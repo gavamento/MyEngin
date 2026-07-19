@@ -11,6 +11,7 @@
 #include "Engine/Core/Components.h"
 #include "Engine/Core/World.h"
 #include "Engine/Engine/GameObject.h"
+#include "Engine/Engine/Prefab.h"
 #include "Engine/Engine/Scene.h"
 #include "Engine/Renderer/GpuResources.h"
 
@@ -93,14 +94,45 @@ void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
         return;
     }
 
+    // ---- プレハブ所属判定 (青文字 / オーバーライド表示 / Revert・Apply に使う) ----
+    const EntityID prefabRoot = Prefab::FindInstanceRoot(world, e);
+    const bool isPrefabMember = !prefabRoot.IsNull();
+    const ImVec4 kPrefabBlue(0.45f, 0.68f, 1.0f, 1.0f);
+
     // ---- 名前 ----
     if (auto* nc = world.GetComponent<NameComponent>(e)) {
         ImGui::SetNextItemWidth(-1);
         ImGui::InputText("##name", nc->value, sizeof(nc->value));
         HandleEditUndo(ctx, selection, undo, fid, "Rename");
+        if (isPrefabMember && Prefab::IsNameOverridden(*ctx.scene, *ctx.prefabs, e)) {
+            ImGui::SameLine();
+            ImGui::TextColored(kPrefabBlue, "*");
+        }
     }
     ImGui::TextDisabled("Entity %u:%u  (fileId %llu)", e.index, e.generation,
                         static_cast<unsigned long long>(fid));
+
+    // ---- プレハブバー (Revert All / Apply All) ----
+    if (isPrefabMember) {
+        auto* inst = world.GetComponent<PrefabInstanceComponent>(prefabRoot);
+        const PrefabAsset* asset = inst ? ctx.prefabs->Get(inst->prefabHash) : nullptr;
+        ImGui::TextColored(kPrefabBlue, "Prefab: %s", asset ? asset->name.c_str() : "(missing)");
+        const uint64_t rootFid = ctx.scene->EnsureFileId(prefabRoot);
+        if (ImGui::SmallButton("Revert All")) {
+            undo.BeginRecord("Revert Prefab", selection);
+            undo.CaptureBefore(*ctx.scene, rootFid);
+            Prefab::RevertInstance(*ctx.scene, *ctx.prefabs, rootFid);
+            ctx.scene->GetWorld().ApplyStructuralChanges();
+            undo.CaptureAfter(*ctx.scene, rootFid);
+            undo.EndRecord(selection);
+        }
+        ImGui::SameLine();
+        // Apply は他インスタンス・アセットファイルも更新するため Undo 対象外 (Unity 同様)
+        if (ImGui::SmallButton("Apply All")) {
+            Prefab::ApplyInstance(*ctx.scene, *ctx.prefabs, rootFid);
+            ctx.scene->GetWorld().ApplyStructuralChanges();
+        }
+    }
     ImGui::Separator();
 
     // ---- コンポーネント一覧 (アーキタイプの型リスト = TypeId 昇順) ----
@@ -144,6 +176,31 @@ void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
                     // 参照ピッカーはポップアップ選択時に自前で Undo を記録するので除外
                     if (f.type != FieldType::AssetRef && f.type != FieldType::EntityRef) {
                         HandleEditUndo(ctx, selection, undo, fid, "Modify");
+                    }
+                    // ---- プレハブオーバーライド: 右クリック Revert/Apply + マーカー ----
+                    if (isPrefabMember) {
+                        if (f.type != FieldType::AssetRef && f.type != FieldType::EntityRef
+                            && ImGui::BeginPopupContextItem()) {
+                            const bool ov = Prefab::IsFieldOverridden(*ctx.scene, *ctx.prefabs, e,
+                                                                      desc.name, f);
+                            if (ImGui::MenuItem("Revert to Prefab", nullptr, false, ov)) {
+                                undo.BeginRecord("Revert Field", selection);
+                                undo.CaptureBefore(*ctx.scene, fid);
+                                Prefab::RevertField(*ctx.scene, *ctx.prefabs, e, desc.name, f);
+                                undo.CaptureAfter(*ctx.scene, fid);
+                                undo.EndRecord(selection);
+                            }
+                            if (ImGui::MenuItem("Apply to Prefab")) {
+                                Prefab::ApplyInstance(*ctx.scene, *ctx.prefabs,
+                                                      ctx.scene->EnsureFileId(prefabRoot));
+                                ctx.scene->GetWorld().ApplyStructuralChanges();
+                            }
+                            ImGui::EndPopup();
+                        }
+                        if (Prefab::IsFieldOverridden(*ctx.scene, *ctx.prefabs, e, desc.name, f)) {
+                            ImGui::SameLine();
+                            ImGui::TextColored(kPrefabBlue, "*");
+                        }
                     }
                 }
             }

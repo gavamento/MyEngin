@@ -6,6 +6,9 @@
 #include <Windows.h>
 #include <shellapi.h>
 
+#include "Editor/Undo/UndoStack.h"
+#include "Engine/Engine/Prefab.h"
+#include "Engine/Engine/Scene.h"
 #include "Engine/Platform/PathUtil.h"
 #include "Engine/Renderer/GpuResources.h"
 
@@ -60,7 +63,7 @@ void AssetBrowserWindow::DrawDirTree(const std::wstring& dir)
     }
 }
 
-void AssetBrowserWindow::OnImGui(EngineContext& ctx)
+void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStack& undo)
 {
     if (!ImGui::Begin("Assets")) {
         ImGui::End();
@@ -104,6 +107,8 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx)
         const std::wstring path = entry.path().wstring();
         const std::wstring ext = entry.path().extension().wstring();
         const std::string nameU = WideToUtf8(entry.path().filename().wstring());
+        const bool isPrefab = nameU.size() >= 12
+            && nameU.compare(nameU.size() - 12, 12, ".prefab.json") == 0;
 
         if (i % cols != 0) {
             ImGui::SameLine();
@@ -119,10 +124,26 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx)
                 ImGui::Button("img", ImVec2(kCell, kCell));
             }
         } else {
-            ImGui::Button(IconFor(ext), ImVec2(kCell, kCell));
+            ImGui::Button(isPrefab ? "prefab" : IconFor(ext), ImVec2(kCell, kCell));
         }
         if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-            ShellExecuteW(nullptr, L"open", path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+            if (isPrefab) {
+                // シーンへインスタンス化 (ルートに配置)。生成を 1 Undo エントリに
+                undo.BeginRecord("Instantiate Prefab", selection);
+                const uint64_t hash = ctx.prefabs->LoadFromFile(path); // 未登録なら登録 (冪等)
+                const uint64_t rootFid =
+                    (hash != 0) ? Prefab::Instantiate(*ctx.scene, *ctx.prefabs, hash, 0) : 0;
+                ctx.scene->GetWorld().ApplyStructuralChanges();
+                if (rootFid != 0) {
+                    selection.SelectOnly(rootFid);
+                    undo.CaptureAfter(*ctx.scene, rootFid);
+                    undo.EndRecord(selection);
+                } else {
+                    undo.CancelRecord();
+                }
+            } else {
+                ShellExecuteW(nullptr, L"open", path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+            }
         }
         ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + kCell);
         ImGui::TextWrapped("%s", nameU.c_str());

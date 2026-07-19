@@ -99,6 +99,9 @@
     <ClCompile Include="..\src\Engine\Engine\Particles\ParticleSystem.cpp">
       <Filter>Engine\Particles</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Prefab.cpp">
+      <Filter>Engine</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\RenderSystem.cpp">
       <Filter>Engine</Filter>
     </ClCompile>
@@ -248,6 +251,9 @@
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Particles\ParticleSystem.h">
       <Filter>Engine\Particles</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Prefab.h">
+      <Filter>Engine</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\RenderSystem.h">
       <Filter>Engine</Filter>

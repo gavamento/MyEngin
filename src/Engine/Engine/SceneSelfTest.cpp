@@ -11,8 +11,13 @@
 #include "Engine/Core/Profiler.h"
 #include "Engine/Core/World.h"
 #include "Engine/Engine/GameObject.h"
+#include "Engine/Engine/Prefab.h"
+#include "Engine/Engine/Replay/WorldHasher.h"
 #include "Engine/Engine/Scene.h"
 #include "Engine/Engine/SceneSerializer.h"
+
+#include <cstddef>
+#include <filesystem>
 
 namespace mye {
 
@@ -245,6 +250,166 @@ bool RunSceneSerializerSelfTest()
         int* np = nullptr;
         delete np; // 落ちないこと
         check(true, "delete nullptr is safe");
+    }
+
+    // ---- プレハブ (M13) ----
+    {
+        auto findField = [](ComponentTypeId t, const char* fname) -> const FieldDesc* {
+            for (const FieldDesc& f : ComponentRegistry::Get().Desc(t).fields) {
+                if (std::string(f.name) == fname) {
+                    return &f;
+                }
+            }
+            return nullptr;
+        };
+
+        PrefabLibrary lib;
+        const std::wstring tmp1 =
+            (std::filesystem::temp_directory_path() / L"mye_selftest_a.prefab.json").wstring();
+
+        // ベースサブツリー (root + 子2、子A に MeshRenderer)
+        Scene sb0;
+        GameObject pr = sb0.CreateGameObjectTracked("PfRoot");
+        pr.SetLocalPosition(1.0f, 2.0f, 3.0f);
+        GameObject ca = sb0.CreateGameObjectTracked("PfChildA");
+        ca.SetParent(pr);
+        ca.SetLocalPosition(0.5f, 0.0f, 0.0f);
+        auto* mrA = ca.AddComponent<MeshRendererComponent>();
+        mrA->mesh = AssetID{ 0xAAull };
+        mrA->material = AssetID{ 0xBBull };
+        GameObject cb = sb0.CreateGameObjectTracked("PfChildB");
+        cb.SetParent(pr);
+        sb0.GetWorld().ApplyStructuralChanges();
+
+        const nlohmann::json local = Prefab::ExtractLocal(sb0, pr.Id());
+        check(local.is_array() && local.size() == 3, "prefab extract has 3 local entities");
+        bool rootLocalOk = false;
+        for (const auto& it : local) {
+            if (it.value("fileId", 0ull) == 1ull && !it.contains("parent")) {
+                rootLocalOk = true;
+            }
+        }
+        check(rootLocalOk, "prefab local root id=1 with no parent");
+        const uint64_t hash = lib.Register(tmp1, "a", local);
+
+        // (1) インスタンス化 → save → 2 回ロードのハッシュ一致 (決定論)
+        Scene s7;
+        const uint64_t r1 = Prefab::Instantiate(s7, lib, hash, 0);
+        const uint64_t r2 = Prefab::Instantiate(s7, lib, hash, 0);
+        s7.GetWorld().ApplyStructuralChanges();
+        check(r1 != 0 && r2 != 0 && r1 != r2, "two instances get distinct root fileIds");
+        check(s7.GetWorld().AliveCount() == 6, "two instances = 6 entities");
+
+        const nlohmann::json saved = SceneSerializer::SaveToJson(s7);
+        Scene sa;
+        SceneSerializer::LoadFromJson(sa, saved);
+        Scene sbb;
+        SceneSerializer::LoadFromJson(sbb, saved);
+        check(HashWorld(sa.GetWorld(), nullptr) == HashWorld(sbb.GetWorld(), nullptr),
+              "instantiate->save->load: WorldHash deterministic");
+        // ロード後のインスタンスも青文字判定 (PrefabLink) を保持
+        {
+            const nlohmann::json resaved = SceneSerializer::SaveToJson(sa);
+            auto byFid = [](const nlohmann::json& root) {
+                std::unordered_map<uint64_t, nlohmann::json> m;
+                for (const auto& it : root["entities"]) {
+                    m[it.value("fileId", 0ull)] = it;
+                }
+                return m;
+            };
+            const auto ma = byFid(saved), mb = byFid(resaved);
+            bool same = ma.size() == mb.size();
+            for (const auto& [f, it] : ma) {
+                auto j = mb.find(f);
+                if (j == mb.end() || j->second != it) {
+                    same = false;
+                    break;
+                }
+            }
+            check(same, "prefab scene save/load roundtrip identical");
+        }
+
+        // (2) オーバーライド → Revert
+        const FieldDesc* posF = findField(LocalTransform::sTypeId, "position");
+        GameObject inst1 = s7.FindByFileId(r1);
+        auto* lt = inst1.GetComponent<LocalTransform>();
+        check(lt && lt->position.x == 1.0f, "instance root inherits base position");
+        check(posF && !Prefab::IsFieldOverridden(s7, lib, inst1.Id(), "LocalTransform", *posF),
+              "fresh instance has no override");
+        lt->position.x = 99.0f;
+        check(posF && Prefab::IsFieldOverridden(s7, lib, inst1.Id(), "LocalTransform", *posF),
+              "modified field detected as override");
+        Prefab::RevertField(s7, lib, inst1.Id(), "LocalTransform", *posF);
+        check(lt->position.x == 1.0f, "revert restores base value");
+        check(posF && !Prefab::IsFieldOverridden(s7, lib, inst1.Id(), "LocalTransform", *posF),
+              "no override after revert");
+
+        // (3) Apply → 別インスタンスの非オーバーライドへ伝播
+        inst1.GetComponent<LocalTransform>()->position.x = 5.0f; // 新ベースにする値
+        check(Prefab::ApplyInstance(s7, lib, r1), "apply succeeds");
+        s7.GetWorld().ApplyStructuralChanges();
+        GameObject inst2 = s7.FindByFileId(r2);
+        check(inst2.GetComponent<LocalTransform>()->position.x == 5.0f,
+              "apply propagated base change to other instance");
+        const PrefabAsset* na = lib.Get(hash);
+        bool baseUpdated = false;
+        if (na) {
+            for (const auto& it : na->entities) {
+                if (it.value("fileId", 0ull) == 1ull) {
+                    baseUpdated = it["components"]["LocalTransform"]["position"][0].get<float>() == 5.0f;
+                }
+            }
+        }
+        check(baseUpdated, "apply updated prefab base asset");
+        std::error_code ec;
+        std::filesystem::remove(tmp1, ec);
+
+        // (4) EntityRef の 2 段 remap (抽出でローカル id 化 → インスタンス化で実体解決)
+        {
+            struct PfRef {
+                EntityID target = kNullEntity;
+            };
+            ComponentDesc d;
+            d.name = "PfRef";
+            d.nameHash = HashStr("PfRef");
+            d.size = sizeof(PfRef);
+            d.align = alignof(PfRef);
+            d.flags = kComponentNone;
+            d.construct = [](void* p) { new (p) PfRef(); };
+            d.fields = { FieldDesc{ "target", FieldType::EntityRef,
+                                    static_cast<uint32_t>(offsetof(PfRef, target)), kFieldNone } };
+            const ComponentTypeId pfRefType = ComponentRegistry::Get().Register(std::move(d));
+
+            Scene s8;
+            GameObject rp = s8.CreateGameObjectTracked("RP_Root");
+            GameObject rc = s8.CreateGameObjectTracked("RP_Child");
+            rc.SetParent(rp);
+            s8.GetWorld().ApplyStructuralChanges();
+            static_cast<PfRef*>(s8.GetWorld().AddComponentRaw(rp.Id(), pfRefType))->target = rc.Id();
+
+            const nlohmann::json local2 = Prefab::ExtractLocal(s8, rp.Id());
+            uint64_t refLocal = 0xFFFF;
+            for (const auto& it : local2) {
+                if (it.value("fileId", 0ull) == 1ull && it.contains("components")
+                    && it["components"].contains("PfRef")) {
+                    refLocal = it["components"]["PfRef"]["target"].get<uint64_t>();
+                }
+            }
+            check(refLocal == 2ull, "extract remaps EntityRef to local child id (stage 1)");
+
+            const std::wstring tmp2 =
+                (std::filesystem::temp_directory_path() / L"mye_selftest_b.prefab.json").wstring();
+            const uint64_t hash2 = lib.Register(tmp2, "b", local2);
+            Scene s9;
+            const uint64_t rr = Prefab::Instantiate(s9, lib, hash2, 0);
+            s9.GetWorld().ApplyStructuralChanges();
+            GameObject instRoot = s9.FindByFileId(rr);
+            auto* p2 = static_cast<PfRef*>(s9.GetWorld().GetComponentRaw(instRoot.Id(), pfRefType));
+            auto* h = s9.GetWorld().GetComponent<HierarchyComponent>(instRoot.Id());
+            const EntityID refChild = h ? h->firstChild : kNullEntity;
+            check(p2 && !refChild.IsNull() && p2->target == refChild,
+                  "instantiate remaps EntityRef to instance child (stage 2)");
+        }
     }
 
     if (failCount == 0) {

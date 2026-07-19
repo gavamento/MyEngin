@@ -1,0 +1,99 @@
+#pragma once
+#include <string>
+#include <unordered_map>
+#include <vector>
+
+#include "nlohmann/json.hpp"
+
+#include "Engine/Core/EntityID.h"
+
+namespace mye {
+
+class Scene;
+class World;
+struct FieldDesc;
+
+// プレハブアセット (M13)。.prefab.json = シーンと同形式のサブツリー + ローカル fileId (root=1)。
+// エディタとランタイム (M15) の両方から使うため Engine 層に置く (Editor 層ではない)
+struct PrefabAsset {
+    uint64_t hash = 0;       // パスハッシュ (PrefabLibrary キー = PrefabInstanceComponent.prefabHash)
+    std::string name;        // 表示名 (拡張子なしファイル名)
+    std::wstring path;       // 絶対パス
+    nlohmann::json entities; // ローカルエンティティ配列 (SubtreeToJson 形式、fileId はローカル)
+};
+
+// 列挙 1 件 (Asset Browser / インスタンス化 UI 用)
+struct PrefabEntry {
+    uint64_t hash = 0;
+    std::string name;
+    std::wstring path;
+};
+
+// 登録済みプレハブの管理 (Mesh/Material ライブラリと同じ役割の Engine 層アセット)
+class PrefabLibrary {
+public:
+    // パスからハッシュを計算 (正規化パスのハッシュ)。ロード有無に関わらず同じ値
+    static uint64_t HashForPath(const std::wstring& path);
+
+    // ファイルを読み込み登録する (既存は置き換え)。失敗時 0。返り値 = hash
+    uint64_t LoadFromFile(const std::wstring& path);
+    // メモリ上の entities を登録/更新する (Create Prefab / Apply 用)。返り値 = hash
+    uint64_t Register(const std::wstring& path, std::string name, nlohmann::json entities);
+
+    const PrefabAsset* Get(uint64_t hash) const;
+    bool Contains(uint64_t hash) const { return assets_.find(hash) != assets_.end(); }
+
+    // 登録済みプレハブを名前順で列挙 (エディタ UI 用)
+    std::vector<PrefabEntry> Enumerate() const;
+
+private:
+    std::unordered_map<uint64_t, PrefabAsset> assets_;
+};
+
+// プレハブ操作 (Engine 層の自由関数)。オーバーライドは「現在値がベース値と異なるか」の
+// ライブ判定で、別途保存はしない (シーンには実体を持つのでロードは通常経路 = 決定論安全)
+namespace Prefab {
+
+// scene のサブツリー root を「プレハブローカル形式」へ変換する:
+//   fileId=1..N (DFS 順、root=1) / 集合外への親・EntityRef は除去 / プレハブタグは除去
+nlohmann::json ExtractLocal(Scene& scene, EntityID root);
+
+// root サブツリーを path に .prefab.json として保存し library に登録、root をインスタンス化する。
+// 返り値 = prefabHash (失敗時 0)
+uint64_t CreateAsset(Scene& scene, PrefabLibrary& lib, const std::wstring& path, EntityID root);
+
+// localEntities (ExtractLocal 形式) をシーンへインスタンス化する低レベル版。
+// parentFileId!=0 ならルートをその子に。返り値 = 生成したルートの新 fileId (失敗時 0)
+uint64_t InstantiateEntities(Scene& scene, const nlohmann::json& localEntities, uint64_t prefabHash,
+                             uint64_t parentFileId = 0);
+
+// prefabHash のプレハブをシーンへインスタンス化する。返り値 = 新ルート fileId (失敗時 0)
+uint64_t Instantiate(Scene& scene, const PrefabLibrary& lib, uint64_t prefabHash,
+                     uint64_t parentFileId = 0);
+
+// e (またはその祖先) が属するインスタンスのルート。無ければ kNullEntity
+EntityID FindInstanceRoot(World& world, EntityID e);
+
+// e の 1 フィールドがプレハブベースと異なるか (= オーバーライド)。
+// EntityRef は remap 判定が不確実なため常に false。プレハブ非所属なら false
+bool IsFieldOverridden(Scene& scene, const PrefabLibrary& lib, EntityID e, const char* compName,
+                       const FieldDesc& field);
+bool IsNameOverridden(Scene& scene, const PrefabLibrary& lib, EntityID e);
+
+// e の 1 フィールドをプレハブベース値へ戻す
+void RevertField(Scene& scene, const PrefabLibrary& lib, EntityID e, const char* compName,
+                 const FieldDesc& field);
+// rootFileId のインスタンス全体をベース値へ戻す (全フィールド + 名前。EntityRef は除く)
+void RevertInstance(Scene& scene, const PrefabLibrary& lib, uint64_t rootFileId);
+
+// rootFileId のインスタンスの現在値を新ベースとして .prefab.json に書き戻し、
+// 同一プレハブの他インスタンスの「非オーバーライド」フィールドへ伝播する
+bool ApplyInstance(Scene& scene, PrefabLibrary& lib, uint64_t rootFileId);
+
+// prefabHash のベース変更 (oldBase→newBase) を全インスタンスの非オーバーライドへ伝播 (リロード用)。
+// 非オーバーライド = 現在値が oldBase と一致するフィールド
+void PropagateBaseChange(Scene& scene, const nlohmann::json& oldBase, const nlohmann::json& newBase,
+                         uint64_t prefabHash);
+
+} // namespace Prefab
+} // namespace mye

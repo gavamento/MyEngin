@@ -123,6 +123,25 @@ struct ActiveComponent {
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
+// ---- プレハブ (M13) ----
+// インスタンスの **ルートのみ** に付く。元 .prefab.json をパスハッシュで指す
+// (PrefabLibrary のキー = PrefabInstanceComponent.prefabHash)。
+// **無ければプレハブインスタンスでない** (opt-in → 既存シーンは挙動もハッシュも不変)。
+// シリアライズ+ハッシュ対象だが、どのシステムにも参加しない純データタグ (sim 非影響)
+struct PrefabInstanceComponent {
+    uint64_t prefabHash = 0;
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
+// インスタンス内の **全エンティティ** に付く。プレハブ内ローカル fileId (localId) を保持し、
+// ベースとのオーバーライド diff / 伝播に使う。所属インスタンスのルートは親を上に辿り、
+// 最初に PrefabInstanceComponent を持つ祖先 (= 自身含む)。rootFileId を持たないため、
+// 複製 (CloneSubtree) しても壊れない (localId はそのまま流用でよい)
+struct PrefabLinkComponent {
+    uint64_t localId = 0;
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
 class World;
 
 // エンティティが有効か (ActiveComponent が無ければ有効 / enabled==0 なら無効)

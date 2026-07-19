@@ -12,6 +12,7 @@
 #include "Engine/Engine/HotReload/DllReloader.h"
 #include "Engine/Engine/HotReload/ReloadHub.h"
 #include "Engine/Engine/ModelLoader.h"
+#include "Engine/Engine/Prefab.h"
 #include "Engine/Engine/Script/ScriptHost.h"
 #include "Engine/Platform/PathUtil.h"
 #include "Engine/Platform/Win32Window.h"
@@ -38,6 +39,7 @@ void EditorApp::OnStart(EngineContext& ctx)
     // シーンファイルは AssetID しか持たないため、実体の登録は起動側の責務
     // (パスベースの完全なアセット解決は AssetManager の将来拡張)
     RegisterDemoResources(ctx);
+    RegisterPrefabs(ctx); // シーンロード前に登録 (オーバーライド解決がライブラリを参照するため)
     if (std::filesystem::exists(scenePath_)) {
         SceneSerializer::LoadFromFile(*ctx.scene, scenePath_);
     } else {
@@ -94,7 +96,7 @@ void EditorApp::OnImGui(EngineContext& ctx)
     gameView_.OnImGui(ctx);
     particleSettings_.OnImGui(ctx);
     profiler_.OnImGui(ctx);
-    assetBrowser_.OnImGui(ctx);
+    assetBrowser_.OnImGui(ctx, selection_, undo_);
 
     // ピッキング自動テスト (--pick-test): 指定フレームでビュー中心を選択できるか検証
     if (pickTestFrame >= 0 && static_cast<int64_t>(ctx.frameIndex) == pickTestFrame) {
@@ -452,6 +454,30 @@ void EditorApp::RegisterDemoResources(EngineContext& ctx)
     // glTF のメッシュ/マテリアル/テクスチャを登録 (エンティティは作らない)。
     // 保存済みシーンをロードする場合でも AssetID の実体が揃うようにする
     ModelLoader::ReloadMeshes(res, *ctx.shaders, ctx.assetsRoot + L"\\models\\BoxTextured.glb");
+}
+
+void EditorApp::RegisterPrefabs(EngineContext& ctx)
+{
+    const std::wstring dir = ctx.assetsRoot + L"\\prefabs";
+    std::error_code ec;
+    if (!std::filesystem::is_directory(dir, ec)) {
+        return;
+    }
+    int count = 0;
+    for (const auto& e : std::filesystem::recursive_directory_iterator(dir, ec)) {
+        if (!e.is_regular_file()) {
+            continue;
+        }
+        const std::wstring p = e.path().wstring();
+        if (p.size() >= 12 && p.compare(p.size() - 12, 12, L".prefab.json") == 0) {
+            if (ctx.prefabs->LoadFromFile(p) != 0) {
+                ++count;
+            }
+        }
+    }
+    if (count > 0) {
+        MYE_LOG_INFO("registered %d prefab(s)", count);
+    }
 }
 
 void EditorApp::BuildDemoEntities(EngineContext& ctx)

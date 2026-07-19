@@ -7,6 +7,7 @@
 #include "Engine/Engine/HotReload/DllReloader.h"
 #include "Engine/Engine/HotReload/ReloadHub.h"
 #include "Engine/Engine/Particles/ParticleSystem.h"
+#include "Engine/Engine/Prefab.h"
 #include "Engine/Engine/RenderSystem.h"
 #include "Engine/Engine/Replay/Replay.h"
 #include "Engine/Engine/Replay/WorldHasher.h"
@@ -57,6 +58,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     DllReloader dllReloader;
     ParticleSystem particleSystem;
     CollisionSystem collisionSystem;
+    PrefabLibrary prefabLibrary;
     IRenderPath* activePath = &forwardPath;
 
     // ---- 起動 ----
@@ -90,7 +92,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     if (!deferredPath.Init(device, shaderManager)) {
         return 1;
     }
-    reloadHub.Init(&shaderManager, &resources, &scene, assetsRoot);
+    reloadHub.Init(&shaderManager, &resources, &scene, &prefabLibrary, assetsRoot);
     particleSystem.Init(device, shaderManager, assetsRoot);
 
     // GameLogic.dll (スクリプト層)。エンジンの exe と同じ構成のビルド出力を監視する
@@ -119,6 +121,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     ctx.scriptHost = &scriptHost;
     ctx.dllReloader = &dllReloader;
     ctx.particles = &particleSystem;
+    ctx.prefabs = &prefabLibrary;
     ctx.assetsRoot = assetsRoot;
     ctx.fixedDt = static_cast<float>(kFixedDt);
 

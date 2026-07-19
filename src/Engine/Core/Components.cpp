@@ -97,6 +97,17 @@ void RegisterBuiltinComponents()
     RegisterComponent<ActiveComponent>("Active", {
         MYE_FIELD(ActiveComponent, enabled, Int32),
     });
+
+    // M13: プレハブタグ。純データ (どのシステムにも参加しない = sim 非影響)。
+    // kComponentHidden で Inspector の Add/一覧から隠すが、シリアライズ+ハッシュはされる。
+    // 無ければ通常エンティティなので既存シーンのハッシュは不変 (ReplayFile bump 不要)
+    RegisterComponent<PrefabInstanceComponent>("PrefabInstance", {
+        MYE_FIELD_FLAGS(PrefabInstanceComponent, prefabHash, UInt64, kFieldReadOnly),
+    }, kComponentHidden);
+
+    RegisterComponent<PrefabLinkComponent>("PrefabLink", {
+        MYE_FIELD_FLAGS(PrefabLinkComponent, localId, UInt64, kFieldReadOnly),
+    }, kComponentHidden);
 }
 
 } // namespace mye

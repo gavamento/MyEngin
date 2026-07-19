@@ -5,6 +5,7 @@
 
 #include "Engine/Core/Log.h"
 #include "Engine/Engine/ModelLoader.h"
+#include "Engine/Engine/Prefab.h"
 #include "Engine/Engine/Scene.h"
 #include "Engine/Engine/SceneSerializer.h"
 #include "Engine/Platform/PathUtil.h"
@@ -23,11 +24,12 @@ std::wstring ExtensionLower(const std::wstring& path)
 } // namespace
 
 bool ReloadHub::Init(ShaderManager* shaders, RenderResources* resources, Scene* scene,
-                     const std::wstring& assetsRoot)
+                     PrefabLibrary* prefabs, const std::wstring& assetsRoot)
 {
     shaders_ = shaders;
     resources_ = resources;
     scene_ = scene;
+    prefabs_ = prefabs;
     std::error_code ec;
     if (!std::filesystem::is_directory(assetsRoot, ec)) {
         MYE_LOG_WARN("[reload] assets root not found, hot reload disabled");
@@ -107,6 +109,30 @@ void ReloadHub::HandleChange(const std::wstring& normPath)
     }
 
     if (ext == L".json") {
+        // .prefab.json: 登録済みプレハブなら再読込 → 全インスタンスの非オーバーライドへ伝播
+        const bool isPrefab = normPath.size() >= 12
+            && normPath.compare(normPath.size() - 12, 12, L".prefab.json") == 0;
+        if (isPrefab) {
+            if (prefabs_ && scene_) {
+                const uint64_t hash = PrefabLibrary::HashForPath(normPath);
+                if (prefabs_->Contains(hash)) {
+                    const PrefabAsset* before = prefabs_->Get(hash);
+                    const nlohmann::json oldBase = before ? before->entities : nlohmann::json::array();
+                    const uint64_t rh = prefabs_->LoadFromFile(normPath);
+                    if (rh == 0) {
+                        retryLater(); // 書き込み途中 / パースエラー
+                        return;
+                    }
+                    if (const PrefabAsset* after = prefabs_->Get(rh)) {
+                        Prefab::PropagateBaseChange(*scene_, oldBase, after->entities, rh);
+                        MYE_LOG_INFO("[reload] prefab recomposited: %s",
+                                     WideToUtf8(normPath).c_str());
+                        ++reloadCount_;
+                    }
+                }
+            }
+            return;
+        }
         if (!activeSceneNorm_.empty() && normPath == activeSceneNorm_) {
             std::ifstream f(std::filesystem::path(normPath), std::ios::binary);
             if (!f) {

@@ -7,9 +7,12 @@
 
 #include "Editor/Undo/UndoStack.h"
 #include "Engine/Core/Components.h"
+#include "Engine/Core/Log.h"
 #include "Engine/Core/World.h"
 #include "Engine/Engine/GameObject.h"
+#include "Engine/Engine/Prefab.h"
 #include "Engine/Engine/Scene.h"
+#include "Engine/Platform/PathUtil.h"
 #include "Engine/Renderer/GpuResources.h"
 
 #include "imgui.h"
@@ -33,6 +36,33 @@ GameObject CreateCube(EngineContext& ctx, const char* name)
     mr->mesh = ctx.resources->meshes.Cube();
     mr->material = ctx.resources->materials.Default(*ctx.shaders, ctx.resources->textures);
     return obj;
+}
+
+// 選択サブツリーを .prefab.json 化し、その場でインスタンス化タグを付ける (1 Undo エントリ)
+void CreatePrefabFromEntity(EngineContext& ctx, Selection& selection, UndoStack& undo, EntityID e)
+{
+    // 名前をファイル名向けにサニタイズ
+    std::string base = ctx.scene->GetWorld().GetName(e);
+    std::string safe;
+    for (char c : base) {
+        const bool ok = std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '-';
+        safe += ok ? c : '_';
+    }
+    if (safe.empty()) {
+        safe = "Prefab";
+    }
+    const std::wstring path = ctx.assetsRoot + L"\\prefabs\\" + Utf8ToWide(safe) + L".prefab.json";
+
+    undo.BeginRecord("Create Prefab", selection);
+    const uint64_t fid = ctx.scene->EnsureFileId(e);
+    undo.CaptureBefore(*ctx.scene, fid);
+    const uint64_t hash = Prefab::CreateAsset(*ctx.scene, *ctx.prefabs, path, e);
+    ctx.scene->GetWorld().ApplyStructuralChanges();
+    undo.CaptureAfter(*ctx.scene, fid);
+    undo.EndRecord(selection);
+    if (hash == 0) {
+        MYE_LOG_ERROR("Create Prefab failed for '%s'", base.c_str());
+    }
 }
 
 // 生成操作を 1 つの Undo エントリとして記録する
@@ -224,7 +254,15 @@ void HierarchyWindow::DrawEntityNode(EngineContext& ctx, World& world, EntityID 
         flags |= ImGuiTreeNodeFlags_Selected;
     }
 
+    // プレハブインスタンスは青文字 (Unity 風)。メンバは全て PrefabLink を持つ
+    const bool isPrefab = world.GetComponent<PrefabLinkComponent>(e) != nullptr;
+    if (isPrefab) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.45f, 0.68f, 1.0f, 1.0f));
+    }
     const bool open = ImGui::TreeNodeEx("##node", flags, "%s", world.GetName(e));
+    if (isPrefab) {
+        ImGui::PopStyleColor();
+    }
 
     if (ImGui::IsItemClicked(ImGuiMouseButton_Left) && !ImGui::IsItemToggledOpen()) {
         ApplyClick(ctx, e, selection);
@@ -247,6 +285,9 @@ void HierarchyWindow::DrawEntityNode(EngineContext& ctx, World& world, EntityID 
             });
         }
         ImGui::Separator();
+        if (ImGui::MenuItem("Create Prefab")) {
+            CreatePrefabFromEntity(ctx, selection, undo, e);
+        }
         if (ImGui::MenuItem("Delete")) {
             undo.BeginRecord("Delete", selection);
             undo.CaptureBefore(*ctx.scene, ctx.scene->EnsureFileId(e));

@@ -39,6 +39,7 @@ public:
 
 private:
     void RegisterDemoResources(EngineContext& ctx); // メッシュ/マテリアル/モデル登録 (毎回)
+    void RegisterPrefabs(EngineContext& ctx);       // assets\prefabs\*.prefab.json をライブラリに登録
     void BuildDemoEntities(EngineContext& ctx);     // エンティティ構築 (シーンファイルが無い時のみ)
     void DrawMainMenuBar(EngineContext& ctx);
     void HandleShortcuts(EngineContext& ctx);
