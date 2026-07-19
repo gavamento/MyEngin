@@ -131,6 +131,54 @@ void ScriptHost::BuildApiTable()
     api_.RandomRange = [](void* engine, float lo, float hi) -> float {
         return Host(engine)->scene_->GetWorld().Rng().Range(lo, hi);
     };
+    api_.AddComponentByName = [](void* engine, MyeEntityId id, const char* name) -> int {
+        if (!name) {
+            return 0;
+        }
+        const ComponentTypeId t = ComponentRegistry::Get().FindByName(name);
+        if (t == kInvalidComponentType) {
+            return 0;
+        }
+        return Host(engine)->scene_->GetWorld().AddComponentRaw(ToEngine(id), t) ? 1 : 0;
+    };
+    api_.SetMeshRenderer = [](void* engine, MyeEntityId id, const char* meshKey,
+                              const char* materialKey) -> int {
+        World& world = Host(engine)->scene_->GetWorld();
+        auto* mr = static_cast<MeshRendererComponent*>(
+            world.AddComponentRaw(ToEngine(id), MeshRendererComponent::sTypeId));
+        if (!mr) {
+            return 0;
+        }
+        // アセットキー名 → AssetID (ハッシュ)。実体解決は描画時にライブラリが行う
+        if (meshKey) {
+            mr->mesh = AssetID{ HashStr(meshKey) };
+        }
+        if (materialKey) {
+            mr->material = AssetID{ HashStr(materialKey) };
+        }
+        return 1;
+    };
+}
+
+void ScriptHost::DispatchTrigger(EntityID self, EntityID other, bool enter)
+{
+    World& world = scene_->GetWorld();
+    for (ScriptType& type : types_) { // 登録順 (決定論)
+        auto fn = enter ? type.onTriggerEnter : type.onTriggerExit;
+        if (!fn) {
+            continue;
+        }
+        void* state = world.GetComponentRaw(self, type.componentId);
+        if (!state) {
+            continue;
+        }
+        MyeUpdateContext ctx;
+        ctx.dt = dt_;
+        ctx.tickIndex = tickIndex_;
+        ctx.self = ToShared(self);
+        ctx.api = &api_;
+        fn(state, &ctx, ToShared(other));
+    }
 }
 
 void ScriptHost::Init(Scene* scene)
@@ -243,6 +291,8 @@ bool ScriptHost::LoadModule(const std::wstring& dllPath)
         type->start = sd.start;
         type->update = sd.update;
         type->lateUpdate = sd.lateUpdate;
+        type->onTriggerEnter = sd.onTriggerEnter;
+        type->onTriggerExit = sd.onTriggerExit;
     }
 
     // 新 DLL に無くなった型: ロジックを外す (状態は残す — 復活したら再バインドされる)
@@ -255,6 +305,8 @@ bool ScriptHost::LoadModule(const std::wstring& dllPath)
             t.start = nullptr;
             t.update = nullptr;
             t.lateUpdate = nullptr;
+            t.onTriggerEnter = nullptr;
+            t.onTriggerExit = nullptr;
         }
     }
 

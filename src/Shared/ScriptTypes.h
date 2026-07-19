@@ -39,6 +39,9 @@ struct MyeScriptDesc {
     void (*start)(void* state, MyeUpdateContext* ctx);       // null 可
     void (*update)(void* state, MyeUpdateContext* ctx);      // null 可
     void (*lateUpdate)(void* state, MyeUpdateContext* ctx);  // null 可
+    // トリガーイベント (v2、null 可) — CollisionSystem が配信する
+    void (*onTriggerEnter)(void* state, MyeUpdateContext* ctx, MyeEntityId other);
+    void (*onTriggerExit)(void* state, MyeUpdateContext* ctx, MyeEntityId other);
 };
 
 struct MyeScriptModule {

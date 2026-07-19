@@ -1,0 +1,75 @@
+# MyEngine
+
+C++20 / DirectX 11 製の自作ゲームエンジン。**Unity 風の使いやすさ × ECS の性能 × 壊れない開発体験** をコンセプトに、就職活動用ポートフォリオとして開発。仕様は [engine_spec.md](engine_spec.md)、設計判断の記録は [docs/adr/](docs/adr/) を参照。
+
+## ビルドと実行
+
+1. Visual Studio 2022 以降 (C++ デスクトップ開発ワークロード + Windows 10/11 SDK)
+2. `MyEngine.sln` を開く → 構成 `Debug|x64` → F5
+
+外部ライブラリはすべて `external/` にソースごとコミット済み (クローン → F5 で動く)。
+
+| プロジェクト | 種類 | 内容 |
+|---|---|---|
+| Engine | 静的ライブラリ | Platform / Core / Renderer / Engine の 4 レイヤ |
+| Editor | exe | ImGui エディタ (開発時のホストプロセス) |
+| GameLogic | DLL | ユーザースクリプト。**ホットリロード対象** |
+
+## 主要機能
+
+- **ハイブリッド ECS** — 外部 API は `GameObject` / `GetComponent<T>()`、内部はアーキタイプ別 SoA。
+  世代付き EntityID で破棄後のハンドルを検出。構造変更はコマンドバッファで tick 末一括適用
+- **リフレクション基盤** — 1 つのフィールド表を Inspector 自動生成 / JSON シリアライズ /
+  DLL リロード時の状態移行 / ワールドハッシュの 4 者で共用
+- **ホットリロード** — シェーダ (include 依存グラフ + 失敗時は旧維持) / テクスチャ / glTF /
+  シーン JSON (fileId 差分適用) / **C++ コード (GameLogic.dll)**。DLL は PDB ごとコピー +
+  `/PDBALTPATH` でデバッガのブレークポイントを維持し、フィールドは名前+型一致で移行
+- **パーティクル二重実装** — CPU (SoA + SSE、スカラー参照実装つき) と GPU (Compute、
+  dead/alive リスト + DrawInstancedIndirect、リードバックなし)。実行時切替 + 並走比較モード。
+  乱数は両者ともエンジンの決定論 RNG (GPU では乱数を生成しない)
+- **レンダリングパス切替** — Forward / Deferred を実行時切替 (View > Render Path)。
+  ライティング関数は common.hlsli を共用し見た目が一致。透明物とパーティクルは共通の Forward 後段
+- **Debug/Release 一貫性** — 固定 60Hz tick、`/fp:precise`、PCG32、明示ソートキー。
+  リプレイ (.rep) の tick 毎ワールドハッシュ比較で機械検証:
+  `tools\replay_verify.bat` が両構成ビルド → Debug 記録 → Debug/Release 照合 → 静的規則検査
+
+## エディタ操作
+
+- **Scene ビュー**: 右ドラッグ + WASDQE (Shift で加速) — エディタカメラ
+- **Play / Pause / Step**: メニューバー中央。Play 中の編集は Stop で破棄 (Unity 方式)
+- **Game ビュー**: シーン内カメラ視点。Play 中は矢印キーで BoxTextured (プレイヤー) が移動、
+  黄色い Spawned キューブに触れると回収 (GameLogic.dll の `OnTriggerEnter`)
+- **Inspector**: リフレクションから widget を自動生成。スクリプトのフィールドもここに出る
+- **Particle Settings**: CPU/GPU 切替・比較モード・SIMD トグル・更新時間表示
+
+## CLI (検証/CI 用)
+
+```
+Editor.exe --selftest                     # ECS + シリアライザ回帰テスト
+Editor.exe --replay-record out.rep --replay-ticks 600
+Editor.exe --replay-verify out.rep        # exit code 0/1
+Editor.exe --autoplay --deferred --frames 600 --screenshot shot.png
+tools\replay_verify.bat                   # 一貫性検証一式
+tools\check_rules.ps1                     # コーディング規則の静的検査
+tools\gen_project_files.ps1               # ソース一覧を vcxproj に反映
+```
+
+## アーキテクチャ
+
+```
+Editor      ImGui エディタ (Hierarchy / Inspector / SceneView / Profiler ...)
+GameLogic   ユーザースクリプト DLL — C ABI (src/Shared) だけを介してエンジンと通信
+Engine      シーン / GameObject / ホットリロード制御 / パーティクル / リプレイ
+Renderer    DX11 抽象 / IRenderPath (Forward・Deferred) / シェーダ管理
+Core        ECS / リフレクション / RNG / ログ / FileWatcher / JSON
+Platform    Win32 / 入力 / 時間 / DLL ロード
+```
+
+上位レイヤは下位レイヤのみに依存。生の D3D 型は Renderer 層より上に出さない。
+DLL 境界 (`src/Shared/`) は C ABI + POD のみ (STL / vtable / 例外は越えない)。
+
+## ドキュメント
+
+- [docs/adr/](docs/adr/) — Architecture Decision Records (設計判断とトレードオフ)
+- [docs/demo_script.md](docs/demo_script.md) — デモ動画の台本
+- [docs/test_checklists.md](docs/test_checklists.md) — 手動テスト手順 (ホットリロード)

@@ -28,11 +28,16 @@ struct Spawner : Script<Spawner> {
             api->DestroyGameObject(api->engine, *target);
         }
         const MyeEntityId e = api->CreateGameObject(api->engine, "Spawned");
-        const MyeVec3 pos = { api->RandomRange(api->engine, -8.0f, 8.0f),
-                              api->RandomRange(api->engine, 0.5f, 3.0f),
-                              api->RandomRange(api->engine, -8.0f, 8.0f) };
+        const MyeVec3 pos = { api->RandomRange(api->engine, -3.0f, 3.0f),
+                              api->RandomRange(api->engine, 0.5f, 2.0f),
+                              api->RandomRange(api->engine, -3.0f, 3.0f) };
         api->SetLocalPosition(api->engine, e, pos);
+        api->SetLocalScale(api->engine, e, { 0.5f, 0.5f, 0.5f });
+        // 見た目 (アセットキー名で解決) + コライダ (既定 = 球 r0.5 トリガー)
+        api->SetMeshRenderer(api->engine, e, "builtin://cube", "mat_yellow");
+        api->AddComponentByName(api->engine, e, "Collider");
         *target = e;
     }
 };
 REGISTER_SCRIPT(Spawner, FIELDS(intervalTicks, counter, slot, spawned0, spawned1, spawned2, spawned3));
+

@@ -13,11 +13,23 @@ constexpr uint8_t kVkDown = 0x28;
 struct PlayerController : Script<PlayerController> {
     float moveSpeed = 5.0f;
     int32_t jumpCount = 0;
-    int32_t prevSpace = 0; // エッジ検出用 (登録フィールドなのでリロードでも保持)
+    int32_t prevSpace = 0;   // エッジ検出用 (登録フィールドなのでリロードでも保持)
+    int32_t pickupCount = 0; // トリガーで拾った Spawned の数
 
     void Start(MyeUpdateContext& ctx)
     {
         MyeLogf(ctx, "PlayerController started (moveSpeed=%.1f)", moveSpeed);
+    }
+
+    // CollisionSystem からの C ABI イベント (spec 1.4 の簡易衝突判定)
+    void OnTriggerEnter(MyeUpdateContext& ctx, MyeEntityId other)
+    {
+        const MyeEngineApi* api = ctx.api;
+        if (api->IsAlive(api->engine, other)) {
+            api->DestroyGameObject(api->engine, other); // 拾ったら消す (tick 末適用)
+            ++pickupCount;
+            MyeLogf(ctx, "pickup #%d (entity %u)", pickupCount, other.index);
+        }
     }
 
     void Update(MyeUpdateContext& ctx)
@@ -46,4 +58,4 @@ struct PlayerController : Script<PlayerController> {
         prevSpace = space;
     }
 };
-REGISTER_SCRIPT(PlayerController, FIELDS(moveSpeed, jumpCount, prevSpace));
+REGISTER_SCRIPT(PlayerController, FIELDS(moveSpeed, jumpCount, prevSpace, pickupCount));

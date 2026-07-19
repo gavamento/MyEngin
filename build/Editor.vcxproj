@@ -40,6 +40,7 @@
     <ClCompile Include="..\src\Editor\Windows\HierarchyWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\InspectorWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\ParticleSettingsWindow.cpp" />
+    <ClCompile Include="..\src\Editor\Windows\ProfilerWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\SceneViewWindow.cpp" />
     <ClInclude Include="..\src\Editor\EditorApp.h" />
     <ClInclude Include="..\src\Editor\PlayModeController.h" />
@@ -49,6 +50,7 @@
     <ClInclude Include="..\src\Editor\Windows\HierarchyWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\InspectorWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\ParticleSettingsWindow.h" />
+    <ClInclude Include="..\src\Editor\Windows\ProfilerWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\SceneViewWindow.h" />
   </ItemGroup>
   <!-- END FILES -->

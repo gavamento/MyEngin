@@ -104,6 +104,16 @@ struct ParticleEmitterComponent {
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
+// 簡易衝突判定 (球 / AABB のオーバーラップ + トリガーイベント)。
+// 回転は無視した近似 (AABB はワールド軸平行、球はスケールの最大成分で拡大)
+struct ColliderComponent {
+    int32_t shape = 0; // 0=sphere 1=aabb
+    float radius = 0.5f;
+    DirectX::XMFLOAT3 halfExtents = { 0.5f, 0.5f, 0.5f };
+    int32_t isTrigger = 1; // 現状トリガーのみ (物理応答は範囲外 — spec 1.4)
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
 // 固定順で登録する (TypeId の決定論)。多重呼び出しは無害
 void RegisterBuiltinComponents();
 

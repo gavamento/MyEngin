@@ -1,0 +1,47 @@
+#include "Editor/Windows/ProfilerWindow.h"
+
+#include "Engine/Engine/Particles/ParticleSystem.h"
+#include "Engine/Engine/Scene.h"
+#include "Engine/Renderer/RenderPath.h"
+
+#include "imgui.h"
+
+namespace mye {
+
+void ProfilerWindow::OnImGui(EngineContext& ctx)
+{
+    frameHistory_[cursor_] = ctx.timings.frameMs;
+    cursor_ = (cursor_ + 1) % kHistory;
+
+    if (!ImGui::Begin("Profiler")) {
+        ImGui::End();
+        return;
+    }
+    const FrameTimings& t = ctx.timings;
+
+    ImGui::Text("frame: %6.2f ms (%.0f fps)", t.frameMs,
+                (t.frameMs > 0.001f) ? 1000.0f / t.frameMs : 0.0f);
+    ImGui::PlotLines("##frame", frameHistory_, kHistory, cursor_, nullptr, 0.0f, 33.3f,
+                     ImVec2(-1, 60));
+
+    ImGui::Separator();
+    ImGui::TextUnformatted("phase breakdown (CPU):");
+    ImGui::Text("  2 hot reload : %6.3f ms", t.reloadMs);
+    ImGui::Text("  3-5,7 ticks  : %6.3f ms (%d tick)", t.tickMs, t.ticksThisFrame);
+    ImGui::Text("  6 render     : %6.3f ms", t.renderMs);
+    ImGui::Text("  8 ui/present : %6.3f ms", t.presentMs);
+
+    ImGui::Separator();
+    ImGui::TextUnformatted("particles:");
+    const ParticleStats cpu = ctx.particles->Cpu().Stats();
+    const ParticleStats gpu = ctx.particles->Gpu().Stats();
+    ImGui::Text("  CPU: %7u alive %7.3f ms", cpu.aliveTotal, cpu.updateMs);
+    ImGui::Text("  GPU: (cap %6u) %7.3f ms (GpuTimer)", gpu.aliveTotal, gpu.updateMs);
+
+    ImGui::Separator();
+    ImGui::Text("render path: %s", ctx.renderPath ? ctx.renderPath->Name() : "?");
+    ImGui::Text("entities: %u", ctx.scene->GetWorld().AliveCount());
+    ImGui::End();
+}
+
+} // namespace mye

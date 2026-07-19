@@ -8,6 +8,7 @@
 #include "Editor/Windows/HierarchyWindow.h"
 #include "Editor/Windows/InspectorWindow.h"
 #include "Editor/Windows/ParticleSettingsWindow.h"
+#include "Editor/Windows/ProfilerWindow.h"
 #include "Editor/Windows/SceneViewWindow.h"
 #include "Engine/Engine/EngineLoop.h"
 #include "Engine/Engine/GameObject.h"
@@ -44,6 +45,7 @@ private:
     SceneViewWindow sceneView_;
     GameViewWindow gameView_;
     ParticleSettingsWindow particleSettings_;
+    ProfilerWindow profiler_;
 
     std::wstring scenePath_;
     bool rebuildDockLayout_ = false;

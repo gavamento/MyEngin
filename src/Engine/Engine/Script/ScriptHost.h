@@ -33,6 +33,9 @@ public:
     void RunStartAndUpdate(); // フェーズ 3: 新規インスタンスの Start → 全 Update
     void RunLateUpdate();     // フェーズ 5
 
+    // CollisionSystem からのトリガーイベント配信 (self のスクリプトへ)
+    void DispatchTrigger(EntityID self, EntityID other, bool enter);
+
 private:
     struct ScriptType {
         std::string name; // エンジン側コピー (DLL 文字列に依存しない)
@@ -42,6 +45,8 @@ private:
         void (*start)(void*, MyeUpdateContext*) = nullptr;
         void (*update)(void*, MyeUpdateContext*) = nullptr;
         void (*lateUpdate)(void*, MyeUpdateContext*) = nullptr;
+        void (*onTriggerEnter)(void*, MyeUpdateContext*, MyeEntityId) = nullptr;
+        void (*onTriggerExit)(void*, MyeUpdateContext*, MyeEntityId) = nullptr;
     };
 
     enum class Phase { StartAndUpdate, LateUpdate };

@@ -77,6 +77,13 @@ void RegisterBuiltinComponents()
         MYE_FIELD(ParticleEmitterComponent, seed, UInt32),
         MYE_FIELD(ParticleEmitterComponent, maxParticles, Int32),
     });
+
+    RegisterComponent<ColliderComponent>("Collider", {
+        MYE_FIELD(ColliderComponent, shape, Int32),
+        MYE_FIELD(ColliderComponent, radius, Float),
+        MYE_FIELD(ColliderComponent, halfExtents, Float3),
+        MYE_FIELD(ColliderComponent, isTrigger, Int32),
+    });
 }
 
 } // namespace mye

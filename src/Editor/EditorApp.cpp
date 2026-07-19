@@ -79,6 +79,7 @@ void EditorApp::OnImGui(EngineContext& ctx)
     sceneView_.OnImGui(ctx);
     gameView_.OnImGui(ctx);
     particleSettings_.OnImGui(ctx);
+    profiler_.OnImGui(ctx);
 
     if (showStats_) {
         if (ImGui::Begin("Stats", &showStats_)) {
@@ -196,6 +197,7 @@ void EditorApp::SetupDockLayout(unsigned int dockspaceId)
     ImGui::DockBuilderDockWindow("Inspector", rightTop);
     ImGui::DockBuilderDockWindow("Stats", rightBottom);
     ImGui::DockBuilderDockWindow("Particle Settings", rightBottom);
+    ImGui::DockBuilderDockWindow("Profiler", rightBottom);
     ImGui::DockBuilderDockWindow("Console", bottom);
     ImGui::DockBuilderDockWindow("Scene", center);
     ImGui::DockBuilderDockWindow("Game", center);
@@ -367,6 +369,10 @@ void EditorApp::BuildDemoEntities(EngineContext& ctx)
     const ComponentTypeId player = ComponentRegistry::Get().FindByName("PlayerController");
     if (player != kInvalidComponentType && model) {
         s.GetWorld().AddComponentRaw(model.Id(), player);
+        // プレイヤーのトリガーコライダ (Spawned の回収デモ)
+        auto* col = model.AddComponent<ColliderComponent>();
+        col->shape = 0;
+        col->radius = 1.2f;
     }
     // 生成/破棄を続けるスクリプト (リプレイ検証に構造変更を含める)
     const ComponentTypeId spawner = ComponentRegistry::Get().FindByName("Spawner");

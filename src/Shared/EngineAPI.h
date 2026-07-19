@@ -10,7 +10,7 @@
 #include "Shared/MathPod.h"
 
 // 互換性チェック用。テーブルや ScriptDesc のレイアウトを変えたら必ず上げること
-#define MYE_API_VERSION 1u
+#define MYE_API_VERSION 2u
 
 // MYE_LOG レベル (Engine/Core/Log.h の LogLevel と同値)
 enum MyeLogLevel {
@@ -50,6 +50,14 @@ struct MyeEngineApi {
     // ---- 乱数 (エンジン管理の決定論ストリーム。spec 11.2 規則 8) ----
     float (*RandomFloat01)(void* engine);
     float (*RandomRange)(void* engine, float lo, float hi);
+
+    // ---- コンポーネント操作 (v2) ----
+    // 登録名でコンポーネントを追加 (例: "Collider")。成功で 1
+    int (*AddComponentByName)(void* engine, MyeEntityId id, const char* componentName);
+    // MeshRenderer を付与してメッシュ/マテリアルをアセットキー名で設定
+    // (例: "builtin://cube", "mat_yellow")。実体の解決はエンジン側
+    int (*SetMeshRenderer)(void* engine, MyeEntityId id, const char* meshKey,
+                           const char* materialKey);
 };
 
 // スクリプトの各コールバックに渡されるコンテキスト (POD)

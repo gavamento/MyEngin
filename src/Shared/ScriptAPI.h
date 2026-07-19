@@ -79,6 +79,30 @@ void (*GetLateUpdateFn())(void*, MyeUpdateContext*)
     }
 }
 
+template <typename T>
+void (*GetTriggerEnterFn())(void*, MyeUpdateContext*, MyeEntityId)
+{
+    if constexpr (requires(T t, MyeUpdateContext& c, MyeEntityId o) { t.OnTriggerEnter(c, o); }) {
+        return [](void* s, MyeUpdateContext* c, MyeEntityId o) {
+            static_cast<T*>(s)->OnTriggerEnter(*c, o);
+        };
+    } else {
+        return nullptr;
+    }
+}
+
+template <typename T>
+void (*GetTriggerExitFn())(void*, MyeUpdateContext*, MyeEntityId)
+{
+    if constexpr (requires(T t, MyeUpdateContext& c, MyeEntityId o) { t.OnTriggerExit(c, o); }) {
+        return [](void* s, MyeUpdateContext* c, MyeEntityId o) {
+            static_cast<T*>(s)->OnTriggerExit(*c, o);
+        };
+    } else {
+        return nullptr;
+    }
+}
+
 inline uint64_t LayoutHash(const MyeScriptField* fields, uint32_t count)
 {
     // FNV-1a (Engine/Core/Hash.h と同じ定数 — Shared はエンジンヘッダを включできないため再掲)
@@ -117,6 +141,8 @@ MyeScriptDesc MakeDesc(const char* name, const MyeScriptField* fields, uint32_t 
     d.start = GetStartFn<T>();
     d.update = GetUpdateFn<T>();
     d.lateUpdate = GetLateUpdateFn<T>();
+    d.onTriggerEnter = GetTriggerEnterFn<T>();
+    d.onTriggerExit = GetTriggerExitFn<T>();
     return d;
 }
 

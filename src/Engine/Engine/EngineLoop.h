@@ -40,6 +40,16 @@ struct EngineConfig {
     int64_t replayTicks = 600;     // 記録する tick 数 (60Hz で 10 秒)
 };
 
+// フレーム計測 (Profiler ウィンドウ表示用)。EngineLoop が毎フレーム更新する
+struct FrameTimings {
+    float frameMs = 0.0f;   // フレーム全体
+    float reloadMs = 0.0f;  // フェーズ 2 (ホットリロード)
+    float tickMs = 0.0f;    // 全 tick (フェーズ 3-5,7)
+    float renderMs = 0.0f;  // フェーズ 6 (シーン描画 + OnRenderViews)
+    float presentMs = 0.0f; // フェーズ 8 (ImGui + Present)
+    int ticksThisFrame = 0;
+};
+
 // アプリ側 (Editor / Runtime) がサブシステムへアクセスするための窓口
 struct EngineContext {
     Win32Window* window = nullptr;
@@ -64,6 +74,7 @@ struct EngineContext {
     uint64_t frameIndex = 0;  // 描画フレーム数
     uint64_t tickIndex = 0;   // 累計固定 tick 数 (シミュレーション時間 = tickIndex * fixedDt)
     float fixedDt = 1.0f / 60.0f;
+    FrameTimings timings;     // 前フレームの計測値
     bool requestExit = false;
 };
 
