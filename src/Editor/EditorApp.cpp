@@ -20,6 +20,7 @@
 
 #include "imgui.h"
 #include "imgui_internal.h" // DockBuilder API
+#include "ImGuizmo/ImGuizmo.h"
 
 namespace mye {
 
@@ -43,6 +44,14 @@ void EditorApp::OnStart(EngineContext& ctx)
     if (saveSceneOnStart) {
         std::filesystem::create_directories(std::filesystem::path(scenePath_).parent_path());
         SceneSerializer::SaveToFile(*ctx.scene, scenePath_);
+    }
+    if (!selectName.empty()) {
+        ctx.scene->GetWorld().ApplyStructuralChanges();
+        if (GameObject g = ctx.scene->Find(selectName)) {
+            selection_.SelectOnly(ctx.scene->EnsureFileId(g.Id()));
+            MYE_LOG_INFO("selected '%s' (fileId %llu)", selectName.c_str(),
+                         static_cast<unsigned long long>(selection_.primary));
+        }
     }
     if (autoPlay) {
         playMode_.Play(*ctx.scene);
@@ -73,15 +82,27 @@ void EditorApp::OnImGui(EngineContext& ctx)
         SetupDockLayout(dockspaceId);
         rebuildDockLayout_ = false;
     }
+    ImGuizmo::BeginFrame(); // ImGui NewFrame 後・ギズモ使用前に 1 回
 
     DrawMainMenuBar(ctx);
     hierarchy_.OnImGui(ctx, selection_, undo_);
     inspector_.OnImGui(ctx, selection_, undo_);
     console_.OnImGui();
-    sceneView_.OnImGui(ctx);
+    sceneView_.OnImGui(ctx, selection_, undo_, settings_);
     gameView_.OnImGui(ctx);
     particleSettings_.OnImGui(ctx);
     profiler_.OnImGui(ctx);
+
+    // ピッキング自動テスト (--pick-test): 指定フレームでビュー中心を選択できるか検証
+    if (pickTestFrame >= 0 && static_cast<int64_t>(ctx.frameIndex) == pickTestFrame) {
+        if (sceneView_.PickAtCenter(ctx, selection_)) {
+            GameObject g = ctx.scene->FindByFileId(selection_.primary);
+            MYE_LOG_INFO("PICK TEST: PASS -- hit '%s' (fileId %llu)", g ? g.Name() : "?",
+                         static_cast<unsigned long long>(selection_.primary));
+        } else {
+            MYE_LOG_ERROR("PICK TEST: FAIL -- no entity at view center");
+        }
+    }
 
     if (showStats_) {
         if (ImGui::Begin("Stats", &showStats_)) {

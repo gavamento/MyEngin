@@ -31,6 +31,8 @@ public:
     float perfRate = 0.0f;         // --perf-rate N (>0 でデモエミッタの放出数を上書き — 性能計測用)
     int perfMax = 0;               // --perf-max N
     bool startDeferred = false;    // --deferred (起動時から Deferred パス — 検証用)
+    std::string selectName;        // --select NAME (起動時に名前でエンティティを選択 — ギズモ検証用)
+    int pickTestFrame = -1;        // --pick-test (このフレームで中心をピッキングし PASS/FAIL ログ)
 
 private:
     void RegisterDemoResources(EngineContext& ctx); // メッシュ/マテリアル/モデル登録 (毎回)

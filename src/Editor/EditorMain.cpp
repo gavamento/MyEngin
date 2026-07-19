@@ -11,6 +11,7 @@
 #include "Engine/Core/Log.h"
 #include "Engine/Engine/EngineLoop.h"
 #include "Engine/Engine/SceneSelfTest.h"
+#include "Engine/Platform/PathUtil.h"
 
 namespace {
 
@@ -46,6 +47,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     float perfRate = 0.0f;
     int perfMax = 0;
     bool startDeferred = false;
+    std::string selectName;
+    int pickTestFrame = -1;
 
     int argc = 0;
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
@@ -88,6 +91,10 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 config.replayTicks = _wtoi64(argv[++i]);
             } else if (arg == L"--deferred") {
                 startDeferred = true;
+            } else if (arg == L"--select" && i + 1 < argc) {
+                selectName = mye::WideToUtf8(argv[++i]);
+            } else if (arg == L"--pick-test") {
+                pickTestFrame = 20;
             }
         }
         LocalFree(argv);
@@ -106,6 +113,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     app.perfRate = perfRate;
     app.perfMax = perfMax;
     app.startDeferred = startDeferred;
+    app.selectName = selectName;
+    app.pickTestFrame = pickTestFrame;
     mye::EngineLoop loop;
     return loop.Run(config, app);
 }

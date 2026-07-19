@@ -35,6 +35,17 @@ bool GraphicsDevice::Init()
             device_.GetAddressOf(), &obtained, context_.GetAddressOf());
     } else {
         debugLayer_ = true;
+        // ピッキングの R32_UINT ターゲットでブレンド不可を誤検知する既知の偽陽性
+        // (ID 376: RENDERTARGET_DOESNOTSUPPORT_BLENDING) を抑制する。
+        // UINT RT はそもそもブレンドしないので実害は無い
+        Microsoft::WRL::ComPtr<ID3D11InfoQueue> infoQueue;
+        if (SUCCEEDED(device_.As(&infoQueue))) {
+            D3D11_MESSAGE_ID hide[] = { static_cast<D3D11_MESSAGE_ID>(376) };
+            D3D11_INFO_QUEUE_FILTER filter = {};
+            filter.DenyList.NumIDs = 1;
+            filter.DenyList.pIDList = hide;
+            infoQueue->AddStorageFilterEntries(&filter);
+        }
     }
 #endif
 
