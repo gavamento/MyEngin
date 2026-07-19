@@ -79,8 +79,19 @@ public:
     // 全アーキタイプ列挙 (ハッシュ/シリアライズ用)
     std::span<const std::unique_ptr<Archetype>> Archetypes() const { return archetypes_; }
 
+    // エンティティの所属アーキタイプ (死んでいれば nullptr)
+    const Archetype* GetArchetype(EntityID e) const
+    {
+        return IsAlive(e) ? records_[e.index].archetype : nullptr;
+    }
+
     // ---- 構造変更適用 (tick 末 / spec フェーズ 7) ----
     void ApplyStructuralChanges();
+
+    // 全エンティティを即時破棄 (シーンロード / Play 復元用)。
+    // generation は保持・加算されるため、古いハンドルが誤って新エンティティに
+    // 一致することはない
+    void Clear();
 
     // ワールド標準の RNG ストリーム (シード管理は Scene/Replay 側)
     Pcg32& Rng() { return rng_; }

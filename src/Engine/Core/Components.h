@@ -64,6 +64,13 @@ struct LightComponent {
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
+// シーンファイル上の永続 ID (engine_spec.md 8.3 の差分適用で使用)。
+// 保存時に未割り当てなら Scene の nextFileId から採番される
+struct FileIdComponent {
+    uint64_t value = 0;
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
 // 固定順で登録する (TypeId の決定論)。多重呼び出しは無害
 void RegisterBuiltinComponents();
 

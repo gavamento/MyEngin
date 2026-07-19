@@ -80,6 +80,8 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     ctx.scene = &scene;
     ctx.shaders = &shaderManager;
     ctx.resources = &resources;
+    ctx.renderSystem = &renderSystem;
+    ctx.renderPath = activePath;
     ctx.assetsRoot = assetsRoot;
     ctx.fixedDt = static_cast<float>(kFixedDt);
 
@@ -131,13 +133,29 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             // ワールド行列は描画直前に一括更新 (LocalTransform の純関数なので sim 状態に影響しない)
             transformSystem.Update(scene.GetWorld());
 
+            app.OnRenderViews(ctx); // エディタの SceneView / GameView (独自 RT)
+
             FrameTarget target;
             target.rtv = swapChain.BackbufferRTV();
             target.dsv = swapChain.DepthDSV();
             target.width = swapChain.Width();
             target.height = swapChain.Height();
             memcpy(target.clearColor, config.clearColor, sizeof(target.clearColor));
-            renderSystem.Render(scene.GetWorld(), device, *activePath, shaderManager, resources, target);
+            if (config.renderSceneToBackbuffer) {
+                renderSystem.Render(scene.GetWorld(), device, *activePath, shaderManager, resources,
+                                    target);
+            } else {
+                // ImGui 描画の下地としてクリアのみ
+                ID3D11DeviceContext* dc = device.Context();
+                dc->OMSetRenderTargets(1, &target.rtv, target.dsv);
+                D3D11_VIEWPORT vp = {};
+                vp.Width = static_cast<float>(target.width);
+                vp.Height = static_cast<float>(target.height);
+                vp.MaxDepth = 1.0f;
+                dc->RSSetViewports(1, &vp);
+                dc->ClearRenderTargetView(target.rtv, target.clearColor);
+                dc->ClearDepthStencilView(target.dsv, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
+            }
 
             // ---- フェーズ 8: ImGui 描画 / Present ----
             if (config.enableImGui) {

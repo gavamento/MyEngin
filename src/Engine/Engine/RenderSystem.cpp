@@ -9,9 +9,9 @@ using namespace DirectX;
 
 namespace mye {
 
-void RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& path,
+bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& path,
                           ShaderManager& shaders, RenderResources& resources,
-                          const FrameTarget& target)
+                          const FrameTarget& target, const CameraOverride* cameraOverride)
 {
     RenderView view;
     view.rtv = target.rtv;
@@ -20,9 +20,20 @@ void RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
     view.height = target.height;
     memcpy(view.clearColor, target.clearColor, sizeof(view.clearColor));
 
+    const float aspectRatio = (target.height > 0)
+        ? static_cast<float>(target.width) / static_cast<float>(target.height) : 1.0f;
+
     // ---- カメラ ----
     bool cameraFound = false;
-    {
+    if (cameraOverride) {
+        view.view = cameraOverride->view;
+        const XMMATRIX p = XMMatrixPerspectiveFovLH(
+            XMConvertToRadians(cameraOverride->fovYDeg), aspectRatio,
+            cameraOverride->nearZ, cameraOverride->farZ);
+        XMStoreFloat4x4(&view.proj, p);
+        view.cameraPos = cameraOverride->position;
+        cameraFound = true;
+    } else {
         const ComponentTypeId req[] = { CameraComponent::sTypeId, WorldMatrixComponent::sTypeId };
         XMFLOAT4X4 camWorld = {};
         CameraComponent cam = {};
@@ -116,6 +127,7 @@ void RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
 
     queue_.Sort();
     path.Render(device, view, queue_, light, resources, shaders);
+    return cameraFound;
 }
 
 } // namespace mye

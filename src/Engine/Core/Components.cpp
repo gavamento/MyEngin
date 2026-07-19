@@ -50,6 +50,10 @@ void RegisterBuiltinComponents()
         MYE_FIELD(LightComponent, intensity, Float),
         MYE_FIELD(LightComponent, ambient, Float3),
     });
+
+    RegisterComponent<FileIdComponent>("FileId", {
+        MYE_FIELD_FLAGS(FileIdComponent, value, UInt64, kFieldReadOnly | kFieldNoSerialize),
+    }, kComponentNoSerialize | kComponentHidden); // シリアライザが "fileId" として特別扱い
 }
 
 } // namespace mye

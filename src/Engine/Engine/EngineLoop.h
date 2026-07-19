@@ -11,6 +11,8 @@ class GraphicsDevice;
 class SwapChain;
 class Scene;
 class ShaderManager;
+class RenderSystem;
+class IRenderPath;
 struct RenderResources;
 
 struct EngineConfig {
@@ -23,6 +25,9 @@ struct EngineConfig {
     float clearColor[4] = { 0.08f, 0.09f, 0.11f, 1.0f };
     std::wstring screenshotPath; // 空でなければ screenshotFrame で PNG 保存 (検証用)
     int64_t screenshotFrame = 60;
+    // true: シーンをバックバッファへ直接描画 (Runtime / M1 デモ)。
+    // false: 描画は app の OnRenderViews に委ねる (エディタは SceneView/GameView の RT へ描く)
+    bool renderSceneToBackbuffer = true;
 };
 
 // アプリ側 (Editor / Runtime) がサブシステムへアクセスするための窓口
@@ -33,6 +38,8 @@ struct EngineContext {
     Scene* scene = nullptr;             // アクティブシーン (EngineLoop が所有)
     ShaderManager* shaders = nullptr;
     RenderResources* resources = nullptr;
+    RenderSystem* renderSystem = nullptr;
+    IRenderPath* renderPath = nullptr;  // 現在アクティブなパス (M6.5 で切替)
     std::wstring assetsRoot;            // assets\ の絶対パス
     InputSnapshot input = {}; // 現フレームのスナップショット (tick 中も同一)
     uint64_t frameIndex = 0;  // 描画フレーム数
@@ -45,8 +52,9 @@ class IEngineApp {
 public:
     virtual ~IEngineApp() = default;
     virtual void OnStart(EngineContext&) {}
-    virtual void OnTick(EngineContext&) {}   // 固定 tick 毎 (spec 5.3 フェーズ 3 スロット)
-    virtual void OnImGui(EngineContext&) {}  // 描画フレーム毎 (spec 5.3 フェーズ 8)
+    virtual void OnTick(EngineContext&) {}        // 固定 tick 毎 (spec 5.3 フェーズ 3 スロット)
+    virtual void OnRenderViews(EngineContext&) {} // フェーズ 6: 独自 RT への描画 (エディタの SceneView 等)
+    virtual void OnImGui(EngineContext&) {}       // 描画フレーム毎 (spec 5.3 フェーズ 8)
     virtual void OnShutdown(EngineContext&) {}
 };
 

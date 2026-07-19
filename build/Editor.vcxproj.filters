@@ -1,8 +1,46 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
+    <Filter Include="Windows">
+      <UniqueIdentifier>{BD808CBF-0BAB-73DA-16EE-0B0A085E97ED}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="..\src\Editor\EditorApp.cpp" />
     <ClCompile Include="..\src\Editor\EditorMain.cpp" />
+    <ClCompile Include="..\src\Editor\PlayModeController.cpp" />
+    <ClCompile Include="..\src\Editor\Windows\ConsoleWindow.cpp">
+      <Filter>Windows</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Windows\GameViewWindow.cpp">
+      <Filter>Windows</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Windows\HierarchyWindow.cpp">
+      <Filter>Windows</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Windows\InspectorWindow.cpp">
+      <Filter>Windows</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Windows\SceneViewWindow.cpp">
+      <Filter>Windows</Filter>
+    </ClCompile>
+    <ClInclude Include="..\src\Editor\EditorApp.h" />
+    <ClInclude Include="..\src\Editor\PlayModeController.h" />
+    <ClInclude Include="..\src\Editor\Selection.h" />
+    <ClInclude Include="..\src\Editor\Windows\ConsoleWindow.h">
+      <Filter>Windows</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Windows\GameViewWindow.h">
+      <Filter>Windows</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Windows\HierarchyWindow.h">
+      <Filter>Windows</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Windows\InspectorWindow.h">
+      <Filter>Windows</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Windows\SceneViewWindow.h">
+      <Filter>Windows</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>

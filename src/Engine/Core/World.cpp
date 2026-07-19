@@ -364,6 +364,27 @@ void World::DestroyImmediate(EntityID e)
     hierarchyDirty_ = true;
 }
 
+void World::Clear()
+{
+    MYE_CHECK(!IsIterating());
+    commands_.clear();
+    cmdPayloads_.clear();
+    archetypes_.clear();
+    freeIndices_.clear();
+    // 世代を進めて全スロットを解放 (降順 push → 昇順割り当てで新規ワールドと同じ順になる)
+    for (uint32_t i = static_cast<uint32_t>(records_.size()); i > 0; --i) {
+        EntityRecord& rec = records_[i - 1];
+        if (rec.archetype != nullptr) {
+            rec.archetype = nullptr;
+            ++rec.generation;
+        }
+        freeIndices_.push_back(i - 1);
+    }
+    aliveCount_ = 0;
+    hierarchyDirty_ = true;
+    GetOrCreateArchetype(baseTypes_); // 基本アーキタイプを再生成
+}
+
 void World::ApplyStructuralChanges()
 {
     MYE_CHECK(!IsIterating());

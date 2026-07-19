@@ -27,12 +27,27 @@
   <ItemDefinitionGroup>
     <Link>
       <SubSystem>Windows</SubSystem>
-      <AdditionalDependencies>d3d11.lib;dxgi.lib;d3dcompiler.lib;dxguid.lib;winmm.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>d3d11.lib;dxgi.lib;d3dcompiler.lib;dxguid.lib;winmm.lib;comdlg32.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <!-- BEGIN FILES (tools\gen_project_files.ps1 が再生成する。手編集しない) -->
   <ItemGroup>
+    <ClCompile Include="..\src\Editor\EditorApp.cpp" />
     <ClCompile Include="..\src\Editor\EditorMain.cpp" />
+    <ClCompile Include="..\src\Editor\PlayModeController.cpp" />
+    <ClCompile Include="..\src\Editor\Windows\ConsoleWindow.cpp" />
+    <ClCompile Include="..\src\Editor\Windows\GameViewWindow.cpp" />
+    <ClCompile Include="..\src\Editor\Windows\HierarchyWindow.cpp" />
+    <ClCompile Include="..\src\Editor\Windows\InspectorWindow.cpp" />
+    <ClCompile Include="..\src\Editor\Windows\SceneViewWindow.cpp" />
+    <ClInclude Include="..\src\Editor\EditorApp.h" />
+    <ClInclude Include="..\src\Editor\PlayModeController.h" />
+    <ClInclude Include="..\src\Editor\Selection.h" />
+    <ClInclude Include="..\src\Editor\Windows\ConsoleWindow.h" />
+    <ClInclude Include="..\src\Editor\Windows\GameViewWindow.h" />
+    <ClInclude Include="..\src\Editor\Windows\HierarchyWindow.h" />
+    <ClInclude Include="..\src\Editor\Windows\InspectorWindow.h" />
+    <ClInclude Include="..\src\Editor\Windows\SceneViewWindow.h" />
   </ItemGroup>
   <!-- END FILES -->
   <ItemGroup>

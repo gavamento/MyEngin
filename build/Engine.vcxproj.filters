@@ -39,6 +39,9 @@
     <ClCompile Include="..\src\Engine\Core\EcsSelfTest.cpp">
       <Filter>Core</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Core\JsonUtil.cpp">
+      <Filter>Core</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Core\Log.cpp">
       <Filter>Core</Filter>
     </ClCompile>
@@ -58,6 +61,12 @@
       <Filter>Engine</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Scene.cpp">
+      <Filter>Engine</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\SceneSelfTest.cpp">
+      <Filter>Engine</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\SceneSerializer.cpp">
       <Filter>Engine</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\TransformSystem.cpp">
@@ -93,6 +102,9 @@
     <ClCompile Include="..\src\Engine\Renderer\RenderQueue.cpp">
       <Filter>Renderer</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Renderer\RenderTexture.cpp">
+      <Filter>Renderer</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Renderer\ShaderManager.cpp">
       <Filter>Renderer</Filter>
     </ClCompile>
@@ -123,6 +135,9 @@
     <ClInclude Include="..\src\Engine\Core\Hash.h">
       <Filter>Core</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Core\JsonUtil.h">
+      <Filter>Core</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Core\Log.h">
       <Filter>Core</Filter>
     </ClInclude>
@@ -148,6 +163,12 @@
       <Filter>Engine</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Scene.h">
+      <Filter>Engine</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\SceneSelfTest.h">
+      <Filter>Engine</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\SceneSerializer.h">
       <Filter>Engine</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\TransformSystem.h">
@@ -181,6 +202,9 @@
       <Filter>Renderer</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\RenderPath.h">
+      <Filter>Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\RenderTexture.h">
       <Filter>Renderer</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\RenderTypes.h">
