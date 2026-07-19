@@ -43,6 +43,12 @@ struct FieldDesc {
     FieldType type = FieldType::Float;
     uint32_t offset = 0;
     uint32_t flags = kFieldNone;
+    // ---- Inspector 用メタデータ (M8 追加、ABI 非依存 — Shared の MyeScriptField とは別物) ----
+    // 0/nullptr は「型ごとの既定」を意味する。シリアライズ/ハッシュ/DLL 移行には影響しない
+    float dragSpeed = 0.0f;      // ImGui::DragFloat の速度 (0 = 既定 0.05)
+    float minVal = 0.0f;         // minVal==maxVal のときレンジ無効 (クランプしない)
+    float maxVal = 0.0f;
+    const char* tooltip = nullptr;
 };
 
 } // namespace mye
@@ -53,3 +59,14 @@ struct FieldDesc {
 
 #define MYE_FIELD_FLAGS(T, member, ftype, fflags) \
     ::mye::FieldDesc{ #member, ::mye::FieldType::ftype, static_cast<uint32_t>(offsetof(T, member)), (fflags) }
+
+// レンジ付き (Inspector でスライダ/クランプ)。C++20 指定初期化子で末尾メタだけ設定
+#define MYE_FIELD_RANGE(T, member, ftype, lo, hi)                                                \
+    ::mye::FieldDesc { .name = #member, .type = ::mye::FieldType::ftype,                          \
+                       .offset = static_cast<uint32_t>(offsetof(T, member)), .minVal = (lo),     \
+                       .maxVal = (hi) }
+
+// ツールチップ付き
+#define MYE_FIELD_TIP(T, member, ftype, tip)                                                     \
+    ::mye::FieldDesc { .name = #member, .type = ::mye::FieldType::ftype,                          \
+                       .offset = static_cast<uint32_t>(offsetof(T, member)), .tooltip = (tip) }

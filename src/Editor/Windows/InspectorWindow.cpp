@@ -2,9 +2,11 @@
 
 #include <cmath>
 
+#include "Editor/Undo/UndoStack.h"
 #include "Engine/Core/ComponentRegistry.h"
 #include "Engine/Core/Components.h"
 #include "Engine/Core/World.h"
+#include "Engine/Engine/GameObject.h"
 #include "Engine/Engine/Scene.h"
 
 #include "imgui.h"
@@ -16,6 +18,26 @@ namespace {
 
 constexpr float kRad2Deg = 180.0f / 3.14159265358979323846f;
 constexpr float kDeg2Rad = 3.14159265358979323846f / 180.0f;
+
+// 直前に描画した widget の編集開始/確定を検出して Undo エントリにまとめる。
+// activate (ドラッグ開始) で before を、deactivate-after-edit で after を記録 —
+// ドラッグ全体が 1 エントリになる (transient マージ)
+void HandleEditUndo(EngineContext& ctx, Selection& sel, UndoStack& undo, uint64_t fid,
+                    const char* label)
+{
+    if (ImGui::IsItemActivated() && !undo.IsRecording()) {
+        undo.BeginRecord(label, sel);
+        undo.CaptureBefore(*ctx.scene, fid);
+    }
+    if (undo.IsRecording()) {
+        if (ImGui::IsItemDeactivatedAfterEdit()) {
+            undo.CaptureAfter(*ctx.scene, fid);
+            undo.EndRecord(sel);
+        } else if (ImGui::IsItemDeactivated()) {
+            undo.CancelRecord(); // 値を変えずに離した
+        }
+    }
+}
 
 // XMQuaternionRotationRollPitchYaw 規約 (roll→pitch→yaw) の逆変換
 XMFLOAT3 QuatToEulerDeg(const XMFLOAT4& q)
@@ -49,15 +71,18 @@ XMFLOAT4 EulerDegToQuat(const XMFLOAT3& euler)
 
 } // namespace
 
-void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection)
+void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStack& undo)
 {
     if (!ImGui::Begin("Inspector")) {
         ImGui::End();
         return;
     }
     World& world = ctx.scene->GetWorld();
-    const EntityID e = selection.entity;
-    if (!world.IsAlive(e)) {
+    // 選択は fileId 保持 — 現フレームの EntityID に解決する
+    const uint64_t fid = selection.primary;
+    GameObject go = ctx.scene->FindByFileId(fid);
+    const EntityID e = go ? go.Id() : kNullEntity;
+    if (fid == 0 || !world.IsAlive(e)) {
         ImGui::TextDisabled("(no selection)");
         ImGui::End();
         return;
@@ -67,8 +92,10 @@ void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection)
     if (auto* nc = world.GetComponent<NameComponent>(e)) {
         ImGui::SetNextItemWidth(-1);
         ImGui::InputText("##name", nc->value, sizeof(nc->value));
+        HandleEditUndo(ctx, selection, undo, fid, "Rename");
     }
-    ImGui::TextDisabled("Entity %u:%u", e.index, e.generation);
+    ImGui::TextDisabled("Entity %u:%u  (fileId %llu)", e.index, e.generation,
+                        static_cast<unsigned long long>(fid));
     ImGui::Separator();
 
     // ---- コンポーネント一覧 (アーキタイプの型リスト = TypeId 昇順) ----
@@ -92,7 +119,12 @@ void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection)
         const bool openHeader = ImGui::CollapsingHeader(desc.name, ImGuiTreeNodeFlags_DefaultOpen);
         if (ImGui::BeginPopupContextItem("##comp_ctx")) {
             if (ImGui::MenuItem("Remove Component")) {
+                undo.BeginRecord("Remove Component", selection);
+                undo.CaptureBefore(*ctx.scene, fid);
                 world.RemoveComponentRaw(e, t); // 基本コンポーネントは World 側で拒否
+                world.ApplyStructuralChanges();
+                undo.CaptureAfter(*ctx.scene, fid);
+                undo.EndRecord(selection);
             }
             ImGui::EndPopup();
         }
@@ -104,6 +136,7 @@ void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection)
                         continue;
                     }
                     DrawField(comp, f, e);
+                    HandleEditUndo(ctx, selection, undo, fid, "Modify");
                 }
             }
         }
@@ -125,7 +158,12 @@ void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection)
                 continue;
             }
             if (ImGui::MenuItem(desc.name)) {
+                undo.BeginRecord("Add Component", selection);
+                undo.CaptureBefore(*ctx.scene, fid);
                 world.AddComponentRaw(e, t);
+                world.ApplyStructuralChanges();
+                undo.CaptureAfter(*ctx.scene, fid);
+                undo.EndRecord(selection);
             }
         }
         ImGui::EndPopup();
@@ -141,13 +179,19 @@ bool InspectorWindow::DrawField(void* comp, const FieldDesc& field, EntityID ent
         ImGui::BeginDisabled();
     }
 
+    // FieldDesc メタデータ (M8): 0 は「既定」。min==max は範囲無効 (クランプ無し)
+    const float speed = (field.dragSpeed > 0.0f) ? field.dragSpeed : 0.05f;
+    const float lo = field.minVal;
+    const float hi = field.maxVal;
+
     bool changed = false;
     switch (field.type) {
     case FieldType::Float:
-        changed = ImGui::DragFloat(field.name, static_cast<float*>(p), 0.05f);
+        changed = ImGui::DragFloat(field.name, static_cast<float*>(p), speed, lo, hi);
         break;
     case FieldType::Int32:
-        changed = ImGui::DragInt(field.name, static_cast<int*>(p));
+        changed = ImGui::DragInt(field.name, static_cast<int*>(p), 1.0f, static_cast<int>(lo),
+                                 static_cast<int>(hi));
         break;
     case FieldType::UInt32:
         changed = ImGui::InputScalar(field.name, ImGuiDataType_U32, p);
@@ -164,13 +208,13 @@ bool InspectorWindow::DrawField(void* comp, const FieldDesc& field, EntityID ent
         break;
     }
     case FieldType::Float2:
-        changed = ImGui::DragFloat2(field.name, static_cast<float*>(p), 0.05f);
+        changed = ImGui::DragFloat2(field.name, static_cast<float*>(p), speed, lo, hi);
         break;
     case FieldType::Float3:
-        changed = ImGui::DragFloat3(field.name, static_cast<float*>(p), 0.05f);
+        changed = ImGui::DragFloat3(field.name, static_cast<float*>(p), speed, lo, hi);
         break;
     case FieldType::Float4:
-        changed = ImGui::DragFloat4(field.name, static_cast<float*>(p), 0.05f);
+        changed = ImGui::DragFloat4(field.name, static_cast<float*>(p), speed, lo, hi);
         break;
     case FieldType::Quat: {
         // オイラー角 (度) で編集。編集中はキャッシュを使い往復変換ドリフトを防ぐ
@@ -223,6 +267,9 @@ bool InspectorWindow::DrawField(void* comp, const FieldDesc& field, EntityID ent
     }
     }
 
+    if (field.tooltip && ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("%s", field.tooltip);
+    }
     if (readOnly) {
         ImGui::EndDisabled();
     }

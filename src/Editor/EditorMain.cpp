@@ -6,6 +6,7 @@
 #include <shellapi.h>
 
 #include "Editor/EditorApp.h"
+#include "Editor/UndoSelfTest.h"
 #include "Engine/Core/EcsSelfTest.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Engine/EngineLoop.h"
@@ -94,7 +95,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
 
     if (selftest) {
         // ウィンドウ/D3D 不要のヘッドレス回帰テスト
-        const bool ok = mye::RunEcsSelfTest() && mye::RunSceneSerializerSelfTest();
+        const bool ok = mye::RunEcsSelfTest() && mye::RunSceneSerializerSelfTest()
+            && mye::RunUndoSelfTest();
         return ok ? 0 : 1;
     }
 

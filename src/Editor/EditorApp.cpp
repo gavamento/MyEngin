@@ -11,6 +11,7 @@
 #include "Engine/Engine/HotReload/ReloadHub.h"
 #include "Engine/Engine/ModelLoader.h"
 #include "Engine/Engine/Script/ScriptHost.h"
+#include "Engine/Platform/PathUtil.h"
 #include "Engine/Platform/Win32Window.h"
 #include "Engine/Engine/Scene.h"
 #include "Engine/Engine/SceneSerializer.h"
@@ -25,6 +26,7 @@ namespace mye {
 void EditorApp::OnStart(EngineContext& ctx)
 {
     ctx.shaders->Load("forward_lit");
+    settings_.Load(ctx.assetsRoot);
     scenePath_ = ctx.assetsRoot + L"\\scenes\\main.scene.json";
     ctx.reloadHub->SetActiveScenePath(scenePath_);
     rebuildDockLayout_ = !std::filesystem::exists("imgui.ini");
@@ -73,8 +75,8 @@ void EditorApp::OnImGui(EngineContext& ctx)
     }
 
     DrawMainMenuBar(ctx);
-    hierarchy_.OnImGui(ctx, selection_);
-    inspector_.OnImGui(ctx, selection_);
+    hierarchy_.OnImGui(ctx, selection_, undo_);
+    inspector_.OnImGui(ctx, selection_, undo_);
     console_.OnImGui();
     sceneView_.OnImGui(ctx);
     gameView_.OnImGui(ctx);
@@ -108,16 +110,16 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
     }
     if (ImGui::BeginMenu("File")) {
         if (ImGui::MenuItem("New Scene")) {
-            selection_.entity = kNullEntity;
+            selection_.Clear();
+            undo_.ClearAll();
             ctx.scene->Clear();
         }
         if (ImGui::MenuItem("Open Scene...")) {
             OpenScene(ctx);
         }
         ImGui::Separator();
-        if (ImGui::MenuItem("Save Scene", "Ctrl+S")) {
-            std::filesystem::create_directories(std::filesystem::path(scenePath_).parent_path());
-            SceneSerializer::SaveToFile(*ctx.scene, scenePath_);
+        if (ImGui::MenuItem("Save Scene", shortcuts_.Label(Shortcut::Save))) {
+            SaveCurrentScene(ctx);
         }
         if (ImGui::MenuItem("Save Scene As...")) {
             SaveSceneAs(ctx);
@@ -146,19 +148,33 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
         }
         ImGui::EndMenu();
     }
+    if (ImGui::BeginMenu("Edit")) {
+        const bool editing = playMode_.State() == PlayState::Editing;
+        if (ImGui::MenuItem("Undo", shortcuts_.Label(Shortcut::Undo), false,
+                            editing && undo_.CanUndo())) {
+            undo_.Undo(*ctx.scene, selection_);
+        }
+        if (ImGui::MenuItem("Redo", shortcuts_.Label(Shortcut::Redo), false,
+                            editing && undo_.CanRedo())) {
+            undo_.Redo(*ctx.scene, selection_);
+        }
+        ImGui::EndMenu();
+    }
 
     // ---- Play / Pause / Step (メニューバー中央) ----
     ImGui::SetCursorPosX(ImGui::GetWindowWidth() * 0.5f - 80.0f);
     const PlayState state = playMode_.State();
     if (state == PlayState::Editing) {
         if (ImGui::Button("Play")) {
-            selection_.entity = kNullEntity; // 復元で EntityID が変わるため選択解除
+            selection_.Clear(); // 復元で EntityID が変わるため選択解除
+            undo_.BeginPlaySession();
             playMode_.Play(*ctx.scene);
         }
     } else {
         if (ImGui::Button("Stop")) {
-            selection_.entity = kNullEntity;
+            selection_.Clear();
             playMode_.Stop(*ctx.scene);
+            undo_.EndPlaySession(); // Play 中に積まれた Undo エントリを破棄
         }
         ImGui::SameLine();
         if (ImGui::Button(state == PlayState::Paused ? "Resume" : "Pause")) {
@@ -173,10 +189,36 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
     }
     ImGui::EndMainMenuBar();
 
-    // Ctrl+S ショートカット
-    if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_S)) {
-        std::filesystem::create_directories(std::filesystem::path(scenePath_).parent_path());
-        SceneSerializer::SaveToFile(*ctx.scene, scenePath_);
+    HandleShortcuts(ctx);
+}
+
+void EditorApp::HandleShortcuts(EngineContext& ctx)
+{
+    // テキスト入力中はエディタショートカットを無効化 (ImGui のテキスト編集/Undo を優先)
+    if (ImGui::GetIO().WantTextInput) {
+        return;
+    }
+    if (shortcuts_.Pressed(Shortcut::Save)) {
+        SaveCurrentScene(ctx);
+    }
+    // Undo/Redo は編集モードのみ (Play 中の変更は Stop で破棄されるため)
+    if (playMode_.State() == PlayState::Editing) {
+        if (shortcuts_.Pressed(Shortcut::Undo)) {
+            undo_.Undo(*ctx.scene, selection_);
+        }
+        if (shortcuts_.Pressed(Shortcut::Redo)
+            || ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_Z)) {
+            undo_.Redo(*ctx.scene, selection_);
+        }
+    }
+}
+
+void EditorApp::SaveCurrentScene(EngineContext& ctx)
+{
+    std::filesystem::create_directories(std::filesystem::path(scenePath_).parent_path());
+    if (SceneSerializer::SaveToFile(*ctx.scene, scenePath_)) {
+        settings_.lastScenePath = WideToUtf8(scenePath_);
+        settings_.Save();
     }
 }
 
@@ -219,7 +261,7 @@ void EditorApp::SaveSceneAs(EngineContext& ctx)
     if (GetSaveFileNameW(&ofn)) {
         scenePath_ = path;
         ctx.reloadHub->SetActiveScenePath(scenePath_);
-        SceneSerializer::SaveToFile(*ctx.scene, scenePath_);
+        SaveCurrentScene(ctx);
     }
 }
 
@@ -236,10 +278,13 @@ void EditorApp::OpenScene(EngineContext& ctx)
     ofn.lpstrInitialDir = initialDir.c_str();
     ofn.Flags = OFN_FILEMUSTEXIST;
     if (GetOpenFileNameW(&ofn)) {
-        selection_.entity = kNullEntity;
+        selection_.Clear();
+        undo_.ClearAll();
         if (SceneSerializer::LoadFromFile(*ctx.scene, path)) {
             scenePath_ = path;
             ctx.reloadHub->SetActiveScenePath(scenePath_);
+            settings_.lastScenePath = WideToUtf8(scenePath_);
+            settings_.Save();
         }
     }
 }

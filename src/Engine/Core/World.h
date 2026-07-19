@@ -48,6 +48,11 @@ public:
     // ---- 階層 ----
     void SetParent(EntityID child, EntityID parent); // 遅延 (tick 末)。parent=kNullEntity でルート化
     EntityID GetParent(EntityID e);
+    // 兄弟内での位置を index 番目に変更する (遅延)。ルート (parent=null) も同じ兄弟リストで扱う。
+    // 兄弟順は WorldHash に含まれない (sim 非影響) が、シーン保存/Hierarchy 表示順を決める
+    void SetSiblingIndex(EntityID e, uint32_t index);
+    // ルート (親を持たない) エンティティの兄弟リスト先頭。DFS 走査 (シリアライズ/Hierarchy) の起点
+    EntityID FirstRoot() const { return firstRoot_; }
     bool HierarchyDirty() const { return hierarchyDirty_; }
     void ClearHierarchyDirty() { hierarchyDirty_ = false; }
 
@@ -111,13 +116,14 @@ private:
         uint32_t row = 0;
     };
 
-    enum class CmdType : uint8_t { AddComponent, RemoveComponent, Destroy, SetParent };
+    enum class CmdType : uint8_t { AddComponent, RemoveComponent, Destroy, SetParent, SetSiblingIndex };
     struct Command {
         CmdType type;
         EntityID entity;
         ComponentTypeId component = kInvalidComponentType;
         EntityID parent;              // SetParent 用
         uint32_t payloadIndex = 0xFFFFFFFFu; // AddComponent の初期値 (cmdPayloads_ 内)
+        uint32_t order = 0;           // SetSiblingIndex 用の位置
     };
 
     Archetype* GetOrCreateArchetype(std::vector<ComponentTypeId> sortedTypes);
@@ -126,8 +132,12 @@ private:
     void* AddComponentImmediate(EntityID e, ComponentTypeId t);
     void RemoveComponentImmediate(EntityID e, ComponentTypeId t);
     void ApplySetParent(EntityID child, EntityID parent);
+    void ApplySetSiblingIndex(EntityID e, uint32_t index);
     void DestroyImmediate(EntityID e); // 子孫含む
     void UnlinkFromParent(EntityID e);
+    // parent の子リスト先頭スロットへのポインタ (parent=null → &firstRoot_)。無効な parent は nullptr
+    EntityID* ChildListHead(EntityID parent);
+    void AppendToChildList(EntityID parent, EntityID child);
     void CollectSubtree(EntityID root, std::vector<EntityID>& out);
 
     std::vector<EntityRecord> records_;
@@ -138,6 +148,7 @@ private:
     // 呼び出し側へ返した scratch ポインタが無効化されないよう、要素毎にヒープ確保
     std::vector<std::unique_ptr<std::byte[]>> cmdPayloads_;
     std::vector<ComponentTypeId> baseTypes_; // {Name, LocalTransform, WorldMatrix, Hierarchy} 昇順
+    EntityID firstRoot_ = kNullEntity;       // ルートの兄弟リスト先頭 (生成順 = 既定の兄弟順)
     int iterationDepth_ = 0;
     bool hierarchyDirty_ = true;
     uint32_t aliveCount_ = 0;

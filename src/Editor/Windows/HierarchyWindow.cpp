@@ -1,7 +1,9 @@
 #include "Editor/Windows/HierarchyWindow.h"
 
+#include <functional>
 #include <vector>
 
+#include "Editor/Undo/UndoStack.h"
 #include "Engine/Core/Components.h"
 #include "Engine/Core/World.h"
 #include "Engine/Engine/GameObject.h"
@@ -15,18 +17,39 @@ namespace {
 
 constexpr const char* kDragPayload = "MYE_ENTITY";
 
+// エンティティの fileId (無ければ 0)。選択/Undo の同一性キー
+uint64_t FidOf(World& world, EntityID e)
+{
+    auto* f = world.GetComponent<FileIdComponent>(e);
+    return f ? f->value : 0;
+}
+
 GameObject CreateCube(EngineContext& ctx, const char* name)
 {
-    GameObject obj = ctx.scene->CreateGameObject(name);
+    GameObject obj = ctx.scene->CreateGameObjectTracked(name);
     auto* mr = obj.AddComponent<MeshRendererComponent>();
     mr->mesh = ctx.resources->meshes.Cube();
     mr->material = ctx.resources->materials.Default(*ctx.shaders, ctx.resources->textures);
     return obj;
 }
 
+// 生成操作を 1 つの Undo エントリとして記録する
+GameObject RecordCreate(EngineContext& ctx, Selection& selection, UndoStack& undo, const char* label,
+                        const std::function<GameObject()>& make)
+{
+    undo.BeginRecord(label, selection);
+    GameObject obj = make();
+    ctx.scene->GetWorld().ApplyStructuralChanges();
+    const uint64_t fid = ctx.scene->EnsureFileId(obj.Id());
+    selection.SelectOnly(fid);
+    undo.CaptureAfter(*ctx.scene, fid);
+    undo.EndRecord(selection);
+    return obj;
+}
+
 } // namespace
 
-void HierarchyWindow::OnImGui(EngineContext& ctx, Selection& selection)
+void HierarchyWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStack& undo)
 {
     if (!ImGui::Begin("Hierarchy")) {
         ImGui::End();
@@ -34,21 +57,13 @@ void HierarchyWindow::OnImGui(EngineContext& ctx, Selection& selection)
     }
     World& world = ctx.scene->GetWorld();
 
-    // ルート (parent 無し) を集めてから描画 (描画中の構造変更と分離)
-    std::vector<EntityID> roots;
-    {
-        const ComponentTypeId req[] = { HierarchyComponent::sTypeId };
-        world.ForEachArchetype(req, [&](Archetype& arch) {
-            const int hi = arch.FindTypeIndex(HierarchyComponent::sTypeId);
-            for (uint32_t row = 0; row < arch.Count(); ++row) {
-                if (static_cast<const HierarchyComponent*>(arch.GetPtr(hi, row))->parent.IsNull()) {
-                    roots.push_back(arch.EntityAt(row));
-                }
-            }
-        });
-    }
-    for (EntityID e : roots) {
-        DrawEntityNode(ctx, world, e, selection);
+    // ルート (parent 無し) を firstRoot リンク順で描画 (= 兄弟順 = 保存順)
+    EntityID r = world.FirstRoot();
+    while (!r.IsNull()) {
+        auto* rh = world.GetComponent<HierarchyComponent>(r);
+        const EntityID next = rh ? rh->nextSibling : kNullEntity;
+        DrawEntityNode(ctx, world, r, selection, undo);
+        r = next;
     }
 
     // 空き領域: 背景コンテキストメニュー + ルート化ドロップ
@@ -56,7 +71,13 @@ void HierarchyWindow::OnImGui(EngineContext& ctx, Selection& selection)
     if (ImGui::BeginDragDropTarget()) {
         if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(kDragPayload)) {
             const EntityID src = *static_cast<const EntityID*>(payload->Data);
+            undo.BeginRecord("Reparent", selection);
+            const uint64_t fid = ctx.scene->EnsureFileId(src);
+            undo.CaptureBefore(*ctx.scene, fid);
             world.SetParent(src, kNullEntity);
+            world.ApplyStructuralChanges();
+            undo.CaptureAfter(*ctx.scene, fid);
+            undo.EndRecord(selection);
         }
         ImGui::EndDragDropTarget();
     }
@@ -64,10 +85,12 @@ void HierarchyWindow::OnImGui(EngineContext& ctx, Selection& selection)
                                        ImGuiPopupFlags_MouseButtonRight
                                            | ImGuiPopupFlags_NoOpenOverItems)) {
         if (ImGui::MenuItem("Create Empty")) {
-            selection.entity = ctx.scene->CreateGameObject("GameObject").Id();
+            RecordCreate(ctx, selection, undo, "Create Empty",
+                         [&] { return ctx.scene->CreateGameObjectTracked("GameObject"); });
         }
         if (ImGui::MenuItem("Create Cube")) {
-            selection.entity = CreateCube(ctx, "Cube").Id();
+            RecordCreate(ctx, selection, undo, "Create Cube",
+                         [&] { return CreateCube(ctx, "Cube"); });
         }
         ImGui::EndPopup();
     }
@@ -75,20 +98,21 @@ void HierarchyWindow::OnImGui(EngineContext& ctx, Selection& selection)
 }
 
 void HierarchyWindow::DrawEntityNode(EngineContext& ctx, World& world, EntityID e,
-                                     Selection& selection)
+                                     Selection& selection, UndoStack& undo)
 {
     if (!world.IsAlive(e)) {
         return;
     }
     auto* h = world.GetComponent<HierarchyComponent>(e);
     const bool leaf = (h == nullptr) || h->firstChild.IsNull();
+    const uint64_t fid = FidOf(world, e);
 
     ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick
         | ImGuiTreeNodeFlags_SpanAvailWidth;
     if (leaf) {
         flags |= ImGuiTreeNodeFlags_Leaf;
     }
-    if (selection.entity == e) {
+    if (fid != 0 && selection.Contains(fid)) {
         flags |= ImGuiTreeNodeFlags_Selected;
     }
 
@@ -96,27 +120,38 @@ void HierarchyWindow::DrawEntityNode(EngineContext& ctx, World& world, EntityID 
     const bool open = ImGui::TreeNodeEx("##node", flags, "%s", world.GetName(e));
 
     if (ImGui::IsItemClicked(ImGuiMouseButton_Left) && !ImGui::IsItemToggledOpen()) {
-        selection.entity = e;
+        const uint64_t clicked = ctx.scene->EnsureFileId(e);
+        if (ImGui::GetIO().KeyCtrl) {
+            selection.Toggle(clicked); // Ctrl+クリックで追加/解除 (マルチ選択)
+        } else {
+            selection.SelectOnly(clicked);
+        }
     }
 
     if (ImGui::BeginPopupContextItem("##entity_ctx")) {
-        selection.entity = e;
+        selection.SelectOnly(ctx.scene->EnsureFileId(e));
         if (ImGui::MenuItem("Create Child")) {
-            GameObject child = ctx.scene->CreateGameObject("GameObject");
-            world.SetParent(child.Id(), e);
-            selection.entity = child.Id();
+            RecordCreate(ctx, selection, undo, "Create Child", [&] {
+                GameObject child = ctx.scene->CreateGameObjectTracked("GameObject");
+                world.SetParent(child.Id(), e);
+                return child;
+            });
         }
         if (ImGui::MenuItem("Create Child Cube")) {
-            GameObject child = CreateCube(ctx, "Cube");
-            world.SetParent(child.Id(), e);
-            selection.entity = child.Id();
+            RecordCreate(ctx, selection, undo, "Create Child Cube", [&] {
+                GameObject child = CreateCube(ctx, "Cube");
+                world.SetParent(child.Id(), e);
+                return child;
+            });
         }
         ImGui::Separator();
         if (ImGui::MenuItem("Delete")) {
+            undo.BeginRecord("Delete", selection);
+            undo.CaptureBefore(*ctx.scene, ctx.scene->EnsureFileId(e));
             world.DestroyEntity(e); // 子孫ごと tick 末に破棄
-            if (selection.entity == e) {
-                selection.entity = kNullEntity;
-            }
+            world.ApplyStructuralChanges();
+            selection.Remove(fid);
+            undo.EndRecord(selection); // CaptureAfter 無し → destroyed 扱い
         }
         ImGui::EndPopup();
     }
@@ -130,7 +165,13 @@ void HierarchyWindow::DrawEntityNode(EngineContext& ctx, World& world, EntityID 
         if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(kDragPayload)) {
             const EntityID src = *static_cast<const EntityID*>(payload->Data);
             if (src != e) {
+                undo.BeginRecord("Reparent", selection);
+                const uint64_t sfid = ctx.scene->EnsureFileId(src);
+                undo.CaptureBefore(*ctx.scene, sfid);
                 world.SetParent(src, e); // 循環は World 側で拒否される
+                world.ApplyStructuralChanges();
+                undo.CaptureAfter(*ctx.scene, sfid);
+                undo.EndRecord(selection);
             }
         }
         ImGui::EndDragDropTarget();
@@ -142,7 +183,7 @@ void HierarchyWindow::DrawEntityNode(EngineContext& ctx, World& world, EntityID 
             while (!child.IsNull()) {
                 auto* ch = world.GetComponent<HierarchyComponent>(child);
                 const EntityID next = ch ? ch->nextSibling : kNullEntity;
-                DrawEntityNode(ctx, world, child, selection);
+                DrawEntityNode(ctx, world, child, selection, undo);
                 child = next;
             }
         }

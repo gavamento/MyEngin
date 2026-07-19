@@ -1,0 +1,185 @@
+#include "Editor/UndoSelfTest.h"
+
+#include "Editor/Selection.h"
+#include "Editor/Undo/UndoStack.h"
+#include "Engine/Core/Components.h"
+#include "Engine/Core/Log.h"
+#include "Engine/Core/World.h"
+#include "Engine/Engine/GameObject.h"
+#include "Engine/Engine/Replay/WorldHasher.h"
+#include "Engine/Engine/Scene.h"
+
+namespace mye {
+namespace {
+
+uint64_t FidOf(Scene& scene, EntityID e)
+{
+    auto* f = scene.GetWorld().GetComponent<FileIdComponent>(e);
+    return f ? f->value : 0;
+}
+
+// 1 エンティティに対する modify op を 1 Undo エントリとして記録するヘルパ
+template <typename MutateFn>
+void RecordModify(UndoStack& undo, Scene& scene, Selection& sel, const char* label, uint64_t fid,
+                  MutateFn&& mutate)
+{
+    undo.BeginRecord(label, sel);
+    undo.CaptureBefore(scene, fid);
+    mutate();
+    scene.GetWorld().ApplyStructuralChanges();
+    undo.CaptureAfter(scene, fid);
+    undo.EndRecord(sel);
+}
+
+} // namespace
+
+bool RunUndoSelfTest()
+{
+    MYE_LOG_INFO("==== Undo self test ====");
+    int failCount = 0;
+    auto check = [&](bool cond, const char* what) {
+        if (cond) {
+            MYE_LOG_INFO("  PASS: %s", what);
+        } else {
+            MYE_LOG_ERROR("  FAIL: %s", what);
+            ++failCount;
+        }
+    };
+
+    // ============ Phase 1: 生成/破棄を含まない op の完全可逆性 (WorldHash) ============
+    {
+        Scene scene;
+        World& world = scene.GetWorld();
+        UndoStack undo;
+        Selection sel;
+
+        GameObject a = scene.CreateGameObjectTracked("A");
+        GameObject b = scene.CreateGameObjectTracked("B");
+        GameObject c = scene.CreateGameObjectTracked("C");
+        a.SetLocalPosition(1.0f, 2.0f, 3.0f);
+        b.SetLocalPosition(-4.0f, 5.0f, 6.0f);
+        c.SetLocalPosition(7.0f, 8.0f, 9.0f);
+        world.ApplyStructuralChanges();
+
+        const uint64_t aFid = FidOf(scene, a.Id());
+        const uint64_t bFid = FidOf(scene, b.Id());
+        const uint64_t cFid = FidOf(scene, c.Id());
+        const uint64_t initialHash = HashWorld(world, nullptr);
+
+        // op1: A の位置を変更
+        RecordModify(undo, scene, sel, "move A", aFid, [&] {
+            scene.FindByFileId(aFid).GetComponent<LocalTransform>()->position.x = 100.0f;
+        });
+        // op2: B に Collider を追加
+        RecordModify(undo, scene, sel, "add collider", bFid, [&] {
+            world.AddComponentRaw(scene.FindByFileId(bFid).Id(), ColliderComponent::sTypeId);
+        });
+        // op3: C を A の子にする (親リンク変更 = ハッシュ対象)
+        RecordModify(undo, scene, sel, "reparent C", cFid,
+                     [&] { world.SetParent(scene.FindByFileId(cFid).Id(),
+                                           scene.FindByFileId(aFid).Id()); });
+        // op4: A に Camera を追加してフィールド編集
+        RecordModify(undo, scene, sel, "add camera", aFid, [&] {
+            auto* cam = static_cast<CameraComponent*>(
+                world.AddComponentRaw(scene.FindByFileId(aFid).Id(), CameraComponent::sTypeId));
+            cam->fovYDeg = 33.0f;
+        });
+
+        const uint64_t editedHash = HashWorld(world, nullptr);
+        check(editedHash != initialHash, "edits changed the world hash");
+
+        int undoCount = 0;
+        while (undo.CanUndo()) {
+            undo.Undo(scene, sel);
+            ++undoCount;
+        }
+        check(undoCount == 4, "4 ops undone");
+        check(HashWorld(world, nullptr) == initialHash, "undo-all restores initial world hash");
+
+        int redoCount = 0;
+        while (undo.CanRedo()) {
+            undo.Redo(scene, sel);
+            ++redoCount;
+        }
+        check(redoCount == 4, "4 ops redone");
+        check(HashWorld(world, nullptr) == editedHash, "redo-all restores edited world hash");
+    }
+
+    // ============ Phase 2: 生成 / 破棄の undo/redo (構造・値で検証) ============
+    {
+        Scene scene;
+        World& world = scene.GetWorld();
+        UndoStack undo;
+        Selection sel;
+
+        GameObject keep = scene.CreateGameObjectTracked("Keep");
+        keep.SetLocalPosition(1.0f, 1.0f, 1.0f);
+        world.ApplyStructuralChanges();
+        const uint32_t baseCount = world.AliveCount();
+
+        // ---- create ----
+        undo.BeginRecord("create", sel);
+        GameObject created = scene.CreateGameObjectTracked("Created");
+        created.SetLocalPosition(3.0f, 4.0f, 5.0f);
+        created.AddComponent<MeshRendererComponent>()->mesh = AssetID{ 0x77ull };
+        world.ApplyStructuralChanges();
+        const uint64_t createdFid = FidOf(scene, created.Id());
+        undo.CaptureAfter(scene, createdFid);
+        undo.EndRecord(sel);
+        check(world.AliveCount() == baseCount + 1, "create: entity added");
+
+        undo.Undo(scene, sel);
+        check(!static_cast<bool>(scene.FindByFileId(createdFid)), "undo create: entity removed");
+        check(world.AliveCount() == baseCount, "undo create: alive count restored");
+
+        undo.Redo(scene, sel);
+        GameObject recreated = scene.FindByFileId(createdFid);
+        bool recreatedOk = static_cast<bool>(recreated);
+        if (recreatedOk) {
+            auto* lt = recreated.GetComponent<LocalTransform>();
+            auto* mr = recreated.GetComponent<MeshRendererComponent>();
+            recreatedOk = lt && lt->position.y == 4.0f && mr && mr->mesh.value == 0x77ull;
+        }
+        check(recreatedOk, "redo create: entity + components restored");
+
+        // ---- destroy (サブツリー: Keep に子を付けてから Keep を破棄) ----
+        undo.BeginRecord("attach child", sel);
+        undo.CaptureBefore(scene, FidOf(scene, keep.Id()));
+        GameObject child = scene.CreateGameObjectTracked("KeepChild");
+        child.SetParent(keep);
+        world.ApplyStructuralChanges();
+        undo.CaptureAfter(scene, FidOf(scene, keep.Id()));
+        undo.EndRecord(sel);
+
+        const uint64_t keepFid = FidOf(scene, keep.Id());
+        const uint64_t childFid = FidOf(scene, child.Id());
+
+        undo.BeginRecord("destroy Keep", sel);
+        undo.CaptureBefore(scene, keepFid); // サブツリー丸ごと
+        world.DestroyEntity(keep.Id());
+        world.ApplyStructuralChanges();
+        undo.EndRecord(sel);
+        check(!static_cast<bool>(scene.FindByFileId(keepFid)), "destroy: subtree removed");
+        check(!static_cast<bool>(scene.FindByFileId(childFid)), "destroy: child removed");
+
+        undo.Undo(scene, sel);
+        GameObject keepBack = scene.FindByFileId(keepFid);
+        GameObject childBack = scene.FindByFileId(childFid);
+        bool restoreOk = static_cast<bool>(keepBack) && static_cast<bool>(childBack);
+        if (restoreOk) {
+            auto* lt = keepBack.GetComponent<LocalTransform>();
+            restoreOk = lt && lt->position.x == 1.0f
+                && world.GetParent(childBack.Id()) == keepBack.Id();
+        }
+        check(restoreOk, "undo destroy: subtree + parent link + values restored");
+    }
+
+    if (failCount == 0) {
+        MYE_LOG_INFO("==== Undo self test: ALL PASS ====");
+        return true;
+    }
+    MYE_LOG_ERROR("==== Undo self test: %d FAILURE(S) ====", failCount);
+    return false;
+}
+
+} // namespace mye

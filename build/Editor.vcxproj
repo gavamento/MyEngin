@@ -34,7 +34,10 @@
   <ItemGroup>
     <ClCompile Include="..\src\Editor\EditorApp.cpp" />
     <ClCompile Include="..\src\Editor\EditorMain.cpp" />
+    <ClCompile Include="..\src\Editor\EditorSettings.cpp" />
     <ClCompile Include="..\src\Editor\PlayModeController.cpp" />
+    <ClCompile Include="..\src\Editor\Undo\UndoStack.cpp" />
+    <ClCompile Include="..\src\Editor\UndoSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\Windows\ConsoleWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\GameViewWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\HierarchyWindow.cpp" />
@@ -43,8 +46,12 @@
     <ClCompile Include="..\src\Editor\Windows\ProfilerWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\SceneViewWindow.cpp" />
     <ClInclude Include="..\src\Editor\EditorApp.h" />
+    <ClInclude Include="..\src\Editor\EditorSettings.h" />
     <ClInclude Include="..\src\Editor\PlayModeController.h" />
     <ClInclude Include="..\src\Editor\Selection.h" />
+    <ClInclude Include="..\src\Editor\ShortcutHub.h" />
+    <ClInclude Include="..\src\Editor\Undo\UndoStack.h" />
+    <ClInclude Include="..\src\Editor\UndoSelfTest.h" />
     <ClInclude Include="..\src\Editor\Windows\ConsoleWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\GameViewWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\HierarchyWindow.h" />

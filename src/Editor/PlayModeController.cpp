@@ -12,8 +12,13 @@ void PlayModeController::Play(Scene& scene)
         return;
     }
     snapshot_ = SceneSerializer::SaveToJson(scene);
+    // Play 開始でシーンをリロードして EntityID を正規化する (Unity の Domain Reload 相当)。
+    // これが無いと、エディタで生成/削除/Undo を繰り返した後の EntityID 割当が
+    // フレッシュロード時と食い違い、エディタ内で録った .rep が replay_verify
+    // (フレッシュロード) と一致しなくなる (M8 の決定論規約)。
+    SceneSerializer::LoadFromJson(scene, snapshot_);
     state_ = PlayState::Playing;
-    MYE_LOG_INFO("[play] started (snapshot: %zu entities)", snapshot_["entities"].size());
+    MYE_LOG_INFO("[play] started (snapshot: %zu entities, reloaded)", snapshot_["entities"].size());
 }
 
 void PlayModeController::Stop(Scene& scene)

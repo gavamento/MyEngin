@@ -23,6 +23,21 @@ GameObject Scene::FindByFileId(uint64_t fileId)
     return result;
 }
 
+uint64_t Scene::EnsureFileId(EntityID e)
+{
+    if (!world_.IsAlive(e)) {
+        return 0;
+    }
+    auto* f = world_.GetComponent<FileIdComponent>(e);
+    if (!f) {
+        f = world_.AddComponent<FileIdComponent>(e); // イテレーション外 (エディタ) では即時
+        f->value = NextFileId();
+    } else if (f->value == 0) {
+        f->value = NextFileId();
+    }
+    return f->value;
+}
+
 GameObject Scene::Find(std::string_view name)
 {
     const ComponentTypeId nameType = NameComponent::sTypeId;

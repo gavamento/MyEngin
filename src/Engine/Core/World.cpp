@@ -47,6 +47,7 @@ EntityID World::CreateEntity(std::string_view name)
     nc->value[n] = '\0';
 
     hierarchyDirty_ = true;
+    AppendToChildList(kNullEntity, e); // ルート兄弟リスト末尾へ (兄弟順 = 生成順で決定論的)
     return e;
 }
 
@@ -149,6 +150,18 @@ void World::SetParent(EntityID child, EntityID parent)
     commands_.push_back(c);
 }
 
+void World::SetSiblingIndex(EntityID e, uint32_t index)
+{
+    if (!IsAlive(e)) {
+        return;
+    }
+    Command c = {};
+    c.type = CmdType::SetSiblingIndex;
+    c.entity = e;
+    c.order = index;
+    commands_.push_back(c);
+}
+
 EntityID World::GetParent(EntityID e)
 {
     auto* h = GetComponent<HierarchyComponent>(e);
@@ -247,31 +260,62 @@ void World::RemoveComponentImmediate(EntityID e, ComponentTypeId t)
     MoveEntity(e, dst);
 }
 
+EntityID* World::ChildListHead(EntityID parent)
+{
+    if (parent.IsNull()) {
+        return &firstRoot_;
+    }
+    auto* ph = GetComponent<HierarchyComponent>(parent);
+    return ph ? &ph->firstChild : nullptr;
+}
+
+void World::AppendToChildList(EntityID parent, EntityID child)
+{
+    EntityID* head = ChildListHead(parent);
+    if (!head) {
+        return;
+    }
+    if (head->IsNull()) {
+        *head = child;
+        return;
+    }
+    EntityID cur = *head;
+    for (;;) {
+        auto* ch = GetComponent<HierarchyComponent>(cur);
+        if (!ch || ch->nextSibling.IsNull()) {
+            if (ch) {
+                ch->nextSibling = child;
+            }
+            break;
+        }
+        cur = ch->nextSibling;
+    }
+}
+
 void World::UnlinkFromParent(EntityID e)
 {
     auto* h = GetComponent<HierarchyComponent>(e);
-    if (!h || h->parent.IsNull()) {
+    if (!h) {
         return;
     }
-    auto* ph = GetComponent<HierarchyComponent>(h->parent);
-    if (!ph) {
-        h->parent = kNullEntity;
-        return;
-    }
-    if (ph->firstChild == e) {
-        ph->firstChild = h->nextSibling;
-    } else {
-        EntityID cur = ph->firstChild;
-        while (!cur.IsNull()) {
-            auto* ch = GetComponent<HierarchyComponent>(cur);
-            if (!ch) {
-                break;
+    // ルート (parent=null) も firstRoot_ を先頭とする兄弟リストで管理する
+    EntityID* head = ChildListHead(h->parent);
+    if (head) {
+        if (*head == e) {
+            *head = h->nextSibling;
+        } else {
+            EntityID cur = *head;
+            while (!cur.IsNull()) {
+                auto* ch = GetComponent<HierarchyComponent>(cur);
+                if (!ch) {
+                    break;
+                }
+                if (ch->nextSibling == e) {
+                    ch->nextSibling = h->nextSibling;
+                    break;
+                }
+                cur = ch->nextSibling;
             }
-            if (ch->nextSibling == e) {
-                ch->nextSibling = h->nextSibling;
-                break;
-            }
-            cur = ch->nextSibling;
         }
     }
     h->parent = kNullEntity;
@@ -302,22 +346,44 @@ void World::ApplySetParent(EntityID child, EntityID parent)
     auto* h = GetComponent<HierarchyComponent>(child);
     h->parent = parent;
     h->nextSibling = kNullEntity;
+    AppendToChildList(parent, child); // 末尾に追加 (適用順 = 兄弟順で決定論的)
+    hierarchyDirty_ = true;
+}
 
-    if (!parent.IsNull()) {
-        auto* ph = GetComponent<HierarchyComponent>(parent);
-        if (ph->firstChild.IsNull()) {
-            ph->firstChild = child;
-        } else {
-            // 末尾に追加 (適用順 = 兄弟順で決定論的)
-            EntityID cur = ph->firstChild;
-            while (true) {
-                auto* ch = GetComponent<HierarchyComponent>(cur);
-                if (ch->nextSibling.IsNull()) {
-                    ch->nextSibling = child;
-                    break;
-                }
-                cur = ch->nextSibling;
+void World::ApplySetSiblingIndex(EntityID e, uint32_t index)
+{
+    if (!IsAlive(e)) {
+        return;
+    }
+    auto* h = GetComponent<HierarchyComponent>(e);
+    if (!h) {
+        return;
+    }
+    const EntityID parent = h->parent;
+    UnlinkFromParent(e);   // 兄弟リストから外す (h->parent は null になる)
+    h->parent = parent;    // 同じ親へ復帰
+    EntityID* head = ChildListHead(parent);
+    if (!head) {
+        return;
+    }
+    if (index == 0 || head->IsNull()) {
+        h->nextSibling = *head;
+        *head = e;
+    } else {
+        EntityID cur = *head;
+        uint32_t i = 1;
+        while (i < index) {
+            auto* ch = GetComponent<HierarchyComponent>(cur);
+            if (!ch || ch->nextSibling.IsNull()) {
+                break; // index が末尾を超える → 末尾に挿入
             }
+            cur = ch->nextSibling;
+            ++i;
+        }
+        auto* ch = GetComponent<HierarchyComponent>(cur);
+        if (ch) {
+            h->nextSibling = ch->nextSibling;
+            ch->nextSibling = e;
         }
     }
     hierarchyDirty_ = true;
@@ -406,6 +472,7 @@ void World::Clear()
     cmdPayloads_.clear();
     archetypes_.clear();
     freeIndices_.clear();
+    firstRoot_ = kNullEntity; // ルートリストも破棄 (全エンティティ削除)
     // 世代を進めて全スロットを解放 (降順 push → 昇順割り当てで新規ワールドと同じ順になる)
     for (uint32_t i = static_cast<uint32_t>(records_.size()); i > 0; --i) {
         EntityRecord& rec = records_[i - 1];
@@ -455,6 +522,9 @@ void World::ApplyStructuralChanges()
             break;
         case CmdType::SetParent:
             ApplySetParent(c.entity, c.parent);
+            break;
+        case CmdType::SetSiblingIndex:
+            ApplySetSiblingIndex(c.entity, c.order);
             break;
         }
     }

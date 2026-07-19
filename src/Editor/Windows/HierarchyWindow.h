@@ -1,18 +1,21 @@
 #pragma once
 #include "Editor/Selection.h"
+#include "Engine/Core/EntityID.h"
 #include "Engine/Engine/EngineLoop.h"
 
 namespace mye {
 
 class World;
+class UndoStack;
 
 // シーンツリー表示 / 選択 / 作成・削除 / ドラッグ&ドロップ再ペアレント (engine_spec.md 9 章)
 class HierarchyWindow {
 public:
-    void OnImGui(EngineContext& ctx, Selection& selection);
+    void OnImGui(EngineContext& ctx, Selection& selection, UndoStack& undo);
 
 private:
-    void DrawEntityNode(EngineContext& ctx, World& world, EntityID e, Selection& selection);
+    void DrawEntityNode(EngineContext& ctx, World& world, EntityID e, Selection& selection,
+                        UndoStack& undo);
 };
 
 } // namespace mye

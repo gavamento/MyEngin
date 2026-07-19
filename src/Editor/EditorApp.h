@@ -1,8 +1,11 @@
 #pragma once
 #include <string>
 
+#include "Editor/EditorSettings.h"
 #include "Editor/PlayModeController.h"
 #include "Editor/Selection.h"
+#include "Editor/ShortcutHub.h"
+#include "Editor/Undo/UndoStack.h"
 #include "Editor/Windows/ConsoleWindow.h"
 #include "Editor/Windows/GameViewWindow.h"
 #include "Editor/Windows/HierarchyWindow.h"
@@ -33,11 +36,16 @@ private:
     void RegisterDemoResources(EngineContext& ctx); // メッシュ/マテリアル/モデル登録 (毎回)
     void BuildDemoEntities(EngineContext& ctx);     // エンティティ構築 (シーンファイルが無い時のみ)
     void DrawMainMenuBar(EngineContext& ctx);
+    void HandleShortcuts(EngineContext& ctx);
+    void SaveCurrentScene(EngineContext& ctx);
     void SetupDockLayout(unsigned int dockspaceId);
     void SaveSceneAs(EngineContext& ctx);
     void OpenScene(EngineContext& ctx);
 
     Selection selection_;
+    UndoStack undo_;
+    EditorSettings settings_;
+    ShortcutHub shortcuts_;
     PlayModeController playMode_;
     HierarchyWindow hierarchy_;
     InspectorWindow inspector_;

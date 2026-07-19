@@ -3,6 +3,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <vector>
 
 #include <DirectXMath.h>
 #include <d3d11.h>
@@ -27,6 +28,16 @@ struct Mesh {
     Microsoft::WRL::ComPtr<ID3D11Buffer> vb;
     Microsoft::WRL::ComPtr<ID3D11Buffer> ib;
     uint32_t indexCount = 0;
+    // ローカル空間 AABB (Register 時に頂点から計算)。Focus/ピッキング/サムネイルで使う (M8)
+    DirectX::XMFLOAT3 aabbMin = { 0, 0, 0 };
+    DirectX::XMFLOAT3 aabbMax = { 0, 0, 0 };
+};
+
+// アセット列挙の 1 件 (Asset Browser / 参照ピッカー用、M8)。
+// ライブラリはハッシュしか保持しないため、名前を別に覚えて列挙可能にする
+struct AssetEntry {
+    AssetID id = {};
+    std::string name;
 };
 
 class MeshLibrary {
@@ -37,9 +48,13 @@ public:
     Mesh* Get(AssetID id);
     AssetID Cube(); // 単位キューブ (遅延生成)
 
+    // 登録済みメッシュを名前順で列挙 (エディタ UI 用)
+    std::vector<AssetEntry> Enumerate() const;
+
 private:
     GraphicsDevice* device_ = nullptr;
     std::unordered_map<uint64_t, Mesh> meshes_;
+    std::unordered_map<uint64_t, std::string> names_;
     AssetID cube_ = {};
 };
 
@@ -67,10 +82,14 @@ public:
     // M3 ホットリロード: 同じ AssetID のまま中身を差し替える
     bool ReplaceFromFile(AssetID id, const std::wstring& path);
 
+    // 登録済みテクスチャを名前 (パス or 生成名) 順で列挙 (エディタ UI 用)
+    std::vector<AssetEntry> Enumerate() const;
+
 private:
     bool CreateFromPixels(Texture& out, const uint8_t* rgba, int w, int h);
     GraphicsDevice* device_ = nullptr;
     std::unordered_map<uint64_t, Texture> textures_;
+    std::unordered_map<uint64_t, std::string> names_;
     AssetID white_ = {};
 };
 
@@ -89,8 +108,12 @@ public:
     Material* Get(AssetID id);
     AssetID Default(ShaderManager& shaders, TextureLibrary& textures); // 灰色 forward_lit (遅延生成)
 
+    // 登録済みマテリアルを名前順で列挙 (エディタ UI 用)
+    std::vector<AssetEntry> Enumerate() const;
+
 private:
     std::unordered_map<uint64_t, Material> materials_;
+    std::unordered_map<uint64_t, std::string> names_;
     AssetID default_ = {};
 };
 

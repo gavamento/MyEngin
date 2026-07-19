@@ -1,5 +1,6 @@
 #include "Engine/Renderer/GpuResources.h"
 
+#include <algorithm>
 #include <vector>
 
 #include "Engine/Core/Hash.h"
@@ -12,6 +13,23 @@
 namespace mye {
 
 using Microsoft::WRL::ComPtr;
+
+namespace {
+
+// names_ (ハッシュ→名前) を名前順の列挙結果に変換する共通ヘルパ
+std::vector<AssetEntry> EnumerateNames(const std::unordered_map<uint64_t, std::string>& names)
+{
+    std::vector<AssetEntry> out;
+    out.reserve(names.size());
+    for (const auto& [id, name] : names) {
+        out.push_back({ AssetID{ id }, name });
+    }
+    std::sort(out.begin(), out.end(),
+              [](const AssetEntry& a, const AssetEntry& b) { return a.name < b.name; });
+    return out;
+}
+
+} // namespace
 
 // ---------------------------------------------------------------- MeshLibrary
 
@@ -41,7 +59,25 @@ AssetID MeshLibrary::Register(std::string_view name, std::span<const MeshVertex>
         return {};
     }
     mesh.indexCount = static_cast<uint32_t>(indices.size());
+
+    // ローカル AABB を頂点から計算 (M8: Focus/ピッキング/サムネイル)
+    if (!vertices.empty()) {
+        DirectX::XMFLOAT3 lo = vertices[0].position;
+        DirectX::XMFLOAT3 hi = vertices[0].position;
+        for (const MeshVertex& v : vertices) {
+            lo.x = (v.position.x < lo.x) ? v.position.x : lo.x;
+            lo.y = (v.position.y < lo.y) ? v.position.y : lo.y;
+            lo.z = (v.position.z < lo.z) ? v.position.z : lo.z;
+            hi.x = (v.position.x > hi.x) ? v.position.x : hi.x;
+            hi.y = (v.position.y > hi.y) ? v.position.y : hi.y;
+            hi.z = (v.position.z > hi.z) ? v.position.z : hi.z;
+        }
+        mesh.aabbMin = lo;
+        mesh.aabbMax = hi;
+    }
+
     meshes_[id.value] = std::move(mesh);
+    names_[id.value].assign(name);
     return id;
 }
 
@@ -49,6 +85,11 @@ Mesh* MeshLibrary::Get(AssetID id)
 {
     auto it = meshes_.find(id.value);
     return (it != meshes_.end()) ? &it->second : nullptr;
+}
+
+std::vector<AssetEntry> MeshLibrary::Enumerate() const
+{
+    return EnumerateNames(names_);
 }
 
 AssetID MeshLibrary::Cube()
@@ -147,6 +188,7 @@ AssetID TextureLibrary::LoadFile(const std::wstring& path)
         return {};
     }
     textures_.emplace(id.value, std::move(t));
+    names_[id.value] = utf8;
     return id;
 }
 
@@ -168,6 +210,7 @@ AssetID TextureLibrary::CreateFromEncoded(std::string_view name, const void* byt
         return {};
     }
     textures_[id.value] = std::move(t);
+    names_[id.value].assign(name);
     return id;
 }
 
@@ -183,7 +226,13 @@ AssetID TextureLibrary::CreateSolid(std::string_view name, uint8_t r, uint8_t g,
         return {};
     }
     textures_.emplace(id.value, std::move(t));
+    names_[id.value].assign(name);
     return id;
+}
+
+std::vector<AssetEntry> TextureLibrary::Enumerate() const
+{
+    return EnumerateNames(names_);
 }
 
 Texture* TextureLibrary::Get(AssetID id)
@@ -229,6 +278,7 @@ AssetID MaterialLibrary::Register(std::string_view name, const Material& mat)
 {
     const AssetID id{ HashStr(name) };
     materials_[id.value] = mat; // 同名は上書き (リロード用)
+    names_[id.value].assign(name);
     return id;
 }
 
@@ -236,6 +286,11 @@ Material* MaterialLibrary::Get(AssetID id)
 {
     auto it = materials_.find(id.value);
     return (it != materials_.end()) ? &it->second : nullptr;
+}
+
+std::vector<AssetEntry> MaterialLibrary::Enumerate() const
+{
+    return EnumerateNames(names_);
 }
 
 AssetID MaterialLibrary::Default(ShaderManager& shaders, TextureLibrary& textures)

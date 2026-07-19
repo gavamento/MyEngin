@@ -1,9 +1,14 @@
 #include "Engine/Engine/SceneSelfTest.h"
 
+#include <new>
+#include <string>
 #include <unordered_map>
+#include <vector>
 
 #include "Engine/Core/Components.h"
+#include "Engine/Core/Hash.h"
 #include "Engine/Core/Log.h"
+#include "Engine/Core/World.h"
 #include "Engine/Engine/GameObject.h"
 #include "Engine/Engine/Scene.h"
 #include "Engine/Engine/SceneSerializer.h"
@@ -88,6 +93,82 @@ bool RunSceneSerializerSelfTest()
         }
     }
     check(identical, "save -> load -> save roundtrip identical");
+
+    // ---- EntityRef の fileId 往復 (M8) ----
+    // 組み込みには serializable な EntityRef フィールドが無いため、
+    // テスト専用コンポーネントを登録して汎用 EntityRef 経路を検証する (--selftest 限りの登録)
+    {
+        struct RefProbe {
+            EntityID target = kNullEntity;
+        };
+        ComponentDesc d;
+        d.name = "RefProbe";
+        d.nameHash = HashStr("RefProbe");
+        d.size = sizeof(RefProbe);
+        d.align = alignof(RefProbe);
+        d.flags = kComponentNone;
+        d.construct = [](void* p) { new (p) RefProbe(); };
+        d.fields = { FieldDesc{ "target", FieldType::EntityRef,
+                                static_cast<uint32_t>(offsetof(RefProbe, target)), kFieldNone } };
+        const ComponentTypeId probeType = ComponentRegistry::Get().Register(std::move(d));
+
+        Scene s2;
+        GameObject ra = s2.CreateGameObjectTracked("Ref_A");
+        GameObject rb = s2.CreateGameObjectTracked("Ref_B");
+        auto* probe = static_cast<RefProbe*>(s2.GetWorld().AddComponentRaw(ra.Id(), probeType));
+        probe->target = rb.Id();
+        const uint64_t rbFid = s2.GetWorld().GetComponent<FileIdComponent>(rb.Id())->value;
+
+        const nlohmann::json j = SceneSerializer::SaveToJson(s2);
+        check(SceneSerializer::LoadFromJson(s2, j), "EntityRef scene reload");
+
+        GameObject ra2 = s2.Find("Ref_A");
+        GameObject rb2 = s2.FindByFileId(rbFid);
+        bool refOk = false;
+        if (ra2 && rb2) {
+            auto* p2 = static_cast<RefProbe*>(s2.GetWorld().GetComponentRaw(ra2.Id(), probeType));
+            refOk = p2 && p2->target == rb2.Id() && !rb2.Id().IsNull();
+        }
+        check(refOk, "EntityRef restored by fileId across save/load");
+    }
+
+    // ---- 兄弟順の保存/復元 (M8) ----
+    {
+        auto childNames = [](Scene& sc, GameObject parent) {
+            std::vector<std::string> out;
+            World& w = sc.GetWorld();
+            auto* h = w.GetComponent<HierarchyComponent>(parent.Id());
+            EntityID ch = h ? h->firstChild : kNullEntity;
+            while (!ch.IsNull()) {
+                out.push_back(w.GetName(ch));
+                auto* chh = w.GetComponent<HierarchyComponent>(ch);
+                ch = chh ? chh->nextSibling : kNullEntity;
+            }
+            return out;
+        };
+
+        Scene s3;
+        GameObject p = s3.CreateGameObjectTracked("SibParent");
+        GameObject c0 = s3.CreateGameObjectTracked("Sib0");
+        GameObject c1 = s3.CreateGameObjectTracked("Sib1");
+        GameObject c2 = s3.CreateGameObjectTracked("Sib2");
+        c0.SetParent(p);
+        c1.SetParent(p);
+        c2.SetParent(p);
+        s3.GetWorld().ApplyStructuralChanges();
+        s3.GetWorld().SetSiblingIndex(c2.Id(), 0); // Sib2 を先頭へ
+        s3.GetWorld().ApplyStructuralChanges();
+
+        const std::vector<std::string> before = childNames(s3, p);
+        check(before.size() == 3 && before[0] == "Sib2" && before[1] == "Sib0"
+                  && before[2] == "Sib1",
+              "sibling reorder applied (Sib2, Sib0, Sib1)");
+
+        const nlohmann::json j = SceneSerializer::SaveToJson(s3);
+        SceneSerializer::LoadFromJson(s3, j);
+        const std::vector<std::string> after = childNames(s3, s3.Find("SibParent"));
+        check(before == after, "sibling order round-trips through save/load");
+    }
 
     if (failCount == 0) {
         MYE_LOG_INFO("==== Scene serializer self test: ALL PASS ====");
