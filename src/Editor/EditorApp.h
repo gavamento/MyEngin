@@ -1,6 +1,8 @@
 #pragma once
 #include <string>
 
+#include "nlohmann/json.hpp"
+
 #include "Editor/EditorSettings.h"
 #include "Editor/PlayModeController.h"
 #include "Editor/Selection.h"
@@ -40,6 +42,13 @@ private:
     void DrawMainMenuBar(EngineContext& ctx);
     void HandleShortcuts(EngineContext& ctx);
     void SaveCurrentScene(EngineContext& ctx);
+    // 選択エンティティ操作 (グローバルショートカット。全て Undo 統合)
+    nlohmann::json GatherSelectionSubtrees(EngineContext& ctx); // 選択のサブツリー群 (fileId 重複除去)
+    void DuplicateSelection(EngineContext& ctx);
+    void CopySelection(EngineContext& ctx);
+    void CutSelection(EngineContext& ctx);
+    void PasteClipboard(EngineContext& ctx);
+    void DeleteSelection(EngineContext& ctx);
     void SetupDockLayout(unsigned int dockspaceId);
     void SaveSceneAs(EngineContext& ctx);
     void OpenScene(EngineContext& ctx);
@@ -57,6 +66,7 @@ private:
     ParticleSettingsWindow particleSettings_;
     ProfilerWindow profiler_;
 
+    nlohmann::json clipboard_; // コピー/カットしたサブツリー群 (SubtreeToJson 形式の配列)
     std::wstring scenePath_;
     bool rebuildDockLayout_ = false;
     bool showStats_ = true;

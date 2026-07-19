@@ -1,13 +1,18 @@
 #include "Editor/Windows/InspectorWindow.h"
 
 #include <cmath>
+#include <string>
+#include <utility>
+#include <vector>
 
+#include "Editor/Selection.h"
 #include "Editor/Undo/UndoStack.h"
 #include "Engine/Core/ComponentRegistry.h"
 #include "Engine/Core/Components.h"
 #include "Engine/Core/World.h"
 #include "Engine/Engine/GameObject.h"
 #include "Engine/Engine/Scene.h"
+#include "Engine/Renderer/GpuResources.h"
 
 #include "imgui.h"
 
@@ -135,8 +140,11 @@ void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
                     if (f.flags & kFieldHidden) {
                         continue;
                     }
-                    DrawField(comp, f, e);
-                    HandleEditUndo(ctx, selection, undo, fid, "Modify");
+                    DrawField(ctx, comp, f, e, selection, undo, fid);
+                    // 参照ピッカーはポップアップ選択時に自前で Undo を記録するので除外
+                    if (f.type != FieldType::AssetRef && f.type != FieldType::EntityRef) {
+                        HandleEditUndo(ctx, selection, undo, fid, "Modify");
+                    }
                 }
             }
         }
@@ -171,7 +179,8 @@ void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
     ImGui::End();
 }
 
-bool InspectorWindow::DrawField(void* comp, const FieldDesc& field, EntityID entity)
+bool InspectorWindow::DrawField(EngineContext& ctx, void* comp, const FieldDesc& field,
+                                EntityID entity, Selection& selection, UndoStack& undo, uint64_t fid)
 {
     void* p = static_cast<uint8_t*>(comp) + field.offset;
     const bool readOnly = (field.flags & kFieldReadOnly) != 0;
@@ -239,20 +248,12 @@ bool InspectorWindow::DrawField(void* comp, const FieldDesc& field, EntityID ent
     case FieldType::Color:
         changed = ImGui::ColorEdit4(field.name, static_cast<float*>(p));
         break;
-    case FieldType::EntityRef: {
-        const auto* id = static_cast<const EntityID*>(p);
-        if (id->IsNull()) {
-            ImGui::Text("%s: (none)", field.name);
-        } else {
-            ImGui::Text("%s: %u:%u", field.name, id->index, id->generation);
-        }
+    case FieldType::EntityRef:
+        DrawEntityRef(ctx, field, p, selection, undo, fid);
         break;
-    }
-    case FieldType::AssetRef: {
-        const auto* id = static_cast<const AssetID*>(p);
-        ImGui::Text("%s: %016llX", field.name, static_cast<unsigned long long>(id->value));
+    case FieldType::AssetRef:
+        DrawAssetRef(ctx, field, p, selection, undo, fid);
         break;
-    }
     case FieldType::String64:
         changed = ImGui::InputText(field.name, static_cast<char*>(p), 64);
         break;
@@ -274,6 +275,112 @@ bool InspectorWindow::DrawField(void* comp, const FieldDesc& field, EntityID ent
         ImGui::EndDisabled();
     }
     return changed;
+}
+
+void InspectorWindow::DrawAssetRef(EngineContext& ctx, const FieldDesc& field, void* p,
+                                   Selection& selection, UndoStack& undo, uint64_t fid)
+{
+    auto* id = static_cast<AssetID*>(p);
+    // フィールド名からライブラリを推定 (mesh / material / texture)
+    const std::string fname = field.name;
+    std::vector<AssetEntry> entries;
+    if (fname.find("mesh") != std::string::npos) {
+        entries = ctx.resources->meshes.Enumerate();
+    } else if (fname.find("material") != std::string::npos) {
+        entries = ctx.resources->materials.Enumerate();
+    } else if (fname.find("tex") != std::string::npos) {
+        entries = ctx.resources->textures.Enumerate();
+    } else {
+        entries = ctx.resources->meshes.Enumerate();
+        const auto mats = ctx.resources->materials.Enumerate();
+        const auto texs = ctx.resources->textures.Enumerate();
+        entries.insert(entries.end(), mats.begin(), mats.end());
+        entries.insert(entries.end(), texs.begin(), texs.end());
+    }
+
+    const char* cur = "(none)";
+    for (const AssetEntry& e : entries) {
+        if (e.id == *id) {
+            cur = e.name.c_str();
+        }
+    }
+
+    ImGui::PushID(field.name);
+    ImGui::TextUnformatted(field.name);
+    ImGui::SameLine(ImGui::GetContentRegionAvail().x * 0.35f);
+    if (ImGui::Button(cur, ImVec2(-1, 0))) {
+        ImGui::OpenPopup("##assetpick");
+    }
+    if (ImGui::BeginPopup("##assetpick")) {
+        auto assign = [&](AssetID v) {
+            undo.BeginRecord("Assign asset", selection);
+            undo.CaptureBefore(*ctx.scene, fid);
+            *id = v;
+            undo.CaptureAfter(*ctx.scene, fid);
+            undo.EndRecord(selection);
+        };
+        if (ImGui::Selectable("(none)")) {
+            assign(AssetID{});
+        }
+        for (const AssetEntry& e : entries) {
+            if (ImGui::Selectable(e.name.c_str(), e.id == *id)) {
+                assign(e.id);
+            }
+        }
+        ImGui::EndPopup();
+    }
+    ImGui::PopID();
+}
+
+void InspectorWindow::DrawEntityRef(EngineContext& ctx, const FieldDesc& field, void* p,
+                                    Selection& selection, UndoStack& undo, uint64_t fid)
+{
+    auto* id = static_cast<EntityID*>(p);
+    World& world = ctx.scene->GetWorld();
+
+    // エンティティ一覧を先に収集 (ポップアップ描画中は ForEachArchetype の外で行う。
+    // Undo の CaptureBefore が ApplyStructuralChanges を呼ぶため、イテレーション中に記録できない)
+    std::vector<std::pair<EntityID, std::string>> ents;
+    const ComponentTypeId req[] = { NameComponent::sTypeId };
+    world.ForEachArchetype(req, [&](Archetype& arch) {
+        for (uint32_t row = 0; row < arch.Count(); ++row) {
+            const EntityID e = arch.EntityAt(row);
+            ents.emplace_back(e, world.GetName(e));
+        }
+    });
+
+    const char* cur = "(none)";
+    if (!id->IsNull() && world.IsAlive(*id)) {
+        cur = world.GetName(*id);
+    }
+
+    ImGui::PushID(field.name);
+    ImGui::TextUnformatted(field.name);
+    ImGui::SameLine(ImGui::GetContentRegionAvail().x * 0.35f);
+    if (ImGui::Button(cur, ImVec2(-1, 0))) {
+        ImGui::OpenPopup("##entpick");
+    }
+    if (ImGui::BeginPopup("##entpick")) {
+        auto assign = [&](EntityID v) {
+            undo.BeginRecord("Assign reference", selection);
+            undo.CaptureBefore(*ctx.scene, fid);
+            *id = v;
+            undo.CaptureAfter(*ctx.scene, fid);
+            undo.EndRecord(selection);
+        };
+        if (ImGui::Selectable("(none)")) {
+            assign(kNullEntity);
+        }
+        for (const auto& [e, name] : ents) {
+            ImGui::PushID(static_cast<int>(e.index));
+            if (ImGui::Selectable(name.c_str(), e == *id)) {
+                assign(e);
+            }
+            ImGui::PopID();
+        }
+        ImGui::EndPopup();
+    }
+    ImGui::PopID();
 }
 
 } // namespace mye

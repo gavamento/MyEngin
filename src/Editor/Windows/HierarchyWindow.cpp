@@ -1,6 +1,8 @@
 #include "Editor/Windows/HierarchyWindow.h"
 
+#include <cctype>
 #include <functional>
+#include <string>
 #include <vector>
 
 #include "Editor/Undo/UndoStack.h"
@@ -57,13 +59,31 @@ void HierarchyWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
     }
     World& world = ctx.scene->GetWorld();
 
-    // ルート (parent 無し) を firstRoot リンク順で描画 (= 兄弟順 = 保存順)
-    EntityID r = world.FirstRoot();
-    while (!r.IsNull()) {
-        auto* rh = world.GetComponent<HierarchyComponent>(r);
-        const EntityID next = rh ? rh->nextSibling : kNullEntity;
-        DrawEntityNode(ctx, world, r, selection, undo);
-        r = next;
+    // 検索ボックス
+    ImGui::SetNextItemWidth(-1);
+    ImGui::InputTextWithHint("##search", "Search...", searchBuf_, sizeof(searchBuf_));
+    ImGui::Separator();
+
+    // F2: 選択エンティティのインラインリネーム開始
+    if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)
+        && ImGui::IsKeyPressed(ImGuiKey_F2, false) && selection.primary != 0 && renamingFid_ == 0) {
+        renamingFid_ = selection.primary;
+        renameFocus_ = true;
+        undo.BeginRecord("Rename", selection);
+        undo.CaptureBefore(*ctx.scene, renamingFid_);
+    }
+
+    if (searchBuf_[0] != '\0') {
+        DrawFiltered(ctx, world, selection);
+    } else {
+        // ルート (parent 無し) を firstRoot リンク順で描画 (= 兄弟順 = 保存順)
+        EntityID r = world.FirstRoot();
+        while (!r.IsNull()) {
+            auto* rh = world.GetComponent<HierarchyComponent>(r);
+            const EntityID next = rh ? rh->nextSibling : kNullEntity;
+            DrawEntityNode(ctx, world, r, selection, undo);
+            r = next;
+        }
     }
 
     // 空き領域: 背景コンテキストメニュー + ルート化ドロップ
@@ -97,6 +117,49 @@ void HierarchyWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
     ImGui::End();
 }
 
+void HierarchyWindow::ApplyClick(EngineContext& ctx, EntityID e, Selection& selection)
+{
+    const uint64_t fid = ctx.scene->EnsureFileId(e);
+    const ImGuiIO& io = ImGui::GetIO();
+    if (io.KeyCtrl) {
+        selection.Toggle(fid);
+    } else if (io.KeyShift) {
+        selection.Add(fid);
+    } else {
+        selection.SelectOnly(fid);
+    }
+}
+
+void HierarchyWindow::DrawFiltered(EngineContext& ctx, World& world, Selection& selection)
+{
+    // 検索中は名前部分一致 (大文字小文字無視) のフラット表示
+    std::string needle = searchBuf_;
+    for (char& c : needle) {
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+    const ComponentTypeId req[] = { NameComponent::sTypeId };
+    world.ForEachArchetype(req, [&](Archetype& arch) {
+        for (uint32_t row = 0; row < arch.Count(); ++row) {
+            const EntityID e = arch.EntityAt(row);
+            std::string name = world.GetName(e);
+            std::string lower = name;
+            for (char& c : lower) {
+                c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            }
+            if (lower.find(needle) == std::string::npos) {
+                continue;
+            }
+            const uint64_t fid = FidOf(world, e);
+            ImGui::PushID(static_cast<int>(e.index));
+            const bool sel = (fid != 0 && selection.Contains(fid));
+            if (ImGui::Selectable(name.c_str(), sel)) {
+                ApplyClick(ctx, e, selection);
+            }
+            ImGui::PopID();
+        }
+    });
+}
+
 void HierarchyWindow::DrawEntityNode(EngineContext& ctx, World& world, EntityID e,
                                      Selection& selection, UndoStack& undo)
 {
@@ -107,6 +170,30 @@ void HierarchyWindow::DrawEntityNode(EngineContext& ctx, World& world, EntityID 
     const bool leaf = (h == nullptr) || h->firstChild.IsNull();
     const uint64_t fid = FidOf(world, e);
 
+    ImGui::PushID(static_cast<int>(e.index));
+
+    // インラインリネーム中はこのノードを InputText に置き換える
+    if (fid != 0 && fid == renamingFid_) {
+        if (auto* nc = world.GetComponent<NameComponent>(e)) {
+            if (renameFocus_) {
+                ImGui::SetKeyboardFocusHere();
+                renameFocus_ = false;
+            }
+            ImGui::SetNextItemWidth(-1);
+            ImGui::InputText("##rename", nc->value, sizeof(nc->value),
+                             ImGuiInputTextFlags_AutoSelectAll | ImGuiInputTextFlags_EnterReturnsTrue);
+            if (ImGui::IsItemDeactivated()) {
+                undo.CaptureAfter(*ctx.scene, renamingFid_);
+                undo.EndRecord(selection);
+                renamingFid_ = 0;
+            }
+        } else {
+            renamingFid_ = 0;
+        }
+        ImGui::PopID();
+        return;
+    }
+
     ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick
         | ImGuiTreeNodeFlags_SpanAvailWidth;
     if (leaf) {
@@ -116,16 +203,10 @@ void HierarchyWindow::DrawEntityNode(EngineContext& ctx, World& world, EntityID 
         flags |= ImGuiTreeNodeFlags_Selected;
     }
 
-    ImGui::PushID(static_cast<int>(e.index));
     const bool open = ImGui::TreeNodeEx("##node", flags, "%s", world.GetName(e));
 
     if (ImGui::IsItemClicked(ImGuiMouseButton_Left) && !ImGui::IsItemToggledOpen()) {
-        const uint64_t clicked = ctx.scene->EnsureFileId(e);
-        if (ImGui::GetIO().KeyCtrl) {
-            selection.Toggle(clicked); // Ctrl+クリックで追加/解除 (マルチ選択)
-        } else {
-            selection.SelectOnly(clicked);
-        }
+        ApplyClick(ctx, e, selection);
     }
 
     if (ImGui::BeginPopupContextItem("##entity_ctx")) {

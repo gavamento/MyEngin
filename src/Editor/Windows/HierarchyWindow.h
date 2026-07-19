@@ -16,6 +16,12 @@ public:
 private:
     void DrawEntityNode(EngineContext& ctx, World& world, EntityID e, Selection& selection,
                         UndoStack& undo);
+    void DrawFiltered(EngineContext& ctx, World& world, Selection& selection);
+    void ApplyClick(EngineContext& ctx, EntityID e, Selection& selection); // 修飾キーで選択更新
+
+    char searchBuf_[64] = {};
+    uint64_t renamingFid_ = 0; // インラインリネーム中の fileId (0 = なし)
+    bool renameFocus_ = false;
 };
 
 } // namespace mye

@@ -170,6 +170,40 @@ bool RunSceneSerializerSelfTest()
         check(before == after, "sibling order round-trips through save/load");
     }
 
+    // ---- CloneSubtree: 複製で新 fileId 採番 + 値一致 (M10) ----
+    {
+        Scene s4;
+        GameObject p = s4.CreateGameObjectTracked("CloneParent");
+        p.SetLocalPosition(5.0f, 0.0f, 0.0f);
+        GameObject c = s4.CreateGameObjectTracked("CloneChild");
+        c.SetParent(p);
+        c.SetLocalPosition(1.0f, 2.0f, 3.0f);
+        s4.GetWorld().ApplyStructuralChanges();
+        const uint64_t pFid = s4.GetWorld().GetComponent<FileIdComponent>(p.Id())->value;
+        const uint32_t beforeCount = s4.GetWorld().AliveCount();
+
+        const nlohmann::json sub = SceneSerializer::SubtreeToJson(s4, p.Id());
+        const std::vector<uint64_t> roots = SceneSerializer::CloneSubtree(s4, sub);
+
+        check(s4.GetWorld().AliveCount() == beforeCount + 2, "clone added parent+child (2)");
+        check(roots.size() == 1 && roots[0] != 0 && roots[0] != pFid, "clone root has new fileId");
+        GameObject clone = s4.FindByFileId(roots.empty() ? 0 : roots[0]);
+        bool cloneOk = static_cast<bool>(clone);
+        if (cloneOk) {
+            auto* lt = clone.GetComponent<LocalTransform>();
+            cloneOk = lt && lt->position.x == 5.0f;
+            auto* ch = s4.GetWorld().GetComponent<HierarchyComponent>(clone.Id());
+            if (ch && !ch->firstChild.IsNull()) {
+                GameObject childGo(&s4.GetWorld(), ch->firstChild);
+                auto* clt = childGo.GetComponent<LocalTransform>();
+                cloneOk = cloneOk && clt && clt->position.y == 2.0f;
+            } else {
+                cloneOk = false;
+            }
+        }
+        check(cloneOk, "clone parent+child values match original");
+    }
+
     if (failCount == 0) {
         MYE_LOG_INFO("==== Scene serializer self test: ALL PASS ====");
         return true;

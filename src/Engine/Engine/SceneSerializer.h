@@ -1,5 +1,6 @@
 #pragma once
 #include <string>
+#include <vector>
 
 #include "nlohmann/json.hpp"
 
@@ -41,6 +42,11 @@ nlohmann::json SubtreeToJson(Scene& scene, EntityID root);    // root + 子孫 (
 // **ApplyDiff と違い incoming に無いエンティティは破棄しない** — Undo/Redo・コピペ・プレハブ展開用。
 // 兄弟位置は childIndex で復元。EntityRef/親は fileId で再解決 (incoming 優先、次にシーン内検索)
 bool ApplyPartial(Scene& scene, const nlohmann::json& entities);
+
+// subtree (SubtreeToJson の出力配列) を新しい fileId 群で複製してシーンに生成する (複製/コピペ)。
+// 集合内の parent / EntityRef 参照は新 fileId に付け替え、集合外への参照は維持する。
+// 生成した「トップレベル」(集合内に親を持たない) エンティティの新 fileId を返す (複製後の選択に使う)
+std::vector<uint64_t> CloneSubtree(Scene& scene, const nlohmann::json& subtree);
 
 } // namespace SceneSerializer
 } // namespace mye

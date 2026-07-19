@@ -521,6 +521,69 @@ bool ApplyPartial(Scene& scene, const json& entities)
     return true;
 }
 
+std::vector<uint64_t> CloneSubtree(Scene& scene, const json& subtree)
+{
+    std::vector<uint64_t> newRoots;
+    if (!subtree.is_array() || subtree.empty()) {
+        return newRoots;
+    }
+    const ComponentRegistry& reg = ComponentRegistry::Get();
+
+    // old fileId → new fileId (集合内の全エンティティに新採番)
+    std::unordered_map<uint64_t, uint64_t> remap;
+    for (const json& item : subtree) {
+        const uint64_t old = item.value("fileId", 0ull);
+        if (old != 0) {
+            remap[old] = scene.NextFileId();
+        }
+    }
+
+    json out = json::array();
+    for (const json& item : subtree) {
+        json ni = item;
+        const uint64_t old = item.value("fileId", 0ull);
+        if (auto it = remap.find(old); it != remap.end()) {
+            ni["fileId"] = it->second;
+        }
+        bool topLevel = true;
+        if (item.contains("parent")) {
+            const uint64_t p = item.value("parent", 0ull);
+            if (auto it = remap.find(p); it != remap.end()) {
+                ni["parent"] = it->second; // 集合内 → 新 fileId に付け替え
+                topLevel = false;
+            }
+            // 集合外の親はそのまま維持 (複製は元と同じ親の兄弟になる)
+        }
+        // EntityRef フィールドを付け替え (集合内なら新 fileId、集合外なら維持)
+        if (ni.contains("components")) {
+            for (auto& [compName, fields] : ni["components"].items()) {
+                const ComponentTypeId t = reg.FindByName(compName);
+                if (t == kInvalidComponentType) {
+                    continue;
+                }
+                for (const FieldDesc& f : reg.Desc(t).fields) {
+                    if (f.type != FieldType::EntityRef || !fields.contains(f.name)) {
+                        continue;
+                    }
+                    const json& v = fields[f.name];
+                    if (v.is_number_unsigned() || v.is_number_integer()) {
+                        if (auto it = remap.find(v.get<uint64_t>()); it != remap.end()) {
+                            fields[f.name] = it->second;
+                        }
+                    }
+                }
+            }
+        }
+        if (topLevel && old != 0) {
+            newRoots.push_back(remap[old]);
+        }
+        out.push_back(std::move(ni));
+    }
+
+    ApplyPartial(scene, out);
+    return newRoots;
+}
+
 bool SaveToFile(Scene& scene, const std::wstring& path)
 {
     const json root = SaveToJson(scene);

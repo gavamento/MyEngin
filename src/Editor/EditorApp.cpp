@@ -1,6 +1,8 @@
 #include "Editor/EditorApp.h"
 
+#include <algorithm>
 #include <filesystem>
+#include <vector>
 
 #include <Windows.h>
 #include <commdlg.h>
@@ -222,7 +224,7 @@ void EditorApp::HandleShortcuts(EngineContext& ctx)
     if (shortcuts_.Pressed(Shortcut::Save)) {
         SaveCurrentScene(ctx);
     }
-    // Undo/Redo は編集モードのみ (Play 中の変更は Stop で破棄されるため)
+    // Undo/Redo・編集操作は編集モードのみ (Play 中の変更は Stop で破棄されるため)
     if (playMode_.State() == PlayState::Editing) {
         if (shortcuts_.Pressed(Shortcut::Undo)) {
             undo_.Undo(*ctx.scene, selection_);
@@ -230,6 +232,21 @@ void EditorApp::HandleShortcuts(EngineContext& ctx)
         if (shortcuts_.Pressed(Shortcut::Redo)
             || ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_Z)) {
             undo_.Redo(*ctx.scene, selection_);
+        }
+        if (shortcuts_.Pressed(Shortcut::Duplicate)) {
+            DuplicateSelection(ctx);
+        }
+        if (shortcuts_.Pressed(Shortcut::Copy)) {
+            CopySelection(ctx);
+        }
+        if (shortcuts_.Pressed(Shortcut::Cut)) {
+            CutSelection(ctx);
+        }
+        if (shortcuts_.Pressed(Shortcut::Paste)) {
+            PasteClipboard(ctx);
+        }
+        if (shortcuts_.Pressed(Shortcut::Delete)) {
+            DeleteSelection(ctx);
         }
     }
 }
@@ -241,6 +258,95 @@ void EditorApp::SaveCurrentScene(EngineContext& ctx)
         settings_.lastScenePath = WideToUtf8(scenePath_);
         settings_.Save();
     }
+}
+
+nlohmann::json EditorApp::GatherSelectionSubtrees(EngineContext& ctx)
+{
+    nlohmann::json out = nlohmann::json::array();
+    std::vector<uint64_t> seen;
+    for (uint64_t fid : selection_.ids) {
+        GameObject g = ctx.scene->FindByFileId(fid);
+        if (!g) {
+            continue;
+        }
+        nlohmann::json sub = SceneSerializer::SubtreeToJson(*ctx.scene, g.Id());
+        for (auto& item : sub) {
+            const uint64_t f = item.value("fileId", 0ull);
+            if (f != 0 && std::find(seen.begin(), seen.end(), f) != seen.end()) {
+                continue; // 親と子を同時選択した場合の重複を除く
+            }
+            if (f != 0) {
+                seen.push_back(f);
+            }
+            out.push_back(std::move(item));
+        }
+    }
+    return out;
+}
+
+void EditorApp::DuplicateSelection(EngineContext& ctx)
+{
+    if (selection_.Empty()) {
+        return;
+    }
+    const nlohmann::json subtrees = GatherSelectionSubtrees(ctx);
+    if (subtrees.empty()) {
+        return;
+    }
+    undo_.BeginRecord("Duplicate", selection_);
+    const std::vector<uint64_t> newRoots = SceneSerializer::CloneSubtree(*ctx.scene, subtrees);
+    ctx.scene->GetWorld().ApplyStructuralChanges();
+    selection_.Clear();
+    for (uint64_t f : newRoots) {
+        selection_.Add(f);
+        undo_.CaptureAfter(*ctx.scene, f);
+    }
+    undo_.EndRecord(selection_);
+}
+
+void EditorApp::CopySelection(EngineContext& ctx)
+{
+    clipboard_ = GatherSelectionSubtrees(ctx);
+}
+
+void EditorApp::CutSelection(EngineContext& ctx)
+{
+    CopySelection(ctx);
+    DeleteSelection(ctx);
+}
+
+void EditorApp::PasteClipboard(EngineContext& ctx)
+{
+    if (!clipboard_.is_array() || clipboard_.empty()) {
+        return;
+    }
+    undo_.BeginRecord("Paste", selection_);
+    const std::vector<uint64_t> newRoots = SceneSerializer::CloneSubtree(*ctx.scene, clipboard_);
+    ctx.scene->GetWorld().ApplyStructuralChanges();
+    selection_.Clear();
+    for (uint64_t f : newRoots) {
+        selection_.Add(f);
+        undo_.CaptureAfter(*ctx.scene, f);
+    }
+    undo_.EndRecord(selection_);
+}
+
+void EditorApp::DeleteSelection(EngineContext& ctx)
+{
+    if (selection_.Empty()) {
+        return;
+    }
+    undo_.BeginRecord("Delete", selection_);
+    for (uint64_t fid : selection_.ids) {
+        GameObject g = ctx.scene->FindByFileId(fid);
+        if (g) {
+            undo_.CaptureBefore(*ctx.scene, fid);
+            ctx.scene->GetWorld().DestroyEntity(g.Id());
+        }
+    }
+    ctx.scene->GetWorld().ApplyStructuralChanges();
+    selection_.Clear();
+    undo_.EndRecord(selection_); // CaptureAfter 無し → destroyed 扱い
 }
 
 void EditorApp::SetupDockLayout(unsigned int dockspaceId)
