@@ -23,6 +23,9 @@
     <ClCompile Include="..\src\Editor\Windows\AssetBrowserWindow.cpp">
       <Filter>Windows</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Editor\Windows\BuildSettingsWindow.cpp">
+      <Filter>Windows</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Editor\Windows\ConsoleWindow.cpp">
       <Filter>Windows</Filter>
     </ClCompile>
@@ -41,7 +44,13 @@
     <ClCompile Include="..\src\Editor\Windows\ProfilerWindow.cpp">
       <Filter>Windows</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Editor\Windows\ProjectSettingsWindow.cpp">
+      <Filter>Windows</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Editor\Windows\SceneViewWindow.cpp">
+      <Filter>Windows</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Windows\SearchWindow.cpp">
       <Filter>Windows</Filter>
     </ClCompile>
     <ClInclude Include="..\src\Editor\EditorApp.h" />
@@ -57,6 +66,9 @@
       <Filter>Windows</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\Windows\AssetBrowserWindow.h">
+      <Filter>Windows</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Windows\BuildSettingsWindow.h">
       <Filter>Windows</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\Windows\ConsoleWindow.h">
@@ -77,7 +89,13 @@
     <ClInclude Include="..\src\Editor\Windows\ProfilerWindow.h">
       <Filter>Windows</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Editor\Windows\ProjectSettingsWindow.h">
+      <Filter>Windows</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Editor\Windows\SceneViewWindow.h">
+      <Filter>Windows</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Windows\SearchWindow.h">
       <Filter>Windows</Filter>
     </ClInclude>
   </ItemGroup>

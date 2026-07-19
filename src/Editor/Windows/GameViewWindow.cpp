@@ -1,6 +1,7 @@
 #include "Editor/Windows/GameViewWindow.h"
 
 #include <algorithm>
+#include <cstdio>
 
 #include "Engine/Engine/RenderSystem.h"
 #include "Engine/Engine/Scene.h"
@@ -31,7 +32,6 @@ void GameViewWindow::OnRenderViews(EngineContext& ctx)
 
 void GameViewWindow::OnImGui(EngineContext& ctx)
 {
-    (void)ctx;
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
     const bool visible = ImGui::Begin("Game");
     ImGui::PopStyleVar();
@@ -39,17 +39,55 @@ void GameViewWindow::OnImGui(EngineContext& ctx)
         ImGui::End();
         return;
     }
+
+    // ---- ツールバー (アスペクト比 / 統計オーバーレイ) ----
+    static const char* kAspects[] = { "Free", "16:9", "4:3", "1:1" };
+    ImGui::SetNextItemWidth(90);
+    ImGui::Combo("##aspect", &aspectMode_, kAspects, IM_ARRAYSIZE(kAspects));
+    ImGui::SameLine();
+    ImGui::Checkbox("Stats", &showStats_);
+    ImGui::Separator();
+
     const ImVec2 avail = ImGui::GetContentRegionAvail();
-    desiredW_ = static_cast<int>(std::max(avail.x, 16.0f));
-    desiredH_ = static_cast<int>(std::max(avail.y, 16.0f));
+    // 目標アスペクトに合わせてレターボックス (Free は avail 全体)
+    float ratio = 0.0f;
+    switch (aspectMode_) {
+    case 1: ratio = 16.0f / 9.0f; break;
+    case 2: ratio = 4.0f / 3.0f; break;
+    case 3: ratio = 1.0f; break;
+    default: break;
+    }
+    ImVec2 imgSize = avail;
+    if (ratio > 0.0f && avail.x > 1 && avail.y > 1) {
+        if (avail.x / avail.y > ratio) {
+            imgSize = ImVec2(avail.y * ratio, avail.y); // 横に余白
+        } else {
+            imgSize = ImVec2(avail.x, avail.x / ratio); // 縦に余白
+        }
+    }
+    desiredW_ = static_cast<int>(std::max(imgSize.x, 16.0f));
+    desiredH_ = static_cast<int>(std::max(imgSize.y, 16.0f));
 
     if (rt_.IsValid()) {
-        ImGui::Image(reinterpret_cast<ImTextureID>(rt_.SRV()), avail);
+        // レターボックス: 余白分だけカーソルを中央寄せ
+        const ImVec2 cursor = ImGui::GetCursorScreenPos();
+        const ImVec2 off((avail.x - imgSize.x) * 0.5f, (avail.y - imgSize.y) * 0.5f);
+        ImGui::SetCursorScreenPos(ImVec2(cursor.x + off.x, cursor.y + off.y));
+        const ImVec2 imgPos = ImGui::GetCursorScreenPos();
+        ImGui::Image(reinterpret_cast<ImTextureID>(rt_.SRV()), imgSize);
+
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        if (showStats_) {
+            const ImGuiIO& io = ImGui::GetIO();
+            char buf[128];
+            snprintf(buf, sizeof(buf), "%.0f fps  %.2f ms\n%u entities  tick %llu", io.Framerate,
+                     1000.0f / io.Framerate, ctx.scene->GetWorld().AliveCount(),
+                     static_cast<unsigned long long>(ctx.tickIndex));
+            dl->AddText(ImVec2(imgPos.x + 8, imgPos.y + 6), IM_COL32(120, 255, 140, 255), buf);
+        }
         if (!hasCamera_) {
-            const ImVec2 pos = ImGui::GetWindowPos();
-            ImGui::GetWindowDrawList()->AddText(
-                ImVec2(pos.x + avail.x * 0.5f - 60.0f, pos.y + avail.y * 0.5f),
-                IM_COL32(255, 200, 80, 255), "No CameraComponent in scene");
+            dl->AddText(ImVec2(imgPos.x + imgSize.x * 0.5f - 60.0f, imgPos.y + imgSize.y * 0.5f),
+                        IM_COL32(255, 200, 80, 255), "No CameraComponent in scene");
         }
     }
     ImGui::End();

@@ -10,13 +10,16 @@
 #include "Editor/Undo/UndoStack.h"
 #include "Editor/Windows/AnimationWindow.h"
 #include "Editor/Windows/AssetBrowserWindow.h"
+#include "Editor/Windows/BuildSettingsWindow.h"
 #include "Editor/Windows/ConsoleWindow.h"
 #include "Editor/Windows/GameViewWindow.h"
 #include "Editor/Windows/HierarchyWindow.h"
 #include "Editor/Windows/InspectorWindow.h"
 #include "Editor/Windows/ParticleSettingsWindow.h"
 #include "Editor/Windows/ProfilerWindow.h"
+#include "Editor/Windows/ProjectSettingsWindow.h"
 #include "Editor/Windows/SceneViewWindow.h"
+#include "Editor/Windows/SearchWindow.h"
 #include "Engine/Engine/EngineLoop.h"
 #include "Engine/Engine/GameObject.h"
 
@@ -68,6 +71,9 @@ private:
     ProfilerWindow profiler_;
     AssetBrowserWindow assetBrowser_;
     AnimationWindow animation_;
+    SearchWindow search_;
+    ProjectSettingsWindow projectSettings_;
+    BuildSettingsWindow buildSettings_;
 
     nlohmann::json clipboard_; // コピー/カットしたサブツリー群 (SubtreeToJson 形式の配列)
     std::wstring scenePath_;

@@ -100,6 +100,9 @@ void EditorApp::OnImGui(EngineContext& ctx)
     profiler_.OnImGui(ctx);
     assetBrowser_.OnImGui(ctx, selection_, undo_);
     animation_.OnImGui(ctx, selection_, undo_);
+    search_.OnImGui(ctx, selection_);
+    projectSettings_.OnImGui(ctx, settings_, shortcuts_);
+    buildSettings_.OnImGui(ctx);
 
     // ピッキング自動テスト (--pick-test): 指定フレームでビュー中心を選択できるか検証
     if (pickTestFrame >= 0 && static_cast<int64_t>(ctx.frameIndex) == pickTestFrame) {
@@ -152,6 +155,13 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
         }
         if (ImGui::MenuItem("Save Scene As...")) {
             SaveSceneAs(ctx);
+        }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Build Settings...")) {
+            buildSettings_.open = true;
+        }
+        if (ImGui::MenuItem("Project Settings...")) {
+            projectSettings_.open = true;
         }
         ImGui::Separator();
         if (ImGui::MenuItem("Exit")) {
@@ -370,6 +380,7 @@ void EditorApp::SetupDockLayout(unsigned int dockspaceId)
     const ImGuiID rightTop = ImGui::DockBuilderSplitNode(rightBottom, ImGuiDir_Up, 0.7f, nullptr, &rightBottom);
 
     ImGui::DockBuilderDockWindow("Hierarchy", left);
+    ImGui::DockBuilderDockWindow("Search", left);
     ImGui::DockBuilderDockWindow("Inspector", rightTop);
     ImGui::DockBuilderDockWindow("Stats", rightBottom);
     ImGui::DockBuilderDockWindow("Particle Settings", rightBottom);

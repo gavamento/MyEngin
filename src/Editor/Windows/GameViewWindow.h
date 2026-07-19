@@ -15,6 +15,8 @@ private:
     int desiredW_ = 0;
     int desiredH_ = 0;
     bool hasCamera_ = false;
+    int aspectMode_ = 0;    // 0=Free 1=16:9 2=4:3 3=1:1 (レターボックス)
+    bool showStats_ = true; // 統計オーバーレイ (FPS/entities/tick)
 };
 
 } // namespace mye
