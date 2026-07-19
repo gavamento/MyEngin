@@ -18,6 +18,7 @@ class ScriptHost;
 class DllReloader;
 class ParticleSystem;
 class PrefabLibrary;
+class AnimationLibrary;
 struct RenderResources;
 
 struct EngineConfig {
@@ -68,6 +69,7 @@ struct EngineContext {
     DllReloader* dllReloader = nullptr;
     ParticleSystem* particles = nullptr;
     PrefabLibrary* prefabs = nullptr;   // 登録済みプレハブ (.prefab.json) — Editor / ReloadHub が使う
+    AnimationLibrary* anims = nullptr;  // 登録済み AnimationClip (.anim.json)
     std::wstring assetsRoot;            // assets\ の絶対パス
     InputSnapshot input = {}; // 現フレームのスナップショット (tick 中も同一)
     // この tick でスクリプト層 (フェーズ 3/5) を実行するか。

@@ -38,6 +38,7 @@
     <ClCompile Include="..\src\Editor\PlayModeController.cpp" />
     <ClCompile Include="..\src\Editor\Undo\UndoStack.cpp" />
     <ClCompile Include="..\src\Editor\UndoSelfTest.cpp" />
+    <ClCompile Include="..\src\Editor\Windows\AnimationWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\AssetBrowserWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\ConsoleWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\GameViewWindow.cpp" />
@@ -53,6 +54,7 @@
     <ClInclude Include="..\src\Editor\ShortcutHub.h" />
     <ClInclude Include="..\src\Editor\Undo\UndoStack.h" />
     <ClInclude Include="..\src\Editor\UndoSelfTest.h" />
+    <ClInclude Include="..\src\Editor\Windows\AnimationWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\AssetBrowserWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\ConsoleWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\GameViewWindow.h" />

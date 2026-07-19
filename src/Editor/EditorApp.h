@@ -8,6 +8,7 @@
 #include "Editor/Selection.h"
 #include "Editor/ShortcutHub.h"
 #include "Editor/Undo/UndoStack.h"
+#include "Editor/Windows/AnimationWindow.h"
 #include "Editor/Windows/AssetBrowserWindow.h"
 #include "Editor/Windows/ConsoleWindow.h"
 #include "Editor/Windows/GameViewWindow.h"
@@ -40,6 +41,7 @@ public:
 private:
     void RegisterDemoResources(EngineContext& ctx); // メッシュ/マテリアル/モデル登録 (毎回)
     void RegisterPrefabs(EngineContext& ctx);       // assets\prefabs\*.prefab.json をライブラリに登録
+    void RegisterAnimations(EngineContext& ctx);    // assets\**\*.anim.json をライブラリに登録
     void BuildDemoEntities(EngineContext& ctx);     // エンティティ構築 (シーンファイルが無い時のみ)
     void DrawMainMenuBar(EngineContext& ctx);
     void HandleShortcuts(EngineContext& ctx);
@@ -68,6 +70,7 @@ private:
     ParticleSettingsWindow particleSettings_;
     ProfilerWindow profiler_;
     AssetBrowserWindow assetBrowser_;
+    AnimationWindow animation_;
 
     nlohmann::json clipboard_; // コピー/カットしたサブツリー群 (SubtreeToJson 形式の配列)
     std::wstring scenePath_;

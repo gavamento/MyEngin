@@ -10,6 +10,7 @@
 #include "Engine/Core/ComponentRegistry.h"
 #include "Engine/Core/Components.h"
 #include "Engine/Core/World.h"
+#include "Engine/Engine/Animation.h"
 #include "Engine/Engine/GameObject.h"
 #include "Engine/Engine/Prefab.h"
 #include "Engine/Engine/Scene.h"
@@ -347,6 +348,10 @@ void InspectorWindow::DrawAssetRef(EngineContext& ctx, const FieldDesc& field, v
         entries = ctx.resources->materials.Enumerate();
     } else if (fname.find("tex") != std::string::npos) {
         entries = ctx.resources->textures.Enumerate();
+    } else if (fname.find("clip") != std::string::npos || fname.find("anim") != std::string::npos) {
+        for (const AnimClipEntry& c : ctx.anims->Enumerate()) {
+            entries.push_back({ AssetID{ c.hash }, c.name });
+        }
     } else {
         entries = ctx.resources->meshes.Enumerate();
         const auto mats = ctx.resources->materials.Enumerate();

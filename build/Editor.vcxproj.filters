@@ -17,6 +17,9 @@
       <Filter>Undo</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Editor\UndoSelfTest.cpp" />
+    <ClCompile Include="..\src\Editor\Windows\AnimationWindow.cpp">
+      <Filter>Windows</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Editor\Windows\AssetBrowserWindow.cpp">
       <Filter>Windows</Filter>
     </ClCompile>
@@ -50,6 +53,9 @@
       <Filter>Undo</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\UndoSelfTest.h" />
+    <ClInclude Include="..\src\Editor\Windows\AnimationWindow.h">
+      <Filter>Windows</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Editor\Windows\AssetBrowserWindow.h">
       <Filter>Windows</Filter>
     </ClInclude>

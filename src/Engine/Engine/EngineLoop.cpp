@@ -3,6 +3,7 @@
 #include "Engine/Core/Check.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Core/Profiler.h"
+#include "Engine/Engine/Animation.h"
 #include "Engine/Engine/CollisionSystem.h"
 #include "Engine/Engine/HotReload/DllReloader.h"
 #include "Engine/Engine/HotReload/ReloadHub.h"
@@ -59,6 +60,8 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     ParticleSystem particleSystem;
     CollisionSystem collisionSystem;
     PrefabLibrary prefabLibrary;
+    AnimationLibrary animLibrary;
+    AnimationSystem animationSystem;
     IRenderPath* activePath = &forwardPath;
 
     // ---- 起動 ----
@@ -92,7 +95,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     if (!deferredPath.Init(device, shaderManager)) {
         return 1;
     }
-    reloadHub.Init(&shaderManager, &resources, &scene, &prefabLibrary, assetsRoot);
+    reloadHub.Init(&shaderManager, &resources, &scene, &prefabLibrary, &animLibrary, assetsRoot);
     particleSystem.Init(device, shaderManager, assetsRoot);
 
     // GameLogic.dll (スクリプト層)。エンジンの exe と同じ構成のビルド出力を監視する
@@ -122,6 +125,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     ctx.dllReloader = &dllReloader;
     ctx.particles = &particleSystem;
     ctx.prefabs = &prefabLibrary;
+    ctx.anims = &animLibrary;
     ctx.assetsRoot = assetsRoot;
     ctx.fixedDt = static_cast<float>(kFixedDt);
 
@@ -190,6 +194,13 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             if (runScripts) {
                 scriptHost.SetTickContext(ctx.input, ctx.tickIndex, ctx.fixedDt);
                 scriptHost.RunStartAndUpdate();
+            }
+            // ---- アニメーション (フェーズ 3.5): スクリプト後・Transform 前に LocalTransform を確定 ----
+            // Play 中のみ進行 (編集時は Animation 窓が明示サンプリングする)。
+            // AnimatorComponent 非存在シーンでは完全 no-op = 既存シーンのリプレイ不変
+            if (ctx.simulateScripts) {
+                MYE_PROFILE_SCOPE("animation");
+                animationSystem.Update(scene.GetWorld(), animLibrary);
             }
             // ---- フェーズ 4: システム層 ----
             // Transform を先に確定 (エミッタ/コライダのワールド位置は tick 決定論の一部)

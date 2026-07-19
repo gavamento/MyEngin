@@ -40,6 +40,7 @@ void EditorApp::OnStart(EngineContext& ctx)
     // (パスベースの完全なアセット解決は AssetManager の将来拡張)
     RegisterDemoResources(ctx);
     RegisterPrefabs(ctx); // シーンロード前に登録 (オーバーライド解決がライブラリを参照するため)
+    RegisterAnimations(ctx);
     if (std::filesystem::exists(scenePath_)) {
         SceneSerializer::LoadFromFile(*ctx.scene, scenePath_);
     } else {
@@ -97,6 +98,7 @@ void EditorApp::OnImGui(EngineContext& ctx)
     particleSettings_.OnImGui(ctx);
     profiler_.OnImGui(ctx);
     assetBrowser_.OnImGui(ctx, selection_, undo_);
+    animation_.OnImGui(ctx, selection_, undo_);
 
     // ピッキング自動テスト (--pick-test): 指定フレームでビュー中心を選択できるか検証
     if (pickTestFrame >= 0 && static_cast<int64_t>(ctx.frameIndex) == pickTestFrame) {
@@ -373,6 +375,7 @@ void EditorApp::SetupDockLayout(unsigned int dockspaceId)
     ImGui::DockBuilderDockWindow("Profiler", rightBottom);
     ImGui::DockBuilderDockWindow("Console", bottom);
     ImGui::DockBuilderDockWindow("Assets", bottomRight);
+    ImGui::DockBuilderDockWindow("Animation", bottom);
     ImGui::DockBuilderDockWindow("Scene", center);
     ImGui::DockBuilderDockWindow("Game", center);
     ImGui::DockBuilderFinish(dockspaceId);
@@ -477,6 +480,29 @@ void EditorApp::RegisterPrefabs(EngineContext& ctx)
     }
     if (count > 0) {
         MYE_LOG_INFO("registered %d prefab(s)", count);
+    }
+}
+
+void EditorApp::RegisterAnimations(EngineContext& ctx)
+{
+    std::error_code ec;
+    if (!std::filesystem::is_directory(ctx.assetsRoot, ec)) {
+        return;
+    }
+    int count = 0;
+    for (const auto& e : std::filesystem::recursive_directory_iterator(ctx.assetsRoot, ec)) {
+        if (!e.is_regular_file()) {
+            continue;
+        }
+        const std::wstring p = e.path().wstring();
+        if (p.size() >= 10 && p.compare(p.size() - 10, 10, L".anim.json") == 0) {
+            if (ctx.anims->LoadFromFile(p) != 0) {
+                ++count;
+            }
+        }
+    }
+    if (count > 0) {
+        MYE_LOG_INFO("registered %d animation clip(s)", count);
     }
 }
 

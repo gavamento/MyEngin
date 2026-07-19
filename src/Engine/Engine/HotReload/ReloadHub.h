@@ -9,6 +9,7 @@ namespace mye {
 class ShaderManager;
 class Scene;
 class PrefabLibrary;
+class AnimationLibrary;
 struct RenderResources;
 
 // ホットリロードの司令塔 (engine_spec.md 8 章)。
@@ -17,7 +18,7 @@ struct RenderResources;
 class ReloadHub {
 public:
     bool Init(ShaderManager* shaders, RenderResources* resources, Scene* scene,
-              PrefabLibrary* prefabs, const std::wstring& assetsRoot);
+              PrefabLibrary* prefabs, AnimationLibrary* anims, const std::wstring& assetsRoot);
     void Shutdown();
 
     // 現在編集中のシーンファイル (このファイルの外部編集だけ差分適用する)
@@ -35,6 +36,7 @@ private:
     RenderResources* resources_ = nullptr;
     Scene* scene_ = nullptr;
     PrefabLibrary* prefabs_ = nullptr;
+    AnimationLibrary* anims_ = nullptr;
     std::wstring activeSceneNorm_;
     uint64_t reloadCount_ = 0;
 

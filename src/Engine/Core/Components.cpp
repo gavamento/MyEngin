@@ -108,6 +108,15 @@ void RegisterBuiltinComponents()
     RegisterComponent<PrefabLinkComponent>("PrefabLink", {
         MYE_FIELD_FLAGS(PrefabLinkComponent, localId, UInt64, kFieldReadOnly),
     }, kComponentHidden);
+
+    // M14: アニメータ。無ければ何もしない (opt-in) ので既存シーンは不変
+    RegisterComponent<AnimatorComponent>("Animator", {
+        MYE_FIELD(AnimatorComponent, clip, AssetRef),
+        MYE_FIELD_FLAGS(AnimatorComponent, timeTicks, Int32, kFieldReadOnly),
+        MYE_FIELD(AnimatorComponent, speed, Int32),
+        MYE_FIELD(AnimatorComponent, loop, Int32),
+        MYE_FIELD(AnimatorComponent, playing, Int32),
+    });
 }
 
 } // namespace mye

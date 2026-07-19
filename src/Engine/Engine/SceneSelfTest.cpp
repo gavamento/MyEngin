@@ -10,6 +10,7 @@
 #include "Engine/Core/Log.h"
 #include "Engine/Core/Profiler.h"
 #include "Engine/Core/World.h"
+#include "Engine/Engine/Animation.h"
 #include "Engine/Engine/GameObject.h"
 #include "Engine/Engine/Prefab.h"
 #include "Engine/Engine/Replay/WorldHasher.h"
@@ -410,6 +411,92 @@ bool RunSceneSerializerSelfTest()
             check(p2 && !refChild.IsNull() && p2->target == refChild,
                   "instantiate remaps EntityRef to instance child (stage 2)");
         }
+    }
+
+    // ---- アニメーション (M14) ----
+    {
+        auto mkkey = [](int t, std::vector<float> v) {
+            nlohmann::json k;
+            k["t"] = t;
+            k["v"] = v;
+            return k;
+        };
+        // position: linear [0,0,0]@0 -> [10,0,0]@10 / scale: step [1,1,1]@0 -> [2,2,2]@5
+        nlohmann::json cj;
+        cj["name"] = "t";
+        cj["lengthTicks"] = 10;
+        nlohmann::json tPos;
+        tPos["target"] = 0;
+        tPos["component"] = "LocalTransform";
+        tPos["field"] = "position";
+        tPos["interp"] = "linear";
+        tPos["keys"] = nlohmann::json::array({ mkkey(0, { 0, 0, 0 }), mkkey(10, { 10, 0, 0 }) });
+        nlohmann::json tScl;
+        tScl["target"] = 0;
+        tScl["component"] = "LocalTransform";
+        tScl["field"] = "scale";
+        tScl["interp"] = "step";
+        tScl["keys"] = nlohmann::json::array({ mkkey(0, { 1, 1, 1 }), mkkey(5, { 2, 2, 2 }) });
+        cj["tracks"] = nlohmann::json::array({ tPos, tScl });
+
+        AnimationClipAsset clip;
+        check(AnimationLibrary::FromJson(cj, clip), "anim clip FromJson");
+        check(clip.tracks.size() == 2, "clip has 2 tracks");
+        check(clip.tracks[0].comp == LocalTransform::sTypeId && clip.tracks[0].compCount == 3,
+              "position track resolved to LocalTransform (Float3)");
+
+        // (a) roundtrip
+        const nlohmann::json j1 = AnimationLibrary::ToJson(clip);
+        AnimationClipAsset clip2;
+        AnimationLibrary::FromJson(j1, clip2);
+        check(j1 == AnimationLibrary::ToJson(clip2), "clip ToJson/FromJson roundtrip identical");
+
+        // (b) 補間の期待値 (linear / step / クランプ)
+        LocalTransform lt;
+        SampleTrackInto(&lt, clip.tracks[0], 5);
+        check(lt.position.x == 5.0f, "linear interp at t=5 -> 5.0");
+        SampleTrackInto(&lt, clip.tracks[0], 0);
+        check(lt.position.x == 0.0f, "clamp before first key");
+        SampleTrackInto(&lt, clip.tracks[0], 100);
+        check(lt.position.x == 10.0f, "clamp after last key");
+        SampleTrackInto(&lt, clip.tracks[1], 3);
+        check(lt.scale.x == 1.0f, "step holds first key at t=3");
+        SampleTrackInto(&lt, clip.tracks[1], 7);
+        check(lt.scale.x == 2.0f, "step advances at t=7 -> 2.0");
+
+        // (c) 同一クリップを 2 回再生 → 全 tick で WorldHash 一致 (決定論)
+        AnimationLibrary lib;
+        const std::wstring apath =
+            (std::filesystem::temp_directory_path() / L"mye_selftest.anim.json").wstring();
+        const uint64_t chash = lib.Register(apath, clip);
+        auto buildAnim = [&](Scene& s) {
+            GameObject go = s.CreateGameObjectTracked("Animated");
+            auto* an = go.AddComponent<AnimatorComponent>();
+            an->clip = AssetID{ chash };
+            an->timeTicks = 0;
+            an->speed = 1;
+            an->loop = 1;
+            an->playing = 1;
+            s.GetWorld().ApplyStructuralChanges();
+        };
+        Scene sx;
+        Scene sy;
+        buildAnim(sx);
+        buildAnim(sy);
+        AnimationSystem sys;
+        bool det = true;
+        for (int i = 0; i < 30 && det; ++i) {
+            sys.Update(sx.GetWorld(), lib);
+            sys.Update(sy.GetWorld(), lib);
+            if (HashWorld(sx.GetWorld(), nullptr) != HashWorld(sy.GetWorld(), nullptr)) {
+                det = false;
+            }
+        }
+        check(det, "same clip played twice: per-tick WorldHash identical");
+        // 実際にアニメートされている (position が 0 から動いた)
+        GameObject animGo = sx.Find("Animated");
+        check(animGo && animGo.GetComponent<LocalTransform>()->position.x != 0.0f,
+              "animator advanced the transform");
     }
 
     if (failCount == 0) {

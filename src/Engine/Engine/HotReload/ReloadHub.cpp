@@ -4,6 +4,7 @@
 #include <fstream>
 
 #include "Engine/Core/Log.h"
+#include "Engine/Engine/Animation.h"
 #include "Engine/Engine/ModelLoader.h"
 #include "Engine/Engine/Prefab.h"
 #include "Engine/Engine/Scene.h"
@@ -24,12 +25,13 @@ std::wstring ExtensionLower(const std::wstring& path)
 } // namespace
 
 bool ReloadHub::Init(ShaderManager* shaders, RenderResources* resources, Scene* scene,
-                     PrefabLibrary* prefabs, const std::wstring& assetsRoot)
+                     PrefabLibrary* prefabs, AnimationLibrary* anims, const std::wstring& assetsRoot)
 {
     shaders_ = shaders;
     resources_ = resources;
     scene_ = scene;
     prefabs_ = prefabs;
+    anims_ = anims;
     std::error_code ec;
     if (!std::filesystem::is_directory(assetsRoot, ec)) {
         MYE_LOG_WARN("[reload] assets root not found, hot reload disabled");
@@ -109,6 +111,23 @@ void ReloadHub::HandleChange(const std::wstring& normPath)
     }
 
     if (ext == L".json") {
+        // .anim.json: 登録済みクリップなら再読込 (animator は hash 参照なので自動反映)
+        const bool isAnim = normPath.size() >= 10
+            && normPath.compare(normPath.size() - 10, 10, L".anim.json") == 0;
+        if (isAnim) {
+            if (anims_) {
+                const uint64_t hash = AnimationLibrary::HashForPath(normPath);
+                if (anims_->Contains(hash)) {
+                    if (anims_->LoadFromFile(normPath) != 0) {
+                        MYE_LOG_INFO("[reload] anim reloaded: %s", WideToUtf8(normPath).c_str());
+                        ++reloadCount_;
+                    } else {
+                        retryLater();
+                    }
+                }
+            }
+            return;
+        }
         // .prefab.json: 登録済みプレハブなら再読込 → 全インスタンスの非オーバーライドへ伝播
         const bool isPrefab = normPath.size() >= 12
             && normPath.compare(normPath.size() - 12, 12, L".prefab.json") == 0;

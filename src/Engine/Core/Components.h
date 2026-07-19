@@ -142,6 +142,19 @@ struct PrefabLinkComponent {
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
+// ---- アニメーション (M14) ----
+// AnimationClip (.anim.json) を再生する。**無ければ何もしない** (opt-in → 既存シーン不変)。
+// 時間は **tick カウント (int)** で持つ (float 秒累積は決定論違反リスク)。
+// トラックの補間係数は整数キー位置の比なのでプラットフォーム非依存。serialize+hash 対象
+struct AnimatorComponent {
+    AssetID clip = {};       // AnimationClip アセット (AnimationLibrary のキー = パスハッシュ)
+    int32_t timeTicks = 0;   // 現在の再生位置 (clip 内 tick)
+    int32_t speed = 1;       // 1 update あたりに進める tick 数 (負で逆再生)
+    int32_t loop = 1;        // 0=一度きり(末尾停止) 1=ループ
+    int32_t playing = 1;     // 0=停止
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
 class World;
 
 // エンティティが有効か (ActiveComponent が無ければ有効 / enabled==0 なら無効)

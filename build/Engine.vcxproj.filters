@@ -72,6 +72,9 @@
     <ClCompile Include="..\src\Engine\Core\World.cpp">
       <Filter>Core</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Animation.cpp">
+      <Filter>Engine</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\CgltfImpl.cpp">
       <Filter>Engine</Filter>
     </ClCompile>
@@ -221,6 +224,9 @@
     </ClInclude>
     <ClInclude Include="..\src\Engine\Core\World.h">
       <Filter>Core</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Animation.h">
+      <Filter>Engine</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\CollisionSystem.h">
       <Filter>Engine</Filter>

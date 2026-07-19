@@ -7,6 +7,7 @@
 #include <shellapi.h>
 
 #include "Editor/Undo/UndoStack.h"
+#include "Engine/Engine/Animation.h"
 #include "Engine/Engine/Prefab.h"
 #include "Engine/Engine/Scene.h"
 #include "Engine/Platform/PathUtil.h"
@@ -109,6 +110,8 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
         const std::string nameU = WideToUtf8(entry.path().filename().wstring());
         const bool isPrefab = nameU.size() >= 12
             && nameU.compare(nameU.size() - 12, 12, ".prefab.json") == 0;
+        const bool isAnim = !isPrefab && nameU.size() >= 10
+            && nameU.compare(nameU.size() - 10, 10, ".anim.json") == 0;
 
         if (i % cols != 0) {
             ImGui::SameLine();
@@ -124,7 +127,8 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
                 ImGui::Button("img", ImVec2(kCell, kCell));
             }
         } else {
-            ImGui::Button(isPrefab ? "prefab" : IconFor(ext), ImVec2(kCell, kCell));
+            const char* icon = isPrefab ? "prefab" : (isAnim ? "anim" : IconFor(ext));
+            ImGui::Button(icon, ImVec2(kCell, kCell));
         }
         if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
             if (isPrefab) {
@@ -140,6 +144,26 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
                     undo.EndRecord(selection);
                 } else {
                     undo.CancelRecord();
+                }
+            } else if (isAnim) {
+                // 選択エンティティに Animator を付けてこのクリップを割り当てる
+                const uint64_t hash = ctx.anims->LoadFromFile(path);
+                GameObject sel = ctx.scene->FindByFileId(selection.primary);
+                if (hash != 0 && sel) {
+                    World& w = ctx.scene->GetWorld();
+                    undo.BeginRecord("Assign Clip", selection);
+                    undo.CaptureBefore(*ctx.scene, selection.primary);
+                    auto* an = w.GetComponent<AnimatorComponent>(sel.Id());
+                    if (!an) {
+                        an = static_cast<AnimatorComponent*>(
+                            w.AddComponentRaw(sel.Id(), AnimatorComponent::sTypeId));
+                    }
+                    if (an) {
+                        an->clip = AssetID{ hash };
+                    }
+                    w.ApplyStructuralChanges();
+                    undo.CaptureAfter(*ctx.scene, selection.primary);
+                    undo.EndRecord(selection);
                 }
             } else {
                 ShellExecuteW(nullptr, L"open", path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
