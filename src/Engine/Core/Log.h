@@ -12,10 +12,16 @@ struct LogEntry {
     LogLevel level;
     uint64_t frame;        // 記録時のフレーム番号
     char     message[240]; // null 終端 (超過分は切り捨て)
+    char     file[160];    // ソースファイル (__FILE__)。DLL/API 経由ログは空 (M11)
+    int32_t  line;         // 行番号 (0 = 無し)
 };
 
 namespace logging {
 
+// file/line 付き (MYE_LOG_* マクロが __FILE__/__LINE__ を注入)
+void WriteSrc(LogLevel level, const char* file, int line, const char* fmt, ...);
+void WriteSrcV(LogLevel level, const char* file, int line, const char* fmt, va_list args);
+// file/line 無し (C ABI 経由など)
 void Write(LogLevel level, const char* fmt, ...);
 void WriteV(LogLevel level, const char* fmt, va_list args);
 
@@ -33,7 +39,7 @@ void Clear();
 } // namespace logging
 } // namespace mye
 
-#define MYE_LOG_TRACE(...) ::mye::logging::Write(::mye::LogLevel::Trace, __VA_ARGS__)
-#define MYE_LOG_INFO(...)  ::mye::logging::Write(::mye::LogLevel::Info,  __VA_ARGS__)
-#define MYE_LOG_WARN(...)  ::mye::logging::Write(::mye::LogLevel::Warn,  __VA_ARGS__)
-#define MYE_LOG_ERROR(...) ::mye::logging::Write(::mye::LogLevel::Error, __VA_ARGS__)
+#define MYE_LOG_TRACE(...) ::mye::logging::WriteSrc(::mye::LogLevel::Trace, __FILE__, __LINE__, __VA_ARGS__)
+#define MYE_LOG_INFO(...)  ::mye::logging::WriteSrc(::mye::LogLevel::Info,  __FILE__, __LINE__, __VA_ARGS__)
+#define MYE_LOG_WARN(...)  ::mye::logging::WriteSrc(::mye::LogLevel::Warn,  __FILE__, __LINE__, __VA_ARGS__)
+#define MYE_LOG_ERROR(...) ::mye::logging::WriteSrc(::mye::LogLevel::Error, __FILE__, __LINE__, __VA_ARGS__)

@@ -89,11 +89,12 @@ void EditorApp::OnImGui(EngineContext& ctx)
     DrawMainMenuBar(ctx);
     hierarchy_.OnImGui(ctx, selection_, undo_);
     inspector_.OnImGui(ctx, selection_, undo_);
-    console_.OnImGui();
+    console_.OnImGui(settings_.externalEditorCmd);
     sceneView_.OnImGui(ctx, selection_, undo_, settings_);
     gameView_.OnImGui(ctx);
     particleSettings_.OnImGui(ctx);
     profiler_.OnImGui(ctx);
+    assetBrowser_.OnImGui(ctx);
 
     // ピッキング自動テスト (--pick-test): 指定フレームでビュー中心を選択できるか検証
     if (pickTestFrame >= 0 && static_cast<int64_t>(ctx.frameIndex) == pickTestFrame) {
@@ -358,7 +359,8 @@ void EditorApp::SetupDockLayout(unsigned int dockspaceId)
     ImGuiID center = dockspaceId;
     const ImGuiID left = ImGui::DockBuilderSplitNode(center, ImGuiDir_Left, 0.18f, nullptr, &center);
     const ImGuiID right = ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.26f, nullptr, &center);
-    const ImGuiID bottom = ImGui::DockBuilderSplitNode(center, ImGuiDir_Down, 0.28f, nullptr, &center);
+    ImGuiID bottom = ImGui::DockBuilderSplitNode(center, ImGuiDir_Down, 0.28f, nullptr, &center);
+    const ImGuiID bottomRight = ImGui::DockBuilderSplitNode(bottom, ImGuiDir_Right, 0.4f, nullptr, &bottom);
     ImGuiID rightBottom = right;
     const ImGuiID rightTop = ImGui::DockBuilderSplitNode(rightBottom, ImGuiDir_Up, 0.7f, nullptr, &rightBottom);
 
@@ -368,6 +370,7 @@ void EditorApp::SetupDockLayout(unsigned int dockspaceId)
     ImGui::DockBuilderDockWindow("Particle Settings", rightBottom);
     ImGui::DockBuilderDockWindow("Profiler", rightBottom);
     ImGui::DockBuilderDockWindow("Console", bottom);
+    ImGui::DockBuilderDockWindow("Assets", bottomRight);
     ImGui::DockBuilderDockWindow("Scene", center);
     ImGui::DockBuilderDockWindow("Game", center);
     ImGui::DockBuilderFinish(dockspaceId);

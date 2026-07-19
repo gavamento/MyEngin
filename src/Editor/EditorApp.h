@@ -8,6 +8,7 @@
 #include "Editor/Selection.h"
 #include "Editor/ShortcutHub.h"
 #include "Editor/Undo/UndoStack.h"
+#include "Editor/Windows/AssetBrowserWindow.h"
 #include "Editor/Windows/ConsoleWindow.h"
 #include "Editor/Windows/GameViewWindow.h"
 #include "Editor/Windows/HierarchyWindow.h"
@@ -65,6 +66,7 @@ private:
     GameViewWindow gameView_;
     ParticleSettingsWindow particleSettings_;
     ProfilerWindow profiler_;
+    AssetBrowserWindow assetBrowser_;
 
     nlohmann::json clipboard_; // コピー/カットしたサブツリー群 (SubtreeToJson 形式の配列)
     std::wstring scenePath_;

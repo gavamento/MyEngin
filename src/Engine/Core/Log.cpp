@@ -30,7 +30,7 @@ const char* LevelTag(LogLevel level)
 
 } // namespace
 
-void WriteV(LogLevel level, const char* fmt, va_list args)
+void WriteSrcV(LogLevel level, const char* file, int line, const char* fmt, va_list args)
 {
     char buffer[1024];
     const int len = vsnprintf(buffer, sizeof(buffer), fmt, args);
@@ -39,24 +39,43 @@ void WriteV(LogLevel level, const char* fmt, va_list args)
     }
 
     // デバッガ / コンソール出力 (リングバッファ外のフル長)
-    char line[1100];
-    snprintf(line, sizeof(line), "[%s] %s\n", LevelTag(level), buffer);
-    OutputDebugStringA(line);
-    fputs(line, level >= LogLevel::Warn ? stderr : stdout);
+    char out[1100];
+    snprintf(out, sizeof(out), "[%s] %s\n", LevelTag(level), buffer);
+    OutputDebugStringA(out);
+    fputs(out, level >= LogLevel::Warn ? stderr : stdout);
 
     std::lock_guard<std::mutex> lock(g_mutex);
     LogEntry& e = g_ring[g_totalWritten & (kCapacity - 1)];
     e.level = level;
     e.frame = g_currentFrame.load(std::memory_order_relaxed);
     strncpy_s(e.message, buffer, _TRUNCATE);
+    if (file) {
+        strncpy_s(e.file, file, _TRUNCATE);
+    } else {
+        e.file[0] = '\0';
+    }
+    e.line = line;
     ++g_totalWritten;
+}
+
+void WriteSrc(LogLevel level, const char* file, int line, const char* fmt, ...)
+{
+    va_list args;
+    va_start(args, fmt);
+    WriteSrcV(level, file, line, fmt, args);
+    va_end(args);
+}
+
+void WriteV(LogLevel level, const char* fmt, va_list args)
+{
+    WriteSrcV(level, nullptr, 0, fmt, args);
 }
 
 void Write(LogLevel level, const char* fmt, ...)
 {
     va_list args;
     va_start(args, fmt);
-    WriteV(level, fmt, args);
+    WriteSrcV(level, nullptr, 0, fmt, args);
     va_end(args);
 }
 
