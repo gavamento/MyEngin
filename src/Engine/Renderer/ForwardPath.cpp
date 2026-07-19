@@ -1,6 +1,7 @@
 #include "Engine/Renderer/ForwardPath.h"
 
 #include "Engine/Core/Log.h"
+#include "Engine/Core/Profiler.h"
 #include "Engine/Renderer/GpuResources.h"
 #include "Engine/Renderer/GraphicsDevice.h"
 #include "Engine/Renderer/ShaderManager.h"
@@ -227,6 +228,7 @@ void ForwardPath::DrawItems(GraphicsDevice& device, const std::vector<RenderItem
         UploadCB(dc, perObjectCB_.Get(), po);
 
         dc->DrawIndexed(mesh->indexCount, 0, 0);
+        prof::AddDraw(static_cast<int>(mesh->indexCount / 3));
     }
 }
 

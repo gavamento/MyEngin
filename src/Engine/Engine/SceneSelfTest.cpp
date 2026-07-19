@@ -8,6 +8,7 @@
 #include "Engine/Core/Components.h"
 #include "Engine/Core/Hash.h"
 #include "Engine/Core/Log.h"
+#include "Engine/Core/Profiler.h"
 #include "Engine/Core/World.h"
 #include "Engine/Engine/GameObject.h"
 #include "Engine/Engine/Scene.h"
@@ -222,6 +223,28 @@ bool RunSceneSerializerSelfTest()
         GameObject g2 = s5.Find("ActiveTest");
         check(static_cast<bool>(g2) && !IsEntityActive(s5.GetWorld(), g2.Id()),
               "ActiveComponent (enabled=0) survives save/load");
+    }
+
+    // ---- メモリフック: new/delete カウンタ (M12) ----
+    {
+        const prof::MemStats before = prof::GetMemoryStats();
+        constexpr int N = 100;
+        std::vector<int*> ptrs;
+        ptrs.reserve(N);
+        for (int i = 0; i < N; ++i) {
+            ptrs.push_back(new int(i));
+        }
+        const prof::MemStats mid = prof::GetMemoryStats();
+        for (int* p : ptrs) {
+            delete p;
+        }
+        const prof::MemStats after = prof::GetMemoryStats();
+        check(mid.totalAllocs - before.totalAllocs >= N, "new increments alloc counter");
+        check(mid.totalBytes - before.totalBytes >= N * sizeof(int), "new adds byte counter");
+        check(after.totalFrees - mid.totalFrees >= N, "delete increments free counter");
+        int* np = nullptr;
+        delete np; // 落ちないこと
+        check(true, "delete nullptr is safe");
     }
 
     if (failCount == 0) {

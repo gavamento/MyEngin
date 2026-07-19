@@ -34,6 +34,8 @@
     <ClCompile Include="..\src\Engine\Core\FileWatcher.cpp" />
     <ClCompile Include="..\src\Engine\Core\JsonUtil.cpp" />
     <ClCompile Include="..\src\Engine\Core\Log.cpp" />
+    <ClCompile Include="..\src\Engine\Core\MemoryTrack.cpp" />
+    <ClCompile Include="..\src\Engine\Core\Profiler.cpp" />
     <ClCompile Include="..\src\Engine\Core\World.cpp" />
     <ClCompile Include="..\src\Engine\Engine\CgltfImpl.cpp" />
     <ClCompile Include="..\src\Engine\Engine\CollisionSystem.cpp" />
@@ -80,6 +82,7 @@
     <ClInclude Include="..\src\Engine\Core\Hash.h" />
     <ClInclude Include="..\src\Engine\Core\JsonUtil.h" />
     <ClInclude Include="..\src\Engine\Core\Log.h" />
+    <ClInclude Include="..\src\Engine\Core\Profiler.h" />
     <ClInclude Include="..\src\Engine\Core\Random.h" />
     <ClInclude Include="..\src\Engine\Core\Reflection.h" />
     <ClInclude Include="..\src\Engine\Core\World.h" />

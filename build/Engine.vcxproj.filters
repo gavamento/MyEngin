@@ -63,6 +63,12 @@
     <ClCompile Include="..\src\Engine\Core\Log.cpp">
       <Filter>Core</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Core\MemoryTrack.cpp">
+      <Filter>Core</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Core\Profiler.cpp">
+      <Filter>Core</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Core\World.cpp">
       <Filter>Core</Filter>
     </ClCompile>
@@ -199,6 +205,9 @@
       <Filter>Core</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Core\Log.h">
+      <Filter>Core</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Core\Profiler.h">
       <Filter>Core</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Core\Random.h">

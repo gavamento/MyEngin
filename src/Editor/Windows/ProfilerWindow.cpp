@@ -1,5 +1,6 @@
 #include "Editor/Windows/ProfilerWindow.h"
 
+#include "Engine/Core/Profiler.h"
 #include "Engine/Engine/Particles/ParticleSystem.h"
 #include "Engine/Engine/Scene.h"
 #include "Engine/Renderer/RenderPath.h"
@@ -37,6 +38,23 @@ void ProfilerWindow::OnImGui(EngineContext& ctx)
     const ParticleStats gpu = ctx.particles->Gpu().Stats();
     ImGui::Text("  CPU: %7u alive %7.3f ms", cpu.aliveTotal, cpu.updateMs);
     ImGui::Text("  GPU: (cap %6u) %7.3f ms (GpuTimer)", gpu.aliveTotal, gpu.updateMs);
+
+    ImGui::Separator();
+    ImGui::TextUnformatted("CPU scopes (this frame):");
+    for (const prof::ScopeRecord& s : prof::FrameScopes()) {
+        ImGui::Text("%*s%-14s %6.3f ms", s.depth * 2, "", s.name, s.ms);
+    }
+
+    ImGui::Separator();
+    const prof::RenderStats rs = prof::GetRenderStats();
+    ImGui::Text("render: %d draw calls, %d tris", rs.drawCalls, rs.triangles);
+
+    const prof::MemStats mem = prof::GetMemoryStats();
+    ImGui::Text("memory: %llu live allocs, %.1f MB total (%llu allocs / %llu frees)",
+                static_cast<unsigned long long>(mem.liveAllocs),
+                static_cast<double>(mem.totalBytes) / (1024.0 * 1024.0),
+                static_cast<unsigned long long>(mem.totalAllocs),
+                static_cast<unsigned long long>(mem.totalFrees));
 
     ImGui::Separator();
     ImGui::Text("render path: %s", ctx.renderPath ? ctx.renderPath->Name() : "?");

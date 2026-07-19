@@ -2,6 +2,7 @@
 
 #include "Engine/Core/Check.h"
 #include "Engine/Core/Log.h"
+#include "Engine/Core/Profiler.h"
 #include "Engine/Engine/CollisionSystem.h"
 #include "Engine/Engine/HotReload/DllReloader.h"
 #include "Engine/Engine/HotReload/ReloadHub.h"
@@ -159,6 +160,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         }
         ctx.input = input.CaptureSnapshot();
         logging::SetCurrentFrame(ctx.frameIndex);
+        prof::BeginFrame();
 
         // ---- フェーズ 2: ホットリロード適用セーフポイント ----
         const double tReload = clock.Now();
@@ -188,10 +190,19 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             }
             // ---- フェーズ 4: システム層 ----
             // Transform を先に確定 (エミッタ/コライダのワールド位置は tick 決定論の一部)
-            transformSystem.Update(scene.GetWorld());
+            {
+                MYE_PROFILE_SCOPE("transform");
+                transformSystem.Update(scene.GetWorld());
+            }
             if (ctx.simulateScripts) {
-                collisionSystem.Update(scene.GetWorld(), &scriptHost); // トリガーイベント配信
-                particleSystem.Update(scene.GetWorld(), ctx.fixedDt);
+                {
+                    MYE_PROFILE_SCOPE("collision");
+                    collisionSystem.Update(scene.GetWorld(), &scriptHost); // トリガーイベント配信
+                }
+                {
+                    MYE_PROFILE_SCOPE("particles");
+                    particleSystem.Update(scene.GetWorld(), ctx.fixedDt);
+                }
             }
             // ---- フェーズ 5: スクリプト層 LateUpdate ----
             if (runScripts) {

@@ -1,6 +1,7 @@
 #include "Engine/Renderer/DeferredPath.h"
 
 #include "Engine/Core/Log.h"
+#include "Engine/Core/Profiler.h"
 #include "Engine/Renderer/GpuResources.h"
 #include "Engine/Renderer/GraphicsDevice.h"
 #include "Engine/Renderer/ShaderManager.h"
@@ -229,6 +230,7 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
         po.baseColor = mat->baseColor;
         UploadCB(dc, perObjectCB_.Get(), po);
         dc->DrawIndexed(mesh->indexCount, 0, 0);
+        prof::AddDraw(static_cast<int>(mesh->indexCount / 3));
     }
 
     // ---- 2) ライティングパス (フルスクリーン解決) ----
@@ -302,6 +304,7 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
             po.baseColor = mat->baseColor;
             UploadCB(dc, perObjectCB_.Get(), po);
             dc->DrawIndexed(mesh->indexCount, 0, 0);
+            prof::AddDraw(static_cast<int>(mesh->indexCount / 3));
         }
     } else {
         // パーティクル後段のために RTV+DSV を戻しておく
