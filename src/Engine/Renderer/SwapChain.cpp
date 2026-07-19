@@ -2,6 +2,7 @@
 
 #include "Engine/Core/Log.h"
 #include "Engine/Renderer/GraphicsDevice.h"
+#include "Engine/Renderer/ImageWrite.h"
 
 namespace mye {
 
@@ -50,14 +51,39 @@ bool SwapChain::Init(GraphicsDevice& device, void* hwnd, int width, int height)
     // Alt+Enter の排他フルスクリーン遷移は無効化 (ボーダーレスで扱う方針)
     factory->MakeWindowAssociation(static_cast<HWND>(hwnd), DXGI_MWA_NO_ALT_ENTER);
 
-    return CreateRTV();
+    return CreateRTV() && CreateDepth();
 }
 
 void SwapChain::Shutdown()
 {
+    dsv_.Reset();
+    depthTex_.Reset();
     rtv_.Reset();
     swapChain_.Reset();
     device_ = nullptr;
+}
+
+bool SwapChain::CreateDepth()
+{
+    D3D11_TEXTURE2D_DESC td = {};
+    td.Width = static_cast<UINT>(width_);
+    td.Height = static_cast<UINT>(height_);
+    td.MipLevels = 1;
+    td.ArraySize = 1;
+    td.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+    td.SampleDesc = { 1, 0 };
+    td.Usage = D3D11_USAGE_DEFAULT;
+    td.BindFlags = D3D11_BIND_DEPTH_STENCIL;
+    if (FAILED(device_->Device()->CreateTexture2D(&td, nullptr, depthTex_.ReleaseAndGetAddressOf()))) {
+        MYE_LOG_ERROR("SwapChain: depth texture creation failed");
+        return false;
+    }
+    if (FAILED(device_->Device()->CreateDepthStencilView(depthTex_.Get(), nullptr,
+                                                         dsv_.ReleaseAndGetAddressOf()))) {
+        MYE_LOG_ERROR("SwapChain: depth stencil view creation failed");
+        return false;
+    }
+    return true;
 }
 
 bool SwapChain::CreateRTV()
@@ -85,6 +111,8 @@ void SwapChain::Resize(int width, int height)
 
     // バックバッファ参照を全て外してから ResizeBuffers (flip model の必須要件)
     rtv_.Reset();
+    dsv_.Reset();
+    depthTex_.Reset();
     device_->Context()->OMSetRenderTargets(0, nullptr, nullptr);
     device_->Context()->Flush();
 
@@ -97,6 +125,43 @@ void SwapChain::Resize(int width, int height)
     width_ = width;
     height_ = height;
     CreateRTV();
+    CreateDepth();
+}
+
+bool SwapChain::SaveBackbufferPng(const std::wstring& path)
+{
+    ComPtr<ID3D11Texture2D> backbuffer;
+    if (FAILED(swapChain_->GetBuffer(0, IID_PPV_ARGS(backbuffer.GetAddressOf())))) {
+        return false;
+    }
+    D3D11_TEXTURE2D_DESC desc = {};
+    backbuffer->GetDesc(&desc);
+    desc.Usage = D3D11_USAGE_STAGING;
+    desc.BindFlags = 0;
+    desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+    desc.MiscFlags = 0;
+
+    ComPtr<ID3D11Texture2D> staging;
+    if (FAILED(device_->Device()->CreateTexture2D(&desc, nullptr, staging.GetAddressOf()))) {
+        return false;
+    }
+    ID3D11DeviceContext* dc = device_->Context();
+    dc->CopyResource(staging.Get(), backbuffer.Get());
+
+    D3D11_MAPPED_SUBRESOURCE mapped = {};
+    if (FAILED(dc->Map(staging.Get(), 0, D3D11_MAP_READ, 0, &mapped))) {
+        return false;
+    }
+    const bool ok = WritePngRGBA(path, static_cast<const uint8_t*>(mapped.pData),
+                                 static_cast<int>(desc.Width), static_cast<int>(desc.Height),
+                                 static_cast<int>(mapped.RowPitch));
+    dc->Unmap(staging.Get(), 0);
+    if (ok) {
+        MYE_LOG_INFO("screenshot saved: %dx%d", desc.Width, desc.Height);
+    } else {
+        MYE_LOG_ERROR("screenshot write failed");
+    }
+    return ok;
 }
 
 void SwapChain::Present(bool vsync)

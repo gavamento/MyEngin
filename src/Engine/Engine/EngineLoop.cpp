@@ -2,10 +2,17 @@
 
 #include "Engine/Core/Check.h"
 #include "Engine/Core/Log.h"
+#include "Engine/Engine/RenderSystem.h"
+#include "Engine/Engine/Scene.h"
+#include "Engine/Engine/TransformSystem.h"
 #include "Engine/Platform/Clock.h"
+#include "Engine/Platform/PathUtil.h"
 #include "Engine/Platform/Win32Window.h"
+#include "Engine/Renderer/ForwardPath.h"
+#include "Engine/Renderer/GpuResources.h"
 #include "Engine/Renderer/GraphicsDevice.h"
 #include "Engine/Renderer/ImGuiRenderer.h"
+#include "Engine/Renderer/ShaderManager.h"
 #include "Engine/Renderer/SwapChain.h"
 
 #include <Windows.h>
@@ -27,6 +34,13 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     ImGuiRenderer imgui;
     Input input;
     Clock clock;
+    Scene scene;
+    ShaderManager shaderManager;
+    RenderResources resources;
+    TransformSystem transformSystem;
+    RenderSystem renderSystem;
+    ForwardPath forwardPath;
+    IRenderPath* activePath = &forwardPath; // M6.5 で Deferred と切替可能になる
 
     // ---- 起動 ----
     WindowDesc wd;
@@ -50,18 +64,32 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         return input.HandleMessage(hwnd, msg, wp, lp, result);
     });
 
+    const std::wstring assetsRoot = FindAssetsRoot();
+    shaderManager.Init(device, assetsRoot + L"\\shaders");
+    resources.Init(device);
+    if (!forwardPath.Init(device, shaderManager)) {
+        return 1;
+    }
+
     clock.Init();
 
     EngineContext ctx;
     ctx.window = &window;
     ctx.device = &device;
     ctx.swapChain = &swapChain;
+    ctx.scene = &scene;
+    ctx.shaders = &shaderManager;
+    ctx.resources = &resources;
+    ctx.assetsRoot = assetsRoot;
     ctx.fixedDt = static_cast<float>(kFixedDt);
 
     app.OnStart(ctx);
-    MYE_LOG_INFO("Engine loop started (fixed dt = %.4f s)", kFixedDt);
+    // OnStart で積まれた構造変更 (SetParent 等) を最初の描画前に反映する
+    scene.GetWorld().ApplyStructuralChanges();
+    MYE_LOG_INFO("Engine loop started (fixed dt = %.4f s, assets = %s)",
+                 kFixedDt, WideToUtf8(assetsRoot).c_str());
 
-    // ---- メインループ ----
+    // ---- メインループ (フェーズ構成は engine_spec.md 5.3 / ADR-005) ----
     double accumulator = 0.0;
     bool running = true;
     while (running) {
@@ -85,7 +113,10 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         accumulator += dt;
         int ticks = 0;
         while (accumulator >= kFixedDt && ticks < kMaxTicksPerFrame) {
-            app.OnTick(ctx); // フェーズ 3 スロット (M1 以降: システム更新/構造変更適用が後続する)
+            app.OnTick(ctx);                          // フェーズ 3 (スクリプト層スロット)
+            // フェーズ 4: システム層 (アニメーション/パーティクルは M5 以降)
+            // フェーズ 5: LateUpdate (M4)
+            scene.GetWorld().ApplyStructuralChanges(); // フェーズ 7 (tick 末適用 = ADR-005)
             ++ctx.tickIndex;
             accumulator -= kFixedDt;
             ++ticks;
@@ -96,22 +127,27 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         }
 
         if (!window.IsMinimized()) {
-            // ---- フェーズ 6: シーン描画 (M1 以降は RenderPath 経由) ----
-            ID3D11RenderTargetView* rtv = swapChain.BackbufferRTV();
-            ID3D11DeviceContext* dc = device.Context();
-            dc->OMSetRenderTargets(1, &rtv, nullptr);
-            D3D11_VIEWPORT vp = {};
-            vp.Width = static_cast<float>(swapChain.Width());
-            vp.Height = static_cast<float>(swapChain.Height());
-            vp.MaxDepth = 1.0f;
-            dc->RSSetViewports(1, &vp);
-            dc->ClearRenderTargetView(rtv, config.clearColor);
+            // ---- フェーズ 6: シーン描画 ----
+            // ワールド行列は描画直前に一括更新 (LocalTransform の純関数なので sim 状態に影響しない)
+            transformSystem.Update(scene.GetWorld());
+
+            FrameTarget target;
+            target.rtv = swapChain.BackbufferRTV();
+            target.dsv = swapChain.DepthDSV();
+            target.width = swapChain.Width();
+            target.height = swapChain.Height();
+            memcpy(target.clearColor, config.clearColor, sizeof(target.clearColor));
+            renderSystem.Render(scene.GetWorld(), device, *activePath, shaderManager, resources, target);
 
             // ---- フェーズ 8: ImGui 描画 / Present ----
             if (config.enableImGui) {
                 imgui.BeginFrame();
                 app.OnImGui(ctx);
                 imgui.EndFrame();
+            }
+            if (!config.screenshotPath.empty()
+                && ctx.frameIndex == static_cast<uint64_t>(config.screenshotFrame)) {
+                swapChain.SaveBackbufferPng(config.screenshotPath);
             }
             swapChain.Present(config.vsync);
         } else {
@@ -130,6 +166,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
 
     // ---- 終了 (起動の逆順) ----
     app.OnShutdown(ctx);
+    forwardPath.Shutdown();
     imgui.Shutdown();
     swapChain.Shutdown();
     device.Shutdown();

@@ -24,13 +24,43 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="..\src\Engine\Core\Archetype.cpp">
+      <Filter>Core</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Core\Check.cpp">
+      <Filter>Core</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Core\ComponentRegistry.cpp">
+      <Filter>Core</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Core\Components.cpp">
+      <Filter>Core</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Core\EcsSelfTest.cpp">
       <Filter>Core</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Core\Log.cpp">
       <Filter>Core</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Core\World.cpp">
+      <Filter>Core</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\CgltfImpl.cpp">
+      <Filter>Engine</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\EngineLoop.cpp">
+      <Filter>Engine</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\ModelLoader.cpp">
+      <Filter>Engine</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\RenderSystem.cpp">
+      <Filter>Engine</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Scene.cpp">
+      <Filter>Engine</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\TransformSystem.cpp">
       <Filter>Engine</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Platform\Clock.cpp">
@@ -39,19 +69,55 @@
     <ClCompile Include="..\src\Engine\Platform\Input.cpp">
       <Filter>Platform</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Platform\PathUtil.cpp">
+      <Filter>Platform</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Platform\Win32Window.cpp">
       <Filter>Platform</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Renderer\ForwardPath.cpp">
+      <Filter>Renderer</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Renderer\GpuResources.cpp">
+      <Filter>Renderer</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Renderer\GraphicsDevice.cpp">
+      <Filter>Renderer</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Renderer\ImageWrite.cpp">
       <Filter>Renderer</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Renderer\ImGuiRenderer.cpp">
       <Filter>Renderer</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Renderer\RenderQueue.cpp">
+      <Filter>Renderer</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Renderer\ShaderManager.cpp">
+      <Filter>Renderer</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Renderer\StbImpl.cpp">
+      <Filter>Renderer</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Renderer\SwapChain.cpp">
       <Filter>Renderer</Filter>
     </ClCompile>
+    <ClInclude Include="..\src\Engine\Core\Archetype.h">
+      <Filter>Core</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Core\Check.h">
+      <Filter>Core</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Core\ComponentRegistry.h">
+      <Filter>Core</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Core\Components.h">
+      <Filter>Core</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Core\EcsSelfTest.h">
+      <Filter>Core</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Core\EntityID.h">
       <Filter>Core</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Core\Hash.h">
@@ -60,7 +126,31 @@
     <ClInclude Include="..\src\Engine\Core\Log.h">
       <Filter>Core</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Core\Random.h">
+      <Filter>Core</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Core\Reflection.h">
+      <Filter>Core</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Core\World.h">
+      <Filter>Core</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\EngineLoop.h">
+      <Filter>Engine</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\GameObject.h">
+      <Filter>Engine</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\ModelLoader.h">
+      <Filter>Engine</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\RenderSystem.h">
+      <Filter>Engine</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Scene.h">
+      <Filter>Engine</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\TransformSystem.h">
       <Filter>Engine</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Platform\Clock.h">
@@ -69,13 +159,34 @@
     <ClInclude Include="..\src\Engine\Platform\Input.h">
       <Filter>Platform</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Platform\PathUtil.h">
+      <Filter>Platform</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Platform\Win32Window.h">
       <Filter>Platform</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\ForwardPath.h">
+      <Filter>Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\GpuResources.h">
+      <Filter>Renderer</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\GraphicsDevice.h">
       <Filter>Renderer</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\ImageWrite.h">
+      <Filter>Renderer</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\ImGuiRenderer.h">
+      <Filter>Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\RenderPath.h">
+      <Filter>Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\RenderTypes.h">
+      <Filter>Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\ShaderManager.h">
       <Filter>Renderer</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\SwapChain.h">

@@ -9,6 +9,9 @@ namespace mye {
 class Win32Window;
 class GraphicsDevice;
 class SwapChain;
+class Scene;
+class ShaderManager;
+struct RenderResources;
 
 struct EngineConfig {
     std::wstring title = L"MyEngine";
@@ -18,6 +21,8 @@ struct EngineConfig {
     bool enableImGui = true; // false = エディタ UI 無し (将来の Runtime.exe 用の余地)
     bool vsync = true;
     float clearColor[4] = { 0.08f, 0.09f, 0.11f, 1.0f };
+    std::wstring screenshotPath; // 空でなければ screenshotFrame で PNG 保存 (検証用)
+    int64_t screenshotFrame = 60;
 };
 
 // アプリ側 (Editor / Runtime) がサブシステムへアクセスするための窓口
@@ -25,6 +30,10 @@ struct EngineContext {
     Win32Window* window = nullptr;
     GraphicsDevice* device = nullptr;
     SwapChain* swapChain = nullptr;
+    Scene* scene = nullptr;             // アクティブシーン (EngineLoop が所有)
+    ShaderManager* shaders = nullptr;
+    RenderResources* resources = nullptr;
+    std::wstring assetsRoot;            // assets\ の絶対パス
     InputSnapshot input = {}; // 現フレームのスナップショット (tick 中も同一)
     uint64_t frameIndex = 0;  // 描画フレーム数
     uint64_t tickIndex = 0;   // 累計固定 tick 数 (シミュレーション時間 = tickIndex * fixedDt)
