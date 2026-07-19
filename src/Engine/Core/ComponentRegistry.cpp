@@ -43,6 +43,13 @@ ComponentTypeId ComponentRegistry::Register(ComponentDesc desc)
     return static_cast<ComponentTypeId>(descs_.size() - 1);
 }
 
+void ComponentRegistry::UpdateDesc(ComponentTypeId id, ComponentDesc desc)
+{
+    MYE_CHECK(id < descs_.size());
+    MYE_CHECKF(descs_[id].nameHash == desc.nameHash, "UpdateDesc: name mismatch for '%s'", desc.name);
+    descs_[id] = std::move(desc);
+}
+
 ComponentTypeId ComponentRegistry::FindByName(std::string_view name) const
 {
     const uint64_t hash = HashStr(name);

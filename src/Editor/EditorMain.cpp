@@ -41,6 +41,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     config.renderSceneToBackbuffer = false; // シーンは SceneView/GameView の RT に描く
     bool selftest = false;
     bool saveSceneOnStart = false;
+    bool autoPlay = false;
 
     int argc = 0;
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
@@ -65,6 +66,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 selftest = true;
             } else if (arg == L"--save-scene-on-start") {
                 saveSceneOnStart = true;
+            } else if (arg == L"--autoplay") {
+                autoPlay = true;
             }
         }
         LocalFree(argv);
@@ -78,6 +81,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
 
     mye::EditorApp app;
     app.saveSceneOnStart = saveSceneOnStart;
+    app.autoPlay = autoPlay;
     mye::EngineLoop loop;
     return loop.Run(config, app);
 }

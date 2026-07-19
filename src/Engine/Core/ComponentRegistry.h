@@ -37,6 +37,12 @@ public:
     // 同名 (nameHash) が登録済みならその TypeId を返す
     ComponentTypeId Register(ComponentDesc desc);
 
+    // 記述子の差し替え (GameLogic.dll リロード用)。
+    // construct 等の関数ポインタが旧 DLL を指したままにならないよう、
+    // リロード時は必ずこれで更新する。サイズ変更を伴う場合は先に
+    // World::ReplaceComponentStorage でカラムを移行すること
+    void UpdateDesc(ComponentTypeId id, ComponentDesc desc);
+
     const ComponentDesc& Desc(ComponentTypeId id) const { return descs_[id]; }
     uint32_t Count() const { return static_cast<uint32_t>(descs_.size()); }
     ComponentTypeId FindByName(std::string_view name) const; // 見つからなければ kInvalidComponentType

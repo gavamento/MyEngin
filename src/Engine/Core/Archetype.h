@@ -34,6 +34,14 @@ public:
     void* GetPtr(int typeIndex, uint32_t row);
     const void* GetPtr(int typeIndex, uint32_t row) const;
 
+    // カラム一式の差し替え (要素サイズ変更可)。スクリプトのレイアウト移行専用
+    // (World::ReplaceComponentStorage 以外から呼ばないこと)
+    void ReplaceColumn(int typeIndex, std::vector<std::byte> data, uint32_t elemSize)
+    {
+        columns_[typeIndex] = std::move(data);
+        sizes_[typeIndex] = elemSize;
+    }
+
     template <typename T>
     T* ColumnData(int typeIndex)
     {

@@ -43,6 +43,12 @@
   <!-- BEGIN FILES (tools\gen_project_files.ps1 が再生成する。手編集しない) -->
   <ItemGroup>
     <ClCompile Include="..\src\GameLogic\GameLogicMain.cpp" />
+    <ClCompile Include="..\src\GameLogic\Scripts\PlayerController.cpp" />
+    <ClCompile Include="..\src\GameLogic\Scripts\Rotator.cpp" />
+    <ClInclude Include="..\src\Shared\EngineAPI.h" />
+    <ClInclude Include="..\src\Shared\MathPod.h" />
+    <ClInclude Include="..\src\Shared\ScriptAPI.h" />
+    <ClInclude Include="..\src\Shared\ScriptTypes.h" />
   </ItemGroup>
   <!-- END FILES -->
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

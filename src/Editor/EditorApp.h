@@ -22,6 +22,7 @@ public:
     void OnImGui(EngineContext& ctx) override;
 
     bool saveSceneOnStart = false; // --save-scene-on-start (シーンリロード検証用)
+    bool autoPlay = false;         // --autoplay (起動直後に Play。スクリプト検証用)
 
 private:
     void RegisterDemoResources(EngineContext& ctx); // メッシュ/マテリアル/モデル登録 (毎回)
@@ -39,8 +40,6 @@ private:
     SceneViewWindow sceneView_;
     GameViewWindow gameView_;
 
-    GameObject spinner_; // デモ用 (Play 中のみ回転)
-    float spinYaw_ = 0.0f;
     std::wstring scenePath_;
     bool rebuildDockLayout_ = false;
     bool showStats_ = true;

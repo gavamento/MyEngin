@@ -10,6 +10,9 @@
     <Filter Include="Engine\HotReload">
       <UniqueIdentifier>{45E1E3BD-577C-EB21-9437-FCBCEC610D8C}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Engine\Script">
+      <UniqueIdentifier>{01586F12-A871-BEFB-7266-0B4C59DCE30B}</UniqueIdentifier>
+    </Filter>
     <Filter Include="external">
       <UniqueIdentifier>{544A71AA-5435-4B20-7017-ADEF0FEA3ABF}</UniqueIdentifier>
     </Filter>
@@ -24,6 +27,9 @@
     </Filter>
     <Filter Include="Renderer">
       <UniqueIdentifier>{FA760276-7897-C107-03A6-426F3AAFB41D}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Shared">
+      <UniqueIdentifier>{3EA2E46E-D5BF-AB27-828F-05F51EEDB435}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
   <ItemGroup>
@@ -60,6 +66,9 @@
     <ClCompile Include="..\src\Engine\Engine\EngineLoop.cpp">
       <Filter>Engine</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\HotReload\DllReloader.cpp">
+      <Filter>Engine\HotReload</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\HotReload\ReloadHub.cpp">
       <Filter>Engine\HotReload</Filter>
     </ClCompile>
@@ -77,6 +86,9 @@
     </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\SceneSerializer.cpp">
       <Filter>Engine</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Script\ScriptHost.cpp">
+      <Filter>Engine\Script</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\TransformSystem.cpp">
       <Filter>Engine</Filter>
@@ -168,6 +180,9 @@
     <ClInclude Include="..\src\Engine\Engine\GameObject.h">
       <Filter>Engine</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\HotReload\DllReloader.h">
+      <Filter>Engine\HotReload</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\HotReload\ReloadHub.h">
       <Filter>Engine\HotReload</Filter>
     </ClInclude>
@@ -185,6 +200,9 @@
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\SceneSerializer.h">
       <Filter>Engine</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Script\ScriptHost.h">
+      <Filter>Engine\Script</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\TransformSystem.h">
       <Filter>Engine</Filter>
@@ -230,6 +248,18 @@
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\SwapChain.h">
       <Filter>Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Shared\EngineAPI.h">
+      <Filter>Shared</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Shared\MathPod.h">
+      <Filter>Shared</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Shared\ScriptAPI.h">
+      <Filter>Shared</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Shared\ScriptTypes.h">
+      <Filter>Shared</Filter>
     </ClInclude>
     <ClCompile Include="..\external\imgui\backends\imgui_impl_dx11.cpp">
       <Filter>external\imgui\backends</Filter>

@@ -7,8 +7,10 @@
 
 #include "Engine/Core/Hash.h"
 #include "Engine/Core/Log.h"
+#include "Engine/Engine/HotReload/DllReloader.h"
 #include "Engine/Engine/HotReload/ReloadHub.h"
 #include "Engine/Engine/ModelLoader.h"
+#include "Engine/Engine/Script/ScriptHost.h"
 #include "Engine/Platform/Win32Window.h"
 #include "Engine/Engine/Scene.h"
 #include "Engine/Engine/SceneSerializer.h"
@@ -40,22 +42,16 @@ void EditorApp::OnStart(EngineContext& ctx)
         std::filesystem::create_directories(std::filesystem::path(scenePath_).parent_path());
         SceneSerializer::SaveToFile(*ctx.scene, scenePath_);
     }
+    if (autoPlay) {
+        playMode_.Play(*ctx.scene);
+    }
     MYE_LOG_INFO("EditorApp started (%u entities)", ctx.scene->GetWorld().AliveCount());
 }
 
 void EditorApp::OnTick(EngineContext& ctx)
 {
-    if (!playMode_.ConsumeSimulateTick()) {
-        return; // 編集中はシミュレーションを進めない
-    }
-    // ---- デモ用ゲームロジック (M4 で GameLogic.dll のスクリプトに移行する) ----
-    if (!spinner_) {
-        spinner_ = ctx.scene->Find("Spinner");
-    }
-    if (spinner_) {
-        spinYaw_ += 20.0f * ctx.fixedDt;
-        spinner_.SetLocalRotationEuler(0.0f, spinYaw_, 0.0f);
-    }
+    // ゲームロジック (GameLogic.dll のスクリプト) は Play 中のみ実行される
+    ctx.simulateScripts = playMode_.ConsumeSimulateTick();
 }
 
 void EditorApp::OnRenderViews(EngineContext& ctx)
@@ -92,6 +88,9 @@ void EditorApp::OnImGui(EngineContext& ctx)
             if (playMode_.State() == PlayState::Playing) { stateName = "Playing"; }
             if (playMode_.State() == PlayState::Paused) { stateName = "Paused"; }
             ImGui::Text("Play state: %s", stateName);
+            ImGui::Text("GameLogic: %s (v%u, %u scripts)",
+                        ctx.scriptHost->IsLoaded() ? "loaded" : "not loaded",
+                        ctx.dllReloader->Version(), ctx.scriptHost->ScriptTypeCount());
         }
         ImGui::End();
     }
@@ -105,7 +104,6 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
     if (ImGui::BeginMenu("File")) {
         if (ImGui::MenuItem("New Scene")) {
             selection_.entity = kNullEntity;
-            spinner_ = {};
             ctx.scene->Clear();
         }
         if (ImGui::MenuItem("Open Scene...")) {
@@ -139,13 +137,11 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
     if (state == PlayState::Editing) {
         if (ImGui::Button("Play")) {
             selection_.entity = kNullEntity; // 復元で EntityID が変わるため選択解除
-            spinner_ = {};
             playMode_.Play(*ctx.scene);
         }
     } else {
         if (ImGui::Button("Stop")) {
             selection_.entity = kNullEntity;
-            spinner_ = {};
             playMode_.Stop(*ctx.scene);
         }
         ImGui::SameLine();
@@ -223,7 +219,6 @@ void EditorApp::OpenScene(EngineContext& ctx)
     ofn.Flags = OFN_FILEMUSTEXIST;
     if (GetOpenFileNameW(&ofn)) {
         selection_.entity = kNullEntity;
-        spinner_ = {};
         if (SceneSerializer::LoadFromFile(*ctx.scene, path)) {
             scenePath_ = path;
             ctx.reloadHub->SetActiveScenePath(scenePath_);
@@ -332,6 +327,16 @@ void EditorApp::BuildDemoEntities(EngineContext& ctx)
     if (model) {
         model.SetLocalPosition(0.0f, 1.5f, 0.0f);
         model.SetLocalScale(2.0f, 2.0f, 2.0f);
+    }
+
+    // ---- GameLogic.dll のスクリプトをアタッチ (DLL 未ロードならスキップ) ----
+    const ComponentTypeId rotator = ComponentRegistry::Get().FindByName("Rotator");
+    if (rotator != kInvalidComponentType) {
+        s.GetWorld().AddComponentRaw(spinner.Id(), rotator);
+    }
+    const ComponentTypeId player = ComponentRegistry::Get().FindByName("PlayerController");
+    if (player != kInvalidComponentType && model) {
+        s.GetWorld().AddComponentRaw(model.Id(), player);
     }
 }
 

@@ -1,8 +1,32 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
+    <Filter Include="Scripts">
+      <UniqueIdentifier>{58425F9E-D29A-63A1-CBA4-66A9B140EF23}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Shared">
+      <UniqueIdentifier>{3EA2E46E-D5BF-AB27-828F-05F51EEDB435}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\src\GameLogic\GameLogicMain.cpp" />
+    <ClCompile Include="..\src\GameLogic\Scripts\PlayerController.cpp">
+      <Filter>Scripts</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\GameLogic\Scripts\Rotator.cpp">
+      <Filter>Scripts</Filter>
+    </ClCompile>
+    <ClInclude Include="..\src\Shared\EngineAPI.h">
+      <Filter>Shared</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Shared\MathPod.h">
+      <Filter>Shared</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Shared\ScriptAPI.h">
+      <Filter>Shared</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Shared\ScriptTypes.h">
+      <Filter>Shared</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>

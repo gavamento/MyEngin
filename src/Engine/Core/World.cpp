@@ -364,6 +364,41 @@ void World::DestroyImmediate(EntityID e)
     hierarchyDirty_ = true;
 }
 
+void World::ReplaceComponentStorage(ComponentTypeId t, ComponentDesc newDesc)
+{
+    MYE_CHECK(!IsIterating());
+    // UpdateDesc で参照が無効になる前に旧フィールド表をコピー
+    const ComponentDesc& oldRef = ComponentRegistry::Get().Desc(t);
+    const std::vector<FieldDesc> oldFields = oldRef.fields;
+    const uint32_t oldSize = oldRef.size;
+    (void)oldSize;
+
+    for (auto& arch : archetypes_) {
+        const int ti = arch->FindTypeIndex(t);
+        if (ti < 0) {
+            continue;
+        }
+        const uint32_t count = arch->Count();
+        std::vector<std::byte> fresh(static_cast<size_t>(count) * newDesc.size);
+        for (uint32_t row = 0; row < count; ++row) {
+            std::byte* dst = fresh.data() + static_cast<size_t>(row) * newDesc.size;
+            newDesc.construct(dst);
+            const auto* src = static_cast<const std::byte*>(arch->GetPtr(ti, row));
+            // 名前と型が一致するフィールドのみ引き継ぐ (spec 8.4 の状態保存規則)
+            for (const FieldDesc& nf : newDesc.fields) {
+                for (const FieldDesc& of : oldFields) {
+                    if (nf.type == of.type && strcmp(nf.name, of.name) == 0) {
+                        memcpy(dst + nf.offset, src + of.offset, FieldTypeSize(nf.type));
+                        break;
+                    }
+                }
+            }
+        }
+        arch->ReplaceColumn(ti, std::move(fresh), newDesc.size);
+    }
+    ComponentRegistry::Get().UpdateDesc(t, std::move(newDesc));
+}
+
 void World::Clear()
 {
     MYE_CHECK(!IsIterating());

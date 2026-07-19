@@ -2,9 +2,11 @@
 
 #include "Engine/Core/Check.h"
 #include "Engine/Core/Log.h"
+#include "Engine/Engine/HotReload/DllReloader.h"
 #include "Engine/Engine/HotReload/ReloadHub.h"
 #include "Engine/Engine/RenderSystem.h"
 #include "Engine/Engine/Scene.h"
+#include "Engine/Engine/Script/ScriptHost.h"
 #include "Engine/Engine/TransformSystem.h"
 #include "Engine/Platform/Clock.h"
 #include "Engine/Platform/PathUtil.h"
@@ -15,6 +17,8 @@
 #include "Engine/Renderer/ImGuiRenderer.h"
 #include "Engine/Renderer/ShaderManager.h"
 #include "Engine/Renderer/SwapChain.h"
+
+#include <filesystem>
 
 #include <Windows.h>
 
@@ -42,6 +46,8 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     RenderSystem renderSystem;
     ForwardPath forwardPath;
     ReloadHub reloadHub;
+    ScriptHost scriptHost;
+    DllReloader dllReloader;
     IRenderPath* activePath = &forwardPath; // M6.5 で Deferred と切替可能になる
 
     // ---- 起動 ----
@@ -74,6 +80,15 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     }
     reloadHub.Init(&shaderManager, &resources, &scene, assetsRoot);
 
+    // GameLogic.dll (スクリプト層)。エンジンの exe と同じ構成のビルド出力を監視する
+    scriptHost.Init(&scene);
+    {
+        const std::wstring cacheHot =
+            (std::filesystem::path(assetsRoot).parent_path() / L"cache" / L"hot").wstring();
+        dllReloader.Init(&scriptHost, GetExecutableDir() + L"\\GameLogic.dll", cacheHot);
+        dllReloader.LoadInitial();
+    }
+
     clock.Init();
 
     EngineContext ctx;
@@ -86,6 +101,8 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     ctx.renderSystem = &renderSystem;
     ctx.renderPath = activePath;
     ctx.reloadHub = &reloadHub;
+    ctx.scriptHost = &scriptHost;
+    ctx.dllReloader = &dllReloader;
     ctx.assetsRoot = assetsRoot;
     ctx.fixedDt = static_cast<float>(kFixedDt);
 
@@ -115,14 +132,24 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
 
         // ---- フェーズ 2: ホットリロード適用セーフポイント ----
         reloadHub.Update();
+        dllReloader.Update();
 
         // ---- 固定 tick: フェーズ 3(Script) / 4(Systems) / 5(Late) / 7(構造変更) ----
         accumulator += dt;
         int ticks = 0;
         while (accumulator >= kFixedDt && ticks < kMaxTicksPerFrame) {
-            app.OnTick(ctx);                          // フェーズ 3 (スクリプト層スロット)
-            // フェーズ 4: システム層 (アニメーション/パーティクルは M5 以降)
-            // フェーズ 5: LateUpdate (M4)
+            app.OnTick(ctx); // エディタ更新 + simulateScripts の決定
+            // ---- フェーズ 3: スクリプト層 Start → Update ----
+            const bool runScripts = ctx.simulateScripts && scriptHost.IsLoaded();
+            if (runScripts) {
+                scriptHost.SetTickContext(ctx.input, ctx.tickIndex, ctx.fixedDt);
+                scriptHost.RunStartAndUpdate();
+            }
+            // ---- フェーズ 4: システム層 (アニメーション/パーティクルは M5 以降) ----
+            // ---- フェーズ 5: スクリプト層 LateUpdate ----
+            if (runScripts) {
+                scriptHost.RunLateUpdate();
+            }
             scene.GetWorld().ApplyStructuralChanges(); // フェーズ 7 (tick 末適用 = ADR-005)
             ++ctx.tickIndex;
             accumulator -= kFixedDt;
@@ -198,6 +225,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
 
     // ---- 終了 (起動の逆順) ----
     app.OnShutdown(ctx);
+    scriptHost.Shutdown();
     reloadHub.Shutdown();
     forwardPath.Shutdown();
     imgui.Shutdown();

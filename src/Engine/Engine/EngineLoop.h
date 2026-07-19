@@ -14,6 +14,8 @@ class ShaderManager;
 class RenderSystem;
 class IRenderPath;
 class ReloadHub;
+class ScriptHost;
+class DllReloader;
 struct RenderResources;
 
 struct EngineConfig {
@@ -43,8 +45,13 @@ struct EngineContext {
     RenderSystem* renderSystem = nullptr;
     IRenderPath* renderPath = nullptr;  // 現在アクティブなパス (M6.5 で切替)
     ReloadHub* reloadHub = nullptr;
+    ScriptHost* scriptHost = nullptr;
+    DllReloader* dllReloader = nullptr;
     std::wstring assetsRoot;            // assets\ の絶対パス
     InputSnapshot input = {}; // 現フレームのスナップショット (tick 中も同一)
+    // この tick でスクリプト層 (フェーズ 3/5) を実行するか。
+    // エディタは OnTick で Play 状態に応じて設定する (Runtime は常に true)
+    bool simulateScripts = true;
     uint64_t frameIndex = 0;  // 描画フレーム数
     uint64_t tickIndex = 0;   // 累計固定 tick 数 (シミュレーション時間 = tickIndex * fixedDt)
     float fixedDt = 1.0f / 60.0f;

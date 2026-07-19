@@ -93,6 +93,12 @@ public:
     // 一致することはない
     void Clear();
 
+    // GameLogic.dll リロード時のスクリプト状態移行 (engine_spec.md 8.4)。
+    // 旧レイアウトのカラムを新レイアウトに差し替える:
+    //   名前と型が一致するフィールドのみコピー、新規フィールドはデフォルト値。
+    // 最後にレジストリの記述子も更新する
+    void ReplaceComponentStorage(ComponentTypeId t, ComponentDesc newDesc);
+
     // ワールド標準の RNG ストリーム (シード管理は Scene/Replay 側)
     Pcg32& Rng() { return rng_; }
 
