@@ -71,6 +71,39 @@ struct FileIdComponent {
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
+// パーティクルエミッタ定義 (engine_spec.md 7 章)。
+// CPU / GPU 両バックエンドが同じこのデータを解釈する (spec 7.1)。
+// ランタイム状態 (プール/乱数ストリーム/放出累積) はバックエンド側が
+// EntityID で管理し、このコンポーネントは純粋な定義データ + シード
+struct ParticleEmitterComponent {
+    // ---- Emission ----
+    float rate = 200.0f;   // 個/秒
+    int32_t shape = 2;     // 0=point 1=sphere 2=cone 3=box
+    float shapeRadius = 0.15f;
+    float coneAngleDeg = 20.0f;
+    DirectX::XMFLOAT3 boxExtents = { 0.5f, 0.5f, 0.5f };
+    // ---- 初期値 (範囲) ----
+    float lifetimeMin = 1.2f;
+    float lifetimeMax = 2.2f;
+    float speedMin = 2.0f;
+    float speedMax = 3.5f;
+    float sizeMin = 0.10f;
+    float sizeMax = 0.22f;
+    DirectX::XMFLOAT4 colorBegin = { 1.0f, 0.85f, 0.35f, 1.0f };
+    DirectX::XMFLOAT4 colorEnd = { 1.0f, 0.15f, 0.02f, 0.0f };
+    float sizeEndScale = 0.25f; // 寿命終端でのサイズ倍率 (線形)
+    // ---- 力場 ----
+    DirectX::XMFLOAT3 gravity = { 0.0f, 1.5f, 0.0f };
+    DirectX::XMFLOAT3 wind = { 0.0f, 0.0f, 0.0f };
+    float turbulence = 0.0f;
+    // ---- 描画 ----
+    int32_t blendMode = 0; // 0=additive 1=alpha
+    // ---- 決定論 ----
+    uint32_t seed = 12345; // エミッタ別 RNG ストリームのシード (spec 7.3)
+    int32_t maxParticles = 100000;
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
 // 固定順で登録する (TypeId の決定論)。多重呼び出しは無害
 void RegisterBuiltinComponents();
 

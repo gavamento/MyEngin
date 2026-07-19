@@ -42,6 +42,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     bool selftest = false;
     bool saveSceneOnStart = false;
     bool autoPlay = false;
+    float perfRate = 0.0f;
+    int perfMax = 0;
 
     int argc = 0;
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
@@ -68,6 +70,10 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 saveSceneOnStart = true;
             } else if (arg == L"--autoplay") {
                 autoPlay = true;
+            } else if (arg == L"--perf-rate" && i + 1 < argc) {
+                perfRate = static_cast<float>(_wtof(argv[++i]));
+            } else if (arg == L"--perf-max" && i + 1 < argc) {
+                perfMax = _wtoi(argv[++i]);
             }
         }
         LocalFree(argv);
@@ -82,6 +88,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     mye::EditorApp app;
     app.saveSceneOnStart = saveSceneOnStart;
     app.autoPlay = autoPlay;
+    app.perfRate = perfRate;
+    app.perfMax = perfMax;
     mye::EngineLoop loop;
     return loop.Run(config, app);
 }

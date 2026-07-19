@@ -1,5 +1,7 @@
 #include "Engine/Renderer/GraphicsDevice.h"
 
+#include <vector>
+
 #include "Engine/Core/Log.h"
 
 namespace mye {
@@ -43,6 +45,40 @@ bool GraphicsDevice::Init()
 
     MYE_LOG_INFO("D3D11 device created (FL 11_0, debug layer: %s)", debugLayer_ ? "on" : "off");
     return true;
+}
+
+void GraphicsDevice::PumpDebugMessages()
+{
+#ifdef _DEBUG
+    if (!debugLayer_ || !device_) {
+        return;
+    }
+    Microsoft::WRL::ComPtr<ID3D11InfoQueue> queue;
+    if (FAILED(device_.As(&queue))) {
+        return;
+    }
+    const UINT64 count = queue->GetNumStoredMessages();
+    for (UINT64 i = debugMsgCursor_; i < count; ++i) {
+        SIZE_T len = 0;
+        queue->GetMessage(i, nullptr, &len);
+        if (len == 0) {
+            continue;
+        }
+        std::vector<uint8_t> storage(len);
+        auto* msg = reinterpret_cast<D3D11_MESSAGE*>(storage.data());
+        if (SUCCEEDED(queue->GetMessage(i, msg, &len))) {
+            if (msg->Severity == D3D11_MESSAGE_SEVERITY_ERROR
+                || msg->Severity == D3D11_MESSAGE_SEVERITY_CORRUPTION) {
+                MYE_LOG_ERROR("[d3d] %.*s", static_cast<int>(msg->DescriptionByteLength),
+                              msg->pDescription);
+            } else if (msg->Severity == D3D11_MESSAGE_SEVERITY_WARNING) {
+                MYE_LOG_WARN("[d3d] %.*s", static_cast<int>(msg->DescriptionByteLength),
+                             msg->pDescription);
+            }
+        }
+    }
+    debugMsgCursor_ = count;
+#endif
 }
 
 void GraphicsDevice::Shutdown()

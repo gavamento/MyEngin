@@ -25,7 +25,8 @@ void GameViewWindow::OnRenderViews(EngineContext& ctx)
     target.width = rt_.Width();
     target.height = rt_.Height();
     hasCamera_ = ctx.renderSystem->Render(ctx.scene->GetWorld(), *ctx.device, *ctx.renderPath,
-                                          *ctx.shaders, *ctx.resources, target);
+                                          *ctx.shaders, *ctx.resources, target, nullptr,
+                                          ctx.particles);
 }
 
 void GameViewWindow::OnImGui(EngineContext& ctx)

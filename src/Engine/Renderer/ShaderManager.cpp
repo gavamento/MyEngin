@@ -138,6 +138,23 @@ AssetID ShaderManager::Load(std::string_view name)
     return id;
 }
 
+AssetID ShaderManager::LoadCompute(std::string_view name)
+{
+    const AssetID id{ HashStr(name) };
+    if (programs_.contains(id.value)) {
+        return id;
+    }
+    ShaderProgram prog;
+    prog.isCompute = true;
+    prog.path = NormalizePathKey(dir_ + L"\\" + Utf8ToWide(name) + L".hlsl");
+    if (!CompileProgram(prog.path, prog)) {
+        MYE_LOG_ERROR("compute shader compile failed: %.*s", static_cast<int>(name.size()),
+                      name.data());
+    }
+    programs_.emplace(id.value, std::move(prog));
+    return id;
+}
+
 ShaderProgram* ShaderManager::Get(AssetID id)
 {
     auto it = programs_.find(id.value);
@@ -153,6 +170,7 @@ bool ShaderManager::Recompile(AssetID id)
     // 成功時のみ差し替え (spec 8.1: 失敗時は旧シェーダを保持)
     ShaderProgram fresh;
     fresh.path = it->second.path;
+    fresh.isCompute = it->second.isCompute;
     if (!CompileProgram(fresh.path, fresh)) {
         return false;
     }
@@ -189,9 +207,11 @@ void ShaderManager::RequestRecompileForFile(const std::wstring& normalizedPath)
         // D3D11 デバイスはフリースレッド (Create* は別スレッド可)。
         // コンパイル失敗時も ShaderProgram (valid=false) が返り、差し替えはされない
         const std::wstring path = prog.path;
-        async_.push_back({ id, std::async(std::launch::async, [this, path] {
+        const bool isCompute = prog.isCompute;
+        async_.push_back({ id, std::async(std::launch::async, [this, path, isCompute] {
                                ShaderProgram fresh;
                                fresh.path = path;
+                               fresh.isCompute = isCompute;
                                CompileProgram(path, fresh);
                                return fresh;
                            }) });
@@ -249,12 +269,27 @@ bool ShaderManager::CompileProgram(const std::wstring& path, ShaderProgram& out)
         return true;
     };
 
+    ID3D11Device* dev = device_->Device();
+
+    if (out.isCompute) {
+        ComPtr<ID3DBlob> csCode;
+        if (!compile("CSMain", "cs_5_0", csCode)) {
+            return false;
+        }
+        if (FAILED(dev->CreateComputeShader(csCode->GetBufferPointer(), csCode->GetBufferSize(),
+                                            nullptr, out.cs.GetAddressOf()))) {
+            MYE_LOG_ERROR("compute shader creation failed: %s", pathUtf8.c_str());
+            return false;
+        }
+        out.valid = true;
+        MYE_LOG_INFO("shader compiled: %s", pathUtf8.c_str());
+        return true;
+    }
+
     ComPtr<ID3DBlob> vsCode, psCode;
     if (!compile("VSMain", "vs_5_0", vsCode) || !compile("PSMain", "ps_5_0", psCode)) {
         return false;
     }
-
-    ID3D11Device* dev = device_->Device();
     if (FAILED(dev->CreateVertexShader(vsCode->GetBufferPointer(), vsCode->GetBufferSize(),
                                        nullptr, out.vs.GetAddressOf()))
         || FAILED(dev->CreatePixelShader(psCode->GetBufferPointer(), psCode->GetBufferSize(),

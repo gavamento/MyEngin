@@ -40,6 +40,9 @@
     <ClCompile Include="..\src\Engine\Engine\HotReload\DllReloader.cpp" />
     <ClCompile Include="..\src\Engine\Engine\HotReload\ReloadHub.cpp" />
     <ClCompile Include="..\src\Engine\Engine\ModelLoader.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Particles\CpuParticleBackend.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Particles\GpuParticleBackend.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Particles\ParticleSystem.cpp" />
     <ClCompile Include="..\src\Engine\Engine\RenderSystem.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Scene.cpp" />
     <ClCompile Include="..\src\Engine\Engine\SceneSelfTest.cpp" />
@@ -52,6 +55,7 @@
     <ClCompile Include="..\src\Engine\Platform\Win32Window.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\ForwardPath.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\GpuResources.cpp" />
+    <ClCompile Include="..\src\Engine\Renderer\GpuTimer.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\GraphicsDevice.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\ImageWrite.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\ImGuiRenderer.cpp" />
@@ -78,6 +82,10 @@
     <ClInclude Include="..\src\Engine\Engine\HotReload\DllReloader.h" />
     <ClInclude Include="..\src\Engine\Engine\HotReload\ReloadHub.h" />
     <ClInclude Include="..\src\Engine\Engine\ModelLoader.h" />
+    <ClInclude Include="..\src\Engine\Engine\Particles\CpuParticleBackend.h" />
+    <ClInclude Include="..\src\Engine\Engine\Particles\GpuParticleBackend.h" />
+    <ClInclude Include="..\src\Engine\Engine\Particles\IParticleBackend.h" />
+    <ClInclude Include="..\src\Engine\Engine\Particles\ParticleSystem.h" />
     <ClInclude Include="..\src\Engine\Engine\RenderSystem.h" />
     <ClInclude Include="..\src\Engine\Engine\Scene.h" />
     <ClInclude Include="..\src\Engine\Engine\SceneSelfTest.h" />
@@ -90,6 +98,7 @@
     <ClInclude Include="..\src\Engine\Platform\Win32Window.h" />
     <ClInclude Include="..\src\Engine\Renderer\ForwardPath.h" />
     <ClInclude Include="..\src\Engine\Renderer\GpuResources.h" />
+    <ClInclude Include="..\src\Engine\Renderer\GpuTimer.h" />
     <ClInclude Include="..\src\Engine\Renderer\GraphicsDevice.h" />
     <ClInclude Include="..\src\Engine\Renderer\ImageWrite.h" />
     <ClInclude Include="..\src\Engine\Renderer\ImGuiRenderer.h" />

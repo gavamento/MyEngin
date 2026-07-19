@@ -2,6 +2,7 @@
 
 #include "Engine/Core/Components.h"
 #include "Engine/Core/World.h"
+#include "Engine/Engine/Particles/ParticleSystem.h"
 #include "Engine/Renderer/GpuResources.h"
 #include "Engine/Renderer/RenderPath.h"
 
@@ -11,7 +12,8 @@ namespace mye {
 
 bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& path,
                           ShaderManager& shaders, RenderResources& resources,
-                          const FrameTarget& target, const CameraOverride* cameraOverride)
+                          const FrameTarget& target, const CameraOverride* cameraOverride,
+                          ParticleSystem* particles)
 {
     RenderView view;
     view.rtv = target.rtv;
@@ -127,6 +129,11 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
 
     queue_.Sort();
     path.Render(device, view, queue_, light, resources, shaders);
+
+    // パーティクルは常に Forward 後段 (どのレンダリングパスでも共通)
+    if (particles) {
+        particles->Render(device, view, shaders);
+    }
     return cameraFound;
 }
 

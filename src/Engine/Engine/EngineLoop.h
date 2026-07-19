@@ -16,6 +16,7 @@ class IRenderPath;
 class ReloadHub;
 class ScriptHost;
 class DllReloader;
+class ParticleSystem;
 struct RenderResources;
 
 struct EngineConfig {
@@ -47,6 +48,7 @@ struct EngineContext {
     ReloadHub* reloadHub = nullptr;
     ScriptHost* scriptHost = nullptr;
     DllReloader* dllReloader = nullptr;
+    ParticleSystem* particles = nullptr;
     std::wstring assetsRoot;            // assets\ の絶対パス
     InputSnapshot input = {}; // 現フレームのスナップショット (tick 中も同一)
     // この tick でスクリプト層 (フェーズ 3/5) を実行するか。

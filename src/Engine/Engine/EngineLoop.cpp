@@ -4,6 +4,7 @@
 #include "Engine/Core/Log.h"
 #include "Engine/Engine/HotReload/DllReloader.h"
 #include "Engine/Engine/HotReload/ReloadHub.h"
+#include "Engine/Engine/Particles/ParticleSystem.h"
 #include "Engine/Engine/RenderSystem.h"
 #include "Engine/Engine/Scene.h"
 #include "Engine/Engine/Script/ScriptHost.h"
@@ -48,6 +49,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     ReloadHub reloadHub;
     ScriptHost scriptHost;
     DllReloader dllReloader;
+    ParticleSystem particleSystem;
     IRenderPath* activePath = &forwardPath; // M6.5 で Deferred と切替可能になる
 
     // ---- 起動 ----
@@ -79,6 +81,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         return 1;
     }
     reloadHub.Init(&shaderManager, &resources, &scene, assetsRoot);
+    particleSystem.Init(device, shaderManager, assetsRoot);
 
     // GameLogic.dll (スクリプト層)。エンジンの exe と同じ構成のビルド出力を監視する
     scriptHost.Init(&scene);
@@ -103,6 +106,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     ctx.reloadHub = &reloadHub;
     ctx.scriptHost = &scriptHost;
     ctx.dllReloader = &dllReloader;
+    ctx.particles = &particleSystem;
     ctx.assetsRoot = assetsRoot;
     ctx.fixedDt = static_cast<float>(kFixedDt);
 
@@ -145,7 +149,12 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                 scriptHost.SetTickContext(ctx.input, ctx.tickIndex, ctx.fixedDt);
                 scriptHost.RunStartAndUpdate();
             }
-            // ---- フェーズ 4: システム層 (アニメーション/パーティクルは M5 以降) ----
+            // ---- フェーズ 4: システム層 ----
+            // Transform を先に確定 (エミッタのワールド位置は tick 決定論の一部)
+            transformSystem.Update(scene.GetWorld());
+            if (ctx.simulateScripts) {
+                particleSystem.Update(scene.GetWorld(), ctx.fixedDt);
+            }
             // ---- フェーズ 5: スクリプト層 LateUpdate ----
             if (runScripts) {
                 scriptHost.RunLateUpdate();
@@ -175,7 +184,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             memcpy(target.clearColor, config.clearColor, sizeof(target.clearColor));
             if (config.renderSceneToBackbuffer) {
                 renderSystem.Render(scene.GetWorld(), device, *activePath, shaderManager, resources,
-                                    target);
+                                    target, nullptr, &particleSystem);
             } else {
                 // ImGui 描画の下地としてクリアのみ
                 ID3D11DeviceContext* dc = device.Context();
@@ -213,6 +222,8 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             Sleep(10); // 最小化中はスピンしない
         }
 
+        device.PumpDebugMessages(); // D3D 検証メッセージをログへ (Debug のみ)
+
         ++ctx.frameIndex;
         if (config.maxFrames > 0 && ctx.frameIndex >= static_cast<uint64_t>(config.maxFrames)) {
             MYE_LOG_INFO("maxFrames (%lld) reached, exiting", static_cast<long long>(config.maxFrames));
@@ -225,6 +236,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
 
     // ---- 終了 (起動の逆順) ----
     app.OnShutdown(ctx);
+    particleSystem.Shutdown();
     scriptHost.Shutdown();
     reloadHub.Shutdown();
     forwardPath.Shutdown();

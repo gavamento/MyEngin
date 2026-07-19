@@ -14,13 +14,15 @@ namespace mye {
 
 class GraphicsDevice;
 
-// VS + PS を 1 つの .hlsl (エントリ VSMain / PSMain) からコンパイルしたプログラム
+// VS + PS (エントリ VSMain / PSMain) または CS (エントリ CSMain) のプログラム
 struct ShaderProgram {
     Microsoft::WRL::ComPtr<ID3D11VertexShader> vs;
     Microsoft::WRL::ComPtr<ID3D11PixelShader> ps;
+    Microsoft::WRL::ComPtr<ID3D11ComputeShader> cs;
     Microsoft::WRL::ComPtr<ID3D11InputLayout> inputLayout;
-    std::wstring path;                  // フルパス
+    std::wstring path;                  // フルパス (正規化済み)
     std::vector<std::wstring> includes; // 依存 .hlsli (M3 のリロード依存グラフ用)
+    bool isCompute = false;
     bool valid = false;
 };
 
@@ -33,6 +35,8 @@ public:
     // "forward_lit" → {shaderDir}\forward_lit.hlsl をコンパイルしてキャッシュ。
     // 失敗しても ID は返す (Get で valid=false のプログラムが得られる)
     AssetID Load(std::string_view name);
+    // "particle_sim.cs" → {shaderDir}\particle_sim.cs.hlsl (エントリ CSMain)
+    AssetID LoadCompute(std::string_view name);
     ShaderProgram* Get(AssetID id);
 
     // 同期再コンパイル。成功時のみ差し替え、失敗時は旧プログラム維持 + エラーログ
@@ -48,7 +52,7 @@ public:
     const std::wstring& ShaderDir() const { return dir_; }
 
 private:
-    bool CompileProgram(const std::wstring& path, ShaderProgram& out);
+    bool CompileProgram(const std::wstring& path, ShaderProgram& out); // out.isCompute を見て分岐
 
     GraphicsDevice* device_ = nullptr;
     std::wstring dir_;

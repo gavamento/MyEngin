@@ -7,6 +7,7 @@
 #include "Editor/Windows/GameViewWindow.h"
 #include "Editor/Windows/HierarchyWindow.h"
 #include "Editor/Windows/InspectorWindow.h"
+#include "Editor/Windows/ParticleSettingsWindow.h"
 #include "Editor/Windows/SceneViewWindow.h"
 #include "Engine/Engine/EngineLoop.h"
 #include "Engine/Engine/GameObject.h"
@@ -23,6 +24,8 @@ public:
 
     bool saveSceneOnStart = false; // --save-scene-on-start (シーンリロード検証用)
     bool autoPlay = false;         // --autoplay (起動直後に Play。スクリプト検証用)
+    float perfRate = 0.0f;         // --perf-rate N (>0 でデモエミッタの放出数を上書き — 性能計測用)
+    int perfMax = 0;               // --perf-max N
 
 private:
     void RegisterDemoResources(EngineContext& ctx); // メッシュ/マテリアル/モデル登録 (毎回)
@@ -39,6 +42,7 @@ private:
     ConsoleWindow console_;
     SceneViewWindow sceneView_;
     GameViewWindow gameView_;
+    ParticleSettingsWindow particleSettings_;
 
     std::wstring scenePath_;
     bool rebuildDockLayout_ = false;

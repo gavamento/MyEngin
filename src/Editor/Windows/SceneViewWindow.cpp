@@ -38,7 +38,7 @@ void SceneViewWindow::OnRenderViews(EngineContext& ctx)
     target.width = rt_.Width();
     target.height = rt_.Height();
     ctx.renderSystem->Render(ctx.scene->GetWorld(), *ctx.device, *ctx.renderPath, *ctx.shaders,
-                             *ctx.resources, target, &cam);
+                             *ctx.resources, target, &cam, ctx.particles);
 }
 
 void SceneViewWindow::OnImGui(EngineContext& ctx)

@@ -9,6 +9,7 @@ class World;
 class GraphicsDevice;
 class IRenderPath;
 class ShaderManager;
+class ParticleSystem;
 struct RenderResources;
 
 // このフレームの描画先
@@ -34,10 +35,13 @@ struct CameraOverride {
 // ライト: 最初の LightComponent (向き = エンティティの +Z)
 class RenderSystem {
 public:
-    // 戻り値: カメラが見つかった (または override があった) か
+    // 戻り値: カメラが見つかった (または override があった) か。
+    // particles を渡すとシーン描画後に Forward 後段としてパーティクルを重ねる
+    // (M6.5 の Deferred でも共通の後段 — spec 7 章 / 6.1)
     bool Render(World& world, GraphicsDevice& device, IRenderPath& path, ShaderManager& shaders,
                 RenderResources& resources, const FrameTarget& target,
-                const CameraOverride* cameraOverride = nullptr);
+                const CameraOverride* cameraOverride = nullptr,
+                ParticleSystem* particles = nullptr);
 
 private:
     RenderQueue queue_; // フレーム毎に再利用 (アロケーション回避)

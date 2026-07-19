@@ -10,6 +10,9 @@
     <Filter Include="Engine\HotReload">
       <UniqueIdentifier>{45E1E3BD-577C-EB21-9437-FCBCEC610D8C}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Engine\Particles">
+      <UniqueIdentifier>{DCDC7B06-EF20-69BD-0BF7-3CA3702AC5ED}</UniqueIdentifier>
+    </Filter>
     <Filter Include="Engine\Script">
       <UniqueIdentifier>{01586F12-A871-BEFB-7266-0B4C59DCE30B}</UniqueIdentifier>
     </Filter>
@@ -75,6 +78,15 @@
     <ClCompile Include="..\src\Engine\Engine\ModelLoader.cpp">
       <Filter>Engine</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Particles\CpuParticleBackend.cpp">
+      <Filter>Engine\Particles</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Particles\GpuParticleBackend.cpp">
+      <Filter>Engine\Particles</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Particles\ParticleSystem.cpp">
+      <Filter>Engine\Particles</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\RenderSystem.cpp">
       <Filter>Engine</Filter>
     </ClCompile>
@@ -109,6 +121,9 @@
       <Filter>Renderer</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Renderer\GpuResources.cpp">
+      <Filter>Renderer</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Renderer\GpuTimer.cpp">
       <Filter>Renderer</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Renderer\GraphicsDevice.cpp">
@@ -189,6 +204,18 @@
     <ClInclude Include="..\src\Engine\Engine\ModelLoader.h">
       <Filter>Engine</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Particles\CpuParticleBackend.h">
+      <Filter>Engine\Particles</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Particles\GpuParticleBackend.h">
+      <Filter>Engine\Particles</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Particles\IParticleBackend.h">
+      <Filter>Engine\Particles</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Particles\ParticleSystem.h">
+      <Filter>Engine\Particles</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\RenderSystem.h">
       <Filter>Engine</Filter>
     </ClInclude>
@@ -223,6 +250,9 @@
       <Filter>Renderer</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\GpuResources.h">
+      <Filter>Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\GpuTimer.h">
       <Filter>Renderer</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\GraphicsDevice.h">

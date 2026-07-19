@@ -75,6 +75,7 @@ void EditorApp::OnImGui(EngineContext& ctx)
     console_.OnImGui();
     sceneView_.OnImGui(ctx);
     gameView_.OnImGui(ctx);
+    particleSettings_.OnImGui(ctx);
 
     if (showStats_) {
         if (ImGui::Begin("Stats", &showStats_)) {
@@ -180,6 +181,7 @@ void EditorApp::SetupDockLayout(unsigned int dockspaceId)
     ImGui::DockBuilderDockWindow("Hierarchy", left);
     ImGui::DockBuilderDockWindow("Inspector", rightTop);
     ImGui::DockBuilderDockWindow("Stats", rightBottom);
+    ImGui::DockBuilderDockWindow("Particle Settings", rightBottom);
     ImGui::DockBuilderDockWindow("Console", bottom);
     ImGui::DockBuilderDockWindow("Scene", center);
     ImGui::DockBuilderDockWindow("Game", center);
@@ -327,6 +329,20 @@ void EditorApp::BuildDemoEntities(EngineContext& ctx)
     if (model) {
         model.SetLocalPosition(0.0f, 1.5f, 0.0f);
         model.SetLocalScale(2.0f, 2.0f, 2.0f);
+    }
+
+    // ---- パーティクルエミッタ (M5 デモ: 中央の炎) ----
+    GameObject fire = s.CreateGameObject("Fire");
+    fire.SetLocalPosition(4.0f, 0.0f, 0.0f);
+    auto* emitter = fire.AddComponent<ParticleEmitterComponent>(); // 既定値 = 上向きコーン炎
+    if (perfRate > 0.0f) {
+        emitter->rate = perfRate; // 性能計測モード
+        emitter->maxParticles = (perfMax > 0) ? perfMax : 100000;
+        emitter->lifetimeMin = 1.2f;
+        emitter->lifetimeMax = 1.8f;
+        emitter->speedMin = 3.0f;
+        emitter->speedMax = 8.0f;
+        emitter->coneAngleDeg = 60.0f;
     }
 
     // ---- GameLogic.dll のスクリプトをアタッチ (DLL 未ロードならスキップ) ----

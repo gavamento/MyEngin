@@ -54,6 +54,29 @@ void RegisterBuiltinComponents()
     RegisterComponent<FileIdComponent>("FileId", {
         MYE_FIELD_FLAGS(FileIdComponent, value, UInt64, kFieldReadOnly | kFieldNoSerialize),
     }, kComponentNoSerialize | kComponentHidden); // シリアライザが "fileId" として特別扱い
+
+    RegisterComponent<ParticleEmitterComponent>("ParticleEmitter", {
+        MYE_FIELD(ParticleEmitterComponent, rate, Float),
+        MYE_FIELD(ParticleEmitterComponent, shape, Int32),
+        MYE_FIELD(ParticleEmitterComponent, shapeRadius, Float),
+        MYE_FIELD(ParticleEmitterComponent, coneAngleDeg, Float),
+        MYE_FIELD(ParticleEmitterComponent, boxExtents, Float3),
+        MYE_FIELD(ParticleEmitterComponent, lifetimeMin, Float),
+        MYE_FIELD(ParticleEmitterComponent, lifetimeMax, Float),
+        MYE_FIELD(ParticleEmitterComponent, speedMin, Float),
+        MYE_FIELD(ParticleEmitterComponent, speedMax, Float),
+        MYE_FIELD(ParticleEmitterComponent, sizeMin, Float),
+        MYE_FIELD(ParticleEmitterComponent, sizeMax, Float),
+        MYE_FIELD(ParticleEmitterComponent, colorBegin, Color),
+        MYE_FIELD(ParticleEmitterComponent, colorEnd, Color),
+        MYE_FIELD(ParticleEmitterComponent, sizeEndScale, Float),
+        MYE_FIELD(ParticleEmitterComponent, gravity, Float3),
+        MYE_FIELD(ParticleEmitterComponent, wind, Float3),
+        MYE_FIELD(ParticleEmitterComponent, turbulence, Float),
+        MYE_FIELD(ParticleEmitterComponent, blendMode, Int32),
+        MYE_FIELD(ParticleEmitterComponent, seed, UInt32),
+        MYE_FIELD(ParticleEmitterComponent, maxParticles, Int32),
+    });
 }
 
 } // namespace mye
