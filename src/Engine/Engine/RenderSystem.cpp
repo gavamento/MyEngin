@@ -105,6 +105,9 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
             const int mi = arch.FindTypeIndex(MeshRendererComponent::sTypeId);
             const int wi = arch.FindTypeIndex(WorldMatrixComponent::sTypeId);
             for (uint32_t row = 0; row < arch.Count(); ++row) {
+                if (!IsEntityActive(world, arch.EntityAt(row))) {
+                    continue; // 無効エンティティは描画しない (M10)
+                }
                 const auto* mr = static_cast<const MeshRendererComponent*>(arch.GetPtr(mi, row));
                 if (mr->mesh.IsNull() || mr->material.IsNull()) {
                     continue;

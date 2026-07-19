@@ -341,6 +341,9 @@ void ScriptHost::RunPhase(Phase phase)
             const int ci = arch.FindTypeIndex(type.componentId);
             const uint32_t count = arch.Count(); // 開始時の行数で固定
             for (uint32_t row = 0; row < count; ++row) {
+                if (!IsEntityActive(world, arch.EntityAt(row))) {
+                    continue; // 無効エンティティのスクリプトは走らせない (M10)
+                }
                 MyeUpdateContext ctx;
                 ctx.dt = dt_;
                 ctx.tickIndex = tickIndex_;

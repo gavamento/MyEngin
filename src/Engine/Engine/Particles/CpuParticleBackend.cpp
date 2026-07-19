@@ -105,6 +105,9 @@ void CpuParticleBackend::SyncEmitters(World& world)
                                     WorldMatrixComponent::sTypeId };
     world.ForEachArchetype(req, [&](Archetype& arch) {
         for (uint32_t row = 0; row < arch.Count(); ++row) {
+            if (!IsEntityActive(world, arch.EntityAt(row))) {
+                continue; // 無効エミッタはプールを持たない (M10)
+            }
             current.push_back(arch.EntityAt(row));
         }
     });

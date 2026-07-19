@@ -1,6 +1,14 @@
 #include "Engine/Core/Components.h"
 
+#include "Engine/Core/World.h"
+
 namespace mye {
+
+bool IsEntityActive(World& world, EntityID e)
+{
+    const auto* a = world.GetComponent<ActiveComponent>(e);
+    return !a || a->enabled != 0;
+}
 
 void RegisterBuiltinComponents()
 {
@@ -83,6 +91,11 @@ void RegisterBuiltinComponents()
         MYE_FIELD(ColliderComponent, radius, Float),
         MYE_FIELD(ColliderComponent, halfExtents, Float3),
         MYE_FIELD(ColliderComponent, isTrigger, Int32),
+    });
+
+    // M10: 末尾追加 (TypeId 順を壊さない)。無ければ有効なので既存シーンは不変
+    RegisterComponent<ActiveComponent>("Active", {
+        MYE_FIELD(ActiveComponent, enabled, Int32),
     });
 }
 

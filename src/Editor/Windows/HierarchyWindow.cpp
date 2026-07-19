@@ -166,11 +166,28 @@ void HierarchyWindow::DrawEntityNode(EngineContext& ctx, World& world, EntityID 
     if (!world.IsAlive(e)) {
         return;
     }
-    auto* h = world.GetComponent<HierarchyComponent>(e);
-    const bool leaf = (h == nullptr) || h->firstChild.IsNull();
     const uint64_t fid = FidOf(world, e);
 
     ImGui::PushID(static_cast<int>(e.index));
+
+    // 有効/無効チェックボックス。トグルで ActiveComponent 追加 = アーキタイプ変更が起きるため、
+    // HierarchyComponent ポインタ (h) を取得する前に処理する (取得後だと use-after-move)
+    bool active = IsEntityActive(world, e);
+    if (ImGui::Checkbox("##active", &active)) {
+        undo.BeginRecord("Toggle Active", selection);
+        undo.CaptureBefore(*ctx.scene, ctx.scene->EnsureFileId(e));
+        auto* a = world.GetComponent<ActiveComponent>(e);
+        if (!a) {
+            a = static_cast<ActiveComponent*>(world.AddComponentRaw(e, ActiveComponent::sTypeId));
+        }
+        if (a) {
+            a->enabled = active ? 1 : 0;
+        }
+        world.ApplyStructuralChanges();
+        undo.CaptureAfter(*ctx.scene, ctx.scene->EnsureFileId(e));
+        undo.EndRecord(selection);
+    }
+    ImGui::SameLine();
 
     // インラインリネーム中はこのノードを InputText に置き換える
     if (fid != 0 && fid == renamingFid_) {
@@ -193,6 +210,10 @@ void HierarchyWindow::DrawEntityNode(EngineContext& ctx, World& world, EntityID 
         ImGui::PopID();
         return;
     }
+
+    // h はチェックボックスのトグル (アーキタイプ変更) 後に取得する
+    auto* h = world.GetComponent<HierarchyComponent>(e);
+    const bool leaf = (h == nullptr) || h->firstChild.IsNull();
 
     ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick
         | ImGuiTreeNodeFlags_SpanAvailWidth;

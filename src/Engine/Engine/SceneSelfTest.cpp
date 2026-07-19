@@ -204,6 +204,26 @@ bool RunSceneSerializerSelfTest()
         check(cloneOk, "clone parent+child values match original");
     }
 
+    // ---- ActiveComponent: 有効/無効 + シリアライズ往復 (M10) ----
+    {
+        Scene s5;
+        GameObject g = s5.CreateGameObjectTracked("ActiveTest");
+        s5.GetWorld().ApplyStructuralChanges();
+        check(IsEntityActive(s5.GetWorld(), g.Id()), "no ActiveComponent = active");
+        auto* act = g.AddComponent<ActiveComponent>();
+        act->enabled = 0;
+        check(!IsEntityActive(s5.GetWorld(), g.Id()), "enabled=0 = inactive");
+        act->enabled = 1;
+        check(IsEntityActive(s5.GetWorld(), g.Id()), "enabled=1 = active");
+
+        act->enabled = 0;
+        const nlohmann::json j = SceneSerializer::SaveToJson(s5);
+        SceneSerializer::LoadFromJson(s5, j);
+        GameObject g2 = s5.Find("ActiveTest");
+        check(static_cast<bool>(g2) && !IsEntityActive(s5.GetWorld(), g2.Id()),
+              "ActiveComponent (enabled=0) survives save/load");
+    }
+
     if (failCount == 0) {
         MYE_LOG_INFO("==== Scene serializer self test: ALL PASS ====");
         return true;

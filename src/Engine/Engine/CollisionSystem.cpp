@@ -65,6 +65,9 @@ void CollisionSystem::Update(World& world, ScriptHost* scripts)
         const int ci = arch.FindTypeIndex(ColliderComponent::sTypeId);
         const int wi = arch.FindTypeIndex(WorldMatrixComponent::sTypeId);
         for (uint32_t row = 0; row < arch.Count(); ++row) {
+            if (!IsEntityActive(world, arch.EntityAt(row))) {
+                continue; // 無効エンティティのコライダーは判定から除外 (M10)
+            }
             const auto* col = static_cast<const ColliderComponent*>(arch.GetPtr(ci, row));
             const auto* wm = static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row));
             Body b;

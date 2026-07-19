@@ -236,6 +236,9 @@ void GpuParticleBackend::SyncEmitters(World& world, GraphicsDevice& device)
                                     WorldMatrixComponent::sTypeId };
     world.ForEachArchetype(req, [&](Archetype& arch) {
         for (uint32_t row = 0; row < arch.Count(); ++row) {
+            if (!IsEntityActive(world, arch.EntityAt(row))) {
+                continue; // 無効エミッタは描画しない (M10)
+            }
             current.push_back(arch.EntityAt(row));
         }
     });

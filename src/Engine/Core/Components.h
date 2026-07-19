@@ -114,6 +114,20 @@ struct ColliderComponent {
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
+// 有効/無効フラグ (M10)。**このコンポーネントが無ければ有効**。
+// enabled==0 で自身を sim (スクリプト/衝突/パーティクル) と描画から外す。
+// 既存シーンは ActiveComponent を持たない → 挙動もワールドハッシュも不変 (ReplayFile bump 不要)。
+// 注: 現状は自エンティティのみ判定 (階層伝播は将来拡張)
+struct ActiveComponent {
+    int32_t enabled = 1;
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
+class World;
+
+// エンティティが有効か (ActiveComponent が無ければ有効 / enabled==0 なら無効)
+bool IsEntityActive(World& world, EntityID e);
+
 // 固定順で登録する (TypeId の決定論)。多重呼び出しは無害
 void RegisterBuiltinComponents();
 
