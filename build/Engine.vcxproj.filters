@@ -132,6 +132,9 @@
     <ClCompile Include="..\src\Engine\Renderer\DeferredPath.cpp">
       <Filter>Renderer</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Renderer\EditorLinePass.cpp">
+      <Filter>Renderer</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Renderer\ForwardPath.cpp">
       <Filter>Renderer</Filter>
     </ClCompile>
@@ -274,6 +277,9 @@
       <Filter>Platform</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\DeferredPath.h">
+      <Filter>Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\EditorLinePass.h">
       <Filter>Renderer</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\ForwardPath.h">

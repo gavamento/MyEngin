@@ -32,9 +32,17 @@ void CamBasis(float pitchDeg, float yawDeg, XMVECTOR& fwd, XMVECTOR& right, XMVE
     up = XMVector3Rotate(XMVectorSet(0, 1, 0, 0), q);
 }
 
+// ワールド行列から各軸のスケール量を取り出す
+XMFLOAT3 MatrixScale(const XMFLOAT4X4& m)
+{
+    return { XMVectorGetX(XMVector3Length(XMVectorSet(m._11, m._12, m._13, 0))),
+             XMVectorGetX(XMVector3Length(XMVectorSet(m._21, m._22, m._23, 0))),
+             XMVectorGetX(XMVector3Length(XMVectorSet(m._31, m._32, m._33, 0))) };
+}
+
 } // namespace
 
-void SceneViewWindow::OnRenderViews(EngineContext& ctx)
+void SceneViewWindow::OnRenderViews(EngineContext& ctx, Selection& selection)
 {
     if (desiredW_ <= 0 || desiredH_ <= 0) {
         return;
@@ -70,6 +78,121 @@ void SceneViewWindow::OnRenderViews(EngineContext& ctx)
     target.height = rt_.Height();
     ctx.renderSystem->Render(ctx.scene->GetWorld(), *ctx.device, *ctx.renderPath, *ctx.shaders,
                              *ctx.resources, target, &cam, ctx.particles);
+
+    // エディタ補助線 (グリッド/ワイヤ/アウトライン) を SceneView RT の上に重ねる。
+    // backbuffer/リプレイ経路には出さない (sim 非影響)
+    if (!lines_.IsReady()) {
+        lines_.Init(*ctx.device, *ctx.shaders);
+    }
+    lines_.Begin();
+    BuildOverlays(ctx, selection);
+    lines_.Render(*ctx.device, *ctx.shaders, rt_.RTV(), rt_.DSV(), rt_.Width(), rt_.Height(),
+                  lastView_, lastProj_);
+}
+
+void SceneViewWindow::BuildOverlays(EngineContext& ctx, Selection& selection)
+{
+    World& world = ctx.scene->GetWorld();
+
+    if (showGrid_) {
+        lines_.AddGrid(20, 1.0f, 0x5A5A64FFu, 0xC04848FFu, 0x4868C0FFu);
+    }
+
+    if (showGizmos_) {
+        constexpr uint32_t kCollider = 0x40D040FFu;
+        constexpr uint32_t kLight = 0xF0E040FFu;
+        constexpr uint32_t kCamera = 0x40C0F0FFu;
+        constexpr uint32_t kEmitter = 0xF08020FFu;
+
+        // コライダー (球 / AABB。回転無視の近似 = CollisionSystem に合わせる)
+        const ComponentTypeId colReq[] = { ColliderComponent::sTypeId,
+                                           WorldMatrixComponent::sTypeId };
+        world.ForEachArchetype(colReq, [&](Archetype& arch) {
+            const int ci = arch.FindTypeIndex(ColliderComponent::sTypeId);
+            const int wi = arch.FindTypeIndex(WorldMatrixComponent::sTypeId);
+            for (uint32_t row = 0; row < arch.Count(); ++row) {
+                const auto* col = static_cast<const ColliderComponent*>(arch.GetPtr(ci, row));
+                const XMFLOAT4X4& wm = static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row))->value;
+                const XMFLOAT3 pos = { wm._41, wm._42, wm._43 };
+                const XMFLOAT3 sc = MatrixScale(wm);
+                if (col->shape == 0) {
+                    const float maxS = (sc.x > sc.y ? sc.x : sc.y) > sc.z
+                        ? (sc.x > sc.y ? sc.x : sc.y) : sc.z;
+                    lines_.AddWireSphere(pos, col->radius * maxS, kCollider);
+                } else {
+                    const XMFLOAT3 h = { col->halfExtents.x * sc.x, col->halfExtents.y * sc.y,
+                                         col->halfExtents.z * sc.z };
+                    lines_.AddAABB({ pos.x - h.x, pos.y - h.y, pos.z - h.z },
+                                   { pos.x + h.x, pos.y + h.y, pos.z + h.z }, kCollider);
+                }
+            }
+        });
+
+        // ライト (位置マーカー + 前方向)
+        const ComponentTypeId liReq[] = { LightComponent::sTypeId, WorldMatrixComponent::sTypeId };
+        world.ForEachArchetype(liReq, [&](Archetype& arch) {
+            const int wi = arch.FindTypeIndex(WorldMatrixComponent::sTypeId);
+            for (uint32_t row = 0; row < arch.Count(); ++row) {
+                const XMFLOAT4X4& wm = static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row))->value;
+                const XMFLOAT3 pos = { wm._41, wm._42, wm._43 };
+                lines_.AddWireSphere(pos, 0.3f, kLight);
+                const XMVECTOR fwd = XMVector3Normalize(XMVectorSet(wm._31, wm._32, wm._33, 0));
+                XMFLOAT3 tip;
+                XMStoreFloat3(&tip, XMVectorAdd(XMLoadFloat3(&pos), XMVectorScale(fwd, 2.0f)));
+                lines_.AddLine(pos, tip, kLight);
+            }
+        });
+
+        // カメラ (ボックス glyph)
+        const ComponentTypeId caReq[] = { CameraComponent::sTypeId, WorldMatrixComponent::sTypeId };
+        world.ForEachArchetype(caReq, [&](Archetype& arch) {
+            const int wi = arch.FindTypeIndex(WorldMatrixComponent::sTypeId);
+            for (uint32_t row = 0; row < arch.Count(); ++row) {
+                const XMFLOAT4X4& wm = static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row))->value;
+                lines_.AddWireBox(wm, { 0.3f, 0.3f, 0.45f }, kCamera);
+            }
+        });
+
+        // パーティクルエミッタ (クロス glyph)
+        const ComponentTypeId emReq[] = { ParticleEmitterComponent::sTypeId,
+                                          WorldMatrixComponent::sTypeId };
+        world.ForEachArchetype(emReq, [&](Archetype& arch) {
+            const int wi = arch.FindTypeIndex(WorldMatrixComponent::sTypeId);
+            for (uint32_t row = 0; row < arch.Count(); ++row) {
+                const XMFLOAT4X4& wm = static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row))->value;
+                const XMFLOAT3 p = { wm._41, wm._42, wm._43 };
+                const float r = 0.4f;
+                lines_.AddLine({ p.x - r, p.y, p.z }, { p.x + r, p.y, p.z }, kEmitter);
+                lines_.AddLine({ p.x, p.y - r, p.z }, { p.x, p.y + r, p.z }, kEmitter);
+                lines_.AddLine({ p.x, p.y, p.z - r }, { p.x, p.y, p.z + r }, kEmitter);
+            }
+        });
+    }
+
+    // 選択アウトライン (常時最前面)
+    GameObject sel = ctx.scene->FindByFileId(selection.primary);
+    if (sel) {
+        auto* wm = world.GetComponent<WorldMatrixComponent>(sel.Id());
+        if (wm) {
+            XMFLOAT3 lo = { -0.5f, -0.5f, -0.5f };
+            XMFLOAT3 hi = { 0.5f, 0.5f, 0.5f };
+            if (auto* mr = world.GetComponent<MeshRendererComponent>(sel.Id())) {
+                if (Mesh* mesh = ctx.resources->meshes.Get(mr->mesh)) {
+                    lo = mesh->aabbMin;
+                    hi = mesh->aabbMax;
+                }
+            }
+            const XMFLOAT3 center = { (lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f,
+                                     (lo.z + hi.z) * 0.5f };
+            const XMFLOAT3 half = { (hi.x - lo.x) * 0.5f, (hi.y - lo.y) * 0.5f,
+                                    (hi.z - lo.z) * 0.5f };
+            const XMMATRIX boxWorld =
+                XMMatrixTranslation(center.x, center.y, center.z) * XMLoadFloat4x4(&wm->value);
+            XMFLOAT4X4 bw;
+            XMStoreFloat4x4(&bw, boxWorld);
+            lines_.AddWireBox(bw, half, 0xFFA030FFu, /*onTop*/ true);
+        }
+    }
 }
 
 void SceneViewWindow::DrawToolbar()
@@ -78,7 +201,7 @@ void SceneViewWindow::DrawToolbar()
     const ImVec2 p = ImGui::GetItemRectMin();
     ImGui::SetCursorScreenPos(ImVec2(p.x + 8.0f, p.y + 8.0f));
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.10f, 0.11f, 0.13f, 0.85f));
-    ImGui::BeginChild("##sv_toolbar", ImVec2(360.0f, 30.0f), ImGuiChildFlags_None,
+    ImGui::BeginChild("##sv_toolbar", ImVec2(520.0f, 30.0f), ImGuiChildFlags_None,
                       ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     auto opBtn = [&](const char* label, ImGuizmo::OPERATION op) {
         const bool on = (gizmoOp_ == op);
@@ -103,6 +226,12 @@ void SceneViewWindow::DrawToolbar()
     }
     ImGui::SameLine();
     ImGui::Checkbox("Ortho", &orthographic_);
+    ImGui::SameLine();
+    ImGui::TextUnformatted("|");
+    ImGui::SameLine();
+    ImGui::Checkbox("Grid", &showGrid_);
+    ImGui::SameLine();
+    ImGui::Checkbox("Gizmos", &showGizmos_);
     ImGui::EndChild();
     ImGui::PopStyleColor();
 }

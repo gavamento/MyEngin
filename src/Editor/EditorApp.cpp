@@ -70,7 +70,7 @@ void EditorApp::OnTick(EngineContext& ctx)
 
 void EditorApp::OnRenderViews(EngineContext& ctx)
 {
-    sceneView_.OnRenderViews(ctx);
+    sceneView_.OnRenderViews(ctx, selection_);
     gameView_.OnRenderViews(ctx);
 }
 

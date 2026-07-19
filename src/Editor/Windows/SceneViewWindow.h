@@ -5,6 +5,7 @@
 #include "ImGuizmo/ImGuizmo.h"
 
 #include "Engine/Engine/EngineLoop.h"
+#include "Engine/Renderer/EditorLinePass.h"
 #include "Engine/Renderer/PickingPass.h"
 #include "Engine/Renderer/RenderTexture.h"
 
@@ -20,13 +21,14 @@ struct EditorSettings;
 //     オービット/パン/ズームのカメラ操作。
 class SceneViewWindow {
 public:
-    void OnRenderViews(EngineContext& ctx); // フェーズ 6: RT へ描画
+    void OnRenderViews(EngineContext& ctx, Selection& selection); // フェーズ 6: RT へ描画 + 補助線
     void OnImGui(EngineContext& ctx, Selection& selection, UndoStack& undo, EditorSettings& settings);
 
     // ビュー中心をピッキングして選択する (自動テスト用 — --pick-test)。ヒットで true
     bool PickAtCenter(EngineContext& ctx, Selection& selection);
 
 private:
+    void BuildOverlays(EngineContext& ctx, Selection& selection);
     void DrawToolbar();
     void DrawGizmo(EngineContext& ctx, Selection& selection, UndoStack& undo,
                    const EditorSettings& settings, float rectX, float rectY, float rectW,
@@ -50,8 +52,11 @@ private:
     ImGuizmo::MODE gizmoMode_ = ImGuizmo::LOCAL;
     bool orthographic_ = false;
     bool gizmoActive_ = false; // Undo transient 記録中 (ドラッグ全体で 1 エントリ)
+    bool showGrid_ = true;
+    bool showGizmos_ = true; // コライダー/ライト/カメラ等の補助表示
 
-    PickingPass picking_; // クリック選択 (遅延 Init)
+    PickingPass picking_;    // クリック選択 (遅延 Init)
+    EditorLinePass lines_;   // グリッド/ワイヤ/アウトライン (遅延 Init)
 };
 
 } // namespace mye
