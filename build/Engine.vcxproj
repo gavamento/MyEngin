@@ -40,6 +40,7 @@
     <ClCompile Include="..\src\Engine\Engine\Animation.cpp" />
     <ClCompile Include="..\src\Engine\Engine\CgltfImpl.cpp" />
     <ClCompile Include="..\src\Engine\Engine\CollisionSystem.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\DemoContent.cpp" />
     <ClCompile Include="..\src\Engine\Engine\EngineLoop.cpp" />
     <ClCompile Include="..\src\Engine\Engine\HotReload\DllReloader.cpp" />
     <ClCompile Include="..\src\Engine\Engine\HotReload\ReloadHub.cpp" />
@@ -90,6 +91,7 @@
     <ClInclude Include="..\src\Engine\Core\World.h" />
     <ClInclude Include="..\src\Engine\Engine\Animation.h" />
     <ClInclude Include="..\src\Engine\Engine\CollisionSystem.h" />
+    <ClInclude Include="..\src\Engine\Engine\DemoContent.h" />
     <ClInclude Include="..\src\Engine\Engine\EngineLoop.h" />
     <ClInclude Include="..\src\Engine\Engine\GameObject.h" />
     <ClInclude Include="..\src\Engine\Engine\HotReload\DllReloader.h" />

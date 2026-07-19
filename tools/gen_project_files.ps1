@@ -99,6 +99,11 @@ $editorSrc = Get-SourceItems @(@{ Path = 'src\Editor'; Prefix = '' })
 Update-Vcxproj 'Editor' $editorSrc
 Update-Filters 'Editor' $editorSrc
 
+# ---- Runtime (エディタ UI 無しの薄いランタイム、M15) ----
+$runtimeSrc = Get-SourceItems @(@{ Path = 'src\Runtime'; Prefix = '' })
+Update-Vcxproj 'Runtime' $runtimeSrc
+Update-Filters 'Runtime' $runtimeSrc
+
 # ---- GameLogic: src\GameLogic + src\Shared ----
 $logicSrc = Get-SourceItems @(
     @{ Path = 'src\GameLogic'; Prefix = '' },

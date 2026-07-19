@@ -81,6 +81,9 @@
     <ClCompile Include="..\src\Engine\Engine\CollisionSystem.cpp">
       <Filter>Engine</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\DemoContent.cpp">
+      <Filter>Engine</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\EngineLoop.cpp">
       <Filter>Engine</Filter>
     </ClCompile>
@@ -229,6 +232,9 @@
       <Filter>Engine</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\CollisionSystem.h">
+      <Filter>Engine</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\DemoContent.h">
       <Filter>Engine</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\EngineLoop.h">

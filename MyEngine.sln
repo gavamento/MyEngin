@@ -8,6 +8,8 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Engine", "build\Engine.vcxp
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "GameLogic", "build\GameLogic.vcxproj", "{B2C3D4E5-3333-4B6C-9D8E-0F1A2B3C4D5E}"
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Runtime", "build\Runtime.vcxproj", "{C3D4E5F6-4444-4C7D-9E0F-1A2B3C4D5E6F}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -26,6 +28,10 @@ Global
 		{B2C3D4E5-3333-4B6C-9D8E-0F1A2B3C4D5E}.Debug|x64.Build.0 = Debug|x64
 		{B2C3D4E5-3333-4B6C-9D8E-0F1A2B3C4D5E}.Release|x64.ActiveCfg = Release|x64
 		{B2C3D4E5-3333-4B6C-9D8E-0F1A2B3C4D5E}.Release|x64.Build.0 = Release|x64
+		{C3D4E5F6-4444-4C7D-9E0F-1A2B3C4D5E6F}.Debug|x64.ActiveCfg = Debug|x64
+		{C3D4E5F6-4444-4C7D-9E0F-1A2B3C4D5E6F}.Debug|x64.Build.0 = Debug|x64
+		{C3D4E5F6-4444-4C7D-9E0F-1A2B3C4D5E6F}.Release|x64.ActiveCfg = Release|x64
+		{C3D4E5F6-4444-4C7D-9E0F-1A2B3C4D5E6F}.Release|x64.Build.0 = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

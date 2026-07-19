@@ -9,6 +9,7 @@
 
 #include "Engine/Core/Hash.h"
 #include "Engine/Core/Log.h"
+#include "Engine/Engine/DemoContent.h"
 #include "Engine/Engine/HotReload/DllReloader.h"
 #include "Engine/Engine/HotReload/ReloadHub.h"
 #include "Engine/Engine/ModelLoader.h"
@@ -31,20 +32,20 @@ void EditorApp::OnStart(EngineContext& ctx)
 {
     ctx.shaders->Load("forward_lit");
     settings_.Load(ctx.assetsRoot);
-    scenePath_ = ctx.assetsRoot + L"\\scenes\\main.scene.json";
+    scenePath_ = sceneOverride.empty() ? (ctx.assetsRoot + L"\\scenes\\main.scene.json")
+                                       : sceneOverride;
     ctx.reloadHub->SetActiveScenePath(scenePath_);
     rebuildDockLayout_ = !std::filesystem::exists("imgui.ini");
 
     // リソース (メッシュ/マテリアル/モデル) は毎回登録する。
     // シーンファイルは AssetID しか持たないため、実体の登録は起動側の責務
     // (パスベースの完全なアセット解決は AssetManager の将来拡張)
-    RegisterDemoResources(ctx);
-    RegisterPrefabs(ctx); // シーンロード前に登録 (オーバーライド解決がライブラリを参照するため)
-    RegisterAnimations(ctx);
+    RegisterDemoContent(ctx);
+    RegisterAssetLibraries(ctx); // シーンロード前に .prefab/.anim を登録 (参照解決のため)
     if (std::filesystem::exists(scenePath_)) {
         SceneSerializer::LoadFromFile(*ctx.scene, scenePath_);
     } else {
-        BuildDemoEntities(ctx);
+        BuildDemoScene(ctx, perfRate, perfMax);
     }
     if (saveSceneOnStart) {
         std::filesystem::create_directories(std::filesystem::path(scenePath_).parent_path());
@@ -424,188 +425,5 @@ void EditorApp::OpenScene(EngineContext& ctx)
     }
 }
 
-void EditorApp::RegisterDemoResources(EngineContext& ctx)
-{
-    RenderResources& res = *ctx.resources;
-    const AssetID shader = AssetID{ HashStr("forward_lit") };
-    const AssetID white = res.textures.White();
-    res.meshes.Cube();
-
-    auto makeMat = [&](const char* name, float r, float g, float b) {
-        Material m;
-        m.shader = shader;
-        m.texture = white;
-        m.baseColor = { r, g, b, 1.0f };
-        return res.materials.Register(name, m);
-    };
-    // 地面はファイルテクスチャ (assets\textures\test.png) — テクスチャホットリロードの実演用
-    {
-        Material m;
-        m.shader = shader;
-        const AssetID groundTex = res.textures.LoadFile(ctx.assetsRoot + L"\\textures\\test.png");
-        m.texture = groundTex.IsNull() ? white : groundTex;
-        m.baseColor = groundTex.IsNull() ? DirectX::XMFLOAT4{ 0.45f, 0.47f, 0.50f, 1.0f }
-                                         : DirectX::XMFLOAT4{ 1.0f, 1.0f, 1.0f, 1.0f };
-        res.materials.Register("mat_ground", m);
-    }
-    makeMat("mat_arm", 0.85f, 0.55f, 0.20f);
-    makeMat("mat_red", 0.85f, 0.30f, 0.28f);
-    makeMat("mat_green", 0.35f, 0.75f, 0.40f);
-    makeMat("mat_blue", 0.30f, 0.50f, 0.85f);
-    makeMat("mat_yellow", 0.90f, 0.80f, 0.30f);
-
-    // glTF のメッシュ/マテリアル/テクスチャを登録 (エンティティは作らない)。
-    // 保存済みシーンをロードする場合でも AssetID の実体が揃うようにする
-    ModelLoader::ReloadMeshes(res, *ctx.shaders, ctx.assetsRoot + L"\\models\\BoxTextured.glb");
-}
-
-void EditorApp::RegisterPrefabs(EngineContext& ctx)
-{
-    const std::wstring dir = ctx.assetsRoot + L"\\prefabs";
-    std::error_code ec;
-    if (!std::filesystem::is_directory(dir, ec)) {
-        return;
-    }
-    int count = 0;
-    for (const auto& e : std::filesystem::recursive_directory_iterator(dir, ec)) {
-        if (!e.is_regular_file()) {
-            continue;
-        }
-        const std::wstring p = e.path().wstring();
-        if (p.size() >= 12 && p.compare(p.size() - 12, 12, L".prefab.json") == 0) {
-            if (ctx.prefabs->LoadFromFile(p) != 0) {
-                ++count;
-            }
-        }
-    }
-    if (count > 0) {
-        MYE_LOG_INFO("registered %d prefab(s)", count);
-    }
-}
-
-void EditorApp::RegisterAnimations(EngineContext& ctx)
-{
-    std::error_code ec;
-    if (!std::filesystem::is_directory(ctx.assetsRoot, ec)) {
-        return;
-    }
-    int count = 0;
-    for (const auto& e : std::filesystem::recursive_directory_iterator(ctx.assetsRoot, ec)) {
-        if (!e.is_regular_file()) {
-            continue;
-        }
-        const std::wstring p = e.path().wstring();
-        if (p.size() >= 10 && p.compare(p.size() - 10, 10, L".anim.json") == 0) {
-            if (ctx.anims->LoadFromFile(p) != 0) {
-                ++count;
-            }
-        }
-    }
-    if (count > 0) {
-        MYE_LOG_INFO("registered %d animation clip(s)", count);
-    }
-}
-
-void EditorApp::BuildDemoEntities(EngineContext& ctx)
-{
-    Scene& s = *ctx.scene;
-    RenderResources& res = *ctx.resources;
-
-    const AssetID cube = res.meshes.Cube();
-    const AssetID matGround = AssetID{ HashStr("mat_ground") };
-    const AssetID matArm = AssetID{ HashStr("mat_arm") };
-    const AssetID palette[4] = {
-        AssetID{ HashStr("mat_red") },
-        AssetID{ HashStr("mat_green") },
-        AssetID{ HashStr("mat_blue") },
-        AssetID{ HashStr("mat_yellow") },
-    };
-
-    GameObject camera = s.CreateGameObject("Main Camera");
-    camera.AddComponent<CameraComponent>();
-    camera.SetLocalPosition(0.0f, 7.0f, -16.0f);
-    camera.SetLocalRotationEuler(18.0f, 0.0f, 0.0f);
-
-    GameObject sun = s.CreateGameObject("Sun");
-    sun.AddComponent<LightComponent>();
-    sun.SetLocalRotationEuler(50.0f, -30.0f, 0.0f);
-
-    GameObject ground = s.CreateGameObject("Ground");
-    ground.SetLocalPosition(0.0f, -1.0f, 0.0f);
-    ground.SetLocalScale(40.0f, 0.5f, 40.0f);
-    {
-        auto* mr = ground.AddComponent<MeshRendererComponent>();
-        mr->mesh = cube;
-        mr->material = matGround;
-    }
-
-    GameObject spinner = s.CreateGameObject("Spinner");
-    spinner.SetLocalPosition(0.0f, 1.5f, 0.0f);
-    for (int a = 0; a < 20; ++a) {
-        char name[32];
-        snprintf(name, sizeof(name), "Arm_%02d", a);
-        GameObject arm = s.CreateGameObject(name);
-        arm.SetParent(spinner);
-        arm.SetLocalRotationEuler(0.0f, a * (360.0f / 20.0f), 0.0f);
-        arm.SetLocalScale(0.4f, 0.4f, 0.4f);
-        {
-            auto* mr = arm.AddComponent<MeshRendererComponent>();
-            mr->mesh = cube;
-            mr->material = matArm;
-        }
-        for (int j = 0; j < 25; ++j) {
-            snprintf(name, sizeof(name), "Cube_%02d_%02d", a, j);
-            GameObject leaf = s.CreateGameObject(name);
-            leaf.SetParent(arm);
-            const float dist = (2.0f + 0.9f * j) / 0.4f;
-            const float wave = 1.0f + 0.8f * ((j % 5) - 2) * 0.3f;
-            leaf.SetLocalPosition(dist, wave, 0.0f);
-            leaf.SetLocalScale(0.75f, 0.75f, 0.75f);
-            auto* mr = leaf.AddComponent<MeshRendererComponent>();
-            mr->mesh = cube;
-            mr->material = palette[(a + j) % 4];
-        }
-    }
-
-    GameObject model = ModelLoader::Load(s, res, *ctx.shaders,
-                                         ctx.assetsRoot + L"\\models\\BoxTextured.glb");
-    if (model) {
-        model.SetLocalPosition(0.0f, 1.5f, 0.0f);
-        model.SetLocalScale(2.0f, 2.0f, 2.0f);
-    }
-
-    // ---- パーティクルエミッタ (M5 デモ: 中央の炎) ----
-    GameObject fire = s.CreateGameObject("Fire");
-    fire.SetLocalPosition(4.0f, 0.0f, 0.0f);
-    auto* emitter = fire.AddComponent<ParticleEmitterComponent>(); // 既定値 = 上向きコーン炎
-    if (perfRate > 0.0f) {
-        emitter->rate = perfRate; // 性能計測モード
-        emitter->maxParticles = (perfMax > 0) ? perfMax : 100000;
-        emitter->lifetimeMin = 1.2f;
-        emitter->lifetimeMax = 1.8f;
-        emitter->speedMin = 3.0f;
-        emitter->speedMax = 8.0f;
-        emitter->coneAngleDeg = 60.0f;
-    }
-
-    // ---- GameLogic.dll のスクリプトをアタッチ (DLL 未ロードならスキップ) ----
-    const ComponentTypeId rotator = ComponentRegistry::Get().FindByName("Rotator");
-    if (rotator != kInvalidComponentType) {
-        s.GetWorld().AddComponentRaw(spinner.Id(), rotator);
-    }
-    const ComponentTypeId player = ComponentRegistry::Get().FindByName("PlayerController");
-    if (player != kInvalidComponentType && model) {
-        s.GetWorld().AddComponentRaw(model.Id(), player);
-        // プレイヤーのトリガーコライダ (Spawned の回収デモ)
-        auto* col = model.AddComponent<ColliderComponent>();
-        col->shape = 0;
-        col->radius = 1.2f;
-    }
-    // 生成/破棄を続けるスクリプト (リプレイ検証に構造変更を含める)
-    const ComponentTypeId spawner = ComponentRegistry::Get().FindByName("Spawner");
-    if (spawner != kInvalidComponentType) {
-        s.GetWorld().AddComponentRaw(fire.Id(), spawner);
-    }
-}
 
 } // namespace mye

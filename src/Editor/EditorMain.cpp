@@ -49,6 +49,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     bool startDeferred = false;
     std::string selectName;
     int pickTestFrame = -1;
+    std::wstring sceneOverride;
 
     int argc = 0;
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
@@ -95,6 +96,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 selectName = mye::WideToUtf8(argv[++i]);
             } else if (arg == L"--pick-test") {
                 pickTestFrame = 20;
+            } else if (arg == L"--scene" && i + 1 < argc) {
+                sceneOverride = argv[++i];
             }
         }
         LocalFree(argv);
@@ -115,6 +118,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     app.startDeferred = startDeferred;
     app.selectName = selectName;
     app.pickTestFrame = pickTestFrame;
+    app.sceneOverride = sceneOverride;
     mye::EngineLoop loop;
     return loop.Run(config, app);
 }
