@@ -44,6 +44,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     bool autoPlay = false;
     float perfRate = 0.0f;
     int perfMax = 0;
+    bool startDeferred = false;
 
     int argc = 0;
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
@@ -84,6 +85,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 config.vsync = false;
             } else if (arg == L"--replay-ticks" && i + 1 < argc) {
                 config.replayTicks = _wtoi64(argv[++i]);
+            } else if (arg == L"--deferred") {
+                startDeferred = true;
             }
         }
         LocalFree(argv);
@@ -100,6 +103,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     app.autoPlay = autoPlay;
     app.perfRate = perfRate;
     app.perfMax = perfMax;
+    app.startDeferred = startDeferred;
     mye::EngineLoop loop;
     return loop.Run(config, app);
 }

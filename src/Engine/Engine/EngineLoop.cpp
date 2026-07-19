@@ -14,6 +14,7 @@
 #include "Engine/Platform/Clock.h"
 #include "Engine/Platform/PathUtil.h"
 #include "Engine/Platform/Win32Window.h"
+#include "Engine/Renderer/DeferredPath.h"
 #include "Engine/Renderer/ForwardPath.h"
 #include "Engine/Renderer/GpuResources.h"
 #include "Engine/Renderer/GraphicsDevice.h"
@@ -48,11 +49,12 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     TransformSystem transformSystem;
     RenderSystem renderSystem;
     ForwardPath forwardPath;
+    DeferredPath deferredPath;
     ReloadHub reloadHub;
     ScriptHost scriptHost;
     DllReloader dllReloader;
     ParticleSystem particleSystem;
-    IRenderPath* activePath = &forwardPath; // M6.5 で Deferred と切替可能になる
+    IRenderPath* activePath = &forwardPath;
 
     // ---- 起動 ----
     WindowDesc wd;
@@ -82,6 +84,9 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     if (!forwardPath.Init(device, shaderManager)) {
         return 1;
     }
+    if (!deferredPath.Init(device, shaderManager)) {
+        return 1;
+    }
     reloadHub.Init(&shaderManager, &resources, &scene, assetsRoot);
     particleSystem.Init(device, shaderManager, assetsRoot);
 
@@ -105,6 +110,8 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     ctx.resources = &resources;
     ctx.renderSystem = &renderSystem;
     ctx.renderPath = activePath;
+    ctx.renderPathForward = &forwardPath;
+    ctx.renderPathDeferred = &deferredPath;
     ctx.reloadHub = &reloadHub;
     ctx.scriptHost = &scriptHost;
     ctx.dllReloader = &dllReloader;
@@ -241,6 +248,12 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             ctx.requestExit = true;
         }
 
+        // エディタ (または将来の設定) によるレンダリングパス切替を反映
+        if (ctx.renderPath != nullptr && ctx.renderPath != activePath) {
+            activePath = ctx.renderPath;
+            MYE_LOG_INFO("[render] path switched to %s", activePath->Name());
+        }
+
         if (!window.IsMinimized()) {
             // ---- フェーズ 6: シーン描画 ----
             // ワールド行列は描画直前に一括更新 (LocalTransform の純関数なので sim 状態に影響しない)
@@ -311,6 +324,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     particleSystem.Shutdown();
     scriptHost.Shutdown();
     reloadHub.Shutdown();
+    deferredPath.Shutdown();
     forwardPath.Shutdown();
     imgui.Shutdown();
     swapChain.Shutdown();

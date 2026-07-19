@@ -49,7 +49,9 @@ struct EngineContext {
     ShaderManager* shaders = nullptr;
     RenderResources* resources = nullptr;
     RenderSystem* renderSystem = nullptr;
-    IRenderPath* renderPath = nullptr;  // 現在アクティブなパス (M6.5 で切替)
+    IRenderPath* renderPath = nullptr;         // 現在アクティブなパス (書き換えると切替)
+    IRenderPath* renderPathForward = nullptr;  // 選択肢: Forward
+    IRenderPath* renderPathDeferred = nullptr; // 選択肢: Deferred
     ReloadHub* reloadHub = nullptr;
     ScriptHost* scriptHost = nullptr;
     DllReloader* dllReloader = nullptr;

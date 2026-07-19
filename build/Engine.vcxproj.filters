@@ -126,6 +126,9 @@
     <ClCompile Include="..\src\Engine\Platform\Win32Window.cpp">
       <Filter>Platform</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Renderer\DeferredPath.cpp">
+      <Filter>Renderer</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Renderer\ForwardPath.cpp">
       <Filter>Renderer</Filter>
     </ClCompile>
@@ -260,6 +263,9 @@
     </ClInclude>
     <ClInclude Include="..\src\Engine\Platform\Win32Window.h">
       <Filter>Platform</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\DeferredPath.h">
+      <Filter>Renderer</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\ForwardPath.h">
       <Filter>Renderer</Filter>

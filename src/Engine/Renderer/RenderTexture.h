@@ -6,12 +6,14 @@ namespace mye {
 
 class GraphicsDevice;
 
-// オフスクリーン描画先 (SceneView / GameView / M6.5 GBuffer 補助)。
-// カラー RTV+SRV とデプス DSV を持つ。サイズ変更は Resize (同サイズなら no-op)
+// オフスクリーン描画先 (SceneView / GameView / GBuffer)。
+// カラー RTV+SRV と (任意で) デプス DSV を持つ。サイズ変更は Resize (同サイズなら no-op)
 class RenderTexture {
 public:
-    bool Create(GraphicsDevice& device, int width, int height);
-    void Resize(GraphicsDevice& device, int width, int height);
+    bool Create(GraphicsDevice& device, int width, int height,
+                DXGI_FORMAT format = DXGI_FORMAT_R8G8B8A8_UNORM, bool withDepth = true);
+    void Resize(GraphicsDevice& device, int width, int height,
+                DXGI_FORMAT format = DXGI_FORMAT_R8G8B8A8_UNORM, bool withDepth = true);
     void Release();
 
     ID3D11RenderTargetView* RTV() const { return rtv_.Get(); }
@@ -29,6 +31,8 @@ private:
     Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> srv_;
     int width_ = 0;
     int height_ = 0;
+    DXGI_FORMAT format_ = DXGI_FORMAT_R8G8B8A8_UNORM;
+    bool withDepth_ = true;
 };
 
 } // namespace mye

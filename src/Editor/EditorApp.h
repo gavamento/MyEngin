@@ -26,6 +26,7 @@ public:
     bool autoPlay = false;         // --autoplay (起動直後に Play。スクリプト検証用)
     float perfRate = 0.0f;         // --perf-rate N (>0 でデモエミッタの放出数を上書き — 性能計測用)
     int perfMax = 0;               // --perf-max N
+    bool startDeferred = false;    // --deferred (起動時から Deferred パス — 検証用)
 
 private:
     void RegisterDemoResources(EngineContext& ctx); // メッシュ/マテリアル/モデル登録 (毎回)

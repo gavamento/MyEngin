@@ -45,6 +45,9 @@ void EditorApp::OnStart(EngineContext& ctx)
     if (autoPlay) {
         playMode_.Play(*ctx.scene);
     }
+    if (startDeferred) {
+        ctx.renderPath = ctx.renderPathDeferred;
+    }
     MYE_LOG_INFO("EditorApp started (%u entities)", ctx.scene->GetWorld().AliveCount());
 }
 
@@ -126,6 +129,17 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
     }
     if (ImGui::BeginMenu("View")) {
         ImGui::MenuItem("Stats", nullptr, &showStats_);
+        if (ImGui::BeginMenu("Render Path")) {
+            // 実行時切替 (M6.5)。描画のみの変更なのでリプレイ一貫性には影響しない
+            const bool isForward = (ctx.renderPath == ctx.renderPathForward);
+            if (ImGui::MenuItem("Forward", nullptr, isForward)) {
+                ctx.renderPath = ctx.renderPathForward;
+            }
+            if (ImGui::MenuItem("Deferred", nullptr, !isForward)) {
+                ctx.renderPath = ctx.renderPathDeferred;
+            }
+            ImGui::EndMenu();
+        }
         if (ImGui::MenuItem("Reset Layout")) {
             rebuildDockLayout_ = true;
         }
