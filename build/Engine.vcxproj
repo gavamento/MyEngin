@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{8F2D5C31-1A2B-4E3F-9C4D-5E6F7A8B9C0D}</ProjectGuid>
+    <RootNamespace>Engine</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Label="Configuration">
+    <ConfigurationType>StaticLibrary</ConfigurationType>
+    <PlatformToolset>v143</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+    <UseDebugLibraries Condition="'$(Configuration)'=='Debug'">true</UseDebugLibraries>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <Import Project="Common.props" />
+  <!-- BEGIN FILES (tools\gen_project_files.ps1 が再生成する。手編集しない) -->
+  <ItemGroup>
+    <ClCompile Include="..\src\Engine\Core\Check.cpp" />
+    <ClCompile Include="..\src\Engine\Core\Log.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\EngineLoop.cpp" />
+    <ClCompile Include="..\src\Engine\Platform\Clock.cpp" />
+    <ClCompile Include="..\src\Engine\Platform\Input.cpp" />
+    <ClCompile Include="..\src\Engine\Platform\Win32Window.cpp" />
+    <ClCompile Include="..\src\Engine\Renderer\GraphicsDevice.cpp" />
+    <ClCompile Include="..\src\Engine\Renderer\ImGuiRenderer.cpp" />
+    <ClCompile Include="..\src\Engine\Renderer\SwapChain.cpp" />
+    <ClInclude Include="..\src\Engine\Core\Check.h" />
+    <ClInclude Include="..\src\Engine\Core\Hash.h" />
+    <ClInclude Include="..\src\Engine\Core\Log.h" />
+    <ClInclude Include="..\src\Engine\Engine\EngineLoop.h" />
+    <ClInclude Include="..\src\Engine\Platform\Clock.h" />
+    <ClInclude Include="..\src\Engine\Platform\Input.h" />
+    <ClInclude Include="..\src\Engine\Platform\Win32Window.h" />
+    <ClInclude Include="..\src\Engine\Renderer\GraphicsDevice.h" />
+    <ClInclude Include="..\src\Engine\Renderer\ImGuiRenderer.h" />
+    <ClInclude Include="..\src\Engine\Renderer\SwapChain.h" />
+  </ItemGroup>
+  <!-- END FILES -->
+  <ItemGroup>
+    <ClCompile Include="..\external\imgui\imgui.cpp">
+      <WarningLevel>Level3</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="..\external\imgui\imgui_draw.cpp">
+      <WarningLevel>Level3</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="..\external\imgui\imgui_tables.cpp">
+      <WarningLevel>Level3</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="..\external\imgui\imgui_widgets.cpp">
+      <WarningLevel>Level3</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="..\external\imgui\imgui_demo.cpp">
+      <WarningLevel>Level3</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="..\external\imgui\backends\imgui_impl_win32.cpp">
+      <WarningLevel>Level3</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="..\external\imgui\backends\imgui_impl_dx11.cpp">
+      <WarningLevel>Level3</WarningLevel>
+    </ClCompile>
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+</Project>

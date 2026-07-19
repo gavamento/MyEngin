@@ -1,0 +1,7 @@
+bin/
+obj/
+cache/
+.vs/
+*.user
+*.ilk
+*.log
