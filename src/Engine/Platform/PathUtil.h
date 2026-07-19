@@ -15,4 +15,8 @@ std::wstring FindAssetsRoot();
 std::string WideToUtf8(std::wstring_view w);
 std::wstring Utf8ToWide(std::string_view s);
 
+// パス比較用の正規化: 絶対化 + 小文字化 + '\\' 統一。
+// AssetID のキーやホットリロードの照合は必ずこの結果を使う
+std::wstring NormalizePathKey(const std::wstring& path);
+
 } // namespace mye

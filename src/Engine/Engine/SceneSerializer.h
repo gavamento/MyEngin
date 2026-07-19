@@ -22,5 +22,10 @@ bool LoadFromJson(Scene& scene, const nlohmann::json& root); // 既存内容は�
 bool SaveToFile(Scene& scene, const std::wstring& path);
 bool LoadFromFile(Scene& scene, const std::wstring& path);
 
+// 実行中シーンへの差分適用 (engine_spec.md 8.3 — 外部エディタでの編集を反映)。
+// fileId で照合し、既存エンティティは更新 / 新規は生成 / 消えたものは破棄する。
+// fileId を持たないエンティティ (未保存の編集中オブジェクト) には触れない
+bool ApplyDiff(Scene& scene, const nlohmann::json& root);
+
 } // namespace SceneSerializer
 } // namespace mye

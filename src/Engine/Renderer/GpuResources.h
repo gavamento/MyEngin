@@ -56,10 +56,13 @@ class TextureLibrary {
 public:
     void Init(GraphicsDevice& device) { device_ = &device; }
     AssetID LoadFile(const std::wstring& path);                                  // png/tga/jpg (stb_image)
-    AssetID CreateFromEncoded(std::string_view name, const void* bytes, size_t size); // GLB 埋め込み等
+    AssetID CreateFromEncoded(std::string_view name, const void* bytes, size_t size); // GLB 埋め込み等 (再呼び出しで差し替え)
     AssetID CreateSolid(std::string_view name, uint8_t r, uint8_t g, uint8_t b, uint8_t a);
     Texture* Get(AssetID id);
     AssetID White(); // 1x1 白 (遅延生成)
+
+    // ファイルパスに対応する AssetID (正規化パスのハッシュ)。ロード有無に関わらず同じ値
+    static AssetID IdForFile(const std::wstring& path);
 
     // M3 ホットリロード: 同じ AssetID のまま中身を差し替える
     bool ReplaceFromFile(AssetID id, const std::wstring& path);

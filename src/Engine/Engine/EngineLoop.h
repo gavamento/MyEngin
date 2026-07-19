@@ -13,6 +13,7 @@ class Scene;
 class ShaderManager;
 class RenderSystem;
 class IRenderPath;
+class ReloadHub;
 struct RenderResources;
 
 struct EngineConfig {
@@ -25,6 +26,7 @@ struct EngineConfig {
     float clearColor[4] = { 0.08f, 0.09f, 0.11f, 1.0f };
     std::wstring screenshotPath; // 空でなければ screenshotFrame で PNG 保存 (検証用)
     int64_t screenshotFrame = 60;
+    int64_t screenshotEvery = 0; // >0 で N フレーム毎に連番保存 (ライブ検証用)
     // true: シーンをバックバッファへ直接描画 (Runtime / M1 デモ)。
     // false: 描画は app の OnRenderViews に委ねる (エディタは SceneView/GameView の RT へ描く)
     bool renderSceneToBackbuffer = true;
@@ -40,6 +42,7 @@ struct EngineContext {
     RenderResources* resources = nullptr;
     RenderSystem* renderSystem = nullptr;
     IRenderPath* renderPath = nullptr;  // 現在アクティブなパス (M6.5 で切替)
+    ReloadHub* reloadHub = nullptr;
     std::wstring assetsRoot;            // assets\ の絶対パス
     InputSnapshot input = {}; // 現フレームのスナップショット (tick 中も同一)
     uint64_t frameIndex = 0;  // 描画フレーム数

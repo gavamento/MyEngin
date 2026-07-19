@@ -31,11 +31,13 @@
     <ClCompile Include="..\src\Engine\Core\ComponentRegistry.cpp" />
     <ClCompile Include="..\src\Engine\Core\Components.cpp" />
     <ClCompile Include="..\src\Engine\Core\EcsSelfTest.cpp" />
+    <ClCompile Include="..\src\Engine\Core\FileWatcher.cpp" />
     <ClCompile Include="..\src\Engine\Core\JsonUtil.cpp" />
     <ClCompile Include="..\src\Engine\Core\Log.cpp" />
     <ClCompile Include="..\src\Engine\Core\World.cpp" />
     <ClCompile Include="..\src\Engine\Engine\CgltfImpl.cpp" />
     <ClCompile Include="..\src\Engine\Engine\EngineLoop.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\HotReload\ReloadHub.cpp" />
     <ClCompile Include="..\src\Engine\Engine\ModelLoader.cpp" />
     <ClCompile Include="..\src\Engine\Engine\RenderSystem.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Scene.cpp" />
@@ -62,6 +64,7 @@
     <ClInclude Include="..\src\Engine\Core\Components.h" />
     <ClInclude Include="..\src\Engine\Core\EcsSelfTest.h" />
     <ClInclude Include="..\src\Engine\Core\EntityID.h" />
+    <ClInclude Include="..\src\Engine\Core\FileWatcher.h" />
     <ClInclude Include="..\src\Engine\Core\Hash.h" />
     <ClInclude Include="..\src\Engine\Core\JsonUtil.h" />
     <ClInclude Include="..\src\Engine\Core\Log.h" />
@@ -70,6 +73,7 @@
     <ClInclude Include="..\src\Engine\Core\World.h" />
     <ClInclude Include="..\src\Engine\Engine\EngineLoop.h" />
     <ClInclude Include="..\src\Engine\Engine\GameObject.h" />
+    <ClInclude Include="..\src\Engine\Engine\HotReload\ReloadHub.h" />
     <ClInclude Include="..\src\Engine\Engine\ModelLoader.h" />
     <ClInclude Include="..\src\Engine\Engine\RenderSystem.h" />
     <ClInclude Include="..\src\Engine\Engine\Scene.h" />

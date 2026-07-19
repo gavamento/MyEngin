@@ -225,7 +225,8 @@ GameObject Load(Scene& scene, RenderResources& resources, ShaderManager& shaders
     LoadContext lc;
     lc.scene = &scene;
     lc.resources = &resources;
-    lc.pathUtf8 = utf8;
+    // AssetID キーは正規化パスから生成 (ホットリロード時の照合と一致させる)
+    lc.pathUtf8 = WideToUtf8(NormalizePathKey(path));
     lc.baseDir = std::filesystem::path(path).parent_path().wstring();
     lc.shaderId = shaders.Load("forward_lit");
 
@@ -243,6 +244,48 @@ GameObject Load(Scene& scene, RenderResources& resources, ShaderManager& shaders
                  static_cast<size_t>(data->meshes_count), static_cast<size_t>(data->materials_count));
     cgltf_free(data);
     return root;
+}
+
+bool ReloadMeshes(RenderResources& resources, ShaderManager& shaders, const std::wstring& path)
+{
+    const std::string utf8 = WideToUtf8(path);
+
+    cgltf_options options = {};
+    cgltf_data* data = nullptr;
+    if (cgltf_parse_file(&options, utf8.c_str(), &data) != cgltf_result_success
+        || cgltf_load_buffers(&options, data, utf8.c_str()) != cgltf_result_success) {
+        MYE_LOG_ERROR("[reload] glTF reload parse failed: %s", utf8.c_str());
+        if (data) {
+            cgltf_free(data);
+        }
+        return false;
+    }
+
+    LoadContext lc;
+    lc.scene = nullptr; // エンティティは作らない
+    lc.resources = &resources;
+    lc.pathUtf8 = WideToUtf8(NormalizePathKey(path));
+    lc.baseDir = std::filesystem::path(path).parent_path().wstring();
+    lc.shaderId = shaders.Load("forward_lit");
+
+    // 全メッシュ / プリミティブを同じキーで再登録 (= GPU バッファ差し替え)
+    for (cgltf_size m = 0; m < data->meshes_count; ++m) {
+        for (cgltf_size p = 0; p < data->meshes[m].primitives_count; ++p) {
+            char key[512];
+            snprintf(key, sizeof(key), "%s#mesh%zu#prim%zu", lc.pathUtf8.c_str(),
+                     static_cast<size_t>(m), static_cast<size_t>(p));
+            const cgltf_primitive* prim = &data->meshes[m].primitives[p];
+            LoadPrimitiveMesh(lc, prim, key);
+
+            char matKey[512];
+            snprintf(matKey, sizeof(matKey), "%s#mat%zd", lc.pathUtf8.c_str(),
+                     prim->material ? (prim->material - data->materials) : -1);
+            LoadMaterial(lc, prim->material, matKey);
+        }
+    }
+    MYE_LOG_INFO("[reload] glTF meshes reloaded: %s", utf8.c_str());
+    cgltf_free(data);
+    return true;
 }
 
 } // namespace mye::ModelLoader

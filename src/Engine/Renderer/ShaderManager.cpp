@@ -1,5 +1,6 @@
 #include "Engine/Renderer/ShaderManager.h"
 
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -40,7 +41,7 @@ public:
     HRESULT __stdcall Open(D3D_INCLUDE_TYPE, LPCSTR pFileName, LPCVOID,
                            LPCVOID* ppData, UINT* pBytes) override
     {
-        const std::wstring path = baseDir_ + L"\\" + Utf8ToWide(pFileName);
+        const std::wstring path = NormalizePathKey(baseDir_ + L"\\" + Utf8ToWide(pFileName));
         std::vector<char> data;
         if (!ReadFileBytes(path, data)) {
             return E_FAIL;
@@ -129,7 +130,7 @@ AssetID ShaderManager::Load(std::string_view name)
         return id;
     }
     ShaderProgram prog;
-    prog.path = dir_ + L"\\" + Utf8ToWide(name) + L".hlsl";
+    prog.path = NormalizePathKey(dir_ + L"\\" + Utf8ToWide(name) + L".hlsl");
     if (!CompileProgram(prog.path, prog)) {
         MYE_LOG_ERROR("shader compile failed: %.*s", static_cast<int>(name.size()), name.data());
     }
@@ -157,6 +158,62 @@ bool ShaderManager::Recompile(AssetID id)
     }
     it->second = std::move(fresh);
     return true;
+}
+
+void ShaderManager::RequestRecompileForFile(const std::wstring& normalizedPath)
+{
+    for (auto& [id, prog] : programs_) {
+        bool affected = (prog.path == normalizedPath);
+        if (!affected) {
+            for (const std::wstring& inc : prog.includes) {
+                if (inc == normalizedPath) {
+                    affected = true; // include 依存グラフ経由 (spec 8.1)
+                    break;
+                }
+            }
+        }
+        if (!affected) {
+            continue;
+        }
+        bool alreadyPending = false;
+        for (const AsyncCompile& ac : async_) {
+            if (ac.id == id) {
+                alreadyPending = true;
+                break;
+            }
+        }
+        if (alreadyPending) {
+            continue;
+        }
+        MYE_LOG_INFO("[reload] shader recompiling: %s", WideToUtf8(prog.path).c_str());
+        // D3D11 デバイスはフリースレッド (Create* は別スレッド可)。
+        // コンパイル失敗時も ShaderProgram (valid=false) が返り、差し替えはされない
+        const std::wstring path = prog.path;
+        async_.push_back({ id, std::async(std::launch::async, [this, path] {
+                               ShaderProgram fresh;
+                               fresh.path = path;
+                               CompileProgram(path, fresh);
+                               return fresh;
+                           }) });
+    }
+}
+
+void ShaderManager::PollAsyncCompiles()
+{
+    for (size_t i = 0; i < async_.size();) {
+        if (async_[i].future.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
+            ++i;
+            continue;
+        }
+        ShaderProgram fresh = async_[i].future.get();
+        if (fresh.valid) {
+            programs_[async_[i].id] = std::move(fresh); // セーフポイントでの差し替え (フェーズ 2)
+            MYE_LOG_INFO("[reload] shader swapped");
+        } else {
+            MYE_LOG_WARN("[reload] shader compile failed - keeping previous shader");
+        }
+        async_.erase(async_.begin() + static_cast<ptrdiff_t>(i));
+    }
 }
 
 bool ShaderManager::CompileProgram(const std::wstring& path, ShaderProgram& out)

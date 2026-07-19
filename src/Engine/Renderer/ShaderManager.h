@@ -1,4 +1,5 @@
 #pragma once
+#include <future>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -34,8 +35,15 @@ public:
     AssetID Load(std::string_view name);
     ShaderProgram* Get(AssetID id);
 
-    // M3: 再コンパイル。成功時のみ差し替え、失敗時は旧プログラム維持 + エラーログ
+    // 同期再コンパイル。成功時のみ差し替え、失敗時は旧プログラム維持 + エラーログ
     bool Recompile(AssetID id);
+
+    // ---- ホットリロード (engine_spec.md 8.1) ----
+    // 変更ファイル (正規化パス) に依存する全プログラムの再コンパイルを
+    // バックグラウンドで開始する。include 依存グラフ (ShaderProgram::includes) を辿る
+    void RequestRecompileForFile(const std::wstring& normalizedPath);
+    // フェーズ 2 で呼ぶ: 完了した非同期コンパイルを取り込み、成功分のみ差し替える
+    void PollAsyncCompiles();
 
     const std::wstring& ShaderDir() const { return dir_; }
 
@@ -45,6 +53,11 @@ private:
     GraphicsDevice* device_ = nullptr;
     std::wstring dir_;
     std::unordered_map<uint64_t, ShaderProgram> programs_; // AssetID.value → program
+    struct AsyncCompile {
+        uint64_t id;
+        std::future<ShaderProgram> future;
+    };
+    std::vector<AsyncCompile> async_;
 };
 
 } // namespace mye

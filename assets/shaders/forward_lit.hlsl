@@ -1,6 +1,8 @@
 // Forward パス標準ライティング (平行光 + アンビエント)
 // エントリ: VSMain / PSMain (ShaderManager の規約)
 
+#include "common.hlsli"
+
 cbuffer PerFrame : register(b0)
 {
     float4x4 gViewProj;
@@ -52,8 +54,8 @@ VSOut VSMain(VSIn v)
 float4 PSMain(VSOut i) : SV_Target
 {
     const float3 n = normalize(i.normalW);
-    const float ndl = saturate(dot(n, -gLightDir));
     const float4 albedo = gAlbedo.Sample(gSampler, i.uv) * gBaseColor;
-    const float3 color = albedo.rgb * (gAmbient + gLightColor * gLightIntensity * ndl);
+    const float3 color = ApplyDirectionalLight(albedo.rgb, n, gLightDir, gLightColor,
+                                               gLightIntensity, gAmbient);
     return float4(color, albedo.a);
 }

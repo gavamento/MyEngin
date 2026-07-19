@@ -18,5 +18,9 @@ namespace ModelLoader {
 GameObject Load(Scene& scene, RenderResources& resources, ShaderManager& shaders,
                 const std::wstring& path);
 
+// M3 ホットリロード: エンティティは触らず、メッシュ / マテリアル / 埋め込みテクスチャを
+// 同じ AssetID のまま再構築する (参照は AssetID 経由なので差し替えが透過になる)
+bool ReloadMeshes(RenderResources& resources, ShaderManager& shaders, const std::wstring& path);
+
 } // namespace ModelLoader
 } // namespace mye

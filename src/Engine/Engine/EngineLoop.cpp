@@ -2,6 +2,7 @@
 
 #include "Engine/Core/Check.h"
 #include "Engine/Core/Log.h"
+#include "Engine/Engine/HotReload/ReloadHub.h"
 #include "Engine/Engine/RenderSystem.h"
 #include "Engine/Engine/Scene.h"
 #include "Engine/Engine/TransformSystem.h"
@@ -40,6 +41,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     TransformSystem transformSystem;
     RenderSystem renderSystem;
     ForwardPath forwardPath;
+    ReloadHub reloadHub;
     IRenderPath* activePath = &forwardPath; // M6.5 で Deferred と切替可能になる
 
     // ---- 起動 ----
@@ -70,6 +72,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     if (!forwardPath.Init(device, shaderManager)) {
         return 1;
     }
+    reloadHub.Init(&shaderManager, &resources, &scene, assetsRoot);
 
     clock.Init();
 
@@ -82,6 +85,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     ctx.resources = &resources;
     ctx.renderSystem = &renderSystem;
     ctx.renderPath = activePath;
+    ctx.reloadHub = &reloadHub;
     ctx.assetsRoot = assetsRoot;
     ctx.fixedDt = static_cast<float>(kFixedDt);
 
@@ -109,7 +113,8 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         ctx.input = input.CaptureSnapshot();
         logging::SetCurrentFrame(ctx.frameIndex);
 
-        // ---- フェーズ 2: ホットリロード適用セーフポイント (M3/M4 で実装) ----
+        // ---- フェーズ 2: ホットリロード適用セーフポイント ----
+        reloadHub.Update();
 
         // ---- 固定 tick: フェーズ 3(Script) / 4(Systems) / 5(Late) / 7(構造変更) ----
         accumulator += dt;
@@ -163,9 +168,18 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                 app.OnImGui(ctx);
                 imgui.EndFrame();
             }
-            if (!config.screenshotPath.empty()
-                && ctx.frameIndex == static_cast<uint64_t>(config.screenshotFrame)) {
-                swapChain.SaveBackbufferPng(config.screenshotPath);
+            if (!config.screenshotPath.empty()) {
+                if (config.screenshotEvery > 0) {
+                    if (ctx.frameIndex > 0
+                        && ctx.frameIndex % static_cast<uint64_t>(config.screenshotEvery) == 0) {
+                        wchar_t numbered[1024];
+                        swprintf_s(numbered, L"%s.%05llu.png", config.screenshotPath.c_str(),
+                                   static_cast<unsigned long long>(ctx.frameIndex));
+                        swapChain.SaveBackbufferPng(numbered);
+                    }
+                } else if (ctx.frameIndex == static_cast<uint64_t>(config.screenshotFrame)) {
+                    swapChain.SaveBackbufferPng(config.screenshotPath);
+                }
             }
             swapChain.Present(config.vsync);
         } else {
@@ -184,6 +198,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
 
     // ---- 終了 (起動の逆順) ----
     app.OnShutdown(ctx);
+    reloadHub.Shutdown();
     forwardPath.Shutdown();
     imgui.Shutdown();
     swapChain.Shutdown();

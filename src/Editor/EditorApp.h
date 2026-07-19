@@ -21,8 +21,11 @@ public:
     void OnRenderViews(EngineContext& ctx) override;
     void OnImGui(EngineContext& ctx) override;
 
+    bool saveSceneOnStart = false; // --save-scene-on-start (シーンリロード検証用)
+
 private:
-    void BuildTestScene(EngineContext& ctx);
+    void RegisterDemoResources(EngineContext& ctx); // メッシュ/マテリアル/モデル登録 (毎回)
+    void BuildDemoEntities(EngineContext& ctx);     // エンティティ構築 (シーンファイルが無い時のみ)
     void DrawMainMenuBar(EngineContext& ctx);
     void SetupDockLayout(unsigned int dockspaceId);
     void SaveSceneAs(EngineContext& ctx);

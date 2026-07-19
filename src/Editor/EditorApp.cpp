@@ -7,6 +7,7 @@
 
 #include "Engine/Core/Hash.h"
 #include "Engine/Core/Log.h"
+#include "Engine/Engine/HotReload/ReloadHub.h"
 #include "Engine/Engine/ModelLoader.h"
 #include "Engine/Platform/Win32Window.h"
 #include "Engine/Engine/Scene.h"
@@ -23,8 +24,22 @@ void EditorApp::OnStart(EngineContext& ctx)
 {
     ctx.shaders->Load("forward_lit");
     scenePath_ = ctx.assetsRoot + L"\\scenes\\main.scene.json";
+    ctx.reloadHub->SetActiveScenePath(scenePath_);
     rebuildDockLayout_ = !std::filesystem::exists("imgui.ini");
-    BuildTestScene(ctx);
+
+    // リソース (メッシュ/マテリアル/モデル) は毎回登録する。
+    // シーンファイルは AssetID しか持たないため、実体の登録は起動側の責務
+    // (パスベースの完全なアセット解決は AssetManager の将来拡張)
+    RegisterDemoResources(ctx);
+    if (std::filesystem::exists(scenePath_)) {
+        SceneSerializer::LoadFromFile(*ctx.scene, scenePath_);
+    } else {
+        BuildDemoEntities(ctx);
+    }
+    if (saveSceneOnStart) {
+        std::filesystem::create_directories(std::filesystem::path(scenePath_).parent_path());
+        SceneSerializer::SaveToFile(*ctx.scene, scenePath_);
+    }
     MYE_LOG_INFO("EditorApp started (%u entities)", ctx.scene->GetWorld().AliveCount());
 }
 
@@ -189,6 +204,7 @@ void EditorApp::SaveSceneAs(EngineContext& ctx)
     ofn.Flags = OFN_OVERWRITEPROMPT;
     if (GetSaveFileNameW(&ofn)) {
         scenePath_ = path;
+        ctx.reloadHub->SetActiveScenePath(scenePath_);
         SceneSerializer::SaveToFile(*ctx.scene, scenePath_);
     }
 }
@@ -210,18 +226,17 @@ void EditorApp::OpenScene(EngineContext& ctx)
         spinner_ = {};
         if (SceneSerializer::LoadFromFile(*ctx.scene, path)) {
             scenePath_ = path;
+            ctx.reloadHub->SetActiveScenePath(scenePath_);
         }
     }
 }
 
-void EditorApp::BuildTestScene(EngineContext& ctx)
+void EditorApp::RegisterDemoResources(EngineContext& ctx)
 {
-    Scene& s = *ctx.scene;
     RenderResources& res = *ctx.resources;
-
-    const AssetID cube = res.meshes.Cube();
     const AssetID shader = AssetID{ HashStr("forward_lit") };
     const AssetID white = res.textures.White();
+    res.meshes.Cube();
 
     auto makeMat = [&](const char* name, float r, float g, float b) {
         Material m;
@@ -230,13 +245,40 @@ void EditorApp::BuildTestScene(EngineContext& ctx)
         m.baseColor = { r, g, b, 1.0f };
         return res.materials.Register(name, m);
     };
-    const AssetID matGround = makeMat("mat_ground", 0.45f, 0.47f, 0.50f);
-    const AssetID matArm = makeMat("mat_arm", 0.85f, 0.55f, 0.20f);
+    // 地面はファイルテクスチャ (assets\textures\test.png) — テクスチャホットリロードの実演用
+    {
+        Material m;
+        m.shader = shader;
+        const AssetID groundTex = res.textures.LoadFile(ctx.assetsRoot + L"\\textures\\test.png");
+        m.texture = groundTex.IsNull() ? white : groundTex;
+        m.baseColor = groundTex.IsNull() ? DirectX::XMFLOAT4{ 0.45f, 0.47f, 0.50f, 1.0f }
+                                         : DirectX::XMFLOAT4{ 1.0f, 1.0f, 1.0f, 1.0f };
+        res.materials.Register("mat_ground", m);
+    }
+    makeMat("mat_arm", 0.85f, 0.55f, 0.20f);
+    makeMat("mat_red", 0.85f, 0.30f, 0.28f);
+    makeMat("mat_green", 0.35f, 0.75f, 0.40f);
+    makeMat("mat_blue", 0.30f, 0.50f, 0.85f);
+    makeMat("mat_yellow", 0.90f, 0.80f, 0.30f);
+
+    // glTF のメッシュ/マテリアル/テクスチャを登録 (エンティティは作らない)。
+    // 保存済みシーンをロードする場合でも AssetID の実体が揃うようにする
+    ModelLoader::ReloadMeshes(res, *ctx.shaders, ctx.assetsRoot + L"\\models\\BoxTextured.glb");
+}
+
+void EditorApp::BuildDemoEntities(EngineContext& ctx)
+{
+    Scene& s = *ctx.scene;
+    RenderResources& res = *ctx.resources;
+
+    const AssetID cube = res.meshes.Cube();
+    const AssetID matGround = AssetID{ HashStr("mat_ground") };
+    const AssetID matArm = AssetID{ HashStr("mat_arm") };
     const AssetID palette[4] = {
-        makeMat("mat_red", 0.85f, 0.30f, 0.28f),
-        makeMat("mat_green", 0.35f, 0.75f, 0.40f),
-        makeMat("mat_blue", 0.30f, 0.50f, 0.85f),
-        makeMat("mat_yellow", 0.90f, 0.80f, 0.30f),
+        AssetID{ HashStr("mat_red") },
+        AssetID{ HashStr("mat_green") },
+        AssetID{ HashStr("mat_blue") },
+        AssetID{ HashStr("mat_yellow") },
     };
 
     GameObject camera = s.CreateGameObject("Main Camera");

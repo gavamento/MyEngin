@@ -7,6 +7,9 @@
     <Filter Include="Engine">
       <UniqueIdentifier>{582F5D06-2930-51DE-CAD8-59B10249443A}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Engine\HotReload">
+      <UniqueIdentifier>{45E1E3BD-577C-EB21-9437-FCBCEC610D8C}</UniqueIdentifier>
+    </Filter>
     <Filter Include="external">
       <UniqueIdentifier>{544A71AA-5435-4B20-7017-ADEF0FEA3ABF}</UniqueIdentifier>
     </Filter>
@@ -39,6 +42,9 @@
     <ClCompile Include="..\src\Engine\Core\EcsSelfTest.cpp">
       <Filter>Core</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Core\FileWatcher.cpp">
+      <Filter>Core</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Core\JsonUtil.cpp">
       <Filter>Core</Filter>
     </ClCompile>
@@ -53,6 +59,9 @@
     </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\EngineLoop.cpp">
       <Filter>Engine</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\HotReload\ReloadHub.cpp">
+      <Filter>Engine\HotReload</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\ModelLoader.cpp">
       <Filter>Engine</Filter>
@@ -132,6 +141,9 @@
     <ClInclude Include="..\src\Engine\Core\EntityID.h">
       <Filter>Core</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Core\FileWatcher.h">
+      <Filter>Core</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Core\Hash.h">
       <Filter>Core</Filter>
     </ClInclude>
@@ -155,6 +167,9 @@
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\GameObject.h">
       <Filter>Engine</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\HotReload\ReloadHub.h">
+      <Filter>Engine\HotReload</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\ModelLoader.h">
       <Filter>Engine</Filter>

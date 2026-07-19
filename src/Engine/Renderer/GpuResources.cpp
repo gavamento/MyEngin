@@ -18,10 +18,8 @@ using Microsoft::WRL::ComPtr;
 AssetID MeshLibrary::Register(std::string_view name, std::span<const MeshVertex> vertices,
                               std::span<const uint32_t> indices)
 {
+    // 同名の再登録は差し替え (モデルのホットリロード経路。AssetID は不変 = 参照透過)
     const AssetID id{ HashStr(name) };
-    if (meshes_.contains(id.value)) {
-        return id;
-    }
 
     Mesh mesh;
     D3D11_BUFFER_DESC vbd = {};
@@ -43,7 +41,7 @@ AssetID MeshLibrary::Register(std::string_view name, std::span<const MeshVertex>
         return {};
     }
     mesh.indexCount = static_cast<uint32_t>(indices.size());
-    meshes_.emplace(id.value, std::move(mesh));
+    meshes_[id.value] = std::move(mesh);
     return id;
 }
 
@@ -123,13 +121,18 @@ bool TextureLibrary::CreateFromPixels(Texture& out, const uint8_t* rgba, int w, 
     return true;
 }
 
+AssetID TextureLibrary::IdForFile(const std::wstring& path)
+{
+    return AssetID{ HashStr(WideToUtf8(NormalizePathKey(path))) };
+}
+
 AssetID TextureLibrary::LoadFile(const std::wstring& path)
 {
-    const std::string utf8 = WideToUtf8(path);
-    const AssetID id{ HashStr(utf8) };
+    const AssetID id = IdForFile(path);
     if (textures_.contains(id.value)) {
         return id;
     }
+    const std::string utf8 = WideToUtf8(path);
     int w = 0, h = 0, comp = 0;
     stbi_uc* pixels = stbi_load(utf8.c_str(), &w, &h, &comp, 4);
     if (!pixels) {
@@ -149,10 +152,8 @@ AssetID TextureLibrary::LoadFile(const std::wstring& path)
 
 AssetID TextureLibrary::CreateFromEncoded(std::string_view name, const void* bytes, size_t size)
 {
+    // 再呼び出しは差し替え (モデルリロード時に埋め込みテクスチャを更新するため)
     const AssetID id{ HashStr(name) };
-    if (textures_.contains(id.value)) {
-        return id;
-    }
     int w = 0, h = 0, comp = 0;
     stbi_uc* pixels = stbi_load_from_memory(static_cast<const stbi_uc*>(bytes),
                                             static_cast<int>(size), &w, &h, &comp, 4);
@@ -166,7 +167,7 @@ AssetID TextureLibrary::CreateFromEncoded(std::string_view name, const void* byt
     if (!ok) {
         return {};
     }
-    textures_.emplace(id.value, std::move(t));
+    textures_[id.value] = std::move(t);
     return id;
 }
 

@@ -31,6 +31,21 @@ std::wstring FindAssetsRoot()
     return (std::filesystem::current_path() / L"assets").wstring();
 }
 
+std::wstring NormalizePathKey(const std::wstring& path)
+{
+    std::error_code ec;
+    std::filesystem::path p = std::filesystem::absolute(path, ec);
+    std::wstring s = ec ? path : p.lexically_normal().wstring();
+    for (wchar_t& c : s) {
+        if (c == L'/') {
+            c = L'\\';
+        } else {
+            c = static_cast<wchar_t>(towlower(c));
+        }
+    }
+    return s;
+}
+
 std::string WideToUtf8(std::wstring_view w)
 {
     if (w.empty()) {
