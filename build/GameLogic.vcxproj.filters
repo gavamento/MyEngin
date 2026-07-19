@@ -16,6 +16,9 @@
     <ClCompile Include="..\src\GameLogic\Scripts\Rotator.cpp">
       <Filter>Scripts</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\GameLogic\Scripts\Spawner.cpp">
+      <Filter>Scripts</Filter>
+    </ClCompile>
     <ClInclude Include="..\src\Shared\EngineAPI.h">
       <Filter>Shared</Filter>
     </ClInclude>

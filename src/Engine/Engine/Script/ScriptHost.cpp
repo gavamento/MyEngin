@@ -1,5 +1,7 @@
 #include "Engine/Engine/Script/ScriptHost.h"
 
+#include <algorithm>
+#include <cstring>
 #include <vector>
 
 #include <Windows.h>
@@ -180,10 +182,21 @@ bool ScriptHost::LoadModule(const std::wstring& dllPath)
 
     World& world = scene_->GetWorld();
 
+    // 名前順に登録する。DLL 内の静的初期化順 (= TU のリンク順) は Debug/Release で
+    // 異なり得るため、実行順と TypeId 割り当てを構成非依存にする (spec 11 章)
+    std::vector<const MyeScriptDesc*> sorted;
+    sorted.reserve(mod->scriptCount);
+    for (uint32_t i = 0; i < mod->scriptCount; ++i) {
+        sorted.push_back(&mod->scripts[i]);
+    }
+    std::sort(sorted.begin(), sorted.end(), [](const MyeScriptDesc* a, const MyeScriptDesc* b) {
+        return strcmp(a->name, b->name) < 0;
+    });
+
     // 新 DLL に存在する型を反映
     std::unordered_set<std::string> present;
-    for (uint32_t i = 0; i < mod->scriptCount; ++i) {
-        const MyeScriptDesc& sd = mod->scripts[i];
+    for (const MyeScriptDesc* sdp : sorted) {
+        const MyeScriptDesc& sd = *sdp;
         present.insert(sd.name);
 
         ScriptType* type = FindType(sd.name);

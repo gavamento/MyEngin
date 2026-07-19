@@ -44,6 +44,8 @@
     <ClCompile Include="..\src\Engine\Engine\Particles\GpuParticleBackend.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Particles\ParticleSystem.cpp" />
     <ClCompile Include="..\src\Engine\Engine\RenderSystem.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Replay\Replay.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Replay\WorldHasher.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Scene.cpp" />
     <ClCompile Include="..\src\Engine\Engine\SceneSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\SceneSerializer.cpp" />
@@ -87,6 +89,8 @@
     <ClInclude Include="..\src\Engine\Engine\Particles\IParticleBackend.h" />
     <ClInclude Include="..\src\Engine\Engine\Particles\ParticleSystem.h" />
     <ClInclude Include="..\src\Engine\Engine\RenderSystem.h" />
+    <ClInclude Include="..\src\Engine\Engine\Replay\Replay.h" />
+    <ClInclude Include="..\src\Engine\Engine\Replay\WorldHasher.h" />
     <ClInclude Include="..\src\Engine\Engine\Scene.h" />
     <ClInclude Include="..\src\Engine\Engine\SceneSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\SceneSerializer.h" />

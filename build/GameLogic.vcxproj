@@ -45,6 +45,7 @@
     <ClCompile Include="..\src\GameLogic\GameLogicMain.cpp" />
     <ClCompile Include="..\src\GameLogic\Scripts\PlayerController.cpp" />
     <ClCompile Include="..\src\GameLogic\Scripts\Rotator.cpp" />
+    <ClCompile Include="..\src\GameLogic\Scripts\Spawner.cpp" />
     <ClInclude Include="..\src\Shared\EngineAPI.h" />
     <ClInclude Include="..\src\Shared\MathPod.h" />
     <ClInclude Include="..\src\Shared\ScriptAPI.h" />

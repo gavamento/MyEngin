@@ -354,6 +354,11 @@ void EditorApp::BuildDemoEntities(EngineContext& ctx)
     if (player != kInvalidComponentType && model) {
         s.GetWorld().AddComponentRaw(model.Id(), player);
     }
+    // 生成/破棄を続けるスクリプト (リプレイ検証に構造変更を含める)
+    const ComponentTypeId spawner = ComponentRegistry::Get().FindByName("Spawner");
+    if (spawner != kInvalidComponentType) {
+        s.GetWorld().AddComponentRaw(fire.Id(), spawner);
+    }
 }
 
 } // namespace mye

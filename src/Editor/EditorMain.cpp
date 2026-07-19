@@ -74,6 +74,16 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 perfRate = static_cast<float>(_wtof(argv[++i]));
             } else if (arg == L"--perf-max" && i + 1 < argc) {
                 perfMax = _wtoi(argv[++i]);
+            } else if (arg == L"--replay-record" && i + 1 < argc) {
+                config.replayRecordPath = argv[++i];
+                autoPlay = true;
+                config.vsync = false;
+            } else if (arg == L"--replay-verify" && i + 1 < argc) {
+                config.replayVerifyPath = argv[++i];
+                autoPlay = true;
+                config.vsync = false;
+            } else if (arg == L"--replay-ticks" && i + 1 < argc) {
+                config.replayTicks = _wtoi64(argv[++i]);
             }
         }
         LocalFree(argv);

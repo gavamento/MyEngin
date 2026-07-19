@@ -33,6 +33,11 @@ struct EngineConfig {
     // true: シーンをバックバッファへ直接描画 (Runtime / M1 デモ)。
     // false: 描画は app の OnRenderViews に委ねる (エディタは SceneView/GameView の RT へ描く)
     bool renderSceneToBackbuffer = true;
+
+    // ---- リプレイ一貫性検証 (engine_spec.md 11.3) ----
+    std::wstring replayRecordPath; // 空でなければ記録モード (replayTicks 分記録して終了)
+    std::wstring replayVerifyPath; // 空でなければ検証モード (全 tick 照合、exit code 0/1)
+    int64_t replayTicks = 600;     // 記録する tick 数 (60Hz で 10 秒)
 };
 
 // アプリ側 (Editor / Runtime) がサブシステムへアクセスするための窓口

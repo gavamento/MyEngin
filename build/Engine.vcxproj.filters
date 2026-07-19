@@ -13,6 +13,9 @@
     <Filter Include="Engine\Particles">
       <UniqueIdentifier>{DCDC7B06-EF20-69BD-0BF7-3CA3702AC5ED}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Engine\Replay">
+      <UniqueIdentifier>{DBAE9292-5C25-5143-7BD0-30A497BF8AF2}</UniqueIdentifier>
+    </Filter>
     <Filter Include="Engine\Script">
       <UniqueIdentifier>{01586F12-A871-BEFB-7266-0B4C59DCE30B}</UniqueIdentifier>
     </Filter>
@@ -89,6 +92,12 @@
     </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\RenderSystem.cpp">
       <Filter>Engine</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Replay\Replay.cpp">
+      <Filter>Engine\Replay</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Replay\WorldHasher.cpp">
+      <Filter>Engine\Replay</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Scene.cpp">
       <Filter>Engine</Filter>
@@ -218,6 +227,12 @@
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\RenderSystem.h">
       <Filter>Engine</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Replay\Replay.h">
+      <Filter>Engine\Replay</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Replay\WorldHasher.h">
+      <Filter>Engine\Replay</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Scene.h">
       <Filter>Engine</Filter>

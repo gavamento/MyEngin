@@ -6,6 +6,8 @@
 #include "Engine/Engine/HotReload/ReloadHub.h"
 #include "Engine/Engine/Particles/ParticleSystem.h"
 #include "Engine/Engine/RenderSystem.h"
+#include "Engine/Engine/Replay/Replay.h"
+#include "Engine/Engine/Replay/WorldHasher.h"
 #include "Engine/Engine/Scene.h"
 #include "Engine/Engine/Script/ScriptHost.h"
 #include "Engine/Engine/TransformSystem.h"
@@ -116,6 +118,21 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     MYE_LOG_INFO("Engine loop started (fixed dt = %.4f s, assets = %s)",
                  kFixedDt, WideToUtf8(assetsRoot).c_str());
 
+    // ---- リプレイ記録/検証の準備 (spec 11.3) ----
+    ReplayRecorder recorder;
+    ReplayPlayer player;
+    int exitCode = 0;
+    if (!config.replayVerifyPath.empty()) {
+        if (!player.Load(config.replayVerifyPath)) {
+            return 1;
+        }
+        // 記録開始時の RNG 状態を復元して同一 tick 列を再現する
+        scene.GetWorld().Rng().Restore(player.RngState(), player.RngInc());
+    } else if (!config.replayRecordPath.empty()) {
+        recorder.Start(config.replayRecordPath, scene.GetWorld().Rng().State(),
+                       scene.GetWorld().Rng().Inc(), scene.GetWorld().AliveCount());
+    }
+
     // ---- メインループ (フェーズ構成は engine_spec.md 5.3 / ADR-005) ----
     double accumulator = 0.0;
     bool running = true;
@@ -141,7 +158,14 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         // ---- 固定 tick: フェーズ 3(Script) / 4(Systems) / 5(Late) / 7(構造変更) ----
         accumulator += dt;
         int ticks = 0;
-        while (accumulator >= kFixedDt && ticks < kMaxTicksPerFrame) {
+        const bool verifying = player.IsActive();
+        // 検証モードは実時間と切り離して最速で回す (spec 11.3 の CLI 実行)
+        const int maxTicksThisFrame = verifying ? 64 : kMaxTicksPerFrame;
+        while (ticks < maxTicksThisFrame
+               && (verifying ? player.HasTick(ctx.tickIndex) : accumulator >= kFixedDt)) {
+            if (verifying) {
+                ctx.input = player.InputForTick(ctx.tickIndex); // フェーズ 1 の入力を置換
+            }
             app.OnTick(ctx); // エディタ更新 + simulateScripts の決定
             // ---- フェーズ 3: スクリプト層 Start → Update ----
             const bool runScripts = ctx.simulateScripts && scriptHost.IsLoaded();
@@ -160,13 +184,61 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                 scriptHost.RunLateUpdate();
             }
             scene.GetWorld().ApplyStructuralChanges(); // フェーズ 7 (tick 末適用 = ADR-005)
+
+            // ---- リプレイ: tick 末の状態ハッシュ (spec 11.3) ----
+            if (recorder.IsActive()) {
+                recorder.RecordTick(ctx.input, HashWorld(scene.GetWorld(), &particleSystem.Cpu()));
+                if (recorder.TickCount() >= static_cast<uint64_t>(config.replayTicks)) {
+                    recorder.Finish();
+                    ctx.requestExit = true;
+                }
+            } else if (verifying) {
+                const uint64_t actual = HashWorld(scene.GetWorld(), &particleSystem.Cpu());
+                const uint64_t expected = player.ExpectedHash(ctx.tickIndex);
+                if (actual != expected) {
+                    // 乖離: 初回の tick とエンティティ別サブハッシュを報告して失敗終了
+                    player.failed = true;
+                    player.firstMismatchTick = ctx.tickIndex;
+                    MYE_LOG_ERROR("[replay] HASH MISMATCH at tick %llu",
+                                  static_cast<unsigned long long>(ctx.tickIndex));
+                    MYE_LOG_ERROR("[replay]   expected %016llX / actual %016llX",
+                                  static_cast<unsigned long long>(expected),
+                                  static_cast<unsigned long long>(actual));
+                    std::vector<EntityHash> detail;
+                    uint64_t total = 0;
+                    HashWorldDetailed(scene.GetWorld(), &particleSystem.Cpu(), detail, total);
+                    MYE_LOG_ERROR("[replay]   entities=%zu rng=%016llX", detail.size(),
+                                  static_cast<unsigned long long>(scene.GetWorld().Rng().State()));
+                    for (size_t i = 0; i < detail.size() && i < 8; ++i) {
+                        MYE_LOG_ERROR("[replay]   entity %u:%u hash=%016llX (%s)",
+                                      detail[i].entity.index, detail[i].entity.generation,
+                                      static_cast<unsigned long long>(detail[i].hash),
+                                      scene.GetWorld().GetName(detail[i].entity));
+                    }
+                    exitCode = 1;
+                    ctx.requestExit = true;
+                } else {
+                    ++player.verifiedTicks;
+                }
+            }
+
             ++ctx.tickIndex;
-            accumulator -= kFixedDt;
             ++ticks;
+            if (!verifying) {
+                accumulator -= kFixedDt;
+            }
+            if (ctx.requestExit) {
+                break;
+            }
         }
-        if (ticks == kMaxTicksPerFrame && accumulator > kFixedDt) {
+        if (!verifying && ticks == kMaxTicksPerFrame && accumulator > kFixedDt) {
             // 追いつけない分は捨てる (スローモーション化を許容し、tick 爆発を防ぐ)
             accumulator = kFixedDt;
+        }
+        if (verifying && !player.failed && !player.HasTick(ctx.tickIndex)) {
+            MYE_LOG_INFO("[replay] VERIFY PASS: %llu ticks hash-identical",
+                         static_cast<unsigned long long>(player.verifiedTicks));
+            ctx.requestExit = true;
         }
 
         if (!window.IsMinimized()) {
@@ -244,10 +316,13 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     swapChain.Shutdown();
     device.Shutdown();
     window.Destroy();
+    if (recorder.IsActive()) {
+        recorder.Finish(); // maxFrames 等で先に抜けた場合も書き出す
+    }
     MYE_LOG_INFO("Engine loop finished (%llu frames, %llu ticks)",
                  static_cast<unsigned long long>(ctx.frameIndex),
                  static_cast<unsigned long long>(ctx.tickIndex));
-    return 0;
+    return exitCode;
 }
 
 } // namespace mye
