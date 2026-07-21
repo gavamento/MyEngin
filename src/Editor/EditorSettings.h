@@ -3,7 +3,8 @@
 
 namespace mye {
 
-// エディタ設定の永続化 (assets\editor_settings.json)。
+// エディタ設定の永続化 (<dir>\editor_settings.json)。
+// 置き場はプロジェクト起動時 <project>\.mye\、レガシー起動時 assets\ 直下 (M26)。
 // project_settings.json (ParticleSystem) と同じ「読み直して該当キーだけ上書き」の
 // マージ保存パターンで、imgui.ini が管理しない設定 (最後に開いたシーン・スナップ量・
 // 外部エディタコマンド等) を保持する。root.value(key, default) で前方/後方互換。
@@ -16,7 +17,7 @@ struct EditorSettings {
     float snapScale = 0.1f;
     bool gridVisible = true;
 
-    void Load(const std::wstring& assetsRoot);
+    void Load(const std::wstring& dir);
     void Save() const;
 
 private:

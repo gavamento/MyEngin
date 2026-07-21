@@ -59,6 +59,7 @@
     <ClCompile Include="..\src\Engine\Engine\Physics\PhysicsSystem.cpp" />
     <ClCompile Include="..\src\Engine\Engine\PhysicsSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Prefab.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Project.cpp" />
     <ClCompile Include="..\src\Engine\Engine\RenderSystem.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Replay\Replay.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Replay\WorldHasher.cpp" />
@@ -134,6 +135,7 @@
     <ClInclude Include="..\src\Engine\Engine\Physics\PhysicsSystem.h" />
     <ClInclude Include="..\src\Engine\Engine\PhysicsSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Prefab.h" />
+    <ClInclude Include="..\src\Engine\Engine\Project.h" />
     <ClInclude Include="..\src\Engine\Engine\RenderSystem.h" />
     <ClInclude Include="..\src\Engine\Engine\Replay\Replay.h" />
     <ClInclude Include="..\src\Engine\Engine\Replay\WorldHasher.h" />

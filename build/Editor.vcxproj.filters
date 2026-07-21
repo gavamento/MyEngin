@@ -15,6 +15,8 @@
     <ClCompile Include="..\src\Editor\EditorMain.cpp" />
     <ClCompile Include="..\src\Editor\EditorSettings.cpp" />
     <ClCompile Include="..\src\Editor\PlayModeController.cpp" />
+    <ClCompile Include="..\src\Editor\ProjectRegistry.cpp" />
+    <ClCompile Include="..\src\Editor\ProjectTemplates.cpp" />
     <ClCompile Include="..\src\Editor\Undo\UndoStack.cpp">
       <Filter>Undo</Filter>
     </ClCompile>
@@ -63,6 +65,8 @@
     <ClInclude Include="..\src\Editor\EditorApp.h" />
     <ClInclude Include="..\src\Editor\EditorSettings.h" />
     <ClInclude Include="..\src\Editor\PlayModeController.h" />
+    <ClInclude Include="..\src\Editor\ProjectRegistry.h" />
+    <ClInclude Include="..\src\Editor\ProjectTemplates.h" />
     <ClInclude Include="..\src\Editor\Selection.h" />
     <ClInclude Include="..\src\Editor\ShortcutHub.h" />
     <ClInclude Include="..\src\Editor\Undo\UndoStack.h">

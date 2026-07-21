@@ -9,9 +9,9 @@
 
 namespace mye {
 
-void EditorSettings::Load(const std::wstring& assetsRoot)
+void EditorSettings::Load(const std::wstring& dir)
 {
-    path_ = assetsRoot + L"\\editor_settings.json";
+    path_ = dir + L"\\editor_settings.json";
     std::ifstream f(std::filesystem::path(path_), std::ios::binary);
     if (!f) {
         return;

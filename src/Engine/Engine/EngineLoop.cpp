@@ -14,6 +14,7 @@
 #include "Engine/Engine/Particles/ParticleSystem.h"
 #include "Engine/Engine/Physics/PhysicsSystem.h"
 #include "Engine/Engine/Prefab.h"
+#include "Engine/Engine/Project.h"
 #include "Engine/Engine/RenderSystem.h"
 #include "Engine/Engine/Replay/Replay.h"
 #include "Engine/Engine/Replay/WorldHasher.h"
@@ -83,6 +84,25 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     std::wstring pendingScene;                // LoadScene の遅延ロード先 (tick 末に消費)
     IRenderPath* activePath = &forwardPath;
 
+    // ---- プロジェクト/アセットルート解決 (M26) ----
+    // --project 指定時は <root>\assets を使い、状態ファイル (.mye\) をプロジェクト側へ置く。
+    // 未指定はレガシー動作 (exe から上へ assets を探索、imgui.ini は CWD 相対)
+    std::wstring assetsRoot;
+    std::wstring imguiIniPath = L"imgui.ini";
+    if (!config.projectRoot.empty()) {
+        assetsRoot = config.projectRoot + L"\\assets";
+        std::error_code fsec;
+        if (!std::filesystem::exists(assetsRoot, fsec)) {
+            MYE_LOG_ERROR("project assets not found: %s", WideToUtf8(assetsRoot).c_str());
+            return 1;
+        }
+        const std::wstring localDir = config.projectRoot + L"\\" + kProjectLocalDir;
+        std::filesystem::create_directories(localDir, fsec);
+        imguiIniPath = localDir + L"\\imgui.ini";
+    } else {
+        assetsRoot = FindAssetsRoot();
+    }
+
     // ---- 起動 ----
     WindowDesc wd;
     wd.title = config.title.c_str();
@@ -97,7 +117,11 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     if (!swapChain.Init(device, window.Hwnd(), window.Width(), window.Height())) {
         return 1;
     }
-    if (config.enableImGui && !imgui.Init(window, device)) {
+    ImGuiInitOptions imguiOpts;
+    if (!config.projectRoot.empty()) {
+        imguiOpts.iniPath = imguiIniPath; // 空 = ImGui 既定 (CWD の imgui.ini)
+    }
+    if (config.enableImGui && !imgui.Init(window, device, imguiOpts)) {
         return 1;
     }
     // ImGui のハンドラ登録より後に登録する (ImGui が先にメッセージを見る)
@@ -105,7 +129,6 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         return input.HandleMessage(hwnd, msg, wp, lp, result);
     });
 
-    const std::wstring assetsRoot = FindAssetsRoot();
     shaderManager.Init(device, assetsRoot + L"\\shaders");
     resources.Init(device);
     if (!forwardPath.Init(device, shaderManager)) {
@@ -174,6 +197,8 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     ctx.controllers = &controllerLibrary;
     ctx.assetDb = &assetDatabase;
     ctx.assetsRoot = assetsRoot;
+    ctx.projectRoot = config.projectRoot;
+    ctx.imguiIniPath = imguiIniPath;
 
     // M23: assets\ を走査して .meta サイドカー (GUID) を生成/同期する。
     // アセット登録 (app.OnStart → RegisterAssetLibraries) の前に済ませ、パス⇄GUID 解決を利用可能にする。

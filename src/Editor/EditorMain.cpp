@@ -1,11 +1,14 @@
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <string>
 
 #include <Windows.h>
 #include <shellapi.h>
 
 #include "Editor/EditorApp.h"
+#include "Editor/ProjectRegistry.h"
+#include "Editor/ProjectTemplates.h"
 #include "Editor/UndoSelfTest.h"
 #include "Engine/Core/EcsSelfTest.h"
 #include "Engine/Core/JobSystemSelfTest.h"
@@ -14,6 +17,7 @@
 #include "Engine/Engine/AssetDatabaseSelfTest.h"
 #include "Engine/Engine/EngineLoop.h"
 #include "Engine/Engine/PhysicsSelfTest.h"
+#include "Engine/Engine/Project.h"
 #include "Engine/Engine/SceneSelfTest.h"
 #include "Engine/Engine/UI/UISelfTest.h"
 #include "Engine/Platform/PathUtil.h"
@@ -57,6 +61,9 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     std::string selectName;
     int pickTestFrame = -1;
     std::wstring sceneOverride;
+    std::wstring projectDir;              // --project <dir> (M26)
+    std::wstring createProjectDir;        // --create-project <dir> (ヘッドレス生成)
+    std::wstring templateName = L"empty"; // --template <empty|demo>
 
     int argc = 0;
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
@@ -121,9 +128,28 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 config.postFxFxaa = false;
             } else if (arg == L"--no-jobs") {
                 config.useJobs = false; // M25: 並列を直列化 (決定論ゲート / 計測比較)
+            } else if (arg == L"--project" && i + 1 < argc) {
+                projectDir = argv[++i];
+            } else if (arg == L"--create-project" && i + 1 < argc) {
+                createProjectDir = argv[++i];
+            } else if (arg == L"--template" && i + 1 < argc) {
+                templateName = argv[++i];
             }
         }
         LocalFree(argv);
+    }
+
+    // --create-project: ヘッドレスでプロジェクトを生成して終了 (M26。検証/CI 用)
+    if (!createProjectDir.empty()) {
+        const std::wstring dir = std::filesystem::absolute(createProjectDir).wstring();
+        const mye::ProjectTemplate tmpl = (templateName == L"demo") ? mye::ProjectTemplate::Demo3D
+                                                                    : mye::ProjectTemplate::Empty;
+        std::string err;
+        const bool ok = mye::CreateProject(dir, std::string(), tmpl, mye::FindAssetsRoot(), &err);
+        if (!ok) {
+            std::fprintf(stderr, "create-project failed: %s\n", err.c_str());
+        }
+        return ok ? 0 : 1;
     }
 
     if (selftest) {
@@ -134,6 +160,25 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             && mye::RunAssetDatabaseSelfTest() && mye::RunTextureCookSelfTest()
             && mye::RunJobSystemSelfTest();
         return ok ? 0 : 1;
+    }
+
+    // --project: プロジェクトを検証して注入 (M26)。失敗はダイアログ + exit 1
+    if (!projectDir.empty()) {
+        const std::wstring dir = std::filesystem::absolute(projectDir).wstring();
+        mye::ProjectManifest manifest;
+        if (!mye::IsProjectRoot(dir) || !mye::LoadProjectManifest(dir, manifest)) {
+            std::fprintf(stderr, "invalid project: %s\n", mye::WideToUtf8(dir).c_str());
+            MessageBoxW(nullptr, (L"プロジェクトが見つかりません:\n" + dir).c_str(),
+                        L"MyEngine Editor", MB_ICONERROR | MB_OK);
+            return 1;
+        }
+        config.projectRoot = dir;
+        if (!manifest.name.empty()) {
+            config.title += L" - " + mye::Utf8ToWide(manifest.name);
+        }
+        mye::ProjectRegistry registry;
+        registry.Load();
+        registry.Touch(dir, manifest.name);
     }
 
     mye::EditorApp app;

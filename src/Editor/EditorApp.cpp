@@ -15,6 +15,7 @@
 #include "Engine/Engine/HotReload/ReloadHub.h"
 #include "Engine/Engine/ModelLoader.h"
 #include "Engine/Engine/Prefab.h"
+#include "Engine/Engine/Project.h"
 #include "Engine/Engine/Script/ScriptHost.h"
 #include "Engine/Platform/PathUtil.h"
 #include "Engine/Platform/Win32Window.h"
@@ -32,11 +33,20 @@ namespace mye {
 void EditorApp::OnStart(EngineContext& ctx)
 {
     ctx.shaders->Load("forward_lit");
-    settings_.Load(ctx.assetsRoot);
-    scenePath_ = sceneOverride.empty() ? (ctx.assetsRoot + L"\\scenes\\main.scene.json")
-                                       : sceneOverride;
+    // 設定の置き場 (M26): プロジェクト起動時は <project>\.mye\、レガシー時は従来の assets\ 直下
+    settings_.Load(ctx.projectRoot.empty() ? ctx.assetsRoot
+                                           : ctx.projectRoot + L"\\" + kProjectLocalDir);
+    if (!sceneOverride.empty()) {
+        scenePath_ = sceneOverride;
+    } else {
+        scenePath_ = ctx.assetsRoot + L"\\scenes\\main.scene.json";
+        ProjectManifest manifest; // ブートシーンはマニフェスト優先 (M26)
+        if (!ctx.projectRoot.empty() && LoadProjectManifest(ctx.projectRoot, manifest)) {
+            scenePath_ = ProjectBootScenePath(ctx.projectRoot, manifest);
+        }
+    }
     ctx.reloadHub->SetActiveScenePath(scenePath_);
-    rebuildDockLayout_ = !std::filesystem::exists("imgui.ini");
+    rebuildDockLayout_ = !std::filesystem::exists(ctx.imguiIniPath);
 
     // リソース (メッシュ/マテリアル/モデル) は毎回登録する。
     // シーンファイルは AssetID しか持たないため、実体の登録は起動側の責務

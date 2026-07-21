@@ -1,6 +1,7 @@
 #include "Engine/Renderer/ImGuiRenderer.h"
 
 #include "Engine/Core/Log.h"
+#include "Engine/Platform/PathUtil.h"
 #include "Engine/Platform/Win32Window.h"
 #include "Engine/Renderer/GraphicsDevice.h"
 
@@ -15,7 +16,7 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg
 
 namespace mye {
 
-bool ImGuiRenderer::Init(Win32Window& window, GraphicsDevice& device)
+bool ImGuiRenderer::Init(Win32Window& window, GraphicsDevice& device, const ImGuiInitOptions& opts)
 {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -24,6 +25,14 @@ bool ImGuiRenderer::Init(Win32Window& window, GraphicsDevice& device)
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
     // multi-viewport は初期スコープ外 (DX11 との組み合わせで工数が膨らむため封印)
+
+    // ini の置き場 (M26): プロジェクト起動時は <project>\.mye\imgui.ini に固定して CWD 揺れを防ぐ
+    if (opts.disableIni) {
+        io.IniFilename = nullptr;
+    } else if (!opts.iniPath.empty()) {
+        iniPathUtf8_ = WideToUtf8(opts.iniPath);
+        io.IniFilename = iniPathUtf8_.c_str();
+    }
 
     ImGui::StyleColorsDark();
 

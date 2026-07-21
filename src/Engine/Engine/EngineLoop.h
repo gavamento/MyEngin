@@ -52,6 +52,11 @@ struct EngineConfig {
     // ---- ジョブシステム (M25) ----
     bool useJobs = true; // false で全並列を直列化 (決定論ゲート / 計測比較用)
 
+    // ---- プロジェクト (M26) ----
+    // 空 = 従来動作 (FindAssetsRoot で単一リポジトリレイアウトを探索)。
+    // 非空 = <projectRoot>\assets をアセットルートにする (--project で注入)
+    std::wstring projectRoot;
+
     // ---- リプレイ一貫性検証 (engine_spec.md 11.3) ----
     std::wstring replayRecordPath; // 空でなければ記録モード (replayTicks 分記録して終了)
     std::wstring replayVerifyPath; // 空でなければ検証モード (全 tick 照合、exit code 0/1)
@@ -91,6 +96,8 @@ struct EngineContext {
     ControllerLibrary* controllers = nullptr; // 登録済み Animator Controller (.controller.json、M22)
     AssetDatabase* assetDb = nullptr;   // GUID/.meta サイドカー DB (M23)。パス⇄GUID 解決
     std::wstring assetsRoot;            // assets\ の絶対パス
+    std::wstring projectRoot;           // プロジェクトルート (M26)。レガシー起動時は空
+    std::wstring imguiIniPath;          // imgui.ini の解決済みパス (レガシー時は L"imgui.ini")
     InputSnapshot input = {}; // 現フレームのスナップショット (tick 中も同一)
     // この tick でスクリプト層 (フェーズ 3/5) を実行するか。
     // エディタは OnTick で Play 状態に応じて設定する (Runtime は常に true)

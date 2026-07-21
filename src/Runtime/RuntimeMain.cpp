@@ -8,6 +8,7 @@
 #include "Engine/Core/Log.h"
 #include "Engine/Engine/DemoContent.h"
 #include "Engine/Engine/EngineLoop.h"
+#include "Engine/Engine/Project.h"
 #include "Engine/Engine/Scene.h"
 #include "Engine/Engine/SceneSerializer.h"
 #include "Engine/Platform/PathUtil.h"
@@ -45,6 +46,10 @@ public:
         mye::RegisterAssetLibraries(ctx); // .prefab / .anim を登録
         if (scenePath.empty()) {
             scenePath = ctx.assetsRoot + L"\\scenes\\main.scene.json";
+            mye::ProjectManifest manifest; // ブートシーンはマニフェスト優先 (M26)
+            if (!ctx.projectRoot.empty() && mye::LoadProjectManifest(ctx.projectRoot, manifest)) {
+                scenePath = mye::ProjectBootScenePath(ctx.projectRoot, manifest);
+            }
         }
         if (std::filesystem::exists(scenePath)) {
             mye::SceneSerializer::LoadFromFile(*ctx.scene, scenePath);
@@ -128,6 +133,9 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 config.postFxFxaa = false;
             } else if (arg == L"--no-jobs") {
                 config.useJobs = false; // M25: 並列を直列化 (決定論ゲート / 計測比較)
+            } else if (arg == L"--project" && i + 1 < argc) {
+                // M26: プロジェクト指定。dist 配布物は従来どおり exe 隣の assets を自動発見する
+                config.projectRoot = std::filesystem::absolute(argv[++i]).wstring();
             }
         }
         LocalFree(argv);
