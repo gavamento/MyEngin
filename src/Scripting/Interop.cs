@@ -136,6 +136,8 @@ namespace MyeScripting
         public delegate* unmanaged<int, byte*, int, int> Serialize;
         public delegate* unmanaged<int, byte*, void> Deserialize;
         public delegate* unmanaged<void> ResetInstances;
+        // M28c 末尾追加 (ManagedHost.h の MyeManagedVTable と同順)。kind: 0=enter 1=stay 2=exit
+        public delegate* unmanaged<int, MyeEntityId, int, MyeVec3, void> InvokeCollision;
     }
 
     // native → managed の起動引数 (ManagedHost.cpp の MyeBootstrapArgs と一致)

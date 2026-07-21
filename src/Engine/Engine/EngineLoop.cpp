@@ -71,6 +71,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     ParticleSystem particleSystem;
     CollisionSystem collisionSystem;
     PhysicsSystem physicsSystem; // 剛体積分 + 衝突解決 (M20、ステートレス)
+    std::vector<SolidContact> solidContacts; // 物理→衝突イベントの tick 内受け渡し (M28c)
     PrefabLibrary prefabLibrary;
     AnimationLibrary animLibrary;
     AnimationSystem animationSystem;
@@ -302,7 +303,8 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             // ワールド位置でコライダ判定させる。Rigidbody 非存在シーンでは完全 no-op (opt-in)
             if (ctx.simulateScripts) {
                 MYE_PROFILE_SCOPE("physics");
-                physicsSystem.Update(scene.GetWorld(), ctx.fixedDt);
+                // ソリッド接触ペアを受け取り CollisionSystem へ渡す (M28c OnCollision 配信)
+                physicsSystem.Update(scene.GetWorld(), ctx.fixedDt, &solidContacts);
             }
             // ---- フェーズ 4: システム層 ----
             // Transform を先に確定 (エミッタ/コライダのワールド位置は tick 決定論の一部)
@@ -315,7 +317,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                     MYE_PROFILE_SCOPE("collision");
                     // C# にもトリガー配信 (別レーン: 記録/検証中は managed=null で純 C++)
                     collisionSystem.Update(scene.GetWorld(), &scriptHost,
-                                           runManaged ? &managedHost : nullptr);
+                                           runManaged ? &managedHost : nullptr, &solidContacts);
                 }
                 {
                     MYE_PROFILE_SCOPE("particles");

@@ -21,11 +21,30 @@ namespace {
 struct Body {
     EntityID entity;
     ShapePose pose;
+    int32_t isTrigger = 0;
 };
+
+// key 昇順の SolidContact 列から法線を引く (無ければ +Y)
+void FindContactNormal(const std::vector<SolidContact>& contacts, uint64_t key, float& nx,
+                       float& ny, float& nz)
+{
+    auto it = std::lower_bound(contacts.begin(), contacts.end(), key,
+                               [](const SolidContact& c, uint64_t k) { return c.key < k; });
+    if (it != contacts.end() && it->key == key) {
+        nx = it->nx;
+        ny = it->ny;
+        nz = it->nz;
+    } else {
+        nx = 0;
+        ny = 1;
+        nz = 0; // Exit ペア (今 tick に接触なし) は前 tick 法線を持たないため既定値
+    }
+}
 
 } // namespace
 
-void CollisionSystem::Update(World& world, ScriptHost* scripts, ManagedHost* managed)
+void CollisionSystem::Update(World& world, ScriptHost* scripts, ManagedHost* managed,
+                             const std::vector<SolidContact>* solidContacts)
 {
     // ---- 収集 (index 昇順 = 決定論) ----
     std::vector<Body> bodies;
@@ -39,16 +58,22 @@ void CollisionSystem::Update(World& world, ScriptHost* scripts, ManagedHost* man
             }
             const auto* col = static_cast<const ColliderComponent*>(arch.GetPtr(ci, row));
             const auto* wm = static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row));
-            bodies.push_back({ arch.EntityAt(row), shapes::MakePoseFromMatrix(*col, wm->value) });
+            bodies.push_back(
+                { arch.EntityAt(row), shapes::MakePoseFromMatrix(*col, wm->value), col->isTrigger });
         }
     });
     std::sort(bodies.begin(), bodies.end(),
               [](const Body& a, const Body& b) { return a.entity.index < b.entity.index; });
 
-    // ---- 総当たり判定 → 現 tick のペア集合 ----
+    // ---- トリガー: 総当たり判定 → 現 tick のペア集合 ----
+    // M28c: ペアの少なくとも片方が isTrigger のものだけがトリガーイベント対象
+    // (ソリッド同士の接触は PhysicsSystem 由来の OnCollision 系に移管)
     std::vector<uint64_t> pairs;
     for (size_t i = 0; i < bodies.size(); ++i) {
         for (size_t j = i + 1; j < bodies.size(); ++j) {
+            if (bodies[i].isTrigger == 0 && bodies[j].isTrigger == 0) {
+                continue;
+            }
             if (shapes::Overlap(bodies[i].pose, bodies[j].pose)) {
                 pairs.push_back((static_cast<uint64_t>(bodies[i].entity.index) << 32)
                                 | bodies[j].entity.index);
@@ -57,13 +82,33 @@ void CollisionSystem::Update(World& world, ScriptHost* scripts, ManagedHost* man
     }
     std::sort(pairs.begin(), pairs.end());
 
-    // ---- 差分 → enter / exit イベント (昇順配信 = 決定論) ----
-    std::vector<uint64_t> entered, exited;
+    // ---- トリガー差分 → enter / exit (昇順配信 = 決定論) ----
+    trigEnter_.clear();
+    trigExit_.clear();
     std::set_difference(pairs.begin(), pairs.end(), prevPairs_.begin(), prevPairs_.end(),
-                        std::back_inserter(entered));
+                        std::back_inserter(trigEnter_));
     std::set_difference(prevPairs_.begin(), prevPairs_.end(), pairs.begin(), pairs.end(),
-                        std::back_inserter(exited));
+                        std::back_inserter(trigExit_));
     prevPairs_ = std::move(pairs);
+
+    // ---- ソリッド差分 → enter / stay / exit (M28c) ----
+    solidEnter_.clear();
+    solidStay_.clear();
+    solidExit_.clear();
+    static const std::vector<SolidContact> kNoContacts;
+    const std::vector<SolidContact>& solid = solidContacts ? *solidContacts : kNoContacts;
+    std::vector<uint64_t> solidKeys;
+    solidKeys.reserve(solid.size());
+    for (const SolidContact& c : solid) {
+        solidKeys.push_back(c.key); // PhysicsSystem 出力は key 昇順
+    }
+    std::set_difference(solidKeys.begin(), solidKeys.end(), prevSolidPairs_.begin(),
+                        prevSolidPairs_.end(), std::back_inserter(solidEnter_));
+    std::set_intersection(solidKeys.begin(), solidKeys.end(), prevSolidPairs_.begin(),
+                          prevSolidPairs_.end(), std::back_inserter(solidStay_));
+    std::set_difference(prevSolidPairs_.begin(), prevSolidPairs_.end(), solidKeys.begin(),
+                        solidKeys.end(), std::back_inserter(solidExit_));
+    prevSolidPairs_ = std::move(solidKeys);
 
     if (!scripts && !managed) {
         return;
@@ -79,7 +124,9 @@ void CollisionSystem::Update(World& world, ScriptHost* scripts, ManagedHost* man
         }
         return kNullEntity;
     };
-    auto dispatch = [&](const std::vector<uint64_t>& list, bool enter) {
+
+    // ---- トリガー配信 (enter → exit、各 key 昇順) ----
+    auto dispatchTrigger = [&](const std::vector<uint64_t>& list, bool enter) {
         for (uint64_t key : list) {
             const EntityID a = resolve(static_cast<uint32_t>(key >> 32));
             const EntityID b = resolve(static_cast<uint32_t>(key & 0xFFFFFFFFu));
@@ -93,8 +140,30 @@ void CollisionSystem::Update(World& world, ScriptHost* scripts, ManagedHost* man
             }
         }
     };
-    dispatch(entered, true);
-    dispatch(exited, false);
+    dispatchTrigger(trigEnter_, true);
+    dispatchTrigger(trigExit_, false);
+
+    // ---- ソリッド配信 (enter → stay → exit、各 key 昇順)。kind: 0=enter 1=stay 2=exit ----
+    // 法線は「相手→自分」方向で渡す (SolidContact.n は大 index→小 index = 小側の自分向き)
+    auto dispatchCollision = [&](const std::vector<uint64_t>& list, int kind) {
+        for (uint64_t key : list) {
+            const EntityID a = resolve(static_cast<uint32_t>(key >> 32));
+            const EntityID b = resolve(static_cast<uint32_t>(key & 0xFFFFFFFFu));
+            float nx, ny, nz;
+            FindContactNormal(solid, key, nx, ny, nz);
+            if (!a.IsNull()) {
+                if (scripts) { scripts->DispatchCollision(a, b, kind, { nx, ny, nz }); }
+                if (managed) { managed->DispatchCollision(a, b, kind, { nx, ny, nz }); }
+            }
+            if (!b.IsNull()) {
+                if (scripts) { scripts->DispatchCollision(b, a, kind, { -nx, -ny, -nz }); }
+                if (managed) { managed->DispatchCollision(b, a, kind, { -nx, -ny, -nz }); }
+            }
+        }
+    };
+    dispatchCollision(solidEnter_, 0);
+    dispatchCollision(solidStay_, 1);
+    dispatchCollision(solidExit_, 2);
 }
 
 } // namespace mye

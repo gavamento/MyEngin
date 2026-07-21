@@ -33,6 +33,8 @@ struct MyeManagedVTable {
     int32_t (*Serialize)(int32_t handle, char* buf, int32_t bufLen);
     void (*Deserialize)(int32_t handle, const char* json);
     void (*ResetInstances)();
+    // M28c 末尾追加 (Interop.cs 側も同順で追加すること)。kind: 0=enter 1=stay 2=exit
+    void (*InvokeCollision)(int32_t handle, MyeEntityId other, int32_t kind, MyeVec3 normal);
 };
 
 // CoreCLR (.NET 8) をホストし、C# スクリプト (MyeScripting.dll + Roslyn) を駆動する。
@@ -71,6 +73,8 @@ public:
     void RunStartAndUpdate(); // フェーズ 3: 新規インスタンスの Start → 全 Update
     void RunLateUpdate();     // フェーズ 5
     void DispatchTrigger(EntityID self, EntityID other, bool enter);
+    // ソリッド衝突イベント (M28c)。kind: 0=enter 1=stay 2=exit。normal は相手→自分 (ワールド)
+    void DispatchCollision(EntityID self, EntityID other, int kind, MyeVec3 normal);
 
     // ---- Inspector / シリアライズ連携 ----
     struct ManagedFieldInfo {

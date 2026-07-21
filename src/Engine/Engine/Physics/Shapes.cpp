@@ -1138,6 +1138,70 @@ bool CollideManifold(const ShapePose& a, const ShapePose& b, Manifold& out)
     return false; // 未知の shape 値は判定しない
 }
 
+float DistanceToShape(const ShapePose& s, float px, float py, float pz)
+{
+    if (s.shape == 0) {
+        const float dx = px - s.px, dy = py - s.py, dz = pz - s.pz;
+        const float d = std::sqrt(dx * dx + dy * dy + dz * dz) - s.radius;
+        return (d > 0.0f) ? d : 0.0f;
+    }
+    if (s.shape == 1) {
+        float lx, ly, lz;
+        WorldToLocal(s, px - s.px, py - s.py, pz - s.pz, lx, ly, lz);
+        float ex = std::fabs(lx) - s.hx;
+        float ey = std::fabs(ly) - s.hy;
+        float ez = std::fabs(lz) - s.hz;
+        if (ex < 0) { ex = 0; }
+        if (ey < 0) { ey = 0; }
+        if (ez < 0) { ez = 0; }
+        return std::sqrt(ex * ex + ey * ey + ez * ez);
+    }
+    // capsule: 線分までの距離 − 半径
+    const float t = std::clamp(Dot3(s.by, px - s.px, py - s.py, pz - s.pz), -s.halfSeg,
+                               s.halfSeg);
+    const float qx = s.px + s.by[0] * t, qy = s.py + s.by[1] * t, qz = s.pz + s.by[2] * t;
+    const float dx = px - qx, dy = py - qy, dz = pz - qz;
+    const float d = std::sqrt(dx * dx + dy * dy + dz * dz) - s.radius;
+    return (d > 0.0f) ? d : 0.0f;
+}
+
+void ClosestPointOnShape(const ShapePose& s, float px, float py, float pz, float& qx, float& qy,
+                         float& qz)
+{
+    if (s.shape == 1) {
+        float lx, ly, lz;
+        WorldToLocal(s, px - s.px, py - s.py, pz - s.pz, lx, ly, lz);
+        const float cx = std::clamp(lx, -s.hx, s.hx);
+        const float cy = std::clamp(ly, -s.hy, s.hy);
+        const float cz = std::clamp(lz, -s.hz, s.hz);
+        float wx, wy, wz;
+        LocalToWorld(s, cx, cy, cz, wx, wy, wz);
+        qx = s.px + wx;
+        qy = s.py + wy;
+        qz = s.pz + wz;
+        return;
+    }
+    // sphere / capsule: 中心 (または軸最近点) から半径方向へ
+    float cx = s.px, cy = s.py, cz = s.pz;
+    if (s.shape == 2) {
+        const float t = std::clamp(Dot3(s.by, px - s.px, py - s.py, pz - s.pz), -s.halfSeg,
+                                   s.halfSeg);
+        cx = s.px + s.by[0] * t;
+        cy = s.py + s.by[1] * t;
+        cz = s.pz + s.by[2] * t;
+    }
+    const float dx = px - cx, dy = py - cy, dz = pz - cz;
+    const float d = std::sqrt(dx * dx + dy * dy + dz * dz);
+    if (d <= s.radius || d < 1e-8f) {
+        qx = px; qy = py; qz = pz; // 内部 (または中心一致) はその点自身
+        return;
+    }
+    const float k = s.radius / d;
+    qx = cx + dx * k;
+    qy = cy + dy * k;
+    qz = cz + dz * k;
+}
+
 bool Raycast(const ShapePose& s, float ox, float oy, float oz, float dx, float dy, float dz,
              float maxDist, float& outT, float& nx, float& ny, float& nz)
 {

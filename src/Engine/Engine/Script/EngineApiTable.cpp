@@ -209,21 +209,18 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
         return 1;
     };
 
-    // ---- 空間クエリ (v4 で予約) — M28c で実装 ----
+    // ---- 空間クエリ (v4 で予約、M28c で実装)。実装本体は PhysicsQueries.cpp ----
     out.OverlapSphere = [](void* engine, MyeVec3 center, float radius, MyeEntityId* outEntities,
                            int maxCount) -> int {
-        (void)engine; (void)center; (void)radius; (void)outEntities; (void)maxCount;
-        return 0;
+        return OverlapSphereWorld(Sc(engine)->GetWorld(), center, radius, outEntities, maxCount);
     };
     out.OverlapBox = [](void* engine, MyeVec3 center, MyeVec3 half, MyeQuat rot,
                         MyeEntityId* outEntities, int maxCount) -> int {
-        (void)engine; (void)center; (void)half; (void)rot; (void)outEntities; (void)maxCount;
-        return 0;
+        return OverlapBoxWorld(Sc(engine)->GetWorld(), center, half, rot, outEntities, maxCount);
     };
     out.SphereCast = [](void* engine, MyeVec3 origin, MyeVec3 dir, float radius, float maxDist,
                         MyeRaycastHit* outHit) -> int {
-        (void)engine; (void)origin; (void)dir; (void)radius; (void)maxDist; (void)outHit;
-        return 0;
+        return SphereCastWorld(Sc(engine)->GetWorld(), origin, dir, radius, maxDist, outHit);
     };
 }
 

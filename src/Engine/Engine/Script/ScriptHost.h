@@ -46,6 +46,9 @@ public:
 
     // CollisionSystem からのトリガーイベント配信 (self のスクリプトへ)
     void DispatchTrigger(EntityID self, EntityID other, bool enter);
+    // ソリッド衝突イベント配信 (M28c)。kind: 0=enter 1=stay 2=exit。
+    // normal は「相手→自分」方向 (ワールド)。enter のみ normal 付きで届く
+    void DispatchCollision(EntityID self, EntityID other, int kind, MyeVec3 normal);
 
 private:
     struct ScriptType {
@@ -58,6 +61,9 @@ private:
         void (*lateUpdate)(void*, MyeUpdateContext*) = nullptr;
         void (*onTriggerEnter)(void*, MyeUpdateContext*, MyeEntityId) = nullptr;
         void (*onTriggerExit)(void*, MyeUpdateContext*, MyeEntityId) = nullptr;
+        void (*onCollisionEnter)(void*, MyeUpdateContext*, MyeEntityId, MyeVec3) = nullptr;
+        void (*onCollisionStay)(void*, MyeUpdateContext*, MyeEntityId) = nullptr;
+        void (*onCollisionExit)(void*, MyeUpdateContext*, MyeEntityId) = nullptr;
     };
 
     enum class Phase { StartAndUpdate, LateUpdate };

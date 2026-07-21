@@ -138,6 +138,9 @@
     <ClCompile Include="..\src\Engine\Engine\Particles\ParticleSystem.cpp">
       <Filter>Engine\Particles</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Physics\PhysicsQueries.cpp">
+      <Filter>Engine\Physics</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Physics\PhysicsSystem.cpp">
       <Filter>Engine\Physics</Filter>
     </ClCompile>

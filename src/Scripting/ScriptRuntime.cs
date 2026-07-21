@@ -268,6 +268,25 @@ namespace MyeScripting
             }
         }
 
+        private void InvokeCollision(int handle, MyeEntityId other, int kind, MyeVec3 normal)
+        {
+            if (!_instances.TryGetValue(handle, out var inst)) return;
+            try
+            {
+                var e = new MyeEntity(other);
+                switch (kind)
+                {
+                    case 0: inst.OnCollisionEnter(e, normal); break;
+                    case 1: inst.OnCollisionStay(e); break;
+                    case 2: inst.OnCollisionExit(e); break;
+                }
+            }
+            catch (Exception ex)
+            {
+                Engine.Log("[csharp] " + inst.GetType().Name + ".OnCollision threw: " + ex.Message, 3);
+            }
+        }
+
         private static string PhaseName(int p) => p == 0 ? "Start" : (p == 1 ? "Update" : "LateUpdate");
 
         private void ResetInstances()
@@ -487,6 +506,9 @@ namespace MyeScripting
 
         [UnmanagedCallersOnly]
         public static void NativeInvokeTrigger(int handle, MyeEntityId other, int enter) => Inst.InvokeTrigger(handle, other, enter);
+
+        [UnmanagedCallersOnly]
+        public static void NativeInvokeCollision(int handle, MyeEntityId other, int kind, MyeVec3 normal) => Inst.InvokeCollision(handle, other, kind, normal);
 
         [UnmanagedCallersOnly]
         public static int NativeGetFieldValue(int handle, int fieldIndex, byte* buf, int bufLen)

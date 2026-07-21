@@ -56,6 +56,7 @@
     <ClCompile Include="..\src\Engine\Engine\Particles\CpuParticleBackend.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Particles\GpuParticleBackend.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Particles\ParticleSystem.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Physics\PhysicsQueries.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Physics\PhysicsSystem.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Physics\Shapes.cpp" />
     <ClCompile Include="..\src\Engine\Engine\PhysicsSelfTest.cpp" />

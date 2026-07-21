@@ -66,5 +66,12 @@ bool CollideManifold(const ShapePose& a, const ShapePose& b, Manifold& out);
 bool Raycast(const ShapePose& s, float ox, float oy, float oz, float dx, float dy, float dz,
              float maxDist, float& outT, float& nx, float& ny, float& nz);
 
+// 点から形状表面までの距離 (内部なら 0)。SphereCast の保守的前進などに使う (M28c)
+float DistanceToShape(const ShapePose& s, float px, float py, float pz);
+
+// 形状表面上 (内部の点はその点自身) の最近点 (M28c)
+void ClosestPointOnShape(const ShapePose& s, float px, float py, float pz, float& qx, float& qy,
+                         float& qz);
+
 } // namespace shapes
 } // namespace mye

@@ -6,6 +6,7 @@
 #include "Engine/Core/Components.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Core/World.h"
+#include "Engine/Engine/CollisionSystem.h"
 #include "Engine/Engine/GameObject.h"
 #include "Engine/Engine/Physics/PhysicsSystem.h"
 #include "Engine/Engine/Replay/WorldHasher.h"
@@ -468,6 +469,109 @@ bool RunPhysicsSelfTest()
         rb->freezeRotation = 1;
         const int rejected = ApplyTorqueWorld(s.GetWorld(), box.Id(), { 0, 2.0f, 0 }, kDt);
         check(rejected == 0, "torque: rejected when freezeRotation=1");
+    }
+
+    // ---- (20) OnCollision イベント: 着地 Enter 1 回 → 静止 Stay → 離脱 Exit (M28c) ----
+    {
+        Scene s;
+        CollisionSystem cols;
+        TransformSystem ts;
+        MakeGround(s, "G20", 0, -0.5f, 0, 5.0f, 0.5f, 5.0f);
+        GameObject box = MakeBox(s, "Faller20", 0, 2.0f, 0, 0.5f, 0.5f, 0.5f);
+        s.GetWorld().ApplyStructuralChanges();
+        std::vector<SolidContact> contacts;
+        int enterCount = 0, stayCount = 0, exitCount = 0;
+        int enterTick = -1, exitTick = -1;
+        float enterNy = 0;
+        for (int i = 0; i < 220; ++i) {
+            phys.Update(s.GetWorld(), kDt, &contacts);
+            ts.Update(s.GetWorld());
+            cols.Update(s.GetWorld(), nullptr, nullptr, &contacts);
+            if (!cols.LastCollisionEnter().empty()) {
+                ++enterCount;
+                if (enterTick < 0) {
+                    enterTick = i;
+                    enterNy = contacts.empty() ? 0.0f : contacts[0].ny;
+                }
+            }
+            if (!cols.LastCollisionStay().empty()) {
+                ++stayCount;
+            }
+            if (!cols.LastCollisionExit().empty()) {
+                ++exitCount;
+                exitTick = i;
+            }
+            if (i == 180) {
+                box.GetComponent<RigidbodyComponent>()->velocity.y = 5.0f; // 上向きに離脱
+            }
+        }
+        check(enterCount == 1 && enterTick > 0, "collision events: enter fires exactly once");
+        check(stayCount > 100, "collision events: stay fires every resting tick");
+        check(exitCount == 1 && exitTick > 180, "collision events: exit fires after leaving");
+        // SolidContact.normal は大 index→小 index (小 = 先に作った床)。箱→床 = -Y
+        check(enterNy < -0.99f, "collision events: contact normal points toward lower index");
+    }
+
+    // ---- (21) トリガーの役割分離 (M28c 是正): ソリッド同士は OnTrigger を出さない ----
+    {
+        Scene s;
+        CollisionSystem cols;
+        TransformSystem ts;
+        MakeGround(s, "SolidA", 0, 0, 0, 1.0f, 1.0f, 1.0f);
+        MakeGround(s, "SolidB", 0.5f, 0, 0, 1.0f, 1.0f, 1.0f);            // ソリッド同士で重なる
+        MakeGround(s, "Trig", 10.0f, 0, 0, 1.0f, 1.0f, 1.0f, /*isTrigger=*/1);
+        MakeGround(s, "SolidC", 10.5f, 0, 0, 1.0f, 1.0f, 1.0f);           // トリガーと重なる
+        s.GetWorld().ApplyStructuralChanges();
+        ts.Update(s.GetWorld());
+        cols.Update(s.GetWorld(), nullptr, nullptr, nullptr);
+        check(cols.LastTriggerEnter().size() == 1,
+              "trigger filter: only the trigger-involving pair fires (solid-solid excluded)");
+    }
+
+    // ---- (22) OverlapSphere / OverlapBox: ヒット数・index 昇順・切り捨て時の総数 ----
+    {
+        Scene s;
+        TransformSystem ts;
+        GameObject a = MakeGround(s, "OvA", 0, 0, 0, 0.5f, 0.5f, 0.5f);
+        GameObject b = MakeGround(s, "OvB", 1.5f, 0, 0, 0.5f, 0.5f, 0.5f);
+        GameObject c = MakeGround(s, "OvC", 10.0f, 0, 0, 0.5f, 0.5f, 0.5f);
+        s.GetWorld().ApplyStructuralChanges();
+        ts.Update(s.GetWorld());
+        MyeEntityId hits[8] = {};
+        int n = OverlapSphereWorld(s.GetWorld(), { 0.75f, 0, 0 }, 1.0f, hits, 8);
+        check(n == 2, "overlap sphere: two nearby boxes hit");
+        check(n == 2 && hits[0].index == a.Id().index && hits[1].index == b.Id().index,
+              "overlap sphere: results are index-ascending");
+        n = OverlapSphereWorld(s.GetWorld(), { 0.75f, 0, 0 }, 1.0f, hits, 1);
+        check(n == 2, "overlap sphere: truncated call still returns total count");
+        n = OverlapBoxWorld(s.GetWorld(), { 10.0f, 0, 0 }, { 1, 1, 1 }, { 0, 0, 0, 1 }, hits, 8);
+        check(n == 1 && hits[0].index == c.Id().index, "overlap box: distant box found");
+    }
+
+    // ---- (23) SphereCast: 対球の解析解 / 45° OBB の保守的前進 / ミス ----
+    {
+        Scene s;
+        TransformSystem ts;
+        GameObject sph = s.CreateGameObjectTracked("ScSphere");
+        sph.SetLocalPosition(0, 0, 10.0f);
+        auto* col = sph.AddComponent<ColliderComponent>();
+        col->shape = 0;
+        col->radius = 1.0f;
+        col->isTrigger = 0;
+        MakeStaticBoxRot(s, "ScObb", 5.0f, 0, 0, 0.5f, 0.5f, 0.5f,
+                         { 0, 0.3826834f, 0, 0.9238795f }); // Y 軸回り 45°
+        s.GetWorld().ApplyStructuralChanges();
+        ts.Update(s.GetWorld());
+        MyeRaycastHit hit = {};
+        int ok = SphereCastWorld(s.GetWorld(), { 0, 0, 0 }, { 0, 0, 1 }, 0.5f, 100.0f, &hit);
+        check(ok == 1 && std::fabs(hit.distance - 8.5f) < 1e-3f,
+              "spherecast: sphere target analytic hit (10 - 1 - 0.5)");
+        // 45° OBB の角 (x = 5 - 0.7071) に半径 0.5 の球が触れる距離
+        ok = SphereCastWorld(s.GetWorld(), { 0, 0, 0 }, { 1, 0, 0 }, 0.5f, 100.0f, &hit);
+        check(ok == 1 && std::fabs(hit.distance - (5.0f - 0.70710678f - 0.5f)) < 5e-3f,
+              "spherecast: obb conservative advancement hit");
+        ok = SphereCastWorld(s.GetWorld(), { 0, 50.0f, 0 }, { 1, 0, 0 }, 0.5f, 100.0f, &hit);
+        check(ok == 0, "spherecast: miss well above scene");
     }
 
     // ---- (14) 決定論: capsule / OBB / sphere 混在シーンの 240 tick 並走ハッシュ一致 ----

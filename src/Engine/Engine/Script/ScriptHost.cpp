@@ -77,6 +77,35 @@ void ScriptHost::DispatchTrigger(EntityID self, EntityID other, bool enter)
     }
 }
 
+void ScriptHost::DispatchCollision(EntityID self, EntityID other, int kind, MyeVec3 normal)
+{
+    World& world = scene_->GetWorld();
+    for (ScriptType& type : types_) { // 登録順 (決定論)
+        const bool has = (kind == 0 && type.onCollisionEnter)
+                      || (kind == 1 && type.onCollisionStay)
+                      || (kind == 2 && type.onCollisionExit);
+        if (!has) {
+            continue;
+        }
+        void* state = world.GetComponentRaw(self, type.componentId);
+        if (!state) {
+            continue;
+        }
+        MyeUpdateContext ctx;
+        ctx.dt = dt_;
+        ctx.tickIndex = tickIndex_;
+        ctx.self = ToShared(self);
+        ctx.api = &api_;
+        if (kind == 0) {
+            type.onCollisionEnter(state, &ctx, ToShared(other), normal);
+        } else if (kind == 1) {
+            type.onCollisionStay(state, &ctx, ToShared(other));
+        } else {
+            type.onCollisionExit(state, &ctx, ToShared(other));
+        }
+    }
+}
+
 void ScriptHost::Init(Scene* scene)
 {
     scene_ = scene;
@@ -189,6 +218,9 @@ bool ScriptHost::LoadModule(const std::wstring& dllPath)
         type->lateUpdate = sd.lateUpdate;
         type->onTriggerEnter = sd.onTriggerEnter;
         type->onTriggerExit = sd.onTriggerExit;
+        type->onCollisionEnter = sd.onCollisionEnter;
+        type->onCollisionStay = sd.onCollisionStay;
+        type->onCollisionExit = sd.onCollisionExit;
     }
 
     // 新 DLL に無くなった型: ロジックを外す (状態は残す — 復活したら再バインドされる)
@@ -203,6 +235,9 @@ bool ScriptHost::LoadModule(const std::wstring& dllPath)
             t.lateUpdate = nullptr;
             t.onTriggerEnter = nullptr;
             t.onTriggerExit = nullptr;
+            t.onCollisionEnter = nullptr;
+            t.onCollisionStay = nullptr;
+            t.onCollisionExit = nullptr;
         }
     }
 

@@ -135,8 +135,11 @@ void ApplyImpulse(Body& b, float rx, float ry, float rz, float jx, float jy, flo
 
 } // namespace
 
-void PhysicsSystem::Update(World& world, float dt)
+void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* outContacts)
 {
+    if (outContacts) {
+        outContacts->clear();
+    }
     // ---- 収集 (動的: Rigidbody + LocalTransform) ----
     std::vector<Body> bodies;
     const ComponentTypeId dynReq[] = { RigidbodyComponent::sTypeId, LocalTransform::sTypeId };
@@ -274,6 +277,12 @@ void PhysicsSystem::Update(World& world, float dt)
                     continue;
                 }
                 const float nx = m.nx, ny = m.ny, nz = m.nz; // b→a (A を押し出す)
+                // 最終反復の接触ペアを記録 (M28c)。i<j × index 昇順走査 → key も自動的に昇順
+                if (outContacts && iter == kSolverIterations - 1) {
+                    outContacts->push_back(
+                        { (static_cast<uint64_t>(A.entity.index) << 32) | B.entity.index, nx, ny,
+                          nz });
+                }
                 // 位置補正 (並進のみ = 回転補正はしない: 簡易ソルバの発散防止)。最深点で分配
                 float maxDepth = 0.0f;
                 for (int k = 0; k < m.count; ++k) {

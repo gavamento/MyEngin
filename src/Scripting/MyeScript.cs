@@ -83,5 +83,9 @@ namespace MyeScripting
         public virtual void LateUpdate() { }
         public virtual void OnTriggerEnter(MyeEntity other) { }
         public virtual void OnTriggerExit(MyeEntity other) { }
+        // ソリッド衝突イベント (M28c)。normal は相手→自分方向 (ワールド)
+        public virtual void OnCollisionEnter(MyeEntity other, MyeVec3 normal) { }
+        public virtual void OnCollisionStay(MyeEntity other) { }
+        public virtual void OnCollisionExit(MyeEntity other) { }
     }
 }
