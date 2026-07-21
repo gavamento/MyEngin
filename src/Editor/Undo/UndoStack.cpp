@@ -95,6 +95,7 @@ void UndoStack::EndRecord(const Selection& selAfter)
         return;
     }
 
+    pending_.serial = ++serialCounter_; // 新しい状態 ID (StateSerial / ダーティ判定用)
     undo_.push_back(std::move(pending_));
     redo_.clear();
 }
@@ -160,6 +161,7 @@ void UndoStack::ClearAll()
     redo_.clear();
     recording_ = false;
     pending_ = Entry{};
+    baseSerial_ = ++serialCounter_; // 新しいシーンの基底状態 (過去の serial と重ならない)
 }
 
 } // namespace mye

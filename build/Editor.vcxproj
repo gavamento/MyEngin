@@ -44,6 +44,8 @@
     <ClCompile Include="..\src\Editor\ProjectManager.cpp" />
     <ClCompile Include="..\src\Editor\ProjectRegistry.cpp" />
     <ClCompile Include="..\src\Editor\ProjectTemplates.cpp" />
+    <ClCompile Include="..\src\Editor\StatusBar.cpp" />
+    <ClCompile Include="..\src\Editor\ToastCenter.cpp" />
     <ClCompile Include="..\src\Editor\Undo\UndoStack.cpp" />
     <ClCompile Include="..\src\Editor\UndoSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\Windows\AnimationWindow.cpp" />
@@ -69,6 +71,8 @@
     <ClInclude Include="..\src\Editor\ProjectTemplates.h" />
     <ClInclude Include="..\src\Editor\Selection.h" />
     <ClInclude Include="..\src\Editor\ShortcutHub.h" />
+    <ClInclude Include="..\src\Editor\StatusBar.h" />
+    <ClInclude Include="..\src\Editor\ToastCenter.h" />
     <ClInclude Include="..\src\Editor\Undo\UndoStack.h" />
     <ClInclude Include="..\src\Editor\UndoSelfTest.h" />
     <ClInclude Include="..\src\Editor\Windows\AnimationWindow.h" />

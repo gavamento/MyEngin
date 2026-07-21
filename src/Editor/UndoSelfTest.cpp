@@ -174,6 +174,32 @@ bool RunUndoSelfTest()
         check(restoreOk, "undo destroy: subtree + parent link + values restored");
     }
 
+    // ============ Phase 4: StateSerial (ダーティ判定、M27b) ============
+    {
+        Scene scene;
+        UndoStack undo;
+        Selection sel;
+        GameObject a = scene.CreateGameObjectTracked("A");
+        scene.GetWorld().ApplyStructuralChanges();
+        const uint64_t fid = FidOf(scene, a.Id());
+
+        const uint64_t savedAt = undo.StateSerial(); // 「保存した」時点
+        RecordModify(undo, scene, sel, "Move", fid,
+                     [&] { a.SetLocalPosition(9.0f, 0.0f, 0.0f); });
+        check(undo.StateSerial() != savedAt, "StateSerial: edit makes state differ (dirty)");
+
+        undo.Undo(scene, sel);
+        check(undo.StateSerial() == savedAt, "StateSerial: undo back to saved state (clean)");
+
+        undo.Redo(scene, sel);
+        check(undo.StateSerial() != savedAt, "StateSerial: redo makes state differ again");
+
+        const uint64_t beforeClear = undo.StateSerial();
+        undo.ClearAll();
+        check(undo.StateSerial() != beforeClear && undo.StateSerial() != savedAt,
+              "StateSerial: ClearAll starts a fresh base (never reuses old serials)");
+    }
+
     if (failCount == 0) {
         MYE_LOG_INFO("==== Undo self test: ALL PASS ====");
         return true;

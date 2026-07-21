@@ -7,6 +7,8 @@
 #include "Editor/PlayModeController.h"
 #include "Editor/Selection.h"
 #include "Editor/ShortcutHub.h"
+#include "Editor/StatusBar.h"
+#include "Editor/ToastCenter.h"
 #include "Editor/Undo/UndoStack.h"
 #include "Editor/Windows/AnimationWindow.h"
 #include "Editor/Windows/AnimatorControllerWindow.h"
@@ -44,9 +46,18 @@ public:
     std::wstring sceneOverride;    // --scene PATH (既定の main.scene.json の代わりに読むシーン)
 
 private:
+    // 未保存変更ガード (M27b): dirty なら確認モーダルを経由して実行する
+    enum class PendingAction { None, NewScene, OpenScene, Exit };
+
     void DrawMainMenuBar(EngineContext& ctx);
     void HandleShortcuts(EngineContext& ctx);
     void SaveCurrentScene(EngineContext& ctx);
+    bool IsSceneDirty() const { return undo_.StateSerial() != savedStateSerial_; }
+    void RequestGuardedAction(EngineContext& ctx, PendingAction action);
+    void ExecuteAction(EngineContext& ctx, PendingAction action);
+    void DrawSaveConfirmModal(EngineContext& ctx);
+    void UpdateWindowTitle(EngineContext& ctx);
+    void PollReloadToasts(EngineContext& ctx);
     // 選択エンティティ操作 (グローバルショートカット。全て Undo 統合)
     nlohmann::json GatherSelectionSubtrees(EngineContext& ctx); // 選択のサブツリー群 (fileId 重複除去)
     void DuplicateSelection(EngineContext& ctx);
@@ -56,7 +67,7 @@ private:
     void DeleteSelection(EngineContext& ctx);
     void SetupDockLayout(unsigned int dockspaceId);
     void SaveSceneAs(EngineContext& ctx);
-    void OpenScene(EngineContext& ctx);
+    bool OpenScene(EngineContext& ctx); // true = 実際にロードした (キャンセル時 false)
 
     Selection selection_;
     UndoStack undo_;
@@ -81,6 +92,19 @@ private:
     std::wstring scenePath_;
     bool rebuildDockLayout_ = false;
     bool showStats_ = true;
+
+    // ---- フィードバック層 (M27b) ----
+    StatusBar statusBar_;
+    ToastCenter toasts_;
+    std::string projectName_;              // マニフェストの name (レガシー起動時は空)
+    uint64_t savedStateSerial_ = 0;        // 最後に保存/ロードした時点の UndoStack::StateSerial
+    PendingAction pendingAction_ = PendingAction::None;
+    bool openSaveConfirm_ = false;         // 確認モーダルを開くリクエスト
+    bool closeRequested_ = false;          // ウィンドウ × ボタン (WM_CLOSE を横取り)
+    std::wstring baseTitle_;               // タイトルバー原文 (dirty で " *" を付ける)
+    bool titleDirtyShown_ = false;
+    uint32_t lastDllVersion_ = 0;          // GameLogic ホットリロードのトースト検知用
+    uint64_t lastReloadCount_ = 0;         // アセットホットリロードのトースト検知用
 };
 
 } // namespace mye

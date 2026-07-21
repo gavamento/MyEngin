@@ -52,6 +52,12 @@ public:
     // ---- シーンロード / New Scene で全消去 ----
     void ClearAll();
 
+    // ---- ダーティ判定 (M27b) ----
+    // 「現在のシーン状態」を識別する単調 ID。Undo/Redo は Entry がスタック間を移動するだけ
+    // なので、保存時点まで Undo で戻れば保存時の値に一致する (= clean 判定できる)。
+    // EditorApp が保存/ロード成功時の値を記録して比較する
+    uint64_t StateSerial() const { return undo_.empty() ? baseSerial_ : undo_.back().serial; }
+
 private:
     struct Entry {
         std::string label;
@@ -62,6 +68,7 @@ private:
         std::vector<uint64_t> selBefore, selAfter;
         uint64_t primaryBefore = 0, primaryAfter = 0;
         uint32_t session = 0;
+        uint64_t serial = 0; // push 時に採番される状態 ID (StateSerial 用)
     };
 
     static void ApplyStep(Scene& scene, Selection& sel, const nlohmann::json& payload,
@@ -77,6 +84,9 @@ private:
 
     uint32_t sessionCounter_ = 0;
     uint32_t currentSession_ = 0;
+
+    uint64_t serialCounter_ = 0; // 単調増加 (Entry 採番 + ClearAll の基底更新)
+    uint64_t baseSerial_ = 0;    // スタックが空のときの状態 ID
 };
 
 } // namespace mye

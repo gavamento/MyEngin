@@ -76,6 +76,32 @@ void EditorApp::OnStart(EngineContext& ctx)
     if (startDeferred) {
         ctx.renderPath = ctx.renderPathDeferred;
     }
+
+    // ---- フィードバック層の初期化 (M27b) ----
+    {
+        ProjectManifest manifest;
+        if (!ctx.projectRoot.empty() && LoadProjectManifest(ctx.projectRoot, manifest)) {
+            projectName_ = manifest.name;
+        }
+    }
+    savedStateSerial_ = undo_.StateSerial(); // ロード直後 = clean
+    {
+        wchar_t title[256] = {};
+        GetWindowTextW(static_cast<HWND>(ctx.window->Hwnd()), title, 256);
+        baseTitle_ = title;
+    }
+    lastDllVersion_ = ctx.dllReloader->Version();
+    lastReloadCount_ = ctx.reloadHub->ReloadCount();
+    // × ボタン (WM_CLOSE) を横取りして保存確認を挟む。ハンドラは DefWindowProc より先に走る
+    ctx.window->AddMsgHandler([this](void*, uint32_t msg, uint64_t, int64_t, int64_t& result) {
+        if (msg == WM_CLOSE) {
+            closeRequested_ = true;
+            result = 0;
+            return true;
+        }
+        return false;
+    });
+
     MYE_LOG_INFO("EditorApp started (%u entities)", ctx.scene->GetWorld().AliveCount());
 }
 
@@ -93,6 +119,12 @@ void EditorApp::OnRenderViews(EngineContext& ctx)
 
 void EditorApp::OnImGui(EngineContext& ctx)
 {
+    // サイドバー (メニュー/ステータスバー) が WorkArea を先に確保し、残りに DockSpace を
+    // 敷く — この順序を同一フレーム内で守ること (逆順だと 1 フレームちらつく)
+    DrawMainMenuBar(ctx);
+    statusBar_.OnImGui(ctx, projectName_, scenePath_, IsSceneDirty(), playMode_.State(),
+                       &console_.open);
+
     const ImGuiID dockspaceId =
         ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport(), ImGuiDockNodeFlags_None);
     if (rebuildDockLayout_) {
@@ -101,7 +133,6 @@ void EditorApp::OnImGui(EngineContext& ctx)
     }
     ImGuizmo::BeginFrame(); // ImGui NewFrame 後・ギズモ使用前に 1 回
 
-    DrawMainMenuBar(ctx);
     hierarchy_.OnImGui(ctx, selection_, undo_);
     inspector_.OnImGui(ctx, selection_, undo_);
     console_.OnImGui(settings_.externalEditorCmd);
@@ -145,6 +176,16 @@ void EditorApp::OnImGui(EngineContext& ctx)
         }
         ImGui::End();
     }
+
+    // ---- フィードバック層 (M27b): 最前面に描く ----
+    if (closeRequested_) {
+        closeRequested_ = false;
+        RequestGuardedAction(ctx, PendingAction::Exit);
+    }
+    DrawSaveConfirmModal(ctx);
+    PollReloadToasts(ctx);
+    UpdateWindowTitle(ctx);
+    toasts_.OnImGui();
 }
 
 void EditorApp::DrawMainMenuBar(EngineContext& ctx)
@@ -153,13 +194,12 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
         return;
     }
     if (ImGui::BeginMenu("File")) {
+        // New/Open/Exit は未保存変更ガード経由 (M27b。dirty なら確認モーダル)
         if (ImGui::MenuItem("New Scene")) {
-            selection_.Clear();
-            undo_.ClearAll();
-            ctx.scene->Clear();
+            RequestGuardedAction(ctx, PendingAction::NewScene);
         }
         if (ImGui::MenuItem("Open Scene...")) {
-            OpenScene(ctx);
+            RequestGuardedAction(ctx, PendingAction::OpenScene);
         }
         ImGui::Separator();
         if (ImGui::MenuItem("Save Scene", shortcuts_.Label(Shortcut::Save))) {
@@ -177,7 +217,7 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
         }
         ImGui::Separator();
         if (ImGui::MenuItem("Exit")) {
-            ctx.requestExit = true;
+            RequestGuardedAction(ctx, PendingAction::Exit);
         }
         ImGui::EndMenu();
     }
@@ -307,6 +347,12 @@ void EditorApp::SaveCurrentScene(EngineContext& ctx)
     if (SceneSerializer::SaveToFile(*ctx.scene, scenePath_)) {
         settings_.lastScenePath = WideToUtf8(scenePath_);
         settings_.Save();
+        savedStateSerial_ = undo_.StateSerial(); // この状態が保存済み基準になる (M27b)
+        toasts_.Notify(LogLevel::Info,
+                       "シーンを保存しました: "
+                           + WideToUtf8(std::filesystem::path(scenePath_).filename().wstring()));
+    } else {
+        toasts_.Notify(LogLevel::Error, "シーンの保存に失敗しました");
     }
 }
 
@@ -447,7 +493,7 @@ void EditorApp::SaveSceneAs(EngineContext& ctx)
     }
 }
 
-void EditorApp::OpenScene(EngineContext& ctx)
+bool EditorApp::OpenScene(EngineContext& ctx)
 {
     wchar_t path[MAX_PATH] = L"";
     OPENFILENAMEW ofn = {};
@@ -459,17 +505,117 @@ void EditorApp::OpenScene(EngineContext& ctx)
     const std::wstring initialDir = ctx.assetsRoot + L"\\scenes";
     ofn.lpstrInitialDir = initialDir.c_str();
     ofn.Flags = OFN_FILEMUSTEXIST;
-    if (GetOpenFileNameW(&ofn)) {
+    if (!GetOpenFileNameW(&ofn)) {
+        return false; // キャンセル (シーンは無変更なので dirty 状態も保持)
+    }
+    selection_.Clear();
+    undo_.ClearAll();
+    if (SceneSerializer::LoadFromFile(*ctx.scene, path)) {
+        scenePath_ = path;
+        ctx.reloadHub->SetActiveScenePath(scenePath_);
+        settings_.lastScenePath = WideToUtf8(scenePath_);
+        settings_.Save();
+    }
+    return true;
+}
+
+// ---- 未保存変更ガード + フィードバック層 (M27b) ----
+
+void EditorApp::RequestGuardedAction(EngineContext& ctx, PendingAction action)
+{
+    if (!IsSceneDirty()) {
+        ExecuteAction(ctx, action);
+        return;
+    }
+    pendingAction_ = action;
+    openSaveConfirm_ = true;
+}
+
+void EditorApp::ExecuteAction(EngineContext& ctx, PendingAction action)
+{
+    switch (action) {
+    case PendingAction::NewScene:
         selection_.Clear();
         undo_.ClearAll();
-        if (SceneSerializer::LoadFromFile(*ctx.scene, path)) {
-            scenePath_ = path;
-            ctx.reloadHub->SetActiveScenePath(scenePath_);
-            settings_.lastScenePath = WideToUtf8(scenePath_);
-            settings_.Save();
+        ctx.scene->Clear();
+        savedStateSerial_ = undo_.StateSerial(); // 空シーン = clean
+        break;
+    case PendingAction::OpenScene:
+        if (OpenScene(ctx)) {
+            savedStateSerial_ = undo_.StateSerial(); // ロード直後 = clean
         }
+        break;
+    case PendingAction::Exit:
+        ctx.requestExit = true;
+        break;
+    default:
+        break;
     }
 }
 
+void EditorApp::DrawSaveConfirmModal(EngineContext& ctx)
+{
+    if (openSaveConfirm_) {
+        openSaveConfirm_ = false;
+        ImGui::OpenPopup("未保存の変更");
+    }
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f,
+                                   vp->WorkPos.y + vp->WorkSize.y * 0.5f),
+                            ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (!ImGui::BeginPopupModal("未保存の変更", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        return;
+    }
+    ImGui::Text("シーンに未保存の変更があります。保存しますか？");
+    ImGui::TextDisabled("%s", WideToUtf8(scenePath_).c_str());
+    ImGui::Spacing();
+    const PendingAction action = pendingAction_;
+    if (ImGui::Button("保存する", ImVec2(110, 0))) {
+        SaveCurrentScene(ctx);
+        pendingAction_ = PendingAction::None;
+        ImGui::CloseCurrentPopup();
+        if (!IsSceneDirty()) { // 保存成功時のみ続行 (失敗はトーストで通知済み)
+            ExecuteAction(ctx, action);
+        }
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("保存しない", ImVec2(110, 0))) {
+        pendingAction_ = PendingAction::None;
+        ImGui::CloseCurrentPopup();
+        ExecuteAction(ctx, action);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("キャンセル", ImVec2(110, 0))) {
+        pendingAction_ = PendingAction::None;
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
+}
+
+void EditorApp::UpdateWindowTitle(EngineContext& ctx)
+{
+    const bool dirty = IsSceneDirty();
+    if (dirty == titleDirtyShown_ || baseTitle_.empty()) {
+        return;
+    }
+    titleDirtyShown_ = dirty;
+    const std::wstring title = dirty ? baseTitle_ + L" *" : baseTitle_;
+    SetWindowTextW(static_cast<HWND>(ctx.window->Hwnd()), title.c_str());
+}
+
+void EditorApp::PollReloadToasts(EngineContext& ctx)
+{
+    const uint32_t dllVersion = ctx.dllReloader->Version();
+    if (dllVersion != lastDllVersion_) {
+        lastDllVersion_ = dllVersion;
+        toasts_.Notify(LogLevel::Info, "GameLogic をホットリロードしました (v"
+                                           + std::to_string(dllVersion) + ")");
+    }
+    const uint64_t reloads = ctx.reloadHub->ReloadCount();
+    if (reloads != lastReloadCount_) {
+        lastReloadCount_ = reloads;
+        toasts_.Notify(LogLevel::Info, "アセットをホットリロードしました");
+    }
+}
 
 } // namespace mye
