@@ -180,34 +180,13 @@ bool SphereBox(float spx, float spy, float spz, float sr, const ShapePose& box, 
     return true;
 }
 
-// ---- box-box。normal は b→a 方向 ----
-// 無回転ペアは M20 の aabb-aabb コードそのまま (fast-path)。回転ありは SAT 15 軸。
-bool BoxBox(const ShapePose& a, const ShapePose& b, float& nx, float& ny, float& nz, float& depth)
+// ---- box-box の SAT 本体。normal は b→a 方向 ----
+// 面軸 6 (a 基底 3 + b 基底 3) + 辺×辺 9。軸の列挙順は固定 (決定論)。
+// 最小重なり軸を厳密 < で選ぶ (同値は先勝ち = 決定論)。
+// axisId: 0-2 = a の面軸 / 3-5 = b の面軸 / 6+ = 辺×辺 (6 + i*3 + j)
+bool BoxBoxSat(const ShapePose& a, const ShapePose& b, float& nx, float& ny, float& nz,
+               float& depth, int& axisId)
 {
-    if (a.identityRot && b.identityRot) {
-        const float ox = (a.hx + b.hx) - std::fabs(a.px - b.px);
-        const float oy = (a.hy + b.hy) - std::fabs(a.py - b.py);
-        const float oz = (a.hz + b.hz) - std::fabs(a.pz - b.pz);
-        if (ox <= 0 || oy <= 0 || oz <= 0) {
-            return false;
-        }
-        // 最小オーバーラップ軸を分離軸に選ぶ
-        nx = ny = nz = 0;
-        if (ox <= oy && ox <= oz) {
-            nx = (a.px >= b.px) ? 1.0f : -1.0f;
-            depth = ox;
-        } else if (oy <= oz) {
-            ny = (a.py >= b.py) ? 1.0f : -1.0f;
-            depth = oy;
-        } else {
-            nz = (a.pz >= b.pz) ? 1.0f : -1.0f;
-            depth = oz;
-        }
-        return true;
-    }
-
-    // SAT: 面軸 6 (a 基底 3 + b 基底 3) + 辺×辺 9。軸の列挙順は固定 (決定論)。
-    // 最小重なり軸を厳密 < で選ぶ (同値は先勝ち = 決定論)。
     const float dx = a.px - b.px, dy = a.py - b.py, dz = a.pz - b.pz;
     const float* aAxes[3] = { a.bx, a.by, a.bz };
     const float* bAxes[3] = { b.bx, b.by, b.bz };
@@ -215,10 +194,11 @@ bool BoxBox(const ShapePose& a, const ShapePose& b, float& nx, float& ny, float&
     const float bExt[3] = { b.hx, b.hy, b.hz };
     float bestDepth = 0;
     float bestX = 0, bestY = 1, bestZ = 0;
+    int bestId = -1;
     bool first = true;
     bool separated = false;
 
-    auto testAxis = [&](float ax, float ay, float az) {
+    auto testAxis = [&](float ax, float ay, float az, int id) {
         if (separated) {
             return; // 分離確定後も列挙は続くが計算はスキップ (固定列挙 = 決定論)
         }
@@ -244,6 +224,7 @@ bool BoxBox(const ShapePose& a, const ShapePose& b, float& nx, float& ny, float&
         if (first || overlap < bestDepth) {
             first = false;
             bestDepth = overlap;
+            bestId = id;
             // normal を b→a (a を押し出す方向) に揃える
             if (dist >= 0) {
                 bestX = ax;
@@ -258,17 +239,17 @@ bool BoxBox(const ShapePose& a, const ShapePose& b, float& nx, float& ny, float&
     };
 
     for (int i = 0; i < 3; ++i) {
-        testAxis(aAxes[i][0], aAxes[i][1], aAxes[i][2]);
+        testAxis(aAxes[i][0], aAxes[i][1], aAxes[i][2], i);
     }
     for (int i = 0; i < 3; ++i) {
-        testAxis(bAxes[i][0], bAxes[i][1], bAxes[i][2]);
+        testAxis(bAxes[i][0], bAxes[i][1], bAxes[i][2], 3 + i);
     }
     for (int i = 0; i < 3; ++i) {
         for (int j = 0; j < 3; ++j) {
             const float* u = aAxes[i];
             const float* v = bAxes[j];
             testAxis(u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2],
-                     u[0] * v[1] - u[1] * v[0]);
+                     u[0] * v[1] - u[1] * v[0], 6 + i * 3 + j);
         }
     }
     if (separated || first) {
@@ -278,7 +259,37 @@ bool BoxBox(const ShapePose& a, const ShapePose& b, float& nx, float& ny, float&
     ny = bestY;
     nz = bestZ;
     depth = bestDepth;
+    axisId = bestId;
     return true;
+}
+
+// ---- box-box (単一接触)。normal は b→a 方向 ----
+// 無回転ペアは M20 の aabb-aabb コードそのまま (fast-path)。回転ありは SAT。
+bool BoxBox(const ShapePose& a, const ShapePose& b, float& nx, float& ny, float& nz, float& depth)
+{
+    if (a.identityRot && b.identityRot) {
+        const float ox = (a.hx + b.hx) - std::fabs(a.px - b.px);
+        const float oy = (a.hy + b.hy) - std::fabs(a.py - b.py);
+        const float oz = (a.hz + b.hz) - std::fabs(a.pz - b.pz);
+        if (ox <= 0 || oy <= 0 || oz <= 0) {
+            return false;
+        }
+        // 最小オーバーラップ軸を分離軸に選ぶ
+        nx = ny = nz = 0;
+        if (ox <= oy && ox <= oz) {
+            nx = (a.px >= b.px) ? 1.0f : -1.0f;
+            depth = ox;
+        } else if (oy <= oz) {
+            ny = (a.py >= b.py) ? 1.0f : -1.0f;
+            depth = oy;
+        } else {
+            nz = (a.pz >= b.pz) ? 1.0f : -1.0f;
+            depth = oz;
+        }
+        return true;
+    }
+    int axisId;
+    return BoxBoxSat(a, b, nx, ny, nz, depth, axisId);
 }
 
 // ---- sphere-capsule。normal は capsule→sphere 方向 ----
@@ -311,26 +322,28 @@ bool CapsuleCapsule(const ShapePose& a, const ShapePose& b, float& nx, float& ny
     return SpherePair(pax, pay, paz, pbx, pby, pbz, a.radius + b.radius, nx, ny, nz, depth);
 }
 
-// ---- capsule-box。normal は box→capsule 方向 ----
-// 箱ローカルで dist²(seg(t), AABB) が t について凸なことを利用し、固定 32 回の黄金分割で
-// 最近パラメータ t を求め、その点で sphere-box 判定する (固定回数 = 決定論)。
-bool CapsuleBox(const ShapePose& c, const ShapePose& box, float& nx, float& ny, float& nz,
-                float& depth)
+// capsule 線分を箱ローカルへ変換する
+void CapsuleSegmentLocalToBox(const ShapePose& c, const ShapePose& box, float& a0x, float& a0y,
+                              float& a0z, float& a1x, float& a1y, float& a1z)
 {
-    // 線分端点を箱ローカルへ
     float w0x, w0y, w0z, w1x, w1y, w1z;
     CapsuleSegment(c, w0x, w0y, w0z, w1x, w1y, w1z);
-    float a0x, a0y, a0z, a1x, a1y, a1z;
     WorldToLocal(box, w0x - box.px, w0y - box.py, w0z - box.pz, a0x, a0y, a0z);
     WorldToLocal(box, w1x - box.px, w1y - box.py, w1z - box.pz, a1x, a1y, a1z);
+}
 
+// 箱ローカルで dist²(seg(t), AABB) が t について凸なことを利用し、固定 32 回の黄金分割で
+// 最近パラメータ t を求める (固定回数 = 決定論)
+float GoldenSegParamToLocalAabb(float a0x, float a0y, float a0z, float a1x, float a1y, float a1z,
+                                float hx, float hy, float hz)
+{
     auto distSq = [&](float t) {
         const float x = a0x + (a1x - a0x) * t;
         const float y = a0y + (a1y - a0y) * t;
         const float z = a0z + (a1z - a0z) * t;
-        float ex = std::fabs(x) - box.hx;
-        float ey = std::fabs(y) - box.hy;
-        float ez = std::fabs(z) - box.hz;
+        float ex = std::fabs(x) - hx;
+        float ey = std::fabs(y) - hy;
+        float ez = std::fabs(z) - hz;
         if (ex < 0) { ex = 0; }
         if (ey < 0) { ey = 0; }
         if (ez < 0) { ez = 0; }
@@ -358,7 +371,17 @@ bool CapsuleBox(const ShapePose& c, const ShapePose& box, float& nx, float& ny, 
             f2 = distSq(m2);
         }
     }
-    const float t = (lo + hi) * 0.5f;
+    return (lo + hi) * 0.5f;
+}
+
+// ---- capsule-box。normal は box→capsule 方向 ----
+bool CapsuleBox(const ShapePose& c, const ShapePose& box, float& nx, float& ny, float& nz,
+                float& depth)
+{
+    float a0x, a0y, a0z, a1x, a1y, a1z;
+    CapsuleSegmentLocalToBox(c, box, a0x, a0y, a0z, a1x, a1y, a1z);
+    const float t = GoldenSegParamToLocalAabb(a0x, a0y, a0z, a1x, a1y, a1z, box.hx, box.hy,
+                                              box.hz);
     const float sx = a0x + (a1x - a0x) * t;
     const float sy = a0y + (a1y - a0y) * t;
     const float sz = a0z + (a1z - a0z) * t;
@@ -372,6 +395,348 @@ bool CapsuleBox(const ShapePose& c, const ShapePose& box, float& nx, float& ny, 
         nz = lnz;
     } else {
         LocalToWorld(box, lnx, lny, lnz, nx, ny, nz);
+    }
+    return true;
+}
+
+// ---- 接触点つき判定 (M28b マニフォールド用) ----
+
+// 球ペア + 接触点 (両表面の中点)。n は b→a
+bool SpherePairContact(float ax, float ay, float az, float bx, float by, float bz, float ra,
+                       float rb, float& nx, float& ny, float& nz, Contact& c)
+{
+    float depth;
+    if (!SpherePair(ax, ay, az, bx, by, bz, ra + rb, nx, ny, nz, depth)) {
+        return false;
+    }
+    c.px = 0.5f * ((ax - nx * ra) + (bx + nx * rb));
+    c.py = 0.5f * ((ay - ny * ra) + (by + ny * rb));
+    c.pz = 0.5f * ((az - nz * ra) + (bz + nz * rb));
+    c.depth = depth;
+    return true;
+}
+
+// sphere-box + 接触点 (箱表面の最近点。中心が箱内なら球中心)。n は box→sphere
+bool SphereBoxContact(float spx, float spy, float spz, float sr, const ShapePose& box, float& nx,
+                      float& ny, float& nz, Contact& c)
+{
+    if (box.identityRot) {
+        float depth;
+        if (!SphereAabb(spx, spy, spz, sr, box.px, box.py, box.pz, box.hx, box.hy, box.hz, nx, ny,
+                        nz, depth)) {
+            return false;
+        }
+        c.px = std::clamp(spx, box.px - box.hx, box.px + box.hx);
+        c.py = std::clamp(spy, box.py - box.hy, box.py + box.hy);
+        c.pz = std::clamp(spz, box.pz - box.hz, box.pz + box.hz);
+        c.depth = depth;
+        return true;
+    }
+    float lx, ly, lz;
+    WorldToLocal(box, spx - box.px, spy - box.py, spz - box.pz, lx, ly, lz);
+    float lnx, lny, lnz, depth;
+    if (!SphereAabb(lx, ly, lz, sr, 0, 0, 0, box.hx, box.hy, box.hz, lnx, lny, lnz, depth)) {
+        return false;
+    }
+    LocalToWorld(box, lnx, lny, lnz, nx, ny, nz);
+    const float qx = std::clamp(lx, -box.hx, box.hx);
+    const float qy = std::clamp(ly, -box.hy, box.hy);
+    const float qz = std::clamp(lz, -box.hz, box.hz);
+    float wx, wy, wz;
+    LocalToWorld(box, qx, qy, qz, wx, wy, wz);
+    c.px = box.px + wx;
+    c.py = box.py + wy;
+    c.pz = box.pz + wz;
+    c.depth = depth;
+    return true;
+}
+
+// box-box 面接触: 入射面を参照面の側面 4 平面でクリップし最大 4 点 (Box2D 流)。
+// n はワールド共通法線 (b→a)、refIsA = SAT 勝者軸が a の面軸か。
+void BoxBoxFaceManifold(const ShapePose& a, const ShapePose& b, bool refIsA, float nx, float ny,
+                        float nz, float satDepth, Manifold& out)
+{
+    const ShapePose& ref = refIsA ? a : b;
+    const ShapePose& inc = refIsA ? b : a;
+    // 参照面の外向き法線 f (参照 box → 相手): a 参照なら -n、b 参照なら +n
+    const float fx = refIsA ? -nx : nx;
+    const float fy = refIsA ? -ny : ny;
+    const float fz = refIsA ? -nz : nz;
+    const float* refAxes[3] = { ref.bx, ref.by, ref.bz };
+    const float refExt[3] = { ref.hx, ref.hy, ref.hz };
+    int refAxis = 0;
+    float bestAlign = -2.0f;
+    for (int i = 0; i < 3; ++i) {
+        const float d = std::fabs(Dot3(refAxes[i], fx, fy, fz));
+        if (d > bestAlign) {
+            bestAlign = d;
+            refAxis = i;
+        }
+    }
+    // 入射面: inc の 6 面から f に最も逆向きの面 (固定列挙・厳密 < = 決定論)
+    const float* incAxes[3] = { inc.bx, inc.by, inc.bz };
+    const float incExt[3] = { inc.hx, inc.hy, inc.hz };
+    int incAxis = 0;
+    float incSign = 1.0f;
+    float bestD = 2.0f;
+    for (int i = 0; i < 3; ++i) {
+        const float d = Dot3(incAxes[i], fx, fy, fz);
+        if (d < bestD) {
+            bestD = d;
+            incAxis = i;
+            incSign = 1.0f;
+        }
+        if (-d < bestD) {
+            bestD = -d;
+            incAxis = i;
+            incSign = -1.0f;
+        }
+    }
+    // 入射面の 4 頂点 (ワールド)
+    const int u = (incAxis + 1) % 3;
+    const int v = (incAxis + 2) % 3;
+    float poly[8][3];
+    float tmp[8][3];
+    int polyN = 4;
+    const float su[4] = { 1, 1, -1, -1 };
+    const float sv[4] = { 1, -1, -1, 1 };
+    const float incC[3] = { inc.px, inc.py, inc.pz };
+    for (int k = 0; k < 4; ++k) {
+        for (int d = 0; d < 3; ++d) {
+            poly[k][d] = incC[d] + incAxes[incAxis][d] * incExt[incAxis] * incSign
+                       + incAxes[u][d] * incExt[u] * su[k] + incAxes[v][d] * incExt[v] * sv[k];
+        }
+    }
+    // 参照面の側面 4 平面でクリップ (Sutherland-Hodgman): dot(p - c, ±axes[m]) <= ext[m]
+    for (int m = 0; m < 3 && polyN > 0; ++m) {
+        if (m == refAxis) {
+            continue;
+        }
+        for (int side = 0; side < 2 && polyN > 0; ++side) {
+            const float sgn = side ? -1.0f : 1.0f;
+            const float pnx = refAxes[m][0] * sgn;
+            const float pny = refAxes[m][1] * sgn;
+            const float pnz = refAxes[m][2] * sgn;
+            int outN = 0;
+            for (int k = 0; k < polyN; ++k) {
+                const int k2 = (k + 1) % polyN;
+                const float dk = (poly[k][0] - ref.px) * pnx + (poly[k][1] - ref.py) * pny
+                               + (poly[k][2] - ref.pz) * pnz - refExt[m];
+                const float dk2 = (poly[k2][0] - ref.px) * pnx + (poly[k2][1] - ref.py) * pny
+                                + (poly[k2][2] - ref.pz) * pnz - refExt[m];
+                if (dk <= 0 && outN < 8) {
+                    tmp[outN][0] = poly[k][0];
+                    tmp[outN][1] = poly[k][1];
+                    tmp[outN][2] = poly[k][2];
+                    ++outN;
+                }
+                if (((dk <= 0) != (dk2 <= 0)) && outN < 8) {
+                    const float t = dk / (dk - dk2);
+                    for (int d = 0; d < 3; ++d) {
+                        tmp[outN][d] = poly[k][d] + (poly[k2][d] - poly[k][d]) * t;
+                    }
+                    ++outN;
+                }
+            }
+            polyN = outN;
+            for (int k = 0; k < polyN; ++k) {
+                poly[k][0] = tmp[k][0];
+                poly[k][1] = tmp[k][1];
+                poly[k][2] = tmp[k][2];
+            }
+        }
+    }
+    // 参照面より下 (貫通側) の点を集める
+    Contact cand[8];
+    int candN = 0;
+    for (int k = 0; k < polyN && candN < 8; ++k) {
+        const float fdot = (poly[k][0] - ref.px) * fx + (poly[k][1] - ref.py) * fy
+                         + (poly[k][2] - ref.pz) * fz;
+        const float dep = refExt[refAxis] - fdot;
+        if (dep >= 0) {
+            cand[candN].px = poly[k][0];
+            cand[candN].py = poly[k][1];
+            cand[candN].pz = poly[k][2];
+            cand[candN].depth = dep;
+            ++candN;
+        }
+    }
+    if (candN == 0) {
+        // 数値縮退: 入射 box の最深頂点 1 点 (SAT depth を採用)
+        float vx = inc.px, vy = inc.py, vz = inc.pz;
+        for (int k = 0; k < 3; ++k) {
+            const float s = (Dot3(incAxes[k], fx, fy, fz) >= 0) ? -1.0f : 1.0f;
+            vx += incAxes[k][0] * incExt[k] * s;
+            vy += incAxes[k][1] * incExt[k] * s;
+            vz += incAxes[k][2] * incExt[k] * s;
+        }
+        out.pts[0] = { vx, vy, vz, satDepth };
+        out.count = 1;
+        return;
+    }
+    // depth 降順の上位 4 点 (同値は元順先勝ち = 決定論)
+    bool used[8] = {};
+    out.count = 0;
+    const int take = (candN < 4) ? candN : 4;
+    for (int slot = 0; slot < take; ++slot) {
+        int best = -1;
+        for (int k = 0; k < candN; ++k) {
+            if (used[k]) {
+                continue;
+            }
+            if (best < 0 || cand[k].depth > cand[best].depth) {
+                best = k;
+            }
+        }
+        used[best] = true;
+        out.pts[out.count++] = cand[best];
+    }
+}
+
+// box-box 辺-辺接触: 支持辺同士の最近点 1 点。n は b→a
+void BoxBoxEdgeManifold(const ShapePose& a, const ShapePose& b, int ai, int bi, float nx, float ny,
+                        float nz, float depth, Manifold& out)
+{
+    const float* aAxes[3] = { a.bx, a.by, a.bz };
+    const float* bAxes[3] = { b.bx, b.by, b.bz };
+    const float aExt[3] = { a.hx, a.hy, a.hz };
+    const float bExt[3] = { b.hx, b.hy, b.hz };
+    // a の支持辺 (b 側 = -n 方向の面上、方向 aAxes[ai])
+    float ac[3] = { a.px, a.py, a.pz };
+    for (int k = 0; k < 3; ++k) {
+        if (k == ai) {
+            continue;
+        }
+        const float s = (Dot3(aAxes[k], nx, ny, nz) >= 0) ? -1.0f : 1.0f;
+        ac[0] += aAxes[k][0] * aExt[k] * s;
+        ac[1] += aAxes[k][1] * aExt[k] * s;
+        ac[2] += aAxes[k][2] * aExt[k] * s;
+    }
+    // b の支持辺 (a 側 = +n 方向の面上、方向 bAxes[bi])
+    float bc[3] = { b.px, b.py, b.pz };
+    for (int k = 0; k < 3; ++k) {
+        if (k == bi) {
+            continue;
+        }
+        const float s = (Dot3(bAxes[k], nx, ny, nz) >= 0) ? 1.0f : -1.0f;
+        bc[0] += bAxes[k][0] * bExt[k] * s;
+        bc[1] += bAxes[k][1] * bExt[k] * s;
+        bc[2] += bAxes[k][2] * bExt[k] * s;
+    }
+    float s, t;
+    ClosestSegSeg(ac[0] - aAxes[ai][0] * aExt[ai], ac[1] - aAxes[ai][1] * aExt[ai],
+                  ac[2] - aAxes[ai][2] * aExt[ai], ac[0] + aAxes[ai][0] * aExt[ai],
+                  ac[1] + aAxes[ai][1] * aExt[ai], ac[2] + aAxes[ai][2] * aExt[ai],
+                  bc[0] - bAxes[bi][0] * bExt[bi], bc[1] - bAxes[bi][1] * bExt[bi],
+                  bc[2] - bAxes[bi][2] * bExt[bi], bc[0] + bAxes[bi][0] * bExt[bi],
+                  bc[1] + bAxes[bi][1] * bExt[bi], bc[2] + bAxes[bi][2] * bExt[bi], s, t);
+    const float pax = ac[0] + aAxes[ai][0] * aExt[ai] * (2.0f * s - 1.0f);
+    const float pay = ac[1] + aAxes[ai][1] * aExt[ai] * (2.0f * s - 1.0f);
+    const float paz = ac[2] + aAxes[ai][2] * aExt[ai] * (2.0f * s - 1.0f);
+    const float pbx = bc[0] + bAxes[bi][0] * bExt[bi] * (2.0f * t - 1.0f);
+    const float pby = bc[1] + bAxes[bi][1] * bExt[bi] * (2.0f * t - 1.0f);
+    const float pbz = bc[2] + bAxes[bi][2] * bExt[bi] * (2.0f * t - 1.0f);
+    out.pts[0] = { (pax + pbx) * 0.5f, (pay + pby) * 0.5f, (paz + pbz) * 0.5f, depth };
+    out.count = 1;
+}
+
+// capsule-box マニフォールド。n は box→capsule。横倒しの線接触は端点も追加 (最大 3 点)
+bool CapsuleBoxManifold(const ShapePose& c, const ShapePose& box, Manifold& out)
+{
+    float a0x, a0y, a0z, a1x, a1y, a1z;
+    CapsuleSegmentLocalToBox(c, box, a0x, a0y, a0z, a1x, a1y, a1z);
+    const float t = GoldenSegParamToLocalAabb(a0x, a0y, a0z, a1x, a1y, a1z, box.hx, box.hy,
+                                              box.hz);
+    float w0x, w0y, w0z, w1x, w1y, w1z;
+    CapsuleSegment(c, w0x, w0y, w0z, w1x, w1y, w1z);
+    auto segW = [&](float tt, float& x, float& y, float& z) {
+        x = w0x + (w1x - w0x) * tt;
+        y = w0y + (w1y - w0y) * tt;
+        z = w0z + (w1z - w0z) * tt;
+    };
+    float sx, sy, sz;
+    segW(t, sx, sy, sz);
+    float nx, ny, nz;
+    Contact c0;
+    if (!SphereBoxContact(sx, sy, sz, c.radius, box, nx, ny, nz, c0)) {
+        return false;
+    }
+    out.nx = nx;
+    out.ny = ny;
+    out.nz = nz;
+    out.count = 0;
+    out.pts[out.count++] = c0;
+    const float ends[2] = { 0.0f, 1.0f };
+    for (float te : ends) {
+        if (std::fabs(te - t) < 1e-3f || out.count >= 4) {
+            continue;
+        }
+        float ex, ey, ez;
+        segW(te, ex, ey, ez);
+        float enx, eny, enz;
+        Contact ce;
+        if (SphereBoxContact(ex, ey, ez, c.radius, box, enx, eny, enz, ce)
+            && enx * nx + eny * ny + enz * nz > 0.99f) {
+            out.pts[out.count++] = ce;
+        }
+    }
+    return true;
+}
+
+// capsule-capsule マニフォールド。n は b→a。ほぼ平行な側面接触は a の両端点で最大 2 点
+bool CapsuleCapsuleManifold(const ShapePose& a, const ShapePose& b, Manifold& out)
+{
+    float a0x, a0y, a0z, a1x, a1y, a1z;
+    float b0x, b0y, b0z, b1x, b1y, b1z;
+    CapsuleSegment(a, a0x, a0y, a0z, a1x, a1y, a1z);
+    CapsuleSegment(b, b0x, b0y, b0z, b1x, b1y, b1z);
+    float s, t;
+    ClosestSegSeg(a0x, a0y, a0z, a1x, a1y, a1z, b0x, b0y, b0z, b1x, b1y, b1z, s, t);
+    const float pax = a0x + (a1x - a0x) * s, pay = a0y + (a1y - a0y) * s,
+                paz = a0z + (a1z - a0z) * s;
+    const float pbx = b0x + (b1x - b0x) * t, pby = b0y + (b1y - b0y) * t,
+                pbz = b0z + (b1z - b0z) * t;
+    float nx, ny, nz;
+    Contact c0;
+    if (!SpherePairContact(pax, pay, paz, pbx, pby, pbz, a.radius, b.radius, nx, ny, nz, c0)) {
+        return false;
+    }
+    out.nx = nx;
+    out.ny = ny;
+    out.nz = nz;
+    out.pts[0] = c0;
+    out.count = 1;
+    // ほぼ平行 (cos² > 0.98) なら a の両端点球 vs b 線分で線接触 2 点に置き換え
+    const float dax = a1x - a0x, day = a1y - a0y, daz = a1z - a0z;
+    const float dbx = b1x - b0x, dby = b1y - b0y, dbz = b1z - b0z;
+    const float la2 = dax * dax + day * day + daz * daz;
+    const float lb2 = dbx * dbx + dby * dby + dbz * dbz;
+    if (la2 > 1e-8f && lb2 > 1e-8f) {
+        const float d = dax * dbx + day * dby + daz * dbz;
+        if (d * d > 0.98f * la2 * lb2) {
+            Contact epts[2];
+            int en = 0;
+            const float ends[2][3] = { { a0x, a0y, a0z }, { a1x, a1y, a1z } };
+            for (int k = 0; k < 2; ++k) {
+                const float ex = ends[k][0], ey = ends[k][1], ez = ends[k][2];
+                const float tb = std::clamp(
+                    ((ex - b0x) * dbx + (ey - b0y) * dby + (ez - b0z) * dbz) / lb2, 0.0f, 1.0f);
+                const float qx = b0x + dbx * tb, qy = b0y + dby * tb, qz = b0z + dbz * tb;
+                float enx, eny, enz;
+                Contact ce;
+                if (SpherePairContact(ex, ey, ez, qx, qy, qz, a.radius, b.radius, enx, eny, enz,
+                                      ce)
+                    && enx * nx + eny * ny + enz * nz > 0.99f) {
+                    epts[en++] = ce;
+                }
+            }
+            if (en > 0) {
+                out.count = en;
+                for (int k = 0; k < en; ++k) {
+                    out.pts[k] = epts[k];
+                }
+            }
+        }
     }
     return true;
 }
@@ -682,6 +1047,95 @@ bool Overlap(const ShapePose& a, const ShapePose& b)
 {
     float nx, ny, nz, depth;
     return Collide(a, b, nx, ny, nz, depth);
+}
+
+bool CollideManifold(const ShapePose& a, const ShapePose& b, Manifold& out)
+{
+    out.count = 0;
+    const int32_t sa = a.shape, sb = b.shape;
+    float nx, ny, nz;
+    Contact c0;
+
+    if (sa == 0 && sb == 0) {
+        if (!SpherePairContact(a.px, a.py, a.pz, b.px, b.py, b.pz, a.radius, b.radius, nx, ny, nz,
+                               c0)) {
+            return false;
+        }
+        out.nx = nx; out.ny = ny; out.nz = nz;
+        out.pts[0] = c0;
+        out.count = 1;
+        return true;
+    }
+    if (sa == 1 && sb == 1) {
+        int axisId;
+        float depth;
+        if (!BoxBoxSat(a, b, nx, ny, nz, depth, axisId)) {
+            return false;
+        }
+        out.nx = nx; out.ny = ny; out.nz = nz;
+        if (axisId < 6) {
+            BoxBoxFaceManifold(a, b, axisId < 3, nx, ny, nz, depth, out);
+        } else {
+            BoxBoxEdgeManifold(a, b, (axisId - 6) / 3, (axisId - 6) % 3, nx, ny, nz, depth, out);
+        }
+        return out.count > 0;
+    }
+    if (sa == 2 && sb == 2) {
+        return CapsuleCapsuleManifold(a, b, out);
+    }
+    if (sa == 0 && sb == 1) {
+        if (!SphereBoxContact(a.px, a.py, a.pz, a.radius, b, nx, ny, nz, c0)) {
+            return false;
+        }
+        out.nx = nx; out.ny = ny; out.nz = nz; // box→sphere = b→a
+        out.pts[0] = c0;
+        out.count = 1;
+        return true;
+    }
+    if (sa == 1 && sb == 0) {
+        if (!SphereBoxContact(b.px, b.py, b.pz, b.radius, a, nx, ny, nz, c0)) {
+            return false;
+        }
+        out.nx = -nx; out.ny = -ny; out.nz = -nz;
+        out.pts[0] = c0;
+        out.count = 1;
+        return true;
+    }
+    if (sa == 0 && sb == 2) {
+        const float t = std::clamp(Dot3(b.by, a.px - b.px, a.py - b.py, a.pz - b.pz), -b.halfSeg,
+                                   b.halfSeg);
+        const float qx = b.px + b.by[0] * t, qy = b.py + b.by[1] * t, qz = b.pz + b.by[2] * t;
+        if (!SpherePairContact(a.px, a.py, a.pz, qx, qy, qz, a.radius, b.radius, nx, ny, nz, c0)) {
+            return false;
+        }
+        out.nx = nx; out.ny = ny; out.nz = nz;
+        out.pts[0] = c0;
+        out.count = 1;
+        return true;
+    }
+    if (sa == 2 && sb == 0) {
+        const float t = std::clamp(Dot3(a.by, b.px - a.px, b.py - a.py, b.pz - a.pz), -a.halfSeg,
+                                   a.halfSeg);
+        const float qx = a.px + a.by[0] * t, qy = a.py + a.by[1] * t, qz = a.pz + a.by[2] * t;
+        if (!SpherePairContact(b.px, b.py, b.pz, qx, qy, qz, b.radius, a.radius, nx, ny, nz, c0)) {
+            return false;
+        }
+        out.nx = -nx; out.ny = -ny; out.nz = -nz;
+        out.pts[0] = c0;
+        out.count = 1;
+        return true;
+    }
+    if (sa == 2 && sb == 1) {
+        return CapsuleBoxManifold(a, b, out); // n = box→capsule = b→a
+    }
+    if (sa == 1 && sb == 2) {
+        if (!CapsuleBoxManifold(b, a, out)) {
+            return false;
+        }
+        out.nx = -out.nx; out.ny = -out.ny; out.nz = -out.nz;
+        return true;
+    }
+    return false; // 未知の shape 値は判定しない
 }
 
 bool Raycast(const ShapePose& s, float ox, float oy, float oz, float dx, float dy, float dz,

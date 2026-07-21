@@ -295,12 +295,13 @@ bool RunPhysicsSelfTest()
         check(lt && lt->position.y > 0.3f, "obb: sphere stays on slope surface (no tunnel)");
     }
 
-    // ---- (11) SAT: 45° 回転した動的 box が平床に角で立つ (並進のみ = 姿勢は維持) ----
+    // ---- (11) SAT: 45° 回転 box (freezeRotation) が平床に角で立つ (姿勢維持の並進解決) ----
     {
         Scene s;
         MakeGround(s, "G11", 0, -0.5f, 0, 5.0f, 0.5f, 5.0f);
         GameObject box = MakeBox(s, "TiltBox", 0, 3.0f, 0, 0.5f, 0.5f, 0.5f);
         box.GetComponent<LocalTransform>()->rotation = { 0, 0, 0.3826834f, 0.9238795f };
+        box.GetComponent<RigidbodyComponent>()->freezeRotation = 1; // M28b: 回転を固定して幾何検証
         s.GetWorld().ApplyStructuralChanges();
         for (int i = 0; i < 180; ++i) {
             phys.Update(s.GetWorld(), kDt);
@@ -309,6 +310,10 @@ bool RunPhysicsSelfTest()
         const float y = lt ? lt->position.y : -999.0f;
         // 対角半径 = (hx+hy)/sqrt(2) ~= 0.7071 (SAT 最小軸 = 床の +Y 面)
         check(y > 0.65f && y < 0.78f, "sat: 45deg box rests on edge at y~=0.707");
+        // freezeRotation: 姿勢はビット単位で不変 (回転積分・角応答なし)
+        const auto& q = lt->rotation;
+        check(q.x == 0.0f && q.y == 0.0f && q.z == 0.3826834f && q.w == 0.9238795f,
+              "freezeRotation: orientation bits unchanged");
     }
 
     // ---- (12) Raycast: 45° OBB (角に当たる → 距離 = 5 - 0.7071) ----
@@ -348,6 +353,121 @@ bool RunPhysicsSelfTest()
               "raycast capsule: upper cap hit at distance ~= 9.134");
         ok = RaycastWorld(s.GetWorld(), { 0, 3.5f, 0 }, { 0, 0, 1 }, 100.0f, &hit);
         check(ok == 0, "raycast capsule: miss above cap");
+    }
+
+    // ---- (15) 回転剛体: 40° に傾けた box が倒れて面で静止する (M28b) ----
+    {
+        Scene s;
+        MakeGround(s, "G15", 0, -0.5f, 0, 5.0f, 0.5f, 5.0f);
+        GameObject box = MakeBox(s, "Topple", 0, 0.9f, 0, 0.5f, 0.5f, 0.5f);
+        // Z 軸回り 40° (バランス点 45° から外す → 重力トルクで倒れる)
+        box.GetComponent<LocalTransform>()->rotation = { 0, 0, 0.3420201f, 0.9396926f };
+        s.GetWorld().ApplyStructuralChanges();
+        for (int i = 0; i < 300; ++i) {
+            phys.Update(s.GetWorld(), kDt);
+        }
+        auto* lt = box.GetComponent<LocalTransform>();
+        const float y = lt ? lt->position.y : -999.0f;
+        check(y < 0.6f, "rotation: tilted box topples onto a face (y settles ~0.5)");
+        // 40° から姿勢が大きく変わっている (回転が起きた証拠)
+        const float qz = lt ? std::fabs(lt->rotation.z) : 1.0f;
+        check(qz < 0.2f || qz > 0.55f, "rotation: orientation changed from initial 40deg");
+    }
+
+    // ---- (16) クーロン摩擦: 20° 斜面で μ 大 = 静止 / μ0 = 滑落 (freezeRotation で純滑り) ----
+    {
+        auto slopeTest = [&](float mu, float& outDx) {
+            Scene s;
+            GameObject slope = MakeStaticBoxRot(s, "Slope20", 0, 0, 0, 5.0f, 0.5f, 5.0f,
+                                                { 0, 0, 0.1736482f, 0.9848078f }); // Z 20°
+            slope.GetComponent<ColliderComponent>()->friction = mu;
+            // 斜面上に置いた箱 (斜面法線方向に浮かせて落とす)
+            GameObject box = MakeBox(s, "Slider", 0, 1.2f, 0, 0.3f, 0.3f, 0.3f);
+            box.GetComponent<LocalTransform>()->rotation = { 0, 0, 0.1736482f, 0.9848078f };
+            box.GetComponent<ColliderComponent>()->friction = mu;
+            auto* rb = box.GetComponent<RigidbodyComponent>();
+            rb->freezeRotation = 1; // 転がり抜きの純粋な滑り摩擦を検証
+            s.GetWorld().ApplyStructuralChanges();
+            float x0 = 0;
+            for (int i = 0; i < 150; ++i) {
+                phys.Update(s.GetWorld(), kDt);
+                if (i == 59) { // 着地・整定後の位置を基準にする
+                    x0 = box.GetComponent<LocalTransform>()->position.x;
+                }
+            }
+            outDx = box.GetComponent<LocalTransform>()->position.x - x0;
+        };
+        float dxHigh = 0, dxZero = 0;
+        slopeTest(0.9f, dxHigh);
+        slopeTest(0.0f, dxZero);
+        // tan20° ~= 0.36 < μ=0.9 → 静止 / μ=0 → 滑落 (-X)
+        check(std::fabs(dxHigh) < 0.02f, "friction: box holds still on 20deg slope (mu=0.9)");
+        check(dxZero < -0.3f, "friction: box slides down 20deg slope (mu=0)");
+    }
+
+    // ---- (17) 転がり: 斜面の球が摩擦で角速度を得る (M28b) ----
+    {
+        Scene s;
+        MakeStaticBoxRot(s, "Slope15", 0, 0, 0, 5.0f, 0.5f, 5.0f,
+                         { 0, 0, 0.1305262f, 0.9914449f }); // Z 15°
+        GameObject ball = MakeSphereBody(s, "Roller", 0, 1.5f, 0, 0.5f);
+        s.GetWorld().ApplyStructuralChanges();
+        for (int i = 0; i < 90; ++i) {
+            phys.Update(s.GetWorld(), kDt);
+        }
+        auto* rb = ball.GetComponent<RigidbodyComponent>();
+        // -X へ転がる球の回転軸は +Z (接触点の摩擦トルク)
+        check(rb && rb->angularVelocity.z > 0.5f, "rolling: sphere gains +Z spin on slope");
+    }
+
+    // ---- (18) 3 段箱スタックが 600 tick 安定 (ドリフト < 5mm、常設回帰) ----
+    {
+        Scene s;
+        MakeGround(s, "G18", 0, -0.5f, 0, 5.0f, 0.5f, 5.0f);
+        GameObject b0 = MakeBox(s, "St0", 0, 0.5f, 0, 0.5f, 0.5f, 0.5f);
+        GameObject b1 = MakeBox(s, "St1", 0, 1.5f, 0, 0.5f, 0.5f, 0.5f);
+        GameObject b2 = MakeBox(s, "St2", 0, 2.5f, 0, 0.5f, 0.5f, 0.5f);
+        s.GetWorld().ApplyStructuralChanges();
+        for (int i = 0; i < 600; ++i) {
+            phys.Update(s.GetWorld(), kDt);
+        }
+        auto drift = [](GameObject& go, float y0) {
+            auto* lt = go.GetComponent<LocalTransform>();
+            if (!lt) {
+                return 999.0f;
+            }
+            const float dx = std::fabs(lt->position.x);
+            const float dz = std::fabs(lt->position.z);
+            const float dy = std::fabs(lt->position.y - y0);
+            return std::max(dx, std::max(dz, dy));
+        };
+        MYE_LOG_INFO("  [phys] stack drift: b0=%.4f b1=%.4f b2=%.4f", drift(b0, 0.5f),
+                     drift(b1, 1.5f), drift(b2, 2.5f));
+        check(drift(b0, 0.5f) < 0.005f && drift(b1, 1.5f) < 0.005f && drift(b2, 2.5f) < 0.005f,
+              "stack: 3-box tower drift < 5mm after 600 ticks");
+        const auto& q2 = b2.GetComponent<LocalTransform>()->rotation;
+        check(std::fabs(q2.x) < 0.05f && std::fabs(q2.y) < 0.05f && std::fabs(q2.z) < 0.05f,
+              "stack: top box stays upright (no spin accumulation)");
+    }
+
+    // ---- (19) AddTorque (ApplyTorqueWorld): ω += I⁻¹τdt が積分され回転する ----
+    {
+        Scene s;
+        GameObject box = MakeBox(s, "Spinner", 0, 5.0f, 0, 0.5f, 0.5f, 0.5f);
+        box.GetComponent<RigidbodyComponent>()->gravityScale = 0.0f;
+        s.GetWorld().ApplyStructuralChanges();
+        for (int i = 0; i < 60; ++i) {
+            ApplyTorqueWorld(s.GetWorld(), box.Id(), { 0, 2.0f, 0 }, kDt);
+            phys.Update(s.GetWorld(), kDt);
+        }
+        auto* rb = box.GetComponent<RigidbodyComponent>();
+        auto* lt = box.GetComponent<LocalTransform>();
+        check(rb && rb->angularVelocity.y > 1.0f, "torque: +Y torque accumulates +Y spin");
+        check(lt && std::fabs(lt->rotation.y) > 0.05f, "torque: orientation integrates over ticks");
+        // freezeRotation では拒否される
+        rb->freezeRotation = 1;
+        const int rejected = ApplyTorqueWorld(s.GetWorld(), box.Id(), { 0, 2.0f, 0 }, kDt);
+        check(rejected == 0, "torque: rejected when freezeRotation=1");
     }
 
     // ---- (14) 決定論: capsule / OBB / sphere 混在シーンの 240 tick 並走ハッシュ一致 ----

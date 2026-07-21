@@ -73,6 +73,7 @@ namespace MyeScripting
         public MyeVec3 Velocity { get => Engine.GetVelocity(SelfId); set => Engine.SetVelocity(SelfId, value); }
         protected bool AddForce(MyeVec3 force) => Engine.AddForce(SelfId, force);
         protected bool AddImpulse(MyeVec3 impulse) => Engine.AddImpulse(SelfId, impulse);
+        protected bool AddTorque(MyeVec3 torque) => Engine.AddTorque(SelfId, torque);
         protected static bool Raycast(MyeVec3 origin, MyeVec3 dir, float maxDist, out MyeRaycastHit hit)
             => Engine.Raycast(origin, dir, maxDist, out hit);
 

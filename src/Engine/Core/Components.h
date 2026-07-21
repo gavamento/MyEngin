@@ -188,6 +188,10 @@ struct RigidbodyComponent {
     float restitution = 0.0f;      // 反発係数 0..1 (接触ペアは min を採用)
     float gravityScale = 1.0f;     // 重力倍率 (0=無重力)
     int32_t isKinematic = 0;       // 1=物理で動かさない (スクリプト制御。他はブロックする)
+    // ---- M28b 追加 (末尾 append = シーン互換維持)。回転剛体 ----
+    DirectX::XMFLOAT3 angularVelocity = { 0.0f, 0.0f, 0.0f }; // rad/s (ワールド)。sim 状態 = hash 対象
+    float angularDamping = 0.05f;  // 毎 tick の角速度減衰率 (スタック静止安定の柱の 1 つ)
+    int32_t freezeRotation = 0;    // 1 = 回転積分・角応答をしない (M28a 以前の並進のみ挙動)
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 

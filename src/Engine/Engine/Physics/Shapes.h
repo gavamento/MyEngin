@@ -46,6 +46,21 @@ bool Collide(const ShapePose& a, const ShapePose& b, float& nx, float& ny, float
 // トリガー用の重なり判定 (Collide と同一判定で出力を捨てる)
 bool Overlap(const ShapePose& a, const ShapePose& b);
 
+// ---- 接触マニフォールド (M28b、回転剛体ソルバ用) ----
+// box 系の面接触は最大 4 点 (参照面クリッピング)、capsule の側面接触は最大 2 点、
+// 球系と辺-辺接触は 1 点。法線は Collide と同じ b→a 方向で全接触点共通。
+// 接触点はワールド座標 (トルク計算の作用点)、depth は点毎の貫通量。
+struct Contact {
+    float px = 0, py = 0, pz = 0;
+    float depth = 0;
+};
+struct Manifold {
+    float nx = 0, ny = 1, nz = 0; // b→a (a を押し出す方向)
+    int count = 0;
+    Contact pts[4];
+};
+bool CollideManifold(const ShapePose& a, const ShapePose& b, Manifold& out);
+
 // レイ交差。dir (dx,dy,dz) は正規化済みであること。ヒットで true、outT は距離、
 // (nx,ny,nz) はヒット面の外向き法線。
 bool Raycast(const ShapePose& s, float ox, float oy, float oz, float dx, float dy, float dz,

@@ -139,6 +139,8 @@ void RegisterBuiltinComponents()
 
     // M20: 剛体。velocity は積分される sim 状態なので **hash 対象** (kComponentNoHash を付けない)。
     // opt-in (無ければ物理非関与) なので TypeId append (=15) だけで既存シーンは不変 → bump 不要
+    // M28b: angularVelocity / angularDamping / freezeRotation を末尾 append。
+    // angularVelocity は積分される sim 状態なので hash 対象 (velocity と同格)
     RegisterComponent<RigidbodyComponent>("Rigidbody", {
         MYE_FIELD(RigidbodyComponent, velocity, Float3),
         MYE_FIELD(RigidbodyComponent, mass, Float),
@@ -146,6 +148,9 @@ void RegisterBuiltinComponents()
         MYE_FIELD(RigidbodyComponent, restitution, Float),
         MYE_FIELD(RigidbodyComponent, gravityScale, Float),
         MYE_FIELD(RigidbodyComponent, isKinematic, Int32),
+        MYE_FIELD(RigidbodyComponent, angularVelocity, Float3),
+        MYE_FIELD(RigidbodyComponent, angularDamping, Float),
+        MYE_FIELD(RigidbodyComponent, freezeRotation, Int32),
     });
 
     // M21: ゲーム内 UI。描画専用なので **kComponentNoHash** (既存シーンのハッシュ不変)。

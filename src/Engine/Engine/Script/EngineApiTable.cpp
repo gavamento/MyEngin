@@ -192,8 +192,9 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
         return 1;
     };
     out.AddTorque = [](void* engine, MyeEntityId id, MyeVec3 torque) -> int {
-        (void)engine; (void)id; (void)torque;
-        return 0; // v4 予約スロット — M28b (回転剛体) で実装
+        // ω += I⁻¹·τ·dt を即時適用 (M28b)。AddForce と同じ「毎 tick 呼べば連続トルク」方式
+        constexpr float kFixedDt = 1.0f / 60.0f;
+        return ApplyTorqueWorld(Sc(engine)->GetWorld(), ToEngine(id), torque, kFixedDt);
     };
     out.GetVelocity = [](void* engine, MyeEntityId id, MyeVec3* o) -> int {
         auto* rb = Sc(engine)->GetWorld().GetComponent<RigidbodyComponent>(ToEngine(id));
