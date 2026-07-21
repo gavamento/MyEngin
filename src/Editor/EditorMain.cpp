@@ -7,6 +7,7 @@
 #include <shellapi.h>
 
 #include "Editor/EditorApp.h"
+#include "Editor/ProjectManager.h"
 #include "Editor/ProjectRegistry.h"
 #include "Editor/ProjectTemplates.h"
 #include "Editor/UndoSelfTest.h"
@@ -64,6 +65,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     std::wstring projectDir;              // --project <dir> (M26)
     std::wstring createProjectDir;        // --create-project <dir> (ヘッドレス生成)
     std::wstring templateName = L"empty"; // --template <empty|demo>
+    int managerFrames = 0;                // --manager-frames N (Hub を N フレームで自動終了、CI 用)
+    std::wstring managerShot;             // --manager-shot <path> (Hub のスクリーンショット)
 
     int argc = 0;
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
@@ -134,6 +137,10 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 createProjectDir = argv[++i];
             } else if (arg == L"--template" && i + 1 < argc) {
                 templateName = argv[++i];
+            } else if (arg == L"--manager-frames" && i + 1 < argc) {
+                managerFrames = _wtoi(argv[++i]);
+            } else if (arg == L"--manager-shot" && i + 1 < argc) {
+                managerShot = argv[++i];
             }
         }
         LocalFree(argv);
@@ -160,6 +167,21 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             && mye::RunAssetDatabaseSelfTest() && mye::RunTextureCookSelfTest()
             && mye::RunJobSystemSelfTest();
         return ok ? 0 : 1;
+    }
+
+    // 裸起動 (プロジェクト未指定 + 自動化フラグなし) はプロジェクトマネージャへ (M26b)。
+    // 既存の CI/検証コマンド列 (--frames / --screenshot / --scene / --replay-* 等) は
+    // 従来のレガシー動作 (リポジトリ assets) を維持する
+    const bool automation = config.maxFrames > 0 || !config.screenshotPath.empty()
+                            || !config.replayRecordPath.empty() || !config.replayVerifyPath.empty()
+                            || !sceneOverride.empty() || autoPlay || saveSceneOnStart
+                            || pickTestFrame >= 0 || !selectName.empty() || perfRate > 0.0f;
+    if (managerFrames > 0 || (projectDir.empty() && !automation)) {
+        const mye::ProjectManagerOutcome outcome = mye::RunProjectManager(managerFrames, managerShot);
+        if (outcome.action == mye::ProjectManagerAction::OpenProject) {
+            mye::RelaunchSelfWithProject(outcome.projectRoot);
+        }
+        return 0;
     }
 
     // --project: プロジェクトを検証して注入 (M26)。失敗はダイアログ + exit 1
