@@ -1,0 +1,83 @@
+#pragma once
+#include <cstdint>
+#include <string>
+#include <unordered_map>
+
+namespace mye {
+
+// アセットの種別 (.meta の "type" と AssetBrowser のアイコン/フィルタ用)。
+// append-only で拡張すること (.meta に文字列で保存するため実値は非依存だが、
+// 判定ロジックの一貫性のため既存値は維持する)。
+enum class AssetType : int32_t {
+    Unknown = 0,
+    Texture,    // .png .jpg .jpeg .tga .bmp .dds
+    Model,      // .glb .gltf .fbx .obj
+    Material,   // .mat.json
+    Prefab,     // .prefab.json
+    Anim,       // .anim.json
+    Controller, // .controller.json
+    Scene,      // .scene.json
+    Audio,      // .wav
+    Shader,     // .hlsl .hlsli
+    Script,     // .cs
+};
+
+// アセット 1 件のサイドカー情報 (<asset>.meta に JSON で保存)。
+struct AssetMeta {
+    uint64_t guid = 0;                 // 安定識別子。初期値 = HashStr(normpath) → 現行 AssetID と一致
+    AssetType type = AssetType::Unknown;
+    int32_t version = 1;               // .meta フォーマットのバージョン
+    std::wstring path;                 // 本体ファイルの実パス (.meta を除く)
+};
+
+// アセットDB (M23): assets\ を走査し、各アセットに .meta サイドカーを生成/読込して
+// GUID ⇄ パスの双方向解決を提供する。
+//
+// 決定論/互換性: GUID は「パスハッシュ継承」方式。新規アセットの初期 GUID =
+// HashStr(WideToUtf8(NormalizePathKey(path))) = 現行の AssetID (TextureLibrary::IdForFile 等) と
+// 完全一致するため、既存の .scene.json / .rep は無傷 (WorldHash 不変・ReplayFile bump 不要)。
+// リネーム時は .meta を本体と一緒に移動することで GUID が永続し、シーン参照が壊れない
+// (リネーム耐性)。
+class AssetDatabase {
+public:
+    // assetsRoot 以下を再帰走査し、各アセットの .meta を生成/読込してマップを再構築する。
+    // 再実行で追加/削除に追従する (冪等)。
+    void ScanAndSync(const std::wstring& assetsRoot);
+
+    // パス → GUID。.meta があればその GUID、なければ path-hash を返す。
+    // createIfMissing=true かつ .meta 不在なら .meta を書き出す。
+    uint64_t GuidForPath(const std::wstring& path, bool createIfMissing = true);
+
+    // GUID → 現在のパス (未知なら空文字列)。
+    std::wstring PathForGuid(uint64_t guid) const;
+
+    // パス → 種別 (未走査なら拡張子から即時判定)。
+    AssetType TypeForPath(const std::wstring& path) const;
+
+    // 拡張子/サフィックスから種別を判定 (静的)。
+    static AssetType ClassifyPath(const std::wstring& path);
+    static const char* TypeName(AssetType t);
+    static AssetType ParseTypeName(const std::string& s);
+
+    // パスが .meta サイドカーそのものか。
+    static bool IsMetaPath(const std::wstring& path);
+
+    size_t Count() const { return byGuid_.size(); }
+
+    // .meta 単体の読み書き (AssetOps / テストからも使う)。
+    static bool ReadMeta(const std::wstring& metaPath, AssetMeta& out);
+    static bool WriteMeta(const std::wstring& metaPath, const AssetMeta& m);
+
+    // <asset> に対応する .meta を生成/更新し、確定した GUID を返す (静的ヘルパ)。
+    // AssetOps の creator が新規アセット保存直後に呼ぶ。
+    static uint64_t EnsureMeta(const std::wstring& assetPath);
+
+private:
+    void SyncOne(const std::wstring& path);
+
+    std::unordered_map<uint64_t, std::wstring> byGuid_;      // guid → 現在パス
+    std::unordered_map<std::wstring, uint64_t> byPath_;      // normpath → guid
+    std::unordered_map<std::wstring, AssetType> typeByPath_; // normpath → 種別
+};
+
+} // namespace mye

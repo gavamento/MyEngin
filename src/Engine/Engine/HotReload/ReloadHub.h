@@ -37,6 +37,7 @@ private:
     Scene* scene_ = nullptr;
     PrefabLibrary* prefabs_ = nullptr;
     AnimationLibrary* anims_ = nullptr;
+    std::wstring assetsRoot_; // .mat.json のテクスチャ相対パス解決に使う (M17)
     std::wstring activeSceneNorm_;
     uint64_t reloadCount_ = 0;
 

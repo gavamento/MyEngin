@@ -191,7 +191,10 @@ void AnimationWindow::HandleRecord(EngineContext& ctx, AnimationClipAsset& clip,
 
 void AnimationWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStack& undo)
 {
-    if (!ImGui::Begin("Animation")) {
+    if (!open) {
+        return;
+    }
+    if (!ImGui::Begin("Animation", &open)) {
         ImGui::End();
         return;
     }

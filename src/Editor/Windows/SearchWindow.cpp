@@ -41,7 +41,10 @@ uint64_t FidOf(World& w, EntityID e)
 
 void SearchWindow::OnImGui(EngineContext& ctx, Selection& selection)
 {
-    if (!ImGui::Begin("Search")) {
+    if (!open) {
+        return;
+    }
+    if (!ImGui::Begin("Search", &open)) {
         ImGui::End();
         return;
     }

@@ -15,6 +15,7 @@ enum ComponentFlags : uint32_t {
     kComponentNoSerialize = 1u << 0, // シーン保存対象外 (WorldMatrix 等の派生値)
     kComponentScriptState = 1u << 1, // GameLogic.dll のスクリプト状態 (M4 で動的登録)
     kComponentHidden = 1u << 2,      // Inspector の Add Component 一覧に出さない
+    kComponentNoHash = 1u << 3,      // ワールドハッシュ対象外 (C# スクリプト状態 = 非決定論レーン)
 };
 
 struct ComponentDesc {

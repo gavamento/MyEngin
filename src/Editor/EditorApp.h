@@ -9,6 +9,7 @@
 #include "Editor/ShortcutHub.h"
 #include "Editor/Undo/UndoStack.h"
 #include "Editor/Windows/AnimationWindow.h"
+#include "Editor/Windows/AnimatorControllerWindow.h"
 #include "Editor/Windows/AssetBrowserWindow.h"
 #include "Editor/Windows/BuildSettingsWindow.h"
 #include "Editor/Windows/ConsoleWindow.h"
@@ -71,6 +72,7 @@ private:
     ProfilerWindow profiler_;
     AssetBrowserWindow assetBrowser_;
     AnimationWindow animation_;
+    AnimatorControllerWindow animatorController_;
     SearchWindow search_;
     ProjectSettingsWindow projectSettings_;
     BuildSettingsWindow buildSettings_;

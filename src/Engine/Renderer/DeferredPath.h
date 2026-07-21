@@ -18,24 +18,30 @@ public:
     bool Init(GraphicsDevice& device, ShaderManager& shaders) override;
     void Shutdown() override;
     void Render(GraphicsDevice& device, const RenderView& view, const RenderQueue& queue,
-                const DirectionalLightData& light, RenderResources& resources,
+                const SceneLightData& lights, RenderResources& resources,
                 ShaderManager& shaders) override;
 
 private:
-    RenderTexture gbAlbedo_; // a=1 でジオメトリ有りマーク
-    RenderTexture gbNormal_;
+    RenderTexture gbAlbedo_;   // a=1 でジオメトリ有りマーク
+    RenderTexture gbNormal_;   // ワールド法線 *0.5+0.5
+    RenderTexture gbPosition_; // ワールド座標 (Point/Spot ライティング用)
+    RenderTexture gbMaterial_; // r=metallic g=roughness (PBR、M17)
 
     Microsoft::WRL::ComPtr<ID3D11Buffer> perFrameCB_;
     Microsoft::WRL::ComPtr<ID3D11Buffer> perObjectCB_;
+    Microsoft::WRL::ComPtr<ID3D11Buffer> materialCB_; // PBR パラメータ
     Microsoft::WRL::ComPtr<ID3D11Buffer> lightCB_;
     Microsoft::WRL::ComPtr<ID3D11SamplerState> sampler_;
+    Microsoft::WRL::ComPtr<ID3D11SamplerState> shadowSampler_; // 比較サンプラ (PCF)
     Microsoft::WRL::ComPtr<ID3D11RasterizerState> rasterizer_;
     Microsoft::WRL::ComPtr<ID3D11DepthStencilState> depthOpaque_;
     Microsoft::WRL::ComPtr<ID3D11DepthStencilState> depthDisabled_;
     Microsoft::WRL::ComPtr<ID3D11DepthStencilState> depthTransparent_;
     Microsoft::WRL::ComPtr<ID3D11BlendState> blendOpaque_;
     Microsoft::WRL::ComPtr<ID3D11BlendState> blendAlpha_;
+    Microsoft::WRL::ComPtr<ID3D11Buffer> boneCB_; // ボーンパレット (b3、スキニング、M18)
     AssetID gbufferShader_ = {};
+    AssetID gbufferSkinnedShader_ = {}; // deferred_gbuffer_skinned (スキンメッシュ用に差替)
     AssetID lightShader_ = {};
 };
 

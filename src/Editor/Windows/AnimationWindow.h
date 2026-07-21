@@ -23,6 +23,7 @@ struct AnimationClipAsset;
 //   レコードモード (Transform 変更を現在 tick に自動キー化)。
 class AnimationWindow {
 public:
+    bool open = true; // 閉じる / 再表示 (タブ [x] と Window メニューに連動)
     void OnImGui(EngineContext& ctx, Selection& selection, UndoStack& undo);
 
 private:

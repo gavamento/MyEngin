@@ -3,10 +3,12 @@
 #include <algorithm>
 #include <cmath>
 
+#include "Editor/AssetOps.h"
 #include "Editor/EditorSettings.h"
 #include "Editor/Selection.h"
 #include "Editor/Undo/UndoStack.h"
 #include "Engine/Core/Components.h"
+#include "Engine/Platform/PathUtil.h"
 #include "Engine/Core/World.h"
 #include "Engine/Engine/GameObject.h"
 #include "Engine/Engine/RenderSystem.h"
@@ -405,8 +407,11 @@ void SceneViewWindow::HandleCamera(EngineContext& ctx, Selection& selection)
 void SceneViewWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStack& undo,
                               EditorSettings& settings)
 {
+    if (!open) {
+        return;
+    }
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
-    const bool visible = ImGui::Begin("Scene");
+    const bool visible = ImGui::Begin("Scene", &open);
     ImGui::PopStyleVar();
     if (!visible) {
         ImGui::End();
@@ -420,6 +425,16 @@ void SceneViewWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
     const ImVec2 imgPos = ImGui::GetCursorScreenPos();
     if (rt_.IsValid()) {
         ImGui::Image(reinterpret_cast<ImTextureID>(rt_.SRV()), avail);
+        // AssetBrowser からのドロップ: カーソル下の地面 (y=0) に配置
+        if (ImGui::BeginDragDropTarget()) {
+            if (const ImGuiPayload* pa = ImGui::AcceptDragDropPayload(kAssetDragPayload)) {
+                XMFLOAT3 gp = { 0, 0, 0 };
+                const XMFLOAT3* pp = GroundPointUnderCursor(imgPos, avail, gp) ? &gp : nullptr;
+                InstantiateAssetAtPath(ctx, selection, undo,
+                                       Utf8ToWide(static_cast<const char*>(pa->Data)), pp, 0);
+            }
+            ImGui::EndDragDropTarget();
+        }
     }
 
     // ギズモ (ImGui 描画レイヤ — シーン RT/backbuffer には焼き込まれない)
@@ -461,6 +476,36 @@ void SceneViewWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
 
     DrawToolbar();
     ImGui::End();
+}
+
+bool SceneViewWindow::GroundPointUnderCursor(const ImVec2& imgPos, const ImVec2& size,
+                                             XMFLOAT3& out) const
+{
+    if (size.x <= 0.0f || size.y <= 0.0f) {
+        return false;
+    }
+    const ImGuiIO& io = ImGui::GetIO();
+    const float ndcX = ((io.MousePos.x - imgPos.x) / size.x) * 2.0f - 1.0f;
+    const float ndcY = 1.0f - ((io.MousePos.y - imgPos.y) / size.y) * 2.0f;
+    const XMMATRIX viewProj =
+        XMMatrixMultiply(XMLoadFloat4x4(&lastView_), XMLoadFloat4x4(&lastProj_));
+    XMVECTOR det;
+    const XMMATRIX inv = XMMatrixInverse(&det, viewProj);
+    if (XMVectorGetX(det) == 0.0f) {
+        return false;
+    }
+    // クリップ空間の near/far をワールドへ逆射影しレイを作る (DX: NDC z は [0,1])
+    const XMVECTOR nearP = XMVector3TransformCoord(XMVectorSet(ndcX, ndcY, 0.0f, 1.0f), inv);
+    const XMVECTOR farP = XMVector3TransformCoord(XMVectorSet(ndcX, ndcY, 1.0f, 1.0f), inv);
+    const XMVECTOR dir = XMVectorSubtract(farP, nearP);
+    const float dy = XMVectorGetY(dir);
+    if (std::fabs(dy) < 1e-6f) {
+        return false; // 視線が地面と平行
+    }
+    const float t = -XMVectorGetY(nearP) / dy;
+    const XMVECTOR hit = XMVectorAdd(nearP, XMVectorScale(dir, (t < 0.0f) ? 0.0f : t));
+    XMStoreFloat3(&out, hit);
+    return true;
 }
 
 bool SceneViewWindow::PickAtCenter(EngineContext& ctx, Selection& selection)

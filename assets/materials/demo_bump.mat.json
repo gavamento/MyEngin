@@ -1,0 +1,12 @@
+{
+  "engine": "MyEngine",
+  "material": 1,
+  "name": "demo_bump",
+  "shader": "forward_lit",
+  "baseColor": [0.42, 0.44, 0.48, 1.0],
+  "metallic": 0.0,
+  "roughness": 0.5,
+  "texture": "",
+  "normalMap": "textures/demo_normal.png",
+  "transparent": false
+}

@@ -7,17 +7,26 @@
     <Filter Include="Engine">
       <UniqueIdentifier>{582F5D06-2930-51DE-CAD8-59B10249443A}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Engine\Audio">
+      <UniqueIdentifier>{5725AD66-3920-E794-128E-9D8078930437}</UniqueIdentifier>
+    </Filter>
     <Filter Include="Engine\HotReload">
       <UniqueIdentifier>{45E1E3BD-577C-EB21-9437-FCBCEC610D8C}</UniqueIdentifier>
     </Filter>
     <Filter Include="Engine\Particles">
       <UniqueIdentifier>{DCDC7B06-EF20-69BD-0BF7-3CA3702AC5ED}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Engine\Physics">
+      <UniqueIdentifier>{B8A7D7DC-13E1-39DC-133A-8490218AA135}</UniqueIdentifier>
+    </Filter>
     <Filter Include="Engine\Replay">
       <UniqueIdentifier>{DBAE9292-5C25-5143-7BD0-30A497BF8AF2}</UniqueIdentifier>
     </Filter>
     <Filter Include="Engine\Script">
       <UniqueIdentifier>{01586F12-A871-BEFB-7266-0B4C59DCE30B}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Engine\UI">
+      <UniqueIdentifier>{AD97C4EA-898A-15C7-7B0A-F4DF0AA75D30}</UniqueIdentifier>
     </Filter>
     <Filter Include="external">
       <UniqueIdentifier>{544A71AA-5435-4B20-7017-ADEF0FEA3ABF}</UniqueIdentifier>
@@ -57,6 +66,12 @@
     <ClCompile Include="..\src\Engine\Core\FileWatcher.cpp">
       <Filter>Core</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Core\JobSystem.cpp">
+      <Filter>Core</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Core\JobSystemSelfTest.cpp">
+      <Filter>Core</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Core\JsonUtil.cpp">
       <Filter>Core</Filter>
     </ClCompile>
@@ -75,6 +90,21 @@
     <ClCompile Include="..\src\Engine\Engine\Animation.cpp">
       <Filter>Engine</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\AnimatorController.cpp">
+      <Filter>Engine</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\AnimatorControllerSelfTest.cpp">
+      <Filter>Engine</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\AssetDatabase.cpp">
+      <Filter>Engine</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\AssetDatabaseSelfTest.cpp">
+      <Filter>Engine</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Audio\AudioSystem.cpp">
+      <Filter>Engine\Audio</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\CgltfImpl.cpp">
       <Filter>Engine</Filter>
     </ClCompile>
@@ -85,6 +115,9 @@
       <Filter>Engine</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\EngineLoop.cpp">
+      <Filter>Engine</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\FbxLoader.cpp">
       <Filter>Engine</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\HotReload\DllReloader.cpp">
@@ -104,6 +137,12 @@
     </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Particles\ParticleSystem.cpp">
       <Filter>Engine\Particles</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Physics\PhysicsSystem.cpp">
+      <Filter>Engine\Physics</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\PhysicsSelfTest.cpp">
+      <Filter>Engine</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Prefab.cpp">
       <Filter>Engine</Filter>
@@ -126,11 +165,29 @@
     <ClCompile Include="..\src\Engine\Engine\SceneSerializer.cpp">
       <Filter>Engine</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Script\EngineApiTable.cpp">
+      <Filter>Engine\Script</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Script\ManagedHost.cpp">
+      <Filter>Engine\Script</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Script\ScriptHost.cpp">
       <Filter>Engine\Script</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\SkinningSystem.cpp">
+      <Filter>Engine</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\TransformSystem.cpp">
       <Filter>Engine</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\UfbxImpl.cpp">
+      <Filter>Engine</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\UI\UIRenderer.cpp">
+      <Filter>Engine\UI</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\UI\UISelfTest.cpp">
+      <Filter>Engine\UI</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Platform\Clock.cpp">
       <Filter>Platform</Filter>
@@ -171,7 +228,13 @@
     <ClCompile Include="..\src\Engine\Renderer\PickingPass.cpp">
       <Filter>Renderer</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Renderer\PostProcess.cpp">
+      <Filter>Renderer</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Renderer\RenderQueue.cpp">
+      <Filter>Renderer</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Renderer\RenderSelfTest.cpp">
       <Filter>Renderer</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Renderer\RenderTexture.cpp">
@@ -180,10 +243,22 @@
     <ClCompile Include="..\src\Engine\Renderer\ShaderManager.cpp">
       <Filter>Renderer</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Renderer\ShadowPass.cpp">
+      <Filter>Renderer</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Renderer\Skeleton.cpp">
+      <Filter>Renderer</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Renderer\StbImpl.cpp">
       <Filter>Renderer</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Renderer\SwapChain.cpp">
+      <Filter>Renderer</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Renderer\TextureCook.cpp">
+      <Filter>Renderer</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Renderer\TextureCookSelfTest.cpp">
       <Filter>Renderer</Filter>
     </ClCompile>
     <ClInclude Include="..\src\Engine\Core\Archetype.h">
@@ -210,6 +285,12 @@
     <ClInclude Include="..\src\Engine\Core\Hash.h">
       <Filter>Core</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Core\JobSystem.h">
+      <Filter>Core</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Core\JobSystemSelfTest.h">
+      <Filter>Core</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Core\JsonUtil.h">
       <Filter>Core</Filter>
     </ClInclude>
@@ -231,6 +312,21 @@
     <ClInclude Include="..\src\Engine\Engine\Animation.h">
       <Filter>Engine</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\AnimatorController.h">
+      <Filter>Engine</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\AnimatorControllerSelfTest.h">
+      <Filter>Engine</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\AssetDatabase.h">
+      <Filter>Engine</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\AssetDatabaseSelfTest.h">
+      <Filter>Engine</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Audio\AudioSystem.h">
+      <Filter>Engine\Audio</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\CollisionSystem.h">
       <Filter>Engine</Filter>
     </ClInclude>
@@ -238,6 +334,9 @@
       <Filter>Engine</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\EngineLoop.h">
+      <Filter>Engine</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\FbxLoader.h">
       <Filter>Engine</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\GameObject.h">
@@ -264,6 +363,12 @@
     <ClInclude Include="..\src\Engine\Engine\Particles\ParticleSystem.h">
       <Filter>Engine\Particles</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Physics\PhysicsSystem.h">
+      <Filter>Engine\Physics</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\PhysicsSelfTest.h">
+      <Filter>Engine</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Prefab.h">
       <Filter>Engine</Filter>
     </ClInclude>
@@ -285,11 +390,26 @@
     <ClInclude Include="..\src\Engine\Engine\SceneSerializer.h">
       <Filter>Engine</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Script\EngineApiTable.h">
+      <Filter>Engine\Script</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Script\ManagedHost.h">
+      <Filter>Engine\Script</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Script\ScriptHost.h">
       <Filter>Engine\Script</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\SkinningSystem.h">
+      <Filter>Engine</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\TransformSystem.h">
       <Filter>Engine</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\UI\UIRenderer.h">
+      <Filter>Engine\UI</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\UI\UISelfTest.h">
+      <Filter>Engine\UI</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Platform\Clock.h">
       <Filter>Platform</Filter>
@@ -312,6 +432,9 @@
     <ClInclude Include="..\src\Engine\Renderer\ForwardPath.h">
       <Filter>Renderer</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\FrustumCull.h">
+      <Filter>Renderer</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\GpuResources.h">
       <Filter>Renderer</Filter>
     </ClInclude>
@@ -330,7 +453,13 @@
     <ClInclude Include="..\src\Engine\Renderer\PickingPass.h">
       <Filter>Renderer</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\PostProcess.h">
+      <Filter>Renderer</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\RenderPath.h">
+      <Filter>Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\RenderSelfTest.h">
       <Filter>Renderer</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\RenderTexture.h">
@@ -342,7 +471,19 @@
     <ClInclude Include="..\src\Engine\Renderer\ShaderManager.h">
       <Filter>Renderer</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\ShadowPass.h">
+      <Filter>Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\Skeleton.h">
+      <Filter>Renderer</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\SwapChain.h">
+      <Filter>Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\TextureCook.h">
+      <Filter>Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\TextureCookSelfTest.h">
       <Filter>Renderer</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Shared\EngineAPI.h">

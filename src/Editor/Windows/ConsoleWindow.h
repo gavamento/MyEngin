@@ -10,6 +10,7 @@ namespace mye {
 // M11: 検索 / Warn・Error カウント / 重複 Collapse / ダブルクリックで file:line ジャンプ
 class ConsoleWindow {
 public:
+    bool open = true; // 閉じる / 再表示 (タブ [x] と Window メニューに連動)
     // externalEditorCmd: "code -g {file}:{line}" 形式 (ソースジャンプに使う)
     void OnImGui(const std::string& externalEditorCmd);
 

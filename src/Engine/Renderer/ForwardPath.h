@@ -13,7 +13,7 @@ public:
     bool Init(GraphicsDevice& device, ShaderManager& shaders) override;
     void Shutdown() override;
     void Render(GraphicsDevice& device, const RenderView& view, const RenderQueue& queue,
-                const DirectionalLightData& light, RenderResources& resources,
+                const SceneLightData& lights, RenderResources& resources,
                 ShaderManager& shaders) override;
 
 private:
@@ -22,7 +22,11 @@ private:
 
     Microsoft::WRL::ComPtr<ID3D11Buffer> perFrameCB_;
     Microsoft::WRL::ComPtr<ID3D11Buffer> perObjectCB_;
+    Microsoft::WRL::ComPtr<ID3D11Buffer> materialCB_; // PBR パラメータ (metallic/roughness)
+    Microsoft::WRL::ComPtr<ID3D11Buffer> boneCB_;     // ボーンパレット (b3、スキニング、M18)
+    AssetID skinnedShader_ = {};                      // forward_skinned (スキンメッシュ用に差替)
     Microsoft::WRL::ComPtr<ID3D11SamplerState> sampler_;
+    Microsoft::WRL::ComPtr<ID3D11SamplerState> shadowSampler_; // 比較サンプラ (PCF)
     Microsoft::WRL::ComPtr<ID3D11RasterizerState> rasterizer_;
     Microsoft::WRL::ComPtr<ID3D11DepthStencilState> depthOpaque_;
     Microsoft::WRL::ComPtr<ID3D11DepthStencilState> depthTransparent_; // 書き込みなし

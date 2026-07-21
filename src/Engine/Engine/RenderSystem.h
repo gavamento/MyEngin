@@ -1,7 +1,12 @@
 #pragma once
 #include <d3d11.h>
 
+#include <deque>
+#include <vector>
+
+#include "Engine/Renderer/PostProcess.h"
 #include "Engine/Renderer/RenderTypes.h"
+#include "Engine/Renderer/ShadowPass.h"
 
 namespace mye {
 
@@ -43,8 +48,18 @@ public:
                 const CameraOverride* cameraOverride = nullptr,
                 ParticleSystem* particles = nullptr);
 
+    // ポストプロセス設定 (M16)。config / エディタから書き換え可能。全ビューポート共通。
+    PostProcess::Settings postFxSettings;
+    bool enablePostFx = true; // false で HDR 配管を丸ごとバイパス (従来の直描き)
+    bool enableShadows = true; // false で平行光シャドウを無効 (M17)
+
 private:
-    RenderQueue queue_; // フレーム毎に再利用 (アロケーション回避)
+    RenderQueue queue_;     // フレーム毎に再利用 (アロケーション回避)
+    PostProcess postFx_;    // HDR 中間 + トーンマップ (遅延 Init)
+    ShadowPass shadowPass_; // 平行光シャドウマップ (遅延 Init)
+    // スキンメッシュのボーンパレット (M18)。フレーム毎に再構築。deque = push_back で
+    // 既存要素の .data() ポインタが無効化されない (RenderItem.bones が参照する)
+    std::deque<std::vector<DirectX::XMFLOAT4X4>> skinPalettes_;
 };
 
 } // namespace mye

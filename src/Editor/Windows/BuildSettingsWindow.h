@@ -20,6 +20,7 @@ private:
     char outputDir_[512] = {};
     std::string bootScene_ = "main.scene.json";
     bool init_ = false;
+    bool bundleDotnet_ = true; // .NET ランタイムを同梱して自己完結配布にする
     std::string status_;
 };
 

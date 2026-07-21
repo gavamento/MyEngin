@@ -11,17 +11,21 @@ using namespace DirectX;
 namespace mye {
 namespace {
 
+// ボーンパレット最大数 (deferred_gbuffer_skinned.hlsl / forward_skinned.hlsl の MYE_MAX_BONES と一致)
+constexpr int kMaxBones = 64;
+
 // ForwardPath と同一レイアウト (forward_lit.hlsl を透明後段でそのまま使うため)
 struct PerFrameCB {
     XMFLOAT4X4 viewProj;
     XMFLOAT3 cameraPos;
-    float pad0;
-    XMFLOAT3 lightDir;
-    float pad1;
-    XMFLOAT3 lightColor;
-    float lightIntensity;
+    int32_t lightCount;
     XMFLOAT3 ambient;
-    float pad2;
+    float pad0;
+    GpuLight lights[kMaxLights];
+    XMFLOAT4X4 shadowVP;
+    float shadowTexel;
+    int32_t shadowEnabled;
+    float pad1[2];
 };
 
 struct PerObjectCB {
@@ -29,14 +33,26 @@ struct PerObjectCB {
     XMFLOAT4 baseColor;
 };
 
-struct LightPassCB {
-    XMFLOAT3 lightDir;
+// deferred_gbuffer.hlsl / forward_lit.hlsl の MaterialParams (b2) と一致 (16 バイト)
+struct MaterialCB {
+    float metallic;
+    float roughness;
+    int32_t hasNormal; // 0=ノーマルマップ無し
     float pad0;
-    XMFLOAT3 lightColor;
-    float lightIntensity;
+};
+
+// deferred_light.hlsl の LightPass と同一レイアウト
+struct LightPassCB {
     XMFLOAT3 ambient;
-    float pad1;
+    int32_t lightCount;
     XMFLOAT4 clearColor;
+    GpuLight lights[kMaxLights];
+    XMFLOAT4X4 shadowVP;
+    float shadowTexel;
+    int32_t shadowEnabled;
+    float pad1[2];
+    XMFLOAT3 cameraPos;
+    float pad2;
 };
 
 bool CreateCB(ID3D11Device* dev, UINT size, Microsoft::WRL::ComPtr<ID3D11Buffer>& out)
@@ -67,10 +83,14 @@ bool DeferredPath::Init(GraphicsDevice& device, ShaderManager& shaders)
 
     gbufferShader_ = shaders.Load("deferred_gbuffer");
     lightShader_ = shaders.Load("deferred_light");
+    // スキンメッシュ用の GBuffer シェーダをプリロード (BLENDINDICES 入力レイアウトもここで構築)
+    gbufferSkinnedShader_ = shaders.Load("deferred_gbuffer_skinned");
 
     if (!CreateCB(dev, sizeof(PerFrameCB), perFrameCB_)
         || !CreateCB(dev, sizeof(PerObjectCB), perObjectCB_)
-        || !CreateCB(dev, sizeof(LightPassCB), lightCB_)) {
+        || !CreateCB(dev, sizeof(MaterialCB), materialCB_)
+        || !CreateCB(dev, sizeof(LightPassCB), lightCB_)
+        || !CreateCB(dev, sizeof(XMFLOAT4X4) * kMaxBones, boneCB_)) {
         return false;
     }
 
@@ -81,6 +101,16 @@ bool DeferredPath::Init(GraphicsDevice& device, ShaderManager& shaders)
     sd.ComparisonFunc = D3D11_COMPARISON_NEVER;
     sd.MaxLOD = D3D11_FLOAT32_MAX;
     if (FAILED(dev->CreateSamplerState(&sd, sampler_.GetAddressOf()))) {
+        return false;
+    }
+
+    // シャドウ PCF 用の比較サンプラ (M17)
+    D3D11_SAMPLER_DESC cs = {};
+    cs.Filter = D3D11_FILTER_COMPARISON_MIN_MAG_LINEAR_MIP_POINT;
+    cs.AddressU = cs.AddressV = cs.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+    cs.ComparisonFunc = D3D11_COMPARISON_LESS_EQUAL;
+    cs.MaxLOD = D3D11_FLOAT32_MAX;
+    if (FAILED(dev->CreateSamplerState(&cs, shadowSampler_.GetAddressOf()))) {
         return false;
     }
 
@@ -131,8 +161,11 @@ void DeferredPath::Shutdown()
 {
     gbAlbedo_.Release();
     gbNormal_.Release();
+    gbPosition_.Release();
+    gbMaterial_.Release();
     perFrameCB_.Reset();
     perObjectCB_.Reset();
+    materialCB_.Reset();
     lightCB_.Reset();
     sampler_.Reset();
     rasterizer_.Reset();
@@ -144,7 +177,7 @@ void DeferredPath::Shutdown()
 }
 
 void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const RenderQueue& queue,
-                          const DirectionalLightData& light, RenderResources& resources,
+                          const SceneLightData& lights, RenderResources& resources,
                           ShaderManager& shaders)
 {
     ShaderProgram* gbProg = shaders.Get(gbufferShader_);
@@ -152,12 +185,16 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
     if (!gbProg || !gbProg->valid || !lightProg || !lightProg->valid) {
         return;
     }
+    ShaderProgram* gbSkinnedProg = shaders.Get(gbufferSkinnedShader_); // スキンメッシュ用 (M18)
     ID3D11DeviceContext* dc = device.Context();
 
     // GBuffer をビューサイズに追従 (パス所有 RT のみ再生成 — spec 7.4 と同じ精神)
     gbAlbedo_.Resize(device, view.width, view.height, DXGI_FORMAT_R8G8B8A8_UNORM, false);
     gbNormal_.Resize(device, view.width, view.height, DXGI_FORMAT_R10G10B10A2_UNORM, false);
-    if (!gbAlbedo_.IsValid() || !gbNormal_.IsValid()) {
+    gbPosition_.Resize(device, view.width, view.height, DXGI_FORMAT_R16G16B16A16_FLOAT, false);
+    gbMaterial_.Resize(device, view.width, view.height, DXGI_FORMAT_R8G8B8A8_UNORM, false);
+    if (!gbAlbedo_.IsValid() || !gbNormal_.IsValid() || !gbPosition_.IsValid()
+        || !gbMaterial_.IsValid()) {
         return;
     }
 
@@ -167,12 +204,15 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
     vp.MaxDepth = 1.0f;
 
     // ---- 1) ジオメトリパス ----
-    ID3D11RenderTargetView* gbufs[2] = { gbAlbedo_.RTV(), gbNormal_.RTV() };
-    dc->OMSetRenderTargets(2, gbufs, view.dsv);
+    ID3D11RenderTargetView* gbufs[4] = { gbAlbedo_.RTV(), gbNormal_.RTV(), gbPosition_.RTV(),
+                                         gbMaterial_.RTV() };
+    dc->OMSetRenderTargets(4, gbufs, view.dsv);
     dc->RSSetViewports(1, &vp);
     const float zero[4] = { 0, 0, 0, 0 };
     dc->ClearRenderTargetView(gbAlbedo_.RTV(), zero);
     dc->ClearRenderTargetView(gbNormal_.RTV(), zero);
+    dc->ClearRenderTargetView(gbPosition_.RTV(), zero);
+    dc->ClearRenderTargetView(gbMaterial_.RTV(), zero);
     if (view.dsv) {
         dc->ClearDepthStencilView(view.dsv, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
     }
@@ -182,17 +222,21 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
     const XMMATRIX p = XMLoadFloat4x4(&view.proj);
     XMStoreFloat4x4(&pf.viewProj, XMMatrixTranspose(XMMatrixMultiply(v, p)));
     pf.cameraPos = view.cameraPos;
-    pf.lightDir = light.dir;
-    pf.lightColor = light.color;
-    pf.lightIntensity = light.intensity;
-    pf.ambient = light.ambient;
+    pf.lightCount = lights.count;
+    pf.ambient = lights.ambient;
+    memcpy(pf.lights, lights.lights, sizeof(pf.lights));
+    pf.shadowVP = view.lightViewProj; // 透明後段の forward_lit 用
+    pf.shadowTexel = view.shadowTexelSize;
+    pf.shadowEnabled = (view.shadowSRV != nullptr) ? 1 : 0;
     UploadCB(dc, perFrameCB_.Get(), pf);
 
     ID3D11Buffer* cbs[2] = { perFrameCB_.Get(), perObjectCB_.Get() };
     dc->VSSetConstantBuffers(0, 2, cbs);
     dc->PSSetConstantBuffers(0, 2, cbs);
-    ID3D11SamplerState* samplers[1] = { sampler_.Get() };
-    dc->PSSetSamplers(0, 1, samplers);
+    ID3D11Buffer* matCbs[1] = { materialCB_.Get() };
+    dc->PSSetConstantBuffers(2, 1, matCbs);
+    ID3D11SamplerState* samplers[2] = { sampler_.Get(), shadowSampler_.Get() };
+    dc->PSSetSamplers(0, 2, samplers);
     dc->RSSetState(rasterizer_.Get());
     dc->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     dc->OMSetDepthStencilState(depthOpaque_.Get(), 0);
@@ -204,11 +248,34 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
 
     uint64_t boundMesh = 0;
     uint64_t boundTexture = 0;
+    uint64_t boundNormal = 0;
+    uint64_t boundGbShader = gbufferShader_.value; // 上で gbProg を bind 済み
     for (const RenderItem& item : queue.opaque) {
         Material* mat = resources.materials.Get(item.material);
         Mesh* mesh = resources.meshes.Get(item.mesh);
         if (!mat || !mesh) {
             continue;
+        }
+        // スキンメッシュは GBuffer シェーダをスキニング版に差し替え + ボーン CB を b3 に (M18)
+        const bool skinned =
+            (item.bones != nullptr && item.boneCount > 0 && gbSkinnedProg && gbSkinnedProg->valid);
+        const AssetID gbShaderId = skinned ? gbufferSkinnedShader_ : gbufferShader_;
+        if (gbShaderId.value != boundGbShader) {
+            ShaderProgram* gp = skinned ? gbSkinnedProg : gbProg;
+            dc->IASetInputLayout(gp->inputLayout.Get());
+            dc->VSSetShader(gp->vs.Get(), nullptr, 0);
+            dc->PSSetShader(gp->ps.Get(), nullptr, 0);
+            boundGbShader = gbShaderId.value;
+        }
+        if (skinned) {
+            D3D11_MAPPED_SUBRESOURCE bm = {};
+            if (SUCCEEDED(dc->Map(boneCB_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &bm))) {
+                memcpy(bm.pData, item.bones,
+                       sizeof(XMFLOAT4X4) * static_cast<size_t>(item.boneCount));
+                dc->Unmap(boneCB_.Get(), 0);
+            }
+            ID3D11Buffer* bcb = boneCB_.Get();
+            dc->VSSetConstantBuffers(3, 1, &bcb);
         }
         const AssetID texId = mat->texture.IsNull() ? resources.textures.White() : mat->texture;
         if (texId.value != boundTexture) {
@@ -216,6 +283,14 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
             ID3D11ShaderResourceView* srv = tex ? tex->srv.Get() : nullptr;
             dc->PSSetShaderResources(0, 1, &srv);
             boundTexture = texId.value;
+        }
+        // GBuffer パスはノーマルマップを t1 に (無ければ White。gHasNormal で使用可否を判定)
+        const AssetID nrmId = mat->normalTex.IsNull() ? resources.textures.White() : mat->normalTex;
+        if (nrmId.value != boundNormal) {
+            Texture* ntex = resources.textures.Get(nrmId);
+            ID3D11ShaderResourceView* nsrv = ntex ? ntex->srv.Get() : nullptr;
+            dc->PSSetShaderResources(1, 1, &nsrv);
+            boundNormal = nrmId.value;
         }
         if (item.mesh.value != boundMesh) {
             const UINT stride = sizeof(MeshVertex);
@@ -229,6 +304,11 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
         XMStoreFloat4x4(&po.world, XMMatrixTranspose(XMLoadFloat4x4(&item.world)));
         po.baseColor = mat->baseColor;
         UploadCB(dc, perObjectCB_.Get(), po);
+        MaterialCB mc = {};
+        mc.metallic = mat->metallic;
+        mc.roughness = mat->roughness;
+        mc.hasNormal = mat->normalTex.IsNull() ? 0 : 1;
+        UploadCB(dc, materialCB_.Get(), mc);
         dc->DrawIndexed(mesh->indexCount, 0, 0);
         prof::AddDraw(static_cast<int>(mesh->indexCount / 3));
     }
@@ -237,37 +317,47 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
     dc->OMSetRenderTargets(1, &view.rtv, nullptr); // GBuffer を SRV で読むため depth も外す
     dc->RSSetViewports(1, &vp);
     LightPassCB lp = {};
-    lp.lightDir = light.dir;
-    lp.lightColor = light.color;
-    lp.lightIntensity = light.intensity;
-    lp.ambient = light.ambient;
+    lp.ambient = lights.ambient;
+    lp.lightCount = lights.count;
     lp.clearColor = { view.clearColor[0], view.clearColor[1], view.clearColor[2],
                       view.clearColor[3] };
+    memcpy(lp.lights, lights.lights, sizeof(lp.lights));
+    lp.shadowVP = view.lightViewProj;
+    lp.shadowTexel = view.shadowTexelSize;
+    lp.shadowEnabled = (view.shadowSRV != nullptr) ? 1 : 0;
+    lp.cameraPos = view.cameraPos;
     UploadCB(dc, lightCB_.Get(), lp);
     ID3D11Buffer* lightCbs[1] = { lightCB_.Get() };
     dc->PSSetConstantBuffers(0, 1, lightCbs);
     dc->VSSetConstantBuffers(0, 1, lightCbs);
-    ID3D11ShaderResourceView* gbSrvs[2] = { gbAlbedo_.SRV(), gbNormal_.SRV() };
-    dc->PSSetShaderResources(0, 2, gbSrvs);
+    // GBuffer t0-3 (albedo/normal/position/material) + シャドウマップ t4 (比較サンプラ s1 は bind 済み)
+    ID3D11ShaderResourceView* gbSrvs[5] = { gbAlbedo_.SRV(), gbNormal_.SRV(), gbPosition_.SRV(),
+                                            gbMaterial_.SRV(), view.shadowSRV };
+    dc->PSSetShaderResources(0, 5, gbSrvs);
     dc->IASetInputLayout(nullptr);
     dc->VSSetShader(lightProg->vs.Get(), nullptr, 0);
     dc->PSSetShader(lightProg->ps.Get(), nullptr, 0);
     dc->OMSetDepthStencilState(depthDisabled_.Get(), 0);
     dc->Draw(3, 0);
-    ID3D11ShaderResourceView* nullSrvs[2] = { nullptr, nullptr };
-    dc->PSSetShaderResources(0, 2, nullSrvs); // 次フレームで RT に戻すため解除
+    ID3D11ShaderResourceView* nullSrvs[5] = { nullptr, nullptr, nullptr, nullptr, nullptr };
+    dc->PSSetShaderResources(0, 5, nullSrvs); // 次フレームで RT に戻すため解除
 
     // ---- 3) 透明後段 (Forward — マテリアルのシェーダで上描き) ----
     if (!queue.transparent.empty()) {
         dc->OMSetRenderTargets(1, &view.rtv, view.dsv);
+        // forward_lit はシャドウマップを t1 で参照する (比較サンプラ s1 は bind 済み)
+        ID3D11ShaderResourceView* shadowSrv[1] = { view.shadowSRV };
+        dc->PSSetShaderResources(1, 1, shadowSrv);
         dc->VSSetConstantBuffers(0, 2, cbs);
         dc->PSSetConstantBuffers(0, 2, cbs);
+        dc->PSSetConstantBuffers(2, 1, matCbs); // forward_lit の MaterialParams
         dc->OMSetDepthStencilState(depthTransparent_.Get(), 0);
         dc->OMSetBlendState(blendAlpha_.Get(), nullptr, 0xFFFFFFFFu);
 
         uint64_t boundShader = 0;
         boundMesh = 0;
         boundTexture = 0;
+        boundNormal = 0;
         for (const RenderItem& item : queue.transparent) {
             Material* mat = resources.materials.Get(item.material);
             Mesh* mesh = resources.meshes.Get(item.mesh);
@@ -291,6 +381,15 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
                 dc->PSSetShaderResources(0, 1, &srv);
                 boundTexture = texId.value;
             }
+            // forward_lit はノーマルマップを t2 で参照する (無ければ White)
+            const AssetID nrmId =
+                mat->normalTex.IsNull() ? resources.textures.White() : mat->normalTex;
+            if (nrmId.value != boundNormal) {
+                Texture* ntex = resources.textures.Get(nrmId);
+                ID3D11ShaderResourceView* nsrv = ntex ? ntex->srv.Get() : nullptr;
+                dc->PSSetShaderResources(2, 1, &nsrv);
+                boundNormal = nrmId.value;
+            }
             if (item.mesh.value != boundMesh) {
                 const UINT stride = sizeof(MeshVertex);
                 const UINT offset = 0;
@@ -303,6 +402,11 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
             XMStoreFloat4x4(&po.world, XMMatrixTranspose(XMLoadFloat4x4(&item.world)));
             po.baseColor = mat->baseColor;
             UploadCB(dc, perObjectCB_.Get(), po);
+            MaterialCB mc = {};
+            mc.metallic = mat->metallic;
+            mc.roughness = mat->roughness;
+            mc.hasNormal = mat->normalTex.IsNull() ? 0 : 1;
+            UploadCB(dc, materialCB_.Get(), mc);
             dc->DrawIndexed(mesh->indexCount, 0, 0);
             prof::AddDraw(static_cast<int>(mesh->indexCount / 3));
         }

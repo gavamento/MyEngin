@@ -222,3 +222,30 @@ inline MyeGameObject MyeSelf(const MyeUpdateContext& ctx)
 {
     return { ctx.self, ctx.api };
 }
+
+// ---- ゲーム内 UI ヒットテスト (M21) ----
+// UI 描画はエンジン (UIElementComponent) が行うが、ボタン操作は **決定論のため
+// InputSnapshot のマウス経由** で判定する (ABI 追加なし = bump 不要)。verify では記録された
+// マウスで再現されるため replay 一致。rect は UIElementComponent と同じピクセル座標系 (左上原点)。
+// anchor=0(左上) の要素なら x/y/w/h をそのまま渡せる (他 anchor は画面サイズ依存)。
+struct MyeUIRect {
+    float x, y, w, h;
+};
+
+inline bool MyeMouseInRect(const MyeUpdateContext& ctx, MyeUIRect r)
+{
+    int32_t mx = 0, my = 0;
+    ctx.api->MousePos(ctx.api->engine, &mx, &my);
+    const float fx = static_cast<float>(mx), fy = static_cast<float>(my);
+    return fx >= r.x && fx < r.x + r.w && fy >= r.y && fy < r.y + r.h;
+}
+
+// 左ボタンを rect 内で押した瞬間に true。prevDown は呼び出し側スクリプトがフィールドで
+// 保持する (エッジ検出。登録フィールドなら DLL リロードを跨いで状態維持)。
+inline bool MyeButtonClicked(const MyeUpdateContext& ctx, MyeUIRect r, int32_t& prevDown)
+{
+    const int down = ctx.api->MouseButton(ctx.api->engine, 0);
+    const bool clicked = down && !prevDown && MyeMouseInRect(ctx, r);
+    prevDown = down;
+    return clicked;
+}

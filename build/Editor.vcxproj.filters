@@ -9,6 +9,8 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="..\src\Editor\AssetOps.cpp" />
+    <ClCompile Include="..\src\Editor\CreateMenu.cpp" />
     <ClCompile Include="..\src\Editor\EditorApp.cpp" />
     <ClCompile Include="..\src\Editor\EditorMain.cpp" />
     <ClCompile Include="..\src\Editor\EditorSettings.cpp" />
@@ -18,6 +20,9 @@
     </ClCompile>
     <ClCompile Include="..\src\Editor\UndoSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\Windows\AnimationWindow.cpp">
+      <Filter>Windows</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Windows\AnimatorControllerWindow.cpp">
       <Filter>Windows</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Editor\Windows\AssetBrowserWindow.cpp">
@@ -53,6 +58,8 @@
     <ClCompile Include="..\src\Editor\Windows\SearchWindow.cpp">
       <Filter>Windows</Filter>
     </ClCompile>
+    <ClInclude Include="..\src\Editor\AssetOps.h" />
+    <ClInclude Include="..\src\Editor\CreateMenu.h" />
     <ClInclude Include="..\src\Editor\EditorApp.h" />
     <ClInclude Include="..\src\Editor\EditorSettings.h" />
     <ClInclude Include="..\src\Editor\PlayModeController.h" />
@@ -63,6 +70,9 @@
     </ClInclude>
     <ClInclude Include="..\src\Editor\UndoSelfTest.h" />
     <ClInclude Include="..\src\Editor\Windows\AnimationWindow.h">
+      <Filter>Windows</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Windows\AnimatorControllerWindow.h">
       <Filter>Windows</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\Windows\AssetBrowserWindow.h">

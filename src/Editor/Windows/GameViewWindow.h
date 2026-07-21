@@ -7,6 +7,7 @@ namespace mye {
 // ゲームカメラ (シーン内の CameraComponent) 視点の表示 (engine_spec.md 9 章)
 class GameViewWindow {
 public:
+    bool open = true; // 閉じる / 再表示 (タブ [x] と Window メニューに連動)
     void OnRenderViews(EngineContext& ctx);
     void OnImGui(EngineContext& ctx);
 

@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- マネージドスクリプトホスト (CoreCLR に組み込まれる)。ネイティブの ManagedHost が
+       nethost/hostfxr でこの DLL をロードし、Roslyn で assets/scripts/*.cs をコンパイルする。
+       出力はネイティブ exe と同じ bin\x64\<Config>\ に置く (同一フォルダから解決するため)。 -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Platforms>x64</Platforms>
+    <PlatformTarget>x64</PlatformTarget>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AssemblyName>MyeScripting</AssemblyName>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <OutputPath>$(MSBuildThisFileDirectory)..\..\bin\x64\$(Configuration)\</OutputPath>
+    <!-- EnableDynamicLoading が CopyLocalLockFileAssemblies を有効化し、Roslyn 一式 +
+         MyeScripting.deps.json を出力先へ配置する。hostfxr は deps.json から依存を解決する。 -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- エンジン内 in-process コンパイル用。net8 ランタイム上で動作する既知安定版。 -->
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.8.0" />
+  </ItemGroup>
+
+</Project>

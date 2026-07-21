@@ -11,17 +11,12 @@
 #include "Engine/Core/World.h"
 #include "Engine/Engine/GameObject.h"
 #include "Engine/Engine/Scene.h"
+#include "Engine/Engine/Script/EngineApiTable.h"
 #include "Engine/Platform/PathUtil.h"
 
 namespace mye {
 namespace {
 
-// Shared 側 POD とエンジン型のバイナリ互換を保証 (DLL 境界の前提)
-static_assert(sizeof(MyeEntityId) == sizeof(EntityID));
-static_assert(offsetof(MyeEntityId, index) == offsetof(EntityID, index));
-static_assert(offsetof(MyeEntityId, generation) == offsetof(EntityID, generation));
-
-EntityID ToEngine(MyeEntityId id) { return { id.index, id.generation }; }
 MyeEntityId ToShared(EntityID id) { return { id.index, id.generation }; }
 
 FieldType ToFieldType(int32_t t)
@@ -47,117 +42,18 @@ uint64_t StartedKey(EntityID e)
     return (static_cast<uint64_t>(e.index) << 32) | e.generation;
 }
 
-ScriptHost* Host(void* engine) { return static_cast<ScriptHost*>(engine); }
-
 } // namespace
 
 // ---- C ABI テーブル構築 ----
-// engine ポインタは常に ScriptHost*。キャプチャなしラムダ → 関数ポインタ変換で
-// extern "C" スタイルのテーブルを埋める (メンバ関数内ラムダなので private に触れる)
+// engine ポインタは apiCtx_ (ScriptApiContext)。テーブル本体は EngineApiTable.cpp に
+// 共通実装があり、C# の ManagedHost と同一の Transform/Log/Input/Random を共有する
 void ScriptHost::BuildApiTable()
 {
-    api_ = {};
-    api_.version = MYE_API_VERSION;
-    api_.engine = this;
-
-    api_.Log = [](void* engine, int level, const char* msg) {
-        (void)engine;
-        logging::Write(static_cast<LogLevel>(level & 3), "[script] %s", msg);
-    };
-    api_.KeyDown = [](void* engine, uint8_t vk) -> int {
-        return Host(engine)->input_.KeyDown(vk) ? 1 : 0;
-    };
-    api_.MouseButton = [](void* engine, int button) -> int {
-        return Host(engine)->input_.MouseDown(button) ? 1 : 0;
-    };
-    api_.MousePos = [](void* engine, int32_t* x, int32_t* y) {
-        if (x) { *x = Host(engine)->input_.mouseX; }
-        if (y) { *y = Host(engine)->input_.mouseY; }
-    };
-    api_.CreateGameObject = [](void* engine, const char* name) -> MyeEntityId {
-        return ToShared(Host(engine)->scene_->GetWorld().CreateEntity(name ? name : "GameObject"));
-    };
-    api_.DestroyGameObject = [](void* engine, MyeEntityId id) {
-        Host(engine)->scene_->GetWorld().DestroyEntity(ToEngine(id));
-    };
-    api_.IsAlive = [](void* engine, MyeEntityId id) -> int {
-        return Host(engine)->scene_->GetWorld().IsAlive(ToEngine(id)) ? 1 : 0;
-    };
-    api_.FindByName = [](void* engine, const char* name) -> MyeEntityId {
-        return ToShared(Host(engine)->scene_->Find(name ? name : "").Id());
-    };
-    api_.SetParent = [](void* engine, MyeEntityId child, MyeEntityId parent) {
-        Host(engine)->scene_->GetWorld().SetParent(ToEngine(child), ToEngine(parent));
-    };
-    api_.GetLocalPosition = [](void* engine, MyeEntityId id, MyeVec3* out) -> int {
-        auto* t = Host(engine)->scene_->GetWorld().GetComponent<LocalTransform>(ToEngine(id));
-        if (!t || !out) { return 0; }
-        *out = { t->position.x, t->position.y, t->position.z };
-        return 1;
-    };
-    api_.SetLocalPosition = [](void* engine, MyeEntityId id, MyeVec3 v) -> int {
-        auto* t = Host(engine)->scene_->GetWorld().GetComponent<LocalTransform>(ToEngine(id));
-        if (!t) { return 0; }
-        t->position = { v.x, v.y, v.z };
-        return 1;
-    };
-    api_.GetLocalRotation = [](void* engine, MyeEntityId id, MyeQuat* out) -> int {
-        auto* t = Host(engine)->scene_->GetWorld().GetComponent<LocalTransform>(ToEngine(id));
-        if (!t || !out) { return 0; }
-        *out = { t->rotation.x, t->rotation.y, t->rotation.z, t->rotation.w };
-        return 1;
-    };
-    api_.SetLocalRotation = [](void* engine, MyeEntityId id, MyeQuat q) -> int {
-        auto* t = Host(engine)->scene_->GetWorld().GetComponent<LocalTransform>(ToEngine(id));
-        if (!t) { return 0; }
-        t->rotation = { q.x, q.y, q.z, q.w };
-        return 1;
-    };
-    api_.GetLocalScale = [](void* engine, MyeEntityId id, MyeVec3* out) -> int {
-        auto* t = Host(engine)->scene_->GetWorld().GetComponent<LocalTransform>(ToEngine(id));
-        if (!t || !out) { return 0; }
-        *out = { t->scale.x, t->scale.y, t->scale.z };
-        return 1;
-    };
-    api_.SetLocalScale = [](void* engine, MyeEntityId id, MyeVec3 v) -> int {
-        auto* t = Host(engine)->scene_->GetWorld().GetComponent<LocalTransform>(ToEngine(id));
-        if (!t) { return 0; }
-        t->scale = { v.x, v.y, v.z };
-        return 1;
-    };
-    api_.RandomFloat01 = [](void* engine) -> float {
-        return Host(engine)->scene_->GetWorld().Rng().NextFloat01();
-    };
-    api_.RandomRange = [](void* engine, float lo, float hi) -> float {
-        return Host(engine)->scene_->GetWorld().Rng().Range(lo, hi);
-    };
-    api_.AddComponentByName = [](void* engine, MyeEntityId id, const char* name) -> int {
-        if (!name) {
-            return 0;
-        }
-        const ComponentTypeId t = ComponentRegistry::Get().FindByName(name);
-        if (t == kInvalidComponentType) {
-            return 0;
-        }
-        return Host(engine)->scene_->GetWorld().AddComponentRaw(ToEngine(id), t) ? 1 : 0;
-    };
-    api_.SetMeshRenderer = [](void* engine, MyeEntityId id, const char* meshKey,
-                              const char* materialKey) -> int {
-        World& world = Host(engine)->scene_->GetWorld();
-        auto* mr = static_cast<MeshRendererComponent*>(
-            world.AddComponentRaw(ToEngine(id), MeshRendererComponent::sTypeId));
-        if (!mr) {
-            return 0;
-        }
-        // アセットキー名 → AssetID (ハッシュ)。実体解決は描画時にライブラリが行う
-        if (meshKey) {
-            mr->mesh = AssetID{ HashStr(meshKey) };
-        }
-        if (materialKey) {
-            mr->material = AssetID{ HashStr(materialKey) };
-        }
-        return 1;
-    };
+    apiCtx_.scene = scene_;
+    apiCtx_.input = input_;
+    apiCtx_.tickIndex = tickIndex_;
+    apiCtx_.dt = dt_;
+    BuildEngineApi(api_, &apiCtx_);
 }
 
 void ScriptHost::DispatchTrigger(EntityID self, EntityID other, bool enter)
@@ -325,6 +221,10 @@ void ScriptHost::SetTickContext(const InputSnapshot& input, uint64_t tickIndex, 
     input_ = input;
     tickIndex_ = tickIndex;
     dt_ = dt;
+    // api_ の engine が指す apiCtx_ も同期 (KeyDown 等が現 tick の入力を読むため)
+    apiCtx_.input = input;
+    apiCtx_.tickIndex = tickIndex;
+    apiCtx_.dt = dt;
 }
 
 void ScriptHost::RunPhase(Phase phase)

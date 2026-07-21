@@ -10,11 +10,11 @@ namespace mye {
 // リプレイファイル (.rep) — engine_spec.md 11.3。
 // 形式 (リトルエンディアン、バイナリ):
 //   MyeReplayHeader
-//   tick 毎: InputSnapshot (48B) + uint64 worldHash
+//   tick 毎: InputSnapshot (64B) + uint64 worldHash
 // InputSnapshot / WorldHasher のレイアウトが変わったら version を上げること
 struct MyeReplayHeader {
     uint32_t magic = 0x5045524Du; // 'MREP'
-    uint32_t version = 1;
+    uint32_t version = 3; // v3: InputSnapshot に gamepad 追加 (48B→64B、M19)
     float fixedDt = 1.0f / 60.0f;
     uint32_t inputSize = sizeof(InputSnapshot);
     uint64_t tickCount = 0;   // 終了時に確定

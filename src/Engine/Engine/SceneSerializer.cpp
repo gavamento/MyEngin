@@ -12,11 +12,17 @@
 #include "Engine/Core/Log.h"
 #include "Engine/Core/World.h"
 #include "Engine/Engine/Scene.h"
+#include "Engine/Engine/Script/ManagedHost.h"
 #include "Engine/Platform/PathUtil.h"
 
 namespace mye::SceneSerializer {
 
 using nlohmann::json;
+
+// C# コンポーネントのフィールド JSON 化フック (EngineLoop が設定)。
+ManagedHost* g_managedHost = nullptr;
+
+void SetManagedHost(ManagedHost* mh) { g_managedHost = mh; }
 
 namespace {
 
@@ -107,6 +113,13 @@ json WriteEntity(World& world, EntityID e, uint32_t childIndex)
             if (t == NameComponent::sTypeId) {
                 continue; // "name" として出力済み
             }
+            // C# スクリプトコンポーネント: フィールドは managed が保持 → hook で JSON 化
+            if (g_managedHost && g_managedHost->IsManagedComponent(t)) {
+                const std::string js = g_managedHost->SerializeComponent(t, e, world.GetComponentRaw(e, t));
+                json parsed = js.empty() ? json::object() : json::parse(js, nullptr, false);
+                comps[desc.name] = parsed.is_discarded() ? json::object() : std::move(parsed);
+                continue;
+            }
             json fields = json::object();
             const void* comp = world.GetComponentRaw(e, t);
             for (const FieldDesc& f : desc.fields) {
@@ -143,6 +156,11 @@ void ReadEntityComponents(World& world, EntityID e, const json& item,
         }
         void* comp = world.AddComponentRaw(e, t); // 既存ならそのポインタ
         if (!comp) {
+            continue;
+        }
+        // C# スクリプトコンポーネント: managed インスタンスにフィールドを復元
+        if (g_managedHost && g_managedHost->IsManagedComponent(t)) {
+            g_managedHost->DeserializeComponent(t, e, comp, fields.dump());
             continue;
         }
         const ComponentDesc& desc = reg.Desc(t);

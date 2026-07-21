@@ -19,7 +19,7 @@ public:
 
     // view.rtv/dsv へ描画する (クリア込み)。queue はソート済みであること
     virtual void Render(GraphicsDevice& device, const RenderView& view, const RenderQueue& queue,
-                        const DirectionalLightData& light, RenderResources& resources,
+                        const SceneLightData& lights, RenderResources& resources,
                         ShaderManager& shaders) = 0;
 };
 

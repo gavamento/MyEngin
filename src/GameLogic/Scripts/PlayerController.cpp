@@ -8,6 +8,7 @@ constexpr uint8_t kVkLeft = 0x25;
 constexpr uint8_t kVkUp = 0x26;
 constexpr uint8_t kVkRight = 0x27;
 constexpr uint8_t kVkDown = 0x28;
+constexpr uint8_t kVkL = 0x4C; // 'L' — シーン遷移デモ (M19)
 } // namespace
 
 struct PlayerController : Script<PlayerController> {
@@ -42,6 +43,12 @@ struct PlayerController : Script<PlayerController> {
         if (api->KeyDown(api->engine, kVkUp)) { dz += 1.0f; }
         if (api->KeyDown(api->engine, kVkDown)) { dz -= 1.0f; }
 
+        // gamepad 左スティックでも移動 (M19)。未接続時は 0 なので既存挙動は不変
+        MyeVec2 lstick = {}, rstick = {};
+        api->PadSticks(api->engine, &lstick, &rstick);
+        if (lstick.x > 0.3f) { dx += 1.0f; } else if (lstick.x < -0.3f) { dx -= 1.0f; }
+        if (lstick.y > 0.3f) { dz += 1.0f; } else if (lstick.y < -0.3f) { dz -= 1.0f; }
+
         if (dx != 0.0f || dz != 0.0f) {
             MyeGameObject self = MyeSelf(ctx);
             MyeVec3 pos = self.GetLocalPosition();
@@ -50,12 +57,20 @@ struct PlayerController : Script<PlayerController> {
             self.SetLocalPosition(pos);
         }
 
-        const int space = api->KeyDown(api->engine, kVkSpace);
-        if (space && !prevSpace) {
+        // ジャンプ = Space または gamepad A。押した瞬間に効果音を鳴らす (M19、非ハッシュ)
+        const int jumpBtn =
+            (api->KeyDown(api->engine, kVkSpace) || api->PadButton(api->engine, MYE_PAD_A)) ? 1 : 0;
+        if (jumpBtn && !prevSpace) {
             ++jumpCount;
             MyeLogf(ctx, "jump #%d", jumpCount);
+            api->PlaySound(api->engine, "beep", 0.8f);
         }
-        prevSpace = space;
+        prevSpace = jumpBtn;
+
+        // L キーでシーン遷移 (M19 デモ)。tick 末に遅延ロードされる。録画中は未押下なので hash 不変
+        if (api->KeyDown(api->engine, kVkL)) {
+            api->LoadScene(api->engine, "scenes/scene_b.scene.json");
+        }
     }
 };
 REGISTER_SCRIPT(PlayerController, FIELDS(moveSpeed, jumpCount, prevSpace, pickupCount));

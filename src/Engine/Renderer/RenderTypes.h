@@ -17,6 +17,10 @@ struct RenderItem {
     AssetID material = {};
     DirectX::XMFLOAT4X4 world = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
     float viewZ = 0.0f; // ソート用 (カメラ空間深度)。RenderQueue::Sort が使用
+    // スキニング (M18)。非 null = スキンメッシュ → パスがスキニングシェーダ + ボーン CB を使う。
+    // 指す先は RenderSystem のフレームアリーナ (transpose 済みボーン行列、描画完了まで有効)。
+    const DirectX::XMFLOAT4X4* bones = nullptr;
+    int32_t boneCount = 0;
 };
 
 struct RenderView {
@@ -28,15 +32,35 @@ struct RenderView {
     int width = 0;
     int height = 0;
     float clearColor[4] = { 0.08f, 0.09f, 0.11f, 1.0f };
+    // ---- シャドウ (M17)。RenderSystem がシャドウパス後に埋める。描画専用 ----
+    DirectX::XMFLOAT4X4 lightViewProj = {}; // transpose(lightView*lightProj)、CB へそのままアップロード
+    ID3D11ShaderResourceView* shadowSRV = nullptr; // シャドウ深度 (R32_FLOAT)。null で影無効
+    float shadowTexelSize = 0.0f;                  // 1/解像度 (PCF オフセット)
 };
 
-struct DirectionalLightData {
-    DirectX::XMFLOAT3 dir = { 0.3f, -0.8f, 0.5f }; // 正規化済み
-    float pad0 = 0.0f;
-    DirectX::XMFLOAT3 color = { 1.0f, 1.0f, 1.0f };
+// GPU へ渡すライト 1 個 (定数バッファ配列要素、16 バイト境界に揃えた 64 バイト)。
+// HLSL 側 common.hlsli の Light 構造体とレイアウト一致。
+struct GpuLight {
+    DirectX::XMFLOAT3 position = { 0, 0, 0 };    // Point/Spot: ワールド位置
+    float range = 15.0f;                         // Point/Spot: 減衰半径
+    DirectX::XMFLOAT3 direction = { 0, -1, 0 };  // 光の進行方向 (正規化、Dir/Spot)
     float intensity = 1.0f;
-    DirectX::XMFLOAT3 ambient = { 0.15f, 0.16f, 0.18f };
+    DirectX::XMFLOAT3 color = { 1, 1, 1 };
+    int32_t type = 0;      // 0=Directional 1=Point 2=Spot
+    float cosInner = 0.9f; // Spot: cos(内角)
+    float cosOuter = 0.8f; // Spot: cos(外角)
+    float pad0 = 0.0f;
     float pad1 = 0.0f;
+};
+static_assert(sizeof(GpuLight) == 64, "GpuLight must match HLSL 16-byte packing");
+
+constexpr int kMaxLights = 16;
+
+// シーンのライト一式 (アンビエント + ライト配列)。RenderSystem が構築し各パスへ渡す。
+struct SceneLightData {
+    DirectX::XMFLOAT3 ambient = { 0.15f, 0.16f, 0.18f };
+    int32_t count = 0;
+    GpuLight lights[kMaxLights] = {};
 };
 
 class RenderQueue {

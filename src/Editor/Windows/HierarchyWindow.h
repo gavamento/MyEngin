@@ -11,6 +11,7 @@ class UndoStack;
 // シーンツリー表示 / 選択 / 作成・削除 / ドラッグ&ドロップ再ペアレント (engine_spec.md 9 章)
 class HierarchyWindow {
 public:
+    bool open = true; // 閉じる / 再表示 (タブ [x] と Window メニューに連動)
     void OnImGui(EngineContext& ctx, Selection& selection, UndoStack& undo);
 
 private:

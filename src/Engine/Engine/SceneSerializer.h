@@ -9,6 +9,7 @@
 namespace mye {
 
 class Scene;
+class ManagedHost;
 
 // シーン JSON シリアライズ (engine_spec.md 8.3 / 10 章)。
 // - リフレクションフィールド表で全登録コンポーネントを自動処理
@@ -18,6 +19,11 @@ class Scene;
 // 注意: AssetRef はハッシュ値で保存される。ファイル由来アセットの
 // パス→ID 解決は M3 の AssetManager が担う
 namespace SceneSerializer {
+
+// C# スクリプトコンポーネントのフィールドは managed インスタンスが保持するため、
+// シーン保存/復元時にこの hook 経由で JSON 化/復元する。EngineLoop が起動時に設定する
+// (null のときは C# フィールドは既定値のまま = 存在のみ保存)。
+void SetManagedHost(ManagedHost* mh);
 
 nlohmann::json SaveToJson(Scene& scene);
 bool LoadFromJson(Scene& scene, const nlohmann::json& root); // 既存内容は破棄される

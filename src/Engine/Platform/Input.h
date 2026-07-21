@@ -14,11 +14,22 @@ struct InputSnapshot {
     int32_t wheelDelta;    // このフレームに累積した生値 (WHEEL_DELTA=120 単位)
     uint8_t mouseButtons;  // bit0:L bit1:R bit2:M bit3:X1 bit4:X2
     uint8_t pad[3];        // 明示パディング (未初期化バイト混入防止, spec 11.2-3)
+    // ---- gamepad (XInput、M19)。record/verify では記録値が live poll を上書きするので透過 ----
+    uint16_t padButtons;      // XINPUT_GAMEPAD_* ビットマスク (A/B/X/Y/DPad/LB/RB/Start/Back/...)
+    uint8_t  padLeftTrigger;  // 0..255
+    uint8_t  padRightTrigger; // 0..255
+    int16_t  padLX;           // 左スティック X (-32768..32767)
+    int16_t  padLY;           // 左スティック Y
+    int16_t  padRX;           // 右スティック X
+    int16_t  padRY;           // 右スティック Y
+    uint8_t  padConnected;    // 0=未接続 1=接続
+    uint8_t  pad2[3];         // 明示パディング
 
     bool KeyDown(uint8_t vk) const { return ((keys[vk >> 3] >> (vk & 7)) & 1) != 0; }
     bool MouseDown(int button) const { return ((mouseButtons >> button) & 1) != 0; }
+    bool PadButton(uint16_t mask) const { return (padButtons & mask) != 0; }
 };
-static_assert(sizeof(InputSnapshot) == 48, "InputSnapshot layout is part of the replay format");
+static_assert(sizeof(InputSnapshot) == 64, "InputSnapshot layout is part of the replay format");
 
 // Win32 メッセージを蓄積し、フレーム頭でスナップショットを確定する。
 class Input {

@@ -5,6 +5,8 @@
 #include <string>
 #include <vector>
 
+#include "Editor/AssetOps.h"
+#include "Editor/CreateMenu.h"
 #include "Editor/Undo/UndoStack.h"
 #include "Engine/Core/Components.h"
 #include "Engine/Core/Log.h"
@@ -27,15 +29,6 @@ uint64_t FidOf(World& world, EntityID e)
 {
     auto* f = world.GetComponent<FileIdComponent>(e);
     return f ? f->value : 0;
-}
-
-GameObject CreateCube(EngineContext& ctx, const char* name)
-{
-    GameObject obj = ctx.scene->CreateGameObjectTracked(name);
-    auto* mr = obj.AddComponent<MeshRendererComponent>();
-    mr->mesh = ctx.resources->meshes.Cube();
-    mr->material = ctx.resources->materials.Default(*ctx.shaders, ctx.resources->textures);
-    return obj;
 }
 
 // 選択サブツリーを .prefab.json 化し、その場でインスタンス化タグを付ける (1 Undo エントリ)
@@ -65,25 +58,14 @@ void CreatePrefabFromEntity(EngineContext& ctx, Selection& selection, UndoStack&
     }
 }
 
-// 生成操作を 1 つの Undo エントリとして記録する
-GameObject RecordCreate(EngineContext& ctx, Selection& selection, UndoStack& undo, const char* label,
-                        const std::function<GameObject()>& make)
-{
-    undo.BeginRecord(label, selection);
-    GameObject obj = make();
-    ctx.scene->GetWorld().ApplyStructuralChanges();
-    const uint64_t fid = ctx.scene->EnsureFileId(obj.Id());
-    selection.SelectOnly(fid);
-    undo.CaptureAfter(*ctx.scene, fid);
-    undo.EndRecord(selection);
-    return obj;
-}
-
 } // namespace
 
 void HierarchyWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStack& undo)
 {
-    if (!ImGui::Begin("Hierarchy")) {
+    if (!open) {
+        return;
+    }
+    if (!ImGui::Begin("Hierarchy", &open)) {
         ImGui::End();
         return;
     }
@@ -129,19 +111,17 @@ void HierarchyWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
             undo.CaptureAfter(*ctx.scene, fid);
             undo.EndRecord(selection);
         }
+        // AssetBrowser からのドロップ: ルートに配置
+        if (const ImGuiPayload* pa = ImGui::AcceptDragDropPayload(kAssetDragPayload)) {
+            InstantiateAssetAtPath(ctx, selection, undo,
+                                   Utf8ToWide(static_cast<const char*>(pa->Data)), nullptr, 0);
+        }
         ImGui::EndDragDropTarget();
     }
     if (ImGui::BeginPopupContextWindow("##hierarchy_bg",
                                        ImGuiPopupFlags_MouseButtonRight
                                            | ImGuiPopupFlags_NoOpenOverItems)) {
-        if (ImGui::MenuItem("Create Empty")) {
-            RecordCreate(ctx, selection, undo, "Create Empty",
-                         [&] { return ctx.scene->CreateGameObjectTracked("GameObject"); });
-        }
-        if (ImGui::MenuItem("Create Cube")) {
-            RecordCreate(ctx, selection, undo, "Create Cube",
-                         [&] { return CreateCube(ctx, "Cube"); });
-        }
+        DrawCreateMenuItems(ctx, selection, undo); // parent 省略 = ルート生成
         ImGui::EndPopup();
     }
     ImGui::End();
@@ -259,7 +239,7 @@ void HierarchyWindow::DrawEntityNode(EngineContext& ctx, World& world, EntityID 
     if (isPrefab) {
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.45f, 0.68f, 1.0f, 1.0f));
     }
-    const bool open = ImGui::TreeNodeEx("##node", flags, "%s", world.GetName(e));
+    const bool nodeOpen = ImGui::TreeNodeEx("##node", flags, "%s", world.GetName(e));
     if (isPrefab) {
         ImGui::PopStyleColor();
     }
@@ -270,19 +250,9 @@ void HierarchyWindow::DrawEntityNode(EngineContext& ctx, World& world, EntityID 
 
     if (ImGui::BeginPopupContextItem("##entity_ctx")) {
         selection.SelectOnly(ctx.scene->EnsureFileId(e));
-        if (ImGui::MenuItem("Create Child")) {
-            RecordCreate(ctx, selection, undo, "Create Child", [&] {
-                GameObject child = ctx.scene->CreateGameObjectTracked("GameObject");
-                world.SetParent(child.Id(), e);
-                return child;
-            });
-        }
-        if (ImGui::MenuItem("Create Child Cube")) {
-            RecordCreate(ctx, selection, undo, "Create Child Cube", [&] {
-                GameObject child = CreateCube(ctx, "Cube");
-                world.SetParent(child.Id(), e);
-                return child;
-            });
+        if (ImGui::BeginMenu("Create")) {
+            DrawCreateMenuItems(ctx, selection, undo, e); // e の子として生成
+            ImGui::EndMenu();
         }
         ImGui::Separator();
         if (ImGui::MenuItem("Create Prefab")) {
@@ -317,10 +287,16 @@ void HierarchyWindow::DrawEntityNode(EngineContext& ctx, World& world, EntityID 
                 undo.EndRecord(selection);
             }
         }
+        // AssetBrowser からのドロップ: このエンティティの子に配置
+        if (const ImGuiPayload* pa = ImGui::AcceptDragDropPayload(kAssetDragPayload)) {
+            InstantiateAssetAtPath(ctx, selection, undo,
+                                   Utf8ToWide(static_cast<const char*>(pa->Data)), nullptr,
+                                   ctx.scene->EnsureFileId(e));
+        }
         ImGui::EndDragDropTarget();
     }
 
-    if (open) {
+    if (nodeOpen) {
         if (h) {
             EntityID child = h->firstChild;
             while (!child.IsNull()) {

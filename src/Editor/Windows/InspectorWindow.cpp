@@ -14,6 +14,7 @@
 #include "Engine/Engine/GameObject.h"
 #include "Engine/Engine/Prefab.h"
 #include "Engine/Engine/Scene.h"
+#include "Engine/Engine/Script/ManagedHost.h"
 #include "Engine/Renderer/GpuResources.h"
 
 #include "imgui.h"
@@ -76,11 +77,66 @@ XMFLOAT4 EulerDegToQuat(const XMFLOAT3& euler)
     return q;
 }
 
+// C# コンポーネントの 1 フィールドを raw バッファ上で描画する (型は managed から届く FieldType)
+bool DrawManagedFieldWidget(const char* name, FieldType type, void* buf)
+{
+    switch (type) {
+    case FieldType::Float: return ImGui::DragFloat(name, static_cast<float*>(buf), 0.05f);
+    case FieldType::Int32: return ImGui::DragInt(name, static_cast<int*>(buf));
+    case FieldType::UInt32: return ImGui::InputScalar(name, ImGuiDataType_U32, buf);
+    case FieldType::UInt64: return ImGui::InputScalar(name, ImGuiDataType_U64, buf);
+    case FieldType::Bool: {
+        bool b = *static_cast<uint8_t*>(buf) != 0;
+        if (ImGui::Checkbox(name, &b)) {
+            *static_cast<uint8_t*>(buf) = b ? 1 : 0;
+            return true;
+        }
+        return false;
+    }
+    case FieldType::Float2: return ImGui::DragFloat2(name, static_cast<float*>(buf), 0.05f);
+    case FieldType::Float3: return ImGui::DragFloat3(name, static_cast<float*>(buf), 0.05f);
+    case FieldType::Float4: return ImGui::DragFloat4(name, static_cast<float*>(buf), 0.05f);
+    case FieldType::Quat: return ImGui::DragFloat4(name, static_cast<float*>(buf), 0.05f);
+    case FieldType::Color: return ImGui::ColorEdit4(name, static_cast<float*>(buf));
+    default: ImGui::TextDisabled("%s (unsupported)", name); return false;
+    }
+}
+
+// C# スクリプトコンポーネントのフィールド描画。値は managed インスタンスが保持するため、
+// ManagedHost 経由で get/set する (編集モードでは EnsureInstance で instance を用意)。
+void DrawManagedComponentFields(EngineContext& ctx, ComponentTypeId t, void* comp, EntityID e)
+{
+    ManagedHost* mh = ctx.managedHost;
+    const int32_t handle = mh->EnsureInstance(t, e, comp);
+    if (handle == 0) {
+        ImGui::TextDisabled("(no managed instance — click 'Compile C# Scripts')");
+        return;
+    }
+    const auto* fields = mh->FieldsForComponent(t);
+    if (!fields || fields->empty()) {
+        ImGui::TextDisabled("(no public fields)");
+        return;
+    }
+    for (size_t i = 0; i < fields->size(); ++i) {
+        const ManagedHost::ManagedFieldInfo& f = (*fields)[i];
+        uint8_t buf[16] = {};
+        if (!mh->GetFieldValue(handle, static_cast<int>(i), buf, static_cast<int>(sizeof(buf)))) {
+            continue;
+        }
+        if (DrawManagedFieldWidget(f.name.c_str(), f.type, buf)) {
+            mh->SetFieldValue(handle, static_cast<int>(i), buf, static_cast<int>(sizeof(buf)));
+        }
+    }
+}
+
 } // namespace
 
 void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStack& undo)
 {
-    if (!ImGui::Begin("Inspector")) {
+    if (!open) {
+        return;
+    }
+    if (!ImGui::Begin("Inspector", &open)) {
         ImGui::End();
         return;
     }
@@ -168,6 +224,12 @@ void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
         }
         if (openHeader) {
             void* comp = world.GetComponentRaw(e, t);
+            // C# スクリプトコンポーネント: フィールドは managed 側が保持 → 専用描画パス
+            if (comp && ctx.managedHost && ctx.managedHost->IsManagedComponent(t)) {
+                DrawManagedComponentFields(ctx, t, comp, e);
+                ImGui::PopID();
+                continue;
+            }
             if (comp) {
                 for (const FieldDesc& f : desc.fields) {
                     if (f.flags & kFieldHidden) {

@@ -5,8 +5,10 @@
 #include <string>
 #include <vector>
 
+#include "Engine/Core/Components.h"
 #include "Engine/Core/Hash.h"
 #include "Engine/Core/Log.h"
+#include "Engine/Engine/GameObject.h"
 #include "Engine/Engine/Scene.h"
 #include "Engine/Platform/PathUtil.h"
 #include "Engine/Renderer/GpuResources.h"
@@ -30,11 +32,23 @@ struct LoadContext {
 // 右手系 → 左手系: 位置/法線は z 反転、クォータニオンは (-x, -y, z, w)
 XMFLOAT3 FlipZ(const float* v) { return { v[0], v[1], -v[2] }; }
 
+// glTF 行列 (column-major) を行ベクトル規約の XMFLOAT4X4 に読み、基底変換 F*M*F (F=diag(1,1,-1)) で
+// Z 反転する。ModelLoader::SetNodeTransform の has_matrix 経路と同じ扱い。
+XMMATRIX FlipZMatrix(const float* colMajor16)
+{
+    XMFLOAT4X4 m;
+    memcpy(&m, colMajor16, sizeof(float) * 16); // 列優先を行優先に流し込む = row-vector 形
+    const XMMATRIX flip = XMMatrixScaling(1, 1, -1);
+    return flip * XMLoadFloat4x4(&m) * flip;
+}
+
 AssetID LoadPrimitiveMesh(LoadContext& lc, const cgltf_primitive* prim, const char* key)
 {
     const cgltf_accessor* posAcc = nullptr;
     const cgltf_accessor* nrmAcc = nullptr;
     const cgltf_accessor* uvAcc = nullptr;
+    const cgltf_accessor* jointAcc = nullptr;  // JOINTS_0 (VEC4 uint)
+    const cgltf_accessor* weightAcc = nullptr; // WEIGHTS_0 (VEC4 float)
     for (cgltf_size a = 0; a < prim->attributes_count; ++a) {
         const cgltf_attribute& attr = prim->attributes[a];
         if (attr.type == cgltf_attribute_type_position) {
@@ -43,6 +57,10 @@ AssetID LoadPrimitiveMesh(LoadContext& lc, const cgltf_primitive* prim, const ch
             nrmAcc = attr.data;
         } else if (attr.type == cgltf_attribute_type_texcoord && attr.index == 0) {
             uvAcc = attr.data;
+        } else if (attr.type == cgltf_attribute_type_joints && attr.index == 0) {
+            jointAcc = attr.data;
+        } else if (attr.type == cgltf_attribute_type_weights && attr.index == 0) {
+            weightAcc = attr.data;
         }
     }
     if (!posAcc || prim->type != cgltf_primitive_type_triangles) {
@@ -70,6 +88,17 @@ AssetID LoadPrimitiveMesh(LoadContext& lc, const cgltf_primitive* prim, const ch
         vertices[i].position = FlipZ(&pos[i * 3]);
         vertices[i].normal = nrm.empty() ? XMFLOAT3{ 0, 1, 0 } : FlipZ(&nrm[i * 3]);
         vertices[i].uv = uv.empty() ? XMFLOAT2{ 0, 0 } : XMFLOAT2{ uv[i * 2], uv[i * 2 + 1] };
+        // スキニング (M18): JOINTS_0(uint4)→u8x4、WEIGHTS_0(float4)。無ければ weight 0 (非スキン)
+        if (jointAcc && weightAcc) {
+            cgltf_uint ji[4] = { 0, 0, 0, 0 };
+            float wt[4] = { 0, 0, 0, 0 };
+            cgltf_accessor_read_uint(jointAcc, i, ji, 4);
+            cgltf_accessor_read_float(weightAcc, i, wt, 4);
+            for (int k = 0; k < 4; ++k) {
+                vertices[i].boneIndices[k] = static_cast<uint8_t>(ji[k] & 0xFF);
+            }
+            vertices[i].boneWeights = { wt[0], wt[1], wt[2], wt[3] };
+        }
     }
 
     std::vector<uint32_t> indices;
@@ -101,6 +130,8 @@ AssetID LoadMaterial(LoadContext& lc, const cgltf_material* mat, const char* key
         const cgltf_pbr_metallic_roughness& pbr = mat->pbr_metallic_roughness;
         m.baseColor = { pbr.base_color_factor[0], pbr.base_color_factor[1],
                         pbr.base_color_factor[2], pbr.base_color_factor[3] };
+        m.metallic = pbr.metallic_factor;   // PBR (M17)
+        m.roughness = pbr.roughness_factor;
         m.transparent = (mat->alpha_mode == cgltf_alpha_mode_blend) ? 1 : 0;
 
         if (pbr.base_color_texture.texture && pbr.base_color_texture.texture->image) {
@@ -126,6 +157,109 @@ AssetID LoadMaterial(LoadContext& lc, const cgltf_material* mat, const char* key
         }
     }
     return lc.resources->materials.Register(key, m);
+}
+
+// glTF skin → SkinnedModel (スケルトン + 全クリップ) を構築・登録し AssetID を返す (M18)。
+// ジョイントグローバルはジョイントツリー内だけで計算する規約 — ジョイント以外の祖先
+// (Armature/Z_UP 等) の変換はメッシュエンティティの world 行列 (gWorld) が担う。
+AssetID LoadSkin(LoadContext& lc, const cgltf_data* data, const cgltf_skin* skin, size_t skinIdx)
+{
+    const cgltf_size jn = skin->joints_count;
+    SkinnedModel model;
+    model.joints.resize(jn);
+
+    auto jointIndexOf = [&](const cgltf_node* n) -> int {
+        for (cgltf_size j = 0; j < jn; ++j) {
+            if (skin->joints[j] == n) {
+                return static_cast<int>(j);
+            }
+        }
+        return -1;
+    };
+
+    for (cgltf_size j = 0; j < jn; ++j) {
+        const cgltf_node* jnode = skin->joints[j];
+        SkeletonJoint& out = model.joints[j];
+        // 親 = 最も近いジョイント祖先 (途中の非ジョイント祖先は gWorld が担うので飛ばす)
+        int parent = -1;
+        for (const cgltf_node* p = jnode->parent; p; p = p->parent) {
+            const int pj = jointIndexOf(p);
+            if (pj >= 0) {
+                parent = pj;
+                break;
+            }
+        }
+        out.parent = parent;
+        if (skin->inverse_bind_matrices) {
+            float ib[16];
+            cgltf_accessor_read_float(skin->inverse_bind_matrices, j, ib, 16);
+            XMStoreFloat4x4(&out.inverseBind, FlipZMatrix(ib)); // 列優先→行ベクトル + Z 反転
+        }
+        float localMat[16];
+        cgltf_node_transform_local(jnode, localMat);
+        XMVECTOR s, r, t;
+        if (XMMatrixDecompose(&s, &r, &t, FlipZMatrix(localMat))) {
+            XMStoreFloat3(&out.bindT, t);
+            XMStoreFloat4(&out.bindR, r);
+            XMStoreFloat3(&out.bindS, s);
+        }
+    }
+
+    // アニメーション: 全 animation の channel をこの skin のジョイントへ振り分ける
+    for (cgltf_size ai = 0; ai < data->animations_count; ++ai) {
+        const cgltf_animation& anim = data->animations[ai];
+        SkeletalClip clip;
+        clip.name = anim.name ? anim.name : "";
+        clip.tracks.resize(jn);
+        float dur = 0.0f;
+        for (cgltf_size ci = 0; ci < anim.channels_count; ++ci) {
+            const cgltf_animation_channel& ch = anim.channels[ci];
+            const int jidx = jointIndexOf(ch.target_node);
+            if (jidx < 0 || !ch.sampler) {
+                continue;
+            }
+            const cgltf_accessor* in = ch.sampler->input;   // 時刻 (scalar, 秒)
+            const cgltf_accessor* val = ch.sampler->output; // 値
+            const cgltf_size kc = in->count;
+            std::vector<float> times(kc);
+            for (cgltf_size k = 0; k < kc; ++k) {
+                cgltf_accessor_read_float(in, k, &times[k], 1);
+                dur = (times[k] > dur) ? times[k] : dur;
+            }
+            JointTrack& tr = clip.tracks[static_cast<size_t>(jidx)];
+            if (ch.target_path == cgltf_animation_path_type_translation) {
+                tr.tTimes = times;
+                tr.tVals.resize(kc);
+                for (cgltf_size k = 0; k < kc; ++k) {
+                    float v[3];
+                    cgltf_accessor_read_float(val, k, v, 3);
+                    tr.tVals[k] = { v[0], v[1], -v[2] }; // Z 反転
+                }
+            } else if (ch.target_path == cgltf_animation_path_type_rotation) {
+                tr.rTimes = times;
+                tr.rVals.resize(kc);
+                for (cgltf_size k = 0; k < kc; ++k) {
+                    float v[4];
+                    cgltf_accessor_read_float(val, k, v, 4);
+                    tr.rVals[k] = { -v[0], -v[1], v[2], v[3] }; // クォータニオン Z 反転
+                }
+            } else if (ch.target_path == cgltf_animation_path_type_scale) {
+                tr.sTimes = times;
+                tr.sVals.resize(kc);
+                for (cgltf_size k = 0; k < kc; ++k) {
+                    float v[3];
+                    cgltf_accessor_read_float(val, k, v, 3);
+                    tr.sVals[k] = { v[0], v[1], v[2] };
+                }
+            }
+        }
+        clip.duration = dur;
+        model.clips.push_back(std::move(clip));
+    }
+
+    char key[512];
+    snprintf(key, sizeof(key), "%s#skin%zu", lc.pathUtf8.c_str(), skinIdx);
+    return lc.resources->skinnedModels.Register(key, std::move(model));
 }
 
 void SetNodeTransform(GameObject obj, const cgltf_node* node)
@@ -171,6 +305,12 @@ void LoadNode(LoadContext& lc, const cgltf_data* data, const cgltf_node* node, G
 
     if (node->mesh) {
         const auto meshIndex = static_cast<size_t>(node->mesh - data->meshes);
+        // スキン付きメッシュ (M18): この node の skin から SkinnedModel を一度だけ登録
+        AssetID skinModelId = {};
+        if (node->skin) {
+            const auto skinIdx = static_cast<size_t>(node->skin - data->skins);
+            skinModelId = LoadSkin(lc, data, node->skin, skinIdx);
+        }
         for (cgltf_size p = 0; p < node->mesh->primitives_count; ++p) {
             char key[512];
             snprintf(key, sizeof(key), "%s#mesh%zu#prim%zu", lc.pathUtf8.c_str(), meshIndex,
@@ -195,6 +335,15 @@ void LoadNode(LoadContext& lc, const cgltf_data* data, const cgltf_node* node, G
             auto* mr = target.AddComponent<MeshRendererComponent>();
             mr->mesh = meshId;
             mr->material = matId;
+            // スキン付きなら SkinnedMeshComponent を付与 (ポーズは描画専用・非ハッシュ)。
+            // clip 0 = 最初のアニメ (CesiumMan は歩行)。RenderSystem がフレーム毎に評価する
+            if (!skinModelId.IsNull()) {
+                auto* sm = target.AddComponent<SkinnedMeshComponent>();
+                sm->model = skinModelId;
+                sm->clip = 0;
+                sm->timeTicks = 0;
+                sm->playing = 1;
+            }
         }
     }
 

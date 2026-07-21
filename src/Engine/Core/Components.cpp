@@ -1,5 +1,7 @@
 #include "Engine/Core/Components.h"
 
+#include <cstddef> // offsetof
+
 #include "Engine/Core/World.h"
 
 namespace mye {
@@ -57,6 +59,10 @@ void RegisterBuiltinComponents()
         MYE_FIELD(LightComponent, color, Float3),
         MYE_FIELD(LightComponent, intensity, Float),
         MYE_FIELD(LightComponent, ambient, Float3),
+        MYE_FIELD(LightComponent, type, Int32),
+        MYE_FIELD(LightComponent, range, Float),
+        MYE_FIELD(LightComponent, spotInnerDeg, Float),
+        MYE_FIELD(LightComponent, spotOuterDeg, Float),
     });
 
     RegisterComponent<FileIdComponent>("FileId", {
@@ -116,6 +122,67 @@ void RegisterBuiltinComponents()
         MYE_FIELD(AnimatorComponent, speed, Int32),
         MYE_FIELD(AnimatorComponent, loop, Int32),
         MYE_FIELD(AnimatorComponent, playing, Int32),
+    });
+
+    // M18: スケルタルスキニング。ポーズは描画専用なので **kComponentNoHash** (既存シーン不変)。
+    // opt-in (無ければ通常メッシュ描画) なので TypeId append (=14) だけで bump 不要
+    RegisterComponent<SkinnedMeshComponent>("SkinnedMesh", {
+        MYE_FIELD(SkinnedMeshComponent, model, AssetRef),
+        MYE_FIELD(SkinnedMeshComponent, clip, Int32),
+        MYE_FIELD_FLAGS(SkinnedMeshComponent, timeTicks, Int32, kFieldReadOnly),
+        MYE_FIELD(SkinnedMeshComponent, playing, Int32),
+    }, kComponentNoHash);
+
+    // M20: 剛体。velocity は積分される sim 状態なので **hash 対象** (kComponentNoHash を付けない)。
+    // opt-in (無ければ物理非関与) なので TypeId append (=15) だけで既存シーンは不変 → bump 不要
+    RegisterComponent<RigidbodyComponent>("Rigidbody", {
+        MYE_FIELD(RigidbodyComponent, velocity, Float3),
+        MYE_FIELD(RigidbodyComponent, mass, Float),
+        MYE_FIELD(RigidbodyComponent, linearDamping, Float),
+        MYE_FIELD(RigidbodyComponent, restitution, Float),
+        MYE_FIELD(RigidbodyComponent, gravityScale, Float),
+        MYE_FIELD(RigidbodyComponent, isKinematic, Int32),
+    });
+
+    // M21: ゲーム内 UI。描画専用なので **kComponentNoHash** (既存シーンのハッシュ不変)。
+    // serialize はされる (UI をシーン保存/Inspector 編集可能)。opt-in で TypeId append (=16) のみ
+    RegisterComponent<UIElementComponent>("UIElement", {
+        MYE_FIELD(UIElementComponent, kind, Int32),
+        MYE_FIELD(UIElementComponent, anchor, Int32),
+        MYE_FIELD(UIElementComponent, x, Float),
+        MYE_FIELD(UIElementComponent, y, Float),
+        MYE_FIELD(UIElementComponent, w, Float),
+        MYE_FIELD(UIElementComponent, h, Float),
+        MYE_FIELD(UIElementComponent, color, Color),
+        MYE_FIELD(UIElementComponent, texture, AssetRef),
+        MYE_FIELD(UIElementComponent, fontScale, Float),
+        MYE_FIELD(UIElementComponent, order, Int32),
+        MYE_FIELD(UIElementComponent, text, String64),
+    }, kComponentNoHash);
+
+    // M22: Animator Controller。LocalTransform を駆動するので **hash 対象** (kComponentNoHash 無し)。
+    // opt-in (無ければ no-op) で TypeId append (=17) のみ → 既存シーン不変 = bump 不要。
+    // params[4] は配列なので手動 FieldDesc で各要素を Int32 登録する (hash + serialize + Inspector)
+    RegisterComponent<AnimatorControllerComponent>("AnimatorController", {
+        MYE_FIELD(AnimatorControllerComponent, controller, AssetRef),
+        MYE_FIELD_FLAGS(AnimatorControllerComponent, currentState, Int32, kFieldReadOnly),
+        MYE_FIELD_FLAGS(AnimatorControllerComponent, stateTimeTicks, Int32, kFieldReadOnly),
+        MYE_FIELD_FLAGS(AnimatorControllerComponent, transitionTo, Int32, kFieldReadOnly),
+        MYE_FIELD_FLAGS(AnimatorControllerComponent, transitionTick, Int32, kFieldReadOnly),
+        MYE_FIELD_FLAGS(AnimatorControllerComponent, transitionDuration, Int32, kFieldReadOnly),
+        MYE_FIELD_FLAGS(AnimatorControllerComponent, transitionToTime, Int32, kFieldReadOnly),
+        FieldDesc{ "param0", FieldType::Int32,
+                   static_cast<uint32_t>(offsetof(AnimatorControllerComponent, params) + 0 * sizeof(int32_t)),
+                   kFieldNone },
+        FieldDesc{ "param1", FieldType::Int32,
+                   static_cast<uint32_t>(offsetof(AnimatorControllerComponent, params) + 1 * sizeof(int32_t)),
+                   kFieldNone },
+        FieldDesc{ "param2", FieldType::Int32,
+                   static_cast<uint32_t>(offsetof(AnimatorControllerComponent, params) + 2 * sizeof(int32_t)),
+                   kFieldNone },
+        FieldDesc{ "param3", FieldType::Int32,
+                   static_cast<uint32_t>(offsetof(AnimatorControllerComponent, params) + 3 * sizeof(int32_t)),
+                   kFieldNone },
     });
 }
 

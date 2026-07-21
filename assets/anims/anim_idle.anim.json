@@ -1,0 +1,19 @@
+{
+  "engine": "MyEngine",
+  "anim": 1,
+  "name": "anim_idle",
+  "lengthTicks": 60,
+  "tracks": [
+    {
+      "target": 0,
+      "component": "LocalTransform",
+      "field": "position",
+      "interp": "linear",
+      "keys": [
+        { "t": 0, "v": [0.0, 0.5, 0.0] },
+        { "t": 30, "v": [0.0, 0.95, 0.0] },
+        { "t": 60, "v": [0.0, 0.5, 0.0] }
+      ]
+    }
+  ]
+}

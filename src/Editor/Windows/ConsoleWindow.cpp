@@ -59,7 +59,10 @@ void ConsoleWindow::OnImGui(const std::string& externalEditorCmd)
                        entries_.begin() + static_cast<ptrdiff_t>(entries_.size() - kMaxLocal));
     }
 
-    if (!ImGui::Begin("Console")) {
+    if (!open) {
+        return;
+    }
+    if (!ImGui::Begin("Console", &open)) {
         ImGui::End();
         return;
     }

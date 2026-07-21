@@ -47,6 +47,54 @@ void BuildSettingsWindow::DoPackage(EngineContext& ctx)
         return;
     }
 
+    // 1b) C# スクリプトホスト (CoreCLR) — nethost.dll + マネージド一式 (Roslyn 含む)
+    // これらが無いと配布先で C# スクリプトが動かない (native ManagedHost の Init が失敗)。
+    copyFile(exeDir / L"nethost.dll", out / L"nethost.dll");
+    auto copyGlob = [&](const wchar_t* pattern) {
+        for (const auto& e : fs::directory_iterator(exeDir, ec)) {
+            if (!e.is_regular_file()) {
+                continue;
+            }
+            const std::wstring fn = e.path().filename().wstring();
+            if (fn.rfind(pattern, 0) == 0) { // 前方一致
+                copyFile(e.path(), out / e.path().filename());
+            }
+        }
+    };
+    copyGlob(L"MyeScripting");         // .dll / .runtimeconfig.json / .deps.json / .pdb
+    copyGlob(L"Microsoft.CodeAnalysis"); // Roslyn
+    copyGlob(L"System.Collections.Immutable");
+    copyGlob(L"System.Reflection.Metadata");
+
+    // 1c) .NET ランタイム同梱 (自己完結配布)。プロセス内 coreclr.dll から SDK レイアウトを特定。
+    // 配布先の Runtime.exe は起動時に exe 隣の dotnet\ を DOTNET_ROOT として使う (ManagedHost)。
+    if (bundleDotnet_) {
+        HMODULE coreclr = GetModuleHandleW(L"coreclr.dll");
+        wchar_t clrPath[MAX_PATH] = {};
+        if (coreclr && GetModuleFileNameW(coreclr, clrPath, MAX_PATH)) {
+            const fs::path clr(clrPath); // ...\dotnet\shared\Microsoft.NETCore.App\<ver>\coreclr.dll
+            const fs::path fwVerDir = clr.parent_path();
+            const std::wstring ver = fwVerDir.filename().wstring();
+            const fs::path dotnetRoot = fwVerDir.parent_path().parent_path().parent_path();
+            const fs::path outDn = out / L"dotnet";
+            // host\fxr\* (hostfxr.dll) と shared framework の当該バージョンをコピー
+            fs::copy(dotnetRoot / L"host", outDn / L"host",
+                     fs::copy_options::recursive | fs::copy_options::overwrite_existing, ec);
+            fs::copy(fwVerDir, outDn / L"shared" / L"Microsoft.NETCore.App" / ver,
+                     fs::copy_options::recursive | fs::copy_options::overwrite_existing, ec);
+            if (ec) {
+                MYE_LOG_WARN("[build] .NET runtime bundle incomplete: %s", ec.message().c_str());
+                ec.clear();
+            } else {
+                MYE_LOG_INFO("[build] bundled .NET runtime %s (self-contained)",
+                             WideToUtf8(ver).c_str());
+            }
+        } else {
+            MYE_LOG_WARN("[build] coreclr.dll not located — skipping runtime bundle "
+                         "(target needs .NET 8 installed)");
+        }
+    }
+
     // 2) assets\ を丸ごとコピー (.prefab.json / .anim.json / .meta.json も漏らさない)
     fs::copy(assetsSrc, out / L"assets",
              fs::copy_options::recursive | fs::copy_options::overwrite_existing, ec);
@@ -91,9 +139,15 @@ void BuildSettingsWindow::OnImGui(EngineContext& ctx)
         return;
     }
 
-    ImGui::TextUnformatted("Package Runtime.exe + GameLogic.dll + assets\\ into a standalone folder.");
+    ImGui::TextUnformatted("Package Runtime.exe + GameLogic.dll + C# host + assets\\ into a folder.");
     ImGui::TextDisabled("(Compile the Release config in Visual Studio / MSBuild first.)");
     ImGui::Separator();
+
+    ImGui::Checkbox("Bundle .NET runtime (self-contained)", &bundleDotnet_);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("ON: .NET 8 ランタイムを dotnet\\ に同梱し、配布先に .NET 不要にする\n"
+                          "OFF: 配布先に .NET 8 ランタイムのインストールが必要");
+    }
 
     // ---- ブートシーン選択 (assets\scenes\*.scene.json) ----
     std::vector<std::string> scenes;

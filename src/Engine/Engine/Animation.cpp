@@ -50,25 +50,6 @@ void DfsCollect(World& w, EntityID root, std::vector<EntityID>& out)
     visit(root);
 }
 
-// clip を animator サブツリーへ適用 (timeTicks の位置でサンプル)
-void ApplyPose(World& w, EntityID animator, const AnimationClipAsset& clip, int32_t time)
-{
-    std::vector<EntityID> idx;
-    DfsCollect(w, animator, idx);
-    for (const AnimTrack& t : clip.tracks) {
-        if (t.comp == kInvalidComponentType || t.keys.empty()) {
-            continue;
-        }
-        if (t.target >= idx.size()) {
-            continue;
-        }
-        void* comp = w.GetComponentRaw(idx[static_cast<size_t>(t.target)], t.comp);
-        if (comp) {
-            SampleTrackInto(comp, t, time);
-        }
-    }
-}
-
 // timeTicks を speed 分進める (loop で巻き戻し / 非 loop で末尾停止)
 void AdvanceTime(AnimatorComponent* a, int32_t length)
 {
@@ -108,12 +89,12 @@ uint32_t FieldFloatCount(FieldType t)
     }
 }
 
-void SampleTrackInto(void* comp, const AnimTrack& t, int32_t time)
+void SampleTrackValues(const AnimTrack& t, int32_t time, float out[4])
 {
+    out[0] = out[1] = out[2] = out[3] = 0.0f;
     if (t.keys.empty()) {
         return;
     }
-    float out[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
 
     if (time <= t.keys.front().tick) {
         const auto& v = t.keys.front().value;
@@ -153,9 +134,59 @@ void SampleTrackInto(void* comp, const AnimTrack& t, int32_t time)
         }
     }
 
+}
+
+void SampleTrackInto(void* comp, const AnimTrack& t, int32_t time)
+{
+    float out[4];
+    SampleTrackValues(t, time, out);
     float* dst = reinterpret_cast<float*>(static_cast<uint8_t*>(comp) + t.offset);
     for (uint32_t i = 0; i < t.compCount; ++i) {
         dst[i] = out[i];
+    }
+}
+
+void ApplyClipPose(World& w, EntityID animator, const AnimationClipAsset& clip, int32_t time)
+{
+    std::vector<EntityID> idx;
+    DfsCollect(w, animator, idx);
+    for (const AnimTrack& t : clip.tracks) {
+        if (t.comp == kInvalidComponentType || t.keys.empty() || t.target >= idx.size()) {
+            continue;
+        }
+        void* comp = w.GetComponentRaw(idx[static_cast<size_t>(t.target)], t.comp);
+        if (comp) {
+            SampleTrackInto(comp, t, time);
+        }
+    }
+}
+
+void ApplyClipPoseBlended(World& w, EntityID animator, const AnimationClipAsset& from,
+                          int32_t timeFrom, const AnimationClipAsset& to, int32_t timeTo, float blend)
+{
+    ApplyClipPose(w, animator, from, timeFrom); // まず from を完全適用 (下地)
+    std::vector<EntityID> idx;
+    DfsCollect(w, animator, idx);
+    for (const AnimTrack& t : to.tracks) {
+        if (t.comp == kInvalidComponentType || t.keys.empty() || t.target >= idx.size()) {
+            continue;
+        }
+        void* comp = w.GetComponentRaw(idx[static_cast<size_t>(t.target)], t.comp);
+        if (!comp) {
+            continue;
+        }
+        float bv[4];
+        SampleTrackValues(t, timeTo, bv);
+        float* dst = reinterpret_cast<float*>(static_cast<uint8_t*>(comp) + t.offset);
+        if (t.type == FieldType::Quat) {
+            const XMVECTOR qa = XMLoadFloat4(reinterpret_cast<const XMFLOAT4*>(dst)); // 現在=from
+            const XMVECTOR qb = XMLoadFloat4(reinterpret_cast<const XMFLOAT4*>(bv));
+            XMStoreFloat4(reinterpret_cast<XMFLOAT4*>(dst), XMQuaternionSlerp(qa, qb, blend));
+        } else {
+            for (uint32_t i = 0; i < t.compCount; ++i) {
+                dst[i] = dst[i] + (bv[i] - dst[i]) * blend;
+            }
+        }
     }
 }
 
@@ -354,8 +385,8 @@ void AnimationSystem::Update(World& world, const AnimationLibrary& lib)
             if (!clip) {
                 continue;
             }
-            ApplyPose(world, e, *clip, anim->timeTicks); // 現在位置のポーズを適用
-            AdvanceTime(anim, clip->lengthTicks);        // 次 tick へ進める
+            ApplyClipPose(world, e, *clip, anim->timeTicks); // 現在位置のポーズを適用
+            AdvanceTime(anim, clip->lengthTicks);            // 次 tick へ進める
         }
     });
 }
@@ -369,7 +400,7 @@ void AnimationSystem::Evaluate(World& world, const AnimationLibrary& lib, Entity
     }
     const AnimationClipAsset* clip = lib.Get(a->clip.value);
     if (clip) {
-        ApplyPose(world, animator, *clip, timeTicks);
+        ApplyClipPose(world, animator, *clip, timeTicks);
     }
 }
 

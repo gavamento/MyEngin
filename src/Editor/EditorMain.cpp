@@ -8,10 +8,17 @@
 #include "Editor/EditorApp.h"
 #include "Editor/UndoSelfTest.h"
 #include "Engine/Core/EcsSelfTest.h"
+#include "Engine/Core/JobSystemSelfTest.h"
 #include "Engine/Core/Log.h"
+#include "Engine/Engine/AnimatorControllerSelfTest.h"
+#include "Engine/Engine/AssetDatabaseSelfTest.h"
 #include "Engine/Engine/EngineLoop.h"
+#include "Engine/Engine/PhysicsSelfTest.h"
 #include "Engine/Engine/SceneSelfTest.h"
+#include "Engine/Engine/UI/UISelfTest.h"
 #include "Engine/Platform/PathUtil.h"
+#include "Engine/Renderer/RenderSelfTest.h"
+#include "Engine/Renderer/TextureCookSelfTest.h"
 
 namespace {
 
@@ -98,6 +105,22 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 pickTestFrame = 20;
             } else if (arg == L"--scene" && i + 1 < argc) {
                 sceneOverride = argv[++i];
+            } else if (arg == L"--postfx-mode" && i + 1 < argc) {
+                config.postFxTonemap = _wtoi(argv[++i]); // 0=passthrough 1=ACES 2=Reinhard
+            } else if (arg == L"--no-postfx") {
+                config.postFx = false;
+            } else if (arg == L"--exposure" && i + 1 < argc) {
+                config.postFxExposure = static_cast<float>(_wtof(argv[++i]));
+            } else if (arg == L"--no-bloom") {
+                config.postFxBloom = false;
+            } else if (arg == L"--bloom-threshold" && i + 1 < argc) {
+                config.postFxBloomThreshold = static_cast<float>(_wtof(argv[++i]));
+            } else if (arg == L"--bloom-intensity" && i + 1 < argc) {
+                config.postFxBloomIntensity = static_cast<float>(_wtof(argv[++i]));
+            } else if (arg == L"--no-fxaa") {
+                config.postFxFxaa = false;
+            } else if (arg == L"--no-jobs") {
+                config.useJobs = false; // M25: 並列を直列化 (決定論ゲート / 計測比較)
             }
         }
         LocalFree(argv);
@@ -106,7 +129,10 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     if (selftest) {
         // ウィンドウ/D3D 不要のヘッドレス回帰テスト
         const bool ok = mye::RunEcsSelfTest() && mye::RunSceneSerializerSelfTest()
-            && mye::RunUndoSelfTest();
+            && mye::RunUndoSelfTest() && mye::RunRenderSelfTest() && mye::RunPhysicsSelfTest()
+            && mye::RunUISelfTest() && mye::RunAnimatorControllerSelfTest()
+            && mye::RunAssetDatabaseSelfTest() && mye::RunTextureCookSelfTest()
+            && mye::RunJobSystemSelfTest();
         return ok ? 0 : 1;
     }
 

@@ -98,7 +98,13 @@ bool BuildInputLayout(ID3D11Device* device, ID3DBlob* vsBytecode,
             DXGI_FORMAT_R32_FLOAT, DXGI_FORMAT_R32G32_FLOAT,
             DXGI_FORMAT_R32G32B32_FLOAT, DXGI_FORMAT_R32G32B32A32_FLOAT
         };
-        e.Format = floatFormats[components - 1];
+        // ボーンインデックス (M18) は uint4 だが VB 側は u8x4 で詰めている。リフレクションの
+        // 成分型ではなく semantic 名で特例判定し R8G8B8A8_UINT を割り当てる (MeshVertex と一致)。
+        if (std::strcmp(pd.SemanticName, "BLENDINDICES") == 0) {
+            e.Format = DXGI_FORMAT_R8G8B8A8_UINT;
+        } else {
+            e.Format = floatFormats[components - 1]; // BLENDWEIGHT は float4 = 既存経路で処理
+        }
         elems.push_back(e);
     }
     if (elems.empty()) {

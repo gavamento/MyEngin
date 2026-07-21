@@ -5,6 +5,10 @@
 #include <Windows.h>
 #include <windowsx.h>
 
+#include <Xinput.h>
+// XInput9_1_0 は Win7+ で常在 (再頒布 DLL 不要)。Engine.lib 経由で exe のリンクに伝播する
+#pragma comment(lib, "Xinput9_1_0.lib")
+
 namespace mye {
 
 void Input::SetKey(uint8_t vk, bool down)
@@ -68,6 +72,19 @@ InputSnapshot Input::CaptureSnapshot()
     s.wheelDelta = wheelAccum_;
     s.mouseButtons = buttons_;
     wheelAccum_ = 0;
+
+    // gamepad (XInput、パッド 0 のみ)。verify 中は記録値が上書きするので透過 (spec 11.3)
+    XINPUT_STATE xs = {};
+    if (XInputGetState(0, &xs) == ERROR_SUCCESS) {
+        s.padConnected = 1;
+        s.padButtons = xs.Gamepad.wButtons;
+        s.padLeftTrigger = xs.Gamepad.bLeftTrigger;
+        s.padRightTrigger = xs.Gamepad.bRightTrigger;
+        s.padLX = xs.Gamepad.sThumbLX;
+        s.padLY = xs.Gamepad.sThumbLY;
+        s.padRX = xs.Gamepad.sThumbRX;
+        s.padRY = xs.Gamepad.sThumbRY;
+    }
     return s;
 }
 

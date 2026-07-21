@@ -1,20 +1,29 @@
 #include "Engine/Engine/EngineLoop.h"
 
 #include "Engine/Core/Check.h"
+#include "Engine/Core/JobSystem.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Core/Profiler.h"
 #include "Engine/Engine/Animation.h"
+#include "Engine/Engine/AnimatorController.h"
+#include "Engine/Engine/AssetDatabase.h"
 #include "Engine/Engine/CollisionSystem.h"
 #include "Engine/Engine/HotReload/DllReloader.h"
 #include "Engine/Engine/HotReload/ReloadHub.h"
+#include "Engine/Engine/Audio/AudioSystem.h"
 #include "Engine/Engine/Particles/ParticleSystem.h"
+#include "Engine/Engine/Physics/PhysicsSystem.h"
 #include "Engine/Engine/Prefab.h"
 #include "Engine/Engine/RenderSystem.h"
 #include "Engine/Engine/Replay/Replay.h"
 #include "Engine/Engine/Replay/WorldHasher.h"
 #include "Engine/Engine/Scene.h"
+#include "Engine/Engine/SceneSerializer.h"
+#include "Engine/Engine/Script/ManagedHost.h"
 #include "Engine/Engine/Script/ScriptHost.h"
+#include "Engine/Engine/SkinningSystem.h"
 #include "Engine/Engine/TransformSystem.h"
+#include "Engine/Engine/UI/UIRenderer.h"
 #include "Engine/Platform/Clock.h"
 #include "Engine/Platform/PathUtil.h"
 #include "Engine/Platform/Win32Window.h"
@@ -57,11 +66,21 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     ReloadHub reloadHub;
     ScriptHost scriptHost;
     DllReloader dllReloader;
+    ManagedHost managedHost;
     ParticleSystem particleSystem;
     CollisionSystem collisionSystem;
+    PhysicsSystem physicsSystem; // 剛体積分 + 衝突解決 (M20、ステートレス)
     PrefabLibrary prefabLibrary;
     AnimationLibrary animLibrary;
     AnimationSystem animationSystem;
+    ControllerLibrary controllerLibrary;        // Animator Controller (.controller.json、M22)
+    AnimatorControllerSystem controllerSystem;  // ステートマシン評価 + ブレンド
+    AssetDatabase assetDatabase;                // GUID/.meta サイドカー DB (M23)
+    SkinningSystem skinningSystem; // スケルタルアニメの時刻進行 (M18)
+    UIRenderer uiRenderer;         // ゲーム内 UI (M21、backbuffer/GameView への重ね描画)
+    AudioSystem audioSystem;       // XAudio2 (M19、決定論レーン外の出力 sink)
+    std::vector<ScriptAudioEvent> audioQueue; // スクリプトの再生イベント (tick 内で積む)
+    std::wstring pendingScene;                // LoadScene の遅延ロード先 (tick 末に消費)
     IRenderPath* activePath = &forwardPath;
 
     // ---- 起動 ----
@@ -95,8 +114,18 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     if (!deferredPath.Init(device, shaderManager)) {
         return 1;
     }
+    uiRenderer.Init(device, shaderManager); // M21: 失敗してもエンジンは継続 (UI が出ないだけ)
     reloadHub.Init(&shaderManager, &resources, &scene, &prefabLibrary, &animLibrary, assetsRoot);
     particleSystem.Init(device, shaderManager, assetsRoot);
+
+    // ポストプロセス設定を config から反映 (M16)。全ビューポート共通の renderSystem に載る
+    renderSystem.enablePostFx = config.postFx;
+    renderSystem.postFxSettings.tonemap = config.postFxTonemap;
+    renderSystem.postFxSettings.exposure = config.postFxExposure;
+    renderSystem.postFxSettings.bloom = config.postFxBloom;
+    renderSystem.postFxSettings.bloomThreshold = config.postFxBloomThreshold;
+    renderSystem.postFxSettings.bloomIntensity = config.postFxBloomIntensity;
+    renderSystem.postFxSettings.fxaa = config.postFxFxaa;
 
     // GameLogic.dll (スクリプト層)。エンジンの exe と同じ構成のビルド出力を監視する
     scriptHost.Init(&scene);
@@ -106,6 +135,20 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         dllReloader.Init(&scriptHost, GetExecutableDir() + L"\\GameLogic.dll", cacheHot);
         dllReloader.LoadInitial();
     }
+
+    // C# スクリプトホスト (CoreCLR)。未導入でも失敗ログのみでエンジンは継続する
+    if (managedHost.Init(GetExecutableDir(), &scene)) {
+        managedHost.CompileScripts(assetsRoot + L"\\scripts"); // 起動時に既存 C# を一括コンパイル
+    }
+    // シーン保存/復元時に C# コンポーネントのフィールドを永続化する hook を登録
+    SceneSerializer::SetManagedHost(&managedHost);
+
+    // オーディオ (M19)。XAudio2 初期化 + デモ .wav ロード + 両ホストへ共有バッファ接続。
+    // 初期化失敗 (ヘッドレス等) でもエンジンは継続する (PlaySound が no-op になるだけ)
+    audioSystem.Init();
+    audioSystem.LoadWav("beep", assetsRoot + L"\\audio\\beep.wav");
+    scriptHost.SetSharedServices(&audioQueue, &pendingScene);
+    managedHost.SetSharedServices(&audioQueue, &pendingScene);
 
     clock.Init();
 
@@ -117,16 +160,30 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     ctx.shaders = &shaderManager;
     ctx.resources = &resources;
     ctx.renderSystem = &renderSystem;
+    ctx.uiRenderer = &uiRenderer;
     ctx.renderPath = activePath;
     ctx.renderPathForward = &forwardPath;
     ctx.renderPathDeferred = &deferredPath;
     ctx.reloadHub = &reloadHub;
     ctx.scriptHost = &scriptHost;
     ctx.dllReloader = &dllReloader;
+    ctx.managedHost = &managedHost;
     ctx.particles = &particleSystem;
     ctx.prefabs = &prefabLibrary;
     ctx.anims = &animLibrary;
+    ctx.controllers = &controllerLibrary;
+    ctx.assetDb = &assetDatabase;
     ctx.assetsRoot = assetsRoot;
+
+    // M23: assets\ を走査して .meta サイドカー (GUID) を生成/同期する。
+    // アセット登録 (app.OnStart → RegisterAssetLibraries) の前に済ませ、パス⇄GUID 解決を利用可能にする。
+    assetDatabase.ScanAndSync(assetsRoot);
+
+    // M25: ジョブシステム起動 (min(16, cores-2) ワーカー)。--no-jobs で直列化。
+    jobs::System().Init();
+    jobs::System().SetEnabled(config.useJobs);
+    MYE_LOG_INFO("[jobs] %s (%d workers)", config.useJobs ? "enabled" : "disabled (serial)",
+                 jobs::System().WorkerCount());
     ctx.fixedDt = static_cast<float>(kFixedDt);
 
     app.OnStart(ctx);
@@ -173,6 +230,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         const double tReload = clock.Now();
         reloadHub.Update();
         dllReloader.Update();
+        resources.textures.PollAsyncLoads(); // M23: 非同期デコード完了分を GPU 公開 (セーフポイント)
         FrameTimings timings;
         timings.reloadMs = static_cast<float>((clock.Now() - tReload) * 1000.0);
         const double tTicks = clock.Now();
@@ -195,12 +253,31 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                 scriptHost.SetTickContext(ctx.input, ctx.tickIndex, ctx.fixedDt);
                 scriptHost.RunStartAndUpdate();
             }
+            // C# スクリプト層 (別レーン): 記録/検証中は走らせない → 純 C++ 決定論を保持
+            const bool runManaged = ctx.simulateScripts && managedHost.IsReady()
+                && !recorder.IsActive() && !player.IsActive();
+            if (runManaged) {
+                managedHost.SetTickContext(ctx.input, ctx.tickIndex, ctx.fixedDt);
+                managedHost.RunStartAndUpdate();
+            }
             // ---- アニメーション (フェーズ 3.5): スクリプト後・Transform 前に LocalTransform を確定 ----
             // Play 中のみ進行 (編集時は Animation 窓が明示サンプリングする)。
             // AnimatorComponent 非存在シーンでは完全 no-op = 既存シーンのリプレイ不変
             if (ctx.simulateScripts) {
                 MYE_PROFILE_SCOPE("animation");
                 animationSystem.Update(scene.GetWorld(), animLibrary);
+                // Animator Controller (M22): ステートマシンでクリップを切替・ブレンド。
+                // LocalTransform を駆動するので hash 対象、決定論 (整数 tick・整数比ブレンド)
+                controllerSystem.Update(scene.GetWorld(), controllerLibrary, animLibrary);
+                // スケルタルアニメの時刻を進める (M18)。ポーズは非ハッシュなのでリプレイ不変
+                skinningSystem.Update(scene.GetWorld(), resources);
+            }
+            // ---- 物理 (フェーズ 3.6): スクリプト/アニメ後・Transform 前に剛体を積分 ----
+            // LocalTransform.position を書き換えるので TransformSystem 前に走らせ、確定した
+            // ワールド位置でコライダ判定させる。Rigidbody 非存在シーンでは完全 no-op (opt-in)
+            if (ctx.simulateScripts) {
+                MYE_PROFILE_SCOPE("physics");
+                physicsSystem.Update(scene.GetWorld(), ctx.fixedDt);
             }
             // ---- フェーズ 4: システム層 ----
             // Transform を先に確定 (エミッタ/コライダのワールド位置は tick 決定論の一部)
@@ -211,7 +288,9 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             if (ctx.simulateScripts) {
                 {
                     MYE_PROFILE_SCOPE("collision");
-                    collisionSystem.Update(scene.GetWorld(), &scriptHost); // トリガーイベント配信
+                    // C# にもトリガー配信 (別レーン: 記録/検証中は managed=null で純 C++)
+                    collisionSystem.Update(scene.GetWorld(), &scriptHost,
+                                           runManaged ? &managedHost : nullptr);
                 }
                 {
                     MYE_PROFILE_SCOPE("particles");
@@ -221,6 +300,9 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             // ---- フェーズ 5: スクリプト層 LateUpdate ----
             if (runScripts) {
                 scriptHost.RunLateUpdate();
+            }
+            if (runManaged) {
+                managedHost.RunLateUpdate();
             }
             scene.GetWorld().ApplyStructuralChanges(); // フェーズ 7 (tick 末適用 = ADR-005)
 
@@ -261,6 +343,37 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                 }
             }
 
+            // ---- オーディオ drain (M19): ハッシュ後に再生する (voice 状態は絶対に hashed state
+            // へ戻さない)。記録/検証中はゲート (実音を出さない)。キューは毎 tick クリア ----
+            if (!recorder.IsActive() && !verifying) {
+                for (const ScriptAudioEvent& e : audioQueue) {
+                    audioSystem.Play(e.key, e.volume);
+                }
+            }
+            audioQueue.clear();
+
+            // ---- シーン遷移 (M19.4): pendingScene が積まれていれば tick 末にロードする ----
+            // スクリプトが決定論的に LoadScene → 記録/検証とも同一 tick に再現される。
+            // world.Clear (LoadFromFile 内) + carry-state リセット + RNG 決定論的再シードで
+            // 新シーンが決定論的に始まる。mid-iteration の world 破棄を避けるため必ず tick 末。
+            if (!pendingScene.empty()) {
+                std::wstring full = pendingScene;
+                pendingScene.clear();
+                if (full.find(L':') == std::wstring::npos) {
+                    full = assetsRoot + L"\\" + full; // assets ルート相対を絶対化
+                }
+                if (SceneSerializer::LoadFromFile(scene, full)) {
+                    scene.GetWorld().Rng().Seed(0x4D794531ull); // 決定論的再シード (World 既定値)
+                    collisionSystem.Reset();
+                    particleSystem.ResetParticles();
+                    scriptHost.ClearStarted();
+                    managedHost.OnSceneReloaded();
+                    MYE_LOG_INFO("[scene] loaded: %s", WideToUtf8(full).c_str());
+                } else {
+                    MYE_LOG_WARN("[scene] load failed: %s", WideToUtf8(full).c_str());
+                }
+            }
+
             ++ctx.tickIndex;
             ++ticks;
             if (!verifying) {
@@ -281,6 +394,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         }
         timings.tickMs = static_cast<float>((clock.Now() - tTicks) * 1000.0);
         timings.ticksThisFrame = ticks;
+        audioSystem.Update(); // 再生し終えた source voice を掃除 (M19、フレーム毎)
         const double tRender = clock.Now();
 
         // エディタ (または将来の設定) によるレンダリングパス切替を反映
@@ -305,6 +419,10 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             if (config.renderSceneToBackbuffer) {
                 renderSystem.Render(scene.GetWorld(), device, *activePath, shaderManager, resources,
                                     target, nullptr, &particleSystem);
+                // M21: ゲーム内 UI を backbuffer に重ねる (Runtime 経路)。マウスは hover 表示用
+                uiRenderer.Render(scene.GetWorld(), device, shaderManager, resources, target.rtv,
+                                  target.width, target.height, ctx.input.mouseX, ctx.input.mouseY,
+                                  ctx.input.MouseDown(0));
             } else {
                 // ImGui 描画の下地としてクリアのみ
                 ID3D11DeviceContext* dc = device.Context();
@@ -363,8 +481,12 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
 
     // ---- 終了 (起動の逆順) ----
     app.OnShutdown(ctx);
+    uiRenderer.Shutdown();  // M21
+    audioSystem.Shutdown(); // M19: source voice + XAudio2 を破棄 (host より先でも後でも可)
+    jobs::System().Shutdown(); // M25: ワーカー join
     particleSystem.Shutdown();
     scriptHost.Shutdown();
+    managedHost.Shutdown();
     reloadHub.Shutdown();
     deferredPath.Shutdown();
     forwardPath.Shutdown();

@@ -4,6 +4,7 @@
 #include <unordered_set>
 
 #include "Engine/Core/EntityID.h"
+#include "Engine/Engine/Script/EngineApiTable.h"
 #include "Engine/Platform/Input.h"
 #include "Shared/ScriptTypes.h"
 
@@ -27,6 +28,16 @@ public:
     bool LoadModule(const std::wstring& dllPath);
     bool IsLoaded() const { return module_ != nullptr; }
     uint32_t ScriptTypeCount() const { return static_cast<uint32_t>(types_.size()); }
+
+    // v3 (M19): audioQueue / pendingScene の共有バッファを context に接続する (Init 後に一度)
+    void SetSharedServices(std::vector<ScriptAudioEvent>* audioQueue, std::wstring* pendingScene)
+    {
+        apiCtx_.audioQueue = audioQueue;
+        apiCtx_.pendingScene = pendingScene;
+    }
+
+    // シーン遷移 (M19.4): Start 済み記録をクリアして新シーンのエンティティで Start を再実行させる
+    void ClearStarted() { started_.clear(); }
 
     // 毎 tick、フェーズ 3/5 で呼ぶ (Play 中のみ)
     void SetTickContext(const InputSnapshot& input, uint64_t tickIndex, float dt);
@@ -56,6 +67,7 @@ private:
 
     Scene* scene_ = nullptr;
     void* module_ = nullptr; // HMODULE (現行 DLL)
+    ScriptApiContext apiCtx_ = {}; // api_ の engine が指すコンテキスト (安定アドレス)
     MyeEngineApi api_ = {};
     std::deque<ScriptType> types_; // deque: name の c_str() 安定性のため
     std::unordered_set<uint64_t> started_; // (index<<32|generation) — Start 済みインスタンス

@@ -14,13 +14,19 @@ class UndoStack;
 // .prefab.json はダブルクリックでシーンへインスタンス化 (M13)。
 class AssetBrowserWindow {
 public:
-    void OnImGui(EngineContext& ctx, Selection& selection, UndoStack& undo);
+    bool open = true; // 閉じる / 再表示 (タブ [x] と Window メニューに連動)
+    void OnImGui(EngineContext& ctx, Selection& selection, UndoStack& undo,
+                 const std::string& externalEditorCmd);
 
 private:
     void DrawDirTree(const std::wstring& dir);
+    void DoCreate(EngineContext& ctx, const std::string& externalEditorCmd); // 命名モーダルの確定処理
 
     std::wstring current_; // 表示中フォルダ (絶対パス)
     bool init_ = false;
+    int pendingCreate_ = 0;     // Create モーダルで作る種別 (0=なし)
+    bool requestModal_ = false; // 次フレームで命名モーダルを開く
+    char createName_[96] = {};
 };
 
 } // namespace mye

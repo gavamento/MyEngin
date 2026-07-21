@@ -15,6 +15,7 @@ class UndoStack;
 // コンポーネント個別の UI コードは存在しない (これが M1 リフレクション設計の回収点)
 class InspectorWindow {
 public:
+    bool open = true; // 閉じる / 再表示 (タブ [x] と Window メニューに連動)
     void OnImGui(EngineContext& ctx, Selection& selection, UndoStack& undo);
 
 private:

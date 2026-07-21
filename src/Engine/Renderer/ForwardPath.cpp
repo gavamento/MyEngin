@@ -11,22 +11,35 @@ using namespace DirectX;
 namespace mye {
 namespace {
 
-// HLSL 側は既定の column_major packing のため、書き込み前に転置する
+// ボーンパレット最大数 (forward_skinned.hlsl / deferred_gbuffer_skinned.hlsl の MYE_MAX_BONES と一致)
+constexpr int kMaxBones = 64;
+
+// HLSL 側は既定の column_major packing のため、書き込み前に転置する。
+// forward_lit.hlsl / deferred_gbuffer.hlsl の PerFrame と同一レイアウト。
 struct PerFrameCB {
     XMFLOAT4X4 viewProj;
     XMFLOAT3 cameraPos;
-    float pad0;
-    XMFLOAT3 lightDir;
-    float pad1;
-    XMFLOAT3 lightColor;
-    float lightIntensity;
+    int32_t lightCount;
     XMFLOAT3 ambient;
-    float pad2;
+    float pad0;
+    GpuLight lights[kMaxLights];
+    XMFLOAT4X4 shadowVP; // transpose(lightView*lightProj)
+    float shadowTexel;
+    int32_t shadowEnabled;
+    float pad1[2];
 };
 
 struct PerObjectCB {
     XMFLOAT4X4 world;
     XMFLOAT4 baseColor;
+};
+
+// forward_lit.hlsl の MaterialParams (b2) と一致 (16 バイト)
+struct MaterialCB {
+    float metallic;
+    float roughness;
+    int32_t hasNormal; // 0=ノーマルマップ無し
+    float pad0;
 };
 
 bool CreateConstantBuffer(ID3D11Device* dev, UINT size, Microsoft::WRL::ComPtr<ID3D11Buffer>& out)
@@ -56,7 +69,9 @@ bool ForwardPath::Init(GraphicsDevice& device, ShaderManager& shaders)
     ID3D11Device* dev = device.Device();
 
     if (!CreateConstantBuffer(dev, sizeof(PerFrameCB), perFrameCB_)
-        || !CreateConstantBuffer(dev, sizeof(PerObjectCB), perObjectCB_)) {
+        || !CreateConstantBuffer(dev, sizeof(PerObjectCB), perObjectCB_)
+        || !CreateConstantBuffer(dev, sizeof(MaterialCB), materialCB_)
+        || !CreateConstantBuffer(dev, sizeof(XMFLOAT4X4) * kMaxBones, boneCB_)) {
         MYE_LOG_ERROR("ForwardPath: constant buffer creation failed");
         return false;
     }
@@ -68,6 +83,16 @@ bool ForwardPath::Init(GraphicsDevice& device, ShaderManager& shaders)
     sd.ComparisonFunc = D3D11_COMPARISON_NEVER;
     sd.MaxLOD = D3D11_FLOAT32_MAX;
     if (FAILED(dev->CreateSamplerState(&sd, sampler_.GetAddressOf()))) {
+        return false;
+    }
+
+    // シャドウ PCF 用の比較サンプラ (M17)
+    D3D11_SAMPLER_DESC cs = {};
+    cs.Filter = D3D11_FILTER_COMPARISON_MIN_MAG_LINEAR_MIP_POINT;
+    cs.AddressU = cs.AddressV = cs.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+    cs.ComparisonFunc = D3D11_COMPARISON_LESS_EQUAL;
+    cs.MaxLOD = D3D11_FLOAT32_MAX;
+    if (FAILED(dev->CreateSamplerState(&cs, shadowSampler_.GetAddressOf()))) {
         return false;
     }
 
@@ -109,7 +134,8 @@ bool ForwardPath::Init(GraphicsDevice& device, ShaderManager& shaders)
         return false;
     }
 
-    (void)shaders;
+    // スキンメッシュ用のシェーダをプリロード (BLENDINDICES 入力レイアウトもここで構築される)
+    skinnedShader_ = shaders.Load("forward_skinned");
     return true;
 }
 
@@ -126,7 +152,7 @@ void ForwardPath::Shutdown()
 }
 
 void ForwardPath::Render(GraphicsDevice& device, const RenderView& view, const RenderQueue& queue,
-                         const DirectionalLightData& light, RenderResources& resources,
+                         const SceneLightData& lights, RenderResources& resources,
                          ShaderManager& shaders)
 {
     ID3D11DeviceContext* dc = device.Context();
@@ -148,17 +174,24 @@ void ForwardPath::Render(GraphicsDevice& device, const RenderView& view, const R
     const XMMATRIX p = XMLoadFloat4x4(&view.proj);
     XMStoreFloat4x4(&pf.viewProj, XMMatrixTranspose(XMMatrixMultiply(v, p)));
     pf.cameraPos = view.cameraPos;
-    pf.lightDir = light.dir;
-    pf.lightColor = light.color;
-    pf.lightIntensity = light.intensity;
-    pf.ambient = light.ambient;
+    pf.lightCount = lights.count;
+    pf.ambient = lights.ambient;
+    memcpy(pf.lights, lights.lights, sizeof(pf.lights));
+    pf.shadowVP = view.lightViewProj;
+    pf.shadowTexel = view.shadowTexelSize;
+    pf.shadowEnabled = (view.shadowSRV != nullptr) ? 1 : 0;
     UploadCB(dc, perFrameCB_.Get(), pf);
 
     ID3D11Buffer* cbs[2] = { perFrameCB_.Get(), perObjectCB_.Get() };
     dc->VSSetConstantBuffers(0, 2, cbs);
     dc->PSSetConstantBuffers(0, 2, cbs);
-    ID3D11SamplerState* samplers[1] = { sampler_.Get() };
-    dc->PSSetSamplers(0, 1, samplers);
+    ID3D11Buffer* matCbs[1] = { materialCB_.Get() };
+    dc->PSSetConstantBuffers(2, 1, matCbs);
+    ID3D11SamplerState* samplers[2] = { sampler_.Get(), shadowSampler_.Get() };
+    dc->PSSetSamplers(0, 2, samplers);
+    // シャドウマップを t1 に (マテリアルの albedo は t0)
+    ID3D11ShaderResourceView* shadowSrv[1] = { view.shadowSRV };
+    dc->PSSetShaderResources(1, 1, shadowSrv);
     dc->RSSetState(rasterizer_.Get());
     dc->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
@@ -184,6 +217,7 @@ void ForwardPath::DrawItems(GraphicsDevice& device, const std::vector<RenderItem
 
     uint64_t boundShader = 0;
     uint64_t boundTexture = 0;
+    uint64_t boundNormal = 0;
     uint64_t boundMesh = 0;
 
     for (const RenderItem& item : items) {
@@ -195,16 +229,30 @@ void ForwardPath::DrawItems(GraphicsDevice& device, const std::vector<RenderItem
         if (!mesh) {
             continue;
         }
-        ShaderProgram* prog = shaders.Get(mat->shader);
+        // スキンメッシュはマテリアルのシェーダではなくスキニング版に差し替える (M18)
+        const bool skinned = (item.bones != nullptr && item.boneCount > 0);
+        const AssetID shaderId = skinned ? skinnedShader_ : mat->shader;
+        ShaderProgram* prog = shaders.Get(shaderId);
         if (!prog || !prog->valid) {
             continue;
         }
 
-        if (mat->shader.value != boundShader) {
+        if (shaderId.value != boundShader) {
             dc->IASetInputLayout(prog->inputLayout.Get());
             dc->VSSetShader(prog->vs.Get(), nullptr, 0);
             dc->PSSetShader(prog->ps.Get(), nullptr, 0);
-            boundShader = mat->shader.value;
+            boundShader = shaderId.value;
+        }
+        if (skinned) {
+            // ボーンパレットを b3 (VS) にアップロード
+            D3D11_MAPPED_SUBRESOURCE bm = {};
+            if (SUCCEEDED(dc->Map(boneCB_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &bm))) {
+                memcpy(bm.pData, item.bones,
+                       sizeof(XMFLOAT4X4) * static_cast<size_t>(item.boneCount));
+                dc->Unmap(boneCB_.Get(), 0);
+            }
+            ID3D11Buffer* bcb = boneCB_.Get();
+            dc->VSSetConstantBuffers(3, 1, &bcb);
         }
         const AssetID texId = mat->texture.IsNull() ? resources.textures.White() : mat->texture;
         if (texId.value != boundTexture) {
@@ -212,6 +260,14 @@ void ForwardPath::DrawItems(GraphicsDevice& device, const std::vector<RenderItem
             ID3D11ShaderResourceView* srv = tex ? tex->srv.Get() : nullptr;
             dc->PSSetShaderResources(0, 1, &srv);
             boundTexture = texId.value;
+        }
+        // ノーマルマップを t2 に (無ければ White。シェーダは gHasNormal で使用可否を判定)
+        const AssetID nrmId = mat->normalTex.IsNull() ? resources.textures.White() : mat->normalTex;
+        if (nrmId.value != boundNormal) {
+            Texture* ntex = resources.textures.Get(nrmId);
+            ID3D11ShaderResourceView* nsrv = ntex ? ntex->srv.Get() : nullptr;
+            dc->PSSetShaderResources(2, 1, &nsrv);
+            boundNormal = nrmId.value;
         }
         if (item.mesh.value != boundMesh) {
             const UINT stride = sizeof(MeshVertex);
@@ -226,6 +282,12 @@ void ForwardPath::DrawItems(GraphicsDevice& device, const std::vector<RenderItem
         XMStoreFloat4x4(&po.world, XMMatrixTranspose(XMLoadFloat4x4(&item.world)));
         po.baseColor = mat->baseColor;
         UploadCB(dc, perObjectCB_.Get(), po);
+
+        MaterialCB mc = {};
+        mc.metallic = mat->metallic;
+        mc.roughness = mat->roughness;
+        mc.hasNormal = mat->normalTex.IsNull() ? 0 : 1;
+        UploadCB(dc, materialCB_.Get(), mc);
 
         dc->DrawIndexed(mesh->indexCount, 0, 0);
         prof::AddDraw(static_cast<int>(mesh->indexCount / 3));

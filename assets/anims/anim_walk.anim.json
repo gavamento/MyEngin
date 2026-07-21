@@ -1,0 +1,21 @@
+{
+  "engine": "MyEngine",
+  "anim": 1,
+  "name": "anim_walk",
+  "lengthTicks": 60,
+  "tracks": [
+    {
+      "target": 0,
+      "component": "LocalTransform",
+      "field": "position",
+      "interp": "linear",
+      "keys": [
+        { "t": 0, "v": [-1.2, 0.6, 0.0] },
+        { "t": 15, "v": [0.0, 0.9, 0.0] },
+        { "t": 30, "v": [1.2, 0.6, 0.0] },
+        { "t": 45, "v": [0.0, 0.9, 0.0] },
+        { "t": 60, "v": [-1.2, 0.6, 0.0] }
+      ]
+    }
+  ]
+}

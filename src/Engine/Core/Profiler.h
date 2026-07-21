@@ -25,12 +25,14 @@ struct ScopeTimer {
     ScopeTimer& operator=(const ScopeTimer&) = delete;
 };
 
-// ---- レンダ統計 (ドローコール / 三角形) ----
+// ---- レンダ統計 (ドローコール / 三角形 / カリング) ----
 struct RenderStats {
     int drawCalls = 0;
     int triangles = 0;
+    int culled = 0; // フラスタムカリングで除外したメッシュ数 (M16)
 };
 void AddDraw(int triangles); // 描画パスの DrawIndexed 地点で呼ぶ
+void AddCulled(int n);       // 収集時にカリングした件数を加算 (M16)
 RenderStats GetRenderStats();
 
 // ---- メモリ (MemoryTrack.cpp の global operator new/delete フック) ----

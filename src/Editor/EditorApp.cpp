@@ -7,6 +7,7 @@
 #include <Windows.h>
 #include <commdlg.h>
 
+#include "Editor/CreateMenu.h"
 #include "Engine/Core/Hash.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Engine/DemoContent.h"
@@ -98,8 +99,9 @@ void EditorApp::OnImGui(EngineContext& ctx)
     gameView_.OnImGui(ctx);
     particleSettings_.OnImGui(ctx);
     profiler_.OnImGui(ctx);
-    assetBrowser_.OnImGui(ctx, selection_, undo_);
+    assetBrowser_.OnImGui(ctx, selection_, undo_, settings_.externalEditorCmd);
     animation_.OnImGui(ctx, selection_, undo_);
+    animatorController_.OnImGui(ctx, selection_);
     search_.OnImGui(ctx, selection_);
     projectSettings_.OnImGui(ctx, settings_, shortcuts_);
     buildSettings_.OnImGui(ctx);
@@ -197,6 +199,28 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
                             editing && undo_.CanRedo())) {
             undo_.Redo(*ctx.scene, selection_);
         }
+        ImGui::EndMenu();
+    }
+    if (ImGui::BeginMenu("GameObject")) {
+        DrawCreateMenuItems(ctx, selection_, undo_); // parent 省略 = ルート生成
+        ImGui::EndMenu();
+    }
+    if (ImGui::BeginMenu("Window")) {
+        // 各パネルの表示トグル (閉じたパネルはここから再表示)
+        ImGui::MenuItem("Hierarchy", nullptr, &hierarchy_.open);
+        ImGui::MenuItem("Inspector", nullptr, &inspector_.open);
+        ImGui::MenuItem("Console", nullptr, &console_.open);
+        ImGui::MenuItem("Scene", nullptr, &sceneView_.open);
+        ImGui::MenuItem("Game", nullptr, &gameView_.open);
+        ImGui::MenuItem("Assets", nullptr, &assetBrowser_.open);
+        ImGui::MenuItem("Animation", nullptr, &animation_.open);
+        ImGui::MenuItem("Animator", nullptr, &animatorController_.open);
+        ImGui::MenuItem("Search", nullptr, &search_.open);
+        ImGui::MenuItem("Profiler", nullptr, &profiler_.open);
+        ImGui::MenuItem("Particle Settings", nullptr, &particleSettings_.open);
+        ImGui::Separator();
+        ImGui::MenuItem("Project Settings", nullptr, &projectSettings_.open);
+        ImGui::MenuItem("Build Settings", nullptr, &buildSettings_.open);
         ImGui::EndMenu();
     }
 
@@ -388,6 +412,7 @@ void EditorApp::SetupDockLayout(unsigned int dockspaceId)
     ImGui::DockBuilderDockWindow("Console", bottom);
     ImGui::DockBuilderDockWindow("Assets", bottomRight);
     ImGui::DockBuilderDockWindow("Animation", bottom);
+    ImGui::DockBuilderDockWindow("Animator", bottom);
     ImGui::DockBuilderDockWindow("Scene", center);
     ImGui::DockBuilderDockWindow("Game", center);
     ImGui::DockBuilderFinish(dockspaceId);

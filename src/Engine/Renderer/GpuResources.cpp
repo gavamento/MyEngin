@@ -1,7 +1,14 @@
 #include "Engine/Renderer/GpuResources.h"
 
 #include <algorithm>
+#include <cmath>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <vector>
+
+#include "nlohmann/json.hpp"
 
 #include "Engine/Core/Hash.h"
 #include "Engine/Core/Log.h"
@@ -27,6 +34,87 @@ std::vector<AssetEntry> EnumerateNames(const std::unordered_map<uint64_t, std::s
     std::sort(out.begin(), out.end(),
               [](const AssetEntry& a, const AssetEntry& b) { return a.name < b.name; });
     return out;
+}
+
+// ---- DDS (M24: BCn 圧縮テクスチャ、依存ゼロ) ----
+constexpr uint32_t kDdsMagic = 0x20534444; // "DDS "
+
+constexpr uint32_t MakeFourCC(char a, char b, char c, char d)
+{
+    return static_cast<uint32_t>(static_cast<uint8_t>(a))
+        | (static_cast<uint32_t>(static_cast<uint8_t>(b)) << 8)
+        | (static_cast<uint32_t>(static_cast<uint8_t>(c)) << 16)
+        | (static_cast<uint32_t>(static_cast<uint8_t>(d)) << 24);
+}
+
+#pragma pack(push, 1)
+struct DdsPixelFormat {
+    uint32_t size, flags, fourCC, rgbBitCount, rMask, gMask, bMask, aMask;
+};
+struct DdsHeader {
+    uint32_t size, flags, height, width, pitchOrLinearSize, depth, mipMapCount;
+    uint32_t reserved1[11];
+    DdsPixelFormat ddspf;
+    uint32_t caps, caps2, caps3, caps4, reserved2;
+};
+struct DdsHeaderDx10 {
+    uint32_t dxgiFormat, resourceDimension, miscFlag, arraySize, miscFlags2;
+};
+#pragma pack(pop)
+
+bool HasDdsExt(const std::wstring& path)
+{
+    return path.size() >= 4
+        && (path.compare(path.size() - 4, 4, L".dds") == 0
+            || path.compare(path.size() - 4, 4, L".DDS") == 0);
+}
+
+// FourCC / DX10 ヘッダから DXGI フォーマットと 4x4 ブロックのバイト数を決める。
+DXGI_FORMAT DdsResolveFormat(const DdsHeader& h, const DdsHeaderDx10* dx10, uint32_t& blockBytes)
+{
+    if (dx10) {
+        const DXGI_FORMAT f = static_cast<DXGI_FORMAT>(dx10->dxgiFormat);
+        switch (f) {
+        case DXGI_FORMAT_BC1_UNORM:
+        case DXGI_FORMAT_BC1_UNORM_SRGB:
+        case DXGI_FORMAT_BC4_UNORM:
+        case DXGI_FORMAT_BC4_SNORM:
+            blockBytes = 8;
+            return f;
+        case DXGI_FORMAT_BC2_UNORM:
+        case DXGI_FORMAT_BC2_UNORM_SRGB:
+        case DXGI_FORMAT_BC3_UNORM:
+        case DXGI_FORMAT_BC3_UNORM_SRGB:
+        case DXGI_FORMAT_BC5_UNORM:
+        case DXGI_FORMAT_BC5_SNORM:
+        case DXGI_FORMAT_BC7_UNORM:
+        case DXGI_FORMAT_BC7_UNORM_SRGB:
+            blockBytes = 16;
+            return f;
+        default:
+            blockBytes = 0;
+            return DXGI_FORMAT_UNKNOWN;
+        }
+    }
+    const uint32_t fc = h.ddspf.fourCC;
+    if (fc == MakeFourCC('D', 'X', 'T', '1')) {
+        blockBytes = 8;
+        return DXGI_FORMAT_BC1_UNORM;
+    }
+    if (fc == MakeFourCC('D', 'X', 'T', '3')) {
+        blockBytes = 16;
+        return DXGI_FORMAT_BC2_UNORM;
+    }
+    if (fc == MakeFourCC('D', 'X', 'T', '5')) {
+        blockBytes = 16;
+        return DXGI_FORMAT_BC3_UNORM;
+    }
+    if (fc == MakeFourCC('A', 'T', 'I', '2') || fc == MakeFourCC('B', 'C', '5', 'U')) {
+        blockBytes = 16;
+        return DXGI_FORMAT_BC5_UNORM;
+    }
+    blockBytes = 0;
+    return DXGI_FORMAT_UNKNOWN;
 }
 
 } // namespace
@@ -130,6 +218,192 @@ AssetID MeshLibrary::Cube()
     return cube_;
 }
 
+namespace {
+
+constexpr float kPi = 3.14159265358979323846f;
+
+// 巻き順の規約 (Cube と同じ): 三角形 (v0,v1,v2) は cross(v1-v0, v2-v0) が外向き法線と
+// 同じ向きになるよう張る (= DX 既定の front)。以下のヘルパは全てこれに従う。
+
+// UV 球の緯度帯 [phi0, phi1] を生成して verts/idx に追記する (中心 center, 半径 r)。
+// phi=0 が +Y 極、phi=pi が -Y 極。stacks=緯度分割、slices=経度分割。
+void AppendSphereBand(std::vector<MeshVertex>& verts, std::vector<uint32_t>& idx,
+                      const DirectX::XMFLOAT3& center, float r, int stacks, int slices, float phi0,
+                      float phi1)
+{
+    const uint32_t base = static_cast<uint32_t>(verts.size());
+    for (int i = 0; i <= stacks; ++i) {
+        const float phi = phi0 + (phi1 - phi0) * (static_cast<float>(i) / stacks);
+        const float sp = std::sin(phi);
+        const float cp = std::cos(phi);
+        for (int j = 0; j <= slices; ++j) {
+            const float theta = 2.0f * kPi * (static_cast<float>(j) / slices);
+            const DirectX::XMFLOAT3 n = { sp * std::cos(theta), cp, sp * std::sin(theta) };
+            MeshVertex v;
+            v.position = { center.x + r * n.x, center.y + r * n.y, center.z + r * n.z };
+            v.normal = n;
+            v.uv = { static_cast<float>(j) / slices, phi / kPi };
+            verts.push_back(v);
+        }
+    }
+    const uint32_t stride = static_cast<uint32_t>(slices + 1);
+    for (int i = 0; i < stacks; ++i) {
+        for (int j = 0; j < slices; ++j) {
+            const uint32_t a = base + static_cast<uint32_t>(i) * stride + j;
+            const uint32_t b = base + static_cast<uint32_t>(i + 1) * stride + j;
+            const uint32_t c = a + 1;
+            const uint32_t d = b + 1;
+            idx.insert(idx.end(), { a, c, b, c, d, b });
+        }
+    }
+}
+
+// 円柱側面 (y=yBottom..yTop, 半径 r) を追記。法線は放射方向。
+void AppendCylinderSide(std::vector<MeshVertex>& verts, std::vector<uint32_t>& idx, float r,
+                        float yBottom, float yTop, int slices)
+{
+    const uint32_t base = static_cast<uint32_t>(verts.size());
+    for (int j = 0; j <= slices; ++j) {
+        const float theta = 2.0f * kPi * (static_cast<float>(j) / slices);
+        const float ct = std::cos(theta);
+        const float st = std::sin(theta);
+        const DirectX::XMFLOAT3 n = { ct, 0.0f, st };
+        const float u = static_cast<float>(j) / slices;
+        MeshVertex top;
+        top.position = { r * ct, yTop, r * st };
+        top.normal = n;
+        top.uv = { u, 0.0f };
+        MeshVertex bot;
+        bot.position = { r * ct, yBottom, r * st };
+        bot.normal = n;
+        bot.uv = { u, 1.0f };
+        verts.push_back(top);
+        verts.push_back(bot);
+    }
+    for (int j = 0; j < slices; ++j) {
+        const uint32_t a = base + static_cast<uint32_t>(j) * 2;     // top_j
+        const uint32_t b = a + 1;                                   // bottom_j
+        const uint32_t c = base + static_cast<uint32_t>(j + 1) * 2; // top_{j+1}
+        const uint32_t d = c + 1;                                   // bottom_{j+1}
+        idx.insert(idx.end(), { a, c, b, b, c, d });
+    }
+}
+
+// 上下フタ (中心 (0,y,0), 法線 (0,ny,0), ny=+1/-1) を扇状に追記。
+void AppendCap(std::vector<MeshVertex>& verts, std::vector<uint32_t>& idx, float r, float y, float ny,
+               int slices)
+{
+    const uint32_t center = static_cast<uint32_t>(verts.size());
+    MeshVertex c;
+    c.position = { 0.0f, y, 0.0f };
+    c.normal = { 0.0f, ny, 0.0f };
+    c.uv = { 0.5f, 0.5f };
+    verts.push_back(c);
+    const uint32_t ring = static_cast<uint32_t>(verts.size());
+    for (int j = 0; j <= slices; ++j) {
+        const float theta = 2.0f * kPi * (static_cast<float>(j) / slices);
+        const float ct = std::cos(theta);
+        const float st = std::sin(theta);
+        MeshVertex v;
+        v.position = { r * ct, y, r * st };
+        v.normal = { 0.0f, ny, 0.0f };
+        v.uv = { 0.5f + 0.5f * ct, 0.5f + 0.5f * st };
+        verts.push_back(v);
+    }
+    for (int j = 0; j < slices; ++j) {
+        const uint32_t r0 = ring + static_cast<uint32_t>(j);
+        const uint32_t r1 = r0 + 1;
+        if (ny > 0.0f) {
+            idx.insert(idx.end(), { center, r1, r0 }); // +Y 外向き
+        } else {
+            idx.insert(idx.end(), { center, r0, r1 }); // -Y 外向き
+        }
+    }
+}
+
+} // namespace
+
+AssetID MeshLibrary::Sphere()
+{
+    if (!sphere_.IsNull()) {
+        return sphere_;
+    }
+    std::vector<MeshVertex> verts;
+    std::vector<uint32_t> idx;
+    AppendSphereBand(verts, idx, { 0, 0, 0 }, 0.5f, 16, 24, 0.0f, kPi);
+    sphere_ = Register("builtin://sphere", verts, idx);
+    return sphere_;
+}
+
+AssetID MeshLibrary::Plane()
+{
+    if (!plane_.IsNull()) {
+        return plane_;
+    }
+    // XZ 平面 1x1、法線 +Y (地面向き)
+    const float h = 0.5f;
+    const MeshVertex v[] = {
+        { { -h, 0, -h }, { 0, 1, 0 }, { 0, 0 } },
+        { { -h, 0, h }, { 0, 1, 0 }, { 0, 1 } },
+        { { h, 0, h }, { 0, 1, 0 }, { 1, 1 } },
+        { { h, 0, -h }, { 0, 1, 0 }, { 1, 0 } },
+    };
+    const uint32_t idx[] = { 0, 1, 2, 0, 2, 3 };
+    plane_ = Register("builtin://plane", v, idx);
+    return plane_;
+}
+
+AssetID MeshLibrary::Quad()
+{
+    if (!quad_.IsNull()) {
+        return quad_;
+    }
+    // XY 平面 1x1、法線 -Z (Unity 同様、+Z を向く既定カメラから正面が見える)
+    const float h = 0.5f;
+    const MeshVertex v[] = {
+        { { -h, -h, 0 }, { 0, 0, -1 }, { 0, 1 } },
+        { { -h, h, 0 }, { 0, 0, -1 }, { 0, 0 } },
+        { { h, h, 0 }, { 0, 0, -1 }, { 1, 0 } },
+        { { h, -h, 0 }, { 0, 0, -1 }, { 1, 1 } },
+    };
+    const uint32_t idx[] = { 0, 1, 2, 0, 2, 3 };
+    quad_ = Register("builtin://quad", v, idx);
+    return quad_;
+}
+
+AssetID MeshLibrary::Cylinder()
+{
+    if (!cylinder_.IsNull()) {
+        return cylinder_;
+    }
+    std::vector<MeshVertex> verts;
+    std::vector<uint32_t> idx;
+    const float r = 0.5f;
+    const int slices = 24;
+    AppendCylinderSide(verts, idx, r, -0.5f, 0.5f, slices);
+    AppendCap(verts, idx, r, 0.5f, 1.0f, slices);   // 上フタ
+    AppendCap(verts, idx, r, -0.5f, -1.0f, slices); // 下フタ
+    cylinder_ = Register("builtin://cylinder", verts, idx);
+    return cylinder_;
+}
+
+AssetID MeshLibrary::Capsule()
+{
+    if (!capsule_.IsNull()) {
+        return capsule_;
+    }
+    // 円柱 (y=-0.5..0.5) + 上下半球 (中心 y=±0.5, 半径 0.5) → 全高 2
+    std::vector<MeshVertex> verts;
+    std::vector<uint32_t> idx;
+    const float r = 0.5f;
+    const int slices = 24;
+    AppendCylinderSide(verts, idx, r, -0.5f, 0.5f, slices);
+    AppendSphereBand(verts, idx, { 0, 0.5f, 0 }, r, 8, slices, 0.0f, kPi * 0.5f);     // 上半球
+    AppendSphereBand(verts, idx, { 0, -0.5f, 0 }, r, 8, slices, kPi * 0.5f, kPi);     // 下半球
+    capsule_ = Register("builtin://capsule", verts, idx);
+    return capsule_;
+}
+
 // ---------------------------------------------------------------- TextureLibrary
 
 bool TextureLibrary::CreateFromPixels(Texture& out, const uint8_t* rgba, int w, int h)
@@ -174,13 +448,22 @@ AssetID TextureLibrary::LoadFile(const std::wstring& path)
         return id;
     }
     const std::string utf8 = WideToUtf8(path);
+    Texture t;
+    if (HasDdsExt(path)) {
+        // M24: BCn/DDS は decode 不要 (GPU が直接サンプルする)。ヘッダを読んで直接テクスチャ化
+        if (!LoadDdsInto(t, path)) {
+            return {};
+        }
+        textures_.emplace(id.value, std::move(t));
+        names_[id.value] = utf8;
+        return id;
+    }
     int w = 0, h = 0, comp = 0;
     stbi_uc* pixels = stbi_load(utf8.c_str(), &w, &h, &comp, 4);
     if (!pixels) {
         MYE_LOG_ERROR("texture load failed: %s (%s)", utf8.c_str(), stbi_failure_reason());
         return {};
     }
-    Texture t;
     const bool ok = CreateFromPixels(t, pixels, w, h);
     stbi_image_free(pixels);
     if (!ok) {
@@ -190,6 +473,209 @@ AssetID TextureLibrary::LoadFile(const std::wstring& path)
     textures_.emplace(id.value, std::move(t));
     names_[id.value] = utf8;
     return id;
+}
+
+// DDS (BC1/BC2/BC3/BC5/BC7) をヘッダ解析して直接 GPU テクスチャ化する。DirectXTex 不要 —
+// BCn は D3D11 がネイティブにサンプルするため、圧縮ブロックをそのまま subresource に渡すだけ。
+bool TextureLibrary::LoadDdsInto(Texture& out, const std::wstring& path)
+{
+    std::ifstream f(path, std::ios::binary);
+    if (!f) {
+        MYE_LOG_ERROR("dds open failed: %s", WideToUtf8(path).c_str());
+        return false;
+    }
+    const std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(f)),
+                                     std::istreambuf_iterator<char>());
+    if (bytes.size() < 4 + sizeof(DdsHeader)) {
+        MYE_LOG_ERROR("dds too small: %s", WideToUtf8(path).c_str());
+        return false;
+    }
+    uint32_t magic = 0;
+    std::memcpy(&magic, bytes.data(), 4);
+    if (magic != kDdsMagic) {
+        MYE_LOG_ERROR("not a DDS file: %s", WideToUtf8(path).c_str());
+        return false;
+    }
+    DdsHeader hdr;
+    std::memcpy(&hdr, bytes.data() + 4, sizeof(DdsHeader));
+    size_t offset = 4 + sizeof(DdsHeader);
+
+    DdsHeaderDx10 dx10s;
+    const DdsHeaderDx10* dx10 = nullptr;
+    if (hdr.ddspf.fourCC == MakeFourCC('D', 'X', '1', '0')) {
+        if (bytes.size() < offset + sizeof(DdsHeaderDx10)) {
+            MYE_LOG_ERROR("dds: DX10 header truncated: %s", WideToUtf8(path).c_str());
+            return false;
+        }
+        std::memcpy(&dx10s, bytes.data() + offset, sizeof(DdsHeaderDx10));
+        dx10 = &dx10s;
+        offset += sizeof(DdsHeaderDx10);
+    }
+
+    uint32_t blockBytes = 0;
+    const DXGI_FORMAT fmt = DdsResolveFormat(hdr, dx10, blockBytes);
+    if (fmt == DXGI_FORMAT_UNKNOWN) {
+        MYE_LOG_ERROR("dds: unsupported format (fourCC=0x%08X): %s", hdr.ddspf.fourCC,
+                      WideToUtf8(path).c_str());
+        return false;
+    }
+
+    const uint32_t mipCount = (hdr.mipMapCount > 0) ? hdr.mipMapCount : 1;
+    std::vector<D3D11_SUBRESOURCE_DATA> subs(mipCount);
+    uint32_t w = hdr.width;
+    uint32_t h = hdr.height;
+    size_t cursor = offset;
+    for (uint32_t m = 0; m < mipCount; ++m) {
+        const uint32_t bw = (w + 3) / 4;
+        const uint32_t bh = (h + 3) / 4;
+        const uint32_t rowPitch = bw * blockBytes;
+        const size_t mipSize = static_cast<size_t>(rowPitch) * bh;
+        if (cursor + mipSize > bytes.size()) {
+            MYE_LOG_ERROR("dds: data truncated at mip %u: %s", m, WideToUtf8(path).c_str());
+            return false;
+        }
+        subs[m].pSysMem = bytes.data() + cursor;
+        subs[m].SysMemPitch = rowPitch;
+        subs[m].SysMemSlicePitch = static_cast<UINT>(mipSize);
+        cursor += mipSize;
+        w = (w > 1) ? w / 2 : 1;
+        h = (h > 1) ? h / 2 : 1;
+    }
+
+    D3D11_TEXTURE2D_DESC td = {};
+    td.Width = hdr.width;
+    td.Height = hdr.height;
+    td.MipLevels = mipCount;
+    td.ArraySize = 1;
+    td.Format = fmt;
+    td.SampleDesc = { 1, 0 };
+    td.Usage = D3D11_USAGE_DEFAULT;
+    td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+
+    ID3D11Device* dev = device_->Device();
+    if (FAILED(dev->CreateTexture2D(&td, subs.data(), out.tex.ReleaseAndGetAddressOf()))) {
+        MYE_LOG_ERROR("dds CreateTexture2D failed: %s", WideToUtf8(path).c_str());
+        return false;
+    }
+    if (FAILED(dev->CreateShaderResourceView(out.tex.Get(), nullptr,
+                                             out.srv.ReleaseAndGetAddressOf()))) {
+        return false;
+    }
+    out.width = static_cast<int>(hdr.width);
+    out.height = static_cast<int>(hdr.height);
+    return true;
+}
+
+TextureLibrary::~TextureLibrary()
+{
+    if (workerStarted_) {
+        {
+            std::lock_guard<std::mutex> lk(asyncMutex_);
+            workerStop_ = true;
+        }
+        asyncCv_.notify_all();
+        if (worker_.joinable()) {
+            worker_.join();
+        }
+    }
+}
+
+void TextureLibrary::EnsureWorker()
+{
+    if (workerStarted_) {
+        return;
+    }
+    workerStarted_ = true;
+    worker_ = std::thread([this] { AsyncWorker(); });
+}
+
+// ワーカースレッド: CPU デコードのみ (GPU 作成には触れない)。
+void TextureLibrary::AsyncWorker()
+{
+    for (;;) {
+        DecodeJob job;
+        {
+            std::unique_lock<std::mutex> lk(asyncMutex_);
+            asyncCv_.wait(lk, [this] { return workerStop_ || !jobQueue_.empty(); });
+            if (workerStop_ && jobQueue_.empty()) {
+                return;
+            }
+            job = std::move(jobQueue_.front());
+            jobQueue_.pop_front();
+        }
+        DecodeResult r;
+        r.id = job.id;
+        int w = 0, h = 0, comp = 0;
+        stbi_uc* pixels = stbi_load(job.utf8Path.c_str(), &w, &h, &comp, 4);
+        if (pixels) {
+            r.pixels.assign(pixels, pixels + static_cast<size_t>(w) * h * 4);
+            r.w = w;
+            r.h = h;
+            r.ok = true;
+            stbi_image_free(pixels);
+        }
+        {
+            std::lock_guard<std::mutex> lk(asyncMutex_);
+            doneQueue_.push_back(std::move(r));
+        }
+    }
+}
+
+AssetID TextureLibrary::RequestLoadFileAsync(const std::wstring& path)
+{
+    // DDS は既に圧縮済みで decode 不要 (ワーカーの stbi は非対応) → 同期ロードで即座に公開
+    if (HasDdsExt(path)) {
+        return LoadFile(path);
+    }
+    const AssetID id = IdForFile(path);
+    if (pending_.count(id.value)) {
+        return id; // デコード中
+    }
+    if (textures_.contains(id.value)) {
+        return id; // 既にロード済み (実体 or 公開済み)
+    }
+    // プレースホルダ (白を共有) を cache に入れておき、ロード中も Get() が有効な SRV を返せるように
+    if (Texture* w = Get(White())) {
+        Texture ph;
+        ph.tex = w->tex; // ComPtr 共有 (参照カウント)
+        ph.srv = w->srv;
+        ph.width = 1;
+        ph.height = 1;
+        textures_.emplace(id.value, std::move(ph));
+    }
+    pending_.insert(id.value);
+    names_[id.value] = WideToUtf8(path);
+    EnsureWorker();
+    {
+        std::lock_guard<std::mutex> lk(asyncMutex_);
+        jobQueue_.push_back({ id.value, WideToUtf8(path) });
+    }
+    asyncCv_.notify_one();
+    return id;
+}
+
+void TextureLibrary::PollAsyncLoads()
+{
+    std::vector<DecodeResult> done;
+    {
+        std::lock_guard<std::mutex> lk(asyncMutex_);
+        if (doneQueue_.empty()) {
+            return;
+        }
+        done.swap(doneQueue_);
+    }
+    for (DecodeResult& r : done) {
+        pending_.erase(r.id);
+        if (!r.ok) {
+            MYE_LOG_WARN("async texture decode failed (id=%016llx)",
+                         static_cast<unsigned long long>(r.id));
+            continue; // プレースホルダのまま残す (再投入せず hammering を防ぐ)
+        }
+        Texture t;
+        if (CreateFromPixels(t, r.pixels.data(), r.w, r.h)) {
+            textures_[r.id] = std::move(t); // プレースホルダを実体に差し替え
+        }
+    }
 }
 
 AssetID TextureLibrary::CreateFromEncoded(std::string_view name, const void* bytes, size_t size)
@@ -255,6 +741,14 @@ bool TextureLibrary::ReplaceFromFile(AssetID id, const std::wstring& path)
     if (it == textures_.end()) {
         return false;
     }
+    Texture fresh;
+    if (HasDdsExt(path)) {
+        if (!LoadDdsInto(fresh, path)) {
+            return false;
+        }
+        it->second = std::move(fresh);
+        return true;
+    }
     const std::string utf8 = WideToUtf8(path);
     int w = 0, h = 0, comp = 0;
     stbi_uc* pixels = stbi_load(utf8.c_str(), &w, &h, &comp, 4);
@@ -262,7 +756,6 @@ bool TextureLibrary::ReplaceFromFile(AssetID id, const std::wstring& path)
         MYE_LOG_ERROR("texture reload failed: %s (%s)", utf8.c_str(), stbi_failure_reason());
         return false;
     }
-    Texture fresh;
     const bool ok = CreateFromPixels(fresh, pixels, w, h);
     stbi_image_free(pixels);
     if (!ok) {
@@ -305,6 +798,66 @@ AssetID MaterialLibrary::Default(ShaderManager& shaders, TextureLibrary& texture
     (void)shaders;
     default_ = Register("builtin://default_material", m);
     return default_;
+}
+
+AssetID MaterialLibrary::HashForPath(const std::wstring& path)
+{
+    return AssetID{ HashStr(WideToUtf8(NormalizePathKey(path))) };
+}
+
+AssetID MaterialLibrary::LoadFromFile(const std::wstring& path, TextureLibrary& textures,
+                                      const std::wstring& assetsRoot)
+{
+    std::ifstream f(std::filesystem::path(path), std::ios::binary);
+    if (!f) {
+        return {};
+    }
+    nlohmann::json root;
+    try {
+        f >> root;
+    } catch (const nlohmann::json::exception& ex) {
+        MYE_LOG_WARN("material parse failed: %s (%s)", WideToUtf8(path).c_str(), ex.what());
+        return {};
+    }
+
+    Material m;
+    m.shader = AssetID{ HashStr(root.value("shader", std::string("forward_lit"))) };
+    if (root.contains("baseColor") && root["baseColor"].is_array()) {
+        const nlohmann::json& c = root["baseColor"];
+        float* dst = &m.baseColor.x;
+        for (size_t i = 0; i < c.size() && i < 4; ++i) {
+            dst[i] = c[i].get<float>();
+        }
+    }
+    m.metallic = root.value("metallic", 0.0f);
+    m.roughness = root.value("roughness", 0.5f);
+    m.transparent = root.value("transparent", false) ? 1 : 0;
+
+    // texture/normalMap は assetsRoot 相対。空文字は「なし」(texture は White にフォールバック)
+    auto resolveTex = [&](const std::string& rel) -> AssetID {
+        if (rel.empty()) {
+            return {};
+        }
+        return textures.LoadFile(assetsRoot + L"\\" + Utf8ToWide(rel));
+    };
+    const AssetID baseTex = resolveTex(root.value("texture", std::string()));
+    m.texture = baseTex.IsNull() ? textures.White() : baseTex;
+    m.normalTex = resolveTex(root.value("normalMap", std::string()));
+
+    const AssetID id = HashForPath(path);
+    materials_[id.value] = m;
+
+    std::string name = root.value("name", std::string());
+    if (name.empty()) {
+        name = WideToUtf8(std::filesystem::path(path).stem().wstring()); // "X.mat.json" -> "X.mat"
+        const std::string suf = ".mat";
+        if (name.size() > suf.size()
+            && name.compare(name.size() - suf.size(), suf.size(), suf) == 0) {
+            name.resize(name.size() - suf.size());
+        }
+    }
+    names_[id.value] = name;
+    return id;
 }
 
 } // namespace mye

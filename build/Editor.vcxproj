@@ -27,11 +27,16 @@
   <ItemDefinitionGroup>
     <Link>
       <SubSystem>Windows</SubSystem>
-      <AdditionalDependencies>d3d11.lib;dxgi.lib;d3dcompiler.lib;dxguid.lib;winmm.lib;comdlg32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>d3d11.lib;dxgi.lib;d3dcompiler.lib;dxguid.lib;winmm.lib;comdlg32.lib;$(RepoRoot)external\nethost\nethost.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
+    <PostBuildEvent>
+      <Command>copy /Y "$(RepoRoot)external\nethost\nethost.dll" "$(OutDir)" &gt;nul</Command>
+    </PostBuildEvent>
   </ItemDefinitionGroup>
   <!-- BEGIN FILES (tools\gen_project_files.ps1 が再生成する。手編集しない) -->
   <ItemGroup>
+    <ClCompile Include="..\src\Editor\AssetOps.cpp" />
+    <ClCompile Include="..\src\Editor\CreateMenu.cpp" />
     <ClCompile Include="..\src\Editor\EditorApp.cpp" />
     <ClCompile Include="..\src\Editor\EditorMain.cpp" />
     <ClCompile Include="..\src\Editor\EditorSettings.cpp" />
@@ -39,6 +44,7 @@
     <ClCompile Include="..\src\Editor\Undo\UndoStack.cpp" />
     <ClCompile Include="..\src\Editor\UndoSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\Windows\AnimationWindow.cpp" />
+    <ClCompile Include="..\src\Editor\Windows\AnimatorControllerWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\AssetBrowserWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\BuildSettingsWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\ConsoleWindow.cpp" />
@@ -50,6 +56,8 @@
     <ClCompile Include="..\src\Editor\Windows\ProjectSettingsWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\SceneViewWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\SearchWindow.cpp" />
+    <ClInclude Include="..\src\Editor\AssetOps.h" />
+    <ClInclude Include="..\src\Editor\CreateMenu.h" />
     <ClInclude Include="..\src\Editor\EditorApp.h" />
     <ClInclude Include="..\src\Editor\EditorSettings.h" />
     <ClInclude Include="..\src\Editor\PlayModeController.h" />
@@ -58,6 +66,7 @@
     <ClInclude Include="..\src\Editor\Undo\UndoStack.h" />
     <ClInclude Include="..\src\Editor\UndoSelfTest.h" />
     <ClInclude Include="..\src\Editor\Windows\AnimationWindow.h" />
+    <ClInclude Include="..\src\Editor\Windows\AnimatorControllerWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\AssetBrowserWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\BuildSettingsWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\ConsoleWindow.h" />

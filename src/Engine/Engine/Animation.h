@@ -77,8 +77,21 @@ private:
 // track を時刻 timeTicks でサンプルして comp のフィールドへ書く (Linear/Step、Quat は slerp)
 void SampleTrackInto(void* comp, const AnimTrack& track, int32_t timeTicks);
 
+// track を時刻 timeTicks でサンプルして 4 float バッファへ書く (書き込み先を選べる版)。
+// M22 のステートブレンドで from/to のポーズを合成するのに使う。補間は整数比 → 決定論
+void SampleTrackValues(const AnimTrack& track, int32_t timeTicks, float out[4]);
+
 // FieldType の float 要素数 (Float=1 … Float4/Quat/Color=4、非対応型は 0)
 uint32_t FieldFloatCount(FieldType t);
+
+// clip を animator サブツリーへ適用 (timeTicks の位置でサンプル)。M22 の controller からも使う
+void ApplyClipPose(World& w, EntityID animator, const AnimationClipAsset& clip, int32_t time);
+
+// from→to のポーズをブレンド (blend=0→from, 1→to)。まず from を完全適用し、to の各トラックで
+// 現在値 (=from) から to 値へ補間 (Quat は slerp)。blend は整数比 (遷移 tick/duration) → 決定論。
+// 両クリップが同じフィールドを animate する前提 (idle↔walk 等)
+void ApplyClipPoseBlended(World& w, EntityID animator, const AnimationClipAsset& from,
+                          int32_t timeFrom, const AnimationClipAsset& to, int32_t timeTo, float blend);
 
 class AnimationSystem {
 public:

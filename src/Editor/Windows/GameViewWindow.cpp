@@ -5,6 +5,7 @@
 
 #include "Engine/Engine/RenderSystem.h"
 #include "Engine/Engine/Scene.h"
+#include "Engine/Engine/UI/UIRenderer.h"
 #include "Engine/Renderer/RenderPath.h"
 
 #include "imgui.h"
@@ -28,12 +29,20 @@ void GameViewWindow::OnRenderViews(EngineContext& ctx)
     hasCamera_ = ctx.renderSystem->Render(ctx.scene->GetWorld(), *ctx.device, *ctx.renderPath,
                                           *ctx.shaders, *ctx.resources, target, nullptr,
                                           ctx.particles);
+    // M21: ゲーム内 UI を GameView RT に重ねる。hover はエディタでは無効 (mouse=-1)
+    if (ctx.uiRenderer) {
+        ctx.uiRenderer->Render(ctx.scene->GetWorld(), *ctx.device, *ctx.shaders, *ctx.resources,
+                               target.rtv, target.width, target.height, -1, -1, false);
+    }
 }
 
 void GameViewWindow::OnImGui(EngineContext& ctx)
 {
+    if (!open) {
+        return;
+    }
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
-    const bool visible = ImGui::Begin("Game");
+    const bool visible = ImGui::Begin("Game", &open);
     ImGui::PopStyleVar();
     if (!visible) {
         ImGui::End();

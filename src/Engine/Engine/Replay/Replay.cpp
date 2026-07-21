@@ -61,7 +61,7 @@ bool ReplayPlayer::Load(const std::wstring& path)
         MYE_LOG_ERROR("[replay] bad file magic");
         return false;
     }
-    if (header_.version != 1 || header_.inputSize != sizeof(InputSnapshot)) {
+    if (header_.version != 3 || header_.inputSize != sizeof(InputSnapshot)) {
         MYE_LOG_ERROR("[replay] incompatible version/layout (v%u, input %u bytes)",
                       header_.version, header_.inputSize);
         return false;

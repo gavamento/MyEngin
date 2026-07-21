@@ -21,6 +21,7 @@ struct EditorSettings;
 //     オービット/パン/ズームのカメラ操作。
 class SceneViewWindow {
 public:
+    bool open = true; // 閉じる / 再表示 (タブ [x] と Window メニューに連動)
     void OnRenderViews(EngineContext& ctx, Selection& selection); // フェーズ 6: RT へ描画 + 補助線
     void OnImGui(EngineContext& ctx, Selection& selection, UndoStack& undo, EditorSettings& settings);
 
@@ -35,6 +36,9 @@ private:
                    float rectH);
     void HandleCamera(EngineContext& ctx, Selection& selection);
     void FocusOnSelection(EngineContext& ctx, Selection& selection);
+    // カーソル下のワールド地面 (y=0) 座標を求める (ドラッグ配置用)。ヒットで true
+    bool GroundPointUnderCursor(const ImVec2& imgPos, const ImVec2& size,
+                                DirectX::XMFLOAT3& out) const;
 
     RenderTexture rt_;
     DirectX::XMFLOAT3 camPos_ = { 0.0f, 7.0f, -16.0f };

@@ -9,6 +9,7 @@ namespace mye {
 // (選択エンティティを EntityRef で参照しているエンティティ — リフレクション走査)。
 class SearchWindow {
 public:
+    bool open = true; // 閉じる / 再表示 (タブ [x] と Window メニューに連動)
     void OnImGui(EngineContext& ctx, Selection& selection);
 
 private:

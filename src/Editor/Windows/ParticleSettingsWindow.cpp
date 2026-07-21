@@ -8,7 +8,10 @@ namespace mye {
 
 void ParticleSettingsWindow::OnImGui(EngineContext& ctx)
 {
-    if (!ImGui::Begin("Particle Settings")) {
+    if (!open) {
+        return;
+    }
+    if (!ImGui::Begin("Particle Settings", &open)) {
         ImGui::End();
         return;
     }

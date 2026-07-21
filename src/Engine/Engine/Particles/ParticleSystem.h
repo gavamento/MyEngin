@@ -23,6 +23,13 @@ public:
     void Update(World& world, float dt);                       // tick フェーズ 4
     void Render(GraphicsDevice& device, const RenderView& view, ShaderManager& shaders);
 
+    // シーン遷移 (M19.4): 生存パーティクルを破棄する (古いシーンの粒子を残さない)
+    void ResetParticles()
+    {
+        cpu_.Reset();
+        gpu_.Reset();
+    }
+
     ParticleBackendKind ActiveKind() const { return active_; }
     void SetActiveKind(ParticleBackendKind kind); // 切替 (Reset + 設定保存)
     bool CompareMode() const { return compareMode_; }

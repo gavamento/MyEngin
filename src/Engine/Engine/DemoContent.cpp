@@ -8,6 +8,7 @@
 #include "Engine/Core/Components.h"
 #include "Engine/Core/Hash.h"
 #include "Engine/Engine/Animation.h"
+#include "Engine/Engine/AnimatorController.h"
 #include "Engine/Engine/EngineLoop.h"
 #include "Engine/Engine/GameObject.h"
 #include "Engine/Engine/ModelLoader.h"
@@ -121,6 +122,7 @@ void BuildDemoScene(EngineContext& ctx, float perfRate, int perfMax)
         model.SetLocalScale(2.0f, 2.0f, 2.0f);
     }
 
+
     // ---- パーティクルエミッタ (M5 デモ: 中央の炎) ----
     GameObject fire = s.CreateGameObject("Fire");
     fire.SetLocalPosition(4.0f, 0.0f, 0.0f);
@@ -171,6 +173,14 @@ void RegisterAssetLibraries(EngineContext& ctx)
         } else if (p.size() >= 10 && p.compare(p.size() - 10, 10, L".anim.json") == 0) {
             if (ctx.anims) {
                 ctx.anims->LoadFromFile(p);
+            }
+        } else if (p.size() >= 9 && p.compare(p.size() - 9, 9, L".mat.json") == 0) {
+            if (ctx.resources) {
+                ctx.resources->materials.LoadFromFile(p, ctx.resources->textures, ctx.assetsRoot);
+            }
+        } else if (p.size() >= 16 && p.compare(p.size() - 16, 16, L".controller.json") == 0) {
+            if (ctx.controllers) {
+                ctx.controllers->LoadFromFile(p); // M22: Animator Controller
             }
         }
     }

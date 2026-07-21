@@ -14,7 +14,10 @@ void ProfilerWindow::OnImGui(EngineContext& ctx)
     frameHistory_[cursor_] = ctx.timings.frameMs;
     cursor_ = (cursor_ + 1) % kHistory;
 
-    if (!ImGui::Begin("Profiler")) {
+    if (!open) {
+        return;
+    }
+    if (!ImGui::Begin("Profiler", &open)) {
         ImGui::End();
         return;
     }
@@ -47,7 +50,7 @@ void ProfilerWindow::OnImGui(EngineContext& ctx)
 
     ImGui::Separator();
     const prof::RenderStats rs = prof::GetRenderStats();
-    ImGui::Text("render: %d draw calls, %d tris", rs.drawCalls, rs.triangles);
+    ImGui::Text("render: %d draw calls, %d tris, %d culled", rs.drawCalls, rs.triangles, rs.culled);
 
     const prof::MemStats mem = prof::GetMemoryStats();
     ImGui::Text("memory: %llu live allocs, %.1f MB total (%llu allocs / %llu frees)",

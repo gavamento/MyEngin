@@ -6,6 +6,7 @@
 
 #include "Engine/Core/Components.h"
 #include "Engine/Core/World.h"
+#include "Engine/Engine/Script/ManagedHost.h"
 #include "Engine/Engine/Script/ScriptHost.h"
 
 using namespace DirectX;
@@ -56,7 +57,7 @@ bool Overlap(const Body& a, const Body& b)
 
 } // namespace
 
-void CollisionSystem::Update(World& world, ScriptHost* scripts)
+void CollisionSystem::Update(World& world, ScriptHost* scripts, ManagedHost* managed)
 {
     // ---- 収集 (index 昇順 = 決定論) ----
     std::vector<Body> bodies;
@@ -109,7 +110,7 @@ void CollisionSystem::Update(World& world, ScriptHost* scripts)
                         std::back_inserter(exited));
     prevPairs_ = std::move(pairs);
 
-    if (!scripts) {
+    if (!scripts && !managed) {
         return;
     }
     auto resolve = [&world](uint32_t index) {
@@ -128,10 +129,12 @@ void CollisionSystem::Update(World& world, ScriptHost* scripts)
             const EntityID a = resolve(static_cast<uint32_t>(key >> 32));
             const EntityID b = resolve(static_cast<uint32_t>(key & 0xFFFFFFFFu));
             if (!a.IsNull()) {
-                scripts->DispatchTrigger(a, b, enter);
+                if (scripts) { scripts->DispatchTrigger(a, b, enter); }
+                if (managed) { managed->DispatchTrigger(a, b, enter); }
             }
             if (!b.IsNull()) {
-                scripts->DispatchTrigger(b, a, enter);
+                if (scripts) { scripts->DispatchTrigger(b, a, enter); }
+                if (managed) { managed->DispatchTrigger(b, a, enter); }
             }
         }
     };

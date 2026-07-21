@@ -28,8 +28,8 @@ uint64_t HashEntity(World& world, EntityID e)
     }
     for (ComponentTypeId t : arch->Types()) { // TypeId 昇順 = 決定論
         const ComponentDesc& desc = reg.Desc(t);
-        if (desc.flags & kComponentNoSerialize) {
-            continue; // WorldMatrix (派生値) / Hierarchy (親は上でハッシュ済み) / FileId
+        if (desc.flags & (kComponentNoSerialize | kComponentNoHash)) {
+            continue; // WorldMatrix (派生値) / Hierarchy / FileId / C# スクリプト状態 (別レーン)
         }
         const void* comp = world.GetComponentRaw(e, t);
         if (!comp) {

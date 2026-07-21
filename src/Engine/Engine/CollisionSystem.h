@@ -7,6 +7,7 @@ namespace mye {
 
 class World;
 class ScriptHost;
+class ManagedHost;
 
 // 簡易衝突判定 (球 / AABB オーバーラップ + トリガーイベント)。
 // 毎 tick、Transform 確定後に総当たりで判定し、前 tick とのペア差分から
@@ -14,7 +15,8 @@ class ScriptHost;
 // ペアは (小 index, 大 index) の明示キーでソート — 配信順も決定論 (spec 11.2 規則 7)
 class CollisionSystem {
 public:
-    void Update(World& world, ScriptHost* scripts);
+    // managed 非 null のとき C# スクリプトにもトリガーを配信する (別レーン、記録/検証中は null)
+    void Update(World& world, ScriptHost* scripts, ManagedHost* managed = nullptr);
     void Reset() { prevPairs_.clear(); }
 
 private:

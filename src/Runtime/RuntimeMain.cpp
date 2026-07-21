@@ -112,6 +112,22 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 config.replayTicks = _wtoi64(argv[++i]);
             } else if (arg == L"--deferred") {
                 app.startDeferred = true;
+            } else if (arg == L"--postfx-mode" && i + 1 < argc) {
+                config.postFxTonemap = _wtoi(argv[++i]);
+            } else if (arg == L"--no-postfx") {
+                config.postFx = false;
+            } else if (arg == L"--exposure" && i + 1 < argc) {
+                config.postFxExposure = static_cast<float>(_wtof(argv[++i]));
+            } else if (arg == L"--no-bloom") {
+                config.postFxBloom = false;
+            } else if (arg == L"--bloom-threshold" && i + 1 < argc) {
+                config.postFxBloomThreshold = static_cast<float>(_wtof(argv[++i]));
+            } else if (arg == L"--bloom-intensity" && i + 1 < argc) {
+                config.postFxBloomIntensity = static_cast<float>(_wtof(argv[++i]));
+            } else if (arg == L"--no-fxaa") {
+                config.postFxFxaa = false;
+            } else if (arg == L"--no-jobs") {
+                config.useJobs = false; // M25: 並列を直列化 (決定論ゲート / 計測比較)
             }
         }
         LocalFree(argv);

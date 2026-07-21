@@ -5,6 +5,7 @@
 
 #include "Engine/Core/Log.h"
 #include "Engine/Engine/Animation.h"
+#include "Engine/Engine/FbxLoader.h"
 #include "Engine/Engine/ModelLoader.h"
 #include "Engine/Engine/Prefab.h"
 #include "Engine/Engine/Scene.h"
@@ -32,6 +33,7 @@ bool ReloadHub::Init(ShaderManager* shaders, RenderResources* resources, Scene* 
     scene_ = scene;
     prefabs_ = prefabs;
     anims_ = anims;
+    assetsRoot_ = assetsRoot;
     std::error_code ec;
     if (!std::filesystem::is_directory(assetsRoot, ec)) {
         MYE_LOG_WARN("[reload] assets root not found, hot reload disabled");
@@ -88,7 +90,7 @@ void ReloadHub::HandleChange(const std::wstring& normPath)
         return;
     }
 
-    if (ext == L".png" || ext == L".tga" || ext == L".jpg" || ext == L".jpeg") {
+    if (ext == L".png" || ext == L".tga" || ext == L".jpg" || ext == L".jpeg" || ext == L".dds") {
         const AssetID id = TextureLibrary::IdForFile(normPath);
         if (resources_->textures.Get(id) != nullptr) {
             if (resources_->textures.ReplaceFromFile(id, normPath)) {
@@ -110,7 +112,32 @@ void ReloadHub::HandleChange(const std::wstring& normPath)
         return;
     }
 
+    if (ext == L".fbx") {
+        if (FbxLoader::ReloadMeshes(*resources_, *shaders_, normPath)) {
+            ++reloadCount_;
+        } else {
+            retryLater();
+        }
+        return;
+    }
+
     if (ext == L".json") {
+        // .mat.json: 登録済みマテリアルなら再読込 (MeshRenderer は AssetID 参照なので自動反映)
+        const bool isMat = normPath.size() >= 9
+            && normPath.compare(normPath.size() - 9, 9, L".mat.json") == 0;
+        if (isMat) {
+            const AssetID id = MaterialLibrary::HashForPath(normPath);
+            if (resources_->materials.Get(id) != nullptr) {
+                if (!resources_->materials.LoadFromFile(normPath, resources_->textures, assetsRoot_)
+                         .IsNull()) {
+                    MYE_LOG_INFO("[reload] material reloaded: %s", WideToUtf8(normPath).c_str());
+                    ++reloadCount_;
+                } else {
+                    retryLater();
+                }
+            }
+            return;
+        }
         // .anim.json: 登録済みクリップなら再読込 (animator は hash 参照なので自動反映)
         const bool isAnim = normPath.size() >= 10
             && normPath.compare(normPath.size() - 10, 10, L".anim.json") == 0;

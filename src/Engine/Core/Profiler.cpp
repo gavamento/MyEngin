@@ -70,6 +70,11 @@ void AddDraw(int triangles)
     g_render.triangles += triangles;
 }
 
+void AddCulled(int n)
+{
+    g_render.culled += n;
+}
+
 RenderStats GetRenderStats()
 {
     return g_render;

@@ -12,13 +12,17 @@ class SwapChain;
 class Scene;
 class ShaderManager;
 class RenderSystem;
+class UIRenderer;
 class IRenderPath;
 class ReloadHub;
 class ScriptHost;
 class DllReloader;
+class ManagedHost;
 class ParticleSystem;
 class PrefabLibrary;
 class AnimationLibrary;
+class ControllerLibrary;
+class AssetDatabase;
 struct RenderResources;
 
 struct EngineConfig {
@@ -35,6 +39,18 @@ struct EngineConfig {
     // true: シーンをバックバッファへ直接描画 (Runtime / M1 デモ)。
     // false: 描画は app の OnRenderViews に委ねる (エディタは SceneView/GameView の RT へ描く)
     bool renderSceneToBackbuffer = true;
+
+    // ---- ポストプロセス (M16) ----
+    bool postFx = true;         // false で HDR 配管をバイパス (従来の直描き)
+    int postFxTonemap = 1;      // 0=passthrough(配管検証) 1=ACES 2=Reinhard
+    float postFxExposure = 1.0f;
+    bool postFxBloom = true;
+    float postFxBloomThreshold = 1.0f;
+    float postFxBloomIntensity = 0.6f;
+    bool postFxFxaa = true;
+
+    // ---- ジョブシステム (M25) ----
+    bool useJobs = true; // false で全並列を直列化 (決定論ゲート / 計測比較用)
 
     // ---- リプレイ一貫性検証 (engine_spec.md 11.3) ----
     std::wstring replayRecordPath; // 空でなければ記録モード (replayTicks 分記録して終了)
@@ -61,15 +77,19 @@ struct EngineContext {
     ShaderManager* shaders = nullptr;
     RenderResources* resources = nullptr;
     RenderSystem* renderSystem = nullptr;
+    UIRenderer* uiRenderer = nullptr;          // ゲーム内 UI (M21)。GameView / Runtime が重ね描画
     IRenderPath* renderPath = nullptr;         // 現在アクティブなパス (書き換えると切替)
     IRenderPath* renderPathForward = nullptr;  // 選択肢: Forward
     IRenderPath* renderPathDeferred = nullptr; // 選択肢: Deferred
     ReloadHub* reloadHub = nullptr;
     ScriptHost* scriptHost = nullptr;
     DllReloader* dllReloader = nullptr;
+    ManagedHost* managedHost = nullptr; // C# スクリプトホスト (CoreCLR)。未導入時は null/未 ready
     ParticleSystem* particles = nullptr;
     PrefabLibrary* prefabs = nullptr;   // 登録済みプレハブ (.prefab.json) — Editor / ReloadHub が使う
     AnimationLibrary* anims = nullptr;  // 登録済み AnimationClip (.anim.json)
+    ControllerLibrary* controllers = nullptr; // 登録済み Animator Controller (.controller.json、M22)
+    AssetDatabase* assetDb = nullptr;   // GUID/.meta サイドカー DB (M23)。パス⇄GUID 解決
     std::wstring assetsRoot;            // assets\ の絶対パス
     InputSnapshot input = {}; // 現フレームのスナップショット (tick 中も同一)
     // この tick でスクリプト層 (フェーズ 3/5) を実行するか。
