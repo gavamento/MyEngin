@@ -61,6 +61,16 @@ namespace MyeScripting
         public MyeColor(float r, float g, float b, float a) { R = r; G = g; B = b; A = a; }
     }
 
+    // Shared/EngineAPI.h の MyeRaycastHit と同一レイアウト
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MyeRaycastHit
+    {
+        public MyeEntityId Entity;
+        public MyeVec3 Point;
+        public MyeVec3 Normal;
+        public float Distance;
+    }
+
     // ---- ネイティブ C ABI テーブル (Shared/EngineAPI.h の MyeEngineApi と同一レイアウト) ----
     // フィールド順は EngineAPI.h と厳密に一致させること。
     [StructLayout(LayoutKind.Sequential)]
@@ -87,6 +97,24 @@ namespace MyeScripting
         public delegate* unmanaged<void*, float, float, float> RandomRange;
         public delegate* unmanaged<void*, MyeEntityId, byte*, int> AddComponentByName;
         public delegate* unmanaged<void*, MyeEntityId, byte*, byte*, int> SetMeshRenderer;
+        // ---- gamepad / 物理 / オーディオ / シーン (v3) ----
+        public delegate* unmanaged<void*, int> PadConnected;
+        public delegate* unmanaged<void*, ushort, int> PadButton;
+        public delegate* unmanaged<void*, MyeVec2*, MyeVec2*, void> PadSticks;
+        public delegate* unmanaged<void*, float*, float*, void> PadTriggers;
+        public delegate* unmanaged<void*, MyeVec3, MyeVec3, float, MyeRaycastHit*, int> Raycast;
+        public delegate* unmanaged<void*, byte*, float, int> PlaySound;
+        public delegate* unmanaged<void*, int, void> StopSound;
+        public delegate* unmanaged<void*, byte*, void> LoadScene;
+        // ---- 剛体操作 + 空間クエリ (v4、M28a) ----
+        public delegate* unmanaged<void*, MyeEntityId, MyeVec3, int> AddForce;
+        public delegate* unmanaged<void*, MyeEntityId, MyeVec3, int> AddImpulse;
+        public delegate* unmanaged<void*, MyeEntityId, MyeVec3, int> AddTorque;
+        public delegate* unmanaged<void*, MyeEntityId, MyeVec3*, int> GetVelocity;
+        public delegate* unmanaged<void*, MyeEntityId, MyeVec3, int> SetVelocity;
+        public delegate* unmanaged<void*, MyeVec3, float, MyeEntityId*, int, int> OverlapSphere;
+        public delegate* unmanaged<void*, MyeVec3, MyeVec3, MyeQuat, MyeEntityId*, int, int> OverlapBox;
+        public delegate* unmanaged<void*, MyeVec3, MyeVec3, float, float, MyeRaycastHit*, int> SphereCast;
     }
 
     // ネイティブ ManagedHost が保持する関数ポインタ表。Bootstrap がここに書き込む。
@@ -214,6 +242,31 @@ namespace MyeScripting
             var mb = Utf8(meshKey);
             var cb = Utf8(materialKey);
             fixed (byte* mp = mb) fixed (byte* cp = cb) { return _api->SetMeshRenderer(_api->Engine, id, mp, cp) != 0; }
+        }
+
+        // ---- 剛体操作 (v4、M28a) ----
+        public static bool AddForce(MyeEntityId id, MyeVec3 force)
+            => _api != null && _api->AddForce(_api->Engine, id, force) != 0;
+        public static bool AddImpulse(MyeEntityId id, MyeVec3 impulse)
+            => _api != null && _api->AddImpulse(_api->Engine, id, impulse) != 0;
+        public static bool AddTorque(MyeEntityId id, MyeVec3 torque)
+            => _api != null && _api->AddTorque(_api->Engine, id, torque) != 0;
+
+        public static MyeVec3 GetVelocity(MyeEntityId id)
+        {
+            MyeVec3 v = default;
+            if (_api != null) _api->GetVelocity(_api->Engine, id, &v);
+            return v;
+        }
+        public static bool SetVelocity(MyeEntityId id, MyeVec3 v)
+            => _api != null && _api->SetVelocity(_api->Engine, id, v) != 0;
+
+        // ---- 空間クエリ ----
+        public static bool Raycast(MyeVec3 origin, MyeVec3 dir, float maxDist, out MyeRaycastHit hit)
+        {
+            hit = default;
+            if (_api == null) return false;
+            fixed (MyeRaycastHit* p = &hit) { return _api->Raycast(_api->Engine, origin, dir, maxDist, p) != 0; }
         }
     }
 }

@@ -69,6 +69,13 @@ namespace MyeScripting
         protected float Random01() => Engine.RandomFloat01();
         protected float RandomRange(float lo, float hi) => Engine.RandomRange(lo, hi);
 
+        // ---- 剛体物理 (v4、M28a)。Rigidbody 非所持なら no-op / Zero ----
+        public MyeVec3 Velocity { get => Engine.GetVelocity(SelfId); set => Engine.SetVelocity(SelfId, value); }
+        protected bool AddForce(MyeVec3 force) => Engine.AddForce(SelfId, force);
+        protected bool AddImpulse(MyeVec3 impulse) => Engine.AddImpulse(SelfId, impulse);
+        protected static bool Raycast(MyeVec3 origin, MyeVec3 dir, float maxDist, out MyeRaycastHit hit)
+            => Engine.Raycast(origin, dir, maxDist, out hit);
+
         // ---- ライフサイクル (すべて任意オーバーライド) ----
         public virtual void Start() { }
         public virtual void Update(float dt) { }

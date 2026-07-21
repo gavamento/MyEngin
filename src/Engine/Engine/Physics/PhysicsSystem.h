@@ -6,11 +6,12 @@ namespace mye {
 
 class World;
 
-// 剛体物理 (M20)。決定論契約に従う簡易射影ソルバ:
+// 剛体物理 (M20、形状拡張 M28a)。決定論契約に従う簡易射影ソルバ:
 //   収集 (entity.index 昇順) → 積分 (重力 / 減衰 / 速度) → 接触生成 (index 順) →
 //   固定反復・固定順ソルバ (貫通押し出し + 法線速度反発) → LocalTransform / velocity 書戻し。
 // RigidbodyComponent を持つエンティティのみが動的ボディ。ソリッドな ColliderComponent
 // (isTrigger==0) が衝突面。RigidbodyComponent 非存在シーンでは完全 no-op = 既存リプレイ不変。
+// 形状判定 (sphere / OBB / capsule) は Physics/Shapes.cpp に統合 (M28a)。
 // ルート (非親子) エンティティ前提: LocalTransform.position をワールド位置として扱う。
 // 状態は全てコンポーネントに常駐 (velocity=Rigidbody, position=LocalTransform) → システムはステートレス。
 class PhysicsSystem {

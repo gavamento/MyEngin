@@ -42,6 +42,10 @@ struct MyeScriptDesc {
     // トリガーイベント (v2、null 可) — CollisionSystem が配信する
     void (*onTriggerEnter)(void* state, MyeUpdateContext* ctx, MyeEntityId other);
     void (*onTriggerExit)(void* state, MyeUpdateContext* ctx, MyeEntityId other);
+    // ソリッド衝突イベント (v4 で予約、M28c で配信)。normal は相手→自分方向 (ワールド)
+    void (*onCollisionEnter)(void* state, MyeUpdateContext* ctx, MyeEntityId other, MyeVec3 normal);
+    void (*onCollisionStay)(void* state, MyeUpdateContext* ctx, MyeEntityId other);
+    void (*onCollisionExit)(void* state, MyeUpdateContext* ctx, MyeEntityId other);
 };
 
 struct MyeScriptModule {

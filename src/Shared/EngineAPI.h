@@ -11,7 +11,10 @@
 
 // 互換性チェック用。テーブルや ScriptDesc のレイアウトを変えたら必ず上げること
 // v3 (M19): gamepad / Raycast / PlaySound / StopSound / LoadScene をスロット予約で一括追加
-#define MYE_API_VERSION 3u
+// v4 (M28a): 剛体操作 (AddForce/AddImpulse/AddTorque/Get/SetVelocity) + 空間クエリ
+//            (OverlapSphere/OverlapBox/SphereCast) + OnCollision コールバックを一括追加。
+//            AddTorque は M28b、Overlap*/SphereCast と OnCollision 配信は M28c で実装
+#define MYE_API_VERSION 4u
 
 // MYE_LOG レベル (Engine/Core/Log.h の LogLevel と同値)
 enum MyeLogLevel {
@@ -103,6 +106,27 @@ struct MyeEngineApi {
 
     // ---- シーン遷移 (v3 で予約、M19.4 で実装)。tick 末に遅延ロードされる ----
     void (*LoadScene)(void* engine, const char* scenePath);
+
+    // ---- 剛体操作 (v4、M28a)。Rigidbody 非所持は 0 を返す ----
+    // AddForce は 1 tick 分の加速 (dv = F/m · fixedDt) を呼出時に即時適用する。
+    // 蓄積フィールドは持たない (ステートレス) — Update 内で毎 tick 呼べば連続力になる。
+    // AddImpulse は dv = J/m を即時適用。kinematic には 0 を返す (SetVelocity は許可)。
+    int (*AddForce)(void* engine, MyeEntityId id, MyeVec3 force);
+    int (*AddImpulse)(void* engine, MyeEntityId id, MyeVec3 impulse);
+    int (*AddTorque)(void* engine, MyeEntityId id, MyeVec3 torque); // v4 予約、M28b で実装
+    int (*GetVelocity)(void* engine, MyeEntityId id, MyeVec3* out);
+    int (*SetVelocity)(void* engine, MyeEntityId id, MyeVec3 v);
+
+    // ---- 空間クエリ (v4 で予約、M28c で実装)。トリガー含む全コライダー対象 ----
+    // Overlap 系: ヒットしたエンティティを outEntities に最大 maxCount 個 (index 昇順) 書き、
+    // 戻り値は「切り捨て前の総ヒット数」。バッファは呼び出し側が確保する (DLL 境界規則)。
+    int (*OverlapSphere)(void* engine, MyeVec3 center, float radius, MyeEntityId* outEntities,
+                         int maxCount);
+    int (*OverlapBox)(void* engine, MyeVec3 center, MyeVec3 halfExtents, MyeQuat rotation,
+                      MyeEntityId* outEntities, int maxCount);
+    // 半径 radius の球を dir 方向に掃引し最近ヒットを返す (Raycast の太い版)
+    int (*SphereCast)(void* engine, MyeVec3 origin, MyeVec3 dir, float radius, float maxDist,
+                      MyeRaycastHit* outHit);
 };
 
 // スクリプトの各コールバックに渡されるコンテキスト (POD)

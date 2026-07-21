@@ -92,11 +92,15 @@ void RegisterBuiltinComponents()
         MYE_FIELD(ParticleEmitterComponent, maxParticles, Int32),
     });
 
+    // M28a: height / friction を末尾 append (フィールド順変更なし = シーン互換維持。
+    // 既存シーンは欠損フィールドをデフォルト値でロードする)
     RegisterComponent<ColliderComponent>("Collider", {
         MYE_FIELD(ColliderComponent, shape, Int32),
         MYE_FIELD(ColliderComponent, radius, Float),
         MYE_FIELD(ColliderComponent, halfExtents, Float3),
         MYE_FIELD(ColliderComponent, isTrigger, Int32),
+        MYE_FIELD(ColliderComponent, height, Float),
+        MYE_FIELD(ColliderComponent, friction, Float),
     });
 
     // M10: 末尾追加 (TypeId 順を壊さない)。無ければ有効なので既存シーンは不変

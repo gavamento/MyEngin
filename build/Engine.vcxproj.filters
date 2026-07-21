@@ -141,6 +141,9 @@
     <ClCompile Include="..\src\Engine\Engine\Physics\PhysicsSystem.cpp">
       <Filter>Engine\Physics</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Physics\Shapes.cpp">
+      <Filter>Engine\Physics</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\PhysicsSelfTest.cpp">
       <Filter>Engine</Filter>
     </ClCompile>
@@ -370,6 +373,9 @@
       <Filter>Engine\Particles</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Physics\PhysicsSystem.h">
+      <Filter>Engine\Physics</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Physics\Shapes.h">
       <Filter>Engine\Physics</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\PhysicsSelfTest.h">

@@ -1,6 +1,7 @@
 #include "Editor/Windows/InspectorWindow.h"
 
 #include <cmath>
+#include <cstring>
 #include <string>
 #include <utility>
 #include <vector>
@@ -75,6 +76,44 @@ XMFLOAT4 EulerDegToQuat(const XMFLOAT3& euler)
     XMStoreFloat4(&q, XMQuaternionRotationRollPitchYaw(euler.x * kDeg2Rad, euler.y * kDeg2Rad,
                                                        euler.z * kDeg2Rad));
     return q;
+}
+
+// エディタ側の enum ラベル表 (M28a)。リフレクション FieldType は閉集合のまま、
+// (コンポーネント名, フィールド名) が一致した Int32 を Combo で描画する (sim 非影響)
+struct EnumFieldLabels {
+    const char* component;
+    const char* field;
+    const char* const* labels;
+    int count;
+};
+constexpr const char* kColliderShapeLabels[] = { "Sphere", "Box", "Capsule" };
+constexpr const char* kLightTypeLabels[] = { "Directional", "Point", "Spot" };
+constexpr const char* kEmitterShapeLabels[] = { "Point", "Sphere", "Cone", "Box" };
+constexpr const char* kBlendModeLabels[] = { "Additive", "Alpha" };
+constexpr const char* kUIKindLabels[] = { "Panel", "Text", "Button" };
+constexpr const char* kUIAnchorLabels[] = { "TopLeft",    "TopCenter",    "TopRight",
+                                            "MiddleLeft", "Center",       "MiddleRight",
+                                            "BottomLeft", "BottomCenter", "BottomRight" };
+constexpr EnumFieldLabels kEnumFields[] = {
+    { "Collider", "shape", kColliderShapeLabels, 3 },
+    { "Light", "type", kLightTypeLabels, 3 },
+    { "ParticleEmitter", "shape", kEmitterShapeLabels, 4 },
+    { "ParticleEmitter", "blendMode", kBlendModeLabels, 2 },
+    { "UIElement", "kind", kUIKindLabels, 3 },
+    { "UIElement", "anchor", kUIAnchorLabels, 9 },
+};
+
+const EnumFieldLabels* FindEnumLabels(const char* component, const char* field)
+{
+    if (!component) {
+        return nullptr;
+    }
+    for (const EnumFieldLabels& e : kEnumFields) {
+        if (std::strcmp(e.component, component) == 0 && std::strcmp(e.field, field) == 0) {
+            return &e;
+        }
+    }
+    return nullptr;
 }
 
 // C# コンポーネントの 1 フィールドを raw バッファ上で描画する (型は managed から届く FieldType)
@@ -235,7 +274,7 @@ void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
                     if (f.flags & kFieldHidden) {
                         continue;
                     }
-                    DrawField(ctx, comp, f, e, selection, undo, fid);
+                    DrawField(ctx, desc.name, comp, f, e, selection, undo, fid);
                     // 参照ピッカーはポップアップ選択時に自前で Undo を記録するので除外
                     if (f.type != FieldType::AssetRef && f.type != FieldType::EntityRef) {
                         HandleEditUndo(ctx, selection, undo, fid, "Modify");
@@ -299,8 +338,9 @@ void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
     ImGui::End();
 }
 
-bool InspectorWindow::DrawField(EngineContext& ctx, void* comp, const FieldDesc& field,
-                                EntityID entity, Selection& selection, UndoStack& undo, uint64_t fid)
+bool InspectorWindow::DrawField(EngineContext& ctx, const char* componentName, void* comp,
+                                const FieldDesc& field, EntityID entity, Selection& selection,
+                                UndoStack& undo, uint64_t fid)
 {
     void* p = static_cast<uint8_t*>(comp) + field.offset;
     const bool readOnly = (field.flags & kFieldReadOnly) != 0;
@@ -319,8 +359,19 @@ bool InspectorWindow::DrawField(EngineContext& ctx, void* comp, const FieldDesc&
         changed = ImGui::DragFloat(field.name, static_cast<float*>(p), speed, lo, hi);
         break;
     case FieldType::Int32:
-        changed = ImGui::DragInt(field.name, static_cast<int*>(p), 1.0f, static_cast<int>(lo),
-                                 static_cast<int>(hi));
+        if (const EnumFieldLabels* ef = FindEnumLabels(componentName, field.name)) {
+            int v = *static_cast<int*>(p);
+            if (v < 0 || v >= ef->count) {
+                v = -1; // 範囲外は "(invalid)" 表示 (値は選択されるまで保持)
+            }
+            changed = ImGui::Combo(field.name, &v, ef->labels, ef->count);
+            if (changed) {
+                *static_cast<int*>(p) = v;
+            }
+        } else {
+            changed = ImGui::DragInt(field.name, static_cast<int*>(p), 1.0f, static_cast<int>(lo),
+                                     static_cast<int>(hi));
+        }
         break;
     case FieldType::UInt32:
         changed = ImGui::InputScalar(field.name, ImGuiDataType_U32, p);

@@ -167,6 +167,63 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
             *pending = Utf8ToWide(scenePath); // tick 末に EngineLoop が消費する (M19.4)
         }
     };
+
+    // ---- 剛体操作 (v4、M28a)。velocity は hash 対象の sim 状態だが、スクリプト実行順は
+    // 決定論なので直接更新してよい (SetLocalPosition と同格)。蓄積フィールドは持たない ----
+    out.AddForce = [](void* engine, MyeEntityId id, MyeVec3 f) -> int {
+        auto* rb = Sc(engine)->GetWorld().GetComponent<RigidbodyComponent>(ToEngine(id));
+        if (!rb || rb->isKinematic) { return 0; }
+        // 固定 tick (EngineLoop kFixedDt = 1/60) 前提の 1 tick 分加速。毎 tick 呼べば連続力
+        constexpr float kFixedDt = 1.0f / 60.0f;
+        const float mass = (rb->mass > 0.0f) ? rb->mass : 1.0f;
+        const float s = kFixedDt / mass;
+        rb->velocity.x += f.x * s;
+        rb->velocity.y += f.y * s;
+        rb->velocity.z += f.z * s;
+        return 1;
+    };
+    out.AddImpulse = [](void* engine, MyeEntityId id, MyeVec3 imp) -> int {
+        auto* rb = Sc(engine)->GetWorld().GetComponent<RigidbodyComponent>(ToEngine(id));
+        if (!rb || rb->isKinematic) { return 0; }
+        const float mass = (rb->mass > 0.0f) ? rb->mass : 1.0f;
+        rb->velocity.x += imp.x / mass;
+        rb->velocity.y += imp.y / mass;
+        rb->velocity.z += imp.z / mass;
+        return 1;
+    };
+    out.AddTorque = [](void* engine, MyeEntityId id, MyeVec3 torque) -> int {
+        (void)engine; (void)id; (void)torque;
+        return 0; // v4 予約スロット — M28b (回転剛体) で実装
+    };
+    out.GetVelocity = [](void* engine, MyeEntityId id, MyeVec3* o) -> int {
+        auto* rb = Sc(engine)->GetWorld().GetComponent<RigidbodyComponent>(ToEngine(id));
+        if (!rb || !o) { return 0; }
+        *o = { rb->velocity.x, rb->velocity.y, rb->velocity.z };
+        return 1;
+    };
+    out.SetVelocity = [](void* engine, MyeEntityId id, MyeVec3 v) -> int {
+        auto* rb = Sc(engine)->GetWorld().GetComponent<RigidbodyComponent>(ToEngine(id));
+        if (!rb) { return 0; }
+        rb->velocity = { v.x, v.y, v.z };
+        return 1;
+    };
+
+    // ---- 空間クエリ (v4 で予約) — M28c で実装 ----
+    out.OverlapSphere = [](void* engine, MyeVec3 center, float radius, MyeEntityId* outEntities,
+                           int maxCount) -> int {
+        (void)engine; (void)center; (void)radius; (void)outEntities; (void)maxCount;
+        return 0;
+    };
+    out.OverlapBox = [](void* engine, MyeVec3 center, MyeVec3 half, MyeQuat rot,
+                        MyeEntityId* outEntities, int maxCount) -> int {
+        (void)engine; (void)center; (void)half; (void)rot; (void)outEntities; (void)maxCount;
+        return 0;
+    };
+    out.SphereCast = [](void* engine, MyeVec3 origin, MyeVec3 dir, float radius, float maxDist,
+                        MyeRaycastHit* outHit) -> int {
+        (void)engine; (void)origin; (void)dir; (void)radius; (void)maxDist; (void)outHit;
+        return 0;
+    };
 }
 
 } // namespace mye

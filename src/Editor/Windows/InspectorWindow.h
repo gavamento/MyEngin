@@ -19,8 +19,9 @@ public:
     void OnImGui(EngineContext& ctx, Selection& selection, UndoStack& undo);
 
 private:
-    bool DrawField(EngineContext& ctx, void* comp, const FieldDesc& field, EntityID entity,
-                   Selection& selection, UndoStack& undo, uint64_t fid);
+    bool DrawField(EngineContext& ctx, const char* componentName, void* comp,
+                   const FieldDesc& field, EntityID entity, Selection& selection, UndoStack& undo,
+                   uint64_t fid);
     // 参照ピッカー (ポップアップで選択。変更時は自前で Undo エントリを記録する)
     void DrawAssetRef(EngineContext& ctx, const FieldDesc& field, void* p, Selection& selection,
                       UndoStack& undo, uint64_t fid);

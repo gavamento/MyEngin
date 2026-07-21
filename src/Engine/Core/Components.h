@@ -109,13 +109,17 @@ struct ParticleEmitterComponent {
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
-// 簡易衝突判定 (球 / AABB のオーバーラップ + トリガーイベント)。
-// 回転は無視した近似 (AABB はワールド軸平行、球はスケールの最大成分で拡大)
+// 衝突形状 (M7 トリガー / M20 ソリッド / M28a 形状拡張)。判定は Physics/Shapes.cpp に統合。
+// box はエンティティ回転を考慮する OBB (M28a)。無回転なら M20 の AABB 判定とビット同一。
+// 球はスケールの最大成分で拡大、capsule はローカル Y 軸・radius は max(sx,sz) スケール。
 struct ColliderComponent {
-    int32_t shape = 0; // 0=sphere 1=aabb
-    float radius = 0.5f;
-    DirectX::XMFLOAT3 halfExtents = { 0.5f, 0.5f, 0.5f };
-    int32_t isTrigger = 1; // 現状トリガーのみ (物理応答は範囲外 — spec 1.4)
+    int32_t shape = 0; // 0=sphere 1=box(OBB) 2=capsule(ローカル Y 軸)
+    float radius = 0.5f; // sphere / capsule
+    DirectX::XMFLOAT3 halfExtents = { 0.5f, 0.5f, 0.5f }; // box
+    int32_t isTrigger = 1;
+    // ---- M28a 追加 (末尾 append = シーン/リプレイ互換維持) ----
+    float height = 2.0f;   // capsule 全高 (両端の半球を含む)。線分半長 = max(0, height/2 − radius)
+    float friction = 0.5f; // クーロン摩擦係数 (M28b のソルバで使用。ペアは sqrt(μa·μb))
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 

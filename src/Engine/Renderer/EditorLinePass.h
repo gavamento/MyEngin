@@ -36,6 +36,11 @@ public:
                  bool onTop = false);
     void AddWireSphere(const DirectX::XMFLOAT3& center, float radius, uint32_t rgba,
                        bool onTop = false);
+    // カプセルワイヤ (M28a)。axisX/Y/Z は正規直交基底 (Y = カプセル軸)、halfSeg は線分半長。
+    // 物理 (ShapePose) と同じパラメータ表現 — ギズモと判定のズレを構造的に防ぐ
+    void AddWireCapsule(const DirectX::XMFLOAT3& center, const DirectX::XMFLOAT3& axisX,
+                        const DirectX::XMFLOAT3& axisY, const DirectX::XMFLOAT3& axisZ,
+                        float radius, float halfSeg, uint32_t rgba, bool onTop = false);
     void AddGrid(int halfCount, float spacing, uint32_t lineRgba, uint32_t axisXRgba,
                  uint32_t axisZRgba);
 

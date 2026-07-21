@@ -151,6 +151,58 @@ void EditorLinePass::AddWireSphere(const XMFLOAT3& center, float radius, uint32_
     }
 }
 
+void EditorLinePass::AddWireCapsule(const XMFLOAT3& center, const XMFLOAT3& axisX,
+                                    const XMFLOAT3& axisY, const XMFLOAT3& axisZ, float radius,
+                                    float halfSeg, uint32_t rgba, bool onTop)
+{
+    constexpr int kSeg = 24;
+    constexpr float kPi = 3.14159265359f;
+    // ローカル (lx,ly,lz) → ワールド
+    auto at = [&](float lx, float ly, float lz) {
+        return XMFLOAT3(center.x + lx * axisX.x + ly * axisY.x + lz * axisZ.x,
+                        center.y + lx * axisX.y + ly * axisY.y + lz * axisZ.y,
+                        center.z + lx * axisX.z + ly * axisY.z + lz * axisZ.z);
+    };
+    // 上下のリング (軸直交面)
+    for (int cap = 0; cap < 2; ++cap) {
+        const float y = cap ? halfSeg : -halfSeg;
+        XMFLOAT3 prev = {};
+        for (int i = 0; i <= kSeg; ++i) {
+            const float t = 2.0f * kPi * static_cast<float>(i) / kSeg;
+            const XMFLOAT3 p = at(std::cos(t) * radius, y, std::sin(t) * radius);
+            if (i > 0) {
+                AddLine(prev, p, rgba, onTop);
+            }
+            prev = p;
+        }
+    }
+    // 側面の縦線 4 本 (±X / ±Z)
+    AddLine(at(radius, -halfSeg, 0), at(radius, halfSeg, 0), rgba, onTop);
+    AddLine(at(-radius, -halfSeg, 0), at(-radius, halfSeg, 0), rgba, onTop);
+    AddLine(at(0, -halfSeg, radius), at(0, halfSeg, radius), rgba, onTop);
+    AddLine(at(0, -halfSeg, -radius), at(0, halfSeg, -radius), rgba, onTop);
+    // 端の半円弧 (XY 面 / ZY 面 × 上下)
+    constexpr int kArc = 12;
+    for (int cap = 0; cap < 2; ++cap) {
+        const float y = cap ? halfSeg : -halfSeg;
+        const float dir = cap ? 1.0f : -1.0f;
+        XMFLOAT3 prevX = {}, prevZ = {};
+        for (int i = 0; i <= kArc; ++i) {
+            const float a = kPi * static_cast<float>(i) / kArc;
+            const float c = std::cos(a) * radius;
+            const float s = std::sin(a) * radius * dir;
+            const XMFLOAT3 px = at(c, y + s, 0);
+            const XMFLOAT3 pz = at(0, y + s, c);
+            if (i > 0) {
+                AddLine(prevX, px, rgba, onTop);
+                AddLine(prevZ, pz, rgba, onTop);
+            }
+            prevX = px;
+            prevZ = pz;
+        }
+    }
+}
+
 void EditorLinePass::AddGrid(int halfCount, float spacing, uint32_t lineRgba, uint32_t axisXRgba,
                              uint32_t axisZRgba)
 {

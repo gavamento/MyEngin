@@ -11,6 +11,7 @@
 #include "Engine/Platform/PathUtil.h"
 #include "Engine/Core/World.h"
 #include "Engine/Engine/GameObject.h"
+#include "Engine/Engine/Physics/Shapes.h"
 #include "Engine/Engine/RenderSystem.h"
 #include "Engine/Engine/Scene.h"
 #include "Engine/Renderer/GpuResources.h"
@@ -106,7 +107,8 @@ void SceneViewWindow::BuildOverlays(EngineContext& ctx, Selection& selection)
         constexpr uint32_t kCamera = 0x40C0F0FFu;
         constexpr uint32_t kEmitter = 0xF08020FFu;
 
-        // コライダー (球 / AABB。回転無視の近似 = CollisionSystem に合わせる)
+        // コライダー (球 / OBB / カプセル、M28a)。寸法・基底は物理と同じ
+        // shapes::MakePoseFromMatrix から取る = ギズモと判定のズレを構造的に防ぐ
         const ComponentTypeId colReq[] = { ColliderComponent::sTypeId,
                                            WorldMatrixComponent::sTypeId };
         world.ForEachArchetype(colReq, [&](Archetype& arch) {
@@ -115,17 +117,24 @@ void SceneViewWindow::BuildOverlays(EngineContext& ctx, Selection& selection)
             for (uint32_t row = 0; row < arch.Count(); ++row) {
                 const auto* col = static_cast<const ColliderComponent*>(arch.GetPtr(ci, row));
                 const XMFLOAT4X4& wm = static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row))->value;
-                const XMFLOAT3 pos = { wm._41, wm._42, wm._43 };
-                const XMFLOAT3 sc = MatrixScale(wm);
+                const ShapePose pose = shapes::MakePoseFromMatrix(*col, wm);
+                const XMFLOAT3 pos = { pose.px, pose.py, pose.pz };
                 if (col->shape == 0) {
-                    const float maxS = (sc.x > sc.y ? sc.x : sc.y) > sc.z
-                        ? (sc.x > sc.y ? sc.x : sc.y) : sc.z;
-                    lines_.AddWireSphere(pos, col->radius * maxS, kCollider);
+                    lines_.AddWireSphere(pos, pose.radius, kCollider);
+                } else if (col->shape == 2) {
+                    lines_.AddWireCapsule(pos, { pose.bx[0], pose.bx[1], pose.bx[2] },
+                                          { pose.by[0], pose.by[1], pose.by[2] },
+                                          { pose.bz[0], pose.bz[1], pose.bz[2] }, pose.radius,
+                                          pose.halfSeg, kCollider);
                 } else {
-                    const XMFLOAT3 h = { col->halfExtents.x * sc.x, col->halfExtents.y * sc.y,
-                                         col->halfExtents.z * sc.z };
-                    lines_.AddAABB({ pos.x - h.x, pos.y - h.y, pos.z - h.z },
-                                   { pos.x + h.x, pos.y + h.y, pos.z + h.z }, kCollider);
+                    // OBB: 基底 × スケール適用済み half extents を行列に組んで描画
+                    XMFLOAT4X4 boxWorld = {
+                        pose.bx[0], pose.bx[1], pose.bx[2], 0,
+                        pose.by[0], pose.by[1], pose.by[2], 0,
+                        pose.bz[0], pose.bz[1], pose.bz[2], 0,
+                        pose.px,    pose.py,    pose.pz,    1,
+                    };
+                    lines_.AddWireBox(boxWorld, { pose.hx, pose.hy, pose.hz }, kCollider);
                 }
             }
         });

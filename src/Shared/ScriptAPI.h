@@ -103,6 +103,49 @@ void (*GetTriggerExitFn())(void*, MyeUpdateContext*, MyeEntityId)
     }
 }
 
+// ---- ソリッド衝突コールバック (v4 予約、M28c で配信開始) ----
+// 使い方: void OnCollisionEnter(MyeUpdateContext& ctx, MyeEntityId other, MyeVec3 normal);
+//         void OnCollisionStay(MyeUpdateContext& ctx, MyeEntityId other);
+//         void OnCollisionExit(MyeUpdateContext& ctx, MyeEntityId other);
+
+template <typename T>
+void (*GetCollisionEnterFn())(void*, MyeUpdateContext*, MyeEntityId, MyeVec3)
+{
+    if constexpr (requires(T t, MyeUpdateContext& c, MyeEntityId o, MyeVec3 n) {
+                      t.OnCollisionEnter(c, o, n);
+                  }) {
+        return [](void* s, MyeUpdateContext* c, MyeEntityId o, MyeVec3 n) {
+            static_cast<T*>(s)->OnCollisionEnter(*c, o, n);
+        };
+    } else {
+        return nullptr;
+    }
+}
+
+template <typename T>
+void (*GetCollisionStayFn())(void*, MyeUpdateContext*, MyeEntityId)
+{
+    if constexpr (requires(T t, MyeUpdateContext& c, MyeEntityId o) { t.OnCollisionStay(c, o); }) {
+        return [](void* s, MyeUpdateContext* c, MyeEntityId o) {
+            static_cast<T*>(s)->OnCollisionStay(*c, o);
+        };
+    } else {
+        return nullptr;
+    }
+}
+
+template <typename T>
+void (*GetCollisionExitFn())(void*, MyeUpdateContext*, MyeEntityId)
+{
+    if constexpr (requires(T t, MyeUpdateContext& c, MyeEntityId o) { t.OnCollisionExit(c, o); }) {
+        return [](void* s, MyeUpdateContext* c, MyeEntityId o) {
+            static_cast<T*>(s)->OnCollisionExit(*c, o);
+        };
+    } else {
+        return nullptr;
+    }
+}
+
 inline uint64_t LayoutHash(const MyeScriptField* fields, uint32_t count)
 {
     // FNV-1a (Engine/Core/Hash.h と同じ定数 — Shared はエンジンヘッダを включできないため再掲)
@@ -143,6 +186,9 @@ MyeScriptDesc MakeDesc(const char* name, const MyeScriptField* fields, uint32_t 
     d.lateUpdate = GetLateUpdateFn<T>();
     d.onTriggerEnter = GetTriggerEnterFn<T>();
     d.onTriggerExit = GetTriggerExitFn<T>();
+    d.onCollisionEnter = GetCollisionEnterFn<T>();
+    d.onCollisionStay = GetCollisionStayFn<T>();
+    d.onCollisionExit = GetCollisionExitFn<T>();
     return d;
 }
 

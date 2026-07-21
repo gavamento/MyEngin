@@ -57,6 +57,7 @@
     <ClCompile Include="..\src\Engine\Engine\Particles\GpuParticleBackend.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Particles\ParticleSystem.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Physics\PhysicsSystem.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Physics\Shapes.cpp" />
     <ClCompile Include="..\src\Engine\Engine\PhysicsSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Prefab.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Project.cpp" />
@@ -134,6 +135,7 @@
     <ClInclude Include="..\src\Engine\Engine\Particles\IParticleBackend.h" />
     <ClInclude Include="..\src\Engine\Engine\Particles\ParticleSystem.h" />
     <ClInclude Include="..\src\Engine\Engine\Physics\PhysicsSystem.h" />
+    <ClInclude Include="..\src\Engine\Engine\Physics\Shapes.h" />
     <ClInclude Include="..\src\Engine\Engine\PhysicsSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Prefab.h" />
     <ClInclude Include="..\src\Engine\Engine\Project.h" />
