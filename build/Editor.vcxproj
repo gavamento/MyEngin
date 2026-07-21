@@ -40,6 +40,7 @@
     <ClCompile Include="..\src\Editor\EditorApp.cpp" />
     <ClCompile Include="..\src\Editor\EditorMain.cpp" />
     <ClCompile Include="..\src\Editor\EditorSettings.cpp" />
+    <ClCompile Include="..\src\Editor\EditorToolbar.cpp" />
     <ClCompile Include="..\src\Editor\PlayModeController.cpp" />
     <ClCompile Include="..\src\Editor\ProjectManager.cpp" />
     <ClCompile Include="..\src\Editor\ProjectRegistry.cpp" />
@@ -65,6 +66,7 @@
     <ClInclude Include="..\src\Editor\CreateMenu.h" />
     <ClInclude Include="..\src\Editor\EditorApp.h" />
     <ClInclude Include="..\src\Editor\EditorSettings.h" />
+    <ClInclude Include="..\src\Editor\EditorToolbar.h" />
     <ClInclude Include="..\src\Editor\PlayModeController.h" />
     <ClInclude Include="..\src\Editor\ProjectManager.h" />
     <ClInclude Include="..\src\Editor\ProjectRegistry.h" />

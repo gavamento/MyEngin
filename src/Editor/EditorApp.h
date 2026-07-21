@@ -4,6 +4,7 @@
 #include "nlohmann/json.hpp"
 
 #include "Editor/EditorSettings.h"
+#include "Editor/EditorToolbar.h"
 #include "Editor/PlayModeController.h"
 #include "Editor/Selection.h"
 #include "Editor/ShortcutHub.h"
@@ -93,7 +94,8 @@ private:
     bool rebuildDockLayout_ = false;
     bool showStats_ = true;
 
-    // ---- フィードバック層 (M27b) ----
+    // ---- フィードバック層 (M27b) / ツールバー (M27c) ----
+    EditorToolbar toolbar_;
     StatusBar statusBar_;
     ToastCenter toasts_;
     std::string projectName_;              // マニフェストの name (レガシー起動時は空)

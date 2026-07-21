@@ -28,6 +28,10 @@ public:
     // ビュー中心をピッキングして選択する (自動テスト用 — --pick-test)。ヒットで true
     bool PickAtCenter(EngineContext& ctx, Selection& selection);
 
+    // ギズモ状態への参照 (M27c: グローバルツールバーと共有)
+    ImGuizmo::OPERATION& GizmoOp() { return gizmoOp_; }
+    ImGuizmo::MODE& GizmoMode() { return gizmoMode_; }
+
 private:
     void BuildOverlays(EngineContext& ctx, Selection& selection);
     void DrawToolbar();

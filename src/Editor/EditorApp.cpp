@@ -119,9 +119,10 @@ void EditorApp::OnRenderViews(EngineContext& ctx)
 
 void EditorApp::OnImGui(EngineContext& ctx)
 {
-    // サイドバー (メニュー/ステータスバー) が WorkArea を先に確保し、残りに DockSpace を
-    // 敷く — この順序を同一フレーム内で守ること (逆順だと 1 フレームちらつく)
+    // サイドバー (メニュー → ツールバー → ステータスバー) が WorkArea を先に確保し、
+    // 残りに DockSpace を敷く — この順序を同一フレーム内で守ること (逆順だと 1 フレームちらつく)
     DrawMainMenuBar(ctx);
+    toolbar_.OnImGui(ctx, playMode_, selection_, undo_, sceneView_);
     statusBar_.OnImGui(ctx, projectName_, scenePath_, IsSceneDirty(), playMode_.State(),
                        &console_.open);
 
@@ -274,32 +275,7 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
         ImGui::EndMenu();
     }
 
-    // ---- Play / Pause / Step (メニューバー中央) ----
-    ImGui::SetCursorPosX(ImGui::GetWindowWidth() * 0.5f - 80.0f);
-    const PlayState state = playMode_.State();
-    if (state == PlayState::Editing) {
-        if (ImGui::Button("Play")) {
-            selection_.Clear(); // 復元で EntityID が変わるため選択解除
-            undo_.BeginPlaySession();
-            playMode_.Play(*ctx.scene);
-        }
-    } else {
-        if (ImGui::Button("Stop")) {
-            selection_.Clear();
-            playMode_.Stop(*ctx.scene);
-            undo_.EndPlaySession(); // Play 中に積まれた Undo エントリを破棄
-        }
-        ImGui::SameLine();
-        if (ImGui::Button(state == PlayState::Paused ? "Resume" : "Pause")) {
-            playMode_.TogglePause();
-        }
-        if (state == PlayState::Paused) {
-            ImGui::SameLine();
-            if (ImGui::Button("Step")) {
-                playMode_.Step();
-            }
-        }
-    }
+    // Play/Pause/Step は M27c でツールバー (EditorToolbar) へ移設
     ImGui::EndMainMenuBar();
 
     HandleShortcuts(ctx);
