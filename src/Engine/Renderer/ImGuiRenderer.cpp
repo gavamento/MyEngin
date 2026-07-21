@@ -4,6 +4,7 @@
 #include "Engine/Platform/PathUtil.h"
 #include "Engine/Platform/Win32Window.h"
 #include "Engine/Renderer/GraphicsDevice.h"
+#include "Engine/Renderer/ImGuiTheme.h"
 
 #include <Windows.h>
 
@@ -35,6 +36,8 @@ bool ImGuiRenderer::Init(Win32Window& window, GraphicsDevice& device, const ImGu
     }
 
     ImGui::StyleColorsDark();
+    ApplyEditorTheme(ImGui::GetStyle()); // M27a: UE5 風テーマ
+    SetupEditorFonts();                  // M27a: Segoe UI + 日本語 + Font Awesome
 
     if (!ImGui_ImplWin32_Init(window.Hwnd())) {
         MYE_LOG_ERROR("ImGui_ImplWin32_Init failed");

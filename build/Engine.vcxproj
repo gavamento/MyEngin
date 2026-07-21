@@ -86,6 +86,7 @@
     <ClCompile Include="..\src\Engine\Renderer\GraphicsDevice.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\ImageWrite.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\ImGuiRenderer.cpp" />
+    <ClCompile Include="..\src\Engine\Renderer\ImGuiTheme.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\PickingPass.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\PostProcess.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\RenderQueue.cpp" />
@@ -162,6 +163,7 @@
     <ClInclude Include="..\src\Engine\Renderer\GraphicsDevice.h" />
     <ClInclude Include="..\src\Engine\Renderer\ImageWrite.h" />
     <ClInclude Include="..\src\Engine\Renderer\ImGuiRenderer.h" />
+    <ClInclude Include="..\src\Engine\Renderer\ImGuiTheme.h" />
     <ClInclude Include="..\src\Engine\Renderer\PickingPass.h" />
     <ClInclude Include="..\src\Engine\Renderer\PostProcess.h" />
     <ClInclude Include="..\src\Engine\Renderer\RenderPath.h" />

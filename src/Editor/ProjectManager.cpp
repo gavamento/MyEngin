@@ -21,6 +21,8 @@
 
 #include "imgui.h"
 
+#include "fontawesome/IconsFontAwesome6.h"
+
 namespace mye {
 
 namespace {
@@ -116,7 +118,7 @@ bool DrawHubUi(HubState& st, void* hwnd, ProjectManagerOutcome& outcome)
     // ---- 左: プロジェクト一覧 (pinned → lastOpened 降順) ----
     ImGui::BeginChild("##projects", ImVec2(listWidth, -footer), ImGuiChildFlags_Borders);
     if (st.registry.Entries().empty()) {
-        ImGui::TextDisabled("(no projects yet — create one on the right)");
+        ImGui::TextDisabled("(プロジェクトがありません — 右側から作成してください)");
     }
     // 表示中の変更操作を安全にするためコピーで回す (Touch/Remove が並びを変える)
     const std::vector<ProjectRegistryEntry> entries = st.registry.Entries();
@@ -124,12 +126,18 @@ bool DrawHubUi(HubState& st, void* hwnd, ProjectManagerOutcome& outcome)
         const ProjectRegistryEntry& e = entries[i];
         ImGui::PushID(static_cast<int>(i));
 
-        // ピン留めトグル
-        if (ImGui::SmallButton(e.pinned ? "*" : " ")) {
+        // ピン留めトグル (非ピンは薄く表示)
+        if (!e.pinned) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+        }
+        if (ImGui::SmallButton(ICON_FA_THUMBTACK)) {
             st.registry.SetPinned(e.path, !e.pinned);
         }
+        if (!e.pinned) {
+            ImGui::PopStyleColor();
+        }
         if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip(e.pinned ? "Unpin" : "Pin to top");
+            ImGui::SetTooltip(e.pinned ? "ピン留めを外す" : "先頭にピン留め");
         }
         ImGui::SameLine();
 
@@ -175,19 +183,19 @@ bool DrawHubUi(HubState& st, void* hwnd, ProjectManagerOutcome& outcome)
 
     // ---- 右: 新規作成 / 既存を開く ----
     ImGui::BeginChild("##actions", ImVec2(0, -footer));
-    ImGui::SeparatorText("New Project");
-    ImGui::InputText("Name", st.newName, sizeof(st.newName));
-    ImGui::InputText("Location", st.newLocation, sizeof(st.newLocation));
+    ImGui::SeparatorText("新規プロジェクト");
+    ImGui::InputText("名前", st.newName, sizeof(st.newName));
+    ImGui::InputText("場所", st.newLocation, sizeof(st.newLocation));
     ImGui::SameLine();
-    if (ImGui::Button("...##loc")) {
+    if (ImGui::Button(ICON_FA_FOLDER_OPEN "##loc")) {
         const std::wstring picked = PickFolderDialog(hwnd);
         if (!picked.empty()) {
             const std::string utf8 = WideToUtf8(picked);
             strncpy_s(st.newLocation, utf8.c_str(), _TRUNCATE);
         }
     }
-    ImGui::Combo("Template", &st.newTemplate, "Empty\0" "3D Demo\0");
-    if (ImGui::Button("Create", ImVec2(120, 0))) {
+    ImGui::Combo("テンプレート", &st.newTemplate, "Empty\0" "3D Demo\0");
+    if (ImGui::Button("作成", ImVec2(120, 0))) {
         const std::wstring dir =
             Utf8ToWide(st.newLocation) + L"\\" + Utf8ToWide(st.newName);
         std::string err;
@@ -204,17 +212,17 @@ bool DrawHubUi(HubState& st, void* hwnd, ProjectManagerOutcome& outcome)
     }
 
     ImGui::Spacing();
-    ImGui::SeparatorText("Open Existing");
-    ImGui::InputText("Path", st.openPath, sizeof(st.openPath));
+    ImGui::SeparatorText("既存を開く");
+    ImGui::InputText("パス", st.openPath, sizeof(st.openPath));
     ImGui::SameLine();
-    if (ImGui::Button("...##open")) {
+    if (ImGui::Button(ICON_FA_FOLDER_OPEN "##open")) {
         const std::wstring picked = PickFolderDialog(hwnd);
         if (!picked.empty()) {
             const std::string utf8 = WideToUtf8(picked);
             strncpy_s(st.openPath, utf8.c_str(), _TRUNCATE);
         }
     }
-    if (ImGui::Button("Open", ImVec2(120, 0))) {
+    if (ImGui::Button("開く", ImVec2(120, 0))) {
         const std::wstring dir = Utf8ToWide(st.openPath);
         ProjectManifest m;
         if (IsProjectRoot(dir) && LoadProjectManifest(dir, m)) {
@@ -229,7 +237,7 @@ bool DrawHubUi(HubState& st, void* hwnd, ProjectManagerOutcome& outcome)
     }
     ImGui::EndChild();
 
-    ImGui::TextDisabled("Double-click a project to open. Opening relaunches the editor.");
+    ImGui::TextDisabled("ダブルクリックでプロジェクトを開く (エディタを再起動します)");
 
     // ---- エラーモーダル ----
     if (!st.errorText.empty() && !ImGui::IsPopupOpen("Error")) {
