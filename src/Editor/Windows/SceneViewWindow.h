@@ -34,11 +34,11 @@ public:
 
 private:
     void BuildOverlays(EngineContext& ctx, Selection& selection);
-    void DrawToolbar();
+    void DrawToolbar(EditorSettings& settings);
     void DrawGizmo(EngineContext& ctx, Selection& selection, UndoStack& undo,
                    const EditorSettings& settings, float rectX, float rectY, float rectW,
                    float rectH);
-    void HandleCamera(EngineContext& ctx, Selection& selection);
+    void HandleCamera(EngineContext& ctx, Selection& selection, EditorSettings& settings);
     void FocusOnSelection(EngineContext& ctx, Selection& selection);
     // カーソル下のワールド地面 (y=0) 座標を求める (ドラッグ配置用)。ヒットで true
     bool GroundPointUnderCursor(const ImVec2& imgPos, const ImVec2& size,
@@ -60,6 +60,7 @@ private:
     ImGuizmo::MODE gizmoMode_ = ImGuizmo::LOCAL;
     bool orthographic_ = false;
     bool gizmoActive_ = false; // Undo transient 記録中 (ドラッグ全体で 1 エントリ)
+    bool camSpeedDirty_ = false; // RMB+ホイールで速度変更中 (RMB リリース時に settings.Save)
     bool showGrid_ = true;
     bool showGizmos_ = true; // コライダー/ライト/カメラ等の補助表示
 

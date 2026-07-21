@@ -7,6 +7,7 @@
 namespace mye {
 
 class UndoStack;
+class AssetPreviewCache;
 
 // Asset Browser (engine_spec.md 9 章、M11)。
 // assets/ をフォルダツリー + ファイルグリッドで表示。テクスチャはサムネイル、
@@ -16,7 +17,7 @@ class AssetBrowserWindow {
 public:
     bool open = true; // 閉じる / 再表示 (タブ [x] と Window メニューに連動)
     void OnImGui(EngineContext& ctx, Selection& selection, UndoStack& undo,
-                 const std::string& externalEditorCmd);
+                 const std::string& externalEditorCmd, AssetPreviewCache& preview);
 
 private:
     void DrawDirTree(const std::wstring& dir);

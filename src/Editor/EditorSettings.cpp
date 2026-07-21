@@ -25,6 +25,7 @@ void EditorSettings::Load(const std::wstring& dir)
         snapRotateDeg = root.value("snapRotateDeg", snapRotateDeg);
         snapScale = root.value("snapScale", snapScale);
         gridVisible = root.value("gridVisible", gridVisible);
+        camMoveSpeed = root.value("camMoveSpeed", camMoveSpeed);
     } catch (const nlohmann::json::exception& ex) {
         MYE_LOG_WARN("editor_settings.json parse error: %s", ex.what());
     }
@@ -53,6 +54,7 @@ void EditorSettings::Save() const
     root["snapRotateDeg"] = snapRotateDeg;
     root["snapScale"] = snapScale;
     root["gridVisible"] = gridVisible;
+    root["camMoveSpeed"] = camMoveSpeed;
 
     std::ofstream f(std::filesystem::path(path_), std::ios::binary);
     if (f) {

@@ -115,6 +115,7 @@ void EditorApp::OnRenderViews(EngineContext& ctx)
 {
     sceneView_.OnRenderViews(ctx, selection_);
     gameView_.OnRenderViews(ctx);
+    preview_.OnRenderViews(ctx); // アセットサムネイル生成 (D3D 描画はこのフェーズのみ)
 }
 
 void EditorApp::OnImGui(EngineContext& ctx)
@@ -141,7 +142,7 @@ void EditorApp::OnImGui(EngineContext& ctx)
     gameView_.OnImGui(ctx);
     particleSettings_.OnImGui(ctx);
     profiler_.OnImGui(ctx);
-    assetBrowser_.OnImGui(ctx, selection_, undo_, settings_.externalEditorCmd);
+    assetBrowser_.OnImGui(ctx, selection_, undo_, settings_.externalEditorCmd, preview_);
     animation_.OnImGui(ctx, selection_, undo_);
     animatorController_.OnImGui(ctx, selection_);
     search_.OnImGui(ctx, selection_);

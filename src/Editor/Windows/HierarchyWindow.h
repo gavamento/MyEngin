@@ -19,10 +19,18 @@ private:
                         UndoStack& undo);
     void DrawFiltered(EngineContext& ctx, World& world, Selection& selection);
     void ApplyClick(EngineContext& ctx, EntityID e, Selection& selection); // 修飾キーで選択更新
+    // 兄弟並べ替え (M27d): src を target の前/後に挿入する (必要なら再ペアレントも)。1 Undo
+    void ReorderAsSibling(EngineContext& ctx, World& world, EntityID src, EntityID target,
+                          bool after, Selection& selection, UndoStack& undo);
 
     char searchBuf_[64] = {};
     uint64_t renamingFid_ = 0; // インラインリネーム中の fileId (0 = なし)
     bool renameFocus_ = false;
+
+    // Shift 範囲選択 (M27d): 前フレームの表示順 + 範囲の起点
+    std::vector<uint64_t> visibleOrder_;
+    std::vector<uint64_t> visibleOrderPrev_;
+    uint64_t anchorFid_ = 0;
 };
 
 } // namespace mye

@@ -197,13 +197,13 @@ void SceneViewWindow::BuildOverlays(EngineContext& ctx, Selection& selection)
     }
 }
 
-void SceneViewWindow::DrawToolbar()
+void SceneViewWindow::DrawToolbar(EditorSettings& settings)
 {
-    // ビューポート左上のオーバーレイツールバー (ギズモ操作 / 座標系 / 投影)
+    // ビューポート左上のオーバーレイツールバー (ギズモ操作 / 座標系 / 投影 / カメラ速度)
     const ImVec2 p = ImGui::GetItemRectMin();
     ImGui::SetCursorScreenPos(ImVec2(p.x + 8.0f, p.y + 8.0f));
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.10f, 0.11f, 0.13f, 0.85f));
-    ImGui::BeginChild("##sv_toolbar", ImVec2(520.0f, 30.0f), ImGuiChildFlags_None,
+    ImGui::BeginChild("##sv_toolbar", ImVec2(660.0f, 30.0f), ImGuiChildFlags_None,
                       ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     auto opBtn = [&](const char* label, ImGuizmo::OPERATION op) {
         const bool on = (gizmoOp_ == op);
@@ -234,6 +234,19 @@ void SceneViewWindow::DrawToolbar()
     ImGui::Checkbox("Grid", &showGrid_);
     ImGui::SameLine();
     ImGui::Checkbox("Gizmos", &showGizmos_);
+    ImGui::SameLine();
+    ImGui::TextUnformatted("|");
+    ImGui::SameLine();
+    // カメラ速度 (M27d)。RMB ホールド中のホイールでも変わる (HandleCamera)
+    ImGui::SetNextItemWidth(100.0f);
+    if (ImGui::SliderFloat("##camspeed", &settings.camMoveSpeed, 0.5f, 60.0f, "cam %.1f",
+                           ImGuiSliderFlags_Logarithmic)) {
+        camSpeedDirty_ = true; // 永続化は操作終了時 (HandleCamera 側の Save に相乗り)
+    }
+    if (ImGui::IsItemDeactivatedAfterEdit()) {
+        camSpeedDirty_ = false;
+        settings.Save();
+    }
     ImGui::EndChild();
     ImGui::PopStyleColor();
 }
@@ -343,7 +356,8 @@ void SceneViewWindow::FocusOnSelection(EngineContext& ctx, Selection& selection)
     XMStoreFloat3(&camPos_, pos);
 }
 
-void SceneViewWindow::HandleCamera(EngineContext& ctx, Selection& selection)
+void SceneViewWindow::HandleCamera(EngineContext& ctx, Selection& selection,
+                                   EditorSettings& settings)
 {
     (void)ctx;
     const ImGuiIO& io = ImGui::GetIO();
@@ -360,10 +374,22 @@ void SceneViewWindow::HandleCamera(EngineContext& ctx, Selection& selection)
     XMVECTOR fwd, right, up;
     CamBasis(camPitch_, camYaw_, fwd, right, up);
 
-    // ホイール: 前後ズーム
+    // ホイール: RMB ホールド中は移動速度調整 (M27d、Unity/UE 風)、それ以外は前後ズーム
     if (io.MouseWheel != 0.0f) {
-        const XMVECTOR pos = XMVectorAdd(XMLoadFloat3(&camPos_), XMVectorScale(fwd, io.MouseWheel * 1.5f));
-        XMStoreFloat3(&camPos_, pos);
+        if (ImGui::IsMouseDown(ImGuiMouseButton_Right)) {
+            settings.camMoveSpeed = std::clamp(
+                settings.camMoveSpeed * std::pow(1.15f, io.MouseWheel), 0.5f, 60.0f);
+            camSpeedDirty_ = true;
+        } else {
+            const XMVECTOR pos =
+                XMVectorAdd(XMLoadFloat3(&camPos_), XMVectorScale(fwd, io.MouseWheel * 1.5f));
+            XMStoreFloat3(&camPos_, pos);
+        }
+    }
+    // 速度変更はドラッグ終了時にまとめて永続化 (ホイール毎のファイル IO を避ける)
+    if (camSpeedDirty_ && !ImGui::IsMouseDown(ImGuiMouseButton_Right)) {
+        camSpeedDirty_ = false;
+        settings.Save();
     }
 
     // RMB ドラッグ: FPS ルック + WASDQE 移動 (RMB 中のみ W/E/R は移動として扱う)
@@ -379,7 +405,8 @@ void SceneViewWindow::HandleCamera(EngineContext& ctx, Selection& selection)
         if (ImGui::IsKeyDown(ImGuiKey_E)) { move = XMVectorAdd(move, XMVectorSet(0, 1, 0, 0)); }
         if (ImGui::IsKeyDown(ImGuiKey_Q)) { move = XMVectorSubtract(move, XMVectorSet(0, 1, 0, 0)); }
         if (XMVectorGetX(XMVector3LengthSq(move)) > 0.0001f) {
-            const float speed = ImGui::IsKeyDown(ImGuiKey_LeftShift) ? 20.0f : 6.0f;
+            const float speed =
+                settings.camMoveSpeed * (ImGui::IsKeyDown(ImGuiKey_LeftShift) ? 3.0f : 1.0f);
             move = XMVectorScale(XMVector3Normalize(move), speed * io.DeltaTime);
             XMStoreFloat3(&camPos_, XMVectorAdd(XMLoadFloat3(&camPos_), move));
         }
@@ -471,10 +498,10 @@ void SceneViewWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
 
     // カメラ操作: ウィンドウ上 & ギズモ操作中でない時のみ
     if (ImGui::IsWindowHovered() && !ImGuizmo::IsUsing()) {
-        HandleCamera(ctx, selection);
+        HandleCamera(ctx, selection, settings);
     }
 
-    DrawToolbar();
+    DrawToolbar(settings);
     ImGui::End();
 }
 

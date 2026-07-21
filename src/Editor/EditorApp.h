@@ -3,6 +3,7 @@
 
 #include "nlohmann/json.hpp"
 
+#include "Editor/AssetPreviewCache.h"
 #include "Editor/EditorSettings.h"
 #include "Editor/EditorToolbar.h"
 #include "Editor/PlayModeController.h"
@@ -88,6 +89,7 @@ private:
     SearchWindow search_;
     ProjectSettingsWindow projectSettings_;
     BuildSettingsWindow buildSettings_;
+    AssetPreviewCache preview_; // AssetBrowser のメッシュ/プレハブサムネイル (M27d)
 
     nlohmann::json clipboard_; // コピー/カットしたサブツリー群 (SubtreeToJson 形式の配列)
     std::wstring scenePath_;

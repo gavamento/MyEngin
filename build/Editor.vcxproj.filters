@@ -10,6 +10,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\src\Editor\AssetOps.cpp" />
+    <ClCompile Include="..\src\Editor\AssetPreviewCache.cpp" />
     <ClCompile Include="..\src\Editor\CreateMenu.cpp" />
     <ClCompile Include="..\src\Editor\EditorApp.cpp" />
     <ClCompile Include="..\src\Editor\EditorMain.cpp" />
@@ -65,6 +66,7 @@
       <Filter>Windows</Filter>
     </ClCompile>
     <ClInclude Include="..\src\Editor\AssetOps.h" />
+    <ClInclude Include="..\src\Editor\AssetPreviewCache.h" />
     <ClInclude Include="..\src\Editor\CreateMenu.h" />
     <ClInclude Include="..\src\Editor\EditorApp.h" />
     <ClInclude Include="..\src\Editor\EditorSettings.h" />

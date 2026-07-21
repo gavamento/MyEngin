@@ -16,6 +16,8 @@ struct EditorSettings {
     float snapRotateDeg = 15.0f;
     float snapScale = 0.1f;
     bool gridVisible = true;
+    // Scene View カメラの WASD 移動速度 (M27d。RMB ホールド中のホイールで調整)
+    float camMoveSpeed = 6.0f;
 
     void Load(const std::wstring& dir);
     void Save() const;

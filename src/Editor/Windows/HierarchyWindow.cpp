@@ -1,5 +1,6 @@
 #include "Editor/Windows/HierarchyWindow.h"
 
+#include <algorithm>
 #include <cctype>
 #include <functional>
 #include <string>
@@ -85,6 +86,10 @@ void HierarchyWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
         undo.CaptureBefore(*ctx.scene, renamingFid_);
     }
 
+    // Shift 範囲選択用の表示順を毎フレーム再構築 (クリック判定は前フレームの並びを使う)
+    visibleOrderPrev_ = std::move(visibleOrder_);
+    visibleOrder_.clear();
+
     if (searchBuf_[0] != '\0') {
         DrawFiltered(ctx, world, selection);
     } else {
@@ -133,10 +138,22 @@ void HierarchyWindow::ApplyClick(EngineContext& ctx, EntityID e, Selection& sele
     const ImGuiIO& io = ImGui::GetIO();
     if (io.KeyCtrl) {
         selection.Toggle(fid);
+        anchorFid_ = fid;
     } else if (io.KeyShift) {
-        selection.Add(fid);
+        // Shift: 表示順 (前フレーム) で anchor〜クリックの範囲を選択 (Unity 風、M27d)
+        const auto& order = visibleOrderPrev_;
+        const auto ia = std::find(order.begin(), order.end(), anchorFid_);
+        const auto ib = std::find(order.begin(), order.end(), fid);
+        if (anchorFid_ != 0 && ia != order.end() && ib != order.end()) {
+            const size_t lo = std::min(ia, ib) - order.begin();
+            const size_t hi = std::max(ia, ib) - order.begin();
+            selection.Set(std::vector<uint64_t>(order.begin() + lo, order.begin() + hi + 1), fid);
+        } else {
+            selection.Add(fid); // anchor が非表示 (折り畳み/検索) なら追加選択に留める
+        }
     } else {
         selection.SelectOnly(fid);
+        anchorFid_ = fid;
     }
 }
 
@@ -160,6 +177,9 @@ void HierarchyWindow::DrawFiltered(EngineContext& ctx, World& world, Selection& 
                 continue;
             }
             const uint64_t fid = FidOf(world, e);
+            if (fid != 0) {
+                visibleOrder_.push_back(fid);
+            }
             ImGui::PushID(static_cast<int>(e.index));
             const bool sel = (fid != 0 && selection.Contains(fid));
             if (ImGui::Selectable(name.c_str(), sel)) {
@@ -177,6 +197,9 @@ void HierarchyWindow::DrawEntityNode(EngineContext& ctx, World& world, EntityID 
         return;
     }
     const uint64_t fid = FidOf(world, e);
+    if (fid != 0) {
+        visibleOrder_.push_back(fid); // Shift 範囲選択用の表示順 (M27d)
+    }
 
     ImGui::PushID(static_cast<int>(e.index));
 
@@ -275,16 +298,40 @@ void HierarchyWindow::DrawEntityNode(EngineContext& ctx, World& world, EntityID 
         ImGui::EndDragDropSource();
     }
     if (ImGui::BeginDragDropTarget()) {
-        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(kDragPayload)) {
+        // 3 ゾーンドロップ (M27d): 上 25% = 前に挿入 / 下 25% = 後ろに挿入 / 中央 = 子にする
+        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(
+                kDragPayload,
+                ImGuiDragDropFlags_AcceptBeforeDelivery
+                    | ImGuiDragDropFlags_AcceptNoDrawDefaultRect)) {
             const EntityID src = *static_cast<const EntityID*>(payload->Data);
-            if (src != e) {
-                undo.BeginRecord("Reparent", selection);
-                const uint64_t sfid = ctx.scene->EnsureFileId(src);
-                undo.CaptureBefore(*ctx.scene, sfid);
-                world.SetParent(src, e); // 循環は World 側で拒否される
-                world.ApplyStructuralChanges();
-                undo.CaptureAfter(*ctx.scene, sfid);
-                undo.EndRecord(selection);
+            const ImVec2 rmin = ImGui::GetItemRectMin();
+            const ImVec2 rmax = ImGui::GetItemRectMax();
+            const float t = (ImGui::GetMousePos().y - rmin.y)
+                            / std::max(1.0f, rmax.y - rmin.y);
+            const int zone = (t < 0.25f) ? -1 : (t > 0.75f) ? 1 : 0;
+
+            // ドロップ先インジケータ (中央 = 枠、上下 = 挿入ライン)
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            const ImU32 col = ImGui::GetColorU32(ImGuiCol_DragDropTarget);
+            if (zone == 0) {
+                dl->AddRect(rmin, rmax, col, 0.0f, 2.0f);
+            } else {
+                const float y = (zone < 0) ? rmin.y : rmax.y;
+                dl->AddLine(ImVec2(rmin.x, y), ImVec2(rmax.x, y), col, 2.0f);
+            }
+
+            if (payload->IsDelivery() && src != e) {
+                if (zone == 0) {
+                    undo.BeginRecord("Reparent", selection);
+                    const uint64_t sfid = ctx.scene->EnsureFileId(src);
+                    undo.CaptureBefore(*ctx.scene, sfid);
+                    world.SetParent(src, e); // 循環は World 側で拒否される
+                    world.ApplyStructuralChanges();
+                    undo.CaptureAfter(*ctx.scene, sfid);
+                    undo.EndRecord(selection);
+                } else {
+                    ReorderAsSibling(ctx, world, src, e, zone > 0, selection, undo);
+                }
             }
         }
         // AssetBrowser からのドロップ: このエンティティの子に配置
@@ -309,6 +356,62 @@ void HierarchyWindow::DrawEntityNode(EngineContext& ctx, World& world, EntityID 
         ImGui::TreePop();
     }
     ImGui::PopID();
+}
+
+void HierarchyWindow::ReorderAsSibling(EngineContext& ctx, World& world, EntityID src,
+                                       EntityID target, bool after, Selection& selection,
+                                       UndoStack& undo)
+{
+    // target が src の子孫なら不可 (再ペアレントすると循環になる)
+    for (EntityID p = world.GetParent(target); !p.IsNull(); p = world.GetParent(p)) {
+        if (p == src) {
+            return;
+        }
+    }
+    const EntityID parent = world.GetParent(target);
+
+    // 挿入位置: 親の子リスト (ルートは firstRoot リスト) を src を除いて数え、
+    // target の位置 (+ after) を求める — SetSiblingIndex は「src を外した後のリスト」が基準
+    uint32_t insertIdx = 0;
+    {
+        EntityID cur;
+        if (parent.IsNull()) {
+            cur = world.FirstRoot();
+        } else {
+            auto* ph = world.GetComponent<HierarchyComponent>(parent);
+            cur = ph ? ph->firstChild : kNullEntity;
+        }
+        uint32_t count = 0;
+        bool found = false;
+        while (!cur.IsNull()) {
+            if (cur == target) {
+                insertIdx = count + (after ? 1u : 0u);
+                found = true;
+                break;
+            }
+            if (cur != src) {
+                ++count;
+            }
+            auto* ch = world.GetComponent<HierarchyComponent>(cur);
+            cur = ch ? ch->nextSibling : kNullEntity;
+        }
+        if (!found) {
+            return;
+        }
+    }
+
+    // 兄弟順は WorldHash 非対象・シーン JSON に childIndex で保存され、
+    // Undo は SubtreeToJson の childIndex を ApplyPartial が復元することで成立する
+    undo.BeginRecord("Reorder", selection);
+    const uint64_t sfid = ctx.scene->EnsureFileId(src);
+    undo.CaptureBefore(*ctx.scene, sfid);
+    if (world.GetParent(src) != parent) {
+        world.SetParent(src, parent);
+    }
+    world.SetSiblingIndex(src, insertIdx);
+    world.ApplyStructuralChanges();
+    undo.CaptureAfter(*ctx.scene, sfid);
+    undo.EndRecord(selection);
 }
 
 } // namespace mye

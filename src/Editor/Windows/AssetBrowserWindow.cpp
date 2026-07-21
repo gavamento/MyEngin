@@ -8,6 +8,7 @@
 #include <shellapi.h>
 
 #include "Editor/AssetOps.h"
+#include "Editor/AssetPreviewCache.h"
 #include "Editor/Undo/UndoStack.h"
 #include "Engine/Engine/Animation.h"
 #include "Engine/Engine/AssetDatabase.h"
@@ -80,7 +81,8 @@ void AssetBrowserWindow::DrawDirTree(const std::wstring& dir)
 }
 
 void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStack& undo,
-                                 const std::string& externalEditorCmd)
+                                 const std::string& externalEditorCmd,
+                                 AssetPreviewCache& preview)
 {
     if (!open) {
         return;
@@ -164,6 +166,13 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
                 ImGui::Image(reinterpret_cast<ImTextureID>(tex->srv.Get()), ImVec2(kCell, kCell));
             } else {
                 ImGui::Button("img", ImVec2(kCell, kCell));
+            }
+        } else if (AssetPreviewCache::IsPreviewable(path)) {
+            // M27d: メッシュ/プレハブの立体サムネイル (OnRenderViews で非同期生成)
+            if (ID3D11ShaderResourceView* srv = preview.GetOrRequest(ctx, path)) {
+                ImGui::Image(reinterpret_cast<ImTextureID>(srv), ImVec2(kCell, kCell));
+            } else {
+                ImGui::Button(isPrefab ? "prefab" : "model", ImVec2(kCell, kCell));
             }
         } else {
             const char* icon = isPrefab ? "prefab"
