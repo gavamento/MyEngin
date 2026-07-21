@@ -574,6 +574,89 @@ bool RunPhysicsSelfTest()
         check(ok == 0, "spherecast: miss well above scene");
     }
 
+    // ---- (24) ブロードフェーズ等価性: sort&sweep と総当たりで 240 tick ハッシュ完全一致 ----
+    {
+        auto build = [](Scene& s) {
+            MakeGround(s, "G24", 0, -0.5f, 0, 12.0f, 0.5f, 12.0f);
+            // 7x7 の球グリッド + 高さ違い (大量ペアで候補列挙を励起する)
+            for (int gz = 0; gz < 7; ++gz) {
+                for (int gx = 0; gx < 7; ++gx) {
+                    MakeSphereBody(s, "S", -3.0f + gx * 1.0f, 1.0f + ((gx + gz) % 3) * 1.1f,
+                                   -3.0f + gz * 1.0f, 0.45f);
+                }
+            }
+            MakeCapsuleBody(s, "C", 0.2f, 6.0f, 0.2f, 0.4f, 1.8f);
+            s.GetWorld().ApplyStructuralChanges();
+        };
+        Scene sa, sb;
+        build(sa);
+        build(sb);
+        bool same = true;
+        for (int i = 0; i < 240 && same; ++i) {
+            PhysicsSystem::sDisableBroadphaseForTest = false;
+            phys.Update(sa.GetWorld(), kDt);
+            PhysicsSystem::sDisableBroadphaseForTest = true;
+            phys.Update(sb.GetWorld(), kDt);
+            PhysicsSystem::sDisableBroadphaseForTest = false;
+            if (HashWorld(sa.GetWorld(), nullptr) != HashWorld(sb.GetWorld(), nullptr)) {
+                same = false;
+                MYE_LOG_ERROR("  broadphase equivalence diverged at tick %d", i);
+            }
+        }
+        check(same, "broadphase: sweep&prune bit-identical to brute force (50 bodies, 240 ticks)");
+    }
+
+    // ---- (25) 親子階層: 親オフセット下の子剛体 + 親付き静的コライダー (バグ修正回帰) ----
+    {
+        Scene s;
+        GameObject parent = s.CreateGameObjectTracked("P25");
+        parent.SetLocalPosition(5.0f, 0, 0);
+        GameObject child = MakeBox(s, "C25", 0, 3.0f, 0, 0.5f, 0.5f, 0.5f); // ローカル (0,3,0)
+        s.GetWorld().SetParent(child.Id(), parent.Id());
+        // 親付き静的コライダー: 親 (0,-0.5,0) + 床ローカル (0,0,0) → ワールド上面 y=0
+        GameObject gp = s.CreateGameObjectTracked("GP25");
+        gp.SetLocalPosition(0, -0.5f, 0);
+        GameObject ground = MakeGround(s, "G25", 0, 0, 0, 20.0f, 0.5f, 20.0f);
+        s.GetWorld().SetParent(ground.Id(), gp.Id());
+        s.GetWorld().ApplyStructuralChanges();
+        for (int i = 0; i < 180; ++i) {
+            phys.Update(s.GetWorld(), kDt);
+        }
+        auto* lt = child.GetComponent<LocalTransform>();
+        // 子はローカル (0, 0.5, 0) に接地 = ワールド (5, 0.5, 0)。親付き床が正しく y=0 上面
+        check(lt && std::fabs(lt->position.x) < 0.01f, "hierarchy: child keeps local x under parent");
+        check(lt && lt->position.y > 0.45f && lt->position.y < 0.55f,
+              "hierarchy: child rests at local y~=0.5 on parented static ground");
+    }
+
+    // ---- (26) 親の回転を考慮した子剛体の書き戻し + scalar 合成と TransformSystem の一致 ----
+    {
+        Scene s;
+        TransformSystem ts;
+        GameObject parent = s.CreateGameObjectTracked("P26");
+        parent.GetComponent<LocalTransform>()->rotation = { 0, 0.7071068f, 0, 0.7071068f }; // Y 90°
+        GameObject child = MakeSphereBody(s, "C26", 2.0f, 3.0f, 0, 0.5f); // ローカル (2,3,0)
+        s.GetWorld().SetParent(child.Id(), parent.Id());
+        MakeGround(s, "G26", 0, -0.5f, 0, 20.0f, 0.5f, 20.0f);
+        s.GetWorld().ApplyStructuralChanges();
+        for (int i = 0; i < 180; ++i) {
+            phys.Update(s.GetWorld(), kDt);
+        }
+        auto* lt = child.GetComponent<LocalTransform>();
+        // ワールド (0,3,-2) から落下 → ワールド (0,0.5,-2) = ローカル (2, 0.5, 0)
+        check(lt && std::fabs(lt->position.x - 2.0f) < 0.01f && std::fabs(lt->position.z) < 0.01f,
+              "hierarchy: world fall maps back to local through rotated parent");
+        check(lt && lt->position.y > 0.45f && lt->position.y < 0.55f,
+              "hierarchy: child sphere rests at local y~=0.5");
+        // scalar 親チェーン合成と TransformSystem (XMMATRIX) の一致検証
+        ts.Update(s.GetWorld());
+        const auto* wm = child.GetComponent<WorldMatrixComponent>();
+        check(wm && std::fabs(wm->value._41 - 0.0f) < 1e-3f
+                  && std::fabs(wm->value._42 - lt->position.y) < 1e-3f
+                  && std::fabs(wm->value._43 - (-2.0f)) < 1e-3f,
+              "hierarchy: scalar compose matches TransformSystem world matrix");
+    }
+
     // ---- (14) 決定論: capsule / OBB / sphere 混在シーンの 240 tick 並走ハッシュ一致 ----
     {
         auto build = [](Scene& s) {

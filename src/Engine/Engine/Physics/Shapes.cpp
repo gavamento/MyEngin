@@ -1202,6 +1202,31 @@ void ClosestPointOnShape(const ShapePose& s, float px, float py, float pz, float
     qz = cz + dz * k;
 }
 
+void ComputeAabb(const ShapePose& s, float& minX, float& minY, float& minZ, float& maxX,
+                 float& maxY, float& maxZ)
+{
+    float ex, ey, ez; // 中心からの半径 (各ワールド軸)
+    if (s.shape == 1) {
+        // box: 各ワールド軸への投影半径 = Σ |基底成分|·half
+        ex = std::fabs(s.bx[0]) * s.hx + std::fabs(s.by[0]) * s.hy + std::fabs(s.bz[0]) * s.hz;
+        ey = std::fabs(s.bx[1]) * s.hx + std::fabs(s.by[1]) * s.hy + std::fabs(s.bz[1]) * s.hz;
+        ez = std::fabs(s.bx[2]) * s.hx + std::fabs(s.by[2]) * s.hy + std::fabs(s.bz[2]) * s.hz;
+    } else if (s.shape == 2) {
+        // capsule: 軸方向の線分半長 + 半径
+        ex = std::fabs(s.by[0]) * s.halfSeg + s.radius;
+        ey = std::fabs(s.by[1]) * s.halfSeg + s.radius;
+        ez = std::fabs(s.by[2]) * s.halfSeg + s.radius;
+    } else {
+        ex = ey = ez = s.radius;
+    }
+    minX = s.px - ex;
+    minY = s.py - ey;
+    minZ = s.pz - ez;
+    maxX = s.px + ex;
+    maxY = s.py + ey;
+    maxZ = s.pz + ez;
+}
+
 bool Raycast(const ShapePose& s, float ox, float oy, float oz, float dx, float dy, float dz,
              float maxDist, float& outT, float& nx, float& ny, float& nz)
 {

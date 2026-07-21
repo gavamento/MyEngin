@@ -8,6 +8,7 @@
 
 #include "Engine/Core/Components.h"
 #include "Engine/Core/World.h"
+#include "Engine/Engine/Physics/Broadphase.h"
 #include "Engine/Engine/Physics/Shapes.h"
 
 using namespace DirectX;
@@ -23,23 +24,115 @@ constexpr int kSolverIterations = 8;    // 固定反復回数 (収束判定に�
 constexpr float kPenetrationSlop = 0.0005f; // 微小めり込みは許容 (ジッタ抑制)
 // |vn| がこの閾値未満の接触は反発 0 扱い (micro-bounce 除去 = 静止安定の柱。~2g·dt)
 constexpr float kRestitutionVelThreshold = 0.3f;
+// ブロードフェーズ AABB の膨張量 (M28d)。ソルバ内の位置補正移動を保守的にカバーする。
+// 仮に候補から漏れても「次 tick で解決」に留まり、候補列は決定論なのでハッシュ一致性は不変
+constexpr float kBroadphaseMargin = 0.1f;
+
+// ---- scalar クォータニオン演算 (親子合成用。XMVECTOR 禁止 = 決定論契約) ----
+
+// Hamilton 積 a ⊗ b
+void QuatMul(float ax, float ay, float az, float aw, float bx, float by, float bz, float bw,
+             float& ox, float& oy, float& oz, float& ow)
+{
+    ox = aw * bx + ax * bw + ay * bz - az * by;
+    oy = aw * by - ax * bz + ay * bw + az * bx;
+    oz = aw * bz + ax * by - ay * bx + az * bw;
+    ow = aw * bw - ax * bx - ay * by - az * bz;
+}
+
+// 単位クォータニオンでベクトルを回転: v' = v + 2·q.w·(q×v) + 2·q×(q×v)
+void QuatRotate(float qx, float qy, float qz, float qw, float vx, float vy, float vz, float& ox,
+                float& oy, float& oz)
+{
+    const float tx = 2.0f * (qy * vz - qz * vy);
+    const float ty = 2.0f * (qz * vx - qx * vz);
+    const float tz = 2.0f * (qx * vy - qy * vx);
+    ox = vx + qw * tx + (qy * tz - qz * ty);
+    oy = vy + qw * ty + (qz * tx - qx * tz);
+    oz = vz + qw * tz + (qx * ty - qy * tx);
+}
+
+// ワールドフレーム (親チェーンの合成結果)。シアーは無視の近似 (基底正規化と同じ流儀)
+struct WorldFrame {
+    float px = 0, py = 0, pz = 0;
+    float qx = 0, qy = 0, qz = 0, qw = 1;
+    float sx = 1, sy = 1, sz = 1;
+    bool identity = true; // 親なし (ルート) — 既存コードパスをビット同一で通す fast-path
+};
+
+// e の親チェーンを LocalTransform から scalar 合成する (M28d)。
+// WorldMatrix は使わない — 物理はフェーズ 3.6 = TransformSystem 前で、現 tick の
+// スクリプト/アニメ結果を反映した LocalTransform チェーンが正となる。
+// 「動的剛体の子」は親を運動学的フレームとして扱う (同 tick の親の積分結果は伝播しない)
+WorldFrame ComposeParentFrame(World& world, EntityID e)
+{
+    WorldFrame f;
+    EntityID cur = world.GetParent(e);
+    while (!cur.IsNull()) {
+        const auto* plt = world.GetComponent<LocalTransform>(cur);
+        if (!plt) {
+            break;
+        }
+        // f' = T_parent ∘ f
+        const float px = plt->position.x, py = plt->position.y, pz = plt->position.z;
+        const float qx = plt->rotation.x, qy = plt->rotation.y, qz = plt->rotation.z,
+                    qw = plt->rotation.w;
+        const float sx = plt->scale.x, sy = plt->scale.y, sz = plt->scale.z;
+        float rx, ry, rz;
+        QuatRotate(qx, qy, qz, qw, sx * f.px, sy * f.py, sz * f.pz, rx, ry, rz);
+        f.px = px + rx;
+        f.py = py + ry;
+        f.pz = pz + rz;
+        float nqx, nqy, nqz, nqw;
+        QuatMul(qx, qy, qz, qw, f.qx, f.qy, f.qz, f.qw, nqx, nqy, nqz, nqw);
+        f.qx = nqx; f.qy = nqy; f.qz = nqz; f.qw = nqw;
+        f.sx *= sx; f.sy *= sy; f.sz *= sz;
+        f.identity = false;
+        cur = world.GetParent(cur);
+    }
+    return f;
+}
+
+// frame ∘ local を適用したワールド position/rotation/scale
+void ApplyFrame(const WorldFrame& f, const LocalTransform& lt, XMFLOAT3& outPos, XMFLOAT4& outRot,
+                XMFLOAT3& outScale)
+{
+    if (f.identity) {
+        outPos = lt.position;
+        outRot = lt.rotation;
+        outScale = lt.scale;
+        return;
+    }
+    float rx, ry, rz;
+    QuatRotate(f.qx, f.qy, f.qz, f.qw, f.sx * lt.position.x, f.sy * lt.position.y,
+               f.sz * lt.position.z, rx, ry, rz);
+    outPos = { f.px + rx, f.py + ry, f.pz + rz };
+    float qx, qy, qz, qw;
+    QuatMul(f.qx, f.qy, f.qz, f.qw, lt.rotation.x, lt.rotation.y, lt.rotation.z, lt.rotation.w,
+            qx, qy, qz, qw);
+    outRot = { qx, qy, qz, qw };
+    outScale = { f.sx * lt.scale.x, f.sy * lt.scale.y, f.sz * lt.scale.z };
+}
 
 struct Body {
     EntityID entity;
-    LocalTransform* lt = nullptr;   // 位置/回転書き込み先 (ルート = ワールド位置)
+    LocalTransform* lt = nullptr;   // 位置/回転書き込み先
     RigidbodyComponent* rb = nullptr; // null = 静的コライダー (動かない衝突面)
     const ColliderComponent* col = nullptr; // ソリッド形状 (null = コライダー無し動的ボディ)
     bool solid = false;            // 衝突解決に参加するか (isTrigger==0)
     bool freezeRot = true;         // 回転積分・角応答をしない (静的 / kinematic / freezeRotation)
     ShapePose pose;                // 形状 + 作業用ワールド位置 (pose.px/py/pz をソルバが更新)
-    XMFLOAT3 scale = { 1, 1, 1 };  // pose 再構築用 (回転積分後に基底を作り直す)
+    XMFLOAT3 scale = { 1, 1, 1 };  // ワールドスケール (pose 再構築用)
     float qx = 0, qy = 0, qz = 0, qw = 1; // 作業用姿勢 (ワールド)
-    float vx = 0, vy = 0, vz = 0;  // 作業用速度
+    float vx = 0, vy = 0, vz = 0;  // 作業用速度 (ワールド)
     float wx = 0, wy = 0, wz = 0;  // 作業用角速度 (rad/s、ワールド)
     float invMass = 0;             // 0 = 不動 (静的 / kinematic)
     float invI[3][3] = {};         // ワールド逆慣性テンソル (freezeRot は零行列)
     float restitution = 0;
     float friction = 0.5f;         // クーロン摩擦係数 (Collider から。ペアは sqrt(μa·μb))
+    // 親のワールドフレーム (M28d)。収集時に合成し運動学的フレームとして固定。
+    // identity (ルート) なら書き戻しは従来の直接代入 (ビット同一 fast-path)
+    WorldFrame frame;
 };
 
 // 形状のローカル主軸慣性 (対角、質量 m)。col null は半径 0.5 の球扱い。
@@ -157,14 +250,20 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             b.entity = e;
             b.lt = lt;
             b.rb = rb;
-            b.pose.px = lt->position.x;
-            b.pose.py = lt->position.y;
-            b.pose.pz = lt->position.z;
-            b.scale = lt->scale;
-            b.qx = lt->rotation.x;
-            b.qy = lt->rotation.y;
-            b.qz = lt->rotation.z;
-            b.qw = lt->rotation.w;
+            // 親チェーンを合成しワールド姿勢で sim する (M28d。ルートは lt そのまま = 従来通り)
+            b.frame = ComposeParentFrame(world, e);
+            XMFLOAT3 wpos;
+            XMFLOAT4 wrot;
+            XMFLOAT3 wscale;
+            ApplyFrame(b.frame, *lt, wpos, wrot, wscale);
+            b.pose.px = wpos.x;
+            b.pose.py = wpos.y;
+            b.pose.pz = wpos.z;
+            b.scale = wscale;
+            b.qx = wrot.x;
+            b.qy = wrot.y;
+            b.qz = wrot.z;
+            b.qw = wrot.w;
             b.vx = rb->velocity.x;
             b.vy = rb->velocity.y;
             b.vz = rb->velocity.z;
@@ -209,7 +308,13 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             b.solid = true;
             b.invMass = 0.0f; // 静的 = 不動
             b.friction = col->friction;
-            b.pose = shapes::MakePose(*col, lt->position, lt->rotation, lt->scale);
+            // M28d: 親付き静的コライダーもワールド姿勢で判定 (従来は lt 直読みのバグ)
+            const WorldFrame f = ComposeParentFrame(world, e);
+            XMFLOAT3 wpos;
+            XMFLOAT4 wrot;
+            XMFLOAT3 wscale;
+            ApplyFrame(f, *lt, wpos, wrot, wscale);
+            b.pose = shapes::MakePose(*col, wpos, wrot, wscale);
             bodies.push_back(b);
         }
     });
@@ -255,22 +360,51 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
         } // freezeRot / kinematic は零行列のまま = 角応答なし
     }
 
-    // ---- 接触解決 (固定反復・index 順ペア = 決定論) ----
+    // ---- ブロードフェーズ (M28d): 候補ペア列挙 (1 軸 sort & sweep、margin 込み) ----
+    // 候補列は真の接触ペアの純粋なスーパーセット + 走査順は (小,大) 昇順 = 総当たりと
+    // ビット同一の解決結果 (等価性は selftest が総当たりとのハッシュ比較で常時検証)
     const size_t n = bodies.size();
-    for (int iter = 0; iter < kSolverIterations; ++iter) {
+    std::vector<uint64_t> candidates;
+    {
+        std::vector<BroadphaseEntry> entries;
+        entries.reserve(n);
         for (size_t i = 0; i < n; ++i) {
             if (!bodies[i].solid) {
                 continue;
             }
-            for (size_t j = i + 1; j < n; ++j) {
-                if (!bodies[j].solid) {
-                    continue;
+            BroadphaseEntry e;
+            e.id = static_cast<uint32_t>(i);
+            shapes::ComputeAabb(bodies[i].pose, e.minX, e.minY, e.minZ, e.maxX, e.maxY, e.maxZ);
+            const float mx = std::fabs(bodies[i].vx) * dt + kBroadphaseMargin;
+            const float my = std::fabs(bodies[i].vy) * dt + kBroadphaseMargin;
+            const float mz = std::fabs(bodies[i].vz) * dt + kBroadphaseMargin;
+            e.minX -= mx; e.maxX += mx;
+            e.minY -= my; e.maxY += my;
+            e.minZ -= mz; e.maxZ += mz;
+            entries.push_back(e);
+        }
+        if (PhysicsSystem::sDisableBroadphaseForTest) {
+            // 等価性テスト用: 全ソリッドペア (昇順) を候補にする
+            for (size_t i = 0; i < entries.size(); ++i) {
+                for (size_t j = i + 1; j < entries.size(); ++j) {
+                    candidates.push_back((static_cast<uint64_t>(entries[i].id) << 32)
+                                         | entries[j].id);
                 }
-                Body& A = bodies[i];
-                Body& B = bodies[j];
+            }
+        } else {
+            ComputeCandidatePairs(entries, candidates);
+        }
+    }
+
+    // ---- 接触解決 (固定反復・候補ペアを (小,大) 昇順走査 = 決定論) ----
+    for (int iter = 0; iter < kSolverIterations; ++iter) {
+        for (const uint64_t pairKey : candidates) {
+            {
+                Body& A = bodies[static_cast<size_t>(pairKey >> 32)];
+                Body& B = bodies[static_cast<size_t>(pairKey & 0xFFFFFFFFu)];
                 const float tim = A.invMass + B.invMass;
                 if (tim == 0.0f) {
-                    continue; // 両方静的
+                    continue; // 両方不動 (静的 / kinematic 同士)
                 }
                 shapes::Manifold m;
                 if (!shapes::CollideManifold(A.pose, B.pose, m)) {
@@ -442,15 +576,38 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
         }
     }
 
-    // ---- 書き戻し (動的ボディのみ) ----
+    // ---- 書き戻し (動的・非 kinematic のみ。kinematic は物理が何も変えないので
+    //      スキップ = 親付きの world→local 往復変換ドリフトも出ない) ----
     for (Body& b : bodies) {
-        if (!b.rb) {
+        if (!b.rb || b.invMass == 0.0f) {
             continue;
         }
-        b.lt->position.x = b.pose.px;
-        b.lt->position.y = b.pose.py;
-        b.lt->position.z = b.pose.pz;
-        b.lt->rotation = { b.qx, b.qy, b.qz, b.qw };
+        if (b.frame.identity) {
+            // ルート: 従来通りの直接代入 (ビット同一 fast-path)
+            b.lt->position.x = b.pose.px;
+            b.lt->position.y = b.pose.py;
+            b.lt->position.z = b.pose.pz;
+            b.lt->rotation = { b.qx, b.qy, b.qz, b.qw };
+        } else {
+            // 親付き: 収集時に固定した親フレームの逆変換でローカルへ (M28d)
+            const float cqx = -b.frame.qx, cqy = -b.frame.qy, cqz = -b.frame.qz,
+                        cqw = b.frame.qw;
+            float lx, ly, lz;
+            QuatRotate(cqx, cqy, cqz, cqw, b.pose.px - b.frame.px, b.pose.py - b.frame.py,
+                       b.pose.pz - b.frame.pz, lx, ly, lz);
+            const float isx = (std::fabs(b.frame.sx) > 1e-8f) ? 1.0f / b.frame.sx : 1.0f;
+            const float isy = (std::fabs(b.frame.sy) > 1e-8f) ? 1.0f / b.frame.sy : 1.0f;
+            const float isz = (std::fabs(b.frame.sz) > 1e-8f) ? 1.0f / b.frame.sz : 1.0f;
+            b.lt->position = { lx * isx, ly * isy, lz * isz };
+            float lqx, lqy, lqz, lqw;
+            QuatMul(cqx, cqy, cqz, cqw, b.qx, b.qy, b.qz, b.qw, lqx, lqy, lqz, lqw);
+            const float len2 = lqx * lqx + lqy * lqy + lqz * lqz + lqw * lqw;
+            if (len2 > 1e-12f) {
+                const float inv = 1.0f / std::sqrt(len2);
+                lqx *= inv; lqy *= inv; lqz *= inv; lqw *= inv;
+            }
+            b.lt->rotation = { lqx, lqy, lqz, lqw };
+        }
         b.rb->velocity.x = b.vx;
         b.rb->velocity.y = b.vy;
         b.rb->velocity.z = b.vz;

@@ -6,6 +6,7 @@
 
 #include "Engine/Core/Components.h"
 #include "Engine/Core/World.h"
+#include "Engine/Engine/Physics/Broadphase.h"
 #include "Engine/Engine/Physics/Shapes.h"
 #include "Engine/Engine/Script/ManagedHost.h"
 #include "Engine/Engine/Script/ScriptHost.h"
@@ -65,18 +66,29 @@ void CollisionSystem::Update(World& world, ScriptHost* scripts, ManagedHost* man
     std::sort(bodies.begin(), bodies.end(),
               [](const Body& a, const Body& b) { return a.entity.index < b.entity.index; });
 
-    // ---- トリガー: 総当たり判定 → 現 tick のペア集合 ----
+    // ---- トリガー: ブロードフェーズ候補 (M28d) → 重なり判定 → 現 tick のペア集合 ----
     // M28c: ペアの少なくとも片方が isTrigger のものだけがトリガーイベント対象
     // (ソリッド同士の接触は PhysicsSystem 由来の OnCollision 系に移管)
     std::vector<uint64_t> pairs;
-    for (size_t i = 0; i < bodies.size(); ++i) {
-        for (size_t j = i + 1; j < bodies.size(); ++j) {
-            if (bodies[i].isTrigger == 0 && bodies[j].isTrigger == 0) {
+    {
+        std::vector<BroadphaseEntry> entries;
+        entries.reserve(bodies.size());
+        for (size_t i = 0; i < bodies.size(); ++i) {
+            BroadphaseEntry e;
+            e.id = static_cast<uint32_t>(i);
+            shapes::ComputeAabb(bodies[i].pose, e.minX, e.minY, e.minZ, e.maxX, e.maxY, e.maxZ);
+            entries.push_back(e); // margin 0 (静止判定なので現在位置の AABB で十分)
+        }
+        std::vector<uint64_t> candidates;
+        ComputeCandidatePairs(entries, candidates);
+        for (const uint64_t key : candidates) {
+            const Body& a = bodies[static_cast<size_t>(key >> 32)];
+            const Body& b = bodies[static_cast<size_t>(key & 0xFFFFFFFFu)];
+            if (a.isTrigger == 0 && b.isTrigger == 0) {
                 continue;
             }
-            if (shapes::Overlap(bodies[i].pose, bodies[j].pose)) {
-                pairs.push_back((static_cast<uint64_t>(bodies[i].entity.index) << 32)
-                                | bodies[j].entity.index);
+            if (shapes::Overlap(a.pose, b.pose)) {
+                pairs.push_back((static_cast<uint64_t>(a.entity.index) << 32) | b.entity.index);
             }
         }
     }

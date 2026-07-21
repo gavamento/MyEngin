@@ -26,7 +26,10 @@ struct SolidContact {
 // 形状判定 (sphere / OBB / capsule) は Physics/Shapes.cpp に統合 (M28a)。
 // 慣性テンソルは形状+質量から毎 tick 導出 (コンポーネントに持たない = ステートレス維持)。
 // freezeRotation=1 で回転積分・角応答を無効化 (M28a 以前の並進のみ挙動)。スリープ機構は無し。
-// ルート (非親子) エンティティ前提: LocalTransform.position をワールド位置として扱う。
+// 親子階層対応 (M28d): 親チェーンを LocalTransform から scalar 合成してワールド姿勢で sim し、
+// 親フレームの逆変換でローカルに書き戻す。親は運動学的フレーム扱い (同 tick の親の積分結果は
+// 子に伝播しない)。velocity / angularVelocity は常にワールド系。ジョイント/複合コライダーは対象外。
+// ブロードフェーズ (M28d): 毎 tick 再構築の 1 軸 sort & sweep (Broadphase.cpp)。
 // 状態は全てコンポーネントに常駐 (velocity=Rigidbody, position=LocalTransform) → システムはステートレス。
 class PhysicsSystem {
 public:
@@ -34,6 +37,10 @@ public:
     // outContacts 非 null なら clear してソリッド接触ペアを key 昇順で書き込む (M28c)。
     // 両方不動 (静的/kinematic 同士) のペアはソルバ対象外なので出力されない。
     void Update(World& world, float dt, std::vector<SolidContact>* outContacts = nullptr);
+
+    // 等価性テスト用 (PhysicsSelfTest): true でブロードフェーズを総当たり候補に切替。
+    // 挙動はビット同一のはず — selftest がハッシュ比較で常時検証する
+    static inline bool sDisableBroadphaseForTest = false;
 };
 
 // ワールドトルクを 1 tick 分適用 (M28b、ABI AddTorque の実装本体)。

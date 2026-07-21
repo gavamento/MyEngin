@@ -73,5 +73,9 @@ float DistanceToShape(const ShapePose& s, float px, float py, float pz);
 void ClosestPointOnShape(const ShapePose& s, float px, float py, float pz, float& qx, float& qy,
                          float& qz);
 
+// 形状を包む保守的ワールド AABB (M28d、ブロードフェーズ用)
+void ComputeAabb(const ShapePose& s, float& minX, float& minY, float& minZ, float& maxX,
+                 float& maxY, float& maxZ);
+
 } // namespace shapes
 } // namespace mye
