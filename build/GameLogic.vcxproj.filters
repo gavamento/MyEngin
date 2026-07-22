@@ -22,6 +22,9 @@
     <ClCompile Include="..\src\GameLogic\Scripts\UIButtonDemo.cpp">
       <Filter>Scripts</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\GameLogic\Scripts\WalkerDemo.cpp">
+      <Filter>Scripts</Filter>
+    </ClCompile>
     <ClInclude Include="..\src\Shared\EngineAPI.h">
       <Filter>Shared</Filter>
     </ClInclude>

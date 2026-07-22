@@ -2,8 +2,10 @@
 
 #include <DirectXMath.h>
 
+#include "Engine/Core/Components.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Renderer/FrustumCull.h"
+#include "Engine/Renderer/PostProcess.h"
 
 using namespace DirectX;
 
@@ -60,12 +62,40 @@ void TestFrustumCulling()
     TEST_CHECK(AabbInFrustum(f, MakeWorld(0, 0, 0.05f), unitMin, unitMax) == true);
 }
 
+// M32d: カメラ別ポスト効果のマージ (色収差 / ビネット / グレーディング)
+void TestPostFxMerge()
+{
+    MYE_LOG_INFO("[selftest] postfx merge (M32d)");
+    PostProcess::Settings base; // 既定
+    CameraPostFxComponent comp;
+    comp.chromAberration = 0.01f;
+    comp.vignetteIntensity = 0.4f;
+    comp.vignetteRadius = 0.6f;
+    comp.saturation = 1.5f;
+    comp.contrast = 1.2f;
+    comp.colorFilter = { 1.0f, 0.8f, 0.6f, 1.0f };
+    const PostProcess::Settings s = MergeCameraPostFx(base, comp);
+    TEST_CHECK(s.chromAberration == 0.01f);
+    TEST_CHECK(s.vignetteIntensity == 0.4f);
+    TEST_CHECK(s.vignetteRadius == 0.6f);
+    TEST_CHECK(s.saturation == 1.5f);
+    TEST_CHECK(s.contrast == 1.2f);
+    TEST_CHECK(s.colorFilter.y == 0.8f && s.colorFilter.z == 0.6f);
+    TEST_CHECK(s.applyGamma == base.applyGamma); // applyGamma は base 維持
+
+    // 既定コンポーネント = 無効 (従来の見た目)
+    const PostProcess::Settings d = MergeCameraPostFx(base, CameraPostFxComponent{});
+    TEST_CHECK(d.chromAberration == 0.0f && d.vignetteIntensity == 0.0f);
+    TEST_CHECK(d.saturation == 1.0f && d.contrast == 1.0f);
+}
+
 } // namespace
 
 bool RunRenderSelfTest()
 {
     g_failCount = 0;
     TestFrustumCulling();
+    TestPostFxMerge();
     if (g_failCount == 0) {
         MYE_LOG_INFO("[selftest] render: ALL PASS");
         return true;

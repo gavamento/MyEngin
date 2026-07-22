@@ -115,6 +115,17 @@ namespace MyeScripting
         public delegate* unmanaged<void*, MyeVec3, float, MyeEntityId*, int, int> OverlapSphere;
         public delegate* unmanaged<void*, MyeVec3, MyeVec3, MyeQuat, MyeEntityId*, int, int> OverlapBox;
         public delegate* unmanaged<void*, MyeVec3, MyeVec3, float, float, MyeRaycastHit*, int> SphereCast;
+        // ---- キャラクターコントローラ + UI テキスト (v5、M29b)。宣言順 = ネイティブと一致 ----
+        public delegate* unmanaged<void*, MyeEntityId, MyeVec3, int> CharacterMove;
+        public delegate* unmanaged<void*, MyeEntityId, float, int> CharacterJump;
+        public delegate* unmanaged<void*, MyeEntityId, int> CharacterIsGrounded;
+        public delegate* unmanaged<void*, MyeEntityId, MyeVec3*, int> CharacterGetVelocity;
+        public delegate* unmanaged<void*, MyeEntityId, byte*, int> SetTextMeshText;
+        // ---- エフェクト制御 (v6、M32f)。宣言順 = ネイティブと一致 ----
+        public delegate* unmanaged<void*, MyeEntityId, int, int> EmitterBurst;
+        public delegate* unmanaged<void*, MyeEntityId, int, int> SetEmitterPlaying;
+        public delegate* unmanaged<void*, MyeEntityId, int> RestartEffect;
+        public delegate* unmanaged<void*, byte*, MyeVec3, MyeEntityId, void> PlayEffect;
     }
 
     // ネイティブ ManagedHost が保持する関数ポインタ表。Bootstrap がここに書き込む。
@@ -262,6 +273,42 @@ namespace MyeScripting
         }
         public static bool SetVelocity(MyeEntityId id, MyeVec3 v)
             => _api != null && _api->SetVelocity(_api->Engine, id, v) != 0;
+
+        // ---- キャラクターコントローラ (v5、M29b) ----
+        public static bool CharacterMove(MyeEntityId id, MyeVec3 move)
+            => _api != null && _api->CharacterMove(_api->Engine, id, move) != 0;
+        public static bool CharacterJump(MyeEntityId id, float speed)
+            => _api != null && _api->CharacterJump(_api->Engine, id, speed) != 0;
+        public static bool CharacterIsGrounded(MyeEntityId id)
+            => _api != null && _api->CharacterIsGrounded(_api->Engine, id) != 0;
+        public static MyeVec3 CharacterGetVelocity(MyeEntityId id)
+        {
+            MyeVec3 v = default;
+            if (_api != null) _api->CharacterGetVelocity(_api->Engine, id, &v);
+            return v;
+        }
+
+        // ---- UI テキスト (v5 で予約、M29c の TextMesh で実装) ----
+        public static bool SetTextMeshText(MyeEntityId id, string text)
+        {
+            if (_api == null) return false;
+            var b = Utf8(text ?? "");
+            fixed (byte* p = b) { return _api->SetTextMeshText(_api->Engine, id, p) != 0; }
+        }
+
+        // ---- エフェクト制御 (v6、M32f) ----
+        public static bool EmitterBurst(MyeEntityId id, int count)
+            => _api != null && _api->EmitterBurst(_api->Engine, id, count) != 0;
+        public static bool SetEmitterPlaying(MyeEntityId id, bool playing)
+            => _api != null && _api->SetEmitterPlaying(_api->Engine, id, playing ? 1 : 0) != 0;
+        public static bool RestartEffect(MyeEntityId id)
+            => _api != null && _api->RestartEffect(_api->Engine, id) != 0;
+        public static void PlayEffect(string prefabKey, MyeVec3 pos, MyeEntityId parent = default)
+        {
+            if (_api == null) return;
+            var b = Utf8(prefabKey ?? "");
+            fixed (byte* p = b) { _api->PlayEffect(_api->Engine, p, pos, parent); }
+        }
 
         // ---- 空間クエリ ----
         public static bool Raycast(MyeVec3 origin, MyeVec3 dir, float maxDist, out MyeRaycastHit hit)

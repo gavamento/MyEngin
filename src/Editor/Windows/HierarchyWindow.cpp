@@ -12,6 +12,7 @@
 #include "Engine/Core/Components.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Core/World.h"
+#include "Engine/Engine/AssetDatabase.h"
 #include "Engine/Engine/GameObject.h"
 #include "Engine/Engine/Prefab.h"
 #include "Engine/Engine/Scene.h"
@@ -116,10 +117,14 @@ void HierarchyWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
             undo.CaptureAfter(*ctx.scene, fid);
             undo.EndRecord(selection);
         }
-        // AssetBrowser からのドロップ: ルートに配置
+        // AssetBrowser からのドロップ: .cs はエンティティ行へドロップするよう促す、他はルート配置
         if (const ImGuiPayload* pa = ImGui::AcceptDragDropPayload(kAssetDragPayload)) {
-            InstantiateAssetAtPath(ctx, selection, undo,
-                                   Utf8ToWide(static_cast<const char*>(pa->Data)), nullptr, 0);
+            const std::wstring path = Utf8ToWide(static_cast<const char*>(pa->Data));
+            if (AssetDatabase::ClassifyPath(path) == AssetType::Script) {
+                MYE_LOG_WARN("drop a script onto an entity row (or the Inspector) to attach it");
+            } else {
+                InstantiateAssetAtPath(ctx, selection, undo, path, nullptr, 0);
+            }
         }
         ImGui::EndDragDropTarget();
     }
@@ -334,11 +339,16 @@ void HierarchyWindow::DrawEntityNode(EngineContext& ctx, World& world, EntityID 
                 }
             }
         }
-        // AssetBrowser からのドロップ: このエンティティの子に配置
+        // AssetBrowser からのドロップ: .cs はこのエンティティにコンポーネントとしてアタッチ、
+        // その他 (プレハブ/モデル) はこのエンティティの子として配置
         if (const ImGuiPayload* pa = ImGui::AcceptDragDropPayload(kAssetDragPayload)) {
-            InstantiateAssetAtPath(ctx, selection, undo,
-                                   Utf8ToWide(static_cast<const char*>(pa->Data)), nullptr,
-                                   ctx.scene->EnsureFileId(e));
+            const std::wstring path = Utf8ToWide(static_cast<const char*>(pa->Data));
+            if (AssetDatabase::ClassifyPath(path) == AssetType::Script) {
+                AttachScriptToEntity(ctx, selection, undo, path, e);
+            } else {
+                InstantiateAssetAtPath(ctx, selection, undo, path, nullptr,
+                                       ctx.scene->EnsureFileId(e));
+            }
         }
         ImGui::EndDragDropTarget();
     }

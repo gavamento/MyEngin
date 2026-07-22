@@ -28,7 +28,7 @@ void GameViewWindow::OnRenderViews(EngineContext& ctx)
     target.height = rt_.Height();
     hasCamera_ = ctx.renderSystem->Render(ctx.scene->GetWorld(), *ctx.device, *ctx.renderPath,
                                           *ctx.shaders, *ctx.resources, target, nullptr,
-                                          ctx.particles);
+                                          ctx.particles, ctx.vfx);
     // M21: ゲーム内 UI を GameView RT に重ねる。hover はエディタでは無効 (mouse=-1)
     if (ctx.uiRenderer) {
         ctx.uiRenderer->Render(ctx.scene->GetWorld(), *ctx.device, *ctx.shaders, *ctx.resources,

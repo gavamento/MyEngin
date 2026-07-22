@@ -8,6 +8,7 @@
 
 #include "Engine/Core/ComponentRegistry.h"
 #include "Engine/Core/Components.h"
+#include "Engine/Core/AssetKeyResolver.h"
 #include "Engine/Core/Hash.h"
 #include "Engine/Core/JsonUtil.h"
 #include "Engine/Core/Log.h"
@@ -160,7 +161,8 @@ std::string GetNameStr(World& w, EntityID e)
 
 uint64_t PrefabLibrary::HashForPath(const std::wstring& path)
 {
-    return HashStr(WideToUtf8(NormalizePathKey(path)));
+    // M30c: 移動/リネーム済みアセットは .meta の GUID がキーになる (未移動は path-hash と同値)
+    return assetkey::Resolve(NormalizePathKey(path));
 }
 
 uint64_t PrefabLibrary::Register(const std::wstring& path, std::string name, json entities)

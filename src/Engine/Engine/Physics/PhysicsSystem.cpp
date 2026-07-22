@@ -226,6 +226,114 @@ void ApplyImpulse(Body& b, float rx, float ry, float rz, float jx, float jy, flo
     b.wz += iz;
 }
 
+// ---- キャラクターコントローラ (M29b) ----
+
+struct CharBody {
+    EntityID entity;
+    CharacterControllerComponent* cc = nullptr;
+    LocalTransform* lt = nullptr;
+    WorldFrame frame;              // 親フレーム (収集時固定)
+    float px = 0, py = 0, pz = 0;  // tick 頭のワールド位置
+    float radius = 0, halfSeg = 0; // ワールドスケール適用済みのカプセル寸法
+};
+
+constexpr int kCharPushPasses = 4; // 固定パス数 (収束早期終了はしない = 決定論)
+
+// move-then-depenetrate: 変位を一括適用してから固定パス × 障害物 index 昇順で押し出す。
+// スイープしないため 1 tick で薄い壁を大きく越える速度 (v·dt > 壁厚) では貫通し得るが、
+// 60Hz × 常識的な移動速度では起きない (v=30m/s でも 0.5m/tick)。剛体ソルバの後に走るので
+// 障害物 (静的 + 解決後の動的剛体) の pose は当該 tick の最終位置。CC が剛体を押す応答は
+// 無し (必要ならソリッド capsule Collider を併用し OnCollision + AddForce で組む)。
+void SolveCharacters(std::vector<Body>& bodies, std::vector<CharBody>& chars, float dt)
+{
+    if (chars.empty()) {
+        return;
+    }
+    std::sort(chars.begin(), chars.end(),
+              [](const CharBody& a, const CharBody& b) { return a.entity.index < b.entity.index; });
+    for (CharBody& c : chars) {
+        constexpr float kDeg2Rad = 3.14159265f / 180.0f;
+        const float cosSlope = std::cos(c.cc->slopeLimitDeg * kDeg2Rad);
+        float vy = c.cc->velocity.y + kGravity * c.cc->gravityScale * dt;
+        // 変位一括適用 (水平は moveInput 直接駆動、垂直は重力積分)
+        ShapePose pose;
+        pose.shape = 2; // capsule (常にワールド Y 軸 = 単位基底)
+        pose.identityRot = 1;
+        pose.radius = c.radius;
+        pose.halfSeg = c.halfSeg;
+        pose.px = c.px + c.cc->moveInput.x * dt;
+        pose.py = c.py + vy * dt;
+        pose.pz = c.pz + c.cc->moveInput.z * dt;
+        bool grounded = false;
+        // 押し出し: 固定パス × 障害物 index 昇順 (bodies はソート済)。自分の collider は skip
+        for (int pass = 0; pass < kCharPushPasses; ++pass) {
+            for (const Body& obs : bodies) {
+                if (!obs.solid || obs.entity.index == c.entity.index) {
+                    continue;
+                }
+                float nx, ny, nz, depth;
+                if (!shapes::Collide(pose, obs.pose, nx, ny, nz, depth)) {
+                    continue;
+                }
+                pose.px += nx * depth;
+                pose.py += ny * depth;
+                pose.pz += nz * depth;
+                if (ny >= cosSlope) {
+                    grounded = true; // 登れる斜面 = 接地
+                    if (vy < 0.0f) {
+                        vy = 0.0f;
+                    }
+                } else if (ny <= -cosSlope) {
+                    if (vy > 0.0f) {
+                        vy = 0.0f; // 天井
+                    }
+                } // 壁/急斜面は押し出しのみ (滑り落ちは重力が担う)
+            }
+        }
+        // 接地プローブ (状態は変更しない): skinWidth+0.01 下げて接地面を探る
+        if (!grounded) {
+            ShapePose probe = pose;
+            probe.py -= (c.cc->skinWidth + 0.01f);
+            for (const Body& obs : bodies) {
+                if (!obs.solid || obs.entity.index == c.entity.index) {
+                    continue;
+                }
+                float nx, ny, nz, depth;
+                if (shapes::Collide(probe, obs.pose, nx, ny, nz, depth) && ny >= cosSlope) {
+                    grounded = true;
+                    break; // 発見のみが目的 (状態を変えないので早期終了しても決定論)
+                }
+            }
+        }
+        // ジャンプ: 接地時のみ発火。接地可否に関わらず消費 (バッファリング無し = 予測可能)
+        if (c.cc->jumpSpeed > 0.0f) {
+            if (grounded) {
+                vy = c.cc->jumpSpeed;
+            }
+            c.cc->jumpSpeed = 0.0f;
+        }
+        // 書き戻し (剛体と同じ親フレーム逆変換。回転は触らない)
+        const float invDt = 1.0f / dt;
+        c.cc->velocity.x = (pose.px - c.px) * invDt;
+        c.cc->velocity.y = vy;
+        c.cc->velocity.z = (pose.pz - c.pz) * invDt;
+        c.cc->isGrounded = grounded ? 1 : 0;
+        if (c.frame.identity) {
+            c.lt->position = { pose.px, pose.py, pose.pz };
+        } else {
+            const float cqx = -c.frame.qx, cqy = -c.frame.qy, cqz = -c.frame.qz,
+                        cqw = c.frame.qw;
+            float lx, ly, lz;
+            QuatRotate(cqx, cqy, cqz, cqw, pose.px - c.frame.px, pose.py - c.frame.py,
+                       pose.pz - c.frame.pz, lx, ly, lz);
+            const float isx = (std::fabs(c.frame.sx) > 1e-8f) ? 1.0f / c.frame.sx : 1.0f;
+            const float isy = (std::fabs(c.frame.sy) > 1e-8f) ? 1.0f / c.frame.sy : 1.0f;
+            const float isz = (std::fabs(c.frame.sz) > 1e-8f) ? 1.0f / c.frame.sz : 1.0f;
+            c.lt->position = { lx * isx, ly * isy, lz * isz };
+        }
+    }
+}
+
 } // namespace
 
 void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* outContacts)
@@ -319,7 +427,47 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
         }
     });
 
-    if (bodies.empty()) {
+    // ---- 収集 (キャラクターコントローラ: CC + LocalTransform、Rigidbody 非所持) (M29b) ----
+    std::vector<CharBody> chars;
+    const ComponentTypeId ccReq[] = { CharacterControllerComponent::sTypeId,
+                                      LocalTransform::sTypeId };
+    world.ForEachArchetype(ccReq, [&](Archetype& arch) {
+        const int ci = arch.FindTypeIndex(CharacterControllerComponent::sTypeId);
+        const int li = arch.FindTypeIndex(LocalTransform::sTypeId);
+        for (uint32_t row = 0; row < arch.Count(); ++row) {
+            const EntityID e = arch.EntityAt(row);
+            if (!IsEntityActive(world, e)) {
+                continue;
+            }
+            if (world.HasComponent(e, RigidbodyComponent::sTypeId)) {
+                continue; // Rigidbody が優先 (CC は無効)
+            }
+            CharBody c;
+            c.entity = e;
+            c.cc = static_cast<CharacterControllerComponent*>(arch.GetPtr(ci, row));
+            c.lt = static_cast<LocalTransform*>(arch.GetPtr(li, row));
+            c.frame = ComposeParentFrame(world, e);
+            XMFLOAT3 wpos;
+            XMFLOAT4 wrot;
+            XMFLOAT3 wscale;
+            ApplyFrame(c.frame, *c.lt, wpos, wrot, wscale);
+            c.px = wpos.x;
+            c.py = wpos.y;
+            c.pz = wpos.z;
+            // カプセル寸法は MakePose の capsule 規約をミラー (回転は形状に影響しない)
+            const float asx = std::fabs(wscale.x);
+            const float asy = std::fabs(wscale.y);
+            const float asz = std::fabs(wscale.z);
+            const float wr = c.cc->radius * std::max(asx, asz);
+            const float wh = c.cc->height * 0.5f * asy;
+            c.radius = wr;
+            c.halfSeg = (wh > wr) ? (wh - wr) : 0.0f;
+            chars.push_back(c);
+        }
+    });
+
+    // chars が空なら従来の分岐と同一 = 既存シーンはビット同一パス
+    if (bodies.empty() && chars.empty()) {
         return;
     }
     std::sort(bodies.begin(), bodies.end(),
@@ -358,6 +506,146 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             LocalInertiaDiag(b.col, b.pose, 1.0f / b.invMass, ix, iy, iz);
             InvInertiaWorld(b.pose, ix, iy, iz, b.invI);
         } // freezeRot / kinematic は零行列のまま = 角応答なし
+    }
+
+    // ---- ConstantForce (M29a): 毎 tick の定常力/トルク。opt-in — 非所持ボディは
+    //      ルックアップのみで fp 演算ゼロ = 既存シーンとビット同一 ----
+    for (Body& b : bodies) {
+        if (!b.rb || b.invMass == 0.0f) {
+            continue;
+        }
+        const auto* cf = world.GetComponent<ConstantForceComponent>(b.entity);
+        if (!cf) {
+            continue;
+        }
+        float fx = cf->force.x, fy = cf->force.y, fz = cf->force.z;
+        float tx = cf->torque.x, ty = cf->torque.y, tz = cf->torque.z;
+        if (cf->relative != 0) {
+            float rx, ry, rz;
+            QuatRotate(b.qx, b.qy, b.qz, b.qw, fx, fy, fz, rx, ry, rz);
+            fx = rx; fy = ry; fz = rz;
+            QuatRotate(b.qx, b.qy, b.qz, b.qw, tx, ty, tz, rx, ry, rz);
+            tx = rx; ty = ry; tz = rz;
+        }
+        b.vx += fx * b.invMass * dt;
+        b.vy += fy * b.invMass * dt;
+        b.vz += fz * b.invMass * dt;
+        // 角: freezeRot / kinematic は invI が零行列なので自然に無効
+        float ax, ay, az;
+        MulInvI(b.invI, tx * dt, ty * dt, tz * dt, ax, ay, az);
+        b.wx += ax;
+        b.wy += ay;
+        b.wz += az;
+    }
+
+    // ---- SpringJoint (M29a): 距離バネ (速度レベル・ステートレス)。owner index 昇順。
+    //      broadphase の前に置く = ばねで変わった速度が候補 AABB の margin に反映される ----
+    {
+        struct Joint {
+            EntityID owner;
+            const SpringJointComponent* sj = nullptr;
+        };
+        std::vector<Joint> joints;
+        const ComponentTypeId sjReq[] = { SpringJointComponent::sTypeId, LocalTransform::sTypeId };
+        world.ForEachArchetype(sjReq, [&](Archetype& arch) {
+            const int si = arch.FindTypeIndex(SpringJointComponent::sTypeId);
+            for (uint32_t row = 0; row < arch.Count(); ++row) {
+                const EntityID e = arch.EntityAt(row);
+                if (!IsEntityActive(world, e)) {
+                    continue;
+                }
+                joints.push_back(
+                    { e, static_cast<const SpringJointComponent*>(arch.GetPtr(si, row)) });
+            }
+        });
+        if (!joints.empty()) {
+            std::sort(joints.begin(), joints.end(),
+                      [](const Joint& a, const Joint& b) { return a.owner.index < b.owner.index; });
+            // bodies は index 昇順ソート済 → 二分探索 (generation も一致確認)
+            auto findBody = [&bodies](EntityID e) -> Body* {
+                auto it = std::lower_bound(
+                    bodies.begin(), bodies.end(), e.index,
+                    [](const Body& b, uint32_t idx) { return b.entity.index < idx; });
+                if (it != bodies.end() && it->entity.index == e.index
+                    && it->entity.generation == e.generation) {
+                    return &(*it);
+                }
+                return nullptr;
+            };
+            // bodies に居ないエンティティ (コライダー/Rigidbody 無し) は変換から不動アンカー位置
+            auto anchorPos = [&world](EntityID e, float& px, float& py, float& pz) -> bool {
+                const auto* alt = world.GetComponent<LocalTransform>(e);
+                if (!alt) {
+                    return false;
+                }
+                const WorldFrame f = ComposeParentFrame(world, e);
+                XMFLOAT3 wpos;
+                XMFLOAT4 wrot;
+                XMFLOAT3 wscale;
+                ApplyFrame(f, *alt, wpos, wrot, wscale);
+                px = wpos.x;
+                py = wpos.y;
+                pz = wpos.z;
+                return true;
+            };
+            for (const Joint& j : joints) {
+                const EntityID other = j.sj->connectedEntity;
+                if (other.IsNull() || !world.IsAlive(other) || !IsEntityActive(world, other)) {
+                    continue;
+                }
+                Body* ba = findBody(j.owner);
+                Body* bb = findBody(other);
+                float pax, pay, paz, pbx, pby, pbz;
+                if (ba) {
+                    pax = ba->pose.px; pay = ba->pose.py; paz = ba->pose.pz;
+                } else if (!anchorPos(j.owner, pax, pay, paz)) {
+                    continue;
+                }
+                if (bb) {
+                    pbx = bb->pose.px; pby = bb->pose.py; pbz = bb->pose.pz;
+                } else if (!anchorPos(other, pbx, pby, pbz)) {
+                    continue;
+                }
+                const float invA = ba ? ba->invMass : 0.0f;
+                const float invB = bb ? bb->invMass : 0.0f;
+                const float invSum = invA + invB;
+                if (invSum == 0.0f) {
+                    continue; // 両側不動 = ばねは何も動かせない
+                }
+                const float dxv = pax - pbx, dyv = pay - pby, dzv = paz - pbz;
+                const float dist2 = dxv * dxv + dyv * dyv + dzv * dzv;
+                if (dist2 < 1e-16f) {
+                    continue; // 同一点はばね方向が定義できない (決定論的分岐)
+                }
+                const float dist = std::sqrt(dist2);
+                const float ux = dxv / dist, uy = dyv / dist, uz = dzv / dist;
+                const float k = (j.sj->stiffness > 0.0f) ? j.sj->stiffness : 0.0f;
+                const float c = (j.sj->damping > 0.0f) ? j.sj->damping : 0.0f;
+                const float stretch = dist - j.sj->restLength;
+                const float vax = ba ? ba->vx : 0.0f, vay = ba ? ba->vy : 0.0f,
+                            vaz = ba ? ba->vz : 0.0f;
+                const float vbx = bb ? bb->vx : 0.0f, vby = bb ? bb->vy : 0.0f,
+                            vbz = bb ? bb->vz : 0.0f;
+                const float vrel = (vax - vbx) * ux + (vay - vby) * uy + (vaz - vbz) * uz;
+                // λ = −(k·stretch + c·vrel)·dt / (1 + c·dt·Σinvm)。分母が implicit damping
+                float lambda = -(k * stretch + c * vrel) * dt / (1.0f + c * dt * invSum);
+                // 極端な剛性でも 1 tick の Δv を 100 m/s に制限 (発散防止の決定論的クランプ)
+                const float maxInv = (invA > invB) ? invA : invB; // invSum>0 → maxInv>0
+                const float maxJ = 100.0f / maxInv;
+                if (lambda > maxJ) { lambda = maxJ; }
+                if (lambda < -maxJ) { lambda = -maxJ; }
+                if (ba && invA > 0.0f) {
+                    ba->vx += ux * lambda * invA;
+                    ba->vy += uy * lambda * invA;
+                    ba->vz += uz * lambda * invA;
+                }
+                if (bb && invB > 0.0f) {
+                    bb->vx -= ux * lambda * invB;
+                    bb->vy -= uy * lambda * invB;
+                    bb->vz -= uz * lambda * invB;
+                }
+            }
+        }
     }
 
     // ---- ブロードフェーズ (M28d): 候補ペア列挙 (1 軸 sort & sweep、margin 込み) ----
@@ -615,6 +903,9 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
         b.rb->angularVelocity.y = b.wy;
         b.rb->angularVelocity.z = b.wz;
     }
+
+    // ---- キャラクターコントローラ解決 (M29b)。剛体解決後の最終 pose を障害物として使う ----
+    SolveCharacters(bodies, chars, dt);
 }
 
 int ApplyTorqueWorld(World& world, EntityID e, MyeVec3 torque, float dt)

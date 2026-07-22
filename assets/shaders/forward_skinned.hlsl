@@ -18,6 +18,13 @@ cbuffer PerFrame : register(b0)
     float    gShadowTexel;   // 1/解像度
     int      gShadowEnabled; // 0=影無効
     float2   _pad1;
+    // ---- フォグ (M29d、末尾 append。forward_lit と同一レイアウト) ----
+    float3   gFogColor;
+    int      gFogMode; // -1=無効
+    float    gFogDensity;
+    float    gFogStart;
+    float    gFogEnd;
+    float    _fogPad;
 };
 
 cbuffer PerObject : register(b1)
@@ -104,7 +111,9 @@ float4 PSMain(VSOut i) : SV_Target
     if (gShadowEnabled != 0) {
         dirShadow = SampleShadowPCF(gShadowMap, gShadowSampler, gShadowVP, i.posW, gShadowTexel);
     }
-    const float3 color = ApplyLighting(albedo.rgb, n, i.posW, gCameraPos, gMetallic, gRoughness,
-                                       gAmbient, gLights, gLightCount, dirShadow);
+    float3 color = ApplyLighting(albedo.rgb, n, i.posW, gCameraPos, gMetallic, gRoughness,
+                                 gAmbient, gLights, gLightCount, dirShadow);
+    color = ApplyFog(color, gFogColor, gFogMode, gFogDensity, gFogStart, gFogEnd,
+                     length(gCameraPos - i.posW)); // M29d
     return float4(color, albedo.a);
 }

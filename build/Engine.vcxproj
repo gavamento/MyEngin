@@ -27,6 +27,7 @@
   <!-- BEGIN FILES (tools\gen_project_files.ps1 が再生成する。手編集しない) -->
   <ItemGroup>
     <ClCompile Include="..\src\Engine\Core\Archetype.cpp" />
+    <ClCompile Include="..\src\Engine\Core\AssetKeyResolver.cpp" />
     <ClCompile Include="..\src\Engine\Core\Check.cpp" />
     <ClCompile Include="..\src\Engine\Core\ComponentRegistry.cpp" />
     <ClCompile Include="..\src\Engine\Core\Components.cpp" />
@@ -48,6 +49,7 @@
     <ClCompile Include="..\src\Engine\Engine\CgltfImpl.cpp" />
     <ClCompile Include="..\src\Engine\Engine\CollisionSystem.cpp" />
     <ClCompile Include="..\src\Engine\Engine\DemoContent.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\EffectSystem.cpp" />
     <ClCompile Include="..\src\Engine\Engine\EngineLoop.cpp" />
     <ClCompile Include="..\src\Engine\Engine\FbxLoader.cpp" />
     <ClCompile Include="..\src\Engine\Engine\HotReload\DllReloader.cpp" />
@@ -56,6 +58,7 @@
     <ClCompile Include="..\src\Engine\Engine\Particles\CpuParticleBackend.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Particles\GpuParticleBackend.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Particles\ParticleSystem.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\ParticleSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Physics\Broadphase.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Physics\PhysicsQueries.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Physics\PhysicsSystem.cpp" />
@@ -77,6 +80,8 @@
     <ClCompile Include="..\src\Engine\Engine\UfbxImpl.cpp" />
     <ClCompile Include="..\src\Engine\Engine\UI\UIRenderer.cpp" />
     <ClCompile Include="..\src\Engine\Engine\UI\UISelfTest.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Vfx\VfxRenderer.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\VfxSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Platform\Clock.cpp" />
     <ClCompile Include="..\src\Engine\Platform\Input.cpp" />
     <ClCompile Include="..\src\Engine\Platform\PathUtil.cpp" />
@@ -98,11 +103,13 @@
     <ClCompile Include="..\src\Engine\Renderer\ShaderManager.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\ShadowPass.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\Skeleton.cpp" />
+    <ClCompile Include="..\src\Engine\Renderer\SkyboxPass.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\StbImpl.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\SwapChain.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\TextureCook.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\TextureCookSelfTest.cpp" />
     <ClInclude Include="..\src\Engine\Core\Archetype.h" />
+    <ClInclude Include="..\src\Engine\Core\AssetKeyResolver.h" />
     <ClInclude Include="..\src\Engine\Core\Check.h" />
     <ClInclude Include="..\src\Engine\Core\ComponentRegistry.h" />
     <ClInclude Include="..\src\Engine\Core\Components.h" />
@@ -126,6 +133,7 @@
     <ClInclude Include="..\src\Engine\Engine\Audio\AudioSystem.h" />
     <ClInclude Include="..\src\Engine\Engine\CollisionSystem.h" />
     <ClInclude Include="..\src\Engine\Engine\DemoContent.h" />
+    <ClInclude Include="..\src\Engine\Engine\EffectSystem.h" />
     <ClInclude Include="..\src\Engine\Engine\EngineLoop.h" />
     <ClInclude Include="..\src\Engine\Engine\FbxLoader.h" />
     <ClInclude Include="..\src\Engine\Engine\GameObject.h" />
@@ -135,7 +143,9 @@
     <ClInclude Include="..\src\Engine\Engine\Particles\CpuParticleBackend.h" />
     <ClInclude Include="..\src\Engine\Engine\Particles\GpuParticleBackend.h" />
     <ClInclude Include="..\src\Engine\Engine\Particles\IParticleBackend.h" />
+    <ClInclude Include="..\src\Engine\Engine\Particles\ParticleCurves.h" />
     <ClInclude Include="..\src\Engine\Engine\Particles\ParticleSystem.h" />
+    <ClInclude Include="..\src\Engine\Engine\ParticleSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Physics\Broadphase.h" />
     <ClInclude Include="..\src\Engine\Engine\Physics\PhysicsSystem.h" />
     <ClInclude Include="..\src\Engine\Engine\Physics\Shapes.h" />
@@ -155,6 +165,9 @@
     <ClInclude Include="..\src\Engine\Engine\TransformSystem.h" />
     <ClInclude Include="..\src\Engine\Engine\UI\UIRenderer.h" />
     <ClInclude Include="..\src\Engine\Engine\UI\UISelfTest.h" />
+    <ClInclude Include="..\src\Engine\Engine\Vfx\VfxGeometry.h" />
+    <ClInclude Include="..\src\Engine\Engine\Vfx\VfxRenderer.h" />
+    <ClInclude Include="..\src\Engine\Engine\VfxSelfTest.h" />
     <ClInclude Include="..\src\Engine\Platform\Clock.h" />
     <ClInclude Include="..\src\Engine\Platform\Input.h" />
     <ClInclude Include="..\src\Engine\Platform\PathUtil.h" />
@@ -178,6 +191,7 @@
     <ClInclude Include="..\src\Engine\Renderer\ShaderManager.h" />
     <ClInclude Include="..\src\Engine\Renderer\ShadowPass.h" />
     <ClInclude Include="..\src\Engine\Renderer\Skeleton.h" />
+    <ClInclude Include="..\src\Engine\Renderer\SkyboxPass.h" />
     <ClInclude Include="..\src\Engine\Renderer\SwapChain.h" />
     <ClInclude Include="..\src\Engine\Renderer\TextureCook.h" />
     <ClInclude Include="..\src\Engine\Renderer\TextureCookSelfTest.h" />

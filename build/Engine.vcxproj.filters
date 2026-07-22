@@ -28,6 +28,9 @@
     <Filter Include="Engine\UI">
       <UniqueIdentifier>{AD97C4EA-898A-15C7-7B0A-F4DF0AA75D30}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Engine\Vfx">
+      <UniqueIdentifier>{515E74B9-0ABA-83E2-939F-4FF67E4E6CE9}</UniqueIdentifier>
+    </Filter>
     <Filter Include="external">
       <UniqueIdentifier>{544A71AA-5435-4B20-7017-ADEF0FEA3ABF}</UniqueIdentifier>
     </Filter>
@@ -49,6 +52,9 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\src\Engine\Core\Archetype.cpp">
+      <Filter>Core</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Core\AssetKeyResolver.cpp">
       <Filter>Core</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Core\Check.cpp">
@@ -114,6 +120,9 @@
     <ClCompile Include="..\src\Engine\Engine\DemoContent.cpp">
       <Filter>Engine</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\EffectSystem.cpp">
+      <Filter>Engine</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\EngineLoop.cpp">
       <Filter>Engine</Filter>
     </ClCompile>
@@ -137,6 +146,9 @@
     </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Particles\ParticleSystem.cpp">
       <Filter>Engine\Particles</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\ParticleSelfTest.cpp">
+      <Filter>Engine</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Physics\Broadphase.cpp">
       <Filter>Engine\Physics</Filter>
@@ -201,6 +213,12 @@
     <ClCompile Include="..\src\Engine\Engine\UI\UISelfTest.cpp">
       <Filter>Engine\UI</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Vfx\VfxRenderer.cpp">
+      <Filter>Engine\Vfx</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\VfxSelfTest.cpp">
+      <Filter>Engine</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Platform\Clock.cpp">
       <Filter>Platform</Filter>
     </ClCompile>
@@ -264,6 +282,9 @@
     <ClCompile Include="..\src\Engine\Renderer\Skeleton.cpp">
       <Filter>Renderer</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Renderer\SkyboxPass.cpp">
+      <Filter>Renderer</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Renderer\StbImpl.cpp">
       <Filter>Renderer</Filter>
     </ClCompile>
@@ -277,6 +298,9 @@
       <Filter>Renderer</Filter>
     </ClCompile>
     <ClInclude Include="..\src\Engine\Core\Archetype.h">
+      <Filter>Core</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Core\AssetKeyResolver.h">
       <Filter>Core</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Core\Check.h">
@@ -348,6 +372,9 @@
     <ClInclude Include="..\src\Engine\Engine\DemoContent.h">
       <Filter>Engine</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\EffectSystem.h">
+      <Filter>Engine</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\EngineLoop.h">
       <Filter>Engine</Filter>
     </ClInclude>
@@ -375,8 +402,14 @@
     <ClInclude Include="..\src\Engine\Engine\Particles\IParticleBackend.h">
       <Filter>Engine\Particles</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Particles\ParticleCurves.h">
+      <Filter>Engine\Particles</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Particles\ParticleSystem.h">
       <Filter>Engine\Particles</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\ParticleSelfTest.h">
+      <Filter>Engine</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Physics\Broadphase.h">
       <Filter>Engine\Physics</Filter>
@@ -434,6 +467,15 @@
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\UI\UISelfTest.h">
       <Filter>Engine\UI</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Vfx\VfxGeometry.h">
+      <Filter>Engine\Vfx</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Vfx\VfxRenderer.h">
+      <Filter>Engine\Vfx</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\VfxSelfTest.h">
+      <Filter>Engine</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Platform\Clock.h">
       <Filter>Platform</Filter>
@@ -502,6 +544,9 @@
       <Filter>Renderer</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\Skeleton.h">
+      <Filter>Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\SkyboxPass.h">
       <Filter>Renderer</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\SwapChain.h">

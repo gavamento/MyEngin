@@ -3,6 +3,7 @@
 
 #include "Engine/Renderer/RenderPath.h"
 #include "Engine/Renderer/RenderTexture.h"
+#include "Engine/Renderer/SkyboxPass.h"
 
 namespace mye {
 
@@ -43,6 +44,7 @@ private:
     AssetID gbufferShader_ = {};
     AssetID gbufferSkinnedShader_ = {}; // deferred_gbuffer_skinned (スキンメッシュ用に差替)
     AssetID lightShader_ = {};
+    SkyboxPass skybox_; // ライトパス後・透明前に空を塗る (M29d)
 };
 
 } // namespace mye

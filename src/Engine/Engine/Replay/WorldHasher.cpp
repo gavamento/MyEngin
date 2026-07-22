@@ -55,6 +55,7 @@ uint64_t HashCpuParticles(const CpuParticleBackend& cpu)
         h = HashCombine(h, pool.owner.generation);
         h = HashCombine(h, pool.alive);
         h = HashBytes(&pool.emitAccum, sizeof(pool.emitAccum), h);
+        h = HashCombine(h, static_cast<uint32_t>(pool.ageTicks)); // M32a: 放出ウィンドウ状態
         const uint64_t rngState = pool.rng.State();
         const uint64_t rngInc = pool.rng.Inc();
         h = HashCombine(h, rngState);

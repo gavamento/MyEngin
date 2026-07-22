@@ -7,6 +7,7 @@
 #include <wrl/client.h>
 
 #include "Engine/Core/EntityID.h"
+#include "Engine/Engine/Vfx/VfxGeometry.h" // VfxGlyph (M29c: TextMesh とフォント共有)
 
 namespace mye {
 
@@ -39,6 +40,11 @@ public:
     // anchor(0..8) + オフセット (x,y) + サイズ(w,h) から最終ピクセル矩形の左上を求める
     static void ResolveAnchor(int anchor, float x, float y, float w, float h, int screenW,
                               int screenH, float& outX, float& outY);
+
+    // ---- フォントアトラス共有 (M29c: TextMesh 用) ----
+    ID3D11ShaderResourceView* FontSRV() const { return fontSrv_.Get(); }
+    // グリフ計測を VfxGlyph 表 (128 要素) へコピー。フォント未焼成なら false
+    bool CopyGlyphTable(VfxGlyph* out128) const;
 
 private:
     struct UIVertex {

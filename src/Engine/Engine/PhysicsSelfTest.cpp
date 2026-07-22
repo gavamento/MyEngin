@@ -692,6 +692,320 @@ bool RunPhysicsSelfTest()
                      static_cast<unsigned long long>(finalHash));
     }
 
+    // ---- (15) ConstantForce: 力 = m·g の上向き定常力でホバリング (M29a) ----
+    {
+        Scene s;
+        GameObject box = MakeBox(s, "Hover", 0, 5.0f, 0, 0.5f, 0.5f, 0.5f);
+        auto* rb = box.GetComponent<RigidbodyComponent>();
+        rb->mass = 2.0f;
+        auto* cf = box.AddComponent<ConstantForceComponent>();
+        // 2·9.81 と 1/m=0.5 の積は float で正確に 9.81 → 重力 (−9.81·dt) と毎 tick 完全相殺
+        cf->force = { 0.0f, 2.0f * 9.81f, 0.0f };
+        s.GetWorld().ApplyStructuralChanges();
+        for (int i = 0; i < 120; ++i) {
+            phys.Update(s.GetWorld(), kDt);
+        }
+        auto* lt = box.GetComponent<LocalTransform>();
+        check(lt && std::fabs(lt->position.y - 5.0f) < 1e-4f
+                  && std::fabs(rb->velocity.y) < 1e-5f,
+              "constant force: upward F=m*g hovers exactly against gravity");
+    }
+
+    // ---- (16) ConstantForce: トルクによるスピンアップ + relative の局所軸適用 ----
+    {
+        Scene s;
+        GameObject spin = MakeBox(s, "Spinner", 0, 5.0f, 0, 0.5f, 0.5f, 0.5f);
+        spin.GetComponent<RigidbodyComponent>()->gravityScale = 0.0f;
+        auto* tq = spin.AddComponent<ConstantForceComponent>();
+        tq->torque = { 0.0f, 10.0f, 0.0f }; // world Y 軸トルク
+        // relative=1 の力: エンティティを Y 軸 90° 回転させ、ローカル +Z の力 → ワールド +X 加速
+        GameObject thr = MakeBox(s, "Thruster", 5.0f, 5.0f, 0, 0.5f, 0.5f, 0.5f);
+        thr.GetComponent<RigidbodyComponent>()->gravityScale = 0.0f;
+        thr.GetComponent<LocalTransform>()->rotation = { 0, 0.7071068f, 0, 0.7071068f }; // Y 90°
+        auto* lf = thr.AddComponent<ConstantForceComponent>();
+        lf->force = { 0.0f, 0.0f, 4.0f };
+        lf->relative = 1;
+        s.GetWorld().ApplyStructuralChanges();
+        for (int i = 0; i < 60; ++i) {
+            phys.Update(s.GetWorld(), kDt);
+        }
+        const auto* srb = spin.GetComponent<RigidbodyComponent>();
+        check(srb && srb->angularVelocity.y > 0.5f,
+              "constant force: world torque spins up angular velocity");
+        const auto* trb = thr.GetComponent<RigidbodyComponent>();
+        // ローカル +Z を Y90° 回転 → ワールド +X。X 速度が支配的で Z はほぼ 0
+        check(trb && trb->velocity.x > 1.0f && std::fabs(trb->velocity.z) < 0.1f,
+              "constant force: relative force follows entity local axes");
+    }
+
+    // ---- (17) SpringJoint: 静的アンカー振り子が平衡長 (restLength + m·g/k) に収束 ----
+    {
+        Scene s;
+        GameObject anchor = s.CreateGameObjectTracked("Anchor");
+        anchor.SetLocalPosition(0, 5.0f, 0);
+        GameObject bob = MakeBox(s, "Bob", 0, 4.0f, 0, 0.3f, 0.3f, 0.3f);
+        auto* sj = bob.AddComponent<SpringJointComponent>();
+        sj->connectedEntity = anchor.Id();
+        sj->restLength = 2.0f;
+        sj->stiffness = 50.0f;
+        sj->damping = 5.0f;
+        s.GetWorld().ApplyStructuralChanges();
+        for (int i = 0; i < 300; ++i) {
+            phys.Update(s.GetWorld(), kDt);
+        }
+        const auto* lt = bob.GetComponent<LocalTransform>();
+        const auto* rb = bob.GetComponent<RigidbodyComponent>();
+        // 平衡: k·stretch = m·g → 長さ ≈ 2 + 9.81/50 ≈ 2.196 (±5%)
+        const float dist = lt ? (5.0f - lt->position.y) : 0.0f;
+        const float expect = 2.0f + 9.81f / 50.0f;
+        check(lt && rb && std::fabs(dist - expect) < expect * 0.05f
+                  && std::fabs(rb->velocity.y) < 0.05f,
+              "spring joint: static-anchor pendulum settles at equilibrium length");
+    }
+
+    // ---- (18) SpringJoint: 2 体ばねの振動が発散せず運動量を保存する ----
+    {
+        Scene s;
+        // コライダー無しの剛体 (接触を混ぜない純粋なばね力学の検証)
+        GameObject a = s.CreateGameObjectTracked("SA");
+        a.SetLocalPosition(-2.0f, 5.0f, 0);
+        a.AddComponent<RigidbodyComponent>()->gravityScale = 0.0f;
+        GameObject b = s.CreateGameObjectTracked("SB");
+        b.SetLocalPosition(2.0f, 5.0f, 0);
+        b.AddComponent<RigidbodyComponent>()->gravityScale = 0.0f;
+        auto* sj = a.AddComponent<SpringJointComponent>();
+        sj->connectedEntity = b.Id();
+        sj->restLength = 2.0f;
+        sj->stiffness = 200.0f;
+        sj->damping = 1.0f;
+        s.GetWorld().ApplyStructuralChanges();
+        bool bounded = true;
+        float comDrift = 0.0f;
+        for (int i = 0; i < 300 && bounded; ++i) {
+            phys.Update(s.GetWorld(), kDt);
+            const auto* la = a.GetComponent<LocalTransform>();
+            const auto* lb = b.GetComponent<LocalTransform>();
+            const float dist = std::fabs(la->position.x - lb->position.x);
+            if (!(dist < 4.8f) || std::isnan(dist)) {
+                bounded = false; // 初期伸び (dist=4, stretch=2) を超えて発散したら失敗
+            }
+            const float com = (la->position.x + lb->position.x) * 0.5f;
+            if (std::fabs(com) > comDrift) {
+                comDrift = std::fabs(com);
+            }
+        }
+        check(bounded, "spring joint: two-body oscillation stays bounded");
+        check(comDrift < 1e-3f, "spring joint: two-body impulses conserve momentum (COM fixed)");
+    }
+
+    // ---- (19) 決定論: ばね + 定常力シーンの 240 tick 並走ハッシュ一致 (M29a) ----
+    {
+        auto build = [](Scene& s) {
+            MakeGround(s, "G", 0, -0.5f, 0, 6.0f, 0.5f, 6.0f);
+            GameObject anchor = s.CreateGameObjectTracked("Anchor");
+            anchor.SetLocalPosition(0, 6.0f, 0);
+            GameObject bob = MakeBox(s, "Bob", 0.8f, 4.5f, 0.2f, 0.3f, 0.3f, 0.3f);
+            auto* sj = bob.AddComponent<SpringJointComponent>();
+            sj->connectedEntity = anchor.Id();
+            sj->restLength = 1.5f;
+            sj->stiffness = 60.0f;
+            sj->damping = 2.0f;
+            GameObject spin = MakeBox(s, "Spin", -2.0f, 3.0f, 0, 0.5f, 0.5f, 0.5f);
+            auto* cf = spin.AddComponent<ConstantForceComponent>();
+            cf->force = { 0.0f, 9.0f, 0.0f };
+            cf->torque = { 0.0f, 3.0f, 1.0f };
+            s.GetWorld().ApplyStructuralChanges();
+        };
+        Scene sa, sb;
+        build(sa);
+        build(sb);
+        bool det = true;
+        uint64_t finalHash = 0;
+        for (int i = 0; i < 240 && det; ++i) {
+            phys.Update(sa.GetWorld(), kDt);
+            phys.Update(sb.GetWorld(), kDt);
+            const uint64_t ha = HashWorld(sa.GetWorld(), nullptr);
+            const uint64_t hb = HashWorld(sb.GetWorld(), nullptr);
+            if (ha != hb) {
+                det = false;
+                MYE_LOG_ERROR("  spring/force determinism diverged at tick %d: %016llX vs %016llX",
+                              i, static_cast<unsigned long long>(ha),
+                              static_cast<unsigned long long>(hb));
+            }
+            finalHash = ha;
+        }
+        check(det, "determinism: spring/force scene hash-identical for 240 ticks");
+        // Debug/Release 間の一致確認用 (両構成で同値であること)
+        MYE_LOG_INFO("  [phys] spring/force scene hash @240 = %016llX",
+                     static_cast<unsigned long long>(finalHash));
+    }
+
+    // ---- (20) CharacterController: 着地・歩行・壁ブロック (M29b) ----
+    {
+        Scene s;
+        MakeGround(s, "G", 0, -0.5f, 0, 8.0f, 0.5f, 8.0f);
+        MakeGround(s, "Wall", 3.0f, 2.0f, 0, 0.5f, 2.0f, 2.0f); // 内側面 x=2.5
+        GameObject ch = s.CreateGameObjectTracked("Char");
+        ch.SetLocalPosition(0, 2.0f, 0);
+        ch.AddComponent<CharacterControllerComponent>(); // 既定 r=0.3 h=1.8 → 接地中心 y=0.9
+        s.GetWorld().ApplyStructuralChanges();
+        auto* cc = ch.GetComponent<CharacterControllerComponent>();
+        auto* lt = ch.GetComponent<LocalTransform>();
+        for (int i = 0; i < 120; ++i) {
+            phys.Update(s.GetWorld(), kDt);
+        }
+        check(std::fabs(lt->position.y - 0.9f) < 0.02f && cc->isGrounded == 1,
+              "character: lands on flat ground at capsule half height");
+        cc->moveInput.x = 1.0f;
+        for (int i = 0; i < 60; ++i) {
+            phys.Update(s.GetWorld(), kDt);
+        }
+        check(std::fabs(lt->position.x - 1.0f) < 0.02f,
+              "character: walks 1m in 60 ticks at 1 m/s");
+        float maxX = lt->position.x;
+        for (int i = 0; i < 180; ++i) {
+            phys.Update(s.GetWorld(), kDt);
+            if (lt->position.x > maxX) {
+                maxX = lt->position.x;
+            }
+        }
+        // 壁面 2.5 − 半径 0.3 = 2.2 で停止 (貫通しない)
+        check(std::fabs(lt->position.x - 2.2f) < 0.05f && maxX < 2.21f,
+              "character: blocked by wall at face minus radius");
+    }
+
+    // ---- (21) CharacterController: 30° 斜面は登れる / 60° 斜面は y 非増加 ----
+    {
+        Scene s;
+        // 30° 斜面 (Z 軸回り +30° → +X 方向が登り)
+        MakeStaticBoxRot(s, "Slope30", 0, 0, 0, 6.0f, 0.5f, 4.0f,
+                         { 0, 0, 0.2588190f, 0.9659258f });
+        GameObject ch = s.CreateGameObjectTracked("Climber");
+        ch.SetLocalPosition(-2.0f, 3.0f, 0);
+        ch.AddComponent<CharacterControllerComponent>();
+        s.GetWorld().ApplyStructuralChanges();
+        auto* cc = ch.GetComponent<CharacterControllerComponent>();
+        auto* lt = ch.GetComponent<LocalTransform>();
+        for (int i = 0; i < 90; ++i) {
+            phys.Update(s.GetWorld(), kDt); // 斜面に着地
+        }
+        const float y0 = lt->position.y;
+        const float x0 = lt->position.x;
+        cc->moveInput.x = 1.5f;
+        for (int i = 0; i < 120; ++i) {
+            phys.Update(s.GetWorld(), kDt);
+        }
+        check(lt->position.x - x0 > 1.0f && lt->position.y - y0 > 0.4f && cc->isGrounded == 1,
+              "character: climbs 30 deg slope (slopeLimit 45)");
+    }
+    {
+        Scene s;
+        // 60° 斜面 (slopeLimit 45 超 = 登れない急斜面)。押し続けても y が増えないこと
+        MakeStaticBoxRot(s, "Slope60", 0, 0, 0, 6.0f, 0.5f, 4.0f,
+                         { 0, 0, 0.5f, 0.8660254f });
+        GameObject ch = s.CreateGameObjectTracked("Pusher");
+        ch.SetLocalPosition(-1.0f, 4.0f, 0);
+        ch.AddComponent<CharacterControllerComponent>();
+        s.GetWorld().ApplyStructuralChanges();
+        auto* cc = ch.GetComponent<CharacterControllerComponent>();
+        auto* lt = ch.GetComponent<LocalTransform>();
+        for (int i = 0; i < 60; ++i) {
+            phys.Update(s.GetWorld(), kDt); // 接触まで落下
+        }
+        const float ySettle = lt->position.y;
+        cc->moveInput.x = 1.5f; // 登り方向へ押し続ける
+        bool noClimb = true;
+        for (int i = 0; i < 180; ++i) {
+            phys.Update(s.GetWorld(), kDt);
+            if (lt->position.y > ySettle + 0.05f) {
+                noClimb = false;
+            }
+        }
+        check(noClimb, "character: cannot climb 60 deg slope (y never increases)");
+    }
+
+    // ---- (22) CharacterController: 接地ジャンプの頂点 ≈ v²/2g、空中ジャンプは無効 ----
+    {
+        Scene s;
+        MakeGround(s, "G", 0, -0.5f, 0, 8.0f, 0.5f, 8.0f);
+        GameObject ch = s.CreateGameObjectTracked("Jumper");
+        ch.SetLocalPosition(0, 2.0f, 0);
+        ch.AddComponent<CharacterControllerComponent>();
+        s.GetWorld().ApplyStructuralChanges();
+        auto* cc = ch.GetComponent<CharacterControllerComponent>();
+        auto* lt = ch.GetComponent<LocalTransform>();
+        for (int i = 0; i < 120; ++i) {
+            phys.Update(s.GetWorld(), kDt);
+        }
+        const float y0 = lt->position.y;
+        cc->jumpSpeed = 5.0f;
+        float maxY = y0;
+        bool airJumpBlocked = true;
+        float prevVy = 0.0f;
+        for (int i = 0; i < 150; ++i) {
+            phys.Update(s.GetWorld(), kDt);
+            if (lt->position.y > maxY) {
+                maxY = lt->position.y;
+            }
+            if (i == 30) { // 滞空中 (vy ≈ 0.1) に空中ジャンプを試みる
+                if (cc->isGrounded != 0) {
+                    airJumpBlocked = false; // 想定外に接地している = テスト前提が崩れている
+                }
+                prevVy = cc->velocity.y;
+                cc->jumpSpeed = 5.0f;
+            }
+            if (i == 31) {
+                // 空中では発火しない: vy は重力で下がるだけ。ただし jumpSpeed は消費される
+                if (cc->velocity.y > prevVy || cc->jumpSpeed != 0.0f) {
+                    airJumpBlocked = false;
+                }
+            }
+        }
+        const float expectApex = y0 + 25.0f / (2.0f * 9.81f);
+        check(std::fabs(maxY - expectApex) < 0.15f,
+              "character: grounded jump apex matches v^2/2g");
+        check(airJumpBlocked, "character: air jump does not fire (jumpSpeed consumed)");
+    }
+
+    // ---- (23) 決定論: CC + 剛体混在シーンの 240 tick 並走ハッシュ一致 (M29b) ----
+    {
+        auto build = [](Scene& s) {
+            MakeGround(s, "G", 0, -0.5f, 0, 8.0f, 0.5f, 8.0f);
+            MakeStaticBoxRot(s, "Ramp", 4.0f, 0.5f, 0, 3.0f, 0.5f, 3.0f,
+                             { 0, 0, 0.1305262f, 0.9914449f });
+            GameObject c1 = s.CreateGameObjectTracked("C1");
+            c1.SetLocalPosition(-2.0f, 2.0f, 0.5f);
+            c1.AddComponent<CharacterControllerComponent>()->moveInput = { 1.2f, 0, 0.3f };
+            GameObject c2 = s.CreateGameObjectTracked("C2");
+            c2.SetLocalPosition(2.0f, 2.0f, -1.0f);
+            c2.AddComponent<CharacterControllerComponent>()->moveInput = { -0.8f, 0, 0 };
+            MakeBox(s, "B0", 0.0f, 5.0f, 0, 0.5f, 0.5f, 0.5f, 0.2f); // CC 進路に落ちる剛体
+            s.GetWorld().ApplyStructuralChanges();
+        };
+        Scene sa, sb;
+        build(sa);
+        build(sb);
+        bool det = true;
+        uint64_t finalHash = 0;
+        for (int i = 0; i < 240 && det; ++i) {
+            phys.Update(sa.GetWorld(), kDt);
+            phys.Update(sb.GetWorld(), kDt);
+            const uint64_t ha = HashWorld(sa.GetWorld(), nullptr);
+            const uint64_t hb = HashWorld(sb.GetWorld(), nullptr);
+            if (ha != hb) {
+                det = false;
+                MYE_LOG_ERROR("  character determinism diverged at tick %d: %016llX vs %016llX",
+                              i, static_cast<unsigned long long>(ha),
+                              static_cast<unsigned long long>(hb));
+            }
+            finalHash = ha;
+        }
+        check(det, "determinism: character scene hash-identical for 240 ticks");
+        // Debug/Release 間の一致確認用 (両構成で同値であること)
+        MYE_LOG_INFO("  [phys] character scene hash @240 = %016llX",
+                     static_cast<unsigned long long>(finalHash));
+    }
+
     if (failCount == 0) {
         MYE_LOG_INFO("==== Physics self test: ALL PASS ====");
         return true;

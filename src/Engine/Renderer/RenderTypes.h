@@ -36,6 +36,16 @@ struct RenderView {
     DirectX::XMFLOAT4X4 lightViewProj = {}; // transpose(lightView*lightProj)、CB へそのままアップロード
     ID3D11ShaderResourceView* shadowSRV = nullptr; // シャドウ深度 (R32_FLOAT)。null で影無効
     float shadowTexelSize = 0.0f;                  // 1/解像度 (PCF オフセット)
+    // ---- 環境 (M29d)。RenderSystem が最初の active Skybox/Fog から埋める。描画専用 ----
+    int32_t skyMode = -1; // -1=スカイボックス無効 (clearColor 背景) / 0=グラデーション
+    DirectX::XMFLOAT3 skyTop = { 0.24f, 0.42f, 0.83f };
+    DirectX::XMFLOAT3 skyHorizon = { 0.74f, 0.81f, 0.90f };
+    DirectX::XMFLOAT3 skyBottom = { 0.28f, 0.25f, 0.22f };
+    int32_t fogMode = -1; // -1=フォグ無効 / 0=linear 1=exp 2=exp2
+    DirectX::XMFLOAT3 fogColor = { 0.65f, 0.70f, 0.75f };
+    float fogDensity = 0.02f;
+    float fogStart = 10.0f;
+    float fogEnd = 80.0f;
 };
 
 // GPU へ渡すライト 1 個 (定数バッファ配列要素、16 バイト境界に揃えた 64 バイト)。

@@ -7,7 +7,9 @@
 
 #include "Engine/Core/Log.h"
 #include "Engine/Core/World.h"
+#include "Engine/Engine/Particles/ParticleCurves.h"
 #include "Engine/Platform/Clock.h"
+#include "Engine/Renderer/GpuResources.h"
 #include "Engine/Renderer/GraphicsDevice.h"
 #include "Engine/Renderer/ShaderManager.h"
 
@@ -22,6 +24,8 @@ struct ParticleInstance {
     XMFLOAT3 pos;
     float size;
     XMFLOAT4 color;
+    float age; // [0,1] 寿命係数 (M32b フリップブック用)
+    float pad[3];
 };
 
 struct ParticleCB {
@@ -31,6 +35,10 @@ struct ParticleCB {
     XMFLOAT3 camUp;
     float pad1;
     uint32_t baseIndex;
+    uint32_t useTexture; // 0=procedural 円 / 1=テクスチャ (フリップブック)
+    int32_t flipTilesX;
+    int32_t flipTilesY;
+    float flipCycles;
     float pad2[3];
 };
 
@@ -74,6 +82,17 @@ bool CpuParticleBackend::Init(GraphicsDevice& device, ShaderManager& shaders)
     if (FAILED(device.Device()->CreateDepthStencilState(&dd, depthNoWrite_.GetAddressOf()))) {
         return false;
     }
+
+    D3D11_SAMPLER_DESC sd = {};
+    sd.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+    sd.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
+    sd.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
+    sd.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+    sd.ComparisonFunc = D3D11_COMPARISON_NEVER;
+    sd.MaxLOD = D3D11_FLOAT32_MAX;
+    if (FAILED(device.Device()->CreateSamplerState(&sd, sampler_.GetAddressOf()))) {
+        return false;
+    }
     return true;
 }
 
@@ -86,6 +105,7 @@ void CpuParticleBackend::Shutdown()
     blendAdditive_.Reset();
     blendAlpha_.Reset();
     depthNoWrite_.Reset();
+    sampler_.Reset();
 }
 
 void CpuParticleBackend::Reset()
@@ -142,15 +162,15 @@ void CpuParticleBackend::SyncEmitters(World& world)
 void CpuParticleBackend::EmitParticles(EmitterPool& pool, const ParticleEmitterComponent& desc,
                                        const XMFLOAT3& origin, float dt)
 {
-    pool.emitAccum += desc.rate * dt;
-    int emit = static_cast<int>(pool.emitAccum);
+    // 放出計画 (playing/duration/loop/burst)。ageTicks/emitAccum を進める。
+    // 既定エミッタ (duration=0, burst=0) では従来の emitAccum ロジックとビット同一に縮退する。
+    int emit = PlanParticleEmission(desc, pool.ageTicks, pool.emitAccum, dt);
     if (emit <= 0) {
         return;
     }
-    pool.emitAccum -= static_cast<float>(emit);
 
     const int cap = std::max(0, desc.maxParticles);
-    emit = std::min(emit, cap - static_cast<int>(pool.alive));
+    emit = std::min(emit, cap - static_cast<int>(pool.alive)); // burst 優先で cap
     if (emit <= 0) {
         return;
     }
@@ -336,7 +356,8 @@ void CpuParticleBackend::Update(World& world, float dt)
 }
 
 void CpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
-                                ShaderManager& shaders, float renderOffsetX)
+                                ShaderManager& shaders, RenderResources& resources,
+                                float renderOffsetX)
 {
     ShaderProgram* prog = shaders.Get(shaderId_);
     if (!prog || !prog->valid) {
@@ -383,6 +404,10 @@ void CpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
         uint32_t base;
         uint32_t count;
         int32_t blendMode;
+        AssetID texture;
+        int32_t flipTilesX;
+        int32_t flipTilesY;
+        float flipCycles;
     };
     std::vector<DrawRange> ranges;
 
@@ -421,13 +446,13 @@ void CpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
             age = std::clamp(age, 0.0f, 1.0f);
             ParticleInstance& inst = out[cursor++];
             inst.pos = { pool.px[i] + renderOffsetX, pool.py[i], pool.pz[i] };
-            inst.size = pool.size0[i] * (1.0f + (d.sizeEndScale - 1.0f) * age);
-            inst.color = { d.colorBegin.x + (d.colorEnd.x - d.colorBegin.x) * age,
-                           d.colorBegin.y + (d.colorEnd.y - d.colorBegin.y) * age,
-                           d.colorBegin.z + (d.colorEnd.z - d.colorBegin.z) * age,
-                           d.colorBegin.w + (d.colorEnd.w - d.colorBegin.w) * age };
+            // 多点グラデーション (中間キー未使用なら従来の 2 点線形と同値)
+            inst.size = pool.size0[i] * EvalParticleSizeScale(d, age);
+            inst.color = EvalParticleColor(d, age);
+            inst.age = age;
         }
-        ranges.push_back({ base, pool.alive, d.blendMode });
+        ranges.push_back({ base, pool.alive, d.blendMode, d.texture,
+                           std::max(1, d.flipTilesX), std::max(1, d.flipTilesY), d.flipCycles });
     }
     dc->Unmap(instanceBuffer_.Get(), 0);
 
@@ -441,6 +466,13 @@ void CpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
     dc->OMSetDepthStencilState(depthNoWrite_.Get(), 0);
     ID3D11Buffer* cb = renderCB_.Get();
     dc->VSSetConstantBuffers(0, 1, &cb);
+    dc->PSSetConstantBuffers(0, 1, &cb); // フリップブック分岐を PS でも参照
+    ID3D11SamplerState* samp = sampler_.Get();
+    dc->PSSetSamplers(0, 1, &samp);
+
+    // フリップブックテクスチャの白フォールバック
+    Texture* whiteTex = resources.textures.Get(resources.textures.White());
+    ID3D11ShaderResourceView* whiteSrv = whiteTex ? whiteTex->srv.Get() : nullptr;
 
     using namespace DirectX;
     ParticleCB cbData = {};
@@ -452,11 +484,24 @@ void CpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
 
     for (const DrawRange& range : ranges) {
         cbData.baseIndex = range.base;
+        // テクスチャ解決 (空なら procedural 円へフォールバック)
+        ID3D11ShaderResourceView* texSrv = nullptr;
+        if (range.texture.value != 0) {
+            if (Texture* t = resources.textures.Get(range.texture)) {
+                texSrv = t->srv.Get();
+            }
+        }
+        cbData.useTexture = texSrv ? 1u : 0u;
+        cbData.flipTilesX = range.flipTilesX;
+        cbData.flipTilesY = range.flipTilesY;
+        cbData.flipCycles = range.flipCycles;
         D3D11_MAPPED_SUBRESOURCE cbMapped = {};
         if (SUCCEEDED(dc->Map(renderCB_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &cbMapped))) {
             memcpy(cbMapped.pData, &cbData, sizeof(cbData));
             dc->Unmap(renderCB_.Get(), 0);
         }
+        ID3D11ShaderResourceView* psSrv = texSrv ? texSrv : whiteSrv;
+        dc->PSSetShaderResources(1, 1, &psSrv);
         dc->OMSetBlendState(range.blendMode == 1 ? blendAlpha_.Get() : blendAdditive_.Get(),
                             nullptr, 0xFFFFFFFFu);
         dc->DrawInstanced(4, range.count, 0, 0);
@@ -465,6 +510,7 @@ void CpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
     // SRV を外す (次フレームの Map と競合させない)
     ID3D11ShaderResourceView* nullSrv = nullptr;
     dc->VSSetShaderResources(0, 1, &nullSrv);
+    dc->PSSetShaderResources(1, 1, &nullSrv);
     dc->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFFu);
     dc->OMSetDepthStencilState(nullptr, 0);
 }

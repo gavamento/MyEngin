@@ -3,7 +3,9 @@
 #include <filesystem>
 #include <fstream>
 
+#include "Engine/Core/Components.h"
 #include "Engine/Core/Log.h"
+#include "Engine/Core/World.h"
 #include "Engine/Platform/PathUtil.h"
 
 #include "nlohmann/json.hpp"
@@ -37,19 +39,35 @@ void ParticleSystem::Update(World& world, float dt)
         // 比較モード: 同一定義・同一シードで両バックエンドを並走 (spec 7.4)
         cpu_.Update(world, dt);
         gpu_.Update(world, dt);
-        return;
+    } else {
+        Active().Update(world, dt);
     }
-    Active().Update(world, dt);
+    // 即時バースト (script/editor) は両バックエンドが読み終えた後にクリアする (M32a)。
+    // これで tick 末ハッシュ前に pendingBurst=0 が保証され、compare でも両者が同値を見る。
+    ClearPendingBursts(world);
 }
 
-void ParticleSystem::Render(GraphicsDevice& device, const RenderView& view, ShaderManager& shaders)
+void ParticleSystem::ClearPendingBursts(World& world)
+{
+    const ComponentTypeId req[] = { ParticleEmitterComponent::sTypeId };
+    world.ForEachArchetype(req, [&](Archetype& arch) {
+        for (uint32_t row = 0; row < arch.Count(); ++row) {
+            if (auto* e = world.GetComponent<ParticleEmitterComponent>(arch.EntityAt(row))) {
+                e->pendingBurst = 0;
+            }
+        }
+    });
+}
+
+void ParticleSystem::Render(GraphicsDevice& device, const RenderView& view, ShaderManager& shaders,
+                            RenderResources& resources)
 {
     if (compareMode_) {
-        cpu_.Render(device, view, shaders, 0.0f);
-        gpu_.Render(device, view, shaders, compareOffsetX_); // 横に並べて表示
+        cpu_.Render(device, view, shaders, resources, 0.0f);
+        gpu_.Render(device, view, shaders, resources, compareOffsetX_); // 横に並べて表示
         return;
     }
-    Active().Render(device, view, shaders, 0.0f);
+    Active().Render(device, view, shaders, resources, 0.0f);
 }
 
 void ParticleSystem::SetActiveKind(ParticleBackendKind kind)

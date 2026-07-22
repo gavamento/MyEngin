@@ -150,3 +150,24 @@ float3 ApplyLighting(float3 albedo, float3 normal, float3 posW, float3 cameraPos
     return ambientTerm + Lo;
 }
 
+
+// ---- 距離フォグ (M29d) ----
+// mode: -1=無効 / 0=linear (start..end) / 1=exp (1-e^-ρd) / 2=exp2 (1-e^-(ρd)²)。
+// dist はカメラからのワールド距離。lit 済みの色をフォグ色へ補間する
+float3 ApplyFog(float3 color, float3 fogColor, int fogMode, float density, float fogStart,
+                float fogEnd, float dist)
+{
+    if (fogMode < 0) {
+        return color;
+    }
+    float f = 0.0f;
+    if (fogMode == 0) {
+        f = saturate((dist - fogStart) / max(fogEnd - fogStart, 0.001f));
+    } else if (fogMode == 1) {
+        f = 1.0f - exp(-density * dist);
+    } else {
+        const float e = density * dist;
+        f = 1.0f - exp(-e * e);
+    }
+    return lerp(color, fogColor, f);
+}

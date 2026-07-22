@@ -21,10 +21,12 @@
 #include "Engine/Engine/Scene.h"
 #include "Engine/Engine/SceneSerializer.h"
 #include "Engine/Engine/Script/ManagedHost.h"
+#include "Engine/Engine/EffectSystem.h"
 #include "Engine/Engine/Script/ScriptHost.h"
 #include "Engine/Engine/SkinningSystem.h"
 #include "Engine/Engine/TransformSystem.h"
 #include "Engine/Engine/UI/UIRenderer.h"
+#include "Engine/Engine/Vfx/VfxRenderer.h"
 #include "Engine/Platform/Clock.h"
 #include "Engine/Platform/PathUtil.h"
 #include "Engine/Platform/Win32Window.h"
@@ -79,10 +81,13 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     AnimatorControllerSystem controllerSystem;  // ステートマシン評価 + ブレンド
     AssetDatabase assetDatabase;                // GUID/.meta サイドカー DB (M23)
     SkinningSystem skinningSystem; // スケルタルアニメの時刻進行 (M18)
+    EffectSystem effectSystem;     // 合成エフェクトのライフサイクル (M32e)
     UIRenderer uiRenderer;         // ゲーム内 UI (M21、backbuffer/GameView への重ね描画)
+    VfxRenderer vfxRenderer;       // Sprite/Trail/TextMesh (M29c、メッシュ後・パーティクル前)
     AudioSystem audioSystem;       // XAudio2 (M19、決定論レーン外の出力 sink)
     std::vector<ScriptAudioEvent> audioQueue; // スクリプトの再生イベント (tick 内で積む)
     std::wstring pendingScene;                // LoadScene の遅延ロード先 (tick 末に消費)
+    std::vector<EffectSpawnRequest> effectQueue; // PlayEffect の spawn 要求 (tick 末に消費、M32f)
     IRenderPath* activePath = &forwardPath;
 
     // ---- プロジェクト/アセットルート解決 (M26) ----
@@ -139,6 +144,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         return 1;
     }
     uiRenderer.Init(device, shaderManager); // M21: 失敗してもエンジンは継続 (UI が出ないだけ)
+    vfxRenderer.Init(device, shaderManager, &uiRenderer); // M29c: 同上 (VFX が出ないだけ)
     reloadHub.Init(&shaderManager, &resources, &scene, &prefabLibrary, &animLibrary, assetsRoot);
     particleSystem.Init(device, shaderManager, assetsRoot);
 
@@ -171,8 +177,8 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // 初期化失敗 (ヘッドレス等) でもエンジンは継続する (PlaySound が no-op になるだけ)
     audioSystem.Init();
     audioSystem.LoadWav("beep", assetsRoot + L"\\audio\\beep.wav");
-    scriptHost.SetSharedServices(&audioQueue, &pendingScene);
-    managedHost.SetSharedServices(&audioQueue, &pendingScene);
+    scriptHost.SetSharedServices(&audioQueue, &pendingScene, &effectQueue);
+    managedHost.SetSharedServices(&audioQueue, &pendingScene, &effectQueue);
 
     clock.Init();
 
@@ -185,6 +191,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     ctx.resources = &resources;
     ctx.renderSystem = &renderSystem;
     ctx.uiRenderer = &uiRenderer;
+    ctx.vfx = &vfxRenderer;
     ctx.renderPath = activePath;
     ctx.renderPathForward = &forwardPath;
     ctx.renderPathDeferred = &deferredPath;
@@ -204,6 +211,9 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // M23: assets\ を走査して .meta サイドカー (GUID) を生成/同期する。
     // アセット登録 (app.OnStart → RegisterAssetLibraries) の前に済ませ、パス⇄GUID 解決を利用可能にする。
     assetDatabase.ScanAndSync(assetsRoot);
+    // M30c: 以後の path→AssetID キー計算 (IdForFile/HashForPath) を GUID 解決経由にする。
+    // 未移動アセットは GUID == path-hash なので既存シーン/リプレイはビット不変
+    assetDatabase.InstallAsKeyResolver();
 
     // M25: ジョブシステム起動 (min(16, cores-2) ワーカー)。--no-jobs で直列化。
     jobs::System().Init();
@@ -297,6 +307,9 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                 controllerSystem.Update(scene.GetWorld(), controllerLibrary, animLibrary);
                 // スケルタルアニメの時刻を進める (M18)。ポーズは非ハッシュなのでリプレイ不変
                 skinningSystem.Update(scene.GetWorld(), resources);
+                // 合成エフェクト (M32e): 子エミッタの停止/再開・duration+linger 後の自動破棄。
+                // EffectComponent 非存在シーンでは完全 no-op = 既存シーンのリプレイ不変
+                effectSystem.Update(scene.GetWorld());
             }
             // ---- 物理 (フェーズ 3.6): スクリプト/アニメ後・Transform 前に剛体を積分 ----
             // LocalTransform.position を書き換えるので TransformSystem 前に走らせ、確定した
@@ -323,6 +336,9 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                     MYE_PROFILE_SCOPE("particles");
                     particleSystem.Update(scene.GetWorld(), ctx.fixedDt);
                 }
+                // トレイル点列の蓄積 (M29c)。WorldMatrix 確定後の tick 側で 1 回だけ —
+                // Render 側だと SceneView/GameView の多重描画で多重サンプルされる
+                vfxRenderer.UpdateTrails(scene.GetWorld(), ctx.tickIndex);
             }
             // ---- フェーズ 5: スクリプト層 LateUpdate ----
             if (runScripts) {
@@ -330,6 +346,42 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             }
             if (runManaged) {
                 managedHost.RunLateUpdate();
+            }
+            // ---- エフェクト spawn を drain (M32f): Prefab::Instantiate は内部で構造変更を確定する
+            // ため tick 末のここで。verify でもゲートしない = sim 状態として同 tick のハッシュに含まれる。
+            // C++ スクリプトは verify 中も走り同一キューを積む → 同一 fileId/EntityID 列で再現される。
+            if (!effectQueue.empty()) {
+                for (const EffectSpawnRequest& req : effectQueue) {
+                    std::wstring full = Utf8ToWide(req.prefabKey);
+                    if (full.size() < 12
+                        || full.compare(full.size() - 12, 12, L".prefab.json") != 0) {
+                        full += L".prefab.json";
+                    }
+                    if (full.find(L':') == std::wstring::npos) {
+                        full = assetsRoot + L"\\" + full; // assets ルート相対を絶対化
+                    }
+                    const uint64_t hash = PrefabLibrary::HashForPath(full);
+                    if (!prefabLibrary.Contains(hash)) {
+                        prefabLibrary.LoadFromFile(full);
+                    }
+                    const bool hasParent = (req.parent.index != 0u || req.parent.generation != 0u);
+                    const uint64_t parentFid =
+                        hasParent ? scene.EnsureFileId(
+                                        EntityID{ req.parent.index, req.parent.generation })
+                                  : 0;
+                    const uint64_t rootFid =
+                        Prefab::Instantiate(scene, prefabLibrary, hash, parentFid);
+                    if (rootFid != 0) {
+                        const EntityID root = scene.FindByFileId(rootFid).Id();
+                        if (auto* t = scene.GetWorld().GetComponent<LocalTransform>(root)) {
+                            t->position = { req.pos.x, req.pos.y, req.pos.z };
+                        }
+                    } else {
+                        MYE_LOG_WARN("PlayEffect: prefab not found: %s",
+                                     WideToUtf8(full).c_str());
+                    }
+                }
+                effectQueue.clear();
             }
             scene.GetWorld().ApplyStructuralChanges(); // フェーズ 7 (tick 末適用 = ADR-005)
 
@@ -393,6 +445,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                     scene.GetWorld().Rng().Seed(0x4D794531ull); // 決定論的再シード (World 既定値)
                     collisionSystem.Reset();
                     particleSystem.ResetParticles();
+                    vfxRenderer.Reset(); // M29c: トレイル点列も新シーンでリセット
                     scriptHost.ClearStarted();
                     managedHost.OnSceneReloaded();
                     MYE_LOG_INFO("[scene] loaded: %s", WideToUtf8(full).c_str());
@@ -445,7 +498,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             memcpy(target.clearColor, config.clearColor, sizeof(target.clearColor));
             if (config.renderSceneToBackbuffer) {
                 renderSystem.Render(scene.GetWorld(), device, *activePath, shaderManager, resources,
-                                    target, nullptr, &particleSystem);
+                                    target, nullptr, &particleSystem, &vfxRenderer);
                 // M21: ゲーム内 UI を backbuffer に重ねる (Runtime 経路)。マウスは hover 表示用
                 uiRenderer.Render(scene.GetWorld(), device, shaderManager, resources, target.rtv,
                                   target.width, target.height, ctx.input.mouseX, ctx.input.mouseY,
@@ -508,6 +561,8 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
 
     // ---- 終了 (起動の逆順) ----
     app.OnShutdown(ctx);
+    AssetDatabase::UninstallKeyResolver(); // M30c (assetDatabase 破棄前に必ず外す)
+    vfxRenderer.Shutdown(); // M29c
     uiRenderer.Shutdown();  // M21
     audioSystem.Shutdown(); // M19: source voice + XAudio2 を破棄 (host より先でも後でも可)
     jobs::System().Shutdown(); // M25: ワーカー join

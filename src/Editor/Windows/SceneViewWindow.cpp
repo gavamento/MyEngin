@@ -8,8 +8,10 @@
 #include "Editor/Selection.h"
 #include "Editor/Undo/UndoStack.h"
 #include "Engine/Core/Components.h"
+#include "Engine/Core/Log.h"
 #include "Engine/Platform/PathUtil.h"
 #include "Engine/Core/World.h"
+#include "Engine/Engine/AssetDatabase.h"
 #include "Engine/Engine/GameObject.h"
 #include "Engine/Engine/Physics/Shapes.h"
 #include "Engine/Engine/RenderSystem.h"
@@ -80,7 +82,7 @@ void SceneViewWindow::OnRenderViews(EngineContext& ctx, Selection& selection)
     target.width = rt_.Width();
     target.height = rt_.Height();
     ctx.renderSystem->Render(ctx.scene->GetWorld(), *ctx.device, *ctx.renderPath, *ctx.shaders,
-                             *ctx.resources, target, &cam, ctx.particles);
+                             *ctx.resources, target, &cam, ctx.particles, ctx.vfx);
 
     // エディタ補助線 (グリッド/ワイヤ/アウトライン) を SceneView RT の上に重ねる。
     // backbuffer/リプレイ経路には出さない (sim 非影響)
@@ -176,6 +178,130 @@ void SceneViewWindow::BuildOverlays(EngineContext& ctx, Selection& selection)
                 lines_.AddLine({ p.x - r, p.y, p.z }, { p.x + r, p.y, p.z }, kEmitter);
                 lines_.AddLine({ p.x, p.y - r, p.z }, { p.x, p.y + r, p.z }, kEmitter);
                 lines_.AddLine({ p.x, p.y, p.z - r }, { p.x, p.y, p.z + r }, kEmitter);
+            }
+        });
+
+        // ばねジョイント (owner↔connected を結ぶ線 + 両端マーカー、M29a)
+        constexpr uint32_t kSpring = 0xE060E0FFu;
+        const ComponentTypeId sjReq[] = { SpringJointComponent::sTypeId,
+                                          WorldMatrixComponent::sTypeId };
+        world.ForEachArchetype(sjReq, [&](Archetype& arch) {
+            const int si = arch.FindTypeIndex(SpringJointComponent::sTypeId);
+            const int wi = arch.FindTypeIndex(WorldMatrixComponent::sTypeId);
+            for (uint32_t row = 0; row < arch.Count(); ++row) {
+                const auto* sj = static_cast<const SpringJointComponent*>(arch.GetPtr(si, row));
+                if (sj->connectedEntity.IsNull() || !world.IsAlive(sj->connectedEntity)) {
+                    continue;
+                }
+                const auto* owm = world.GetComponent<WorldMatrixComponent>(sj->connectedEntity);
+                if (!owm) {
+                    continue;
+                }
+                const XMFLOAT4X4& wm = static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row))->value;
+                const XMFLOAT3 a = { wm._41, wm._42, wm._43 };
+                const XMFLOAT3 b = { owm->value._41, owm->value._42, owm->value._43 };
+                lines_.AddLine(a, b, kSpring);
+                lines_.AddWireSphere(a, 0.08f, kSpring);
+                lines_.AddWireSphere(b, 0.08f, kSpring);
+            }
+        });
+
+        // 定常力 (力方向の矢印、M29a)。長さは正規化 + 固定 (大きさは Inspector で読む)
+        constexpr uint32_t kForce = 0xF0A040FFu;
+        const ComponentTypeId cfReq[] = { ConstantForceComponent::sTypeId,
+                                          WorldMatrixComponent::sTypeId };
+        world.ForEachArchetype(cfReq, [&](Archetype& arch) {
+            const int fi = arch.FindTypeIndex(ConstantForceComponent::sTypeId);
+            const int wi = arch.FindTypeIndex(WorldMatrixComponent::sTypeId);
+            for (uint32_t row = 0; row < arch.Count(); ++row) {
+                const auto* cf = static_cast<const ConstantForceComponent*>(arch.GetPtr(fi, row));
+                const XMFLOAT4X4& wm = static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row))->value;
+                XMVECTOR dir = XMVectorSet(cf->force.x, cf->force.y, cf->force.z, 0);
+                if (cf->relative != 0) {
+                    // ローカル指定はワールド行列の回転成分で向きを変換 (表示のみ)
+                    XMFLOAT4X4 rot = wm;
+                    rot._41 = rot._42 = rot._43 = 0;
+                    dir = XMVector3TransformNormal(dir, XMLoadFloat4x4(&rot));
+                }
+                if (XMVectorGetX(XMVector3LengthSq(dir)) < 1e-8f) {
+                    continue;
+                }
+                dir = XMVector3Normalize(dir);
+                const XMFLOAT3 p = { wm._41, wm._42, wm._43 };
+                XMFLOAT3 tip;
+                XMStoreFloat3(&tip, XMVectorAdd(XMLoadFloat3(&p), XMVectorScale(dir, 1.2f)));
+                lines_.AddLine(p, tip, kForce);
+                // 矢先 (tip から根本方向へ小さな八の字)
+                XMVECTOR back = XMVectorScale(dir, -0.25f);
+                XMVECTOR up = XMVectorSet(0, 1, 0, 0);
+                XMVECTOR side = XMVector3Cross(dir, up);
+                if (XMVectorGetX(XMVector3LengthSq(side)) < 1e-6f) {
+                    side = XMVectorSet(1, 0, 0, 0);
+                } else {
+                    side = XMVector3Normalize(side);
+                }
+                XMFLOAT3 w1, w2;
+                XMStoreFloat3(&w1, XMVectorAdd(XMLoadFloat3(&tip),
+                                               XMVectorAdd(back, XMVectorScale(side, 0.12f))));
+                XMStoreFloat3(&w2, XMVectorAdd(XMLoadFloat3(&tip),
+                                               XMVectorSubtract(back, XMVectorScale(side, 0.12f))));
+                lines_.AddLine(tip, w1, kForce);
+                lines_.AddLine(tip, w2, kForce);
+            }
+        });
+
+        // キャラクターコントローラ (カプセルワイヤ、M29b)。寸法規約は物理とミラー
+        // (radius×max(sx,sz)、halfSeg = height/2×sy − radius、常にワールド Y 軸)
+        constexpr uint32_t kCharCtrl = 0x30E0B0FFu;
+        const ComponentTypeId chReq[] = { CharacterControllerComponent::sTypeId,
+                                          WorldMatrixComponent::sTypeId };
+        world.ForEachArchetype(chReq, [&](Archetype& arch) {
+            const int ci = arch.FindTypeIndex(CharacterControllerComponent::sTypeId);
+            const int wi = arch.FindTypeIndex(WorldMatrixComponent::sTypeId);
+            for (uint32_t row = 0; row < arch.Count(); ++row) {
+                const auto* cc =
+                    static_cast<const CharacterControllerComponent*>(arch.GetPtr(ci, row));
+                const XMFLOAT4X4& wm = static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row))->value;
+                const XMFLOAT3 sc = MatrixScale(wm);
+                const float wr = cc->radius * std::max(std::fabs(sc.x), std::fabs(sc.z));
+                const float wh = cc->height * 0.5f * std::fabs(sc.y);
+                const float halfSeg = (wh > wr) ? (wh - wr) : 0.0f;
+                lines_.AddWireCapsule({ wm._41, wm._42, wm._43 }, { 1, 0, 0 }, { 0, 1, 0 },
+                                      { 0, 0, 1 }, wr, halfSeg, kCharCtrl);
+            }
+        });
+
+        // スプライト (サイズ枠、M29c)。ビルボードは常時回るのでワイヤは XY 平面固定のヒント表示
+        constexpr uint32_t kVfx = 0xC080F0FFu;
+        const ComponentTypeId spReq[] = { SpriteRendererComponent::sTypeId,
+                                          WorldMatrixComponent::sTypeId };
+        world.ForEachArchetype(spReq, [&](Archetype& arch) {
+            const int si = arch.FindTypeIndex(SpriteRendererComponent::sTypeId);
+            const int wi = arch.FindTypeIndex(WorldMatrixComponent::sTypeId);
+            for (uint32_t row = 0; row < arch.Count(); ++row) {
+                const auto* sp = static_cast<const SpriteRendererComponent*>(arch.GetPtr(si, row));
+                const XMFLOAT4X4& wm = static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row))->value;
+                const XMFLOAT3 p = { wm._41, wm._42, wm._43 };
+                const float hx = sp->size.x * 0.5f;
+                const float hy = sp->size.y * 0.5f;
+                lines_.AddLine({ p.x - hx, p.y - hy, p.z }, { p.x + hx, p.y - hy, p.z }, kVfx);
+                lines_.AddLine({ p.x + hx, p.y - hy, p.z }, { p.x + hx, p.y + hy, p.z }, kVfx);
+                lines_.AddLine({ p.x + hx, p.y + hy, p.z }, { p.x - hx, p.y + hy, p.z }, kVfx);
+                lines_.AddLine({ p.x - hx, p.y + hy, p.z }, { p.x - hx, p.y - hy, p.z }, kVfx);
+            }
+        });
+
+        // 3D テキスト (T 字 glyph、M29c)
+        const ComponentTypeId txReq[] = { TextMeshComponent::sTypeId,
+                                          WorldMatrixComponent::sTypeId };
+        world.ForEachArchetype(txReq, [&](Archetype& arch) {
+            const int wi = arch.FindTypeIndex(WorldMatrixComponent::sTypeId);
+            for (uint32_t row = 0; row < arch.Count(); ++row) {
+                const XMFLOAT4X4& wm = static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row))->value;
+                const XMFLOAT3 p = { wm._41, wm._42, wm._43 };
+                const float r = 0.25f;
+                lines_.AddLine({ p.x - r, p.y + r, p.z }, { p.x + r, p.y + r, p.z }, kVfx);
+                lines_.AddLine({ p.x, p.y + r, p.z }, { p.x, p.y - r, p.z }, kVfx);
             }
         });
     }
@@ -461,13 +587,35 @@ void SceneViewWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
     const ImVec2 imgPos = ImGui::GetCursorScreenPos();
     if (rt_.IsValid()) {
         ImGui::Image(reinterpret_cast<ImTextureID>(rt_.SRV()), avail);
-        // AssetBrowser からのドロップ: カーソル下の地面 (y=0) に配置
+        // AssetBrowser からのドロップ: .cs はカーソル下の 3D オブジェクトにアタッチ (ピッキング)、
+        // その他 (プレハブ/モデル) はカーソル下の地面 (y=0) に配置
         if (ImGui::BeginDragDropTarget()) {
             if (const ImGuiPayload* pa = ImGui::AcceptDragDropPayload(kAssetDragPayload)) {
-                XMFLOAT3 gp = { 0, 0, 0 };
-                const XMFLOAT3* pp = GroundPointUnderCursor(imgPos, avail, gp) ? &gp : nullptr;
-                InstantiateAssetAtPath(ctx, selection, undo,
-                                       Utf8ToWide(static_cast<const char*>(pa->Data)), pp, 0);
+                const std::wstring path = Utf8ToWide(static_cast<const char*>(pa->Data));
+                if (AssetDatabase::ClassifyPath(path) == AssetType::Script) {
+                    const ImGuiIO& dio = ImGui::GetIO();
+                    const int px = static_cast<int>(dio.MousePos.x - imgPos.x);
+                    const int py = static_cast<int>(dio.MousePos.y - imgPos.y);
+                    if (px >= 0 && py >= 0 && px < rt_.Width() && py < rt_.Height()) {
+                        if (!picking_.IsReady()) {
+                            picking_.Init(*ctx.device, *ctx.shaders);
+                        }
+                        const EntityID hit =
+                            picking_.Pick(*ctx.device, ctx.scene->GetWorld(), *ctx.shaders,
+                                          *ctx.resources, lastView_, lastProj_, rt_.Width(),
+                                          rt_.Height(), px, py);
+                        if (!hit.IsNull()) {
+                            AttachScriptToEntity(ctx, selection, undo, path, hit);
+                        } else {
+                            MYE_LOG_WARN("no entity under cursor — drop the script onto an object "
+                                         "(or an entity row in Hierarchy)");
+                        }
+                    }
+                } else {
+                    XMFLOAT3 gp = { 0, 0, 0 };
+                    const XMFLOAT3* pp = GroundPointUnderCursor(imgPos, avail, gp) ? &gp : nullptr;
+                    InstantiateAssetAtPath(ctx, selection, undo, path, pp, 0);
+                }
             }
             ImGui::EndDragDropTarget();
         }

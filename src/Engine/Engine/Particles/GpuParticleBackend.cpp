@@ -5,6 +5,7 @@
 
 #include "Engine/Core/Log.h"
 #include "Engine/Core/World.h"
+#include "Engine/Engine/Particles/ParticleCurves.h"
 #include "Engine/Renderer/GraphicsDevice.h"
 #include "Engine/Renderer/ShaderManager.h"
 
@@ -303,10 +304,10 @@ void GpuParticleBackend::Update(World& world, float dt)
         const XMFLOAT3 origin = { wm->value._41, wm->value._42, wm->value._43 };
 
         // ---- CPU 側で放出データを生成 (決定論 RNG。GPU では乱数を作らない) ----
-        em.emitAccum += desc->rate * dt;
-        int emitCount = static_cast<int>(em.emitAccum);
-        em.emitAccum -= static_cast<float>(emitCount);
+        // 放出計画は CPU バックエンドと共有 (M32a: playing/duration/loop/burst)。表示用ベストエフォート。
+        int emitCount = PlanParticleEmission(*desc, em.ageTicks, em.emitAccum, dt);
         emitCount = std::min(emitCount, static_cast<int>(em.capacity / 4)); // 1tick 暴発ガード
+        emitCount = std::max(emitCount, 0);
 
         std::vector<EmitData> emitData(static_cast<size_t>(std::max(emitCount, 0)));
         for (int n = 0; n < emitCount; ++n) {
@@ -447,8 +448,10 @@ void GpuParticleBackend::Update(World& world, float dt)
 }
 
 void GpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
-                                ShaderManager& shaders, float renderOffsetX)
+                                ShaderManager& shaders, RenderResources& resources,
+                                float renderOffsetX)
 {
+    (void)resources; // GPU 側テクスチャは将来対応 (CPU バックエンドが主。M32b)
     ShaderProgram* prog = shaders.Get(renderShader_);
     if (!prog || !prog->valid) {
         return;

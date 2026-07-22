@@ -8,6 +8,7 @@
 #include <fstream>
 #include <system_error>
 
+#include "Engine/Core/AssetKeyResolver.h"
 #include "Engine/Core/Hash.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Platform/PathUtil.h"
@@ -255,6 +256,66 @@ std::wstring AssetDatabase::PathForGuid(uint64_t guid) const
 {
     auto it = byGuid_.find(guid);
     return it == byGuid_.end() ? std::wstring() : it->second;
+}
+
+namespace {
+
+// assetkey::Resolve → AssetDatabase の橋渡し (関数ポインタ + user データ)
+uint64_t KeyResolverThunk(void* user, const std::wstring& normalizedPath)
+{
+    // createIfMissing=false: 解決だけで .meta は書かない (書き出しは Import/Create 側の責務)。
+    // テーブル/ディスク .meta ヒット時は GUID、未知パスは従来の path-hash が返る
+    return static_cast<AssetDatabase*>(user)->GuidForPath(normalizedPath,
+                                                          /*createIfMissing=*/false);
+}
+
+} // namespace
+
+void AssetDatabase::InstallAsKeyResolver()
+{
+    assetkey::Install(&KeyResolverThunk, this);
+}
+
+void AssetDatabase::UninstallKeyResolver()
+{
+    assetkey::Install(nullptr, nullptr);
+}
+
+void AssetDatabase::MoveAsset(const std::wstring& oldPath, const std::wstring& newPath)
+{
+    // 1) 旧キーの除去: oldPath そのもの + (フォルダ移動なら) 配下すべて
+    const std::wstring oldKey = NormalizePathKey(oldPath);
+    const std::wstring oldPrefix = oldKey + L"\\";
+    for (auto it = byPath_.begin(); it != byPath_.end();) {
+        const std::wstring& key = it->first;
+        const bool hit = (key == oldKey)
+            || (key.size() > oldPrefix.size()
+                && key.compare(0, oldPrefix.size(), oldPrefix) == 0);
+        if (hit) {
+            byGuid_.erase(it->second);
+            typeByPath_.erase(key);
+            it = byPath_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
+    // 2) 新パスの再登録: 同伴移動した .meta の GUID を SyncOne (EnsureMeta 経由) が尊重する。
+    //    .meta が無い場合は新 path-hash で採番される (フォールバック)
+    std::error_code ec;
+    if (fs::is_directory(newPath, ec)) {
+        for (const auto& e : fs::recursive_directory_iterator(newPath, ec)) {
+            if (!e.is_regular_file(ec)) {
+                continue;
+            }
+            const std::wstring p = e.path().wstring();
+            if (!IsMetaPath(p)) {
+                SyncOne(p);
+            }
+        }
+    } else if (fs::exists(newPath, ec)) {
+        SyncOne(newPath);
+    }
 }
 
 AssetType AssetDatabase::TypeForPath(const std::wstring& path) const

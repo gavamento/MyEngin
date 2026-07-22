@@ -20,7 +20,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
         return DefWindowProcW(hwnd, msg, wparam, lparam);
     }
     if (window) {
-        return static_cast<LRESULT>(window->HandleMsg(msg, wparam, lparam));
+        return static_cast<LRESULT>(window->HandleMsg(hwnd, msg, wparam, lparam));
     }
     return DefWindowProcW(hwnd, msg, wparam, lparam);
 }
@@ -106,13 +106,13 @@ bool Win32Window::ConsumeResize()
     return r;
 }
 
-intptr_t Win32Window::HandleMsg(uint32_t msg, uint64_t wparam, int64_t lparam)
+intptr_t Win32Window::HandleMsg(void* hwndRaw, uint32_t msg, uint64_t wparam, int64_t lparam)
 {
-    const HWND hwnd = static_cast<HWND>(hwnd_);
+    const HWND hwnd = static_cast<HWND>(hwndRaw);
 
     for (MsgHandler& handler : handlers_) {
         int64_t result = 0;
-        if (handler(hwnd_, msg, wparam, lparam, result)) {
+        if (handler(hwndRaw, msg, wparam, lparam, result)) {
             return result;
         }
     }

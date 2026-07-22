@@ -14,13 +14,16 @@
 #include "Engine/Core/EcsSelfTest.h"
 #include "Engine/Core/JobSystemSelfTest.h"
 #include "Engine/Core/Log.h"
+#include "Editor/AssetOpsSelfTest.h"
 #include "Engine/Engine/AnimatorControllerSelfTest.h"
 #include "Engine/Engine/AssetDatabaseSelfTest.h"
 #include "Engine/Engine/EngineLoop.h"
+#include "Engine/Engine/ParticleSelfTest.h"
 #include "Engine/Engine/PhysicsSelfTest.h"
 #include "Engine/Engine/Project.h"
 #include "Engine/Engine/SceneSelfTest.h"
 #include "Engine/Engine/UI/UISelfTest.h"
+#include "Engine/Engine/VfxSelfTest.h"
 #include "Engine/Platform/PathUtil.h"
 #include "Engine/Renderer/RenderSelfTest.h"
 #include "Engine/Renderer/TextureCookSelfTest.h"
@@ -165,7 +168,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             && mye::RunUndoSelfTest() && mye::RunRenderSelfTest() && mye::RunPhysicsSelfTest()
             && mye::RunUISelfTest() && mye::RunAnimatorControllerSelfTest()
             && mye::RunAssetDatabaseSelfTest() && mye::RunTextureCookSelfTest()
-            && mye::RunJobSystemSelfTest();
+            && mye::RunJobSystemSelfTest() && mye::RunVfxSelfTest()
+            && mye::RunParticleSelfTest() && mye::RunAssetOpsSelfTest();
         return ok ? 0 : 1;
     }
 

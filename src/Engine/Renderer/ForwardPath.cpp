@@ -27,6 +27,13 @@ struct PerFrameCB {
     float shadowTexel;
     int32_t shadowEnabled;
     float pad1[2];
+    // ---- フォグ (M29d、末尾 append = 既存レイアウト不変) ----
+    XMFLOAT3 fogColor;
+    int32_t fogMode; // -1=無効
+    float fogDensity;
+    float fogStart;
+    float fogEnd;
+    float fogPad;
 };
 
 struct PerObjectCB {
@@ -136,6 +143,8 @@ bool ForwardPath::Init(GraphicsDevice& device, ShaderManager& shaders)
 
     // スキンメッシュ用のシェーダをプリロード (BLENDINDICES 入力レイアウトもここで構築される)
     skinnedShader_ = shaders.Load("forward_skinned");
+    // スカイボックス (M29d)。失敗しても続行 (空が clearColor になるだけ)
+    skybox_.Init(device, shaders);
     return true;
 }
 
@@ -180,6 +189,11 @@ void ForwardPath::Render(GraphicsDevice& device, const RenderView& view, const R
     pf.shadowVP = view.lightViewProj;
     pf.shadowTexel = view.shadowTexelSize;
     pf.shadowEnabled = (view.shadowSRV != nullptr) ? 1 : 0;
+    pf.fogColor = view.fogColor;
+    pf.fogMode = view.fogMode;
+    pf.fogDensity = view.fogDensity;
+    pf.fogStart = view.fogStart;
+    pf.fogEnd = view.fogEnd;
     UploadCB(dc, perFrameCB_.Get(), pf);
 
     ID3D11Buffer* cbs[2] = { perFrameCB_.Get(), perObjectCB_.Get() };
@@ -199,6 +213,10 @@ void ForwardPath::Render(GraphicsDevice& device, const RenderView& view, const R
     dc->OMSetDepthStencilState(depthOpaque_.Get(), 0);
     dc->OMSetBlendState(blendOpaque_.Get(), nullptr, 0xFFFFFFFFu);
     DrawItems(device, queue.opaque, view, resources, shaders);
+
+    // スカイボックス (M29d): 不透明後・透明前。深度 1.0 のピクセルだけ塗る。
+    // PS の b3 のみ使うので b0-b2 / トポロジは不変 (透明段は DrawItems がシェーダ再バインド)
+    skybox_.Render(device, shaders, view);
 
     // 半透明
     if (!queue.transparent.empty()) {

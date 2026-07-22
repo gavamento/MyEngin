@@ -6,9 +6,11 @@
 
 #include "Engine/Core/Components.h"
 #include "Engine/Core/JobSystem.h"
+#include "Engine/Core/Log.h"
 #include "Engine/Core/Profiler.h"
 #include "Engine/Core/World.h"
 #include "Engine/Engine/Particles/ParticleSystem.h"
+#include "Engine/Engine/Vfx/VfxRenderer.h"
 #include "Engine/Renderer/FrustumCull.h"
 #include "Engine/Renderer/GpuResources.h"
 #include "Engine/Renderer/RenderPath.h"
@@ -75,10 +77,61 @@ XMFLOAT4X4 ComputeDirectionalLightVP(const XMFLOAT3& lightDir, const XMFLOAT3& s
 
 } // namespace
 
+void CollectEnvironment(World& world, RenderView& view)
+{
+    // 最初 (entity.index 最小) の active な Skybox
+    uint32_t bestSky = 0xFFFFFFFFu;
+    const ComponentTypeId skyReq[] = { SkyboxComponent::sTypeId };
+    world.ForEachArchetype(skyReq, [&](Archetype& arch) {
+        const int si = arch.FindTypeIndex(SkyboxComponent::sTypeId);
+        for (uint32_t row = 0; row < arch.Count(); ++row) {
+            const EntityID e = arch.EntityAt(row);
+            if (e.index >= bestSky || !IsEntityActive(world, e)) {
+                continue;
+            }
+            bestSky = e.index;
+            const auto* sb = static_cast<const SkyboxComponent*>(arch.GetPtr(si, row));
+            if (sb->mode == 1) {
+                // Cubemap は予約 (未実装) — Gradient にフォールバック。1 回だけ警告
+                static bool warned = false;
+                if (!warned) {
+                    warned = true;
+                    MYE_LOG_WARN("[render] Skybox mode=Cubemap is reserved; falling back to "
+                                 "Gradient");
+                }
+            }
+            view.skyMode = 0;
+            view.skyTop = { sb->topColor.x, sb->topColor.y, sb->topColor.z };
+            view.skyHorizon = { sb->horizonColor.x, sb->horizonColor.y, sb->horizonColor.z };
+            view.skyBottom = { sb->bottomColor.x, sb->bottomColor.y, sb->bottomColor.z };
+        }
+    });
+
+    // 最初の active な Fog
+    uint32_t bestFog = 0xFFFFFFFFu;
+    const ComponentTypeId fogReq[] = { FogComponent::sTypeId };
+    world.ForEachArchetype(fogReq, [&](Archetype& arch) {
+        const int fi = arch.FindTypeIndex(FogComponent::sTypeId);
+        for (uint32_t row = 0; row < arch.Count(); ++row) {
+            const EntityID e = arch.EntityAt(row);
+            if (e.index >= bestFog || !IsEntityActive(world, e)) {
+                continue;
+            }
+            bestFog = e.index;
+            const auto* fog = static_cast<const FogComponent*>(arch.GetPtr(fi, row));
+            view.fogMode = (fog->mode >= 0 && fog->mode <= 2) ? fog->mode : 0;
+            view.fogColor = { fog->color.x, fog->color.y, fog->color.z };
+            view.fogDensity = fog->density;
+            view.fogStart = fog->start;
+            view.fogEnd = fog->end;
+        }
+    });
+}
+
 bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& path,
                           ShaderManager& shaders, RenderResources& resources,
                           const FrameTarget& target, const CameraOverride* cameraOverride,
-                          ParticleSystem* particles)
+                          ParticleSystem* particles, VfxRenderer* vfx)
 {
     RenderView view;
     view.dsv = target.dsv;
@@ -104,6 +157,7 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
 
     // ---- カメラ ----
     bool cameraFound = false;
+    EntityID camEntity = kNullEntity; // シーンカメラの実体 (CameraPostFx 参照用、M29e)
     if (cameraOverride) {
         view.view = cameraOverride->view;
         const XMMATRIX p = XMMatrixPerspectiveFovLH(
@@ -124,6 +178,7 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
                 if (!cameraFound || c->isPrimary != 0) {
                     cam = *c;
                     camWorld = static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row))->value;
+                    camEntity = arch.EntityAt(row); // M29e: CameraPostFx 参照用
                     cameraFound = true;
                     if (c->isPrimary != 0) {
                         return;
@@ -315,18 +370,33 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
         }
     }
 
+    CollectEnvironment(world, view); // M29d: Skybox/Fog を view に反映
     queue_.Sort();
     path.Render(device, view, queue_, lights, resources, shaders);
 
-    // パーティクルは常に Forward 後段 (どのレンダリングパスでも共通)。HDR 中間へ加算される
-    if (particles) {
-        particles->Render(device, view, shaders);
+    // VFX (M29c): Sprite/Trail/TextMesh をメッシュ (不透明+透明) の後・パーティクルの前に
+    // 重ねる。HDR 中間へ描かれ postfx を通る。RT はパスがバインドしたまま
+    if (vfx) {
+        vfx->Render(world, device, shaders, resources, view);
     }
 
-    // HDR → LDR 解決 (トーンマップ)。HDR 中間を使った時のみ
+    // パーティクルは常に Forward 後段 (どのレンダリングパスでも共通)。HDR 中間へ加算される
+    if (particles) {
+        particles->Render(device, view, shaders, resources);
+    }
+
+    // HDR → LDR 解決 (トーンマップ)。HDR 中間を使った時のみ。
+    // シーンカメラに CameraPostFx があれば上書きマージ (M29e。CameraOverride 経路は
+    // エディタ視界なのでグローバル設定のまま)
     if (hdr != nullptr) {
+        PostProcess::Settings effective = postFxSettings;
+        if (!cameraOverride && !camEntity.IsNull()) {
+            if (const auto* pfx = world.GetComponent<CameraPostFxComponent>(camEntity)) {
+                effective = MergeCameraPostFx(postFxSettings, *pfx);
+            }
+        }
         postFx_.Resolve(device, shaders, *hdr, target.rtv, target.width, target.height,
-                        postFxSettings);
+                        effective);
     }
     return cameraFound;
 }

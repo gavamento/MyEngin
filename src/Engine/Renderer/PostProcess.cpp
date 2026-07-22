@@ -3,19 +3,46 @@
 #include <algorithm>
 #include <utility>
 
+#include "Engine/Core/Components.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Renderer/GraphicsDevice.h"
 #include "Engine/Renderer/ShaderManager.h"
 
 namespace mye {
+
+PostProcess::Settings MergeCameraPostFx(const PostProcess::Settings& base,
+                                        const CameraPostFxComponent& comp)
+{
+    PostProcess::Settings s = base; // applyGamma は base を維持
+    s.exposure = (comp.exposure >= 0.0f) ? comp.exposure : 0.0f;
+    s.tonemap = (comp.tonemapMode >= 0 && comp.tonemapMode <= 2) ? comp.tonemapMode : 1;
+    s.bloom = comp.bloomOn != 0;
+    s.bloomThreshold = comp.bloomThreshold;
+    s.chromAberration = comp.chromAberration; // M32d
+    s.vignetteIntensity = comp.vignetteIntensity;
+    s.vignetteRadius = comp.vignetteRadius;
+    s.saturation = comp.saturation;
+    s.contrast = comp.contrast;
+    s.colorFilter = comp.colorFilter;
+    s.bloomIntensity = comp.bloomIntensity;
+    s.fxaa = comp.fxaaOn != 0;
+    return s;
+}
 namespace {
 
-// postfx_tonemap.hlsl の PostFx cbuffer と一致 (16 バイト)
+// postfx_tonemap.hlsl の PostFx cbuffer と一致 (64 バイト)
 struct PostFxCB {
     float exposure;
     int32_t tonemap;
     float bloomIntensity;
     int32_t applyGamma;
+    float chromAberration; // M32d
+    float vignetteIntensity;
+    float vignetteRadius;
+    float saturation;
+    float contrast;
+    float pad[3];
+    DirectX::XMFLOAT4 colorFilter;
 };
 
 // postfx_bright.hlsl の Bright cbuffer (16 バイト)
@@ -263,6 +290,12 @@ void PostProcess::Resolve(GraphicsDevice& device, ShaderManager& shaders, Target
     cb.tonemap = s.tonemap;
     cb.bloomIntensity = bloomIntensity;
     cb.applyGamma = s.applyGamma ? 1 : 0;
+    cb.chromAberration = s.chromAberration;
+    cb.vignetteIntensity = s.vignetteIntensity;
+    cb.vignetteRadius = s.vignetteRadius;
+    cb.saturation = s.saturation;
+    cb.contrast = s.contrast;
+    cb.colorFilter = s.colorFilter;
     UploadCB(dc, cb_.Get(), cb);
     ID3D11Buffer* cbs[1] = { cb_.Get() };
     dc->PSSetConstantBuffers(0, 1, cbs);

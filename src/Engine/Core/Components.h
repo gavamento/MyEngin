@@ -106,6 +106,27 @@ struct ParticleEmitterComponent {
     // ---- 決定論 ----
     uint32_t seed = 12345; // エミッタ別 RNG ストリームのシード (spec 7.3)
     int32_t maxParticles = 100000;
+    // ---- ライフサイクル (M32a: 末尾 append。既定 = 従来挙動と同一) ----
+    int32_t playing = 1;       // 0=放出停止 (生存粒子は生きる)。age/emitAccum 凍結
+    int32_t durationTicks = 0; // 放出ウィンドウ長 (tick)。0=無限
+    int32_t looping = 1;       // durationTicks>0 のとき 1=ウィンドウ末で巻き戻し再放出
+    int32_t burstCount = 0;    // ウィンドウ先頭 (age==0) の単発放出数
+    // ---- 多点グラデーション (M32a: begin/end + opt-in 中間キー。T∈(0,1) で有効、0=無効) ----
+    DirectX::XMFLOAT4 colorMid1 = { 1.0f, 1.0f, 1.0f, 1.0f };
+    float colorMidT1 = 0.0f;
+    DirectX::XMFLOAT4 colorMid2 = { 1.0f, 1.0f, 1.0f, 1.0f };
+    float colorMidT2 = 0.0f;
+    float sizeMidScale = 1.0f;
+    float sizeMidT = 0.0f;
+    // ---- テクスチャ / フリップブック (M32b) ----
+    AssetID texture = {};  // 空=procedural ソフト円
+    int32_t flipTilesX = 1;
+    int32_t flipTilesY = 1;
+    float flipCycles = 1.0f; // 寿命あたりのフリップブック周回数
+    // ---- ソフトパーティクル (M32c) ----
+    float softFadeDistance = 0.0f; // >0 で深度フェード
+    // ---- 実行時 (非登録=非ハッシュ・非シリアライズ。スクリプト/エディタが即時バーストを積む) ----
+    int32_t pendingBurst = 0; // 次の Update で消費され 0 に戻る (常に tick 末ハッシュ前に 0)
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
@@ -230,6 +251,153 @@ struct AnimatorControllerComponent {
     int32_t transitionDuration = 0;  // 遷移全長 tick
     int32_t transitionToTime = 0;    // 遷移先 state の再生位置 (tick)
     int32_t params[4] = { 0, 0, 0, 0 }; // 整数パラメータ (遷移条件が index 0..3 を参照)
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
+// ---- 定常力 (M29a) ----
+// Rigidbody へ毎 tick 力/トルクを加え続ける。**無ければ何もしない** (opt-in → 既存シーン不変)。
+// Rigidbody の velocity (hash 対象) を決定論的に駆動する入力データなので **hash 対象**。
+// Rigidbody 非所持・kinematic のエンティティでは無効。
+struct ConstantForceComponent {
+    DirectX::XMFLOAT3 force = { 0.0f, 0.0f, 0.0f };  // N。毎 tick v += F/m·dt
+    DirectX::XMFLOAT3 torque = { 0.0f, 0.0f, 0.0f }; // N·m。毎 tick ω += I⁻¹·τ·dt (freezeRotation 中は無効)
+    int32_t relative = 0; // 0=World 1=Local (エンティティのワールド姿勢で回転して適用)
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
+// ---- 距離バネジョイント (M29a) ----
+// 自エンティティと connectedEntity を自然長 restLength のばねで繋ぐ。**無ければ何もしない** (opt-in)。
+// 速度レベルの単一インパルス (ステートレス = warm starting 不要) で、減衰は implicit
+// (分母に組込) なので damping はいくら大きくても発散しない。剛性の安定目安:
+// stiffness·dt²/mass < 4 (dt=1/60 → mass=1 で k < 14400)。
+// どちらか一方が動的 Rigidbody なら機能する (もう一方は不動アンカー扱い)。hash 対象。
+struct SpringJointComponent {
+    EntityID connectedEntity = kNullEntity; // 接続先 (null = 何もしない)
+    float restLength = 2.0f; // 自然長 (m)
+    float stiffness = 50.0f; // ばね定数 k (N/m)
+    float damping = 5.0f;    // 減衰係数 c (N·s/m)
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
+// ---- キャラクターコントローラ (M29b) ----
+// カプセル形状のキネマティック移動体 (move-then-depenetrate + 接地判定)。**無ければ何もしない**
+// (opt-in)。Rigidbody と両方持つ場合は Rigidbody が優先され CC は無効。カプセルは常にワールド
+// Y 軸 (エンティティの回転は形状に影響しない)。LocalTransform (hash 対象) を駆動する sim
+// 状態なので **hash 対象**。moveInput / jumpSpeed は決定論スクリプトが ABI で書く sim 入力。
+// ソリッドな Collider (capsule) を併用すると剛体側からもブロック面として見える (推奨パターン。
+// その場合 collider は tick 頭の位置で判定される = 1 tick 遅延は許容)。
+struct CharacterControllerComponent {
+    float radius = 0.3f;         // カプセル半径 (m)
+    float height = 1.8f;         // 全高 (両端の半球込み)。線分半長 = max(0, height/2 − radius)
+    float slopeLimitDeg = 45.0f; // これ以下の傾斜の面を「接地」とみなす (面法線と Y の角度)
+    float skinWidth = 0.02f;     // 接地プローブの探り距離
+    float gravityScale = 1.0f;
+    DirectX::XMFLOAT3 moveInput = { 0.0f, 0.0f, 0.0f }; // 水平移動速度 m/s (y 無視)。保持される
+    DirectX::XMFLOAT3 velocity = { 0.0f, 0.0f, 0.0f };  // y=重力積分状態、x/z=前 tick の実効速度
+    float jumpSpeed = 0.0f; // >0 なら次 tick 接地時に vy=jumpSpeed (接地可否に関わらず消費)
+    int32_t isGrounded = 0; // 前 tick の接地判定 (読み取り専用)
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
+// ---- スプライト/ビルボード (M29c) ----
+// ワールド空間のテクスチャ付き板。**無ければ何も描かない** (opt-in)。描画専用なので
+// **kComponentNoHash** (既存シーンのリプレイ不変 = bump 不要)。VfxRenderer が
+// 透明メッシュの後・パーティクルの前に描く (透明メッシュとの相互ソートはしない)。
+struct SpriteRendererComponent {
+    AssetID texture = {};                          // 空 = 白 (単色板)
+    DirectX::XMFLOAT4 color = { 1.0f, 1.0f, 1.0f, 1.0f };
+    DirectX::XMFLOAT2 size = { 1.0f, 1.0f };       // ワールド単位 (幅, 高さ)
+    int32_t billboardMode = 0; // 0=Billboard(常にカメラ正対) 1=BillboardY(ヨーのみ) 2=World(姿勢基底)
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
+// ---- トレイル (M29c) ----
+// 移動軌跡のリボン。**無ければ何も描かない** (opt-in)。描画専用 = **kComponentNoHash**。
+// 点列はコンポーネント外 (VfxRenderer の TrailStore) に常駐し、tick 側で蓄積される
+// (Render 側で蓄積すると SceneView/GameView の多重描画で多重サンプルされるため)。
+struct TrailRendererComponent {
+    float duration = 0.5f;          // 点の寿命 (秒)
+    float width = 0.2f;             // リボン幅 (新しい端。古い端へ 0 にテーパ)
+    DirectX::XMFLOAT4 colorBegin = { 1.0f, 1.0f, 1.0f, 1.0f }; // 新しい端
+    DirectX::XMFLOAT4 colorEnd = { 1.0f, 1.0f, 1.0f, 0.0f };   // 古い端
+    float minVertexDistance = 0.05f; // この距離以上動いたら点を追加
+    int32_t emitting = 1;            // 0 = 新規点の追加停止 (既存点は寿命で消える)
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
+// ---- 3D テキスト (M29c) ----
+// ワールド空間の中央揃え単一行テキスト。**無ければ何も描かない** (opt-in)。描画専用 =
+// **kComponentNoHash**。フォントは UIRenderer の埋め込み 8x8 アトラスを共有。
+// スクリプトからは ABI SetTextMeshText で文字列を設定できる (非 hash なので sim 安全)。
+struct TextMeshComponent {
+    char text[64] = "Text";
+    float fontScale = 1.0f; // 1.0 で行高 ≈ 0.3 ワールド単位
+    DirectX::XMFLOAT4 color = { 1.0f, 1.0f, 1.0f, 1.0f };
+    int32_t billboardMode = 0; // SpriteRenderer と同じ enum
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
+// ---- スカイボックス (M29d) ----
+// 背景の空。シーン内の **最初の active な 1 個** (entity.index 最小) を使用 (isPrimary カメラ前例)。
+// **無ければ従来の clearColor 背景** (opt-in)。描画専用 = **kComponentNoHash**。
+// mode=1 (Cubemap) は将来拡張の予約 — 現状は Gradient にフォールバックする。
+struct SkyboxComponent {
+    int32_t mode = 0; // 0=Gradient 1=Cubemap (予約。現状 Gradient フォールバック)
+    DirectX::XMFLOAT4 topColor = { 0.24f, 0.42f, 0.83f, 1.0f };     // 天頂
+    DirectX::XMFLOAT4 horizonColor = { 0.74f, 0.81f, 0.90f, 1.0f }; // 地平線
+    DirectX::XMFLOAT4 bottomColor = { 0.28f, 0.25f, 0.22f, 1.0f };  // 地面方向
+    AssetID cubemapTexture = {}; // 予約 (mode=1 用。DDS cubemap ローダは未実装)
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
+// ---- フォグ (M29d) ----
+// 距離フォグ。シーン内の **最初の active な 1 個** を使用。**無ければフォグ無し** (opt-in)。
+// 描画専用 = **kComponentNoHash**。不透明+透明メッシュに適用 (forward/deferred 両パス)。
+// パーティクル/スプライト/スカイボックスには掛からない (v1 の制限)。
+struct FogComponent {
+    int32_t mode = 0; // 0=Linear (start..end) 1=Exp (1-e^-ρd) 2=Exp2 (1-e^-(ρd)²)
+    DirectX::XMFLOAT4 color = { 0.65f, 0.70f, 0.75f, 1.0f };
+    float density = 0.02f; // Exp/Exp2 用
+    float start = 10.0f;   // Linear 用
+    float end = 80.0f;     // Linear 用
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
+// ---- カメラ別ポストプロセス (M29e) ----
+// シーンカメラに付けて既存 PostProcess::Settings をシーンオーサリングする。
+// **無ければグローバル設定 (renderSystem.postFxSettings) のまま** (opt-in)。
+// 描画専用 = **kComponentNoHash**。SceneView のエディタカメラ (CameraOverride) には
+// 適用されない (エディタ操作視界は不変)。enablePostFx=false 時は無視される。
+struct CameraPostFxComponent {
+    float exposure = 1.0f;       // トーンマップ前の露出倍率
+    int32_t tonemapMode = 1;     // 0=Passthrough 1=ACES 2=Reinhard
+    int32_t bloomOn = 1;         // 0=Off 1=On
+    float bloomThreshold = 1.0f; // bright-pass しきい値 (輝度)
+    float bloomIntensity = 0.6f; // 合成強度
+    int32_t fxaaOn = 1;          // 0=Off 1=On
+    // ---- M32d: 追加ポスト効果 (末尾 append。既定 = 無効 = 従来の見た目) ----
+    float chromAberration = 0.0f;   // 色収差 (UV スケール、0=off)
+    float vignetteIntensity = 0.0f; // 周辺減光 (0=off)
+    float vignetteRadius = 0.75f;   // 減光開始半径 (0..1)
+    float saturation = 1.0f;        // 彩度 (1=変化なし)
+    float contrast = 1.0f;          // コントラスト (1=変化なし)
+    DirectX::XMFLOAT4 colorFilter = { 1.0f, 1.0f, 1.0f, 1.0f }; // 乗算カラーフィルタ
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
+// ---- 合成エフェクト (M32e) ----
+// 複数エミッタ/スプライト/トレイルの子階層を 1 つのエフェクトとして束ね、寿命を管理する。
+// エフェクト = プレハブ (子に複数エミッタ) + Animator (.anim.json で rate/color を時間変化) +
+// この EffectComponent (ライフサイクル)。移動はルートの LocalTransform で行う (親子変換)。
+// **DestroyEntity と子エミッタの playing を駆動する = sim 構造変更なので hash 対象** (NoHash 無し)。
+// opt-in (無ければ EffectSystem 完全 no-op) なので既存シーンは不変 = golden 再記録不要。
+struct EffectComponent {
+    int32_t durationTicks = 120; // 放出フェーズ長 (tick)。0=手動制御 (自動停止しない)
+    int32_t lingerTicks = 120;   // 放出停止後、残粒子の消滅を待つ猶予 (autoDestroy 用)
+    int32_t elapsedTicks = 0;    // 経過 tick (ReadOnly、sim 状態)
+    int32_t playing = 1;         // 0=停止 (elapsed 凍結)
+    int32_t looping = 0;         // 1=duration 毎に elapsed 巻き戻し + 子エミッタ再開 (autoDestroy 無効)
+    int32_t autoDestroy = 1;     // 1=duration+linger 経過で自エンティティ (子孫ごと) 破棄
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 

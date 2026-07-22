@@ -4,6 +4,7 @@
 #include <fstream>
 
 #include "Engine/Core/Components.h"
+#include "Engine/Core/AssetKeyResolver.h"
 #include "Engine/Core/Hash.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Core/World.h"
@@ -97,7 +98,8 @@ void AdvanceStateTime(int32_t& time, int32_t speed, int32_t loop, int32_t length
 
 uint64_t ControllerLibrary::HashForPath(const std::wstring& path)
 {
-    return HashStr(WideToUtf8(NormalizePathKey(path)));
+    // M30c: 移動/リネーム済みアセットは .meta の GUID がキーになる (未移動は path-hash と同値)
+    return assetkey::Resolve(NormalizePathKey(path));
 }
 
 uint64_t ControllerLibrary::Register(const std::wstring& path, ControllerAsset asset)

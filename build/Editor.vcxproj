@@ -36,6 +36,7 @@
   <!-- BEGIN FILES (tools\gen_project_files.ps1 が再生成する。手編集しない) -->
   <ItemGroup>
     <ClCompile Include="..\src\Editor\AssetOps.cpp" />
+    <ClCompile Include="..\src\Editor\AssetOpsSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\AssetPreviewCache.cpp" />
     <ClCompile Include="..\src\Editor\CreateMenu.cpp" />
     <ClCompile Include="..\src\Editor\EditorApp.cpp" />
@@ -64,6 +65,7 @@
     <ClCompile Include="..\src\Editor\Windows\SceneViewWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\SearchWindow.cpp" />
     <ClInclude Include="..\src\Editor\AssetOps.h" />
+    <ClInclude Include="..\src\Editor\AssetOpsSelfTest.h" />
     <ClInclude Include="..\src\Editor\AssetPreviewCache.h" />
     <ClInclude Include="..\src\Editor\CreateMenu.h" />
     <ClInclude Include="..\src\Editor\EditorApp.h" />

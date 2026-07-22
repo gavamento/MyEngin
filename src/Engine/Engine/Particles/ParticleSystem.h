@@ -21,7 +21,8 @@ public:
     void Shutdown();
 
     void Update(World& world, float dt);                       // tick フェーズ 4
-    void Render(GraphicsDevice& device, const RenderView& view, ShaderManager& shaders);
+    void Render(GraphicsDevice& device, const RenderView& view, ShaderManager& shaders,
+                RenderResources& resources);
 
     // シーン遷移 (M19.4): 生存パーティクルを破棄する (古いシーンの粒子を残さない)
     void ResetParticles()
@@ -46,6 +47,8 @@ public:
 
 private:
     void LoadSettings();
+    // スクリプト/エディタ起因の pendingBurst を全エミッタでクリアする (両バックエンドが読んだ後)
+    static void ClearPendingBursts(World& world);
 
     CpuParticleBackend cpu_;
     GpuParticleBackend gpu_;

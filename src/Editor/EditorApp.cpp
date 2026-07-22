@@ -6,7 +6,9 @@
 
 #include <Windows.h>
 #include <commdlg.h>
+#include <shellapi.h>
 
+#include "Editor/AssetOps.h"
 #include "Editor/CreateMenu.h"
 #include "Engine/Core/Hash.h"
 #include "Engine/Core/Log.h"
@@ -92,10 +94,43 @@ void EditorApp::OnStart(EngineContext& ctx)
     }
     lastDllVersion_ = ctx.dllReloader->Version();
     lastReloadCount_ = ctx.reloadHub->ReloadCount();
-    // × ボタン (WM_CLOSE) を横取りして保存確認を挟む。ハンドラは DefWindowProc より先に走る
-    ctx.window->AddMsgHandler([this](void*, uint32_t msg, uint64_t, int64_t, int64_t& result) {
+    // エクスプローラーからのファイルドロップを受理する (エディタ専用機能なのでここで有効化。
+    // ゲーム実行系は DragAcceptFiles を呼ばないため対象外のまま)
+    DragAcceptFiles(static_cast<HWND>(ctx.window->Hwnd()), TRUE);
+    // 管理者権限で起動されたエディタ (管理者 VS からの F5 等) は UIPI が中権限エクスプローラー
+    // からの WM_DROPFILES を遮断し、ドラッグが禁止カーソルになる。シェル D&D に必要な
+    // 3 メッセージ (WM_DROPFILES / WM_COPYDATA / WM_COPYGLOBALDATA) のみ下位権限から許可する。
+    // 非昇格時は実質 no-op。エディタ限定の緩和で、Runtime.exe には適用しない
+    {
+        const HWND hwnd = static_cast<HWND>(ctx.window->Hwnd());
+        constexpr UINT kCopyGlobalData = 0x0049; // WM_COPYGLOBALDATA (ヘッダ未定義の内部メッセージ)
+        ChangeWindowMessageFilterEx(hwnd, WM_DROPFILES, MSGFLT_ALLOW, nullptr);
+        ChangeWindowMessageFilterEx(hwnd, WM_COPYDATA, MSGFLT_ALLOW, nullptr);
+        ChangeWindowMessageFilterEx(hwnd, kCopyGlobalData, MSGFLT_ALLOW, nullptr);
+    }
+    // × ボタン (WM_CLOSE) の横取り + WM_DROPFILES の受信。ハンドラは DefWindowProc より先に走る
+    ctx.window->AddMsgHandler([this](void*, uint32_t msg, uint64_t wparam, int64_t, int64_t& result) {
         if (msg == WM_CLOSE) {
             closeRequested_ = true;
+            result = 0;
+            return true;
+        }
+        if (msg == WM_DROPFILES) {
+            HDROP drop = reinterpret_cast<HDROP>(wparam);
+            PendingFileDrop pd;
+            POINT pt = {};
+            pd.inClientArea = (DragQueryPoint(drop, &pt) != FALSE); // クライアント座標
+            pd.clientX = static_cast<float>(pt.x);
+            pd.clientY = static_cast<float>(pt.y);
+            const UINT n = DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
+            for (UINT i = 0; i < n; ++i) {
+                const UINT len = DragQueryFileW(drop, i, nullptr, 0); // 終端を除く必要長
+                std::vector<wchar_t> buf(len + 1);
+                DragQueryFileW(drop, i, buf.data(), len + 1);
+                pd.paths.emplace_back(buf.data(), len);
+            }
+            DragFinish(drop); // 分岐より先に必ず解放 (シェル側の HDROP リーク防止)
+            pendingFileDrops_.push_back(std::move(pd));
             result = 0;
             return true;
         }
@@ -120,6 +155,10 @@ void EditorApp::OnRenderViews(EngineContext& ctx)
 
 void EditorApp::OnImGui(EngineContext& ctx)
 {
+    // エクスプローラー D&D の消費はグリッド描画 (assetBrowser_) より先に行い、
+    // インポートしたファイルが同フレームで表示されるようにする
+    ProcessPendingFileDrops(ctx);
+
     // サイドバー (メニュー → ツールバー → ステータスバー) が WorkArea を先に確保し、
     // 残りに DockSpace を敷く — この順序を同一フレーム内で守ること (逆順だと 1 フレームちらつく)
     DrawMainMenuBar(ctx);
@@ -578,6 +617,38 @@ void EditorApp::UpdateWindowTitle(EngineContext& ctx)
     titleDirtyShown_ = dirty;
     const std::wstring title = dirty ? baseTitle_ + L" *" : baseTitle_;
     SetWindowTextW(static_cast<HWND>(ctx.window->Hwnd()), title.c_str());
+}
+
+void EditorApp::ProcessPendingFileDrops(EngineContext& ctx)
+{
+    if (pendingFileDrops_.empty()) {
+        return;
+    }
+    for (PendingFileDrop& pd : pendingFileDrops_) {
+        if (!pd.inClientArea || pd.paths.empty()) {
+            continue; // タイトルバー等クライアント領域外へのドロップ
+        }
+        if (!assetBrowser_.open || assetBrowser_.CurrentDir().empty() ||
+            !assetBrowser_.IsClientPosInPanel(pd.clientX, pd.clientY)) {
+            // 黙って捨てると「無反応」に見えて原因調査が難しいため誘導トーストを出す
+            toasts_.Notify(LogLevel::Warn, "インポートは Assets パネル上にドロップしてください");
+            continue; // Assets パネル上のドロップのみインポートする (誤操作防止)
+        }
+        const ImportResult r = ImportExternalPaths(ctx, pd.paths, assetBrowser_.CurrentDir());
+        if (r.imported > 0) {
+            toasts_.Notify(LogLevel::Info,
+                           std::to_string(r.imported) + " 件のアセットをインポートしました");
+        }
+        if (r.failed > 0) {
+            toasts_.Notify(LogLevel::Error,
+                           std::to_string(r.failed) + " 件のインポートに失敗しました");
+        }
+        if (r.imported == 0 && r.failed == 0 && r.skipped > 0) {
+            toasts_.Notify(LogLevel::Warn,
+                           "インポートをスキップしました (対象外またはドロップ元と同じフォルダ)");
+        }
+    }
+    pendingFileDrops_.clear();
 }
 
 void EditorApp::PollReloadToasts(EngineContext& ctx)

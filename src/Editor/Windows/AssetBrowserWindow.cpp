@@ -57,8 +57,27 @@ const char* IconFor(const std::wstring& ext)
 
 } // namespace
 
-void AssetBrowserWindow::DrawDirTree(const std::wstring& dir)
+void AssetBrowserWindow::BeginRename(const std::wstring& path)
 {
+    std::error_code ec;
+    pendingRenamePath_ = path;
+    std::string pre;
+    if (fs::is_directory(path, ec)) {
+        pre = WideToUtf8(fs::path(path).filename().wstring());
+    } else {
+        // 拡張子/複合サフィックスは編集させない (RenameAsset 側で維持される)
+        std::wstring stem;
+        std::wstring suffix;
+        SplitAssetName(fs::path(path).filename().wstring(), stem, suffix);
+        pre = WideToUtf8(stem);
+    }
+    strncpy_s(createName_, sizeof(createName_), pre.c_str(), _TRUNCATE);
+    requestRenameModal_ = true;
+}
+
+void AssetBrowserWindow::DrawDirTree(EngineContext& ctx, const std::wstring& dir)
+{
+    (void)ctx;
     std::error_code ec;
     for (const auto& entry : fs::directory_iterator(dir, ec)) {
         if (!entry.is_directory()) {
@@ -73,8 +92,23 @@ void AssetBrowserWindow::DrawDirTree(const std::wstring& dir)
         if (ImGui::IsItemClicked()) {
             current_ = entry.path().wstring();
         }
+        // D&D 移動の受け皿 (M30b、Unity 同様ツリーにも落とせる)。実行はフレーム末 (iterator 保護)
+        if (ImGui::BeginDragDropTarget()) {
+            if (const ImGuiPayload* pl = ImGui::AcceptDragDropPayload(kAssetDragPayload)) {
+                pendingMoveSrc_ = Utf8ToWide(static_cast<const char*>(pl->Data));
+                pendingMoveDstDir_ = entry.path().wstring();
+            }
+            ImGui::EndDragDropTarget();
+        }
+        // 右クリック → Rename (M30d)。実行はモーダル確定時 (iterator 保護)
+        if (ImGui::BeginPopupContextItem()) {
+            if (ImGui::MenuItem("Rename")) {
+                BeginRename(entry.path().wstring());
+            }
+            ImGui::EndPopup();
+        }
         if (nodeOpen) {
-            DrawDirTree(entry.path().wstring());
+            DrawDirTree(ctx, entry.path().wstring());
             ImGui::TreePop();
         }
     }
@@ -84,12 +118,23 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
                                  const std::string& externalEditorCmd,
                                  AssetPreviewCache& preview)
 {
+    panelRectValid_ = false; // Begin に成功したフレームだけ矩形が有効
     if (!open) {
         return;
     }
     if (!ImGui::Begin("Assets", &open)) {
         ImGui::End();
         return;
+    }
+    {
+        // エクスプローラー D&D の受理判定用にパネル矩形を記録 (クライアント座標)
+        const ImVec2 p = ImGui::GetWindowPos();
+        const ImVec2 s = ImGui::GetWindowSize();
+        panelMin_[0] = p.x;
+        panelMin_[1] = p.y;
+        panelMax_[0] = p.x + s.x;
+        panelMax_[1] = p.y + s.y;
+        panelRectValid_ = true;
     }
     if (!init_) {
         current_ = ctx.assetsRoot;
@@ -102,11 +147,20 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
     if (ctx.assetsRoot == current_) {
         rootFlags |= ImGuiTreeNodeFlags_Selected;
     }
-    if (ImGui::TreeNodeEx("assets", rootFlags)) {
-        if (ImGui::IsItemClicked()) {
-            current_ = ctx.assetsRoot;
+    const bool rootOpen = ImGui::TreeNodeEx("assets", rootFlags);
+    if (ImGui::IsItemClicked()) {
+        current_ = ctx.assetsRoot;
+    }
+    // ルートへの D&D 移動 (M30b): assets 直下へ戻す
+    if (ImGui::BeginDragDropTarget()) {
+        if (const ImGuiPayload* pl = ImGui::AcceptDragDropPayload(kAssetDragPayload)) {
+            pendingMoveSrc_ = Utf8ToWide(static_cast<const char*>(pl->Data));
+            pendingMoveDstDir_ = ctx.assetsRoot;
         }
-        DrawDirTree(ctx.assetsRoot);
+        ImGui::EndDragDropTarget();
+    }
+    if (rootOpen) {
+        DrawDirTree(ctx, ctx.assetsRoot);
         ImGui::TreePop();
     }
     ImGui::EndChild();
@@ -128,24 +182,123 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
         ImGui::SetTooltip("C# スクリプト (assets\\scripts\\*.cs) をエンジン内でコンパイル (Roslyn)");
     }
     ImGui::SameLine();
-    ImGui::TextDisabled("%s", WideToUtf8(current_).c_str());
+    // ---- パンくずナビ (M30a): assets > sub > ... をクリックで移動 ----
+    {
+        std::error_code bec;
+        if (!fs::is_directory(current_, bec)) {
+            current_ = ctx.assetsRoot; // Explorer 側で削除された場合のフォールバック
+        }
+        std::wstring navTo;
+        const std::wstring rootKey = NormalizePathKey(ctx.assetsRoot);
+        const std::wstring curKey = NormalizePathKey(current_);
+        const bool underRoot = curKey.size() >= rootKey.size()
+            && curKey.compare(0, rootKey.size(), rootKey) == 0
+            && (curKey.size() == rootKey.size() || curKey[rootKey.size()] == L'\\');
+        if (underRoot) {
+            if (ImGui::SmallButton("assets")) {
+                navTo = ctx.assetsRoot;
+            }
+            const fs::path rel = fs::relative(current_, ctx.assetsRoot, bec);
+            if (!bec && rel != L".") {
+                std::wstring accum = ctx.assetsRoot;
+                int seg = 0;
+                for (const auto& part : rel) {
+                    accum += L"\\" + part.wstring();
+                    ImGui::SameLine(0, 2);
+                    ImGui::TextDisabled(">");
+                    ImGui::SameLine(0, 2);
+                    ImGui::PushID(seg++);
+                    if (ImGui::SmallButton(WideToUtf8(part.wstring()).c_str())) {
+                        navTo = accum;
+                    }
+                    ImGui::PopID();
+                }
+            }
+        } else {
+            ImGui::TextDisabled("%s", WideToUtf8(current_).c_str()); // 異常系フォールバック
+        }
+        if (!navTo.empty()) {
+            current_ = navTo;
+        }
+    }
     ImGui::Separator();
 
     constexpr float kCell = 88.0f;
     const int cols = std::max(1, static_cast<int>(ImGui::GetContentRegionAvail().x / (kCell + 12.0f)));
 
+    // ---- エントリ収集 (M30a): フォルダ → ファイルの順、それぞれ名前昇順で安定表示 ----
     std::error_code ec;
-    int i = 0;
+    std::vector<fs::path> dirEntries;
+    std::vector<fs::path> fileEntries;
     for (const auto& entry : fs::directory_iterator(current_, ec)) {
         if (entry.is_directory()) {
-            continue;
+            dirEntries.push_back(entry.path());
+        } else if (entry.path().extension().wstring() != L".meta") {
+            fileEntries.push_back(entry.path()); // M23: GUID サイドカーは表示しない
         }
-        const std::wstring path = entry.path().wstring();
-        const std::wstring ext = entry.path().extension().wstring();
-        const std::string nameU = WideToUtf8(entry.path().filename().wstring());
-        if (ext == L".meta") {
-            continue; // M23: GUID サイドカーはブラウザに表示しない
+    }
+    auto nameLess = [](const fs::path& a, const fs::path& b) {
+        return _wcsicmp(a.filename().c_str(), b.filename().c_str()) < 0;
+    };
+    std::sort(dirEntries.begin(), dirEntries.end(), nameLess);
+    std::sort(fileEntries.begin(), fileEntries.end(), nameLess);
+
+    // ---- フォルダタイル (M30a): ダブルクリックで移動。ループ後に適用 (描画中の変更回避) ----
+    std::wstring pendingNav;
+    int i = 0;
+    for (const fs::path& dirPath : dirEntries) {
+        if (i % cols != 0) {
+            ImGui::SameLine();
         }
+        ImGui::PushID(i);
+        ImGui::BeginGroup();
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.45f, 0.38f, 0.15f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.55f, 0.47f, 0.20f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.62f, 0.53f, 0.24f, 1.0f));
+        ImGui::Button("folder", ImVec2(kCell, kCell));
+        ImGui::PopStyleColor(3);
+        const std::string dirNameU = WideToUtf8(dirPath.filename().wstring());
+        // フォルダ自身も移動のドラッグ元になれる (フォルダ→フォルダ移動、M30b)
+        if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_None)) {
+            const std::string u = WideToUtf8(dirPath.wstring());
+            ImGui::SetDragDropPayload(kAssetDragPayload, u.c_str(), u.size() + 1);
+            ImGui::TextUnformatted(dirNameU.c_str());
+            ImGui::EndDragDropSource();
+        }
+        // ドロップでこのフォルダへ移動 (Unity 風)。実行はフレーム末
+        if (ImGui::BeginDragDropTarget()) {
+            if (const ImGuiPayload* pl = ImGui::AcceptDragDropPayload(kAssetDragPayload)) {
+                pendingMoveSrc_ = Utf8ToWide(static_cast<const char*>(pl->Data));
+                pendingMoveDstDir_ = dirPath.wstring();
+            }
+            ImGui::EndDragDropTarget();
+        }
+        // 右クリック → Rename (M30d)
+        if (ImGui::BeginPopupContextItem("##folderctx")) {
+            if (ImGui::MenuItem("Rename")) {
+                BeginRename(dirPath.wstring());
+            }
+            if (ImGui::MenuItem("Show in Explorer")) {
+                ShellExecuteW(nullptr, L"open", dirPath.wstring().c_str(), nullptr, nullptr,
+                              SW_SHOWNORMAL);
+            }
+            ImGui::EndPopup();
+        }
+        if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+            pendingNav = dirPath.wstring();
+        }
+        ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + kCell);
+        ImGui::TextWrapped("%s", dirNameU.c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::EndGroup();
+        ImGui::PopID();
+        ++i;
+    }
+
+    for (const fs::path& filePath : fileEntries) {
+        const std::wstring path = filePath.wstring();
+        const std::wstring ext = filePath.extension().wstring();
+        const std::string nameU = WideToUtf8(filePath.filename().wstring());
         const bool isPrefab = nameU.size() >= 12
             && nameU.compare(nameU.size() - 12, 12, ".prefab.json") == 0;
         const bool isAnim = !isPrefab && nameU.size() >= 10
@@ -186,17 +339,20 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
             ImGui::TextUnformatted(nameU.c_str());
             ImGui::EndDragDropSource();
         }
-        // M24: 画像 (.dds 以外) を右クリック → BCn 圧縮 DDS にクック
-        if (IsImageExt(ext) && ext != L".dds") {
-            if (ImGui::BeginPopupContextItem("##ddsctx")) {
+        // 右クリックメニュー: Rename (M30d) + 画像なら BCn 圧縮 (M24)
+        if (ImGui::BeginPopupContextItem("##filectx")) {
+            if (ImGui::MenuItem("Rename")) {
+                BeginRename(path);
+            }
+            if (IsImageExt(ext) && ext != L".dds") {
                 if (ImGui::MenuItem("Compress to DDS (BCn)")) {
                     const std::wstring dds = fs::path(path).replace_extension(L".dds").wstring();
                     if (TextureCook::CookImageToDds(path, dds)) {
                         AssetDatabase::EnsureMeta(dds); // 生成した .dds に GUID サイドカーを付与
                     }
                 }
-                ImGui::EndPopup();
             }
+            ImGui::EndPopup();
         }
         if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
             if (isPrefab) {
@@ -264,6 +420,9 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
         ImGui::PopID();
         ++i;
     }
+    if (!pendingNav.empty()) {
+        current_ = pendingNav; // フォルダダブルクリックの適用 (次フレームから新フォルダ表示)
+    }
 
     // 空き領域を右クリック → Create メニュー
     auto beginCreate = [&](int kind, const char* def) {
@@ -290,6 +449,49 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
         ImGui::EndPopup();
     }
     ImGui::EndChild();
+
+    // ---- D&D 移動の実行 (M30b)。描画終了後にまとめて行う (directory_iterator 保護) ----
+    if (!pendingMoveSrc_.empty()) {
+        MoveAssetToFolder(ctx, pendingMoveSrc_, pendingMoveDstDir_);
+        pendingMoveSrc_.clear();
+        pendingMoveDstDir_.clear();
+    }
+
+    // ---- リネームモーダル (M30d) ----
+    if (requestRenameModal_) {
+        ImGui::OpenPopup("Rename Asset");
+        requestRenameModal_ = false;
+    }
+    if (ImGui::BeginPopupModal("Rename Asset", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextDisabled("%s", WideToUtf8(pendingRenamePath_).c_str());
+        ImGui::SetNextItemWidth(260.0f);
+        const bool enter = ImGui::InputText("Name", createName_, sizeof(createName_),
+                                            ImGuiInputTextFlags_EnterReturnsTrue);
+        const bool doRename = ImGui::Button("Rename", ImVec2(90, 0)) || enter;
+        ImGui::SameLine();
+        const bool cancelRename = ImGui::Button("Cancel", ImVec2(90, 0));
+        if (doRename && createName_[0] != '\0') {
+            const std::wstring newPath = RenameAsset(ctx, pendingRenamePath_, createName_);
+            if (!newPath.empty()) {
+                // 表示中フォルダがリネーム対象 (またはその配下) なら追従する
+                const std::wstring oldKey = NormalizePathKey(pendingRenamePath_);
+                const std::wstring curKey = NormalizePathKey(current_);
+                if (curKey == oldKey) {
+                    current_ = newPath;
+                } else if (curKey.size() > oldKey.size()
+                           && curKey.compare(0, oldKey.size(), oldKey) == 0
+                           && curKey[oldKey.size()] == L'\\') {
+                    current_ = newPath + curKey.substr(oldKey.size());
+                }
+            }
+            pendingRenamePath_.clear();
+            ImGui::CloseCurrentPopup();
+        } else if (cancelRename) {
+            pendingRenamePath_.clear();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
 
     // ---- 命名モーダル (Create の確定) ----
     if (requestModal_) {
@@ -349,6 +551,12 @@ void AssetBrowserWindow::DoCreate(EngineContext& ctx, const std::string& externa
     default:
         break;
     }
+}
+
+bool AssetBrowserWindow::IsClientPosInPanel(float x, float y) const
+{
+    return panelRectValid_ && x >= panelMin_[0] && x < panelMax_[0] && y >= panelMin_[1] &&
+           y < panelMax_[1];
 }
 
 } // namespace mye

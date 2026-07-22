@@ -23,7 +23,7 @@ public:
     void Reset() override;
     void Update(World& world, float dt) override;
     void Render(GraphicsDevice& device, const RenderView& view, ShaderManager& shaders,
-                float renderOffsetX) override;
+                RenderResources& resources, float renderOffsetX) override;
     ParticleStats Stats() const override { return stats_; }
 
 private:
@@ -37,6 +37,7 @@ private:
         EntityID owner = kNullEntity;
         uint32_t capacity = 0;
         float emitAccum = 0.0f;
+        int32_t ageTicks = 0; // M32a: 放出ウィンドウ経過 tick (CPU 側で管理、表示用)
         Pcg32 rng;
         ParticleEmitterComponent descCache;
         bool firstDispatch = true; // 初回のみ dead list カウンタを capacity で初期化

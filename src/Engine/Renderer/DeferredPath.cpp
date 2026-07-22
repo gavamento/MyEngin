@@ -26,6 +26,13 @@ struct PerFrameCB {
     float shadowTexel;
     int32_t shadowEnabled;
     float pad1[2];
+    // ---- フォグ (M29d、末尾 append)。透明後段の forward_lit が参照 ----
+    XMFLOAT3 fogColor;
+    int32_t fogMode; // -1=無効
+    float fogDensity;
+    float fogStart;
+    float fogEnd;
+    float fogPad;
 };
 
 struct PerObjectCB {
@@ -53,6 +60,13 @@ struct LightPassCB {
     float pad1[2];
     XMFLOAT3 cameraPos;
     float pad2;
+    // ---- フォグ (M29d、末尾 append) ----
+    XMFLOAT3 fogColor;
+    int32_t fogMode; // -1=無効
+    float fogDensity;
+    float fogStart;
+    float fogEnd;
+    float fogPad;
 };
 
 bool CreateCB(ID3D11Device* dev, UINT size, Microsoft::WRL::ComPtr<ID3D11Buffer>& out)
@@ -85,6 +99,8 @@ bool DeferredPath::Init(GraphicsDevice& device, ShaderManager& shaders)
     lightShader_ = shaders.Load("deferred_light");
     // スキンメッシュ用の GBuffer シェーダをプリロード (BLENDINDICES 入力レイアウトもここで構築)
     gbufferSkinnedShader_ = shaders.Load("deferred_gbuffer_skinned");
+    // スカイボックス (M29d)。失敗しても続行 (空が clearColor になるだけ)
+    skybox_.Init(device, shaders);
 
     if (!CreateCB(dev, sizeof(PerFrameCB), perFrameCB_)
         || !CreateCB(dev, sizeof(PerObjectCB), perObjectCB_)
@@ -228,6 +244,11 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
     pf.shadowVP = view.lightViewProj; // 透明後段の forward_lit 用
     pf.shadowTexel = view.shadowTexelSize;
     pf.shadowEnabled = (view.shadowSRV != nullptr) ? 1 : 0;
+    pf.fogColor = view.fogColor;
+    pf.fogMode = view.fogMode;
+    pf.fogDensity = view.fogDensity;
+    pf.fogStart = view.fogStart;
+    pf.fogEnd = view.fogEnd;
     UploadCB(dc, perFrameCB_.Get(), pf);
 
     ID3D11Buffer* cbs[2] = { perFrameCB_.Get(), perObjectCB_.Get() };
@@ -326,6 +347,11 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
     lp.shadowTexel = view.shadowTexelSize;
     lp.shadowEnabled = (view.shadowSRV != nullptr) ? 1 : 0;
     lp.cameraPos = view.cameraPos;
+    lp.fogColor = view.fogColor;
+    lp.fogMode = view.fogMode;
+    lp.fogDensity = view.fogDensity;
+    lp.fogStart = view.fogStart;
+    lp.fogEnd = view.fogEnd;
     UploadCB(dc, lightCB_.Get(), lp);
     ID3D11Buffer* lightCbs[1] = { lightCB_.Get() };
     dc->PSSetConstantBuffers(0, 1, lightCbs);
@@ -341,6 +367,9 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
     dc->Draw(3, 0);
     ID3D11ShaderResourceView* nullSrvs[5] = { nullptr, nullptr, nullptr, nullptr, nullptr };
     dc->PSSetShaderResources(0, 5, nullSrvs); // 次フレームで RT に戻すため解除
+
+    // ---- 2.5) スカイボックス (M29d): clearColor ピクセルを深度 1.0 判定で上書き ----
+    skybox_.Render(device, shaders, view);
 
     // ---- 3) 透明後段 (Forward — マテリアルのシェーダで上描き) ----
     if (!queue.transparent.empty()) {

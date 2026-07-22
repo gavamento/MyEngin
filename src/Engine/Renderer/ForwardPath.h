@@ -2,6 +2,7 @@
 #include <wrl/client.h>
 
 #include "Engine/Renderer/RenderPath.h"
+#include "Engine/Renderer/SkyboxPass.h"
 
 namespace mye {
 
@@ -32,6 +33,7 @@ private:
     Microsoft::WRL::ComPtr<ID3D11DepthStencilState> depthTransparent_; // 書き込みなし
     Microsoft::WRL::ComPtr<ID3D11BlendState> blendOpaque_;
     Microsoft::WRL::ComPtr<ID3D11BlendState> blendAlpha_;
+    SkyboxPass skybox_; // 不透明後・透明前に空を塗る (M29d)
 };
 
 } // namespace mye

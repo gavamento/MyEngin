@@ -13,6 +13,7 @@ class Scene;
 class ShaderManager;
 class RenderSystem;
 class UIRenderer;
+class VfxRenderer;
 class IRenderPath;
 class ReloadHub;
 class ScriptHost;
@@ -83,6 +84,7 @@ struct EngineContext {
     RenderResources* resources = nullptr;
     RenderSystem* renderSystem = nullptr;
     UIRenderer* uiRenderer = nullptr;          // ゲーム内 UI (M21)。GameView / Runtime が重ね描画
+    VfxRenderer* vfx = nullptr;                // Sprite/Trail/TextMesh (M29c)。RenderSystem に渡す
     IRenderPath* renderPath = nullptr;         // 現在アクティブなパス (書き換えると切替)
     IRenderPath* renderPathForward = nullptr;  // 選択肢: Forward
     IRenderPath* renderPathDeferred = nullptr; // 選択肢: Deferred

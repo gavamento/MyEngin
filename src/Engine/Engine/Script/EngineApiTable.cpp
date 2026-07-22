@@ -6,6 +6,7 @@
 #include "Engine/Core/Hash.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Core/World.h"
+#include "Engine/Engine/EffectSystem.h"
 #include "Engine/Engine/GameObject.h"
 #include "Engine/Engine/Physics/PhysicsSystem.h"
 #include "Engine/Engine/Scene.h"
@@ -221,6 +222,81 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
     out.SphereCast = [](void* engine, MyeVec3 origin, MyeVec3 dir, float radius, float maxDist,
                         MyeRaycastHit* outHit) -> int {
         return SphereCastWorld(Sc(engine)->GetWorld(), origin, dir, radius, maxDist, outHit);
+    };
+
+    // ---- キャラクターコントローラ (v5、M29b)。sim 入力フィールドへの直接書き込み
+    //      (SetLocalPosition と同格 — スクリプト実行順は決定論なのでハッシュ安全) ----
+    out.CharacterMove = [](void* engine, MyeEntityId id, MyeVec3 v) -> int {
+        auto* cc =
+            Sc(engine)->GetWorld().GetComponent<CharacterControllerComponent>(ToEngine(id));
+        if (!cc) { return 0; }
+        cc->moveInput = { v.x, v.y, v.z }; // y は物理側で無視される
+        return 1;
+    };
+    out.CharacterJump = [](void* engine, MyeEntityId id, float speed) -> int {
+        auto* cc =
+            Sc(engine)->GetWorld().GetComponent<CharacterControllerComponent>(ToEngine(id));
+        if (!cc) { return 0; }
+        cc->jumpSpeed = speed;
+        return 1;
+    };
+    out.CharacterIsGrounded = [](void* engine, MyeEntityId id) -> int {
+        auto* cc =
+            Sc(engine)->GetWorld().GetComponent<CharacterControllerComponent>(ToEngine(id));
+        return (cc && cc->isGrounded != 0) ? 1 : 0;
+    };
+    out.CharacterGetVelocity = [](void* engine, MyeEntityId id, MyeVec3* o) -> int {
+        auto* cc =
+            Sc(engine)->GetWorld().GetComponent<CharacterControllerComponent>(ToEngine(id));
+        if (!cc || !o) { return 0; }
+        *o = { cc->velocity.x, cc->velocity.y, cc->velocity.z };
+        return 1;
+    };
+
+    // ---- UI テキスト (v5 で予約、M29c で実装)。TextMesh は NoHash の描画状態なので
+    //      スクリプトから毎 tick 書いても sim/リプレイに影響しない ----
+    out.SetTextMeshText = [](void* engine, MyeEntityId id, const char* text) -> int {
+        auto* tm = Sc(engine)->GetWorld().GetComponent<TextMeshComponent>(ToEngine(id));
+        if (!tm || !text) { return 0; }
+        size_t n = 0;
+        while (text[n] != '\0' && n < sizeof(tm->text) - 1) {
+            tm->text[n] = text[n];
+            ++n;
+        }
+        tm->text[n] = '\0';
+        return 1;
+    };
+
+    // ---- エフェクト制御 (v6、M32f)。sim 入力/状態フィールドへの直接書込 (SetLocalPosition と同格) ----
+    out.EmitterBurst = [](void* engine, MyeEntityId id, int count) -> int {
+        auto* em = Sc(engine)->GetWorld().GetComponent<ParticleEmitterComponent>(ToEngine(id));
+        if (!em || count <= 0) { return 0; }
+        em->pendingBurst += count; // 次の粒子 Update で放出、ParticleSystem が tick 末に 0 クリア
+        return 1;
+    };
+    out.SetEmitterPlaying = [](void* engine, MyeEntityId id, int playing) -> int {
+        auto* em = Sc(engine)->GetWorld().GetComponent<ParticleEmitterComponent>(ToEngine(id));
+        if (!em) { return 0; }
+        em->playing = playing ? 1 : 0;
+        return 1;
+    };
+    out.RestartEffect = [](void* engine, MyeEntityId id) -> int {
+        World& w = Sc(engine)->GetWorld();
+        if (!w.GetComponent<EffectComponent>(ToEngine(id))) { return 0; }
+        EffectSystem::RestartEffect(w, ToEngine(id));
+        return 1;
+    };
+    // PlayEffect: tick 末の spawn キューに積む (Prefab::Instantiate は内部で構造変更を確定するため
+    // イテレーション中には呼べない。EngineLoop が ApplyStructuralChanges 直前に drain する)
+    out.PlayEffect = [](void* engine, const char* prefabKey, MyeVec3 pos, MyeEntityId parent) {
+        auto* q = Ctx(engine)->effectQueue;
+        if (q && prefabKey) {
+            EffectSpawnRequest r;
+            r.prefabKey = prefabKey;
+            r.pos = pos;
+            r.parent = parent;
+            q->push_back(std::move(r));
+        }
     };
 }
 

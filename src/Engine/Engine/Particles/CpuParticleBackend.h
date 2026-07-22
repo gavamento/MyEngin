@@ -22,7 +22,7 @@ public:
     void Reset() override;
     void Update(World& world, float dt) override;
     void Render(GraphicsDevice& device, const RenderView& view, ShaderManager& shaders,
-                float renderOffsetX) override;
+                RenderResources& resources, float renderOffsetX) override;
     ParticleStats Stats() const override { return stats_; }
 
     void SetSimdEnabled(bool enabled) { simd_ = enabled; }
@@ -33,6 +33,7 @@ public:
         EntityID owner = kNullEntity;
         uint32_t alive = 0;
         float emitAccum = 0.0f;
+        int32_t ageTicks = 0; // 放出ウィンドウ内の経過 tick (M32a: burst/duration/loop 用、ハッシュ対象)
         Pcg32 rng;
         ParticleEmitterComponent descCache; // Update 時のコピー (描画属性用)
         // SoA (SSE 4-wide でアクセス)
@@ -66,6 +67,7 @@ private:
     Microsoft::WRL::ComPtr<ID3D11BlendState> blendAdditive_;
     Microsoft::WRL::ComPtr<ID3D11BlendState> blendAlpha_;
     Microsoft::WRL::ComPtr<ID3D11DepthStencilState> depthNoWrite_;
+    Microsoft::WRL::ComPtr<ID3D11SamplerState> sampler_; // フリップブックテクスチャ用 (linear clamp)
     uint32_t instanceCapacity_ = 0;
     AssetID shaderId_ = {};
 };

@@ -9,6 +9,7 @@
 #include <DirectXMath.h>
 
 #include "Engine/Core/Components.h"
+#include "Engine/Core/AssetKeyResolver.h"
 #include "Engine/Core/Hash.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Core/World.h"
@@ -194,7 +195,8 @@ void ApplyClipPoseBlended(World& w, EntityID animator, const AnimationClipAsset&
 
 uint64_t AnimationLibrary::HashForPath(const std::wstring& path)
 {
-    return HashStr(WideToUtf8(NormalizePathKey(path)));
+    // M30c: 移動/リネーム済みアセットは .meta の GUID がキーになる (未移動は path-hash と同値)
+    return assetkey::Resolve(NormalizePathKey(path));
 }
 
 json AnimationLibrary::ToJson(const AnimationClipAsset& clip)

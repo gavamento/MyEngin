@@ -1,5 +1,6 @@
 #pragma once
 #include <string>
+#include <vector>
 
 #include "nlohmann/json.hpp"
 
@@ -70,6 +71,7 @@ private:
     void SetupDockLayout(unsigned int dockspaceId);
     void SaveSceneAs(EngineContext& ctx);
     bool OpenScene(EngineContext& ctx); // true = 実際にロードした (キャンセル時 false)
+    void ProcessPendingFileDrops(EngineContext& ctx); // エクスプローラー D&D (OnImGui 冒頭で消費)
 
     Selection selection_;
     UndoStack undo_;
@@ -109,6 +111,15 @@ private:
     bool titleDirtyShown_ = false;
     uint32_t lastDllVersion_ = 0;          // GameLogic ホットリロードのトースト検知用
     uint64_t lastReloadCount_ = 0;         // アセットホットリロードのトースト検知用
+
+    // ---- エクスプローラー D&D インポート ----
+    struct PendingFileDrop {
+        std::vector<std::wstring> paths;
+        float clientX = 0.0f; // ドロップ位置 (クライアント座標)
+        float clientY = 0.0f;
+        bool inClientArea = false; // DragQueryPoint の戻り値 (false = タイトルバー等)
+    };
+    std::vector<PendingFileDrop> pendingFileDrops_; // WM_DROPFILES → 次の OnImGui で消費
 };
 
 } // namespace mye

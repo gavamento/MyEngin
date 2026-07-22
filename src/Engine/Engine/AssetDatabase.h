@@ -72,6 +72,19 @@ public:
     // AssetOps の creator が新規アセット保存直後に呼ぶ。
     static uint64_t EnsureMeta(const std::wstring& assetPath);
 
+    // ファイル/フォルダの移動を実行時テーブルへ反映する (M30b)。
+    // oldPath 配下 (フォルダの場合) を含む旧キーを byPath_/typeByPath_/byGuid_ から外し、
+    // 移動後の newPath を再走査して同伴 .meta の GUID で再登録する。
+    // 物理的な移動 (fs::rename + .meta 同伴) は呼び出し側 (AssetOps::MoveAssetToFolder) の責務
+    void MoveAsset(const std::wstring& oldPath, const std::wstring& newPath);
+
+    // このインスタンスを assetkey::Resolve のバックエンドにする (M30c)。
+    // 解決は GuidForPath(path, createIfMissing=false) — テーブル → ディスク .meta → path-hash。
+    // 未移動アセットは GUID == path-hash なので従来とビット同一。
+    // EngineLoop が ScanAndSync 直後に呼び、終了時に Uninstall する
+    void InstallAsKeyResolver();
+    static void UninstallKeyResolver();
+
 private:
     void SyncOne(const std::wstring& path);
 

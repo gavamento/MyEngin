@@ -6,16 +6,19 @@
 #include <utility>
 #include <vector>
 
+#include "Editor/AssetOps.h"
 #include "Editor/Selection.h"
 #include "Editor/Undo/UndoStack.h"
 #include "Engine/Core/ComponentRegistry.h"
 #include "Engine/Core/Components.h"
 #include "Engine/Core/World.h"
 #include "Engine/Engine/Animation.h"
+#include "Engine/Engine/AssetDatabase.h"
 #include "Engine/Engine/GameObject.h"
 #include "Engine/Engine/Prefab.h"
 #include "Engine/Engine/Scene.h"
 #include "Engine/Engine/Script/ManagedHost.h"
+#include "Engine/Platform/PathUtil.h"
 #include "Engine/Renderer/GpuResources.h"
 
 #include "imgui.h"
@@ -94,6 +97,12 @@ constexpr const char* kUIKindLabels[] = { "Panel", "Text", "Button" };
 constexpr const char* kUIAnchorLabels[] = { "TopLeft",    "TopCenter",    "TopRight",
                                             "MiddleLeft", "Center",       "MiddleRight",
                                             "BottomLeft", "BottomCenter", "BottomRight" };
+constexpr const char* kForceSpaceLabels[] = { "World", "Local" };
+constexpr const char* kBillboardLabels[] = { "Billboard", "BillboardY", "World" };
+constexpr const char* kSkyboxModeLabels[] = { "Gradient", "Cubemap" };
+constexpr const char* kFogModeLabels[] = { "Linear", "Exp", "Exp2" };
+constexpr const char* kTonemapLabels[] = { "Passthrough", "ACES", "Reinhard" };
+constexpr const char* kOffOnLabels[] = { "Off", "On" };
 constexpr EnumFieldLabels kEnumFields[] = {
     { "Collider", "shape", kColliderShapeLabels, 3 },
     { "Light", "type", kLightTypeLabels, 3 },
@@ -101,6 +110,14 @@ constexpr EnumFieldLabels kEnumFields[] = {
     { "ParticleEmitter", "blendMode", kBlendModeLabels, 2 },
     { "UIElement", "kind", kUIKindLabels, 3 },
     { "UIElement", "anchor", kUIAnchorLabels, 9 },
+    { "ConstantForce", "relative", kForceSpaceLabels, 2 },
+    { "SpriteRenderer", "billboardMode", kBillboardLabels, 3 },
+    { "TextMesh", "billboardMode", kBillboardLabels, 3 },
+    { "Skybox", "mode", kSkyboxModeLabels, 2 },
+    { "Fog", "mode", kFogModeLabels, 3 },
+    { "CameraPostFx", "tonemapMode", kTonemapLabels, 3 },
+    { "CameraPostFx", "bloomOn", kOffOnLabels, 2 },
+    { "CameraPostFx", "fxaaOn", kOffOnLabels, 2 },
 };
 
 const EnumFieldLabels* FindEnumLabels(const char* component, const char* field)
@@ -334,6 +351,20 @@ void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
             }
         }
         ImGui::EndPopup();
+    }
+
+    // ---- スクリプト D&D 受け皿 (M31): パネル残余をターゲット化して .cs をアタッチ ----
+    // AssetBrowser/SceneView の .cs をここへドロップすると表示中エンティティに付与される。
+    const ImVec2 dropAvail = ImGui::GetContentRegionAvail();
+    ImGui::Dummy(ImVec2(dropAvail.x, dropAvail.y > 48.0f ? dropAvail.y : 48.0f));
+    if (ImGui::BeginDragDropTarget()) {
+        if (const ImGuiPayload* pa = ImGui::AcceptDragDropPayload(kAssetDragPayload)) {
+            const std::wstring path = Utf8ToWide(static_cast<const char*>(pa->Data));
+            if (AssetDatabase::ClassifyPath(path) == AssetType::Script) {
+                AttachScriptToEntity(ctx, selection, undo, path, e);
+            }
+        }
+        ImGui::EndDragDropTarget();
     }
     ImGui::End();
 }

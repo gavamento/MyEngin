@@ -10,6 +10,7 @@
 
 #include "nlohmann/json.hpp"
 
+#include "Engine/Core/AssetKeyResolver.h"
 #include "Engine/Core/Hash.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Platform/PathUtil.h"
@@ -438,7 +439,8 @@ bool TextureLibrary::CreateFromPixels(Texture& out, const uint8_t* rgba, int w, 
 
 AssetID TextureLibrary::IdForFile(const std::wstring& path)
 {
-    return AssetID{ HashStr(WideToUtf8(NormalizePathKey(path))) };
+    // M30c: 移動/リネーム済みアセットは .meta の GUID がキーになる (未移動は path-hash と同値)
+    return AssetID{ assetkey::Resolve(NormalizePathKey(path)) };
 }
 
 AssetID TextureLibrary::LoadFile(const std::wstring& path)
@@ -802,7 +804,8 @@ AssetID MaterialLibrary::Default(ShaderManager& shaders, TextureLibrary& texture
 
 AssetID MaterialLibrary::HashForPath(const std::wstring& path)
 {
-    return AssetID{ HashStr(WideToUtf8(NormalizePathKey(path))) };
+    // M30c: 移動/リネーム済みアセットは .meta の GUID がキーになる (未移動は path-hash と同値)
+    return AssetID{ assetkey::Resolve(NormalizePathKey(path)) };
 }
 
 AssetID MaterialLibrary::LoadFromFile(const std::wstring& path, TextureLibrary& textures,

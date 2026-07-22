@@ -15,6 +15,7 @@ class GraphicsDevice;
 class IRenderPath;
 class ShaderManager;
 class ParticleSystem;
+class VfxRenderer;
 struct RenderResources;
 
 // このフレームの描画先
@@ -35,6 +36,10 @@ struct CameraOverride {
     float farZ = 1000.0f;
 };
 
+// 環境コンポーネント収集 (M29d): 最初 (entity.index 最小) の active な Skybox/Fog を
+// view に反映する。無ければ view の既定値 (-1 = 無効) のまま。ヘッドレス selftest 対象。
+void CollectEnvironment(World& world, RenderView& view);
+
 // ECS から描画アイテムを収集し、ソートして RenderPath に提出する (spec 5.1 システム層 / 6.3)。
 // カメラ: isPrimary の CameraComponent (無ければ最初のカメラ)。override 指定時はそれを優先。
 // ライト: 最初の LightComponent (向き = エンティティの +Z)
@@ -42,11 +47,12 @@ class RenderSystem {
 public:
     // 戻り値: カメラが見つかった (または override があった) か。
     // particles を渡すとシーン描画後に Forward 後段としてパーティクルを重ねる
-    // (M6.5 の Deferred でも共通の後段 — spec 7 章 / 6.1)
+    // (M6.5 の Deferred でも共通の後段 — spec 7 章 / 6.1)。
+    // vfx (M29c) は Sprite/Trail/TextMesh をメッシュ後・パーティクル前に重ねる
     bool Render(World& world, GraphicsDevice& device, IRenderPath& path, ShaderManager& shaders,
                 RenderResources& resources, const FrameTarget& target,
                 const CameraOverride* cameraOverride = nullptr,
-                ParticleSystem* particles = nullptr);
+                ParticleSystem* particles = nullptr, VfxRenderer* vfx = nullptr);
 
     // ポストプロセス設定 (M16)。config / エディタから書き換え可能。全ビューポート共通。
     PostProcess::Settings postFxSettings;

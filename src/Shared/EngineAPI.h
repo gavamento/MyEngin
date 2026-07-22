@@ -14,7 +14,10 @@
 // v4 (M28a): 剛体操作 (AddForce/AddImpulse/AddTorque/Get/SetVelocity) + 空間クエリ
 //            (OverlapSphere/OverlapBox/SphereCast) + OnCollision コールバックを一括追加。
 //            AddTorque は M28b、Overlap*/SphereCast と OnCollision 配信は M28c で実装
-#define MYE_API_VERSION 4u
+// v5 (M29b): キャラクターコントローラ操作 (CharacterMove/Jump/IsGrounded/GetVelocity) +
+//            SetTextMeshText (スロット予約、M29c の TextMesh で実装) を一括追加
+// v6 (M32f): エフェクト制御 (EmitterBurst/SetEmitterPlaying/RestartEffect/PlayEffect) を一括追加
+#define MYE_API_VERSION 6u
 
 // MYE_LOG レベル (Engine/Core/Log.h の LogLevel と同値)
 enum MyeLogLevel {
@@ -127,6 +130,30 @@ struct MyeEngineApi {
     // 半径 radius の球を dir 方向に掃引し最近ヒットを返す (Raycast の太い版)
     int (*SphereCast)(void* engine, MyeVec3 origin, MyeVec3 dir, float radius, float maxDist,
                       MyeRaycastHit* outHit);
+
+    // ---- キャラクターコントローラ (v5、M29b)。CC 非所持は 0 を返す ----
+    // CharacterMove: 水平移動速度 (m/s) を設定する。値は保持される (毎 tick 設定推奨)。y は無視
+    int (*CharacterMove)(void* engine, MyeEntityId id, MyeVec3 move);
+    // CharacterJump: 次の物理 tick で接地していれば vy=speed。接地可否に関わらず消費される
+    int (*CharacterJump)(void* engine, MyeEntityId id, float speed);
+    int (*CharacterIsGrounded)(void* engine, MyeEntityId id);           // 1=前 tick 接地
+    int (*CharacterGetVelocity)(void* engine, MyeEntityId id, MyeVec3* out); // 実効速度
+
+    // ---- UI テキスト (v5 で予約、M29c の TextMesh で実装)。描画専用 = 非 hash で sim 安全 ----
+    int (*SetTextMeshText)(void* engine, MyeEntityId id, const char* text);
+
+    // ---- エフェクト制御 (v6、M32f)。全て hash 対象フィールドへの決定論的書込 or tick 末 spawn ----
+    // EmitterBurst: ParticleEmitter を持つ id に count 個の即時バーストを積む (次の粒子 Update で放出)。
+    //               成功で 1、非所持は 0。
+    int (*EmitterBurst)(void* engine, MyeEntityId id, int count);
+    // SetEmitterPlaying: ParticleEmitter の連続放出を on(1)/off(0) する。成功で 1。
+    int (*SetEmitterPlaying)(void* engine, MyeEntityId id, int playing);
+    // RestartEffect: EffectComponent の経過を 0 に戻し子エミッタ + Animator を再開する。成功で 1。
+    int (*RestartEffect)(void* engine, MyeEntityId id);
+    // PlayEffect: prefabKey (.prefab.json、assets 相対。省略サフィックス可) を pos に生成する
+    //             (fire-and-forget)。生成は tick 末の構造変更フェーズ (spawn キュー)。
+    //             parent 有効ならその子 (pos はローカル)。sim 状態なので record/verify で再現される。
+    void (*PlayEffect)(void* engine, const char* prefabKey, MyeVec3 pos, MyeEntityId parent);
 };
 
 // スクリプトの各コールバックに渡されるコンテキスト (POD)

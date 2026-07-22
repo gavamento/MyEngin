@@ -90,6 +90,23 @@ void RegisterBuiltinComponents()
         MYE_FIELD(ParticleEmitterComponent, blendMode, Int32),
         MYE_FIELD(ParticleEmitterComponent, seed, UInt32),
         MYE_FIELD(ParticleEmitterComponent, maxParticles, Int32),
+        // M32a: ライフサイクル + 多点グラデーション + テクスチャ/フリップブック + ソフトパーティクル。
+        // 末尾 append なので既存シーンは既定値ロードで挙動不変 (ハッシュは変わる → golden 再記録)。
+        MYE_FIELD(ParticleEmitterComponent, playing, Int32),
+        MYE_FIELD(ParticleEmitterComponent, durationTicks, Int32),
+        MYE_FIELD(ParticleEmitterComponent, looping, Int32),
+        MYE_FIELD(ParticleEmitterComponent, burstCount, Int32),
+        MYE_FIELD(ParticleEmitterComponent, colorMid1, Color),
+        MYE_FIELD(ParticleEmitterComponent, colorMidT1, Float),
+        MYE_FIELD(ParticleEmitterComponent, colorMid2, Color),
+        MYE_FIELD(ParticleEmitterComponent, colorMidT2, Float),
+        MYE_FIELD(ParticleEmitterComponent, sizeMidScale, Float),
+        MYE_FIELD(ParticleEmitterComponent, sizeMidT, Float),
+        MYE_FIELD(ParticleEmitterComponent, texture, AssetRef),
+        MYE_FIELD(ParticleEmitterComponent, flipTilesX, Int32),
+        MYE_FIELD(ParticleEmitterComponent, flipTilesY, Int32),
+        MYE_FIELD(ParticleEmitterComponent, flipCycles, Float),
+        MYE_FIELD(ParticleEmitterComponent, softFadeDistance, Float),
     });
 
     // M28a: height / friction を末尾 append (フィールド順変更なし = シーン互換維持。
@@ -192,6 +209,110 @@ void RegisterBuiltinComponents()
         FieldDesc{ "param3", FieldType::Int32,
                    static_cast<uint32_t>(offsetof(AnimatorControllerComponent, params) + 3 * sizeof(int32_t)),
                    kFieldNone },
+    });
+
+    // M29a: 定常力。Rigidbody の velocity (hash 対象) を決定論的に駆動するので **hash 対象**。
+    // opt-in (無ければ物理非関与) で TypeId append (=18) のみ → 既存シーン不変 = bump 不要
+    RegisterComponent<ConstantForceComponent>("ConstantForce", {
+        MYE_FIELD(ConstantForceComponent, force, Float3),
+        MYE_FIELD(ConstantForceComponent, torque, Float3),
+        MYE_FIELD(ConstantForceComponent, relative, Int32),
+    });
+
+    // M29a: 距離バネジョイント。速度を駆動するので **hash 対象**。opt-in で TypeId append (=19)。
+    // connectedEntity は EntityRef → シーン保存は fileId 変換、プレハブは既存 remap が面倒を見る
+    RegisterComponent<SpringJointComponent>("SpringJoint", {
+        MYE_FIELD(SpringJointComponent, connectedEntity, EntityRef),
+        MYE_FIELD_RANGE(SpringJointComponent, restLength, Float, 0.0f, 1000.0f),
+        MYE_FIELD_TIP(SpringJointComponent, stiffness, Float,
+                      "安定条件: stiffness*dt^2/mass < 4 (dt=1/60 → mass=1 で k < 14400)"),
+        MYE_FIELD_RANGE(SpringJointComponent, damping, Float, 0.0f, 100000.0f),
+    });
+
+    // M29b: キャラクターコントローラ。LocalTransform を駆動する sim 状態なので **hash 対象**。
+    // opt-in で TypeId append (=20) のみ → 既存シーン不変 = bump 不要
+    RegisterComponent<CharacterControllerComponent>("CharacterController", {
+        MYE_FIELD_RANGE(CharacterControllerComponent, radius, Float, 0.01f, 10.0f),
+        MYE_FIELD_RANGE(CharacterControllerComponent, height, Float, 0.1f, 20.0f),
+        MYE_FIELD_RANGE(CharacterControllerComponent, slopeLimitDeg, Float, 0.0f, 89.0f),
+        MYE_FIELD_RANGE(CharacterControllerComponent, skinWidth, Float, 0.0f, 0.5f),
+        MYE_FIELD(CharacterControllerComponent, gravityScale, Float),
+        MYE_FIELD(CharacterControllerComponent, moveInput, Float3),
+        MYE_FIELD_FLAGS(CharacterControllerComponent, velocity, Float3, kFieldReadOnly),
+        MYE_FIELD_FLAGS(CharacterControllerComponent, jumpSpeed, Float, kFieldHidden),
+        MYE_FIELD_FLAGS(CharacterControllerComponent, isGrounded, Int32, kFieldReadOnly),
+    });
+
+    // M29c: スプライト/トレイル/3D テキスト。描画専用なので **kComponentNoHash**
+    // (既存シーンのハッシュ不変)。serialize はされる。opt-in で TypeId append (=21/22/23) のみ
+    RegisterComponent<SpriteRendererComponent>("SpriteRenderer", {
+        MYE_FIELD(SpriteRendererComponent, texture, AssetRef),
+        MYE_FIELD(SpriteRendererComponent, color, Color),
+        MYE_FIELD(SpriteRendererComponent, size, Float2),
+        MYE_FIELD(SpriteRendererComponent, billboardMode, Int32),
+    }, kComponentNoHash);
+
+    RegisterComponent<TrailRendererComponent>("TrailRenderer", {
+        MYE_FIELD_RANGE(TrailRendererComponent, duration, Float, 0.02f, 30.0f),
+        MYE_FIELD_RANGE(TrailRendererComponent, width, Float, 0.001f, 10.0f),
+        MYE_FIELD(TrailRendererComponent, colorBegin, Color),
+        MYE_FIELD(TrailRendererComponent, colorEnd, Color),
+        MYE_FIELD_RANGE(TrailRendererComponent, minVertexDistance, Float, 0.001f, 10.0f),
+        MYE_FIELD(TrailRendererComponent, emitting, Int32),
+    }, kComponentNoHash);
+
+    RegisterComponent<TextMeshComponent>("TextMesh", {
+        MYE_FIELD(TextMeshComponent, text, String64),
+        MYE_FIELD_RANGE(TextMeshComponent, fontScale, Float, 0.05f, 50.0f),
+        MYE_FIELD(TextMeshComponent, color, Color),
+        MYE_FIELD(TextMeshComponent, billboardMode, Int32),
+    }, kComponentNoHash);
+
+    // M29d: スカイボックス/フォグ。描画専用なので **kComponentNoHash** (既存シーン不変)。
+    // opt-in で TypeId append (=24/25) のみ → bump 不要
+    RegisterComponent<SkyboxComponent>("Skybox", {
+        MYE_FIELD(SkyboxComponent, mode, Int32),
+        MYE_FIELD(SkyboxComponent, topColor, Color),
+        MYE_FIELD(SkyboxComponent, horizonColor, Color),
+        MYE_FIELD(SkyboxComponent, bottomColor, Color),
+        MYE_FIELD(SkyboxComponent, cubemapTexture, AssetRef),
+    }, kComponentNoHash);
+
+    RegisterComponent<FogComponent>("Fog", {
+        MYE_FIELD(FogComponent, mode, Int32),
+        MYE_FIELD(FogComponent, color, Color),
+        MYE_FIELD_RANGE(FogComponent, density, Float, 0.0f, 1.0f),
+        MYE_FIELD(FogComponent, start, Float),
+        MYE_FIELD(FogComponent, end, Float),
+    }, kComponentNoHash);
+
+    // M29e: カメラ別ポストプロセス。描画専用なので **kComponentNoHash**。
+    // opt-in で TypeId append (=26) のみ → bump 不要
+    RegisterComponent<CameraPostFxComponent>("CameraPostFx", {
+        MYE_FIELD_RANGE(CameraPostFxComponent, exposure, Float, 0.0f, 16.0f),
+        MYE_FIELD(CameraPostFxComponent, tonemapMode, Int32),
+        MYE_FIELD(CameraPostFxComponent, bloomOn, Int32),
+        MYE_FIELD(CameraPostFxComponent, bloomThreshold, Float),
+        MYE_FIELD(CameraPostFxComponent, bloomIntensity, Float),
+        MYE_FIELD(CameraPostFxComponent, fxaaOn, Int32),
+        // M32d: 色収差 / ビネット / カラーグレーディング (末尾 append、NoHash なので bump 不要)
+        MYE_FIELD_RANGE(CameraPostFxComponent, chromAberration, Float, 0.0f, 0.05f),
+        MYE_FIELD_RANGE(CameraPostFxComponent, vignetteIntensity, Float, 0.0f, 1.0f),
+        MYE_FIELD_RANGE(CameraPostFxComponent, vignetteRadius, Float, 0.0f, 1.0f),
+        MYE_FIELD_RANGE(CameraPostFxComponent, saturation, Float, 0.0f, 4.0f),
+        MYE_FIELD_RANGE(CameraPostFxComponent, contrast, Float, 0.0f, 4.0f),
+        MYE_FIELD(CameraPostFxComponent, colorFilter, Color),
+    }, kComponentNoHash);
+
+    // M32e: 合成エフェクトのライフサイクル。DestroyEntity + 子エミッタ playing を駆動 = hash 対象。
+    // opt-in (TypeId append =27) なので既存シーンは不変 = bump 不要
+    RegisterComponent<EffectComponent>("Effect", {
+        MYE_FIELD(EffectComponent, durationTicks, Int32),
+        MYE_FIELD(EffectComponent, lingerTicks, Int32),
+        MYE_FIELD_FLAGS(EffectComponent, elapsedTicks, Int32, kFieldReadOnly),
+        MYE_FIELD(EffectComponent, playing, Int32),
+        MYE_FIELD(EffectComponent, looping, Int32),
+        MYE_FIELD(EffectComponent, autoDestroy, Int32),
     });
 }
 

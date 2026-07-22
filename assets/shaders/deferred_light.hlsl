@@ -15,6 +15,13 @@ cbuffer LightPass : register(b0)
     float2   _pad1;
     float3   gCameraPos;
     float    _pad2;
+    // ---- フォグ (M29d、末尾 append) ----
+    float3   gFogColor;
+    int      gFogMode; // -1=無効
+    float    gFogDensity;
+    float    gFogStart;
+    float    gFogEnd;
+    float    _fogPad;
 };
 
 Texture2D gAlbedo    : register(t0);
@@ -52,7 +59,9 @@ float4 PSMain(VSOut i) : SV_Target
     if (gShadowEnabled != 0) {
         dirShadow = SampleShadowPCF(gShadowMap, gShadowSampler, gShadowVP, posW, gShadowTexel);
     }
-    const float3 color = ApplyLighting(albedo.rgb, n, posW, gCameraPos, mr.x, mr.y, gAmbient,
-                                       gLights, gLightCount, dirShadow);
+    float3 color = ApplyLighting(albedo.rgb, n, posW, gCameraPos, mr.x, mr.y, gAmbient,
+                                 gLights, gLightCount, dirShadow);
+    color = ApplyFog(color, gFogColor, gFogMode, gFogDensity, gFogStart, gFogEnd,
+                     length(gCameraPos - posW)); // M29d
     return float4(color, 1.0f);
 }

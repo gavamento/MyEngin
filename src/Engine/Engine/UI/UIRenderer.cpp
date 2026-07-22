@@ -265,6 +265,26 @@ void UIRenderer::Shutdown()
     ready_ = false;
 }
 
+bool UIRenderer::CopyGlyphTable(VfxGlyph* out128) const
+{
+    if (!out128 || !fontSrv_) {
+        return false;
+    }
+    for (int i = 0; i < 128; ++i) {
+        const Glyph& g = glyphs_[i];
+        VfxGlyph& o = out128[i];
+        o.u0 = g.u0;
+        o.v0 = g.v0;
+        o.u1 = g.u1;
+        o.v1 = g.v1;
+        o.w = g.x1 - g.x0;
+        o.h = g.y1 - g.y0;
+        o.advance = g.advance;
+        o.valid = g.valid;
+    }
+    return true;
+}
+
 float UIRenderer::TextWidth(const char* s, float scale) const
 {
     if (!s) {

@@ -8,6 +8,7 @@ namespace mye {
 class World;
 class GraphicsDevice;
 class ShaderManager;
+struct RenderResources;
 
 struct ParticleStats {
     uint32_t aliveTotal = 0; // CPU は正確、GPU は放出累計ベースの推定
@@ -30,8 +31,9 @@ public:
 
     // シーン描画後に呼ばれる (両レンダリングパス共通の Forward 後段)。
     // renderOffsetX: 比較モードで横に並べて表示するためのオフセット
+    // resources: エミッタのテクスチャ (M32b フリップブック) 解決に使う
     virtual void Render(GraphicsDevice& device, const RenderView& view, ShaderManager& shaders,
-                        float renderOffsetX) = 0;
+                        RenderResources& resources, float renderOffsetX) = 0;
 
     virtual ParticleStats Stats() const = 0;
 };

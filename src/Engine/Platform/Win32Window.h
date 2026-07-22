@@ -35,7 +35,9 @@ public:
     // 前回呼び出し以降にクライアント領域サイズが変わっていたら true (1 回で消費)
     bool ConsumeResize();
 
-    intptr_t HandleMsg(uint32_t msg, uint64_t wparam, int64_t lparam);
+    // hwnd は WndProc の引数をそのまま受ける。CreateWindowExW 中 (hwnd_ 代入前) にも
+    // WM_NCCALCSIZE 等が届くため、hwnd_ ではなくこの引数を DefWindowProc へ渡す
+    intptr_t HandleMsg(void* hwnd, uint32_t msg, uint64_t wparam, int64_t lparam);
 
 private:
     void* hwnd_ = nullptr;
