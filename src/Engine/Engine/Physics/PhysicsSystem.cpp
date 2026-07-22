@@ -130,6 +130,8 @@ struct Body {
     float invI[3][3] = {};         // ワールド逆慣性テンソル (freezeRot は零行列)
     float restitution = 0;
     float friction = 0.5f;         // クーロン摩擦係数 (Collider から。ペアは sqrt(μa·μb))
+    int32_t layer = 0;             // 衝突レイヤー (M36a、Collider から複製)
+    uint32_t mask = 0xFFFFFFFFu;   // 衝突マスク (既定 = 全レイヤー → 従来挙動)
     // 親のワールドフレーム (M28d)。収集時に合成し運動学的フレームとして固定。
     // identity (ルート) なら書き戻しは従来の直接代入 (ビット同一 fast-path)
     WorldFrame frame;
@@ -235,6 +237,8 @@ struct CharBody {
     WorldFrame frame;              // 親フレーム (収集時固定)
     float px = 0, py = 0, pz = 0;  // tick 頭のワールド位置
     float radius = 0, halfSeg = 0; // ワールドスケール適用済みのカプセル寸法
+    int32_t layer = 0;             // 衝突レイヤー (M36a、併用 Collider から。無ければ既定)
+    uint32_t mask = 0xFFFFFFFFu;
 };
 
 constexpr int kCharPushPasses = 4; // 固定パス数 (収束早期終了はしない = 決定論)
@@ -271,6 +275,9 @@ void SolveCharacters(std::vector<Body>& bodies, std::vector<CharBody>& chars, fl
                 if (!obs.solid || obs.entity.index == c.entity.index) {
                     continue;
                 }
+                if (!shapes::CanCollide(c.layer, c.mask, obs.layer, obs.mask)) {
+                    continue; // M36a
+                }
                 float nx, ny, nz, depth;
                 if (!shapes::Collide(pose, obs.pose, nx, ny, nz, depth)) {
                     continue;
@@ -297,6 +304,9 @@ void SolveCharacters(std::vector<Body>& bodies, std::vector<CharBody>& chars, fl
             for (const Body& obs : bodies) {
                 if (!obs.solid || obs.entity.index == c.entity.index) {
                     continue;
+                }
+                if (!shapes::CanCollide(c.layer, c.mask, obs.layer, obs.mask)) {
+                    continue; // M36a
                 }
                 float nx, ny, nz, depth;
                 if (shapes::Collide(probe, obs.pose, nx, ny, nz, depth) && ny >= cosSlope) {
@@ -388,6 +398,8 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                 b.solid = true;
                 b.col = col;
                 b.friction = col->friction;
+                b.layer = col->layer; // M36a
+                b.mask = col->mask;
             }
             bodies.push_back(b);
         }
@@ -416,6 +428,8 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             b.solid = true;
             b.invMass = 0.0f; // 静的 = 不動
             b.friction = col->friction;
+            b.layer = col->layer; // M36a
+            b.mask = col->mask;
             // M28d: 親付き静的コライダーもワールド姿勢で判定 (従来は lt 直読みのバグ)
             const WorldFrame f = ComposeParentFrame(world, e);
             XMFLOAT3 wpos;
@@ -462,6 +476,11 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             const float wh = c.cc->height * 0.5f * asy;
             c.radius = wr;
             c.halfSeg = (wh > wr) ? (wh - wr) : 0.0f;
+            // M36a: 併用 Collider があればそのレイヤー/マスクを CC の判定にも使う
+            if (const auto* ccol = world.GetComponent<ColliderComponent>(e)) {
+                c.layer = ccol->layer;
+                c.mask = ccol->mask;
+            }
             chars.push_back(c);
         }
     });
@@ -682,6 +701,20 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
         } else {
             ComputeCandidatePairs(entries, candidates);
         }
+    }
+
+    // ---- レイヤーフィルタ (M36a): 非マッチペアを候補から除外 (順序保存 = 決定論)。
+    //      既定 (layer=0, mask=all) は全ペア通過 = 従来挙動 ----
+    {
+        size_t w = 0;
+        for (const uint64_t key : candidates) {
+            const Body& A = bodies[static_cast<size_t>(key >> 32)];
+            const Body& B = bodies[static_cast<size_t>(key & 0xFFFFFFFFu)];
+            if (shapes::CanCollide(A.layer, A.mask, B.layer, B.mask)) {
+                candidates[w++] = key;
+            }
+        }
+        candidates.resize(w);
     }
 
     // ---- 接触解決 (固定反復・候補ペアを (小,大) 昇順走査 = 決定論) ----
@@ -933,7 +966,8 @@ int ApplyTorqueWorld(World& world, EntityID e, MyeVec3 torque, float dt)
     return 1;
 }
 
-int RaycastWorld(World& world, MyeVec3 origin, MyeVec3 dir, float maxDist, MyeRaycastHit* outHit)
+int RaycastWorld(World& world, MyeVec3 origin, MyeVec3 dir, float maxDist, MyeRaycastHit* outHit,
+                 uint32_t mask)
 {
     // dir を正規化 (ゼロ長は無効)
     float dlen = std::sqrt(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
@@ -961,6 +995,9 @@ int RaycastWorld(World& world, MyeVec3 origin, MyeVec3 dir, float maxDist, MyeRa
                 continue;
             }
             const auto* col = static_cast<const ColliderComponent*>(arch.GetPtr(ci, row));
+            if (!shapes::LayerHit(mask, col->layer)) {
+                continue; // M36a: マスク外レイヤーは収集段階で除外
+            }
             const auto* wm = static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row));
             targets.push_back({ e, shapes::MakePoseFromMatrix(*col, wm->value) });
         }

@@ -19,8 +19,9 @@ struct QueryTarget {
     ShapePose pose;
 };
 
-// 全コライダーのワールドポーズを index 昇順で収集 (RaycastWorld と同一規約)
-void CollectTargets(World& world, std::vector<QueryTarget>& out)
+// 全コライダーのワールドポーズを index 昇順で収集 (RaycastWorld と同一規約)。
+// mask (M36a): マスク外レイヤーは収集段階で除外 (既定 = 全レイヤー = 従来挙動)
+void CollectTargets(World& world, uint32_t mask, std::vector<QueryTarget>& out)
 {
     const ComponentTypeId req[] = { ColliderComponent::sTypeId, WorldMatrixComponent::sTypeId };
     world.ForEachArchetype(req, [&](Archetype& arch) {
@@ -32,6 +33,9 @@ void CollectTargets(World& world, std::vector<QueryTarget>& out)
                 continue;
             }
             const auto* col = static_cast<const ColliderComponent*>(arch.GetPtr(ci, row));
+            if (!shapes::LayerHit(mask, col->layer)) {
+                continue;
+            }
             const auto* wm = static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row));
             out.push_back({ e, shapes::MakePoseFromMatrix(*col, wm->value) });
         }
@@ -42,10 +46,11 @@ void CollectTargets(World& world, std::vector<QueryTarget>& out)
 }
 
 // probe と重なる全エンティティを列挙する共通本体
-int OverlapWorld(World& world, const ShapePose& probe, MyeEntityId* outEntities, int maxCount)
+int OverlapWorld(World& world, const ShapePose& probe, MyeEntityId* outEntities, int maxCount,
+                 uint32_t mask)
 {
     std::vector<QueryTarget> targets;
-    CollectTargets(world, targets);
+    CollectTargets(world, mask, targets);
     int total = 0;
     for (const QueryTarget& t : targets) {
         if (!shapes::Overlap(probe, t.pose)) {
@@ -62,18 +67,18 @@ int OverlapWorld(World& world, const ShapePose& probe, MyeEntityId* outEntities,
 } // namespace
 
 int OverlapSphereWorld(World& world, MyeVec3 center, float radius, MyeEntityId* outEntities,
-                       int maxCount)
+                       int maxCount, uint32_t mask)
 {
     ColliderComponent probe;
     probe.shape = 0;
     probe.radius = radius;
     const ShapePose pose = shapes::MakePose(probe, { center.x, center.y, center.z },
                                             { 0, 0, 0, 1 }, { 1, 1, 1 });
-    return OverlapWorld(world, pose, outEntities, maxCount);
+    return OverlapWorld(world, pose, outEntities, maxCount, mask);
 }
 
 int OverlapBoxWorld(World& world, MyeVec3 center, MyeVec3 halfExtents, MyeQuat rotation,
-                    MyeEntityId* outEntities, int maxCount)
+                    MyeEntityId* outEntities, int maxCount, uint32_t mask)
 {
     ColliderComponent probe;
     probe.shape = 1;
@@ -81,16 +86,16 @@ int OverlapBoxWorld(World& world, MyeVec3 center, MyeVec3 halfExtents, MyeQuat r
     const ShapePose pose = shapes::MakePose(probe, { center.x, center.y, center.z },
                                             { rotation.x, rotation.y, rotation.z, rotation.w },
                                             { 1, 1, 1 });
-    return OverlapWorld(world, pose, outEntities, maxCount);
+    return OverlapWorld(world, pose, outEntities, maxCount, mask);
 }
 
 int SphereCastWorld(World& world, MyeVec3 origin, MyeVec3 dir, float radius, float maxDist,
-                    MyeRaycastHit* outHit)
+                    MyeRaycastHit* outHit, uint32_t mask)
 {
     const float dlen = std::sqrt(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
     if (dlen < 1e-8f || radius <= 0.0f) {
         // 半径 0 は通常の Raycast と等価
-        return (radius <= 0.0f) ? RaycastWorld(world, origin, dir, maxDist, outHit) : 0;
+        return (radius <= 0.0f) ? RaycastWorld(world, origin, dir, maxDist, outHit, mask) : 0;
     }
     const float dx = dir.x / dlen, dy = dir.y / dlen, dz = dir.z / dlen;
     if (maxDist <= 0.0f) {
@@ -98,7 +103,7 @@ int SphereCastWorld(World& world, MyeVec3 origin, MyeVec3 dir, float radius, flo
     }
 
     std::vector<QueryTarget> targets;
-    CollectTargets(world, targets);
+    CollectTargets(world, mask, targets);
 
     float bestT = maxDist;
     bool hit = false;

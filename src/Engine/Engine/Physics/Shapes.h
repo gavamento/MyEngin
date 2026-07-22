@@ -31,6 +31,19 @@ struct ShapePose {
 
 namespace shapes {
 
+// ---- 衝突レイヤー判定 (M36a、純関数) ----
+// クエリマスクがレイヤー layer のコライダーをヒット対象にするか
+inline bool LayerHit(uint32_t queryMask, int32_t layer)
+{
+    return ((queryMask >> (static_cast<uint32_t>(layer) & 31u)) & 1u) != 0u;
+}
+// ペア判定は双方向: 互いの mask が相手の layer を許可して初めて衝突する (Unity のマトリクス
+// と違い per-collider mask。対称にするには両側の mask を揃える)
+inline bool CanCollide(int32_t layerA, uint32_t maskA, int32_t layerB, uint32_t maskB)
+{
+    return LayerHit(maskA, layerB) && LayerHit(maskB, layerA);
+}
+
 // LocalTransform の成分から (物理ソルバ用 — TransformSystem 前でも使える)
 ShapePose MakePose(const ColliderComponent& col, const DirectX::XMFLOAT3& position,
                    const DirectX::XMFLOAT4& rotation, const DirectX::XMFLOAT3& scale);

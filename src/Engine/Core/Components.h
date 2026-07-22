@@ -141,6 +141,10 @@ struct ColliderComponent {
     // ---- M28a 追加 (末尾 append = シーン/リプレイ互換維持) ----
     float height = 2.0f;   // capsule 全高 (両端の半球を含む)。線分半長 = max(0, height/2 − radius)
     float friction = 0.5f; // クーロン摩擦係数 (M28b のソルバで使用。ペアは sqrt(μa·μb))
+    // ---- M36a 追加: 衝突レイヤー (hash 対象のフィールド追加 → golden 再記録済) ----
+    int32_t layer = 0;          // 所属レイヤー 0..31 (名前は project_settings.json、sim は index のみ)
+    uint32_t mask = 0xFFFFFFFFu; // 衝突相手レイヤーのビット集合。判定は双方向 (CanCollide)
+    AssetID meshAsset = {};     // M41 予約: 静的メッシュコライダー (空 = 従来形状。M36 では未使用)
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 

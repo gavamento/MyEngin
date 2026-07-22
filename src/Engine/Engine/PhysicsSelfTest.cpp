@@ -1006,6 +1006,90 @@ bool RunPhysicsSelfTest()
                      static_cast<unsigned long long>(finalHash));
     }
 
+    // ---- (L1) レイヤー/マスク: ソルバペア除外 (M36a) ----
+    {
+        // 床 = layer0。箱 A = 既定 (全マッチ、床に乗る)。箱 B = mask から layer0 を除外 → 素通り落下
+        Scene s;
+        MakeGround(s, "LGround", 0, -0.5f, 0, 10.0f, 0.5f, 10.0f);
+        GameObject a = MakeBox(s, "LBoxA", -2.0f, 2.0f, 0, 0.5f, 0.5f, 0.5f);
+        GameObject b = MakeBox(s, "LBoxB", 2.0f, 2.0f, 0, 0.5f, 0.5f, 0.5f);
+        b.GetComponent<ColliderComponent>()->mask = ~1u; // layer0 (床) と衝突しない
+        s.GetWorld().ApplyStructuralChanges();
+        for (int i = 0; i < 180; ++i) {
+            phys.Update(s.GetWorld(), kDt);
+        }
+        const float ay = a.GetComponent<LocalTransform>()->position.y;
+        const float by = b.GetComponent<LocalTransform>()->position.y;
+        check(std::fabs(ay - 0.5f) < 0.05f, "layer: default mask box rests on ground");
+        check(by < -5.0f, "layer: masked-out box falls through ground");
+    }
+
+    // ---- (L2) レイヤー/マスク: 片側除外でも双方向で不衝突 (対称性) ----
+    {
+        Scene s;
+        GameObject g = MakeGround(s, "LG2", 0, -0.5f, 0, 10.0f, 0.5f, 10.0f);
+        g.GetComponent<ColliderComponent>()->layer = 3;
+        g.GetComponent<ColliderComponent>()->mask = ~2u; // layer1 を拒否
+        GameObject b = MakeBox(s, "LB2", 0, 2.0f, 0, 0.5f, 0.5f, 0.5f);
+        b.GetComponent<ColliderComponent>()->layer = 1; // mask は既定 (layer3 を許可) — だが床側が拒否
+        s.GetWorld().ApplyStructuralChanges();
+        for (int i = 0; i < 180; ++i) {
+            phys.Update(s.GetWorld(), kDt);
+        }
+        check(b.GetComponent<LocalTransform>()->position.y < -5.0f,
+              "layer: one-sided rejection is bidirectional (falls through)");
+    }
+
+    // ---- (L3) レイヤー/マスク: トリガーイベント除外 ----
+    {
+        Scene s;
+        TransformSystem ts;
+        CollisionSystem cs;
+        GameObject trig = MakeGround(s, "LTrig", 0, 0, 0, 1.0f, 1.0f, 1.0f, 1); // isTrigger
+        trig.GetComponent<ColliderComponent>()->layer = 2;
+        GameObject inA = MakeGround(s, "LInA", 0.5f, 0, 0, 0.5f, 0.5f, 0.5f, 0);
+        GameObject inB = MakeGround(s, "LInB", -0.5f, 0, 0, 0.5f, 0.5f, 0.5f, 0);
+        inB.GetComponent<ColliderComponent>()->mask = ~4u; // layer2 (トリガー) を拒否
+        s.GetWorld().ApplyStructuralChanges();
+        ts.Update(s.GetWorld());
+        cs.Update(s.GetWorld(), nullptr, nullptr, nullptr);
+        int hitA = 0, hitB = 0;
+        for (const uint64_t key : cs.LastTriggerEnter()) {
+            const uint32_t i0 = static_cast<uint32_t>(key >> 32);
+            const uint32_t i1 = static_cast<uint32_t>(key & 0xFFFFFFFFu);
+            if (i0 == inA.Id().index || i1 == inA.Id().index) { ++hitA; }
+            if (i0 == inB.Id().index || i1 == inB.Id().index) { ++hitB; }
+        }
+        check(hitA == 1, "layer: unmasked overlap fires trigger enter");
+        check(hitB == 0, "layer: masked-out overlap fires no trigger");
+    }
+
+    // ---- (L4) レイヤー/マスク: Raycast / Overlap のクエリマスク ----
+    {
+        Scene s;
+        TransformSystem ts;
+        GameObject near5 = MakeGround(s, "LRayNear", 5.0f, 0, 0, 0.5f, 0.5f, 0.5f);
+        near5.GetComponent<ColliderComponent>()->layer = 4;
+        GameObject far10 = MakeGround(s, "LRayFar", 10.0f, 0, 0, 0.5f, 0.5f, 0.5f);
+        far10.GetComponent<ColliderComponent>()->layer = 5;
+        s.GetWorld().ApplyStructuralChanges();
+        ts.Update(s.GetWorld());
+        MyeRaycastHit hit = {};
+        // 既定マスク: 近い layer4 がヒット
+        check(RaycastWorld(s.GetWorld(), { 0, 0, 0 }, { 1, 0, 0 }, 100.0f, &hit) == 1
+                  && hit.entity.index == near5.Id().index,
+              "layer: raycast default mask hits nearest");
+        // layer4 を除外: 奥の layer5 がヒット
+        check(RaycastWorld(s.GetWorld(), { 0, 0, 0 }, { 1, 0, 0 }, 100.0f, &hit, ~(1u << 4)) == 1
+                  && hit.entity.index == far10.Id().index,
+              "layer: raycast mask skips excluded layer");
+        // Overlap: layer5 のみ許可 → far だけ
+        MyeEntityId ents[8] = {};
+        const int n = OverlapSphereWorld(s.GetWorld(), { 7.5f, 0, 0 }, 5.0f, ents, 8, 1u << 5);
+        check(n == 1 && ents[0].index == far10.Id().index,
+              "layer: overlap mask filters collection");
+    }
+
     if (failCount == 0) {
         MYE_LOG_INFO("==== Physics self test: ALL PASS ====");
         return true;

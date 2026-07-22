@@ -52,20 +52,22 @@ int ApplyTorqueWorld(World& world, EntityID e, MyeVec3 torque, float dt);
 // origin/dir はワールド座標。dir は非正規化でよい (内部で正規化する)。
 // 最近ヒットを outHit に書いて 1 を返す。ヒット無しで 0。走査は entity.index 昇順 (決定論)。
 // トリガー / ソリッドを問わず全コライダーが対象 (汎用空間クエリ)。WorldMatrix ベース。
-int RaycastWorld(World& world, MyeVec3 origin, MyeVec3 dir, float maxDist, MyeRaycastHit* outHit);
+// mask (M36a): LayerHit(mask, collider.layer) のコライダーだけ対象。既定 = 全レイヤー = 従来。
+int RaycastWorld(World& world, MyeVec3 origin, MyeVec3 dir, float maxDist, MyeRaycastHit* outHit,
+                 uint32_t mask = 0xFFFFFFFFu);
 
 // ---- 空間クエリ (M28c、ABI OverlapSphere/OverlapBox/SphereCast の実装本体) ----
 // Raycast と同じ収集規約: トリガー含む全コライダー対象、WorldMatrix ベース、
-// entity.index 昇順 (決定論)。実装は PhysicsQueries.cpp。
+// entity.index 昇順 (決定論)。実装は PhysicsQueries.cpp。mask の意味は Raycast と同じ (M36a)。
 // Overlap 系: ヒットを outEntities に最大 maxCount 個 (index 昇順) 書き、
 // 戻り値は切り捨て前の総ヒット数 (outEntities null / maxCount 0 は数えるだけ)。
 int OverlapSphereWorld(World& world, MyeVec3 center, float radius, MyeEntityId* outEntities,
-                       int maxCount);
+                       int maxCount, uint32_t mask = 0xFFFFFFFFu);
 int OverlapBoxWorld(World& world, MyeVec3 center, MyeVec3 halfExtents, MyeQuat rotation,
-                    MyeEntityId* outEntities, int maxCount);
+                    MyeEntityId* outEntities, int maxCount, uint32_t mask = 0xFFFFFFFFu);
 // 半径 radius の球を dir 方向に掃引し最近ヒットを返す (Raycast の太い版)。
 // sphere/capsule 相手は解析解 (半径膨張レイ)、box 相手は固定 32 回の保守的前進 (決定論)。
 int SphereCastWorld(World& world, MyeVec3 origin, MyeVec3 dir, float radius, float maxDist,
-                    MyeRaycastHit* outHit);
+                    MyeRaycastHit* outHit, uint32_t mask = 0xFFFFFFFFu);
 
 } // namespace mye

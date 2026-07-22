@@ -23,6 +23,8 @@ struct Body {
     EntityID entity;
     ShapePose pose;
     int32_t isTrigger = 0;
+    int32_t layer = 0;           // M36a: 衝突レイヤー (Collider から複製)
+    uint32_t mask = 0xFFFFFFFFu;
 };
 
 // key 昇順の SolidContact 列から法線を引く (無ければ +Y)
@@ -59,8 +61,8 @@ void CollisionSystem::Update(World& world, ScriptHost* scripts, ManagedHost* man
             }
             const auto* col = static_cast<const ColliderComponent*>(arch.GetPtr(ci, row));
             const auto* wm = static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row));
-            bodies.push_back(
-                { arch.EntityAt(row), shapes::MakePoseFromMatrix(*col, wm->value), col->isTrigger });
+            bodies.push_back({ arch.EntityAt(row), shapes::MakePoseFromMatrix(*col, wm->value),
+                               col->isTrigger, col->layer, col->mask });
         }
     });
     std::sort(bodies.begin(), bodies.end(),
@@ -86,6 +88,9 @@ void CollisionSystem::Update(World& world, ScriptHost* scripts, ManagedHost* man
             const Body& b = bodies[static_cast<size_t>(key & 0xFFFFFFFFu)];
             if (a.isTrigger == 0 && b.isTrigger == 0) {
                 continue;
+            }
+            if (!shapes::CanCollide(a.layer, a.mask, b.layer, b.mask)) {
+                continue; // M36a: レイヤー非マッチはトリガーイベントも出さない
             }
             if (shapes::Overlap(a.pose, b.pose)) {
                 pairs.push_back((static_cast<uint64_t>(a.entity.index) << 32) | b.entity.index);

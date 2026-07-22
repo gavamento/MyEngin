@@ -109,8 +109,9 @@ void RegisterBuiltinComponents()
         MYE_FIELD(ParticleEmitterComponent, softFadeDistance, Float),
     });
 
-    // M28a: height / friction を末尾 append (フィールド順変更なし = シーン互換維持。
-    // 既存シーンは欠損フィールドをデフォルト値でロードする)
+    // M28a: height / friction、M36a: layer / mask / meshAsset を末尾 append
+    // (フィールド順変更なし = シーン互換維持。既存シーンは欠損フィールドをデフォルト値でロード。
+    //  hash 対象フィールドの追加なので golden.rep は M36a で再記録済み)
     RegisterComponent<ColliderComponent>("Collider", {
         MYE_FIELD(ColliderComponent, shape, Int32),
         MYE_FIELD(ColliderComponent, radius, Float),
@@ -118,6 +119,9 @@ void RegisterBuiltinComponents()
         MYE_FIELD(ColliderComponent, isTrigger, Int32),
         MYE_FIELD(ColliderComponent, height, Float),
         MYE_FIELD(ColliderComponent, friction, Float),
+        MYE_FIELD_TIP(ColliderComponent, layer, Int32, "collision layer 0..31"),
+        MYE_FIELD_TIP(ColliderComponent, mask, UInt32, "layers this collider hits (bitmask)"),
+        MYE_FIELD(ColliderComponent, meshAsset, AssetRef), // M41 予約 (現状未使用)
     });
 
     // M10: 末尾追加 (TypeId 順を壊さない)。無ければ有効なので既存シーンは不変

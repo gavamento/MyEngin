@@ -9,6 +9,7 @@
 
 #include "Editor/AssetOps.h"
 #include "Editor/EditorComponentCatalog.h"
+#include "Editor/PhysicsLayerNames.h"
 #include "Editor/Selection.h"
 #include "Editor/Undo/UndoStack.h"
 #include "Engine/Core/ComponentRegistry.h"
@@ -320,8 +321,12 @@ void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
                         continue;
                     }
                     DrawField(ctx, desc.name, comp, f, e, selection, undo, fid);
-                    // 参照ピッカーはポップアップ選択時に自前で Undo を記録するので除外
-                    if (f.type != FieldType::AssetRef && f.type != FieldType::EntityRef) {
+                    // 参照ピッカー / 衝突マスク (M36a) はポップアップ内で自前 Undo を記録するので除外
+                    const bool ownUndo = f.type == FieldType::AssetRef
+                        || f.type == FieldType::EntityRef
+                        || (std::strcmp(desc.name, "Collider") == 0
+                            && std::strcmp(f.name, "mask") == 0);
+                    if (!ownUndo) {
                         HandleEditUndo(ctx, selection, undo, fid, "Modify");
                     }
                     // ---- プレハブオーバーライド: 右クリック Revert/Apply + マーカー ----
@@ -443,7 +448,22 @@ bool InspectorWindow::DrawField(EngineContext& ctx, const char* componentName, v
         changed = ImGui::DragFloat(field.name, static_cast<float*>(p), speed, lo, hi);
         break;
     case FieldType::Int32:
-        if (const EnumFieldLabels* ef = FindEnumLabels(componentName, field.name)) {
+        // M36a: 物理レイヤーは project_settings.json の動的名前で Combo (sim は index のみ)
+        if (componentName && std::strcmp(componentName, "Collider") == 0
+            && std::strcmp(field.name, "layer") == 0) {
+            PhysicsLayerNames& ln = PhysicsLayerNames::Get();
+            ln.Load(ctx.assetsRoot);
+            const char* labels[PhysicsLayerNames::kCount];
+            ln.BuildComboLabels(labels);
+            int v = *static_cast<int*>(p);
+            if (v < 0 || v >= PhysicsLayerNames::kCount) {
+                v = -1;
+            }
+            changed = ImGui::Combo(field.name, &v, labels, PhysicsLayerNames::kCount);
+            if (changed) {
+                *static_cast<int*>(p) = v;
+            }
+        } else if (const EnumFieldLabels* ef = FindEnumLabels(componentName, field.name)) {
             int v = *static_cast<int*>(p);
             if (v < 0 || v >= ef->count) {
                 v = -1; // 範囲外は "(invalid)" 表示 (値は選択されるまで保持)
@@ -458,7 +478,59 @@ bool InspectorWindow::DrawField(EngineContext& ctx, const char* componentName, v
         }
         break;
     case FieldType::UInt32:
-        changed = ImGui::InputScalar(field.name, ImGuiDataType_U32, p);
+        // M36a: 衝突マスクはレイヤー名チェックリストのポップアップ (Undo は自前記録 —
+        // 呼び出し側の HandleEditUndo からは除外されている)
+        if (componentName && std::strcmp(componentName, "Collider") == 0
+            && std::strcmp(field.name, "mask") == 0) {
+            uint32_t& m = *static_cast<uint32_t*>(p);
+            PhysicsLayerNames& ln = PhysicsLayerNames::Get();
+            ln.Load(ctx.assetsRoot);
+            char summary[48];
+            if (m == 0xFFFFFFFFu) {
+                std::snprintf(summary, sizeof(summary), "Everything##mask");
+            } else if (m == 0u) {
+                std::snprintf(summary, sizeof(summary), "Nothing##mask");
+            } else {
+                std::snprintf(summary, sizeof(summary), "Mixed (0x%08X)##mask", m);
+            }
+            if (ImGui::Button(summary)) {
+                ImGui::OpenPopup("##collider_mask");
+            }
+            ImGui::SameLine();
+            ImGui::TextUnformatted(field.name);
+            if (ImGui::BeginPopup("##collider_mask")) {
+                auto applyMask = [&](uint32_t next) {
+                    undo.BeginRecord("Modify Mask", selection);
+                    undo.CaptureBefore(*ctx.scene, fid);
+                    m = next;
+                    undo.CaptureAfter(*ctx.scene, fid);
+                    undo.EndRecord(selection);
+                    changed = true;
+                };
+                if (ImGui::SmallButton("Everything")) {
+                    applyMask(0xFFFFFFFFu);
+                }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Nothing")) {
+                    applyMask(0u);
+                }
+                ImGui::Separator();
+                for (int i = 0; i < PhysicsLayerNames::kCount; ++i) {
+                    bool on = ((m >> i) & 1u) != 0u;
+                    ImGui::PushID(i);
+                    if (ImGui::Checkbox(ln.Name(i), &on)) {
+                        applyMask(m ^ (1u << i));
+                    }
+                    ImGui::PopID();
+                    if ((i % 2) == 0 && i + 1 < PhysicsLayerNames::kCount) {
+                        ImGui::SameLine(180.0f); // 2 列表示
+                    }
+                }
+                ImGui::EndPopup();
+            }
+        } else {
+            changed = ImGui::InputScalar(field.name, ImGuiDataType_U32, p);
+        }
         break;
     case FieldType::UInt64:
         changed = ImGui::InputScalar(field.name, ImGuiDataType_U64, p);

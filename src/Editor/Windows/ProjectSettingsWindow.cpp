@@ -3,6 +3,7 @@
 #include <string>
 
 #include "Editor/EditorSettings.h"
+#include "Editor/PhysicsLayerNames.h"
 #include "Editor/ShortcutHub.h"
 #include "Engine/Renderer/RenderPath.h"
 
@@ -48,6 +49,29 @@ void ProjectSettingsWindow::OnImGui(EngineContext& ctx, EditorSettings& settings
         ImGui::Checkbox("Grid visible", &settings.gridVisible);
         if (ImGui::Button("Save Settings")) {
             settings.Save();
+        }
+    }
+
+    // ---- 物理レイヤー名 (M36a、assets\project_settings.json の physicsLayers) ----
+    if (ImGui::CollapsingHeader("Physics Layers")) {
+        PhysicsLayerNames& ln = PhysicsLayerNames::Get();
+        ln.Load(ctx.assetsRoot);
+        ImGui::TextDisabled("表示名のみ (sim はレイヤー番号を使う)。Collider の layer/mask に反映");
+        for (int i = 0; i < PhysicsLayerNames::kCount; ++i) {
+            ImGui::PushID(i);
+            ImGui::SetNextItemWidth(160.0f);
+            char label[16];
+            std::snprintf(label, sizeof(label), "%2d", i);
+            ImGui::InputText(label, ln.EditBuffer(i), 32);
+            ImGui::PopID();
+            if ((i % 2) == 0) {
+                ImGui::SameLine(240.0f);
+            }
+        }
+        if (ImGui::Button("Save Layers")) {
+            if (ln.Save(ctx.assetsRoot)) {
+                ln.Load(ctx.assetsRoot, true);
+            }
         }
     }
 
