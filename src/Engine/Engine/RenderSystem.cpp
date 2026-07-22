@@ -33,6 +33,21 @@ struct CullCand {
 
 constexpr size_t kCullGrain = 256; // これ未満は直列 (スレッド起動コスト回避)
 
+// 前 tick → 現 tick のワールド行列を成分 lerp する (M36b 描画補間)。
+// 平行移動は厳密 lerp、回転 3x3 は成分 lerp — 1/60s の姿勢差では非直交化は不可視。
+// render-only なので float 誤差は sim/hash に無関係
+XMFLOAT4X4 LerpWorld(const XMFLOAT4X4& a, const XMFLOAT4X4& b, float t)
+{
+    XMFLOAT4X4 o;
+    const float* pa = &a._11;
+    const float* pb = &b._11;
+    float* po = &o._11;
+    for (int i = 0; i < 16; ++i) {
+        po[i] = pa[i] + (pb[i] - pa[i]) * t;
+    }
+    return o;
+}
+
 // 平行光の view-proj (行ベクトル規約 world*view*proj)。シーン AABB にフィットした正射影。
 // 戻り値は非転置 (ShadowPass が world と合成、RenderView 用に別途転置する)。
 XMFLOAT4X4 ComputeDirectionalLightVP(const XMFLOAT3& lightDir, const XMFLOAT3& sceneMin,
@@ -187,6 +202,12 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
             }
         });
         if (cameraFound) {
+            // M36b: カメラも補間 (スクリプト駆動カメラの tick 刻みを消す)
+            if (prevWorld && interpAlpha < 1.0f) {
+                if (const XMFLOAT4X4* pw = prevWorld->Get(camEntity)) {
+                    camWorld = LerpWorld(*pw, camWorld, interpAlpha);
+                }
+            }
             const XMMATRIX w = XMLoadFloat4x4(&camWorld);
             const XMMATRIX v = XMMatrixInverse(nullptr, w);
             const float aspect = (target.height > 0)
@@ -267,12 +288,14 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
 
         // ---- ステージ 1 (直列): 候補を収集 (順序 = ForEachArchetype/row = 決定的) ----
         std::vector<CullCand> cullCands;
+        const bool interp = prevWorld != nullptr && interpAlpha < 1.0f; // M36b
         const ComponentTypeId req[] = { MeshRendererComponent::sTypeId, WorldMatrixComponent::sTypeId };
         world.ForEachArchetype(req, [&](Archetype& arch) {
             const int mi = arch.FindTypeIndex(MeshRendererComponent::sTypeId);
             const int wi = arch.FindTypeIndex(WorldMatrixComponent::sTypeId);
             for (uint32_t row = 0; row < arch.Count(); ++row) {
-                if (!IsEntityActive(world, arch.EntityAt(row))) {
+                const EntityID e = arch.EntityAt(row);
+                if (!IsEntityActive(world, e)) {
                     continue; // 無効エンティティは描画しない (M10)
                 }
                 const auto* mr = static_cast<const MeshRendererComponent*>(arch.GetPtr(mi, row));
@@ -280,7 +303,14 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
                     continue;
                 }
                 const auto* wm = static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row));
-                cullCands.push_back({ arch.EntityAt(row), mr->mesh, mr->material, wm->value,
+                XMFLOAT4X4 worldMat = wm->value;
+                if (interp) {
+                    // M36b: 前 tick との補間 (新規 spawn は prev 無し → 現在値)
+                    if (const XMFLOAT4X4* pw = prevWorld->Get(e)) {
+                        worldMat = LerpWorld(*pw, wm->value, interpAlpha);
+                    }
+                }
+                cullCands.push_back({ e, mr->mesh, mr->material, worldMat,
                                        resources.meshes.Get(mr->mesh), 0.0f, 1 });
             }
         });

@@ -4,6 +4,7 @@
 #include <deque>
 #include <vector>
 
+#include "Engine/Core/EntityID.h"
 #include "Engine/Renderer/PostProcess.h"
 #include "Engine/Renderer/RenderTypes.h"
 #include "Engine/Renderer/ShadowPass.h"
@@ -25,6 +26,21 @@ struct FrameTarget {
     int width = 0;
     int height = 0;
     float clearColor[4] = { 0.08f, 0.09f, 0.11f, 1.0f };
+};
+
+// 描画補間 (M36b): 前 tick 末のワールド行列スナップショット。EngineLoop が tick 頭に採取し、
+// Render が interpAlpha (= accumulator/fixedDt) で現在値と成分 lerp する。
+// render-only — sim / WorldHash / リプレイには一切干渉しない (verify 中は alpha=1 固定)。
+struct PrevWorldStore {
+    std::vector<DirectX::XMFLOAT4X4> world;   // entity.index キー
+    std::vector<uint32_t> generation;         // entity.generation + 1 (0 = 無効スロット)
+    const DirectX::XMFLOAT4X4* Get(EntityID e) const
+    {
+        if (e.index >= world.size() || generation[e.index] != e.generation + 1) {
+            return nullptr; // 未採取 / 破棄後の index 再利用 → 補間せず現在値
+        }
+        return &world[e.index];
+    }
 };
 
 // エディタカメラ等でシーンカメラを上書きするためのビュー指定
@@ -58,6 +74,11 @@ public:
     PostProcess::Settings postFxSettings;
     bool enablePostFx = true; // false で HDR 配管を丸ごとバイパス (従来の直描き)
     bool enableShadows = true; // false で平行光シャドウを無効 (M17)
+
+    // 描画補間 (M36b)。EngineLoop が毎フレーム設定する。1.0 = 補間なし (従来描画)。
+    // 対象はカメラ + メッシュ収集のワールド行列 (パーティクル/スプライト/UI は対象外)
+    float interpAlpha = 1.0f;
+    const PrevWorldStore* prevWorld = nullptr;
 
 private:
     RenderQueue queue_;     // フレーム毎に再利用 (アロケーション回避)

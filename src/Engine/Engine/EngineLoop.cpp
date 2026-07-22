@@ -1,5 +1,7 @@
 #include "Engine/Engine/EngineLoop.h"
 
+#include <algorithm>
+
 #include "Engine/Core/Check.h"
 #include "Engine/Core/JobSystem.h"
 #include "Engine/Core/Log.h"
@@ -246,6 +248,25 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // ---- メインループ (フェーズ構成は engine_spec.md 5.3 / ADR-005) ----
     double accumulator = 0.0;
     bool running = true;
+    // M36b 描画補間: 前 tick 末のワールド行列 (tick 頭に採取)。record/verify 中は不使用
+    PrevWorldStore prevWorld;
+    bool lastTickSimulated = false;
+    const auto capturePrevWorld = [&prevWorld](World& w) {
+        const ComponentTypeId req[] = { WorldMatrixComponent::sTypeId };
+        w.ForEachArchetype(req, [&](Archetype& arch) {
+            const int wi = arch.FindTypeIndex(WorldMatrixComponent::sTypeId);
+            for (uint32_t row = 0; row < arch.Count(); ++row) {
+                const EntityID e = arch.EntityAt(row);
+                if (e.index >= prevWorld.world.size()) {
+                    prevWorld.world.resize(e.index + 1);
+                    prevWorld.generation.resize(e.index + 1, 0);
+                }
+                prevWorld.world[e.index] =
+                    static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row))->value;
+                prevWorld.generation[e.index] = e.generation + 1;
+            }
+        });
+    };
     while (running) {
         // ---- フェーズ 1: 時間更新 / 入力取得 ----
         if (!window.PumpMessages()) {
@@ -282,7 +303,12 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             if (verifying) {
                 ctx.input = player.InputForTick(ctx.tickIndex); // フェーズ 1 の入力を置換
             }
+            // M36b: tick 頭のワールド行列を補間用に採取 (record/verify 中は補間しないので省く)
+            if (!recorder.IsActive() && !player.IsActive()) {
+                capturePrevWorld(scene.GetWorld());
+            }
             app.OnTick(ctx); // エディタ更新 + simulateScripts の決定
+            lastTickSimulated = ctx.simulateScripts; // M36b: 編集中 (非 Play) は補間を切る
             // ---- フェーズ 3: スクリプト層 Start → Update ----
             const bool runScripts = ctx.simulateScripts && scriptHost.IsLoaded();
             if (runScripts) {
@@ -487,6 +513,15 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             // ---- フェーズ 6: シーン描画 ----
             // ワールド行列は描画直前に一括更新 (LocalTransform の純関数なので sim 状態に影響しない)
             transformSystem.Update(scene.GetWorld());
+
+            // M36b: 補間係数 (accumulator の残り比)。Play 中のみ有効 —
+            // 編集中 / record / verify は 1.0 固定 = 従来描画 (リプレイ透過の保証)
+            const bool interpOk =
+                lastTickSimulated && !recorder.IsActive() && !player.IsActive();
+            renderSystem.interpAlpha = interpOk
+                ? std::clamp(static_cast<float>(accumulator / kFixedDt), 0.0f, 1.0f)
+                : 1.0f;
+            renderSystem.prevWorld = &prevWorld;
 
             app.OnRenderViews(ctx); // エディタの SceneView / GameView (独自 RT)
 
