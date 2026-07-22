@@ -183,7 +183,7 @@ void RegisterBuiltinComponents()
         MYE_FIELD(UIElementComponent, texture, AssetRef),
         MYE_FIELD(UIElementComponent, fontScale, Float),
         MYE_FIELD(UIElementComponent, order, Int32),
-        MYE_FIELD(UIElementComponent, text, String64),
+        MYE_FIELD(UIElementComponent, text, String256),
     }, kComponentNoHash);
 
     // M22: Animator Controller。LocalTransform を駆動するので **hash 対象** (kComponentNoHash 無し)。
@@ -262,7 +262,7 @@ void RegisterBuiltinComponents()
     }, kComponentNoHash);
 
     RegisterComponent<TextMeshComponent>("TextMesh", {
-        MYE_FIELD(TextMeshComponent, text, String64),
+        MYE_FIELD(TextMeshComponent, text, String256),
         MYE_FIELD_RANGE(TextMeshComponent, fontScale, Float, 0.05f, 50.0f),
         MYE_FIELD(TextMeshComponent, color, Color),
         MYE_FIELD(TextMeshComponent, billboardMode, Int32),

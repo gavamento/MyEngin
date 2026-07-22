@@ -22,6 +22,7 @@
 #include "Engine/Engine/PhysicsSelfTest.h"
 #include "Engine/Engine/Project.h"
 #include "Engine/Engine/SceneSelfTest.h"
+#include "Engine/Engine/FontSelfTest.h"
 #include "Engine/Engine/UI/UISelfTest.h"
 #include "Engine/Engine/VfxSelfTest.h"
 #include "Engine/Platform/PathUtil.h"
@@ -169,7 +170,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             && mye::RunUISelfTest() && mye::RunAnimatorControllerSelfTest()
             && mye::RunAssetDatabaseSelfTest() && mye::RunTextureCookSelfTest()
             && mye::RunJobSystemSelfTest() && mye::RunVfxSelfTest()
-            && mye::RunParticleSelfTest() && mye::RunAssetOpsSelfTest();
+            && mye::RunParticleSelfTest() && mye::RunAssetOpsSelfTest()
+            && mye::RunFontSelfTest();
         return ok ? 0 : 1;
     }
 

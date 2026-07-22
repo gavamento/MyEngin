@@ -52,6 +52,7 @@
     <ClCompile Include="..\src\Engine\Engine\EffectSystem.cpp" />
     <ClCompile Include="..\src\Engine\Engine\EngineLoop.cpp" />
     <ClCompile Include="..\src\Engine\Engine\FbxLoader.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\FontSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\HotReload\DllReloader.cpp" />
     <ClCompile Include="..\src\Engine\Engine\HotReload\ReloadHub.cpp" />
     <ClCompile Include="..\src\Engine\Engine\ModelLoader.cpp" />
@@ -88,6 +89,7 @@
     <ClCompile Include="..\src\Engine\Platform\Win32Window.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\DeferredPath.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\EditorLinePass.cpp" />
+    <ClCompile Include="..\src\Engine\Renderer\FontAtlas.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\ForwardPath.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\GpuResources.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\GpuTimer.cpp" />
@@ -136,6 +138,7 @@
     <ClInclude Include="..\src\Engine\Engine\EffectSystem.h" />
     <ClInclude Include="..\src\Engine\Engine\EngineLoop.h" />
     <ClInclude Include="..\src\Engine\Engine\FbxLoader.h" />
+    <ClInclude Include="..\src\Engine\Engine\FontSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\GameObject.h" />
     <ClInclude Include="..\src\Engine\Engine\HotReload\DllReloader.h" />
     <ClInclude Include="..\src\Engine\Engine\HotReload\ReloadHub.h" />
@@ -174,6 +177,8 @@
     <ClInclude Include="..\src\Engine\Platform\Win32Window.h" />
     <ClInclude Include="..\src\Engine\Renderer\DeferredPath.h" />
     <ClInclude Include="..\src\Engine\Renderer\EditorLinePass.h" />
+    <ClInclude Include="..\src\Engine\Renderer\FontAtlas.h" />
+    <ClInclude Include="..\src\Engine\Renderer\FontGeometry.h" />
     <ClInclude Include="..\src\Engine\Renderer\ForwardPath.h" />
     <ClInclude Include="..\src\Engine\Renderer\FrustumCull.h" />
     <ClInclude Include="..\src\Engine\Renderer\GpuResources.h" />

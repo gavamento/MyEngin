@@ -12,3 +12,9 @@
 #pragma warning(push, 0)
 #include "stb/stb_dxt.h"
 #pragma warning(pop)
+
+// TTF ラスタライザ (M34: FontAtlas の動的グリフ焼成用)
+#define STB_TRUETYPE_IMPLEMENTATION
+#pragma warning(push, 0)
+#include "stb/stb_truetype.h"
+#pragma warning(pop)

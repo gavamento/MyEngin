@@ -9,6 +9,8 @@
 
 #include <DirectXMath.h>
 
+#include "Engine/Renderer/FontGeometry.h" // FontGlyphMap (M34: FontAtlas とグリフ共有)
+
 namespace mye {
 
 struct VfxVertex {
@@ -17,16 +19,8 @@ struct VfxVertex {
     DirectX::XMFLOAT4 color;
 };
 
-// UIRenderer のグリフ計測のコピー (VfxRenderer/TextMesh 用の D3D 非依存ビュー)
-struct VfxGlyph {
-    float u0 = 0, v0 = 0, u1 = 0, v1 = 0; // アトラス UV
-    float w = 0, h = 0;                   // グリフ寸法 (px)
-    float advance = 0;                    // 送り幅 (px)
-    bool valid = false;
-};
-
-// TextMesh のワールドスケール係数: フォント 1px が fontScale=1 で何ワールド単位か。
-// 8px フォント × 0.0375 = 行高 ≈ 0.3 ユニット
+// TextMesh のワールドスケール係数: 「レガシー px」(fontScale=1 で行高 10px 相当) 1px が
+// 何ワールド単位か。行高 10px × 0.0375 = 行高 ≈ 0.375 ユニット
 inline constexpr float kVfxWorldPerPx = 0.0375f;
 
 namespace vfx {
@@ -38,40 +32,75 @@ struct TrailPoint {
 };
 
 // 中央揃えの単一行テキストをローカル XY 平面 (+X 右、+Y 上、原点=中心、z=0) の
-// クアッド列として out に追加する。glyphs は 128 要素のテーブル。戻り値 = 追加頂点数。
-inline int BuildTextQuadsLocal(const char* text, const VfxGlyph* glyphs, float scale,
+// クアッド列として out に追加する (M34: UTF-8 + FontGlyphMap)。
+// glyphs は FontAtlas::Glyphs() (EnsureText 済みであること)。pxToLocal は
+// 「ベイク px → ローカル単位」係数 = FontAtlas::GlyphScale(fontScale) * kVfxWorldPerPx。
+// 未焼成/焼成失敗のコードポイントは '?' で代替 (それも無ければスキップ)。戻り値 = 追加頂点数。
+inline int BuildTextQuadsLocal(const char* text, const FontGlyphMap& glyphs, float pxToLocal,
                                const DirectX::XMFLOAT4& color, std::vector<VfxVertex>& out)
 {
-    if (!text || !glyphs || scale <= 0.0f) {
+    if (!text || pxToLocal <= 0.0f) {
         return 0;
     }
-    const float k = kVfxWorldPerPx * scale;
+    const auto find = [&glyphs](uint32_t cp) -> const FontGlyphInfo* {
+        const auto it = glyphs.find(cp);
+        return (it != glyphs.end() && it->second.valid) ? &it->second : nullptr;
+    };
+    const FontGlyphInfo* fallback = find(fontgeom::kReplacementChar);
+    if (!fallback) {
+        fallback = find(static_cast<uint32_t>('?'));
+    }
+    // 計測 (総送り幅で水平センタリング — レガシーと同じ基準)
     float totalPx = 0.0f;
-    float maxHPx = 0.0f;
-    for (const char* p = text; *p; ++p) {
-        const VfxGlyph& g = glyphs[static_cast<unsigned char>(*p) & 127];
-        totalPx += (g.valid ? g.advance : 4.0f);
-        if (g.valid && g.h > maxHPx) {
-            maxHPx = g.h;
+    {
+        const char* p = text;
+        for (;;) {
+            const uint32_t cp = fontgeom::Utf8Next(p);
+            if (cp == 0) {
+                break;
+            }
+            if (cp < 0x20) {
+                continue; // 制御文字は無視 (単一行)
+            }
+            const FontGlyphInfo* g = find(cp);
+            if (!g) {
+                g = fallback;
+            }
+            if (g) {
+                totalPx += g->advance;
+            }
         }
     }
     if (totalPx <= 0.0f) {
         return 0;
     }
+    // 構築: ベースライン y=0 (+Y 上 = px の yoff を符号反転) → 後段で bbox 中心へシフト
+    const size_t first = out.size();
     int added = 0;
-    float penX = -totalPx * 0.5f * k;
-    const float topY = maxHPx * 0.5f * k;
-    for (const char* p = text; *p; ++p) {
-        const VfxGlyph& g = glyphs[static_cast<unsigned char>(*p) & 127];
-        if (!g.valid) {
-            penX += 4.0f * k;
+    float penX = -totalPx * 0.5f * pxToLocal;
+    float minY = 1e9f, maxY = -1e9f;
+    const char* p = text;
+    for (;;) {
+        const uint32_t cp = fontgeom::Utf8Next(p);
+        if (cp == 0) {
+            break;
+        }
+        if (cp < 0x20) {
             continue;
         }
-        if (g.u1 > g.u0 && g.v1 > g.v0) {
-            const float x0 = penX;
-            const float x1 = penX + g.w * k;
-            const float y0 = topY;          // 上端 (+Y)
-            const float y1 = topY - g.h * k; // 下端。px は上原点なので反転
+        const FontGlyphInfo* gp = find(cp);
+        if (!gp) {
+            gp = fallback;
+        }
+        if (!gp) {
+            continue;
+        }
+        const FontGlyphInfo& g = *gp;
+        if (g.w > 0.0f && g.h > 0.0f) {
+            const float x0 = penX + g.xoff * pxToLocal;
+            const float x1 = x0 + g.w * pxToLocal;
+            const float y0 = -g.yoff * pxToLocal;          // 上端 (+Y)。yoff は上方向が負
+            const float y1 = -(g.yoff + g.h) * pxToLocal;  // 下端
             const VfxVertex q[6] = {
                 { { x0, y0, 0 }, { g.u0, g.v0 }, color }, { { x1, y0, 0 }, { g.u1, g.v0 }, color },
                 { { x1, y1, 0 }, { g.u1, g.v1 }, color }, { { x0, y0, 0 }, { g.u0, g.v0 }, color },
@@ -81,8 +110,17 @@ inline int BuildTextQuadsLocal(const char* text, const VfxGlyph* glyphs, float s
                 out.push_back(v);
             }
             added += 6;
+            minY = (std::min)(minY, y1);
+            maxY = (std::max)(maxY, y0);
         }
-        penX += g.advance * k;
+        penX += g.advance * pxToLocal;
+    }
+    // 垂直センタリング (レガシーは maxH/2 基準 — bbox 中心はその一般化)
+    if (added > 0) {
+        const float shiftY = -(minY + maxY) * 0.5f;
+        for (size_t i = first; i < out.size(); ++i) {
+            out[i].pos.y += shiftY;
+        }
     }
     return added;
 }

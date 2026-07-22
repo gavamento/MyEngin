@@ -129,6 +129,9 @@
     <ClCompile Include="..\src\Engine\Engine\FbxLoader.cpp">
       <Filter>Engine</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\FontSelfTest.cpp">
+      <Filter>Engine</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\HotReload\DllReloader.cpp">
       <Filter>Engine\HotReload</Filter>
     </ClCompile>
@@ -235,6 +238,9 @@
       <Filter>Renderer</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Renderer\EditorLinePass.cpp">
+      <Filter>Renderer</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Renderer\FontAtlas.cpp">
       <Filter>Renderer</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Renderer\ForwardPath.cpp">
@@ -381,6 +387,9 @@
     <ClInclude Include="..\src\Engine\Engine\FbxLoader.h">
       <Filter>Engine</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\FontSelfTest.h">
+      <Filter>Engine</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\GameObject.h">
       <Filter>Engine</Filter>
     </ClInclude>
@@ -493,6 +502,12 @@
       <Filter>Renderer</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\EditorLinePass.h">
+      <Filter>Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\FontAtlas.h">
+      <Filter>Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\FontGeometry.h">
       <Filter>Renderer</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\ForwardPath.h">

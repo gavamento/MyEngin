@@ -512,6 +512,9 @@ bool InspectorWindow::DrawField(EngineContext& ctx, const char* componentName, v
     case FieldType::String64:
         changed = ImGui::InputText(field.name, static_cast<char*>(p), 64);
         break;
+    case FieldType::String256:
+        changed = ImGui::InputText(field.name, static_cast<char*>(p), 256);
+        break;
     case FieldType::Float4x4: {
         const float* m = static_cast<const float*>(p);
         ImGui::Text("%s:", field.name);

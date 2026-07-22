@@ -99,16 +99,17 @@ bool RunVfxSelfTest()
 
     // ---- (2) BuildTextQuadsLocal: 頂点数 / 中央揃え / 色 ----
     {
-        VfxGlyph glyphs[128] = {};
+        FontGlyphMap glyphs;
         for (unsigned char c : { 'A', 'B' }) {
-            VfxGlyph& g = glyphs[c];
+            FontGlyphInfo g;
             g.u0 = 0.0f; g.v0 = 0.0f; g.u1 = 0.5f; g.v1 = 0.5f;
-            g.w = 8.0f; g.h = 8.0f; g.advance = 8.0f;
+            g.w = 8.0f; g.h = 8.0f; g.xoff = 0.0f; g.yoff = -8.0f; g.advance = 8.0f;
             g.valid = true;
+            glyphs[c] = g;
         }
         std::vector<VfxVertex> out;
         const XMFLOAT4 col = { 0.2f, 0.4f, 0.6f, 0.8f };
-        const int n = vfx::BuildTextQuadsLocal("AB", glyphs, 1.0f, col, out);
+        const int n = vfx::BuildTextQuadsLocal("AB", glyphs, kVfxWorldPerPx, col, out);
         check(n == 12 && out.size() == 12, "text: 2 glyphs -> 12 vertices");
         float minX = 1e9f, maxX = -1e9f, minY = 1e9f, maxY = -1e9f;
         bool colOk = true;
@@ -127,10 +128,16 @@ bool RunVfxSelfTest()
                   && std::fabs(minY + maxY) < 1e-4f,
               "text: quads centered at origin");
         check(colOk, "text: vertex color passthrough");
-        // 無効文字のみ → 0 頂点
+        // 無効文字のみ (制御文字 + 未登録でフォールバックも無し) → 0 頂点
         std::vector<VfxVertex> none;
-        check(vfx::BuildTextQuadsLocal("\t\x7f", glyphs, 1.0f, col, none) == 0 && none.empty(),
+        check(vfx::BuildTextQuadsLocal("\t\x7f", glyphs, kVfxWorldPerPx, col, none) == 0
+                  && none.empty(),
               "text: invalid-only string builds nothing");
+        // 未登録コードポイント (日本語) は '?' フォールバックで描かれる
+        glyphs[static_cast<uint32_t>('?')] = glyphs[static_cast<uint32_t>('A')];
+        std::vector<VfxVertex> fb;
+        check(vfx::BuildTextQuadsLocal("\xE3\x81\x82", glyphs, kVfxWorldPerPx, col, fb) == 6,
+              "text: missing glyph falls back to '?'");
     }
 
     // ---- (3) BuildTrailRibbon: 頂点数 / 幅テーパ ----

@@ -250,7 +250,8 @@ void VfxRenderer::Render(World& world, GraphicsDevice& device, ShaderManager& sh
         }
     });
 
-    const bool haveFont = (ui_ != nullptr) && (ui_->FontSRV() != nullptr);
+    const bool haveFont = (ui_ != nullptr) && ui_->Font().IsReady()
+        && (ui_->Font().SRV() != nullptr);
     if (haveFont) {
         const ComponentTypeId txReq[] = { TextMeshComponent::sTypeId,
                                           WorldMatrixComponent::sTypeId };
@@ -264,6 +265,8 @@ void VfxRenderer::Render(World& world, GraphicsDevice& device, ShaderManager& sh
                 }
                 const auto* tm = static_cast<const TextMeshComponent*>(arch.GetPtr(ti, row));
                 const auto* wmc = static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row));
+                // グリフ焼成 (M34: 2 フェーズの前半。クアッド構築前にアトラスを安定させる)
+                ui_->Font().EnsureText(tm->text);
                 const XMFLOAT3 pos = { wmc->value._41, wmc->value._42, wmc->value._43 };
                 items.push_back({ viewZOf(pos), e.index, 2, tm, &wmc->value, nullptr });
             }
@@ -299,11 +302,6 @@ void VfxRenderer::Render(World& world, GraphicsDevice& device, ShaderManager& sh
     if (!whiteSrv) {
         return;
     }
-    VfxGlyph glyphs[128];
-    if (haveFont) {
-        ui_->CopyGlyphTable(glyphs);
-    }
-
     // 現フレームの tick は TrailStore の最新点 tick で近似不要 — age は寿命比の表示なので
     // buffers の最新 tick を now として使う (UpdateTrails と同じ時計)
     uint64_t nowTick = 0;
@@ -351,8 +349,11 @@ void VfxRenderer::Render(World& world, GraphicsDevice& device, ShaderManager& sh
             PushVerts(whiteSrv, false, scratch_.data(), static_cast<int>(scratch_.size()));
         } else {
             const auto& tm = *static_cast<const TextMeshComponent*>(it.comp);
+            FontAtlas& font = ui_->Font();
+            const float pxToLocal = font.GlyphScale(tm.fontScale) * kVfxWorldPerPx;
             scratch_.clear();
-            if (vfx::BuildTextQuadsLocal(tm.text, glyphs, tm.fontScale, tm.color, scratch_) > 0) {
+            if (vfx::BuildTextQuadsLocal(tm.text, font.Glyphs(), pxToLocal, tm.color, scratch_)
+                > 0) {
                 XMFLOAT3 right, up;
                 vfx::BillboardBasis(tm.billboardMode, *it.world, camRight, camUp, view.cameraPos,
                                     right, up);
@@ -363,7 +364,8 @@ void VfxRenderer::Render(World& world, GraphicsDevice& device, ShaderManager& sh
                     v.pos = { pos.x + right.x * lx + up.x * ly, pos.y + right.y * lx + up.y * ly,
                               pos.z + right.z * lx + up.z * ly };
                 }
-                PushVerts(ui_->FontSRV(), true, scratch_.data(),
+                // TTF は縮小サンプルなので LINEAR (pointSample=false)。8x8 は従来どおり POINT
+                PushVerts(font.SRV(), !font.IsTtf(), scratch_.data(),
                           static_cast<int>(scratch_.size()));
             }
         }

@@ -55,6 +55,10 @@ json FieldToJson(const void* comp, const FieldDesc& field)
         const char* s = static_cast<const char*>(p);
         return std::string(s, strnlen(s, 64));
     }
+    case FieldType::String256: {
+        const char* s = static_cast<const char*>(p);
+        return std::string(s, strnlen(s, 256));
+    }
     case FieldType::EntityRef: // シリアライザ側で fileId 再マップ (ここでは生値)
         return json::array({ static_cast<const EntityID*>(p)->index,
                              static_cast<const EntityID*>(p)->generation });
@@ -85,6 +89,14 @@ bool FieldFromJson(void* comp, const FieldDesc& field, const json& value)
             const std::string s = value.get<std::string>();
             char* dst = static_cast<char*>(p);
             const size_t n = (s.size() < 63) ? s.size() : 63;
+            memcpy(dst, s.data(), n);
+            dst[n] = '\0';
+            return true;
+        }
+        case FieldType::String256: {
+            const std::string s = value.get<std::string>();
+            char* dst = static_cast<char*>(p);
+            const size_t n = (s.size() < 255) ? s.size() : 255;
             memcpy(dst, s.data(), n);
             dst[n] = '\0';
             return true;

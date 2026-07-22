@@ -21,6 +21,7 @@ uint32_t FieldTypeSize(FieldType t)
     case FieldType::AssetRef: return 8;
     case FieldType::String64: return 64;
     case FieldType::Float4x4: return 64;
+    case FieldType::String256: return 256;
     }
     return 0;
 }

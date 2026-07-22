@@ -233,7 +233,7 @@ struct UIElementComponent {
     AssetID texture = {}; // kind==0 の画像 (0=単色)
     float fontScale = 1.0f; // text/button ラベルのフォント倍率
     int32_t order = 0;    // 描画順 (小さいほど奥)。同値は entity.index 昇順
-    char text[64] = {};   // kind 1/2 のテキスト/ラベル (UTF-8、ASCII 描画)
+    char text[256] = {};  // kind 1/2 のテキスト/ラベル (UTF-8。M34 で日本語対応 + 256B 化)
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
@@ -330,7 +330,7 @@ struct TrailRendererComponent {
 // **kComponentNoHash**。フォントは UIRenderer の埋め込み 8x8 アトラスを共有。
 // スクリプトからは ABI SetTextMeshText で文字列を設定できる (非 hash なので sim 安全)。
 struct TextMeshComponent {
-    char text[64] = "Text";
+    char text[256] = "Text"; // UTF-8 (M34 で日本語対応 + 256B 化)
     float fontScale = 1.0f; // 1.0 で行高 ≈ 0.3 ワールド単位
     DirectX::XMFLOAT4 color = { 1.0f, 1.0f, 1.0f, 1.0f };
     int32_t billboardMode = 0; // SpriteRenderer と同じ enum

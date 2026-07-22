@@ -26,6 +26,7 @@ enum class FieldType : uint8_t {
     AssetRef,  // AssetID
     String64,  // char[64] 固定長
     Float4x4,  // 派生値表示用 (シリアライズ対象外が普通)
+    String256, // char[256] 固定長 (M34: UI/TextMesh の日本語テキスト用。末尾追加)
 };
 
 // フィールドのバイトサイズ
