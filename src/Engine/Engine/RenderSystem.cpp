@@ -417,6 +417,24 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
             view.skyMode = 0;
         }
     }
+    // M38c: スカイがあるなら IBL 環境マップを取得 (初回のみ GPU ベイク、以後キャッシュ)。
+    // gradient も同じベイクに通す — シェーダ側は「IBL on/off」の 2 択で済む。
+    // ベイクは RT/シェーダ状態を触るが、この後の path.Render が全て再設定するので安全
+    if (view.skyMode == 1 && view.skyCubemap != nullptr) {
+        const EnvMaps em =
+            envBaker_.GetForCubemap(device, shaders, view.skyCubemapId, view.skyCubemap);
+        view.iblIrradiance = em.irradiance;
+        view.iblPrefiltered = em.prefiltered;
+        view.iblBrdfLut = em.brdfLut;
+        view.iblSpecMips = em.specMips;
+    } else if (view.skyMode == 0) {
+        const EnvMaps em = envBaker_.GetForGradient(device, shaders, view.skyTop, view.skyHorizon,
+                                                    view.skyBottom); // リニア変換済みの色
+        view.iblIrradiance = em.irradiance;
+        view.iblPrefiltered = em.prefiltered;
+        view.iblBrdfLut = em.brdfLut;
+        view.iblSpecMips = em.specMips;
+    }
     queue_.Sort();
     path.Render(device, view, queue_, lights, resources, shaders);
 

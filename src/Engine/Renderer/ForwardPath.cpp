@@ -34,6 +34,10 @@ struct PerFrameCB {
     float fogStart;
     float fogEnd;
     float fogPad;
+    // ---- IBL (M38c、末尾 append) ----
+    int32_t iblEnabled;
+    float iblSpecMips;
+    float iblPad[2];
 };
 
 struct PerObjectCB {
@@ -100,6 +104,15 @@ bool ForwardPath::Init(GraphicsDevice& device, ShaderManager& shaders)
     cs.ComparisonFunc = D3D11_COMPARISON_LESS_EQUAL;
     cs.MaxLOD = D3D11_FLOAT32_MAX;
     if (FAILED(dev->CreateSamplerState(&cs, shadowSampler_.GetAddressOf()))) {
+        return false;
+    }
+
+    // IBL 用の LINEAR/CLAMP サンプラ (s2、M38c — LUT の端で wrap しないこと)
+    D3D11_SAMPLER_DESC is = {};
+    is.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+    is.AddressU = is.AddressV = is.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+    is.MaxLOD = D3D11_FLOAT32_MAX;
+    if (FAILED(dev->CreateSamplerState(&is, iblSampler_.GetAddressOf()))) {
         return false;
     }
 
@@ -194,6 +207,11 @@ void ForwardPath::Render(GraphicsDevice& device, const RenderView& view, const R
     pf.fogDensity = view.fogDensity;
     pf.fogStart = view.fogStart;
     pf.fogEnd = view.fogEnd;
+    // IBL (M38c): SRV 3 点が揃っている時のみ有効 (無ければ従来の定数アンビエント)
+    const bool ibl = view.iblIrradiance != nullptr && view.iblPrefiltered != nullptr
+        && view.iblBrdfLut != nullptr;
+    pf.iblEnabled = ibl ? 1 : 0;
+    pf.iblSpecMips = view.iblSpecMips;
     UploadCB(dc, perFrameCB_.Get(), pf);
 
     ID3D11Buffer* cbs[2] = { perFrameCB_.Get(), perObjectCB_.Get() };
@@ -201,11 +219,12 @@ void ForwardPath::Render(GraphicsDevice& device, const RenderView& view, const R
     dc->PSSetConstantBuffers(0, 2, cbs);
     ID3D11Buffer* matCbs[1] = { materialCB_.Get() };
     dc->PSSetConstantBuffers(2, 1, matCbs);
-    ID3D11SamplerState* samplers[2] = { sampler_.Get(), shadowSampler_.Get() };
-    dc->PSSetSamplers(0, 2, samplers);
-    // シャドウマップを t1 に (マテリアルの albedo は t0)
-    ID3D11ShaderResourceView* shadowSrv[1] = { view.shadowSRV };
-    dc->PSSetShaderResources(1, 1, shadowSrv);
+    ID3D11SamplerState* samplers[3] = { sampler_.Get(), shadowSampler_.Get(), iblSampler_.Get() };
+    dc->PSSetSamplers(0, 3, samplers);
+    // シャドウマップを t1 に (マテリアルの albedo は t0)、IBL を t3-5 に (M38c)
+    ID3D11ShaderResourceView* frameSrvs[5] = { view.shadowSRV, nullptr, view.iblIrradiance,
+                                               view.iblPrefiltered, view.iblBrdfLut };
+    dc->PSSetShaderResources(1, 5, frameSrvs);
     dc->RSSetState(rasterizer_.Get());
     dc->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 

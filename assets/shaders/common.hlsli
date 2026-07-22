@@ -74,6 +74,13 @@ float3 FresnelSchlick(float cosTheta, float3 F0)
     return F0 + (1.0f - F0) * pow(saturate(1.0f - cosTheta), 5.0f);
 }
 
+// roughness 考慮版 (IBL の拡散/鏡面配分用、M38c)
+float3 FresnelSchlickRoughness(float cosTheta, float3 F0, float rough)
+{
+    const float3 fmax = max(float3(1.0f - rough, 1.0f - rough, 1.0f - rough), F0);
+    return F0 + (fmax - F0) * pow(saturate(1.0f - cosTheta), 5.0f);
+}
+
 float DistributionGGX(float3 N, float3 H, float rough)
 {
     const float a = rough * rough;
@@ -97,9 +104,13 @@ float GeometrySmith(float ndv, float ndl, float rough)
 
 // 全ライトを Cook-Torrance で積算して最終色を返す (Forward / Deferred 共通)。
 // posW はワールド座標、cameraPos は視点。dirShadow は平行光 (type 0) のシャドウ係数 (1=影なし)。
+// M38c: 環境項は iblEnabled != 0 なら split-sum IBL (irradiance + prefiltered + BRDF LUT)、
+// 無効なら従来の定数アンビエント。IBL テクスチャは呼び出しシェーダのスロットから引数で渡す
+// (forward=t3-5/s2、deferred=t5-7/s0 — スロットが異なるため)。
 float3 ApplyLighting(float3 albedo, float3 normal, float3 posW, float3 cameraPos, float metallic,
                      float roughness, float3 ambient, Light lights[MAX_LIGHTS], int count,
-                     float dirShadow)
+                     float dirShadow, int iblEnabled, float iblSpecMips, TextureCube iblIrradiance,
+                     TextureCube iblPrefiltered, Texture2D iblBrdfLut, SamplerState iblSampler)
 {
     const float3 N = normal;
     const float3 V = normalize(cameraPos - posW);
@@ -145,8 +156,23 @@ float3 ApplyLighting(float3 albedo, float3 normal, float3 posW, float3 cameraPos
         // 拡散は 1/PI を省く (既存コンテンツの明るさを維持。ライト強度の再調整を避ける)。
         Lo += (kd * albedo + specular) * radiance * ndl;
     }
-    // 簡易アンビエント (IBL 無し。誘電体のみ拡散に寄与)
-    const float3 ambientTerm = ambient * albedo * (1.0f - metallic);
+    // 環境項 (M38c): IBL (split-sum) または従来の定数アンビエント
+    float3 ambientTerm;
+    if (iblEnabled != 0) {
+        const float3 kS = FresnelSchlickRoughness(ndv, F0, roughness);
+        const float3 kD = (1.0f - kS) * (1.0f - metallic);
+        // irradiance は「平均入射色」に正規化済み (直接光の 1/PI 省略規約と整合)
+        const float3 diffuse = iblIrradiance.SampleLevel(iblSampler, N, 0).rgb * albedo * kD;
+        const float3 R = reflect(-V, N);
+        const float3 pre =
+            iblPrefiltered.SampleLevel(iblSampler, R, roughness * iblSpecMips).rgb;
+        const float2 brdf =
+            iblBrdfLut.SampleLevel(iblSampler, float2(ndv, roughness), 0).rg;
+        ambientTerm = diffuse + pre * (F0 * brdf.x + brdf.y);
+    } else {
+        // 簡易アンビエント (スカイ無し。誘電体のみ拡散に寄与 — 従来挙動)
+        ambientTerm = ambient * albedo * (1.0f - metallic);
+    }
     return ambientTerm + Lo;
 }
 

@@ -66,6 +66,11 @@ struct RenderView {
     float fogDensity = 0.02f;
     float fogStart = 10.0f;
     float fogEnd = 80.0f;
+    // ---- IBL (M38c)。RenderSystem が EnvMapBaker から埋める。null = 定数アンビエント ----
+    ID3D11ShaderResourceView* iblIrradiance = nullptr;
+    ID3D11ShaderResourceView* iblPrefiltered = nullptr;
+    ID3D11ShaderResourceView* iblBrdfLut = nullptr;
+    float iblSpecMips = 0.0f;
 };
 
 // GPU へ渡すライト 1 個 (定数バッファ配列要素、16 バイト境界に揃えた 64 バイト)。

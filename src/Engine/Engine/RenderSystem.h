@@ -7,6 +7,7 @@
 #include "Engine/Core/EntityID.h"
 #include "Engine/Engine/DebugDraw.h"
 #include "Engine/Renderer/EditorLinePass.h"
+#include "Engine/Renderer/EnvMapBaker.h"
 #include "Engine/Renderer/PostProcess.h"
 #include "Engine/Renderer/RenderTypes.h"
 #include "Engine/Renderer/ShadowPass.h"
@@ -91,6 +92,7 @@ private:
     PostProcess postFx_;    // HDR 中間 + トーンマップ (遅延 Init)
     ShadowPass shadowPass_; // 平行光シャドウマップ (遅延 Init)
     EditorLinePass linePass_; // DebugDrawLine 用 (v7、遅延 Init)
+    EnvMapBaker envBaker_;    // IBL 環境マップ (M38c、lazy ベイク + キャッシュ)
     // スキンメッシュのボーンパレット (M18)。フレーム毎に再構築。deque = push_back で
     // 既存要素の .data() ポインタが無効化されない (RenderItem.bones が参照する)
     std::deque<std::vector<DirectX::XMFLOAT4X4>> skinPalettes_;

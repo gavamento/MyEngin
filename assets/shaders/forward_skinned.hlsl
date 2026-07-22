@@ -25,6 +25,10 @@ cbuffer PerFrame : register(b0)
     float    gFogStart;
     float    gFogEnd;
     float    _fogPad;
+    // ---- IBL (M38c、末尾 append) ----
+    int      gIblEnabled;
+    float    gIblSpecMips;
+    float2   _iblPad;
 };
 
 cbuffer PerObject : register(b1)
@@ -50,8 +54,12 @@ cbuffer BonePalette : register(b3)
 Texture2D                gAlbedo        : register(t0);
 Texture2D                gShadowMap     : register(t1);
 Texture2D                gNormalTex     : register(t2);
+TextureCube              gIblIrradiance : register(t3); // M38c
+TextureCube              gIblPrefiltered: register(t4);
+Texture2D                gIblBrdfLut    : register(t5);
 SamplerState             gSampler       : register(s0);
 SamplerComparisonState   gShadowSampler : register(s1);
+SamplerState             gIblSampler    : register(s2); // LINEAR/CLAMP (M38c)
 
 struct VSIn
 {
@@ -112,7 +120,9 @@ float4 PSMain(VSOut i) : SV_Target
         dirShadow = SampleShadowPCF(gShadowMap, gShadowSampler, gShadowVP, i.posW, gShadowTexel);
     }
     float3 color = ApplyLighting(albedo.rgb, n, i.posW, gCameraPos, gMetallic, gRoughness,
-                                 gAmbient, gLights, gLightCount, dirShadow);
+                                 gAmbient, gLights, gLightCount, dirShadow, gIblEnabled,
+                                 gIblSpecMips, gIblIrradiance, gIblPrefiltered, gIblBrdfLut,
+                                 gIblSampler);
     color = ApplyFog(color, gFogColor, gFogMode, gFogDensity, gFogStart, gFogEnd,
                      length(gCameraPos - i.posW)); // M29d
     return float4(color, albedo.a);

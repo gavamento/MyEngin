@@ -33,6 +33,10 @@ struct PerFrameCB {
     float fogStart;
     float fogEnd;
     float fogPad;
+    // ---- IBL (M38c、末尾 append) ----
+    int32_t iblEnabled;
+    float iblSpecMips;
+    float iblPad[2];
 };
 
 struct PerObjectCB {
@@ -67,6 +71,10 @@ struct LightPassCB {
     float fogStart;
     float fogEnd;
     float fogPad;
+    // ---- IBL (M38c、末尾 append) ----
+    int32_t iblEnabled;
+    float iblSpecMips;
+    float iblPad[2];
 };
 
 bool CreateCB(ID3D11Device* dev, UINT size, Microsoft::WRL::ComPtr<ID3D11Buffer>& out)
@@ -127,6 +135,15 @@ bool DeferredPath::Init(GraphicsDevice& device, ShaderManager& shaders)
     cs.ComparisonFunc = D3D11_COMPARISON_LESS_EQUAL;
     cs.MaxLOD = D3D11_FLOAT32_MAX;
     if (FAILED(dev->CreateSamplerState(&cs, shadowSampler_.GetAddressOf()))) {
+        return false;
+    }
+
+    // IBL 用の LINEAR/CLAMP サンプラ (光パス s0 / 透明後段 s2、M38c)
+    D3D11_SAMPLER_DESC is = {};
+    is.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+    is.AddressU = is.AddressV = is.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+    is.MaxLOD = D3D11_FLOAT32_MAX;
+    if (FAILED(dev->CreateSamplerState(&is, iblSampler_.GetAddressOf()))) {
         return false;
     }
 
@@ -249,6 +266,11 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
     pf.fogDensity = view.fogDensity;
     pf.fogStart = view.fogStart;
     pf.fogEnd = view.fogEnd;
+    // IBL (M38c): 透明後段の forward_lit / 光パスの deferred_light が参照
+    const bool ibl = view.iblIrradiance != nullptr && view.iblPrefiltered != nullptr
+        && view.iblBrdfLut != nullptr;
+    pf.iblEnabled = ibl ? 1 : 0;
+    pf.iblSpecMips = view.iblSpecMips;
     UploadCB(dc, perFrameCB_.Get(), pf);
 
     ID3D11Buffer* cbs[2] = { perFrameCB_.Get(), perObjectCB_.Get() };
@@ -256,8 +278,8 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
     dc->PSSetConstantBuffers(0, 2, cbs);
     ID3D11Buffer* matCbs[1] = { materialCB_.Get() };
     dc->PSSetConstantBuffers(2, 1, matCbs);
-    ID3D11SamplerState* samplers[2] = { sampler_.Get(), shadowSampler_.Get() };
-    dc->PSSetSamplers(0, 2, samplers);
+    ID3D11SamplerState* samplers[3] = { sampler_.Get(), shadowSampler_.Get(), iblSampler_.Get() };
+    dc->PSSetSamplers(0, 3, samplers);
     dc->RSSetState(rasterizer_.Get());
     dc->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     dc->OMSetDepthStencilState(depthOpaque_.Get(), 0);
@@ -352,21 +374,29 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
     lp.fogDensity = view.fogDensity;
     lp.fogStart = view.fogStart;
     lp.fogEnd = view.fogEnd;
+    lp.iblEnabled = pf.iblEnabled; // M38c (透明後段と同判定)
+    lp.iblSpecMips = view.iblSpecMips;
     UploadCB(dc, lightCB_.Get(), lp);
     ID3D11Buffer* lightCbs[1] = { lightCB_.Get() };
     dc->PSSetConstantBuffers(0, 1, lightCbs);
     dc->VSSetConstantBuffers(0, 1, lightCbs);
-    // GBuffer t0-3 (albedo/normal/position/material) + シャドウマップ t4 (比較サンプラ s1 は bind 済み)
-    ID3D11ShaderResourceView* gbSrvs[5] = { gbAlbedo_.SRV(), gbNormal_.SRV(), gbPosition_.SRV(),
-                                            gbMaterial_.SRV(), view.shadowSRV };
-    dc->PSSetShaderResources(0, 5, gbSrvs);
+    // 光パスの s0 は IBL 用 LINEAR/CLAMP (deferred_light.hlsl の宣言と一致。
+    // LUT を wrap でサンプルすると roughness=1.0 が v=0 に巻き戻るため clamp 必須)
+    ID3D11SamplerState* lightSamplers[1] = { iblSampler_.Get() };
+    dc->PSSetSamplers(0, 1, lightSamplers);
+    // GBuffer t0-3 + シャドウ t4 + IBL t5-7 (M38c、s0=IBL サンプラ / s1=比較サンプラ bind 済み)
+    ID3D11ShaderResourceView* gbSrvs[8] = { gbAlbedo_.SRV(),  gbNormal_.SRV(),
+                                            gbPosition_.SRV(), gbMaterial_.SRV(),
+                                            view.shadowSRV,    view.iblIrradiance,
+                                            view.iblPrefiltered, view.iblBrdfLut };
+    dc->PSSetShaderResources(0, 8, gbSrvs);
     dc->IASetInputLayout(nullptr);
     dc->VSSetShader(lightProg->vs.Get(), nullptr, 0);
     dc->PSSetShader(lightProg->ps.Get(), nullptr, 0);
     dc->OMSetDepthStencilState(depthDisabled_.Get(), 0);
     dc->Draw(3, 0);
-    ID3D11ShaderResourceView* nullSrvs[5] = { nullptr, nullptr, nullptr, nullptr, nullptr };
-    dc->PSSetShaderResources(0, 5, nullSrvs); // 次フレームで RT に戻すため解除
+    ID3D11ShaderResourceView* nullSrvs[8] = {};
+    dc->PSSetShaderResources(0, 8, nullSrvs); // 次フレームで RT に戻すため解除
 
     // ---- 2.5) スカイボックス (M29d): clearColor ピクセルを深度 1.0 判定で上書き ----
     skybox_.Render(device, shaders, view);
@@ -374,9 +404,13 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
     // ---- 3) 透明後段 (Forward — マテリアルのシェーダで上描き) ----
     if (!queue.transparent.empty()) {
         dc->OMSetRenderTargets(1, &view.rtv, view.dsv);
-        // forward_lit はシャドウマップを t1 で参照する (比較サンプラ s1 は bind 済み)
-        ID3D11ShaderResourceView* shadowSrv[1] = { view.shadowSRV };
-        dc->PSSetShaderResources(1, 1, shadowSrv);
+        // forward_lit はシャドウ t1 / IBL t3-5 を参照 (M38c)。s0 は光パスで IBL 用に
+        // 差し替えたのでマテリアル用 (異方性) に戻す。s2 (IBL) はフレーム頭で bind 済み
+        ID3D11ShaderResourceView* fwdSrvs[5] = { view.shadowSRV, nullptr, view.iblIrradiance,
+                                                 view.iblPrefiltered, view.iblBrdfLut };
+        dc->PSSetShaderResources(1, 5, fwdSrvs);
+        ID3D11SamplerState* matSampler[1] = { sampler_.Get() };
+        dc->PSSetSamplers(0, 1, matSampler);
         dc->VSSetConstantBuffers(0, 2, cbs);
         dc->PSSetConstantBuffers(0, 2, cbs);
         dc->PSSetConstantBuffers(2, 1, matCbs); // forward_lit の MaterialParams

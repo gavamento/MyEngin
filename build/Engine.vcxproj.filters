@@ -240,6 +240,9 @@
     <ClCompile Include="..\src\Engine\Renderer\EditorLinePass.cpp">
       <Filter>Renderer</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Renderer\EnvMapBaker.cpp">
+      <Filter>Renderer</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Renderer\FontAtlas.cpp">
       <Filter>Renderer</Filter>
     </ClCompile>
@@ -511,6 +514,9 @@
       <Filter>Renderer</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\EditorLinePass.h">
+      <Filter>Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\EnvMapBaker.h">
       <Filter>Renderer</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\FontAtlas.h">

@@ -89,6 +89,7 @@
     <ClCompile Include="..\src\Engine\Platform\Win32Window.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\DeferredPath.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\EditorLinePass.cpp" />
+    <ClCompile Include="..\src\Engine\Renderer\EnvMapBaker.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\FontAtlas.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\ForwardPath.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\GpuResources.cpp" />
@@ -180,6 +181,7 @@
     <ClInclude Include="..\src\Engine\Platform\Win32Window.h" />
     <ClInclude Include="..\src\Engine\Renderer\DeferredPath.h" />
     <ClInclude Include="..\src\Engine\Renderer\EditorLinePass.h" />
+    <ClInclude Include="..\src\Engine\Renderer\EnvMapBaker.h" />
     <ClInclude Include="..\src\Engine\Renderer\FontAtlas.h" />
     <ClInclude Include="..\src\Engine\Renderer\FontGeometry.h" />
     <ClInclude Include="..\src\Engine\Renderer\ForwardPath.h" />

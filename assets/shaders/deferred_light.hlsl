@@ -22,6 +22,10 @@ cbuffer LightPass : register(b0)
     float    gFogStart;
     float    gFogEnd;
     float    _fogPad;
+    // ---- IBL (M38c、末尾 append) ----
+    int      gIblEnabled;
+    float    gIblSpecMips;
+    float2   _iblPad;
 };
 
 Texture2D gAlbedo    : register(t0);
@@ -29,6 +33,10 @@ Texture2D gNormal    : register(t1);
 Texture2D gPosition  : register(t2); // ワールド座標 (GBuffer)
 Texture2D gMaterial  : register(t3); // r=metallic g=roughness
 Texture2D gShadowMap : register(t4);
+TextureCube gIblIrradiance  : register(t5); // M38c
+TextureCube gIblPrefiltered : register(t6);
+Texture2D   gIblBrdfLut     : register(t7);
+SamplerState gIblSampler : register(s0); // LINEAR/CLAMP (M38c、s0 は光パスで空きだった)
 SamplerComparisonState gShadowSampler : register(s1);
 
 struct VSOut
@@ -60,7 +68,8 @@ float4 PSMain(VSOut i) : SV_Target
         dirShadow = SampleShadowPCF(gShadowMap, gShadowSampler, gShadowVP, posW, gShadowTexel);
     }
     float3 color = ApplyLighting(albedo.rgb, n, posW, gCameraPos, mr.x, mr.y, gAmbient,
-                                 gLights, gLightCount, dirShadow);
+                                 gLights, gLightCount, dirShadow, gIblEnabled, gIblSpecMips,
+                                 gIblIrradiance, gIblPrefiltered, gIblBrdfLut, gIblSampler);
     color = ApplyFog(color, gFogColor, gFogMode, gFogDensity, gFogStart, gFogEnd,
                      length(gCameraPos - posW)); // M29d
     return float4(color, 1.0f);
