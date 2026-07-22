@@ -9,10 +9,11 @@ namespace mye {
 class GraphicsDevice;
 class ShaderManager;
 
-// スカイボックス描画 (M29d、gradient)。フルスクリーン三角形を z=1 (far)・深度 LESS_EQUAL・
-// 書き込み無しで描き、ジオメトリの無いピクセルだけを空の色で塗る。
+// スカイボックス描画 (M29d gradient / M38b cubemap)。フルスクリーン三角形を z=1 (far)・
+// 深度 LESS_EQUAL・書き込み無しで描き、ジオメトリの無いピクセルだけを空の色で塗る。
 // 挿入点はパス毎: Forward = 不透明後・透明前 / Deferred = ライトパス後・透明前。
 // CB は PS の b3 (b0-b2 はメッシュ描画が使用中のため衝突しないスロット)。
+// cubemap (view.skyMode==1 + skyCubemap SRV) は t0/s0 でサンプル。
 class SkyboxPass {
 public:
     bool Init(GraphicsDevice& device, ShaderManager& shaders);
@@ -22,10 +23,12 @@ public:
 
 private:
     bool ready_ = false;
-    AssetID shader_ = {};
+    AssetID shader_ = {};     // gradient (skybox.hlsl)
+    AssetID shaderCube_ = {}; // cubemap (skybox_cubemap.hlsl、M38b)
     Microsoft::WRL::ComPtr<ID3D11Buffer> cb_;
     Microsoft::WRL::ComPtr<ID3D11DepthStencilState> depthReadOnly_;
     Microsoft::WRL::ComPtr<ID3D11BlendState> blendOpaque_;
+    Microsoft::WRL::ComPtr<ID3D11SamplerState> sampler_; // cubemap 用 LINEAR
 };
 
 } // namespace mye

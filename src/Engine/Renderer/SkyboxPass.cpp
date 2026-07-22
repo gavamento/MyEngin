@@ -26,6 +26,15 @@ bool SkyboxPass::Init(GraphicsDevice& device, ShaderManager& shaders)
 {
     ID3D11Device* dev = device.Device();
     shader_ = shaders.Load("skybox");
+    shaderCube_ = shaders.Load("skybox_cubemap"); // M38b
+
+    D3D11_SAMPLER_DESC smp = {};
+    smp.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+    smp.AddressU = smp.AddressV = smp.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+    smp.MaxLOD = D3D11_FLOAT32_MAX;
+    if (FAILED(dev->CreateSamplerState(&smp, sampler_.GetAddressOf()))) {
+        return false;
+    }
 
     D3D11_BUFFER_DESC bd = {};
     bd.ByteWidth = sizeof(SkyCB);
@@ -60,7 +69,9 @@ void SkyboxPass::Render(GraphicsDevice& device, ShaderManager& shaders, const Re
     if (!ready_ || view.skyMode < 0 || !view.rtv || !view.dsv) {
         return;
     }
-    ShaderProgram* prog = shaders.Get(shader_);
+    // M38b: cubemap モード (SRV が揃っている時のみ。無ければ gradient にフォールバック)
+    const bool useCube = (view.skyMode == 1) && (view.skyCubemap != nullptr);
+    ShaderProgram* prog = shaders.Get(useCube ? shaderCube_ : shader_);
     if (!prog || !prog->valid) {
         return;
     }
@@ -88,11 +99,22 @@ void SkyboxPass::Render(GraphicsDevice& device, ShaderManager& shaders, const Re
     dc->PSSetShader(prog->ps.Get(), nullptr, 0);
     ID3D11Buffer* cbs[1] = { cb_.Get() };
     dc->PSSetConstantBuffers(3, 1, cbs); // b3 (b0-b2 はメッシュ描画が使用中)
+    if (useCube) {
+        ID3D11ShaderResourceView* srvs[1] = { view.skyCubemap };
+        dc->PSSetShaderResources(0, 1, srvs);
+        ID3D11SamplerState* samps[1] = { sampler_.Get() };
+        dc->PSSetSamplers(0, 1, samps);
+    }
     dc->OMSetDepthStencilState(depthReadOnly_.Get(), 0);
     dc->OMSetBlendState(blendOpaque_.Get(), nullptr, 0xFFFFFFFFu);
     // ラスタライザは呼び出し元のメッシュ用設定を継承する (deferred_light と同じ流儀。
     // フルスクリーン三角形は既存設定で front-facing になる頂点列)
     dc->Draw(3, 0);
+    if (useCube) {
+        // TextureCube を t0 に残さない (後段は Texture2D を bind する — デバッグレイヤ警告回避)
+        ID3D11ShaderResourceView* nullSrv[1] = { nullptr };
+        dc->PSSetShaderResources(0, 1, nullSrv);
+    }
 }
 
 } // namespace mye

@@ -55,7 +55,9 @@ struct RenderView {
     ID3D11ShaderResourceView* shadowSRV = nullptr; // シャドウ深度 (R32_FLOAT)。null で影無効
     float shadowTexelSize = 0.0f;                  // 1/解像度 (PCF オフセット)
     // ---- 環境 (M29d)。RenderSystem が最初の active Skybox/Fog から埋める。描画専用 ----
-    int32_t skyMode = -1; // -1=スカイボックス無効 (clearColor 背景) / 0=グラデーション
+    int32_t skyMode = -1; // -1=無効 (clearColor 背景) / 0=グラデーション / 1=cubemap (M38b)
+    AssetID skyCubemapId = {};                          // CollectEnvironment が埋める (純データ)
+    ID3D11ShaderResourceView* skyCubemap = nullptr;     // RenderSystem が解決 (null=フォールバック)
     DirectX::XMFLOAT3 skyTop = { 0.24f, 0.42f, 0.83f };
     DirectX::XMFLOAT3 skyHorizon = { 0.74f, 0.81f, 0.90f };
     DirectX::XMFLOAT3 skyBottom = { 0.28f, 0.25f, 0.22f };

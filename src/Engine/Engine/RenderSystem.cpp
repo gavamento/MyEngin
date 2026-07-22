@@ -106,16 +106,9 @@ void CollectEnvironment(World& world, RenderView& view)
             }
             bestSky = e.index;
             const auto* sb = static_cast<const SkyboxComponent*>(arch.GetPtr(si, row));
-            if (sb->mode == 1) {
-                // Cubemap は予約 (未実装) — Gradient にフォールバック。1 回だけ警告
-                static bool warned = false;
-                if (!warned) {
-                    warned = true;
-                    MYE_LOG_WARN("[render] Skybox mode=Cubemap is reserved; falling back to "
-                                 "Gradient");
-                }
-            }
-            view.skyMode = 0;
+            // M38b: cubemap 実装 — SRV 解決は RenderSystem 側 (この関数は純データのまま)
+            view.skyMode = (sb->mode == 1) ? 1 : 0;
+            view.skyCubemapId = sb->cubemapTexture;
             view.skyTop = { sb->topColor.x, sb->topColor.y, sb->topColor.z };
             view.skyHorizon = { sb->horizonColor.x, sb->horizonColor.y, sb->horizonColor.z };
             view.skyBottom = { sb->bottomColor.x, sb->bottomColor.y, sb->bottomColor.z };
@@ -415,6 +408,15 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
     view.skyHorizon = SrgbToLinear(view.skyHorizon);
     view.skyBottom = SrgbToLinear(view.skyBottom);
     view.fogColor = SrgbToLinear(view.fogColor);
+    // M38b: cubemap スカイの SRV 解決 (未ロード/不正なら gradient にフォールバック)
+    if (view.skyMode == 1) {
+        Texture* cube = resources.textures.Get(view.skyCubemapId);
+        if (cube && cube->srv) {
+            view.skyCubemap = cube->srv.Get();
+        } else {
+            view.skyMode = 0;
+        }
+    }
     queue_.Sort();
     path.Render(device, view, queue_, lights, resources, shaders);
 

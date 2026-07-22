@@ -70,9 +70,13 @@ bool HasDdsExt(const std::wstring& path)
             || path.compare(path.size() - 4, 4, L".DDS") == 0);
 }
 
-// FourCC / DX10 ヘッダから DXGI フォーマットと 4x4 ブロックのバイト数を決める。
-DXGI_FORMAT DdsResolveFormat(const DdsHeader& h, const DdsHeaderDx10* dx10, uint32_t& blockBytes)
+// FourCC / DX10 ヘッダから DXGI フォーマットを決める。
+// blockBytes > 0 = BCn (4x4 ブロックのバイト数)、blockBytes == 0 = 非圧縮 (bppBytes を使う)
+DXGI_FORMAT DdsResolveFormat(const DdsHeader& h, const DdsHeaderDx10* dx10, uint32_t& blockBytes,
+                             uint32_t& bppBytes)
 {
+    blockBytes = 0;
+    bppBytes = 0;
     if (dx10) {
         const DXGI_FORMAT f = static_cast<DXGI_FORMAT>(dx10->dxgiFormat);
         switch (f) {
@@ -92,8 +96,18 @@ DXGI_FORMAT DdsResolveFormat(const DdsHeader& h, const DdsHeaderDx10* dx10, uint
         case DXGI_FORMAT_BC7_UNORM_SRGB:
             blockBytes = 16;
             return f;
+        // M38b: 非圧縮 (cubemap / HDR 環境マップ用)
+        case DXGI_FORMAT_R8G8B8A8_UNORM:
+        case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
+            bppBytes = 4;
+            return f;
+        case DXGI_FORMAT_R16G16B16A16_FLOAT:
+            bppBytes = 8;
+            return f;
+        case DXGI_FORMAT_R32G32B32A32_FLOAT:
+            bppBytes = 16;
+            return f;
         default:
-            blockBytes = 0;
             return DXGI_FORMAT_UNKNOWN;
         }
     }
@@ -114,9 +128,16 @@ DXGI_FORMAT DdsResolveFormat(const DdsHeader& h, const DdsHeaderDx10* dx10, uint
         blockBytes = 16;
         return DXGI_FORMAT_BC5_UNORM;
     }
-    blockBytes = 0;
+    // M38b: レガシー非圧縮 RGBA8 (fourCC 無し・32bit RGB マスク)
+    if ((h.ddspf.flags & 0x40u) != 0 && h.ddspf.rgbBitCount == 32) { // DDPF_RGB
+        bppBytes = 4;
+        return DXGI_FORMAT_R8G8B8A8_UNORM;
+    }
     return DXGI_FORMAT_UNKNOWN;
 }
+
+constexpr uint32_t kDdsCaps2Cubemap = 0x200;         // DDSCAPS2_CUBEMAP
+constexpr uint32_t kDx10MiscTextureCube = 0x4;       // D3D11_RESOURCE_MISC_TEXTURECUBE
 
 } // namespace
 
@@ -530,7 +551,8 @@ bool TextureLibrary::LoadDdsInto(Texture& out, const std::wstring& path, bool sr
     }
 
     uint32_t blockBytes = 0;
-    DXGI_FORMAT fmt = DdsResolveFormat(hdr, dx10, blockBytes);
+    uint32_t bppBytes = 0;
+    DXGI_FORMAT fmt = DdsResolveFormat(hdr, dx10, blockBytes, bppBytes);
     if (srgb) {
         fmt = ToSrgbFormat(fmt); // M38a: アルベド DDS は _SRGB 変種でサンプル時デコード
     }
@@ -540,37 +562,54 @@ bool TextureLibrary::LoadDdsInto(Texture& out, const std::wstring& path, bool sr
         return false;
     }
 
+    // M38b: cubemap (caps2 / DX10 miscFlag)。データは face-major (面 0 の全 mip → 面 1 ...) —
+    // D3D11 の Texture2DArray subresource 順と同じなのでそのまま並べる
+    const bool isCube = ((hdr.caps2 & kDdsCaps2Cubemap) != 0)
+        || (dx10 != nullptr && (dx10->miscFlag & kDx10MiscTextureCube) != 0);
+    const uint32_t faces = isCube ? 6u : 1u;
+
     const uint32_t mipCount = (hdr.mipMapCount > 0) ? hdr.mipMapCount : 1;
-    std::vector<D3D11_SUBRESOURCE_DATA> subs(mipCount);
-    uint32_t w = hdr.width;
-    uint32_t h = hdr.height;
+    std::vector<D3D11_SUBRESOURCE_DATA> subs(static_cast<size_t>(faces) * mipCount);
     size_t cursor = offset;
-    for (uint32_t m = 0; m < mipCount; ++m) {
-        const uint32_t bw = (w + 3) / 4;
-        const uint32_t bh = (h + 3) / 4;
-        const uint32_t rowPitch = bw * blockBytes;
-        const size_t mipSize = static_cast<size_t>(rowPitch) * bh;
-        if (cursor + mipSize > bytes.size()) {
-            MYE_LOG_ERROR("dds: data truncated at mip %u: %s", m, WideToUtf8(path).c_str());
-            return false;
+    for (uint32_t f2 = 0; f2 < faces; ++f2) {
+        uint32_t w = hdr.width;
+        uint32_t h = hdr.height;
+        for (uint32_t m = 0; m < mipCount; ++m) {
+            uint32_t rowPitch = 0;
+            uint32_t rows = 0;
+            if (blockBytes > 0) { // BCn
+                rowPitch = ((w + 3) / 4) * blockBytes;
+                rows = (h + 3) / 4;
+            } else { // 非圧縮
+                rowPitch = w * bppBytes;
+                rows = h;
+            }
+            const size_t mipSize = static_cast<size_t>(rowPitch) * rows;
+            if (cursor + mipSize > bytes.size()) {
+                MYE_LOG_ERROR("dds: data truncated at face %u mip %u: %s", f2, m,
+                              WideToUtf8(path).c_str());
+                return false;
+            }
+            D3D11_SUBRESOURCE_DATA& sd = subs[static_cast<size_t>(f2) * mipCount + m];
+            sd.pSysMem = bytes.data() + cursor;
+            sd.SysMemPitch = rowPitch;
+            sd.SysMemSlicePitch = static_cast<UINT>(mipSize);
+            cursor += mipSize;
+            w = (w > 1) ? w / 2 : 1;
+            h = (h > 1) ? h / 2 : 1;
         }
-        subs[m].pSysMem = bytes.data() + cursor;
-        subs[m].SysMemPitch = rowPitch;
-        subs[m].SysMemSlicePitch = static_cast<UINT>(mipSize);
-        cursor += mipSize;
-        w = (w > 1) ? w / 2 : 1;
-        h = (h > 1) ? h / 2 : 1;
     }
 
     D3D11_TEXTURE2D_DESC td = {};
     td.Width = hdr.width;
     td.Height = hdr.height;
     td.MipLevels = mipCount;
-    td.ArraySize = 1;
+    td.ArraySize = faces;
     td.Format = fmt;
     td.SampleDesc = { 1, 0 };
     td.Usage = D3D11_USAGE_DEFAULT;
     td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    td.MiscFlags = isCube ? D3D11_RESOURCE_MISC_TEXTURECUBE : 0u;
 
     ID3D11Device* dev = device_->Device();
     if (FAILED(dev->CreateTexture2D(&td, subs.data(), out.tex.ReleaseAndGetAddressOf()))) {
