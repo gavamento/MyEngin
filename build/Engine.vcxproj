@@ -134,6 +134,7 @@
     <ClInclude Include="..\src\Engine\Engine\AssetDatabaseSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Audio\AudioSystem.h" />
     <ClInclude Include="..\src\Engine\Engine\CollisionSystem.h" />
+    <ClInclude Include="..\src\Engine\Engine\DebugDraw.h" />
     <ClInclude Include="..\src\Engine\Engine\DemoContent.h" />
     <ClInclude Include="..\src\Engine\Engine\EffectSystem.h" />
     <ClInclude Include="..\src\Engine\Engine\EngineLoop.h" />

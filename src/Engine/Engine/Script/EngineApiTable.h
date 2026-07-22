@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 
+#include "Engine/Engine/DebugDraw.h"
 #include "Engine/Platform/Input.h"
 #include "Shared/EngineAPI.h"
 
@@ -16,12 +17,16 @@ struct ScriptAudioEvent {
     float volume = 1.0f;
 };
 
-// スクリプトが tick 内で積むエフェクト生成要求 (M32f)。tick 末 (ハッシュ前) に
-// EngineLoop がプレハブをインスタンス化する。sim 状態なので record/verify とも実行される。
+// スクリプトが tick 内で積むエフェクト/汎用生成要求 (M32f、v7 Instantiate も共用)。
+// tick 末 (ハッシュ前) に EngineLoop がプレハブをインスタンス化する。
+// sim 状態なので record/verify とも実行される。
 struct EffectSpawnRequest {
     std::string prefabKey; // .prefab.json、assets 相対 (省略サフィックス可)
     MyeVec3 pos = {};      // ルートの LocalTransform.position (parent 有効ならローカル)
     MyeEntityId parent = {};
+    // v7 Instantiate (M37): 呼出時に予約したルート fileId (0 = PlayEffect = 予約なし)。
+    // 予約は Scene::NextFileId() の消費 = 決定論点で行われ record/verify で同一列になる
+    uint64_t reservedRootFid = 0;
 };
 
 // MyeEngineApi の engine 不透明ポインタが指すコンテキスト。
@@ -37,6 +42,7 @@ struct ScriptApiContext {
     std::wstring* pendingScene = nullptr;                // LoadScene の書き先 (tick 末に消費)
     void* physics = nullptr;                             // Raycast 用 (M20 で PhysicsWorld*)
     std::vector<EffectSpawnRequest>* effectQueue = nullptr; // PlayEffect の積み先 (M32f、tick 末消費)
+    std::vector<DebugLineCmd>* debugLines = nullptr; // DebugDrawLine の積み先 (v7。tick 頭クリア)
 };
 
 // out に MyeEngineApi (engine = ctx) を構築する。ctx の生存は呼び出し側が管理する。

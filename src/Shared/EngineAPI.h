@@ -17,7 +17,9 @@
 // v5 (M29b): キャラクターコントローラ操作 (CharacterMove/Jump/IsGrounded/GetVelocity) +
 //            SetTextMeshText (スロット予約、M29c の TextMesh で実装) を一括追加
 // v6 (M32f): エフェクト制御 (EmitterBurst/SetEmitterPlaying/RestartEffect/PlayEffect) を一括追加
-#define MYE_API_VERSION 6u
+// v7 (M37): Instantiate (fileId 予約方式) / FindByFileId / AnimatorParam / 動的 UI
+//           (SetUIText/Fill/Color/Focused + UIFocusNav) / DebugDrawLine / マスク付きクエリ
+#define MYE_API_VERSION 7u
 
 // MYE_LOG レベル (Engine/Core/Log.h の LogLevel と同値)
 enum MyeLogLevel {
@@ -154,6 +156,39 @@ struct MyeEngineApi {
     //             (fire-and-forget)。生成は tick 末の構造変更フェーズ (spawn キュー)。
     //             parent 有効ならその子 (pos はローカル)。sim 状態なので record/verify で再現される。
     void (*PlayEffect)(void* engine, const char* prefabKey, MyeVec3 pos, MyeEntityId parent);
+
+    // ---- 汎用スポーン (v7、M37) ----
+    // Instantiate: PlayEffect と同じ tick 末 spawn だが、呼出時にルートの fileId を予約して
+    //              即返す。生成は tick 末なので EntityID は次 tick 以降に FindByFileId で解決する
+    //              (呼出順は決定論 → 予約列も record/verify で一致)。失敗 (キュー未接続) は 0。
+    uint64_t (*Instantiate)(void* engine, const char* prefabKey, MyeVec3 pos, MyeEntityId parent);
+    // fileId → EntityID (未存在は null id)。Instantiate の遅延解決用
+    MyeEntityId (*FindByFileId)(void* engine, uint64_t fileId);
+
+    // ---- Animator Controller パラメータ (v7)。hash 対象への決定論的書込 (M22 の回収) ----
+    int (*SetAnimatorParam)(void* engine, MyeEntityId id, int index, int value); // index 0..3
+    int (*GetAnimatorParam)(void* engine, MyeEntityId id, int index, int* out);
+
+    // ---- 動的 UI (v7)。UIElement は NoHash の描画状態 → 毎 tick 書いても sim 安全 ----
+    int (*SetUIText)(void* engine, MyeEntityId id, const char* utf8);
+    int (*SetUIFill)(void* engine, MyeEntityId id, float amount);   // fillAmount 0..1
+    int (*SetUIColor)(void* engine, MyeEntityId id, MyeColor color);
+    int (*SetUIFocused)(void* engine, MyeEntityId id, int focused); // フォーカス枠の表示
+    // フォーカスナビ: 全 active focusable UIElement を基準解像度 (1920x1080) で解決し
+    // dir (0=上 1=下 2=左 3=右) の最近傍を返す (無ければ current)。ウィンドウ実寸に
+    // 依存しない = 決定論 (フォーカス状態はスクリプト側が保持する)
+    MyeEntityId (*UIFocusNav)(void* engine, MyeEntityId current, int dir);
+
+    // ---- デバッグ描画 (v7)。描画専用 (非 hash) — 今 tick の線は次の描画フレームに出る ----
+    void (*DebugDrawLine)(void* engine, MyeVec3 a, MyeVec3 b, MyeColor color);
+
+    // ---- マスク付き空間クエリ (v7、M36a のレイヤー対応)。mask のビット = 対象レイヤー ----
+    int (*RaycastMasked)(void* engine, MyeVec3 origin, MyeVec3 dir, float maxDist, uint32_t mask,
+                         MyeRaycastHit* outHit);
+    int (*OverlapSphereMasked)(void* engine, MyeVec3 center, float radius, uint32_t mask,
+                               MyeEntityId* outEntities, int maxCount);
+    int (*SphereCastMasked)(void* engine, MyeVec3 origin, MyeVec3 dir, float radius, float maxDist,
+                            uint32_t mask, MyeRaycastHit* outHit);
 };
 
 // スクリプトの各コールバックに渡されるコンテキスト (POD)

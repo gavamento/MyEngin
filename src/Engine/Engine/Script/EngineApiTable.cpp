@@ -10,6 +10,8 @@
 #include "Engine/Engine/GameObject.h"
 #include "Engine/Engine/Physics/PhysicsSystem.h"
 #include "Engine/Engine/Scene.h"
+#include "Engine/Engine/UI/UINav.h"      // v7 UIFocusNav (M37)
+#include "Engine/Engine/UI/UIRenderer.h" // ResolveAnchor (基準解像度でのナビ矩形解決)
 #include "Engine/Platform/PathUtil.h"
 
 namespace mye {
@@ -297,6 +299,155 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
             r.parent = parent;
             q->push_back(std::move(r));
         }
+    };
+
+    // ---- v7 (M37) ----
+    // Instantiate: PlayEffect の予約付き版。呼出時 (tick 内の決定論点) に NextFileId を
+    // 消費してルート fileId を確保 → drain 側の Prefab::Instantiate へ強制 ID として渡る
+    out.Instantiate = [](void* engine, const char* prefabKey, MyeVec3 pos,
+                         MyeEntityId parent) -> uint64_t {
+        auto* q = Ctx(engine)->effectQueue;
+        Scene* s = Sc(engine);
+        if (!q || !s || !prefabKey) {
+            return 0;
+        }
+        EffectSpawnRequest r;
+        r.prefabKey = prefabKey;
+        r.pos = pos;
+        r.parent = parent;
+        r.reservedRootFid = s->NextFileId();
+        const uint64_t fid = r.reservedRootFid;
+        q->push_back(std::move(r));
+        return fid;
+    };
+    out.FindByFileId = [](void* engine, uint64_t fileId) -> MyeEntityId {
+        GameObject g = Sc(engine)->FindByFileId(fileId);
+        return g ? ToShared(g.Id()) : MyeEntityId{};
+    };
+
+    // ---- Animator Controller パラメータ (v7)。hash 対象への決定論的書込 (SetLocalPosition と同格) ----
+    out.SetAnimatorParam = [](void* engine, MyeEntityId id, int index, int value) -> int {
+        auto* ac = Sc(engine)->GetWorld().GetComponent<AnimatorControllerComponent>(ToEngine(id));
+        if (!ac || index < 0 || index >= 4) { return 0; }
+        ac->params[index] = value;
+        return 1;
+    };
+    out.GetAnimatorParam = [](void* engine, MyeEntityId id, int index, int* outValue) -> int {
+        auto* ac = Sc(engine)->GetWorld().GetComponent<AnimatorControllerComponent>(ToEngine(id));
+        if (!ac || index < 0 || index >= 4 || !outValue) { return 0; }
+        *outValue = ac->params[index];
+        return 1;
+    };
+
+    // ---- 動的 UI (v7)。UIElement は NoHash → 毎 tick 書いても sim/リプレイに無関係 ----
+    out.SetUIText = [](void* engine, MyeEntityId id, const char* utf8) -> int {
+        auto* el = Sc(engine)->GetWorld().GetComponent<UIElementComponent>(ToEngine(id));
+        if (!el || !utf8) { return 0; }
+        size_t n = 0;
+        while (utf8[n] != '\0' && n < sizeof(el->text) - 1) {
+            el->text[n] = utf8[n];
+            ++n;
+        }
+        el->text[n] = '\0'; // 多バイト途中切れは描画側の U+FFFD 耐性で安全 (M34)
+        return 1;
+    };
+    out.SetUIFill = [](void* engine, MyeEntityId id, float amount) -> int {
+        auto* el = Sc(engine)->GetWorld().GetComponent<UIElementComponent>(ToEngine(id));
+        if (!el) { return 0; }
+        el->fillAmount = amount;
+        return 1;
+    };
+    out.SetUIColor = [](void* engine, MyeEntityId id, MyeColor color) -> int {
+        auto* el = Sc(engine)->GetWorld().GetComponent<UIElementComponent>(ToEngine(id));
+        if (!el) { return 0; }
+        el->color = { color.r, color.g, color.b, color.a };
+        return 1;
+    };
+    out.SetUIFocused = [](void* engine, MyeEntityId id, int focused) -> int {
+        auto* el = Sc(engine)->GetWorld().GetComponent<UIElementComponent>(ToEngine(id));
+        if (!el) { return 0; }
+        el->focused = focused;
+        return 1;
+    };
+    // フォーカスナビ: 基準解像度 1920x1080 でアンカー解決 (ウィンドウ実寸非依存 = 決定論)
+    out.UIFocusNav = [](void* engine, MyeEntityId current, int dir) -> MyeEntityId {
+        static constexpr int kRefW = 1920; // 内側ラムダから ODR 非使用で参照 (C4189 回避に static)
+        static constexpr int kRefH = 1080;
+        World& w = Sc(engine)->GetWorld();
+        std::vector<uinav::NavRect> rects;
+        std::vector<uint32_t> gens;
+        uinav::NavRect cur = {};
+        bool haveCur = false;
+        const ComponentTypeId req[] = { UIElementComponent::sTypeId };
+        w.ForEachArchetype(req, [&](Archetype& arch) {
+            const int ci = arch.FindTypeIndex(UIElementComponent::sTypeId);
+            for (uint32_t row = 0; row < arch.Count(); ++row) {
+                const EntityID e = arch.EntityAt(row);
+                if (!IsEntityActive(w, e)) {
+                    continue;
+                }
+                const auto* el = static_cast<const UIElementComponent*>(arch.GetPtr(ci, row));
+                if (el->focusable == 0) {
+                    continue;
+                }
+                uinav::NavRect r;
+                UIRenderer::ResolveAnchor(el->anchor, el->x, el->y, el->w, el->h, kRefW, kRefH,
+                                          r.x, r.y);
+                r.w = el->w;
+                r.h = el->h;
+                r.index = e.index;
+                if (e.index == current.index) {
+                    cur = r;
+                    haveCur = true;
+                }
+                rects.push_back(r);
+                gens.push_back(e.generation);
+            }
+        });
+        if (!haveCur || rects.empty()) {
+            return current; // 現フォーカスが候補に無ければ維持
+        }
+        const uint32_t next =
+            uinav::FindNext(rects.data(), static_cast<int>(rects.size()), cur, dir);
+        for (size_t i = 0; i < rects.size(); ++i) {
+            if (rects[i].index == next) {
+                return { next, gens[i] };
+            }
+        }
+        return current;
+    };
+
+    // ---- デバッグ描画 (v7)。描画レーンのキューに積むだけ (audioQueue パターン) ----
+    out.DebugDrawLine = [](void* engine, MyeVec3 a, MyeVec3 b, MyeColor color) {
+        auto* q = Ctx(engine)->debugLines;
+        if (!q) {
+            return;
+        }
+        auto pack = [](float v) -> uint32_t {
+            const float c = (v < 0.0f) ? 0.0f : (v > 1.0f ? 1.0f : v);
+            return static_cast<uint32_t>(c * 255.0f + 0.5f);
+        };
+        DebugLineCmd cmd;
+        cmd.ax = a.x; cmd.ay = a.y; cmd.az = a.z;
+        cmd.bx = b.x; cmd.by = b.y; cmd.bz = b.z;
+        cmd.rgba = (pack(color.r) << 24) | (pack(color.g) << 16) | (pack(color.b) << 8)
+                   | pack(color.a);
+        q->push_back(cmd);
+    };
+
+    // ---- マスク付き空間クエリ (v7、M36a) ----
+    out.RaycastMasked = [](void* engine, MyeVec3 origin, MyeVec3 dir, float maxDist, uint32_t mask,
+                           MyeRaycastHit* outHit) -> int {
+        return RaycastWorld(Sc(engine)->GetWorld(), origin, dir, maxDist, outHit, mask);
+    };
+    out.OverlapSphereMasked = [](void* engine, MyeVec3 center, float radius, uint32_t mask,
+                                 MyeEntityId* outEntities, int maxCount) -> int {
+        return OverlapSphereWorld(Sc(engine)->GetWorld(), center, radius, outEntities, maxCount,
+                                  mask);
+    };
+    out.SphereCastMasked = [](void* engine, MyeVec3 origin, MyeVec3 dir, float radius,
+                              float maxDist, uint32_t mask, MyeRaycastHit* outHit) -> int {
+        return SphereCastWorld(Sc(engine)->GetWorld(), origin, dir, radius, maxDist, outHit, mask);
     };
 }
 

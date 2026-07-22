@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <unordered_set>
 
 #include "Engine/Core/ComponentRegistry.h"
 #include "Engine/Core/Components.h"
@@ -318,17 +319,41 @@ static json ExtractLocalByLinks(Scene& scene, EntityID root)
 }
 
 uint64_t InstantiateEntities(Scene& scene, const json& localEntities, uint64_t prefabHash,
-                             uint64_t parentFileId)
+                             uint64_t parentFileId, uint64_t forcedRootFileId)
 {
     if (!localEntities.is_array() || localEntities.empty()) {
         return 0;
     }
-    // localId -> 新 scene fileId
+    // ルート (集合内に親を持たない最後のエンティティ — 下の走査と同じ規則) を先に特定する。
+    // forcedRootFileId (v7 Instantiate の予約 ID、M37) をルートに割り当てるため
+    uint64_t forcedRootLocal = 0;
+    if (forcedRootFileId != 0) {
+        std::unordered_set<uint64_t> localIds;
+        for (const json& item : localEntities) {
+            const uint64_t local = item.value("fileId", 0ull);
+            if (local != 0) {
+                localIds.insert(local);
+            }
+        }
+        for (const json& item : localEntities) {
+            const uint64_t local = item.value("fileId", 0ull);
+            if (local == 0) {
+                continue;
+            }
+            const uint64_t p = item.contains("parent") ? item.value("parent", 0ull) : 0ull;
+            if (p == 0 || localIds.count(p) == 0) {
+                forcedRootLocal = local;
+            }
+        }
+    }
+    // localId -> 新 scene fileId (ルートは予約 ID、他は新規採番)
     std::unordered_map<uint64_t, uint64_t> remap;
     for (const json& item : localEntities) {
         const uint64_t local = item.value("fileId", 0ull);
         if (local != 0) {
-            remap[local] = scene.NextFileId();
+            remap[local] = (forcedRootFileId != 0 && local == forcedRootLocal)
+                ? forcedRootFileId
+                : scene.NextFileId();
         }
     }
     uint64_t rootLocal = 0;
@@ -387,7 +412,7 @@ uint64_t InstantiateEntities(Scene& scene, const json& localEntities, uint64_t p
 }
 
 uint64_t Instantiate(Scene& scene, const PrefabLibrary& lib, uint64_t prefabHash,
-                     uint64_t parentFileId)
+                     uint64_t parentFileId, uint64_t forcedRootFileId)
 {
     const PrefabAsset* a = lib.Get(prefabHash);
     if (!a) {
@@ -395,7 +420,7 @@ uint64_t Instantiate(Scene& scene, const PrefabLibrary& lib, uint64_t prefabHash
                      static_cast<unsigned long long>(prefabHash));
         return 0;
     }
-    return InstantiateEntities(scene, a->entities, prefabHash, parentFileId);
+    return InstantiateEntities(scene, a->entities, prefabHash, parentFileId, forcedRootFileId);
 }
 
 uint64_t CreateAsset(Scene& scene, PrefabLibrary& lib, const std::wstring& path, EntityID root)

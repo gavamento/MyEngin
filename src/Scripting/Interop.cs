@@ -126,6 +126,20 @@ namespace MyeScripting
         public delegate* unmanaged<void*, MyeEntityId, int, int> SetEmitterPlaying;
         public delegate* unmanaged<void*, MyeEntityId, int> RestartEffect;
         public delegate* unmanaged<void*, byte*, MyeVec3, MyeEntityId, void> PlayEffect;
+        // ---- v7 (M37)。宣言順 = ネイティブと一致 ----
+        public delegate* unmanaged<void*, byte*, MyeVec3, MyeEntityId, ulong> Instantiate;
+        public delegate* unmanaged<void*, ulong, MyeEntityId> FindByFileId;
+        public delegate* unmanaged<void*, MyeEntityId, int, int, int> SetAnimatorParam;
+        public delegate* unmanaged<void*, MyeEntityId, int, int*, int> GetAnimatorParam;
+        public delegate* unmanaged<void*, MyeEntityId, byte*, int> SetUIText;
+        public delegate* unmanaged<void*, MyeEntityId, float, int> SetUIFill;
+        public delegate* unmanaged<void*, MyeEntityId, MyeColor, int> SetUIColor;
+        public delegate* unmanaged<void*, MyeEntityId, int, int> SetUIFocused;
+        public delegate* unmanaged<void*, MyeEntityId, int, MyeEntityId> UIFocusNav;
+        public delegate* unmanaged<void*, MyeVec3, MyeVec3, MyeColor, void> DebugDrawLine;
+        public delegate* unmanaged<void*, MyeVec3, MyeVec3, float, uint, MyeRaycastHit*, int> RaycastMasked;
+        public delegate* unmanaged<void*, MyeVec3, float, uint, MyeEntityId*, int, int> OverlapSphereMasked;
+        public delegate* unmanaged<void*, MyeVec3, MyeVec3, float, float, uint, MyeRaycastHit*, int> SphereCastMasked;
     }
 
     // ネイティブ ManagedHost が保持する関数ポインタ表。Bootstrap がここに書き込む。
@@ -316,6 +330,80 @@ namespace MyeScripting
             hit = default;
             if (_api == null) return false;
             fixed (MyeRaycastHit* p = &hit) { return _api->Raycast(_api->Engine, origin, dir, maxDist, p) != 0; }
+        }
+
+        // ---- v7 (M37) ----
+        // Instantiate: 生成は tick 末。戻り値 = 予約されたルート fileId (0 = 失敗)。
+        // 次 tick 以降に FindByFileId で EntityID に解決する
+        public static ulong Instantiate(string prefabKey, MyeVec3 pos, MyeEntityId parent = default)
+        {
+            if (_api == null) return 0;
+            var b = Utf8(prefabKey ?? "");
+            fixed (byte* p = b) { return _api->Instantiate(_api->Engine, p, pos, parent); }
+        }
+        public static MyeEntityId FindByFileId(ulong fileId)
+            => _api != null ? _api->FindByFileId(_api->Engine, fileId) : default;
+
+        public static bool SetAnimatorParam(MyeEntityId id, int index, int value)
+            => _api != null && _api->SetAnimatorParam(_api->Engine, id, index, value) != 0;
+        public static int GetAnimatorParam(MyeEntityId id, int index)
+        {
+            int v = 0;
+            if (_api != null) _api->GetAnimatorParam(_api->Engine, id, index, &v);
+            return v;
+        }
+
+        public static bool SetUIText(MyeEntityId id, string text)
+        {
+            if (_api == null) return false;
+            var b = Utf8(text ?? "");
+            fixed (byte* p = b) { return _api->SetUIText(_api->Engine, id, p) != 0; }
+        }
+        public static bool SetUIFill(MyeEntityId id, float amount)
+            => _api != null && _api->SetUIFill(_api->Engine, id, amount) != 0;
+        public static bool SetUIColor(MyeEntityId id, MyeColor color)
+            => _api != null && _api->SetUIColor(_api->Engine, id, color) != 0;
+        public static bool SetUIFocused(MyeEntityId id, bool focused)
+            => _api != null && _api->SetUIFocused(_api->Engine, id, focused ? 1 : 0) != 0;
+        // dir: 0=上 1=下 2=左 3=右。候補が無ければ current をそのまま返す
+        public static MyeEntityId UIFocusNav(MyeEntityId current, int dir)
+            => _api != null ? _api->UIFocusNav(_api->Engine, current, dir) : current;
+
+        public static void DebugDrawLine(MyeVec3 a, MyeVec3 b, MyeColor color)
+        {
+            if (_api != null) _api->DebugDrawLine(_api->Engine, a, b, color);
+        }
+
+        public static bool RaycastMasked(MyeVec3 origin, MyeVec3 dir, float maxDist, uint mask,
+                                         out MyeRaycastHit hit)
+        {
+            hit = default;
+            if (_api == null) return false;
+            fixed (MyeRaycastHit* p = &hit)
+            {
+                return _api->RaycastMasked(_api->Engine, origin, dir, maxDist, mask, p) != 0;
+            }
+        }
+        public static int OverlapSphereMasked(MyeVec3 center, float radius, uint mask,
+                                              MyeEntityId[] outEntities)
+        {
+            if (_api == null) return 0;
+            fixed (MyeEntityId* p = outEntities)
+            {
+                return _api->OverlapSphereMasked(_api->Engine, center, radius, mask, p,
+                                                 outEntities?.Length ?? 0);
+            }
+        }
+        public static bool SphereCastMasked(MyeVec3 origin, MyeVec3 dir, float radius,
+                                            float maxDist, uint mask, out MyeRaycastHit hit)
+        {
+            hit = default;
+            if (_api == null) return false;
+            fixed (MyeRaycastHit* p = &hit)
+            {
+                return _api->SphereCastMasked(_api->Engine, origin, dir, radius, maxDist, mask, p)
+                       != 0;
+            }
         }
     }
 }

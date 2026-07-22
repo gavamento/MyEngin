@@ -90,6 +90,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     std::vector<ScriptAudioEvent> audioQueue; // スクリプトの再生イベント (tick 内で積む)
     std::wstring pendingScene;                // LoadScene の遅延ロード先 (tick 末に消費)
     std::vector<EffectSpawnRequest> effectQueue; // PlayEffect の spawn 要求 (tick 末に消費、M32f)
+    std::vector<DebugLineCmd> debugLines; // DebugDrawLine (v7)。tick 頭クリア → 描画で消費
     IRenderPath* activePath = &forwardPath;
 
     // ---- プロジェクト/アセットルート解決 (M26) ----
@@ -179,8 +180,8 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // 初期化失敗 (ヘッドレス等) でもエンジンは継続する (PlaySound が no-op になるだけ)
     audioSystem.Init();
     audioSystem.LoadWav("beep", assetsRoot + L"\\audio\\beep.wav");
-    scriptHost.SetSharedServices(&audioQueue, &pendingScene, &effectQueue);
-    managedHost.SetSharedServices(&audioQueue, &pendingScene, &effectQueue);
+    scriptHost.SetSharedServices(&audioQueue, &pendingScene, &effectQueue, &debugLines);
+    managedHost.SetSharedServices(&audioQueue, &pendingScene, &effectQueue, &debugLines);
 
     clock.Init();
 
@@ -307,6 +308,9 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             if (!recorder.IsActive() && !player.IsActive()) {
                 capturePrevWorld(scene.GetWorld());
             }
+            // v7 DebugDrawLine (M37): 前 tick の線を捨てて今 tick 分を積み直す。
+            // 0 tick フレームでは最後の tick の線が描かれ続ける (意図どおり)
+            debugLines.clear();
             app.OnTick(ctx); // エディタ更新 + simulateScripts の決定
             lastTickSimulated = ctx.simulateScripts; // M36b: 編集中 (非 Play) は補間を切る
             // ---- フェーズ 3: スクリプト層 Start → Update ----
@@ -395,8 +399,8 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                         hasParent ? scene.EnsureFileId(
                                         EntityID{ req.parent.index, req.parent.generation })
                                   : 0;
-                    const uint64_t rootFid =
-                        Prefab::Instantiate(scene, prefabLibrary, hash, parentFid);
+                    const uint64_t rootFid = Prefab::Instantiate(
+                        scene, prefabLibrary, hash, parentFid, req.reservedRootFid);
                     if (rootFid != 0) {
                         const EntityID root = scene.FindByFileId(rootFid).Id();
                         if (auto* t = scene.GetWorld().GetComponent<LocalTransform>(root)) {
@@ -522,6 +526,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                 ? std::clamp(static_cast<float>(accumulator / kFixedDt), 0.0f, 1.0f)
                 : 1.0f;
             renderSystem.prevWorld = &prevWorld;
+            renderSystem.debugLines = &debugLines; // v7 DebugDrawLine (M37)
 
             app.OnRenderViews(ctx); // エディタの SceneView / GameView (独自 RT)
 

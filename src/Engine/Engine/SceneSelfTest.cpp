@@ -301,6 +301,32 @@ bool RunSceneSerializerSelfTest()
         check(r1 != 0 && r2 != 0 && r1 != r2, "two instances get distinct root fileIds");
         check(s7.GetWorld().AliveCount() == 6, "two instances = 6 entities");
 
+        // (1b) v7 Instantiate の予約 fileId (M37): forcedRootFileId がルートに使われ、
+        // 子は新規採番される。予約 ID は呼び出し側が NextFileId で確保する契約
+        {
+            const uint64_t reserved = s7.NextFileId();
+            const uint64_t r3 = Prefab::Instantiate(s7, lib, hash, 0, reserved);
+            s7.GetWorld().ApplyStructuralChanges();
+            check(r3 == reserved, "forcedRootFileId: root gets the reserved id");
+            GameObject g3 = s7.FindByFileId(reserved);
+            check(static_cast<bool>(g3), "forcedRootFileId: root resolvable by reserved id");
+            // 子は予約 ID と衝突しない新規 ID (= 予約より後の採番)
+            bool childrenOk = true;
+            if (g3) {
+                if (auto* h = s7.GetWorld().GetComponent<HierarchyComponent>(g3.Id())) {
+                    for (EntityID c = h->firstChild; !c.IsNull();) {
+                        const uint64_t cf = s7.EnsureFileId(c);
+                        if (cf == reserved || cf == 0) {
+                            childrenOk = false;
+                        }
+                        auto* ch = s7.GetWorld().GetComponent<HierarchyComponent>(c);
+                        c = ch ? ch->nextSibling : kNullEntity;
+                    }
+                }
+            }
+            check(childrenOk, "forcedRootFileId: children get fresh distinct ids");
+        }
+
         const nlohmann::json saved = SceneSerializer::SaveToJson(s7);
         Scene sa;
         SceneSerializer::LoadFromJson(sa, saved);

@@ -375,6 +375,9 @@
     <ClInclude Include="..\src\Engine\Engine\CollisionSystem.h">
       <Filter>Engine</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\DebugDraw.h">
+      <Filter>Engine</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\DemoContent.h">
       <Filter>Engine</Filter>
     </ClInclude>

@@ -5,6 +5,8 @@
 #include <vector>
 
 #include "Engine/Core/EntityID.h"
+#include "Engine/Engine/DebugDraw.h"
+#include "Engine/Renderer/EditorLinePass.h"
 #include "Engine/Renderer/PostProcess.h"
 #include "Engine/Renderer/RenderTypes.h"
 #include "Engine/Renderer/ShadowPass.h"
@@ -80,10 +82,15 @@ public:
     float interpAlpha = 1.0f;
     const PrevWorldStore* prevWorld = nullptr;
 
+    // スクリプトの DebugDrawLine (v7、M37)。EngineLoop が接続。非 null かつ非空で
+    // シーン描画後 (ポスプロ解決前) に深度テスト付きの線として重ねる
+    const std::vector<DebugLineCmd>* debugLines = nullptr;
+
 private:
     RenderQueue queue_;     // フレーム毎に再利用 (アロケーション回避)
     PostProcess postFx_;    // HDR 中間 + トーンマップ (遅延 Init)
     ShadowPass shadowPass_; // 平行光シャドウマップ (遅延 Init)
+    EditorLinePass linePass_; // DebugDrawLine 用 (v7、遅延 Init)
     // スキンメッシュのボーンパレット (M18)。フレーム毎に再構築。deque = push_back で
     // 既存要素の .data() ポインタが無効化されない (RenderItem.bones が参照する)
     std::deque<std::vector<DirectX::XMFLOAT4X4>> skinPalettes_;

@@ -415,6 +415,22 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
         particles->Render(device, view, shaders, resources);
     }
 
+    // スクリプトの DebugDrawLine (v7、M37): シーン空間の線を深度テスト付きで重ねる。
+    // ポスプロ解決前 = HDR 中間 (直描き時は最終 RT) に描く
+    if (debugLines != nullptr && !debugLines->empty()) {
+        if (!linePass_.IsReady()) {
+            linePass_.Init(device, shaders); // 遅延 Init (postFx_ 前例)
+        }
+        if (linePass_.IsReady()) {
+            linePass_.Begin();
+            for (const DebugLineCmd& l : *debugLines) {
+                linePass_.AddLine({ l.ax, l.ay, l.az }, { l.bx, l.by, l.bz }, l.rgba, false);
+            }
+            linePass_.Render(device, shaders, view.rtv, view.dsv, target.width, target.height,
+                             view.view, view.proj);
+        }
+    }
+
     // HDR → LDR 解決 (トーンマップ)。HDR 中間を使った時のみ。
     // シーンカメラに CameraPostFx があれば上書きマージ (M29e。CameraOverride 経路は
     // エディタ視界なのでグローバル設定のまま)

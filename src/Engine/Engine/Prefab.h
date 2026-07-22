@@ -63,13 +63,15 @@ nlohmann::json ExtractLocal(Scene& scene, EntityID root);
 uint64_t CreateAsset(Scene& scene, PrefabLibrary& lib, const std::wstring& path, EntityID root);
 
 // localEntities (ExtractLocal 形式) をシーンへインスタンス化する低レベル版。
-// parentFileId!=0 ならルートをその子に。返り値 = 生成したルートの新 fileId (失敗時 0)
+// parentFileId!=0 ならルートをその子に。返り値 = 生成したルートの新 fileId (失敗時 0)。
+// forcedRootFileId!=0 ならルートに新規採番せずその ID を使う (v7 Instantiate の予約方式 —
+// 呼出側が Scene::NextFileId() で確保済みであること。M37)
 uint64_t InstantiateEntities(Scene& scene, const nlohmann::json& localEntities, uint64_t prefabHash,
-                             uint64_t parentFileId = 0);
+                             uint64_t parentFileId = 0, uint64_t forcedRootFileId = 0);
 
 // prefabHash のプレハブをシーンへインスタンス化する。返り値 = 新ルート fileId (失敗時 0)
 uint64_t Instantiate(Scene& scene, const PrefabLibrary& lib, uint64_t prefabHash,
-                     uint64_t parentFileId = 0);
+                     uint64_t parentFileId = 0, uint64_t forcedRootFileId = 0);
 
 // e (またはその祖先) が属するインスタンスのルート。無ければ kNullEntity
 EntityID FindInstanceRoot(World& world, EntityID e);
