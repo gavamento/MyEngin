@@ -15,6 +15,21 @@ using namespace DirectX;
 using Microsoft::WRL::ComPtr;
 
 namespace mye {
+namespace {
+
+// vfx_sprite.hlsl の VfxCB と一致 (M32c でフォグ params + cameraPos を追加)
+struct VfxCB {
+    XMFLOAT4X4 viewProj; // transpose(view*proj)
+    XMFLOAT3 cameraPos;
+    int32_t fogMode; // -1=off / 0=linear 1=exp 2=exp2
+    XMFLOAT3 fogColor;
+    float fogDensity;
+    float fogStart;
+    float fogEnd;
+    float pad[2];
+};
+
+} // namespace
 
 // ---- TrailStore (D3D 非依存 — ヘッドレス selftest 対象) ----
 
@@ -99,7 +114,7 @@ bool VfxRenderer::Init(GraphicsDevice& device, ShaderManager& shaders, UIRendere
     shader_ = shaders.Load("vfx_sprite");
 
     D3D11_BUFFER_DESC cbd = {};
-    cbd.ByteWidth = sizeof(XMFLOAT4X4); // transpose(view*proj)
+    cbd.ByteWidth = sizeof(VfxCB); // viewProj + フォグ params (M32c)
     cbd.Usage = D3D11_USAGE_DYNAMIC;
     cbd.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
     cbd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
@@ -379,11 +394,18 @@ void VfxRenderer::Render(World& world, GraphicsDevice& device, ShaderManager& sh
         memcpy(mapped.pData, verts_.data(), verts_.size() * sizeof(VfxVertex));
         dc->Unmap(vb_.Get(), 0);
     }
-    XMFLOAT4X4 vp;
-    XMStoreFloat4x4(&vp, XMMatrixTranspose(XMMatrixMultiply(XMLoadFloat4x4(&view.view),
-                                                            XMLoadFloat4x4(&view.proj))));
+    VfxCB cbData = {};
+    XMStoreFloat4x4(&cbData.viewProj,
+                    XMMatrixTranspose(XMMatrixMultiply(XMLoadFloat4x4(&view.view),
+                                                       XMLoadFloat4x4(&view.proj))));
+    cbData.cameraPos = view.cameraPos; // フォグ距離用 (M32c)
+    cbData.fogMode = view.fogMode;
+    cbData.fogColor = view.fogColor;
+    cbData.fogDensity = view.fogDensity;
+    cbData.fogStart = view.fogStart;
+    cbData.fogEnd = view.fogEnd;
     if (SUCCEEDED(dc->Map(cb_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
-        memcpy(mapped.pData, &vp, sizeof(vp));
+        memcpy(mapped.pData, &cbData, sizeof(cbData));
         dc->Unmap(cb_.Get(), 0);
     }
 
@@ -398,6 +420,7 @@ void VfxRenderer::Render(World& world, GraphicsDevice& device, ShaderManager& sh
     dc->PSSetShader(prog->ps.Get(), nullptr, 0);
     ID3D11Buffer* cbs[1] = { cb_.Get() };
     dc->VSSetConstantBuffers(0, 1, cbs);
+    dc->PSSetConstantBuffers(0, 1, cbs); // フォグ (M32c) を PS でも参照
     dc->OMSetBlendState(blend_.Get(), nullptr, 0xFFFFFFFFu);
     dc->OMSetDepthStencilState(depthReadOnly_.Get(), 0);
     dc->RSSetState(raster_.Get());

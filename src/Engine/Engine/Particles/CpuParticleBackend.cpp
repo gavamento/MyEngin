@@ -39,7 +39,15 @@ struct ParticleCB {
     int32_t flipTilesX;
     int32_t flipTilesY;
     float flipCycles;
-    float pad2[3];
+    int32_t blendAdditive; // 1=additive (fog=減光) / 0=alpha (fog=色 lerp)
+    int32_t fogMode;       // -1=off / 0=linear 1=exp 2=exp2 (M32c)
+    float pad2;
+    XMFLOAT3 cameraPos;
+    float fogDensity;
+    XMFLOAT3 fogColor;
+    float fogStart;
+    float fogEnd;
+    float pad3[3];
 };
 
 } // namespace
@@ -481,9 +489,17 @@ void CpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
     XMStoreFloat4x4(&cbData.viewProj, XMMatrixTranspose(XMMatrixMultiply(xv, xp)));
     cbData.camRight = { vm._11, vm._21, vm._31 };
     cbData.camUp = { vm._12, vm._22, vm._32 };
+    // フォグ (M32c): RenderView が CollectEnvironment から埋めた値を粒子にも適用する
+    cbData.fogMode = view.fogMode;
+    cbData.cameraPos = view.cameraPos;
+    cbData.fogDensity = view.fogDensity;
+    cbData.fogColor = view.fogColor;
+    cbData.fogStart = view.fogStart;
+    cbData.fogEnd = view.fogEnd;
 
     for (const DrawRange& range : ranges) {
         cbData.baseIndex = range.base;
+        cbData.blendAdditive = (range.blendMode == 1) ? 0 : 1; // blendMode: 0=additive 1=alpha
         // テクスチャ解決 (空なら procedural 円へフォールバック)
         ID3D11ShaderResourceView* texSrv = nullptr;
         if (range.texture.value != 0) {
