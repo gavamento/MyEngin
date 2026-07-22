@@ -184,6 +184,13 @@ void RegisterBuiltinComponents()
         MYE_FIELD(UIElementComponent, fontScale, Float),
         MYE_FIELD(UIElementComponent, order, Int32),
         MYE_FIELD(UIElementComponent, text, String256),
+        // M35 拡張 (末尾 append)
+        MYE_FIELD_RANGE(UIElementComponent, fillAmount, Float, 0.0f, 1.0f),
+        MYE_FIELD_TIP(UIElementComponent, fillMode, Int32, "0=off 1=horizontal 2=vertical"),
+        MYE_FIELD_TIP(UIElementComponent, sliceBorder, Float4, "9-slice border px (l,t,r,b)"),
+        MYE_FIELD(UIElementComponent, sliced, Int32),
+        MYE_FIELD(UIElementComponent, focusable, Int32),
+        MYE_FIELD(UIElementComponent, focused, Int32),
     }, kComponentNoHash);
 
     // M22: Animator Controller。LocalTransform を駆動するので **hash 対象** (kComponentNoHash 無し)。

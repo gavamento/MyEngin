@@ -234,6 +234,13 @@ struct UIElementComponent {
     float fontScale = 1.0f; // text/button ラベルのフォント倍率
     int32_t order = 0;    // 描画順 (小さいほど奥)。同値は entity.index 昇順
     char text[256] = {};  // kind 1/2 のテキスト/ラベル (UTF-8。M34 で日本語対応 + 256B 化)
+    // ---- M35 拡張 (末尾 append、NoHash なので旧シーンは既定値ロードで互換) ----
+    float fillAmount = 1.0f; // kind0 の塗り率 0..1 (HP バー。fillMode!=0 で有効)
+    int32_t fillMode = 0;    // 0=off 1=水平(左→右) 2=垂直(下→上)
+    DirectX::XMFLOAT4 sliceBorder = { 0, 0, 0, 0 }; // 9-slice 境界 px (l,t,r,b)。sliced!=0 で有効
+    int32_t sliced = 0;      // kind0 + texture 有りで 9-slice 描画
+    int32_t focusable = 0;   // パッドナビ候補 (状態はスクリプト側 — UINav.h 参照)
+    int32_t focused = 0;     // フォーカス枠の表示 (表示専用。スクリプトが書く)
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 

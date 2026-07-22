@@ -471,6 +471,12 @@
     <ClInclude Include="..\src\Engine\Engine\TransformSystem.h">
       <Filter>Engine</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\UI\UIGeometry.h">
+      <Filter>Engine\UI</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\UI\UINav.h">
+      <Filter>Engine\UI</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\UI\UIRenderer.h">
       <Filter>Engine\UI</Filter>
     </ClInclude>

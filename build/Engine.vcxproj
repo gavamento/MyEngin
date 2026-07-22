@@ -166,6 +166,8 @@
     <ClInclude Include="..\src\Engine\Engine\Script\ScriptHost.h" />
     <ClInclude Include="..\src\Engine\Engine\SkinningSystem.h" />
     <ClInclude Include="..\src\Engine\Engine\TransformSystem.h" />
+    <ClInclude Include="..\src\Engine\Engine\UI\UIGeometry.h" />
+    <ClInclude Include="..\src\Engine\Engine\UI\UINav.h" />
     <ClInclude Include="..\src\Engine\Engine\UI\UIRenderer.h" />
     <ClInclude Include="..\src\Engine\Engine\UI\UISelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Vfx\VfxGeometry.h" />

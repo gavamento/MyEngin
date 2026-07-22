@@ -6,6 +6,7 @@
 
 #include "Engine/Core/Components.h"
 #include "Engine/Core/World.h"
+#include "Engine/Engine/UI/UIGeometry.h"
 #include "Engine/Renderer/GpuResources.h"
 #include "Engine/Renderer/GraphicsDevice.h"
 #include "Engine/Renderer/ShaderManager.h"
@@ -276,15 +277,48 @@ void UIRenderer::Render(World& world, GraphicsDevice& device, ShaderManager& sha
             const XMFLOAT4 label = { 1, 1, 1, 1 };
             PushText(el.text, rx + (el.w - tw) * 0.5f, ry + (el.h - th) * 0.5f, el.fontScale, label);
         } else {
-            // パネル / 画像
+            // パネル / 画像 (M35: 9-slice / fillAmount 対応)
             ID3D11ShaderResourceView* srv = whiteSrv_;
+            float texW = 0.0f, texH = 0.0f;
             if (el.texture.value != 0) {
                 Texture* t = resources.textures.Get(el.texture);
                 if (t && t->srv) {
                     srv = t->srv.Get();
+                    texW = static_cast<float>(t->width);
+                    texH = static_cast<float>(t->height);
                 }
             }
-            PushQuad(srv, false, rx, ry, el.w, el.h, 0, 0, 1, 1, el.color);
+            if (el.sliced != 0 && texW > 0.0f) {
+                uigeom::UIQuad quads[9];
+                const int n = uigeom::Build9Slice(rx, ry, el.w, el.h, el.sliceBorder.x,
+                                                  el.sliceBorder.y, el.sliceBorder.z,
+                                                  el.sliceBorder.w, texW, texH, quads);
+                for (int i = 0; i < n; ++i) {
+                    const uigeom::UIQuad& q = quads[i];
+                    PushQuad(srv, false, q.x, q.y, q.w, q.h, q.u0, q.v0, q.u1, q.v1, el.color);
+                }
+            } else if (el.fillMode != 0) {
+                const uigeom::UIQuad q =
+                    uigeom::BuildFillQuad(rx, ry, el.w, el.h, el.fillMode, el.fillAmount);
+                if (q.w > 0.0f && q.h > 0.0f) {
+                    PushQuad(srv, false, q.x, q.y, q.w, q.h, q.u0, q.v0, q.u1, q.v1, el.color);
+                }
+            } else {
+                PushQuad(srv, false, rx, ry, el.w, el.h, 0, 0, 1, 1, el.color);
+            }
+        }
+
+        // フォーカス枠 (M35): focusable かつ focused (スクリプトが書く表示専用状態) の要素に
+        // 2px の白枠を重ねる。kind 問わず矩形 (x,y,w,h) 基準
+        if (el.focusable != 0 && el.focused != 0) {
+            constexpr float kRing = 2.0f;
+            const XMFLOAT4 ring = { 1.0f, 1.0f, 1.0f, 0.9f };
+            PushQuad(whiteSrv_, false, rx - kRing, ry - kRing, el.w + kRing * 2, kRing, 0, 0, 1, 1,
+                     ring); // 上
+            PushQuad(whiteSrv_, false, rx - kRing, ry + el.h, el.w + kRing * 2, kRing, 0, 0, 1, 1,
+                     ring); // 下
+            PushQuad(whiteSrv_, false, rx - kRing, ry, kRing, el.h, 0, 0, 1, 1, ring); // 左
+            PushQuad(whiteSrv_, false, rx + el.w, ry, kRing, el.h, 0, 0, 1, 1, ring);  // 右
         }
     }
 
