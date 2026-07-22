@@ -29,6 +29,10 @@ cbuffer LightPass : register(b0)
     // ---- CSM (M38d、末尾 append)。gShadowVP はカスケード 0 ----
     float4x4 gShadowVP12[2];
     float4   gCascadeInfo; // xyz = split far 境界 / w = カスケード数
+    // ---- SSAO (M38e、末尾 append) ----
+    float2   gScreenSize;  // フル解像度 (SV_Position → uv 変換用)
+    int      gSsaoEnabled; // 0=無効
+    float    _ssaoPad;
 };
 
 Texture2D gAlbedo    : register(t0);
@@ -39,6 +43,7 @@ Texture2DArray gShadowMap : register(t4); // M38d: CSM カスケード配列
 TextureCube gIblIrradiance  : register(t5); // M38c
 TextureCube gIblPrefiltered : register(t6);
 Texture2D   gIblBrdfLut     : register(t7);
+Texture2D   gSsao           : register(t8); // M38e (半解像度、ブラー済み AO)
 SamplerState gIblSampler : register(s0); // LINEAR/CLAMP (M38c、s0 は光パスで空きだった)
 SamplerComparisonState gShadowSampler : register(s1);
 
@@ -71,9 +76,13 @@ float4 PSMain(VSOut i) : SV_Target
         dirShadow = SampleShadowCSM(gShadowMap, gShadowSampler, gShadowVP, gShadowVP12[0],
                                     gShadowVP12[1], (int)gCascadeInfo.w, posW, gShadowTexel);
     }
+    float ao = 1.0f;
+    if (gSsaoEnabled != 0) {
+        ao = gSsao.SampleLevel(gIblSampler, i.pos.xy / gScreenSize, 0).r; // M38e
+    }
     float3 color = ApplyLighting(albedo.rgb, n, posW, gCameraPos, mr.x, mr.y, gAmbient,
                                  gLights, gLightCount, dirShadow, gIblEnabled, gIblSpecMips,
-                                 gIblIrradiance, gIblPrefiltered, gIblBrdfLut, gIblSampler);
+                                 gIblIrradiance, gIblPrefiltered, gIblBrdfLut, gIblSampler, ao);
     color = ApplyFog(color, gFogColor, gFogMode, gFogDensity, gFogStart, gFogEnd,
                      length(gCameraPos - posW)); // M29d
     return float4(color, 1.0f);

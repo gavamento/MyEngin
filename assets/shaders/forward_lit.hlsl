@@ -97,7 +97,7 @@ float4 PSMain(VSOut i) : SV_Target
     float3 color = ApplyLighting(albedo.rgb, n, i.posW, gCameraPos, gMetallic, gRoughness,
                                  gAmbient, gLights, gLightCount, dirShadow, gIblEnabled,
                                  gIblSpecMips, gIblIrradiance, gIblPrefiltered, gIblBrdfLut,
-                                 gIblSampler);
+                                 gIblSampler, 1.0f); // SSAO は Deferred のみ
     color = ApplyFog(color, gFogColor, gFogMode, gFogDensity, gFogStart, gFogEnd,
                      length(gCameraPos - i.posW)); // M29d
     return float4(color, albedo.a);

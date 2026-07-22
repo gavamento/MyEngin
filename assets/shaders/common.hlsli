@@ -142,10 +142,12 @@ float GeometrySmith(float ndv, float ndl, float rough)
 // M38c: 環境項は iblEnabled != 0 なら split-sum IBL (irradiance + prefiltered + BRDF LUT)、
 // 無効なら従来の定数アンビエント。IBL テクスチャは呼び出しシェーダのスロットから引数で渡す
 // (forward=t3-5/s2、deferred=t5-7/s0 — スロットが異なるため)。
+// ao (M38e): 環境項に掛ける遮蔽係数 (1=遮蔽なし。SSAO は Deferred のみ、Forward は 1 を渡す)
 float3 ApplyLighting(float3 albedo, float3 normal, float3 posW, float3 cameraPos, float metallic,
                      float roughness, float3 ambient, Light lights[MAX_LIGHTS], int count,
                      float dirShadow, int iblEnabled, float iblSpecMips, TextureCube iblIrradiance,
-                     TextureCube iblPrefiltered, Texture2D iblBrdfLut, SamplerState iblSampler)
+                     TextureCube iblPrefiltered, Texture2D iblBrdfLut, SamplerState iblSampler,
+                     float ao)
 {
     const float3 N = normal;
     const float3 V = normalize(cameraPos - posW);
@@ -208,7 +210,7 @@ float3 ApplyLighting(float3 albedo, float3 normal, float3 posW, float3 cameraPos
         // 簡易アンビエント (スカイ無し。誘電体のみ拡散に寄与 — 従来挙動)
         ambientTerm = ambient * albedo * (1.0f - metallic);
     }
-    return ambientTerm + Lo;
+    return ambientTerm * ao + Lo; // SSAO は環境項のみ減衰 (直接光には掛けない)
 }
 
 

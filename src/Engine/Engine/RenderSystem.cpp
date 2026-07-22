@@ -506,6 +506,7 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
         }
     }
 
+    view.ssaoEnabled = enableSsao ? 1 : 0; // M38e (Deferred のみ消費)
     CollectEnvironment(world, view); // M29d: Skybox/Fog を view に反映
     // M38a: 環境の authored 色をリニアへ (CollectEnvironment 自体は純パススルーのまま =
     // selftest 不変)。スカイ/フォグは HDR 中間に描かれ、トーンマップ後の OETF と対になる

@@ -1,5 +1,7 @@
 #include "Engine/Renderer/DeferredPath.h"
 
+#include <cmath>
+
 #include "Engine/Core/Log.h"
 #include "Engine/Core/Profiler.h"
 #include "Engine/Renderer/GpuResources.h"
@@ -81,6 +83,26 @@ struct LightPassCB {
     // ---- CSM (M38d、末尾 append) ----
     XMFLOAT4X4 shadowVP12[2];
     float cascadeInfo[4]; // xyz = split far 境界 / w = カスケード数
+    // ---- SSAO (M38e、末尾 append) ----
+    float screenSize[2];
+    int32_t ssaoEnabled;
+    float ssaoPad;
+};
+
+// ssao.hlsl の SsaoCB と同一レイアウト
+struct SsaoCB {
+    XMFLOAT4X4 viewProj; // transpose(view*proj)
+    XMFLOAT3 cameraPos;
+    float radius;
+    float noiseScale[2];
+    float intensity;
+    float bias;
+};
+
+// ssao_blur.hlsl の BlurCB と同一レイアウト
+struct SsaoBlurCB {
+    float texel[2];
+    float pad[2];
 };
 
 bool CreateCB(ID3D11Device* dev, UINT size, Microsoft::WRL::ComPtr<ID3D11Buffer>& out)
@@ -153,6 +175,55 @@ bool DeferredPath::Init(GraphicsDevice& device, ShaderManager& shaders)
         return false;
     }
 
+    // ---- SSAO (M38e) ----
+    ssaoShader_ = shaders.Load("ssao");
+    ssaoBlurShader_ = shaders.Load("ssao_blur");
+    if (!CreateCB(dev, sizeof(SsaoCB), ssaoCB_) || !CreateCB(dev, sizeof(SsaoBlurCB), ssaoBlurCB_)) {
+        return false;
+    }
+    D3D11_SAMPLER_DESC ps = {};
+    ps.Filter = D3D11_FILTER_MIN_MAG_MIP_POINT;
+    ps.AddressU = ps.AddressV = ps.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+    ps.MaxLOD = D3D11_FLOAT32_MAX;
+    if (FAILED(dev->CreateSamplerState(&ps, pointClamp_.GetAddressOf()))) {
+        return false;
+    }
+    ps.AddressU = ps.AddressV = ps.AddressW = D3D11_TEXTURE_ADDRESS_WRAP;
+    if (FAILED(dev->CreateSamplerState(&ps, pointWrap_.GetAddressOf()))) {
+        return false;
+    }
+    {
+        // 4x4 ランダム回転ノイズ (固定テーブル = 再現的。xy に単位ベクトル、z=0)
+        constexpr float kAngles[16] = { 0.13f, 2.71f, 5.02f, 1.37f, 3.88f, 0.94f, 5.71f, 2.15f,
+                                        4.42f, 1.83f, 0.55f, 3.27f, 5.44f, 2.93f, 1.11f, 4.05f };
+        uint8_t pixels[16 * 4];
+        for (int i = 0; i < 16; ++i) {
+            const float x = std::cos(kAngles[i]) * 0.5f + 0.5f;
+            const float y = std::sin(kAngles[i]) * 0.5f + 0.5f;
+            pixels[i * 4 + 0] = static_cast<uint8_t>(x * 255.0f);
+            pixels[i * 4 + 1] = static_cast<uint8_t>(y * 255.0f);
+            pixels[i * 4 + 2] = 128; // z=0
+            pixels[i * 4 + 3] = 255;
+        }
+        D3D11_TEXTURE2D_DESC td = {};
+        td.Width = 4;
+        td.Height = 4;
+        td.MipLevels = 1;
+        td.ArraySize = 1;
+        td.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        td.SampleDesc = { 1, 0 };
+        td.Usage = D3D11_USAGE_IMMUTABLE;
+        td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+        D3D11_SUBRESOURCE_DATA sd2 = {};
+        sd2.pSysMem = pixels;
+        sd2.SysMemPitch = 16;
+        if (FAILED(dev->CreateTexture2D(&td, &sd2, noiseTex_.GetAddressOf()))
+            || FAILED(dev->CreateShaderResourceView(noiseTex_.Get(), nullptr,
+                                                    noiseSrv_.GetAddressOf()))) {
+            return false;
+        }
+    }
+
     D3D11_RASTERIZER_DESC rd = {};
     rd.FillMode = D3D11_FILL_SOLID;
     rd.CullMode = D3D11_CULL_BACK;
@@ -213,6 +284,15 @@ void DeferredPath::Shutdown()
     depthTransparent_.Reset();
     blendOpaque_.Reset();
     blendAlpha_.Reset();
+    // SSAO (M38e)
+    ssaoRaw_.Release();
+    ssaoBlur_.Release();
+    ssaoCB_.Reset();
+    ssaoBlurCB_.Reset();
+    pointClamp_.Reset();
+    pointWrap_.Reset();
+    noiseTex_.Reset();
+    noiseSrv_.Reset();
 }
 
 void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const RenderQueue& queue,
@@ -368,6 +448,71 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
         prof::AddDraw(static_cast<int>(mesh->indexCount / 3));
     }
 
+    // ---- 1.5) SSAO (M38e): worldpos + normal → 半解像度 AO → 4x4 ブラー ----
+    ShaderProgram* ssaoProg = shaders.Get(ssaoShader_);
+    ShaderProgram* ssaoBlurProg = shaders.Get(ssaoBlurShader_);
+    const bool ssaoOn = view.ssaoEnabled != 0 && ssaoProg && ssaoProg->valid && ssaoBlurProg
+        && ssaoBlurProg->valid;
+    if (ssaoOn) {
+        const int hw = (view.width > 1) ? view.width / 2 : 1;
+        const int hh = (view.height > 1) ? view.height / 2 : 1;
+        ssaoRaw_.Resize(device, hw, hh, DXGI_FORMAT_R8_UNORM, /*withDepth=*/false);
+        ssaoBlur_.Resize(device, hw, hh, DXGI_FORMAT_R8_UNORM, /*withDepth=*/false);
+
+        SsaoCB sc = {};
+        sc.viewProj = pf.viewProj; // 既に transpose 済み
+        sc.cameraPos = view.cameraPos;
+        sc.radius = 0.8f;
+        sc.noiseScale[0] = static_cast<float>(hw) / 4.0f;
+        sc.noiseScale[1] = static_cast<float>(hh) / 4.0f;
+        sc.intensity = 1.0f;
+        sc.bias = 0.03f;
+        UploadCB(dc, ssaoCB_.Get(), sc);
+
+        D3D11_VIEWPORT hvp = {};
+        hvp.Width = static_cast<float>(hw);
+        hvp.Height = static_cast<float>(hh);
+        hvp.MaxDepth = 1.0f;
+        dc->RSSetViewports(1, &hvp);
+        dc->IASetInputLayout(nullptr);
+        dc->OMSetDepthStencilState(depthDisabled_.Get(), 0);
+        dc->OMSetBlendState(blendOpaque_.Get(), nullptr, 0xFFFFFFFFu);
+
+        // AO 生成 (t0=position t1=normal t2=noise / s0=point clamp s1=point wrap)
+        ID3D11RenderTargetView* aoRtv[1] = { ssaoRaw_.RTV() };
+        dc->OMSetRenderTargets(1, aoRtv, nullptr);
+        ID3D11Buffer* aoCbs[1] = { ssaoCB_.Get() };
+        dc->PSSetConstantBuffers(0, 1, aoCbs);
+        ID3D11SamplerState* aoSamps[2] = { pointClamp_.Get(), pointWrap_.Get() };
+        dc->PSSetSamplers(0, 2, aoSamps);
+        ID3D11ShaderResourceView* aoSrvs[3] = { gbPosition_.SRV(), gbNormal_.SRV(),
+                                                noiseSrv_.Get() };
+        dc->PSSetShaderResources(0, 3, aoSrvs);
+        dc->VSSetShader(ssaoProg->vs.Get(), nullptr, 0);
+        dc->PSSetShader(ssaoProg->ps.Get(), nullptr, 0);
+        dc->Draw(3, 0);
+
+        // ブラー (raw → blur)
+        SsaoBlurCB bc = {};
+        bc.texel[0] = 1.0f / static_cast<float>(hw);
+        bc.texel[1] = 1.0f / static_cast<float>(hh);
+        UploadCB(dc, ssaoBlurCB_.Get(), bc);
+        ID3D11RenderTargetView* blurRtv[1] = { ssaoBlur_.RTV() };
+        dc->OMSetRenderTargets(1, blurRtv, nullptr);
+        ID3D11Buffer* blurCbs[1] = { ssaoBlurCB_.Get() };
+        dc->PSSetConstantBuffers(0, 1, blurCbs);
+        ID3D11SamplerState* blurSamps[1] = { iblSampler_.Get() }; // linear clamp
+        dc->PSSetSamplers(0, 1, blurSamps);
+        ID3D11ShaderResourceView* rawSrv[1] = { ssaoRaw_.SRV() };
+        dc->PSSetShaderResources(0, 1, rawSrv);
+        dc->VSSetShader(ssaoBlurProg->vs.Get(), nullptr, 0);
+        dc->PSSetShader(ssaoBlurProg->ps.Get(), nullptr, 0);
+        dc->Draw(3, 0);
+
+        ID3D11ShaderResourceView* aoNull[3] = {};
+        dc->PSSetShaderResources(0, 3, aoNull); // 光パスで再バインドする前に解除
+    }
+
     // ---- 2) ライティングパス (フルスクリーン解決) ----
     dc->OMSetRenderTargets(1, &view.rtv, nullptr); // GBuffer を SRV で読むため depth も外す
     dc->RSSetViewports(1, &vp);
@@ -394,27 +539,34 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
     lp.fogEnd = view.fogEnd;
     lp.iblEnabled = pf.iblEnabled; // M38c (透明後段と同判定)
     lp.iblSpecMips = view.iblSpecMips;
+    lp.screenSize[0] = static_cast<float>(view.width); // M38e
+    lp.screenSize[1] = static_cast<float>(view.height);
+    lp.ssaoEnabled = ssaoOn ? 1 : 0;
     UploadCB(dc, lightCB_.Get(), lp);
     ID3D11Buffer* lightCbs[1] = { lightCB_.Get() };
     dc->PSSetConstantBuffers(0, 1, lightCbs);
     dc->VSSetConstantBuffers(0, 1, lightCbs);
-    // 光パスの s0 は IBL 用 LINEAR/CLAMP (deferred_light.hlsl の宣言と一致。
-    // LUT を wrap でサンプルすると roughness=1.0 が v=0 に巻き戻るため clamp 必須)
-    ID3D11SamplerState* lightSamplers[1] = { iblSampler_.Get() };
-    dc->PSSetSamplers(0, 1, lightSamplers);
-    // GBuffer t0-3 + シャドウ t4 + IBL t5-7 (M38c、s0=IBL サンプラ / s1=比較サンプラ bind 済み)
-    ID3D11ShaderResourceView* gbSrvs[8] = { gbAlbedo_.SRV(),  gbNormal_.SRV(),
+    // 光パスの s0 = IBL 用 LINEAR/CLAMP (LUT を wrap で引くと roughness=1.0 が v=0 に
+    // 巻き戻るため clamp 必須)、s1 = シャドウ比較サンプラ。**SSAO パス (M38e) が s1 を
+    // point-wrap で上書きするため両方を明示的に張り直す** (張り忘れると影が全消えする)
+    ID3D11SamplerState* lightSamplers[2] = { iblSampler_.Get(), shadowSampler_.Get() };
+    dc->PSSetSamplers(0, 2, lightSamplers);
+    // GBuffer t0-3 + シャドウ t4 + IBL t5-7 (M38c) + SSAO t8 (M38e)。
+    // s0=IBL サンプラ / s1=比較サンプラ bind 済み
+    ID3D11ShaderResourceView* gbSrvs[9] = { gbAlbedo_.SRV(),  gbNormal_.SRV(),
                                             gbPosition_.SRV(), gbMaterial_.SRV(),
                                             view.shadowSRV,    view.iblIrradiance,
-                                            view.iblPrefiltered, view.iblBrdfLut };
-    dc->PSSetShaderResources(0, 8, gbSrvs);
+                                            view.iblPrefiltered, view.iblBrdfLut,
+                                            ssaoOn ? ssaoBlur_.SRV() : nullptr };
+    dc->PSSetShaderResources(0, 9, gbSrvs);
     dc->IASetInputLayout(nullptr);
+    dc->OMSetBlendState(blendOpaque_.Get(), nullptr, 0xFFFFFFFFu);
     dc->VSSetShader(lightProg->vs.Get(), nullptr, 0);
     dc->PSSetShader(lightProg->ps.Get(), nullptr, 0);
     dc->OMSetDepthStencilState(depthDisabled_.Get(), 0);
     dc->Draw(3, 0);
-    ID3D11ShaderResourceView* nullSrvs[8] = {};
-    dc->PSSetShaderResources(0, 8, nullSrvs); // 次フレームで RT に戻すため解除
+    ID3D11ShaderResourceView* nullSrvs[9] = {};
+    dc->PSSetShaderResources(0, 9, nullSrvs); // 次フレームで RT に戻すため解除
 
     // ---- 2.5) スカイボックス (M29d): clearColor ピクセルを深度 1.0 判定で上書き ----
     skybox_.Render(device, shaders, view);

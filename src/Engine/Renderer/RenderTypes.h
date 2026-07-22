@@ -73,6 +73,8 @@ struct RenderView {
     ID3D11ShaderResourceView* iblPrefiltered = nullptr;
     ID3D11ShaderResourceView* iblBrdfLut = nullptr;
     float iblSpecMips = 0.0f;
+    // ---- SSAO (M38e)。Deferred のみ消費 (Forward は無視) ----
+    int32_t ssaoEnabled = 0;
 };
 
 // GPU へ渡すライト 1 個 (定数バッファ配列要素、16 バイト境界に揃えた 64 バイト)。

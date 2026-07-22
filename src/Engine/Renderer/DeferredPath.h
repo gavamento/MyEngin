@@ -46,6 +46,18 @@ private:
     AssetID gbufferSkinnedShader_ = {}; // deferred_gbuffer_skinned (スキンメッシュ用に差替)
     AssetID lightShader_ = {};
     SkyboxPass skybox_; // ライトパス後・透明前に空を塗る (M29d)
+
+    // ---- SSAO (M38e、半解像度) ----
+    RenderTexture ssaoRaw_;
+    RenderTexture ssaoBlur_;
+    AssetID ssaoShader_ = {};
+    AssetID ssaoBlurShader_ = {};
+    Microsoft::WRL::ComPtr<ID3D11Buffer> ssaoCB_;
+    Microsoft::WRL::ComPtr<ID3D11Buffer> ssaoBlurCB_;
+    Microsoft::WRL::ComPtr<ID3D11SamplerState> pointClamp_;
+    Microsoft::WRL::ComPtr<ID3D11SamplerState> pointWrap_;
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> noiseTex_; // 4x4 ランダム回転
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> noiseSrv_;
 };
 
 } // namespace mye
