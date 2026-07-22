@@ -142,14 +142,14 @@ AssetID LoadMaterial(LoadContext& lc, const cgltf_material* mat, const char* key
                     static_cast<const uint8_t*>(img->buffer_view->buffer->data) + img->buffer_view->offset;
                 const std::string texKey = lc.pathUtf8 + "#img:" + (img->name ? img->name : key);
                 const AssetID tex = lc.resources->textures.CreateFromEncoded(
-                    texKey, bytes, img->buffer_view->size);
+                    texKey, bytes, img->buffer_view->size, /*srgb=*/true); // ベースカラー (M38a)
                 if (!tex.IsNull()) {
                     m.texture = tex;
                 }
             } else if (img->uri && strncmp(img->uri, "data:", 5) != 0) {
                 // 外部ファイル
-                const AssetID tex =
-                    lc.resources->textures.LoadFile(lc.baseDir + L"\\" + Utf8ToWide(img->uri));
+                const AssetID tex = lc.resources->textures.LoadFile(
+                    lc.baseDir + L"\\" + Utf8ToWide(img->uri), /*srgb=*/true); // ベースカラー (M38a)
                 if (!tex.IsNull()) {
                     m.texture = tex;
                 }

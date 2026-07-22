@@ -407,7 +407,7 @@ AssetID MeshLibrary::Capsule()
 
 // ---------------------------------------------------------------- TextureLibrary
 
-bool TextureLibrary::CreateFromPixels(Texture& out, const uint8_t* rgba, int w, int h)
+bool TextureLibrary::CreateFromPixels(Texture& out, const uint8_t* rgba, int w, int h, bool srgb)
 {
     // フルミップチェーン + GenerateMips
     D3D11_TEXTURE2D_DESC td = {};
@@ -415,7 +415,8 @@ bool TextureLibrary::CreateFromPixels(Texture& out, const uint8_t* rgba, int w, 
     td.Height = static_cast<UINT>(h);
     td.MipLevels = 0; // full chain
     td.ArraySize = 1;
-    td.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    // M38a: アルベド系は _SRGB (サンプル時 HW デコード = リニアパイプライン)
+    td.Format = srgb ? DXGI_FORMAT_R8G8B8A8_UNORM_SRGB : DXGI_FORMAT_R8G8B8A8_UNORM;
     td.SampleDesc = { 1, 0 };
     td.Usage = D3D11_USAGE_DEFAULT;
     td.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
@@ -434,6 +435,7 @@ bool TextureLibrary::CreateFromPixels(Texture& out, const uint8_t* rgba, int w, 
     device_->Context()->GenerateMips(out.srv.Get());
     out.width = w;
     out.height = h;
+    out.srgb = srgb;
     return true;
 }
 
@@ -443,17 +445,17 @@ AssetID TextureLibrary::IdForFile(const std::wstring& path)
     return AssetID{ assetkey::Resolve(NormalizePathKey(path)) };
 }
 
-AssetID TextureLibrary::LoadFile(const std::wstring& path)
+AssetID TextureLibrary::LoadFile(const std::wstring& path, bool srgb)
 {
     const AssetID id = IdForFile(path);
     if (textures_.contains(id.value)) {
-        return id;
+        return id; // 先勝ち (フラグ違いは無視 — per-asset 指定は M39 .meta で)
     }
     const std::string utf8 = WideToUtf8(path);
     Texture t;
     if (HasDdsExt(path)) {
         // M24: BCn/DDS は decode 不要 (GPU が直接サンプルする)。ヘッダを読んで直接テクスチャ化
-        if (!LoadDdsInto(t, path)) {
+        if (!LoadDdsInto(t, path, srgb)) {
             return {};
         }
         textures_.emplace(id.value, std::move(t));
@@ -466,7 +468,7 @@ AssetID TextureLibrary::LoadFile(const std::wstring& path)
         MYE_LOG_ERROR("texture load failed: %s (%s)", utf8.c_str(), stbi_failure_reason());
         return {};
     }
-    const bool ok = CreateFromPixels(t, pixels, w, h);
+    const bool ok = CreateFromPixels(t, pixels, w, h, srgb);
     stbi_image_free(pixels);
     if (!ok) {
         MYE_LOG_ERROR("texture creation failed: %s", utf8.c_str());
@@ -477,9 +479,22 @@ AssetID TextureLibrary::LoadFile(const std::wstring& path)
     return id;
 }
 
+// UNORM → 対応する _SRGB フォーマット (M38a)。sRGB 変種の無いもの (BC5=ノーマル等) はそのまま
+static DXGI_FORMAT ToSrgbFormat(DXGI_FORMAT f)
+{
+    switch (f) {
+    case DXGI_FORMAT_BC1_UNORM: return DXGI_FORMAT_BC1_UNORM_SRGB;
+    case DXGI_FORMAT_BC2_UNORM: return DXGI_FORMAT_BC2_UNORM_SRGB;
+    case DXGI_FORMAT_BC3_UNORM: return DXGI_FORMAT_BC3_UNORM_SRGB;
+    case DXGI_FORMAT_BC7_UNORM: return DXGI_FORMAT_BC7_UNORM_SRGB;
+    case DXGI_FORMAT_R8G8B8A8_UNORM: return DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
+    default: return f;
+    }
+}
+
 // DDS (BC1/BC2/BC3/BC5/BC7) をヘッダ解析して直接 GPU テクスチャ化する。DirectXTex 不要 —
 // BCn は D3D11 がネイティブにサンプルするため、圧縮ブロックをそのまま subresource に渡すだけ。
-bool TextureLibrary::LoadDdsInto(Texture& out, const std::wstring& path)
+bool TextureLibrary::LoadDdsInto(Texture& out, const std::wstring& path, bool srgb)
 {
     std::ifstream f(path, std::ios::binary);
     if (!f) {
@@ -515,7 +530,10 @@ bool TextureLibrary::LoadDdsInto(Texture& out, const std::wstring& path)
     }
 
     uint32_t blockBytes = 0;
-    const DXGI_FORMAT fmt = DdsResolveFormat(hdr, dx10, blockBytes);
+    DXGI_FORMAT fmt = DdsResolveFormat(hdr, dx10, blockBytes);
+    if (srgb) {
+        fmt = ToSrgbFormat(fmt); // M38a: アルベド DDS は _SRGB 変種でサンプル時デコード
+    }
     if (fmt == DXGI_FORMAT_UNKNOWN) {
         MYE_LOG_ERROR("dds: unsupported format (fourCC=0x%08X): %s", hdr.ddspf.fourCC,
                       WideToUtf8(path).c_str());
@@ -565,6 +583,7 @@ bool TextureLibrary::LoadDdsInto(Texture& out, const std::wstring& path)
     }
     out.width = static_cast<int>(hdr.width);
     out.height = static_cast<int>(hdr.height);
+    out.srgb = srgb;
     return true;
 }
 
@@ -680,7 +699,8 @@ void TextureLibrary::PollAsyncLoads()
     }
 }
 
-AssetID TextureLibrary::CreateFromEncoded(std::string_view name, const void* bytes, size_t size)
+AssetID TextureLibrary::CreateFromEncoded(std::string_view name, const void* bytes, size_t size,
+                                          bool srgb)
 {
     // 再呼び出しは差し替え (モデルリロード時に埋め込みテクスチャを更新するため)
     const AssetID id{ HashStr(name) };
@@ -692,7 +712,7 @@ AssetID TextureLibrary::CreateFromEncoded(std::string_view name, const void* byt
         return {};
     }
     Texture t;
-    const bool ok = CreateFromPixels(t, pixels, w, h);
+    const bool ok = CreateFromPixels(t, pixels, w, h, srgb);
     stbi_image_free(pixels);
     if (!ok) {
         return {};
@@ -743,9 +763,10 @@ bool TextureLibrary::ReplaceFromFile(AssetID id, const std::wstring& path)
     if (it == textures_.end()) {
         return false;
     }
+    const bool srgb = it->second.srgb; // ホットリロードでフォーマット (sRGB) を維持 (M38a)
     Texture fresh;
     if (HasDdsExt(path)) {
-        if (!LoadDdsInto(fresh, path)) {
+        if (!LoadDdsInto(fresh, path, srgb)) {
             return false;
         }
         it->second = std::move(fresh);
@@ -758,7 +779,7 @@ bool TextureLibrary::ReplaceFromFile(AssetID id, const std::wstring& path)
         MYE_LOG_ERROR("texture reload failed: %s (%s)", utf8.c_str(), stbi_failure_reason());
         return false;
     }
-    const bool ok = CreateFromPixels(fresh, pixels, w, h);
+    const bool ok = CreateFromPixels(fresh, pixels, w, h, srgb);
     stbi_image_free(pixels);
     if (!ok) {
         return false;
@@ -837,15 +858,16 @@ AssetID MaterialLibrary::LoadFromFile(const std::wstring& path, TextureLibrary& 
     m.transparent = root.value("transparent", false) ? 1 : 0;
 
     // texture/normalMap は assetsRoot 相対。空文字は「なし」(texture は White にフォールバック)
-    auto resolveTex = [&](const std::string& rel) -> AssetID {
+    auto resolveTex = [&](const std::string& rel, bool srgb) -> AssetID {
         if (rel.empty()) {
             return {};
         }
-        return textures.LoadFile(assetsRoot + L"\\" + Utf8ToWide(rel));
+        return textures.LoadFile(assetsRoot + L"\\" + Utf8ToWide(rel), srgb);
     };
-    const AssetID baseTex = resolveTex(root.value("texture", std::string()));
+    // M38a: アルベドは sRGB デコード、ノーマルマップはリニアのまま
+    const AssetID baseTex = resolveTex(root.value("texture", std::string()), true);
     m.texture = baseTex.IsNull() ? textures.White() : baseTex;
-    m.normalTex = resolveTex(root.value("normalMap", std::string()));
+    m.normalTex = resolveTex(root.value("normalMap", std::string()), false);
 
     const AssetID id = HashForPath(path);
     materials_[id.value] = m;

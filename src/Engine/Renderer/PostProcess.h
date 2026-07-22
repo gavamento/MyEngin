@@ -27,9 +27,10 @@ public:
         float bloomIntensity = 0.6f; // 合成強度 (0 で無効)
         bool bloom = true;
         bool fxaa = true;
-        // linear→sRGB OETF。M16 のシーンは sRGB 未対応 (テクスチャ非デコード) のため既定 OFF。
-        // 正しいリニアパイプラインが揃う M17 (sRGB テクスチャ) で ON にする。
-        bool applyGamma = false;
+        // linear→sRGB OETF。M38a でリニアパイプライン (sRGB テクスチャデコード +
+        // authored 色の CPU 変換) が揃ったので既定 ON。
+        // 制限: enablePostFx=false (HDR 配管バイパス) 時は OETF も掛からない = 旧来の見た目
+        bool applyGamma = true;
         // ---- M32d: 追加ポスト効果 (既定 = 無効 = 従来の見た目) ----
         float chromAberration = 0.0f;   // 色収差 (UV スケール、0=off)
         float vignetteIntensity = 0.0f; // 周辺減光 (0=off)

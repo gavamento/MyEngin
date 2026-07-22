@@ -1,4 +1,5 @@
 #pragma once
+#include <cmath>
 #include <cstdint>
 #include <vector>
 
@@ -8,6 +9,23 @@
 #include "Engine/Core/EntityID.h"
 
 namespace mye {
+
+// ---- sRGB → リニア変換 (M38a リニアパイプライン) ----
+// authored な色 (マテリアル baseColor / ライト色 / スカイ / フォグ) は sRGB 認知色として
+// 保存されている前提で、CB へ載せる直前に変換する。トーンマップ後の OETF (applyGamma)
+// と対になり「作者が選んだ色 ≒ 画面の色」を保つ。render-only (sim/hash 非関与)。
+inline float SrgbToLinear(float c)
+{
+    return (c <= 0.04045f) ? c / 12.92f : std::pow((c + 0.055f) / 1.055f, 2.4f);
+}
+inline DirectX::XMFLOAT3 SrgbToLinear(const DirectX::XMFLOAT3& c)
+{
+    return { SrgbToLinear(c.x), SrgbToLinear(c.y), SrgbToLinear(c.z) };
+}
+inline DirectX::XMFLOAT4 SrgbToLinear(const DirectX::XMFLOAT4& c)
+{
+    return { SrgbToLinear(c.x), SrgbToLinear(c.y), SrgbToLinear(c.z), c.w }; // α はそのまま
+}
 
 // 「収集 → ソート → 提出」モデル (engine_spec.md 6.3)。
 // 即時描画 API は提供しない — 将来のマルチスレッド化 / API 差し替えの余地を残す。

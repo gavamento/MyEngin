@@ -87,14 +87,19 @@ struct Texture {
     Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> srv;
     int width = 0;
     int height = 0;
+    bool srgb = false; // M38a: _SRGB フォーマットでロード済み (ホットリロードで維持)
 };
 
 class TextureLibrary {
 public:
     void Init(GraphicsDevice& device) { device_ = &device; }
     ~TextureLibrary();
-    AssetID LoadFile(const std::wstring& path);                                  // png/tga/jpg (stb_image)
-    AssetID CreateFromEncoded(std::string_view name, const void* bytes, size_t size); // GLB 埋め込み等 (再呼び出しで差し替え)
+    // png/tga/jpg (stb_image) / dds。srgb=true でアルベド系を _SRGB フォーマットに
+    // (サンプル時に HW デコード = リニアパイプライン、M38a)。ノーマル/データ系は false。
+    // 既ロードの AssetID は先勝ち (フラグ違いの再要求は無視 — per-asset 指定は M39 .meta で)
+    AssetID LoadFile(const std::wstring& path, bool srgb = false);
+    AssetID CreateFromEncoded(std::string_view name, const void* bytes, size_t size,
+                              bool srgb = false); // GLB 埋め込み等 (再呼び出しで差し替え)
     AssetID CreateSolid(std::string_view name, uint8_t r, uint8_t g, uint8_t b, uint8_t a);
     Texture* Get(AssetID id);
     AssetID White(); // 1x1 白 (遅延生成)
@@ -117,8 +122,9 @@ public:
     std::vector<AssetEntry> Enumerate() const;
 
 private:
-    bool CreateFromPixels(Texture& out, const uint8_t* rgba, int w, int h);
-    bool LoadDdsInto(Texture& out, const std::wstring& path); // M24: BCn/DDS (依存ゼロ)
+    bool CreateFromPixels(Texture& out, const uint8_t* rgba, int w, int h, bool srgb = false);
+    bool LoadDdsInto(Texture& out, const std::wstring& path,
+                     bool srgb = false); // M24: BCn/DDS (依存ゼロ)
     void EnsureWorker();
     void AsyncWorker();
 

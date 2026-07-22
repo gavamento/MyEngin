@@ -298,7 +298,7 @@ void ForwardPath::DrawItems(GraphicsDevice& device, const std::vector<RenderItem
 
         PerObjectCB po = {};
         XMStoreFloat4x4(&po.world, XMMatrixTranspose(XMLoadFloat4x4(&item.world)));
-        po.baseColor = mat->baseColor;
+        po.baseColor = SrgbToLinear(mat->baseColor); // M38a: authored 色をリニアへ
         UploadCB(dc, perObjectCB_.Get(), po);
 
         MaterialCB mc = {};

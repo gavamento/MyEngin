@@ -166,6 +166,13 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
         hdr = postFx_.Acquire(device, target.width, target.height);
     }
     view.rtv = (hdr != nullptr) ? hdr->scene.RTV() : target.rtv; // 確保失敗時は従来直描きにフォールバック
+    if (hdr != nullptr) {
+        // M38a: 背景クリア色も authored 色 → リニアへ (トーンマップ + OETF と対)。
+        // 直描き (postFx 無効) 経路は OETF が掛からないので変換しない
+        for (int i = 0; i < 3; ++i) {
+            view.clearColor[i] = SrgbToLinear(view.clearColor[i]);
+        }
+    }
 
     const float aspectRatio = (target.height > 0)
         ? static_cast<float>(target.width) / static_cast<float>(target.height) : 1.0f;
@@ -246,14 +253,15 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
                     XMVectorSet(w->value._31, w->value._32, w->value._33, 0));
                 XMStoreFloat3(&g.direction, dir);
                 g.position = { w->value._41, w->value._42, w->value._43 };
-                g.color = l->color;
+                g.color = SrgbToLinear(l->color); // M38a: authored 色をリニアへ
                 g.intensity = l->intensity;
                 g.type = l->type;
                 g.range = l->range;
                 g.cosInner = std::cos(XMConvertToRadians(l->spotInnerDeg));
                 g.cosOuter = std::cos(XMConvertToRadians(l->spotOuterDeg));
                 if (!ambientSet) {
-                    lights.ambient = l->ambient; // アンビエントは最初のライトの値を全体に使う
+                    // アンビエントは最初のライトの値を全体に使う (M38a: リニアへ)
+                    lights.ambient = SrgbToLinear(l->ambient);
                     ambientSet = true;
                 }
             }
@@ -401,6 +409,12 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
     }
 
     CollectEnvironment(world, view); // M29d: Skybox/Fog を view に反映
+    // M38a: 環境の authored 色をリニアへ (CollectEnvironment 自体は純パススルーのまま =
+    // selftest 不変)。スカイ/フォグは HDR 中間に描かれ、トーンマップ後の OETF と対になる
+    view.skyTop = SrgbToLinear(view.skyTop);
+    view.skyHorizon = SrgbToLinear(view.skyHorizon);
+    view.skyBottom = SrgbToLinear(view.skyBottom);
+    view.fogColor = SrgbToLinear(view.fogColor);
     queue_.Sort();
     path.Render(device, view, queue_, lights, resources, shaders);
 

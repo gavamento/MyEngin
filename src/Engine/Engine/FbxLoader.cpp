@@ -115,11 +115,13 @@ AssetID LoadMaterial(LoadContext& lc, const ufbx_material* mat, const char* key)
         if (tex) {
             AssetID texId = {};
             if (tex->filename.length > 0) {
-                texId = lc.resources->textures.LoadFile(Utf8ToWide(StrOf(tex->filename)));
+                texId = lc.resources->textures.LoadFile(Utf8ToWide(StrOf(tex->filename)),
+                                                        /*srgb=*/true); // ベースカラー (M38a)
             }
             if (texId.IsNull() && tex->relative_filename.length > 0) {
-                texId = lc.resources->textures.LoadFile(lc.baseDir + L"\\"
-                                                        + Utf8ToWide(StrOf(tex->relative_filename)));
+                texId = lc.resources->textures.LoadFile(
+                    lc.baseDir + L"\\" + Utf8ToWide(StrOf(tex->relative_filename)),
+                    /*srgb=*/true);
             }
             if (!texId.IsNull()) {
                 m.texture = texId;

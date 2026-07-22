@@ -37,7 +37,8 @@ void RegisterDemoContent(EngineContext& ctx)
     {
         Material m;
         m.shader = shader;
-        const AssetID groundTex = res.textures.LoadFile(ctx.assetsRoot + L"\\textures\\test.png");
+        const AssetID groundTex =
+            res.textures.LoadFile(ctx.assetsRoot + L"\\textures\\test.png", true); // アルベド=sRGB (M38a)
         m.texture = groundTex.IsNull() ? white : groundTex;
         m.baseColor = groundTex.IsNull() ? DirectX::XMFLOAT4{ 0.45f, 0.47f, 0.50f, 1.0f }
                                          : DirectX::XMFLOAT4{ 1.0f, 1.0f, 1.0f, 1.0f };
