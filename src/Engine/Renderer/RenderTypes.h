@@ -50,9 +50,11 @@ struct RenderView {
     int width = 0;
     int height = 0;
     float clearColor[4] = { 0.08f, 0.09f, 0.11f, 1.0f };
-    // ---- シャドウ (M17)。RenderSystem がシャドウパス後に埋める。描画専用 ----
-    DirectX::XMFLOAT4X4 lightViewProj = {}; // transpose(lightView*lightProj)、CB へそのままアップロード
-    ID3D11ShaderResourceView* shadowSRV = nullptr; // シャドウ深度 (R32_FLOAT)。null で影無効
+    // ---- シャドウ (M17 単一 → M38d CSM)。RenderSystem がシャドウパス後に埋める。描画専用 ----
+    DirectX::XMFLOAT4X4 lightViewProj[3] = {}; // 各カスケードの transpose(lightView*lightProj)
+    float cascadeSplits[3] = { 0, 0, 0 };      // 各カスケードの far 境界 (view 深度、デバッグ用)
+    int32_t cascadeCount = 0;                  // 0 = 影無効
+    ID3D11ShaderResourceView* shadowSRV = nullptr; // シャドウ深度 Texture2DArray (R32_FLOAT)
     float shadowTexelSize = 0.0f;                  // 1/解像度 (PCF オフセット)
     // ---- 環境 (M29d)。RenderSystem が最初の active Skybox/Fog から埋める。描画専用 ----
     int32_t skyMode = -1; // -1=無効 (clearColor 背景) / 0=グラデーション / 1=cubemap (M38b)

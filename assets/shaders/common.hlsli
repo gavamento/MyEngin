@@ -45,6 +45,41 @@ float SampleShadowPCF(Texture2D shadowMap, SamplerComparisonState samp, float4x4
     return sum / 9.0f;
 }
 
+// CSM のカスケード選択付き PCF (M38d)。カスケード 0 (最詳細) から順に posW を射影し、
+// 最初にマップ範囲へ収まったスライスで 3x3 比較平均。どれにも入らなければ 1 (影なし)。
+// 範囲ベース選択なので view 深度の受け渡しが不要 (splits はデバッグ用に CB へ残す)。
+float SampleShadowCSM(Texture2DArray shadowMap, SamplerComparisonState samp, float4x4 vp0,
+                      float4x4 vp1, float4x4 vp2, int count, float3 posW, float texelSize)
+{
+    float4x4 vps[3] = { vp0, vp1, vp2 };
+    float result = 1.0f;
+    bool found = false;
+    for (int c = 0; c < count; ++c) {
+        if (found) {
+            continue;
+        }
+        float4 lp = mul(float4(posW, 1.0f), vps[c]);
+        lp.xyz /= lp.w;
+        const float2 uv = lp.xy * float2(0.5f, -0.5f) + 0.5f;
+        // 端 1% は次のカスケードへ (境界の PCF はみ出し回避)
+        if (uv.x < 0.01f || uv.x > 0.99f || uv.y < 0.01f || uv.y > 0.99f || lp.z > 1.0f
+            || lp.z < 0.0f) {
+            continue;
+        }
+        const float d = lp.z - 0.0008f;
+        float sum = 0.0f;
+        [unroll] for (int y = -1; y <= 1; ++y) {
+            [unroll] for (int x = -1; x <= 1; ++x) {
+                sum += shadowMap.SampleCmpLevelZero(
+                    samp, float3(uv + float2(x, y) * texelSize, float(c)), d);
+            }
+        }
+        result = sum / 9.0f;
+        found = true;
+    }
+    return result;
+}
+
 // ノーマルマップの摂動 (M17.3)。Christian Schüler の微分ベース TBN
 // ("Normal Mapping Without Precomputed Tangents") — 頂点タンジェント不要。
 // 画面空間の posW/uv 微分から接空間基底を再構成する。gHasNormal が uniform なので

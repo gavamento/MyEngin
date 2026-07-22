@@ -37,6 +37,9 @@ struct PerFrameCB {
     int32_t iblEnabled;
     float iblSpecMips;
     float iblPad[2];
+    // ---- CSM (M38d、末尾 append)。shadowVP はカスケード 0 として温存 ----
+    XMFLOAT4X4 shadowVP12[2];
+    float cascadeInfo[4]; // xyz = split far 境界 / w = カスケード数
 };
 
 struct PerObjectCB {
@@ -75,6 +78,9 @@ struct LightPassCB {
     int32_t iblEnabled;
     float iblSpecMips;
     float iblPad[2];
+    // ---- CSM (M38d、末尾 append) ----
+    XMFLOAT4X4 shadowVP12[2];
+    float cascadeInfo[4]; // xyz = split far 境界 / w = カスケード数
 };
 
 bool CreateCB(ID3D11Device* dev, UINT size, Microsoft::WRL::ComPtr<ID3D11Buffer>& out)
@@ -258,9 +264,15 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
     pf.lightCount = lights.count;
     pf.ambient = lights.ambient;
     memcpy(pf.lights, lights.lights, sizeof(pf.lights));
-    pf.shadowVP = view.lightViewProj; // 透明後段の forward_lit 用
+    pf.shadowVP = view.lightViewProj[0]; // 透明後段の forward_lit 用
     pf.shadowTexel = view.shadowTexelSize;
     pf.shadowEnabled = (view.shadowSRV != nullptr) ? 1 : 0;
+    pf.shadowVP12[0] = view.lightViewProj[1]; // M38d CSM
+    pf.shadowVP12[1] = view.lightViewProj[2];
+    pf.cascadeInfo[0] = view.cascadeSplits[0];
+    pf.cascadeInfo[1] = view.cascadeSplits[1];
+    pf.cascadeInfo[2] = view.cascadeSplits[2];
+    pf.cascadeInfo[3] = static_cast<float>(view.cascadeCount);
     pf.fogColor = view.fogColor;
     pf.fogMode = view.fogMode;
     pf.fogDensity = view.fogDensity;
@@ -365,9 +377,15 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
     lp.clearColor = { view.clearColor[0], view.clearColor[1], view.clearColor[2],
                       view.clearColor[3] };
     memcpy(lp.lights, lights.lights, sizeof(lp.lights));
-    lp.shadowVP = view.lightViewProj;
+    lp.shadowVP = view.lightViewProj[0];
     lp.shadowTexel = view.shadowTexelSize;
     lp.shadowEnabled = (view.shadowSRV != nullptr) ? 1 : 0;
+    lp.shadowVP12[0] = view.lightViewProj[1]; // M38d CSM
+    lp.shadowVP12[1] = view.lightViewProj[2];
+    lp.cascadeInfo[0] = view.cascadeSplits[0];
+    lp.cascadeInfo[1] = view.cascadeSplits[1];
+    lp.cascadeInfo[2] = view.cascadeSplits[2];
+    lp.cascadeInfo[3] = static_cast<float>(view.cascadeCount);
     lp.cameraPos = view.cameraPos;
     lp.fogColor = view.fogColor;
     lp.fogMode = view.fogMode;

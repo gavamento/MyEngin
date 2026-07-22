@@ -90,6 +90,102 @@ XMFLOAT4X4 ComputeDirectionalLightVP(const XMFLOAT3& lightDir, const XMFLOAT3& s
     return out;
 }
 
+// CSM のカスケード VP 列 (M38d)。カメラの部分フラスタム 8 隅をライトビューへ射影して
+// フィットした ortho を作る。practical split (λ=0.5)、影距離は kShadowMaxDist まで。
+// テクセルスナップで安定化。ライト方向のキャスター (フラスタム外) を拾うため
+// 近平面はシーン AABB のライト空間 z まで引き戻す。
+// 非 perspective (エディタ Ortho ビュー) は従来のシーン全体フィットを全カスケードに複製。
+constexpr float kShadowMaxDist = 60.0f;
+
+void ComputeCascadeVPs(const XMFLOAT3& lightDir, const XMFLOAT3& sceneMin,
+                       const XMFLOAT3& sceneMax, const RenderView& view, int resolution,
+                       XMFLOAT4X4* outVPs, float* outSplits, int count)
+{
+    const XMMATRIX camView = XMLoadFloat4x4(&view.view);
+    const XMMATRIX camProj = XMLoadFloat4x4(&view.proj);
+    XMFLOAT4X4 pj;
+    XMStoreFloat4x4(&pj, camProj);
+    const bool perspective = std::fabs(pj._34 - 1.0f) < 1e-3f; // LH perspective は _34 == 1
+
+    if (!perspective || resolution <= 0) {
+        const XMFLOAT4X4 whole = ComputeDirectionalLightVP(lightDir, sceneMin, sceneMax);
+        for (int c = 0; c < count; ++c) {
+            outVPs[c] = whole;
+            outSplits[c] = kShadowMaxDist;
+        }
+        return;
+    }
+
+    // 射影行列から near/far を復元 (行ベクトル規約: zNdc = P33 + P43/viewZ)
+    const float nearZ = (std::fabs(pj._33) > 1e-6f) ? (-pj._43 / pj._33) : 0.1f;
+    const float rawFar = (std::fabs(1.0f - pj._33) > 1e-6f) ? (pj._43 / (1.0f - pj._33)) : 1000.0f;
+    const float farZ = std::min(std::max(rawFar, nearZ + 1.0f), kShadowMaxDist);
+    ComputeCascadeSplits(nearZ, farZ, count, 0.5f, outSplits);
+
+    // 共有ライトビュー (原点はシーン中心)
+    const XMVECTOR dir = XMVector3Normalize(XMLoadFloat3(&lightDir));
+    const XMFLOAT3 cf = { (sceneMin.x + sceneMax.x) * 0.5f, (sceneMin.y + sceneMax.y) * 0.5f,
+                          (sceneMin.z + sceneMax.z) * 0.5f };
+    const XMFLOAT3 ext = { sceneMax.x - sceneMin.x, sceneMax.y - sceneMin.y,
+                           sceneMax.z - sceneMin.z };
+    const float radius = 0.5f * std::sqrt(ext.x * ext.x + ext.y * ext.y + ext.z * ext.z);
+    const XMVECTOR eye =
+        XMVectorSubtract(XMLoadFloat3(&cf), XMVectorScale(dir, radius * 2.0f + 1.0f));
+    const bool nearlyVertical = std::fabs(XMVectorGetY(dir)) > 0.99f;
+    const XMVECTOR up = nearlyVertical ? XMVectorSet(0, 0, 1, 0) : XMVectorSet(0, 1, 0, 0);
+    const XMMATRIX lightView = XMMatrixLookToLH(eye, dir, up);
+
+    // シーン AABB のライト空間 z 範囲 (フラスタム外キャスターの取りこぼし防止)
+    float sceneMinZ = FLT_MAX, sceneMaxZ = -FLT_MAX;
+    for (int i = 0; i < 8; ++i) {
+        const XMFLOAT3 c = { (i & 1) ? sceneMax.x : sceneMin.x, (i & 2) ? sceneMax.y : sceneMin.y,
+                             (i & 4) ? sceneMax.z : sceneMin.z };
+        const float z = XMVectorGetZ(XMVector3TransformCoord(XMLoadFloat3(&c), lightView));
+        sceneMinZ = std::min(sceneMinZ, z);
+        sceneMaxZ = std::max(sceneMaxZ, z);
+    }
+
+    const XMMATRIX invVP = XMMatrixInverse(nullptr, XMMatrixMultiply(camView, camProj));
+    auto ndcZ = [&](float viewZ) { return pj._33 + pj._43 / viewZ; };
+    float splitNear = nearZ;
+    for (int c = 0; c < count; ++c) {
+        const float splitFar = outSplits[c];
+        // 部分フラスタムの 8 隅 (NDC → ワールド)
+        float minX = FLT_MAX, maxX = -FLT_MAX, minY = FLT_MAX, maxY = -FLT_MAX;
+        float minZ = FLT_MAX, maxZ = -FLT_MAX;
+        for (int i = 0; i < 8; ++i) {
+            const float nx = (i & 1) ? 1.0f : -1.0f;
+            const float ny = (i & 2) ? 1.0f : -1.0f;
+            const float nz = (i & 4) ? ndcZ(splitFar) : ndcZ(splitNear);
+            const XMVECTOR w = XMVector3TransformCoord(XMVectorSet(nx, ny, nz, 0), invVP);
+            const XMVECTOR lv = XMVector3TransformCoord(w, lightView);
+            const float x = XMVectorGetX(lv), y = XMVectorGetY(lv), z = XMVectorGetZ(lv);
+            minX = std::min(minX, x); maxX = std::max(maxX, x);
+            minY = std::min(minY, y); maxY = std::max(maxY, y);
+            minZ = std::min(minZ, z); maxZ = std::max(maxZ, z);
+        }
+        // テクセルスナップ (カメラ移動でのシャドウエッジのちらつき防止)
+        const float margin = 1.0f;
+        minX -= margin; maxX += margin;
+        minY -= margin; maxY += margin;
+        const float texelX = (maxX - minX) / static_cast<float>(resolution);
+        const float texelY = (maxY - minY) / static_cast<float>(resolution);
+        if (texelX > 0.0f && texelY > 0.0f) {
+            minX = std::floor(minX / texelX) * texelX;
+            minY = std::floor(minY / texelY) * texelY;
+            maxX = std::floor(maxX / texelX) * texelX;
+            maxY = std::floor(maxY / texelY) * texelY;
+        }
+        // 近平面はシーン AABB まで引き戻す (ライト方向の手前にいるキャスターを含める)
+        const float zNear = std::min(minZ, sceneMinZ) - 1.0f;
+        const float zFar = std::min(maxZ + 1.0f, sceneMaxZ + 1.0f) + 1.0f;
+        const XMMATRIX lightProj =
+            XMMatrixOrthographicOffCenterLH(minX, maxX, minY, maxY, zNear, std::max(zFar, zNear + 1.0f));
+        XMStoreFloat4x4(&outVPs[c], XMMatrixMultiply(lightView, lightProj));
+        splitNear = splitFar;
+    }
+}
+
 } // namespace
 
 void CollectEnvironment(World& world, RenderView& view)
@@ -390,11 +486,20 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
                 }
             }
             if (dirIdx >= 0) {
-                const XMFLOAT4X4 lightVP =
-                    ComputeDirectionalLightVP(lights.lights[dirIdx].direction, sceneMin, sceneMax);
-                shadowPass_.Render(device, shaders, queue_, resources, lightVP);
-                XMStoreFloat4x4(&view.lightViewProj,
-                                XMMatrixTranspose(XMLoadFloat4x4(&lightVP)));
+                // M38d: カメラフィットの 3 カスケード (非 perspective はシーン全体×3 に縮退)
+                XMFLOAT4X4 lightVPs[ShadowPass::kCascades];
+                float splits[ShadowPass::kCascades];
+                ComputeCascadeVPs(lights.lights[dirIdx].direction, sceneMin, sceneMax, view,
+                                  shadowPass_.Resolution(), lightVPs, splits,
+                                  ShadowPass::kCascades);
+                shadowPass_.Render(device, shaders, queue_, resources, lightVPs,
+                                   ShadowPass::kCascades);
+                for (int c = 0; c < ShadowPass::kCascades; ++c) {
+                    XMStoreFloat4x4(&view.lightViewProj[c],
+                                    XMMatrixTranspose(XMLoadFloat4x4(&lightVPs[c])));
+                    view.cascadeSplits[c] = splits[c];
+                }
+                view.cascadeCount = ShadowPass::kCascades;
                 view.shadowSRV = shadowPass_.SRV();
                 view.shadowTexelSize = 1.0f / static_cast<float>(shadowPass_.Resolution());
             }

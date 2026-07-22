@@ -8,6 +8,19 @@
 // M25 のジョブ並列カリングでも再利用する純関数群。
 namespace mye {
 
+// CSM のカスケード分割 (M38d、practical split)。out[i] = カスケード i の far 境界 (view 深度)。
+// s_i = λ·(n·(f/n)^(i/N)) + (1−λ)·(n + (f−n)·i/N)。λ=0.5 が log/linear の折衷。
+// 純関数 (RenderSelfTest 対象)。
+inline void ComputeCascadeSplits(float nearZ, float farZ, int count, float lambda, float* out)
+{
+    for (int i = 1; i <= count; ++i) {
+        const float p = static_cast<float>(i) / static_cast<float>(count);
+        const float logSplit = nearZ * std::pow(farZ / nearZ, p);
+        const float linSplit = nearZ + (farZ - nearZ) * p;
+        out[i - 1] = lambda * logSplit + (1.0f - lambda) * linSplit;
+    }
+}
+
 // ビュー射影行列から抽出した視錐台 6 平面 (Gribb-Hartmann、行ベクトル規約 clip = v*M)。
 // 各平面 (a,b,c,d) に対し点 (x,y,z) が a*x+b*y+c*z+d >= 0 なら内側。
 // 正規化は不要 (内外判定は符号のみ。正のスケールでは符号が不変)。

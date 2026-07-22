@@ -32,6 +32,22 @@ XMFLOAT4X4 MakeWorld(float x, float y, float z, float scale = 1.0f)
     return m;
 }
 
+// CSM のカスケード分割 (M38d): 単調増加・境界一致・λ の両極
+void TestCascadeSplits()
+{
+    MYE_LOG_INFO("[selftest] cascade splits (practical split)");
+    float s[3] = {};
+    ComputeCascadeSplits(0.1f, 60.0f, 3, 0.5f, s);
+    TEST_CHECK(s[0] > 0.1f && s[0] < s[1] && s[1] < s[2]);
+    TEST_CHECK(std::fabs(s[2] - 60.0f) < 1e-3f); // 最終カスケードの far = 影距離
+    float lin[3] = {};
+    ComputeCascadeSplits(0.1f, 60.0f, 3, 0.0f, lin); // λ=0 → 純線形
+    TEST_CHECK(std::fabs(lin[0] - (0.1f + 59.9f / 3.0f)) < 1e-3f);
+    float lg[3] = {};
+    ComputeCascadeSplits(0.1f, 60.0f, 3, 1.0f, lg); // λ=1 → 純対数
+    TEST_CHECK(lg[0] < lin[0]); // 対数分割は近距離に寄る
+}
+
 void TestFrustumCulling()
 {
     MYE_LOG_INFO("[selftest] frustum culling (p-vertex)");
@@ -96,6 +112,7 @@ bool RunRenderSelfTest()
     g_failCount = 0;
     TestFrustumCulling();
     TestPostFxMerge();
+    TestCascadeSplits();
     if (g_failCount == 0) {
         MYE_LOG_INFO("[selftest] render: ALL PASS");
         return true;

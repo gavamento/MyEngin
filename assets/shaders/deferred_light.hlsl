@@ -26,13 +26,16 @@ cbuffer LightPass : register(b0)
     int      gIblEnabled;
     float    gIblSpecMips;
     float2   _iblPad;
+    // ---- CSM (M38d、末尾 append)。gShadowVP はカスケード 0 ----
+    float4x4 gShadowVP12[2];
+    float4   gCascadeInfo; // xyz = split far 境界 / w = カスケード数
 };
 
 Texture2D gAlbedo    : register(t0);
 Texture2D gNormal    : register(t1);
 Texture2D gPosition  : register(t2); // ワールド座標 (GBuffer)
 Texture2D gMaterial  : register(t3); // r=metallic g=roughness
-Texture2D gShadowMap : register(t4);
+Texture2DArray gShadowMap : register(t4); // M38d: CSM カスケード配列
 TextureCube gIblIrradiance  : register(t5); // M38c
 TextureCube gIblPrefiltered : register(t6);
 Texture2D   gIblBrdfLut     : register(t7);
@@ -65,7 +68,8 @@ float4 PSMain(VSOut i) : SV_Target
     const float2 mr = gMaterial.Load(pixel).rg; // metallic, roughness
     float dirShadow = 1.0f;
     if (gShadowEnabled != 0) {
-        dirShadow = SampleShadowPCF(gShadowMap, gShadowSampler, gShadowVP, posW, gShadowTexel);
+        dirShadow = SampleShadowCSM(gShadowMap, gShadowSampler, gShadowVP, gShadowVP12[0],
+                                    gShadowVP12[1], (int)gCascadeInfo.w, posW, gShadowTexel);
     }
     float3 color = ApplyLighting(albedo.rgb, n, posW, gCameraPos, mr.x, mr.y, gAmbient,
                                  gLights, gLightCount, dirShadow, gIblEnabled, gIblSpecMips,

@@ -12,18 +12,22 @@ class ShaderManager;
 class RenderQueue;
 struct RenderResources;
 
-// 平行光シャドウマップ (M17)。ライト視点から不透明ジオメトリの深度のみを描き、
-// 深度を SRV として本描画のライティングへ渡す (PCF 比較)。描画専用でハッシュ非対象。
+// 平行光シャドウマップ (M17 単一 → M38d CSM 3 カスケード)。ライト視点から不透明
+// ジオメトリの深度のみを Texture2DArray の各スライスへ描き、SRV として本描画の
+// ライティングへ渡す (PCF 比較 + 範囲ベースのカスケード選択)。描画専用でハッシュ非対象。
 class ShadowPass {
 public:
+    static constexpr int kCascades = 3; // シェーダの SampleShadowCSM と対
+
     bool Init(GraphicsDevice& device, ShaderManager& shaders, int resolution = 2048);
     bool IsReady() const { return ready_; }
 
-    // 不透明キューを lightViewProj (非転置、行ベクトル規約 world*view*proj) でシャドウ深度へ描く。
+    // 不透明キューを各カスケードの lightViewProj (非転置、行ベクトル規約 world*view*proj) で
+    // シャドウ深度 (スライス c) へ描く。count は kCascades 以下
     void Render(GraphicsDevice& device, ShaderManager& shaders, const RenderQueue& queue,
-                RenderResources& resources, const DirectX::XMFLOAT4X4& lightViewProj);
+                RenderResources& resources, const DirectX::XMFLOAT4X4* lightViewProjs, int count);
 
-    ID3D11ShaderResourceView* SRV() const { return srv_.Get(); }
+    ID3D11ShaderResourceView* SRV() const { return srv_.Get(); } // Texture2DArray (R32_FLOAT)
     int Resolution() const { return resolution_; }
 
 private:
@@ -31,8 +35,8 @@ private:
     int resolution_ = 0;
     AssetID depthShader_ = {};
 
-    Microsoft::WRL::ComPtr<ID3D11Texture2D> tex_;
-    Microsoft::WRL::ComPtr<ID3D11DepthStencilView> dsv_;
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> tex_; // ArraySize = kCascades
+    Microsoft::WRL::ComPtr<ID3D11DepthStencilView> dsv_[kCascades]; // スライス毎
     Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> srv_;
     Microsoft::WRL::ComPtr<ID3D11Buffer> objectCB_; // 1 オブジェクトあたり transpose(world*lightVP)
     Microsoft::WRL::ComPtr<ID3D11DepthStencilState> depthState_;

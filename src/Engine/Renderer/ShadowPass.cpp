@@ -34,12 +34,13 @@ bool ShadowPass::Init(GraphicsDevice& device, ShaderManager& shaders, int resolu
 
     depthShader_ = shaders.Load("shadow_depth");
 
-    // 深度テクスチャ: TYPELESS で作り DSV(D32_FLOAT) と SRV(R32_FLOAT) を両方生成
+    // 深度テクスチャ: TYPELESS の Texture2DArray (M38d カスケード) で作り、
+    // DSV(D32_FLOAT) はスライス毎、SRV(R32_FLOAT) は配列全体で生成
     D3D11_TEXTURE2D_DESC td = {};
     td.Width = static_cast<UINT>(resolution);
     td.Height = static_cast<UINT>(resolution);
     td.MipLevels = 1;
-    td.ArraySize = 1;
+    td.ArraySize = kCascades;
     td.Format = DXGI_FORMAT_R32_TYPELESS;
     td.SampleDesc = { 1, 0 };
     td.Usage = D3D11_USAGE_DEFAULT;
@@ -48,16 +49,21 @@ bool ShadowPass::Init(GraphicsDevice& device, ShaderManager& shaders, int resolu
         MYE_LOG_ERROR("ShadowPass: depth texture creation failed");
         return false;
     }
-    D3D11_DEPTH_STENCIL_VIEW_DESC dvd = {};
-    dvd.Format = DXGI_FORMAT_D32_FLOAT;
-    dvd.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
-    if (FAILED(dev->CreateDepthStencilView(tex_.Get(), &dvd, dsv_.GetAddressOf()))) {
-        return false;
+    for (int c = 0; c < kCascades; ++c) {
+        D3D11_DEPTH_STENCIL_VIEW_DESC dvd = {};
+        dvd.Format = DXGI_FORMAT_D32_FLOAT;
+        dvd.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2DARRAY;
+        dvd.Texture2DArray.FirstArraySlice = static_cast<UINT>(c);
+        dvd.Texture2DArray.ArraySize = 1;
+        if (FAILED(dev->CreateDepthStencilView(tex_.Get(), &dvd, dsv_[c].GetAddressOf()))) {
+            return false;
+        }
     }
     D3D11_SHADER_RESOURCE_VIEW_DESC svd = {};
     svd.Format = DXGI_FORMAT_R32_FLOAT;
-    svd.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
-    svd.Texture2D.MipLevels = 1;
+    svd.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2DARRAY;
+    svd.Texture2DArray.MipLevels = 1;
+    svd.Texture2DArray.ArraySize = kCascades;
     if (FAILED(dev->CreateShaderResourceView(tex_.Get(), &svd, srv_.GetAddressOf()))) {
         return false;
     }
@@ -96,21 +102,22 @@ bool ShadowPass::Init(GraphicsDevice& device, ShaderManager& shaders, int resolu
 }
 
 void ShadowPass::Render(GraphicsDevice& device, ShaderManager& shaders, const RenderQueue& queue,
-                        RenderResources& resources, const XMFLOAT4X4& lightViewProj)
+                        RenderResources& resources, const XMFLOAT4X4* lightViewProjs, int count)
 {
     ShaderProgram* prog = shaders.Get(depthShader_);
-    if (!ready_ || !prog || !prog->valid) {
+    if (!ready_ || !prog || !prog->valid || lightViewProjs == nullptr || count <= 0) {
         return;
+    }
+    if (count > kCascades) {
+        count = kCascades;
     }
     ID3D11DeviceContext* dc = device.Context();
 
     // シャドウテクスチャが前フレームから SRV に残っていると DSV へ束ねられない → 先に解除
-    ID3D11ShaderResourceView* nullSrvs[4] = { nullptr, nullptr, nullptr, nullptr };
-    dc->PSSetShaderResources(0, 4, nullSrvs);
+    ID3D11ShaderResourceView* nullSrvs[8] = {};
+    dc->PSSetShaderResources(0, 8, nullSrvs);
 
     ID3D11RenderTargetView* noRtv[1] = { nullptr };
-    dc->OMSetRenderTargets(1, noRtv, dsv_.Get());
-    dc->ClearDepthStencilView(dsv_.Get(), D3D11_CLEAR_DEPTH, 1.0f, 0);
     D3D11_VIEWPORT vp = {};
     vp.Width = static_cast<float>(resolution_);
     vp.Height = static_cast<float>(resolution_);
@@ -126,25 +133,31 @@ void ShadowPass::Render(GraphicsDevice& device, ShaderManager& shaders, const Re
     ID3D11Buffer* cbs[1] = { objectCB_.Get() };
     dc->VSSetConstantBuffers(0, 1, cbs);
 
-    const XMMATRIX lvp = XMLoadFloat4x4(&lightViewProj);
-    uint64_t boundMesh = 0;
-    for (const RenderItem& item : queue.opaque) {
-        Mesh* mesh = resources.meshes.Get(item.mesh);
-        if (!mesh) {
-            continue;
+    // M38d: カスケード毎にスライス DSV へ全不透明キャスターを描く
+    for (int c = 0; c < count; ++c) {
+        dc->OMSetRenderTargets(1, noRtv, dsv_[c].Get());
+        dc->ClearDepthStencilView(dsv_[c].Get(), D3D11_CLEAR_DEPTH, 1.0f, 0);
+        const XMMATRIX lvp = XMLoadFloat4x4(&lightViewProjs[c]);
+        uint64_t boundMesh = 0;
+        for (const RenderItem& item : queue.opaque) {
+            Mesh* mesh = resources.meshes.Get(item.mesh);
+            if (!mesh) {
+                continue;
+            }
+            ShadowObjectCB cb;
+            XMStoreFloat4x4(&cb.mvp,
+                            XMMatrixTranspose(XMMatrixMultiply(XMLoadFloat4x4(&item.world), lvp)));
+            UploadCB(dc, objectCB_.Get(), cb);
+            if (item.mesh.value != boundMesh) {
+                const UINT stride = sizeof(MeshVertex);
+                const UINT offset = 0;
+                ID3D11Buffer* vb = mesh->vb.Get();
+                dc->IASetVertexBuffers(0, 1, &vb, &stride, &offset);
+                dc->IASetIndexBuffer(mesh->ib.Get(), DXGI_FORMAT_R32_UINT, 0);
+                boundMesh = item.mesh.value;
+            }
+            dc->DrawIndexed(mesh->indexCount, 0, 0);
         }
-        ShadowObjectCB cb;
-        XMStoreFloat4x4(&cb.mvp, XMMatrixTranspose(XMMatrixMultiply(XMLoadFloat4x4(&item.world), lvp)));
-        UploadCB(dc, objectCB_.Get(), cb);
-        if (item.mesh.value != boundMesh) {
-            const UINT stride = sizeof(MeshVertex);
-            const UINT offset = 0;
-            ID3D11Buffer* vb = mesh->vb.Get();
-            dc->IASetVertexBuffers(0, 1, &vb, &stride, &offset);
-            dc->IASetIndexBuffer(mesh->ib.Get(), DXGI_FORMAT_R32_UINT, 0);
-            boundMesh = item.mesh.value;
-        }
-        dc->DrawIndexed(mesh->indexCount, 0, 0);
     }
 
     // SRV として使う前に DSV バインドを解除 (同一リソースの DSV と SRV 同時バインド禁止)

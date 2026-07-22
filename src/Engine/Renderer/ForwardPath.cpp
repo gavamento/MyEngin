@@ -38,6 +38,9 @@ struct PerFrameCB {
     int32_t iblEnabled;
     float iblSpecMips;
     float iblPad[2];
+    // ---- CSM (M38d、末尾 append)。shadowVP はカスケード 0 として温存 ----
+    XMFLOAT4X4 shadowVP12[2];  // カスケード 1,2
+    float cascadeInfo[4];      // xyz = split far 境界 (デバッグ用) / w = カスケード数
 };
 
 struct PerObjectCB {
@@ -199,9 +202,15 @@ void ForwardPath::Render(GraphicsDevice& device, const RenderView& view, const R
     pf.lightCount = lights.count;
     pf.ambient = lights.ambient;
     memcpy(pf.lights, lights.lights, sizeof(pf.lights));
-    pf.shadowVP = view.lightViewProj;
+    pf.shadowVP = view.lightViewProj[0];
     pf.shadowTexel = view.shadowTexelSize;
     pf.shadowEnabled = (view.shadowSRV != nullptr) ? 1 : 0;
+    pf.shadowVP12[0] = view.lightViewProj[1]; // M38d CSM
+    pf.shadowVP12[1] = view.lightViewProj[2];
+    pf.cascadeInfo[0] = view.cascadeSplits[0];
+    pf.cascadeInfo[1] = view.cascadeSplits[1];
+    pf.cascadeInfo[2] = view.cascadeSplits[2];
+    pf.cascadeInfo[3] = static_cast<float>(view.cascadeCount);
     pf.fogColor = view.fogColor;
     pf.fogMode = view.fogMode;
     pf.fogDensity = view.fogDensity;
