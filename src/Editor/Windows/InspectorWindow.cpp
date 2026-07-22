@@ -1,5 +1,6 @@
 #include "Editor/Windows/InspectorWindow.h"
 
+#include <cctype>
 #include <cmath>
 #include <cstring>
 #include <string>
@@ -7,6 +8,7 @@
 #include <vector>
 
 #include "Editor/AssetOps.h"
+#include "Editor/EditorComponentCatalog.h"
 #include "Editor/Selection.h"
 #include "Editor/Undo/UndoStack.h"
 #include "Engine/Core/ComponentRegistry.h"
@@ -23,6 +25,8 @@
 
 #include "imgui.h"
 
+#include "fontawesome/IconsFontAwesome6.h"
+
 using namespace DirectX;
 
 namespace mye {
@@ -30,6 +34,27 @@ namespace {
 
 constexpr float kRad2Deg = 180.0f / 3.14159265358979323846f;
 constexpr float kDeg2Rad = 3.14159265358979323846f / 180.0f;
+
+// ASCII 大文字小文字無視の部分一致 (Add Component の検索用。コンポーネント名は ASCII 前提)
+bool ContainsIgnoreCase(const char* haystack, const char* needle)
+{
+    if (needle[0] == '\0') {
+        return true;
+    }
+    const size_t nlen = std::strlen(needle);
+    for (const char* h = haystack; *h; ++h) {
+        size_t i = 0;
+        while (i < nlen && h[i]
+               && std::tolower(static_cast<unsigned char>(h[i]))
+                      == std::tolower(static_cast<unsigned char>(needle[i]))) {
+            ++i;
+        }
+        if (i == nlen) {
+            return true;
+        }
+    }
+    return false;
+}
 
 // 直前に描画した widget の編集開始/確定を検出して Undo エントリにまとめる。
 // activate (ドラッグ開始) で before を、deactivate-after-edit で after を記録 —
@@ -266,7 +291,10 @@ void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
             continue; // 上部で表示済み
         }
         ImGui::PushID(static_cast<int>(t));
-        const bool openHeader = ImGui::CollapsingHeader(desc.name, ImGuiTreeNodeFlags_DefaultOpen);
+        const std::string headerLabel =
+            std::string(ComponentUiFor(desc.name).icon) + " " + desc.name;
+        const bool openHeader =
+            ImGui::CollapsingHeader(headerLabel.c_str(), ImGuiTreeNodeFlags_DefaultOpen);
         if (ImGui::BeginPopupContextItem("##comp_ctx")) {
             if (ImGui::MenuItem("Remove Component")) {
                 undo.BeginRecord("Remove Component", selection);
@@ -330,24 +358,49 @@ void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
     // ---- Add Component ----
     ImGui::Separator();
     if (ImGui::Button("Add Component", ImVec2(-1, 0))) {
+        addComponentFilter_[0] = '\0';
         ImGui::OpenPopup("##add_component");
     }
     if (ImGui::BeginPopup("##add_component")) {
-        for (ComponentTypeId t = 0; t < reg.Count(); ++t) {
-            const ComponentDesc& desc = reg.Desc(t);
-            if (desc.flags & kComponentHidden) {
-                continue;
-            }
-            if (world.HasComponent(e, t)) {
-                continue;
-            }
-            if (ImGui::MenuItem(desc.name)) {
-                undo.BeginRecord("Add Component", selection);
-                undo.CaptureBefore(*ctx.scene, fid);
-                world.AddComponentRaw(e, t);
-                world.ApplyStructuralChanges();
-                undo.CaptureAfter(*ctx.scene, fid);
-                undo.EndRecord(selection);
+        // 検索ボックス (開いた直後にフォーカス)
+        if (ImGui::IsWindowAppearing()) {
+            ImGui::SetKeyboardFocusHere();
+        }
+        ImGui::SetNextItemWidth(240.0f);
+        ImGui::InputTextWithHint("##add_filter", ICON_FA_MAGNIFYING_GLASS " Search",
+                                 addComponentFilter_, sizeof(addComponentFilter_));
+        ImGui::Separator();
+        // カテゴリ順に列挙 (EditorComponentCatalog)。マッチ行のあるカテゴリだけ見出しを出す
+        for (const char* cat : ComponentUiCategories()) {
+            bool headerShown = false;
+            for (ComponentTypeId t = 0; t < reg.Count(); ++t) {
+                const ComponentDesc& desc = reg.Desc(t);
+                if (desc.flags & kComponentHidden) {
+                    continue;
+                }
+                if (world.HasComponent(e, t)) {
+                    continue;
+                }
+                const ComponentUiInfo& info = ComponentUiFor(desc.name);
+                if (std::strcmp(info.category, cat) != 0) {
+                    continue;
+                }
+                if (!ContainsIgnoreCase(desc.name, addComponentFilter_)) {
+                    continue;
+                }
+                if (!headerShown) {
+                    ImGui::SeparatorText(cat);
+                    headerShown = true;
+                }
+                const std::string label = std::string(info.icon) + " " + desc.name;
+                if (ImGui::MenuItem(label.c_str())) {
+                    undo.BeginRecord("Add Component", selection);
+                    undo.CaptureBefore(*ctx.scene, fid);
+                    world.AddComponentRaw(e, t);
+                    world.ApplyStructuralChanges();
+                    undo.CaptureAfter(*ctx.scene, fid);
+                    undo.EndRecord(selection);
+                }
             }
         }
         ImGui::EndPopup();

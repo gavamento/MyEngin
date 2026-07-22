@@ -8,6 +8,7 @@
 
 #include "Editor/AssetOps.h"
 #include "Editor/CreateMenu.h"
+#include "Editor/EditorComponentCatalog.h"
 #include "Editor/Undo/UndoStack.h"
 #include "Engine/Core/Components.h"
 #include "Engine/Core/Log.h"
@@ -267,7 +268,8 @@ void HierarchyWindow::DrawEntityNode(EngineContext& ctx, World& world, EntityID 
     if (isPrefab) {
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.45f, 0.68f, 1.0f, 1.0f));
     }
-    const bool nodeOpen = ImGui::TreeNodeEx("##node", flags, "%s", world.GetName(e));
+    const bool nodeOpen =
+        ImGui::TreeNodeEx("##node", flags, "%s %s", EntityIconFor(world, e), world.GetName(e));
     if (isPrefab) {
         ImGui::PopStyleColor();
     }

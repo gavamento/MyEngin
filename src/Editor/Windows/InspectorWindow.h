@@ -28,6 +28,9 @@ private:
     void DrawEntityRef(EngineContext& ctx, const FieldDesc& field, void* p, Selection& selection,
                        UndoStack& undo, uint64_t fid);
 
+    // Add Component ポップアップの検索フィルタ (開くたびにクリア)
+    char addComponentFilter_[64] = {};
+
     // 回転編集中のオイラー角キャッシュ (quat→euler→quat の往復ドリフト防止)
     DirectX::XMFLOAT3 eulerCache_ = { 0, 0, 0 };
     EntityID eulerCacheEntity_ = kNullEntity;

@@ -68,6 +68,20 @@ std::wstring DefaultProjectsDir()
     return base + L"\\Documents\\MyEngineProjects";
 }
 
+// フォルダをごみ箱へ移動する (FOF_ALLOWUNDO)。SHFileOperationW は pFrom を
+// 二重 null 終端で要求するので push_back(L'\0') + c_str() で満たす
+bool MoveToRecycleBin(const std::wstring& path)
+{
+    std::wstring from = path;
+    from.push_back(L'\0');
+    SHFILEOPSTRUCTW op = {};
+    op.wFunc = FO_DELETE;
+    op.pFrom = from.c_str();
+    op.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT;
+    const int r = SHFileOperationW(&op);
+    return r == 0 && !op.fAnyOperationsAborted;
+}
+
 // Hub 画面の編集状態 (プロセス内で 1 回しか走らないのでフレームを跨いで保持するだけ)
 struct HubState {
     ProjectRegistry registry;
@@ -76,6 +90,9 @@ struct HubState {
     int newTemplate = 1; // 0=Empty 1=3D Demo
     char openPath[512] = {};
     std::string errorText; // 非空でエラーモーダルを開く
+    // 削除確認モーダルの対象 (非空でモーダルを開く)
+    std::wstring deleteTargetPath;
+    std::string deleteTargetLabel;
     // プロジェクトごとの engineVersion キャッシュ (毎フレームのファイル IO を避ける)
     std::unordered_map<std::wstring, std::string> versionCache;
 };
@@ -158,6 +175,22 @@ bool DrawHubUi(HubState& st, void* hwnd, ProjectManagerOutcome& outcome)
                     keepRunning = false;
                 }
             }
+            // 行の右クリックメニュー (M33a)。entries はコピーなので Remove しても安全
+            if (ImGui::BeginPopupContextItem("##projctx")) {
+                if (ImGui::MenuItem(ICON_FA_FOLDER_OPEN " Show in Explorer")) {
+                    ShellExecuteW(nullptr, L"open", e.path.c_str(), nullptr, nullptr,
+                                  SW_SHOWNORMAL);
+                }
+                if (ImGui::MenuItem("リストから外す")) {
+                    st.registry.Remove(e.path);
+                }
+                ImGui::Separator();
+                if (ImGui::MenuItem(ICON_FA_TRASH " プロジェクトを削除...")) {
+                    st.deleteTargetPath = e.path;
+                    st.deleteTargetLabel = label;
+                }
+                ImGui::EndPopup();
+            }
             const char* ver = EntryEngineVersion(st, e);
             if (ver[0] != '\0' && std::strcmp(ver, kEngineVersion) != 0) {
                 ImGui::SameLine();
@@ -238,6 +271,33 @@ bool DrawHubUi(HubState& st, void* hwnd, ProjectManagerOutcome& outcome)
     ImGui::EndChild();
 
     ImGui::TextDisabled("ダブルクリックでプロジェクトを開く (エディタを再起動します)");
+
+    // ---- 削除確認モーダル (M33a) ----
+    if (!st.deleteTargetPath.empty() && !ImGui::IsPopupOpen("Delete Project")) {
+        ImGui::OpenPopup("Delete Project");
+    }
+    if (ImGui::BeginPopupModal("Delete Project", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("プロジェクト \"%s\" を削除します", st.deleteTargetLabel.c_str());
+        ImGui::TextDisabled("%s", WideToUtf8(st.deleteTargetPath).c_str());
+        ImGui::TextUnformatted("フォルダごと ごみ箱へ移動します (元に戻せます)。");
+        ImGui::Separator();
+        if (ImGui::Button(ICON_FA_TRASH " ごみ箱へ移動", ImVec2(160, 0))) {
+            if (MoveToRecycleBin(st.deleteTargetPath)) {
+                st.registry.Remove(st.deleteTargetPath);
+            } else {
+                st.errorText = "削除に失敗しました:\n" + WideToUtf8(st.deleteTargetPath);
+            }
+            st.deleteTargetPath.clear();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("キャンセル", ImVec2(120, 0))) {
+            st.deleteTargetPath.clear();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SetItemDefaultFocus(); // 破壊的操作なので既定フォーカスはキャンセル側
+        ImGui::EndPopup();
+    }
 
     // ---- エラーモーダル ----
     if (!st.errorText.empty() && !ImGui::IsPopupOpen("Error")) {
