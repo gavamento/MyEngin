@@ -14,6 +14,7 @@
 #include "Engine/Engine/HotReload/ReloadHub.h"
 #include "Engine/Engine/Audio/AudioSystem.h"
 #include "Engine/Engine/Particles/ParticleSystem.h"
+#include "Engine/Engine/Physics/MeshColliderLibrary.h"
 #include "Engine/Engine/Physics/PhysicsSystem.h"
 #include "Engine/Engine/Prefab.h"
 #include "Engine/Engine/Project.h"
@@ -75,6 +76,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     ParticleSystem particleSystem;
     CollisionSystem collisionSystem;
     PhysicsSystem physicsSystem; // 剛体積分 + 衝突解決 (M20、ステートレス)
+    MeshColliderLibrary meshColliders; // 静的メッシュコライダーの BVH キャッシュ (M41)
     std::vector<SolidContact> solidContacts; // 物理→衝突イベントの tick 内受け渡し (M28c)
     PrefabLibrary prefabLibrary;
     AnimationLibrary animLibrary;
@@ -140,6 +142,10 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
 
     shaderManager.Init(device, assetsRoot + L"\\shaders");
     resources.Init(device);
+    // M41: 静的メッシュコライダー (Collider.shape=3)。pose 構築サイトが meshcol::Resolve で
+    // AssetID → BVH 付きコライダーデータを引けるように接続する
+    meshColliders.Init(&resources);
+    meshcol::Install(&meshColliders);
     if (!forwardPath.Init(device, shaderManager)) {
         return 1;
     }
@@ -601,6 +607,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
 
     // ---- 終了 (起動の逆順) ----
     app.OnShutdown(ctx);
+    meshcol::Install(nullptr); // M41 (meshColliders 破棄前に必ず外す)
     AssetDatabase::UninstallKeyResolver(); // M30c (assetDatabase 破棄前に必ず外す)
     vfxRenderer.Shutdown(); // M29c
     uiRenderer.Shutdown();  // M21

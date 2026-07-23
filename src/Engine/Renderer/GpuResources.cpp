@@ -172,6 +172,13 @@ AssetID MeshLibrary::Register(std::string_view name, std::span<const MeshVertex>
     }
     mesh.indexCount = static_cast<uint32_t>(indices.size());
 
+    // M41: メッシュコライダー用 CPU コピー (位置 + インデックス)
+    mesh.positions.reserve(vertices.size());
+    for (const MeshVertex& mv : vertices) {
+        mesh.positions.push_back(mv.position);
+    }
+    mesh.indices.assign(indices.begin(), indices.end());
+
     // ローカル AABB を頂点から計算 (M8: Focus/ピッキング/サムネイル)
     if (!vertices.empty()) {
         DirectX::XMFLOAT3 lo = vertices[0].position;

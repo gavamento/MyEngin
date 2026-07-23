@@ -18,7 +18,7 @@ struct ColliderComponent;
 // ワールド方向)。スケールは radius / half extents / halfSeg に折り込み済み。
 // 非一様スケール × 回転のシアーは無視する近似 (基底正規化 — M20 までの流儀を踏襲)。
 struct ShapePose {
-    int32_t shape = 0;        // 0=sphere 1=box(OBB) 2=capsule(ローカル Y 軸)
+    int32_t shape = 0;        // 0=sphere 1=box(OBB) 2=capsule(ローカル Y 軸) 3=triangle mesh (M41)
     int32_t identityRot = 1;  // 基底が単位 (無回転) — M20 互換 fast-path 用
     float px = 0, py = 0, pz = 0;
     float bx[3] = { 1, 0, 0 };
@@ -27,6 +27,11 @@ struct ShapePose {
     float radius = 0;              // sphere / capsule (ワールドスケール適用済み)
     float hx = 0, hy = 0, hz = 0;  // box half extents (ワールドスケール適用済み)
     float halfSeg = 0;             // capsule 線分半長 (ワールドスケール適用済み)
+    // ---- 静的メッシュ (M41、shape=3。静的/kinematic 専用) ----
+    // 実体は呼び出し側が meshcol::Resolve(col.meshAsset) で注入する (POD 維持のポインタ参照)。
+    // null のままの shape=3 は全判定が「衝突なし」に落ちる (安全なフォールバック)
+    const void* meshData = nullptr; // MeshColliderData*
+    float sx = 1, sy = 1, sz = 1;   // メッシュのローカル→ワールドスケール (基底とは別持ち)
 };
 
 namespace shapes {

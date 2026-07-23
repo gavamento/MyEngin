@@ -162,6 +162,9 @@
     <ClCompile Include="..\src\Engine\Engine\Physics\Broadphase.cpp">
       <Filter>Engine\Physics</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Physics\MeshColliderLibrary.cpp">
+      <Filter>Engine\Physics</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Physics\PhysicsQueries.cpp">
       <Filter>Engine\Physics</Filter>
     </ClCompile>
@@ -442,6 +445,9 @@
       <Filter>Engine</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Physics\Broadphase.h">
+      <Filter>Engine\Physics</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Physics\MeshColliderLibrary.h">
       <Filter>Engine\Physics</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Physics\PhysicsSystem.h">

@@ -133,7 +133,7 @@ struct EnumFieldLabels {
     const char* const* labels;
     int count;
 };
-constexpr const char* kColliderShapeLabels[] = { "Sphere", "Box", "Capsule" };
+constexpr const char* kColliderShapeLabels[] = { "Sphere", "Box", "Capsule", "Mesh" };
 constexpr const char* kLightTypeLabels[] = { "Directional", "Point", "Spot" };
 constexpr const char* kEmitterShapeLabels[] = { "Point", "Sphere", "Cone", "Box" };
 constexpr const char* kBlendModeLabels[] = { "Additive", "Alpha" };

@@ -42,6 +42,10 @@ struct Mesh {
     // ローカル空間 AABB (Register 時に頂点から計算)。Focus/ピッキング/サムネイルで使う (M8)
     DirectX::XMFLOAT3 aabbMin = { 0, 0, 0 };
     DirectX::XMFLOAT3 aabbMax = { 0, 0, 0 };
+    // M41: メッシュコライダー用の CPU コピー (位置のみ + インデックス)。
+    // MeshColliderLibrary が BVH 構築素材に使う (GPU アップロード後も保持)
+    std::vector<DirectX::XMFLOAT3> positions;
+    std::vector<uint32_t> indices;
 };
 
 // アセット列挙の 1 件 (Asset Browser / 参照ピッカー用、M8)。

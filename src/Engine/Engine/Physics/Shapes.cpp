@@ -4,6 +4,7 @@
 #include <cmath>
 
 #include "Engine/Core/Components.h"
+#include "Engine/Engine/Physics/MeshColliderLibrary.h"
 
 namespace mye {
 namespace shapes {
@@ -917,6 +918,614 @@ void ApplyScaledExtents(ShapePose& p, const ColliderComponent& col, float sx, fl
         p.radius = wr;
         p.halfSeg = (wh > wr) ? (wh - wr) : 0.0f;
     }
+    // M41: メッシュはスケールを別持ち (三角形をワールドへ変換する時に掛ける)。
+    // 実体解決もここで一元化 — 全 pose 構築サイト (ソルバ/CC/トリガー/クエリ/レイ) が
+    // 自動で対応する。未接続/未ロードは null のまま = shape=3 は衝突なしに落ちる
+    p.sx = sx;
+    p.sy = sy;
+    p.sz = sz;
+    if (col.shape == 3) {
+        p.meshData = meshcol::Resolve(col.meshAsset);
+    }
+}
+
+// ================================================================ 静的メッシュ (M41)
+// 全て「動的形状 vs ワールド変換済み三角形 1 枚」に帰着させる。候補三角形は BVH で AABB
+// カリング → **昇順** 判定 (MeshGatherTris がソート済みで返す = 走査順非依存の決定論)。
+// 最深貫通の三角形を採用 (同深度は小さい三角形番号が勝つ = strict > 更新)。
+
+constexpr int kMeshMaxCandidates = 256; // AABB カリング後の候補三角形上限 (十分に大きい)
+
+const MeshColliderData* MeshOf(const ShapePose& m)
+{
+    return static_cast<const MeshColliderData*>(m.meshData);
+}
+
+// メッシュローカル頂点 → ワールド (スケール → 基底回転 → 平行移動)
+void MeshVertToWorld(const ShapePose& m, const DirectX::XMFLOAT3& v, float& x, float& y, float& z)
+{
+    float wx, wy, wz;
+    LocalToWorld(m, v.x * m.sx, v.y * m.sy, v.z * m.sz, wx, wy, wz);
+    x = m.px + wx;
+    y = m.py + wy;
+    z = m.pz + wz;
+}
+
+void MeshWorldTri(const ShapePose& m, const MeshColliderData& md, int32_t tri, float& ax,
+                  float& ay, float& az, float& bx, float& by, float& bz, float& cx, float& cy,
+                  float& cz)
+{
+    MeshVertToWorld(m, md.positions[md.indices[tri * 3 + 0]], ax, ay, az);
+    MeshVertToWorld(m, md.positions[md.indices[tri * 3 + 1]], bx, by, bz);
+    MeshVertToWorld(m, md.positions[md.indices[tri * 3 + 2]], cx, cy, cz);
+}
+
+// ワールド AABB → メッシュローカル AABB (保守的。逆回転 = 転置基底、逆スケール)。
+// スケールは MakePose 系で fabs 済み = 常に正
+void WorldAabbToMeshLocal(const ShapePose& m, float wminX, float wminY, float wminZ, float wmaxX,
+                          float wmaxY, float wmaxZ, float& lminX, float& lminY, float& lminZ,
+                          float& lmaxX, float& lmaxY, float& lmaxZ)
+{
+    const float wcx = (wminX + wmaxX) * 0.5f - m.px;
+    const float wcy = (wminY + wmaxY) * 0.5f - m.py;
+    const float wcz = (wminZ + wmaxZ) * 0.5f - m.pz;
+    const float ex = (wmaxX - wminX) * 0.5f;
+    const float ey = (wmaxY - wminY) * 0.5f;
+    const float ez = (wmaxZ - wminZ) * 0.5f;
+    float lcx, lcy, lcz;
+    WorldToLocal(m, wcx, wcy, wcz, lcx, lcy, lcz);
+    const float lex = std::fabs(m.bx[0]) * ex + std::fabs(m.bx[1]) * ey + std::fabs(m.bx[2]) * ez;
+    const float ley = std::fabs(m.by[0]) * ex + std::fabs(m.by[1]) * ey + std::fabs(m.by[2]) * ez;
+    const float lez = std::fabs(m.bz[0]) * ex + std::fabs(m.bz[1]) * ey + std::fabs(m.bz[2]) * ez;
+    const float isx = 1.0f / std::max(m.sx, 1e-6f);
+    const float isy = 1.0f / std::max(m.sy, 1e-6f);
+    const float isz = 1.0f / std::max(m.sz, 1e-6f);
+    lminX = (lcx - lex) * isx;
+    lmaxX = (lcx + lex) * isx;
+    lminY = (lcy - ley) * isy;
+    lmaxY = (lcy + ley) * isy;
+    lminZ = (lcz - lez) * isz;
+    lmaxZ = (lcz + lez) * isz;
+}
+
+// 他形状のワールド AABB (+margin) と重なる候補三角形を昇順収集
+int GatherTrisForShape(const ShapePose& mesh, const ShapePose& other, float margin, int32_t* buf,
+                       int cap)
+{
+    const MeshColliderData* md = MeshOf(mesh);
+    if (!md) {
+        return 0;
+    }
+    float wminX, wminY, wminZ, wmaxX, wmaxY, wmaxZ;
+    ComputeAabb(other, wminX, wminY, wminZ, wmaxX, wmaxY, wmaxZ);
+    float lminX, lminY, lminZ, lmaxX, lmaxY, lmaxZ;
+    WorldAabbToMeshLocal(mesh, wminX - margin, wminY - margin, wminZ - margin, wmaxX + margin,
+                         wmaxY + margin, wmaxZ + margin, lminX, lminY, lminZ, lmaxX, lmaxY, lmaxZ);
+    return MeshGatherTris(*md, lminX, lminY, lminZ, lmaxX, lmaxY, lmaxZ, buf, cap);
+}
+
+// Ericson 5.1.5: 点 P の三角形 ABC 上の最近点 (scalar、分岐は入力のみに依存)
+void ClosestPtPointTri(float px, float py, float pz, float ax, float ay, float az, float bx,
+                       float by, float bz, float cx, float cy, float cz, float& qx, float& qy,
+                       float& qz)
+{
+    const float abx = bx - ax, aby = by - ay, abz = bz - az;
+    const float acx = cx - ax, acy = cy - ay, acz = cz - az;
+    const float apx = px - ax, apy = py - ay, apz = pz - az;
+    const float d1 = abx * apx + aby * apy + abz * apz;
+    const float d2 = acx * apx + acy * apy + acz * apz;
+    if (d1 <= 0.0f && d2 <= 0.0f) {
+        qx = ax; qy = ay; qz = az;
+        return;
+    }
+    const float bpx = px - bx, bpy = py - by, bpz = pz - bz;
+    const float d3 = abx * bpx + aby * bpy + abz * bpz;
+    const float d4 = acx * bpx + acy * bpy + acz * bpz;
+    if (d3 >= 0.0f && d4 <= d3) {
+        qx = bx; qy = by; qz = bz;
+        return;
+    }
+    const float vc = d1 * d4 - d3 * d2;
+    if (vc <= 0.0f && d1 >= 0.0f && d3 <= 0.0f) {
+        const float denom = d1 - d3;
+        const float v = (std::fabs(denom) > kDegenerateEps) ? d1 / denom : 0.0f;
+        qx = ax + abx * v; qy = ay + aby * v; qz = az + abz * v;
+        return;
+    }
+    const float cpx = px - cx, cpy = py - cy, cpz = pz - cz;
+    const float d5 = abx * cpx + aby * cpy + abz * cpz;
+    const float d6 = acx * cpx + acy * cpy + acz * cpz;
+    if (d6 >= 0.0f && d5 <= d6) {
+        qx = cx; qy = cy; qz = cz;
+        return;
+    }
+    const float vb = d5 * d2 - d1 * d6;
+    if (vb <= 0.0f && d2 >= 0.0f && d6 <= 0.0f) {
+        const float denom = d2 - d6;
+        const float w = (std::fabs(denom) > kDegenerateEps) ? d2 / denom : 0.0f;
+        qx = ax + acx * w; qy = ay + acy * w; qz = az + acz * w;
+        return;
+    }
+    const float va = d3 * d6 - d5 * d4;
+    if (va <= 0.0f && (d4 - d3) >= 0.0f && (d5 - d6) >= 0.0f) {
+        const float denom = (d4 - d3) + (d5 - d6);
+        const float w = (std::fabs(denom) > kDegenerateEps) ? (d4 - d3) / denom : 0.0f;
+        qx = bx + (cx - bx) * w; qy = by + (cy - by) * w; qz = bz + (cz - bz) * w;
+        return;
+    }
+    const float denom = va + vb + vc;
+    const float inv = (std::fabs(denom) > kDegenerateEps) ? 1.0f / denom : 0.0f;
+    const float v = vb * inv;
+    const float w = vc * inv;
+    qx = ax + abx * v + acx * w;
+    qy = ay + aby * v + acy * w;
+    qz = az + abz * v + acz * w;
+}
+
+// 三角形の面法線 (正規化)。縮退は (0,1,0)
+void TriFaceNormal(float ax, float ay, float az, float bx, float by, float bz, float cx, float cy,
+                   float cz, float& nx, float& ny, float& nz)
+{
+    const float ux = bx - ax, uy = by - ay, uz = bz - az;
+    const float vx = cx - ax, vy = cy - ay, vz = cz - az;
+    nx = uy * vz - uz * vy;
+    ny = uz * vx - ux * vz;
+    nz = ux * vy - uy * vx;
+    const float len2 = nx * nx + ny * ny + nz * nz;
+    if (len2 < kDegenerateEps) {
+        nx = 0.0f; ny = 1.0f; nz = 0.0f;
+        return;
+    }
+    const float inv = 1.0f / std::sqrt(len2);
+    nx *= inv; ny *= inv; nz *= inv;
+}
+
+// 球 vs 三角形。normal は三角形→球 (球を押し出す方向)、contact は三角形上の最近点
+bool SphereTriContact(float spx, float spy, float spz, float r, float ax, float ay, float az,
+                      float bx, float by, float bz, float cx, float cy, float cz, float& nx,
+                      float& ny, float& nz, float& depth, float& qx, float& qy, float& qz)
+{
+    ClosestPtPointTri(spx, spy, spz, ax, ay, az, bx, by, bz, cx, cy, cz, qx, qy, qz);
+    const float dx = spx - qx, dy = spy - qy, dz = spz - qz;
+    const float d2 = dx * dx + dy * dy + dz * dz;
+    if (d2 > r * r) {
+        return false;
+    }
+    const float d = std::sqrt(d2);
+    if (d > 1e-6f) {
+        nx = dx / d; ny = dy / d; nz = dz / d;
+    } else {
+        TriFaceNormal(ax, ay, az, bx, by, bz, cx, cy, cz, nx, ny, nz);
+    }
+    depth = r - d;
+    return true;
+}
+
+// 線分 (p0→p1) と三角形の最近点対。候補 = 両端点 vs 面 / 線分 vs 3 辺 / 平面貫通点 (固定順)
+void ClosestSegTri(float p0x, float p0y, float p0z, float p1x, float p1y, float p1z, float ax,
+                   float ay, float az, float bx, float by, float bz, float cx, float cy, float cz,
+                   float& sx, float& sy, float& sz, float& tx, float& ty, float& tz)
+{
+    float bestD2 = 3.4e38f;
+    auto consider = [&](float csx, float csy, float csz, float ctx, float cty, float ctz) {
+        const float dx = csx - ctx, dy = csy - cty, dz = csz - ctz;
+        const float d2 = dx * dx + dy * dy + dz * dz;
+        if (d2 < bestD2) { // strict < = 先の候補 (固定順) が勝つ
+            bestD2 = d2;
+            sx = csx; sy = csy; sz = csz;
+            tx = ctx; ty = cty; tz = ctz;
+        }
+    };
+    float qx, qy, qz;
+    // 1) 両端点 vs 三角形
+    ClosestPtPointTri(p0x, p0y, p0z, ax, ay, az, bx, by, bz, cx, cy, cz, qx, qy, qz);
+    consider(p0x, p0y, p0z, qx, qy, qz);
+    ClosestPtPointTri(p1x, p1y, p1z, ax, ay, az, bx, by, bz, cx, cy, cz, qx, qy, qz);
+    consider(p1x, p1y, p1z, qx, qy, qz);
+    // 2) 線分 vs 3 辺 (a→b, b→c, c→a の固定順)
+    const float ex[3] = { ax, bx, cx }, ey[3] = { ay, by, cy }, ez[3] = { az, bz, cz };
+    for (int i = 0; i < 3; ++i) {
+        const int j = (i + 1) % 3;
+        float s, t;
+        ClosestSegSeg(p0x, p0y, p0z, p1x, p1y, p1z, ex[i], ey[i], ez[i], ex[j], ey[j], ez[j], s,
+                      t);
+        const float csx = p0x + (p1x - p0x) * s, csy = p0y + (p1y - p0y) * s,
+                    csz = p0z + (p1z - p0z) * s;
+        const float ctx = ex[i] + (ex[j] - ex[i]) * t, cty = ey[i] + (ey[j] - ey[i]) * t,
+                    ctz = ez[i] + (ez[j] - ez[i]) * t;
+        consider(csx, csy, csz, ctx, cty, ctz);
+    }
+    // 3) 線分が三角形平面を貫通し、交点が三角形内部 → 距離 0
+    float fnx, fny, fnz;
+    TriFaceNormal(ax, ay, az, bx, by, bz, cx, cy, cz, fnx, fny, fnz);
+    const float d0 = fnx * (p0x - ax) + fny * (p0y - ay) + fnz * (p0z - az);
+    const float d1 = fnx * (p1x - ax) + fny * (p1y - ay) + fnz * (p1z - az);
+    if (d0 * d1 < 0.0f) {
+        const float t = d0 / (d0 - d1);
+        const float ix = p0x + (p1x - p0x) * t, iy = p0y + (p1y - p0y) * t,
+                    iz = p0z + (p1z - p0z) * t;
+        ClosestPtPointTri(ix, iy, iz, ax, ay, az, bx, by, bz, cx, cy, cz, qx, qy, qz);
+        const float dx = ix - qx, dy = iy - qy, dz = iz - qz;
+        if (dx * dx + dy * dy + dz * dz < 1e-10f) {
+            consider(ix, iy, iz, ix, iy, iz); // 貫通 = 距離 0
+        }
+    }
+}
+
+// カプセル vs 三角形。normal は三角形→カプセル
+bool CapsuleTriContact(const ShapePose& cap, float ax, float ay, float az, float bx, float by,
+                       float bz, float cx, float cy, float cz, float& nx, float& ny, float& nz,
+                       float& depth, float& qx, float& qy, float& qz)
+{
+    float a0x, a0y, a0z, a1x, a1y, a1z;
+    CapsuleSegment(cap, a0x, a0y, a0z, a1x, a1y, a1z);
+    float sx, sy, sz;
+    ClosestSegTri(a0x, a0y, a0z, a1x, a1y, a1z, ax, ay, az, bx, by, bz, cx, cy, cz, sx, sy, sz,
+                  qx, qy, qz);
+    const float dx = sx - qx, dy = sy - qy, dz = sz - qz;
+    const float d2 = dx * dx + dy * dy + dz * dz;
+    if (d2 > cap.radius * cap.radius) {
+        return false;
+    }
+    const float d = std::sqrt(d2);
+    if (d > 1e-6f) {
+        nx = dx / d; ny = dy / d; nz = dz / d;
+    } else {
+        TriFaceNormal(ax, ay, az, bx, by, bz, cx, cy, cz, nx, ny, nz);
+        // 貫通時はカプセル中心のある側へ向ける
+        const float side = nx * (cap.px - ax) + ny * (cap.py - ay) + nz * (cap.pz - az);
+        if (side < 0.0f) {
+            nx = -nx; ny = -ny; nz = -nz;
+        }
+    }
+    depth = cap.radius - d;
+    return true;
+}
+
+// ボックス vs 三角形の SAT (13 軸、ボックスローカル空間)。normal は三角形→ボックス (ワールド)
+bool BoxTriSat(const ShapePose& box, float ax, float ay, float az, float bx, float by, float bz,
+               float cx, float cy, float cz, float& nx, float& ny, float& nz, float& depth)
+{
+    // 三角形をボックスローカルへ (中心原点、半幅 hx/hy/hz)
+    float v[3][3];
+    WorldToLocal(box, ax - box.px, ay - box.py, az - box.pz, v[0][0], v[0][1], v[0][2]);
+    WorldToLocal(box, bx - box.px, by - box.py, bz - box.pz, v[1][0], v[1][1], v[1][2]);
+    WorldToLocal(box, cx - box.px, cy - box.py, cz - box.pz, v[2][0], v[2][1], v[2][2]);
+    const float f[3][3] = {
+        { v[1][0] - v[0][0], v[1][1] - v[0][1], v[1][2] - v[0][2] }, // b-a
+        { v[2][0] - v[1][0], v[2][1] - v[1][1], v[2][2] - v[1][2] }, // c-b
+        { v[0][0] - v[2][0], v[0][1] - v[2][1], v[0][2] - v[2][2] }, // a-c
+    };
+    const float h[3] = { box.hx, box.hy, box.hz };
+
+    float bestDepth = 3.4e38f;
+    float bestAxis[3] = { 0, 1, 0 };
+    bool found = false;
+
+    auto testAxis = [&](float lx, float ly, float lz) -> bool {
+        const float len2 = lx * lx + ly * ly + lz * lz;
+        if (len2 < 1e-10f) {
+            return true; // 縮退軸はスキップ (分離を主張しない)
+        }
+        float tmin = v[0][0] * lx + v[0][1] * ly + v[0][2] * lz;
+        float tmax = tmin;
+        for (int i = 1; i < 3; ++i) {
+            const float p = v[i][0] * lx + v[i][1] * ly + v[i][2] * lz;
+            tmin = (p < tmin) ? p : tmin;
+            tmax = (p > tmax) ? p : tmax;
+        }
+        const float r = h[0] * std::fabs(lx) + h[1] * std::fabs(ly) + h[2] * std::fabs(lz);
+        if (tmin > r || tmax < -r) {
+            return false; // 分離軸あり
+        }
+        // 貫通深度 = 分離に要する移動量 (区間の交差長ではない — 平坦な三角形の射影は
+        // 幅 0 になるため min(正方向, 負方向) の押し出し量を取る)
+        const float overlap = ((tmax + r) < (r - tmin)) ? (tmax + r) : (r - tmin);
+        const float invLen = 1.0f / std::sqrt(len2);
+        const float d = overlap * invLen; // ワールド単位の重なり
+        if (d < bestDepth) {              // strict < = 先の軸 (固定順) が勝つ
+            bestDepth = d;
+            bestAxis[0] = lx * invLen;
+            bestAxis[1] = ly * invLen;
+            bestAxis[2] = lz * invLen;
+            found = true;
+        }
+        return true;
+    };
+
+    // 1) ボックス 3 軸 → 2) 三角形法線 → 3) 9 クロス軸 (固定順)
+    if (!testAxis(1, 0, 0) || !testAxis(0, 1, 0) || !testAxis(0, 0, 1)) {
+        return false;
+    }
+    if (!testAxis(f[0][1] * f[1][2] - f[0][2] * f[1][1], f[0][2] * f[1][0] - f[0][0] * f[1][2],
+                  f[0][0] * f[1][1] - f[0][1] * f[1][0])) {
+        return false;
+    }
+    for (int j = 0; j < 3; ++j) { // a0=(1,0,0) × f_j = (0, -fz, fy)
+        if (!testAxis(0.0f, -f[j][2], f[j][1])) {
+            return false;
+        }
+    }
+    for (int j = 0; j < 3; ++j) { // a1=(0,1,0) × f_j = (fz, 0, -fx)
+        if (!testAxis(f[j][2], 0.0f, -f[j][0])) {
+            return false;
+        }
+    }
+    for (int j = 0; j < 3; ++j) { // a2=(0,0,1) × f_j = (-fy, fx, 0)
+        if (!testAxis(-f[j][1], f[j][0], 0.0f)) {
+            return false;
+        }
+    }
+    if (!found) {
+        return false;
+    }
+    // 法線の向き: 三角形→ボックス (ボックス中心 = ローカル原点)。三角形重心が軸の正側なら反転
+    const float gx = (v[0][0] + v[1][0] + v[2][0]) / 3.0f;
+    const float gy = (v[0][1] + v[1][1] + v[2][1]) / 3.0f;
+    const float gz = (v[0][2] + v[1][2] + v[2][2]) / 3.0f;
+    float lx = bestAxis[0], ly = bestAxis[1], lz = bestAxis[2];
+    if (gx * lx + gy * ly + gz * lz > 0.0f) {
+        lx = -lx; ly = -ly; lz = -lz;
+    }
+    LocalToWorld(box, lx, ly, lz, nx, ny, nz);
+    depth = bestDepth;
+    return true;
+}
+
+// ボックス vs 三角形マニフォールド: 三角形をボックス 6 スラブでクリップ → 最大 4 点。
+// 各点の depth は SAT 深度 (一様近似 — 静的メッシュ相手の安定接地には十分)
+bool BoxTriManifold(const ShapePose& box, float ax, float ay, float az, float bx, float by,
+                    float bz, float cx, float cy, float cz, Manifold& out)
+{
+    float nx, ny, nz, depth;
+    if (!BoxTriSat(box, ax, ay, az, bx, by, bz, cx, cy, cz, nx, ny, nz, depth)) {
+        return false;
+    }
+    // ローカル頂点で Sutherland–Hodgman クリップ (6 平面固定順)
+    float polyA[16][3], polyB[16][3];
+    WorldToLocal(box, ax - box.px, ay - box.py, az - box.pz, polyA[0][0], polyA[0][1],
+                 polyA[0][2]);
+    WorldToLocal(box, bx - box.px, by - box.py, bz - box.pz, polyA[1][0], polyA[1][1],
+                 polyA[1][2]);
+    WorldToLocal(box, cx - box.px, cy - box.py, cz - box.pz, polyA[2][0], polyA[2][1],
+                 polyA[2][2]);
+    int countA = 3;
+    float (*src)[3] = polyA;
+    float (*dst)[3] = polyB;
+    const float h[3] = { box.hx, box.hy, box.hz };
+    for (int plane = 0; plane < 6 && countA > 0; ++plane) {
+        const int axis = plane / 2;
+        const float sign = (plane % 2 == 0) ? 1.0f : -1.0f; // +axis <= h / -axis <= h
+        int countB = 0;
+        for (int i = 0; i < countA; ++i) {
+            const int j = (i + 1) % countA;
+            const float di = h[axis] - sign * src[i][axis]; // >=0 = 内側
+            const float dj = h[axis] - sign * src[j][axis];
+            if (di >= 0.0f && countB < 16) {
+                dst[countB][0] = src[i][0];
+                dst[countB][1] = src[i][1];
+                dst[countB][2] = src[i][2];
+                ++countB;
+            }
+            if ((di >= 0.0f) != (dj >= 0.0f) && countB < 16) {
+                const float t = di / (di - dj);
+                dst[countB][0] = src[i][0] + (src[j][0] - src[i][0]) * t;
+                dst[countB][1] = src[i][1] + (src[j][1] - src[i][1]) * t;
+                dst[countB][2] = src[i][2] + (src[j][2] - src[i][2]) * t;
+                ++countB;
+            }
+        }
+        float (*tmp)[3] = src;
+        src = dst;
+        dst = tmp;
+        countA = countB;
+    }
+
+    out.nx = nx; out.ny = ny; out.nz = nz;
+    out.count = 0;
+    for (int i = 0; i < countA && out.count < 4; ++i) {
+        float wx, wy, wz;
+        LocalToWorld(box, src[i][0], src[i][1], src[i][2], wx, wy, wz);
+        out.pts[out.count].px = box.px + wx;
+        out.pts[out.count].py = box.py + wy;
+        out.pts[out.count].pz = box.pz + wz;
+        out.pts[out.count].depth = depth;
+        ++out.count;
+    }
+    if (out.count == 0) { // クリップが空 (接触ぎりぎり) → 最近点 1 点
+        float qx, qy, qz;
+        ClosestPtPointTri(box.px, box.py, box.pz, ax, ay, az, bx, by, bz, cx, cy, cz, qx, qy, qz);
+        out.pts[0] = { qx, qy, qz, depth };
+        out.count = 1;
+    }
+    return true;
+}
+
+// レイ vs 三角形 (Möller–Trumbore、両面ヒット)。normal はレイ進行方向と逆側の面法線
+bool RayTri(float ox, float oy, float oz, float dx, float dy, float dz, float ax, float ay,
+            float az, float bx, float by, float bz, float cx, float cy, float cz, float maxDist,
+            float& outT, float& nx, float& ny, float& nz)
+{
+    const float e1x = bx - ax, e1y = by - ay, e1z = bz - az;
+    const float e2x = cx - ax, e2y = cy - ay, e2z = cz - az;
+    const float px = dy * e2z - dz * e2y;
+    const float py = dz * e2x - dx * e2z;
+    const float pz = dx * e2y - dy * e2x;
+    const float det = e1x * px + e1y * py + e1z * pz;
+    if (std::fabs(det) < 1e-10f) {
+        return false; // 平行
+    }
+    const float inv = 1.0f / det;
+    const float tx = ox - ax, ty = oy - ay, tz = oz - az;
+    const float u = (tx * px + ty * py + tz * pz) * inv;
+    if (u < 0.0f || u > 1.0f) {
+        return false;
+    }
+    const float qx = ty * e1z - tz * e1y;
+    const float qy = tz * e1x - tx * e1z;
+    const float qz = tx * e1y - ty * e1x;
+    const float vv = (dx * qx + dy * qy + dz * qz) * inv;
+    if (vv < 0.0f || u + vv > 1.0f) {
+        return false;
+    }
+    const float t = (e2x * qx + e2y * qy + e2z * qz) * inv;
+    if (t < 0.0f || t > maxDist) {
+        return false;
+    }
+    outT = t;
+    TriFaceNormal(ax, ay, az, bx, by, bz, cx, cy, cz, nx, ny, nz);
+    if (nx * dx + ny * dy + nz * dz > 0.0f) { // 両面: レイと逆向きに揃える
+        nx = -nx; ny = -ny; nz = -nz;
+    }
+    return true;
+}
+
+// メッシュ表面上の最近点 (固定順 DFS + ノード AABB 下限で枝刈り)。
+// 戻り値 = ワールド距離 (メッシュ無し = 3.4e38f)。最小距離は走査順に依らず一意、
+// 等距離タイは固定走査順の先勝ち = 決定論
+float MeshClosestPoint(const ShapePose& mesh, float px, float py, float pz, float& qx, float& qy,
+                       float& qz)
+{
+    const MeshColliderData* md = MeshOf(mesh);
+    if (!md || md->nodes.empty()) {
+        return 3.4e38f;
+    }
+    float lx, ly, lz;
+    WorldToLocal(mesh, px - mesh.px, py - mesh.py, pz - mesh.pz, lx, ly, lz);
+    const float lpx = lx / std::max(mesh.sx, 1e-6f);
+    const float lpy = ly / std::max(mesh.sy, 1e-6f);
+    const float lpz = lz / std::max(mesh.sz, 1e-6f);
+    const float minScale = std::min(mesh.sx, std::min(mesh.sy, mesh.sz));
+    float best = 3.4e38f;
+    int32_t stack[64];
+    int top = 0;
+    stack[top++] = 0;
+    while (top > 0) {
+        const MeshBvhNode& node = md->nodes[stack[--top]];
+        float ddx = 0.0f, ddy = 0.0f, ddz = 0.0f;
+        if (lpx < node.minX) { ddx = node.minX - lpx; } else if (lpx > node.maxX) { ddx = lpx - node.maxX; }
+        if (lpy < node.minY) { ddy = node.minY - lpy; } else if (lpy > node.maxY) { ddy = lpy - node.maxY; }
+        if (lpz < node.minZ) { ddz = node.minZ - lpz; } else if (lpz > node.maxZ) { ddz = lpz - node.maxZ; }
+        const float lower = std::sqrt(ddx * ddx + ddy * ddy + ddz * ddz) * minScale;
+        if (lower >= best) {
+            continue; // 枝刈り (結果には影響しない — 下限が現ベスト以上)
+        }
+        if (node.left < 0) {
+            for (int i = 0; i < node.triCount; ++i) {
+                const int32_t tri = md->triOrder[node.triStart + i];
+                float ax, ay, az, bx, by, bz, cx, cy, cz;
+                MeshWorldTri(mesh, *md, tri, ax, ay, az, bx, by, bz, cx, cy, cz);
+                float tqx, tqy, tqz;
+                ClosestPtPointTri(px, py, pz, ax, ay, az, bx, by, bz, cx, cy, cz, tqx, tqy, tqz);
+                const float dx = px - tqx, dy = py - tqy, dz = pz - tqz;
+                const float d = std::sqrt(dx * dx + dy * dy + dz * dz);
+                if (d < best) {
+                    best = d;
+                    qx = tqx; qy = tqy; qz = tqz;
+                }
+            }
+            continue;
+        }
+        if (top + 2 <= 64) {
+            stack[top++] = node.right;
+            stack[top++] = node.left;
+        }
+    }
+    return best;
+}
+
+// メッシュ vs 他形状 (sphere/box/capsule)。normal は **メッシュ→他形状**、最深三角形を採用
+bool CollideMeshOther(const ShapePose& mesh, const ShapePose& other, float& nx, float& ny,
+                      float& nz, float& depth)
+{
+    int32_t tris[kMeshMaxCandidates];
+    const int n = GatherTrisForShape(mesh, other, 0.01f, tris, kMeshMaxCandidates);
+    const MeshColliderData* md = MeshOf(mesh);
+    if (n == 0 || !md) {
+        return false;
+    }
+    bool hit = false;
+    float bestDepth = -1.0f;
+    for (int i = 0; i < n; ++i) {
+        float ax, ay, az, bx, by, bz, cx, cy, cz;
+        MeshWorldTri(mesh, *md, tris[i], ax, ay, az, bx, by, bz, cx, cy, cz);
+        float tnx = 0, tny = 1, tnz = 0, td = 0, qx = 0, qy = 0, qz = 0;
+        bool triHit = false;
+        if (other.shape == 0) {
+            triHit = SphereTriContact(other.px, other.py, other.pz, other.radius, ax, ay, az, bx,
+                                      by, bz, cx, cy, cz, tnx, tny, tnz, td, qx, qy, qz);
+        } else if (other.shape == 1) {
+            triHit = BoxTriSat(other, ax, ay, az, bx, by, bz, cx, cy, cz, tnx, tny, tnz, td);
+        } else if (other.shape == 2) {
+            triHit = CapsuleTriContact(other, ax, ay, az, bx, by, bz, cx, cy, cz, tnx, tny, tnz,
+                                       td, qx, qy, qz);
+        }
+        if (triHit && td > bestDepth) { // strict > = 同深度は小さい三角形番号が勝つ
+            bestDepth = td;
+            nx = tnx; ny = tny; nz = tnz;
+            hit = true;
+        }
+    }
+    depth = bestDepth;
+    return hit;
+}
+
+// メッシュ vs 他形状のマニフォールド。最深三角形のマニフォールド (normal = メッシュ→他形状)
+bool MeshOtherManifold(const ShapePose& mesh, const ShapePose& other, Manifold& out)
+{
+    int32_t tris[kMeshMaxCandidates];
+    const int n = GatherTrisForShape(mesh, other, 0.01f, tris, kMeshMaxCandidates);
+    const MeshColliderData* md = MeshOf(mesh);
+    if (n == 0 || !md) {
+        return false;
+    }
+    bool hit = false;
+    float bestDepth = -1.0f;
+    int32_t bestTri = -1;
+    for (int i = 0; i < n; ++i) {
+        float ax, ay, az, bx, by, bz, cx, cy, cz;
+        MeshWorldTri(mesh, *md, tris[i], ax, ay, az, bx, by, bz, cx, cy, cz);
+        float tnx = 0, tny = 1, tnz = 0, td = 0, qx = 0, qy = 0, qz = 0;
+        bool triHit = false;
+        if (other.shape == 0) {
+            triHit = SphereTriContact(other.px, other.py, other.pz, other.radius, ax, ay, az, bx,
+                                      by, bz, cx, cy, cz, tnx, tny, tnz, td, qx, qy, qz);
+        } else if (other.shape == 1) {
+            triHit = BoxTriSat(other, ax, ay, az, bx, by, bz, cx, cy, cz, tnx, tny, tnz, td);
+        } else if (other.shape == 2) {
+            triHit = CapsuleTriContact(other, ax, ay, az, bx, by, bz, cx, cy, cz, tnx, tny, tnz,
+                                       td, qx, qy, qz);
+        }
+        if (triHit && td > bestDepth) {
+            bestDepth = td;
+            bestTri = tris[i];
+            hit = true;
+        }
+    }
+    if (!hit) {
+        return false;
+    }
+    float ax, ay, az, bx, by, bz, cx, cy, cz;
+    MeshWorldTri(mesh, *md, bestTri, ax, ay, az, bx, by, bz, cx, cy, cz);
+    if (other.shape == 1) {
+        return BoxTriManifold(other, ax, ay, az, bx, by, bz, cx, cy, cz, out);
+    }
+    float tnx = 0, tny = 1, tnz = 0, td = 0, qx = 0, qy = 0, qz = 0;
+    bool triHit = false;
+    if (other.shape == 0) {
+        triHit = SphereTriContact(other.px, other.py, other.pz, other.radius, ax, ay, az, bx, by,
+                                  bz, cx, cy, cz, tnx, tny, tnz, td, qx, qy, qz);
+    } else {
+        triHit = CapsuleTriContact(other, ax, ay, az, bx, by, bz, cx, cy, cz, tnx, tny, tnz, td,
+                                   qx, qy, qz);
+    }
+    if (!triHit) {
+        return false;
+    }
+    out.nx = tnx; out.ny = tny; out.nz = tnz;
+    out.pts[0] = { qx, qy, qz, td };
+    out.count = 1;
+    return true;
 }
 
 } // namespace
@@ -994,6 +1603,26 @@ ShapePose MakePoseFromMatrix(const ColliderComponent& col, const DirectX::XMFLOA
 bool Collide(const ShapePose& a, const ShapePose& b, float& nx, float& ny, float& nz, float& depth)
 {
     const int32_t sa = a.shape, sb = b.shape;
+    // ---- 静的メッシュ (M41): mesh vs sphere/box/capsule。mesh 同士は解かない ----
+    if (sa == 3 || sb == 3) {
+        if (sa == 3 && sb == 3) {
+            return false;
+        }
+        const ShapePose& m = (sa == 3) ? a : b;
+        const ShapePose& o = (sa == 3) ? b : a;
+        float mnx, mny, mnz, md;
+        if (!CollideMeshOther(m, o, mnx, mny, mnz, md)) {
+            return false;
+        }
+        // 規約: normal は b→a。CollideMeshOther は mesh→other を返す
+        if (sa == 3) {
+            nx = -mnx; ny = -mny; nz = -mnz;
+        } else {
+            nx = mnx; ny = mny; nz = mnz;
+        }
+        depth = md;
+        return true;
+    }
     if (sa == 0 && sb == 0) {
         return SpherePair(a.px, a.py, a.pz, b.px, b.py, b.pz, a.radius + b.radius, nx, ny, nz,
                           depth);
@@ -1055,6 +1684,24 @@ bool CollideManifold(const ShapePose& a, const ShapePose& b, Manifold& out)
     const int32_t sa = a.shape, sb = b.shape;
     float nx, ny, nz;
     Contact c0;
+
+    // ---- 静的メッシュ (M41)。normal 規約は Collide と同じ (b→a) ----
+    if (sa == 3 || sb == 3) {
+        if (sa == 3 && sb == 3) {
+            return false;
+        }
+        const ShapePose& m = (sa == 3) ? a : b;
+        const ShapePose& o = (sa == 3) ? b : a;
+        if (!MeshOtherManifold(m, o, out)) {
+            return false;
+        }
+        if (sa == 3) { // MeshOtherManifold は mesh→other を返す
+            out.nx = -out.nx;
+            out.ny = -out.ny;
+            out.nz = -out.nz;
+        }
+        return true;
+    }
 
     if (sa == 0 && sb == 0) {
         if (!SpherePairContact(a.px, a.py, a.pz, b.px, b.py, b.pz, a.radius, b.radius, nx, ny, nz,
@@ -1140,6 +1787,12 @@ bool CollideManifold(const ShapePose& a, const ShapePose& b, Manifold& out)
 
 float DistanceToShape(const ShapePose& s, float px, float py, float pz)
 {
+    // 静的メッシュ (M41): 表面 (三角形群) までの距離。メッシュ無しは「無限遠」=
+    // SphereCast の保守的前進が自由に進める (障害物として扱わない)
+    if (s.shape == 3) {
+        float qx, qy, qz;
+        return MeshClosestPoint(s, px, py, pz, qx, qy, qz);
+    }
     if (s.shape == 0) {
         const float dx = px - s.px, dy = py - s.py, dz = pz - s.pz;
         const float d = std::sqrt(dx * dx + dy * dy + dz * dz) - s.radius;
@@ -1168,6 +1821,15 @@ float DistanceToShape(const ShapePose& s, float px, float py, float pz)
 void ClosestPointOnShape(const ShapePose& s, float px, float py, float pz, float& qx, float& qy,
                          float& qz)
 {
+    // 静的メッシュ (M41): 三角形群上の最近点。メッシュ無しはその点自身
+    if (s.shape == 3) {
+        qx = px; qy = py; qz = pz;
+        float mqx, mqy, mqz;
+        if (MeshClosestPoint(s, px, py, pz, mqx, mqy, mqz) < 3.4e38f) {
+            qx = mqx; qy = mqy; qz = mqz;
+        }
+        return;
+    }
     if (s.shape == 1) {
         float lx, ly, lz;
         WorldToLocal(s, px - s.px, py - s.py, pz - s.pz, lx, ly, lz);
@@ -1205,6 +1867,36 @@ void ClosestPointOnShape(const ShapePose& s, float px, float py, float pz, float
 void ComputeAabb(const ShapePose& s, float& minX, float& minY, float& minZ, float& maxX,
                  float& maxY, float& maxZ)
 {
+    // 静的メッシュ (M41): BVH ルートのローカル AABB をワールドへ (スケール → |基底| 変換)
+    if (s.shape == 3) {
+        const MeshColliderData* md = static_cast<const MeshColliderData*>(s.meshData);
+        if (!md || md->nodes.empty()) {
+            minX = maxX = s.px;
+            minY = maxY = s.py;
+            minZ = maxZ = s.pz;
+            return;
+        }
+        const MeshBvhNode& root = md->nodes[0];
+        const float lcx = (root.minX + root.maxX) * 0.5f * s.sx;
+        const float lcy = (root.minY + root.maxY) * 0.5f * s.sy;
+        const float lcz = (root.minZ + root.maxZ) * 0.5f * s.sz;
+        const float lex = (root.maxX - root.minX) * 0.5f * s.sx;
+        const float ley = (root.maxY - root.minY) * 0.5f * s.sy;
+        const float lez = (root.maxZ - root.minZ) * 0.5f * s.sz;
+        const float wcx = s.px + s.bx[0] * lcx + s.by[0] * lcy + s.bz[0] * lcz;
+        const float wcy = s.py + s.bx[1] * lcx + s.by[1] * lcy + s.bz[1] * lcz;
+        const float wcz = s.pz + s.bx[2] * lcx + s.by[2] * lcy + s.bz[2] * lcz;
+        const float wex = std::fabs(s.bx[0]) * lex + std::fabs(s.by[0]) * ley + std::fabs(s.bz[0]) * lez;
+        const float wey = std::fabs(s.bx[1]) * lex + std::fabs(s.by[1]) * ley + std::fabs(s.bz[1]) * lez;
+        const float wez = std::fabs(s.bx[2]) * lex + std::fabs(s.by[2]) * ley + std::fabs(s.bz[2]) * lez;
+        minX = wcx - wex;
+        minY = wcy - wey;
+        minZ = wcz - wez;
+        maxX = wcx + wex;
+        maxY = wcy + wey;
+        maxZ = wcz + wez;
+        return;
+    }
     float ex, ey, ez; // 中心からの半径 (各ワールド軸)
     if (s.shape == 1) {
         // box: 各ワールド軸への投影半径 = Σ |基底成分|·half
@@ -1239,6 +1931,38 @@ bool Raycast(const ShapePose& s, float ox, float oy, float oz, float dx, float d
     }
     if (s.shape == 2) {
         return RayCapsule(s, ox, oy, oz, dx, dy, dz, maxDist, outT, nx, ny, nz);
+    }
+    // 静的メッシュ (M41): 線分 AABB で BVH 候補収集 → 三角形番号昇順に MT 判定、最近 t を採用
+    if (s.shape == 3) {
+        const MeshColliderData* md = static_cast<const MeshColliderData*>(s.meshData);
+        if (!md) {
+            return false;
+        }
+        const float ex2 = ox + dx * maxDist, ey2 = oy + dy * maxDist, ez2 = oz + dz * maxDist;
+        const float wminX = (ox < ex2) ? ox : ex2, wmaxX = (ox > ex2) ? ox : ex2;
+        const float wminY = (oy < ey2) ? oy : ey2, wmaxY = (oy > ey2) ? oy : ey2;
+        const float wminZ = (oz < ez2) ? oz : ez2, wmaxZ = (oz > ez2) ? oz : ez2;
+        float lminX, lminY, lminZ, lmaxX, lmaxY, lmaxZ;
+        WorldAabbToMeshLocal(s, wminX, wminY, wminZ, wmaxX, wmaxY, wmaxZ, lminX, lminY, lminZ,
+                             lmaxX, lmaxY, lmaxZ);
+        // レイは接触より広い範囲を掃く可能性があるため候補上限を大きめに取る
+        int32_t tris[1024];
+        const int n = MeshGatherTris(*md, lminX, lminY, lminZ, lmaxX, lmaxY, lmaxZ, tris, 1024);
+        bool hit = false;
+        for (int i = 0; i < n; ++i) {
+            float ax, ay, az, bx2, by2, bz2, cx, cy, cz;
+            MeshWorldTri(s, *md, tris[i], ax, ay, az, bx2, by2, bz2, cx, cy, cz);
+            float t, tnx, tny, tnz;
+            if (RayTri(ox, oy, oz, dx, dy, dz, ax, ay, az, bx2, by2, bz2, cx, cy, cz, maxDist, t,
+                       tnx, tny, tnz)) {
+                if (!hit || t < outT) { // strict < = 同距離は小さい三角形番号が勝つ
+                    outT = t;
+                    nx = tnx; ny = tny; nz = tnz;
+                    hit = true;
+                }
+            }
+        }
+        return hit;
     }
     return false;
 }

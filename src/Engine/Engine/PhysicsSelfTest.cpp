@@ -8,7 +8,9 @@
 #include "Engine/Core/World.h"
 #include "Engine/Engine/CollisionSystem.h"
 #include "Engine/Engine/GameObject.h"
+#include "Engine/Engine/Physics/MeshColliderLibrary.h"
 #include "Engine/Engine/Physics/PhysicsSystem.h"
+#include "Engine/Engine/Physics/Shapes.h"
 #include "Engine/Engine/Replay/WorldHasher.h"
 #include "Engine/Engine/Scene.h"
 #include "Engine/Engine/TransformSystem.h"
@@ -1088,6 +1090,141 @@ bool RunPhysicsSelfTest()
         const int n = OverlapSphereWorld(s.GetWorld(), { 7.5f, 0, 0 }, 5.0f, ents, 8, 1u << 5);
         check(n == 1 && ents[0].index == far10.Id().index,
               "layer: overlap mask filters collection");
+    }
+
+    // ---- (M41-1) 静的メッシュ: 形状ペアの単体検証 (y=0 の 10x10 クアッド = 三角形 2 枚) ----
+    {
+        MeshColliderData quad;
+        BuildMeshColliderData(
+            { { -5, 0, -5 }, { 5, 0, -5 }, { 5, 0, 5 }, { -5, 0, 5 } },
+            { 0, 1, 2, 0, 2, 3 }, quad);
+        check(quad.TriCount() == 2 && !quad.nodes.empty(), "mesh: BVH built (2 tris)");
+
+        ShapePose mp;
+        mp.shape = 3;
+        mp.meshData = &quad;
+
+        // 球: 中心 (0,0.3,0)、r=0.5 → 貫通 0.2、法線 = メッシュ→球 = +Y
+        ShapePose sp;
+        sp.shape = 0;
+        sp.py = 0.3f;
+        sp.radius = 0.5f;
+        float nx = 0, ny = 0, nz = 0, d = 0;
+        check(shapes::Collide(sp, mp, nx, ny, nz, d) && ny > 0.99f && std::fabs(d - 0.2f) < 1e-4f,
+              "mesh: sphere-tri contact (depth/normal)");
+        check(shapes::Collide(mp, sp, nx, ny, nz, d) && ny < -0.99f,
+              "mesh: normal flips when mesh is 'a' (b->a convention)");
+        sp.py = 0.6f;
+        check(!shapes::Collide(sp, mp, nx, ny, nz, d), "mesh: no contact when separated");
+
+        // カプセル: 中心 (1,0.8,1)、halfSeg=0.5、r=0.4 → 底 -0.1 → 貫通 0.1
+        ShapePose cp;
+        cp.shape = 2;
+        cp.px = 1.0f;
+        cp.py = 0.8f;
+        cp.pz = 1.0f;
+        cp.radius = 0.4f;
+        cp.halfSeg = 0.5f;
+        check(shapes::Collide(cp, mp, nx, ny, nz, d) && ny > 0.99f && std::fabs(d - 0.1f) < 1e-4f,
+              "mesh: capsule-tri contact");
+
+        // ボックス: 中心 (0,0.4,0)、h=0.5 → 底 -0.1 → 貫通 0.1、マニフォールドは複数点
+        ShapePose bp;
+        bp.shape = 1;
+        bp.py = 0.4f;
+        bp.hx = bp.hy = bp.hz = 0.5f;
+        shapes::Manifold m;
+        check(shapes::CollideManifold(bp, mp, m) && m.count >= 1 && m.ny > 0.99f
+                  && std::fabs(m.pts[0].depth - 0.1f) < 1e-3f,
+              "mesh: box-tri manifold (SAT depth/normal)");
+
+        // レイ: (2,3,2) から -Y → t=3、法線 +Y。クアッド外は外れる
+        float t = 0;
+        check(shapes::Raycast(mp, 2, 3, 2, 0, -1, 0, 10.0f, t, nx, ny, nz)
+                  && std::fabs(t - 3.0f) < 1e-4f && ny > 0.99f,
+              "mesh: raycast hits quad (t/normal)");
+        check(!shapes::Raycast(mp, 20, 3, 0, 0, -1, 0, 10.0f, t, nx, ny, nz),
+              "mesh: raycast misses outside quad");
+
+        // 距離 / 最近点 / AABB
+        check(std::fabs(shapes::DistanceToShape(mp, 0, 2, 0) - 2.0f) < 1e-4f,
+              "mesh: DistanceToShape");
+        float qx = 0, qy = 0, qz = 0;
+        shapes::ClosestPointOnShape(mp, 1, 1.5f, 1, qx, qy, qz);
+        check(std::fabs(qx - 1.0f) < 1e-4f && std::fabs(qy) < 1e-4f && std::fabs(qz - 1.0f) < 1e-4f,
+              "mesh: ClosestPointOnShape");
+        float mnX = 0, mnY = 0, mnZ = 0, mxX = 0, mxY = 0, mxZ = 0;
+        shapes::ComputeAabb(mp, mnX, mnY, mnZ, mxX, mxY, mxZ);
+        check(std::fabs(mnX + 5) < 1e-4f && std::fabs(mxX - 5) < 1e-4f && std::fabs(mnY) < 1e-4f,
+              "mesh: ComputeAabb from BVH root");
+
+        // スケール: sx=sz=2 で 20x20 相当 → (8,3,8) からのレイがヒット
+        mp.sx = 2.0f;
+        mp.sz = 2.0f;
+        check(shapes::Raycast(mp, 8, 3, 8, 0, -1, 0, 10.0f, t, nx, ny, nz)
+                  && std::fabs(t - 3.0f) < 1e-4f,
+              "mesh: non-uniform scale applies to triangles");
+        mp.sx = mp.sy = mp.sz = 1.0f;
+
+        // meshData 未解決 (null) は全判定が衝突なし (安全なフォールバック)
+        ShapePose noMesh = mp;
+        noMesh.meshData = nullptr;
+        sp.py = 0.3f;
+        check(!shapes::Collide(sp, noMesh, nx, ny, nz, d) && !shapes::Overlap(sp, noMesh),
+              "mesh: null meshData collides with nothing");
+    }
+
+    // ---- (M41-2) ソルバ統合: 球がメッシュ床に静止 + 決定論 (2 回実行で per-tick 一致) ----
+    {
+        MeshColliderData quad;
+        BuildMeshColliderData(
+            { { -5, 0, -5 }, { 5, 0, -5 }, { 5, 0, 5 }, { -5, 0, 5 } },
+            { 0, 1, 2, 0, 2, 3 }, quad);
+        MeshColliderLibrary lib;
+        const AssetID meshId{ 0x4D343154ull };
+        lib.Register(meshId, std::move(quad));
+        meshcol::Install(&lib);
+
+        auto build = [&](Scene& s) {
+            GameObject ground = s.CreateGameObjectTracked("MeshGround");
+            auto* col = ground.AddComponent<ColliderComponent>();
+            col->shape = 3;
+            col->isTrigger = 0; // 既定は 1 (トリガー) — ソリッド衝突面にする
+            col->meshAsset = meshId;
+            GameObject ball = MakeSphereBody(s, "Ball", 0.5f, 3.0f, 0.5f, 0.5f);
+            (void)ball;
+            s.GetWorld().ApplyStructuralChanges();
+            return ball;
+        };
+        Scene s1, s2;
+        GameObject ball1 = build(s1);
+        GameObject ball2 = build(s2);
+        bool hashesMatch = true;
+        for (int i = 0; i < 180; ++i) {
+            phys.Update(s1.GetWorld(), kDt);
+            phys.Update(s2.GetWorld(), kDt);
+            if (HashWorld(s1.GetWorld(), nullptr) != HashWorld(s2.GetWorld(), nullptr)) {
+                hashesMatch = false;
+            }
+        }
+        auto* lt = ball1.GetComponent<LocalTransform>();
+        const float y = lt ? lt->position.y : -999.0f;
+        check(y > 0.45f && y < 0.55f, "mesh solver: sphere rests on mesh quad at y~=0.5");
+        auto* rb = ball1.GetComponent<RigidbodyComponent>();
+        check(rb && std::fabs(rb->velocity.y) < 0.5f, "mesh solver: settled (|vy| small)");
+        check(hashesMatch, "mesh solver: deterministic (per-tick hash identical)");
+
+        // ワールドレベル Raycast: ボールから離れた位置からメッシュ床へ (WorldMatrix ベース —
+        // TransformSystem 未実行でも LocalTransform=ルートなので EnsureFileId 経由の
+        // WorldMatrix が無い場合に備え、収集は WorldMatrix 要求 → ここでは transform を回す)
+        TransformSystem xform;
+        xform.Update(s1.GetWorld());
+        MyeRaycastHit hit = {};
+        const int rc = RaycastWorld(s1.GetWorld(), { -2.0f, 2.0f, -2.0f }, { 0, -1, 0 }, 10.0f,
+                                    &hit);
+        check(rc == 1 && std::fabs(hit.distance - 2.0f) < 0.01f && hit.normal.y > 0.99f,
+              "mesh: RaycastWorld hits mesh collider (dist/normal)");
+        meshcol::Install(nullptr);
     }
 
     if (failCount == 0) {

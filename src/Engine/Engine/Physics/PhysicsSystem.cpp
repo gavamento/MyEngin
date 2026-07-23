@@ -392,8 +392,13 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             b.invMass = rb->isKinematic ? 0.0f : (1.0f / mass);
             b.restitution = rb->restitution;
             b.freezeRot = (rb->freezeRotation != 0) || rb->isKinematic;
-            // コライダーがあり isTrigger==0 ならソリッド (衝突解決に参加)
+            // コライダーがあり isTrigger==0 ならソリッド (衝突解決に参加)。
+            // M41: メッシュ (shape=3) は静的/kinematic 専用 — 動的剛体では無視する
+            // (慣性テンソルを定義しないため。kinematic は invMass=0 なので許可)
             auto* col = world.GetComponent<ColliderComponent>(e);
+            if (col && col->shape == 3 && !rb->isKinematic) {
+                col = nullptr;
+            }
             if (col && col->isTrigger == 0) {
                 b.solid = true;
                 b.col = col;

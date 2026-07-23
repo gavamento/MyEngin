@@ -63,6 +63,7 @@
     <ClCompile Include="..\src\Engine\Engine\Particles\ParticleSystem.cpp" />
     <ClCompile Include="..\src\Engine\Engine\ParticleSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Physics\Broadphase.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Physics\MeshColliderLibrary.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Physics\PhysicsQueries.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Physics\PhysicsSystem.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Physics\Shapes.cpp" />
@@ -157,6 +158,7 @@
     <ClInclude Include="..\src\Engine\Engine\Particles\ParticleSystem.h" />
     <ClInclude Include="..\src\Engine\Engine\ParticleSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Physics\Broadphase.h" />
+    <ClInclude Include="..\src\Engine\Engine\Physics\MeshColliderLibrary.h" />
     <ClInclude Include="..\src\Engine\Engine\Physics\PhysicsSystem.h" />
     <ClInclude Include="..\src\Engine\Engine\Physics\Shapes.h" />
     <ClInclude Include="..\src\Engine\Engine\PhysicsSelfTest.h" />

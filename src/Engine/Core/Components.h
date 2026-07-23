@@ -134,7 +134,7 @@ struct ParticleEmitterComponent {
 // box はエンティティ回転を考慮する OBB (M28a)。無回転なら M20 の AABB 判定とビット同一。
 // 球はスケールの最大成分で拡大、capsule はローカル Y 軸・radius は max(sx,sz) スケール。
 struct ColliderComponent {
-    int32_t shape = 0; // 0=sphere 1=box(OBB) 2=capsule(ローカル Y 軸)
+    int32_t shape = 0; // 0=sphere 1=box(OBB) 2=capsule(ローカル Y 軸) 3=mesh (静的専用、M41)
     float radius = 0.5f; // sphere / capsule
     DirectX::XMFLOAT3 halfExtents = { 0.5f, 0.5f, 0.5f }; // box
     int32_t isTrigger = 1;
