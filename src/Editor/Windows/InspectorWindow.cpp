@@ -3,7 +3,9 @@
 #include <cctype>
 #include <cmath>
 #include <cstring>
+#include <filesystem>
 #include <string>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -235,6 +237,13 @@ void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
         ImGui::End();
         return;
     }
+    // ---- アセット選択 (M40c): AssetBrowser タイルクリックで Inspector に情報表示 ----
+    if (selection.HasAsset()) {
+        DrawAssetInspector(ctx, selection);
+        ImGui::End();
+        return;
+    }
+
     World& world = ctx.scene->GetWorld();
     // 選択は fileId 保持 — 現フレームの EntityID に解決する
     const uint64_t fid = selection.primary;
@@ -734,6 +743,91 @@ bool InspectorWindow::DrawField(EngineContext& ctx, const char* componentName, v
         ImGui::EndDisabled();
     }
     return changed;
+}
+
+void InspectorWindow::DrawAssetInspector(EngineContext& ctx, Selection& selection)
+{
+    namespace fs = std::filesystem;
+    const std::wstring path = selection.assetPath;
+    std::error_code ec;
+    if (!fs::exists(path, ec)) {
+        ImGui::TextDisabled("(asset no longer exists)");
+        return;
+    }
+    const AssetType type = AssetDatabase::ClassifyPath(path);
+    const std::string nameU = WideToUtf8(fs::path(path).filename().wstring());
+    ImGui::TextUnformatted(nameU.c_str());
+    ImGui::TextDisabled("%s asset", AssetDatabase::TypeName(type));
+    const uint64_t guid = ctx.assetDb ? ctx.assetDb->GuidForPath(path, /*createIfMissing=*/false)
+                                      : 0;
+    if (guid != 0) {
+        ImGui::TextDisabled("GUID %016llx", static_cast<unsigned long long>(guid));
+    }
+    // assets ルート相対で表示 (絶対パスは長すぎる)
+    {
+        const std::wstring key = NormalizePathKey(path);
+        const std::wstring rootKey = NormalizePathKey(ctx.assetsRoot);
+        std::string rel = WideToUtf8(path);
+        if (key.size() > rootKey.size() && key.compare(0, rootKey.size(), rootKey) == 0) {
+            rel = "assets" + WideToUtf8(key.substr(rootKey.size()));
+        }
+        ImGui::TextDisabled("%s", rel.c_str());
+    }
+    ImGui::Separator();
+
+    // 選択パスが変わったら編集キャッシュを .meta から再読込
+    if (assetEditPath_ != path) {
+        assetEditPath_ = path;
+        AssetMeta meta;
+        AssetDatabase::ReadMeta(path + L".meta", meta);
+        assetImportEdit_ = meta.tex;
+    }
+
+    if (type == AssetType::Texture) {
+        // プレビュー (AssetBrowser と同じ非同期サムネ。1x1 はプレースホルダなのでスキップ)
+        const AssetID texId = ctx.resources->textures.RequestLoadFileAsync(path);
+        if (Texture* tex = ctx.resources->textures.Get(texId);
+            tex && tex->srv && tex->width > 1) {
+            const float availW = ImGui::GetContentRegionAvail().x;
+            float w = (availW < 220.0f) ? availW : 220.0f;
+            const float h = w * static_cast<float>(tex->height) / static_cast<float>(tex->width);
+            ImGui::Image(reinterpret_cast<ImTextureID>(tex->srv.Get()), ImVec2(w, h));
+            ImGui::TextDisabled("%d x %d%s", tex->width, tex->height,
+                                tex->srgb ? "  (sRGB)" : "");
+        }
+
+        // ---- Import Settings (M39b の統合表示、M40c) ----
+        ImGui::SeparatorText("Import Settings");
+        const char* srgbLabels[] = { "Auto (usage hint)", "sRGB (albedo)", "Linear (data)" };
+        ImGui::SetNextItemWidth(200.0f);
+        ImGui::Combo("sRGB", &assetImportEdit_.srgb, srgbLabels, 3);
+        bool mips = assetImportEdit_.generateMips != 0;
+        if (ImGui::Checkbox("Generate Mips", &mips)) {
+            assetImportEdit_.generateMips = mips ? 1 : 0;
+        }
+        const char* compLabels[] = { "Auto (BC1/BC3)", "None (RGBA8)" };
+        ImGui::SetNextItemWidth(200.0f);
+        ImGui::Combo("Cook Compress", &assetImportEdit_.compress, compLabels, 2);
+        if (ImGui::Button("Apply", ImVec2(90, 0))) {
+            const std::wstring metaPath = path + L".meta";
+            AssetDatabase::EnsureMeta(path); // 不在なら生成 (GUID 確定)
+            AssetMeta meta;
+            if (AssetDatabase::ReadMeta(metaPath, meta)) {
+                meta.type = AssetType::Texture;
+                meta.tex = assetImportEdit_;
+                meta.version = 2;
+                AssetDatabase::WriteMeta(metaPath, meta);
+                // ロード済みならその場で再ロード (AssetID 不変 = 参照側の再解決不要)
+                ctx.resources->textures.ReplaceFromFile(TextureLibrary::IdForFile(path), path);
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Revert", ImVec2(90, 0))) {
+            AssetMeta meta;
+            AssetDatabase::ReadMeta(path + L".meta", meta);
+            assetImportEdit_ = meta.tex;
+        }
+    }
 }
 
 void InspectorWindow::DrawAssetRef(EngineContext& ctx, const FieldDesc& field, void* p,

@@ -1,10 +1,12 @@
 #pragma once
 #include <DirectXMath.h>
 #include <cstdint>
+#include <string>
 #include <vector>
 
 #include "Editor/Selection.h"
 #include "Engine/Core/EntityID.h"
+#include "Engine/Core/ImportMetaResolver.h"
 #include "Engine/Engine/EngineLoop.h"
 
 namespace mye {
@@ -23,6 +25,9 @@ public:
     void OnImGui(EngineContext& ctx, Selection& selection, UndoStack& undo);
 
 private:
+    // アセット選択時の表示 (M40c): 名前/種別/GUID + テクスチャは Import Settings 編集
+    void DrawAssetInspector(EngineContext& ctx, Selection& selection);
+
     // fids/comps は同コンポーネントを持つ選択エンティティ列 (要素 [0] = primary、comp と同一)。
     // 単一選択では要素 1 個。ポップアップ系 (mask/参照ピッカー) はこの列へバッチ書込する
     bool DrawField(EngineContext& ctx, const char* componentName, void* comp,
@@ -38,6 +43,10 @@ private:
 
     // Add Component ポップアップの検索フィルタ (開くたびにクリア)
     char addComponentFilter_[64] = {};
+
+    // アセットインスペクタの編集キャッシュ (M40c)。選択パスが変わったら .meta から再読込
+    std::wstring assetEditPath_;
+    importmeta::TextureImportSettings assetImportEdit_;
 
     // 回転編集中のオイラー角キャッシュ (quat→euler→quat の往復ドリフト防止)
     DirectX::XMFLOAT3 eulerCache_ = { 0, 0, 0 };

@@ -369,6 +369,10 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
             }
             ImGui::EndPopup();
         }
+        // タイル単一クリック → アセット選択 (Inspector に情報 + Import Settings 表示、M40c)
+        if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+            selection.SelectAsset(path);
+        }
         if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
             if (isPrefab) {
                 // シーンへインスタンス化 (ルートに配置)。生成を 1 Undo エントリに

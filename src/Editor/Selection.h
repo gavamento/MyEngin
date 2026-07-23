@@ -1,6 +1,7 @@
 #pragma once
 #include <algorithm>
 #include <cstdint>
+#include <string>
 #include <vector>
 
 namespace mye {
@@ -9,11 +10,15 @@ namespace mye {
 // 選択は **fileId** で保持する — Undo/Redo・Play/Stop・シーン再ロードで EntityID が
 // 作り直されても選択を追跡できるようにするため (M8)。EntityID への解決は
 // Scene::FindByFileId で各フレーム行う。
+// M40c: アセット選択 (assetPath) を追加 — エンティティ選択と排他 (Unity と同じ)。
+// エンティティを選ぶとアセット選択は解除され、アセットを選ぶとエンティティ選択が解除される
 struct Selection {
     std::vector<uint64_t> ids; // 選択中の fileId 群 (選択順)
     uint64_t primary = 0;      // アクティブ = Inspector 表示対象 / 範囲選択の起点 (0 = 無し)
+    std::wstring assetPath;    // 選択中アセットの絶対パス (空 = アセット非選択、M40c)
 
     bool Empty() const { return ids.empty(); }
+    bool HasAsset() const { return !assetPath.empty(); }
     bool Contains(uint64_t fid) const
     {
         return fid != 0 && std::find(ids.begin(), ids.end(), fid) != ids.end();
@@ -23,6 +28,15 @@ struct Selection {
     {
         ids.clear();
         primary = 0;
+        assetPath.clear();
+    }
+
+    // アセット単一選択 (AssetBrowser タイルクリック、M40c)
+    void SelectAsset(std::wstring path)
+    {
+        ids.clear();
+        primary = 0;
+        assetPath = std::move(path);
     }
 
     // 単一選択 (通常クリック)
@@ -33,6 +47,7 @@ struct Selection {
             ids.push_back(fid);
         }
         primary = fid;
+        assetPath.clear();
     }
 
     // 追加選択 (Ctrl+クリック)。既にあれば primary だけ更新
@@ -45,6 +60,7 @@ struct Selection {
             ids.push_back(fid);
         }
         primary = fid;
+        assetPath.clear();
     }
 
     void Remove(uint64_t fid)
@@ -70,6 +86,7 @@ struct Selection {
     {
         ids = std::move(newIds);
         primary = newPrimary;
+        assetPath.clear();
     }
 };
 
