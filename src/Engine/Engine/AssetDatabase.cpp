@@ -157,6 +157,14 @@ bool AssetDatabase::ReadMeta(const std::wstring& metaPath, AssetMeta& out)
     out.version = (j.contains("version") && j["version"].is_number_integer())
                       ? j["version"].get<int32_t>()
                       : 1;
+    // v2 (M39b): テクスチャインポート設定。v1 (キー無し) は既定値 = 従来挙動
+    out.tex = importmeta::TextureImportSettings{};
+    if (j.contains("tex") && j["tex"].is_object()) {
+        const json& t = j["tex"];
+        out.tex.srgb = t.value("srgb", 0);
+        out.tex.generateMips = t.value("generateMips", 1);
+        out.tex.compress = t.value("compress", 0);
+    }
     return out.guid != 0;
 }
 
@@ -165,7 +173,15 @@ bool AssetDatabase::WriteMeta(const std::wstring& metaPath, const AssetMeta& m)
     json j;
     j["guid"] = GuidToHex(m.guid);
     j["type"] = TypeName(m.type);
-    j["version"] = m.version;
+    // テクスチャは v2 (インポート設定付き) で書く。他種別は従来どおり
+    if (m.type == AssetType::Texture) {
+        j["version"] = (m.version < 2) ? 2 : m.version;
+        j["tex"] = { { "srgb", m.tex.srgb },
+                     { "generateMips", m.tex.generateMips },
+                     { "compress", m.tex.compress } };
+    } else {
+        j["version"] = m.version;
+    }
     std::ofstream f(metaPath);
     if (!f) {
         return false;
@@ -276,18 +292,33 @@ std::wstring GuidResolverThunk(void* user, uint64_t guid)
     return static_cast<AssetDatabase*>(user)->PathForGuid(guid);
 }
 
+// importmeta::Resolve → .meta ディスク読み (M39b)。テーブルを持たず毎回ディスクを読む —
+// 呼び出しはテクスチャロード時のみで、Import Settings 適用が即反映される (無効化不要)
+bool ImportMetaThunk(void* user, const std::wstring& path, importmeta::TextureImportSettings& out)
+{
+    (void)user;
+    AssetMeta m;
+    if (!AssetDatabase::ReadMeta(path + L".meta", m)) {
+        return false;
+    }
+    out = m.tex;
+    return true;
+}
+
 } // namespace
 
 void AssetDatabase::InstallAsKeyResolver()
 {
     assetkey::Install(&KeyResolverThunk, this);
     assetguid::Install(&GuidResolverThunk, this); // M39a: GUID→パスも同じ DB で解決
+    importmeta::Install(&ImportMetaThunk, this);  // M39b: テクスチャインポート設定
 }
 
 void AssetDatabase::UninstallKeyResolver()
 {
     assetkey::Install(nullptr, nullptr);
     assetguid::Install(nullptr, nullptr);
+    importmeta::Install(nullptr, nullptr);
 }
 
 void AssetDatabase::MoveAsset(const std::wstring& oldPath, const std::wstring& newPath)

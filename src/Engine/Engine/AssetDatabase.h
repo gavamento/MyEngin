@@ -3,6 +3,8 @@
 #include <string>
 #include <unordered_map>
 
+#include "Engine/Core/ImportMetaResolver.h"
+
 namespace mye {
 
 // アセットの種別 (.meta の "type" と AssetBrowser のアイコン/フィルタ用)。
@@ -23,11 +25,14 @@ enum class AssetType : int32_t {
 };
 
 // アセット 1 件のサイドカー情報 (<asset>.meta に JSON で保存)。
+// version 2 (M39b) でテクスチャに tex (インポート設定) が付く。ReadMeta は
+// contains+既定値の前方互換読みなので v1 の .meta はそのまま許容される
 struct AssetMeta {
     uint64_t guid = 0;                 // 安定識別子。初期値 = HashStr(normpath) → 現行 AssetID と一致
     AssetType type = AssetType::Unknown;
     int32_t version = 1;               // .meta フォーマットのバージョン
     std::wstring path;                 // 本体ファイルの実パス (.meta を除く)
+    importmeta::TextureImportSettings tex; // type==Texture のみ意味を持つ (v2、M39b)
 };
 
 // アセットDB (M23): assets\ を走査し、各アセットに .meta サイドカーを生成/読込して

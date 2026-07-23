@@ -48,7 +48,8 @@ void ExpectedLayout(int w, int h, int blockBytes, uint32_t& mipCount, uint32_t& 
 struct DdsProbe {
     bool ok = false;
     uint32_t width = 0, height = 0, mipCount = 0, fourCC = 0;
-    size_t blockBytes = 0; // 総ブロックデータ長 (ファイル - 128)
+    uint32_t rgbBitCount = 0; // 非圧縮 (マスク形式) のみ非 0 (M39b)
+    size_t blockBytes = 0;    // 総ブロックデータ長 (ファイル - 128)
 };
 
 DdsProbe ProbeDds(const std::wstring& path)
@@ -68,11 +69,13 @@ DdsProbe ProbeDds(const std::wstring& path)
     if (magic != 0x20534444u) {
         return p;
     }
-    // DDS_HEADER 内オフセット (magic 後): height@8, width@12, mipMapCount@24, ddspf.fourCC@80
+    // DDS_HEADER 内オフセット (magic 後): height@8, width@12, mipMapCount@24,
+    // ddspf.fourCC@80, ddspf.rgbBitCount@84
     std::memcpy(&p.height, b.data() + 4 + 8, 4);
     std::memcpy(&p.width, b.data() + 4 + 12, 4);
     std::memcpy(&p.mipCount, b.data() + 4 + 24, 4);
     std::memcpy(&p.fourCC, b.data() + 4 + 80, 4);
+    std::memcpy(&p.rgbBitCount, b.data() + 4 + 84, 4);
     p.blockBytes = b.size() - 128; // magic(4) + header(124)
     p.ok = true;
     return p;
@@ -141,6 +144,48 @@ bool RunTextureCookSelfTest()
         ExpectedLayout(W, H, 8, expMips, expBytes);
         check(p.mipCount == expMips, "RGB mip count == 5");
         check(p.blockBytes == expBytes, "RGB block data length matches mip chain");
+    }
+
+    // ---- CookOptions (M39b): RGBA8 非圧縮 + mips 無し ----
+    {
+        std::vector<uint8_t> rgba(static_cast<size_t>(W) * H * 4);
+        for (int i = 0; i < W * H; ++i) {
+            rgba[i * 4 + 0] = static_cast<uint8_t>(i);
+            rgba[i * 4 + 1] = static_cast<uint8_t>(i * 2);
+            rgba[i * 4 + 2] = static_cast<uint8_t>(i * 4);
+            rgba[i * 4 + 3] = 255;
+        }
+        const std::wstring png = (root / L"raw.png").wstring();
+        const std::wstring dds = (root / L"raw.dds").wstring();
+        stbi_write_png(WideToUtf8(png).c_str(), W, H, 4, rgba.data(), W * 4);
+        TextureCook::CookOptions co;
+        co.generateMips = false;
+        co.compress = false;
+        check(TextureCook::CookImageToDds(png, dds, co), "cook uncompressed no-mips dds");
+        const DdsProbe p = ProbeDds(dds);
+        check(p.ok && p.width == W && p.height == H, "uncompressed dds header valid");
+        check(p.fourCC == 0 && p.rgbBitCount == 32, "no fourCC + 32bit masks (RGBA8)");
+        check(p.mipCount == 1, "generateMips=off -> single mip");
+        check(p.blockBytes == static_cast<size_t>(W) * H * 4,
+              "uncompressed data length == w*h*4");
+
+        // mips 有り非圧縮: データ長 = 全 mip の RGBA8 合計
+        const std::wstring dds2 = (root / L"raw_mips.dds").wstring();
+        TextureCook::CookOptions co2;
+        co2.compress = false;
+        check(TextureCook::CookImageToDds(png, dds2, co2), "cook uncompressed with mips");
+        const DdsProbe p2 = ProbeDds(dds2);
+        size_t expTotal = 0;
+        for (int cw = W, chh = H;;) {
+            expTotal += static_cast<size_t>(cw) * chh * 4;
+            if (cw == 1 && chh == 1) {
+                break;
+            }
+            cw = (cw > 1) ? cw / 2 : 1;
+            chh = (chh > 1) ? chh / 2 : 1;
+        }
+        check(p2.mipCount == 5 && p2.blockBytes == expTotal,
+              "uncompressed mip chain length matches");
     }
 
     fs::remove_all(root, ec);

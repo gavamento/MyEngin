@@ -137,6 +137,49 @@ bool RunAssetDatabaseSelfTest()
         AssetDatabase::UninstallKeyResolver();
     }
 
+    // ---- .meta v2 (M39b): テクスチャインポート設定の round-trip + v1 後方互換 ----
+    {
+        const std::wstring texPng = (root / L"tex.png").wstring();
+        const std::wstring texMeta = texPng + L".meta";
+        WriteDummy(texPng);
+
+        // v1 相当 (tex キー無し) を手書き → 既定値 (= 従来挙動) で読める
+        {
+            std::ofstream f(texMeta);
+            f << "{\n  \"guid\": \"00000000000000aa\",\n  \"type\": \"texture\",\n"
+                 "  \"version\": 1\n}";
+        }
+        AssetMeta v1;
+        check(AssetDatabase::ReadMeta(texMeta, v1) && v1.guid == 0xAA && v1.version == 1,
+              "v1 meta (no tex block) still reads");
+        check(v1.tex.srgb == 0 && v1.tex.generateMips == 1 && v1.tex.compress == 0,
+              "v1 meta yields default import settings");
+
+        // v2 書き → 読み round-trip (テクスチャは WriteMeta が version 2 + tex を書く)
+        v1.tex.srgb = 2;
+        v1.tex.generateMips = 0;
+        v1.tex.compress = 1;
+        check(AssetDatabase::WriteMeta(texMeta, v1), "v2 meta write");
+        AssetMeta v2;
+        check(AssetDatabase::ReadMeta(texMeta, v2) && v2.version == 2 && v2.guid == 0xAA,
+              "v2 meta reads back (version bumped, guid preserved)");
+        check(v2.tex.srgb == 2 && v2.tex.generateMips == 0 && v2.tex.compress == 1,
+              "v2 import settings round-trip");
+
+        // importmeta フック: install 中は .meta の設定が返り、uninstall で未解決に戻る
+        AssetDatabase db5;
+        db5.InstallAsKeyResolver();
+        importmeta::TextureImportSettings s;
+        check(importmeta::Resolve(texPng, s) && s.srgb == 2 && s.generateMips == 0
+                  && s.compress == 1,
+              "importmeta resolver reads settings from .meta");
+        importmeta::TextureImportSettings none;
+        check(!importmeta::Resolve((root / L"missing.png").wstring(), none),
+              "importmeta resolver: no .meta -> unresolved (defaults)");
+        AssetDatabase::UninstallKeyResolver();
+        check(!importmeta::Resolve(texPng, s), "importmeta uninstall restores default");
+    }
+
     fs::remove_all(root, ec);
 
     if (failCount == 0) {

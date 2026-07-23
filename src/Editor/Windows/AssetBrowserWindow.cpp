@@ -339,15 +339,30 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
             ImGui::TextUnformatted(nameU.c_str());
             ImGui::EndDragDropSource();
         }
-        // 右クリックメニュー: Rename (M30d) + 画像なら BCn 圧縮 (M24)
+        // 右クリックメニュー: Rename (M30d) + 画像なら Import Settings (M39b) / DDS 圧縮 (M24)
         if (ImGui::BeginPopupContextItem("##filectx")) {
             if (ImGui::MenuItem("Rename")) {
                 BeginRename(path);
             }
+            if (IsImageExt(ext)) {
+                if (ImGui::MenuItem("Import Settings...")) {
+                    AssetMeta m;
+                    AssetDatabase::ReadMeta(path + L".meta", m); // 不在なら既定値のまま
+                    importEdit_ = m.tex;
+                    pendingImportPath_ = path;
+                    requestImportModal_ = true;
+                }
+            }
             if (IsImageExt(ext) && ext != L".dds") {
-                if (ImGui::MenuItem("Compress to DDS (BCn)")) {
+                if (ImGui::MenuItem("Compress to DDS")) {
+                    // .meta の Import Settings が mips/圧縮形式を決める (M39b)
+                    AssetMeta m;
+                    AssetDatabase::ReadMeta(path + L".meta", m);
+                    TextureCook::CookOptions co;
+                    co.generateMips = m.tex.generateMips != 0;
+                    co.compress = m.tex.compress == 0;
                     const std::wstring dds = fs::path(path).replace_extension(L".dds").wstring();
-                    if (TextureCook::CookImageToDds(path, dds)) {
+                    if (TextureCook::CookImageToDds(path, dds, co)) {
                         AssetDatabase::EnsureMeta(dds); // 生成した .dds に GUID サイドカーを付与
                     }
                 }
@@ -488,6 +503,47 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
             ImGui::CloseCurrentPopup();
         } else if (cancelRename) {
             pendingRenamePath_.clear();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+
+    // ---- Import Settings モーダル (M39b): .meta v2 のテクスチャインポート設定 ----
+    if (requestImportModal_) {
+        ImGui::OpenPopup("Import Settings");
+        requestImportModal_ = false;
+    }
+    if (ImGui::BeginPopupModal("Import Settings", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextDisabled("%s", WideToUtf8(pendingImportPath_).c_str());
+        const char* srgbLabels[] = { "Auto (usage hint)", "sRGB (albedo)", "Linear (data)" };
+        ImGui::SetNextItemWidth(220.0f);
+        ImGui::Combo("sRGB", &importEdit_.srgb, srgbLabels, 3);
+        bool mips = importEdit_.generateMips != 0;
+        if (ImGui::Checkbox("Generate Mips", &mips)) {
+            importEdit_.generateMips = mips ? 1 : 0;
+        }
+        const char* compLabels[] = { "Auto (BC1/BC3)", "None (RGBA8)" };
+        ImGui::SetNextItemWidth(220.0f);
+        ImGui::Combo("Cook Compress", &importEdit_.compress, compLabels, 2);
+        if (ImGui::Button("Apply", ImVec2(90, 0))) {
+            const std::wstring metaPath = pendingImportPath_ + L".meta";
+            AssetDatabase::EnsureMeta(pendingImportPath_); // 不在なら生成 (GUID 確定)
+            AssetMeta m;
+            if (AssetDatabase::ReadMeta(metaPath, m)) {
+                m.type = AssetType::Texture; // 旧 .meta の型欠落でも tex を書けるように
+                m.tex = importEdit_;
+                m.version = 2;
+                AssetDatabase::WriteMeta(metaPath, m);
+                // ロード済みならその場で再ロード (AssetID 不変 = 参照側の再解決不要)
+                ctx.resources->textures.ReplaceFromFile(
+                    TextureLibrary::IdForFile(pendingImportPath_), pendingImportPath_);
+            }
+            pendingImportPath_.clear();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(90, 0))) {
+            pendingImportPath_.clear();
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();

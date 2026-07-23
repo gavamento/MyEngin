@@ -75,6 +75,9 @@
     <ClCompile Include="..\src\Engine\Core\FileWatcher.cpp">
       <Filter>Core</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Core\ImportMetaResolver.cpp">
+      <Filter>Core</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Core\JobSystem.cpp">
       <Filter>Core</Filter>
     </ClCompile>
@@ -340,6 +343,9 @@
       <Filter>Core</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Core\Hash.h">
+      <Filter>Core</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Core\ImportMetaResolver.h">
       <Filter>Core</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Core\JobSystem.h">

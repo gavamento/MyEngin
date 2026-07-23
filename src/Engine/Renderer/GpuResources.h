@@ -122,7 +122,8 @@ public:
     std::vector<AssetEntry> Enumerate() const;
 
 private:
-    bool CreateFromPixels(Texture& out, const uint8_t* rgba, int w, int h, bool srgb = false);
+    bool CreateFromPixels(Texture& out, const uint8_t* rgba, int w, int h, bool srgb = false,
+                          bool mips = true);
     bool LoadDdsInto(Texture& out, const std::wstring& path,
                      bool srgb = false); // M24: BCn/DDS (依存ゼロ)
     void EnsureWorker();

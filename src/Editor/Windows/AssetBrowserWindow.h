@@ -2,6 +2,7 @@
 #include <string>
 
 #include "Editor/Selection.h"
+#include "Engine/Core/ImportMetaResolver.h"
 #include "Engine/Engine/EngineLoop.h"
 
 namespace mye {
@@ -37,6 +38,10 @@ private:
     // リネーム (M30d)。対象パスを保持しモーダル確定で RenameAsset を呼ぶ
     std::wstring pendingRenamePath_;
     bool requestRenameModal_ = false;
+    // Import Settings (M39b)。対象パス + 編集中設定 (Apply で .meta v2 へ書き即リロード)
+    std::wstring pendingImportPath_;
+    importmeta::TextureImportSettings importEdit_;
+    bool requestImportModal_ = false;
     bool init_ = false;
     int pendingCreate_ = 0;     // Create モーダルで作る種別 (0=なし)
     bool requestModal_ = false; // 次フレームで命名モーダルを開く

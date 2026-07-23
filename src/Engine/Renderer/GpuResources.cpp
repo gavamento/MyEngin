@@ -13,6 +13,7 @@
 #include "Engine/Core/AssetGuidResolver.h"
 #include "Engine/Core/AssetKeyResolver.h"
 #include "Engine/Core/Hash.h"
+#include "Engine/Core/ImportMetaResolver.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Platform/PathUtil.h"
 #include "Engine/Renderer/GraphicsDevice.h"
@@ -429,20 +430,24 @@ AssetID MeshLibrary::Capsule()
 
 // ---------------------------------------------------------------- TextureLibrary
 
-bool TextureLibrary::CreateFromPixels(Texture& out, const uint8_t* rgba, int w, int h, bool srgb)
+bool TextureLibrary::CreateFromPixels(Texture& out, const uint8_t* rgba, int w, int h, bool srgb,
+                                      bool mips)
 {
-    // フルミップチェーン + GenerateMips
+    // 既定はフルミップチェーン + GenerateMips (.meta の generateMips=off で mip0 のみ、M39b)
     D3D11_TEXTURE2D_DESC td = {};
     td.Width = static_cast<UINT>(w);
     td.Height = static_cast<UINT>(h);
-    td.MipLevels = 0; // full chain
+    td.MipLevels = mips ? 0 : 1; // 0 = full chain
     td.ArraySize = 1;
     // M38a: アルベド系は _SRGB (サンプル時 HW デコード = リニアパイプライン)
     td.Format = srgb ? DXGI_FORMAT_R8G8B8A8_UNORM_SRGB : DXGI_FORMAT_R8G8B8A8_UNORM;
     td.SampleDesc = { 1, 0 };
     td.Usage = D3D11_USAGE_DEFAULT;
-    td.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
-    td.MiscFlags = D3D11_RESOURCE_MISC_GENERATE_MIPS;
+    td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    if (mips) {
+        td.BindFlags |= D3D11_BIND_RENDER_TARGET; // GenerateMips の要件
+        td.MiscFlags = D3D11_RESOURCE_MISC_GENERATE_MIPS;
+    }
 
     ID3D11Device* dev = device_->Device();
     if (FAILED(dev->CreateTexture2D(&td, nullptr, out.tex.ReleaseAndGetAddressOf()))) {
@@ -454,7 +459,9 @@ bool TextureLibrary::CreateFromPixels(Texture& out, const uint8_t* rgba, int w, 
                                              out.srv.ReleaseAndGetAddressOf()))) {
         return false;
     }
-    device_->Context()->GenerateMips(out.srv.Get());
+    if (mips) {
+        device_->Context()->GenerateMips(out.srv.Get());
+    }
     out.width = w;
     out.height = h;
     out.srgb = srgb;
@@ -471,13 +478,20 @@ AssetID TextureLibrary::LoadFile(const std::wstring& path, bool srgb)
 {
     const AssetID id = IdForFile(path);
     if (textures_.contains(id.value)) {
-        return id; // 先勝ち (フラグ違いは無視 — per-asset 指定は M39 .meta で)
+        return id; // 先勝ち (フラグ違いは無視 — per-asset 指定は .meta の srgb on/off で)
     }
+    // M39b: .meta のインポート設定が呼び出し側ヒントを上書きする (auto = ヒントのまま)
+    importmeta::TextureImportSettings imp;
+    importmeta::Resolve(path, imp);
+    const bool effSrgb = (imp.srgb == 1) ? true : (imp.srgb == 2) ? false : srgb;
+    const bool mips = imp.generateMips != 0;
+
     const std::string utf8 = WideToUtf8(path);
     Texture t;
     if (HasDdsExt(path)) {
         // M24: BCn/DDS は decode 不要 (GPU が直接サンプルする)。ヘッダを読んで直接テクスチャ化
-        if (!LoadDdsInto(t, path, srgb)) {
+        // (mips は DDS に焼成済みのため generateMips は非適用)
+        if (!LoadDdsInto(t, path, effSrgb)) {
             return {};
         }
         textures_.emplace(id.value, std::move(t));
@@ -490,7 +504,7 @@ AssetID TextureLibrary::LoadFile(const std::wstring& path, bool srgb)
         MYE_LOG_ERROR("texture load failed: %s (%s)", utf8.c_str(), stbi_failure_reason());
         return {};
     }
-    const bool ok = CreateFromPixels(t, pixels, w, h, srgb);
+    const bool ok = CreateFromPixels(t, pixels, w, h, effSrgb, mips);
     stbi_image_free(pixels);
     if (!ok) {
         MYE_LOG_ERROR("texture creation failed: %s", utf8.c_str());
@@ -732,8 +746,16 @@ void TextureLibrary::PollAsyncLoads()
                          static_cast<unsigned long long>(r.id));
             continue; // プレースホルダのまま残す (再投入せず hammering を防ぐ)
         }
+        // M39b: 非同期経路 (サムネイル等) も .meta の srgb on を尊重する — 先勝ちキャッシュに
+        // 非 sRGB で入ると 3D 側が色褪せるため。auto は従来どおり UNORM (ImGui 直表示向け)
+        importmeta::TextureImportSettings imp;
+        auto nameIt = names_.find(r.id);
+        if (nameIt != names_.end()) {
+            importmeta::Resolve(Utf8ToWide(nameIt->second), imp);
+        }
         Texture t;
-        if (CreateFromPixels(t, r.pixels.data(), r.w, r.h)) {
+        if (CreateFromPixels(t, r.pixels.data(), r.w, r.h, imp.srgb == 1,
+                             imp.generateMips != 0)) {
             textures_[r.id] = std::move(t); // プレースホルダを実体に差し替え
         }
     }
@@ -803,7 +825,12 @@ bool TextureLibrary::ReplaceFromFile(AssetID id, const std::wstring& path)
     if (it == textures_.end()) {
         return false;
     }
-    const bool srgb = it->second.srgb; // ホットリロードでフォーマット (sRGB) を維持 (M38a)
+    // ホットリロードは sRGB を維持 (M38a)。ただし .meta の on/off 指定があれば従う
+    // (Import Settings 適用の即時反映経路もここ、M39b)
+    importmeta::TextureImportSettings imp;
+    importmeta::Resolve(path, imp);
+    const bool srgb = (imp.srgb == 1) ? true : (imp.srgb == 2) ? false : it->second.srgb;
+    const bool mips = imp.generateMips != 0;
     Texture fresh;
     if (HasDdsExt(path)) {
         if (!LoadDdsInto(fresh, path, srgb)) {
@@ -819,7 +846,7 @@ bool TextureLibrary::ReplaceFromFile(AssetID id, const std::wstring& path)
         MYE_LOG_ERROR("texture reload failed: %s (%s)", utf8.c_str(), stbi_failure_reason());
         return false;
     }
-    const bool ok = CreateFromPixels(fresh, pixels, w, h, srgb);
+    const bool ok = CreateFromPixels(fresh, pixels, w, h, srgb, mips);
     stbi_image_free(pixels);
     if (!ok) {
         return false;
