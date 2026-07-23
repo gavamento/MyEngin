@@ -1,7 +1,9 @@
 #include "Editor/UndoSelfTest.h"
 
+#include "Editor/ComponentClipboard.h"
 #include "Editor/Selection.h"
 #include "Editor/Undo/UndoStack.h"
+#include "Engine/Core/ComponentRegistry.h"
 #include "Engine/Core/Components.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Core/World.h"
@@ -198,6 +200,73 @@ bool RunUndoSelfTest()
         undo.ClearAll();
         check(undo.StateSerial() != beforeClear && undo.StateSerial() != savedAt,
               "StateSerial: ClearAll starts a fresh base (never reuses old serials)");
+    }
+
+    // ============ Phase 4 (M40a): マルチ選択バッチ編集 = 1 Undo エントリ ============
+    {
+        Scene scene;
+        World& world = scene.GetWorld();
+        UndoStack undo;
+        Selection sel;
+
+        GameObject a = scene.CreateGameObjectTracked("A");
+        GameObject b = scene.CreateGameObjectTracked("B");
+        a.SetLocalPosition(1.0f, 0.0f, 0.0f);
+        b.SetLocalPosition(2.0f, 0.0f, 0.0f);
+        world.ApplyStructuralChanges();
+        const uint64_t aFid = FidOf(scene, a.Id());
+        const uint64_t bFid = FidOf(scene, b.Id());
+        const uint64_t initialHash = HashWorld(world, nullptr);
+
+        // Inspector のバッチ編集と同じ手順: 全対象 CaptureBefore → 編集 → 全対象 CaptureAfter
+        undo.BeginRecord("Batch Modify", sel);
+        undo.CaptureBefore(scene, aFid);
+        undo.CaptureBefore(scene, bFid);
+        scene.FindByFileId(aFid).GetComponent<LocalTransform>()->position.y = 5.0f;
+        scene.FindByFileId(bFid).GetComponent<LocalTransform>()->position.y = 5.0f;
+        undo.CaptureAfter(scene, aFid);
+        undo.CaptureAfter(scene, bFid);
+        undo.EndRecord(sel);
+        const uint64_t editedHash = HashWorld(world, nullptr);
+        check(editedHash != initialHash, "batch: edits changed the world hash");
+
+        undo.Undo(scene, sel);
+        check(HashWorld(world, nullptr) == initialHash,
+              "batch: single undo restores BOTH entities (one entry)");
+        check(!undo.CanUndo(), "batch: exactly one undo entry was recorded");
+
+        undo.Redo(scene, sel);
+        check(HashWorld(world, nullptr) == editedHash, "batch: redo re-applies both");
+        check(scene.FindByFileId(aFid).GetComponent<LocalTransform>()->position.y == 5.0f
+                  && scene.FindByFileId(bFid).GetComponent<LocalTransform>()->position.y == 5.0f,
+              "batch: redo values on both entities");
+    }
+
+    // ============ Phase 5 (M40a): コンポーネント copy/paste round-trip ============
+    {
+        const ComponentRegistry& reg = ComponentRegistry::Get();
+        const ComponentDesc& desc = reg.Desc(ColliderComponent::sTypeId);
+
+        ColliderComponent src{};
+        src.shape = 1;
+        src.radius = 3.5f;
+        src.layer = 4;
+        src.mask = 0x0000000Fu;
+        const nlohmann::json j = ComponentFieldsToJson(desc, &src);
+
+        ColliderComponent dst{};
+        ComponentFieldsFromJson(desc, &dst, j);
+        check(dst.shape == 1 && dst.radius == 3.5f && dst.layer == 4 && dst.mask == 0x0000000Fu,
+              "clipboard: component fields round-trip");
+
+        // 欠落キーは現在値維持 (旧クリップボード/型違いに寛容)
+        ColliderComponent partialDst{};
+        partialDst.radius = 9.0f;
+        nlohmann::json partial = nlohmann::json::object();
+        partial["layer"] = 7;
+        ComponentFieldsFromJson(desc, &partialDst, partial);
+        check(partialDst.layer == 7 && partialDst.radius == 9.0f,
+              "clipboard: missing keys keep current values");
     }
 
     if (failCount == 0) {

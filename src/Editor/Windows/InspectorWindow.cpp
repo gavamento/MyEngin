@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "Editor/AssetOps.h"
+#include "Editor/ComponentClipboard.h"
 #include "Editor/EditorComponentCatalog.h"
 #include "Editor/PhysicsLayerNames.h"
 #include "Editor/Selection.h"
@@ -59,22 +60,34 @@ bool ContainsIgnoreCase(const char* haystack, const char* needle)
 
 // 直前に描画した widget の編集開始/確定を検出して Undo エントリにまとめる。
 // activate (ドラッグ開始) で before を、deactivate-after-edit で after を記録 —
-// ドラッグ全体が 1 エントリになる (transient マージ)
-void HandleEditUndo(EngineContext& ctx, Selection& sel, UndoStack& undo, uint64_t fid,
-                    const char* label)
+// ドラッグ全体が 1 エントリになる (transient マージ)。
+// M40a: 複数 fileId を渡すとバッチ編集全体が 1 エントリになる (全対象の before/after)
+void HandleEditUndoMulti(EngineContext& ctx, Selection& sel, UndoStack& undo,
+                         const std::vector<uint64_t>& fids, const char* label)
 {
     if (ImGui::IsItemActivated() && !undo.IsRecording()) {
         undo.BeginRecord(label, sel);
-        undo.CaptureBefore(*ctx.scene, fid);
+        for (uint64_t fid : fids) {
+            undo.CaptureBefore(*ctx.scene, fid);
+        }
     }
     if (undo.IsRecording()) {
         if (ImGui::IsItemDeactivatedAfterEdit()) {
-            undo.CaptureAfter(*ctx.scene, fid);
+            for (uint64_t fid : fids) {
+                undo.CaptureAfter(*ctx.scene, fid);
+            }
             undo.EndRecord(sel);
         } else if (ImGui::IsItemDeactivated()) {
             undo.CancelRecord(); // 値を変えずに離した
         }
     }
+}
+
+void HandleEditUndo(EngineContext& ctx, Selection& sel, UndoStack& undo, uint64_t fid,
+                    const char* label)
+{
+    const std::vector<uint64_t> one = { fid };
+    HandleEditUndoMulti(ctx, sel, undo, one, label);
 }
 
 // XMQuaternionRotationRollPitchYaw 規約 (roll→pitch→yaw) の逆変換
@@ -233,6 +246,24 @@ void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
         return;
     }
 
+    // ---- マルチ選択の対象集合 (M40a): 生存する選択 fileId 群、primary 先頭 ----
+    // 表示値は primary のもの。編集は全対象へバッチ適用 (ギズモ操作は従来どおり primary のみ)
+    std::vector<uint64_t> targetFids;
+    std::vector<EntityID> targetEnts;
+    targetFids.push_back(fid);
+    targetEnts.push_back(e);
+    for (uint64_t sfid : selection.ids) {
+        if (sfid == fid) {
+            continue;
+        }
+        GameObject g = ctx.scene->FindByFileId(sfid);
+        if (g && world.IsAlive(g.Id())) {
+            targetFids.push_back(sfid);
+            targetEnts.push_back(g.Id());
+        }
+    }
+    const bool multi = targetFids.size() > 1;
+
     // ---- プレハブ所属判定 (青文字 / オーバーライド表示 / Revert・Apply に使う) ----
     const EntityID prefabRoot = Prefab::FindInstanceRoot(world, e);
     const bool isPrefabMember = !prefabRoot.IsNull();
@@ -248,8 +279,13 @@ void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
             ImGui::TextColored(kPrefabBlue, "*");
         }
     }
-    ImGui::TextDisabled("Entity %u:%u  (fileId %llu)", e.index, e.generation,
-                        static_cast<unsigned long long>(fid));
+    if (multi) {
+        ImGui::TextDisabled("%zu entities selected — edits apply to all (gizmo: primary only)",
+                            targetFids.size());
+    } else {
+        ImGui::TextDisabled("Entity %u:%u  (fileId %llu)", e.index, e.generation,
+                            static_cast<unsigned long long>(fid));
+    }
 
     // ---- プレハブバー (Revert All / Apply All) ----
     if (isPrefabMember) {
@@ -291,26 +327,86 @@ void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
         if (t == NameComponent::sTypeId) {
             continue; // 上部で表示済み
         }
+        // マルチ選択: 全対象が共通に持つコンポーネントだけ表示 (M40a)
+        if (multi) {
+            bool commonToAll = true;
+            for (size_t i = 1; i < targetEnts.size(); ++i) {
+                if (!world.HasComponent(targetEnts[i], t)) {
+                    commonToAll = false;
+                    break;
+                }
+            }
+            if (!commonToAll) {
+                continue;
+            }
+        }
+        // この型のバッチ対象 (fileId + コンポーネント実体、[0] = primary)。
+        // フィールド編集中に構造変更は起きないためポインタはフレーム内有効
+        std::vector<uint64_t> tfids;
+        std::vector<void*> tcomps;
+        for (size_t i = 0; i < targetEnts.size(); ++i) {
+            if (void* c = world.GetComponentRaw(targetEnts[i], t)) {
+                tfids.push_back(targetFids[i]);
+                tcomps.push_back(c);
+            }
+        }
+        const bool managed = ctx.managedHost && ctx.managedHost->IsManagedComponent(t);
+
         ImGui::PushID(static_cast<int>(t));
         const std::string headerLabel =
             std::string(ComponentUiFor(desc.name).icon) + " " + desc.name;
         const bool openHeader =
             ImGui::CollapsingHeader(headerLabel.c_str(), ImGuiTreeNodeFlags_DefaultOpen);
         if (ImGui::BeginPopupContextItem("##comp_ctx")) {
-            if (ImGui::MenuItem("Remove Component")) {
-                undo.BeginRecord("Remove Component", selection);
-                undo.CaptureBefore(*ctx.scene, fid);
-                world.RemoveComponentRaw(e, t); // 基本コンポーネントは World 側で拒否
+            // 全対象の before/after を取り 1 Undo エントリにするバッチヘルパ (M40a)
+            auto batchOp = [&](const char* label, auto&& mutate) {
+                undo.BeginRecord(label, selection);
+                for (uint64_t tf : tfids) {
+                    undo.CaptureBefore(*ctx.scene, tf);
+                }
+                mutate();
                 world.ApplyStructuralChanges();
-                undo.CaptureAfter(*ctx.scene, fid);
+                for (uint64_t tf : tfids) {
+                    undo.CaptureAfter(*ctx.scene, tf);
+                }
                 undo.EndRecord(selection);
+            };
+            // C# コンポーネントはフィールドが managed 側にあるため copy/paste/reset 対象外
+            ComponentClipboard& clip = GetComponentClipboard();
+            if (ImGui::MenuItem("Copy Component", nullptr, false, !managed && !tcomps.empty())) {
+                clip.componentName = desc.name;
+                clip.fields = ComponentFieldsToJson(desc, tcomps[0]);
+            }
+            const bool canPaste = !managed && !clip.Empty() && clip.componentName == desc.name;
+            if (ImGui::MenuItem("Paste Component Values", nullptr, false, canPaste)) {
+                batchOp("Paste Component", [&] {
+                    for (void* c : tcomps) {
+                        ComponentFieldsFromJson(desc, c, clip.fields);
+                    }
+                });
+            }
+            if (ImGui::MenuItem("Reset Component", nullptr, false, !managed && desc.construct)) {
+                batchOp("Reset Component", [&] {
+                    for (void* c : tcomps) {
+                        desc.construct(c); // 既定値の書き込み (placement new)
+                    }
+                });
+            }
+            ImGui::Separator();
+            if (ImGui::MenuItem("Remove Component")) {
+                batchOp("Remove Component", [&] {
+                    for (EntityID te : targetEnts) {
+                        world.RemoveComponentRaw(te, t); // 基本コンポーネントは World 側で拒否
+                    }
+                });
             }
             ImGui::EndPopup();
         }
         if (openHeader) {
-            void* comp = world.GetComponentRaw(e, t);
+            void* comp = tcomps.empty() ? nullptr : tcomps[0];
             // C# スクリプトコンポーネント: フィールドは managed 側が保持 → 専用描画パス
-            if (comp && ctx.managedHost && ctx.managedHost->IsManagedComponent(t)) {
+            // (マルチ選択でも primary のみ編集 — managed 状態はエンティティ毎に独立)
+            if (comp && managed) {
                 DrawManagedComponentFields(ctx, t, comp, e);
                 ImGui::PopID();
                 continue;
@@ -320,14 +416,25 @@ void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
                     if (f.flags & kFieldHidden) {
                         continue;
                     }
-                    DrawField(ctx, desc.name, comp, f, e, selection, undo, fid);
+                    const bool changed =
+                        DrawField(ctx, desc.name, comp, f, e, selection, undo, tfids, tcomps);
+                    // マルチ選択: primary で編集した値をフィールド単位で他対象へ伝播
+                    // (バイトコピー — POD リフレクション型のみなので安全)
+                    if (changed && tcomps.size() > 1 && !(f.flags & kFieldReadOnly)
+                        && f.type != FieldType::AssetRef && f.type != FieldType::EntityRef) {
+                        const uint32_t sz = FieldTypeSize(f.type);
+                        for (size_t i = 1; i < tcomps.size(); ++i) {
+                            std::memcpy(static_cast<uint8_t*>(tcomps[i]) + f.offset,
+                                        static_cast<const uint8_t*>(comp) + f.offset, sz);
+                        }
+                    }
                     // 参照ピッカー / 衝突マスク (M36a) はポップアップ内で自前 Undo を記録するので除外
                     const bool ownUndo = f.type == FieldType::AssetRef
                         || f.type == FieldType::EntityRef
                         || (std::strcmp(desc.name, "Collider") == 0
                             && std::strcmp(f.name, "mask") == 0);
                     if (!ownUndo) {
-                        HandleEditUndo(ctx, selection, undo, fid, "Modify");
+                        HandleEditUndoMulti(ctx, selection, undo, tfids, "Modify");
                     }
                     // ---- プレハブオーバーライド: 右クリック Revert/Apply + マーカー ----
                     if (isPrefabMember) {
@@ -399,11 +506,24 @@ void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
                 }
                 const std::string label = std::string(info.icon) + " " + desc.name;
                 if (ImGui::MenuItem(label.c_str())) {
+                    // マルチ選択: まだ持っていない全対象へ追加 (1 Undo エントリ、M40a)
                     undo.BeginRecord("Add Component", selection);
-                    undo.CaptureBefore(*ctx.scene, fid);
-                    world.AddComponentRaw(e, t);
+                    for (size_t i = 0; i < targetEnts.size(); ++i) {
+                        if (!world.HasComponent(targetEnts[i], t)) {
+                            undo.CaptureBefore(*ctx.scene, targetFids[i]);
+                        }
+                    }
+                    std::vector<uint64_t> addedFids;
+                    for (size_t i = 0; i < targetEnts.size(); ++i) {
+                        if (!world.HasComponent(targetEnts[i], t)) {
+                            world.AddComponentRaw(targetEnts[i], t);
+                            addedFids.push_back(targetFids[i]);
+                        }
+                    }
                     world.ApplyStructuralChanges();
-                    undo.CaptureAfter(*ctx.scene, fid);
+                    for (uint64_t af : addedFids) {
+                        undo.CaptureAfter(*ctx.scene, af);
+                    }
                     undo.EndRecord(selection);
                 }
             }
@@ -429,7 +549,8 @@ void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
 
 bool InspectorWindow::DrawField(EngineContext& ctx, const char* componentName, void* comp,
                                 const FieldDesc& field, EntityID entity, Selection& selection,
-                                UndoStack& undo, uint64_t fid)
+                                UndoStack& undo, const std::vector<uint64_t>& fids,
+                                const std::vector<void*>& comps)
 {
     void* p = static_cast<uint8_t*>(comp) + field.offset;
     const bool readOnly = (field.flags & kFieldReadOnly) != 0;
@@ -500,10 +621,18 @@ bool InspectorWindow::DrawField(EngineContext& ctx, const char* componentName, v
             ImGui::TextUnformatted(field.name);
             if (ImGui::BeginPopup("##collider_mask")) {
                 auto applyMask = [&](uint32_t next) {
+                    // マルチ選択は全対象へバッチ適用 (1 Undo エントリ、M40a)
                     undo.BeginRecord("Modify Mask", selection);
-                    undo.CaptureBefore(*ctx.scene, fid);
-                    m = next;
-                    undo.CaptureAfter(*ctx.scene, fid);
+                    for (uint64_t tf : fids) {
+                        undo.CaptureBefore(*ctx.scene, tf);
+                    }
+                    for (void* c : comps) {
+                        *reinterpret_cast<uint32_t*>(static_cast<uint8_t*>(c) + field.offset) =
+                            next;
+                    }
+                    for (uint64_t tf : fids) {
+                        undo.CaptureAfter(*ctx.scene, tf);
+                    }
                     undo.EndRecord(selection);
                     changed = true;
                 };
@@ -576,10 +705,10 @@ bool InspectorWindow::DrawField(EngineContext& ctx, const char* componentName, v
         changed = ImGui::ColorEdit4(field.name, static_cast<float*>(p));
         break;
     case FieldType::EntityRef:
-        DrawEntityRef(ctx, field, p, selection, undo, fid);
+        DrawEntityRef(ctx, field, p, selection, undo, fids, comps, field.offset);
         break;
     case FieldType::AssetRef:
-        DrawAssetRef(ctx, field, p, selection, undo, fid);
+        DrawAssetRef(ctx, field, p, selection, undo, fids, comps, field.offset);
         break;
     case FieldType::String64:
         changed = ImGui::InputText(field.name, static_cast<char*>(p), 64);
@@ -608,7 +737,9 @@ bool InspectorWindow::DrawField(EngineContext& ctx, const char* componentName, v
 }
 
 void InspectorWindow::DrawAssetRef(EngineContext& ctx, const FieldDesc& field, void* p,
-                                   Selection& selection, UndoStack& undo, uint64_t fid)
+                                   Selection& selection, UndoStack& undo,
+                                   const std::vector<uint64_t>& fids,
+                                   const std::vector<void*>& comps, uint32_t fieldOffset)
 {
     auto* id = static_cast<AssetID*>(p);
     // フィールド名からライブラリを推定 (mesh / material / texture)
@@ -647,10 +778,17 @@ void InspectorWindow::DrawAssetRef(EngineContext& ctx, const FieldDesc& field, v
     }
     if (ImGui::BeginPopup("##assetpick")) {
         auto assign = [&](AssetID v) {
+            // マルチ選択は全対象へバッチ適用 (1 Undo エントリ、M40a)
             undo.BeginRecord("Assign asset", selection);
-            undo.CaptureBefore(*ctx.scene, fid);
-            *id = v;
-            undo.CaptureAfter(*ctx.scene, fid);
+            for (uint64_t tf : fids) {
+                undo.CaptureBefore(*ctx.scene, tf);
+            }
+            for (void* c : comps) {
+                *reinterpret_cast<AssetID*>(static_cast<uint8_t*>(c) + fieldOffset) = v;
+            }
+            for (uint64_t tf : fids) {
+                undo.CaptureAfter(*ctx.scene, tf);
+            }
             undo.EndRecord(selection);
         };
         if (ImGui::Selectable("(none)")) {
@@ -667,7 +805,9 @@ void InspectorWindow::DrawAssetRef(EngineContext& ctx, const FieldDesc& field, v
 }
 
 void InspectorWindow::DrawEntityRef(EngineContext& ctx, const FieldDesc& field, void* p,
-                                    Selection& selection, UndoStack& undo, uint64_t fid)
+                                    Selection& selection, UndoStack& undo,
+                                    const std::vector<uint64_t>& fids,
+                                    const std::vector<void*>& comps, uint32_t fieldOffset)
 {
     auto* id = static_cast<EntityID*>(p);
     World& world = ctx.scene->GetWorld();
@@ -696,10 +836,17 @@ void InspectorWindow::DrawEntityRef(EngineContext& ctx, const FieldDesc& field, 
     }
     if (ImGui::BeginPopup("##entpick")) {
         auto assign = [&](EntityID v) {
+            // マルチ選択は全対象へバッチ適用 (同一エンティティを参照させる、M40a)
             undo.BeginRecord("Assign reference", selection);
-            undo.CaptureBefore(*ctx.scene, fid);
-            *id = v;
-            undo.CaptureAfter(*ctx.scene, fid);
+            for (uint64_t tf : fids) {
+                undo.CaptureBefore(*ctx.scene, tf);
+            }
+            for (void* c : comps) {
+                *reinterpret_cast<EntityID*>(static_cast<uint8_t*>(c) + fieldOffset) = v;
+            }
+            for (uint64_t tf : fids) {
+                undo.CaptureAfter(*ctx.scene, tf);
+            }
             undo.EndRecord(selection);
         };
         if (ImGui::Selectable("(none)")) {

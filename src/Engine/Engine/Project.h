@@ -5,7 +5,7 @@ namespace mye {
 
 // エンジンのバージョン表記。project.mye.json の engineVersion と照合し、
 // 不一致はプロジェクトマネージャで警告表示する (起動はブロックしない)
-constexpr const char* kEngineVersion = "0.39";
+constexpr const char* kEngineVersion = "0.40";
 
 // プロジェクトルート直下のマニフェストファイル名
 constexpr const wchar_t* kProjectManifestFile = L"project.mye.json";
