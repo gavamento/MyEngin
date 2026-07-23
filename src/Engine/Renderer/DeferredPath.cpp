@@ -236,6 +236,13 @@ bool DeferredPath::Init(GraphicsDevice& device, ShaderManager& shaders)
     if (FAILED(dev->CreateRasterizerState(&rd, rasterizer_.GetAddressOf()))) {
         return false;
     }
+    // SceneView Wireframe (M40b)。CULL_NONE = 裏面の線も見せる (GBuffer パスのみ使用 —
+    // フルスクリーン解決系は常に solid)
+    rd.FillMode = D3D11_FILL_WIREFRAME;
+    rd.CullMode = D3D11_CULL_NONE;
+    if (FAILED(dev->CreateRasterizerState(&rd, rasterizerWire_.GetAddressOf()))) {
+        return false;
+    }
 
     D3D11_DEPTH_STENCIL_DESC dd = {};
     dd.DepthEnable = TRUE;
@@ -343,17 +350,25 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
         dc->ClearDepthStencilView(view.dsv, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
     }
 
+    // SceneView 表示モード (M40b): Unlit/Wireframe はライト白差替 + 影/IBL/SSAO/フォグ無効
+    const bool unlit = view.debugViewMode != 0;
+    const bool wire = view.debugViewMode == 2;
+    SceneLightData unlitLights;
+    unlitLights.ambient = { 1.0f, 1.0f, 1.0f };
+    unlitLights.count = 0;
+    const SceneLightData& L = unlit ? unlitLights : lights;
+
     PerFrameCB pf = {};
     const XMMATRIX v = XMLoadFloat4x4(&view.view);
     const XMMATRIX p = XMLoadFloat4x4(&view.proj);
     XMStoreFloat4x4(&pf.viewProj, XMMatrixTranspose(XMMatrixMultiply(v, p)));
     pf.cameraPos = view.cameraPos;
-    pf.lightCount = lights.count;
-    pf.ambient = lights.ambient;
-    memcpy(pf.lights, lights.lights, sizeof(pf.lights));
+    pf.lightCount = L.count;
+    pf.ambient = L.ambient;
+    memcpy(pf.lights, L.lights, sizeof(pf.lights));
     pf.shadowVP = view.lightViewProj[0]; // 透明後段の forward_lit 用
     pf.shadowTexel = view.shadowTexelSize;
-    pf.shadowEnabled = (view.shadowSRV != nullptr) ? 1 : 0;
+    pf.shadowEnabled = (!unlit && view.shadowSRV != nullptr) ? 1 : 0;
     pf.shadowVP12[0] = view.lightViewProj[1]; // M38d CSM
     pf.shadowVP12[1] = view.lightViewProj[2];
     pf.cascadeInfo[0] = view.cascadeSplits[0];
@@ -361,12 +376,12 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
     pf.cascadeInfo[2] = view.cascadeSplits[2];
     pf.cascadeInfo[3] = static_cast<float>(view.cascadeCount);
     pf.fogColor = view.fogColor;
-    pf.fogMode = view.fogMode;
+    pf.fogMode = unlit ? -1 : view.fogMode;
     pf.fogDensity = view.fogDensity;
     pf.fogStart = view.fogStart;
     pf.fogEnd = view.fogEnd;
     // IBL (M38c): 透明後段の forward_lit / 光パスの deferred_light が参照
-    const bool ibl = view.iblIrradiance != nullptr && view.iblPrefiltered != nullptr
+    const bool ibl = !unlit && view.iblIrradiance != nullptr && view.iblPrefiltered != nullptr
         && view.iblBrdfLut != nullptr;
     pf.iblEnabled = ibl ? 1 : 0;
     pf.iblSpecMips = view.iblSpecMips;
@@ -379,7 +394,7 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
     dc->PSSetConstantBuffers(2, 1, matCbs);
     ID3D11SamplerState* samplers[3] = { sampler_.Get(), shadowSampler_.Get(), iblSampler_.Get() };
     dc->PSSetSamplers(0, 3, samplers);
-    dc->RSSetState(rasterizer_.Get());
+    dc->RSSetState(wire ? rasterizerWire_.Get() : rasterizer_.Get()); // M40b
     dc->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     dc->OMSetDepthStencilState(depthOpaque_.Get(), 0);
     dc->OMSetBlendState(blendOpaque_.Get(), nullptr, 0xFFFFFFFFu);
@@ -533,11 +548,17 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
     ID3D11ShaderResourceView* nullVsSrv = nullptr;
     dc->VSSetShaderResources(0, 1, &nullVsSrv);
 
+    // Wireframe (M40b) は GBuffer パスのみ — フルスクリーン解決系は solid に戻す
+    if (wire) {
+        dc->RSSetState(rasterizer_.Get());
+    }
+
     // ---- 1.5) SSAO (M38e): worldpos + normal → 半解像度 AO → 4x4 ブラー ----
+    // (Unlit/Wireframe では環境項が定数 1 のためスキップ、M40b)
     ShaderProgram* ssaoProg = shaders.Get(ssaoShader_);
     ShaderProgram* ssaoBlurProg = shaders.Get(ssaoBlurShader_);
-    const bool ssaoOn = view.ssaoEnabled != 0 && ssaoProg && ssaoProg->valid && ssaoBlurProg
-        && ssaoBlurProg->valid;
+    const bool ssaoOn = view.ssaoEnabled != 0 && !unlit && ssaoProg && ssaoProg->valid
+        && ssaoBlurProg && ssaoBlurProg->valid;
     if (ssaoOn) {
         const int hw = (view.width > 1) ? view.width / 2 : 1;
         const int hh = (view.height > 1) ? view.height / 2 : 1;
@@ -602,14 +623,14 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
     dc->OMSetRenderTargets(1, &view.rtv, nullptr); // GBuffer を SRV で読むため depth も外す
     dc->RSSetViewports(1, &vp);
     LightPassCB lp = {};
-    lp.ambient = lights.ambient;
-    lp.lightCount = lights.count;
+    lp.ambient = L.ambient; // M40b: Unlit は白定数
+    lp.lightCount = L.count;
     lp.clearColor = { view.clearColor[0], view.clearColor[1], view.clearColor[2],
                       view.clearColor[3] };
-    memcpy(lp.lights, lights.lights, sizeof(lp.lights));
+    memcpy(lp.lights, L.lights, sizeof(lp.lights));
     lp.shadowVP = view.lightViewProj[0];
     lp.shadowTexel = view.shadowTexelSize;
-    lp.shadowEnabled = (view.shadowSRV != nullptr) ? 1 : 0;
+    lp.shadowEnabled = (!unlit && view.shadowSRV != nullptr) ? 1 : 0;
     lp.shadowVP12[0] = view.lightViewProj[1]; // M38d CSM
     lp.shadowVP12[1] = view.lightViewProj[2];
     lp.cascadeInfo[0] = view.cascadeSplits[0];
@@ -618,7 +639,7 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
     lp.cascadeInfo[3] = static_cast<float>(view.cascadeCount);
     lp.cameraPos = view.cameraPos;
     lp.fogColor = view.fogColor;
-    lp.fogMode = view.fogMode;
+    lp.fogMode = unlit ? -1 : view.fogMode;
     lp.fogDensity = view.fogDensity;
     lp.fogStart = view.fogStart;
     lp.fogEnd = view.fogEnd;
@@ -654,11 +675,17 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
     dc->PSSetShaderResources(0, 9, nullSrvs); // 次フレームで RT に戻すため解除
 
     // ---- 2.5) スカイボックス (M29d): clearColor ピクセルを深度 1.0 判定で上書き ----
-    skybox_.Render(device, shaders, view);
+    // (Wireframe はフルスクリーン三角形が線になるためスキップ、M40b)
+    if (!wire) {
+        skybox_.Render(device, shaders, view);
+    }
 
     // ---- 3) 透明後段 (Forward — マテリアルのシェーダで上描き) ----
     if (!queue.transparent.empty()) {
         dc->OMSetRenderTargets(1, &view.rtv, view.dsv);
+        if (wire) {
+            dc->RSSetState(rasterizerWire_.Get()); // M40b: 透明メッシュもワイヤ表示
+        }
         // forward_lit はシャドウ t1 / IBL t3-5 を参照 (M38c)。s0 は光パスで IBL 用に
         // 差し替えたのでマテリアル用 (異方性) に戻す。s2 (IBL) はフレーム頭で bind 済み
         ID3D11ShaderResourceView* fwdSrvs[5] = { view.shadowSRV, nullptr, view.iblIrradiance,
@@ -734,6 +761,10 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
     }
     dc->OMSetDepthStencilState(nullptr, 0);
     dc->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFFu);
+    // Wireframe (M40b) はメッシュ描画のみ — 後段 (パーティクル/ポスプロ) は solid に戻す
+    if (wire) {
+        dc->RSSetState(rasterizer_.Get());
+    }
 }
 
 } // namespace mye

@@ -19,6 +19,8 @@
 #include "Engine/Renderer/GpuResources.h"
 #include "Engine/Renderer/RenderPath.h"
 
+#include "fontawesome/IconsFontAwesome6.h"
+
 using namespace DirectX;
 
 namespace mye {
@@ -65,6 +67,7 @@ void SceneViewWindow::OnRenderViews(EngineContext& ctx, Selection& selection)
     XMStoreFloat4x4(&cam.view, XMMatrixInverse(nullptr, camWorld));
     cam.position = camPos_;
     cam.fovYDeg = kEditorFovDeg;
+    cam.debugViewMode = viewMode_; // M40b: Lit/Unlit/Wireframe (SceneView のみ)
 
     // ギズモがレンダ画像とピクセル一致するよう、描画と同じ view/proj を保存する
     lastView_ = cam.view;
@@ -338,7 +341,7 @@ void SceneViewWindow::DrawToolbar(EditorSettings& settings)
     const ImVec2 p = ImGui::GetItemRectMin();
     ImGui::SetCursorScreenPos(ImVec2(p.x + 8.0f, p.y + 8.0f));
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.10f, 0.11f, 0.13f, 0.85f));
-    ImGui::BeginChild("##sv_toolbar", ImVec2(660.0f, 30.0f), ImGuiChildFlags_None,
+    ImGui::BeginChild("##sv_toolbar", ImVec2(830.0f, 30.0f), ImGuiChildFlags_None,
                       ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     auto opBtn = [&](const char* label, ImGuizmo::OPERATION op) {
         const bool on = (gizmoOp_ == op);
@@ -370,6 +373,25 @@ void SceneViewWindow::DrawToolbar(EditorSettings& settings)
     ImGui::SameLine();
     ImGui::Checkbox("Gizmos", &showGizmos_);
     ImGui::SameLine();
+    ImGui::TextUnformatted("|");
+    ImGui::SameLine();
+    // 表示モード (M40b): Lit / Unlit / Wireframe。GameView は常に Lit
+    auto modeBtn = [&](const char* label, int mode) {
+        const bool on = (viewMode_ == mode);
+        if (on) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.26f, 0.45f, 0.78f, 1.0f));
+        }
+        if (ImGui::Button(label)) {
+            viewMode_ = mode;
+        }
+        if (on) {
+            ImGui::PopStyleColor();
+        }
+        ImGui::SameLine();
+    };
+    modeBtn("Lit", 0);
+    modeBtn("Unlit", 1);
+    modeBtn("Wire", 2);
     ImGui::TextUnformatted("|");
     ImGui::SameLine();
     // カメラ速度 (M27d)。RMB ホールド中のホイールでも変わる (HandleCamera)
@@ -626,11 +648,77 @@ void SceneViewWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
         DrawGizmo(ctx, selection, undo, settings, imgPos.x, imgPos.y, avail.x, avail.y);
     }
 
-    // クリックでピッキング選択 (ギズモ上・オービット操作中は除外)
+    // ---- ビルボードアイコン (M40b): カメラ/ライト/エミッタ位置に FA アイコンを重ねる。
+    //      GPU パス不要 (ImGui drawlist に world→screen 投影) + クリックで選択 ----
     const ImGuiIO& io = ImGui::GetIO();
+    bool iconClicked = false;
+    if (showGizmos_ && rt_.IsValid()) {
+        World& world = ctx.scene->GetWorld();
+        const XMMATRIX vp =
+            XMMatrixMultiply(XMLoadFloat4x4(&lastView_), XMLoadFloat4x4(&lastProj_));
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        struct IconHit {
+            float dist2;
+            EntityID entity;
+        };
+        IconHit best = { 14.0f * 14.0f, kNullEntity }; // クリック判定半径 14px
+
+        auto drawIcons = [&](ComponentTypeId type, const char* icon, ImU32 color) {
+            const ComponentTypeId req[] = { type, WorldMatrixComponent::sTypeId };
+            world.ForEachArchetype(req, [&](Archetype& arch) {
+                const int wi = arch.FindTypeIndex(WorldMatrixComponent::sTypeId);
+                for (uint32_t row = 0; row < arch.Count(); ++row) {
+                    const XMFLOAT4X4& wm =
+                        static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row))->value;
+                    const XMVECTOR clip =
+                        XMVector4Transform(XMVectorSet(wm._41, wm._42, wm._43, 1.0f), vp);
+                    const float w = XMVectorGetW(clip);
+                    if (w <= 0.01f) {
+                        continue; // カメラ後方
+                    }
+                    const float ndcX = XMVectorGetX(clip) / w;
+                    const float ndcY = XMVectorGetY(clip) / w;
+                    if (ndcX < -1.1f || ndcX > 1.1f || ndcY < -1.1f || ndcY > 1.1f) {
+                        continue;
+                    }
+                    const ImVec2 sp(imgPos.x + (ndcX * 0.5f + 0.5f) * avail.x,
+                                    imgPos.y + (0.5f - ndcY * 0.5f) * avail.y);
+                    const ImVec2 ts = ImGui::CalcTextSize(icon);
+                    dl->AddText(ImVec2(sp.x - ts.x * 0.5f + 1.0f, sp.y - ts.y * 0.5f + 1.0f),
+                                IM_COL32(0, 0, 0, 160), icon); // 視認性のための影
+                    dl->AddText(ImVec2(sp.x - ts.x * 0.5f, sp.y - ts.y * 0.5f), color, icon);
+                    const float dx = io.MousePos.x - sp.x;
+                    const float dy = io.MousePos.y - sp.y;
+                    const float d2 = dx * dx + dy * dy;
+                    if (d2 < best.dist2) {
+                        best = { d2, arch.EntityAt(row) };
+                    }
+                }
+            });
+        };
+        drawIcons(CameraComponent::sTypeId, ICON_FA_VIDEO, IM_COL32(0x40, 0xC0, 0xF0, 0xFF));
+        drawIcons(LightComponent::sTypeId, ICON_FA_LIGHTBULB, IM_COL32(0xF0, 0xE0, 0x40, 0xFF));
+        drawIcons(ParticleEmitterComponent::sTypeId, ICON_FA_FIRE,
+                  IM_COL32(0xF0, 0x80, 0x20, 0xFF));
+
+        // アイコンクリックで選択 (ピッキングより優先。Ctrl はトグル = ピッキングと同じ流儀)
+        if (ImGui::IsWindowHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Left)
+            && !ImGuizmo::IsOver() && !ImGuizmo::IsUsing() && !io.KeyAlt
+            && !best.entity.IsNull()) {
+            const uint64_t iconFid = ctx.scene->EnsureFileId(best.entity);
+            if (io.KeyCtrl) {
+                selection.Toggle(iconFid);
+            } else {
+                selection.SelectOnly(iconFid);
+            }
+            iconClicked = true;
+        }
+    }
+
+    // クリックでピッキング選択 (ギズモ上・オービット操作中・アイコンヒット時は除外)
     const bool overGizmo = ImGuizmo::IsOver() || ImGuizmo::IsUsing();
     if (ImGui::IsWindowHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !overGizmo
-        && !io.KeyAlt && rt_.IsValid()) {
+        && !io.KeyAlt && !iconClicked && rt_.IsValid()) {
         const int px = static_cast<int>(io.MousePos.x - imgPos.x);
         const int py = static_cast<int>(io.MousePos.y - imgPos.y);
         if (px >= 0 && py >= 0 && px < rt_.Width() && py < rt_.Height()) {

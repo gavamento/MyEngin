@@ -276,6 +276,7 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
             cameraOverride->nearZ, cameraOverride->farZ);
         XMStoreFloat4x4(&view.proj, p);
         view.cameraPos = cameraOverride->position;
+        view.debugViewMode = cameraOverride->debugViewMode; // M40b (SceneView のみ非 0)
         cameraFound = true;
     } else {
         const ComponentTypeId req[] = { CameraComponent::sTypeId, WorldMatrixComponent::sTypeId };

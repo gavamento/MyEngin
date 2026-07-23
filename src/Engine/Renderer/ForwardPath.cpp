@@ -130,6 +130,12 @@ bool ForwardPath::Init(GraphicsDevice& device, ShaderManager& shaders)
     if (FAILED(dev->CreateRasterizerState(&rd, rasterizer_.GetAddressOf()))) {
         return false;
     }
+    // SceneView Wireframe (M40b)。CULL_NONE = 裏面の線も見せる
+    rd.FillMode = D3D11_FILL_WIREFRAME;
+    rd.CullMode = D3D11_CULL_NONE;
+    if (FAILED(dev->CreateRasterizerState(&rd, rasterizerWire_.GetAddressOf()))) {
+        return false;
+    }
 
     D3D11_DEPTH_STENCIL_DESC dd = {};
     dd.DepthEnable = TRUE;
@@ -200,18 +206,27 @@ void ForwardPath::Render(GraphicsDevice& device, const RenderView& view, const R
         dc->ClearDepthStencilView(view.dsv, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
     }
 
+    // SceneView 表示モード (M40b): Unlit/Wireframe はライトを白定数に差し替え、
+    // 影/IBL/フォグも切る (シェーダ追加なしで albedo 素通し)
+    const bool unlit = view.debugViewMode != 0;
+    const bool wire = view.debugViewMode == 2;
+    SceneLightData unlitLights;
+    unlitLights.ambient = { 1.0f, 1.0f, 1.0f };
+    unlitLights.count = 0;
+    const SceneLightData& L = unlit ? unlitLights : lights;
+
     // フレーム共通 CB
     PerFrameCB pf = {};
     const XMMATRIX v = XMLoadFloat4x4(&view.view);
     const XMMATRIX p = XMLoadFloat4x4(&view.proj);
     XMStoreFloat4x4(&pf.viewProj, XMMatrixTranspose(XMMatrixMultiply(v, p)));
     pf.cameraPos = view.cameraPos;
-    pf.lightCount = lights.count;
-    pf.ambient = lights.ambient;
-    memcpy(pf.lights, lights.lights, sizeof(pf.lights));
+    pf.lightCount = L.count;
+    pf.ambient = L.ambient;
+    memcpy(pf.lights, L.lights, sizeof(pf.lights));
     pf.shadowVP = view.lightViewProj[0];
     pf.shadowTexel = view.shadowTexelSize;
-    pf.shadowEnabled = (view.shadowSRV != nullptr) ? 1 : 0;
+    pf.shadowEnabled = (!unlit && view.shadowSRV != nullptr) ? 1 : 0;
     pf.shadowVP12[0] = view.lightViewProj[1]; // M38d CSM
     pf.shadowVP12[1] = view.lightViewProj[2];
     pf.cascadeInfo[0] = view.cascadeSplits[0];
@@ -219,12 +234,12 @@ void ForwardPath::Render(GraphicsDevice& device, const RenderView& view, const R
     pf.cascadeInfo[2] = view.cascadeSplits[2];
     pf.cascadeInfo[3] = static_cast<float>(view.cascadeCount);
     pf.fogColor = view.fogColor;
-    pf.fogMode = view.fogMode;
+    pf.fogMode = unlit ? -1 : view.fogMode;
     pf.fogDensity = view.fogDensity;
     pf.fogStart = view.fogStart;
     pf.fogEnd = view.fogEnd;
     // IBL (M38c): SRV 3 点が揃っている時のみ有効 (無ければ従来の定数アンビエント)
-    const bool ibl = view.iblIrradiance != nullptr && view.iblPrefiltered != nullptr
+    const bool ibl = !unlit && view.iblIrradiance != nullptr && view.iblPrefiltered != nullptr
         && view.iblBrdfLut != nullptr;
     pf.iblEnabled = ibl ? 1 : 0;
     pf.iblSpecMips = view.iblSpecMips;
@@ -241,7 +256,7 @@ void ForwardPath::Render(GraphicsDevice& device, const RenderView& view, const R
     ID3D11ShaderResourceView* frameSrvs[5] = { view.shadowSRV, nullptr, view.iblIrradiance,
                                                view.iblPrefiltered, view.iblBrdfLut };
     dc->PSSetShaderResources(1, 5, frameSrvs);
-    dc->RSSetState(rasterizer_.Get());
+    dc->RSSetState(wire ? rasterizerWire_.Get() : rasterizer_.Get());
     dc->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
     // インスタンス run 検出 (M38f): forward_lit マテリアルの非スキン opaque 連続 run のみ。
@@ -280,14 +295,22 @@ void ForwardPath::Render(GraphicsDevice& device, const RenderView& view, const R
     dc->VSSetShaderResources(0, 1, &nullVsSrv);
 
     // スカイボックス (M29d): 不透明後・透明前。深度 1.0 のピクセルだけ塗る。
-    // PS の b3 のみ使うので b0-b2 / トポロジは不変 (透明段は DrawItems がシェーダ再バインド)
-    skybox_.Render(device, shaders, view);
+    // PS の b3 のみ使うので b0-b2 / トポロジは不変 (透明段は DrawItems がシェーダ再バインド)。
+    // Wireframe (M40b) はフルスクリーン三角形が線になってしまうためスキップ
+    if (!wire) {
+        skybox_.Render(device, shaders, view);
+    }
 
     // 半透明 (インスタンシング対象外)
     if (!queue.transparent.empty()) {
         dc->OMSetDepthStencilState(depthTransparent_.Get(), 0);
         dc->OMSetBlendState(blendAlpha_.Get(), nullptr, 0xFFFFFFFFu);
         DrawItems(device, queue.transparent, view, resources, shaders, nullptr);
+    }
+
+    // Wireframe (M40b) はメッシュ描画のみ — 後段 (パーティクル/ポスプロ) は solid に戻す
+    if (wire) {
+        dc->RSSetState(rasterizer_.Get());
     }
 }
 

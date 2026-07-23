@@ -77,6 +77,9 @@ struct RenderView {
     int32_t ssaoEnabled = 0;
     // ---- メッシュ GPU インスタンシング (M38f)。0 = 全て per-item 描画 (A/B 比較用) ----
     int32_t instancingEnabled = 1;
+    // ---- SceneView 表示モード (M40b)。0=Lit 1=Unlit (白ライト) 2=Wireframe (+Unlit)。
+    //      CameraOverride 経由でエディタのみ設定 — GameView/Runtime は常に 0 ----
+    int32_t debugViewMode = 0;
 };
 
 // GPU へ渡すライト 1 個 (定数バッファ配列要素、16 バイト境界に揃えた 64 バイト)。

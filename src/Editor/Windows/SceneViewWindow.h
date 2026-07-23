@@ -62,7 +62,8 @@ private:
     bool gizmoActive_ = false; // Undo transient 記録中 (ドラッグ全体で 1 エントリ)
     bool camSpeedDirty_ = false; // RMB+ホイールで速度変更中 (RMB リリース時に settings.Save)
     bool showGrid_ = true;
-    bool showGizmos_ = true; // コライダー/ライト/カメラ等の補助表示
+    bool showGizmos_ = true; // コライダー/ライト/カメラ等の補助表示 (ビルボードアイコン含む)
+    int viewMode_ = 0;       // SceneView 表示モード (M40b): 0=Lit 1=Unlit 2=Wireframe
 
     PickingPass picking_;    // クリック選択 (遅延 Init)
     EditorLinePass lines_;   // グリッド/ワイヤ/アウトライン (遅延 Init)

@@ -38,6 +38,7 @@ private:
     Microsoft::WRL::ComPtr<ID3D11SamplerState> shadowSampler_; // 比較サンプラ (PCF)
     Microsoft::WRL::ComPtr<ID3D11SamplerState> iblSampler_;    // LINEAR/CLAMP (M38c)
     Microsoft::WRL::ComPtr<ID3D11RasterizerState> rasterizer_;
+    Microsoft::WRL::ComPtr<ID3D11RasterizerState> rasterizerWire_; // SceneView Wireframe (M40b)
     Microsoft::WRL::ComPtr<ID3D11DepthStencilState> depthOpaque_;
     Microsoft::WRL::ComPtr<ID3D11DepthStencilState> depthDisabled_;
     Microsoft::WRL::ComPtr<ID3D11DepthStencilState> depthTransparent_;

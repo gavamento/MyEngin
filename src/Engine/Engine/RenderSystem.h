@@ -53,6 +53,7 @@ struct CameraOverride {
     float fovYDeg = 60.0f;
     float nearZ = 0.1f;
     float farZ = 1000.0f;
+    int32_t debugViewMode = 0; // SceneView 表示モード (M40b): 0=Lit 1=Unlit 2=Wireframe
 };
 
 // 環境コンポーネント収集 (M29d): 最初 (entity.index 最小) の active な Skybox/Fog を
