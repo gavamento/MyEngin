@@ -48,6 +48,22 @@ private:
     std::wstring assetEditPath_;
     importmeta::TextureImportSettings assetImportEdit_;
 
+    // マテリアルインスペクタの編集キャッシュ (M40d)。.mat.json のスキーマ固定編集
+    struct MaterialEditState {
+        bool valid = false;
+        std::string name;
+        std::string shader = "forward_lit";
+        float baseColor[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+        float metallic = 0.0f;
+        float roughness = 0.5f;
+        bool transparent = false;
+        uint64_t textureGuid = 0; // 0 = なし (保存は GUID 数値、M39a)
+        uint64_t normalGuid = 0;
+    };
+    MaterialEditState matEdit_;
+    void LoadMaterialEdit(EngineContext& ctx, const std::wstring& path);
+    void DrawMaterialInspector(EngineContext& ctx, const std::wstring& path);
+
     // 回転編集中のオイラー角キャッシュ (quat→euler→quat の往復ドリフト防止)
     DirectX::XMFLOAT3 eulerCache_ = { 0, 0, 0 };
     EntityID eulerCacheEntity_ = kNullEntity;

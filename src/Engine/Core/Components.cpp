@@ -313,6 +313,9 @@ void RegisterBuiltinComponents()
         MYE_FIELD_RANGE(CameraPostFxComponent, saturation, Float, 0.0f, 4.0f),
         MYE_FIELD_RANGE(CameraPostFxComponent, contrast, Float, 0.0f, 4.0f),
         MYE_FIELD(CameraPostFxComponent, colorFilter, Color),
+        // M40d: SSAO パラメータ (末尾 append、NoHash なので bump 不要)
+        MYE_FIELD_RANGE(CameraPostFxComponent, ssaoRadius, Float, 0.05f, 4.0f),
+        MYE_FIELD_RANGE(CameraPostFxComponent, ssaoIntensity, Float, 0.0f, 4.0f),
     }, kComponentNoHash);
 
     // M32e: 合成エフェクトのライフサイクル。DestroyEntity + 子エミッタ playing を駆動 = hash 対象。

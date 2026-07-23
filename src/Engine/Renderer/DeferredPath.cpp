@@ -568,10 +568,10 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
         SsaoCB sc = {};
         sc.viewProj = pf.viewProj; // 既に transpose 済み
         sc.cameraPos = view.cameraPos;
-        sc.radius = 0.8f;
+        sc.radius = (view.ssaoRadius > 0.01f) ? view.ssaoRadius : 0.8f; // M40d: CameraPostFx
         sc.noiseScale[0] = static_cast<float>(hw) / 4.0f;
         sc.noiseScale[1] = static_cast<float>(hh) / 4.0f;
-        sc.intensity = 1.0f;
+        sc.intensity = view.ssaoIntensity;
         sc.bias = 0.03f;
         UploadCB(dc, ssaoCB_.Get(), sc);
 

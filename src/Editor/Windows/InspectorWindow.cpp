@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <string>
 #include <system_error>
 #include <utility>
@@ -11,12 +12,14 @@
 
 #include "Editor/AssetOps.h"
 #include "Editor/ComponentClipboard.h"
+#include "Engine/Core/AssetGuidResolver.h"
 #include "Editor/EditorComponentCatalog.h"
 #include "Editor/PhysicsLayerNames.h"
 #include "Editor/Selection.h"
 #include "Editor/Undo/UndoStack.h"
 #include "Engine/Core/ComponentRegistry.h"
 #include "Engine/Core/Components.h"
+#include "Engine/Core/Log.h"
 #include "Engine/Core/World.h"
 #include "Engine/Engine/Animation.h"
 #include "Engine/Engine/AssetDatabase.h"
@@ -775,12 +778,20 @@ void InspectorWindow::DrawAssetInspector(EngineContext& ctx, Selection& selectio
     }
     ImGui::Separator();
 
-    // 選択パスが変わったら編集キャッシュを .meta から再読込
+    // 選択パスが変わったら編集キャッシュを .meta / .mat.json から再読込
     if (assetEditPath_ != path) {
         assetEditPath_ = path;
         AssetMeta meta;
         AssetDatabase::ReadMeta(path + L".meta", meta);
         assetImportEdit_ = meta.tex;
+        if (type == AssetType::Material) {
+            LoadMaterialEdit(ctx, path); // M40d
+        }
+    }
+
+    if (type == AssetType::Material) {
+        DrawMaterialInspector(ctx, path); // M40d
+        return;
     }
 
     if (type == AssetType::Texture) {
@@ -827,6 +838,167 @@ void InspectorWindow::DrawAssetInspector(EngineContext& ctx, Selection& selectio
             AssetDatabase::ReadMeta(path + L".meta", meta);
             assetImportEdit_ = meta.tex;
         }
+    }
+}
+
+void InspectorWindow::LoadMaterialEdit(EngineContext& ctx, const std::wstring& path)
+{
+    matEdit_ = MaterialEditState{};
+    std::ifstream f(std::filesystem::path(path), std::ios::binary);
+    if (!f) {
+        return;
+    }
+    nlohmann::json root;
+    try {
+        f >> root;
+    } catch (const nlohmann::json::exception&) {
+        return;
+    }
+    matEdit_.name = root.value("name", std::string());
+    matEdit_.shader = root.value("shader", std::string("forward_lit"));
+    if (root.contains("baseColor") && root["baseColor"].is_array()) {
+        const nlohmann::json& c = root["baseColor"];
+        for (size_t i = 0; i < c.size() && i < 4; ++i) {
+            matEdit_.baseColor[i] = c[i].get<float>();
+        }
+    }
+    matEdit_.metallic = root.value("metallic", 0.0f);
+    matEdit_.roughness = root.value("roughness", 0.5f);
+    matEdit_.transparent = root.value("transparent", false);
+    // texture/normalMap: 数値 = GUID / 文字列 = 旧相対パス (GUID に変換して保持 —
+    // 保存時は常に GUID 数値で書く = M39a の「次回保存で guid 書き」)
+    auto readRef = [&](const char* key) -> uint64_t {
+        if (!root.contains(key)) {
+            return 0;
+        }
+        const nlohmann::json& node = root[key];
+        if (node.is_number_unsigned() || node.is_number_integer()) {
+            return node.get<uint64_t>();
+        }
+        if (node.is_string()) {
+            const std::string rel = node.get<std::string>();
+            if (rel.empty()) {
+                return 0;
+            }
+            const std::wstring abs = ctx.assetsRoot + L"\\" + Utf8ToWide(rel);
+            return ctx.assetDb ? ctx.assetDb->GuidForPath(abs, /*createIfMissing=*/false) : 0;
+        }
+        return 0;
+    };
+    matEdit_.textureGuid = readRef("texture");
+    matEdit_.normalGuid = readRef("normalMap");
+    matEdit_.valid = true;
+}
+
+void InspectorWindow::DrawMaterialInspector(EngineContext& ctx, const std::wstring& path)
+{
+    namespace fs = std::filesystem;
+    if (!matEdit_.valid) {
+        ImGui::TextDisabled("(material parse failed)");
+        return;
+    }
+    ImGui::SeparatorText("Material");
+    ImGui::TextDisabled("shader: %s", matEdit_.shader.c_str());
+    ImGui::ColorEdit4("baseColor", matEdit_.baseColor);
+    ImGui::SliderFloat("metallic", &matEdit_.metallic, 0.0f, 1.0f);
+    ImGui::SliderFloat("roughness", &matEdit_.roughness, 0.0f, 1.0f);
+    ImGui::Checkbox("transparent", &matEdit_.transparent);
+
+    // テクスチャピッカー (GUID 参照、M39a)。assets 配下の画像をサムネ付きで列挙
+    auto texPicker = [&](const char* label, uint64_t& guidRef) {
+        ImGui::PushID(label);
+        std::string cur = "(none)";
+        if (guidRef != 0) {
+            const std::wstring resolved = assetguid::ResolvePath(guidRef);
+            if (!resolved.empty()) {
+                cur = WideToUtf8(fs::path(resolved).filename().wstring());
+            } else {
+                char hex[24];
+                std::snprintf(hex, sizeof(hex), "%016llx",
+                              static_cast<unsigned long long>(guidRef));
+                cur = std::string("(missing ") + hex + ")";
+            }
+        }
+        ImGui::TextUnformatted(label);
+        ImGui::SameLine(ImGui::GetContentRegionAvail().x * 0.35f);
+        if (ImGui::Button(cur.c_str(), ImVec2(-1, 0))) {
+            ImGui::OpenPopup("##mat_tex_pick");
+        }
+        if (ImGui::BeginPopup("##mat_tex_pick")) {
+            if (ImGui::Selectable("(none)")) {
+                guidRef = 0;
+            }
+            std::error_code ec;
+            for (const auto& e : fs::recursive_directory_iterator(ctx.assetsRoot, ec)) {
+                if (!e.is_regular_file(ec)) {
+                    continue;
+                }
+                const std::wstring p = e.path().wstring();
+                if (AssetDatabase::IsMetaPath(p)
+                    || AssetDatabase::ClassifyPath(p) != AssetType::Texture) {
+                    continue;
+                }
+                ImGui::PushID(WideToUtf8(p).c_str());
+                // サムネイル (非同期。プレースホルダ中は白)
+                const AssetID tid = ctx.resources->textures.RequestLoadFileAsync(p);
+                if (Texture* tex = ctx.resources->textures.Get(tid); tex && tex->srv) {
+                    ImGui::Image(reinterpret_cast<ImTextureID>(tex->srv.Get()),
+                                 ImVec2(20, 20));
+                    ImGui::SameLine();
+                }
+                const std::string rel =
+                    WideToUtf8(fs::relative(e.path(), ctx.assetsRoot, ec).wstring());
+                if (ImGui::Selectable(rel.c_str())) {
+                    guidRef = AssetDatabase::EnsureMeta(p); // .meta 不在なら生成 (GUID 確定)
+                }
+                ImGui::PopID();
+            }
+            ImGui::EndPopup();
+        }
+        ImGui::PopID();
+    };
+    texPicker("texture", matEdit_.textureGuid);
+    texPicker("normalMap", matEdit_.normalGuid);
+
+    if (ImGui::Button("Save", ImVec2(90, 0))) {
+        nlohmann::json root;
+        root["engine"] = "MyEngine";
+        root["material"] = 1;
+        root["name"] = matEdit_.name.empty()
+            ? WideToUtf8(fs::path(path).stem().stem().wstring())
+            : matEdit_.name;
+        root["shader"] = matEdit_.shader;
+        root["baseColor"] = { matEdit_.baseColor[0], matEdit_.baseColor[1],
+                              matEdit_.baseColor[2], matEdit_.baseColor[3] };
+        root["metallic"] = matEdit_.metallic;
+        root["roughness"] = matEdit_.roughness;
+        // サブ参照は GUID 数値で書く (M39a)。0 = 空文字列 (従来互換の「なし」)
+        if (matEdit_.textureGuid != 0) {
+            root["texture"] = matEdit_.textureGuid;
+        } else {
+            root["texture"] = "";
+        }
+        if (matEdit_.normalGuid != 0) {
+            root["normalMap"] = matEdit_.normalGuid;
+        } else {
+            root["normalMap"] = "";
+        }
+        root["transparent"] = matEdit_.transparent;
+        std::ofstream out(std::filesystem::path(path), std::ios::binary);
+        if (out) {
+            out << root.dump(2);
+            out.close();
+            // 即時反映: 同一 AssetID のまま再ロード → 全ビューの MeshRenderer に反映
+            ctx.resources->materials.LoadFromFile(path, ctx.resources->textures,
+                                                  ctx.assetsRoot);
+            MYE_LOG_INFO("material saved: %s", WideToUtf8(path).c_str());
+        } else {
+            MYE_LOG_ERROR("could not write material: %s", WideToUtf8(path).c_str());
+        }
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Revert", ImVec2(90, 0))) {
+        LoadMaterialEdit(ctx, path);
     }
 }
 

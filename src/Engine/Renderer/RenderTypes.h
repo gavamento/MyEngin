@@ -75,6 +75,8 @@ struct RenderView {
     float iblSpecMips = 0.0f;
     // ---- SSAO (M38e)。Deferred のみ消費 (Forward は無視) ----
     int32_t ssaoEnabled = 0;
+    float ssaoRadius = 0.8f;    // M40d: CameraPostFx から (シーンカメラ経路のみ上書き)
+    float ssaoIntensity = 1.0f;
     // ---- メッシュ GPU インスタンシング (M38f)。0 = 全て per-item 描画 (A/B 比較用) ----
     int32_t instancingEnabled = 1;
     // ---- SceneView 表示モード (M40b)。0=Lit 1=Unlit (白ライト) 2=Wireframe (+Unlit)。

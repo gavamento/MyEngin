@@ -275,6 +275,14 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
             }
             ImGui::EndMenu();
         }
+        if (ImGui::BeginMenu("Rendering")) {
+            // 描画専用トグル (M40d)。sim/hash 非影響
+            ImGui::MenuItem("Shadows", nullptr, &ctx.renderSystem->enableShadows);
+            ImGui::MenuItem("SSAO (Deferred)", nullptr, &ctx.renderSystem->enableSsao);
+            ImGui::MenuItem("GPU Instancing", nullptr, &ctx.renderSystem->enableInstancing);
+            ImGui::MenuItem("Post FX", nullptr, &ctx.renderSystem->enablePostFx);
+            ImGui::EndMenu();
+        }
         if (ImGui::MenuItem("Reset Layout")) {
             rebuildDockLayout_ = true;
         }

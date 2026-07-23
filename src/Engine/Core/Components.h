@@ -393,6 +393,9 @@ struct CameraPostFxComponent {
     float saturation = 1.0f;        // 彩度 (1=変化なし)
     float contrast = 1.0f;          // コントラスト (1=変化なし)
     DirectX::XMFLOAT4 colorFilter = { 1.0f, 1.0f, 1.0f, 1.0f }; // 乗算カラーフィルタ
+    // ---- M40d: SSAO パラメータ (Deferred のみ。末尾 append、NoHash なので hash 不変) ----
+    float ssaoRadius = 0.8f;    // サンプル半球の半径 (ワールド単位)
+    float ssaoIntensity = 1.0f; // 遮蔽の効き (0=off 相当)
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
