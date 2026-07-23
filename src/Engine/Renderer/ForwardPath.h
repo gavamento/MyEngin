@@ -1,6 +1,8 @@
 #pragma once
+#include <vector>
 #include <wrl/client.h>
 
+#include "Engine/Renderer/MeshInstancing.h"
 #include "Engine/Renderer/RenderPath.h"
 #include "Engine/Renderer/SkyboxPass.h"
 
@@ -18,14 +20,23 @@ public:
                 ShaderManager& shaders) override;
 
 private:
+    // runs 非 null = opaque のインスタンス run 一括描画を併用 (M38f)。transparent は nullptr
     void DrawItems(GraphicsDevice& device, const std::vector<RenderItem>& items,
-                   const RenderView& view, RenderResources& resources, ShaderManager& shaders);
+                   const RenderView& view, RenderResources& resources, ShaderManager& shaders,
+                   const std::vector<MeshInstanceRun>* runs);
 
     Microsoft::WRL::ComPtr<ID3D11Buffer> perFrameCB_;
     Microsoft::WRL::ComPtr<ID3D11Buffer> perObjectCB_;
     Microsoft::WRL::ComPtr<ID3D11Buffer> materialCB_; // PBR パラメータ (metallic/roughness)
     Microsoft::WRL::ComPtr<ID3D11Buffer> boneCB_;     // ボーンパレット (b3、スキニング、M18)
     AssetID skinnedShader_ = {};                      // forward_skinned (スキンメッシュ用に差替)
+    // ---- インスタンシング (M38f)。forward_lit マテリアルの opaque 連続 run のみ対象 ----
+    AssetID litShader_ = {};          // forward_lit (run 判定: mat->shader がこれと一致する時のみ)
+    AssetID litInstancedShader_ = {}; // forward_lit_instanced
+    MeshInstanceBuffer instanceBuf_;
+    std::vector<uint8_t> canInstance_;        // フレーム毎スクラッチ
+    std::vector<MeshInstanceRun> runs_;
+    std::vector<DirectX::XMFLOAT4X4> worlds_;
     Microsoft::WRL::ComPtr<ID3D11SamplerState> sampler_;
     Microsoft::WRL::ComPtr<ID3D11SamplerState> shadowSampler_; // 比較サンプラ (PCF)
     Microsoft::WRL::ComPtr<ID3D11SamplerState> iblSampler_;    // LINEAR/CLAMP (s2、M38c)

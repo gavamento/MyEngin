@@ -1,6 +1,8 @@
 #pragma once
+#include <vector>
 #include <wrl/client.h>
 
+#include "Engine/Renderer/MeshInstancing.h"
 #include "Engine/Renderer/RenderPath.h"
 #include "Engine/Renderer/RenderTexture.h"
 #include "Engine/Renderer/SkyboxPass.h"
@@ -45,6 +47,12 @@ private:
     AssetID gbufferShader_ = {};
     AssetID gbufferSkinnedShader_ = {}; // deferred_gbuffer_skinned (スキンメッシュ用に差替)
     AssetID lightShader_ = {};
+    // ---- インスタンシング (M38f)。非スキン opaque の連続 run を一括描画 ----
+    AssetID gbufferInstancedShader_ = {};
+    MeshInstanceBuffer instanceBuf_;
+    std::vector<uint8_t> canInstance_; // フレーム毎スクラッチ
+    std::vector<MeshInstanceRun> runs_;
+    std::vector<DirectX::XMFLOAT4X4> worlds_;
     SkyboxPass skybox_; // ライトパス後・透明前に空を塗る (M29d)
 
     // ---- SSAO (M38e、半解像度) ----

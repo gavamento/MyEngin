@@ -78,6 +78,7 @@ public:
     bool enablePostFx = true; // false で HDR 配管を丸ごとバイパス (従来の直描き)
     bool enableShadows = true; // false で平行光シャドウを無効 (M17)
     bool enableSsao = true;    // SSAO (M38e、Deferred パスのみ効く)
+    bool enableInstancing = true; // メッシュ GPU インスタンシング (M38f、A/B 比較用トグル)
 
     // 描画補間 (M36b)。EngineLoop が毎フレーム設定する。1.0 = 補間なし (従来描画)。
     // 対象はカメラ + メッシュ収集のワールド行列 (パーティクル/スプライト/UI は対象外)

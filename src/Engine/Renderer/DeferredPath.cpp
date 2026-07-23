@@ -47,6 +47,9 @@ struct PerFrameCB {
 struct PerObjectCB {
     XMFLOAT4X4 world;
     XMFLOAT4 baseColor;
+    // ---- インスタンシング (M38f、末尾 append)。インスタンス版シェーダのみ参照 ----
+    int32_t instanceBase;
+    float instPad[3];
 };
 
 // deferred_gbuffer.hlsl / forward_lit.hlsl の MaterialParams (b2) と一致 (16 バイト)
@@ -135,6 +138,8 @@ bool DeferredPath::Init(GraphicsDevice& device, ShaderManager& shaders)
     lightShader_ = shaders.Load("deferred_light");
     // スキンメッシュ用の GBuffer シェーダをプリロード (BLENDINDICES 入力レイアウトもここで構築)
     gbufferSkinnedShader_ = shaders.Load("deferred_gbuffer_skinned");
+    // インスタンシング (M38f)
+    gbufferInstancedShader_ = shaders.Load("deferred_gbuffer_instanced");
     // スカイボックス (M29d)。失敗しても続行 (空が clearColor になるだけ)
     skybox_.Init(device, shaders);
 
@@ -293,6 +298,8 @@ void DeferredPath::Shutdown()
     pointWrap_.Reset();
     noiseTex_.Reset();
     noiseSrv_.Reset();
+    // インスタンシング (M38f)
+    instanceBuf_.Reset();
 }
 
 void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const RenderQueue& queue,
@@ -381,14 +388,88 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
     dc->VSSetShader(gbProg->vs.Get(), nullptr, 0);
     dc->PSSetShader(gbProg->ps.Get(), nullptr, 0);
 
+    // インスタンス run 検出 (M38f): 非スキン opaque の同一 (material,mesh) 連続 run。
+    // GBuffer は全マテリアルが同一シェーダなので Forward と違いシェーダ一致判定は不要
+    runs_.clear();
+    worlds_.clear();
+    ShaderProgram* gbInstProg = shaders.Get(gbufferInstancedShader_);
+    if (view.instancingEnabled != 0 && gbInstProg && gbInstProg->valid) {
+        canInstance_.resize(queue.opaque.size());
+        for (size_t i = 0; i < queue.opaque.size(); ++i) {
+            const RenderItem& it = queue.opaque[i];
+            canInstance_[i] = (it.bones == nullptr && resources.materials.Get(it.material)
+                               && resources.meshes.Get(it.mesh))
+                ? 1
+                : 0;
+        }
+        BuildInstanceRuns(queue.opaque, canInstance_, runs_, worlds_);
+        if (!worlds_.empty() && instanceBuf_.Upload(device, worlds_)) {
+            ID3D11ShaderResourceView* isrv = instanceBuf_.SRV();
+            dc->VSSetShaderResources(0, 1, &isrv);
+        } else {
+            runs_.clear();
+        }
+    }
+
     uint64_t boundMesh = 0;
     uint64_t boundTexture = 0;
     uint64_t boundNormal = 0;
     uint64_t boundGbShader = gbufferShader_.value; // 上で gbProg を bind 済み
-    for (const RenderItem& item : queue.opaque) {
+    size_t nextRun = 0;
+    for (size_t idx = 0; idx < queue.opaque.size(); ++idx) {
+        const RenderItem& item = queue.opaque[idx];
         Material* mat = resources.materials.Get(item.material);
         Mesh* mesh = resources.meshes.Get(item.mesh);
         if (!mat || !mesh) {
+            continue;
+        }
+        // インスタンス run の先頭なら一括描画 (M38f)
+        if (nextRun < runs_.size() && runs_[nextRun].first == idx) {
+            const MeshInstanceRun& run = runs_[nextRun];
+            ++nextRun;
+            if (gbufferInstancedShader_.value != boundGbShader) {
+                dc->IASetInputLayout(gbInstProg->inputLayout.Get());
+                dc->VSSetShader(gbInstProg->vs.Get(), nullptr, 0);
+                dc->PSSetShader(gbInstProg->ps.Get(), nullptr, 0);
+                boundGbShader = gbufferInstancedShader_.value;
+            }
+            const AssetID texId =
+                mat->texture.IsNull() ? resources.textures.White() : mat->texture;
+            if (texId.value != boundTexture) {
+                Texture* tex = resources.textures.Get(texId);
+                ID3D11ShaderResourceView* srv = tex ? tex->srv.Get() : nullptr;
+                dc->PSSetShaderResources(0, 1, &srv);
+                boundTexture = texId.value;
+            }
+            const AssetID nrmId =
+                mat->normalTex.IsNull() ? resources.textures.White() : mat->normalTex;
+            if (nrmId.value != boundNormal) {
+                Texture* ntex = resources.textures.Get(nrmId);
+                ID3D11ShaderResourceView* nsrv = ntex ? ntex->srv.Get() : nullptr;
+                dc->PSSetShaderResources(1, 1, &nsrv);
+                boundNormal = nrmId.value;
+            }
+            if (item.mesh.value != boundMesh) {
+                const UINT stride = sizeof(MeshVertex);
+                const UINT offset = 0;
+                ID3D11Buffer* vb = mesh->vb.Get();
+                dc->IASetVertexBuffers(0, 1, &vb, &stride, &offset);
+                dc->IASetIndexBuffer(mesh->ib.Get(), DXGI_FORMAT_R32_UINT, 0);
+                boundMesh = item.mesh.value;
+            }
+            PerObjectCB po = {};
+            po.world = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 }; // 未使用
+            po.baseColor = SrgbToLinear(mat->baseColor);
+            po.instanceBase = static_cast<int32_t>(run.base);
+            UploadCB(dc, perObjectCB_.Get(), po);
+            MaterialCB imc = {};
+            imc.metallic = mat->metallic;
+            imc.roughness = mat->roughness;
+            imc.hasNormal = mat->normalTex.IsNull() ? 0 : 1;
+            UploadCB(dc, materialCB_.Get(), imc);
+            dc->DrawIndexedInstanced(mesh->indexCount, run.count, 0, 0, 0);
+            prof::AddDraw(static_cast<int>(mesh->indexCount / 3 * run.count));
+            idx += run.count - 1; // for の ++idx と合わせて run 全体を飛ばす
             continue;
         }
         // スキンメッシュは GBuffer シェーダをスキニング版に差し替え + ボーン CB を b3 に (M18)
@@ -447,6 +528,10 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
         dc->DrawIndexed(mesh->indexCount, 0, 0);
         prof::AddDraw(static_cast<int>(mesh->indexCount / 3));
     }
+
+    // インスタンス SRV を外す (次フレームの Map と競合させない、M38f)
+    ID3D11ShaderResourceView* nullVsSrv = nullptr;
+    dc->VSSetShaderResources(0, 1, &nullVsSrv);
 
     // ---- 1.5) SSAO (M38e): worldpos + normal → 半解像度 AO → 4x4 ブラー ----
     ShaderProgram* ssaoProg = shaders.Get(ssaoShader_);

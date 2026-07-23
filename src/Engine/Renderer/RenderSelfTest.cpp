@@ -5,6 +5,7 @@
 #include "Engine/Core/Components.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Renderer/FrustumCull.h"
+#include "Engine/Renderer/MeshInstancing.h"
 #include "Engine/Renderer/PostProcess.h"
 
 using namespace DirectX;
@@ -105,6 +106,52 @@ void TestPostFxMerge()
     TEST_CHECK(d.saturation == 1.0f && d.contrast == 1.0f);
 }
 
+// メッシュインスタンシングの run 検出 (M38f): 同一 (material,mesh) の連続 2 件以上のみ、
+// canInstance=false は run を分断、base はバッファ内オフセットとして単調に積み上がる
+void TestInstanceRuns()
+{
+    MYE_LOG_INFO("[selftest] mesh instance runs (M38f)");
+
+    auto makeItem = [](uint64_t mat, uint64_t mesh, float x) {
+        RenderItem it;
+        it.material.value = mat;
+        it.mesh.value = mesh;
+        it.world = MakeWorld(x, 0, 0);
+        return it;
+    };
+    std::vector<MeshInstanceRun> runs;
+    std::vector<XMFLOAT4X4> worlds;
+
+    // 3 連続 = 1 run (count=3, base=0)、行列は項目順
+    std::vector<RenderItem> a = { makeItem(1, 10, 0), makeItem(1, 10, 1), makeItem(1, 10, 2) };
+    BuildInstanceRuns(a, { 1, 1, 1 }, runs, worlds);
+    TEST_CHECK(runs.size() == 1 && runs[0].first == 0 && runs[0].count == 3 && runs[0].base == 0);
+    TEST_CHECK(worlds.size() == 3 && worlds[1]._41 == 1.0f && worlds[2]._41 == 2.0f);
+
+    // 単発は run にならない / mesh 違いは境界
+    std::vector<RenderItem> b = { makeItem(1, 10, 0), makeItem(1, 20, 1), makeItem(1, 20, 2) };
+    BuildInstanceRuns(b, { 1, 1, 1 }, runs, worlds);
+    TEST_CHECK(runs.size() == 1 && runs[0].first == 1 && runs[0].count == 2 && runs[0].base == 0);
+
+    // material 違いは同一 mesh でも境界
+    std::vector<RenderItem> c = { makeItem(1, 10, 0), makeItem(2, 10, 1) };
+    BuildInstanceRuns(c, { 1, 1 }, runs, worlds);
+    TEST_CHECK(runs.empty() && worlds.empty());
+
+    // canInstance=false (スキン等) は run を分断する
+    std::vector<RenderItem> d = { makeItem(1, 10, 0), makeItem(1, 10, 1), makeItem(1, 10, 2) };
+    BuildInstanceRuns(d, { 1, 0, 1 }, runs, worlds);
+    TEST_CHECK(runs.empty());
+
+    // 複数 run: base は先行 run の行列数だけ進む
+    std::vector<RenderItem> e = { makeItem(1, 10, 0), makeItem(1, 10, 1), makeItem(2, 20, 2),
+                                  makeItem(2, 20, 3), makeItem(2, 20, 4) };
+    BuildInstanceRuns(e, { 1, 1, 1, 1, 1 }, runs, worlds);
+    TEST_CHECK(runs.size() == 2 && runs[0].count == 2 && runs[1].first == 2 && runs[1].count == 3
+               && runs[1].base == 2);
+    TEST_CHECK(worlds.size() == 5 && worlds[2]._41 == 2.0f);
+}
+
 } // namespace
 
 bool RunRenderSelfTest()
@@ -113,6 +160,7 @@ bool RunRenderSelfTest()
     TestFrustumCulling();
     TestPostFxMerge();
     TestCascadeSplits();
+    TestInstanceRuns();
     if (g_failCount == 0) {
         MYE_LOG_INFO("[selftest] render: ALL PASS");
         return true;

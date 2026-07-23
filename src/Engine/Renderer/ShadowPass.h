@@ -1,9 +1,11 @@
 #pragma once
 #include <DirectXMath.h>
 #include <d3d11.h>
+#include <vector>
 #include <wrl/client.h>
 
 #include "Engine/Core/EntityID.h"
+#include "Engine/Renderer/MeshInstancing.h"
 
 namespace mye {
 
@@ -23,9 +25,11 @@ public:
     bool IsReady() const { return ready_; }
 
     // 不透明キューを各カスケードの lightViewProj (非転置、行ベクトル規約 world*view*proj) で
-    // シャドウ深度 (スライス c) へ描く。count は kCascades 以下
+    // シャドウ深度 (スライス c) へ描く。count は kCascades 以下。
+    // instancing = 非スキン連続 run の一括描画を併用 (M38f)
     void Render(GraphicsDevice& device, ShaderManager& shaders, const RenderQueue& queue,
-                RenderResources& resources, const DirectX::XMFLOAT4X4* lightViewProjs, int count);
+                RenderResources& resources, const DirectX::XMFLOAT4X4* lightViewProjs, int count,
+                bool instancing = true);
 
     ID3D11ShaderResourceView* SRV() const { return srv_.Get(); } // Texture2DArray (R32_FLOAT)
     int Resolution() const { return resolution_; }
@@ -34,6 +38,12 @@ private:
     bool ready_ = false;
     int resolution_ = 0;
     AssetID depthShader_ = {};
+    // ---- インスタンシング (M38f)。run はカスケード間で共通 (充填は 1 回) ----
+    AssetID depthInstancedShader_ = {};
+    MeshInstanceBuffer instanceBuf_;
+    std::vector<uint8_t> canInstance_; // フレーム毎スクラッチ
+    std::vector<MeshInstanceRun> runs_;
+    std::vector<DirectX::XMFLOAT4X4> worlds_;
 
     Microsoft::WRL::ComPtr<ID3D11Texture2D> tex_; // ArraySize = kCascades
     Microsoft::WRL::ComPtr<ID3D11DepthStencilView> dsv_[kCascades]; // スライス毎

@@ -75,6 +75,8 @@ struct RenderView {
     float iblSpecMips = 0.0f;
     // ---- SSAO (M38e)。Deferred のみ消費 (Forward は無視) ----
     int32_t ssaoEnabled = 0;
+    // ---- メッシュ GPU インスタンシング (M38f)。0 = 全て per-item 描画 (A/B 比較用) ----
+    int32_t instancingEnabled = 1;
 };
 
 // GPU へ渡すライト 1 個 (定数バッファ配列要素、16 バイト境界に揃えた 64 バイト)。

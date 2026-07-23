@@ -1,0 +1,117 @@
+// Forward パス標準ライティングのインスタンス版 (M38f)。
+// ワールド行列を StructuredBuffer + SV_InstanceID で引く以外は forward_lit.hlsl と同一。
+// PerObject の gWorld は未使用 (レイアウト互換のため残す)。gInstanceBase は末尾 append。
+
+#include "common.hlsli"
+
+cbuffer PerFrame : register(b0)
+{
+    float4x4 gViewProj;
+    float3   gCameraPos;
+    int      gLightCount;
+    float3   gAmbient;
+    float    _pad0;
+    Light    gLights[MAX_LIGHTS];
+    float4x4 gShadowVP;      // transpose(lightView*lightProj)
+    float    gShadowTexel;   // 1/解像度
+    int      gShadowEnabled; // 0=影無効
+    float2   _pad1;
+    // ---- フォグ (M29d、末尾 append) ----
+    float3   gFogColor;
+    int      gFogMode; // -1=無効
+    float    gFogDensity;
+    float    gFogStart;
+    float    gFogEnd;
+    float    _fogPad;
+    // ---- IBL (M38c、末尾 append) ----
+    int      gIblEnabled;  // 0=定数アンビエント (従来)
+    float    gIblSpecMips; // prefiltered の最終 mip (roughness*mips で LOD)
+    float2   _iblPad;
+    // ---- CSM (M38d、末尾 append)。gShadowVP はカスケード 0 ----
+    float4x4 gShadowVP12[2];
+    float4   gCascadeInfo; // xyz = split far 境界 (デバッグ用) / w = カスケード数
+};
+
+cbuffer PerObject : register(b1)
+{
+    float4x4 gWorld; // インスタンス版では未使用 (レイアウト互換)
+    float4   gBaseColor;
+    // ---- インスタンシング (M38f、末尾 append) ----
+    int      gInstanceBase; // gInstances 内の run 開始位置
+    float3   _instPad;
+};
+
+cbuffer MaterialParams : register(b2)
+{
+    float  gMetallic;
+    float  gRoughness;
+    int    gHasNormal; // 0=ノーマルマップ無し (幾何法線をそのまま使う)
+    float  _matPad;
+};
+
+// CPU 側は XMFLOAT4X4 (行優先) をそのまま書くため row_major で受ける
+struct MeshInstance
+{
+    row_major float4x4 world;
+};
+StructuredBuffer<MeshInstance> gInstances : register(t0); // VS 側 (PS の t0 とは独立)
+
+Texture2D                gAlbedo        : register(t0);
+Texture2DArray           gShadowMap     : register(t1); // M38d: CSM カスケード配列
+Texture2D                gNormalTex     : register(t2);
+TextureCube              gIblIrradiance : register(t3); // M38c
+TextureCube              gIblPrefiltered: register(t4);
+Texture2D                gIblBrdfLut    : register(t5);
+SamplerState             gSampler       : register(s0);
+SamplerComparisonState   gShadowSampler : register(s1);
+SamplerState             gIblSampler    : register(s2); // LINEAR/CLAMP (M38c)
+
+struct VSIn
+{
+    float3 pos    : POSITION;
+    float3 normal : NORMAL;
+    float2 uv     : TEXCOORD0;
+    uint   instId : SV_InstanceID;
+};
+
+struct VSOut
+{
+    float4 pos     : SV_Position;
+    float3 normalW : NORMAL;
+    float2 uv      : TEXCOORD0;
+    float3 posW    : TEXCOORD1;
+};
+
+VSOut VSMain(VSIn v)
+{
+    VSOut o;
+    const float4x4 world = gInstances[gInstanceBase + v.instId].world;
+    const float4 posW = mul(float4(v.pos, 1.0f), world);
+    o.pos = mul(posW, gViewProj);
+    o.normalW = normalize(mul(v.normal, (float3x3)world));
+    o.uv = v.uv;
+    o.posW = posW.xyz;
+    return o;
+}
+
+float4 PSMain(VSOut i) : SV_Target
+{
+    float3 n = normalize(i.normalW);
+    if (gHasNormal != 0) {
+        const float3 tsN = gNormalTex.Sample(gSampler, i.uv).xyz * 2.0f - 1.0f;
+        n = PerturbNormal(n, i.posW, i.uv, tsN);
+    }
+    const float4 albedo = gAlbedo.Sample(gSampler, i.uv) * gBaseColor;
+    float dirShadow = 1.0f;
+    if (gShadowEnabled != 0) {
+        dirShadow = SampleShadowCSM(gShadowMap, gShadowSampler, gShadowVP, gShadowVP12[0],
+                                    gShadowVP12[1], (int)gCascadeInfo.w, i.posW, gShadowTexel);
+    }
+    float3 color = ApplyLighting(albedo.rgb, n, i.posW, gCameraPos, gMetallic, gRoughness,
+                                 gAmbient, gLights, gLightCount, dirShadow, gIblEnabled,
+                                 gIblSpecMips, gIblIrradiance, gIblPrefiltered, gIblBrdfLut,
+                                 gIblSampler, 1.0f); // SSAO は Deferred のみ
+    color = ApplyFog(color, gFogColor, gFogMode, gFogDensity, gFogStart, gFogEnd,
+                     length(gCameraPos - i.posW)); // M29d
+    return float4(color, albedo.a);
+}

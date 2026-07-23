@@ -46,6 +46,9 @@ struct PerFrameCB {
 struct PerObjectCB {
     XMFLOAT4X4 world;
     XMFLOAT4 baseColor;
+    // ---- インスタンシング (M38f、末尾 append)。インスタンス版シェーダのみ参照 ----
+    int32_t instanceBase;
+    float instPad[3];
 };
 
 // forward_lit.hlsl の MaterialParams (b2) と一致 (16 バイト)
@@ -159,6 +162,9 @@ bool ForwardPath::Init(GraphicsDevice& device, ShaderManager& shaders)
 
     // スキンメッシュ用のシェーダをプリロード (BLENDINDICES 入力レイアウトもここで構築される)
     skinnedShader_ = shaders.Load("forward_skinned");
+    // インスタンシング (M38f)。litShader_ は run 判定用 (これ以外のシェーダは差し替え不可)
+    litShader_ = shaders.Load("forward_lit");
+    litInstancedShader_ = shaders.Load("forward_lit_instanced");
     // スカイボックス (M29d)。失敗しても続行 (空が clearColor になるだけ)
     skybox_.Init(device, shaders);
     return true;
@@ -174,6 +180,7 @@ void ForwardPath::Shutdown()
     depthTransparent_.Reset();
     blendOpaque_.Reset();
     blendAlpha_.Reset();
+    instanceBuf_.Reset();
 }
 
 void ForwardPath::Render(GraphicsDevice& device, const RenderView& view, const RenderQueue& queue,
@@ -237,26 +244,56 @@ void ForwardPath::Render(GraphicsDevice& device, const RenderView& view, const R
     dc->RSSetState(rasterizer_.Get());
     dc->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
+    // インスタンス run 検出 (M38f): forward_lit マテリアルの非スキン opaque 連続 run のみ。
+    // シェーダ未ロード時や無効化時は runs 空 = 全て従来の per-item 描画
+    runs_.clear();
+    worlds_.clear();
+    ShaderProgram* instProg = shaders.Get(litInstancedShader_);
+    if (view.instancingEnabled != 0 && instProg && instProg->valid) {
+        canInstance_.resize(queue.opaque.size());
+        for (size_t i = 0; i < queue.opaque.size(); ++i) {
+            const RenderItem& it = queue.opaque[i];
+            bool can = (it.bones == nullptr);
+            if (can) {
+                Material* m = resources.materials.Get(it.material);
+                can = m && m->shader.value == litShader_.value
+                    && resources.meshes.Get(it.mesh) != nullptr;
+            }
+            canInstance_[i] = can ? 1 : 0;
+        }
+        BuildInstanceRuns(queue.opaque, canInstance_, runs_, worlds_);
+        if (!worlds_.empty() && instanceBuf_.Upload(device, worlds_)) {
+            ID3D11ShaderResourceView* isrv = instanceBuf_.SRV();
+            dc->VSSetShaderResources(0, 1, &isrv);
+        } else {
+            runs_.clear();
+        }
+    }
+
     // 不透明
     dc->OMSetDepthStencilState(depthOpaque_.Get(), 0);
     dc->OMSetBlendState(blendOpaque_.Get(), nullptr, 0xFFFFFFFFu);
-    DrawItems(device, queue.opaque, view, resources, shaders);
+    DrawItems(device, queue.opaque, view, resources, shaders, runs_.empty() ? nullptr : &runs_);
+
+    // インスタンス SRV を外す (次フレームの Map と競合させない)
+    ID3D11ShaderResourceView* nullVsSrv = nullptr;
+    dc->VSSetShaderResources(0, 1, &nullVsSrv);
 
     // スカイボックス (M29d): 不透明後・透明前。深度 1.0 のピクセルだけ塗る。
     // PS の b3 のみ使うので b0-b2 / トポロジは不変 (透明段は DrawItems がシェーダ再バインド)
     skybox_.Render(device, shaders, view);
 
-    // 半透明
+    // 半透明 (インスタンシング対象外)
     if (!queue.transparent.empty()) {
         dc->OMSetDepthStencilState(depthTransparent_.Get(), 0);
         dc->OMSetBlendState(blendAlpha_.Get(), nullptr, 0xFFFFFFFFu);
-        DrawItems(device, queue.transparent, view, resources, shaders);
+        DrawItems(device, queue.transparent, view, resources, shaders, nullptr);
     }
 }
 
 void ForwardPath::DrawItems(GraphicsDevice& device, const std::vector<RenderItem>& items,
                             const RenderView& view, RenderResources& resources,
-                            ShaderManager& shaders)
+                            ShaderManager& shaders, const std::vector<MeshInstanceRun>* runs)
 {
     (void)view;
     ID3D11DeviceContext* dc = device.Context();
@@ -265,8 +302,65 @@ void ForwardPath::DrawItems(GraphicsDevice& device, const std::vector<RenderItem
     uint64_t boundTexture = 0;
     uint64_t boundNormal = 0;
     uint64_t boundMesh = 0;
+    size_t nextRun = 0;
 
-    for (const RenderItem& item : items) {
+    for (size_t idx = 0; idx < items.size(); ++idx) {
+        const RenderItem& item = items[idx];
+
+        // インスタンス run の先頭なら一括描画 (M38f)。run 判定時に mat/mesh/シェーダの
+        // 有効性は確認済み (Render の canInstance_ 構築を参照)
+        if (runs && nextRun < runs->size() && (*runs)[nextRun].first == idx) {
+            const MeshInstanceRun& run = (*runs)[nextRun];
+            ++nextRun;
+            Material* mat = resources.materials.Get(item.material);
+            Mesh* mesh = resources.meshes.Get(item.mesh);
+            ShaderProgram* prog = shaders.Get(litInstancedShader_);
+            if (litInstancedShader_.value != boundShader) {
+                dc->IASetInputLayout(prog->inputLayout.Get());
+                dc->VSSetShader(prog->vs.Get(), nullptr, 0);
+                dc->PSSetShader(prog->ps.Get(), nullptr, 0);
+                boundShader = litInstancedShader_.value;
+            }
+            const AssetID texId =
+                mat->texture.IsNull() ? resources.textures.White() : mat->texture;
+            if (texId.value != boundTexture) {
+                Texture* tex = resources.textures.Get(texId);
+                ID3D11ShaderResourceView* srv = tex ? tex->srv.Get() : nullptr;
+                dc->PSSetShaderResources(0, 1, &srv);
+                boundTexture = texId.value;
+            }
+            const AssetID nrmId =
+                mat->normalTex.IsNull() ? resources.textures.White() : mat->normalTex;
+            if (nrmId.value != boundNormal) {
+                Texture* ntex = resources.textures.Get(nrmId);
+                ID3D11ShaderResourceView* nsrv = ntex ? ntex->srv.Get() : nullptr;
+                dc->PSSetShaderResources(2, 1, &nsrv);
+                boundNormal = nrmId.value;
+            }
+            if (item.mesh.value != boundMesh) {
+                const UINT stride = sizeof(MeshVertex);
+                const UINT offset = 0;
+                ID3D11Buffer* vb = mesh->vb.Get();
+                dc->IASetVertexBuffers(0, 1, &vb, &stride, &offset);
+                dc->IASetIndexBuffer(mesh->ib.Get(), DXGI_FORMAT_R32_UINT, 0);
+                boundMesh = item.mesh.value;
+            }
+            PerObjectCB po = {};
+            po.world = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 }; // 未使用
+            po.baseColor = SrgbToLinear(mat->baseColor);
+            po.instanceBase = static_cast<int32_t>(run.base);
+            UploadCB(dc, perObjectCB_.Get(), po);
+            MaterialCB mc = {};
+            mc.metallic = mat->metallic;
+            mc.roughness = mat->roughness;
+            mc.hasNormal = mat->normalTex.IsNull() ? 0 : 1;
+            UploadCB(dc, materialCB_.Get(), mc);
+            dc->DrawIndexedInstanced(mesh->indexCount, run.count, 0, 0, 0);
+            prof::AddDraw(static_cast<int>(mesh->indexCount / 3 * run.count));
+            idx += run.count - 1; // for の ++idx と合わせて run 全体を飛ばす
+            continue;
+        }
+
         Material* mat = resources.materials.Get(item.material);
         if (!mat) {
             continue;
