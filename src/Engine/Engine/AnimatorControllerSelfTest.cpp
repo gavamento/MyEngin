@@ -169,6 +169,37 @@ bool RunAnimatorControllerSelfTest()
         check(lt && std::fabs(lt->position.y) > 0.2f, "idle clip animates LocalTransform.position.y");
     }
 
+    // ---- (M39a) clip サブ参照の GUID round-trip + 旧形式後方互換 ----
+    {
+        // 解決済み clipHash は数値 (GUID) で保存される
+        const json cj = ControllerLibrary::ToJson(ca);
+        const json& st0 = cj["states"][0];
+        check(st0["clip"].is_number_unsigned(), "ToJson writes resolved clip as guid number");
+        check(st0["clip"].get<uint64_t>() == idleH, "ToJson clip guid == clipHash");
+
+        // 数値 clip の読み戻し: clipHash 直接 (パス解決不要)
+        ControllerAsset back;
+        check(ControllerLibrary::FromJson(cj, back), "FromJson accepts guid clip");
+        check(back.states.size() == 2 && back.states[0].clipHash == idleH
+                  && back.states[1].clipHash == walkH,
+              "FromJson restores clipHash from guid");
+        check(back.states[0].clipPath.empty(), "guid clip leaves legacy clipPath empty");
+
+        // 旧形式 (文字列パス) の後方互換読み: clipPath に載り clipHash は未解決のまま
+        json legacy = cj;
+        legacy["states"][0]["clip"] = "idle.anim.json";
+        ControllerAsset old;
+        check(ControllerLibrary::FromJson(legacy, old), "FromJson accepts legacy path clip");
+        check(old.states[0].clipPath == "idle.anim.json" && old.states[0].clipHash == 0,
+              "legacy string clip -> clipPath (resolved later by LoadFromFile)");
+
+        // 未解決 (clipHash==0) の保存は旧 clipPath を温存する (壊れた参照を消さない)
+        const json rewritten = ControllerLibrary::ToJson(old);
+        check(rewritten["states"][0]["clip"].is_string()
+                  && rewritten["states"][0]["clip"].get<std::string>() == "idle.anim.json",
+              "unresolved clip keeps legacy path on save");
+    }
+
     if (failCount == 0) {
         MYE_LOG_INFO("==== Animator Controller self test: ALL PASS ====");
         return true;

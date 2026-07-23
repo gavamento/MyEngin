@@ -54,6 +54,9 @@
     <ClCompile Include="..\src\Engine\Core\Archetype.cpp">
       <Filter>Core</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Core\AssetGuidResolver.cpp">
+      <Filter>Core</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Core\AssetKeyResolver.cpp">
       <Filter>Core</Filter>
     </ClCompile>
@@ -310,6 +313,9 @@
       <Filter>Renderer</Filter>
     </ClCompile>
     <ClInclude Include="..\src\Engine\Core\Archetype.h">
+      <Filter>Core</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Core\AssetGuidResolver.h">
       <Filter>Core</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Core\AssetKeyResolver.h">

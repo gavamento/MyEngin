@@ -27,6 +27,7 @@
   <!-- BEGIN FILES (tools\gen_project_files.ps1 が再生成する。手編集しない) -->
   <ItemGroup>
     <ClCompile Include="..\src\Engine\Core\Archetype.cpp" />
+    <ClCompile Include="..\src\Engine\Core\AssetGuidResolver.cpp" />
     <ClCompile Include="..\src\Engine\Core\AssetKeyResolver.cpp" />
     <ClCompile Include="..\src\Engine\Core\Check.cpp" />
     <ClCompile Include="..\src\Engine\Core\ComponentRegistry.cpp" />
@@ -113,6 +114,7 @@
     <ClCompile Include="..\src\Engine\Renderer\TextureCook.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\TextureCookSelfTest.cpp" />
     <ClInclude Include="..\src\Engine\Core\Archetype.h" />
+    <ClInclude Include="..\src\Engine\Core\AssetGuidResolver.h" />
     <ClInclude Include="..\src\Engine\Core\AssetKeyResolver.h" />
     <ClInclude Include="..\src\Engine\Core\Check.h" />
     <ClInclude Include="..\src\Engine\Core\ComponentRegistry.h" />

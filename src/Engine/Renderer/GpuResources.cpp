@@ -10,6 +10,7 @@
 
 #include "nlohmann/json.hpp"
 
+#include "Engine/Core/AssetGuidResolver.h"
 #include "Engine/Core/AssetKeyResolver.h"
 #include "Engine/Core/Hash.h"
 #include "Engine/Core/Log.h"
@@ -896,17 +897,40 @@ AssetID MaterialLibrary::LoadFromFile(const std::wstring& path, TextureLibrary& 
     m.roughness = root.value("roughness", 0.5f);
     m.transparent = root.value("transparent", false) ? 1 : 0;
 
-    // texture/normalMap は assetsRoot 相対。空文字は「なし」(texture は White にフォールバック)
-    auto resolveTex = [&](const std::string& rel, bool srgb) -> AssetID {
-        if (rel.empty()) {
+    // texture/normalMap のサブ参照 (M39a で GUID 化):
+    //   数値 = GUID (assetguid::ResolvePath で現在パスへ解決 — リネーム/移動に追従)
+    //   文字列 = 従来の assetsRoot 相対パス (後方互換読み)。空文字/0 は「なし」
+    auto resolveTex = [&](const char* key, bool srgb) -> AssetID {
+        if (!root.contains(key)) {
             return {};
         }
-        return textures.LoadFile(assetsRoot + L"\\" + Utf8ToWide(rel), srgb);
+        const nlohmann::json& node = root[key];
+        if (node.is_number_unsigned() || node.is_number_integer()) {
+            const uint64_t guid = node.get<uint64_t>();
+            if (guid == 0) {
+                return {};
+            }
+            const std::wstring full = assetguid::ResolvePath(guid);
+            if (full.empty()) {
+                MYE_LOG_WARN("material texture guid %llu unresolved: %s",
+                             static_cast<unsigned long long>(guid), WideToUtf8(path).c_str());
+                return {};
+            }
+            return textures.LoadFile(full, srgb);
+        }
+        if (node.is_string()) {
+            const std::string rel = node.get<std::string>();
+            if (rel.empty()) {
+                return {};
+            }
+            return textures.LoadFile(assetsRoot + L"\\" + Utf8ToWide(rel), srgb);
+        }
+        return {};
     };
     // M38a: アルベドは sRGB デコード、ノーマルマップはリニアのまま
-    const AssetID baseTex = resolveTex(root.value("texture", std::string()), true);
+    const AssetID baseTex = resolveTex("texture", true);
     m.texture = baseTex.IsNull() ? textures.White() : baseTex;
-    m.normalTex = resolveTex(root.value("normalMap", std::string()), false);
+    m.normalTex = resolveTex("normalMap", false);
 
     const AssetID id = HashForPath(path);
     materials_[id.value] = m;

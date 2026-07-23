@@ -8,6 +8,7 @@
 #include <fstream>
 #include <system_error>
 
+#include "Engine/Core/AssetGuidResolver.h"
 #include "Engine/Core/AssetKeyResolver.h"
 #include "Engine/Core/Hash.h"
 #include "Engine/Core/Log.h"
@@ -269,16 +270,24 @@ uint64_t KeyResolverThunk(void* user, const std::wstring& normalizedPath)
                                                           /*createIfMissing=*/false);
 }
 
+// assetguid::ResolvePath → AssetDatabase の橋渡し (M39a、逆方向)
+std::wstring GuidResolverThunk(void* user, uint64_t guid)
+{
+    return static_cast<AssetDatabase*>(user)->PathForGuid(guid);
+}
+
 } // namespace
 
 void AssetDatabase::InstallAsKeyResolver()
 {
     assetkey::Install(&KeyResolverThunk, this);
+    assetguid::Install(&GuidResolverThunk, this); // M39a: GUID→パスも同じ DB で解決
 }
 
 void AssetDatabase::UninstallKeyResolver()
 {
     assetkey::Install(nullptr, nullptr);
+    assetguid::Install(nullptr, nullptr);
 }
 
 void AssetDatabase::MoveAsset(const std::wstring& oldPath, const std::wstring& newPath)

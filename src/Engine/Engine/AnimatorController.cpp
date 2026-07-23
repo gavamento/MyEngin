@@ -132,7 +132,8 @@ uint64_t ControllerLibrary::LoadFromFile(const std::wstring& path)
         return 0;
     }
     a.name = NameFromPath(path);
-    // clipPath は controller ファイルのディレクトリからの相対で解決する
+    // 旧形式の clipPath (文字列参照) は controller ファイルのディレクトリからの相対で解決する。
+    // GUID 参照 (M39a) は FromJson が clipHash を直接埋めるのでここは素通り
     const fs::path dir = fs::path(path).parent_path();
     for (ControllerState& st : a.states) {
         if (!st.clipPath.empty()) {
@@ -192,8 +193,16 @@ json ControllerLibrary::ToJson(const ControllerAsset& c)
     root["parameters"] = std::move(params);
     json states = json::array();
     for (const ControllerState& s : c.states) {
+        // M39a: 解決済みクリップは GUID (数値) で書く — クリップのリネーム/移動に追従する。
+        // 未解決 (clipHash==0) は旧 clipPath 文字列を温存 (壊れた参照を消さない)
+        json clip;
+        if (s.clipHash != 0) {
+            clip = s.clipHash;
+        } else {
+            clip = s.clipPath;
+        }
         states.push_back({ { "name", s.name },
-                           { "clip", s.clipPath },
+                           { "clip", std::move(clip) },
                            { "speed", s.speed },
                            { "loop", s.loop } });
     }
@@ -234,7 +243,16 @@ bool ControllerLibrary::FromJson(const json& j, ControllerAsset& out)
     for (const json& s : j["states"]) {
         ControllerState cs;
         cs.name = s.value("name", std::string());
-        cs.clipPath = s.value("clip", std::string());
+        // M39a: "clip" 両対応読み — 数値なら GUID (= AnimationLibrary のキーそのもの)、
+        // 文字列なら従来の相対パス (LoadFromFile が baseDir 相対で clipHash に解決)
+        if (s.contains("clip")) {
+            const json& clip = s["clip"];
+            if (clip.is_number_unsigned() || clip.is_number_integer()) {
+                cs.clipHash = clip.get<uint64_t>();
+            } else if (clip.is_string()) {
+                cs.clipPath = clip.get<std::string>();
+            }
+        }
         cs.speed = s.value("speed", 1);
         cs.loop = s.value("loop", 1);
         out.states.push_back(std::move(cs));

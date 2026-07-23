@@ -159,8 +159,9 @@ void AnimatorControllerWindow::OnImGui(EngineContext& ctx, Selection& selection)
             if (ImGui::BeginCombo("clip", cur)) {
                 for (const auto& c : clips) {
                     if (ImGui::Selectable(c.name.c_str(), c.hash == s.clipHash)) {
+                        // M39a: 保存は clipHash (= GUID) の数値参照 — パスの推測書きは不要
                         s.clipHash = c.hash;
-                        s.clipPath = c.name + ".anim.json";
+                        s.clipPath.clear();
                     }
                 }
                 ImGui::EndCombo();

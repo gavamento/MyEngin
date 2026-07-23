@@ -4,6 +4,7 @@
 #include <fstream>
 #include <system_error>
 
+#include "Engine/Core/AssetGuidResolver.h"
 #include "Engine/Core/AssetKeyResolver.h"
 #include "Engine/Core/Hash.h"
 #include "Engine/Core/Log.h"
@@ -115,9 +116,17 @@ bool RunAssetDatabaseSelfTest()
         // 実ライブラリのキー計算も GUID に追従する (登録キーの安定性 = シーン参照維持の核)
         check(AnimationLibrary::HashForPath(moved) == guidFoo,
               "resolver: AnimationLibrary::HashForPath follows GUID");
+        // ---- GuidResolver (M39a): GUID → 現在パス (.mat/.controller のサブ参照解決) ----
+        check(assetguid::ResolvePath(guidFoo) == moved,
+              "guid resolver: guid resolves to current (moved) path");
+        check(assetguid::ResolvePath(0xDEADBEEFDEADBEEFull).empty(),
+              "guid resolver: unknown guid resolves to empty");
+        check(assetguid::ResolvePath(0).empty(), "guid resolver: guid 0 resolves to empty");
         AssetDatabase::UninstallKeyResolver();
         check(assetkey::Resolve(NormalizePathKey(moved)) == ExpectedPathHash(moved),
               "resolver: uninstall restores default path-hash");
+        check(assetguid::ResolvePath(guidFoo).empty(),
+              "guid resolver: uninstall restores default (empty)");
 
         // ---- end-to-end: 移動後の再起動相当 (新 DB で再走査 + resolver) でもキー不変 ----
         AssetDatabase db4;

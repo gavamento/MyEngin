@@ -20,8 +20,10 @@ struct ControllerParam {
 
 struct ControllerState {
     std::string name;
-    std::string clipPath;   // .anim.json への相対パス (controller ファイルからの相対)
-    uint64_t clipHash = 0;  // 解決済み AnimationClip ハッシュ (AnimationLibrary のキー)
+    // 旧形式 (M39a 以前) の .anim.json 相対パス。読み込み後方互換のためだけに残る —
+    // 保存は clipHash (= GUID) の数値参照で行い、リネーム/移動に追従する
+    std::string clipPath;
+    uint64_t clipHash = 0;  // 解決済み AnimationClip ハッシュ = GUID (AnimationLibrary のキー)
     int32_t speed = 1;      // 1 tick あたりの進み tick 数
     int32_t loop = 1;       // 0=末尾停止 1=ループ
 };
@@ -71,7 +73,8 @@ public:
     std::vector<ControllerEntry> Enumerate() const;
 
     static nlohmann::json ToJson(const ControllerAsset& c);
-    // FromJson は clipPath を読むが clipHash は解決しない (LoadFromFile が baseDir 相対で解決する)
+    // FromJson の "clip" は両対応 (M39a): 数値 = GUID → clipHash 直接 / 文字列 = 旧相対パス →
+    // clipPath に読むだけで clipHash は解決しない (LoadFromFile が baseDir 相対で解決する)
     static bool FromJson(const nlohmann::json& j, ControllerAsset& out);
 
 private:

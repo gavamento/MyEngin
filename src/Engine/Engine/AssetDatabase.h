@@ -78,10 +78,11 @@ public:
     // 物理的な移動 (fs::rename + .meta 同伴) は呼び出し側 (AssetOps::MoveAssetToFolder) の責務
     void MoveAsset(const std::wstring& oldPath, const std::wstring& newPath);
 
-    // このインスタンスを assetkey::Resolve のバックエンドにする (M30c)。
+    // このインスタンスを assetkey::Resolve + assetguid::ResolvePath のバックエンドにする
+    // (M30c パス→GUID / M39a GUID→パス)。
     // 解決は GuidForPath(path, createIfMissing=false) — テーブル → ディスク .meta → path-hash。
     // 未移動アセットは GUID == path-hash なので従来とビット同一。
-    // EngineLoop が ScanAndSync 直後に呼び、終了時に Uninstall する
+    // EngineLoop が ScanAndSync 直後に呼び、終了時に Uninstall する (両フック同時)
     void InstallAsKeyResolver();
     static void UninstallKeyResolver();
 
