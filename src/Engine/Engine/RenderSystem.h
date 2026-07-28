@@ -97,6 +97,9 @@ public:
     // シーン描画後 (ポスプロ解決前) に深度テスト付きの線として重ねる
     const std::vector<DebugLineCmd>* debugLines = nullptr;
 
+    // M44d: ポストプロセス解決の GPU 時間 (直近の Resolve、ProfilerWindow 表示用)
+    float PostFxGpuMs() const { return postFx_.ResolveGpuMs(); }
+
 private:
     RenderQueue queue_;     // フレーム毎に再利用 (アロケーション回避)
     PostProcess postFx_;    // HDR 中間 + トーンマップ (遅延 Init)
@@ -106,6 +109,15 @@ private:
     // スキンメッシュのボーンパレット (M18)。フレーム毎に再構築。deque = push_back で
     // 既存要素の .data() ポインタが無効化されない (RenderItem.bones が参照する)
     std::deque<std::vector<DirectX::XMFLOAT4X4>> skinPalettes_;
+    // M44d: viewKey (1=runtime/2=SceneView/3=GameView) 毎の前フレーム viewProj。
+    // 初フレーム/リサイズは valid=false → モーションブラー 0 (viewKey=0 は保存しない)
+    struct PrevViewProj {
+        DirectX::XMFLOAT4X4 m = {};
+        int w = 0;
+        int h = 0;
+        bool valid = false;
+    };
+    PrevViewProj prevVP_[4];
 };
 
 } // namespace mye

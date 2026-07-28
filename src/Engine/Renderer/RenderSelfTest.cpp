@@ -103,6 +103,8 @@ void TestPostFxMerge()
     comp.dofFocusDistance = 20.0f; // M44c
     comp.dofFocusRange = 8.0f;
     comp.dofMaxRadius = 12.0f;
+    comp.motionBlurIntensity = 0.6f; // M44d
+    comp.mbMaxPixels = 24.0f;
     const PostProcess::Settings s = MergeCameraPostFx(base, comp);
     TEST_CHECK(s.chromAberration == 0.01f);
     TEST_CHECK(s.vignetteIntensity == 0.4f);
@@ -117,6 +119,7 @@ void TestPostFxMerge()
     TEST_CHECK(s.autoExposure == 1 && s.aeSpeed == 5.0f && s.aeMin == 0.5f && s.aeMax == 8.0f);
     TEST_CHECK(s.dofFocusDistance == 20.0f && s.dofFocusRange == 8.0f
                && s.dofMaxRadius == 12.0f); // M44c
+    TEST_CHECK(s.motionBlurIntensity == 0.6f && s.mbMaxPixels == 24.0f); // M44d
     // M44b: aeInstant は base 維持 (applyGamma と同じ Settings 専用フィールド)
     PostProcess::Settings instantBase;
     instantBase.aeInstant = true;
@@ -130,6 +133,7 @@ void TestPostFxMerge()
     TEST_CHECK(d.lutIntensity == 0.0f && d.lutTexture.IsNull()); // M44a: 既定 = off
     TEST_CHECK(d.autoExposure == 0); // M44b: 既定 = off
     TEST_CHECK(d.dofMaxRadius == 0.0f); // M44c: 既定 = off
+    TEST_CHECK(d.motionBlurIntensity == 0.0f); // M44d: 既定 = off
 }
 
 // メッシュインスタンシングの run 検出 (M38f): 同一 (material,mesh) の連続 2 件以上のみ、
@@ -297,6 +301,30 @@ void TestSignedCoC()
     TEST_CHECK(SignedCoC(11.0f, 10.0f, 0.0f) == 1.0f);
 }
 
+// M44d: 深度再投影 (postfx_motionblur.hlsl のミラー検証)
+void TestReprojectUv()
+{
+    MYE_LOG_INFO("[selftest] motion blur reprojection (M44d)");
+    XMFLOAT4X4 identity;
+    XMStoreFloat4x4(&identity, XMMatrixIdentity());
+    float pu = 0.0f, pv = 0.0f;
+    // 恒等: カメラ不動 → prevUV == uv (速度 0)
+    TEST_CHECK(ReprojectUv(identity, identity, 0.3f, 0.7f, 0.5f, pu, pv));
+    TEST_CHECK(std::fabs(pu - 0.3f) < 1e-5f && std::fabs(pv - 0.7f) < 1e-5f);
+    // 既知の平行移動: 前フレームがワールド +X に 0.2 ずれた投影 → prevU = u + 0.1
+    // (NDC 幅 2 に対する +0.2 = UV では +0.1。y は v 反転規約で不変)
+    XMFLOAT4X4 shifted;
+    XMStoreFloat4x4(&shifted, XMMatrixTranslation(0.2f, 0.0f, 0.0f));
+    TEST_CHECK(ReprojectUv(identity, shifted, 0.5f, 0.5f, 0.5f, pu, pv));
+    TEST_CHECK(std::fabs(pu - 0.6f) < 1e-5f && std::fabs(pv - 0.5f) < 1e-5f);
+    // 前フレームで背面 (透視 w<=0) → false (ブラーしない)
+    XMFLOAT4X4 persp;
+    XMStoreFloat4x4(&persp, XMMatrixPerspectiveFovLH(XMConvertToRadians(60.0f), 1.0f,
+                                                     0.1f, 100.0f));
+    // 恒等 invViewProj で depth=-1 → ワールド z=-1 (カメラ背面) → 透視 w<0
+    TEST_CHECK(!ReprojectUv(identity, persp, 0.5f, 0.5f, -1.0f, pu, pv));
+}
+
 } // namespace
 
 bool RunRenderSelfTest()
@@ -311,6 +339,7 @@ bool RunRenderSelfTest()
     TestLutStripUv();
     TestAutoExposureBins();
     TestSignedCoC();
+    TestReprojectUv();
     if (g_failCount == 0) {
         MYE_LOG_INFO("[selftest] render: ALL PASS");
         return true;

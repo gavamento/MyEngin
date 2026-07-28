@@ -659,6 +659,18 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
                 effective = MergeCameraPostFx(postFxSettings, *pfx);
             }
         }
+        // M44d: 前フレーム viewProj (viewKey 毎)。初フレーム/リサイズは invalid = ブラー 0。
+        // SceneView (cameraOverride) はエディタ操作中のスミアが UX を阻害するため強制 off
+        if (cameraOverride) {
+            effective.motionBlurIntensity = 0.0f;
+        }
+        if (target.viewKey > 0 && target.viewKey < 4) {
+            const PrevViewProj& p = prevVP_[target.viewKey];
+            if (p.valid && p.w == target.width && p.h == target.height) {
+                view.prevViewProj = p.m;
+                view.prevViewProjValid = 1;
+            }
+        }
         // M44a: LUT の SRV 解決 (MaterialLibrary の GUID→パス解決と同じ流儀)。
         // 未ロードなら遅延ロード — LUT はデータなので srgb=false (デコード禁止)。
         // 解決できなければ lutSRV=null のまま = Resolve 側で強制 off
@@ -677,6 +689,14 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
         }
         postFx_.Resolve(device, shaders, *hdr, target.rtv, target.width, target.height,
                         effective, view, distortionActive); // M43b: view = 深度/太陽の供給口
+    }
+    // M44d: 次フレームのモーションブラー用に viewProj を保存 (viewKey=0 = AssetPreview は対象外)
+    if (target.viewKey > 0 && target.viewKey < 4) {
+        PrevViewProj& p = prevVP_[target.viewKey];
+        XMStoreFloat4x4(&p.m, XMLoadFloat4x4(&view.view) * XMLoadFloat4x4(&view.proj));
+        p.w = target.width;
+        p.h = target.height;
+        p.valid = true;
     }
     return cameraFound;
 }

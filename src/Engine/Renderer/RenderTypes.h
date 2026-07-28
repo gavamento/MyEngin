@@ -102,6 +102,10 @@ struct RenderView {
     float fogInscatterPower = 8.0f;
     DirectX::XMFLOAT3 sunDirection = { 0.0f, -1.0f, 0.0f }; // 光の進行方向 (正規化)
     DirectX::XMFLOAT3 sunColor = { 0.0f, 0.0f, 0.0f };      // リニア・強度込み
+    // ---- M44d: カメラモーションブラー (末尾 append)。RenderSystem が viewKey 毎の
+    //      前フレーム viewProj を供給。valid=0 = 初フレーム/リサイズ = ブラー 0 ----
+    DirectX::XMFLOAT4X4 prevViewProj = {}; // 未転置 (view*proj)
+    int32_t prevViewProjValid = 0;
 };
 
 // GPU へ渡すライト 1 個 (定数バッファ配列要素、16 バイト境界に揃えた 64 バイト)。

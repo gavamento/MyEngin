@@ -39,6 +39,8 @@ PostProcess::Settings MergeCameraPostFx(const PostProcess::Settings& base,
     s.dofFocusDistance = comp.dofFocusDistance; // M44c
     s.dofFocusRange = comp.dofFocusRange;
     s.dofMaxRadius = comp.dofMaxRadius;
+    s.motionBlurIntensity = comp.motionBlurIntensity; // M44d
+    s.mbMaxPixels = comp.mbMaxPixels;
     return s;
 }
 namespace {
@@ -124,6 +126,15 @@ struct DofCB {
     float pad;
 };
 
+// postfx_motionblur.hlsl の MotionBlurCB (144 バイト)
+struct MotionBlurCB {
+    DirectX::XMFLOAT4X4 invViewProj;  // transpose(inverse(view*proj))
+    DirectX::XMFLOAT4X4 prevViewProj; // transpose(前フレームの view*proj)
+    float intensity;
+    float maxPixels;
+    float screenW, screenH;
+};
+
 // 構造化バッファ + UAV/SRV の生成 (GpuParticleBackend.cpp の CreateStructured を範に縮約)
 bool CreateStructuredBuf(ID3D11Device* dev, UINT elemSize, UINT count, const void* initData,
                          Microsoft::WRL::ComPtr<ID3D11Buffer>& buf,
@@ -192,6 +203,7 @@ bool PostProcess::Init(GraphicsDevice& device, ShaderManager& shaders)
     dofPrefilterShader_ = shaders.Load("postfx_dof_prefilter"); // M44c
     dofGatherShader_ = shaders.Load("postfx_dof_gather");
     dofCompositeShader_ = shaders.Load("postfx_dof_composite");
+    motionBlurShader_ = shaders.Load("postfx_motionblur"); // M44d
 
     if (!CreateCB(dev, sizeof(PostFxCB), cb_) || !CreateCB(dev, sizeof(BrightCB), brightCB_)
         || !CreateCB(dev, sizeof(BlurCB), blurCB_) || !CreateCB(dev, sizeof(FxaaCB), fxaaCB_)
@@ -199,10 +211,12 @@ bool PostProcess::Init(GraphicsDevice& device, ShaderManager& shaders)
         || !CreateCB(dev, sizeof(GodrayBlurCB), godrayBlurCB_)
         || !CreateCB(dev, sizeof(HistCB), histCB_)
         || !CreateCB(dev, sizeof(AeReduceCB), aeReduceCB_)
-        || !CreateCB(dev, sizeof(DofCB), dofCB_)) {
+        || !CreateCB(dev, sizeof(DofCB), dofCB_)
+        || !CreateCB(dev, sizeof(MotionBlurCB), mbCB_)) {
         MYE_LOG_ERROR("PostProcess: CB creation failed");
         return false;
     }
+    resolveTimer_.Init(device); // M44d: 失敗しても致命ではない (計測 0 のまま)
 
     D3D11_SAMPLER_DESC sd = {};
     sd.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
@@ -378,6 +392,65 @@ bool PostProcess::RunDof(GraphicsDevice& device, ShaderManager& shaders, Target&
         dc->Draw(3, 0);
         dc->PSSetShaderResources(0, 3, nullSrv); // 深度 SRV は即解除 (次フレーム DSV bind 対策)
     }
+    return true;
+}
+
+// M44d: カメラモーションブラー (深度再投影)。uv+深度 → ワールド → 前フレーム viewProj で
+// 再投影した UV との差を速度として 8 タップ平均。カメラの動きのみ (オブジェクト velocity
+// 対象外 = v1 制限)。行列の逆行列/転置は CPU 側で用意する
+bool PostProcess::RunMotionBlur(GraphicsDevice& device, ShaderManager& shaders,
+                                const Settings& s, const RenderView& view,
+                                ID3D11ShaderResourceView* inputSRV, RenderTexture& dst)
+{
+    if (s.motionBlurIntensity <= 0.0f || view.depthSRV == nullptr
+        || view.prevViewProjValid == 0) {
+        return false;
+    }
+    ShaderProgram* prog = shaders.Get(motionBlurShader_);
+    if (!prog || !prog->valid) {
+        return false;
+    }
+    using namespace DirectX;
+    ID3D11DeviceContext* dc = device.Context();
+
+    MotionBlurCB cb = {};
+    const XMMATRIX vpMat = XMLoadFloat4x4(&view.view) * XMLoadFloat4x4(&view.proj);
+    XMVECTOR det;
+    const XMMATRIX inv = XMMatrixInverse(&det, vpMat);
+    XMStoreFloat4x4(&cb.invViewProj, XMMatrixTranspose(inv));
+    XMStoreFloat4x4(&cb.prevViewProj,
+                    XMMatrixTranspose(XMLoadFloat4x4(&view.prevViewProj)));
+    cb.intensity = std::clamp(s.motionBlurIntensity, 0.0f, 1.0f);
+    cb.maxPixels = s.mbMaxPixels;
+    cb.screenW = static_cast<float>(dst.Width());
+    cb.screenH = static_cast<float>(dst.Height());
+    UploadCB(dc, mbCB_.Get(), cb);
+
+    // フルスクリーンパス (RunBloom と同じ規約)。入力 SRV を読むため RTV を先に外す
+    dc->OMSetRenderTargets(0, nullptr, nullptr);
+    dc->IASetInputLayout(nullptr);
+    dc->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    dc->OMSetDepthStencilState(depthDisabled_.Get(), 0);
+    dc->OMSetBlendState(blendOff_.Get(), nullptr, 0xFFFFFFFFu);
+    dc->RSSetState(rasterizer_.Get());
+    ID3D11SamplerState* samp[1] = { linearClamp_.Get() };
+    dc->PSSetSamplers(0, 1, samp);
+    D3D11_VIEWPORT vp = {};
+    vp.Width = static_cast<float>(dst.Width());
+    vp.Height = static_cast<float>(dst.Height());
+    vp.MaxDepth = 1.0f;
+    dc->RSSetViewports(1, &vp);
+    ID3D11Buffer* cbs[1] = { mbCB_.Get() };
+    dc->PSSetConstantBuffers(0, 1, cbs);
+    ID3D11RenderTargetView* rtv = dst.RTV();
+    dc->OMSetRenderTargets(1, &rtv, nullptr);
+    ID3D11ShaderResourceView* srvs[2] = { inputSRV, view.depthSRV };
+    dc->PSSetShaderResources(0, 2, srvs);
+    dc->VSSetShader(prog->vs.Get(), nullptr, 0);
+    dc->PSSetShader(prog->ps.Get(), nullptr, 0);
+    dc->Draw(3, 0);
+    ID3D11ShaderResourceView* nullSrv[2] = { nullptr, nullptr };
+    dc->PSSetShaderResources(0, 2, nullSrv); // 深度 SRV は即解除 (次フレーム DSV bind 対策)
     return true;
 }
 
@@ -623,12 +696,19 @@ void PostProcess::Resolve(GraphicsDevice& device, ShaderManager& shaders, Target
     if (!prog || !prog->valid || dst == nullptr) {
         return; // 解決不能 (シェーダ未コンパイル等)。呼び出し側は既に HDR に描画済み
     }
+    resolveTimer_.Begin(device); // M44d: Resolve 全体の GPU 時間 (ProfilerWindow "postfx" 行)
 
     // M44c: DoF (scene → sceneB)。実行後は bloom/AE/トーンマップが sceneB を読む
-    // (ボケた高輝度が自然にブルームする順序)。off/不成立時は従来どおり t.scene
+    // (ボケた高輝度が自然にブルームする順序)。off/不成立時は従来どおり t.scene。
+    // M44d: モーションブラーは DoF 出力と scene のピンポン (DoF off なら scene → sceneB)
     ID3D11ShaderResourceView* sceneSRV = t.scene.SRV();
+    RenderTexture* mbDst = &t.sceneB;
     if (RunDof(device, shaders, t, s, view)) {
         sceneSRV = t.sceneB.SRV();
+        mbDst = &t.scene;
+    }
+    if (RunMotionBlur(device, shaders, s, view, sceneSRV, *mbDst)) {
+        sceneSRV = mbDst->SRV();
     }
 
     ID3D11ShaderResourceView* bloomSRV = sceneSRV; // プレースホルダ (intensity 0 で不参照)
@@ -726,6 +806,7 @@ void PostProcess::Resolve(GraphicsDevice& device, ShaderManager& shaders, Target
 
     dc->OMSetDepthStencilState(nullptr, 0);
     dc->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFFu);
+    resolveTimer_.End(device); // M44d
 }
 
 } // namespace mye

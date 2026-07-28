@@ -424,6 +424,9 @@ struct CameraPostFxComponent {
     float dofFocusDistance = 10.0f; // 焦点距離 (ビュー空間 z)
     float dofFocusRange = 5.0f;     // 焦点面からボケが最大に達するまでの距離
     float dofMaxRadius = 0.0f;      // 最大ボケ半径 (px、0=off)
+    // ---- M44d: カメラモーションブラー (末尾 append、NoHash なので hash 不変) ----
+    float motionBlurIntensity = 0.0f; // 0=off (SceneView は常に強制 0)
+    float mbMaxPixels = 16.0f;        // 速度クランプ (px)
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 

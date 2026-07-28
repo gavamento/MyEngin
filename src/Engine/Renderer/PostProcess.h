@@ -8,6 +8,7 @@
 #include <DirectXMath.h>
 
 #include "Engine/Core/EntityID.h"
+#include "Engine/Renderer/GpuTimer.h"
 #include "Engine/Renderer/RenderTexture.h"
 
 namespace mye {
@@ -61,6 +62,9 @@ public:
         float dofFocusDistance = 10.0f; // 焦点距離 (ビュー空間 z)
         float dofFocusRange = 5.0f;     // 焦点面から CoC が最大に達するまでの距離
         float dofMaxRadius = 0.0f;      // 最大ボケ半径 (フル解像度 px、0=off)
+        // ---- M44d: カメラモーションブラー (既定 = 無効)。深度再投影方式 ----
+        float motionBlurIntensity = 0.0f; // ブラー量スケール (0=off、SceneView は強制 0)
+        float mbMaxPixels = 16.0f;        // 速度クランプ (px、スミアの暴走防止)
     };
 
     // サイズ別の中間ターゲット群 (フルスクリーン HDR シーン + 半解像度ブルーム ping-pong)。
@@ -100,6 +104,10 @@ public:
                  ID3D11RenderTargetView* dst, int width, int height, const Settings& s,
                  const RenderView& view, bool distortionActive = false);
 
+    // M44d: 直近の Resolve の GPU 時間 (ms)。ProfilerWindow の "postfx" 行が表示する。
+    // 複数ビュー解決時は最後に完了した計測値
+    float ResolveGpuMs() const { return resolveTimer_.Milliseconds(); }
+
 private:
     // sceneSRV から bright-pass → 分離ガウスブラーを行い、結果を t.bloomA (半解像度) に残す。
     // sceneSRV は t.scene または DoF 実行後の t.sceneB (M44c)
@@ -117,6 +125,11 @@ private:
     // 実行しなかった (off / CS 未コンパイル / バッファ無し) 場合は false
     bool RunAutoExposure(GraphicsDevice& device, ShaderManager& shaders, Target& t,
                          const Settings& s, ID3D11ShaderResourceView* sceneSRV);
+    // M44d: 深度再投影モーションブラー (inputSRV → dst)。
+    // 実行しなかった (off / prevViewProj 無効 / depthSRV 無し) 場合は false
+    bool RunMotionBlur(GraphicsDevice& device, ShaderManager& shaders, const Settings& s,
+                       const RenderView& view, ID3D11ShaderResourceView* inputSRV,
+                       RenderTexture& dst);
 
     GraphicsDevice* device_ = nullptr;
     bool ready_ = false;
@@ -132,6 +145,7 @@ private:
     AssetID dofPrefilterShader_ = {}; // M44c
     AssetID dofGatherShader_ = {};
     AssetID dofCompositeShader_ = {};
+    AssetID motionBlurShader_ = {}; // M44d
 
     Microsoft::WRL::ComPtr<ID3D11Buffer> cb_;     // PostFx CB (tonemap)
     Microsoft::WRL::ComPtr<ID3D11Buffer> brightCB_;
@@ -142,6 +156,8 @@ private:
     Microsoft::WRL::ComPtr<ID3D11Buffer> histCB_; // M44b
     Microsoft::WRL::ComPtr<ID3D11Buffer> aeReduceCB_;
     Microsoft::WRL::ComPtr<ID3D11Buffer> dofCB_; // M44c (3 パス共通)
+    Microsoft::WRL::ComPtr<ID3D11Buffer> mbCB_;  // M44d
+    GpuTimer resolveTimer_; // M44d: Resolve 全体の GPU 時間
     Microsoft::WRL::ComPtr<ID3D11SamplerState> linearClamp_;
     Microsoft::WRL::ComPtr<ID3D11DepthStencilState> depthDisabled_;
     Microsoft::WRL::ComPtr<ID3D11BlendState> blendOff_;

@@ -102,4 +102,31 @@ inline float ComputeSunScreenPos(const DirectX::XMFLOAT4X4& view,
     return std::clamp(1.0f - (std::max)(ox, oy) / 0.25f, 0.0f, 1.0f);
 }
 
+// M44d: 深度再投影 — 現フレームの UV+深度 → ワールド → 前フレームの viewProj で UV へ。
+// postfx_motionblur.hlsl とコメント同期 — 変更時は両方更新。
+// 行列は未転置 (row ベクトル規約)。false = 復元不能または前フレームで背面 (ブラー 0)
+inline bool ReprojectUv(const DirectX::XMFLOAT4X4& invViewProj,
+                        const DirectX::XMFLOAT4X4& prevViewProj, float u, float v, float depth,
+                        float& prevU, float& prevV)
+{
+    using namespace DirectX;
+    const float ndcX = u * 2.0f - 1.0f;
+    const float ndcY = 1.0f - v * 2.0f;
+    XMVECTOR world = XMVector4Transform(XMVectorSet(ndcX, ndcY, depth, 1.0f),
+                                        XMLoadFloat4x4(&invViewProj));
+    const float w = XMVectorGetW(world);
+    if (std::abs(w) < 1e-6f) {
+        return false;
+    }
+    world = XMVectorSetW(XMVectorScale(world, 1.0f / w), 1.0f);
+    const XMVECTOR clip = XMVector4Transform(world, XMLoadFloat4x4(&prevViewProj));
+    const float cw = XMVectorGetW(clip);
+    if (cw <= 1e-4f) {
+        return false;
+    }
+    prevU = XMVectorGetX(clip) / cw * 0.5f + 0.5f;
+    prevV = 0.5f - XMVectorGetY(clip) / cw * 0.5f;
+    return true;
+}
+
 } // namespace mye

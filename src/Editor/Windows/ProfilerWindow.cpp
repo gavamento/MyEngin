@@ -2,6 +2,7 @@
 
 #include "Engine/Core/Profiler.h"
 #include "Engine/Engine/Particles/ParticleSystem.h"
+#include "Engine/Engine/RenderSystem.h"
 #include "Engine/Engine/Scene.h"
 #include "Engine/Renderer/RenderPath.h"
 
@@ -41,6 +42,10 @@ void ProfilerWindow::OnImGui(EngineContext& ctx)
     const ParticleStats gpu = ctx.particles->Gpu().Stats();
     ImGui::Text("  CPU: %7u alive %7.3f ms", cpu.aliveTotal, cpu.updateMs);
     ImGui::Text("  GPU: (cap %6u) %7.3f ms (GpuTimer)", gpu.aliveTotal, gpu.updateMs);
+    // M44d: ポストプロセス解決の GPU 時間 (複数ビューでは最後に完了した Resolve)
+    if (ctx.renderSystem) {
+        ImGui::Text("  postfx: %6.3f ms (GpuTimer)", ctx.renderSystem->PostFxGpuMs());
+    }
 
     ImGui::Separator();
     ImGui::TextUnformatted("CPU scopes (this frame):");
