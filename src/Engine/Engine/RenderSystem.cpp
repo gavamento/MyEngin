@@ -659,7 +659,7 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
             }
         }
         postFx_.Resolve(device, shaders, *hdr, target.rtv, target.width, target.height,
-                        effective, distortionActive);
+                        effective, view, distortionActive); // M43b: view = 深度/太陽の供給口
     }
     return cameraFound;
 }

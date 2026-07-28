@@ -409,6 +409,9 @@ struct CameraPostFxComponent {
     // ---- M40d: SSAO パラメータ (Deferred のみ。末尾 append、NoHash なので hash 不変) ----
     float ssaoRadius = 0.8f;    // サンプル半球の半径 (ワールド単位)
     float ssaoIntensity = 1.0f; // 遮蔽の効き (0=off 相当)
+    // ---- M43b: スクリーンスペースゴッドレイ (末尾 append、NoHash なので hash 不変) ----
+    float godrayIntensity = 0.0f; // 空マスクの明るさ倍率 (0=off)
+    float godrayDecay = 0.95f;    // 放射ブラーのタップ毎減衰
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 

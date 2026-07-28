@@ -6,6 +6,8 @@
 #include "Engine/Core/Components.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Renderer/GraphicsDevice.h"
+#include "Engine/Renderer/PostFxMath.h"
+#include "Engine/Renderer/RenderTypes.h"
 #include "Engine/Renderer/ShaderManager.h"
 
 namespace mye {
@@ -26,6 +28,8 @@ PostProcess::Settings MergeCameraPostFx(const PostProcess::Settings& base,
     s.colorFilter = comp.colorFilter;
     s.bloomIntensity = comp.bloomIntensity;
     s.fxaa = comp.fxaaOn != 0;
+    s.godrayIntensity = comp.godrayIntensity; // M43b
+    s.godrayDecay = comp.godrayDecay;
     return s;
 }
 namespace {
@@ -42,7 +46,8 @@ struct PostFxCB {
     float saturation;
     float contrast;
     int32_t distortEnabled; // M42d: 旧 pad[0] 転用。1 で t2 の歪みバッファを UV に加算
-    float pad[2];
+    int32_t godrayEnabled;  // M43b: 旧 pad[1] 転用。1 で t3 のゴッドレイを加算
+    float pad;
     DirectX::XMFLOAT4 colorFilter;
 };
 
@@ -62,6 +67,21 @@ struct BlurCB {
 struct FxaaCB {
     float invW, invH;
     float pad0, pad1;
+};
+
+// postfx_godray_mask.hlsl の GodrayMask cbuffer (32 バイト)
+struct GodrayMaskCB {
+    float screenW, screenH; // フル解像度深度の Load 用
+    float pad0, pad1;
+    DirectX::XMFLOAT3 sunColorFade; // sunColor (リニア・強度込み) × intensity × 画面端フェード
+    float pad2;
+};
+
+// postfx_godray_blur.hlsl の GodrayBlur cbuffer (16 バイト)
+struct GodrayBlurCB {
+    float sunU, sunV; // 太陽のスクリーン UV
+    float decay;      // タップ毎減衰
+    float density;    // 16 タップで太陽までの距離の何割を進むか
 };
 
 template <typename T>
@@ -95,9 +115,13 @@ bool PostProcess::Init(GraphicsDevice& device, ShaderManager& shaders)
     brightShader_ = shaders.Load("postfx_bright");
     blurShader_ = shaders.Load("postfx_blur");
     fxaaShader_ = shaders.Load("postfx_fxaa");
+    godrayMaskShader_ = shaders.Load("postfx_godray_mask"); // M43b
+    godrayBlurShader_ = shaders.Load("postfx_godray_blur");
 
     if (!CreateCB(dev, sizeof(PostFxCB), cb_) || !CreateCB(dev, sizeof(BrightCB), brightCB_)
-        || !CreateCB(dev, sizeof(BlurCB), blurCB_) || !CreateCB(dev, sizeof(FxaaCB), fxaaCB_)) {
+        || !CreateCB(dev, sizeof(BlurCB), blurCB_) || !CreateCB(dev, sizeof(FxaaCB), fxaaCB_)
+        || !CreateCB(dev, sizeof(GodrayMaskCB), godrayMaskCB_)
+        || !CreateCB(dev, sizeof(GodrayBlurCB), godrayBlurCB_)) {
         MYE_LOG_ERROR("PostProcess: CB creation failed");
         return false;
     }
@@ -161,7 +185,9 @@ PostProcess::Target* PostProcess::Acquire(GraphicsDevice& device, int width, int
         || !t.bloomA.Create(device, bw, bh, DXGI_FORMAT_R16G16B16A16_FLOAT, false)
         || !t.bloomB.Create(device, bw, bh, DXGI_FORMAT_R16G16B16A16_FLOAT, false)
         || !t.ldr.Create(device, width, height, DXGI_FORMAT_R8G8B8A8_UNORM, false)
-        || !t.distort.Create(device, width, height, DXGI_FORMAT_R16G16_FLOAT, false)) { // M42d
+        || !t.distort.Create(device, width, height, DXGI_FORMAT_R16G16_FLOAT, false) // M42d
+        || !t.godA.Create(device, bw, bh, DXGI_FORMAT_R16G16B16A16_FLOAT, false)     // M43b
+        || !t.godB.Create(device, bw, bh, DXGI_FORMAT_R16G16B16A16_FLOAT, false)) {
         return nullptr;
     }
     cache_.insert(cache_.begin(), std::move(t));
@@ -251,9 +277,101 @@ void PostProcess::RunBloom(GraphicsDevice& device, ShaderManager& shaders, Targe
     }
 }
 
+// M43b: スクリーンスペースゴッドレイ (放射ブラー方式)。
+// 空ピクセル (depth>=0.9999) だけを太陽色で塗ったマスク (半解像度) を作り、
+// 太陽のスクリーン位置へ向けて 16 タップ × 2 パスの放射ブラー。結果は t.godA。
+// v1 制限: 遮蔽マスクは空のみ (発光体のレイ非対応)。太陽が背面/画面外は端フェードで消す
+bool PostProcess::RunGodray(GraphicsDevice& device, ShaderManager& shaders, Target& t,
+                            const Settings& s, const RenderView& view)
+{
+    if (s.godrayIntensity <= 0.0f || view.depthSRV == nullptr) {
+        return false;
+    }
+    // 平行光が無い (sunColor 黒) なら描いても見えない — パスごとスキップ
+    if (view.sunColor.x <= 0.0f && view.sunColor.y <= 0.0f && view.sunColor.z <= 0.0f) {
+        return false;
+    }
+    ShaderProgram* mask = shaders.Get(godrayMaskShader_);
+    ShaderProgram* blur = shaders.Get(godrayBlurShader_);
+    if (!mask || !mask->valid || !blur || !blur->valid) {
+        return false;
+    }
+    float sunU = 0.5f, sunV = 0.5f;
+    const float fade = ComputeSunScreenPos(view.view, view.proj, view.sunDirection, sunU, sunV);
+    if (fade <= 0.0f) {
+        return false; // 太陽が背面または画面から遠すぎる
+    }
+
+    ID3D11DeviceContext* dc = device.Context();
+    const int gw = t.godA.Width();
+    const int gh = t.godA.Height();
+
+    // 共通ステート (RunBloom と同じフルスクリーン規約、半解像度ビューポート)
+    dc->IASetInputLayout(nullptr);
+    dc->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    dc->OMSetDepthStencilState(depthDisabled_.Get(), 0);
+    dc->OMSetBlendState(blendOff_.Get(), nullptr, 0xFFFFFFFFu);
+    dc->RSSetState(rasterizer_.Get());
+    ID3D11SamplerState* samp[1] = { linearClamp_.Get() };
+    dc->PSSetSamplers(0, 1, samp);
+    D3D11_VIEWPORT vp = {};
+    vp.Width = static_cast<float>(gw);
+    vp.Height = static_cast<float>(gh);
+    vp.MaxDepth = 1.0f;
+    dc->RSSetViewports(1, &vp);
+    ID3D11ShaderResourceView* nullSrv[1] = { nullptr };
+
+    // 1) 空マスク: 深度 (フル解像度、t0) → godA。深度 SRV は Resolve 冒頭で DSV が
+    //    外れている (OMSetRenderTargets が null DSV) ためハザード無し
+    {
+        GodrayMaskCB cb = {};
+        cb.screenW = static_cast<float>(view.width);
+        cb.screenH = static_cast<float>(view.height);
+        const float k = s.godrayIntensity * fade;
+        cb.sunColorFade = { view.sunColor.x * k, view.sunColor.y * k, view.sunColor.z * k };
+        UploadCB(dc, godrayMaskCB_.Get(), cb);
+        ID3D11Buffer* cbs[1] = { godrayMaskCB_.Get() };
+        dc->PSSetConstantBuffers(0, 1, cbs);
+        ID3D11RenderTargetView* rtv = t.godA.RTV();
+        dc->OMSetRenderTargets(1, &rtv, nullptr);
+        ID3D11ShaderResourceView* srv[1] = { view.depthSRV };
+        dc->PSSetShaderResources(0, 1, srv);
+        dc->VSSetShader(mask->vs.Get(), nullptr, 0);
+        dc->PSSetShader(mask->ps.Get(), nullptr, 0);
+        dc->Draw(3, 0);
+        dc->PSSetShaderResources(0, 1, nullSrv); // 深度 SRV は即解除 (次フレームの DSV bind 対策)
+    }
+
+    // 2) 放射ブラー 2 パス (godA → godB → godA)。1 パス目は短く 2 パス目で伸ばす =
+    //    16 タップ × 2 で実効 256 タップ相当の滑らかさ
+    dc->VSSetShader(blur->vs.Get(), nullptr, 0);
+    dc->PSSetShader(blur->ps.Get(), nullptr, 0);
+    const float densities[2] = { 0.5f, 1.0f };
+    RenderTexture* src = &t.godA;
+    RenderTexture* dstRt = &t.godB;
+    for (int pass = 0; pass < 2; ++pass) {
+        GodrayBlurCB cb = {};
+        cb.sunU = sunU;
+        cb.sunV = sunV;
+        cb.decay = s.godrayDecay;
+        cb.density = densities[pass];
+        UploadCB(dc, godrayBlurCB_.Get(), cb);
+        ID3D11Buffer* cbs[1] = { godrayBlurCB_.Get() };
+        dc->PSSetConstantBuffers(0, 1, cbs);
+        ID3D11RenderTargetView* rtv = dstRt->RTV();
+        dc->OMSetRenderTargets(1, &rtv, nullptr);
+        ID3D11ShaderResourceView* srv[1] = { src->SRV() };
+        dc->PSSetShaderResources(0, 1, srv);
+        dc->Draw(3, 0);
+        dc->PSSetShaderResources(0, 1, nullSrv);
+        std::swap(src, dstRt);
+    }
+    return true; // 結果は t.godA (2 パスで A→B→A)
+}
+
 void PostProcess::Resolve(GraphicsDevice& device, ShaderManager& shaders, Target& t,
                           ID3D11RenderTargetView* dst, int width, int height, const Settings& s,
-                          bool distortionActive)
+                          const RenderView& view, bool distortionActive)
 {
     ID3D11DeviceContext* dc = device.Context();
     ShaderProgram* prog = shaders.Get(tonemapShader_);
@@ -272,6 +390,9 @@ void PostProcess::Resolve(GraphicsDevice& device, ShaderManager& shaders, Target
             bloomIntensity = s.bloomIntensity;
         }
     }
+
+    // M43b: ゴッドレイ (結果 = t.godA)。off/不成立時は t3 に null = 従来とビット同一
+    const bool godrayActive = RunGodray(device, shaders, t, s, view);
 
     // FXAA 有効時はトーンマップを LDR 中間 (t.ldr) に描き、その後 FXAA で dst へ。
     ShaderProgram* fxaa = shaders.Get(fxaaShader_);
@@ -299,15 +420,17 @@ void PostProcess::Resolve(GraphicsDevice& device, ShaderManager& shaders, Target
     cb.saturation = s.saturation;
     cb.contrast = s.contrast;
     cb.distortEnabled = (distortionActive && t.distort.IsValid()) ? 1 : 0; // M42d
+    cb.godrayEnabled = godrayActive ? 1 : 0;                              // M43b
     cb.colorFilter = s.colorFilter;
     UploadCB(dc, cb_.Get(), cb);
     ID3D11Buffer* cbs[1] = { cb_.Get() };
     dc->PSSetConstantBuffers(0, 1, cbs);
 
-    // M42d: t2 = 歪みバッファ (無効時も白ダミー不要 — gDistortEnabled=0 なら不参照)
-    ID3D11ShaderResourceView* srvs[3] = { t.scene.SRV(), bloomSRV,
-                                          cb.distortEnabled ? t.distort.SRV() : nullptr };
-    dc->PSSetShaderResources(0, 3, srvs);
+    // M42d: t2 = 歪みバッファ / M43b: t3 = ゴッドレイ (無効時は null — enabled=0 なら不参照)
+    ID3D11ShaderResourceView* srvs[4] = { t.scene.SRV(), bloomSRV,
+                                          cb.distortEnabled ? t.distort.SRV() : nullptr,
+                                          godrayActive ? t.godA.SRV() : nullptr };
+    dc->PSSetShaderResources(0, 4, srvs);
     ID3D11SamplerState* samps[1] = { linearClamp_.Get() };
     dc->PSSetSamplers(0, 1, samps);
 
@@ -319,8 +442,8 @@ void PostProcess::Resolve(GraphicsDevice& device, ShaderManager& shaders, Target
     dc->OMSetBlendState(blendOff_.Get(), nullptr, 0xFFFFFFFFu);
     dc->Draw(3, 0);
 
-    ID3D11ShaderResourceView* nulls[3] = { nullptr, nullptr, nullptr };
-    dc->PSSetShaderResources(0, 3, nulls); // t.scene / t.distort を次フレーム RTV に戻すため解除
+    ID3D11ShaderResourceView* nulls[4] = { nullptr, nullptr, nullptr, nullptr };
+    dc->PSSetShaderResources(0, 4, nulls); // t.scene / t.distort / t.godA を次フレーム RTV に戻すため解除
 
     // ---- FXAA: t.ldr → dst ----
     if (useFxaa) {

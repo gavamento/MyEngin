@@ -18,13 +18,15 @@ cbuffer PostFx : register(b0)
     float  gSaturation;      // 彩度 (1=変化なし)
     float  gContrast;        // コントラスト (1=変化なし)
     int    gDistortEnabled;  // M42d: 1 で gDistort の UV オフセットを適用 (旧 _pfxpad.x 転用)
-    float2 _pfxpad;
+    int    gGodrayEnabled;   // M43b: 1 で gGodray を加算 (旧 _pfxpad.y 転用)
+    float  _pfxpad;
     float4 gColorFilter;     // 乗算カラーフィルタ
 };
 
 Texture2D gScene   : register(t0); // HDR シーンカラー (R16G16B16A16F)
 Texture2D gBloom   : register(t1); // ブルーム (低解像度をアップサンプル済み。未使用時は黒)
 Texture2D gDistort : register(t2); // M42d: 歪みバッファ (R16G16F、UV オフセット)
+Texture2D gGodray  : register(t3); // M43b: ゴッドレイ (半解像度、強度は焼き込み済み)
 SamplerState gLinear : register(s0);
 
 struct VSOut
@@ -80,6 +82,9 @@ float4 PSMain(VSOut i) : SV_Target
     float3 c = hdr * gExposure;
     if (gBloomIntensity > 0.0f) {
         c += gBloom.Sample(gLinear, i.uv).rgb * gBloomIntensity; // ブルーム加算
+    }
+    if (gGodrayEnabled != 0) {
+        c += gGodray.Sample(gLinear, i.uv).rgb; // M43b: 強度はマスク側で焼き込み済み
     }
     if (gTonemap == 2) {
         c = c / (1.0f + c); // Reinhard

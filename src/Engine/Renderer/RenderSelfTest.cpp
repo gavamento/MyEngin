@@ -92,6 +92,8 @@ void TestPostFxMerge()
     comp.saturation = 1.5f;
     comp.contrast = 1.2f;
     comp.colorFilter = { 1.0f, 0.8f, 0.6f, 1.0f };
+    comp.godrayIntensity = 0.7f; // M43b
+    comp.godrayDecay = 0.9f;
     const PostProcess::Settings s = MergeCameraPostFx(base, comp);
     TEST_CHECK(s.chromAberration == 0.01f);
     TEST_CHECK(s.vignetteIntensity == 0.4f);
@@ -100,11 +102,13 @@ void TestPostFxMerge()
     TEST_CHECK(s.contrast == 1.2f);
     TEST_CHECK(s.colorFilter.y == 0.8f && s.colorFilter.z == 0.6f);
     TEST_CHECK(s.applyGamma == base.applyGamma); // applyGamma は base 維持
+    TEST_CHECK(s.godrayIntensity == 0.7f && s.godrayDecay == 0.9f); // M43b
 
     // 既定コンポーネント = 無効 (従来の見た目)
     const PostProcess::Settings d = MergeCameraPostFx(base, CameraPostFxComponent{});
     TEST_CHECK(d.chromAberration == 0.0f && d.vignetteIntensity == 0.0f);
     TEST_CHECK(d.saturation == 1.0f && d.contrast == 1.0f);
+    TEST_CHECK(d.godrayIntensity == 0.0f); // M43b: 既定 = off
 }
 
 // メッシュインスタンシングの run 検出 (M38f): 同一 (material,mesh) の連続 2 件以上のみ、
@@ -186,6 +190,31 @@ void TestHeightFogInscatter()
     TEST_CHECK(SunInscatterFactor(diag, sunDir, 8.0f) < SunInscatterFactor(diag, sunDir, 2.0f));
 }
 
+// M43b: 太陽のスクリーン位置 (ゴッドレイの放射中心)。カメラは原点から +Z (view=単位行列)
+void TestSunScreenPos()
+{
+    MYE_LOG_INFO("[selftest] sun screen position (M43b)");
+    XMFLOAT4X4 view, proj;
+    XMStoreFloat4x4(&view, XMMatrixIdentity());
+    XMStoreFloat4x4(&proj, XMMatrixPerspectiveFovLH(XMConvertToRadians(60.0f), 1.0f, 0.1f, 100.0f));
+    float u = 0.0f, v = 0.0f;
+    // 正面 (太陽が視線の先 = sunDir は -Z): 画面中央、フェード 1
+    TEST_CHECK(ComputeSunScreenPos(view, proj, { 0.0f, 0.0f, -1.0f }, u, v) == 1.0f);
+    TEST_CHECK(std::fabs(u - 0.5f) < 1e-4f && std::fabs(v - 0.5f) < 1e-4f);
+    // 背面 (太陽がカメラの後ろ = sunDir は +Z): フェード 0
+    TEST_CHECK(ComputeSunScreenPos(view, proj, { 0.0f, 0.0f, 1.0f }, u, v) == 0.0f);
+    // 画面端の少し外 (右 35°、FOV 半角 30°): u>1 で部分フェード (0,1)
+    const float f35 = ComputeSunScreenPos(
+        view, proj, { -std::sin(XMConvertToRadians(35.0f)), 0.0f,
+                      -std::cos(XMConvertToRadians(35.0f)) }, u, v);
+    TEST_CHECK(u > 1.0f && f35 > 0.0f && f35 < 1.0f);
+    // 大きく外 (右 60°): フェード 0
+    TEST_CHECK(ComputeSunScreenPos(view, proj, { -0.866f, 0.0f, -0.5f }, u, v) == 0.0f);
+    // 上方向 (太陽が真上 45°、FOV 内): v < 0.5 (スクリーン上半分)
+    const float fup = ComputeSunScreenPos(view, proj, { 0.0f, -0.5f, -0.866f }, u, v);
+    TEST_CHECK(fup > 0.0f && v < 0.5f);
+}
+
 } // namespace
 
 bool RunRenderSelfTest()
@@ -196,6 +225,7 @@ bool RunRenderSelfTest()
     TestCascadeSplits();
     TestInstanceRuns();
     TestHeightFogInscatter();
+    TestSunScreenPos();
     if (g_failCount == 0) {
         MYE_LOG_INFO("[selftest] render: ALL PASS");
         return true;

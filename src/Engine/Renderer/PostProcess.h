@@ -14,6 +14,7 @@ namespace mye {
 
 class GraphicsDevice;
 class ShaderManager;
+struct RenderView; // M43b: Resolve へのシーン情報供給口 (RenderTypes.h)
 
 // HDR ポストプロセス (M16)。シーンを R16G16B16A16F の中間ターゲットへ描画させ、
 // 最後にトーンマップ (+ ブルーム / FXAA) でフルスクリーン解決して LDR 出力する。
@@ -38,6 +39,9 @@ public:
         float saturation = 1.0f;        // 彩度 (1=変化なし)
         float contrast = 1.0f;          // コントラスト (1=変化なし)
         DirectX::XMFLOAT4 colorFilter = { 1.0f, 1.0f, 1.0f, 1.0f }; // 乗算カラーフィルタ
+        // ---- M43b: スクリーンスペースゴッドレイ (既定 = 無効 = 従来の見た目) ----
+        float godrayIntensity = 0.0f; // 空マスクの明るさ倍率 (0=off)
+        float godrayDecay = 0.95f;    // 放射ブラーのタップ毎減衰 (0..1)
     };
 
     // サイズ別の中間ターゲット群 (フルスクリーン HDR シーン + 半解像度ブルーム ping-pong)。
@@ -48,6 +52,8 @@ public:
         RenderTexture bloomB;  // 半解像度 ping-pong
         RenderTexture ldr;     // FXAA 用の LDR 中間 (トーンマップ結果、fxaa 有効時のみ使用)
         RenderTexture distort; // M42d: 歪みバッファ (フル解像度 R16G16F、UV オフセット加算先)
+        RenderTexture godA;    // M43b: ゴッドレイ (半解像度 FP16。bloomA/B は bloom 結果保持中のため流用不可)
+        RenderTexture godB;    // M43b: 放射ブラー ping-pong
     };
 
     bool Init(GraphicsDevice& device, ShaderManager& shaders);
@@ -56,16 +62,21 @@ public:
     // このサイズの中間ターゲット群を取得/生成する (サイズ別 LRU キャッシュ)。
     Target* Acquire(GraphicsDevice& device, int width, int height);
 
-    // t.scene を解決して dst へ書く (ブルーム → トーンマップ → FXAA)。dst は LDR。
+    // t.scene を解決して dst へ書く (ブルーム → ゴッドレイ → トーンマップ → FXAA)。dst は LDR。
+    // view (M43b): depthSRV/太陽/view/proj の供給口 (M44 の DoF/モーションブラーもここから取る)。
     // distortionActive (M42d): このフレーム歪みパーティクルが t.distort に描かれたとき true
     // -> トーンマップのシーンサンプル UV に t.distort をオフセット加算する
     void Resolve(GraphicsDevice& device, ShaderManager& shaders, Target& t,
                  ID3D11RenderTargetView* dst, int width, int height, const Settings& s,
-                 bool distortionActive = false);
+                 const RenderView& view, bool distortionActive = false);
 
 private:
     // t.scene から bright-pass → 分離ガウスブラーを行い、結果を t.bloomA (半解像度) に残す。
     void RunBloom(GraphicsDevice& device, ShaderManager& shaders, Target& t, const Settings& s);
+    // M43b: 空マスク → 太陽へ向けた放射ブラー ×2 を行い、結果を t.godA (半解像度) に残す。
+    // 実行しなかった (intensity 0 / 太陽が背面・画面外 / depthSRV 無し等) 場合は false
+    bool RunGodray(GraphicsDevice& device, ShaderManager& shaders, Target& t, const Settings& s,
+                   const RenderView& view);
 
     GraphicsDevice* device_ = nullptr;
     bool ready_ = false;
@@ -74,11 +85,15 @@ private:
     AssetID brightShader_ = {};
     AssetID blurShader_ = {};
     AssetID fxaaShader_ = {};
+    AssetID godrayMaskShader_ = {}; // M43b
+    AssetID godrayBlurShader_ = {};
 
     Microsoft::WRL::ComPtr<ID3D11Buffer> cb_;     // PostFx CB (tonemap)
     Microsoft::WRL::ComPtr<ID3D11Buffer> brightCB_;
     Microsoft::WRL::ComPtr<ID3D11Buffer> blurCB_;
     Microsoft::WRL::ComPtr<ID3D11Buffer> fxaaCB_;
+    Microsoft::WRL::ComPtr<ID3D11Buffer> godrayMaskCB_; // M43b
+    Microsoft::WRL::ComPtr<ID3D11Buffer> godrayBlurCB_;
     Microsoft::WRL::ComPtr<ID3D11SamplerState> linearClamp_;
     Microsoft::WRL::ComPtr<ID3D11DepthStencilState> depthDisabled_;
     Microsoft::WRL::ComPtr<ID3D11BlendState> blendOff_;

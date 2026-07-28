@@ -37,4 +37,29 @@ inline float SunInscatterFactor(const DirectX::XMFLOAT3& rayDir, const DirectX::
     return std::pow(std::clamp(d, 0.0f, 1.0f), std::max(power, 1e-2f));
 }
 
+// M43b: 太陽のスクリーン位置。sunDir (光の進行方向) の逆 = 太陽方向を方向ベクトル (w=0)
+// として view*proj で射影し、UV [0,1] とフェード係数 [0,1] を返す。
+// 背面 (clip.w<=0) は 0。画面内 = 1、画面外は UV が [0,1] を出た距離 0.25 で線形減衰
+// (ゴッドレイのソースが視界から離れるほど自然に消える)。postfx_godray_*.hlsl の CB 供給元
+inline float ComputeSunScreenPos(const DirectX::XMFLOAT4X4& view,
+                                 const DirectX::XMFLOAT4X4& proj,
+                                 const DirectX::XMFLOAT3& sunDir, float& outU, float& outV)
+{
+    using namespace DirectX;
+    const XMMATRIX vp = XMLoadFloat4x4(&view) * XMLoadFloat4x4(&proj);
+    const XMVECTOR clip =
+        XMVector4Transform(XMVectorSet(-sunDir.x, -sunDir.y, -sunDir.z, 0.0f), vp);
+    const float w = XMVectorGetW(clip);
+    outU = 0.5f;
+    outV = 0.5f;
+    if (w <= 1e-4f) {
+        return 0.0f; // 太陽が背面
+    }
+    outU = 0.5f + 0.5f * (XMVectorGetX(clip) / w);
+    outV = 0.5f - 0.5f * (XMVectorGetY(clip) / w);
+    const float ox = (std::max)({ 0.0f, -outU, outU - 1.0f });
+    const float oy = (std::max)({ 0.0f, -outV, outV - 1.0f });
+    return std::clamp(1.0f - (std::max)(ox, oy) / 0.25f, 0.0f, 1.0f);
+}
+
 } // namespace mye
