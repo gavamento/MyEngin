@@ -70,6 +70,13 @@ inline float LumForBin(int bin)
     return std::exp2((static_cast<float>(bin) - 1.0f) / 254.0f * 16.0f - 10.0f);
 }
 
+// M44c: 符号付き CoC [-1,1]。焦点面 = 0、手前が負・奥が正、focusRange で ±1 に達し clamp。
+// postfx_dof_prefilter/composite.hlsl とコメント同期 — 変更時は全て更新
+inline float SignedCoC(float viewZ, float focusDist, float focusRange)
+{
+    return std::clamp((viewZ - focusDist) / (std::max)(focusRange, 1e-4f), -1.0f, 1.0f);
+}
+
 // M43b: 太陽のスクリーン位置。sunDir (光の進行方向) の逆 = 太陽方向を方向ベクトル (w=0)
 // として view*proj で射影し、UV [0,1] とフェード係数 [0,1] を返す。
 // 背面 (clip.w<=0) は 0。画面内 = 1、画面外は UV が [0,1] を出た距離 0.25 で線形減衰

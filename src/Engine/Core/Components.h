@@ -420,6 +420,10 @@ struct CameraPostFxComponent {
     float aeSpeed = 3.0f;     // 適応速度 (1/s)
     float aeMin = 0.25f;      // 露出倍率の下限
     float aeMax = 4.0f;       // 上限
+    // ---- M44c: 被写界深度 (末尾 append、NoHash なので hash 不変) ----
+    float dofFocusDistance = 10.0f; // 焦点距離 (ビュー空間 z)
+    float dofFocusRange = 5.0f;     // 焦点面からボケが最大に達するまでの距離
+    float dofMaxRadius = 0.0f;      // 最大ボケ半径 (px、0=off)
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 

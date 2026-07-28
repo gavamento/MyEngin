@@ -100,6 +100,9 @@ void TestPostFxMerge()
     comp.aeSpeed = 5.0f;
     comp.aeMin = 0.5f;
     comp.aeMax = 8.0f;
+    comp.dofFocusDistance = 20.0f; // M44c
+    comp.dofFocusRange = 8.0f;
+    comp.dofMaxRadius = 12.0f;
     const PostProcess::Settings s = MergeCameraPostFx(base, comp);
     TEST_CHECK(s.chromAberration == 0.01f);
     TEST_CHECK(s.vignetteIntensity == 0.4f);
@@ -112,6 +115,8 @@ void TestPostFxMerge()
     TEST_CHECK(s.lutTexture.value == 123 && s.lutIntensity == 0.5f); // M44a
     TEST_CHECK(s.lutSRV == nullptr); // SRV はマージでは触らない (RenderSystem が解決)
     TEST_CHECK(s.autoExposure == 1 && s.aeSpeed == 5.0f && s.aeMin == 0.5f && s.aeMax == 8.0f);
+    TEST_CHECK(s.dofFocusDistance == 20.0f && s.dofFocusRange == 8.0f
+               && s.dofMaxRadius == 12.0f); // M44c
     // M44b: aeInstant は base 維持 (applyGamma と同じ Settings 専用フィールド)
     PostProcess::Settings instantBase;
     instantBase.aeInstant = true;
@@ -124,6 +129,7 @@ void TestPostFxMerge()
     TEST_CHECK(d.godrayIntensity == 0.0f); // M43b: 既定 = off
     TEST_CHECK(d.lutIntensity == 0.0f && d.lutTexture.IsNull()); // M44a: 既定 = off
     TEST_CHECK(d.autoExposure == 0); // M44b: 既定 = off
+    TEST_CHECK(d.dofMaxRadius == 0.0f); // M44c: 既定 = off
 }
 
 // メッシュインスタンシングの run 検出 (M38f): 同一 (material,mesh) の連続 2 件以上のみ、
@@ -275,6 +281,22 @@ void TestAutoExposureBins()
     TEST_CHECK(std::fabs(LumForBin(255) - std::exp2(6.0f)) < 1e-2f);
 }
 
+// M44c: 符号付き CoC (postfx_dof_prefilter/composite.hlsl のミラー検証)
+void TestSignedCoC()
+{
+    MYE_LOG_INFO("[selftest] DoF signed CoC (M44c)");
+    // 焦点面ちょうど → 0
+    TEST_CHECK(SignedCoC(10.0f, 10.0f, 5.0f) == 0.0f);
+    // 手前が負 / 奥が正 (半レンジで ±0.5)
+    TEST_CHECK(std::fabs(SignedCoC(7.5f, 10.0f, 5.0f) + 0.5f) < 1e-6f);
+    TEST_CHECK(std::fabs(SignedCoC(12.5f, 10.0f, 5.0f) - 0.5f) < 1e-6f);
+    // レンジ超過は ±1 に clamp
+    TEST_CHECK(SignedCoC(100.0f, 10.0f, 5.0f) == 1.0f);
+    TEST_CHECK(SignedCoC(0.1f, 10.0f, 5.0f) == -1.0f);
+    // range 0 ガード (ゼロ除算しない)
+    TEST_CHECK(SignedCoC(11.0f, 10.0f, 0.0f) == 1.0f);
+}
+
 } // namespace
 
 bool RunRenderSelfTest()
@@ -288,6 +310,7 @@ bool RunRenderSelfTest()
     TestSunScreenPos();
     TestLutStripUv();
     TestAutoExposureBins();
+    TestSignedCoC();
     if (g_failCount == 0) {
         MYE_LOG_INFO("[selftest] render: ALL PASS");
         return true;

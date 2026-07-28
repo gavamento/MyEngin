@@ -57,6 +57,10 @@ public:
         // EngineLoop が --replay-verify/--replay-record/--screenshot 時に true にし、
         // 適応を 1 フレーム収束させて決定的スクショを成立させる
         bool aeInstant = false;
+        // ---- M44c: 被写界深度 (既定 = 無効)。CoC + 半解像度 gather ----
+        float dofFocusDistance = 10.0f; // 焦点距離 (ビュー空間 z)
+        float dofFocusRange = 5.0f;     // 焦点面から CoC が最大に達するまでの距離
+        float dofMaxRadius = 0.0f;      // 最大ボケ半径 (フル解像度 px、0=off)
     };
 
     // サイズ別の中間ターゲット群 (フルスクリーン HDR シーン + 半解像度ブルーム ping-pong)。
@@ -69,6 +73,9 @@ public:
         RenderTexture distort; // M42d: 歪みバッファ (フル解像度 R16G16F、UV オフセット加算先)
         RenderTexture godA;    // M43b: ゴッドレイ (半解像度 FP16。bloomA/B は bloom 結果保持中のため流用不可)
         RenderTexture godB;    // M43b: 放射ブラー ping-pong
+        RenderTexture sceneB;  // M44c: DoF (/M44d MB) の書き先 — 実行後は bloom/tonemap がこちらを読む
+        RenderTexture dofA;    // M44c: プリフィルタ結果 (半解像度、rgb=色 a=符号付き CoC)
+        RenderTexture dofB;    // M44c: ギャザー結果 (半解像度)
         // ---- M44b: 自動露出 (ヒストグラム 256 bin + 露出倍率 1 要素、GPU 常駐) ----
         // exposureBuf[0] はフレームを跨いで持ち越す適応状態 (初期値 1.0、リサイズで再生成 = リセット)
         Microsoft::WRL::ComPtr<ID3D11Buffer> histBuf;
@@ -94,8 +101,14 @@ public:
                  const RenderView& view, bool distortionActive = false);
 
 private:
-    // t.scene から bright-pass → 分離ガウスブラーを行い、結果を t.bloomA (半解像度) に残す。
-    void RunBloom(GraphicsDevice& device, ShaderManager& shaders, Target& t, const Settings& s);
+    // sceneSRV から bright-pass → 分離ガウスブラーを行い、結果を t.bloomA (半解像度) に残す。
+    // sceneSRV は t.scene または DoF 実行後の t.sceneB (M44c)
+    void RunBloom(GraphicsDevice& device, ShaderManager& shaders, Target& t, const Settings& s,
+                  ID3D11ShaderResourceView* sceneSRV);
+    // M44c: プリフィルタ → 円盤ギャザー → 合成で t.sceneB を作る。
+    // 実行しなかった (radius 0 / depthSRV 無し / シェーダ未コンパイル) 場合は false
+    bool RunDof(GraphicsDevice& device, ShaderManager& shaders, Target& t, const Settings& s,
+                const RenderView& view);
     // M43b: 空マスク → 太陽へ向けた放射ブラー ×2 を行い、結果を t.godA (半解像度) に残す。
     // 実行しなかった (intensity 0 / 太陽が背面・画面外 / depthSRV 無し等) 場合は false
     bool RunGodray(GraphicsDevice& device, ShaderManager& shaders, Target& t, const Settings& s,
@@ -103,7 +116,7 @@ private:
     // M44b: 輝度ヒストグラム収集 → 縮約 CS で t.exposureBuf[0] を更新する。
     // 実行しなかった (off / CS 未コンパイル / バッファ無し) 場合は false
     bool RunAutoExposure(GraphicsDevice& device, ShaderManager& shaders, Target& t,
-                         const Settings& s);
+                         const Settings& s, ID3D11ShaderResourceView* sceneSRV);
 
     GraphicsDevice* device_ = nullptr;
     bool ready_ = false;
@@ -116,6 +129,9 @@ private:
     AssetID godrayBlurShader_ = {};
     AssetID histCS_ = {}; // M44b
     AssetID histReduceCS_ = {};
+    AssetID dofPrefilterShader_ = {}; // M44c
+    AssetID dofGatherShader_ = {};
+    AssetID dofCompositeShader_ = {};
 
     Microsoft::WRL::ComPtr<ID3D11Buffer> cb_;     // PostFx CB (tonemap)
     Microsoft::WRL::ComPtr<ID3D11Buffer> brightCB_;
@@ -125,6 +141,7 @@ private:
     Microsoft::WRL::ComPtr<ID3D11Buffer> godrayBlurCB_;
     Microsoft::WRL::ComPtr<ID3D11Buffer> histCB_; // M44b
     Microsoft::WRL::ComPtr<ID3D11Buffer> aeReduceCB_;
+    Microsoft::WRL::ComPtr<ID3D11Buffer> dofCB_; // M44c (3 パス共通)
     Microsoft::WRL::ComPtr<ID3D11SamplerState> linearClamp_;
     Microsoft::WRL::ComPtr<ID3D11DepthStencilState> depthDisabled_;
     Microsoft::WRL::ComPtr<ID3D11BlendState> blendOff_;

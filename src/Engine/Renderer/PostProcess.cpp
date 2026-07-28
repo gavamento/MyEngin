@@ -36,6 +36,9 @@ PostProcess::Settings MergeCameraPostFx(const PostProcess::Settings& base,
     s.aeSpeed = comp.aeSpeed;
     s.aeMin = comp.aeMin;
     s.aeMax = comp.aeMax;
+    s.dofFocusDistance = comp.dofFocusDistance; // M44c
+    s.dofFocusRange = comp.dofFocusRange;
+    s.dofMaxRadius = comp.dofMaxRadius;
     return s;
 }
 namespace {
@@ -108,6 +111,19 @@ struct AeReduceCB {
     int32_t aeInstant;
 };
 
+// postfx_dof_prefilter/gather/composite.hlsl の DofCB (32 バイト、3 パス共通。
+// texel はパス毎の出力ターゲット解像度で詰め直す)
+struct DofCB {
+    float focusDist;
+    float focusRange;
+    float nearZ;
+    float farZ;
+    float maxRadius;
+    float texelX;
+    float texelY;
+    float pad;
+};
+
 // 構造化バッファ + UAV/SRV の生成 (GpuParticleBackend.cpp の CreateStructured を範に縮約)
 bool CreateStructuredBuf(ID3D11Device* dev, UINT elemSize, UINT count, const void* initData,
                          Microsoft::WRL::ComPtr<ID3D11Buffer>& buf,
@@ -173,13 +189,17 @@ bool PostProcess::Init(GraphicsDevice& device, ShaderManager& shaders)
     godrayBlurShader_ = shaders.Load("postfx_godray_blur");
     histCS_ = shaders.LoadCompute("postfx_hist.cs"); // M44b
     histReduceCS_ = shaders.LoadCompute("postfx_hist_reduce.cs");
+    dofPrefilterShader_ = shaders.Load("postfx_dof_prefilter"); // M44c
+    dofGatherShader_ = shaders.Load("postfx_dof_gather");
+    dofCompositeShader_ = shaders.Load("postfx_dof_composite");
 
     if (!CreateCB(dev, sizeof(PostFxCB), cb_) || !CreateCB(dev, sizeof(BrightCB), brightCB_)
         || !CreateCB(dev, sizeof(BlurCB), blurCB_) || !CreateCB(dev, sizeof(FxaaCB), fxaaCB_)
         || !CreateCB(dev, sizeof(GodrayMaskCB), godrayMaskCB_)
         || !CreateCB(dev, sizeof(GodrayBlurCB), godrayBlurCB_)
         || !CreateCB(dev, sizeof(HistCB), histCB_)
-        || !CreateCB(dev, sizeof(AeReduceCB), aeReduceCB_)) {
+        || !CreateCB(dev, sizeof(AeReduceCB), aeReduceCB_)
+        || !CreateCB(dev, sizeof(DofCB), dofCB_)) {
         MYE_LOG_ERROR("PostProcess: CB creation failed");
         return false;
     }
@@ -245,7 +265,10 @@ PostProcess::Target* PostProcess::Acquire(GraphicsDevice& device, int width, int
         || !t.ldr.Create(device, width, height, DXGI_FORMAT_R8G8B8A8_UNORM, false)
         || !t.distort.Create(device, width, height, DXGI_FORMAT_R16G16_FLOAT, false) // M42d
         || !t.godA.Create(device, bw, bh, DXGI_FORMAT_R16G16B16A16_FLOAT, false)     // M43b
-        || !t.godB.Create(device, bw, bh, DXGI_FORMAT_R16G16B16A16_FLOAT, false)) {
+        || !t.godB.Create(device, bw, bh, DXGI_FORMAT_R16G16B16A16_FLOAT, false)
+        || !t.sceneB.Create(device, width, height, DXGI_FORMAT_R16G16B16A16_FLOAT, false) // M44c
+        || !t.dofA.Create(device, bw, bh, DXGI_FORMAT_R16G16B16A16_FLOAT, false)
+        || !t.dofB.Create(device, bw, bh, DXGI_FORMAT_R16G16B16A16_FLOAT, false)) {
         return nullptr;
     }
     // M44b: 自動露出バッファ (ヒストグラム 256 bin + 露出倍率 1 要素、初期値 1.0)
@@ -264,8 +287,102 @@ PostProcess::Target* PostProcess::Acquire(GraphicsDevice& device, int width, int
     return &cache_[0];
 }
 
+// M44c: DoF。プリフィルタ (scene+depth → dofA 半解像度、α=符号付き CoC) →
+// 円盤ギャザー (dofA → dofB) → 合成 (scene+dofB+depth → sceneB フル解像度)。
+// 実行後は bloom/トーンマップが sceneB を読む (ボケた高輝度が自然にブルームする順序)
+bool PostProcess::RunDof(GraphicsDevice& device, ShaderManager& shaders, Target& t,
+                         const Settings& s, const RenderView& view)
+{
+    if (s.dofMaxRadius <= 0.0f || view.depthSRV == nullptr) {
+        return false;
+    }
+    ShaderProgram* pre = shaders.Get(dofPrefilterShader_);
+    ShaderProgram* gather = shaders.Get(dofGatherShader_);
+    ShaderProgram* comp = shaders.Get(dofCompositeShader_);
+    if (!pre || !pre->valid || !gather || !gather->valid || !comp || !comp->valid) {
+        return false;
+    }
+    ID3D11DeviceContext* dc = device.Context();
+    const int hw = t.dofA.Width();
+    const int hh = t.dofA.Height();
+    const int fw = t.scene.Width();
+    const int fh = t.scene.Height();
+
+    // 共通ステート (RunBloom と同じフルスクリーン規約)。t.scene を SRV で読むため RTV を外す
+    dc->OMSetRenderTargets(0, nullptr, nullptr);
+    dc->IASetInputLayout(nullptr);
+    dc->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    dc->OMSetDepthStencilState(depthDisabled_.Get(), 0);
+    dc->OMSetBlendState(blendOff_.Get(), nullptr, 0xFFFFFFFFu);
+    dc->RSSetState(rasterizer_.Get());
+    ID3D11SamplerState* samp[1] = { linearClamp_.Get() };
+    dc->PSSetSamplers(0, 1, samp);
+    ID3D11ShaderResourceView* nullSrv[3] = { nullptr, nullptr, nullptr };
+
+    DofCB cb = {};
+    cb.focusDist = s.dofFocusDistance;
+    cb.focusRange = s.dofFocusRange;
+    cb.nearZ = view.nearZ;
+    cb.farZ = view.farZ;
+    cb.maxRadius = s.dofMaxRadius;
+    ID3D11Buffer* cbs[1] = { dofCB_.Get() };
+    dc->PSSetConstantBuffers(0, 1, cbs);
+    D3D11_VIEWPORT vp = {};
+    vp.MaxDepth = 1.0f;
+
+    // 1) プリフィルタ: scene(t0)+depth(t1) → dofA (半解像度)
+    {
+        cb.texelX = 1.0f / static_cast<float>(hw);
+        cb.texelY = 1.0f / static_cast<float>(hh);
+        UploadCB(dc, dofCB_.Get(), cb);
+        vp.Width = static_cast<float>(hw);
+        vp.Height = static_cast<float>(hh);
+        dc->RSSetViewports(1, &vp);
+        ID3D11RenderTargetView* rtv = t.dofA.RTV();
+        dc->OMSetRenderTargets(1, &rtv, nullptr);
+        ID3D11ShaderResourceView* srvs[2] = { t.scene.SRV(), view.depthSRV };
+        dc->PSSetShaderResources(0, 2, srvs);
+        dc->VSSetShader(pre->vs.Get(), nullptr, 0);
+        dc->PSSetShader(pre->ps.Get(), nullptr, 0);
+        dc->Draw(3, 0);
+        dc->PSSetShaderResources(0, 2, nullSrv);
+    }
+
+    // 2) 円盤ギャザー: dofA → dofB (半解像度)
+    {
+        UploadCB(dc, dofCB_.Get(), cb); // texel は半解像度のまま
+        ID3D11RenderTargetView* rtv = t.dofB.RTV();
+        dc->OMSetRenderTargets(1, &rtv, nullptr);
+        ID3D11ShaderResourceView* srvs[1] = { t.dofA.SRV() };
+        dc->PSSetShaderResources(0, 1, srvs);
+        dc->VSSetShader(gather->vs.Get(), nullptr, 0);
+        dc->PSSetShader(gather->ps.Get(), nullptr, 0);
+        dc->Draw(3, 0);
+        dc->PSSetShaderResources(0, 1, nullSrv);
+    }
+
+    // 3) 合成: scene(t0)+dofB(t1)+depth(t2) → sceneB (フル解像度)
+    {
+        cb.texelX = 1.0f / static_cast<float>(fw);
+        cb.texelY = 1.0f / static_cast<float>(fh);
+        UploadCB(dc, dofCB_.Get(), cb);
+        vp.Width = static_cast<float>(fw);
+        vp.Height = static_cast<float>(fh);
+        dc->RSSetViewports(1, &vp);
+        ID3D11RenderTargetView* rtv = t.sceneB.RTV();
+        dc->OMSetRenderTargets(1, &rtv, nullptr);
+        ID3D11ShaderResourceView* srvs[3] = { t.scene.SRV(), t.dofB.SRV(), view.depthSRV };
+        dc->PSSetShaderResources(0, 3, srvs);
+        dc->VSSetShader(comp->vs.Get(), nullptr, 0);
+        dc->PSSetShader(comp->ps.Get(), nullptr, 0);
+        dc->Draw(3, 0);
+        dc->PSSetShaderResources(0, 3, nullSrv); // 深度 SRV は即解除 (次フレーム DSV bind 対策)
+    }
+    return true;
+}
+
 void PostProcess::RunBloom(GraphicsDevice& device, ShaderManager& shaders, Target& t,
-                           const Settings& s)
+                           const Settings& s, ID3D11ShaderResourceView* sceneSRV)
 {
     ShaderProgram* bright = shaders.Get(brightShader_);
     ShaderProgram* blur = shaders.Get(blurShader_);
@@ -300,7 +417,7 @@ void PostProcess::RunBloom(GraphicsDevice& device, ShaderManager& shaders, Targe
         dc->PSSetConstantBuffers(0, 1, cbs);
         ID3D11RenderTargetView* rtv = t.bloomA.RTV();
         dc->OMSetRenderTargets(1, &rtv, nullptr);
-        ID3D11ShaderResourceView* srv[1] = { t.scene.SRV() };
+        ID3D11ShaderResourceView* srv[1] = { sceneSRV }; // M44c: DoF 後は sceneB
         dc->PSSetShaderResources(0, 1, srv);
         dc->VSSetShader(bright->vs.Get(), nullptr, 0);
         dc->PSSetShader(bright->ps.Get(), nullptr, 0);
@@ -439,7 +556,7 @@ bool PostProcess::RunGodray(GraphicsDevice& device, ShaderManager& shaders, Targ
 // 目標露出 0.18/avgLum を指数平滑で t.exposureBuf[0] に反映する。GPU 内完結・リードバック
 // 無し = WorldHash 非干渉。aeInstant (決定的スクショ) は 1 フレーム収束
 bool PostProcess::RunAutoExposure(GraphicsDevice& device, ShaderManager& shaders, Target& t,
-                                  const Settings& s)
+                                  const Settings& s, ID3D11ShaderResourceView* sceneSRV)
 {
     if (s.autoExposure == 0) {
         return false;
@@ -465,7 +582,7 @@ bool PostProcess::RunAutoExposure(GraphicsDevice& device, ShaderManager& shaders
     UploadCB(dc, histCB_.Get(), hcb);
     ID3D11Buffer* cbs[1] = { histCB_.Get() };
     dc->CSSetConstantBuffers(0, 1, cbs);
-    ID3D11ShaderResourceView* srv[1] = { t.scene.SRV() };
+    ID3D11ShaderResourceView* srv[1] = { sceneSRV }; // M44c: DoF 後は sceneB
     dc->CSSetShaderResources(0, 1, srv);
     ID3D11UnorderedAccessView* uav[1] = { t.histUAV.Get() };
     dc->CSSetUnorderedAccessViews(0, 1, uav, nullptr);
@@ -507,10 +624,17 @@ void PostProcess::Resolve(GraphicsDevice& device, ShaderManager& shaders, Target
         return; // 解決不能 (シェーダ未コンパイル等)。呼び出し側は既に HDR に描画済み
     }
 
-    ID3D11ShaderResourceView* bloomSRV = t.scene.SRV(); // プレースホルダ (intensity 0 で不参照)
+    // M44c: DoF (scene → sceneB)。実行後は bloom/AE/トーンマップが sceneB を読む
+    // (ボケた高輝度が自然にブルームする順序)。off/不成立時は従来どおり t.scene
+    ID3D11ShaderResourceView* sceneSRV = t.scene.SRV();
+    if (RunDof(device, shaders, t, s, view)) {
+        sceneSRV = t.sceneB.SRV();
+    }
+
+    ID3D11ShaderResourceView* bloomSRV = sceneSRV; // プレースホルダ (intensity 0 で不参照)
     float bloomIntensity = 0.0f;
     if (s.bloom) {
-        RunBloom(device, shaders, t, s);
+        RunBloom(device, shaders, t, s, sceneSRV);
         ShaderProgram* bright = shaders.Get(brightShader_);
         ShaderProgram* blur = shaders.Get(blurShader_);
         if (bright && bright->valid && blur && blur->valid) {
@@ -523,7 +647,7 @@ void PostProcess::Resolve(GraphicsDevice& device, ShaderManager& shaders, Target
     const bool godrayActive = RunGodray(device, shaders, t, s, view);
 
     // M44b: 自動露出 (結果 = t.exposureBuf[0])。off/不成立時は t5 に null = 従来とビット同一
-    const bool aeActive = RunAutoExposure(device, shaders, t, s);
+    const bool aeActive = RunAutoExposure(device, shaders, t, s, sceneSRV);
 
     // FXAA 有効時はトーンマップを LDR 中間 (t.ldr) に描き、その後 FXAA で dst へ。
     ShaderProgram* fxaa = shaders.Get(fxaaShader_);
@@ -560,8 +684,8 @@ void PostProcess::Resolve(GraphicsDevice& device, ShaderManager& shaders, Target
     dc->PSSetConstantBuffers(0, 1, cbs);
 
     // M42d: t2 = 歪みバッファ / M43b: t3 = ゴッドレイ / M44a: t4 = LUT / M44b: t5 = 露出
-    // (無効時は null — enabled/intensity 0 なら不参照)
-    ID3D11ShaderResourceView* srvs[6] = { t.scene.SRV(), bloomSRV,
+    // (無効時は null — enabled/intensity 0 なら不参照)。t0 は DoF 後なら sceneB (M44c)
+    ID3D11ShaderResourceView* srvs[6] = { sceneSRV, bloomSRV,
                                           cb.distortEnabled ? t.distort.SRV() : nullptr,
                                           godrayActive ? t.godA.SRV() : nullptr,
                                           (cb.lutIntensity > 0.0f) ? s.lutSRV : nullptr,

@@ -335,6 +335,10 @@ void RegisterBuiltinComponents()
         MYE_FIELD_RANGE(CameraPostFxComponent, aeSpeed, Float, 0.1f, 20.0f),
         MYE_FIELD_RANGE(CameraPostFxComponent, aeMin, Float, 0.01f, 1.0f),
         MYE_FIELD_RANGE(CameraPostFxComponent, aeMax, Float, 1.0f, 16.0f),
+        // M44c: 被写界深度 (末尾 append、NoHash なので bump 不要)
+        MYE_FIELD_RANGE(CameraPostFxComponent, dofFocusDistance, Float, 0.1f, 500.0f),
+        MYE_FIELD_RANGE(CameraPostFxComponent, dofFocusRange, Float, 0.1f, 100.0f),
+        MYE_FIELD_RANGE(CameraPostFxComponent, dofMaxRadius, Float, 0.0f, 32.0f),
     }, kComponentNoHash);
 
     // M32e: 合成エフェクトのライフサイクル。DestroyEntity + 子エミッタ playing を駆動 = hash 対象。
