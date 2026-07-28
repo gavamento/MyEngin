@@ -33,6 +33,15 @@ cbuffer LightPass : register(b0)
     float2   gScreenSize;  // フル解像度 (SV_Position → uv 変換用)
     int      gSsaoEnabled; // 0=無効
     float    _ssaoPad;
+    // ---- M43a: ハイトフォグ + 太陽インスキャッタ (末尾 append。既定 = 恒等) ----
+    float    gFogHeightFalloff;      // 0 = 高さ一様 (従来)
+    float    gFogBaseHeight;
+    float    gFogInscatterIntensity; // 0 = 無効
+    float    gFogInscatterPower;
+    float3   gSunDirection;          // 光の進行方向 (正規化)
+    float    _fogPad2;
+    float3   gSunColor;              // リニア・強度込み (平行光無し = 黒 + intensity 0)
+    float    _fogPad3;
 };
 
 Texture2D gAlbedo    : register(t0);
@@ -84,6 +93,7 @@ float4 PSMain(VSOut i) : SV_Target
                                  gLights, gLightCount, dirShadow, gIblEnabled, gIblSpecMips,
                                  gIblIrradiance, gIblPrefiltered, gIblBrdfLut, gIblSampler, ao);
     color = ApplyFog(color, gFogColor, gFogMode, gFogDensity, gFogStart, gFogEnd,
-                     length(gCameraPos - posW)); // M29d
+                     gCameraPos, posW, gFogHeightFalloff, gFogBaseHeight, gSunDirection,
+                     gSunColor, gFogInscatterIntensity, gFogInscatterPower); // M29d+M43a
     return float4(color, 1.0f);
 }

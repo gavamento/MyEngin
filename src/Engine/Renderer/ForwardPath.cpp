@@ -41,6 +41,15 @@ struct PerFrameCB {
     // ---- CSM (M38d、末尾 append)。shadowVP はカスケード 0 として温存 ----
     XMFLOAT4X4 shadowVP12[2];  // カスケード 1,2
     float cascadeInfo[4];      // xyz = split far 境界 (デバッグ用) / w = カスケード数
+    // ---- M43a: ハイトフォグ + 太陽インスキャッタ (末尾 append。既定 = 恒等) ----
+    float fogHeightFalloff;
+    float fogBaseHeight;
+    float fogInscatterIntensity;
+    float fogInscatterPower;
+    XMFLOAT3 sunDirection;
+    float fogPad2;
+    XMFLOAT3 sunColor;
+    float fogPad3;
 };
 
 struct PerObjectCB {
@@ -240,6 +249,12 @@ void ForwardPath::Render(GraphicsDevice& device, const RenderView& view, const R
     pf.fogDensity = view.fogDensity;
     pf.fogStart = view.fogStart;
     pf.fogEnd = view.fogEnd;
+    pf.fogHeightFalloff = view.fogHeightFalloff; // M43a
+    pf.fogBaseHeight = view.fogBaseHeight;
+    pf.fogInscatterIntensity = view.fogInscatterIntensity;
+    pf.fogInscatterPower = view.fogInscatterPower;
+    pf.sunDirection = view.sunDirection;
+    pf.sunColor = view.sunColor;
     // IBL (M38c): SRV 3 点が揃っている時のみ有効 (無ければ従来の定数アンビエント)
     const bool ibl = !unlit && view.iblIrradiance != nullptr && view.iblPrefiltered != nullptr
         && view.iblBrdfLut != nullptr;

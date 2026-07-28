@@ -42,6 +42,15 @@ struct PerFrameCB {
     // ---- CSM (M38d、末尾 append)。shadowVP はカスケード 0 として温存 ----
     XMFLOAT4X4 shadowVP12[2];
     float cascadeInfo[4]; // xyz = split far 境界 / w = カスケード数
+    // ---- M43a: ハイトフォグ + 太陽インスキャッタ (末尾 append。既定 = 恒等) ----
+    float fogHeightFalloff;
+    float fogBaseHeight;
+    float fogInscatterIntensity;
+    float fogInscatterPower;
+    XMFLOAT3 sunDirection;
+    float fogPad2;
+    XMFLOAT3 sunColor;
+    float fogPad3;
 };
 
 struct PerObjectCB {
@@ -90,6 +99,15 @@ struct LightPassCB {
     float screenSize[2];
     int32_t ssaoEnabled;
     float ssaoPad;
+    // ---- M43a: ハイトフォグ + 太陽インスキャッタ (末尾 append。既定 = 恒等) ----
+    float fogHeightFalloff;
+    float fogBaseHeight;
+    float fogInscatterIntensity;
+    float fogInscatterPower;
+    XMFLOAT3 sunDirection;
+    float fogPad2;
+    XMFLOAT3 sunColor;
+    float fogPad3;
 };
 
 // ssao.hlsl の SsaoCB と同一レイアウト
@@ -380,6 +398,12 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
     pf.fogDensity = view.fogDensity;
     pf.fogStart = view.fogStart;
     pf.fogEnd = view.fogEnd;
+    pf.fogHeightFalloff = view.fogHeightFalloff; // M43a
+    pf.fogBaseHeight = view.fogBaseHeight;
+    pf.fogInscatterIntensity = view.fogInscatterIntensity;
+    pf.fogInscatterPower = view.fogInscatterPower;
+    pf.sunDirection = view.sunDirection;
+    pf.sunColor = view.sunColor;
     // IBL (M38c): 透明後段の forward_lit / 光パスの deferred_light が参照
     const bool ibl = !unlit && view.iblIrradiance != nullptr && view.iblPrefiltered != nullptr
         && view.iblBrdfLut != nullptr;
@@ -648,6 +672,12 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
     lp.screenSize[0] = static_cast<float>(view.width); // M38e
     lp.screenSize[1] = static_cast<float>(view.height);
     lp.ssaoEnabled = ssaoOn ? 1 : 0;
+    lp.fogHeightFalloff = view.fogHeightFalloff; // M43a
+    lp.fogBaseHeight = view.fogBaseHeight;
+    lp.fogInscatterIntensity = view.fogInscatterIntensity;
+    lp.fogInscatterPower = view.fogInscatterPower;
+    lp.sunDirection = view.sunDirection;
+    lp.sunColor = view.sunColor;
     UploadCB(dc, lightCB_.Get(), lp);
     ID3D11Buffer* lightCbs[1] = { lightCB_.Get() };
     dc->PSSetConstantBuffers(0, 1, lightCbs);

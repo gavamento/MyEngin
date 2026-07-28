@@ -201,6 +201,7 @@
     <ClInclude Include="..\src\Engine\Renderer\ImGuiTheme.h" />
     <ClInclude Include="..\src\Engine\Renderer\MeshInstancing.h" />
     <ClInclude Include="..\src\Engine\Renderer\PickingPass.h" />
+    <ClInclude Include="..\src\Engine\Renderer\PostFxMath.h" />
     <ClInclude Include="..\src\Engine\Renderer\PostProcess.h" />
     <ClInclude Include="..\src\Engine\Renderer\RenderPath.h" />
     <ClInclude Include="..\src\Engine\Renderer\RenderSelfTest.h" />

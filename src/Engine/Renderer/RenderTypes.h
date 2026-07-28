@@ -93,6 +93,15 @@ struct RenderView {
     //      「blendMode=2 エミッタあり && HDR 経路」のときだけクリアして充填。
     //      null = 歪みパーティクルは描かれない (postfx off / AssetPreview) ----
     ID3D11RenderTargetView* distortionRTV = nullptr;
+    // ---- M43a: ハイトフォグ + 太陽インスキャッタ (末尾 append。既定 = 恒等 = 従来と同一)。
+    //      fog 系は CollectEnvironment のパススルー、太陽は RenderSystem が
+    //      最初の type==0 平行光から充填 (リニア・強度込み。無ければ intensity を 0 に潰す) ----
+    float fogHeightFalloff = 0.0f;      // 0 = 高さ一様 (従来)
+    float fogBaseHeight = 0.0f;
+    float fogInscatterIntensity = 0.0f; // 0 = 無効
+    float fogInscatterPower = 8.0f;
+    DirectX::XMFLOAT3 sunDirection = { 0.0f, -1.0f, 0.0f }; // 光の進行方向 (正規化)
+    DirectX::XMFLOAT3 sunColor = { 0.0f, 0.0f, 0.0f };      // リニア・強度込み
 };
 
 // GPU へ渡すライト 1 個 (定数バッファ配列要素、16 バイト境界に揃えた 64 バイト)。

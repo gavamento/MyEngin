@@ -298,6 +298,11 @@ void RegisterBuiltinComponents()
         MYE_FIELD_RANGE(FogComponent, density, Float, 0.0f, 1.0f),
         MYE_FIELD(FogComponent, start, Float),
         MYE_FIELD(FogComponent, end, Float),
+        // M43a: ハイトフォグ + 太陽インスキャッタ (末尾 append、NoHash なので bump 不要)
+        MYE_FIELD_RANGE(FogComponent, heightFalloff, Float, 0.0f, 4.0f),
+        MYE_FIELD(FogComponent, baseHeight, Float),
+        MYE_FIELD_RANGE(FogComponent, inscatterIntensity, Float, 0.0f, 1.0f),
+        MYE_FIELD_RANGE(FogComponent, inscatterPower, Float, 1.0f, 64.0f),
     }, kComponentNoHash);
 
     // M29e: カメラ別ポストプロセス。描画専用なので **kComponentNoHash**。

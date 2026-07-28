@@ -229,6 +229,10 @@ void CollectEnvironment(World& world, RenderView& view)
             view.fogDensity = fog->density;
             view.fogStart = fog->start;
             view.fogEnd = fog->end;
+            view.fogHeightFalloff = fog->heightFalloff; // M43a (純パススルー)
+            view.fogBaseHeight = fog->baseHeight;
+            view.fogInscatterIntensity = fog->inscatterIntensity;
+            view.fogInscatterPower = fog->inscatterPower;
         }
     });
 }
@@ -530,6 +534,25 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
     view.skyHorizon = SrgbToLinear(view.skyHorizon);
     view.skyBottom = SrgbToLinear(view.skyBottom);
     view.fogColor = SrgbToLinear(view.fogColor);
+    // M43a: 太陽 = 最初の type==0 平行光 (CSM の dirIdx と同じ規則)。色はリニア・強度込み。
+    // 平行光が無いシーンではインスキャッタ無効化 (黒い太陽へ lerp して暗転する事故を防ぐ)
+    {
+        int sunIdx = -1;
+        for (int i = 0; i < lights.count; ++i) {
+            if (lights.lights[i].type == 0) {
+                sunIdx = i;
+                break;
+            }
+        }
+        if (sunIdx >= 0) {
+            const GpuLight& g = lights.lights[sunIdx];
+            view.sunDirection = g.direction;
+            view.sunColor = { g.color.x * g.intensity, g.color.y * g.intensity,
+                              g.color.z * g.intensity };
+        } else {
+            view.fogInscatterIntensity = 0.0f;
+        }
+    }
     // M38b: cubemap スカイの SRV 解決 (未ロード/不正なら gradient にフォールバック)
     if (view.skyMode == 1) {
         Texture* cube = resources.textures.Get(view.skyCubemapId);

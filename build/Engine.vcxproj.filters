@@ -576,6 +576,9 @@
     <ClInclude Include="..\src\Engine\Renderer\PickingPass.h">
       <Filter>Renderer</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\PostFxMath.h">
+      <Filter>Renderer</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\PostProcess.h">
       <Filter>Renderer</Filter>
     </ClInclude>

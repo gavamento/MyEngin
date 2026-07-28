@@ -184,6 +184,10 @@ bool RunVfxSelfTest()
             auto* f = fog1.AddComponent<FogComponent>();
             f->mode = 1;
             f->density = 0.5f;
+            f->heightFalloff = 0.3f; // M43a: ハイトフォグ/インスキャッタのパススルー検証
+            f->baseHeight = 2.0f;
+            f->inscatterIntensity = 0.7f;
+            f->inscatterPower = 16.0f;
         }
         // 無効化された Skybox は飛ばされる (sky1 を無効化 → sky2 が選ばれる) 検証用
         s.GetWorld().ApplyStructuralChanges();
@@ -194,6 +198,11 @@ bool RunVfxSelfTest()
               "environment: first skybox (lowest index) is selected");
         check(view.fogMode == 1 && std::fabs(view.fogDensity - 0.5f) < 1e-6f,
               "environment: fog settings propagate to view");
+        check(std::fabs(view.fogHeightFalloff - 0.3f) < 1e-6f
+                  && std::fabs(view.fogBaseHeight - 2.0f) < 1e-6f
+                  && std::fabs(view.fogInscatterIntensity - 0.7f) < 1e-6f
+                  && std::fabs(view.fogInscatterPower - 16.0f) < 1e-6f,
+              "environment: M43a height-fog/inscatter fields propagate to view");
 
         sky1.AddComponent<ActiveComponent>()->enabled = 0;
         s.GetWorld().ApplyStructuralChanges();
@@ -207,6 +216,8 @@ bool RunVfxSelfTest()
         CollectEnvironment(empty.GetWorld(), view3);
         check(view3.skyMode == -1 && view3.fogMode == -1,
               "environment: empty scene leaves sky/fog disabled");
+        check(view3.fogHeightFalloff == 0.0f && view3.fogInscatterIntensity == 0.0f,
+              "environment: M43a fields default to identity (bit-identical legacy fog)");
     }
 
     // ---- (3.6) MergeCameraPostFx (M29e): 上書きマージと applyGamma 維持 ----

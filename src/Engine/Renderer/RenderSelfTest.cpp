@@ -6,6 +6,7 @@
 #include "Engine/Core/Log.h"
 #include "Engine/Renderer/FrustumCull.h"
 #include "Engine/Renderer/MeshInstancing.h"
+#include "Engine/Renderer/PostFxMath.h"
 #include "Engine/Renderer/PostProcess.h"
 
 using namespace DirectX;
@@ -152,6 +153,39 @@ void TestInstanceRuns()
     TEST_CHECK(worlds.size() == 5 && worlds[2]._41 == 2.0f);
 }
 
+// M43a: ハイトフォグ / 太陽インスキャッタ (common.hlsli::ApplyFog のミラー検証)
+void TestHeightFogInscatter()
+{
+    MYE_LOG_INFO("[selftest] height fog + sun inscatter (M43a)");
+    // falloff=0 → 恒等 (従来とビット同一)
+    TEST_CHECK(HeightFogEffectiveDistance(50.0f, 10.0f, 0.0f, 0.0f, 0.0f) == 50.0f);
+    // 水平視線でカメラ高さ = 基準高さ → 等倍 (kd=0 の縮退分岐)
+    TEST_CHECK(std::fabs(HeightFogEffectiveDistance(50.0f, 0.0f, 0.0f, 0.5f, 0.0f) - 50.0f)
+               < 1e-3f);
+    // 高所の水平視線 → e^{-k·camY} で減衰 (k=0.5, camY=10 → e^-5 ≈ 0.674%)
+    const float high = HeightFogEffectiveDistance(50.0f, 10.0f, 10.0f, 0.5f, 0.0f);
+    TEST_CHECK(high > 0.0f && high < 1.0f);
+    // baseHeight を camY まで持ち上げると等倍に戻る (基準の意味)
+    TEST_CHECK(std::fabs(HeightFogEffectiveDistance(50.0f, 10.0f, 10.0f, 0.5f, 10.0f) - 50.0f)
+               < 1e-3f);
+    // 積分は視線の向きに依らない: cam(0)→pos(10) と cam(10)→pos(0) で同じ実効距離
+    const float up = HeightFogEffectiveDistance(50.0f, 0.0f, 10.0f, 0.5f, 0.0f);
+    const float down = HeightFogEffectiveDistance(50.0f, 10.0f, 0.0f, 0.5f, 0.0f);
+    TEST_CHECK(std::fabs(up - down) < 1e-2f);
+    // 下向き (地表へ) は高所の水平より濃い
+    TEST_CHECK(down > high);
+
+    // インスキャッタ: 正対 → 1 / 直交 → 0 (sunDir は光の進行方向 = 太陽は逆側)
+    const XMFLOAT3 sunDir = { 0.0f, 0.0f, -1.0f }; // 太陽は +Z 側
+    TEST_CHECK(std::fabs(SunInscatterFactor({ 0.0f, 0.0f, 1.0f }, sunDir, 8.0f) - 1.0f) < 1e-4f);
+    TEST_CHECK(SunInscatterFactor({ 1.0f, 0.0f, 0.0f }, sunDir, 8.0f) < 1e-4f);
+    // 太陽を背にする (dot<0) → 0
+    TEST_CHECK(SunInscatterFactor({ 0.0f, 0.0f, -1.0f }, sunDir, 8.0f) == 0.0f);
+    // power が大きいほど 45° の係数が小さい (ピークが鋭い)
+    const XMFLOAT3 diag = { 0.70710678f, 0.0f, 0.70710678f };
+    TEST_CHECK(SunInscatterFactor(diag, sunDir, 8.0f) < SunInscatterFactor(diag, sunDir, 2.0f));
+}
+
 } // namespace
 
 bool RunRenderSelfTest()
@@ -161,6 +195,7 @@ bool RunRenderSelfTest()
     TestPostFxMerge();
     TestCascadeSplits();
     TestInstanceRuns();
+    TestHeightFogInscatter();
     if (g_failCount == 0) {
         MYE_LOG_INFO("[selftest] render: ALL PASS");
         return true;

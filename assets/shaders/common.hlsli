@@ -214,14 +214,31 @@ float3 ApplyLighting(float3 albedo, float3 normal, float3 posW, float3 cameraPos
 }
 
 
-// ---- 距離フォグ (M29d) ----
+// ---- 距離フォグ (M29d) + ハイトフォグ/太陽インスキャッタ (M43a) ----
 // mode: -1=無効 / 0=linear (start..end) / 1=exp (1-e^-ρd) / 2=exp2 (1-e^-(ρd)²)。
-// dist はカメラからのワールド距離。lit 済みの色をフォグ色へ補間する
+// lit 済みの色をフォグ色へ補間する。
+// M43a: heightFalloff>0 のとき高度 exp 減衰密度 ρ(y)=e^{-k(y-base)} の視線積分を
+// 「実効距離」として距離に置換。inscatterIntensity>0 のとき視線が太陽 (光の進行方向
+// sunDir の逆) へ向くほどフォグ色を太陽色へ寄せる。
+// **既定 (heightFalloff==0 && inscatterIntensity==0) は従来とビット同一**。
+// C++ ミラー: PostFxMath.h (HeightFogEffectiveDistance / SunInscatterFactor) — 変更時は両方更新
 float3 ApplyFog(float3 color, float3 fogColor, int fogMode, float density, float fogStart,
-                float fogEnd, float dist)
+                float fogEnd, float3 cameraPos, float3 posW, float heightFalloff,
+                float baseHeight, float3 sunDir, float3 sunColor, float inscatterIntensity,
+                float inscatterPower)
 {
     if (fogMode < 0) {
         return color;
+    }
+    const float trueDist = length(cameraPos - posW);
+    float dist = trueDist;
+    if (heightFalloff > 0.0f) {
+        // ∫ρ = e^{-k(camY-base)} · (1-e^{-kΔy})/(kΔy) · dist (Δy=posY-camY)。
+        // 指数は overflow 回避で ±60 に clamp (PostFxMath.h と同一)
+        const float kd = heightFalloff * (posW.y - cameraPos.y);
+        const float slope = (abs(kd) > 1e-4f) ? (1.0f - exp(-kd)) / kd : 1.0f;
+        dist = trueDist
+               * exp(clamp(-heightFalloff * (cameraPos.y - baseHeight), -60.0f, 60.0f)) * slope;
     }
     float f = 0.0f;
     if (fogMode == 0) {
@@ -231,6 +248,11 @@ float3 ApplyFog(float3 color, float3 fogColor, int fogMode, float density, float
     } else {
         const float e = density * dist;
         f = 1.0f - exp(-e * e);
+    }
+    if (inscatterIntensity > 0.0f) {
+        const float3 rayDir = (posW - cameraPos) / max(trueDist, 1e-4f);
+        const float sunAmount = pow(saturate(dot(rayDir, -sunDir)), max(inscatterPower, 1e-2f));
+        fogColor = lerp(fogColor, sunColor, saturate(sunAmount * inscatterIntensity));
     }
     return lerp(color, fogColor, f);
 }

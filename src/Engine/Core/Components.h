@@ -379,6 +379,11 @@ struct FogComponent {
     float density = 0.02f; // Exp/Exp2 用
     float start = 10.0f;   // Linear 用
     float end = 80.0f;     // Linear 用
+    // ---- M43a: ハイトフォグ + 太陽インスキャッタ (末尾 append。既定 = 恒等 = 従来の見た目) ----
+    float heightFalloff = 0.0f;      // 高度による密度の指数減衰係数 (0 = 高さ一様)
+    float baseHeight = 0.0f;         // 密度基準の高さ (これより上で薄くなる)
+    float inscatterIntensity = 0.0f; // 太陽方向へのフォグ色寄せ (0 = 無効)
+    float inscatterPower = 8.0f;     // 寄せの鋭さ (大きいほど太陽周辺に集中)
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
