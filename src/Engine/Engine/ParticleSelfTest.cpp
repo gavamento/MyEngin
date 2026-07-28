@@ -176,6 +176,30 @@ bool RunParticleSelfTest()
               "softfade: depth linearization endpoints");
     }
 
+    // ---- (B3) GPU 深度衝突の座標変換/反射 (M42e、particle_sim.cs.hlsl のミラー) ----
+    {
+        float u = -1.0f, v = -1.0f;
+        // クリップ原点 (画面中央) -> uv (0.5, 0.5)
+        check(ParticleClipToUv(0.0f, 0.0f, 1.0f, u, v) && NearF(u, 0.5f) && NearF(v, 0.5f),
+              "collision: clip origin maps to uv center");
+        // クリップ右上 (+w, +w) -> uv (1, 0) (y は上下反転)
+        check(ParticleClipToUv(2.0f, 2.0f, 2.0f, u, v) && NearF(u, 1.0f) && NearF(v, 0.0f),
+              "collision: clip corner maps with y flip");
+        // 背面 (w<=0) は判定しない
+        check(!ParticleClipToUv(0.0f, 0.0f, -1.0f, u, v), "collision: behind camera rejected");
+
+        // 真下落下 (0,-4,0) を y-up 法線で反射、反発 0.5 -> (0, +2, 0)
+        const XMFLOAT3 r =
+            ReflectWithRestitution({ 0.0f, -4.0f, 0.0f }, { 0.0f, 1.0f, 0.0f }, 0.5f);
+        check(NearF(r.x, 0.0f) && NearF(r.y, 2.0f) && NearF(r.z, 0.0f),
+              "collision: straight-down reflect with restitution");
+        // 斜め入射 (1,-1,0)、反発 1 -> (1, +1, 0) (接線成分保存)
+        const XMFLOAT3 r2 =
+            ReflectWithRestitution({ 1.0f, -1.0f, 0.0f }, { 0.0f, 1.0f, 0.0f }, 1.0f);
+        check(NearF(r2.x, 1.0f) && NearF(r2.y, 1.0f) && NearF(r2.z, 0.0f),
+              "collision: oblique reflect preserves tangent");
+    }
+
     // ---- (C) SIMD と スカラーの Simulate がビット一致 (120 tick) ----
     {
         Scene s;

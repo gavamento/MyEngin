@@ -128,6 +128,11 @@ struct ParticleEmitterComponent {
     float flipCycles = 1.0f; // 寿命あたりのフリップブック周回数
     // ---- ソフトパーティクル (M32c) ----
     float softFadeDistance = 0.0f; // >0 で深度フェード
+    // ---- 深度バッファ衝突 (M42e: 末尾 append。hash 対象フィールド追加 = golden 再記録済) ----
+    // GPU バックエンド限定の見た目効果 (spec 7.5 の等価規約に例外明記)。CPU は素通し。
+    // 深度は前フレームの描画結果 = 1 フレーム遅延 / 画面外・空ピクセルとは衝突しない
+    int32_t depthCollision = 0;   // 1 で GPU sim がシーン深度と衝突
+    float collisionBounce = 0.4f; // 反発係数 (0..1)
     // ---- 実行時 (非登録=非ハッシュ・非シリアライズ。スクリプト/エディタが即時バーストを積む) ----
     int32_t pendingBurst = 0; // 次の Update で消費され 0 に戻る (常に tick 末ハッシュ前に 0)
     static inline ComponentTypeId sTypeId = kInvalidComponentType;

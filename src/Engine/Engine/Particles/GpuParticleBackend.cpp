@@ -24,6 +24,10 @@ struct GpuParticleCB { // particle_gpu_common.hlsli と一致
     XMFLOAT4 colorEnd;
     XMFLOAT4 params2;     // M42b: softFade, nearZ, farZ / w = 予約
     XMFLOAT4 params3;     // M42c: useTexture, flipTilesX, flipTilesY, flipCycles
+    XMFLOAT4X4 collViewProj;    // M42e: transpose 済み
+    XMFLOAT4X4 collInvViewProj; // M42e: transpose 済み
+    XMFLOAT4 collParams;        // M42e: enabled, restitution, thickness, 予約
+    XMFLOAT4 collScreen;        // M42e: 画面 w/h, nearZ, farZ
 };
 
 struct GpuRenderCB {
@@ -405,12 +409,23 @@ void GpuParticleBackend::Update(World& world, float dt)
                       static_cast<float>(em.capacity) };
         cb.colorBegin = desc->colorBegin;
         cb.colorEnd = desc->colorEnd;
+        // M42e: 深度衝突 (エミッタ側 depthCollision かつ深度供給済みのときのみ有効)
+        const bool collide = (desc->depthCollision != 0) && collValid_ && collDepthSRV_;
+        cb.collViewProj = collViewProj_;
+        cb.collInvViewProj = collInvViewProj_;
+        cb.collParams = { collide ? 1.0f : 0.0f, desc->collisionBounce, 0.0f, 0.0f };
+        cb.collScreen = { collScreen_[0], collScreen_[1], collScreen_[2], collScreen_[3] };
         UploadCB(dc, simCB_.Get(), cb);
         ID3D11Buffer* cbs[1] = { simCB_.Get() };
         dc->CSSetConstantBuffers(0, 1, cbs);
 
         ID3D11UnorderedAccessView* nullUavs[3] = { nullptr, nullptr, nullptr };
-        ID3D11ShaderResourceView* nullSrvs[2] = { nullptr, nullptr };
+        ID3D11ShaderResourceView* nullSrvs[3] = { nullptr, nullptr, nullptr };
+        // M42e: t2 = 前フレーム深度 (sim のみ参照。emit は t2 未使用)
+        if (collide) {
+            ID3D11ShaderResourceView* dsrv = collDepthSRV_.Get();
+            dc->CSSetShaderResources(2, 1, &dsrv);
+        }
 
         // カウントバッファ更新: [0]=deadCount, [1]=aliveInCount。
         // 重要: counts が CS の SRV にバインドされたままコピーしない (ハザードで落ちる)
@@ -448,7 +463,7 @@ void GpuParticleBackend::Update(World& world, float dt)
         }
 
         // ---- 描画用: InstanceCount を GPU 上で確定 (リードバックなし) ----
-        dc->CSSetShaderResources(0, 2, nullSrvs);
+        dc->CSSetShaderResources(0, 3, nullSrvs); // M42e: t2 (深度) も解除
         dc->CSSetUnorderedAccessViews(0, 3, nullUavs, nullptr);
         dc->CopyStructureCount(em.indirectArgs.Get(), 4, em.aliveUAV[aliveOut].Get());
         em.aliveCurrent = aliveOut;
@@ -460,6 +475,26 @@ void GpuParticleBackend::Update(World& world, float dt)
     timer_.End(*device_);
     stats_.updateMs = timer_.Milliseconds();
     stats_.aliveTotal = aliveEstimate;
+}
+
+void GpuParticleBackend::SetSceneDepth(ID3D11ShaderResourceView* depthSRV,
+                                       const XMFLOAT4X4& view, const XMFLOAT4X4& proj, int width,
+                                       int height, float nearZ, float farZ)
+{
+    collDepthSRV_ = depthSRV; // ComPtr 保持 (リサイズ後も stale-but-safe)
+    collValid_ = (depthSRV != nullptr) && width > 0 && height > 0;
+    if (!collValid_) {
+        return;
+    }
+    const XMMATRIX v = XMLoadFloat4x4(&view);
+    const XMMATRIX p = XMLoadFloat4x4(&proj);
+    const XMMATRIX vp = XMMatrixMultiply(v, p);
+    XMStoreFloat4x4(&collViewProj_, XMMatrixTranspose(vp));
+    XMStoreFloat4x4(&collInvViewProj_, XMMatrixTranspose(XMMatrixInverse(nullptr, vp)));
+    collScreen_[0] = static_cast<float>(width);
+    collScreen_[1] = static_cast<float>(height);
+    collScreen_[2] = nearZ;
+    collScreen_[3] = farZ;
 }
 
 void GpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,

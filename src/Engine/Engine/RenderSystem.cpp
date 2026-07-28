@@ -599,6 +599,14 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
             device.Context()->OMSetRenderTargets(1, &view.rtv, view.dsvReadOnly);
         }
         particles->Render(device, view, shaders, resources);
+
+        // M42e: GPU 深度衝突へシーンカメラの深度を供給する。次 tick の sim が使う =
+        // 衝突相手は前フレームの深度 (仕様)。SceneView エディタカメラ (cameraOverride) は
+        // 衝突源にしない — ゲームカメラの見た目だけが物理感を持つ
+        if (!cameraOverride && view.depthSRV != nullptr) {
+            particles->Gpu().SetSceneDepth(view.depthSRV, view.view, view.proj, view.width,
+                                           view.height, view.nearZ, view.farZ);
+        }
     }
 
     // スクリプトの DebugDrawLine (v7、M37): シーン空間の線を深度テスト付きで重ねる。

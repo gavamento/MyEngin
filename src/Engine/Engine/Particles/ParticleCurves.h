@@ -107,6 +107,28 @@ inline float SoftFadeFactor(float sceneLinZ, float particleLinZ, float fadeDist)
     return std::clamp((sceneLinZ - particleLinZ) / std::max(fadeDist, 1e-4f), 0.0f, 1.0f);
 }
 
+// M42e: GPU 深度衝突の座標変換/反射。particle_sim.cs.hlsl とコメント同期のミラー —
+// selftest はこちらを検証する。GPU バックエンド限定の見た目効果 (spec 7.5 例外)。
+// クリップ座標 -> スクリーン UV。背面 (w<=0) は false (衝突判定しない)
+inline bool ParticleClipToUv(float clipX, float clipY, float clipW, float& u, float& v)
+{
+    if (clipW <= 0.0f) {
+        return false;
+    }
+    u = (clipX / clipW) * 0.5f + 0.5f;
+    v = 0.5f - (clipY / clipW) * 0.5f;
+    return true;
+}
+
+// 反射 + 反発係数: v' = (v - 2(v·n)n) * restitution
+inline DirectX::XMFLOAT3 ReflectWithRestitution(const DirectX::XMFLOAT3& vel,
+                                                const DirectX::XMFLOAT3& n, float restitution)
+{
+    const float d = vel.x * n.x + vel.y * n.y + vel.z * n.z;
+    return { (vel.x - 2.0f * d * n.x) * restitution, (vel.y - 2.0f * d * n.y) * restitution,
+             (vel.z - 2.0f * d * n.z) * restitution };
+}
+
 // 寿命係数 age∈[0,1] でのサイズ倍率。キー: 1.0(0) / [sizeMidScale@sizeMidT] / sizeEndScale(1)。
 // sizeMidT∈(0,1) のときのみ中間キー有効。無効時は 1.0→sizeEndScale の線形とビット同一。
 inline float EvalParticleSizeScale(const ParticleEmitterComponent& d, float age)

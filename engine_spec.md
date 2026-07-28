@@ -283,6 +283,7 @@ IParticleBackend (switchable interface)
 ### 7.5 Consistency
 
 - Both backends should produce **logically equivalent results** from the same seed and input. Floating-point rounding differences are acceptable within a formally defined tolerance
+- **Exception (M42e)**: depth-buffer collision (`ParticleEmitter.depthCollision`) is a **GPU-backend-only visual effect**; the CPU backend does not implement it and particles pass through geometry. This does not violate determinism: the GPU particle pool is not part of the world hash and is never read back to the CPU
 
 ---
 

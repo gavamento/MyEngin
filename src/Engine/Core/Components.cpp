@@ -107,6 +107,9 @@ void RegisterBuiltinComponents()
         MYE_FIELD(ParticleEmitterComponent, flipTilesY, Int32),
         MYE_FIELD(ParticleEmitterComponent, flipCycles, Float),
         MYE_FIELD(ParticleEmitterComponent, softFadeDistance, Float),
+        // M42e: GPU 深度衝突 (末尾 append。hash 対象フィールド追加 → golden 再記録 = M42e で実施)
+        MYE_FIELD(ParticleEmitterComponent, depthCollision, Int32),
+        MYE_FIELD_RANGE(ParticleEmitterComponent, collisionBounce, Float, 0.0f, 1.0f),
     });
 
     // M28a: height / friction、M36a: layer / mask / meshAsset を末尾 append

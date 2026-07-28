@@ -26,6 +26,13 @@ public:
                 RenderResources& resources, float renderOffsetX) override;
     ParticleStats Stats() const override { return stats_; }
 
+    // M42e: 深度衝突用にシーンカメラの深度を渡す (RenderSystem がシーンカメラ描画後に呼ぶ)。
+    // sim は tick フェーズで走るため衝突相手は前フレームの深度 = 1 フレーム遅延 (仕様)。
+    // ComPtr 保持なのでリサイズで元 RenderTexture が破棄されても stale-but-safe。
+    void SetSceneDepth(ID3D11ShaderResourceView* depthSRV, const DirectX::XMFLOAT4X4& view,
+                       const DirectX::XMFLOAT4X4& proj, int width, int height, float nearZ,
+                       float farZ);
+
 private:
     struct EmitData { // particle_emit.cs.hlsl の EmitData と一致
         DirectX::XMFLOAT3 pos;
@@ -76,6 +83,13 @@ private:
     Microsoft::WRL::ComPtr<ID3D11BlendState> blendAlpha_;
     Microsoft::WRL::ComPtr<ID3D11DepthStencilState> depthNoWrite_;
     Microsoft::WRL::ComPtr<ID3D11SamplerState> sampler_; // M42c: フリップブック (linear clamp)
+
+    // M42e: 深度衝突の入力 (SetSceneDepth で更新。valid=false なら衝突無効)
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> collDepthSRV_;
+    DirectX::XMFLOAT4X4 collViewProj_ = {};    // transpose 済み
+    DirectX::XMFLOAT4X4 collInvViewProj_ = {}; // transpose 済み
+    float collScreen_[4] = { 0, 0, 0.1f, 1000.0f }; // w, h, nearZ, farZ
+    bool collValid_ = false;
 };
 
 } // namespace mye
