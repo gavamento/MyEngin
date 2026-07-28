@@ -6,6 +6,7 @@
 #include "Engine/Core/Log.h"
 #include "Engine/Core/World.h"
 #include "Engine/Engine/Particles/ParticleCurves.h"
+#include "Engine/Renderer/GpuResources.h" // M42c: TextureLibrary (フリップブック解決)
 #include "Engine/Renderer/GraphicsDevice.h"
 #include "Engine/Renderer/ShaderManager.h"
 
@@ -21,7 +22,8 @@ struct GpuParticleCB { // particle_gpu_common.hlsli と一致
     XMFLOAT4 params;      // emitCount, turbulence, sizeEndScale, capacity
     XMFLOAT4 colorBegin;
     XMFLOAT4 colorEnd;
-    XMFLOAT4 params2;     // M42b: softFade, nearZ, farZ / w = M42c 予約
+    XMFLOAT4 params2;     // M42b: softFade, nearZ, farZ / w = 予約
+    XMFLOAT4 params3;     // M42c: useTexture, flipTilesX, flipTilesY, flipCycles
 };
 
 struct GpuRenderCB {
@@ -139,6 +141,18 @@ bool GpuParticleBackend::Init(GraphicsDevice& device, ShaderManager& shaders)
     dd.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ZERO;
     dd.DepthFunc = D3D11_COMPARISON_LESS_EQUAL;
     if (FAILED(dev->CreateDepthStencilState(&dd, depthNoWrite_.GetAddressOf()))) {
+        return false;
+    }
+
+    // M42c: フリップブックテクスチャ用サンプラ (CPU バックエンドと同じ linear clamp)
+    D3D11_SAMPLER_DESC sd = {};
+    sd.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+    sd.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
+    sd.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
+    sd.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+    sd.ComparisonFunc = D3D11_COMPARISON_NEVER;
+    sd.MaxLOD = D3D11_FLOAT32_MAX;
+    if (FAILED(dev->CreateSamplerState(&sd, sampler_.GetAddressOf()))) {
         return false;
     }
     return timer_.Init(device);
@@ -452,12 +466,15 @@ void GpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
                                 ShaderManager& shaders, RenderResources& resources,
                                 float renderOffsetX)
 {
-    (void)resources; // GPU 側テクスチャは将来対応 (CPU バックエンドが主。M32b)
     ShaderProgram* prog = shaders.Get(renderShader_);
     if (!prog || !prog->valid) {
         return;
     }
     ID3D11DeviceContext* dc = device.Context();
+
+    // M42c: フリップブックテクスチャの白フォールバック (CPU バックエンドと同じ)
+    Texture* whiteTex = resources.textures.Get(resources.textures.White());
+    ID3D11ShaderResourceView* whiteSrv = whiteTex ? whiteTex->srv.Get() : nullptr;
 
     GpuRenderCB cb = {};
     const XMMATRIX v = XMLoadFloat4x4(&view.view);
@@ -490,6 +507,17 @@ void GpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
         // M42b: ソフトフェード (深度が読めるビューのみ有効)
         simCb.params2 = { (view.depthSRV != nullptr) ? em.descCache.softFadeDistance : 0.0f,
                           view.nearZ, view.farZ, 0.0f };
+        // M42c: テクスチャ解決 (空なら procedural 円へフォールバック。CPU 側 :504-510 と同型)
+        ID3D11ShaderResourceView* texSrv = nullptr;
+        if (em.descCache.texture.value != 0) {
+            if (Texture* t = resources.textures.Get(em.descCache.texture)) {
+                texSrv = t->srv.Get();
+            }
+        }
+        simCb.params3 = { texSrv ? 1.0f : 0.0f,
+                          static_cast<float>(std::max(1, em.descCache.flipTilesX)),
+                          static_cast<float>(std::max(1, em.descCache.flipTilesY)),
+                          em.descCache.flipCycles };
         UploadCB(dc, simCB_.Get(), simCb);
         ID3D11Buffer* cbs[2] = { simCB_.Get(), renderCB_.Get() };
         dc->VSSetConstantBuffers(0, 2, cbs);
@@ -498,6 +526,10 @@ void GpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
         ID3D11ShaderResourceView* srvs[2] = { em.poolSRV.Get(),
                                               em.aliveSRV[em.aliveCurrent].Get() };
         dc->VSSetShaderResources(0, 2, srvs);
+        ID3D11ShaderResourceView* psTex = texSrv ? texSrv : whiteSrv;
+        dc->PSSetShaderResources(3, 1, &psTex); // M42c: t3
+        ID3D11SamplerState* samp = sampler_.Get();
+        dc->PSSetSamplers(0, 1, &samp);
         dc->OMSetBlendState(em.descCache.blendMode == 1 ? blendAlpha_.Get() : blendAdditive_.Get(),
                             nullptr, 0xFFFFFFFFu);
         dc->DrawInstancedIndirect(em.indirectArgs.Get(), 0);
@@ -505,7 +537,7 @@ void GpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
 
     ID3D11ShaderResourceView* nullSrvs[3] = { nullptr, nullptr, nullptr };
     dc->VSSetShaderResources(0, 2, nullSrvs);
-    dc->PSSetShaderResources(2, 1, nullSrvs); // M42b: t2=深度は RTV/DSV 戻し前に解除
+    dc->PSSetShaderResources(2, 2, nullSrvs); // M42b/c: t2=深度, t3=テクスチャを解除
     dc->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFFu);
     dc->OMSetDepthStencilState(nullptr, 0);
 }

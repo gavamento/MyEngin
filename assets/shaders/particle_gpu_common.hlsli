@@ -16,5 +16,6 @@ cbuffer GpuParticleCB : register(b0)
     float4 gParams;        // x = emitCount, y = turbulence, z = sizeEndScale, w = capacity
     float4 gColorBegin;
     float4 gColorEnd;
-    float4 gParams2;       // M42b: x = softFade (0=off), y = nearZ, z = farZ / w = M42c 予約
+    float4 gParams2;       // M42b: x = softFade (0=off), y = nearZ, z = farZ / w = 予約
+    float4 gParams3;       // M42c: x = useTexture, y = flipTilesX, z = flipTilesY, w = flipCycles
 };

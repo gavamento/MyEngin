@@ -75,6 +75,7 @@ private:
     Microsoft::WRL::ComPtr<ID3D11BlendState> blendAdditive_;
     Microsoft::WRL::ComPtr<ID3D11BlendState> blendAlpha_;
     Microsoft::WRL::ComPtr<ID3D11DepthStencilState> depthNoWrite_;
+    Microsoft::WRL::ComPtr<ID3D11SamplerState> sampler_; // M42c: フリップブック (linear clamp)
 };
 
 } // namespace mye

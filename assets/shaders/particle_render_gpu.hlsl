@@ -17,6 +17,8 @@ cbuffer GpuRenderCB : register(b1)
 StructuredBuffer<GpuParticle> gPoolSRV : register(t0);
 StructuredBuffer<uint> gAliveList : register(t1);
 Texture2D gDepth : register(t2); // M42b: シーン深度 (PS のみ。read-only DSV とセット)
+Texture2D gTex   : register(t3); // M42c: フリップブックテクスチャ (未使用時は白)
+SamplerState gSamp : register(s0);
 
 struct VSOut
 {
@@ -24,6 +26,7 @@ struct VSOut
     float2 uv    : TEXCOORD0;
     float4 color : COLOR0;
     float  viewZ : TEXCOORD1; // M42b: ビュー空間深度 (= clip.w)
+    float  age   : TEXCOORD2; // M42c: [0,1] 寿命係数 (フリップブック用)
 };
 
 VSOut VSMain(uint vid : SV_VertexID, uint iid : SV_InstanceID)
@@ -42,6 +45,7 @@ VSOut VSMain(uint vid : SV_VertexID, uint iid : SV_InstanceID)
     o.uv = corner * 0.5f + 0.5f;
     o.color = color;
     o.viewZ = o.pos.w; // 透視投影では clip.w = ビュー空間 z
+    o.age = age;       // M42c: フリップブック用
     return o;
 }
 
@@ -54,10 +58,29 @@ float LinearizeSceneDepth(float d)
 
 float4 PSMain(VSOut i) : SV_Target
 {
-    const float2 d = i.uv * 2.0f - 1.0f;
-    float m = saturate(1.0f - dot(d, d));
-    m *= m;
-    float4 col = float4(i.color.rgb * m, i.color.a * m);
+    float4 col;
+    if (gParams3.x != 0.0f)
+    {
+        // フリップブック (M42c): particle_render.hlsl PSMain のフリップブック分岐を移植 (同一式)
+        const uint tx = (uint)max(1.0f, gParams3.y);
+        const uint ty = (uint)max(1.0f, gParams3.z);
+        const uint tiles = tx * ty;
+        uint frame = (uint)max(0, (int)floor(i.age * gParams3.w * (float)tiles));
+        frame = frame % tiles;
+        const uint cx = frame % tx;
+        const uint cy = frame / tx;
+        const float2 uv = (i.uv + float2(cx, cy)) / float2(tx, ty);
+        const float4 tex = gTex.Sample(gSamp, uv);
+        col = float4(i.color.rgb * tex.rgb, i.color.a * tex.a);
+    }
+    else
+    {
+        // procedural ソフト円形 (テクスチャ未指定時)
+        const float2 d = i.uv * 2.0f - 1.0f;
+        float m = saturate(1.0f - dot(d, d));
+        m *= m;
+        col = float4(i.color.rgb * m, i.color.a * m);
+    }
 
     // ソフトパーティクル (M42b): 0=off (従来とビット同一)。CPU 版 particle_render.hlsl と同一式
     if (gParams2.x > 0.0f) {
