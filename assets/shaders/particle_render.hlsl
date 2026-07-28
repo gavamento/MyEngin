@@ -21,7 +21,10 @@ cbuffer ParticleCB : register(b0)
     float3   gFogColor;
     float    gFogStart;
     float    gFogEnd;
-    float3   _p3;
+    // M42b: ソフトパーティクル (旧 _p3 パディングを転用、CB サイズ不変)
+    float    gSoftFade; // 深度フェード距離 (0=off)。ParticleCurves.h::SoftFadeFactor と同一式
+    float    gNearZ;    // 深度線形化用 (ParticleCurves.h::LinearizeParticleDepth と同一式)
+    float    gFarZ;
 };
 
 struct ParticleInstance
@@ -34,8 +37,9 @@ struct ParticleInstance
 };
 StructuredBuffer<ParticleInstance> gParticles : register(t0);
 
-Texture2D    gTex  : register(t1);
-SamplerState gSamp : register(s0);
+Texture2D    gTex   : register(t1);
+Texture2D    gDepth : register(t2); // M42b: シーン深度 (read-only DSV とセットでバインド)
+SamplerState gSamp  : register(s0);
 
 struct VSOut
 {
@@ -44,6 +48,7 @@ struct VSOut
     float4 color : COLOR0;
     float  age   : TEXCOORD1;
     float  dist  : TEXCOORD2; // カメラからのワールド距離 (フォグ用)
+    float  viewZ : TEXCOORD3; // ビュー空間深度 (M42b ソフトフェード用、= clip.w)
 };
 
 VSOut VSMain(uint vid : SV_VertexID, uint iid : SV_InstanceID)
@@ -58,7 +63,14 @@ VSOut VSMain(uint vid : SV_VertexID, uint iid : SV_InstanceID)
     o.color = p.color;
     o.age = p.age;
     o.dist = length(world - gCameraPos);
+    o.viewZ = o.pos.w; // 透視投影では clip.w = ビュー空間 z
     return o;
+}
+
+// M42b: 非線形深度 [0,1] -> ビュー空間 z。ParticleCurves.h::LinearizeParticleDepth と同一式
+float LinearizeSceneDepth(float d)
+{
+    return gNearZ * gFarZ / max(gFarZ - d * (gFarZ - gNearZ), 1e-4f);
 }
 
 // 距離フォグ係数 (common.hlsli::ApplyFog と同一。粒子は register 衝突回避のため独立定義)
@@ -103,6 +115,14 @@ float4 PSMain(VSOut i) : SV_Target
         col.rgb *= (1.0f - f);
     } else {
         col.rgb = lerp(col.rgb, gFogColor, f);
+    }
+
+    // ソフトパーティクル (M42b): シーン深度との差でフェード。0=off (従来とビット同一)。
+    // ParticleCurves.h::SoftFadeFactor と同一式 (selftest はそちらを検証)
+    if (gSoftFade > 0.0f) {
+        const float sceneZ = LinearizeSceneDepth(gDepth.Load(int3(int2(i.pos.xy), 0)).r);
+        const float fade = saturate((sceneZ - i.viewZ) / max(gSoftFade, 1e-4f));
+        col *= fade; // rgb + a 両方 -> additive/alpha どちらのブレンドでも正しく消える
     }
     return col;
 }

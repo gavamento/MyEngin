@@ -16,12 +16,14 @@ cbuffer GpuRenderCB : register(b1)
 
 StructuredBuffer<GpuParticle> gPoolSRV : register(t0);
 StructuredBuffer<uint> gAliveList : register(t1);
+Texture2D gDepth : register(t2); // M42b: シーン深度 (PS のみ。read-only DSV とセット)
 
 struct VSOut
 {
     float4 pos   : SV_Position;
     float2 uv    : TEXCOORD0;
     float4 color : COLOR0;
+    float  viewZ : TEXCOORD1; // M42b: ビュー空間深度 (= clip.w)
 };
 
 VSOut VSMain(uint vid : SV_VertexID, uint iid : SV_InstanceID)
@@ -39,7 +41,15 @@ VSOut VSMain(uint vid : SV_VertexID, uint iid : SV_InstanceID)
     o.pos = mul(float4(world, 1.0f), gViewProj);
     o.uv = corner * 0.5f + 0.5f;
     o.color = color;
+    o.viewZ = o.pos.w; // 透視投影では clip.w = ビュー空間 z
     return o;
+}
+
+// M42b: 非線形深度 [0,1] -> ビュー空間 z (particle_render.hlsl と同一式)
+float LinearizeSceneDepth(float d)
+{
+    const float n = gParams2.y, f = gParams2.z;
+    return n * f / max(f - d * (f - n), 1e-4f);
 }
 
 float4 PSMain(VSOut i) : SV_Target
@@ -47,5 +57,12 @@ float4 PSMain(VSOut i) : SV_Target
     const float2 d = i.uv * 2.0f - 1.0f;
     float m = saturate(1.0f - dot(d, d));
     m *= m;
-    return float4(i.color.rgb * m, i.color.a * m);
+    float4 col = float4(i.color.rgb * m, i.color.a * m);
+
+    // ソフトパーティクル (M42b): 0=off (従来とビット同一)。CPU 版 particle_render.hlsl と同一式
+    if (gParams2.x > 0.0f) {
+        const float sceneZ = LinearizeSceneDepth(gDepth.Load(int3(int2(i.pos.xy), 0)).r);
+        col *= saturate((sceneZ - i.viewZ) / max(gParams2.x, 1e-4f));
+    }
+    return col;
 }

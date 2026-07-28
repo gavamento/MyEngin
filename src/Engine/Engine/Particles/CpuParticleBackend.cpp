@@ -47,7 +47,10 @@ struct ParticleCB {
     XMFLOAT3 fogColor;
     float fogStart;
     float fogEnd;
-    float pad3[3];
+    // M42b: ソフトパーティクル (旧 pad3 転用。particle_render.hlsl の ParticleCB と一致)
+    float softFade; // 深度フェード距離 (0=off)
+    float nearZ;    // 深度線形化用
+    float farZ;
 };
 
 } // namespace
@@ -416,6 +419,7 @@ void CpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
         int32_t flipTilesX;
         int32_t flipTilesY;
         float flipCycles;
+        float softFade; // M42b: エミッタ毎の深度フェード距離
     };
     std::vector<DrawRange> ranges;
 
@@ -460,7 +464,8 @@ void CpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
             inst.age = age;
         }
         ranges.push_back({ base, pool.alive, d.blendMode, d.texture,
-                           std::max(1, d.flipTilesX), std::max(1, d.flipTilesY), d.flipCycles });
+                           std::max(1, d.flipTilesX), std::max(1, d.flipTilesY), d.flipCycles,
+                           d.softFadeDistance });
     }
     dc->Unmap(instanceBuffer_.Get(), 0);
 
@@ -496,6 +501,14 @@ void CpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
     cbData.fogColor = view.fogColor;
     cbData.fogStart = view.fogStart;
     cbData.fogEnd = view.fogEnd;
+    cbData.nearZ = view.nearZ; // M42b: ソフトフェードの深度線形化用
+    cbData.farZ = view.farZ;
+
+    // M42b: シーン深度を t2 へ。depthSRV が無いビュー (AssetPreview 等) は softFade=0 に
+    // 強制してフェードを無効化する (read-only DSV バインド中のみ SRV 読みが合法 — M42a)
+    if (view.depthSRV != nullptr) {
+        dc->PSSetShaderResources(2, 1, &view.depthSRV);
+    }
 
     for (const DrawRange& range : ranges) {
         cbData.baseIndex = range.base;
@@ -511,6 +524,7 @@ void CpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
         cbData.flipTilesX = range.flipTilesX;
         cbData.flipTilesY = range.flipTilesY;
         cbData.flipCycles = range.flipCycles;
+        cbData.softFade = (view.depthSRV != nullptr) ? range.softFade : 0.0f; // M42b
         D3D11_MAPPED_SUBRESOURCE cbMapped = {};
         if (SUCCEEDED(dc->Map(renderCB_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &cbMapped))) {
             memcpy(cbMapped.pData, &cbData, sizeof(cbData));
@@ -523,10 +537,11 @@ void CpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
         dc->DrawInstanced(4, range.count, 0, 0);
     }
 
-    // SRV を外す (次フレームの Map と競合させない)
+    // SRV を外す (次フレームの Map と競合させない。t2=深度は RTV/DSV 戻し前の解除 — M42a 流儀)
     ID3D11ShaderResourceView* nullSrv = nullptr;
     dc->VSSetShaderResources(0, 1, &nullSrv);
     dc->PSSetShaderResources(1, 1, &nullSrv);
+    dc->PSSetShaderResources(2, 1, &nullSrv);
     dc->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFFu);
     dc->OMSetDepthStencilState(nullptr, 0);
 }

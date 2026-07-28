@@ -159,6 +159,23 @@ bool RunParticleSelfTest()
         check(NearF(EvalParticleSizeScale(s, 0.5f), 2.0f), "gradient: size mid key hit exactly");
     }
 
+    // ---- (B2) ソフトパーティクルのフェード係数 (M42b、HLSL と同一式のミラー) ----
+    {
+        // fadeDist=0 (既定) は無効 = 常に 1.0 (従来とビット同一)
+        check(SoftFadeFactor(5.0f, 10.0f, 0.0f) == 1.0f, "softfade: disabled returns 1");
+        // シーンが粒子よりちょうど fadeDist 奥 -> 1.0 (フェード完了)
+        check(NearF(SoftFadeFactor(12.0f, 10.0f, 2.0f), 1.0f), "softfade: full at fade distance");
+        // 中間 (奥行差 = fadeDist/2) -> 0.5
+        check(NearF(SoftFadeFactor(11.0f, 10.0f, 2.0f), 0.5f), "softfade: half at mid distance");
+        // 粒子がシーンより奥 (差が負) -> 0 (完全に消える)
+        check(SoftFadeFactor(8.0f, 10.0f, 2.0f) == 0.0f, "softfade: behind scene clamps to 0");
+        // 深度線形化: d=0 -> near, d=1 -> far (float で正確に表せる値を使う —
+        // near=0.1/far=1000 だと far-(far-near) の桁落ちで ~0.02% ずれて NearF を外れる)
+        check(NearF(LinearizeParticleDepth(0.0f, 1.0f, 100.0f), 1.0f)
+                  && NearF(LinearizeParticleDepth(1.0f, 1.0f, 100.0f), 100.0f),
+              "softfade: depth linearization endpoints");
+    }
+
     // ---- (C) SIMD と スカラーの Simulate がビット一致 (120 tick) ----
     {
         Scene s;

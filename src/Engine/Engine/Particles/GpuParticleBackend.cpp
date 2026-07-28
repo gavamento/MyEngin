@@ -21,6 +21,7 @@ struct GpuParticleCB { // particle_gpu_common.hlsli と一致
     XMFLOAT4 params;      // emitCount, turbulence, sizeEndScale, capacity
     XMFLOAT4 colorBegin;
     XMFLOAT4 colorEnd;
+    XMFLOAT4 params2;     // M42b: softFade, nearZ, farZ / w = M42c 予約
 };
 
 struct GpuRenderCB {
@@ -473,6 +474,12 @@ void GpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
     dc->PSSetShader(prog->ps.Get(), nullptr, 0);
     dc->OMSetDepthStencilState(depthNoWrite_.Get(), 0);
 
+    // M42b: シーン深度を PS t2 へ (VS の t0/t1 とはステージ別で無衝突)。
+    // depthSRV が無いビューでは softFade=0 に強制されるのでバインド不要
+    if (view.depthSRV != nullptr) {
+        dc->PSSetShaderResources(2, 1, &view.depthSRV);
+    }
+
     for (GpuEmitter& em : emitters_) {
         // sim CB (b0: sizeEndScale/color) はエミッタ毎に更新
         GpuParticleCB simCb = {};
@@ -480,9 +487,13 @@ void GpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
                          static_cast<float>(em.capacity) };
         simCb.colorBegin = em.descCache.colorBegin;
         simCb.colorEnd = em.descCache.colorEnd;
+        // M42b: ソフトフェード (深度が読めるビューのみ有効)
+        simCb.params2 = { (view.depthSRV != nullptr) ? em.descCache.softFadeDistance : 0.0f,
+                          view.nearZ, view.farZ, 0.0f };
         UploadCB(dc, simCB_.Get(), simCb);
         ID3D11Buffer* cbs[2] = { simCB_.Get(), renderCB_.Get() };
         dc->VSSetConstantBuffers(0, 2, cbs);
+        dc->PSSetConstantBuffers(0, 2, cbs); // M42b: PS もソフトフェードで b0 を参照
 
         ID3D11ShaderResourceView* srvs[2] = { em.poolSRV.Get(),
                                               em.aliveSRV[em.aliveCurrent].Get() };
@@ -492,8 +503,9 @@ void GpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
         dc->DrawInstancedIndirect(em.indirectArgs.Get(), 0);
     }
 
-    ID3D11ShaderResourceView* nullSrvs[2] = { nullptr, nullptr };
+    ID3D11ShaderResourceView* nullSrvs[3] = { nullptr, nullptr, nullptr };
     dc->VSSetShaderResources(0, 2, nullSrvs);
+    dc->PSSetShaderResources(2, 1, nullSrvs); // M42b: t2=深度は RTV/DSV 戻し前に解除
     dc->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFFu);
     dc->OMSetDepthStencilState(nullptr, 0);
 }
