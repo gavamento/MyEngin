@@ -56,6 +56,8 @@ bool SwapChain::Init(GraphicsDevice& device, void* hwnd, int width, int height)
 
 void SwapChain::Shutdown()
 {
+    depthSrv_.Reset();
+    dsvReadOnly_.Reset();
     dsv_.Reset();
     depthTex_.Reset();
     rtv_.Reset();
@@ -70,17 +72,33 @@ bool SwapChain::CreateDepth()
     td.Height = static_cast<UINT>(height_);
     td.MipLevels = 1;
     td.ArraySize = 1;
-    td.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+    // M42a: TYPELESS 化 (RenderTexture.cpp と同型。深度ビット素性は D24S8 のまま)
+    td.Format = DXGI_FORMAT_R24G8_TYPELESS;
     td.SampleDesc = { 1, 0 };
     td.Usage = D3D11_USAGE_DEFAULT;
-    td.BindFlags = D3D11_BIND_DEPTH_STENCIL;
+    td.BindFlags = D3D11_BIND_DEPTH_STENCIL | D3D11_BIND_SHADER_RESOURCE;
     if (FAILED(device_->Device()->CreateTexture2D(&td, nullptr, depthTex_.ReleaseAndGetAddressOf()))) {
         MYE_LOG_ERROR("SwapChain: depth texture creation failed");
         return false;
     }
-    if (FAILED(device_->Device()->CreateDepthStencilView(depthTex_.Get(), nullptr,
-                                                         dsv_.ReleaseAndGetAddressOf()))) {
-        MYE_LOG_ERROR("SwapChain: depth stencil view creation failed");
+
+    D3D11_DEPTH_STENCIL_VIEW_DESC dsvDesc = {};
+    dsvDesc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT; // TYPELESS なので明示必須
+    dsvDesc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
+    D3D11_DEPTH_STENCIL_VIEW_DESC roDesc = dsvDesc;
+    roDesc.Flags = D3D11_DSV_READ_ONLY_DEPTH | D3D11_DSV_READ_ONLY_STENCIL;
+    D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+    srvDesc.Format = DXGI_FORMAT_R24_UNORM_X8_TYPELESS; // .r = 深度 [0,1]
+    srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+    srvDesc.Texture2D.MipLevels = 1;
+
+    if (FAILED(device_->Device()->CreateDepthStencilView(depthTex_.Get(), &dsvDesc,
+                                                         dsv_.ReleaseAndGetAddressOf()))
+        || FAILED(device_->Device()->CreateDepthStencilView(
+            depthTex_.Get(), &roDesc, dsvReadOnly_.ReleaseAndGetAddressOf()))
+        || FAILED(device_->Device()->CreateShaderResourceView(
+            depthTex_.Get(), &srvDesc, depthSrv_.ReleaseAndGetAddressOf()))) {
+        MYE_LOG_ERROR("SwapChain: depth view creation failed");
         return false;
     }
     return true;

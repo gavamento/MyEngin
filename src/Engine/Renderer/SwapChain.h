@@ -21,6 +21,9 @@ public:
 
     ID3D11RenderTargetView* BackbufferRTV() const { return rtv_.Get(); }
     ID3D11DepthStencilView* DepthDSV() const { return dsv_.Get(); }
+    // M42a: 深度の SRV 読みと read-only DSV (RenderTexture と同型)
+    ID3D11ShaderResourceView* DepthSRV() const { return depthSrv_.Get(); }
+    ID3D11DepthStencilView* DepthDSVReadOnly() const { return dsvReadOnly_.Get(); }
     int Width() const { return width_; }
     int Height() const { return height_; }
 
@@ -36,6 +39,8 @@ private:
     Microsoft::WRL::ComPtr<ID3D11RenderTargetView> rtv_;
     Microsoft::WRL::ComPtr<ID3D11Texture2D> depthTex_;
     Microsoft::WRL::ComPtr<ID3D11DepthStencilView> dsv_;
+    Microsoft::WRL::ComPtr<ID3D11DepthStencilView> dsvReadOnly_; // M42a
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> depthSrv_;  // M42a
     int width_ = 0;
     int height_ = 0;
 };

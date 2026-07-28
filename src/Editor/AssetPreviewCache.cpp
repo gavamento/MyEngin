@@ -174,6 +174,8 @@ bool AssetPreviewCache::RenderOne(EngineContext& ctx, const std::wstring& path, 
     target.dsv = rt_.DSV();
     target.width = rt_.Width();
     target.height = rt_.Height();
+    // M42a: depthSRV/dsvReadOnly は意図的に null のまま (viewKey=0) — プレビューは
+    // パーティクル無しで深度読み系効果が不要。null なら効果側が自然に無効化される
     target.clearColor[0] = 0.13f;
     target.clearColor[1] = 0.13f;
     target.clearColor[2] = 0.15f;

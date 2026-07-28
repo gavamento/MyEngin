@@ -195,6 +195,8 @@ void ForwardPath::Render(GraphicsDevice& device, const RenderView& view, const R
 {
     ID3D11DeviceContext* dc = device.Context();
 
+    // RT はここでバインドしたまま VFX/パーティクル後段まで引き継ぐ
+    // (M42a: パーティクル直前に RenderSystem が read-only DSV へ差し替える)
     dc->OMSetRenderTargets(1, &view.rtv, view.dsv);
     D3D11_VIEWPORT vp = {};
     vp.Width = static_cast<float>(view.width);

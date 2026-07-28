@@ -84,6 +84,9 @@ void SceneViewWindow::OnRenderViews(EngineContext& ctx, Selection& selection)
     target.dsv = rt_.DSV();
     target.width = rt_.Width();
     target.height = rt_.Height();
+    target.depthSRV = rt_.DepthSRV();       // M42a
+    target.dsvReadOnly = rt_.DSVReadOnly();
+    target.viewKey = 2; // SceneView
     ctx.renderSystem->Render(ctx.scene->GetWorld(), *ctx.device, *ctx.renderPath, *ctx.shaders,
                              *ctx.resources, target, &cam, ctx.particles, ctx.vfx);
 

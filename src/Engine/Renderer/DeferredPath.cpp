@@ -757,6 +757,7 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
         }
     } else {
         // パーティクル後段のために RTV+DSV を戻しておく
+        // (M42a: パーティクル直前に RenderSystem が read-only DSV へ差し替える)
         dc->OMSetRenderTargets(1, &view.rtv, view.dsv);
     }
     dc->OMSetDepthStencilState(nullptr, 0);

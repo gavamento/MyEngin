@@ -26,6 +26,9 @@ void GameViewWindow::OnRenderViews(EngineContext& ctx)
     target.dsv = rt_.DSV();
     target.width = rt_.Width();
     target.height = rt_.Height();
+    target.depthSRV = rt_.DepthSRV();       // M42a
+    target.dsvReadOnly = rt_.DSVReadOnly();
+    target.viewKey = 3; // GameView
     hasCamera_ = ctx.renderSystem->Render(ctx.scene->GetWorld(), *ctx.device, *ctx.renderPath,
                                           *ctx.shaders, *ctx.resources, target, nullptr,
                                           ctx.particles, ctx.vfx);

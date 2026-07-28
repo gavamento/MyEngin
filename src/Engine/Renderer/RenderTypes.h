@@ -82,6 +82,13 @@ struct RenderView {
     // ---- SceneView 表示モード (M40b)。0=Lit 1=Unlit (白ライト) 2=Wireframe (+Unlit)。
     //      CameraOverride 経由でエディタのみ設定 — GameView/Runtime は常に 0 ----
     int32_t debugViewMode = 0;
+    // ---- M42a: シーン深度 SRV 基盤 (末尾 append)。FrameTarget からパススルー。
+    //      depthSRV は dsv と同一テクスチャ — 読む側は dsvReadOnly バインド中のみ合法。
+    //      null = 深度読み系効果 (ソフトパーティクル等) を自然無効化 (AssetPreview) ----
+    ID3D11ShaderResourceView* depthSRV = nullptr;
+    ID3D11DepthStencilView* dsvReadOnly = nullptr;
+    float nearZ = 0.1f;   // 深度線形化用 (カメラ/override から充填)
+    float farZ = 1000.0f;
 };
 
 // GPU へ渡すライト 1 個 (定数バッファ配列要素、16 バイト境界に揃えた 64 バイト)。

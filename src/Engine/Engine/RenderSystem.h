@@ -29,6 +29,13 @@ struct FrameTarget {
     int width = 0;
     int height = 0;
     float clearColor[4] = { 0.08f, 0.09f, 0.11f, 1.0f };
+    // ---- M42a: シーン深度 SRV 基盤 (末尾 append) ----
+    // depthSRV/dsvReadOnly は dsv と同一テクスチャのビュー。null = 深度読み系効果を無効化
+    // (AssetPreview 等)。viewKey はビュー別の前フレーム状態のキー (M44d モーションブラー用
+    // 先行予約): 0=保存なし 1=runtime バックバッファ 2=SceneView 3=GameView
+    ID3D11ShaderResourceView* depthSRV = nullptr;
+    ID3D11DepthStencilView* dsvReadOnly = nullptr;
+    uint32_t viewKey = 0;
 };
 
 // 描画補間 (M36b): 前 tick 末のワールド行列スナップショット。EngineLoop が tick 頭に採取し、

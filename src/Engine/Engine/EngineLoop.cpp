@@ -542,6 +542,9 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             target.width = swapChain.Width();
             target.height = swapChain.Height();
             memcpy(target.clearColor, config.clearColor, sizeof(target.clearColor));
+            target.depthSRV = swapChain.DepthSRV();          // M42a
+            target.dsvReadOnly = swapChain.DepthDSVReadOnly();
+            target.viewKey = 1; // runtime バックバッファ
             if (config.renderSceneToBackbuffer) {
                 renderSystem.Render(scene.GetWorld(), device, *activePath, shaderManager, resources,
                                     target, nullptr, &particleSystem, &vfxRenderer);

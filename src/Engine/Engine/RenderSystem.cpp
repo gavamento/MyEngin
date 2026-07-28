@@ -13,6 +13,7 @@
 #include "Engine/Engine/Vfx/VfxRenderer.h"
 #include "Engine/Renderer/FrustumCull.h"
 #include "Engine/Renderer/GpuResources.h"
+#include "Engine/Renderer/GraphicsDevice.h"
 #include "Engine/Renderer/RenderPath.h"
 
 using namespace DirectX;
@@ -242,6 +243,8 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
     view.width = target.width;
     view.height = target.height;
     memcpy(view.clearColor, target.clearColor, sizeof(view.clearColor));
+    view.depthSRV = target.depthSRV;       // M42a: null なら深度読み系効果は自然無効
+    view.dsvReadOnly = target.dsvReadOnly;
 
     // ---- HDR ポストプロセス経路 (M16) ----
     // シーン + パーティクルを HDR 中間 (R16F, color のみ) へ描き、最後にトーンマップ解決で
@@ -277,6 +280,8 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
         XMStoreFloat4x4(&view.proj, p);
         view.cameraPos = cameraOverride->position;
         view.debugViewMode = cameraOverride->debugViewMode; // M40b (SceneView のみ非 0)
+        view.nearZ = cameraOverride->nearZ; // M42a: 深度線形化用
+        view.farZ = cameraOverride->farZ;
         cameraFound = true;
     } else {
         const ComponentTypeId req[] = { CameraComponent::sTypeId, WorldMatrixComponent::sTypeId };
@@ -314,6 +319,8 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
             XMStoreFloat4x4(&view.view, v);
             XMStoreFloat4x4(&view.proj, p);
             view.cameraPos = { camWorld._41, camWorld._42, camWorld._43 };
+            view.nearZ = cam.nearZ; // M42a: 深度線形化用
+            view.farZ = cam.farZ;
         } else {
             XMStoreFloat4x4(&view.view, XMMatrixIdentity());
             XMStoreFloat4x4(&view.proj, XMMatrixIdentity());
@@ -561,6 +568,12 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
 
     // パーティクルは常に Forward 後段 (どのレンダリングパスでも共通)。HDR 中間へ加算される
     if (particles) {
+        // M42a: パーティクル系は深度書込みしない (WriteMask=ZERO) ので read-only DSV に
+        // 差し替える。これで深度 SRV (view.depthSRV) との同時バインドが合法になり、
+        // ソフトパーティクル (M42b) 等が深度を読める。read-only ビューが無ければ従来どおり
+        if (view.dsvReadOnly != nullptr) {
+            device.Context()->OMSetRenderTargets(1, &view.rtv, view.dsvReadOnly);
+        }
         particles->Render(device, view, shaders, resources);
     }
 
