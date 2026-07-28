@@ -412,6 +412,9 @@ struct CameraPostFxComponent {
     // ---- M43b: スクリーンスペースゴッドレイ (末尾 append、NoHash なので hash 不変) ----
     float godrayIntensity = 0.0f; // 空マスクの明るさ倍率 (0=off)
     float godrayDecay = 0.95f;    // 放射ブラーのタップ毎減衰
+    // ---- M44a: カラーグレーディング LUT (末尾 append、NoHash なので hash 不変) ----
+    AssetID lutTexture = {};   // 256x16 ストリップ (sRGB off でロードされる)
+    float lutIntensity = 0.0f; // 0=off / 1=LUT 全適用
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 

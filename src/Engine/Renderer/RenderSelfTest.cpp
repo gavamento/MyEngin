@@ -94,6 +94,8 @@ void TestPostFxMerge()
     comp.colorFilter = { 1.0f, 0.8f, 0.6f, 1.0f };
     comp.godrayIntensity = 0.7f; // M43b
     comp.godrayDecay = 0.9f;
+    comp.lutTexture = AssetID{ 123 }; // M44a
+    comp.lutIntensity = 0.5f;
     const PostProcess::Settings s = MergeCameraPostFx(base, comp);
     TEST_CHECK(s.chromAberration == 0.01f);
     TEST_CHECK(s.vignetteIntensity == 0.4f);
@@ -103,12 +105,15 @@ void TestPostFxMerge()
     TEST_CHECK(s.colorFilter.y == 0.8f && s.colorFilter.z == 0.6f);
     TEST_CHECK(s.applyGamma == base.applyGamma); // applyGamma は base 維持
     TEST_CHECK(s.godrayIntensity == 0.7f && s.godrayDecay == 0.9f); // M43b
+    TEST_CHECK(s.lutTexture.value == 123 && s.lutIntensity == 0.5f); // M44a
+    TEST_CHECK(s.lutSRV == nullptr); // SRV はマージでは触らない (RenderSystem が解決)
 
     // 既定コンポーネント = 無効 (従来の見た目)
     const PostProcess::Settings d = MergeCameraPostFx(base, CameraPostFxComponent{});
     TEST_CHECK(d.chromAberration == 0.0f && d.vignetteIntensity == 0.0f);
     TEST_CHECK(d.saturation == 1.0f && d.contrast == 1.0f);
     TEST_CHECK(d.godrayIntensity == 0.0f); // M43b: 既定 = off
+    TEST_CHECK(d.lutIntensity == 0.0f && d.lutTexture.IsNull()); // M44a: 既定 = off
 }
 
 // メッシュインスタンシングの run 検出 (M38f): 同一 (material,mesh) の連続 2 件以上のみ、
@@ -215,6 +220,29 @@ void TestSunScreenPos()
     TEST_CHECK(fup > 0.0f && v < 0.5f);
 }
 
+// M44a: LUT ストリップの UV (postfx_tonemap.hlsl::SampleLutStrip のミラー検証)
+void TestLutStripUv()
+{
+    MYE_LOG_INFO("[selftest] LUT strip UV (M44a)");
+    float u0 = 0, u1 = 0, v = 0, f = 0;
+    // 黒: スライス 0 のテクセル (0,0) 中心、補間 0
+    LutStripUv(0.0f, 0.0f, 0.0f, u0, u1, v, f);
+    TEST_CHECK(std::fabs(u0 - 0.5f / 256.0f) < 1e-6f && std::fabs(v - 0.5f / 16.0f) < 1e-6f
+               && f == 0.0f);
+    // 白: 最終スライス 15 のテクセル (15,15) 中心、u0==u1 (クランプ)
+    LutStripUv(1.0f, 1.0f, 1.0f, u0, u1, v, f);
+    TEST_CHECK(std::fabs(u0 - 255.5f / 256.0f) < 1e-6f && u0 == u1
+               && std::fabs(v - 15.5f / 16.0f) < 1e-6f && f == 0.0f);
+    // セル境界: b=0.5 はスライス 7/8 の中間 (frac=0.5)
+    LutStripUv(0.5f, 0.5f, 0.5f, u0, u1, v, f);
+    TEST_CHECK(std::fabs(f - 0.5f) < 1e-6f);
+    TEST_CHECK(std::fabs(u0 - 120.0f / 256.0f) < 1e-6f && std::fabs(u1 - 136.0f / 256.0f) < 1e-6f);
+    // 範囲外はクランプ (負/超過)
+    LutStripUv(-1.0f, 2.0f, -0.5f, u0, u1, v, f);
+    TEST_CHECK(std::fabs(u0 - 0.5f / 256.0f) < 1e-6f && std::fabs(v - 15.5f / 16.0f) < 1e-6f
+               && f == 0.0f);
+}
+
 } // namespace
 
 bool RunRenderSelfTest()
@@ -226,6 +254,7 @@ bool RunRenderSelfTest()
     TestInstanceRuns();
     TestHeightFogInscatter();
     TestSunScreenPos();
+    TestLutStripUv();
     if (g_failCount == 0) {
         MYE_LOG_INFO("[selftest] render: ALL PASS");
         return true;

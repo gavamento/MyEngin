@@ -30,6 +30,8 @@ PostProcess::Settings MergeCameraPostFx(const PostProcess::Settings& base,
     s.fxaa = comp.fxaaOn != 0;
     s.godrayIntensity = comp.godrayIntensity; // M43b
     s.godrayDecay = comp.godrayDecay;
+    s.lutTexture = comp.lutTexture; // M44a (lutSRV の解決は RenderSystem)
+    s.lutIntensity = comp.lutIntensity;
     return s;
 }
 namespace {
@@ -49,6 +51,9 @@ struct PostFxCB {
     int32_t godrayEnabled;  // M43b: 旧 pad[1] 転用。1 で t3 のゴッドレイを加算
     float pad;
     DirectX::XMFLOAT4 colorFilter;
+    // ---- M44a: LUT (末尾 append) ----
+    float lutIntensity; // 0 = 無効 (t4 不参照)
+    float lutPad[3];
 };
 
 // postfx_bright.hlsl の Bright cbuffer (16 バイト)
@@ -422,15 +427,18 @@ void PostProcess::Resolve(GraphicsDevice& device, ShaderManager& shaders, Target
     cb.distortEnabled = (distortionActive && t.distort.IsValid()) ? 1 : 0; // M42d
     cb.godrayEnabled = godrayActive ? 1 : 0;                              // M43b
     cb.colorFilter = s.colorFilter;
+    cb.lutIntensity = (s.lutSRV != nullptr) ? s.lutIntensity : 0.0f; // M44a: SRV 無しは強制 off
     UploadCB(dc, cb_.Get(), cb);
     ID3D11Buffer* cbs[1] = { cb_.Get() };
     dc->PSSetConstantBuffers(0, 1, cbs);
 
-    // M42d: t2 = 歪みバッファ / M43b: t3 = ゴッドレイ (無効時は null — enabled=0 なら不参照)
-    ID3D11ShaderResourceView* srvs[4] = { t.scene.SRV(), bloomSRV,
+    // M42d: t2 = 歪みバッファ / M43b: t3 = ゴッドレイ / M44a: t4 = LUT
+    // (無効時は null — enabled/intensity 0 なら不参照)
+    ID3D11ShaderResourceView* srvs[5] = { t.scene.SRV(), bloomSRV,
                                           cb.distortEnabled ? t.distort.SRV() : nullptr,
-                                          godrayActive ? t.godA.SRV() : nullptr };
-    dc->PSSetShaderResources(0, 4, srvs);
+                                          godrayActive ? t.godA.SRV() : nullptr,
+                                          (cb.lutIntensity > 0.0f) ? s.lutSRV : nullptr };
+    dc->PSSetShaderResources(0, 5, srvs);
     ID3D11SamplerState* samps[1] = { linearClamp_.Get() };
     dc->PSSetSamplers(0, 1, samps);
 
@@ -442,8 +450,8 @@ void PostProcess::Resolve(GraphicsDevice& device, ShaderManager& shaders, Target
     dc->OMSetBlendState(blendOff_.Get(), nullptr, 0xFFFFFFFFu);
     dc->Draw(3, 0);
 
-    ID3D11ShaderResourceView* nulls[4] = { nullptr, nullptr, nullptr, nullptr };
-    dc->PSSetShaderResources(0, 4, nulls); // t.scene / t.distort / t.godA を次フレーム RTV に戻すため解除
+    ID3D11ShaderResourceView* nulls[5] = { nullptr, nullptr, nullptr, nullptr, nullptr };
+    dc->PSSetShaderResources(0, 5, nulls); // t.scene / t.distort / t.godA を次フレーム RTV に戻すため解除
 
     // ---- FXAA: t.ldr → dst ----
     if (useFxaa) {

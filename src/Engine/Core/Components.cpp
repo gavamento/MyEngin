@@ -327,6 +327,9 @@ void RegisterBuiltinComponents()
         // M43b: ゴッドレイ (末尾 append、NoHash なので bump 不要)
         MYE_FIELD_RANGE(CameraPostFxComponent, godrayIntensity, Float, 0.0f, 4.0f),
         MYE_FIELD_RANGE(CameraPostFxComponent, godrayDecay, Float, 0.5f, 0.999f),
+        // M44a: カラーグレーディング LUT (末尾 append、NoHash なので bump 不要)
+        MYE_FIELD(CameraPostFxComponent, lutTexture, AssetRef),
+        MYE_FIELD_RANGE(CameraPostFxComponent, lutIntensity, Float, 0.0f, 1.0f),
     }, kComponentNoHash);
 
     // M32e: 合成エフェクトのライフサイクル。DestroyEntity + 子エミッタ playing を駆動 = hash 対象。

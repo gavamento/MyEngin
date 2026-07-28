@@ -42,6 +42,12 @@ public:
         // ---- M43b: スクリーンスペースゴッドレイ (既定 = 無効 = 従来の見た目) ----
         float godrayIntensity = 0.0f; // 空マスクの明るさ倍率 (0=off)
         float godrayDecay = 0.95f;    // 放射ブラーのタップ毎減衰 (0..1)
+        // ---- M44a: カラーグレーディング LUT (既定 = 無効)。256x16 ストリップ (16 スライス)。
+        //      lutSRV は render-only: RenderSystem がマージ後に lutTexture から解決して埋める
+        //      (シリアライズ/比較対象は AssetID のみ) ----
+        AssetID lutTexture = {};
+        float lutIntensity = 0.0f; // 0=off / 1=LUT 全適用
+        ID3D11ShaderResourceView* lutSRV = nullptr;
     };
 
     // サイズ別の中間ターゲット群 (フルスクリーン HDR シーン + 半解像度ブルーム ping-pong)。

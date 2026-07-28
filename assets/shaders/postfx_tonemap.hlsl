@@ -21,12 +21,16 @@ cbuffer PostFx : register(b0)
     int    gGodrayEnabled;   // M43b: 1 で gGodray を加算 (旧 _pfxpad.y 転用)
     float  _pfxpad;
     float4 gColorFilter;     // 乗算カラーフィルタ
+    // ---- M44a: LUT (末尾 append) ----
+    float  gLutIntensity;    // 0 = 無効 (t4 不参照)
+    float3 _lutPad;
 };
 
 Texture2D gScene   : register(t0); // HDR シーンカラー (R16G16B16A16F)
 Texture2D gBloom   : register(t1); // ブルーム (低解像度をアップサンプル済み。未使用時は黒)
 Texture2D gDistort : register(t2); // M42d: 歪みバッファ (R16G16F、UV オフセット)
 Texture2D gGodray  : register(t3); // M43b: ゴッドレイ (半解像度、強度は焼き込み済み)
+Texture2D gLut     : register(t4); // M44a: カラー LUT (256x16 ストリップ、sRGB デコード無し)
 SamplerState gLinear : register(s0);
 
 struct VSOut
@@ -49,6 +53,23 @@ float3 ACES(float3 x)
 {
     const float a = 2.51f, b = 0.03f, c = 2.43f, d = 0.59f, e = 0.14f;
     return saturate((x * (a * x + b)) / (x * (c * x + d) + e));
+}
+
+// M44a: 256x16 ストリップ LUT (16 スライスを横並べ、blue でスライス 2 枚を選び lerp =
+// 実質トリリニア)。UV 計算は PostFxMath.h::LutStripUv とコメント同期 — 変更時は両方更新。
+// SampleLevel 0 固定 (PS の自動 LOD は画面上の色勾配で暴れるため)
+float3 SampleLutStrip(float3 c)
+{
+    const float b = c.b * 15.0f;
+    const float slice0 = floor(b);
+    const float f = b - slice0;
+    const float slice1 = min(slice0 + 1.0f, 15.0f);
+    const float u0 = (slice0 * 16.0f + c.r * 15.0f + 0.5f) / 256.0f;
+    const float u1 = (slice1 * 16.0f + c.r * 15.0f + 0.5f) / 256.0f;
+    const float v = (c.g * 15.0f + 0.5f) / 16.0f;
+    const float3 c0 = gLut.SampleLevel(gLinear, float2(u0, v), 0).rgb;
+    const float3 c1 = gLut.SampleLevel(gLinear, float2(u1, v), 0).rgb;
+    return lerp(c0, c1, f);
 }
 
 float4 PSMain(VSOut i) : SV_Target
@@ -109,6 +130,12 @@ float4 PSMain(VSOut i) : SV_Target
 
     if (gApplyGamma != 0) {
         c = pow(max(c, 0.0f), 1.0f / 2.2f); // linear → sRGB (OETF)。M16 は既定 OFF
+    }
+    // M44a: カラーグレーディング LUT。OETF 後の sRGB 域で適用 (LUT は「表示される色 →
+    // 表示される色」でオーサリングされる前提)。0 = 従来とビット同一。
+    // 制限: applyGamma=false (リニア出力) との併用はオーサリング域とズレるため非推奨
+    if (gLutIntensity > 0.0f) {
+        c = lerp(c, SampleLutStrip(saturate(c)), gLutIntensity);
     }
     return float4(max(c, 0.0f), 1.0f);
 }

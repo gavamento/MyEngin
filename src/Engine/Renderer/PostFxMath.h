@@ -37,6 +37,21 @@ inline float SunInscatterFactor(const DirectX::XMFLOAT3& rayDir, const DirectX::
     return std::pow(std::clamp(d, 0.0f, 1.0f), std::max(power, 1e-2f));
 }
 
+// M44a: 256x16 ストリップ LUT のサンプル UV。blue でスライス 2 枚 (u0/u1) と補間係数 frac を
+// 選び、呼び出し側が 2 サンプルを lerp する = 実質トリリニア。
+// postfx_tonemap.hlsl::SampleLutStrip とコメント同期 — 変更時は両方更新
+inline void LutStripUv(float r, float g, float b, float& u0, float& u1, float& v, float& frac)
+{
+    const float bb = std::clamp(b, 0.0f, 1.0f) * 15.0f;
+    const float slice0 = std::floor(bb);
+    frac = bb - slice0;
+    const float slice1 = (std::min)(slice0 + 1.0f, 15.0f);
+    const float rr = std::clamp(r, 0.0f, 1.0f);
+    u0 = (slice0 * 16.0f + rr * 15.0f + 0.5f) / 256.0f;
+    u1 = (slice1 * 16.0f + rr * 15.0f + 0.5f) / 256.0f;
+    v = (std::clamp(g, 0.0f, 1.0f) * 15.0f + 0.5f) / 16.0f;
+}
+
 // M43b: 太陽のスクリーン位置。sunDir (光の進行方向) の逆 = 太陽方向を方向ベクトル (w=0)
 // として view*proj で射影し、UV [0,1] とフェード係数 [0,1] を返す。
 // 背面 (clip.w<=0) は 0。画面内 = 1、画面外は UV が [0,1] を出た距離 0.25 で線形減衰

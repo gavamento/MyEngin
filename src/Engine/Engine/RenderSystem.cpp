@@ -4,6 +4,7 @@
 #include <cfloat>
 #include <cmath>
 
+#include "Engine/Core/AssetGuidResolver.h"
 #include "Engine/Core/Components.h"
 #include "Engine/Core/JobSystem.h"
 #include "Engine/Core/Log.h"
@@ -656,6 +657,22 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
         if (!cameraOverride && !camEntity.IsNull()) {
             if (const auto* pfx = world.GetComponent<CameraPostFxComponent>(camEntity)) {
                 effective = MergeCameraPostFx(postFxSettings, *pfx);
+            }
+        }
+        // M44a: LUT の SRV 解決 (MaterialLibrary の GUID→パス解決と同じ流儀)。
+        // 未ロードなら遅延ロード — LUT はデータなので srgb=false (デコード禁止)。
+        // 解決できなければ lutSRV=null のまま = Resolve 側で強制 off
+        if (effective.lutIntensity > 0.0f && !effective.lutTexture.IsNull()) {
+            Texture* lut = resources.textures.Get(effective.lutTexture);
+            if (!lut) {
+                const std::wstring lutPath = assetguid::ResolvePath(effective.lutTexture.value);
+                if (!lutPath.empty()) {
+                    resources.textures.LoadFile(lutPath, /*srgb=*/false);
+                    lut = resources.textures.Get(effective.lutTexture);
+                }
+            }
+            if (lut && lut->srv) {
+                effective.lutSRV = lut->srv.Get();
             }
         }
         postFx_.Resolve(device, shaders, *hdr, target.rtv, target.width, target.height,
