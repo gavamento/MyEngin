@@ -305,6 +305,8 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
             && nameU.compare(nameU.size() - 10, 10, ".anim.json") == 0;
         const bool isMat = !isPrefab && !isAnim && nameU.size() >= 9
             && nameU.compare(nameU.size() - 9, 9, ".mat.json") == 0;
+        const bool isScene = !isPrefab && !isAnim && !isMat && nameU.size() >= 11
+            && nameU.compare(nameU.size() - 11, 11, ".scene.json") == 0;
 
         if (i % cols != 0) {
             ImGui::SameLine();
@@ -428,6 +430,9 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
                 } else {
                     ShellExecuteW(nullptr, L"open", path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
                 }
+            } else if (isScene) {
+                // シーンを開く。ロード自体は EditorApp が未保存変更ガードを通して行う
+                pendingOpenScene_ = path;
             } else {
                 ShellExecuteW(nullptr, L"open", path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
             }

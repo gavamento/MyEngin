@@ -182,6 +182,11 @@ void EditorApp::OnImGui(EngineContext& ctx)
     particleSettings_.OnImGui(ctx);
     profiler_.OnImGui(ctx);
     assetBrowser_.OnImGui(ctx, selection_, undo_, settings_.externalEditorCmd, preview_);
+    // AssetBrowser で .scene.json がダブルクリックされたら未保存変更ガード経由で開く
+    if (std::wstring p = assetBrowser_.TakePendingOpenScene(); !p.empty()) {
+        pendingOpenScenePath_ = std::move(p);
+        RequestGuardedAction(ctx, PendingAction::OpenSceneAsset);
+    }
     animation_.OnImGui(ctx, selection_, undo_);
     animatorController_.OnImGui(ctx, selection_);
     search_.OnImGui(ctx, selection_);
@@ -532,14 +537,24 @@ bool EditorApp::OpenScene(EngineContext& ctx)
     if (!GetOpenFileNameW(&ofn)) {
         return false; // キャンセル (シーンは無変更なので dirty 状態も保持)
     }
+    return LoadSceneFromPath(ctx, path);
+}
+
+// ファイルダイアログを経ない共通ロード経路 (OpenScene と AssetBrowser ダブルクリックが使う)
+bool EditorApp::LoadSceneFromPath(EngineContext& ctx, const std::wstring& path)
+{
     selection_.Clear();
     undo_.ClearAll();
-    if (SceneSerializer::LoadFromFile(*ctx.scene, path)) {
-        scenePath_ = path;
-        ctx.reloadHub->SetActiveScenePath(scenePath_);
-        settings_.lastScenePath = WideToUtf8(scenePath_);
-        settings_.Save();
+    if (!SceneSerializer::LoadFromFile(*ctx.scene, path)) {
+        toasts_.Notify(LogLevel::Error,
+                       "シーンを開けませんでした: "
+                           + WideToUtf8(std::filesystem::path(path).filename().wstring()));
+        return false;
     }
+    scenePath_ = path;
+    ctx.reloadHub->SetActiveScenePath(scenePath_);
+    settings_.lastScenePath = WideToUtf8(scenePath_);
+    settings_.Save();
     return true;
 }
 
@@ -568,6 +583,12 @@ void EditorApp::ExecuteAction(EngineContext& ctx, PendingAction action)
         if (OpenScene(ctx)) {
             savedStateSerial_ = undo_.StateSerial(); // ロード直後 = clean
         }
+        break;
+    case PendingAction::OpenSceneAsset:
+        if (LoadSceneFromPath(ctx, pendingOpenScenePath_)) {
+            savedStateSerial_ = undo_.StateSerial(); // ロード直後 = clean
+        }
+        pendingOpenScenePath_.clear();
         break;
     case PendingAction::Exit:
         ctx.requestExit = true;

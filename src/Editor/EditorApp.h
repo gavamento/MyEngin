@@ -50,7 +50,8 @@ public:
 
 private:
     // 未保存変更ガード (M27b): dirty なら確認モーダルを経由して実行する
-    enum class PendingAction { None, NewScene, OpenScene, Exit };
+    // OpenSceneAsset = AssetBrowser ダブルクリック (pendingOpenScenePath_ をダイアログなしでロード)
+    enum class PendingAction { None, NewScene, OpenScene, OpenSceneAsset, Exit };
 
     void DrawMainMenuBar(EngineContext& ctx);
     void HandleShortcuts(EngineContext& ctx);
@@ -71,6 +72,7 @@ private:
     void SetupDockLayout(unsigned int dockspaceId);
     void SaveSceneAs(EngineContext& ctx);
     bool OpenScene(EngineContext& ctx); // true = 実際にロードした (キャンセル時 false)
+    bool LoadSceneFromPath(EngineContext& ctx, const std::wstring& path); // ダイアログなし共通経路
     void ProcessPendingFileDrops(EngineContext& ctx); // エクスプローラー D&D (OnImGui 冒頭で消費)
 
     Selection selection_;
@@ -105,6 +107,7 @@ private:
     std::string projectName_;              // マニフェストの name (レガシー起動時は空)
     uint64_t savedStateSerial_ = 0;        // 最後に保存/ロードした時点の UndoStack::StateSerial
     PendingAction pendingAction_ = PendingAction::None;
+    std::wstring pendingOpenScenePath_;    // OpenSceneAsset の対象 (AssetBrowser ダブルクリック)
     bool openSaveConfirm_ = false;         // 確認モーダルを開くリクエスト
     bool closeRequested_ = false;          // ウィンドウ × ボタン (WM_CLOSE を横取り)
     std::wstring baseTitle_;               // タイトルバー原文 (dirty で " *" を付ける)

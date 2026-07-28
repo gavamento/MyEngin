@@ -14,11 +14,21 @@ class AssetPreviewCache;
 // assets/ をフォルダツリー + ファイルグリッドで表示。テクスチャはサムネイル、
 // 他は拡張子アイコン。ダブルクリックで OS 既定アプリで開く。
 // .prefab.json はダブルクリックでシーンへインスタンス化 (M13)。
+// .scene.json はダブルクリックでシーンを開く (EditorApp が dirty ガード経由でロード)。
 class AssetBrowserWindow {
 public:
     bool open = true; // 閉じる / 再表示 (タブ [x] と Window メニューに連動)
     void OnImGui(EngineContext& ctx, Selection& selection, UndoStack& undo,
                  const std::string& externalEditorCmd, AssetPreviewCache& preview);
+
+    // ダブルクリックされた .scene.json のパスを取り出す (空 = リクエストなし)。
+    // EditorApp が毎フレーム消費し、未保存変更ガードを通してロードする
+    std::wstring TakePendingOpenScene()
+    {
+        std::wstring p;
+        p.swap(pendingOpenScene_);
+        return p;
+    }
 
     // ---- エクスプローラー D&D (EditorApp が WM_DROPFILES 処理時に参照) ----
     // 前フレームにパネルが前面に描画されていて (x,y) [クライアント座標] が矩形内なら true
@@ -32,6 +42,7 @@ private:
     void BeginRename(const std::wstring& path);
 
     std::wstring current_; // 表示中フォルダ (絶対パス)
+    std::wstring pendingOpenScene_; // ダブルクリックされたシーン (TakePendingOpenScene で消費)
     // D&D 移動 (M30b)。描画中の fs 変更 (iterator 破壊) を避けるためフレーム末に実行する
     std::wstring pendingMoveSrc_;
     std::wstring pendingMoveDstDir_;
