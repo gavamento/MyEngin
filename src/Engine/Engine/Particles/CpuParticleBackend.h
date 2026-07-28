@@ -70,6 +70,7 @@ private:
     Microsoft::WRL::ComPtr<ID3D11SamplerState> sampler_; // フリップブックテクスチャ用 (linear clamp)
     uint32_t instanceCapacity_ = 0;
     AssetID shaderId_ = {};
+    AssetID distortShaderId_ = {}; // M42d: blendMode=2 用 (particle_distort.hlsl)
 };
 
 } // namespace mye

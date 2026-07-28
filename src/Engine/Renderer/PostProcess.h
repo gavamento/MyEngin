@@ -47,6 +47,7 @@ public:
         RenderTexture bloomA;  // 半解像度ブルーム (bright/最終)
         RenderTexture bloomB;  // 半解像度 ping-pong
         RenderTexture ldr;     // FXAA 用の LDR 中間 (トーンマップ結果、fxaa 有効時のみ使用)
+        RenderTexture distort; // M42d: 歪みバッファ (フル解像度 R16G16F、UV オフセット加算先)
     };
 
     bool Init(GraphicsDevice& device, ShaderManager& shaders);
@@ -56,8 +57,11 @@ public:
     Target* Acquire(GraphicsDevice& device, int width, int height);
 
     // t.scene を解決して dst へ書く (ブルーム → トーンマップ → FXAA)。dst は LDR。
+    // distortionActive (M42d): このフレーム歪みパーティクルが t.distort に描かれたとき true
+    // -> トーンマップのシーンサンプル UV に t.distort をオフセット加算する
     void Resolve(GraphicsDevice& device, ShaderManager& shaders, Target& t,
-                 ID3D11RenderTargetView* dst, int width, int height, const Settings& s);
+                 ID3D11RenderTargetView* dst, int width, int height, const Settings& s,
+                 bool distortionActive = false);
 
 private:
     // t.scene から bright-pass → 分離ガウスブラーを行い、結果を t.bloomA (半解像度) に残す。

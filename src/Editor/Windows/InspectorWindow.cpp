@@ -136,7 +136,7 @@ struct EnumFieldLabels {
 constexpr const char* kColliderShapeLabels[] = { "Sphere", "Box", "Capsule", "Mesh" };
 constexpr const char* kLightTypeLabels[] = { "Directional", "Point", "Spot" };
 constexpr const char* kEmitterShapeLabels[] = { "Point", "Sphere", "Cone", "Box" };
-constexpr const char* kBlendModeLabels[] = { "Additive", "Alpha" };
+constexpr const char* kBlendModeLabels[] = { "Additive", "Alpha", "Distortion" }; // M42d
 constexpr const char* kUIKindLabels[] = { "Panel", "Text", "Button" };
 constexpr const char* kUIAnchorLabels[] = { "TopLeft",    "TopCenter",    "TopRight",
                                             "MiddleLeft", "Center",       "MiddleRight",
@@ -151,7 +151,7 @@ constexpr EnumFieldLabels kEnumFields[] = {
     { "Collider", "shape", kColliderShapeLabels, 3 },
     { "Light", "type", kLightTypeLabels, 3 },
     { "ParticleEmitter", "shape", kEmitterShapeLabels, 4 },
-    { "ParticleEmitter", "blendMode", kBlendModeLabels, 2 },
+    { "ParticleEmitter", "blendMode", kBlendModeLabels, 3 },
     { "UIElement", "kind", kUIKindLabels, 3 },
     { "UIElement", "anchor", kUIAnchorLabels, 9 },
     { "ConstantForce", "relative", kForceSpaceLabels, 2 },

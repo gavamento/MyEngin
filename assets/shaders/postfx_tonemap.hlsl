@@ -17,12 +17,14 @@ cbuffer PostFx : register(b0)
     float  gVignetteRadius;  // 減光開始半径
     float  gSaturation;      // 彩度 (1=変化なし)
     float  gContrast;        // コントラスト (1=変化なし)
-    float3 _pfxpad;
+    int    gDistortEnabled;  // M42d: 1 で gDistort の UV オフセットを適用 (旧 _pfxpad.x 転用)
+    float2 _pfxpad;
     float4 gColorFilter;     // 乗算カラーフィルタ
 };
 
-Texture2D gScene : register(t0); // HDR シーンカラー (R16G16B16A16F)
-Texture2D gBloom : register(t1); // ブルーム (低解像度をアップサンプル済み。未使用時は黒)
+Texture2D gScene   : register(t0); // HDR シーンカラー (R16G16B16A16F)
+Texture2D gBloom   : register(t1); // ブルーム (低解像度をアップサンプル済み。未使用時は黒)
+Texture2D gDistort : register(t2); // M42d: 歪みバッファ (R16G16F、UV オフセット)
 SamplerState gLinear : register(s0);
 
 struct VSOut
@@ -55,13 +57,22 @@ float4 PSMain(VSOut i) : SV_Target
         return float4(gScene.Load(pixel).rgb, 1.0f); // passthrough: HDR 配管の非破壊検証用
     }
 
+    // 歪み (M42d): シーンサンプルの基準 UV に歪みバッファをオフセット加算。
+    // 0 なら uv 不変 + 従来の Load 経路 = ビット同一
+    float2 uv = i.uv;
+    if (gDistortEnabled != 0) {
+        uv += gDistort.Sample(gLinear, i.uv).rg;
+    }
+
     // 色収差 (M32d): 中心からの放射方向に RGB を分離サンプル (0 なら Load で厳密)
     float3 hdr;
     if (gChromAb > 0.0f) {
-        const float2 off = (i.uv - 0.5f) * gChromAb;
-        hdr.r = gScene.Sample(gLinear, i.uv + off).r;
-        hdr.g = gScene.Sample(gLinear, i.uv).g;
-        hdr.b = gScene.Sample(gLinear, i.uv - off).b;
+        const float2 off = (uv - 0.5f) * gChromAb;
+        hdr.r = gScene.Sample(gLinear, uv + off).r;
+        hdr.g = gScene.Sample(gLinear, uv).g;
+        hdr.b = gScene.Sample(gLinear, uv - off).b;
+    } else if (gDistortEnabled != 0) {
+        hdr = gScene.Sample(gLinear, uv).rgb; // 歪み時は Load ではなく補間サンプル
     } else {
         hdr = gScene.Load(pixel).rgb;
     }

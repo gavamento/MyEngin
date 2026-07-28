@@ -102,7 +102,10 @@ struct ParticleEmitterComponent {
     DirectX::XMFLOAT3 wind = { 0.0f, 0.0f, 0.0f };
     float turbulence = 0.0f;
     // ---- 描画 ----
-    int32_t blendMode = 0; // 0=additive 1=alpha
+    // 2=distortion (M42d): 歪みバッファへ描き postfx で UV オフセット。既存 Int32 の値域
+    // 拡張のみ = フィールド追加なし = hash 不変。強度は color のアルファで表現。
+    // v1 制限: CPU バックエンド限定 (GPU は skip) / enablePostFx=false では描かれない
+    int32_t blendMode = 0; // 0=additive 1=alpha 2=distortion
     // ---- 決定論 ----
     uint32_t seed = 12345; // エミッタ別 RNG ストリームのシード (spec 7.3)
     int32_t maxParticles = 100000;

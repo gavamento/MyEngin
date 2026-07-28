@@ -89,6 +89,10 @@ struct RenderView {
     ID3D11DepthStencilView* dsvReadOnly = nullptr;
     float nearZ = 0.1f;   // 深度線形化用 (カメラ/override から充填)
     float farZ = 1000.0f;
+    // ---- M42d: 歪みバッファ (PostProcess::Target::distort)。RenderSystem が
+    //      「blendMode=2 エミッタあり && HDR 経路」のときだけクリアして充填。
+    //      null = 歪みパーティクルは描かれない (postfx off / AssetPreview) ----
+    ID3D11RenderTargetView* distortionRTV = nullptr;
 };
 
 // GPU へ渡すライト 1 個 (定数バッファ配列要素、16 バイト境界に揃えた 64 バイト)。

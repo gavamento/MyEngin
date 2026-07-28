@@ -58,6 +58,7 @@ struct ParticleCB {
 bool CpuParticleBackend::Init(GraphicsDevice& device, ShaderManager& shaders)
 {
     shaderId_ = shaders.Load("particle_render");
+    distortShaderId_ = shaders.Load("particle_distort"); // M42d: blendMode=2 用
 
     D3D11_BUFFER_DESC cbd = {};
     cbd.ByteWidth = sizeof(ParticleCB);
@@ -510,7 +511,12 @@ void CpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
         dc->PSSetShaderResources(2, 1, &view.depthSRV);
     }
 
+    bool anyDistortion = false; // M42d
     for (const DrawRange& range : ranges) {
+        if (range.blendMode == 2) { // M42d: 歪みは後段の専用パスで描く
+            anyDistortion = true;
+            continue;
+        }
         cbData.baseIndex = range.base;
         cbData.blendAdditive = (range.blendMode == 1) ? 0 : 1; // blendMode: 0=additive 1=alpha
         // テクスチャ解決 (空なら procedural 円へフォールバック)
@@ -535,6 +541,37 @@ void CpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
         dc->OMSetBlendState(range.blendMode == 1 ? blendAlpha_.Get() : blendAdditive_.Get(),
                             nullptr, 0xFFFFFFFFu);
         dc->DrawInstanced(4, range.count, 0, 0);
+    }
+
+    // ---- M42d: 歪みパス (blendMode=2) — 歪みバッファへ加算描画 ----
+    // RenderSystem が「歪みエミッタあり && HDR 経路」のときだけ distortionRTV を配線する。
+    // 深度テストは read-only DSV で継続 = 遮蔽された粒子は歪まない
+    if (anyDistortion && view.distortionRTV != nullptr) {
+        ShaderProgram* dprog = shaders.Get(distortShaderId_);
+        if (dprog && dprog->valid) {
+            dc->OMSetRenderTargets(1, &view.distortionRTV,
+                                   view.dsvReadOnly ? view.dsvReadOnly : nullptr);
+            dc->VSSetShader(dprog->vs.Get(), nullptr, 0);
+            dc->PSSetShader(dprog->ps.Get(), nullptr, 0);
+            dc->OMSetBlendState(blendAdditive_.Get(), nullptr, 0xFFFFFFFFu); // 加算で累積
+            for (const DrawRange& range : ranges) {
+                if (range.blendMode != 2) {
+                    continue;
+                }
+                cbData.baseIndex = range.base;
+                cbData.softFade = 0.0f;
+                D3D11_MAPPED_SUBRESOURCE cbMapped = {};
+                if (SUCCEEDED(
+                        dc->Map(renderCB_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &cbMapped))) {
+                    memcpy(cbMapped.pData, &cbData, sizeof(cbData));
+                    dc->Unmap(renderCB_.Get(), 0);
+                }
+                dc->DrawInstanced(4, range.count, 0, 0);
+            }
+            // シーン RT へ戻す (M42a: パーティクル区間は read-only DSV)
+            dc->OMSetRenderTargets(1, &view.rtv,
+                                   view.dsvReadOnly ? view.dsvReadOnly : view.dsv);
+        }
     }
 
     // SRV を外す (次フレームの Map と競合させない。t2=深度は RTV/DSV 戻し前の解除 — M42a 流儀)

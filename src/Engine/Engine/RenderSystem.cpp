@@ -567,7 +567,31 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
     }
 
     // パーティクルは常に Forward 後段 (どのレンダリングパスでも共通)。HDR 中間へ加算される
+    bool distortionActive = false; // M42d: このフレーム歪みバッファを使ったか
     if (particles) {
+        // M42d: blendMode=2 (distortion) のエミッタが存在するときだけ歪みバッファを
+        // クリアして配線する (HDR 経路限定。バッファ未使用フレームのクリアコストを避ける)
+        if (hdr != nullptr && hdr->distort.IsValid()) {
+            const ComponentTypeId req2[] = { ParticleEmitterComponent::sTypeId };
+            bool hasDistortion = false;
+            world.ForEachArchetype(req2, [&](Archetype& arch) {
+                const int pi = arch.FindTypeIndex(ParticleEmitterComponent::sTypeId);
+                for (uint32_t row = 0; row < arch.Count(); ++row) {
+                    const auto* p =
+                        static_cast<const ParticleEmitterComponent*>(arch.GetPtr(pi, row));
+                    if (p->blendMode == 2) {
+                        hasDistortion = true;
+                        return;
+                    }
+                }
+            });
+            if (hasDistortion) {
+                const float zero[4] = { 0, 0, 0, 0 };
+                device.Context()->ClearRenderTargetView(hdr->distort.RTV(), zero);
+                view.distortionRTV = hdr->distort.RTV();
+                distortionActive = true;
+            }
+        }
         // M42a: パーティクル系は深度書込みしない (WriteMask=ZERO) ので read-only DSV に
         // 差し替える。これで深度 SRV (view.depthSRV) との同時バインドが合法になり、
         // ソフトパーティクル (M42b) 等が深度を読める。read-only ビューが無ければ従来どおり
@@ -604,7 +628,7 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
             }
         }
         postFx_.Resolve(device, shaders, *hdr, target.rtv, target.width, target.height,
-                        effective);
+                        effective, distortionActive);
     }
     return cameraFound;
 }

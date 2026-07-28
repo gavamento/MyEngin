@@ -498,6 +498,9 @@ void GpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
     }
 
     for (GpuEmitter& em : emitters_) {
+        if (em.descCache.blendMode == 2) {
+            continue; // M42d: 歪みは CPU バックエンド限定 (v1 制限。GPU は描画スキップ)
+        }
         // sim CB (b0: sizeEndScale/color) はエミッタ毎に更新
         GpuParticleCB simCb = {};
         simCb.params = { 0, em.descCache.turbulence, em.descCache.sizeEndScale,

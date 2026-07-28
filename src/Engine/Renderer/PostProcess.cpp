@@ -30,7 +30,7 @@ PostProcess::Settings MergeCameraPostFx(const PostProcess::Settings& base,
 }
 namespace {
 
-// postfx_tonemap.hlsl の PostFx cbuffer と一致 (64 バイト)
+// postfx_tonemap.hlsl の PostFx cbuffer と一致 (80 バイト)
 struct PostFxCB {
     float exposure;
     int32_t tonemap;
@@ -41,7 +41,8 @@ struct PostFxCB {
     float vignetteRadius;
     float saturation;
     float contrast;
-    float pad[3];
+    int32_t distortEnabled; // M42d: 旧 pad[0] 転用。1 で t2 の歪みバッファを UV に加算
+    float pad[2];
     DirectX::XMFLOAT4 colorFilter;
 };
 
@@ -159,7 +160,8 @@ PostProcess::Target* PostProcess::Acquire(GraphicsDevice& device, int width, int
     if (!t.scene.Create(device, width, height, DXGI_FORMAT_R16G16B16A16_FLOAT, false)
         || !t.bloomA.Create(device, bw, bh, DXGI_FORMAT_R16G16B16A16_FLOAT, false)
         || !t.bloomB.Create(device, bw, bh, DXGI_FORMAT_R16G16B16A16_FLOAT, false)
-        || !t.ldr.Create(device, width, height, DXGI_FORMAT_R8G8B8A8_UNORM, false)) {
+        || !t.ldr.Create(device, width, height, DXGI_FORMAT_R8G8B8A8_UNORM, false)
+        || !t.distort.Create(device, width, height, DXGI_FORMAT_R16G16_FLOAT, false)) { // M42d
         return nullptr;
     }
     cache_.insert(cache_.begin(), std::move(t));
@@ -250,7 +252,8 @@ void PostProcess::RunBloom(GraphicsDevice& device, ShaderManager& shaders, Targe
 }
 
 void PostProcess::Resolve(GraphicsDevice& device, ShaderManager& shaders, Target& t,
-                          ID3D11RenderTargetView* dst, int width, int height, const Settings& s)
+                          ID3D11RenderTargetView* dst, int width, int height, const Settings& s,
+                          bool distortionActive)
 {
     ID3D11DeviceContext* dc = device.Context();
     ShaderProgram* prog = shaders.Get(tonemapShader_);
@@ -295,13 +298,16 @@ void PostProcess::Resolve(GraphicsDevice& device, ShaderManager& shaders, Target
     cb.vignetteRadius = s.vignetteRadius;
     cb.saturation = s.saturation;
     cb.contrast = s.contrast;
+    cb.distortEnabled = (distortionActive && t.distort.IsValid()) ? 1 : 0; // M42d
     cb.colorFilter = s.colorFilter;
     UploadCB(dc, cb_.Get(), cb);
     ID3D11Buffer* cbs[1] = { cb_.Get() };
     dc->PSSetConstantBuffers(0, 1, cbs);
 
-    ID3D11ShaderResourceView* srvs[2] = { t.scene.SRV(), bloomSRV };
-    dc->PSSetShaderResources(0, 2, srvs);
+    // M42d: t2 = 歪みバッファ (無効時も白ダミー不要 — gDistortEnabled=0 なら不参照)
+    ID3D11ShaderResourceView* srvs[3] = { t.scene.SRV(), bloomSRV,
+                                          cb.distortEnabled ? t.distort.SRV() : nullptr };
+    dc->PSSetShaderResources(0, 3, srvs);
     ID3D11SamplerState* samps[1] = { linearClamp_.Get() };
     dc->PSSetSamplers(0, 1, samps);
 
@@ -313,8 +319,8 @@ void PostProcess::Resolve(GraphicsDevice& device, ShaderManager& shaders, Target
     dc->OMSetBlendState(blendOff_.Get(), nullptr, 0xFFFFFFFFu);
     dc->Draw(3, 0);
 
-    ID3D11ShaderResourceView* nulls[2] = { nullptr, nullptr };
-    dc->PSSetShaderResources(0, 2, nulls); // t.scene を次フレーム RTV に戻すため解除
+    ID3D11ShaderResourceView* nulls[3] = { nullptr, nullptr, nullptr };
+    dc->PSSetShaderResources(0, 3, nulls); // t.scene / t.distort を次フレーム RTV に戻すため解除
 
     // ---- FXAA: t.ldr → dst ----
     if (useFxaa) {
