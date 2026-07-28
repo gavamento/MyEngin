@@ -48,6 +48,15 @@ public:
         AssetID lutTexture = {};
         float lutIntensity = 0.0f; // 0=off / 1=LUT 全適用
         ID3D11ShaderResourceView* lutSRV = nullptr;
+        // ---- M44b: 自動露出 (既定 = 無効)。輝度ヒストグラム CS → 露出倍率 (GPU 内完結) ----
+        int autoExposure = 0;  // 0=off 1=on
+        float aeSpeed = 3.0f;  // 適応速度 (1/s)
+        float aeMin = 0.25f;   // 露出倍率の下限
+        float aeMax = 4.0f;    // 上限
+        // Settings 専用 (Merge は base 維持 — applyGamma と同じ扱い)。
+        // EngineLoop が --replay-verify/--replay-record/--screenshot 時に true にし、
+        // 適応を 1 フレーム収束させて決定的スクショを成立させる
+        bool aeInstant = false;
     };
 
     // サイズ別の中間ターゲット群 (フルスクリーン HDR シーン + 半解像度ブルーム ping-pong)。
@@ -60,6 +69,14 @@ public:
         RenderTexture distort; // M42d: 歪みバッファ (フル解像度 R16G16F、UV オフセット加算先)
         RenderTexture godA;    // M43b: ゴッドレイ (半解像度 FP16。bloomA/B は bloom 結果保持中のため流用不可)
         RenderTexture godB;    // M43b: 放射ブラー ping-pong
+        // ---- M44b: 自動露出 (ヒストグラム 256 bin + 露出倍率 1 要素、GPU 常駐) ----
+        // exposureBuf[0] はフレームを跨いで持ち越す適応状態 (初期値 1.0、リサイズで再生成 = リセット)
+        Microsoft::WRL::ComPtr<ID3D11Buffer> histBuf;
+        Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> histUAV;
+        Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> histSRV;
+        Microsoft::WRL::ComPtr<ID3D11Buffer> exposureBuf;
+        Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> exposureUAV;
+        Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> exposureSRV;
     };
 
     bool Init(GraphicsDevice& device, ShaderManager& shaders);
@@ -83,6 +100,10 @@ private:
     // 実行しなかった (intensity 0 / 太陽が背面・画面外 / depthSRV 無し等) 場合は false
     bool RunGodray(GraphicsDevice& device, ShaderManager& shaders, Target& t, const Settings& s,
                    const RenderView& view);
+    // M44b: 輝度ヒストグラム収集 → 縮約 CS で t.exposureBuf[0] を更新する。
+    // 実行しなかった (off / CS 未コンパイル / バッファ無し) 場合は false
+    bool RunAutoExposure(GraphicsDevice& device, ShaderManager& shaders, Target& t,
+                         const Settings& s);
 
     GraphicsDevice* device_ = nullptr;
     bool ready_ = false;
@@ -93,6 +114,8 @@ private:
     AssetID fxaaShader_ = {};
     AssetID godrayMaskShader_ = {}; // M43b
     AssetID godrayBlurShader_ = {};
+    AssetID histCS_ = {}; // M44b
+    AssetID histReduceCS_ = {};
 
     Microsoft::WRL::ComPtr<ID3D11Buffer> cb_;     // PostFx CB (tonemap)
     Microsoft::WRL::ComPtr<ID3D11Buffer> brightCB_;
@@ -100,6 +123,8 @@ private:
     Microsoft::WRL::ComPtr<ID3D11Buffer> fxaaCB_;
     Microsoft::WRL::ComPtr<ID3D11Buffer> godrayMaskCB_; // M43b
     Microsoft::WRL::ComPtr<ID3D11Buffer> godrayBlurCB_;
+    Microsoft::WRL::ComPtr<ID3D11Buffer> histCB_; // M44b
+    Microsoft::WRL::ComPtr<ID3D11Buffer> aeReduceCB_;
     Microsoft::WRL::ComPtr<ID3D11SamplerState> linearClamp_;
     Microsoft::WRL::ComPtr<ID3D11DepthStencilState> depthDisabled_;
     Microsoft::WRL::ComPtr<ID3D11BlendState> blendOff_;

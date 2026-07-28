@@ -52,6 +52,24 @@ inline void LutStripUv(float r, float g, float b, float& u0, float& u1, float& v
     v = (std::clamp(g, 0.0f, 1.0f) * 15.0f + 0.5f) / 16.0f;
 }
 
+// M44b: 自動露出のヒストグラム bin。log2 輝度域 [-10,+6] を bin 1..255 に量子化、
+// bin 0 = ほぼ黒 (レンジ外) 専用 (平均から除外される)。
+// postfx_hist.cs.hlsl / postfx_hist_reduce.cs.hlsl とコメント同期 — 変更時は全て更新
+inline int BinForLuminance(float lum)
+{
+    if (lum <= 1e-6f) {
+        return 0;
+    }
+    const float t = std::clamp((std::log2(lum) + 10.0f) / 16.0f, 0.0f, 1.0f);
+    return static_cast<int>(t * 254.0f + 1.5f); // 1..255
+}
+
+// bin → 代表輝度 (BinForLuminance の逆量子化)
+inline float LumForBin(int bin)
+{
+    return std::exp2((static_cast<float>(bin) - 1.0f) / 254.0f * 16.0f - 10.0f);
+}
+
 // M43b: 太陽のスクリーン位置。sunDir (光の進行方向) の逆 = 太陽方向を方向ベクトル (w=0)
 // として view*proj で射影し、UV [0,1] とフェード係数 [0,1] を返す。
 // 背面 (clip.w<=0) は 0。画面内 = 1、画面外は UV が [0,1] を出た距離 0.25 で線形減衰

@@ -21,9 +21,10 @@ cbuffer PostFx : register(b0)
     int    gGodrayEnabled;   // M43b: 1 で gGodray を加算 (旧 _pfxpad.y 転用)
     float  _pfxpad;
     float4 gColorFilter;     // 乗算カラーフィルタ
-    // ---- M44a: LUT (末尾 append) ----
+    // ---- M44a: LUT (末尾 append) / M44b: 自動露出 (旧 _lutPad.x 転用) ----
     float  gLutIntensity;    // 0 = 無効 (t4 不参照)
-    float3 _lutPad;
+    int    gAutoExposure;    // 1 = gExposureBuf[0] を gExposure に乗算
+    float2 _lutPad;
 };
 
 Texture2D gScene   : register(t0); // HDR シーンカラー (R16G16B16A16F)
@@ -31,6 +32,7 @@ Texture2D gBloom   : register(t1); // ブルーム (低解像度をアップサ�
 Texture2D gDistort : register(t2); // M42d: 歪みバッファ (R16G16F、UV オフセット)
 Texture2D gGodray  : register(t3); // M43b: ゴッドレイ (半解像度、強度は焼き込み済み)
 Texture2D gLut     : register(t4); // M44a: カラー LUT (256x16 ストリップ、sRGB デコード無し)
+StructuredBuffer<float> gExposureBuf : register(t5); // M44b: 自動露出の倍率 ([0] のみ)
 SamplerState gLinear : register(s0);
 
 struct VSOut
@@ -100,7 +102,12 @@ float4 PSMain(VSOut i) : SV_Target
         hdr = gScene.Load(pixel).rgb;
     }
 
-    float3 c = hdr * gExposure;
+    // M44b: 自動露出 — 手動 gExposure は補正段として温存 (乗算合成)。off = 従来とビット同一
+    float exposure = gExposure;
+    if (gAutoExposure != 0) {
+        exposure *= gExposureBuf[0];
+    }
+    float3 c = hdr * exposure;
     if (gBloomIntensity > 0.0f) {
         c += gBloom.Sample(gLinear, i.uv).rgb * gBloomIntensity; // ブルーム加算
     }

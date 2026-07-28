@@ -415,6 +415,11 @@ struct CameraPostFxComponent {
     // ---- M44a: カラーグレーディング LUT (末尾 append、NoHash なので hash 不変) ----
     AssetID lutTexture = {};   // 256x16 ストリップ (sRGB off でロードされる)
     float lutIntensity = 0.0f; // 0=off / 1=LUT 全適用
+    // ---- M44b: 自動露出 (末尾 append、NoHash なので hash 不変) ----
+    int32_t autoExposure = 0; // 0=off 1=on (輝度ヒストグラム → 露出適応)
+    float aeSpeed = 3.0f;     // 適応速度 (1/s)
+    float aeMin = 0.25f;      // 露出倍率の下限
+    float aeMax = 4.0f;       // 上限
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 

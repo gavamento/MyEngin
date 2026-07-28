@@ -32,6 +32,10 @@ PostProcess::Settings MergeCameraPostFx(const PostProcess::Settings& base,
     s.godrayDecay = comp.godrayDecay;
     s.lutTexture = comp.lutTexture; // M44a (lutSRV の解決は RenderSystem)
     s.lutIntensity = comp.lutIntensity;
+    s.autoExposure = comp.autoExposure; // M44b (aeInstant は base 維持 — applyGamma と同じ)
+    s.aeSpeed = comp.aeSpeed;
+    s.aeMin = comp.aeMin;
+    s.aeMax = comp.aeMax;
     return s;
 }
 namespace {
@@ -51,9 +55,10 @@ struct PostFxCB {
     int32_t godrayEnabled;  // M43b: 旧 pad[1] 転用。1 で t3 のゴッドレイを加算
     float pad;
     DirectX::XMFLOAT4 colorFilter;
-    // ---- M44a: LUT (末尾 append) ----
-    float lutIntensity; // 0 = 無効 (t4 不参照)
-    float lutPad[3];
+    // ---- M44a: LUT (末尾 append) / M44b: 自動露出 (旧 lutPad[0] 転用) ----
+    float lutIntensity;    // 0 = 無効 (t4 不参照)
+    int32_t autoExposure;  // 1 = t5 の露出倍率を gExposure に乗算
+    float lutPad[2];
 };
 
 // postfx_bright.hlsl の Bright cbuffer (16 バイト)
@@ -89,6 +94,50 @@ struct GodrayBlurCB {
     float density;    // 16 タップで太陽までの距離の何割を進むか
 };
 
+// postfx_hist.cs.hlsl の HistCB (16 バイト)
+struct HistCB {
+    float sizeW, sizeH;
+    float pad0, pad1;
+};
+
+// postfx_hist_reduce.cs.hlsl の AeReduceCB (16 バイト)
+struct AeReduceCB {
+    float aeSpeed;
+    float aeMin;
+    float aeMax;
+    int32_t aeInstant;
+};
+
+// 構造化バッファ + UAV/SRV の生成 (GpuParticleBackend.cpp の CreateStructured を範に縮約)
+bool CreateStructuredBuf(ID3D11Device* dev, UINT elemSize, UINT count, const void* initData,
+                         Microsoft::WRL::ComPtr<ID3D11Buffer>& buf,
+                         Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView>& uav,
+                         Microsoft::WRL::ComPtr<ID3D11ShaderResourceView>& srv)
+{
+    D3D11_BUFFER_DESC bd = {};
+    bd.ByteWidth = elemSize * count;
+    bd.Usage = D3D11_USAGE_DEFAULT;
+    bd.BindFlags = D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE;
+    bd.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+    bd.StructureByteStride = elemSize;
+    D3D11_SUBRESOURCE_DATA init = { initData, 0, 0 };
+    if (FAILED(dev->CreateBuffer(&bd, initData ? &init : nullptr, buf.GetAddressOf()))) {
+        return false;
+    }
+    D3D11_UNORDERED_ACCESS_VIEW_DESC ud = {};
+    ud.Format = DXGI_FORMAT_UNKNOWN;
+    ud.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
+    ud.Buffer.NumElements = count;
+    if (FAILED(dev->CreateUnorderedAccessView(buf.Get(), &ud, uav.GetAddressOf()))) {
+        return false;
+    }
+    D3D11_SHADER_RESOURCE_VIEW_DESC sd = {};
+    sd.Format = DXGI_FORMAT_UNKNOWN;
+    sd.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
+    sd.Buffer.NumElements = count;
+    return SUCCEEDED(dev->CreateShaderResourceView(buf.Get(), &sd, srv.GetAddressOf()));
+}
+
 template <typename T>
 void UploadCB(ID3D11DeviceContext* dc, ID3D11Buffer* cb, const T& data)
 {
@@ -122,11 +171,15 @@ bool PostProcess::Init(GraphicsDevice& device, ShaderManager& shaders)
     fxaaShader_ = shaders.Load("postfx_fxaa");
     godrayMaskShader_ = shaders.Load("postfx_godray_mask"); // M43b
     godrayBlurShader_ = shaders.Load("postfx_godray_blur");
+    histCS_ = shaders.LoadCompute("postfx_hist.cs"); // M44b
+    histReduceCS_ = shaders.LoadCompute("postfx_hist_reduce.cs");
 
     if (!CreateCB(dev, sizeof(PostFxCB), cb_) || !CreateCB(dev, sizeof(BrightCB), brightCB_)
         || !CreateCB(dev, sizeof(BlurCB), blurCB_) || !CreateCB(dev, sizeof(FxaaCB), fxaaCB_)
         || !CreateCB(dev, sizeof(GodrayMaskCB), godrayMaskCB_)
-        || !CreateCB(dev, sizeof(GodrayBlurCB), godrayBlurCB_)) {
+        || !CreateCB(dev, sizeof(GodrayBlurCB), godrayBlurCB_)
+        || !CreateCB(dev, sizeof(HistCB), histCB_)
+        || !CreateCB(dev, sizeof(AeReduceCB), aeReduceCB_)) {
         MYE_LOG_ERROR("PostProcess: CB creation failed");
         return false;
     }
@@ -193,6 +246,14 @@ PostProcess::Target* PostProcess::Acquire(GraphicsDevice& device, int width, int
         || !t.distort.Create(device, width, height, DXGI_FORMAT_R16G16_FLOAT, false) // M42d
         || !t.godA.Create(device, bw, bh, DXGI_FORMAT_R16G16B16A16_FLOAT, false)     // M43b
         || !t.godB.Create(device, bw, bh, DXGI_FORMAT_R16G16B16A16_FLOAT, false)) {
+        return nullptr;
+    }
+    // M44b: 自動露出バッファ (ヒストグラム 256 bin + 露出倍率 1 要素、初期値 1.0)
+    const float kInitialExposure = 1.0f;
+    if (!CreateStructuredBuf(device.Device(), sizeof(uint32_t), 256, nullptr, t.histBuf,
+                             t.histUAV, t.histSRV)
+        || !CreateStructuredBuf(device.Device(), sizeof(float), 1, &kInitialExposure,
+                                t.exposureBuf, t.exposureUAV, t.exposureSRV)) {
         return nullptr;
     }
     cache_.insert(cache_.begin(), std::move(t));
@@ -374,6 +435,68 @@ bool PostProcess::RunGodray(GraphicsDevice& device, ShaderManager& shaders, Targ
     return true; // 結果は t.godA (2 パスで A→B→A)
 }
 
+// M44b: 自動露出。HDR シーンの輝度ヒストグラム (log2 [-10,+6]、256 bin) → 加重平均 →
+// 目標露出 0.18/avgLum を指数平滑で t.exposureBuf[0] に反映する。GPU 内完結・リードバック
+// 無し = WorldHash 非干渉。aeInstant (決定的スクショ) は 1 フレーム収束
+bool PostProcess::RunAutoExposure(GraphicsDevice& device, ShaderManager& shaders, Target& t,
+                                  const Settings& s)
+{
+    if (s.autoExposure == 0) {
+        return false;
+    }
+    ShaderProgram* hist = shaders.Get(histCS_);
+    ShaderProgram* reduce = shaders.Get(histReduceCS_);
+    if (!hist || !hist->valid || !hist->cs || !reduce || !reduce->valid || !reduce->cs) {
+        return false;
+    }
+    if (!t.histUAV || !t.exposureUAV || !t.exposureSRV) {
+        return false;
+    }
+    ID3D11DeviceContext* dc = device.Context();
+    // t.scene が RTV に残っている可能性がある (bloom/godray スキップ時) — CS の SRV 読みの前に外す
+    dc->OMSetRenderTargets(0, nullptr, nullptr);
+    const UINT clear[4] = { 0, 0, 0, 0 };
+    dc->ClearUnorderedAccessViewUint(t.histUAV.Get(), clear);
+
+    // 1) ヒストグラム収集: scene (フル解像度) → histBuf
+    HistCB hcb = {};
+    hcb.sizeW = static_cast<float>(t.scene.Width());
+    hcb.sizeH = static_cast<float>(t.scene.Height());
+    UploadCB(dc, histCB_.Get(), hcb);
+    ID3D11Buffer* cbs[1] = { histCB_.Get() };
+    dc->CSSetConstantBuffers(0, 1, cbs);
+    ID3D11ShaderResourceView* srv[1] = { t.scene.SRV() };
+    dc->CSSetShaderResources(0, 1, srv);
+    ID3D11UnorderedAccessView* uav[1] = { t.histUAV.Get() };
+    dc->CSSetUnorderedAccessViews(0, 1, uav, nullptr);
+    dc->CSSetShader(hist->cs.Get(), nullptr, 0);
+    dc->Dispatch((t.scene.Width() + 15) / 16, (t.scene.Height() + 15) / 16, 1);
+
+    // 2) 縮約: histBuf (SRV に持ち替え) → exposureBuf[0] 更新
+    ID3D11UnorderedAccessView* nullUav[1] = { nullptr };
+    dc->CSSetUnorderedAccessViews(0, 1, nullUav, nullptr);
+    AeReduceCB rcb = {};
+    rcb.aeSpeed = s.aeSpeed;
+    rcb.aeMin = s.aeMin;
+    rcb.aeMax = s.aeMax;
+    rcb.aeInstant = s.aeInstant ? 1 : 0;
+    UploadCB(dc, aeReduceCB_.Get(), rcb);
+    cbs[0] = aeReduceCB_.Get();
+    dc->CSSetConstantBuffers(0, 1, cbs);
+    srv[0] = t.histSRV.Get();
+    dc->CSSetShaderResources(0, 1, srv);
+    uav[0] = t.exposureUAV.Get();
+    dc->CSSetUnorderedAccessViews(0, 1, uav, nullptr);
+    dc->CSSetShader(reduce->cs.Get(), nullptr, 0);
+    dc->Dispatch(1, 1, 1);
+
+    // 後始末: exposureBuf は直後にトーンマップの t5 (PS SRV) になるため UAV を必ず外す
+    dc->CSSetUnorderedAccessViews(0, 1, nullUav, nullptr);
+    ID3D11ShaderResourceView* nullSrv[1] = { nullptr };
+    dc->CSSetShaderResources(0, 1, nullSrv);
+    return true;
+}
+
 void PostProcess::Resolve(GraphicsDevice& device, ShaderManager& shaders, Target& t,
                           ID3D11RenderTargetView* dst, int width, int height, const Settings& s,
                           const RenderView& view, bool distortionActive)
@@ -398,6 +521,9 @@ void PostProcess::Resolve(GraphicsDevice& device, ShaderManager& shaders, Target
 
     // M43b: ゴッドレイ (結果 = t.godA)。off/不成立時は t3 に null = 従来とビット同一
     const bool godrayActive = RunGodray(device, shaders, t, s, view);
+
+    // M44b: 自動露出 (結果 = t.exposureBuf[0])。off/不成立時は t5 に null = 従来とビット同一
+    const bool aeActive = RunAutoExposure(device, shaders, t, s);
 
     // FXAA 有効時はトーンマップを LDR 中間 (t.ldr) に描き、その後 FXAA で dst へ。
     ShaderProgram* fxaa = shaders.Get(fxaaShader_);
@@ -428,17 +554,19 @@ void PostProcess::Resolve(GraphicsDevice& device, ShaderManager& shaders, Target
     cb.godrayEnabled = godrayActive ? 1 : 0;                              // M43b
     cb.colorFilter = s.colorFilter;
     cb.lutIntensity = (s.lutSRV != nullptr) ? s.lutIntensity : 0.0f; // M44a: SRV 無しは強制 off
+    cb.autoExposure = aeActive ? 1 : 0;                              // M44b
     UploadCB(dc, cb_.Get(), cb);
     ID3D11Buffer* cbs[1] = { cb_.Get() };
     dc->PSSetConstantBuffers(0, 1, cbs);
 
-    // M42d: t2 = 歪みバッファ / M43b: t3 = ゴッドレイ / M44a: t4 = LUT
+    // M42d: t2 = 歪みバッファ / M43b: t3 = ゴッドレイ / M44a: t4 = LUT / M44b: t5 = 露出
     // (無効時は null — enabled/intensity 0 なら不参照)
-    ID3D11ShaderResourceView* srvs[5] = { t.scene.SRV(), bloomSRV,
+    ID3D11ShaderResourceView* srvs[6] = { t.scene.SRV(), bloomSRV,
                                           cb.distortEnabled ? t.distort.SRV() : nullptr,
                                           godrayActive ? t.godA.SRV() : nullptr,
-                                          (cb.lutIntensity > 0.0f) ? s.lutSRV : nullptr };
-    dc->PSSetShaderResources(0, 5, srvs);
+                                          (cb.lutIntensity > 0.0f) ? s.lutSRV : nullptr,
+                                          aeActive ? t.exposureSRV.Get() : nullptr };
+    dc->PSSetShaderResources(0, 6, srvs);
     ID3D11SamplerState* samps[1] = { linearClamp_.Get() };
     dc->PSSetSamplers(0, 1, samps);
 
@@ -450,8 +578,8 @@ void PostProcess::Resolve(GraphicsDevice& device, ShaderManager& shaders, Target
     dc->OMSetBlendState(blendOff_.Get(), nullptr, 0xFFFFFFFFu);
     dc->Draw(3, 0);
 
-    ID3D11ShaderResourceView* nulls[5] = { nullptr, nullptr, nullptr, nullptr, nullptr };
-    dc->PSSetShaderResources(0, 5, nulls); // t.scene / t.distort / t.godA を次フレーム RTV に戻すため解除
+    ID3D11ShaderResourceView* nulls[6] = { nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
+    dc->PSSetShaderResources(0, 6, nulls); // t.scene / t.distort / t.godA / 露出を次フレームのため解除
 
     // ---- FXAA: t.ldr → dst ----
     if (useFxaa) {

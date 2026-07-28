@@ -96,6 +96,10 @@ void TestPostFxMerge()
     comp.godrayDecay = 0.9f;
     comp.lutTexture = AssetID{ 123 }; // M44a
     comp.lutIntensity = 0.5f;
+    comp.autoExposure = 1; // M44b
+    comp.aeSpeed = 5.0f;
+    comp.aeMin = 0.5f;
+    comp.aeMax = 8.0f;
     const PostProcess::Settings s = MergeCameraPostFx(base, comp);
     TEST_CHECK(s.chromAberration == 0.01f);
     TEST_CHECK(s.vignetteIntensity == 0.4f);
@@ -107,6 +111,11 @@ void TestPostFxMerge()
     TEST_CHECK(s.godrayIntensity == 0.7f && s.godrayDecay == 0.9f); // M43b
     TEST_CHECK(s.lutTexture.value == 123 && s.lutIntensity == 0.5f); // M44a
     TEST_CHECK(s.lutSRV == nullptr); // SRV はマージでは触らない (RenderSystem が解決)
+    TEST_CHECK(s.autoExposure == 1 && s.aeSpeed == 5.0f && s.aeMin == 0.5f && s.aeMax == 8.0f);
+    // M44b: aeInstant は base 維持 (applyGamma と同じ Settings 専用フィールド)
+    PostProcess::Settings instantBase;
+    instantBase.aeInstant = true;
+    TEST_CHECK(MergeCameraPostFx(instantBase, comp).aeInstant == true);
 
     // 既定コンポーネント = 無効 (従来の見た目)
     const PostProcess::Settings d = MergeCameraPostFx(base, CameraPostFxComponent{});
@@ -114,6 +123,7 @@ void TestPostFxMerge()
     TEST_CHECK(d.saturation == 1.0f && d.contrast == 1.0f);
     TEST_CHECK(d.godrayIntensity == 0.0f); // M43b: 既定 = off
     TEST_CHECK(d.lutIntensity == 0.0f && d.lutTexture.IsNull()); // M44a: 既定 = off
+    TEST_CHECK(d.autoExposure == 0); // M44b: 既定 = off
 }
 
 // メッシュインスタンシングの run 検出 (M38f): 同一 (material,mesh) の連続 2 件以上のみ、
@@ -243,6 +253,28 @@ void TestLutStripUv()
                && f == 0.0f);
 }
 
+// M44b: 自動露出のヒストグラム量子化 (postfx_hist*.cs.hlsl のミラー検証)
+void TestAutoExposureBins()
+{
+    MYE_LOG_INFO("[selftest] auto exposure histogram bins (M44b)");
+    // ほぼ黒はレンジ外 bin 0 (平均から除外される側)
+    TEST_CHECK(BinForLuminance(0.0f) == 0 && BinForLuminance(-1.0f) == 0);
+    // レンジ両端: 2^-10 → bin 1 / 2^6 → bin 255 / 超過はクランプ
+    TEST_CHECK(BinForLuminance(std::exp2(-10.0f)) == 1);
+    TEST_CHECK(BinForLuminance(std::exp2(6.0f)) == 255);
+    TEST_CHECK(BinForLuminance(1000.0f) == 255);
+    // 単調性
+    TEST_CHECK(BinForLuminance(0.1f) < BinForLuminance(0.5f)
+               && BinForLuminance(0.5f) < BinForLuminance(2.0f));
+    // 往復: bin 幅 (2^(16/254) ≈ ±4.5%) 以内で復元される
+    const float lum = 1.0f;
+    const float back = LumForBin(BinForLuminance(lum));
+    TEST_CHECK(back > lum * 0.95f && back < lum * 1.05f);
+    // 逆量子化の両端
+    TEST_CHECK(std::fabs(LumForBin(1) - std::exp2(-10.0f)) < 1e-5f);
+    TEST_CHECK(std::fabs(LumForBin(255) - std::exp2(6.0f)) < 1e-2f);
+}
+
 } // namespace
 
 bool RunRenderSelfTest()
@@ -255,6 +287,7 @@ bool RunRenderSelfTest()
     TestHeightFogInscatter();
     TestSunScreenPos();
     TestLutStripUv();
+    TestAutoExposureBins();
     if (g_failCount == 0) {
         MYE_LOG_INFO("[selftest] render: ALL PASS");
         return true;
