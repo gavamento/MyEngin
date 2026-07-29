@@ -32,18 +32,29 @@ bool ReadFileBytes(const std::wstring& path, std::vector<char>& out)
     return true;
 }
 
-// #include を shaderDir 基準で解決し、開いたファイルを記録する (M3 の依存グラフ用)
+// #include をシェーダルート群 (優先度順) で解決し、開いたファイルを記録する
+// (M3 の依存グラフ用)。プロジェクトが common.hlsli だけ差し替える、といった
+// 部分上書きもここで成立する
 class IncludeRecorder : public ID3DInclude {
 public:
-    IncludeRecorder(std::wstring baseDir, std::vector<std::wstring>& outIncludes)
-        : baseDir_(std::move(baseDir)), includes_(outIncludes) {}
+    IncludeRecorder(const std::vector<std::wstring>& baseDirs,
+                    std::vector<std::wstring>& outIncludes)
+        : baseDirs_(baseDirs), includes_(outIncludes) {}
 
     HRESULT __stdcall Open(D3D_INCLUDE_TYPE, LPCSTR pFileName, LPCVOID,
                            LPCVOID* ppData, UINT* pBytes) override
     {
-        const std::wstring path = NormalizePathKey(baseDir_ + L"\\" + Utf8ToWide(pFileName));
+        std::wstring path;
         std::vector<char> data;
-        if (!ReadFileBytes(path, data)) {
+        bool found = false;
+        for (const std::wstring& base : baseDirs_) {
+            path = NormalizePathKey(base + L"\\" + Utf8ToWide(pFileName));
+            if (ReadFileBytes(path, data)) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
             return E_FAIL;
         }
         includes_.push_back(path);
@@ -64,7 +75,7 @@ public:
     }
 
 private:
-    std::wstring baseDir_;
+    const std::vector<std::wstring>& baseDirs_;
     std::vector<std::wstring>& includes_;
 };
 
@@ -118,15 +129,82 @@ bool BuildInputLayout(ID3D11Device* device, ID3DBlob* vsBytecode,
 
 } // namespace
 
-bool ShaderManager::Init(GraphicsDevice& device, std::wstring shaderDir)
+bool ShaderManager::Init(GraphicsDevice& device, std::vector<std::wstring> shaderDirs)
 {
     device_ = &device;
-    dir_ = std::move(shaderDir);
+    dirs_ = std::move(shaderDirs);
     std::error_code ec;
-    if (!std::filesystem::is_directory(dir_, ec)) {
-        MYE_LOG_WARN("shader dir not found: %s", WideToUtf8(dir_).c_str());
+    bool anyExists = false;
+    for (const std::wstring& d : dirs_) {
+        if (std::filesystem::is_directory(d, ec)) {
+            anyExists = true;
+        }
     }
+    if (!anyExists) {
+        MYE_LOG_WARN("no shader dir found (%zu root(s) searched)", dirs_.size());
+    }
+    for (const std::wstring& d : dirs_) {
+        MYE_LOG_INFO("shader root: %s", WideToUtf8(d).c_str());
+    }
+    ReportShadowedBuiltins();
     return true;
+}
+
+// 優先度の高いルートが下位ルートの同名シェーダを隠している箇所を報告する。
+// 意図的な上書きなら想定どおりだが、テンプレートからコピーされた古い残骸だと
+// 「エンジンを更新したのに挙動が古いまま」という分かりにくい壊れ方をするので、
+// 内容が一致するか (= 単なる冗長コピー) まで出して判断材料にする
+void ShaderManager::ReportShadowedBuiltins() const
+{
+    if (dirs_.size() < 2) {
+        return;
+    }
+    std::error_code ec;
+    for (size_t i = 0; i + 1 < dirs_.size(); ++i) {
+        for (const auto& e : std::filesystem::directory_iterator(dirs_[i], ec)) {
+            if (!e.is_regular_file(ec)) {
+                continue;
+            }
+            const std::filesystem::path& p = e.path();
+            const std::wstring ext = p.extension().wstring();
+            if (ext != L".hlsl" && ext != L".hlsli") {
+                continue;
+            }
+            for (size_t j = i + 1; j < dirs_.size(); ++j) {
+                const std::filesystem::path lower =
+                    std::filesystem::path(dirs_[j]) / p.filename();
+                if (!std::filesystem::is_regular_file(lower, ec)) {
+                    continue;
+                }
+                std::vector<char> a;
+                std::vector<char> b;
+                const bool same = ReadFileBytes(p.wstring(), a)
+                    && ReadFileBytes(lower.wstring(), b) && a == b;
+                MYE_LOG_WARN("shader override: %s shadows %s (%s)",
+                             WideToUtf8(p.wstring()).c_str(),
+                             WideToUtf8(lower.wstring()).c_str(),
+                             same ? "identical - redundant copy, safe to delete"
+                                  : "DIFFERS - intentional override, or a stale copy that will "
+                                    "hide engine updates");
+                break;
+            }
+        }
+    }
+}
+
+std::wstring ShaderManager::ResolvePath(std::string_view name) const
+{
+    const std::wstring file = Utf8ToWide(name) + L".hlsl";
+    std::error_code ec;
+    for (const std::wstring& d : dirs_) {
+        const std::wstring candidate = d + L"\\" + file;
+        if (std::filesystem::is_regular_file(candidate, ec)) {
+            return NormalizePathKey(candidate);
+        }
+    }
+    // 未発見。最優先ルート上のパスを返しておくと、後からプロジェクト側に
+    // 同名ファイルを置いたときに FileWatcher の照合が成立する
+    return dirs_.empty() ? NormalizePathKey(file) : NormalizePathKey(dirs_.front() + L"\\" + file);
 }
 
 AssetID ShaderManager::Load(std::string_view name)
@@ -136,7 +214,7 @@ AssetID ShaderManager::Load(std::string_view name)
         return id;
     }
     ShaderProgram prog;
-    prog.path = NormalizePathKey(dir_ + L"\\" + Utf8ToWide(name) + L".hlsl");
+    prog.path = ResolvePath(name);
     if (!CompileProgram(prog.path, prog)) {
         MYE_LOG_ERROR("shader compile failed: %.*s", static_cast<int>(name.size()), name.data());
     }
@@ -152,7 +230,7 @@ AssetID ShaderManager::LoadCompute(std::string_view name)
     }
     ShaderProgram prog;
     prog.isCompute = true;
-    prog.path = NormalizePathKey(dir_ + L"\\" + Utf8ToWide(name) + L".hlsl");
+    prog.path = ResolvePath(name);
     if (!CompileProgram(prog.path, prog)) {
         MYE_LOG_ERROR("compute shader compile failed: %.*s", static_cast<int>(name.size()),
                       name.data());
@@ -255,7 +333,7 @@ bool ShaderManager::CompileProgram(const std::wstring& path, ShaderProgram& out)
     const std::string pathUtf8 = WideToUtf8(path);
 
     out.includes.clear();
-    IncludeRecorder includer(dir_, out.includes);
+    IncludeRecorder includer(dirs_, out.includes);
 
     auto compile = [&](const char* entry, const char* target, ComPtr<ID3DBlob>& bytecode) {
         ComPtr<ID3DBlob> errors;

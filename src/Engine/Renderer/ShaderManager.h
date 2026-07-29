@@ -28,14 +28,20 @@ struct ShaderProgram {
 
 // assets/shaders/ からの実行時コンパイル (engine_spec.md 8.1 / 10 章)。
 // コンパイルフラグは Debug/Release で同一 (描画結果の構成差を作らない)。
+//
+// シェーダルートは優先度順の複数持ちにする: [<project>\assets\shaders,
+// <engineRepo>\assets\shaders]。プロジェクトに同名を置けばエンジン組込みを上書きでき、
+// 置かなければエンジン側が使われる。これによりエンジンに機能を足しても
+// 既存プロジェクトが古いシェーダのまま取り残されない (単一ルート時代の障害)
 class ShaderManager {
 public:
-    bool Init(GraphicsDevice& device, std::wstring shaderDir);
+    // shaderDirs は優先度順 (先頭が最優先)。空要素・重複は呼び出し側で除いておくこと
+    bool Init(GraphicsDevice& device, std::vector<std::wstring> shaderDirs);
 
-    // "forward_lit" → {shaderDir}\forward_lit.hlsl をコンパイルしてキャッシュ。
+    // "forward_lit" → 各ルートを順に見て最初に見つかった forward_lit.hlsl をコンパイル。
     // 失敗しても ID は返す (Get で valid=false のプログラムが得られる)
     AssetID Load(std::string_view name);
-    // "particle_sim.cs" → {shaderDir}\particle_sim.cs.hlsl (エントリ CSMain)
+    // "particle_sim.cs" → particle_sim.cs.hlsl (エントリ CSMain)
     AssetID LoadCompute(std::string_view name);
     ShaderProgram* Get(AssetID id);
 
@@ -49,13 +55,18 @@ public:
     // フェーズ 2 で呼ぶ: 完了した非同期コンパイルを取り込み、成功分のみ差し替える
     void PollAsyncCompiles();
 
-    const std::wstring& ShaderDir() const { return dir_; }
+    const std::vector<std::wstring>& ShaderDirs() const { return dirs_; }
 
 private:
     bool CompileProgram(const std::wstring& path, ShaderProgram& out); // out.isCompute を見て分岐
+    // "<name>.hlsl" を各ルートで探す。見つからなければ最優先ルート上のパスを返す
+    // (ホットリロード監視の照合キーになるので必ず非空を返す)
+    std::wstring ResolvePath(std::string_view name) const;
+    // 上位ルートが下位ルート (エンジン組込み) を隠している箇所を警告する
+    void ReportShadowedBuiltins() const;
 
     GraphicsDevice* device_ = nullptr;
-    std::wstring dir_;
+    std::vector<std::wstring> dirs_;
     std::unordered_map<uint64_t, ShaderProgram> programs_; // AssetID.value → program
     struct AsyncCompile {
         uint64_t id;

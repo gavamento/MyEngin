@@ -23,7 +23,9 @@ std::wstring CreateAnimationAsset(EngineContext& ctx, const std::wstring& dir,
                                   const std::string& name);                        // .anim.json
 std::wstring CreateMaterialAsset(EngineContext& ctx, const std::wstring& dir,
                                  const std::string& name);                         // .mat.json
-std::wstring CreateCppScript(EngineContext& ctx, const std::string& name); // src\GameLogic\Scripts\<name>.cpp
+// <root>\src\GameLogic\Scripts\<name>.cpp。root はプロジェクト起動なら <project>、
+// レガシー起動ならエンジンリポジトリ
+std::wstring CreateCppScript(EngineContext& ctx, const std::string& name);
 std::wstring CreateCSharpScript(EngineContext& ctx, const std::string& name); // assets\scripts\<name>.cs
 
 // ---- 外部ファイルインポート (エクスプローラー D&D) ----
@@ -74,7 +76,10 @@ bool AttachScriptToEntity(EngineContext& ctx, Selection& selection, UndoStack& u
 
 // ---- スクリプトワークフロー ----
 void OpenInExternalEditor(const std::string& editorCmd, const std::wstring& path); // {file}/{line} 置換
-void RebuildGameLogic(EngineContext& ctx); // tools\build_scripts.bat 起動 (gen + msbuild GameLogic)
+// C++ スクリプトのビルド。プロジェクト起動時は <project>\src\GameLogic\Scripts\*.cpp を
+// cl.exe で <project>\cache\GameLogic.dll へ直接ビルドする (vcxproj / msbuild を介さない)。
+// レガシー起動時のみ従来どおり tools\build_scripts.bat (gen + msbuild) を起動する
+void RebuildGameLogic(EngineContext& ctx);
 void CompileCSharpScripts(EngineContext& ctx); // assets\scripts\*.cs をエンジン内 Roslyn でコンパイル
 
 } // namespace mye

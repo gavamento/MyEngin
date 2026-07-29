@@ -31,6 +31,34 @@ std::wstring FindAssetsRoot()
     return (std::filesystem::current_path() / L"assets").wstring();
 }
 
+std::wstring FindEngineRepoRoot()
+{
+    // FindAssetsRoot と同じ探索。目印は C++ スクリプトのビルドに必須なヘッダそのもの
+    std::filesystem::path dir = GetExecutableDir();
+    for (int i = 0; i < 6; ++i) {
+        std::error_code ec;
+        if (std::filesystem::is_regular_file(dir / L"src" / L"Shared" / L"ScriptAPI.h", ec)) {
+            return dir.wstring();
+        }
+        if (!dir.has_parent_path() || dir.parent_path() == dir) {
+            break;
+        }
+        dir = dir.parent_path();
+    }
+    return {};
+}
+
+std::wstring FindEngineShaderDir()
+{
+    const std::wstring repo = FindEngineRepoRoot();
+    if (repo.empty()) {
+        return {};
+    }
+    const std::filesystem::path p = std::filesystem::path(repo) / L"assets" / L"shaders";
+    std::error_code ec;
+    return std::filesystem::is_directory(p, ec) ? p.wstring() : std::wstring{};
+}
+
 std::wstring NormalizePathKey(const std::wstring& path)
 {
     std::error_code ec;

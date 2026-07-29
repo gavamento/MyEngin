@@ -12,6 +12,16 @@ std::wstring GetExecutableDir();
 // 見つからなければカレントディレクトリ基準の "assets" を返す
 std::wstring FindAssetsRoot();
 
+// エンジンリポジトリのルートを exe から上方向に探す (最大 6 階層、src\Shared\ScriptAPI.h が目印)。
+// C++ スクリプトのコンパイルに必要な Shared ヘッダの位置解決に使う。
+// 見つからなければ空 (リポジトリから切り離して配布された exe など)
+std::wstring FindEngineRepoRoot();
+
+// エンジン組込みシェーダ (<engineRepo>\assets\shaders) の絶対パス。
+// プロジェクトの assets\shaders に無いシェーダはここから解決される (2 ルート化)。
+// 配布済み Runtime など、リポジトリが見つからない環境では空
+std::wstring FindEngineShaderDir();
+
 std::string WideToUtf8(std::wstring_view w);
 std::wstring Utf8ToWide(std::string_view s);
 

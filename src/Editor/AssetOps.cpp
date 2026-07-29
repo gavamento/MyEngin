@@ -1,10 +1,12 @@
 #include "Editor/AssetOps.h"
 
+#include <algorithm>
 #include <cctype>
 #include <cstring>
 #include <cwctype>
 #include <filesystem>
 #include <fstream>
+#include <vector>
 
 #include <Windows.h>
 #include <shellapi.h>
@@ -84,9 +86,44 @@ bool EndsWith(const std::string& s, const char* suffix)
     return s.size() >= n && s.compare(s.size() - n, n, suffix) == 0;
 }
 
-std::wstring RepoRoot(EngineContext& ctx)
+// C++ スクリプトを置くツリーのルート。
+//   プロジェクト起動 = <project> (Hub から開いた通常の動線)
+//   レガシー起動      = エンジンリポジトリ (assets\ の親。replay_verify / selftest の経路)
+// 旧 RepoRoot() は常に「assets\ の親」を返していたため、プロジェクト起動時に
+// <project>\src\GameLogic\Scripts へ書いた上で <project>\tools\build_scripts.bat を
+// 探しに行き、ビルドできないまま無言で失敗していた
+std::wstring ScriptsRoot(EngineContext& ctx)
 {
-    return fs::path(ctx.assetsRoot).parent_path().wstring(); // assets\ の親 = リポジトリルート
+    if (!ctx.projectRoot.empty()) {
+        return ctx.projectRoot;
+    }
+    return fs::path(ctx.assetsRoot).parent_path().wstring();
+}
+
+// cmd.exe は .bat をコンソール ANSI コードページで読むので UTF-8 では書けない。
+// 日本語を含むプロジェクトパスを通すためにここだけ CP_ACP へ変換する
+std::string WideToAcp(const std::wstring& w)
+{
+    if (w.empty()) {
+        return {};
+    }
+    const int n = WideCharToMultiByte(CP_ACP, 0, w.data(), static_cast<int>(w.size()), nullptr, 0,
+                                      nullptr, nullptr);
+    if (n <= 0) {
+        return {};
+    }
+    std::string s(static_cast<size_t>(n), '\0');
+    WideCharToMultiByte(CP_ACP, 0, w.data(), static_cast<int>(w.size()), s.data(), n, nullptr,
+                        nullptr);
+    return s;
+}
+
+// 実行中の構成を exe パスから判定 (bin\x64\<Config>\)。構成マクロ分岐は決定論ルールで不可
+bool RunningRelease()
+{
+    const std::wstring exeDir = GetExecutableDir();
+    return exeDir.find(L"Release") != std::wstring::npos
+        || exeDir.find(L"release") != std::wstring::npos;
 }
 
 // ---- 外部ファイルインポート (エクスプローラー D&D) のヘルパー ----
@@ -277,7 +314,7 @@ std::wstring CreateMaterialAsset(EngineContext& ctx, const std::wstring& dir, co
 std::wstring CreateCppScript(EngineContext& ctx, const std::string& rawName)
 {
     const std::string name = SanitizeIdentifier(rawName);
-    const std::wstring dir = RepoRoot(ctx) + L"\\src\\GameLogic\\Scripts";
+    const std::wstring dir = ScriptsRoot(ctx) + L"\\src\\GameLogic\\Scripts";
     std::error_code ec;
     fs::create_directories(dir, ec);
     const std::wstring path = dir + L"\\" + Utf8ToWide(name) + L".cpp";
@@ -637,19 +674,215 @@ void OpenInExternalEditor(const std::string& editorCmd, const std::wstring& path
     ShellExecuteW(nullptr, L"open", L"cmd.exe", wargs.c_str(), nullptr, SW_HIDE);
 }
 
+namespace {
+
+// エクスポート glue を <project>\cache\ へ生成する。
+// エンジンリポジトリの src\GameLogic\GameLogicMain.cpp と同一内容 — これを生成することで
+// プロジェクト側が参照するエンジン資産は Shared\ のヘッダ 4 本だけになる
+bool WriteGeneratedMain(const std::wstring& path)
+{
+    std::ofstream f{ fs::path(path) };
+    if (!f) {
+        MYE_LOG_ERROR("could not write %s", WideToUtf8(path).c_str());
+        return false;
+    }
+    f << "// 自動生成 (MyEngine エディタ)。手編集しても Rebuild Scripts で上書きされる。\n"
+         "// エンジンの src\\GameLogic\\GameLogicMain.cpp と同一内容。\n"
+         "#include \"Shared/ScriptAPI.h\"\n"
+         "\n"
+         "extern \"C\" __declspec(dllexport) const MyeScriptModule* GameLogic_GetModule(\n"
+         "    const MyeEngineApi* api)\n"
+         "{\n"
+         "    (void)api;\n"
+         "    static MyeScriptModule mod = {};\n"
+         "    mod.apiVersion = MYE_API_VERSION;\n"
+         "    mod.scripts = mye_script_detail::Registry().data();\n"
+         "    mod.scriptCount = static_cast<uint32_t>(mye_script_detail::Registry().size());\n"
+         "    return &mod;\n"
+         "}\n"
+         "\n"
+         "extern \"C\" __declspec(dllexport) unsigned int GameLogic_ApiVersion(void)\n"
+         "{\n"
+         "    return MYE_API_VERSION;\n"
+         "}\n";
+    return true;
+}
+
+// XML 属性値のエスケープ (プロジェクトパスに & や < が混ざっても壊れないように)
+std::string XmlEscape(const std::wstring& w)
+{
+    std::string out;
+    for (char c : WideToUtf8(w)) {
+        switch (c) {
+        case '&': out += "&amp;"; break;
+        case '<': out += "&lt;"; break;
+        case '>': out += "&gt;"; break;
+        case '"': out += "&quot;"; break;
+        default: out += c; break;
+        }
+    }
+    return out;
+}
+
+// <project>\cache\GameLogic.vcxproj を生成する。
+// エンジンの build\Common.props を直接 import するので、コンパイラフラグ
+// (/std:c++20 /W4 /permissive- /fp:precise /Zi /utf-8 /Zc:preprocessor、構成別 RuntimeLibrary、
+// AdditionalIncludeDirectories=$(RepoRoot)src) はエンジン本体と常に一致する。
+// import 順は build\GameLogic.vcxproj に厳密に合わせること (Microsoft.Cpp.props の後)
+bool WriteGeneratedVcxproj(const std::wstring& path, const std::wstring& engineRepo,
+                           const std::wstring& cacheDir,
+                           const std::vector<std::wstring>& sources)
+{
+    std::ofstream f{ fs::path(path), std::ios::binary };
+    if (!f) {
+        MYE_LOG_ERROR("could not write %s", WideToUtf8(path).c_str());
+        return false;
+    }
+    std::string x;
+    x += "<?xml version=\"1.0\" encoding=\"utf-8\"?>\r\n";
+    x += "<!-- 自動生成 (MyEngine エディタ / Rebuild Scripts)。手編集しても上書きされる -->\r\n";
+    x += "<Project DefaultTargets=\"Build\" "
+         "xmlns=\"http://schemas.microsoft.com/developer/msbuild/2003\">\r\n";
+    x += "  <ItemGroup Label=\"ProjectConfigurations\">\r\n";
+    for (const char* cfg : { "Debug", "Release" }) {
+        x += std::string("    <ProjectConfiguration Include=\"") + cfg + "|x64\">\r\n";
+        x += std::string("      <Configuration>") + cfg + "</Configuration>\r\n";
+        x += "      <Platform>x64</Platform>\r\n";
+        x += "    </ProjectConfiguration>\r\n";
+    }
+    x += "  </ItemGroup>\r\n";
+    x += "  <PropertyGroup Label=\"Globals\">\r\n";
+    x += "    <ProjectGuid>{7E3A1C55-9B24-4E77-8A61-2D5F0C9E4B10}</ProjectGuid>\r\n";
+    x += "    <RootNamespace>GameLogic</RootNamespace>\r\n";
+    x += "    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>\r\n";
+    x += "  </PropertyGroup>\r\n";
+    x += "  <Import Project=\"$(VCTargetsPath)\\Microsoft.Cpp.Default.props\" />\r\n";
+    x += "  <PropertyGroup Label=\"Configuration\">\r\n";
+    x += "    <ConfigurationType>DynamicLibrary</ConfigurationType>\r\n";
+    x += "    <PlatformToolset>v143</PlatformToolset>\r\n";
+    x += "    <CharacterSet>Unicode</CharacterSet>\r\n";
+    x += "    <UseDebugLibraries Condition=\"'$(Configuration)'=='Debug'\">true"
+         "</UseDebugLibraries>\r\n";
+    x += "  </PropertyGroup>\r\n";
+    x += "  <Import Project=\"$(VCTargetsPath)\\Microsoft.Cpp.props\" />\r\n";
+    x += "  <Import Project=\"" + XmlEscape(engineRepo) + "\\build\\Common.props\" />\r\n";
+    // Common.props の OutDir/IntDir はエンジンリポジトリを指すので import 後に上書きする
+    x += "  <PropertyGroup>\r\n";
+    x += "    <LinkIncremental>false</LinkIncremental>\r\n";
+    x += "    <TargetName>GameLogic</TargetName>\r\n";
+    x += "    <OutDir>" + XmlEscape(cacheDir) + "\\</OutDir>\r\n";
+    x += "    <IntDir>" + XmlEscape(cacheDir) + "\\obj\\</IntDir>\r\n";
+    x += "  </PropertyGroup>\r\n";
+    // cache\hot\v{N}\ へコピーした PDB をデバッガが隣から読めるようにする (本家と同じ)
+    x += "  <ItemDefinitionGroup>\r\n";
+    x += "    <Link>\r\n";
+    x += "      <AdditionalOptions>/PDBALTPATH:$(TargetName).pdb %(AdditionalOptions)"
+         "</AdditionalOptions>\r\n";
+    x += "    </Link>\r\n";
+    x += "  </ItemDefinitionGroup>\r\n";
+    x += "  <ItemGroup>\r\n";
+    x += "    <ClCompile Include=\"" + XmlEscape(cacheDir) + "\\GameLogicMain.cpp\" />\r\n";
+    for (const std::wstring& s : sources) {
+        x += "    <ClCompile Include=\"" + XmlEscape(s) + "\" />\r\n";
+    }
+    x += "  </ItemGroup>\r\n";
+    x += "  <Import Project=\"$(VCTargetsPath)\\Microsoft.Cpp.targets\" />\r\n";
+    x += "</Project>\r\n";
+    f.write(x.data(), static_cast<std::streamsize>(x.size()));
+    return true;
+}
+
+// プロジェクトの C++ スクリプトをビルドする。
+// C# の [Compile C# Scripts] と同じ「プロジェクト内のソースをエンジンがビルドする」モデル。
+// エンジンリポジトリの vcxproj や gen_project_files.ps1 には一切依存せず、
+// <project>\cache\ に自己完結したビルド一式を生成して MSBuild にかける。
+// vcvars は使わない — MSBuild はツールチェーンを自前で解決するので環境依存が少ない
+void BuildProjectScripts(EngineContext& ctx)
+{
+    const std::wstring engineRepo = FindEngineRepoRoot();
+    if (engineRepo.empty()) {
+        MYE_LOG_ERROR("engine repo not found (src\\Shared\\ScriptAPI.h) - "
+                      "C++ scripts need the engine sources to compile");
+        return;
+    }
+    const std::wstring cacheDir = ctx.projectRoot + L"\\cache";
+    const std::wstring scriptsDir = ctx.projectRoot + L"\\src\\GameLogic\\Scripts";
+    std::error_code ec;
+    fs::create_directories(cacheDir, ec);
+
+    // スクリプト列挙 (決定論のためソート。リンク順 = 静的初期化順に効く)
+    std::vector<std::wstring> sources;
+    for (const auto& e : fs::directory_iterator(scriptsDir, ec)) {
+        if (e.is_regular_file(ec) && e.path().extension() == L".cpp") {
+            sources.push_back(e.path().wstring());
+        }
+    }
+    std::sort(sources.begin(), sources.end());
+
+    const std::wstring projPath = cacheDir + L"\\GameLogic.vcxproj";
+    if (!WriteGeneratedMain(cacheDir + L"\\GameLogicMain.cpp")
+        || !WriteGeneratedVcxproj(projPath, engineRepo, cacheDir, sources)) {
+        return;
+    }
+
+    // MSBuild の起動は tools\build_scripts.bat と同じ vswhere パターン。
+    // 失敗時は pause で窓を残し、コンパイルエラーをそのまま読めるようにする
+    const std::wstring cfg = RunningRelease() ? L"Release" : L"Debug";
+    const std::wstring batPath = cacheDir + L"\\build_scripts.bat";
+    {
+        std::ofstream b{ fs::path(batPath), std::ios::binary };
+        if (!b) {
+            MYE_LOG_ERROR("could not write %s", WideToUtf8(batPath).c_str());
+            return;
+        }
+        const std::wstring bat =
+            L"@echo off\r\n"
+            L"rem auto-generated by the MyEngine editor (Rebuild Scripts). Do not edit.\r\n"
+            L"setlocal\r\n"
+            L"cd /d \"%~dp0\"\r\n"
+            L"\r\n"
+            L"for /f \"usebackq tokens=*\" %%i in (`\"%ProgramFiles(x86)%\\Microsoft Visual "
+            L"Studio\\Installer\\vswhere.exe\" -latest -products * -requires "
+            L"Microsoft.Component.MSBuild -find MSBuild\\**\\Bin\\MSBuild.exe`) do set "
+            L"MSBUILD=%%i\r\n"
+            L"if not defined MSBUILD ( echo [scripts] MSBuild not found & pause & exit /b 1 )\r\n"
+            L"\r\n"
+            L"echo === building C++ scripts (" + cfg + L") ===\r\n"
+            L"\"%MSBUILD%\" \"" + projPath + L"\" /p:Configuration=" + cfg
+            + L" /p:Platform=x64 /m /v:minimal /nologo || ( echo. & echo [scripts] BUILD FAILED "
+              L"-- fix errors above & pause & exit /b 1 )\r\n"
+            L"\r\n"
+            L"echo.\r\n"
+            L"echo === scripts built. The editor will hot-reload within ~0.5s. ===\r\n"
+            L"exit /b 0\r\n";
+        const std::string acp = WideToAcp(bat);
+        b.write(acp.data(), static_cast<std::streamsize>(acp.size()));
+    }
+
+    MYE_LOG_INFO("building %zu C++ script(s) -> %s\\GameLogic.dll (%s)", sources.size(),
+                 WideToUtf8(cacheDir).c_str(), WideToUtf8(cfg).c_str());
+    const std::wstring args = L"/c \"\"" + batPath + L"\"\"";
+    ShellExecuteW(nullptr, L"open", L"cmd.exe", args.c_str(), cacheDir.c_str(), SW_SHOWNORMAL);
+}
+
+} // namespace
+
 void RebuildGameLogic(EngineContext& ctx)
 {
-    const std::wstring repo = RepoRoot(ctx);
+    // プロジェクト起動時はプロジェクト内のスクリプトを cl.exe でビルドする。
+    // レガシー起動 (--project なし) はエンジン同梱スクリプトを vcxproj でビルドする従来経路 —
+    // replay_verify / golden.rep がこちらに依存しているので変更しない
+    if (!ctx.projectRoot.empty()) {
+        BuildProjectScripts(ctx);
+        return;
+    }
+    const std::wstring repo = ScriptsRoot(ctx);
     const std::wstring bat = repo + L"\\tools\\build_scripts.bat";
     if (!fs::exists(bat)) {
         MYE_LOG_ERROR("build_scripts.bat not found: %s", WideToUtf8(bat).c_str());
         return;
     }
-    // 実行中の構成を exe パスから判定 (bin\x64\<Config>\)。構成マクロ分岐は決定論ルールで不可
-    const std::wstring exeDir = GetExecutableDir();
-    const bool isRelease = exeDir.find(L"Release") != std::wstring::npos
-        || exeDir.find(L"release") != std::wstring::npos;
-    const std::wstring cfg = isRelease ? L"Release" : L"Debug";
+    const std::wstring cfg = RunningRelease() ? L"Release" : L"Debug";
     // cmd /c ""<bat>" <cfg>"  (スペース入りパス対応)
     const std::wstring args = L"/c \"\"" + bat + L"\" " + cfg + L"\"";
     MYE_LOG_INFO("building GameLogic (%s)... hot reload applies on success",

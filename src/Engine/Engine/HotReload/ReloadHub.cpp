@@ -39,12 +39,26 @@ bool ReloadHub::Init(ShaderManager* shaders, RenderResources* resources, Scene* 
         MYE_LOG_WARN("[reload] assets root not found, hot reload disabled");
         return false;
     }
+    // エンジン組込みシェーダも監視する (2 ルート化でプロジェクト assets\ の外にあるため)。
+    // レガシー起動では assets\shaders が assetsRoot 配下 = watcher_ が既に拾うので張らない
+    const std::wstring engineShaders = FindEngineShaderDir();
+    if (!engineShaders.empty()) {
+        const std::wstring engKey = NormalizePathKey(engineShaders);
+        const std::wstring rootKey = NormalizePathKey(assetsRoot);
+        const bool underAssets = engKey.size() > rootKey.size()
+            && engKey.compare(0, rootKey.size(), rootKey) == 0 && engKey[rootKey.size()] == L'\\';
+        if (!underAssets && engineShaderWatcher_.Start(engineShaders)) {
+            MYE_LOG_INFO("[reload] watching engine shaders: %s",
+                         WideToUtf8(engineShaders).c_str());
+        }
+    }
     return watcher_.Start(assetsRoot);
 }
 
 void ReloadHub::Shutdown()
 {
     watcher_.Stop();
+    engineShaderWatcher_.Stop();
 }
 
 void ReloadHub::SetActiveScenePath(const std::wstring& path)
@@ -59,6 +73,9 @@ void ReloadHub::Update()
 
     for (const std::wstring& path : watcher_.DrainChanges()) {
         HandleChange(path);
+    }
+    for (const std::wstring& path : engineShaderWatcher_.DrainChanges()) {
+        HandleChange(path); // .hlsl/.hlsli 以外は HandleChange 側の拡張子分岐で無視される
     }
 
     if (!retries_.empty()) {

@@ -32,6 +32,10 @@ private:
     void HandleChange(const std::wstring& normPath);
 
     FileWatcher watcher_;
+    // エンジン組込みシェーダ (<engineRepo>\assets\shaders) の監視。
+    // assets\ の外にあるので watcher_ では拾えず、別ルートとして張る。
+    // レガシー起動 (assets = エンジンの assets) では重複するので起動しない
+    FileWatcher engineShaderWatcher_;
     ShaderManager* shaders_ = nullptr;
     RenderResources* resources_ = nullptr;
     Scene* scene_ = nullptr;

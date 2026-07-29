@@ -23,13 +23,18 @@ bool SetError(std::string* outError, const std::string& msg)
 }
 
 // .meta サイドカーを除いて再帰コピーする。
-// GUID はパス由来なので新プロジェクトでは AssetDatabase::ScanAndSync に再生成させる
-bool CopyTreeWithoutMeta(const fs::path& src, const fs::path& dst, std::string* outError)
+// GUID はパス由来なので新プロジェクトでは AssetDatabase::ScanAndSync に再生成させる。
+// skipTopLevel が非 null なら、src 直下のそのフォルダ配下を丸ごとコピーしない
+bool CopyTreeWithoutMeta(const fs::path& src, const fs::path& dst, std::string* outError,
+                         const wchar_t* skipTopLevel = nullptr)
 {
     std::error_code ec;
     fs::create_directories(dst, ec);
     for (const auto& entry : fs::recursive_directory_iterator(src, ec)) {
         const fs::path rel = fs::relative(entry.path(), src, ec);
+        if (skipTopLevel != nullptr && !rel.empty() && rel.begin()->wstring() == skipTopLevel) {
+            continue;
+        }
         const fs::path to = dst / rel;
         if (entry.is_directory()) {
             fs::create_directories(to, ec);
@@ -75,23 +80,24 @@ bool CreateProject(const std::wstring& dir, const std::string& name, ProjectTemp
 
     const fs::path engineAssets(engineAssetsRoot);
     const fs::path assets = root / L"assets";
+    // シェーダはコピーしない (2 ルート化): エンジン組込みを実行時に解決するので、
+    // プロジェクトに複製するとエンジン更新に取り残されて機能が丸ごと死ぬ。
+    // assets\shaders は「上書きしたいシェーダを置く場所」として空で作る
     if (tmpl == ProjectTemplate::Demo3D) {
         // assets 一式 (デモシーン自体は初回起動時の BuildDemoScene がコード生成する)。
         // editor_settings.json はユーザー環境設定なので持ち込まない
-        if (!CopyTreeWithoutMeta(engineAssets, assets, outError)) {
+        if (!CopyTreeWithoutMeta(engineAssets, assets, outError, L"shaders")) {
             return false;
         }
         fs::remove(assets / L"editor_settings.json", ec);
+        fs::create_directories(assets / L"shaders", ec);
     } else {
-        // Empty: エンジンが要求する最小構成 — シェーダ一式 + 効果音 + 空の作業フォルダ。
-        // シェーダはエンジン実装と対のため v1 はコピー配布 (将来 Engine/Project の 2 ルート化)
-        if (!CopyTreeWithoutMeta(engineAssets / L"shaders", assets / L"shaders", outError)) {
-            return false;
-        }
+        // Empty: エンジンが要求する最小構成 — 効果音 + 空の作業フォルダ
         fs::create_directories(assets / L"audio", ec);
         fs::copy_file(engineAssets / L"audio" / L"beep.wav", assets / L"audio" / L"beep.wav",
                       fs::copy_options::overwrite_existing, ec);
-        for (const wchar_t* sub : { L"scenes", L"scripts", L"models", L"textures", L"materials" }) {
+        for (const wchar_t* sub :
+             { L"scenes", L"scripts", L"models", L"textures", L"materials", L"shaders" }) {
             fs::create_directories(assets / sub, ec);
         }
     }

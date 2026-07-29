@@ -39,11 +39,18 @@ void BuildSettingsWindow::DoPackage(EngineContext& ctx)
         return true;
     };
 
-    // 1) 実行ファイル + スクリプト DLL
+    // 1) 実行ファイル + スクリプト DLL。
+    // GameLogic.dll の出所は EngineLoop の監視先と揃える: プロジェクト起動なら
+    // <project>\cache\ (Rebuild Scripts がここに吐く)、レガシー起動なら exe の隣。
+    // exe 隣を無条件に使うとエンジンのデモスクリプトを配布してしまう
+    const fs::path logicSrc = ctx.projectRoot.empty()
+        ? exeDir / L"GameLogic.dll"
+        : fs::path(ctx.projectRoot) / L"cache" / L"GameLogic.dll";
     bool ok = copyFile(exeDir / L"Runtime.exe", out / L"Runtime.exe");
-    ok = copyFile(exeDir / L"GameLogic.dll", out / L"GameLogic.dll") && ok;
+    ok = copyFile(logicSrc, out / L"GameLogic.dll") && ok;
     if (!ok) {
-        status_ = "FAILED: Runtime.exe / GameLogic.dll not found (build Release first)";
+        status_ = "FAILED: Runtime.exe / GameLogic.dll not found "
+                  "(build Release, then Rebuild Scripts)";
         return;
     }
 
@@ -102,6 +109,27 @@ void BuildSettingsWindow::DoPackage(EngineContext& ctx)
         status_ = "FAILED: assets copy error";
         MYE_LOG_ERROR("[build] assets copy failed: %s", ec.message().c_str());
         return;
+    }
+
+    // 2b) エンジン組込みシェーダを同梱する。シェーダは 2 ルート解決なのでプロジェクトの
+    // assets\shaders には上書き分しか無い — ここで補わないと配布先で描画できない。
+    // skip_existing でプロジェクト側の上書きを勝たせる (解決順と同じ優先度)。
+    // これを入れることで dist\ は実行時にエンジンリポジトリへ依存しない
+    {
+        const std::wstring engineShaders = FindEngineShaderDir();
+        if (engineShaders.empty()) {
+            MYE_LOG_WARN("[build] engine shader dir not found - dist may be missing shaders");
+        } else {
+            fs::copy(engineShaders, out / L"assets" / L"shaders",
+                     fs::copy_options::recursive | fs::copy_options::skip_existing, ec);
+            if (ec) {
+                status_ = "FAILED: engine shader copy error";
+                MYE_LOG_ERROR("[build] engine shader copy failed: %s", ec.message().c_str());
+                return;
+            }
+            MYE_LOG_INFO("[build] bundled engine shaders from %s",
+                         WideToUtf8(engineShaders).c_str());
+        }
     }
 
     // 3) ブートシーンを main.scene.json として配置 (Runtime は既定でこれを読む)

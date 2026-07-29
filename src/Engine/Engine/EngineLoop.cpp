@@ -140,7 +140,18 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         return input.HandleMessage(hwnd, msg, wp, lp, result);
     });
 
-    shaderManager.Init(device, assetsRoot + L"\\shaders");
+    // シェーダは 2 ルート解決: <assets>\shaders を先に見て、無ければエンジン組込みへ落ちる。
+    // プロジェクトに同名を置けば上書きできる。レガシー起動では両者が同一なので 1 本に畳む。
+    // 配布済み Runtime はリポジトリが無いので dist\assets\shaders のみ (DoPackage が同梱する)
+    {
+        std::vector<std::wstring> shaderDirs{ assetsRoot + L"\\shaders" };
+        const std::wstring engineShaders = FindEngineShaderDir();
+        if (!engineShaders.empty()
+            && NormalizePathKey(engineShaders) != NormalizePathKey(shaderDirs.front())) {
+            shaderDirs.push_back(engineShaders);
+        }
+        shaderManager.Init(device, std::move(shaderDirs));
+    }
     resources.Init(device);
     // M41: 静的メッシュコライダー (Collider.shape=3)。pose 構築サイトが meshcol::Resolve で
     // AssetID → BVH 付きコライダーデータを引けるように接続する
@@ -170,12 +181,21 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     renderSystem.postFxSettings.aeInstant = !config.replayVerifyPath.empty()
         || !config.replayRecordPath.empty() || !config.screenshotPath.empty();
 
-    // GameLogic.dll (スクリプト層)。エンジンの exe と同じ構成のビルド出力を監視する
+    // GameLogic.dll (スクリプト層)。監視先は起動形態で 2 通りに分かれる:
+    //   レガシー起動 (--project なし) = エンジンの exe と同じ構成のビルド出力。
+    //     build\GameLogic.vcxproj が作るもので、replay_verify / selftest はこちらを使う
+    //   プロジェクト起動 = <project>\cache\GameLogic.dll。
+    //     エディタの Rebuild Scripts が cl.exe で直接ビルドする (vcxproj を介さない)
+    // 分岐は assetsRoot ではなく projectRoot の有無で行う — assetsRoot 由来にすると
+    // レガシー時に <repo>\cache\GameLogic.dll を見に行って既存の検証経路が壊れる
     scriptHost.Init(&scene);
     {
         const std::wstring cacheHot =
             (std::filesystem::path(assetsRoot).parent_path() / L"cache" / L"hot").wstring();
-        dllReloader.Init(&scriptHost, GetExecutableDir() + L"\\GameLogic.dll", cacheHot);
+        const std::wstring dllPath = config.projectRoot.empty()
+            ? GetExecutableDir() + L"\\GameLogic.dll"
+            : config.projectRoot + L"\\cache\\GameLogic.dll";
+        dllReloader.Init(&scriptHost, dllPath, cacheHot);
         dllReloader.LoadInitial();
     }
 
