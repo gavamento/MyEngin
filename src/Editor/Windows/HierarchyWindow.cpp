@@ -342,11 +342,14 @@ void HierarchyWindow::DrawEntityNode(EngineContext& ctx, World& world, EntityID 
             }
         }
         // AssetBrowser からのドロップ: .cs はこのエンティティにコンポーネントとしてアタッチ、
-        // その他 (プレハブ/モデル) はこのエンティティの子として配置
+        // .mat.json はこのエンティティの材質に割当、その他 (プレハブ/モデル/画像) は子として配置
         if (const ImGuiPayload* pa = ImGui::AcceptDragDropPayload(kAssetDragPayload)) {
             const std::wstring path = Utf8ToWide(static_cast<const char*>(pa->Data));
-            if (AssetDatabase::ClassifyPath(path) == AssetType::Script) {
+            const AssetType dropType = AssetDatabase::ClassifyPath(path);
+            if (dropType == AssetType::Script) {
                 AttachScriptToEntity(ctx, selection, undo, path, e);
+            } else if (dropType == AssetType::Material) {
+                AssignMaterialToEntity(ctx, selection, undo, path, e);
             } else {
                 InstantiateAssetAtPath(ctx, selection, undo, path, nullptr,
                                        ctx.scene->EnsureFileId(e));

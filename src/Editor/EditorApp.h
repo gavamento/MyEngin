@@ -7,6 +7,7 @@
 #include "Editor/AssetPreviewCache.h"
 #include "Editor/EditorSettings.h"
 #include "Editor/EditorToolbar.h"
+#include "Editor/LayoutManager.h"
 #include "Editor/PlayModeController.h"
 #include "Editor/Selection.h"
 #include "Editor/ShortcutHub.h"
@@ -99,6 +100,7 @@ private:
     std::wstring scenePath_;
     bool rebuildDockLayout_ = false;
     bool showStats_ = true;
+    LayoutManager layouts_; // 名前付きレイアウト (ツールバー右端のドロップダウン)
 
     // ---- フィードバック層 (M27b) / ツールバー (M27c) ----
     EditorToolbar toolbar_;

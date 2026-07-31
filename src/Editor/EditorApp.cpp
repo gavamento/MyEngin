@@ -36,8 +36,26 @@ void EditorApp::OnStart(EngineContext& ctx)
 {
     ctx.shaders->Load("forward_lit");
     // 設定の置き場 (M26): プロジェクト起動時は <project>\.mye\、レガシー時は従来の assets\ 直下
-    settings_.Load(ctx.projectRoot.empty() ? ctx.assetsRoot
-                                           : ctx.projectRoot + L"\\" + kProjectLocalDir);
+    const std::wstring settingsDir = ctx.projectRoot.empty()
+        ? ctx.assetsRoot
+        : ctx.projectRoot + L"\\" + kProjectLocalDir;
+    settings_.Load(settingsDir);
+    // 名前付きレイアウト: ImGui ini + パネル開閉フラグを <settingsDir>\layouts に保存/復元
+    layouts_.Init(settingsDir + L"\\layouts",
+                  { { "Hierarchy", &hierarchy_.open },
+                    { "Inspector", &inspector_.open },
+                    { "Console", &console_.open },
+                    { "Scene", &sceneView_.open },
+                    { "Game", &gameView_.open },
+                    { "Assets", &assetBrowser_.open },
+                    { "Animation", &animation_.open },
+                    { "Animator", &animatorController_.open },
+                    { "Search", &search_.open },
+                    { "Profiler", &profiler_.open },
+                    { "Particle Settings", &particleSettings_.open },
+                    { "Project Settings", &projectSettings_.open },
+                    { "Build Settings", &buildSettings_.open },
+                    { "Stats", &showStats_ } });
     if (!sceneOverride.empty()) {
         scenePath_ = sceneOverride;
     } else {
@@ -155,6 +173,10 @@ void EditorApp::OnRenderViews(EngineContext& ctx)
 
 void EditorApp::OnImGui(EngineContext& ctx)
 {
+    // レイアウトロードは **どの ImGui::Begin よりも前** に実行する — LoadIniSettingsFromDisk が
+    // 既存ウィンドウの DockId を差し替え、同フレームの Begin で新ドックに再バインドされる
+    layouts_.ApplyPendingLoad();
+
     // エクスプローラー D&D の消費はグリッド描画 (assetBrowser_) より先に行い、
     // インポートしたファイルが同フレームで表示されるようにする
     ProcessPendingFileDrops(ctx);
@@ -162,7 +184,9 @@ void EditorApp::OnImGui(EngineContext& ctx)
     // サイドバー (メニュー → ツールバー → ステータスバー) が WorkArea を先に確保し、
     // 残りに DockSpace を敷く — この順序を同一フレーム内で守ること (逆順だと 1 フレームちらつく)
     DrawMainMenuBar(ctx);
-    toolbar_.OnImGui(ctx, playMode_, selection_, undo_, sceneView_);
+    if (toolbar_.OnImGui(ctx, playMode_, selection_, undo_, sceneView_, layouts_)) {
+        rebuildDockLayout_ = true; // レイアウトの「リセット (既定)」
+    }
     statusBar_.OnImGui(ctx, projectName_, scenePath_, IsSceneDirty(), playMode_.State(),
                        &console_.open);
 

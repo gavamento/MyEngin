@@ -93,6 +93,9 @@ struct HubState {
     // 削除確認モーダルの対象 (非空でモーダルを開く)
     std::wstring deleteTargetPath;
     std::string deleteTargetLabel;
+    // リネームモーダルの対象 (非空でモーダルを開く)
+    std::wstring renameTargetPath;
+    char renameBuf[128] = {};
     // プロジェクトごとの engineVersion キャッシュ (毎フレームのファイル IO を避ける)
     std::unordered_map<std::wstring, std::string> versionCache;
 };
@@ -180,6 +183,10 @@ bool DrawHubUi(HubState& st, void* hwnd, ProjectManagerOutcome& outcome)
                 if (ImGui::MenuItem(ICON_FA_FOLDER_OPEN " Show in Explorer")) {
                     ShellExecuteW(nullptr, L"open", e.path.c_str(), nullptr, nullptr,
                                   SW_SHOWNORMAL);
+                }
+                if (ImGui::MenuItem(ICON_FA_PEN " 名前を変更...")) {
+                    st.renameTargetPath = e.path;
+                    strncpy_s(st.renameBuf, label.c_str(), _TRUNCATE);
                 }
                 if (ImGui::MenuItem("リストから外す")) {
                     st.registry.Remove(e.path);
@@ -296,6 +303,47 @@ bool DrawHubUi(HubState& st, void* hwnd, ProjectManagerOutcome& outcome)
             ImGui::CloseCurrentPopup();
         }
         ImGui::SetItemDefaultFocus(); // 破壊的操作なので既定フォーカスはキャンセル側
+        ImGui::EndPopup();
+    }
+
+    // ---- リネームモーダル: 表示名 + project.mye.json の name のみ (フォルダ名は変えない) ----
+    if (!st.renameTargetPath.empty() && !ImGui::IsPopupOpen("Rename Project")) {
+        ImGui::OpenPopup("Rename Project");
+    }
+    if (ImGui::BeginPopupModal("Rename Project", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextDisabled("%s", WideToUtf8(st.renameTargetPath).c_str());
+        ImGui::SetNextItemWidth(280.0f);
+        const bool enter = ImGui::InputText("名前", st.renameBuf, sizeof(st.renameBuf),
+                                            ImGuiInputTextFlags_EnterReturnsTrue);
+        std::string newName = st.renameBuf;
+        while (!newName.empty() && (newName.back() == ' ' || newName.back() == '\t')) {
+            newName.pop_back(); // 末尾空白は除去 (表示崩れ防止)
+        }
+        const bool doRename = ImGui::Button("変更", ImVec2(120, 0)) || enter;
+        ImGui::SameLine();
+        const bool cancelRename = ImGui::Button("キャンセル", ImVec2(120, 0));
+        if (doRename && !newName.empty()) {
+            // SaveProjectManifest は構造体から全書き出しするため、engineVersion/bootScene を
+            // 保持するには先にロードが必須 (未知キーは現状存在しない)
+            ProjectManifest m;
+            if (LoadProjectManifest(st.renameTargetPath, m)) {
+                m.name = newName;
+                if (SaveProjectManifest(st.renameTargetPath, m)) {
+                    st.registry.SetName(st.renameTargetPath, m.name);
+                } else {
+                    st.errorText = "project.mye.json の保存に失敗しました:\n"
+                                   + WideToUtf8(st.renameTargetPath);
+                }
+            } else {
+                st.errorText = "project.mye.json が読めません:\n"
+                               + WideToUtf8(st.renameTargetPath);
+            }
+            st.renameTargetPath.clear();
+            ImGui::CloseCurrentPopup();
+        } else if (cancelRename) {
+            st.renameTargetPath.clear();
+            ImGui::CloseCurrentPopup();
+        }
         ImGui::EndPopup();
     }
 

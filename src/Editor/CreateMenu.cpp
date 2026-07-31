@@ -105,9 +105,11 @@ namespace {
 
 using Factory = GameObject (*)(EngineContext&, const char*);
 
-// 生成メニュー項目 1 つ。クリックで factory の結果を (parent があれば子として) 生成する。
+// 生成メニュー項目 1 つ。クリックで factory の結果を (parent があれば子として、
+// spawnPos があればその位置に) 生成する。
 void CreateItem(EngineContext& ctx, Selection& selection, UndoStack& undo, EntityID parent,
-                const char* menuLabel, const char* objName, Factory factory)
+                const DirectX::XMFLOAT3* spawnPos, const char* menuLabel, const char* objName,
+                Factory factory)
 {
     if (ImGui::MenuItem(menuLabel)) {
         const std::string undoLabel = std::string("Create ") + objName;
@@ -116,6 +118,9 @@ void CreateItem(EngineContext& ctx, Selection& selection, UndoStack& undo, Entit
             if (!parent.IsNull()) {
                 ctx.scene->GetWorld().SetParent(obj.Id(), parent);
             }
+            if (spawnPos) {
+                obj.SetLocalPosition(spawnPos->x, spawnPos->y, spawnPos->z);
+            }
             return obj;
         });
     }
@@ -123,26 +128,29 @@ void CreateItem(EngineContext& ctx, Selection& selection, UndoStack& undo, Entit
 
 } // namespace
 
-void DrawCreateMenuItems(EngineContext& ctx, Selection& selection, UndoStack& undo, EntityID parent)
+void DrawCreateMenuItems(EngineContext& ctx, Selection& selection, UndoStack& undo, EntityID parent,
+                         const DirectX::XMFLOAT3* spawnPos)
 {
-    CreateItem(ctx, selection, undo, parent, "Create Empty", "GameObject", &CreateEmpty);
+    CreateItem(ctx, selection, undo, parent, spawnPos, "Create Empty", "GameObject", &CreateEmpty);
     if (ImGui::BeginMenu("3D Object")) {
-        CreateItem(ctx, selection, undo, parent, "Cube", "Cube", &CreateCube);
-        CreateItem(ctx, selection, undo, parent, "Sphere", "Sphere", &CreateSphere);
-        CreateItem(ctx, selection, undo, parent, "Plane", "Plane", &CreatePlane);
-        CreateItem(ctx, selection, undo, parent, "Quad", "Quad", &CreateQuad);
-        CreateItem(ctx, selection, undo, parent, "Cylinder", "Cylinder", &CreateCylinder);
-        CreateItem(ctx, selection, undo, parent, "Capsule", "Capsule", &CreateCapsule);
+        CreateItem(ctx, selection, undo, parent, spawnPos, "Cube", "Cube", &CreateCube);
+        CreateItem(ctx, selection, undo, parent, spawnPos, "Sphere", "Sphere", &CreateSphere);
+        CreateItem(ctx, selection, undo, parent, spawnPos, "Plane", "Plane", &CreatePlane);
+        CreateItem(ctx, selection, undo, parent, spawnPos, "Quad", "Quad", &CreateQuad);
+        CreateItem(ctx, selection, undo, parent, spawnPos, "Cylinder", "Cylinder", &CreateCylinder);
+        CreateItem(ctx, selection, undo, parent, spawnPos, "Capsule", "Capsule", &CreateCapsule);
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Light")) {
-        CreateItem(ctx, selection, undo, parent, "Directional Light", "Directional Light",
+        CreateItem(ctx, selection, undo, parent, spawnPos, "Directional Light", "Directional Light",
                    &CreateDirectionalLight);
-        CreateItem(ctx, selection, undo, parent, "Point Light", "Point Light", &CreatePointLight);
-        CreateItem(ctx, selection, undo, parent, "Spot Light", "Spot Light", &CreateSpotLight);
+        CreateItem(ctx, selection, undo, parent, spawnPos, "Point Light", "Point Light",
+                   &CreatePointLight);
+        CreateItem(ctx, selection, undo, parent, spawnPos, "Spot Light", "Spot Light",
+                   &CreateSpotLight);
         ImGui::EndMenu();
     }
-    CreateItem(ctx, selection, undo, parent, "Camera", "Camera", &CreateCamera);
+    CreateItem(ctx, selection, undo, parent, spawnPos, "Camera", "Camera", &CreateCamera);
 }
 
 } // namespace mye

@@ -1,5 +1,6 @@
 #include "Editor/EditorToolbar.h"
 
+#include "Editor/LayoutManager.h"
 #include "Editor/Selection.h"
 #include "Editor/Undo/UndoStack.h"
 #include "Editor/Windows/SceneViewWindow.h"
@@ -33,9 +34,10 @@ bool ToggleIconButton(const char* icon, bool active, const char* tooltip)
 
 } // namespace
 
-void EditorToolbar::OnImGui(EngineContext& ctx, PlayModeController& playMode, Selection& selection,
-                            UndoStack& undo, SceneViewWindow& sceneView)
+bool EditorToolbar::OnImGui(EngineContext& ctx, PlayModeController& playMode, Selection& selection,
+                            UndoStack& undo, SceneViewWindow& sceneView, LayoutManager& layouts)
 {
+    bool resetLayout = false;
     const PlayState state = playMode.State();
     const bool inPlay = state != PlayState::Editing;
 
@@ -110,14 +112,17 @@ void EditorToolbar::OnImGui(EngineContext& ctx, PlayModeController& playMode, Se
             }
         }
 
-        // ---- 右: Render Path ----
+        // ---- 右: Render Path + レイアウト (最右端、Unity の Layout ドロップダウン相当) ----
+        const float layoutBtnW = 38.0f;
         const float rightWidth = 150.0f;
-        ImGui::SameLine(ImGui::GetWindowWidth() - rightWidth);
+        ImGui::SameLine(ImGui::GetWindowWidth() - rightWidth - layoutBtnW);
         ImGui::SetNextItemWidth(rightWidth - 12.0f);
         int cur = (ctx.renderPath == ctx.renderPathForward) ? 0 : 1;
         if (ImGui::Combo("##renderpath", &cur, "Forward\0Deferred\0")) {
             ctx.renderPath = (cur == 0) ? ctx.renderPathForward : ctx.renderPathDeferred;
         }
+        ImGui::SameLine(ImGui::GetWindowWidth() - layoutBtnW);
+        resetLayout = layouts.DrawToolbarUi();
     }
     ImGui::End();
     if (inPlay) {
@@ -133,6 +138,7 @@ void EditorToolbar::OnImGui(EngineContext& ctx, PlayModeController& playMode, Se
             ->AddRect(vp->Pos, ImVec2(vp->Pos.x + vp->Size.x, vp->Pos.y + vp->Size.y), col, 0.0f,
                       2.0f);
     }
+    return resetLayout;
 }
 
 } // namespace mye

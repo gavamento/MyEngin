@@ -74,6 +74,13 @@ void InstantiateAssetAtPath(EngineContext& ctx, Selection& selection, UndoStack&
 bool AttachScriptToEntity(EngineContext& ctx, Selection& selection, UndoStack& undo,
                           const std::wstring& csPath, EntityID target);
 
+// ---- マテリアル割当 (D&D で .mat.json をエンティティへ) ----
+// matPath (.mat.json) をロードして target の MeshRenderer に割り当てる
+// (AssetBrowser ダブルクリック割当と同じ流儀の 1 Undo エントリ)。
+// 戻り値: 成功なら true (MeshRenderer 不在 / ロード失敗は false で WARN ログ)
+bool AssignMaterialToEntity(EngineContext& ctx, Selection& selection, UndoStack& undo,
+                            const std::wstring& matPath, EntityID target);
+
 // ---- スクリプトワークフロー ----
 void OpenInExternalEditor(const std::string& editorCmd, const std::wstring& path); // {file}/{line} 置換
 // C++ スクリプトのビルド。プロジェクト起動時は <project>\src\GameLogic\Scripts\*.cpp を

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <cwctype>
 #include <filesystem>
 
 #include <Windows.h>
@@ -19,6 +20,8 @@
 #include "Engine/Renderer/TextureCook.h"
 
 #include "imgui.h"
+
+#include "fontawesome/IconsFontAwesome6.h"
 
 namespace fs = std::filesystem;
 
@@ -53,6 +56,28 @@ const char* IconFor(const std::wstring& ext)
         return "json";
     }
     return "file";
+}
+
+// サムネイル未生成 (または対象外) のタイルに出す文字ラベル
+const char* TileLabel(const std::wstring& ext, const std::wstring& path, bool isPrefab, bool isAnim,
+                      bool isMat)
+{
+    if (IsImageExt(ext)) {
+        return "img"; // デコード完了までのプレースホルダ
+    }
+    if (isPrefab) {
+        return "prefab";
+    }
+    if (isAnim) {
+        return "anim";
+    }
+    if (isMat) {
+        return "mat";
+    }
+    if (AssetPreviewCache::IsPreviewable(path)) {
+        return "model"; // 立体サムネイル生成待ち
+    }
+    return IconFor(ext);
 }
 
 } // namespace
@@ -252,11 +277,24 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
         }
         ImGui::PushID(i);
         ImGui::BeginGroup();
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.45f, 0.38f, 0.15f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.55f, 0.47f, 0.20f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.62f, 0.53f, 0.24f, 1.0f));
-        ImGui::Button("folder", ImVec2(kCell, kCell));
+        // 透明ボタン + 大きな FA フォルダグリフ (Unity 風)。ボタンがアイテム本体なので
+        // 直後のドラッグ元/受け皿/コンテキストメニュー/ダブルクリックはそのまま機能する
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1, 1, 1, 0.06f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(1, 1, 1, 0.10f));
+        ImGui::Button("##folder", ImVec2(kCell, kCell));
         ImGui::PopStyleColor(3);
+        {
+            const bool folderHovered = ImGui::IsItemHovered();
+            const ImVec2 mn = ImGui::GetItemRectMin();
+            ImGui::PushFont(nullptr, kCell * 0.6f); // imgui 1.92 動的アトラス: 任意サイズ描画可
+            const ImVec2 ts = ImGui::CalcTextSize(ICON_FA_FOLDER);
+            ImGui::GetWindowDrawList()->AddText(
+                ImVec2(mn.x + (kCell - ts.x) * 0.5f, mn.y + (kCell - ts.y) * 0.5f),
+                folderHovered ? IM_COL32(255, 214, 90, 255) : IM_COL32(232, 196, 80, 255),
+                ICON_FA_FOLDER);
+            ImGui::PopFont();
+        }
         const std::string dirNameU = WideToUtf8(dirPath.filename().wstring());
         // フォルダ自身も移動のドラッグ元になれる (フォルダ→フォルダ移動、M30b)
         if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_None)) {
@@ -297,7 +335,9 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
 
     for (const fs::path& filePath : fileEntries) {
         const std::wstring path = filePath.wstring();
-        const std::wstring ext = filePath.extension().wstring();
+        // 拡張子は小文字に正規化してから判定する (DCC 由来の ".FBX" / ".PNG" を取りこぼさない)
+        std::wstring ext = filePath.extension().wstring();
+        std::transform(ext.begin(), ext.end(), ext.begin(), ::towlower);
         const std::string nameU = WideToUtf8(filePath.filename().wstring());
         const bool isPrefab = nameU.size() >= 12
             && nameU.compare(nameU.size() - 12, 12, ".prefab.json") == 0;
@@ -313,26 +353,34 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
         }
         ImGui::PushID(i);
         ImGui::BeginGroup();
+        ID3D11ShaderResourceView* thumb = nullptr;
         if (IsImageExt(ext)) {
             // M23: 非同期ロード。初回は白プレースホルダ → デコード完了後に実体へ差し替わる
             const AssetID id = ctx.resources->textures.RequestLoadFileAsync(path);
-            Texture* tex = ctx.resources->textures.Get(id);
-            if (tex && tex->srv) {
-                ImGui::Image(reinterpret_cast<ImTextureID>(tex->srv.Get()), ImVec2(kCell, kCell));
-            } else {
-                ImGui::Button("img", ImVec2(kCell, kCell));
+            if (Texture* tex = ctx.resources->textures.Get(id)) {
+                thumb = tex->srv.Get();
             }
         } else if (AssetPreviewCache::IsPreviewable(path)) {
             // M27d: メッシュ/プレハブの立体サムネイル (OnRenderViews で非同期生成)
-            if (ID3D11ShaderResourceView* srv = preview.GetOrRequest(ctx, path)) {
-                ImGui::Image(reinterpret_cast<ImTextureID>(srv), ImVec2(kCell, kCell));
-            } else {
-                ImGui::Button(isPrefab ? "prefab" : "model", ImVec2(kCell, kCell));
+            thumb = preview.GetOrRequest(ctx, path);
+        }
+        // タイル本体は **必ず ID を持つアイテム (Button)** にする。ImGui::Image は ID を持たず、
+        // 直後の BeginDragDropSource が「ID なしアイテム」経路 (IM_ASSERT → false) に落ちるため、
+        // サムネイルが生成されたアセット (fbx/glb/prefab/画像) だけドラッグで掴めなくなっていた。
+        // フォルダタイルと同じ流儀: 透明ボタンをアイテムにして絵は drawlist で重ねる
+        ImGui::PushStyleColor(ImGuiCol_Button, thumb ? ImVec4(0, 0, 0, 0)
+                                                     : ImGui::GetStyleColorVec4(ImGuiCol_Button));
+        ImGui::Button(thumb ? "##tile" : TileLabel(ext, path, isPrefab, isAnim, isMat),
+                      ImVec2(kCell, kCell));
+        ImGui::PopStyleColor();
+        if (thumb) {
+            const ImVec2 mn = ImGui::GetItemRectMin();
+            const ImVec2 mx = ImGui::GetItemRectMax();
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            dl->AddImage(reinterpret_cast<ImTextureID>(thumb), mn, mx);
+            if (ImGui::IsItemHovered()) {
+                dl->AddRect(mn, mx, IM_COL32(255, 255, 255, 96)); // 透明ボタンの代わりのホバー表示
             }
-        } else {
-            const char* icon = isPrefab ? "prefab"
-                                        : (isAnim ? "anim" : (isMat ? "mat" : IconFor(ext)));
-            ImGui::Button(icon, ImVec2(kCell, kCell));
         }
         // ドラッグソース: パスをペイロードに (Hierarchy / SceneView が受け取り配置)
         if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_None)) {

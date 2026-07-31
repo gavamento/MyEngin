@@ -16,6 +16,7 @@
 #include "Editor/Selection.h"
 #include "Editor/Undo/UndoStack.h"
 #include "Engine/Core/ComponentRegistry.h"
+#include "Engine/Core/Components.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Core/World.h"
 #include "Engine/Engine/Animation.h"
@@ -84,6 +85,16 @@ bool EndsWith(const std::string& s, const char* suffix)
 {
     const size_t n = std::strlen(suffix);
     return s.size() >= n && s.compare(s.size() - n, n, suffix) == 0;
+}
+
+// 拡張子判定用の小文字化 (ASCII のみ)。DCC 出力に多い ".FBX" 等の大文字拡張子を取りこぼさない
+std::string LowerAscii(const std::string& s)
+{
+    std::string out = s;
+    std::transform(out.begin(), out.end(), out.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return out;
 }
 
 // C++ スクリプトを置くツリーのルート。
@@ -460,6 +471,34 @@ bool AttachScriptToEntity(EngineContext& ctx, Selection& selection, UndoStack& u
     return true;
 }
 
+bool AssignMaterialToEntity(EngineContext& ctx, Selection& selection, UndoStack& undo,
+                            const std::wstring& matPath, EntityID target)
+{
+    World& world = ctx.scene->GetWorld();
+    if (!world.IsAlive(target)) {
+        return false;
+    }
+    const AssetID id =
+        ctx.resources->materials.LoadFromFile(matPath, ctx.resources->textures, ctx.assetsRoot);
+    if (id.IsNull()) {
+        MYE_LOG_WARN("failed to load material: %s", WideToUtf8(matPath).c_str());
+        return false;
+    }
+    auto* mr = world.GetComponent<MeshRendererComponent>(target);
+    if (!mr) {
+        MYE_LOG_WARN("no MeshRenderer on target — drop the material onto a mesh object");
+        return false;
+    }
+    // AssetBrowser ダブルクリック割当と同じ 1 Undo エントリ (選択は変えない)
+    const uint64_t fid = ctx.scene->EnsureFileId(target);
+    undo.BeginRecord("Assign Material", selection);
+    undo.CaptureBefore(*ctx.scene, fid);
+    mr->material = id;
+    undo.CaptureAfter(*ctx.scene, fid);
+    undo.EndRecord(selection);
+    return true;
+}
+
 ImportResult ImportExternalPaths(EngineContext& ctx, const std::vector<std::wstring>& srcs,
                                  const std::wstring& destDir)
 {
@@ -617,16 +656,17 @@ void InstantiateAssetAtPath(EngineContext& ctx, Selection& selection, UndoStack&
         return;
     }
     const std::string u = WideToUtf8(path);
+    const std::string lu = LowerAscii(u); // 拡張子判定は大文字小文字を無視する
     undo.BeginRecord("Place Asset", selection);
     uint64_t rootFid = 0;
-    if (EndsWith(u, ".prefab.json")) {
+    if (EndsWith(lu, ".prefab.json")) {
         const uint64_t hash = ctx.prefabs ? ctx.prefabs->LoadFromFile(path) : 0;
         if (hash != 0) {
             rootFid = Prefab::Instantiate(*ctx.scene, *ctx.prefabs, hash, parentFileId);
             ctx.scene->GetWorld().ApplyStructuralChanges();
         }
-    } else if (EndsWith(u, ".glb") || EndsWith(u, ".gltf") || EndsWith(u, ".fbx")) {
-        GameObject o = EndsWith(u, ".fbx")
+    } else if (EndsWith(lu, ".glb") || EndsWith(lu, ".gltf") || EndsWith(lu, ".fbx")) {
+        GameObject o = EndsWith(lu, ".fbx")
                            ? FbxLoader::Load(*ctx.scene, *ctx.resources, *ctx.shaders, path)
                            : ModelLoader::Load(*ctx.scene, *ctx.resources, *ctx.shaders, path);
         ctx.scene->GetWorld().ApplyStructuralChanges();
@@ -640,9 +680,32 @@ void InstantiateAssetAtPath(EngineContext& ctx, Selection& selection, UndoStack&
             }
             rootFid = ctx.scene->EnsureFileId(o.Id());
         }
+    } else if (AssetDatabase::ClassifyPath(path) == AssetType::Texture) {
+        // 画像 → SpriteRenderer 付きオブジェクトとして配置。テクスチャは GUID 安定 ID で
+        // 非同期ロード。注: 再起動後はシーン参照だけではロードされず、サムネイル等が
+        // RequestLoad するまで白 (UIElementComponent.texture と同じ既存挙動)
+        const std::string stem = WideToUtf8(fs::path(path).stem().wstring());
+        GameObject o = ctx.scene->CreateGameObjectTracked(stem.empty() ? "Sprite" : stem.c_str());
+        auto* sp = o.AddComponent<SpriteRendererComponent>();
+        sp->texture = ctx.resources->textures.RequestLoadFileAsync(path);
+        if (Texture* t = ctx.resources->textures.Get(sp->texture)) {
+            if (t->width > 0 && t->height > 0) {
+                // サムネイル等でロード済みなら縦横比を size に反映 (高さ 1 基準)
+                sp->size.x = static_cast<float>(t->width) / static_cast<float>(t->height);
+            }
+        }
+        ctx.scene->GetWorld().ApplyStructuralChanges();
+        if (parentFileId != 0) {
+            GameObject par = ctx.scene->FindByFileId(parentFileId);
+            if (par) {
+                o.SetParent(par);
+                ctx.scene->GetWorld().ApplyStructuralChanges();
+            }
+        }
+        rootFid = ctx.scene->EnsureFileId(o.Id());
     } else {
         undo.CancelRecord();
-        MYE_LOG_WARN("cannot place asset (drag a prefab or model): %s", u.c_str());
+        MYE_LOG_WARN("cannot place asset (drag a prefab, model, or image): %s", u.c_str());
         return;
     }
     if (rootFid == 0) {

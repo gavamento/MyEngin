@@ -4,6 +4,7 @@
 #include <cmath>
 
 #include "Editor/AssetOps.h"
+#include "Editor/CreateMenu.h"
 #include "Editor/EditorSettings.h"
 #include "Editor/Selection.h"
 #include "Editor/Undo/UndoStack.h"
@@ -612,12 +613,14 @@ void SceneViewWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
     const ImVec2 imgPos = ImGui::GetCursorScreenPos();
     if (rt_.IsValid()) {
         ImGui::Image(reinterpret_cast<ImTextureID>(rt_.SRV()), avail);
-        // AssetBrowser からのドロップ: .cs はカーソル下の 3D オブジェクトにアタッチ (ピッキング)、
-        // その他 (プレハブ/モデル) はカーソル下の地面 (y=0) に配置
+        // AssetBrowser からのドロップ: .cs はカーソル下の 3D オブジェクトにアタッチ、
+        // .mat.json はカーソル下のオブジェクトの材質に割当 (どちらもピッキング)、
+        // その他 (プレハブ/モデル/画像) はカーソル下の地面 (y=0) に配置
         if (ImGui::BeginDragDropTarget()) {
             if (const ImGuiPayload* pa = ImGui::AcceptDragDropPayload(kAssetDragPayload)) {
                 const std::wstring path = Utf8ToWide(static_cast<const char*>(pa->Data));
-                if (AssetDatabase::ClassifyPath(path) == AssetType::Script) {
+                const AssetType dropType = AssetDatabase::ClassifyPath(path);
+                if (dropType == AssetType::Script || dropType == AssetType::Material) {
                     const ImGuiIO& dio = ImGui::GetIO();
                     const int px = static_cast<int>(dio.MousePos.x - imgPos.x);
                     const int py = static_cast<int>(dio.MousePos.y - imgPos.y);
@@ -630,10 +633,17 @@ void SceneViewWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
                                           *ctx.resources, lastView_, lastProj_, rt_.Width(),
                                           rt_.Height(), px, py);
                         if (!hit.IsNull()) {
-                            AttachScriptToEntity(ctx, selection, undo, path, hit);
-                        } else {
+                            if (dropType == AssetType::Script) {
+                                AttachScriptToEntity(ctx, selection, undo, path, hit);
+                            } else {
+                                AssignMaterialToEntity(ctx, selection, undo, path, hit);
+                            }
+                        } else if (dropType == AssetType::Script) {
                             MYE_LOG_WARN("no entity under cursor — drop the script onto an object "
                                          "(or an entity row in Hierarchy)");
+                        } else {
+                            MYE_LOG_WARN("no entity under cursor — drop the material onto a mesh "
+                                         "object");
                         }
                     }
                 } else {
@@ -742,6 +752,21 @@ void SceneViewWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
                 selection.Clear();
             }
         }
+    }
+
+    // 右クリック (ドラッグなし・ギズモ外) → 生成メニュー (Hierarchy 右クリックと同じ項目)。
+    // RMB ドラッグは FPS ルック (HandleCamera) なので、移動量 4px 未満のリリースのみクリック扱い。
+    // 地面点はメニュー操作中にカーソルが動くため、開いた瞬間に固定する
+    if (ImGui::IsWindowHovered() && ImGui::IsMouseReleased(ImGuiMouseButton_Right)
+        && !ImGuizmo::IsOver() && !ImGuizmo::IsUsing()
+        && io.MouseDragMaxDistanceSqr[ImGuiMouseButton_Right] < 4.0f * 4.0f) {
+        ctxSpawnValid_ = GroundPointUnderCursor(imgPos, avail, ctxSpawnPos_);
+        ImGui::OpenPopup("##scene_create");
+    }
+    if (ImGui::BeginPopup("##scene_create")) {
+        DrawCreateMenuItems(ctx, selection, undo, kNullEntity,
+                            ctxSpawnValid_ ? &ctxSpawnPos_ : nullptr);
+        ImGui::EndPopup();
     }
 
     // カメラ操作: ウィンドウ上 & ギズモ操作中でない時のみ

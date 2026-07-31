@@ -23,6 +23,8 @@ public:
     // 追加 or lastOpened 更新 (開いた時に呼ぶ)。name はマニフェストから
     void Touch(const std::wstring& projectRoot, const std::string& name);
     void SetPinned(const std::wstring& projectRoot, bool pinned);
+    // 表示名のみ更新して保存 (Touch と違い lastOpened を触らない = 並び順を変えない)
+    void SetName(const std::wstring& projectRoot, const std::string& name);
     void Remove(const std::wstring& projectRoot);
 
     const std::vector<ProjectRegistryEntry>& Entries() const { return entries_; }

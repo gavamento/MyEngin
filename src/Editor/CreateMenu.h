@@ -1,6 +1,8 @@
 #pragma once
 #include <functional>
 
+#include <DirectXMath.h>
+
 #include "Engine/Core/EntityID.h"
 #include "Engine/Engine/GameObject.h"
 
@@ -29,8 +31,10 @@ GameObject RecordCreate(EngineContext& ctx, Selection& selection, UndoStack& und
                         const std::function<GameObject()>& make);
 
 // Unity 風の生成メニュー項目一式を発行する (呼び出し側の BeginPopup / BeginMenu 内で呼ぶ)。
-// parent が非 null なら生成物をその子にする。
+// parent が非 null なら生成物をその子にする。spawnPos が非 null なら生成物をその位置に置く
+// (SceneView 右クリック = クリック地点の地面。省略時は既定位置 = 原点)。
 void DrawCreateMenuItems(EngineContext& ctx, Selection& selection, UndoStack& undo,
-                         EntityID parent = kNullEntity);
+                         EntityID parent = kNullEntity,
+                         const DirectX::XMFLOAT3* spawnPos = nullptr);
 
 } // namespace mye

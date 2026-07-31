@@ -137,6 +137,14 @@ void ProjectRegistry::SetPinned(const std::wstring& projectRoot, bool pinned)
     }
 }
 
+void ProjectRegistry::SetName(const std::wstring& projectRoot, const std::string& name)
+{
+    if (ProjectRegistryEntry* e = FindByPath(projectRoot)) {
+        e->name = name;
+        Save(); // ソートキー (pinned/lastOpened) は不変なので SortEntries 不要
+    }
+}
+
 void ProjectRegistry::Remove(const std::wstring& projectRoot)
 {
     const std::wstring key = NormalizePathKey(projectRoot);
