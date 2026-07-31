@@ -1,5 +1,6 @@
 #include "Engine/Engine/FbxLoader.h"
 
+#include <cctype>
 #include <cstdio>
 #include <filesystem>
 #include <string>
@@ -38,6 +39,58 @@ XMFLOAT3 ToXm(ufbx_vec3 v)
 std::string StrOf(ufbx_string s)
 {
     return std::string(s.data, s.length);
+}
+
+// FBX が書き出し元 OS の区切りをそのまま持つことがあるので Windows 側に正規化する
+std::string NormalizeSeps(std::string s)
+{
+    for (char& c : s) {
+        if (c == '/') {
+            c = '\\';
+        }
+    }
+    return s;
+}
+
+std::string BaseNameOf(const std::string& p)
+{
+    const size_t sep = p.find_last_of("/\\");
+    return (sep == std::string::npos) ? p : p.substr(sep + 1);
+}
+
+std::string LowerExtOf(const std::string& p)
+{
+    const size_t dot = p.find_last_of('.');
+    if (dot == std::string::npos) {
+        return {};
+    }
+    std::string ext = p.substr(dot);
+    for (char& c : ext) {
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+    return ext;
+}
+
+// stb_image (GpuResources.cpp の stbi_load) が読めない形式。案内を具体的に出すために判定する
+bool IsUnsupportedImageExt(const std::string& ext)
+{
+    return ext == ".tif" || ext == ".tiff" || ext == ".exr";
+}
+
+const char* TextureTypeName(ufbx_texture_type t)
+{
+    switch (t) {
+    case UFBX_TEXTURE_FILE:
+        return "file";
+    case UFBX_TEXTURE_LAYERED:
+        return "layered";
+    case UFBX_TEXTURE_PROCEDURAL:
+        return "procedural";
+    case UFBX_TEXTURE_SHADER:
+        return "shader";
+    default:
+        return "unknown";
+    }
 }
 
 // ジオメトリックトランスフォーム用の合成ノードに付ける名前 (Hierarchy 上の識別用)
@@ -109,6 +162,101 @@ AssetID LoadMeshPart(LoadContext& lc, const ufbx_mesh* mesh, const ufbx_mesh_par
     return lc.resources->meshes.Register(key, vertices, indices);
 }
 
+// FBX のテクスチャ参照を AssetID に解決する (P2)。解決順は
+// レイヤード/シェーダの展開 → 埋め込みコンテンツ → 外部ファイル → フォールバック探索。
+// 解決できなければ空 ID を返し、試したパスを WARN に出す (従来は黙って White に落ちていた)。
+AssetID ResolveTexture(LoadContext& lc, const ufbx_texture* tex, bool srgb, const char* slot,
+                       const char* matName)
+{
+    if (!tex) {
+        return {};
+    }
+    // 1. レイヤード / シェーダテクスチャを実ファイルへ展開。file_textures は FILE 型なら
+    //    自分自身を含む (ufbx.h:2944) ので、この 1 本で LAYERED/SHADER の両方に対応できる
+    const ufbx_texture* file = tex;
+    if (file->type != UFBX_TEXTURE_FILE) {
+        if (tex->file_textures.count == 0) {
+            MYE_LOG_WARN("FBX texture unresolved: material '%s' slot '%s' は %s テクスチャで"
+                         "ファイル実体を持たない",
+                         matName, slot, TextureTypeName(tex->type));
+            return {};
+        }
+        file = tex->file_textures.data[0];
+    }
+
+    // 2. 埋め込みコンテンツ (Embed Media) を優先。FBX では非常に一般的で White 化の最有力原因。
+    //    キーは glTF 側 (ModelLoader.cpp) に倣いパス + element_id でモデル内一意にする
+    if (file->content.size > 0) {
+        char texKey[512];
+        snprintf(texKey, sizeof(texKey), "%s#tex:%u", lc.pathUtf8.c_str(), file->element_id);
+        const AssetID id =
+            lc.resources->textures.CreateFromEncoded(texKey, file->content.data, file->content.size, srgb);
+        if (!id.IsNull()) {
+            return id;
+        }
+        // デコード失敗 (stb 非対応の埋め込み形式) は外部ファイル探索へフォールバックする
+    }
+
+    // 3-4. 外部ファイル → フォールバック探索。ufbx の filename は既に FBX のディレクトリ基準で
+    //      解決済みなので、それが外れたときだけ書き出し元とのフォルダ構成差を救いにいく
+    std::vector<std::wstring> tried;
+    auto tryPath = [&](const std::wstring& p) -> AssetID {
+        if (p.empty()) {
+            return {};
+        }
+        for (const std::wstring& t : tried) {
+            if (t == p) {
+                return {}; // 同一パスの再試行は無駄なので省く
+            }
+        }
+        tried.push_back(p);
+        std::error_code ec;
+        if (!std::filesystem::exists(p, ec)) {
+            return {};
+        }
+        return lc.resources->textures.LoadFile(p, srgb);
+    };
+
+    const std::string fileName = NormalizeSeps(StrOf(file->filename));
+    const std::string relName = NormalizeSeps(StrOf(file->relative_filename));
+    const std::string baseName = BaseNameOf(!fileName.empty() ? fileName : relName);
+
+    AssetID id = tryPath(Utf8ToWide(fileName));
+    if (id.IsNull() && !fileName.empty() && std::filesystem::path(fileName).is_relative()) {
+        id = tryPath(lc.baseDir + L"\\" + Utf8ToWide(fileName));
+    }
+    if (id.IsNull() && !baseName.empty()) {
+        id = tryPath(lc.baseDir + L"\\" + Utf8ToWide(baseName));
+    }
+    if (id.IsNull() && !baseName.empty()) {
+        id = tryPath(lc.baseDir + L"\\textures\\" + Utf8ToWide(baseName));
+    }
+    if (id.IsNull() && !relName.empty()) {
+        id = tryPath(lc.baseDir + L"\\" + Utf8ToWide(relName));
+    }
+    if (!id.IsNull()) {
+        return id;
+    }
+
+    // 5-6. 診断。どのマテリアルのどのスロットが、どのパスを試して駄目だったかを残す
+    std::string detail;
+    for (const std::wstring& t : tried) {
+        detail += "\n    " + WideToUtf8(t);
+    }
+    if (detail.empty()) {
+        detail = "\n    (ファイル名が空)";
+    }
+    if (IsUnsupportedImageExt(LowerExtOf(baseName))) {
+        MYE_LOG_WARN("FBX texture unresolved: material '%s' slot '%s' の '%s' は非対応形式です。"
+                     "png / tga / dds に変換してください",
+                     matName, slot, baseName.c_str());
+        return {};
+    }
+    MYE_LOG_WARN("FBX texture unresolved: material '%s' slot '%s' (埋め込みなし)。試したパス:%s",
+                 matName, slot, detail.c_str());
+    return {};
+}
+
 AssetID LoadMaterial(LoadContext& lc, const ufbx_material* mat, const char* key)
 {
     Material m;
@@ -127,18 +275,16 @@ AssetID LoadMaterial(LoadContext& lc, const ufbx_material* mat, const char* key)
         if (mat->pbr.roughness.has_value) {
             m.roughness = static_cast<float>(mat->pbr.roughness.value_real);
         }
-        const ufbx_texture* tex = bc.texture;
+        // ベースカラー。texture_enabled が false のマップはテクスチャを無視する (ufbx.h:2311)。
+        // Phong/Lambert は ufbx が pbr へマップするが、拾えないケースに備えて fbx 側も見る
+        const std::string matName = StrOf(mat->name);
+        const ufbx_texture* tex = (bc.texture && bc.texture_enabled) ? bc.texture : nullptr;
+        if (!tex && mat->fbx.diffuse_color.texture && mat->fbx.diffuse_color.texture_enabled) {
+            tex = mat->fbx.diffuse_color.texture;
+        }
         if (tex) {
-            AssetID texId = {};
-            if (tex->filename.length > 0) {
-                texId = lc.resources->textures.LoadFile(Utf8ToWide(StrOf(tex->filename)),
-                                                        /*srgb=*/true); // ベースカラー (M38a)
-            }
-            if (texId.IsNull() && tex->relative_filename.length > 0) {
-                texId = lc.resources->textures.LoadFile(
-                    lc.baseDir + L"\\" + Utf8ToWide(StrOf(tex->relative_filename)),
-                    /*srgb=*/true);
-            }
+            // ベースカラーは _SRGB でロード (M38a)
+            const AssetID texId = ResolveTexture(lc, tex, /*srgb=*/true, "base_color", matName.c_str());
             if (!texId.IsNull()) {
                 m.texture = texId;
             }
