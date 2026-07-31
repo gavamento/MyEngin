@@ -40,6 +40,9 @@ std::string StrOf(ufbx_string s)
     return std::string(s.data, s.length);
 }
 
+// ジオメトリックトランスフォーム用の合成ノードに付ける名前 (Hierarchy 上の識別用)
+constexpr char kGeoHelperName[] = "geo";
+
 // ufbx シーンを左手系 (エンジン標準) Y-up + メートル単位に正規化して読み込む共通オプション。
 // 右手系 → 左手系の変換 (位置/法線のミラーと巻き順の反転) は ufbx に任せる。
 // handedness_conversion_axis は既定が NONE で、その場合 ufbx はジオメトリを鏡像化せず
@@ -48,6 +51,11 @@ std::string StrOf(ufbx_string s)
 // (handedness_conversion_retain_winding は立てない)。
 // NOTE: glTF ローダ (ModelLoader.cpp) は cgltf に同等機能が無いため手動 Z 反転のまま。
 // 2 ローダで座標変換の規約が分かれるので、どちらかを触るときは両方を確認すること。
+//
+// ジオメトリックトランスフォーム (FBX の pivot。子には継承されない) は ufbx の
+// ヘルパーノードに任せる。頂点にベイクするとメッシュがノード依存になり、
+// メッシュ AssetID キー (ノードを含まない) が同一メッシュの複数インスタンス間で
+// 衝突して後勝ち上書きされる。ヘルパー化すれば頂点は完全にノード非依存になる。
 ufbx_load_opts MakeOpts()
 {
     ufbx_load_opts opts = {};
@@ -56,11 +64,17 @@ ufbx_load_opts MakeOpts()
     opts.target_unit_meters = 1.0f;
     opts.space_conversion = UFBX_SPACE_CONVERSION_ADJUST_TRANSFORMS;
     opts.generate_missing_normals = true;
+    opts.geometry_transform_handling = UFBX_GEOMETRY_TRANSFORM_HANDLING_HELPER_NODES;
+    opts.geometry_transform_helper_name.data = kGeoHelperName;
+    opts.geometry_transform_helper_name.length = sizeof(kGeoHelperName) - 1;
     return opts;
 }
 
-AssetID LoadMeshPart(LoadContext& lc, const ufbx_node* node, const ufbx_mesh* mesh,
-                     const ufbx_mesh_part* part, const char* key)
+// メッシュのマテリアルパートを頂点バッファ化する。ジオメトリックトランスフォームは
+// ヘルパーノードが持つ (MakeOpts) ので、ここでノード変換を掛けてはいけない
+// = 頂点はノード非依存 → 同一メッシュの複数インスタンスでキーが衝突しない。
+AssetID LoadMeshPart(LoadContext& lc, const ufbx_mesh* mesh, const ufbx_mesh_part* part,
+                     const char* key)
 {
     if (part->num_triangles == 0) {
         return {};
@@ -76,13 +90,10 @@ AssetID LoadMeshPart(LoadContext& lc, const ufbx_node* node, const ufbx_mesh* me
         const uint32_t numTri = ufbx_triangulate_face(triIx.data(), triIx.size(), mesh, face);
         for (uint32_t c = 0; c < numTri * 3; ++c) {
             const uint32_t corner = triIx[c];
-            ufbx_vec3 p = ufbx_get_vertex_vec3(&mesh->vertex_position, corner);
-            // ジオメトリックトランスフォーム (FBX の pivot) を頂点にベイク
-            p = ufbx_transform_position(&node->geometry_to_node, p);
-            ufbx_vec3 n = mesh->vertex_normal.exists
-                              ? ufbx_get_vertex_vec3(&mesh->vertex_normal, corner)
-                              : ufbx_vec3{ 0, 1, 0 };
-            n = ufbx_transform_direction(&node->geometry_to_node, n);
+            const ufbx_vec3 p = ufbx_get_vertex_vec3(&mesh->vertex_position, corner);
+            const ufbx_vec3 n = mesh->vertex_normal.exists
+                                    ? ufbx_get_vertex_vec3(&mesh->vertex_normal, corner)
+                                    : ufbx_vec3{ 0, 1, 0 };
             ufbx_vec2 uv = mesh->vertex_uv.exists ? ufbx_get_vertex_vec2(&mesh->vertex_uv, corner)
                                                   : ufbx_vec2{ 0, 0 };
             MeshVertex mv;
@@ -158,18 +169,32 @@ void LoadMeshInto(LoadContext& lc, const ufbx_node* node, GameObject owner)
 {
     const ufbx_mesh* mesh = node->mesh;
     const size_t meshId = mesh->element_id;
+    // マテリアルはインスタンス毎 (ufbx.h:1323-1326 が mesh->materials を明示的に非推奨としている)。
+    // ただしジオメトリヘルパーにはマテリアル接続が移らない (ufbx が remap するのは attrib のみ) ため、
+    // ヘルパー側の materials は mesh->materials で埋め戻された値になる。元ノード (親) を見ること。
+    const ufbx_node* matNode = node;
+    if (matNode->is_geometry_transform_helper && matNode->parent) {
+        matNode = matNode->parent;
+    }
+    const ufbx_material_list& mats =
+        (matNode->materials.count > 0) ? matNode->materials : mesh->materials;
     for (size_t pi = 0; pi < mesh->material_parts.count; ++pi) {
         const ufbx_mesh_part* part = &mesh->material_parts.data[pi];
         char key[512];
         snprintf(key, sizeof(key), "%s#mesh%zu#part%zu", lc.pathUtf8.c_str(), meshId, pi);
-        const AssetID meshAsset = LoadMeshPart(lc, node, mesh, part, key);
+        const AssetID meshAsset = LoadMeshPart(lc, mesh, part, key);
         if (meshAsset.IsNull()) {
             continue;
         }
-        const ufbx_material* mat =
-            (part->index < mesh->materials.count) ? mesh->materials.data[part->index] : nullptr;
+        const ufbx_material* mat = (part->index < mats.count) ? mats.data[part->index] : nullptr;
+        // マテリアルキーはグローバル (element_id) — メッシュ毎に複製すると
+        // 同一マテリアルが AssetID 重複登録され、編集/ホットリロードが 1 箇所で効かない
         char matKey[512];
-        snprintf(matKey, sizeof(matKey), "%s#mesh%zu#mat%zu", lc.pathUtf8.c_str(), meshId, pi);
+        if (mat) {
+            snprintf(matKey, sizeof(matKey), "%s#mat%u", lc.pathUtf8.c_str(), mat->element_id);
+        } else {
+            snprintf(matKey, sizeof(matKey), "%s#defaultmat", lc.pathUtf8.c_str());
+        }
         const AssetID matAsset = LoadMaterial(lc, mat, matKey);
 
         if (!lc.scene) {
@@ -190,8 +215,10 @@ void LoadMeshInto(LoadContext& lc, const ufbx_node* node, GameObject owner)
 
 void LoadNode(LoadContext& lc, const ufbx_node* node, GameObject parent)
 {
+    // ジオメトリヘルパーは合成ノードなので名前が空になりうる (MakeOpts で名前を与えているが保険)
+    const char* fallbackName = node->is_geometry_transform_helper ? kGeoHelperName : "node";
     GameObject obj =
-        lc.scene->CreateGameObject(node->name.length ? StrOf(node->name).c_str() : "node");
+        lc.scene->CreateGameObject(node->name.length ? StrOf(node->name).c_str() : fallbackName);
     obj.SetParent(parent);
     SetNodeTransform(obj, node);
     if (node->mesh) {
@@ -229,8 +256,12 @@ GameObject Load(Scene& scene, RenderResources& resources, ShaderManager& shaders
         LoadNode(lc, fbx->root_node->children.data[c], root);
     }
 
-    MYE_LOG_INFO("FBX loaded: %s (%zu meshes, %zu materials)", utf8.c_str(),
-                 fbx->meshes.count, fbx->materials.count);
+    size_t helpers = 0;
+    for (size_t i = 0; i < fbx->nodes.count; ++i) {
+        helpers += fbx->nodes.data[i]->is_geometry_transform_helper ? 1 : 0;
+    }
+    MYE_LOG_INFO("FBX loaded: %s (%zu meshes, %zu materials, %zu geometry-transform helpers)",
+                 utf8.c_str(), fbx->meshes.count, fbx->materials.count, helpers);
     ufbx_free_scene(fbx);
     return root;
 }
