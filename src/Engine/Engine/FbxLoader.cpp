@@ -2,7 +2,9 @@
 
 #include <cctype>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
+#include <initializer_list>
 #include <string>
 #include <vector>
 
@@ -28,6 +30,7 @@ struct LoadContext {
     std::string pathUtf8; // AssetID 用のキー (正規化パス)
     std::wstring baseDir; // 外部テクスチャの解決基準
     AssetID shaderId;
+    std::vector<uint32_t> diagnosedMats; // 診断ログを出し終えたマテリアルの element_id
 };
 
 // ufbx_vec3 → XMFLOAT3。左手系への変換は ufbx 側で完了済み (MakeOpts を参照)
@@ -257,36 +260,171 @@ AssetID ResolveTexture(LoadContext& lc, const ufbx_texture* tex, bool srgb, cons
     return {};
 }
 
-AssetID LoadMaterial(LoadContext& lc, const ufbx_material* mat, const char* key)
+// テクスチャが接続されていて有効なら返す。has_value はテクスチャの有無と無関係に真に
+// なりうる (実測: box.fbx の pbr.normal_map は has_value=1 / texture=null) ので、
+// テクスチャスロットの判定に has_value を使ってはいけない。
+const ufbx_texture* EnabledTexture(const ufbx_material_map& map)
+{
+    return (map.texture && map.texture_enabled) ? map.texture : nullptr;
+}
+
+// 同一マテリアルは複数のパート / 複数のインスタンスから参照されるため、素直に出すと
+// 同じ診断行が何度も並ぶ。マテリアル単位で最初の 1 回だけ出す。
+bool ShouldDiagnose(LoadContext& lc, const ufbx_material* mat)
+{
+    for (const uint32_t id : lc.diagnosedMats) {
+        if (id == mat->element_id) {
+            return false;
+        }
+    }
+    lc.diagnosedMats.push_back(mat->element_id);
+    return true;
+}
+
+// マテリアルの不透明度 (0=透明 1=不透明) を求める。
+// PBR 系シェーダ (Arnold / glTF / OpenPBR 等) は pbr.opacity を持つのでそれを最優先する。
+// FBX 組み込みの Lambert / Phong には opacity マップが存在せず、透明度は
+// TransparencyFactor → pbr.transmission_factor / TransparentColor → pbr.transmission_color
+// に入る (ufbx.c のシェーダマッピング表)。
+//
+// ★factor だけで判定してはいけない: Maya 系の書き出しは「factor は倍率、実際の透明度は
+// TransparentColor」という規約で、**不透明なマテリアルにも TransparencyFactor=1 を書く**
+// (実測: assets\models\cubes_pivot.fbx の Mat_Green は factor=1 / color=(0,0,0) で不透明)。
+// factor 単独で判定すると既存アセットが軒並み alpha=0 で消える。色が書かれていれば
+// 「最も透過するチャンネル」を倍率として掛け、黒 (=透過なし) を不透明として扱う。
+float ComputeOpacity(const ufbx_material* mat)
+{
+    if (mat->pbr.opacity.has_value) {
+        return static_cast<float>(mat->pbr.opacity.value_real);
+    }
+    if (!mat->pbr.transmission_factor.has_value) {
+        return 1.0f;
+    }
+    float transmission = static_cast<float>(mat->pbr.transmission_factor.value_real);
+    if (mat->pbr.transmission_color.has_value) {
+        const ufbx_vec3 c = mat->pbr.transmission_color.value_vec3;
+        // 赤ガラスのような有色透過を輝度で潰さないよう最大チャンネルを採る
+        double maxChannel = c.x > c.y ? c.x : c.y;
+        maxChannel = maxChannel > c.z ? maxChannel : c.z;
+        transmission *= static_cast<float>(maxChannel);
+    }
+    return 1.0f - transmission;
+}
+
+AssetID LoadMaterial(LoadContext& lc, const ufbx_material* mat, const ufbx_mesh* mesh,
+                     const char* key)
 {
     Material m;
     m.shader = lc.shaderId;
     m.texture = lc.resources->textures.White();
-    if (mat) {
-        const ufbx_material_map& bc = mat->pbr.base_color;
-        if (bc.has_value) {
-            m.baseColor = { static_cast<float>(bc.value_vec4.x), static_cast<float>(bc.value_vec4.y),
-                            static_cast<float>(bc.value_vec4.z),
-                            static_cast<float>(bc.value_vec4.w) };
+    if (!mat) {
+        return lc.resources->materials.Register(key, m);
+    }
+    const std::string matName = StrOf(mat->name);
+    const bool diag = ShouldDiagnose(lc, mat);
+
+    const ufbx_material_map& bc = mat->pbr.base_color;
+    if (bc.has_value) {
+        m.baseColor = { static_cast<float>(bc.value_vec4.x), static_cast<float>(bc.value_vec4.y),
+                        static_cast<float>(bc.value_vec4.z), static_cast<float>(bc.value_vec4.w) };
+    }
+    // DiffuseFactor (pbr.base_factor)。無視するとファクタ < 1 のマテリアルが明るすぎる。
+    // シェーダはベースカラーをテクスチャに乗算するので rgb に畳み込んでよい
+    if (mat->pbr.base_factor.has_value) {
+        const float bf = static_cast<float>(mat->pbr.base_factor.value_real);
+        m.baseColor.x *= bf;
+        m.baseColor.y *= bf;
+        m.baseColor.z *= bf;
+    }
+    if (mat->pbr.metalness.has_value) {
+        m.metallic = static_cast<float>(mat->pbr.metalness.value_real);
+    } else if (diag) {
+        // Lambert / Phong には metalness が無い。specular からの憶測変換はせず既定値のままにする
+        MYE_LOG_INFO("FBX material '%s': シェーディングモデル '%s' は metalness を持たないため "
+                     "metallic は既定値 (%.2f) です",
+                     matName.c_str(), StrOf(mat->shading_model_name).c_str(),
+                     static_cast<double>(m.metallic));
+    }
+    if (mat->pbr.roughness.has_value) {
+        m.roughness = static_cast<float>(mat->pbr.roughness.value_real);
+    }
+
+    // 半透明。ForwardPath / DeferredPath の半透明キューに乗せる
+    const float opacity = ComputeOpacity(mat);
+    m.baseColor.w *= opacity;
+    if (m.baseColor.w < 0.999f) {
+        m.transparent = 1;
+        if (diag) {
+            MYE_LOG_INFO("FBX material '%s': 半透明 (alpha=%.3f) として読み込みました",
+                         matName.c_str(), static_cast<double>(m.baseColor.w));
         }
-        if (mat->pbr.metalness.has_value) {
-            m.metallic = static_cast<float>(mat->pbr.metalness.value_real);
+    }
+
+    // ベースカラー。texture_enabled が false のマップはテクスチャを無視する (ufbx.h:2311)。
+    // Phong/Lambert は ufbx が pbr へマップするが、拾えないケースに備えて fbx 側も見る
+    const ufbx_texture* tex = EnabledTexture(bc);
+    if (!tex) {
+        tex = EnabledTexture(mat->fbx.diffuse_color);
+    }
+    if (tex) {
+        // ベースカラーは _SRGB でロード (M38a)
+        const AssetID texId = ResolveTexture(lc, tex, /*srgb=*/true, "base_color", matName.c_str());
+        if (!texId.IsNull()) {
+            m.texture = texId;
         }
-        if (mat->pbr.roughness.has_value) {
-            m.roughness = static_cast<float>(mat->pbr.roughness.value_real);
+    }
+
+    // ノーマルマップ。頂点タンジェントは不要 — common.hlsli の PerturbNormal が
+    // posW/uv の導関数から接空間基底を作る (M17.3) ので MeshVertex は変更しなくてよい。
+    // bump スロットは最後の手段: 書き出し元によっては接空間ノーマルマップがここに入るが、
+    // 本来のハイトマップが入っていることもあり両者を FBX からは区別できない
+    const ufbx_texture* nrm = EnabledTexture(mat->pbr.normal_map);
+    const char* nrmSlot = "normal_map";
+    if (!nrm) {
+        nrm = EnabledTexture(mat->fbx.normal_map);
+    }
+    if (!nrm) {
+        nrm = EnabledTexture(mat->fbx.bump);
+        if (nrm) {
+            nrmSlot = "bump";
+            if (diag) {
+                MYE_LOG_WARN("FBX material '%s': bump スロットを接空間ノーマルマップとして"
+                             "解釈します。ハイトマップの場合は陰影が破綻します",
+                             matName.c_str());
+            }
         }
-        // ベースカラー。texture_enabled が false のマップはテクスチャを無視する (ufbx.h:2311)。
-        // Phong/Lambert は ufbx が pbr へマップするが、拾えないケースに備えて fbx 側も見る
-        const std::string matName = StrOf(mat->name);
-        const ufbx_texture* tex = (bc.texture && bc.texture_enabled) ? bc.texture : nullptr;
-        if (!tex && mat->fbx.diffuse_color.texture && mat->fbx.diffuse_color.texture_enabled) {
-            tex = mat->fbx.diffuse_color.texture;
+    }
+    if (nrm) {
+        // ノーマルマップは色ではないのでリニア (srgb=false) で読む (M38a)
+        const AssetID nrmId = ResolveTexture(lc, nrm, /*srgb=*/false, nrmSlot, matName.c_str());
+        if (!nrmId.IsNull()) {
+            m.normalTex = nrmId;
         }
-        if (tex) {
-            // ベースカラーは _SRGB でロード (M38a)
-            const AssetID texId = ResolveTexture(lc, tex, /*srgb=*/true, "base_color", matName.c_str());
-            if (!texId.IsNull()) {
-                m.texture = texId;
+    }
+
+    if (diag) {
+        // emissive: Material にフィールドが無いので取り込めない (今回は対象外)
+        const ufbx_material_map& em = mat->pbr.emission_color;
+        const double emFactor =
+            mat->pbr.emission_factor.has_value ? mat->pbr.emission_factor.value_real : 1.0;
+        if (emFactor * (em.value_vec3.x + em.value_vec3.y + em.value_vec3.z) > 0.0) {
+            MYE_LOG_WARN("FBX material '%s': emissive が設定されていますが、エンジンの Material に "
+                         "emissive が無いため無視します",
+                         matName.c_str());
+        }
+        // 第 2 UV セットはメッシュ分割が必要なので据え置き (WARN のみ)
+        if (mesh && mesh->uv_sets.count > 1) {
+            const ufbx_string set0 = mesh->uv_sets.data[0].name;
+            for (const ufbx_texture* t : { tex, nrm }) {
+                if (!t || t->uv_set.length == 0) {
+                    continue;
+                }
+                if (t->uv_set.length != set0.length ||
+                    memcmp(t->uv_set.data, set0.data, set0.length) != 0) {
+                    MYE_LOG_WARN("FBX material '%s': テクスチャが UV セット '%s' を参照して"
+                                 "いますが、第 1 セット '%s' のみ対応のため UV がずれます",
+                                 matName.c_str(), StrOf(t->uv_set).c_str(), StrOf(set0).c_str());
+                }
             }
         }
     }
@@ -341,7 +479,7 @@ void LoadMeshInto(LoadContext& lc, const ufbx_node* node, GameObject owner)
         } else {
             snprintf(matKey, sizeof(matKey), "%s#defaultmat", lc.pathUtf8.c_str());
         }
-        const AssetID matAsset = LoadMaterial(lc, mat, matKey);
+        const AssetID matAsset = LoadMaterial(lc, mat, mesh, matKey);
 
         if (!lc.scene) {
             continue; // リロード: 登録のみ
