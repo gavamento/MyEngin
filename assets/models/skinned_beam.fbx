@@ -1,0 +1,260 @@
+; FBX 7.4.0 project file
+; Hand-authored by MyEngine tools for FBX P4 (skin + bake_anim) verification
+;----------------------------------------------------
+
+FBXHeaderExtension:  {
+	FBXHeaderVersion: 1003
+	FBXVersion: 7400
+	Creator: "MyEngine P4 handmade"
+}
+GlobalSettings:  {
+	Version: 1000
+	Properties70:  {
+		P: "UpAxis", "int", "Integer", "",1
+		P: "UpAxisSign", "int", "Integer", "",1
+		P: "FrontAxis", "int", "Integer", "",2
+		P: "FrontAxisSign", "int", "Integer", "",1
+		P: "CoordAxis", "int", "Integer", "",0
+		P: "CoordAxisSign", "int", "Integer", "",1
+		P: "OriginalUpAxis", "int", "Integer", "",1
+		P: "UnitScaleFactor", "double", "Number", "",100
+		P: "OriginalUnitScaleFactor", "double", "Number", "",100
+		P: "TimeMode", "enum", "", "",6
+		P: "TimeSpanStart", "KTime", "Time", "",0
+		P: "TimeSpanStop", "KTime", "Time", "",46186158000
+	}
+}
+
+Definitions:  {
+	Version: 100
+	Count: 16
+	ObjectType: "GlobalSettings" {
+		Count: 1
+	}
+	ObjectType: "Geometry" {
+		Count: 1
+	}
+	ObjectType: "Model" {
+		Count: 4
+	}
+	ObjectType: "NodeAttribute" {
+		Count: 2
+	}
+	ObjectType: "Material" {
+		Count: 1
+	}
+	ObjectType: "Deformer" {
+		Count: 3
+	}
+	ObjectType: "AnimationStack" {
+		Count: 1
+	}
+	ObjectType: "AnimationLayer" {
+		Count: 1
+	}
+	ObjectType: "AnimationCurveNode" {
+		Count: 1
+	}
+	ObjectType: "AnimationCurve" {
+		Count: 3
+	}
+}
+
+Objects:  {
+	Geometry: 100, "Geometry::Beam", "Mesh" {
+		Vertices: *60 {
+			a: -0.5,0,-0.5,0.5,0,-0.5,0.5,0,0.5,-0.5,0,0.5,-0.5,1,-0.5,0.5,1,-0.5,0.5,1,0.5,-0.5,1,0.5,-0.5,2,-0.5,0.5,2,-0.5,0.5,2,0.5,-0.5,2,0.5,-0.5,3,-0.5,0.5,3,-0.5,0.5,3,0.5,-0.5,3,0.5,-0.5,4,-0.5,0.5,4,-0.5,0.5,4,0.5,-0.5,4,0.5
+		}
+		PolygonVertexIndex: *144 {
+			a: 0,1,5,-5,4,5,1,-1,1,2,6,-6,5,6,2,-2,2,3,7,-7,6,7,3,-3,3,0,4,-8,7,4,0,-4,4,5,9,-9,8,9,5,-5,5,6,10,-10,9,10,6,-6,6,7,11,-11,10,11,7,-7,7,4,8,-12,11,8,4,-8,8,9,13,-13,12,13,9,-9,9,10,14,-14,13,14,10,-10,10,11,15,-15,14,15,11,-11,11,8,12,-16,15,12,8,-12,12,13,17,-17,16,17,13,-13,13,14,18,-18,17,18,14,-14,14,15,19,-19,18,19,15,-15,15,12,16,-20,19,16,12,-16,0,1,2,-4,3,2,1,-1,16,17,18,-20,19,18,17,-17
+		}
+		GeometryVersion: 124
+		Layer: 0 {
+			Version: 100
+		}
+	}
+	Model: 200, "Model::Beam", "Mesh" {
+		Version: 232
+		Properties70:  {
+			P: "Lcl Translation", "Lcl Translation", "", "A",0,0,0
+			P: "Lcl Rotation", "Lcl Rotation", "", "A",0,0,0
+			P: "Lcl Scaling", "Lcl Scaling", "", "A",1,1,1
+		}
+		Shading: T
+		Culling: "CullingOff"
+	}
+	Model: 210, "Model::Armature", "Null" {
+		Version: 232
+		Properties70:  {
+			P: "Lcl Translation", "Lcl Translation", "", "A",3,0,0
+		}
+		Shading: T
+		Culling: "CullingOff"
+	}
+	Model: 220, "Model::Bone1", "LimbNode" {
+		Version: 232
+		Properties70:  {
+			P: "Lcl Translation", "Lcl Translation", "", "A",-3,0,0
+			P: "Lcl Rotation", "Lcl Rotation", "", "A",0,0,0
+			P: "Lcl Scaling", "Lcl Scaling", "", "A",1,1,1
+		}
+		Shading: T
+		Culling: "CullingOff"
+	}
+	Model: 230, "Model::Bone2", "LimbNode" {
+		Version: 232
+		Properties70:  {
+			P: "Lcl Translation", "Lcl Translation", "", "A",0,2,0
+			P: "Lcl Rotation", "Lcl Rotation", "", "A",0,0,0
+			P: "Lcl Scaling", "Lcl Scaling", "", "A",1,1,1
+		}
+		Shading: T
+		Culling: "CullingOff"
+	}
+	NodeAttribute: 221, "NodeAttribute::Bone1", "LimbNode" {
+		TypeFlags: "Skeleton"
+	}
+	NodeAttribute: 231, "NodeAttribute::Bone2", "LimbNode" {
+		TypeFlags: "Skeleton"
+	}
+	Material: 300, "Material::MatBeam", "" {
+		Version: 102
+		ShadingModel: "phong"
+		MultiLayer: 0
+		Properties70:  {
+			P: "DiffuseColor", "Color", "", "A",0.85,0.45,0.15
+		}
+	}
+	Deformer: 400, "Deformer::SkinBeam", "Skin" {
+		Version: 101
+		Link_DeformAcuracy: 50
+	}
+	Deformer: 410, "SubDeformer::Cluster1", "Cluster" {
+		Version: 100
+		UserData: "", ""
+		Indexes: *12 {
+			a: 0,1,2,3,4,5,6,7,8,9,10,11
+		}
+		Weights: *12 {
+			a: 1,1,1,1,1,1,1,1,0.5,0.5,0.5,0.5
+		}
+		Transform: *16 {
+			a: 1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1
+		}
+		TransformLink: *16 {
+			a: 1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1
+		}
+	}
+	Deformer: 420, "SubDeformer::Cluster2", "Cluster" {
+		Version: 100
+		UserData: "", ""
+		Indexes: *12 {
+			a: 8,9,10,11,12,13,14,15,16,17,18,19
+		}
+		Weights: *12 {
+			a: 0.5,0.5,0.5,0.5,1,1,1,1,1,1,1,1
+		}
+		Transform: *16 {
+			a: 1,0,0,0,0,1,0,0,0,0,1,0,0,-2,0,1
+		}
+		TransformLink: *16 {
+			a: 1,0,0,0,0,1,0,0,0,0,1,0,0,2,0,1
+		}
+	}
+	AnimationStack: 500, "AnimStack::Take 001", "" {
+		Properties70:  {
+			P: "LocalStart", "KTime", "Time", "",0
+			P: "LocalStop", "KTime", "Time", "",46186158000
+			P: "ReferenceStart", "KTime", "Time", "",0
+			P: "ReferenceStop", "KTime", "Time", "",46186158000
+		}
+	}
+	AnimationLayer: 510, "AnimLayer::BaseLayer", "" {
+	}
+	AnimationCurveNode: 520, "AnimCurveNode::R", "" {
+		Properties70:  {
+			P: "d|X", "Number", "", "A",0
+			P: "d|Y", "Number", "", "A",0
+			P: "d|Z", "Number", "", "A",0
+		}
+	}
+	AnimationCurve: 530, "AnimCurve::", "" {
+		Default: 0
+		KeyVer: 4008
+		KeyTime: *2 {
+			a: 0,46186158000
+		}
+		KeyValueFloat: *2 {
+			a: 0,0
+		}
+		KeyAttrFlags: *1 {
+			a: 24580
+		}
+		KeyAttrDataFloat: *4 {
+			a: 0,0,0,0
+		}
+		KeyAttrRefCount: *1 {
+			a: 2
+		}
+	}
+	AnimationCurve: 531, "AnimCurve::", "" {
+		Default: 0
+		KeyVer: 4008
+		KeyTime: *2 {
+			a: 0,46186158000
+		}
+		KeyValueFloat: *2 {
+			a: 0,0
+		}
+		KeyAttrFlags: *1 {
+			a: 24580
+		}
+		KeyAttrDataFloat: *4 {
+			a: 0,0,0,0
+		}
+		KeyAttrRefCount: *1 {
+			a: 2
+		}
+	}
+	AnimationCurve: 532, "AnimCurve::", "" {
+		Default: 0
+		KeyVer: 4008
+		KeyTime: *2 {
+			a: 0,46186158000
+		}
+		KeyValueFloat: *2 {
+			a: 0,90
+		}
+		KeyAttrFlags: *1 {
+			a: 24580
+		}
+		KeyAttrDataFloat: *4 {
+			a: 0,0,0,0
+		}
+		KeyAttrRefCount: *1 {
+			a: 2
+		}
+	}
+}
+
+Connections:  {
+	C: "OO",200,0
+	C: "OO",100,200
+	C: "OO",300,200
+	C: "OO",210,0
+	C: "OO",220,210
+	C: "OO",230,220
+	C: "OO",221,220
+	C: "OO",231,230
+	C: "OO",400,100
+	C: "OO",410,400
+	C: "OO",420,400
+	C: "OO",220,410
+	C: "OO",230,420
+	C: "OO",510,500
+	C: "OO",520,510
+	C: "OP",520,230, "Lcl Rotation"
+	C: "OP",530,520, "d|X"
+	C: "OP",531,520, "d|Y"
+	C: "OP",532,520, "d|Z"
+}

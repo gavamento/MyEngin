@@ -1,5 +1,6 @@
 #include "Engine/Engine/FbxLoader.h"
 
+#include <algorithm>
 #include <cctype>
 #include <cstdio>
 #include <cstring>
@@ -27,10 +28,21 @@ namespace {
 struct LoadContext {
     Scene* scene = nullptr;
     RenderResources* resources = nullptr;
+    const ufbx_scene* fbx = nullptr; // アニメーションスタックの走査に要る (P4)
+    GameObject modelRoot;            // スキンメッシュを恒等 transform で置く先 (P4-5)
     std::string pathUtf8; // AssetID 用のキー (正規化パス)
     std::wstring baseDir; // 外部テクスチャの解決基準
     AssetID shaderId;
     std::vector<uint32_t> diagnosedMats; // 診断ログを出し終えたマテリアルの element_id
+    size_t resolvedTextures = 0;         // 診断用 (解決できたテクスチャ数)
+    size_t skinCount = 0;
+    size_t clipCount = 0;
+    // 同一メッシュを複数ノードがインスタンス化しているときに skin を作り直さないためのキャッシュ
+    struct SkinCacheEntry {
+        uint32_t meshId;
+        AssetID id;
+    };
+    std::vector<SkinCacheEntry> skinCache;
 };
 
 // ufbx_vec3 → XMFLOAT3。左手系への変換は ufbx 側で完了済み (MakeOpts を参照)
@@ -42,6 +54,20 @@ XMFLOAT3 ToXm(ufbx_vec3 v)
 std::string StrOf(ufbx_string s)
 {
     return std::string(s.data, s.length);
+}
+
+// ufbx_matrix (列優先 3x4 = 列ベクトル規約 v' = M*v) → 行ベクトル規約の XMFLOAT4X4 (v' = v*M)。
+// 最終行 (0,0,0,1) を補って転置するだけ = 行 i がそのまま cols[i]。
+// P0 で左手系変換は ufbx 側で完了しているので Z 反転は掛けない
+// (glTF 側 ModelLoader::FlipZMatrix は手動反転のままで規約が異なる)。
+XMFLOAT4X4 ToXm4x4(const ufbx_matrix& m)
+{
+    return XMFLOAT4X4(static_cast<float>(m.cols[0].x), static_cast<float>(m.cols[0].y),
+                      static_cast<float>(m.cols[0].z), 0.0f, static_cast<float>(m.cols[1].x),
+                      static_cast<float>(m.cols[1].y), static_cast<float>(m.cols[1].z), 0.0f,
+                      static_cast<float>(m.cols[2].x), static_cast<float>(m.cols[2].y),
+                      static_cast<float>(m.cols[2].z), 0.0f, static_cast<float>(m.cols[3].x),
+                      static_cast<float>(m.cols[3].y), static_cast<float>(m.cols[3].z), 1.0f);
 }
 
 // FBX が書き出し元 OS の区切りをそのまま持つことがあるので Windows 側に正規化する
@@ -129,12 +155,15 @@ ufbx_load_opts MakeOpts()
 // メッシュのマテリアルパートを頂点バッファ化する。ジオメトリックトランスフォームは
 // ヘルパーノードが持つ (MakeOpts) ので、ここでノード変換を掛けてはいけない
 // = 頂点はノード非依存 → 同一メッシュの複数インスタンスでキーが衝突しない。
+// skin が非 null ならボーンインデックス / ウェイトも詰める (P4-3)。ウェイトは頂点 (corner
+// ではなく論理頂点) 単位なので mesh->vertex_position.indices で引き直す。
 AssetID LoadMeshPart(LoadContext& lc, const ufbx_mesh* mesh, const ufbx_mesh_part* part,
-                     const char* key)
+                     const ufbx_skin_deformer* skin, const char* key)
 {
     if (part->num_triangles == 0) {
         return {};
     }
+    bool indexOverflow = false;
     std::vector<MeshVertex> vertices;
     std::vector<uint32_t> indices;
     vertices.reserve(part->num_triangles * 3);
@@ -157,9 +186,42 @@ AssetID LoadMeshPart(LoadContext& lc, const ufbx_mesh* mesh, const ufbx_mesh_par
             mv.normal = ToXm(n);
             // FBX の UV 原点は左下 → D3D の左上へ V 反転
             mv.uv = { static_cast<float>(uv.x), 1.0f - static_cast<float>(uv.y) };
+            if (skin) {
+                const uint32_t vi = mesh->vertex_position.indices.data[corner];
+                if (vi < skin->vertices.count) {
+                    const ufbx_skin_vertex sv = skin->vertices.data[vi];
+                    // ufbx はウェイト降順ソート済み (ufbx.h:1955-1957) なので先頭 4 本が最良近似
+                    const uint32_t take = sv.num_weights < 4 ? sv.num_weights : 4;
+                    float w[4] = { 0, 0, 0, 0 };
+                    float sum = 0.0f;
+                    for (uint32_t k = 0; k < take; ++k) {
+                        const ufbx_skin_weight sw = skin->weights.data[sv.weight_begin + k];
+                        // boneIndices は uint8 (GpuResources.h) — 256 本以上は表現できない。
+                        // kMaxBones=128 の範囲なら到達しないが、黙って化けないようガードする
+                        if (sw.cluster_index > 255) {
+                            indexOverflow = true;
+                            continue;
+                        }
+                        mv.boneIndices[k] = static_cast<uint8_t>(sw.cluster_index);
+                        w[k] = static_cast<float>(sw.weight);
+                        sum += w[k];
+                    }
+                    // 正規化は必須 (ufbx.h:1958 「not guaranteed to be normalized」)。
+                    // 5 本目以降を捨てた分の目減りもここで吸収される
+                    if (sum > 1e-6f) {
+                        for (float& v : w) {
+                            v /= sum;
+                        }
+                    }
+                    mv.boneWeights = { w[0], w[1], w[2], w[3] };
+                }
+            }
             vertices.push_back(mv);
             indices.push_back(static_cast<uint32_t>(indices.size()));
         }
+    }
+    if (indexOverflow) {
+        MYE_LOG_WARN("FBX skin: cluster index >= 256 のウェイトを破棄しました (%s)", key);
     }
     // 巻き順は ufbx が左手系変換時に反転済み (MakeOpts を参照)
     return lc.resources->meshes.Register(key, vertices, indices);
@@ -195,6 +257,7 @@ AssetID ResolveTexture(LoadContext& lc, const ufbx_texture* tex, bool srgb, cons
         const AssetID id =
             lc.resources->textures.CreateFromEncoded(texKey, file->content.data, file->content.size, srgb);
         if (!id.IsNull()) {
+            ++lc.resolvedTextures;
             return id;
         }
         // デコード失敗 (stb 非対応の埋め込み形式) は外部ファイル探索へフォールバックする
@@ -238,6 +301,7 @@ AssetID ResolveTexture(LoadContext& lc, const ufbx_texture* tex, bool srgb, cons
         id = tryPath(lc.baseDir + L"\\" + Utf8ToWide(relName));
     }
     if (!id.IsNull()) {
+        ++lc.resolvedTextures;
         return id;
     }
 
@@ -431,6 +495,137 @@ AssetID LoadMaterial(LoadContext& lc, const ufbx_material* mat, const ufbx_mesh*
     return lc.resources->materials.Register(key, m);
 }
 
+// FBX の skin deformer → SkinnedModel (スケルトン + 全クリップ) を構築・登録する (P4-2/4-4)。
+// glTF 側の ModelLoader::LoadSkin と同じ成果物を作るが、**親チェーンの規約が異なる**。
+//
+// ★ジョイント配列 = クラスタ列 + その祖先ノードの閉包。
+//   glTF 版は「ジョイント以外の祖先 (Armature 等) はメッシュの gWorld が担う」規約だが、
+//   FBX ではこれが成立しない。FBX のスキニングは geometry space → bone space → world で
+//   ワールドまで完結し、その world は **ボーンの完全な node_to_world** を前提にしている。
+//   ジョイント集合内だけで親を辿ると Armature やユニット変換 (cm→m は root 直下ノードの
+//   スケールに入る) が抜け落ち、ComputeBonePalette の jointGlobal が node_to_world とズレる。
+//   実測: Armature を T(3,0,0) にしたテストアセットで、クラスタのみのジョイント集合は
+//   ufbx の正解 (cluster->geometry_to_world) と maxdiff 3.0、祖先を足すと maxdiff 0.0。
+//   祖先を追加ジョイントにすれば chain が完全になり、メッシュ側は world 恒等のままでよい。
+//   クラスタは配列の先頭に並べたままなので `ufbx_skin_weight.cluster_index` がそのまま
+//   ジョイント index として使える (P4-3 の前提) 点も保たれる。
+AssetID LoadSkin(LoadContext& lc, const ufbx_mesh* mesh, const ufbx_skin_deformer* skin)
+{
+    std::vector<const ufbx_node*> nodes; // ジョイント index → ufbx ノード
+    nodes.reserve(skin->clusters.count + 4);
+    for (size_t c = 0; c < skin->clusters.count; ++c) {
+        nodes.push_back(skin->clusters.data[c]->bone_node); // 壊れた接続では null になりうる
+    }
+    // 祖先の閉包 (ルートノードまで)。nodes は伸びるので index ループで回す
+    for (size_t i = 0; i < nodes.size(); ++i) {
+        for (const ufbx_node* p = nodes[i] ? nodes[i]->parent : nullptr; p; p = p->parent) {
+            if (std::find(nodes.begin(), nodes.end(), p) == nodes.end()) {
+                nodes.push_back(p);
+            }
+        }
+    }
+
+    SkinnedModel model;
+    model.joints.resize(nodes.size());
+    for (size_t j = 0; j < nodes.size(); ++j) {
+        SkeletonJoint& out = model.joints[j];
+        if (j < skin->clusters.count) {
+            // ufbx 公式が "Prefer geometry_to_bone in most use cases!" と明記している通り
+            // これが inverse-bind (メッシュ空間 → ボーンのバインド局所空間) にあたる
+            out.inverseBind = ToXm4x4(skin->clusters.data[j]->geometry_to_bone);
+        }
+        const ufbx_node* n = nodes[j];
+        if (!n) {
+            continue; // bone_node が無いクラスタ: バインドポーズ恒等で index だけ確保する
+        }
+        if (n->parent) {
+            const auto it = std::find(nodes.begin(), nodes.end(), n->parent);
+            if (it != nodes.end()) {
+                out.parent = static_cast<int32_t>(it - nodes.begin());
+            }
+        }
+        // 左手系変換は ufbx 側で完了済み (MakeOpts) なのでそのまま写す
+        const ufbx_transform& lt = n->local_transform;
+        out.bindT = { static_cast<float>(lt.translation.x), static_cast<float>(lt.translation.y),
+                      static_cast<float>(lt.translation.z) };
+        out.bindR = { static_cast<float>(lt.rotation.x), static_cast<float>(lt.rotation.y),
+                      static_cast<float>(lt.rotation.z), static_cast<float>(lt.rotation.w) };
+        out.bindS = { static_cast<float>(lt.scale.x), static_cast<float>(lt.scale.y),
+                      static_cast<float>(lt.scale.z) };
+    }
+
+    // アニメーション: 手書きの ufbx_anim_prop 走査ではなく ufbx_bake_anim を使う (ufbx 公式推奨)。
+    // Euler 回転順 / pre-post rotation / ピボット / 合成レイヤを ufbx が解決した
+    // 線形補間 TRS キーに落としてくれる = エンジンの JointTrack とそのまま対応する。
+    ufbx_bake_opts bopts = {};
+    bopts.resample_rate = 60.0;      // エンジンの固定 60Hz tick に合わせる
+    bopts.minimum_sample_rate = 60.0; // 既に 60Hz 以上のキーは二重リサンプルしない
+    bopts.trim_start_time = true;     // キー時刻を 0 起点へ (ComputeBonePalette は 0..duration で引く)
+    for (size_t si = 0; si < lc.fbx->anim_stacks.count; ++si) {
+        const ufbx_anim_stack* stack = lc.fbx->anim_stacks.data[si];
+        ufbx_error berr;
+        ufbx_baked_anim* baked = ufbx_bake_anim(lc.fbx, stack->anim, &bopts, &berr);
+        if (!baked) {
+            MYE_LOG_WARN("FBX anim bake failed: stack '%s' (%s)", StrOf(stack->name).c_str(),
+                         StrOf(berr.description).c_str());
+            continue;
+        }
+        SkeletalClip clip;
+        clip.name = StrOf(stack->name);
+        clip.duration = static_cast<float>(baked->playback_duration);
+        clip.tracks.resize(nodes.size());
+        for (size_t bi = 0; bi < baked->nodes.count; ++bi) {
+            const ufbx_baked_node& bn = baked->nodes.data[bi];
+            size_t j = nodes.size();
+            for (size_t k = 0; k < nodes.size(); ++k) {
+                if (nodes[k] && nodes[k]->typed_id == bn.typed_id) {
+                    j = k;
+                    break;
+                }
+            }
+            if (j == nodes.size()) {
+                continue; // このスキンに関係しないノード (メッシュ本体やカメラ等)
+            }
+            JointTrack& tr = clip.tracks[j];
+            tr.tTimes.reserve(bn.translation_keys.count);
+            tr.tVals.reserve(bn.translation_keys.count);
+            for (size_t k = 0; k < bn.translation_keys.count; ++k) {
+                const ufbx_baked_vec3& v = bn.translation_keys.data[k];
+                tr.tTimes.push_back(static_cast<float>(v.time));
+                tr.tVals.push_back({ static_cast<float>(v.value.x), static_cast<float>(v.value.y),
+                                     static_cast<float>(v.value.z) });
+            }
+            tr.rTimes.reserve(bn.rotation_keys.count);
+            tr.rVals.reserve(bn.rotation_keys.count);
+            for (size_t k = 0; k < bn.rotation_keys.count; ++k) {
+                const ufbx_baked_quat& q = bn.rotation_keys.data[k];
+                tr.rTimes.push_back(static_cast<float>(q.time));
+                tr.rVals.push_back({ static_cast<float>(q.value.x), static_cast<float>(q.value.y),
+                                     static_cast<float>(q.value.z),
+                                     static_cast<float>(q.value.w) });
+            }
+            tr.sTimes.reserve(bn.scale_keys.count);
+            tr.sVals.reserve(bn.scale_keys.count);
+            for (size_t k = 0; k < bn.scale_keys.count; ++k) {
+                const ufbx_baked_vec3& v = bn.scale_keys.data[k];
+                tr.sTimes.push_back(static_cast<float>(v.time));
+                tr.sVals.push_back({ static_cast<float>(v.value.x), static_cast<float>(v.value.y),
+                                     static_cast<float>(v.value.z) });
+            }
+        }
+        ufbx_free_baked_anim(baked); // 早期 continue も含めて必ず解放する
+        model.clips.push_back(std::move(clip));
+    }
+
+    ++lc.skinCount;
+    lc.clipCount += model.clips.size();
+    // キーはメッシュ + deformer なのでノード非依存 = 複数インスタンスでも 1 本に収束する
+    char key[512];
+    snprintf(key, sizeof(key), "%s#mesh%u#skin%u", lc.pathUtf8.c_str(), mesh->element_id,
+             skin->element_id);
+    return lc.resources->skinnedModels.Register(key, std::move(model));
+}
+
 void SetNodeTransform(GameObject obj, const ufbx_node* node)
 {
     auto* t = obj.GetComponent<LocalTransform>();
@@ -462,11 +657,36 @@ void LoadMeshInto(LoadContext& lc, const ufbx_node* node, GameObject owner)
     }
     const ufbx_material_list& mats =
         (matNode->materials.count > 0) ? matNode->materials : mesh->materials;
+
+    // スキン (P4)。複数 deformer は先頭のみ扱う (エンジンのボーンパレットは 1 本)。
+    // メッシュ単位でキャッシュする — 同一メッシュを複数ノードがインスタンス化している場合に
+    // bake_anim (実アセットでは重い) を人数分走らせないため。
+    const ufbx_skin_deformer* skin =
+        (mesh->skin_deformers.count > 0) ? mesh->skin_deformers.data[0] : nullptr;
+    AssetID skinModelId;
+    if (skin) {
+        const auto it = std::find_if(lc.skinCache.begin(), lc.skinCache.end(),
+                                     [&](const LoadContext::SkinCacheEntry& e) {
+                                         return e.meshId == mesh->element_id;
+                                     });
+        if (it != lc.skinCache.end()) {
+            skinModelId = it->id;
+        } else {
+            if (mesh->skin_deformers.count > 1) {
+                MYE_LOG_WARN(
+                    "FBX skin: メッシュに skin deformer が %zu 本あります。先頭のみ使用します",
+                    mesh->skin_deformers.count);
+            }
+            skinModelId = LoadSkin(lc, mesh, skin);
+            lc.skinCache.push_back({ mesh->element_id, skinModelId });
+        }
+    }
+
     for (size_t pi = 0; pi < mesh->material_parts.count; ++pi) {
         const ufbx_mesh_part* part = &mesh->material_parts.data[pi];
         char key[512];
         snprintf(key, sizeof(key), "%s#mesh%zu#part%zu", lc.pathUtf8.c_str(), meshId, pi);
-        const AssetID meshAsset = LoadMeshPart(lc, mesh, part, key);
+        const AssetID meshAsset = LoadMeshPart(lc, mesh, part, skin, key);
         if (meshAsset.IsNull()) {
             continue;
         }
@@ -484,16 +704,34 @@ void LoadMeshInto(LoadContext& lc, const ufbx_node* node, GameObject owner)
         if (!lc.scene) {
             continue; // リロード: 登録のみ
         }
-        GameObject target = owner;
-        if (mesh->material_parts.count > 1) {
-            char partName[64];
-            snprintf(partName, sizeof(partName), "part%zu", pi);
+        // ★スキン付きはノード階層に置かない (P4-5)。FBX のスキニングは
+        //   geometry space → bone space → world をボーンパレットだけで完結させるため、
+        //   メッシュのエンティティに変換が乗っていると gWorld と二重に掛かって吹き飛ぶ。
+        //   モデルルート直下に恒等 transform で置くこと (ボーン階層は別途 LoadNode が作る)。
+        GameObject partParent = skinModelId.IsNull() ? owner : lc.modelRoot;
+        GameObject target = partParent;
+        if (!skinModelId.IsNull() || mesh->material_parts.count > 1) {
+            char partName[80];
+            if (!skinModelId.IsNull()) {
+                snprintf(partName, sizeof(partName), "%s_skin%zu",
+                         matNode->name.length ? StrOf(matNode->name).c_str() : "mesh", pi);
+            } else {
+                snprintf(partName, sizeof(partName), "part%zu", pi);
+            }
             target = lc.scene->CreateGameObject(partName);
-            target.SetParent(owner);
+            target.SetParent(partParent);
         }
         auto* mr = target.AddComponent<MeshRendererComponent>();
         mr->mesh = meshAsset;
         mr->material = matAsset;
+        if (!skinModelId.IsNull()) {
+            // clip 0 を再生 (glTF 側と同じ既定)。ポーズは描画専用・非ハッシュ
+            auto* sm = target.AddComponent<SkinnedMeshComponent>();
+            sm->model = skinModelId;
+            sm->clip = 0;
+            sm->timeTicks = 0;
+            sm->playing = 1;
+        }
     }
 }
 
@@ -530,12 +768,14 @@ GameObject Load(Scene& scene, RenderResources& resources, ShaderManager& shaders
     LoadContext lc;
     lc.scene = &scene;
     lc.resources = &resources;
+    lc.fbx = fbx;
     lc.pathUtf8 = WideToUtf8(NormalizePathKey(path));
     lc.baseDir = std::filesystem::path(path).parent_path().wstring();
     lc.shaderId = shaders.Load("forward_lit");
 
     const std::string rootName = std::filesystem::path(path).stem().string();
     GameObject root = scene.CreateGameObject(rootName);
+    lc.modelRoot = root;
     for (size_t c = 0; c < fbx->root_node->children.count; ++c) {
         LoadNode(lc, fbx->root_node->children.data[c], root);
     }
@@ -544,8 +784,10 @@ GameObject Load(Scene& scene, RenderResources& resources, ShaderManager& shaders
     for (size_t i = 0; i < fbx->nodes.count; ++i) {
         helpers += fbx->nodes.data[i]->is_geometry_transform_helper ? 1 : 0;
     }
-    MYE_LOG_INFO("FBX loaded: %s (%zu meshes, %zu materials, %zu geometry-transform helpers)",
-                 utf8.c_str(), fbx->meshes.count, fbx->materials.count, helpers);
+    MYE_LOG_INFO("FBX loaded: %s (%zu meshes, %zu materials, %zu geometry-transform helpers, "
+                 "%zu skins, %zu clips, %zu textures resolved)",
+                 utf8.c_str(), fbx->meshes.count, fbx->materials.count, helpers, lc.skinCount,
+                 lc.clipCount, lc.resolvedTextures);
     ufbx_free_scene(fbx);
     return root;
 }
@@ -565,6 +807,7 @@ bool ReloadMeshes(RenderResources& resources, ShaderManager& shaders, const std:
     LoadContext lc;
     lc.scene = nullptr; // エンティティは作らない
     lc.resources = &resources;
+    lc.fbx = fbx; // スキン / クリップも同じキーで再登録する (P4-5)
     lc.pathUtf8 = WideToUtf8(NormalizePathKey(path));
     lc.baseDir = std::filesystem::path(path).parent_path().wstring();
     lc.shaderId = shaders.Load("forward_lit");
