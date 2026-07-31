@@ -30,6 +30,13 @@ inline DirectX::XMFLOAT4 SrgbToLinear(const DirectX::XMFLOAT4& c)
 // 「収集 → ソート → 提出」モデル (engine_spec.md 6.3)。
 // 即時描画 API は提供しない — 将来のマルチスレッド化 / API 差し替えの余地を残す。
 
+// ボーンパレット最大数 (M18、M45 で 64 → 128)。定数バッファは 128*64B = 8KB で D3D11 の
+// 64KB 上限に十分収まる。Mixamo の標準ヒューマノイドが約 65 ジョイントで 64 を超えるため拡張。
+// **HLSL 側の MYE_MAX_BONES (forward_skinned.hlsl / deferred_gbuffer_skinned.hlsl) と必ず一致
+// させること** — 食い違うと定数バッファのサイズ不一致で描画が壊れる。
+// tools\check_rules.ps1 の規則 9 が C++/HLSL 3 箇所の一致を静的に検査する。
+constexpr int kMaxBones = 128;
+
 struct RenderItem {
     AssetID mesh = {};
     AssetID material = {};

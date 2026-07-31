@@ -3,7 +3,8 @@
 
 #include "common.hlsli" // PerturbNormal (M17.3)
 
-#define MYE_MAX_BONES 64
+// RenderTypes.h の mye::kMaxBones と必ず一致させること (check_rules.ps1 規則 9 が検査)
+#define MYE_MAX_BONES 128
 
 cbuffer PerFrame : register(b0)
 {

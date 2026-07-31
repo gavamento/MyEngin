@@ -13,8 +13,7 @@ using namespace DirectX;
 namespace mye {
 namespace {
 
-// ボーンパレット最大数 (deferred_gbuffer_skinned.hlsl / forward_skinned.hlsl の MYE_MAX_BONES と一致)
-constexpr int kMaxBones = 64;
+// ボーンパレット最大数は RenderTypes.h の mye::kMaxBones (HLSL の MYE_MAX_BONES と対) を使う。
 
 // ForwardPath と同一レイアウト (forward_lit.hlsl を透明後段でそのまま使うため)
 struct PerFrameCB {

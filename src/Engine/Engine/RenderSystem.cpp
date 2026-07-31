@@ -459,8 +459,18 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
                     std::vector<XMFLOAT4X4>& palette = skinPalettes_.back();
                     const float timeSec = static_cast<float>(sm->timeTicks) / 60.0f;
                     ComputeBonePalette(*model, sm->clip, timeSec, palette);
-                    if (palette.size() > 64) { // kMaxBones (シェーダ MYE_MAX_BONES と一致)
-                        palette.resize(64);
+                    if (palette.size() > static_cast<size_t>(kMaxBones)) {
+                        // 上限超過は切り捨て (シェーダの定数バッファが kMaxBones 固定のため)。
+                        // 黙って切ると姿勢が壊れた原因が追えないので model 毎に 1 回だけ WARN
+                        if (std::find(boneOverflowWarned_.begin(), boneOverflowWarned_.end(),
+                                      sm->model.value)
+                            == boneOverflowWarned_.end()) {
+                            boneOverflowWarned_.push_back(sm->model.value);
+                            MYE_LOG_WARN("skinned model has %zu bones, clamped to %d "
+                                         "(MYE_MAX_BONES): pose will be wrong for the extra bones",
+                                         palette.size(), kMaxBones);
+                        }
+                        palette.resize(static_cast<size_t>(kMaxBones));
                     }
                     item.bones = palette.data();
                     item.boneCount = static_cast<int32_t>(palette.size());

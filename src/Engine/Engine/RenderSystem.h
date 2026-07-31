@@ -109,6 +109,8 @@ private:
     // スキンメッシュのボーンパレット (M18)。フレーム毎に再構築。deque = push_back で
     // 既存要素の .data() ポインタが無効化されない (RenderItem.bones が参照する)
     std::deque<std::vector<DirectX::XMFLOAT4X4>> skinPalettes_;
+    // kMaxBones 超過の切り捨てを警告済みのスキンモデル AssetID (毎フレーム WARN を出さないため)
+    std::vector<uint64_t> boneOverflowWarned_;
     // M44d: viewKey (1=runtime/2=SceneView/3=GameView) 毎の前フレーム viewProj。
     // 初フレーム/リサイズは valid=false → モーションブラー 0 (viewKey=0 は保存しない)
     struct PrevViewProj {
