@@ -29,10 +29,10 @@ struct LoadContext {
     AssetID shaderId;
 };
 
-// 右手系 → 左手系: 位置/法線は z 反転 (glTF ローダと同一規約)
-XMFLOAT3 FlipZ(ufbx_vec3 v)
+// ufbx_vec3 → XMFLOAT3。左手系への変換は ufbx 側で完了済み (MakeOpts を参照)
+XMFLOAT3 ToXm(ufbx_vec3 v)
 {
-    return { static_cast<float>(v.x), static_cast<float>(v.y), -static_cast<float>(v.z) };
+    return { static_cast<float>(v.x), static_cast<float>(v.y), static_cast<float>(v.z) };
 }
 
 std::string StrOf(ufbx_string s)
@@ -40,11 +40,19 @@ std::string StrOf(ufbx_string s)
     return std::string(s.data, s.length);
 }
 
-// ufbx シーンを右手系 Y-up + メートル単位に正規化して読み込む共通オプション
+// ufbx シーンを左手系 (エンジン標準) Y-up + メートル単位に正規化して読み込む共通オプション。
+// 右手系 → 左手系の変換 (位置/法線のミラーと巻き順の反転) は ufbx に任せる。
+// handedness_conversion_axis は既定が NONE で、その場合 ufbx はジオメトリを鏡像化せず
+// ルートスケール -1 に押し込む (= ノードのスケールが負になりエンジン側で破綻する)。
+// 明示的に Z を指定してジオメトリ側でミラーさせること。巻き順も ufbx が反転する
+// (handedness_conversion_retain_winding は立てない)。
+// NOTE: glTF ローダ (ModelLoader.cpp) は cgltf に同等機能が無いため手動 Z 反転のまま。
+// 2 ローダで座標変換の規約が分かれるので、どちらかを触るときは両方を確認すること。
 ufbx_load_opts MakeOpts()
 {
     ufbx_load_opts opts = {};
-    opts.target_axes = ufbx_axes_right_handed_y_up;
+    opts.target_axes = ufbx_axes_left_handed_y_up;
+    opts.handedness_conversion_axis = UFBX_MIRROR_AXIS_Z;
     opts.target_unit_meters = 1.0f;
     opts.space_conversion = UFBX_SPACE_CONVERSION_ADJUST_TRANSFORMS;
     opts.generate_missing_normals = true;
@@ -78,18 +86,15 @@ AssetID LoadMeshPart(LoadContext& lc, const ufbx_node* node, const ufbx_mesh* me
             ufbx_vec2 uv = mesh->vertex_uv.exists ? ufbx_get_vertex_vec2(&mesh->vertex_uv, corner)
                                                   : ufbx_vec2{ 0, 0 };
             MeshVertex mv;
-            mv.position = FlipZ(p);
-            mv.normal = FlipZ(n);
+            mv.position = ToXm(p);
+            mv.normal = ToXm(n);
             // FBX の UV 原点は左下 → D3D の左上へ V 反転
             mv.uv = { static_cast<float>(uv.x), 1.0f - static_cast<float>(uv.y) };
             vertices.push_back(mv);
             indices.push_back(static_cast<uint32_t>(indices.size()));
         }
     }
-    // Z 反転で裏返るため巻き順も反転 (i1 と i2 を入れ替え)
-    for (size_t i = 0; i + 2 < indices.size(); i += 3) {
-        std::swap(indices[i + 1], indices[i + 2]);
-    }
+    // 巻き順は ufbx が左手系変換時に反転済み (MakeOpts を参照)
     return lc.resources->meshes.Register(key, vertices, indices);
 }
 
@@ -138,10 +143,10 @@ void SetNodeTransform(GameObject obj, const ufbx_node* node)
         return;
     }
     const ufbx_transform& lt = node->local_transform;
-    // 右手系 → 左手系: 平行移動 z 反転、クォータニオン (-x,-y,z,w)、スケール不変 (glTF と同一)
+    // 左手系への変換は ufbx 側で完了済み (MakeOpts を参照) なのでそのまま写す
     t->position = { static_cast<float>(lt.translation.x), static_cast<float>(lt.translation.y),
-                    -static_cast<float>(lt.translation.z) };
-    t->rotation = { -static_cast<float>(lt.rotation.x), -static_cast<float>(lt.rotation.y),
+                    static_cast<float>(lt.translation.z) };
+    t->rotation = { static_cast<float>(lt.rotation.x), static_cast<float>(lt.rotation.y),
                     static_cast<float>(lt.rotation.z), static_cast<float>(lt.rotation.w) };
     t->scale = { static_cast<float>(lt.scale.x), static_cast<float>(lt.scale.y),
                  static_cast<float>(lt.scale.z) };

@@ -11,7 +11,8 @@ struct RenderResources;
 
 // FBX ローダ (M24、ufbx ベース。ModelLoader (glTF) の兄弟)。
 // ノード階層をエンティティ階層として再現し、メッシュのマテリアルパート毎に MeshRenderer を付ける。
-// 座標系: ufbx で右手系 Y-up に正規化 → glTF と同じ Z 反転 + 巻き順反転で左手系 (エンジン標準) へ。
+// 座標系: ufbx に左手系 (エンジン標準) Y-up への変換を任せる (target_axes + 巻き順の自動反転)。
+// glTF ローダは cgltf に同等機能が無いため手動 Z 反転のままで、規約が分かれている点に注意。
 // 現状はスタティックメッシュ + マテリアル + 階層に対応 (スキン/アニメは将来)。
 namespace FbxLoader {
 
