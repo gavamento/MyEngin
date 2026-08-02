@@ -5,10 +5,13 @@
 #include <filesystem>
 #include <vector>
 
+#include "Engine/Core/Components.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Engine/Audio/AudioClip.h"
 #include "Engine/Engine/Audio/AudioMixer.h"
+#include "Engine/Engine/Audio/AudioSourceSystem.h"
 #include "Engine/Engine/Audio/SoundAsset.h"
+#include "Engine/Engine/Audio/SpatialMath.h"
 #include "Engine/Engine/Audio/SynthCore.h"
 #include "Engine/Engine/Audio/VoicePolicy.h"
 
@@ -446,6 +449,156 @@ bool RunAudioSelfTest()
         check(presetsOk, "mixer: reverb preset names resolve back to their index");
         check(ReverbPresetIndex("no such preset") == 0,
               "mixer: an unknown preset name falls back to Default");
+    }
+
+    // ---- (15) 3D: 距離減衰カーブ + tick 基準の速度推定 (M45e) ----
+    {
+        // X3DAudio へ渡すカーブの形式的な要求: 先頭 0.0 / 末尾 1.0 / 距離は狭義単調増加
+        for (int rolloff = 0; rolloff <= 2; ++rolloff) {
+            AudioCurvePoint pts[kMaxRolloffCurvePoints];
+            const int n = BuildRolloffCurve(rolloff, 1.0f, 50.0f, pts, kMaxRolloffCurvePoints);
+            bool shapeOk = n >= 2 && pts[0].distance == 0.0f && pts[0].dsp == 1.0f
+                        && pts[n - 1].distance == 1.0f && pts[n - 1].dsp == 0.0f;
+            for (int i = 1; i < n; ++i) {
+                shapeOk = shapeOk && pts[i].distance > pts[i - 1].distance;
+                shapeOk = shapeOk && pts[i].dsp <= pts[i - 1].dsp + 1e-6f; // 単調非増加
+            }
+            check(shapeOk, "spatial: the rolloff curve is a valid descending 0..1 X3DAudio curve");
+        }
+        // 退化した入力でも X3DAudio の要求 (2 点以上・0.0/1.0 端点) を割らない
+        {
+            AudioCurvePoint tiny[2];
+            const int n2 = BuildRolloffCurve(0, 1.0f, 1.0f, tiny, 2); // min == max
+            check(n2 == 2 && tiny[0].distance == 0.0f && tiny[1].distance == 1.0f,
+                  "spatial: a degenerate min/max still produces a two-point curve");
+            AudioCurvePoint wide[kMaxRolloffCurvePoints];
+            const int n3 = BuildRolloffCurve(0, 0.0f, 1e6f, wide, kMaxRolloffCurvePoints);
+            bool inc = n3 >= 2;
+            for (int i = 1; i < n3; ++i) {
+                inc = inc && wide[i].distance > wide[i - 1].distance;
+            }
+            check(inc, "spatial: an extreme min/max ratio stays strictly increasing");
+        }
+
+        // 減衰値そのもの
+        check(RolloffGain(0, 2.0f, 40.0f, 1.0f) == 1.0f && RolloffGain(0, 2.0f, 40.0f, 2.0f) == 1.0f,
+              "spatial: no attenuation inside min distance");
+        check(RolloffGain(0, 2.0f, 40.0f, 41.0f) == 0.0f,
+              "spatial: silent beyond max distance (the curve's last point is 0)");
+        check(std::fabs(RolloffGain(0, 2.0f, 40.0f, 4.0f) - 0.5f) < 1e-5f,
+              "spatial: logarithmic rolloff halves at twice the min distance");
+        check(std::fabs(RolloffGain(2, 2.0f, 40.0f, 4.0f) - 0.25f) < 1e-5f,
+              "spatial: inverse rolloff is the square of the logarithmic one");
+        check(std::fabs(RolloffGain(1, 0.0f, 10.0f, 5.0f) - 0.5f) < 1e-3f,
+              "spatial: linear rolloff is half way at half the max distance");
+
+        // 速度推定: 立ち上がり / 0-tick フレーム / テレポート
+        constexpr float kDt = 1.0f / 60.0f;
+        VelocitySample vs;
+        UpdateVelocitySample(vs, AudioVec3{ 0.0f, 0.0f, 0.0f }, 100, kDt);
+        check(vs.valid && vs.velocity.x == 0.0f, "spatial: the first sample starts at rest");
+        UpdateVelocitySample(vs, AudioVec3{ 1.0f, 0.0f, 0.0f }, 101, kDt);
+        const float afterOne = vs.velocity.x;
+        check(afterOne > 0.0f, "spatial: velocity picks up once the tick advances");
+        UpdateVelocitySample(vs, AudioVec3{ 9.0f, 0.0f, 0.0f }, 101, kDt); // 同 tick
+        check(vs.velocity.x == afterOne && vs.position.x == 1.0f,
+              "spatial: a 0-tick frame leaves the estimate untouched");
+
+        // 等速運動なら真の速度へ収束する (1 tick で 0.05m = 3 m/s)
+        VelocitySample run;
+        UpdateVelocitySample(run, AudioVec3{}, 0, kDt);
+        for (uint64_t t = 1; t <= 60; ++t) {
+            UpdateVelocitySample(run, AudioVec3{ 0.05f * static_cast<float>(t), 0.0f, 0.0f }, t, kDt);
+        }
+        check(std::fabs(run.velocity.x - 3.0f) < 0.05f,
+              "spatial: constant motion converges to the true velocity");
+
+        // ★フレームレート非依存: 毎 tick 呼んでも 3 tick に 1 回まとめて呼んでも、
+        //   同じ tick 数を進めば同じ速度になる (これが tick 基準サンプリングの存在理由)
+        VelocitySample coarse;
+        UpdateVelocitySample(coarse, AudioVec3{}, 0, kDt);
+        for (uint64_t t = 3; t <= 60; t += 3) {
+            UpdateVelocitySample(coarse, AudioVec3{ 0.05f * static_cast<float>(t), 0.0f, 0.0f }, t,
+                                 kDt);
+        }
+        check(std::fabs(coarse.velocity.x - run.velocity.x) < 0.05f,
+              "spatial: multi-tick catch-up frames agree with per-tick sampling");
+
+        // テレポート (1 tick で 5m 超) は速度を積まない
+        VelocitySample tp;
+        UpdateVelocitySample(tp, AudioVec3{}, 0, kDt);
+        UpdateVelocitySample(tp, AudioVec3{ 100.0f, 0.0f, 0.0f }, 1, kDt);
+        check(tp.velocity.x == 0.0f && tp.position.x == 100.0f,
+              "spatial: a teleport is not turned into a huge velocity");
+        // tick の巻き戻し (シーン再ロード / リプレイ開始) は仕切り直し
+        VelocitySample rew = run;
+        UpdateVelocitySample(rew, AudioVec3{ 7.0f, 0.0f, 0.0f }, 1, kDt);
+        check(rew.velocity.x == 0.0f, "spatial: a rewound tick resets the estimate");
+    }
+
+    // ---- (16) AudioSource の上書き規則 (M45e) ----
+    {
+        const AudioSystem audio; // Init を呼ばない = デバイス非依存 (13 と同じ手)
+        SoundAsset asset;
+        asset.variations.push_back({ 42, {}, 1 });
+        asset.bus = "BGM";
+        asset.volume = 0.8f;
+        asset.pitch = 1.0f;
+        asset.loop = true;
+        asset.priority = 60;
+        asset.spatialBlend = 0.25f;
+        asset.minDistance = 3.0f;
+        asset.maxDistance = 70.0f;
+        asset.rolloff = SoundRolloff::Linear;
+        asset.dopplerScale = 2.0f;
+        asset.reverbSend = 0.6f;
+
+        AudioSourceComponent src; // 既定 = 何も上書きしない
+        PlayDesc d;
+        AudioSpatial sp;
+        MakeSourcePlay(asset, src, audio, 0, 0.0f, 0.0f, d, sp);
+        check(d.clip.value == 42 && d.bus == AudioSystem::kBusBgm && d.loop && d.priority == 60,
+              "source: defaults pass the asset's own settings through");
+        check(std::fabs(d.volume - 0.8f) < 1e-5f && std::fabs(d.pitch - 1.0f) < 1e-5f,
+              "source: unity volume/pitch multipliers leave the asset values alone");
+        check(sp.spatialBlend == 0.25f && sp.minDistance == 3.0f && sp.maxDistance == 70.0f
+                  && sp.rolloff == 1 && sp.dopplerScale == 2.0f && sp.reverbSend == 0.6f,
+              "source: 3D values come from the asset while overrideAttenuation is off");
+
+        // 2D 側の上書き
+        src.volume = 0.5f;
+        src.pitch = 2.0f;
+        src.loop = 0;
+        src.priority = 200;
+        std::strncpy(src.bus, "ui", sizeof(src.bus) - 1);
+        MakeSourcePlay(asset, src, audio, 0, 0.0f, 0.0f, d, sp);
+        check(std::fabs(d.volume - 0.4f) < 1e-5f, "source: volume multiplies the asset value");
+        check(std::fabs(d.pitch - 2.0f) < 1e-5f, "source: pitch multiplies the asset value");
+        check(!d.loop && d.priority == 200 && d.bus == AudioSystem::kBusUi,
+              "source: loop / priority / bus overrides win over the asset");
+        check(sp.pitch == d.pitch, "source: doppler rides on the final pitch ratio");
+
+        // 解決できないバス名はアセット既定に留まる (黙って無音のバスへ流さない)
+        AudioSourceComponent ghost;
+        std::strncpy(ghost.bus, "NoSuchBus", sizeof(ghost.bus) - 1);
+        MakeSourcePlay(asset, ghost, audio, 0, 0.0f, 0.0f, d, sp);
+        check(d.bus == AudioSystem::kBusBgm, "source: an unknown bus name keeps the asset's bus");
+
+        // mute と 3D 上書き
+        AudioSourceComponent over;
+        over.mute = 1;
+        over.overrideAttenuation = 1;
+        over.spatialBlend = 1.0f;
+        over.minDistance = 5.0f;
+        over.maxDistance = 25.0f;
+        over.rolloff = 2;
+        over.dopplerScale = 0.0f;
+        over.reverbSend = 0.1f;
+        MakeSourcePlay(asset, over, audio, 0, 0.0f, 0.0f, d, sp);
+        check(d.volume == 0.0f, "source: mute silences the voice");
+        check(sp.spatialBlend == 1.0f && sp.minDistance == 5.0f && sp.maxDistance == 25.0f
+                  && sp.rolloff == 2 && sp.dopplerScale == 0.0f && sp.reverbSend == 0.1f,
+              "source: overrideAttenuation switches every 3D value to the component");
     }
 
     // ※OGG デコードは selftest に fixture を持たない (エンコーダを同梱しないため)。

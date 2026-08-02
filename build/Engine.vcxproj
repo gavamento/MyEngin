@@ -50,6 +50,7 @@
     <ClCompile Include="..\src\Engine\Engine\Audio\AudioClip.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Audio\AudioMixer.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Audio\AudioSelfTest.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Audio\AudioSourceSystem.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Audio\AudioSystem.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Audio\SoundAsset.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Audio\StbVorbisImpl.cpp" />
@@ -148,8 +149,10 @@
     <ClInclude Include="..\src\Engine\Engine\Audio\AudioClip.h" />
     <ClInclude Include="..\src\Engine\Engine\Audio\AudioMixer.h" />
     <ClInclude Include="..\src\Engine\Engine\Audio\AudioSelfTest.h" />
+    <ClInclude Include="..\src\Engine\Engine\Audio\AudioSourceSystem.h" />
     <ClInclude Include="..\src\Engine\Engine\Audio\AudioSystem.h" />
     <ClInclude Include="..\src\Engine\Engine\Audio\SoundAsset.h" />
+    <ClInclude Include="..\src\Engine\Engine\Audio\SpatialMath.h" />
     <ClInclude Include="..\src\Engine\Engine\Audio\StbVorbis.h" />
     <ClInclude Include="..\src\Engine\Engine\Audio\SynthCore.h" />
     <ClInclude Include="..\src\Engine\Engine\Audio\VoicePolicy.h" />

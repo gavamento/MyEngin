@@ -13,6 +13,7 @@
 #include "Engine/Engine/HotReload/DllReloader.h"
 #include "Engine/Engine/HotReload/ReloadHub.h"
 #include "Engine/Engine/Audio/AudioMixer.h"
+#include "Engine/Engine/Audio/AudioSourceSystem.h"
 #include "Engine/Engine/Audio/AudioSystem.h"
 #include "Engine/Engine/Audio/SoundAsset.h"
 #include "Engine/Engine/Particles/ParticleSystem.h"
@@ -91,6 +92,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     UIRenderer uiRenderer;         // ゲーム内 UI (M21、backbuffer/GameView への重ね描画)
     VfxRenderer vfxRenderer;       // Sprite/Trail/TextMesh (M29c、メッシュ後・パーティクル前)
     AudioSystem audioSystem;       // XAudio2 (M19/M45、決定論レーン外の出力 sink)
+    AudioSourceSystem audioSources; // AudioSource/AudioListener → X3DAudio (M45e)
     SoundLibrary soundLibrary;     // .sound.json (M45c)。PCM 実体は AudioSystem 側
     MixerLibrary mixerLibrary;     // .mixer.json (M45d)。バスグラフの実体は AudioSystem 側
     std::vector<ScriptAudioEvent> audioQueue; // スクリプトの再生イベント (tick 内で積む)
@@ -545,6 +547,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                     // 採番列は「スクリプトの呼出順」だけで決まる必要があるので、
                     // 記録/検証の別なく **必ず** リセットする (サスペンド中でも進む値のため)
                     audioSystem.StopAll();
+                    audioSources.Reset(); // 旧シーンの音源キャッシュ (速度推定 / 再生済みフラグ)
                     audioHandleSeq = 0;
                     MYE_LOG_INFO("[scene] loaded: %s", WideToUtf8(full).c_str());
                 } else {
@@ -578,6 +581,10 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         //   WorldMatrix は tick 内 (フェーズ 4) で確定した「直前 tick の値」そのものになる。
         //   Runtime は vsync 無効で数千 fps 回るため、フレーム差分で速度を出すと値がノイズに
         //   なる — M45e のドップラーは tick 差分で速度を取る前提でここに置いている。
+        //   M45e: AudioSource/AudioListener を先に処理して定位を確定させ、その後に
+        //   voice 回収を回す (回収でスロットが空くのは次フレームからで良い)
+        audioSources.Update(scene.GetWorld(), audioSystem, soundLibrary, ctx.tickIndex,
+                            ctx.fixedDt, ctx.simulateScripts);
         audioSystem.Update();
         const double tRender = clock.Now();
 

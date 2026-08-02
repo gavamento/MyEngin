@@ -354,6 +354,31 @@ void RegisterBuiltinComponents()
         MYE_FIELD(EffectComponent, looping, Int32),
         MYE_FIELD(EffectComponent, autoDestroy, Int32),
     });
+
+    // M45e: 3D オーディオ。**出力 sink であり決定論レーン外なので kComponentNoHash** —
+    // WorldHasher.cpp が NoHash を丸ごとスキップするので、TypeId 末尾 append (=28/29) の
+    // これらを足しても既存シーンのハッシュは 1 バイトも変わらない (= golden 再記録不要)。
+    RegisterComponent<AudioListenerComponent>("AudioListener", {
+        MYE_FIELD(AudioListenerComponent, enabled, Int32),
+    }, kComponentNoHash);
+
+    RegisterComponent<AudioSourceComponent>("AudioSource", {
+        MYE_FIELD(AudioSourceComponent, sound, AssetRef),
+        MYE_FIELD(AudioSourceComponent, playOnAwake, Int32),
+        MYE_FIELD(AudioSourceComponent, loop, Int32),
+        MYE_FIELD_RANGE(AudioSourceComponent, volume, Float, 0.0f, 1.0f),
+        MYE_FIELD_RANGE(AudioSourceComponent, pitch, Float, 0.25f, 4.0f),
+        MYE_FIELD(AudioSourceComponent, mute, Int32),
+        MYE_FIELD(AudioSourceComponent, priority, Int32),
+        MYE_FIELD(AudioSourceComponent, bus, String64),
+        MYE_FIELD(AudioSourceComponent, overrideAttenuation, Int32),
+        MYE_FIELD_RANGE(AudioSourceComponent, spatialBlend, Float, 0.0f, 1.0f),
+        MYE_FIELD_RANGE(AudioSourceComponent, minDistance, Float, 0.01f, 1000.0f),
+        MYE_FIELD_RANGE(AudioSourceComponent, maxDistance, Float, 0.02f, 10000.0f),
+        MYE_FIELD(AudioSourceComponent, rolloff, Int32),
+        MYE_FIELD_RANGE(AudioSourceComponent, dopplerScale, Float, 0.0f, 5.0f),
+        MYE_FIELD_RANGE(AudioSourceComponent, reverbSend, Float, 0.0f, 1.0f),
+    }, kComponentNoHash);
 }
 
 } // namespace mye

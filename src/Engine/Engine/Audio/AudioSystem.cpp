@@ -1,10 +1,12 @@
 #include "Engine/Engine/Audio/AudioSystem.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <filesystem>
 
 #include <Windows.h>
+#include <x3daudio.h>
 #include <xaudio2.h>
 #include <xaudio2fx.h>
 
@@ -50,6 +52,42 @@ static_assert(sizeof(kReverbPresets) / sizeof(kReverbPresets[0]) == kReverbPrese
 // メーターの減衰速度 (フルスケール/秒)。アタックは即時、リリースだけこの速度で落とす
 constexpr float kMeterFallPerSec = 1.6f;
 constexpr float kMeterHoldFallPerSec = 0.35f;
+
+// ---- 3D 定位 (M45e) ----
+// AudioSystem.h は x3daudio.h を include できない (Windows.h を引き込んでしまう) ので
+// ハンドルを生バイトで持っている。SDK 側の定義とズレたらここで落とす
+static_assert(AudioSystem::kSpatialHandleBytes == X3DAUDIO_HANDLE_BYTESIZE,
+              "X3DAUDIO_HANDLE size changed — update AudioSystem::kSpatialHandleBytes");
+static_assert(AudioSystem::kSpatialHandleBytes % sizeof(uint32_t) == 0,
+              "x3dHandle_ is stored as uint32_t[] — the byte size must divide evenly");
+
+// ステレオエミッタのチャンネル方位 (前方向から時計回りのラジアン)。左 = 270°、右 = 90°
+const float kStereoAzimuths[2] = { 3.0f * X3DAUDIO_PI / 2.0f, X3DAUDIO_PI / 2.0f };
+// マルチチャンネルエミッタの「チャンネル間の広がり」(ワールド単位)
+constexpr float kEmitterChannelRadius = 1.0f;
+
+// GetChannelMask が 0 を返す環境 (仮想 / ループバックデバイス) 用のフォールバック
+DWORD DefaultChannelMask(uint32_t channels)
+{
+    switch (channels) {
+    case 1: return SPEAKER_MONO;
+    case 2: return SPEAKER_STEREO;
+    case 4: return SPEAKER_QUAD;
+    case 6: return SPEAKER_5POINT1;
+    case 8: return SPEAKER_7POINT1;
+    default: return 0;
+    }
+}
+
+float Lerp(float a, float b, float t)
+{
+    return a + (b - a) * t;
+}
+
+X3DAUDIO_VECTOR ToX3D(const AudioVec3& v)
+{
+    return X3DAUDIO_VECTOR{ v.x, v.y, v.z };
+}
 
 float ClampVolume(float v)
 {
@@ -132,15 +170,48 @@ bool AudioSystem::Init(bool enabled)
     }
 
     voices_.resize(static_cast<size_t>(kMaxVoices));
+    InitSpatial(); // 失敗しても 2D 経路で動き続ける (オーディオ全体は落とさない)
     MYE_LOG_INFO("[audio] XAudio2 ready (%u ch @ %u Hz, %d voices, %d buses)", masterChannels_,
                  masterSampleRate_, kMaxVoices, BusCount());
     return true;
+}
+
+// X3DAudio の初期化。**x3daudio.lib は Win10 SDK に存在せず、xaudio2.lib が
+// X3DAudioInitialize / X3DAudioCalculate をエクスポートしている** (ファイル冒頭の注記参照)。
+void AudioSystem::InitSpatial()
+{
+    x3dReady_ = false;
+    if (master_ == nullptr) {
+        return;
+    }
+    // XAUDIO2_DEVICE_DETAILS は 2.9 で廃止。スピーカー構成は GetChannelMask で取る
+    DWORD mask = 0;
+    if (FAILED(master_->GetChannelMask(&mask)) || mask == 0) {
+        // 仮想 / ループバックデバイスは 0 を返すことがある → チャンネル数から推定する
+        mask = DefaultChannelMask(masterChannels_);
+    }
+    if (mask == 0) {
+        MYE_LOG_WARN("[audio] speaker mask unavailable (%u ch) — 3D disabled, 2D playback continues",
+                     masterChannels_);
+        return;
+    }
+    // 世界単位はメートルなので既定の音速 (343.5 m/s) がそのまま正しい
+    if (FAILED(X3DAudioInitialize(mask, X3DAUDIO_SPEED_OF_SOUND,
+                                  reinterpret_cast<BYTE*>(x3dHandle_)))) {
+        MYE_LOG_WARN("[audio] X3DAudioInitialize failed — 3D disabled, 2D playback continues");
+        return;
+    }
+    x3dReady_ = true;
+    MYE_LOG_INFO("[audio] X3DAudio ready (speaker mask 0x%08lX)", static_cast<unsigned long>(mask));
 }
 
 void AudioSystem::Shutdown()
 {
     DestroyAllSourceVoices();
     voices_.clear();
+    x3dReady_ = false;
+    defaultMatrixValid_[0] = false;
+    defaultMatrixValid_[1] = false;
     DestroyBusGraph();
     clips_.clear();
     named_.clear();
@@ -838,12 +909,194 @@ bool AudioSystem::EnsureSourceVoice(Voice& v, uint16_t channels, uint32_t sample
     v.sampleRate = sampleRate;
     v.bus = bus;
 
-    // ★リバーブ送りは既定行列だと「素通し」になる。M45e が X3DAudio の ReverbLevel を
-    //   書き込むまでは全部ドライで鳴らしたいので、生成直後にゼロで潰しておく
-    //   (バス毎のリバーブ送りは M45d でサブミックス側に入っている)。
+    // ★XAudio2 が張った既定行列を **書き換える前に** 読み出して控える (M45e)。
+    //   spatialBlend の 2D 側と ResetVoiceTo2D はこれを使う — 自前で書き起こすと
+    //   5.1/7.1 環境で従来と違う鳴り方になるため、推測せず実物を控えるのが要点。
+    //   ここを逃すと以降は 3D 行列で上書き済みの値しか読めない
+    if (channels >= 1 && channels <= 2) {
+        const size_t di = static_cast<size_t>(channels) - 1;
+        if (!defaultMatrixValid_[di]) {
+            sv->GetOutputMatrix(buses_[static_cast<size_t>(bus)].voice, channels, masterChannels_,
+                                defaultMatrix_[di]);
+            defaultMatrixValid_[di] = true;
+        }
+    }
+
+    // ★リバーブ送りは既定行列だと「素通し」になる。X3DAudio の ReverbLevel (M45e) か
+    //   バス毎の送り (M45d、サブミックス側の別経路) で明示的に開けるまでは全部ドライに
+    //   したいので、生成直後にゼロで潰しておく。
     if (reverbVoice_ != nullptr) {
         v.voice->SetOutputMatrix(reverbVoice_, channels, kReverbChannels, kZeroMatrix);
     }
+    return true;
+}
+
+const float* AudioSystem::DefaultMatrixFor(Voice& v)
+{
+    if (v.channels < 1 || v.channels > 2) {
+        return nullptr; // 3D に載せないチャンネル構成 (既定行列を触っていないので復元も不要)
+    }
+    const size_t di = static_cast<size_t>(v.channels) - 1;
+    return defaultMatrixValid_[di] ? defaultMatrix_[di] : nullptr;
+}
+
+// スロットを再利用するときに前の音の定位を必ず消す。
+// **これを忘れると、3D で使ったスロットに 2D の音が乗った瞬間に減衰と LPF を引き継ぐ**
+// (voice はフォーマットとバスが一致する限り作り直されないため)。
+void AudioSystem::ResetVoiceTo2D(Voice& v)
+{
+    if (v.voice == nullptr || !ValidBus(v.bus)) {
+        return;
+    }
+    IXAudio2SubmixVoice* dry = buses_[static_cast<size_t>(v.bus)].voice;
+    if (const float* def = DefaultMatrixFor(v)) {
+        v.voice->SetOutputMatrix(dry, v.channels, masterChannels_, def);
+    }
+    if (reverbVoice_ != nullptr) {
+        v.voice->SetOutputMatrix(reverbVoice_, v.channels, kReverbChannels, kZeroMatrix);
+    }
+    // フィルタも開け切る (前の音の LPF が残ると籠もったまま鳴る)
+    XAUDIO2_FILTER_PARAMETERS pass = { LowPassFilter, XAUDIO2_MAX_FILTER_FREQUENCY, 1.0f };
+    v.voice->SetOutputFilterParameters(dry, &pass);
+    if (reverbVoice_ != nullptr) {
+        v.voice->SetOutputFilterParameters(reverbVoice_, &pass);
+    }
+}
+
+// X3DAudio で 1 voice ぶんの定位を計算して反映する。
+// spatialBlend は「XAudio2 の既定行列 (2D)」と「X3DAudio の行列 (3D)」の線形補間で表現し、
+// ドップラー / LPF / リバーブ送りも同じ係数で恒等値側へ寄せる — blend=0 が
+// **従来の 2D 再生と完全に同一**になることが重要 (spatialBlend 既定 0 の .sound.json が
+// M45e の導入で鳴り方を変えてはいけない)。
+void AudioSystem::ApplySpatialToVoice(Voice& v, const AudioSpatial& s)
+{
+    if (v.voice == nullptr || !ValidBus(v.bus)) {
+        return;
+    }
+    const uint32_t srcCh = v.channels;
+    // マルチチャンネルエミッタは pChannelAzimuths が要る。デコーダが返すのは 1ch / 2ch だけ
+    // (stb_vorbis は STB_VORBIS_MAX_CHANNELS 2) なので、それ以外は 3D を諦めて素通しにする
+    // — 定位より「音が消えないこと」を優先する
+    if (!x3dReady_ || srcCh < 1 || srcCh > 2) {
+        ResetVoiceTo2D(v);
+        return;
+    }
+    const uint32_t dstCh = masterChannels_;
+    const float blend = s.spatialBlend < 0.0f ? 0.0f : (s.spatialBlend > 1.0f ? 1.0f : s.spatialBlend);
+
+    X3DAUDIO_LISTENER listener = {};
+    listener.Position = ToX3D(listener_.position);
+    listener.Velocity = ToX3D(listener_.velocity);
+    listener.OrientFront = ToX3D(listener_.forward);
+    listener.OrientTop = ToX3D(listener_.up);
+    listener.pCone = nullptr;
+
+    // 距離減衰カーブ (正規化 0..1)。CurveDistanceScaler = maxDistance なので、
+    // 正規化距離 1.0 がちょうど maxDistance に対応する
+    AudioCurvePoint pts[kMaxRolloffCurvePoints];
+    const int pointCount =
+        BuildRolloffCurve(s.rolloff, s.minDistance, s.maxDistance, pts, kMaxRolloffCurvePoints);
+    X3DAUDIO_DISTANCE_CURVE_POINT curvePoints[kMaxRolloffCurvePoints];
+    for (int i = 0; i < pointCount; ++i) {
+        curvePoints[i].Distance = pts[i].distance;
+        curvePoints[i].DSPSetting = pts[i].dsp;
+    }
+    X3DAUDIO_DISTANCE_CURVE volumeCurve = { curvePoints, static_cast<UINT32>(pointCount) };
+
+    X3DAUDIO_EMITTER emitter = {};
+    emitter.pCone = nullptr;
+    emitter.OrientFront = X3DAUDIO_VECTOR{ 0.0f, 0.0f, 1.0f }; // 左手系 +Z が前
+    emitter.OrientTop = X3DAUDIO_VECTOR{ 0.0f, 1.0f, 0.0f };
+    emitter.Position = ToX3D(s.position);
+    emitter.Velocity = ToX3D(s.velocity);
+    emitter.InnerRadius = 0.0f;
+    emitter.InnerRadiusAngle = 0.0f;
+    emitter.ChannelCount = srcCh;
+    emitter.ChannelRadius = kEmitterChannelRadius;
+    // 単一チャンネルでは参照されないが、null を渡さない方が診断時に紛れが無い
+    emitter.pChannelAzimuths = const_cast<float*>(kStereoAzimuths);
+    emitter.pVolumeCurve = pointCount >= 2 ? &volumeCurve : nullptr;
+    emitter.pLFECurve = nullptr;       // 既定 (逆二乗) のまま
+    emitter.pLPFDirectCurve = nullptr; // 既定 [0,1]→[1,0.75]
+    emitter.pLPFReverbCurve = nullptr;
+    emitter.pReverbCurve = nullptr;
+    emitter.CurveDistanceScaler = s.maxDistance > 1e-4f ? s.maxDistance : 1e-4f;
+    emitter.DopplerScaler = s.dopplerScale > 0.0f ? s.dopplerScale : 0.0f;
+
+    X3DAUDIO_DSP_SETTINGS dsp = {};
+    dsp.pMatrixCoefficients = matrixScratch_;
+    dsp.pDelayTimes = delayScratch_;
+    dsp.SrcChannelCount = srcCh;
+    dsp.DstChannelCount = dstCh;
+
+    UINT32 flags = X3DAUDIO_CALCULATE_MATRIX | X3DAUDIO_CALCULATE_DOPPLER
+                 | X3DAUDIO_CALCULATE_LPF_DIRECT;
+    if (reverbVoice_ != nullptr) {
+        flags |= X3DAUDIO_CALCULATE_REVERB | X3DAUDIO_CALCULATE_LPF_REVERB;
+    }
+    X3DAudioCalculate(reinterpret_cast<const BYTE*>(x3dHandle_), &listener, &emitter, flags, &dsp);
+
+    IXAudio2SubmixVoice* dry = buses_[static_cast<size_t>(v.bus)].voice;
+
+    // ---- ドライ行列 (X3DAudio と XAudio2 は同じ [srcCount * D + S] レイアウト) ----
+    const float* def2D = DefaultMatrixFor(v);
+    if (def2D == nullptr) {
+        def2D = matrixScratch_; // 既定行列が取れていなければ補間を恒等にする (= 純 3D)
+    }
+    const size_t count = static_cast<size_t>(srcCh) * dstCh;
+    for (size_t i = 0; i < count; ++i) {
+        blendScratch_[i] = Lerp(def2D[i], matrixScratch_[i], blend);
+    }
+    v.voice->SetOutputMatrix(dry, srcCh, dstCh, blendScratch_);
+
+    // ---- リバーブ送り ----
+    // X3DAudio がウェット側に返すのはスカラー 1 個 (リバーブ APO が mono/stereo 入力に
+    // 限られるため)。mono は両 ch へ、stereo は同 index へ 1:1 で送る — 全要素へ複製すると
+    // ステレオ音源だけリバーブが 2 倍のエネルギーで入ってしまう
+    if (reverbVoice_ != nullptr) {
+        const float level = s.reverbSend * Lerp(1.0f, dsp.ReverbLevel, blend);
+        float wet[2 * kReverbChannels] = {};
+        for (uint32_t d = 0; d < kReverbChannels; ++d) {
+            for (uint32_t sc = 0; sc < srcCh; ++sc) {
+                const bool feed = (srcCh == 1) || (sc == d);
+                wet[srcCh * d + sc] = feed ? level : 0.0f;
+            }
+        }
+        v.voice->SetOutputMatrix(reverbVoice_, srcCh, kReverbChannels, wet);
+    }
+
+    // ---- LPF (経路別。voice 全体の SetFilterParameters では per-send を表現できない) ----
+    // 係数 1.0 = 素通し。2*sin(pi/6 * coeff) が [0,1] → [0,1] の正規化周波数に対応する
+    auto applyLpf = [&](IXAudio2Voice* dst, float coefficient) {
+        const float c = Lerp(1.0f, coefficient, blend);
+        float freq = 2.0f * std::sin(X3DAUDIO_PI / 6.0f * c);
+        if (!(freq > 0.0f)) { // NaN もここで閉じ切る側に落ちる
+            freq = 0.0f;
+        } else if (freq > XAUDIO2_MAX_FILTER_FREQUENCY) {
+            freq = XAUDIO2_MAX_FILTER_FREQUENCY; // sin の丸めで 1.0 を僅かに超えることがある
+        }
+        XAUDIO2_FILTER_PARAMETERS p = { LowPassFilter, freq, 1.0f };
+        v.voice->SetOutputFilterParameters(dst, &p);
+    };
+    applyLpf(dry, dsp.LPFDirectCoefficient);
+    if (reverbVoice_ != nullptr) {
+        applyLpf(reverbVoice_, dsp.LPFReverbCoefficient);
+    }
+
+    // ---- ドップラー ----
+    v.voice->SetFrequencyRatio(ClampPitch(s.pitch * Lerp(1.0f, dsp.DopplerFactor, blend)));
+}
+
+bool AudioSystem::ApplyVoiceSpatial(AudioHandle h, const AudioSpatial& s)
+{
+    if (!h.Valid() || h.index >= voices_.size()) {
+        return false;
+    }
+    Voice& v = voices_[h.index];
+    if (v.generation != h.generation || !v.active || v.voice == nullptr) {
+        return false; // すでに別の音に再利用されている / 鳴り終わっている
+    }
+    ApplySpatialToVoice(v, s);
     return true;
 }
 
@@ -886,6 +1139,15 @@ AudioHandle AudioSystem::Play(const PlayDesc& desc)
 
     v.voice->SetVolume(ClampVolume(desc.volume));
     v.voice->SetFrequencyRatio(ClampPitch(desc.pitch));
+    // ★定位は Start() の **前** に確定させる (再生開始の 1 quantum が無定位で鳴るのを防ぐ)。
+    //   2D の音でも必ず ResetVoiceTo2D を通す — スロットは使い回されるので、前に 3D で
+    //   鳴らした音の減衰行列と LPF がそのまま残っているため。SetFrequencyRatio より後に
+    //   置くのは、3D 側がドップラーを載せた比で上書きするから
+    if (desc.spatial != nullptr) {
+        ApplySpatialToVoice(v, *desc.spatial);
+    } else {
+        ResetVoiceTo2D(v);
+    }
     if (FAILED(v.voice->SubmitSourceBuffer(&buf)) || FAILED(v.voice->Start(0))) {
         StopSlot(v);
         return {};

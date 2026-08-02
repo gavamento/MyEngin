@@ -706,12 +706,6 @@ void InstantiateAssetAtPath(EngineContext& ctx, Selection& selection, UndoStack&
     const std::string u = WideToUtf8(path);
     const std::string lu = LowerAscii(u); // 拡張子判定は大文字小文字を無視する
     const AssetType dropType = AssetDatabase::ClassifyPath(path);
-    // M45c: 音の配置は AudioSource コンポーネント (M45e) が入るまで実体を作れない。
-    // 分岐だけ先に置いて「無反応でどこにも記録が残らない」状態を避ける
-    if (dropType == AssetType::Sound || dropType == AssetType::Audio) {
-        MYE_LOG_WARN("audio drop is not placeable yet (AudioSource lands in M45e): %s", u.c_str());
-        return;
-    }
     undo.BeginRecord("Place Asset", selection);
     uint64_t rootFid = 0;
     if (EndsWith(lu, ".prefab.json")) {
@@ -758,9 +752,53 @@ void InstantiateAssetAtPath(EngineContext& ctx, Selection& selection, UndoStack&
             }
         }
         rootFid = ctx.scene->EnsureFileId(o.Id());
+    } else if (dropType == AssetType::Sound || dropType == AssetType::Audio) {
+        // M45e: 音 → AudioSource 付きオブジェクト (be8e158 の「画像 → SpriteRenderer」と同型)。
+        // AudioSource が参照するのは **.sound.json (SoundAsset)** であってクリップではないので、
+        // 生の .wav/.ogg を落とされたら隣に .sound.json を 1 本作ってそれを指す —
+        // 「ドロップしたのに何も鳴らない AudioSource」を作らないため
+        uint64_t soundHash = 0;
+        if (ctx.sounds != nullptr) {
+            if (dropType == AssetType::Sound) {
+                soundHash = ctx.sounds->LoadFromFile(path); // 未登録なら登録 (冪等)
+            } else if (ctx.audio != nullptr) {
+                const std::wstring dir = fs::path(path).parent_path().wstring();
+                const std::string stem = WideToUtf8(fs::path(path).stem().wstring());
+                const std::wstring created = CreateSoundAsset(ctx, dir, stem);
+                const AssetID clip = ctx.audio->LoadClipFile(path);
+                if (!created.empty() && !clip.IsNull()) {
+                    const uint64_t h = SoundLibrary::HashForPath(created);
+                    if (SoundAsset* s = ctx.sounds->GetMutable(h)) {
+                        s->variations[0].clip = clip.value;
+                        // 置いた瞬間から 3D で鳴ってほしいので既定を 3D にする
+                        // (.sound.json 単体の既定は 2D = 従来の再生と同じ、を保つ)
+                        s->spatialBlend = 1.0f;
+                        ctx.sounds->SaveToFile(h);
+                        soundHash = h;
+                    }
+                }
+            }
+        }
+        const std::string stem = WideToUtf8(fs::path(path).stem().stem().wstring());
+        GameObject o = ctx.scene->CreateGameObjectTracked(stem.empty() ? "Audio Source"
+                                                                       : stem.c_str());
+        auto* as = o.AddComponent<AudioSourceComponent>();
+        as->sound = AssetID{ soundHash };
+        ctx.scene->GetWorld().ApplyStructuralChanges();
+        if (parentFileId != 0) {
+            GameObject par = ctx.scene->FindByFileId(parentFileId);
+            if (par) {
+                o.SetParent(par);
+                ctx.scene->GetWorld().ApplyStructuralChanges();
+            }
+        }
+        rootFid = ctx.scene->EnsureFileId(o.Id());
+        if (soundHash == 0) {
+            MYE_LOG_WARN("placed AudioSource but could not resolve a sound asset: %s", u.c_str());
+        }
     } else {
         undo.CancelRecord();
-        MYE_LOG_WARN("cannot place asset (drag a prefab, model, or image): %s", u.c_str());
+        MYE_LOG_WARN("cannot place asset (drag a prefab, model, image, or sound): %s", u.c_str());
         return;
     }
     if (rootFid == 0) {

@@ -500,12 +500,23 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
                     ShellExecuteW(nullptr, L"open", path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
                 }
             } else if (isSound) {
-                // .sound.json を試聴 (先頭バリエーション・揺らぎ無し)。
-                // AudioSource への割当は M45e (コンポーネントがまだ無い)
+                // M45e: AudioSource を選択中ならそれに割り当て、そうでなければ試聴する
+                // (マテリアル/アニメの「選択中の該当コンポーネントに割り当てる」流儀と同じ)
                 if (ctx.sounds && ctx.audio) {
                     const uint64_t hash = ctx.sounds->LoadFromFile(path); // 未登録なら登録 (冪等)
-                    if (const SoundAsset* s = ctx.sounds->Get(hash)) {
-                        PreviewSound(*ctx.audio, *s);
+                    GameObject sel = ctx.scene->FindByFileId(selection.primary);
+                    AudioSourceComponent* as = nullptr;
+                    if (hash != 0 && sel) {
+                        as = ctx.scene->GetWorld().GetComponent<AudioSourceComponent>(sel.Id());
+                    }
+                    if (as != nullptr) {
+                        undo.BeginRecord("Assign Sound", selection);
+                        undo.CaptureBefore(*ctx.scene, selection.primary);
+                        as->sound = AssetID{ hash };
+                        undo.CaptureAfter(*ctx.scene, selection.primary);
+                        undo.EndRecord(selection);
+                    } else if (const SoundAsset* s = ctx.sounds->Get(hash)) {
+                        PreviewSound(*ctx.audio, *s); // 先頭バリエーション・揺らぎ無し
                     }
                 }
             } else if (isMixer) {

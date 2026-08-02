@@ -1161,7 +1161,7 @@ void InspectorWindow::DrawSoundInspector(EngineContext& ctx, const std::wstring&
     ImGui::DragInt("max instances", &soundEdit_.maxInstances, 0.1f, 0, 64);
     ImGui::TextDisabled("0 = unlimited. Higher priority wins when voices are stolen.");
 
-    // ---- 3D (M45e で実際に効く) ----
+    // ---- 3D (M45e: X3DAudio が実際にこの値で定位する) ----
     ImGui::SeparatorText("3D");
     ImGui::SliderFloat("spatial blend", &soundEdit_.spatialBlend, 0.0f, 1.0f);
     ImGui::DragFloat("min distance", &soundEdit_.minDistance, 0.05f, 0.01f, 1000.0f);
@@ -1176,7 +1176,8 @@ void InspectorWindow::DrawSoundInspector(EngineContext& ctx, const std::wstring&
     }
     ImGui::SliderFloat("doppler", &soundEdit_.dopplerScale, 0.0f, 5.0f);
     ImGui::SliderFloat("reverb send", &soundEdit_.reverbSend, 0.0f, 1.0f);
-    ImGui::TextDisabled("3D settings take effect in M45e (X3DAudio).");
+    ImGui::TextDisabled("spatial blend 0 = 2D. Sound is silent beyond max distance.");
+    ImGui::TextDisabled("AudioSource can override these (overrideAttenuation).");
 
     // ---- ループ点 (M45f 予約) ----
     ImGui::SeparatorText("Loop points (frames)");

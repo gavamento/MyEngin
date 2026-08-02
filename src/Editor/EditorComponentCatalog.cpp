@@ -40,6 +40,9 @@ const std::unordered_map<std::string, ComponentUiInfo>& Table()
         { "TrailRenderer", { ICON_FA_WIND, "VFX" } },
         { "TextMesh", { ICON_FA_FONT, "VFX" } },
         { "Effect", { ICON_FA_WAND_MAGIC_SPARKLES, "VFX" } },
+        // Audio
+        { "AudioSource", { ICON_FA_VOLUME_HIGH, "Audio" } },
+        { "AudioListener", { ICON_FA_HEADPHONES, "Audio" } },
         // Environment
         { "Skybox", { ICON_FA_CLOUD, "Environment" } },
         { "Fog", { ICON_FA_SMOG, "Environment" } },
@@ -62,9 +65,9 @@ const ComponentUiInfo& ComponentUiFor(const char* name)
 
 const std::vector<const char*>& ComponentUiCategories()
 {
-    static const std::vector<const char*> cats = { "General", "Rendering",   "Physics",
-                                                   "Animation", "VFX",       "Environment",
-                                                   "UI",        "Scripts" };
+    static const std::vector<const char*> cats = { "General",   "Rendering", "Physics",
+                                                   "Animation", "VFX",       "Audio",
+                                                   "Environment", "UI",      "Scripts" };
     return cats;
 }
 

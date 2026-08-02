@@ -6,6 +6,7 @@
 
 #include "Engine/Core/EntityID.h"
 #include "Engine/Engine/Audio/AudioClip.h"
+#include "Engine/Engine/Audio/SpatialMath.h"
 #include "Engine/Engine/Audio/VoicePolicy.h"
 
 // XAudio2 インターフェイスは .cpp でのみ完全定義を使う (前方宣言でヘッダを軽く保つ)
@@ -39,7 +40,29 @@ struct AudioHandle {
     }
 };
 
-// 1 回の再生指定。3D 用フィールドは M45e で足す (ここでは 2D 部分だけ)
+// 1 音源ぶんの 3D パラメータ (M45e)。ワールド座標はエンジンと同じ左手系・メートル単位で、
+// X3DAudio も左手系なので**変換は不要**。**決定論レーンの外**
+struct AudioSpatial {
+    AudioVec3 position;
+    AudioVec3 velocity;        // m/s。ドップラー用 (tick 差分で推定する。SpatialMath.h 参照)
+    float spatialBlend = 1.0f; // 0 = 2D (定位も減衰もドップラーも無し) / 1 = フル 3D
+    float minDistance = 1.0f;
+    float maxDistance = 50.0f; // これ以遠は無音 (SpatialMath.h の BuildRolloffCurve の規約)
+    int rolloff = 0;           // SoundRolloff と同じ並び (0=Log 1=Linear 2=Inverse)
+    float dopplerScale = 1.0f; // 0 = ドップラー無効
+    float reverbSend = 0.0f;   // リバーブバスへの送り量。X3DAudio の ReverbLevel に乗る
+    float pitch = 1.0f;        // ドップラーと合成する基準ピッチ (アセット/コンポーネント由来)
+};
+
+// リスナー (3D 定位の基準点)。向きは正規化済み・直交していること
+struct AudioListenerState {
+    AudioVec3 position;
+    AudioVec3 forward = { 0.0f, 0.0f, 1.0f }; // +Z が前 (エンジンの規約)
+    AudioVec3 up = { 0.0f, 1.0f, 0.0f };
+    AudioVec3 velocity;
+};
+
+// 1 回の再生指定
 struct PlayDesc {
     AssetID clip = {};
     int bus = 2;             // 既定バス構成での SE (AudioSystem::kBusSe)
@@ -47,6 +70,9 @@ struct PlayDesc {
     float pitch = 1.0f;      // 周波数比。kMaxFreqRatio で飽和する
     bool loop = false;
     int32_t priority = 128;  // **大きいほど重要** (VoicePolicy.h と同じ規約)
+    // 3D 定位 (M45e)。非 null なら Start() の **前** に定位を適用する — 再生開始の
+    // 1 quantum ぶんが無定位で鳴るのを防ぐため。**Play() の呼び出し中だけ有効な借用ポインタ**
+    const AudioSpatial* spatial = nullptr;
 };
 
 // バス 1 本のランタイム状態 (.mixer.json の MixerBus を「親名 → index」まで解決した形)。
@@ -83,6 +109,10 @@ public:
     static constexpr float kMaxFreqRatio = 4.0f;
     // メーターが扱う最大チャンネル数 (7.1 まで)
     static constexpr int kMaxBusChannels = 8;
+    // X3DAUDIO_HANDLE のバイト数 (x3daudio.h の X3DAUDIO_HANDLE_BYTESIZE)。
+    // このヘッダへ x3daudio.h (と Windows.h) を引き込まないため生バイトで持つ。
+    // SDK 定義とのズレは AudioSystem.cpp の static_assert で検出する
+    static constexpr uint32_t kSpatialHandleBytes = 20;
 
     AudioSystem(); // 既定バス構成をデータとして持つ (デバイスが無くても FindBus が働く)
 
@@ -113,6 +143,17 @@ public:
     void SetVoicePitch(AudioHandle h, float pitch);
     void StopAll();
     int ActiveVoiceCount() const;
+
+    // ---- 3D 定位 (M45e) ----
+    // X3DAudio が使えるか。デバイスのチャンネルマスクが取れない環境 (仮想/ループバック) では
+    // false になり、**オーディオ全体は落とさず 2D 経路のまま**動き続ける
+    bool SpatialReady() const { return x3dReady_; }
+    // リスナーを差し替える。AudioSourceSystem がフレーム毎に 1 回だけ呼ぶ
+    void SetListener(const AudioListenerState& listener) { listener_ = listener; }
+    const AudioListenerState& Listener() const { return listener_; }
+    // 再生中の voice へ定位を反映する。ハンドルが古ければ何もしない (false)。
+    // spatialBlend の分だけ「XAudio2 の既定行列 (= 2D)」と 3D 行列を線形補間する
+    bool ApplyVoiceSpatial(AudioHandle h, const AudioSpatial& s);
 
     // ---- バス / ミキサー (M45d) ----
     int BusCount() const { return static_cast<int>(buses_.size()); }
@@ -212,6 +253,17 @@ private:
     void StopSlot(Voice& v);
     int AcquireSlot(int32_t priority);
 
+    // ---- 3D 定位 (M45e) ----
+    void InitSpatial(); // X3DAudioInitialize。失敗しても Init 全体は成功のまま (2D で動く)
+    void ApplySpatialToVoice(Voice& v, const AudioSpatial& s);
+    // voice をスロット再利用したときに前の音の定位が残らないよう既定状態へ戻す。
+    // **これを忘れると、3D で使ったスロットに 2D の音が乗った瞬間に減衰が引き継がれる**
+    void ResetVoiceTo2D(Voice& v);
+    // XAudio2 が voice 生成時に張る既定行列 (= 2D の素通し)。自前で書き起こすと
+    // 5.1/7.1 環境で今までと違う鳴り方になるので、**生成直後に読み出して控える**。
+    // src チャンネル数だけが変数 (送り先バスは全て masterChannels_ 幅で固定)
+    const float* DefaultMatrixFor(Voice& v);
+
     IXAudio2* xaudio_ = nullptr;
     IXAudio2MasteringVoice* master_ = nullptr;
     IXAudio2SubmixVoice* reverbVoice_ = nullptr; // 全ソースボイスの 2 本目の send 先
@@ -236,6 +288,22 @@ private:
     uint64_t playSeq_ = 0; // 再生開始の通し番号 (スティールの「古さ」判定用)
     bool suspended_ = false;
     bool comInit_ = false;
+
+    // ---- 3D 定位 (M45e) ----
+    // X3DAUDIO_HANDLE は BYTE[20]。**uint32_t 配列で持つ**のは、alignas(4) を付けると
+    // C4324 (アラインメント指定子による構造体パディング) が出るため — uint32_t なら
+    // 4 バイト境界が自然に保証され、警告も出ない
+    uint32_t x3dHandle_[kSpatialHandleBytes / 4] = {};
+    bool x3dReady_ = false;
+    AudioListenerState listener_;
+    // スクラッチ (voice 毎フレームの確保を避ける)。X3DAudio は最大 8ch を想定
+    float matrixScratch_[kMaxBusChannels * kMaxBusChannels] = {};
+    float blendScratch_[kMaxBusChannels * kMaxBusChannels] = {};
+    float delayScratch_[kMaxBusChannels] = {};
+    // src チャンネル数 (1 / 2) 毎の既定行列キャッシュ。masterChannels_ は Init 後不変なので
+    // 送り先による差は出ない
+    float defaultMatrix_[2][kMaxBusChannels * kMaxBusChannels] = {};
+    bool defaultMatrixValid_[2] = { false, false };
 };
 
 } // namespace mye

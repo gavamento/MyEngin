@@ -13,6 +13,8 @@
 #include "Engine/Platform/PathUtil.h"
 #include "Engine/Core/World.h"
 #include "Engine/Engine/AssetDatabase.h"
+#include "Engine/Engine/Audio/AudioSourceSystem.h"
+#include "Engine/Engine/Audio/SoundAsset.h"
 #include "Engine/Engine/GameObject.h"
 #include "Engine/Engine/Physics/Shapes.h"
 #include "Engine/Engine/RenderSystem.h"
@@ -295,6 +297,63 @@ void SceneViewWindow::BuildOverlays(EngineContext& ctx, Selection& selection)
                 lines_.AddLine({ p.x + hx, p.y - hy, p.z }, { p.x + hx, p.y + hy, p.z }, kVfx);
                 lines_.AddLine({ p.x + hx, p.y + hy, p.z }, { p.x - hx, p.y + hy, p.z }, kVfx);
                 lines_.AddLine({ p.x - hx, p.y + hy, p.z }, { p.x - hx, p.y - hy, p.z }, kVfx);
+            }
+        });
+
+        // オーディオ (M45e)。音源はマーカー球、リスナーは向きが要るので前方向線も引く。
+        // **減衰球 (min/max) は選択中の 1 個だけ** — 全音源に描くとシーンが球だらけになる
+        constexpr uint32_t kAudio = 0x40E0C0FFu;    // 音源マーカー / リスナー
+        constexpr uint32_t kAudioMin = 0x40FFA0FFu; // minDistance (ここまでは減衰しない)
+        constexpr uint32_t kAudioMax = 0x2080A0FFu; // maxDistance (ここから先は無音)
+        const GameObject selForAudio = ctx.scene->FindByFileId(selection.primary);
+        const EntityID selAudioEntity = selForAudio ? selForAudio.Id() : kNullEntity;
+
+        const ComponentTypeId auReq[] = { AudioSourceComponent::sTypeId,
+                                          WorldMatrixComponent::sTypeId };
+        world.ForEachArchetype(auReq, [&](Archetype& arch) {
+            const int ai = arch.FindTypeIndex(AudioSourceComponent::sTypeId);
+            const int wi = arch.FindTypeIndex(WorldMatrixComponent::sTypeId);
+            for (uint32_t row = 0; row < arch.Count(); ++row) {
+                const auto* src = static_cast<const AudioSourceComponent*>(arch.GetPtr(ai, row));
+                const XMFLOAT4X4& wm =
+                    static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row))->value;
+                const XMFLOAT3 p = { wm._41, wm._42, wm._43 };
+                lines_.AddWireSphere(p, 0.18f, kAudio);
+                if (!(arch.EntityAt(row) == selAudioEntity)) {
+                    continue;
+                }
+                // ★実効値は再生時とまったく同じ 1 本の規則 (MakeSourcePlay) から取る。
+                //   ここで overrideAttenuation の分岐を書き直すと、ギズモと実際の鳴り方が
+                //   静かにズレる (コライダーのギズモを shapes:: 経由にしてあるのと同じ理由)
+                const SoundAsset* asset =
+                    ctx.sounds != nullptr ? ctx.sounds->Get(src->sound.value) : nullptr;
+                if (asset == nullptr || ctx.audio == nullptr) {
+                    continue;
+                }
+                PlayDesc desc;
+                AudioSpatial sp;
+                MakeSourcePlay(*asset, *src, *ctx.audio, -1, 0.0f, 0.0f, desc, sp);
+                if (sp.spatialBlend <= 0.0f) {
+                    continue; // 2D 音源に距離球を描くと嘘になる
+                }
+                lines_.AddWireSphere(p, sp.minDistance, kAudioMin);
+                lines_.AddWireSphere(p, sp.maxDistance, kAudioMax);
+            }
+        });
+
+        const ComponentTypeId alReq[] = { AudioListenerComponent::sTypeId,
+                                          WorldMatrixComponent::sTypeId };
+        world.ForEachArchetype(alReq, [&](Archetype& arch) {
+            const int wi = arch.FindTypeIndex(WorldMatrixComponent::sTypeId);
+            for (uint32_t row = 0; row < arch.Count(); ++row) {
+                const XMFLOAT4X4& wm =
+                    static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row))->value;
+                const XMFLOAT3 pos = { wm._41, wm._42, wm._43 };
+                lines_.AddWireSphere(pos, 0.3f, kAudio);
+                const XMVECTOR fwd = XMVector3Normalize(XMVectorSet(wm._31, wm._32, wm._33, 0));
+                XMFLOAT3 tip;
+                XMStoreFloat3(&tip, XMVectorAdd(XMLoadFloat3(&pos), XMVectorScale(fwd, 1.2f)));
+                lines_.AddLine(pos, tip, kAudio);
             }
         });
 

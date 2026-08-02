@@ -88,6 +88,20 @@ GameObject CreateCamera(EngineContext& ctx, const char* name)
     return obj;
 }
 
+GameObject CreateAudioSource(EngineContext& ctx, const char* name)
+{
+    GameObject obj = ctx.scene->CreateGameObjectTracked(name);
+    obj.AddComponent<AudioSourceComponent>(); // sound は未割当 (Inspector か D&D で割り当てる)
+    return obj;
+}
+
+GameObject CreateAudioListener(EngineContext& ctx, const char* name)
+{
+    GameObject obj = ctx.scene->CreateGameObjectTracked(name);
+    obj.AddComponent<AudioListenerComponent>();
+    return obj;
+}
+
 GameObject RecordCreate(EngineContext& ctx, Selection& selection, UndoStack& undo, const char* label,
                         const std::function<GameObject()>& make)
 {
@@ -148,6 +162,13 @@ void DrawCreateMenuItems(EngineContext& ctx, Selection& selection, UndoStack& un
                    &CreatePointLight);
         CreateItem(ctx, selection, undo, parent, spawnPos, "Spot Light", "Spot Light",
                    &CreateSpotLight);
+        ImGui::EndMenu();
+    }
+    if (ImGui::BeginMenu("Audio")) {
+        CreateItem(ctx, selection, undo, parent, spawnPos, "Audio Source", "Audio Source",
+                   &CreateAudioSource);
+        CreateItem(ctx, selection, undo, parent, spawnPos, "Audio Listener", "Audio Listener",
+                   &CreateAudioListener);
         ImGui::EndMenu();
     }
     CreateItem(ctx, selection, undo, parent, spawnPos, "Camera", "Camera", &CreateCamera);

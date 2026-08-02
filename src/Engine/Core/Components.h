@@ -446,6 +446,47 @@ struct EffectComponent {
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
+// ---- オーディオ (M45e) ----
+// 3D 定位の基準点。シーン内の **最初の active な 1 個** (entity.index 最小) を使い、
+// 無ければ primary カメラへフォールバックする (SkyboxComponent と同じ「最初の 1 個」規約)。
+// 位置と向きは WorldMatrix から取る (+Z = 前、+Y = 上。X3DAudio もエンジンも左手系)。
+// **オーディオは決定論レーン外の出力 sink なので kComponentNoHash** = 既存シーンのハッシュ不変。
+struct AudioListenerComponent {
+    int32_t enabled = 1; // 0 = このリスナーを無視 (複数置いて切り替える用)
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
+// シーンに置く音源。再生パラメータの本体は `.sound.json` (SoundAsset) 側にあり、
+// ここはその **インスタンス毎の上書き**を持つ。**kComponentNoHash** (上と同じ理由)。
+//
+// 上書きの規約:
+//   - volume / pitch は アセット値への **乗算** (1.0 = アセットのまま)
+//   - loop は 3 値: -1 = アセット既定 / 0 = ループしない / 1 = ループする
+//   - bus は空文字列 = アセット既定。非空なら実行中ミキサーの名前で解決
+//   - priority は -1 = アセット既定
+//   - **3D 系 (spatialBlend 以下) は overrideAttenuation != 0 のときだけ効く** —
+//     既定ではアセット 1 箇所を直せば全インスタンスに効く方が扱いやすいため
+struct AudioSourceComponent {
+    // ★フィールド名は `sound` にすること。`clip` は AnimatorComponent.clip =
+    //   アニメーションクリップの既存規約で、被せると Inspector の AssetRef ピッカーが壊れる
+    AssetID sound = {};        // .sound.json の GUID
+    int32_t playOnAwake = 1;   // Play 開始時 (と生成時) に自動再生する
+    int32_t loop = -1;         // -1 = アセット既定 / 0 = 単発 / 1 = ループ
+    float volume = 1.0f;       // アセット volume への乗算
+    float pitch = 1.0f;        // アセット pitch への乗算
+    int32_t mute = 0;          // 1 = 無音 (再生自体は続く)
+    int32_t priority = -1;     // -1 = アセット既定。大きいほど重要 (VoicePolicy と同じ規約)
+    char bus[64] = {};         // 空 = アセット既定
+    int32_t overrideAttenuation = 0; // 1 = 以下の 3D 値でアセットを上書きする
+    float spatialBlend = 1.0f; // 0 = 2D (定位も減衰もドップラーも無し) / 1 = フル 3D
+    float minDistance = 1.0f;  // これより近ければ減衰なし
+    float maxDistance = 50.0f; // これ以遠は無音 (SpatialMath.h の規約)
+    int32_t rolloff = 0;       // SoundRolloff: 0=Logarithmic 1=Linear 2=Inverse
+    float dopplerScale = 1.0f; // 0 = ドップラー無効 (速度推定ごとスキップされる)
+    float reverbSend = 0.0f;   // リバーブバスへの送り量 (0 = ドライのみ)
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
 class World;
 
 // エンティティが有効か (ActiveComponent が無ければ有効 / enabled==0 なら無効)
