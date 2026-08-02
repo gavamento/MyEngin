@@ -70,6 +70,9 @@
     <ClCompile Include="..\src\Editor\Windows\SearchWindow.cpp">
       <Filter>Windows</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Editor\Windows\SoundGenWindow.cpp">
+      <Filter>Windows</Filter>
+    </ClCompile>
     <ClInclude Include="..\src\Editor\AssetOps.h" />
     <ClInclude Include="..\src\Editor\AssetOpsSelfTest.h" />
     <ClInclude Include="..\src\Editor\AssetPreviewCache.h" />
@@ -130,6 +133,9 @@
       <Filter>Windows</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\Windows\SearchWindow.h">
+      <Filter>Windows</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Windows\SoundGenWindow.h">
       <Filter>Windows</Filter>
     </ClInclude>
   </ItemGroup>

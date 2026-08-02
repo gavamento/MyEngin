@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <cstring>
+#include <filesystem>
 #include <vector>
 
 #include "Engine/Core/Log.h"
@@ -253,6 +254,30 @@ bool RunAudioSelfTest()
         check(LinearToDb(0.0f) == kMinDb, "db: silence clamps to the floor");
         const float rt = LinearToDb(DbToLinear(-12.0f));
         check(std::abs(rt + 12.0f) < 1e-3f, "db: round trip");
+    }
+
+    // ---- (11) ディスク往復 (M45b の Save as .wav が通る経路そのもの) ----
+    // WriteWavToMemory はメモリ内で検証済みなので、ここでは **ファイル出口と入口**
+    // (WriteWavToFile → LoadAudioFile) がサンプルを保つことだけを見る
+    {
+        std::error_code ec;
+        const std::filesystem::path path =
+            std::filesystem::temp_directory_path(ec) / L"mye_audio_selftest.wav";
+        std::filesystem::remove(path, ec);
+        SynthParams p;
+        p.wave = SynthWave::Triangle;
+        p.durationSec = 0.03f;
+        p.channels = 1;
+        AudioClip gen;
+        SynthRender(p, gen);
+        check(WriteWavToFile(gen, path.wstring()), "wav file: written to disk");
+        AudioClip back;
+        const bool loaded = LoadAudioFile(path.wstring(), back);
+        check(loaded, "wav file: loaded back from disk");
+        check(loaded && back.samples == gen.samples && back.channels == gen.channels &&
+                  back.sampleRate == gen.sampleRate,
+              "wav file: disk round trip is sample-exact");
+        std::filesystem::remove(path, ec);
     }
 
     // ※OGG デコードは selftest に fixture を持たない (エンコーダを同梱しないため)。

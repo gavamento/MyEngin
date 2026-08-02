@@ -53,6 +53,7 @@ void EditorApp::OnStart(EngineContext& ctx)
                     { "Search", &search_.open },
                     { "Profiler", &profiler_.open },
                     { "Particle Settings", &particleSettings_.open },
+                    { "Sound Generator", &soundGen_.open },
                     { "Project Settings", &projectSettings_.open },
                     { "Build Settings", &buildSettings_.open },
                     { "Stats", &showStats_ } });
@@ -216,6 +217,8 @@ void EditorApp::OnImGui(EngineContext& ctx)
     search_.OnImGui(ctx, selection_);
     projectSettings_.OnImGui(ctx, settings_, shortcuts_);
     buildSettings_.OnImGui(ctx);
+    // 書き出し先は AssetBrowser の表示中フォルダ (未初期化なら窓側が <assets>\audio に落とす)
+    soundGen_.OnImGui(ctx, assetBrowser_.CurrentDir());
 
     // ピッキング自動テスト (--pick-test): 指定フレームでビュー中心を選択できるか検証
     if (pickTestFrame >= 0 && static_cast<int64_t>(ctx.frameIndex) == pickTestFrame) {
@@ -346,6 +349,7 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
         ImGui::MenuItem("Search", nullptr, &search_.open);
         ImGui::MenuItem("Profiler", nullptr, &profiler_.open);
         ImGui::MenuItem("Particle Settings", nullptr, &particleSettings_.open);
+        ImGui::MenuItem("Sound Generator", nullptr, &soundGen_.open);
         ImGui::Separator();
         ImGui::MenuItem("Project Settings", nullptr, &projectSettings_.open);
         ImGui::MenuItem("Build Settings", nullptr, &buildSettings_.open);
@@ -517,6 +521,7 @@ void EditorApp::SetupDockLayout(unsigned int dockspaceId)
     ImGui::DockBuilderDockWindow("Inspector", rightTop);
     ImGui::DockBuilderDockWindow("Stats", rightBottom);
     ImGui::DockBuilderDockWindow("Particle Settings", rightBottom);
+    ImGui::DockBuilderDockWindow("Sound Generator", rightBottom);
     ImGui::DockBuilderDockWindow("Profiler", rightBottom);
     ImGui::DockBuilderDockWindow("Console", bottom);
     ImGui::DockBuilderDockWindow("Assets", bottomRight);
