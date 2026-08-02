@@ -95,9 +95,15 @@ std::vector<int> MixerBusDepths(const MixerAsset& m);
 // 親が全て解決できる / 循環なし。error は最初の違反だけ書く (null 可)
 bool ValidateMixer(const MixerAsset& m, std::string* error);
 
-// ソロを考慮した実効ミュート。ソロが 1 つでも立っていれば
-// 「ソロバス自身 + その祖先 + その子孫」以外を落とす
-// (祖先を残さないとソロにした音がマスターまで届かない)
+// ソロ規則の実体。ソロが 1 つでも立っていれば「ソロバス自身 + その祖先 + その子孫」以外を
+// 落とす (祖先を残さないとソロにした音がマスターまで届かない)。
+// parents[i] は親 index (負 = ルート)。**アセット編集と AudioSystem のランタイムが
+// この 1 実装を共有する** — 2 箇所に書くと必ずズレる
+std::vector<uint8_t> SoloEffectiveMutes(const std::vector<int>& parents,
+                                        const std::vector<uint8_t>& mute,
+                                        const std::vector<uint8_t>& solo);
+
+// MixerAsset 版 (中身は SoloEffectiveMutes)
 std::vector<uint8_t> MixerEffectiveMutes(const MixerAsset& m);
 
 // 既定ミキサー (Master / BGM / SE / UI)。AudioSystem の初期バス構成でもある

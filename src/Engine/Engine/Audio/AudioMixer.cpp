@@ -351,15 +351,18 @@ bool ValidateMixer(const MixerAsset& m, std::string* error)
     return true;
 }
 
-std::vector<uint8_t> MixerEffectiveMutes(const MixerAsset& m)
+std::vector<uint8_t> SoloEffectiveMutes(const std::vector<int>& parents,
+                                       const std::vector<uint8_t>& mute,
+                                       const std::vector<uint8_t>& solo)
 {
-    const size_t n = m.buses.size();
-    const std::vector<int> parents = MixerBusParents(m);
+    const size_t n = parents.size();
     std::vector<uint8_t> mutes(n, 0);
-
+    if (mute.size() != n || solo.size() != n) {
+        return mutes; // 呼び出し側の組み立てミス。無音にはしない
+    }
     bool anySolo = false;
-    for (const MixerBus& b : m.buses) {
-        anySolo = anySolo || b.solo;
+    for (size_t i = 0; i < n; ++i) {
+        anySolo = anySolo || solo[i] != 0;
     }
     // ソロ中に鳴らし続けるバス集合 = ソロバス自身 + 祖先 + 子孫
     std::vector<uint8_t> keep(n, anySolo ? 0u : 1u);
@@ -367,8 +370,8 @@ std::vector<uint8_t> MixerEffectiveMutes(const MixerAsset& m)
         for (size_t i = 0; i < n; ++i) {
             // 自分から根へ辿り、途中にソロがあれば「ソロの子孫」として残す
             int cur = static_cast<int>(i);
-            for (int step = 0; step <= static_cast<int>(n); ++step) {
-                if (m.buses[static_cast<size_t>(cur)].solo) {
+            for (size_t step = 0; step <= n; ++step) {
+                if (solo[static_cast<size_t>(cur)] != 0) {
                     keep[i] = 1;
                     break;
                 }
@@ -377,21 +380,33 @@ std::vector<uint8_t> MixerEffectiveMutes(const MixerAsset& m)
                 }
                 cur = parents[static_cast<size_t>(cur)];
             }
-            if (!m.buses[i].solo) {
+            if (solo[i] == 0) {
                 continue;
             }
             // 自分がソロなら祖先も残す (途中で切ると出力がマスターに届かない)
             cur = parents[i];
-            for (int step = 0; cur >= 0 && step <= static_cast<int>(n); ++step) {
+            for (size_t step = 0; cur >= 0 && step <= n; ++step) {
                 keep[static_cast<size_t>(cur)] = 1;
                 cur = parents[static_cast<size_t>(cur)];
             }
         }
     }
     for (size_t i = 0; i < n; ++i) {
-        mutes[i] = (m.buses[i].mute || keep[i] == 0) ? 1u : 0u;
+        mutes[i] = (mute[i] != 0 || keep[i] == 0) ? 1u : 0u;
     }
     return mutes;
+}
+
+std::vector<uint8_t> MixerEffectiveMutes(const MixerAsset& m)
+{
+    const size_t n = m.buses.size();
+    std::vector<uint8_t> mute(n, 0);
+    std::vector<uint8_t> solo(n, 0);
+    for (size_t i = 0; i < n; ++i) {
+        mute[i] = m.buses[i].mute ? 1u : 0u;
+        solo[i] = m.buses[i].solo ? 1u : 0u;
+    }
+    return SoloEffectiveMutes(MixerBusParents(m), mute, solo);
 }
 
 MixerAsset DefaultMixer()

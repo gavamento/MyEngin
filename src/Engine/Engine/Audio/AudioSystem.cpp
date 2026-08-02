@@ -448,48 +448,22 @@ MixerAsset AudioSystem::CurrentMixer() const
     return m;
 }
 
-// 音量 / ミュート / ソロ → 各サブミックスの SetVolume。**voice の作り直しは起きない**
+// 音量 / ミュート / ソロ → 各サブミックスの SetVolume。**voice の作り直しは起きない**。
+// ソロ規則そのものは AudioMixer.h の純関数を使う (selftest が見ているのと同じ 1 実装)
 void AudioSystem::ApplyBusGains()
 {
-    bool anySolo = false;
-    for (const BusSlot& b : buses_) {
-        anySolo = anySolo || b.s.solo;
-    }
     const size_t n = buses_.size();
+    std::vector<int> parents(n, -1);
+    std::vector<uint8_t> mute(n, 0);
+    std::vector<uint8_t> solo(n, 0);
     for (size_t i = 0; i < n; ++i) {
-        bool audible = true;
-        if (anySolo) {
-            // 「ソロバス自身 + その祖先 + その子孫」だけを残す
-            audible = false;
-            int cur = static_cast<int>(i);
-            for (size_t step = 0; step <= n; ++step) { // 自分 → 根: 途中にソロがあれば子孫
-                if (buses_[static_cast<size_t>(cur)].s.solo) {
-                    audible = true;
-                    break;
-                }
-                if (buses_[static_cast<size_t>(cur)].s.parent < 0) {
-                    break;
-                }
-                cur = buses_[static_cast<size_t>(cur)].s.parent;
-            }
-            if (!audible) {
-                // 自分がソロの祖先か (子孫のどれかがソロなら鳴らす経路が要る)
-                for (size_t j = 0; j < n && !audible; ++j) {
-                    if (!buses_[j].s.solo) {
-                        continue;
-                    }
-                    int p = buses_[j].s.parent;
-                    for (size_t step = 0; p >= 0 && step <= n; ++step) {
-                        if (p == static_cast<int>(i)) {
-                            audible = true;
-                            break;
-                        }
-                        p = buses_[static_cast<size_t>(p)].s.parent;
-                    }
-                }
-            }
-        }
-        const float gain = (buses_[i].s.mute || !audible) ? 0.0f : DbToLinear(buses_[i].s.volumeDb);
+        parents[i] = buses_[i].s.parent;
+        mute[i] = buses_[i].s.mute ? 1u : 0u;
+        solo[i] = buses_[i].s.solo ? 1u : 0u;
+    }
+    const std::vector<uint8_t> silenced = SoloEffectiveMutes(parents, mute, solo);
+    for (size_t i = 0; i < n; ++i) {
+        const float gain = silenced[i] != 0 ? 0.0f : DbToLinear(buses_[i].s.volumeDb);
         if (buses_[i].voice != nullptr) {
             buses_[i].voice->SetVolume(gain);
         }
