@@ -92,9 +92,14 @@ bool CreateProject(const std::wstring& dir, const std::string& name, ProjectTemp
         fs::remove(assets / L"editor_settings.json", ec);
         fs::create_directories(assets / L"shaders", ec);
     } else {
-        // Empty: エンジンが要求する最小構成 — 効果音 + 空の作業フォルダ
+        // Empty: エンジンが要求する最小構成 — 効果音 + ミキサー + 空の作業フォルダ。
+        // **default.mixer.json は必須** — 無いと新規プロジェクトのミキサー窓が空になり、
+        // .sound.json の bus 参照が全部フォールバックに落ちる (M45d)
         fs::create_directories(assets / L"audio", ec);
         fs::copy_file(engineAssets / L"audio" / L"beep.wav", assets / L"audio" / L"beep.wav",
+                      fs::copy_options::overwrite_existing, ec);
+        fs::copy_file(engineAssets / L"audio" / L"default.mixer.json",
+                      assets / L"audio" / L"default.mixer.json",
                       fs::copy_options::overwrite_existing, ec);
         for (const wchar_t* sub :
              { L"scenes", L"scripts", L"models", L"textures", L"materials", L"shaders" }) {

@@ -12,6 +12,7 @@
 #include "Engine/Engine/CollisionSystem.h"
 #include "Engine/Engine/HotReload/DllReloader.h"
 #include "Engine/Engine/HotReload/ReloadHub.h"
+#include "Engine/Engine/Audio/AudioMixer.h"
 #include "Engine/Engine/Audio/AudioSystem.h"
 #include "Engine/Engine/Audio/SoundAsset.h"
 #include "Engine/Engine/Particles/ParticleSystem.h"
@@ -91,6 +92,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     VfxRenderer vfxRenderer;       // Sprite/Trail/TextMesh (M29c、メッシュ後・パーティクル前)
     AudioSystem audioSystem;       // XAudio2 (M19/M45、決定論レーン外の出力 sink)
     SoundLibrary soundLibrary;     // .sound.json (M45c)。PCM 実体は AudioSystem 側
+    MixerLibrary mixerLibrary;     // .mixer.json (M45d)。バスグラフの実体は AudioSystem 側
     std::vector<ScriptAudioEvent> audioQueue; // スクリプトの再生イベント (tick 内で積む)
     // 再生ハンドルの予約カウンタ (M45)。**採番は push 側 = ゲートされない経路**で行う。
     // AudioSystem 側に置くと記録/検証中 (drain がゲートされる) だけ番号が進まず、
@@ -172,7 +174,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     uiRenderer.Init(device, shaderManager, assetsRoot); // M21: 失敗してもエンジンは継続 (UI が出ないだけ)
     vfxRenderer.Init(device, shaderManager, &uiRenderer); // M29c: 同上 (VFX が出ないだけ)
     reloadHub.Init(&shaderManager, &resources, &scene, &prefabLibrary, &animLibrary, &soundLibrary,
-                   &audioSystem, assetsRoot);
+                   &mixerLibrary, &audioSystem, assetsRoot);
     particleSystem.Init(device, shaderManager, assetsRoot);
 
     // ポストプロセス設定を config から反映 (M16)。全ビューポート共通の renderSystem に載る
@@ -249,6 +251,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     ctx.assetDb = &assetDatabase;
     ctx.audio = &audioSystem;
     ctx.sounds = &soundLibrary;
+    ctx.mixers = &mixerLibrary;
     ctx.assetsRoot = assetsRoot;
     ctx.projectRoot = config.projectRoot;
     ctx.imguiIniPath = imguiIniPath;

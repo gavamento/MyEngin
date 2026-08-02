@@ -277,14 +277,15 @@ int PickVariationIndex(const SoundAsset& s, uint32_t roll)
     return -1; // ここには来ない (total の走査と同じ条件で回している)
 }
 
-PlayDesc MakePlayDesc(const SoundAsset& s, int variationIndex, float volJitter, float pitchJitter)
+PlayDesc MakePlayDesc(const SoundAsset& s, int variationIndex, float volJitter, float pitchJitter,
+                      const AudioSystem& audio)
 {
     PlayDesc d;
     if (variationIndex >= 0 && static_cast<size_t>(variationIndex) < s.variations.size()) {
         d.clip = AssetID{ s.variations[static_cast<size_t>(variationIndex)].clip };
     }
-    const int bus = AudioSystem::FindBus(s.bus.c_str());
-    d.bus = (bus >= 0) ? bus : static_cast<int>(AudioSystem::kBusSe);
+    const int bus = audio.FindBus(s.bus.c_str());
+    d.bus = (bus >= 0) ? bus : audio.DefaultBus();
     d.volume = std::clamp(s.volume + volJitter * s.volumeRandom, 0.0f, 1.0f);
     d.pitch = std::clamp(s.pitch + pitchJitter * s.pitchRandom, 1.0f / AudioSystem::kMaxFreqRatio,
                          AudioSystem::kMaxFreqRatio);
@@ -318,7 +319,7 @@ AudioHandle PreviewSound(AudioSystem& audio, const SoundAsset& s)
             return {};
         }
     }
-    return audio.Play(MakePlayDesc(s, index, 0.0f, 0.0f));
+    return audio.Play(MakePlayDesc(s, index, 0.0f, 0.0f, audio));
 }
 
 } // namespace mye

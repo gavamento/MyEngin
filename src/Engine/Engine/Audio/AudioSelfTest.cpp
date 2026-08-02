@@ -7,6 +7,7 @@
 
 #include "Engine/Core/Log.h"
 #include "Engine/Engine/Audio/AudioClip.h"
+#include "Engine/Engine/Audio/AudioMixer.h"
 #include "Engine/Engine/Audio/SoundAsset.h"
 #include "Engine/Engine/Audio/SynthCore.h"
 #include "Engine/Engine/Audio/VoicePolicy.h"
@@ -351,7 +352,10 @@ bool RunAudioSelfTest()
         unresolved.variations.push_back({ 0, "missing.wav", 5 });
         check(PickVariationIndex(unresolved, 0) < 0, "sound: unresolved clip is not a candidate");
 
-        // PlayDesc への写像 (バス名解決 + 揺らぎ 0 で決定論)
+        // PlayDesc への写像 (バス名解決 + 揺らぎ 0 で決定論)。
+        // **Init を呼ばない AudioSystem** は既定バス構成をデータとしてだけ持つので、
+        // デバイス非依存のままバス名解決を検証できる
+        const AudioSystem audio;
         SoundAsset p;
         p.variations.push_back({ 99, {}, 1 });
         p.bus = "ui";
@@ -359,15 +363,89 @@ bool RunAudioSelfTest()
         p.pitch = 1.5f;
         p.priority = 7;
         p.loop = true;
-        const PlayDesc d = MakePlayDesc(p, 0, 0.0f, 0.0f);
+        const PlayDesc d = MakePlayDesc(p, 0, 0.0f, 0.0f, audio);
         check(d.clip.value == 99 && d.bus == AudioSystem::kBusUi && d.volume == 0.5f
                   && d.pitch == 1.5f && d.priority == 7 && d.loop,
               "sound: MakePlayDesc maps fields and resolves the bus name case-insensitively");
         SoundAsset bad;
         bad.variations.push_back({ 1, {}, 1 });
         bad.bus = "NoSuchBus";
-        check(MakePlayDesc(bad, 0, 0.0f, 0.0f).bus == AudioSystem::kBusSe,
+        check(MakePlayDesc(bad, 0, 0.0f, 0.0f, audio).bus == AudioSystem::kBusSe,
               "sound: unknown bus name falls back to SE");
+    }
+
+    // ---- (14) ミキサー: dB 変換 / トポロジ検証 / ソロ (M45d) ----
+    {
+        check(std::fabs(DbToLinear(0.0f) - 1.0f) < 1e-5f, "mixer: 0 dB is unity gain");
+        check(DbToLinear(kMinDb) == 0.0f && DbToLinear(kMinDb - 10.0f) == 0.0f,
+              "mixer: the bottom of the fader is exact silence");
+        check(std::fabs(DbToLinear(-6.0f) - 0.5011872f) < 1e-5f, "mixer: -6 dB is about half");
+        check(LinearToDb(0.0f) == kMinDb && LinearToDb(-1.0f) == kMinDb,
+              "mixer: non-positive gain maps to the bottom of the fader");
+        check(std::fabs(LinearToDb(DbToLinear(-12.5f)) + 12.5f) < 1e-3f,
+              "mixer: dB <-> linear round trips");
+
+        std::string err;
+        const MixerAsset def = DefaultMixer();
+        check(ValidateMixer(def, &err), "mixer: the default mixer is a valid topology");
+        check(FindMixerBus(def, "se") == 2 && FindMixerBus(def, "nope") < 0,
+              "mixer: bus lookup ignores case and reports misses");
+        const std::vector<int> depth = MixerBusDepths(def);
+        check(depth.size() == 4 && depth[0] == 0 && depth[1] == 1 && depth[3] == 1,
+              "mixer: depths are measured from the root");
+
+        // 検証で弾かれるべき形
+        MixerAsset dup = def;
+        dup.buses.push_back(dup.buses[1]); // 同名 (BGM) を 2 本
+        check(!ValidateMixer(dup, &err), "mixer: duplicate bus names are rejected");
+        MixerAsset orphan = def;
+        orphan.buses[1].parent = "Ghost";
+        check(!ValidateMixer(orphan, &err), "mixer: an unknown parent is rejected");
+        MixerAsset twoRoots = def;
+        twoRoots.buses[1].parent.clear();
+        check(!ValidateMixer(twoRoots, &err), "mixer: a second root bus is rejected");
+        MixerAsset cycle = def;
+        cycle.buses[0].parent = "UI"; // Master -> UI -> Master
+        check(!ValidateMixer(cycle, &err), "mixer: a parent cycle is rejected");
+        MixerAsset noName = def;
+        noName.buses[2].name.clear();
+        check(!ValidateMixer(noName, &err), "mixer: an empty bus name is rejected");
+
+        // ソロ: 「ソロバス + 祖先 + 子孫」だけが残る
+        MixerAsset solo = def;
+        solo.buses.push_back(MixerBus{ "Voice", "BGM", 0.0f, false, false, 0.0f });
+        solo.buses[1].solo = true; // BGM
+        const std::vector<uint8_t> m = MixerEffectiveMutes(solo);
+        check(m.size() == 5 && m[0] == 0, "mixer: solo keeps the ancestors audible");
+        check(m[1] == 0 && m[4] == 0, "mixer: solo keeps the soloed bus and its children");
+        check(m[2] == 1 && m[3] == 1, "mixer: solo silences everything else");
+        MixerAsset muteOnly = def;
+        muteOnly.buses[2].mute = true;
+        const std::vector<uint8_t> mm = MixerEffectiveMutes(muteOnly);
+        check(mm[0] == 0 && mm[1] == 0 && mm[2] == 1 && mm[3] == 0,
+              "mixer: without solo only the muted bus is silenced");
+
+        // JSON ラウンドトリップ + プリセット名
+        MixerAsset src = def;
+        src.buses[1].volumeDb = -7.5f;
+        src.buses[2].mute = true;
+        src.buses[3].reverbSend = 0.4f;
+        src.reverbPreset = "Cave";
+        src.reverbWetDryMix = 80.0f;
+        MixerAsset back;
+        const bool ok = MixerLibrary::FromJson(MixerLibrary::ToJson(src), back);
+        check(ok && back.buses.size() == 4 && back.buses[1].volumeDb == -7.5f && back.buses[2].mute
+                  && back.buses[3].reverbSend == 0.4f && back.buses[1].parent == "Master",
+              "mixer: bus fields round trip through JSON");
+        check(ok && back.reverbPreset == "Cave" && back.reverbWetDryMix == 80.0f,
+              "mixer: reverb settings round trip");
+        bool presetsOk = true;
+        for (int i = 0; i < kReverbPresetCount; ++i) {
+            presetsOk = presetsOk && ReverbPresetIndex(ReverbPresetName(i)) == i;
+        }
+        check(presetsOk, "mixer: reverb preset names resolve back to their index");
+        check(ReverbPresetIndex("no such preset") == 0,
+              "mixer: an unknown preset name falls back to Default");
     }
 
     // ※OGG デコードは selftest に fixture を持たない (エンコーダを同梱しないため)。

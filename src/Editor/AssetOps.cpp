@@ -21,6 +21,7 @@
 #include "Engine/Core/World.h"
 #include "Engine/Engine/Animation.h"
 #include "Engine/Engine/AssetDatabase.h"
+#include "Engine/Engine/Audio/AudioMixer.h"
 #include "Engine/Engine/Audio/AudioSystem.h"
 #include "Engine/Engine/Audio/SoundAsset.h"
 #include "Engine/Engine/EngineLoop.h"
@@ -344,6 +345,28 @@ std::wstring CreateSoundAsset(EngineContext& ctx, const std::wstring& dir, const
         ctx.sounds->LoadFromFile(path);
     }
     MYE_LOG_INFO("created sound: %s", WideToUtf8(path).c_str());
+    return path;
+}
+
+std::wstring CreateMixerAsset(EngineContext& ctx, const std::wstring& dir, const std::string& name)
+{
+    const std::string safe = SanitizeFileName(name, "New Mixer");
+    const std::wstring path = dir + L"\\" + Utf8ToWide(safe) + L".mixer.json";
+    MixerAsset m = DefaultMixer(); // Master / BGM / SE / UI
+    m.name = safe;
+    std::ofstream f{ fs::path(path), std::ios::binary };
+    if (!f) {
+        MYE_LOG_ERROR("could not write mixer: %s", WideToUtf8(path).c_str());
+        return {};
+    }
+    f << MixerLibrary::ToJson(m).dump(2);
+    f.close();
+    // 生成直後に登録 → Audio Mixer 窓のアセット一覧にそのまま出る (CreateSoundAsset 範型)。
+    // **アクティブの切り替えはしない** — 作った瞬間に鳴っているバス構成が変わると事故る
+    if (ctx.mixers) {
+        ctx.mixers->LoadFromFile(path);
+    }
+    MYE_LOG_INFO("created mixer: %s", WideToUtf8(path).c_str());
     return path;
 }
 

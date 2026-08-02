@@ -14,6 +14,7 @@
 #include "Engine/Core/Log.h"
 #include "Engine/Engine/Animation.h"
 #include "Engine/Engine/AssetDatabase.h"
+#include "Engine/Engine/Audio/AudioMixer.h"
 #include "Engine/Engine/Audio/AudioSystem.h"
 #include "Engine/Engine/Audio/SoundAsset.h"
 #include "Engine/Engine/Prefab.h"
@@ -45,7 +46,8 @@ enum CreateKind {
     kCreateScene,
     kCreateAnim,
     kCreateMaterial,
-    kCreateSound
+    kCreateSound,
+    kCreateMixer
 };
 
 const char* IconFor(const std::wstring& ext)
@@ -67,7 +69,7 @@ const char* IconFor(const std::wstring& ext)
 
 // サムネイル未生成 (または対象外) のタイルに出す文字ラベル
 const char* TileLabel(const std::wstring& ext, const std::wstring& path, bool isPrefab, bool isAnim,
-                      bool isMat, bool isSound)
+                      bool isMat, bool isSound, bool isMixer)
 {
     if (IsImageExt(ext)) {
         return "img"; // デコード完了までのプレースホルダ
@@ -83,6 +85,9 @@ const char* TileLabel(const std::wstring& ext, const std::wstring& path, bool is
     }
     if (isSound) {
         return "sound";
+    }
+    if (isMixer) {
+        return "mixer";
     }
     if (AssetPreviewCache::IsPreviewable(path)) {
         return "model"; // 立体サムネイル生成待ち
@@ -359,6 +364,8 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
             && nameU.compare(nameU.size() - 11, 11, ".scene.json") == 0;
         const bool isSound = !isPrefab && !isAnim && !isMat && !isScene && nameU.size() >= 11
             && nameU.compare(nameU.size() - 11, 11, ".sound.json") == 0;
+        const bool isMixer = !isPrefab && !isAnim && !isMat && !isScene && !isSound
+            && nameU.size() >= 11 && nameU.compare(nameU.size() - 11, 11, ".mixer.json") == 0;
         const bool isClip = ext == L".wav" || ext == L".ogg"; // 素の音声ファイル
 
         if (i % cols != 0) {
@@ -383,7 +390,8 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
         // フォルダタイルと同じ流儀: 透明ボタンをアイテムにして絵は drawlist で重ねる
         ImGui::PushStyleColor(ImGuiCol_Button, thumb ? ImVec4(0, 0, 0, 0)
                                                      : ImGui::GetStyleColorVec4(ImGuiCol_Button));
-        ImGui::Button(thumb ? "##tile" : TileLabel(ext, path, isPrefab, isAnim, isMat, isSound),
+        ImGui::Button(thumb ? "##tile"
+                            : TileLabel(ext, path, isPrefab, isAnim, isMat, isSound, isMixer),
                       ImVec2(kCell, kCell));
         ImGui::PopStyleColor();
         if (thumb) {
@@ -500,6 +508,19 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
                         PreviewSound(*ctx.audio, *s);
                     }
                 }
+            } else if (isMixer) {
+                // .mixer.json をアクティブにして Audio Mixer 窓を開く (M45d)。
+                // 適用は AudioSystem::Update = フレーム境界まで遅延される
+                if (ctx.mixers && ctx.audio) {
+                    const uint64_t hash = ctx.mixers->LoadFromFile(path); // 未登録なら登録 (冪等)
+                    if (const MixerAsset* m = ctx.mixers->Get(hash)) {
+                        ctx.mixers->SetActive(hash);
+                        ctx.audio->ApplyMixer(*m);
+                        openMixerRequest_ = true;
+                    } else {
+                        MYE_LOG_WARN("could not load mixer: %s", WideToUtf8(path).c_str());
+                    }
+                }
             } else if (isClip) {
                 // .wav / .ogg をその場で試聴 (OS の既定プレイヤーは開かない)
                 if (ctx.audio) {
@@ -547,6 +568,7 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
             if (ImGui::MenuItem("Animation Clip")) { beginCreate(kCreateAnim, "New Clip"); }
             if (ImGui::MenuItem("Material")) { beginCreate(kCreateMaterial, "New Material"); }
             if (ImGui::MenuItem("Sound")) { beginCreate(kCreateSound, "New Sound"); }
+            if (ImGui::MenuItem("Mixer")) { beginCreate(kCreateMixer, "New Mixer"); }
             ImGui::EndMenu();
         }
         ImGui::Separator();
@@ -684,6 +706,9 @@ void AssetBrowserWindow::DoCreate(EngineContext& ctx, const std::string& externa
         break;
     case kCreateSound:
         CreateSoundAsset(ctx, current_, name);
+        break;
+    case kCreateMixer:
+        CreateMixerAsset(ctx, current_, name);
         break;
     case kCreateScript: {
         const std::wstring p = CreateCppScript(ctx, name);

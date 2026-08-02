@@ -26,6 +26,7 @@ class ControllerLibrary;
 class AssetDatabase;
 class AudioSystem;
 class SoundLibrary;
+class MixerLibrary;
 struct RenderResources;
 
 struct EngineConfig {
@@ -108,6 +109,7 @@ struct EngineContext {
     // 読み戻してはいけない (読んだ瞬間にリプレイが壊れる)。エディタの試聴/ミキサー用に公開する
     AudioSystem* audio = nullptr;
     SoundLibrary* sounds = nullptr;     // 登録済みサウンドアセット (.sound.json、M45c)
+    MixerLibrary* mixers = nullptr;     // 登録済みミキサー (.mixer.json、M45d)。アクティブは 1 本
     std::wstring assetsRoot;            // assets\ の絶対パス
     std::wstring projectRoot;           // プロジェクトルート (M26)。レガシー起動時は空
     std::wstring imguiIniPath;          // imgui.ini の解決済みパス (レガシー時は L"imgui.ini")

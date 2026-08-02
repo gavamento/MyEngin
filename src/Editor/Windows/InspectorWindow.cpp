@@ -1136,18 +1136,23 @@ void InspectorWindow::DrawSoundInspector(EngineContext& ctx, const std::wstring&
     ImGui::Checkbox("loop", &soundEdit_.loop);
     ImGui::SameLine();
     ImGui::Checkbox("stream (BGM)", &soundEdit_.stream);
-    {
-        int bus = AudioSystem::FindBus(soundEdit_.bus.c_str());
-        if (bus < 0) {
-            bus = AudioSystem::kBusSe;
-        }
-        const char* busNames[AudioSystem::kBusCount] = {
-            AudioSystem::BusName(AudioSystem::kBusMaster), AudioSystem::BusName(AudioSystem::kBusBgm),
-            AudioSystem::BusName(AudioSystem::kBusSe), AudioSystem::BusName(AudioSystem::kBusUi)
-        };
+    // バス候補は**実際に張られているミキサー**から採る (M45d でバスはデータ駆動になった)。
+    // 保存は名前なので、未知のバス名は既定バスへ落ちるだけで値自体は壊さない
+    if (ctx.audio != nullptr) {
+        const int current = ctx.audio->FindBus(soundEdit_.bus.c_str());
+        const char* preview = current >= 0 ? ctx.audio->BusName(current) : soundEdit_.bus.c_str();
         ImGui::SetNextItemWidth(160.0f);
-        if (ImGui::Combo("bus", &bus, busNames, AudioSystem::kBusCount)) {
-            soundEdit_.bus = busNames[bus];
+        if (ImGui::BeginCombo("bus", preview)) {
+            for (int i = 0; i < ctx.audio->BusCount(); ++i) {
+                if (ImGui::Selectable(ctx.audio->BusName(i), i == current)) {
+                    soundEdit_.bus = ctx.audio->BusName(i);
+                }
+            }
+            ImGui::EndCombo();
+        }
+        if (current < 0) {
+            ImGui::SameLine();
+            ImGui::TextDisabled("(unknown bus -> %s)", ctx.audio->BusName(ctx.audio->DefaultBus()));
         }
     }
     ImGui::SetNextItemWidth(160.0f);

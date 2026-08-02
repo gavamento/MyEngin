@@ -39,7 +39,7 @@ struct SoundAsset {
     float pitchRandom = 0.0f;  // ± 幅 (周波数比)
     bool loop = false;
     bool stream = false;       // BGM フラグ (ストリーミング再生は M45f)
-    std::string bus = "SE";    // AudioSystem::FindBus で解決。未知名は SE に落とす
+    std::string bus = "SE";    // 実行中のミキサーの名前で解決 (未知名は AudioSystem の既定バス)
     int32_t priority = 128;    // 大きいほど重要 (VoicePolicy と同じ規約)
     int32_t maxInstances = 0;  // 同時発音数の上限 (0 = 無制限)
 
@@ -93,8 +93,11 @@ private:
 int PickVariationIndex(const SoundAsset& s, uint32_t roll);
 
 // SoundAsset → PlayDesc (2D 部分のみ。3D 定位/ドップラーは M45e が上書きする)。
-// jitter は [-1,1]。0,0 を渡せば揺らぎ無し = 試聴が毎回同じ音になる
-PlayDesc MakePlayDesc(const SoundAsset& s, int variationIndex, float volJitter, float pitchJitter);
+// jitter は [-1,1]。0,0 を渡せば揺らぎ無し = 試聴が毎回同じ音になる。
+// **バス名の解決は audio 側に問う** — M45d でバスは .mixer.json のデータになったので、
+// 静的な既定 4 バスではなく実際に張られているグラフで引く必要がある
+PlayDesc MakePlayDesc(const SoundAsset& s, int variationIndex, float volJitter, float pitchJitter,
+                      const AudioSystem& audio);
 
 // エディタ試聴 (Asset Browser のダブルクリック / Inspector の ▶)。
 // バリエーションは先頭固定・揺らぎ無しで再現性を優先する。クリップが未ロードなら

@@ -48,6 +48,7 @@
     <ClCompile Include="..\src\Engine\Engine\AssetDatabase.cpp" />
     <ClCompile Include="..\src\Engine\Engine\AssetDatabaseSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Audio\AudioClip.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Audio\AudioMixer.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Audio\AudioSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Audio\AudioSystem.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Audio\SoundAsset.cpp" />
@@ -145,6 +146,7 @@
     <ClInclude Include="..\src\Engine\Engine\AssetDatabase.h" />
     <ClInclude Include="..\src\Engine\Engine\AssetDatabaseSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Audio\AudioClip.h" />
+    <ClInclude Include="..\src\Engine\Engine\Audio\AudioMixer.h" />
     <ClInclude Include="..\src\Engine\Engine\Audio\AudioSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Audio\AudioSystem.h" />
     <ClInclude Include="..\src\Engine\Engine\Audio\SoundAsset.h" />

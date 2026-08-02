@@ -30,6 +30,15 @@ public:
         return p;
     }
 
+    // ダブルクリックされた .mixer.json をアクティブにしたか (M45d)。
+    // true なら EditorApp が Audio Mixer 窓を開く (適用自体はここで済んでいる)
+    bool TakeOpenMixerRequest()
+    {
+        const bool r = openMixerRequest_;
+        openMixerRequest_ = false;
+        return r;
+    }
+
     // ---- エクスプローラー D&D (EditorApp が WM_DROPFILES 処理時に参照) ----
     // 前フレームにパネルが前面に描画されていて (x,y) [クライアント座標] が矩形内なら true
     bool IsClientPosInPanel(float x, float y) const;
@@ -43,6 +52,7 @@ private:
 
     std::wstring current_; // 表示中フォルダ (絶対パス)
     std::wstring pendingOpenScene_; // ダブルクリックされたシーン (TakePendingOpenScene で消費)
+    bool openMixerRequest_ = false; // .mixer.json をダブルクリックした (M45d)
     // D&D 移動 (M30b)。描画中の fs 変更 (iterator 破壊) を避けるためフレーム末に実行する
     std::wstring pendingMoveSrc_;
     std::wstring pendingMoveDstDir_;

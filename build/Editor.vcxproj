@@ -58,6 +58,7 @@
     <ClCompile Include="..\src\Editor\Windows\AnimationWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\AnimatorControllerWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\AssetBrowserWindow.cpp" />
+    <ClCompile Include="..\src\Editor\Windows\AudioMixerWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\BuildSettingsWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\ConsoleWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\GameViewWindow.cpp" />
@@ -93,6 +94,7 @@
     <ClInclude Include="..\src\Editor\Windows\AnimationWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\AnimatorControllerWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\AssetBrowserWindow.h" />
+    <ClInclude Include="..\src\Editor\Windows\AudioMixerWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\BuildSettingsWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\ConsoleWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\GameViewWindow.h" />

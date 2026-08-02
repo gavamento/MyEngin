@@ -1,0 +1,41 @@
+{
+  "engine": "MyEngine",
+  "mixer": 1,
+  "name": "default",
+  "buses": [
+    {
+      "name": "Master",
+      "parent": "",
+      "volumeDb": 0.0,
+      "mute": false,
+      "solo": false,
+      "reverbSend": 0.0
+    },
+    {
+      "name": "BGM",
+      "parent": "Master",
+      "volumeDb": -3.0,
+      "mute": false,
+      "solo": false,
+      "reverbSend": 0.0
+    },
+    {
+      "name": "SE",
+      "parent": "Master",
+      "volumeDb": 0.0,
+      "mute": false,
+      "solo": false,
+      "reverbSend": 0.0
+    },
+    {
+      "name": "UI",
+      "parent": "Master",
+      "volumeDb": 0.0,
+      "mute": false,
+      "solo": false,
+      "reverbSend": 0.0
+    }
+  ],
+  "reverbPreset": "Default",
+  "reverbWetDryMix": 100.0
+}

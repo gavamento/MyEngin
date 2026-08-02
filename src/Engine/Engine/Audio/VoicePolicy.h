@@ -49,7 +49,7 @@ inline constexpr float kMinDb = -80.0f;
 
 inline float DbToLinear(float db)
 {
-    if (db <= kMinDb) {
+    if (!(db > kMinDb)) { // NaN もここで無音に落ちる (手編集された .mixer.json 対策)
         return 0.0f;
     }
     return std::pow(10.0f, db * 0.05f); // 10^(dB/20)

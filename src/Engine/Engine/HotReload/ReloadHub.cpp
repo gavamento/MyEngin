@@ -5,6 +5,7 @@
 
 #include "Engine/Core/Log.h"
 #include "Engine/Engine/Animation.h"
+#include "Engine/Engine/Audio/AudioMixer.h"
 #include "Engine/Engine/Audio/AudioSystem.h"
 #include "Engine/Engine/Audio/SoundAsset.h"
 #include "Engine/Engine/FbxLoader.h"
@@ -29,7 +30,7 @@ std::wstring ExtensionLower(const std::wstring& path)
 
 bool ReloadHub::Init(ShaderManager* shaders, RenderResources* resources, Scene* scene,
                      PrefabLibrary* prefabs, AnimationLibrary* anims, SoundLibrary* sounds,
-                     AudioSystem* audio, const std::wstring& assetsRoot)
+                     MixerLibrary* mixers, AudioSystem* audio, const std::wstring& assetsRoot)
 {
     shaders_ = shaders;
     resources_ = resources;
@@ -37,6 +38,7 @@ bool ReloadHub::Init(ShaderManager* shaders, RenderResources* resources, Scene* 
     prefabs_ = prefabs;
     anims_ = anims;
     sounds_ = sounds;
+    mixers_ = mixers;
     audio_ = audio;
     assetsRoot_ = assetsRoot;
     std::error_code ec;
@@ -202,6 +204,29 @@ void ReloadHub::HandleChange(const std::wstring& normPath)
                 if (sounds_->Contains(hash)) {
                     if (sounds_->LoadFromFile(normPath) != 0) {
                         MYE_LOG_INFO("[reload] sound reloaded: %s", WideToUtf8(normPath).c_str());
+                        ++reloadCount_;
+                    } else {
+                        retryLater();
+                    }
+                }
+            }
+            return;
+        }
+        // .mixer.json: 登録済みミキサーなら再読込。**アクティブなら即バスグラフへ再適用する**
+        // (適用自体は AudioSystem::Update = フレーム境界まで遅延される、M45d)
+        const bool isMixer = normPath.size() >= 11
+            && normPath.compare(normPath.size() - 11, 11, L".mixer.json") == 0;
+        if (isMixer) {
+            if (mixers_ != nullptr) {
+                const uint64_t hash = MixerLibrary::HashForPath(normPath);
+                if (mixers_->Contains(hash)) {
+                    if (mixers_->LoadFromFile(normPath) != 0) {
+                        if (audio_ != nullptr && mixers_->ActiveHash() == hash) {
+                            if (const MixerAsset* m = mixers_->Get(hash)) {
+                                audio_->ApplyMixer(*m);
+                            }
+                        }
+                        MYE_LOG_INFO("[reload] mixer reloaded: %s", WideToUtf8(normPath).c_str());
                         ++reloadCount_;
                     } else {
                         retryLater();

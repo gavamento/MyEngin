@@ -27,6 +27,7 @@
 #include "Editor/Windows/ProjectSettingsWindow.h"
 #include "Editor/Windows/SceneViewWindow.h"
 #include "Editor/Windows/SearchWindow.h"
+#include "Editor/Windows/AudioMixerWindow.h"
 #include "Editor/Windows/SoundGenWindow.h"
 #include "Engine/Engine/EngineLoop.h"
 #include "Engine/Engine/GameObject.h"
@@ -96,6 +97,7 @@ private:
     ProjectSettingsWindow projectSettings_;
     BuildSettingsWindow buildSettings_;
     SoundGenWindow soundGen_;
+    AudioMixerWindow audioMixer_;
     AssetPreviewCache preview_; // AssetBrowser のメッシュ/プレハブサムネイル (M27d)
 
     nlohmann::json clipboard_; // コピー/カットしたサブツリー群 (SubtreeToJson 形式の配列)

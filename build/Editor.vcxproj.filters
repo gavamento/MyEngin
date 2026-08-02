@@ -40,6 +40,9 @@
     <ClCompile Include="..\src\Editor\Windows\AssetBrowserWindow.cpp">
       <Filter>Windows</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Editor\Windows\AudioMixerWindow.cpp">
+      <Filter>Windows</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Editor\Windows\BuildSettingsWindow.cpp">
       <Filter>Windows</Filter>
     </ClCompile>
@@ -103,6 +106,9 @@
       <Filter>Windows</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\Windows\AssetBrowserWindow.h">
+      <Filter>Windows</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Windows\AudioMixerWindow.h">
       <Filter>Windows</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\Windows\BuildSettingsWindow.h">
