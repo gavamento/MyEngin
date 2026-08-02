@@ -88,8 +88,12 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     EffectSystem effectSystem;     // 合成エフェクトのライフサイクル (M32e)
     UIRenderer uiRenderer;         // ゲーム内 UI (M21、backbuffer/GameView への重ね描画)
     VfxRenderer vfxRenderer;       // Sprite/Trail/TextMesh (M29c、メッシュ後・パーティクル前)
-    AudioSystem audioSystem;       // XAudio2 (M19、決定論レーン外の出力 sink)
+    AudioSystem audioSystem;       // XAudio2 (M19/M45、決定論レーン外の出力 sink)
     std::vector<ScriptAudioEvent> audioQueue; // スクリプトの再生イベント (tick 内で積む)
+    // 再生ハンドルの予約カウンタ (M45)。**採番は push 側 = ゲートされない経路**で行う。
+    // AudioSystem 側に置くと記録/検証中 (drain がゲートされる) だけ番号が進まず、
+    // スクリプトが受け取る値がリプレイで食い違う。v7 Instantiate の fileId 予約と同型。
+    uint64_t audioHandleSeq = 0;
     std::wstring pendingScene;                // LoadScene の遅延ロード先 (tick 末に消費)
     std::vector<EffectSpawnRequest> effectQueue; // PlayEffect の spawn 要求 (tick 末に消費、M32f)
     std::vector<DebugLineCmd> debugLines; // DebugDrawLine (v7)。tick 頭クリア → 描画で消費
@@ -206,12 +210,14 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // シーン保存/復元時に C# コンポーネントのフィールドを永続化する hook を登録
     SceneSerializer::SetManagedHost(&managedHost);
 
-    // オーディオ (M19)。XAudio2 初期化 + デモ .wav ロード + 両ホストへ共有バッファ接続。
-    // 初期化失敗 (ヘッドレス等) でもエンジンは継続する (PlaySound が no-op になるだけ)
-    audioSystem.Init();
+    // オーディオ (M19/M45)。XAudio2 初期化 + デモ .wav ロード + 両ホストへ共有バッファ接続。
+    // 初期化失敗 (ヘッドレス / --no-audio) でもエンジンは継続する (再生が no-op になるだけ)
+    audioSystem.Init(config.audio);
     audioSystem.LoadWav("beep", assetsRoot + L"\\audio\\beep.wav");
-    scriptHost.SetSharedServices(&audioQueue, &pendingScene, &effectQueue, &debugLines);
-    managedHost.SetSharedServices(&audioQueue, &pendingScene, &effectQueue, &debugLines);
+    scriptHost.SetSharedServices(&audioQueue, &pendingScene, &effectQueue, &debugLines,
+                                 &audioHandleSeq);
+    managedHost.SetSharedServices(&audioQueue, &pendingScene, &effectQueue, &debugLines,
+                                  &audioHandleSeq);
 
     clock.Init();
 
@@ -237,6 +243,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     ctx.anims = &animLibrary;
     ctx.controllers = &controllerLibrary;
     ctx.assetDb = &assetDatabase;
+    ctx.audio = &audioSystem;
     ctx.assetsRoot = assetsRoot;
     ctx.projectRoot = config.projectRoot;
     ctx.imguiIniPath = imguiIniPath;
@@ -327,6 +334,12 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         accumulator += dt;
         int ticks = 0;
         const bool verifying = player.IsActive();
+        // ---- オーディオのゲート (M45): 記録/検証中はサスペンドする。
+        // drain だけでなく **オーディオ更新フレーム全体** を止めるのが要点 — 検証中は
+        // 1 フレームで最大 64 tick 回るので、ゲートが drain だけだと 3D 計算 (M45e) や
+        // playOnAwake がその頻度で走ってしまう。サスペンドの立ち上がりで一度だけ全停止し、
+        // サスペンド中も voice 回収 (Update) は動き続ける (止めるとスロットが枯れる) ----
+        audioSystem.SetSuspended(recorder.IsActive() || verifying);
         // 検証モードは実時間と切り離して最速で回す (spec 11.3 の CLI 実行)
         const int maxTicksThisFrame = verifying ? 64 : kMaxTicksPerFrame;
         while (ticks < maxTicksThisFrame
@@ -482,11 +495,23 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                 }
             }
 
-            // ---- オーディオ drain (M19): ハッシュ後に再生する (voice 状態は絶対に hashed state
-            // へ戻さない)。記録/検証中はゲート (実音を出さない)。キューは毎 tick クリア ----
-            if (!recorder.IsActive() && !verifying) {
-                for (const ScriptAudioEvent& e : audioQueue) {
-                    audioSystem.Play(e.key, e.volume);
+            // ---- オーディオ drain (M19/M45): ハッシュ後に再生する (voice 状態は絶対に
+            // hashed state へ戻さない)。記録/検証中は AudioSystem 自体が suspend されており
+            // Play が no-op になる。**キューの clear だけはゲートの外**で毎 tick 行う ----
+            for (const ScriptAudioEvent& e : audioQueue) {
+                switch (e.op) {
+                case ScriptAudioOp::PlayOneShot: {
+                    PlayDesc d;
+                    d.clip = audioSystem.ResolveClipKey(e.key);
+                    d.volume = e.a;
+                    d.pitch = e.b;
+                    d.loop = e.i0 != 0;
+                    audioSystem.Play(d);
+                    break;
+                }
+                default:
+                    // 残りの op は M45e-g で実装する (スロットは v8 で予約済み)
+                    break;
                 }
             }
             audioQueue.clear();
@@ -508,6 +533,11 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                     vfxRenderer.Reset(); // M29c: トレイル点列も新シーンでリセット
                     scriptHost.ClearStarted();
                     managedHost.OnSceneReloaded();
+                    // M45: 旧シーンの音を断ち、ハンドル採番も 0 から振り直す。
+                    // 採番列は「スクリプトの呼出順」だけで決まる必要があるので、
+                    // 記録/検証の別なく **必ず** リセットする (サスペンド中でも進む値のため)
+                    audioSystem.StopAll();
+                    audioHandleSeq = 0;
                     MYE_LOG_INFO("[scene] loaded: %s", WideToUtf8(full).c_str());
                 } else {
                     MYE_LOG_WARN("[scene] load failed: %s", WideToUtf8(full).c_str());
@@ -534,7 +564,13 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         }
         timings.tickMs = static_cast<float>((clock.Now() - tTicks) * 1000.0);
         timings.ticksThisFrame = ticks;
-        audioSystem.Update(); // 再生し終えた source voice を掃除 (M19、フレーム毎)
+        // オーディオのフレーム更新 (M19: voice 回収 / M45e: 3D 定位)。
+        // ★この位置は意図的で、動かしてはいけない: フレーム末の transformSystem.Update()
+        //   (下の「ワールド行列は描画直前に一括更新」) より **前** なので、ここで読める
+        //   WorldMatrix は tick 内 (フェーズ 4) で確定した「直前 tick の値」そのものになる。
+        //   Runtime は vsync 無効で数千 fps 回るため、フレーム差分で速度を出すと値がノイズに
+        //   なる — M45e のドップラーは tick 差分で速度を取る前提でここに置いている。
+        audioSystem.Update();
         const double tRender = clock.Now();
 
         // エディタ (または将来の設定) によるレンダリングパス切替を反映

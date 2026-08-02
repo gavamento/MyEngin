@@ -29,15 +29,17 @@ public:
     bool IsLoaded() const { return module_ != nullptr; }
     uint32_t ScriptTypeCount() const { return static_cast<uint32_t>(types_.size()); }
 
-    // v3 (M19) + v6 (M32f) + v7 (M37): 共有バッファを接続する
+    // v3 (M19) + v6 (M32f) + v7 (M37) + v8 (M45): 共有バッファを接続する
     void SetSharedServices(std::vector<ScriptAudioEvent>* audioQueue, std::wstring* pendingScene,
                            std::vector<EffectSpawnRequest>* effectQueue = nullptr,
-                           std::vector<DebugLineCmd>* debugLines = nullptr)
+                           std::vector<DebugLineCmd>* debugLines = nullptr,
+                           uint64_t* audioHandleSeq = nullptr)
     {
         apiCtx_.audioQueue = audioQueue;
         apiCtx_.pendingScene = pendingScene;
         apiCtx_.effectQueue = effectQueue;
         apiCtx_.debugLines = debugLines;
+        apiCtx_.audioHandleSeq = audioHandleSeq;
     }
 
     // シーン遷移 (M19.4): Start 済み記録をクリアして新シーンのエンティティで Start を再実行させる

@@ -47,7 +47,11 @@
     <ClCompile Include="..\src\Engine\Engine\AnimatorControllerSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\AssetDatabase.cpp" />
     <ClCompile Include="..\src\Engine\Engine\AssetDatabaseSelfTest.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Audio\AudioClip.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Audio\AudioSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Audio\AudioSystem.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Audio\StbVorbisImpl.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Audio\SynthCore.cpp" />
     <ClCompile Include="..\src\Engine\Engine\CgltfImpl.cpp" />
     <ClCompile Include="..\src\Engine\Engine\CollisionSystem.cpp" />
     <ClCompile Include="..\src\Engine\Engine\DemoContent.cpp" />
@@ -139,7 +143,12 @@
     <ClInclude Include="..\src\Engine\Engine\AnimatorControllerSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\AssetDatabase.h" />
     <ClInclude Include="..\src\Engine\Engine\AssetDatabaseSelfTest.h" />
+    <ClInclude Include="..\src\Engine\Engine\Audio\AudioClip.h" />
+    <ClInclude Include="..\src\Engine\Engine\Audio\AudioSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Audio\AudioSystem.h" />
+    <ClInclude Include="..\src\Engine\Engine\Audio\StbVorbis.h" />
+    <ClInclude Include="..\src\Engine\Engine\Audio\SynthCore.h" />
+    <ClInclude Include="..\src\Engine\Engine\Audio\VoicePolicy.h" />
     <ClInclude Include="..\src\Engine\Engine\CollisionSystem.h" />
     <ClInclude Include="..\src\Engine\Engine\DebugDraw.h" />
     <ClInclude Include="..\src\Engine\Engine\DemoContent.h" />

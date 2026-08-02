@@ -121,6 +121,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 config.postFxTonemap = _wtoi(argv[++i]);
             } else if (arg == L"--no-postfx") {
                 config.postFx = false;
+            } else if (arg == L"--no-audio") {
+                config.audio = false; // M45: XAudio2 を初期化しない (端末の無い CI / 撮影専用実行)
             } else if (arg == L"--exposure" && i + 1 < argc) {
                 config.postFxExposure = static_cast<float>(_wtof(argv[++i]));
             } else if (arg == L"--no-bloom") {

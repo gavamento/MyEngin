@@ -140,6 +140,19 @@ namespace MyeScripting
         public delegate* unmanaged<void*, MyeVec3, MyeVec3, float, uint, MyeRaycastHit*, int> RaycastMasked;
         public delegate* unmanaged<void*, MyeVec3, float, uint, MyeEntityId*, int, int> OverlapSphereMasked;
         public delegate* unmanaged<void*, MyeVec3, MyeVec3, float, float, uint, MyeRaycastHit*, int> SphereCastMasked;
+        // ---- オーディオ (v8、M45)。宣言順 = ネイティブと一致。**write-only** で、
+        //      再生位置や再生中判定の読み取り API は意図的に存在しない (EngineAPI.h 参照) ----
+        public delegate* unmanaged<void*, byte*, float, float, ulong> PlaySound2;
+        public delegate* unmanaged<void*, byte*, MyeVec3, float, ulong> PlaySoundAt;
+        public delegate* unmanaged<void*, ulong, float, void> StopVoice;
+        public delegate* unmanaged<void*, ulong, float, void> SetVoiceVolume;
+        public delegate* unmanaged<void*, ulong, float, void> SetVoicePitch;
+        public delegate* unmanaged<void*, MyeEntityId, int> PlayAudioSource;
+        public delegate* unmanaged<void*, MyeEntityId, float, int> StopAudioSource;
+        public delegate* unmanaged<void*, byte*, float, void> SetBusVolume;
+        public delegate* unmanaged<void*, byte*, float, int, void> PlayMusic;
+        public delegate* unmanaged<void*, float, void> StopMusic;
+        public delegate* unmanaged<void*, MyeEntityId, void> SetListenerEntity;
     }
 
     // ネイティブ ManagedHost が保持する関数ポインタ表。Bootstrap がここに書き込む。

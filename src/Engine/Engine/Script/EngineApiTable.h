@@ -11,10 +11,33 @@ namespace mye {
 
 class Scene;
 
-// スクリプトが tick 内で積む再生イベント (M19)。ハッシュ後に AudioSystem が drain する。
+// スクリプトが tick 内で積むオーディオ操作 (M19 の再生イベントを v8 でタグ付きに拡張)。
+// ハッシュ後に EngineLoop が drain して AudioSystem へ流す。
+// **POD で持つ** — 毎 tick clear() されるので std::string を含めるとヒープが暴れる。
+// 文字列キーは push 時に 64bit へ潰す (name-key ハッシュ or AssetID)。
+enum class ScriptAudioOp : uint32_t {
+    PlayOneShot = 0, // key=clip, a=volume, b=pitch, i0=loop, handle=予約ハンドル
+    PlayAtPoint,     // + pos (3D。M45e で有効化)
+    StopVoice,       // handle, a=fadeSeconds
+    SetVoiceVolume,  // handle, a=volume
+    SetVoicePitch,   // handle, b=pitch
+    PlaySource,      // entity (AudioSource。M45e)
+    StopSource,      // entity, a=fadeSeconds (M45e)
+    SetBusVolume,    // key=バス名ハッシュ, a=volume
+    PlayMusic,       // key=clip, a=fadeSeconds, i0=loop (M45f)
+    StopMusic,       // a=fadeSeconds (M45f)
+    SetListener,     // entity (M45e)
+};
+
 struct ScriptAudioEvent {
-    std::string key; // .wav アセットキー
-    float volume = 1.0f;
+    ScriptAudioOp op = ScriptAudioOp::PlayOneShot;
+    uint64_t handle = 0; // 予約済み再生ハンドル (0 = 不要な op)
+    uint64_t key = 0;    // clip の AssetID / name-key ハッシュ / バス名ハッシュ
+    MyeEntityId entity = {};
+    MyeVec3 pos = {};
+    float a = 0.0f;  // op 依存: volume / fadeSeconds
+    float b = 1.0f;  // op 依存: pitch
+    int32_t i0 = 0;  // op 依存: loop フラグ等
 };
 
 // スクリプトが tick 内で積むエフェクト/汎用生成要求 (M32f、v7 Instantiate も共用)。
@@ -43,6 +66,10 @@ struct ScriptApiContext {
     void* physics = nullptr;                             // Raycast 用 (M20 で PhysicsWorld*)
     std::vector<EffectSpawnRequest>* effectQueue = nullptr; // PlayEffect の積み先 (M32f、tick 末消費)
     std::vector<DebugLineCmd>* debugLines = nullptr; // DebugDrawLine の積み先 (v7。tick 頭クリア)
+    // v8 (M45): 再生ハンドルの予約カウンタ。**採番はここ (push 側) で行う** —
+    // drain はゲートされるがこのカウンタは常に進むので、スクリプトが受け取る値が
+    // 記録/検証で一致する (v7 Instantiate の fileId 予約と同型)。null 時は 0 を返す
+    uint64_t* audioHandleSeq = nullptr;
 };
 
 // out に MyeEngineApi (engine = ctx) を構築する。ctx の生存は呼び出し側が管理する。

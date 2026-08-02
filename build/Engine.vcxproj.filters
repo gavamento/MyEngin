@@ -114,7 +114,19 @@
     <ClCompile Include="..\src\Engine\Engine\AssetDatabaseSelfTest.cpp">
       <Filter>Engine</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Audio\AudioClip.cpp">
+      <Filter>Engine\Audio</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Audio\AudioSelfTest.cpp">
+      <Filter>Engine\Audio</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Audio\AudioSystem.cpp">
+      <Filter>Engine\Audio</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Audio\StbVorbisImpl.cpp">
+      <Filter>Engine\Audio</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Audio\SynthCore.cpp">
       <Filter>Engine\Audio</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\CgltfImpl.cpp">
@@ -390,7 +402,22 @@
     <ClInclude Include="..\src\Engine\Engine\AssetDatabaseSelfTest.h">
       <Filter>Engine</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Audio\AudioClip.h">
+      <Filter>Engine\Audio</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Audio\AudioSelfTest.h">
+      <Filter>Engine\Audio</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Audio\AudioSystem.h">
+      <Filter>Engine\Audio</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Audio\StbVorbis.h">
+      <Filter>Engine\Audio</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Audio\SynthCore.h">
+      <Filter>Engine\Audio</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Audio\VoicePolicy.h">
       <Filter>Engine\Audio</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\CollisionSystem.h">

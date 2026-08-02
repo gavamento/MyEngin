@@ -24,6 +24,7 @@ class PrefabLibrary;
 class AnimationLibrary;
 class ControllerLibrary;
 class AssetDatabase;
+class AudioSystem;
 struct RenderResources;
 
 struct EngineConfig {
@@ -52,6 +53,11 @@ struct EngineConfig {
 
     // ---- ジョブシステム (M25) ----
     bool useJobs = true; // false で全並列を直列化 (決定論ゲート / 計測比較用)
+
+    // ---- オーディオ (M45) ----
+    // false (--no-audio) で XAudio2 を一切初期化しない。オーディオ端末の無い CI や
+    // スクリーンショット専用実行で、デバイス確保とストリーミングスレッドを避けるため
+    bool audio = true;
 
     // ---- プロジェクト (M26) ----
     // 空 = 従来動作 (FindAssetsRoot で単一リポジトリレイアウトを探索)。
@@ -97,6 +103,9 @@ struct EngineContext {
     AnimationLibrary* anims = nullptr;  // 登録済み AnimationClip (.anim.json)
     ControllerLibrary* controllers = nullptr; // 登録済み Animator Controller (.controller.json、M22)
     AssetDatabase* assetDb = nullptr;   // GUID/.meta サイドカー DB (M23)。パス⇄GUID 解決
+    // オーディオ (M45)。**決定論レーン外の出力 sink** — sim から再生位置や再生中判定を
+    // 読み戻してはいけない (読んだ瞬間にリプレイが壊れる)。エディタの試聴/ミキサー用に公開する
+    AudioSystem* audio = nullptr;
     std::wstring assetsRoot;            // assets\ の絶対パス
     std::wstring projectRoot;           // プロジェクトルート (M26)。レガシー起動時は空
     std::wstring imguiIniPath;          // imgui.ini の解決済みパス (レガシー時は L"imgui.ini")

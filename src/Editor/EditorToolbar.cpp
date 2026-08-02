@@ -4,6 +4,7 @@
 #include "Editor/Selection.h"
 #include "Editor/Undo/UndoStack.h"
 #include "Editor/Windows/SceneViewWindow.h"
+#include "Engine/Engine/Audio/AudioSystem.h"
 #include "Engine/Engine/EngineLoop.h"
 #include "Engine/Renderer/ImGuiTheme.h"
 
@@ -92,6 +93,11 @@ bool EditorToolbar::OnImGui(EngineContext& ctx, PlayModeController& playMode, Se
                 selection.Clear();
                 playMode.Stop(*ctx.scene);
                 undo.EndPlaySession(); // Play 中に積まれた Undo エントリを破棄
+                // M45: Stop でシーンはスナップショットから戻るが、鳴っている voice は
+                // エンジン側の状態なので戻らない。ループ音や BGM が Stop 後も鳴り続けるのを防ぐ
+                if (ctx.audio != nullptr) {
+                    ctx.audio->StopAll();
+                }
             }
             ImGui::PopStyleColor();
             if (ImGui::IsItemHovered()) {

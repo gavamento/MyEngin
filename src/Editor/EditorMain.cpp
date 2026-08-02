@@ -17,6 +17,7 @@
 #include "Editor/AssetOpsSelfTest.h"
 #include "Engine/Engine/AnimatorControllerSelfTest.h"
 #include "Engine/Engine/AssetDatabaseSelfTest.h"
+#include "Engine/Engine/Audio/AudioSelfTest.h"
 #include "Engine/Engine/EngineLoop.h"
 #include "Engine/Engine/ParticleSelfTest.h"
 #include "Engine/Engine/PhysicsSelfTest.h"
@@ -123,6 +124,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 config.postFxTonemap = _wtoi(argv[++i]); // 0=passthrough 1=ACES 2=Reinhard
             } else if (arg == L"--no-postfx") {
                 config.postFx = false;
+            } else if (arg == L"--no-audio") {
+                config.audio = false; // M45: XAudio2 を初期化しない (端末の無い CI / 撮影専用実行)
             } else if (arg == L"--exposure" && i + 1 < argc) {
                 config.postFxExposure = static_cast<float>(_wtof(argv[++i]));
             } else if (arg == L"--no-bloom") {
@@ -171,7 +174,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             && mye::RunAssetDatabaseSelfTest() && mye::RunTextureCookSelfTest()
             && mye::RunJobSystemSelfTest() && mye::RunVfxSelfTest()
             && mye::RunParticleSelfTest() && mye::RunAssetOpsSelfTest()
-            && mye::RunFontSelfTest();
+            && mye::RunFontSelfTest() && mye::RunAudioSelfTest();
         return ok ? 0 : 1;
     }
 

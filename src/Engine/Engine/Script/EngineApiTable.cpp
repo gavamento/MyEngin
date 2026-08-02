@@ -28,6 +28,16 @@ MyeEntityId ToShared(EntityID id) { return { id.index, id.generation }; }
 ScriptApiContext* Ctx(void* engine) { return static_cast<ScriptApiContext*>(engine); }
 Scene* Sc(void* engine) { return Ctx(engine)->scene; }
 
+// v8 (M45): 再生ハンドルを 1 つ予約する。**採番は push 側 = 記録/検証でもゲートされない**
+// ので、同じスクリプト呼出順なら常に同じ値が返る (v7 Instantiate の fileId 予約と同型)。
+uint64_t ReserveAudioHandle(ScriptApiContext* c)
+{
+    if (c->audioHandleSeq == nullptr) {
+        return 0; // キュー未接続 = 失敗
+    }
+    return ++(*c->audioHandleSeq);
+}
+
 } // namespace
 
 // engine ポインタは常に ScriptApiContext*。キャプチャなしラムダ → 関数ポインタ変換で
@@ -153,14 +163,22 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
 
     // ---- オーディオ (v3 で予約、M19.3 で drain 実装)。tick 内で決定論順に積む ----
     out.PlaySound = [](void* engine, const char* soundKey, float volume) -> int {
-        auto* q = Ctx(engine)->audioQueue;
-        if (!q || !soundKey) { return 0; }
-        q->push_back({ soundKey, volume });
-        return static_cast<int>(q->size()); // 疑似 voice ハンドル (1 始まり)
+        ScriptApiContext* c = Ctx(engine);
+        if (!c->audioQueue || !soundKey) { return 0; }
+        ScriptAudioEvent e;
+        e.op = ScriptAudioOp::PlayOneShot;
+        e.key = HashStr(soundKey);
+        e.a = volume;
+        e.handle = ReserveAudioHandle(c);
+        c->audioQueue->push_back(e);
+        // v3 の戻り値は int なので下位 31bit だけ返す。**tick を跨いで一意** になったので
+        // 旧実装 (キュー index) の衝突バグは解消しているが、停止には v8 の
+        // StopVoice(uint64) を使うこと (int へ潰すと 2^31 再生目以降で衝突しうる)
+        return static_cast<int>(e.handle & 0x7FFFFFFFull);
     };
     out.StopSound = [](void* engine, int voice) {
         (void)engine;
-        (void)voice; // M19.3 で voice 管理を実装
+        (void)voice; // v8 で非推奨。停止は StopVoice(uint64 ハンドル) を使う
     };
 
     // ---- シーン遷移 (v3 で予約、M19.4 で消費)。tick 末に遅延ロード ----
@@ -448,6 +466,69 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
     out.SphereCastMasked = [](void* engine, MyeVec3 origin, MyeVec3 dir, float radius,
                               float maxDist, uint32_t mask, MyeRaycastHit* outHit) -> int {
         return SphereCastWorld(Sc(engine)->GetWorld(), origin, dir, radius, maxDist, outHit, mask);
+    };
+
+    // ---- オーディオ (v8 で予約、M45g で実装) ----
+    // スロットは全て埋めておく (null のままだとスクリプトが呼んだ瞬間に落ちる)。
+    // ハンドルを返す 2 本は **今から採番だけ正しく行う** — 実装が入った時点で
+    // 採番列が変わらないようにするため。キューへの push は M45g で足す。
+    out.PlaySound2 = [](void* engine, const char* soundKey, float volume, float pitch) -> uint64_t {
+        (void)soundKey;
+        (void)volume;
+        (void)pitch;
+        return ReserveAudioHandle(Ctx(engine));
+    };
+    out.PlaySoundAt = [](void* engine, const char* soundKey, MyeVec3 worldPos,
+                         float volume) -> uint64_t {
+        (void)soundKey;
+        (void)worldPos;
+        (void)volume;
+        return ReserveAudioHandle(Ctx(engine));
+    };
+    out.StopVoice = [](void* engine, uint64_t handle, float fadeSeconds) {
+        (void)engine;
+        (void)handle;
+        (void)fadeSeconds;
+    };
+    out.SetVoiceVolume = [](void* engine, uint64_t handle, float volume) {
+        (void)engine;
+        (void)handle;
+        (void)volume;
+    };
+    out.SetVoicePitch = [](void* engine, uint64_t handle, float pitch) {
+        (void)engine;
+        (void)handle;
+        (void)pitch;
+    };
+    out.PlayAudioSource = [](void* engine, MyeEntityId id) -> int {
+        (void)engine;
+        (void)id;
+        return 0; // AudioSource コンポーネントは M45e
+    };
+    out.StopAudioSource = [](void* engine, MyeEntityId id, float fadeSeconds) -> int {
+        (void)engine;
+        (void)id;
+        (void)fadeSeconds;
+        return 0;
+    };
+    out.SetBusVolume = [](void* engine, const char* busName, float volume) {
+        (void)engine;
+        (void)busName;
+        (void)volume;
+    };
+    out.PlayMusic = [](void* engine, const char* soundKey, float fadeSeconds, int loop) {
+        (void)engine;
+        (void)soundKey;
+        (void)fadeSeconds;
+        (void)loop; // ストリーミング BGM は M45f
+    };
+    out.StopMusic = [](void* engine, float fadeSeconds) {
+        (void)engine;
+        (void)fadeSeconds;
+    };
+    out.SetListenerEntity = [](void* engine, MyeEntityId id) {
+        (void)engine;
+        (void)id; // AudioListener は M45e
     };
 }
 

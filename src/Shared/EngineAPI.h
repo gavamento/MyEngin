@@ -19,7 +19,10 @@
 // v6 (M32f): エフェクト制御 (EmitterBurst/SetEmitterPlaying/RestartEffect/PlayEffect) を一括追加
 // v7 (M37): Instantiate (fileId 予約方式) / FindByFileId / AnimatorParam / 動的 UI
 //           (SetUIText/Fill/Color/Focused + UIFocusNav) / DebugDrawLine / マスク付きクエリ
-#define MYE_API_VERSION 7u
+// v8 (M45): オーディオ操作一式をスロット予約で一括追加 (実装は M45g)。
+//           v3 の PlaySound/StopSound はシグネチャを変えずに残す — Interop.cs が
+//           位置ベースでミラーしているため、既存スロットをいじると C# 側が全てズレる
+#define MYE_API_VERSION 8u
 
 // MYE_LOG レベル (Engine/Core/Log.h の LogLevel と同値)
 enum MyeLogLevel {
@@ -107,6 +110,8 @@ struct MyeEngineApi {
     // 戻り値: voice ハンドル (>0)、0=失敗。再生イベントは tick 内で決定論順に積まれ、
     // ハッシュ後にエンジンが XAudio2 へ流す (voice 状態は hashed state に絶対戻さない)
     int (*PlaySound)(void* engine, const char* soundKey, float volume);
+    // v8: **非推奨** (v3 時代の疑似ハンドルは tick を跨ぐと衝突するため常に no-op だった)。
+    //     停止は下の StopVoice (uint64 ハンドル) を使うこと。互換のためスロットは残す
     void (*StopSound)(void* engine, int voice);
 
     // ---- シーン遷移 (v3 で予約、M19.4 で実装)。tick 末に遅延ロードされる ----
@@ -189,6 +194,34 @@ struct MyeEngineApi {
                                MyeEntityId* outEntities, int maxCount);
     int (*SphereCastMasked)(void* engine, MyeVec3 origin, MyeVec3 dir, float radius, float maxDist,
                             uint32_t mask, MyeRaycastHit* outHit);
+
+    // ---- オーディオ (v8 で予約、M45g で実装) ----
+    //
+    // ★このブロックは意図的に **write-only** である。再生位置・再生中判定・バス音量・
+    //   メーター値などの **読み取り API は今後も追加しない**。オーディオは実時間・
+    //   デバイス依存の出力レーンなので、sim がそこから 1 bit でも読んだ瞬間に
+    //   リプレイ (spec 11.3) が壊れる。
+    //   一見安全に見える「tick 差分から算出した再生経過」も禁止 — hashed state が
+    //   アセットの実バイト長に依存し、.wav を 1 サンプル差し替えただけで golden が壊れる。
+    //
+    // ハンドルは呼出時に予約される単調増加値 (v7 Instantiate の fileId 予約と同型)。
+    // 採番はキューへの push 側で行われ記録/検証でもゲートされないので、同じ入力なら
+    // 常に同じ値が返る。0 = 失敗 (キュー未接続)。
+    uint64_t (*PlaySound2)(void* engine, const char* soundKey, float volume, float pitch);
+    uint64_t (*PlaySoundAt)(void* engine, const char* soundKey, MyeVec3 worldPos, float volume);
+    void (*StopVoice)(void* engine, uint64_t handle, float fadeSeconds);
+    void (*SetVoiceVolume)(void* engine, uint64_t handle, float volume);
+    void (*SetVoicePitch)(void* engine, uint64_t handle, float pitch);
+    // AudioSource コンポーネント (M45e) を持つエンティティの再生/停止。非所持は 0
+    int (*PlayAudioSource)(void* engine, MyeEntityId id);
+    int (*StopAudioSource)(void* engine, MyeEntityId id, float fadeSeconds);
+    // busName = "Master" / "BGM" / "SE" / "UI" (M45d 以降はミキサーアセットのバス名)
+    void (*SetBusVolume)(void* engine, const char* busName, float volume);
+    // BGM (M45f)。fadeSeconds > 0 で現行 BGM とクロスフェードする
+    void (*PlayMusic)(void* engine, const char* soundKey, float fadeSeconds, int loop);
+    void (*StopMusic)(void* engine, float fadeSeconds);
+    // 3D リスナーを指定エンティティに固定する (M45e)。null id = 自動 (プライマリカメラ)
+    void (*SetListenerEntity)(void* engine, MyeEntityId id);
 };
 
 // スクリプトの各コールバックに渡されるコンテキスト (POD)
