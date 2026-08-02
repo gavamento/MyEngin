@@ -39,20 +39,30 @@ public:
     void ParallelFor(size_t total, size_t grain, const std::function<void(size_t)>& fn);
 
 private:
+    // 1 バッチぶんの不変な記述。ワーカーは mutex_ 下でこれをコピーしてから drain するので、
+    // drain 中に呼出スレッドが次バッチを書いても掴んでいる値は動かない。
+    struct Batch {
+        const std::function<void(size_t, size_t)>* fn = nullptr;
+        size_t total = 0;
+        size_t chunkSize = 0;
+        size_t chunkCount = 0;
+        uint64_t base = 0; // cursor_ 上でこのバッチが占有する区間の先頭
+    };
+
     void WorkerLoop();
-    void DrainChunks(); // 現バッチの chunk を atomic カーソルで消化
+    void DrainChunks(const Batch& b); // バッチ b の chunk を CAS で消化
 
     std::vector<std::thread> workers_;
     std::mutex mutex_;
     std::condition_variable cvWake_; // ワーカー起床 (新バッチ)
     std::condition_variable cvDone_; // 完了通知 (呼出スレッドへ)
 
-    // 現バッチ (ParallelRanges は同期呼び出しなので常に高々 1 バッチ)
-    const std::function<void(size_t, size_t)>* fn_ = nullptr;
-    size_t total_ = 0;
-    size_t chunkSize_ = 0;
-    size_t chunkCount_ = 0;
-    std::atomic<size_t> nextChunk_{ 0 };
+    // 現バッチ (ParallelRanges は同期呼び出しなので常に高々 1 バッチ)。mutex_ 保護
+    Batch batch_;
+    // chunk 取得カーソル。**バッチ間でリセットしない単調増加**で、各バッチは
+    // [base, base+chunkCount) を排他占有する。前バッチに取り残されたワーカーが
+    // 次バッチの chunk を掴む (= 破棄済みの fn を呼ぶ) 事故を構造的に防ぐため
+    std::atomic<uint64_t> cursor_{ 0 };
     std::atomic<size_t> doneChunks_{ 0 };
     uint64_t batchGen_ = 0; // バッチ世代 (mutex_ 保護)
     bool stop_ = false;     // mutex_ 保護

@@ -110,6 +110,32 @@ bool RunJobSystemSelfTest()
         check(stable, "repeated parallel runs are identical");
     }
 
+    // ---- 連投バッチ (回帰): 小さい ParallelRanges を背中合わせに投げる。
+    //      TransformSystem (深度レベル毎) / RenderSystem (ビュー毎カリング) と同じ形。
+    //      前バッチに取り残されたワーカーが次バッチの chunk を掴むと、破棄済みの fn を
+    //      呼んで AV する (実際に落ちた) / 掴み損ねると被覆が崩れる。両方をここで見る ----
+    {
+        constexpr size_t total = 64;
+        constexpr int batches = 20000;
+        std::vector<int> touch(total, 0);
+        js.SetEnabled(true);
+        for (int i = 0; i < batches; ++i) {
+            js.ParallelRanges(total, 1, [&](size_t begin, size_t end) {
+                for (size_t k = begin; k < end; ++k) {
+                    touch[k] += 1;
+                }
+            });
+        }
+        bool ok = true;
+        for (size_t i = 0; i < total; ++i) {
+            if (touch[i] != batches) {
+                ok = false;
+                break;
+            }
+        }
+        check(ok, "back-to-back small batches: exact coverage across batches");
+    }
+
     js.Shutdown();
 
     if (failCount == 0) {
