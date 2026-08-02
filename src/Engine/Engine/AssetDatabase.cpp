@@ -78,6 +78,12 @@ AssetType AssetDatabase::ClassifyPath(const std::wstring& path)
     if (EndsWith(s, ".scene.json")) {
         return AssetType::Scene;
     }
+    if (EndsWith(s, ".sound.json")) {
+        return AssetType::Sound;
+    }
+    if (EndsWith(s, ".mixer.json")) {
+        return AssetType::Mixer;
+    }
     if (EndsWith(s, ".png") || EndsWith(s, ".jpg") || EndsWith(s, ".jpeg") || EndsWith(s, ".tga")
         || EndsWith(s, ".bmp") || EndsWith(s, ".dds")) {
         return AssetType::Texture;
@@ -85,7 +91,7 @@ AssetType AssetDatabase::ClassifyPath(const std::wstring& path)
     if (EndsWith(s, ".glb") || EndsWith(s, ".gltf") || EndsWith(s, ".fbx") || EndsWith(s, ".obj")) {
         return AssetType::Model;
     }
-    if (EndsWith(s, ".wav")) {
+    if (EndsWith(s, ".wav") || EndsWith(s, ".ogg")) {
         return AssetType::Audio;
     }
     if (EndsWith(s, ".hlsl") || EndsWith(s, ".hlsli")) {
@@ -110,6 +116,8 @@ const char* AssetDatabase::TypeName(AssetType t)
     case AssetType::Audio: return "audio";
     case AssetType::Shader: return "shader";
     case AssetType::Script: return "script";
+    case AssetType::Sound: return "sound";
+    case AssetType::Mixer: return "mixer";
     case AssetType::Unknown:
     default: return "unknown";
     }
@@ -127,6 +135,8 @@ AssetType AssetDatabase::ParseTypeName(const std::string& s)
     if (s == "audio") return AssetType::Audio;
     if (s == "shader") return AssetType::Shader;
     if (s == "script") return AssetType::Script;
+    if (s == "sound") return AssetType::Sound;
+    if (s == "mixer") return AssetType::Mixer;
     return AssetType::Unknown;
 }
 

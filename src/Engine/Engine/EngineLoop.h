@@ -25,6 +25,7 @@ class AnimationLibrary;
 class ControllerLibrary;
 class AssetDatabase;
 class AudioSystem;
+class SoundLibrary;
 struct RenderResources;
 
 struct EngineConfig {
@@ -106,6 +107,7 @@ struct EngineContext {
     // オーディオ (M45)。**決定論レーン外の出力 sink** — sim から再生位置や再生中判定を
     // 読み戻してはいけない (読んだ瞬間にリプレイが壊れる)。エディタの試聴/ミキサー用に公開する
     AudioSystem* audio = nullptr;
+    SoundLibrary* sounds = nullptr;     // 登録済みサウンドアセット (.sound.json、M45c)
     std::wstring assetsRoot;            // assets\ の絶対パス
     std::wstring projectRoot;           // プロジェクトルート (M26)。レガシー起動時は空
     std::wstring imguiIniPath;          // imgui.ini の解決済みパス (レガシー時は L"imgui.ini")

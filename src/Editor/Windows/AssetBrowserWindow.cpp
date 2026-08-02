@@ -11,8 +11,11 @@
 #include "Editor/AssetOps.h"
 #include "Editor/AssetPreviewCache.h"
 #include "Editor/Undo/UndoStack.h"
+#include "Engine/Core/Log.h"
 #include "Engine/Engine/Animation.h"
 #include "Engine/Engine/AssetDatabase.h"
+#include "Engine/Engine/Audio/AudioSystem.h"
+#include "Engine/Engine/Audio/SoundAsset.h"
 #include "Engine/Engine/Prefab.h"
 #include "Engine/Engine/Scene.h"
 #include "Engine/Platform/PathUtil.h"
@@ -41,13 +44,17 @@ enum CreateKind {
     kCreateCSharp,
     kCreateScene,
     kCreateAnim,
-    kCreateMaterial
+    kCreateMaterial,
+    kCreateSound
 };
 
 const char* IconFor(const std::wstring& ext)
 {
     if (ext == L".hlsl" || ext == L".hlsli") {
         return "shader";
+    }
+    if (ext == L".wav" || ext == L".ogg") {
+        return "audio";
     }
     if (ext == L".glb" || ext == L".gltf" || ext == L".fbx") {
         return "model";
@@ -60,7 +67,7 @@ const char* IconFor(const std::wstring& ext)
 
 // サムネイル未生成 (または対象外) のタイルに出す文字ラベル
 const char* TileLabel(const std::wstring& ext, const std::wstring& path, bool isPrefab, bool isAnim,
-                      bool isMat)
+                      bool isMat, bool isSound)
 {
     if (IsImageExt(ext)) {
         return "img"; // デコード完了までのプレースホルダ
@@ -73,6 +80,9 @@ const char* TileLabel(const std::wstring& ext, const std::wstring& path, bool is
     }
     if (isMat) {
         return "mat";
+    }
+    if (isSound) {
+        return "sound";
     }
     if (AssetPreviewCache::IsPreviewable(path)) {
         return "model"; // 立体サムネイル生成待ち
@@ -347,6 +357,9 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
             && nameU.compare(nameU.size() - 9, 9, ".mat.json") == 0;
         const bool isScene = !isPrefab && !isAnim && !isMat && nameU.size() >= 11
             && nameU.compare(nameU.size() - 11, 11, ".scene.json") == 0;
+        const bool isSound = !isPrefab && !isAnim && !isMat && !isScene && nameU.size() >= 11
+            && nameU.compare(nameU.size() - 11, 11, ".sound.json") == 0;
+        const bool isClip = ext == L".wav" || ext == L".ogg"; // 素の音声ファイル
 
         if (i % cols != 0) {
             ImGui::SameLine();
@@ -370,7 +383,7 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
         // フォルダタイルと同じ流儀: 透明ボタンをアイテムにして絵は drawlist で重ねる
         ImGui::PushStyleColor(ImGuiCol_Button, thumb ? ImVec4(0, 0, 0, 0)
                                                      : ImGui::GetStyleColorVec4(ImGuiCol_Button));
-        ImGui::Button(thumb ? "##tile" : TileLabel(ext, path, isPrefab, isAnim, isMat),
+        ImGui::Button(thumb ? "##tile" : TileLabel(ext, path, isPrefab, isAnim, isMat, isSound),
                       ImVec2(kCell, kCell));
         ImGui::PopStyleColor();
         if (thumb) {
@@ -478,6 +491,27 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
                 } else {
                     ShellExecuteW(nullptr, L"open", path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
                 }
+            } else if (isSound) {
+                // .sound.json を試聴 (先頭バリエーション・揺らぎ無し)。
+                // AudioSource への割当は M45e (コンポーネントがまだ無い)
+                if (ctx.sounds && ctx.audio) {
+                    const uint64_t hash = ctx.sounds->LoadFromFile(path); // 未登録なら登録 (冪等)
+                    if (const SoundAsset* s = ctx.sounds->Get(hash)) {
+                        PreviewSound(*ctx.audio, *s);
+                    }
+                }
+            } else if (isClip) {
+                // .wav / .ogg をその場で試聴 (OS の既定プレイヤーは開かない)
+                if (ctx.audio) {
+                    const AssetID id = ctx.audio->LoadClipFile(path);
+                    if (!id.IsNull()) {
+                        PlayDesc d;
+                        d.clip = id;
+                        ctx.audio->Play(d);
+                    } else {
+                        MYE_LOG_WARN("could not preview audio clip: %s", WideToUtf8(path).c_str());
+                    }
+                }
             } else if (isScene) {
                 // シーンを開く。ロード自体は EditorApp が未保存変更ガードを通して行う
                 pendingOpenScene_ = path;
@@ -512,6 +546,7 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
             if (ImGui::MenuItem("Scene")) { beginCreate(kCreateScene, "New Scene"); }
             if (ImGui::MenuItem("Animation Clip")) { beginCreate(kCreateAnim, "New Clip"); }
             if (ImGui::MenuItem("Material")) { beginCreate(kCreateMaterial, "New Material"); }
+            if (ImGui::MenuItem("Sound")) { beginCreate(kCreateSound, "New Sound"); }
             ImGui::EndMenu();
         }
         ImGui::Separator();
@@ -646,6 +681,9 @@ void AssetBrowserWindow::DoCreate(EngineContext& ctx, const std::string& externa
         break;
     case kCreateMaterial:
         CreateMaterialAsset(ctx, current_, name);
+        break;
+    case kCreateSound:
+        CreateSoundAsset(ctx, current_, name);
         break;
     case kCreateScript: {
         const std::wstring p = CreateCppScript(ctx, name);

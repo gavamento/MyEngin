@@ -5,6 +5,8 @@
 
 #include "Engine/Core/Log.h"
 #include "Engine/Engine/Animation.h"
+#include "Engine/Engine/Audio/AudioSystem.h"
+#include "Engine/Engine/Audio/SoundAsset.h"
 #include "Engine/Engine/FbxLoader.h"
 #include "Engine/Engine/ModelLoader.h"
 #include "Engine/Engine/Prefab.h"
@@ -26,13 +28,16 @@ std::wstring ExtensionLower(const std::wstring& path)
 } // namespace
 
 bool ReloadHub::Init(ShaderManager* shaders, RenderResources* resources, Scene* scene,
-                     PrefabLibrary* prefabs, AnimationLibrary* anims, const std::wstring& assetsRoot)
+                     PrefabLibrary* prefabs, AnimationLibrary* anims, SoundLibrary* sounds,
+                     AudioSystem* audio, const std::wstring& assetsRoot)
 {
     shaders_ = shaders;
     resources_ = resources;
     scene_ = scene;
     prefabs_ = prefabs;
     anims_ = anims;
+    sounds_ = sounds;
+    audio_ = audio;
     assetsRoot_ = assetsRoot;
     std::error_code ec;
     if (!std::filesystem::is_directory(assetsRoot, ec)) {
@@ -120,6 +125,22 @@ void ReloadHub::HandleChange(const std::wstring& normPath)
         return;
     }
 
+    if (ext == L".wav" || ext == L".ogg") {
+        // ★再生中の XAUDIO2_BUFFER はクリップのバイト列を直接指しているので、
+        //   差し替えは必ず「参照している voice を止めてから」行う
+        //   (ReloadClipFile → RegisterClip → StopVoicesUsingClip の順で保証される)。
+        //   未ロードのファイルは false が返るだけで何も起きない
+        if (audio_ != nullptr && audio_->HasClip(AudioSystem::IdForFile(normPath))) {
+            if (audio_->ReloadClipFile(normPath)) {
+                MYE_LOG_INFO("[reload] audio clip reloaded: %s", WideToUtf8(normPath).c_str());
+                ++reloadCount_;
+            } else {
+                retryLater();
+            }
+        }
+        return;
+    }
+
     if (ext == L".glb" || ext == L".gltf") {
         if (ModelLoader::ReloadMeshes(*resources_, *shaders_, normPath)) {
             ++reloadCount_;
@@ -164,6 +185,23 @@ void ReloadHub::HandleChange(const std::wstring& normPath)
                 if (anims_->Contains(hash)) {
                     if (anims_->LoadFromFile(normPath) != 0) {
                         MYE_LOG_INFO("[reload] anim reloaded: %s", WideToUtf8(normPath).c_str());
+                        ++reloadCount_;
+                    } else {
+                        retryLater();
+                    }
+                }
+            }
+            return;
+        }
+        // .sound.json: 登録済みサウンドなら再読込 (参照側は GUID なので自動反映、M45c)
+        const bool isSound = normPath.size() >= 11
+            && normPath.compare(normPath.size() - 11, 11, L".sound.json") == 0;
+        if (isSound) {
+            if (sounds_ != nullptr) {
+                const uint64_t hash = SoundLibrary::HashForPath(normPath);
+                if (sounds_->Contains(hash)) {
+                    if (sounds_->LoadFromFile(normPath) != 0) {
+                        MYE_LOG_INFO("[reload] sound reloaded: %s", WideToUtf8(normPath).c_str());
                         ++reloadCount_;
                     } else {
                         retryLater();

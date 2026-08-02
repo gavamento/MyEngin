@@ -19,9 +19,11 @@ enum class AssetType : int32_t {
     Anim,       // .anim.json
     Controller, // .controller.json
     Scene,      // .scene.json
-    Audio,      // .wav
+    Audio,      // .wav .ogg
     Shader,     // .hlsl .hlsli
     Script,     // .cs
+    Sound,      // .sound.json (M45c)
+    Mixer,      // .mixer.json (M45d)
 };
 
 // アセット 1 件のサイドカー情報 (<asset>.meta に JSON で保存)。

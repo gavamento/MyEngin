@@ -7,6 +7,7 @@
 
 #include "Engine/Core/Log.h"
 #include "Engine/Engine/Audio/AudioClip.h"
+#include "Engine/Engine/Audio/SoundAsset.h"
 #include "Engine/Engine/Audio/SynthCore.h"
 #include "Engine/Engine/Audio/VoicePolicy.h"
 
@@ -278,6 +279,95 @@ bool RunAudioSelfTest()
                   back.sampleRate == gen.sampleRate,
               "wav file: disk round trip is sample-exact");
         std::filesystem::remove(path, ec);
+    }
+
+    // ---- (12) .sound.json のラウンドトリップ (M45c) ----
+    // 「保存したものがそのまま読み戻る」ことと、**旧形式の文字列 clip 参照が
+    //   数値 GUID と両立する**ことを見る (.mat.json / .controller.json と同じ M39a 規約)
+    {
+        SoundAsset s;
+        s.name = "hit";
+        s.variations.push_back({ 0x1122334455667788ull, {}, 3 });
+        s.variations.push_back({ 0xAABBCCDDEEFF0011ull, {}, 1 });
+        s.volume = 0.8f;
+        s.volumeRandom = 0.1f;
+        s.pitch = 1.2f;
+        s.pitchRandom = 0.05f;
+        s.loop = true;
+        s.stream = true;
+        s.bus = "BGM";
+        s.priority = 200;
+        s.maxInstances = 4;
+        s.spatialBlend = 1.0f;
+        s.minDistance = 2.0f;
+        s.maxDistance = 30.0f;
+        s.rolloff = SoundRolloff::Inverse;
+        s.dopplerScale = 0.5f;
+        s.reverbSend = 0.25f;
+        s.loopStartSample = 100;
+        s.loopEndSample = 200;
+
+        SoundAsset back;
+        const bool ok = SoundLibrary::FromJson(SoundLibrary::ToJson(s), back);
+        check(ok, "sound: ToJson/FromJson round trip parses");
+        check(ok && back.variations.size() == 2 && back.variations[0].clip == s.variations[0].clip
+                  && back.variations[1].weight == 1,
+              "sound: variations survive as numeric GUIDs");
+        check(ok && back.volume == s.volume && back.pitch == s.pitch && back.loop && back.stream
+                  && back.bus == "BGM" && back.priority == 200 && back.maxInstances == 4,
+              "sound: 2D playback fields round trip");
+        check(ok && back.spatialBlend == 1.0f && back.minDistance == 2.0f
+                  && back.maxDistance == 30.0f && back.rolloff == SoundRolloff::Inverse
+                  && back.dopplerScale == 0.5f && back.reverbSend == 0.25f,
+              "sound: 3D fields round trip (incl. rolloff enum by name)");
+        check(ok && back.loopStartSample == 100 && back.loopEndSample == 200,
+              "sound: loop points round trip");
+
+        // 旧形式 (文字列パス) と欠損フィールドの前方互換
+        SoundAsset legacy;
+        const nlohmann::json lj = nlohmann::json::parse(
+            R"({"variations":[{"clip":"sfx/hit.wav"}],"loop":1})");
+        const bool lok = SoundLibrary::FromJson(lj, legacy);
+        check(lok && legacy.variations.size() == 1 && legacy.variations[0].clip == 0
+                  && legacy.variations[0].clipPath == "sfx/hit.wav",
+              "sound: legacy string clip goes to clipPath (resolved on load)");
+        check(lok && legacy.loop && legacy.bus == "SE" && legacy.volume == 1.0f,
+              "sound: numeric bool is accepted and missing fields take defaults");
+    }
+
+    // ---- (13) バリエーション抽選は重みどおり・走査順非依存 ----
+    {
+        SoundAsset s;
+        s.variations.push_back({ 11, {}, 3 }); // roll 0,1,2
+        s.variations.push_back({ 22, {}, 0 }); // weight 0 = 候補外
+        s.variations.push_back({ 33, {}, 1 }); // roll 3
+        check(PickVariationIndex(s, 0) == 0 && PickVariationIndex(s, 2) == 0,
+              "sound: weight 3 covers the first three rolls");
+        check(PickVariationIndex(s, 3) == 2, "sound: weight-0 entry is skipped");
+        check(PickVariationIndex(s, 4) == 0, "sound: roll wraps by total weight");
+        SoundAsset empty;
+        check(PickVariationIndex(empty, 0) < 0, "sound: no candidate yields -1");
+        SoundAsset unresolved;
+        unresolved.variations.push_back({ 0, "missing.wav", 5 });
+        check(PickVariationIndex(unresolved, 0) < 0, "sound: unresolved clip is not a candidate");
+
+        // PlayDesc への写像 (バス名解決 + 揺らぎ 0 で決定論)
+        SoundAsset p;
+        p.variations.push_back({ 99, {}, 1 });
+        p.bus = "ui";
+        p.volume = 0.5f;
+        p.pitch = 1.5f;
+        p.priority = 7;
+        p.loop = true;
+        const PlayDesc d = MakePlayDesc(p, 0, 0.0f, 0.0f);
+        check(d.clip.value == 99 && d.bus == AudioSystem::kBusUi && d.volume == 0.5f
+                  && d.pitch == 1.5f && d.priority == 7 && d.loop,
+              "sound: MakePlayDesc maps fields and resolves the bus name case-insensitively");
+        SoundAsset bad;
+        bad.variations.push_back({ 1, {}, 1 });
+        bad.bus = "NoSuchBus";
+        check(MakePlayDesc(bad, 0, 0.0f, 0.0f).bus == AudioSystem::kBusSe,
+              "sound: unknown bus name falls back to SE");
     }
 
     // ※OGG デコードは selftest に fixture を持たない (エンコーダを同梱しないため)。

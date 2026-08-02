@@ -306,6 +306,24 @@ std::vector<AssetEntry> AudioSystem::Enumerate() const
     return out;
 }
 
+bool AudioSystem::ReloadClipFile(const std::wstring& path)
+{
+    if (xaudio_ == nullptr) {
+        return false;
+    }
+    const AssetID id = IdForFile(path);
+    if (id.IsNull() || clips_.find(id.value) == clips_.end()) {
+        return false; // ロードしていないファイルは対象外
+    }
+    AudioClip clip;
+    if (!LoadAudioFile(path, clip)) {
+        return false; // 書き込み途中の共有違反など
+    }
+    const std::string name = WideToUtf8(std::filesystem::path{ path }.stem().wstring());
+    // RegisterClip が差し替え前に StopVoicesUsingClip を呼ぶ (use-after-free 防止)
+    return !RegisterClip(id, std::move(clip), name).IsNull();
+}
+
 void AudioSystem::StopVoicesUsingClip(AssetID id)
 {
     for (Voice& v : voices_) {

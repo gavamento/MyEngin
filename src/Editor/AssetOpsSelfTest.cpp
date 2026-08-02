@@ -56,6 +56,20 @@ bool RunAssetOpsSelfTest()
     check(fs::exists(run + L".meta", ec) && !fs::exists(walk.wstring() + L".meta", ec),
           "meta sidecar renamed alongside (GUID preserved)");
 
+    // ---- (1b) M45c の複合サフィックス (.sound.json / .mixer.json) ----
+    // kCompound に載っていないと "x.sound (1).json" になり ClassifyPath が壊れる
+    const fs::path hit = root / L"hit.sound.json";
+    WriteDummy(hit);
+    const std::wstring hurt = RenameAsset(ctx, hit.wstring(), "hurt");
+    check(hurt == (root / L"hurt.sound.json").wstring(),
+          "rename keeps compound suffix (.sound.json)");
+    check(AssetDatabase::ClassifyPath(hurt) == AssetType::Sound, "classify .sound.json as Sound");
+    const fs::path mixer = root / L"main.mixer.json";
+    WriteDummy(mixer);
+    check(RenameAsset(ctx, mixer.wstring(), "game") == (root / L"game.mixer.json").wstring(),
+          "rename keeps compound suffix (.mixer.json)");
+    check(AssetDatabase::ClassifyPath(L"a.ogg") == AssetType::Audio, "classify .ogg as Audio");
+
     // ---- (2) 通常拡張子 ----
     const fs::path tex = root / L"tex.png";
     WriteDummy(tex);

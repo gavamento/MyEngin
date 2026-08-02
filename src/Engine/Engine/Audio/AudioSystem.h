@@ -84,6 +84,10 @@ public:
     // ★ホットリロード前に必ず呼ぶこと: 再生中の XAUDIO2_BUFFER はクリップのバイト列を
     //   直接指しているので、停止せずに差し替えると use-after-free になる
     void StopVoicesUsingClip(AssetID id);
+    // ディスク上の .wav/.ogg が書き換わったときの差し替え (M45c、ReloadHub 用)。
+    // **未登録のパスは何もしない** (見ていないファイルを勝手に鳴らす側へ引き込まない)。
+    // 戻り値 false = 未登録 or 読み込み失敗 (呼び出し側は共有違反としてリトライしてよい)
+    bool ReloadClipFile(const std::wstring& path);
 
     // ---- 再生 ----
     AudioHandle Play(const PlayDesc& desc);

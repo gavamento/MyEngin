@@ -23,6 +23,8 @@ std::wstring CreateAnimationAsset(EngineContext& ctx, const std::wstring& dir,
                                   const std::string& name);                        // .anim.json
 std::wstring CreateMaterialAsset(EngineContext& ctx, const std::wstring& dir,
                                  const std::string& name);                         // .mat.json
+std::wstring CreateSoundAsset(EngineContext& ctx, const std::wstring& dir,
+                              const std::string& name);                            // .sound.json
 // <root>\src\GameLogic\Scripts\<name>.cpp。root はプロジェクト起動なら <project>、
 // レガシー起動ならエンジンリポジトリ
 std::wstring CreateCppScript(EngineContext& ctx, const std::string& name);

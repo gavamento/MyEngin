@@ -10,6 +10,8 @@ class ShaderManager;
 class Scene;
 class PrefabLibrary;
 class AnimationLibrary;
+class SoundLibrary;
+class AudioSystem;
 struct RenderResources;
 
 // ホットリロードの司令塔 (engine_spec.md 8 章)。
@@ -18,7 +20,8 @@ struct RenderResources;
 class ReloadHub {
 public:
     bool Init(ShaderManager* shaders, RenderResources* resources, Scene* scene,
-              PrefabLibrary* prefabs, AnimationLibrary* anims, const std::wstring& assetsRoot);
+              PrefabLibrary* prefabs, AnimationLibrary* anims, SoundLibrary* sounds,
+              AudioSystem* audio, const std::wstring& assetsRoot);
     void Shutdown();
 
     // 現在編集中のシーンファイル (このファイルの外部編集だけ差分適用する)
@@ -41,6 +44,8 @@ private:
     Scene* scene_ = nullptr;
     PrefabLibrary* prefabs_ = nullptr;
     AnimationLibrary* anims_ = nullptr;
+    SoundLibrary* sounds_ = nullptr; // .sound.json (M45c)
+    AudioSystem* audio_ = nullptr;   // .wav/.ogg の差し替え (再生中 voice は先に停止される)
     std::wstring assetsRoot_; // .mat.json のテクスチャ相対パス解決に使う (M17)
     std::wstring activeSceneNorm_;
     uint64_t reloadCount_ = 0;

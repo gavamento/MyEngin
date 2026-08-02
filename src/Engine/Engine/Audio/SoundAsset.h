@@ -1,0 +1,104 @@
+#pragma once
+#include <cstdint>
+#include <string>
+#include <unordered_map>
+#include <vector>
+
+#include "nlohmann/json.hpp"
+
+#include "Engine/Engine/Audio/AudioSystem.h"
+
+namespace mye {
+
+// 距離減衰カーブ (M45e の X3DAudio 側で実際に使う。ここでは .sound.json の保持だけ)
+enum class SoundRolloff : int32_t { Logarithmic = 0, Linear = 1, Inverse = 2 };
+
+// 1 バリエーション = 1 クリップ + 抽選重み。同じ音の言い回し違いを 1 アセットに束ねる
+struct SoundVariation {
+    // 解決済みクリップ = GUID (AudioSystem のクリップキーそのもの)。
+    // 旧形式 (文字列パス) は clipPath に読むだけで、解決は SoundLibrary::LoadFromFile が
+    // .sound.json のディレクトリ相対で行う (.mat.json / .controller.json と同じ M39a 流儀)
+    uint64_t clip = 0;
+    std::string clipPath;
+    int32_t weight = 1; // 0 以下は候補外
+};
+
+// .sound.json 1 件。**再生パラメータのデータ化**であって ECS コンポーネントではない
+// (AudioSource コンポーネントは M45e)。決定論レーン外なので float を持ってよい
+struct SoundAsset {
+    uint64_t hash = 0; // = GUID (SoundLibrary のキー)
+    std::string name;
+    std::wstring path;
+
+    std::vector<SoundVariation> variations;
+
+    // ---- 2D 再生パラメータ ----
+    float volume = 1.0f;       // 線形 0..1
+    float volumeRandom = 0.0f; // ± 幅 (線形)
+    float pitch = 1.0f;        // 周波数比
+    float pitchRandom = 0.0f;  // ± 幅 (周波数比)
+    bool loop = false;
+    bool stream = false;       // BGM フラグ (ストリーミング再生は M45f)
+    std::string bus = "SE";    // AudioSystem::FindBus で解決。未知名は SE に落とす
+    int32_t priority = 128;    // 大きいほど重要 (VoicePolicy と同じ規約)
+    int32_t maxInstances = 0;  // 同時発音数の上限 (0 = 無制限)
+
+    // ---- 3D 設定 (M45e で実際に効く) ----
+    float spatialBlend = 0.0f; // 0 = 2D、1 = フル 3D
+    float minDistance = 1.0f;  // これより近ければ減衰なし
+    float maxDistance = 50.0f;
+    SoundRolloff rolloff = SoundRolloff::Logarithmic;
+    float dopplerScale = 1.0f;
+    float reverbSend = 0.0f;   // リバーブバスへの送り量 (0 = ドライのみ)
+
+    // ---- ループ点 (M45f 予約。単位 = フレーム。end<=start で「末尾まで」) ----
+    int32_t loopStartSample = 0;
+    int32_t loopEndSample = 0;
+};
+
+// 列挙 1 件 (AssetRef ピッカー / Asset Browser 用。ControllerEntry 範型)
+struct SoundEntry {
+    uint64_t hash = 0;
+    std::string name;
+};
+
+// 登録済み .sound.json の管理 (ControllerLibrary 範型)。
+// **クリップの実体 (PCM) は持たない** — 参照先は AudioSystem のクリップ表 (GUID キー)
+class SoundLibrary {
+public:
+    static uint64_t HashForPath(const std::wstring& path);
+
+    uint64_t LoadFromFile(const std::wstring& path); // clipPath を解決して clip を埋める。失敗時 0
+    uint64_t Register(const std::wstring& path, SoundAsset asset); // 返り値 = hash
+    bool SaveToFile(uint64_t hash) const;
+
+    const SoundAsset* Get(uint64_t hash) const;
+    SoundAsset* GetMutable(uint64_t hash);
+    bool Contains(uint64_t hash) const { return sounds_.find(hash) != sounds_.end(); }
+    std::vector<SoundEntry> Enumerate() const; // 名前昇順 (ハッシュの反復順を表に出さない)
+
+    static nlohmann::json ToJson(const SoundAsset& s);
+    // "clip" は両対応: 数値 = GUID をそのまま / 文字列 = 旧相対パス (clipPath に読むだけ)
+    static bool FromJson(const nlohmann::json& j, SoundAsset& out);
+
+private:
+    std::unordered_map<uint64_t, SoundAsset> sounds_;
+};
+
+// ---- 純関数 (selftest がデバイス無しで叩ける) ----
+
+// 重み付き抽選。roll は呼び出し側が用意した乱数値 (AudioSystem 所有の Pcg32。
+// **world.Rng() は絶対に使わない** — RNG state は hash 対象で sim が壊れる)。
+// 候補 (weight>0 かつ clip!=0) が無ければ -1
+int PickVariationIndex(const SoundAsset& s, uint32_t roll);
+
+// SoundAsset → PlayDesc (2D 部分のみ。3D 定位/ドップラーは M45e が上書きする)。
+// jitter は [-1,1]。0,0 を渡せば揺らぎ無し = 試聴が毎回同じ音になる
+PlayDesc MakePlayDesc(const SoundAsset& s, int variationIndex, float volJitter, float pitchJitter);
+
+// エディタ試聴 (Asset Browser のダブルクリック / Inspector の ▶)。
+// バリエーションは先頭固定・揺らぎ無しで再現性を優先する。クリップが未ロードなら
+// GUID からパスを解決してロードを試みる
+AudioHandle PreviewSound(AudioSystem& audio, const SoundAsset& s);
+
+} // namespace mye

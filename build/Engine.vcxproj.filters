@@ -123,6 +123,9 @@
     <ClCompile Include="..\src\Engine\Engine\Audio\AudioSystem.cpp">
       <Filter>Engine\Audio</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Audio\SoundAsset.cpp">
+      <Filter>Engine\Audio</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Audio\StbVorbisImpl.cpp">
       <Filter>Engine\Audio</Filter>
     </ClCompile>
@@ -409,6 +412,9 @@
       <Filter>Engine\Audio</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Audio\AudioSystem.h">
+      <Filter>Engine\Audio</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Audio\SoundAsset.h">
       <Filter>Engine\Audio</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Audio\StbVorbis.h">

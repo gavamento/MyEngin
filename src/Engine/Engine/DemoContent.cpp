@@ -1,6 +1,8 @@
 #include "Engine/Engine/DemoContent.h"
 
+#include <algorithm>
 #include <cstdio>
+#include <cwctype>
 #include <filesystem>
 #include <system_error>
 
@@ -9,11 +11,14 @@
 #include "Engine/Core/Hash.h"
 #include "Engine/Engine/Animation.h"
 #include "Engine/Engine/AnimatorController.h"
+#include "Engine/Engine/Audio/AudioSystem.h"
+#include "Engine/Engine/Audio/SoundAsset.h"
 #include "Engine/Engine/EngineLoop.h"
 #include "Engine/Engine/GameObject.h"
 #include "Engine/Engine/ModelLoader.h"
 #include "Engine/Engine/Prefab.h"
 #include "Engine/Engine/Scene.h"
+#include "Engine/Platform/PathUtil.h"
 #include "Engine/Renderer/GpuResources.h"
 #include "Engine/Renderer/ShaderManager.h"
 
@@ -182,6 +187,22 @@ void RegisterAssetLibraries(EngineContext& ctx)
         } else if (p.size() >= 16 && p.compare(p.size() - 16, 16, L".controller.json") == 0) {
             if (ctx.controllers) {
                 ctx.controllers->LoadFromFile(p); // M22: Animator Controller
+            }
+        } else if (p.size() >= 11 && p.compare(p.size() - 11, 11, L".sound.json") == 0) {
+            if (ctx.sounds) {
+                ctx.sounds->LoadFromFile(p); // M45c: サウンドアセット
+            }
+        } else {
+            // M45c: 素の音声ファイルは PCM を AudioSystem へ展開しつつ、**ファイル名 stem を
+            // 名前キーに登録**する (LoadWav = M19 互換シム)。既存スクリプトの
+            // PlaySound("beep") がハードコードロード無しで引き続き解決できる経路がこれ。
+            // --no-audio / デバイス無しでは LoadClipFile が早期 return するので何も起きない
+            std::wstring ext = e.path().extension().wstring();
+            std::transform(ext.begin(), ext.end(), ext.begin(), ::towlower);
+            if (ext == L".wav" || ext == L".ogg") {
+                if (ctx.audio) {
+                    ctx.audio->LoadWav(WideToUtf8(e.path().stem().wstring()), p);
+                }
             }
         }
     }

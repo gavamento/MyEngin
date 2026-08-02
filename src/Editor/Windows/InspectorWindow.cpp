@@ -787,10 +787,39 @@ void InspectorWindow::DrawAssetInspector(EngineContext& ctx, Selection& selectio
         if (type == AssetType::Material) {
             LoadMaterialEdit(ctx, path); // M40d
         }
+        if (type == AssetType::Sound) {
+            LoadSoundEdit(path); // M45c
+        }
     }
 
     if (type == AssetType::Material) {
         DrawMaterialInspector(ctx, path); // M40d
+        return;
+    }
+
+    if (type == AssetType::Sound) {
+        DrawSoundInspector(ctx, path); // M45c
+        return;
+    }
+
+    if (type == AssetType::Audio) {
+        // 素のクリップ: 情報表示 + 試聴。編集対象は .sound.json 側 (ここは読み取り専用)
+        if (ctx.audio) {
+            const AssetID id = ctx.audio->LoadClipFile(path); // 冪等 (--no-audio なら null)
+            if (ImGui::Button("Preview", ImVec2(110, 0))) {
+                if (!id.IsNull()) {
+                    PlayDesc d;
+                    d.clip = id;
+                    ctx.audio->Play(d);
+                } else {
+                    MYE_LOG_WARN("audio device is not available (or clip failed to decode)");
+                }
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Stop All", ImVec2(90, 0))) {
+                ctx.audio->StopAll();
+            }
+        }
         return;
     }
 
@@ -1002,6 +1031,181 @@ void InspectorWindow::DrawMaterialInspector(EngineContext& ctx, const std::wstri
     }
 }
 
+void InspectorWindow::LoadSoundEdit(const std::wstring& path)
+{
+    soundEdit_ = SoundAsset{};
+    soundEditValid_ = false;
+    std::ifstream f(std::filesystem::path(path), std::ios::binary);
+    if (!f) {
+        return;
+    }
+    nlohmann::json root;
+    try {
+        f >> root;
+    } catch (const nlohmann::json::exception&) {
+        return;
+    }
+    soundEditValid_ = SoundLibrary::FromJson(root, soundEdit_);
+}
+
+void InspectorWindow::DrawSoundInspector(EngineContext& ctx, const std::wstring& path)
+{
+    namespace fs = std::filesystem;
+    if (!soundEditValid_) {
+        ImGui::TextDisabled("(sound parse failed)");
+        return;
+    }
+
+    // ---- 試聴 (先頭バリエーション・揺らぎ無しで固定 = 何を聴いているか分かる) ----
+    if (ImGui::Button("Preview", ImVec2(110, 0))) {
+        if (ctx.audio) {
+            PreviewSound(*ctx.audio, soundEdit_);
+        }
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Stop All", ImVec2(90, 0))) {
+        if (ctx.audio) {
+            ctx.audio->StopAll();
+        }
+    }
+    ImGui::TextDisabled("(preview uses the saved-in-editor values, not the file on disk)");
+
+    // ---- バリエーション ----
+    ImGui::SeparatorText("Variations");
+    int removeAt = -1;
+    for (size_t i = 0; i < soundEdit_.variations.size(); ++i) {
+        SoundVariation& v = soundEdit_.variations[i];
+        ImGui::PushID(static_cast<int>(i));
+        std::string cur = "(none)";
+        if (v.clip != 0) {
+            const std::wstring resolved = assetguid::ResolvePath(v.clip);
+            if (!resolved.empty()) {
+                cur = WideToUtf8(fs::path(resolved).filename().wstring());
+            } else if (!v.clipPath.empty()) {
+                cur = v.clipPath;
+            } else {
+                char hex[24];
+                std::snprintf(hex, sizeof(hex), "%016llx", static_cast<unsigned long long>(v.clip));
+                cur = std::string("(missing ") + hex + ")";
+            }
+        } else if (!v.clipPath.empty()) {
+            cur = v.clipPath + " (unresolved)";
+        }
+        if (ImGui::Button(cur.c_str(), ImVec2(ImGui::GetContentRegionAvail().x * 0.5f, 0))) {
+            ImGui::OpenPopup("##clip_pick");
+        }
+        if (ImGui::BeginPopup("##clip_pick")) {
+            if (ImGui::Selectable("(none)")) {
+                v.clip = 0;
+                v.clipPath.clear();
+            }
+            // ロード済みクリップ = assets\**\*.wav|*.ogg (RegisterAssetLibraries が起動時に登録)
+            if (ctx.audio) {
+                for (const AssetEntry& e : ctx.audio->Enumerate()) {
+                    if (ImGui::Selectable(e.name.c_str(), e.id.value == v.clip)) {
+                        v.clip = e.id.value;
+                        v.clipPath.clear();
+                    }
+                }
+            }
+            ImGui::EndPopup();
+        }
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(80.0f);
+        ImGui::DragInt("weight", &v.weight, 0.1f, 0, 100);
+        ImGui::SameLine();
+        if (ImGui::SmallButton("x")) {
+            removeAt = static_cast<int>(i);
+        }
+        ImGui::PopID();
+    }
+    if (removeAt >= 0) {
+        soundEdit_.variations.erase(soundEdit_.variations.begin() + removeAt);
+    }
+    if (ImGui::Button("+ Add Variation")) {
+        soundEdit_.variations.push_back(SoundVariation{});
+    }
+
+    // ---- 2D 再生パラメータ ----
+    ImGui::SeparatorText("Playback");
+    ImGui::SliderFloat("volume", &soundEdit_.volume, 0.0f, 1.0f);
+    ImGui::SliderFloat("volume random", &soundEdit_.volumeRandom, 0.0f, 1.0f);
+    ImGui::SliderFloat("pitch", &soundEdit_.pitch, 1.0f / AudioSystem::kMaxFreqRatio,
+                       AudioSystem::kMaxFreqRatio);
+    ImGui::SliderFloat("pitch random", &soundEdit_.pitchRandom, 0.0f, 1.0f);
+    ImGui::Checkbox("loop", &soundEdit_.loop);
+    ImGui::SameLine();
+    ImGui::Checkbox("stream (BGM)", &soundEdit_.stream);
+    {
+        int bus = AudioSystem::FindBus(soundEdit_.bus.c_str());
+        if (bus < 0) {
+            bus = AudioSystem::kBusSe;
+        }
+        const char* busNames[AudioSystem::kBusCount] = {
+            AudioSystem::BusName(AudioSystem::kBusMaster), AudioSystem::BusName(AudioSystem::kBusBgm),
+            AudioSystem::BusName(AudioSystem::kBusSe), AudioSystem::BusName(AudioSystem::kBusUi)
+        };
+        ImGui::SetNextItemWidth(160.0f);
+        if (ImGui::Combo("bus", &bus, busNames, AudioSystem::kBusCount)) {
+            soundEdit_.bus = busNames[bus];
+        }
+    }
+    ImGui::SetNextItemWidth(160.0f);
+    ImGui::DragInt("priority", &soundEdit_.priority, 1.0f, 0, 255);
+    ImGui::SetNextItemWidth(160.0f);
+    ImGui::DragInt("max instances", &soundEdit_.maxInstances, 0.1f, 0, 64);
+    ImGui::TextDisabled("0 = unlimited. Higher priority wins when voices are stolen.");
+
+    // ---- 3D (M45e で実際に効く) ----
+    ImGui::SeparatorText("3D");
+    ImGui::SliderFloat("spatial blend", &soundEdit_.spatialBlend, 0.0f, 1.0f);
+    ImGui::DragFloat("min distance", &soundEdit_.minDistance, 0.05f, 0.01f, 1000.0f);
+    ImGui::DragFloat("max distance", &soundEdit_.maxDistance, 0.5f, 0.02f, 10000.0f);
+    {
+        int rolloff = static_cast<int>(soundEdit_.rolloff);
+        const char* rolloffNames[] = { "Logarithmic", "Linear", "Inverse" };
+        ImGui::SetNextItemWidth(160.0f);
+        if (ImGui::Combo("rolloff", &rolloff, rolloffNames, 3)) {
+            soundEdit_.rolloff = static_cast<SoundRolloff>(rolloff);
+        }
+    }
+    ImGui::SliderFloat("doppler", &soundEdit_.dopplerScale, 0.0f, 5.0f);
+    ImGui::SliderFloat("reverb send", &soundEdit_.reverbSend, 0.0f, 1.0f);
+    ImGui::TextDisabled("3D settings take effect in M45e (X3DAudio).");
+
+    // ---- ループ点 (M45f 予約) ----
+    ImGui::SeparatorText("Loop points (frames)");
+    ImGui::SetNextItemWidth(160.0f);
+    ImGui::DragInt("loop start", &soundEdit_.loopStartSample, 8.0f, 0, 1 << 30);
+    ImGui::SetNextItemWidth(160.0f);
+    ImGui::DragInt("loop end", &soundEdit_.loopEndSample, 8.0f, 0, 1 << 30);
+    ImGui::TextDisabled("end <= start means \"to the end\". Used by streaming (M45f).");
+
+    ImGui::Separator();
+    if (ImGui::Button("Save", ImVec2(90, 0))) {
+        if (soundEdit_.name.empty()) {
+            // "hit.sound.json" → "hit" (stem を 2 回剥がす)
+            soundEdit_.name = WideToUtf8(fs::path(path).stem().stem().wstring());
+        }
+        std::ofstream out(fs::path(path), std::ios::binary);
+        if (out) {
+            out << SoundLibrary::ToJson(soundEdit_).dump(2);
+            out.close();
+            // 即時反映: 同一 GUID のまま再ロード (参照側は GUID なので再解決不要)
+            if (ctx.sounds) {
+                ctx.sounds->LoadFromFile(path);
+            }
+            MYE_LOG_INFO("sound saved: %s", WideToUtf8(path).c_str());
+        } else {
+            MYE_LOG_ERROR("could not write sound: %s", WideToUtf8(path).c_str());
+        }
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Revert", ImVec2(90, 0))) {
+        LoadSoundEdit(path);
+    }
+}
+
 void InspectorWindow::DrawAssetRef(EngineContext& ctx, const FieldDesc& field, void* p,
                                    Selection& selection, UndoStack& undo,
                                    const std::vector<uint64_t>& fids,
@@ -1017,7 +1221,20 @@ void InspectorWindow::DrawAssetRef(EngineContext& ctx, const FieldDesc& field, v
         entries = ctx.resources->materials.Enumerate();
     } else if (fname.find("tex") != std::string::npos) {
         entries = ctx.resources->textures.Enumerate();
+    } else if (fname.find("sound") != std::string::npos) {
+        // M45c: .sound.json (AudioSource.sound 等)。**"clip"/"anim" より先に見る**
+        if (ctx.sounds) {
+            for (const SoundEntry& s : ctx.sounds->Enumerate()) {
+                entries.push_back({ AssetID{ s.hash }, s.name });
+            }
+        }
+    } else if (fname.find("audio") != std::string::npos) {
+        // M45c: 素の音声クリップ (.wav/.ogg) を直接指すフィールド
+        if (ctx.audio) {
+            entries = ctx.audio->Enumerate();
+        }
     } else if (fname.find("clip") != std::string::npos || fname.find("anim") != std::string::npos) {
+        // 注: "clip" はアニメーションクリップの既存規約。音のクリップは "audio" を使うこと
         for (const AnimClipEntry& c : ctx.anims->Enumerate()) {
             entries.push_back({ AssetID{ c.hash }, c.name });
         }

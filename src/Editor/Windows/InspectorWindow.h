@@ -7,6 +7,7 @@
 #include "Editor/Selection.h"
 #include "Engine/Core/EntityID.h"
 #include "Engine/Core/ImportMetaResolver.h"
+#include "Engine/Engine/Audio/SoundAsset.h"
 #include "Engine/Engine/EngineLoop.h"
 
 namespace mye {
@@ -63,6 +64,13 @@ private:
     MaterialEditState matEdit_;
     void LoadMaterialEdit(EngineContext& ctx, const std::wstring& path);
     void DrawMaterialInspector(EngineContext& ctx, const std::wstring& path);
+
+    // サウンドインスペクタの編集キャッシュ (M45c)。.sound.json のスキーマ固定編集。
+    // マテリアルと同じく **アセット編集は UndoStack 対象外** (既存規約)
+    SoundAsset soundEdit_;
+    bool soundEditValid_ = false;
+    void LoadSoundEdit(const std::wstring& path);
+    void DrawSoundInspector(EngineContext& ctx, const std::wstring& path);
 
     // 回転編集中のオイラー角キャッシュ (quat→euler→quat の往復ドリフト防止)
     DirectX::XMFLOAT3 eulerCache_ = { 0, 0, 0 };

@@ -21,6 +21,8 @@
 #include "Engine/Core/World.h"
 #include "Engine/Engine/Animation.h"
 #include "Engine/Engine/AssetDatabase.h"
+#include "Engine/Engine/Audio/AudioSystem.h"
+#include "Engine/Engine/Audio/SoundAsset.h"
 #include "Engine/Engine/EngineLoop.h"
 #include "Engine/Engine/GameObject.h"
 #include "Engine/Engine/FbxLoader.h"
@@ -146,7 +148,8 @@ bool RunningRelease()
 void SplitAssetName(const std::wstring& filename, std::wstring& stem, std::wstring& suffix)
 {
     static const std::wstring kCompound[] = {L".scene.json", L".prefab.json", L".anim.json",
-                                             L".mat.json", L".controller.json"};
+                                             L".mat.json",   L".controller.json",
+                                             L".sound.json", L".mixer.json"};
     for (const std::wstring& c : kCompound) {
         if (filename.size() > c.size() &&
             filename.compare(filename.size() - c.size(), c.size(), c) == 0) {
@@ -319,6 +322,28 @@ std::wstring CreateMaterialAsset(EngineContext& ctx, const std::wstring& dir, co
         ctx.resources->materials.LoadFromFile(path, ctx.resources->textures, ctx.assetsRoot);
     }
     MYE_LOG_INFO("created material: %s", WideToUtf8(path).c_str());
+    return path;
+}
+
+std::wstring CreateSoundAsset(EngineContext& ctx, const std::wstring& dir, const std::string& name)
+{
+    const std::string safe = SanitizeFileName(name, "New Sound");
+    const std::wstring path = dir + L"\\" + Utf8ToWide(safe) + L".sound.json";
+    SoundAsset s;
+    s.name = safe;
+    s.variations.push_back(SoundVariation{}); // 空スロットを 1 本 (Inspector で clip を選ぶ)
+    std::ofstream f{ fs::path(path), std::ios::binary };
+    if (!f) {
+        MYE_LOG_ERROR("could not write sound: %s", WideToUtf8(path).c_str());
+        return {};
+    }
+    f << SoundLibrary::ToJson(s).dump(2);
+    f.close();
+    // 生成直後に登録 → 参照ピッカー / ダブルクリック試聴で即使える (CreateMaterialAsset 範型)
+    if (ctx.sounds) {
+        ctx.sounds->LoadFromFile(path);
+    }
+    MYE_LOG_INFO("created sound: %s", WideToUtf8(path).c_str());
     return path;
 }
 
@@ -657,6 +682,13 @@ void InstantiateAssetAtPath(EngineContext& ctx, Selection& selection, UndoStack&
     }
     const std::string u = WideToUtf8(path);
     const std::string lu = LowerAscii(u); // 拡張子判定は大文字小文字を無視する
+    const AssetType dropType = AssetDatabase::ClassifyPath(path);
+    // M45c: 音の配置は AudioSource コンポーネント (M45e) が入るまで実体を作れない。
+    // 分岐だけ先に置いて「無反応でどこにも記録が残らない」状態を避ける
+    if (dropType == AssetType::Sound || dropType == AssetType::Audio) {
+        MYE_LOG_WARN("audio drop is not placeable yet (AudioSource lands in M45e): %s", u.c_str());
+        return;
+    }
     undo.BeginRecord("Place Asset", selection);
     uint64_t rootFid = 0;
     if (EndsWith(lu, ".prefab.json")) {
@@ -680,7 +712,7 @@ void InstantiateAssetAtPath(EngineContext& ctx, Selection& selection, UndoStack&
             }
             rootFid = ctx.scene->EnsureFileId(o.Id());
         }
-    } else if (AssetDatabase::ClassifyPath(path) == AssetType::Texture) {
+    } else if (dropType == AssetType::Texture) {
         // 画像 → SpriteRenderer 付きオブジェクトとして配置。テクスチャは GUID 安定 ID で
         // 非同期ロード。注: 再起動後はシーン参照だけではロードされず、サムネイル等が
         // RequestLoad するまで白 (UIElementComponent.texture と同じ既存挙動)

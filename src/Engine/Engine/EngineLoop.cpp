@@ -13,6 +13,7 @@
 #include "Engine/Engine/HotReload/DllReloader.h"
 #include "Engine/Engine/HotReload/ReloadHub.h"
 #include "Engine/Engine/Audio/AudioSystem.h"
+#include "Engine/Engine/Audio/SoundAsset.h"
 #include "Engine/Engine/Particles/ParticleSystem.h"
 #include "Engine/Engine/Physics/MeshColliderLibrary.h"
 #include "Engine/Engine/Physics/PhysicsSystem.h"
@@ -89,6 +90,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     UIRenderer uiRenderer;         // ゲーム内 UI (M21、backbuffer/GameView への重ね描画)
     VfxRenderer vfxRenderer;       // Sprite/Trail/TextMesh (M29c、メッシュ後・パーティクル前)
     AudioSystem audioSystem;       // XAudio2 (M19/M45、決定論レーン外の出力 sink)
+    SoundLibrary soundLibrary;     // .sound.json (M45c)。PCM 実体は AudioSystem 側
     std::vector<ScriptAudioEvent> audioQueue; // スクリプトの再生イベント (tick 内で積む)
     // 再生ハンドルの予約カウンタ (M45)。**採番は push 側 = ゲートされない経路**で行う。
     // AudioSystem 側に置くと記録/検証中 (drain がゲートされる) だけ番号が進まず、
@@ -169,7 +171,8 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     }
     uiRenderer.Init(device, shaderManager, assetsRoot); // M21: 失敗してもエンジンは継続 (UI が出ないだけ)
     vfxRenderer.Init(device, shaderManager, &uiRenderer); // M29c: 同上 (VFX が出ないだけ)
-    reloadHub.Init(&shaderManager, &resources, &scene, &prefabLibrary, &animLibrary, assetsRoot);
+    reloadHub.Init(&shaderManager, &resources, &scene, &prefabLibrary, &animLibrary, &soundLibrary,
+                   &audioSystem, assetsRoot);
     particleSystem.Init(device, shaderManager, assetsRoot);
 
     // ポストプロセス設定を config から反映 (M16)。全ビューポート共通の renderSystem に載る
@@ -210,10 +213,11 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // シーン保存/復元時に C# コンポーネントのフィールドを永続化する hook を登録
     SceneSerializer::SetManagedHost(&managedHost);
 
-    // オーディオ (M19/M45)。XAudio2 初期化 + デモ .wav ロード + 両ホストへ共有バッファ接続。
-    // 初期化失敗 (ヘッドレス / --no-audio) でもエンジンは継続する (再生が no-op になるだけ)
+    // オーディオ (M19/M45)。XAudio2 初期化 + 両ホストへ共有バッファ接続。
+    // 初期化失敗 (ヘッドレス / --no-audio) でもエンジンは継続する (再生が no-op になるだけ)。
+    // クリップの実ロードは M45c から RegisterAssetLibraries (assets\**\*.wav|*.ogg の走査) が
+    // 担う — 単一ファイルのハードコードはここには置かない
     audioSystem.Init(config.audio);
-    audioSystem.LoadWav("beep", assetsRoot + L"\\audio\\beep.wav");
     scriptHost.SetSharedServices(&audioQueue, &pendingScene, &effectQueue, &debugLines,
                                  &audioHandleSeq);
     managedHost.SetSharedServices(&audioQueue, &pendingScene, &effectQueue, &debugLines,
@@ -244,6 +248,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     ctx.controllers = &controllerLibrary;
     ctx.assetDb = &assetDatabase;
     ctx.audio = &audioSystem;
+    ctx.sounds = &soundLibrary;
     ctx.assetsRoot = assetsRoot;
     ctx.projectRoot = config.projectRoot;
     ctx.imguiIniPath = imguiIniPath;

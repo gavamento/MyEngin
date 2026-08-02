@@ -1,0 +1,28 @@
+{
+  "engine": "MyEngine",
+  "sound": 1,
+  "name": "beep",
+  "variations": [
+    {
+      "clip": 12361048743093969237,
+      "weight": 1
+    }
+  ],
+  "volume": 0.8,
+  "volumeRandom": 0.1,
+  "pitch": 1.0,
+  "pitchRandom": 0.15,
+  "loop": false,
+  "stream": false,
+  "bus": "SE",
+  "priority": 128,
+  "maxInstances": 0,
+  "spatialBlend": 1.0,
+  "minDistance": 2.0,
+  "maxDistance": 40.0,
+  "rolloff": "logarithmic",
+  "dopplerScale": 1.0,
+  "reverbSend": 0.0,
+  "loopStartSample": 0,
+  "loopEndSample": 0
+}
