@@ -110,7 +110,7 @@ bool LayoutManager::DrawToolbarUi()
         ImGui::OpenPopup("##layouts");
     }
     if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("レイアウト (保存/切替)");
+        ImGui::SetTooltip("%s", Tr(StrId::Layout_Tip));
     }
     if (ImGui::BeginPopup("##layouts")) {
         // ファイル列挙はポップアップ表示中のみ (毎フレームのディレクトリ走査を避ける)
@@ -125,10 +125,10 @@ bool LayoutManager::DrawToolbarUi()
         if (!names.empty()) {
             ImGui::Separator();
         }
-        if (ImGui::MenuItem("レイアウトを保存...")) {
+        if (ImGui::MenuItem(Tr(StrId::Layout_Save))) {
             openSaveModal_ = true;
         }
-        if (!names.empty() && ImGui::BeginMenu("削除")) {
+        if (!names.empty() && ImGui::BeginMenu(Tr(StrId::Layout_Delete))) {
             for (const std::string& n : names) {
                 ImGui::PushID(n.c_str());
                 if (ImGui::MenuItem(n.c_str())) {
@@ -141,7 +141,7 @@ bool LayoutManager::DrawToolbarUi()
             ImGui::EndMenu();
         }
         ImGui::Separator();
-        if (ImGui::MenuItem("リセット (既定)")) {
+        if (ImGui::MenuItem(Tr(StrId::Layout_ResetDefault))) {
             resetRequested = true;
         }
         ImGui::EndPopup();
@@ -153,9 +153,9 @@ bool LayoutManager::DrawToolbarUi()
         ImGui::OpenPopup(Tr(StrId::Popup_SaveLayout));
     }
     if (ImGui::BeginPopupModal(Tr(StrId::Popup_SaveLayout), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::TextDisabled("同名レイアウトは上書きされます");
+        ImGui::TextDisabled("%s", Tr(StrId::Layout_OverwriteNote));
         ImGui::SetNextItemWidth(240.0f);
-        const bool enter = ImGui::InputText("名前", nameBuf_, sizeof(nameBuf_),
+        const bool enter = ImGui::InputText(Tr(StrId::Layout_NameField), nameBuf_, sizeof(nameBuf_),
                                             ImGuiInputTextFlags_EnterReturnsTrue);
         std::string name = nameBuf_;
         // 末尾の空白/ドットは Windows のファイル名として不正なので落とす
@@ -165,9 +165,9 @@ bool LayoutManager::DrawToolbarUi()
         // 拒否文字は RenameAsset と同じ集合
         const bool invalid =
             name.empty() || name.find_first_of("\\/:*?\"<>|") != std::string::npos;
-        const bool doSave = ImGui::Button("保存", ImVec2(90, 0)) || enter;
+        const bool doSave = ImGui::Button(Tr(StrId::Common_Save), ImVec2(90, 0)) || enter;
         ImGui::SameLine();
-        const bool cancel = ImGui::Button("キャンセル", ImVec2(90, 0));
+        const bool cancel = ImGui::Button(Tr(StrId::Common_Cancel), ImVec2(90, 0));
         if (doSave && !invalid) {
             SaveCurrent(name);
             ImGui::CloseCurrentPopup();

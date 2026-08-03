@@ -128,9 +128,9 @@ bool DrawHubUi(HubState& st, void* hwnd, ProjectManagerOutcome& outcome)
                      | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoBringToFrontOnFocus
                      | ImGuiWindowFlags_NoSavedSettings);
 
-    ImGui::Text("MyEngine Hub");
+    ImGui::TextUnformatted(Tr(StrId::Hub_Title));
     ImGui::SameLine();
-    ImGui::TextDisabled("engine %s", kEngineVersion);
+    ImGui::TextDisabled(Tr(StrId::Hub_EngineVer), kEngineVersion);
     ImGui::Separator();
 
     const float footer = ImGui::GetFrameHeightWithSpacing();
@@ -139,7 +139,7 @@ bool DrawHubUi(HubState& st, void* hwnd, ProjectManagerOutcome& outcome)
     // ---- 左: プロジェクト一覧 (pinned → lastOpened 降順) ----
     ImGui::BeginChild("##projects", ImVec2(listWidth, -footer), ImGuiChildFlags_Borders);
     if (st.registry.Entries().empty()) {
-        ImGui::TextDisabled("(プロジェクトがありません — 右側から作成してください)");
+        ImGui::TextDisabled("%s", Tr(StrId::Hub_Empty));
     }
     // 表示中の変更操作を安全にするためコピーで回す (Touch/Remove が並びを変える)
     const std::vector<ProjectRegistryEntry> entries = st.registry.Entries();
@@ -168,7 +168,7 @@ bool DrawHubUi(HubState& st, void* hwnd, ProjectManagerOutcome& outcome)
         if (e.missing) {
             ImGui::TextDisabled("%s  (missing)", label.c_str());
             ImGui::SameLine(ImGui::GetContentRegionAvail().x - 60.0f);
-            if (ImGui::SmallButton("Remove")) {
+            if (ImGui::SmallButton(Tr(StrId::Hub_Remove))) {
                 st.registry.Remove(e.path);
             }
         } else {
@@ -189,7 +189,7 @@ bool DrawHubUi(HubState& st, void* hwnd, ProjectManagerOutcome& outcome)
                     st.renameTargetPath = e.path;
                     strncpy_s(st.renameBuf, label.c_str(), _TRUNCATE);
                 }
-                if (ImGui::MenuItem("リストから外す")) {
+                if (ImGui::MenuItem(Tr(StrId::Hub_RemoveFromList))) {
                     st.registry.Remove(e.path);
                 }
                 ImGui::Separator();
@@ -204,7 +204,7 @@ bool DrawHubUi(HubState& st, void* hwnd, ProjectManagerOutcome& outcome)
                 ImGui::SameLine();
                 ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.2f, 1.0f), "[engine %s]", ver);
                 if (ImGui::IsItemHovered()) {
-                    ImGui::SetTooltip("Created with engine %s (current: %s)", ver, kEngineVersion);
+                    ImGui::SetTooltip(Tr(StrId::Hub_TipEngineVer), ver, kEngineVersion);
                 }
             }
         }
@@ -224,9 +224,9 @@ bool DrawHubUi(HubState& st, void* hwnd, ProjectManagerOutcome& outcome)
 
     // ---- 右: 新規作成 / 既存を開く ----
     ImGui::BeginChild("##actions", ImVec2(0, -footer));
-    ImGui::SeparatorText("新規プロジェクト");
-    ImGui::InputText("名前", st.newName, sizeof(st.newName));
-    ImGui::InputText("場所", st.newLocation, sizeof(st.newLocation));
+    ImGui::SeparatorText(Tr(StrId::Hub_NewProject));
+    ImGui::InputText(Tr(StrId::Hub_NameField), st.newName, sizeof(st.newName));
+    ImGui::InputText(Tr(StrId::Hub_Location), st.newLocation, sizeof(st.newLocation));
     ImGui::SameLine();
     if (ImGui::Button(ICON_FA_FOLDER_OPEN "##loc")) {
         const std::wstring picked = PickFolderDialog(hwnd);
@@ -235,8 +235,8 @@ bool DrawHubUi(HubState& st, void* hwnd, ProjectManagerOutcome& outcome)
             strncpy_s(st.newLocation, utf8.c_str(), _TRUNCATE);
         }
     }
-    ImGui::Combo("テンプレート", &st.newTemplate, "Empty\0" "3D Demo\0");
-    if (ImGui::Button("作成", ImVec2(120, 0))) {
+    ImGui::Combo(Tr(StrId::Hub_Template), &st.newTemplate, "Empty\0" "3D Demo\0");
+    if (ImGui::Button(Tr(StrId::Common_Create), ImVec2(120, 0))) {
         const std::wstring dir =
             Utf8ToWide(st.newLocation) + L"\\" + Utf8ToWide(st.newName);
         std::string err;
@@ -253,8 +253,8 @@ bool DrawHubUi(HubState& st, void* hwnd, ProjectManagerOutcome& outcome)
     }
 
     ImGui::Spacing();
-    ImGui::SeparatorText("既存を開く");
-    ImGui::InputText("パス", st.openPath, sizeof(st.openPath));
+    ImGui::SeparatorText(Tr(StrId::Hub_OpenExisting));
+    ImGui::InputText(Tr(StrId::Hub_PathField), st.openPath, sizeof(st.openPath));
     ImGui::SameLine();
     if (ImGui::Button(ICON_FA_FOLDER_OPEN "##open")) {
         const std::wstring picked = PickFolderDialog(hwnd);
@@ -263,7 +263,7 @@ bool DrawHubUi(HubState& st, void* hwnd, ProjectManagerOutcome& outcome)
             strncpy_s(st.openPath, utf8.c_str(), _TRUNCATE);
         }
     }
-    if (ImGui::Button("開く", ImVec2(120, 0))) {
+    if (ImGui::Button(Tr(StrId::Hub_Open), ImVec2(120, 0))) {
         const std::wstring dir = Utf8ToWide(st.openPath);
         ProjectManifest m;
         if (IsProjectRoot(dir) && LoadProjectManifest(dir, m)) {
@@ -278,7 +278,7 @@ bool DrawHubUi(HubState& st, void* hwnd, ProjectManagerOutcome& outcome)
     }
     ImGui::EndChild();
 
-    ImGui::TextDisabled("ダブルクリックでプロジェクトを開く (エディタを再起動します)");
+    ImGui::TextDisabled("%s", Tr(StrId::Hub_TipOpen));
 
     // ---- 削除確認モーダル (M33a) ----
     if (!st.deleteTargetPath.empty() && !ImGui::IsPopupOpen(Tr(StrId::Popup_DeleteProject))) {
@@ -287,7 +287,7 @@ bool DrawHubUi(HubState& st, void* hwnd, ProjectManagerOutcome& outcome)
     if (ImGui::BeginPopupModal(Tr(StrId::Popup_DeleteProject), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::Text("プロジェクト \"%s\" を削除します", st.deleteTargetLabel.c_str());
         ImGui::TextDisabled("%s", WideToUtf8(st.deleteTargetPath).c_str());
-        ImGui::TextUnformatted("フォルダごと ごみ箱へ移動します (元に戻せます)。");
+        ImGui::TextUnformatted(Tr(StrId::Hub_TrashNote));
         ImGui::Separator();
         if (ImGui::Button(ICON_FA_TRASH " ごみ箱へ移動", ImVec2(160, 0))) {
             if (MoveToRecycleBin(st.deleteTargetPath)) {
@@ -299,7 +299,7 @@ bool DrawHubUi(HubState& st, void* hwnd, ProjectManagerOutcome& outcome)
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button("キャンセル", ImVec2(120, 0))) {
+        if (ImGui::Button(Tr(StrId::Common_Cancel), ImVec2(120, 0))) {
             st.deleteTargetPath.clear();
             ImGui::CloseCurrentPopup();
         }
@@ -314,15 +314,15 @@ bool DrawHubUi(HubState& st, void* hwnd, ProjectManagerOutcome& outcome)
     if (ImGui::BeginPopupModal(Tr(StrId::Popup_RenameProject), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::TextDisabled("%s", WideToUtf8(st.renameTargetPath).c_str());
         ImGui::SetNextItemWidth(280.0f);
-        const bool enter = ImGui::InputText("名前", st.renameBuf, sizeof(st.renameBuf),
+        const bool enter = ImGui::InputText(Tr(StrId::Hub_NameField), st.renameBuf, sizeof(st.renameBuf),
                                             ImGuiInputTextFlags_EnterReturnsTrue);
         std::string newName = st.renameBuf;
         while (!newName.empty() && (newName.back() == ' ' || newName.back() == '\t')) {
             newName.pop_back(); // 末尾空白は除去 (表示崩れ防止)
         }
-        const bool doRename = ImGui::Button("変更", ImVec2(120, 0)) || enter;
+        const bool doRename = ImGui::Button(Tr(StrId::Hub_Change), ImVec2(120, 0)) || enter;
         ImGui::SameLine();
-        const bool cancelRename = ImGui::Button("キャンセル", ImVec2(120, 0));
+        const bool cancelRename = ImGui::Button(Tr(StrId::Common_Cancel), ImVec2(120, 0));
         if (doRename && !newName.empty()) {
             // SaveProjectManifest は構造体から全書き出しするため、engineVersion/bootScene を
             // 保持するには先にロードが必須 (未知キーは現状存在しない)
@@ -354,7 +354,7 @@ bool DrawHubUi(HubState& st, void* hwnd, ProjectManagerOutcome& outcome)
     }
     if (ImGui::BeginPopupModal(Tr(StrId::Popup_Error), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::TextUnformatted(st.errorText.c_str());
-        if (ImGui::Button("OK", ImVec2(120, 0))) {
+        if (ImGui::Button(Tr(StrId::Common_Ok), ImVec2(120, 0))) {
             st.errorText.clear();
             ImGui::CloseCurrentPopup();
         }

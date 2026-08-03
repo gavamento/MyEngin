@@ -34,6 +34,7 @@
     <ClCompile Include="..\src\Engine\Core\Components.cpp" />
     <ClCompile Include="..\src\Engine\Core\EcsSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Core\FileWatcher.cpp" />
+    <ClCompile Include="..\src\Engine\Core\Format.cpp" />
     <ClCompile Include="..\src\Engine\Core\ImportMetaResolver.cpp" />
     <ClCompile Include="..\src\Engine\Core\JobSystem.cpp" />
     <ClCompile Include="..\src\Engine\Core\JobSystemSelfTest.cpp" />
@@ -139,6 +140,7 @@
     <ClInclude Include="..\src\Engine\Core\EcsSelfTest.h" />
     <ClInclude Include="..\src\Engine\Core\EntityID.h" />
     <ClInclude Include="..\src\Engine\Core\FileWatcher.h" />
+    <ClInclude Include="..\src\Engine\Core\Format.h" />
     <ClInclude Include="..\src\Engine\Core\Hash.h" />
     <ClInclude Include="..\src\Engine\Core\ImportMetaResolver.h" />
     <ClInclude Include="..\src\Engine\Core\JobSystem.h" />

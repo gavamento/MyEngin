@@ -247,7 +247,7 @@ void SoundGenWindow::OnImGui(EngineContext& ctx, const std::wstring& assetDir)
     }
 
     // ---- プリセット ----
-    ImGui::TextUnformatted("Presets");
+    ImGui::TextUnformatted(Tr(StrId::SndGen_Presets));
     static const char* const kPresetNames[] = { "Jump", "Coin", "Explosion", "Laser" };
     for (int i = 0; i < 4; ++i) {
         if (i != 0) {
@@ -269,17 +269,17 @@ void SoundGenWindow::OnImGui(EngineContext& ctx, const std::wstring& assetDir)
 
     // ---- 波形 ----
     int wave = static_cast<int>(params_.wave);
-    if (ImGui::Combo("Waveform", &wave, kWaveNames, IM_ARRAYSIZE(kWaveNames))) {
+    if (ImGui::Combo(Tr(StrId::SndGen_Waveform), &wave, kWaveNames, IM_ARRAYSIZE(kWaveNames))) {
         params_.wave = static_cast<SynthWave>(wave);
         changed = true;
     }
     if (params_.wave == SynthWave::Square) {
-        changed |= ImGui::SliderFloat("Duty", &params_.duty, 0.05f, 0.95f, "%.2f");
+        changed |= ImGui::SliderFloat(Tr(StrId::SndGen_Duty), &params_.duty, 0.05f, 0.95f, "%.2f");
     }
     if (params_.wave == SynthWave::Noise) {
         // シードは Pcg32 に渡す決定論の種 (spec 11.2 規則 8: rand は使わない)。
         // ボタンは黄金比定数を足すだけ — 同じ操作列なら常に同じ音になる
-        ImGui::Text("Noise seed: %llu", static_cast<unsigned long long>(params_.noiseSeed));
+        ImGui::Text(Tr(StrId::SndGen_NoiseSeed), static_cast<unsigned long long>(params_.noiseSeed));
         ImGui::SameLine();
         if (ImGui::SmallButton(ICON_FA_DICE " Shuffle")) {
             params_.noiseSeed += 0x9E3779B97F4A7C15ull;
@@ -287,36 +287,36 @@ void SoundGenWindow::OnImGui(EngineContext& ctx, const std::wstring& assetDir)
         }
     }
 
-    changed |= ImGui::DragFloat("Freq start (Hz)", &params_.freqStart, 2.0f, 20.0f, 8000.0f, "%.0f");
-    changed |= ImGui::DragFloat("Freq end (Hz)", &params_.freqEnd, 2.0f, 20.0f, 8000.0f, "%.0f");
-    changed |= ImGui::DragFloat("Duration (s)", &params_.durationSec, 0.005f, 0.01f,
+    changed |= ImGui::DragFloat(Tr(StrId::SndGen_FreqStart), &params_.freqStart, 2.0f, 20.0f, 8000.0f, "%.0f");
+    changed |= ImGui::DragFloat(Tr(StrId::SndGen_FreqEnd), &params_.freqEnd, 2.0f, 20.0f, 8000.0f, "%.0f");
+    changed |= ImGui::DragFloat(Tr(StrId::SndGen_Duration), &params_.durationSec, 0.005f, 0.01f,
                                 kMaxDurationSec, "%.3f");
-    changed |= ImGui::SliderFloat("Amplitude", &params_.amplitude, 0.0f, 1.0f, "%.2f");
+    changed |= ImGui::SliderFloat(Tr(StrId::SndGen_Amplitude), &params_.amplitude, 0.0f, 1.0f, "%.2f");
 
-    ImGui::SeparatorText("Envelope (ADSR)");
-    changed |= ImGui::DragFloat("Attack (s)", &params_.attackSec, 0.002f, 0.0f, kMaxDurationSec, "%.3f");
-    changed |= ImGui::DragFloat("Decay (s)", &params_.decaySec, 0.002f, 0.0f, kMaxDurationSec, "%.3f");
-    changed |= ImGui::SliderFloat("Sustain", &params_.sustainLevel, 0.0f, 1.0f, "%.2f");
-    changed |= ImGui::DragFloat("Release (s)", &params_.releaseSec, 0.002f, 0.0f, kMaxDurationSec, "%.3f");
-    ImGui::TextDisabled("(A+D+R が全長を超えると比例縮小されます)");
+    ImGui::SeparatorText(Tr(StrId::SndGen_Envelope));
+    changed |= ImGui::DragFloat(Tr(StrId::SndGen_Attack), &params_.attackSec, 0.002f, 0.0f, kMaxDurationSec, "%.3f");
+    changed |= ImGui::DragFloat(Tr(StrId::SndGen_Decay), &params_.decaySec, 0.002f, 0.0f, kMaxDurationSec, "%.3f");
+    changed |= ImGui::SliderFloat(Tr(StrId::SndGen_Sustain), &params_.sustainLevel, 0.0f, 1.0f, "%.2f");
+    changed |= ImGui::DragFloat(Tr(StrId::SndGen_Release), &params_.releaseSec, 0.002f, 0.0f, kMaxDurationSec, "%.3f");
+    ImGui::TextDisabled("%s", Tr(StrId::SndGen_AdsrNote));
 
-    ImGui::SeparatorText("Format");
+    ImGui::SeparatorText(Tr(StrId::SndGen_Format));
     int rateIndex = 1;
     for (int i = 0; i < IM_ARRAYSIZE(kSampleRates); ++i) {
         if (kSampleRates[i] == params_.sampleRate) {
             rateIndex = i;
         }
     }
-    if (ImGui::Combo("Sample rate", &rateIndex, kSampleRateNames, IM_ARRAYSIZE(kSampleRateNames))) {
+    if (ImGui::Combo(Tr(StrId::SndGen_SampleRate), &rateIndex, kSampleRateNames, IM_ARRAYSIZE(kSampleRateNames))) {
         params_.sampleRate = kSampleRates[rateIndex];
         changed = true;
     }
     int channels = params_.channels >= 2 ? 2 : 1;
-    if (ImGui::RadioButton("Mono", &channels, 1)) {
+    if (ImGui::RadioButton(Tr(StrId::SndGen_Mono), &channels, 1)) {
         changed = true;
     }
     ImGui::SameLine();
-    if (ImGui::RadioButton("Stereo", &channels, 2)) {
+    if (ImGui::RadioButton(Tr(StrId::SndGen_Stereo), &channels, 2)) {
         changed = true;
     }
     params_.channels = static_cast<uint16_t>(channels);
@@ -334,7 +334,7 @@ void SoundGenWindow::OnImGui(EngineContext& ctx, const std::wstring& assetDir)
     }
 
     // ---- 波形プレビュー ----
-    ImGui::SeparatorText("Preview");
+    ImGui::SeparatorText(Tr(StrId::SndGen_PreviewSec));
     EnsureRendered();
     DrawWaveform(90.0f);
     ImGui::Text("%.3f s / %zu frames / %u ch @ %u Hz", clip_.Seconds(), clip_.Frames(),
@@ -353,11 +353,11 @@ void SoundGenWindow::OnImGui(EngineContext& ctx, const std::wstring& assetDir)
     ImGui::EndDisabled();
     if (!audioReady) {
         ImGui::SameLine();
-        ImGui::TextDisabled("(audio disabled)");
+        ImGui::TextDisabled("%s", Tr(StrId::SndGen_AudioDisabled));
     }
 
     // ---- 書き出し ----
-    ImGui::SeparatorText("Save");
+    ImGui::SeparatorText(Tr(StrId::SndGen_SaveSec));
     const std::wstring dir = assetDir.empty() ? (ctx.assetsRoot + L"\\audio") : assetDir;
     // assets ルートからの相対で見せる (絶対パスは長すぎて窓に収まらない)
     std::wstring shown = dir;

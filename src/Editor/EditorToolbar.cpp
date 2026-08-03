@@ -1,9 +1,14 @@
 #include "Editor/EditorToolbar.h"
 
+#include <algorithm>
+#include <cstdio>
+#include <cstring>
+
 #include "Editor/LayoutManager.h"
 #include "Editor/Selection.h"
 #include "Editor/Undo/UndoStack.h"
 #include "Editor/Windows/SceneViewWindow.h"
+#include "Engine/Core/Localization.h"
 #include "Engine/Engine/Audio/AudioSystem.h"
 #include "Engine/Engine/EngineLoop.h"
 #include "Engine/Renderer/ImGuiTheme.h"
@@ -56,24 +61,31 @@ bool EditorToolbar::OnImGui(EngineContext& ctx, PlayModeController& playMode, Se
 
         // ---- 左: ギズモ操作 (SceneView と状態共有。W/E/R ショートカットは SceneView 側) ----
         if (ToggleIconButton(ICON_FA_ARROWS_UP_DOWN_LEFT_RIGHT,
-                             sceneView.GizmoOp() == ImGuizmo::TRANSLATE, "移動 (W)")) {
+                             sceneView.GizmoOp() == ImGuizmo::TRANSLATE, Tr(StrId::Tool_TipMove))) {
             sceneView.GizmoOp() = ImGuizmo::TRANSLATE;
         }
         ImGui::SameLine();
-        if (ToggleIconButton(ICON_FA_ROTATE, sceneView.GizmoOp() == ImGuizmo::ROTATE, "回転 (E)")) {
+        if (ToggleIconButton(ICON_FA_ROTATE, sceneView.GizmoOp() == ImGuizmo::ROTATE,
+                             Tr(StrId::Tool_TipRotate))) {
             sceneView.GizmoOp() = ImGuizmo::ROTATE;
         }
         ImGui::SameLine();
-        if (ToggleIconButton(ICON_FA_MAXIMIZE, sceneView.GizmoOp() == ImGuizmo::SCALE, "拡縮 (R)")) {
+        if (ToggleIconButton(ICON_FA_MAXIMIZE, sceneView.GizmoOp() == ImGuizmo::SCALE,
+                             Tr(StrId::Tool_TipScale))) {
             sceneView.GizmoOp() = ImGuizmo::SCALE;
         }
         ImGui::SameLine();
         const bool local = sceneView.GizmoMode() == ImGuizmo::LOCAL;
-        if (ImGui::Button(local ? ICON_FA_CUBE " Local" : ICON_FA_GLOBE " World")) {
+        // アイコンとラベルはコンパイル時連結できない (ラベルが Tr 経由) ので実行時に組む
+        char spaceLabel[64];
+        std::snprintf(spaceLabel, sizeof(spaceLabel), "%s %s",
+                      local ? ICON_FA_CUBE : ICON_FA_GLOBE,
+                      Tr(local ? StrId::Tool_SpaceLocal : StrId::Tool_SpaceWorld));
+        if (ImGui::Button(spaceLabel)) {
             sceneView.GizmoMode() = local ? ImGuizmo::WORLD : ImGuizmo::LOCAL;
         }
         if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("ギズモの座標系を切替");
+            ImGui::SetTooltip("%s", Tr(StrId::Tool_TipGizmoSpace));
         }
 
         // ---- 中央: Play / Pause / Step (旧メニューバー中央から移設) ----
@@ -85,7 +97,7 @@ bool EditorToolbar::OnImGui(EngineContext& ctx, PlayModeController& playMode, Se
                 playMode.Play(*ctx.scene);
             }
             if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Play");
+                ImGui::SetTooltip("%s", Tr(StrId::Tool_TipPlay));
             }
         } else {
             ImGui::PushStyleColor(ImGuiCol_Button, themeColor::PlayAccent);
@@ -103,11 +115,14 @@ bool EditorToolbar::OnImGui(EngineContext& ctx, PlayModeController& playMode, Se
             }
             ImGui::PopStyleColor();
             if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Stop (変更は破棄されます)");
+                ImGui::SetTooltip("%s", Tr(StrId::Tool_TipStop));
             }
             ImGui::SameLine();
             if (ImGui::Button(state == PlayState::Paused ? ICON_FA_PLAY : ICON_FA_PAUSE)) {
                 playMode.TogglePause();
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("%s", Tr(StrId::Tool_TipPause));
             }
             if (state == PlayState::Paused) {
                 ImGui::SameLine();
@@ -115,18 +130,28 @@ bool EditorToolbar::OnImGui(EngineContext& ctx, PlayModeController& playMode, Se
                     playMode.Step();
                 }
                 if (ImGui::IsItemHovered()) {
-                    ImGui::SetTooltip("1 tick 進める");
+                    ImGui::SetTooltip("%s", Tr(StrId::Tool_TipStep));
                 }
             }
         }
 
         // ---- 右: Render Path + レイアウト (最右端、Unity の Layout ドロップダウン相当) ----
-        const float layoutBtnW = 38.0f;
-        const float rightWidth = 150.0f;
+        // M47b: 幅は実測にする。訳文の長さでボタンが見切れないようにするため
+        const ImGuiStyle& style = ImGui::GetStyle();
+        const float layoutBtnW =
+            ImGui::CalcTextSize(ICON_FA_TABLE_COLUMNS).x + style.FramePadding.x * 2.0f
+            + style.ItemSpacing.x;
+        const char* pathItems = Tr(StrId::Tool_RenderPathItems);
+        float itemsW = 0.0f;
+        for (const char* p = pathItems; *p != '\0'; p += std::strlen(p) + 1) {
+            itemsW = (std::max)(itemsW, ImGui::CalcTextSize(p).x);
+        }
+        // コンボの矢印ぶん (GetFrameHeight) + 左右の余白
+        const float rightWidth = itemsW + ImGui::GetFrameHeight() + style.FramePadding.x * 4.0f;
         ImGui::SameLine(ImGui::GetWindowWidth() - rightWidth - layoutBtnW);
-        ImGui::SetNextItemWidth(rightWidth - 12.0f);
+        ImGui::SetNextItemWidth(rightWidth);
         int cur = (ctx.renderPath == ctx.renderPathForward) ? 0 : 1;
-        if (ImGui::Combo("##renderpath", &cur, "Forward\0Deferred\0")) {
+        if (ImGui::Combo("##renderpath", &cur, pathItems)) {
             ctx.renderPath = (cur == 0) ? ctx.renderPathForward : ctx.renderPathDeferred;
         }
         ImGui::SameLine(ImGui::GetWindowWidth() - layoutBtnW);

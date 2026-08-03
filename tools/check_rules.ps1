@@ -143,8 +143,11 @@ foreach ($g in $constGroups) {
 }
 
 # 規則 10: ローカライズ (M47)
-# 10-a  Tr() の戻り値を printf 系の書式引数に渡さない
-#       ImGui::Text 系 / SetTooltip は printf。訳文に % が入った瞬間に未定義動作になる
+# 10-a  Tr() を printf 系の**唯一の引数**として渡さない
+#       ImGui::Text 系 / SetTooltip は printf。可変引数が無いのに訳文へ % が入ると
+#       未定義動作になる。TextUnformatted(Tr(x)) か Text("%s", Tr(x)) を使うこと。
+#       可変引数を伴う Text(Tr(x), a, b) は「訳文自体が書式」の正当な用法なので許す
+#       — 指定子の並びは 10-b が en/ja 一致を機械検査している
 # 10-b  LocalizationTable.inl の en/ja が整合していること
 #       - どちらも非空
 #       - "###" を含む行は "###" 以降 (= ImGui の ID) が完全一致
@@ -152,9 +155,15 @@ foreach ($g in $constGroups) {
 #       - "###" の右辺がテーブル内で一意 (ウィンドウ ID の衝突防止)
 # 注: 日本語を含む行を読むので Select-String は使わない
 #     (Windows PowerShell 5.1 は BOM 無しファイルを ANSI として読み、マッチが不発になる)
-$trFmtPattern = 'ImGui::(Text|TextDisabled|TextWrapped|TextColored|BulletText|LabelText|SetTooltip|SetItemTooltip)\s*\(\s*(::)?(mye::)?Tr\s*\('
+$trOnly = '(::)?(mye::)?Tr\s*\(\s*(::)?(mye::)?StrId::\w+\s*\)\s*\)'
+$trFmtPatterns = @(
+    'ImGui::(?:Text|TextDisabled|TextWrapped|BulletText|LabelText|SetTooltip|SetItemTooltip)\s*\(\s*' + $trOnly,
+    'ImGui::TextColored\s*\([^,]+,\s*' + $trOnly
+)
 foreach ($f in Get-Sources) {
-    Test-CodeLines $f $trFmtPattern 'rule 10' 'Tr() must not be a printf format argument - use TextUnformatted(Tr(x)) or Text("%s", Tr(x))'
+    foreach ($p in $trFmtPatterns) {
+        Test-CodeLines $f $p 'rule 10' 'Tr() alone as a printf format - use TextUnformatted(Tr(x)) or Text("%s", Tr(x))'
+    }
 }
 
 $tablePath = Join-Path $repo 'src\Engine\Core\LocalizationTable.inl'
@@ -163,20 +172,26 @@ if (-not (Test-Path $tablePath)) {
     $errors++
 } else {
     $seenIds = @{}
-    $lineNo = 0
-    foreach ($line in [System.IO.File]::ReadLines($tablePath)) {
-        $lineNo++
-        $m = [regex]::Match($line, '^\s*MYE_STR\(\s*(\w+)\s*,\s*"((?:[^"\\]|\\.)*)"\s*,\s*"((?:[^"\\]|\\.)*)"\s*\)')
-        if (-not $m.Success) {
-            if ($line -match '^\s*MYE_STR\(') {
-                Write-Host "ERROR [rule 10] ${tablePath}:${lineNo}: malformed MYE_STR entry"
-                $errors++
-            }
-            continue
-        }
+    # 1 エントリが複数行にまたがることがあり、隣接文字列リテラルの連結も使うので
+    # 全文に対してマッチする。行番号は先頭からの改行数で求める
+    $content = [System.IO.File]::ReadAllText($tablePath)
+    $strSeq = '"(?:[^"\\]|\\.)*"(?:\s*"(?:[^"\\]|\\.)*")*'
+    $entryRe = 'MYE_STR\(\s*(\w+)\s*,\s*(' + $strSeq + ')\s*,\s*(' + $strSeq + ')\s*\)'
+    $found = [regex]::Matches($content, $entryRe)
+    $declared = [regex]::Matches($content, '(?m)^\s*MYE_STR\(').Count
+    if ($found.Count -ne $declared) {
+        Write-Host "ERROR [rule 10] ${tablePath}: $declared MYE_STR line(s) but only $($found.Count) parsed - malformed entry"
+        $errors++
+    }
+    # 隣接文字列リテラルを 1 本に畳む ("a" "b" -> ab)
+    function Join-Literals([string]$seq) {
+        ([regex]::Matches($seq, '"((?:[^"\\]|\\.)*)"') | ForEach-Object { $_.Groups[1].Value }) -join ''
+    }
+    foreach ($m in $found) {
+        $lineNo = ($content.Substring(0, $m.Index) -split "`n").Count
         $id = $m.Groups[1].Value
-        $en = $m.Groups[2].Value
-        $ja = $m.Groups[3].Value
+        $en = Join-Literals $m.Groups[2].Value
+        $ja = Join-Literals $m.Groups[3].Value
 
         if ($en -eq '' -or $ja -eq '') {
             Write-Host "ERROR [rule 10] ${tablePath}:${lineNo}: ${id}: empty string"

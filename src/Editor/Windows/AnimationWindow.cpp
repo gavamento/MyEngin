@@ -207,7 +207,7 @@ void AnimationWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
         StopPreview(ctx);
     }
     if (!go) {
-        ImGui::TextDisabled("(select an entity)");
+        ImGui::TextDisabled("%s", Tr(StrId::Clip_SelectEntity));
         ImGui::End();
         return;
     }
@@ -216,8 +216,8 @@ void AnimationWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
 
     // ---- Animator が無ければ作成 ----
     if (!anim) {
-        ImGui::TextDisabled("'%s' has no Animator.", world.GetName(e));
-        if (ImGui::Button("Create Clip + Animator")) {
+        ImGui::TextDisabled(Tr(StrId::Clip_NoAnimator), world.GetName(e));
+        if (ImGui::Button(Tr(StrId::Clip_CreateClip))) {
             const std::string safe = Sanitize(world.GetName(e));
             const std::wstring path =
                 ctx.assetsRoot + L"\\animations\\" + Utf8ToWide(safe) + L".anim.json";
@@ -250,22 +250,22 @@ void AnimationWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
         return;
     }
 
-    ImGui::Text("Clip: %s", clip->name.c_str());
+    ImGui::Text(Tr(StrId::Clip_Name), clip->name.c_str());
     ImGui::SameLine();
-    if (ImGui::SmallButton("Save")) {
+    if (ImGui::SmallButton(Tr(StrId::Common_Save))) {
         if (ctx.anims->SaveToFile(clip->hash)) {
             MYE_LOG_INFO("anim saved: %s", clip->name.c_str());
         }
     }
     ImGui::SetNextItemWidth(120);
-    ImGui::InputInt("Length (ticks)", &clip->lengthTicks);
+    ImGui::InputInt(Tr(StrId::Clip_Length), &clip->lengthTicks);
     if (clip->lengthTicks < 1) {
         clip->lengthTicks = 1;
     }
 
     // ---- プレビュー / レコード コントロール ----
     bool prev = preview_;
-    if (ImGui::Checkbox("Preview", &prev)) {
+    if (ImGui::Checkbox(Tr(StrId::Clip_Preview), &prev)) {
         if (prev) {
             recording_ = false;
             StartPreview(ctx, e);
@@ -275,10 +275,10 @@ void AnimationWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
     }
     ImGui::SameLine();
     ImGui::BeginDisabled(!preview_);
-    ImGui::Checkbox("Play", &playing_);
+    ImGui::Checkbox(Tr(StrId::Clip_Play), &playing_);
     ImGui::EndDisabled();
     ImGui::SameLine();
-    if (ImGui::Checkbox("Record", &recording_)) {
+    if (ImGui::Checkbox(Tr(StrId::Clip_Record), &recording_)) {
         if (recording_) {
             if (preview_) {
                 StopPreview(ctx);
@@ -290,8 +290,7 @@ void AnimationWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
     ImGui::SameLine();
     ImGui::TextDisabled("(?)");
     if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Preview: scrub to see the pose (restored on exit).\n"
-                          "Record: edit the transform (gizmo) to auto-key at the current tick.");
+        ImGui::SetTooltip("%s", Tr(StrId::Clip_TipPreview));
     }
 
     // ---- タイムライン スクラブ ----
@@ -315,22 +314,22 @@ void AnimationWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
     // ---- キー追加 (現在 tick、対象 = このエンティティ) ----
     ImGui::Separator();
     ImGui::BeginDisabled(preview_); // プレビュー中はポーズを表示中なのでキー不可
-    ImGui::TextUnformatted("Key at current tick:");
+    ImGui::TextUnformatted(Tr(StrId::Clip_KeyAtTick));
     ImGui::SameLine();
-    if (ImGui::Button("Position")) {
+    if (ImGui::Button(Tr(StrId::Clip_Position))) {
         KeyChannel(*clip, world, e, "position", previewTick_);
     }
     ImGui::SameLine();
-    if (ImGui::Button("Rotation")) {
+    if (ImGui::Button(Tr(StrId::Clip_Rotation))) {
         KeyChannel(*clip, world, e, "rotation", previewTick_);
     }
     ImGui::SameLine();
-    if (ImGui::Button("Scale")) {
+    if (ImGui::Button(Tr(StrId::Clip_Scale))) {
         KeyChannel(*clip, world, e, "scale", previewTick_);
     }
     ImGui::EndDisabled();
     ImGui::SameLine();
-    if (ImGui::Button("Delete keys @tick")) {
+    if (ImGui::Button(Tr(StrId::Clip_DeleteKeys))) {
         for (AnimTrack& tr : clip->tracks) {
             tr.keys.erase(std::remove_if(tr.keys.begin(), tr.keys.end(),
                                          [&](const AnimKey& k) { return k.tick == previewTick_; }),

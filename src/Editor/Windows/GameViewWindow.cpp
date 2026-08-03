@@ -58,7 +58,7 @@ void GameViewWindow::OnImGui(EngineContext& ctx)
     ImGui::SetNextItemWidth(90);
     ImGui::Combo("##aspect", &aspectMode_, kAspects, IM_ARRAYSIZE(kAspects));
     ImGui::SameLine();
-    ImGui::Checkbox("Stats", &showStats_);
+    ImGui::Checkbox(Tr(StrId::GameView_Stats), &showStats_);
     ImGui::Separator();
 
     const ImVec2 avail = ImGui::GetContentRegionAvail();

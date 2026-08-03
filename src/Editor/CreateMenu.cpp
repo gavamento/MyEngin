@@ -4,6 +4,7 @@
 
 #include "Editor/Selection.h"
 #include "Editor/Undo/UndoStack.h"
+#include "Engine/Core/Localization.h"
 #include "Engine/Core/Components.h"
 #include "Engine/Core/World.h"
 #include "Engine/Engine/EngineLoop.h"
@@ -145,33 +146,33 @@ void CreateItem(EngineContext& ctx, Selection& selection, UndoStack& undo, Entit
 void DrawCreateMenuItems(EngineContext& ctx, Selection& selection, UndoStack& undo, EntityID parent,
                          const DirectX::XMFLOAT3* spawnPos)
 {
-    CreateItem(ctx, selection, undo, parent, spawnPos, "Create Empty", "GameObject", &CreateEmpty);
-    if (ImGui::BeginMenu("3D Object")) {
-        CreateItem(ctx, selection, undo, parent, spawnPos, "Cube", "Cube", &CreateCube);
-        CreateItem(ctx, selection, undo, parent, spawnPos, "Sphere", "Sphere", &CreateSphere);
-        CreateItem(ctx, selection, undo, parent, spawnPos, "Plane", "Plane", &CreatePlane);
-        CreateItem(ctx, selection, undo, parent, spawnPos, "Quad", "Quad", &CreateQuad);
-        CreateItem(ctx, selection, undo, parent, spawnPos, "Cylinder", "Cylinder", &CreateCylinder);
-        CreateItem(ctx, selection, undo, parent, spawnPos, "Capsule", "Capsule", &CreateCapsule);
+    CreateItem(ctx, selection, undo, parent, spawnPos, Tr(StrId::Create_Empty), "GameObject", &CreateEmpty);
+    if (ImGui::BeginMenu(Tr(StrId::Create_3DObject))) {
+        CreateItem(ctx, selection, undo, parent, spawnPos, Tr(StrId::Create_Cube), "Cube", &CreateCube);
+        CreateItem(ctx, selection, undo, parent, spawnPos, Tr(StrId::Create_Sphere), "Sphere", &CreateSphere);
+        CreateItem(ctx, selection, undo, parent, spawnPos, Tr(StrId::Create_Plane), "Plane", &CreatePlane);
+        CreateItem(ctx, selection, undo, parent, spawnPos, Tr(StrId::Create_Quad), "Quad", &CreateQuad);
+        CreateItem(ctx, selection, undo, parent, spawnPos, Tr(StrId::Create_Cylinder), "Cylinder", &CreateCylinder);
+        CreateItem(ctx, selection, undo, parent, spawnPos, Tr(StrId::Create_Capsule), "Capsule", &CreateCapsule);
         ImGui::EndMenu();
     }
-    if (ImGui::BeginMenu("Light")) {
-        CreateItem(ctx, selection, undo, parent, spawnPos, "Directional Light", "Directional Light",
+    if (ImGui::BeginMenu(Tr(StrId::Create_Light))) {
+        CreateItem(ctx, selection, undo, parent, spawnPos, Tr(StrId::Create_DirLight), "Directional Light",
                    &CreateDirectionalLight);
-        CreateItem(ctx, selection, undo, parent, spawnPos, "Point Light", "Point Light",
+        CreateItem(ctx, selection, undo, parent, spawnPos, Tr(StrId::Create_PointLight), "Point Light",
                    &CreatePointLight);
-        CreateItem(ctx, selection, undo, parent, spawnPos, "Spot Light", "Spot Light",
+        CreateItem(ctx, selection, undo, parent, spawnPos, Tr(StrId::Create_SpotLight), "Spot Light",
                    &CreateSpotLight);
         ImGui::EndMenu();
     }
-    if (ImGui::BeginMenu("Audio")) {
-        CreateItem(ctx, selection, undo, parent, spawnPos, "Audio Source", "Audio Source",
+    if (ImGui::BeginMenu(Tr(StrId::Create_Audio))) {
+        CreateItem(ctx, selection, undo, parent, spawnPos, Tr(StrId::Create_AudioSource), "Audio Source",
                    &CreateAudioSource);
-        CreateItem(ctx, selection, undo, parent, spawnPos, "Audio Listener", "Audio Listener",
+        CreateItem(ctx, selection, undo, parent, spawnPos, Tr(StrId::Create_AudioListener), "Audio Listener",
                    &CreateAudioListener);
         ImGui::EndMenu();
     }
-    CreateItem(ctx, selection, undo, parent, spawnPos, "Camera", "Camera", &CreateCamera);
+    CreateItem(ctx, selection, undo, parent, spawnPos, Tr(StrId::Create_Camera), "Camera", &CreateCamera);
 }
 
 } // namespace mye

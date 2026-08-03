@@ -58,7 +58,7 @@ void SearchWindow::OnImGui(EngineContext& ctx, Selection& selection)
     ImGui::Separator();
 
     // ---- エンティティ (名前 or コンポーネント型名で一致) ----
-    if (ImGui::CollapsingHeader("Entities", ImGuiTreeNodeFlags_DefaultOpen)) {
+    if (ImGui::CollapsingHeader(Tr(StrId::Search_Entities), ImGuiTreeNodeFlags_DefaultOpen)) {
         const ComponentTypeId req[] = { NameComponent::sTypeId };
         int shown = 0;
         world.ForEachArchetype(req, [&](Archetype& arch) {
@@ -89,12 +89,12 @@ void SearchWindow::OnImGui(EngineContext& ctx, Selection& selection)
             }
         });
         if (shown == 0) {
-            ImGui::TextDisabled("  (none)");
+            ImGui::TextDisabled("%s", Tr(StrId::Common_None));
         }
     }
 
     // ---- アセット (名前一致) ----
-    if (ImGui::CollapsingHeader("Assets", ImGuiTreeNodeFlags_DefaultOpen)) {
+    if (ImGui::CollapsingHeader(Tr(StrId::Search_Assets), ImGuiTreeNodeFlags_DefaultOpen)) {
         auto listAssets = [&](const char* kind, const std::vector<AssetEntry>& entries) {
             for (const AssetEntry& a : entries) {
                 if (Contains(a.name, needle)) {
@@ -118,13 +118,13 @@ void SearchWindow::OnImGui(EngineContext& ctx, Selection& selection)
     }
 
     // ---- 参照逆引き (選択エンティティを EntityRef で指しているエンティティ) ----
-    if (ImGui::CollapsingHeader("References to selection", ImGuiTreeNodeFlags_DefaultOpen)) {
+    if (ImGui::CollapsingHeader(Tr(StrId::Search_RefsToSel), ImGuiTreeNodeFlags_DefaultOpen)) {
         GameObject sel = ctx.scene->FindByFileId(selection.primary);
         if (!sel) {
-            ImGui::TextDisabled("  (select an entity to find who references it)");
+            ImGui::TextDisabled("%s", Tr(StrId::Search_SelectHint));
         } else {
             const EntityID target = sel.Id();
-            ImGui::Text("who references '%s':", world.GetName(target));
+            ImGui::Text(Tr(StrId::Search_WhoRefs), world.GetName(target));
             int found = 0;
             const ComponentTypeId req[] = { NameComponent::sTypeId };
             world.ForEachArchetype(req, [&](Archetype& arch) {
@@ -163,7 +163,7 @@ void SearchWindow::OnImGui(EngineContext& ctx, Selection& selection)
                 }
             });
             if (found == 0) {
-                ImGui::TextDisabled("  (no references)");
+                ImGui::TextDisabled("%s", Tr(StrId::Search_NoRefs));
             }
         }
     }

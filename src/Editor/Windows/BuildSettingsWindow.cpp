@@ -168,14 +168,13 @@ void BuildSettingsWindow::OnImGui(EngineContext& ctx)
         return;
     }
 
-    ImGui::TextUnformatted("Package Runtime.exe + GameLogic.dll + C# host + assets\\ into a folder.");
-    ImGui::TextDisabled("(Compile the Release config in Visual Studio / MSBuild first.)");
+    ImGui::TextUnformatted(Tr(StrId::Build_Desc));
+    ImGui::TextDisabled("%s", Tr(StrId::Build_ReleaseNote));
     ImGui::Separator();
 
-    ImGui::Checkbox("Bundle .NET runtime (self-contained)", &bundleDotnet_);
+    ImGui::Checkbox(Tr(StrId::Build_BundleDotnet), &bundleDotnet_);
     if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("ON: .NET 8 ランタイムを dotnet\\ に同梱し、配布先に .NET 不要にする\n"
-                          "OFF: 配布先に .NET 8 ランタイムのインストールが必要");
+        ImGui::SetTooltip("%s", Tr(StrId::Build_TipBundle));
     }
 
     // ---- ブートシーン選択 (assets\scenes\*.scene.json) ----
@@ -190,7 +189,7 @@ void BuildSettingsWindow::OnImGui(EngineContext& ctx)
             }
         }
     }
-    if (ImGui::BeginCombo("Boot scene", bootScene_.c_str())) {
+    if (ImGui::BeginCombo(Tr(StrId::Build_BootScene), bootScene_.c_str())) {
         for (const std::string& s : scenes) {
             if (ImGui::Selectable(s.c_str(), s == bootScene_)) {
                 bootScene_ = s;
@@ -199,13 +198,13 @@ void BuildSettingsWindow::OnImGui(EngineContext& ctx)
         ImGui::EndCombo();
     }
 
-    ImGui::InputText("Output folder", outputDir_, sizeof(outputDir_));
+    ImGui::InputText(Tr(StrId::Build_OutputFolder), outputDir_, sizeof(outputDir_));
 
-    if (ImGui::Button("Package Build", ImVec2(160, 0))) {
+    if (ImGui::Button(Tr(StrId::Build_Package), ImVec2(160, 0))) {
         DoPackage(ctx);
     }
     ImGui::SameLine();
-    if (ImGui::Button("Open Folder")) {
+    if (ImGui::Button(Tr(StrId::Build_OpenFolder))) {
         ShellExecuteW(nullptr, L"open", Utf8ToWide(outputDir_).c_str(), nullptr, nullptr,
                       SW_SHOWNORMAL);
     }

@@ -281,15 +281,15 @@ void HierarchyWindow::DrawEntityNode(EngineContext& ctx, World& world, EntityID 
 
     if (ImGui::BeginPopupContextItem("##entity_ctx")) {
         selection.SelectOnly(ctx.scene->EnsureFileId(e));
-        if (ImGui::BeginMenu("Create")) {
+        if (ImGui::BeginMenu(Tr(StrId::Hier_Create))) {
             DrawCreateMenuItems(ctx, selection, undo, e); // e の子として生成
             ImGui::EndMenu();
         }
         ImGui::Separator();
-        if (ImGui::MenuItem("Create Prefab")) {
+        if (ImGui::MenuItem(Tr(StrId::Hier_CreatePrefab))) {
             CreatePrefabFromEntity(ctx, selection, undo, e);
         }
-        if (ImGui::MenuItem("Delete")) {
+        if (ImGui::MenuItem(Tr(StrId::Hier_Delete))) {
             undo.BeginRecord("Delete", selection);
             undo.CaptureBefore(*ctx.scene, ctx.scene->EnsureFileId(e));
             world.DestroyEntity(e); // 子孫ごと tick 末に破棄

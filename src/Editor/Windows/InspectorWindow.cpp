@@ -211,12 +211,12 @@ void DrawManagedComponentFields(EngineContext& ctx, ComponentTypeId t, void* com
     ManagedHost* mh = ctx.managedHost;
     const int32_t handle = mh->EnsureInstance(t, e, comp);
     if (handle == 0) {
-        ImGui::TextDisabled("(no managed instance — click 'Compile C# Scripts')");
+        ImGui::TextDisabled("%s", Tr(StrId::Insp_NoManagedInst));
         return;
     }
     const auto* fields = mh->FieldsForComponent(t);
     if (!fields || fields->empty()) {
-        ImGui::TextDisabled("(no public fields)");
+        ImGui::TextDisabled("%s", Tr(StrId::Insp_NoPublicFields));
         return;
     }
     for (size_t i = 0; i < fields->size(); ++i) {
@@ -255,7 +255,7 @@ void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
     GameObject go = ctx.scene->FindByFileId(fid);
     const EntityID e = go ? go.Id() : kNullEntity;
     if (fid == 0 || !world.IsAlive(e)) {
-        ImGui::TextDisabled("(no selection)");
+        ImGui::TextDisabled("%s", Tr(StrId::Insp_NoSelection));
         ImGui::End();
         return;
     }
@@ -307,7 +307,7 @@ void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
         const PrefabAsset* asset = inst ? ctx.prefabs->Get(inst->prefabHash) : nullptr;
         ImGui::TextColored(kPrefabBlue, "Prefab: %s", asset ? asset->name.c_str() : "(missing)");
         const uint64_t rootFid = ctx.scene->EnsureFileId(prefabRoot);
-        if (ImGui::SmallButton("Revert All")) {
+        if (ImGui::SmallButton(Tr(StrId::Insp_RevertAll))) {
             undo.BeginRecord("Revert Prefab", selection);
             undo.CaptureBefore(*ctx.scene, rootFid);
             Prefab::RevertInstance(*ctx.scene, *ctx.prefabs, rootFid);
@@ -317,7 +317,7 @@ void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
         }
         ImGui::SameLine();
         // Apply は他インスタンス・アセットファイルも更新するため Undo 対象外 (Unity 同様)
-        if (ImGui::SmallButton("Apply All")) {
+        if (ImGui::SmallButton(Tr(StrId::Insp_ApplyAll))) {
             Prefab::ApplyInstance(*ctx.scene, *ctx.prefabs, rootFid);
             ctx.scene->GetWorld().ApplyStructuralChanges();
         }
@@ -387,19 +387,19 @@ void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
             };
             // C# コンポーネントはフィールドが managed 側にあるため copy/paste/reset 対象外
             ComponentClipboard& clip = GetComponentClipboard();
-            if (ImGui::MenuItem("Copy Component", nullptr, false, !managed && !tcomps.empty())) {
+            if (ImGui::MenuItem(Tr(StrId::Insp_CopyComponent), nullptr, false, !managed && !tcomps.empty())) {
                 clip.componentName = desc.name;
                 clip.fields = ComponentFieldsToJson(desc, tcomps[0]);
             }
             const bool canPaste = !managed && !clip.Empty() && clip.componentName == desc.name;
-            if (ImGui::MenuItem("Paste Component Values", nullptr, false, canPaste)) {
+            if (ImGui::MenuItem(Tr(StrId::Insp_PasteValues), nullptr, false, canPaste)) {
                 batchOp("Paste Component", [&] {
                     for (void* c : tcomps) {
                         ComponentFieldsFromJson(desc, c, clip.fields);
                     }
                 });
             }
-            if (ImGui::MenuItem("Reset Component", nullptr, false, !managed && desc.construct)) {
+            if (ImGui::MenuItem(Tr(StrId::Insp_ResetComponent), nullptr, false, !managed && desc.construct)) {
                 batchOp("Reset Component", [&] {
                     for (void* c : tcomps) {
                         desc.construct(c); // 既定値の書き込み (placement new)
@@ -407,7 +407,7 @@ void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
                 });
             }
             ImGui::Separator();
-            if (ImGui::MenuItem("Remove Component")) {
+            if (ImGui::MenuItem(Tr(StrId::Insp_RemoveComponent))) {
                 batchOp("Remove Component", [&] {
                     for (EntityID te : targetEnts) {
                         world.RemoveComponentRaw(te, t); // 基本コンポーネントは World 側で拒否
@@ -456,14 +456,14 @@ void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
                             && ImGui::BeginPopupContextItem()) {
                             const bool ov = Prefab::IsFieldOverridden(*ctx.scene, *ctx.prefabs, e,
                                                                       desc.name, f);
-                            if (ImGui::MenuItem("Revert to Prefab", nullptr, false, ov)) {
+                            if (ImGui::MenuItem(Tr(StrId::Insp_RevertToPrefab), nullptr, false, ov)) {
                                 undo.BeginRecord("Revert Field", selection);
                                 undo.CaptureBefore(*ctx.scene, fid);
                                 Prefab::RevertField(*ctx.scene, *ctx.prefabs, e, desc.name, f);
                                 undo.CaptureAfter(*ctx.scene, fid);
                                 undo.EndRecord(selection);
                             }
-                            if (ImGui::MenuItem("Apply to Prefab")) {
+                            if (ImGui::MenuItem(Tr(StrId::Insp_ApplyToPrefab))) {
                                 Prefab::ApplyInstance(*ctx.scene, *ctx.prefabs,
                                                       ctx.scene->EnsureFileId(prefabRoot));
                                 ctx.scene->GetWorld().ApplyStructuralChanges();
@@ -483,7 +483,7 @@ void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
 
     // ---- Add Component ----
     ImGui::Separator();
-    if (ImGui::Button("Add Component", ImVec2(-1, 0))) {
+    if (ImGui::Button(Tr(StrId::Insp_AddComponent), ImVec2(-1, 0))) {
         addComponentFilter_[0] = '\0';
         ImGui::OpenPopup("##add_component");
     }
@@ -622,11 +622,11 @@ bool InspectorWindow::DrawField(EngineContext& ctx, const char* componentName, v
             ln.Load(ctx.assetsRoot);
             char summary[48];
             if (m == 0xFFFFFFFFu) {
-                std::snprintf(summary, sizeof(summary), "Everything##mask");
+                std::snprintf(summary, sizeof(summary), "%s", Tr(StrId::Insp_Everything));
             } else if (m == 0u) {
-                std::snprintf(summary, sizeof(summary), "Nothing##mask");
+                std::snprintf(summary, sizeof(summary), "%s", Tr(StrId::Insp_Nothing));
             } else {
-                std::snprintf(summary, sizeof(summary), "Mixed (0x%08X)##mask", m);
+                std::snprintf(summary, sizeof(summary), Tr(StrId::Insp_MaskMixed), m);
             }
             if (ImGui::Button(summary)) {
                 ImGui::OpenPopup("##collider_mask");
@@ -650,11 +650,11 @@ bool InspectorWindow::DrawField(EngineContext& ctx, const char* componentName, v
                     undo.EndRecord(selection);
                     changed = true;
                 };
-                if (ImGui::SmallButton("Everything")) {
+                if (ImGui::SmallButton(Tr(StrId::Insp_MaskAll))) {
                     applyMask(0xFFFFFFFFu);
                 }
                 ImGui::SameLine();
-                if (ImGui::SmallButton("Nothing")) {
+                if (ImGui::SmallButton(Tr(StrId::Insp_MaskNone))) {
                     applyMask(0u);
                 }
                 ImGui::Separator();
@@ -756,7 +756,7 @@ void InspectorWindow::DrawAssetInspector(EngineContext& ctx, Selection& selectio
     const std::wstring path = selection.assetPath;
     std::error_code ec;
     if (!fs::exists(path, ec)) {
-        ImGui::TextDisabled("(asset no longer exists)");
+        ImGui::TextDisabled("%s", Tr(StrId::Insp_AssetGone));
         return;
     }
     const AssetType type = AssetDatabase::ClassifyPath(path);
@@ -808,7 +808,7 @@ void InspectorWindow::DrawAssetInspector(EngineContext& ctx, Selection& selectio
         // 素のクリップ: 情報表示 + 試聴。編集対象は .sound.json 側 (ここは読み取り専用)
         if (ctx.audio) {
             const AssetID id = ctx.audio->LoadClipFile(path); // 冪等 (--no-audio なら null)
-            if (ImGui::Button("Preview", ImVec2(110, 0))) {
+            if (ImGui::Button(Tr(StrId::Insp_Preview), ImVec2(110, 0))) {
                 if (!id.IsNull()) {
                     PlayDesc d;
                     d.clip = id;
@@ -818,7 +818,7 @@ void InspectorWindow::DrawAssetInspector(EngineContext& ctx, Selection& selectio
                 }
             }
             ImGui::SameLine();
-            if (ImGui::Button("Stop All", ImVec2(90, 0))) {
+            if (ImGui::Button(Tr(StrId::Insp_StopAll), ImVec2(90, 0))) {
                 ctx.audio->StopAll();
                 ctx.audio->StopMusic(kMusicStopFadeSeconds); // BGM は別レーン (M45f)
             }
@@ -840,18 +840,18 @@ void InspectorWindow::DrawAssetInspector(EngineContext& ctx, Selection& selectio
         }
 
         // ---- Import Settings (M39b の統合表示、M40c) ----
-        ImGui::SeparatorText("Import Settings");
+        ImGui::SeparatorText(Tr(StrId::Insp_ImportSettings));
         const char* srgbLabels[] = { "Auto (usage hint)", "sRGB (albedo)", "Linear (data)" };
         ImGui::SetNextItemWidth(200.0f);
-        ImGui::Combo("sRGB", &assetImportEdit_.srgb, srgbLabels, 3);
+        ImGui::Combo(Tr(StrId::Insp_Srgb), &assetImportEdit_.srgb, srgbLabels, 3);
         bool mips = assetImportEdit_.generateMips != 0;
-        if (ImGui::Checkbox("Generate Mips", &mips)) {
+        if (ImGui::Checkbox(Tr(StrId::Insp_GenerateMips), &mips)) {
             assetImportEdit_.generateMips = mips ? 1 : 0;
         }
         const char* compLabels[] = { "Auto (BC1/BC3)", "None (RGBA8)" };
         ImGui::SetNextItemWidth(200.0f);
-        ImGui::Combo("Cook Compress", &assetImportEdit_.compress, compLabels, 2);
-        if (ImGui::Button("Apply", ImVec2(90, 0))) {
+        ImGui::Combo(Tr(StrId::Insp_CookCompress), &assetImportEdit_.compress, compLabels, 2);
+        if (ImGui::Button(Tr(StrId::Common_Apply), ImVec2(90, 0))) {
             const std::wstring metaPath = path + L".meta";
             AssetDatabase::EnsureMeta(path); // 不在なら生成 (GUID 確定)
             AssetMeta meta;
@@ -865,7 +865,7 @@ void InspectorWindow::DrawAssetInspector(EngineContext& ctx, Selection& selectio
             }
         }
         ImGui::SameLine();
-        if (ImGui::Button("Revert", ImVec2(90, 0))) {
+        if (ImGui::Button(Tr(StrId::Insp_Revert), ImVec2(90, 0))) {
             AssetMeta meta;
             AssetDatabase::ReadMeta(path + L".meta", meta);
             assetImportEdit_ = meta.tex;
@@ -927,27 +927,27 @@ void InspectorWindow::DrawMaterialInspector(EngineContext& ctx, const std::wstri
 {
     namespace fs = std::filesystem;
     if (!matEdit_.valid) {
-        ImGui::TextDisabled("(material parse failed)");
+        ImGui::TextDisabled("%s", Tr(StrId::Insp_MaterialFailed));
         return;
     }
-    ImGui::SeparatorText("Material");
+    ImGui::SeparatorText(Tr(StrId::Insp_Material));
     ImGui::TextDisabled("shader: %s", matEdit_.shader.c_str());
     ImGui::ColorEdit4("baseColor", matEdit_.baseColor);
-    ImGui::SliderFloat("metallic", &matEdit_.metallic, 0.0f, 1.0f);
-    ImGui::SliderFloat("roughness", &matEdit_.roughness, 0.0f, 1.0f);
+    ImGui::SliderFloat(Tr(StrId::Mat_Metallic), &matEdit_.metallic, 0.0f, 1.0f);
+    ImGui::SliderFloat(Tr(StrId::Mat_Roughness), &matEdit_.roughness, 0.0f, 1.0f);
     // M46i: 自己発光。放射輝度 = baseColor * emissive。Deferred は G-Buffer へ
     // kEmissiveMaxIntensity 正規化で詰めるので、それを超える値は頭打ちになる
-    ImGui::SliderFloat("emissive", &matEdit_.emissive, 0.0f,
+    ImGui::SliderFloat(Tr(StrId::Mat_Emissive), &matEdit_.emissive, 0.0f,
                        static_cast<float>(kEmissiveMaxIntensity));
     if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("自己発光の強さ。RT GI が有効なら発光面がそのまま間接光の光源になる");
+        ImGui::SetTooltip("%s", Tr(StrId::Insp_TipEmissive));
     }
-    ImGui::Checkbox("transparent", &matEdit_.transparent);
+    ImGui::Checkbox(Tr(StrId::Insp_Transparent), &matEdit_.transparent);
 
     // テクスチャピッカー (GUID 参照、M39a)。assets 配下の画像をサムネ付きで列挙
     auto texPicker = [&](const char* label, uint64_t& guidRef) {
         ImGui::PushID(label);
-        std::string cur = "(none)";
+        std::string cur = Tr(StrId::Insp_NoneItem);
         if (guidRef != 0) {
             const std::wstring resolved = assetguid::ResolvePath(guidRef);
             if (!resolved.empty()) {
@@ -965,7 +965,7 @@ void InspectorWindow::DrawMaterialInspector(EngineContext& ctx, const std::wstri
             ImGui::OpenPopup("##mat_tex_pick");
         }
         if (ImGui::BeginPopup("##mat_tex_pick")) {
-            if (ImGui::Selectable("(none)")) {
+            if (ImGui::Selectable(Tr(StrId::Insp_NoneItem))) {
                 guidRef = 0;
             }
             std::error_code ec;
@@ -1000,7 +1000,7 @@ void InspectorWindow::DrawMaterialInspector(EngineContext& ctx, const std::wstri
     texPicker("texture", matEdit_.textureGuid);
     texPicker("normalMap", matEdit_.normalGuid);
 
-    if (ImGui::Button("Save", ImVec2(90, 0))) {
+    if (ImGui::Button(Tr(StrId::Common_Save), ImVec2(90, 0))) {
         nlohmann::json root;
         root["engine"] = "MyEngine";
         root["material"] = 1;
@@ -1038,7 +1038,7 @@ void InspectorWindow::DrawMaterialInspector(EngineContext& ctx, const std::wstri
         }
     }
     ImGui::SameLine();
-    if (ImGui::Button("Revert", ImVec2(90, 0))) {
+    if (ImGui::Button(Tr(StrId::Insp_Revert), ImVec2(90, 0))) {
         LoadMaterialEdit(ctx, path);
     }
 }
@@ -1064,18 +1064,18 @@ void InspectorWindow::DrawSoundInspector(EngineContext& ctx, const std::wstring&
 {
     namespace fs = std::filesystem;
     if (!soundEditValid_) {
-        ImGui::TextDisabled("(sound parse failed)");
+        ImGui::TextDisabled("%s", Tr(StrId::Insp_SoundFailed));
         return;
     }
 
     // ---- 試聴 (先頭バリエーション・揺らぎ無しで固定 = 何を聴いているか分かる) ----
-    if (ImGui::Button("Preview", ImVec2(110, 0))) {
+    if (ImGui::Button(Tr(StrId::Insp_Preview), ImVec2(110, 0))) {
         if (ctx.audio) {
             PreviewSound(*ctx.audio, soundEdit_);
         }
     }
     ImGui::SameLine();
-    if (ImGui::Button("Stop All", ImVec2(90, 0))) {
+    if (ImGui::Button(Tr(StrId::Insp_StopAll), ImVec2(90, 0))) {
         if (ctx.audio) {
             ctx.audio->StopAll();
             ctx.audio->StopMusic(kMusicStopFadeSeconds); // BGM は別レーン (M45f)
@@ -1083,18 +1083,17 @@ void InspectorWindow::DrawSoundInspector(EngineContext& ctx, const std::wstring&
     }
     if (soundEdit_.stream) {
         // BGM は voice プールに載らないので、試聴の挙動が SE と違うことを明示する
-        ImGui::TextDisabled("(stream: plays on the BGM lane — previewing another stream sound"
-                            " crossfades)");
+        ImGui::TextDisabled("%s", Tr(StrId::Insp_StreamNote));
     }
-    ImGui::TextDisabled("(preview uses the saved-in-editor values, not the file on disk)");
+    ImGui::TextDisabled("%s", Tr(StrId::Insp_PreviewNote));
 
     // ---- バリエーション ----
-    ImGui::SeparatorText("Variations");
+    ImGui::SeparatorText(Tr(StrId::Insp_Variations));
     int removeAt = -1;
     for (size_t i = 0; i < soundEdit_.variations.size(); ++i) {
         SoundVariation& v = soundEdit_.variations[i];
         ImGui::PushID(static_cast<int>(i));
-        std::string cur = "(none)";
+        std::string cur = Tr(StrId::Insp_NoneItem);
         if (v.clip != 0) {
             const std::wstring resolved = assetguid::ResolvePath(v.clip);
             if (!resolved.empty()) {
@@ -1113,7 +1112,7 @@ void InspectorWindow::DrawSoundInspector(EngineContext& ctx, const std::wstring&
             ImGui::OpenPopup("##clip_pick");
         }
         if (ImGui::BeginPopup("##clip_pick")) {
-            if (ImGui::Selectable("(none)")) {
+            if (ImGui::Selectable(Tr(StrId::Insp_NoneItem))) {
                 v.clip = 0;
                 v.clipPath.clear();
             }
@@ -1130,7 +1129,7 @@ void InspectorWindow::DrawSoundInspector(EngineContext& ctx, const std::wstring&
         }
         ImGui::SameLine();
         ImGui::SetNextItemWidth(80.0f);
-        ImGui::DragInt("weight", &v.weight, 0.1f, 0, 100);
+        ImGui::DragInt(Tr(StrId::Insp_Weight), &v.weight, 0.1f, 0, 100);
         ImGui::SameLine();
         if (ImGui::SmallButton("x")) {
             removeAt = static_cast<int>(i);
@@ -1140,27 +1139,27 @@ void InspectorWindow::DrawSoundInspector(EngineContext& ctx, const std::wstring&
     if (removeAt >= 0) {
         soundEdit_.variations.erase(soundEdit_.variations.begin() + removeAt);
     }
-    if (ImGui::Button("+ Add Variation")) {
+    if (ImGui::Button(Tr(StrId::Insp_AddVariation))) {
         soundEdit_.variations.push_back(SoundVariation{});
     }
 
     // ---- 2D 再生パラメータ ----
-    ImGui::SeparatorText("Playback");
-    ImGui::SliderFloat("volume", &soundEdit_.volume, 0.0f, 1.0f);
-    ImGui::SliderFloat("volume random", &soundEdit_.volumeRandom, 0.0f, 1.0f);
-    ImGui::SliderFloat("pitch", &soundEdit_.pitch, 1.0f / AudioSystem::kMaxFreqRatio,
+    ImGui::SeparatorText(Tr(StrId::Insp_Playback));
+    ImGui::SliderFloat(Tr(StrId::Insp_Volume), &soundEdit_.volume, 0.0f, 1.0f);
+    ImGui::SliderFloat(Tr(StrId::Insp_VolumeRandom), &soundEdit_.volumeRandom, 0.0f, 1.0f);
+    ImGui::SliderFloat(Tr(StrId::Insp_Pitch), &soundEdit_.pitch, 1.0f / AudioSystem::kMaxFreqRatio,
                        AudioSystem::kMaxFreqRatio);
-    ImGui::SliderFloat("pitch random", &soundEdit_.pitchRandom, 0.0f, 1.0f);
-    ImGui::Checkbox("loop", &soundEdit_.loop);
+    ImGui::SliderFloat(Tr(StrId::Insp_PitchRandom), &soundEdit_.pitchRandom, 0.0f, 1.0f);
+    ImGui::Checkbox(Tr(StrId::Insp_Loop), &soundEdit_.loop);
     ImGui::SameLine();
-    ImGui::Checkbox("stream (BGM)", &soundEdit_.stream);
+    ImGui::Checkbox(Tr(StrId::Insp_StreamBgm), &soundEdit_.stream);
     // バス候補は**実際に張られているミキサー**から採る (M45d でバスはデータ駆動になった)。
     // 保存は名前なので、未知のバス名は既定バスへ落ちるだけで値自体は壊さない
     if (ctx.audio != nullptr) {
         const int current = ctx.audio->FindBus(soundEdit_.bus.c_str());
         const char* preview = current >= 0 ? ctx.audio->BusName(current) : soundEdit_.bus.c_str();
         ImGui::SetNextItemWidth(160.0f);
-        if (ImGui::BeginCombo("bus", preview)) {
+        if (ImGui::BeginCombo(Tr(StrId::Insp_Bus), preview)) {
             for (int i = 0; i < ctx.audio->BusCount(); ++i) {
                 if (ImGui::Selectable(ctx.audio->BusName(i), i == current)) {
                     soundEdit_.bus = ctx.audio->BusName(i);
@@ -1174,40 +1173,40 @@ void InspectorWindow::DrawSoundInspector(EngineContext& ctx, const std::wstring&
         }
     }
     ImGui::SetNextItemWidth(160.0f);
-    ImGui::DragInt("priority", &soundEdit_.priority, 1.0f, 0, 255);
+    ImGui::DragInt(Tr(StrId::Insp_Priority), &soundEdit_.priority, 1.0f, 0, 255);
     ImGui::SetNextItemWidth(160.0f);
-    ImGui::DragInt("max instances", &soundEdit_.maxInstances, 0.1f, 0, 64);
-    ImGui::TextDisabled("0 = unlimited. Higher priority wins when voices are stolen.");
+    ImGui::DragInt(Tr(StrId::Insp_MaxInstances), &soundEdit_.maxInstances, 0.1f, 0, 64);
+    ImGui::TextDisabled("%s", Tr(StrId::Insp_PriorityNote));
 
     // ---- 3D (M45e: X3DAudio が実際にこの値で定位する) ----
-    ImGui::SeparatorText("3D");
-    ImGui::SliderFloat("spatial blend", &soundEdit_.spatialBlend, 0.0f, 1.0f);
-    ImGui::DragFloat("min distance", &soundEdit_.minDistance, 0.05f, 0.01f, 1000.0f);
-    ImGui::DragFloat("max distance", &soundEdit_.maxDistance, 0.5f, 0.02f, 10000.0f);
+    ImGui::SeparatorText(Tr(StrId::Insp_3D));
+    ImGui::SliderFloat(Tr(StrId::Insp_SpatialBlend), &soundEdit_.spatialBlend, 0.0f, 1.0f);
+    ImGui::DragFloat(Tr(StrId::Insp_MinDistance), &soundEdit_.minDistance, 0.05f, 0.01f, 1000.0f);
+    ImGui::DragFloat(Tr(StrId::Insp_MaxDistance), &soundEdit_.maxDistance, 0.5f, 0.02f, 10000.0f);
     {
         int rolloff = static_cast<int>(soundEdit_.rolloff);
         const char* rolloffNames[] = { "Logarithmic", "Linear", "Inverse" };
         ImGui::SetNextItemWidth(160.0f);
-        if (ImGui::Combo("rolloff", &rolloff, rolloffNames, 3)) {
+        if (ImGui::Combo(Tr(StrId::Insp_Rolloff), &rolloff, rolloffNames, 3)) {
             soundEdit_.rolloff = static_cast<SoundRolloff>(rolloff);
         }
     }
-    ImGui::SliderFloat("doppler", &soundEdit_.dopplerScale, 0.0f, 5.0f);
-    ImGui::SliderFloat("reverb send", &soundEdit_.reverbSend, 0.0f, 1.0f);
-    ImGui::TextDisabled("spatial blend 0 = 2D. Sound is silent beyond max distance.");
-    ImGui::TextDisabled("AudioSource can override these (overrideAttenuation).");
+    ImGui::SliderFloat(Tr(StrId::Insp_Doppler), &soundEdit_.dopplerScale, 0.0f, 5.0f);
+    ImGui::SliderFloat(Tr(StrId::Insp_ReverbSend), &soundEdit_.reverbSend, 0.0f, 1.0f);
+    ImGui::TextDisabled("%s", Tr(StrId::Insp_SpatialNote));
+    ImGui::TextDisabled("%s", Tr(StrId::Insp_AttenNote));
 
     // ---- ループ点 (M45f から実際に効く。stream + loop のときだけ意味を持つ) ----
-    ImGui::SeparatorText("Loop points (frames)");
+    ImGui::SeparatorText(Tr(StrId::Insp_LoopPoints));
     ImGui::SetNextItemWidth(160.0f);
-    ImGui::DragInt("loop start", &soundEdit_.loopStartSample, 8.0f, 0, 1 << 30);
+    ImGui::DragInt(Tr(StrId::Insp_LoopStart), &soundEdit_.loopStartSample, 8.0f, 0, 1 << 30);
     ImGui::SetNextItemWidth(160.0f);
-    ImGui::DragInt("loop end", &soundEdit_.loopEndSample, 8.0f, 0, 1 << 30);
-    ImGui::TextDisabled("end <= start means \"to the end\". Applies to stream + loop only:");
-    ImGui::TextDisabled("the stream seeks back sample-exactly, so the seam is inaudible.");
+    ImGui::DragInt(Tr(StrId::Insp_LoopEnd), &soundEdit_.loopEndSample, 8.0f, 0, 1 << 30);
+    ImGui::TextDisabled("%s", Tr(StrId::Insp_LoopEndNote1));
+    ImGui::TextDisabled("%s", Tr(StrId::Insp_LoopEndNote2));
 
     ImGui::Separator();
-    if (ImGui::Button("Save", ImVec2(90, 0))) {
+    if (ImGui::Button(Tr(StrId::Common_Save), ImVec2(90, 0))) {
         if (soundEdit_.name.empty()) {
             // "hit.sound.json" → "hit" (stem を 2 回剥がす)
             soundEdit_.name = WideToUtf8(fs::path(path).stem().stem().wstring());
@@ -1226,7 +1225,7 @@ void InspectorWindow::DrawSoundInspector(EngineContext& ctx, const std::wstring&
         }
     }
     ImGui::SameLine();
-    if (ImGui::Button("Revert", ImVec2(90, 0))) {
+    if (ImGui::Button(Tr(StrId::Insp_Revert), ImVec2(90, 0))) {
         LoadSoundEdit(path);
     }
 }
@@ -1271,7 +1270,7 @@ void InspectorWindow::DrawAssetRef(EngineContext& ctx, const FieldDesc& field, v
         entries.insert(entries.end(), texs.begin(), texs.end());
     }
 
-    const char* cur = "(none)";
+    const char* cur = Tr(StrId::Insp_NoneItem);
     for (const AssetEntry& e : entries) {
         if (e.id == *id) {
             cur = e.name.c_str();
@@ -1299,7 +1298,7 @@ void InspectorWindow::DrawAssetRef(EngineContext& ctx, const FieldDesc& field, v
             }
             undo.EndRecord(selection);
         };
-        if (ImGui::Selectable("(none)")) {
+        if (ImGui::Selectable(Tr(StrId::Insp_NoneItem))) {
             assign(AssetID{});
         }
         for (const AssetEntry& e : entries) {
@@ -1331,7 +1330,7 @@ void InspectorWindow::DrawEntityRef(EngineContext& ctx, const FieldDesc& field, 
         }
     });
 
-    const char* cur = "(none)";
+    const char* cur = Tr(StrId::Insp_NoneItem);
     if (!id->IsNull() && world.IsAlive(*id)) {
         cur = world.GetName(*id);
     }
@@ -1357,7 +1356,7 @@ void InspectorWindow::DrawEntityRef(EngineContext& ctx, const FieldDesc& field, 
             }
             undo.EndRecord(selection);
         };
-        if (ImGui::Selectable("(none)")) {
+        if (ImGui::Selectable(Tr(StrId::Insp_NoneItem))) {
             assign(kNullEntity);
         }
         for (const auto& [e, name] : ents) {

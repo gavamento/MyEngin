@@ -19,23 +19,23 @@ void ParticleSettingsWindow::OnImGui(EngineContext& ctx)
     ParticleSystem& ps = *ctx.particles;
 
     // ---- バックエンド選択 (spec 7.4: ラジオボタン、プロジェクト設定に保存) ----
-    ImGui::TextUnformatted("Backend");
+    ImGui::TextUnformatted(Tr(StrId::Particle_Backend));
     int kind = static_cast<int>(ps.ActiveKind());
     bool changed = false;
-    changed |= ImGui::RadioButton("CPU (SIMD)", &kind, 0);
+    changed |= ImGui::RadioButton(Tr(StrId::Particle_Cpu), &kind, 0);
     ImGui::SameLine();
-    changed |= ImGui::RadioButton("GPU (Compute)", &kind, 1);
+    changed |= ImGui::RadioButton(Tr(StrId::Particle_Gpu), &kind, 1);
     if (changed) {
         ps.SetActiveKind(static_cast<ParticleBackendKind>(kind));
     }
 
     bool compare = ps.CompareMode();
-    if (ImGui::Checkbox("Compare mode (side by side)", &compare)) {
+    if (ImGui::Checkbox(Tr(StrId::Particle_Compare), &compare)) {
         ps.SetCompareMode(compare);
     }
 
     bool simd = ps.Cpu().SimdEnabled();
-    if (ImGui::Checkbox("CPU SIMD (SSE)", &simd)) {
+    if (ImGui::Checkbox(Tr(StrId::Particle_Simd), &simd)) {
         ps.Cpu().SetSimdEnabled(simd);
         ps.SaveSettings();
     }
@@ -49,16 +49,16 @@ void ParticleSettingsWindow::OnImGui(EngineContext& ctx)
         ImGui::Text("CPU: %7u alive  %6.3f ms", cpu.aliveTotal, cpu.updateMs);
         ImGui::Text("GPU: (cap %6u)  %6.3f ms", gpu.aliveTotal, gpu.updateMs);
         if (cpu.updateMs > 0.0001f && gpu.updateMs > 0.0001f) {
-            ImGui::Text("speedup: x%.1f", cpu.updateMs / gpu.updateMs);
+            ImGui::Text(Tr(StrId::Particle_Speedup), cpu.updateMs / gpu.updateMs);
         }
-        ImGui::TextDisabled("GPU cloud is offset +%.1f on X", ps.CompareOffsetX());
+        ImGui::TextDisabled(Tr(StrId::Particle_GpuOffset), ps.CompareOffsetX());
     } else {
         const ParticleStats s = ps.Active().Stats();
         ImGui::Text("%s", ps.Active().Name());
-        ImGui::Text("alive: %u", s.aliveTotal);
-        ImGui::Text("update: %.3f ms", s.updateMs);
+        ImGui::Text(Tr(StrId::Particle_Alive), s.aliveTotal);
+        ImGui::Text(Tr(StrId::Particle_Update), s.updateMs);
     }
-    ImGui::TextDisabled("(emitter properties are edited in the Inspector)");
+    ImGui::TextDisabled("%s", Tr(StrId::Particle_EditHint));
     ImGui::End();
 }
 

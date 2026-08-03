@@ -405,7 +405,8 @@ void SceneViewWindow::DrawToolbar(EditorSettings& settings)
     const ImVec2 p = ImGui::GetItemRectMin();
     ImGui::SetCursorScreenPos(ImVec2(p.x + 8.0f, p.y + 8.0f));
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.10f, 0.11f, 0.13f, 0.85f));
-    ImGui::BeginChild("##sv_toolbar", ImVec2(830.0f, 30.0f), ImGuiChildFlags_None,
+    // M47b: 幅は中身から自動決定する。訳文が長いと 830px 固定ではボタンが見切れるため
+    ImGui::BeginChild("##sv_toolbar", ImVec2(0.0f, 30.0f), ImGuiChildFlags_AutoResizeX,
                       ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     auto opBtn = [&](const char* label, ImGuizmo::OPERATION op) {
         const bool on = (gizmoOp_ == op);
@@ -420,22 +421,22 @@ void SceneViewWindow::DrawToolbar(EditorSettings& settings)
         }
         ImGui::SameLine();
     };
-    opBtn("Move", ImGuizmo::TRANSLATE);
-    opBtn("Rotate", ImGuizmo::ROTATE);
-    opBtn("Scale", ImGuizmo::SCALE);
+    opBtn(Tr(StrId::SceneView_Move), ImGuizmo::TRANSLATE);
+    opBtn(Tr(StrId::SceneView_Rotate), ImGuizmo::ROTATE);
+    opBtn(Tr(StrId::SceneView_Scale), ImGuizmo::SCALE);
     ImGui::TextUnformatted("|");
     ImGui::SameLine();
-    if (ImGui::Button(gizmoMode_ == ImGuizmo::LOCAL ? "Local" : "World")) {
+    if (ImGui::Button(Tr(gizmoMode_ == ImGuizmo::LOCAL ? StrId::Tool_SpaceLocal : StrId::Tool_SpaceWorld))) {
         gizmoMode_ = (gizmoMode_ == ImGuizmo::LOCAL) ? ImGuizmo::WORLD : ImGuizmo::LOCAL;
     }
     ImGui::SameLine();
-    ImGui::Checkbox("Ortho", &orthographic_);
+    ImGui::Checkbox(Tr(StrId::SceneView_Ortho), &orthographic_);
     ImGui::SameLine();
     ImGui::TextUnformatted("|");
     ImGui::SameLine();
-    ImGui::Checkbox("Grid", &showGrid_);
+    ImGui::Checkbox(Tr(StrId::SceneView_Grid), &showGrid_);
     ImGui::SameLine();
-    ImGui::Checkbox("Gizmos", &showGizmos_);
+    ImGui::Checkbox(Tr(StrId::SceneView_Gizmos), &showGizmos_);
     ImGui::SameLine();
     ImGui::TextUnformatted("|");
     ImGui::SameLine();
@@ -453,14 +454,14 @@ void SceneViewWindow::DrawToolbar(EditorSettings& settings)
         }
         ImGui::SameLine();
     };
-    modeBtn("Lit", 0);
-    modeBtn("Unlit", 1);
-    modeBtn("Wire", 2);
+    modeBtn(Tr(StrId::SceneView_Lit), 0);
+    modeBtn(Tr(StrId::SceneView_Unlit), 1);
+    modeBtn(Tr(StrId::SceneView_Wire), 2);
     ImGui::TextUnformatted("|");
     ImGui::SameLine();
     // カメラ速度 (M27d)。RMB ホールド中のホイールでも変わる (HandleCamera)
     ImGui::SetNextItemWidth(100.0f);
-    if (ImGui::SliderFloat("##camspeed", &settings.camMoveSpeed, 0.5f, 60.0f, "cam %.1f",
+    if (ImGui::SliderFloat("##camspeed", &settings.camMoveSpeed, 0.5f, 60.0f, Tr(StrId::SceneView_CamSpeed),
                            ImGuiSliderFlags_Logarithmic)) {
         camSpeedDirty_ = true; // 永続化は操作終了時 (HandleCamera 側の Save に相乗り)
     }

@@ -77,21 +77,21 @@ void ConsoleWindow::OnImGui(const std::string& externalEditorCmd)
         }
     }
 
-    if (ImGui::Button("Clear")) {
+    if (ImGui::Button(Tr(StrId::Console_Clear))) {
         entries_.clear();
     }
     ImGui::SameLine();
-    ImGui::Checkbox("Trace", &showTrace_);
+    ImGui::Checkbox(Tr(StrId::Console_Trace), &showTrace_);
     ImGui::SameLine();
-    ImGui::Checkbox("Info", &showInfo_);
+    ImGui::Checkbox(Tr(StrId::Console_Info), &showInfo_);
     ImGui::SameLine();
-    ImGui::Checkbox("Warn", &showWarn_);
+    ImGui::Checkbox(Tr(StrId::Console_Warn), &showWarn_);
     ImGui::SameLine();
-    ImGui::Checkbox("Error", &showError_);
+    ImGui::Checkbox(Tr(StrId::Console_Error), &showError_);
     ImGui::SameLine();
-    ImGui::Checkbox("Collapse", &collapse_);
+    ImGui::Checkbox(Tr(StrId::Console_Collapse), &collapse_);
     ImGui::SameLine();
-    ImGui::Checkbox("Auto-scroll", &autoScroll_);
+    ImGui::Checkbox(Tr(StrId::Console_AutoScroll), &autoScroll_);
     ImGui::SameLine();
     ImGui::TextColored(ImVec4(0.95f, 0.85f, 0.3f, 1.0f), "%d", warnCount);
     ImGui::SameLine();

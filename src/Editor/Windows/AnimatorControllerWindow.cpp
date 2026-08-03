@@ -66,7 +66,7 @@ void AnimatorControllerWindow::OnImGui(EngineContext& ctx, Selection& selection)
         return;
     }
     if (!ctx.controllers || !ctx.scene) {
-        ImGui::TextDisabled("(no controller library)");
+        ImGui::TextDisabled("%s", Tr(StrId::Anim_NoCtrlLibrary));
         ImGui::End();
         return;
     }
@@ -80,22 +80,22 @@ void AnimatorControllerWindow::OnImGui(EngineContext& ctx, Selection& selection)
         }
     }
     if (!comp) {
-        ImGui::TextWrapped("Select an entity that has an AnimatorController component.");
+        ImGui::TextWrapped("%s", Tr(StrId::Anim_SelectEntity));
         ImGui::End();
         return;
     }
     ControllerAsset* ctrl = ctx.controllers->GetMutable(comp->controller.value);
     if (!ctrl) {
-        ImGui::TextWrapped("AnimatorController references an unknown .controller.json.");
+        ImGui::TextWrapped("%s", Tr(StrId::Anim_UnknownCtrl));
         ImGui::End();
         return;
     }
     const int nStates = static_cast<int>(ctrl->states.size());
 
     // ---- ツールバー ----
-    ImGui::Text("Controller: %s", ctrl->name.c_str());
+    ImGui::Text(Tr(StrId::Anim_Controller), ctrl->name.c_str());
     ImGui::SameLine();
-    if (ImGui::SmallButton("Add State")) {
+    if (ImGui::SmallButton(Tr(StrId::Anim_AddState))) {
         ControllerState s;
         char nm[32];
         snprintf(nm, sizeof(nm), "State%d", nStates);
@@ -103,38 +103,38 @@ void AnimatorControllerWindow::OnImGui(EngineContext& ctx, Selection& selection)
         ctrl->states.push_back(s);
     }
     ImGui::SameLine();
-    if (ImGui::SmallButton("Add Transition") && nStates >= 2) {
+    if (ImGui::SmallButton(Tr(StrId::Anim_AddTransition)) && nStates >= 2) {
         ControllerTransition t;
         t.from = 0;
         t.to = 1;
         ctrl->transitions.push_back(t);
     }
     ImGui::SameLine();
-    if (ImGui::SmallButton("Save")) {
+    if (ImGui::SmallButton(Tr(StrId::Common_Save))) {
         ctx.controllers->SaveToFile(ctrl->hash);
     }
     ImGui::Separator();
 
     // ---- 左: パラメータ + インスペクタ ----
     ImGui::BeginChild("ctrl_left", ImVec2(260, 0), true);
-    ImGui::TextUnformatted("Parameters (live)");
+    ImGui::TextUnformatted(Tr(StrId::Anim_ParamsLive));
     ImGui::Separator();
     for (int i = 0; i < static_cast<int>(ctrl->parameters.size()) && i < 4; ++i) {
         ImGui::PushID(i);
         ImGui::InputInt(ctrl->parameters[i].name.c_str(), &comp->params[i]);
         ImGui::PopID();
     }
-    if (ctrl->parameters.size() < 4 && ImGui::SmallButton("+ param")) {
+    if (ctrl->parameters.size() < 4 && ImGui::SmallButton(Tr(StrId::Anim_AddParam))) {
         char nm[16];
         snprintf(nm, sizeof(nm), "param%zu", ctrl->parameters.size());
         ctrl->parameters.push_back({ nm });
     }
     ImGui::Separator();
-    ImGui::Text("Current: %s", (comp->currentState >= 0 && comp->currentState < nStates)
+    ImGui::Text(Tr(StrId::Anim_Current), (comp->currentState >= 0 && comp->currentState < nStates)
                                    ? ctrl->states[comp->currentState].name.c_str()
                                    : "-");
     if (comp->transitionTo >= 0 && comp->transitionTo < nStates) {
-        ImGui::Text("-> %s (%d/%d)", ctrl->states[comp->transitionTo].name.c_str(),
+        ImGui::Text(Tr(StrId::Anim_TransitionRow), ctrl->states[comp->transitionTo].name.c_str(),
                     comp->transitionTick, comp->transitionDuration);
     }
     ImGui::Separator();
@@ -142,10 +142,10 @@ void AnimatorControllerWindow::OnImGui(EngineContext& ctx, Selection& selection)
     // 選択ステートの編集
     if (selectedState_ >= 0 && selectedState_ < nStates) {
         ControllerState& s = ctrl->states[selectedState_];
-        ImGui::Text("State: %s", s.name.c_str());
+        ImGui::Text(Tr(StrId::Anim_State), s.name.c_str());
         char buf[64];
         snprintf(buf, sizeof(buf), "%s", s.name.c_str());
-        if (ImGui::InputText("name", buf, sizeof(buf))) {
+        if (ImGui::InputText(Tr(StrId::Anim_Name), buf, sizeof(buf))) {
             s.name = buf;
         }
         // クリップ選択 (AnimationLibrary から)
@@ -157,7 +157,7 @@ void AnimatorControllerWindow::OnImGui(EngineContext& ctx, Selection& selection)
                     cur = c.name.c_str();
                 }
             }
-            if (ImGui::BeginCombo("clip", cur)) {
+            if (ImGui::BeginCombo(Tr(StrId::Anim_Clip), cur)) {
                 for (const auto& c : clips) {
                     if (ImGui::Selectable(c.name.c_str(), c.hash == s.clipHash)) {
                         // M39a: 保存は clipHash (= GUID) の数値参照 — パスの推測書きは不要
@@ -168,13 +168,13 @@ void AnimatorControllerWindow::OnImGui(EngineContext& ctx, Selection& selection)
                 ImGui::EndCombo();
             }
         }
-        ImGui::InputInt("speed", &s.speed);
+        ImGui::InputInt(Tr(StrId::Anim_Speed), &s.speed);
         bool loop = s.loop != 0;
-        if (ImGui::Checkbox("loop", &loop)) {
+        if (ImGui::Checkbox(Tr(StrId::Anim_Loop), &loop)) {
             s.loop = loop ? 1 : 0;
         }
     } else {
-        ImGui::TextDisabled("(click a node to edit)");
+        ImGui::TextDisabled("%s", Tr(StrId::Anim_ClickNode));
     }
     ImGui::EndChild();
 
@@ -243,7 +243,7 @@ void AnimatorControllerWindow::OnImGui(EngineContext& ctx, Selection& selection)
     ImGui::EndChild();
 
     // ---- 遷移リスト (キャンバス下) ----
-    if (ImGui::CollapsingHeader("Transitions", ImGuiTreeNodeFlags_DefaultOpen)) {
+    if (ImGui::CollapsingHeader(Tr(StrId::Anim_Transitions), ImGuiTreeNodeFlags_DefaultOpen)) {
         auto stateName = [&](int idx) {
             return (idx == -1) ? "Any" : (idx >= 0 && idx < nStates ? ctrl->states[idx].name.c_str() : "?");
         };
@@ -253,19 +253,19 @@ void AnimatorControllerWindow::OnImGui(EngineContext& ctx, Selection& selection)
             if (ImGui::TreeNode("t", "%s -> %s  (dur %d, cond %zu)", stateName(t.from),
                                 stateName(t.to), t.duration, t.conditions.size())) {
                 selectedTransition_ = ti;
-                ImGui::InputInt("from", &t.from);
-                ImGui::InputInt("to", &t.to);
-                ImGui::InputInt("duration", &t.duration);
+                ImGui::InputInt(Tr(StrId::Anim_From), &t.from);
+                ImGui::InputInt(Tr(StrId::Anim_To), &t.to);
+                ImGui::InputInt(Tr(StrId::Anim_Duration), &t.duration);
                 bool exit = t.hasExitTime != 0;
-                if (ImGui::Checkbox("hasExitTime", &exit)) {
+                if (ImGui::Checkbox(Tr(StrId::Anim_HasExitTime), &exit)) {
                     t.hasExitTime = exit ? 1 : 0;
                 }
-                ImGui::TextUnformatted("Conditions:");
+                ImGui::TextUnformatted(Tr(StrId::Anim_Conditions));
                 for (int ci = 0; ci < static_cast<int>(t.conditions.size()); ++ci) {
                     ControllerCondition& c = t.conditions[ci];
                     ImGui::PushID(ci);
                     ImGui::SetNextItemWidth(60);
-                    ImGui::InputInt("param", &c.param);
+                    ImGui::InputInt(Tr(StrId::Anim_Param), &c.param);
                     ImGui::SameLine();
                     ImGui::SetNextItemWidth(50);
                     int op = static_cast<int>(c.op);
@@ -274,7 +274,7 @@ void AnimatorControllerWindow::OnImGui(EngineContext& ctx, Selection& selection)
                     }
                     ImGui::SameLine();
                     ImGui::SetNextItemWidth(60);
-                    ImGui::InputInt("val", &c.value);
+                    ImGui::InputInt(Tr(StrId::Anim_Val), &c.value);
                     ImGui::SameLine();
                     if (ImGui::SmallButton("x")) {
                         t.conditions.erase(t.conditions.begin() + ci);
@@ -283,7 +283,7 @@ void AnimatorControllerWindow::OnImGui(EngineContext& ctx, Selection& selection)
                     }
                     ImGui::PopID();
                 }
-                if (ImGui::SmallButton("+ condition")) {
+                if (ImGui::SmallButton(Tr(StrId::Anim_AddCondition))) {
                     t.conditions.push_back({ 0, CondOp::Gt, 0 });
                 }
                 ImGui::TreePop();

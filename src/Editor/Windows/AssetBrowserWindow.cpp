@@ -143,7 +143,7 @@ void AssetBrowserWindow::DrawDirTree(EngineContext& ctx, const std::wstring& dir
         }
         // 右クリック → Rename (M30d)。実行はモーダル確定時 (iterator 保護)
         if (ImGui::BeginPopupContextItem()) {
-            if (ImGui::MenuItem("Rename")) {
+            if (ImGui::MenuItem(Tr(StrId::Asset_RenameItem))) {
                 BeginRename(entry.path().wstring());
             }
             ImGui::EndPopup();
@@ -209,18 +209,18 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
 
     // ---- 右: ファイルグリッド ----
     ImGui::BeginChild("##filegrid", ImVec2(0, 0), ImGuiChildFlags_Borders);
-    if (ImGui::Button("Rebuild Scripts")) {
+    if (ImGui::Button(Tr(StrId::Asset_RebuildScripts))) {
         RebuildGameLogic(ctx); // gen + msbuild GameLogic → ホットリロード
     }
     if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("C++ スクリプト (GameLogic.dll) を再生成 + ビルドしてホットリロード");
+        ImGui::SetTooltip("%s", Tr(StrId::Asset_TipRebuild));
     }
     ImGui::SameLine();
-    if (ImGui::Button("Compile C# Scripts")) {
+    if (ImGui::Button(Tr(StrId::Asset_CompileCs))) {
         CompileCSharpScripts(ctx); // assets\scripts\*.cs をエンジン内 Roslyn でコンパイル
     }
     if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("C# スクリプト (assets\\scripts\\*.cs) をエンジン内でコンパイル (Roslyn)");
+        ImGui::SetTooltip("%s", Tr(StrId::Asset_TipCompileCs));
     }
     ImGui::SameLine();
     // ---- パンくずナビ (M30a): assets > sub > ... をクリックで移動 ----
@@ -329,10 +329,10 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
         }
         // 右クリック → Rename (M30d)
         if (ImGui::BeginPopupContextItem("##folderctx")) {
-            if (ImGui::MenuItem("Rename")) {
+            if (ImGui::MenuItem(Tr(StrId::Asset_RenameItem))) {
                 BeginRename(dirPath.wstring());
             }
-            if (ImGui::MenuItem("Show in Explorer")) {
+            if (ImGui::MenuItem(Tr(StrId::Asset_ShowInExplorer))) {
                 ShellExecuteW(nullptr, L"open", dirPath.wstring().c_str(), nullptr, nullptr,
                               SW_SHOWNORMAL);
             }
@@ -413,11 +413,11 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
         }
         // 右クリックメニュー: Rename (M30d) + 画像なら Import Settings (M39b) / DDS 圧縮 (M24)
         if (ImGui::BeginPopupContextItem("##filectx")) {
-            if (ImGui::MenuItem("Rename")) {
+            if (ImGui::MenuItem(Tr(StrId::Asset_RenameItem))) {
                 BeginRename(path);
             }
             if (IsImageExt(ext)) {
-                if (ImGui::MenuItem("Import Settings...")) {
+                if (ImGui::MenuItem(Tr(StrId::Asset_ImportSettings))) {
                     AssetMeta m;
                     AssetDatabase::ReadMeta(path + L".meta", m); // 不在なら既定値のまま
                     importEdit_ = m.tex;
@@ -426,7 +426,7 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
                 }
             }
             if (IsImageExt(ext) && ext != L".dds") {
-                if (ImGui::MenuItem("Compress to DDS")) {
+                if (ImGui::MenuItem(Tr(StrId::Asset_CompressDds))) {
                     // .meta の Import Settings が mips/圧縮形式を決める (M39b)
                     AssetMeta m;
                     AssetDatabase::ReadMeta(path + L".meta", m);
@@ -572,19 +572,19 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
     if (ImGui::BeginPopupContextWindow("##assets_ctx",
                                        ImGuiPopupFlags_MouseButtonRight
                                            | ImGuiPopupFlags_NoOpenOverItems)) {
-        if (ImGui::BeginMenu("Create")) {
-            if (ImGui::MenuItem("Folder")) { beginCreate(kCreateFolder, "New Folder"); }
-            if (ImGui::MenuItem("C++ Script")) { beginCreate(kCreateScript, "NewScript"); }
-            if (ImGui::MenuItem("C# Script")) { beginCreate(kCreateCSharp, "NewScript"); }
-            if (ImGui::MenuItem("Scene")) { beginCreate(kCreateScene, "New Scene"); }
-            if (ImGui::MenuItem("Animation Clip")) { beginCreate(kCreateAnim, "New Clip"); }
-            if (ImGui::MenuItem("Material")) { beginCreate(kCreateMaterial, "New Material"); }
-            if (ImGui::MenuItem("Sound")) { beginCreate(kCreateSound, "New Sound"); }
-            if (ImGui::MenuItem("Mixer")) { beginCreate(kCreateMixer, "New Mixer"); }
+        if (ImGui::BeginMenu(Tr(StrId::Asset_Create))) {
+            if (ImGui::MenuItem(Tr(StrId::Asset_Folder))) { beginCreate(kCreateFolder, "New Folder"); }
+            if (ImGui::MenuItem(Tr(StrId::Asset_CppScript))) { beginCreate(kCreateScript, "NewScript"); }
+            if (ImGui::MenuItem(Tr(StrId::Asset_CsScript))) { beginCreate(kCreateCSharp, "NewScript"); }
+            if (ImGui::MenuItem(Tr(StrId::Asset_Scene))) { beginCreate(kCreateScene, "New Scene"); }
+            if (ImGui::MenuItem(Tr(StrId::Asset_AnimationClip))) { beginCreate(kCreateAnim, "New Clip"); }
+            if (ImGui::MenuItem(Tr(StrId::Asset_MaterialItem))) { beginCreate(kCreateMaterial, "New Material"); }
+            if (ImGui::MenuItem(Tr(StrId::Asset_Sound))) { beginCreate(kCreateSound, "New Sound"); }
+            if (ImGui::MenuItem(Tr(StrId::Asset_Mixer))) { beginCreate(kCreateMixer, "New Mixer"); }
             ImGui::EndMenu();
         }
         ImGui::Separator();
-        if (ImGui::MenuItem("Show in Explorer")) {
+        if (ImGui::MenuItem(Tr(StrId::Asset_ShowInExplorer))) {
             ShellExecuteW(nullptr, L"open", current_.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
         }
         ImGui::EndPopup();
@@ -606,11 +606,11 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
     if (ImGui::BeginPopupModal(Tr(StrId::Popup_RenameAsset), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::TextDisabled("%s", WideToUtf8(pendingRenamePath_).c_str());
         ImGui::SetNextItemWidth(260.0f);
-        const bool enter = ImGui::InputText("Name", createName_, sizeof(createName_),
+        const bool enter = ImGui::InputText(Tr(StrId::Asset_NameField), createName_, sizeof(createName_),
                                             ImGuiInputTextFlags_EnterReturnsTrue);
-        const bool doRename = ImGui::Button("Rename", ImVec2(90, 0)) || enter;
+        const bool doRename = ImGui::Button(Tr(StrId::Common_Rename), ImVec2(90, 0)) || enter;
         ImGui::SameLine();
-        const bool cancelRename = ImGui::Button("Cancel", ImVec2(90, 0));
+        const bool cancelRename = ImGui::Button(Tr(StrId::Common_Cancel), ImVec2(90, 0));
         if (doRename && createName_[0] != '\0') {
             const std::wstring newPath = RenameAsset(ctx, pendingRenamePath_, createName_);
             if (!newPath.empty()) {
@@ -643,15 +643,15 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
         ImGui::TextDisabled("%s", WideToUtf8(pendingImportPath_).c_str());
         const char* srgbLabels[] = { "Auto (usage hint)", "sRGB (albedo)", "Linear (data)" };
         ImGui::SetNextItemWidth(220.0f);
-        ImGui::Combo("sRGB", &importEdit_.srgb, srgbLabels, 3);
+        ImGui::Combo(Tr(StrId::Insp_Srgb), &importEdit_.srgb, srgbLabels, 3);
         bool mips = importEdit_.generateMips != 0;
-        if (ImGui::Checkbox("Generate Mips", &mips)) {
+        if (ImGui::Checkbox(Tr(StrId::Insp_GenerateMips), &mips)) {
             importEdit_.generateMips = mips ? 1 : 0;
         }
         const char* compLabels[] = { "Auto (BC1/BC3)", "None (RGBA8)" };
         ImGui::SetNextItemWidth(220.0f);
-        ImGui::Combo("Cook Compress", &importEdit_.compress, compLabels, 2);
-        if (ImGui::Button("Apply", ImVec2(90, 0))) {
+        ImGui::Combo(Tr(StrId::Insp_CookCompress), &importEdit_.compress, compLabels, 2);
+        if (ImGui::Button(Tr(StrId::Common_Apply), ImVec2(90, 0))) {
             const std::wstring metaPath = pendingImportPath_ + L".meta";
             AssetDatabase::EnsureMeta(pendingImportPath_); // 不在なら生成 (GUID 確定)
             AssetMeta m;
@@ -668,7 +668,7 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(90, 0))) {
+        if (ImGui::Button(Tr(StrId::Common_Cancel), ImVec2(90, 0))) {
             pendingImportPath_.clear();
             ImGui::CloseCurrentPopup();
         }
@@ -682,11 +682,11 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
     }
     if (ImGui::BeginPopupModal(Tr(StrId::Popup_CreateAsset), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::SetNextItemWidth(260.0f);
-        const bool enter = ImGui::InputText("Name", createName_, sizeof(createName_),
+        const bool enter = ImGui::InputText(Tr(StrId::Asset_NameField), createName_, sizeof(createName_),
                                             ImGuiInputTextFlags_EnterReturnsTrue);
-        const bool create = ImGui::Button("Create", ImVec2(90, 0)) || enter;
+        const bool create = ImGui::Button(Tr(StrId::Common_Create), ImVec2(90, 0)) || enter;
         ImGui::SameLine();
-        const bool cancel = ImGui::Button("Cancel", ImVec2(90, 0));
+        const bool cancel = ImGui::Button(Tr(StrId::Common_Cancel), ImVec2(90, 0));
         if (create && createName_[0] != '\0') {
             DoCreate(ctx, externalEditorCmd);
             pendingCreate_ = 0;

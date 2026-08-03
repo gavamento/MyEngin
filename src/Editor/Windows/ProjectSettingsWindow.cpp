@@ -24,40 +24,40 @@ void ProjectSettingsWindow::OnImGui(EngineContext& ctx, EditorSettings& settings
     }
 
     // ---- レンダリング ----
-    if (ImGui::CollapsingHeader("Rendering", ImGuiTreeNodeFlags_DefaultOpen)) {
+    if (ImGui::CollapsingHeader(Tr(StrId::PrjSet_Rendering), ImGuiTreeNodeFlags_DefaultOpen)) {
         const bool isForward = (ctx.renderPath == ctx.renderPathForward);
-        ImGui::Text("Active render path: %s", ctx.renderPath ? ctx.renderPath->Name() : "?");
-        if (ImGui::RadioButton("Forward", isForward)) {
+        ImGui::Text(Tr(StrId::PrjSet_ActivePath), ctx.renderPath ? ctx.renderPath->Name() : "?");
+        if (ImGui::RadioButton(Tr(StrId::Menu_Forward), isForward)) {
             ctx.renderPath = ctx.renderPathForward;
         }
         ImGui::SameLine();
-        if (ImGui::RadioButton("Deferred", !isForward)) {
+        if (ImGui::RadioButton(Tr(StrId::Menu_Deferred), !isForward)) {
             ctx.renderPath = ctx.renderPathDeferred;
         }
     }
 
     // ---- エディタ設定 (editor_settings.json) ----
-    if (ImGui::CollapsingHeader("Editor", ImGuiTreeNodeFlags_DefaultOpen)) {
+    if (ImGui::CollapsingHeader(Tr(StrId::PrjSet_Editor), ImGuiTreeNodeFlags_DefaultOpen)) {
         char cmd[256];
         std::snprintf(cmd, sizeof(cmd), "%s", settings.externalEditorCmd.c_str());
-        if (ImGui::InputText("External editor cmd", cmd, sizeof(cmd))) {
+        if (ImGui::InputText(Tr(StrId::PrjSet_ExternalCmd), cmd, sizeof(cmd))) {
             settings.externalEditorCmd = cmd;
         }
-        ImGui::TextDisabled("  {file} / {line} が Console のソースジャンプで置換されます");
-        ImGui::DragFloat("Snap: translate", &settings.snapTranslate, 0.01f, 0.0f, 100.0f);
-        ImGui::DragFloat("Snap: rotate (deg)", &settings.snapRotateDeg, 0.5f, 0.0f, 180.0f);
-        ImGui::DragFloat("Snap: scale", &settings.snapScale, 0.01f, 0.0f, 10.0f);
-        ImGui::Checkbox("Grid visible", &settings.gridVisible);
-        if (ImGui::Button("Save Settings")) {
+        ImGui::TextDisabled("%s", Tr(StrId::PrjSet_CmdHint));
+        ImGui::DragFloat(Tr(StrId::PrjSet_SnapTranslate), &settings.snapTranslate, 0.01f, 0.0f, 100.0f);
+        ImGui::DragFloat(Tr(StrId::PrjSet_SnapRotate), &settings.snapRotateDeg, 0.5f, 0.0f, 180.0f);
+        ImGui::DragFloat(Tr(StrId::PrjSet_SnapScale), &settings.snapScale, 0.01f, 0.0f, 10.0f);
+        ImGui::Checkbox(Tr(StrId::PrjSet_GridVisible), &settings.gridVisible);
+        if (ImGui::Button(Tr(StrId::PrjSet_SaveSettings))) {
             settings.Save();
         }
     }
 
     // ---- 物理レイヤー名 (M36a、assets\project_settings.json の physicsLayers) ----
-    if (ImGui::CollapsingHeader("Physics Layers")) {
+    if (ImGui::CollapsingHeader(Tr(StrId::PrjSet_PhysicsLayers))) {
         PhysicsLayerNames& ln = PhysicsLayerNames::Get();
         ln.Load(ctx.assetsRoot);
-        ImGui::TextDisabled("表示名のみ (sim はレイヤー番号を使う)。Collider の layer/mask に反映");
+        ImGui::TextDisabled("%s", Tr(StrId::PrjSet_LayerHint));
         for (int i = 0; i < PhysicsLayerNames::kCount; ++i) {
             ImGui::PushID(i);
             ImGui::SetNextItemWidth(160.0f);
@@ -69,7 +69,7 @@ void ProjectSettingsWindow::OnImGui(EngineContext& ctx, EditorSettings& settings
                 ImGui::SameLine(240.0f);
             }
         }
-        if (ImGui::Button("Save Layers")) {
+        if (ImGui::Button(Tr(StrId::PrjSet_SaveLayers))) {
             if (ln.Save(ctx.assetsRoot)) {
                 ln.Load(ctx.assetsRoot, true);
             }
@@ -77,14 +77,14 @@ void ProjectSettingsWindow::OnImGui(EngineContext& ctx, EditorSettings& settings
     }
 
     // ---- ショートカット一覧 (読み取り専用) ----
-    if (ImGui::CollapsingHeader("Shortcuts")) {
+    if (ImGui::CollapsingHeader(Tr(StrId::PrjSet_Shortcuts))) {
         static const char* kNames[] = {
             "Save", "Undo", "Redo", "Duplicate", "Delete",
             "Focus", "Rename", "Copy", "Cut", "Paste",
         };
         if (ImGui::BeginTable("##sc", 2, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
-            ImGui::TableSetupColumn("Action");
-            ImGui::TableSetupColumn("Key");
+            ImGui::TableSetupColumn(Tr(StrId::PrjSet_ColAction));
+            ImGui::TableSetupColumn(Tr(StrId::PrjSet_ColKey));
             ImGui::TableHeadersRow();
             for (int i = 0; i < static_cast<int>(Shortcut::Count); ++i) {
                 ImGui::TableNextRow();

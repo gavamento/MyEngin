@@ -25,20 +25,20 @@ void ProfilerWindow::OnImGui(EngineContext& ctx)
     }
     const FrameTimings& t = ctx.timings;
 
-    ImGui::Text("frame: %6.2f ms (%.0f fps)", t.frameMs,
+    ImGui::Text(Tr(StrId::Prof_Frame), t.frameMs,
                 (t.frameMs > 0.001f) ? 1000.0f / t.frameMs : 0.0f);
     ImGui::PlotLines("##frame", frameHistory_, kHistory, cursor_, nullptr, 0.0f, 33.3f,
                      ImVec2(-1, 60));
 
     ImGui::Separator();
-    ImGui::TextUnformatted("phase breakdown (CPU):");
-    ImGui::Text("  2 hot reload : %6.3f ms", t.reloadMs);
-    ImGui::Text("  3-5,7 ticks  : %6.3f ms (%d tick)", t.tickMs, t.ticksThisFrame);
-    ImGui::Text("  6 render     : %6.3f ms", t.renderMs);
-    ImGui::Text("  8 ui/present : %6.3f ms", t.presentMs);
+    ImGui::TextUnformatted(Tr(StrId::Prof_PhaseHeader));
+    ImGui::Text(Tr(StrId::Prof_PhaseHotReload), t.reloadMs);
+    ImGui::Text(Tr(StrId::Prof_PhaseTicks), t.tickMs, t.ticksThisFrame);
+    ImGui::Text(Tr(StrId::Prof_PhaseRender), t.renderMs);
+    ImGui::Text(Tr(StrId::Prof_PhaseUi), t.presentMs);
 
     ImGui::Separator();
-    ImGui::TextUnformatted("particles:");
+    ImGui::TextUnformatted(Tr(StrId::Prof_Particles));
     const ParticleStats cpu = ctx.particles->Cpu().Stats();
     const ParticleStats gpu = ctx.particles->Gpu().Stats();
     ImGui::Text("  CPU: %7u alive %7.3f ms", cpu.aliveTotal, cpu.updateMs);
@@ -89,25 +89,25 @@ void ProfilerWindow::OnImGui(EngineContext& ctx)
     }
 
     ImGui::Separator();
-    ImGui::TextUnformatted("CPU scopes (this frame):");
+    ImGui::TextUnformatted(Tr(StrId::Prof_ScopesHeader));
     for (const prof::ScopeRecord& s : prof::FrameScopes()) {
         ImGui::Text("%*s%-14s %6.3f ms", s.depth * 2, "", s.name, s.ms);
     }
 
     ImGui::Separator();
     const prof::RenderStats rs = prof::GetRenderStats();
-    ImGui::Text("render: %d draw calls, %d tris, %d culled", rs.drawCalls, rs.triangles, rs.culled);
+    ImGui::Text(Tr(StrId::Prof_Draw), rs.drawCalls, rs.triangles, rs.culled);
 
     const prof::MemStats mem = prof::GetMemoryStats();
-    ImGui::Text("memory: %llu live allocs, %.1f MB total (%llu allocs / %llu frees)",
+    ImGui::Text(Tr(StrId::Prof_Memory),
                 static_cast<unsigned long long>(mem.liveAllocs),
                 static_cast<double>(mem.totalBytes) / (1024.0 * 1024.0),
                 static_cast<unsigned long long>(mem.totalAllocs),
                 static_cast<unsigned long long>(mem.totalFrees));
 
     ImGui::Separator();
-    ImGui::Text("render path: %s", ctx.renderPath ? ctx.renderPath->Name() : "?");
-    ImGui::Text("entities: %u", ctx.scene->GetWorld().AliveCount());
+    ImGui::Text(Tr(StrId::Prof_RenderPath), ctx.renderPath ? ctx.renderPath->Name() : "?");
+    ImGui::Text(Tr(StrId::Prof_Entities), ctx.scene->GetWorld().AliveCount());
     ImGui::End();
 }
 

@@ -251,16 +251,16 @@ void EditorApp::OnImGui(EngineContext& ctx)
     if (showStats_) {
         if (ImGui::Begin(Tr(StrId::Win_Stats), &showStats_)) {
             const ImGuiIO& io = ImGui::GetIO();
-            ImGui::Text("FPS: %.1f (%.3f ms)", io.Framerate, 1000.0f / io.Framerate);
-            ImGui::Text("Frame: %llu / Tick: %llu",
+            ImGui::Text(Tr(StrId::Stats_Fps), io.Framerate, 1000.0f / io.Framerate);
+            ImGui::Text(Tr(StrId::Stats_Frame),
                         static_cast<unsigned long long>(ctx.frameIndex),
                         static_cast<unsigned long long>(ctx.tickIndex));
-            ImGui::Text("Entities: %u", ctx.scene->GetWorld().AliveCount());
-            const char* stateName = "Editing";
-            if (playMode_.State() == PlayState::Playing) { stateName = "Playing"; }
-            if (playMode_.State() == PlayState::Paused) { stateName = "Paused"; }
-            ImGui::Text("Play state: %s", stateName);
-            ImGui::Text("GameLogic: %s (v%u, %u scripts)",
+            ImGui::Text(Tr(StrId::Stats_Entities), ctx.scene->GetWorld().AliveCount());
+            const char* stateName = Tr(StrId::Stats_Editing);
+            if (playMode_.State() == PlayState::Playing) { stateName = Tr(StrId::Stats_Playing); }
+            if (playMode_.State() == PlayState::Paused) { stateName = Tr(StrId::Stats_Paused); }
+            ImGui::Text(Tr(StrId::Stats_PlayState), stateName);
+            ImGui::Text(Tr(StrId::Stats_GameLogic),
                         ctx.scriptHost->IsLoaded() ? "loaded" : "not loaded",
                         ctx.dllReloader->Version(), ctx.scriptHost->ScriptTypeCount());
         }
@@ -283,35 +283,35 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
     if (!ImGui::BeginMainMenuBar()) {
         return;
     }
-    if (ImGui::BeginMenu("File")) {
+    if (ImGui::BeginMenu(Tr(StrId::Menu_File))) {
         // New/Open/Exit は未保存変更ガード経由 (M27b。dirty なら確認モーダル)
-        if (ImGui::MenuItem("New Scene")) {
+        if (ImGui::MenuItem(Tr(StrId::Menu_NewScene))) {
             RequestGuardedAction(ctx, PendingAction::NewScene);
         }
-        if (ImGui::MenuItem("Open Scene...")) {
+        if (ImGui::MenuItem(Tr(StrId::Menu_OpenScene))) {
             RequestGuardedAction(ctx, PendingAction::OpenScene);
         }
         ImGui::Separator();
-        if (ImGui::MenuItem("Save Scene", shortcuts_.Label(Shortcut::Save))) {
+        if (ImGui::MenuItem(Tr(StrId::Menu_SaveScene), shortcuts_.Label(Shortcut::Save))) {
             SaveCurrentScene(ctx);
         }
-        if (ImGui::MenuItem("Save Scene As...")) {
+        if (ImGui::MenuItem(Tr(StrId::Menu_SaveSceneAs))) {
             SaveSceneAs(ctx);
         }
         ImGui::Separator();
-        if (ImGui::MenuItem("Build Settings...")) {
+        if (ImGui::MenuItem(Tr(StrId::Menu_BuildSettings))) {
             buildSettings_.open = true;
         }
-        if (ImGui::MenuItem("Project Settings...")) {
+        if (ImGui::MenuItem(Tr(StrId::Menu_ProjectSettings))) {
             projectSettings_.open = true;
         }
         ImGui::Separator();
-        if (ImGui::MenuItem("Exit")) {
+        if (ImGui::MenuItem(Tr(StrId::Menu_Exit))) {
             RequestGuardedAction(ctx, PendingAction::Exit);
         }
         ImGui::EndMenu();
     }
-    if (ImGui::BeginMenu("View")) {
+    if (ImGui::BeginMenu(Tr(StrId::Menu_View))) {
         ImGui::MenuItem(Tr(StrId::Win_Stats), nullptr, &showStats_);
         // UI 言語 (M47a)。ウィンドウ名は "表示名###安定ID" 形式なので、
         // 切り替えてもドッキング配置とパネル開閉状態は保たれる
@@ -330,125 +330,125 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
             }
             ImGui::EndMenu();
         }
-        if (ImGui::BeginMenu("Render Path")) {
+        if (ImGui::BeginMenu(Tr(StrId::Menu_RenderPath))) {
             // 実行時切替 (M6.5)。描画のみの変更なのでリプレイ一貫性には影響しない
             const bool isForward = (ctx.renderPath == ctx.renderPathForward);
-            if (ImGui::MenuItem("Forward", nullptr, isForward)) {
+            if (ImGui::MenuItem(Tr(StrId::Menu_Forward), nullptr, isForward)) {
                 ctx.renderPath = ctx.renderPathForward;
             }
-            if (ImGui::MenuItem("Deferred", nullptr, !isForward)) {
+            if (ImGui::MenuItem(Tr(StrId::Menu_Deferred), nullptr, !isForward)) {
                 ctx.renderPath = ctx.renderPathDeferred;
             }
             ImGui::EndMenu();
         }
-        if (ImGui::BeginMenu("Rendering")) {
+        if (ImGui::BeginMenu(Tr(StrId::Menu_Rendering))) {
             // 描画専用トグル (M40d)。sim/hash 非影響
-            ImGui::MenuItem("Shadows", nullptr, &ctx.renderSystem->enableShadows);
-            ImGui::MenuItem("SSAO (Deferred)", nullptr, &ctx.renderSystem->enableSsao);
-            ImGui::MenuItem("GPU Instancing", nullptr, &ctx.renderSystem->enableInstancing);
-            ImGui::MenuItem("Post FX", nullptr, &ctx.renderSystem->enablePostFx);
+            ImGui::MenuItem(Tr(StrId::Menu_Shadows), nullptr, &ctx.renderSystem->enableShadows);
+            ImGui::MenuItem(Tr(StrId::Menu_Ssao), nullptr, &ctx.renderSystem->enableSsao);
+            ImGui::MenuItem(Tr(StrId::Menu_GpuInstancing), nullptr, &ctx.renderSystem->enableInstancing);
+            ImGui::MenuItem(Tr(StrId::Menu_PostFx), nullptr, &ctx.renderSystem->enablePostFx);
             // M46f: レイトレ拡散 GI を最終画像へ合成。off なら BVH の構築すら走らない。
             // 品質パラメータ (解像度/バウンス/蓄積/SVGF) は RT Debug メニュー側と共通
-            ImGui::MenuItem("RT GI (Deferred)", nullptr, &ctx.renderSystem->enableRtGi);
+            ImGui::MenuItem(Tr(StrId::Menu_RtGi), nullptr, &ctx.renderSystem->enableRtGi);
             // M46g: 平行光の影を CSM でなくレイトレの可視率で作る (カスケード境界が消える)
-            ImGui::MenuItem("RT Shadow (Deferred)", nullptr, &ctx.renderSystem->enableRtShadow);
+            ImGui::MenuItem(Tr(StrId::Menu_RtShadow), nullptr, &ctx.renderSystem->enableRtShadow);
             // M46h: 滑らかな面のスペキュラ環境項をレイトレ反射で置換 (画面外も映る)
-            ImGui::MenuItem("RT Reflection (Deferred)", nullptr, &ctx.renderSystem->enableRtRefl);
+            ImGui::MenuItem(Tr(StrId::Menu_RtReflection), nullptr, &ctx.renderSystem->enableRtRefl);
             ImGui::EndMenu();
         }
-        if (ImGui::BeginMenu("RT Debug (Deferred)")) {
+        if (ImGui::BeginMenu(Tr(StrId::Menu_RtDebug))) {
             // M46b: BVH 検証用の可視化。off なら BVH の構築も GPU 転送も走らない
             int& mode = ctx.renderSystem->rtDebugMode;
-            if (ImGui::MenuItem("Off", nullptr, mode == 0)) {
+            if (ImGui::MenuItem(Tr(StrId::Menu_RtDbgOff), nullptr, mode == 0)) {
                 mode = 0;
             }
-            if (ImGui::MenuItem("BVH Heatmap", nullptr, mode == 1)) {
+            if (ImGui::MenuItem(Tr(StrId::Menu_RtDbgBvhHeat), nullptr, mode == 1)) {
                 mode = 1;
             }
-            if (ImGui::MenuItem("Hit Normals", nullptr, mode == 2)) {
+            if (ImGui::MenuItem(Tr(StrId::Menu_RtDbgNormals), nullptr, mode == 2)) {
                 mode = 2;
             }
-            if (ImGui::MenuItem("Instance ID", nullptr, mode == 3)) {
+            if (ImGui::MenuItem(Tr(StrId::Menu_RtDbgInstanceId), nullptr, mode == 3)) {
                 mode = 3;
             }
-            if (ImGui::MenuItem("Raw GI (1spp)", nullptr, mode == 4)) {
+            if (ImGui::MenuItem(Tr(StrId::Menu_RtDbgRawGi), nullptr, mode == 4)) {
                 mode = 4;
             }
             // M46d: 蓄積結果と履歴長 (赤=履歴なし → 緑=上限まで蓄積) の可視化
-            if (ImGui::MenuItem("Accumulated GI", nullptr, mode == 5)) {
+            if (ImGui::MenuItem(Tr(StrId::Menu_RtDbgAccumGi), nullptr, mode == 5)) {
                 mode = 5;
             }
-            if (ImGui::MenuItem("History Length", nullptr, mode == 6)) {
+            if (ImGui::MenuItem(Tr(StrId::Menu_RtDbgHistory), nullptr, mode == 6)) {
                 mode = 6;
             }
             // M46e: SVGF 後の GI と、A-Trous を駆動している推定分散 (緑 = 収束)
-            if (ImGui::MenuItem("Denoised GI (SVGF)", nullptr, mode == 7)) {
+            if (ImGui::MenuItem(Tr(StrId::Menu_RtDbgSvgfGi), nullptr, mode == 7)) {
                 mode = 7;
             }
-            if (ImGui::MenuItem("Variance", nullptr, mode == 8)) {
+            if (ImGui::MenuItem(Tr(StrId::Menu_RtDbgVariance), nullptr, mode == 8)) {
                 mode = 8;
             }
             // M46g: 太陽の可視率 (白 = 照らされる / 黒 = 影)。RT 影 off でも撃って表示する
-            if (ImGui::MenuItem("RT Shadow Visibility", nullptr, mode == 9)) {
+            if (ImGui::MenuItem(Tr(StrId::Menu_RtDbgShadowVis), nullptr, mode == 9)) {
                 mode = 9;
             }
             // M46h: 反射の生 1spp とデノイズ後 (roughness 超過の面は黒 = 撃っていない)
-            if (ImGui::MenuItem("Raw Reflection (1spp)", nullptr, mode == 10)) {
+            if (ImGui::MenuItem(Tr(StrId::Menu_RtDbgRawRefl), nullptr, mode == 10)) {
                 mode = 10;
             }
-            if (ImGui::MenuItem("Denoised Reflection", nullptr, mode == 11)) {
+            if (ImGui::MenuItem(Tr(StrId::Menu_RtDbgSvgfRefl), nullptr, mode == 11)) {
                 mode = 11;
             }
             ImGui::Separator();
             // M46c: GI の品質。解像度は内部バッファ、バウンスは二次光線の深さ
             float& scale = ctx.renderSystem->rtResolutionScale;
-            if (ImGui::MenuItem("Scale 100%", nullptr, scale > 0.9f)) {
+            if (ImGui::MenuItem(Tr(StrId::Menu_RtScale100), nullptr, scale > 0.9f)) {
                 scale = 1.0f;
             }
-            if (ImGui::MenuItem("Scale 50%", nullptr, scale > 0.4f && scale <= 0.9f)) {
+            if (ImGui::MenuItem(Tr(StrId::Menu_RtScale50), nullptr, scale > 0.4f && scale <= 0.9f)) {
                 scale = 0.5f;
             }
-            if (ImGui::MenuItem("Scale 25%", nullptr, scale <= 0.4f)) {
+            if (ImGui::MenuItem(Tr(StrId::Menu_RtScale25), nullptr, scale <= 0.4f)) {
                 scale = 0.25f;
             }
             ImGui::Separator();
             int& bounces = ctx.renderSystem->rtBounces;
-            if (ImGui::MenuItem("1 bounce", nullptr, bounces <= 1)) {
+            if (ImGui::MenuItem(Tr(StrId::Menu_RtBounce1), nullptr, bounces <= 1)) {
                 bounces = 1;
             }
-            if (ImGui::MenuItem("2 bounces", nullptr, bounces >= 2)) {
+            if (ImGui::MenuItem(Tr(StrId::Menu_RtBounce2), nullptr, bounces >= 2)) {
                 bounces = 2;
             }
             ImGui::Separator();
             // M46d: 蓄積を切ると 1spp の生ノイズが見える (A/B 比較用)
-            ImGui::MenuItem("Temporal Accumulation", nullptr, &ctx.renderSystem->rtTemporal);
+            ImGui::MenuItem(Tr(StrId::Menu_RtTemporal), nullptr, &ctx.renderSystem->rtTemporal);
             // M46e: 空間フィルタ。蓄積 off では幾何バッファが無いので連動して効かない
-            ImGui::MenuItem("SVGF Spatial Filter", nullptr, &ctx.renderSystem->rtSvgf);
-            ImGui::MenuItem("Freeze Seed", nullptr, &ctx.renderSystem->rtFreezeSeed);
+            ImGui::MenuItem(Tr(StrId::Menu_RtSvgf), nullptr, &ctx.renderSystem->rtSvgf);
+            ImGui::MenuItem(Tr(StrId::Menu_RtFreezeSeed), nullptr, &ctx.renderSystem->rtFreezeSeed);
             ImGui::EndMenu();
         }
-        if (ImGui::MenuItem("Reset Layout")) {
+        if (ImGui::MenuItem(Tr(StrId::Menu_ResetLayout))) {
             rebuildDockLayout_ = true;
         }
         ImGui::EndMenu();
     }
-    if (ImGui::BeginMenu("Edit")) {
+    if (ImGui::BeginMenu(Tr(StrId::Menu_Edit))) {
         const bool editing = playMode_.State() == PlayState::Editing;
-        if (ImGui::MenuItem("Undo", shortcuts_.Label(Shortcut::Undo), false,
+        if (ImGui::MenuItem(Tr(StrId::Menu_Undo), shortcuts_.Label(Shortcut::Undo), false,
                             editing && undo_.CanUndo())) {
             undo_.Undo(*ctx.scene, selection_);
         }
-        if (ImGui::MenuItem("Redo", shortcuts_.Label(Shortcut::Redo), false,
+        if (ImGui::MenuItem(Tr(StrId::Menu_Redo), shortcuts_.Label(Shortcut::Redo), false,
                             editing && undo_.CanRedo())) {
             undo_.Redo(*ctx.scene, selection_);
         }
         ImGui::EndMenu();
     }
-    if (ImGui::BeginMenu("GameObject")) {
+    if (ImGui::BeginMenu(Tr(StrId::Menu_GameObject))) {
         DrawCreateMenuItems(ctx, selection_, undo_); // parent 省略 = ルート生成
         ImGui::EndMenu();
     }
-    if (ImGui::BeginMenu("Window")) {
+    if (ImGui::BeginMenu(Tr(StrId::Menu_Window))) {
         // 各パネルの表示トグル (閉じたパネルはここから再表示)。
         // ラベルはウィンドウ名と同じ StrId を使う ("###" 以降は表示されない)
         ImGui::MenuItem(Tr(StrId::Win_Hierarchy), nullptr, &hierarchy_.open);
@@ -755,11 +755,11 @@ void EditorApp::DrawSaveConfirmModal(EngineContext& ctx)
     if (!ImGui::BeginPopupModal(Tr(StrId::Popup_UnsavedChanges), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         return;
     }
-    ImGui::Text("シーンに未保存の変更があります。保存しますか？");
+    ImGui::TextUnformatted(Tr(StrId::Confirm_UnsavedBody));
     ImGui::TextDisabled("%s", WideToUtf8(scenePath_).c_str());
     ImGui::Spacing();
     const PendingAction action = pendingAction_;
-    if (ImGui::Button("保存する", ImVec2(110, 0))) {
+    if (ImGui::Button(Tr(StrId::Confirm_Save), ImVec2(110, 0))) {
         SaveCurrentScene(ctx);
         pendingAction_ = PendingAction::None;
         ImGui::CloseCurrentPopup();
@@ -768,13 +768,13 @@ void EditorApp::DrawSaveConfirmModal(EngineContext& ctx)
         }
     }
     ImGui::SameLine();
-    if (ImGui::Button("保存しない", ImVec2(110, 0))) {
+    if (ImGui::Button(Tr(StrId::Confirm_DontSave), ImVec2(110, 0))) {
         pendingAction_ = PendingAction::None;
         ImGui::CloseCurrentPopup();
         ExecuteAction(ctx, action);
     }
     ImGui::SameLine();
-    if (ImGui::Button("キャンセル", ImVec2(110, 0))) {
+    if (ImGui::Button(Tr(StrId::Common_Cancel), ImVec2(110, 0))) {
         pendingAction_ = PendingAction::None;
         ImGui::CloseCurrentPopup();
     }

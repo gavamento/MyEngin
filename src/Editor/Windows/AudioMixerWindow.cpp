@@ -245,7 +245,7 @@ void AudioMixerWindow::DrawStrip(EngineContext& ctx, int bus)
             std::snprintf(renameBuf_, sizeof(renameBuf_), "%s", audio.BusName(bus));
         }
         if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("click to rename");
+            ImGui::SetTooltip("%s", Tr(StrId::Mixer_TipRename));
         }
     }
 
@@ -314,7 +314,7 @@ void AudioMixerWindow::DrawStrip(EngineContext& ctx, int bus)
 
     // ---- 削除 ----
     ImGui::BeginDisabled(isRoot);
-    if (ImGui::Button("Remove", ImVec2(kStripWidth, 0.0f))) {
+    if (ImGui::Button(Tr(StrId::Mixer_Remove), ImVec2(kStripWidth, 0.0f))) {
         RemoveBus(ctx, bus);
     }
     ImGui::EndDisabled();
@@ -332,7 +332,7 @@ void AudioMixerWindow::DrawFooter(EngineContext& ctx)
         const std::vector<MixerEntry> all = ctx.mixers->Enumerate();
         const MixerAsset* active = ctx.mixers->Get(ctx.mixers->ActiveHash());
         ImGui::SetNextItemWidth(200.0f);
-        if (ImGui::BeginCombo("mixer asset", active != nullptr ? active->name.c_str() : "(none)")) {
+        if (ImGui::BeginCombo(Tr(StrId::Mixer_Asset), active != nullptr ? active->name.c_str() : "(none)")) {
             for (const MixerEntry& e : all) {
                 if (ImGui::Selectable(e.name.c_str(), active != nullptr && active->hash == e.hash)) {
                     if (const MixerAsset* m = ctx.mixers->Get(e.hash)) {
@@ -346,31 +346,31 @@ void AudioMixerWindow::DrawFooter(EngineContext& ctx)
         }
         if (all.empty()) {
             ImGui::SameLine();
-            ImGui::TextDisabled("(create one from the Asset Browser)");
+            ImGui::TextDisabled("%s", Tr(StrId::Mixer_CreateFromAb));
         }
     }
 
-    if (ImGui::Button("+ Add Bus")) {
+    if (ImGui::Button(Tr(StrId::Mixer_AddBus))) {
         AddBus(ctx, audio.RootBus());
     }
     ImGui::SameLine();
-    if (ImGui::Button("Save")) {
+    if (ImGui::Button(Tr(StrId::Common_Save))) {
         Save(ctx);
     }
     ImGui::SameLine();
-    if (ImGui::Button("Reload Default")) {
+    if (ImGui::Button(Tr(StrId::Mixer_ReloadDefault))) {
         audio.ApplyMixer(DefaultMixer());
         status_ = "reset to the built-in Master/BGM/SE/UI layout (not saved yet)";
     }
 
     // ---- リバーブ (送り先は 1 本のグローバルバス。APO の制約でステレオ固定) ----
-    ImGui::SeparatorText("Reverb");
+    ImGui::SeparatorText(Tr(StrId::Mixer_Reverb));
     if (!audio.HasReverbBus()) {
-        ImGui::TextDisabled("reverb bus is unavailable on this device");
+        ImGui::TextDisabled("%s", Tr(StrId::Mixer_NoReverbBus));
     } else {
         int preset = audio.ReverbPreset();
         ImGui::SetNextItemWidth(160.0f);
-        if (ImGui::BeginCombo("preset", ReverbPresetName(preset))) {
+        if (ImGui::BeginCombo(Tr(StrId::Mixer_Preset), ReverbPresetName(preset))) {
             for (int i = 0; i < kReverbPresetCount; ++i) {
                 if (ImGui::Selectable(ReverbPresetName(i), i == preset)) {
                     audio.SetReverbPreset(i);
@@ -381,11 +381,11 @@ void AudioMixerWindow::DrawFooter(EngineContext& ctx)
         ImGui::SameLine();
         float wet = audio.ReverbWetDryMix();
         ImGui::SetNextItemWidth(160.0f);
-        if (ImGui::SliderFloat("wet/dry", &wet, 0.0f, 100.0f, "%.0f %%")) {
+        if (ImGui::SliderFloat(Tr(StrId::Mixer_WetDry), &wet, 0.0f, 100.0f, "%.0f %%")) {
             audio.SetReverbWetDryMix(wet);
         }
         ImGui::SameLine();
-        ImGui::TextDisabled("(Default = no reverb)");
+        ImGui::TextDisabled("%s", Tr(StrId::Mixer_NoReverb));
     }
 
     if (!status_.empty()) {
@@ -406,12 +406,12 @@ void AudioMixerWindow::OnImGui(EngineContext& ctx)
         return;
     }
     if (ctx.audio == nullptr) {
-        ImGui::TextDisabled("audio system is not available");
+        ImGui::TextDisabled("%s", Tr(StrId::Mixer_NoSystem));
         ImGui::End();
         return;
     }
     if (!ctx.audio->IsReady()) {
-        ImGui::TextDisabled("audio device is not available (--no-audio) — faders are inert");
+        ImGui::TextDisabled("%s", Tr(StrId::Mixer_NoDevice));
     }
 
     // メーターは**窓が開いている間だけ**読む。実時間の減衰が要るので dt を渡す
