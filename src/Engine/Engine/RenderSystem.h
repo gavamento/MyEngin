@@ -6,9 +6,11 @@
 
 #include "Engine/Core/EntityID.h"
 #include "Engine/Engine/DebugDraw.h"
+#include "Engine/Engine/RayTracing/RtScene.h"
 #include "Engine/Renderer/EditorLinePass.h"
 #include "Engine/Renderer/EnvMapBaker.h"
 #include "Engine/Renderer/PostProcess.h"
+#include "Engine/Renderer/RayTracing/RtPasses.h"
 #include "Engine/Renderer/RenderTypes.h"
 #include "Engine/Renderer/ShadowPass.h"
 
@@ -97,8 +99,17 @@ public:
     // シーン描画後 (ポスプロ解決前) に深度テスト付きの線として重ねる
     const std::vector<DebugLineCmd>* debugLines = nullptr;
 
+    // M46b: レイトレのデバッグ表示 (Deferred のみ)。0=off 1=BVH ヒート 2=法線 3=インスタンス ID。
+    // 0 なら BVH の構築も転送も走らない = 従来と完全に同じ経路
+    int rtDebugMode = 0;
+
     // M44d: ポストプロセス解決の GPU 時間 (直近の Resolve、ProfilerWindow 表示用)
     float PostFxGpuMs() const { return postFx_.ResolveGpuMs(); }
+    // M46b: レイトレの統計 (ProfilerWindow 表示用)
+    float RtDebugGpuMs() const { return rtPasses_.DebugGpuMs(); }
+    float RtBuildCpuMs() const { return rtScene_.BuildCpuMs(); }
+    int RtInstanceCount() const { return rtScene_.InstanceCount(); }
+    int RtTriangleCount() const { return rtScene_.TriangleCount(); }
 
 private:
     RenderQueue queue_;     // フレーム毎に再利用 (アロケーション回避)
@@ -120,6 +131,10 @@ private:
         bool valid = false;
     };
     PrevViewProj prevVP_[4];
+    // M46b: レイトレ (遅延 Init)。rtDebugMode == 0 のあいだは一切触らない
+    RtScene rtScene_;
+    RtPasses rtPasses_;
+    std::vector<RtScene::InstanceDesc> rtInstances_; // フレーム毎に再構築
 };
 
 } // namespace mye

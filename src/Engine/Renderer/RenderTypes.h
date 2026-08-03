@@ -113,6 +113,11 @@ struct RenderView {
     //      前フレーム viewProj を供給。valid=0 = 初フレーム/リサイズ = ブラー 0 ----
     DirectX::XMFLOAT4X4 prevViewProj = {}; // 未転置 (view*proj)
     int32_t prevViewProjValid = 0;
+    // ---- M46b: ハイブリッド・パストレーシング (末尾 append。既定 = 0/null = 従来と同一)。
+    //      rtScene/rtPasses が null のパス (Forward / AssetPreview) では自然に無効化される ----
+    int32_t rtDebugMode = 0; // 0=off 1=BVH ヒートマップ 2=ヒット法線 3=インスタンス ID
+    const struct RtSceneBindings* rtScene = nullptr;
+    class RtPasses* rtPasses = nullptr;
 };
 
 // GPU へ渡すライト 1 個 (定数バッファ配列要素、16 バイト境界に揃えた 64 バイト)。

@@ -321,6 +321,23 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
             ImGui::MenuItem("Post FX", nullptr, &ctx.renderSystem->enablePostFx);
             ImGui::EndMenu();
         }
+        if (ImGui::BeginMenu("RT Debug (Deferred)")) {
+            // M46b: BVH 検証用の可視化。off なら BVH の構築も GPU 転送も走らない
+            int& mode = ctx.renderSystem->rtDebugMode;
+            if (ImGui::MenuItem("Off", nullptr, mode == 0)) {
+                mode = 0;
+            }
+            if (ImGui::MenuItem("BVH Heatmap", nullptr, mode == 1)) {
+                mode = 1;
+            }
+            if (ImGui::MenuItem("Hit Normals", nullptr, mode == 2)) {
+                mode = 2;
+            }
+            if (ImGui::MenuItem("Instance ID", nullptr, mode == 3)) {
+                mode = 3;
+            }
+            ImGui::EndMenu();
+        }
         if (ImGui::MenuItem("Reset Layout")) {
             rebuildDockLayout_ = true;
         }

@@ -19,6 +19,9 @@
     <Filter Include="Engine\Physics">
       <UniqueIdentifier>{B8A7D7DC-13E1-39DC-133A-8490218AA135}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Engine\RayTracing">
+      <UniqueIdentifier>{BC200033-10AF-6797-1437-D1FAD27CE707}</UniqueIdentifier>
+    </Filter>
     <Filter Include="Engine\Replay">
       <UniqueIdentifier>{DBAE9292-5C25-5143-7BD0-30A497BF8AF2}</UniqueIdentifier>
     </Filter>
@@ -45,6 +48,9 @@
     </Filter>
     <Filter Include="Renderer">
       <UniqueIdentifier>{FA760276-7897-C107-03A6-426F3AAFB41D}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Renderer\RayTracing">
+      <UniqueIdentifier>{EBC6B46E-9DDA-EE48-CB45-A1351C84ADAA}</UniqueIdentifier>
     </Filter>
     <Filter Include="Shared">
       <UniqueIdentifier>{3EA2E46E-D5BF-AB27-828F-05F51EEDB435}</UniqueIdentifier>
@@ -207,6 +213,15 @@
     <ClCompile Include="..\src\Engine\Engine\Project.cpp">
       <Filter>Engine</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\RayTracing\RtScene.cpp">
+      <Filter>Engine\RayTracing</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\RayTracing\RtSceneBuild.cpp">
+      <Filter>Engine\RayTracing</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\RayTracing\RtSelfTest.cpp">
+      <Filter>Engine\RayTracing</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\RenderSystem.cpp">
       <Filter>Engine</Filter>
     </ClCompile>
@@ -308,6 +323,9 @@
     </ClCompile>
     <ClCompile Include="..\src\Engine\Renderer\PostProcess.cpp">
       <Filter>Renderer</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Renderer\RayTracing\RtPasses.cpp">
+      <Filter>Renderer\RayTracing</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Renderer\RenderQueue.cpp">
       <Filter>Renderer</Filter>
@@ -522,6 +540,15 @@
     <ClInclude Include="..\src\Engine\Engine\Project.h">
       <Filter>Engine</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\RayTracing\RtScene.h">
+      <Filter>Engine\RayTracing</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\RayTracing\RtSceneBuild.h">
+      <Filter>Engine\RayTracing</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\RayTracing\RtSelfTest.h">
+      <Filter>Engine\RayTracing</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\RenderSystem.h">
       <Filter>Engine</Filter>
     </ClInclude>
@@ -641,6 +668,15 @@
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\PostProcess.h">
       <Filter>Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\RayTracing\RtMath.h">
+      <Filter>Renderer\RayTracing</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\RayTracing\RtPasses.h">
+      <Filter>Renderer\RayTracing</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\RayTracing\RtTypes.h">
+      <Filter>Renderer\RayTracing</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\RenderPath.h">
       <Filter>Renderer</Filter>

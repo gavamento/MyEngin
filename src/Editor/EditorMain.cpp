@@ -21,6 +21,7 @@
 #include "Engine/Engine/EngineLoop.h"
 #include "Engine/Engine/ParticleSelfTest.h"
 #include "Engine/Engine/PhysicsSelfTest.h"
+#include "Engine/Engine/RayTracing/RtSelfTest.h"
 #include "Engine/Engine/Project.h"
 #include "Engine/Engine/SceneSelfTest.h"
 #include "Engine/Engine/FontSelfTest.h"
@@ -138,6 +139,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 config.postFxFxaa = false;
             } else if (arg == L"--no-jobs") {
                 config.useJobs = false; // M25: 並列を直列化 (決定論ゲート / 計測比較)
+            } else if (arg == L"--rt-debug" && i + 1 < argc) {
+                config.rtDebugMode = _wtoi(argv[++i]); // M46b (Deferred のみ)
             } else if (arg == L"--project" && i + 1 < argc) {
                 projectDir = argv[++i];
             } else if (arg == L"--create-project" && i + 1 < argc) {
@@ -174,7 +177,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             && mye::RunAssetDatabaseSelfTest() && mye::RunTextureCookSelfTest()
             && mye::RunJobSystemSelfTest() && mye::RunVfxSelfTest()
             && mye::RunParticleSelfTest() && mye::RunAssetOpsSelfTest()
-            && mye::RunFontSelfTest() && mye::RunAudioSelfTest();
+            && mye::RunFontSelfTest() && mye::RunAudioSelfTest() && mye::RunRtSelfTest();
         return ok ? 0 : 1;
     }
 

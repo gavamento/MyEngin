@@ -135,6 +135,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 config.postFxFxaa = false;
             } else if (arg == L"--no-jobs") {
                 config.useJobs = false; // M25: 並列を直列化 (決定論ゲート / 計測比較)
+            } else if (arg == L"--rt-debug" && i + 1 < argc) {
+                config.rtDebugMode = _wtoi(argv[++i]); // M46b (Deferred のみ)
             } else if (arg == L"--project" && i + 1 < argc) {
                 // M26: プロジェクト指定。dist 配布物は従来どおり exe 隣の assets を自動発見する
                 config.projectRoot = std::filesystem::absolute(argv[++i]).wstring();

@@ -78,6 +78,9 @@
     <ClCompile Include="..\src\Engine\Engine\PhysicsSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Prefab.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Project.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\RayTracing\RtScene.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\RayTracing\RtSceneBuild.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\RayTracing\RtSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\RenderSystem.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Replay\Replay.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Replay\WorldHasher.cpp" />
@@ -112,6 +115,7 @@
     <ClCompile Include="..\src\Engine\Renderer\MeshInstancing.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\PickingPass.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\PostProcess.cpp" />
+    <ClCompile Include="..\src\Engine\Renderer\RayTracing\RtPasses.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\RenderQueue.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\RenderSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\RenderTexture.cpp" />
@@ -183,6 +187,9 @@
     <ClInclude Include="..\src\Engine\Engine\PhysicsSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Prefab.h" />
     <ClInclude Include="..\src\Engine\Engine\Project.h" />
+    <ClInclude Include="..\src\Engine\Engine\RayTracing\RtScene.h" />
+    <ClInclude Include="..\src\Engine\Engine\RayTracing\RtSceneBuild.h" />
+    <ClInclude Include="..\src\Engine\Engine\RayTracing\RtSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\RenderSystem.h" />
     <ClInclude Include="..\src\Engine\Engine\Replay\Replay.h" />
     <ClInclude Include="..\src\Engine\Engine\Replay\WorldHasher.h" />
@@ -223,6 +230,9 @@
     <ClInclude Include="..\src\Engine\Renderer\PickingPass.h" />
     <ClInclude Include="..\src\Engine\Renderer\PostFxMath.h" />
     <ClInclude Include="..\src\Engine\Renderer\PostProcess.h" />
+    <ClInclude Include="..\src\Engine\Renderer\RayTracing\RtMath.h" />
+    <ClInclude Include="..\src\Engine\Renderer\RayTracing\RtPasses.h" />
+    <ClInclude Include="..\src\Engine\Renderer\RayTracing\RtTypes.h" />
     <ClInclude Include="..\src\Engine\Renderer\RenderPath.h" />
     <ClInclude Include="..\src\Engine\Renderer\RenderSelfTest.h" />
     <ClInclude Include="..\src\Engine\Renderer\RenderTexture.h" />

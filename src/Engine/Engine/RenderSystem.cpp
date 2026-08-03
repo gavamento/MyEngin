@@ -440,7 +440,18 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
         });
 
         // ---- ステージ 3 (直列): 可視候補をキュー化 (スキン/AABB/キューは順序依存で直列) ----
+        const bool collectRt = rtDebugMode != 0; // M46b
+        rtInstances_.clear();
         for (const CullCand& c : cullCands) {
+            // M46b: レイトレ用の収集はフラスタムカリングしない (画面外の物体も
+            // 反射や GI には効くため)。v1 制限: スキンメッシュ (CPU 頂点がバインドポーズ
+            // のままなので姿勢が反映できない) と半透明は BVH に入れない
+            if (collectRt && world.GetComponent<SkinnedMeshComponent>(c.e) == nullptr) {
+                const Material* rtMat = resources.materials.Get(c.material);
+                if (!rtMat || rtMat->transparent == 0) {
+                    rtInstances_.push_back({ c.mesh, c.material, c.world });
+                }
+            }
             if (!c.visible) {
                 ++culledCount;
                 continue;
@@ -591,6 +602,21 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
         view.iblBrdfLut = em.brdfLut;
         view.iblSpecMips = em.specMips;
     }
+    // M46b: レイトレ用シーン (BLAS 連結 + TLAS + インスタンス) を GPU へ。
+    // rtDebugMode==0 なら収集自体が空なので、この節はまるごと従来経路と同じになる
+    if (rtDebugMode != 0 && !rtInstances_.empty()) {
+        if (!rtPasses_.IsReady()) {
+            rtPasses_.Init(device, shaders);
+        }
+        rtScene_.Init(device);
+        rtScene_.Update(rtInstances_, resources);
+        if (rtPasses_.IsReady() && rtScene_.Bindings().IsValid()) {
+            view.rtDebugMode = rtDebugMode;
+            view.rtScene = &rtScene_.Bindings();
+            view.rtPasses = &rtPasses_;
+        }
+    }
+
     queue_.Sort();
     path.Render(device, view, queue_, lights, resources, shaders);
 

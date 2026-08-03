@@ -309,6 +309,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
 
     // ポストプロセス設定を config から反映 (M16)。全ビューポート共通の renderSystem に載る
     renderSystem.enablePostFx = config.postFx;
+    renderSystem.rtDebugMode = config.rtDebugMode; // M46b (--rt-debug N、Deferred のみ)
     renderSystem.postFxSettings.tonemap = config.postFxTonemap;
     renderSystem.postFxSettings.exposure = config.postFxExposure;
     renderSystem.postFxSettings.bloom = config.postFxBloom;
@@ -825,6 +826,14 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     window.Destroy();
     if (recorder.IsActive()) {
         recorder.Finish(); // maxFrames 等で先に抜けた場合も書き出す
+    }
+    if (config.rtDebugMode != 0) {
+        // M46b: BVH の規模とソフトウェアトラバーサルの実測値 (性能ゲートの一次データ)
+        MYE_LOG_INFO("[rt] mode %d: %d instances / %d triangles / build %.3f ms (CPU) / "
+                     "trace %.3f ms (GPU, last frame)",
+                     config.rtDebugMode, renderSystem.RtInstanceCount(),
+                     renderSystem.RtTriangleCount(), renderSystem.RtBuildCpuMs(),
+                     renderSystem.RtDebugGpuMs());
     }
     MYE_LOG_INFO("Engine loop finished (%llu frames, %llu ticks)",
                  static_cast<unsigned long long>(ctx.frameIndex),

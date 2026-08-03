@@ -7,6 +7,7 @@
 #include "Engine/Renderer/GpuBufferUtil.h" // M46a: バッファ生成ヘルパ (共通化)
 #include "Engine/Renderer/GpuResources.h"
 #include "Engine/Renderer/GraphicsDevice.h"
+#include "Engine/Renderer/RayTracing/RtPasses.h" // M46b: RT デバッグ表示
 #include "Engine/Renderer/ShaderManager.h"
 
 using namespace DirectX;
@@ -778,6 +779,16 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
     // Wireframe (M40b) はメッシュ描画のみ — 後段 (パーティクル/ポスプロ) は solid に戻す
     if (wire) {
         dc->RSSetState(rasterizer_.Get());
+    }
+
+    // ---- 4) RT デバッグ表示 (M46b): BVH の検証用に画面を丸ごと差し替える。
+    //      既定 (rtDebugMode==0 / rtScene==null) では何も起きない ----
+    if (view.rtDebugMode != 0 && view.rtPasses != nullptr && view.rtScene != nullptr) {
+        view.rtPasses->RenderDebug(device, shaders, view, *view.rtScene);
+        // パーティクル後段のために RTV+DSV を戻す (ブリットが RTV のみに差し替えたため)
+        dc->OMSetRenderTargets(1, &view.rtv, view.dsv);
+        dc->OMSetDepthStencilState(nullptr, 0);
+        dc->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFFu);
     }
 }
 

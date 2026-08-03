@@ -69,32 +69,54 @@ foreach ($f in Get-Sources) {
     }
 }
 
-# 規則 9: ボーンパレット上限の C++/HLSL 一致 (食い違うと定数バッファ不一致で描画が壊れる)
-$boneSites = @{
-    'src\Engine\Renderer\RenderTypes.h'            = 'constexpr\s+int\s+kMaxBones\s*=\s*(\d+)'
-    'assets\shaders\forward_skinned.hlsl'          = '#\s*define\s+MYE_MAX_BONES\s+(\d+)'
-    'assets\shaders\deferred_gbuffer_skinned.hlsl' = '#\s*define\s+MYE_MAX_BONES\s+(\d+)'
-}
-$boneValues = @{}
-foreach ($rel in $boneSites.Keys) {
-    $path = Join-Path $repo $rel
-    if (-not (Test-Path $path)) {
-        Write-Host "ERROR [rule 9] missing file: $rel"
-        $errors++
-        continue
+# 規則 9: C++ と HLSL で共有する定数の一致
+# (食い違うと定数バッファ不一致やトラバーサル破綻として静かに壊れる)
+$constGroups = @(
+    @{
+        label = 'kMaxBones / MYE_MAX_BONES'
+        sites = @{
+            'src\Engine\Renderer\RenderTypes.h'            = 'constexpr\s+int\s+kMaxBones\s*=\s*(\d+)'
+            'assets\shaders\forward_skinned.hlsl'          = '#\s*define\s+MYE_MAX_BONES\s+(\d+)'
+            'assets\shaders\deferred_gbuffer_skinned.hlsl' = '#\s*define\s+MYE_MAX_BONES\s+(\d+)'
+        }
+    },
+    @{
+        label = 'kRtStackDepth / MYE_RT_STACK_DEPTH'
+        sites = @{
+            'src\Engine\Renderer\RayTracing\RtTypes.h' = 'constexpr\s+int\s+kRtStackDepth\s*=\s*(\d+)'
+            'assets\shaders\rt_common.hlsli'           = '#\s*define\s+MYE_RT_STACK_DEPTH\s+(\d+)'
+        }
+    },
+    @{
+        label = 'kRtMaxVisit / MYE_RT_MAX_VISIT'
+        sites = @{
+            'src\Engine\Renderer\RayTracing\RtTypes.h' = 'constexpr\s+int\s+kRtMaxVisit\s*=\s*(\d+)'
+            'assets\shaders\rt_common.hlsli'           = '#\s*define\s+MYE_RT_MAX_VISIT\s+(\d+)'
+        }
     }
-    $hit = Select-String -Path $path -Pattern $boneSites[$rel] | Select-Object -First 1
-    if (-not $hit) {
-        Write-Host "ERROR [rule 9] ${rel}: bone limit definition not found"
-        $errors++
-        continue
+)
+foreach ($g in $constGroups) {
+    $values = @{}
+    foreach ($rel in $g.sites.Keys) {
+        $path = Join-Path $repo $rel
+        if (-not (Test-Path $path)) {
+            Write-Host "ERROR [rule 9] missing file: $rel"
+            $errors++
+            continue
+        }
+        $hit = Select-String -Path $path -Pattern $g.sites[$rel] | Select-Object -First 1
+        if (-not $hit) {
+            Write-Host "ERROR [rule 9] ${rel}: $($g.label) definition not found"
+            $errors++
+            continue
+        }
+        $values[$rel] = [int]$hit.Matches[0].Groups[1].Value
     }
-    $boneValues[$rel] = [int]$hit.Matches[0].Groups[1].Value
-}
-if ($boneValues.Count -eq $boneSites.Count -and ($boneValues.Values | Select-Object -Unique).Count -ne 1) {
-    foreach ($rel in $boneValues.Keys) { Write-Host "ERROR [rule 9] ${rel}: $($boneValues[$rel])" }
-    Write-Host "ERROR [rule 9] kMaxBones / MYE_MAX_BONES must match across C++ and HLSL"
-    $errors++
+    if ($values.Count -eq $g.sites.Count -and ($values.Values | Select-Object -Unique).Count -ne 1) {
+        foreach ($rel in $values.Keys) { Write-Host "ERROR [rule 9] ${rel}: $($values[$rel])" }
+        Write-Host "ERROR [rule 9] $($g.label) must match across C++ and HLSL"
+        $errors++
+    }
 }
 
 Write-Host "=== result: $errors error(s), $warnings warning(s) ==="

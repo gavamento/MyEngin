@@ -45,6 +45,13 @@ void ProfilerWindow::OnImGui(EngineContext& ctx)
     // M44d: ポストプロセス解決の GPU 時間 (複数ビューでは最後に完了した Resolve)
     if (ctx.renderSystem) {
         ImGui::Text("  postfx: %6.3f ms (GpuTimer)", ctx.renderSystem->PostFxGpuMs());
+        // M46b: レイトレ (rtDebugMode が off のときは 0 のまま)
+        if (ctx.renderSystem->rtDebugMode != 0) {
+            ImGui::Text("  rt bvh: %5d inst / %7d tri / %6.3f ms (CPU)",
+                        ctx.renderSystem->RtInstanceCount(),
+                        ctx.renderSystem->RtTriangleCount(), ctx.renderSystem->RtBuildCpuMs());
+            ImGui::Text("  rt debug: %6.3f ms (GpuTimer)", ctx.renderSystem->RtDebugGpuMs());
+        }
     }
 
     ImGui::Separator();
