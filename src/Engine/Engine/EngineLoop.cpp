@@ -320,6 +320,9 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // 決定的スクショを成立させる (aeInstant は Merge が base 維持する Settings 専用フィールド)
     renderSystem.postFxSettings.aeInstant = !config.replayVerifyPath.empty()
         || !config.replayRecordPath.empty() || !config.screenshotPath.empty();
+    // M46c: 同じ理由でレイトレのサンプル列もフレームで進めない (毎フレーム同じノイズ =
+    // スクリーンショットが決定的になる)。GPU 上で完結し読み戻さないので sim には無関係
+    renderSystem.rtFreezeSeed = renderSystem.postFxSettings.aeInstant;
 
     // GameLogic.dll (スクリプト層)。監視先は起動形態で 2 通りに分かれる:
     //   レガシー起動 (--project なし) = エンジンの exe と同じ構成のビルド出力。
@@ -830,10 +833,10 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     if (config.rtDebugMode != 0) {
         // M46b: BVH の規模とソフトウェアトラバーサルの実測値 (性能ゲートの一次データ)
         MYE_LOG_INFO("[rt] mode %d: %d instances / %d triangles / build %.3f ms (CPU) / "
-                     "trace %.3f ms (GPU, last frame)",
+                     "trace %.3f ms / gi %.3f ms (GPU, last frame)",
                      config.rtDebugMode, renderSystem.RtInstanceCount(),
                      renderSystem.RtTriangleCount(), renderSystem.RtBuildCpuMs(),
-                     renderSystem.RtDebugGpuMs());
+                     renderSystem.RtDebugGpuMs(), renderSystem.RtGiGpuMs());
     }
     MYE_LOG_INFO("Engine loop finished (%llu frames, %llu ticks)",
                  static_cast<unsigned long long>(ctx.frameIndex),

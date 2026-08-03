@@ -77,6 +77,62 @@ inline bool RtRayTri(const DirectX::XMFLOAT3& ro, const DirectX::XMFLOAT3& rd, c
     return true;
 }
 
+// ---- サンプリング (HLSL の同名関数と一致。変更時は両方更新) ----
+
+// PCG3D ハッシュ (状態レス)。同じ入力からは常に同じ値 = スクリーンショットの決定性が保てる
+struct RtSeed {
+    uint32_t x = 0, y = 0, z = 0;
+};
+
+inline RtSeed RtPcg3d(RtSeed v)
+{
+    v.x = v.x * 1664525u + 1013904223u;
+    v.y = v.y * 1664525u + 1013904223u;
+    v.z = v.z * 1664525u + 1013904223u;
+    v.x += v.y * v.z;
+    v.y += v.z * v.x;
+    v.z += v.x * v.y;
+    v.x ^= v.x >> 16u;
+    v.y ^= v.y >> 16u;
+    v.z ^= v.z >> 16u;
+    v.x += v.y * v.z;
+    v.y += v.z * v.x;
+    v.z += v.x * v.y;
+    return v;
+}
+
+// 呼ぶたびに seed.z を進める (HLSL の RtNextRand2 と同一)
+inline DirectX::XMFLOAT2 RtNextRand2(RtSeed& seed)
+{
+    seed.z += 1u;
+    const RtSeed h = RtPcg3d(seed);
+    constexpr float kInv2p32 = 2.3283064365386963e-10f; // 1 / 2^32
+    return { static_cast<float>(h.x) * kInv2p32, static_cast<float>(h.y) * kInv2p32 };
+}
+
+// コサイン重点サンプリング (法線半球、pdf = cos/PI)。
+// 基底は Duff らの分岐なし ONB。HLSL の RtCosineHemisphere と同一式
+inline DirectX::XMFLOAT3 RtCosineHemisphere(const DirectX::XMFLOAT3& n,
+                                            const DirectX::XMFLOAT2& u)
+{
+    using namespace DirectX;
+    const float r = std::sqrt(u.x);
+    const float phi = 6.28318530718f * u.y;
+    const float sgn = (n.z >= 0.0f) ? 1.0f : -1.0f;
+    const float a = -1.0f / (sgn + n.z);
+    const float b = n.x * n.y * a;
+    const XMFLOAT3 t1 = { 1.0f + sgn * n.x * n.x * a, sgn * b, -sgn * n.x };
+    const XMFLOAT3 t2 = { b, sgn + n.y * n.y * a, -n.y };
+    const float c1 = r * std::cos(phi);
+    const float c2 = r * std::sin(phi);
+    const float c3 = std::sqrt((std::max)(0.0f, 1.0f - u.x));
+    XMFLOAT3 out;
+    XMStoreFloat3(&out, XMVector3Normalize(XMVectorSet(
+                            t1.x * c1 + t2.x * c2 + n.x * c3, t1.y * c1 + t2.y * c2 + n.y * c3,
+                            t1.z * c1 + t2.z * c2 + n.z * c3, 0.0f)));
+    return out;
+}
+
 // BLAS (単一メッシュ) のヒット結果。tri は連結三角形配列の絶対 index
 struct RtBlasHit {
     float t = 0.0f;

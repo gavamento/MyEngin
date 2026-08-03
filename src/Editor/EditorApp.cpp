@@ -336,6 +336,30 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
             if (ImGui::MenuItem("Instance ID", nullptr, mode == 3)) {
                 mode = 3;
             }
+            if (ImGui::MenuItem("Raw GI (1spp)", nullptr, mode == 4)) {
+                mode = 4;
+            }
+            ImGui::Separator();
+            // M46c: GI の品質。解像度は内部バッファ、バウンスは二次光線の深さ
+            float& scale = ctx.renderSystem->rtResolutionScale;
+            if (ImGui::MenuItem("Scale 100%", nullptr, scale > 0.9f)) {
+                scale = 1.0f;
+            }
+            if (ImGui::MenuItem("Scale 50%", nullptr, scale > 0.4f && scale <= 0.9f)) {
+                scale = 0.5f;
+            }
+            if (ImGui::MenuItem("Scale 25%", nullptr, scale <= 0.4f)) {
+                scale = 0.25f;
+            }
+            ImGui::Separator();
+            int& bounces = ctx.renderSystem->rtBounces;
+            if (ImGui::MenuItem("1 bounce", nullptr, bounces <= 1)) {
+                bounces = 1;
+            }
+            if (ImGui::MenuItem("2 bounces", nullptr, bounces >= 2)) {
+                bounces = 2;
+            }
+            ImGui::MenuItem("Freeze Seed", nullptr, &ctx.renderSystem->rtFreezeSeed);
             ImGui::EndMenu();
         }
         if (ImGui::MenuItem("Reset Layout")) {

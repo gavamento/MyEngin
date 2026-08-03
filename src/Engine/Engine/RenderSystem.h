@@ -99,14 +99,21 @@ public:
     // シーン描画後 (ポスプロ解決前) に深度テスト付きの線として重ねる
     const std::vector<DebugLineCmd>* debugLines = nullptr;
 
-    // M46b: レイトレのデバッグ表示 (Deferred のみ)。0=off 1=BVH ヒート 2=法線 3=インスタンス ID。
+    // M46b: レイトレのデバッグ表示 (Deferred のみ)。
+    // 0=off 1=BVH ヒート 2=法線 3=インスタンス ID 4=生 GI (M46c)。
     // 0 なら BVH の構築も転送も走らない = 従来と完全に同じ経路
     int rtDebugMode = 0;
+    // M46c: GI を撃つ内部解像度の倍率 / 二次光線のバウンス数 /
+    // 乱数をフレームで進めない (リプレイ・スクリーンショットの決定性を保つため)
+    float rtResolutionScale = 0.5f;
+    int rtBounces = 1;
+    bool rtFreezeSeed = false;
 
     // M44d: ポストプロセス解決の GPU 時間 (直近の Resolve、ProfilerWindow 表示用)
     float PostFxGpuMs() const { return postFx_.ResolveGpuMs(); }
     // M46b: レイトレの統計 (ProfilerWindow 表示用)
     float RtDebugGpuMs() const { return rtPasses_.DebugGpuMs(); }
+    float RtGiGpuMs() const { return rtPasses_.GiGpuMs(); }
     float RtBuildCpuMs() const { return rtScene_.BuildCpuMs(); }
     int RtInstanceCount() const { return rtScene_.InstanceCount(); }
     int RtTriangleCount() const { return rtScene_.TriangleCount(); }
@@ -135,6 +142,7 @@ private:
     RtScene rtScene_;
     RtPasses rtPasses_;
     std::vector<RtScene::InstanceDesc> rtInstances_; // フレーム毎に再構築
+    uint32_t rtFrameCounter_ = 0; // 乱数列をフレームでずらすための描画専用カウンタ
 };
 
 } // namespace mye

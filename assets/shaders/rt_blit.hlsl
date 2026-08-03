@@ -1,7 +1,14 @@
-// M46b: RT デバッグ表示をシーンの上に貼り付けるだけのフルスクリーンパス。
-// 解像度は描画先と一致している前提なので Load で 1:1 に読む (サンプラ不要)。
+// M46b: RT の中間バッファをシーンの上に貼り付けるフルスクリーンパス。
+// 内部解像度 (GI 等) の拡大にも使うので、描画先サイズを CB で受けて線形サンプルする。
+
+cbuffer RtBlitCB : register(b0)
+{
+    float2 gBlitDstSize; // 描画先の解像度 (px)
+    float2 gBlitPad;
+};
 
 Texture2D gSrc : register(t0);
+SamplerState gBlitSamp : register(s0); // LINEAR / CLAMP
 
 struct VSOut {
     float4 pos : SV_Position;
@@ -17,5 +24,6 @@ VSOut VSMain(uint vid : SV_VertexID)
 
 float4 PSMain(VSOut i) : SV_Target
 {
-    return float4(gSrc.Load(int3(int2(i.pos.xy), 0)).rgb, 1.0f);
+    const float2 uv = i.pos.xy / max(gBlitDstSize, float2(1.0f, 1.0f));
+    return float4(gSrc.SampleLevel(gBlitSamp, uv, 0).rgb, 1.0f);
 }

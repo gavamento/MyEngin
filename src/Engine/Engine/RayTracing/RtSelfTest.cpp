@@ -1,6 +1,7 @@
 #include "Engine/Engine/RayTracing/RtSelfTest.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <vector>
 
@@ -260,6 +261,68 @@ void TestRayPrimitives()
     TEST_CHECK(!RtRayTri({ -0.5f, -0.5f, -2.0f }, { 1, 0, 0 }, tri, t, u, v));
 }
 
+// 乱数とコサイン重点サンプリング (M46c)。HLSL 側と同一式なので、
+// ここが通れば GI シェーダのサンプリングも同じ分布になる
+void TestSampling()
+{
+    MYE_LOG_INFO("[selftest] rt: sampling");
+    // ハッシュは状態レス = 同じ入力から常に同じ値 (スクリーンショットの決定性の前提)
+    TEST_CHECK(RtPcg3d(RtSeed{ 1, 2, 3 }).x == RtPcg3d(RtSeed{ 1, 2, 3 }).x);
+    TEST_CHECK(RtPcg3d(RtSeed{ 1, 2, 3 }).x != RtPcg3d(RtSeed{ 1, 2, 4 }).x);
+
+    // [0,1) に収まり、平均が 0.5 付近に来ること
+    RtSeed s{ 7u, 11u, 0u };
+    double sumX = 0.0, sumY = 0.0;
+    bool inRange = true;
+    constexpr int kN = 4096;
+    for (int i = 0; i < kN; ++i) {
+        const XMFLOAT2 u = RtNextRand2(s);
+        if (!(u.x >= 0.0f && u.x < 1.0f && u.y >= 0.0f && u.y < 1.0f)) {
+            inRange = false;
+        }
+        sumX += u.x;
+        sumY += u.y;
+    }
+    TEST_CHECK(inRange);
+    TEST_CHECK(std::fabs(sumX / kN - 0.5) < 0.02 && std::fabs(sumY / kN - 0.5) < 0.02);
+
+    // コサイン重点: 常に法線半球の内側・単位長・有限値
+    const XMFLOAT3 n = Normalize({ 0.3f, 0.8f, -0.5f });
+    RtSeed s2{ 3u, 5u, 0u };
+    bool hemiOk = true, unitOk = true, finiteOk = true;
+    double cosSum = 0.0;
+    constexpr int kS = 2048;
+    for (int i = 0; i < kS; ++i) {
+        const XMFLOAT3 d = RtCosineHemisphere(n, RtNextRand2(s2));
+        const float dt = n.x * d.x + n.y * d.y + n.z * d.z;
+        const float len = std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
+        if (dt < -1e-4f) {
+            hemiOk = false;
+        }
+        if (std::fabs(len - 1.0f) > 1e-3f) {
+            unitOk = false;
+        }
+        if (!std::isfinite(d.x) || !std::isfinite(d.y) || !std::isfinite(d.z)) {
+            finiteOk = false;
+        }
+        cosSum += dt;
+    }
+    TEST_CHECK(hemiOk && unitOk && finiteOk);
+    // コサイン分布の平均 cos は 2/3 (一様半球なら 1/2) — 重点サンプリングが効いている証拠
+    TEST_CHECK(std::fabs(cosSum / kS - 2.0 / 3.0) < 0.03);
+
+    // u=(0,*) は法線そのもの (円盤半径 0 = 天頂)
+    const XMFLOAT3 top = RtCosineHemisphere(n, { 0.0f, 0.37f });
+    TEST_CHECK(std::fabs(top.x - n.x) < 1e-4f && std::fabs(top.y - n.y) < 1e-4f
+               && std::fabs(top.z - n.z) < 1e-4f);
+
+    // z=-1 の法線でも基底が破綻しないこと (Duff の分岐なし ONB を使う理由)
+    const XMFLOAT3 down = { 0.0f, 0.0f, -1.0f };
+    const XMFLOAT3 dd = RtCosineHemisphere(down, { 0.5f, 0.25f });
+    TEST_CHECK(std::isfinite(dd.x) && std::isfinite(dd.y) && std::isfinite(dd.z));
+    TEST_CHECK(down.x * dd.x + down.y * dd.y + down.z * dd.z >= -1e-4f);
+}
+
 } // namespace
 
 bool RunRtSelfTest()
@@ -270,6 +333,7 @@ bool RunRtSelfTest()
     TestBlasTraversal();
     TestBuildDeterminism();
     TestTlas();
+    TestSampling();
     if (g_failCount == 0) {
         MYE_LOG_INFO("==== Ray tracing self test: ALL PASS ====");
         return true;

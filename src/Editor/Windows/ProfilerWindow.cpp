@@ -51,6 +51,12 @@ void ProfilerWindow::OnImGui(EngineContext& ctx)
                         ctx.renderSystem->RtInstanceCount(),
                         ctx.renderSystem->RtTriangleCount(), ctx.renderSystem->RtBuildCpuMs());
             ImGui::Text("  rt debug: %6.3f ms (GpuTimer)", ctx.renderSystem->RtDebugGpuMs());
+            if (ctx.renderSystem->rtDebugMode == 4) {
+                ImGui::Text("  rt gi: %6.3f ms (GpuTimer, %.0f%% res, %d bounce)",
+                            ctx.renderSystem->RtGiGpuMs(),
+                            ctx.renderSystem->rtResolutionScale * 100.0f,
+                            ctx.renderSystem->rtBounces);
+            }
         }
     }
 

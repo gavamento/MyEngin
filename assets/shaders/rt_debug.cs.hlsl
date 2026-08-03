@@ -5,7 +5,7 @@
 
 #include "rt_common.hlsli"
 
-cbuffer RtDebugCB : register(b1)
+cbuffer RtDebugCB : register(b2) // b0=RtSceneCB / b1=RtEnvCB は rt_common.hlsli が使う
 {
     float4x4 gInvViewProj; // transpose(inverse(view*proj))
     float3 gCameraPos;

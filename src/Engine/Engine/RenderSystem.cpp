@@ -614,6 +614,11 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
             view.rtDebugMode = rtDebugMode;
             view.rtScene = &rtScene_.Bindings();
             view.rtPasses = &rtPasses_;
+            view.rtResolutionScale = rtResolutionScale;
+            view.rtBounces = rtBounces;
+            // freeze 中は毎フレーム同じ乱数列 = 決定的なスクリーンショットが撮れる
+            view.rtFrameIndex = rtFreezeSeed ? 0u : rtFrameCounter_;
+            ++rtFrameCounter_;
         }
     }
 

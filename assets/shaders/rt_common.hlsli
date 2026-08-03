@@ -52,13 +52,30 @@ struct RtMaterial {
     float roughness;
 };
 
-// シーンバッファ (全 RT シェーダ共通の t0-t5 / b0)
+// GPU ライト 1 個 (C++ の GpuLight / common.hlsli の Light と同じ 64 バイト)
+struct RtLight {
+    float3 position;
+    float range;
+    float3 direction; // 光の進行方向 (正規化)
+    float intensity;
+    float3 color;
+    int type; // 0=Directional 1=Point 2=Spot
+    float cosInner;
+    float cosOuter;
+    float2 _pad;
+};
+
+#define MYE_RT_MAX_LIGHTS 16 // C++ の kMaxLights と同値
+
+// シーンバッファ (全 RT シェーダ共通の t0-t6 / b0-b1 / s0)
 StructuredBuffer<RtBvhNode> gRtNodes : register(t0);     // 全 BLAS を連結したノード配列
 StructuredBuffer<RtTri> gRtTris : register(t1);          // 同上 (三角形)
 StructuredBuffer<RtTriAttr> gRtAttrs : register(t2);     // 同上 (頂点属性)
 StructuredBuffer<RtBvhNode> gRtTlas : register(t3);      // TLAS (root = 0)
 StructuredBuffer<RtInstance> gRtInstances : register(t4);
 StructuredBuffer<RtMaterial> gRtMaterials : register(t5);
+TextureCube gRtSkyCube : register(t6); // skyMode==1 のときだけ有効
+SamplerState gRtSampler : register(s0); // LINEAR / CLAMP
 
 cbuffer RtSceneCB : register(b0)
 {
@@ -66,6 +83,20 @@ cbuffer RtSceneCB : register(b0)
     int gRtPad0;
     int gRtPad1;
     int gRtPad2;
+};
+
+// 環境 (ライト + スカイ)。ヒット点のシェーディングとレイのミス色に使う
+cbuffer RtEnvCB : register(b1)
+{
+    float3 gRtAmbient;
+    int gRtLightCount;
+    float3 gRtSkyTop; // リニア (RenderSystem が変換済みで渡す)
+    int gRtSkyMode;   // -1=スカイ無し 0=グラデーション 1=キューブマップ
+    float3 gRtSkyHorizon;
+    float gRtRayEps; // 自己交差回避のオフセット
+    float3 gRtSkyBottom;
+    float gRtEnvPad1;
+    RtLight gRtLights[MYE_RT_MAX_LIGHTS];
 };
 
 // ---- 数式 (RtMath.h と一致) ----
@@ -249,6 +280,194 @@ float2 RtHitUv(RtHit hit)
 RtMaterial RtHitMaterial(RtHit hit)
 {
     return gRtMaterials[gRtInstances[hit.inst].materialIndex];
+}
+
+// 影レイ: [0, tMax) に遮蔽物があれば true。最近ヒットを求めないので最初の交差で抜ける
+bool RtTraceAnyHit(float3 ro, float3 rd, float tMax)
+{
+    if (gRtInstanceCount <= 0) {
+        return false;
+    }
+    const float3 invD = RtSafeInv3(rd);
+    int visited = 0;
+    int stack[MYE_RT_STACK_DEPTH];
+    int top = 0;
+    stack[top++] = 0;
+    while (top > 0) {
+        if (visited >= MYE_RT_MAX_VISIT) {
+            break;
+        }
+        const RtBvhNode node = gRtTlas[stack[--top]];
+        ++visited;
+        if (!RtSlabTest(node.aabbMin, node.aabbMax, ro, invD, tMax)) {
+            continue;
+        }
+        if (node.left < 0) {
+            const int start = -node.left - 1;
+            for (int i = 0; i < node.right; ++i) {
+                const RtInstance inst = gRtInstances[start + i];
+                const float3 roL = ro.x * inst.invRow0.xyz + ro.y * inst.invRow1.xyz
+                    + ro.z * inst.invRow2.xyz + inst.invRow3.xyz;
+                const float3 rdL = rd.x * inst.invRow0.xyz + rd.y * inst.invRow1.xyz
+                    + rd.z * inst.invRow2.xyz;
+                const float3 invDL = RtSafeInv3(rdL);
+                int bstack[MYE_RT_STACK_DEPTH];
+                int btop = 0;
+                bstack[btop++] = inst.blasRoot;
+                while (btop > 0) {
+                    if (visited >= MYE_RT_MAX_VISIT) {
+                        break;
+                    }
+                    const RtBvhNode bn = gRtNodes[bstack[--btop]];
+                    ++visited;
+                    if (!RtSlabTest(bn.aabbMin, bn.aabbMax, roL, invDL, tMax)) {
+                        continue;
+                    }
+                    if (bn.left < 0) {
+                        const int bstart = -bn.left - 1;
+                        for (int k = 0; k < bn.right; ++k) {
+                            float t;
+                            float2 bary;
+                            if (RtRayTri(roL, rdL, gRtTris[bstart + k], t, bary) && t < tMax) {
+                                return true; // 遮蔽あり
+                            }
+                        }
+                        continue;
+                    }
+                    if (btop + 2 <= MYE_RT_STACK_DEPTH) {
+                        bstack[btop++] = bn.right;
+                        bstack[btop++] = bn.left;
+                    }
+                }
+            }
+            continue;
+        }
+        if (top + 2 <= MYE_RT_STACK_DEPTH) {
+            stack[top++] = node.right;
+            stack[top++] = node.left;
+        }
+    }
+    return false;
+}
+
+// ---- サンプリング (RtMath.h と一致) ----
+
+// PCG3D ハッシュ (状態レス)。同じ入力からは常に同じ乱数列 = スクショの決定性が保てる
+uint3 RtPcg3d(uint3 v)
+{
+    v = v * 1664525u + 1013904223u;
+    v.x += v.y * v.z;
+    v.y += v.z * v.x;
+    v.z += v.x * v.y;
+    v ^= v >> 16u;
+    v.x += v.y * v.z;
+    v.y += v.z * v.x;
+    v.z += v.x * v.y;
+    return v;
+}
+
+// seed は (ピクセル, フレーム由来) で初期化する。呼ぶたびに z を進める
+float2 RtNextRand2(inout uint3 seed)
+{
+    seed.z += 1u;
+    const uint3 h = RtPcg3d(seed);
+    return float2(h.x, h.y) * 2.3283064365386963e-10f; // 1 / 2^32
+}
+
+// コサイン重点サンプリング (法線半球)。pdf = cos/PI。
+// 基底は Duff らの分岐なし ONB (z≈-1 でも安定)
+float3 RtCosineHemisphere(float3 n, float2 u)
+{
+    const float r = sqrt(u.x);
+    const float phi = 6.28318530718f * u.y;
+    const float sgn = (n.z >= 0.0f) ? 1.0f : -1.0f;
+    const float a = -1.0f / (sgn + n.z);
+    const float b = n.x * n.y * a;
+    const float3 t1 = float3(1.0f + sgn * n.x * n.x * a, sgn * b, -sgn * n.x);
+    const float3 t2 = float3(b, sgn + n.y * n.y * a, -n.y);
+    return normalize(t1 * (r * cos(phi)) + t2 * (r * sin(phi))
+                     + n * sqrt(max(0.0f, 1.0f - u.x)));
+}
+
+// ---- シェーディング ----
+
+// レイが何にも当たらなかったときの放射輝度
+float3 RtSkyRadiance(float3 dir)
+{
+    // 単一の戻り値にまとめる (早期 return を混ぜると X4000 の誤検出が出る)
+    float3 c = gRtAmbient; // スカイ無し = 従来の定数アンビエント
+    if (gRtSkyMode == 1) {
+        // 二次光線なので粗い mip で十分 (ノイズも減る)
+        c = gRtSkyCube.SampleLevel(gRtSampler, dir, 2.0f).rgb;
+    } else if (gRtSkyMode == 0) {
+        const float t = dir.y; // skybox.hlsl と同一式
+        c = (t >= 0.0f) ? lerp(gRtSkyHorizon, gRtSkyTop, saturate(t * 1.4f))
+                        : lerp(gRtSkyHorizon, gRtSkyBottom, saturate(-t * 1.4f));
+    }
+    return c;
+}
+
+// ヒット点の直接光 (拡散のみ)。common.hlsli::ApplyLighting の減衰規約をそのまま複製し、
+// 拡散の 1/PI 省略も踏襲する (ラスタと明るさの次元を揃えるため)。
+// 影レイは太陽のみ — ローカルライトが影を落とさないのはラスタ側と同じ
+float3 RtDirectLight(float3 P, float3 N, float3 albedo, float metallic)
+{
+    float3 Lo = float3(0.0f, 0.0f, 0.0f);
+    for (int i = 0; i < gRtLightCount; ++i) {
+        const RtLight L = gRtLights[i];
+        float3 toL;
+        float atten = 1.0f;
+        if (L.type == 0) { // Directional
+            toL = -L.direction;
+            if (RtTraceAnyHit(P + N * gRtRayEps, toL, 1e16f)) {
+                atten = 0.0f;
+            }
+        } else { // Point / Spot
+            const float3 d = L.position - P;
+            const float dist = length(d);
+            toL = d / max(dist, 1e-4f);
+            const float k = saturate(1.0f - dist / max(L.range, 1e-4f));
+            atten = k * k;
+            if (L.type == 2) {
+                const float cosA = dot(-toL, L.direction);
+                const float spot =
+                    saturate((cosA - L.cosOuter) / max(L.cosInner - L.cosOuter, 1e-4f));
+                atten *= spot * spot;
+            }
+        }
+        Lo += L.color * (L.intensity * atten * saturate(dot(N, toL)));
+    }
+    return albedo * (1.0f - metallic) * Lo;
+}
+
+// レイに沿った放射輝度を bounces 回まで積む。
+// cosine 重点サンプリングと 1/PI 省略規約により、throughput は albedo の積そのものになる
+// (BRDF の 1/PI を省いた分と pdf の PI が相殺する)
+float3 RtTraceRadiance(float3 ro, float3 rd, float tMax, int bounces, inout uint3 seed)
+{
+    float3 radiance = float3(0.0f, 0.0f, 0.0f);
+    float3 throughput = float3(1.0f, 1.0f, 1.0f);
+    for (int b = 0; b < bounces; ++b) {
+        RtHit hit;
+        if (!RtTraceClosest(ro, rd, tMax, hit)) {
+            radiance += throughput * RtSkyRadiance(rd);
+            break;
+        }
+        const float3 P = ro + rd * hit.t;
+        float3 N = RtHitNormal(hit);
+        if (dot(N, rd) > 0.0f) {
+            N = -N; // 裏面ヒットは法線を反転 (マテリアルは両面扱い)
+        }
+        const RtMaterial m = RtHitMaterial(hit);
+        radiance += throughput * (RtDirectLight(P, N, m.baseColor, m.metallic) + m.emissive);
+        if (b + 1 >= bounces) {
+            break;
+        }
+        throughput *= m.baseColor * (1.0f - m.metallic);
+        rd = RtCosineHemisphere(N, RtNextRand2(seed));
+        ro = P + N * gRtRayEps;
+    }
+    return radiance;
 }
 
 #endif // MYE_RT_COMMON_INCLUDED

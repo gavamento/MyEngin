@@ -784,7 +784,18 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
     // ---- 4) RT デバッグ表示 (M46b): BVH の検証用に画面を丸ごと差し替える。
     //      既定 (rtDebugMode==0 / rtScene==null) では何も起きない ----
     if (view.rtDebugMode != 0 && view.rtPasses != nullptr && view.rtScene != nullptr) {
-        view.rtPasses->RenderDebug(device, shaders, view, *view.rtScene);
+        RtFrameInputs rtIn;
+        rtIn.scene = view.rtScene;
+        rtIn.lights = &lights;
+        rtIn.gbNormal = gbNormal_.SRV();
+        rtIn.gbPosition = gbPosition_.SRV();
+        rtIn.gbAlbedo = gbAlbedo_.SRV();
+        rtIn.skyCube = view.skyCubemap;
+        ID3D11ShaderResourceView* giSrv = nullptr;
+        if (view.rtDebugMode == 4) { // 生 GI 表示のときだけ GI パスを走らせる
+            giSrv = view.rtPasses->RenderGi(device, shaders, view, rtIn);
+        }
+        view.rtPasses->RenderDebug(device, shaders, view, rtIn, giSrv);
         // パーティクル後段のために RTV+DSV を戻す (ブリットが RTV のみに差し替えたため)
         dc->OMSetRenderTargets(1, &view.rtv, view.dsv);
         dc->OMSetDepthStencilState(nullptr, 0);
