@@ -602,6 +602,17 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
         view.iblBrdfLut = em.brdfLut;
         view.iblSpecMips = em.specMips;
     }
+    // M44d: 前フレームの viewProj / カメラ位置 (viewKey 毎)。初フレーム/リサイズは invalid。
+    // モーションブラー (ポスプロ) と RT のテンポラル再投影 (M46d) の共通の出所なので、
+    // path.Render より前で埋める
+    if (target.viewKey > 0 && target.viewKey < 4) {
+        const PrevViewProj& p = prevVP_[target.viewKey];
+        if (p.valid && p.w == target.width && p.h == target.height) {
+            view.prevViewProj = p.m;
+            view.prevCameraPos = p.pos;
+            view.prevViewProjValid = 1;
+        }
+    }
     // M46b: レイトレ用シーン (BLAS 連結 + TLAS + インスタンス) を GPU へ。
     // rtDebugMode==0 なら収集自体が空なので、この節はまるごと従来経路と同じになる
     if (rtDebugMode != 0 && !rtInstances_.empty()) {
@@ -619,6 +630,10 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
             // freeze 中は毎フレーム同じ乱数列 = 決定的なスクリーンショットが撮れる
             view.rtFrameIndex = rtFreezeSeed ? 0u : rtFrameCounter_;
             ++rtFrameCounter_;
+            // M46d: テンポラル蓄積。履歴は viewKey 別 (SceneView と GameView が混線しない)
+            view.rtTemporal = rtTemporal ? 1 : 0;
+            view.rtViewKey = (target.viewKey < 4) ? target.viewKey : 0u;
+            view.rtViewSerial = viewSerial_[view.rtViewKey];
         }
     }
 
@@ -700,17 +715,10 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
                 effective = MergeCameraPostFx(postFxSettings, *pfx);
             }
         }
-        // M44d: 前フレーム viewProj (viewKey 毎)。初フレーム/リサイズは invalid = ブラー 0。
+        // M44d: 前フレーム viewProj は path.Render 前に充填済み (view.prevViewProj)。
         // SceneView (cameraOverride) はエディタ操作中のスミアが UX を阻害するため強制 off
         if (cameraOverride) {
             effective.motionBlurIntensity = 0.0f;
-        }
-        if (target.viewKey > 0 && target.viewKey < 4) {
-            const PrevViewProj& p = prevVP_[target.viewKey];
-            if (p.valid && p.w == target.width && p.h == target.height) {
-                view.prevViewProj = p.m;
-                view.prevViewProjValid = 1;
-            }
         }
         // M44a: LUT の SRV 解決 (MaterialLibrary の GUID→パス解決と同じ流儀)。
         // 未ロードなら遅延ロード — LUT はデータなので srgb=false (デコード禁止)。
@@ -731,13 +739,16 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
         postFx_.Resolve(device, shaders, *hdr, target.rtv, target.width, target.height,
                         effective, view, distortionActive); // M43b: view = 深度/太陽の供給口
     }
-    // M44d: 次フレームのモーションブラー用に viewProj を保存 (viewKey=0 = AssetPreview は対象外)
+    // M44d: 次フレームのモーションブラー用に viewProj を保存 (viewKey=0 = AssetPreview は対象外)。
+    // M46d: カメラ位置と描画通番も同じ場所で更新する (再投影とテンポラル履歴の連続性判定)
     if (target.viewKey > 0 && target.viewKey < 4) {
         PrevViewProj& p = prevVP_[target.viewKey];
         XMStoreFloat4x4(&p.m, XMLoadFloat4x4(&view.view) * XMLoadFloat4x4(&view.proj));
+        p.pos = view.cameraPos;
         p.w = target.width;
         p.h = target.height;
         p.valid = true;
+        ++viewSerial_[target.viewKey];
     }
     return cameraFound;
 }

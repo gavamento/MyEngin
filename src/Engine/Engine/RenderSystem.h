@@ -108,12 +108,16 @@ public:
     float rtResolutionScale = 0.5f;
     int rtBounces = 1;
     bool rtFreezeSeed = false;
+    // M46d: テンポラル蓄積 (1spp のノイズを前フレームの再投影で均す)。
+    // false で 1spp 生のまま = A/B 比較用
+    bool rtTemporal = true;
 
     // M44d: ポストプロセス解決の GPU 時間 (直近の Resolve、ProfilerWindow 表示用)
     float PostFxGpuMs() const { return postFx_.ResolveGpuMs(); }
     // M46b: レイトレの統計 (ProfilerWindow 表示用)
     float RtDebugGpuMs() const { return rtPasses_.DebugGpuMs(); }
     float RtGiGpuMs() const { return rtPasses_.GiGpuMs(); }
+    float RtTemporalGpuMs() const { return rtPasses_.TemporalGpuMs(); }
     float RtBuildCpuMs() const { return rtScene_.BuildCpuMs(); }
     int RtInstanceCount() const { return rtScene_.InstanceCount(); }
     int RtTriangleCount() const { return rtScene_.TriangleCount(); }
@@ -133,11 +137,15 @@ private:
     // 初フレーム/リサイズは valid=false → モーションブラー 0 (viewKey=0 は保存しない)
     struct PrevViewProj {
         DirectX::XMFLOAT4X4 m = {};
+        DirectX::XMFLOAT3 pos = { 0, 0, 0 }; // M46d: 再投影の深度照合に使うカメラ位置
         int w = 0;
         int h = 0;
         bool valid = false;
     };
     PrevViewProj prevVP_[4];
+    // M46d: viewKey 毎の描画通番 (Render 1 回で 1 進む)。テンポラル蓄積が
+    // 「前フレームも同じビューを描いたか」を判定するのに使う (RT の on/off で履歴が混ざらない)
+    uint32_t viewSerial_[4] = {};
     // M46b: レイトレ (遅延 Init)。rtDebugMode == 0 のあいだは一切触らない
     RtScene rtScene_;
     RtPasses rtPasses_;

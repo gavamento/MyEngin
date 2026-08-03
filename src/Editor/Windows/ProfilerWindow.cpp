@@ -51,11 +51,15 @@ void ProfilerWindow::OnImGui(EngineContext& ctx)
                         ctx.renderSystem->RtInstanceCount(),
                         ctx.renderSystem->RtTriangleCount(), ctx.renderSystem->RtBuildCpuMs());
             ImGui::Text("  rt debug: %6.3f ms (GpuTimer)", ctx.renderSystem->RtDebugGpuMs());
-            if (ctx.renderSystem->rtDebugMode == 4) {
+            if (ctx.renderSystem->rtDebugMode >= 4) {
                 ImGui::Text("  rt gi: %6.3f ms (GpuTimer, %.0f%% res, %d bounce)",
                             ctx.renderSystem->RtGiGpuMs(),
                             ctx.renderSystem->rtResolutionScale * 100.0f,
                             ctx.renderSystem->rtBounces);
+                // M46d: テンポラル蓄積 (off のときは前回値のまま = 参考値)
+                ImGui::Text("  rt temporal: %6.3f ms (GpuTimer, %s)",
+                            ctx.renderSystem->RtTemporalGpuMs(),
+                            ctx.renderSystem->rtTemporal ? "on" : "off");
             }
         }
     }

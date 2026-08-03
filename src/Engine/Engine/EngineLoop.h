@@ -57,9 +57,17 @@ struct EngineConfig {
     bool useJobs = true; // false で全並列を直列化 (決定論ゲート / 計測比較用)
 
     // ---- レイトレのデバッグ表示 (M46b、--rt-debug N) ----
-    // 0=off 1=BVH ヒートマップ 2=ヒット法線 3=インスタンス ID。Deferred パスのみ効く。
+    // 0=off 1=BVH ヒートマップ 2=ヒット法線 3=インスタンス ID
+    // 4=生 GI (1spp) 5=蓄積 GI 6=履歴長 (M46c/M46d)。Deferred パスのみ効く。
     // 終了時に BVH の規模とトラバーサルの GPU 時間をログに出す (性能実測用)
     int rtDebugMode = 0;
+    // M46d: テンポラル蓄積 (--rt-no-temporal で off = 1spp 生のまま。A/B 計測用)。
+    // 乱数列の freeze は既定でスクショ/リプレイ時に自動 on (M46c)。
+    // --rt-freeze-seed で常時 on、--rt-anim-seed でその自動 on を解除する
+    // (蓄積のデノイズ効果をスクリーンショットに写すには後者が要る)
+    bool rtTemporal = true;
+    bool rtFreezeSeed = false;
+    bool rtAnimSeed = false;
 
     // ---- オーディオ (M45) ----
     // false (--no-audio) で XAudio2 を一切初期化しない。オーディオ端末の無い CI や

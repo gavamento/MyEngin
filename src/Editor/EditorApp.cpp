@@ -339,6 +339,13 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
             if (ImGui::MenuItem("Raw GI (1spp)", nullptr, mode == 4)) {
                 mode = 4;
             }
+            // M46d: 蓄積結果と履歴長 (赤=履歴なし → 緑=上限まで蓄積) の可視化
+            if (ImGui::MenuItem("Accumulated GI", nullptr, mode == 5)) {
+                mode = 5;
+            }
+            if (ImGui::MenuItem("History Length", nullptr, mode == 6)) {
+                mode = 6;
+            }
             ImGui::Separator();
             // M46c: GI の品質。解像度は内部バッファ、バウンスは二次光線の深さ
             float& scale = ctx.renderSystem->rtResolutionScale;
@@ -359,6 +366,9 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
             if (ImGui::MenuItem("2 bounces", nullptr, bounces >= 2)) {
                 bounces = 2;
             }
+            ImGui::Separator();
+            // M46d: 蓄積を切ると 1spp の生ノイズが見える (A/B 比較用)
+            ImGui::MenuItem("Temporal Accumulation", nullptr, &ctx.renderSystem->rtTemporal);
             ImGui::MenuItem("Freeze Seed", nullptr, &ctx.renderSystem->rtFreezeSeed);
             ImGui::EndMenu();
         }

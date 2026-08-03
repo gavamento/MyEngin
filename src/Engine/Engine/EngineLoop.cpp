@@ -310,6 +310,8 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // ポストプロセス設定を config から反映 (M16)。全ビューポート共通の renderSystem に載る
     renderSystem.enablePostFx = config.postFx;
     renderSystem.rtDebugMode = config.rtDebugMode; // M46b (--rt-debug N、Deferred のみ)
+    renderSystem.rtTemporal = config.rtTemporal;   // M46d (--rt-no-temporal / --rt-freeze-seed)
+    renderSystem.rtFreezeSeed = config.rtFreezeSeed;
     renderSystem.postFxSettings.tonemap = config.postFxTonemap;
     renderSystem.postFxSettings.exposure = config.postFxExposure;
     renderSystem.postFxSettings.bloom = config.postFxBloom;
@@ -321,8 +323,11 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     renderSystem.postFxSettings.aeInstant = !config.replayVerifyPath.empty()
         || !config.replayRecordPath.empty() || !config.screenshotPath.empty();
     // M46c: 同じ理由でレイトレのサンプル列もフレームで進めない (毎フレーム同じノイズ =
-    // スクリーンショットが決定的になる)。GPU 上で完結し読み戻さないので sim には無関係
-    renderSystem.rtFreezeSeed = renderSystem.postFxSettings.aeInstant;
+    // スクリーンショットが決定的になる)。GPU 上で完結し読み戻さないので sim には無関係。
+    // M46d: ただし freeze 中はテンポラル蓄積が「同じ 1 サンプルを積む」だけになり
+    // デノイズ効果がスクショに写らない。--rt-anim-seed で自動 freeze を明示解除できる
+    renderSystem.rtFreezeSeed =
+        (config.rtFreezeSeed || renderSystem.postFxSettings.aeInstant) && !config.rtAnimSeed;
 
     // GameLogic.dll (スクリプト層)。監視先は起動形態で 2 通りに分かれる:
     //   レガシー起動 (--project なし) = エンジンの exe と同じ構成のビルド出力。
@@ -833,10 +838,11 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     if (config.rtDebugMode != 0) {
         // M46b: BVH の規模とソフトウェアトラバーサルの実測値 (性能ゲートの一次データ)
         MYE_LOG_INFO("[rt] mode %d: %d instances / %d triangles / build %.3f ms (CPU) / "
-                     "trace %.3f ms / gi %.3f ms (GPU, last frame)",
+                     "trace %.3f ms / gi %.3f ms / temporal %.3f ms (GPU, last frame)",
                      config.rtDebugMode, renderSystem.RtInstanceCount(),
                      renderSystem.RtTriangleCount(), renderSystem.RtBuildCpuMs(),
-                     renderSystem.RtDebugGpuMs(), renderSystem.RtGiGpuMs());
+                     renderSystem.RtDebugGpuMs(), renderSystem.RtGiGpuMs(),
+                     renderSystem.RtTemporalGpuMs());
     }
     MYE_LOG_INFO("Engine loop finished (%llu frames, %llu ticks)",
                  static_cast<unsigned long long>(ctx.frameIndex),

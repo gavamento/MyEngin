@@ -19,6 +19,17 @@ constexpr int kRtMaxVisit = 512;
 // TLAS の葉あたりインスタンス数 (BLAS 側は MeshColliderLibrary の kLeafTris=8 に従う)
 constexpr int kRtTlasLeafSize = 2;
 
+// ---- M46d: テンポラル蓄積 ----
+
+// 履歴長の上限。移動平均の重み下限 = 1/この値 (32 → 約 3% で追従が止まらない)。
+// HLSL の MYE_RT_TEMPORAL_MAX_HISTORY と一致検査される (tools/check_rules.ps1 規則 9)
+constexpr int kRtTemporalMaxHistory = 32;
+
+// 再投影の妥当性しきい値。CB 経由で HLSL へ渡す (= C++ 側が唯一の出所)。
+// 深度はカメラ距離の相対差、法線は cos。どちらかを外れたら履歴を捨てて 1spp に戻す
+constexpr float kRtTemporalDepthThreshold = 0.05f;
+constexpr float kRtTemporalNormalThreshold = 0.9f;
+
 // BVH ノード (BLAS / TLAS 共通)。
 //   内部ノード: left/right = 子ノードの絶対 index (どちらも >= 0)
 //   葉:         left = -(start + 1) で負、right = 個数

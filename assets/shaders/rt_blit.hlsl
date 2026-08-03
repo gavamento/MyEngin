@@ -4,7 +4,8 @@
 cbuffer RtBlitCB : register(b0)
 {
     float2 gBlitDstSize; // 描画先の解像度 (px)
-    float2 gBlitPad;
+    int gBlitMode;       // 0 = rgb をそのまま / 1 = a を履歴長ヒートマップとして表示 (M46d)
+    float gBlitParam;    // mode 1 = 履歴長の上限 (正規化に使う)
 };
 
 Texture2D gSrc : register(t0);
@@ -25,5 +26,12 @@ VSOut VSMain(uint vid : SV_VertexID)
 float4 PSMain(VSOut i) : SV_Target
 {
     const float2 uv = i.pos.xy / max(gBlitDstSize, float2(1.0f, 1.0f));
-    return float4(gSrc.SampleLevel(gBlitSamp, uv, 0).rgb, 1.0f);
+    const float4 s = gSrc.SampleLevel(gBlitSamp, uv, 0);
+    float3 c = s.rgb;
+    if (gBlitMode == 1) {
+        // 履歴長 0 → 赤 (履歴なし) / 中間 → 黄 / 上限 → 緑 (十分に蓄積された)
+        const float t = saturate(s.a / max(gBlitParam, 1.0f));
+        c = float3(saturate(2.0f - 2.0f * t), saturate(2.0f * t), 0.0f);
+    }
+    return float4(c, 1.0f);
 }

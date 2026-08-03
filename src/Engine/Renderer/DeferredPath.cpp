@@ -791,11 +791,11 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
         rtIn.gbPosition = gbPosition_.SRV();
         rtIn.gbAlbedo = gbAlbedo_.SRV();
         rtIn.skyCube = view.skyCubemap;
-        ID3D11ShaderResourceView* giSrv = nullptr;
-        if (view.rtDebugMode == 4) { // 生 GI 表示のときだけ GI パスを走らせる
-            giSrv = view.rtPasses->RenderGi(device, shaders, view, rtIn);
+        RtGiResult gi;
+        if (view.rtDebugMode >= 4) { // GI 系表示 (4=生 / 5=蓄積 / 6=履歴長) のときだけ走らせる
+            gi = view.rtPasses->RenderGi(device, shaders, view, rtIn);
         }
-        view.rtPasses->RenderDebug(device, shaders, view, rtIn, giSrv);
+        view.rtPasses->RenderDebug(device, shaders, view, rtIn, gi);
         // パーティクル後段のために RTV+DSV を戻す (ブリットが RTV のみに差し替えたため)
         dc->OMSetRenderTargets(1, &view.rtv, view.dsv);
         dc->OMSetDepthStencilState(nullptr, 0);

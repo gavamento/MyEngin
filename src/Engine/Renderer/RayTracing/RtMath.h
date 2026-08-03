@@ -133,6 +133,56 @@ inline DirectX::XMFLOAT3 RtCosineHemisphere(const DirectX::XMFLOAT3& n,
     return out;
 }
 
+// ---- M46d: テンポラル蓄積 (HLSL の rt_temporal.cs.hlsl と一致。変更時は両方更新) ----
+
+// 前フレームのクリップ座標 → 履歴バッファの UV。
+// 背後 (w<=0) と画面外は false = 履歴なし。HLSL の RtClipToPrevUv と同一式
+inline bool RtClipToPrevUv(const DirectX::XMFLOAT4& clip, DirectX::XMFLOAT2& outUv)
+{
+    outUv = { 0.0f, 0.0f };
+    if (clip.w <= 1e-6f) {
+        return false; // 前フレームのカメラの背後 (または退化)
+    }
+    const float nx = clip.x / clip.w;
+    const float ny = clip.y / clip.w;
+    outUv = { nx * 0.5f + 0.5f, ny * -0.5f + 0.5f };
+    return outUv.x >= 0.0f && outUv.x < 1.0f && outUv.y >= 0.0f && outUv.y < 1.0f;
+}
+
+// 再投影先の履歴が現在の面と同じものか。
+// expectedDepth = 現在の可視点を前フレームのカメラから測った距離、
+// storedDepth   = 履歴バッファがそのピクセルに記録している距離 (0 以下 = 未記録)。
+// HLSL の RtReprojectValid と同一式
+inline bool RtReprojectValid(float expectedDepth, float storedDepth,
+                             const DirectX::XMFLOAT3& n, const DirectX::XMFLOAT3& prevN,
+                             float depthThreshold, float normalThreshold)
+{
+    if (!(storedDepth > 0.0f) || !(expectedDepth > 0.0f)) {
+        return false;
+    }
+    const float d = std::fabs(expectedDepth - storedDepth);
+    if (d > depthThreshold * (std::max)(expectedDepth, 1e-3f)) {
+        return false; // 別の面が手前/奥にある (disocclusion)
+    }
+    const float c = n.x * prevN.x + n.y * prevN.y + n.z * prevN.z;
+    return c >= normalThreshold;
+}
+
+// 履歴長を 1 進める。無効なら 1 (= 今フレームの 1spp をそのまま採用) に若返る。
+// HLSL の RtAdvanceHistory と同一式
+inline float RtAdvanceHistory(float prevLen, bool valid, float maxLen)
+{
+    const float base = valid ? prevLen : 0.0f;
+    return (std::min)(base + 1.0f, maxLen);
+}
+
+// 移動平均の重み (新サンプルの寄与)。履歴長 1 で 1.0 = 履歴を使わない。
+// HLSL の RtTemporalAlpha と同一式
+inline float RtTemporalAlpha(float histLen)
+{
+    return 1.0f / (std::max)(histLen, 1.0f);
+}
+
 // BLAS (単一メッシュ) のヒット結果。tri は連結三角形配列の絶対 index
 struct RtBlasHit {
     float t = 0.0f;

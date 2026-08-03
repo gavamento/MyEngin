@@ -93,6 +93,13 @@ $constGroups = @(
             'src\Engine\Renderer\RayTracing\RtTypes.h' = 'constexpr\s+int\s+kRtMaxVisit\s*=\s*(\d+)'
             'assets\shaders\rt_common.hlsli'           = '#\s*define\s+MYE_RT_MAX_VISIT\s+(\d+)'
         }
+    },
+    @{
+        label = 'kRtTemporalMaxHistory / MYE_RT_TEMPORAL_MAX_HISTORY'
+        sites = @{
+            'src\Engine\Renderer\RayTracing\RtTypes.h' = 'constexpr\s+int\s+kRtTemporalMaxHistory\s*=\s*(\d+)'
+            'assets\shaders\rt_temporal.cs.hlsl'       = '#\s*define\s+MYE_RT_TEMPORAL_MAX_HISTORY\s+(\d+)'
+        }
     }
 )
 foreach ($g in $constGroups) {

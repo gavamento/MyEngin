@@ -122,6 +122,12 @@ struct RenderView {
     float rtResolutionScale = 0.5f; // GI を撃つ内部解像度の倍率 (0.25〜1.0)
     int32_t rtBounces = 1;          // 二次光線のバウンス数
     uint32_t rtFrameIndex = 0;      // 乱数列をフレームでずらす (freeze 時は 0 固定)
+    // ---- M46d: テンポラル蓄積 (末尾 append)。RenderSystem が充填 ----
+    int32_t rtTemporal = 1;    // 0 = 蓄積せず 1spp のまま (A/B 比較用)
+    uint32_t rtViewKey = 0;    // 履歴の格納先 (FrameTarget::viewKey と同値)
+    uint32_t rtViewSerial = 0; // このビューが描かれた通番。+1 で連続 = 履歴が使える
+    // 前フレームのカメラ位置 (再投影の深度照合。prevViewProj とセットで有効)
+    DirectX::XMFLOAT3 prevCameraPos = { 0, 0, 0 };
 };
 
 // GPU へ渡すライト 1 個 (定数バッファ配列要素、16 バイト境界に揃えた 64 バイト)。

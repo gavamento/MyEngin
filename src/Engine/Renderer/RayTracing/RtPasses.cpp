@@ -6,6 +6,7 @@
 #include "Engine/Core/Log.h"
 #include "Engine/Renderer/GpuBufferUtil.h"
 #include "Engine/Renderer/GraphicsDevice.h"
+#include "Engine/Renderer/RayTracing/RtTypes.h" // テンポラル蓄積のしきい値 / 履歴長上限
 #include "Engine/Renderer/ShaderManager.h"
 
 using namespace DirectX;
@@ -59,10 +60,25 @@ struct RtGiCB {
 };
 static_assert(sizeof(RtGiCB) == 32, "HLSL の RtGiCB と一致させること");
 
+// rt_temporal.cs.hlsl の RtTemporalCB (b2) と一致
+struct RtTemporalCB {
+    XMFLOAT4X4 prevViewProj = {}; // 転置済み
+    float outSize[2] = { 0, 0 };
+    float gbSize[2] = { 0, 0 };
+    XMFLOAT3 prevCameraPos = { 0, 0, 0 };
+    int32_t histValid = 0;
+    XMFLOAT3 cameraPos = { 0, 0, 0 };
+    float depthThreshold = kRtTemporalDepthThreshold;
+    float normalThreshold = kRtTemporalNormalThreshold;
+    float pad[3] = { 0, 0, 0 };
+};
+static_assert(sizeof(RtTemporalCB) == 128, "HLSL の RtTemporalCB と一致させること");
+
 // rt_blit.hlsl の RtBlitCB (b0) と一致
 struct RtBlitCB {
     float dstSize[2] = { 0, 0 };
-    float pad[2] = { 0, 0 };
+    int32_t mode = 0;   // 0 = rgb をそのまま / 1 = a を履歴長ヒートマップとして表示
+    float param = 1.0f; // mode 1 のスケール (履歴長の上限)
 };
 
 } // namespace
@@ -76,12 +92,14 @@ bool RtPasses::Init(GraphicsDevice& device, ShaderManager& shaders)
 
     debugCS_ = shaders.LoadCompute("rt_debug.cs");
     giCS_ = shaders.LoadCompute("rt_gi.cs");
+    temporalCS_ = shaders.LoadCompute("rt_temporal.cs");
     blitShader_ = shaders.Load("rt_blit");
 
     if (!CreateConstant(dev, sizeof(RtSceneCB), sceneCB_)
         || !CreateConstant(dev, sizeof(RtEnvCB), envCB_)
         || !CreateConstant(dev, sizeof(RtDebugCB), debugCB_)
         || !CreateConstant(dev, sizeof(RtGiCB), giCB_)
+        || !CreateConstant(dev, sizeof(RtTemporalCB), temporalCB_)
         || !CreateConstant(dev, sizeof(RtBlitCB), blitCB_)) {
         MYE_LOG_ERROR("RtPasses: constant buffer creation failed");
         return false;
@@ -113,6 +131,7 @@ bool RtPasses::Init(GraphicsDevice& device, ShaderManager& shaders)
 
     debugTimer_.Init(device);
     giTimer_.Init(device);
+    temporalTimer_.Init(device);
     inited_ = true;
     return true;
 }
@@ -121,10 +140,22 @@ void RtPasses::Shutdown()
 {
     debugRt_.Release();
     giRt_.Release();
+    for (GiHistory& h : giHist_) {
+        for (int i = 0; i < 2; ++i) {
+            h.color[i].Release();
+            h.geom[i].Release();
+        }
+        h.write = 0;
+        h.w = 0;
+        h.h = 0;
+        h.lastSerial = 0;
+        h.hasLast = false;
+    }
     sceneCB_.Reset();
     envCB_.Reset();
     debugCB_.Reset();
     giCB_.Reset();
+    temporalCB_.Reset();
     blitCB_.Reset();
     linearClamp_.Reset();
     depthDisabled_.Reset();
@@ -171,23 +202,25 @@ void RtPasses::UnbindCompute(GraphicsDevice& device)
 {
     ID3D11DeviceContext* dc = device.Context();
     // 同じテクスチャを次のパスで SRV / RTV として使うので必ず外す
+    // (テンポラルは履歴 ping-pong で「前フレーム書込先」を今フレーム SRV で読むため必須)
     ID3D11ShaderResourceView* nullSrvs[10] = {};
-    ID3D11UnorderedAccessView* nullUavs[1] = {};
+    ID3D11UnorderedAccessView* nullUavs[2] = {};
     dc->CSSetShaderResources(0, 10, nullSrvs);
-    dc->CSSetUnorderedAccessViews(0, 1, nullUavs, nullptr);
+    dc->CSSetUnorderedAccessViews(0, 2, nullUavs, nullptr);
     dc->CSSetShader(nullptr, nullptr, 0);
 }
 
-ID3D11ShaderResourceView* RtPasses::RenderGi(GraphicsDevice& device, ShaderManager& shaders,
-                                             const RenderView& view, const RtFrameInputs& in)
+RtGiResult RtPasses::RenderGi(GraphicsDevice& device, ShaderManager& shaders,
+                              const RenderView& view, const RtFrameInputs& in)
 {
+    RtGiResult result;
     if (!inited_ || !in.scene || !in.scene->IsValid() || !in.gbNormal || !in.gbPosition
         || !in.gbAlbedo || view.width <= 0 || view.height <= 0) {
-        return nullptr;
+        return result;
     }
     ShaderProgram* cs = shaders.Get(giCS_);
     if (!cs || !cs->valid || !cs->cs) {
-        return nullptr; // コンパイル失敗時は GI 無しで進む
+        return result; // コンパイル失敗時は GI 無しで進む
     }
 
     const float scale = std::clamp(view.rtResolutionScale, 0.25f, 1.0f);
@@ -196,7 +229,7 @@ ID3D11ShaderResourceView* RtPasses::RenderGi(GraphicsDevice& device, ShaderManag
     giRt_.Resize(device, gw, gh, DXGI_FORMAT_R16G16B16A16_FLOAT, /*withDepth=*/false,
                  /*withUav=*/true);
     if (!giRt_.UAV()) {
-        return nullptr;
+        return result;
     }
 
     ID3D11DeviceContext* dc = device.Context();
@@ -224,11 +257,94 @@ ID3D11ShaderResourceView* RtPasses::RenderGi(GraphicsDevice& device, ShaderManag
 
     UnbindCompute(device);
     giTimer_.End(device);
-    return giRt_.SRV();
+
+    // M46d: 履歴と混ぜる。off / シェーダ未コンパイルなら 1spp のまま返す
+    result.raw = giRt_.SRV();
+    ID3D11ShaderResourceView* acc = nullptr;
+    if (view.rtTemporal != 0) {
+        acc = Accumulate(device, shaders, view, in, gw, gh);
+    } else {
+        // 蓄積を切ったら履歴は連続しない — 次に入れたときは 1spp から積み直す
+        const uint32_t key =
+            (view.rtViewKey < static_cast<uint32_t>(kHistorySlots)) ? view.rtViewKey : 0u;
+        giHist_[key].hasLast = false;
+    }
+    result.accumulated = (acc != nullptr) ? acc : result.raw;
+    return result;
+}
+
+ID3D11ShaderResourceView* RtPasses::Accumulate(GraphicsDevice& device, ShaderManager& shaders,
+                                               const RenderView& view, const RtFrameInputs& in,
+                                               int gw, int gh)
+{
+    ShaderProgram* cs = shaders.Get(temporalCS_);
+    if (!cs || !cs->valid || !cs->cs) {
+        return nullptr; // コンパイル失敗時は 1spp のまま (絵は荒れるが壊れない)
+    }
+    const uint32_t key =
+        (view.rtViewKey < static_cast<uint32_t>(kHistorySlots)) ? view.rtViewKey : 0u;
+    GiHistory& h = giHist_[key];
+
+    if (h.w != gw || h.h != gh) {
+        for (int i = 0; i < 2; ++i) {
+            h.color[i].Resize(device, gw, gh, DXGI_FORMAT_R16G16B16A16_FLOAT,
+                              /*withDepth=*/false, /*withUav=*/true);
+            h.geom[i].Resize(device, gw, gh, DXGI_FORMAT_R16G16B16A16_FLOAT,
+                             /*withDepth=*/false, /*withUav=*/true);
+        }
+        h.w = gw;
+        h.h = gh;
+        h.write = 0;
+        h.hasLast = false; // リサイズで履歴は捨てる
+    }
+    const int wr = h.write;
+    const int rd = 1 - wr;
+    if (!h.color[wr].UAV() || !h.geom[wr].UAV() || !h.color[rd].SRV() || !h.geom[rd].SRV()) {
+        return nullptr;
+    }
+
+    // 履歴が使えるのは「同じビューが前フレームも描かれた」ときだけ。
+    // lastSerial+1 == 今フレームの通番 で連続性を見る (RT を途中で on/off しても混ざらない)
+    const bool histValid =
+        h.hasLast && (h.lastSerial + 1u == view.rtViewSerial) && view.prevViewProjValid != 0;
+
+    ID3D11DeviceContext* dc = device.Context();
+    temporalTimer_.Begin(device);
+
+    RtTemporalCB tc = {};
+    XMStoreFloat4x4(&tc.prevViewProj, XMMatrixTranspose(XMLoadFloat4x4(&view.prevViewProj)));
+    tc.outSize[0] = static_cast<float>(gw);
+    tc.outSize[1] = static_cast<float>(gh);
+    tc.gbSize[0] = static_cast<float>(view.width);
+    tc.gbSize[1] = static_cast<float>(view.height);
+    tc.prevCameraPos = view.prevCameraPos;
+    tc.histValid = histValid ? 1 : 0;
+    tc.cameraPos = view.cameraPos;
+    tc.depthThreshold = kRtTemporalDepthThreshold;
+    tc.normalThreshold = kRtTemporalNormalThreshold;
+    UploadCB(dc, temporalCB_.Get(), tc);
+    ID3D11Buffer* cbs[1] = { temporalCB_.Get() };
+    dc->CSSetConstantBuffers(2, 1, cbs);
+
+    ID3D11ShaderResourceView* srvs[6] = { giRt_.SRV(),   h.color[rd].SRV(), h.geom[rd].SRV(),
+                                          in.gbNormal,   in.gbPosition,     in.gbAlbedo };
+    dc->CSSetShaderResources(0, 6, srvs);
+    ID3D11UnorderedAccessView* uavs[2] = { h.color[wr].UAV(), h.geom[wr].UAV() };
+    dc->CSSetUnorderedAccessViews(0, 2, uavs, nullptr);
+    dc->CSSetShader(cs->cs.Get(), nullptr, 0);
+    dc->Dispatch(static_cast<UINT>((gw + 7) / 8), static_cast<UINT>((gh + 7) / 8), 1);
+
+    UnbindCompute(device);
+    temporalTimer_.End(device);
+
+    h.lastSerial = view.rtViewSerial;
+    h.hasLast = true;
+    h.write = rd; // 次フレームは今書いた面を読む
+    return h.color[wr].SRV();
 }
 
 bool RtPasses::Blit(GraphicsDevice& device, ShaderManager& shaders, const RenderView& view,
-                    ID3D11ShaderResourceView* src)
+                    ID3D11ShaderResourceView* src, int mode)
 {
     ShaderProgram* blit = shaders.Get(blitShader_);
     if (!blit || !blit->valid || src == nullptr) {
@@ -239,6 +355,8 @@ bool RtPasses::Blit(GraphicsDevice& device, ShaderManager& shaders, const Render
     RtBlitCB bc = {};
     bc.dstSize[0] = static_cast<float>(view.width);
     bc.dstSize[1] = static_cast<float>(view.height);
+    bc.mode = mode;
+    bc.param = static_cast<float>(kRtTemporalMaxHistory);
     UploadCB(dc, blitCB_.Get(), bc);
 
     D3D11_VIEWPORT vp = {};
@@ -268,16 +386,22 @@ bool RtPasses::Blit(GraphicsDevice& device, ShaderManager& shaders, const Render
 }
 
 bool RtPasses::RenderDebug(GraphicsDevice& device, ShaderManager& shaders, const RenderView& view,
-                           const RtFrameInputs& in, ID3D11ShaderResourceView* giSrv)
+                           const RtFrameInputs& in, const RtGiResult& gi)
 {
     if (!inited_ || view.rtDebugMode == 0 || !in.scene || !in.scene->IsValid()
         || view.rtv == nullptr || view.width <= 0 || view.height <= 0) {
         return false;
     }
 
-    // モード 4 は GI バッファをそのまま拡大表示する (CS は RenderGi で実行済み)
+    // モード 4-6 は GI バッファをそのまま拡大表示する (CS は RenderGi で実行済み)
     if (view.rtDebugMode == 4) {
-        return Blit(device, shaders, view, giSrv);
+        return Blit(device, shaders, view, gi.raw);
+    }
+    if (view.rtDebugMode == 5) {
+        return Blit(device, shaders, view, gi.accumulated);
+    }
+    if (view.rtDebugMode == 6) { // 履歴長 (a) のヒートマップ
+        return Blit(device, shaders, view, gi.accumulated, /*mode=*/1);
     }
 
     ShaderProgram* cs = shaders.Get(debugCS_);

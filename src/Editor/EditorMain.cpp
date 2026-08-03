@@ -141,6 +141,12 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 config.useJobs = false; // M25: 並列を直列化 (決定論ゲート / 計測比較)
             } else if (arg == L"--rt-debug" && i + 1 < argc) {
                 config.rtDebugMode = _wtoi(argv[++i]); // M46b (Deferred のみ)
+            } else if (arg == L"--rt-no-temporal") {
+                config.rtTemporal = false; // M46d: 1spp 生のまま (A/B 計測用)
+            } else if (arg == L"--rt-freeze-seed") {
+                config.rtFreezeSeed = true; // M46d: 乱数列を進めない (決定的スクショ)
+            } else if (arg == L"--rt-anim-seed") {
+                config.rtAnimSeed = true; // M46d: スクショ時の自動 freeze を解除
             } else if (arg == L"--project" && i + 1 < argc) {
                 projectDir = argv[++i];
             } else if (arg == L"--create-project" && i + 1 < argc) {

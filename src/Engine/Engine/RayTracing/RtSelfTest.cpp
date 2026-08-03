@@ -323,6 +323,77 @@ void TestSampling()
     TEST_CHECK(down.x * dd.x + down.y * dd.y + down.z * dd.z >= -1e-4f);
 }
 
+// テンポラル蓄積の判定式 (M46d)。HLSL 側と同一式なので、ここが通れば
+// rt_temporal.cs.hlsl の再投影・履歴更新も同じ挙動になる
+void TestTemporal()
+{
+    MYE_LOG_INFO("[selftest] rt: temporal reprojection");
+
+    // ---- クリップ座標 → 履歴 UV ----
+    XMFLOAT2 uv;
+    // 画面中央 (ndc 0,0) は uv (0.5, 0.5)
+    TEST_CHECK(RtClipToPrevUv({ 0.0f, 0.0f, 5.0f, 10.0f }, uv));
+    TEST_CHECK(std::fabs(uv.x - 0.5f) < 1e-6f && std::fabs(uv.y - 0.5f) < 1e-6f);
+    // ndc の +Y は画面の上 = uv の 0 側 (Y 反転が入っていること)
+    TEST_CHECK(RtClipToPrevUv({ 0.0f, 1.0f, 5.0f, 2.0f }, uv));
+    TEST_CHECK(uv.y < 0.5f);
+    // カメラの背後 (w<=0) と画面外は履歴なし
+    TEST_CHECK(!RtClipToPrevUv({ 0.0f, 0.0f, -1.0f, -2.0f }, uv));
+    TEST_CHECK(!RtClipToPrevUv({ 3.0f, 0.0f, 1.0f, 2.0f }, uv)); // ndc.x = 1.5 → 画面右外
+    TEST_CHECK(!RtClipToPrevUv({ 0.0f, -3.0f, 1.0f, 2.0f }, uv)); // ndc.y = -1.5 → 画面下外
+
+    // ---- 再投影の妥当性 (深度 = カメラ距離の相対差 / 法線 = cos) ----
+    const XMFLOAT3 n = { 0.0f, 1.0f, 0.0f };
+    constexpr float kD = kRtTemporalDepthThreshold;   // 0.05
+    constexpr float kN = kRtTemporalNormalThreshold;  // 0.9
+    TEST_CHECK(RtReprojectValid(10.0f, 10.0f, n, n, kD, kN));       // 完全一致
+    TEST_CHECK(RtReprojectValid(10.0f, 10.4f, n, n, kD, kN));       // 相対 4% = 許容内
+    TEST_CHECK(!RtReprojectValid(10.0f, 11.0f, n, n, kD, kN));      // 相対 10% = disocclusion
+    TEST_CHECK(!RtReprojectValid(10.0f, 0.0f, n, n, kD, kN));       // 履歴が未記録 (深度 0)
+    TEST_CHECK(!RtReprojectValid(0.0f, 10.0f, n, n, kD, kN));       // 現在側が退化
+    // 法線: しきい値をまたぐ 2 点 + 直交/裏返しは棄却
+    const XMFLOAT3 tiltIn = Normalize({ 0.3122f, 0.95f, 0.0f });  // n との cos ≈ 0.95 > 0.9
+    const XMFLOAT3 tiltOut = Normalize({ 0.5268f, 0.85f, 0.0f }); // n との cos ≈ 0.85 < 0.9
+    TEST_CHECK(RtReprojectValid(10.0f, 10.0f, n, tiltIn, kD, kN));
+    TEST_CHECK(!RtReprojectValid(10.0f, 10.0f, n, tiltOut, kD, kN));
+    TEST_CHECK(!RtReprojectValid(10.0f, 10.0f, n, { 1.0f, 0.0f, 0.0f }, kD, kN));
+    TEST_CHECK(!RtReprojectValid(10.0f, 10.0f, n, { 0.0f, -1.0f, 0.0f }, kD, kN));
+
+    // ---- 履歴長と重み ----
+    const float maxLen = static_cast<float>(kRtTemporalMaxHistory);
+    // 無効 → 1 に若返る = alpha 1.0 = 今フレームの 1spp をそのまま採用
+    TEST_CHECK(RtAdvanceHistory(20.0f, false, maxLen) == 1.0f);
+    TEST_CHECK(RtTemporalAlpha(RtAdvanceHistory(20.0f, false, maxLen)) == 1.0f);
+    // 有効 → 1 ずつ伸びて上限で頭打ち (追従を止めないための下限重み)
+    TEST_CHECK(RtAdvanceHistory(0.0f, true, maxLen) == 1.0f);
+    TEST_CHECK(RtAdvanceHistory(3.0f, true, maxLen) == 4.0f);
+    TEST_CHECK(RtAdvanceHistory(maxLen, true, maxLen) == maxLen);
+    TEST_CHECK(std::fabs(RtTemporalAlpha(maxLen) - 1.0f / maxLen) < 1e-6f);
+    TEST_CHECK(RtTemporalAlpha(0.0f) == 1.0f); // 0 除算しない
+
+    // 静止 (常に valid) なら履歴長は単調増加して上限で止まり、重みは 0 にならない
+    float len = 0.0f;
+    bool monotone = true;
+    for (int i = 0; i < 200; ++i) {
+        const float next = RtAdvanceHistory(len, true, maxLen);
+        if (next < len) {
+            monotone = false;
+        }
+        len = next;
+    }
+    TEST_CHECK(monotone && len == maxLen && RtTemporalAlpha(len) > 0.0f);
+
+    // 移動平均の収束: 一定値 c を入れ続ければ蓄積値は c に近づく (バイアスが無い)
+    float acc = 0.0f, hist = 0.0f;
+    constexpr float kC = 0.75f;
+    for (int i = 0; i < 64; ++i) {
+        hist = RtAdvanceHistory(hist, i > 0, maxLen);
+        const float a = RtTemporalAlpha(hist);
+        acc = acc * (1.0f - a) + kC * a;
+    }
+    TEST_CHECK(std::fabs(acc - kC) < 1e-3f);
+}
+
 } // namespace
 
 bool RunRtSelfTest()
@@ -334,6 +405,7 @@ bool RunRtSelfTest()
     TestBuildDeterminism();
     TestTlas();
     TestSampling();
+    TestTemporal();
     if (g_failCount == 0) {
         MYE_LOG_INFO("==== Ray tracing self test: ALL PASS ====");
         return true;
