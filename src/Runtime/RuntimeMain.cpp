@@ -149,6 +149,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 config.rtGi = true; // M46f: GI を最終画像へ合成 (Deferred のみ)
             } else if (arg == L"--rt-shadow") {
                 config.rtShadow = true; // M46g: 平行光の影をレイトレで (Deferred のみ)
+            } else if (arg == L"--rt-refl") {
+                config.rtRefl = true; // M46h: スペキュラ環境項をレイトレ反射で (Deferred のみ)
             } else if (arg == L"--project" && i + 1 < argc) {
                 // M26: プロジェクト指定。dist 配布物は従来どおり exe 隣の assets を自動発見する
                 config.projectRoot = std::filesystem::absolute(argv[++i]).wstring();

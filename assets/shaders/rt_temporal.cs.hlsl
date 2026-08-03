@@ -25,7 +25,11 @@ cbuffer RtTemporalCB : register(b2)
     float3 gTempCameraPos;
     float gTempDepthThreshold; // カメラ距離の相対許容 (RtTypes.h が出所)
     float gTempNormalThreshold; // 法線 cos の下限
-    float3 gTempPad;
+    // M46h: この信号の履歴長上限。GI は MYE_RT_TEMPORAL_MAX_HISTORY と同値、
+    // 反射はより短い値 (鏡面はカメラ運動で反射像が大きく動くので長く積むとラグになる)。
+    // 下の #define はハードキャップとして残す (C++ 定数との一致を規則 9 が検査する)
+    float gTempMaxHistory;
+    float2 gTempPad;
 };
 
 Texture2D gTempCur : register(t0);       // このフレームの 1spp GI (内部解像度)
@@ -130,7 +134,7 @@ void CSMain(uint3 tid : SV_DispatchThreadID)
     }
 
     const float histLen =
-        RtAdvanceHistory(hist.a, valid, (float)MYE_RT_TEMPORAL_MAX_HISTORY);
+        RtAdvanceHistory(hist.a, valid, min(gTempMaxHistory, (float)MYE_RT_TEMPORAL_MAX_HISTORY));
     const float alpha = RtTemporalAlpha(histLen);
     const float3 accum = lerp(hist.rgb, cur, alpha); // valid=false なら histLen=1 → cur
 

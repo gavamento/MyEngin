@@ -46,7 +46,11 @@ cbuffer LightPass : register(b0)
     int      gRtGiEnabled;
     // ---- M46g: RT 影 (末尾 append)。0 = 従来どおり CSM をサンプルする ----
     int      gRtShadowEnabled;
-    float2   _rtPad;
+    // ---- M46h: RT 反射 (末尾 append)。0 = スペキュラ環境項は従来どおり IBL のみ ----
+    int      gRtReflEnabled;
+    float    gRtReflFadeStart; // ここから gRtReflMaxRough まで IBL へ smoothstep で戻す
+    float    gRtReflMaxRough;  // これを超える roughness はレイを撃っていない
+    float3   _rtPad;
 };
 
 Texture2D gAlbedo    : register(t0);
@@ -60,6 +64,7 @@ Texture2D   gIblBrdfLut     : register(t7);
 Texture2D   gSsao           : register(t8); // M38e (半解像度、ブラー済み AO)
 Texture2D   gRtGi           : register(t9); // M46f (内部解像度、demodulated 入射放射輝度)
 Texture2D   gRtShadow       : register(t10); // M46g (フル解像度 R8、太陽の可視率)
+Texture2D   gRtRefl         : register(t11); // M46h (内部解像度、反射方向の入射放射輝度)
 SamplerState gIblSampler : register(s0); // LINEAR/CLAMP (M38c、s0 は光パスで空きだった)
 SamplerComparisonState gShadowSampler : register(s1);
 
@@ -101,13 +106,23 @@ float4 PSMain(VSOut i) : SV_Target
         ao = gSsao.SampleLevel(gIblSampler, i.pos.xy / gScreenSize, 0).r; // M38e
     }
     float3 color;
-    if (gRtGiEnabled != 0) {
-        // M46f: GI は内部解像度 (rtResolutionScale) なので s0 = LINEAR/CLAMP で引き上げる
-        const float3 gi = gRtGi.SampleLevel(gIblSampler, i.pos.xy / gScreenSize, 0).rgb;
+    if (gRtGiEnabled != 0 || gRtReflEnabled != 0) {
+        // M46f/M46h: GI と反射は内部解像度 (rtResolutionScale) なので
+        // s0 = LINEAR/CLAMP で引き上げる。off 側の項は 0 のまま渡す (合成側が見ない)
+        const float2 rtUv = i.pos.xy / gScreenSize;
+        float3 gi = float3(0.0f, 0.0f, 0.0f);
+        if (gRtGiEnabled != 0) {
+            gi = gRtGi.SampleLevel(gIblSampler, rtUv, 0).rgb;
+        }
+        float3 refl = float3(0.0f, 0.0f, 0.0f);
+        if (gRtReflEnabled != 0) {
+            refl = gRtRefl.SampleLevel(gIblSampler, rtUv, 0).rgb;
+        }
         color = ApplyLightingHybrid(albedo.rgb, n, posW, gCameraPos, mr.x, mr.y, gAmbient,
                                     gLights, gLightCount, dirShadow, gIblEnabled, gIblSpecMips,
                                     gIblIrradiance, gIblPrefiltered, gIblBrdfLut, gIblSampler, ao,
-                                    gi);
+                                    gi, gRtGiEnabled, refl, gRtReflEnabled, gRtReflFadeStart,
+                                    gRtReflMaxRough);
     } else {
         color = ApplyLighting(albedo.rgb, n, posW, gCameraPos, mr.x, mr.y, gAmbient,
                               gLights, gLightCount, dirShadow, gIblEnabled, gIblSpecMips,

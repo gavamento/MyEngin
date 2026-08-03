@@ -405,22 +405,65 @@ float3 RtSampleCone(float3 dir, float cosMax, float2 u)
     return normalize(t1 * (sinT * cos(phi)) + t2 * (sinT * sin(phi)) + dir * cosT);
 }
 
+// GGX の可視法線分布 (VNDF) サンプリング (Heitz 2018, JCGT)。
+// ワールド空間の法線 n と視線方向 v (面 → カメラ) から half vector を返す。
+// alpha = roughness² (common.hlsli::DistributionGGX と同じ規約)。
+// alpha = 0 で n そのものへ退化する = 完全鏡面。
+// 接空間の基底は RtCosineHemisphere / RtSampleCone と同じ Duff らの分岐なし ONB。
+// **RtMath.h の RtGgxVndf と同一式 (変更時は両方更新)**
+float3 RtGgxVndf(float3 n, float3 v, float alpha, float2 u)
+{
+    // n を z 軸とする正規直交基底
+    const float sgn = (n.z >= 0.0f) ? 1.0f : -1.0f;
+    const float a = -1.0f / (sgn + n.z);
+    const float b = n.x * n.y * a;
+    const float3 t1 = float3(1.0f + sgn * n.x * n.x * a, sgn * b, -sgn * n.x);
+    const float3 t2 = float3(b, sgn + n.y * n.y * a, -n.y);
+
+    // 視線を接空間へ → 楕円体を半球へ変形 (§3.2)
+    const float3 ve = float3(dot(v, t1), dot(v, t2), dot(v, n));
+    const float3 vh = normalize(float3(alpha * ve.x, alpha * ve.y, ve.z));
+    // 投影面積の正規直交基底 (vh が z 軸に一致するときの特異点を分岐で回避、§4.1)
+    const float lensq = vh.x * vh.x + vh.y * vh.y;
+    const float3 h1 = (lensq > 1e-12f) ? (float3(-vh.y, vh.x, 0.0f) * rsqrt(lensq))
+                                       : float3(1.0f, 0.0f, 0.0f);
+    const float3 h2 = cross(vh, h1);
+    // 単位円板の一様サンプルを、可視半球の投影 (楕円) へ切り詰める (§4.2)
+    const float r = sqrt(u.x);
+    const float phi = 6.28318530718f * u.y;
+    const float p1 = r * cos(phi);
+    float p2 = r * sin(phi);
+    const float s = 0.5f * (1.0f + vh.z);
+    p2 = (1.0f - s) * sqrt(max(0.0f, 1.0f - p1 * p1)) + s * p2;
+    // 半球へ持ち上げ (§4.3) → 楕円体へ戻す (§3.4)
+    const float3 nh =
+        p1 * h1 + p2 * h2 + sqrt(max(0.0f, 1.0f - p1 * p1 - p2 * p2)) * vh;
+    const float3 ne = normalize(float3(alpha * nh.x, alpha * nh.y, max(1e-6f, nh.z)));
+    return normalize(ne.x * t1 + ne.y * t2 + ne.z * n);
+}
+
 // ---- シェーディング ----
 
-// レイが何にも当たらなかったときの放射輝度
-float3 RtSkyRadiance(float3 dir)
+// レイが何にも当たらなかったときの放射輝度。lod はキューブマップスカイの mip
+// (拡散 GI は粗い mip でノイズを減らし、鏡面反射は lod 0 で像を保つ)
+float3 RtSkyRadianceLod(float3 dir, float lod)
 {
     // 単一の戻り値にまとめる (早期 return を混ぜると X4000 の誤検出が出る)
     float3 c = gRtAmbient; // スカイ無し = 従来の定数アンビエント
     if (gRtSkyMode == 1) {
-        // 二次光線なので粗い mip で十分 (ノイズも減る)
-        c = gRtSkyCube.SampleLevel(gRtSampler, dir, 2.0f).rgb;
+        c = gRtSkyCube.SampleLevel(gRtSampler, dir, lod).rgb;
     } else if (gRtSkyMode == 0) {
         const float t = dir.y; // skybox.hlsl と同一式
         c = (t >= 0.0f) ? lerp(gRtSkyHorizon, gRtSkyTop, saturate(t * 1.4f))
                         : lerp(gRtSkyHorizon, gRtSkyBottom, saturate(-t * 1.4f));
     }
     return c;
+}
+
+// 二次光線 (拡散 GI) 既定: 粗い mip で十分 (ノイズも減る)
+float3 RtSkyRadiance(float3 dir)
+{
+    return RtSkyRadianceLod(dir, 2.0f);
 }
 
 // ヒット点の直接光 (拡散のみ)。common.hlsli::ApplyLighting の減衰規約をそのまま複製し、
@@ -456,17 +499,28 @@ float3 RtDirectLight(float3 P, float3 N, float3 albedo, float metallic)
     return albedo * (1.0f - metallic) * Lo;
 }
 
-// レイに沿った放射輝度を bounces 回まで積む。
+// レイに沿った放射輝度を bounces 回まで積む。skyLod = ミス時のスカイ mip。
 // cosine 重点サンプリングと 1/PI 省略規約により、throughput は albedo の積そのものになる
-// (BRDF の 1/PI を省いた分と pdf の PI が相殺する)
-float3 RtTraceRadiance(float3 ro, float3 rd, float tMax, int bounces, inout uint3 seed)
+// (BRDF の 1/PI を省いた分と pdf の PI が相殺する)。
+//
+// envOnLastHit = 1 で、打ち切り点のヒット面に「環境からの拡散入射」を近似で足す
+// (法線方向のスカイ放射輝度 × albedo)。**反射 (M46h) では必須** — 反射は
+// ラスタのスペキュラ環境項を丸ごと置き換えるので、映り込んだ面の明るさが
+// ラスタで見たときの明るさと揃っていないと、日向を向いていない面が黒く抜ける。
+// 逆に**拡散 GI (M46c) では 0** — GI はラスタの拡散環境項を置き換える側なので、
+// バウンス先にも環境項を足すと同じ光を二重に数えることになる。
+//
+// v1 制限: ヒット点のシェーディングは拡散のみ — 二次ヒット面の鏡面反射は評価しない
+// (金属に映った金属は黒く落ちる)。マテリアルは定数のみでテクスチャは引かない
+float3 RtTraceRadianceLod(float3 ro, float3 rd, float tMax, int bounces, inout uint3 seed,
+                          float skyLod, float envOnLastHit)
 {
     float3 radiance = float3(0.0f, 0.0f, 0.0f);
     float3 throughput = float3(1.0f, 1.0f, 1.0f);
     for (int b = 0; b < bounces; ++b) {
         RtHit hit;
         if (!RtTraceClosest(ro, rd, tMax, hit)) {
-            radiance += throughput * RtSkyRadiance(rd);
+            radiance += throughput * RtSkyRadianceLod(rd, skyLod);
             break;
         }
         const float3 P = ro + rd * hit.t;
@@ -477,6 +531,18 @@ float3 RtTraceRadiance(float3 ro, float3 rd, float tMax, int bounces, inout uint
         const RtMaterial m = RtHitMaterial(hit);
         radiance += throughput * (RtDirectLight(P, N, m.baseColor, m.metallic) + m.emissive);
         if (b + 1 >= bounces) {
+            // 打ち切り点。これ以上バウンスしないので、ラスタが同じ面に与える環境項
+            // (IBL 拡散 + IBL スペキュラ) を追加のレイ無しで 1 発近似する。
+            //   拡散  = 法線方向のスカイ放射輝度 × albedo (粗い mip = irradiance の代用)。
+            //           スカイ無しなら gRtAmbient = ラスタの簡易アンビエントと同値
+            //   鏡面  = 鏡面方向のスカイ放射輝度 × F0 (mip を roughness で選ぶのは
+            //           ラスタの prefiltered サンプルと同じ規約)。**これが無いと
+            //           映り込んだ金属面が真っ黒になる** — 金属は拡散項が 0 のため
+            const float3 f0 = lerp(float3(0.04f, 0.04f, 0.04f), m.baseColor, m.metallic);
+            const float3 envDiffuse = RtSkyRadianceLod(N, 4.0f) * m.baseColor
+                * (1.0f - m.metallic);
+            const float3 envSpec = RtSkyRadianceLod(reflect(rd, N), m.roughness * 4.0f) * f0;
+            radiance += throughput * envOnLastHit * (envDiffuse + envSpec);
             break;
         }
         throughput *= m.baseColor * (1.0f - m.metallic);
@@ -484,6 +550,12 @@ float3 RtTraceRadiance(float3 ro, float3 rd, float tMax, int bounces, inout uint
         ro = P + N * gRtRayEps;
     }
     return radiance;
+}
+
+// 拡散 GI 既定 (skyLod = 2 / 環境項なし)。M46c からの呼び出しはこちら = 出力はビット不変
+float3 RtTraceRadiance(float3 ro, float3 rd, float tMax, int bounces, inout uint3 seed)
+{
+    return RtTraceRadianceLod(ro, rd, tMax, bounces, seed, 2.0f, 0.0f);
 }
 
 #endif // MYE_RT_COMMON_INCLUDED

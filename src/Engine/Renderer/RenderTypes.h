@@ -135,6 +135,9 @@ struct RenderView {
     int32_t rtGiEnabled = 0;
     // ---- M46g: RT 影 (末尾 append)。1 = 平行光のシャドウ係数を CSM でなくレイトレで作る ----
     int32_t rtShadowEnabled = 0;
+    // ---- M46h: RT 反射 (末尾 append)。1 = ライトパスのスペキュラ環境項を
+    //      roughness に応じてレイトレ反射で置換する (粗い面は IBL のまま) ----
+    int32_t rtReflEnabled = 0;
 };
 
 // GPU へ渡すライト 1 個 (定数バッファ配列要素、16 バイト境界に揃えた 64 バイト)。

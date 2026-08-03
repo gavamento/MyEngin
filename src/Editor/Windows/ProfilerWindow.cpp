@@ -48,7 +48,8 @@ void ProfilerWindow::OnImGui(EngineContext& ctx)
         // M46b: レイトレ (デバッグ表示も GI 合成も off のときは行ごと出さない)
         const bool rtGiOn = ctx.renderSystem->enableRtGi;             // M46f
         const bool rtShadowOn = ctx.renderSystem->enableRtShadow;     // M46g
-        if (ctx.renderSystem->rtDebugMode != 0 || rtGiOn || rtShadowOn) {
+        const bool rtReflOn = ctx.renderSystem->enableRtRefl;         // M46h
+        if (ctx.renderSystem->rtDebugMode != 0 || rtGiOn || rtShadowOn || rtReflOn) {
             ImGui::Text("  rt bvh: %5d inst / %7d tri / %6.3f ms (CPU)",
                         ctx.renderSystem->RtInstanceCount(),
                         ctx.renderSystem->RtTriangleCount(), ctx.renderSystem->RtBuildCpuMs());
@@ -74,6 +75,14 @@ void ProfilerWindow::OnImGui(EngineContext& ctx)
                 ImGui::Text("  rt shadow: %6.3f ms trace / %6.3f ms filter (GpuTimer, full res)",
                             ctx.renderSystem->RtShadowGpuMs(),
                             ctx.renderSystem->RtShadowFilterGpuMs());
+            }
+            // M46h: 反射レイと、そのデノイズ (蓄積 + 分散推定 + A-Trous の合計)
+            if (ctx.renderSystem->rtDebugMode == 10 || ctx.renderSystem->rtDebugMode == 11
+                || rtReflOn) {
+                ImGui::Text("  rt refl: %6.3f ms trace / %6.3f ms denoise (GpuTimer, %.0f%% res)",
+                            ctx.renderSystem->RtReflGpuMs(),
+                            ctx.renderSystem->RtReflDenoiseGpuMs(),
+                            ctx.renderSystem->rtResolutionScale * 100.0f);
             }
         }
     }

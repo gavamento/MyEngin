@@ -57,15 +57,40 @@ constexpr float kRtAtrousSigmaLuma = 4.0f;
 // 大きいほど半影が広がるが、1spp のノイズも同じだけ増える
 constexpr float kRtShadowSunAngleDeg = 0.265f;
 
-// 影レイ原点のオフセット (自己交差回避)。G-Buffer のワールド座標が半精度
-// (R16G16B16A16_FLOAT = 相対誤差 ~5e-4) なので、定数だけでは遠景でアクネが出る。
-// 実効値 = max(絶対下限, 相対係数 * 距離)
-constexpr float kRtShadowEpsMin = 1e-3f;
-constexpr float kRtShadowEpsRel = 1e-3f;
+// G-Buffer の可視点から二次光線を撃つときの原点オフセット (自己交差回避)。
+// ワールド座標が半精度 (R16G16B16A16_FLOAT = 相対誤差 ~5e-4) なので、定数だけでは
+// 遠景でアクネが出る。実効値 = max(絶対下限, 相対係数 * 距離)。
+// **影 (M46g) と反射 (M46h) で共有** — 面の自己交差はレイの種類によらないため
+constexpr float kRtSurfaceEpsMin = 1e-3f;
+constexpr float kRtSurfaceEpsRel = 1e-3f;
 
 // 影の空間フィルタ (SVGF のスカラー軽量版) の反復回数。刻み幅は 1 から倍化。
 // GI (3 回) より弱いのは、太陽コーンが狭く 1spp のノイズが半影に限られるため
 constexpr int kRtShadowFilterIterations = 1;
+
+// ---- M46h: RT 反射 (GGX VNDF 1 本 + IBL フォールバック) ----
+
+// これを超える roughness ではレイを撃たず IBL スペキュラへ完全に委ねる。
+// GGX ローブが広がるほど 1spp の分散が跳ね上がる一方、プリフィルタ IBL との
+// 見た目の差は縮むので、コストを払う意味が無くなる境界
+constexpr float kRtReflMaxRoughness = 0.6f;
+
+// IBL へのフェード開始 roughness。ここから kRtReflMaxRoughness まで smoothstep で
+// 混ぜる (段差を作らないため。両者は同じ次元の入射放射輝度なので混色して良い)
+constexpr float kRtReflFadeStart = 0.4f;
+
+// 反射のテンポラル履歴長の上限。GI (32) より短いのは、鏡面ほど反射像が
+// カメラ運動で大きく動くため — 長く積むとラグ (引きずり) として見える。
+// 実効値は HLSL の MYE_RT_TEMPORAL_MAX_HISTORY とのより小さい方
+constexpr float kRtReflMaxHistory = 8.0f;
+
+// 反射の A-Trous 反復回数。GI (3 回) より少ないのは、反射像は「本物のディテール」を
+// 持つので広く均すと像そのものが溶けるため
+constexpr int kRtReflAtrousIterations = 2;
+
+// 反射の輝度エッジ停止 σ。GI (4.0) より厳しくして反射像のディテールを残す
+// (分散が高い = ノイズのときだけ均し、収束したら像を保つ)
+constexpr float kRtReflSigmaLuma = 1.0f;
 
 // BVH ノード (BLAS / TLAS 共通)。
 //   内部ノード: left/right = 子ノードの絶対 index (どちらも >= 0)

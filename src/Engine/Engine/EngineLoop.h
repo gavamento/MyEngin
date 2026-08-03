@@ -76,6 +76,8 @@ struct EngineConfig {
     bool rtGi = false;
     // M46g: 平行光の影をレイトレで作る (--rt-shadow)。Deferred パスのみ。同上
     bool rtShadow = false;
+    // M46h: スペキュラ環境項をレイトレ反射で置き換える (--rt-refl)。Deferred パスのみ。同上
+    bool rtRefl = false;
 
     // ---- オーディオ (M45) ----
     // false (--no-audio) で XAudio2 を一切初期化しない。オーディオ端末の無い CI や

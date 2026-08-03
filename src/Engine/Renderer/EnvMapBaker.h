@@ -34,6 +34,9 @@ public:
     EnvMaps GetForGradient(GraphicsDevice& device, ShaderManager& shaders,
                            const DirectX::XMFLOAT3& top, const DirectX::XMFLOAT3& horizon,
                            const DirectX::XMFLOAT3& bottom);
+    // M46h: split-sum 第 2 項 (環境 BRDF) だけを取り出す。スカイに依存しない純関数なので、
+    // スカイの無いシーンでも RT 反射の合成に使える。失敗時は null (初回のみベイク)
+    ID3D11ShaderResourceView* GetBrdfLut(GraphicsDevice& device, ShaderManager& shaders);
     void Shutdown();
 
     static constexpr int kSpecSize = 128;

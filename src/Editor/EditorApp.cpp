@@ -324,6 +324,8 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
             ImGui::MenuItem("RT GI (Deferred)", nullptr, &ctx.renderSystem->enableRtGi);
             // M46g: 平行光の影を CSM でなくレイトレの可視率で作る (カスケード境界が消える)
             ImGui::MenuItem("RT Shadow (Deferred)", nullptr, &ctx.renderSystem->enableRtShadow);
+            // M46h: 滑らかな面のスペキュラ環境項をレイトレ反射で置換 (画面外も映る)
+            ImGui::MenuItem("RT Reflection (Deferred)", nullptr, &ctx.renderSystem->enableRtRefl);
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu("RT Debug (Deferred)")) {
@@ -361,6 +363,13 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
             // M46g: 太陽の可視率 (白 = 照らされる / 黒 = 影)。RT 影 off でも撃って表示する
             if (ImGui::MenuItem("RT Shadow Visibility", nullptr, mode == 9)) {
                 mode = 9;
+            }
+            // M46h: 反射の生 1spp とデノイズ後 (roughness 超過の面は黒 = 撃っていない)
+            if (ImGui::MenuItem("Raw Reflection (1spp)", nullptr, mode == 10)) {
+                mode = 10;
+            }
+            if (ImGui::MenuItem("Denoised Reflection", nullptr, mode == 11)) {
+                mode = 11;
             }
             ImGui::Separator();
             // M46c: GI の品質。解像度は内部バッファ、バウンスは二次光線の深さ

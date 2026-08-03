@@ -213,21 +213,31 @@ float3 ApplyLighting(float3 albedo, float3 normal, float3 posW, float3 cameraPos
     return ambientTerm * ao + Lo; // SSAO は環境項のみ減衰 (直接光には掛けない)
 }
 
-// M46f: ハイブリッド合成版。**拡散の環境項だけ**をレイトレ GI (rt_gi.cs.hlsl の出力) で
-// 置き換える。gi は albedo を掛けない demodulated 入射放射輝度 (M46c の規約) なので、
-// IBL irradiance / 定数アンビエントとちょうど同じ位置に代入できる = 明るさの段差が出ない。
+// M46h: レイトレ反射を IBL スペキュラへ混ぜる重み (1 = 反射 100% / 0 = IBL 100%)。
+// しきい値は RtTypes.h が出所で CB 経由で渡る。RtMath.h の RtReflWeight と同一式
+float RtReflWeight(float roughness, float fadeStart, float maxRough)
+{
+    return 1.0f - smoothstep(fadeStart, maxRough, roughness);
+}
+
+// M46f/M46h: ハイブリッド合成版。**環境項だけ**をレイトレの結果で置き換える。
+//   拡散 = rt_gi.cs.hlsl の出力 (albedo を掛けない demodulated 入射放射輝度、M46c の規約)。
+//          IBL irradiance / 定数アンビエントとちょうど同じ位置に代入できる。
+//   鏡面 = rt_refl.cs.hlsl の出力 (IBL のプリフィルタ済み放射輝度と同次元、M46h の規約)。
+//          roughness で IBL へ smoothstep フォールバックする — 同次元なので段差が出ない。
+// どちらも独立に on/off でき、両方 0 なら呼ばれない (呼び出し側が ApplyLighting を使う)。
 //
 // 直接光は式を複製せず ApplyLighting を「環境項ゼロ」(ambient=0 / iblEnabled=0) で呼んで
 // Lo だけを取り出す — こうしておくと Forward と Deferred のライティングが永久に一致する。
-// ao は GI 拡散には掛けない (可視性はレイトレ側に既に入っている = 二重遮蔽になるため)。
-// IBL スペキュラ環境項は従来どおり ao で減衰させる。
-// **この関数は gRtGiEnabled != 0 のときだけ呼ばれる** (既存 ApplyLighting は無変更)。
+// ao はレイトレ由来の項には掛けない (可視性はレイが持っている = 二重遮蔽になるため)。
+// IBL 由来の環境項は従来どおり ao で減衰させる。**既存 ApplyLighting は無変更**。
 float3 ApplyLightingHybrid(float3 albedo, float3 normal, float3 posW, float3 cameraPos,
                            float metallic, float roughness, float3 ambient,
                            Light lights[MAX_LIGHTS], int count, float dirShadow, int iblEnabled,
                            float iblSpecMips, TextureCube iblIrradiance,
                            TextureCube iblPrefiltered, Texture2D iblBrdfLut,
-                           SamplerState iblSampler, float ao, float3 gi)
+                           SamplerState iblSampler, float ao, float3 gi, int giEnabled,
+                           float3 refl, int reflEnabled, float reflFadeStart, float reflMaxRough)
 {
     const float3 zero3 = float3(0.0f, 0.0f, 0.0f);
     const float3 Lo =
@@ -242,13 +252,35 @@ float3 ApplyLightingHybrid(float3 albedo, float3 normal, float3 posW, float3 cam
     const float3 kS = FresnelSchlickRoughness(ndv, F0, roughness);
     const float3 kD = (1.0f - kS) * (1.0f - metallic); // 金属は拡散なし (IBL 拡散と同配分)
 
-    float3 ambientTerm = gi * albedo * kD; // AO は掛けない (GI が遮蔽を含む)
+    // ---- 拡散環境項 ----
+    float3 ambientTerm;
+    if (giEnabled != 0) {
+        ambientTerm = gi * albedo * kD; // AO は掛けない (GI が遮蔽を含む)
+    } else if (iblEnabled != 0) {
+        ambientTerm = iblIrradiance.SampleLevel(iblSampler, N, 0).rgb * albedo * kD * ao;
+    } else {
+        ambientTerm = ambient * albedo * (1.0f - metallic) * ao; // 従来の簡易アンビエント
+    }
+
+    // ---- スペキュラ環境項 (split-sum: 放射輝度 × 環境 BRDF) ----
+    float3 specRadiance = zero3;
+    bool hasSpec = false;
     if (iblEnabled != 0) {
-        // スペキュラ環境項は M46h (RT 反射) まで IBL のまま
         const float3 R = reflect(-V, N);
-        const float3 pre = iblPrefiltered.SampleLevel(iblSampler, R, roughness * iblSpecMips).rgb;
+        specRadiance =
+            iblPrefiltered.SampleLevel(iblSampler, R, roughness * iblSpecMips).rgb * ao;
+        hasSpec = true;
+    }
+    if (reflEnabled != 0) {
+        // 粗い面ほど IBL 側へ戻す (撃たなかった画素の反射バッファは 0 なので、
+        // 重みが 0 になるしきい値と rt_refl.cs.hlsl のカットオフは同じ値を使う)
+        specRadiance =
+            lerp(specRadiance, refl, RtReflWeight(roughness, reflFadeStart, reflMaxRough));
+        hasSpec = true;
+    }
+    if (hasSpec) {
         const float2 brdf = iblBrdfLut.SampleLevel(iblSampler, float2(ndv, roughness), 0).rg;
-        ambientTerm += pre * (F0 * brdf.x + brdf.y) * ao;
+        ambientTerm += specRadiance * (F0 * brdf.x + brdf.y);
     }
     return ambientTerm + Lo;
 }

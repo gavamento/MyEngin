@@ -440,7 +440,8 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
         });
 
         // ---- ステージ 3 (直列): 可視候補をキュー化 (スキン/AABB/キューは順序依存で直列) ----
-        const bool collectRt = rtDebugMode != 0 || enableRtGi || enableRtShadow; // M46b/f/g
+        const bool collectRt =
+            rtDebugMode != 0 || enableRtGi || enableRtShadow || enableRtRefl; // M46b/f/g/h
         rtInstances_.clear();
         for (const CullCand& c : cullCands) {
             // M46b: レイトレ用の収集はフラスタムカリングしない (画面外の物体も
@@ -616,7 +617,8 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
     // M46b: レイトレ用シーン (BLAS 連結 + TLAS + インスタンス) を GPU へ。
     // デバッグ表示・GI 合成・RT 影のどれも off なら収集自体が空なので、
     // この節はまるごと従来経路と同じになる
-    if ((rtDebugMode != 0 || enableRtGi || enableRtShadow) && !rtInstances_.empty()) {
+    if ((rtDebugMode != 0 || enableRtGi || enableRtShadow || enableRtRefl)
+        && !rtInstances_.empty()) {
         if (!rtPasses_.IsReady()) {
             rtPasses_.Init(device, shaders);
         }
@@ -643,6 +645,15 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
             // M46g: 平行光のシャドウ係数を CSM でなくレイトレの可視率で作る。
             // 「Shadows」トグルは影全体の元栓なので、off なら RT 影も出さない
             view.rtShadowEnabled = (enableRtShadow && enableShadows) ? 1 : 0;
+            // M46h: スペキュラ環境項をレイトレ反射で置換
+            view.rtReflEnabled = enableRtRefl ? 1 : 0;
+            // 合成は split-sum なので環境 BRDF LUT (t7) が要る。IBL は「スカイがある」
+            // ことが条件だが LUT 自体はスカイに依らない純関数なので、スカイ無しの
+            // シーンでも反射のためにベイクしておく。irradiance/prefiltered は
+            // null のままなので pf.iblEnabled は false に留まる = IBL は有効化されない
+            if (enableRtRefl && view.iblBrdfLut == nullptr) {
+                view.iblBrdfLut = envBaker_.GetBrdfLut(device, shaders);
+            }
         }
     }
 

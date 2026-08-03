@@ -175,12 +175,78 @@ inline DirectX::XMFLOAT3 RtSampleCone(const DirectX::XMFLOAT3& dir, float cosMax
     return out;
 }
 
-// 影レイ原点のオフセット量。G-Buffer のワールド座標が半精度なので距離に比例させる
+// 可視点から二次光線を撃つときの原点オフセット量 (影 M46g / 反射 M46h 共通)。
+// G-Buffer のワールド座標が半精度なので距離に比例させる
 // (定数だけだと遠景でアクネ、大きすぎるとピーターパン)。HLSL の eps 計算と同一式
-inline float RtShadowRayEps(float dist)
+inline float RtSurfaceRayEps(float dist)
 {
-    const float e = kRtShadowEpsRel * dist;
-    return (e > kRtShadowEpsMin) ? e : kRtShadowEpsMin;
+    const float e = kRtSurfaceEpsRel * dist;
+    return (e > kRtSurfaceEpsMin) ? e : kRtSurfaceEpsMin;
+}
+
+// ---- M46h: RT 反射 (HLSL の rt_common.hlsli / rt_refl.cs.hlsl と一致。両方更新) ----
+
+// GGX の可視法線分布 (VNDF) サンプリング (Heitz 2018, JCGT)。
+// n = ワールド法線 / v = 面 → カメラ / alpha = roughness² / 戻り値 = half vector。
+// alpha = 0 で n そのもの (完全鏡面) へ退化する。HLSL の RtGgxVndf と同一式
+inline DirectX::XMFLOAT3 RtGgxVndf(const DirectX::XMFLOAT3& n, const DirectX::XMFLOAT3& v,
+                                   float alpha, const DirectX::XMFLOAT2& u)
+{
+    using namespace DirectX;
+    // n を z 軸とする正規直交基底 (Duff らの分岐なし ONB)
+    const float sgn = (n.z >= 0.0f) ? 1.0f : -1.0f;
+    const float a = -1.0f / (sgn + n.z);
+    const float b = n.x * n.y * a;
+    const XMFLOAT3 t1 = { 1.0f + sgn * n.x * n.x * a, sgn * b, -sgn * n.x };
+    const XMFLOAT3 t2 = { b, sgn + n.y * n.y * a, -n.y };
+
+    // 視線を接空間へ → 楕円体を半球へ変形
+    const float vex = v.x * t1.x + v.y * t1.y + v.z * t1.z;
+    const float vey = v.x * t2.x + v.y * t2.y + v.z * t2.z;
+    const float vez = v.x * n.x + v.y * n.y + v.z * n.z;
+    XMFLOAT3 vh;
+    XMStoreFloat3(&vh, XMVector3Normalize(XMVectorSet(alpha * vex, alpha * vey, vez, 0.0f)));
+    // 投影面積の正規直交基底 (vh が z 軸に一致するときの特異点を分岐で回避)
+    const float lensq = vh.x * vh.x + vh.y * vh.y;
+    XMFLOAT3 h1 = { 1.0f, 0.0f, 0.0f };
+    if (lensq > 1e-12f) {
+        const float inv = 1.0f / std::sqrt(lensq);
+        h1 = { -vh.y * inv, vh.x * inv, 0.0f };
+    }
+    const XMFLOAT3 h2 = { vh.y * h1.z - vh.z * h1.y, vh.z * h1.x - vh.x * h1.z,
+                          vh.x * h1.y - vh.y * h1.x };
+    // 単位円板の一様サンプルを可視半球の投影 (楕円) へ切り詰める
+    const float r = std::sqrt(u.x);
+    const float phi = 6.28318530718f * u.y;
+    const float p1 = r * std::cos(phi);
+    float p2 = r * std::sin(phi);
+    const float s = 0.5f * (1.0f + vh.z);
+    p2 = (1.0f - s) * std::sqrt((std::max)(0.0f, 1.0f - p1 * p1)) + s * p2;
+    // 半球へ持ち上げ → 楕円体へ戻す
+    const float p3 = std::sqrt((std::max)(0.0f, 1.0f - p1 * p1 - p2 * p2));
+    const XMFLOAT3 nh = { p1 * h1.x + p2 * h2.x + p3 * vh.x, p1 * h1.y + p2 * h2.y + p3 * vh.y,
+                          p1 * h1.z + p2 * h2.z + p3 * vh.z };
+    XMFLOAT3 ne;
+    XMStoreFloat3(&ne, XMVector3Normalize(XMVectorSet(alpha * nh.x, alpha * nh.y,
+                                                      (std::max)(1e-6f, nh.z), 0.0f)));
+    XMFLOAT3 out;
+    XMStoreFloat3(&out, XMVector3Normalize(XMVectorSet(
+                            ne.x * t1.x + ne.y * t2.x + ne.z * n.x,
+                            ne.x * t1.y + ne.y * t2.y + ne.z * n.y,
+                            ne.x * t1.z + ne.y * t2.z + ne.z * n.z, 0.0f)));
+    return out;
+}
+
+// レイトレ反射を IBL スペキュラへ混ぜる重み (1 = 反射 100% / 0 = IBL 100%)。
+// kRtReflFadeStart から kRtReflMaxRoughness まで smoothstep で落とす。
+// common.hlsli::RtReflWeight と同一式 (合成の段差が出ないことをここで担保する)
+inline float RtReflWeight(float roughness)
+{
+    const float lo = kRtReflFadeStart;
+    const float hi = kRtReflMaxRoughness;
+    float t = (roughness - lo) / ((hi > lo) ? (hi - lo) : 1e-4f);
+    t = (t < 0.0f) ? 0.0f : ((t > 1.0f) ? 1.0f : t);
+    return 1.0f - t * t * (3.0f - 2.0f * t); // 1 - smoothstep
 }
 
 // ---- M46d: テンポラル蓄積 (HLSL の rt_temporal.cs.hlsl と一致。変更時は両方更新) ----

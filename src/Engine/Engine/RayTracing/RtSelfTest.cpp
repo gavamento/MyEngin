@@ -380,12 +380,97 @@ void TestShadowSampling()
     TEST_CHECK(down.x * dd.x + down.y * dd.y + down.z * dd.z >= cosMax - 1e-4f);
 
     // ---- 影レイのオフセット (近景は絶対下限 / 遠景は距離比例) ----
-    TEST_CHECK(RtShadowRayEps(0.0f) == kRtShadowEpsMin);
-    TEST_CHECK(RtShadowRayEps(0.1f) == kRtShadowEpsMin); // 下限を割らない
-    TEST_CHECK(RtShadowRayEps(100.0f) > RtShadowRayEps(10.0f));
-    TEST_CHECK(std::fabs(RtShadowRayEps(100.0f) - 0.1f) < 1e-6f);
+    TEST_CHECK(RtSurfaceRayEps(0.0f) == kRtSurfaceEpsMin);
+    TEST_CHECK(RtSurfaceRayEps(0.1f) == kRtSurfaceEpsMin); // 下限を割らない
+    TEST_CHECK(RtSurfaceRayEps(100.0f) > RtSurfaceRayEps(10.0f));
+    TEST_CHECK(std::fabs(RtSurfaceRayEps(100.0f) - 0.1f) < 1e-6f);
     // 半精度ワールド座標の相対誤差 (~5e-4) より必ず大きい = アクネが出ない下限
-    TEST_CHECK(RtShadowRayEps(50.0f) > 50.0f * 4.9e-4f);
+    TEST_CHECK(RtSurfaceRayEps(50.0f) > 50.0f * 4.9e-4f);
+}
+
+// GGX VNDF サンプリングと IBL フォールバック重み (M46h)。HLSL 側と同一式なので、
+// ここが通れば rt_refl.cs.hlsl の反射方向と合成側の混色も同じになる
+void TestReflection()
+{
+    MYE_LOG_INFO("[selftest] rt: GGX VNDF sampling / reflection blend weight");
+
+    const XMFLOAT3 n = Normalize({ 0.2f, 0.9f, -0.35f });
+    const XMFLOAT3 v = Normalize({ -0.3f, 0.6f, 0.75f }); // 面 → カメラ (法線側)
+
+    // ---- alpha = 0 は完全鏡面: どの乱数でも half vector = 法線 ----
+    const XMFLOAT3 h0 = RtGgxVndf(n, v, 0.0f, { 0.37f, 0.81f });
+    TEST_CHECK(std::fabs(h0.x - n.x) < 1e-4f && std::fabs(h0.y - n.y) < 1e-4f
+               && std::fabs(h0.z - n.z) < 1e-4f);
+    const XMFLOAT3 h0b = RtGgxVndf(n, v, 0.0f, { 0.02f, 0.44f });
+    TEST_CHECK(std::fabs(h0b.x - n.x) < 1e-4f && std::fabs(h0b.z - n.z) < 1e-4f);
+
+    // ---- サンプルの健全性: 単位長・法線半球の内側・有限 ----
+    // roughness 0.6 (= 反射を撃つ上限) の alpha で最も分布が広がる
+    const float alphaMax = kRtReflMaxRoughness * kRtReflMaxRoughness;
+    RtSeed s{ 23u, 91u, 0u };
+    bool unitOk = true, hemiOk = true, finiteOk = true, lobeOk = true;
+    double cosSum = 0.0;
+    constexpr int kS = 4096;
+    for (int i = 0; i < kS; ++i) {
+        const XMFLOAT3 h = RtGgxVndf(n, v, alphaMax, RtNextRand2(s));
+        const float len = std::sqrt(h.x * h.x + h.y * h.y + h.z * h.z);
+        const float ndh = n.x * h.x + n.y * h.y + n.z * h.z;
+        if (std::fabs(len - 1.0f) > 1e-3f) {
+            unitOk = false;
+        }
+        if (ndh < -1e-4f) {
+            hemiOk = false; // 可視法線は必ず法線半球の内側
+        }
+        if (!std::isfinite(h.x) || !std::isfinite(h.y) || !std::isfinite(h.z)) {
+            finiteOk = false;
+        }
+        // 反射方向 = 視線を h で折り返したもの。視線側の半球に留まること
+        const float vdh = v.x * h.x + v.y * h.y + v.z * h.z;
+        if (vdh < -1e-3f) {
+            lobeOk = false; // 視線の裏を向いた微小面は VNDF からは出ない
+        }
+        cosSum += ndh;
+    }
+    TEST_CHECK(unitOk && hemiOk && finiteOk && lobeOk);
+
+    // ---- alpha が大きいほどローブが広がる (平均 N·H が小さくなる) ----
+    double narrowSum = 0.0;
+    RtSeed s2{ 23u, 91u, 0u };
+    for (int i = 0; i < kS; ++i) {
+        const XMFLOAT3 h = RtGgxVndf(n, v, 0.01f, RtNextRand2(s2));
+        narrowSum += n.x * h.x + n.y * h.y + n.z * h.z;
+    }
+    TEST_CHECK(narrowSum / kS > cosSum / kS);       // 滑らかな面ほど法線に集中
+    TEST_CHECK(narrowSum / kS > 0.999);             // alpha=0.01 はほぼ鏡面
+    TEST_CHECK(cosSum / kS < 0.999 && cosSum / kS > 0.5); // alpha=0.36 は明確に広がる
+
+    // ---- z = -1 の法線でも ONB が破綻しない (Duff の基底を使う理由) ----
+    const XMFLOAT3 down = { 0.0f, 0.0f, -1.0f };
+    const XMFLOAT3 hd = RtGgxVndf(down, down, alphaMax, { 0.5f, 0.25f });
+    TEST_CHECK(std::isfinite(hd.x) && std::isfinite(hd.y) && std::isfinite(hd.z));
+    TEST_CHECK(down.x * hd.x + down.y * hd.y + down.z * hd.z >= -1e-4f);
+
+    // ---- IBL フォールバックの重み (合成の連続性を担保する式) ----
+    TEST_CHECK(RtReflWeight(0.0f) == 1.0f);                    // 鏡面は反射 100%
+    TEST_CHECK(RtReflWeight(kRtReflFadeStart) == 1.0f);        // フェード開始点まで 100%
+    TEST_CHECK(RtReflWeight(kRtReflMaxRoughness) == 0.0f);     // カットオフで IBL 100%
+    TEST_CHECK(RtReflWeight(1.0f) == 0.0f);
+    // 単調減少 + 端点が滑らか (smoothstep なので微分が 0)
+    bool monotonic = true;
+    float prev = RtReflWeight(0.0f);
+    for (int i = 1; i <= 200; ++i) {
+        const float w = RtReflWeight(static_cast<float>(i) / 200.0f);
+        if (w > prev + 1e-6f) {
+            monotonic = false;
+        }
+        prev = w;
+    }
+    TEST_CHECK(monotonic);
+    // 中点はちょうど 0.5 (smoothstep の対称性)
+    const float mid = 0.5f * (kRtReflFadeStart + kRtReflMaxRoughness);
+    TEST_CHECK(std::fabs(RtReflWeight(mid) - 0.5f) < 1e-5f);
+    // 反射を撃たない領域では重みが 0 = 合成が反射バッファ (0 埋め) を見ない
+    TEST_CHECK(RtReflWeight(kRtReflMaxRoughness + 0.01f) == 0.0f);
 }
 
 // テンポラル蓄積の判定式 (M46d)。HLSL 側と同一式なので、ここが通れば
@@ -548,6 +633,7 @@ bool RunRtSelfTest()
     TestTlas();
     TestSampling();
     TestShadowSampling();
+    TestReflection();
     TestTemporal();
     TestSvgf();
     if (g_failCount == 0) {

@@ -282,6 +282,16 @@ EnvMaps EnvMapBaker::GetForGradient(GraphicsDevice& device, ShaderManager& shade
     return Result(cache_.emplace(key, std::move(b)).first->second);
 }
 
+// M46h: BRDF LUT だけを確保する。EnsureCommon の中でグローバル 1 枚として
+// ベイクされるので、キューブマップの生成 (Bake) は一切走らない
+ID3D11ShaderResourceView* EnvMapBaker::GetBrdfLut(GraphicsDevice& device, ShaderManager& shaders)
+{
+    if (!EnsureCommon(device, shaders)) {
+        return nullptr;
+    }
+    return lutSrv_.Get();
+}
+
 void EnvMapBaker::Shutdown()
 {
     cache_.clear();

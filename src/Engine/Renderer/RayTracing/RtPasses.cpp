@@ -71,7 +71,10 @@ struct RtTemporalCB {
     XMFLOAT3 cameraPos = { 0, 0, 0 };
     float depthThreshold = kRtTemporalDepthThreshold;
     float normalThreshold = kRtTemporalNormalThreshold;
-    float pad[3] = { 0, 0, 0 };
+    // M46h: この信号の履歴長上限 (GI = kRtTemporalMaxHistory / 反射 = kRtReflMaxHistory)。
+    // HLSL 側で MYE_RT_TEMPORAL_MAX_HISTORY とのより小さい方に丸められる
+    float maxHistory = static_cast<float>(kRtTemporalMaxHistory);
+    float pad[2] = { 0, 0 };
 };
 static_assert(sizeof(RtTemporalCB) == 128, "HLSL の RtTemporalCB と一致させること");
 
@@ -103,8 +106,8 @@ struct RtShadowCB {
     float cosThetaMax = 1.0f;
     uint32_t frameIndex = 0;
     XMFLOAT3 cameraPos = { 0, 0, 0 };
-    float epsMin = kRtShadowEpsMin;
-    float epsRel = kRtShadowEpsRel;
+    float epsMin = kRtSurfaceEpsMin;
+    float epsRel = kRtSurfaceEpsRel;
     float pad[3] = { 0, 0, 0 };
 };
 static_assert(sizeof(RtShadowCB) == 48, "HLSL の RtShadowCB と一致させること");
@@ -120,6 +123,27 @@ struct RtShadowFilterCB {
     float pad[2] = { 0, 0 };
 };
 static_assert(sizeof(RtShadowFilterCB) == 48, "HLSL の RtShadowFilterCB と一致させること");
+
+// rt_refl.cs.hlsl の RtReflCB (b2) と一致
+struct RtReflCB {
+    float outSize[2] = { 0, 0 };
+    float gbSize[2] = { 0, 0 };
+    XMFLOAT3 cameraPos = { 0, 0, 0 };
+    float tMax = 1000.0f;
+    uint32_t frameIndex = 0;
+    int32_t bounces = 1;
+    float maxRoughness = kRtReflMaxRoughness;
+    float epsMin = kRtSurfaceEpsMin;
+    float epsRel = kRtSurfaceEpsRel;
+    float pad[3] = { 0, 0, 0 };
+};
+static_assert(sizeof(RtReflCB) == 64, "HLSL の RtReflCB と一致させること");
+
+// viewKey → 履歴スロット (範囲外は 0 へ丸める)。GI と反射で同じ写像を使う
+uint32_t HistorySlot(uint32_t viewKey, int slots)
+{
+    return (viewKey < static_cast<uint32_t>(slots)) ? viewKey : 0u;
+}
 
 // rt_blit.hlsl の RtBlitCB (b0) と一致
 struct RtBlitCB {
@@ -144,6 +168,7 @@ bool RtPasses::Init(GraphicsDevice& device, ShaderManager& shaders)
     atrousCS_ = shaders.LoadCompute("rt_atrous.cs");
     shadowCS_ = shaders.LoadCompute("rt_shadow.cs");
     shadowFilterCS_ = shaders.LoadCompute("rt_shadow_filter.cs");
+    reflCS_ = shaders.LoadCompute("rt_refl.cs");
     blitShader_ = shaders.Load("rt_blit");
 
     if (!CreateConstant(dev, sizeof(RtSceneCB), sceneCB_)
@@ -155,6 +180,7 @@ bool RtPasses::Init(GraphicsDevice& device, ShaderManager& shaders)
         || !CreateConstant(dev, sizeof(RtAtrousCB), atrousCB_)
         || !CreateConstant(dev, sizeof(RtShadowCB), shadowCB_)
         || !CreateConstant(dev, sizeof(RtShadowFilterCB), shadowFilterCB_)
+        || !CreateConstant(dev, sizeof(RtReflCB), reflCB_)
         || !CreateConstant(dev, sizeof(RtBlitCB), blitCB_)) {
         MYE_LOG_ERROR("RtPasses: constant buffer creation failed");
         return false;
@@ -190,6 +216,9 @@ bool RtPasses::Init(GraphicsDevice& device, ShaderManager& shaders)
     svgfTimer_.Init(device);
     shadowTimer_.Init(device);
     shadowFilterTimer_.Init(device);
+    reflTimer_.Init(device);
+    reflTemporalTimer_.Init(device);
+    reflSvgfTimer_.Init(device);
     inited_ = true;
     return true;
 }
@@ -198,23 +227,30 @@ void RtPasses::Shutdown()
 {
     debugRt_.Release();
     giRt_.Release();
+    reflRt_.Release();
     for (RenderTexture& rt : svgfRt_) {
         rt.Release();
     }
     for (RenderTexture& rt : shadowRt_) {
         rt.Release();
     }
-    for (GiHistory& h : giHist_) {
-        for (int i = 0; i < 2; ++i) {
-            h.color[i].Release();
-            h.geom[i].Release();
-            h.moments[i].Release();
+    for (RenderTexture& rt : reflSvgfRt_) {
+        rt.Release();
+    }
+    for (RtHistory* set : { giHist_, reflHist_ }) {
+        for (int k = 0; k < kHistorySlots; ++k) {
+            RtHistory& h = set[k];
+            for (int i = 0; i < 2; ++i) {
+                h.color[i].Release();
+                h.geom[i].Release();
+                h.moments[i].Release();
+            }
+            h.write = 0;
+            h.w = 0;
+            h.h = 0;
+            h.lastSerial = 0;
+            h.hasLast = false;
         }
-        h.write = 0;
-        h.w = 0;
-        h.h = 0;
-        h.lastSerial = 0;
-        h.hasLast = false;
     }
     sceneCB_.Reset();
     envCB_.Reset();
@@ -225,6 +261,7 @@ void RtPasses::Shutdown()
     atrousCB_.Reset();
     shadowCB_.Reset();
     shadowFilterCB_.Reset();
+    reflCB_.Reset();
     blitCB_.Reset();
     linearClamp_.Reset();
     depthDisabled_.Reset();
@@ -272,10 +309,11 @@ void RtPasses::UnbindCompute(GraphicsDevice& device)
     ID3D11DeviceContext* dc = device.Context();
     // 同じテクスチャを次のパスで SRV / RTV として使うので必ず外す
     // (テンポラルは履歴 ping-pong で「前フレーム書込先」を今フレーム SRV で読むため必須。
-    //  SVGF も ping-pong で書いた面を次の反復で読むので同様)
-    ID3D11ShaderResourceView* nullSrvs[10] = {};
+    //  SVGF も ping-pong で書いた面を次の反復で読むので同様)。
+    // 上限は反射パスが使う t10 (GBuffer マテリアル) まで
+    ID3D11ShaderResourceView* nullSrvs[11] = {};
     ID3D11UnorderedAccessView* nullUavs[3] = {};
-    dc->CSSetShaderResources(0, 10, nullSrvs);
+    dc->CSSetShaderResources(0, 11, nullSrvs);
     dc->CSSetUnorderedAccessViews(0, 3, nullUavs, nullptr);
     dc->CSSetShader(nullptr, nullptr, 0);
 }
@@ -333,13 +371,18 @@ RtGiResult RtPasses::RenderGi(GraphicsDevice& device, ShaderManager& shaders,
     result.accumulated = result.raw;
     result.filtered = result.raw;
     if (view.rtTemporal != 0) {
-        const AccumResult acc = Accumulate(device, shaders, view, in, gw, gh);
+        const AccumResult acc =
+            Accumulate(device, shaders, view, in, gw, gh, giRt_.SRV(),
+                       giHist_[HistorySlot(view.rtViewKey, kHistorySlots)],
+                       static_cast<float>(kRtTemporalMaxHistory), temporalTimer_);
         if (acc.color != nullptr) {
             result.accumulated = acc.color;
             result.filtered = acc.color;
             // M46e: 分散推定 + A-Trous。幾何バッファが蓄積パスの副産物なので順序は固定
             if (view.rtSvgf != 0) {
-                ID3D11ShaderResourceView* f = Denoise(device, shaders, view, acc, gw, gh);
+                ID3D11ShaderResourceView* f =
+                    Denoise(device, shaders, view, acc, gw, gh, svgfRt_, kRtAtrousIterations,
+                            kRtAtrousSigmaLuma, svgfTimer_);
                 if (f != nullptr) {
                     result.filtered = f;
                 }
@@ -347,25 +390,21 @@ RtGiResult RtPasses::RenderGi(GraphicsDevice& device, ShaderManager& shaders,
         }
     } else {
         // 蓄積を切ったら履歴は連続しない — 次に入れたときは 1spp から積み直す
-        const uint32_t key =
-            (view.rtViewKey < static_cast<uint32_t>(kHistorySlots)) ? view.rtViewKey : 0u;
-        giHist_[key].hasLast = false;
+        giHist_[HistorySlot(view.rtViewKey, kHistorySlots)].hasLast = false;
     }
     return result;
 }
 
 RtPasses::AccumResult RtPasses::Accumulate(GraphicsDevice& device, ShaderManager& shaders,
                                            const RenderView& view, const RtFrameInputs& in, int gw,
-                                           int gh)
+                                           int gh, ID3D11ShaderResourceView* src, RtHistory& h,
+                                           float maxHistory, GpuTimer& timer)
 {
     AccumResult out;
     ShaderProgram* cs = shaders.Get(temporalCS_);
-    if (!cs || !cs->valid || !cs->cs) {
+    if (!cs || !cs->valid || !cs->cs || src == nullptr) {
         return out; // コンパイル失敗時は 1spp のまま (絵は荒れるが壊れない)
     }
-    const uint32_t key =
-        (view.rtViewKey < static_cast<uint32_t>(kHistorySlots)) ? view.rtViewKey : 0u;
-    GiHistory& h = giHist_[key];
 
     if (h.w != gw || h.h != gh) {
         for (int i = 0; i < 2; ++i) {
@@ -394,7 +433,7 @@ RtPasses::AccumResult RtPasses::Accumulate(GraphicsDevice& device, ShaderManager
         h.hasLast && (h.lastSerial + 1u == view.rtViewSerial) && view.prevViewProjValid != 0;
 
     ID3D11DeviceContext* dc = device.Context();
-    temporalTimer_.Begin(device);
+    timer.Begin(device);
 
     RtTemporalCB tc = {};
     XMStoreFloat4x4(&tc.prevViewProj, XMMatrixTranspose(XMLoadFloat4x4(&view.prevViewProj)));
@@ -407,12 +446,13 @@ RtPasses::AccumResult RtPasses::Accumulate(GraphicsDevice& device, ShaderManager
     tc.cameraPos = view.cameraPos;
     tc.depthThreshold = kRtTemporalDepthThreshold;
     tc.normalThreshold = kRtTemporalNormalThreshold;
+    tc.maxHistory = maxHistory; // M46h: 反射は GI より短く積む (鏡面のラグを避けるため)
     UploadCB(dc, temporalCB_.Get(), tc);
     ID3D11Buffer* cbs[1] = { temporalCB_.Get() };
     dc->CSSetConstantBuffers(2, 1, cbs);
 
-    ID3D11ShaderResourceView* srvs[7] = { giRt_.SRV(),   h.color[rd].SRV(), h.geom[rd].SRV(),
-                                          in.gbNormal,   in.gbPosition,     in.gbAlbedo,
+    ID3D11ShaderResourceView* srvs[7] = { src,         h.color[rd].SRV(), h.geom[rd].SRV(),
+                                          in.gbNormal, in.gbPosition,     in.gbAlbedo,
                                           h.moments[rd].SRV() };
     dc->CSSetShaderResources(0, 7, srvs);
     ID3D11UnorderedAccessView* uavs[3] = { h.color[wr].UAV(), h.geom[wr].UAV(),
@@ -422,7 +462,7 @@ RtPasses::AccumResult RtPasses::Accumulate(GraphicsDevice& device, ShaderManager
     dc->Dispatch(static_cast<UINT>((gw + 7) / 8), static_cast<UINT>((gh + 7) / 8), 1);
 
     UnbindCompute(device);
-    temporalTimer_.End(device);
+    timer.End(device);
 
     h.lastSerial = view.rtViewSerial;
     h.hasLast = true;
@@ -433,18 +473,20 @@ RtPasses::AccumResult RtPasses::Accumulate(GraphicsDevice& device, ShaderManager
     return out;
 }
 
-// M46e: SVGF の空間側。分散推定 → A-Trous を刻み幅 1,2,4 で 3 回。
-// ping-pong は svgfRt_[2] (ビュー間で共有 — 同じフレーム内で使い切るので履歴と違い分ける必要なし)
+// M46e: SVGF の空間側。分散推定 → A-Trous を刻み幅 1,2,4 と倍化しながら iterations 回。
+// ping-pong (pp) はビュー間で共有する — 同じフレーム内で使い切るので履歴と違い分ける必要はない。
+// ただし**信号間 (GI と反射) では分けること**: GI の結果はライトパスまで t9 で生きている
 ID3D11ShaderResourceView* RtPasses::Denoise(GraphicsDevice& device, ShaderManager& shaders,
                                             const RenderView& view, const AccumResult& acc, int gw,
-                                            int gh)
+                                            int gh, RenderTexture (&pp)[2], int iterations,
+                                            float sigmaLuma, GpuTimer& timer)
 {
     ShaderProgram* varCs = shaders.Get(varianceCS_);
     ShaderProgram* atrousCs = shaders.Get(atrousCS_);
     if (!varCs || !varCs->valid || !varCs->cs || !atrousCs || !atrousCs->valid || !atrousCs->cs) {
         return nullptr; // コンパイル失敗時は蓄積結果のまま (ノイズは残るが壊れない)
     }
-    for (RenderTexture& rt : svgfRt_) {
+    for (RenderTexture& rt : pp) {
         rt.Resize(device, gw, gh, DXGI_FORMAT_R16G16B16A16_FLOAT, /*withDepth=*/false,
                   /*withUav=*/true);
         if (!rt.UAV() || !rt.SRV()) {
@@ -455,9 +497,9 @@ ID3D11ShaderResourceView* RtPasses::Denoise(GraphicsDevice& device, ShaderManage
     ID3D11DeviceContext* dc = device.Context();
     const UINT gx = static_cast<UINT>((gw + 7) / 8);
     const UINT gy = static_cast<UINT>((gh + 7) / 8);
-    svgfTimer_.Begin(device);
+    timer.Begin(device);
 
-    // ---- 1) 分散推定 → svgfRt_[0] (rgb = 色, a = 分散) ----
+    // ---- 1) 分散推定 → pp[0] (rgb = 色, a = 分散) ----
     RtVarianceCB vc = {};
     vc.size[0] = static_cast<float>(gw);
     vc.size[1] = static_cast<float>(gh);
@@ -471,7 +513,7 @@ ID3D11ShaderResourceView* RtPasses::Denoise(GraphicsDevice& device, ShaderManage
     dc->CSSetConstantBuffers(2, 1, varCbs);
     ID3D11ShaderResourceView* varSrvs[3] = { acc.color, acc.moments, acc.geom };
     dc->CSSetShaderResources(0, 3, varSrvs);
-    ID3D11UnorderedAccessView* varUavs[1] = { svgfRt_[0].UAV() };
+    ID3D11UnorderedAccessView* varUavs[1] = { pp[0].UAV() };
     dc->CSSetUnorderedAccessViews(0, 1, varUavs, nullptr);
     dc->CSSetShader(varCs->cs.Get(), nullptr, 0);
     dc->Dispatch(gx, gy, 1);
@@ -479,7 +521,7 @@ ID3D11ShaderResourceView* RtPasses::Denoise(GraphicsDevice& device, ShaderManage
 
     // ---- 2) A-Trous (刻み幅を倍化しながら ping-pong) ----
     int src = 0;
-    for (int i = 0; i < kRtAtrousIterations; ++i) {
+    for (int i = 0; i < iterations; ++i) {
         const int dst = 1 - src;
         RtAtrousCB ac = {};
         ac.size[0] = static_cast<float>(gw);
@@ -487,13 +529,13 @@ ID3D11ShaderResourceView* RtPasses::Denoise(GraphicsDevice& device, ShaderManage
         ac.step = 1 << i;
         ac.sigmaDepth = kRtAtrousSigmaDepth;
         ac.sigmaNormal = kRtAtrousSigmaNormal;
-        ac.sigmaLuma = kRtAtrousSigmaLuma;
+        ac.sigmaLuma = sigmaLuma;
         UploadCB(dc, atrousCB_.Get(), ac);
         ID3D11Buffer* atCbs[1] = { atrousCB_.Get() };
         dc->CSSetConstantBuffers(2, 1, atCbs);
-        ID3D11ShaderResourceView* atSrvs[2] = { svgfRt_[src].SRV(), acc.geom };
+        ID3D11ShaderResourceView* atSrvs[2] = { pp[src].SRV(), acc.geom };
         dc->CSSetShaderResources(0, 2, atSrvs);
-        ID3D11UnorderedAccessView* atUavs[1] = { svgfRt_[dst].UAV() };
+        ID3D11UnorderedAccessView* atUavs[1] = { pp[dst].UAV() };
         dc->CSSetUnorderedAccessViews(0, 1, atUavs, nullptr);
         dc->CSSetShader(atrousCs->cs.Get(), nullptr, 0);
         dc->Dispatch(gx, gy, 1);
@@ -501,8 +543,8 @@ ID3D11ShaderResourceView* RtPasses::Denoise(GraphicsDevice& device, ShaderManage
         src = dst;
     }
 
-    svgfTimer_.End(device);
-    return svgfRt_[src].SRV();
+    timer.End(device);
+    return pp[src].SRV();
 }
 
 // M46g: 太陽の可視率 (フル解像度 R8)。1 画素 1 レイの any-hit + スカラー空間フィルタ。
@@ -540,8 +582,8 @@ ID3D11ShaderResourceView* RtPasses::RenderShadow(GraphicsDevice& device, ShaderM
     sc.cosThetaMax = RtConeCosMax(kRtShadowSunAngleDeg);
     sc.frameIndex = view.rtFrameIndex;
     sc.cameraPos = view.cameraPos;
-    sc.epsMin = kRtShadowEpsMin;
-    sc.epsRel = kRtShadowEpsRel;
+    sc.epsMin = kRtSurfaceEpsMin;
+    sc.epsRel = kRtSurfaceEpsRel;
     UploadCB(dc, shadowCB_.Get(), sc);
     ID3D11Buffer* shCbs[1] = { shadowCB_.Get() };
     dc->CSSetConstantBuffers(2, 1, shCbs);
@@ -589,6 +631,87 @@ ID3D11ShaderResourceView* RtPasses::RenderShadow(GraphicsDevice& device, ShaderM
     return shadowRt_[src].SRV();
 }
 
+// M46h: 鏡面反射 (内部解像度)。GGX VNDF で 1 本撃ち、GI と同じ 2 段のデノイズを掛ける。
+// GI と違い履歴上限を短く (kRtReflMaxHistory) 取り、A-Trous も反復を減らして
+// 輝度エッジ停止を厳しくする — 反射像は「本物のディテール」なので均しすぎると溶ける
+RtReflResult RtPasses::RenderReflection(GraphicsDevice& device, ShaderManager& shaders,
+                                        const RenderView& view, const RtFrameInputs& in)
+{
+    RtReflResult result;
+    if (!inited_ || !in.scene || !in.scene->IsValid() || !in.gbNormal || !in.gbPosition
+        || !in.gbAlbedo || !in.gbMaterial || view.width <= 0 || view.height <= 0) {
+        return result;
+    }
+    ShaderProgram* cs = shaders.Get(reflCS_);
+    if (!cs || !cs->valid || !cs->cs) {
+        return result; // コンパイル失敗時は反射無しで進む (合成側は IBL のまま)
+    }
+
+    const float scale = std::clamp(view.rtResolutionScale, 0.25f, 1.0f);
+    const int gw = (std::max)(1, static_cast<int>(static_cast<float>(view.width) * scale));
+    const int gh = (std::max)(1, static_cast<int>(static_cast<float>(view.height) * scale));
+    reflRt_.Resize(device, gw, gh, DXGI_FORMAT_R16G16B16A16_FLOAT, /*withDepth=*/false,
+                   /*withUav=*/true);
+    if (!reflRt_.UAV()) {
+        return result;
+    }
+
+    ID3D11DeviceContext* dc = device.Context();
+    reflTimer_.Begin(device);
+    BindCommon(device, view, in);
+
+    RtReflCB rc = {};
+    rc.outSize[0] = static_cast<float>(gw);
+    rc.outSize[1] = static_cast<float>(gh);
+    rc.gbSize[0] = static_cast<float>(view.width);
+    rc.gbSize[1] = static_cast<float>(view.height);
+    rc.cameraPos = view.cameraPos;
+    rc.tMax = (view.farZ > 0.0f) ? view.farZ : 1000.0f;
+    rc.frameIndex = view.rtFrameIndex;
+    rc.bounces = (std::max)(1, view.rtBounces);
+    rc.maxRoughness = kRtReflMaxRoughness;
+    rc.epsMin = kRtSurfaceEpsMin;
+    rc.epsRel = kRtSurfaceEpsRel;
+    UploadCB(dc, reflCB_.Get(), rc);
+    ID3D11Buffer* reflCbs[1] = { reflCB_.Get() };
+    dc->CSSetConstantBuffers(2, 1, reflCbs);
+
+    // t7-t9 は GI/影と同じ並び、t10 に metallic/roughness を足す
+    ID3D11ShaderResourceView* gbuf[4] = { in.gbNormal, in.gbPosition, in.gbAlbedo,
+                                          in.gbMaterial };
+    dc->CSSetShaderResources(7, 4, gbuf);
+    ID3D11UnorderedAccessView* uavs[1] = { reflRt_.UAV() };
+    dc->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
+    dc->CSSetShader(cs->cs.Get(), nullptr, 0);
+    dc->Dispatch(static_cast<UINT>((gw + 7) / 8), static_cast<UINT>((gh + 7) / 8), 1);
+
+    UnbindCompute(device);
+    reflTimer_.End(device);
+
+    result.raw = reflRt_.SRV();
+    result.filtered = result.raw;
+    if (view.rtTemporal != 0) {
+        const AccumResult acc =
+            Accumulate(device, shaders, view, in, gw, gh, reflRt_.SRV(),
+                       reflHist_[HistorySlot(view.rtViewKey, kHistorySlots)], kRtReflMaxHistory,
+                       reflTemporalTimer_);
+        if (acc.color != nullptr) {
+            result.filtered = acc.color;
+            if (view.rtSvgf != 0) {
+                ID3D11ShaderResourceView* f =
+                    Denoise(device, shaders, view, acc, gw, gh, reflSvgfRt_,
+                            kRtReflAtrousIterations, kRtReflSigmaLuma, reflSvgfTimer_);
+                if (f != nullptr) {
+                    result.filtered = f;
+                }
+            }
+        }
+    } else {
+        reflHist_[HistorySlot(view.rtViewKey, kHistorySlots)].hasLast = false;
+    }
+    return result;
+}
+
 bool RtPasses::Blit(GraphicsDevice& device, ShaderManager& shaders, const RenderView& view,
                     ID3D11ShaderResourceView* src, int mode, float param)
 {
@@ -633,7 +756,7 @@ bool RtPasses::Blit(GraphicsDevice& device, ShaderManager& shaders, const Render
 
 bool RtPasses::RenderDebug(GraphicsDevice& device, ShaderManager& shaders, const RenderView& view,
                            const RtFrameInputs& in, const RtGiResult& gi,
-                           ID3D11ShaderResourceView* shadow)
+                           ID3D11ShaderResourceView* shadow, const RtReflResult& refl)
 {
     if (!inited_ || view.rtDebugMode == 0 || !in.scene || !in.scene->IsValid()
         || view.rtv == nullptr || view.width <= 0 || view.height <= 0) {
@@ -659,6 +782,12 @@ bool RtPasses::RenderDebug(GraphicsDevice& device, ShaderManager& shaders, const
     }
     if (view.rtDebugMode == 9) { // M46g: 太陽の可視率 (白 = 照らされる / 黒 = 影)
         return Blit(device, shaders, view, shadow, /*mode=*/3);
+    }
+    if (view.rtDebugMode == 10) { // M46h: 反射の生 1spp (roughness 超過は黒)
+        return Blit(device, shaders, view, refl.raw);
+    }
+    if (view.rtDebugMode == 11) { // M46h: デノイズ後の反射
+        return Blit(device, shaders, view, refl.filtered);
     }
 
     ShaderProgram* cs = shaders.Get(debugCS_);
