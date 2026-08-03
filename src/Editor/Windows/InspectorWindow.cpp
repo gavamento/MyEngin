@@ -818,6 +818,7 @@ void InspectorWindow::DrawAssetInspector(EngineContext& ctx, Selection& selectio
             ImGui::SameLine();
             if (ImGui::Button("Stop All", ImVec2(90, 0))) {
                 ctx.audio->StopAll();
+                ctx.audio->StopMusic(kMusicStopFadeSeconds); // BGM は別レーン (M45f)
             }
         }
         return;
@@ -1066,7 +1067,13 @@ void InspectorWindow::DrawSoundInspector(EngineContext& ctx, const std::wstring&
     if (ImGui::Button("Stop All", ImVec2(90, 0))) {
         if (ctx.audio) {
             ctx.audio->StopAll();
+            ctx.audio->StopMusic(kMusicStopFadeSeconds); // BGM は別レーン (M45f)
         }
+    }
+    if (soundEdit_.stream) {
+        // BGM は voice プールに載らないので、試聴の挙動が SE と違うことを明示する
+        ImGui::TextDisabled("(stream: plays on the BGM lane — previewing another stream sound"
+                            " crossfades)");
     }
     ImGui::TextDisabled("(preview uses the saved-in-editor values, not the file on disk)");
 
@@ -1179,13 +1186,14 @@ void InspectorWindow::DrawSoundInspector(EngineContext& ctx, const std::wstring&
     ImGui::TextDisabled("spatial blend 0 = 2D. Sound is silent beyond max distance.");
     ImGui::TextDisabled("AudioSource can override these (overrideAttenuation).");
 
-    // ---- ループ点 (M45f 予約) ----
+    // ---- ループ点 (M45f から実際に効く。stream + loop のときだけ意味を持つ) ----
     ImGui::SeparatorText("Loop points (frames)");
     ImGui::SetNextItemWidth(160.0f);
     ImGui::DragInt("loop start", &soundEdit_.loopStartSample, 8.0f, 0, 1 << 30);
     ImGui::SetNextItemWidth(160.0f);
     ImGui::DragInt("loop end", &soundEdit_.loopEndSample, 8.0f, 0, 1 << 30);
-    ImGui::TextDisabled("end <= start means \"to the end\". Used by streaming (M45f).");
+    ImGui::TextDisabled("end <= start means \"to the end\". Applies to stream + loop only:");
+    ImGui::TextDisabled("the stream seeks back sample-exactly, so the seam is inaudible.");
 
     ImGui::Separator();
     if (ImGui::Button("Save", ImVec2(90, 0))) {

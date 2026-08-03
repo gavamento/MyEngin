@@ -168,6 +168,27 @@ std::vector<SoundEntry> SoundLibrary::Enumerate() const
     return out;
 }
 
+ClipUsage SoundLibrary::UsageOfClip(uint64_t clip) const
+{
+    if (clip == 0) {
+        return ClipUsage::None;
+    }
+    bool stream = false;
+    // 反復順に依存しない (「1 つでも stream=false があれば Sampled」は順序無関係な述語)
+    for (auto it = sounds_.begin(); it != sounds_.end(); ++it) {
+        for (const SoundVariation& v : it->second.variations) {
+            if (v.clip != clip) {
+                continue;
+            }
+            if (!it->second.stream) {
+                return ClipUsage::Sampled; // SE として使われている = 展開が要る
+            }
+            stream = true;
+        }
+    }
+    return stream ? ClipUsage::StreamOnly : ClipUsage::None;
+}
+
 json SoundLibrary::ToJson(const SoundAsset& s)
 {
     json root;
@@ -294,17 +315,62 @@ PlayDesc MakePlayDesc(const SoundAsset& s, int variationIndex, float volJitter, 
     return d;
 }
 
-AudioHandle PreviewSound(AudioSystem& audio, const SoundAsset& s)
+namespace {
+
+// 先頭の「クリップが割り当たっているバリエーション」。試聴と BGM が共有する規則
+int FirstAssignedVariation(const SoundAsset& s)
 {
-    // 試聴は「先頭バリエーション・揺らぎ無し」で固定する (押すたびに音が変わると
-    // パラメータを詰めている最中に何を聴いているのか分からなくなる)
-    int index = -1;
     for (size_t i = 0; i < s.variations.size(); ++i) {
         if (s.variations[i].clip != 0) {
-            index = static_cast<int>(i);
-            break;
+            return static_cast<int>(i);
         }
     }
+    return -1;
+}
+
+} // namespace
+
+bool PlayMusicSound(AudioSystem& audio, const SoundAsset& s, float fadeSeconds)
+{
+    const int index = FirstAssignedVariation(s);
+    if (index < 0) {
+        MYE_LOG_WARN("[music] no clip assigned: %s", s.name.c_str());
+        return false;
+    }
+    const uint64_t clip = s.variations[static_cast<size_t>(index)].clip;
+    // ★BGM はクリップ表を経由しない。GUID から実ファイルを引いて、そこから直接読む
+    const std::wstring path = assetguid::ResolvePath(clip);
+    if (path.empty()) {
+        MYE_LOG_WARN("[music] clip path not found (guid %016llx): %s",
+                     static_cast<unsigned long long>(clip), s.name.c_str());
+        return false;
+    }
+
+    MusicDesc d;
+    d.path = path;
+    // 同一判定はアセット単位 (同じ .sound.json を再指定しても頭出しし直さない)
+    d.key = s.hash != 0 ? s.hash : clip;
+    const int bus = audio.FindBus(s.bus.c_str());
+    d.bus = (bus >= 0) ? bus : audio.DefaultBus();
+    d.volume = std::clamp(s.volume, 0.0f, 1.0f); // BGM に音量の揺らぎは掛けない
+    d.fadeSeconds = fadeSeconds;
+    d.loop = s.loop;
+    d.loopStartFrame = s.loopStartSample;
+    d.loopEndFrame = s.loopEndSample;
+    return audio.PlayMusic(d);
+}
+
+AudioHandle PreviewSound(AudioSystem& audio, const SoundAsset& s)
+{
+    // stream = BGM はボイスプールに載せずストリーミングレーンで鳴らす (M45f)。
+    // 2 つ目の BGM アセットを続けて試聴すると、そのままクロスフェードが聴ける
+    if (s.stream) {
+        PlayMusicSound(audio, s, kMusicDefaultFadeSeconds);
+        return {}; // BGM レーンにボイスハンドルは無い
+    }
+    // 試聴は「先頭バリエーション・揺らぎ無し」で固定する (押すたびに音が変わると
+    // パラメータを詰めている最中に何を聴いているのか分からなくなる)
+    const int index = FirstAssignedVariation(s);
     if (index < 0) {
         MYE_LOG_WARN("[sound] no clip assigned: %s", s.name.c_str());
         return {};

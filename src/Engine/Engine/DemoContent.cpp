@@ -169,6 +169,7 @@ void RegisterAssetLibraries(EngineContext& ctx)
     if (!std::filesystem::is_directory(ctx.assetsRoot, ec)) {
         return;
     }
+    std::vector<std::wstring> audioFiles; // 走査後にまとめて判定する (M45f。下の注記参照)
     for (const auto& e : std::filesystem::recursive_directory_iterator(ctx.assetsRoot, ec)) {
         if (!e.is_regular_file()) {
             continue;
@@ -199,18 +200,35 @@ void RegisterAssetLibraries(EngineContext& ctx)
                 ctx.mixers->LoadFromFile(p); // M45d: ミキサー (適用は走査後にまとめて)
             }
         } else {
-            // M45c: 素の音声ファイルは PCM を AudioSystem へ展開しつつ、**ファイル名 stem を
-            // 名前キーに登録**する (LoadWav = M19 互換シム)。既存スクリプトの
-            // PlaySound("beep") がハードコードロード無しで引き続き解決できる経路がこれ。
-            // --no-audio / デバイス無しでは LoadClipFile が早期 return するので何も起きない
+            // 素の音声ファイルは走査中には展開せず、候補として貯めるだけにする。
+            // **.sound.json より先に .wav を見ることがある**ので、「BGM 専用かどうか」は
+            // 全部読み終えてからでないと判定できない (M45f)
             std::wstring ext = e.path().extension().wstring();
             std::transform(ext.begin(), ext.end(), ext.begin(), ::towlower);
             if (ext == L".wav" || ext == L".ogg") {
-                if (ctx.audio) {
-                    ctx.audio->LoadWav(WideToUtf8(e.path().stem().wstring()), p);
-                }
+                audioFiles.push_back(p);
             }
         }
+    }
+
+    // M45c: 素の音声ファイルは PCM を AudioSystem へ展開しつつ、**ファイル名 stem を
+    // 名前キーに登録**する (LoadWav = M19 互換シム)。既存スクリプトの
+    // PlaySound("beep") がハードコードロード無しで引き続き解決できる経路がこれ。
+    // --no-audio / デバイス無しでは LoadClipFile が早期 return するので何も起きない。
+    // ★M45f: **stream の .sound.json からしか参照されていないファイルは展開しない** —
+    //   数分の BGM を PCM 化すると数十 MB になり、ストリーミングの意味が無くなる。
+    //   展開しない = 名前キーも張られないので、その素材は PlaySound(名前) では鳴らない
+    //   (BGM を一発ものとして鳴らす経路は元々無いので、失うものは無い)
+    for (const std::wstring& p : audioFiles) {
+        if (ctx.audio == nullptr) {
+            break;
+        }
+        if (ctx.sounds != nullptr &&
+            ctx.sounds->UsageOfClip(AudioSystem::IdForFile(p).value) == ClipUsage::StreamOnly) {
+            MYE_LOG_INFO("[audio] stream-only (not preloaded): %s", WideToUtf8(p).c_str());
+            continue;
+        }
+        ctx.audio->LoadWav(WideToUtf8(std::filesystem::path(p).stem().wstring()), p);
     }
 
     // M45d: バスグラフはグローバルに 1 つなので、走査後に「どれを鳴らすか」を 1 本決める。

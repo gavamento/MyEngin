@@ -281,6 +281,21 @@ void AudioSourceSystem::Update(World& world, AudioSystem& audio, const SoundLibr
 
             const AudioVec3 pos = PositionOf(wm);
 
+            // ---- BGM (stream) は voice プールではなくストリーミングレーンで鳴らす (M45f) ----
+            // 定位も減衰もドップラーも掛からない (BGM は 2D)。**レーンは 1 本**なので、
+            // stream の AudioSource を 2 つ置くと後勝ちでクロスフェードする
+            if (asset->stream) {
+                if (simulateScripts && src->playOnAwake != 0 && !st.started) {
+                    const float vol = src->mute != 0 ? 0.0f : std::clamp(src->volume, 0.0f, 1.0f);
+                    SoundAsset a = *asset; // コンポーネント側の音量上書きだけ載せる
+                    a.volume = std::clamp(a.volume * vol, 0.0f, 1.0f);
+                    // 失敗 (ファイル未解決) なら started を立てずに次フレーム再挑戦する
+                    st.started = PlayMusicSound(audio, a, kMusicDefaultFadeSeconds);
+                }
+                st.vel = {};
+                continue;
+            }
+
             // ---- 再生開始 (playOnAwake) ----
             if (simulateScripts && src->playOnAwake != 0 && !st.started && !st.voice.Valid()) {
                 st.variationIndex = PickVariationIndex(*asset, rng_.NextU32());

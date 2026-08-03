@@ -10,6 +10,7 @@
 #include "Engine/Engine/Audio/AudioClip.h"
 #include "Engine/Engine/Audio/AudioMixer.h"
 #include "Engine/Engine/Audio/AudioSourceSystem.h"
+#include "Engine/Engine/Audio/MusicStream.h"
 #include "Engine/Engine/Audio/SoundAsset.h"
 #include "Engine/Engine/Audio/SpatialMath.h"
 #include "Engine/Engine/Audio/SynthCore.h"
@@ -599,6 +600,126 @@ bool RunAudioSelfTest()
         check(sp.spatialBlend == 1.0f && sp.minDistance == 5.0f && sp.maxDistance == 25.0f
                   && sp.rolloff == 2 && sp.dopplerScale == 0.0f && sp.reverbSend == 0.1f,
               "source: overrideAttenuation switches every 3D value to the component");
+    }
+
+    // ---- (16) BGM ストリーミングの純関数 (M45f) ----
+    // ここが崩れると「ループ点で無音になる」「リングを上書きしてノイズが乗る」
+    // 「クロスフェードで音量が跳ねる」といった、耳でしか気付けない壊れ方をする
+    {
+        // ループ点の正規化: end<=start は「末尾まで」。壊れた値でも 0 長ループにしない
+        const MusicLoop full = ResolveMusicLoop(0, 0, 1000);
+        check(full.start == 0 && full.end == 1000, "music: no loop points means whole file");
+        const MusicLoop part = ResolveMusicLoop(100, 800, 1000);
+        check(part.start == 100 && part.end == 800, "music: explicit loop points survive");
+        const MusicLoop rev = ResolveMusicLoop(900, 100, 1000);
+        check(rev.start == 0 && rev.end == 1000, "music: reversed loop points fall back to whole");
+        const MusicLoop over = ResolveMusicLoop(0, 5000, 1000);
+        check(over.start == 0 && over.end == 1000, "music: loop end past EOF clamps to total");
+        const MusicLoop oob = ResolveMusicLoop(2000, 0, 1000);
+        check(oob.start == 0 && oob.end == 1000, "music: loop start past EOF falls back to whole");
+        check(ResolveMusicLoop(0, 0, 0).end == 0, "music: empty source yields an empty loop");
+
+        // 供給できるフレーム数。**0 = ここで巻き戻す (または終端)**
+        check(MusicChunkFrames(0, 512, part, true, 1000) == 512, "music: chunk fits inside loop");
+        check(MusicChunkFrames(700, 512, part, true, 1000) == 100,
+              "music: chunk is cut at the loop end, not at the file end");
+        check(MusicChunkFrames(800, 512, part, true, 1000) == 0, "music: cursor at loop end wraps");
+        check(MusicChunkFrames(700, 512, part, false, 1000) == 300,
+              "music: non-looping playback runs to the file end");
+        check(MusicChunkFrames(1000, 512, part, false, 1000) == 0, "music: EOF stops the feed");
+        // イントロ (ループ区間より手前) からでも途切れずに供給できる
+        check(MusicChunkFrames(50, 512, part, true, 1000) == 512,
+              "music: intro before the loop region streams normally");
+
+        // リング: queued == blocks で書くと再生中のブロックを潰す = 唯一の安全条件
+        check(MusicRefillCount(0, kMusicRingBlocks) == kMusicRingBlocks,
+              "music: empty ring is filled completely");
+        check(MusicRefillCount(kMusicRingBlocks, kMusicRingBlocks) == 0,
+              "music: a full ring is never overwritten");
+        check(MusicRefillCount(kMusicRingBlocks - 1, kMusicRingBlocks) == 1,
+              "music: only the drained blocks are refilled");
+        int block = kMusicRingBlocks - 1;
+        for (int i = 0; i < kMusicRingBlocks; ++i) {
+            block = MusicNextBlock(block, kMusicRingBlocks);
+            check(block == i, "music: blocks are submitted strictly round-robin");
+        }
+
+        // クロスフェード: 等パワー (中間で音圧が落ちない) + 端点が厳密
+        const MusicFade f0 = MusicCrossfadeGains(0.0, 2.0);
+        check(f0.from == 1.0f && f0.to == 0.0f, "music: crossfade starts fully on the old track");
+        const MusicFade f1 = MusicCrossfadeGains(2.0, 2.0);
+        check(f1.from == 0.0f && f1.to == 1.0f, "music: crossfade ends fully on the new track");
+        const MusicFade fm = MusicCrossfadeGains(1.0, 2.0);
+        check(std::abs(fm.from * fm.from + fm.to * fm.to - 1.0f) < 1e-4f,
+              "music: crossfade is equal-power (no -3dB dip in the middle)");
+        const MusicFade inst = MusicCrossfadeGains(0.0, 0.0);
+        check(inst.from == 0.0f && inst.to == 1.0f, "music: zero-length fade switches instantly");
+        // フェード中の曲をさらに上書きしても、ゲインが 1.0 へ跳ね上がらない (クリック防止)
+        const double resume = MusicFadeOutElapsedFor(fm.from, 2.0);
+        const MusicFade cont = MusicCrossfadeGains(resume, 2.0);
+        check(std::abs(cont.from - fm.from) < 1e-4f,
+              "music: a fade-out resumed mid-way keeps the current gain (no click)");
+        check(MusicFadeOutElapsedFor(1.0f, 2.0) == 0.0,
+              "music: resuming from full gain starts the fade at zero elapsed");
+        check(std::abs(MusicFadeOutElapsedFor(0.0f, 2.0) - 2.0) < 1e-9,
+              "music: resuming from silence is already finished");
+    }
+
+    // ---- (17) ストリーミング読み出しが全展開デコーダと一致する (M45f) ----
+    // ★ここが M45f で唯一「耳でしか確かめられない」経路の自動検証。ストリーマは
+    //   ブロック毎に seek + 部分読み + 16bit 変換を行うので、全展開 (DecodeWav) と
+    //   1 サンプルでもズレると継ぎ目にノイズが出る
+    {
+        std::error_code ec;
+        const std::filesystem::path path =
+            std::filesystem::temp_directory_path(ec) / L"mye_music_selftest.wav";
+        std::filesystem::remove(path, ec);
+        SynthParams p;
+        p.wave = SynthWave::Saw;
+        p.durationSec = 0.25f;
+        p.channels = 2; // ステレオ = インターリーブの取り扱いも同時に見る
+        AudioClip gen;
+        SynthRender(p, gen);
+        const bool wrote = WriteWavToFile(gen, path.wstring());
+        check(wrote, "music: fixture wav written");
+
+        MusicSource src;
+        const bool opened = wrote && src.Open(path.wstring());
+        check(opened, "music: MusicSource opens a wav without decoding it whole");
+        if (opened) {
+            check(src.Channels() == gen.channels && src.SampleRate() == gen.sampleRate
+                      && src.TotalFrames() == static_cast<int64_t>(gen.Frames()),
+                  "music: streamed format matches the decoded clip");
+
+            // 半端なブロック長で読み進め、連結が全展開と完全一致することを見る
+            std::vector<int16_t> streamed;
+            std::vector<int16_t> block(700 * gen.channels);
+            for (;;) {
+                const int64_t got = src.Read(block.data(), 700);
+                if (got <= 0) {
+                    break;
+                }
+                streamed.insert(streamed.end(), block.begin(),
+                                block.begin() + static_cast<size_t>(got) * gen.channels);
+            }
+            check(streamed == gen.samples, "music: sequential streaming is sample-exact");
+            check(src.Read(block.data(), 700) == 0, "music: reading past EOF returns nothing");
+
+            // ループ点の seek — ここがズレるとループの継ぎ目でノイズが出る
+            const int64_t mid = src.TotalFrames() / 3;
+            check(src.Seek(mid), "music: seek to a loop point succeeds");
+            const int64_t got = src.Read(block.data(), 700);
+            check(got == 700, "music: a full block is available after the seek");
+            bool same = got == 700;
+            for (int64_t i = 0; same && i < 700 * gen.channels; ++i) {
+                same = block[static_cast<size_t>(i)] ==
+                       gen.samples[static_cast<size_t>(mid * gen.channels + i)];
+            }
+            check(same, "music: samples after a seek match the decoded clip exactly");
+            check(!src.Seek(src.TotalFrames() + 1), "music: seeking past EOF is rejected");
+        }
+        src.Close();
+        std::filesystem::remove(path, ec);
     }
 
     // ※OGG デコードは selftest に fixture を持たない (エンコーダを同梱しないため)。

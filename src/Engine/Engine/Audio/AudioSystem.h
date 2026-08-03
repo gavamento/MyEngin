@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -18,7 +19,8 @@ struct IXAudio2SourceVoice;
 namespace mye {
 
 struct AssetEntry;
-struct MixerAsset; // Audio/AudioMixer.h (json を引き込まないようここでは前方宣言)
+struct MixerAsset;   // Audio/AudioMixer.h (json を引き込まないようここでは前方宣言)
+class MusicStreamer; // Audio/MusicStream.h (<thread>/<mutex> をこのヘッダへ広げないため)
 
 // 再生ハンドル。世代タグ付きなので、スロットが別の音に再利用された後に来た
 // Stop / SetVolume を安全に無視できる (generation==0 は「無効」の予約値)
@@ -75,6 +77,26 @@ struct PlayDesc {
     const AudioSpatial* spatial = nullptr;
 };
 
+// BGM 1 曲ぶんの再生指定 (M45f)。SE の PlayDesc と違い **クリップ表 (PCM 全展開) には
+// 載せない** — 数分の曲は展開すると数十 MB になるため、ディスク/圧縮バイト列から
+// 逐次デコードして鳴らす
+struct MusicDesc {
+    std::wstring path;          // .wav / .ogg の実ファイル
+    uint64_t key = 0;           // 同一判定用の識別子 (.sound.json の GUID)。0 = 常に別曲扱い
+    int bus = 1;                // 既定バス構成での BGM (AudioSystem::kBusBgm)
+    float volume = 1.0f;        // 線形 0..1
+    float fadeSeconds = 1.0f;   // クロスフェード長。0 以下 = 即時切替
+    bool loop = true;
+    int64_t loopStartFrame = 0; // .sound.json の loopStartSample (フレーム単位)
+    int64_t loopEndFrame = 0;   // 同 loopEndSample。end <= start は「末尾まで」
+};
+
+// BGM の既定クロスフェード長 (エディタ試聴 / AudioSource の playOnAwake)。
+// 続けて 2 曲鳴らしたときに **その場でクロスフェードが聴き取れる**長さにしてある
+inline constexpr float kMusicDefaultFadeSeconds = 1.0f;
+// エディタの Stop / Play 停止で BGM を切るときの最小フェード。0 で切るとプツッと鳴るため
+inline constexpr float kMusicStopFadeSeconds = 0.1f;
+
 // バス 1 本のランタイム状態 (.mixer.json の MixerBus を「親名 → index」まで解決した形)。
 // **決定論レーン外** — sim はこの値を一切読まない
 struct AudioBusState {
@@ -115,6 +137,9 @@ public:
     static constexpr uint32_t kSpatialHandleBytes = 20;
 
     AudioSystem(); // 既定バス構成をデータとして持つ (デバイスが無くても FindBus が働く)
+    ~AudioSystem();
+    AudioSystem(const AudioSystem&) = delete;
+    AudioSystem& operator=(const AudioSystem&) = delete;
 
     bool Init(bool enabled = true); // enabled=false (--no-audio) なら全 API が no-op になる
     void Shutdown();
@@ -141,8 +166,20 @@ public:
     void Stop(AudioHandle h);
     void SetVoiceVolume(AudioHandle h, float volume);
     void SetVoicePitch(AudioHandle h, float pitch);
+    // ★ボイスプール (SE) だけを止める。**BGM は止まらない** — シーン遷移で BGM が
+    //   途切れないようにするため (M45f の「引き継ぎ」)。両方止めたいなら StopMusic も呼ぶこと
     void StopAll();
     int ActiveVoiceCount() const;
+
+    // ---- BGM ストリーミング (M45f) ----
+    // ボイスプールとは**別レーン**。ワーカースレッド 1 本 + スロット 2 個で、
+    // 曲を切り替えると等パワークロスフェードする。
+    // 同じ key が既に鳴っていれば**頭出しし直さず true** を返す (シーン遷移での引き継ぎ)
+    bool PlayMusic(const MusicDesc& d);
+    void StopMusic(float fadeSeconds);
+    // エディタ UI 用。**ABI へは絶対に出さない** (決定論契約 5: 再生状態を sim へ戻さない)
+    bool MusicPlaying() const;
+    uint64_t MusicKey() const;
 
     // ---- 3D 定位 (M45e) ----
     // X3DAudio が使えるか。デバイスのチャンネルマスクが取れない環境 (仮想/ループバック) では
@@ -201,7 +238,9 @@ public:
     // (完全に early-out すると再生し終えた voice がリークする)
     void SetSuspended(bool suspended);
     bool IsSuspended() const { return suspended_; }
-    void Update(); // フレーム毎。終了 voice の回収 + 保留中のバスグラフ再構築
+    // フレーム毎。終了 voice の回収 + 保留中のバスグラフ再構築 + BGM のフェード進行。
+    // dt は**実時間秒** (フェードは絶対経過時間で進めるため tick の固定 dt では駄目)
+    void Update(float dt);
 
     // ---- 名前キー (互換シム。M19 の API と、それを 64bit へ潰したスクリプト経路) ----
     bool LoadWav(const std::string& key, const std::wstring& path);
@@ -282,6 +321,10 @@ private:
     std::vector<Voice> voices_;
     std::unordered_map<uint64_t, Clip> clips_;    // AssetID.value → PCM
     std::unordered_map<uint64_t, AssetID> named_; // HashStr(名前キー) → AssetID
+
+    // BGM ストリーマ (M45f)。**常に非 null** (Init 前でも構築済み。ワーカーは Init で起きる)。
+    // unique_ptr にしているのは <thread>/<mutex> をこのヘッダへ広げないため
+    std::unique_ptr<MusicStreamer> music_;
 
     uint32_t masterChannels_ = 2;
     uint32_t masterSampleRate_ = 44100;

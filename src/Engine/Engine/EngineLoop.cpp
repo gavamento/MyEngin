@@ -543,9 +543,12 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                     vfxRenderer.Reset(); // M29c: トレイル点列も新シーンでリセット
                     scriptHost.ClearStarted();
                     managedHost.OnSceneReloaded();
-                    // M45: 旧シーンの音を断ち、ハンドル採番も 0 から振り直す。
+                    // M45: 旧シーンの SE を断ち、ハンドル採番も 0 から振り直す。
                     // 採番列は「スクリプトの呼出順」だけで決まる必要があるので、
-                    // 記録/検証の別なく **必ず** リセットする (サスペンド中でも進む値のため)
+                    // 記録/検証の別なく **必ず** リセットする (サスペンド中でも進む値のため)。
+                    // ★M45f: StopAll はボイスプール (SE) だけを止め、**BGM は止めない** —
+                    //   シーンをまたいで曲が途切れないのが BGM の要件。新シーンが別の曲を
+                    //   指定すれば PlayMusic 側でクロスフェードし、同じ曲なら鳴り続ける
                     audioSystem.StopAll();
                     audioSources.Reset(); // 旧シーンの音源キャッシュ (速度推定 / 再生済みフラグ)
                     audioHandleSeq = 0;
@@ -585,7 +588,9 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         //   voice 回収を回す (回収でスロットが空くのは次フレームからで良い)
         audioSources.Update(scene.GetWorld(), audioSystem, soundLibrary, ctx.tickIndex,
                             ctx.fixedDt, ctx.simulateScripts);
-        audioSystem.Update();
+        // dt は**実時間**を渡す (M45f の BGM クロスフェードは絶対経過時間で進むため。
+        // 固定 dt を渡すと 6500fps ではフェードが 100 倍速で終わる)
+        audioSystem.Update(static_cast<float>(dt));
         const double tRender = clock.Now();
 
         // エディタ (または将来の設定) によるレンダリングパス切替を反映

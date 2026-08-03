@@ -14,6 +14,7 @@
 #include "Engine/Core/Hash.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Engine/Audio/AudioMixer.h"
+#include "Engine/Engine/Audio/MusicStream.h"
 #include "Engine/Platform/PathUtil.h"
 #include "Engine/Renderer/GpuResources.h" // AssetEntry
 
@@ -130,6 +131,15 @@ AudioSystem::AudioSystem()
         buses_.push_back(std::move(b));
     }
     UpdateRootBus();
+    // ストリーマは常に構築しておく (ワーカーが起きるのは Init のとき)。
+    // こうすると --no-audio / selftest でも PlayMusic が null チェック無しに no-op になる
+    music_ = std::make_unique<MusicStreamer>();
+}
+
+// MusicStreamer が前方宣言なので、デストラクタは**必ずここ** (完全定義が見える場所) に置く
+AudioSystem::~AudioSystem()
+{
+    Shutdown();
 }
 
 bool AudioSystem::Init(bool enabled)
@@ -171,6 +181,7 @@ bool AudioSystem::Init(bool enabled)
 
     voices_.resize(static_cast<size_t>(kMaxVoices));
     InitSpatial(); // 失敗しても 2D 経路で動き続ける (オーディオ全体は落とさない)
+    music_->Init(xaudio_); // BGM ストリーマのワーカー起動 (M45f)
     MYE_LOG_INFO("[audio] XAudio2 ready (%u ch @ %u Hz, %d voices, %d buses)", masterChannels_,
                  masterSampleRate_, kMaxVoices, BusCount());
     return true;
@@ -207,6 +218,11 @@ void AudioSystem::InitSpatial()
 
 void AudioSystem::Shutdown()
 {
+    // ★BGM が最初。ストリーマはワーカースレッドを持つので、**バスグラフを壊す前に
+    //   スレッドを殺し切って voice を破棄する**必要がある (Shutdown が中でその順を守る)
+    if (music_) {
+        music_->Shutdown();
+    }
     DestroyAllSourceVoices();
     voices_.clear();
     x3dReady_ = false;
@@ -400,6 +416,12 @@ void AudioSystem::DestroyBusGraph()
 
 void AudioSystem::DestroyAllSourceVoices()
 {
+    // ★BGM の voice も送り先サブミックスを掴んでいるので、ここで必ず一緒に破棄する。
+    //   残すと再構築で消えたバスへ送り続けて落ちる。トポロジ変更 (バスの追加/削除/改名/
+    //   親変更) はエディタ操作でしか起きないので、BGM が止まることは許容する
+    if (music_) {
+        music_->StopNow();
+    }
     for (Voice& v : voices_) {
         if (v.voice != nullptr) {
             v.voice->Stop(0);
@@ -1213,6 +1235,48 @@ void AudioSystem::StopAll()
     }
 }
 
+// ---------------------------------------------------------------------------
+// BGM ストリーミング (M45f)。ボイスプールとは別レーン
+// ---------------------------------------------------------------------------
+
+bool AudioSystem::PlayMusic(const MusicDesc& d)
+{
+    if (xaudio_ == nullptr || suspended_ || !music_) {
+        return false; // 記録/検証中と --no-audio では鳴らさない (決定論契約 2)
+    }
+    const int bus = ValidBus(d.bus) ? d.bus : DefaultBus();
+    IXAudio2SubmixVoice* dest = buses_[static_cast<size_t>(bus)].voice;
+    if (dest == nullptr) {
+        return false;
+    }
+    MusicRequest r;
+    r.path = d.path;
+    r.key = d.key;
+    r.volume = d.volume;
+    r.fadeSeconds = d.fadeSeconds;
+    r.loop = d.loop;
+    r.loopStartFrame = d.loopStartFrame;
+    r.loopEndFrame = d.loopEndFrame;
+    return music_->Play(r, dest);
+}
+
+void AudioSystem::StopMusic(float fadeSeconds)
+{
+    if (music_) {
+        music_->Stop(fadeSeconds);
+    }
+}
+
+bool AudioSystem::MusicPlaying() const
+{
+    return music_ && music_->Playing();
+}
+
+uint64_t AudioSystem::MusicKey() const
+{
+    return music_ ? music_->CurrentKey() : 0;
+}
+
 int AudioSystem::ActiveVoiceCount() const
 {
     int n = 0;
@@ -1235,12 +1299,16 @@ void AudioSystem::SetSuspended(bool suspended)
     }
     suspended_ = suspended;
     if (suspended_) {
-        // 立ち上がりで 1 回だけ全停止する。記録/検証中に実音を出さないための境界
+        // 立ち上がりで 1 回だけ全停止する。記録/検証中に実音を出さないための境界。
+        // ★BGM は StopAll では止まらない別レーンなので明示的に止める (M45f)
         StopAll();
+        if (music_) {
+            music_->StopNow();
+        }
     }
 }
 
-void AudioSystem::Update()
+void AudioSystem::Update(float dt)
 {
     // ★トポロジ変更はここ (フレーム境界) でしか適用しない。UI のドラッグ操作で
     //   1 フレームに何度 ApplyMixer が呼ばれても、グラフの作り直しは 1 回で済む
@@ -1262,6 +1330,11 @@ void AudioSystem::Update()
             v.active = false;
             v.clip = {};
         }
+    }
+    // BGM のフェード進行と鳴り終わり回収 (M45f)。**suspend 中も回す** — 上の voice 回収と
+    // 同じ理由で、止めた側の後始末までは動かし続ける必要がある
+    if (music_) {
+        music_->Update(dt);
     }
 }
 

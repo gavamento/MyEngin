@@ -38,7 +38,9 @@ struct SoundAsset {
     float pitch = 1.0f;        // 周波数比
     float pitchRandom = 0.0f;  // ± 幅 (周波数比)
     bool loop = false;
-    bool stream = false;       // BGM フラグ (ストリーミング再生は M45f)
+    // BGM フラグ。true なら**ボイスプールではなくストリーミングレーン**で鳴る (M45f)。
+    // PCM 全展開もされない (DemoContent::RegisterAssetLibraries の ClipUsage 判定)
+    bool stream = false;
     std::string bus = "SE";    // 実行中のミキサーの名前で解決 (未知名は AudioSystem の既定バス)
     int32_t priority = 128;    // 大きいほど重要 (VoicePolicy と同じ規約)
     int32_t maxInstances = 0;  // 同時発音数の上限 (0 = 無制限)
@@ -51,7 +53,7 @@ struct SoundAsset {
     float dopplerScale = 1.0f;
     float reverbSend = 0.0f;   // リバーブバスへの送り量 (0 = ドライのみ)
 
-    // ---- ループ点 (M45f 予約。単位 = フレーム。end<=start で「末尾まで」) ----
+    // ---- ループ点 (単位 = フレーム。end<=start で「末尾まで」)。stream + loop で効く ----
     int32_t loopStartSample = 0;
     int32_t loopEndSample = 0;
 };
@@ -60,6 +62,15 @@ struct SoundAsset {
 struct SoundEntry {
     uint64_t hash = 0;
     std::string name;
+};
+
+// あるクリップ GUID が .sound.json からどう参照されているか (M45f)。
+// **BGM を PCM 全展開しない**ための判定に使う — 数分の曲を展開すると数十 MB になり、
+// ストリーミングの意味が無くなる
+enum class ClipUsage : int32_t {
+    None = 0,   // どの .sound.json からも参照されていない (従来どおり展開する)
+    Sampled,    // 1 つでも stream=false から参照されている (SE として展開が要る)
+    StreamOnly, // 参照元が **すべて** stream=true (展開せずストリーミングだけで足りる)
 };
 
 // 登録済み .sound.json の管理 (ControllerLibrary 範型)。
@@ -76,6 +87,10 @@ public:
     SoundAsset* GetMutable(uint64_t hash);
     bool Contains(uint64_t hash) const { return sounds_.find(hash) != sounds_.end(); }
     std::vector<SoundEntry> Enumerate() const; // 名前昇順 (ハッシュの反復順を表に出さない)
+    // 「この .wav/.ogg を PCM へ展開する必要があるか」の判定 (M45f)。
+    // **1 つでも stream=false の参照があれば Sampled** — 同じ素材を SE と BGM の両方で
+    // 使っているときに、SE 側が黙って鳴らなくなるのを防ぐ
+    ClipUsage UsageOfClip(uint64_t clip) const;
 
     static nlohmann::json ToJson(const SoundAsset& s);
     // "clip" は両対応: 数値 = GUID をそのまま / 文字列 = 旧相対パス (clipPath に読むだけ)
@@ -99,9 +114,17 @@ int PickVariationIndex(const SoundAsset& s, uint32_t roll);
 PlayDesc MakePlayDesc(const SoundAsset& s, int variationIndex, float volJitter, float pitchJitter,
                       const AudioSystem& audio);
 
+// stream = true の .sound.json を **BGM ストリーミングレーン**で鳴らす (M45f)。
+// クリップ表 (PCM 全展開) には載せず、GUID から実ファイルを引いてディスクから直接読む。
+// **BGM レーンは 1 本** — 別の曲が鳴っていればクロスフェードで置き換わる。
+// バリエーションは先頭固定 (BGM を毎回抽選する意味が無い)、揺らぎも掛けない
+bool PlayMusicSound(AudioSystem& audio, const SoundAsset& s, float fadeSeconds);
+
 // エディタ試聴 (Asset Browser のダブルクリック / Inspector の ▶)。
 // バリエーションは先頭固定・揺らぎ無しで再現性を優先する。クリップが未ロードなら
-// GUID からパスを解決してロードを試みる
+// GUID からパスを解決してロードを試みる。
+// **stream = true なら PlayMusicSound へ回す** ので、返るハンドルは無効になる
+// (BGM はボイスプールの外のレーンで鳴るため)
 AudioHandle PreviewSound(AudioSystem& audio, const SoundAsset& s);
 
 } // namespace mye

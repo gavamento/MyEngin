@@ -90,9 +90,9 @@ int16_t ConvertSample(const uint8_t* p, uint16_t formatTag, uint16_t bits)
 
 } // namespace
 
-bool DecodeWav(const uint8_t* bytes, size_t len, AudioClip& out)
+bool ParseWavHeader(const uint8_t* bytes, size_t len, WavInfo& out)
 {
-    out = AudioClip{};
+    out = WavInfo{};
     if (bytes == nullptr || len < 44) {
         return false;
     }
@@ -105,8 +105,9 @@ bool DecodeWav(const uint8_t* bytes, size_t len, AudioClip& out)
     uint16_t channels = 0;
     uint32_t sampleRate = 0;
     uint16_t bits = 0;
-    const uint8_t* data = nullptr;
+    size_t dataOffset = 0;
     size_t dataBytes = 0;
+    uint64_t dataDeclared = 0;
     bool haveFmt = false;
     bool haveData = false;
 
@@ -131,8 +132,9 @@ bool DecodeWav(const uint8_t* bytes, size_t len, AudioClip& out)
             }
             haveFmt = true;
         } else if (id == FourCC('d', 'a', 't', 'a')) {
-            data = bytes + body;
+            dataOffset = body;
             dataBytes = bodySize;
+            dataDeclared = csz;
             haveData = true;
         }
 
@@ -161,24 +163,51 @@ bool DecodeWav(const uint8_t* bytes, size_t len, AudioClip& out)
         return false;
     }
 
+    out.formatTag = formatTag;
+    out.channels = channels;
+    out.sampleRate = sampleRate;
+    out.bits = bits;
+    out.dataOffset = dataOffset;
+    out.dataBytes = dataBytes;
+    out.dataBytesDeclared = dataDeclared;
+    return true;
+}
+
+void ConvertWavSamples(const uint8_t* src, size_t count, uint16_t formatTag, uint16_t bits,
+                       int16_t* dst)
+{
+    if (src == nullptr || dst == nullptr || count == 0) {
+        return;
+    }
+    if (formatTag == kFmtPcm && bits == 16) {
+        // 最頻ケースは変換不要 (バイト列がそのまま int16 LE)。x64 は LE なので memcpy でよい
+        std::memcpy(dst, src, count * sizeof(int16_t));
+        return;
+    }
     const size_t bytesPerSample = bits / 8u;
-    size_t totalSamples = dataBytes / bytesPerSample;
-    totalSamples -= totalSamples % channels; // 半端なフレームは捨てる
+    for (size_t i = 0; i < count; ++i) {
+        dst[i] = ConvertSample(src + i * bytesPerSample, formatTag, bits);
+    }
+}
+
+bool DecodeWav(const uint8_t* bytes, size_t len, AudioClip& out)
+{
+    out = AudioClip{};
+    WavInfo info;
+    if (!ParseWavHeader(bytes, len, info)) {
+        return false;
+    }
+    size_t totalSamples = info.dataBytes / info.BytesPerSample();
+    totalSamples -= totalSamples % info.channels; // 半端なフレームは捨てる
     if (totalSamples == 0) {
         return false;
     }
 
     out.samples.resize(totalSamples);
-    out.channels = channels;
-    out.sampleRate = sampleRate;
-    if (formatTag == kFmtPcm && bits == 16) {
-        // 最頻ケースは変換不要 (バイト列がそのまま int16 LE)。x64 は LE なので memcpy でよい
-        std::memcpy(out.samples.data(), data, totalSamples * sizeof(int16_t));
-    } else {
-        for (size_t i = 0; i < totalSamples; ++i) {
-            out.samples[i] = ConvertSample(data + i * bytesPerSample, formatTag, bits);
-        }
-    }
+    out.channels = info.channels;
+    out.sampleRate = info.sampleRate;
+    ConvertWavSamples(bytes + info.dataOffset, totalSamples, info.formatTag, info.bits,
+                      out.samples.data());
     return true;
 }
 

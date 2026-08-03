@@ -1,0 +1,28 @@
+{
+  "engine": "MyEngine",
+  "sound": 1,
+  "name": "bgm_drive",
+  "variations": [
+    {
+      "clip": 1718695645959118014,
+      "weight": 1
+    }
+  ],
+  "volume": 0.7,
+  "volumeRandom": 0.0,
+  "pitch": 1.0,
+  "pitchRandom": 0.0,
+  "loop": true,
+  "stream": true,
+  "bus": "BGM",
+  "priority": 128,
+  "maxInstances": 0,
+  "spatialBlend": 0.0,
+  "minDistance": 1.0,
+  "maxDistance": 50.0,
+  "rolloff": "logarithmic",
+  "dopplerScale": 0.0,
+  "reverbSend": 0.0,
+  "loopStartSample": 0,
+  "loopEndSample": 0
+}
