@@ -71,6 +71,9 @@ struct EngineConfig {
     bool rtAnimSeed = false;
     // M46e: SVGF 空間フィルタ (--rt-no-svgf で off)。rtTemporal=false では元から動かない
     bool rtSvgf = true;
+    // M46f: レイトレ GI を最終画像へ合成する (--rt-gi)。Deferred パスのみ。
+    // off なら BVH の構築も転送も走らないので既定の描画経路は一切変わらない
+    bool rtGi = false;
 
     // ---- オーディオ (M45) ----
     // false (--no-audio) で XAudio2 を一切初期化しない。オーディオ端末の無い CI や

@@ -29,3 +29,37 @@
 - [ ] Compare mode: 2 つの雲が同じ動き / ms 表示 / SIMD トグルで CPU 時間変化
 - [ ] View > Render Path: Forward ⇔ Deferred 切替で見た目一致、繰り返してもリークなし
   (Debug 実行で終了時の D3D レポート確認)
+
+## M46: ハイブリッド・パストレーシング (RT GI)
+
+前提: **Deferred パスのみ**効く。Forward / AssetPreview では自動的に無効。
+CLI は Editor / Runtime 共通で `--rt-gi` `--rt-debug N` `--rt-no-temporal` `--rt-no-svgf`
+`--rt-freeze-seed` `--rt-anim-seed`。
+
+### 非干渉 (既定 off) — サブごとに必須
+
+- [ ] 何も触らずに `Runtime.exe --deferred --replay-verify cache\golden.rep --shot-frame 3
+      --screenshot a.png` を**変更前後のバイナリ**で撮り `fc /b` でバイト一致
+- [ ] 同じことを `--deferred` 無し (Forward) でも実施 — `common.hlsli` を触ったら必ず
+- [ ] RT off のまま `--selftest` / `tools\replay_verify.bat` / `tools\check_rules.ps1` が全 PASS
+
+### RT GI の合成 (M46f)
+
+- [ ] View > Rendering > **RT GI (Deferred)** を on/off → SceneView が即座に切り替わる
+      (off で BVH の構築も走らない = Profiler の `rt bvh` 行が消える)
+- [ ] **明るさの段差が無いこと**: スカイ (= IBL) のあるシーンで on/off し、遮蔽の無い
+      開けた床の輝度がほぼ変わらない (GI は IBL 拡散項と同次元の入射放射輝度で置換される)
+- [ ] 色移り: 有色の床の上に置いた白い箱の**影側の面**に床の色が回り込む
+- [ ] SSAO 併用: GI on では拡散環境項に AO が掛からない (二重遮蔽にならない)。
+      IBL スペキュラ項には従来どおり掛かる
+- [ ] Unlit / Wireframe 表示モードでは GI が掛からない (環境項が定数のまま)
+- [ ] SceneView と GameView を同時に開いても互いのノイズ/履歴が混線しない
+- [ ] Debug 実行で D3D デバッグレイヤの警告 0 (GBuffer を CS の SRV で読むため
+      RTV のアンバインド漏れがあるとここに出る)
+
+### 品質 A/B (計測時の注意)
+
+- [ ] `--rt-no-temporal` で 1spp の生ノイズ / 外すと均される
+- [ ] `--rt-no-svgf` で蓄積のみ / 外すとエッジを保ったまま平滑化
+- [ ] **スクリーンショットは自動でシード凍結される** — デノイズの効きを写したいときは
+      `--rt-anim-seed` を併用する (付けても `--replay-verify` ならフレーム決定的)

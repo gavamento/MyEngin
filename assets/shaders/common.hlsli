@@ -213,6 +213,46 @@ float3 ApplyLighting(float3 albedo, float3 normal, float3 posW, float3 cameraPos
     return ambientTerm * ao + Lo; // SSAO は環境項のみ減衰 (直接光には掛けない)
 }
 
+// M46f: ハイブリッド合成版。**拡散の環境項だけ**をレイトレ GI (rt_gi.cs.hlsl の出力) で
+// 置き換える。gi は albedo を掛けない demodulated 入射放射輝度 (M46c の規約) なので、
+// IBL irradiance / 定数アンビエントとちょうど同じ位置に代入できる = 明るさの段差が出ない。
+//
+// 直接光は式を複製せず ApplyLighting を「環境項ゼロ」(ambient=0 / iblEnabled=0) で呼んで
+// Lo だけを取り出す — こうしておくと Forward と Deferred のライティングが永久に一致する。
+// ao は GI 拡散には掛けない (可視性はレイトレ側に既に入っている = 二重遮蔽になるため)。
+// IBL スペキュラ環境項は従来どおり ao で減衰させる。
+// **この関数は gRtGiEnabled != 0 のときだけ呼ばれる** (既存 ApplyLighting は無変更)。
+float3 ApplyLightingHybrid(float3 albedo, float3 normal, float3 posW, float3 cameraPos,
+                           float metallic, float roughness, float3 ambient,
+                           Light lights[MAX_LIGHTS], int count, float dirShadow, int iblEnabled,
+                           float iblSpecMips, TextureCube iblIrradiance,
+                           TextureCube iblPrefiltered, Texture2D iblBrdfLut,
+                           SamplerState iblSampler, float ao, float3 gi)
+{
+    const float3 zero3 = float3(0.0f, 0.0f, 0.0f);
+    const float3 Lo =
+        ApplyLighting(albedo, normal, posW, cameraPos, metallic, roughness, zero3, lights, count,
+                      dirShadow, 0, iblSpecMips, iblIrradiance, iblPrefiltered, iblBrdfLut,
+                      iblSampler, ao);
+
+    const float3 N = normal;
+    const float3 V = normalize(cameraPos - posW);
+    const float ndv = saturate(dot(N, V));
+    const float3 F0 = lerp(float3(0.04f, 0.04f, 0.04f), albedo, metallic);
+    const float3 kS = FresnelSchlickRoughness(ndv, F0, roughness);
+    const float3 kD = (1.0f - kS) * (1.0f - metallic); // 金属は拡散なし (IBL 拡散と同配分)
+
+    float3 ambientTerm = gi * albedo * kD; // AO は掛けない (GI が遮蔽を含む)
+    if (iblEnabled != 0) {
+        // スペキュラ環境項は M46h (RT 反射) まで IBL のまま
+        const float3 R = reflect(-V, N);
+        const float3 pre = iblPrefiltered.SampleLevel(iblSampler, R, roughness * iblSpecMips).rgb;
+        const float2 brdf = iblBrdfLut.SampleLevel(iblSampler, float2(ndv, roughness), 0).rg;
+        ambientTerm += pre * (F0 * brdf.x + brdf.y) * ao;
+    }
+    return ambientTerm + Lo;
+}
+
 
 // ---- 距離フォグ (M29d) + ハイトフォグ/太陽インスキャッタ (M43a) ----
 // mode: -1=無効 / 0=linear (start..end) / 1=exp (1-e^-ρd) / 2=exp2 (1-e^-(ρd)²)。

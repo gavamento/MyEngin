@@ -319,6 +319,9 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
             ImGui::MenuItem("SSAO (Deferred)", nullptr, &ctx.renderSystem->enableSsao);
             ImGui::MenuItem("GPU Instancing", nullptr, &ctx.renderSystem->enableInstancing);
             ImGui::MenuItem("Post FX", nullptr, &ctx.renderSystem->enablePostFx);
+            // M46f: レイトレ拡散 GI を最終画像へ合成。off なら BVH の構築すら走らない。
+            // 品質パラメータ (解像度/バウンス/蓄積/SVGF) は RT Debug メニュー側と共通
+            ImGui::MenuItem("RT GI (Deferred)", nullptr, &ctx.renderSystem->enableRtGi);
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu("RT Debug (Deferred)")) {

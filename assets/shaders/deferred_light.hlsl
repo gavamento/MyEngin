@@ -42,6 +42,9 @@ cbuffer LightPass : register(b0)
     float    _fogPad2;
     float3   gSunColor;              // リニア・強度込み (平行光無し = 黒 + intensity 0)
     float    _fogPad3;
+    // ---- M46f: RT GI 合成 (末尾 append)。0 = 従来と完全に同一の式 ----
+    int      gRtGiEnabled;
+    float3   _rtPad;
 };
 
 Texture2D gAlbedo    : register(t0);
@@ -53,6 +56,7 @@ TextureCube gIblIrradiance  : register(t5); // M38c
 TextureCube gIblPrefiltered : register(t6);
 Texture2D   gIblBrdfLut     : register(t7);
 Texture2D   gSsao           : register(t8); // M38e (半解像度、ブラー済み AO)
+Texture2D   gRtGi           : register(t9); // M46f (内部解像度、demodulated 入射放射輝度)
 SamplerState gIblSampler : register(s0); // LINEAR/CLAMP (M38c、s0 は光パスで空きだった)
 SamplerComparisonState gShadowSampler : register(s1);
 
@@ -89,9 +93,19 @@ float4 PSMain(VSOut i) : SV_Target
     if (gSsaoEnabled != 0) {
         ao = gSsao.SampleLevel(gIblSampler, i.pos.xy / gScreenSize, 0).r; // M38e
     }
-    float3 color = ApplyLighting(albedo.rgb, n, posW, gCameraPos, mr.x, mr.y, gAmbient,
-                                 gLights, gLightCount, dirShadow, gIblEnabled, gIblSpecMips,
-                                 gIblIrradiance, gIblPrefiltered, gIblBrdfLut, gIblSampler, ao);
+    float3 color;
+    if (gRtGiEnabled != 0) {
+        // M46f: GI は内部解像度 (rtResolutionScale) なので s0 = LINEAR/CLAMP で引き上げる
+        const float3 gi = gRtGi.SampleLevel(gIblSampler, i.pos.xy / gScreenSize, 0).rgb;
+        color = ApplyLightingHybrid(albedo.rgb, n, posW, gCameraPos, mr.x, mr.y, gAmbient,
+                                    gLights, gLightCount, dirShadow, gIblEnabled, gIblSpecMips,
+                                    gIblIrradiance, gIblPrefiltered, gIblBrdfLut, gIblSampler, ao,
+                                    gi);
+    } else {
+        color = ApplyLighting(albedo.rgb, n, posW, gCameraPos, mr.x, mr.y, gAmbient,
+                              gLights, gLightCount, dirShadow, gIblEnabled, gIblSpecMips,
+                              gIblIrradiance, gIblPrefiltered, gIblBrdfLut, gIblSampler, ao);
+    }
     color = ApplyFog(color, gFogColor, gFogMode, gFogDensity, gFogStart, gFogEnd,
                      gCameraPos, posW, gFogHeightFalloff, gFogBaseHeight, gSunDirection,
                      gSunColor, gFogInscatterIntensity, gFogInscatterPower); // M29d+M43a

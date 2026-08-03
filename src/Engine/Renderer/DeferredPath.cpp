@@ -109,6 +109,9 @@ struct LightPassCB {
     float fogPad2;
     XMFLOAT3 sunColor;
     float fogPad3;
+    // ---- M46f: RT GI 合成 (末尾 append。0 = 従来と完全に同一の式) ----
+    int32_t rtGiEnabled;
+    float rtPad[3];
 };
 
 // ssao.hlsl の SsaoCB と同一レイアウト
@@ -627,6 +630,30 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
         dc->PSSetShaderResources(0, 3, aoNull); // 光パスで再バインドする前に解除
     }
 
+    // ---- 1.7) レイトレ拡散 GI (M46f): ライトパスの前に内部解像度で撃つ。
+    //      デバッグ表示 (mode>=4) も**この結果を使い回す** — 1 フレームに 2 回撃つと
+    //      テンポラル履歴が二重に進んで蓄積が壊れるため。
+    //      Unlit/Wireframe は環境項が定数なので撃たない (SSAO/影/IBL と同じ扱い) ----
+    const bool rtAvailable = view.rtPasses != nullptr && view.rtScene != nullptr;
+    const bool rtGiOn = rtAvailable && !unlit && view.rtGiEnabled != 0;
+    RtFrameInputs rtIn;
+    RtGiResult rtGi;
+    if (rtAvailable) {
+        rtIn.scene = view.rtScene;
+        rtIn.lights = &lights;
+        rtIn.gbNormal = gbNormal_.SRV();
+        rtIn.gbPosition = gbPosition_.SRV();
+        rtIn.gbAlbedo = gbAlbedo_.SRV();
+        rtIn.skyCube = view.skyCubemap;
+        if (rtGiOn || view.rtDebugMode >= 4) {
+            // GBuffer を CS の SRV で読むので RTV を先に外す
+            // (SSAO off の経路では GBuffer が RTV に残ったままなので必須。M44b と同じ罠)
+            dc->OMSetRenderTargets(0, nullptr, nullptr);
+            rtGi = view.rtPasses->RenderGi(device, shaders, view, rtIn);
+        }
+    }
+    const bool rtGiBound = rtGiOn && rtGi.filtered != nullptr;
+
     // ---- 2) ライティングパス (フルスクリーン解決) ----
     dc->OMSetRenderTargets(1, &view.rtv, nullptr); // GBuffer を SRV で読むため depth も外す
     dc->RSSetViewports(1, &vp);
@@ -662,6 +689,7 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
     lp.fogInscatterPower = view.fogInscatterPower;
     lp.sunDirection = view.sunDirection;
     lp.sunColor = view.sunColor;
+    lp.rtGiEnabled = rtGiBound ? 1 : 0; // M46f
     UploadCB(dc, lightCB_.Get(), lp);
     ID3D11Buffer* lightCbs[1] = { lightCB_.Get() };
     dc->PSSetConstantBuffers(0, 1, lightCbs);
@@ -671,22 +699,23 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
     // point-wrap で上書きするため両方を明示的に張り直す** (張り忘れると影が全消えする)
     ID3D11SamplerState* lightSamplers[2] = { iblSampler_.Get(), shadowSampler_.Get() };
     dc->PSSetSamplers(0, 2, lightSamplers);
-    // GBuffer t0-3 + シャドウ t4 + IBL t5-7 (M38c) + SSAO t8 (M38e)。
+    // GBuffer t0-3 + シャドウ t4 + IBL t5-7 (M38c) + SSAO t8 (M38e) + RT GI t9 (M46f)。
     // s0=IBL サンプラ / s1=比較サンプラ bind 済み
-    ID3D11ShaderResourceView* gbSrvs[9] = { gbAlbedo_.SRV(),  gbNormal_.SRV(),
-                                            gbPosition_.SRV(), gbMaterial_.SRV(),
-                                            view.shadowSRV,    view.iblIrradiance,
-                                            view.iblPrefiltered, view.iblBrdfLut,
-                                            ssaoOn ? ssaoBlur_.SRV() : nullptr };
-    dc->PSSetShaderResources(0, 9, gbSrvs);
+    ID3D11ShaderResourceView* gbSrvs[10] = { gbAlbedo_.SRV(),     gbNormal_.SRV(),
+                                             gbPosition_.SRV(),   gbMaterial_.SRV(),
+                                             view.shadowSRV,      view.iblIrradiance,
+                                             view.iblPrefiltered, view.iblBrdfLut,
+                                             ssaoOn ? ssaoBlur_.SRV() : nullptr,
+                                             rtGiBound ? rtGi.filtered : nullptr };
+    dc->PSSetShaderResources(0, 10, gbSrvs);
     dc->IASetInputLayout(nullptr);
     dc->OMSetBlendState(blendOpaque_.Get(), nullptr, 0xFFFFFFFFu);
     dc->VSSetShader(lightProg->vs.Get(), nullptr, 0);
     dc->PSSetShader(lightProg->ps.Get(), nullptr, 0);
     dc->OMSetDepthStencilState(depthDisabled_.Get(), 0);
     dc->Draw(3, 0);
-    ID3D11ShaderResourceView* nullSrvs[9] = {};
-    dc->PSSetShaderResources(0, 9, nullSrvs); // 次フレームで RT に戻すため解除
+    ID3D11ShaderResourceView* nullSrvs[10] = {};
+    dc->PSSetShaderResources(0, 10, nullSrvs); // 次フレームで RT に戻すため解除
 
     // ---- 2.5) スカイボックス (M29d): clearColor ピクセルを深度 1.0 判定で上書き ----
     // (Wireframe はフルスクリーン三角形が線になるためスキップ、M40b)
@@ -783,19 +812,10 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
 
     // ---- 4) RT デバッグ表示 (M46b): BVH の検証用に画面を丸ごと差し替える。
     //      既定 (rtDebugMode==0 / rtScene==null) では何も起きない ----
-    if (view.rtDebugMode != 0 && view.rtPasses != nullptr && view.rtScene != nullptr) {
-        RtFrameInputs rtIn;
-        rtIn.scene = view.rtScene;
-        rtIn.lights = &lights;
-        rtIn.gbNormal = gbNormal_.SRV();
-        rtIn.gbPosition = gbPosition_.SRV();
-        rtIn.gbAlbedo = gbAlbedo_.SRV();
-        rtIn.skyCube = view.skyCubemap;
-        RtGiResult gi;
-        if (view.rtDebugMode >= 4) { // GI 系表示 (4=生 / 5=蓄積 / 6=履歴長) のときだけ走らせる
-            gi = view.rtPasses->RenderGi(device, shaders, view, rtIn);
-        }
-        view.rtPasses->RenderDebug(device, shaders, view, rtIn, gi);
+    if (view.rtDebugMode != 0 && rtAvailable) {
+        // GI 系表示 (4=生 / 5=蓄積 / 6=履歴長 / 7=SVGF / 8=分散) の入力は 1.7 で撃った結果。
+        // ここで撃ち直すと同じフレームで履歴が 2 回進むので絶対に呼ばない (M46f)
+        view.rtPasses->RenderDebug(device, shaders, view, rtIn, rtGi);
         // パーティクル後段のために RTV+DSV を戻す (ブリットが RTV のみに差し替えたため)
         dc->OMSetRenderTargets(1, &view.rtv, view.dsv);
         dc->OMSetDepthStencilState(nullptr, 0);

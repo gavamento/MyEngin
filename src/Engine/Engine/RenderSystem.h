@@ -114,6 +114,10 @@ public:
     // M46e: SVGF 空間フィルタ (分散推定 + エッジ停止 A-Trous)。
     // 幾何バッファがテンポラルパスの副産物なので rtTemporal=false では動かない
     bool rtSvgf = true;
+    // M46f: 最終画像への合成 (Deferred のみ)。true でライトパスの拡散環境項
+    // (IBL irradiance / 定数アンビエント) をレイトレ GI で置き換える。
+    // false かつ rtDebugMode==0 なら BVH の構築も転送も走らない = 従来と完全に同じ経路
+    bool enableRtGi = false;
 
     // M44d: ポストプロセス解決の GPU 時間 (直近の Resolve、ProfilerWindow 表示用)
     float PostFxGpuMs() const { return postFx_.ResolveGpuMs(); }
