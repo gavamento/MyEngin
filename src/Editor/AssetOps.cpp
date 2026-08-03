@@ -15,6 +15,7 @@
 
 #include "Editor/Selection.h"
 #include "Editor/Undo/UndoStack.h"
+#include "Engine/Core/Localization.h"
 #include "Engine/Core/ComponentRegistry.h"
 #include "Engine/Core/Components.h"
 #include "Engine/Core/Log.h"
@@ -219,7 +220,7 @@ void CopyDirRecursive(EngineContext& ctx, const fs::path& srcDir, const fs::path
     std::error_code ec;
     fs::create_directories(dstDir, ec);
     if (!fs::is_directory(dstDir, ec)) {
-        MYE_LOG_ERROR("import: could not create folder: %s", WideToUtf8(dstDir.wstring()).c_str());
+        MYE_LOG_ERROR(Tr(StrId::Log_ImportMkdirFail), WideToUtf8(dstDir.wstring()).c_str());
         result.failed++;
         return;
     }
@@ -235,7 +236,7 @@ void CopyDirRecursive(EngineContext& ctx, const fs::path& srcDir, const fs::path
                 RegisterImported(ctx, dst.wstring());
                 result.imported++;
             } else {
-                MYE_LOG_ERROR("import: copy failed: %s (%s)",
+                MYE_LOG_ERROR(Tr(StrId::Log_ImportCopyFail),
                               WideToUtf8(entry.path().wstring()).c_str(), ec.message().c_str());
                 result.failed++;
             }
@@ -250,10 +251,10 @@ bool CreateFolderAsset(const std::wstring& dir, const std::string& name)
     const std::wstring p = dir + L"\\" + Utf8ToWide(SanitizeFileName(name, "New Folder"));
     std::error_code ec;
     if (fs::create_directory(p, ec)) {
-        MYE_LOG_INFO("created folder: %s", WideToUtf8(p).c_str());
+        MYE_LOG_INFO(Tr(StrId::Log_CreatedFolder), WideToUtf8(p).c_str());
         return true;
     }
-    MYE_LOG_WARN("could not create folder: %s", WideToUtf8(p).c_str());
+    MYE_LOG_WARN(Tr(StrId::Log_MkdirFail), WideToUtf8(p).c_str());
     return false;
 }
 
@@ -269,11 +270,11 @@ std::wstring CreateSceneAsset(const std::wstring& dir, const std::string& name)
     root["entities"] = nlohmann::json::array();
     std::ofstream f{ fs::path(path) };
     if (!f) {
-        MYE_LOG_ERROR("could not write scene: %s", WideToUtf8(path).c_str());
+        MYE_LOG_ERROR(Tr(StrId::Log_WriteSceneFail), WideToUtf8(path).c_str());
         return {};
     }
     f << root.dump(2);
-    MYE_LOG_INFO("created scene: %s", WideToUtf8(path).c_str());
+    MYE_LOG_INFO(Tr(StrId::Log_CreatedScene), WideToUtf8(path).c_str());
     return path;
 }
 
@@ -289,10 +290,10 @@ std::wstring CreateAnimationAsset(EngineContext& ctx, const std::wstring& dir, c
     clip.lengthTicks = 60;
     const uint64_t hash = ctx.anims->Register(path, clip);
     if (hash == 0 || !ctx.anims->SaveToFile(hash)) {
-        MYE_LOG_ERROR("could not write animation: %s", WideToUtf8(path).c_str());
+        MYE_LOG_ERROR(Tr(StrId::Log_WriteAnimFail), WideToUtf8(path).c_str());
         return {};
     }
-    MYE_LOG_INFO("created animation clip: %s", WideToUtf8(path).c_str());
+    MYE_LOG_INFO(Tr(StrId::Log_CreatedAnim), WideToUtf8(path).c_str());
     return path;
 }
 
@@ -314,7 +315,7 @@ std::wstring CreateMaterialAsset(EngineContext& ctx, const std::wstring& dir, co
     root["transparent"] = false;
     std::ofstream f{ fs::path(path) };
     if (!f) {
-        MYE_LOG_ERROR("could not write material: %s", WideToUtf8(path).c_str());
+        MYE_LOG_ERROR(Tr(StrId::Log_WriteMatFail), WideToUtf8(path).c_str());
         return {};
     }
     f << root.dump(2);
@@ -323,7 +324,7 @@ std::wstring CreateMaterialAsset(EngineContext& ctx, const std::wstring& dir, co
     if (ctx.resources) {
         ctx.resources->materials.LoadFromFile(path, ctx.resources->textures, ctx.assetsRoot);
     }
-    MYE_LOG_INFO("created material: %s", WideToUtf8(path).c_str());
+    MYE_LOG_INFO(Tr(StrId::Log_CreatedMat), WideToUtf8(path).c_str());
     return path;
 }
 
@@ -336,7 +337,7 @@ std::wstring CreateSoundAsset(EngineContext& ctx, const std::wstring& dir, const
     s.variations.push_back(SoundVariation{}); // 空スロットを 1 本 (Inspector で clip を選ぶ)
     std::ofstream f{ fs::path(path), std::ios::binary };
     if (!f) {
-        MYE_LOG_ERROR("could not write sound: %s", WideToUtf8(path).c_str());
+        MYE_LOG_ERROR(Tr(StrId::Log_WriteSoundFail), WideToUtf8(path).c_str());
         return {};
     }
     f << SoundLibrary::ToJson(s).dump(2);
@@ -345,7 +346,7 @@ std::wstring CreateSoundAsset(EngineContext& ctx, const std::wstring& dir, const
     if (ctx.sounds) {
         ctx.sounds->LoadFromFile(path);
     }
-    MYE_LOG_INFO("created sound: %s", WideToUtf8(path).c_str());
+    MYE_LOG_INFO(Tr(StrId::Log_CreatedSound), WideToUtf8(path).c_str());
     return path;
 }
 
@@ -357,7 +358,7 @@ std::wstring CreateMixerAsset(EngineContext& ctx, const std::wstring& dir, const
     m.name = safe;
     std::ofstream f{ fs::path(path), std::ios::binary };
     if (!f) {
-        MYE_LOG_ERROR("could not write mixer: %s", WideToUtf8(path).c_str());
+        MYE_LOG_ERROR(Tr(StrId::Log_WriteMixerFail), WideToUtf8(path).c_str());
         return {};
     }
     f << MixerLibrary::ToJson(m).dump(2);
@@ -367,7 +368,7 @@ std::wstring CreateMixerAsset(EngineContext& ctx, const std::wstring& dir, const
     if (ctx.mixers) {
         ctx.mixers->LoadFromFile(path);
     }
-    MYE_LOG_INFO("created mixer: %s", WideToUtf8(path).c_str());
+    MYE_LOG_INFO(Tr(StrId::Log_CreatedMixer), WideToUtf8(path).c_str());
     return path;
 }
 
@@ -379,7 +380,7 @@ std::wstring CreateCppScript(EngineContext& ctx, const std::string& rawName)
     fs::create_directories(dir, ec);
     const std::wstring path = dir + L"\\" + Utf8ToWide(name) + L".cpp";
     if (fs::exists(path)) {
-        MYE_LOG_WARN("script already exists: %s", WideToUtf8(path).c_str());
+        MYE_LOG_WARN(Tr(StrId::Log_ScriptExists), WideToUtf8(path).c_str());
         return path;
     }
     std::string t =
@@ -411,12 +412,12 @@ std::wstring CreateCppScript(EngineContext& ctx, const std::string& rawName)
     ReplaceAll(t, "{NAME}", name);
     std::ofstream f{ fs::path(path) };
     if (!f) {
-        MYE_LOG_ERROR("could not write script: %s", WideToUtf8(path).c_str());
+        MYE_LOG_ERROR(Tr(StrId::Log_WriteScriptFail), WideToUtf8(path).c_str());
         return {};
     }
     f << t;
-    MYE_LOG_INFO("created C++ script: %s", WideToUtf8(path).c_str());
-    MYE_LOG_INFO("edit it, then click 'Rebuild Scripts' in the Assets panel to compile + hot-reload.");
+    MYE_LOG_INFO(Tr(StrId::Log_CreatedCpp), WideToUtf8(path).c_str());
+    MYE_LOG_INFO(Tr(StrId::Log_HintRebuildCpp));
     return path;
 }
 
@@ -428,7 +429,7 @@ std::wstring CreateCSharpScript(EngineContext& ctx, const std::string& rawName)
     fs::create_directories(dir, ec);
     const std::wstring path = dir + L"\\" + Utf8ToWide(name) + L".cs";
     if (fs::exists(path)) {
-        MYE_LOG_WARN("C# script already exists: %s", WideToUtf8(path).c_str());
+        MYE_LOG_WARN(Tr(StrId::Log_CsExists), WideToUtf8(path).c_str());
         return path;
     }
     std::string t =
@@ -456,26 +457,26 @@ std::wstring CreateCSharpScript(EngineContext& ctx, const std::string& rawName)
     ReplaceAll(t, "{NAME}", name);
     std::ofstream f{ fs::path(path) };
     if (!f) {
-        MYE_LOG_ERROR("could not write C# script: %s", WideToUtf8(path).c_str());
+        MYE_LOG_ERROR(Tr(StrId::Log_WriteCsFail), WideToUtf8(path).c_str());
         return {};
     }
     f << t;
-    MYE_LOG_INFO("created C# script: %s", WideToUtf8(path).c_str());
-    MYE_LOG_INFO("edit it, then click 'Compile C# Scripts' in the Assets panel to compile in-engine.");
+    MYE_LOG_INFO(Tr(StrId::Log_CreatedCs), WideToUtf8(path).c_str());
+    MYE_LOG_INFO(Tr(StrId::Log_HintCompileCs));
     return path;
 }
 
 void CompileCSharpScripts(EngineContext& ctx)
 {
     if (!ctx.managedHost) {
-        MYE_LOG_WARN("C# scripting host not available (.NET runtime not initialized)");
+        MYE_LOG_WARN(Tr(StrId::Log_CsHostMissing));
         return;
     }
     if (!ctx.managedHost->IsReady()) {
-        MYE_LOG_WARN("C# scripting host not ready — check MyeScripting.dll / .NET 8 runtime");
+        MYE_LOG_WARN(Tr(StrId::Log_CsHostNotReady));
         return;
     }
-    MYE_LOG_INFO("compiling C# scripts (assets\\scripts\\*.cs) in-engine...");
+    MYE_LOG_INFO(Tr(StrId::Log_CsCompiling));
     ctx.managedHost->CompileScripts(ctx.assetsRoot + L"\\scripts");
 }
 
@@ -504,7 +505,7 @@ bool AttachScriptToEntity(EngineContext& ctx, Selection& selection, UndoStack& u
         return false;
     }
     if (world.HasComponent(target, t)) {
-        MYE_LOG_WARN("script '%s' is already attached to this entity", className.c_str());
+        MYE_LOG_WARN(Tr(StrId::Log_ScriptDup), className.c_str());
         return false;
     }
     // Add Component と同一の Undo 雛形 (InspectorWindow の Add Component 経路と一致)
@@ -516,7 +517,7 @@ bool AttachScriptToEntity(EngineContext& ctx, Selection& selection, UndoStack& u
     undo.CaptureAfter(*ctx.scene, fid);
     undo.EndRecord(selection);
     selection.SelectOnly(fid);
-    MYE_LOG_INFO("attached script '%s'", className.c_str());
+    MYE_LOG_INFO(Tr(StrId::Log_ScriptAttached), className.c_str());
     return true;
 }
 
@@ -530,12 +531,12 @@ bool AssignMaterialToEntity(EngineContext& ctx, Selection& selection, UndoStack&
     const AssetID id =
         ctx.resources->materials.LoadFromFile(matPath, ctx.resources->textures, ctx.assetsRoot);
     if (id.IsNull()) {
-        MYE_LOG_WARN("failed to load material: %s", WideToUtf8(matPath).c_str());
+        MYE_LOG_WARN(Tr(StrId::Log_MatLoadFail), WideToUtf8(matPath).c_str());
         return false;
     }
     auto* mr = world.GetComponent<MeshRendererComponent>(target);
     if (!mr) {
-        MYE_LOG_WARN("no MeshRenderer on target — drop the material onto a mesh object");
+        MYE_LOG_WARN(Tr(StrId::Log_NoMeshRenderer));
         return false;
     }
     // AssetBrowser ダブルクリック割当と同じ 1 Undo エントリ (選択は変えない)
@@ -554,7 +555,7 @@ ImportResult ImportExternalPaths(EngineContext& ctx, const std::vector<std::wstr
     ImportResult result;
     std::error_code ec;
     if (!fs::is_directory(destDir, ec)) {
-        MYE_LOG_ERROR("import: destination is not a folder: %s", WideToUtf8(destDir).c_str());
+        MYE_LOG_ERROR(Tr(StrId::Log_ImportNotFolder), WideToUtf8(destDir).c_str());
         result.failed = static_cast<int>(srcs.size());
         return result;
     }
@@ -562,7 +563,7 @@ ImportResult ImportExternalPaths(EngineContext& ctx, const std::vector<std::wstr
     for (const std::wstring& src : srcs) {
         const fs::path srcPath{ src };
         if (!fs::exists(srcPath, ec)) {
-            MYE_LOG_ERROR("import: source not found: %s", WideToUtf8(src).c_str());
+            MYE_LOG_ERROR(Tr(StrId::Log_ImportNoSource), WideToUtf8(src).c_str());
             result.failed++;
             continue;
         }
@@ -570,7 +571,7 @@ ImportResult ImportExternalPaths(EngineContext& ctx, const std::vector<std::wstr
             // 自分自身/自分の子孫フォルダへのドロップは無限再帰コピーになるため拒否
             const std::wstring srcKey = NormalizePathKey(src);
             if (destKey == srcKey || destKey.rfind(srcKey + L"\\", 0) == 0) {
-                MYE_LOG_WARN("import: cannot copy folder into itself: %s", WideToUtf8(src).c_str());
+                MYE_LOG_WARN(Tr(StrId::Log_ImportSelf), WideToUtf8(src).c_str());
                 result.skipped++;
                 continue;
             }
@@ -592,13 +593,13 @@ ImportResult ImportExternalPaths(EngineContext& ctx, const std::vector<std::wstr
                 RegisterImported(ctx, dst);
                 result.imported++;
             } else {
-                MYE_LOG_ERROR("import: copy failed: %s (%s)", WideToUtf8(src).c_str(),
+                MYE_LOG_ERROR(Tr(StrId::Log_ImportCopyFail), WideToUtf8(src).c_str(),
                               ec.message().c_str());
                 result.failed++;
             }
         }
     }
-    MYE_LOG_INFO("[import] %d file(s) -> %s (%d skipped, %d failed)", result.imported,
+    MYE_LOG_INFO(Tr(StrId::Log_ImportDone), result.imported,
                  WideToUtf8(destDir).c_str(), result.skipped, result.failed);
     return result;
 }
@@ -613,7 +614,7 @@ bool PerformAssetRelocate(EngineContext& ctx, const std::wstring& src, const std
     std::error_code ec;
     fs::rename(src, dst, ec);
     if (ec) {
-        MYE_LOG_ERROR("[assets] relocate failed: %s -> %s (%s)", WideToUtf8(src).c_str(),
+        MYE_LOG_ERROR(Tr(StrId::Log_RelocateFail), WideToUtf8(src).c_str(),
                       WideToUtf8(dst).c_str(), ec.message().c_str());
         return false;
     }
@@ -625,7 +626,7 @@ bool PerformAssetRelocate(EngineContext& ctx, const std::wstring& src, const std
             fs::rename(srcMeta, dst + L".meta", mec);
             if (mec) {
                 // 本体は移動済み。.meta が残ると次回スキャンで新 GUID 採番になるだけ (非致命)
-                MYE_LOG_WARN("[assets] failed to move .meta for %s (%s)",
+                MYE_LOG_WARN(Tr(StrId::Log_MetaMoveFail),
                              WideToUtf8(src).c_str(), mec.message().c_str());
             }
         }
@@ -633,7 +634,7 @@ bool PerformAssetRelocate(EngineContext& ctx, const std::wstring& src, const std
     if (ctx.assetDb) {
         ctx.assetDb->MoveAsset(src, dst); // 実行時テーブルの旧キー除去 + 新パス再登録
     }
-    MYE_LOG_INFO("[assets] moved: %s -> %s", WideToUtf8(src).c_str(), WideToUtf8(dst).c_str());
+    MYE_LOG_INFO(Tr(StrId::Log_Relocated), WideToUtf8(src).c_str(), WideToUtf8(dst).c_str());
     return true;
 }
 
@@ -657,7 +658,7 @@ std::wstring MoveAssetToFolder(EngineContext& ctx, const std::wstring& srcPath,
         // 自分自身/自分の子孫への移動は不可 (ImportExternalPaths と同じ判定)
         const std::wstring srcKey = NormalizePathKey(srcPath);
         if (destKey == srcKey || destKey.rfind(srcKey + L"\\", 0) == 0) {
-            MYE_LOG_WARN("[assets] cannot move folder into itself: %s",
+            MYE_LOG_WARN(Tr(StrId::Log_MoveSelf),
                          WideToUtf8(srcPath).c_str());
             return {};
         }
@@ -676,7 +677,7 @@ std::wstring RenameAsset(EngineContext& ctx, const std::wstring& srcPath,
     }
     const std::wstring newNameW = Utf8ToWide(newName);
     if (newNameW.empty() || newNameW.find_first_of(L"\\/:*?\"<>|") != std::wstring::npos) {
-        MYE_LOG_WARN("[assets] rename: invalid name: %s", newName.c_str());
+        MYE_LOG_WARN(Tr(StrId::Log_RenameInvalid), newName.c_str());
         return {};
     }
     const bool isDir = fs::is_directory(src, ec);
@@ -795,7 +796,7 @@ void InstantiateAssetAtPath(EngineContext& ctx, Selection& selection, UndoStack&
         }
         rootFid = ctx.scene->EnsureFileId(o.Id());
         if (soundHash == 0) {
-            MYE_LOG_WARN("placed AudioSource but could not resolve a sound asset: %s", u.c_str());
+            MYE_LOG_WARN(Tr(StrId::Log_PlaceNoSound), u.c_str());
         }
     } else {
         undo.CancelRecord();
@@ -804,7 +805,7 @@ void InstantiateAssetAtPath(EngineContext& ctx, Selection& selection, UndoStack&
     }
     if (rootFid == 0) {
         undo.CancelRecord();
-        MYE_LOG_WARN("failed to place asset: %s", u.c_str());
+        MYE_LOG_WARN(Tr(StrId::Log_PlaceFail), u.c_str());
         return;
     }
     if (pos) {
@@ -840,7 +841,7 @@ bool WriteGeneratedMain(const std::wstring& path)
 {
     std::ofstream f{ fs::path(path) };
     if (!f) {
-        MYE_LOG_ERROR("could not write %s", WideToUtf8(path).c_str());
+        MYE_LOG_ERROR(Tr(StrId::Log_WriteFail), WideToUtf8(path).c_str());
         return false;
     }
     f << "// 自動生成 (MyEngine エディタ)。手編集しても Rebuild Scripts で上書きされる。\n"
@@ -892,7 +893,7 @@ bool WriteGeneratedVcxproj(const std::wstring& path, const std::wstring& engineR
 {
     std::ofstream f{ fs::path(path), std::ios::binary };
     if (!f) {
-        MYE_LOG_ERROR("could not write %s", WideToUtf8(path).c_str());
+        MYE_LOG_ERROR(Tr(StrId::Log_WriteFail), WideToUtf8(path).c_str());
         return false;
     }
     std::string x;
@@ -989,7 +990,7 @@ void BuildProjectScripts(EngineContext& ctx)
     {
         std::ofstream b{ fs::path(batPath), std::ios::binary };
         if (!b) {
-            MYE_LOG_ERROR("could not write %s", WideToUtf8(batPath).c_str());
+            MYE_LOG_ERROR(Tr(StrId::Log_WriteFail), WideToUtf8(batPath).c_str());
             return;
         }
         const std::wstring bat =
@@ -1016,7 +1017,7 @@ void BuildProjectScripts(EngineContext& ctx)
         b.write(acp.data(), static_cast<std::streamsize>(acp.size()));
     }
 
-    MYE_LOG_INFO("building %zu C++ script(s) -> %s\\GameLogic.dll (%s)", sources.size(),
+    MYE_LOG_INFO(Tr(StrId::Log_BuildingCpp), sources.size(),
                  WideToUtf8(cacheDir).c_str(), WideToUtf8(cfg).c_str());
     const std::wstring args = L"/c \"\"" + batPath + L"\"\"";
     ShellExecuteW(nullptr, L"open", L"cmd.exe", args.c_str(), cacheDir.c_str(), SW_SHOWNORMAL);
@@ -1036,13 +1037,13 @@ void RebuildGameLogic(EngineContext& ctx)
     const std::wstring repo = ScriptsRoot(ctx);
     const std::wstring bat = repo + L"\\tools\\build_scripts.bat";
     if (!fs::exists(bat)) {
-        MYE_LOG_ERROR("build_scripts.bat not found: %s", WideToUtf8(bat).c_str());
+        MYE_LOG_ERROR(Tr(StrId::Log_BatMissing), WideToUtf8(bat).c_str());
         return;
     }
     const std::wstring cfg = RunningRelease() ? L"Release" : L"Debug";
     // cmd /c ""<bat>" <cfg>"  (スペース入りパス対応)
     const std::wstring args = L"/c \"\"" + bat + L"\" " + cfg + L"\"";
-    MYE_LOG_INFO("building GameLogic (%s)... hot reload applies on success",
+    MYE_LOG_INFO(Tr(StrId::Log_BuildingGameLogic),
                  WideToUtf8(cfg).c_str());
     ShellExecuteW(nullptr, L"open", L"cmd.exe", args.c_str(), repo.c_str(), SW_SHOWNORMAL);
 }

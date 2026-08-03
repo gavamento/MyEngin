@@ -395,6 +395,24 @@ As a shared foundation for all hot-reload targets, the Core layer provides **fil
 
 - Provide Play / Pause / Step controls. Editing policy during Play mode: [TBD: discard changes as Unity does / save changes]
 
+### 9.1 Localization
+
+The editor ships in **Japanese by default** and can be switched to English at runtime from
+*View > Language*. See [ADR-010](docs/adr/ADR-010-editor-localization.md).
+
+- Every UI string lives in `src/Engine/Core/LocalizationTable.inl`, one line per string. The
+  `StrId` enum and both language tables are generated from that single file by the preprocessor,
+  so a missing translation is a compile error rather than a runtime fallback
+- Window and modal titles use the `"display###stable-id"` form. `ImHashStr` resets the hash at
+  `###`, so the ImGui ID — and therefore `imgui.ini`, `DockBuilderDockWindow` and the saved
+  layouts — stays identical across languages
+- Inspector field labels come from `FieldDesc::displayName`, component labels from
+  `EditorComponentCatalog`. The English `name` is a serialization key, a world-hash input and a
+  DLL-reload migration key, and is never translated
+- Only user-facing log messages are translated. Diagnostic logs and self-test output stay in
+  English so they read alongside D3D debug-layer output and `HRESULT` values
+- Rule 10 in §11.2 is enforced by `tools\check_rules.ps1`
+
 ---
 
 ## 10. Asset Pipeline
@@ -429,6 +447,8 @@ Eliminate cases in which the engine works in Debug but fails in Release, or vice
 | 6 | Code that depends on unspecified evaluation order, such as multiple side effects in function arguments, is prohibited |
 | 7 | Non-deterministic values such as pointer addresses and hash iteration order must not influence game logic. Sort order must use explicit deterministic keys |
 | 8 | Only the engine-provided deterministic RNG with managed seeds may be used. Direct use of `rand()` or `std::random_device` is prohibited |
+| 9 | Constants shared between C++ and HLSL must hold the same value on both sides. A mismatch corrupts constant buffers or traversal state and fails silently, so the values are compared by static analysis |
+| 10 | UI strings live in `LocalizationTable.inl` and are read through `Tr()`. `Tr()` must never be the sole argument of a printf-style call, because a `%` inside a translation would then be read as a conversion specifier. Both languages of an entry must be non-empty, must agree on the identifier after `###`, and must use the same conversion specifiers in the same order — MSVC's `printf` does not support positional arguments, so word order cannot differ between languages |
 
 ### 11.3 Automated Verification: Replay Consistency Test
 
@@ -478,7 +498,7 @@ The full records live in [`docs/adr/`](docs/adr/), one file per decision:
 ADR-001 hybrid ECS / ADR-002 DLL-only hot reload / ADR-003 engine-side script state /
 ADR-004 replay consistency / ADR-005 fixed tick, per-tick structural changes /
 ADR-006 build system / ADR-007 dual render path / ADR-008 particle determinism /
-**ADR-009 hybrid path tracing** (§6.4).
+ADR-009 hybrid path tracing (§6.4) / **ADR-010 editor localization** (§9.1).
 
 ---
 

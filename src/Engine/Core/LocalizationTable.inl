@@ -514,3 +514,76 @@ MYE_STR(Insp_LoopEndNote2,    "the stream seeks back sample-exactly, so the seam
 
 // ---- Hub: 補足 (M47b) ----
 MYE_STR(Hub_EngineVer,        "engine %s",   "エンジン %s")
+
+// ---- ユーザー向けログ (M47c) ----
+// MYE_LOG_* に「書式として」渡す。Warn/Error は ToastCenter がそのままトーストにするので、
+// ここが実質「操作の結果をユーザーに伝える文言」になる。
+// 開発者向けの診断ログ (シェーダ/GPU/BVH/selftest) は英語のまま — D3D デバッグレイヤ出力や
+// HRESULT と並ぶ場所で、grep 性と英語資料との突き合わせを優先する
+MYE_STR(Log_ImportMkdirFail,  "import: could not create folder: %s",
+                              "インポート: フォルダを作成できません: %s")
+MYE_STR(Log_ImportCopyFail,   "import: copy failed: %s (%s)",
+                              "インポート: コピーに失敗しました: %s (%s)")
+MYE_STR(Log_ImportNotFolder,  "import: destination is not a folder: %s",
+                              "インポート: 移動先がフォルダではありません: %s")
+MYE_STR(Log_ImportNoSource,   "import: source not found: %s",
+                              "インポート: 元のファイルが見つかりません: %s")
+MYE_STR(Log_ImportSelf,       "import: cannot copy folder into itself: %s",
+                              "インポート: フォルダを自分自身の中へはコピーできません: %s")
+MYE_STR(Log_ImportDone,       "[import] %d file(s) -> %s (%d skipped, %d failed)",
+                              "[import] %d 件を %s へ (スキップ %d / 失敗 %d)")
+MYE_STR(Log_CreatedFolder,    "created folder: %s",         "フォルダを作成しました: %s")
+MYE_STR(Log_MkdirFail,        "could not create folder: %s", "フォルダを作成できません: %s")
+MYE_STR(Log_WriteSceneFail,   "could not write scene: %s",  "シーンを書き出せません: %s")
+MYE_STR(Log_CreatedScene,     "created scene: %s",          "シーンを作成しました: %s")
+MYE_STR(Log_WriteAnimFail,    "could not write animation: %s", "アニメーションを書き出せません: %s")
+MYE_STR(Log_CreatedAnim,      "created animation clip: %s", "アニメーションクリップを作成しました: %s")
+MYE_STR(Log_WriteMatFail,     "could not write material: %s", "マテリアルを書き出せません: %s")
+MYE_STR(Log_CreatedMat,       "created material: %s",       "マテリアルを作成しました: %s")
+MYE_STR(Log_WriteSoundFail,   "could not write sound: %s",  "サウンドを書き出せません: %s")
+MYE_STR(Log_CreatedSound,     "created sound: %s",          "サウンドを作成しました: %s")
+MYE_STR(Log_WriteMixerFail,   "could not write mixer: %s",  "ミキサーを書き出せません: %s")
+MYE_STR(Log_CreatedMixer,     "created mixer: %s",          "ミキサーを作成しました: %s")
+MYE_STR(Log_ScriptExists,     "script already exists: %s",  "スクリプトは既に存在します: %s")
+MYE_STR(Log_WriteScriptFail,  "could not write script: %s", "スクリプトを書き出せません: %s")
+MYE_STR(Log_CreatedCpp,       "created C++ script: %s",     "C++ スクリプトを作成しました: %s")
+MYE_STR(Log_HintRebuildCpp,   "edit it, then click 'Rebuild Scripts' in the Assets panel to compile + hot-reload.",
+                              "編集したら、アセットパネルの「スクリプトを再ビルド」でコンパイル + ホットリロードされます。")
+MYE_STR(Log_CsExists,         "C# script already exists: %s", "C# スクリプトは既に存在します: %s")
+MYE_STR(Log_WriteCsFail,      "could not write C# script: %s", "C# スクリプトを書き出せません: %s")
+MYE_STR(Log_CreatedCs,        "created C# script: %s",      "C# スクリプトを作成しました: %s")
+MYE_STR(Log_HintCompileCs,    "edit it, then click 'Compile C# Scripts' in the Assets panel to compile in-engine.",
+                              "編集したら、アセットパネルの「C# をコンパイル」でエンジン内コンパイルされます。")
+MYE_STR(Log_CsHostMissing,    "C# scripting host not available (.NET runtime not initialized)",
+                              "C# スクリプトホストが使えません (.NET ランタイム未初期化)")
+MYE_STR(Log_CsHostNotReady,   "C# scripting host not ready — check MyeScripting.dll / .NET 8 runtime",
+                              "C# スクリプトホストが準備できていません — MyeScripting.dll / .NET 8 ランタイムを確認してください")
+MYE_STR(Log_CsCompiling,      "compiling C# scripts (assets\\scripts\\*.cs) in-engine...",
+                              "C# スクリプト (assets\\scripts\\*.cs) をエンジン内でコンパイルしています...")
+MYE_STR(Log_ScriptAttached,   "attached script '%s'",       "スクリプト '%s' をアタッチしました")
+MYE_STR(Log_ScriptDup,        "script '%s' is already attached to this entity",
+                              "スクリプト '%s' は既にこのエンティティに付いています")
+MYE_STR(Log_MatLoadFail,      "failed to load material: %s", "マテリアルを読み込めません: %s")
+MYE_STR(Log_NoMeshRenderer,   "no MeshRenderer on target — drop the material onto a mesh object",
+                              "対象に MeshRenderer がありません — マテリアルはメッシュを持つオブジェクトに落としてください")
+MYE_STR(Log_Relocated,        "[assets] moved: %s -> %s",   "[assets] 移動しました: %s -> %s")
+MYE_STR(Log_RelocateFail,     "[assets] relocate failed: %s -> %s (%s)",
+                              "[assets] 移動に失敗しました: %s -> %s (%s)")
+MYE_STR(Log_MetaMoveFail,     "[assets] failed to move .meta for %s (%s)",
+                              "[assets] %s の .meta を移動できませんでした (%s)")
+MYE_STR(Log_MoveSelf,         "[assets] cannot move folder into itself: %s",
+                              "[assets] フォルダを自分自身の中へは移動できません: %s")
+MYE_STR(Log_RenameInvalid,    "[assets] rename: invalid name: %s",
+                              "[assets] 名前の変更: 使えない名前です: %s")
+MYE_STR(Log_PlaceNoSound,     "placed AudioSource but could not resolve a sound asset: %s",
+                              "AudioSource は置きましたが、サウンドアセットを解決できませんでした: %s")
+MYE_STR(Log_PlaceUnsupported, "cannot place asset (drag a prefab, model, image, or sound): %s",
+                              "このアセットは配置できません (プレハブ / モデル / 画像 / サウンドをドラッグしてください): %s")
+MYE_STR(Log_PlaceFail,        "failed to place asset: %s",  "アセットを配置できませんでした: %s")
+MYE_STR(Log_WriteFail,        "could not write %s",         "%s を書き出せません")
+MYE_STR(Log_BuildingCpp,      "building %zu C++ script(s) -> %s\\GameLogic.dll (%s)",
+                              "C++ スクリプト %zu 件をビルドしています -> %s\\GameLogic.dll (%s)")
+MYE_STR(Log_BatMissing,       "build_scripts.bat not found: %s",
+                              "build_scripts.bat が見つかりません: %s")
+MYE_STR(Log_BuildingGameLogic, "building GameLogic (%s)... hot reload applies on success",
+                               "GameLogic (%s) をビルドしています... 成功するとホットリロードされます")

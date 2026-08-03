@@ -129,11 +129,38 @@ XMFLOAT4 EulerDegToQuat(const XMFLOAT3& euler)
 
 // エディタ側の enum ラベル表 (M28a)。リフレクション FieldType は閉集合のまま、
 // (コンポーネント名, フィールド名) が一致した Int32 を Combo で描画する (sim 非影響)
+// M47c: フィールドの表示名。name (英語) は JSON キー / DLL 移行キーなので触らず、
+// FieldDesc::displayName を「表示だけ」に使う。
+// widget では "表示名###英語名" にして ID を英語名に固定する — ImHashStr は "###" で
+// ハッシュをシードへ戻すので、言語を切り替えても ID が変わらず、同一コンポーネント内で
+// 表示名が重複しても衝突しない。displayName が無い (スクリプト由来の) フィールドは英名のまま
+const char* FieldLabelText(const FieldDesc& f)
+{
+    return (f.displayName != nullptr && CurrentLanguage() != Lang::En) ? f.displayName : f.name;
+}
+
+const char* MakeFieldLabel(const FieldDesc& f, char* out, size_t cap)
+{
+    if (f.displayName != nullptr && CurrentLanguage() != Lang::En) {
+        std::snprintf(out, cap, "%s###%s", f.displayName, f.name);
+    } else {
+        std::snprintf(out, cap, "%s", f.name);
+    }
+    return out;
+}
+
 struct EnumFieldLabels {
     const char* component;
     const char* field;
     const char* const* labels;
     int count;
+    const char* const* ja = nullptr; // M47c: 日本語表示 (nullptr なら labels をそのまま出す)
+
+    // 表示に使う配列。値は index なので、訳しても保存内容は変わらない
+    const char* const* Display() const
+    {
+        return (ja != nullptr && CurrentLanguage() != Lang::En) ? ja : labels;
+    }
 };
 constexpr const char* kColliderShapeLabels[] = { "Sphere", "Box", "Capsule", "Mesh" };
 constexpr const char* kLightTypeLabels[] = { "Directional", "Point", "Spot" };
@@ -149,21 +176,35 @@ constexpr const char* kSkyboxModeLabels[] = { "Gradient", "Cubemap" };
 constexpr const char* kFogModeLabels[] = { "Linear", "Exp", "Exp2" };
 constexpr const char* kTonemapLabels[] = { "Passthrough", "ACES", "Reinhard" };
 constexpr const char* kOffOnLabels[] = { "Off", "On" };
+// M47c: 日本語表示。ACES / Reinhard / Exp2 のような固有名詞・数式名は英語のまま
+constexpr const char* kColliderShapeJa[] = { "スフィア", "ボックス", "カプセル", "メッシュ" };
+constexpr const char* kLightTypeJa[] = { "平行光", "ポイント", "スポット" };
+constexpr const char* kEmitterShapeJa[] = { "点", "スフィア", "コーン", "ボックス" };
+constexpr const char* kBlendModeJa[] = { "加算", "アルファ", "歪み" };
+constexpr const char* kUIKindJa[] = { "パネル", "テキスト", "ボタン" };
+constexpr const char* kUIAnchorJa[] = { "左上", "上中央", "右上", "左中央", "中央",
+                                        "右中央", "左下", "下中央", "右下" };
+constexpr const char* kForceSpaceJa[] = { "ワールド", "ローカル" };
+constexpr const char* kBillboardJa[] = { "ビルボード", "ビルボード (Y 軸)", "ワールド" };
+constexpr const char* kSkyboxModeJa[] = { "グラデーション", "キューブマップ" };
+constexpr const char* kFogModeJa[] = { "線形", "Exp", "Exp2" };
+constexpr const char* kTonemapJa[] = { "そのまま", "ACES", "Reinhard" };
+constexpr const char* kOffOnJa[] = { "オフ", "オン" };
 constexpr EnumFieldLabels kEnumFields[] = {
-    { "Collider", "shape", kColliderShapeLabels, 3 },
-    { "Light", "type", kLightTypeLabels, 3 },
-    { "ParticleEmitter", "shape", kEmitterShapeLabels, 4 },
-    { "ParticleEmitter", "blendMode", kBlendModeLabels, 3 },
-    { "UIElement", "kind", kUIKindLabels, 3 },
-    { "UIElement", "anchor", kUIAnchorLabels, 9 },
-    { "ConstantForce", "relative", kForceSpaceLabels, 2 },
-    { "SpriteRenderer", "billboardMode", kBillboardLabels, 3 },
-    { "TextMesh", "billboardMode", kBillboardLabels, 3 },
-    { "Skybox", "mode", kSkyboxModeLabels, 2 },
-    { "Fog", "mode", kFogModeLabels, 3 },
-    { "CameraPostFx", "tonemapMode", kTonemapLabels, 3 },
-    { "CameraPostFx", "bloomOn", kOffOnLabels, 2 },
-    { "CameraPostFx", "fxaaOn", kOffOnLabels, 2 },
+    { "Collider", "shape", kColliderShapeLabels, 3, kColliderShapeJa },
+    { "Light", "type", kLightTypeLabels, 3, kLightTypeJa },
+    { "ParticleEmitter", "shape", kEmitterShapeLabels, 4, kEmitterShapeJa },
+    { "ParticleEmitter", "blendMode", kBlendModeLabels, 3, kBlendModeJa },
+    { "UIElement", "kind", kUIKindLabels, 3, kUIKindJa },
+    { "UIElement", "anchor", kUIAnchorLabels, 9, kUIAnchorJa },
+    { "ConstantForce", "relative", kForceSpaceLabels, 2, kForceSpaceJa },
+    { "SpriteRenderer", "billboardMode", kBillboardLabels, 3, kBillboardJa },
+    { "TextMesh", "billboardMode", kBillboardLabels, 3, kBillboardJa },
+    { "Skybox", "mode", kSkyboxModeLabels, 2, kSkyboxModeJa },
+    { "Fog", "mode", kFogModeLabels, 3, kFogModeJa },
+    { "CameraPostFx", "tonemapMode", kTonemapLabels, 3, kTonemapJa },
+    { "CameraPostFx", "bloomOn", kOffOnLabels, 2, kOffOnJa },
+    { "CameraPostFx", "fxaaOn", kOffOnLabels, 2, kOffOnJa },
 };
 
 const EnumFieldLabels* FindEnumLabels(const char* component, const char* field)
@@ -368,7 +409,7 @@ void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
 
         ImGui::PushID(static_cast<int>(t));
         const std::string headerLabel =
-            std::string(ComponentUiFor(desc.name).icon) + " " + desc.name;
+            std::string(ComponentUiFor(desc.name).icon) + " " + ComponentDisplayName(desc.name) + "###" + desc.name;
         const bool openHeader =
             ImGui::CollapsingHeader(headerLabel.c_str(), ImGuiTreeNodeFlags_DefaultOpen);
         if (ImGui::BeginPopupContextItem("##comp_ctx")) {
@@ -511,14 +552,15 @@ void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
                 if (std::strcmp(info.category, cat) != 0) {
                     continue;
                 }
-                if (!ContainsIgnoreCase(desc.name, addComponentFilter_)) {
+                if (!ContainsIgnoreCase(desc.name, addComponentFilter_)
+                    && !ContainsIgnoreCase(ComponentDisplayName(desc.name), addComponentFilter_)) {
                     continue;
                 }
                 if (!headerShown) {
-                    ImGui::SeparatorText(cat);
+                    ImGui::SeparatorText(ComponentCategoryLabel(cat));
                     headerShown = true;
                 }
-                const std::string label = std::string(info.icon) + " " + desc.name;
+                const std::string label = std::string(info.icon) + " " + ComponentDisplayName(desc.name);
                 if (ImGui::MenuItem(label.c_str())) {
                     // マルチ選択: まだ持っていない全対象へ追加 (1 Undo エントリ、M40a)
                     undo.BeginRecord("Add Component", selection);
@@ -577,10 +619,17 @@ bool InspectorWindow::DrawField(EngineContext& ctx, const char* componentName, v
     const float lo = field.minVal;
     const float hi = field.maxVal;
 
+    // M47c: 表示名 + "###" + 英語名。"###" 以降が ImGui の ID なので、言語を切り替えても
+    // widget の ID は変わらず、同一コンポーネント内で表示名が重複しても衝突しない。
+    // 英語モードや displayName 未設定 (スクリプト由来のフィールド) は name をそのまま使う
+    const char* labelText = FieldLabelText(field); // 表示専用 (ID を持たない Text 系)
+    char labelBuf[192];
+    const char* label = MakeFieldLabel(field, labelBuf, sizeof(labelBuf));
+
     bool changed = false;
     switch (field.type) {
     case FieldType::Float:
-        changed = ImGui::DragFloat(field.name, static_cast<float*>(p), speed, lo, hi);
+        changed = ImGui::DragFloat(label, static_cast<float*>(p), speed, lo, hi);
         break;
     case FieldType::Int32:
         // M36a: 物理レイヤーは project_settings.json の動的名前で Combo (sim は index のみ)
@@ -594,7 +643,7 @@ bool InspectorWindow::DrawField(EngineContext& ctx, const char* componentName, v
             if (v < 0 || v >= PhysicsLayerNames::kCount) {
                 v = -1;
             }
-            changed = ImGui::Combo(field.name, &v, labels, PhysicsLayerNames::kCount);
+            changed = ImGui::Combo(label, &v, labels, PhysicsLayerNames::kCount);
             if (changed) {
                 *static_cast<int*>(p) = v;
             }
@@ -603,12 +652,12 @@ bool InspectorWindow::DrawField(EngineContext& ctx, const char* componentName, v
             if (v < 0 || v >= ef->count) {
                 v = -1; // 範囲外は "(invalid)" 表示 (値は選択されるまで保持)
             }
-            changed = ImGui::Combo(field.name, &v, ef->labels, ef->count);
+            changed = ImGui::Combo(label, &v, ef->Display(), ef->count);
             if (changed) {
                 *static_cast<int*>(p) = v;
             }
         } else {
-            changed = ImGui::DragInt(field.name, static_cast<int*>(p), 1.0f, static_cast<int>(lo),
+            changed = ImGui::DragInt(label, static_cast<int*>(p), 1.0f, static_cast<int>(lo),
                                      static_cast<int>(hi));
         }
         break;
@@ -632,7 +681,7 @@ bool InspectorWindow::DrawField(EngineContext& ctx, const char* componentName, v
                 ImGui::OpenPopup("##collider_mask");
             }
             ImGui::SameLine();
-            ImGui::TextUnformatted(field.name);
+            ImGui::TextUnformatted(labelText);
             if (ImGui::BeginPopup("##collider_mask")) {
                 auto applyMask = [&](uint32_t next) {
                     // マルチ選択は全対象へバッチ適用 (1 Undo エントリ、M40a)
@@ -672,28 +721,28 @@ bool InspectorWindow::DrawField(EngineContext& ctx, const char* componentName, v
                 ImGui::EndPopup();
             }
         } else {
-            changed = ImGui::InputScalar(field.name, ImGuiDataType_U32, p);
+            changed = ImGui::InputScalar(label, ImGuiDataType_U32, p);
         }
         break;
     case FieldType::UInt64:
-        changed = ImGui::InputScalar(field.name, ImGuiDataType_U64, p);
+        changed = ImGui::InputScalar(label, ImGuiDataType_U64, p);
         break;
     case FieldType::Bool: {
         bool b = *static_cast<uint8_t*>(p) != 0;
-        if (ImGui::Checkbox(field.name, &b)) {
+        if (ImGui::Checkbox(label, &b)) {
             *static_cast<uint8_t*>(p) = b ? 1 : 0;
             changed = true;
         }
         break;
     }
     case FieldType::Float2:
-        changed = ImGui::DragFloat2(field.name, static_cast<float*>(p), speed, lo, hi);
+        changed = ImGui::DragFloat2(label, static_cast<float*>(p), speed, lo, hi);
         break;
     case FieldType::Float3:
-        changed = ImGui::DragFloat3(field.name, static_cast<float*>(p), speed, lo, hi);
+        changed = ImGui::DragFloat3(label, static_cast<float*>(p), speed, lo, hi);
         break;
     case FieldType::Float4:
-        changed = ImGui::DragFloat4(field.name, static_cast<float*>(p), speed, lo, hi);
+        changed = ImGui::DragFloat4(label, static_cast<float*>(p), speed, lo, hi);
         break;
     case FieldType::Quat: {
         // オイラー角 (度) で編集。編集中はキャッシュを使い往復変換ドリフトを防ぐ
@@ -701,7 +750,7 @@ bool InspectorWindow::DrawField(EngineContext& ctx, const char* componentName, v
         XMFLOAT3 euler;
         const bool usingCache = eulerEditing_ && eulerCacheEntity_ == entity && eulerCacheField_ == p;
         euler = usingCache ? eulerCache_ : QuatToEulerDeg(*q);
-        if (ImGui::DragFloat3(field.name, &euler.x, 0.5f)) {
+        if (ImGui::DragFloat3(label, &euler.x, 0.5f)) {
             *q = EulerDegToQuat(euler);
             changed = true;
         }
@@ -716,7 +765,7 @@ bool InspectorWindow::DrawField(EngineContext& ctx, const char* componentName, v
         break;
     }
     case FieldType::Color:
-        changed = ImGui::ColorEdit4(field.name, static_cast<float*>(p));
+        changed = ImGui::ColorEdit4(label, static_cast<float*>(p));
         break;
     case FieldType::EntityRef:
         DrawEntityRef(ctx, field, p, selection, undo, fids, comps, field.offset);
@@ -725,14 +774,14 @@ bool InspectorWindow::DrawField(EngineContext& ctx, const char* componentName, v
         DrawAssetRef(ctx, field, p, selection, undo, fids, comps, field.offset);
         break;
     case FieldType::String64:
-        changed = ImGui::InputText(field.name, static_cast<char*>(p), 64);
+        changed = ImGui::InputText(label, static_cast<char*>(p), 64);
         break;
     case FieldType::String256:
-        changed = ImGui::InputText(field.name, static_cast<char*>(p), 256);
+        changed = ImGui::InputText(label, static_cast<char*>(p), 256);
         break;
     case FieldType::Float4x4: {
         const float* m = static_cast<const float*>(p);
-        ImGui::Text("%s:", field.name);
+        ImGui::Text("%s:", labelText);
         for (int r = 0; r < 4; ++r) {
             ImGui::Text("  %8.3f %8.3f %8.3f %8.3f", m[r * 4], m[r * 4 + 1], m[r * 4 + 2],
                         m[r * 4 + 3]);
@@ -1277,8 +1326,9 @@ void InspectorWindow::DrawAssetRef(EngineContext& ctx, const FieldDesc& field, v
         }
     }
 
-    ImGui::PushID(field.name);
-    ImGui::TextUnformatted(field.name);
+    char labelBuf[192];
+    ImGui::PushID(MakeFieldLabel(field, labelBuf, sizeof(labelBuf)));
+    ImGui::TextUnformatted(FieldLabelText(field));
     ImGui::SameLine(ImGui::GetContentRegionAvail().x * 0.35f);
     if (ImGui::Button(cur, ImVec2(-1, 0))) {
         ImGui::OpenPopup("##assetpick");
@@ -1335,8 +1385,9 @@ void InspectorWindow::DrawEntityRef(EngineContext& ctx, const FieldDesc& field, 
         cur = world.GetName(*id);
     }
 
-    ImGui::PushID(field.name);
-    ImGui::TextUnformatted(field.name);
+    char labelBuf[192];
+    ImGui::PushID(MakeFieldLabel(field, labelBuf, sizeof(labelBuf)));
+    ImGui::TextUnformatted(FieldLabelText(field));
     ImGui::SameLine(ImGui::GetContentRegionAvail().x * 0.35f);
     if (ImGui::Button(cur, ImVec2(-1, 0))) {
         ImGui::OpenPopup("##entpick");

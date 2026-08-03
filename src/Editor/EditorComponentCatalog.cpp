@@ -5,6 +5,7 @@
 #include <unordered_map>
 
 #include "Engine/Core/ComponentRegistry.h"
+#include "Engine/Core/Localization.h"
 #include "Engine/Core/World.h"
 
 #include "fontawesome/IconsFontAwesome6.h"
@@ -17,38 +18,38 @@ const std::unordered_map<std::string, ComponentUiInfo>& Table()
 {
     static const std::unordered_map<std::string, ComponentUiInfo> t = {
         // General
-        { "Name", { ICON_FA_FONT, "General" } },
-        { "LocalTransform", { ICON_FA_ARROWS_UP_DOWN_LEFT_RIGHT, "General" } },
-        { "Active", { ICON_FA_EYE, "General" } },
+        { "Name", { ICON_FA_FONT, "General", "名前" } },
+        { "LocalTransform", { ICON_FA_ARROWS_UP_DOWN_LEFT_RIGHT, "General", "トランスフォーム" } },
+        { "Active", { ICON_FA_EYE, "General", "アクティブ" } },
         // Rendering
-        { "MeshRenderer", { ICON_FA_CUBE, "Rendering" } },
-        { "SkinnedMesh", { ICON_FA_PERSON, "Rendering" } },
-        { "Camera", { ICON_FA_VIDEO, "Rendering" } },
-        { "Light", { ICON_FA_LIGHTBULB, "Rendering" } },
+        { "MeshRenderer", { ICON_FA_CUBE, "Rendering", "メッシュレンダラー" } },
+        { "SkinnedMesh", { ICON_FA_PERSON, "Rendering", "スキンメッシュ" } },
+        { "Camera", { ICON_FA_VIDEO, "Rendering", "カメラ" } },
+        { "Light", { ICON_FA_LIGHTBULB, "Rendering", "ライト" } },
         // Physics
-        { "Collider", { ICON_FA_VECTOR_SQUARE, "Physics" } },
-        { "Rigidbody", { ICON_FA_CIRCLE_DOT, "Physics" } },
-        { "ConstantForce", { ICON_FA_BOLT, "Physics" } },
-        { "SpringJoint", { ICON_FA_LINK, "Physics" } },
-        { "CharacterController", { ICON_FA_PERSON_RUNNING, "Physics" } },
+        { "Collider", { ICON_FA_VECTOR_SQUARE, "Physics", "コライダー" } },
+        { "Rigidbody", { ICON_FA_CIRCLE_DOT, "Physics", "リジッドボディ" } },
+        { "ConstantForce", { ICON_FA_BOLT, "Physics", "定常力" } },
+        { "SpringJoint", { ICON_FA_LINK, "Physics", "スプリングジョイント" } },
+        { "CharacterController", { ICON_FA_PERSON_RUNNING, "Physics", "キャラクターコントローラー" } },
         // Animation
-        { "Animator", { ICON_FA_FILM, "Animation" } },
-        { "AnimatorController", { ICON_FA_CIRCLE_NODES, "Animation" } },
+        { "Animator", { ICON_FA_FILM, "Animation", "アニメーター" } },
+        { "AnimatorController", { ICON_FA_CIRCLE_NODES, "Animation", "アニメーターコントローラー" } },
         // VFX
-        { "ParticleEmitter", { ICON_FA_FIRE, "VFX" } },
-        { "SpriteRenderer", { ICON_FA_IMAGE, "VFX" } },
-        { "TrailRenderer", { ICON_FA_WIND, "VFX" } },
-        { "TextMesh", { ICON_FA_FONT, "VFX" } },
-        { "Effect", { ICON_FA_WAND_MAGIC_SPARKLES, "VFX" } },
+        { "ParticleEmitter", { ICON_FA_FIRE, "VFX", "パーティクルエミッタ" } },
+        { "SpriteRenderer", { ICON_FA_IMAGE, "VFX", "スプライトレンダラー" } },
+        { "TrailRenderer", { ICON_FA_WIND, "VFX", "トレイルレンダラー" } },
+        { "TextMesh", { ICON_FA_FONT, "VFX", "テキストメッシュ" } },
+        { "Effect", { ICON_FA_WAND_MAGIC_SPARKLES, "VFX", "エフェクト" } },
         // Audio
-        { "AudioSource", { ICON_FA_VOLUME_HIGH, "Audio" } },
-        { "AudioListener", { ICON_FA_HEADPHONES, "Audio" } },
+        { "AudioSource", { ICON_FA_VOLUME_HIGH, "Audio", "オーディオソース" } },
+        { "AudioListener", { ICON_FA_HEADPHONES, "Audio", "オーディオリスナー" } },
         // Environment
-        { "Skybox", { ICON_FA_CLOUD, "Environment" } },
-        { "Fog", { ICON_FA_SMOG, "Environment" } },
-        { "CameraPostFx", { ICON_FA_SLIDERS, "Environment" } },
+        { "Skybox", { ICON_FA_CLOUD, "Environment", "スカイボックス" } },
+        { "Fog", { ICON_FA_SMOG, "Environment", "フォグ" } },
+        { "CameraPostFx", { ICON_FA_SLIDERS, "Environment", "ポストエフェクト" } },
         // UI
-        { "UIElement", { ICON_FA_WINDOW_MAXIMIZE, "UI" } },
+        { "UIElement", { ICON_FA_WINDOW_MAXIMIZE, "UI", "UI 要素" } },
     };
     return t;
 }
@@ -57,10 +58,16 @@ const std::unordered_map<std::string, ComponentUiInfo>& Table()
 
 const ComponentUiInfo& ComponentUiFor(const char* name)
 {
-    static const ComponentUiInfo kScript = { ICON_FA_CODE, "Scripts" };
+    static const ComponentUiInfo kScript = { ICON_FA_CODE, "Scripts", nullptr };
     const auto& t = Table();
     const auto it = t.find(name);
     return it != t.end() ? it->second : kScript;
+}
+
+const char* ComponentDisplayName(const char* name)
+{
+    const ComponentUiInfo& info = ComponentUiFor(name);
+    return (info.ja != nullptr && CurrentLanguage() != Lang::En) ? info.ja : name;
 }
 
 const std::vector<const char*>& ComponentUiCategories()
@@ -69,6 +76,26 @@ const std::vector<const char*>& ComponentUiCategories()
                                                    "Animation", "VFX",       "Audio",
                                                    "Environment", "UI",      "Scripts" };
     return cats;
+}
+
+const char* ComponentCategoryLabel(const char* categoryKey)
+{
+    // キー (英語) は InspectorWindow の strcmp 照合に使うので、表示だけを差し替える
+    if (CurrentLanguage() == Lang::En || categoryKey == nullptr) {
+        return categoryKey;
+    }
+    struct Row { const char* key; const char* ja; };
+    static const Row kRows[] = {
+        { "General", "一般" },      { "Rendering", "レンダリング" }, { "Physics", "物理" },
+        { "Animation", "アニメーション" }, { "VFX", "エフェクト" },  { "Audio", "オーディオ" },
+        { "Environment", "環境" },  { "UI", "UI" },                  { "Scripts", "スクリプト" },
+    };
+    for (const Row& r : kRows) {
+        if (std::strcmp(r.key, categoryKey) == 0) {
+            return r.ja;
+        }
+    }
+    return categoryKey;
 }
 
 const char* EntityIconFor(World& world, EntityID e)

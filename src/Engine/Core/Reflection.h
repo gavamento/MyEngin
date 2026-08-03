@@ -50,7 +50,25 @@ struct FieldDesc {
     float minVal = 0.0f;         // minVal==maxVal のときレンジ無効 (クランプしない)
     float maxVal = 0.0f;
     const char* tooltip = nullptr;
+    // Inspector の日本語表示名 (M47c)。nullptr なら name をそのまま出す。
+    // name は JSON キー / DLL リロードの移行キーなので触れない — これは表示専用の別スロット。
+    // **必ず末尾に置くこと**: MYE_FIELD / MYE_FIELD_FLAGS は先頭 4 メンバの位置指定初期化、
+    // Components.cpp の生 FieldDesc{...} も同様で、途中に挿すと全部ずれる
+    const char* displayName = nullptr;
 };
+
+// 表示名を後付けする合成ヘルパ (M47c)。既存の MYE_FIELD 系 4 マクロを 1 文字も変えずに
+// 包める。jp を先頭にして可変引数で受けるのは、Components.cpp に
+// `FieldDesc{ "param0", ... }` のようなマクロを使わない記述があり、プリプロセッサが
+// `{}` をグループ化しない (= 引数が分割されてしまう) ため。
+//
+//   MYE_JP("位置", MYE_FIELD(LocalTransform, position, Float3))
+//   MYE_JP("範囲", MYE_FIELD_RANGE(LightComponent, range, Float, 0.0f, 100.0f))
+constexpr FieldDesc WithJp(FieldDesc d, const char* jp)
+{
+    d.displayName = jp;
+    return d;
+}
 
 } // namespace mye
 
@@ -71,3 +89,6 @@ struct FieldDesc {
 #define MYE_FIELD_TIP(T, member, ftype, tip)                                                     \
     ::mye::FieldDesc { .name = #member, .type = ::mye::FieldType::ftype,                          \
                        .offset = static_cast<uint32_t>(offsetof(T, member)), .tooltip = (tip) }
+
+// 日本語表示名を付ける (M47c)。上の 4 マクロと生の FieldDesc{...} のどれでも包める
+#define MYE_JP(jp, ...) ::mye::WithJp(__VA_ARGS__, jp)

@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 
+#include "Editor/EditorComponentCatalog.h"
 #include "Engine/Core/ComponentRegistry.h"
 #include "Engine/Core/Components.h"
 #include "Engine/Core/Localization.h"
@@ -69,7 +70,8 @@ void SearchWindow::OnImGui(EngineContext& ctx, Selection& selection)
                 if (!match && !needle.empty()) {
                     if (const Archetype* a = world.GetArchetype(e)) {
                         for (ComponentTypeId t : a->Types()) {
-                            if (Contains(reg.Desc(t).name, needle)) {
+                            if ((Contains(reg.Desc(t).name, needle)
+                     || Contains(ComponentDisplayName(reg.Desc(t).name), needle))) {
                                 match = true;
                                 break;
                             }

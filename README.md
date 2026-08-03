@@ -35,6 +35,12 @@ C++20 / DirectX 11 製の自作ゲームエンジン。**Unity 風の使いや�
   Feature Level 11_0 縛りで DXR が使えないため `cs_5_0` のコンピュートシェーダで実装し、
   SVGF (テンポラル蓄積 → 分散推定 → A-Trous) でデノイズする。発光マテリアルはそのまま
   GI の面光源になる。詳細は [ADR-009](docs/adr/ADR-009-hybrid-path-tracing.md)
+- **エディタの日本語化** — UI 言語は**日本語が既定**で、View > 言語 から実行時に英語へ切替。
+  文字列は X マクロ 1 ファイルに集約し、訳の書き忘れを**コンパイルエラー**にする。
+  ウィンドウ名は `"表示名###英語ID"` 形式なので、切り替えても ImGui の ID —
+  つまり `imgui.ini` とドッキング配置 — は 1 バイトも変わらない。
+  Inspector の表示名は `FieldDesc::displayName` に持ち、シリアライズキー兼ハッシュ入力である
+  英語の `name` には触れない。詳細は [ADR-010](docs/adr/ADR-010-editor-localization.md)
 - **Debug/Release 一貫性** — 固定 60Hz tick、`/fp:precise`、PCG32、明示ソートキー。
   リプレイ (.rep) の tick 毎ワールドハッシュ比較で機械検証:
   `tools\replay_verify.bat` が両構成ビルド → Debug 記録 → Debug/Release 照合 → 静的規則検査
