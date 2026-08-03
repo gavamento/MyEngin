@@ -46,6 +46,10 @@ struct Mesh {
     // MeshColliderLibrary が BVH 構築素材に使う (GPU アップロード後も保持)
     std::vector<DirectX::XMFLOAT3> positions;
     std::vector<uint32_t> indices;
+    // M46a: レイトレーシングのヒット属性用 (positions と同じ頂点順・同じ長さ)。
+    // BLAS の三角形属性 (補間法線 / UV) をここから焼く。+20B/頂点
+    std::vector<DirectX::XMFLOAT3> normals;
+    std::vector<DirectX::XMFLOAT2> uvs;
 };
 
 // アセット列挙の 1 件 (Asset Browser / 参照ピッカー用、M8)。

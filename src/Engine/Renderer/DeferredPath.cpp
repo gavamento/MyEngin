@@ -4,6 +4,7 @@
 
 #include "Engine/Core/Log.h"
 #include "Engine/Core/Profiler.h"
+#include "Engine/Renderer/GpuBufferUtil.h" // M46a: バッファ生成ヘルパ (共通化)
 #include "Engine/Renderer/GpuResources.h"
 #include "Engine/Renderer/GraphicsDevice.h"
 #include "Engine/Renderer/ShaderManager.h"
@@ -125,25 +126,8 @@ struct SsaoBlurCB {
     float pad[2];
 };
 
-bool CreateCB(ID3D11Device* dev, UINT size, Microsoft::WRL::ComPtr<ID3D11Buffer>& out)
-{
-    D3D11_BUFFER_DESC bd = {};
-    bd.ByteWidth = size;
-    bd.Usage = D3D11_USAGE_DYNAMIC;
-    bd.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
-    bd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-    return SUCCEEDED(dev->CreateBuffer(&bd, nullptr, out.GetAddressOf()));
-}
-
-template <typename T>
-void UploadCB(ID3D11DeviceContext* dc, ID3D11Buffer* cb, const T& data)
-{
-    D3D11_MAPPED_SUBRESOURCE mapped = {};
-    if (SUCCEEDED(dc->Map(cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
-        memcpy(mapped.pData, &data, sizeof(T));
-        dc->Unmap(cb, 0);
-    }
-}
+// M46a: 定数バッファ生成 / CB 更新は GpuBufferUtil.h へ集約 (定義は同一)
+using namespace gpubuf;
 
 } // namespace
 
@@ -160,11 +144,11 @@ bool DeferredPath::Init(GraphicsDevice& device, ShaderManager& shaders)
     // スカイボックス (M29d)。失敗しても続行 (空が clearColor になるだけ)
     skybox_.Init(device, shaders);
 
-    if (!CreateCB(dev, sizeof(PerFrameCB), perFrameCB_)
-        || !CreateCB(dev, sizeof(PerObjectCB), perObjectCB_)
-        || !CreateCB(dev, sizeof(MaterialCB), materialCB_)
-        || !CreateCB(dev, sizeof(LightPassCB), lightCB_)
-        || !CreateCB(dev, sizeof(XMFLOAT4X4) * kMaxBones, boneCB_)) {
+    if (!CreateConstant(dev, sizeof(PerFrameCB), perFrameCB_)
+        || !CreateConstant(dev, sizeof(PerObjectCB), perObjectCB_)
+        || !CreateConstant(dev, sizeof(MaterialCB), materialCB_)
+        || !CreateConstant(dev, sizeof(LightPassCB), lightCB_)
+        || !CreateConstant(dev, sizeof(XMFLOAT4X4) * kMaxBones, boneCB_)) {
         return false;
     }
 
@@ -200,7 +184,7 @@ bool DeferredPath::Init(GraphicsDevice& device, ShaderManager& shaders)
     // ---- SSAO (M38e) ----
     ssaoShader_ = shaders.Load("ssao");
     ssaoBlurShader_ = shaders.Load("ssao_blur");
-    if (!CreateCB(dev, sizeof(SsaoCB), ssaoCB_) || !CreateCB(dev, sizeof(SsaoBlurCB), ssaoBlurCB_)) {
+    if (!CreateConstant(dev, sizeof(SsaoCB), ssaoCB_) || !CreateConstant(dev, sizeof(SsaoBlurCB), ssaoBlurCB_)) {
         return false;
     }
     D3D11_SAMPLER_DESC ps = {};

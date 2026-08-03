@@ -212,6 +212,7 @@
     <ClInclude Include="..\src\Engine\Renderer\FontGeometry.h" />
     <ClInclude Include="..\src\Engine\Renderer\ForwardPath.h" />
     <ClInclude Include="..\src\Engine\Renderer\FrustumCull.h" />
+    <ClInclude Include="..\src\Engine\Renderer\GpuBufferUtil.h" />
     <ClInclude Include="..\src\Engine\Renderer\GpuResources.h" />
     <ClInclude Include="..\src\Engine\Renderer\GpuTimer.h" />
     <ClInclude Include="..\src\Engine\Renderer\GraphicsDevice.h" />

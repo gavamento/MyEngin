@@ -6,7 +6,7 @@
 namespace mye {
 
 bool RenderTexture::Create(GraphicsDevice& device, int width, int height, DXGI_FORMAT format,
-                           bool withDepth)
+                           bool withDepth, bool withUav)
 {
     if (width <= 0 || height <= 0) {
         return false;
@@ -24,12 +24,28 @@ bool RenderTexture::Create(GraphicsDevice& device, int width, int height, DXGI_F
     cd.SampleDesc = { 1, 0 };
     cd.Usage = D3D11_USAGE_DEFAULT;
     cd.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+    if (withUav) {
+        cd.BindFlags |= D3D11_BIND_UNORDERED_ACCESS; // M46a
+    }
     if (FAILED(dev->CreateTexture2D(&cd, nullptr, color_.GetAddressOf()))
         || FAILED(dev->CreateRenderTargetView(color_.Get(), nullptr, rtv_.GetAddressOf()))
         || FAILED(dev->CreateShaderResourceView(color_.Get(), nullptr, srv_.GetAddressOf()))) {
         MYE_LOG_ERROR("RenderTexture: color creation failed (%dx%d)", width, height);
         Release();
         return false;
+    }
+
+    if (withUav) {
+        // M46a: typed UAV (フォーマットはカラーと同一)。CS から RWTexture2D として書く
+        D3D11_UNORDERED_ACCESS_VIEW_DESC ud = {};
+        ud.Format = format;
+        ud.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
+        if (FAILED(dev->CreateUnorderedAccessView(color_.Get(), &ud, uav_.GetAddressOf()))) {
+            MYE_LOG_ERROR("RenderTexture: UAV creation failed (format %d は typed UAV 非対応か)",
+                          static_cast<int>(format));
+            Release();
+            return false;
+        }
     }
 
     if (withDepth) {
@@ -68,20 +84,23 @@ bool RenderTexture::Create(GraphicsDevice& device, int width, int height, DXGI_F
     height_ = height;
     format_ = format;
     withDepth_ = withDepth;
+    withUav_ = withUav;
     return true;
 }
 
 void RenderTexture::Resize(GraphicsDevice& device, int width, int height, DXGI_FORMAT format,
-                           bool withDepth)
+                           bool withDepth, bool withUav)
 {
-    if (width == width_ && height == height_ && format == format_ && withDepth == withDepth_) {
+    if (width == width_ && height == height_ && format == format_ && withDepth == withDepth_
+        && withUav == withUav_) {
         return;
     }
-    Create(device, width, height, format, withDepth);
+    Create(device, width, height, format, withDepth, withUav);
 }
 
 void RenderTexture::Release()
 {
+    uav_.Reset(); // M46a
     depthSrv_.Reset();
     srv_.Reset();
     dsvReadOnly_.Reset();
@@ -93,6 +112,7 @@ void RenderTexture::Release()
     height_ = 0;
     format_ = DXGI_FORMAT_R8G8B8A8_UNORM;
     withDepth_ = true;
+    withUav_ = false; // M46a
 }
 
 } // namespace mye

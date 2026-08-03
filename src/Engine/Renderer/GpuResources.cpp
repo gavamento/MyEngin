@@ -173,9 +173,14 @@ AssetID MeshLibrary::Register(std::string_view name, std::span<const MeshVertex>
     mesh.indexCount = static_cast<uint32_t>(indices.size());
 
     // M41: メッシュコライダー用 CPU コピー (位置 + インデックス)
+    // M46a: レイトレのヒット属性用に法線 / UV も同じ頂点順で保持する
     mesh.positions.reserve(vertices.size());
+    mesh.normals.reserve(vertices.size());
+    mesh.uvs.reserve(vertices.size());
     for (const MeshVertex& mv : vertices) {
         mesh.positions.push_back(mv.position);
+        mesh.normals.push_back(mv.normal);
+        mesh.uvs.push_back(mv.uv);
     }
     mesh.indices.assign(indices.begin(), indices.end());
 

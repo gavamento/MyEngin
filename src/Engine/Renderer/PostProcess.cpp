@@ -5,6 +5,7 @@
 
 #include "Engine/Core/Components.h"
 #include "Engine/Core/Log.h"
+#include "Engine/Renderer/GpuBufferUtil.h" // M46a: バッファ生成ヘルパ (共通化)
 #include "Engine/Renderer/GraphicsDevice.h"
 #include "Engine/Renderer/PostFxMath.h"
 #include "Engine/Renderer/RenderTypes.h"
@@ -135,55 +136,8 @@ struct MotionBlurCB {
     float screenW, screenH;
 };
 
-// 構造化バッファ + UAV/SRV の生成 (GpuParticleBackend.cpp の CreateStructured を範に縮約)
-bool CreateStructuredBuf(ID3D11Device* dev, UINT elemSize, UINT count, const void* initData,
-                         Microsoft::WRL::ComPtr<ID3D11Buffer>& buf,
-                         Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView>& uav,
-                         Microsoft::WRL::ComPtr<ID3D11ShaderResourceView>& srv)
-{
-    D3D11_BUFFER_DESC bd = {};
-    bd.ByteWidth = elemSize * count;
-    bd.Usage = D3D11_USAGE_DEFAULT;
-    bd.BindFlags = D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE;
-    bd.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
-    bd.StructureByteStride = elemSize;
-    D3D11_SUBRESOURCE_DATA init = { initData, 0, 0 };
-    if (FAILED(dev->CreateBuffer(&bd, initData ? &init : nullptr, buf.GetAddressOf()))) {
-        return false;
-    }
-    D3D11_UNORDERED_ACCESS_VIEW_DESC ud = {};
-    ud.Format = DXGI_FORMAT_UNKNOWN;
-    ud.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
-    ud.Buffer.NumElements = count;
-    if (FAILED(dev->CreateUnorderedAccessView(buf.Get(), &ud, uav.GetAddressOf()))) {
-        return false;
-    }
-    D3D11_SHADER_RESOURCE_VIEW_DESC sd = {};
-    sd.Format = DXGI_FORMAT_UNKNOWN;
-    sd.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
-    sd.Buffer.NumElements = count;
-    return SUCCEEDED(dev->CreateShaderResourceView(buf.Get(), &sd, srv.GetAddressOf()));
-}
-
-template <typename T>
-void UploadCB(ID3D11DeviceContext* dc, ID3D11Buffer* cb, const T& data)
-{
-    D3D11_MAPPED_SUBRESOURCE mapped = {};
-    if (SUCCEEDED(dc->Map(cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
-        memcpy(mapped.pData, &data, sizeof(T));
-        dc->Unmap(cb, 0);
-    }
-}
-
-bool CreateCB(ID3D11Device* dev, UINT size, Microsoft::WRL::ComPtr<ID3D11Buffer>& out)
-{
-    D3D11_BUFFER_DESC bd = {};
-    bd.ByteWidth = size;
-    bd.Usage = D3D11_USAGE_DYNAMIC;
-    bd.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
-    bd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-    return SUCCEEDED(dev->CreateBuffer(&bd, nullptr, out.GetAddressOf()));
-}
+// M46a: 構造化バッファ / 定数バッファ / CB 更新は GpuBufferUtil.h へ集約 (定義は同一)
+using namespace gpubuf;
 
 } // namespace
 
@@ -205,14 +159,14 @@ bool PostProcess::Init(GraphicsDevice& device, ShaderManager& shaders)
     dofCompositeShader_ = shaders.Load("postfx_dof_composite");
     motionBlurShader_ = shaders.Load("postfx_motionblur"); // M44d
 
-    if (!CreateCB(dev, sizeof(PostFxCB), cb_) || !CreateCB(dev, sizeof(BrightCB), brightCB_)
-        || !CreateCB(dev, sizeof(BlurCB), blurCB_) || !CreateCB(dev, sizeof(FxaaCB), fxaaCB_)
-        || !CreateCB(dev, sizeof(GodrayMaskCB), godrayMaskCB_)
-        || !CreateCB(dev, sizeof(GodrayBlurCB), godrayBlurCB_)
-        || !CreateCB(dev, sizeof(HistCB), histCB_)
-        || !CreateCB(dev, sizeof(AeReduceCB), aeReduceCB_)
-        || !CreateCB(dev, sizeof(DofCB), dofCB_)
-        || !CreateCB(dev, sizeof(MotionBlurCB), mbCB_)) {
+    if (!CreateConstant(dev, sizeof(PostFxCB), cb_) || !CreateConstant(dev, sizeof(BrightCB), brightCB_)
+        || !CreateConstant(dev, sizeof(BlurCB), blurCB_) || !CreateConstant(dev, sizeof(FxaaCB), fxaaCB_)
+        || !CreateConstant(dev, sizeof(GodrayMaskCB), godrayMaskCB_)
+        || !CreateConstant(dev, sizeof(GodrayBlurCB), godrayBlurCB_)
+        || !CreateConstant(dev, sizeof(HistCB), histCB_)
+        || !CreateConstant(dev, sizeof(AeReduceCB), aeReduceCB_)
+        || !CreateConstant(dev, sizeof(DofCB), dofCB_)
+        || !CreateConstant(dev, sizeof(MotionBlurCB), mbCB_)) {
         MYE_LOG_ERROR("PostProcess: CB creation failed");
         return false;
     }
@@ -287,10 +241,10 @@ PostProcess::Target* PostProcess::Acquire(GraphicsDevice& device, int width, int
     }
     // M44b: 自動露出バッファ (ヒストグラム 256 bin + 露出倍率 1 要素、初期値 1.0)
     const float kInitialExposure = 1.0f;
-    if (!CreateStructuredBuf(device.Device(), sizeof(uint32_t), 256, nullptr, t.histBuf,
-                             t.histUAV, t.histSRV)
-        || !CreateStructuredBuf(device.Device(), sizeof(float), 1, &kInitialExposure,
-                                t.exposureBuf, t.exposureUAV, t.exposureSRV)) {
+    if (!CreateStructured(device.Device(), sizeof(uint32_t), 256, nullptr, 0, t.histBuf,
+                          &t.histUAV, &t.histSRV)
+        || !CreateStructured(device.Device(), sizeof(float), 1, &kInitialExposure, 0,
+                             t.exposureBuf, &t.exposureUAV, &t.exposureSRV)) {
         return nullptr;
     }
     cache_.insert(cache_.begin(), std::move(t));
