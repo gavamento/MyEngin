@@ -269,6 +269,48 @@ inline MyeGameObject MyeSelf(const MyeUpdateContext& ctx)
     return { ctx.self, ctx.api };
 }
 
+// ---- オーディオ (v8、M45g)。ABI 追加なしの糖衣 (呼び先は EngineAPI.h のスロットそのもの) ----
+// key は .sound.json の名前 (無ければ .wav / .ogg のファイル名 stem)。
+// **write-only** — 再生位置や再生中判定を取る手段は意図的に存在しない (EngineAPI.h 参照)
+inline uint64_t MyePlaySound(const MyeUpdateContext& ctx, const char* key, float volume = 1.0f,
+                             float pitch = 1.0f)
+{
+    return ctx.api->PlaySound2(ctx.api->engine, key, volume, pitch);
+}
+
+inline uint64_t MyePlaySoundAt(const MyeUpdateContext& ctx, const char* key, MyeVec3 worldPos,
+                               float volume = 1.0f)
+{
+    return ctx.api->PlaySoundAt(ctx.api->engine, key, worldPos, volume);
+}
+
+// 自分の位置で 3D 再生する (足音・衝突音など)
+inline uint64_t MyePlaySoundHere(const MyeUpdateContext& ctx, const char* key, float volume = 1.0f)
+{
+    return MyePlaySoundAt(ctx, key, MyeSelf(ctx).GetLocalPosition(), volume);
+}
+
+inline void MyeStopVoice(const MyeUpdateContext& ctx, uint64_t handle, float fadeSeconds = 0.0f)
+{
+    ctx.api->StopVoice(ctx.api->engine, handle, fadeSeconds);
+}
+
+inline void MyeSetBusVolume(const MyeUpdateContext& ctx, const char* busName, float volume)
+{
+    ctx.api->SetBusVolume(ctx.api->engine, busName, volume);
+}
+
+inline void MyePlayMusic(const MyeUpdateContext& ctx, const char* key, float fadeSeconds = 1.0f,
+                         bool loop = true)
+{
+    ctx.api->PlayMusic(ctx.api->engine, key, fadeSeconds, loop ? 1 : 0);
+}
+
+inline void MyeStopMusic(const MyeUpdateContext& ctx, float fadeSeconds = 1.0f)
+{
+    ctx.api->StopMusic(ctx.api->engine, fadeSeconds);
+}
+
 // ---- ゲーム内 UI ヒットテスト (M21) ----
 // UI 描画はエンジン (UIElementComponent) が行うが、ボタン操作は **決定論のため
 // InputSnapshot のマウス経由** で判定する (ABI 追加なし = bump 不要)。verify では記録された

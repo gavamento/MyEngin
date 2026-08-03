@@ -43,6 +43,7 @@
   <!-- BEGIN FILES (tools\gen_project_files.ps1 が再生成する。手編集しない) -->
   <ItemGroup>
     <ClCompile Include="..\src\GameLogic\GameLogicMain.cpp" />
+    <ClCompile Include="..\src\GameLogic\Scripts\AudioDemo.cpp" />
     <ClCompile Include="..\src\GameLogic\Scripts\PlayerController.cpp" />
     <ClCompile Include="..\src\GameLogic\Scripts\Rotator.cpp" />
     <ClCompile Include="..\src\GameLogic\Scripts\Spawner.cpp" />

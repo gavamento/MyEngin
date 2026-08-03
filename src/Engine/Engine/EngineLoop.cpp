@@ -2,10 +2,12 @@
 
 #include <algorithm>
 
+#include "Engine/Core/AssetGuidResolver.h" // v8 PlayMusic の生クリップ経路 (GUID → 実パス)
 #include "Engine/Core/Check.h"
 #include "Engine/Core/JobSystem.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Core/Profiler.h"
+#include "Engine/Core/Random.h"
 #include "Engine/Engine/Animation.h"
 #include "Engine/Engine/AnimatorController.h"
 #include "Engine/Engine/AssetDatabase.h"
@@ -55,6 +57,129 @@ constexpr double kFixedDt = 1.0 / 60.0;
 constexpr int kMaxTicksPerFrame = 5;   // スパイラルオブデス防止
 constexpr double kMaxFrameDt = 0.25;   // ブレークポイント等の巨大 dt をクランプ
 
+// スクリプトが積んだオーディオイベント 1 件を実際の発音へ流す (M45g)。
+// **必ずワールドハッシュの後に呼ぶこと** — ここから先は決定論レーンの外で、
+// 記録/検証中は AudioSystem が suspend されているので個々の API が no-op になる。
+// rng は AudioSystem 側の専用ストリーム。**world.Rng() は絶対に使わない** (hash 対象)。
+void ApplyScriptAudioEvent(const ScriptAudioEvent& e, World& world, AudioSystem& audio,
+                           const SoundLibrary& sounds, AudioSourceSystem& sources, Pcg32& rng)
+{
+    switch (e.op) {
+    case ScriptAudioOp::PlayOneShot:
+    case ScriptAudioOp::PlayAtPoint: {
+        const bool at = e.op == ScriptAudioOp::PlayAtPoint;
+        const ResolvedSound rs = ResolveSoundKey(audio, sounds, e.key);
+        if (!rs.Valid()) {
+            // ★黙って無音にしない — 綴り間違いは「壊れている」と見分けが付かないため
+            MYE_LOG_WARN("[audio] unknown sound key (hash %016llx) from script",
+                         static_cast<unsigned long long>(e.key));
+            break;
+        }
+        PlayDesc d;
+        AudioSpatial spatial;
+        bool spatialize = false;
+        if (rs.asset != nullptr) {
+            if (rs.asset->stream) {
+                // stream = BGM。ワンショットのレーンには載らないので BGM として鳴らす
+                // (エディタ試聴 PreviewSound と同じ扱い。返したハンドルは無効のまま)
+                SoundAsset a = *rs.asset;
+                a.volume = std::clamp(a.volume * e.a, 0.0f, 1.0f);
+                PlayMusicSound(audio, a, kMusicDefaultFadeSeconds);
+                break;
+            }
+            const int index = PickVariationIndex(*rs.asset, rng.NextU32());
+            if (index < 0) {
+                break; // クリップが 1 つも割り当たっていないアセット
+            }
+            d = MakePlayDesc(*rs.asset, index, rng.Range(-1.0f, 1.0f), rng.Range(-1.0f, 1.0f),
+                             audio);
+            // スクリプト引数はアセット既定への**乗算**(コンポーネント上書きと同じ規約)
+            d.volume = std::clamp(d.volume * e.a, 0.0f, 1.0f);
+            d.pitch = std::clamp(d.pitch * e.b, 1.0f / AudioSystem::kMaxFreqRatio,
+                                 AudioSystem::kMaxFreqRatio);
+            spatial.spatialBlend = rs.asset->spatialBlend;
+            spatial.minDistance = rs.asset->minDistance;
+            spatial.maxDistance = rs.asset->maxDistance;
+            spatial.rolloff = static_cast<int>(rs.asset->rolloff);
+            spatial.dopplerScale = rs.asset->dopplerScale;
+            spatial.reverbSend = rs.asset->reverbSend;
+        } else {
+            // 生クリップ (M19 からの PlaySound("beep") 経路)。アセットが無いので既定値
+            d.clip = rs.clip;
+            d.bus = audio.DefaultBus();
+            d.volume = std::clamp(e.a, 0.0f, 1.0f);
+            d.pitch = e.b;
+            d.loop = e.i0 != 0;
+        }
+        if (at) {
+            // ★PlaySoundAt は「その座標で鳴らせ」という明示指定なので、2D 設定の音でも
+            //   3D に載せる。ここで落とすと座標を渡したのに定位しない = 一番分かりにくい
+            spatial.position = AudioVec3{ e.pos.x, e.pos.y, e.pos.z };
+            spatial.velocity = {}; // 置き音なので静止 (ドップラーは掛からない)
+            if (spatial.spatialBlend <= 0.0f) {
+                spatial.spatialBlend = 1.0f;
+            }
+            spatial.pitch = d.pitch;
+            spatialize = true;
+        }
+        d.tag = e.handle; // 後の tick から StopVoice / SetVoiceVolume で引けるようにする
+        d.spatial = spatialize ? &spatial : nullptr;
+        audio.Play(d);
+        break;
+    }
+    case ScriptAudioOp::StopVoice:
+        audio.Stop(audio.FindByTag(e.handle), e.a);
+        break;
+    case ScriptAudioOp::SetVoiceVolume:
+        audio.SetVoiceVolume(audio.FindByTag(e.handle), e.a);
+        break;
+    case ScriptAudioOp::SetVoicePitch:
+        audio.SetVoicePitch(audio.FindByTag(e.handle), e.b);
+        break;
+    case ScriptAudioOp::PlaySource:
+        sources.PlayEntity(world, audio, sounds, { e.entity.index, e.entity.generation });
+        break;
+    case ScriptAudioOp::StopSource:
+        sources.StopEntity(world, audio, sounds, { e.entity.index, e.entity.generation }, e.a);
+        break;
+    case ScriptAudioOp::SetBusVolume: {
+        const int bus = audio.FindBusHashed(e.key);
+        if (bus >= 0) {
+            audio.SetBusVolume(bus, e.a); // 未知のバス名は黙って無視 (既存の音量を壊さない)
+        }
+        break;
+    }
+    case ScriptAudioOp::PlayMusic: {
+        const ResolvedSound rs = ResolveSoundKey(audio, sounds, e.key);
+        if (rs.asset != nullptr) {
+            SoundAsset a = *rs.asset;
+            a.loop = e.i0 != 0;
+            PlayMusicSound(audio, a, e.a);
+        } else if (!rs.clip.IsNull()) {
+            // .sound.json を作らずに素の .wav/.ogg を BGM 指定した場合。
+            // GUID から実ファイルを引いて既定パラメータでストリーミングする
+            MusicDesc d;
+            d.path = assetguid::ResolvePath(rs.clip.value);
+            d.key = rs.clip.value;
+            const int bus = audio.FindBus("BGM");
+            d.bus = bus >= 0 ? bus : audio.DefaultBus();
+            d.fadeSeconds = e.a;
+            d.loop = e.i0 != 0;
+            if (!d.path.empty()) {
+                audio.PlayMusic(d);
+            }
+        }
+        break;
+    }
+    case ScriptAudioOp::StopMusic:
+        audio.StopMusic(e.a);
+        break;
+    case ScriptAudioOp::SetListener:
+        sources.SetListenerOverride({ e.entity.index, e.entity.generation });
+        break;
+    }
+}
+
 } // namespace
 
 int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
@@ -100,6 +225,9 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // AudioSystem 側に置くと記録/検証中 (drain がゲートされる) だけ番号が進まず、
     // スクリプトが受け取る値がリプレイで食い違う。v7 Instantiate の fileId 予約と同型。
     uint64_t audioHandleSeq = 0;
+    // スクリプト再生のバリエーション抽選 / 揺らぎ用 (M45g)。**world.Rng() とは別系統** —
+    // RNG state はワールドハッシュ対象なので、オーディオが引くと sim が壊れる
+    Pcg32 audioScriptRng;
     std::wstring pendingScene;                // LoadScene の遅延ロード先 (tick 末に消費)
     std::vector<EffectSpawnRequest> effectQueue; // PlayEffect の spawn 要求 (tick 末に消費、M32f)
     std::vector<DebugLineCmd> debugLines; // DebugDrawLine (v7)。tick 頭クリア → 描画で消費
@@ -222,6 +350,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // クリップの実ロードは M45c から RegisterAssetLibraries (assets\**\*.wav|*.ogg の走査) が
     // 担う — 単一ファイルのハードコードはここには置かない
     audioSystem.Init(config.audio);
+    audioScriptRng.Seed(0x4D796541536372ull); // "MyeAScr" — world.Rng() とは別ストリーム
     scriptHost.SetSharedServices(&audioQueue, &pendingScene, &effectQueue, &debugLines,
                                  &audioHandleSeq);
     managedHost.SetSharedServices(&audioQueue, &pendingScene, &effectQueue, &debugLines,
@@ -509,20 +638,8 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             // hashed state へ戻さない)。記録/検証中は AudioSystem 自体が suspend されており
             // Play が no-op になる。**キューの clear だけはゲートの外**で毎 tick 行う ----
             for (const ScriptAudioEvent& e : audioQueue) {
-                switch (e.op) {
-                case ScriptAudioOp::PlayOneShot: {
-                    PlayDesc d;
-                    d.clip = audioSystem.ResolveClipKey(e.key);
-                    d.volume = e.a;
-                    d.pitch = e.b;
-                    d.loop = e.i0 != 0;
-                    audioSystem.Play(d);
-                    break;
-                }
-                default:
-                    // 残りの op は M45e-g で実装する (スロットは v8 で予約済み)
-                    break;
-                }
+                ApplyScriptAudioEvent(e, scene.GetWorld(), audioSystem, soundLibrary, audioSources,
+                                      audioScriptRng);
             }
             audioQueue.clear();
 

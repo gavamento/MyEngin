@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "Engine/Core/Components.h"
+#include "Engine/Core/Hash.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Engine/Audio/AudioClip.h"
 #include "Engine/Engine/Audio/AudioMixer.h"
@@ -720,6 +721,77 @@ bool RunAudioSelfTest()
         }
         src.Close();
         std::filesystem::remove(path, ec);
+    }
+
+    // ---- (18) スクリプト v8 の soundKey / バス名の解決 (M45g) ----
+    // ここが崩れると「スクリプトが黙って無音になる」という一番気付きにくい壊れ方をする。
+    // **特に生クリップへのフォールバック** — M19 からある PlaySound("beep") はここを通る
+    {
+        std::error_code ec;
+        const std::filesystem::path clipPath =
+            std::filesystem::temp_directory_path(ec) / L"mye_audio_key_selftest.wav";
+        std::filesystem::remove(clipPath, ec);
+        SynthParams p;
+        p.wave = SynthWave::Sine;
+        p.durationSec = 0.02f;
+        p.channels = 1;
+        AudioClip gen;
+        SynthRender(p, gen);
+        const bool wrote = WriteWavToFile(gen, clipPath.wstring());
+        check(wrote, "key: fixture clip written");
+
+        AudioSystem audio; // Init は呼ばない (デバイス非依存 — 既定バス構成だけを使う)
+        // ★LoadClipFile / LoadWav はデバイス無しだと何もしない (鳴らせない PCM を
+        //   展開しないため) ので、ここは RegisterClip + RegisterClipName で直接組む。
+        //   LoadWav も内部でこの 2 本を呼ぶので、見ている規則は production と同じ
+        const AssetID clipId = AudioSystem::IdForFile(clipPath.wstring());
+        AudioClip disk;
+        const bool loaded = wrote && LoadAudioFile(clipPath.wstring(), disk)
+                            && !audio.RegisterClip(clipId, std::move(disk), "keyclip").IsNull();
+        audio.RegisterClipName("keyclip", clipId);
+        check(loaded, "key: raw clip registered with a name key");
+
+        SoundLibrary lib;
+        SoundAsset asset;
+        asset.variations.push_back({ clipId.value, {}, 1 });
+        // Register は path の stem から name を決める ("mye_key_demo.sound.json" → "mye_key_demo")
+        const uint64_t soundHash = lib.Register(L"C:\\fake\\mye_key_demo.sound.json", asset);
+        check(soundHash != 0 && lib.Get(soundHash) != nullptr, "key: sound asset registered");
+        check(lib.Get(soundHash)->name == "mye_key_demo", "key: name comes from the file stem");
+
+        const ResolvedSound byName = ResolveSoundKey(audio, lib, HashStr("mye_key_demo"));
+        check(byName.asset != nullptr && byName.asset->hash == soundHash,
+              "key: .sound.json resolves by name key");
+        const ResolvedSound byGuid = ResolveSoundKey(audio, lib, soundHash);
+        check(byGuid.asset != nullptr && byGuid.asset->hash == soundHash,
+              "key: .sound.json resolves by GUID");
+
+        // ★フォールバック 2 経路: 生クリップの名前キーと GUID 直指定
+        const ResolvedSound rawByName = ResolveSoundKey(audio, lib, HashStr("keyclip"));
+        check(rawByName.asset == nullptr && rawByName.clip.value == clipId.value,
+              "key: falls back to a raw clip by name (PlaySound(\"beep\") path)");
+        const ResolvedSound rawByGuid = ResolveSoundKey(audio, lib, clipId.value);
+        check(rawByGuid.asset == nullptr && rawByGuid.clip.value == clipId.value,
+              "key: falls back to a raw clip by GUID");
+
+        check(!ResolveSoundKey(audio, lib, HashStr("no_such_sound")).Valid(),
+              "key: an unknown key resolves to nothing");
+        check(!ResolveSoundKey(audio, lib, 0).Valid(), "key: key 0 resolves to nothing");
+        check(lib.ResolveKey(HashStr("no_such_sound")) == 0, "key: SoundLibrary rejects unknowns");
+
+        // バス名は POD イベントでハッシュ化して運ぶので、FindBus と結果が一致する必要がある。
+        // **小文字化を忘れると "SE" と "se" が別物になる**
+        check(audio.FindBusHashed(AudioSystem::HashBusName("SE")) == audio.FindBus("SE"),
+              "bus: hashed lookup matches the string lookup");
+        check(audio.FindBusHashed(AudioSystem::HashBusName("se"))
+                  == audio.FindBusHashed(AudioSystem::HashBusName("SE")),
+              "bus: hashed lookup ignores case");
+        check(audio.FindBusHashed(AudioSystem::HashBusName("NoSuchBus")) == -1,
+              "bus: an unknown bus name resolves to -1");
+        check(audio.FindBusHashed(0) == -1 && AudioSystem::HashBusName(nullptr) == 0,
+              "bus: null / empty bus names are rejected");
+
+        std::filesystem::remove(clipPath, ec);
     }
 
     // ※OGG デコードは selftest に fixture を持たない (エンコーダを同梱しないため)。

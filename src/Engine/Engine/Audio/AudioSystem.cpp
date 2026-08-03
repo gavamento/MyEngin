@@ -1,6 +1,7 @@
 #include "Engine/Engine/Audio/AudioSystem.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstring>
 #include <filesystem>
@@ -625,6 +626,33 @@ int AudioSystem::FindBus(const char* name) const
     return -1;
 }
 
+uint64_t AudioSystem::HashBusName(const char* name)
+{
+    if (name == nullptr) {
+        return 0;
+    }
+    // ★小文字化してからハッシュする — 名前引きが大文字小文字を無視する規約なので、
+    //   素の HashStr だと "SE" と "se" が別物になり FindBus と結果が食い違う
+    std::string lower(name);
+    for (char& ch : lower) {
+        ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    }
+    return lower.empty() ? 0 : HashStr(lower);
+}
+
+int AudioSystem::FindBusHashed(uint64_t nameHash) const
+{
+    if (nameHash == 0) {
+        return -1;
+    }
+    for (size_t i = 0; i < buses_.size(); ++i) {
+        if (HashBusName(buses_[i].s.name.c_str()) == nameHash) {
+            return static_cast<int>(i);
+        }
+    }
+    return -1;
+}
+
 int AudioSystem::DefaultBus() const
 {
     const int se = FindBus("SE");
@@ -811,6 +839,14 @@ AssetID AudioSystem::RegisterClip(AssetID id, AudioClip clip, const std::string&
     return id;
 }
 
+void AudioSystem::RegisterClipName(const std::string& key, AssetID id)
+{
+    if (key.empty() || id.IsNull()) {
+        return;
+    }
+    named_[HashStr(key)] = id; // 同名は後勝ち (SoundLibrary::Register と同じ規約)
+}
+
 std::vector<AssetEntry> AudioSystem::Enumerate() const
 {
     std::vector<AssetEntry> out;
@@ -867,6 +903,11 @@ void AudioSystem::StopSlot(Voice& v)
     }
     v.active = false;
     v.clip = {};
+    // ★スロットは使い回されるので、スクリプトの紐付けとフェード状態も必ず落とす。
+    //   残すと「鳴り終わったハンドル」が次の音を掴んでしまう
+    v.tag = 0;
+    v.fadeRemain = 0.0f;
+    v.fadeTotal = 0.0f;
 }
 
 // 空きスロットを取る。無ければ VoicePolicy の規則で 1 本奪う (-1 = 再生をあきらめる)
@@ -1178,6 +1219,10 @@ AudioHandle AudioSystem::Play(const PlayDesc& desc)
     v.active = true;
     v.priority = desc.priority;
     v.clip = desc.clip;
+    v.tag = desc.tag;
+    v.volume = ClampVolume(desc.volume);
+    v.fadeRemain = 0.0f; // スロット再利用でも前の音のフェードを引き継がない
+    v.fadeTotal = 0.0f;
     v.startSeq = ++playSeq_;
     ++v.generation;
     if (v.generation == 0) {
@@ -1202,6 +1247,28 @@ void AudioSystem::Stop(AudioHandle h)
     StopSlot(v);
 }
 
+void AudioSystem::Stop(AudioHandle h, float fadeSeconds)
+{
+    if (fadeSeconds <= 0.0f) {
+        Stop(h);
+        return;
+    }
+    if (!h.Valid() || h.index >= voices_.size()) {
+        return;
+    }
+    Voice& v = voices_[h.index];
+    if (v.generation != h.generation || !v.active || v.voice == nullptr) {
+        return;
+    }
+    // 既にフェード中なら**残り時間を伸ばさない** — 同じ音に Stop を連打されたときに
+    // いつまでも鳴り続けるのを防ぐ (短い方を採る)
+    if (v.fadeRemain > 0.0f && v.fadeRemain <= fadeSeconds) {
+        return;
+    }
+    v.fadeTotal = fadeSeconds;
+    v.fadeRemain = fadeSeconds;
+}
+
 void AudioSystem::SetVoiceVolume(AudioHandle h, float volume)
 {
     if (!h.Valid() || h.index >= voices_.size()) {
@@ -1211,7 +1278,27 @@ void AudioSystem::SetVoiceVolume(AudioHandle h, float volume)
     if (v.generation != h.generation || !v.active || v.voice == nullptr) {
         return;
     }
-    v.voice->SetVolume(ClampVolume(volume));
+    v.volume = ClampVolume(volume);
+    // フェード中は係数を掛けたものを書く (基準音量だけ替えてフェードは進み続ける)
+    const float gain = v.fadeTotal > 0.0f ? v.fadeRemain / v.fadeTotal : 1.0f;
+    v.voice->SetVolume(v.volume * gain);
+}
+
+AudioHandle AudioSystem::FindByTag(uint64_t tag) const
+{
+    if (tag == 0) {
+        return {};
+    }
+    for (size_t i = 0; i < voices_.size(); ++i) {
+        const Voice& v = voices_[i];
+        if (v.active && v.tag == tag) {
+            AudioHandle h;
+            h.index = static_cast<uint32_t>(i);
+            h.generation = v.generation;
+            return h;
+        }
+    }
+    return {};
 }
 
 void AudioSystem::SetVoicePitch(AudioHandle h, float pitch)
@@ -1324,11 +1411,23 @@ void AudioSystem::Update(float dt)
         if (!v.active || v.voice == nullptr) {
             continue;
         }
+        // ---- フェードアウト (v8 StopVoice / StopAudioSource) ----
+        // **実時間 dt で進める** — BGM のクロスフェード (M45f) と同じ理由で、
+        // ctx.fixedDt を使うと 6500fps の Runtime でフェードが 100 倍速で終わる
+        if (v.fadeRemain > 0.0f) {
+            v.fadeRemain -= dt;
+            if (v.fadeRemain <= 0.0f) {
+                StopSlot(v); // fade/tag もここで落ちる
+                continue;
+            }
+            v.voice->SetVolume(v.volume * (v.fadeRemain / v.fadeTotal));
+        }
         XAUDIO2_VOICE_STATE st = {};
         v.voice->GetState(&st, XAUDIO2_VOICE_NOSAMPLESPLAYED);
         if (st.BuffersQueued == 0) { // ループ再生中は 1 のまま = 回収されない
-            v.active = false;
-            v.clip = {};
+            // ★StopSlot を通す — active を落とすだけだと tag が残り、鳴り終わった
+            //   ハンドルが次にこのスロットへ乗った音を掴んでしまう
+            StopSlot(v);
         }
     }
     // BGM のフェード進行と鳴り終わり回収 (M45f)。**suspend 中も回す** — 上の voice 回収と
@@ -1348,7 +1447,7 @@ bool AudioSystem::LoadWav(const std::string& key, const std::wstring& path)
     if (id.IsNull()) {
         return false;
     }
-    named_[HashStr(key)] = id;
+    RegisterClipName(key, id);
     return true;
 }
 

@@ -6,6 +6,7 @@
 
 #include "Engine/Core/AssetGuidResolver.h"
 #include "Engine/Core/AssetKeyResolver.h"
+#include "Engine/Core/Hash.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Platform/PathUtil.h"
 
@@ -91,6 +92,7 @@ uint64_t SoundLibrary::Register(const std::wstring& path, SoundAsset asset)
     if (asset.name.empty()) {
         asset.name = NameFromPath(path);
     }
+    named_[HashStr(asset.name)] = hash; // 名前キー索引 (同名は後勝ち。AudioSystem と同じ規約)
     sounds_[hash] = std::move(asset);
     return hash;
 }
@@ -149,6 +151,19 @@ SoundAsset* SoundLibrary::GetMutable(uint64_t hash)
 {
     auto it = sounds_.find(hash);
     return it == sounds_.end() ? nullptr : &it->second;
+}
+
+uint64_t SoundLibrary::ResolveKey(uint64_t key) const
+{
+    if (key == 0) {
+        return 0;
+    }
+    const auto n = named_.find(key);
+    if (n != named_.end()) {
+        return n->second;
+    }
+    // 名前キーで引けなければ GUID 直指定とみなす
+    return sounds_.find(key) != sounds_.end() ? key : 0;
 }
 
 std::vector<SoundEntry> SoundLibrary::Enumerate() const
@@ -296,6 +311,23 @@ int PickVariationIndex(const SoundAsset& s, uint32_t roll)
         }
     }
     return -1; // ここには来ない (total の走査と同じ条件で回している)
+}
+
+ResolvedSound ResolveSoundKey(const AudioSystem& audio, const SoundLibrary& lib, uint64_t key)
+{
+    ResolvedSound r;
+    if (key == 0) {
+        return r;
+    }
+    const uint64_t soundHash = lib.ResolveKey(key);
+    if (soundHash != 0) {
+        r.asset = lib.Get(soundHash);
+        if (r.asset != nullptr) {
+            return r; // .sound.json が勝つ (バス/揺らぎ/3D 設定が付いてくるため)
+        }
+    }
+    r.clip = audio.ResolveClipKey(key);
+    return r;
 }
 
 PlayDesc MakePlayDesc(const SoundAsset& s, int variationIndex, float volJitter, float pitchJitter,

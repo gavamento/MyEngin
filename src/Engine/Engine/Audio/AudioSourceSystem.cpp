@@ -48,6 +48,25 @@ void OrientationOf(const XMFLOAT4X4& m, AudioVec3& outForward, AudioVec3& outUp)
     outUp = { u.x, u.y, u.z };
 }
 
+// 指定エンティティをそのままリスナーにする (v8 SetListenerEntity)。
+// 死んでいる / 非アクティブ / WorldMatrix 無しなら false を返して自動探索へ落とす —
+// **リスナーを失って全部無音になるのが一番困る**ため
+bool ListenerFromEntity(World& world, EntityID e, AudioListenerState& out, EntityID& outEntity)
+{
+    if (e.IsNull() || !world.IsAlive(e) || !IsEntityActive(world, e)) {
+        return false;
+    }
+    const auto* wm = world.GetComponent<WorldMatrixComponent>(e);
+    if (wm == nullptr) {
+        return false;
+    }
+    out.position = PositionOf(wm->value);
+    OrientationOf(wm->value, out.forward, out.up);
+    out.velocity = {};
+    outEntity = e;
+    return true;
+}
+
 // リスナーを探す。AudioListenerComponent (enabled != 0 かつエンティティが active) のうち
 // **entity.index が最小のもの** を使い、無ければ primary カメラへ落とす
 // (SkyboxComponent / FogComponent の「最初の active な 1 個」と同じ規約。
@@ -181,6 +200,9 @@ void AudioSourceSystem::Reset()
     states_.clear();
     listenerVel_ = {};
     listenerEntity_ = kNullEntity;
+    // シーンが替われば EntityID の意味も替わる。指定を残すと別のオブジェクトが
+    // リスナーになりかねないので自動へ戻す
+    listenerOverride_ = kNullEntity;
     lastTickValid_ = false;
 }
 
@@ -214,6 +236,91 @@ void AudioSourceSystem::Sweep(AudioSystem& audio)
     states_.resize(write);
 }
 
+bool AudioSourceSystem::StartSource(AudioSystem& audio, const SoundAsset& asset,
+                                    const AudioSourceComponent& src, SourceState& st,
+                                    const AudioVec3& pos)
+{
+    st.variationIndex = PickVariationIndex(asset, rng_.NextU32());
+    if (st.variationIndex < 0) {
+        return false; // 鳴らせるバリエーションが 1 つも無いアセット
+    }
+    st.volJitter = rng_.Range(-1.0f, 1.0f);
+    st.pitchJitter = rng_.Range(-1.0f, 1.0f);
+    PlayDesc desc;
+    AudioSpatial spatial;
+    MakeSourcePlay(asset, src, audio, st.variationIndex, st.volJitter, st.pitchJitter, desc,
+                   spatial);
+    // 初回の定位も込みで渡す (Start() 前に適用されるので出だしが無定位にならない)
+    spatial.position = pos;
+    spatial.velocity = {}; // 生成直後は静止扱い (初速をでっち上げない)
+    desc.spatial = spatial.spatialBlend > 0.0f ? &spatial : nullptr;
+    st.voice = audio.Play(desc);
+    st.vel = {};
+    return st.voice.Valid();
+}
+
+bool AudioSourceSystem::PlayEntity(World& world, AudioSystem& audio, const SoundLibrary& sounds,
+                                   EntityID e)
+{
+    const auto* src = world.GetComponent<AudioSourceComponent>(e);
+    if (src == nullptr) {
+        return false;
+    }
+    const SoundAsset* asset = sounds.Get(src->sound.value);
+    if (asset == nullptr) {
+        return false; // サウンド未割当 (Inspector で空のまま)
+    }
+    SourceState& st = StateFor(e);
+    // このフレームの Update より前に状態を作ることがあるので、掃除で消されないようにする
+    st.seen = true;
+    // 明示的に鳴らした以上、playOnAwake の再発火は不要
+    st.started = true;
+
+    if (asset->stream) {
+        SoundAsset a = *asset; // コンポーネント側の音量上書きだけ載せる (Update と同じ規則)
+        const float vol = src->mute != 0 ? 0.0f : std::clamp(src->volume, 0.0f, 1.0f);
+        a.volume = std::clamp(a.volume * vol, 0.0f, 1.0f);
+        return PlayMusicSound(audio, a, kMusicDefaultFadeSeconds);
+    }
+
+    if (st.voice.Valid()) {
+        audio.Stop(st.voice); // 鳴らし直し (Unity の AudioSource.Play と同じ挙動)
+        st.voice = {};
+    }
+    AudioVec3 pos{};
+    if (const auto* wm = world.GetComponent<WorldMatrixComponent>(e)) {
+        pos = PositionOf(wm->value);
+    }
+    return StartSource(audio, *asset, *src, st, pos);
+}
+
+bool AudioSourceSystem::StopEntity(World& world, AudioSystem& audio, const SoundLibrary& sounds,
+                                   EntityID e, float fadeSeconds)
+{
+    const auto* src = world.GetComponent<AudioSourceComponent>(e);
+    if (src == nullptr) {
+        return false;
+    }
+    SourceState& st = StateFor(e);
+    st.seen = true;
+    st.started = true; // 止めた音を playOnAwake が鳴らし直さないように
+
+    const SoundAsset* asset = sounds.Get(src->sound.value);
+    if (asset != nullptr && asset->stream) {
+        // BGM レーンは 1 本しかないので「この音源の曲だけ止める」は原理的にできない。
+        // 0 秒指定でもプツッと切らない (M45f の kMusicStopFadeSeconds と同じ規約)
+        audio.StopMusic(fadeSeconds > 0.0f ? fadeSeconds : kMusicStopFadeSeconds);
+        return true;
+    }
+    if (!st.voice.Valid()) {
+        return false;
+    }
+    // フェード中の voice の面倒は AudioSystem::Update が見る。こちら側は手を離す
+    audio.Stop(st.voice, fadeSeconds);
+    st.voice = {};
+    return true;
+}
+
 void AudioSourceSystem::Update(World& world, AudioSystem& audio, const SoundLibrary& sounds,
                                uint64_t tickIndex, float fixedDt, bool simulateScripts)
 {
@@ -240,7 +347,11 @@ void AudioSourceSystem::Update(World& world, AudioSystem& audio, const SoundLibr
     // ---- リスナー ----
     AudioListenerState listener;
     EntityID listenerEntity = kNullEntity;
-    const bool haveListener = FindListener(world, listener, listenerEntity);
+    // v8 SetListenerEntity の指定が生きていればそれを使い、駄目なら通常の探索へ落とす
+    bool haveListener = ListenerFromEntity(world, listenerOverride_, listener, listenerEntity);
+    if (!haveListener) {
+        haveListener = FindListener(world, listener, listenerEntity);
+    }
     if (!(listenerEntity == listenerEntity_)) {
         listenerVel_ = {}; // リスナーが替わったら速度推定を仕切り直す (瞬間移動扱いにしない)
         listenerEntity_ = listenerEntity;
@@ -296,28 +407,11 @@ void AudioSourceSystem::Update(World& world, AudioSystem& audio, const SoundLibr
                 continue;
             }
 
-            // ---- 再生開始 (playOnAwake) ----
+            // ---- 再生開始 (playOnAwake)。経路は PlayEntity と共有の StartSource 1 本 ----
             if (simulateScripts && src->playOnAwake != 0 && !st.started && !st.voice.Valid()) {
-                st.variationIndex = PickVariationIndex(*asset, rng_.NextU32());
-                if (st.variationIndex < 0) {
-                    // 鳴らせるバリエーションが 1 つも無いアセット。毎フレーム試し続けない
-                    st.started = true;
-                } else {
-                    st.volJitter = rng_.Range(-1.0f, 1.0f);
-                    st.pitchJitter = rng_.Range(-1.0f, 1.0f);
-                    PlayDesc desc;
-                    AudioSpatial spatial;
-                    MakeSourcePlay(*asset, *src, audio, st.variationIndex, st.volJitter,
-                                   st.pitchJitter, desc, spatial);
-                    // 初回の定位も込みで渡す (Start() 前に適用されるので出だしが無定位にならない)
-                    spatial.position = pos;
-                    spatial.velocity = {}; // 生成直後は静止扱い (初速をでっち上げない)
-                    desc.spatial = spatial.spatialBlend > 0.0f ? &spatial : nullptr;
-                    st.voice = audio.Play(desc);
-                    // クリップが未ロードの間は失敗する → started を立てずに次フレーム再挑戦する
-                    st.started = st.voice.Valid();
-                    st.vel = {};
-                }
+                // クリップが未ロードの間は失敗する → started を立てずに次フレーム再挑戦する。
+                // ただしバリエーションが 1 つも無いアセットは打ち切る (毎フレーム試さない)
+                st.started = StartSource(audio, *asset, *src, st, pos) || st.variationIndex < 0;
             }
 
             if (!st.voice.Valid()) {

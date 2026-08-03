@@ -85,6 +85,10 @@ public:
 
     const SoundAsset* Get(uint64_t hash) const;
     SoundAsset* GetMutable(uint64_t hash);
+    // 名前キー (= HashStr(stem)) → GUID。引けなければ key を GUID 直指定とみなす。
+    // **AudioSystem::ResolveClipKey と同じ流儀** — スクリプトが "footstep" のような
+    // 人間が書ける名前で鳴らせるようにするための入口。未知のキーは 0
+    uint64_t ResolveKey(uint64_t key) const;
     bool Contains(uint64_t hash) const { return sounds_.find(hash) != sounds_.end(); }
     std::vector<SoundEntry> Enumerate() const; // 名前昇順 (ハッシュの反復順を表に出さない)
     // 「この .wav/.ogg を PCM へ展開する必要があるか」の判定 (M45f)。
@@ -98,7 +102,24 @@ public:
 
 private:
     std::unordered_map<uint64_t, SoundAsset> sounds_;
+    // 名前キー → GUID。挿入口は Register 1 箇所だけなので同期がずれない
+    std::unordered_map<uint64_t, uint64_t> named_;
 };
+
+// スクリプト v8 (M45g) が渡す soundKey の解決結果。**解決規則の実装は 1 本だけ** —
+// drain と selftest が同じ関数を見るようにする (M45d でランタイムとアセット編集に
+// 同じ規則を二重実装して「テストが見ているコードと鳴らしているコードが別物」になった前例)
+struct ResolvedSound {
+    const SoundAsset* asset = nullptr; // 非 null = .sound.json 由来 (バス/揺らぎ/3D 設定つき)
+    AssetID clip = {};                 // asset == nullptr のときの生クリップ (M45c の名前キー経路)
+    bool Valid() const { return asset != nullptr || !clip.IsNull(); }
+};
+
+// 解決順: .sound.json の名前キー → .sound.json の GUID 直指定 → 生クリップ
+// (AudioSystem の名前キー = .wav/.ogg のファイル名 stem → クリップ GUID)。
+// **生クリップへのフォールバックを外さないこと** — M19 からある PlaySound("beep") が
+// 黙って無音になる (M45c の申し送り)
+ResolvedSound ResolveSoundKey(const AudioSystem& audio, const SoundLibrary& lib, uint64_t key);
 
 // ---- 純関数 (selftest がデバイス無しで叩ける) ----
 

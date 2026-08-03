@@ -75,6 +75,10 @@ struct PlayDesc {
     // 3D 定位 (M45e)。非 null なら Start() の **前** に定位を適用する — 再生開始の
     // 1 quantum ぶんが無定位で鳴るのを防ぐため。**Play() の呼び出し中だけ有効な借用ポインタ**
     const AudioSpatial* spatial = nullptr;
+    // スクリプト v8 (M45g) が呼出時に予約したハンドル。voice に貼っておくと、後の tick から
+    // FindByTag で引き直せる。**マップを持たない**のが要点 — voice が鳴り終わるかスティール
+    // されれば紐付けも一緒に消えるので、際限なく育つ表を抱えずに済む。0 = 紐付けなし
+    uint64_t tag = 0;
 };
 
 // BGM 1 曲ぶんの再生指定 (M45f)。SE の PlayDesc と違い **クリップ表 (PCM 全展開) には
@@ -151,6 +155,9 @@ public:
     AssetID LoadClipFile(const std::wstring& path); // 冪等。失敗は null AssetID
     // 手続き生成クリップ等をそのまま登録する (Sound Generator のプレビュー / selftest 用)
     AssetID RegisterClip(AssetID id, AudioClip clip, const std::string& name);
+    // 名前キー (ファイル名 stem 等) → クリップ GUID の登録。**M19 からの PlaySound("beep")
+    // 経路の入口はここ 1 箇所**。LoadWav シムもこれを呼ぶ (規則の二重実装を作らない)
+    void RegisterClipName(const std::string& key, AssetID id);
     bool HasClip(AssetID id) const { return clips_.find(id.value) != clips_.end(); }
     std::vector<AssetEntry> Enumerate() const;
     // ★ホットリロード前に必ず呼ぶこと: 再生中の XAUDIO2_BUFFER はクリップのバイト列を
@@ -164,8 +171,14 @@ public:
     // ---- 再生 ----
     AudioHandle Play(const PlayDesc& desc);
     void Stop(AudioHandle h);
+    // fadeSeconds > 0 なら音量を線形に 0 まで落としてから停止する (v8 StopVoice)。
+    // フェード中も SetVoiceVolume は効く (基準音量を書き替えるだけで、フェードは進み続ける)
+    void Stop(AudioHandle h, float fadeSeconds);
     void SetVoiceVolume(AudioHandle h, float volume);
     void SetVoicePitch(AudioHandle h, float pitch);
+    // PlayDesc::tag で貼った識別子から鳴っている voice を引く (スクリプト v8 のハンドル解決)。
+    // tag == 0 と、鳴り終わった / スティールされた音は無効ハンドルを返す
+    AudioHandle FindByTag(uint64_t tag) const;
     // ★ボイスプール (SE) だけを止める。**BGM は止まらない** — シーン遷移で BGM が
     //   途切れないようにするため (M45f の「引き継ぎ」)。両方止めたいなら StopMusic も呼ぶこと
     void StopAll();
@@ -197,6 +210,11 @@ public:
     const char* BusName(int bus) const;   // 範囲外は ""
     int BusParent(int bus) const;         // -1 = ルート / 範囲外
     int FindBus(const char* name) const;  // 大文字小文字を無視。見つからなければ -1
+    // スクリプト v8 の SetBusVolume 用。POD イベント (ScriptAudioEvent) は文字列を運べないので
+    // 名前をハッシュで渡す。**小文字化してからハッシュする** — FindBus の大文字小文字無視と
+    // 結果を一致させるため。この 2 本以外でバス名をハッシュしないこと
+    static uint64_t HashBusName(const char* name);
+    int FindBusHashed(uint64_t nameHash) const;
     int RootBus() const { return rootBus_; }
     // 名前が解決できなかった音の行き先 ("SE" があればそこ、無ければルート)
     int DefaultBus() const;
@@ -264,6 +282,13 @@ private:
         int32_t priority = 128;
         uint64_t startSeq = 0;
         AssetID clip = {};
+        // スクリプト v8 の予約ハンドル (PlayDesc::tag)。0 = 紐付けなし
+        uint64_t tag = 0;
+        // 基準音量。実際に voice へ書く値は volume * フェード係数 なので、フェード中に
+        // SetVoiceVolume が来ても「音量を書き替えつつフェードは進む」が成立する
+        float volume = 1.0f;
+        float fadeRemain = 0.0f; // > 0 = フェードアウト中。0 まで落ちたら StopSlot
+        float fadeTotal = 0.0f;  // フェード長 (係数 = fadeRemain / fadeTotal)
         // voice を再利用できるかの判定キー
         int bus = kBusSe;
         uint16_t channels = 0;

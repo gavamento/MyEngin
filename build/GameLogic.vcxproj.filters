@@ -10,6 +10,9 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\src\GameLogic\GameLogicMain.cpp" />
+    <ClCompile Include="..\src\GameLogic\Scripts\AudioDemo.cpp">
+      <Filter>Scripts</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\GameLogic\Scripts\PlayerController.cpp">
       <Filter>Scripts</Filter>
     </ClCompile>

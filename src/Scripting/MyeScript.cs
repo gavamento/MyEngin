@@ -13,6 +13,11 @@ namespace MyeScripting
         public void Destroy() => Engine.DestroyGameObject(Id);
         public void SetParent(MyeEntity parent) => Engine.SetParent(Id, parent.Id);
 
+        // AudioSource コンポーネントの再生 / 停止 (v8、M45g)。非所持なら false。
+        // PlayAudio は鳴っている音を鳴らし直す (Unity の AudioSource.Play と同じ)
+        public bool PlayAudio() => Engine.PlayAudioSource(Id);
+        public bool StopAudio(float fadeSeconds = 0.0f) => Engine.StopAudioSource(Id, fadeSeconds);
+
         public static MyeEntity Create(string name) => new MyeEntity(Engine.CreateGameObject(name));
         public static MyeEntity Find(string name) => new MyeEntity(Engine.FindByName(name));
     }
@@ -76,6 +81,30 @@ namespace MyeScripting
         protected bool AddTorque(MyeVec3 torque) => Engine.AddTorque(SelfId, torque);
         protected static bool Raycast(MyeVec3 origin, MyeVec3 dir, float maxDist, out MyeRaycastHit hit)
             => Engine.Raycast(origin, dir, maxDist, out hit);
+
+        // ---- オーディオ (v8、M45g)。**write-only** — 再生位置や再生中判定は取得できない ----
+        // soundKey は .sound.json の名前 (無ければ .wav / .ogg のファイル名)。
+        // 戻り値は voice ハンドル (0 = 失敗)。StopVoice / SetVoiceVolume / SetVoicePitch で使う
+        protected static ulong PlaySound(string soundKey, float volume = 1.0f, float pitch = 1.0f)
+            => Engine.PlaySound(soundKey, volume, pitch);
+        // 自分の位置で 3D 再生する (足音・衝突音など)
+        protected ulong PlaySoundHere(string soundKey, float volume = 1.0f)
+            => Engine.PlaySoundAt(soundKey, Engine.GetLocalPosition(SelfId), volume);
+        protected static ulong PlaySoundAt(string soundKey, MyeVec3 worldPos, float volume = 1.0f)
+            => Engine.PlaySoundAt(soundKey, worldPos, volume);
+        protected static void StopVoice(ulong handle, float fadeSeconds = 0.0f)
+            => Engine.StopVoice(handle, fadeSeconds);
+        protected static void SetVoiceVolume(ulong handle, float volume)
+            => Engine.SetVoiceVolume(handle, volume);
+        protected static void SetVoicePitch(ulong handle, float pitch)
+            => Engine.SetVoicePitch(handle, pitch);
+        protected static void SetBusVolume(string busName, float volume)
+            => Engine.SetBusVolume(busName, volume);
+        protected static void PlayMusic(string soundKey, float fadeSeconds = 1.0f, bool loop = true)
+            => Engine.PlayMusic(soundKey, fadeSeconds, loop);
+        protected static void StopMusic(float fadeSeconds = 1.0f) => Engine.StopMusic(fadeSeconds);
+        // 3D リスナーを自分に固定する (三人称カメラで「プレイヤーの耳」で聴かせたいとき)
+        protected void MakeListener() => Engine.SetListenerEntity(SelfId);
 
         // ---- ライフサイクル (すべて任意オーバーライド) ----
         public virtual void Start() { }

@@ -48,6 +48,18 @@ public:
     void Update(World& world, AudioSystem& audio, const SoundLibrary& sounds, uint64_t tickIndex,
                 float fixedDt, bool simulateScripts);
 
+    // ---- スクリプト v8 (M45g) 由来の明示操作 ----
+    // playOnAwake と**同じ状態キャッシュ / 同じ MakeSourcePlay** を通す (規則の二重実装を作らない)。
+    // 呼び出し位置は EngineLoop のオーディオ drain (tick 末・ハッシュ後)。
+    // PlayEntity は鳴っている音を鳴らし直す (Unity の AudioSource.Play と同じ)。
+    // stream = true のアセットは BGM レーンへ回る (voice ハンドルは持たない)
+    bool PlayEntity(World& world, AudioSystem& audio, const SoundLibrary& sounds, EntityID e);
+    bool StopEntity(World& world, AudioSystem& audio, const SoundLibrary& sounds, EntityID e,
+                    float fadeSeconds);
+    // 3D リスナーを指定エンティティに固定する。kNullEntity = 自動
+    // (AudioListener → primary カメラ)。指定が死んでいる/非アクティブなら自動へ落ちる
+    void SetListenerOverride(EntityID e) { listenerOverride_ = e; }
+
     // シーン遷移 / Play 停止で呼ぶ。鳴っている音を止めるのは呼び出し側 (AudioSystem::StopAll)
     void Reset();
 
@@ -67,10 +79,16 @@ private:
 
     SourceState& StateFor(EntityID e);
     void Sweep(AudioSystem& audio);
+    // 音源 1 つを実際に鳴らす。**playOnAwake とスクリプト PlayEntity が共有する唯一の経路**。
+    // 戻り値 = voice が立ち上がったか (false かつ variationIndex >= 0 は「クリップ未ロード」
+    // なので呼び出し側が次フレーム再挑戦してよい)
+    bool StartSource(AudioSystem& audio, const SoundAsset& asset, const AudioSourceComponent& src,
+                     SourceState& st, const AudioVec3& pos);
 
     std::vector<SourceState> states_;
     VelocitySample listenerVel_;
     EntityID listenerEntity_ = kNullEntity;
+    EntityID listenerOverride_ = kNullEntity; // v8 SetListenerEntity (kNullEntity = 自動)
     uint64_t lastTick_ = 0;      // 0-tick フレームを丸ごと省くための直前 tick
     bool lastTickValid_ = false;
     Pcg32 rng_;

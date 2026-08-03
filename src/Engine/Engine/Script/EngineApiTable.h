@@ -16,17 +16,19 @@ class Scene;
 // **POD で持つ** — 毎 tick clear() されるので std::string を含めるとヒープが暴れる。
 // 文字列キーは push 時に 64bit へ潰す (name-key ハッシュ or AssetID)。
 enum class ScriptAudioOp : uint32_t {
-    PlayOneShot = 0, // key=clip, a=volume, b=pitch, i0=loop, handle=予約ハンドル
-    PlayAtPoint,     // + pos (3D。M45e で有効化)
+    // key は「.sound.json の名前キー → その GUID → 生クリップ」の順で解決される
+    // (ResolveSoundKey が唯一の実装)。volume/pitch はアセット既定への**乗算**
+    PlayOneShot = 0, // key=sound, a=volume, b=pitch, handle=予約ハンドル (= voice の tag)
+    PlayAtPoint,     // + pos (ワールド座標。2D 設定の音でも 3D に載せる)
     StopVoice,       // handle, a=fadeSeconds
     SetVoiceVolume,  // handle, a=volume
     SetVoicePitch,   // handle, b=pitch
-    PlaySource,      // entity (AudioSource。M45e)
-    StopSource,      // entity, a=fadeSeconds (M45e)
-    SetBusVolume,    // key=バス名ハッシュ, a=volume
-    PlayMusic,       // key=clip, a=fadeSeconds, i0=loop (M45f)
-    StopMusic,       // a=fadeSeconds (M45f)
-    SetListener,     // entity (M45e)
+    PlaySource,      // entity (AudioSource を持つエンティティ)
+    StopSource,      // entity, a=fadeSeconds
+    SetBusVolume,    // key=AudioSystem::HashBusName(バス名), a=volume
+    PlayMusic,       // key=sound, a=fadeSeconds, i0=loop
+    StopMusic,       // a=fadeSeconds
+    SetListener,     // entity (null id = 自動 = AudioListener → primary カメラ)
 };
 
 struct ScriptAudioEvent {

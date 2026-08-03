@@ -6,6 +6,7 @@
 #include "Engine/Core/Hash.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Core/World.h"
+#include "Engine/Engine/Audio/AudioSystem.h" // HashBusName (バス名ハッシュの規則は 1 本だけ)
 #include "Engine/Engine/EffectSystem.h"
 #include "Engine/Engine/GameObject.h"
 #include "Engine/Engine/Physics/PhysicsSystem.h"
@@ -36,6 +37,19 @@ uint64_t ReserveAudioHandle(ScriptApiContext* c)
         return 0; // キュー未接続 = 失敗
     }
     return ++(*c->audioHandleSeq);
+}
+
+// handle + float 1 つだけの op を積む (StopVoice / SetVoiceVolume / StopMusic)
+void PushAudioOp(ScriptApiContext* c, ScriptAudioOp op, uint64_t handle, float a)
+{
+    if (c->audioQueue == nullptr) {
+        return;
+    }
+    ScriptAudioEvent e;
+    e.op = op;
+    e.handle = handle;
+    e.a = a;
+    c->audioQueue->push_back(e);
 }
 
 } // namespace
@@ -468,67 +482,129 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
         return SphereCastWorld(Sc(engine)->GetWorld(), origin, dir, radius, maxDist, outHit, mask);
     };
 
-    // ---- オーディオ (v8 で予約、M45g で実装) ----
-    // スロットは全て埋めておく (null のままだとスクリプトが呼んだ瞬間に落ちる)。
-    // ハンドルを返す 2 本は **今から採番だけ正しく行う** — 実装が入った時点で
-    // 採番列が変わらないようにするため。キューへの push は M45g で足す。
+    // ---- オーディオ (v8、M45g) ----
+    // 全て **キューへ積むだけ** で、実際の発音は EngineLoop がハッシュ後に drain する
+    // (voice 状態を hashed state へ戻さないための境界)。read API は恒久的に作らない。
+    //
+    // ★ハンドルを返す 2 本は M45a のスタブと**同じ位置で採番する** — 引数が不正でも
+    //   採番を飛ばさないこと。飛ばすと記録と検証で採番列がずれる
     out.PlaySound2 = [](void* engine, const char* soundKey, float volume, float pitch) -> uint64_t {
-        (void)soundKey;
-        (void)volume;
-        (void)pitch;
-        return ReserveAudioHandle(Ctx(engine));
+        ScriptApiContext* c = Ctx(engine);
+        const uint64_t handle = ReserveAudioHandle(c);
+        if (c->audioQueue == nullptr || soundKey == nullptr) {
+            return handle;
+        }
+        ScriptAudioEvent e;
+        e.op = ScriptAudioOp::PlayOneShot;
+        e.key = HashStr(soundKey);
+        e.a = volume;
+        e.b = pitch;
+        e.handle = handle;
+        c->audioQueue->push_back(e);
+        return handle;
     };
     out.PlaySoundAt = [](void* engine, const char* soundKey, MyeVec3 worldPos,
                          float volume) -> uint64_t {
-        (void)soundKey;
-        (void)worldPos;
-        (void)volume;
-        return ReserveAudioHandle(Ctx(engine));
+        ScriptApiContext* c = Ctx(engine);
+        const uint64_t handle = ReserveAudioHandle(c);
+        if (c->audioQueue == nullptr || soundKey == nullptr) {
+            return handle;
+        }
+        ScriptAudioEvent e;
+        e.op = ScriptAudioOp::PlayAtPoint;
+        e.key = HashStr(soundKey);
+        e.pos = worldPos;
+        e.a = volume;
+        e.handle = handle;
+        c->audioQueue->push_back(e);
+        return handle;
     };
     out.StopVoice = [](void* engine, uint64_t handle, float fadeSeconds) {
-        (void)engine;
-        (void)handle;
-        (void)fadeSeconds;
+        PushAudioOp(Ctx(engine), ScriptAudioOp::StopVoice, handle, fadeSeconds);
     };
     out.SetVoiceVolume = [](void* engine, uint64_t handle, float volume) {
-        (void)engine;
-        (void)handle;
-        (void)volume;
+        PushAudioOp(Ctx(engine), ScriptAudioOp::SetVoiceVolume, handle, volume);
     };
     out.SetVoicePitch = [](void* engine, uint64_t handle, float pitch) {
-        (void)engine;
-        (void)handle;
-        (void)pitch;
+        ScriptApiContext* c = Ctx(engine);
+        if (c->audioQueue == nullptr) {
+            return;
+        }
+        ScriptAudioEvent e;
+        e.op = ScriptAudioOp::SetVoicePitch;
+        e.handle = handle;
+        e.b = pitch; // ピッチは b に載せる規約 (ScriptAudioOp のコメント参照)
+        c->audioQueue->push_back(e);
     };
+    // ★「AudioSource を持っているか」は**シーンデータ由来 = 決定論**なので sim が読んでよい
+    //   (オーディオランタイムの状態ではない)。読んで良いのはこの所持判定までで、
+    //   再生中かどうかは絶対に返さない
     out.PlayAudioSource = [](void* engine, MyeEntityId id) -> int {
-        (void)engine;
-        (void)id;
-        return 0; // AudioSource コンポーネントは M45e
+        ScriptApiContext* c = Ctx(engine);
+        if (Sc(engine)->GetWorld().GetComponent<AudioSourceComponent>(ToEngine(id)) == nullptr) {
+            return 0;
+        }
+        if (c->audioQueue == nullptr) {
+            return 0;
+        }
+        ScriptAudioEvent e;
+        e.op = ScriptAudioOp::PlaySource;
+        e.entity = id;
+        c->audioQueue->push_back(e);
+        return 1;
     };
     out.StopAudioSource = [](void* engine, MyeEntityId id, float fadeSeconds) -> int {
-        (void)engine;
-        (void)id;
-        (void)fadeSeconds;
-        return 0;
+        ScriptApiContext* c = Ctx(engine);
+        if (Sc(engine)->GetWorld().GetComponent<AudioSourceComponent>(ToEngine(id)) == nullptr) {
+            return 0;
+        }
+        if (c->audioQueue == nullptr) {
+            return 0;
+        }
+        ScriptAudioEvent e;
+        e.op = ScriptAudioOp::StopSource;
+        e.entity = id;
+        e.a = fadeSeconds;
+        c->audioQueue->push_back(e);
+        return 1;
     };
     out.SetBusVolume = [](void* engine, const char* busName, float volume) {
-        (void)engine;
-        (void)busName;
-        (void)volume;
+        ScriptApiContext* c = Ctx(engine);
+        if (c->audioQueue == nullptr || busName == nullptr) {
+            return;
+        }
+        ScriptAudioEvent e;
+        e.op = ScriptAudioOp::SetBusVolume;
+        // ★バス名のハッシュ規則は AudioSystem の 1 本だけを使う (大文字小文字無視のため
+        //   小文字化してからハッシュする)。ここで素の HashStr を書くと FindBus と食い違う
+        e.key = AudioSystem::HashBusName(busName);
+        e.a = volume;
+        c->audioQueue->push_back(e);
     };
     out.PlayMusic = [](void* engine, const char* soundKey, float fadeSeconds, int loop) {
-        (void)engine;
-        (void)soundKey;
-        (void)fadeSeconds;
-        (void)loop; // ストリーミング BGM は M45f
+        ScriptApiContext* c = Ctx(engine);
+        if (c->audioQueue == nullptr || soundKey == nullptr) {
+            return;
+        }
+        ScriptAudioEvent e;
+        e.op = ScriptAudioOp::PlayMusic;
+        e.key = HashStr(soundKey);
+        e.a = fadeSeconds;
+        e.i0 = loop;
+        c->audioQueue->push_back(e);
     };
     out.StopMusic = [](void* engine, float fadeSeconds) {
-        (void)engine;
-        (void)fadeSeconds;
+        PushAudioOp(Ctx(engine), ScriptAudioOp::StopMusic, 0, fadeSeconds);
     };
     out.SetListenerEntity = [](void* engine, MyeEntityId id) {
-        (void)engine;
-        (void)id; // AudioListener は M45e
+        ScriptApiContext* c = Ctx(engine);
+        if (c->audioQueue == nullptr) {
+            return;
+        }
+        ScriptAudioEvent e;
+        e.op = ScriptAudioOp::SetListener;
+        e.entity = id; // null id = 自動 (AudioListener → primary カメラ)
+        c->audioQueue->push_back(e);
     };
 }
 

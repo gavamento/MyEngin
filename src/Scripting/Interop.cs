@@ -418,5 +418,68 @@ namespace MyeScripting
                        != 0;
             }
         }
+
+        // ---- オーディオ (v8、M45g) ----
+        // ★**write-only**。再生位置・再生中判定・バス音量の取得 API は存在せず、今後も追加しない
+        //   (実時間で動くオーディオを sim が読むとリプレイが壊れるため。EngineAPI.h 参照)。
+        //
+        // soundKey は .sound.json の名前 (= ファイル名から ".sound" を除いた stem) が第一候補で、
+        // 見つからなければ素の .wav / .ogg のファイル名 stem で引かれる。
+        // 戻り値のハンドルは呼出時に予約される単調増加値で、リプレイでも同じ値になる (0 = 失敗)
+
+        public static ulong PlaySound(string soundKey, float volume = 1.0f, float pitch = 1.0f)
+        {
+            if (_api == null) return 0;
+            var b = Utf8(soundKey ?? "");
+            fixed (byte* p = b) { return _api->PlaySound2(_api->Engine, p, volume, pitch); }
+        }
+        // ワールド座標で鳴らす。2D 設定の音でも 3D に載る (座標を渡した以上は定位させる)
+        public static ulong PlaySoundAt(string soundKey, MyeVec3 worldPos, float volume = 1.0f)
+        {
+            if (_api == null) return 0;
+            var b = Utf8(soundKey ?? "");
+            fixed (byte* p = b) { return _api->PlaySoundAt(_api->Engine, p, worldPos, volume); }
+        }
+        // fadeSeconds > 0 で音量を落としてから止める。鳴り終わったハンドルへの指定は無視される
+        public static void StopVoice(ulong handle, float fadeSeconds = 0.0f)
+        {
+            if (_api != null) _api->StopVoice(_api->Engine, handle, fadeSeconds);
+        }
+        public static void SetVoiceVolume(ulong handle, float volume)
+        {
+            if (_api != null) _api->SetVoiceVolume(_api->Engine, handle, volume);
+        }
+        public static void SetVoicePitch(ulong handle, float pitch)
+        {
+            if (_api != null) _api->SetVoicePitch(_api->Engine, handle, pitch);
+        }
+        // AudioSource コンポーネントを持つエンティティの再生 / 停止。非所持なら false
+        public static bool PlayAudioSource(MyeEntityId id)
+            => _api != null && _api->PlayAudioSource(_api->Engine, id) != 0;
+        public static bool StopAudioSource(MyeEntityId id, float fadeSeconds = 0.0f)
+            => _api != null && _api->StopAudioSource(_api->Engine, id, fadeSeconds) != 0;
+        // busName は "Master" / "BGM" / "SE" / "UI" 等 (.mixer.json のバス名。大文字小文字無視)
+        public static void SetBusVolume(string busName, float volume)
+        {
+            if (_api == null) return;
+            var b = Utf8(busName ?? "");
+            fixed (byte* p = b) { _api->SetBusVolume(_api->Engine, p, volume); }
+        }
+        // BGM。同じ曲を再指定しても頭出しし直さない (シーンを跨いで鳴り続ける)
+        public static void PlayMusic(string soundKey, float fadeSeconds = 1.0f, bool loop = true)
+        {
+            if (_api == null) return;
+            var b = Utf8(soundKey ?? "");
+            fixed (byte* p = b) { _api->PlayMusic(_api->Engine, p, fadeSeconds, loop ? 1 : 0); }
+        }
+        public static void StopMusic(float fadeSeconds = 1.0f)
+        {
+            if (_api != null) _api->StopMusic(_api->Engine, fadeSeconds);
+        }
+        // 3D リスナーを固定する。default (null id) で自動 (AudioListener → primary カメラ) に戻る
+        public static void SetListenerEntity(MyeEntityId id)
+        {
+            if (_api != null) _api->SetListenerEntity(_api->Engine, id);
+        }
     }
 }
