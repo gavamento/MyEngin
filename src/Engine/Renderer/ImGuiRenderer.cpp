@@ -1,5 +1,6 @@
 #include "Engine/Renderer/ImGuiRenderer.h"
 
+#include "Engine/Core/Localization.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Platform/PathUtil.h"
 #include "Engine/Platform/Win32Window.h"
@@ -37,7 +38,12 @@ bool ImGuiRenderer::Init(Win32Window& window, GraphicsDevice& device, const ImGu
 
     ImGui::StyleColorsDark();
     ApplyEditorTheme(ImGui::GetStyle()); // M27a: UE5 風テーマ
-    SetupEditorFonts();                  // M27a: Segoe UI + 日本語 + Font Awesome
+    // M47a: 日本語グリフが無い環境 (英語版 Windows の最小構成など) で日本語 UI にすると
+    // 画面全体が豆腐になるので、フォント側の実情に合わせて英語へ落とす
+    if (!SetupEditorFonts() && CurrentLanguage() == Lang::Ja) {
+        MYE_LOG_WARN("no Japanese font available - falling back to English UI");
+        SetLanguage(Lang::En);
+    }
 
     if (!ImGui_ImplWin32_Init(window.Hwnd())) {
         MYE_LOG_ERROR("ImGui_ImplWin32_Init failed");

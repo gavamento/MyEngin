@@ -10,7 +10,9 @@
 
 #include "Editor/AssetOps.h"
 #include "Editor/CreateMenu.h"
+#include "Editor/EditorGlobalSettings.h"
 #include "Engine/Core/Hash.h"
+#include "Engine/Core/Localization.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Engine/DemoContent.h"
 #include "Engine/Engine/HotReload/DllReloader.h"
@@ -247,7 +249,7 @@ void EditorApp::OnImGui(EngineContext& ctx)
     }
 
     if (showStats_) {
-        if (ImGui::Begin("Stats", &showStats_)) {
+        if (ImGui::Begin(Tr(StrId::Win_Stats), &showStats_)) {
             const ImGuiIO& io = ImGui::GetIO();
             ImGui::Text("FPS: %.1f (%.3f ms)", io.Framerate, 1000.0f / io.Framerate);
             ImGui::Text("Frame: %llu / Tick: %llu",
@@ -310,7 +312,24 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("View")) {
-        ImGui::MenuItem("Stats", nullptr, &showStats_);
+        ImGui::MenuItem(Tr(StrId::Win_Stats), nullptr, &showStats_);
+        // UI 言語 (M47a)。ウィンドウ名は "表示名###安定ID" 形式なので、
+        // 切り替えてもドッキング配置とパネル開閉状態は保たれる
+        if (ImGui::BeginMenu(Tr(StrId::Menu_Language))) {
+            const Lang cur = CurrentLanguage();
+            for (const Lang lang : { Lang::Ja, Lang::En }) {
+                const StrId label = (lang == Lang::Ja) ? StrId::Menu_LangJapanese
+                                                       : StrId::Menu_LangEnglish;
+                if (ImGui::MenuItem(Tr(label), nullptr, cur == lang) && cur != lang) {
+                    SetLanguage(lang);
+                    EditorGlobalSettings globals;
+                    globals.Load(); // 他のキーを消さないよう読み直してから保存
+                    globals.uiLanguage = lang;
+                    globals.Save();
+                }
+            }
+            ImGui::EndMenu();
+        }
         if (ImGui::BeginMenu("Render Path")) {
             // 実行時切替 (M6.5)。描画のみの変更なのでリプレイ一貫性には影響しない
             const bool isForward = (ctx.renderPath == ctx.renderPathForward);
@@ -430,23 +449,24 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Window")) {
-        // 各パネルの表示トグル (閉じたパネルはここから再表示)
-        ImGui::MenuItem("Hierarchy", nullptr, &hierarchy_.open);
-        ImGui::MenuItem("Inspector", nullptr, &inspector_.open);
-        ImGui::MenuItem("Console", nullptr, &console_.open);
-        ImGui::MenuItem("Scene", nullptr, &sceneView_.open);
-        ImGui::MenuItem("Game", nullptr, &gameView_.open);
-        ImGui::MenuItem("Assets", nullptr, &assetBrowser_.open);
-        ImGui::MenuItem("Animation", nullptr, &animation_.open);
-        ImGui::MenuItem("Animator", nullptr, &animatorController_.open);
-        ImGui::MenuItem("Search", nullptr, &search_.open);
-        ImGui::MenuItem("Profiler", nullptr, &profiler_.open);
-        ImGui::MenuItem("Particle Settings", nullptr, &particleSettings_.open);
-        ImGui::MenuItem("Sound Generator", nullptr, &soundGen_.open);
-        ImGui::MenuItem("Audio Mixer", nullptr, &audioMixer_.open);
+        // 各パネルの表示トグル (閉じたパネルはここから再表示)。
+        // ラベルはウィンドウ名と同じ StrId を使う ("###" 以降は表示されない)
+        ImGui::MenuItem(Tr(StrId::Win_Hierarchy), nullptr, &hierarchy_.open);
+        ImGui::MenuItem(Tr(StrId::Win_Inspector), nullptr, &inspector_.open);
+        ImGui::MenuItem(Tr(StrId::Win_Console), nullptr, &console_.open);
+        ImGui::MenuItem(Tr(StrId::Win_Scene), nullptr, &sceneView_.open);
+        ImGui::MenuItem(Tr(StrId::Win_Game), nullptr, &gameView_.open);
+        ImGui::MenuItem(Tr(StrId::Win_Assets), nullptr, &assetBrowser_.open);
+        ImGui::MenuItem(Tr(StrId::Win_Animation), nullptr, &animation_.open);
+        ImGui::MenuItem(Tr(StrId::Win_Animator), nullptr, &animatorController_.open);
+        ImGui::MenuItem(Tr(StrId::Win_Search), nullptr, &search_.open);
+        ImGui::MenuItem(Tr(StrId::Win_Profiler), nullptr, &profiler_.open);
+        ImGui::MenuItem(Tr(StrId::Win_ParticleSettings), nullptr, &particleSettings_.open);
+        ImGui::MenuItem(Tr(StrId::Win_SoundGenerator), nullptr, &soundGen_.open);
+        ImGui::MenuItem(Tr(StrId::Win_AudioMixer), nullptr, &audioMixer_.open);
         ImGui::Separator();
-        ImGui::MenuItem("Project Settings", nullptr, &projectSettings_.open);
-        ImGui::MenuItem("Build Settings", nullptr, &buildSettings_.open);
+        ImGui::MenuItem(Tr(StrId::Win_ProjectSettings), nullptr, &projectSettings_.open);
+        ImGui::MenuItem(Tr(StrId::Win_BuildSettings), nullptr, &buildSettings_.open);
         ImGui::EndMenu();
     }
 
@@ -726,13 +746,13 @@ void EditorApp::DrawSaveConfirmModal(EngineContext& ctx)
 {
     if (openSaveConfirm_) {
         openSaveConfirm_ = false;
-        ImGui::OpenPopup("未保存の変更");
+        ImGui::OpenPopup(Tr(StrId::Popup_UnsavedChanges));
     }
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f,
                                    vp->WorkPos.y + vp->WorkSize.y * 0.5f),
                             ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-    if (!ImGui::BeginPopupModal("未保存の変更", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (!ImGui::BeginPopupModal(Tr(StrId::Popup_UnsavedChanges), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         return;
     }
     ImGui::Text("シーンに未保存の変更があります。保存しますか？");

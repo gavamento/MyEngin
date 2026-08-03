@@ -9,6 +9,7 @@
 #include "Editor/Selection.h"
 #include "Editor/Undo/UndoStack.h"
 #include "Engine/Core/Components.h"
+#include "Engine/Core/Localization.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Platform/PathUtil.h"
 #include "Engine/Core/World.h"
@@ -658,7 +659,7 @@ void SceneViewWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
         return;
     }
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
-    const bool visible = ImGui::Begin("Scene", &open);
+    const bool visible = ImGui::Begin(Tr(StrId::Win_Scene), &open);
     ImGui::PopStyleVar();
     if (!visible) {
         ImGui::End();

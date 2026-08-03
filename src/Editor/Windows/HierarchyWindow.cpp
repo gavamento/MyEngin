@@ -11,6 +11,7 @@
 #include "Editor/EditorComponentCatalog.h"
 #include "Editor/Undo/UndoStack.h"
 #include "Engine/Core/Components.h"
+#include "Engine/Core/Localization.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Core/World.h"
 #include "Engine/Engine/AssetDatabase.h"
@@ -68,7 +69,7 @@ void HierarchyWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
     if (!open) {
         return;
     }
-    if (!ImGui::Begin("Hierarchy", &open)) {
+    if (!ImGui::Begin(Tr(StrId::Win_Hierarchy), &open)) {
         ImGui::End();
         return;
     }

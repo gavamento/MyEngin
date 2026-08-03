@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <vector>
 
+#include "Engine/Core/Localization.h"
 #include "Engine/Engine/Audio/AudioSystem.h"
 
 #include "imgui.h"
@@ -400,7 +401,7 @@ void AudioMixerWindow::OnImGui(EngineContext& ctx)
     ImGui::SetNextWindowSize(ImVec2(660.0f, 540.0f), ImGuiCond_FirstUseEver);
     // 窓名はアイコン無しの素の文字列にする — LayoutManager / DockBuilder / Window メニューが
     // この文字列で参照するため (既存パネルと同じ規約、M45b の教訓)
-    if (!ImGui::Begin("Audio Mixer", &open)) {
+    if (!ImGui::Begin(Tr(StrId::Win_AudioMixer), &open)) {
         ImGui::End();
         return;
     }

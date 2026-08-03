@@ -1,5 +1,6 @@
 #include "Editor/Windows/ParticleSettingsWindow.h"
 
+#include "Engine/Core/Localization.h"
 #include "Engine/Engine/Particles/ParticleSystem.h"
 
 #include "imgui.h"
@@ -11,7 +12,7 @@ void ParticleSettingsWindow::OnImGui(EngineContext& ctx)
     if (!open) {
         return;
     }
-    if (!ImGui::Begin("Particle Settings", &open)) {
+    if (!ImGui::Begin(Tr(StrId::Win_ParticleSettings), &open)) {
         ImGui::End();
         return;
     }

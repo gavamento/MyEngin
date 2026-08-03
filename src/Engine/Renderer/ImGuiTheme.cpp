@@ -155,7 +155,7 @@ bool SetupEditorFonts(float sizePx)
 
     MYE_LOG_INFO("editor fonts: base=%s jp=%s icons=%s", base ? "Segoe UI" : "default",
                  jpLoaded ? jpLoaded : "(none)", fa ? "FontAwesome6" : "(none)");
-    return jpLoaded != nullptr && fa != nullptr;
+    return jpLoaded != nullptr; // M47a: UI 言語を日本語にしてよいか
 }
 
 } // namespace mye

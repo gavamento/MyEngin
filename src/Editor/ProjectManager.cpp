@@ -11,6 +11,7 @@
 
 #include "Editor/ProjectRegistry.h"
 #include "Editor/ProjectTemplates.h"
+#include "Engine/Core/Localization.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Engine/Project.h"
 #include "Engine/Platform/PathUtil.h"
@@ -280,10 +281,10 @@ bool DrawHubUi(HubState& st, void* hwnd, ProjectManagerOutcome& outcome)
     ImGui::TextDisabled("ダブルクリックでプロジェクトを開く (エディタを再起動します)");
 
     // ---- 削除確認モーダル (M33a) ----
-    if (!st.deleteTargetPath.empty() && !ImGui::IsPopupOpen("Delete Project")) {
-        ImGui::OpenPopup("Delete Project");
+    if (!st.deleteTargetPath.empty() && !ImGui::IsPopupOpen(Tr(StrId::Popup_DeleteProject))) {
+        ImGui::OpenPopup(Tr(StrId::Popup_DeleteProject));
     }
-    if (ImGui::BeginPopupModal("Delete Project", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (ImGui::BeginPopupModal(Tr(StrId::Popup_DeleteProject), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::Text("プロジェクト \"%s\" を削除します", st.deleteTargetLabel.c_str());
         ImGui::TextDisabled("%s", WideToUtf8(st.deleteTargetPath).c_str());
         ImGui::TextUnformatted("フォルダごと ごみ箱へ移動します (元に戻せます)。");
@@ -307,10 +308,10 @@ bool DrawHubUi(HubState& st, void* hwnd, ProjectManagerOutcome& outcome)
     }
 
     // ---- リネームモーダル: 表示名 + project.mye.json の name のみ (フォルダ名は変えない) ----
-    if (!st.renameTargetPath.empty() && !ImGui::IsPopupOpen("Rename Project")) {
-        ImGui::OpenPopup("Rename Project");
+    if (!st.renameTargetPath.empty() && !ImGui::IsPopupOpen(Tr(StrId::Popup_RenameProject))) {
+        ImGui::OpenPopup(Tr(StrId::Popup_RenameProject));
     }
-    if (ImGui::BeginPopupModal("Rename Project", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (ImGui::BeginPopupModal(Tr(StrId::Popup_RenameProject), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::TextDisabled("%s", WideToUtf8(st.renameTargetPath).c_str());
         ImGui::SetNextItemWidth(280.0f);
         const bool enter = ImGui::InputText("名前", st.renameBuf, sizeof(st.renameBuf),
@@ -348,10 +349,10 @@ bool DrawHubUi(HubState& st, void* hwnd, ProjectManagerOutcome& outcome)
     }
 
     // ---- エラーモーダル ----
-    if (!st.errorText.empty() && !ImGui::IsPopupOpen("Error")) {
-        ImGui::OpenPopup("Error");
+    if (!st.errorText.empty() && !ImGui::IsPopupOpen(Tr(StrId::Popup_Error))) {
+        ImGui::OpenPopup(Tr(StrId::Popup_Error));
     }
-    if (ImGui::BeginPopupModal("Error", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (ImGui::BeginPopupModal(Tr(StrId::Popup_Error), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::TextUnformatted(st.errorText.c_str());
         if (ImGui::Button("OK", ImVec2(120, 0))) {
             st.errorText.clear();

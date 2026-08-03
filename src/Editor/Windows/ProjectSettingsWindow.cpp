@@ -5,6 +5,7 @@
 #include "Editor/EditorSettings.h"
 #include "Editor/PhysicsLayerNames.h"
 #include "Editor/ShortcutHub.h"
+#include "Engine/Core/Localization.h"
 #include "Engine/Renderer/RenderPath.h"
 
 #include "imgui.h"
@@ -17,7 +18,7 @@ void ProjectSettingsWindow::OnImGui(EngineContext& ctx, EditorSettings& settings
     if (!open) {
         return;
     }
-    if (!ImGui::Begin("Project Settings", &open)) {
+    if (!ImGui::Begin(Tr(StrId::Win_ProjectSettings), &open)) {
         ImGui::End();
         return;
     }

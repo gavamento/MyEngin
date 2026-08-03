@@ -7,6 +7,7 @@
 
 #include "nlohmann/json.hpp"
 
+#include "Editor/EditorGlobalSettings.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Engine/Project.h"
 #include "Engine/Platform/PathUtil.h"
@@ -29,17 +30,7 @@ std::string NowIsoUtc()
 
 std::wstring ProjectRegistry::RegistryPath()
 {
-    wchar_t* localAppData = nullptr;
-    size_t len = 0;
-    std::wstring base;
-    if (_wdupenv_s(&localAppData, &len, L"LOCALAPPDATA") == 0 && localAppData) {
-        base = localAppData;
-        free(localAppData);
-    }
-    if (base.empty()) {
-        base = GetExecutableDir(); // フォールバック (通常は到達しない)
-    }
-    return base + L"\\MyEngine\\projects.json";
+    return MachineLocalDir() + L"\\projects.json"; // M47a: 置き場の解決は共通ヘルパへ
 }
 
 void ProjectRegistry::Load()

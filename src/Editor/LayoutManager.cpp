@@ -6,6 +6,7 @@
 
 #include "nlohmann/json.hpp"
 
+#include "Engine/Core/Localization.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Platform/PathUtil.h"
 
@@ -149,9 +150,9 @@ bool LayoutManager::DrawToolbarUi()
     // ---- 保存モーダル (命名) ----
     if (openSaveModal_) {
         openSaveModal_ = false;
-        ImGui::OpenPopup("Save Layout");
+        ImGui::OpenPopup(Tr(StrId::Popup_SaveLayout));
     }
-    if (ImGui::BeginPopupModal("Save Layout", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (ImGui::BeginPopupModal(Tr(StrId::Popup_SaveLayout), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::TextDisabled("同名レイアウトは上書きされます");
         ImGui::SetNextItemWidth(240.0f);
         const bool enter = ImGui::InputText("名前", nameBuf_, sizeof(nameBuf_),

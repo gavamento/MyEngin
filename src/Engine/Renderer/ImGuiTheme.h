@@ -19,8 +19,12 @@ void ApplyEditorTheme(ImGuiStyle& style);
 //   ベース   = Segoe UI (Windows 標準の欧文)
 //   マージ 1 = 日本語 (YuGothM.ttc → meiryo.ttc → msgothic.ttc の順にフォールバック)
 //   マージ 2 = Font Awesome 6 Solid (external/fontawesome/ の埋め込み配列、ICON_FA_*)
-// 全て失敗しても ImGui 既定フォントで続行する (戻り値 false + WARN ログ)。
-// ImGui::CreateContext() 後・初回 BeginFrame 前に 1 回だけ呼ぶこと
+// 全て失敗しても ImGui 既定フォントで続行する (WARN ログ)。
+// ImGui::CreateContext() 後・初回 BeginFrame 前に 1 回だけ呼ぶこと。
+//
+// **戻り値 = 日本語グリフが描けるか** (M47a)。false のまま UI 言語を日本語にすると
+// 画面が豆腐だらけになるため、呼び出し側は SetLanguage(Lang::En) へ落とすこと。
+// アイコンフォントの成否は戻り値に含めない (欠けても文字は読める)
 bool SetupEditorFonts(float sizePx = 16.0f);
 
 } // namespace mye

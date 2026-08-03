@@ -11,6 +11,7 @@
 #include "Editor/AssetOps.h"
 #include "Editor/AssetPreviewCache.h"
 #include "Editor/Undo/UndoStack.h"
+#include "Engine/Core/Localization.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Engine/Animation.h"
 #include "Engine/Engine/AssetDatabase.h"
@@ -162,7 +163,7 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
     if (!open) {
         return;
     }
-    if (!ImGui::Begin("Assets", &open)) {
+    if (!ImGui::Begin(Tr(StrId::Win_Assets), &open)) {
         ImGui::End();
         return;
     }
@@ -599,10 +600,10 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
 
     // ---- リネームモーダル (M30d) ----
     if (requestRenameModal_) {
-        ImGui::OpenPopup("Rename Asset");
+        ImGui::OpenPopup(Tr(StrId::Popup_RenameAsset));
         requestRenameModal_ = false;
     }
-    if (ImGui::BeginPopupModal("Rename Asset", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (ImGui::BeginPopupModal(Tr(StrId::Popup_RenameAsset), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::TextDisabled("%s", WideToUtf8(pendingRenamePath_).c_str());
         ImGui::SetNextItemWidth(260.0f);
         const bool enter = ImGui::InputText("Name", createName_, sizeof(createName_),
@@ -635,10 +636,10 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
 
     // ---- Import Settings モーダル (M39b): .meta v2 のテクスチャインポート設定 ----
     if (requestImportModal_) {
-        ImGui::OpenPopup("Import Settings");
+        ImGui::OpenPopup(Tr(StrId::Popup_ImportSettings));
         requestImportModal_ = false;
     }
-    if (ImGui::BeginPopupModal("Import Settings", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (ImGui::BeginPopupModal(Tr(StrId::Popup_ImportSettings), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::TextDisabled("%s", WideToUtf8(pendingImportPath_).c_str());
         const char* srgbLabels[] = { "Auto (usage hint)", "sRGB (albedo)", "Linear (data)" };
         ImGui::SetNextItemWidth(220.0f);
@@ -676,10 +677,10 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
 
     // ---- 命名モーダル (Create の確定) ----
     if (requestModal_) {
-        ImGui::OpenPopup("Create Asset");
+        ImGui::OpenPopup(Tr(StrId::Popup_CreateAsset));
         requestModal_ = false;
     }
-    if (ImGui::BeginPopupModal("Create Asset", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (ImGui::BeginPopupModal(Tr(StrId::Popup_CreateAsset), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::SetNextItemWidth(260.0f);
         const bool enter = ImGui::InputText("Name", createName_, sizeof(createName_),
                                             ImGuiInputTextFlags_EnterReturnsTrue);

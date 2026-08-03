@@ -1,5 +1,6 @@
 #include "Editor/Windows/ProfilerWindow.h"
 
+#include "Engine/Core/Localization.h"
 #include "Engine/Core/Profiler.h"
 #include "Engine/Engine/Particles/ParticleSystem.h"
 #include "Engine/Engine/RenderSystem.h"
@@ -18,7 +19,7 @@ void ProfilerWindow::OnImGui(EngineContext& ctx)
     if (!open) {
         return;
     }
-    if (!ImGui::Begin("Profiler", &open)) {
+    if (!ImGui::Begin(Tr(StrId::Win_Profiler), &open)) {
         ImGui::End();
         return;
     }

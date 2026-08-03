@@ -7,6 +7,7 @@
 
 #include "Engine/Core/ComponentRegistry.h"
 #include "Engine/Core/Components.h"
+#include "Engine/Core/Localization.h"
 #include "Engine/Core/World.h"
 #include "Engine/Engine/Animation.h"
 #include "Engine/Engine/Prefab.h"
@@ -44,7 +45,7 @@ void SearchWindow::OnImGui(EngineContext& ctx, Selection& selection)
     if (!open) {
         return;
     }
-    if (!ImGui::Begin("Search", &open)) {
+    if (!ImGui::Begin(Tr(StrId::Win_Search), &open)) {
         ImGui::End();
         return;
     }

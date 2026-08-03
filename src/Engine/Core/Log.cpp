@@ -3,9 +3,12 @@
 #include <atomic>
 #include <cstdio>
 #include <cstring>
+#include <iterator>
 #include <mutex>
 
 #include <Windows.h>
+
+#include "Engine/Core/Utf8.h"
 
 namespace mye::logging {
 namespace {
@@ -28,6 +31,36 @@ const char* LevelTag(LogLevel level)
     return "?????";
 }
 
+// UTF-8 のまま外へ出す (M47a)。ログには日本語が混ざるので:
+//   - OutputDebugStringA は ANSI (CP932) として解釈するため W 版へ UTF-16 で渡す
+//   - コンソールに直結しているときは WriteConsoleW。リダイレクト/パイプのときは
+//     UTF-8 バイトをそのまま流す (受け側のエンコーディングに委ねる)
+// SetConsoleOutputCP(CP_UTF8) は使わない — コードページは「コンソール」側の状態で
+// プロセス終了後も残る。AttachConsole(ATTACH_PARENT_PROCESS) で親の cmd に相乗り
+// している以上、呼び出し元のシェルを 65001 のまま壊してしまう
+void EmitUtf8(const char* utf8, bool isError)
+{
+    wchar_t wide[1200];
+    const int wlen =
+        MultiByteToWideChar(CP_UTF8, 0, utf8, -1, wide, static_cast<int>(std::size(wide)));
+    if (wlen <= 0) {
+        // 変換不能 (不正 UTF-8 / 長すぎ) は従来経路へフォールバック
+        OutputDebugStringA(utf8);
+        fputs(utf8, isError ? stderr : stdout);
+        return;
+    }
+    OutputDebugStringW(wide);
+
+    const HANDLE h = GetStdHandle(isError ? STD_ERROR_HANDLE : STD_OUTPUT_HANDLE);
+    DWORD mode = 0;
+    if (h != nullptr && h != INVALID_HANDLE_VALUE && GetConsoleMode(h, &mode) != 0) {
+        DWORD written = 0;
+        WriteConsoleW(h, wide, static_cast<DWORD>(wlen - 1), &written, nullptr); // -1 = 終端を除く
+    } else {
+        fputs(utf8, isError ? stderr : stdout);
+    }
+}
+
 } // namespace
 
 void WriteSrcV(LogLevel level, const char* file, int line, const char* fmt, va_list args)
@@ -41,16 +74,17 @@ void WriteSrcV(LogLevel level, const char* file, int line, const char* fmt, va_l
     // デバッガ / コンソール出力 (リングバッファ外のフル長)
     char out[1100];
     snprintf(out, sizeof(out), "[%s] %s\n", LevelTag(level), buffer);
-    OutputDebugStringA(out);
-    fputs(out, level >= LogLevel::Warn ? stderr : stdout);
+    EmitUtf8(out, level >= LogLevel::Warn);
 
     std::lock_guard<std::mutex> lock(g_mutex);
     LogEntry& e = g_ring[g_totalWritten & (kCapacity - 1)];
     e.level = level;
     e.frame = g_currentFrame.load(std::memory_order_relaxed);
-    strncpy_s(e.message, buffer, _TRUNCATE);
+    // strncpy_s(_TRUNCATE) はバイト境界で切るのでマルチバイト列を分断しうる。
+    // Console/StatusBar/Toast は UTF-8 前提なので、文字単位で落とす (M47a)
+    utf8::CopyTruncated(e.message, sizeof(e.message), buffer);
     if (file) {
-        strncpy_s(e.file, file, _TRUNCATE);
+        utf8::CopyTruncated(e.file, sizeof(e.file), file);
     } else {
         e.file[0] = '\0';
     }

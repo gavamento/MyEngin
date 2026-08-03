@@ -7,6 +7,7 @@
 #include <Windows.h>
 #include <shellapi.h>
 
+#include "Engine/Core/Localization.h"
 #include "imgui.h"
 
 namespace mye {
@@ -62,7 +63,7 @@ void ConsoleWindow::OnImGui(const std::string& externalEditorCmd)
     if (!open) {
         return;
     }
-    if (!ImGui::Begin("Console", &open)) {
+    if (!ImGui::Begin(Tr(StrId::Win_Console), &open)) {
         ImGui::End();
         return;
     }

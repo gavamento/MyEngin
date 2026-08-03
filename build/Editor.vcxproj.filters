@@ -16,6 +16,7 @@
     <ClCompile Include="..\src\Editor\CreateMenu.cpp" />
     <ClCompile Include="..\src\Editor\EditorApp.cpp" />
     <ClCompile Include="..\src\Editor\EditorComponentCatalog.cpp" />
+    <ClCompile Include="..\src\Editor\EditorGlobalSettings.cpp" />
     <ClCompile Include="..\src\Editor\EditorMain.cpp" />
     <ClCompile Include="..\src\Editor\EditorSettings.cpp" />
     <ClCompile Include="..\src\Editor\EditorToolbar.cpp" />
@@ -83,6 +84,7 @@
     <ClInclude Include="..\src\Editor\CreateMenu.h" />
     <ClInclude Include="..\src\Editor\EditorApp.h" />
     <ClInclude Include="..\src\Editor\EditorComponentCatalog.h" />
+    <ClInclude Include="..\src\Editor\EditorGlobalSettings.h" />
     <ClInclude Include="..\src\Editor\EditorSettings.h" />
     <ClInclude Include="..\src\Editor\EditorToolbar.h" />
     <ClInclude Include="..\src\Editor\LayoutManager.h" />

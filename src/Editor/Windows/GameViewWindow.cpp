@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdio>
 
+#include "Engine/Core/Localization.h"
 #include "Engine/Engine/RenderSystem.h"
 #include "Engine/Engine/Scene.h"
 #include "Engine/Engine/UI/UIRenderer.h"
@@ -45,7 +46,7 @@ void GameViewWindow::OnImGui(EngineContext& ctx)
         return;
     }
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
-    const bool visible = ImGui::Begin("Game", &open);
+    const bool visible = ImGui::Begin(Tr(StrId::Win_Game), &open);
     ImGui::PopStyleVar();
     if (!visible) {
         ImGui::End();

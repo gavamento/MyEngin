@@ -6,6 +6,7 @@
 
 #include "Editor/Selection.h"
 #include "Engine/Core/Components.h"
+#include "Engine/Core/Localization.h"
 #include "Engine/Core/World.h"
 #include "Engine/Engine/Animation.h"
 #include "Engine/Engine/AnimatorController.h"
@@ -60,7 +61,7 @@ void AnimatorControllerWindow::OnImGui(EngineContext& ctx, Selection& selection)
     if (!open) {
         return;
     }
-    if (!ImGui::Begin("Animator", &open)) {
+    if (!ImGui::Begin(Tr(StrId::Win_Animator), &open)) {
         ImGui::End();
         return;
     }

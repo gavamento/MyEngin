@@ -4,6 +4,7 @@
 #include <string_view>
 
 #include "Engine/Core/Hash.h"
+#include "Engine/Core/Localization.h"
 #include "Engine/Platform/PathUtil.h"
 
 #include "fontawesome/IconsFontAwesome6.h"
@@ -240,7 +241,7 @@ void SoundGenWindow::OnImGui(EngineContext& ctx, const std::wstring& assetDir)
     ImGui::SetNextWindowSize(ImVec2(440.0f, 700.0f), ImGuiCond_FirstUseEver);
     // 窓名はアイコン無しの素の文字列にする — LayoutManager / DockBuilder / Window メニューが
     // この文字列で参照するため (既存パネルと同じ規約)
-    if (!ImGui::Begin("Sound Generator", &open)) {
+    if (!ImGui::Begin(Tr(StrId::Win_SoundGenerator), &open)) {
         ImGui::End();
         return;
     }

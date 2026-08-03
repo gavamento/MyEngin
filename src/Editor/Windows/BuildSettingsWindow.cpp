@@ -7,6 +7,7 @@
 #include <Windows.h>
 #include <shellapi.h>
 
+#include "Engine/Core/Localization.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Platform/PathUtil.h"
 
@@ -162,7 +163,7 @@ void BuildSettingsWindow::OnImGui(EngineContext& ctx)
         std::snprintf(outputDir_, sizeof(outputDir_), "%s", WideToUtf8(def).c_str());
         init_ = true;
     }
-    if (!ImGui::Begin("Build Settings", &open)) {
+    if (!ImGui::Begin(Tr(StrId::Win_BuildSettings), &open)) {
         ImGui::End();
         return;
     }

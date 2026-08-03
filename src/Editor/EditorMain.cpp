@@ -7,12 +7,15 @@
 #include <shellapi.h>
 
 #include "Editor/EditorApp.h"
+#include "Editor/EditorGlobalSettings.h"
 #include "Editor/ProjectManager.h"
 #include "Editor/ProjectRegistry.h"
 #include "Editor/ProjectTemplates.h"
 #include "Editor/UndoSelfTest.h"
 #include "Engine/Core/EcsSelfTest.h"
 #include "Engine/Core/JobSystemSelfTest.h"
+#include "Engine/Core/Localization.h"
+#include "Engine/Core/LocalizationSelfTest.h"
 #include "Engine/Core/Log.h"
 #include "Editor/AssetOpsSelfTest.h"
 #include "Engine/Engine/AnimatorControllerSelfTest.h"
@@ -74,6 +77,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     std::wstring templateName = L"empty"; // --template <empty|demo>
     int managerFrames = 0;                // --manager-frames N (Hub を N フレームで自動終了、CI 用)
     std::wstring managerShot;             // --manager-shot <path> (Hub のスクリーンショット)
+    std::wstring langOverride;            // --lang <ja|en> (M47a。保存設定と自動化既定の両方に優先)
 
     int argc = 0;
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
@@ -168,9 +172,31 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 managerFrames = _wtoi(argv[++i]);
             } else if (arg == L"--manager-shot" && i + 1 < argc) {
                 managerShot = argv[++i];
+            } else if (arg == L"--lang" && i + 1 < argc) {
+                langOverride = argv[++i]; // M47a: UI 言語を明示指定 (検証用の A/B)
             }
         }
         LocalFree(argv);
+    }
+
+    // 自動化 (CI/検証) 起動かどうか。既存の CI/検証コマンド列 (--frames / --screenshot /
+    // --scene / --replay-* 等) は従来のレガシー動作 (リポジトリ assets) を維持する
+    const bool automation = config.maxFrames > 0 || !config.screenshotPath.empty()
+                            || !config.replayRecordPath.empty() || !config.replayVerifyPath.empty()
+                            || !sceneOverride.empty() || autoPlay || saveSceneOnStart
+                            || pickTestFrame >= 0 || !selectName.empty() || perfRate > 0.0f;
+
+    // UI 言語 (M47a)。Hub はプロジェクト未確定のまま描かれる別プロセスなので、
+    // 設定はプロジェクト配下ではなく %LOCALAPPDATA%\MyEngine\editor_global.json から読む。
+    // 自動化/セルフテスト時は環境に依存しないよう英語に固定する (--lang で上書き可)
+    if (!langOverride.empty()) {
+        mye::SetLanguage(langOverride == L"en" ? mye::Lang::En : mye::Lang::Ja);
+    } else if (selftest || automation) {
+        mye::SetLanguage(mye::Lang::En);
+    } else {
+        mye::EditorGlobalSettings globals;
+        globals.Load();
+        mye::SetLanguage(globals.uiLanguage);
     }
 
     // --create-project: ヘッドレスでプロジェクトを生成して終了 (M26。検証/CI 用)
@@ -194,17 +220,12 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             && mye::RunAssetDatabaseSelfTest() && mye::RunTextureCookSelfTest()
             && mye::RunJobSystemSelfTest() && mye::RunVfxSelfTest()
             && mye::RunParticleSelfTest() && mye::RunAssetOpsSelfTest()
-            && mye::RunFontSelfTest() && mye::RunAudioSelfTest() && mye::RunRtSelfTest();
+            && mye::RunFontSelfTest() && mye::RunAudioSelfTest() && mye::RunRtSelfTest()
+            && mye::RunLocalizationSelfTest();
         return ok ? 0 : 1;
     }
 
-    // 裸起動 (プロジェクト未指定 + 自動化フラグなし) はプロジェクトマネージャへ (M26b)。
-    // 既存の CI/検証コマンド列 (--frames / --screenshot / --scene / --replay-* 等) は
-    // 従来のレガシー動作 (リポジトリ assets) を維持する
-    const bool automation = config.maxFrames > 0 || !config.screenshotPath.empty()
-                            || !config.replayRecordPath.empty() || !config.replayVerifyPath.empty()
-                            || !sceneOverride.empty() || autoPlay || saveSceneOnStart
-                            || pickTestFrame >= 0 || !selectName.empty() || perfRate > 0.0f;
+    // 裸起動 (プロジェクト未指定 + 自動化フラグなし) はプロジェクトマネージャへ (M26b)
     if (managerFrames > 0 || (projectDir.empty() && !automation)) {
         const mye::ProjectManagerOutcome outcome = mye::RunProjectManager(managerFrames, managerShot);
         if (outcome.action == mye::ProjectManagerAction::OpenProject) {

@@ -142,6 +142,71 @@ foreach ($g in $constGroups) {
     }
 }
 
+# 規則 10: ローカライズ (M47)
+# 10-a  Tr() の戻り値を printf 系の書式引数に渡さない
+#       ImGui::Text 系 / SetTooltip は printf。訳文に % が入った瞬間に未定義動作になる
+# 10-b  LocalizationTable.inl の en/ja が整合していること
+#       - どちらも非空
+#       - "###" を含む行は "###" 以降 (= ImGui の ID) が完全一致
+#       - 変換指定子の並びが一致 (MSVC printf は "%1$s" 形式に非対応で語順を変えられない)
+#       - "###" の右辺がテーブル内で一意 (ウィンドウ ID の衝突防止)
+# 注: 日本語を含む行を読むので Select-String は使わない
+#     (Windows PowerShell 5.1 は BOM 無しファイルを ANSI として読み、マッチが不発になる)
+$trFmtPattern = 'ImGui::(Text|TextDisabled|TextWrapped|TextColored|BulletText|LabelText|SetTooltip|SetItemTooltip)\s*\(\s*(::)?(mye::)?Tr\s*\('
+foreach ($f in Get-Sources) {
+    Test-CodeLines $f $trFmtPattern 'rule 10' 'Tr() must not be a printf format argument - use TextUnformatted(Tr(x)) or Text("%s", Tr(x))'
+}
+
+$tablePath = Join-Path $repo 'src\Engine\Core\LocalizationTable.inl'
+if (-not (Test-Path $tablePath)) {
+    Write-Host "ERROR [rule 10] missing file: src\Engine\Core\LocalizationTable.inl"
+    $errors++
+} else {
+    $seenIds = @{}
+    $lineNo = 0
+    foreach ($line in [System.IO.File]::ReadLines($tablePath)) {
+        $lineNo++
+        $m = [regex]::Match($line, '^\s*MYE_STR\(\s*(\w+)\s*,\s*"((?:[^"\\]|\\.)*)"\s*,\s*"((?:[^"\\]|\\.)*)"\s*\)')
+        if (-not $m.Success) {
+            if ($line -match '^\s*MYE_STR\(') {
+                Write-Host "ERROR [rule 10] ${tablePath}:${lineNo}: malformed MYE_STR entry"
+                $errors++
+            }
+            continue
+        }
+        $id = $m.Groups[1].Value
+        $en = $m.Groups[2].Value
+        $ja = $m.Groups[3].Value
+
+        if ($en -eq '' -or $ja -eq '') {
+            Write-Host "ERROR [rule 10] ${tablePath}:${lineNo}: ${id}: empty string"
+            $errors++
+        }
+        $enId = if ($en -match '###(.*)$') { $Matches[1] } else { '' }
+        $jaId = if ($ja -match '###(.*)$') { $Matches[1] } else { '' }
+        if ($enId -ne $jaId) {
+            Write-Host "ERROR [rule 10] ${tablePath}:${lineNo}: ${id}: ### id differs ('$enId' vs '$jaId')"
+            $errors++
+        }
+        if ($enId -ne '') {
+            if ($seenIds.ContainsKey($enId)) {
+                Write-Host "ERROR [rule 10] ${tablePath}:${lineNo}: ${id}: duplicate ### id '$enId' (also $($seenIds[$enId]))"
+                $errors++
+            } else {
+                $seenIds[$enId] = $id
+            }
+        }
+        # 変換指定子 ("%%" はリテラルなので除外) の並びを比較
+        $specRe = '%(?!%)[-+ #0-9.*]*(?:hh|h|ll|l|z|j|t|L|I32|I64|I)?[a-zA-Z]'
+        $enSpecs = ([regex]::Matches($en, $specRe) | ForEach-Object { $_.Value }) -join ','
+        $jaSpecs = ([regex]::Matches($ja, $specRe) | ForEach-Object { $_.Value }) -join ','
+        if ($enSpecs -ne $jaSpecs) {
+            Write-Host "ERROR [rule 10] ${tablePath}:${lineNo}: ${id}: format specifiers differ ('$enSpecs' vs '$jaSpecs')"
+            $errors++
+        }
+    }
+}
+
 Write-Host "=== result: $errors error(s), $warnings warning(s) ==="
 if ($errors -gt 0) { exit 1 }
 exit 0

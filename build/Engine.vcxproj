@@ -38,9 +38,12 @@
     <ClCompile Include="..\src\Engine\Core\JobSystem.cpp" />
     <ClCompile Include="..\src\Engine\Core\JobSystemSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Core\JsonUtil.cpp" />
+    <ClCompile Include="..\src\Engine\Core\Localization.cpp" />
+    <ClCompile Include="..\src\Engine\Core\LocalizationSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Core\Log.cpp" />
     <ClCompile Include="..\src\Engine\Core\MemoryTrack.cpp" />
     <ClCompile Include="..\src\Engine\Core\Profiler.cpp" />
+    <ClCompile Include="..\src\Engine\Core\Utf8.cpp" />
     <ClCompile Include="..\src\Engine\Core\World.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Animation.cpp" />
     <ClCompile Include="..\src\Engine\Engine\AnimatorController.cpp" />
@@ -141,10 +144,14 @@
     <ClInclude Include="..\src\Engine\Core\JobSystem.h" />
     <ClInclude Include="..\src\Engine\Core\JobSystemSelfTest.h" />
     <ClInclude Include="..\src\Engine\Core\JsonUtil.h" />
+    <ClInclude Include="..\src\Engine\Core\Localization.h" />
+    <ClInclude Include="..\src\Engine\Core\LocalizationSelfTest.h" />
+    <ClInclude Include="..\src\Engine\Core\LocalizationTable.inl" />
     <ClInclude Include="..\src\Engine\Core\Log.h" />
     <ClInclude Include="..\src\Engine\Core\Profiler.h" />
     <ClInclude Include="..\src\Engine\Core\Random.h" />
     <ClInclude Include="..\src\Engine\Core\Reflection.h" />
+    <ClInclude Include="..\src\Engine\Core\Utf8.h" />
     <ClInclude Include="..\src\Engine\Core\World.h" />
     <ClInclude Include="..\src\Engine\Engine\Animation.h" />
     <ClInclude Include="..\src\Engine\Engine\AnimatorController.h" />

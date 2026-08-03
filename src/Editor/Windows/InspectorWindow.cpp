@@ -19,6 +19,7 @@
 #include "Editor/Undo/UndoStack.h"
 #include "Engine/Core/ComponentRegistry.h"
 #include "Engine/Core/Components.h"
+#include "Engine/Core/Localization.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Core/World.h"
 #include "Engine/Engine/Animation.h"
@@ -237,7 +238,7 @@ void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
     if (!open) {
         return;
     }
-    if (!ImGui::Begin("Inspector", &open)) {
+    if (!ImGui::Begin(Tr(StrId::Win_Inspector), &open)) {
         ImGui::End();
         return;
     }

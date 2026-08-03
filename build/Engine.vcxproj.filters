@@ -93,6 +93,12 @@
     <ClCompile Include="..\src\Engine\Core\JsonUtil.cpp">
       <Filter>Core</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Core\Localization.cpp">
+      <Filter>Core</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Core\LocalizationSelfTest.cpp">
+      <Filter>Core</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Core\Log.cpp">
       <Filter>Core</Filter>
     </ClCompile>
@@ -100,6 +106,9 @@
       <Filter>Core</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Core\Profiler.cpp">
+      <Filter>Core</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Core\Utf8.cpp">
       <Filter>Core</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Core\World.cpp">
@@ -402,6 +411,15 @@
     <ClInclude Include="..\src\Engine\Core\JsonUtil.h">
       <Filter>Core</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Core\Localization.h">
+      <Filter>Core</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Core\LocalizationSelfTest.h">
+      <Filter>Core</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Core\LocalizationTable.inl">
+      <Filter>Core</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Core\Log.h">
       <Filter>Core</Filter>
     </ClInclude>
@@ -412,6 +430,9 @@
       <Filter>Core</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Core\Reflection.h">
+      <Filter>Core</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Core\Utf8.h">
       <Filter>Core</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Core\World.h">
