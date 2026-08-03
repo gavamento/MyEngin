@@ -147,6 +147,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 config.rtFreezeSeed = true; // M46d: 乱数列を進めない (決定的スクショ)
             } else if (arg == L"--rt-anim-seed") {
                 config.rtAnimSeed = true; // M46d: スクショ時の自動 freeze を解除
+            } else if (arg == L"--rt-no-svgf") {
+                config.rtSvgf = false; // M46e: 空間フィルタ off (蓄積のみ = A/B 計測用)
             } else if (arg == L"--project" && i + 1 < argc) {
                 projectDir = argv[++i];
             } else if (arg == L"--create-project" && i + 1 < argc) {

@@ -346,6 +346,13 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
             if (ImGui::MenuItem("History Length", nullptr, mode == 6)) {
                 mode = 6;
             }
+            // M46e: SVGF 後の GI と、A-Trous を駆動している推定分散 (緑 = 収束)
+            if (ImGui::MenuItem("Denoised GI (SVGF)", nullptr, mode == 7)) {
+                mode = 7;
+            }
+            if (ImGui::MenuItem("Variance", nullptr, mode == 8)) {
+                mode = 8;
+            }
             ImGui::Separator();
             // M46c: GI の品質。解像度は内部バッファ、バウンスは二次光線の深さ
             float& scale = ctx.renderSystem->rtResolutionScale;
@@ -369,6 +376,8 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
             ImGui::Separator();
             // M46d: 蓄積を切ると 1spp の生ノイズが見える (A/B 比較用)
             ImGui::MenuItem("Temporal Accumulation", nullptr, &ctx.renderSystem->rtTemporal);
+            // M46e: 空間フィルタ。蓄積 off では幾何バッファが無いので連動して効かない
+            ImGui::MenuItem("SVGF Spatial Filter", nullptr, &ctx.renderSystem->rtSvgf);
             ImGui::MenuItem("Freeze Seed", nullptr, &ctx.renderSystem->rtFreezeSeed);
             ImGui::EndMenu();
         }

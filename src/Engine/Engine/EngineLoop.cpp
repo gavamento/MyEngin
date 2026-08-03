@@ -312,6 +312,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     renderSystem.rtDebugMode = config.rtDebugMode; // M46b (--rt-debug N、Deferred のみ)
     renderSystem.rtTemporal = config.rtTemporal;   // M46d (--rt-no-temporal / --rt-freeze-seed)
     renderSystem.rtFreezeSeed = config.rtFreezeSeed;
+    renderSystem.rtSvgf = config.rtSvgf; // M46e (--rt-no-svgf)
     renderSystem.postFxSettings.tonemap = config.postFxTonemap;
     renderSystem.postFxSettings.exposure = config.postFxExposure;
     renderSystem.postFxSettings.bloom = config.postFxBloom;
@@ -838,11 +839,12 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     if (config.rtDebugMode != 0) {
         // M46b: BVH の規模とソフトウェアトラバーサルの実測値 (性能ゲートの一次データ)
         MYE_LOG_INFO("[rt] mode %d: %d instances / %d triangles / build %.3f ms (CPU) / "
-                     "trace %.3f ms / gi %.3f ms / temporal %.3f ms (GPU, last frame)",
+                     "trace %.3f ms / gi %.3f ms / temporal %.3f ms / svgf %.3f ms "
+                     "(GPU, last frame)",
                      config.rtDebugMode, renderSystem.RtInstanceCount(),
                      renderSystem.RtTriangleCount(), renderSystem.RtBuildCpuMs(),
                      renderSystem.RtDebugGpuMs(), renderSystem.RtGiGpuMs(),
-                     renderSystem.RtTemporalGpuMs());
+                     renderSystem.RtTemporalGpuMs(), renderSystem.RtSvgfGpuMs());
     }
     MYE_LOG_INFO("Engine loop finished (%llu frames, %llu ticks)",
                  static_cast<unsigned long long>(ctx.frameIndex),

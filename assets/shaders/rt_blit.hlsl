@@ -4,8 +4,8 @@
 cbuffer RtBlitCB : register(b0)
 {
     float2 gBlitDstSize; // 描画先の解像度 (px)
-    int gBlitMode;       // 0 = rgb をそのまま / 1 = a を履歴長ヒートマップとして表示 (M46d)
-    float gBlitParam;    // mode 1 = 履歴長の上限 (正規化に使う)
+    int gBlitMode;       // 0 = rgb / 1 = a を履歴長 (M46d) / 2 = a を分散 (M46e) のヒートマップ
+    float gBlitParam;    // 正規化スケール (mode 1 = 履歴長の上限 / mode 2 = 標準偏差の倍率)
 };
 
 Texture2D gSrc : register(t0);
@@ -32,6 +32,10 @@ float4 PSMain(VSOut i) : SV_Target
         // 履歴長 0 → 赤 (履歴なし) / 中間 → 黄 / 上限 → 緑 (十分に蓄積された)
         const float t = saturate(s.a / max(gBlitParam, 1.0f));
         c = float3(saturate(2.0f - 2.0f * t), saturate(2.0f * t), 0.0f);
+    } else if (gBlitMode == 2) {
+        // M46e: 推定標準偏差 0 → 緑 (収束) / 大 → 赤 (まだノイズが乗っている)
+        const float t = saturate(sqrt(max(s.a, 0.0f)) * gBlitParam);
+        c = float3(saturate(2.0f * t), saturate(2.0f - 2.0f * t), 0.0f);
     }
     return float4(c, 1.0f);
 }

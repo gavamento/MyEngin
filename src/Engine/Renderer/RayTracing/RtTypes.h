@@ -30,6 +30,27 @@ constexpr int kRtTemporalMaxHistory = 32;
 constexpr float kRtTemporalDepthThreshold = 0.05f;
 constexpr float kRtTemporalNormalThreshold = 0.9f;
 
+// ---- M46e: SVGF 空間フィルタ (分散推定 + エッジ停止 A-Trous) ----
+
+// A-Trous のカーネル半径 (5x5 = B3 スプライン)。分散の空間フォールバックも同じ半径。
+// HLSL の MYE_RT_ATROUS_RADIUS と一致検査される (tools/check_rules.ps1 規則 9)
+constexpr int kRtAtrousRadius = 2;
+
+// A-Trous の反復回数。刻み幅を 1,2,4 と倍化しながら掛ける (GI の推奨は 3)
+constexpr int kRtAtrousIterations = 3;
+
+// テンポラルモーメントから分散を取るのに必要な履歴長。
+// これ未満は 5x5 の空間推定に落とす (蓄積が浅いと μ,μ² が信用できない)
+constexpr float kRtVarianceHistoryMin = 4.0f;
+
+// エッジ停止関数のパラメータ (C++ が唯一の出所 → CB で HLSL へ渡す)。
+//   depth  = タップ 1 画素あたりに許す相対深度差 (真の深度勾配を持たないための近似)
+//   normal = cos の指数 (大きいほど法線の違いに厳しい)
+//   luma   = 推定標準偏差の何倍までを「ノイズ」として均すか
+constexpr float kRtAtrousSigmaDepth = 0.02f;
+constexpr float kRtAtrousSigmaNormal = 64.0f;
+constexpr float kRtAtrousSigmaLuma = 4.0f;
+
 // BVH ノード (BLAS / TLAS 共通)。
 //   内部ノード: left/right = 子ノードの絶対 index (どちらも >= 0)
 //   葉:         left = -(start + 1) で負、right = 個数

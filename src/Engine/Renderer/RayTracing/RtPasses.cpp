@@ -74,11 +74,33 @@ struct RtTemporalCB {
 };
 static_assert(sizeof(RtTemporalCB) == 128, "HLSL の RtTemporalCB と一致させること");
 
+// rt_variance.cs.hlsl の RtVarianceCB (b2) と一致
+struct RtVarianceCB {
+    float size[2] = { 0, 0 };
+    float historyMin = kRtVarianceHistoryMin;
+    int32_t forceSpatial = 0;
+    float depthThreshold = kRtTemporalDepthThreshold;
+    float normalThreshold = kRtTemporalNormalThreshold;
+    float pad[2] = { 0, 0 };
+};
+static_assert(sizeof(RtVarianceCB) == 32, "HLSL の RtVarianceCB と一致させること");
+
+// rt_atrous.cs.hlsl の RtAtrousCB (b2) と一致
+struct RtAtrousCB {
+    float size[2] = { 0, 0 };
+    int32_t step = 1;
+    float sigmaDepth = kRtAtrousSigmaDepth;
+    float sigmaNormal = kRtAtrousSigmaNormal;
+    float sigmaLuma = kRtAtrousSigmaLuma;
+    float pad[2] = { 0, 0 };
+};
+static_assert(sizeof(RtAtrousCB) == 32, "HLSL の RtAtrousCB と一致させること");
+
 // rt_blit.hlsl の RtBlitCB (b0) と一致
 struct RtBlitCB {
     float dstSize[2] = { 0, 0 };
-    int32_t mode = 0;   // 0 = rgb をそのまま / 1 = a を履歴長ヒートマップとして表示
-    float param = 1.0f; // mode 1 のスケール (履歴長の上限)
+    int32_t mode = 0;   // 0 = rgb / 1 = a を履歴長 / 2 = a を分散のヒートマップとして表示
+    float param = 1.0f; // ヒートマップの正規化スケール
 };
 
 } // namespace
@@ -93,6 +115,8 @@ bool RtPasses::Init(GraphicsDevice& device, ShaderManager& shaders)
     debugCS_ = shaders.LoadCompute("rt_debug.cs");
     giCS_ = shaders.LoadCompute("rt_gi.cs");
     temporalCS_ = shaders.LoadCompute("rt_temporal.cs");
+    varianceCS_ = shaders.LoadCompute("rt_variance.cs");
+    atrousCS_ = shaders.LoadCompute("rt_atrous.cs");
     blitShader_ = shaders.Load("rt_blit");
 
     if (!CreateConstant(dev, sizeof(RtSceneCB), sceneCB_)
@@ -100,6 +124,8 @@ bool RtPasses::Init(GraphicsDevice& device, ShaderManager& shaders)
         || !CreateConstant(dev, sizeof(RtDebugCB), debugCB_)
         || !CreateConstant(dev, sizeof(RtGiCB), giCB_)
         || !CreateConstant(dev, sizeof(RtTemporalCB), temporalCB_)
+        || !CreateConstant(dev, sizeof(RtVarianceCB), varianceCB_)
+        || !CreateConstant(dev, sizeof(RtAtrousCB), atrousCB_)
         || !CreateConstant(dev, sizeof(RtBlitCB), blitCB_)) {
         MYE_LOG_ERROR("RtPasses: constant buffer creation failed");
         return false;
@@ -132,6 +158,7 @@ bool RtPasses::Init(GraphicsDevice& device, ShaderManager& shaders)
     debugTimer_.Init(device);
     giTimer_.Init(device);
     temporalTimer_.Init(device);
+    svgfTimer_.Init(device);
     inited_ = true;
     return true;
 }
@@ -140,10 +167,14 @@ void RtPasses::Shutdown()
 {
     debugRt_.Release();
     giRt_.Release();
+    for (RenderTexture& rt : svgfRt_) {
+        rt.Release();
+    }
     for (GiHistory& h : giHist_) {
         for (int i = 0; i < 2; ++i) {
             h.color[i].Release();
             h.geom[i].Release();
+            h.moments[i].Release();
         }
         h.write = 0;
         h.w = 0;
@@ -156,6 +187,8 @@ void RtPasses::Shutdown()
     debugCB_.Reset();
     giCB_.Reset();
     temporalCB_.Reset();
+    varianceCB_.Reset();
+    atrousCB_.Reset();
     blitCB_.Reset();
     linearClamp_.Reset();
     depthDisabled_.Reset();
@@ -202,11 +235,12 @@ void RtPasses::UnbindCompute(GraphicsDevice& device)
 {
     ID3D11DeviceContext* dc = device.Context();
     // 同じテクスチャを次のパスで SRV / RTV として使うので必ず外す
-    // (テンポラルは履歴 ping-pong で「前フレーム書込先」を今フレーム SRV で読むため必須)
+    // (テンポラルは履歴 ping-pong で「前フレーム書込先」を今フレーム SRV で読むため必須。
+    //  SVGF も ping-pong で書いた面を次の反復で読むので同様)
     ID3D11ShaderResourceView* nullSrvs[10] = {};
-    ID3D11UnorderedAccessView* nullUavs[2] = {};
+    ID3D11UnorderedAccessView* nullUavs[3] = {};
     dc->CSSetShaderResources(0, 10, nullSrvs);
-    dc->CSSetUnorderedAccessViews(0, 2, nullUavs, nullptr);
+    dc->CSSetUnorderedAccessViews(0, 3, nullUavs, nullptr);
     dc->CSSetShader(nullptr, nullptr, 0);
 }
 
@@ -260,26 +294,38 @@ RtGiResult RtPasses::RenderGi(GraphicsDevice& device, ShaderManager& shaders,
 
     // M46d: 履歴と混ぜる。off / シェーダ未コンパイルなら 1spp のまま返す
     result.raw = giRt_.SRV();
-    ID3D11ShaderResourceView* acc = nullptr;
+    result.accumulated = result.raw;
+    result.filtered = result.raw;
     if (view.rtTemporal != 0) {
-        acc = Accumulate(device, shaders, view, in, gw, gh);
+        const AccumResult acc = Accumulate(device, shaders, view, in, gw, gh);
+        if (acc.color != nullptr) {
+            result.accumulated = acc.color;
+            result.filtered = acc.color;
+            // M46e: 分散推定 + A-Trous。幾何バッファが蓄積パスの副産物なので順序は固定
+            if (view.rtSvgf != 0) {
+                ID3D11ShaderResourceView* f = Denoise(device, shaders, view, acc, gw, gh);
+                if (f != nullptr) {
+                    result.filtered = f;
+                }
+            }
+        }
     } else {
         // 蓄積を切ったら履歴は連続しない — 次に入れたときは 1spp から積み直す
         const uint32_t key =
             (view.rtViewKey < static_cast<uint32_t>(kHistorySlots)) ? view.rtViewKey : 0u;
         giHist_[key].hasLast = false;
     }
-    result.accumulated = (acc != nullptr) ? acc : result.raw;
     return result;
 }
 
-ID3D11ShaderResourceView* RtPasses::Accumulate(GraphicsDevice& device, ShaderManager& shaders,
-                                               const RenderView& view, const RtFrameInputs& in,
-                                               int gw, int gh)
+RtPasses::AccumResult RtPasses::Accumulate(GraphicsDevice& device, ShaderManager& shaders,
+                                           const RenderView& view, const RtFrameInputs& in, int gw,
+                                           int gh)
 {
+    AccumResult out;
     ShaderProgram* cs = shaders.Get(temporalCS_);
     if (!cs || !cs->valid || !cs->cs) {
-        return nullptr; // コンパイル失敗時は 1spp のまま (絵は荒れるが壊れない)
+        return out; // コンパイル失敗時は 1spp のまま (絵は荒れるが壊れない)
     }
     const uint32_t key =
         (view.rtViewKey < static_cast<uint32_t>(kHistorySlots)) ? view.rtViewKey : 0u;
@@ -291,6 +337,8 @@ ID3D11ShaderResourceView* RtPasses::Accumulate(GraphicsDevice& device, ShaderMan
                               /*withDepth=*/false, /*withUav=*/true);
             h.geom[i].Resize(device, gw, gh, DXGI_FORMAT_R16G16B16A16_FLOAT,
                              /*withDepth=*/false, /*withUav=*/true);
+            h.moments[i].Resize(device, gw, gh, DXGI_FORMAT_R16G16B16A16_FLOAT,
+                                /*withDepth=*/false, /*withUav=*/true);
         }
         h.w = gw;
         h.h = gh;
@@ -299,8 +347,9 @@ ID3D11ShaderResourceView* RtPasses::Accumulate(GraphicsDevice& device, ShaderMan
     }
     const int wr = h.write;
     const int rd = 1 - wr;
-    if (!h.color[wr].UAV() || !h.geom[wr].UAV() || !h.color[rd].SRV() || !h.geom[rd].SRV()) {
-        return nullptr;
+    if (!h.color[wr].UAV() || !h.geom[wr].UAV() || !h.moments[wr].UAV() || !h.color[rd].SRV()
+        || !h.geom[rd].SRV() || !h.moments[rd].SRV()) {
+        return out;
     }
 
     // 履歴が使えるのは「同じビューが前フレームも描かれた」ときだけ。
@@ -326,11 +375,13 @@ ID3D11ShaderResourceView* RtPasses::Accumulate(GraphicsDevice& device, ShaderMan
     ID3D11Buffer* cbs[1] = { temporalCB_.Get() };
     dc->CSSetConstantBuffers(2, 1, cbs);
 
-    ID3D11ShaderResourceView* srvs[6] = { giRt_.SRV(),   h.color[rd].SRV(), h.geom[rd].SRV(),
-                                          in.gbNormal,   in.gbPosition,     in.gbAlbedo };
-    dc->CSSetShaderResources(0, 6, srvs);
-    ID3D11UnorderedAccessView* uavs[2] = { h.color[wr].UAV(), h.geom[wr].UAV() };
-    dc->CSSetUnorderedAccessViews(0, 2, uavs, nullptr);
+    ID3D11ShaderResourceView* srvs[7] = { giRt_.SRV(),   h.color[rd].SRV(), h.geom[rd].SRV(),
+                                          in.gbNormal,   in.gbPosition,     in.gbAlbedo,
+                                          h.moments[rd].SRV() };
+    dc->CSSetShaderResources(0, 7, srvs);
+    ID3D11UnorderedAccessView* uavs[3] = { h.color[wr].UAV(), h.geom[wr].UAV(),
+                                           h.moments[wr].UAV() };
+    dc->CSSetUnorderedAccessViews(0, 3, uavs, nullptr);
     dc->CSSetShader(cs->cs.Get(), nullptr, 0);
     dc->Dispatch(static_cast<UINT>((gw + 7) / 8), static_cast<UINT>((gh + 7) / 8), 1);
 
@@ -340,11 +391,86 @@ ID3D11ShaderResourceView* RtPasses::Accumulate(GraphicsDevice& device, ShaderMan
     h.lastSerial = view.rtViewSerial;
     h.hasLast = true;
     h.write = rd; // 次フレームは今書いた面を読む
-    return h.color[wr].SRV();
+    out.color = h.color[wr].SRV();
+    out.geom = h.geom[wr].SRV();
+    out.moments = h.moments[wr].SRV();
+    return out;
+}
+
+// M46e: SVGF の空間側。分散推定 → A-Trous を刻み幅 1,2,4 で 3 回。
+// ping-pong は svgfRt_[2] (ビュー間で共有 — 同じフレーム内で使い切るので履歴と違い分ける必要なし)
+ID3D11ShaderResourceView* RtPasses::Denoise(GraphicsDevice& device, ShaderManager& shaders,
+                                            const RenderView& view, const AccumResult& acc, int gw,
+                                            int gh)
+{
+    ShaderProgram* varCs = shaders.Get(varianceCS_);
+    ShaderProgram* atrousCs = shaders.Get(atrousCS_);
+    if (!varCs || !varCs->valid || !varCs->cs || !atrousCs || !atrousCs->valid || !atrousCs->cs) {
+        return nullptr; // コンパイル失敗時は蓄積結果のまま (ノイズは残るが壊れない)
+    }
+    for (RenderTexture& rt : svgfRt_) {
+        rt.Resize(device, gw, gh, DXGI_FORMAT_R16G16B16A16_FLOAT, /*withDepth=*/false,
+                  /*withUav=*/true);
+        if (!rt.UAV() || !rt.SRV()) {
+            return nullptr;
+        }
+    }
+
+    ID3D11DeviceContext* dc = device.Context();
+    const UINT gx = static_cast<UINT>((gw + 7) / 8);
+    const UINT gy = static_cast<UINT>((gh + 7) / 8);
+    svgfTimer_.Begin(device);
+
+    // ---- 1) 分散推定 → svgfRt_[0] (rgb = 色, a = 分散) ----
+    RtVarianceCB vc = {};
+    vc.size[0] = static_cast<float>(gw);
+    vc.size[1] = static_cast<float>(gh);
+    vc.historyMin = kRtVarianceHistoryMin;
+    // シード凍結中は毎フレーム同じサンプル = テンポラル分散が 0 に潰れるので空間推定を使う
+    vc.forceSpatial = (view.rtFreezeSeed != 0) ? 1 : 0;
+    vc.depthThreshold = kRtTemporalDepthThreshold;
+    vc.normalThreshold = kRtTemporalNormalThreshold;
+    UploadCB(dc, varianceCB_.Get(), vc);
+    ID3D11Buffer* varCbs[1] = { varianceCB_.Get() };
+    dc->CSSetConstantBuffers(2, 1, varCbs);
+    ID3D11ShaderResourceView* varSrvs[3] = { acc.color, acc.moments, acc.geom };
+    dc->CSSetShaderResources(0, 3, varSrvs);
+    ID3D11UnorderedAccessView* varUavs[1] = { svgfRt_[0].UAV() };
+    dc->CSSetUnorderedAccessViews(0, 1, varUavs, nullptr);
+    dc->CSSetShader(varCs->cs.Get(), nullptr, 0);
+    dc->Dispatch(gx, gy, 1);
+    UnbindCompute(device);
+
+    // ---- 2) A-Trous (刻み幅を倍化しながら ping-pong) ----
+    int src = 0;
+    for (int i = 0; i < kRtAtrousIterations; ++i) {
+        const int dst = 1 - src;
+        RtAtrousCB ac = {};
+        ac.size[0] = static_cast<float>(gw);
+        ac.size[1] = static_cast<float>(gh);
+        ac.step = 1 << i;
+        ac.sigmaDepth = kRtAtrousSigmaDepth;
+        ac.sigmaNormal = kRtAtrousSigmaNormal;
+        ac.sigmaLuma = kRtAtrousSigmaLuma;
+        UploadCB(dc, atrousCB_.Get(), ac);
+        ID3D11Buffer* atCbs[1] = { atrousCB_.Get() };
+        dc->CSSetConstantBuffers(2, 1, atCbs);
+        ID3D11ShaderResourceView* atSrvs[2] = { svgfRt_[src].SRV(), acc.geom };
+        dc->CSSetShaderResources(0, 2, atSrvs);
+        ID3D11UnorderedAccessView* atUavs[1] = { svgfRt_[dst].UAV() };
+        dc->CSSetUnorderedAccessViews(0, 1, atUavs, nullptr);
+        dc->CSSetShader(atrousCs->cs.Get(), nullptr, 0);
+        dc->Dispatch(gx, gy, 1);
+        UnbindCompute(device);
+        src = dst;
+    }
+
+    svgfTimer_.End(device);
+    return svgfRt_[src].SRV();
 }
 
 bool RtPasses::Blit(GraphicsDevice& device, ShaderManager& shaders, const RenderView& view,
-                    ID3D11ShaderResourceView* src, int mode)
+                    ID3D11ShaderResourceView* src, int mode, float param)
 {
     ShaderProgram* blit = shaders.Get(blitShader_);
     if (!blit || !blit->valid || src == nullptr) {
@@ -356,7 +482,7 @@ bool RtPasses::Blit(GraphicsDevice& device, ShaderManager& shaders, const Render
     bc.dstSize[0] = static_cast<float>(view.width);
     bc.dstSize[1] = static_cast<float>(view.height);
     bc.mode = mode;
-    bc.param = static_cast<float>(kRtTemporalMaxHistory);
+    bc.param = (param > 0.0f) ? param : static_cast<float>(kRtTemporalMaxHistory);
     UploadCB(dc, blitCB_.Get(), bc);
 
     D3D11_VIEWPORT vp = {};
@@ -393,7 +519,7 @@ bool RtPasses::RenderDebug(GraphicsDevice& device, ShaderManager& shaders, const
         return false;
     }
 
-    // モード 4-6 は GI バッファをそのまま拡大表示する (CS は RenderGi で実行済み)
+    // モード 4-8 は GI バッファをそのまま拡大表示する (CS は RenderGi で実行済み)
     if (view.rtDebugMode == 4) {
         return Blit(device, shaders, view, gi.raw);
     }
@@ -402,6 +528,13 @@ bool RtPasses::RenderDebug(GraphicsDevice& device, ShaderManager& shaders, const
     }
     if (view.rtDebugMode == 6) { // 履歴長 (a) のヒートマップ
         return Blit(device, shaders, view, gi.accumulated, /*mode=*/1);
+    }
+    if (view.rtDebugMode == 7) { // M46e: SVGF 後
+        return Blit(device, shaders, view, gi.filtered);
+    }
+    if (view.rtDebugMode == 8) { // M46e: 推定分散 (a) のヒートマップ。緑 = 収束
+        // 標準偏差 0.25 で赤に振り切る (GI の輝度スケールに合わせた表示用の定数)
+        return Blit(device, shaders, view, gi.filtered, /*mode=*/2, /*param=*/4.0f);
     }
 
     ShaderProgram* cs = shaders.Get(debugCS_);

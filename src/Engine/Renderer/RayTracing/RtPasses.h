@@ -40,15 +40,16 @@ struct RtFrameInputs {
     ID3D11ShaderResourceView* skyCube = nullptr;    // skyMode==1 のときのみ
 };
 
-// GI パスの出力 (M46d)。テンポラル蓄積が入ったので「今フレームの生」と
-// 「履歴込み」の 2 つを返す。accumulated の a には履歴長が入っている
+// GI パスの出力 (M46d/M46e)。デノイズの段階ごとに参照できるよう 3 つ返す。
+// accumulated の a には履歴長、filtered の a には推定分散が入っている
 struct RtGiResult {
     ID3D11ShaderResourceView* raw = nullptr;         // 1spp そのまま
     ID3D11ShaderResourceView* accumulated = nullptr; // 蓄積後 (テンポラル off なら raw と同じ)
+    ID3D11ShaderResourceView* filtered = nullptr;    // SVGF 後 (off なら accumulated と同じ)
 };
 
 // レイトレーシングのコンピュートパス群 (M46b: デバッグ表示 / M46c: 拡散 GI /
-// M46d: テンポラル蓄積)。Renderer 層 = 生の D3D11 はここに閉じる
+// M46d: テンポラル蓄積 / M46e: SVGF 空間フィルタ)。Renderer 層 = 生の D3D11 はここに閉じる
 class RtPasses {
 public:
     bool Init(GraphicsDevice& device, ShaderManager& shaders);
@@ -69,6 +70,8 @@ public:
     float DebugGpuMs() const { return debugTimer_.Milliseconds(); }
     float GiGpuMs() const { return giTimer_.Milliseconds(); }
     float TemporalGpuMs() const { return temporalTimer_.Milliseconds(); }
+    // M46e: 分散推定 + A-Trous 全反復の合計
+    float SvgfGpuMs() const { return svgfTimer_.Milliseconds(); }
 
 private:
     // viewKey (0=AssetPreview 1=runtime 2=SceneView 3=GameView) 毎に履歴を分ける。
@@ -76,10 +79,12 @@ private:
     static constexpr int kHistorySlots = 4;
 
     // テンポラル蓄積の履歴 (ping-pong)。color = rgb 蓄積 GI + a 履歴長 /
-    // geom = xyz ワールド法線 + w カメラ距離 (再投影の妥当性判定に使う)
+    // geom = xyz ワールド法線 + w カメラ距離 (再投影の妥当性判定に使う) /
+    // moments = x 輝度 μ + y μ² (M46e: SVGF の分散推定)
     struct GiHistory {
         RenderTexture color[2];
         RenderTexture geom[2];
+        RenderTexture moments[2];
         int write = 0; // 今フレームの書き込み先 index (読みは 1-write)
         int w = 0;
         int h = 0;
@@ -87,29 +92,45 @@ private:
         bool hasLast = false;
     };
 
+    // Accumulate が今フレーム書き込んだ面 (SVGF の入力)。null = 蓄積を走らせなかった
+    struct AccumResult {
+        ID3D11ShaderResourceView* color = nullptr;
+        ID3D11ShaderResourceView* geom = nullptr;
+        ID3D11ShaderResourceView* moments = nullptr;
+    };
+
     // t0-t6 / b0-b1 / s0 (シーン + 環境) をコンピュートステージへバインドする
     void BindCommon(GraphicsDevice& device, const RenderView& view, const RtFrameInputs& in);
     void UnbindCompute(GraphicsDevice& device);
-    // 1spp の結果に履歴を混ぜる。戻り値 = 蓄積結果の SRV (null = 走らせなかった)
-    ID3D11ShaderResourceView* Accumulate(GraphicsDevice& device, ShaderManager& shaders,
-                                         const RenderView& view, const RtFrameInputs& in, int gw,
-                                         int gh);
-    // src を view.rtv 全面に貼る (mode 1 = a を履歴長ヒートマップとして表示)
+    // 1spp の結果に履歴を混ぜる。戻り値の color が null なら走らせていない
+    AccumResult Accumulate(GraphicsDevice& device, ShaderManager& shaders, const RenderView& view,
+                           const RtFrameInputs& in, int gw, int gh);
+    // M46e: 分散推定 + A-Trous ×kRtAtrousIterations。戻り値 = 最終出力の SRV (null = 走らせず)。
+    // 幾何バッファ (法線 + カメラ距離) が蓄積パスの副産物なので、テンポラル off では動かない
+    ID3D11ShaderResourceView* Denoise(GraphicsDevice& device, ShaderManager& shaders,
+                                      const RenderView& view, const AccumResult& acc, int gw,
+                                      int gh);
+    // src を view.rtv 全面に貼る (mode 1 = a を履歴長 / 2 = a を分散のヒートマップとして表示)
     bool Blit(GraphicsDevice& device, ShaderManager& shaders, const RenderView& view,
-              ID3D11ShaderResourceView* src, int mode = 0);
+              ID3D11ShaderResourceView* src, int mode = 0, float param = 0.0f);
 
-    RenderTexture debugRt_; // デバッグ CS の出力先 (フル解像度、UAV 付き)
-    RenderTexture giRt_;    // GI の出力先 (内部解像度、UAV 付き)
+    RenderTexture debugRt_;   // デバッグ CS の出力先 (フル解像度、UAV 付き)
+    RenderTexture giRt_;      // GI の出力先 (内部解像度、UAV 付き)
+    RenderTexture svgfRt_[2]; // M46e: 分散推定 + A-Trous の ping-pong (内部解像度)
     GiHistory giHist_[kHistorySlots];
     AssetID debugCS_ = {};
     AssetID giCS_ = {};
     AssetID temporalCS_ = {};
+    AssetID varianceCS_ = {};
+    AssetID atrousCS_ = {};
     AssetID blitShader_ = {};
     Microsoft::WRL::ComPtr<ID3D11Buffer> sceneCB_;
     Microsoft::WRL::ComPtr<ID3D11Buffer> envCB_;
     Microsoft::WRL::ComPtr<ID3D11Buffer> debugCB_;
     Microsoft::WRL::ComPtr<ID3D11Buffer> giCB_;
     Microsoft::WRL::ComPtr<ID3D11Buffer> temporalCB_;
+    Microsoft::WRL::ComPtr<ID3D11Buffer> varianceCB_;
+    Microsoft::WRL::ComPtr<ID3D11Buffer> atrousCB_;
     Microsoft::WRL::ComPtr<ID3D11Buffer> blitCB_;
     Microsoft::WRL::ComPtr<ID3D11SamplerState> linearClamp_;
     Microsoft::WRL::ComPtr<ID3D11DepthStencilState> depthDisabled_;
@@ -118,6 +139,7 @@ private:
     GpuTimer debugTimer_;
     GpuTimer giTimer_;
     GpuTimer temporalTimer_;
+    GpuTimer svgfTimer_;
     bool inited_ = false;
 };
 

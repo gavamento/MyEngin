@@ -183,6 +183,77 @@ inline float RtTemporalAlpha(float histLen)
     return 1.0f / (std::max)(histLen, 1.0f);
 }
 
+// ---- M46e: SVGF (HLSL の rt_variance.cs.hlsl / rt_atrous.cs.hlsl と一致。両方更新) ----
+
+// 輝度 (Rec.709)。ポスプロ (postfx_tonemap.hlsl 等) と同じ係数
+inline float RtLuminance(const DirectX::XMFLOAT3& c)
+{
+    return 0.2126f * c.x + 0.7152f * c.y + 0.0722f * c.z;
+}
+
+// 1 サンプルあたりの分散 (μ² から μ の 2 乗を引く)。丸めで負に落ちるので 0 で止める。
+// HLSL の RtVarianceFromMoments と同一式
+inline float RtVarianceFromMoments(float m1, float m2)
+{
+    const float v = m2 - m1 * m1;
+    return (v > 0.0f) ? v : 0.0f;
+}
+
+// サンプル分散 → 蓄積後の推定値の分散。N 個の平均の分散は 1/N になるので履歴長で割る。
+// SVGF 原論文はサンプル分散をそのまま使うが、それだと収束後もぼけ続けて GI の
+// コンタクト陰影が溶ける。forceSpatial (シード凍結 = 毎フレーム同じ 1 サンプル) は
+// いくら履歴が伸びても実効サンプル数が 1 なので割らない。
+// HLSL の RtVarianceEstimate と同一式
+inline float RtVarianceEstimate(float sampleVar, float histLen, bool forceSpatial)
+{
+    if (forceSpatial) {
+        return sampleVar;
+    }
+    return sampleVar / ((histLen > 1.0f) ? histLen : 1.0f);
+}
+
+// 深度 (カメラ距離) のエッジ停止重み。真の深度勾配を持たないので
+// 「タップが遠いほど許容を広げる」相対差で近似する (平面上で重みが落ちないように)。
+// HLSL の RtAtrousDepthWeight と同一式
+inline float RtAtrousDepthWeight(float zc, float zq, float tapDist, float sigma)
+{
+    const float tol = sigma * ((zc > 1e-3f) ? zc : 1e-3f) * ((tapDist > 1.0f) ? tapDist : 1.0f);
+    return std::exp(-std::fabs(zc - zq) / ((tol > 1e-6f) ? tol : 1e-6f));
+}
+
+// 法線のエッジ停止重み (cos の冪)。裏向きは 0。HLSL の RtAtrousNormalWeight と同一式
+inline float RtAtrousNormalWeight(const DirectX::XMFLOAT3& nc, const DirectX::XMFLOAT3& nq,
+                                  float power)
+{
+    const float c = nc.x * nq.x + nc.y * nq.y + nc.z * nq.z;
+    return std::pow((c > 0.0f) ? c : 0.0f, power);
+}
+
+// 輝度のエッジ停止重み。推定標準偏差でスケールするので、ノイズが乗っている間は
+// 緩く (よくぼける)、収束すると厳しく (エッジが残る)。HLSL の RtAtrousLumaWeight と同一式
+inline float RtAtrousLumaWeight(float lc, float lq, float variance, float sigma)
+{
+    const float sd = std::sqrt((variance > 0.0f) ? variance : 0.0f);
+    return std::exp(-std::fabs(lc - lq) / (sigma * sd + 1e-4f));
+}
+
+// A-Trous の 1 次元カーネル (B3 スプライン (1,4,6,4,1)/16)。d は中心からのタップ番号。
+// HLSL の RtAtrousKernel と同一値
+inline float RtAtrousKernel(int d)
+{
+    const int i = (d < 0) ? -d : d;
+    switch (i) {
+    case 0:
+        return 6.0f / 16.0f;
+    case 1:
+        return 4.0f / 16.0f;
+    case 2:
+        return 1.0f / 16.0f;
+    default:
+        return 0.0f;
+    }
+}
+
 // BLAS (単一メッシュ) のヒット結果。tri は連結三角形配列の絶対 index
 struct RtBlasHit {
     float t = 0.0f;

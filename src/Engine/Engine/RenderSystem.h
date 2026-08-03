@@ -111,6 +111,9 @@ public:
     // M46d: テンポラル蓄積 (1spp のノイズを前フレームの再投影で均す)。
     // false で 1spp 生のまま = A/B 比較用
     bool rtTemporal = true;
+    // M46e: SVGF 空間フィルタ (分散推定 + エッジ停止 A-Trous)。
+    // 幾何バッファがテンポラルパスの副産物なので rtTemporal=false では動かない
+    bool rtSvgf = true;
 
     // M44d: ポストプロセス解決の GPU 時間 (直近の Resolve、ProfilerWindow 表示用)
     float PostFxGpuMs() const { return postFx_.ResolveGpuMs(); }
@@ -118,6 +121,7 @@ public:
     float RtDebugGpuMs() const { return rtPasses_.DebugGpuMs(); }
     float RtGiGpuMs() const { return rtPasses_.GiGpuMs(); }
     float RtTemporalGpuMs() const { return rtPasses_.TemporalGpuMs(); }
+    float RtSvgfGpuMs() const { return rtPasses_.SvgfGpuMs(); }
     float RtBuildCpuMs() const { return rtScene_.BuildCpuMs(); }
     int RtInstanceCount() const { return rtScene_.InstanceCount(); }
     int RtTriangleCount() const { return rtScene_.TriangleCount(); }

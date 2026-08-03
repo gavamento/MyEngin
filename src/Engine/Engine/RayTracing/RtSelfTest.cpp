@@ -394,6 +394,83 @@ void TestTemporal()
     TEST_CHECK(std::fabs(acc - kC) < 1e-3f);
 }
 
+// SVGF の分散推定とエッジ停止重み (M46e)。HLSL 側 (rt_variance.cs.hlsl /
+// rt_atrous.cs.hlsl) と同一式なので、ここが通れば GPU 側の重みも同じ挙動になる
+void TestSvgf()
+{
+    MYE_LOG_INFO("[selftest] rt: svgf variance / edge-stopping weights");
+
+    // ---- 輝度 (Rec.709) ----
+    TEST_CHECK(std::fabs(RtLuminance({ 1.0f, 1.0f, 1.0f }) - 1.0f) < 1e-6f); // 係数の和 = 1
+    TEST_CHECK(RtLuminance({ 0.0f, 1.0f, 0.0f }) > RtLuminance({ 1.0f, 0.0f, 0.0f }));
+    TEST_CHECK(RtLuminance({ 0.0f, 0.0f, 0.0f }) == 0.0f);
+
+    // ---- モーメント → 分散 ----
+    // 一定値なら分散 0 (μ² - μ² が丸めで負に落ちても 0 で止まる)
+    TEST_CHECK(RtVarianceFromMoments(0.5f, 0.25f) == 0.0f);
+    TEST_CHECK(RtVarianceFromMoments(0.7f, 0.49f) < 1e-6f);  // 丸めで微小な正 (0.7² は非正確)
+    TEST_CHECK(RtVarianceFromMoments(1.0f, 0.999f) == 0.0f); // 丸めで負 → クランプ
+    // {0, 1} を半々で見たときの分散は 0.25
+    TEST_CHECK(std::fabs(RtVarianceFromMoments(0.5f, 0.5f) - 0.25f) < 1e-6f);
+
+    // ---- サンプル分散 → 推定値の分散 (履歴長で割る / 凍結時は割らない) ----
+    TEST_CHECK(std::fabs(RtVarianceEstimate(0.4f, 4.0f, false) - 0.1f) < 1e-6f);
+    TEST_CHECK(std::fabs(RtVarianceEstimate(0.4f, 1.0f, false) - 0.4f) < 1e-6f);
+    TEST_CHECK(std::fabs(RtVarianceEstimate(0.4f, 0.0f, false) - 0.4f) < 1e-6f); // 0 除算しない
+    // 凍結中は履歴がいくら伸びても実効サンプル数 1 (テンポラル分散が 0 に潰れるため)
+    TEST_CHECK(RtVarianceEstimate(0.4f, 32.0f, true) == 0.4f);
+    TEST_CHECK(RtVarianceEstimate(0.4f, 32.0f, false) < RtVarianceEstimate(0.4f, 4.0f, false));
+
+    // ---- A-Trous カーネル (B3 スプライン) ----
+    TEST_CHECK(RtAtrousKernel(0) > RtAtrousKernel(1) && RtAtrousKernel(1) > RtAtrousKernel(2));
+    TEST_CHECK(RtAtrousKernel(-1) == RtAtrousKernel(1)); // 対称
+    TEST_CHECK(RtAtrousKernel(3) == 0.0f);               // 半径外
+    float kSum = 0.0f;
+    for (int d = -kRtAtrousRadius; d <= kRtAtrousRadius; ++d) {
+        kSum += RtAtrousKernel(d);
+    }
+    TEST_CHECK(std::fabs(kSum - 1.0f) < 1e-6f); // 1 次元で正規化済み (2 次元も外積で 1)
+
+    // ---- 深度 (カメラ距離) の重み ----
+    constexpr float kSd = kRtAtrousSigmaDepth;
+    TEST_CHECK(RtAtrousDepthWeight(10.0f, 10.0f, 1.0f, kSd) == 1.0f); // 同じ深度は減衰なし
+    TEST_CHECK(RtAtrousDepthWeight(10.0f, 10.5f, 1.0f, kSd)
+               < RtAtrousDepthWeight(10.0f, 10.1f, 1.0f, kSd)); // 離れるほど小さい
+    // 相対差で見るので、距離が 10 倍でも「同じ相対差」なら同じ重み
+    TEST_CHECK(std::fabs(RtAtrousDepthWeight(10.0f, 10.1f, 1.0f, kSd)
+                         - RtAtrousDepthWeight(100.0f, 101.0f, 1.0f, kSd))
+               < 1e-5f);
+    // 刻み幅を上げた (タップが遠い) ぶんだけ許容が広がる = 平面がぼけ続ける
+    TEST_CHECK(RtAtrousDepthWeight(10.0f, 10.4f, 4.0f, kSd)
+               > RtAtrousDepthWeight(10.0f, 10.4f, 1.0f, kSd));
+    // tapDist は 1 未満に潰さない (中心タップで許容が 0 にならないように)
+    TEST_CHECK(RtAtrousDepthWeight(10.0f, 10.0f, 0.0f, kSd) == 1.0f);
+
+    // ---- 法線の重み ----
+    constexpr float kSn = kRtAtrousSigmaNormal;
+    const XMFLOAT3 up = { 0.0f, 1.0f, 0.0f };
+    TEST_CHECK(std::fabs(RtAtrousNormalWeight(up, up, kSn) - 1.0f) < 1e-6f);
+    TEST_CHECK(RtAtrousNormalWeight(up, { 1.0f, 0.0f, 0.0f }, kSn) == 0.0f); // 直交
+    TEST_CHECK(RtAtrousNormalWeight(up, { 0.0f, -1.0f, 0.0f }, kSn) == 0.0f); // 裏向き
+    // 少し傾いた面は残り、大きく傾いた面はほぼ切れる (指数 64 の効き)
+    TEST_CHECK(RtAtrousNormalWeight(up, Normalize({ 0.1f, 1.0f, 0.0f }), kSn) > 0.5f);
+    TEST_CHECK(RtAtrousNormalWeight(up, Normalize({ 0.5f, 1.0f, 0.0f }), kSn) < 0.05f);
+
+    // ---- 輝度の重み (推定標準偏差でスケール) ----
+    constexpr float kSl = kRtAtrousSigmaLuma;
+    TEST_CHECK(RtAtrousLumaWeight(0.5f, 0.5f, 0.04f, kSl) == 1.0f); // 同じ輝度は減衰なし
+    // 分散が大きい (ノイズ中) ほど輝度差を許す = よくぼける
+    TEST_CHECK(RtAtrousLumaWeight(0.5f, 0.7f, 0.04f, kSl)
+               > RtAtrousLumaWeight(0.5f, 0.7f, 0.0004f, kSl));
+    // 収束して分散 0 になったらエッジは残す (重みがほぼ 0)
+    TEST_CHECK(RtAtrousLumaWeight(0.5f, 0.7f, 0.0f, kSl) < 1e-6f);
+    // 標準偏差 σ の σ_l 倍だけ離れた点は exp(-1) 付近 (スケールが合っている)
+    const float sd = 0.1f;
+    TEST_CHECK(std::fabs(RtAtrousLumaWeight(0.5f, 0.5f + kSl * sd, sd * sd, kSl)
+                         - std::exp(-1.0f))
+               < 1e-3f);
+}
+
 } // namespace
 
 bool RunRtSelfTest()
@@ -406,6 +483,7 @@ bool RunRtSelfTest()
     TestTlas();
     TestSampling();
     TestTemporal();
+    TestSvgf();
     if (g_failCount == 0) {
         MYE_LOG_INFO("==== Ray tracing self test: ALL PASS ====");
         return true;

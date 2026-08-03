@@ -60,6 +60,10 @@ void ProfilerWindow::OnImGui(EngineContext& ctx)
                 ImGui::Text("  rt temporal: %6.3f ms (GpuTimer, %s)",
                             ctx.renderSystem->RtTemporalGpuMs(),
                             ctx.renderSystem->rtTemporal ? "on" : "off");
+                // M46e: 分散推定 + A-Trous 全反復の合計 (蓄積 off では動かない)
+                ImGui::Text("  rt svgf: %6.3f ms (GpuTimer, %s)", ctx.renderSystem->RtSvgfGpuMs(),
+                            (ctx.renderSystem->rtSvgf && ctx.renderSystem->rtTemporal) ? "on"
+                                                                                       : "off");
             }
         }
     }

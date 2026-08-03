@@ -1,5 +1,6 @@
 // M46d: GI のテンポラル蓄積。1spp のノイズを「前フレームの結果を再投影して混ぜる」ことで
-// 落とす。SVGF の第 1 段 — 空間フィルタ (A-Trous) は M46e で後段に挿す。
+// 落とす。SVGF の第 1 段 — 後段の分散推定 (rt_variance) と A-Trous (rt_atrous) が M46e。
+// ここでは色の蓄積に加えて、分散推定用の輝度モーメント (μ, μ²) も同じ重みで積む。
 //
 // 履歴の持ち方: 色バッファ (rgb = 蓄積 GI, a = 履歴長) と
 //               ジオメトリバッファ (xyz = ワールド法線, w = カメラからの距離) の 2 枚を
@@ -33,9 +34,12 @@ Texture2D gTempHistGeom : register(t2);  // 前フレームの法線 (xyz) と�
 Texture2D gTempGbNormal : register(t3);  // GBuffer 法線 (*0.5+0.5、フル解像度)
 Texture2D gTempGbPosition : register(t4); // GBuffer ワールド座標 (フル解像度)
 Texture2D gTempGbMark : register(t5);    // GBuffer アルベド (a = ジオメトリ有りマーク)
+Texture2D gTempHistMoments : register(t6); // 前フレームの輝度モーメント (x = μ, y = μ²)
 
 RWTexture2D<float4> gTempOutColor : register(u0);
 RWTexture2D<float4> gTempOutGeom : register(u1);
+// M46e: SVGF の分散推定に使う輝度モーメント (x = μ, y = μ²)。色と同じ重みで積む
+RWTexture2D<float4> gTempOutMoments : register(u2);
 
 // ---- RtMath.h と同一式 (変更時は両方更新。selftest が C++ 側を検証する) ----
 
@@ -80,6 +84,12 @@ float RtTemporalAlpha(float histLen)
     return 1.0f / max(histLen, 1.0f);
 }
 
+// 輝度 (Rec.709)。RtMath.h の RtLuminance と同一式
+float RtLuminance(float3 c)
+{
+    return dot(c, float3(0.2126f, 0.7152f, 0.0722f));
+}
+
 [numthreads(8, 8, 1)]
 void CSMain(uint3 tid : SV_DispatchThreadID)
 {
@@ -93,6 +103,7 @@ void CSMain(uint3 tid : SV_DispatchThreadID)
         // ジオメトリ無し (空) — 履歴も無効化しておく (深度 0 = 未記録)
         gTempOutColor[tid.xy] = float4(0.0f, 0.0f, 0.0f, 0.0f);
         gTempOutGeom[tid.xy] = float4(0.0f, 0.0f, 0.0f, 0.0f);
+        gTempOutMoments[tid.xy] = float4(0.0f, 0.0f, 0.0f, 0.0f);
         return;
     }
     const float3 N = normalize(gTempGbNormal.Load(gp).xyz * 2.0f - 1.0f);
@@ -102,6 +113,7 @@ void CSMain(uint3 tid : SV_DispatchThreadID)
     // 履歴の探索: P を前フレームのカメラへ射影する
     bool valid = false;
     float4 hist = float4(0.0f, 0.0f, 0.0f, 0.0f);
+    float2 histMoments = float2(0.0f, 0.0f);
     const float expectedDepth = length(P - gTempPrevCameraPos);
     if (gTempHistValid != 0) {
         float2 prevUv;
@@ -111,6 +123,7 @@ void CSMain(uint3 tid : SV_DispatchThreadID)
             if (RtReprojectValid(expectedDepth, geom.w, N, geom.xyz, gTempDepthThreshold,
                                  gTempNormalThreshold)) {
                 hist = gTempHistColor.Load(hp);
+                histMoments = gTempHistMoments.Load(hp).xy;
                 valid = true;
             }
         }
@@ -121,6 +134,12 @@ void CSMain(uint3 tid : SV_DispatchThreadID)
     const float alpha = RtTemporalAlpha(histLen);
     const float3 accum = lerp(hist.rgb, cur, alpha); // valid=false なら histLen=1 → cur
 
+    // M46e: 輝度モーメントも同じ重みで積む。μ は accum の輝度と一致するが、
+    // 16F の丸めで食い違わないよう独立に持つ (分散 = μ² - μ² が負に落ちないように)
+    const float lum = RtLuminance(cur);
+    const float2 moments = lerp(histMoments, float2(lum, lum * lum), alpha);
+
     gTempOutColor[tid.xy] = float4(accum, histLen);
     gTempOutGeom[tid.xy] = float4(N, length(P - gTempCameraPos));
+    gTempOutMoments[tid.xy] = float4(moments, 0.0f, 0.0f);
 }

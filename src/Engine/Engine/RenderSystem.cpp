@@ -634,6 +634,9 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
             view.rtTemporal = rtTemporal ? 1 : 0;
             view.rtViewKey = (target.viewKey < 4) ? target.viewKey : 0u;
             view.rtViewSerial = viewSerial_[view.rtViewKey];
+            // M46e: SVGF。凍結中はテンポラル分散が 0 に潰れるので空間推定へ落とす合図も渡す
+            view.rtSvgf = rtSvgf ? 1 : 0;
+            view.rtFreezeSeed = rtFreezeSeed ? 1 : 0;
         }
     }
 

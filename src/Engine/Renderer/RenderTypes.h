@@ -128,6 +128,9 @@ struct RenderView {
     uint32_t rtViewSerial = 0; // このビューが描かれた通番。+1 で連続 = 履歴が使える
     // 前フレームのカメラ位置 (再投影の深度照合。prevViewProj とセットで有効)
     DirectX::XMFLOAT3 prevCameraPos = { 0, 0, 0 };
+    // ---- M46e: SVGF 空間フィルタ (末尾 append)。テンポラル蓄積が前提 (幾何バッファの出所) ----
+    int32_t rtSvgf = 1;       // 0 = 分散推定 + A-Trous を掛けない (A/B 比較用)
+    int32_t rtFreezeSeed = 0; // 1 = 乱数固定 → 分散推定はテンポラルでなく空間へ落とす
 };
 
 // GPU へ渡すライト 1 個 (定数バッファ配列要素、16 バイト境界に揃えた 64 バイト)。
