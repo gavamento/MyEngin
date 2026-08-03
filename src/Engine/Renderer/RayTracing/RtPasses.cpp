@@ -6,6 +6,7 @@
 #include "Engine/Core/Log.h"
 #include "Engine/Renderer/GpuBufferUtil.h"
 #include "Engine/Renderer/GraphicsDevice.h"
+#include "Engine/Renderer/RayTracing/RtMath.h"  // M46g: 太陽コーンの cos (CPU が唯一の出所)
 #include "Engine/Renderer/RayTracing/RtTypes.h" // テンポラル蓄積のしきい値 / 履歴長上限
 #include "Engine/Renderer/ShaderManager.h"
 
@@ -96,6 +97,30 @@ struct RtAtrousCB {
 };
 static_assert(sizeof(RtAtrousCB) == 32, "HLSL の RtAtrousCB と一致させること");
 
+// rt_shadow.cs.hlsl の RtShadowCB (b2) と一致
+struct RtShadowCB {
+    float size[2] = { 0, 0 };
+    float cosThetaMax = 1.0f;
+    uint32_t frameIndex = 0;
+    XMFLOAT3 cameraPos = { 0, 0, 0 };
+    float epsMin = kRtShadowEpsMin;
+    float epsRel = kRtShadowEpsRel;
+    float pad[3] = { 0, 0, 0 };
+};
+static_assert(sizeof(RtShadowCB) == 48, "HLSL の RtShadowCB と一致させること");
+
+// rt_shadow_filter.cs.hlsl の RtShadowFilterCB (b2) と一致
+struct RtShadowFilterCB {
+    float size[2] = { 0, 0 };
+    int32_t step = 1;
+    float sigmaDepth = kRtAtrousSigmaDepth;
+    XMFLOAT3 cameraPos = { 0, 0, 0 };
+    float sigmaNormal = kRtAtrousSigmaNormal;
+    int32_t axis[2] = { 1, 0 }; // (1,0) = 水平 / (0,1) = 垂直 (分離型)
+    float pad[2] = { 0, 0 };
+};
+static_assert(sizeof(RtShadowFilterCB) == 48, "HLSL の RtShadowFilterCB と一致させること");
+
 // rt_blit.hlsl の RtBlitCB (b0) と一致
 struct RtBlitCB {
     float dstSize[2] = { 0, 0 };
@@ -117,6 +142,8 @@ bool RtPasses::Init(GraphicsDevice& device, ShaderManager& shaders)
     temporalCS_ = shaders.LoadCompute("rt_temporal.cs");
     varianceCS_ = shaders.LoadCompute("rt_variance.cs");
     atrousCS_ = shaders.LoadCompute("rt_atrous.cs");
+    shadowCS_ = shaders.LoadCompute("rt_shadow.cs");
+    shadowFilterCS_ = shaders.LoadCompute("rt_shadow_filter.cs");
     blitShader_ = shaders.Load("rt_blit");
 
     if (!CreateConstant(dev, sizeof(RtSceneCB), sceneCB_)
@@ -126,6 +153,8 @@ bool RtPasses::Init(GraphicsDevice& device, ShaderManager& shaders)
         || !CreateConstant(dev, sizeof(RtTemporalCB), temporalCB_)
         || !CreateConstant(dev, sizeof(RtVarianceCB), varianceCB_)
         || !CreateConstant(dev, sizeof(RtAtrousCB), atrousCB_)
+        || !CreateConstant(dev, sizeof(RtShadowCB), shadowCB_)
+        || !CreateConstant(dev, sizeof(RtShadowFilterCB), shadowFilterCB_)
         || !CreateConstant(dev, sizeof(RtBlitCB), blitCB_)) {
         MYE_LOG_ERROR("RtPasses: constant buffer creation failed");
         return false;
@@ -159,6 +188,8 @@ bool RtPasses::Init(GraphicsDevice& device, ShaderManager& shaders)
     giTimer_.Init(device);
     temporalTimer_.Init(device);
     svgfTimer_.Init(device);
+    shadowTimer_.Init(device);
+    shadowFilterTimer_.Init(device);
     inited_ = true;
     return true;
 }
@@ -168,6 +199,9 @@ void RtPasses::Shutdown()
     debugRt_.Release();
     giRt_.Release();
     for (RenderTexture& rt : svgfRt_) {
+        rt.Release();
+    }
+    for (RenderTexture& rt : shadowRt_) {
         rt.Release();
     }
     for (GiHistory& h : giHist_) {
@@ -189,6 +223,8 @@ void RtPasses::Shutdown()
     temporalCB_.Reset();
     varianceCB_.Reset();
     atrousCB_.Reset();
+    shadowCB_.Reset();
+    shadowFilterCB_.Reset();
     blitCB_.Reset();
     linearClamp_.Reset();
     depthDisabled_.Reset();
@@ -469,6 +505,90 @@ ID3D11ShaderResourceView* RtPasses::Denoise(GraphicsDevice& device, ShaderManage
     return svgfRt_[src].SRV();
 }
 
+// M46g: 太陽の可視率 (フル解像度 R8)。1 画素 1 レイの any-hit + スカラー空間フィルタ。
+// GI と違いテンポラル履歴を持たない — 動く物体の影がゴーストするのを避けるため
+// (太陽コーンが狭いので 1spp でも半影の数画素にしかノイズが出ない)
+ID3D11ShaderResourceView* RtPasses::RenderShadow(GraphicsDevice& device, ShaderManager& shaders,
+                                                 const RenderView& view, const RtFrameInputs& in)
+{
+    if (!inited_ || !in.scene || !in.scene->IsValid() || !in.gbNormal || !in.gbPosition
+        || !in.gbAlbedo || view.width <= 0 || view.height <= 0) {
+        return nullptr;
+    }
+    ShaderProgram* cs = shaders.Get(shadowCS_);
+    if (!cs || !cs->valid || !cs->cs) {
+        return nullptr; // コンパイル失敗時は影なしで進む (ライトパスは CSM のまま)
+    }
+    for (RenderTexture& rt : shadowRt_) {
+        rt.Resize(device, view.width, view.height, DXGI_FORMAT_R8_UNORM, /*withDepth=*/false,
+                  /*withUav=*/true);
+        if (!rt.UAV() || !rt.SRV()) {
+            return nullptr;
+        }
+    }
+
+    ID3D11DeviceContext* dc = device.Context();
+    const UINT gx = static_cast<UINT>((view.width + 7) / 8);
+    const UINT gy = static_cast<UINT>((view.height + 7) / 8);
+    shadowTimer_.Begin(device);
+    BindCommon(device, view, in);
+
+    // ---- 1) 影レイ (1spp、太陽コーンサンプル) → shadowRt_[0] ----
+    RtShadowCB sc = {};
+    sc.size[0] = static_cast<float>(view.width);
+    sc.size[1] = static_cast<float>(view.height);
+    sc.cosThetaMax = RtConeCosMax(kRtShadowSunAngleDeg);
+    sc.frameIndex = view.rtFrameIndex;
+    sc.cameraPos = view.cameraPos;
+    sc.epsMin = kRtShadowEpsMin;
+    sc.epsRel = kRtShadowEpsRel;
+    UploadCB(dc, shadowCB_.Get(), sc);
+    ID3D11Buffer* shCbs[1] = { shadowCB_.Get() };
+    dc->CSSetConstantBuffers(2, 1, shCbs);
+    ID3D11ShaderResourceView* gbuf[3] = { in.gbNormal, in.gbPosition, in.gbAlbedo };
+    dc->CSSetShaderResources(7, 3, gbuf);
+    ID3D11UnorderedAccessView* uavs[1] = { shadowRt_[0].UAV() };
+    dc->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
+    dc->CSSetShader(cs->cs.Get(), nullptr, 0);
+    dc->Dispatch(gx, gy, 1);
+    UnbindCompute(device);
+
+    shadowTimer_.End(device);
+
+    // ---- 2) 空間フィルタ (分離型: 水平 → 垂直 で 1 反復。刻み幅を倍化しながら ping-pong) ----
+    int src = 0;
+    ShaderProgram* filterCs = shaders.Get(shadowFilterCS_);
+    if (filterCs && filterCs->valid && filterCs->cs) {
+        shadowFilterTimer_.Begin(device);
+        for (int i = 0; i < kRtShadowFilterIterations * 2; ++i) {
+            const int dst = 1 - src;
+            RtShadowFilterCB fc = {};
+            fc.size[0] = static_cast<float>(view.width);
+            fc.size[1] = static_cast<float>(view.height);
+            fc.step = 1 << (i / 2);
+            fc.sigmaDepth = kRtAtrousSigmaDepth;
+            fc.cameraPos = view.cameraPos;
+            fc.sigmaNormal = kRtAtrousSigmaNormal;
+            fc.axis[0] = (i % 2 == 0) ? 1 : 0; // 偶数 = 水平、奇数 = 垂直
+            fc.axis[1] = (i % 2 == 0) ? 0 : 1;
+            UploadCB(dc, shadowFilterCB_.Get(), fc);
+            ID3D11Buffer* fCbs[1] = { shadowFilterCB_.Get() };
+            dc->CSSetConstantBuffers(2, 1, fCbs);
+            ID3D11ShaderResourceView* fSrvs[3] = { shadowRt_[src].SRV(), in.gbNormal,
+                                                   in.gbPosition };
+            dc->CSSetShaderResources(0, 3, fSrvs);
+            ID3D11UnorderedAccessView* fUavs[1] = { shadowRt_[dst].UAV() };
+            dc->CSSetUnorderedAccessViews(0, 1, fUavs, nullptr);
+            dc->CSSetShader(filterCs->cs.Get(), nullptr, 0);
+            dc->Dispatch(gx, gy, 1);
+            UnbindCompute(device);
+            src = dst;
+        }
+        shadowFilterTimer_.End(device);
+    }
+    return shadowRt_[src].SRV();
+}
+
 bool RtPasses::Blit(GraphicsDevice& device, ShaderManager& shaders, const RenderView& view,
                     ID3D11ShaderResourceView* src, int mode, float param)
 {
@@ -512,7 +632,8 @@ bool RtPasses::Blit(GraphicsDevice& device, ShaderManager& shaders, const Render
 }
 
 bool RtPasses::RenderDebug(GraphicsDevice& device, ShaderManager& shaders, const RenderView& view,
-                           const RtFrameInputs& in, const RtGiResult& gi)
+                           const RtFrameInputs& in, const RtGiResult& gi,
+                           ID3D11ShaderResourceView* shadow)
 {
     if (!inited_ || view.rtDebugMode == 0 || !in.scene || !in.scene->IsValid()
         || view.rtv == nullptr || view.width <= 0 || view.height <= 0) {
@@ -535,6 +656,9 @@ bool RtPasses::RenderDebug(GraphicsDevice& device, ShaderManager& shaders, const
     if (view.rtDebugMode == 8) { // M46e: 推定分散 (a) のヒートマップ。緑 = 収束
         // 標準偏差 0.25 で赤に振り切る (GI の輝度スケールに合わせた表示用の定数)
         return Blit(device, shaders, view, gi.filtered, /*mode=*/2, /*param=*/4.0f);
+    }
+    if (view.rtDebugMode == 9) { // M46g: 太陽の可視率 (白 = 照らされる / 黒 = 影)
+        return Blit(device, shaders, view, shadow, /*mode=*/3);
     }
 
     ShaderProgram* cs = shaders.Get(debugCS_);

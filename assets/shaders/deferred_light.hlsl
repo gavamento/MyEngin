@@ -44,7 +44,9 @@ cbuffer LightPass : register(b0)
     float    _fogPad3;
     // ---- M46f: RT GI 合成 (末尾 append)。0 = 従来と完全に同一の式 ----
     int      gRtGiEnabled;
-    float3   _rtPad;
+    // ---- M46g: RT 影 (末尾 append)。0 = 従来どおり CSM をサンプルする ----
+    int      gRtShadowEnabled;
+    float2   _rtPad;
 };
 
 Texture2D gAlbedo    : register(t0);
@@ -57,6 +59,7 @@ TextureCube gIblPrefiltered : register(t6);
 Texture2D   gIblBrdfLut     : register(t7);
 Texture2D   gSsao           : register(t8); // M38e (半解像度、ブラー済み AO)
 Texture2D   gRtGi           : register(t9); // M46f (内部解像度、demodulated 入射放射輝度)
+Texture2D   gRtShadow       : register(t10); // M46g (フル解像度 R8、太陽の可視率)
 SamplerState gIblSampler : register(s0); // LINEAR/CLAMP (M38c、s0 は光パスで空きだった)
 SamplerComparisonState gShadowSampler : register(s1);
 
@@ -85,7 +88,11 @@ float4 PSMain(VSOut i) : SV_Target
     const float3 posW = gPosition.Load(pixel).xyz;
     const float2 mr = gMaterial.Load(pixel).rg; // metallic, roughness
     float dirShadow = 1.0f;
-    if (gShadowEnabled != 0) {
+    if (gRtShadowEnabled != 0) {
+        // M46g: レイトレの可視率で置き換える (フル解像度なので Load でぴったり一致)。
+        // カスケード選択も深度バイアスも無いので継ぎ目・アクネ・ピーターパンが出ない
+        dirShadow = gRtShadow.Load(pixel).r;
+    } else if (gShadowEnabled != 0) {
         dirShadow = SampleShadowCSM(gShadowMap, gShadowSampler, gShadowVP, gShadowVP12[0],
                                     gShadowVP12[1], (int)gCascadeInfo.w, posW, gShadowTexel);
     }

@@ -107,6 +107,7 @@ $constGroups = @(
             'src\Engine\Renderer\RayTracing\RtTypes.h' = 'constexpr\s+int\s+kRtAtrousRadius\s*=\s*(\d+)'
             'assets\shaders\rt_atrous.cs.hlsl'         = '#\s*define\s+MYE_RT_ATROUS_RADIUS\s+(\d+)'
             'assets\shaders\rt_variance.cs.hlsl'       = '#\s*define\s+MYE_RT_ATROUS_RADIUS\s+(\d+)'
+            'assets\shaders\rt_shadow_filter.cs.hlsl'  = '#\s*define\s+MYE_RT_ATROUS_RADIUS\s+(\d+)'
         }
     }
 )

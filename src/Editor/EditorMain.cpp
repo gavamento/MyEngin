@@ -151,6 +151,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 config.rtSvgf = false; // M46e: 空間フィルタ off (蓄積のみ = A/B 計測用)
             } else if (arg == L"--rt-gi") {
                 config.rtGi = true; // M46f: GI を最終画像へ合成 (Deferred のみ)
+            } else if (arg == L"--rt-shadow") {
+                config.rtShadow = true; // M46g: 平行光の影をレイトレで (Deferred のみ)
             } else if (arg == L"--project" && i + 1 < argc) {
                 projectDir = argv[++i];
             } else if (arg == L"--create-project" && i + 1 < argc) {

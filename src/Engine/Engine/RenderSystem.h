@@ -118,6 +118,10 @@ public:
     // (IBL irradiance / 定数アンビエント) をレイトレ GI で置き換える。
     // false かつ rtDebugMode==0 なら BVH の構築も転送も走らない = 従来と完全に同じ経路
     bool enableRtGi = false;
+    // M46g: 平行光のシャドウ係数をレイトレで作る (Deferred のみ)。true にすると
+    // ライトパスが CSM のサンプルをレイトレの可視率で置き換える (カスケード境界も
+    // 深度バイアスも無くなる)。透明後段 (Forward) と CSM 自体は従来どおり
+    bool enableRtShadow = false;
 
     // M44d: ポストプロセス解決の GPU 時間 (直近の Resolve、ProfilerWindow 表示用)
     float PostFxGpuMs() const { return postFx_.ResolveGpuMs(); }
@@ -126,6 +130,8 @@ public:
     float RtGiGpuMs() const { return rtPasses_.GiGpuMs(); }
     float RtTemporalGpuMs() const { return rtPasses_.TemporalGpuMs(); }
     float RtSvgfGpuMs() const { return rtPasses_.SvgfGpuMs(); }
+    float RtShadowGpuMs() const { return rtPasses_.ShadowGpuMs(); }
+    float RtShadowFilterGpuMs() const { return rtPasses_.ShadowFilterGpuMs(); }
     float RtBuildCpuMs() const { return rtScene_.BuildCpuMs(); }
     int RtInstanceCount() const { return rtScene_.InstanceCount(); }
     int RtTriangleCount() const { return rtScene_.TriangleCount(); }

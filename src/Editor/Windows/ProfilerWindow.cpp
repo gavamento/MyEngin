@@ -46,8 +46,9 @@ void ProfilerWindow::OnImGui(EngineContext& ctx)
     if (ctx.renderSystem) {
         ImGui::Text("  postfx: %6.3f ms (GpuTimer)", ctx.renderSystem->PostFxGpuMs());
         // M46b: レイトレ (デバッグ表示も GI 合成も off のときは行ごと出さない)
-        const bool rtGiOn = ctx.renderSystem->enableRtGi; // M46f
-        if (ctx.renderSystem->rtDebugMode != 0 || rtGiOn) {
+        const bool rtGiOn = ctx.renderSystem->enableRtGi;             // M46f
+        const bool rtShadowOn = ctx.renderSystem->enableRtShadow;     // M46g
+        if (ctx.renderSystem->rtDebugMode != 0 || rtGiOn || rtShadowOn) {
             ImGui::Text("  rt bvh: %5d inst / %7d tri / %6.3f ms (CPU)",
                         ctx.renderSystem->RtInstanceCount(),
                         ctx.renderSystem->RtTriangleCount(), ctx.renderSystem->RtBuildCpuMs());
@@ -67,6 +68,12 @@ void ProfilerWindow::OnImGui(EngineContext& ctx)
                 ImGui::Text("  rt svgf: %6.3f ms (GpuTimer, %s)", ctx.renderSystem->RtSvgfGpuMs(),
                             (ctx.renderSystem->rtSvgf && ctx.renderSystem->rtTemporal) ? "on"
                                                                                        : "off");
+            }
+            // M46g: 影レイと分離型空間フィルタ (どちらもフル解像度)
+            if (ctx.renderSystem->rtDebugMode == 9 || rtShadowOn) {
+                ImGui::Text("  rt shadow: %6.3f ms trace / %6.3f ms filter (GpuTimer, full res)",
+                            ctx.renderSystem->RtShadowGpuMs(),
+                            ctx.renderSystem->RtShadowFilterGpuMs());
             }
         }
     }

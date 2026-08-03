@@ -323,6 +323,71 @@ void TestSampling()
     TEST_CHECK(down.x * dd.x + down.y * dd.y + down.z * dd.z >= -1e-4f);
 }
 
+// 太陽コーンのサンプリングと影レイのオフセット (M46g)。HLSL 側と同一式なので、
+// ここが通れば rt_shadow.cs.hlsl の影レイも同じ方向分布・同じ eps になる
+void TestShadowSampling()
+{
+    MYE_LOG_INFO("[selftest] rt: sun cone sampling / shadow ray epsilon");
+
+    // ---- 半頂角 → cos ----
+    TEST_CHECK(RtConeCosMax(0.0f) == 1.0f);                            // 点光源 = 硬い影
+    TEST_CHECK(std::fabs(RtConeCosMax(90.0f)) < 1e-6f);                // 半球
+    TEST_CHECK(RtConeCosMax(-5.0f) == 1.0f);                           // 負はクランプ
+    TEST_CHECK(RtConeCosMax(1.0f) < RtConeCosMax(0.5f));               // 広いほど cos は小さい
+    // 既定 (太陽の視半径 0.265°) はほぼ 1 = ほぼ硬い影
+    TEST_CHECK(RtConeCosMax(kRtShadowSunAngleDeg) > 0.999f);
+
+    // ---- 円錐サンプル ----
+    const XMFLOAT3 dir = Normalize({ -0.4f, 0.8f, 0.45f });
+    // cosMax = 1 (点光源) はどの乱数でも dir そのもの = 完全に硬い影に退化する
+    const XMFLOAT3 exact = RtSampleCone(dir, 1.0f, { 0.37f, 0.81f });
+    TEST_CHECK(std::fabs(exact.x - dir.x) < 1e-5f && std::fabs(exact.y - dir.y) < 1e-5f
+               && std::fabs(exact.z - dir.z) < 1e-5f);
+    // u.x = 1 は円錐の中心 (cos = 1)
+    const XMFLOAT3 center = RtSampleCone(dir, 0.5f, { 1.0f, 0.25f });
+    TEST_CHECK(std::fabs(center.x - dir.x) < 1e-5f && std::fabs(center.y - dir.y) < 1e-5f
+               && std::fabs(center.z - dir.z) < 1e-5f);
+
+    // 半頂角 10° の円錐: 全サンプルが単位長・円錐内・有限
+    const float cosMax = RtConeCosMax(10.0f);
+    RtSeed s{ 13u, 17u, 0u };
+    bool inCone = true, unitOk = true, finiteOk = true;
+    double cosSum = 0.0;
+    constexpr int kS = 4096;
+    for (int i = 0; i < kS; ++i) {
+        const XMFLOAT3 d = RtSampleCone(dir, cosMax, RtNextRand2(s));
+        const float dt = dir.x * d.x + dir.y * d.y + dir.z * d.z;
+        const float len = std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
+        if (dt < cosMax - 1e-4f) {
+            inCone = false;
+        }
+        if (std::fabs(len - 1.0f) > 1e-3f) {
+            unitOk = false;
+        }
+        if (!std::isfinite(d.x) || !std::isfinite(d.y) || !std::isfinite(d.z)) {
+            finiteOk = false;
+        }
+        cosSum += dt;
+    }
+    TEST_CHECK(inCone && unitOk && finiteOk);
+    // 立体角に対して一様なら平均 cos は (1 + cosMax) / 2
+    TEST_CHECK(std::fabs(cosSum / kS - 0.5 * (1.0 + cosMax)) < 1e-3);
+
+    // z = -1 の方向でも ONB が破綻しない (RtCosineHemisphere と同じ Duff の基底)
+    const XMFLOAT3 down = { 0.0f, 0.0f, -1.0f };
+    const XMFLOAT3 dd = RtSampleCone(down, cosMax, { 0.5f, 0.25f });
+    TEST_CHECK(std::isfinite(dd.x) && std::isfinite(dd.y) && std::isfinite(dd.z));
+    TEST_CHECK(down.x * dd.x + down.y * dd.y + down.z * dd.z >= cosMax - 1e-4f);
+
+    // ---- 影レイのオフセット (近景は絶対下限 / 遠景は距離比例) ----
+    TEST_CHECK(RtShadowRayEps(0.0f) == kRtShadowEpsMin);
+    TEST_CHECK(RtShadowRayEps(0.1f) == kRtShadowEpsMin); // 下限を割らない
+    TEST_CHECK(RtShadowRayEps(100.0f) > RtShadowRayEps(10.0f));
+    TEST_CHECK(std::fabs(RtShadowRayEps(100.0f) - 0.1f) < 1e-6f);
+    // 半精度ワールド座標の相対誤差 (~5e-4) より必ず大きい = アクネが出ない下限
+    TEST_CHECK(RtShadowRayEps(50.0f) > 50.0f * 4.9e-4f);
+}
+
 // テンポラル蓄積の判定式 (M46d)。HLSL 側と同一式なので、ここが通れば
 // rt_temporal.cs.hlsl の再投影・履歴更新も同じ挙動になる
 void TestTemporal()
@@ -482,6 +547,7 @@ bool RunRtSelfTest()
     TestBuildDeterminism();
     TestTlas();
     TestSampling();
+    TestShadowSampling();
     TestTemporal();
     TestSvgf();
     if (g_failCount == 0) {

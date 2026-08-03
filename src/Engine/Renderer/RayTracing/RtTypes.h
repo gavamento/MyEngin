@@ -51,6 +51,22 @@ constexpr float kRtAtrousSigmaDepth = 0.02f;
 constexpr float kRtAtrousSigmaNormal = 64.0f;
 constexpr float kRtAtrousSigmaLuma = 4.0f;
 
+// ---- M46g: RT 影 (太陽コーンサンプル) ----
+
+// 太陽の見かけ半径 (度)。実測値 (視直径 0.53°) の半分。
+// 大きいほど半影が広がるが、1spp のノイズも同じだけ増える
+constexpr float kRtShadowSunAngleDeg = 0.265f;
+
+// 影レイ原点のオフセット (自己交差回避)。G-Buffer のワールド座標が半精度
+// (R16G16B16A16_FLOAT = 相対誤差 ~5e-4) なので、定数だけでは遠景でアクネが出る。
+// 実効値 = max(絶対下限, 相対係数 * 距離)
+constexpr float kRtShadowEpsMin = 1e-3f;
+constexpr float kRtShadowEpsRel = 1e-3f;
+
+// 影の空間フィルタ (SVGF のスカラー軽量版) の反復回数。刻み幅は 1 から倍化。
+// GI (3 回) より弱いのは、太陽コーンが狭く 1spp のノイズが半影に限られるため
+constexpr int kRtShadowFilterIterations = 1;
+
 // BVH ノード (BLAS / TLAS 共通)。
 //   内部ノード: left/right = 子ノードの絶対 index (どちらも >= 0)
 //   葉:         left = -(start + 1) で負、right = 個数

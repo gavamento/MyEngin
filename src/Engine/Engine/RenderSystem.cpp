@@ -440,7 +440,7 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
         });
 
         // ---- ステージ 3 (直列): 可視候補をキュー化 (スキン/AABB/キューは順序依存で直列) ----
-        const bool collectRt = rtDebugMode != 0 || enableRtGi; // M46b / M46f
+        const bool collectRt = rtDebugMode != 0 || enableRtGi || enableRtShadow; // M46b/f/g
         rtInstances_.clear();
         for (const CullCand& c : cullCands) {
             // M46b: レイトレ用の収集はフラスタムカリングしない (画面外の物体も
@@ -614,9 +614,9 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
         }
     }
     // M46b: レイトレ用シーン (BLAS 連結 + TLAS + インスタンス) を GPU へ。
-    // rtDebugMode==0 かつ enableRtGi==false なら収集自体が空なので、
+    // デバッグ表示・GI 合成・RT 影のどれも off なら収集自体が空なので、
     // この節はまるごと従来経路と同じになる
-    if ((rtDebugMode != 0 || enableRtGi) && !rtInstances_.empty()) {
+    if ((rtDebugMode != 0 || enableRtGi || enableRtShadow) && !rtInstances_.empty()) {
         if (!rtPasses_.IsReady()) {
             rtPasses_.Init(device, shaders);
         }
@@ -640,6 +640,9 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
             view.rtFreezeSeed = rtFreezeSeed ? 1 : 0;
             // M46f: 最終画像への合成 (ライトパスの拡散環境項を GI で置換)
             view.rtGiEnabled = enableRtGi ? 1 : 0;
+            // M46g: 平行光のシャドウ係数を CSM でなくレイトレの可視率で作る。
+            // 「Shadows」トグルは影全体の元栓なので、off なら RT 影も出さない
+            view.rtShadowEnabled = (enableRtShadow && enableShadows) ? 1 : 0;
         }
     }
 

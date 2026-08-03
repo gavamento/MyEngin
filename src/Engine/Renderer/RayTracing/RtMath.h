@@ -133,6 +133,56 @@ inline DirectX::XMFLOAT3 RtCosineHemisphere(const DirectX::XMFLOAT3& n,
     return out;
 }
 
+// ---- M46g: RT 影 (HLSL の rt_common.hlsli / rt_shadow.cs.hlsl と一致。両方更新) ----
+
+// 半頂角 (度) → cos。1 = 点光源 (完全に硬い影)。CPU 側だけで使い CB へ渡す
+inline float RtConeCosMax(float angleDeg)
+{
+    constexpr float kDegToRad = 0.01745329252f;
+    constexpr float kPi = 3.14159265358979f;
+    float a = angleDeg * kDegToRad;
+    if (a < 0.0f) {
+        a = 0.0f;
+    }
+    if (a > kPi) {
+        a = kPi;
+    }
+    return std::cos(a);
+}
+
+// 円錐 (半頂角 acos(cosMax)) の内側を立体角に対して一様にサンプルする。
+// cosMax = 1 で dir そのもの。基底は RtCosineHemisphere と同じ Duff らの分岐なし ONB。
+// HLSL の RtSampleCone と同一式
+inline DirectX::XMFLOAT3 RtSampleCone(const DirectX::XMFLOAT3& dir, float cosMax,
+                                      const DirectX::XMFLOAT2& u)
+{
+    using namespace DirectX;
+    const float cosT = cosMax + u.x * (1.0f - cosMax);
+    const float sinT = std::sqrt((std::max)(0.0f, 1.0f - cosT * cosT));
+    const float phi = 6.28318530718f * u.y;
+    const float sgn = (dir.z >= 0.0f) ? 1.0f : -1.0f;
+    const float a = -1.0f / (sgn + dir.z);
+    const float b = dir.x * dir.y * a;
+    const XMFLOAT3 t1 = { 1.0f + sgn * dir.x * dir.x * a, sgn * b, -sgn * dir.x };
+    const XMFLOAT3 t2 = { b, sgn + dir.y * dir.y * a, -dir.y };
+    const float c1 = sinT * std::cos(phi);
+    const float c2 = sinT * std::sin(phi);
+    XMFLOAT3 out;
+    XMStoreFloat3(&out, XMVector3Normalize(XMVectorSet(
+                            t1.x * c1 + t2.x * c2 + dir.x * cosT,
+                            t1.y * c1 + t2.y * c2 + dir.y * cosT,
+                            t1.z * c1 + t2.z * c2 + dir.z * cosT, 0.0f)));
+    return out;
+}
+
+// 影レイ原点のオフセット量。G-Buffer のワールド座標が半精度なので距離に比例させる
+// (定数だけだと遠景でアクネ、大きすぎるとピーターパン)。HLSL の eps 計算と同一式
+inline float RtShadowRayEps(float dist)
+{
+    const float e = kRtShadowEpsRel * dist;
+    return (e > kRtShadowEpsMin) ? e : kRtShadowEpsMin;
+}
+
 // ---- M46d: テンポラル蓄積 (HLSL の rt_temporal.cs.hlsl と一致。変更時は両方更新) ----
 
 // 前フレームのクリップ座標 → 履歴バッファの UV。

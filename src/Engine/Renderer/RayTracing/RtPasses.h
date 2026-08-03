@@ -61,10 +61,16 @@ public:
     RtGiResult RenderGi(GraphicsDevice& device, ShaderManager& shaders, const RenderView& view,
                         const RtFrameInputs& in);
 
+    // M46g: 太陽 (最初の平行光) の可視率をフル解像度で計算する。
+    // 戻り値 = 可視率テクスチャ (R8、1 = 照らされる) の SRV。null = 走らせられなかった
+    ID3D11ShaderResourceView* RenderShadow(GraphicsDevice& device, ShaderManager& shaders,
+                                           const RenderView& view, const RtFrameInputs& in);
+
     // デバッグ表示を view.rtv へ上書きする。描いたら true。
-    // gi は rtDebugMode>=4 (GI 系表示) のときだけ使う
+    // gi は rtDebugMode>=4 (GI 系表示) / shadow は rtDebugMode==9 のときだけ使う
     bool RenderDebug(GraphicsDevice& device, ShaderManager& shaders, const RenderView& view,
-                     const RtFrameInputs& in, const RtGiResult& gi);
+                     const RtFrameInputs& in, const RtGiResult& gi,
+                     ID3D11ShaderResourceView* shadow);
 
     // 直近の GPU 時間 (ProfilerWindow 表示用)
     float DebugGpuMs() const { return debugTimer_.Milliseconds(); }
@@ -72,6 +78,9 @@ public:
     float TemporalGpuMs() const { return temporalTimer_.Milliseconds(); }
     // M46e: 分散推定 + A-Trous 全反復の合計
     float SvgfGpuMs() const { return svgfTimer_.Milliseconds(); }
+    // M46g: 影レイ (フル解像度 1spp) と、その分離型空間フィルタ
+    float ShadowGpuMs() const { return shadowTimer_.Milliseconds(); }
+    float ShadowFilterGpuMs() const { return shadowFilterTimer_.Milliseconds(); }
 
 private:
     // viewKey (0=AssetPreview 1=runtime 2=SceneView 3=GameView) 毎に履歴を分ける。
@@ -117,12 +126,16 @@ private:
     RenderTexture debugRt_;   // デバッグ CS の出力先 (フル解像度、UAV 付き)
     RenderTexture giRt_;      // GI の出力先 (内部解像度、UAV 付き)
     RenderTexture svgfRt_[2]; // M46e: 分散推定 + A-Trous の ping-pong (内部解像度)
+    // M46g: 影の可視率 (フル解像度 R8)。[0] にレイトレ結果、以降フィルタで ping-pong
+    RenderTexture shadowRt_[2];
     GiHistory giHist_[kHistorySlots];
     AssetID debugCS_ = {};
     AssetID giCS_ = {};
     AssetID temporalCS_ = {};
     AssetID varianceCS_ = {};
     AssetID atrousCS_ = {};
+    AssetID shadowCS_ = {};
+    AssetID shadowFilterCS_ = {};
     AssetID blitShader_ = {};
     Microsoft::WRL::ComPtr<ID3D11Buffer> sceneCB_;
     Microsoft::WRL::ComPtr<ID3D11Buffer> envCB_;
@@ -131,6 +144,8 @@ private:
     Microsoft::WRL::ComPtr<ID3D11Buffer> temporalCB_;
     Microsoft::WRL::ComPtr<ID3D11Buffer> varianceCB_;
     Microsoft::WRL::ComPtr<ID3D11Buffer> atrousCB_;
+    Microsoft::WRL::ComPtr<ID3D11Buffer> shadowCB_;
+    Microsoft::WRL::ComPtr<ID3D11Buffer> shadowFilterCB_;
     Microsoft::WRL::ComPtr<ID3D11Buffer> blitCB_;
     Microsoft::WRL::ComPtr<ID3D11SamplerState> linearClamp_;
     Microsoft::WRL::ComPtr<ID3D11DepthStencilState> depthDisabled_;
@@ -140,6 +155,8 @@ private:
     GpuTimer giTimer_;
     GpuTimer temporalTimer_;
     GpuTimer svgfTimer_;
+    GpuTimer shadowTimer_;
+    GpuTimer shadowFilterTimer_;
     bool inited_ = false;
 };
 

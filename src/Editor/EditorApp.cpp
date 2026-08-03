@@ -322,6 +322,8 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
             // M46f: レイトレ拡散 GI を最終画像へ合成。off なら BVH の構築すら走らない。
             // 品質パラメータ (解像度/バウンス/蓄積/SVGF) は RT Debug メニュー側と共通
             ImGui::MenuItem("RT GI (Deferred)", nullptr, &ctx.renderSystem->enableRtGi);
+            // M46g: 平行光の影を CSM でなくレイトレの可視率で作る (カスケード境界が消える)
+            ImGui::MenuItem("RT Shadow (Deferred)", nullptr, &ctx.renderSystem->enableRtShadow);
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu("RT Debug (Deferred)")) {
@@ -355,6 +357,10 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
             }
             if (ImGui::MenuItem("Variance", nullptr, mode == 8)) {
                 mode = 8;
+            }
+            // M46g: 太陽の可視率 (白 = 照らされる / 黒 = 影)。RT 影 off でも撃って表示する
+            if (ImGui::MenuItem("RT Shadow Visibility", nullptr, mode == 9)) {
+                mode = 9;
             }
             ImGui::Separator();
             // M46c: GI の品質。解像度は内部バッファ、バウンスは二次光線の深さ

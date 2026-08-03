@@ -389,6 +389,22 @@ float3 RtCosineHemisphere(float3 n, float2 u)
                      + n * sqrt(max(0.0f, 1.0f - u.x)));
 }
 
+// 円錐 (半頂角 acos(cosMax)) の内側を立体角に対して一様にサンプルする (M46g)。
+// cosMax = 1 で dir そのもの (点光源 = 完全に硬い影)。基底は RtCosineHemisphere と同じ
+// Duff らの分岐なし ONB。**RtMath.h の RtSampleCone と同一式 (変更時は両方更新)**
+float3 RtSampleCone(float3 dir, float cosMax, float2 u)
+{
+    const float cosT = cosMax + u.x * (1.0f - cosMax);
+    const float sinT = sqrt(max(0.0f, 1.0f - cosT * cosT));
+    const float phi = 6.28318530718f * u.y;
+    const float sgn = (dir.z >= 0.0f) ? 1.0f : -1.0f;
+    const float a = -1.0f / (sgn + dir.z);
+    const float b = dir.x * dir.y * a;
+    const float3 t1 = float3(1.0f + sgn * dir.x * dir.x * a, sgn * b, -sgn * dir.x);
+    const float3 t2 = float3(b, sgn + dir.y * dir.y * a, -dir.y);
+    return normalize(t1 * (sinT * cos(phi)) + t2 * (sinT * sin(phi)) + dir * cosT);
+}
+
 // ---- シェーディング ----
 
 // レイが何にも当たらなかったときの放射輝度
