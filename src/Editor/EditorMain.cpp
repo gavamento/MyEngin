@@ -63,6 +63,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     bool saveSceneOnStart = false;
     bool autoPlay = false;
     float perfRate = 0.0f;
+    bool rtShowcase = false; // --rt-demo (M46i)
     int perfMax = 0;
     bool startDeferred = false;
     std::string selectName;
@@ -155,6 +156,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 config.rtShadow = true; // M46g: 平行光の影をレイトレで (Deferred のみ)
             } else if (arg == L"--rt-refl") {
                 config.rtRefl = true; // M46h: スペキュラ環境項をレイトレ反射で (Deferred のみ)
+            } else if (arg == L"--rt-demo") {
+                rtShowcase = true; // M46i: コーネル箱のショーケースシーンを構築
             } else if (arg == L"--project" && i + 1 < argc) {
                 projectDir = argv[++i];
             } else if (arg == L"--create-project" && i + 1 < argc) {
@@ -232,6 +235,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     mye::EditorApp app;
     app.saveSceneOnStart = saveSceneOnStart;
     app.autoPlay = autoPlay;
+    app.rtShowcase = rtShowcase;
     app.perfRate = perfRate;
     app.perfMax = perfMax;
     app.startDeferred = startDeferred;

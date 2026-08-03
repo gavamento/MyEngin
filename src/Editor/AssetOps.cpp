@@ -308,6 +308,7 @@ std::wstring CreateMaterialAsset(EngineContext& ctx, const std::wstring& dir, co
     root["baseColor"] = { 0.8, 0.8, 0.8, 1.0 };
     root["metallic"] = 0.0;
     root["roughness"] = 0.5;
+    root["emissive"] = 0.0; // M46i: 自己発光の強さ (0 = 発光なし)
     root["texture"] = "";   // assets ルート相対パス (空 = 白テクスチャ)
     root["normalMap"] = ""; // 空 = ノーマルマップなし
     root["transparent"] = false;

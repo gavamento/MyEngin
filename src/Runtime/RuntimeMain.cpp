@@ -38,21 +38,31 @@ class RuntimeApp : public mye::IEngineApp {
 public:
     std::wstring scenePath;
     bool startDeferred = false;
+    bool rtShowcase = false; // --rt-demo (M46i: コーネル箱のショーケース)
 
     void OnStart(mye::EngineContext& ctx) override
     {
         ctx.shaders->Load("forward_lit");
         mye::RegisterDemoContent(ctx);   // Editor と同じ実体登録 (AssetID 解決)
         mye::RegisterAssetLibraries(ctx); // .prefab / .anim を登録
-        if (scenePath.empty()) {
+        if (scenePath.empty() && rtShowcase) {
+            // M46i: ショーケースはブートシーンと別枠。保存済みファイルがあればそれを読み、
+            // 無ければコードから組む (main.scene.json には一切触らない)
+            scenePath = ctx.assetsRoot + L"\\scenes\\rt_showcase.scene.json";
+        } else if (scenePath.empty()) {
             scenePath = ctx.assetsRoot + L"\\scenes\\main.scene.json";
             mye::ProjectManifest manifest; // ブートシーンはマニフェスト優先 (M26)
             if (!ctx.projectRoot.empty() && mye::LoadProjectManifest(ctx.projectRoot, manifest)) {
                 scenePath = mye::ProjectBootScenePath(ctx.projectRoot, manifest);
             }
         }
+        if (rtShowcase) {
+            mye::RegisterRtShowcaseContent(ctx); // ロード経路でも AssetID を解決できるように
+        }
         if (std::filesystem::exists(scenePath)) {
             mye::SceneSerializer::LoadFromFile(*ctx.scene, scenePath);
+        } else if (rtShowcase) {
+            mye::BuildRtShowcaseScene(ctx); // M46i
         } else {
             mye::BuildDemoScene(ctx); // ブートシーンが無ければデモを構築
         }
@@ -151,6 +161,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 config.rtShadow = true; // M46g: 平行光の影をレイトレで (Deferred のみ)
             } else if (arg == L"--rt-refl") {
                 config.rtRefl = true; // M46h: スペキュラ環境項をレイトレ反射で (Deferred のみ)
+            } else if (arg == L"--rt-demo") {
+                app.rtShowcase = true; // M46i: コーネル箱のショーケースシーンを構築
             } else if (arg == L"--project" && i + 1 < argc) {
                 // M26: プロジェクト指定。dist 配布物は従来どおり exe 隣の assets を自動発見する
                 config.projectRoot = std::filesystem::absolute(argv[++i]).wstring();

@@ -13,6 +13,7 @@ C++20 / DirectX 11 製の自作ゲームエンジン。**Unity 風の使いや�
 |---|---|---|
 | Engine | 静的ライブラリ | Platform / Core / Renderer / Engine の 4 レイヤ |
 | Editor | exe | ImGui エディタ (開発時のホストプロセス) |
+| Runtime | exe | エディタ UI 無しの配布用ランタイム (エンジンは Editor と完全共有) |
 | GameLogic | DLL | ユーザースクリプト。**ホットリロード対象** |
 
 ## 主要機能
@@ -29,6 +30,11 @@ C++20 / DirectX 11 製の自作ゲームエンジン。**Unity 風の使いや�
   乱数は両者ともエンジンの決定論 RNG (GPU では乱数を生成しない)
 - **レンダリングパス切替** — Forward / Deferred を実行時切替 (View > Render Path)。
   ライティング関数は common.hlsli を共用し見た目が一致。透明物とパーティクルは共通の Forward 後段
+- **ハイブリッド・リアルタイムパストレーシング** — 一次光線はラスタのまま、**二次光線
+  (拡散 GI / 平行光の影 / スペキュラ反射) を自前の BVH トラバーサルで置換**。
+  Feature Level 11_0 縛りで DXR が使えないため `cs_5_0` のコンピュートシェーダで実装し、
+  SVGF (テンポラル蓄積 → 分散推定 → A-Trous) でデノイズする。発光マテリアルはそのまま
+  GI の面光源になる。詳細は [ADR-009](docs/adr/ADR-009-hybrid-path-tracing.md)
 - **Debug/Release 一貫性** — 固定 60Hz tick、`/fp:precise`、PCG32、明示ソートキー。
   リプレイ (.rep) の tick 毎ワールドハッシュ比較で機械検証:
   `tools\replay_verify.bat` が両構成ビルド → Debug 記録 → Debug/Release 照合 → 静的規則検査
@@ -49,10 +55,29 @@ Editor.exe --selftest                     # ECS + シリアライザ回帰テス
 Editor.exe --replay-record out.rep --replay-ticks 600
 Editor.exe --replay-verify out.rep        # exit code 0/1
 Editor.exe --autoplay --deferred --frames 600 --screenshot shot.png
+Runtime.exe --deferred --rt-demo --rt-gi --rt-shadow --rt-refl --rt-anim-seed
+                                          # レイトレのショーケース (コーネル箱)
 tools\replay_verify.bat                   # 一貫性検証一式
 tools\check_rules.ps1                     # コーディング規則の静的検査
 tools\gen_project_files.ps1               # ソース一覧を vcxproj に反映
 ```
+
+## 計測 (RTX 3060 / 1600x900 / Release)
+
+レイトレ 3 レーンを全部 on にしたときの GPU 時間。GI と反射は内部 1/2 解像度、影はフル解像度。
+`[rt]` ログの GpuTimer は最終フレーム 1 サンプルなので、同一条件 5 回の**最小値**を載せている。
+
+| パス | 既定デモ (522 インスタンス) | コーネル箱 (11 インスタンス / 780 三角形) |
+|---|---|---|
+| BVH 構築 (CPU) | 0.20 ms | 0.02 ms |
+| 拡散 GI (1spp) | 0.48 ms | 1.50 ms |
+| テンポラル + SVGF | 0.35 ms | 0.55 ms |
+| RT 影 (トレース + フィルタ) | 0.49 ms | 0.49 ms |
+| RT 反射 (トレース + デノイズ) | 0.74 ms | 0.49 ms |
+| **合計** | **約 2.1 ms** | **約 3.0 ms** |
+
+インスタンス数が 1/50 でも閉じた箱の方が GI が 3 倍重い — **全レイがジオメトリに当たり
+2 バウンス目と影レイまで必ず走る**ため。コストを決めるのは三角形数ではなくレイの平均行程。
 
 ## アーキテクチャ
 

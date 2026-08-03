@@ -413,6 +413,25 @@ AssetID LoadMaterial(LoadContext& lc, const ufbx_material* mat, const ufbx_mesh*
         m.roughness = static_cast<float>(mat->pbr.roughness.value_real);
     }
 
+    // 自己発光 (M46i)。エンジンの Material は **スカラー強度 × baseColor** なので、
+    // FBX の emission_color (RGB) はそのままは入らない。明るさだけを最大成分で拾い、
+    // 色味は baseColor に委ねる (発光色を独立に持たせるのは v2 以降)
+    {
+        const ufbx_material_map& em = mat->pbr.emission_color;
+        const double emFactor =
+            mat->pbr.emission_factor.has_value ? mat->pbr.emission_factor.value_real : 1.0;
+        const double peak = std::max({ em.value_vec3.x, em.value_vec3.y, em.value_vec3.z });
+        const double intensity = emFactor * peak;
+        if (intensity > 0.0) {
+            m.emissiveIntensity = static_cast<float>(intensity);
+            if (diag) {
+                MYE_LOG_INFO("FBX material '%s': emissive を強度 %.3f として取り込みました "
+                             "(発光色は baseColor に従います)",
+                             matName.c_str(), intensity);
+            }
+        }
+    }
+
     // 半透明。ForwardPath / DeferredPath の半透明キューに乗せる
     const float opacity = ComputeOpacity(mat);
     m.baseColor.w *= opacity;
@@ -467,15 +486,6 @@ AssetID LoadMaterial(LoadContext& lc, const ufbx_material* mat, const ufbx_mesh*
     }
 
     if (diag) {
-        // emissive: Material にフィールドが無いので取り込めない (今回は対象外)
-        const ufbx_material_map& em = mat->pbr.emission_color;
-        const double emFactor =
-            mat->pbr.emission_factor.has_value ? mat->pbr.emission_factor.value_real : 1.0;
-        if (emFactor * (em.value_vec3.x + em.value_vec3.y + em.value_vec3.z) > 0.0) {
-            MYE_LOG_WARN("FBX material '%s': emissive が設定されていますが、エンジンの Material に "
-                         "emissive が無いため無視します",
-                         matName.c_str());
-        }
         // 第 2 UV セットはメッシュ分割が必要なので据え置き (WARN のみ)
         if (mesh && mesh->uv_sets.count > 1) {
             const ufbx_string set0 = mesh->uv_sets.data[0].name;

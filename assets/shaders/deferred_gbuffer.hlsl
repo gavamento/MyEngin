@@ -22,7 +22,7 @@ cbuffer MaterialParams : register(b2)
     float  gMetallic;
     float  gRoughness;
     int    gHasNormal; // 0=ノーマルマップ無し (幾何法線をそのまま使う)
-    float  _matPad;
+    float  gEmissive; // M46i: 自己発光の強さ (0 = 発光なし)
 };
 
 Texture2D    gAlbedoTex : register(t0);
@@ -60,7 +60,7 @@ struct PSOut
     float4 albedo   : SV_Target0; // rgb = albedo, a = 1 (ジオメトリ有り)
     float4 normal   : SV_Target1; // ワールド法線 *0.5+0.5 (R10G10B10A2)
     float4 position : SV_Target2; // ワールド座標 (R16G16B16A16_FLOAT)
-    float4 material : SV_Target3; // r=metallic g=roughness (R8G8B8A8)
+    float4 material : SV_Target3; // r=metallic g=roughness b=emissive/MYE_EMISSIVE_MAX
 };
 
 PSOut PSMain(VSOut i)
@@ -75,6 +75,6 @@ PSOut PSMain(VSOut i)
     o.albedo = float4(albedo.rgb, 1.0f);
     o.normal = float4(n * 0.5f + 0.5f, 1.0f);
     o.position = float4(i.posW, 1.0f);
-    o.material = float4(gMetallic, gRoughness, 0.0f, 1.0f);
+    o.material = float4(gMetallic, gRoughness, EncodeEmissive(gEmissive), 1.0f);
     return o;
 }

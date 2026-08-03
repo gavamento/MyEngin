@@ -57,6 +57,7 @@ private:
         float baseColor[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
         float metallic = 0.0f;
         float roughness = 0.5f;
+        float emissive = 0.0f; // M46i: 自己発光の強さ (0 = 発光なし)
         bool transparent = false;
         uint64_t textureGuid = 0; // 0 = なし (保存は GUID 数値、M39a)
         uint64_t normalGuid = 0;

@@ -14,8 +14,9 @@ struct RenderResources;
 // ジオメトリックトランスフォーム (pivot) は ufbx のヘルパーノード ("geo") として階層に現れる。
 // 座標系: ufbx に左手系 (エンジン標準) Y-up への変換を任せる (target_axes + 巻き順の自動反転)。
 // glTF ローダは cgltf に同等機能が無いため手動 Z 反転のままで、規約が分かれている点に注意。
-// マテリアルはベースカラー / ノーマルマップ / 半透明 / metallic-roughness に対応。
-// emissive と第 2 UV セットはエンジン側に受け皿が無いため WARN のみ (P3)。
+// マテリアルはベースカラー / ノーマルマップ / 半透明 / metallic-roughness / emissive に対応。
+// emissive は M46i でエンジン側の受け皿 (Material::emissiveIntensity) ができたので取り込む
+// (スカラー強度なので発光色は baseColor に従う)。第 2 UV セットは受け皿が無く WARN のみ。
 // 現状はスタティックメッシュ + マテリアル + 階層に対応 (スキン/アニメは将来)。
 namespace FbxLoader {
 

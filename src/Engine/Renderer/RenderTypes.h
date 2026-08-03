@@ -37,6 +37,29 @@ inline DirectX::XMFLOAT4 SrgbToLinear(const DirectX::XMFLOAT4& c)
 // tools\check_rules.ps1 の規則 9 が C++/HLSL 3 箇所の一致を静的に検査する。
 constexpr int kMaxBones = 128;
 
+// 自己発光強度を G-Buffer へ詰めるときの正規化上限 (M46i)。
+// gbMaterial は R8G8B8A8_UNORM で b チャンネルが空いていたので、そこへ
+// saturate(emissiveIntensity / kEmissiveMaxIntensity) を書き、ライトパスで逆変換する。
+// **HLSL 側の MYE_EMISSIVE_MAX (common.hlsli) と必ず一致させること** — 食い違うと
+// 発光の明るさが静かに定数倍ずれる。tools\check_rules.ps1 の規則 9 が一致を検査する。
+// 8 は「1 = 白の拡散面と同じ明るさ」を基準に、屋内の面光源が飽和しない範囲として選んだ値
+constexpr int kEmissiveMaxIntensity = 8;
+
+// common.hlsli の EncodeEmissive / DecodeEmissive の CPU ミラー (PostFxMath.h と同じ方針)。
+// selftest がこの 2 本で往復と飽和を検証し、HLSL 側との式の一致は目視 + 規則 9 で担保する。
+// **0 はちょうど 0 に落ちる** — これが「発光を使わないマテリアルは M46i 以前と
+// ビット単位で同じ絵になる」という受け入れ基準の根拠
+inline float EncodeEmissive(float intensity)
+{
+    const float t = intensity / static_cast<float>(kEmissiveMaxIntensity);
+    return (t < 0.0f) ? 0.0f : ((t > 1.0f) ? 1.0f : t); // HLSL saturate と同じ
+}
+
+inline float DecodeEmissive(float encoded)
+{
+    return encoded * static_cast<float>(kEmissiveMaxIntensity);
+}
+
 struct RenderItem {
     AssetID mesh = {};
     AssetID material = {};

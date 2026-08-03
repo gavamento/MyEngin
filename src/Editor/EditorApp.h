@@ -50,6 +50,7 @@ public:
     std::string selectName;        // --select NAME (起動時に名前でエンティティを選択 — ギズモ検証用)
     int pickTestFrame = -1;        // --pick-test (このフレームで中心をピッキングし PASS/FAIL ログ)
     std::wstring sceneOverride;    // --scene PATH (既定の main.scene.json の代わりに読むシーン)
+    bool rtShowcase = false;       // --rt-demo (M46i: コーネル箱のショーケースを構築)
 
 private:
     // 未保存変更ガード (M27b): dirty なら確認モーダルを経由して実行する

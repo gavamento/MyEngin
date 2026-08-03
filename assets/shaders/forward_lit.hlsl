@@ -51,7 +51,7 @@ cbuffer MaterialParams : register(b2)
     float  gMetallic;
     float  gRoughness;
     int    gHasNormal; // 0=ノーマルマップ無し (幾何法線をそのまま使う)
-    float  _matPad;
+    float  gEmissive; // M46i: 自己発光の強さ (0 = 発光なし)
 };
 
 Texture2D                gAlbedo        : register(t0);
@@ -107,6 +107,9 @@ float4 PSMain(VSOut i) : SV_Target
                                  gAmbient, gLights, gLightCount, dirShadow, gIblEnabled,
                                  gIblSpecMips, gIblIrradiance, gIblPrefiltered, gIblBrdfLut,
                                  gIblSampler, 1.0f); // SSAO は Deferred のみ
+    // M46i: 自己発光。ライティングに依らず放射する分を足す (フォグより前 =
+    // 遠くの発光もフォグに減衰される)。gEmissive=0 なら加算項がちょうど 0
+    color += albedo.rgb * gEmissive;
     color = ApplyFog(color, gFogColor, gFogMode, gFogDensity, gFogStart, gFogEnd,
                      gCameraPos, i.posW, gFogHeightFalloff, gFogBaseHeight, gSunDirection,
                      gSunColor, gFogInscatterIntensity, gFogInscatterPower); // M29d+M43a

@@ -29,6 +29,7 @@
 #include "Engine/Engine/Script/ManagedHost.h"
 #include "Engine/Platform/PathUtil.h"
 #include "Engine/Renderer/GpuResources.h"
+#include "Engine/Renderer/RenderTypes.h" // kEmissiveMaxIntensity (M46i)
 
 #include "imgui.h"
 
@@ -894,6 +895,7 @@ void InspectorWindow::LoadMaterialEdit(EngineContext& ctx, const std::wstring& p
     }
     matEdit_.metallic = root.value("metallic", 0.0f);
     matEdit_.roughness = root.value("roughness", 0.5f);
+    matEdit_.emissive = root.value("emissive", 0.0f); // M46i (欠損 = 発光なし)
     matEdit_.transparent = root.value("transparent", false);
     // texture/normalMap: 数値 = GUID / 文字列 = 旧相対パス (GUID に変換して保持 —
     // 保存時は常に GUID 数値で書く = M39a の「次回保存で guid 書き」)
@@ -932,6 +934,13 @@ void InspectorWindow::DrawMaterialInspector(EngineContext& ctx, const std::wstri
     ImGui::ColorEdit4("baseColor", matEdit_.baseColor);
     ImGui::SliderFloat("metallic", &matEdit_.metallic, 0.0f, 1.0f);
     ImGui::SliderFloat("roughness", &matEdit_.roughness, 0.0f, 1.0f);
+    // M46i: 自己発光。放射輝度 = baseColor * emissive。Deferred は G-Buffer へ
+    // kEmissiveMaxIntensity 正規化で詰めるので、それを超える値は頭打ちになる
+    ImGui::SliderFloat("emissive", &matEdit_.emissive, 0.0f,
+                       static_cast<float>(kEmissiveMaxIntensity));
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("自己発光の強さ。RT GI が有効なら発光面がそのまま間接光の光源になる");
+    }
     ImGui::Checkbox("transparent", &matEdit_.transparent);
 
     // テクスチャピッカー (GUID 参照、M39a)。assets 配下の画像をサムネ付きで列挙
@@ -1002,6 +1011,7 @@ void InspectorWindow::DrawMaterialInspector(EngineContext& ctx, const std::wstri
                               matEdit_.baseColor[2], matEdit_.baseColor[3] };
         root["metallic"] = matEdit_.metallic;
         root["roughness"] = matEdit_.roughness;
+        root["emissive"] = matEdit_.emissive; // M46i
         // サブ参照は GUID 数値で書く (M39a)。0 = 空文字列 (従来互換の「なし」)
         if (matEdit_.textureGuid != 0) {
             root["texture"] = matEdit_.textureGuid;

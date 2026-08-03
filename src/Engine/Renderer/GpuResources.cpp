@@ -935,6 +935,8 @@ AssetID MaterialLibrary::LoadFromFile(const std::wstring& path, TextureLibrary& 
     m.metallic = root.value("metallic", 0.0f);
     m.roughness = root.value("roughness", 0.5f);
     m.transparent = root.value("transparent", false) ? 1 : 0;
+    // M46i: 自己発光。欠損 = 0 = 発光なしなので、既存の .mat.json は挙動不変
+    m.emissiveIntensity = root.value("emissive", 0.0f);
 
     // texture/normalMap のサブ参照 (M39a で GUID 化):
     //   数値 = GUID (assetguid::ResolvePath で現在パスへ解決 — リネーム/移動に追従)

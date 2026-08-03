@@ -215,28 +215,68 @@ REGISTER_SCRIPT(PlayerController, FIELDS(moveSpeed, jumpCount));
 
 ### 6.1 Scope
 
-[TBD] Rendering path:
+Resolved: **both paths are implemented and switchable at runtime** (View > Render Path).
+The original Option A / Option B trade-off was settled by sharing the lighting functions
+in `common.hlsli` between the two paths, which keeps their output visually identical while
+letting the Deferred path carry the effects that need a G-Buffer. See ADR-007.
 
-- **Option A: Forward Rendering** — Lower implementation cost. Recommended if particles and hot reloading are the primary portfolio focus
-- **Option B: Deferred Rendering** — Stronger demonstration of rendering technology, but substantially higher development cost. Recommended if the project is intended to emphasize graphics programming
+- **Forward** — opaque + transparent + particles in one pass. Also used as the transparent
+  tail of the Deferred path, so the two never diverge in lighting
+- **Deferred** — 4 render targets (albedo / world normal / world position / metal-roughness-emissive).
+  SSAO, screen-space effects and the ray-traced lanes of §6.4 hook in here
 
-### 6.2 Initial Feature Scope
+### 6.2 Feature Scope
 
-| Feature | Priority | Notes |
+| Feature | Status | Notes |
 |---|---|---|
-| Static mesh rendering | Required | |
-| Materials / shader variants | Required | Hot-reloadable |
-| Textures (2D / mipmaps) | Required | |
-| Directional light + ambient light | Required | |
-| Particle rendering (additive / alpha blending) | Required | See Chapter 7 |
-| Shadow mapping | [TBD] | |
-| Post-processing such as bloom | [TBD] | |
-| Skeletal animation | [TBD] | |
+| Static mesh rendering | Implemented | Frustum culling + instancing |
+| Materials / shader variants | Implemented | `.mat.json`, hot-reloadable |
+| Textures (2D / mipmaps) | Implemented | GUID-keyed, async decode, BCn cooking |
+| Lighting | Implemented | Directional / Point / Spot (max 16) + ambient, Cook-Torrance PBR |
+| Particle rendering | Implemented | See Chapter 7 |
+| Shadow mapping | Implemented | 3-cascade CSM with PCF |
+| Post-processing | Implemented | HDR, bloom, tonemap, FXAA, DoF, motion blur, auto-exposure, LUT |
+| Skeletal animation | Implemented | 128-bone palette, glTF / FBX skinning |
+| Image-based lighting | Implemented | Irradiance + prefiltered specular + BRDF LUT |
+| Ray-traced secondary rays | Implemented | See §6.4 (default off) |
 
 ### 6.3 DirectX 11 Abstraction
 
 - The device and context are encapsulated within the Renderer layer. Raw DirectX 11 types are not exposed to the Engine layer or higher layers
 - Rendering follows a “collect render items → sort → submit” model. No immediate-mode rendering API is provided, preserving room for future multithreading and graphics API replacement
+
+### 6.4 Hybrid Ray Tracing (default off)
+
+Primary visibility stays rasterized; the **secondary rays** are replaced by a compute-shader
+ray tracer that walks a software BVH. `GraphicsDevice` requires only Feature Level 11_0, so
+DXR / `RayQuery` are unavailable — the traversal is written by hand in `cs_5_0`.
+Design rationale and measured cost: **ADR-009**.
+
+| Lane | Replaces | Resolution | Denoiser |
+|---|---|---|---|
+| Diffuse GI (1 spp, cosine-importance + NEE) | The diffuse environment term (IBL irradiance / constant ambient) | 1/2 | Temporal accumulation → variance estimation → A-Trous ×3 |
+| Directional shadow (sun cone, 0.265°) | The CSM lookup | Full | Separable spatial filter only (no history — shadows must not ghost) |
+| Specular reflection (GGX VNDF, 1 ray) | The prefiltered IBL specular term, fading back to IBL above roughness 0.6 | 1/2 | Same chain as GI, tuned shorter (history 8, A-Trous ×2) |
+
+- **Acceptance criterion**: with every lane off, the output is *bit-identical* to the build
+  before the ray tracer existed. Each milestone verified this by comparing screenshots
+  with `fc /b` against the previous commit's binary, on both render paths
+- **Scene representation**: BLAS reuses the deterministic median-split builder from the
+  physics mesh collider; only the TLAS is new. Instances carry `worldToLocal` only and the
+  ray direction is deliberately left unnormalized so `t` stays in world units
+- **Radiometry**: the GI and reflection buffers hold *demodulated incident radiance*
+  (no albedo applied), which puts them in the same units as the IBL terms they replace.
+  This is what makes the swap free of brightness steps
+- **Emissive surfaces are area lights.** `Material::emissiveIntensity` (a scalar multiplying
+  the base color) drives both the raster look — packed into the free `b` channel of the
+  metal-roughness G-Buffer, normalized by `kEmissiveMaxIntensity` — and `RtMaterial::emissive`,
+  which the path tracer picks up on bounce hits
+- **Determinism**: this is a render-only lane. Randomness is a stateless PCG3D hash of
+  (pixel, frame index), never read back to the CPU, and never hashed into the world state —
+  the same exemption ADR-008 grants GPU particles
+- **Not covered in v1**: skinned meshes and transparents are absent from the BVH, secondary
+  hits shade from material constants only (no bindless textures), moving objects ghost
+  (no object motion vectors), and local lights cast no ray-traced shadows
 
 ---
 
@@ -433,6 +473,12 @@ Record major design decisions so they can be clearly discussed during interviews
 | ADR-3 | Store script state on the engine side | Eliminates the need to back up state during DLL reloads. Trade-off: fields must be registered for reflection |
 | ADR-4 | Guarantee consistency through rules and automated testing | Rules alone cannot prevent human error. Replay hash comparison provides mechanical verification |
 | ADR-5 | Add further entries as decisions are made | |
+
+The full records live in [`docs/adr/`](docs/adr/), one file per decision:
+ADR-001 hybrid ECS / ADR-002 DLL-only hot reload / ADR-003 engine-side script state /
+ADR-004 replay consistency / ADR-005 fixed tick, per-tick structural changes /
+ADR-006 build system / ADR-007 dual render path / ADR-008 particle determinism /
+**ADR-009 hybrid path tracing** (§6.4).
 
 ---
 

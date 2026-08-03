@@ -81,6 +81,13 @@ $constGroups = @(
         }
     },
     @{
+        label = 'kEmissiveMaxIntensity / MYE_EMISSIVE_MAX'
+        sites = @{
+            'src\Engine\Renderer\RenderTypes.h' = 'constexpr\s+int\s+kEmissiveMaxIntensity\s*=\s*(\d+)'
+            'assets\shaders\common.hlsli'       = '#\s*define\s+MYE_EMISSIVE_MAX\s+(\d+)'
+        }
+    },
+    @{
         label = 'kRtStackDepth / MYE_RT_STACK_DEPTH'
         sites = @{
             'src\Engine\Renderer\RayTracing\RtTypes.h' = 'constexpr\s+int\s+kRtStackDepth\s*=\s*(\d+)'

@@ -176,8 +176,13 @@ void RtScene::Update(const std::vector<InstanceDesc>& instances, RenderResources
             rm.baseColor = lin;
             rm.metallic = mat->metallic;
             rm.roughness = mat->roughness;
+            // M46i: 自己発光。放射輝度 = リニア baseColor * 強度。ラスタ側 (gbMaterial.b) と
+            // 同じ「albedo に強度を掛ける」規約なので、発光面をラスタで見た明るさと
+            // その面がバウンス先で光源として振る舞う明るさが一致する
+            rm.emissive = { lin.x * mat->emissiveIntensity, lin.y * mat->emissiveIntensity,
+                            lin.z * mat->emissiveIntensity };
         }
-        matScratch_.push_back(rm); // emissive は M46i で埋める
+        matScratch_.push_back(rm);
     }
     if (instScratch_.empty()) {
         return;

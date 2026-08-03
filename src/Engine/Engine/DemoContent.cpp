@@ -163,6 +163,119 @@ void BuildDemoScene(EngineContext& ctx, float perfRate, int perfMax)
     }
 }
 
+void RegisterRtShowcaseContent(EngineContext& ctx)
+{
+    RenderResources& res = *ctx.resources;
+    const AssetID white = res.textures.White();
+    const AssetID shader = AssetID{ HashStr("forward_lit") };
+    res.meshes.Cube();
+    res.meshes.Sphere();
+
+    // マテリアルはこのシーン専用 (既定デモの mat_* とは名前を分ける)。
+    // 二次ヒットのシェーディングはマテリアル定数のみ = テクスチャ非対応 (M46 v1 制限) なので、
+    // ショーケースは意図的に全て無地にしてある — ラスタとレイトレで同じ色が出る
+    auto makeMat = [&](const char* name, float r, float g, float b, float metallic,
+                       float roughness, float emissive) {
+        Material m;
+        m.shader = shader;
+        m.texture = white;
+        m.baseColor = { r, g, b, 1.0f };
+        m.metallic = metallic;
+        m.roughness = roughness;
+        m.emissiveIntensity = emissive;
+        return res.materials.Register(name, m);
+    };
+    makeMat("rt_white", 0.80f, 0.79f, 0.76f, 0.0f, 0.85f, 0.0f);
+    makeMat("rt_red", 0.75f, 0.15f, 0.12f, 0.0f, 0.85f, 0.0f);
+    makeMat("rt_green", 0.18f, 0.65f, 0.20f, 0.0f, 0.85f, 0.0f);
+    // 発光パネル。ラスタでは gbMaterial.b 経由でこの面自体が明るく描かれ、
+    // レイトレでは RtMaterial.emissive としてバウンス先の光源になる (同じ強度から両方が出る)
+    makeMat("rt_lamp", 1.00f, 0.95f, 0.85f, 0.0f, 1.0f, 6.0f);
+    makeMat("rt_mirror", 0.95f, 0.93f, 0.88f, 1.0f, 0.05f, 0.0f);
+    // 粗さは 0.18 にしてある: roughness 0.3〜0.6 の帯は 1spp の GGX ローブが
+    // 小さな発光パネルを引く分散が大きく、v1 のデノイザではファイアフライが残るため (M46h v1 制限)
+    makeMat("rt_brushed", 0.72f, 0.45f, 0.20f, 1.0f, 0.18f, 0.0f);
+}
+
+void BuildRtShowcaseScene(EngineContext& ctx)
+{
+    Scene& s = *ctx.scene;
+    RenderResources& res = *ctx.resources;
+
+    RegisterRtShowcaseContent(ctx); // 単独で呼ばれても実体が揃うようにしておく
+    const AssetID cube = res.meshes.Cube();
+    const AssetID sphere = res.meshes.Sphere();
+    const AssetID matWhite = AssetID{ HashStr("rt_white") };
+    const AssetID matRed = AssetID{ HashStr("rt_red") };
+    const AssetID matGreen = AssetID{ HashStr("rt_green") };
+    const AssetID matLamp = AssetID{ HashStr("rt_lamp") };
+    const AssetID matMirror = AssetID{ HashStr("rt_mirror") };
+    const AssetID matBrushed = AssetID{ HashStr("rt_brushed") };
+
+    auto box = [&](const char* name, float px, float py, float pz, float sx, float sy, float sz,
+                   AssetID mat, float yawDeg = 0.0f) {
+        GameObject go = s.CreateGameObject(name);
+        go.SetLocalPosition(px, py, pz);
+        go.SetLocalScale(sx, sy, sz);
+        if (yawDeg != 0.0f) {
+            go.SetLocalRotationEuler(0.0f, yawDeg, 0.0f);
+        }
+        auto* mr = go.AddComponent<MeshRendererComponent>();
+        mr->mesh = cube;
+        mr->material = mat;
+        return go;
+    };
+    auto ball = [&](const char* name, float px, float py, float pz, float diameter, AssetID mat) {
+        GameObject go = s.CreateGameObject(name);
+        go.SetLocalPosition(px, py, pz);
+        go.SetLocalScale(diameter, diameter, diameter); // Sphere() は半径 0.5 = 直径 1
+        auto* mr = go.AddComponent<MeshRendererComponent>();
+        mr->mesh = sphere;
+        mr->material = mat;
+        return go;
+    };
+
+    // カメラは箱の内側に置く (前面の壁はカメラの背後なので視界を塞がない)。
+    // 箱を閉じておくことで、拡散 GI のバウンスが外へ逃げずコーネル箱らしい色移りが出る
+    GameObject camera = s.CreateGameObject("Main Camera");
+    {
+        auto* cam = camera.AddComponent<CameraComponent>();
+        cam->fovYDeg = 55.0f; // 既定 60 はやや広角。天井の発光パネルが画に入る下限
+    }
+    camera.SetLocalPosition(0.0f, 4.2f, -4.3f);
+    camera.SetLocalRotationEuler(4.0f, 0.0f, 0.0f); // わずかに見下ろして床を画に入れる
+
+    // ---- 箱 (内寸 10 x 8 x 14、壁厚 0.4)。奥行きを取ってあるのは、
+    //      被写体をカメラから離して画角に収めるため ----
+    box("Floor", 0.0f, -0.2f, 2.0f, 10.8f, 0.4f, 14.4f, matWhite);
+    box("Ceiling", 0.0f, 8.2f, 2.0f, 10.8f, 0.4f, 14.4f, matWhite);
+    box("WallBack", 0.0f, 4.0f, 9.2f, 10.8f, 8.8f, 0.4f, matWhite);
+    box("WallFront", 0.0f, 4.0f, -5.2f, 10.8f, 8.8f, 0.4f, matWhite); // カメラの背後
+    box("WallLeft", -5.2f, 4.0f, 2.0f, 0.4f, 8.8f, 14.4f, matRed);
+    box("WallRight", 5.2f, 4.0f, 2.0f, 0.4f, 8.8f, 14.4f, matGreen);
+
+    // ---- 天井の面光源 (このシーン唯一の光源) ----
+    box("LightPanel", 0.0f, 7.85f, 2.5f, 4.5f, 0.15f, 5.0f, matLamp);
+
+    // ---- 被写体 ----
+    ball("MirrorSphere", -2.1f, 1.5f, 4.2f, 3.0f, matMirror);  // 鏡面 = 箱が映り込む
+    ball("BrushedSphere", 2.8f, 1.1f, 1.8f, 2.2f, matBrushed); // 金属 = 引き締まった映り込み
+    box("TallBox", 2.2f, 2.2f, 6.2f, 2.2f, 4.4f, 2.2f, matWhite, 20.0f);
+    box("ShortBox", -3.0f, 0.9f, 1.4f, 1.8f, 1.8f, 1.8f, matWhite, -18.0f);
+
+    // 2 個目の発光体は **ファイルマテリアル** (.mat.json の "emissive" フィールド) から引く。
+    // これで「JSON → MaterialLibrary → ラスタ + レイトレ」の経路がショーケースを起動するだけで
+    // 通る (エディタで .mat.json を書き換えればホットリロードで光り方が変わるのも確認できる)。
+    // ファイルが無ければ静かに省略する — このシーンの成立に必須ではない
+    {
+        const AssetID matFile = MaterialLibrary::HashForPath(
+            ctx.assetsRoot + L"\\materials\\demo_emissive.mat.json");
+        if (res.materials.Get(matFile) != nullptr) {
+            box("EmissiveBar", -4.6f, 3.4f, 6.4f, 0.5f, 2.6f, 0.5f, matFile);
+        }
+    }
+}
+
 void RegisterAssetLibraries(EngineContext& ctx)
 {
     std::error_code ec;

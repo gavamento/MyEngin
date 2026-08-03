@@ -10,6 +10,23 @@ float3 ApplyDirectionalLight(float3 albedo, float3 normal, float3 lightDir, floa
 
 #define MAX_LIGHTS 16
 
+// 自己発光強度を G-Buffer (R8G8B8A8 の b チャンネル) へ詰めるときの正規化上限 (M46i)。
+// **C++ 側の kEmissiveMaxIntensity (RenderTypes.h) と必ず一致させること** —
+// tools\check_rules.ps1 の規則 9 が静的に検査する
+#define MYE_EMISSIVE_MAX 8
+
+// 自己発光強度 → G-Buffer の b チャンネル (0..1)。0 はちょうど 0 に落ちるので、
+// 発光を使わないマテリアルは M46i 以前と 1 ビットも変わらない
+float EncodeEmissive(float intensity)
+{
+    return saturate(intensity / (float)MYE_EMISSIVE_MAX);
+}
+
+float DecodeEmissive(float encoded)
+{
+    return encoded * (float)MYE_EMISSIVE_MAX;
+}
+
 // GPU ライト 1 個 (C++ 側 GpuLight とレイアウト一致 = 64 バイト)
 struct Light
 {

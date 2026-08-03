@@ -1,5 +1,7 @@
 #include "Engine/Renderer/RenderSelfTest.h"
 
+#include <cmath>
+
 #include <DirectXMath.h>
 
 #include "Engine/Core/Components.h"
@@ -325,6 +327,48 @@ void TestReprojectUv()
     TEST_CHECK(!ReprojectUv(identity, persp, 0.5f, 0.5f, -1.0f, pu, pv));
 }
 
+// 自己発光の G-Buffer 符号化 (M46i)。common.hlsli の EncodeEmissive/DecodeEmissive と対
+void TestEmissiveEncoding()
+{
+    MYE_LOG_INFO("[selftest] emissive encode/decode (G-Buffer b channel)");
+    const float kMax = static_cast<float>(kEmissiveMaxIntensity);
+
+    // ★受け入れ基準の核: 発光なし → 符号化値も復号値も厳密に 0。
+    //   ライトパスの加算項がちょうど 0 になるので M46i 以前とビット一致する
+    TEST_CHECK(EncodeEmissive(0.0f) == 0.0f);
+    TEST_CHECK(DecodeEmissive(0.0f) == 0.0f);
+    TEST_CHECK(DecodeEmissive(EncodeEmissive(0.0f)) == 0.0f);
+
+    // 往復 (量子化前の実数域では厳密に戻る値を選ぶ: kMax の 2 冪分の 1)
+    for (float v : { 0.5f, 1.0f, 2.0f, 4.0f, kMax }) {
+        TEST_CHECK(DecodeEmissive(EncodeEmissive(v)) == v);
+    }
+
+    // 上限で飽和し、それを超えても 1.0 (= kMax) で頭打ち
+    TEST_CHECK(EncodeEmissive(kMax) == 1.0f);
+    TEST_CHECK(EncodeEmissive(kMax * 2.0f) == 1.0f);
+    TEST_CHECK(DecodeEmissive(EncodeEmissive(kMax * 100.0f)) == kMax);
+
+    // 負値は 0 へクランプ (saturate 相当)。マテリアルに負の強度が入っても黒くならない
+    TEST_CHECK(EncodeEmissive(-1.0f) == 0.0f);
+
+    // 単調増加 + 8bit UNORM に落としても順序が保たれる
+    float prev = -1.0f;
+    for (int i = 0; i <= 16; ++i) {
+        const float e = EncodeEmissive(kMax * static_cast<float>(i) / 16.0f);
+        TEST_CHECK(e > prev);
+        prev = e;
+    }
+
+    // R8G8B8A8_UNORM の量子化誤差は 1 段 = kMax/255 未満に収まる
+    const float quantStep = kMax / 255.0f;
+    for (float v : { 0.1f, 1.3f, 3.7f, 6.0f }) {
+        const float roundTrip =
+            DecodeEmissive(std::round(EncodeEmissive(v) * 255.0f) / 255.0f);
+        TEST_CHECK(std::fabs(roundTrip - v) <= quantStep * 0.5f + 1e-5f);
+    }
+}
+
 } // namespace
 
 bool RunRenderSelfTest()
@@ -340,6 +384,7 @@ bool RunRenderSelfTest()
     TestAutoExposureBins();
     TestSignedCoC();
     TestReprojectUv();
+    TestEmissiveEncoding();
     if (g_failCount == 0) {
         MYE_LOG_INFO("[selftest] render: ALL PASS");
         return true;

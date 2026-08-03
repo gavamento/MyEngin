@@ -1,0 +1,13 @@
+{
+  "engine": "MyEngine",
+  "material": 1,
+  "name": "demo_emissive",
+  "shader": "forward_lit",
+  "baseColor": [0.35, 0.85, 1.0, 1.0],
+  "metallic": 0.0,
+  "roughness": 1.0,
+  "emissive": 4.0,
+  "texture": "",
+  "normalMap": "",
+  "transparent": false
+}

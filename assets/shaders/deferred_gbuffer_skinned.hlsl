@@ -24,7 +24,7 @@ cbuffer MaterialParams : register(b2)
     float  gMetallic;
     float  gRoughness;
     int    gHasNormal; // 0=ノーマルマップ無し (幾何法線をそのまま使う)
-    float  _matPad;
+    float  gEmissive; // M46i: 自己発光の強さ (0 = 発光なし)
 };
 
 // ボーンパレット (M18)。各行列 = transpose(inverseBind * jointWorld) (行ベクトル規約)。
@@ -102,6 +102,6 @@ PSOut PSMain(VSOut i)
     o.albedo = float4(albedo.rgb, 1.0f);
     o.normal = float4(n * 0.5f + 0.5f, 1.0f);
     o.position = float4(i.posW, 1.0f);
-    o.material = float4(gMetallic, gRoughness, 0.0f, 1.0f);
+    o.material = float4(gMetallic, gRoughness, EncodeEmissive(gEmissive), 1.0f);
     return o;
 }

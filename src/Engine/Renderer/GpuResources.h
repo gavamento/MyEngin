@@ -174,7 +174,12 @@ struct Material {
     float metallic = 0.0f;  // 0=誘電体 1=金属 (PBR、M17)
     float roughness = 0.5f; // 0=鏡面 1=拡散
     int32_t transparent = 0; // 0=opaque, 1=alpha blend
-    int32_t pad = 0;
+    // 自己発光の強さ (M46i)。放射輝度 = baseColor(リニア) * emissiveIntensity。
+    // 0 = 発光なし (既定) — このとき全経路で加算項がちょうど 0 になり従来の絵とビット一致する。
+    // ラスタでは Deferred が gbMaterial.b へ kEmissiveMaxIntensity 正規化で符号化するため
+    // 上限 kEmissiveMaxIntensity・量子化 1/255 刻み (Forward は CB 直渡しで量子化なし)。
+    // レイトレでは RtMaterial.emissive に載り、そのままバウンス先の光源になる
+    float emissiveIntensity = 0.0f;
 };
 
 class MaterialLibrary {

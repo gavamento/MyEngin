@@ -64,7 +64,7 @@ struct MaterialCB {
     float metallic;
     float roughness;
     int32_t hasNormal; // 0=ノーマルマップ無し
-    float pad0;
+    float emissive;    // M46i: 自己発光の強さ (0 = 発光なし)
 };
 
 bool CreateConstantBuffer(ID3D11Device* dev, UINT size, Microsoft::WRL::ComPtr<ID3D11Buffer>& out)
@@ -393,6 +393,7 @@ void ForwardPath::DrawItems(GraphicsDevice& device, const std::vector<RenderItem
             mc.metallic = mat->metallic;
             mc.roughness = mat->roughness;
             mc.hasNormal = mat->normalTex.IsNull() ? 0 : 1;
+            mc.emissive = mat->emissiveIntensity;
             UploadCB(dc, materialCB_.Get(), mc);
             dc->DrawIndexedInstanced(mesh->indexCount, run.count, 0, 0, 0);
             prof::AddDraw(static_cast<int>(mesh->indexCount / 3 * run.count));
@@ -466,6 +467,7 @@ void ForwardPath::DrawItems(GraphicsDevice& device, const std::vector<RenderItem
         mc.metallic = mat->metallic;
         mc.roughness = mat->roughness;
         mc.hasNormal = mat->normalTex.IsNull() ? 0 : 1;
+        mc.emissive = mat->emissiveIntensity;
         UploadCB(dc, materialCB_.Get(), mc);
 
         dc->DrawIndexed(mesh->indexCount, 0, 0);

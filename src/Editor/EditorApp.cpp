@@ -60,6 +60,10 @@ void EditorApp::OnStart(EngineContext& ctx)
                     { "Stats", &showStats_ } });
     if (!sceneOverride.empty()) {
         scenePath_ = sceneOverride;
+    } else if (rtShowcase) {
+        // M46i: ショーケースの保存先は専用パスにする。ここを main.scene.json のままにすると
+        // Ctrl+S ひとつで既定デモシーンが置き換わり、golden.rep の入力が変わってしまう
+        scenePath_ = ctx.assetsRoot + L"\\scenes\\rt_showcase.scene.json";
     } else {
         scenePath_ = ctx.assetsRoot + L"\\scenes\\main.scene.json";
         ProjectManifest manifest; // ブートシーンはマニフェスト優先 (M26)
@@ -75,8 +79,13 @@ void EditorApp::OnStart(EngineContext& ctx)
     // (パスベースの完全なアセット解決は AssetManager の将来拡張)
     RegisterDemoContent(ctx);
     RegisterAssetLibraries(ctx); // シーンロード前に .prefab/.anim を登録 (参照解決のため)
+    if (rtShowcase) {
+        RegisterRtShowcaseContent(ctx); // 保存済みショーケースをロードする経路でも実体を揃える
+    }
     if (std::filesystem::exists(scenePath_)) {
         SceneSerializer::LoadFromFile(*ctx.scene, scenePath_);
+    } else if (rtShowcase) {
+        BuildRtShowcaseScene(ctx); // M46i
     } else {
         BuildDemoScene(ctx, perfRate, perfMax);
     }

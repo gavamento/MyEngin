@@ -91,7 +91,8 @@ float4 PSMain(VSOut i) : SV_Target
     }
     const float3 n = normalize(gNormal.Load(pixel).xyz * 2.0f - 1.0f);
     const float3 posW = gPosition.Load(pixel).xyz;
-    const float2 mr = gMaterial.Load(pixel).rg; // metallic, roughness
+    const float4 matG = gMaterial.Load(pixel);
+    const float2 mr = matG.rg; // metallic, roughness
     float dirShadow = 1.0f;
     if (gRtShadowEnabled != 0) {
         // M46g: レイトレの可視率で置き換える (フル解像度なので Load でぴったり一致)。
@@ -128,6 +129,10 @@ float4 PSMain(VSOut i) : SV_Target
                               gLights, gLightCount, dirShadow, gIblEnabled, gIblSpecMips,
                               gIblIrradiance, gIblPrefiltered, gIblBrdfLut, gIblSampler, ao);
     }
+    // M46i: 自己発光 (G-Buffer の b に正規化して詰めてある)。ライティングに依らず
+    // 放射する分を足す。発光なしのマテリアルは b が厳密に 0 なので加算項もちょうど 0 になり、
+    // M46i 以前の出力とビット単位で一致する
+    color += albedo.rgb * DecodeEmissive(matG.b);
     color = ApplyFog(color, gFogColor, gFogMode, gFogDensity, gFogStart, gFogEnd,
                      gCameraPos, posW, gFogHeightFalloff, gFogBaseHeight, gSunDirection,
                      gSunColor, gFogInscatterIntensity, gFogInscatterPower); // M29d+M43a

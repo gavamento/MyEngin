@@ -68,7 +68,7 @@ struct MaterialCB {
     float metallic;
     float roughness;
     int32_t hasNormal; // 0=ノーマルマップ無し
-    float pad0;
+    float emissive;    // M46i: 自己発光の強さ (0 = 発光なし)
 };
 
 // deferred_light.hlsl の LightPass と同一レイアウト
@@ -499,6 +499,7 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
             imc.metallic = mat->metallic;
             imc.roughness = mat->roughness;
             imc.hasNormal = mat->normalTex.IsNull() ? 0 : 1;
+            imc.emissive = mat->emissiveIntensity;
             UploadCB(dc, materialCB_.Get(), imc);
             dc->DrawIndexedInstanced(mesh->indexCount, run.count, 0, 0, 0);
             prof::AddDraw(static_cast<int>(mesh->indexCount / 3 * run.count));
@@ -557,6 +558,7 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
         mc.metallic = mat->metallic;
         mc.roughness = mat->roughness;
         mc.hasNormal = mat->normalTex.IsNull() ? 0 : 1;
+        mc.emissive = mat->emissiveIntensity;
         UploadCB(dc, materialCB_.Get(), mc);
         dc->DrawIndexed(mesh->indexCount, 0, 0);
         prof::AddDraw(static_cast<int>(mesh->indexCount / 3));
@@ -825,6 +827,7 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
             mc.metallic = mat->metallic;
             mc.roughness = mat->roughness;
             mc.hasNormal = mat->normalTex.IsNull() ? 0 : 1;
+            mc.emissive = mat->emissiveIntensity;
             UploadCB(dc, materialCB_.Get(), mc);
             dc->DrawIndexed(mesh->indexCount, 0, 0);
             prof::AddDraw(static_cast<int>(mesh->indexCount / 3));
