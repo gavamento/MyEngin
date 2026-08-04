@@ -215,7 +215,9 @@ AssetID ShaderManager::Load(std::string_view name)
     }
     ShaderProgram prog;
     prog.path = ResolvePath(name);
-    if (!CompileProgram(prog.path, prog)) {
+    // Init 前 (ヘッドレス = --selftest 等、M48a) はコンパイルせず ID だけ予約する
+    // (ローダの shaders.Load("forward_lit") をウィンドウ / D3D 無しで通すため)
+    if (device_ && !CompileProgram(prog.path, prog)) {
         MYE_LOG_ERROR("shader compile failed: %.*s", static_cast<int>(name.size()), name.data());
     }
     programs_.emplace(id.value, std::move(prog));
@@ -231,7 +233,7 @@ AssetID ShaderManager::LoadCompute(std::string_view name)
     ShaderProgram prog;
     prog.isCompute = true;
     prog.path = ResolvePath(name);
-    if (!CompileProgram(prog.path, prog)) {
+    if (device_ && !CompileProgram(prog.path, prog)) { // Init 前は ID 予約のみ (Load と同じ)
         MYE_LOG_ERROR("compute shader compile failed: %.*s", static_cast<int>(name.size()),
                       name.data());
     }

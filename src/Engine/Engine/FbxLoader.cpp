@@ -548,6 +548,7 @@ AssetID LoadSkin(LoadContext& lc, const ufbx_mesh* mesh, const ufbx_skin_deforme
         if (!n) {
             continue; // bone_node が無いクラスタ: バインドポーズ恒等で index だけ確保する
         }
+        out.name = StrOf(n->name); // 部位ソケットの joint 名参照 (M48a)
         if (n->parent) {
             const auto it = std::find(nodes.begin(), nodes.end(), n->parent);
             if (it != nodes.end()) {

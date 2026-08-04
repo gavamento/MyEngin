@@ -152,23 +152,29 @@ AssetID MeshLibrary::Register(std::string_view name, std::span<const MeshVertex>
     const AssetID id{ HashStr(name) };
 
     Mesh mesh;
-    D3D11_BUFFER_DESC vbd = {};
-    vbd.ByteWidth = static_cast<UINT>(vertices.size_bytes());
-    vbd.Usage = D3D11_USAGE_IMMUTABLE;
-    vbd.BindFlags = D3D11_BIND_VERTEX_BUFFER;
-    D3D11_SUBRESOURCE_DATA vinit = { vertices.data(), 0, 0 };
+    // Init 前 (ヘッドレス = --selftest 等、M48a) は GPU バッファを作らず CPU 側
+    // (AABB / positions / indices) だけ登録する — ローダをウィンドウ / D3D 無しで通すため。
+    // 実アプリは必ず Init 済みなのでこの分岐には入らない
+    if (device_) {
+        D3D11_BUFFER_DESC vbd = {};
+        vbd.ByteWidth = static_cast<UINT>(vertices.size_bytes());
+        vbd.Usage = D3D11_USAGE_IMMUTABLE;
+        vbd.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+        D3D11_SUBRESOURCE_DATA vinit = { vertices.data(), 0, 0 };
 
-    D3D11_BUFFER_DESC ibd = {};
-    ibd.ByteWidth = static_cast<UINT>(indices.size_bytes());
-    ibd.Usage = D3D11_USAGE_IMMUTABLE;
-    ibd.BindFlags = D3D11_BIND_INDEX_BUFFER;
-    D3D11_SUBRESOURCE_DATA iinit = { indices.data(), 0, 0 };
+        D3D11_BUFFER_DESC ibd = {};
+        ibd.ByteWidth = static_cast<UINT>(indices.size_bytes());
+        ibd.Usage = D3D11_USAGE_IMMUTABLE;
+        ibd.BindFlags = D3D11_BIND_INDEX_BUFFER;
+        D3D11_SUBRESOURCE_DATA iinit = { indices.data(), 0, 0 };
 
-    ID3D11Device* dev = device_->Device();
-    if (FAILED(dev->CreateBuffer(&vbd, &vinit, mesh.vb.GetAddressOf()))
-        || FAILED(dev->CreateBuffer(&ibd, &iinit, mesh.ib.GetAddressOf()))) {
-        MYE_LOG_ERROR("mesh buffer creation failed: %.*s", static_cast<int>(name.size()), name.data());
-        return {};
+        ID3D11Device* dev = device_->Device();
+        if (FAILED(dev->CreateBuffer(&vbd, &vinit, mesh.vb.GetAddressOf()))
+            || FAILED(dev->CreateBuffer(&ibd, &iinit, mesh.ib.GetAddressOf()))) {
+            MYE_LOG_ERROR("mesh buffer creation failed: %.*s", static_cast<int>(name.size()),
+                          name.data());
+            return {};
+        }
     }
     mesh.indexCount = static_cast<uint32_t>(indices.size());
 
@@ -445,6 +451,9 @@ AssetID MeshLibrary::Capsule()
 bool TextureLibrary::CreateFromPixels(Texture& out, const uint8_t* rgba, int w, int h, bool srgb,
                                       bool mips)
 {
+    if (!device_) {
+        return false; // Init 前 = ヘッドレス (M48a)。GPU 生成の隘路はここと LoadDdsInto の 2 本
+    }
     // 既定はフルミップチェーン + GenerateMips (.meta の generateMips=off で mip0 のみ、M39b)
     D3D11_TEXTURE2D_DESC td = {};
     td.Width = static_cast<UINT>(w);
@@ -544,6 +553,9 @@ static DXGI_FORMAT ToSrgbFormat(DXGI_FORMAT f)
 // BCn は D3D11 がネイティブにサンプルするため、圧縮ブロックをそのまま subresource に渡すだけ。
 bool TextureLibrary::LoadDdsInto(Texture& out, const std::wstring& path, bool srgb)
 {
+    if (!device_) {
+        return false; // Init 前 = ヘッドレス (M48a)。CreateFromPixels と並ぶ GPU 生成の隘路
+    }
     std::ifstream f(path, std::ios::binary);
     if (!f) {
         MYE_LOG_ERROR("dds open failed: %s", WideToUtf8(path).c_str());

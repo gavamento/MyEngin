@@ -79,16 +79,16 @@ XMFLOAT4 SampleQuat(const std::vector<float>& times, const std::vector<XMFLOAT4>
     return out;
 }
 
-} // namespace
-
-void ComputeBonePalette(const SkinnedModel& model, int clip, float timeSec,
-                        std::vector<XMFLOAT4X4>& out)
+// clip を timeSec でサンプルして全ジョイントのローカル行列を作る (palette / jointGlobal 共用)。
+// 式・評価順は M18 の ComputeBonePalette 前半ループそのまま (ビット不変が selftest 対象、M48a)
+void ComputeJointLocals(const SkinnedModel& model, int clip, float timeSec,
+                        std::vector<XMMATRIX>& local)
 {
     const size_t n = model.joints.size();
     const SkeletalClip* c =
         (clip >= 0 && clip < static_cast<int>(model.clips.size())) ? &model.clips[clip] : nullptr;
 
-    std::vector<XMMATRIX> local(n);
+    local.resize(n);
     for (size_t j = 0; j < n; ++j) {
         const SkeletonJoint& jt = model.joints[j];
         XMFLOAT3 t = jt.bindT;
@@ -105,20 +105,60 @@ void ComputeBonePalette(const SkinnedModel& model, int clip, float timeSec,
                    XMMatrixRotationQuaternion(XMLoadFloat4(&r)) *
                    XMMatrixTranslation(t.x, t.y, t.z);
     }
+}
+
+// グローバル = local[j] * local[parent] * ... (親チェーンを上へ、順序非依存)
+XMMATRIX JointGlobalFromLocals(const SkinnedModel& model, const std::vector<XMMATRIX>& local,
+                               size_t j)
+{
+    XMMATRIX global = local[j];
+    int p = model.joints[j].parent;
+    while (p >= 0) {
+        global = XMMatrixMultiply(global, local[static_cast<size_t>(p)]);
+        p = model.joints[static_cast<size_t>(p)].parent;
+    }
+    return global;
+}
+
+} // namespace
+
+int32_t SkinnedModel::FindJointByName(std::string_view name) const
+{
+    if (name.empty()) {
+        return -1;
+    }
+    for (size_t j = 0; j < joints.size(); ++j) {
+        if (joints[j].name == name) {
+            return static_cast<int32_t>(j);
+        }
+    }
+    return -1;
+}
+
+void ComputeBonePalette(const SkinnedModel& model, int clip, float timeSec,
+                        std::vector<XMFLOAT4X4>& out)
+{
+    const size_t n = model.joints.size();
+    std::vector<XMMATRIX> local;
+    ComputeJointLocals(model, clip, timeSec, local);
 
     out.resize(n);
     for (size_t j = 0; j < n; ++j) {
-        // グローバル = local[j] * local[parent] * ... (親チェーンを上へ、順序非依存)
-        XMMATRIX global = local[j];
-        int p = model.joints[j].parent;
-        while (p >= 0) {
-            global = XMMatrixMultiply(global, local[static_cast<size_t>(p)]);
-            p = model.joints[static_cast<size_t>(p)].parent;
-        }
+        const XMMATRIX global = JointGlobalFromLocals(model, local, j);
         // skin = inverseBind * jointGlobal (行ベクトル: 頂点 * IB * global)。転置してアップロード
         const XMMATRIX ib = XMLoadFloat4x4(&model.joints[j].inverseBind);
         XMStoreFloat4x4(&out[j], XMMatrixTranspose(XMMatrixMultiply(ib, global)));
     }
+}
+
+XMMATRIX ComputeJointGlobal(const SkinnedModel& model, int clip, float timeSec, int32_t jointIndex)
+{
+    if (jointIndex < 0 || static_cast<size_t>(jointIndex) >= model.joints.size()) {
+        return XMMatrixIdentity();
+    }
+    std::vector<XMMATRIX> local;
+    ComputeJointLocals(model, clip, timeSec, local);
+    return JointGlobalFromLocals(model, local, static_cast<size_t>(jointIndex));
 }
 
 } // namespace mye

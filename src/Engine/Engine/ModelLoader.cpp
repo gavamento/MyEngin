@@ -190,6 +190,7 @@ AssetID LoadSkin(LoadContext& lc, const cgltf_data* data, const cgltf_skin* skin
             }
         }
         out.parent = parent;
+        out.name = jnode->name ? jnode->name : ""; // 部位ソケットの joint 名参照 (M48a)
         if (skin->inverse_bind_matrices) {
             float ib[16];
             cgltf_accessor_read_float(skin->inverse_bind_matrices, j, ib, 16);

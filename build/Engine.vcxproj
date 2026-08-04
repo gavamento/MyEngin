@@ -94,6 +94,7 @@
     <ClCompile Include="..\src\Engine\Engine\Script\EngineApiTable.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Script\ManagedHost.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Script\ScriptHost.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\SkeletonSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\SkinningSystem.cpp" />
     <ClCompile Include="..\src\Engine\Engine\TransformSystem.cpp" />
     <ClCompile Include="..\src\Engine\Engine\UfbxImpl.cpp" />
@@ -208,6 +209,7 @@
     <ClInclude Include="..\src\Engine\Engine\Script\EngineApiTable.h" />
     <ClInclude Include="..\src\Engine\Engine\Script\ManagedHost.h" />
     <ClInclude Include="..\src\Engine\Engine\Script\ScriptHost.h" />
+    <ClInclude Include="..\src\Engine\Engine\SkeletonSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\SkinningSystem.h" />
     <ClInclude Include="..\src\Engine\Engine\TransformSystem.h" />
     <ClInclude Include="..\src\Engine\Engine\UI\UIGeometry.h" />

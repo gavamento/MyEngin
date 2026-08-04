@@ -27,6 +27,7 @@
 #include "Engine/Engine/RayTracing/RtSelfTest.h"
 #include "Engine/Engine/Project.h"
 #include "Engine/Engine/SceneSelfTest.h"
+#include "Engine/Engine/SkeletonSelfTest.h"
 #include "Engine/Engine/FontSelfTest.h"
 #include "Engine/Engine/UI/UISelfTest.h"
 #include "Engine/Engine/VfxSelfTest.h"
@@ -221,7 +222,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             && mye::RunJobSystemSelfTest() && mye::RunVfxSelfTest()
             && mye::RunParticleSelfTest() && mye::RunAssetOpsSelfTest()
             && mye::RunFontSelfTest() && mye::RunAudioSelfTest() && mye::RunRtSelfTest()
-            && mye::RunLocalizationSelfTest();
+            && mye::RunLocalizationSelfTest() && mye::RunSkeletonSelfTest();
         return ok ? 0 : 1;
     }
 
