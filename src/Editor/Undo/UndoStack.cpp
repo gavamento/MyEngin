@@ -4,6 +4,7 @@
 
 #include "Editor/Selection.h"
 #include "Engine/Engine/GameObject.h"
+#include "Engine/Engine/Prefab.h"
 #include "Engine/Engine/Scene.h"
 #include "Engine/Engine/SceneSerializer.h"
 
@@ -59,6 +60,17 @@ void UndoStack::CaptureAfter(Scene& scene, uint64_t fileId)
     GameObject g = scene.FindByFileId(fileId);
     if (!g) {
         return;
+    }
+    // ---- プレハブ override リストの記録 (M48e) ----
+    // **エディタの編集経路はすべてここを通る** (Inspector のフィールド/名前、ギズモ、
+    // Hierarchy のリネーム/D&D、コンポーネントの貼り付け・リセット・追加・削除、Revert)。
+    // 個々の編集箇所に MarkOverride を撒くと必ず取りこぼしが出て、次のロードで
+    // RefreshNonOverridden がその上書きをベース値に戻してしまう = 静かなデータ損失になる。
+    // 編集直後はベースが現行値と一致している唯一のタイミングなので、ここでライブ diff を
+    // 撮り直すのが最も安全。SubtreeToJson の**前**に撮ること — Undo ペイロードにも
+    // 更新後の overrides キーが載り、Undo/Redo でリストごと復元される
+    if (prefabs_) {
+        Prefab::RecordOverridesSubtree(scene, *prefabs_, g.Id());
     }
     json sub = SceneSerializer::SubtreeToJson(scene, g.Id());
     for (json& item : sub) {

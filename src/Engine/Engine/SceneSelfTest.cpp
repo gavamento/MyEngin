@@ -542,6 +542,9 @@ bool RunSceneSerializerSelfTest()
         check(posF && !Prefab::IsFieldOverridden(s7, lib, inst1.Id(), "LocalTransform", *posF),
               "fresh instance has no override");
         lt->position.x = 99.0f;
+        // M48e: 上書き判定は保存型の override リストが一次情報。ECS を直接書き換えたら
+        // エディタが CaptureAfter でやっているのと同じ記録を明示的に行う必要がある
+        Prefab::RecordOverrides(s7, lib, inst1.Id());
         check(posF && Prefab::IsFieldOverridden(s7, lib, inst1.Id(), "LocalTransform", *posF),
               "modified field detected as override");
         Prefab::RevertField(s7, lib, inst1.Id(), "LocalTransform", *posF);
@@ -774,6 +777,7 @@ bool RunSceneSerializerSelfTest()
         check(posF && !Prefab::IsFieldOverridden(s2, lib, blade2, "LocalTransform", *posF),
               "nested: a fresh inner member reports no override");
         s2.GetWorld().GetComponent<LocalTransform>(blade2)->position.y = 42.0f;
+        Prefab::RecordOverrides(s2, lib, blade2); // M48e: 記録も内側ベース基準で作られること
         check(posF && Prefab::IsFieldOverridden(s2, lib, blade2, "LocalTransform", *posF),
               "nested: an edited inner member is diffed against the INNER base");
 
@@ -1189,6 +1193,159 @@ bool RunSceneSerializerSelfTest()
         for (const std::wstring& p : { actorPath, prefabPath, badPath, multiPath }) {
             std::filesystem::remove(p, ec);
         }
+    }
+
+    // ---- シーン override リスト + ロード時ベース更新 (M48e) ----
+    // M13 のライブ diff は「シーンを閉じている間にベースが変わった」ケースを誤判定する
+    // (ユーザーが触っていないフィールドまで上書き扱いになり、二度とベース更新に追随しない)。
+    // 保存型の override リストでそこを直したので、以下 4 点を機械的に押さえる:
+    //   (1) 上書きが overrides キーで往復する  (2) 再ロードで非 override だけベース最新値へ
+    //   (3) レガシー (キー無し) シーンはビット不変ロード  (4) Play/Stop 往復でリスト不変
+    {
+        PrefabLibrary lib;
+        const std::wstring ovrPath =
+            (std::filesystem::temp_directory_path() / L"mye_selftest_ovr.actor.json").wstring();
+        const std::string kPosKey = "LocalTransform.position";
+
+        // ベース: Root(pos 1,2,3 / scale 1,1,1) + Child(pos 0.5,0,0)
+        Scene srcScene;
+        GameObject ovrRoot = srcScene.CreateGameObjectTracked("OvrRoot");
+        ovrRoot.SetLocalPosition(1.0f, 2.0f, 3.0f);
+        GameObject ovrKid = srcScene.CreateGameObjectTracked("OvrChild");
+        ovrKid.SetParent(ovrRoot);
+        ovrKid.SetLocalPosition(0.5f, 0.0f, 0.0f);
+        srcScene.GetWorld().ApplyStructuralChanges();
+        const uint64_t ovrHash = Prefab::CreateAsset(srcScene, lib, ovrPath, ovrRoot.Id());
+
+        Scene s;
+        const uint64_t rootFid = Prefab::Instantiate(s, lib, ovrHash, 0);
+        s.GetWorld().ApplyStructuralChanges();
+        GameObject inst = s.FindByFileId(rootFid);
+        uint64_t kidFid = 0;
+        if (auto* h = s.GetWorld().GetComponent<HierarchyComponent>(inst.Id())) {
+            kidFid = s.EnsureFileId(h->firstChild);
+        }
+        check(s.HasOverrideRecord(rootFid) && s.GetOverrides(rootFid)->empty()
+                  && s.HasOverrideRecord(kidFid),
+              "override: a fresh instance is recorded as new-format with an empty list");
+
+        // ルートの position だけ上書き (エディタの CaptureAfter に相当する記録を明示的に行う)
+        inst.GetComponent<LocalTransform>()->position.x = 99.0f;
+        Prefab::RecordOverrides(s, lib, inst.Id());
+        check(s.GetOverrides(rootFid) && *s.GetOverrides(rootFid) == std::set<std::string>{ kPosKey },
+              "override: editing one field records exactly that leaf key");
+
+        // (1) 保存往復 — overrides キーがソート済み配列で出て、ロードで戻る
+        const nlohmann::json saved = SceneSerializer::SaveToJson(s);
+        {
+            bool wrote = false;
+            for (const nlohmann::json& it : saved["entities"]) {
+                if (it.value("fileId", 0ull) == rootFid) {
+                    wrote = it.contains("overrides")
+                        && it["overrides"] == nlohmann::json::array({ kPosKey });
+                }
+            }
+            check(wrote, "override: SaveToJson emits the list as an \"overrides\" array");
+            Scene sl;
+            SceneSerializer::LoadFromJson(sl, saved);
+            check(sl.GetOverrides(rootFid)
+                      && *sl.GetOverrides(rootFid) == std::set<std::string>{ kPosKey },
+                  "override: LoadFromJson restores the list");
+        }
+
+        // ---- ベースを「シーンを閉じている間に」書き換える ----
+        // Root: position (7,8,9) + scale (2,2,2) / Child: position (0.25,0,0) + 改名
+        {
+            const PrefabAsset* ovrAsset = lib.Get(ovrHash);
+            nlohmann::json newBase = ovrAsset ? ovrAsset->entities : nlohmann::json::array();
+            const std::string assetName = ovrAsset ? ovrAsset->name : std::string();
+            for (nlohmann::json& it : newBase) {
+                nlohmann::json& lt = it["components"]["LocalTransform"];
+                if (it.value("fileId", 0ull) == 1ull) {
+                    lt["position"] = nlohmann::json::array({ 7.0f, 8.0f, 9.0f });
+                    lt["scale"] = nlohmann::json::array({ 2.0f, 2.0f, 2.0f });
+                } else {
+                    lt["position"] = nlohmann::json::array({ 0.25f, 0.0f, 0.0f });
+                    it["name"] = "RenamedChild";
+                }
+            }
+            lib.Register(ovrPath, assetName, newBase);
+        }
+
+        // (2) 再ロード + refresh: override は据え置き、非 override だけ新ベースへ追随する
+        {
+            Scene s2;
+            SceneSerializer::LoadFromJson(s2, saved);
+            Prefab::RefreshNonOverridden(s2, lib);
+            GameObject i2 = s2.FindByFileId(rootFid);
+            GameObject k2 = s2.FindByFileId(kidFid);
+            const LocalTransform* rlt = i2 ? i2.GetComponent<LocalTransform>() : nullptr;
+            const LocalTransform* klt = k2 ? k2.GetComponent<LocalTransform>() : nullptr;
+            check(rlt && rlt->position.x == 99.0f && rlt->position.y == 2.0f,
+                  "override: the overridden field survives a base change (whole leaf field)");
+            check(rlt && rlt->scale.x == 2.0f,
+                  "override: a non-overridden field of the same component follows the new base");
+            check(klt && klt->position.x == 0.25f,
+                  "override: a non-overridden member follows the new base");
+            check(k2 && std::string(s2.GetWorld().GetName(k2.Id())) == "RenamedChild",
+                  "override: a non-overridden name follows the new base");
+            check(s2.GetOverrides(rootFid)
+                      && *s2.GetOverrides(rootFid) == std::set<std::string>{ kPosKey },
+                  "override: refresh does not disturb the stored list");
+        }
+
+        // (3) レガシー (overrides キー無し) はビット不変ロード + ライブ diff からの移行
+        {
+            nlohmann::json legacy = saved;
+            for (nlohmann::json& it : legacy["entities"]) {
+                it.erase("overrides");
+            }
+            Scene s3;
+            SceneSerializer::LoadFromJson(s3, legacy);
+            Prefab::RefreshNonOverridden(s3, lib);
+            nlohmann::json after = SceneSerializer::SaveToJson(s3);
+            for (nlohmann::json& it : after["entities"]) {
+                it.erase("overrides"); // 移行で付いたキーだけを外して値を比較する
+            }
+            check(after == legacy,
+                  "override: a legacy scene loads bit-invariant (refresh must not touch it)");
+            check(s3.GetOverrides(rootFid) && s3.GetOverrides(rootFid)->count(kPosKey) == 1,
+                  "override: a legacy instance is migrated from the live diff at load");
+        }
+
+        // (4) Play/Stop (SaveToJson → LoadFromJson) の往復でリストが変わらないこと
+        {
+            Scene s4;
+            SceneSerializer::LoadFromJson(s4, saved);
+            const nlohmann::json snap = SceneSerializer::SaveToJson(s4);
+            SceneSerializer::LoadFromJson(s4, snap);
+            check(s4.GetOverrides(rootFid)
+                      && *s4.GetOverrides(rootFid) == std::set<std::string>{ kPosKey },
+                  "override: the list survives the Play/Stop round trip");
+        }
+
+        // (5) Revert はリストからも消す / 抽出したベースには自レベルの overrides を残さない
+        {
+            const FieldDesc* pf = nullptr;
+            for (const FieldDesc& f : ComponentRegistry::Get().Desc(LocalTransform::sTypeId).fields) {
+                if (std::string(f.name) == "position") {
+                    pf = &f;
+                }
+            }
+            Prefab::RevertField(s, lib, inst.Id(), "LocalTransform", *pf);
+            check(s.GetOverrides(rootFid) && s.GetOverrides(rootFid)->empty(),
+                  "override: RevertField drops the key from the list");
+            inst.GetComponent<LocalTransform>()->position.x = 55.0f;
+            Prefab::RecordOverrides(s, lib, inst.Id());
+            bool leaked = false;
+            for (const nlohmann::json& it : Prefab::ExtractLocal(s, inst.Id())) {
+                leaked = leaked || it.contains("overrides");
+            }
+            check(!leaked, "override: extracting a new base strips own-level override lists");
+        }
+
+        std::error_code ec;
+        std::filesystem::remove(ovrPath, ec);
     }
 
     // ---- Undo 復元でプレハブタグが消えること (M48c) ----

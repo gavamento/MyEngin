@@ -1,4 +1,5 @@
 #pragma once
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -71,8 +72,24 @@ private:
     std::unordered_map<uint64_t, PrefabAsset> assets_;
 };
 
-// プレハブ操作 (Engine 層の自由関数)。オーバーライドは「現在値がベース値と異なるか」の
-// ライブ判定で、別途保存はしない (シーンには実体を持つのでロードは通常経路 = 決定論安全)
+// プレハブ操作 (Engine 層の自由関数)。
+//
+// ---- オーバーライドの保存モデル (M48e) ----
+// 上書きは Scene の override リスト (`Scene::GetOverrides`) に **保存型** で持ち、
+// エンティティ JSON の `"overrides"` キーで往復する。ライブ diff (現在値 != ベース値) は
+// 記録の無いレガシーシーンのフォールバックとしてのみ残る。
+//
+// 記録の更新はライブ diff の**スナップショット**として行う。ライブ diff が真になるのは
+// 「ベースが現行と一致していると分かっているタイミング」だけなので、そこで撮って保存する:
+//   - 編集直後 (UndoStack::CaptureAfter → RecordOverridesSubtree)
+//   - ベース更新の直後 (PropagateBaseChange / ApplyInstance)
+//   - ロード直後のレガシー移行 (RefreshNonOverridden)
+// 逆に「シーンを閉じている間にベースが変わった」場合はライブ diff が誤判定するため、
+// ロード時は保存済みリストだけを信じて非 override をベース最新値へ更新する
+// (これが M13 のライブ diff 方式にあった欠陥の修理そのもの)。
+//
+// v1 の制限: 値が偶然ベースと一致する上書きは記録されない (ライブ diff 由来の性質)。
+// 構造変更 (コンポーネントの追加/削除、子の増減) も上書きとして追跡しない
 //
 // ---- 入れ子インスタンスの ID ドメイン (M48c) ----
 // プレハブは **展開保存** される (シーンにもアセットにも実体が丸ごと入る) ので、入れ子は
@@ -137,10 +154,33 @@ void RevertInstance(Scene& scene, const PrefabLibrary& lib, uint64_t rootFileId)
 bool ApplyInstance(Scene& scene, PrefabLibrary& lib, uint64_t rootFileId);
 
 // prefabHash のベース変更 (oldBase→newBase) を全インスタンスの非オーバーライドへ伝播 (リロード用)。
-// 非オーバーライド = 現在値が oldBase と一致するフィールド。
+// 非オーバーライド = 現在値が oldBase と一致するフィールド。伝播後は override リストを取り直す。
 // 入れ子インスタンスは境界を越えない (内側は内側のハッシュで別途伝播される。M48c)
 void PropagateBaseChange(Scene& scene, const nlohmann::json& oldBase, const nlohmann::json& newBase,
                          uint64_t prefabHash);
+
+// ---- override リストの記録 (M48e) ----
+
+// e の現在値をベースと突き合わせた上書きキー集合 (ライブ diff)。プレハブ非メンバなら空。
+// キーは "Component.field" / 名前は "name"。**ベースに存在するフィールドだけ**を見る
+// (ベースに無いものはロード時の更新対象でもないので記録する意味がない)
+std::set<std::string> ComputeOverrides(Scene& scene, const PrefabLibrary& lib, EntityID e);
+
+// e の override リストを現在値から記録し直す。プレハブ非メンバになったら記録を消す。
+// ベースが未登録 (アセット欠落) のときは既存の記録を保持する — 消すと復帰時に上書きを失う
+void RecordOverrides(Scene& scene, const PrefabLibrary& lib, EntityID e);
+
+// root サブツリー全体に RecordOverrides を適用する (エディタ編集直後のフック)。
+// **UndoStack::CaptureAfter がこれを呼ぶ** = 全エディタ編集経路を 1 箇所で被覆する
+void RecordOverridesSubtree(Scene& scene, const PrefabLibrary& lib, EntityID root);
+
+// **ロード直後に 1 回だけ**呼ぶ: 全インスタンスの「上書きされていない」フィールドと名前を
+// ベースの最新値へ更新する。シーンを閉じている間にプレハブが更新されていても追随する。
+//   - 記録のあるメンバ : リストに無いフィールドをベース値で更新
+//   - 記録の無いメンバ : レガシー。**値には触らず**ライブ diff から記録だけ作る (移行)
+// 順序は fileId 昇順 → localId 昇順の固定順で、入力 (シーン JSON / アセット JSON) だけに
+// 依存する純関数 = 決定論的。Play/Stop の LoadFromJson では**呼ばない** (往復で値が動かない)
+void RefreshNonOverridden(Scene& scene, const PrefabLibrary& lib);
 
 } // namespace Prefab
 } // namespace mye

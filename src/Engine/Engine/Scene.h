@@ -1,6 +1,8 @@
 #pragma once
+#include <set>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 
 #include "Engine/Core/World.h"
 #include "Engine/Engine/GameObject.h"
@@ -35,7 +37,11 @@ public:
     uint64_t EnsureFileId(EntityID e);
 
     // 全エンティティ破棄 (名前と nextFileId は保持)
-    void Clear() { world_.Clear(); }
+    void Clear()
+    {
+        world_.Clear();
+        overrides_.clear();
+    }
 
     World& GetWorld() { return world_; }
     const std::string& Name() const { return name_; }
@@ -45,10 +51,51 @@ public:
     void SetNextFileId(uint64_t v) { nextFileId_ = v; }
     uint64_t PeekNextFileId() const { return nextFileId_; }
 
+    // ---- プレハブ override リスト (M48e) ----
+    //
+    // プレハブインスタンスのメンバごとに「ユーザーが上書きした葉フィールド」の集合を持つ。
+    // キーは `"Component.field"`、エンティティ名だけは `"name"`。
+    // **ECS の外に置き WorldHash には入れない** — シミュレーション状態ではなく編集メタデータで、
+    // ロード後の値には差が出ないため (差が出るなら refresh のバグ)。
+    //
+    // 記録の有無そのものが意味を持つ:
+    //   - 記録あり (空集合を含む) = 新形式。ロード時にベース最新値で非 override を更新してよい
+    //   - 記録なし               = レガシー (M48d 以前に保存されたシーン)。ライブ diff に
+    //                              フォールバックし、値には一切触らない (ビット不変ロード)
+    // シリアライズはエンティティ JSON の `"overrides"` キー (SceneSerializer::WriteEntity)。
+    using OverrideSet = std::set<std::string>; // ソート済み = 決定論的なファイル出力
+
+    void SetOverrides(uint64_t fileId, OverrideSet keys)
+    {
+        if (fileId != 0) {
+            overrides_[fileId] = std::move(keys); // 空集合でも「記録あり」として残す
+        }
+    }
+    void ClearOverrides(uint64_t fileId) { overrides_.erase(fileId); }
+    void MarkOverride(uint64_t fileId, std::string key)
+    {
+        if (fileId != 0) {
+            overrides_[fileId].insert(std::move(key));
+        }
+    }
+    void UnmarkOverride(uint64_t fileId, const std::string& key)
+    {
+        if (auto it = overrides_.find(fileId); it != overrides_.end()) {
+            it->second.erase(key);
+        }
+    }
+    const OverrideSet* GetOverrides(uint64_t fileId) const
+    {
+        auto it = overrides_.find(fileId);
+        return (it != overrides_.end()) ? &it->second : nullptr;
+    }
+    bool HasOverrideRecord(uint64_t fileId) const { return overrides_.count(fileId) != 0; }
+
 private:
     World world_;
     std::string name_ = "Untitled";
     uint64_t nextFileId_ = 1;
+    std::unordered_map<uint64_t, OverrideSet> overrides_; // fileId → 上書き済みキー集合
 };
 
 } // namespace mye

@@ -77,13 +77,19 @@ uint32_t SiblingIndexOf(World& world, EntityID e)
     return i;
 }
 
-// 1 エンティティ → JSON オブジェクト (fileId/name/parent/childIndex/components)。
-// EntityRef フィールドと親は fileId で出力する (参照透過な復元のため)
-json WriteEntity(World& world, EntityID e, uint32_t childIndex)
+// 1 エンティティ → JSON オブジェクト (fileId/name/parent/childIndex/components[/overrides])。
+// EntityRef フィールドと親は fileId で出力する (参照透過な復元のため)。
+//
+// **ここが overrides キーの唯一の出口** (M48e)。SaveToJson / EntityToJson / SubtreeToJson は
+// すべてこの関数を通るので、シーン保存・Undo スナップショット・プレハブ抽出・複製が
+// まとめて override リストを運ぶ
+json WriteEntity(Scene& scene, EntityID e, uint32_t childIndex)
 {
+    World& world = scene.GetWorld();
     const ComponentRegistry& reg = ComponentRegistry::Get();
     json item;
-    item["fileId"] = FidOf(world, e);
+    const uint64_t fileId = FidOf(world, e);
+    item["fileId"] = fileId;
     item["name"] = world.GetName(e);
     const EntityID parent = world.GetParent(e);
     if (!parent.IsNull() && world.IsAlive(parent)) {
@@ -127,7 +133,39 @@ json WriteEntity(World& world, EntityID e, uint32_t childIndex)
         }
     }
     item["components"] = std::move(comps);
+    // 記録があるときだけキーを出す (空配列も出す = 「新形式・上書き無し」の明示)。
+    // 記録が無いエンティティ = プレハブ非メンバ or レガシー → キーごと省略し、旧形式の
+    // ファイルと 1 バイトも変わらないようにする
+    if (const Scene::OverrideSet* ov = scene.GetOverrides(fileId)) {
+        json arr = json::array();
+        for (const std::string& key : *ov) { // std::set = ソート済み
+            arr.push_back(key);
+        }
+        item["overrides"] = std::move(arr);
+    }
     return item;
+}
+
+// エンティティ JSON の "overrides" キーを Scene の記録へ復元する (M48e)。
+// **ReadEntityComponents を呼ぶ経路すべての直後で呼ぶこと** — LoadFromJson / ApplyDiff /
+// ApplyPartial の 3 本。JSON が唯一の正解なので、キーが無ければ記録も消す
+// (Undo 復元やプレハブ展開で「前の状態の override」が残らないように)
+void ReadEntityOverrides(Scene& scene, uint64_t fileId, const json& item)
+{
+    if (fileId == 0) {
+        return;
+    }
+    if (!item.contains("overrides") || !item["overrides"].is_array()) {
+        scene.ClearOverrides(fileId);
+        return;
+    }
+    Scene::OverrideSet keys;
+    for (const json& v : item["overrides"]) {
+        if (v.is_string()) {
+            keys.insert(v.get<std::string>());
+        }
+    }
+    scene.SetOverrides(fileId, std::move(keys));
 }
 
 // JSON の components を エンティティ e へ流し込む。EntityRef は toEntity で fileId→EntityID に解決。
@@ -270,7 +308,7 @@ json SaveToJson(Scene& scene)
 
     json items = json::array();
     for (size_t i = 0; i < entities.size(); ++i) {
-        items.push_back(WriteEntity(world, entities[i], childIndices[i]));
+        items.push_back(WriteEntity(scene, entities[i], childIndices[i]));
     }
 
     json root;
@@ -316,11 +354,13 @@ bool LoadFromJson(Scene& scene, const json& root)
 
     // 2) コンポーネントとフィールド (EntityRef は fileId で解決)
     for (const json& item : items) {
-        const EntityID e = toEntity(item.value("fileId", 0ull));
+        const uint64_t fileId = item.value("fileId", 0ull);
+        const EntityID e = toEntity(fileId);
         if (e.IsNull()) {
             continue;
         }
         ReadEntityComponents(world, e, item, toEntity, /*removeMissing*/ false);
+        ReadEntityOverrides(scene, fileId, item); // M48e
     }
 
     // 3) 親子関係 (ファイル順に SetParent → 兄弟順は DFS 順で復元される)
@@ -398,6 +438,7 @@ bool ApplyDiff(Scene& scene, const json& root)
         }
         SetEntityName(world, e, item.value("name", std::string()));
         ReadEntityComponents(world, e, item, toEntity, /*removeMissing*/ true);
+        ReadEntityOverrides(scene, fid, item); // M48e
         ++updated;
     }
 
@@ -439,7 +480,7 @@ json EntityToJson(Scene& scene, EntityID e)
         return json::object();
     }
     EnsureFileId(scene, world, e);
-    return WriteEntity(world, e, SiblingIndexOf(world, e));
+    return WriteEntity(scene, e, SiblingIndexOf(world, e));
 }
 
 json SubtreeToJson(Scene& scene, EntityID root)
@@ -458,7 +499,7 @@ json SubtreeToJson(Scene& scene, EntityID root)
         EnsureFileId(scene, world, e);
     }
     for (size_t i = 0; i < ents.size(); ++i) {
-        arr.push_back(WriteEntity(world, ents[i], idxs[i]));
+        arr.push_back(WriteEntity(scene, ents[i], idxs[i]));
     }
     return arr;
 }
@@ -512,6 +553,7 @@ bool ApplyPartial(Scene& scene, const json& entities, bool removeHiddenMissing)
         }
         SetEntityName(world, e, item.value("name", std::string()));
         ReadEntityComponents(world, e, item, toEntity, /*removeMissing*/ true, removeHiddenMissing);
+        ReadEntityOverrides(scene, fid, item); // M48e
     }
 
     // 親 + 兄弟位置

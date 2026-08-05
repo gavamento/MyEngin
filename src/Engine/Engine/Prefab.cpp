@@ -188,17 +188,22 @@ void SplitLevels(World& w, EntityID root, std::unordered_set<uint64_t>& ownLevel
 }
 
 // 抽出したエンティティ item のプレハブタグをベース用に整える (M48c)。
-//  - 自レベル: 外側のタグはベースの定義には要らない (インスタンス化時に付く) → 剥がす
+//  - 自レベル: 外側のタグはベースの定義には要らない (インスタンス化時に付く) → 剥がす。
+//    **override リストも剥がす** (M48e) — 「外側インスタンスでの上書き」であって、
+//    その値がそのまま新しいベース定義になる以上、新ベースに対する上書きは 0 件
 //  - 入れ子ルート: 内側の識別 (prefabHash / 内側 localId) は保ったまま、
-//    外側ドメインでの位置 outerLocalId だけを新しいローカル fileId に付け替える
+//    外側ドメインでの位置 outerLocalId だけを新しいローカル fileId に付け替える。
+//    override リストは内側ベースに対するものなので保持する
 //  - 入れ子の配下: 触らない (localId は内側ベースのドメイン。外側は関知しない)
-void RebaseTags(nlohmann::json& components, uint64_t sceneFid, uint64_t newLocalId,
+void RebaseTags(nlohmann::json& item, uint64_t sceneFid, uint64_t newLocalId,
                 const std::unordered_set<uint64_t>& ownLevel,
                 const std::unordered_set<uint64_t>& innerRoots)
 {
+    nlohmann::json& components = item["components"];
     if (ownLevel.count(sceneFid) != 0) {
         components.erase("PrefabInstance");
         components.erase("PrefabLink");
+        item.erase("overrides");
     } else if (innerRoots.count(sceneFid) != 0 && components.contains("PrefabInstance")) {
         components["PrefabInstance"]["outerLocalId"] = newLocalId;
     }
@@ -260,6 +265,56 @@ std::string GetNameStr(World& w, EntityID e)
 {
     auto* nc = w.GetComponent<NameComponent>(e);
     return nc ? std::string(nc->value, strnlen(nc->value, sizeof(nc->value))) : std::string();
+}
+
+// ---- override リスト (M48e) ----
+
+// override リストのキー。名前だけは特別扱いで "name" (コンポーネントではないため)
+constexpr const char* kNameOverrideKey = "name";
+
+std::string OverrideKey(const std::string& compName, const char* fieldName)
+{
+    return compName + "." + fieldName;
+}
+
+// e の現在値を base (ベースのエンティティ JSON) と突き合わせた上書きキー集合 = ライブ diff。
+// **ベースに存在するフィールドだけ**を対象にする — ロード時の更新はベース値の書き戻しなので、
+// ベースに無いフィールド (インスタンスで足したコンポーネント等) は上書きとして記録しても
+// 使い道がなく、リストを無駄に膨らませるだけ。
+// EntityRef は remap 判定が不確実なので従来どおり対象外、隠しコンポーネント (プレハブタグ)
+// はデータではないので対象外
+std::set<std::string> OverridesAgainstBase(World& w, EntityID e, const json& base)
+{
+    std::set<std::string> keys;
+    if (GetNameStr(w, e) != base.value("name", std::string())) {
+        keys.insert(kNameOverrideKey);
+    }
+    if (!base.contains("components")) {
+        return keys;
+    }
+    const ComponentRegistry& reg = ComponentRegistry::Get();
+    for (const auto& [compName, fields] : base["components"].items()) {
+        const ComponentTypeId t = reg.FindByName(compName);
+        if (t == kInvalidComponentType || (reg.Desc(t).flags & kComponentHidden) != 0) {
+            continue;
+        }
+        const void* comp = w.GetComponentRaw(e, t);
+        if (!comp) {
+            continue; // インスタンスから外されたコンポーネント (v1 では構造変更を追跡しない)
+        }
+        for (const FieldDesc& f : reg.Desc(t).fields) {
+            if (f.type == FieldType::EntityRef || (f.flags & kFieldNoSerialize)) {
+                continue;
+            }
+            if (!fields.contains(f.name)) {
+                continue;
+            }
+            if (FieldToJson(comp, f) != fields[f.name]) {
+                keys.insert(OverrideKey(compName, f.name));
+            }
+        }
+    }
+    return keys;
 }
 
 } // namespace
@@ -428,7 +483,7 @@ json ExtractLocal(Scene& scene, EntityID root)
         }
         if (ni.contains("components")) {
             SceneSerializer::RemapEntityRefsInComponents(ni["components"], remap, /*zeroExternal=*/true);
-            RebaseTags(ni["components"], f, newLocal, ownLevel, innerRoots);
+            RebaseTags(ni, f, newLocal, ownLevel, innerRoots);
         }
         out.push_back(std::move(ni));
     }
@@ -549,7 +604,7 @@ static json ExtractLocalByLinks(Scene& scene, EntityID root, const json& oldBase
         }
         if (ni.contains("components")) {
             SceneSerializer::RemapEntityRefsInComponents(ni["components"], remap, /*zeroExternal=*/true);
-            RebaseTags(ni["components"], f, it->second, ownLevel, innerRoots);
+            RebaseTags(ni, f, it->second, ownLevel, innerRoots);
         }
         out.push_back(std::move(ni));
     }
@@ -678,12 +733,19 @@ uint64_t InstantiateEntities(Scene& scene, const json& localEntities, uint64_t p
             inst->prefabHash = prefabHash;
             inst->outerLocalId = 0;
             g.AddComponent<PrefabLinkComponent>()->localId = 0; // ベース対応物なし
+            scene.SetOverrides(wrapperFid, {}); // ラッパーはベース対応物なし = 上書きも無い
         }
     }
     for (const auto& [local, fid] : pairs) {
         GameObject g = scene.FindByFileId(fid);
         if (!g) {
             continue;
+        }
+        // 新規インスタンスは全メンバが「新形式・上書き無し」。ベース JSON が overrides キーを
+        // 持っていた分 (入れ子インスタンスの上書き) は ApplyPartial の復元フックが既に
+        // 積んでいるので、**記録が無いものだけ**空で埋める (M48e)
+        if (!scene.HasOverrideRecord(fid)) {
+            scene.SetOverrides(fid, {});
         }
         if (!wrapped && local == rootLocal) {
             // ルートは分類がどうであれ必ず外側として付け直す (手書きアセットへの保険)。
@@ -784,6 +846,11 @@ bool IsFieldOverridden(Scene& scene, const PrefabLibrary& lib, EntityID e, const
     if (!bc.contains(field.name)) {
         return true;
     }
+    // 保存済み override リストが一次情報 (M48e)。記録が無いのはレガシーシーンだけなので、
+    // そのときだけ従来のライブ diff に落ちる
+    if (const Scene::OverrideSet* rec = scene.GetOverrides(FidOf(w, e))) {
+        return rec->count(OverrideKey(compName, field.name)) != 0;
+    }
     const void* comp = w.GetComponentRaw(e, ComponentRegistry::Get().FindByName(compName));
     if (!comp) {
         return false;
@@ -797,6 +864,9 @@ bool IsNameOverridden(Scene& scene, const PrefabLibrary& lib, EntityID e)
     const json* base = ResolveBase(w, lib, e);
     if (!base) {
         return false;
+    }
+    if (const Scene::OverrideSet* rec = scene.GetOverrides(FidOf(w, e))) {
+        return rec->count(kNameOverrideKey) != 0;
     }
     return GetNameStr(w, e) != base->value("name", std::string());
 }
@@ -819,6 +889,7 @@ void RevertField(Scene& scene, const PrefabLibrary& lib, EntityID e, const char*
     void* comp = w.GetComponentRaw(e, ComponentRegistry::Get().FindByName(compName));
     if (comp) {
         FieldFromJson(comp, field, comps[compName][field.name]);
+        scene.UnmarkOverride(FidOf(w, e), OverrideKey(compName, field.name)); // M48e
     }
 }
 
@@ -850,6 +921,9 @@ void RevertInstance(Scene& scene, const PrefabLibrary& lib, uint64_t rootFileId)
             continue;
         }
         SetEntityName(w, m, base->value("name", std::string()));
+        // ベース値へ戻し切るので上書きは 0 件になる (M48e)。
+        // **ベースに無いフィールドは元々リストに載らない**ので空集合で正しい
+        scene.SetOverrides(FidOf(w, m), {});
         if (!base->contains("components")) {
             continue;
         }
@@ -921,12 +995,10 @@ void PropagateBaseChange(Scene& scene, const json& oldBase, const json& newBase,
                     SetEntityName(w, m, newName);
                 }
             }
-            if (!nb->contains("components")) {
-                continue;
-            }
+            const json nbComps = nb->contains("components") ? (*nb)["components"] : json::object();
             const json obComps = (ob && ob->contains("components")) ? (*ob)["components"]
                                                                     : json::object();
-            for (const auto& [compName, nfields] : (*nb)["components"].items()) {
+            for (const auto& [compName, nfields] : nbComps.items()) {
                 const ComponentTypeId t = reg.FindByName(compName);
                 if (t == kInvalidComponentType) {
                     continue;
@@ -967,6 +1039,10 @@ void PropagateBaseChange(Scene& scene, const json& oldBase, const json& newBase,
                     }
                 }
             }
+            // 伝播が終わった今この瞬間だけ「ベース == 現行」なので、override リストを
+            // ライブ diff で撮り直す (M48e)。ここを飛ばすと、Apply / ホットリロードで
+            // ベースが動いたあとにリストが古い判定のまま残る
+            scene.SetOverrides(FidOf(w, m), OverridesAgainstBase(w, m, *nb));
         }
     }
     w.ApplyStructuralChanges();
@@ -1017,9 +1093,155 @@ bool ApplyInstance(Scene& scene, PrefabLibrary& lib, uint64_t rootFileId)
     }
     lib.Register(path, name, newBase); // library 更新 (hash 不変)
     lib.SetActorFormat(hash, actorFormat); // Register は拡張子から推定するので宣言キーを戻す
+    // 伝播対象には Apply 元のインスタンス自身も含まれる (同じ prefabHash) ので、
+    // override リストの撮り直しもここで一緒に済む (M48e)
     PropagateBaseChange(scene, oldBase, newBase, hash); // 他インスタンスへ伝播
     MYE_LOG_INFO("prefab apply: '%s' base updated + propagated", name.c_str());
     return true;
+}
+
+// ==== override リストの記録 (M48e) ====
+
+std::set<std::string> ComputeOverrides(Scene& scene, const PrefabLibrary& lib, EntityID e)
+{
+    World& w = scene.GetWorld();
+    const json* base = ResolveBase(w, lib, e);
+    return base ? OverridesAgainstBase(w, e, *base) : std::set<std::string>();
+}
+
+void RecordOverrides(Scene& scene, const PrefabLibrary& lib, EntityID e)
+{
+    World& w = scene.GetWorld();
+    const uint64_t fid = FidOf(w, e);
+    if (fid == 0) {
+        return;
+    }
+    if (!w.GetComponent<PrefabLinkComponent>(e)) {
+        scene.ClearOverrides(fid); // プレハブメンバでなくなった (タグ剥がし / 単なる非メンバ)
+        return;
+    }
+    const json* base = ResolveBase(w, lib, e);
+    if (!base) {
+        // アセット未登録 / ベースに対応物なし (複数ルートのラッパー等)。
+        // **記録は消さない** — アセットが戻ったときに上書きを失うのは復旧不能な破壊
+        return;
+    }
+    scene.SetOverrides(fid, OverridesAgainstBase(w, e, *base));
+}
+
+void RecordOverridesSubtree(Scene& scene, const PrefabLibrary& lib, EntityID root)
+{
+    World& w = scene.GetWorld();
+    std::function<void(EntityID)> visit = [&](EntityID e) {
+        RecordOverrides(scene, lib, e);
+        auto* h = w.GetComponent<HierarchyComponent>(e);
+        EntityID c = h ? h->firstChild : kNullEntity;
+        while (!c.IsNull()) {
+            auto* ch = w.GetComponent<HierarchyComponent>(c);
+            const EntityID next = ch ? ch->nextSibling : kNullEntity;
+            visit(c);
+            c = next;
+        }
+    };
+    if (w.IsAlive(root)) {
+        visit(root);
+    }
+}
+
+void RefreshNonOverridden(Scene& scene, const PrefabLibrary& lib)
+{
+    World& w = scene.GetWorld();
+    const ComponentRegistry& reg = ComponentRegistry::Get();
+
+    // インスタンスルートを fileId 昇順で処理する。ForEachArchetype の走査順はアーキタイプの
+    // 生成履歴に依存するため、**そのまま使うと決定論を落とす** (同じ JSON でも順序が変わりうる)
+    std::vector<std::pair<uint64_t, EntityID>> roots;
+    {
+        const ComponentTypeId req[] = { PrefabInstanceComponent::sTypeId };
+        w.ForEachArchetype(req, [&](Archetype& arch) {
+            for (uint32_t row = 0; row < arch.Count(); ++row) {
+                const EntityID e = arch.EntityAt(row);
+                roots.emplace_back(FidOf(w, e), e);
+            }
+        });
+    }
+    std::sort(roots.begin(), roots.end(),
+              [](const auto& a, const auto& b) { return a.first < b.first; });
+
+    int refreshed = 0, migrated = 0;
+    for (const auto& rootPair : roots) {
+        const EntityID root = rootPair.second;
+        auto* inst = w.GetComponent<PrefabInstanceComponent>(root);
+        const PrefabAsset* a = inst ? lib.Get(inst->prefabHash) : nullptr;
+        if (!a) {
+            continue; // アセット欠落 — 値には触らない (欠落アセットで壊すより据え置きが安全)
+        }
+        std::vector<EntityID> members;
+        CollectInstanceMembers(w, root, members); // 入れ子は境界で止まる (内側は内側のルートで処理)
+        std::vector<std::pair<uint64_t, EntityID>> ordered; // localId 昇順
+        ordered.reserve(members.size());
+        for (EntityID m : members) {
+            if (auto* link = w.GetComponent<PrefabLinkComponent>(m)) {
+                ordered.emplace_back(link->localId, m);
+            }
+        }
+        std::sort(ordered.begin(), ordered.end(),
+                  [](const auto& x, const auto& y) { return x.first < y.first; });
+
+        for (const auto& [localId, m] : ordered) {
+            const json* base = FindOwnLevelLocal(a->entities, localId);
+            if (!base) {
+                continue; // ベースに対応物なし (ラッパー localId=0 / 削除されたメンバ)
+            }
+            const uint64_t fid = FidOf(w, m);
+            if (fid == 0) {
+                continue;
+            }
+            const Scene::OverrideSet* rec = scene.GetOverrides(fid);
+            if (!rec) {
+                // レガシー (M48d 以前に保存されたシーン)。ライブ diff から記録だけ起こし、
+                // **値には一切触らない** = 旧エンジンで保存したシーンはビット不変にロードされる。
+                // 次の保存で overrides キーが付き、以後は新形式として refresh の対象になる
+                scene.SetOverrides(fid, OverridesAgainstBase(w, m, *base));
+                ++migrated;
+                continue;
+            }
+            const Scene::OverrideSet keys = *rec; // 以降の Set 呼び出しでポインタが失効しうる
+            if (keys.count(kNameOverrideKey) == 0) {
+                // ★MakeUniqueSiblingName は通さない — ロード経路で名前を変えると
+                //   WorldHash が変わり既存シーンの決定論が壊れる (EntityNaming.h の規約)
+                SetEntityName(w, m, base->value("name", std::string()));
+            }
+            if (!base->contains("components")) {
+                continue;
+            }
+            for (const auto& [compName, fields] : (*base)["components"].items()) {
+                const ComponentTypeId t = reg.FindByName(compName);
+                if (t == kInvalidComponentType || (reg.Desc(t).flags & kComponentHidden) != 0) {
+                    continue; // プレハブタグはデータではない (M48c)
+                }
+                void* comp = w.GetComponentRaw(m, t);
+                if (!comp) {
+                    continue; // v1 は構造変更を追跡しない — 無いコンポーネントを生やさない
+                }
+                for (const FieldDesc& f : reg.Desc(t).fields) {
+                    if (f.type == FieldType::EntityRef || (f.flags & kFieldNoSerialize)) {
+                        continue;
+                    }
+                    if (!fields.contains(f.name) || keys.count(OverrideKey(compName, f.name)) != 0) {
+                        continue;
+                    }
+                    FieldFromJson(comp, f, fields[f.name]);
+                }
+            }
+            ++refreshed;
+        }
+    }
+    w.ApplyStructuralChanges();
+    if (refreshed != 0 || migrated != 0) {
+        MYE_LOG_INFO("[prefab] refreshed %d instance member(s) from base, migrated %d legacy",
+                     refreshed, migrated);
+    }
 }
 
 } // namespace Prefab

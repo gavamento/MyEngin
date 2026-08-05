@@ -85,8 +85,11 @@ void EditorApp::OnStart(EngineContext& ctx)
     if (rtShowcase) {
         RegisterRtShowcaseContent(ctx); // 保存済みショーケースをロードする経路でも実体を揃える
     }
+    undo_.SetPrefabLibrary(ctx.prefabs); // 編集直後の override リスト記録 (M48e)
     if (std::filesystem::exists(scenePath_)) {
         SceneSerializer::LoadFromFile(*ctx.scene, scenePath_);
+        // ロード直後 1 回だけ: 閉じている間に更新されたプレハブへ非 override を追随させる (M48e)
+        Prefab::RefreshNonOverridden(*ctx.scene, *ctx.prefabs);
     } else if (rtShowcase) {
         BuildRtShowcaseScene(ctx); // M46i
     } else {
@@ -716,6 +719,7 @@ bool EditorApp::LoadSceneFromPath(EngineContext& ctx, const std::wstring& path)
                            + WideToUtf8(std::filesystem::path(path).filename().wstring()));
         return false;
     }
+    Prefab::RefreshNonOverridden(*ctx.scene, *ctx.prefabs); // ロード直後 1 回 (M48e)
     scenePath_ = path;
     ctx.reloadHub->SetActiveScenePath(scenePath_);
     settings_.lastScenePath = WideToUtf8(scenePath_);

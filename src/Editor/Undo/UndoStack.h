@@ -8,6 +8,7 @@
 namespace mye {
 
 class Scene;
+class PrefabLibrary;
 struct Selection;
 
 // エディタの Undo/Redo スタック (M8)。
@@ -29,6 +30,10 @@ struct Selection;
 // Begin と End は複数フレームに跨いでよい (ドラッグ操作を 1 エントリにまとめる = transient マージ)。
 class UndoStack {
 public:
+    // プレハブ override リストの記録に使うライブラリ (M48e)。EditorApp が起動時に一度設定する。
+    // **未設定なら override の記録だけを飛ばす** — Undo 自体は従来どおり動く
+    void SetPrefabLibrary(const PrefabLibrary* lib) { prefabs_ = lib; }
+
     // ---- 記録 ----
     void BeginRecord(const char* label, const Selection& selBefore);
     void CaptureBefore(Scene& scene, uint64_t fileId); // op 前の状態 (サブツリー丸ごと)
@@ -87,6 +92,8 @@ private:
 
     uint64_t serialCounter_ = 0; // 単調増加 (Entry 採番 + ClearAll の基底更新)
     uint64_t baseSerial_ = 0;    // スタックが空のときの状態 ID
+
+    const PrefabLibrary* prefabs_ = nullptr; // override リスト記録用 (M48e)
 };
 
 } // namespace mye

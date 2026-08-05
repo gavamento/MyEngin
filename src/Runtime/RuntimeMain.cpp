@@ -8,6 +8,7 @@
 #include "Engine/Core/Log.h"
 #include "Engine/Engine/DemoContent.h"
 #include "Engine/Engine/EngineLoop.h"
+#include "Engine/Engine/Prefab.h"
 #include "Engine/Engine/Project.h"
 #include "Engine/Engine/Scene.h"
 #include "Engine/Engine/SceneSerializer.h"
@@ -61,6 +62,9 @@ public:
         }
         if (std::filesystem::exists(scenePath)) {
             mye::SceneSerializer::LoadFromFile(*ctx.scene, scenePath);
+            // Editor と同じ「ロード直後 1 回」(M48e)。ここを揃えないと Editor で録った .rep と
+            // Runtime の verify で初期状態が食い違う
+            mye::Prefab::RefreshNonOverridden(*ctx.scene, *ctx.prefabs);
         } else if (rtShowcase) {
             mye::BuildRtShowcaseScene(ctx); // M46i
         } else {
