@@ -25,6 +25,7 @@ enum class AssetType : int32_t {
     Sound,      // .sound.json (M45c)
     Mixer,      // .mixer.json (M45d)
     Actor,      // .actor.json (M48d — プレハブ 2.0。Prefab は部分集合として読込互換)
+    Schema,     // .component.schema.json (M48j — 動的コンポーネント定義)
 };
 
 // アセット 1 件のサイドカー情報 (<asset>.meta に JSON で保存)。

@@ -62,7 +62,11 @@ uint64_t PathHash(const std::wstring& path)
 AssetType AssetDatabase::ClassifyPath(const std::wstring& path)
 {
     const std::string s = LowerUtf8(path);
-    // 複合サフィックス (.xxx.json) を単一拡張子より先に判定する
+    // 複合サフィックス (.xxx.json) を単一拡張子より先に判定する。
+    // .component.schema.json は .schema.json より長いので更に先に見る (M48j)
+    if (EndsWith(s, ".component.schema.json")) {
+        return AssetType::Schema;
+    }
     if (EndsWith(s, ".actor.json")) {
         return AssetType::Actor;
     }
@@ -122,6 +126,7 @@ const char* AssetDatabase::TypeName(AssetType t)
     case AssetType::Script: return "script";
     case AssetType::Sound: return "sound";
     case AssetType::Mixer: return "mixer";
+    case AssetType::Schema: return "schema";
     case AssetType::Unknown:
     default: return "unknown";
     }
@@ -142,6 +147,7 @@ AssetType AssetDatabase::ParseTypeName(const std::string& s)
     if (s == "script") return AssetType::Script;
     if (s == "sound") return AssetType::Sound;
     if (s == "mixer") return AssetType::Mixer;
+    if (s == "schema") return AssetType::Schema;
     return AssetType::Unknown;
 }
 

@@ -72,10 +72,14 @@ const char* IconFor(const std::wstring& ext)
 
 // サムネイル未生成 (または対象外) のタイルに出す文字ラベル
 const char* TileLabel(const std::wstring& ext, const std::wstring& path, bool isCompose,
-                      bool isActor, bool isAnim, bool isMat, bool isSound, bool isMixer)
+                      bool isActor, bool isAnim, bool isMat, bool isSound, bool isMixer,
+                      bool isSchema)
 {
     if (IsImageExt(ext)) {
         return "img"; // デコード完了までのプレースホルダ
+    }
+    if (isSchema) {
+        return "schema"; // .component.schema.json (M48j)
     }
     if (isCompose) {
         return isActor ? "actor" : "prefab";
@@ -372,6 +376,10 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
             && nameU.compare(nameU.size() - 11, 11, ".sound.json") == 0;
         const bool isMixer = !isCompose && !isAnim && !isMat && !isScene && !isSound
             && nameU.size() >= 11 && nameU.compare(nameU.size() - 11, 11, ".mixer.json") == 0;
+        // M48j: .component.schema.json は起動時に読まれる動的コンポーネント定義。
+        // 他の複合サフィックスより長いので単独判定でよい (.json の一般判定より先に効く)
+        const bool isSchema = nameU.size() >= 22
+            && nameU.compare(nameU.size() - 22, 22, ".component.schema.json") == 0;
         const bool isClip = ext == L".wav" || ext == L".ogg"; // 素の音声ファイル
 
         if (i % cols != 0) {
@@ -397,7 +405,8 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
         ImGui::PushStyleColor(ImGuiCol_Button, thumb ? ImVec4(0, 0, 0, 0)
                                                      : ImGui::GetStyleColorVec4(ImGuiCol_Button));
         ImGui::Button(thumb ? "##tile"
-                            : TileLabel(ext, path, isCompose, isActor, isAnim, isMat, isSound, isMixer),
+                            : TileLabel(ext, path, isCompose, isActor, isAnim, isMat, isSound,
+                                        isMixer, isSchema),
                       ImVec2(kCell, kCell));
         ImGui::PopStyleColor();
         if (thumb) {

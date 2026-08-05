@@ -31,6 +31,7 @@
 #include "Engine/Engine/Script/ManagedHost.h"
 #include "Engine/Engine/EffectSystem.h"
 #include "Engine/Engine/Script/ScriptHost.h"
+#include "Engine/Engine/SchemaComponents.h"
 #include "Engine/Engine/PartFollowSystem.h"
 #include "Engine/Engine/SkinningSystem.h"
 #include "Engine/Engine/TransformSystem.h"
@@ -334,6 +335,13 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // デノイズ効果がスクショに写らない。--rt-anim-seed で自動 freeze を明示解除できる
     renderSystem.rtFreezeSeed =
         (config.rtFreezeSeed || renderSystem.postFxSettings.aeInstant) && !config.rtAnimSeed;
+
+    // ---- スキーマ由来の動的コンポーネント (M48j) ----
+    // ★呼ぶ位置がそのまま決定論の契約: 組込み型 (World の生成時に RegisterBuiltinComponents で
+    //   済んでいる) の後、**GameLogic.dll のスクリプト型より前**。この 1 箇所に固定しておくと
+    //   スキーマ型は組込み群とスクリプト群の間の連続ブロックになり、スクリプト型の TypeId は
+    //   一様にずれるだけ = エンティティ内の相対順が変わらない = 既存シーンのハッシュ不変
+    schema::RegisterSchemaComponents(assetsRoot);
 
     // GameLogic.dll (スクリプト層)。監視先は起動形態で 2 通りに分かれる:
     //   レガシー起動 (--project なし) = エンジンの exe と同じ構成のビルド出力。

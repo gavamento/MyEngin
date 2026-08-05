@@ -78,7 +78,12 @@ bool RunAssetDatabaseSelfTest()
           "actor/prefab/scene are distinguished by compound suffix");
     check(AssetDatabase::ClassifyPath(L"x\\Goblin.ACTOR.JSON") == AssetType::Actor,
           "compound suffix classification ignores case");
-    for (AssetType t : { AssetType::Actor, AssetType::Prefab, AssetType::Sound, AssetType::Mixer }) {
+    // M48j: .component.schema.json は .scene.json 等と紛れない (最長サフィックス優先)
+    check(AssetDatabase::ClassifyPath(L"x\\Health.component.schema.json") == AssetType::Schema
+              && AssetDatabase::ClassifyPath(L"x\\Health.json") == AssetType::Unknown,
+          "component schema is a distinct asset type");
+    for (AssetType t : { AssetType::Actor, AssetType::Prefab, AssetType::Sound, AssetType::Mixer,
+                         AssetType::Schema }) {
         check(AssetDatabase::ParseTypeName(AssetDatabase::TypeName(t)) == t,
               "asset type name round-trips through .meta");
     }

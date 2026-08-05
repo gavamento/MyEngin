@@ -1,0 +1,21 @@
+{
+  "engine": "MyEngine",
+  "componentSchema": 1,
+  "id": 1001,
+  "name": "Health",
+
+  "//": "C++ の struct を書かずに定義するゲーム固有コンポーネントの見本 (M48j)。",
+  "//order": "起動時に assets/schemas を相対パス昇順で読み、組込み型の後・スクリプト型の前に登録される。",
+  "//types": "type は FieldType の閉集合 15 種: Float Int32 UInt32 UInt64 Bool Float2 Float3 Float4 Quat Color EntityRef AssetRef String64 String256 Float4x4",
+  "//meta": "display=Inspector 表示名 / tooltip / min,max=スライダ範囲 / speed=ドラッグ速度 / default=既定値",
+
+  "fields": [
+    { "name": "current", "type": "Float", "default": 100.0, "min": 0.0, "max": 9999.0,
+      "display": "現在値", "tooltip": "現在の体力" },
+    { "name": "max", "type": "Float", "default": 100.0, "min": 1.0, "max": 9999.0,
+      "display": "最大値" },
+    { "name": "invulnerable", "type": "Bool", "default": false, "display": "無敵" },
+    { "name": "faction", "type": "Int32", "default": 0, "min": 0, "max": 15,
+      "display": "陣営", "tooltip": "0 = 中立" }
+  ]
+}

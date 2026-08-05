@@ -9,6 +9,7 @@
 #include "Editor/EditorApp.h"
 #include "Editor/EditorGlobalSettings.h"
 #include "Editor/PartSelfTest.h"
+#include "Engine/Engine/SchemaSelfTest.h"
 #include "Editor/ProjectManager.h"
 #include "Editor/ProjectRegistry.h"
 #include "Editor/ProjectTemplates.h"
@@ -227,7 +228,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             && mye::RunParticleSelfTest() && mye::RunAssetOpsSelfTest()
             && mye::RunFontSelfTest() && mye::RunAudioSelfTest() && mye::RunRtSelfTest()
             && mye::RunLocalizationSelfTest() && mye::RunSkeletonSelfTest()
-            && mye::RunPartSelfTest();
+            && mye::RunPartSelfTest() && mye::RunSchemaSelfTest();
         return ok ? 0 : 1;
     }
 
