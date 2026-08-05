@@ -311,6 +311,70 @@ inline void MyeStopMusic(const MyeUpdateContext& ctx, float fadeSeconds = 1.0f)
     ctx.api->StopMusic(ctx.api->engine, fadeSeconds);
 }
 
+// ---- 部位 (ソケット) (v9、M48h)。ABI 追加なしの糖衣 + タグ名ハッシュ ----
+//
+// 使い方 (`SetEffect(leg)` 相当 = アセットが公開した場所にランタイムが物を付ける):
+//     const MyeEntityId hand = MyeFindPart(ctx, enemy, "Hips/HandR");
+//     if (!MyeEntityIdIsNull(hand)) { ctx.api->Instantiate(ctx.api->engine, "fx_fire", {}, hand); }
+
+// タグ名 → タグ ID。FNV-1a 64bit で、**Engine/Core/Hash.h の HashStr と同一の定数**。
+// Shared はエンジンヘッダを include できないので再掲する (LayoutHash と同じ扱い)。
+// 一致は PartSelfTest が MyePartTag == Parts::TagOf で機械検査している
+inline constexpr uint64_t MyePartTag(const char* name)
+{
+    if (name == nullptr || *name == '\0') {
+        return 0ull; // 無名タグ = 0 (Parts::TagOf("") と同じ)
+    }
+    uint64_t h = 14695981039346656037ull;
+    for (const char* c = name; *c != '\0'; ++c) {
+        h ^= static_cast<unsigned char>(*c);
+        h *= 1099511628211ull;
+    }
+    return h;
+}
+
+// root から '/' 区切りの名前パスで部位を引く。見つからなければ null id
+inline MyeEntityId MyeFindPart(const MyeUpdateContext& ctx, MyeEntityId root, const char* path)
+{
+    return ctx.api->FindPart(ctx.api->engine, root, path);
+}
+
+// 自分のサブツリーから引く省略形
+inline MyeEntityId MyeFindPart(const MyeUpdateContext& ctx, const char* path)
+{
+    return ctx.api->FindPart(ctx.api->engine, ctx.self, path);
+}
+
+// タグ名一致の部位を DFS 順に集める。戻り値は **切り捨て前の総ヒット数**
+// (書けた件数は min(戻り値, cap)。戻り値 > cap ならバッファが足りていない)
+inline int32_t MyeFindPartsByTag(const MyeUpdateContext& ctx, MyeEntityId root, const char* tagName,
+                                 MyeEntityId* out, int32_t cap)
+{
+    return ctx.api->FindPartsByTag(ctx.api->engine, root, MyePartTag(tagName), out, cap);
+}
+
+// タグ名一致の部位を 1 個だけ引く (最初のヒット)。無ければ null id
+inline MyeEntityId MyeFindPartByTag(const MyeUpdateContext& ctx, MyeEntityId root,
+                                    const char* tagName)
+{
+    MyeEntityId hit = {};
+    MyeFindPartsByTag(ctx, root, tagName, &hit, 1);
+    return hit; // ヒット 0 件なら既定値 = null id のまま
+}
+
+// child を root の部位へ取り付ける。取り付けは既存 SetParent (ABI 追加なし)。
+// 部位が見つからなければ何もせず false — 「黙って原点に付く」より落ちる方を選ぶ
+inline bool MyeAttachToPart(const MyeUpdateContext& ctx, MyeEntityId child, MyeEntityId root,
+                            const char* path)
+{
+    const MyeEntityId part = MyeFindPart(ctx, root, path);
+    if (MyeEntityIdIsNull(part)) {
+        return false;
+    }
+    ctx.api->SetParent(ctx.api->engine, child, part);
+    return true;
+}
+
 // ---- ゲーム内 UI ヒットテスト (M21) ----
 // UI 描画はエンジン (UIElementComponent) が行うが、ボタン操作は **決定論のため
 // InputSnapshot のマウス経由** で判定する (ABI 追加なし = bump 不要)。verify では記録された

@@ -9,6 +9,7 @@
 #include "Engine/Engine/Audio/AudioSystem.h" // HashBusName (バス名ハッシュの規則は 1 本だけ)
 #include "Engine/Engine/EffectSystem.h"
 #include "Engine/Engine/GameObject.h"
+#include "Engine/Engine/Parts.h" // v9 部位クエリ (M48h)
 #include "Engine/Engine/Physics/PhysicsSystem.h"
 #include "Engine/Engine/Scene.h"
 #include "Engine/Engine/UI/UINav.h"      // v7 UIFocusNav (M37)
@@ -605,6 +606,27 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
         e.op = ScriptAudioOp::SetListener;
         e.entity = id; // null id = 自動 (AudioListener → primary カメラ)
         c->audioQueue->push_back(e);
+    };
+
+    // ---- 部位 (ソケット) クエリ (v9、M48h) ----
+    // 実装は Engine/Engine/Parts.{h,cpp} の 1 本きり — エディタ (Inspector のドロップダウン、
+    // 構造ロック) とスクリプトが同じ関数を見ることで「エディタで見えた部位」と
+    // 「スクリプトが引ける部位」が食い違わないようにしている
+    out.FindPart = [](void* engine, MyeEntityId root, const char* utf8Path) -> MyeEntityId {
+        const std::string_view path = utf8Path ? std::string_view(utf8Path) : std::string_view();
+        return ToShared(Parts::FindPart(Sc(engine)->GetWorld(), ToEngine(root), path));
+    };
+    out.FindPartsByTag = [](void* engine, MyeEntityId root, uint64_t tag, MyeEntityId* outParts,
+                            int32_t cap) -> int32_t {
+        std::vector<EntityID> hits;
+        Parts::FindPartsByTag(Sc(engine)->GetWorld(), ToEngine(root), tag, hits);
+        const int32_t total = static_cast<int32_t>(hits.size());
+        // 切り捨てても戻り値は総数のまま (Overlap* と同じ規約)。out=null / cap<=0 は数えるだけ
+        const int32_t written = (outParts && cap > 0) ? ((total < cap) ? total : cap) : 0;
+        for (int32_t i = 0; i < written; ++i) {
+            outParts[i] = ToShared(hits[static_cast<size_t>(i)]);
+        }
+        return total;
     };
 }
 

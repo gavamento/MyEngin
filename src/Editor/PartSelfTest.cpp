@@ -25,10 +25,12 @@
 #include "Engine/Engine/Replay/WorldHasher.h"
 #include "Engine/Engine/Scene.h"
 #include "Engine/Engine/SceneSerializer.h"
+#include "Engine/Engine/Script/EngineApiTable.h" // v9 部位スロットの実配線 (M48h)
 #include "Engine/Engine/TransformSystem.h"
 #include "Engine/Renderer/GpuResources.h"
 #include "Engine/Renderer/ShaderManager.h"
 #include "Engine/Renderer/Skeleton.h"
+#include "Shared/ScriptAPI.h" // MyePartTag / MyeFindPartByTag / MyeAttachToPart (糖衣)
 
 using namespace DirectX;
 
@@ -131,6 +133,84 @@ bool RunPartSelfTest()
                   && Parts::FindPart(w, enemy.Id(), uniq) == head2.Id(),
               "unique-name: both siblings stay addressable by their own path");
         w.DestroyEntity(head2.Id());
+        w.ApplyStructuralChanges();
+    }
+
+    // ---- C ABI v9 (M48h): スクリプトから見た部位クエリ ----
+    // エンジン内の Parts:: 関数が通ることは上で確認済みなので、ここで見るのは
+    // 「GameLogic.dll / C# が実際に呼ぶ経路」— テーブルのスロットが埋まっているか、
+    // 戻り値の規約 (切り捨て前の総数) が守られているか、Shared 側で再掲した
+    // FNV 定数がエンジンの HashStr と一致しているか
+    {
+        ScriptApiContext apiCtx;
+        apiCtx.scene = &scene;
+        MyeEngineApi api = {};
+        BuildEngineApi(api, &apiCtx);
+
+        const auto toShared = [](EntityID e) { return MyeEntityId{ e.index, e.generation }; };
+        const auto same = [](MyeEntityId a, EntityID b) {
+            return a.index == b.index && a.generation == b.generation;
+        };
+        const MyeEntityId root = toShared(enemy.Id());
+
+        check(api.version == MYE_API_VERSION && MYE_API_VERSION == 9u, "abi: the table reports v9");
+        check(api.FindPart != nullptr && api.FindPartsByTag != nullptr,
+              "abi: the v9 part slots are filled in");
+
+        // ★Shared/ScriptAPI.h は Engine/Core/Hash.h を include できず FNV 定数を再掲して
+        //   いる。ここがズレると「同じタグ名なのに引けない」という静かな壊れ方をする
+        check(MyePartTag("Foot") == Parts::TagOf("Foot")
+                  && MyePartTag("HandR") == Parts::TagOf("HandR") && MyePartTag("") == 0ull
+                  && MyePartTag(nullptr) == 0ull,
+              "abi: MyePartTag (Shared) equals Parts::TagOf (engine)");
+
+        check(same(api.FindPart(&apiCtx, root, "Hips/LegL"), legL.Id()),
+              "abi: FindPart descends a name path through the C ABI");
+        check(same(api.FindPart(&apiCtx, root, ""), enemy.Id())
+                  && same(api.FindPart(&apiCtx, root, nullptr), enemy.Id()),
+              "abi: an empty or null path resolves to the root itself (no crash)");
+        check(MyeEntityIdIsNull(api.FindPart(&apiCtx, root, "Hips/Nope")),
+              "abi: a missing part comes back as a null id");
+
+        MyeEntityId buf[4] = {};
+        check(api.FindPartsByTag(&apiCtx, root, MyePartTag("Foot"), buf, 4) == 2
+                  && same(buf[0], legL.Id()) && same(buf[1], legR.Id()),
+              "abi: FindPartsByTag writes the DFS-ordered hits");
+        check(MyeEntityIdIsNull(buf[2]) && MyeEntityIdIsNull(buf[3]),
+              "abi: nothing is written past the hit count");
+        MyeEntityId one = {};
+        check(api.FindPartsByTag(&apiCtx, root, MyePartTag("Foot"), &one, 1) == 2
+                  && same(one, legL.Id()),
+              "abi: the return value is the hit count BEFORE truncation (Overlap* rule)");
+        check(api.FindPartsByTag(&apiCtx, root, MyePartTag("Foot"), nullptr, 0) == 2,
+              "abi: a null buffer just counts");
+        check(api.FindPartsByTag(&apiCtx, root, MyePartTag("Nope"), buf, 4) == 0
+                  && api.FindPartsByTag(&apiCtx, MyeEntityId{}, MyePartTag("Foot"), buf, 4) == 0,
+              "abi: an unused tag and a dead root yield nothing");
+
+        // ---- 糖衣: 取り付けは既存 SetParent のまま (ABI は増やしていない) ----
+        MyeUpdateContext uctx = {};
+        uctx.api = &api;
+        uctx.self = root;
+        GameObject charm = scene.CreateGameObjectTracked("Charm");
+        charm.SetParent(enemy);
+        w.ApplyStructuralChanges();
+        check(MyeAttachToPart(uctx, toShared(charm.Id()), root, "Hips/LegL"),
+              "abi: MyeAttachToPart reports success for an existing part");
+        w.ApplyStructuralChanges(); // SetParent はコマンドキュー経由なので確定させる
+        check(w.GetParent(charm.Id()) == legL.Id(),
+              "abi: MyeAttachToPart reparents the entity onto the part");
+        check(!MyeAttachToPart(uctx, toShared(charm.Id()), root, "Hips/Nope"),
+              "abi: attaching to a missing part fails instead of silently parenting elsewhere");
+        w.ApplyStructuralChanges();
+        check(w.GetParent(charm.Id()) == legL.Id(), "abi: a failed attach leaves the hierarchy alone");
+        check(same(MyeFindPartByTag(uctx, root, "Head"), head.Id())
+                  && MyeEntityIdIsNull(MyeFindPartByTag(uctx, root, "Nope")),
+              "abi: MyeFindPartByTag returns the first hit (null id when there is none)");
+        check(same(MyeFindPart(uctx, "Hips/LegR"), legR.Id()),
+              "abi: the self-relative MyeFindPart overload searches ctx.self");
+
+        w.DestroyEntity(charm.Id());
         w.ApplyStructuralChanges();
     }
 

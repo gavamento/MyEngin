@@ -22,7 +22,9 @@
 // v8 (M45): オーディオ操作一式をスロット予約で一括追加 (実装は M45g)。
 //           v3 の PlaySound/StopSound はシグネチャを変えずに残す — Interop.cs が
 //           位置ベースでミラーしているため、既存スロットをいじると C# 側が全てズレる
-#define MYE_API_VERSION 8u
+// v9 (M48h): 部位 (ソケット) クエリ FindPart / FindPartsByTag を追加。取り付けは既存
+//            SetParent、位置取得は既存 Transform getter で足りるので新スロットは 2 本だけ
+#define MYE_API_VERSION 9u
 
 // MYE_LOG レベル (Engine/Core/Log.h の LogLevel と同値)
 enum MyeLogLevel {
@@ -222,6 +224,31 @@ struct MyeEngineApi {
     void (*StopMusic)(void* engine, float fadeSeconds);
     // 3D リスナーを指定エンティティに固定する (M45e)。null id = 自動 (プライマリカメラ)
     void (*SetListenerEntity)(void* engine, MyeEntityId id);
+
+    // ---- 部位 (ソケット) クエリ (v9、M48h) ----
+    //
+    // 「アセット側が決めた取り付け位置に、ランタイムが物を付ける」ための入口。
+    // 取り付けそのものは既存 SetParent、位置取得は既存 Transform getter で足りるので、
+    // ここに増やすのは **引く手段** の 2 本だけ (ScriptAPI.h に糖衣あり)。
+    //
+    // ★どちらも読むのはシーンデータ (階層 / 名前 / PartComponent) だけ = 決定論。
+    //   スクリプト実行順は固定なので記録/検証で同じ答えが返る (オーディオのような
+    //   実時間レーンからは 1 bit も読んでいない)。
+    //
+    // FindPart: root から '/' 区切りの名前パスで降下する ("Hips/LegL")。各セグメントは
+    //   直子の名前と完全一致。空セグメント (先頭/末尾/連続の '/') は読み飛ばし、
+    //   パスが空なら root 自身。途中が PartComponent を持つ必要はない。
+    //   見つからなければ null id (MyeEntityIdIsNull で判定)
+    MyeEntityId (*FindPart)(void* engine, MyeEntityId root, const char* utf8Path);
+    // FindPartsByTag: root サブツリーの PartComponent から tag 一致を DFS 順 (root 先頭) に集める。
+    //   out へ最大 cap 個書き、戻り値は **切り捨て前の総ヒット数** (Overlap* と同じ規約 —
+    //   バッファが足りたかは戻り値 <= cap で判定する)。out=null / cap=0 で件数だけ数えられる。
+    //   バッファは呼び出し側が確保する (DLL 境界規則)。
+    //   tag は部位タグ名の FNV-1a 64bit (ScriptAPI.h の MyePartTag / C# の Engine.PartTag)。
+    //   ★入れ子プレハブの境界では止めない (フラット走査) — 「ボス配下の全弱点」を
+    //     1 回で引ける方を優先した設計判断
+    int32_t (*FindPartsByTag)(void* engine, MyeEntityId root, uint64_t tag, MyeEntityId* out,
+                              int32_t cap);
 };
 
 // スクリプトの各コールバックに渡されるコンテキスト (POD)

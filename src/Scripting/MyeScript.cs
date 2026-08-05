@@ -106,6 +106,37 @@ namespace MyeScripting
         // 3D リスナーを自分に固定する (三人称カメラで「プレイヤーの耳」で聴かせたいとき)
         protected void MakeListener() => Engine.SetListenerEntity(SelfId);
 
+        // ---- 部位 (ソケット) (v9、M48h) ----
+        // アセットが公開した取り付け位置を名前パス / タグ名で引く。
+        // 取り付けは AttachToPart (中身は SetParent)。部位が無ければ何もせず false
+
+        // 自分のサブツリーから引く ("Hips/HandR")
+        protected MyeEntity FindPart(string path) => new MyeEntity(Engine.FindPart(SelfId, path));
+        // 任意のルートから引く
+        protected static MyeEntity FindPart(MyeEntity root, string path)
+            => new MyeEntity(Engine.FindPart(root.Id, path));
+
+        // タグ名一致の部位を DFS 順に集める (max 件で打ち切り)
+        protected static MyeEntity[] FindPartsByTag(MyeEntity root, string tagName, int max = 32)
+        {
+            if (max <= 0) return System.Array.Empty<MyeEntity>();
+            var buf = new MyeEntityId[max];
+            int total = Engine.FindPartsByTag(root.Id, tagName, buf);
+            int n = total < max ? total : max; // 戻り値は切り捨て前の総数
+            var result = new MyeEntity[n];
+            for (int i = 0; i < n; ++i) result[i] = new MyeEntity(buf[i]);
+            return result;
+        }
+
+        // 自分を root の部位へ取り付ける。部位が見つからなければ false
+        protected bool AttachToPart(MyeEntity root, string path)
+        {
+            var part = Engine.FindPart(root.Id, path);
+            if (part.IsNull) return false;
+            Engine.SetParent(SelfId, part);
+            return true;
+        }
+
         // ---- ライフサイクル (すべて任意オーバーライド) ----
         public virtual void Start() { }
         public virtual void Update(float dt) { }

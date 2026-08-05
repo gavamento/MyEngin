@@ -396,6 +396,15 @@ void BuildPartsShowcaseScene(EngineContext& ctx)
         col->isTrigger = 0;
         drop.AddComponent<RigidbodyComponent>();
     }
+
+    // ---- 部位 API (v9、M48h) をリプレイ被覆に入れる ----
+    // スクリプトが自分のサブツリーから "HandR" タグの部位を引いて飾りを取り付ける。
+    // これで「C ABI の FindPartsByTag → SetParent」が Debug/Release のハッシュ照合を
+    // 通ることまで機械検証される (DLL 未ロードならスキップ = 既定デモと同じ流儀)
+    const ComponentTypeId attachDemo = ComponentRegistry::Get().FindByName("PartAttachDemo");
+    if (attachDemo != kInvalidComponentType) {
+        w.AddComponentRaw(actor.Id(), attachDemo);
+    }
     w.ApplyStructuralChanges();
 }
 

@@ -153,6 +153,9 @@ namespace MyeScripting
         public delegate* unmanaged<void*, byte*, float, int, void> PlayMusic;
         public delegate* unmanaged<void*, float, void> StopMusic;
         public delegate* unmanaged<void*, MyeEntityId, void> SetListenerEntity;
+        // ---- 部位 (ソケット) クエリ (v9、M48h)。宣言順 = ネイティブと一致 ----
+        public delegate* unmanaged<void*, MyeEntityId, byte*, MyeEntityId> FindPart;
+        public delegate* unmanaged<void*, MyeEntityId, ulong, MyeEntityId*, int, int> FindPartsByTag;
     }
 
     // ネイティブ ManagedHost が保持する関数ポインタ表。Bootstrap がここに書き込む。
@@ -480,6 +483,46 @@ namespace MyeScripting
         public static void SetListenerEntity(MyeEntityId id)
         {
             if (_api != null) _api->SetListenerEntity(_api->Engine, id);
+        }
+
+        // ---- 部位 (ソケット) (v9、M48h) ----
+        // 「アセットが公開した取り付け位置」を名前パス / タグで引く。取り付けは SetParent。
+        // ★C# レーンはリプレイ/ワールドハッシュの対象外 (別レーン) — 引く行為自体は
+        //   決定論だが、C# から sim を動かす経路は record/verify で回らないので注意
+
+        // タグ名 → タグ ID。FNV-1a 64bit で、ネイティブ Engine/Core/Hash.h の HashStr と
+        // 同一の定数 (バイト列は UTF-8)。ここがズレると同じ名前で別 ID を引くことになる
+        public static ulong PartTag(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return 0ul;
+            ulong h = 14695981039346656037ul;
+            foreach (byte b in Encoding.UTF8.GetBytes(name))
+            {
+                h ^= b;
+                h *= 1099511628211ul;
+            }
+            return h;
+        }
+
+        // root から '/' 区切りの名前パスで降下する ("Hips/LegL")。空パスは root 自身。
+        // 見つからなければ MyeEntityId.Null
+        public static MyeEntityId FindPart(MyeEntityId root, string path)
+        {
+            if (_api == null) return MyeEntityId.Null;
+            var b = Utf8(path ?? "");
+            fixed (byte* p = b) { return _api->FindPart(_api->Engine, root, p); }
+        }
+
+        // タグ一致の部位を DFS 順に outParts へ書く。戻り値は **切り捨て前の総ヒット数**
+        // (戻り値 > outParts.Length ならバッファが足りていない)
+        public static int FindPartsByTag(MyeEntityId root, string tagName, MyeEntityId[] outParts)
+        {
+            if (_api == null) return 0;
+            fixed (MyeEntityId* p = outParts)
+            {
+                return _api->FindPartsByTag(_api->Engine, root, PartTag(tagName), p,
+                                            outParts?.Length ?? 0);
+            }
         }
     }
 }
