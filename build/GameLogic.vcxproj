@@ -45,6 +45,7 @@
     <ClCompile Include="..\src\GameLogic\GameLogicMain.cpp" />
     <ClCompile Include="..\src\GameLogic\Scripts\AudioDemo.cpp" />
     <ClCompile Include="..\src\GameLogic\Scripts\PartAttachDemo.cpp" />
+    <ClCompile Include="..\src\GameLogic\Scripts\PartRaycastDemo.cpp" />
     <ClCompile Include="..\src\GameLogic\Scripts\PlayerController.cpp" />
     <ClCompile Include="..\src\GameLogic\Scripts\Rotator.cpp" />
     <ClCompile Include="..\src\GameLogic\Scripts\Spawner.cpp" />

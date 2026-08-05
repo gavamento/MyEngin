@@ -180,6 +180,8 @@ constexpr const char* kSkyboxModeLabels[] = { "Gradient", "Cubemap" };
 constexpr const char* kFogModeLabels[] = { "Linear", "Exp", "Exp2" };
 constexpr const char* kTonemapLabels[] = { "Passthrough", "ACES", "Reinhard" };
 constexpr const char* kOffOnLabels[] = { "Off", "On" };
+// M49: PartBounds は 0=Box (Collider の 0=Sphere と並びが違うので専用配列)
+constexpr const char* kPartBoundsShapeLabels[] = { "Box", "Sphere" };
 // M47c: 日本語表示。ACES / Reinhard / Exp2 のような固有名詞・数式名は英語のまま
 constexpr const char* kColliderShapeJa[] = { "スフィア", "ボックス", "カプセル", "メッシュ" };
 constexpr const char* kLightTypeJa[] = { "平行光", "ポイント", "スポット" };
@@ -194,6 +196,7 @@ constexpr const char* kSkyboxModeJa[] = { "グラデーション", "キューブ
 constexpr const char* kFogModeJa[] = { "線形", "Exp", "Exp2" };
 constexpr const char* kTonemapJa[] = { "そのまま", "ACES", "Reinhard" };
 constexpr const char* kOffOnJa[] = { "オフ", "オン" };
+constexpr const char* kPartBoundsShapeJa[] = { "ボックス", "スフィア" };
 constexpr EnumFieldLabels kEnumFields[] = {
     { "Collider", "shape", kColliderShapeLabels, 3, kColliderShapeJa },
     { "Light", "type", kLightTypeLabels, 3, kLightTypeJa },
@@ -209,6 +212,7 @@ constexpr EnumFieldLabels kEnumFields[] = {
     { "CameraPostFx", "tonemapMode", kTonemapLabels, 3, kTonemapJa },
     { "CameraPostFx", "bloomOn", kOffOnLabels, 2, kOffOnJa },
     { "CameraPostFx", "fxaaOn", kOffOnLabels, 2, kOffOnJa },
+    { "PartBounds", "shape", kPartBoundsShapeLabels, 2, kPartBoundsShapeJa },
 };
 
 // ImGui::InputText は終端より後ろのバイトを掃除しない。一方 WorldHasher は登録フィールドを

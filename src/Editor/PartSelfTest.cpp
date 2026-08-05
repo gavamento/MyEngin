@@ -174,9 +174,11 @@ bool RunPartSelfTest()
         };
         const MyeEntityId root = toShared(enemy.Id());
 
-        check(api.version == MYE_API_VERSION && MYE_API_VERSION == 9u, "abi: the table reports v9");
+        check(api.version == MYE_API_VERSION && MYE_API_VERSION == 10u,
+              "abi: the table reports v10");
         check(api.FindPart != nullptr && api.FindPartsByTag != nullptr,
               "abi: the v9 part slots are filled in");
+        check(api.RaycastParts != nullptr, "abi: the v10 RaycastParts slot is filled in");
 
         // ★Shared/ScriptAPI.h は Engine/Core/Hash.h を include できず FNV 定数を再掲して
         //   いる。ここがズレると「同じタグ名なのに引けない」という静かな壊れ方をする
@@ -230,6 +232,25 @@ bool RunPartSelfTest()
               "abi: MyeFindPartByTag returns the first hit (null id when there is none)");
         check(same(MyeFindPart(uctx, "Hips/LegR"), legR.Id()),
               "abi: the self-relative MyeFindPart overload searches ctx.self");
+
+        // ---- RaycastParts (v10、M49): C ABI 経路 + 糖衣のタグ名解決 ----
+        // legL に範囲を付けて WorldMatrix を確定させ、テーブル経由で当てる
+        legL.AddComponent<PartBoundsComponent>(); // 既定 ±0.5 の箱、原点
+        w.ApplyStructuralChanges();
+        TransformSystem abiTs;
+        abiTs.Update(w);
+        MyeRaycastHit rh = {};
+        check(api.RaycastParts(&apiCtx, MyeEntityId{}, 0, { 0, 0, -5 }, { 0, 0, 1 }, 100.0f, &rh)
+                      == 1
+                  && same(rh.entity, legL.Id()) && std::fabs(rh.distance - 4.5f) < 1e-5f,
+              "abi: RaycastParts hits the bounded part through the C ABI");
+        check(api.RaycastParts(&apiCtx, MyeEntityId{}, MyePartTag("Head"), { 0, 0, -5 },
+                               { 0, 0, 1 }, 100.0f, &rh)
+                  == 0,
+              "abi: a tag filter with no bounded match yields no hit");
+        check(MyeRaycastParts(uctx, MyeEntityId{}, "Foot", { 0, 0, -5 }, { 0, 0, 1 }, 100.0f, rh)
+                  && same(rh.entity, legL.Id()),
+              "abi: the MyeRaycastParts sugar resolves the tag name");
 
         w.DestroyEntity(charm.Id());
         w.ApplyStructuralChanges();
@@ -471,6 +492,146 @@ bool RunPartSelfTest()
             check(fw.GetComponent<LocalTransform>(staticSock.Id())->position.y == 2.0f,
                   "follow: an empty joint name means a static socket (left alone)");
         }
+    }
+
+    // ---- 部位の範囲 (M49): ポーズ規約 ----
+    {
+        PartBoundsComponent b;
+        b.shape = 0; // 箱
+        b.center = { 1.0f, 2.0f, 3.0f };
+        b.halfExtents = { 0.5f, 0.6f, 0.7f };
+        XMFLOAT4X4 wm;
+        XMStoreFloat4x4(&wm, XMMatrixScaling(2.0f, 3.0f, 4.0f));
+        ShapePose p = Parts::MakePartBoundsPose(b, wm);
+        // ★shape 番号は PartBounds と ShapePose で逆 — ここが入れ替わると
+        //   「箱を置いたのに球で当たる」が静かに起きるので機械検査で固定する
+        check(p.shape == 1, "bounds: PartBounds box(0) maps to ShapePose box(1)");
+        check(p.identityRot == 1, "bounds: a scale-only matrix keeps the identity fast-path");
+        check(std::fabs(p.hx - 1.0f) < 1e-5f && std::fabs(p.hy - 1.8f) < 1e-5f
+                  && std::fabs(p.hz - 2.8f) < 1e-5f,
+              "bounds: box extents scale per-axis");
+        check(std::fabs(p.px - 2.0f) < 1e-5f && std::fabs(p.py - 6.0f) < 1e-5f
+                  && std::fabs(p.pz - 12.0f) < 1e-5f,
+              "bounds: the center offset is scaled into the world position");
+
+        b.shape = 1; // 球
+        p = Parts::MakePartBoundsPose(b, wm);
+        check(p.shape == 0, "bounds: PartBounds sphere(1) maps to ShapePose sphere(0)");
+        check(std::fabs(p.radius - 0.5f * 4.0f) < 1e-5f,
+              "bounds: the sphere radius is halfExtents.x times the max scale axis");
+
+        // 回転を含む center 変換は DirectXMath の答えと一致すること (フル変換の検査)
+        XMStoreFloat4x4(&wm, XMMatrixRotationY(XM_PIDIV2) * XMMatrixTranslation(5, 0, 0));
+        b.shape = 0;
+        p = Parts::MakePartBoundsPose(b, wm);
+        XMFLOAT3 expect;
+        XMStoreFloat3(&expect, XMVector3Transform(XMLoadFloat3(&b.center), XMLoadFloat4x4(&wm)));
+        check(p.identityRot == 0 && std::fabs(p.px - expect.x) < 1e-5f
+                  && std::fabs(p.py - expect.y) < 1e-5f && std::fabs(p.pz - expect.z) < 1e-5f,
+              "bounds: a rotated matrix transforms the center like XMVector3Transform");
+    }
+
+    // ---- 部位の範囲 (M49): RaycastParts の決定論規約とフィルタ ----
+    {
+        Scene rs;
+        World& rw = rs.GetWorld();
+        GameObject p1 = rs.CreateGameObjectTracked("P1");
+        GameObject p2 = rs.CreateGameObjectTracked("P2");
+        // 手前から: F (Part 無し) / E (無効) / Z (ゼロ寸法) はどれも当たってはいけない
+        GameObject f = rs.CreateGameObjectTracked("NoPart");
+        GameObject e = rs.CreateGameObjectTracked("Inactive");
+        GameObject z = rs.CreateGameObjectTracked("ZeroSize");
+        GameObject a = rs.CreateGameObjectTracked("BoxA");
+        GameObject sb = rs.CreateGameObjectTracked("SphereB");
+        GameObject d1 = rs.CreateGameObjectTracked("Twin1");
+        GameObject d2 = rs.CreateGameObjectTracked("Twin2");
+        rw.ApplyStructuralChanges();
+        a.SetParent(p1);
+        sb.SetParent(p2);
+
+        const uint64_t kWeak = Parts::TagOf("Weak");
+        const uint64_t kCore = Parts::TagOf("Core");
+        const uint64_t kTwin = Parts::TagOf("Twin");
+        auto setup = [&](GameObject& g, float x, int32_t shape, float he, uint64_t tag) {
+            g.SetLocalPosition(x, 0.0f, 0.0f);
+            g.AddComponent<PartComponent>()->tag = tag;
+            auto* pb = g.AddComponent<PartBoundsComponent>();
+            pb->shape = shape;
+            pb->halfExtents = { he, he, he };
+        };
+        f.SetLocalPosition(0.8f, 0.0f, 0.0f);
+        f.AddComponent<PartBoundsComponent>()->halfExtents = { 0.4f, 0.4f, 0.4f };
+        setup(e, 1.0f, 0, 0.25f, kWeak);
+        e.AddComponent<ActiveComponent>()->enabled = 0;
+        setup(z, 1.2f, 0, 0.0f, kWeak);
+        setup(a, 2.0f, 0, 0.5f, kWeak);
+        setup(sb, 5.0f, 1, 0.5f, kCore);
+        setup(d1, 8.0f, 0, 0.5f, kTwin);
+        setup(d2, 8.0f, 0, 0.5f, kTwin);
+        rw.ApplyStructuralChanges();
+        TransformSystem ts;
+        ts.Update(rw);
+
+        const XMFLOAT3 o = { 0, 0, 0 };
+        const XMFLOAT3 dx = { 1, 0, 0 };
+        Parts::PartRayHit hit;
+        check(Parts::RaycastParts(rw, kNullEntity, 0, o, dx, 100.0f, hit)
+                  && hit.entity == a.Id() && std::fabs(hit.distance - 1.5f) < 1e-5f
+                  && std::fabs(hit.point.x - 1.5f) < 1e-5f && hit.normal.x == -1.0f,
+              "raycast: nearest part wins; part-less / inactive / zero-size candidates are skipped");
+        check(Parts::RaycastParts(rw, kNullEntity, kCore, o, dx, 100.0f, hit)
+                  && hit.entity == sb.Id() && std::fabs(hit.distance - 4.5f) < 1e-5f
+                  && std::fabs(hit.normal.x + 1.0f) < 1e-5f,
+              "raycast: the tag filter reaches the sphere behind the box");
+        check(Parts::RaycastParts(rw, p2.Id(), 0, o, dx, 100.0f, hit) && hit.entity == sb.Id(),
+              "raycast: a root limits hits to its subtree");
+        check(!Parts::RaycastParts(rw, kNullEntity, 0, o, dx, 1.0f, hit),
+              "raycast: maxDist cuts everything off");
+        // 同 t (完全に重なった双子) は**低 index が勝つ** (昇順走査 + 厳密 < の規約)。
+        // ここが <= に変わる/走査が降順になると落ちる = 決定論規約の変異検出
+        check(Parts::RaycastParts(rw, kNullEntity, kTwin, o, dx, 100.0f, hit)
+                  && hit.entity == d1.Id(),
+              "raycast: an exact tie is won by the lower entity index");
+        // 箱の内部始点は t=0 で当たる (RayAabb は tmin=0 開始 — M49 で実測確定した挙動)
+        const XMFLOAT3 inside = { 8.0f, 0.0f, 0.0f };
+        check(Parts::RaycastParts(rw, kNullEntity, kTwin, inside, dx, 100.0f, hit)
+                  && hit.distance == 0.0f && hit.entity == d1.Id(),
+              "raycast: a ray starting inside a box hits at t=0 (and ties go to the lower index)");
+        GameObject dead = rs.CreateGameObjectTracked("Dead");
+        rw.ApplyStructuralChanges();
+        const EntityID deadId = dead.Id();
+        rw.DestroyEntity(deadId);
+        rw.ApplyStructuralChanges();
+        check(!Parts::RaycastParts(rw, deadId, 0, o, dx, 100.0f, hit),
+              "raycast: a dead root returns no hit (no crash)");
+    }
+
+    // ---- 部位の範囲 (M49): シリアライズ往復 + ハッシュ被覆 ----
+    {
+        Scene hs;
+        GameObject g = hs.CreateGameObjectTracked("Bounded");
+        hs.GetWorld().ApplyStructuralChanges();
+        g.AddComponent<PartComponent>()->tag = Parts::TagOf("Weak");
+        auto* pb = g.AddComponent<PartBoundsComponent>();
+        pb->shape = 1;
+        pb->center = { 0.1f, 0.2f, 0.3f };
+        pb->halfExtents = { 0.4f, 0.5f, 0.6f };
+        hs.GetWorld().ApplyStructuralChanges();
+
+        const nlohmann::json saved = SceneSerializer::SaveToJson(hs);
+        const uint64_t h0 = HashWorld(hs.GetWorld(), nullptr);
+        Scene hs2;
+        SceneSerializer::LoadFromJson(hs2, saved);
+        check(HashWorld(hs2.GetWorld(), nullptr) == h0,
+              "bounds: the serialize round trip is hash-identical");
+        auto* pb2 = hs2.GetWorld().GetComponent<PartBoundsComponent>(hs2.Find("Bounded").Id());
+        check(pb2 && pb2->shape == 1 && std::fabs(pb2->center.y - 0.2f) < 1e-6f
+                  && std::fabs(pb2->halfExtents.z - 0.6f) < 1e-6f,
+              "bounds: PartBounds fields survive a save/load round trip");
+        // hash 対象であること (kComponentNoHash の付け忘れ/付けすぎ検出)
+        pb2->halfExtents.y = 9.0f;
+        check(HashWorld(hs2.GetWorld(), nullptr) != h0,
+              "bounds: halfExtents is covered by the world hash");
     }
 
     if (failCount == 0) {

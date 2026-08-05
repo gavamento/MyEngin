@@ -3,12 +3,16 @@
 #include <string_view>
 #include <vector>
 
+#include <DirectXMath.h>
+
 #include "Engine/Core/EntityID.h"
 #include "Engine/Core/Hash.h"
+#include "Engine/Engine/Physics/Shapes.h"
 
 namespace mye {
 
 class World;
+struct PartBoundsComponent;
 
 // 部位 (ソケット) の検索 API (M48f)。`PartComponent` を持つ子エンティティを
 // 「名前パス」または「タグ」で引く。ゲームコードの本命ユースケースは
@@ -42,6 +46,27 @@ void FindPartsByTag(World& world, EntityID root, uint64_t tag, std::vector<Entit
 // ★PartFollowSystem (sim) と Inspector のジョイント一覧が**同じ答え**を見るための唯一の実装。
 //   ここが 2 本あると「エディタで選べたジョイントに実行時は追従しない」が静かに起きる
 EntityID ResolvePartSource(World& world, EntityID part, EntityID explicitSource);
+
+// 部位の範囲 (M49) → ワールド ShapePose。**ワイヤ表示とレイ判定が同じ答えを見るための唯一の実装**
+// (ResolvePartSource と同じ 1 本化原則)。規約は shapes::MakePoseFromMatrix の写し:
+// 行ベクトル長 = スケール、正規化行 = 基底、無回転 fast-path。球の半径 =
+// halfExtents.x × 最大軸スケール (ApplyScaledExtents と同じ max 規約)、箱は軸別。
+// center はローカルオフセットとして wm でフル変換して位置に足す。
+// ★shape 番号は PartBounds (0=箱 1=球) と ShapePose (0=球 1=箱) で**逆** — 変換はここだけ
+ShapePose MakePartBoundsPose(const PartBoundsComponent& b, const DirectX::XMFLOAT4X4& wm);
+
+// 部位ボリュームへのレイキャスト (M49)。root=kNullEntity でシーン全体、tag=0 で全部位。
+// 対象は Part + PartBounds + WorldMatrix を**全部持つ**エンティティのみ (tag は Part 側)。
+// dir は正規化済み前提 (shapes::Raycast の契約)。エディタのクリック選択も sim もこの 1 本。
+// 決定論: entity.index 昇順走査 + 厳密 < のみ更新 = 同 t は低 index 勝ち (物理クエリの流儀)
+struct PartRayHit {
+    EntityID entity = kNullEntity;
+    float distance = 0.0f;
+    DirectX::XMFLOAT3 point = { 0.0f, 0.0f, 0.0f };
+    DirectX::XMFLOAT3 normal = { 0.0f, 0.0f, 0.0f };
+};
+bool RaycastParts(World& world, EntityID root, uint64_t tag, const DirectX::XMFLOAT3& origin,
+                  const DirectX::XMFLOAT3& dir, float maxDist, PartRayHit& out);
 
 // 部位の構造ロック (M48f)。「プレハブメンバ (PrefabLink 持ち) かつ Part 持ち」は
 // **リネーム / 削除 / 再親化を禁止する**。部位はアセットが公開する API そのもので、

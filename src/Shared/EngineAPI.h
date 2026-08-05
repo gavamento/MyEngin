@@ -24,7 +24,9 @@
 //           位置ベースでミラーしているため、既存スロットをいじると C# 側が全てズレる
 // v9 (M48h): 部位 (ソケット) クエリ FindPart / FindPartsByTag を追加。取り付けは既存
 //            SetParent、位置取得は既存 Transform getter で足りるので新スロットは 2 本だけ
-#define MYE_API_VERSION 9u
+// v10 (M49): 部位ボリューム (PartBounds) へのレイキャスト RaycastParts を追加。
+//            root/tag のフィルタ込みで 1 本に収めた (root null = シーン全体、tag 0 = 全部位)
+#define MYE_API_VERSION 10u
 
 // MYE_LOG レベル (Engine/Core/Log.h の LogLevel と同値)
 enum MyeLogLevel {
@@ -249,6 +251,13 @@ struct MyeEngineApi {
     //     1 回で引ける方を優先した設計判断
     int32_t (*FindPartsByTag)(void* engine, MyeEntityId root, uint64_t tag, MyeEntityId* out,
                               int32_t cap);
+    // RaycastParts (v10、M49): 部位ボリューム (Part + PartBounds 両持ちのエンティティ) への
+    //   レイキャスト。root null = シーン全体、tag 0 = 全部位。dir は**正規化済み**であること。
+    //   ヒットで 1 を返し outHit に最近ヒット (entity = 部位)。同距離は低 index が勝つ (決定論)。
+    //   読むのはシーンデータ (WorldMatrix / Part / PartBounds) だけ — WorldMatrix は
+    //   前 tick の TransformSystem の結果 (既存の Raycast と同条件)
+    int32_t (*RaycastParts)(void* engine, MyeEntityId root, uint64_t tag, MyeVec3 origin,
+                            MyeVec3 dir, float maxDist, MyeRaycastHit* outHit);
 };
 
 // スクリプトの各コールバックに渡されるコンテキスト (POD)

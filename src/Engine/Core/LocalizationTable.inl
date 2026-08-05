@@ -482,6 +482,7 @@ MYE_STR(Create_Audio,         "Audio",             "オーディオ")
 MYE_STR(Create_AudioSource,   "Audio Source",      "オーディオソース")
 MYE_STR(Create_AudioListener, "Audio Listener",    "オーディオリスナー")
 MYE_STR(Create_Camera,        "Camera",            "カメラ")
+MYE_STR(Create_Part,          "Part (with Bounds)", "部位 (範囲付き)")
 
 // ---- 統計ウィンドウ / 未保存確認 (M47b) ----
 MYE_STR(Stats_Fps,            "FPS: %.1f (%.3f ms)",        "FPS: %.1f (%.3f ms)")

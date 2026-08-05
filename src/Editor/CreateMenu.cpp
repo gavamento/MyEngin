@@ -178,6 +178,38 @@ void DrawCreateMenuItems(EngineContext& ctx, Selection& selection, UndoStack& un
         ImGui::EndMenu();
     }
     CreateItem(ctx, selection, undo, parent, spawnPos, Tr(StrId::Create_Camera), "Camera", &CreateCamera);
+
+    // 部位 (範囲付き、M49)。汎用 CreateItem を使わないのは、右クリック対象 (parent) の
+    // メッシュ AABB へ範囲をフィットさせる親依存の初期化があるため
+    if (ImGui::MenuItem(Tr(StrId::Create_Part))) {
+        RecordCreate(ctx, selection, undo, "Create Part", [&] {
+            const std::string unique =
+                MakeUniqueSiblingName(ctx.scene->GetWorld(), parent, "Part", /*exclude=*/kNullEntity);
+            GameObject obj = ctx.scene->CreateGameObjectTracked(unique.c_str());
+            obj.AddComponent<PartComponent>(); // tag = 0 (未分類)。Inspector の combo で選ぶ
+            auto* pb = obj.AddComponent<PartBoundsComponent>();
+            if (!parent.IsNull()) {
+                ctx.scene->GetWorld().SetParent(obj.Id(), parent);
+                // 親のメッシュ AABB に箱をフィット。子の変換は恒等のまま作られるので、
+                // 親ローカルの AABB 寸法をそのまま center/halfExtents に写せる
+                if (const auto* mr =
+                        ctx.scene->GetWorld().GetComponent<MeshRendererComponent>(parent)) {
+                    if (const Mesh* mesh = ctx.resources->meshes.Get(mr->mesh)) {
+                        const DirectX::XMFLOAT3& lo = mesh->aabbMin;
+                        const DirectX::XMFLOAT3& hi = mesh->aabbMax;
+                        pb->center = { (lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f,
+                                       (lo.z + hi.z) * 0.5f };
+                        pb->halfExtents = { (hi.x - lo.x) * 0.5f, (hi.y - lo.y) * 0.5f,
+                                            (hi.z - lo.z) * 0.5f };
+                    }
+                }
+            }
+            if (spawnPos) {
+                obj.SetLocalPosition(spawnPos->x, spawnPos->y, spawnPos->z);
+            }
+            return obj;
+        });
+    }
 }
 
 } // namespace mye

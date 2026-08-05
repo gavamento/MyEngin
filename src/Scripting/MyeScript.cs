@@ -137,6 +137,17 @@ namespace MyeScripting
             return true;
         }
 
+        // 部位ボリューム (Part + PartBounds) へのレイキャスト (v10、M49)。部位ダメージ判定用。
+        // tagName null/空 = 全部位。dir は正規化済みであること。シーン全体を対象にする
+        protected static bool RaycastParts(MyeVec3 origin, MyeVec3 dir, float maxDist,
+                                           out MyeRaycastHit hit, string tagName = null)
+            => Engine.RaycastParts(MyeEntityId.Null, tagName, origin, dir, maxDist, out hit);
+        // root のサブツリー限定版
+        protected static bool RaycastParts(MyeEntity root, MyeVec3 origin, MyeVec3 dir,
+                                           float maxDist, out MyeRaycastHit hit,
+                                           string tagName = null)
+            => Engine.RaycastParts(root.Id, tagName, origin, dir, maxDist, out hit);
+
         // ---- ライフサイクル (すべて任意オーバーライド) ----
         public virtual void Start() { }
         public virtual void Update(float dt) { }

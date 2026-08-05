@@ -397,6 +397,27 @@ void BuildPartsShowcaseScene(EngineContext& ctx)
         drop.AddComponent<RigidbodyComponent>();
     }
 
+    // ---- 範囲部位 (M49): ボーン無しの静的オブジェクトの「一部分」を部位にする ----
+    // 的 (Target) の上半分だけを WeakPoint にする。PartBounds が demo シーンに載ることで
+    // シリアライズ + WorldHash + (M49 の PartRaycastDemo で) RaycastParts がリプレイ被覆に入る
+    GameObject target = s.CreateGameObject("Target");
+    target.SetLocalPosition(-0.9f, 0.5f, 0.4f);
+    {
+        auto* mr = target.AddComponent<MeshRendererComponent>();
+        mr->mesh = cube;
+        mr->material = AssetID{ HashStr("parts_drop") };
+    }
+    GameObject weak = s.CreateGameObject("WeakPoint");
+    weak.SetParent(target);
+    {
+        auto* p = weak.AddComponent<PartComponent>();
+        p->tag = HashStr("WeakPoint"); // joint 空 = 静的ソケット
+        auto* b = weak.AddComponent<PartBoundsComponent>();
+        b->shape = 0;                      // 箱
+        b->center = { 0.0f, 0.25f, 0.0f }; // 単位キューブの上半分だけが弱点
+        b->halfExtents = { 0.5f, 0.25f, 0.5f };
+    }
+
     // ---- 部位 API (v9、M48h) をリプレイ被覆に入れる ----
     // スクリプトが自分のサブツリーから "HandR" タグの部位を引いて飾りを取り付ける。
     // これで「C ABI の FindPartsByTag → SetParent」が Debug/Release のハッシュ照合を
@@ -404,6 +425,12 @@ void BuildPartsShowcaseScene(EngineContext& ctx)
     const ComponentTypeId attachDemo = ComponentRegistry::Get().FindByName("PartAttachDemo");
     if (attachDemo != kInvalidComponentType) {
         w.AddComponentRaw(actor.Id(), attachDemo);
+    }
+    // 範囲部位レイキャスト (v10、M49) の恒久 probe。Target に付け、毎 tick RaycastParts を
+    // 実走して結果を sim 状態に書き戻す (詳細は PartRaycastDemo.cpp)
+    const ComponentTypeId rayDemo = ComponentRegistry::Get().FindByName("PartRaycastDemo");
+    if (rayDemo != kInvalidComponentType) {
+        w.AddComponentRaw(target.Id(), rayDemo);
     }
     w.ApplyStructuralChanges();
 }

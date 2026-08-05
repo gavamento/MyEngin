@@ -17,9 +17,11 @@
 #include "Engine/Engine/Audio/AudioSourceSystem.h"
 #include "Engine/Engine/Audio/SoundAsset.h"
 #include "Engine/Engine/GameObject.h"
+#include "Engine/Engine/Parts.h"
 #include "Engine/Engine/Physics/Shapes.h"
 #include "Engine/Engine/RenderSystem.h"
 #include "Engine/Engine/Scene.h"
+#include "Engine/Renderer/FrustumCull.h"
 #include "Engine/Renderer/GpuResources.h"
 #include "Engine/Renderer/RenderPath.h"
 
@@ -41,6 +43,40 @@ void CamBasis(float pitchDeg, float yawDeg, XMVECTOR& fwd, XMVECTOR& right, XMVE
     fwd = XMVector3Rotate(XMVectorSet(0, 0, 1, 0), q);
     right = XMVector3Rotate(XMVectorSet(1, 0, 0, 0), q);
     up = XMVector3Rotate(XMVectorSet(0, 1, 0, 0), q);
+}
+
+// レイがワールド AABB を**抜ける** t (スラブ法の tmax)。ミス (かすらない) は false。
+// 部位ボリューム選択 (M49) の遮蔽近似に使う — GPU ピックは深度を返さないので、
+// 「ピックしたメッシュの AABB を抜ける前にボリュームへ入るか」で手前/奥を判定する
+bool RayAabbExit(const XMFLOAT3& o, const XMFLOAT3& d, const XMFLOAT3& lo, const XMFLOAT3& hi,
+                 float& outExitT)
+{
+    float tmin = 0.0f, tmax = kFarZ;
+    const float* op = &o.x;
+    const float* dp = &d.x;
+    const float* lp = &lo.x;
+    const float* hp = &hi.x;
+    for (int i = 0; i < 3; ++i) {
+        if (std::fabs(dp[i]) < 1e-8f) {
+            if (op[i] < lp[i] || op[i] > hp[i]) {
+                return false;
+            }
+            continue;
+        }
+        const float inv = 1.0f / dp[i];
+        float t0 = (lp[i] - op[i]) * inv;
+        float t1 = (hp[i] - op[i]) * inv;
+        if (t0 > t1) {
+            std::swap(t0, t1);
+        }
+        tmin = std::max(tmin, t0);
+        tmax = std::min(tmax, t1);
+        if (tmin > tmax) {
+            return false;
+        }
+    }
+    outExitT = tmax;
+    return true;
 }
 
 // ワールド行列から各軸のスケール量を取り出す
@@ -405,6 +441,36 @@ void SceneViewWindow::BuildOverlays(EngineContext& ctx, Selection& selection)
                 XMFLOAT3 tip;
                 XMStoreFloat3(&tip, XMVectorAdd(XMLoadFloat3(&p), XMVectorScale(fwd, 0.22f)));
                 lines_.AddLine(p, tip, c);
+            }
+        });
+
+        // 部位の範囲 (M49): 箱/球ボリュームのワイヤ。ポーズはクリック選択・RaycastParts と
+        // 同じ Parts::MakePartBoundsPose から取る = 表示と判定のズレを構造的に防ぐ
+        const ComponentTypeId pbReq[] = { PartComponent::sTypeId, PartBoundsComponent::sTypeId,
+                                          WorldMatrixComponent::sTypeId };
+        world.ForEachArchetype(pbReq, [&](Archetype& arch) {
+            const int pi = arch.FindTypeIndex(PartComponent::sTypeId);
+            const int bi = arch.FindTypeIndex(PartBoundsComponent::sTypeId);
+            const int wi = arch.FindTypeIndex(WorldMatrixComponent::sTypeId);
+            for (uint32_t row = 0; row < arch.Count(); ++row) {
+                const auto* pc = static_cast<const PartComponent*>(arch.GetPtr(pi, row));
+                const auto* pb = static_cast<const PartBoundsComponent*>(arch.GetPtr(bi, row));
+                const XMFLOAT4X4& wm =
+                    static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row))->value;
+                const uint32_t c = (pc->joint[0] != '\0') ? kPartBone : kPartStatic;
+                const ShapePose pose = Parts::MakePartBoundsPose(*pb, wm);
+                const XMFLOAT3 pos = { pose.px, pose.py, pose.pz };
+                if (pose.shape == 0) {
+                    lines_.AddWireSphere(pos, pose.radius, c);
+                } else {
+                    XMFLOAT4X4 boxWorld = {
+                        pose.bx[0], pose.bx[1], pose.bx[2], 0,
+                        pose.by[0], pose.by[1], pose.by[2], 0,
+                        pose.bz[0], pose.bz[1], pose.bz[2], 0,
+                        pose.px,    pose.py,    pose.pz,    1,
+                    };
+                    lines_.AddWireBox(boxWorld, { pose.hx, pose.hy, pose.hz }, c);
+                }
             }
         });
     }
@@ -841,8 +907,42 @@ void SceneViewWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
             const EntityID hit = picking_.Pick(*ctx.device, ctx.scene->GetWorld(), *ctx.shaders,
                                                *ctx.resources, lastView_, lastProj_, rt_.Width(),
                                                rt_.Height(), px, py);
-            if (!hit.IsNull()) {
-                const uint64_t fid = ctx.scene->EnsureFileId(hit);
+
+            // 部位ボリューム (M49): CPU レイで部位の範囲を判定し、GPU ピックと付き合わせる。
+            // 判定・ポーズはワイヤ表示/sim と同じ Parts::RaycastParts の 1 本。
+            // 優先規則: ボリュームは「メッシュ表面を包むクリック領域」なので、ピックした
+            // メッシュの AABB を**抜ける前**にボリュームへ入るなら部位が勝つ (ボリュームは
+            // メッシュ AABB の内側にあるのが普通で、入口 t 同士の比較だと常にメッシュが
+            // 勝ってしまう)。手前の別メッシュに遮られている部位は AABB の出口より遠いので
+            // 選ばれない。深度バッファは読まない近似
+            EntityID chosen = hit;
+            XMFLOAT3 ro, rd;
+            Parts::PartRayHit partHit;
+            if (MouseRay(imgPos, avail, ro, rd)
+                && Parts::RaycastParts(ctx.scene->GetWorld(), kNullEntity, 0, ro, rd, kFarZ,
+                                       partHit)) {
+                float exitT = kFarZ; // ピック無し / AABB 不明 (スキンメッシュ等) は部位が勝つ
+                if (!hit.IsNull()) {
+                    World& w = ctx.scene->GetWorld();
+                    const auto* mr = w.GetComponent<MeshRendererComponent>(hit);
+                    const auto* wmc = w.GetComponent<WorldMatrixComponent>(hit);
+                    const Mesh* mesh = mr ? ctx.resources->meshes.Get(mr->mesh) : nullptr;
+                    if (mesh && wmc) {
+                        XMFLOAT3 lo, hi;
+                        WorldAabb(wmc->value, mesh->aabbMin, mesh->aabbMax, lo, hi);
+                        float t;
+                        if (RayAabbExit(ro, rd, lo, hi, t)) {
+                            exitT = t;
+                        }
+                    }
+                }
+                if (partHit.distance <= exitT) {
+                    chosen = partHit.entity;
+                }
+            }
+
+            if (!chosen.IsNull()) {
+                const uint64_t fid = ctx.scene->EnsureFileId(chosen);
                 if (io.KeyCtrl) {
                     selection.Toggle(fid);
                 } else {
@@ -878,8 +978,8 @@ void SceneViewWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
     ImGui::End();
 }
 
-bool SceneViewWindow::GroundPointUnderCursor(const ImVec2& imgPos, const ImVec2& size,
-                                             XMFLOAT3& out) const
+bool SceneViewWindow::MouseRay(const ImVec2& imgPos, const ImVec2& size, XMFLOAT3& origin,
+                               XMFLOAT3& dir) const
 {
     if (size.x <= 0.0f || size.y <= 0.0f) {
         return false;
@@ -897,13 +997,24 @@ bool SceneViewWindow::GroundPointUnderCursor(const ImVec2& imgPos, const ImVec2&
     // クリップ空間の near/far をワールドへ逆射影しレイを作る (DX: NDC z は [0,1])
     const XMVECTOR nearP = XMVector3TransformCoord(XMVectorSet(ndcX, ndcY, 0.0f, 1.0f), inv);
     const XMVECTOR farP = XMVector3TransformCoord(XMVectorSet(ndcX, ndcY, 1.0f, 1.0f), inv);
-    const XMVECTOR dir = XMVectorSubtract(farP, nearP);
-    const float dy = XMVectorGetY(dir);
-    if (std::fabs(dy) < 1e-6f) {
+    XMStoreFloat3(&origin, nearP);
+    XMStoreFloat3(&dir, XMVector3Normalize(XMVectorSubtract(farP, nearP)));
+    return true;
+}
+
+bool SceneViewWindow::GroundPointUnderCursor(const ImVec2& imgPos, const ImVec2& size,
+                                             XMFLOAT3& out) const
+{
+    XMFLOAT3 ro, rd;
+    if (!MouseRay(imgPos, size, ro, rd)) {
+        return false;
+    }
+    if (std::fabs(rd.y) < 1e-6f) {
         return false; // 視線が地面と平行
     }
-    const float t = -XMVectorGetY(nearP) / dy;
-    const XMVECTOR hit = XMVectorAdd(nearP, XMVectorScale(dir, (t < 0.0f) ? 0.0f : t));
+    const float t = -ro.y / rd.y;
+    const XMVECTOR hit = XMVectorAdd(XMLoadFloat3(&ro),
+                                     XMVectorScale(XMLoadFloat3(&rd), (t < 0.0f) ? 0.0f : t));
     XMStoreFloat3(&out, hit);
     return true;
 }

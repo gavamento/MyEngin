@@ -628,6 +628,26 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
         }
         return total;
     };
+
+    // ---- 部位ボリューム レイキャスト (v10、M49) ----
+    // 実体は Parts::RaycastParts の 1 本きり (エディタのクリック選択・ワイヤ表示と同じ関数 =
+    // 「エディタで選べた範囲」と「スクリプトが当てられる範囲」が食い違わない)
+    out.RaycastParts = [](void* engine, MyeEntityId root, uint64_t tag, MyeVec3 origin,
+                          MyeVec3 dir, float maxDist, MyeRaycastHit* outHit) -> int32_t {
+        Parts::PartRayHit hit;
+        if (!Parts::RaycastParts(Sc(engine)->GetWorld(), ToEngine(root), tag,
+                                 { origin.x, origin.y, origin.z }, { dir.x, dir.y, dir.z },
+                                 maxDist, hit)) {
+            return 0;
+        }
+        if (outHit) {
+            outHit->entity = ToShared(hit.entity);
+            outHit->point = { hit.point.x, hit.point.y, hit.point.z };
+            outHit->normal = { hit.normal.x, hit.normal.y, hit.normal.z };
+            outHit->distance = hit.distance;
+        }
+        return 1;
+    };
 }
 
 } // namespace mye

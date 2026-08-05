@@ -375,6 +375,17 @@ inline bool MyeAttachToPart(const MyeUpdateContext& ctx, MyeEntityId child, MyeE
     return true;
 }
 
+// 部位ボリューム (Part + PartBounds) へのレイキャスト (v10、M49)。部位ダメージ判定用。
+// root null id = シーン全体、tagName null/空 = 全部位。dir は**正規化済み**であること。
+// ヒットで true、outHit.entity が部位 (同距離は低 index が勝つ = 決定論)
+inline bool MyeRaycastParts(const MyeUpdateContext& ctx, MyeEntityId root, const char* tagName,
+                            MyeVec3 origin, MyeVec3 dir, float maxDist, MyeRaycastHit& outHit)
+{
+    return ctx.api->RaycastParts(ctx.api->engine, root, MyePartTag(tagName), origin, dir, maxDist,
+                                 &outHit)
+        != 0;
+}
+
 // ---- ゲーム内 UI ヒットテスト (M21) ----
 // UI 描画はエンジン (UIElementComponent) が行うが、ボタン操作は **決定論のため
 // InputSnapshot のマウス経由** で判定する (ABI 追加なし = bump 不要)。verify では記録された

@@ -18,7 +18,8 @@ namespace {
 
 // 初回 (キーが無いプロジェクト) に入れる例。空表だと Inspector のドロップダウンが
 // 空になって「何を書けばいいか分からない」ので、よくある部位を種として置く
-constexpr const char* kDefaultTags[] = { "Head", "HandL", "HandR", "FootL", "FootR", "Weapon" };
+constexpr const char* kDefaultTags[] = { "Head",  "HandL",  "HandR",    "FootL",
+                                         "FootR", "Weapon", "WeakPoint" }; // WeakPoint は M49 で追加
 
 } // namespace
 

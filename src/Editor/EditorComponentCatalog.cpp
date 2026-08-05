@@ -23,6 +23,8 @@ const std::unordered_map<std::string, ComponentUiInfo>& Table()
         { "Active", { ICON_FA_EYE, "General", "アクティブ" } },
         // M48f: 部位 (ソケット)。アタッチ先を公開する構造なので General 扱い
         { "Part", { ICON_FA_ANCHOR, "General", "部位" } },
+        // M49: 部位の範囲 (箱/球ボリューム)。Part の添え物なので隣に置く
+        { "PartBounds", { ICON_FA_BULLSEYE, "General", "部位の範囲" } },
         // Rendering
         { "MeshRenderer", { ICON_FA_CUBE, "Rendering", "メッシュレンダラー" } },
         { "SkinnedMesh", { ICON_FA_PERSON, "Rendering", "スキンメッシュ" } },

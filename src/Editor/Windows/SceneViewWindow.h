@@ -40,6 +40,9 @@ private:
                    float rectH);
     void HandleCamera(EngineContext& ctx, Selection& selection, EditorSettings& settings);
     void FocusOnSelection(EngineContext& ctx, Selection& selection);
+    // カーソル位置のワールドレイ (origin + 正規化 dir)。ビュー行列が特異なら false
+    bool MouseRay(const ImVec2& imgPos, const ImVec2& size, DirectX::XMFLOAT3& origin,
+                  DirectX::XMFLOAT3& dir) const;
     // カーソル下のワールド地面 (y=0) 座標を求める (ドラッグ配置用)。ヒットで true
     bool GroundPointUnderCursor(const ImVec2& imgPos, const ImVec2& size,
                                 DirectX::XMFLOAT3& out) const;

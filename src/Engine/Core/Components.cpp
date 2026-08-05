@@ -394,6 +394,16 @@ void RegisterBuiltinComponents()
         MYE_JP("ジョイント", MYE_FIELD(PartComponent, joint, String64)),
         MYE_JP("骨の供給元", MYE_FIELD(PartComponent, source, EntityRef)),
     });
+
+    // M49: 部位の範囲 (箱/球ボリューム)。**hash 対象** — Parts::RaycastParts の結果を
+    // スクリプトが読んで挙動を変える = sim 状態の入力になるため (Part と同じ判断)。
+    // opt-in (TypeId 末尾 append =31) なので既存シーンのハッシュは不変 = ReplayFile bump 不要
+    RegisterComponent<PartBoundsComponent>("PartBounds", {
+        MYE_JP("形状", MYE_FIELD(PartBoundsComponent, shape, Int32)),
+        MYE_JP("中心", MYE_FIELD(PartBoundsComponent, center, Float3)),
+        MYE_JP("ハーフサイズ", MYE_FIELD_TIP(PartBoundsComponent, halfExtents, Float3,
+                                             "sphere uses x as radius")),
+    });
 }
 
 } // namespace mye

@@ -156,6 +156,9 @@ namespace MyeScripting
         // ---- 部位 (ソケット) クエリ (v9、M48h)。宣言順 = ネイティブと一致 ----
         public delegate* unmanaged<void*, MyeEntityId, byte*, MyeEntityId> FindPart;
         public delegate* unmanaged<void*, MyeEntityId, ulong, MyeEntityId*, int, int> FindPartsByTag;
+        // ---- 部位ボリューム レイキャスト (v10、M49)。宣言順 = ネイティブと一致 ----
+        public delegate* unmanaged<void*, MyeEntityId, ulong, MyeVec3, MyeVec3, float,
+            MyeRaycastHit*, int> RaycastParts;
     }
 
     // ネイティブ ManagedHost が保持する関数ポインタ表。Bootstrap がここに書き込む。
@@ -522,6 +525,20 @@ namespace MyeScripting
             {
                 return _api->FindPartsByTag(_api->Engine, root, PartTag(tagName), p,
                                             outParts?.Length ?? 0);
+            }
+        }
+
+        // 部位ボリューム (Part + PartBounds) へのレイキャスト (v10、M49)。
+        // root = Null でシーン全体、tagName null/空で全部位。dir は正規化済みであること
+        public static bool RaycastParts(MyeEntityId root, string tagName, MyeVec3 origin,
+                                        MyeVec3 dir, float maxDist, out MyeRaycastHit hit)
+        {
+            hit = default;
+            if (_api == null) return false;
+            fixed (MyeRaycastHit* p = &hit)
+            {
+                return _api->RaycastParts(_api->Engine, root, PartTag(tagName), origin, dir,
+                                          maxDist, p) != 0;
             }
         }
     }

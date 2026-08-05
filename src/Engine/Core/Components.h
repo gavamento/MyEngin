@@ -520,6 +520,21 @@ struct PartComponent {
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
+// ---- 部位の範囲 (M49) ----
+// 部位に「クリックできる/レイが当たる広がり」を持たせる任意の添え物。ボーンの無い
+// 静的オブジェクトでも「メッシュの一部分」を部位として選択・判定できるようにする。
+// Part と同じエンティティに載せる想定 (Parts::RaycastParts の対象は Part + PartBounds 両持ちのみ)。
+// 部位エンティティ自体が PartFollowSystem で骨に追従するので、範囲もそのまま追従する。
+//
+// ★shape の番号は ShapePose (0=球 1=箱) と**逆**。変換は Parts::MakePartBoundsPose の
+//   1 箇所に閉じ込めてあり、対応は PartSelfTest が機械検査する
+struct PartBoundsComponent {
+    int32_t shape = 0;                                    // 0=箱 1=球
+    DirectX::XMFLOAT3 center = { 0.0f, 0.0f, 0.0f };      // ローカルオフセット
+    DirectX::XMFLOAT3 halfExtents = { 0.5f, 0.5f, 0.5f }; // 球は x を半径に使う (y/z 無視)
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
 class World;
 
 // エンティティが有効か (ActiveComponent が無ければ有効 / enabled==0 なら無効)
