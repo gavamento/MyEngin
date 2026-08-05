@@ -52,10 +52,22 @@ private:
 
 // プレハブ操作 (Engine 層の自由関数)。オーバーライドは「現在値がベース値と異なるか」の
 // ライブ判定で、別途保存はしない (シーンには実体を持つのでロードは通常経路 = 決定論安全)
+//
+// ---- 入れ子インスタンスの ID ドメイン (M48c) ----
+// プレハブは **展開保存** される (シーンにもアセットにも実体が丸ごと入る) ので、入れ子は
+// 「再帰インスタンス化」ではなく「境界を尊重したタグ付け」で成立する。規約は 3 つ:
+//   1. `PrefabLink.localId` は **自分が直接所属するインスタンスのベース** のドメインの値。
+//      内側インスタンスのメンバは内側ベースの番号を保つ (参照ではなくデータなので remap 不要)
+//   2. 内側ルートは `PrefabInstance{prefabHash=内側, outerLocalId=外側ベースでの位置}` と
+//      `PrefabLink{localId=1}` (内側ドメイン) を同時に持つ
+//   3. 所属境界は `FindInstanceRoot` (最近祖先) が唯一の定義。列挙 (CollectInstanceMembers)・
+//      抽出・タグ付けはすべてこの境界に一致させる — 内側のメンバは外側のメンバではない
+// v1 の制限: 外側ベースが内側ルートに掛けた変更は再伝播しない (3 層マージ非対応)
 namespace Prefab {
 
 // scene のサブツリー root を「プレハブローカル形式」へ変換する:
-//   fileId=1..N (DFS 順、root=1) / 集合外への親・EntityRef は除去 / プレハブタグは除去
+//   fileId=1..N (DFS 順、root=1) / 集合外への親・EntityRef は除去 /
+//   **自レベル** のプレハブタグは除去 (内側インスタンスのタグは保持し outerLocalId を付け替え)
 nlohmann::json ExtractLocal(Scene& scene, EntityID root);
 
 // root サブツリーを path に .prefab.json として保存し library に登録、root をインスタンス化する。
@@ -76,6 +88,13 @@ uint64_t Instantiate(Scene& scene, const PrefabLibrary& lib, uint64_t prefabHash
 // e (またはその祖先) が属するインスタンスのルート。無ければ kNullEntity
 EntityID FindInstanceRoot(World& world, EntityID e);
 
+// root インスタンスに **直接所属する** メンバ (PrefabLink 持ち) を DFS 順に収集する。
+// root 以外で PrefabInstanceComponent を持つノード = 入れ子インスタンスのルートに達したら、
+// **そのノード自身も含めずに降下を止める** (= FindInstanceRoot(e)==root と厳密に等価)。
+// innerRoots が非 null なら、そこで止めたノードを DFS 順に受け取る
+void CollectInstanceMembers(World& world, EntityID root, std::vector<EntityID>& out,
+                            std::vector<EntityID>* innerRoots = nullptr);
+
 // e の 1 フィールドがプレハブベースと異なるか (= オーバーライド)。
 // EntityRef は remap 判定が不確実なため常に false。プレハブ非所属なら false
 bool IsFieldOverridden(Scene& scene, const PrefabLibrary& lib, EntityID e, const char* compName,
@@ -85,7 +104,8 @@ bool IsNameOverridden(Scene& scene, const PrefabLibrary& lib, EntityID e);
 // e の 1 フィールドをプレハブベース値へ戻す
 void RevertField(Scene& scene, const PrefabLibrary& lib, EntityID e, const char* compName,
                  const FieldDesc& field);
-// rootFileId のインスタンス全体をベース値へ戻す (全フィールド + 名前。EntityRef は除く)
+// rootFileId のインスタンス全体をベース値へ戻す (全フィールド + 名前。EntityRef は除く)。
+// 入れ子インスタンスは**境界を越えない** — 内側は内側の Revert で戻す (M48c)
 void RevertInstance(Scene& scene, const PrefabLibrary& lib, uint64_t rootFileId);
 
 // rootFileId のインスタンスの現在値を新ベースとして .prefab.json に書き戻し、
@@ -93,7 +113,8 @@ void RevertInstance(Scene& scene, const PrefabLibrary& lib, uint64_t rootFileId)
 bool ApplyInstance(Scene& scene, PrefabLibrary& lib, uint64_t rootFileId);
 
 // prefabHash のベース変更 (oldBase→newBase) を全インスタンスの非オーバーライドへ伝播 (リロード用)。
-// 非オーバーライド = 現在値が oldBase と一致するフィールド
+// 非オーバーライド = 現在値が oldBase と一致するフィールド。
+// 入れ子インスタンスは境界を越えない (内側は内側のハッシュで別途伝播される。M48c)
 void PropagateBaseChange(Scene& scene, const nlohmann::json& oldBase, const nlohmann::json& newBase,
                          uint64_t prefabHash);
 

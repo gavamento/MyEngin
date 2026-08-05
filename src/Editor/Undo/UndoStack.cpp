@@ -118,7 +118,9 @@ void UndoStack::ApplyStep(Scene& scene, Selection& sel, const json& payload,
         }
     }
     world.ApplyStructuralChanges(); // 破棄を確定してから再適用する
-    SceneSerializer::ApplyPartial(scene, payload);
+    // ペイロードはサブツリーの全量スナップショットなので、プレハブタグ (隠しコンポーネント) も
+    // JSON が正解。消せないままだと「Create Prefab → Undo」でタグだけ残る (M48c)
+    SceneSerializer::ApplyPartial(scene, payload, /*removeHiddenMissing=*/true);
     sel.Set(selIds, primary);
 }
 

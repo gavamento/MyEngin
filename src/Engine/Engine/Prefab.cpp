@@ -53,6 +53,64 @@ const json* FindLocal(const json& entities, uint64_t localId)
     return nullptr;
 }
 
+// フラット展開されたベース JSON を階層で分類する (M48c)。ECS 側の SplitLevels と同じ境界:
+//   ownLevel   = 自レベル (外側のタグを付ける対象。入れ子ルートは含まない)
+//   innerRoots = 入れ子インスタンスのルート (照合キーではあるが外側タグは付けない)
+//   どちらにも入らない = 内側インスタンスの持ち物 (外側は一切触らない)
+// **判定は PrefabInstance の位置だけ**。「PrefabLink の有無」で代用してはいけない —
+// 内側インスタンスの配下にユーザーが手で足したタグ無しの子を取りこぼし、
+// 外側ドメインの localId を付けてしまう (FindInstanceRoot は内側を返すので別物に化ける)
+struct BaseLevels {
+    std::unordered_set<uint64_t> ownLevel;
+    std::unordered_set<uint64_t> innerRoots;
+};
+
+BaseLevels ClassifyBase(const json& entities)
+{
+    BaseLevels out;
+    if (!entities.is_array()) {
+        return out;
+    }
+    std::unordered_map<uint64_t, uint64_t> parentOf;
+    std::unordered_set<uint64_t> hasInstance;
+    std::vector<uint64_t> ids;
+    for (const json& item : entities) {
+        const uint64_t local = item.value("fileId", 0ull);
+        if (local == 0) {
+            continue;
+        }
+        ids.push_back(local);
+        parentOf[local] = item.value("parent", 0ull);
+        if (item.contains("components") && item["components"].contains("PrefabInstance")) {
+            hasInstance.insert(local);
+        }
+    }
+    for (uint64_t local : ids) {
+        bool inner = false;
+        uint64_t cur = local;
+        for (size_t guard = 0; guard <= ids.size(); ++guard) { // 手書きファイルの循環に備える
+            auto it = parentOf.find(cur);
+            if (it == parentOf.end() || it->second == 0 || parentOf.count(it->second) == 0) {
+                break; // ベースのルートまで到達
+            }
+            cur = it->second;
+            if (hasInstance.count(cur) != 0) {
+                inner = true;
+                break;
+            }
+        }
+        if (inner) {
+            continue; // 内側の持ち物 — どちらの集合にも入れない
+        }
+        if (hasInstance.count(local) != 0) {
+            out.innerRoots.insert(local);
+        } else {
+            out.ownLevel.insert(local);
+        }
+    }
+    return out;
+}
+
 bool WritePrefabFile(const std::wstring& path, const std::string& name, const json& entities)
 {
     json root;
@@ -71,23 +129,87 @@ bool WritePrefabFile(const std::wstring& path, const std::string& name, const js
     return true;
 }
 
-// root サブツリー内で PrefabLink を持つエンティティを DFS 順に収集 (インスタンスメンバ)
-void CollectInstanceMembers(World& w, EntityID root, std::vector<EntityID>& out)
+// e の fileId (無ければ 0)
+uint64_t FidOf(World& w, EntityID e)
 {
-    std::function<void(EntityID)> visit = [&](EntityID e) {
-        if (w.GetComponent<PrefabLinkComponent>(e)) {
-            out.push_back(e);
+    auto* f = w.GetComponent<FileIdComponent>(e);
+    return f ? f->value : 0;
+}
+
+// root サブツリーを「root と同じインスタンス階層 (= 自レベル)」と「入れ子インスタンスのルート」に
+// 切り分け、それぞれの fileId 集合を返す (M48c)。境界は FindInstanceRoot と厳密に一致する:
+// root 以外で PrefabInstanceComponent を持つノードは自レベルではなく、その配下も自レベルではない。
+// **fileId を鍵にする** — 呼び出し側は直前に SubtreeToJson を通しており全 fileId が確定している
+void SplitLevels(World& w, EntityID root, std::unordered_set<uint64_t>& ownLevel,
+                 std::unordered_set<uint64_t>& innerRoots)
+{
+    std::function<void(EntityID, bool)> visit = [&](EntityID e, bool isRoot) {
+        const uint64_t fid = FidOf(w, e);
+        if (!isRoot && w.GetComponent<PrefabInstanceComponent>(e)) {
+            if (fid != 0) {
+                innerRoots.insert(fid);
+            }
+            return; // 入れ子の境界 — ここから下は内側インスタンスの持ち物
+        }
+        if (fid != 0) {
+            ownLevel.insert(fid);
         }
         auto* h = w.GetComponent<HierarchyComponent>(e);
         EntityID c = h ? h->firstChild : kNullEntity;
         while (!c.IsNull()) {
             auto* ch = w.GetComponent<HierarchyComponent>(c);
             const EntityID next = ch ? ch->nextSibling : kNullEntity;
-            visit(c);
+            visit(c, false);
             c = next;
         }
     };
-    visit(root);
+    visit(root, true);
+}
+
+// 抽出したエンティティ item のプレハブタグをベース用に整える (M48c)。
+//  - 自レベル: 外側のタグはベースの定義には要らない (インスタンス化時に付く) → 剥がす
+//  - 入れ子ルート: 内側の識別 (prefabHash / 内側 localId) は保ったまま、
+//    外側ドメインでの位置 outerLocalId だけを新しいローカル fileId に付け替える
+//  - 入れ子の配下: 触らない (localId は内側ベースのドメイン。外側は関知しない)
+void RebaseTags(nlohmann::json& components, uint64_t sceneFid, uint64_t newLocalId,
+                const std::unordered_set<uint64_t>& ownLevel,
+                const std::unordered_set<uint64_t>& innerRoots)
+{
+    if (ownLevel.count(sceneFid) != 0) {
+        components.erase("PrefabInstance");
+        components.erase("PrefabLink");
+    } else if (innerRoots.count(sceneFid) != 0 && components.contains("PrefabInstance")) {
+        components["PrefabInstance"]["outerLocalId"] = newLocalId;
+    }
+}
+
+// entities 内の localId を引く。ただし **入れ子インスタンスの配下に当たったら nullptr** (M48c)。
+// メンバの localId は必ず「自分のベースの自レベル」を指すはずで、内側配下のエントリに
+// 当たるのは番号の使い回しによる誤対応 (別インスタンスで削除された ID が内側配下へ再割り当て
+// された等)。そのまま使うと Revert / 伝播が **無関係なエンティティのベース値で上書き** する
+const json* FindOwnLevelLocal(const json& entities, uint64_t localId)
+{
+    const json* item = FindLocal(entities, localId);
+    if (!item) {
+        return nullptr;
+    }
+    const json* cur = item;
+    const size_t count = entities.is_array() ? entities.size() : 0;
+    for (size_t guard = 0; guard <= count; ++guard) {
+        const uint64_t p = cur->value("parent", 0ull);
+        if (p == 0) {
+            return item; // ベースのルートまで到達 = 自レベル
+        }
+        const json* pe = FindLocal(entities, p);
+        if (!pe) {
+            return item; // 集合外の親 (通常は起きない)
+        }
+        if (pe->contains("components") && (*pe)["components"].contains("PrefabInstance")) {
+            return nullptr; // 祖先に入れ子ルートがある = 内側の持ち物
+        }
+        cur = pe;
+    }
+    return item;
 }
 
 // e のプレハブベース item (無ければ nullptr)。ライブラリと PrefabLink.localId で解決
@@ -109,7 +231,7 @@ const json* ResolveBase(World& w, const PrefabLibrary& lib, EntityID e)
     if (!a) {
         return nullptr;
     }
-    return FindLocal(a->entities, link->localId);
+    return FindOwnLevelLocal(a->entities, link->localId);
 }
 
 
@@ -195,13 +317,43 @@ EntityID FindInstanceRoot(World& world, EntityID e)
     return kNullEntity;
 }
 
+void CollectInstanceMembers(World& world, EntityID root, std::vector<EntityID>& out,
+                            std::vector<EntityID>* innerRoots)
+{
+    std::function<void(EntityID, bool)> visit = [&](EntityID e, bool isRoot) {
+        if (!isRoot && world.GetComponent<PrefabInstanceComponent>(e)) {
+            if (innerRoots) {
+                innerRoots->push_back(e); // 入れ子の境界 — 内側は外側のメンバではない
+            }
+            return;
+        }
+        if (world.GetComponent<PrefabLinkComponent>(e)) {
+            out.push_back(e);
+        }
+        auto* h = world.GetComponent<HierarchyComponent>(e);
+        EntityID c = h ? h->firstChild : kNullEntity;
+        while (!c.IsNull()) {
+            auto* ch = world.GetComponent<HierarchyComponent>(c);
+            const EntityID next = ch ? ch->nextSibling : kNullEntity;
+            visit(c, false);
+            c = next;
+        }
+    };
+    visit(root, true);
+}
+
 json ExtractLocal(Scene& scene, EntityID root)
 {
+    World& w = scene.GetWorld();
     const json sub = SceneSerializer::SubtreeToJson(scene, root); // scene fileId、DFS (root 先頭)
     json out = json::array();
     if (!sub.is_array() || sub.empty()) {
         return out;
     }
+    std::unordered_set<uint64_t> ownLevel;
+    std::unordered_set<uint64_t> innerRoots;
+    SplitLevels(w, root, ownLevel, innerRoots);
+
     // scene fileId -> ローカル id (配列順 = DFS。root=1)
     std::unordered_map<uint64_t, uint64_t> remap;
     uint64_t next = 1;
@@ -214,8 +366,10 @@ json ExtractLocal(Scene& scene, EntityID root)
     for (const json& item : sub) {
         json ni = item;
         const uint64_t f = item.value("fileId", 0ull);
+        uint64_t newLocal = 0;
         if (auto it = remap.find(f); it != remap.end()) {
-            ni["fileId"] = it->second;
+            newLocal = it->second;
+            ni["fileId"] = newLocal;
         }
         if (ni.contains("parent")) {
             const uint64_t p = ni.value("parent", 0ull);
@@ -227,39 +381,109 @@ json ExtractLocal(Scene& scene, EntityID root)
         }
         if (ni.contains("components")) {
             SceneSerializer::RemapEntityRefsInComponents(ni["components"], remap, /*zeroExternal=*/true);
-            ni["components"].erase("PrefabInstance"); // タグは新規インスタンス化時に付与
-            ni["components"].erase("PrefabLink");
+            RebaseTags(ni["components"], f, newLocal, ownLevel, innerRoots);
         }
         out.push_back(std::move(ni));
     }
     return out;
 }
 
-// PrefabLink.localId を保った抽出 (Apply 用 — ベースの localId 対応を崩さない)
-static json ExtractLocalByLinks(Scene& scene, EntityID root)
+// PrefabLink.localId を保った抽出 (Apply 用 — ベースの localId 対応を崩さない)。
+// **入れ子 (M48c)**: 内側メンバの PrefabLink は内側ベースのドメインなので、外側ベースの
+// fileId にそのまま使うと外側メンバと衝突する (1 と 1、2 と 2 …)。外側での ID は
+//   - 自レベル      : PrefabLink.localId
+//   - 入れ子ルート  : PrefabInstance.outerLocalId
+//   - 入れ子の配下  : 外側 ID を持たないので DFS 順に「最小の空き番号」を割り当てる
+// で決める。最後の規則は ExtractLocal の連番と一致するため、構造が変わっていなければ
+// Apply しても内側配下の ID は据え置きになる (ファイル diff が暴れない)。
+// **oldBase の「照合キーになりうる ID」(自レベル + 入れ子ルート) は空きでも再利用しない** —
+// このインスタンスで削除されたメンバの番号を内側配下に配ると、同じプレハブの別インスタンスが
+// まだその番号を名乗っているため、直後の PropagateBaseChange が localId 照合だけで
+// 別エンティティのベース値を書き込み、名前ごと化けさせてしまう
+static json ExtractLocalByLinks(Scene& scene, EntityID root, const json& oldBase)
 {
     World& w = scene.GetWorld();
     const json sub = SceneSerializer::SubtreeToJson(scene, root);
     json out = json::array();
-    if (!sub.is_array()) {
+    if (!sub.is_array() || sub.empty()) {
         return out;
     }
-    std::unordered_map<uint64_t, uint64_t> remap; // scene fileId -> localId
+    std::unordered_set<uint64_t> ownLevel;
+    std::unordered_set<uint64_t> innerRoots;
+    SplitLevels(w, root, ownLevel, innerRoots);
+
+    std::unordered_map<uint64_t, uint64_t> remap; // scene fileId -> 外側ベースの localId
+    std::unordered_set<uint64_t> skipped;         // 新ベースに含めないサブツリー
+    std::unordered_set<uint64_t> used;            // このインスタンスが実際に名乗った localId
+    std::vector<uint64_t> pending;                // 外側 ID を持たないもの (DFS 順)
     for (const json& item : sub) {
         const uint64_t f = item.value("fileId", 0ull);
-        GameObject g = scene.FindByFileId(f);
-        if (!g) {
+        if (f == 0) {
             continue;
         }
-        if (auto* link = w.GetComponent<PrefabLinkComponent>(g.Id())) {
-            remap[f] = link->localId;
+        const uint64_t p = item.value("parent", 0ull);
+        if (p != 0 && skipped.count(p) != 0) {
+            skipped.insert(f); // 除外した親のサブツリーごと落とす (木を分断しない)
+            continue;
+        }
+        GameObject g = scene.FindByFileId(f);
+        if (!g) {
+            skipped.insert(f);
+            continue;
+        }
+        // 既に埋まっている番号は名乗らせない。localId の重複は本来起きないが、他インスタンスの
+        // メンバをここへ D&D した等で起きうる。素通しすると **fileId が重複したベース** が
+        // 書き出され、FindLocal が別エンティティを解決して静かに壊れる
+        uint64_t claimed = 0;
+        if (ownLevel.count(f) != 0) {
+            auto* link = w.GetComponent<PrefabLinkComponent>(g.Id());
+            if (!link) {
+                skipped.insert(f); // ユーザーが追加した非プレハブの子は新ベースに含めない
+                continue;
+            }
+            claimed = link->localId;
+        } else if (innerRoots.count(f) != 0) {
+            auto* inst = w.GetComponent<PrefabInstanceComponent>(g.Id());
+            claimed = inst ? inst->outerLocalId : 0;
+            if (claimed == 0) {
+                // ベースに対応の無い入れ子 = エディタで後から差し込んだインスタンス。
+                // タグ無しのユーザー追加子と同じ扱いで新ベースに含めない
+                // (v1 は構造変更の上書き非対応。included にすると片方だけ特別扱いになる)
+                skipped.insert(f);
+                continue;
+            }
+        }
+        // claimed==0 = 内側インスタンスの配下 (外側 ID を持たない) → 後で採番
+        if (claimed != 0 && used.insert(claimed).second) {
+            remap[f] = claimed;
+        } else {
+            pending.push_back(f);
         }
     }
+    std::unordered_set<uint64_t> reserved = used;
+    {
+        const BaseLevels oldLevels = ClassifyBase(oldBase);
+        for (uint64_t id : oldLevels.ownLevel) {
+            reserved.insert(id);
+        }
+        for (uint64_t id : oldLevels.innerRoots) {
+            reserved.insert(id);
+        }
+    }
+    uint64_t nextFree = 1;
+    for (uint64_t f : pending) {
+        while (reserved.count(nextFree) != 0) {
+            ++nextFree;
+        }
+        remap[f] = nextFree;
+        reserved.insert(nextFree);
+    }
+
     for (const json& item : sub) {
         const uint64_t f = item.value("fileId", 0ull);
         auto it = remap.find(f);
         if (it == remap.end()) {
-            continue; // ユーザーが追加した非プレハブの子は新ベースに含めない
+            continue;
         }
         json ni = item;
         ni["fileId"] = it->second;
@@ -273,8 +497,7 @@ static json ExtractLocalByLinks(Scene& scene, EntityID root)
         }
         if (ni.contains("components")) {
             SceneSerializer::RemapEntityRefsInComponents(ni["components"], remap, /*zeroExternal=*/true);
-            ni["components"].erase("PrefabInstance");
-            ni["components"].erase("PrefabLink");
+            RebaseTags(ni["components"], f, it->second, ownLevel, innerRoots);
         }
         out.push_back(std::move(ni));
     }
@@ -352,6 +575,14 @@ uint64_t InstantiateEntities(Scene& scene, const json& localEntities, uint64_t p
     SceneSerializer::ApplyPartial(scene, out);
     scene.GetWorld().ApplyStructuralChanges();
 
+    // 入れ子インスタンスの持ち物には外側のタグを付けない (M48c)。その localId は内側ベースの
+    // ドメインなので外側の連番で上書きしてはいけない。ApplyPartial が JSON からタグごと
+    // 復元済みなので、ここでは触らないだけでよい (再帰は不要)。
+    // 境界判定は **ベース JSON の PrefabInstance の位置** で行う — 「PrefabLink を持つか」で
+    // 代用すると、内側の配下にユーザーが足したタグ無しの子に外側ドメインの localId が付き、
+    // FindInstanceRoot が返す内側ベースで解決されて別エンティティに化ける
+    const BaseLevels levels = ClassifyBase(localEntities);
+
     // タグ付け (localId 昇順で決定論的に処理。順序はハッシュに影響しないが規約に合わせる)
     std::vector<std::pair<uint64_t, uint64_t>> pairs; // (localId, newFid)
     pairs.reserve(remap.size());
@@ -365,9 +596,16 @@ uint64_t InstantiateEntities(Scene& scene, const json& localEntities, uint64_t p
         if (!g) {
             continue;
         }
-        g.AddComponent<PrefabLinkComponent>()->localId = local;
         if (local == rootLocal) {
-            g.AddComponent<PrefabInstanceComponent>()->prefabHash = prefabHash;
+            // ルートは分類がどうであれ必ず外側として付け直す (手書きアセットへの保険)。
+            // **PrefabInstance のフィールドを先に書く** — 続く AddComponent が
+            // アーキタイプを動かしてポインタを無効化するため
+            auto* inst = g.AddComponent<PrefabInstanceComponent>();
+            inst->prefabHash = prefabHash;
+            inst->outerLocalId = 0; // 単体配置。入れ子は展開済みなので再帰インスタンス化しない
+            g.AddComponent<PrefabLinkComponent>()->localId = local;
+        } else if (levels.ownLevel.count(local) != 0) {
+            g.AddComponent<PrefabLinkComponent>()->localId = local;
         }
     }
     scene.GetWorld().ApplyStructuralChanges();
@@ -400,20 +638,36 @@ uint64_t CreateAsset(Scene& scene, PrefabLibrary& lib, const std::wstring& path,
     const uint64_t hash = lib.Register(path, name, entities);
 
     // 既存の root サブツリーをこのプレハブのインスタンスとしてタグ付けする
-    // (localId は ExtractLocal と同じ DFS 順で 1..N = ベースと一致)
+    // (localId は ExtractLocal と同じ DFS 順で 1..N = ベースと一致)。
+    // **入れ子 (M48c)**: 内側インスタンスには外側の PrefabLink を付けない — 内側メンバの
+    // localId は内側ベースのドメインだから。内側ルートには外側での位置だけを記録する
     World& w = scene.GetWorld();
     const json sub = SceneSerializer::SubtreeToJson(scene, root);
-    uint64_t local = 1;
+    std::unordered_set<uint64_t> ownLevel;
+    std::unordered_set<uint64_t> innerRoots;
+    SplitLevels(w, root, ownLevel, innerRoots);
+    uint64_t local = 0;
     for (const json& item : sub) {
         const uint64_t f = item.value("fileId", 0ull);
+        if (f == 0) {
+            continue;
+        }
+        ++local; // ExtractLocal の連番と同じ規則 (fileId 付きの item を DFS 順に 1..N)
         GameObject g = scene.FindByFileId(f);
-        if (g) {
-            g.AddComponent<PrefabLinkComponent>()->localId = local;
+        if (!g) {
+            continue;
+        }
+        if (ownLevel.count(f) != 0) {
             if (local == 1) {
-                g.AddComponent<PrefabInstanceComponent>()->prefabHash = hash;
+                auto* inst = g.AddComponent<PrefabInstanceComponent>();
+                inst->prefabHash = hash; // outerLocalId は据え置き (root 自身が入れ子なら有効値)
+            }
+            g.AddComponent<PrefabLinkComponent>()->localId = local;
+        } else if (innerRoots.count(f) != 0) {
+            if (auto* inst = w.GetComponent<PrefabInstanceComponent>(g.Id())) {
+                inst->outerLocalId = local;
             }
         }
-        ++local;
     }
     w.ApplyStructuralChanges();
     MYE_LOG_INFO("prefab created: %s (%zu entities)", WideToUtf8(path).c_str(), entities.size());
@@ -500,7 +754,7 @@ void RevertInstance(Scene& scene, const PrefabLibrary& lib, uint64_t rootFileId)
         if (!link) {
             continue;
         }
-        const json* base = FindLocal(a->entities, link->localId);
+        const json* base = FindOwnLevelLocal(a->entities, link->localId);
         if (!base) {
             continue;
         }
@@ -512,6 +766,9 @@ void RevertInstance(Scene& scene, const PrefabLibrary& lib, uint64_t rootFileId)
             const ComponentTypeId t = reg.FindByName(compName);
             if (t == kInvalidComponentType) {
                 continue;
+            }
+            if ((reg.Desc(t).flags & kComponentHidden) != 0) {
+                continue; // プレハブタグ自体はデータではない — Revert/伝播の対象外 (M48c)
             }
             void* comp = w.GetComponentRaw(m, t);
             if (!comp) {
@@ -558,8 +815,10 @@ void PropagateBaseChange(Scene& scene, const json& oldBase, const json& newBase,
             if (!link) {
                 continue;
             }
-            const json* ob = FindLocal(oldBase, link->localId);
-            const json* nb = FindLocal(newBase, link->localId);
+            // **自レベルのエントリしか当てない** (M48c)。番号が使い回されて内側配下の
+            // エントリに当たった場合、そのまま伝播すると別エンティティに化ける
+            const json* ob = FindOwnLevelLocal(oldBase, link->localId);
+            const json* nb = FindOwnLevelLocal(newBase, link->localId);
             if (!nb) {
                 continue; // 新ベースに存在しない → 触らない
             }
@@ -580,6 +839,9 @@ void PropagateBaseChange(Scene& scene, const json& oldBase, const json& newBase,
                 const ComponentTypeId t = reg.FindByName(compName);
                 if (t == kInvalidComponentType) {
                     continue;
+                }
+                if ((reg.Desc(t).flags & kComponentHidden) != 0) {
+                    continue; // プレハブタグを「普通のコンポーネント」として生やさない (M48c)
                 }
                 void* comp = w.GetComponentRaw(m, t);
                 bool added = false;
@@ -639,7 +901,7 @@ bool ApplyInstance(Scene& scene, PrefabLibrary& lib, uint64_t rootFileId)
     const std::wstring path = a->path;
     const std::string name = a->name;
 
-    json newBase = ExtractLocalByLinks(scene, rootGo.Id());
+    json newBase = ExtractLocalByLinks(scene, rootGo.Id(), oldBase);
     if (newBase.empty()) {
         return false;
     }

@@ -1,5 +1,6 @@
 #include "Engine/Engine/SceneSelfTest.h"
 
+#include <algorithm>
 #include <new>
 #include <string>
 #include <unordered_map>
@@ -641,6 +642,426 @@ bool RunSceneSerializerSelfTest()
             check(p2 && !refChild.IsNull() && p2->target == refChild,
                   "instantiate remaps EntityRef to instance child (stage 2)");
         }
+    }
+
+    // ---- 入れ子プレハブインスタンス (M48c) ----
+    // 境界の定義は FindInstanceRoot (最近祖先) ただ 1 つ。抽出 / タグ付け / 列挙 / Apply が
+    // すべてその境界に一致していることを確かめる。**内側メンバの localId は内側ベースの
+    // ドメイン**なので、外側の連番で上書きすると内側の解決が静かに壊れる
+    {
+        auto findField = [](ComponentTypeId t, const char* fname) -> const FieldDesc* {
+            for (const FieldDesc& f : ComponentRegistry::Get().Desc(t).fields) {
+                if (std::string(f.name) == fname) {
+                    return &f;
+                }
+            }
+            return nullptr;
+        };
+        auto firstChild = [](Scene& sc, EntityID e) {
+            auto* h = sc.GetWorld().GetComponent<HierarchyComponent>(e);
+            return h ? h->firstChild : kNullEntity;
+        };
+        auto entryOf = [](const nlohmann::json& entities, uint64_t localId) {
+            for (const nlohmann::json& it : entities) {
+                if (it.value("fileId", 0ull) == localId) {
+                    return it;
+                }
+            }
+            return nlohmann::json::object();
+        };
+        auto hasComp = [](const nlohmann::json& item, const char* name) {
+            return item.contains("components") && item["components"].contains(name);
+        };
+        // 常にオブジェクトを返す (未所持でも .value() が投げないように — 失敗は FAIL 報告させたい)
+        auto compOf = [&hasComp](const nlohmann::json& item, const char* name) {
+            return hasComp(item, name) ? item["components"][name] : nlohmann::json::object();
+        };
+
+        PrefabLibrary lib;
+        const std::wstring innerPath =
+            (std::filesystem::temp_directory_path() / L"mye_selftest_inner.prefab.json").wstring();
+        const std::wstring outerPath =
+            (std::filesystem::temp_directory_path() / L"mye_selftest_outer.prefab.json").wstring();
+
+        // 内側ベース: Sword(local 1) > Blade(local 2)
+        uint64_t innerHash = 0;
+        {
+            Scene si;
+            GameObject sw = si.CreateGameObjectTracked("Sword");
+            GameObject bl = si.CreateGameObjectTracked("Blade");
+            bl.SetParent(sw);
+            bl.SetLocalPosition(0.0f, 1.0f, 0.0f);
+            si.GetWorld().ApplyStructuralChanges();
+            innerHash = lib.Register(innerPath, "inner", Prefab::ExtractLocal(si, sw.Id()));
+        }
+
+        // 外側シーン: Goblin > Hand > [Sword インスタンス > Blade]
+        Scene so;
+        GameObject gob = so.CreateGameObjectTracked("Goblin");
+        GameObject hand = so.CreateGameObjectTracked("Hand");
+        hand.SetParent(gob);
+        so.GetWorld().ApplyStructuralChanges();
+        const uint64_t swordFid =
+            Prefab::Instantiate(so, lib, innerHash, so.EnsureFileId(hand.Id()));
+        so.GetWorld().ApplyStructuralChanges();
+        check(swordFid != 0, "nested: inner instance placed under Hand");
+
+        const uint64_t outerHash = Prefab::CreateAsset(so, lib, outerPath, gob.Id());
+        so.GetWorld().ApplyStructuralChanges();
+        const PrefabAsset* outerAsset = lib.Get(outerHash);
+        const nlohmann::json outerBase =
+            outerAsset ? outerAsset->entities : nlohmann::json::array();
+        check(outerBase.size() == 4, "nested: outer asset holds the flattened 4-entity tree");
+
+        // 外側ベース: 1=Goblin 2=Hand 3=Sword(入れ子ルート) 4=Blade(入れ子の配下)
+        const nlohmann::json bGoblin = entryOf(outerBase, 1);
+        const nlohmann::json bHand = entryOf(outerBase, 2);
+        const nlohmann::json bSword = entryOf(outerBase, 3);
+        const nlohmann::json bBlade = entryOf(outerBase, 4);
+        check(bGoblin.value("name", std::string()) == "Goblin" && !hasComp(bGoblin, "PrefabInstance")
+                  && !hasComp(bGoblin, "PrefabLink"),
+              "nested: own-level entries carry no prefab tags in the base (tags are added on instantiate)");
+        check(bHand.value("name", std::string()) == "Hand" && !hasComp(bHand, "PrefabLink"),
+              "nested: own-level child entry carries no prefab tags either");
+        check(compOf(bSword, "PrefabInstance").value("prefabHash", 0ull) == innerHash
+                  && compOf(bSword, "PrefabInstance").value("outerLocalId", 0ull) == 3ull
+                  && compOf(bSword, "PrefabLink").value("localId", 0ull) == 1ull,
+              "nested: the inner root keeps its inner identity and records its outer position");
+        check(compOf(bBlade, "PrefabLink").value("localId", 0ull) == 2ull
+                  && !hasComp(bBlade, "PrefabInstance"),
+              "nested: inner member keeps the INNER localId (not the outer 1..N numbering)");
+
+        // CreateAsset がシーン側に付けたタグも同じ規則
+        {
+            World& wo = so.GetWorld();
+            GameObject swGo = so.FindByFileId(swordFid);
+            auto* swInst = swGo ? wo.GetComponent<PrefabInstanceComponent>(swGo.Id()) : nullptr;
+            auto* swLink = swGo ? wo.GetComponent<PrefabLinkComponent>(swGo.Id()) : nullptr;
+            check(swInst && swInst->prefabHash == innerHash && swInst->outerLocalId == 3ull
+                      && swLink && swLink->localId == 1ull,
+                  "nested: CreateAsset records the inner root's outer position without retagging it");
+            auto* gobLink = wo.GetComponent<PrefabLinkComponent>(gob.Id());
+            auto* gobInst = wo.GetComponent<PrefabInstanceComponent>(gob.Id());
+            check(gobLink && gobLink->localId == 1ull && gobInst && gobInst->prefabHash == outerHash,
+                  "nested: CreateAsset still tags the own level as the new instance");
+        }
+
+        // 別シーンへインスタンス化 → 入れ子タグが生きていること
+        Scene s2;
+        const uint64_t rootFid2 = Prefab::Instantiate(s2, lib, outerHash, 0);
+        s2.GetWorld().ApplyStructuralChanges();
+        GameObject root2 = s2.FindByFileId(rootFid2);
+        const EntityID hand2 = root2 ? firstChild(s2, root2.Id()) : kNullEntity;
+        const EntityID sword2 = hand2.IsNull() ? kNullEntity : firstChild(s2, hand2);
+        const EntityID blade2 = sword2.IsNull() ? kNullEntity : firstChild(s2, sword2);
+        check(!blade2.IsNull() && s2.GetWorld().AliveCount() == 4,
+              "nested: instantiating the outer asset expands the whole nested tree");
+        check(!blade2.IsNull()
+                  && Prefab::FindInstanceRoot(s2.GetWorld(), blade2) == sword2
+                  && Prefab::FindInstanceRoot(s2.GetWorld(), hand2) == root2.Id(),
+              "nested: the instance boundary is the nearest PrefabInstance ancestor");
+        {
+            auto* bl2Link = s2.GetWorld().GetComponent<PrefabLinkComponent>(blade2);
+            auto* sw2Inst = s2.GetWorld().GetComponent<PrefabInstanceComponent>(sword2);
+            check(bl2Link && bl2Link->localId == 2ull && sw2Inst
+                      && sw2Inst->prefabHash == innerHash && sw2Inst->outerLocalId == 3ull,
+                  "nested: instantiate leaves inner tags alone instead of renumbering them");
+        }
+
+        // オーバーライド判定が内側ベースに解決されること (壊れていると base=null で常に false)
+        const FieldDesc* posF = findField(LocalTransform::sTypeId, "position");
+        check(posF && !Prefab::IsFieldOverridden(s2, lib, blade2, "LocalTransform", *posF),
+              "nested: a fresh inner member reports no override");
+        s2.GetWorld().GetComponent<LocalTransform>(blade2)->position.y = 42.0f;
+        check(posF && Prefab::IsFieldOverridden(s2, lib, blade2, "LocalTransform", *posF),
+              "nested: an edited inner member is diffed against the INNER base");
+
+        // Revert が境界を越えない
+        Prefab::RevertInstance(s2, lib, rootFid2);
+        s2.GetWorld().ApplyStructuralChanges();
+        check(s2.GetWorld().GetComponent<LocalTransform>(blade2)->position.y == 42.0f,
+              "nested: Revert on the outer instance does not reach into the inner one");
+        Prefab::RevertInstance(s2, lib, s2.EnsureFileId(sword2));
+        s2.GetWorld().ApplyStructuralChanges();
+        check(s2.GetWorld().GetComponent<LocalTransform>(blade2)->position.y == 1.0f,
+              "nested: Revert on the inner instance restores its own members");
+
+        // 再抽出が元アセットと同型 (= 展開保存モデルの往復が閉じている)
+        check(Prefab::ExtractLocal(s2, root2.Id()) == outerBase,
+              "nested: re-extracting the instance reproduces the asset exactly");
+
+        // Apply の往復 — ExtractLocalByLinks が内側の localId ドメインと衝突しないこと。
+        // 壊れていると Sword/Blade が Goblin/Hand と同じ fileId 1,2 を名乗ってベースが潰れる
+        check(Prefab::ApplyInstance(s2, lib, rootFid2), "nested: apply on a nested instance succeeds");
+        const PrefabAsset* outerAfter = lib.Get(outerHash);
+        check(outerAfter && outerAfter->entities == outerBase,
+              "nested: apply round-trips an unchanged nested asset byte-for-byte");
+
+        std::error_code ec;
+        std::filesystem::remove(innerPath, ec);
+        std::filesystem::remove(outerPath, ec);
+    }
+
+    // ---- 3 階層の入れ子 A > B > C (M48c) ----
+    // 「外側 ID = 自分が直接所属するインスタンスのドメイン」は再帰的な規約なので、深さに
+    // 依存しないことを 2 階層とは別に固定する。C のルートが持つ outerLocalId は **B のドメイン**
+    // のままで、A の連番では書き換わらない (書き換えると B 単体の Apply が壊れる)
+    {
+        auto tmpPath = [](const wchar_t* n) {
+            return (std::filesystem::temp_directory_path() / n).wstring();
+        };
+        auto firstChild = [](Scene& sc, EntityID e) {
+            auto* h = sc.GetWorld().GetComponent<HierarchyComponent>(e);
+            return h ? h->firstChild : kNullEntity;
+        };
+
+        PrefabLibrary lib;
+        const std::wstring pathC = tmpPath(L"mye_selftest_n3c.prefab.json");
+        const std::wstring pathB = tmpPath(L"mye_selftest_n3b.prefab.json");
+        const std::wstring pathA = tmpPath(L"mye_selftest_n3a.prefab.json");
+
+        uint64_t hashC = 0;
+        {
+            Scene s;
+            GameObject gem = s.CreateGameObjectTracked("Gem");
+            gem.SetLocalPosition(0.0f, 0.0f, 3.0f);
+            s.GetWorld().ApplyStructuralChanges();
+            hashC = lib.Register(pathC, "c", Prefab::ExtractLocal(s, gem.Id()));
+        }
+        uint64_t hashB = 0;
+        {
+            Scene s;
+            GameObject sword = s.CreateGameObjectTracked("Sword");
+            GameObject guard = s.CreateGameObjectTracked("Guard");
+            guard.SetParent(sword);
+            s.GetWorld().ApplyStructuralChanges();
+            Prefab::Instantiate(s, lib, hashC, s.EnsureFileId(guard.Id()));
+            s.GetWorld().ApplyStructuralChanges();
+            hashB = lib.Register(pathB, "b", Prefab::ExtractLocal(s, sword.Id()));
+        }
+
+        // A: Hero(1) > Hand(2) > [B: Sword(3) > Guard(4) > [C: Gem(5)]]
+        Scene sa;
+        GameObject hero = sa.CreateGameObjectTracked("Hero");
+        GameObject hand = sa.CreateGameObjectTracked("Hand");
+        hand.SetParent(hero);
+        sa.GetWorld().ApplyStructuralChanges();
+        Prefab::Instantiate(sa, lib, hashB, sa.EnsureFileId(hand.Id()));
+        sa.GetWorld().ApplyStructuralChanges();
+        const uint64_t hashA = Prefab::CreateAsset(sa, lib, pathA, hero.Id());
+        sa.GetWorld().ApplyStructuralChanges();
+        const PrefabAsset* assetA = lib.Get(hashA);
+        const nlohmann::json baseA = assetA ? assetA->entities : nlohmann::json::array();
+        const PrefabAsset* assetB = lib.Get(hashB);
+        const nlohmann::json baseB = assetB ? assetB->entities : nlohmann::json::array();
+        check(baseA.size() == 5, "3-level: the outermost asset flattens all three levels");
+
+        // 退行時に .value() が type_error を投げて --selftest 全体を落とさないよう、
+        // 見つからない場合は object のままにして FAIL 報告に落とす
+        nlohmann::json gemEntry = nlohmann::json::object();
+        for (const nlohmann::json& it : baseA) {
+            if (it.value("name", std::string()) == "Gem") {
+                gemEntry = it;
+            }
+        }
+        const nlohmann::json gemInst =
+            (gemEntry.contains("components") && gemEntry["components"].contains("PrefabInstance"))
+            ? gemEntry["components"]["PrefabInstance"]
+            : nlohmann::json::object();
+        check(gemEntry.value("fileId", 0ull) == 5ull
+                  && gemInst.value("outerLocalId", 0ull) == 3ull,
+              "3-level: the innermost root keeps its MIDDLE-domain outerLocalId (not A's numbering)");
+
+        // 別シーンへ展開 → 各階層の境界が独立に立つ
+        Scene s2;
+        const uint64_t rootA = Prefab::Instantiate(s2, lib, hashA, 0);
+        s2.GetWorld().ApplyStructuralChanges();
+        World& w2 = s2.GetWorld();
+        GameObject heroGo = s2.FindByFileId(rootA);
+        const EntityID hand2 = heroGo ? firstChild(s2, heroGo.Id()) : kNullEntity;
+        const EntityID sword2 = hand2.IsNull() ? kNullEntity : firstChild(s2, hand2);
+        const EntityID guard2 = sword2.IsNull() ? kNullEntity : firstChild(s2, sword2);
+        const EntityID gem2 = guard2.IsNull() ? kNullEntity : firstChild(s2, guard2);
+        check(!gem2.IsNull() && Prefab::FindInstanceRoot(w2, gem2) == gem2
+                  && Prefab::FindInstanceRoot(w2, guard2) == sword2
+                  && Prefab::FindInstanceRoot(w2, hand2) == heroGo.Id(),
+              "3-level: each level's boundary resolves to its own instance root");
+        check(Prefab::ExtractLocal(s2, heroGo.Id()) == baseA,
+              "3-level: re-extracting the outermost instance reproduces the asset exactly");
+
+        // Apply を各階層で — 外側 (A) と中間 (B) のどちらのベースも壊れないこと。
+        // ExtractLocalByLinks の「最小の空き番号」採番が DFS 連番と一致していないとここで崩れる
+        check(Prefab::ApplyInstance(s2, lib, rootA), "3-level: apply on the outermost instance succeeds");
+        check(lib.Get(hashA) && lib.Get(hashA)->entities == baseA,
+              "3-level: apply round-trips the outermost asset unchanged");
+        check(Prefab::ApplyInstance(s2, lib, s2.EnsureFileId(sword2)),
+              "3-level: apply on the middle instance succeeds");
+        check(lib.Get(hashB) && lib.Get(hashB)->entities == baseB,
+              "3-level: apply on the middle instance round-trips ITS own asset unchanged");
+
+        std::error_code ec;
+        std::filesystem::remove(pathA, ec);
+        std::filesystem::remove(pathB, ec);
+        std::filesystem::remove(pathC, ec);
+    }
+
+    // ---- 境界の 3 つの穴 (M48c、敵対的レビュー由来の回帰防止) ----
+    // (1) 内側インスタンスの配下にユーザーが足した **タグ無しの子** に、外側の localId を
+    //     付けてはいけない (FindInstanceRoot は内側を返すので内側ドメインとして誤解決される)
+    // (2) 自レベルの兄弟が入れ子の **後ろ** にいる木で、連番が内側配下ぶんも消費すること
+    // (3) 削除で空いた localId を内側配下へ再利用してはいけない (他インスタンスがまだ名乗っている)
+    {
+        auto firstChild = [](Scene& sc, EntityID e) {
+            auto* h = sc.GetWorld().GetComponent<HierarchyComponent>(e);
+            return h ? h->firstChild : kNullEntity;
+        };
+        auto tmpPath = [](const wchar_t* n) {
+            return (std::filesystem::temp_directory_path() / n).wstring();
+        };
+        auto nameOfLocal = [](const nlohmann::json& entities, uint64_t localId) {
+            for (const nlohmann::json& it : entities) {
+                if (it.value("fileId", 0ull) == localId) {
+                    return it.value("name", std::string());
+                }
+            }
+            return std::string();
+        };
+
+        PrefabLibrary lib;
+        const std::wstring innerPath = tmpPath(L"mye_selftest_h_inner.prefab.json");
+        const std::wstring outerPath = tmpPath(L"mye_selftest_h_outer.prefab.json");
+
+        uint64_t innerHash = 0;
+        {
+            Scene s;
+            GameObject sw = s.CreateGameObjectTracked("Sword");
+            GameObject bl = s.CreateGameObjectTracked("Blade");
+            bl.SetParent(sw);
+            s.GetWorld().ApplyStructuralChanges();
+            innerHash = lib.Register(innerPath, "inner", Prefab::ExtractLocal(s, sw.Id()));
+        }
+
+        // Goblin > [ Foot, Hand > [Sword > Blade > Decal] ]
+        //   DFS: 1 Goblin / 2 Foot / 3 Hand / 4 Sword / 5 Blade / 6 Decal
+        // Foot が入れ子の **前**、Decal は内側配下のユーザー追加 (タグ無し)
+        Scene so;
+        GameObject gob = so.CreateGameObjectTracked("Goblin");
+        GameObject foot = so.CreateGameObjectTracked("Foot");
+        GameObject hand = so.CreateGameObjectTracked("Hand");
+        foot.SetParent(gob);
+        hand.SetParent(gob);
+        so.GetWorld().ApplyStructuralChanges();
+        const uint64_t swordFid =
+            Prefab::Instantiate(so, lib, innerHash, so.EnsureFileId(hand.Id()));
+        so.GetWorld().ApplyStructuralChanges();
+        GameObject swordGo = so.FindByFileId(swordFid);
+        GameObject decal = so.CreateGameObjectTracked("Decal");
+        // Blade の子 (= 内側インスタンスの配下) に置く
+        decal.SetParent(GameObject(&so.GetWorld(), firstChild(so, swordGo.Id())));
+        so.GetWorld().ApplyStructuralChanges();
+
+        const uint64_t outerHash = Prefab::CreateAsset(so, lib, outerPath, gob.Id());
+        so.GetWorld().ApplyStructuralChanges();
+        const nlohmann::json baseOuter =
+            lib.Get(outerHash) ? lib.Get(outerHash)->entities : nlohmann::json::array();
+        check(baseOuter.size() == 6 && nameOfLocal(baseOuter, 2) == "Foot"
+                  && nameOfLocal(baseOuter, 3) == "Hand" && nameOfLocal(baseOuter, 6) == "Decal",
+              "holes: the base numbering counts inner-instance members too (own-level siblings keep DFS order)");
+        check(!so.GetWorld().GetComponent<PrefabLinkComponent>(decal.Id()),
+              "holes: CreateAsset leaves a user-added child inside an inner instance untagged");
+
+        // 別シーンへ展開 — Decal に外側の PrefabLink が付かないこと (境界判定の代理はここで割れる)
+        Scene s2;
+        const uint64_t rootFid2 = Prefab::Instantiate(s2, lib, outerHash, 0);
+        s2.GetWorld().ApplyStructuralChanges();
+        World& w2 = s2.GetWorld();
+        GameObject root2 = s2.FindByFileId(rootFid2);
+        EntityID decal2 = kNullEntity;
+        EntityID sword2 = kNullEntity;
+        EntityID foot2 = kNullEntity;
+        {
+            // Goblin > [Foot, Hand > Sword > Blade > Decal]
+            foot2 = root2 ? firstChild(s2, root2.Id()) : kNullEntity;
+            auto* fh = foot2.IsNull() ? nullptr : w2.GetComponent<HierarchyComponent>(foot2);
+            const EntityID hand2 = fh ? fh->nextSibling : kNullEntity;
+            sword2 = hand2.IsNull() ? kNullEntity : firstChild(s2, hand2);
+            const EntityID blade2 = sword2.IsNull() ? kNullEntity : firstChild(s2, sword2);
+            decal2 = blade2.IsNull() ? kNullEntity : firstChild(s2, blade2);
+        }
+        check(!decal2.IsNull() && std::string(w2.GetName(decal2)) == "Decal"
+                  && !w2.GetComponent<PrefabLinkComponent>(decal2),
+              "holes: instantiate does NOT give an outer localId to a tagless child inside an inner instance");
+
+        // CollectInstanceMembers の境界 — 内側ルート自身もメンバに含めないこと
+        {
+            std::vector<EntityID> members;
+            std::vector<EntityID> inners;
+            Prefab::CollectInstanceMembers(w2, root2.Id(), members, &inners);
+            const bool hasSword =
+                std::find(members.begin(), members.end(), sword2) != members.end();
+            check(members.size() == 3 && !hasSword && inners.size() == 1 && inners[0] == sword2,
+                  "holes: CollectInstanceMembers excludes the inner root itself and reports it separately");
+        }
+
+        // 削除で空いた localId を内側配下へ再利用しない (別インスタンスが名乗っているため)
+        Scene s3;
+        const uint64_t instA = Prefab::Instantiate(s3, lib, outerHash, 0);
+        const uint64_t instB = Prefab::Instantiate(s3, lib, outerHash, 0);
+        s3.GetWorld().ApplyStructuralChanges();
+        World& w3 = s3.GetWorld();
+        GameObject rootA = s3.FindByFileId(instA);
+        const EntityID footA = rootA ? firstChild(s3, rootA.Id()) : kNullEntity;
+        GameObject rootB = s3.FindByFileId(instB);
+        const EntityID footB = rootB ? firstChild(s3, rootB.Id()) : kNullEntity;
+        w3.DestroyEntity(footA); // A の自レベルメンバ (localId=2) を消す
+        w3.ApplyStructuralChanges();
+        check(Prefab::ApplyInstance(s3, lib, instA), "holes: apply after deleting an own-level member succeeds");
+        s3.GetWorld().ApplyStructuralChanges();
+        const nlohmann::json baseAfter =
+            lib.Get(outerHash) ? lib.Get(outerHash)->entities : nlohmann::json::array();
+        check(nameOfLocal(baseAfter, 2).empty(),
+              "holes: the deleted member's localId is left vacant (not recycled for an inner member)");
+        check(!footB.IsNull() && w3.IsAlive(footB) && std::string(w3.GetName(footB)) == "Foot",
+              "holes: the other instance's member is not renamed into a different entity");
+
+        std::error_code ec;
+        std::filesystem::remove(innerPath, ec);
+        std::filesystem::remove(outerPath, ec);
+    }
+
+    // ---- Undo 復元でプレハブタグが消えること (M48c) ----
+    // UndoStack は before/after のサブツリー全量スナップショットなので JSON がタグの正解。
+    // 隠しコンポーネントを消せないままだと「Create Prefab → Undo」でタグだけ残り、
+    // アセットに紐づいていないのに Inspector がプレハブバーを出す偽インスタンスになる
+    {
+        PrefabLibrary lib;
+        const std::wstring p =
+            (std::filesystem::temp_directory_path() / L"mye_selftest_undo.prefab.json").wstring();
+        Scene s;
+        GameObject undoRoot = s.CreateGameObjectTracked("UndoRoot");
+        GameObject undoChild = s.CreateGameObjectTracked("UndoChild");
+        undoChild.SetParent(undoRoot);
+        s.GetWorld().ApplyStructuralChanges();
+        const nlohmann::json before = SceneSerializer::SubtreeToJson(s, undoRoot.Id());
+
+        check(Prefab::CreateAsset(s, lib, p, undoRoot.Id()) != 0, "undo: create prefab succeeded");
+        s.GetWorld().ApplyStructuralChanges();
+        check(s.GetWorld().GetComponent<PrefabInstanceComponent>(undoRoot.Id()) != nullptr,
+              "undo: the subtree is tagged before undo");
+
+        SceneSerializer::ApplyPartial(s, before, /*removeHiddenMissing=*/false);
+        s.GetWorld().ApplyStructuralChanges();
+        check(s.GetWorld().GetComponent<PrefabInstanceComponent>(undoRoot.Id()) != nullptr,
+              "undo: the default ApplyPartial keeps hidden tags (load path stays bit-invariant)");
+
+        SceneSerializer::ApplyPartial(s, before, /*removeHiddenMissing=*/true);
+        s.GetWorld().ApplyStructuralChanges();
+        check(s.GetWorld().GetComponent<PrefabInstanceComponent>(undoRoot.Id()) == nullptr
+                  && s.GetWorld().GetComponent<PrefabLinkComponent>(undoChild.Id()) == nullptr,
+              "undo: removeHiddenMissing strips the tags the snapshot does not have");
+
+        std::error_code ec;
+        std::filesystem::remove(p, ec);
     }
 
     // ---- アニメーション (M14) ----

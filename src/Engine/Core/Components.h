@@ -172,13 +172,20 @@ struct ActiveComponent {
 // シリアライズ+ハッシュ対象だが、どのシステムにも参加しない純データタグ (sim 非影響)
 struct PrefabInstanceComponent {
     uint64_t prefabHash = 0;
+    // M48c: 入れ子インスタンスのルートが「外側ベースのどのエントリか」を指す localId。
+    // 0 = 入れ子でない (シーンに直接配置)。**PrefabLink.localId とはドメインが違う** —
+    // 入れ子ルートの PrefabLink は内側ベースのドメイン (常に 1) なので、外側での位置を
+    // 記録する場所がここにしかない。詳細は Prefab.h の「ID ドメイン」節
+    uint64_t outerLocalId = 0;
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
 // インスタンス内の **全エンティティ** に付く。プレハブ内ローカル fileId (localId) を保持し、
 // ベースとのオーバーライド diff / 伝播に使う。所属インスタンスのルートは親を上に辿り、
 // 最初に PrefabInstanceComponent を持つ祖先 (= 自身含む)。rootFileId を持たないため、
-// 複製 (CloneSubtree) しても壊れない (localId はそのまま流用でよい)
+// 複製 (CloneSubtree) しても壊れない (localId はそのまま流用でよい)。
+// **入れ子 (M48c): localId は「自分が直接所属するインスタンスのベース」のドメインの値**。
+// 内側インスタンスのメンバは内側ベースの番号を持ち、外側の連番では上書きされない
 struct PrefabLinkComponent {
     uint64_t localId = 0;
     static inline ComponentTypeId sTypeId = kInvalidComponentType;

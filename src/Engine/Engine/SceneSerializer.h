@@ -47,8 +47,15 @@ nlohmann::json SubtreeToJson(Scene& scene, EntityID root);    // root + 子孫 (
 // entities (SaveToJson の entities と同形式の配列) をシーンへ適用する。
 // fileId で照合し、無ければ生成・あれば更新 (シリアライズ対象コンポーネントは JSON に一致させる)。
 // **ApplyDiff と違い incoming に無いエンティティは破棄しない** — Undo/Redo・コピペ・プレハブ展開用。
-// 兄弟位置は childIndex で復元。EntityRef/親は fileId で再解決 (incoming 優先、次にシーン内検索)
-bool ApplyPartial(Scene& scene, const nlohmann::json& entities);
+// 兄弟位置は childIndex で復元。EntityRef/親は fileId で再解決 (incoming 優先、次にシーン内検索)。
+//
+// removeHiddenMissing=true で「JSON に無い **隠し** コンポーネントも消す」(M48c)。
+// シリアライズされる隠しコンポーネントは PrefabInstance / PrefabLink だけなので、これは
+// 実質「プレハブタグを JSON に一致させるか」のスイッチ。**Undo/Redo の復元だけが true** —
+// 全量スナップショットを撮っているので JSON がタグの正解であり、false のままだと
+// 「Create Prefab → Undo」でタグだけ残って偽インスタンスになる。
+// プレハブ展開・複製は新規エンティティしか触らないので false のままでよい
+bool ApplyPartial(Scene& scene, const nlohmann::json& entities, bool removeHiddenMissing = false);
 
 // components (エンティティ JSON の "components" オブジェクト) 内の EntityRef フィールド
 // (シリアライズ上は fileId の生値) を remap で置換する。プレハブ抽出/展開と複製の共通実装。

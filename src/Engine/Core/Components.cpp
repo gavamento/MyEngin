@@ -137,6 +137,8 @@ void RegisterBuiltinComponents()
     // 無ければ通常エンティティなので既存シーンのハッシュは不変 (ReplayFile bump 不要)
     RegisterComponent<PrefabInstanceComponent>("PrefabInstance", {
         MYE_JP("プレハブハッシュ", MYE_FIELD_FLAGS(PrefabInstanceComponent, prefabHash, UInt64, kFieldReadOnly)),
+        // M48c: 末尾追加。追跡シーンに PrefabInstance は 1 件も無いのでハッシュ影響なし
+        MYE_JP("外側ローカル ID", MYE_FIELD_FLAGS(PrefabInstanceComponent, outerLocalId, UInt64, kFieldReadOnly)),
     }, kComponentHidden);
 
     RegisterComponent<PrefabLinkComponent>("PrefabLink", {

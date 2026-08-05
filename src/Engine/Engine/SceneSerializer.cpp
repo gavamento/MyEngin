@@ -131,9 +131,14 @@ json WriteEntity(World& world, EntityID e, uint32_t childIndex)
 }
 
 // JSON の components を エンティティ e へ流し込む。EntityRef は toEntity で fileId→EntityID に解決。
-// removeMissing=true のとき、JSON に無いシリアライズ対象コンポーネントを除去する
+// removeMissing=true のとき、JSON に無いシリアライズ対象コンポーネントを除去する。
+// removeHiddenMissing=true なら kComponentHidden なものも除去対象に含める (M48c) —
+// シリアライズされる隠しコンポーネントは PrefabInstance / PrefabLink だけなので、
+// これは実質「プレハブタグを JSON に一致させるか」のスイッチ。既定 false は従来どおりの
+// ビット不変ロード (シーンロード/ApplyDiff/プレハブ展開はタグを消してはならない)
 void ReadEntityComponents(World& world, EntityID e, const json& item,
-                          const std::function<EntityID(uint64_t)>& toEntity, bool removeMissing)
+                          const std::function<EntityID(uint64_t)>& toEntity, bool removeMissing,
+                          bool removeHiddenMissing = false)
 {
     const ComponentRegistry& reg = ComponentRegistry::Get();
     const json comps = item.contains("components") ? item["components"] : json::object();
@@ -178,8 +183,11 @@ void ReadEntityComponents(World& world, EntityID e, const json& item,
             std::vector<ComponentTypeId> types(arch->Types().begin(), arch->Types().end());
             for (ComponentTypeId t : types) {
                 const ComponentDesc& desc = reg.Desc(t);
-                if ((desc.flags & (kComponentNoSerialize | kComponentHidden)) != 0
-                    || t == NameComponent::sTypeId || t == LocalTransform::sTypeId) {
+                if ((desc.flags & kComponentNoSerialize) != 0 || t == NameComponent::sTypeId
+                    || t == LocalTransform::sTypeId) {
+                    continue;
+                }
+                if ((desc.flags & kComponentHidden) != 0 && !removeHiddenMissing) {
                     continue;
                 }
                 if (!comps.contains(desc.name)) {
@@ -455,7 +463,7 @@ json SubtreeToJson(Scene& scene, EntityID root)
     return arr;
 }
 
-bool ApplyPartial(Scene& scene, const json& entities)
+bool ApplyPartial(Scene& scene, const json& entities, bool removeHiddenMissing)
 {
     if (!entities.is_array()) {
         return false;
@@ -503,7 +511,7 @@ bool ApplyPartial(Scene& scene, const json& entities)
             continue;
         }
         SetEntityName(world, e, item.value("name", std::string()));
-        ReadEntityComponents(world, e, item, toEntity, /*removeMissing*/ true);
+        ReadEntityComponents(world, e, item, toEntity, /*removeMissing*/ true, removeHiddenMissing);
     }
 
     // 親 + 兄弟位置
