@@ -24,6 +24,7 @@
 #include "Engine/Core/World.h"
 #include "Engine/Engine/Animation.h"
 #include "Engine/Engine/AssetDatabase.h"
+#include "Engine/Engine/EntityNaming.h"
 #include "Engine/Engine/GameObject.h"
 #include "Engine/Engine/Prefab.h"
 #include "Engine/Engine/Scene.h"
@@ -328,6 +329,17 @@ void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
     if (auto* nc = world.GetComponent<NameComponent>(e)) {
         ImGui::SetNextItemWidth(-1);
         ImGui::InputText("##name", nc->value, sizeof(nc->value));
+        // 編集開始時の名前を控え、確定時に正規化する (M48b)。
+        // HandleEditUndo が CaptureAfter を撮る**前**に置くこと。ImGui のアイテム状態問い合わせは
+        // 同フレーム内で冪等なので次行の判定は壊れない。
+        // ★IsItemDeactivatedAfterEdit は Esc の revert でも真になるので、original と比較して
+        //   「変更なし」を弾かないと取り消したはずの操作で名前が変わる
+        if (ImGui::IsItemActivated()) {
+            nameOriginal_ = nc->value;
+        }
+        if (ImGui::IsItemDeactivatedAfterEdit()) {
+            FinishRename(world, e, nc->value, nameOriginal_);
+        }
         HandleEditUndo(ctx, selection, undo, fid, "Rename");
         if (isPrefabMember && Prefab::IsNameOverridden(*ctx.scene, *ctx.prefabs, e)) {
             ImGui::SameLine();

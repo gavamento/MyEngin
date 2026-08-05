@@ -15,6 +15,7 @@
 #include "Engine/Core/Log.h"
 #include "Engine/Engine/Animation.h"
 #include "Engine/Engine/AssetDatabase.h"
+#include "Engine/Engine/EntityNaming.h"
 #include "Engine/Engine/Audio/AudioMixer.h"
 #include "Engine/Engine/Audio/AudioSystem.h"
 #include "Engine/Engine/Audio/SoundAsset.h"
@@ -454,6 +455,16 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
                     (hash != 0) ? Prefab::Instantiate(*ctx.scene, *ctx.prefabs, hash, 0) : 0;
                 ctx.scene->GetWorld().ApplyStructuralChanges();
                 if (rootFid != 0) {
+                    // 兄弟名の一意化 (M48b)。InstantiateAssetAtPath を通らない独立経路なので
+                    // ここにも要る。ルート配置だが exclude = 自分自身が必須
+                    if (GameObject r = ctx.scene->FindByFileId(rootFid)) {
+                        World& w = ctx.scene->GetWorld();
+                        const EntityID re = r.Id();
+                        if (auto* nc = w.GetComponent<NameComponent>(re)) {
+                            SetEntityName(w, re, MakeUniqueSiblingName(w, w.GetParent(re), nc->value,
+                                                                       /*exclude=*/re));
+                        }
+                    }
                     selection.SelectOnly(rootFid);
                     undo.CaptureAfter(*ctx.scene, rootFid);
                     undo.EndRecord(selection);

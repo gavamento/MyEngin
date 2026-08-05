@@ -26,6 +26,7 @@ private:
     char searchBuf_[64] = {};
     uint64_t renamingFid_ = 0; // インラインリネーム中の fileId (0 = なし)
     bool renameFocus_ = false;
+    std::string renameOriginal_; // 編集開始時の名前 (確定時に同一なら改名しない、M48b)
 
     // Shift 範囲選択 (M27d): 前フレームの表示順 + 範囲の起点
     std::vector<uint64_t> visibleOrder_;

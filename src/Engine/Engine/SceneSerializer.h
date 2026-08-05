@@ -1,5 +1,6 @@
 #pragma once
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "nlohmann/json.hpp"
@@ -48,6 +49,15 @@ nlohmann::json SubtreeToJson(Scene& scene, EntityID root);    // root + 子孫 (
 // **ApplyDiff と違い incoming に無いエンティティは破棄しない** — Undo/Redo・コピペ・プレハブ展開用。
 // 兄弟位置は childIndex で復元。EntityRef/親は fileId で再解決 (incoming 優先、次にシーン内検索)
 bool ApplyPartial(Scene& scene, const nlohmann::json& entities);
+
+// components (エンティティ JSON の "components" オブジェクト) 内の EntityRef フィールド
+// (シリアライズ上は fileId の生値) を remap で置換する。プレハブ抽出/展開と複製の共通実装。
+// **zeroExternal に既定値を与えないこと** — remap に無い参照を 0 にするか据え置くかは
+// 呼び出し側で正反対 (抽出/展開 = true、複製 = false) で、取り違えてもコンパイルは通り
+// 静かに壊れる (集合外を指す SpringJoint.connectedEntity が切れる / プレハブに外部参照が残る)
+void RemapEntityRefsInComponents(nlohmann::json& components,
+                                 const std::unordered_map<uint64_t, uint64_t>& remap,
+                                 bool zeroExternal);
 
 // subtree (SubtreeToJson の出力配列) を新しい fileId 群で複製してシーンに生成する (複製/コピペ)。
 // 集合内の parent / EntityRef 参照は新 fileId に付け替え、集合外への参照は維持する。

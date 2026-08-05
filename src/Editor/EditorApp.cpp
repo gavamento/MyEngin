@@ -15,6 +15,7 @@
 #include "Engine/Core/Localization.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Engine/DemoContent.h"
+#include "Engine/Engine/EntityNaming.h"
 #include "Engine/Engine/HotReload/DllReloader.h"
 #include "Engine/Engine/HotReload/ReloadHub.h"
 #include "Engine/Engine/ModelLoader.h"
@@ -551,6 +552,24 @@ nlohmann::json EditorApp::GatherSelectionSubtrees(EngineContext& ctx)
     return out;
 }
 
+// 複製 / 貼り付けで生えた各ルートの名前を兄弟内で一意にする (M48b)。
+// **1 つずつ改名してから次を計算する** — 先に全候補を計算すると 2 つ目以降も同じ " (1)" を取る。
+// CloneSubtree + ApplyStructuralChanges の後、CaptureAfter より前に呼ぶこと
+static void UniquifyNewRoots(Scene& scene, const std::vector<uint64_t>& newRoots)
+{
+    World& w = scene.GetWorld();
+    for (uint64_t f : newRoots) {
+        GameObject o = scene.FindByFileId(f);
+        if (!o) {
+            continue;
+        }
+        const EntityID e = o.Id();
+        if (auto* nc = w.GetComponent<NameComponent>(e)) {
+            SetEntityName(w, e, MakeUniqueSiblingName(w, w.GetParent(e), nc->value, /*exclude=*/e));
+        }
+    }
+}
+
 void EditorApp::DuplicateSelection(EngineContext& ctx)
 {
     if (selection_.Empty()) {
@@ -563,6 +582,7 @@ void EditorApp::DuplicateSelection(EngineContext& ctx)
     undo_.BeginRecord("Duplicate", selection_);
     const std::vector<uint64_t> newRoots = SceneSerializer::CloneSubtree(*ctx.scene, subtrees);
     ctx.scene->GetWorld().ApplyStructuralChanges();
+    UniquifyNewRoots(*ctx.scene, newRoots);
     selection_.Clear();
     for (uint64_t f : newRoots) {
         selection_.Add(f);
@@ -590,6 +610,7 @@ void EditorApp::PasteClipboard(EngineContext& ctx)
     undo_.BeginRecord("Paste", selection_);
     const std::vector<uint64_t> newRoots = SceneSerializer::CloneSubtree(*ctx.scene, clipboard_);
     ctx.scene->GetWorld().ApplyStructuralChanges();
+    UniquifyNewRoots(*ctx.scene, newRoots);
     selection_.Clear();
     for (uint64_t f : newRoots) {
         selection_.Add(f);

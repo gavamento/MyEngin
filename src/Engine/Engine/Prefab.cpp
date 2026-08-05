@@ -14,6 +14,7 @@
 #include "Engine/Core/JsonUtil.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Core/World.h"
+#include "Engine/Engine/EntityNaming.h"
 #include "Engine/Engine/GameObject.h"
 #include "Engine/Engine/Scene.h"
 #include "Engine/Engine/SceneSerializer.h"
@@ -50,35 +51,6 @@ const json* FindLocal(const json& entities, uint64_t localId)
         }
     }
     return nullptr;
-}
-
-// components 内の EntityRef フィールド (シリアライズでは fileId の生値) を remap で置換する。
-// remap に無い参照は zeroExternal なら 0 (null) に、そうでなければ据え置き
-void RemapEntityRefs(json& components, const std::unordered_map<uint64_t, uint64_t>& remap,
-                     bool zeroExternal)
-{
-    const ComponentRegistry& reg = ComponentRegistry::Get();
-    for (auto& [compName, fields] : components.items()) {
-        const ComponentTypeId t = reg.FindByName(compName);
-        if (t == kInvalidComponentType) {
-            continue;
-        }
-        for (const FieldDesc& f : reg.Desc(t).fields) {
-            if (f.type != FieldType::EntityRef || !fields.contains(f.name)) {
-                continue;
-            }
-            const json& v = fields[f.name];
-            if (v.is_number_unsigned() || v.is_number_integer()) {
-                const uint64_t id = v.get<uint64_t>();
-                auto it = remap.find(id);
-                if (it != remap.end()) {
-                    fields[f.name] = it->second;
-                } else if (zeroExternal) {
-                    fields[f.name] = 0;
-                }
-            }
-        }
-    }
 }
 
 bool WritePrefabFile(const std::wstring& path, const std::string& name, const json& entities)
@@ -140,15 +112,6 @@ const json* ResolveBase(World& w, const PrefabLibrary& lib, EntityID e)
     return FindLocal(a->entities, link->localId);
 }
 
-// NameComponent へ決定論的に名前を書く (WorldHash が 64 バイト生読みするためゼロ埋め必須)
-void SetName(World& w, EntityID e, const std::string& name)
-{
-    if (auto* nc = w.GetComponent<NameComponent>(e)) {
-        std::memset(nc->value, 0, sizeof(nc->value));
-        const size_t n = (name.size() < sizeof(nc->value) - 1) ? name.size() : sizeof(nc->value) - 1;
-        std::memcpy(nc->value, name.data(), n);
-    }
-}
 
 std::string GetNameStr(World& w, EntityID e)
 {
@@ -263,7 +226,7 @@ json ExtractLocal(Scene& scene, EntityID root)
             }
         }
         if (ni.contains("components")) {
-            RemapEntityRefs(ni["components"], remap, /*zeroExternal*/ true);
+            SceneSerializer::RemapEntityRefsInComponents(ni["components"], remap, /*zeroExternal=*/true);
             ni["components"].erase("PrefabInstance"); // タグは新規インスタンス化時に付与
             ni["components"].erase("PrefabLink");
         }
@@ -309,7 +272,7 @@ static json ExtractLocalByLinks(Scene& scene, EntityID root)
             }
         }
         if (ni.contains("components")) {
-            RemapEntityRefs(ni["components"], remap, /*zeroExternal*/ true);
+            SceneSerializer::RemapEntityRefsInComponents(ni["components"], remap, /*zeroExternal=*/true);
             ni["components"].erase("PrefabInstance");
             ni["components"].erase("PrefabLink");
         }
@@ -381,7 +344,7 @@ uint64_t InstantiateEntities(Scene& scene, const json& localEntities, uint64_t p
             }
         }
         if (ni.contains("components")) {
-            RemapEntityRefs(ni["components"], remap, /*zeroExternal*/ true);
+            SceneSerializer::RemapEntityRefsInComponents(ni["components"], remap, /*zeroExternal=*/true);
         }
         out.push_back(std::move(ni));
     }
@@ -541,7 +504,7 @@ void RevertInstance(Scene& scene, const PrefabLibrary& lib, uint64_t rootFileId)
         if (!base) {
             continue;
         }
-        SetName(w, m, base->value("name", std::string()));
+        SetEntityName(w, m, base->value("name", std::string()));
         if (!base->contains("components")) {
             continue;
         }
@@ -605,7 +568,7 @@ void PropagateBaseChange(Scene& scene, const json& oldBase, const json& newBase,
                 const std::string oldName = ob ? ob->value("name", std::string()) : std::string();
                 const std::string newName = nb->value("name", std::string());
                 if (oldName != newName && GetNameStr(w, m) == oldName) {
-                    SetName(w, m, newName);
+                    SetEntityName(w, m, newName);
                 }
             }
             if (!nb->contains("components")) {
@@ -676,9 +639,24 @@ bool ApplyInstance(Scene& scene, PrefabLibrary& lib, uint64_t rootFileId)
     const std::wstring path = a->path;
     const std::string name = a->name;
 
-    const json newBase = ExtractLocalByLinks(scene, rootGo.Id());
+    json newBase = ExtractLocalByLinks(scene, rootGo.Id());
     if (newBase.empty()) {
         return false;
+    }
+    // ★インスタンスルートの名前は Apply でベースへ書き戻さない (M48b)。
+    //   兄弟名の一意化で 2 個目の配置が "Enemy (1)" になるため、そのまま焼くと
+    //   (1) .prefab.json のルート名が "Enemy (1)" に汚染され、
+    //   (2) 直後の PropagateBaseChange が「旧名 Enemy のまま」の 1 個目まで "Enemy (1)" に改名し、
+    //       兄弟が両方 "Enemy (1)" になって一意性が壊れる。
+    //   さらに次の配置は "Enemy (1) (1)" と際限なく育つ。Unity も同じ理由でインスタンスの
+    //   ルート名を Apply の対象外にしている。ルート以外のメンバ名は従来どおり Apply する
+    if (const json* oldRoot = FindLocal(oldBase, 1); oldRoot && oldRoot->contains("name")) {
+        for (json& item : newBase) {
+            if (item.value("fileId", 0ull) == 1ull) {
+                item["name"] = (*oldRoot)["name"];
+                break;
+            }
+        }
     }
     if (!WritePrefabFile(path, name, newBase)) {
         MYE_LOG_WARN("prefab apply: file write failed for %s", WideToUtf8(path).c_str());

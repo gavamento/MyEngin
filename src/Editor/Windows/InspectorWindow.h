@@ -78,6 +78,9 @@ private:
     EntityID eulerCacheEntity_ = kNullEntity;
     const void* eulerCacheField_ = nullptr;
     bool eulerEditing_ = false;
+
+    // 名前欄の編集開始時の値 (確定時に同一なら改名しない — Esc の revert 対策、M48b)
+    std::string nameOriginal_;
 };
 
 } // namespace mye

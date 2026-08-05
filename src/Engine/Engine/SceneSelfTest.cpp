@@ -8,9 +8,11 @@
 #include "Engine/Core/Components.h"
 #include "Engine/Core/Hash.h"
 #include "Engine/Core/Log.h"
+#include "Engine/Core/NameUtil.h"
 #include "Engine/Core/Profiler.h"
 #include "Engine/Core/World.h"
 #include "Engine/Engine/Animation.h"
+#include "Engine/Engine/EntityNaming.h"
 #include "Engine/Engine/GameObject.h"
 #include "Engine/Engine/Prefab.h"
 #include "Engine/Engine/Replay/WorldHasher.h"
@@ -211,6 +213,180 @@ bool RunSceneSerializerSelfTest()
         check(cloneOk, "clone parent+child values match original");
     }
 
+    // ---- remap 一本化: 集合外 EntityRef の扱いが clone と extract で逆であること (M48b) ----
+    // 唯一の組み込み serializable EntityRef である SpringJoint.connectedEntity で検証する。
+    // **この 2 本が無いと zeroExternal を取り違えてもコンパイルもテストも通ってしまう**
+    {
+        Scene s;
+        GameObject outside = s.CreateGameObjectTracked("Outside");
+        GameObject src = s.CreateGameObjectTracked("Jointed");
+        s.GetWorld().ApplyStructuralChanges();
+        const uint64_t outsideFid = s.GetWorld().GetComponent<FileIdComponent>(outside.Id())->value;
+        src.AddComponent<SpringJointComponent>()->connectedEntity = outside.Id();
+
+        const nlohmann::json sub = SceneSerializer::SubtreeToJson(s, src.Id());
+        const std::vector<uint64_t> roots = SceneSerializer::CloneSubtree(s, sub);
+        s.GetWorld().ApplyStructuralChanges();
+        GameObject clone = s.FindByFileId(roots.empty() ? 0 : roots[0]);
+        auto* cj = clone ? clone.GetComponent<SpringJointComponent>() : nullptr;
+        check(cj && cj->connectedEntity == outside.Id(),
+              "clone: an EntityRef pointing outside the set is preserved (zeroExternal=false)");
+
+        // 抽出 (プレハブ化) は集合外参照を 0 にする。
+        // **対象コンポーネントを見つけたことを必須にする** — 見つからないまま真を返すと、
+        // SpringJoint が出力から消える変異で空振り PASS してしまう
+        const nlohmann::json local = Prefab::ExtractLocal(s, src.Id());
+        bool found = false;
+        bool zeroed = false;
+        for (const nlohmann::json& item : local) {
+            if (item.contains("components") && item["components"].contains("SpringJoint")) {
+                found = true;
+                zeroed = item["components"]["SpringJoint"].value("connectedEntity", 1ull) == 0ull;
+            }
+        }
+        check(found && zeroed && outsideFid != 0,
+              "extract: an EntityRef pointing outside the set is zeroed (zeroExternal=true)");
+    }
+
+    // ---- 兄弟名の一意化 (M48b。エディタ操作専用のヘルパ) ----
+    {
+        Scene s;
+        World& w = s.GetWorld();
+        GameObject rootCube = s.CreateGameObjectTracked("Cube");
+        GameObject grp = s.CreateGameObjectTracked("Parent");
+        GameObject childCube = s.CreateGameObjectTracked("Cube");
+        childCube.SetParent(grp);
+        w.ApplyStructuralChanges();
+
+        check(MakeUniqueSiblingName(w, kNullEntity, "Sphere", kNullEntity) == "Sphere",
+              "unique: a free name is returned unchanged");
+        check(MakeUniqueSiblingName(w, kNullEntity, "Cube", kNullEntity) == "Cube (1)",
+              "unique: a colliding root name gets ' (1)'");
+        check(MakeUniqueSiblingName(w, kNullEntity, "Cube", rootCube.Id()) == "Cube",
+              "unique: excluding the entity itself keeps its own name (rename no-op)");
+        // 兄弟集合は親ごとに独立 — ルートの "Cube" は parent の子には影響しない
+        check(MakeUniqueSiblingName(w, grp.Id(), "Cube", childCube.Id()) == "Cube",
+              "unique: sibling sets are per-parent");
+        check(MakeUniqueSiblingName(w, grp.Id(), "Cube", kNullEntity) == "Cube (1)",
+              "unique: a colliding child name gets ' (1)'");
+
+        // 予算ちょうど (63 バイト) の名前: 素の候補が衝突するので連番を付ける必要があるが、
+        // 連番ぶんの領域が無い。base 側を先に詰めるので候補は必ず別文字列になる
+        // (詰めずに後置するだけの実装だと切り詰めで元の名前に戻り、永久に衝突が解けない)
+        const std::string longName(kMaxEntityNameBytes, 'x');
+        SetEntityName(w, rootCube.Id(), longName);
+        const std::string uniqLong = MakeUniqueSiblingName(w, kNullEntity, longName, kNullEntity);
+        check(uniqLong.size() <= kMaxEntityNameBytes && uniqLong != longName
+                  && uniqLong.substr(uniqLong.size() - 4) == " (1)",
+              "unique: a name at the exact byte budget still yields a distinct numbered candidate");
+
+        // マルチバイト文字を割らない。**境界をまたぐ予算**で後退ループを実際に働かせる
+        // (3 の倍数の予算だと後退が起きず、後退ループを削除しても通ってしまう)
+        std::string mb;
+        for (int i = 0; i < 5; ++i) {
+            mb += "あ"; // 3 バイト × 5 = 15 バイト
+        }
+        check(nameutil::TruncateUtf8(mb, 7).size() == 6, "TruncateUtf8 steps back to a boundary (7 -> 6)");
+        check(nameutil::TruncateUtf8(mb, 8).size() == 6, "TruncateUtf8 steps back to a boundary (8 -> 6)");
+        check(nameutil::TruncateUtf8(mb, 9).size() == 9, "TruncateUtf8 keeps an exact boundary (9)");
+        check(nameutil::TruncateUtf8(mb, 0).empty() && nameutil::TruncateUtf8(mb, 99).size() == 15,
+              "TruncateUtf8 handles zero and oversized budgets");
+    }
+
+    // ---- 名前のゼロ埋めと正規化 (M48b) ----
+    {
+        Scene s;
+        World& w = s.GetWorld();
+        GameObject g = s.CreateGameObjectTracked("LongEnoughName");
+        w.ApplyStructuralChanges();
+        auto* nc = w.GetComponent<NameComponent>(g.Id());
+        SetEntityName(w, g.Id(), "Ab"); // 短くする: 以前のバイトが残ってはいけない
+        bool tailZero = nc != nullptr;
+        for (size_t i = 2; nc && i < sizeof(nc->value); ++i) {
+            tailZero = tailZero && nc->value[i] == 0;
+        }
+        check(tailZero, "SetEntityName zero-fills the tail (WorldHash reads all 64 bytes)");
+
+        check(SanitizeEntityName("  Hello  ", "GameObject") == "Hello",
+              "sanitize: leading/trailing spaces are trimmed");
+        check(SanitizeEntityName("a/b/c", "GameObject") == "abc",
+              "sanitize: '/' is stripped (reserved for part paths)");
+        check(SanitizeEntityName("   ", "GameObject") == "GameObject",
+              "sanitize: an all-blank name falls back");
+    }
+
+    // ---- FinishRename: 本番の 2 つのリネーム UI が通る唯一の入口 (M48b) ----
+    {
+        Scene s;
+        World& w = s.GetWorld();
+        GameObject dupA = s.CreateGameObjectTracked("Cube");
+        GameObject dupB = s.CreateGameObjectTracked("Cube"); // ロード/D&D で実際に起きる同名兄弟
+        GameObject slash = s.CreateGameObjectTracked("a/b");
+        w.ApplyStructuralChanges();
+
+        // ★変更なし (Esc キャンセル / 無編集): 同名兄弟がいても改名してはいけない
+        FinishRename(w, dupB.Id(), "Cube", "Cube");
+        check(std::string(w.GetName(dupB.Id())) == "Cube",
+              "FinishRename: an unchanged name is never uniquified (Esc / no-edit)");
+        FinishRename(w, slash.Id(), "a/b", "a/b");
+        check(std::string(w.GetName(slash.Id())) == "a/b",
+              "FinishRename: an unchanged name is never sanitized (legacy names survive Esc)");
+
+        // 実際に編集された場合は正規化 + 一意化する
+        FinishRename(w, dupB.Id(), "  Cube  ", "Cube");
+        check(std::string(w.GetName(dupB.Id())) == "Cube (1)",
+              "FinishRename: an edited name is trimmed and uniquified against siblings");
+        FinishRename(w, slash.Id(), "x/y", "a/b");
+        check(std::string(w.GetName(slash.Id())) == "xy",
+              "FinishRename: an edited name has '/' stripped");
+        FinishRename(w, slash.Id(), "   ", "xy");
+        check(std::string(w.GetName(slash.Id())) == "GameObject",
+              "FinishRename: an edited all-blank name falls back");
+        check(std::string(w.GetName(dupA.Id())) == "Cube", "FinishRename: siblings are untouched");
+    }
+
+    // ---- 同名兄弟のロード冪等性 (M48b の回帰防止の要) ----
+    // ロード経路に一意化が混ざると Play/Stop 往復や Undo のたびに名前が育つ。
+    // golden.rep は毎回録り直されるため replay_verify では捕まらない = ここで捕まえる
+    {
+        Scene s;
+        for (int i = 0; i < 3; ++i) {
+            s.CreateGameObjectTracked("Dup"); // 意図的に兄弟内で重複させる
+        }
+        s.GetWorld().ApplyStructuralChanges();
+        const nlohmann::json save1 = SceneSerializer::SaveToJson(s);
+
+        Scene s2;
+        SceneSerializer::LoadFromJson(s2, save1);
+        const nlohmann::json save2 = SceneSerializer::SaveToJson(s2);
+        Scene s3;
+        SceneSerializer::LoadFromJson(s3, save2);
+        const nlohmann::json save3 = SceneSerializer::SaveToJson(s3);
+
+        check(save1 == save2 && save2 == save3,
+              "load/save is idempotent for duplicate sibling names (no renaming on load)");
+
+        int dupCount = 0;
+        EntityID r = s2.GetWorld().FirstRoot();
+        while (!r.IsNull()) {
+            auto* h = s2.GetWorld().GetComponent<HierarchyComponent>(r);
+            if (std::string(s2.GetWorld().GetName(r)) == "Dup") {
+                ++dupCount;
+            }
+            r = h ? h->nextSibling : kNullEntity;
+        }
+        check(dupCount == 3, "load keeps all three duplicate names as-is");
+
+        // ApplyPartial は Undo/Redo 復元・プレハブ展開・CloneSubtree の共通出口。
+        // ここに一意化が混ざると Undo→Redo のたびに " (n)" が積み増され冪等性が消える
+        const nlohmann::json sub = SceneSerializer::SubtreeToJson(s2, s2.GetWorld().FirstRoot());
+        SceneSerializer::ApplyPartial(s2, sub);
+        SceneSerializer::ApplyPartial(s2, sub); // 2 回目も同じ結果でなければならない
+        s2.GetWorld().ApplyStructuralChanges();
+        check(SceneSerializer::SaveToJson(s2) == save2,
+              "ApplyPartial is idempotent for duplicate sibling names (Undo/Redo restore path)");
+    }
+
     // ---- ActiveComponent: 有効/無効 + シリアライズ往復 (M10) ----
     {
         Scene s5;
@@ -388,6 +564,34 @@ bool RunSceneSerializerSelfTest()
             }
         }
         check(baseUpdated, "apply updated prefab base asset");
+
+        // ★インスタンスルートの名前は Apply でベースへ焼かない (M48b)。
+        //   兄弟名の一意化で 2 個目が "X (1)" になるため、焼くとアセットが汚染され、
+        //   続く PropagateBaseChange が 1 個目まで改名して兄弟が両方同名になる
+        {
+            GameObject i1 = s7.FindByFileId(r1);
+            const std::string baseNameBefore = i1 ? std::string(s7.GetWorld().GetName(i1.Id()))
+                                                  : std::string();
+            const std::string otherBefore = inst2 ? std::string(s7.GetWorld().GetName(inst2.Id()))
+                                                  : std::string();
+            SetEntityName(s7.GetWorld(), i1.Id(), baseNameBefore + " (1)"); // 一意化を模す
+            check(Prefab::ApplyInstance(s7, lib, r1), "apply (renamed root) succeeds");
+            s7.GetWorld().ApplyStructuralChanges();
+
+            const PrefabAsset* a2 = lib.Get(hash);
+            std::string baseRootName;
+            if (a2) {
+                for (const auto& it : a2->entities) {
+                    if (it.value("fileId", 0ull) == 1ull) {
+                        baseRootName = it.value("name", std::string());
+                    }
+                }
+            }
+            check(baseRootName == baseNameBefore,
+                  "apply does NOT write the instance root name back to the prefab asset");
+            check(inst2 && std::string(s7.GetWorld().GetName(inst2.Id())) == otherBefore,
+                  "apply does NOT rename other instances via the root name");
+        }
         std::error_code ec;
         std::filesystem::remove(tmp1, ec);
 

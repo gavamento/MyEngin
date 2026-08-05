@@ -11,6 +11,7 @@
 #include "Engine/Core/JsonUtil.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Core/World.h"
+#include "Engine/Engine/EntityNaming.h"
 #include "Engine/Engine/Scene.h"
 #include "Engine/Engine/Script/ManagedHost.h"
 #include "Engine/Platform/PathUtil.h"
@@ -47,18 +48,6 @@ void EnsureFileId(Scene& scene, World& world, EntityID e)
         }
     } else {
         world.AddComponent<FileIdComponent>(e)->value = scene.NextFileId();
-    }
-}
-
-void SetEntityName(World& world, EntityID e, const std::string& name)
-{
-    if (auto* nc = world.GetComponent<NameComponent>(e)) {
-        // 末尾までゼロ埋めしてから設定する。NameComponent.value[64] は WorldHash が
-        // 64 バイトを生で読むため、null 以降のバイトも決定論的でなければならない
-        // (strncpy_s は末尾を埋めない → Undo 復元と生成時でハッシュが食い違う)。
-        std::memset(nc->value, 0, sizeof(nc->value));
-        const size_t n = (name.size() < sizeof(nc->value) - 1) ? name.size() : sizeof(nc->value) - 1;
-        std::memcpy(nc->value, name.data(), n);
     }
 }
 
@@ -539,14 +528,40 @@ bool ApplyPartial(Scene& scene, const json& entities)
     return true;
 }
 
+void RemapEntityRefsInComponents(json& components,
+                                 const std::unordered_map<uint64_t, uint64_t>& remap,
+                                 bool zeroExternal)
+{
+    const ComponentRegistry& reg = ComponentRegistry::Get();
+    for (auto& [compName, fields] : components.items()) {
+        const ComponentTypeId t = reg.FindByName(compName);
+        if (t == kInvalidComponentType) {
+            continue;
+        }
+        for (const FieldDesc& f : reg.Desc(t).fields) {
+            if (f.type != FieldType::EntityRef || !fields.contains(f.name)) {
+                continue;
+            }
+            const json& v = fields[f.name];
+            if (v.is_number_unsigned() || v.is_number_integer()) {
+                const uint64_t id = v.get<uint64_t>();
+                auto it = remap.find(id);
+                if (it != remap.end()) {
+                    fields[f.name] = it->second;
+                } else if (zeroExternal) {
+                    fields[f.name] = 0;
+                }
+            }
+        }
+    }
+}
+
 std::vector<uint64_t> CloneSubtree(Scene& scene, const json& subtree)
 {
     std::vector<uint64_t> newRoots;
     if (!subtree.is_array() || subtree.empty()) {
         return newRoots;
     }
-    const ComponentRegistry& reg = ComponentRegistry::Get();
-
     // old fileId → new fileId (集合内の全エンティティに新採番)
     std::unordered_map<uint64_t, uint64_t> remap;
     for (const json& item : subtree) {
@@ -572,25 +587,9 @@ std::vector<uint64_t> CloneSubtree(Scene& scene, const json& subtree)
             }
             // 集合外の親はそのまま維持 (複製は元と同じ親の兄弟になる)
         }
-        // EntityRef フィールドを付け替え (集合内なら新 fileId、集合外なら維持)
+        // EntityRef フィールドを付け替え (集合内なら新 fileId、集合外なら**維持**)
         if (ni.contains("components")) {
-            for (auto& [compName, fields] : ni["components"].items()) {
-                const ComponentTypeId t = reg.FindByName(compName);
-                if (t == kInvalidComponentType) {
-                    continue;
-                }
-                for (const FieldDesc& f : reg.Desc(t).fields) {
-                    if (f.type != FieldType::EntityRef || !fields.contains(f.name)) {
-                        continue;
-                    }
-                    const json& v = fields[f.name];
-                    if (v.is_number_unsigned() || v.is_number_integer()) {
-                        if (auto it = remap.find(v.get<uint64_t>()); it != remap.end()) {
-                            fields[f.name] = it->second;
-                        }
-                    }
-                }
-            }
+            RemapEntityRefsInComponents(ni["components"], remap, /*zeroExternal=*/false);
         }
         if (topLevel && old != 0) {
             newRoots.push_back(remap[old]);

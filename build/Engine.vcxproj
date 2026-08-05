@@ -65,6 +65,7 @@
     <ClCompile Include="..\src\Engine\Engine\DemoContent.cpp" />
     <ClCompile Include="..\src\Engine\Engine\EffectSystem.cpp" />
     <ClCompile Include="..\src\Engine\Engine\EngineLoop.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\EntityNaming.cpp" />
     <ClCompile Include="..\src\Engine\Engine\FbxLoader.cpp" />
     <ClCompile Include="..\src\Engine\Engine\FontSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\HotReload\DllReloader.cpp" />
@@ -151,6 +152,7 @@
     <ClInclude Include="..\src\Engine\Core\LocalizationSelfTest.h" />
     <ClInclude Include="..\src\Engine\Core\LocalizationTable.inl" />
     <ClInclude Include="..\src\Engine\Core\Log.h" />
+    <ClInclude Include="..\src\Engine\Core\NameUtil.h" />
     <ClInclude Include="..\src\Engine\Core\Profiler.h" />
     <ClInclude Include="..\src\Engine\Core\Random.h" />
     <ClInclude Include="..\src\Engine\Core\Reflection.h" />
@@ -178,6 +180,7 @@
     <ClInclude Include="..\src\Engine\Engine\DemoContent.h" />
     <ClInclude Include="..\src\Engine\Engine\EffectSystem.h" />
     <ClInclude Include="..\src\Engine\Engine\EngineLoop.h" />
+    <ClInclude Include="..\src\Engine\Engine\EntityNaming.h" />
     <ClInclude Include="..\src\Engine\Engine\FbxLoader.h" />
     <ClInclude Include="..\src\Engine\Engine\FontSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\GameObject.h" />

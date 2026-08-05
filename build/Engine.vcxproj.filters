@@ -174,6 +174,9 @@
     <ClCompile Include="..\src\Engine\Engine\EngineLoop.cpp">
       <Filter>Engine</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\EntityNaming.cpp">
+      <Filter>Engine</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\FbxLoader.cpp">
       <Filter>Engine</Filter>
     </ClCompile>
@@ -432,6 +435,9 @@
     <ClInclude Include="..\src\Engine\Core\Log.h">
       <Filter>Core</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Core\NameUtil.h">
+      <Filter>Core</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Core\Profiler.h">
       <Filter>Core</Filter>
     </ClInclude>
@@ -511,6 +517,9 @@
       <Filter>Engine</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\EngineLoop.h">
+      <Filter>Engine</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\EntityNaming.h">
       <Filter>Engine</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\FbxLoader.h">

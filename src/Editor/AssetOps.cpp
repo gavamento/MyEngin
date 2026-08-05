@@ -19,8 +19,10 @@
 #include "Engine/Core/ComponentRegistry.h"
 #include "Engine/Core/Components.h"
 #include "Engine/Core/Log.h"
+#include "Engine/Core/NameUtil.h"
 #include "Engine/Core/World.h"
 #include "Engine/Engine/Animation.h"
+#include "Engine/Engine/EntityNaming.h"
 #include "Engine/Engine/AssetDatabase.h"
 #include "Engine/Engine/Audio/AudioMixer.h"
 #include "Engine/Engine/Audio/AudioSystem.h"
@@ -167,20 +169,21 @@ void SplitAssetName(const std::wstring& filename, std::wstring& stem, std::wstri
 
 namespace {
 
-// destDir 直下で衝突しない絶対パスを返す ("name.ext" → "name (1).ext" → ...)
+// destDir 直下で衝突しない絶対パスを返す ("name.ext" → "name (1).ext" → ...)。
+// 連番規則そのものは nameutil::MakeUniqueNumbered に集約されており、
+// エンティティの兄弟名一意化 (MakeUniqueSiblingName) と同じ規則を共有する (M48b)
 std::wstring MakeUniquePath(const std::wstring& destDir, const std::wstring& filename, bool isDir)
 {
     std::wstring stem = filename;
     std::wstring suffix;
     if (!isDir) {
-        SplitAssetName(filename, stem, suffix);
+        SplitAssetName(filename, stem, suffix); // 複合サフィックスはファイル名固有 (移設しない)
     }
     std::error_code ec;
-    std::wstring candidate = destDir + L"\\" + filename;
-    for (int i = 1; fs::exists(candidate, ec); ++i) {
-        candidate = destDir + L"\\" + stem + L" (" + std::to_wstring(i) + L")" + suffix;
-    }
-    return candidate;
+    const std::wstring name = nameutil::MakeUniqueNumbered<wchar_t>(
+        stem, suffix, /*budget=*/0,
+        [&](const std::wstring& c) { return fs::exists(destDir + L"\\" + c, ec); });
+    return destDir + L"\\" + name;
 }
 
 // インポート対象外のソース (.meta サイドカー / OS ゴミファイル / 隠しファイル)。
@@ -812,6 +815,17 @@ void InstantiateAssetAtPath(EngineContext& ctx, Selection& selection, UndoStack&
         GameObject r = ctx.scene->FindByFileId(rootFid);
         if (r) {
             r.SetLocalPosition(pos->x, pos->y, pos->z);
+        }
+    }
+    // 兄弟名の一意化 (M48b)。全分岐で ApplyStructuralChanges 済み = root は既に親の子リストに
+    // いるので、親は world から引き、**自分自身を exclude** する (でないと必ず " (1)" が付く)。
+    // CaptureAfter より前に置くこと (後ろだと Undo/Redo で名前が巻き戻る)
+    if (GameObject r = ctx.scene->FindByFileId(rootFid)) {
+        World& w = ctx.scene->GetWorld();
+        const EntityID re = r.Id();
+        if (auto* nc = w.GetComponent<NameComponent>(re)) {
+            SetEntityName(w, re,
+                          MakeUniqueSiblingName(w, w.GetParent(re), nc->value, /*exclude=*/re));
         }
     }
     selection.SelectOnly(rootFid);

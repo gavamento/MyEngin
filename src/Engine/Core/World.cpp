@@ -6,6 +6,7 @@
 #include "Engine/Core/Check.h"
 #include "Engine/Core/Components.h"
 #include "Engine/Core/Log.h"
+#include "Engine/Core/NameUtil.h"
 
 namespace mye {
 
@@ -42,9 +43,11 @@ EntityID World::CreateEntity(std::string_view name)
     ++aliveCount_;
 
     auto* nc = static_cast<NameComponent*>(arch->GetPtr(arch->FindTypeIndex(NameComponent::sTypeId), rec.row));
-    const size_t n = (name.size() < sizeof(nc->value) - 1) ? name.size() : sizeof(nc->value) - 1;
-    memcpy(nc->value, name.data(), n);
-    nc->value[n] = '\0';
+    // 切り詰めは UTF-8 の文字境界で行う (M48b)。生バイトで切ると多バイト文字が分断され、
+    // シーン保存時に nlohmann が不正 UTF-8 で例外を投げる。SetEntityName と同じ規則に揃える
+    const std::string_view fit = nameutil::TruncateUtf8(name, sizeof(nc->value) - 1);
+    memcpy(nc->value, fit.data(), fit.size());
+    nc->value[fit.size()] = '\0';
 
     hierarchyDirty_ = true;
     AppendToChildList(kNullEntity, e); // ルート兄弟リスト末尾へ (兄弟順 = 生成順で決定論的)

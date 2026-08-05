@@ -8,6 +8,7 @@
 #include "Engine/Core/Components.h"
 #include "Engine/Core/World.h"
 #include "Engine/Engine/EngineLoop.h"
+#include "Engine/Engine/EntityNaming.h"
 #include "Engine/Engine/Scene.h"
 #include "Engine/Renderer/GpuResources.h"
 
@@ -129,7 +130,11 @@ void CreateItem(EngineContext& ctx, Selection& selection, UndoStack& undo, Entit
     if (ImGui::MenuItem(menuLabel)) {
         const std::string undoLabel = std::string("Create ") + objName;
         RecordCreate(ctx, selection, undo, undoLabel.c_str(), [&] {
-            GameObject obj = factory(ctx, objName);
+            // 兄弟名の一意化 (M48b)。**生成前**に決めるので exclude は不要 (対象はまだ存在しない)。
+            // SetParent は遅延なので world.GetParent(obj) はまだ使えず、引数 parent が権威
+            const std::string unique = MakeUniqueSiblingName(ctx.scene->GetWorld(), parent, objName,
+                                                             /*exclude=*/kNullEntity);
+            GameObject obj = factory(ctx, unique.c_str());
             if (!parent.IsNull()) {
                 ctx.scene->GetWorld().SetParent(obj.Id(), parent);
             }

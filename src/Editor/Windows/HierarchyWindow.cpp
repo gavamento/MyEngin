@@ -15,6 +15,7 @@
 #include "Engine/Core/Log.h"
 #include "Engine/Core/World.h"
 #include "Engine/Engine/AssetDatabase.h"
+#include "Engine/Engine/EntityNaming.h"
 #include "Engine/Engine/GameObject.h"
 #include "Engine/Engine/Prefab.h"
 #include "Engine/Engine/Scene.h"
@@ -85,6 +86,12 @@ void HierarchyWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
         && ImGui::IsKeyPressed(ImGuiKey_F2, false) && selection.primary != 0 && renamingFid_ == 0) {
         renamingFid_ = selection.primary;
         renameFocus_ = true;
+        // 編集開始時点の名前を控える。確定時にこれと一致していれば「変更なし」= 改名しない
+        // (ImGui は Esc で元の名前をバッファへ戻すが確定判定は真になるため、M48b)
+        renameOriginal_.clear();
+        if (GameObject g = ctx.scene->FindByFileId(renamingFid_)) {
+            renameOriginal_ = world.GetName(g.Id());
+        }
         undo.BeginRecord("Rename", selection);
         undo.CaptureBefore(*ctx.scene, renamingFid_);
     }
@@ -240,11 +247,19 @@ void HierarchyWindow::DrawEntityNode(EngineContext& ctx, World& world, EntityID 
             ImGui::InputText("##rename", nc->value, sizeof(nc->value),
                              ImGuiInputTextFlags_AutoSelectAll | ImGuiInputTextFlags_EnterReturnsTrue);
             if (ImGui::IsItemDeactivated()) {
+                // 確定時に正規化する (M48b)。編集中に毎フレームやってはいけない —
+                // "Cube" を打つ途中の "C"/"Cu" が衝突判定されて打ち切れなくなる。
+                // ★文字列が変わっていなくても必ず SetEntityName を通すこと: ImGui は
+                //   nc->value を直接編集し ImStrncpy が NUL 以降の残骸バイトを消さないため、
+                //   名前を短くすると WorldHash に前の名前の残骸が残る (JSON には出ないので
+                //   Undo でも直らない)。ここでゼロ埋めし直すのが唯一の修復点
+                FinishRename(world, e, nc->value, renameOriginal_);
                 undo.CaptureAfter(*ctx.scene, renamingFid_);
                 undo.EndRecord(selection);
                 renamingFid_ = 0;
             }
         } else {
+            undo.CancelRecord(); // NameComponent が消えた: 記録を開きっぱなしにしない
             renamingFid_ = 0;
         }
         ImGui::PopID();
