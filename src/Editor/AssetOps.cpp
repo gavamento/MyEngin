@@ -43,24 +43,6 @@ using namespace DirectX;
 namespace mye {
 namespace {
 
-// ファイル名向けサニタイズ (英数 _ - 空白のみ残す)。空なら fallback
-std::string SanitizeFileName(const std::string& in, const char* fallback)
-{
-    std::string out;
-    for (char c : in) {
-        const unsigned char u = static_cast<unsigned char>(c);
-        if (std::isalnum(u) || c == '_' || c == '-' || c == ' ') {
-            out += c;
-        }
-    }
-    const size_t b = out.find_first_not_of(' ');
-    const size_t e = out.find_last_not_of(' ');
-    if (b == std::string::npos) {
-        return fallback;
-    }
-    return out.substr(b, e - b + 1);
-}
-
 // C++ 識別子向けサニタイズ (英数 _ のみ、先頭は英字。数字始まり/空は Script を前置)
 std::string SanitizeIdentifier(const std::string& in)
 {
@@ -249,6 +231,36 @@ void CopyDirRecursive(EngineContext& ctx, const fs::path& srcDir, const fs::path
 
 } // namespace
 
+// ファイル名向けサニタイズ。M50b で許可リスト (英数のみ) から禁止リスト
+// (\/:*?"<>| + 制御文字) へ緩めた — 非 ASCII (日本語名) のアセット名を通すため。
+// 前後の空白と末尾ドット (Windows 不可) を落とし、空になったら fallback
+std::string SanitizeFileName(const std::string& in, const char* fallback)
+{
+    std::string out;
+    for (char c : in) {
+        const unsigned char u = static_cast<unsigned char>(c);
+        const bool bad = u < 0x20 || c == '\\' || c == '/' || c == ':' || c == '*' || c == '?'
+            || c == '"' || c == '<' || c == '>' || c == '|';
+        if (!bad) {
+            out += c;
+        }
+    }
+    const size_t b = out.find_first_not_of(' ');
+    const size_t e = out.find_last_not_of(" .");
+    if (b == std::string::npos || e == std::string::npos || e < b) {
+        return fallback;
+    }
+    return out.substr(b, e - b + 1);
+}
+
+// MakeUniquePath の公開ラッパ (M50b)。Create Prefab (Hierarchy 側) が同名衝突で
+// 既存アセットを黙って上書き = パスハッシュ再登録で既存インスタンスが新ベースへ
+// 張り替わる事故を防ぐために使う
+std::wstring MakeUniqueAssetPath(const std::wstring& destDir, const std::wstring& filename)
+{
+    return MakeUniquePath(destDir, filename, /*isDir=*/false);
+}
+
 bool CreateFolderAsset(const std::wstring& dir, const std::string& name)
 {
     const std::wstring p = dir + L"\\" + Utf8ToWide(SanitizeFileName(name, "New Folder"));
@@ -356,7 +368,10 @@ std::wstring CreateSoundAsset(EngineContext& ctx, const std::wstring& dir, const
 std::wstring CreateActorAsset(EngineContext& ctx, const std::wstring& dir, const std::string& name)
 {
     const std::string safe = SanitizeFileName(name, "New Actor");
-    const std::wstring path = dir + L"\\" + Utf8ToWide(safe) + PrefabLibrary::kActorSuffix;
+    // 同名は " (1)" 連番 (M50b)。上書きするとパスハッシュ再登録で既存インスタンスが
+    // 空のベースへ黙って張り替わるため、ここの一意化は機能ではなく安全装置
+    const std::wstring path =
+        MakeUniqueAssetPath(dir, Utf8ToWide(safe) + PrefabLibrary::kActorSuffix);
     // ルート 1 個の最小構成。エンティティ形式は WriteEntity 互換 (fileId=1 / 親なし)
     nlohmann::json rootEntity;
     rootEntity["fileId"] = 1;

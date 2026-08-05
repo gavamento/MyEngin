@@ -15,7 +15,7 @@
 | サブ | 状態 | コミット | メモ |
 |---|---|---|---|
 | M50a 修理と磨き | **完了** | (このコミット) | 計画外: モデル登録だけでは足りず、**ショーケース材質 (parts_*/rt_*) の登録がフラグゲートで Runtime には parts 登録が皆無**だった → Editor/Runtime とも無条件登録化 (名前キー少数・冪等・非ハッシュ)。これで cache シーン直接ロードで Floor/Target キューブ群も初めて描画された。RegisterSkinnedModels は selftest 専用で温存。サンプルの AssetID は FNV を手計算 (builtin://cube = 1506918697593860217, mat_blue, タグ WeakPoint/Head) — 描画実測で正しさを確認済み |
-| M50b プレハブ UX | 未着手 | - | - |
+| M50b プレハブ UX | **完了** | (このコミット) | Unpack は Engine 層 `Prefab::UnpackInstance` に置いた (selftest 可能 + override 記録の消去も内包)。SanitizeFileName は**全 Create 系共通の実装を許可リスト→禁止リストへ緩めた** (計画は Hierarchy 側のみ言及だったが、共有関数なので Create > Actor 等も日本語名が通るようになる)。selftest 15 本 (unpack 10 + sanitize/連番 5)。**UI モーダル 2 つ (命名/Unpack 確認) の実操作だけは手動確認待ち** (メニュー操作は CLI から叩けない。ロジック部は全て selftest 被覆済み) |
 | M50c 構造上書き | 未着手 | - | - |
 | M50d codegen + ABI v11 | 未着手 | - | - |
 

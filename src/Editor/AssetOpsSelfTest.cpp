@@ -108,6 +108,27 @@ bool RunAssetOpsSelfTest()
     }
     check(AssetDatabase::ClassifyPath(L"a.ogg") == AssetType::Audio, "classify .ogg as Audio");
 
+    // ---- (1e) M50b: 緩いサニタイズ (日本語を通す) + Create の同名連番 ----
+    // Create Prefab (Hierarchy) と Create > Actor が共有する経路。上書きは
+    // パスハッシュ再登録 = 既存インスタンスの黙った張り替えなので、連番は安全装置
+    {
+        check(SanitizeFileName("敵/ボス:*?\"<>|", "Prefab") == "敵ボス",
+              "sanitize strips only forbidden characters (Japanese passes)");
+        check(SanitizeFileName("  ", "Prefab") == std::string("Prefab")
+                  && SanitizeFileName("name... ", "Prefab") == "name",
+              "sanitize falls back when empty and trims trailing dots/spaces");
+        const std::wstring first = CreateActorAsset(ctx, root.wstring(), "武器");
+        const std::wstring second = CreateActorAsset(ctx, root.wstring(), "武器");
+        check(first == (root / L"武器.actor.json").wstring() && fs::exists(first, ec),
+              "Create > Actor accepts a Japanese name");
+        check(second == (root / L"武器 (1).actor.json").wstring() && fs::exists(second, ec)
+                  && fs::exists(first, ec),
+              "creating the same name again numbers instead of overwriting (path-hash safety)");
+        check(MakeUniqueAssetPath(root.wstring(), L"武器.actor.json")
+                  == (root / L"武器 (2).actor.json").wstring(),
+              "MakeUniqueAssetPath keeps the compound suffix while numbering");
+    }
+
     // ---- (2) 通常拡張子 ----
     const fs::path tex = root / L"tex.png";
     WriteDummy(tex);

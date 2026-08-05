@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
+#include <filesystem>
 #include <functional>
 #include <string>
 #include <vector>
@@ -37,23 +39,18 @@ uint64_t FidOf(World& world, EntityID e)
     return f ? f->value : 0;
 }
 
-// 選択サブツリーを .prefab.json 化し、その場でインスタンス化タグを付ける (1 Undo エントリ)
-void CreatePrefabFromEntity(EngineContext& ctx, Selection& selection, UndoStack& undo, EntityID e)
+// 選択サブツリーをアセット化し、その場でインスタンス化タグを付ける (1 Undo エントリ)。
+// name はモーダルのユーザー入力 (M50b): 禁止文字だけ落とす緩いサニタイズで日本語名を通し、
+// 同名は " (1)" 連番 — 上書きするとパスハッシュ再登録で既存インスタンスが新ベースへ
+// 黙って張り替わるため、一意化は安全装置
+void CreatePrefabFromEntity(EngineContext& ctx, Selection& selection, UndoStack& undo, EntityID e,
+                            const std::string& name, const wchar_t* suffix)
 {
-    // 名前をファイル名向けにサニタイズ
-    std::string base = ctx.scene->GetWorld().GetName(e);
-    std::string safe;
-    for (char c : base) {
-        const bool ok = std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '-';
-        safe += ok ? c : '_';
-    }
-    if (safe.empty()) {
-        safe = "Prefab";
-    }
-    // 新規作成は .actor.json (M48d)。既存 .prefab.json は読み書きとも据え置きで、
-    // Apply も元の拡張子・宣言キーのまま書き戻す (強制移行しない)
-    const std::wstring path =
-        ctx.assetsRoot + L"\\prefabs\\" + Utf8ToWide(safe) + PrefabLibrary::kActorSuffix;
+    const std::string safe = SanitizeFileName(name, "Prefab");
+    const std::wstring dir = ctx.assetsRoot + L"\\prefabs";
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec); // プロジェクト起動では未作成のことがある
+    const std::wstring path = MakeUniqueAssetPath(dir, Utf8ToWide(safe) + suffix);
 
     undo.BeginRecord("Create Prefab", selection);
     const uint64_t fid = ctx.scene->EnsureFileId(e);
@@ -63,7 +60,7 @@ void CreatePrefabFromEntity(EngineContext& ctx, Selection& selection, UndoStack&
     undo.CaptureAfter(*ctx.scene, fid);
     undo.EndRecord(selection);
     if (hash == 0) {
-        MYE_LOG_ERROR("Create Prefab failed for '%s'", base.c_str());
+        MYE_LOG_ERROR("Create Prefab failed for '%s'", safe.c_str());
     }
 }
 
@@ -161,6 +158,79 @@ void HierarchyWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
                                        ImGuiPopupFlags_MouseButtonRight
                                            | ImGuiPopupFlags_NoOpenOverItems)) {
         DrawCreateMenuItems(ctx, selection, undo); // parent 省略 = ルート生成
+        ImGui::EndPopup();
+    }
+
+    // ---- Create Prefab 命名モーダル (M50b) ----
+    if (prefabModalRequest_) {
+        ImGui::OpenPopup(Tr(StrId::Popup_CreatePrefab));
+        prefabModalRequest_ = false;
+    }
+    if (ImGui::BeginPopupModal(Tr(StrId::Popup_CreatePrefab), nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize)) {
+        if (ImGui::IsWindowAppearing()) {
+            ImGui::SetKeyboardFocusHere();
+        }
+        ImGui::SetNextItemWidth(260.0f);
+        const bool enter = ImGui::InputText(Tr(StrId::Asset_NameField), prefabNameBuf_,
+                                            sizeof(prefabNameBuf_),
+                                            ImGuiInputTextFlags_EnterReturnsTrue);
+        // 拡張子 2 択。既定は .actor.json (M48d: 新規作成は actor、.prefab.json は互換用)
+        ImGui::TextUnformatted(Tr(StrId::Hier_PrefabFormat));
+        ImGui::SameLine();
+        if (ImGui::RadioButton(".actor.json", prefabAsActor_)) {
+            prefabAsActor_ = true;
+        }
+        ImGui::SameLine();
+        if (ImGui::RadioButton(".prefab.json", !prefabAsActor_)) {
+            prefabAsActor_ = false;
+        }
+        const bool create = ImGui::Button(Tr(StrId::Common_Create), ImVec2(90, 0)) || enter;
+        ImGui::SameLine();
+        const bool cancel = ImGui::Button(Tr(StrId::Common_Cancel), ImVec2(90, 0));
+        if (create && prefabNameBuf_[0] != '\0') {
+            if (GameObject g = ctx.scene->FindByFileId(prefabModalFid_)) {
+                CreatePrefabFromEntity(ctx, selection, undo, g.Id(), prefabNameBuf_,
+                                       prefabAsActor_ ? PrefabLibrary::kActorSuffix
+                                                      : PrefabLibrary::kPrefabSuffix);
+            }
+            prefabModalFid_ = 0;
+            ImGui::CloseCurrentPopup();
+        } else if (cancel) {
+            prefabModalFid_ = 0;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+
+    // ---- Unpack Prefab 確認モーダル (M50b) ----
+    if (unpackModalRequest_) {
+        ImGui::OpenPopup(Tr(StrId::Popup_UnpackPrefab));
+        unpackModalRequest_ = false;
+    }
+    if (ImGui::BeginPopupModal(Tr(StrId::Popup_UnpackPrefab), nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize)) {
+        GameObject target = ctx.scene->FindByFileId(unpackModalFid_);
+        const char* tname = target ? world.GetName(target.Id()) : "?";
+        ImGui::Text(Tr(StrId::Unpack_ConfirmBody), tname);
+        ImGui::Spacing();
+        if (ImGui::Button(Tr(StrId::Common_Ok), ImVec2(90, 0)) && target) {
+            undo.BeginRecord("Unpack Prefab", selection);
+            undo.CaptureBefore(*ctx.scene, unpackModalFid_);
+            if (Prefab::UnpackInstance(*ctx.scene, unpackModalFid_)) {
+                MYE_LOG_INFO(Tr(StrId::Log_Unpacked), tname);
+            }
+            world.ApplyStructuralChanges();
+            undo.CaptureAfter(*ctx.scene, unpackModalFid_);
+            undo.EndRecord(selection);
+            unpackModalFid_ = 0;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(Tr(StrId::Common_Cancel), ImVec2(90, 0))) {
+            unpackModalFid_ = 0;
+            ImGui::CloseCurrentPopup();
+        }
         ImGui::EndPopup();
     }
     ImGui::End();
@@ -322,7 +392,28 @@ void HierarchyWindow::DrawEntityNode(EngineContext& ctx, World& world, EntityID 
         }
         ImGui::Separator();
         if (ImGui::MenuItem(Tr(StrId::Hier_CreatePrefab))) {
-            CreatePrefabFromEntity(ctx, selection, undo, e);
+            // 命名モーダルへ (M50b)。ポップアップはこのコンテキストメニューと同居できない
+            // ので、要求フラグを立てて OnImGui 末尾で開く (AssetBrowser の Create と同じ)
+            prefabModalFid_ = ctx.scene->EnsureFileId(e);
+            prefabModalRequest_ = true;
+            std::snprintf(prefabNameBuf_, sizeof(prefabNameBuf_), "%s", world.GetName(e));
+        }
+        // Unpack Prefab (M50b): インスタンスルートだけに出す。入れ子 (祖先にルートあり) は
+        // 外側の Apply でこの枝が新ベースから落ちるため不可 — グレーアウト + 理由表示
+        if (world.GetComponent<PrefabInstanceComponent>(e) != nullptr) {
+            const EntityID par = world.GetParent(e);
+            const bool nested = !par.IsNull() && !Prefab::FindInstanceRoot(world, par).IsNull();
+            if (nested) {
+                ImGui::BeginDisabled();
+            }
+            if (ImGui::MenuItem(Tr(StrId::Hier_UnpackPrefab)) && !nested) {
+                unpackModalFid_ = ctx.scene->EnsureFileId(e);
+                unpackModalRequest_ = true;
+            }
+            if (nested) {
+                ImGui::EndDisabled();
+                ImGui::TextDisabled("%s", Tr(StrId::Hier_UnpackNested));
+            }
         }
         // 部位は削除もロック (M48f)。グレーアウト + ホバーで理由を出す
         const bool partLocked = Parts::IsStructureLocked(world, e);

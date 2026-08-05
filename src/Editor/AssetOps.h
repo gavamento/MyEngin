@@ -16,6 +16,14 @@ class UndoStack;
 // AssetBrowser のドラッグ&ドロップ用ペイロード名。データは UTF-8 のファイルパス (null 終端)。
 inline constexpr const char* kAssetDragPayload = "MYE_ASSET";
 
+// ---- ファイル名ユーティリティ (M50b で公開) ----
+// 禁止文字 (\/:*?"<>| + 制御文字) を除去する緩いサニタイズ。非 ASCII (日本語名) は通す。
+// 前後空白と末尾ドットを落とし、空になったら fallback
+std::string SanitizeFileName(const std::string& in, const char* fallback);
+// destDir 直下で衝突しない絶対パスを返す ("name.ext" → "name (1).ext"。
+// .actor.json 等の複合サフィックスは維持)
+std::wstring MakeUniqueAssetPath(const std::wstring& destDir, const std::wstring& filename);
+
 // ---- アセット新規作成 (AssetBrowser の右クリック Create) ----
 bool CreateFolderAsset(const std::wstring& dir, const std::string& name);
 std::wstring CreateSceneAsset(const std::wstring& dir, const std::string& name);   // .scene.json (空)

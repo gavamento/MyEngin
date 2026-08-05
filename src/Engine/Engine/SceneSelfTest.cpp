@@ -15,6 +15,7 @@
 #include "Engine/Engine/Animation.h"
 #include "Engine/Engine/EntityNaming.h"
 #include "Engine/Engine/GameObject.h"
+#include "Engine/Engine/Parts.h"
 #include "Engine/Engine/Prefab.h"
 #include "Engine/Engine/Replay/WorldHasher.h"
 #include "Engine/Engine/Scene.h"
@@ -1028,6 +1029,101 @@ bool RunSceneSerializerSelfTest()
               "holes: the deleted member's localId is left vacant (not recycled for an inner member)");
         check(!footB.IsNull() && w3.IsAlive(footB) && std::string(w3.GetName(footB)) == "Foot",
               "holes: the other instance's member is not renamed into a different entity");
+
+        std::error_code ec;
+        std::filesystem::remove(innerPath, ec);
+        std::filesystem::remove(outerPath, ec);
+    }
+
+    // ---- Unpack Prefab (M50b) ----
+    // インスタンスをプレハブから切り離す。規約: 入れ子内 (祖先にルートあり) は拒否 /
+    // 内側インスタンスは無傷でシーン直接配置へ / Undo (全量スナップショット +
+    // ApplyPartial removeHiddenMissing) で完全に戻る / 外側から順に解ける
+    {
+        auto firstChild = [](Scene& sc, EntityID e) {
+            auto* h = sc.GetWorld().GetComponent<HierarchyComponent>(e);
+            return h ? h->firstChild : kNullEntity;
+        };
+        auto tmpPath = [](const wchar_t* n) {
+            return (std::filesystem::temp_directory_path() / n).wstring();
+        };
+        PrefabLibrary lib;
+        const std::wstring innerPath = tmpPath(L"mye_selftest_u_inner.prefab.json");
+        const std::wstring outerPath = tmpPath(L"mye_selftest_u_outer.prefab.json");
+        uint64_t innerHash = 0;
+        {
+            Scene si;
+            GameObject sw = si.CreateGameObjectTracked("Sword");
+            GameObject bl = si.CreateGameObjectTracked("Blade");
+            bl.SetParent(sw);
+            si.GetWorld().ApplyStructuralChanges();
+            innerHash = lib.Register(innerPath, "inner", Prefab::ExtractLocal(si, sw.Id()));
+        }
+        // Goblin > [ Foot (Part 持ち = 構造ロックの検体), Hand > Sword (内側) > Blade ]
+        Scene s;
+        World& w = s.GetWorld();
+        GameObject gob = s.CreateGameObjectTracked("Goblin");
+        GameObject foot = s.CreateGameObjectTracked("Foot");
+        GameObject hand = s.CreateGameObjectTracked("Hand");
+        foot.SetParent(gob);
+        hand.SetParent(gob);
+        foot.AddComponent<PartComponent>()->tag = 0x1234;
+        w.ApplyStructuralChanges();
+        Prefab::Instantiate(s, lib, innerHash, s.EnsureFileId(hand.Id()));
+        w.ApplyStructuralChanges();
+        const uint64_t outerHash = Prefab::CreateAsset(s, lib, outerPath, gob.Id());
+        w.ApplyStructuralChanges();
+        const uint64_t rootFid = s.EnsureFileId(gob.Id());
+        const EntityID sword = firstChild(s, hand.Id());
+        const EntityID blade = sword.IsNull() ? kNullEntity : firstChild(s, sword);
+        check(outerHash != 0 && !sword.IsNull() && !blade.IsNull()
+                  && Parts::IsStructureLocked(w, foot.Id()),
+              "unpack: setup — the part member is structure-locked while packed");
+
+        // (1) 入れ子内 (内側ルート) の Unpack は拒否 — 状態も無傷
+        check(!Prefab::UnpackInstance(s, s.EnsureFileId(sword))
+                  && w.GetComponent<PrefabInstanceComponent>(sword) != nullptr
+                  && w.GetComponent<PrefabLinkComponent>(blade) != nullptr,
+              "unpack: refuses inside an outer instance and leaves the tags alone");
+
+        // Undo 相当の全量スナップショット (UndoStack::CaptureBefore と同じ実体)
+        const nlohmann::json before = SceneSerializer::SubtreeToJson(s, gob.Id());
+
+        // (2) 本体: 直属タグが剥がれ、部位の構造ロックが外れる
+        check(Prefab::UnpackInstance(s, rootFid), "unpack: succeeds on a top-level instance");
+        w.ApplyStructuralChanges();
+        check(w.GetComponent<PrefabInstanceComponent>(gob.Id()) == nullptr
+                  && w.GetComponent<PrefabLinkComponent>(gob.Id()) == nullptr
+                  && w.GetComponent<PrefabLinkComponent>(foot.Id()) == nullptr
+                  && w.GetComponent<PrefabLinkComponent>(hand.Id()) == nullptr
+                  && !Parts::IsStructureLocked(w, foot.Id()),
+              "unpack: own-level tags are removed and the part lock is released");
+
+        // (3) 内側は無傷 — タグ温存 + outerLocalId=0 (シーン直接配置扱い) + メンバ無傷
+        auto* swordPi = w.GetComponent<PrefabInstanceComponent>(sword);
+        check(swordPi != nullptr && swordPi->prefabHash == innerHash && swordPi->outerLocalId == 0
+                  && w.GetComponent<PrefabLinkComponent>(sword) != nullptr
+                  && w.GetComponent<PrefabLinkComponent>(blade) != nullptr,
+              "unpack: the inner instance survives intact and becomes scene-placed");
+
+        // (4) Undo 往復: removeHiddenMissing=true (UndoStack の復元と同じ) でタグとロックが戻る
+        check(SceneSerializer::ApplyPartial(s, before, /*removeHiddenMissing=*/true),
+              "unpack: the undo snapshot applies");
+        w.ApplyStructuralChanges();
+        check(w.GetComponent<PrefabInstanceComponent>(gob.Id()) != nullptr
+                  && w.GetComponent<PrefabLinkComponent>(foot.Id()) != nullptr
+                  && Parts::IsStructureLocked(w, foot.Id()),
+              "unpack: undo restores the instance tags and the part lock");
+
+        // (5) Redo 相当で再度解き、外側が消えた今度は内側も Unpack できる (順に解ける規約)
+        check(Prefab::UnpackInstance(s, rootFid), "unpack: redo works after undo");
+        w.ApplyStructuralChanges();
+        check(Prefab::UnpackInstance(s, s.EnsureFileId(sword)),
+              "unpack: the inner instance can be unpacked once the outer is gone");
+        w.ApplyStructuralChanges();
+        check(w.GetComponent<PrefabInstanceComponent>(sword) == nullptr
+                  && w.GetComponent<PrefabLinkComponent>(blade) == nullptr,
+              "unpack: unpacking the ex-inner instance strips its own tags");
 
         std::error_code ec;
         std::filesystem::remove(innerPath, ec);

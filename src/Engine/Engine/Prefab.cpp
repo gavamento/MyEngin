@@ -444,6 +444,44 @@ void CollectInstanceMembers(World& world, EntityID root, std::vector<EntityID>& 
     visit(root, true);
 }
 
+bool UnpackInstance(Scene& scene, uint64_t rootFileId)
+{
+    World& w = scene.GetWorld();
+    GameObject rootGo = scene.FindByFileId(rootFileId);
+    if (!rootGo || w.GetComponent<PrefabInstanceComponent>(rootGo.Id()) == nullptr) {
+        return false;
+    }
+    // 祖先にインスタンスルートがある = 外側インスタンスの配下。ここで Unpack すると
+    // 外側の Apply (ExtractLocalByLinks) でこの枝がタグ無し扱いになり新ベースから落ちる
+    // ため拒否する。外側を先に Unpack すれば順に解ける
+    const EntityID parent = w.GetParent(rootGo.Id());
+    if (!parent.IsNull() && !FindInstanceRoot(w, parent).IsNull()) {
+        return false;
+    }
+
+    std::vector<EntityID> members;
+    std::vector<EntityID> innerRoots;
+    CollectInstanceMembers(w, rootGo.Id(), members, &innerRoots);
+
+    // 内側ルートは先に処理する (構造変更後のポインタ失効を避ける順序):
+    // タグは残し outerLocalId=0 = 「シーン直接配置のインスタンス」へ格下げ。内側は無傷
+    for (EntityID ir : innerRoots) {
+        if (auto* pi = w.GetComponent<PrefabInstanceComponent>(ir)) {
+            pi->outerLocalId = 0;
+        }
+    }
+    // 直属メンバ (root 含む) のタグを剥がし、override 記録も消す (非メンバの記録は
+    // 静かなゴミになるだけだが、RecordOverrides の消去分岐と同じ結論をここで確定させる)
+    for (EntityID m : members) {
+        if (auto* f = w.GetComponent<FileIdComponent>(m)) {
+            scene.ClearOverrides(f->value);
+        }
+        w.RemoveComponentRaw(m, PrefabLinkComponent::sTypeId);
+    }
+    w.RemoveComponentRaw(rootGo.Id(), PrefabInstanceComponent::sTypeId);
+    return true;
+}
+
 json ExtractLocal(Scene& scene, EntityID root)
 {
     World& w = scene.GetWorld();

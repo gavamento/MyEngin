@@ -136,6 +136,14 @@ EntityID FindInstanceRoot(World& world, EntityID e);
 void CollectInstanceMembers(World& world, EntityID root, std::vector<EntityID>& out,
                             std::vector<EntityID>* innerRoots = nullptr);
 
+// rootFileId のインスタンスをプレハブから切り離す (Unity の Unpack 相当。M50b)。
+// 直属メンバの PrefabLink とルートの PrefabInstance を除去し (= 部位の構造ロックも外れる)、
+// override 記録も消す。内側インスタンスは無傷 — タグを温存し outerLocalId=0 (シーン直接
+// 配置扱い) へ。**祖先にインスタンスルートがある場合は false** (外側の Apply でこの枝が
+// 新ベースから落ちるため。外側から順に Unpack すれば解ける)。
+// 呼び出し後は World::ApplyStructuralChanges を回すこと
+bool UnpackInstance(Scene& scene, uint64_t rootFileId);
+
 // e の 1 フィールドがプレハブベースと異なるか (= オーバーライド)。
 // EntityRef は remap 判定が不確実なため常に false。プレハブ非所属なら false
 bool IsFieldOverridden(Scene& scene, const PrefabLibrary& lib, EntityID e, const char* compName,

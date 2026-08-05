@@ -157,6 +157,19 @@ MYE_STR(Hier_Create,          "Create",         "作成")
 MYE_STR(Hier_CreatePrefab,    "Create Prefab",  "プレハブを作成")
 MYE_STR(Hier_Delete,          "Delete",         "削除")
 MYE_STR(Hier_PartLockedShort, "locked: prefab part", "ロック中: プレハブの部位")
+// ---- プレハブ UX (M50b) ----
+MYE_STR(Popup_CreatePrefab,   "Create Prefab###CreatePrefab", "プレハブを作成###CreatePrefab")
+MYE_STR(Hier_PrefabFormat,    "format",         "形式")
+MYE_STR(Hier_UnpackPrefab,    "Unpack Prefab",  "プレハブを解除")
+MYE_STR(Hier_UnpackNested,    "unpack the outer instance first", "先に外側のインスタンスを解除してください")
+MYE_STR(Popup_UnpackPrefab,   "Unpack Prefab###UnpackPrefab", "プレハブを解除###UnpackPrefab")
+MYE_STR(Unpack_ConfirmBody,   "'%s' will be detached from its prefab.\n"
+                              "Part structure locks are released and base updates will no longer propagate.\n"
+                              "Inner prefab instances stay intact.",
+                              "'%s' をプレハブから切り離します。\n"
+                              "部位の構造ロックは外れ、ベース更新はもう伝播しません。\n"
+                              "内側のプレハブインスタンスはそのまま残ります。")
+MYE_STR(Log_Unpacked,         "unpacked prefab instance: %s", "プレハブインスタンスを解除しました: %s")
 
 // ---- コンソール (M47b) ----
 MYE_STR(Console_Clear,        "Clear",       "クリア")

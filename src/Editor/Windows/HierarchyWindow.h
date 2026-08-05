@@ -32,6 +32,16 @@ private:
     std::vector<uint64_t> visibleOrder_;
     std::vector<uint64_t> visibleOrderPrev_;
     uint64_t anchorFid_ = 0;
+
+    // Create Prefab 命名モーダル (M50b)。要求フラグ → 次フレームで OpenPopup
+    // (コンテキストメニューの中からは開けないため。AssetBrowser の Create と同じ)
+    uint64_t prefabModalFid_ = 0; // 対象エンティティの fileId (0 = なし)
+    bool prefabModalRequest_ = false;
+    char prefabNameBuf_[128] = {};
+    bool prefabAsActor_ = true; // true=.actor.json (既定) / false=.prefab.json
+    // Unpack Prefab 確認モーダル (M50b)
+    uint64_t unpackModalFid_ = 0;
+    bool unpackModalRequest_ = false;
 };
 
 } // namespace mye
