@@ -16,6 +16,7 @@
 #include "Engine/Engine/Audio/AudioSystem.h"
 #include "Engine/Engine/Audio/SoundAsset.h"
 #include "Engine/Engine/EngineLoop.h"
+#include "Engine/Engine/FbxLoader.h"
 #include "Engine/Engine/GameObject.h"
 #include "Engine/Engine/ModelLoader.h"
 #include "Engine/Engine/Prefab.h"
@@ -276,6 +277,128 @@ void BuildRtShowcaseScene(EngineContext& ctx)
     }
 }
 
+void RegisterPartsShowcaseContent(EngineContext& ctx)
+{
+    RenderResources& res = *ctx.resources;
+    const AssetID white = res.textures.White();
+    const AssetID shader = AssetID{ HashStr("forward_lit") };
+    res.meshes.Cube();
+
+    auto makeMat = [&](const char* name, float r, float g, float b) {
+        Material m;
+        m.shader = shader;
+        m.texture = white;
+        m.baseColor = { r, g, b, 1.0f };
+        return res.materials.Register(name, m);
+    };
+    makeMat("parts_held", 1.00f, 0.55f, 0.10f);  // 部位に付いた立方体 (追従が目で分かる色)
+    makeMat("parts_floor", 0.55f, 0.55f, 0.60f);
+    makeMat("parts_drop", 0.20f, 0.70f, 1.00f);
+}
+
+void BuildPartsShowcaseScene(EngineContext& ctx)
+{
+    Scene& s = *ctx.scene;
+    RenderResources& res = *ctx.resources;
+
+    RegisterPartsShowcaseContent(ctx); // 単独で呼ばれても実体が揃うようにしておく
+    const AssetID cube = res.meshes.Cube();
+
+    GameObject camera = s.CreateGameObject("Main Camera");
+    camera.AddComponent<CameraComponent>();
+    camera.SetLocalPosition(0.0f, 1.2f, -3.2f);
+
+    GameObject sun = s.CreateGameObject("Sun");
+    sun.AddComponent<LightComponent>();
+    sun.SetLocalRotationEuler(50.0f, -30.0f, 0.0f);
+
+    GameObject floor = s.CreateGameObject("Floor");
+    floor.SetLocalPosition(0.0f, -0.25f, 0.0f);
+    floor.SetLocalScale(12.0f, 0.5f, 12.0f);
+    {
+        auto* mr = floor.AddComponent<MeshRendererComponent>();
+        mr->mesh = cube;
+        mr->material = AssetID{ HashStr("parts_floor") };
+        auto* col = floor.AddComponent<ColliderComponent>();
+        col->shape = 1; // box
+        col->halfExtents = { 0.5f, 0.5f, 0.5f }; // ローカル半径 (スケールは Collider 側で掛かる)
+        col->isTrigger = 0;
+    }
+
+    // ---- スキンメッシュ本体 ----
+    GameObject actor = ModelLoader::Load(s, res, *ctx.shaders,
+                                         ctx.assetsRoot + L"\\models\\CesiumMan.glb");
+    if (!actor) {
+        MYE_LOG_ERROR("[parts] CesiumMan.glb could not be loaded — showcase scene is incomplete");
+        return;
+    }
+    actor.SetLocalPosition(0.0f, 0.0f, 0.0f);
+
+    // SkinnedMesh を持つエンティティを DFS 最初の 1 個だけ拾う (CesiumMan は skin 1 本)
+    World& w = s.GetWorld();
+    w.ApplyStructuralChanges();
+    EntityID skinned = kNullEntity;
+    {
+        std::function<void(EntityID)> visit = [&](EntityID e) {
+            if (!skinned.IsNull()) {
+                return;
+            }
+            if (w.GetComponent<SkinnedMeshComponent>(e)) {
+                skinned = e;
+                return;
+            }
+            auto* h = w.GetComponent<HierarchyComponent>(e);
+            for (EntityID c = h ? h->firstChild : kNullEntity; !c.IsNull();) {
+                auto* ch = w.GetComponent<HierarchyComponent>(c);
+                const EntityID next = ch ? ch->nextSibling : kNullEntity;
+                visit(c);
+                c = next;
+            }
+        };
+        visit(actor.Id());
+    }
+    if (skinned.IsNull()) {
+        MYE_LOG_ERROR("[parts] no SkinnedMesh in CesiumMan.glb — showcase scene is incomplete");
+        return;
+    }
+
+    // ---- 部位: 右腕の先端ジョイントに追従させる ----
+    // **source の直子に置く** (M48g の v1 規約)。ジョイント名は CesiumMan.glb のノード名
+    GameObject hand = s.CreateGameObject("HandSocket");
+    hand.SetParent(GameObject(&w, skinned));
+    {
+        auto* p = hand.AddComponent<PartComponent>();
+        p->tag = HashStr("HandR");
+        std::snprintf(p->joint, sizeof(p->joint), "%s", "Skeleton_arm_joint_R__3_");
+    }
+    // 部位の子: 追従が子孫まで伝わることを絵と TransformSystem の両方で被覆する
+    GameObject held = s.CreateGameObject("HeldCube");
+    held.SetParent(hand);
+    held.SetLocalScale(0.12f, 0.12f, 0.12f);
+    {
+        auto* mr = held.AddComponent<MeshRendererComponent>();
+        mr->mesh = cube;
+        mr->material = AssetID{ HashStr("parts_held") };
+    }
+
+    // ---- 物理との順序被覆: 部位の近くに剛体を落とす ----
+    // PartFollowSystem → PhysicsSystem → TransformSystem の順序が崩れると軌道が変わる
+    GameObject drop = s.CreateGameObject("Drop");
+    drop.SetLocalPosition(0.35f, 2.4f, 0.0f);
+    drop.SetLocalScale(0.25f, 0.25f, 0.25f);
+    {
+        auto* mr = drop.AddComponent<MeshRendererComponent>();
+        mr->mesh = cube;
+        mr->material = AssetID{ HashStr("parts_drop") };
+        auto* col = drop.AddComponent<ColliderComponent>();
+        col->shape = 1;
+        col->halfExtents = { 0.5f, 0.5f, 0.5f };
+        col->isTrigger = 0;
+        drop.AddComponent<RigidbodyComponent>();
+    }
+    w.ApplyStructuralChanges();
+}
+
 void RegisterAssetLibraries(EngineContext& ctx)
 {
     std::error_code ec;
@@ -313,13 +436,25 @@ void RegisterAssetLibraries(EngineContext& ctx)
                 ctx.mixers->LoadFromFile(p); // M45d: ミキサー (適用は走査後にまとめて)
             }
         } else {
+            std::wstring ext = e.path().extension().wstring();
+            std::transform(ext.begin(), ext.end(), ext.begin(), ::towlower);
             // 素の音声ファイルは走査中には展開せず、候補として貯めるだけにする。
             // **.sound.json より先に .wav を見ることがある**ので、「BGM 専用かどうか」は
             // 全部読み終えてからでないと判定できない (M45f)
-            std::wstring ext = e.path().extension().wstring();
-            std::transform(ext.begin(), ext.end(), ext.begin(), ::towlower);
             if (ext == L".wav" || ext == L".ogg") {
                 audioFiles.push_back(p);
+            } else if (ctx.resources != nullptr
+                       && (ext == L".glb" || ext == L".gltf" || ext == L".fbx")) {
+                // M48g: **スケルトンだけ**を登録する (エンティティも GPU バッファも作らない)。
+                // 保存済みシーンをロードする経路は ModelLoader::Load を通らないため、
+                // SkinnedMesh.model の AssetID が誰にも登録されずポーズ評価が丸ごと
+                // 落ちていた (骨追従も描画のボーンパレットも)。Editor / Runtime 共通の穴
+                const size_t n = (ext == L".fbx") ? FbxLoader::RegisterSkinnedModels(*ctx.resources, p)
+                                                  : ModelLoader::RegisterSkinnedModels(*ctx.resources, p);
+                if (n > 0) {
+                    MYE_LOG_INFO("[assets] %zu skinned model(s) registered: %s", n,
+                                 WideToUtf8(p).c_str());
+                }
             }
         }
     }

@@ -43,7 +43,9 @@ C++20 / DirectX 11 製の自作ゲームエンジン。**Unity 風の使いや�
   英語の `name` には触れない。詳細は [ADR-010](docs/adr/ADR-010-editor-localization.md)
 - **Debug/Release 一貫性** — 固定 60Hz tick、`/fp:precise`、PCG32、明示ソートキー。
   リプレイ (.rep) の tick 毎ワールドハッシュ比較で機械検証:
-  `tools\replay_verify.bat` が両構成ビルド → Debug 記録 → Debug/Release 照合 → 静的規則検査
+  `tools\replay_verify.bat` が両構成ビルド → Debug 記録 → Debug/Release 照合 → 静的規則検査。
+  **被覆は 2 シーン**: 既定デモ (物理 / パーティクル / スクリプト) と部位ショーケース
+  (スキンメッシュのボーン追従 = 骨駆動 LocalTransform の構成間ビット一致)
 
 ## エディタ操作
 
@@ -63,7 +65,8 @@ Editor.exe --replay-verify out.rep        # exit code 0/1
 Editor.exe --autoplay --deferred --frames 600 --screenshot shot.png
 Runtime.exe --deferred --rt-demo --rt-gi --rt-shadow --rt-refl --rt-anim-seed
                                           # レイトレのショーケース (コーネル箱)
-tools\replay_verify.bat                   # 一貫性検証一式
+Editor.exe --parts-demo                   # 部位 (ソケット) のボーン追従シーン
+tools\replay_verify.bat                   # 一貫性検証一式 (2 シーン被覆)
 tools\check_rules.ps1                     # コーディング規則の静的検査
 tools\gen_project_files.ps1               # ソース一覧を vcxproj に反映
 ```

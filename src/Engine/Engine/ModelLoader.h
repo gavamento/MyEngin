@@ -22,5 +22,12 @@ GameObject Load(Scene& scene, RenderResources& resources, ShaderManager& shaders
 // 同じ AssetID のまま再構築する (参照は AssetID 経由なので差し替えが透過になる)
 bool ReloadMeshes(RenderResources& resources, ShaderManager& shaders, const std::wstring& path);
 
+// M48g: スケルトン (SkinnedModel) だけを**エンティティを作らずに**登録する。
+// 保存済みシーンをロードする経路では `Load` を通らないため、SkinnedMesh.model が指す
+// AssetID が誰にも登録されずポーズ評価が丸ごと落ちていた (骨追従・ボーンパレット双方)。
+// キーは `Load` と厳密に同じ (`パス#skin<index>`) — ずれると別物として二重登録される。
+// 返り値 = 登録した skin の数 (パース失敗は 0)
+size_t RegisterSkinnedModels(RenderResources& resources, const std::wstring& path);
+
 } // namespace ModelLoader
 } // namespace mye

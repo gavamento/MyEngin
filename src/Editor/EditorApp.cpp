@@ -67,6 +67,13 @@ void EditorApp::OnStart(EngineContext& ctx)
         // M46i: ショーケースの保存先は専用パスにする。ここを main.scene.json のままにすると
         // Ctrl+S ひとつで既定デモシーンが置き換わり、golden.rep の入力が変わってしまう
         scenePath_ = ctx.assetsRoot + L"\\scenes\\rt_showcase.scene.json";
+    } else if (partsShowcase) {
+        // M48g: 部位追従のリプレイ被覆シーン。**cache\ に置く** (git 非追跡) —
+        // モデル由来のサブアセット ID は「正規化した**絶対パス**のハッシュ」なので、
+        // 保存した .scene.json はチェックアウト先に依存する = コミットできない。
+        // 版管理された唯一の正解は BuildPartsShowcaseScene (コード) 側で、
+        // replay_verify.bat は毎回そこから組み直してから記録する
+        scenePath_ = L"cache\\parts_showcase.scene.json";
     } else {
         scenePath_ = ctx.assetsRoot + L"\\scenes\\main.scene.json";
         ProjectManifest manifest; // ブートシーンはマニフェスト優先 (M26)
@@ -85,6 +92,9 @@ void EditorApp::OnStart(EngineContext& ctx)
     if (rtShowcase) {
         RegisterRtShowcaseContent(ctx); // 保存済みショーケースをロードする経路でも実体を揃える
     }
+    if (partsShowcase) {
+        RegisterPartsShowcaseContent(ctx); // 同上 (M48g)
+    }
     undo_.SetPrefabLibrary(ctx.prefabs); // 編集直後の override リスト記録 (M48e)
     if (std::filesystem::exists(scenePath_)) {
         SceneSerializer::LoadFromFile(*ctx.scene, scenePath_);
@@ -92,6 +102,8 @@ void EditorApp::OnStart(EngineContext& ctx)
         Prefab::RefreshNonOverridden(*ctx.scene, *ctx.prefabs);
     } else if (rtShowcase) {
         BuildRtShowcaseScene(ctx); // M46i
+    } else if (partsShowcase) {
+        BuildPartsShowcaseScene(ctx); // M48g
     } else {
         BuildDemoScene(ctx, perfRate, perfMax);
     }

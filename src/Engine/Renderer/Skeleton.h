@@ -76,4 +76,19 @@ void ComputeBonePalette(const SkinnedModel& model, int clip, float timeSec,
 DirectX::XMMATRIX ComputeJointGlobal(const SkinnedModel& model, int clip, float timeSec,
                                      int32_t jointIndex);
 
+// ---- 上の 2 つを組み立てている素材 (M48g で公開) ----
+// **`ComputeJointGlobal` は 1 回ごとに全ジョイントの局所行列を作り直す**ので、同じモデル・
+// 同じ時刻で複数のジョイントを引く用途 (部位追従) では O(部位数 × ジョイント数) になる。
+// 局所行列は (model, clip, timeSec) だけの関数なのでキャッシュ単位として切り出してある。
+// 評価順は ComputeBonePalette と 1 命令も変えていない = 結果はビット一致
+
+// clip を timeSec でサンプルした全ジョイントのローカル行列 (joints.size() 個)
+void ComputeJointLocals(const SkinnedModel& model, int clip, float timeSec,
+                        std::vector<DirectX::XMMATRIX>& outLocals);
+
+// locals (上の出力) から 1 ジョイントのグローバル行列。範囲外 index は恒等
+DirectX::XMMATRIX JointGlobalFromLocals(const SkinnedModel& model,
+                                        const std::vector<DirectX::XMMATRIX>& locals,
+                                        int32_t jointIndex);
+
 } // namespace mye

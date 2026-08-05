@@ -51,6 +51,7 @@ public:
     int pickTestFrame = -1;        // --pick-test (このフレームで中心をピッキングし PASS/FAIL ログ)
     std::wstring sceneOverride;    // --scene PATH (既定の main.scene.json の代わりに読むシーン)
     bool rtShowcase = false;       // --rt-demo (M46i: コーネル箱のショーケースを構築)
+    bool partsShowcase = false;    // --parts-demo (M48g: 部位追従のリプレイ被覆シーン)
 
 private:
     // 未保存変更ガード (M27b): dirty なら確認モーダルを経由して実行する

@@ -1,9 +1,14 @@
 #include "Editor/PartSelfTest.h"
 
+#include <algorithm>
+#include <cmath>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <string>
 #include <vector>
+
+#include <DirectXMath.h>
 
 #include "Editor/PartTagNames.h"
 #include "Engine/Core/Components.h"
@@ -11,12 +16,21 @@
 #include "Engine/Core/Log.h"
 #include "Engine/Core/World.h"
 #include "Engine/Engine/EntityNaming.h"
+#include "Engine/Engine/FbxLoader.h"
 #include "Engine/Engine/GameObject.h"
+#include "Engine/Engine/ModelLoader.h"
+#include "Engine/Engine/PartFollowSystem.h"
 #include "Engine/Engine/Parts.h"
 #include "Engine/Engine/Prefab.h"
 #include "Engine/Engine/Replay/WorldHasher.h"
 #include "Engine/Engine/Scene.h"
 #include "Engine/Engine/SceneSerializer.h"
+#include "Engine/Engine/TransformSystem.h"
+#include "Engine/Renderer/GpuResources.h"
+#include "Engine/Renderer/ShaderManager.h"
+#include "Engine/Renderer/Skeleton.h"
+
+using namespace DirectX;
 
 #include "nlohmann/json.hpp"
 
@@ -212,6 +226,140 @@ bool RunPartSelfTest()
                   "tags: saving part tags does not clobber other project settings keys");
         }
         std::filesystem::remove_all(dir, ec);
+    }
+
+    // ---- ボーン追従 (M48g): 実アセット CesiumMan.glb をヘッドレスにロードして回す ----
+    {
+        RenderResources resources;
+        ShaderManager shaders;
+        Scene fs;
+        const std::wstring modelPath =
+            std::filesystem::absolute(L"assets\\models\\CesiumMan.glb").wstring();
+        const std::wstring fbxPath =
+            std::filesystem::absolute(L"assets\\models\\skinned_beam.fbx").wstring();
+
+        // (0) ヘッドレス登録: エンティティを 1 個も作らずにスケルトンだけ登録できること。
+        // ★**Load とは別のライブラリ**に登録して照合する — 同じライブラリだと Load 側の
+        //   登録が必ず当たってしまい、「キーがずれている」バグを検出できない。
+        //   本番で起きるのはまさにこの形: シーン JSON が持つのは Load が作った AssetID で、
+        //   起動時に走っているのはヘッドレス登録だけ
+        RenderResources headless;
+        const size_t registered = ModelLoader::RegisterSkinnedModels(headless, modelPath);
+        const size_t registeredFbx = FbxLoader::RegisterSkinnedModels(headless, fbxPath);
+        check(registered == 1 && registeredFbx == 1,
+              "follow: RegisterSkinnedModels registers glTF and FBX skeletons headlessly");
+
+        GameObject root = ModelLoader::Load(fs, resources, shaders, modelPath);
+        World& fw = fs.GetWorld();
+        fw.ApplyStructuralChanges();
+        EntityID skinned = kNullEntity;
+        {
+            const ComponentTypeId req[] = { SkinnedMeshComponent::sTypeId };
+            fw.ForEachArchetype(req, [&](Archetype& arch) {
+                for (uint32_t row = 0; row < arch.Count(); ++row) {
+                    if (skinned.IsNull()) {
+                        skinned = arch.EntityAt(row);
+                    }
+                }
+            });
+        }
+        check(root && !skinned.IsNull(), "follow: CesiumMan.glb loaded with a skinned mesh");
+
+        // ★ヘッドレス登録が Load と**同じキー**を作っていること。ずれていたら
+        //   保存済みシーンからのロードでポーズが取れなくなる (この穴が M48g の修理対象)
+        auto* sm = skinned.IsNull() ? nullptr : fw.GetComponent<SkinnedMeshComponent>(skinned);
+        check(sm && headless.skinnedModels.Get(sm->model) != nullptr,
+              "follow: the AssetID a saved scene holds resolves against a headless-only library");
+        {
+            // FBX 側も同じ照合をする (キーが element_id 由来でノード走査と組み方が違うため)
+            Scene fbxScene;
+            RenderResources fbxRes;
+            FbxLoader::Load(fbxScene, fbxRes, shaders, fbxPath);
+            fbxScene.GetWorld().ApplyStructuralChanges();
+            AssetID fbxModel{};
+            const ComponentTypeId req[] = { SkinnedMeshComponent::sTypeId };
+            fbxScene.GetWorld().ForEachArchetype(req, [&](Archetype& arch) {
+                const int si = arch.FindTypeIndex(SkinnedMeshComponent::sTypeId);
+                for (uint32_t row = 0; row < arch.Count(); ++row) {
+                    if (fbxModel.IsNull()) {
+                        fbxModel = static_cast<const SkinnedMeshComponent*>(arch.GetPtr(si, row))->model;
+                    }
+                }
+            });
+            check(!fbxModel.IsNull() && headless.skinnedModels.Get(fbxModel) != nullptr,
+                  "follow: the FBX headless key matches FbxLoader::Load as well");
+        }
+
+        if (sm) {
+            GameObject socket = fs.CreateGameObjectTracked("Socket");
+            socket.SetParent(GameObject(&fw, skinned));
+            auto* pc = socket.AddComponent<PartComponent>();
+            pc->tag = Parts::TagOf("HandR");
+            std::snprintf(pc->joint, sizeof(pc->joint), "%s", "Skeleton_arm_joint_R__3_");
+            fw.ApplyStructuralChanges();
+
+            PartFollowSystem follow;
+            const auto poseAt = [&](int ticks) {
+                fw.GetComponent<SkinnedMeshComponent>(skinned)->timeTicks = ticks;
+                follow.Update(fw, resources);
+                return *fw.GetComponent<LocalTransform>(socket.Id());
+            };
+            const LocalTransform kIdentityLt{}; // memcmp 用の実体 (一時オブジェクトのアドレスは取れない)
+            const LocalTransform t0 = poseAt(0);
+            const LocalTransform t30 = poseAt(30);
+            const LocalTransform t0b = poseAt(0);
+
+            check(std::memcmp(&t0, &kIdentityLt, sizeof(LocalTransform)) != 0,
+                  "follow: the part is moved onto the joint (no longer the identity transform)");
+            check(std::memcmp(&t0, &t30, sizeof(LocalTransform)) != 0,
+                  "follow: advancing timeTicks moves the part");
+            check(std::memcmp(&t0, &t0b, sizeof(LocalTransform)) == 0,
+                  "follow: the same tick reproduces the transform bit-for-bit");
+
+            // 部位のワールドが M48a の式 (jointGlobal * sourceWorld) と一致すること。
+            // **直子規約が成り立っている**ことの直接検査でもある
+            {
+                TransformSystem ts;
+                ts.Update(fw);
+                const XMMATRIX expect =
+                    XMMatrixMultiply(ComputeJointGlobal(*resources.skinnedModels.Get(sm->model),
+                                                        sm->clip, 0.0f,
+                                                        resources.skinnedModels.Get(sm->model)
+                                                            ->FindJointByName("Skeleton_arm_joint_R__3_")),
+                                     XMLoadFloat4x4(&fw.GetComponent<WorldMatrixComponent>(skinned)->value));
+                const XMFLOAT4X4& got = fw.GetComponent<WorldMatrixComponent>(socket.Id())->value;
+                XMFLOAT4X4 exp4;
+                XMStoreFloat4x4(&exp4, expect);
+                float maxDiff = 0.0f;
+                for (int i = 0; i < 16; ++i) {
+                    maxDiff = std::max(maxDiff, std::fabs((&got._11)[i] - (&exp4._11)[i]));
+                }
+                check(maxDiff < 1e-4f,
+                      "follow: the part world equals jointGlobal * sourceWorld (M48a formula)");
+            }
+
+            // 直子でない部位は追従しない (v1 規約のガード)
+            GameObject deep = fs.CreateGameObjectTracked("DeepSocket");
+            deep.SetParent(socket);
+            auto* dp = deep.AddComponent<PartComponent>();
+            dp->tag = Parts::TagOf("HandR");
+            std::snprintf(dp->joint, sizeof(dp->joint), "%s", "Skeleton_arm_joint_R__3_");
+            fw.ApplyStructuralChanges();
+            follow.Update(fw, resources);
+            check(std::memcmp(fw.GetComponent<LocalTransform>(deep.Id()), &kIdentityLt,
+                              sizeof(LocalTransform)) == 0,
+                  "follow: a part that is not a direct child of its source is skipped (v1 rule)");
+
+            // joint 空 = 静的ソケット (触らない)
+            GameObject staticSock = fs.CreateGameObjectTracked("StaticSocket");
+            staticSock.SetParent(GameObject(&fw, skinned));
+            staticSock.SetLocalPosition(1.0f, 2.0f, 3.0f);
+            staticSock.AddComponent<PartComponent>()->tag = Parts::TagOf("Fixed");
+            fw.ApplyStructuralChanges();
+            follow.Update(fw, resources);
+            check(fw.GetComponent<LocalTransform>(staticSock.Id())->position.y == 2.0f,
+                  "follow: an empty joint name means a static socket (left alone)");
+        }
     }
 
     if (failCount == 0) {

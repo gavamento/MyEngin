@@ -79,6 +79,8 @@ XMFLOAT4 SampleQuat(const std::vector<float>& times, const std::vector<XMFLOAT4>
     return out;
 }
 
+} // namespace
+
 // clip を timeSec でサンプルして全ジョイントのローカル行列を作る (palette / jointGlobal 共用)。
 // 式・評価順は M18 の ComputeBonePalette 前半ループそのまま (ビット不変が selftest 対象、M48a)
 void ComputeJointLocals(const SkinnedModel& model, int clip, float timeSec,
@@ -109,8 +111,12 @@ void ComputeJointLocals(const SkinnedModel& model, int clip, float timeSec,
 
 // グローバル = local[j] * local[parent] * ... (親チェーンを上へ、順序非依存)
 XMMATRIX JointGlobalFromLocals(const SkinnedModel& model, const std::vector<XMMATRIX>& local,
-                               size_t j)
+                               int32_t jointIndex)
 {
+    if (jointIndex < 0 || static_cast<size_t>(jointIndex) >= local.size()) {
+        return XMMatrixIdentity();
+    }
+    const size_t j = static_cast<size_t>(jointIndex);
     XMMATRIX global = local[j];
     int p = model.joints[j].parent;
     while (p >= 0) {
@@ -119,8 +125,6 @@ XMMATRIX JointGlobalFromLocals(const SkinnedModel& model, const std::vector<XMMA
     }
     return global;
 }
-
-} // namespace
 
 int32_t SkinnedModel::FindJointByName(std::string_view name) const
 {
@@ -144,7 +148,7 @@ void ComputeBonePalette(const SkinnedModel& model, int clip, float timeSec,
 
     out.resize(n);
     for (size_t j = 0; j < n; ++j) {
-        const XMMATRIX global = JointGlobalFromLocals(model, local, j);
+        const XMMATRIX global = JointGlobalFromLocals(model, local, static_cast<int32_t>(j));
         // skin = inverseBind * jointGlobal (行ベクトル: 頂点 * IB * global)。転置してアップロード
         const XMMATRIX ib = XMLoadFloat4x4(&model.joints[j].inverseBind);
         XMStoreFloat4x4(&out[j], XMMatrixTranspose(XMMatrixMultiply(ib, global)));
@@ -158,7 +162,7 @@ XMMATRIX ComputeJointGlobal(const SkinnedModel& model, int clip, float timeSec, 
     }
     std::vector<XMMATRIX> local;
     ComputeJointLocals(model, clip, timeSec, local);
-    return JointGlobalFromLocals(model, local, static_cast<size_t>(jointIndex));
+    return JointGlobalFromLocals(model, local, jointIndex);
 }
 
 } // namespace mye

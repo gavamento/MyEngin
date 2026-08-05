@@ -31,6 +31,7 @@
 #include "Engine/Engine/Script/ManagedHost.h"
 #include "Engine/Engine/EffectSystem.h"
 #include "Engine/Engine/Script/ScriptHost.h"
+#include "Engine/Engine/PartFollowSystem.h"
 #include "Engine/Engine/SkinningSystem.h"
 #include "Engine/Engine/TransformSystem.h"
 #include "Engine/Engine/UI/UIRenderer.h"
@@ -213,6 +214,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     AnimatorControllerSystem controllerSystem;  // ステートマシン評価 + ブレンド
     AssetDatabase assetDatabase;                // GUID/.meta サイドカー DB (M23)
     SkinningSystem skinningSystem; // スケルタルアニメの時刻進行 (M18)
+    PartFollowSystem partFollowSystem; // 部位のボーン追従 (M48g)
     EffectSystem effectSystem;     // 合成エフェクトのライフサイクル (M32e)
     UIRenderer uiRenderer;         // ゲーム内 UI (M21、backbuffer/GameView への重ね描画)
     VfxRenderer vfxRenderer;       // Sprite/Trail/TextMesh (M29c、メッシュ後・パーティクル前)
@@ -532,6 +534,11 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                 controllerSystem.Update(scene.GetWorld(), controllerLibrary, animLibrary);
                 // スケルタルアニメの時刻を進める (M18)。ポーズは非ハッシュなのでリプレイ不変
                 skinningSystem.Update(scene.GetWorld(), resources);
+                // 部位のボーン追従 (M48g): 上で進めた timeTicks のポーズで LocalTransform を作る。
+                // **skinning の直後・物理と TransformSystem の前**に置くこと — 同じ tick の
+                // WorldMatrix に反映され、追従した部位のコライダ位置も同じ tick で確定する。
+                // Part 非存在シーンでは完全 no-op = 既存シーンのリプレイ不変
+                partFollowSystem.Update(scene.GetWorld(), resources);
                 // 合成エフェクト (M32e): 子エミッタの停止/再開・duration+linger 後の自動破棄。
                 // EffectComponent 非存在シーンでは完全 no-op = 既存シーンのリプレイ不変
                 effectSystem.Update(scene.GetWorld());
@@ -670,6 +677,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                     collisionSystem.Reset();
                     particleSystem.ResetParticles();
                     vfxRenderer.Reset(); // M29c: トレイル点列も新シーンでリセット
+                    partFollowSystem.Reset(); // M48g: 旧シーンの warn 抑制を捨てる
                     scriptHost.ClearStarted();
                     managedHost.OnSceneReloaded();
                     // M45: 旧シーンの SE を断ち、ハンドル採番も 0 から振り直す。

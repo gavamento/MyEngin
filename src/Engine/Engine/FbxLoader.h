@@ -27,5 +27,10 @@ GameObject Load(Scene& scene, RenderResources& resources, ShaderManager& shaders
 // ホットリロード: エンティティは触らず、メッシュ / マテリアルを同じ AssetID のまま再構築する
 bool ReloadMeshes(RenderResources& resources, ShaderManager& shaders, const std::wstring& path);
 
+// M48g: スケルトン (SkinnedModel) だけを**エンティティも GPU バッファも作らずに**登録する。
+// 詳細は ModelLoader::RegisterSkinnedModels と同じ (保存済みシーンのロード経路の穴埋め)。
+// キーは Load / ReloadMeshes と厳密に同じ (`パス#mesh<id>#skin<id>`)
+size_t RegisterSkinnedModels(RenderResources& resources, const std::wstring& path);
+
 } // namespace FbxLoader
 } // namespace mye

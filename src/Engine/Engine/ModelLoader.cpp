@@ -438,4 +438,33 @@ bool ReloadMeshes(RenderResources& resources, ShaderManager& shaders, const std:
     return true;
 }
 
+size_t RegisterSkinnedModels(RenderResources& resources, const std::wstring& path)
+{
+    const std::string utf8 = WideToUtf8(path);
+    cgltf_options options = {};
+    cgltf_data* data = nullptr;
+    if (cgltf_parse_file(&options, utf8.c_str(), &data) != cgltf_result_success
+        || cgltf_load_buffers(&options, data, utf8.c_str()) != cgltf_result_success) {
+        if (data) {
+            cgltf_free(data);
+        }
+        return 0; // 起動時の全走査から呼ばれるので、非モデルの .glb でも黙って諦める
+    }
+    LoadContext lc;
+    lc.scene = nullptr; // エンティティは作らない
+    lc.resources = &resources;
+    lc.pathUtf8 = WideToUtf8(NormalizePathKey(path));
+    lc.baseDir = std::filesystem::path(path).parent_path().wstring();
+    // shaderId は使わない (LoadSkin はマテリアルに触れない)
+
+    // **skinIdx は data->skins の index** — Load 側も `node->skin - data->skins` で
+    // 同じ値を作っているので、全 skin を順に登録すればキーが一致する
+    for (cgltf_size i = 0; i < data->skins_count; ++i) {
+        LoadSkin(lc, data, &data->skins[i], static_cast<size_t>(i));
+    }
+    const size_t count = static_cast<size_t>(data->skins_count);
+    cgltf_free(data);
+    return count;
+}
+
 } // namespace mye::ModelLoader

@@ -30,7 +30,21 @@ void BuildRtShowcaseScene(EngineContext& ctx);
 // シーンを組まない場合でも呼ぶ (RegisterDemoContent と BuildDemoScene の関係と同じ)
 void RegisterRtShowcaseContent(EngineContext& ctx);
 
-// assets\ 以下の .prefab.json / .anim.json を各ライブラリへ登録する (Editor / Runtime 共用)
+// M48g: 部位 (ソケット) のボーン追従を **リプレイ検証で被覆する**ためのシーン。--parts-demo で選ぶ。
+// CesiumMan (スキンメッシュ) + 手のジョイントに追従する部位 + 部位の子メッシュ +
+// 部位の近くに落とす Rigidbody という構成で、`PartFollowSystem` が書く LocalTransform が
+// 毎 tick のワールドハッシュに載る = **骨駆動の値が Debug/Release でビット一致することの機械証明**
+// になる (既定デモシーンにはスキンメッシュが 1 体も無く、骨演算は一度もハッシュ被覆に
+// 入ったことがなかった)。
+//
+// ★既定のデモシーンは 1 バイトも変えない (golden.rep の入力そのもの。BuildRtShowcaseScene と同じ理由)
+void BuildPartsShowcaseScene(EngineContext& ctx);
+
+// 上のショーケースが参照するメッシュ/マテリアルの実体登録 (RegisterRtShowcaseContent と同じ役割)
+void RegisterPartsShowcaseContent(EngineContext& ctx);
+
+// assets\ 以下の .prefab.json / .anim.json を各ライブラリへ登録する (Editor / Runtime 共用)。
+// M48g からは .glb / .gltf / .fbx のスケルトンもここで (エンティティを作らずに) 登録する
 void RegisterAssetLibraries(EngineContext& ctx);
 
 } // namespace mye

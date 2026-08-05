@@ -834,4 +834,36 @@ bool ReloadMeshes(RenderResources& resources, ShaderManager& shaders, const std:
     return true;
 }
 
+size_t RegisterSkinnedModels(RenderResources& resources, const std::wstring& path)
+{
+    const std::string utf8 = WideToUtf8(path);
+    const ufbx_load_opts opts = MakeOpts();
+    ufbx_error error;
+    ufbx_scene* fbx = ufbx_load_file(utf8.c_str(), &opts, &error);
+    if (!fbx) {
+        return 0; // 起動時の全走査から呼ばれるので、壊れたファイルでも黙って諦める
+    }
+    LoadContext lc;
+    lc.scene = nullptr; // エンティティは作らない
+    lc.resources = &resources;
+    lc.fbx = fbx;
+    lc.pathUtf8 = WideToUtf8(NormalizePathKey(path));
+    lc.baseDir = std::filesystem::path(path).parent_path().wstring();
+    // shaderId は使わない (LoadSkin はメッシュにもマテリアルにも触れない)
+
+    // **キーは (mesh, skin) なのでノードではなくメッシュを回す** — LoadMeshInto は
+    // ノード走査 + skinCache で同じ収束をするので、生成されるキー集合は同一になる
+    size_t count = 0;
+    for (size_t mi = 0; mi < fbx->meshes.count; ++mi) {
+        const ufbx_mesh* mesh = fbx->meshes.data[mi];
+        if (mesh->skin_deformers.count == 0) {
+            continue;
+        }
+        LoadSkin(lc, mesh, mesh->skin_deformers.data[0]); // 2 本目以降は Load 側も使わない
+        ++count;
+    }
+    ufbx_free_scene(fbx);
+    return count;
+}
+
 } // namespace mye::FbxLoader
