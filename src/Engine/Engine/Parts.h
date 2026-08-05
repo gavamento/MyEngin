@@ -36,6 +36,13 @@ EntityID FindPart(World& world, EntityID root, std::string_view utf8Path);
 //   使う側の視点を優先する。境界で止めたい要求が出たら flag を additive に足す
 void FindPartsByTag(World& world, EntityID root, uint64_t tag, std::vector<EntityID>& out);
 
+// 部位の骨供給元を解決する (M48i で 1 本化)。
+//   explicitSource が生きていて SkinnedMesh を持つ → そのまま
+//   そうでなければ **最も近い SkinnedMesh 祖先** (無ければ kNullEntity)
+// ★PartFollowSystem (sim) と Inspector のジョイント一覧が**同じ答え**を見るための唯一の実装。
+//   ここが 2 本あると「エディタで選べたジョイントに実行時は追従しない」が静かに起きる
+EntityID ResolvePartSource(World& world, EntityID part, EntityID explicitSource);
+
 // 部位の構造ロック (M48f)。「プレハブメンバ (PrefabLink 持ち) かつ Part 持ち」は
 // **リネーム / 削除 / 再親化を禁止する**。部位はアセットが公開する API そのもので、
 // インスタンス側で名前や場所を動かされると `FindPart("Hips/LegL")` が黙って壊れる。

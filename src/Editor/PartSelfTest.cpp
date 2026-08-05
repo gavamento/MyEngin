@@ -118,6 +118,27 @@ bool RunPartSelfTest()
         check(sub.size() == 2, "FindPartsByTag: the search is scoped to the given root");
     }
 
+    // ---- 骨の供給元の解決 (M48i で Parts:: へ 1 本化) ----
+    check(Parts::ResolvePartSource(w, head.Id(), kNullEntity).IsNull(),
+          "source: a part with no skinned mesh ancestor resolves to null");
+    check(Parts::ResolvePartSource(w, head.Id(), hips.Id()).IsNull(),
+          "source: an explicit source without a SkinnedMesh is rejected (not trusted blindly)");
+
+    // ---- String64 は「終端より後ろ」もハッシュ対象 (Inspector の ZeroStringTail の理由) ----
+    // WorldHasher は登録フィールドを FieldTypeSize 分まるごと読むが、JSON は終端までしか
+    // 書かない。残骸があると「保存内容は同じなのに WorldHash だけ違う」= M8 の
+    // NameComponent と同じ静かな壊れ方になる
+    {
+        auto* hp = w.GetComponent<PartComponent>(head.Id());
+        const size_t n = std::strlen(hp->joint);
+        const uint64_t clean = HashWorld(w, nullptr);
+        hp->joint[n + 1] = 'X'; // 終端の 1 つ後ろに残骸を置く (文字列としては同じ)
+        check(std::strlen(hp->joint) == n && HashWorld(w, nullptr) != clean,
+              "string64: bytes past the terminator are hashed (editors must zero the tail)");
+        std::memset(hp->joint + n + 1, 0, sizeof(hp->joint) - n - 1);
+        check(HashWorld(w, nullptr) == clean, "string64: zeroing the tail restores the hash");
+    }
+
     // ---- 兄弟名の一意化との整合 (M48b) ----
     // FindPart は「最初に一致した直子」を返すので、同名の兄弟がいるとどちらが返るか
     // 使う側から見て決まらない。エディタ経由の生成/改名は必ず一意化を通ることで
@@ -377,6 +398,16 @@ bool RunPartSelfTest()
             pc->tag = Parts::TagOf("HandR");
             std::snprintf(pc->joint, sizeof(pc->joint), "%s", "Skeleton_arm_joint_R__3_");
             fw.ApplyStructuralChanges();
+
+            // 供給元の解決 (M48i): Inspector のジョイント一覧と PartFollowSystem が
+            // **同じ関数**を見ていること。ここがズレると「エディタで選べたのに動かない」
+            check(Parts::ResolvePartSource(fw, socket.Id(), kNullEntity) == skinned,
+                  "source: falls back to the nearest skinned mesh ancestor");
+            check(Parts::ResolvePartSource(fw, socket.Id(), skinned) == skinned,
+                  "source: an explicit valid source is honored");
+            check(fw.GetComponent<SkinnedMeshComponent>(root.Id()) == nullptr
+                      && Parts::ResolvePartSource(fw, socket.Id(), root.Id()) == skinned,
+                  "source: an explicit source without a SkinnedMesh falls back to the ancestor");
 
             PartFollowSystem follow;
             const auto poseAt = [&](int ticks) {

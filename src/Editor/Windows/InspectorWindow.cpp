@@ -14,6 +14,7 @@
 #include "Editor/ComponentClipboard.h"
 #include "Engine/Core/AssetGuidResolver.h"
 #include "Editor/EditorComponentCatalog.h"
+#include "Editor/PartTagNames.h"
 #include "Editor/PhysicsLayerNames.h"
 #include "Editor/Selection.h"
 #include "Editor/Undo/UndoStack.h"
@@ -33,6 +34,7 @@
 #include "Engine/Platform/PathUtil.h"
 #include "Engine/Renderer/GpuResources.h"
 #include "Engine/Renderer/RenderTypes.h" // kEmissiveMaxIntensity (M46i)
+#include "Engine/Renderer/Skeleton.h"    // SkinnedModel のジョイント名 (M48i)
 
 #include "imgui.h"
 
@@ -208,6 +210,18 @@ constexpr EnumFieldLabels kEnumFields[] = {
     { "CameraPostFx", "bloomOn", kOffOnLabels, 2, kOffOnJa },
     { "CameraPostFx", "fxaaOn", kOffOnLabels, 2, kOffOnJa },
 };
+
+// ImGui::InputText は終端より後ろのバイトを掃除しない。一方 WorldHasher は登録フィールドを
+// **FieldTypeSize 分まるごと**ハッシュする (WorldHasher.cpp) ので、文字列を短くしたときの
+// 残骸が「JSON は同一なのに WorldHash だけ違う」を生む (M8 の NameComponent と同じ罠)。
+// 編集直後に終端以降をゼロ埋めして、生バイトを保存内容と 1:1 にする
+void ZeroStringTail(char* buf, size_t cap)
+{
+    const size_t n = std::strlen(buf);
+    if (n + 1 < cap) {
+        std::memset(buf + n + 1, 0, cap - n - 1);
+    }
+}
 
 const EnumFieldLabels* FindEnumLabels(const char* component, const char* field)
 {
@@ -745,7 +759,42 @@ bool InspectorWindow::DrawField(EngineContext& ctx, const char* componentName, v
         }
         break;
     case FieldType::UInt64:
-        changed = ImGui::InputScalar(label, ImGuiDataType_U64, p);
+        // M48i: 部位タグは project_settings.json の名前表から選ぶ。
+        // **保存されるのは名前ハッシュ (u64)** なので、表に無い ID もそのまま維持する
+        // (別プロジェクトのシーンを開いたときに黙って 0 に潰さない)
+        if (componentName && std::strcmp(componentName, "Part") == 0
+            && std::strcmp(field.name, "tag") == 0) {
+            PartTagNames& pt = PartTagNames::Get();
+            pt.Load(ctx.assetsRoot);
+            uint64_t& tag = *static_cast<uint64_t*>(p);
+            char unknown[48];
+            const char* preview = (tag == 0) ? Tr(StrId::Insp_PartTagNone) : pt.NameOf(tag);
+            if (preview == nullptr) {
+                std::snprintf(unknown, sizeof(unknown), Tr(StrId::Insp_PartTagUnknown),
+                              static_cast<unsigned long long>(tag));
+                preview = unknown;
+            }
+            if (ImGui::BeginCombo(label, preview)) {
+                if (ImGui::Selectable(Tr(StrId::Insp_PartTagNone), tag == 0)) {
+                    tag = 0;
+                    changed = true;
+                }
+                for (int i = 0; i < pt.Count(); ++i) {
+                    ImGui::PushID(i); // タグ名が重複していても ImGui ID を分ける
+                    const uint64_t id = pt.Id(i);
+                    if (ImGui::Selectable(pt.Name(i), id == tag)) {
+                        tag = id;
+                        changed = true;
+                    }
+                    ImGui::PopID();
+                }
+                ImGui::Separator();
+                ImGui::TextDisabled("%s", Tr(StrId::Insp_PartTagHint));
+                ImGui::EndCombo();
+            }
+        } else {
+            changed = ImGui::InputScalar(label, ImGuiDataType_U64, p);
+        }
         break;
     case FieldType::Bool: {
         bool b = *static_cast<uint8_t*>(p) != 0;
@@ -794,10 +843,72 @@ bool InspectorWindow::DrawField(EngineContext& ctx, const char* componentName, v
         DrawAssetRef(ctx, field, p, selection, undo, fids, comps, field.offset);
         break;
     case FieldType::String64:
-        changed = ImGui::InputText(label, static_cast<char*>(p), 64);
+        // M48i: 部位のジョイントは供給元スケルトンの名前から選ぶ (M48a の名前保持が効く)。
+        // モデルが解決できないときは自由入力にフォールバックする — 骨がまだ登録されていない
+        // だけの場合に、既に入っている正しい名前を消させないため
+        if (componentName && std::strcmp(componentName, "Part") == 0
+            && std::strcmp(field.name, "joint") == 0) {
+            char* joint = static_cast<char*>(p);
+            World& w = ctx.scene->GetWorld();
+            const EntityID src = Parts::ResolvePartSource(
+                w, entity, static_cast<const PartComponent*>(comp)->source);
+            const auto* sm = src.IsNull() ? nullptr : w.GetComponent<SkinnedMeshComponent>(src);
+            const SkinnedModel* model =
+                (sm && ctx.resources) ? ctx.resources->skinnedModels.Get(sm->model) : nullptr;
+            if (model == nullptr) {
+                changed = ImGui::InputText(label, joint, 64);
+                if (changed) {
+                    ZeroStringTail(joint, 64);
+                }
+                ImGui::TextDisabled("%s", Tr(StrId::Insp_PartNoSkin));
+            } else {
+                char missing[96];
+                const char* preview = Tr(StrId::Insp_PartJointStatic);
+                if (joint[0] != '\0') {
+                    preview = joint;
+                    if (model->FindJointByName(joint) < 0) {
+                        std::snprintf(missing, sizeof(missing),
+                                      Tr(StrId::Insp_PartJointMissing), joint);
+                        preview = missing;
+                    }
+                }
+                if (ImGui::BeginCombo(label, preview)) {
+                    if (ImGui::Selectable(Tr(StrId::Insp_PartJointStatic), joint[0] == '\0')) {
+                        std::memset(joint, 0, 64); // 生バイトが hash 対象なので末尾までゼロ埋め
+                        changed = true;
+                    }
+                    for (size_t i = 0; i < model->joints.size(); ++i) {
+                        const std::string& n = model->joints[i].name;
+                        if (n.empty()) {
+                            continue; // 無名ジョイントは FindJointByName の対象外
+                        }
+                        ImGui::PushID(static_cast<int>(i));
+                        if (ImGui::Selectable(n.c_str(), n == joint)) {
+                            std::memset(joint, 0, 64);
+                            std::snprintf(joint, 64, "%s", n.c_str());
+                            changed = true;
+                        }
+                        ImGui::PopID();
+                    }
+                    ImGui::EndCombo();
+                }
+                // v1 規約: 骨追従の部位は供給元の直子。破っていると実行時に黙って skip される
+                if (joint[0] != '\0' && w.GetParent(entity) != src) {
+                    ImGui::TextDisabled("%s", Tr(StrId::Insp_PartNotChild));
+                }
+            }
+        } else {
+            changed = ImGui::InputText(label, static_cast<char*>(p), 64);
+            if (changed) {
+                ZeroStringTail(static_cast<char*>(p), 64);
+            }
+        }
         break;
     case FieldType::String256:
         changed = ImGui::InputText(label, static_cast<char*>(p), 256);
+        if (changed) {
+            ZeroStringTail(static_cast<char*>(p), 256);
+        }
         break;
     case FieldType::Float4x4: {
         const float* m = static_cast<const float*>(p);

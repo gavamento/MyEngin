@@ -283,6 +283,21 @@ MYE_STR(Insp_RevertAll,       "Revert All",                 "すべて戻す")
 MYE_STR(Insp_Everything,      "Everything###mask_all",      "すべて###mask_all")
 MYE_STR(Insp_Nothing,         "Nothing###mask_none",        "なし###mask_none")
 MYE_STR(Insp_MaskMixed,       "Mixed (0x%08X)###mask_mixed", "一部 (0x%08X)###mask_mixed")
+// 部位 (ソケット) の特殊フィールド (M48i)。tag は名前ハッシュ、joint はモデルのジョイント名
+MYE_STR(Insp_PartTagNone,     "(none)",                     "(なし)")
+MYE_STR(Insp_PartTagUnknown,  "(unregistered 0x%016llX)",   "(未登録 0x%016llX)")
+MYE_STR(Insp_PartTagHint,     "Part tags are name hashes — renaming a tag in Project Settings "
+                              "breaks scenes that already use it",
+                              "部位タグは名前のハッシュです — プロジェクト設定でタグ名を変えると、"
+                              "既にそのタグを使っているシーンの参照が切れます")
+MYE_STR(Insp_PartJointStatic, "(static socket)",            "(静的ソケット)")
+MYE_STR(Insp_PartJointMissing, "%s (not in the model)",     "%s (モデルに無い)")
+MYE_STR(Insp_PartNoSkin,      "no skinned mesh source — put the part under a skinned mesh or set "
+                              "'source' (typed joint names are kept)",
+                              "スキンメッシュの供給元がありません — 部位をスキンメッシュの下に置くか "
+                              "'骨の供給元' を指定してください (入力したジョイント名はそのまま保持されます)")
+MYE_STR(Insp_PartNotChild,    "a bone-following part must be a direct child of its skinned mesh",
+                              "ボーン追従の部位は、スキンメッシュの直子である必要があります")
 // マテリアルインスペクタのスライダ (リフレクション由来ではなく手書きラベル)
 MYE_STR(Mat_Emissive,         "emissive",                   "自己発光")
 MYE_STR(Mat_Metallic,         "metallic",                   "メタリック")

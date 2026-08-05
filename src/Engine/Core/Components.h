@@ -513,8 +513,9 @@ struct PartComponent {
     // 追従するジョイント名 (空 = 静的ソケット = 親に対して固定)。
     // 実際に骨へ追従させるのは M48g の PartFollowSystem
     char joint[64] = {};
-    // 骨の供給元 (SkinnedMesh を持つエンティティ)。null = 未指定 →
-    // M48g が「同じインスタンス内 DFS 最初の SkinnedMesh」へフォールバックする
+    // 骨の供給元 (SkinnedMesh を持つエンティティ)。null または無効なら
+    // **最も近い SkinnedMesh 祖先**へフォールバックする (`Parts::ResolvePartSource` が唯一の実装。
+    // PartFollowSystem と Inspector のジョイント一覧が同じ答えを見るため)
     EntityID source = kNullEntity;
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };

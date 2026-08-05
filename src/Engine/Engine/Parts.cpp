@@ -65,6 +65,20 @@ void FindPartsByTag(World& world, EntityID root, uint64_t tag, std::vector<Entit
     visit(root);
 }
 
+EntityID ResolvePartSource(World& world, EntityID part, EntityID explicitSource)
+{
+    if (!explicitSource.IsNull() && world.IsAlive(explicitSource)
+        && world.GetComponent<SkinnedMeshComponent>(explicitSource)) {
+        return explicitSource;
+    }
+    for (EntityID a = world.GetParent(part); !a.IsNull(); a = world.GetParent(a)) {
+        if (world.GetComponent<SkinnedMeshComponent>(a)) {
+            return a;
+        }
+    }
+    return kNullEntity;
+}
+
 bool IsStructureLocked(World& world, EntityID e)
 {
     if (!world.IsAlive(e)) {

@@ -8,6 +8,7 @@
 #include "Engine/Core/Components.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Core/World.h"
+#include "Engine/Engine/Parts.h" // ResolvePartSource (Inspector と共用)
 #include "Engine/Renderer/GpuResources.h"
 #include "Engine/Renderer/Skeleton.h"
 
@@ -126,17 +127,8 @@ void PartFollowSystem::Update(World& world, const RenderResources& resources)
     std::vector<PoseCache> poses;
 
     for (const Job& job : jobs) {
-        // ---- 供給元の解決: source 明示 → 無ければ最も近い SkinnedMesh 祖先 ----
-        EntityID src = job.source;
-        if (src.IsNull() || !world.IsAlive(src) || !world.GetComponent<SkinnedMeshComponent>(src)) {
-            src = kNullEntity;
-            for (EntityID a = world.GetParent(job.part); !a.IsNull(); a = world.GetParent(a)) {
-                if (world.GetComponent<SkinnedMeshComponent>(a)) {
-                    src = a;
-                    break;
-                }
-            }
-        }
+        // ---- 供給元の解決 (M48i で Parts:: に 1 本化 — Inspector のジョイント一覧と同じ答え) ----
+        const EntityID src = Parts::ResolvePartSource(world, job.part, job.source);
         if (src.IsNull()) {
             if (warned_.insert(WarnKey(job.part, WarnKind::NoSource)).second) {
                 MYE_LOG_WARN("[part] '%s': no SkinnedMesh source (set Part.source or put the part "

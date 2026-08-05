@@ -371,6 +371,42 @@ void SceneViewWindow::BuildOverlays(EngineContext& ctx, Selection& selection)
                 lines_.AddLine({ p.x, p.y + r, p.z }, { p.x, p.y - r, p.z }, kVfx);
             }
         });
+
+        // 部位ソケット (八面体 glyph + 前方ティック、M48i)。
+        // ボーン追従 (joint 指定あり) と静的ソケットで色を分ける — 実行時に動くかどうかが
+        // 一目で分かることが、この glyph の主目的
+        constexpr uint32_t kPartBone = 0xF060C0FFu;   // 追従あり (マゼンタ)
+        constexpr uint32_t kPartStatic = 0x8080A0FFu; // 静的ソケット (くすんだ青灰)
+        const ComponentTypeId ptReq[] = { PartComponent::sTypeId, WorldMatrixComponent::sTypeId };
+        world.ForEachArchetype(ptReq, [&](Archetype& arch) {
+            const int pi = arch.FindTypeIndex(PartComponent::sTypeId);
+            const int wi = arch.FindTypeIndex(WorldMatrixComponent::sTypeId);
+            for (uint32_t row = 0; row < arch.Count(); ++row) {
+                const auto* pc = static_cast<const PartComponent*>(arch.GetPtr(pi, row));
+                const XMFLOAT4X4& wm =
+                    static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row))->value;
+                const XMFLOAT3 p = { wm._41, wm._42, wm._43 };
+                const uint32_t c = (pc->joint[0] != '\0') ? kPartBone : kPartStatic;
+                // 八面体のワイヤ (= 3 平面の菱形)。ワールド軸に揃えるので向きに関係なく読める
+                const float r = 0.09f;
+                const XMFLOAT3 px = { p.x + r, p.y, p.z }, nx = { p.x - r, p.y, p.z };
+                const XMFLOAT3 py = { p.x, p.y + r, p.z }, ny = { p.x, p.y - r, p.z };
+                const XMFLOAT3 pz = { p.x, p.y, p.z + r }, nz = { p.x, p.y, p.z - r };
+                const XMFLOAT3* ring[3][4] = { { &px, &py, &nx, &ny },
+                                               { &py, &pz, &ny, &nz },
+                                               { &pz, &px, &nz, &nx } };
+                for (const XMFLOAT3** rg : ring) {
+                    for (int i = 0; i < 4; ++i) {
+                        lines_.AddLine(*rg[i], *rg[(i + 1) & 3], c);
+                    }
+                }
+                // 取り付け向き (+Z) を短いティックで示す — ソケットは向きが本体なので
+                const XMVECTOR fwd = XMVector3Normalize(XMVectorSet(wm._31, wm._32, wm._33, 0));
+                XMFLOAT3 tip;
+                XMStoreFloat3(&tip, XMVectorAdd(XMLoadFloat3(&p), XMVectorScale(fwd, 0.22f)));
+                lines_.AddLine(p, tip, c);
+            }
+        });
     }
 
     // 選択アウトライン (常時最前面)
@@ -774,6 +810,9 @@ void SceneViewWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
         drawIcons(LightComponent::sTypeId, ICON_FA_LIGHTBULB, IM_COL32(0xF0, 0xE0, 0x40, 0xFF));
         drawIcons(ParticleEmitterComponent::sTypeId, ICON_FA_FIRE,
                   IM_COL32(0xF0, 0x80, 0x20, 0xFF));
+        // 部位ソケット (M48i): メッシュを持たないので通常のピッキングでは掴めない。
+        // アイコン経路に載せて初めてクリック選択できるようになる
+        drawIcons(PartComponent::sTypeId, ICON_FA_ANCHOR, IM_COL32(0xF0, 0x60, 0xC0, 0xFF));
 
         // アイコンクリックで選択 (ピッキングより優先。Ctrl はトグル = ピッキングと同じ流儀)
         if (ImGui::IsWindowHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Left)
