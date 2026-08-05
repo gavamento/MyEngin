@@ -26,6 +26,7 @@
 #include "Engine/Engine/AssetDatabase.h"
 #include "Engine/Engine/EntityNaming.h"
 #include "Engine/Engine/GameObject.h"
+#include "Engine/Engine/Parts.h"
 #include "Engine/Engine/Prefab.h"
 #include "Engine/Engine/Scene.h"
 #include "Engine/Engine/Script/ManagedHost.h"
@@ -327,8 +328,15 @@ void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
 
     // ---- 名前 ----
     if (auto* nc = world.GetComponent<NameComponent>(e)) {
+        // 部位の構造ロック (M48f): プレハブメンバの部位はリネーム不可。Hierarchy 側だけ
+        // 塞いでも Inspector から改名できたら穴になるので、ここも読み取り専用にする
+        const bool partLocked = Parts::IsStructureLocked(world, e);
         ImGui::SetNextItemWidth(-1);
-        ImGui::InputText("##name", nc->value, sizeof(nc->value));
+        ImGui::InputText("##name", nc->value, sizeof(nc->value),
+                         partLocked ? ImGuiInputTextFlags_ReadOnly : ImGuiInputTextFlags_None);
+        if (partLocked) {
+            ImGui::TextDisabled("%s", Tr(StrId::Hier_PartLockedShort));
+        }
         // 編集開始時の名前を控え、確定時に正規化する (M48b)。
         // HandleEditUndo が CaptureAfter を撮る**前**に置くこと。ImGui のアイテム状態問い合わせは
         // 同フレーム内で冪等なので次行の判定は壊れない。

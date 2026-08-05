@@ -47,6 +47,8 @@
     <ClCompile Include="..\src\Editor\EditorSettings.cpp" />
     <ClCompile Include="..\src\Editor\EditorToolbar.cpp" />
     <ClCompile Include="..\src\Editor\LayoutManager.cpp" />
+    <ClCompile Include="..\src\Editor\PartSelfTest.cpp" />
+    <ClCompile Include="..\src\Editor\PartTagNames.cpp" />
     <ClCompile Include="..\src\Editor\PhysicsLayerNames.cpp" />
     <ClCompile Include="..\src\Editor\PlayModeController.cpp" />
     <ClCompile Include="..\src\Editor\ProjectManager.cpp" />
@@ -82,6 +84,8 @@
     <ClInclude Include="..\src\Editor\EditorSettings.h" />
     <ClInclude Include="..\src\Editor\EditorToolbar.h" />
     <ClInclude Include="..\src\Editor\LayoutManager.h" />
+    <ClInclude Include="..\src\Editor\PartSelfTest.h" />
+    <ClInclude Include="..\src\Editor\PartTagNames.h" />
     <ClInclude Include="..\src\Editor\PhysicsLayerNames.h" />
     <ClInclude Include="..\src\Editor\PlayModeController.h" />
     <ClInclude Include="..\src\Editor\ProjectManager.h" />

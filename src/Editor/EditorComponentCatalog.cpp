@@ -21,6 +21,8 @@ const std::unordered_map<std::string, ComponentUiInfo>& Table()
         { "Name", { ICON_FA_FONT, "General", "名前" } },
         { "LocalTransform", { ICON_FA_ARROWS_UP_DOWN_LEFT_RIGHT, "General", "トランスフォーム" } },
         { "Active", { ICON_FA_EYE, "General", "アクティブ" } },
+        // M48f: 部位 (ソケット)。アタッチ先を公開する構造なので General 扱い
+        { "Part", { ICON_FA_ANCHOR, "General", "部位" } },
         // Rendering
         { "MeshRenderer", { ICON_FA_CUBE, "Rendering", "メッシュレンダラー" } },
         { "SkinnedMesh", { ICON_FA_PERSON, "Rendering", "スキンメッシュ" } },

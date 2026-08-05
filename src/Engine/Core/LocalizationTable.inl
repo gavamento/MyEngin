@@ -156,6 +156,7 @@ MYE_STR(Common_None,          "  (none)", "  (なし)")
 MYE_STR(Hier_Create,          "Create",         "作成")
 MYE_STR(Hier_CreatePrefab,    "Create Prefab",  "プレハブを作成")
 MYE_STR(Hier_Delete,          "Delete",         "削除")
+MYE_STR(Hier_PartLockedShort, "locked: prefab part", "ロック中: プレハブの部位")
 
 // ---- コンソール (M47b) ----
 MYE_STR(Console_Clear,        "Clear",       "クリア")
@@ -240,6 +241,14 @@ MYE_STR(PrjSet_CmdHint,       "  {file} / {line} are substituted when jumping fr
                               "  {file} / {line} が Console のソースジャンプで置換されます")
 MYE_STR(PrjSet_LayerHint,     "Display names only (the sim uses layer numbers). Applies to Collider layer/mask",
                               "表示名のみ (sim はレイヤー番号を使う)。Collider の layer/mask に反映")
+// ---- 部位タグ (M48f) ----
+MYE_STR(PrjSet_PartTags,      "Part Tags",           "部位タグ")
+MYE_STR(PrjSet_SavePartTags,  "Save Part Tags",      "部位タグを保存")
+MYE_STR(PrjSet_AddPartTag,    "Add Tag",             "タグを追加")
+MYE_STR(PrjSet_PartTagHint,   "The tag ID is the hash of its NAME — renaming a tag breaks scenes that already use it "
+                              "(unlike physics layers, where the number is the identity)",
+                              "タグ ID は**名前のハッシュ**です — 名前を変えると、既にそのタグを使っているシーンの参照が切れます "
+                              "(番号が実体の物理レイヤーとは性質が違います)")
 MYE_STR(Build_TipBundle,      "ON: bundles the .NET 8 runtime under dotnet\\ so the target machine does not need .NET\n"
                               "OFF: the target machine must have the .NET 8 runtime installed",
                               "ON: .NET 8 ランタイムを dotnet\\ に同梱し、配布先に .NET 不要にする\n"
@@ -591,6 +600,10 @@ MYE_STR(Log_PlaceUnsupported, "cannot place asset (drag a prefab, model, image, 
                               "このアセットは配置できません (プレハブ / モデル / 画像 / サウンドをドラッグしてください): %s")
 MYE_STR(Log_PlaceFail,        "failed to place asset: %s",  "アセットを配置できませんでした: %s")
 MYE_STR(Log_WriteFail,        "could not write %s",         "%s を書き出せません")
+MYE_STR(Log_PartLocked,       "'%s' is a part of a prefab — renaming, deleting or re-parenting it would break "
+                              "FindPart() lookups. Edit the asset itself to change its structure",
+                              "'%s' はプレハブの部位です — 名前の変更・削除・親子の付け替えは FindPart() の "
+                              "参照を壊します。構造を変えるにはアセット側を編集してください")
 MYE_STR(Log_BuildingCpp,      "building %zu C++ script(s) -> %s\\GameLogic.dll (%s)",
                               "C++ スクリプト %zu 件をビルドしています -> %s\\GameLogic.dll (%s)")
 MYE_STR(Log_BatMissing,       "build_scripts.bat not found: %s",

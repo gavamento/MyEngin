@@ -385,6 +385,15 @@ void RegisterBuiltinComponents()
         MYE_JP("ドップラー", MYE_FIELD_RANGE(AudioSourceComponent, dopplerScale, Float, 0.0f, 5.0f)),
         MYE_JP("リバーブ送り", MYE_FIELD_RANGE(AudioSourceComponent, reverbSend, Float, 0.0f, 1.0f)),
     }, kComponentNoHash);
+
+    // M48f: 部位 (ソケット)。**hash 対象** — M48g の PartFollowSystem が LocalTransform を
+    // 駆動する = sim 状態の入力になるため。opt-in (TypeId 末尾 append =30) なので
+    // 既存シーンのハッシュは 1 バイトも変わらない = ReplayFile bump 不要
+    RegisterComponent<PartComponent>("Part", {
+        MYE_JP("タグ", MYE_FIELD(PartComponent, tag, UInt64)),
+        MYE_JP("ジョイント", MYE_FIELD(PartComponent, joint, String64)),
+        MYE_JP("骨の供給元", MYE_FIELD(PartComponent, source, EntityRef)),
+    });
 }
 
 } // namespace mye

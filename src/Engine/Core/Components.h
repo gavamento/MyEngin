@@ -494,6 +494,31 @@ struct AudioSourceComponent {
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
+// ---- 部位 = ソケット (M48f) ----
+// 「コードから引けるアタッチポイント」。UE のソケット相当で、`SetEffect(leg)` のように
+// **アセット側で決めた場所へランタイムが物を付ける**のが本来の用途。
+// 部位は特別な構文ではなく **Part コンポーネントを持つ普通の子エンティティ** —
+// 変換は LocalTransform、階層は HierarchyComponent がそのまま担う。
+//
+// - **kComponentHidden にしない**: Inspector で編集する対象そのものだから
+// - opt-in (TypeId 末尾 append) なので既存シーンは不変 = ReplayFile bump 不要
+//   (ActiveComponent / Rigidbody と同じ前例)
+// - `source` を EntityRef にしているのは、インスタンス化・複製で
+//   `RemapEntityRefsInComponents` が自動で追従してくれるため (fileId で保存される)
+struct PartComponent {
+    // 部位タグ = `mye::HashStr(タグ名)`。0 = 未分類。
+    // **sim が見るのはハッシュ値だけ**で、名前表はエディタ専用テーブル (PartTagNames)。
+    // ★タグ名を変えると ID が変わる = 既存シーンの参照が切れる (レイヤー番号と違う性質)
+    uint64_t tag = 0;
+    // 追従するジョイント名 (空 = 静的ソケット = 親に対して固定)。
+    // 実際に骨へ追従させるのは M48g の PartFollowSystem
+    char joint[64] = {};
+    // 骨の供給元 (SkinnedMesh を持つエンティティ)。null = 未指定 →
+    // M48g が「同じインスタンス内 DFS 最初の SkinnedMesh」へフォールバックする
+    EntityID source = kNullEntity;
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
 class World;
 
 // エンティティが有効か (ActiveComponent が無ければ有効 / enabled==0 なら無効)

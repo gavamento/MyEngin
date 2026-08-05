@@ -3,6 +3,7 @@
 #include <string>
 
 #include "Editor/EditorSettings.h"
+#include "Editor/PartTagNames.h"
 #include "Editor/PhysicsLayerNames.h"
 #include "Editor/ShortcutHub.h"
 #include "Engine/Core/Localization.h"
@@ -72,6 +73,33 @@ void ProjectSettingsWindow::OnImGui(EngineContext& ctx, EditorSettings& settings
         if (ImGui::Button(Tr(StrId::PrjSet_SaveLayers))) {
             if (ln.Save(ctx.assetsRoot)) {
                 ln.Load(ctx.assetsRoot, true);
+            }
+        }
+    }
+
+    // ---- 部位タグ名 (M48f、assets\project_settings.json の partTags) ----
+    // 物理レイヤーと違い **名前のハッシュが ID の実体** なので、行数可変 + 注意書きつき
+    if (ImGui::CollapsingHeader(Tr(StrId::PrjSet_PartTags))) {
+        PartTagNames& pt = PartTagNames::Get();
+        pt.Load(ctx.assetsRoot);
+        ImGui::TextWrapped("%s", Tr(StrId::PrjSet_PartTagHint));
+        for (int i = 0; i < pt.Count(); ++i) {
+            ImGui::PushID(i);
+            ImGui::SetNextItemWidth(200.0f);
+            char label[16];
+            std::snprintf(label, sizeof(label), "%2d", i);
+            ImGui::InputText(label, pt.EditBuffer(i), PartTagNames::kNameCapacity);
+            ImGui::SameLine();
+            ImGui::TextDisabled("0x%016llx", static_cast<unsigned long long>(pt.Id(i)));
+            ImGui::PopID();
+        }
+        if (ImGui::Button(Tr(StrId::PrjSet_AddPartTag))) {
+            pt.SetCount(pt.Count() + 1);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(Tr(StrId::PrjSet_SavePartTags))) {
+            if (pt.Save(ctx.assetsRoot)) {
+                pt.Load(ctx.assetsRoot, true); // 空欄が落ちた結果を読み直す
             }
         }
     }

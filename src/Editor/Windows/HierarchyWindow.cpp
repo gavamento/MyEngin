@@ -17,6 +17,7 @@
 #include "Engine/Engine/AssetDatabase.h"
 #include "Engine/Engine/EntityNaming.h"
 #include "Engine/Engine/GameObject.h"
+#include "Engine/Engine/Parts.h"
 #include "Engine/Engine/Prefab.h"
 #include "Engine/Engine/Scene.h"
 #include "Engine/Platform/PathUtil.h"
@@ -66,6 +67,17 @@ void CreatePrefabFromEntity(EngineContext& ctx, Selection& selection, UndoStack&
     }
 }
 
+// 部位の構造ロック (M48f)。ブロックしたときは理由をユーザー向けログに出す —
+// 「クリックしても何も起きない」は最悪の UX で、必ず「なぜ駄目か / どうすればよいか」を返す
+bool BlockedByPartLock(World& world, EntityID e)
+{
+    if (!Parts::IsStructureLocked(world, e)) {
+        return false;
+    }
+    MYE_LOG_WARN(Tr(StrId::Log_PartLocked), world.GetName(e));
+    return true;
+}
+
 } // namespace
 
 void HierarchyWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStack& undo)
@@ -87,16 +99,18 @@ void HierarchyWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
     // F2: 選択エンティティのインラインリネーム開始
     if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)
         && ImGui::IsKeyPressed(ImGuiKey_F2, false) && selection.primary != 0 && renamingFid_ == 0) {
-        renamingFid_ = selection.primary;
-        renameFocus_ = true;
-        // 編集開始時点の名前を控える。確定時にこれと一致していれば「変更なし」= 改名しない
-        // (ImGui は Esc で元の名前をバッファへ戻すが確定判定は真になるため、M48b)
-        renameOriginal_.clear();
-        if (GameObject g = ctx.scene->FindByFileId(renamingFid_)) {
+        GameObject g = ctx.scene->FindByFileId(selection.primary);
+        // 部位はロック (M48f)。**記録を開く前**に弾くこと — BeginRecord してから抜けると
+        // 開きっぱなしの記録が次の操作を巻き込む
+        if (g && !BlockedByPartLock(world, g.Id())) {
+            renamingFid_ = selection.primary;
+            renameFocus_ = true;
+            // 編集開始時点の名前を控える。確定時にこれと一致していれば「変更なし」= 改名しない
+            // (ImGui は Esc で元の名前をバッファへ戻すが確定判定は真になるため、M48b)
             renameOriginal_ = world.GetName(g.Id());
+            undo.BeginRecord("Rename", selection);
+            undo.CaptureBefore(*ctx.scene, renamingFid_);
         }
-        undo.BeginRecord("Rename", selection);
-        undo.CaptureBefore(*ctx.scene, renamingFid_);
     }
 
     // Shift 範囲選択用の表示順を毎フレーム再構築 (クリック判定は前フレームの並びを使う)
@@ -121,13 +135,16 @@ void HierarchyWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
     if (ImGui::BeginDragDropTarget()) {
         if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(kDragPayload)) {
             const EntityID src = *static_cast<const EntityID*>(payload->Data);
-            undo.BeginRecord("Reparent", selection);
-            const uint64_t fid = ctx.scene->EnsureFileId(src);
-            undo.CaptureBefore(*ctx.scene, fid);
-            world.SetParent(src, kNullEntity);
-            world.ApplyStructuralChanges();
-            undo.CaptureAfter(*ctx.scene, fid);
-            undo.EndRecord(selection);
+            // 部位をルートへ引き剥がすのも再親化 (M48f)
+            if (!BlockedByPartLock(world, src)) {
+                undo.BeginRecord("Reparent", selection);
+                const uint64_t fid = ctx.scene->EnsureFileId(src);
+                undo.CaptureBefore(*ctx.scene, fid);
+                world.SetParent(src, kNullEntity);
+                world.ApplyStructuralChanges();
+                undo.CaptureAfter(*ctx.scene, fid);
+                undo.EndRecord(selection);
+            }
         }
         // AssetBrowser からのドロップ: .cs はエンティティ行へドロップするよう促す、他はルート配置
         if (const ImGuiPayload* pa = ImGui::AcceptDragDropPayload(kAssetDragPayload)) {
@@ -307,13 +324,22 @@ void HierarchyWindow::DrawEntityNode(EngineContext& ctx, World& world, EntityID 
         if (ImGui::MenuItem(Tr(StrId::Hier_CreatePrefab))) {
             CreatePrefabFromEntity(ctx, selection, undo, e);
         }
-        if (ImGui::MenuItem(Tr(StrId::Hier_Delete))) {
+        // 部位は削除もロック (M48f)。グレーアウト + ホバーで理由を出す
+        const bool partLocked = Parts::IsStructureLocked(world, e);
+        if (partLocked) {
+            ImGui::BeginDisabled();
+        }
+        if (ImGui::MenuItem(Tr(StrId::Hier_Delete)) && !partLocked) {
             undo.BeginRecord("Delete", selection);
             undo.CaptureBefore(*ctx.scene, ctx.scene->EnsureFileId(e));
             world.DestroyEntity(e); // 子孫ごと tick 末に破棄
             world.ApplyStructuralChanges();
             selection.Remove(fid);
             undo.EndRecord(selection); // CaptureAfter 無し → destroyed 扱い
+        }
+        if (partLocked) {
+            ImGui::EndDisabled();
+            ImGui::TextDisabled("%s", Tr(StrId::Hier_PartLockedShort));
         }
         ImGui::EndPopup();
     }
@@ -346,7 +372,10 @@ void HierarchyWindow::DrawEntityNode(EngineContext& ctx, World& world, EntityID 
                 dl->AddLine(ImVec2(rmin.x, y), ImVec2(rmax.x, y), col, 2.0f);
             }
 
-            if (payload->IsDelivery() && src != e) {
+            // 部位は再親化をロック (M48f)。並べ替え (zone != 0) は親が変わらないので許す —
+            // FindPart は名前パスで引くため兄弟順には影響されない
+            if (payload->IsDelivery() && src != e
+                && !(zone == 0 && BlockedByPartLock(world, src))) {
                 if (zone == 0) {
                     undo.BeginRecord("Reparent", selection);
                     const uint64_t sfid = ctx.scene->EnsureFileId(src);
