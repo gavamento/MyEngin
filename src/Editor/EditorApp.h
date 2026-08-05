@@ -1,4 +1,5 @@
 #pragma once
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -31,6 +32,8 @@
 #include "Editor/Windows/SoundGenWindow.h"
 #include "Engine/Engine/EngineLoop.h"
 #include "Engine/Engine/GameObject.h"
+#include "Engine/Engine/Scene.h"
+#include "Engine/Engine/TransformSystem.h"
 
 namespace mye {
 
@@ -52,11 +55,16 @@ public:
     std::wstring sceneOverride;    // --scene PATH (既定の main.scene.json の代わりに読むシーン)
     bool rtShowcase = false;       // --rt-demo (M46i: コーネル箱のショーケースを構築)
     bool partsShowcase = false;    // --parts-demo (M48g: 部位追従のリプレイ被覆シーン)
+    // --edit-actor PATH (M48k): 起動直後にミニシーン編集モードで開く。
+    // 編集モードの入口はダブルクリックだけで自動検証できないため、既存の検証フラグ
+    // (--select / --pick-test / --parts-demo) と同じ流儀で口を開けてある
+    std::wstring editActorPath;
 
 private:
     // 未保存変更ガード (M27b): dirty なら確認モーダルを経由して実行する
     // OpenSceneAsset = AssetBrowser ダブルクリック (pendingOpenScenePath_ をダイアログなしでロード)
-    enum class PendingAction { None, NewScene, OpenScene, OpenSceneAsset, Exit };
+    // ExitActorEdit = ミニシーン編集の終了 (M48k)。未保存なら同じ確認モーダルを通す
+    enum class PendingAction { None, NewScene, OpenScene, OpenSceneAsset, Exit, ExitActorEdit };
 
     void DrawMainMenuBar(EngineContext& ctx);
     void HandleShortcuts(EngineContext& ctx);
@@ -79,6 +87,34 @@ private:
     bool OpenScene(EngineContext& ctx); // true = 実際にロードした (キャンセル時 false)
     bool LoadSceneFromPath(EngineContext& ctx, const std::wstring& path); // ダイアログなし共通経路
     void ProcessPendingFileDrops(EngineContext& ctx); // エクスプローラー D&D (OnImGui 冒頭で消費)
+
+    // ---- ミニシーン編集モード (M48k) ----
+    // 構成アセット (.actor.json / .prefab.json) を**専用の Scene** に展開して編集する。
+    // Hierarchy / Inspector / SceneView / Undo / Selection はすべて引数駆動なので、
+    // 描画の間だけ `ctx.scene` をミニシーンへ差し替えるだけで丸ごと使い回せる。
+    // ScriptHost / ManagedHost / ReloadHub が Init 時に captured した `Scene*` と、
+    // EngineLoop がローカルに持つ Scene には**一切触れない** = tick 経路は無傷
+    struct ActorEdit {
+        Scene scene; // アセットの実体 (fileId == localId)
+        std::wstring path;
+        std::string name;
+        bool actorFormat = true; // 読み込んだ宣言キーを維持する (.prefab.json を勝手に移行しない)
+        // ---- 外側 (通常シーン) の編集状態の退避 ----
+        // ★編集中は selection_ / undo_ / savedStateSerial_ の**中身をアセット側に入れ替える**。
+        //   こうすると EditorApp 内に 49 箇所ある selection_/undo_ 参照を 1 つも書き換えずに
+        //   「今開いている文書」を丸ごと切り替えられる (ショートカット・複製・削除・
+        //   ダーティ判定・タイトルバーが全部そのまま効く)
+        Selection outerSelection;
+        UndoStack outerUndo;
+        uint64_t outerSavedSerial = 0;
+    };
+    void OpenActorEdit(EngineContext& ctx, const std::wstring& path);
+    void SaveActorEdit(EngineContext& ctx);
+    void CloseActorEdit(EngineContext& ctx);
+    bool InActorEdit() const { return actorEdit_ != nullptr; }
+
+    std::unique_ptr<ActorEdit> actorEdit_; // 非 null = 編集モード中
+    TransformSystem actorTransform_;       // ミニシーンの WorldMatrix はエンジン tick が回さない
 
     Selection selection_;
     UndoStack undo_;

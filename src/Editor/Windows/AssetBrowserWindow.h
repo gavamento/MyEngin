@@ -30,6 +30,16 @@ public:
         return p;
     }
 
+    // ダブルクリックされた構成アセット (.actor.json / .prefab.json) のパス (空 = なし)。
+    // M48k: EditorApp がミニシーン編集モードで開く。シーンへの配置は D&D と
+    // 右クリックメニュー「シーンに配置」に残してある
+    std::wstring TakePendingOpenActor()
+    {
+        std::wstring p;
+        p.swap(pendingOpenActor_);
+        return p;
+    }
+
     // ダブルクリックされた .mixer.json をアクティブにしたか (M45d)。
     // true なら EditorApp が Audio Mixer 窓を開く (適用自体はここで済んでいる)
     bool TakeOpenMixerRequest()
@@ -52,6 +62,7 @@ private:
 
     std::wstring current_; // 表示中フォルダ (絶対パス)
     std::wstring pendingOpenScene_; // ダブルクリックされたシーン (TakePendingOpenScene で消費)
+    std::wstring pendingOpenActor_; // ダブルクリックされた構成アセット (M48k)
     bool openMixerRequest_ = false; // .mixer.json をダブルクリックした (M45d)
     // D&D 移動 (M30b)。描画中の fs 変更 (iterator 破壊) を避けるためフレーム末に実行する
     std::wstring pendingMoveSrc_;

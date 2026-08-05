@@ -119,7 +119,11 @@ void EditorApp::OnStart(EngineContext& ctx)
                          static_cast<unsigned long long>(selection_.primary));
         }
     }
-    if (autoPlay) {
+    if (!editActorPath.empty()) {
+        // M48k: ダブルクリック相当の口。他の検証フラグと同じく起動直後に 1 回だけ効く
+        OpenActorEdit(ctx, std::filesystem::absolute(editActorPath).wstring());
+    }
+    if (autoPlay && !actorEdit_) { // 編集モード中の Play は禁止 (ツールバーでも無効化している)
         playMode_.Play(*ctx.scene);
     }
     if (startDeferred) {
@@ -195,13 +199,115 @@ void EditorApp::OnTick(EngineContext& ctx)
 
 void EditorApp::OnRenderViews(EngineContext& ctx)
 {
-    sceneView_.OnRenderViews(ctx, selection_);
-    gameView_.OnRenderViews(ctx);
-    preview_.OnRenderViews(ctx); // アセットサムネイル生成 (D3D 描画はこのフェーズのみ)
+    if (actorEdit_) {
+        // ミニシーン編集モード (M48k): SceneView だけアセットのミニシーンを描く。
+        // **ミニシーンはエンジンの tick に載っていない** ので、WorldMatrix はここで自前に
+        // 更新する (TransformSystem は純関数なので World を渡すだけでよい)
+        Scene* const mainScene = ctx.scene;
+        ctx.scene = &actorEdit_->scene;
+        actorEdit_->scene.GetWorld().ApplyStructuralChanges();
+        actorTransform_.Update(actorEdit_->scene.GetWorld());
+        sceneView_.OnRenderViews(ctx, selection_); // selection_ は編集中アセット側 (中身を入替済み)
+        ctx.scene = mainScene;
+    } else {
+        sceneView_.OnRenderViews(ctx, selection_);
+    }
+    gameView_.OnRenderViews(ctx); // GameView は常に本シーン (編集モードでも実行結果を見せる)
+    preview_.OnRenderViews(ctx);  // アセットサムネイル生成 (D3D 描画はこのフェーズのみ)
+}
+
+// ---- ミニシーン編集モード (M48k) ----
+
+void EditorApp::OpenActorEdit(EngineContext& ctx, const std::wstring& path)
+{
+    if (playMode_.State() != PlayState::Editing) {
+        toasts_.Notify(LogLevel::Warn, "アセットを編集するには再生を停止してください");
+        return;
+    }
+    if (actorEdit_) {
+        CloseActorEdit(ctx); // 別アセットへ乗り換え (編集モードの入れ子は v1 非対応)
+    }
+    const uint64_t hash = ctx.prefabs->LoadFromFile(path); // 未登録なら登録 (冪等)
+    const PrefabAsset* asset = (hash != 0) ? ctx.prefabs->Get(hash) : nullptr;
+    if (asset == nullptr) {
+        toasts_.Notify(LogLevel::Error,
+                       "アセットを開けませんでした: "
+                           + WideToUtf8(std::filesystem::path(path).filename().wstring()));
+        return;
+    }
+
+    auto edit = std::make_unique<ActorEdit>();
+    edit->path = path;
+    edit->name = asset->name;
+    edit->actorFormat = asset->actorFormat;
+    // MakeEditDocument が nextFileId を max(localId)+1 にする — 編集中に足した
+    // エンティティが既存 localId と衝突すると、配置済みインスタンスの PrefabLink が壊れる
+    if (!SceneSerializer::LoadFromJson(edit->scene, Prefab::MakeEditDocument(*asset))) {
+        toasts_.Notify(LogLevel::Error, "アセットの展開に失敗しました");
+        return;
+    }
+    edit->scene.GetWorld().ApplyStructuralChanges();
+
+    // 外側の編集状態を退避して、アセット用の空の Undo/Selection に差し替える
+    edit->outerSelection = std::move(selection_);
+    edit->outerUndo = std::move(undo_);
+    edit->outerSavedSerial = savedStateSerial_;
+    selection_ = Selection{};
+    undo_ = UndoStack{};
+    undo_.SetPrefabLibrary(ctx.prefabs); // 入れ子インスタンスの override 記録 (M48e)
+    savedStateSerial_ = undo_.StateSerial(); // 開いた直後 = clean
+
+    actorEdit_ = std::move(edit);
+    MYE_LOG_INFO("[actor] editing '%s' (%s)", actorEdit_->name.c_str(),
+                 WideToUtf8(actorEdit_->path).c_str());
+    toasts_.Notify(LogLevel::Info, "アセットを編集中: " + actorEdit_->name);
+}
+
+void EditorApp::SaveActorEdit(EngineContext& ctx)
+{
+    if (!actorEdit_) {
+        return;
+    }
+    actorEdit_->scene.GetWorld().ApplyStructuralChanges();
+    if (Prefab::SaveEdited(actorEdit_->scene, *ctx.prefabs, actorEdit_->path, actorEdit_->name,
+                           actorEdit_->actorFormat)) {
+        savedStateSerial_ = undo_.StateSerial(); // 現在の状態が保存済み基準になる
+        // 配置済みインスタンスへの伝播は ReloadHub (ファイル監視) の既存経路が拾う
+        toasts_.Notify(LogLevel::Info, "アセットを保存しました: " + actorEdit_->name);
+    } else {
+        toasts_.Notify(LogLevel::Error, "アセットを保存できませんでした");
+    }
+}
+
+void EditorApp::CloseActorEdit(EngineContext& ctx)
+{
+    (void)ctx;
+    if (!actorEdit_) {
+        return;
+    }
+    // 未保存分はここで捨てる (保存はツールバーの保存ボタン / Ctrl+S。
+    // dirty なら呼び出し側が確認モーダルを通している)
+    selection_ = std::move(actorEdit_->outerSelection);
+    undo_ = std::move(actorEdit_->outerUndo);
+    savedStateSerial_ = actorEdit_->outerSavedSerial;
+    const std::string name = actorEdit_->name;
+    actorEdit_.reset();
+    MYE_LOG_INFO("[actor] closed '%s' - back to the scene", name.c_str());
 }
 
 void EditorApp::OnImGui(EngineContext& ctx)
 {
+    // ---- ミニシーン編集モード (M48k) ----
+    // 全ウィンドウの描画の間だけ `ctx.scene` をアセットのミニシーンへ差し替える。
+    // Hierarchy / Inspector / SceneView / AssetBrowser の配置は ctx.scene 駆動なので、
+    // これだけで丸ごと「アセットを編集する側」に回る。
+    // ★差し替えるのは**この関数の中だけ**: ScriptHost / ManagedHost / ReloadHub が Init 時に
+    //   捕まえた Scene* と、EngineLoop がローカルに持つ Scene には触れないので tick 経路は無傷
+    Scene* const mainScene = ctx.scene;
+    if (actorEdit_) {
+        ctx.scene = &actorEdit_->scene;
+    }
+
     // レイアウトロードは **どの ImGui::Begin よりも前** に実行する — LoadIniSettingsFromDisk が
     // 既存ウィンドウの DockId を差し替え、同フレームの Begin で新ドックに再バインドされる
     layouts_.ApplyPendingLoad();
@@ -213,8 +319,19 @@ void EditorApp::OnImGui(EngineContext& ctx)
     // サイドバー (メニュー → ツールバー → ステータスバー) が WorkArea を先に確保し、
     // 残りに DockSpace を敷く — この順序を同一フレーム内で守ること (逆順だと 1 フレームちらつく)
     DrawMainMenuBar(ctx);
-    if (toolbar_.OnImGui(ctx, playMode_, selection_, undo_, sceneView_, layouts_)) {
+    ActorEditBar editBar;
+    if (actorEdit_) {
+        editBar.name = actorEdit_->name.c_str();
+        editBar.dirty = IsSceneDirty(); // 入替済みなので「今開いている文書」の dirty
+    }
+    if (toolbar_.OnImGui(ctx, playMode_, selection_, undo_, sceneView_, layouts_, &editBar)) {
         rebuildDockLayout_ = true; // レイアウトの「リセット (既定)」
+    }
+    if (editBar.saveRequested) {
+        SaveActorEdit(ctx);
+    }
+    if (editBar.exitRequested) {
+        RequestGuardedAction(ctx, PendingAction::ExitActorEdit); // dirty なら確認モーダル
     }
     statusBar_.OnImGui(ctx, projectName_, scenePath_, IsSceneDirty(), playMode_.State(),
                        &console_.open);
@@ -239,6 +356,10 @@ void EditorApp::OnImGui(EngineContext& ctx)
     if (std::wstring p = assetBrowser_.TakePendingOpenScene(); !p.empty()) {
         pendingOpenScenePath_ = std::move(p);
         RequestGuardedAction(ctx, PendingAction::OpenSceneAsset);
+    }
+    // 構成アセットのダブルクリック → ミニシーン編集モード (M48k)
+    if (std::wstring p = assetBrowser_.TakePendingOpenActor(); !p.empty()) {
+        OpenActorEdit(ctx, p);
     }
     animation_.OnImGui(ctx, selection_, undo_);
     animatorController_.OnImGui(ctx, selection_);
@@ -283,6 +404,9 @@ void EditorApp::OnImGui(EngineContext& ctx)
         ImGui::End();
     }
 
+    // ---- 以降はアプリのライフサイクル (シーン読み書き / 終了) なので本シーンに戻す ----
+    ctx.scene = mainScene;
+
     // ---- フィードバック層 (M27b): 最前面に描く ----
     if (closeRequested_) {
         closeRequested_ = false;
@@ -300,20 +424,27 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
         return;
     }
     if (ImGui::BeginMenu(Tr(StrId::Menu_File))) {
-        // New/Open/Exit は未保存変更ガード経由 (M27b。dirty なら確認モーダル)
+        // New/Open/Exit は未保存変更ガード経由 (M27b。dirty なら確認モーダル)。
+        // ミニシーン編集中 (M48k) はシーンの入れ替え系を無効化する — 編集モードを
+        // 抜けないままシーンを差し替えると、どちらの文書を編集しているのか破綻する
+        ImGui::BeginDisabled(actorEdit_ != nullptr);
         if (ImGui::MenuItem(Tr(StrId::Menu_NewScene))) {
             RequestGuardedAction(ctx, PendingAction::NewScene);
         }
         if (ImGui::MenuItem(Tr(StrId::Menu_OpenScene))) {
             RequestGuardedAction(ctx, PendingAction::OpenScene);
         }
+        ImGui::EndDisabled();
         ImGui::Separator();
+        // 保存は編集モードでも有効 (SaveCurrentScene がアセット保存へ分岐する)
         if (ImGui::MenuItem(Tr(StrId::Menu_SaveScene), shortcuts_.Label(Shortcut::Save))) {
             SaveCurrentScene(ctx);
         }
+        ImGui::BeginDisabled(actorEdit_ != nullptr);
         if (ImGui::MenuItem(Tr(StrId::Menu_SaveSceneAs))) {
             SaveSceneAs(ctx);
         }
+        ImGui::EndDisabled();
         ImGui::Separator();
         if (ImGui::MenuItem(Tr(StrId::Menu_BuildSettings))) {
             buildSettings_.open = true;
@@ -530,6 +661,12 @@ void EditorApp::HandleShortcuts(EngineContext& ctx)
 
 void EditorApp::SaveCurrentScene(EngineContext& ctx)
 {
+    // ミニシーン編集中は「保存 = アセットの保存」(M48k)。File メニュー / Ctrl+S /
+    // 未保存確認モーダルの「保存」が全部ここを通るので、分岐はこの 1 箇所で足りる
+    if (actorEdit_) {
+        SaveActorEdit(ctx);
+        return;
+    }
     std::filesystem::create_directories(std::filesystem::path(scenePath_).parent_path());
     if (SceneSerializer::SaveToFile(*ctx.scene, scenePath_)) {
         settings_.lastScenePath = WideToUtf8(scenePath_);
@@ -774,6 +911,9 @@ void EditorApp::ExecuteAction(EngineContext& ctx, PendingAction action)
     case PendingAction::Exit:
         ctx.requestExit = true;
         break;
+    case PendingAction::ExitActorEdit:
+        CloseActorEdit(ctx); // M48k
+        break;
     default:
         break;
     }
@@ -793,7 +933,9 @@ void EditorApp::DrawSaveConfirmModal(EngineContext& ctx)
         return;
     }
     ImGui::TextUnformatted(Tr(StrId::Confirm_UnsavedBody));
-    ImGui::TextDisabled("%s", WideToUtf8(scenePath_).c_str());
+    // 編集モード中はアセットのパスを出す (保存されるのはシーンではなくアセットなので)
+    ImGui::TextDisabled("%s",
+                        WideToUtf8(actorEdit_ ? actorEdit_->path : scenePath_).c_str());
     ImGui::Spacing();
     const PendingAction action = pendingAction_;
     if (ImGui::Button(Tr(StrId::Confirm_Save), ImVec2(110, 0))) {

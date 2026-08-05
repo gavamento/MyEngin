@@ -41,7 +41,8 @@ bool ToggleIconButton(const char* icon, bool active, const char* tooltip)
 } // namespace
 
 bool EditorToolbar::OnImGui(EngineContext& ctx, PlayModeController& playMode, Selection& selection,
-                            UndoStack& undo, SceneViewWindow& sceneView, LayoutManager& layouts)
+                            UndoStack& undo, SceneViewWindow& sceneView, LayoutManager& layouts,
+                            ActorEditBar* actorEdit)
 {
     bool resetLayout = false;
     const PlayState state = playMode.State();
@@ -88,7 +89,34 @@ bool EditorToolbar::OnImGui(EngineContext& ctx, PlayModeController& playMode, Se
             ImGui::SetTooltip("%s", Tr(StrId::Tool_TipGizmoSpace));
         }
 
+        // ---- ミニシーン編集モードのパンくず (M48k) ----
+        // 「今どこを編集しているか」と戻り道を常に見せる。Unity の Prefab Mode と同じ役割
+        const bool inActorEdit = (actorEdit != nullptr && actorEdit->name != nullptr);
+        if (inActorEdit) {
+            ImGui::SameLine();
+            ImGui::TextUnformatted("|");
+            ImGui::SameLine();
+            if (ImGui::Button(ICON_FA_ARROW_LEFT)) {
+                actorEdit->exitRequested = true;
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("%s", Tr(StrId::Tool_TipExitActorEdit));
+            }
+            ImGui::SameLine();
+            ImGui::Text(actorEdit->dirty ? "%s *" : "%s", actorEdit->name);
+            ImGui::SameLine();
+            if (ImGui::Button(ICON_FA_FLOPPY_DISK)) {
+                actorEdit->saveRequested = true;
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("%s", Tr(StrId::Tool_TipSaveActor));
+            }
+        }
+
         // ---- 中央: Play / Pause / Step (旧メニューバー中央から移設) ----
+        // 編集モード中は無効化する: Play は Save+Load でシーンを作り直すので、
+        // ミニシーン (= アセットの実体) に走らせると編集内容が壊れる
+        ImGui::BeginDisabled(inActorEdit);
         ImGui::SameLine(ImGui::GetWindowWidth() * 0.5f - 48.0f);
         if (state == PlayState::Editing) {
             if (ImGui::Button(ICON_FA_PLAY)) {
@@ -134,6 +162,7 @@ bool EditorToolbar::OnImGui(EngineContext& ctx, PlayModeController& playMode, Se
                 }
             }
         }
+        ImGui::EndDisabled();
 
         // ---- 右: Render Path + レイアウト (最右端、Unity の Layout ドロップダウン相当) ----
         // M47b: 幅は実測にする。訳文の長さでボタンが見切れないようにするため

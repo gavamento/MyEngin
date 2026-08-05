@@ -70,6 +70,36 @@ const char* IconFor(const std::wstring& ext)
     return "file";
 }
 
+// 構成アセット (.actor.json / .prefab.json) をシーンのルートへ配置する。
+// M48k でダブルクリックが「編集モードで開く」に変わったため、右クリックメニューの
+// 「シーンに配置」から呼ぶ経路として切り出した (挙動は M48b 以降と同一)
+void InstantiateComposeAsset(EngineContext& ctx, Selection& selection, UndoStack& undo,
+                             const std::wstring& path)
+{
+    undo.BeginRecord("Instantiate Prefab", selection); // 生成を 1 Undo エントリに
+    const uint64_t hash = ctx.prefabs->LoadFromFile(path); // 未登録なら登録 (冪等)
+    const uint64_t rootFid =
+        (hash != 0) ? Prefab::Instantiate(*ctx.scene, *ctx.prefabs, hash, 0) : 0;
+    ctx.scene->GetWorld().ApplyStructuralChanges();
+    if (rootFid == 0) {
+        undo.CancelRecord();
+        return;
+    }
+    // 兄弟名の一意化 (M48b)。InstantiateAssetAtPath を通らない独立経路なのでここにも要る。
+    // ルート配置だが exclude = 自分自身が必須
+    if (GameObject r = ctx.scene->FindByFileId(rootFid)) {
+        World& w = ctx.scene->GetWorld();
+        const EntityID re = r.Id();
+        if (auto* nc = w.GetComponent<NameComponent>(re)) {
+            SetEntityName(w, re,
+                          MakeUniqueSiblingName(w, w.GetParent(re), nc->value, /*exclude=*/re));
+        }
+    }
+    selection.SelectOnly(rootFid);
+    undo.CaptureAfter(*ctx.scene, rootFid);
+    undo.EndRecord(selection);
+}
+
 // サムネイル未生成 (または対象外) のタイルに出す文字ラベル
 const char* TileLabel(const std::wstring& ext, const std::wstring& path, bool isCompose,
                       bool isActor, bool isAnim, bool isMat, bool isSound, bool isMixer,
@@ -430,6 +460,13 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
             if (ImGui::MenuItem(Tr(StrId::Asset_RenameItem))) {
                 BeginRename(path);
             }
+            // M48k でダブルクリックが「編集モードで開く」に変わったので、旧来の
+            // 「シーンへ配置」はここに残す (D&D 配置も従来どおり使える)
+            if (isCompose) {
+                if (ImGui::MenuItem(Tr(StrId::Asset_InstantiateItem))) {
+                    InstantiateComposeAsset(ctx, selection, undo, path);
+                }
+            }
             if (IsImageExt(ext)) {
                 if (ImGui::MenuItem(Tr(StrId::Asset_ImportSettings))) {
                     AssetMeta m;
@@ -461,29 +498,9 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
         }
         if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
             if (isCompose) {
-                // シーンへインスタンス化 (ルートに配置)。生成を 1 Undo エントリに
-                undo.BeginRecord("Instantiate Prefab", selection);
-                const uint64_t hash = ctx.prefabs->LoadFromFile(path); // 未登録なら登録 (冪等)
-                const uint64_t rootFid =
-                    (hash != 0) ? Prefab::Instantiate(*ctx.scene, *ctx.prefabs, hash, 0) : 0;
-                ctx.scene->GetWorld().ApplyStructuralChanges();
-                if (rootFid != 0) {
-                    // 兄弟名の一意化 (M48b)。InstantiateAssetAtPath を通らない独立経路なので
-                    // ここにも要る。ルート配置だが exclude = 自分自身が必須
-                    if (GameObject r = ctx.scene->FindByFileId(rootFid)) {
-                        World& w = ctx.scene->GetWorld();
-                        const EntityID re = r.Id();
-                        if (auto* nc = w.GetComponent<NameComponent>(re)) {
-                            SetEntityName(w, re, MakeUniqueSiblingName(w, w.GetParent(re), nc->value,
-                                                                       /*exclude=*/re));
-                        }
-                    }
-                    selection.SelectOnly(rootFid);
-                    undo.CaptureAfter(*ctx.scene, rootFid);
-                    undo.EndRecord(selection);
-                } else {
-                    undo.CancelRecord();
-                }
+                // M48k: ダブルクリックは **アセットをミニシーンで開く** (Unity の Prefab Mode)。
+                // シーンへの配置は D&D と右クリックメニューに残してある
+                pendingOpenActor_ = path;
             } else if (isAnim) {
                 // 選択エンティティに Animator を付けてこのクリップを割り当てる
                 const uint64_t hash = ctx.anims->LoadFromFile(path);

@@ -1244,5 +1244,50 @@ void RefreshNonOverridden(Scene& scene, const PrefabLibrary& lib)
     }
 }
 
+// ---- ミニシーン編集モード (M48k) ----
+
+json MakeEditDocument(const PrefabAsset& asset)
+{
+    json doc;
+    doc["engine"] = "MyEngine";
+    doc["version"] = 2;
+    doc["sceneName"] = asset.name;
+    // ★ここが要点: LoadFromJson は nextFileId 既定を 1 にするので、そのままだと
+    //   編集中に追加したエンティティが既存の localId (1..N) と衝突し、配置済み
+    //   インスタンスの PrefabLink が別メンバを指すようになる
+    uint64_t maxFid = 0;
+    if (asset.entities.is_array()) {
+        for (const json& item : asset.entities) {
+            maxFid = std::max(maxFid, item.value("fileId", 0ull));
+        }
+    }
+    doc["nextFileId"] = maxFid + 1;
+    doc["entities"] = asset.entities.is_array() ? asset.entities : json::array();
+    return doc;
+}
+
+bool SaveEdited(Scene& miniScene, PrefabLibrary& lib, const std::wstring& path,
+                const std::string& name, bool actorFormat)
+{
+    const json doc = SceneSerializer::SaveToJson(miniScene);
+    if (!doc.contains("entities") || !doc["entities"].is_array()) {
+        return false;
+    }
+    const json& entities = doc["entities"];
+    if (entities.empty()) {
+        MYE_LOG_WARN("[prefab] refusing to save an empty asset: %s", WideToUtf8(path).c_str());
+        return false; // 空で上書きすると配置済みインスタンスのベースが消える
+    }
+    if (!WritePrefabFile(path, name, entities, actorFormat)) {
+        MYE_LOG_ERROR("[prefab] could not write %s", WideToUtf8(path).c_str());
+        return false;
+    }
+    // ライブラリも即更新する (ファイル監視が拾う前に Inspector 等が古いベースを見ないように)。
+    // 配置済みインスタンスへの伝播は ReloadHub の既存経路に任せる
+    const uint64_t hash = lib.Register(path, name, entities);
+    lib.SetActorFormat(hash, actorFormat);
+    return hash != 0;
+}
+
 } // namespace Prefab
 } // namespace mye

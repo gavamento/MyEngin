@@ -182,5 +182,24 @@ void RecordOverridesSubtree(Scene& scene, const PrefabLibrary& lib, EntityID roo
 // 依存する純関数 = 決定論的。Play/Stop の LoadFromJson では**呼ばない** (往復で値が動かない)
 void RefreshNonOverridden(Scene& scene, const PrefabLibrary& lib);
 
+// ---- ミニシーン編集モード (M48k) ----
+//
+// アセットそのものを専用の Scene に展開して編集し、書き戻す経路。M13 で見送った
+// 「分離ステージのプレハブ編集」の回収で、Unity の Prefab Mode に相当する。
+//
+// ★localId (= ミニシーンの fileId) は開いても保存しても**振り直さない**。
+//   配置済みインスタンスの `PrefabLink.localId` がこの番号でベースを指しているので、
+//   振り直すと全インスタンスの上書き・伝播が別メンバに掛かる (静かなデータ破壊)
+
+// アセットの entities を LoadFromJson へ渡せるシーン文書に仕立てる。
+// 要点は **nextFileId = max(fileId)+1**: 既定の 1 のままだと編集中に足した
+// エンティティが既存 localId と衝突する
+nlohmann::json MakeEditDocument(const PrefabAsset& asset);
+
+// ミニシーンの現在内容をアセットへ書き戻し、ライブラリにも登録し直す。
+// 配置済みインスタンスへの伝播は ReloadHub (ファイル監視) が拾う既存経路に任せる
+bool SaveEdited(Scene& miniScene, PrefabLibrary& lib, const std::wstring& path,
+                const std::string& name, bool actorFormat);
+
 } // namespace Prefab
 } // namespace mye

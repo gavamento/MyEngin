@@ -427,6 +427,23 @@ The editor ships in **Japanese by default** and can be switched to English at ru
 - Import assets asynchronously while the editor is running and generate intermediate-format caches under `cache/`
 - glTF is recommended because it avoids FBX SDK licensing and redistribution issues, while a custom parser can also demonstrate technical ability
 
+### 10.1 Compose assets (`.actor.json`) — prefab 2.0
+
+Implemented as an **extension of the M13 prefab**, not a parallel system; `.prefab.json` is read as
+the subset with a single root, no parts and no override list. See
+[ADR-011](docs/adr/ADR-011-compose-assets.md) for the reasoning and the v1 limits.
+
+| Concept | Where it lives |
+|---|---|
+| Asset | `.actor.json` (`"actor": 1`) / `.prefab.json` (`"prefab": 1`), flat expanded subtree with local `fileId` |
+| Identity | 64-bit path hash + `.meta` GUID (no UUIDs) |
+| Placement | Expanded values **plus** a saved `"overrides"` key; non-overridden fields are refreshed from the base once at load |
+| Part (socket) | `PartComponent { tag, joint, source }` on a child entity — no special syntax |
+| Part lookup | `FindPart(root, "Hips/HandR")` / `FindPartsByTag(root, tag)` (ABI v9); attaching reuses `SetParent` |
+| Bone following | `PartFollowSystem`, inserted after skinning and before physics/transform in the fixed tick |
+| Schema components | `assets/schemas/*.component.schema.json` registered at startup, **after built-ins and before script types** |
+| Asset editing | Mini-scene edit mode: the asset is expanded into a private `Scene`; only `EditorApp::OnImGui`/`OnRenderViews` swap `ctx.scene`, so the tick path is untouched |
+
 ---
 
 ## 11. Debug/Release Consistency Policy
@@ -498,7 +515,8 @@ The full records live in [`docs/adr/`](docs/adr/), one file per decision:
 ADR-001 hybrid ECS / ADR-002 DLL-only hot reload / ADR-003 engine-side script state /
 ADR-004 replay consistency / ADR-005 fixed tick, per-tick structural changes /
 ADR-006 build system / ADR-007 dual render path / ADR-008 particle determinism /
-ADR-009 hybrid path tracing (§6.4) / **ADR-010 editor localization** (§9.1).
+ADR-009 hybrid path tracing (§6.4) / ADR-010 editor localization (§9.1) /
+**ADR-011 compose assets (`.actor.json` = prefab 2.0)** (§10).
 
 ---
 

@@ -1469,6 +1469,84 @@ bool RunSceneSerializerSelfTest()
               "animator advanced the transform");
     }
 
+    // ---- ミニシーン編集モード (M48k) ----
+    // 「アセットを専用 Scene に展開して編集し、書き戻す」経路の往復不変条件を固定する。
+    // ここが崩れると、配置済みインスタンスの PrefabLink.localId が別メンバを指す
+    {
+        Scene s;
+        PrefabLibrary lib;
+        GameObject root = s.CreateGameObjectTracked("Rig");
+        GameObject arm = s.CreateGameObjectTracked("Arm");
+        GameObject hand = s.CreateGameObjectTracked("Hand");
+        arm.SetParent(root);
+        hand.SetParent(arm);
+        s.GetWorld().ApplyStructuralChanges();
+        arm.GetComponent<LocalTransform>()->position = { 1.0f, 2.0f, 3.0f };
+
+        const std::wstring path =
+            (std::filesystem::temp_directory_path() / L"mye_selftest_edit.actor.json").wstring();
+        const uint64_t hash = Prefab::CreateAsset(s, lib, path, root.Id());
+        check(hash != 0, "actor-edit: create the asset to edit");
+        const nlohmann::json base = lib.Get(hash)->entities; // 編集前のベース
+
+        // ---- 展開 ----
+        Scene mini;
+        const nlohmann::json doc = Prefab::MakeEditDocument(*lib.Get(hash));
+        check(SceneSerializer::LoadFromJson(mini, doc), "actor-edit: the asset expands into a scene");
+        mini.GetWorld().ApplyStructuralChanges();
+        uint64_t maxLocal = 0;
+        for (const nlohmann::json& it : base) {
+            maxLocal = std::max(maxLocal, it.value("fileId", 0ull));
+        }
+        check(doc.value("nextFileId", 0ull) == maxLocal + 1,
+              "actor-edit: nextFileId starts past the highest localId (new entities cannot collide)");
+        GameObject miniHand = mini.Find("Hand");
+        check(mini.Find("Rig") && mini.Find("Arm") && miniHand,
+              "actor-edit: every member is present in the mini scene");
+
+        // ---- 無変更で保存 → ベースがビット単位で同じ (往復不変) ----
+        check(Prefab::SaveEdited(mini, lib, path, "Rig", /*actorFormat=*/true),
+              "actor-edit: saving an untouched mini scene succeeds");
+        check(lib.Get(hash)->entities == base,
+              "actor-edit: an untouched round trip reproduces the base exactly");
+
+        // ---- 編集して保存 → 値が入り、localId は据え置き ----
+        miniHand.GetComponent<LocalTransform>()->position = { 9.0f, 0.0f, 0.0f };
+        const uint64_t handLocal = mini.EnsureFileId(miniHand.Id());
+        GameObject added = mini.CreateGameObjectTracked("Extra");
+        added.SetParent(mini.Find("Rig"));
+        mini.GetWorld().ApplyStructuralChanges();
+        const uint64_t addedLocal = mini.EnsureFileId(added.Id());
+        check(addedLocal > maxLocal,
+              "actor-edit: an entity added while editing gets a fresh localId");
+        check(Prefab::SaveEdited(mini, lib, path, "Rig", true), "actor-edit: save the edit");
+        {
+            const nlohmann::json& saved = lib.Get(hash)->entities;
+            bool handOk = false;
+            bool extraOk = false;
+            for (const nlohmann::json& it : saved) {
+                if (it.value("fileId", 0ull) == handLocal) {
+                    handOk = it["components"]["LocalTransform"]["position"][0].get<float>() == 9.0f;
+                }
+                if (it.value("fileId", 0ull) == addedLocal) {
+                    extraOk = it.value("name", std::string()) == "Extra";
+                }
+            }
+            check(handOk, "actor-edit: the edit lands on the member that kept its localId");
+            check(extraOk, "actor-edit: the added entity is written with its new localId");
+            check(saved.size() == base.size() + 1, "actor-edit: exactly one member was added");
+        }
+
+        // ---- 空保存の拒否 (配置済みインスタンスのベースを消させない) ----
+        Scene empty;
+        check(!Prefab::SaveEdited(empty, lib, path, "Rig", true),
+              "actor-edit: saving an empty mini scene is refused");
+        check(lib.Get(hash)->entities.size() == base.size() + 1,
+              "actor-edit: the refused save left the asset untouched");
+        std::error_code ec;
+        std::filesystem::remove(path, ec);
+    }
+
     if (failCount == 0) {
         MYE_LOG_INFO("==== Scene serializer self test: ALL PASS ====");
         return true;
