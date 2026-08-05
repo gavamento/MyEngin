@@ -1,0 +1,82 @@
+{
+  "engine": "MyEngine",
+  "actor": 1,
+  "name": "部位サンプル",
+  "entities": [
+    {
+      "fileId": 1,
+      "name": "部位サンプル",
+      "childIndex": 0,
+      "components": {
+        "LocalTransform": {
+          "position": [0.0, 0.0, 0.0],
+          "rotation": [0.0, 0.0, 0.0, 1.0],
+          "scale": [1.0, 1.0, 1.0]
+        }
+      }
+    },
+    {
+      "fileId": 2,
+      "name": "胴体",
+      "parent": 1,
+      "childIndex": 0,
+      "components": {
+        "LocalTransform": {
+          "position": [0.0, 1.0, 0.0],
+          "rotation": [0.0, 0.0, 0.0, 1.0],
+          "scale": [1.0, 2.0, 1.0]
+        },
+        "MeshRenderer": {
+          "mesh": 1506918697593860217,
+          "material": 15562885196676570302
+        }
+      }
+    },
+    {
+      "fileId": 3,
+      "name": "弱点",
+      "parent": 1,
+      "childIndex": 1,
+      "components": {
+        "LocalTransform": {
+          "position": [0.0, 1.6, 0.0],
+          "rotation": [0.0, 0.0, 0.0, 1.0],
+          "scale": [1.0, 1.0, 1.0]
+        },
+        "Part": {
+          "tag": 12257164524424906917,
+          "joint": "",
+          "source": 0
+        },
+        "PartBounds": {
+          "shape": 0,
+          "center": [0.0, 0.0, 0.0],
+          "halfExtents": [0.55, 0.45, 0.55]
+        }
+      }
+    },
+    {
+      "fileId": 4,
+      "name": "頭",
+      "parent": 1,
+      "childIndex": 2,
+      "components": {
+        "LocalTransform": {
+          "position": [0.0, 2.3, 0.0],
+          "rotation": [0.0, 0.0, 0.0, 1.0],
+          "scale": [1.0, 1.0, 1.0]
+        },
+        "Part": {
+          "tag": 3826955603419909347,
+          "joint": "",
+          "source": 0
+        },
+        "PartBounds": {
+          "shape": 1,
+          "center": [0.0, 0.0, 0.0],
+          "halfExtents": [0.35, 0.35, 0.35]
+        }
+      }
+    }
+  ]
+}

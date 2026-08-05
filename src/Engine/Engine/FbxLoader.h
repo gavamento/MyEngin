@@ -24,7 +24,14 @@ namespace FbxLoader {
 GameObject Load(Scene& scene, RenderResources& resources, ShaderManager& shaders,
                 const std::wstring& path);
 
-// ホットリロード: エンティティは触らず、メッシュ / マテリアルを同じ AssetID のまま再構築する
+// M50a: 一括ヘッドレス登録 — メッシュ / マテリアル / スキン / クリップをエンティティを
+// 作らずに `Load` とバイト同一のキーで登録する (詳細は ModelLoader::RegisterAssets と同じ)。
+// logErrors=false は起動全走査用 (壊れたファイルでも黙って諦める)
+bool RegisterAssets(RenderResources& resources, ShaderManager& shaders, const std::wstring& path,
+                    bool logErrors);
+
+// ホットリロード: エンティティは触らず、メッシュ / マテリアルを同じ AssetID のまま再構築する。
+// 実体は RegisterAssets + リロードログ
 bool ReloadMeshes(RenderResources& resources, ShaderManager& shaders, const std::wstring& path);
 
 // M48g: スケルトン (SkinnedModel) だけを**エンティティも GPU バッファも作らずに**登録する。

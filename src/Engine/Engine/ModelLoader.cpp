@@ -396,7 +396,8 @@ GameObject Load(Scene& scene, RenderResources& resources, ShaderManager& shaders
     return root;
 }
 
-bool ReloadMeshes(RenderResources& resources, ShaderManager& shaders, const std::wstring& path)
+bool RegisterAssets(RenderResources& resources, ShaderManager& shaders, const std::wstring& path,
+                    bool logErrors)
 {
     const std::string utf8 = WideToUtf8(path);
 
@@ -404,7 +405,9 @@ bool ReloadMeshes(RenderResources& resources, ShaderManager& shaders, const std:
     cgltf_data* data = nullptr;
     if (cgltf_parse_file(&options, utf8.c_str(), &data) != cgltf_result_success
         || cgltf_load_buffers(&options, data, utf8.c_str()) != cgltf_result_success) {
-        MYE_LOG_ERROR("[reload] glTF reload parse failed: %s", utf8.c_str());
+        if (logErrors) {
+            MYE_LOG_ERROR("[reload] glTF reload parse failed: %s", utf8.c_str());
+        }
         if (data) {
             cgltf_free(data);
         }
@@ -433,8 +436,21 @@ bool ReloadMeshes(RenderResources& resources, ShaderManager& shaders, const std:
             LoadMaterial(lc, prim->material, matKey);
         }
     }
-    MYE_LOG_INFO("[reload] glTF meshes reloaded: %s", utf8.c_str());
+    // M50a: スキンも同じキーで登録 (RegisterSkinnedModels と同一ループ) — これで
+    // Load が作る AssetID 全種 (mesh / material / skin) がヘッドレスで揃う
+    for (cgltf_size i = 0; i < data->skins_count; ++i) {
+        LoadSkin(lc, data, &data->skins[i], static_cast<size_t>(i));
+    }
     cgltf_free(data);
+    return true;
+}
+
+bool ReloadMeshes(RenderResources& resources, ShaderManager& shaders, const std::wstring& path)
+{
+    if (!RegisterAssets(resources, shaders, path, /*logErrors=*/true)) {
+        return false;
+    }
+    MYE_LOG_INFO("[reload] glTF meshes reloaded: %s", WideToUtf8(path).c_str());
     return true;
 }
 

@@ -371,6 +371,14 @@ bool RunPartSelfTest()
         check(registered == 1 && registeredFbx == 1,
               "follow: RegisterSkinnedModels registers glTF and FBX skeletons headlessly");
 
+        // (0b) M50a: 一括登録 (起動走査の実体) はメッシュ / マテリアルまで揃えること。
+        // スケルトンだけだと保存済みシーン経由のロードでモデルが描画されない
+        // (M48i 申し送りの穴)。照合はスキン同様、Load とは別ライブラリに対して行う
+        RenderResources headlessFull;
+        check(ModelLoader::RegisterAssets(headlessFull, shaders, modelPath, false)
+                  && FbxLoader::RegisterAssets(headlessFull, shaders, fbxPath, false),
+              "assets: RegisterAssets registers glTF and FBX headlessly");
+
         GameObject root = ModelLoader::Load(fs, resources, shaders, modelPath);
         World& fw = fs.GetWorld();
         fw.ApplyStructuralChanges();
@@ -392,6 +400,15 @@ bool RunPartSelfTest()
         auto* sm = skinned.IsNull() ? nullptr : fw.GetComponent<SkinnedMeshComponent>(skinned);
         check(sm && headless.skinnedModels.Get(sm->model) != nullptr,
               "follow: the AssetID a saved scene holds resolves against a headless-only library");
+        // M50a: 同じエンティティの MeshRenderer が持つ mesh / material も一括登録側で
+        // 解決できること (= 保存済みシーンからモデルが「描画」される条件そのもの)
+        {
+            auto* mrr = skinned.IsNull() ? nullptr : fw.GetComponent<MeshRendererComponent>(skinned);
+            check(mrr && headlessFull.meshes.Get(mrr->mesh) != nullptr
+                      && headlessFull.materials.Get(mrr->material) != nullptr
+                      && sm && headlessFull.skinnedModels.Get(sm->model) != nullptr,
+                  "assets: mesh/material/skin AssetIDs a saved scene holds resolve headlessly");
+        }
         {
             // FBX 側も同じ照合をする (キーが element_id 由来でノード走査と組み方が違うため)
             Scene fbxScene;
@@ -410,6 +427,25 @@ bool RunPartSelfTest()
             });
             check(!fbxModel.IsNull() && headless.skinnedModels.Get(fbxModel) != nullptr,
                   "follow: the FBX headless key matches FbxLoader::Load as well");
+            // M50a: FBX 側も mesh / material キーの一致を照合する (組み方がノード走査で
+            // glTF と違うため、キーずれの検知は両ローダで独立に必要)
+            AssetID fbxMesh{};
+            AssetID fbxMat{};
+            const ComponentTypeId mreq[] = { MeshRendererComponent::sTypeId };
+            fbxScene.GetWorld().ForEachArchetype(mreq, [&](Archetype& arch) {
+                const int mi = arch.FindTypeIndex(MeshRendererComponent::sTypeId);
+                for (uint32_t row = 0; row < arch.Count(); ++row) {
+                    if (fbxMesh.IsNull()) {
+                        const auto* mr =
+                            static_cast<const MeshRendererComponent*>(arch.GetPtr(mi, row));
+                        fbxMesh = mr->mesh;
+                        fbxMat = mr->material;
+                    }
+                }
+            });
+            check(!fbxMesh.IsNull() && headlessFull.meshes.Get(fbxMesh) != nullptr
+                      && headlessFull.materials.Get(fbxMat) != nullptr,
+                  "assets: FBX mesh/material AssetIDs resolve against the bulk registration");
         }
 
         if (sm) {

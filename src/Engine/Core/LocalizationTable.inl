@@ -302,6 +302,8 @@ MYE_STR(Insp_PartNoSkin,      "no skinned mesh source — put the part under a s
                               "'骨の供給元' を指定してください (入力したジョイント名はそのまま保持されます)")
 MYE_STR(Insp_PartNotChild,    "a bone-following part must be a direct child of its skinned mesh",
                               "ボーン追従の部位は、スキンメッシュの直子である必要があります")
+MYE_STR(Insp_BoundsNoPart,    "no Part component — RaycastParts ignores bounds without one",
+                              "部位コンポーネントがありません — 範囲だけでは RaycastParts の対象になりません")
 // マテリアルインスペクタのスライダ (リフレクション由来ではなく手書きラベル)
 MYE_STR(Mat_Emissive,         "emissive",                   "自己発光")
 MYE_STR(Mat_Metallic,         "metallic",                   "メタリック")

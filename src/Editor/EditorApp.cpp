@@ -89,12 +89,11 @@ void EditorApp::OnStart(EngineContext& ctx)
     // (パスベースの完全なアセット解決は AssetManager の将来拡張)
     RegisterDemoContent(ctx);
     RegisterAssetLibraries(ctx); // シーンロード前に .prefab/.anim を登録 (参照解決のため)
-    if (rtShowcase) {
-        RegisterRtShowcaseContent(ctx); // 保存済みショーケースをロードする経路でも実体を揃える
-    }
-    if (partsShowcase) {
-        RegisterPartsShowcaseContent(ctx); // 同上 (M48g)
-    }
+    // ショーケース材質は無条件で登録する (M50a)。名前キーの少数登録で冪等・非ハッシュなので
+    // 常時登録が安全 — フラグゲートだと保存済みショーケースを --scene で直接開いたときに
+    // 材質が解決されず、キューブ群が描画されない
+    RegisterRtShowcaseContent(ctx);
+    RegisterPartsShowcaseContent(ctx);
     undo_.SetPrefabLibrary(ctx.prefabs); // 編集直後の override リスト記録 (M48e)
     if (std::filesystem::exists(scenePath_)) {
         SceneSerializer::LoadFromFile(*ctx.scene, scenePath_);

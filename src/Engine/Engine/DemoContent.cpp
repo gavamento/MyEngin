@@ -57,10 +57,8 @@ void RegisterDemoContent(EngineContext& ctx)
     makeMat("mat_green", 0.35f, 0.75f, 0.40f);
     makeMat("mat_blue", 0.30f, 0.50f, 0.85f);
     makeMat("mat_yellow", 0.90f, 0.80f, 0.30f);
-
-    // glTF のメッシュ/マテリアル/テクスチャを登録 (エンティティは作らない)。
-    // 保存済みシーンをロードする場合でも AssetID の実体が揃うようにする
-    ModelLoader::ReloadMeshes(res, *ctx.shaders, ctx.assetsRoot + L"\\models\\BoxTextured.glb");
+    // BoxTextured.glb の単発登録は M50a で削除 — RegisterAssetLibraries の起動走査が
+    // 全モデルを RegisterAssets でヘッドレス登録するようになった (呼び出し側は常に対)
 }
 
 void BuildDemoScene(EngineContext& ctx, float perfRate, int perfMax)
@@ -479,17 +477,17 @@ void RegisterAssetLibraries(EngineContext& ctx)
             // 全部読み終えてからでないと判定できない (M45f)
             if (ext == L".wav" || ext == L".ogg") {
                 audioFiles.push_back(p);
-            } else if (ctx.resources != nullptr
+            } else if (ctx.resources != nullptr && ctx.shaders != nullptr
                        && (ext == L".glb" || ext == L".gltf" || ext == L".fbx")) {
-                // M48g: **スケルトンだけ**を登録する (エンティティも GPU バッファも作らない)。
-                // 保存済みシーンをロードする経路は ModelLoader::Load を通らないため、
-                // SkinnedMesh.model の AssetID が誰にも登録されずポーズ評価が丸ごと
-                // 落ちていた (骨追従も描画のボーンパレットも)。Editor / Runtime 共通の穴
-                const size_t n = (ext == L".fbx") ? FbxLoader::RegisterSkinnedModels(*ctx.resources, p)
-                                                  : ModelLoader::RegisterSkinnedModels(*ctx.resources, p);
-                if (n > 0) {
-                    MYE_LOG_INFO("[assets] %zu skinned model(s) registered: %s", n,
-                                 WideToUtf8(p).c_str());
+                // M50a: メッシュ / マテリアル / スキンを丸ごとヘッドレス登録する。
+                // M48g はスケルトンだけだったため、保存済みシーンをロードする経路
+                // (ModelLoader::Load を通らない) では MeshRenderer.mesh / .material の
+                // 実体が誰にも登録されず、モデルが描画されなかった。Editor / Runtime 共通
+                const bool ok = (ext == L".fbx")
+                    ? FbxLoader::RegisterAssets(*ctx.resources, *ctx.shaders, p, false)
+                    : ModelLoader::RegisterAssets(*ctx.resources, *ctx.shaders, p, false);
+                if (ok) {
+                    MYE_LOG_INFO("[assets] model assets registered: %s", WideToUtf8(p).c_str());
                 }
             }
         }

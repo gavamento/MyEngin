@@ -803,15 +803,18 @@ GameObject Load(Scene& scene, RenderResources& resources, ShaderManager& shaders
     return root;
 }
 
-bool ReloadMeshes(RenderResources& resources, ShaderManager& shaders, const std::wstring& path)
+bool RegisterAssets(RenderResources& resources, ShaderManager& shaders, const std::wstring& path,
+                    bool logErrors)
 {
     const std::string utf8 = WideToUtf8(path);
     const ufbx_load_opts opts = MakeOpts();
     ufbx_error error;
     ufbx_scene* fbx = ufbx_load_file(utf8.c_str(), &opts, &error);
     if (!fbx) {
-        MYE_LOG_ERROR("[reload] FBX reload failed: %s (%s)", utf8.c_str(),
-                      StrOf(error.description).c_str());
+        if (logErrors) {
+            MYE_LOG_ERROR("[reload] FBX reload failed: %s (%s)", utf8.c_str(),
+                          StrOf(error.description).c_str());
+        }
         return false;
     }
 
@@ -829,8 +832,16 @@ bool ReloadMeshes(RenderResources& resources, ShaderManager& shaders, const std:
             LoadMeshInto(lc, node, GameObject{});
         }
     }
-    MYE_LOG_INFO("[reload] FBX meshes reloaded: %s", utf8.c_str());
     ufbx_free_scene(fbx);
+    return true;
+}
+
+bool ReloadMeshes(RenderResources& resources, ShaderManager& shaders, const std::wstring& path)
+{
+    if (!RegisterAssets(resources, shaders, path, /*logErrors=*/true)) {
+        return false;
+    }
+    MYE_LOG_INFO("[reload] FBX meshes reloaded: %s", WideToUtf8(path).c_str());
     return true;
 }
 

@@ -556,6 +556,12 @@ void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
                     }
                 }
             }
+            // M50a: PartBounds 単独 (Part 無し) は RaycastParts の収集
+            // ({Part, PartBounds, WorldMatrix} の同居アーキタイプ) から黙って外れるため警告
+            if (std::strcmp(desc.name, "PartBounds") == 0
+                && world.GetComponent<PartComponent>(e) == nullptr) {
+                ImGui::TextDisabled("%s", Tr(StrId::Insp_BoundsNoPart));
+            }
         }
         ImGui::PopID();
     }

@@ -57,9 +57,11 @@ public:
                 scenePath = mye::ProjectBootScenePath(ctx.projectRoot, manifest);
             }
         }
-        if (rtShowcase) {
-            mye::RegisterRtShowcaseContent(ctx); // ロード経路でも AssetID を解決できるように
-        }
+        // ショーケース材質は無条件で登録する (M50a)。--scene で保存済みショーケースを
+        // 直接開く経路 (replay_verify の Runtime 側 parts 検証もこれ) でも実体が揃う。
+        // Runtime には --parts-demo が無いので、ゲートしたままだと parts 材質は常に欠落する
+        mye::RegisterRtShowcaseContent(ctx);
+        mye::RegisterPartsShowcaseContent(ctx);
         if (std::filesystem::exists(scenePath)) {
             mye::SceneSerializer::LoadFromFile(*ctx.scene, scenePath);
             // Editor と同じ「ロード直後 1 回」(M48e)。ここを揃えないと Editor で録った .rep と
