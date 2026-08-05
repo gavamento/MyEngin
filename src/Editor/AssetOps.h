@@ -27,6 +27,10 @@ std::wstring CreateSoundAsset(EngineContext& ctx, const std::wstring& dir,
                               const std::string& name);                            // .sound.json
 std::wstring CreateMixerAsset(EngineContext& ctx, const std::wstring& dir,
                               const std::string& name);                            // .mixer.json
+// .actor.json (M48d)。ルート 1 個だけの最小構成アセット。**新規作成は常に .actor.json** —
+// 既存 .prefab.json は読み書きとも据え置き (強制移行しない)
+std::wstring CreateActorAsset(EngineContext& ctx, const std::wstring& dir,
+                              const std::string& name);                            // .actor.json
 // <root>\src\GameLogic\Scripts\<name>.cpp。root はプロジェクト起動なら <project>、
 // レガシー起動ならエンジンリポジトリ
 std::wstring CreateCppScript(EngineContext& ctx, const std::string& name);

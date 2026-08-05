@@ -63,6 +63,9 @@ AssetType AssetDatabase::ClassifyPath(const std::wstring& path)
 {
     const std::string s = LowerUtf8(path);
     // 複合サフィックス (.xxx.json) を単一拡張子より先に判定する
+    if (EndsWith(s, ".actor.json")) {
+        return AssetType::Actor;
+    }
     if (EndsWith(s, ".prefab.json")) {
         return AssetType::Prefab;
     }
@@ -110,6 +113,7 @@ const char* AssetDatabase::TypeName(AssetType t)
     case AssetType::Model: return "model";
     case AssetType::Material: return "material";
     case AssetType::Prefab: return "prefab";
+    case AssetType::Actor: return "actor";
     case AssetType::Anim: return "anim";
     case AssetType::Controller: return "controller";
     case AssetType::Scene: return "scene";
@@ -129,6 +133,7 @@ AssetType AssetDatabase::ParseTypeName(const std::string& s)
     if (s == "model") return AssetType::Model;
     if (s == "material") return AssetType::Material;
     if (s == "prefab") return AssetType::Prefab;
+    if (s == "actor") return AssetType::Actor;
     if (s == "anim") return AssetType::Anim;
     if (s == "controller") return AssetType::Controller;
     if (s == "scene") return AssetType::Scene;

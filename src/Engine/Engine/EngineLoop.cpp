@@ -578,9 +578,8 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             if (!effectQueue.empty()) {
                 for (const EffectSpawnRequest& req : effectQueue) {
                     std::wstring full = Utf8ToWide(req.prefabKey);
-                    if (full.size() < 12
-                        || full.compare(full.size() - 12, 12, L".prefab.json") != 0) {
-                        full += L".prefab.json";
+                    if (!PrefabLibrary::IsComposePath(full)) {
+                        full += PrefabLibrary::kPrefabSuffix; // 既定は従来どおり (既存キー互換)
                     }
                     if (full.find(L':') == std::wstring::npos) {
                         full = assetsRoot + L"\\" + full; // assets ルート相対を絶対化

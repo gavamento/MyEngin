@@ -13,13 +13,20 @@ class Scene;
 class World;
 struct FieldDesc;
 
-// プレハブアセット (M13)。.prefab.json = シーンと同形式のサブツリー + ローカル fileId (root=1)。
-// エディタとランタイム (M15) の両方から使うため Engine 層に置く (Editor 層ではない)
+// 構成アセット (M13 プレハブ → M48d で .actor.json に拡張)。
+// シーンと同形式のフラット展開サブツリー + ローカル fileId (単一ルートなら root=1)。
+// エディタとランタイム (M15) の両方から使うため Engine 層に置く (Editor 層ではない)。
+//
+// **.prefab.json は .actor.json の部分集合** (単一ルート・部位なし・overrides なし) として
+// 読み込み互換。上書き機構・ライブラリ・タグはすべて共通で、違いは宣言キーと拡張子だけ
 struct PrefabAsset {
     uint64_t hash = 0;       // パスハッシュ (PrefabLibrary キー = PrefabInstanceComponent.prefabHash)
     std::string name;        // 表示名 (拡張子なしファイル名)
     std::wstring path;       // 絶対パス
     nlohmann::json entities; // ローカルエンティティ配列 (SubtreeToJson 形式、fileId はローカル)
+    // 宣言キー: true = "actor":1 / false = "prefab":1。**書き戻しで維持する** —
+    // 既存 .prefab.json を勝手に新形式へ移行させない (強制移行はユーザーの diff を汚す)
+    bool actorFormat = false;
 };
 
 // 列挙 1 件 (Asset Browser / インスタンス化 UI 用)
@@ -32,13 +39,27 @@ struct PrefabEntry {
 // 登録済みプレハブの管理 (Mesh/Material ライブラリと同じ役割の Engine 層アセット)
 class PrefabLibrary {
 public:
+    // 新規作成の既定拡張子 (M48d)。既存 .prefab.json は読み書きとも据え置き
+    static constexpr const wchar_t* kActorSuffix = L".actor.json";
+    static constexpr const wchar_t* kPrefabSuffix = L".prefab.json";
+
+    // path が構成アセット (.actor.json / .prefab.json) か。大文字小文字は無視する。
+    // **suffix 判定はここ 1 箇所に集約する** — 種別が増えるたびに各所へ書き足すと必ず漏れる
+    // (登録は通るがホットリロードだけ効かない、といった片肺の壊れ方をする)
+    static bool IsComposePath(const std::wstring& path);
+
     // パスからハッシュを計算 (正規化パスのハッシュ)。ロード有無に関わらず同じ値
     static uint64_t HashForPath(const std::wstring& path);
 
     // ファイルを読み込み登録する (既存は置き換え)。失敗時 0。返り値 = hash
     uint64_t LoadFromFile(const std::wstring& path);
-    // メモリ上の entities を登録/更新する (Create Prefab / Apply 用)。返り値 = hash
+    // メモリ上の entities を登録/更新する (Create / Apply 用)。返り値 = hash。
+    // actorFormat は拡張子から推定される — ファイル由来の宣言キーを保つ場合は
+    // 続けて SetActorFormat を呼ぶこと (LoadFromFile / ApplyInstance がそうしている)
     uint64_t Register(const std::wstring& path, std::string name, nlohmann::json entities);
+
+    // 登録済みアセットの宣言キーを設定する (書き戻し時に維持するため)
+    void SetActorFormat(uint64_t hash, bool actorFormat);
 
     const PrefabAsset* Get(uint64_t hash) const;
     bool Contains(uint64_t hash) const { return assets_.find(hash) != assets_.end(); }
@@ -77,9 +98,12 @@ uint64_t CreateAsset(Scene& scene, PrefabLibrary& lib, const std::wstring& path,
 // localEntities (ExtractLocal 形式) をシーンへインスタンス化する低レベル版。
 // parentFileId!=0 ならルートをその子に。返り値 = 生成したルートの新 fileId (失敗時 0)。
 // forcedRootFileId!=0 ならルートに新規採番せずその ID を使う (v7 Instantiate の予約方式 —
-// 呼出側が Scene::NextFileId() で確保済みであること。M37)
+// 呼出側が Scene::NextFileId() で確保済みであること。M37)。
+// **複数ルート (ミニシーン型 .actor.json) は wrapperName のグループで包む** (M48d)。
+// ラッパーは `PrefabLink.localId = 0` = ベース対応物なしで、diff/Revert/伝播から外れる
 uint64_t InstantiateEntities(Scene& scene, const nlohmann::json& localEntities, uint64_t prefabHash,
-                             uint64_t parentFileId = 0, uint64_t forcedRootFileId = 0);
+                             uint64_t parentFileId = 0, uint64_t forcedRootFileId = 0,
+                             const char* wrapperName = nullptr);
 
 // prefabHash のプレハブをシーンへインスタンス化する。返り値 = 新ルート fileId (失敗時 0)
 uint64_t Instantiate(Scene& scene, const PrefabLibrary& lib, uint64_t prefabHash,

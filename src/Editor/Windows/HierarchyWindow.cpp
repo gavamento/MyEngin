@@ -49,7 +49,10 @@ void CreatePrefabFromEntity(EngineContext& ctx, Selection& selection, UndoStack&
     if (safe.empty()) {
         safe = "Prefab";
     }
-    const std::wstring path = ctx.assetsRoot + L"\\prefabs\\" + Utf8ToWide(safe) + L".prefab.json";
+    // 新規作成は .actor.json (M48d)。既存 .prefab.json は読み書きとも据え置きで、
+    // Apply も元の拡張子・宣言キーのまま書き戻す (強制移行しない)
+    const std::wstring path =
+        ctx.assetsRoot + L"\\prefabs\\" + Utf8ToWide(safe) + PrefabLibrary::kActorSuffix;
 
     undo.BeginRecord("Create Prefab", selection);
     const uint64_t fid = ctx.scene->EnsureFileId(e);

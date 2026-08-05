@@ -28,21 +28,41 @@ using nlohmann::json;
 
 namespace {
 
-// ".prefab.json" / ".json" を落としたファイル名 (表示名)
+// 末尾一致 (大文字小文字を無視)。Windows のパスなので ".PREFAB.JSON" も拾う
+bool EndsWithNoCase(const std::wstring& s, const std::wstring& suffix)
+{
+    if (s.size() < suffix.size()) {
+        return false;
+    }
+    size_t i = s.size() - suffix.size();
+    for (size_t j = 0; j < suffix.size(); ++j, ++i) {
+        if (towlower(s[i]) != towlower(suffix[j])) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// ".actor.json" / ".prefab.json" / ".json" を落としたファイル名 (表示名)
 std::string NameFromPath(const std::wstring& path)
 {
-    std::string name = WideToUtf8(fs::path(path).stem().wstring()); // "X.prefab.json" -> "X.prefab"
-    const std::string suf = ".prefab";
-    if (name.size() > suf.size() && name.compare(name.size() - suf.size(), suf.size(), suf) == 0) {
-        name.resize(name.size() - suf.size()); // -> "X"
+    std::string name = WideToUtf8(fs::path(path).stem().wstring()); // "X.actor.json" -> "X.actor"
+    for (const char* suf : { ".actor", ".prefab" }) {
+        const size_t n = std::strlen(suf);
+        if (name.size() > n && name.compare(name.size() - n, n, suf) == 0) {
+            name.resize(name.size() - n); // -> "X"
+            break;
+        }
     }
     return name;
 }
 
-// entities 配列 (SubtreeToJson 形式) から fileId==localId の item を返す (無ければ nullptr)
+// entities 配列 (SubtreeToJson 形式) から fileId==localId の item を返す (無ければ nullptr)。
+// **localId==0 は「ベースに対応物なし」の予約値** (複数ルートを包むラッパー、M48d) なので
+// 必ず nullptr。これで diff / Revert / 伝播からラッパーが自然に外れる
 const json* FindLocal(const json& entities, uint64_t localId)
 {
-    if (!entities.is_array()) {
+    if (!entities.is_array() || localId == 0) {
         return nullptr;
     }
     for (const json& item : entities) {
@@ -111,11 +131,12 @@ BaseLevels ClassifyBase(const json& entities)
     return out;
 }
 
-bool WritePrefabFile(const std::wstring& path, const std::string& name, const json& entities)
+bool WritePrefabFile(const std::wstring& path, const std::string& name, const json& entities,
+                     bool actorFormat)
 {
     json root;
     root["engine"] = "MyEngine";
-    root["prefab"] = 1;
+    root[actorFormat ? "actor" : "prefab"] = 1; // 読み込んだときのキーを維持する (M48d)
     root["name"] = name;
     root["entities"] = entities;
     std::error_code ec;
@@ -245,6 +266,11 @@ std::string GetNameStr(World& w, EntityID e)
 
 // ==== PrefabLibrary ====
 
+bool PrefabLibrary::IsComposePath(const std::wstring& path)
+{
+    return EndsWithNoCase(path, kActorSuffix) || EndsWithNoCase(path, kPrefabSuffix);
+}
+
 uint64_t PrefabLibrary::HashForPath(const std::wstring& path)
 {
     // M30c: 移動/リネーム済みアセットは .meta の GUID がキーになる (未移動は path-hash と同値)
@@ -259,6 +285,7 @@ uint64_t PrefabLibrary::Register(const std::wstring& path, std::string name, jso
     a.name = std::move(name);
     a.path = path;
     a.entities = std::move(entities);
+    a.actorFormat = EndsWithNoCase(path, kActorSuffix); // 既定は拡張子。LoadFromFile が宣言キーで上書き
     return hash;
 }
 
@@ -272,15 +299,35 @@ uint64_t PrefabLibrary::LoadFromFile(const std::wstring& path)
     try {
         f >> root;
     } catch (const json::exception& ex) {
-        MYE_LOG_WARN("prefab parse failed: %s (%s)", WideToUtf8(path).c_str(), ex.what());
+        MYE_LOG_WARN("compose asset parse failed: %s (%s)", WideToUtf8(path).c_str(), ex.what());
+        return 0;
+    }
+    // 宣言キーで種別を検証する (M48d)。**actor:1 と prefab:1 の両方を受理** し、
+    // どちらも無いものは弾く — 従来はキーを一切見ずに entities だけ拾っていたので、
+    // 別種の .json (シーンやマテリアル) を渡しても「エンティティ 0 件のプレハブ」として
+    // 静かに登録されてしまっていた
+    const bool isActor = root.value("actor", 0) == 1;
+    const bool isPrefab = root.value("prefab", 0) == 1;
+    if (!isActor && !isPrefab) {
+        MYE_LOG_WARN("compose asset load: neither \"actor\":1 nor \"prefab\":1 in %s",
+                     WideToUtf8(path).c_str());
         return 0;
     }
     if (!root.contains("entities") || !root["entities"].is_array()) {
-        MYE_LOG_WARN("prefab load: no entities array in %s", WideToUtf8(path).c_str());
+        MYE_LOG_WARN("compose asset load: no entities array in %s", WideToUtf8(path).c_str());
         return 0;
     }
     std::string name = root.value("name", NameFromPath(path));
-    return Register(path, std::move(name), root["entities"]);
+    const uint64_t hash = Register(path, std::move(name), root["entities"]);
+    SetActorFormat(hash, isActor); // 拡張子ではなく宣言キーが正 (書き戻しで維持)
+    return hash;
+}
+
+void PrefabLibrary::SetActorFormat(uint64_t hash, bool actorFormat)
+{
+    if (auto it = assets_.find(hash); it != assets_.end()) {
+        it->second.actorFormat = actorFormat;
+    }
 }
 
 const PrefabAsset* PrefabLibrary::Get(uint64_t hash) const
@@ -442,6 +489,11 @@ static json ExtractLocalByLinks(Scene& scene, EntityID root, const json& oldBase
                 continue;
             }
             claimed = link->localId;
+            if (claimed == 0) {
+                // 複数ルートを包むラッパー (M48d) — ベースに対応物が無いので新ベースにも出さない。
+                // **skipped には入れない** — 子は残し、親解決に失敗して再びルートに戻す
+                continue;
+            }
         } else if (innerRoots.count(f) != 0) {
             auto* inst = w.GetComponent<PrefabInstanceComponent>(g.Id());
             claimed = inst ? inst->outerLocalId : 0;
@@ -505,45 +557,72 @@ static json ExtractLocalByLinks(Scene& scene, EntityID root, const json& oldBase
 }
 
 uint64_t InstantiateEntities(Scene& scene, const json& localEntities, uint64_t prefabHash,
-                             uint64_t parentFileId, uint64_t forcedRootFileId)
+                             uint64_t parentFileId, uint64_t forcedRootFileId,
+                             const char* wrapperName)
 {
     if (!localEntities.is_array() || localEntities.empty()) {
         return 0;
     }
-    // ルート (集合内に親を持たない最後のエンティティ — 下の走査と同じ規則) を先に特定する。
-    // forcedRootFileId (v7 Instantiate の予約 ID、M37) をルートに割り当てるため
-    uint64_t forcedRootLocal = 0;
-    if (forcedRootFileId != 0) {
-        std::unordered_set<uint64_t> localIds;
-        for (const json& item : localEntities) {
-            const uint64_t local = item.value("fileId", 0ull);
-            if (local != 0) {
-                localIds.insert(local);
-            }
-        }
-        for (const json& item : localEntities) {
-            const uint64_t local = item.value("fileId", 0ull);
-            if (local == 0) {
-                continue;
-            }
-            const uint64_t p = item.contains("parent") ? item.value("parent", 0ull) : 0ull;
-            if (p == 0 || localIds.count(p) == 0) {
-                forcedRootLocal = local;
-            }
+    // 集合内に親を持たないエントリ = ベースのルート。
+    // **複数ある場合 (ミニシーン型の .actor.json) はラッパーで包む** (M48d) —
+    // インスタンスの実体が単一ルートでないと、FindInstanceRoot / 選択 / Undo が
+    // 「どれがルートか」で割れる。従来は最後のルートだけをタグ付けして残りが野良になっていた
+    std::unordered_set<uint64_t> localIds;
+    for (const json& item : localEntities) {
+        const uint64_t local = item.value("fileId", 0ull);
+        if (local != 0) {
+            localIds.insert(local);
         }
     }
+    std::vector<uint64_t> roots; // 配列順 (= ExtractLocal の DFS 順)
+    for (const json& item : localEntities) {
+        const uint64_t local = item.value("fileId", 0ull);
+        if (local == 0) {
+            continue;
+        }
+        const uint64_t p = item.value("parent", 0ull);
+        if (p == 0 || localIds.count(p) == 0) {
+            roots.push_back(local);
+        }
+    }
+    if (roots.empty()) {
+        MYE_LOG_WARN("compose asset instantiate: no root entity (cyclic parents?)");
+        return 0;
+    }
+    const bool wrapped = roots.size() >= 2;
+    const uint64_t rootLocal = wrapped ? 0 : roots.front();
+
+    // ラッパーの fileId はメンバより先に確保する (単一ルート時にルートが最初の ID を取るのと同じ順)。
+    // forcedRootFileId (v7 Instantiate の予約 ID、M37) はインスタンスのルートに割り当てる契約なので、
+    // 包む場合はラッパーが受け取る
+    const uint64_t wrapperFid =
+        wrapped ? ((forcedRootFileId != 0) ? forcedRootFileId : scene.NextFileId()) : 0;
+    const uint64_t forcedRootLocal = (!wrapped && forcedRootFileId != 0) ? rootLocal : 0;
+
     // localId -> 新 scene fileId (ルートは予約 ID、他は新規採番)
     std::unordered_map<uint64_t, uint64_t> remap;
     for (const json& item : localEntities) {
         const uint64_t local = item.value("fileId", 0ull);
         if (local != 0) {
-            remap[local] = (forcedRootFileId != 0 && local == forcedRootLocal)
+            remap[local] = (forcedRootLocal != 0 && local == forcedRootLocal)
                 ? forcedRootFileId
                 : scene.NextFileId();
         }
     }
-    uint64_t rootLocal = 0;
     json out = json::array();
+    if (wrapped) {
+        // ベースに対応物が無いので PrefabLink.localId は 0 (FindLocal(0) は必ず nullptr)。
+        // components は空 = 生成時の既定 (LocalTransform 等) をそのまま使う
+        json wrap;
+        wrap["fileId"] = wrapperFid;
+        wrap["name"] = (wrapperName && *wrapperName) ? std::string(wrapperName) : std::string("Actor");
+        wrap["childIndex"] = 0;
+        wrap["components"] = json::object();
+        if (parentFileId != 0) {
+            wrap["parent"] = parentFileId;
+        }
+        out.push_back(std::move(wrap));
+    }
     for (const json& item : localEntities) {
         json ni = item;
         const uint64_t local = item.value("fileId", 0ull);
@@ -561,8 +640,9 @@ uint64_t InstantiateEntities(Scene& scene, const json& localEntities, uint64_t p
             }
         }
         if (!hasParent) {
-            rootLocal = local; // プレハブルート (集合内に親を持たない)
-            if (parentFileId != 0) {
+            if (wrapped) {
+                ni["parent"] = wrapperFid; // ベースのルート群はラッパーの子になる
+            } else if (parentFileId != 0) {
                 ni["parent"] = parentFileId;
             }
         }
@@ -590,13 +670,22 @@ uint64_t InstantiateEntities(Scene& scene, const json& localEntities, uint64_t p
         pairs.emplace_back(local, fid);
     }
     std::sort(pairs.begin(), pairs.end());
-    const uint64_t newRootFid = remap.count(rootLocal) ? remap[rootLocal] : 0;
+    const uint64_t newRootFid =
+        wrapped ? wrapperFid : (remap.count(rootLocal) ? remap[rootLocal] : 0);
+    if (wrapped) {
+        if (GameObject g = scene.FindByFileId(wrapperFid)) {
+            auto* inst = g.AddComponent<PrefabInstanceComponent>();
+            inst->prefabHash = prefabHash;
+            inst->outerLocalId = 0;
+            g.AddComponent<PrefabLinkComponent>()->localId = 0; // ベース対応物なし
+        }
+    }
     for (const auto& [local, fid] : pairs) {
         GameObject g = scene.FindByFileId(fid);
         if (!g) {
             continue;
         }
-        if (local == rootLocal) {
+        if (!wrapped && local == rootLocal) {
             // ルートは分類がどうであれ必ず外側として付け直す (手書きアセットへの保険)。
             // **PrefabInstance のフィールドを先に書く** — 続く AddComponent が
             // アーキタイプを動かしてポインタを無効化するため
@@ -617,11 +706,12 @@ uint64_t Instantiate(Scene& scene, const PrefabLibrary& lib, uint64_t prefabHash
 {
     const PrefabAsset* a = lib.Get(prefabHash);
     if (!a) {
-        MYE_LOG_WARN("prefab instantiate: unknown hash %llu",
+        MYE_LOG_WARN("compose asset instantiate: unknown hash %llu",
                      static_cast<unsigned long long>(prefabHash));
         return 0;
     }
-    return InstantiateEntities(scene, a->entities, prefabHash, parentFileId, forcedRootFileId);
+    return InstantiateEntities(scene, a->entities, prefabHash, parentFileId, forcedRootFileId,
+                               a->name.c_str()); // 複数ルートを包むときの名前 = アセット名
 }
 
 uint64_t CreateAsset(Scene& scene, PrefabLibrary& lib, const std::wstring& path, EntityID root)
@@ -631,8 +721,9 @@ uint64_t CreateAsset(Scene& scene, PrefabLibrary& lib, const std::wstring& path,
         return 0;
     }
     const std::string name = NameFromPath(path);
-    if (!WritePrefabFile(path, name, entities)) {
-        MYE_LOG_ERROR("prefab create: cannot write %s", WideToUtf8(path).c_str());
+    // 新規作成の宣言キーは拡張子に従う (.actor.json → actor:1)
+    if (!WritePrefabFile(path, name, entities, EndsWithNoCase(path, PrefabLibrary::kActorSuffix))) {
+        MYE_LOG_ERROR("compose asset create: cannot write %s", WideToUtf8(path).c_str());
         return 0;
     }
     const uint64_t hash = lib.Register(path, name, entities);
@@ -900,6 +991,7 @@ bool ApplyInstance(Scene& scene, PrefabLibrary& lib, uint64_t rootFileId)
     const json oldBase = a->entities; // 伝播用にコピー
     const std::wstring path = a->path;
     const std::string name = a->name;
+    const bool actorFormat = a->actorFormat; // 元の宣言キーを維持 (強制移行しない)
 
     json newBase = ExtractLocalByLinks(scene, rootGo.Id(), oldBase);
     if (newBase.empty()) {
@@ -920,10 +1012,11 @@ bool ApplyInstance(Scene& scene, PrefabLibrary& lib, uint64_t rootFileId)
             }
         }
     }
-    if (!WritePrefabFile(path, name, newBase)) {
-        MYE_LOG_WARN("prefab apply: file write failed for %s", WideToUtf8(path).c_str());
+    if (!WritePrefabFile(path, name, newBase, actorFormat)) {
+        MYE_LOG_WARN("compose asset apply: file write failed for %s", WideToUtf8(path).c_str());
     }
     lib.Register(path, name, newBase); // library 更新 (hash 不変)
+    lib.SetActorFormat(hash, actorFormat); // Register は拡張子から推定するので宣言キーを戻す
     PropagateBaseChange(scene, oldBase, newBase, hash); // 他インスタンスへ伝播
     MYE_LOG_INFO("prefab apply: '%s' base updated + propagated", name.c_str());
     return true;

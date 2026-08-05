@@ -235,10 +235,8 @@ void ReloadHub::HandleChange(const std::wstring& normPath)
             }
             return;
         }
-        // .prefab.json: 登録済みプレハブなら再読込 → 全インスタンスの非オーバーライドへ伝播
-        const bool isPrefab = normPath.size() >= 12
-            && normPath.compare(normPath.size() - 12, 12, L".prefab.json") == 0;
-        if (isPrefab) {
+        // .actor.json / .prefab.json: 登録済みなら再読込 → 全インスタンスの非オーバーライドへ伝播
+        if (PrefabLibrary::IsComposePath(normPath)) {
             if (prefabs_ && scene_) {
                 const uint64_t hash = PrefabLibrary::HashForPath(normPath);
                 if (prefabs_->Contains(hash)) {
@@ -251,7 +249,7 @@ void ReloadHub::HandleChange(const std::wstring& normPath)
                     }
                     if (const PrefabAsset* after = prefabs_->Get(rh)) {
                         Prefab::PropagateBaseChange(*scene_, oldBase, after->entities, rh);
-                        MYE_LOG_INFO("[reload] prefab recomposited: %s",
+                        MYE_LOG_INFO("[reload] compose asset recomposited: %s",
                                      WideToUtf8(normPath).c_str());
                         ++reloadCount_;
                     }

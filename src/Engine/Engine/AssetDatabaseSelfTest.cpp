@@ -68,6 +68,20 @@ bool RunAssetDatabaseSelfTest()
     check(db1.PathForGuid(guidFoo) == fooPng, "GUID -> path round-trips");
     check(db1.TypeForPath(fooPng) == AssetType::Texture, "foo.png classified as texture");
     check(db1.TypeForPath(bazWav) == AssetType::Audio, "baz.wav classified as audio");
+
+    // ---- 複合サフィックスの分類 (M48d で Actor を追加) ----
+    // .actor.json は .prefab.json とは別種別だが、どちらも PrefabLibrary が扱う。
+    // 種別名の往復も見る (.meta には TypeName の文字列で保存されるため)
+    check(AssetDatabase::ClassifyPath(L"x\\Goblin.actor.json") == AssetType::Actor
+              && AssetDatabase::ClassifyPath(L"x\\Goblin.prefab.json") == AssetType::Prefab
+              && AssetDatabase::ClassifyPath(L"x\\Goblin.scene.json") == AssetType::Scene,
+          "actor/prefab/scene are distinguished by compound suffix");
+    check(AssetDatabase::ClassifyPath(L"x\\Goblin.ACTOR.JSON") == AssetType::Actor,
+          "compound suffix classification ignores case");
+    for (AssetType t : { AssetType::Actor, AssetType::Prefab, AssetType::Sound, AssetType::Mixer }) {
+        check(AssetDatabase::ParseTypeName(AssetDatabase::TypeName(t)) == t,
+              "asset type name round-trips through .meta");
+    }
     check(db1.GuidForPath(bazWav) == ExpectedPathHash(bazWav), "baz.wav GUID inherits path-hash");
 
     // ---- リネーム: 本体と .meta を一緒に移動 ----

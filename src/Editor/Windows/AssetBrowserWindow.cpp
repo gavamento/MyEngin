@@ -49,7 +49,8 @@ enum CreateKind {
     kCreateAnim,
     kCreateMaterial,
     kCreateSound,
-    kCreateMixer
+    kCreateMixer,
+    kCreateActor
 };
 
 const char* IconFor(const std::wstring& ext)
@@ -70,14 +71,14 @@ const char* IconFor(const std::wstring& ext)
 }
 
 // サムネイル未生成 (または対象外) のタイルに出す文字ラベル
-const char* TileLabel(const std::wstring& ext, const std::wstring& path, bool isPrefab, bool isAnim,
-                      bool isMat, bool isSound, bool isMixer)
+const char* TileLabel(const std::wstring& ext, const std::wstring& path, bool isCompose,
+                      bool isActor, bool isAnim, bool isMat, bool isSound, bool isMixer)
 {
     if (IsImageExt(ext)) {
         return "img"; // デコード完了までのプレースホルダ
     }
-    if (isPrefab) {
-        return "prefab";
+    if (isCompose) {
+        return isActor ? "actor" : "prefab";
     }
     if (isAnim) {
         return "anim";
@@ -356,17 +357,20 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
         std::wstring ext = filePath.extension().wstring();
         std::transform(ext.begin(), ext.end(), ext.begin(), ::towlower);
         const std::string nameU = WideToUtf8(filePath.filename().wstring());
-        const bool isPrefab = nameU.size() >= 12
-            && nameU.compare(nameU.size() - 12, 12, ".prefab.json") == 0;
-        const bool isAnim = !isPrefab && nameU.size() >= 10
+        // .actor.json / .prefab.json はどちらもプレハブライブラリが扱う構成アセット (M48d)。
+        // 判定は PrefabLibrary::IsComposePath 一本 (suffix の書き足し漏れを作らない)
+        const bool isCompose = PrefabLibrary::IsComposePath(path);
+        const bool isActor = isCompose && nameU.size() >= 11
+            && nameU.compare(nameU.size() - 11, 11, ".actor.json") == 0;
+        const bool isAnim = !isCompose && nameU.size() >= 10
             && nameU.compare(nameU.size() - 10, 10, ".anim.json") == 0;
-        const bool isMat = !isPrefab && !isAnim && nameU.size() >= 9
+        const bool isMat = !isCompose && !isAnim && nameU.size() >= 9
             && nameU.compare(nameU.size() - 9, 9, ".mat.json") == 0;
-        const bool isScene = !isPrefab && !isAnim && !isMat && nameU.size() >= 11
+        const bool isScene = !isCompose && !isAnim && !isMat && nameU.size() >= 11
             && nameU.compare(nameU.size() - 11, 11, ".scene.json") == 0;
-        const bool isSound = !isPrefab && !isAnim && !isMat && !isScene && nameU.size() >= 11
+        const bool isSound = !isCompose && !isAnim && !isMat && !isScene && nameU.size() >= 11
             && nameU.compare(nameU.size() - 11, 11, ".sound.json") == 0;
-        const bool isMixer = !isPrefab && !isAnim && !isMat && !isScene && !isSound
+        const bool isMixer = !isCompose && !isAnim && !isMat && !isScene && !isSound
             && nameU.size() >= 11 && nameU.compare(nameU.size() - 11, 11, ".mixer.json") == 0;
         const bool isClip = ext == L".wav" || ext == L".ogg"; // 素の音声ファイル
 
@@ -393,7 +397,7 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
         ImGui::PushStyleColor(ImGuiCol_Button, thumb ? ImVec4(0, 0, 0, 0)
                                                      : ImGui::GetStyleColorVec4(ImGuiCol_Button));
         ImGui::Button(thumb ? "##tile"
-                            : TileLabel(ext, path, isPrefab, isAnim, isMat, isSound, isMixer),
+                            : TileLabel(ext, path, isCompose, isActor, isAnim, isMat, isSound, isMixer),
                       ImVec2(kCell, kCell));
         ImGui::PopStyleColor();
         if (thumb) {
@@ -447,7 +451,7 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
             selection.SelectAsset(path);
         }
         if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-            if (isPrefab) {
+            if (isCompose) {
                 // シーンへインスタンス化 (ルートに配置)。生成を 1 Undo エントリに
                 undo.BeginRecord("Instantiate Prefab", selection);
                 const uint64_t hash = ctx.prefabs->LoadFromFile(path); // 未登録なら登録 (冪等)
@@ -590,6 +594,7 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
             if (ImGui::MenuItem(Tr(StrId::Asset_Scene))) { beginCreate(kCreateScene, "New Scene"); }
             if (ImGui::MenuItem(Tr(StrId::Asset_AnimationClip))) { beginCreate(kCreateAnim, "New Clip"); }
             if (ImGui::MenuItem(Tr(StrId::Asset_MaterialItem))) { beginCreate(kCreateMaterial, "New Material"); }
+            if (ImGui::MenuItem(Tr(StrId::Asset_Actor))) { beginCreate(kCreateActor, "New Actor"); }
             if (ImGui::MenuItem(Tr(StrId::Asset_Sound))) { beginCreate(kCreateSound, "New Sound"); }
             if (ImGui::MenuItem(Tr(StrId::Asset_Mixer))) { beginCreate(kCreateMixer, "New Mixer"); }
             ImGui::EndMenu();
@@ -726,6 +731,9 @@ void AssetBrowserWindow::DoCreate(EngineContext& ctx, const std::string& externa
         break;
     case kCreateMaterial:
         CreateMaterialAsset(ctx, current_, name);
+        break;
+    case kCreateActor:
+        CreateActorAsset(ctx, current_, name);
         break;
     case kCreateSound:
         CreateSoundAsset(ctx, current_, name);

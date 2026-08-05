@@ -288,7 +288,7 @@ void RegisterAssetLibraries(EngineContext& ctx)
             continue;
         }
         const std::wstring p = e.path().wstring();
-        if (p.size() >= 12 && p.compare(p.size() - 12, 12, L".prefab.json") == 0) {
+        if (PrefabLibrary::IsComposePath(p)) { // .actor.json / .prefab.json (M48d)
             if (ctx.prefabs) {
                 ctx.prefabs->LoadFromFile(p);
             }

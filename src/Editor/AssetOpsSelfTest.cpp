@@ -10,6 +10,8 @@
 #include "Engine/Core/Log.h"
 #include "Engine/Engine/AssetDatabase.h"
 #include "Engine/Engine/EngineLoop.h"
+#include "Engine/Engine/Prefab.h"
+#include "Engine/Engine/Scene.h"
 
 namespace fs = std::filesystem;
 
@@ -68,6 +70,42 @@ bool RunAssetOpsSelfTest()
     WriteDummy(mixer);
     check(RenameAsset(ctx, mixer.wstring(), "game") == (root / L"game.mixer.json").wstring(),
           "rename keeps compound suffix (.mixer.json)");
+
+    // ---- (1c) M48d の複合サフィックス (.actor.json) ----
+    const fs::path goblin = root / L"goblin.actor.json";
+    WriteDummy(goblin);
+    const std::wstring orc = RenameAsset(ctx, goblin.wstring(), "orc");
+    check(orc == (root / L"orc.actor.json").wstring(),
+          "rename keeps compound suffix (.actor.json)");
+    check(AssetDatabase::ClassifyPath(orc) == AssetType::Actor, "classify .actor.json as Actor");
+    // 連番も複合サフィックスを保つ (壊れると "orc.actor (1).json" になり種別判定が落ちる)
+    WriteDummy(root / L"dup.actor.json");
+    const fs::path dupSrc = root / L"sub" / L"dup.actor.json";
+    fs::create_directories(root / L"sub", ec);
+    WriteDummy(dupSrc);
+    const std::wstring dupMoved = MoveAssetToFolder(ctx, dupSrc.wstring(), root.wstring());
+    check(dupMoved == (root / L"dup (1).actor.json").wstring(),
+          "numbering keeps the compound suffix (.actor.json)");
+
+    // ---- (1d) Create > Actor が実際に読み込める最小アセットを吐くこと (M48d) ----
+    // ここが崩れると「作った直後のアセットが配置できない」形で壊れる
+    {
+        const std::wstring created = CreateActorAsset(ctx, root.wstring(), "Goblin King");
+        check(!created.empty() && fs::exists(created, ec), "Create > Actor writes a file");
+        check(AssetDatabase::ClassifyPath(created) == AssetType::Actor,
+              "the created file is classified as Actor");
+        PrefabLibrary lib;
+        const uint64_t h = lib.LoadFromFile(created);
+        check(h != 0 && lib.Get(h) && lib.Get(h)->actorFormat && lib.Get(h)->entities.size() == 1,
+              "the created actor loads back as a single-root actor-format asset");
+        Scene s;
+        const uint64_t rootFid = Prefab::Instantiate(s, lib, h, 0);
+        s.GetWorld().ApplyStructuralChanges();
+        GameObject g = s.FindByFileId(rootFid);
+        check(g && s.GetWorld().AliveCount() == 1
+                  && std::string(s.GetWorld().GetName(g.Id())) == "Goblin King",
+              "the created actor instantiates to one entity named after the asset");
+    }
     check(AssetDatabase::ClassifyPath(L"a.ogg") == AssetType::Audio, "classify .ogg as Audio");
 
     // ---- (2) 通常拡張子 ----

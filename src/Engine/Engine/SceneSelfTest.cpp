@@ -22,6 +22,7 @@
 
 #include <cstddef>
 #include <filesystem>
+#include <fstream>
 
 namespace mye {
 
@@ -1027,6 +1028,167 @@ bool RunSceneSerializerSelfTest()
         std::error_code ec;
         std::filesystem::remove(innerPath, ec);
         std::filesystem::remove(outerPath, ec);
+    }
+
+    // ---- .actor.json フォーマット v1 + .prefab.json 互換読込 + 複数ルート (M48d) ----
+    {
+        auto tmpPath = [](const wchar_t* n) {
+            return (std::filesystem::temp_directory_path() / n).wstring();
+        };
+        auto writeText = [](const std::wstring& path, const std::string& text) {
+            std::ofstream f(std::filesystem::path(path), std::ios::binary);
+            f.write(text.data(), static_cast<std::streamsize>(text.size()));
+        };
+        auto readJson = [](const std::wstring& path) {
+            std::ifstream f(std::filesystem::path(path), std::ios::binary);
+            nlohmann::json j;
+            if (f) {
+                f >> j;
+            }
+            return j;
+        };
+        auto entityDoc = [](const char* declKey, const char* name, const nlohmann::json& ents) {
+            nlohmann::json d;
+            d["engine"] = "MyEngine";
+            d[declKey] = 1;
+            d["name"] = name;
+            d["entities"] = ents;
+            return d.dump(2);
+        };
+        auto mkEntity = [](uint64_t fileId, const char* name, uint64_t parent, uint32_t childIndex) {
+            nlohmann::json e;
+            e["fileId"] = fileId;
+            e["name"] = name;
+            e["childIndex"] = childIndex;
+            e["components"] = nlohmann::json::object();
+            if (parent != 0) {
+                e["parent"] = parent;
+            }
+            return e;
+        };
+
+        PrefabLibrary lib;
+        const std::wstring actorPath = tmpPath(L"mye_selftest_fmt.actor.json");
+        const std::wstring prefabPath = tmpPath(L"mye_selftest_fmt.prefab.json");
+        const std::wstring badPath = tmpPath(L"mye_selftest_fmt_bad.actor.json");
+        const std::wstring multiPath = tmpPath(L"mye_selftest_fmt_multi.actor.json");
+
+        // (1) actor:1 を受理し、宣言キーを覚える
+        writeText(actorPath,
+                  entityDoc("actor", "FmtActor",
+                            nlohmann::json::array({ mkEntity(1, "ActorRoot", 0, 0) })));
+        const uint64_t actorHash = lib.LoadFromFile(actorPath);
+        check(actorHash != 0 && lib.Get(actorHash) && lib.Get(actorHash)->actorFormat,
+              "format: \"actor\":1 loads and is remembered as actor format");
+
+        // (2) prefab:1 を部分集合として受理する (互換読込)
+        writeText(prefabPath,
+                  entityDoc("prefab", "FmtPrefab",
+                            nlohmann::json::array({ mkEntity(1, "PrefabRoot", 0, 0) })));
+        const uint64_t prefabHash = lib.LoadFromFile(prefabPath);
+        check(prefabHash != 0 && lib.Get(prefabHash) && !lib.Get(prefabHash)->actorFormat,
+              "format: \"prefab\":1 loads as the compatible subset (prefab format)");
+
+        // (3) どちらのキーも無い .json は弾く (従来は entities だけ見て素通ししていた)
+        writeText(badPath, R"({"engine":"MyEngine","sceneName":"x","entities":[]})");
+        check(lib.LoadFromFile(badPath) == 0,
+              "format: a json with neither actor:1 nor prefab:1 is rejected");
+
+        check(PrefabLibrary::IsComposePath(L"a\\b.ACTOR.JSON")
+                  && PrefabLibrary::IsComposePath(L"a\\b.prefab.json")
+                  && !PrefabLibrary::IsComposePath(L"a\\b.scene.json"),
+              "format: IsComposePath accepts both suffixes case-insensitively");
+
+        // (4) 書き戻しで宣言キーを維持する (強制移行しない)
+        {
+            Scene s;
+            const uint64_t r = Prefab::Instantiate(s, lib, prefabHash, 0);
+            s.GetWorld().ApplyStructuralChanges();
+            check(Prefab::ApplyInstance(s, lib, r), "format: apply on a .prefab.json instance succeeds");
+            const nlohmann::json back = readJson(prefabPath);
+            check(back.value("prefab", 0) == 1 && !back.contains("actor"),
+                  "format: apply keeps the original \"prefab\":1 key (no forced migration)");
+        }
+        {
+            Scene s;
+            const uint64_t r = Prefab::Instantiate(s, lib, actorHash, 0);
+            s.GetWorld().ApplyStructuralChanges();
+            check(Prefab::ApplyInstance(s, lib, r), "format: apply on a .actor.json instance succeeds");
+            const nlohmann::json back = readJson(actorPath);
+            check(back.value("actor", 0) == 1 && !back.contains("prefab"),
+                  "format: apply keeps the \"actor\":1 key");
+        }
+
+        // (5) 複数ルート (ミニシーン型) はラッパーで包む
+        writeText(multiPath,
+                  entityDoc("actor", "MiniScene",
+                            // DFS 順 + 正しい childIndex = ExtractLocal が吐く形。
+                            // 手書きで順序や childIndex が崩れていても読めるが、Apply で正規化される
+                            nlohmann::json::array({ mkEntity(1, "RootA", 0, 0),
+                                                    mkEntity(3, "ChildOfA", 1, 0),
+                                                    mkEntity(2, "RootB", 0, 1) })));
+        const uint64_t multiHash = lib.LoadFromFile(multiPath);
+        Scene sm;
+        const uint64_t wrapFid = Prefab::Instantiate(sm, lib, multiHash, 0);
+        sm.GetWorld().ApplyStructuralChanges();
+        World& wm = sm.GetWorld();
+        GameObject wrap = sm.FindByFileId(wrapFid);
+        check(wrap && std::string(wm.GetName(wrap.Id())) == "MiniScene",
+              "multi-root: instantiation is wrapped in a group named after the asset");
+        check(wm.AliveCount() == 4 && wm.GetParent(wrap.Id()).IsNull(),
+              "multi-root: the wrapper is the single root of the instance (3 members + wrapper)");
+        {
+            auto* wl = wrap ? wm.GetComponent<PrefabLinkComponent>(wrap.Id()) : nullptr;
+            auto* wi = wrap ? wm.GetComponent<PrefabInstanceComponent>(wrap.Id()) : nullptr;
+            check(wl && wl->localId == 0 && wi && wi->prefabHash == multiHash,
+                  "multi-root: the wrapper links to localId 0 (= no counterpart in the base)");
+            // 両ルートがラッパーの子になり、どちらも自分の localId を保つ
+            std::vector<std::string> kids;
+            auto* h = wrap ? wm.GetComponent<HierarchyComponent>(wrap.Id()) : nullptr;
+            for (EntityID c = h ? h->firstChild : kNullEntity; !c.IsNull();) {
+                kids.push_back(wm.GetName(c));
+                auto* ch = wm.GetComponent<HierarchyComponent>(c);
+                c = ch ? ch->nextSibling : kNullEntity;
+            }
+            check(kids.size() == 2 && kids[0] == "RootA" && kids[1] == "RootB",
+                  "multi-root: every base root becomes a child of the wrapper (order preserved)");
+        }
+        // ラッパーはベース対応物が無いので diff / Revert / Apply から自然に外れる
+        {
+            std::vector<EntityID> members;
+            Prefab::CollectInstanceMembers(wm, wrap.Id(), members);
+            check(members.size() == 4, "multi-root: the wrapper is still a member for enumeration");
+            check(Prefab::ApplyInstance(sm, lib, wrapFid), "multi-root: apply succeeds");
+            // 手書きの最小ファイルは初回 Apply で正規化される (WriteEntity が実体の
+            // コンポーネントを書き出す) ので、ここで見るのは「ラッパーが焼かれていないか」
+            const nlohmann::json baseNorm =
+                lib.Get(multiHash) ? lib.Get(multiHash)->entities : nlohmann::json::array();
+            bool wrapperBaked = false;
+            int rootCount = 0;
+            for (const nlohmann::json& it : baseNorm) {
+                if (it.value("name", std::string()) == "MiniScene") {
+                    wrapperBaked = true;
+                }
+                if (!it.contains("parent")) {
+                    ++rootCount;
+                }
+            }
+            check(baseNorm.size() == 3 && !wrapperBaked && rootCount == 2,
+                  "multi-root: apply keeps the base multi-rooted and does not bake the wrapper in");
+
+            // 正規化後は wrap → unwrap → wrap が安定する (ID も配列順も動かない)
+            Scene sm2;
+            const uint64_t wrap2 = Prefab::Instantiate(sm2, lib, multiHash, 0);
+            sm2.GetWorld().ApplyStructuralChanges();
+            check(Prefab::ApplyInstance(sm2, lib, wrap2), "multi-root: re-apply succeeds");
+            check(lib.Get(multiHash) && lib.Get(multiHash)->entities == baseNorm,
+                  "multi-root: a normalized multi-root asset round-trips byte-for-byte");
+        }
+
+        std::error_code ec;
+        for (const std::wstring& p : { actorPath, prefabPath, badPath, multiPath }) {
+            std::filesystem::remove(p, ec);
+        }
     }
 
     // ---- Undo 復元でプレハブタグが消えること (M48c) ----

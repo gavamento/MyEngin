@@ -853,6 +853,35 @@ void InspectorWindow::DrawAssetInspector(EngineContext& ctx, Selection& selectio
         if (type == AssetType::Sound) {
             LoadSoundEdit(path); // M45c
         }
+        if ((type == AssetType::Actor || type == AssetType::Prefab) && ctx.prefabs) {
+            // 選択が変わったときだけ登録を試す (エディタ起動後に外から置かれたファイルを拾う)。
+            // 毎フレーム LoadFromFile すると不正ファイルで警告ログを撒き続ける
+            const uint64_t h = PrefabLibrary::HashForPath(path);
+            if (!ctx.prefabs->Contains(h)) {
+                ctx.prefabs->LoadFromFile(path);
+            }
+        }
+    }
+
+    if (type == AssetType::Actor || type == AssetType::Prefab) {
+        // 構成アセット (M48d): 読み取り専用の要約。中身の編集はミニシーン編集モード (M48k) で
+        const PrefabAsset* a =
+            ctx.prefabs ? ctx.prefabs->Get(PrefabLibrary::HashForPath(path)) : nullptr;
+        if (a) {
+            int roots = 0;
+            for (const nlohmann::json& it : a->entities) {
+                if (!it.contains("parent")) {
+                    ++roots;
+                }
+            }
+            ImGui::Text(Tr(StrId::Insp_ComposeSummary), static_cast<int>(a->entities.size()), roots);
+            if (roots >= 2) {
+                ImGui::TextDisabled("%s", Tr(StrId::Insp_ComposeMultiRoot));
+            }
+        } else {
+            ImGui::TextDisabled("%s", Tr(StrId::Insp_ComposeInvalid));
+        }
+        return;
     }
 
     if (type == AssetType::Material) {

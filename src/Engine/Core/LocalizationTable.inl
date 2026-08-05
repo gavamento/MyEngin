@@ -308,12 +308,20 @@ MYE_STR(Insp_AttenNote,       "AudioSource can override these (overrideAttenuati
 MYE_STR(Insp_SpatialNote,     "spatial blend 0 = 2D. Sound is silent beyond max distance.",
                               "spatial blend 0 = 2D。max distance を超えると無音になります。")
 
+// ---- 構成アセット (.actor.json / .prefab.json、M48d) ----
+MYE_STR(Insp_ComposeSummary,  "%d entities, %d root(s)", "エンティティ %d 個 / ルート %d 個")
+MYE_STR(Insp_ComposeMultiRoot, "Multiple roots are wrapped in a group on instantiation.",
+                              "複数ルートは配置時にグループで包まれます。")
+MYE_STR(Insp_ComposeInvalid,  "could not be loaded (needs \"actor\":1 or \"prefab\":1)",
+                              "読み込めません (\"actor\":1 または \"prefab\":1 が必要です)")
+
 // ---- アセットブラウザ (M47b) ----
 MYE_STR(Asset_Create,         "Create",              "作成")
 MYE_STR(Asset_Folder,         "Folder",              "フォルダ")
 MYE_STR(Asset_Scene,          "Scene",               "シーン")
 MYE_STR(Asset_MaterialItem,   "Material",            "マテリアル")
 MYE_STR(Asset_AnimationClip,  "Animation Clip",      "アニメーションクリップ")
+MYE_STR(Asset_Actor,          "Actor",               "アクター")
 MYE_STR(Asset_Sound,          "Sound",               "サウンド")
 MYE_STR(Asset_Mixer,          "Mixer",               "ミキサー")
 MYE_STR(Asset_CppScript,      "C++ Script",          "C++ スクリプト")
@@ -542,6 +550,8 @@ MYE_STR(Log_WriteMatFail,     "could not write material: %s", "マテリアル�
 MYE_STR(Log_CreatedMat,       "created material: %s",       "マテリアルを作成しました: %s")
 MYE_STR(Log_WriteSoundFail,   "could not write sound: %s",  "サウンドを書き出せません: %s")
 MYE_STR(Log_CreatedSound,     "created sound: %s",          "サウンドを作成しました: %s")
+MYE_STR(Log_WriteActorFail,   "could not write actor: %s",  "アクターを書き出せません: %s")
+MYE_STR(Log_CreatedActor,     "created actor: %s",          "アクターを作成しました: %s")
 MYE_STR(Log_WriteMixerFail,   "could not write mixer: %s",  "ミキサーを書き出せません: %s")
 MYE_STR(Log_CreatedMixer,     "created mixer: %s",          "ミキサーを作成しました: %s")
 MYE_STR(Log_ScriptExists,     "script already exists: %s",  "スクリプトは既に存在します: %s")

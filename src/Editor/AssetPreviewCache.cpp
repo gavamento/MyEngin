@@ -45,7 +45,7 @@ int64_t FileWriteTime(const std::wstring& path)
 bool AssetPreviewCache::IsPreviewable(const std::wstring& path)
 {
     return EndsWith(path, L".glb") || EndsWith(path, L".gltf") || EndsWith(path, L".fbx")
-           || EndsWith(path, L".prefab.json");
+           || PrefabLibrary::IsComposePath(path);
 }
 
 ID3D11ShaderResourceView* AssetPreviewCache::GetOrRequest(EngineContext& ctx,
@@ -97,7 +97,7 @@ bool AssetPreviewCache::RenderOne(EngineContext& ctx, const std::wstring& path, 
     // ---- 一時シーンに対象 1 体 + プレビュー用平行光を構築 ----
     tempScene_.Clear();
     World& world = tempScene_.GetWorld();
-    if (EndsWith(path, L".prefab.json")) {
+    if (PrefabLibrary::IsComposePath(path)) {
         const uint64_t hash = ctx.prefabs ? ctx.prefabs->LoadFromFile(path) : 0;
         if (hash == 0 || Prefab::Instantiate(tempScene_, *ctx.prefabs, hash, 0) == 0) {
             return false;

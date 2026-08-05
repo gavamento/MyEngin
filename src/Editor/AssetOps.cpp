@@ -151,8 +151,8 @@ bool RunningRelease()
 // 素朴な extension() 分割だと連番付与で "x.prefab (1).json" になり種別判定が壊れる
 void SplitAssetName(const std::wstring& filename, std::wstring& stem, std::wstring& suffix)
 {
-    static const std::wstring kCompound[] = {L".scene.json", L".prefab.json", L".anim.json",
-                                             L".mat.json",   L".controller.json",
+    static const std::wstring kCompound[] = {L".scene.json", L".prefab.json", L".actor.json",
+                                             L".anim.json",  L".mat.json",   L".controller.json",
                                              L".sound.json", L".mixer.json"};
     for (const std::wstring& c : kCompound) {
         if (filename.size() > c.size() &&
@@ -350,6 +350,37 @@ std::wstring CreateSoundAsset(EngineContext& ctx, const std::wstring& dir, const
         ctx.sounds->LoadFromFile(path);
     }
     MYE_LOG_INFO(Tr(StrId::Log_CreatedSound), WideToUtf8(path).c_str());
+    return path;
+}
+
+std::wstring CreateActorAsset(EngineContext& ctx, const std::wstring& dir, const std::string& name)
+{
+    const std::string safe = SanitizeFileName(name, "New Actor");
+    const std::wstring path = dir + L"\\" + Utf8ToWide(safe) + PrefabLibrary::kActorSuffix;
+    // ルート 1 個の最小構成。エンティティ形式は WriteEntity 互換 (fileId=1 / 親なし)
+    nlohmann::json rootEntity;
+    rootEntity["fileId"] = 1;
+    rootEntity["name"] = safe;
+    rootEntity["childIndex"] = 0;
+    rootEntity["components"] = nlohmann::json::object();
+    nlohmann::json doc;
+    doc["engine"] = "MyEngine";
+    doc["actor"] = 1;
+    doc["name"] = safe;
+    doc["entities"] = nlohmann::json::array({ rootEntity });
+
+    std::ofstream f{ fs::path(path), std::ios::binary };
+    if (!f) {
+        MYE_LOG_ERROR(Tr(StrId::Log_WriteActorFail), WideToUtf8(path).c_str());
+        return {};
+    }
+    f << doc.dump(2);
+    f.close();
+    // 生成直後に登録 → ダブルクリック / D&D で即配置できる (CreateSoundAsset 範型)
+    if (ctx.prefabs) {
+        ctx.prefabs->LoadFromFile(path);
+    }
+    MYE_LOG_INFO(Tr(StrId::Log_CreatedActor), WideToUtf8(path).c_str());
     return path;
 }
 
@@ -713,7 +744,7 @@ void InstantiateAssetAtPath(EngineContext& ctx, Selection& selection, UndoStack&
     const AssetType dropType = AssetDatabase::ClassifyPath(path);
     undo.BeginRecord("Place Asset", selection);
     uint64_t rootFid = 0;
-    if (EndsWith(lu, ".prefab.json")) {
+    if (PrefabLibrary::IsComposePath(path)) { // .actor.json / .prefab.json (M48d)
         const uint64_t hash = ctx.prefabs ? ctx.prefabs->LoadFromFile(path) : 0;
         if (hash != 0) {
             rootFid = Prefab::Instantiate(*ctx.scene, *ctx.prefabs, hash, parentFileId);
