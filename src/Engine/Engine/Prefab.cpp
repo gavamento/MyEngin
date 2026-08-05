@@ -277,10 +277,33 @@ std::string OverrideKey(const std::string& compName, const char* fieldName)
     return compName + "." + fieldName;
 }
 
+// ---- 構造上書きキー (M50c) ----
+// コンポーネントの追加/削除を "+Component" / "-Component" で記録する。
+// 値キー "Component.field" / 名前 "name" とは先頭 1 文字で機械的に区別できる。
+// 旧エンジンはこのキーを素通しで保存・復元するだけ (照合には掛からない = 不活性)
+
+std::string AddedKey(const std::string& compName) { return "+" + compName; }
+std::string RemovedKey(const std::string& compName) { return "-" + compName; }
+
+// 構造上書きの追跡対象か。**ReadEntityComponents の removeMissing 除外集合のミラー**
+// (SceneSerializer.cpp) — NoSerialize (派生値) / Hidden (プレハブタグ) / Name /
+// LocalTransform は対象外。kComponentScriptState (C# スクリプト状態) は含める — ただし
+// ベースに追加された C# comp が伝播/復元で既定値のまま生えるのは既存ギャップ
+// (フィールドは managed 側が持ち、ここからは充填できない。スコープ外)
+bool IsStructureTracked(const ComponentRegistry& reg, ComponentTypeId t)
+{
+    if (t == kInvalidComponentType || t == NameComponent::sTypeId
+        || t == LocalTransform::sTypeId) {
+        return false;
+    }
+    return (reg.Desc(t).flags & (kComponentNoSerialize | kComponentHidden)) == 0;
+}
+
 // e の現在値を base (ベースのエンティティ JSON) と突き合わせた上書きキー集合 = ライブ diff。
-// **ベースに存在するフィールドだけ**を対象にする — ロード時の更新はベース値の書き戻しなので、
-// ベースに無いフィールド (インスタンスで足したコンポーネント等) は上書きとして記録しても
-// 使い道がなく、リストを無駄に膨らませるだけ。
+// 値キーは**ベースに存在するフィールドだけ**を対象にする — ロード時の更新はベース値の
+// 書き戻しなので、ベースに無いフィールドを値キーとして記録しても使い道がない。
+// 構造の差 (追跡対象コンポーネントの有無) は "+C" / "-C" として一緒に導出する (M50c) —
+// レコードは常にライブ diff の純導出なので、RecordOverrides の全置換と自然に両立する。
 // EntityRef は remap 判定が不確実なので従来どおり対象外、隠しコンポーネント (プレハブタグ)
 // はデータではないので対象外
 std::set<std::string> OverridesAgainstBase(World& w, EntityID e, const json& base)
@@ -289,18 +312,21 @@ std::set<std::string> OverridesAgainstBase(World& w, EntityID e, const json& bas
     if (GetNameStr(w, e) != base.value("name", std::string())) {
         keys.insert(kNameOverrideKey);
     }
-    if (!base.contains("components")) {
-        return keys;
-    }
     const ComponentRegistry& reg = ComponentRegistry::Get();
-    for (const auto& [compName, fields] : base["components"].items()) {
+    const json empty = json::object();
+    const json& baseComps = base.contains("components") ? base["components"] : empty;
+    for (const auto& [compName, fields] : baseComps.items()) {
         const ComponentTypeId t = reg.FindByName(compName);
         if (t == kInvalidComponentType || (reg.Desc(t).flags & kComponentHidden) != 0) {
             continue;
         }
         const void* comp = w.GetComponentRaw(e, t);
         if (!comp) {
-            continue; // インスタンスから外されたコンポーネント (v1 では構造変更を追跡しない)
+            // ベースにあり実体に無い = インスタンスで削除された comp → "-C" (M50c)
+            if (IsStructureTracked(reg, t)) {
+                keys.insert(RemovedKey(compName));
+            }
+            continue;
         }
         for (const FieldDesc& f : reg.Desc(t).fields) {
             if (f.type == FieldType::EntityRef || (f.flags & kFieldNoSerialize)) {
@@ -311,6 +337,18 @@ std::set<std::string> OverridesAgainstBase(World& w, EntityID e, const json& bas
             }
             if (FieldToJson(comp, f) != fields[f.name]) {
                 keys.insert(OverrideKey(compName, f.name));
+            }
+        }
+    }
+    // 実体にありベースに無い追跡対象 comp = インスタンスで追加された comp → "+C" (M50c)。
+    // アーキタイプの型リストは TypeId 昇順 = 決定論
+    if (const Archetype* arch = w.GetArchetype(e)) {
+        for (ComponentTypeId t : arch->Types()) {
+            if (!IsStructureTracked(reg, t)) {
+                continue;
+            }
+            if (!baseComps.contains(reg.Desc(t).name)) {
+                keys.insert(AddedKey(reg.Desc(t).name));
             }
         }
     }
@@ -931,6 +969,105 @@ void RevertField(Scene& scene, const PrefabLibrary& lib, EntityID e, const char*
     }
 }
 
+// ---- 構造上書き: 状態問い合わせ + コンポーネント単位の Revert (M50c) ----
+
+CompOverride ComponentOverrideState(Scene& scene, const PrefabLibrary& lib, EntityID e,
+                                    const char* compName)
+{
+    World& w = scene.GetWorld();
+    const json* base = ResolveBase(w, lib, e);
+    if (!base) {
+        return CompOverride::None;
+    }
+    // 保存済みレコードが一次情報。無いのはレガシーシーンだけなので、そのときだけ
+    // ライブ diff に落ちる (IsFieldOverridden と同じ流儀)
+    const Scene::OverrideSet* rec = scene.GetOverrides(FidOf(w, e));
+    const Scene::OverrideSet keys = rec ? *rec : OverridesAgainstBase(w, e, *base);
+    if (keys.count(AddedKey(compName)) != 0) {
+        return CompOverride::Added;
+    }
+    if (keys.count(RemovedKey(compName)) != 0) {
+        return CompOverride::Removed;
+    }
+    return CompOverride::None;
+}
+
+std::vector<std::string> RemovedPrefabComponents(Scene& scene, const PrefabLibrary& lib, EntityID e)
+{
+    std::vector<std::string> out;
+    World& w = scene.GetWorld();
+    const json* base = ResolveBase(w, lib, e);
+    if (!base || !base->contains("components")) {
+        return out;
+    }
+    const ComponentRegistry& reg = ComponentRegistry::Get();
+    const Scene::OverrideSet* rec = scene.GetOverrides(FidOf(w, e));
+    const Scene::OverrideSet keys = rec ? *rec : OverridesAgainstBase(w, e, *base);
+    for (const std::string& k : keys) {
+        if (k.empty() || k[0] != '-') {
+            continue;
+        }
+        const std::string name = k.substr(1);
+        // レコードが古びている可能性に備えて実体とベースで裏を取る — Restore が no-op に
+        // なるエントリ (実体が持っている / ベースから消えた) は UI に出さない
+        const ComponentTypeId t = reg.FindByName(name);
+        if (t == kInvalidComponentType || w.GetComponentRaw(e, t) != nullptr
+            || !(*base)["components"].contains(name)) {
+            continue;
+        }
+        out.push_back(name);
+    }
+    return out; // std::set 由来 = 名前順で決定論的
+}
+
+bool RevertComponent(Scene& scene, const PrefabLibrary& lib, EntityID e, const char* compName)
+{
+    World& w = scene.GetWorld();
+    const json* base = ResolveBase(w, lib, e);
+    if (!base) {
+        return false;
+    }
+    const ComponentRegistry& reg = ComponentRegistry::Get();
+    const ComponentTypeId t = reg.FindByName(compName);
+    if (!IsStructureTracked(reg, t)) {
+        return false;
+    }
+    const uint64_t fid = FidOf(w, e);
+    const json comps = base->contains("components") ? (*base)["components"] : json::object();
+    void* comp = w.GetComponentRaw(e, t);
+    if (comps.contains(compName)) {
+        if (comp) {
+            return false; // 構造は一致している (値を戻すのは RevertField の仕事)
+        }
+        // "-C" の復元: ベース値で再生成する。EntityRef はベースのドメインの localId で
+        // ここでは解決できないため null のまま (RevertInstance と同じ制限)。
+        // C# comp はフィールドが managed 側にあり充填できず既定値で生える (既存ギャップ)
+        comp = w.AddComponentRaw(e, t);
+        if (!comp) {
+            return false;
+        }
+        const json& fields = comps[compName];
+        for (const FieldDesc& f : reg.Desc(t).fields) {
+            if (f.type == FieldType::EntityRef || (f.flags & kFieldNoSerialize)) {
+                continue;
+            }
+            if (fields.contains(f.name)) {
+                FieldFromJson(comp, f, fields[f.name]);
+            }
+        }
+        scene.UnmarkOverride(fid, RemovedKey(compName));
+    } else {
+        if (!comp) {
+            return false;
+        }
+        // "+C" の取り消し: インスタンスで追加された comp を除去する
+        w.RemoveComponentRaw(e, t);
+        scene.UnmarkOverride(fid, AddedKey(compName));
+    }
+    w.ApplyStructuralChanges();
+    return true;
+}
+
 void RevertInstance(Scene& scene, const PrefabLibrary& lib, uint64_t rootFileId)
 {
     World& w = scene.GetWorld();
@@ -960,12 +1097,11 @@ void RevertInstance(Scene& scene, const PrefabLibrary& lib, uint64_t rootFileId)
         }
         SetEntityName(w, m, base->value("name", std::string()));
         // ベース値へ戻し切るので上書きは 0 件になる (M48e)。
-        // **ベースに無いフィールドは元々リストに載らない**ので空集合で正しい
+        // 構造も戻すため "+C"/"-C" キーも含めて空集合で正しい (M50c)
         scene.SetOverrides(FidOf(w, m), {});
-        if (!base->contains("components")) {
-            continue;
-        }
-        for (const auto& [compName, fields] : (*base)["components"].items()) {
+        const json baseComps =
+            base->contains("components") ? (*base)["components"] : json::object();
+        for (const auto& [compName, fields] : baseComps.items()) {
             const ComponentTypeId t = reg.FindByName(compName);
             if (t == kInvalidComponentType) {
                 continue;
@@ -975,7 +1111,14 @@ void RevertInstance(Scene& scene, const PrefabLibrary& lib, uint64_t rootFileId)
             }
             void* comp = w.GetComponentRaw(m, t);
             if (!comp) {
-                continue; // インスタンスに無いコンポーネントは足さない (フィールドのみ復元)
+                // インスタンスで削除されていた comp はベース値で再生成する (M50c 構造復元)
+                if (!IsStructureTracked(reg, t)) {
+                    continue;
+                }
+                comp = w.AddComponentRaw(m, t);
+                if (!comp) {
+                    continue;
+                }
             }
             for (const FieldDesc& f : reg.Desc(t).fields) {
                 if (f.type == FieldType::EntityRef || (f.flags & kFieldNoSerialize)) {
@@ -983,6 +1126,19 @@ void RevertInstance(Scene& scene, const PrefabLibrary& lib, uint64_t rootFileId)
                 }
                 if (fields.contains(f.name)) {
                     FieldFromJson(comp, f, fields[f.name]);
+                }
+            }
+        }
+        // ベースに無い追跡対象 comp = インスタンスで追加された comp を除去する (M50c 構造復元)。
+        // 型リストは Remove でアーキタイプが動く前にコピーして回す
+        if (const Archetype* arch = w.GetArchetype(m)) {
+            std::vector<ComponentTypeId> types(arch->Types().begin(), arch->Types().end());
+            for (ComponentTypeId t : types) {
+                if (!IsStructureTracked(reg, t)) {
+                    continue;
+                }
+                if (!baseComps.contains(reg.Desc(t).name)) {
+                    w.RemoveComponentRaw(m, t);
                 }
             }
         }
@@ -1025,6 +1181,12 @@ void PropagateBaseChange(Scene& scene, const json& oldBase, const json& newBase,
             if (!nb) {
                 continue; // 新ベースに存在しない → 触らない
             }
+            // 構造上書きレコードは**コピーで**参照する (M50c)。この後の SetOverrides が
+            // overrides_ マップを書き換えるため、ポインタ保持は失効リスクを抱える
+            // (RefreshNonOverridden の keys コピーと同じ理由)
+            const Scene::OverrideSet* recPtr = scene.GetOverrides(FidOf(w, m));
+            const bool hasRec = recPtr != nullptr;
+            const Scene::OverrideSet rec = recPtr ? *recPtr : Scene::OverrideSet();
             // 名前 (非オーバーライドのみ伝播)
             {
                 const std::string oldName = ob ? ob->value("name", std::string()) : std::string();
@@ -1047,10 +1209,21 @@ void PropagateBaseChange(Scene& scene, const json& oldBase, const json& newBase,
                 void* comp = w.GetComponentRaw(m, t);
                 bool added = false;
                 if (!comp) {
+                    // ユーザーがインスタンスで削除した comp ("-C") は復活させない (M50c)。
+                    // レコードの無いレガシーメンバは従来どおり復活 = フォールバック現状維持
+                    if (hasRec && rec.count(RemovedKey(compName)) != 0) {
+                        continue;
+                    }
                     comp = w.AddComponentRaw(m, t); // 新規にベースへ加わったコンポーネント
                     added = true;
                 }
                 if (!comp) {
+                    continue;
+                }
+                // インスタンスで追加した comp ("+C") と同名をベースが獲得した場合、値伝播を
+                // 丸ごとスキップする — インスタンスの値をベース値でクロバーしない (M50c)。
+                // 直後の記録撮り直しで "+C" は値キーへ転換され、以後は差分だけが上書き扱い
+                if (!added && hasRec && rec.count(AddedKey(compName)) != 0) {
                     continue;
                 }
                 const json obFields = obComps.contains(compName) ? obComps[compName] : json::object();
@@ -1190,6 +1363,9 @@ void RefreshNonOverridden(Scene& scene, const PrefabLibrary& lib)
 {
     World& w = scene.GetWorld();
     const ComponentRegistry& reg = ComponentRegistry::Get();
+    // 文書 version で構造追随の掛け方を分ける (M50c)。v3 = 「キー不在 = ベース追随」が
+    // 構造まで及ぶ契約で保存された文書。v2 以前は実体に触らずレコードへのマージだけ
+    const int docVersion = scene.LoadedVersion();
 
     // インスタンスルートを fileId 昇順で処理する。ForEachArchetype の走査順はアーキタイプの
     // 生成履歴に依存するため、**そのまま使うと決定論を落とす** (同じ JSON でも順序が変わりうる)
@@ -1239,12 +1415,30 @@ void RefreshNonOverridden(Scene& scene, const PrefabLibrary& lib)
             if (!rec) {
                 // レガシー (M48d 以前に保存されたシーン)。ライブ diff から記録だけ起こし、
                 // **値には一切触らない** = 旧エンジンで保存したシーンはビット不変にロードされる。
+                // 拡張導出 (M50c) が構造キー "+C"/"-C" も一緒に拾う。
                 // 次の保存で overrides キーが付き、以後は新形式として refresh の対象になる
                 scene.SetOverrides(fid, OverridesAgainstBase(w, m, *base));
                 ++migrated;
                 continue;
             }
-            const Scene::OverrideSet keys = *rec; // 以降の Set 呼び出しでポインタが失効しうる
+            const Scene::OverrideSet stored = *rec; // 以降の Set 呼び出しでポインタが失効しうる
+            Scene::OverrideSet keys = stored;
+            if (docVersion < 3) {
+                // v2 (M48e 期) の文書は構造キーを持たない。ライブ diff から構造キーだけを
+                // レコードへマージする — **実体は不変**。v2 では「ユーザーの削除」と
+                // 「閉シーン中のベース成長による欠落」が区別できないため、どちらも "-C"
+                // (= sticky な削除) になる。誤ラベルは一度きりで、削除が復活し続けた
+                // 現行よりは改善。v3 で保存し直した以後は正しくベース追随する
+                bool changed = false;
+                for (const std::string& k : OverridesAgainstBase(w, m, *base)) {
+                    if (!k.empty() && (k[0] == '+' || k[0] == '-') && keys.insert(k).second) {
+                        changed = true;
+                    }
+                }
+                if (changed) {
+                    scene.SetOverrides(fid, keys);
+                }
+            }
             if (keys.count(kNameOverrideKey) == 0) {
                 // ★MakeUniqueSiblingName は通さない — ロード経路で名前を変えると
                 //   WorldHash が変わり既存シーンの決定論が壊れる (EntityNaming.h の規約)
@@ -1260,7 +1454,23 @@ void RefreshNonOverridden(Scene& scene, const PrefabLibrary& lib)
                 }
                 void* comp = w.GetComponentRaw(m, t);
                 if (!comp) {
-                    continue; // v1 は構造変更を追跡しない — 無いコンポーネントを生やさない
+                    // v3 の新契約 (M50c): 「キー不在 = ベース追随」は構造にも及ぶ。
+                    // "-C" の無い欠落 = 閉シーン中にベースへ加わった comp → ここで追加し、
+                    // 下の通常 refresh がベース値を充填する (処理順は localId 昇順 = 決定論)。
+                    // v2 以前は上のマージで "-C" が付いているので実体には触らない
+                    if (docVersion >= 3 && IsStructureTracked(reg, t)
+                        && keys.count(RemovedKey(compName)) == 0) {
+                        comp = w.AddComponentRaw(m, t);
+                    }
+                    if (!comp) {
+                        continue; // "-C" (ユーザー削除) → 復活させない
+                    }
+                }
+                // インスタンス追加 comp ("+C") と同名をベースが獲得した直後の文書では、
+                // フィールド refresh を丸ごとスキップ — インスタンス値をクロバーしない
+                // (M50c。次の編集の記録撮り直しで値キーへ転換される)
+                if (keys.count(AddedKey(compName)) != 0) {
+                    continue;
                 }
                 for (const FieldDesc& f : reg.Desc(t).fields) {
                     if (f.type == FieldType::EntityRef || (f.flags & kFieldNoSerialize)) {
@@ -1288,6 +1498,10 @@ json MakeEditDocument(const PrefabAsset& asset)
 {
     json doc;
     doc["engine"] = "MyEngine";
+    // ★意図的に v2 のまま (M50c)。ミニシーンは RefreshNonOverridden の対象外だが、
+    //   仮に将来呼ばれても v2 の「記録へのマージのみ・実体不変」に落ちるのが安全側 —
+    //   旧エンジンが書いたアセットの入れ子メンバへ v3 の構造追随 (comp 追加) を掛けると、
+    //   開いて保存しただけでアセットの実体が変わってしまう
     doc["version"] = 2;
     doc["sceneName"] = asset.name;
     // ★ここが要点: LoadFromJson は nextFileId 既定を 1 にするので、そのままだと

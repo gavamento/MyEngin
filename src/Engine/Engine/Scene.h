@@ -12,6 +12,13 @@ namespace mye {
 // アクティブなワールドの所有者。M2 で JSON シリアライズ (保存/読込/Play スナップショット) が載る
 class Scene {
 public:
+    // シーン文書の現行 version (SceneSerializer::SaveToJson が書く値)。
+    //   v1: EntityRef を [index, generation] で保存 (M8 以前)
+    //   v2: EntityRef を fileId で保存 + childIndex (M8)
+    //   v3: 「キー不在 = ベース追随」をコンポーネント構造へ拡張 (M50c) —
+    //       ベースにあり実体に無く "-Component" キーの無い comp は、ロード時に
+    //       ベース値で追加してよい (v2 以前の文書では記録へのマージのみで実体は不変)
+    static constexpr int kDocVersion = 3;
     GameObject CreateGameObject(std::string_view name)
     {
         return GameObject(&world_, world_.CreateEntity(name));
@@ -50,6 +57,12 @@ public:
     uint64_t NextFileId() { return nextFileId_++; }
     void SetNextFileId(uint64_t v) { nextFileId_ = v; }
     uint64_t PeekNextFileId() const { return nextFileId_; }
+
+    // このシーンをロードした文書の version (LoadFromJson が設定する)。
+    // RefreshNonOverridden が v3 の構造追随を掛けてよいかの判定に使う。
+    // 既定は kDocVersion — メモリ上で組んだシーン (デモ構築等) は現行形式そのもの
+    int LoadedVersion() const { return loadedVersion_; }
+    void SetLoadedVersion(int v) { loadedVersion_ = v; }
 
     // ---- プレハブ override リスト (M48e) ----
     //
@@ -95,6 +108,7 @@ private:
     World world_;
     std::string name_ = "Untitled";
     uint64_t nextFileId_ = 1;
+    int loadedVersion_ = kDocVersion; // LoadFromJson が文書の値で上書きする
     std::unordered_map<uint64_t, OverrideSet> overrides_; // fileId → 上書き済みキー集合
 };
 

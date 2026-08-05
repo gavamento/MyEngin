@@ -313,7 +313,9 @@ json SaveToJson(Scene& scene)
 
     json root;
     root["engine"] = "MyEngine";
-    root["version"] = 2; // v2: EntityRef を fileId で保存 + childIndex (兄弟順)
+    // v3 (M50c): 「キー不在 = ベース追随」を構造へ拡張した文書であることの宣言。
+    // 値の書式は v2 と同一 — 旧エンジンは version を読まないので素通しでロードできる
+    root["version"] = Scene::kDocVersion;
     root["sceneName"] = scene.Name();
     root["nextFileId"] = scene.PeekNextFileId();
     root["entities"] = std::move(items);
@@ -331,6 +333,9 @@ bool LoadFromJson(Scene& scene, const json& root)
     scene.Clear();
     scene.SetName(root.value("sceneName", std::string("Untitled")));
     scene.SetNextFileId(root.value("nextFileId", 1ull));
+    // 文書 version を保持する (M50c)。RefreshNonOverridden が v3 の構造追随
+    // (欠落 comp のロード時追加) を掛けてよいかをこれで判定する。キー無し = v1
+    scene.SetLoadedVersion(root.value("version", 1));
 
     const json& items = root["entities"];
 

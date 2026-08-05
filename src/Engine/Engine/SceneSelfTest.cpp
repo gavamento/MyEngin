@@ -1444,6 +1444,299 @@ bool RunSceneSerializerSelfTest()
         std::filesystem::remove(ovrPath, ec);
     }
 
+    // ---- 構造上書き = コンポーネント追加/削除の Revert + シーン文書 v3 (M50c) ----
+    // override キーに "+C"/"-C" を追加し、コンポーネント単位の構造変更を上書きとして追跡する。
+    // レコードはライブ diff の純導出 (RecordOverrides の全置換と両立)。v3 文書は
+    // 「キー不在 = ベース追随」が構造にも及ぶ契約で、v2 以前はレコードへのマージのみ。
+    // 押さえるのは計画の検証済みリスト 13 本 (削除 sticky / v3 追随 / v2 移行 / "+C" 転換 /
+    // Undo / Revert 双方向 / Apply 伝播 / 入れ子再播種 / レガシー復活ピン)
+    {
+        PrefabLibrary lib;
+        auto tmpPath = [](const wchar_t* n) {
+            return (std::filesystem::temp_directory_path() / n).wstring();
+        };
+        const std::wstring basePath = tmpPath(L"mye_selftest_struct.actor.json");
+
+        // ベース: StructRoot { MeshRenderer(0xAB/0x12), Camera(fov 50) }。Light は持たない
+        uint64_t baseHash = 0;
+        {
+            Scene src;
+            GameObject r = src.CreateGameObjectTracked("StructRoot");
+            auto* smr = r.AddComponent<MeshRendererComponent>();
+            smr->mesh = AssetID{ 0xABull };
+            smr->material = AssetID{ 0x12ull };
+            r.AddComponent<CameraComponent>()->fovYDeg = 50.0f;
+            src.GetWorld().ApplyStructuralChanges();
+            baseHash = lib.Register(basePath, "struct", Prefab::ExtractLocal(src, r.Id()));
+        }
+        const nlohmann::json baseJson = lib.Get(baseHash)->entities;
+        auto ovr = [](Scene& sc, uint64_t fid, const char* key) {
+            const Scene::OverrideSet* rec = sc.GetOverrides(fid);
+            return rec != nullptr && rec->count(key) != 0;
+        };
+        // fid のエンティティから "overrides" の 1 キーを外した文書を作る
+        auto stripKey = [](nlohmann::json doc, uint64_t fid, const char* key) {
+            for (nlohmann::json& it : doc["entities"]) {
+                if (it.value("fileId", 0ull) == fid && it.contains("overrides")) {
+                    nlohmann::json arr = nlohmann::json::array();
+                    for (const nlohmann::json& k : it["overrides"]) {
+                        if (!k.is_string() || k.get<std::string>() != key) {
+                            arr.push_back(k);
+                        }
+                    }
+                    it["overrides"] = arr;
+                }
+            }
+            return doc;
+        };
+
+        Scene s;
+        World& w = s.GetWorld();
+        const uint64_t aFid = Prefab::Instantiate(s, lib, baseHash, 0);
+        const uint64_t bFid = Prefab::Instantiate(s, lib, baseHash, 0);
+        w.ApplyStructuralChanges();
+        const EntityID ea = s.FindByFileId(aFid).Id();
+        const EntityID eb = s.FindByFileId(bFid).Id();
+
+        // (1) 削除 → "-C" 導出 → 伝播で復活しない → 再導出でもキー維持
+        w.RemoveComponentRaw(ea, CameraComponent::sTypeId);
+        w.ApplyStructuralChanges();
+        Prefab::RecordOverrides(s, lib, ea);
+        check(ovr(s, aFid, "-Camera"),
+              "struct: removing an instance component derives the \"-Camera\" key");
+        check(Prefab::ComponentOverrideState(s, lib, ea, "Camera") == Prefab::CompOverride::Removed,
+              "struct: ComponentOverrideState reports Removed");
+        Prefab::PropagateBaseChange(s, baseJson, baseJson, baseHash);
+        check(w.GetComponent<CameraComponent>(ea) == nullptr,
+              "struct: propagation does not resurrect a \"-C\" component");
+        check(ovr(s, aFid, "-Camera"),
+              "struct: the re-derived record keeps \"-Camera\" after propagation");
+
+        // (2) v3 往復で削除が sticky に生き残る
+        const nlohmann::json savedV3 = SceneSerializer::SaveToJson(s);
+        check(savedV3.value("version", 0) == 3, "struct: scene documents now save as version 3");
+        {
+            Scene s2;
+            SceneSerializer::LoadFromJson(s2, savedV3);
+            Prefab::RefreshNonOverridden(s2, lib);
+            check(s2.GetWorld().GetComponent<CameraComponent>(s2.FindByFileId(aFid).Id()) == nullptr
+                      && ovr(s2, aFid, "-Camera"),
+                  "struct: a v3 round trip keeps the deletion across load refresh");
+        }
+        // (3) v3 の新契約: "-C" キーの無い欠落 (= 閉シーン中のベース成長) はロードで追加される
+        {
+            Scene s3;
+            SceneSerializer::LoadFromJson(s3, stripKey(savedV3, aFid, "-Camera"));
+            Prefab::RefreshNonOverridden(s3, lib);
+            auto* readded = s3.GetWorld().GetComponent<CameraComponent>(s3.FindByFileId(aFid).Id());
+            check(readded != nullptr && readded->fovYDeg == 50.0f,
+                  "struct: v3 contract — a keyless missing component is re-added with base values");
+        }
+        // (4) 同じ欠落でも v2 文書は実体不変で "-C" がレコードへマージされる (sticky 化)
+        {
+            nlohmann::json v2doc = stripKey(savedV3, aFid, "-Camera");
+            v2doc["version"] = 2;
+            Scene s4;
+            SceneSerializer::LoadFromJson(s4, v2doc);
+            Prefab::RefreshNonOverridden(s4, lib);
+            check(s4.GetWorld().GetComponent<CameraComponent>(s4.FindByFileId(aFid).Id()) == nullptr,
+                  "struct: a v2 document is never mutated structurally at load");
+            check(ovr(s4, aFid, "-Camera"),
+                  "struct: v2 load merges the structural key into the record");
+        }
+
+        // (5) 追加 → "+C"。ベースが同名 comp を獲得しても値はクロバーされず、キーは値キーへ転換
+        w.AddComponent<LightComponent>(eb)->intensity = 7.0f;
+        w.ApplyStructuralChanges();
+        Prefab::RecordOverrides(s, lib, eb);
+        check(ovr(s, bFid, "+Light")
+                  && Prefab::ComponentOverrideState(s, lib, eb, "Light")
+                      == Prefab::CompOverride::Added,
+              "struct: adding an instance component derives the \"+Light\" key");
+        nlohmann::json lightBase = baseJson;
+        lightBase[0]["components"]["Light"] = { { "intensity", 3.0f } };
+        lib.Register(basePath, "struct", lightBase); // 以降の RecordOverrides もこのベースで引く
+        Prefab::PropagateBaseChange(s, baseJson, lightBase, baseHash);
+        {
+            auto* bl = w.GetComponent<LightComponent>(eb);
+            check(bl != nullptr && bl->intensity == 7.0f,
+                  "struct: the base gaining a \"+C\" component does not clobber instance values");
+        }
+        check(!ovr(s, bFid, "+Light") && ovr(s, bFid, "Light.intensity"),
+              "struct: the \"+C\" key converts into value keys once the base has the component");
+
+        // (6) ベースが comp を削除 → インスタンスは実体を保持し "+C" へ転換 (データ温存)
+        nlohmann::json noCamBase = lightBase;
+        noCamBase[0]["components"].erase("Camera");
+        lib.Register(basePath, "struct", noCamBase);
+        Prefab::PropagateBaseChange(s, lightBase, noCamBase, baseHash);
+        check(w.GetComponent<CameraComponent>(eb) != nullptr && ovr(s, bFid, "+Camera"),
+              "struct: the base removing a component preserves the instance copy as \"+Camera\"");
+        // (7) 双方削除 (インスタンスで削除済み + ベースからも消えた) → キー消滅
+        check(w.GetComponent<CameraComponent>(ea) == nullptr && !ovr(s, aFid, "-Camera"),
+              "struct: when the base also drops the component the \"-C\" key vanishes");
+
+        // (8) 削除 → 同値で再追加 → レコードは空 (純導出なので痕跡が残らない)
+        w.RemoveComponentRaw(ea, LightComponent::sTypeId);
+        w.ApplyStructuralChanges();
+        Prefab::RecordOverrides(s, lib, ea);
+        check(ovr(s, aFid, "-Light"), "struct: setup — the deletion is recorded first");
+        w.AddComponent<LightComponent>(ea)->intensity = 3.0f; // ベースと同値
+        w.ApplyStructuralChanges();
+        Prefab::RecordOverrides(s, lib, ea);
+        check(s.GetOverrides(aFid) != nullptr && s.GetOverrides(aFid)->empty(),
+              "struct: re-adding with base-equal values leaves an empty record");
+
+        // (9) Undo/Redo 相当 (全量スナップショット + ApplyPartial removeHiddenMissing) で
+        //     構造とレコードが一緒に往復する
+        const nlohmann::json beforeUndo = SceneSerializer::SubtreeToJson(s, eb);
+        w.RemoveComponentRaw(eb, LightComponent::sTypeId);
+        w.ApplyStructuralChanges();
+        Prefab::RecordOverrides(s, lib, eb);
+        const nlohmann::json afterUndo = SceneSerializer::SubtreeToJson(s, eb);
+        check(ovr(s, bFid, "-Light"), "struct: setup — the redo snapshot carries \"-Light\"");
+        check(SceneSerializer::ApplyPartial(s, beforeUndo, /*removeHiddenMissing=*/true),
+              "struct: the undo snapshot applies");
+        w.ApplyStructuralChanges();
+        check(w.GetComponent<LightComponent>(s.FindByFileId(bFid).Id()) != nullptr
+                  && !ovr(s, bFid, "-Light") && ovr(s, bFid, "Light.intensity"),
+              "struct: undo restores both the component and the previous record");
+        SceneSerializer::ApplyPartial(s, afterUndo, /*removeHiddenMissing=*/true);
+        w.ApplyStructuralChanges();
+        check(w.GetComponent<LightComponent>(s.FindByFileId(bFid).Id()) == nullptr
+                  && ovr(s, bFid, "-Light"),
+              "struct: redo removes it again and restores the \"-Light\" key");
+
+        // RevertComponent 双方向 + RemovedPrefabComponents (Inspector の入口)
+        const EntityID eb2 = s.FindByFileId(bFid).Id();
+        {
+            const std::vector<std::string> removed = Prefab::RemovedPrefabComponents(s, lib, eb2);
+            check(removed.size() == 1 && removed[0] == "Light",
+                  "struct: RemovedPrefabComponents lists exactly the removed base component");
+        }
+        check(Prefab::RevertComponent(s, lib, eb2, "Light"),
+              "struct: RevertComponent restores a removed component");
+        {
+            auto* rl = w.GetComponent<LightComponent>(eb2);
+            check(rl != nullptr && rl->intensity == 3.0f && !ovr(s, bFid, "-Light"),
+                  "struct: the restored component carries base values and drops the key");
+        }
+        check(Prefab::RevertComponent(s, lib, eb2, "Camera")
+                  && w.GetComponent<CameraComponent>(eb2) == nullptr && !ovr(s, bFid, "+Camera"),
+              "struct: RevertComponent removes an instance-added component");
+        check(!Prefab::RevertComponent(s, lib, eb2, "Light"),
+              "struct: RevertComponent is a no-op when the structure already matches");
+
+        // (10) RevertInstance が構造も戻す (削除を復元 + 追加を除去 + レコード空)
+        w.RemoveComponentRaw(eb2, LightComponent::sTypeId);
+        w.AddComponent<CameraComponent>(eb2)->fovYDeg = 42.0f;
+        w.ApplyStructuralChanges();
+        Prefab::RecordOverrides(s, lib, eb2);
+        Prefab::RevertInstance(s, lib, bFid);
+        {
+            const EntityID eb3 = s.FindByFileId(bFid).Id();
+            auto* rl = w.GetComponent<LightComponent>(eb3);
+            check(rl != nullptr && rl->intensity == 3.0f
+                      && w.GetComponent<CameraComponent>(eb3) == nullptr
+                      && s.GetOverrides(bFid) != nullptr && s.GetOverrides(bFid)->empty(),
+                  "struct: RevertInstance restores removed and strips added components");
+        }
+
+        // (11) Apply 伝播: 削除はベースから消え、他インスタンスは "+C" で温存。
+        //      追加はベースへ入り、他インスタンスへ comp ごと届く
+        {
+            Scene sp;
+            World& wp = sp.GetWorld();
+            const uint64_t pa = Prefab::Instantiate(sp, lib, baseHash, 0);
+            const uint64_t pb = Prefab::Instantiate(sp, lib, baseHash, 0);
+            wp.ApplyStructuralChanges();
+            const EntityID pea = sp.FindByFileId(pa).Id();
+            wp.RemoveComponentRaw(pea, LightComponent::sTypeId);
+            wp.AddComponent<CameraComponent>(pea)->fovYDeg = 77.0f;
+            wp.ApplyStructuralChanges();
+            Prefab::RecordOverrides(sp, lib, pea);
+            check(Prefab::ApplyInstance(sp, lib, pa), "struct: apply with structural changes succeeds");
+            const nlohmann::json& applied = lib.Get(baseHash)->entities;
+            check(!applied[0]["components"].contains("Light")
+                      && applied[0]["components"].contains("Camera"),
+                  "struct: apply bakes the structural changes into the base");
+            const EntityID peb = sp.FindByFileId(pb).Id();
+            auto* pcam = wp.GetComponent<CameraComponent>(peb);
+            check(pcam != nullptr && pcam->fovYDeg == 77.0f,
+                  "struct: an applied addition propagates to sibling instances with base values");
+            check(wp.GetComponent<LightComponent>(peb) != nullptr && ovr(sp, pb, "+Light"),
+                  "struct: an applied removal keeps the sibling copy as \"+Light\" (no data loss)");
+            check(sp.GetOverrides(pa) != nullptr && sp.GetOverrides(pa)->empty(),
+                  "struct: the applying instance re-records to an empty list");
+        }
+
+        // (12) 入れ子: 内側メンバの "-C" が外側ベースへの保存・再インスタンス化 (再播種) と
+        //      内側ベースの伝播を生き残る
+        {
+            PrefabLibrary lib2;
+            const std::wstring innerP = tmpPath(L"mye_selftest_struct_in.prefab.json");
+            const std::wstring outerP = tmpPath(L"mye_selftest_struct_out.prefab.json");
+            uint64_t innerHash = 0;
+            {
+                Scene si;
+                GameObject ir = si.CreateGameObjectTracked("Inner");
+                ir.AddComponent<CameraComponent>()->fovYDeg = 50.0f;
+                si.GetWorld().ApplyStructuralChanges();
+                innerHash = lib2.Register(innerP, "inner", Prefab::ExtractLocal(si, ir.Id()));
+            }
+            Scene sn;
+            World& wn = sn.GetWorld();
+            GameObject carrier = sn.CreateGameObjectTracked("Carrier");
+            wn.ApplyStructuralChanges();
+            const uint64_t innerFid =
+                Prefab::Instantiate(sn, lib2, innerHash, sn.EnsureFileId(carrier.Id()));
+            wn.ApplyStructuralChanges();
+            const EntityID ie = sn.FindByFileId(innerFid).Id();
+            wn.RemoveComponentRaw(ie, CameraComponent::sTypeId);
+            wn.ApplyStructuralChanges();
+            Prefab::RecordOverrides(sn, lib2, ie);
+            check(ovr(sn, innerFid, "-Camera"), "struct: setup — the inner member records \"-Camera\"");
+            const uint64_t outerHash = Prefab::CreateAsset(sn, lib2, outerP, carrier.Id());
+            Scene sr;
+            const uint64_t rootFid = Prefab::Instantiate(sr, lib2, outerHash, 0);
+            sr.GetWorld().ApplyStructuralChanges();
+            EntityID rin = kNullEntity;
+            if (auto* h = sr.GetWorld().GetComponent<HierarchyComponent>(
+                    sr.FindByFileId(rootFid).Id())) {
+                rin = h->firstChild;
+            }
+            check(!rin.IsNull() && sr.GetWorld().GetComponent<CameraComponent>(rin) == nullptr,
+                  "struct: re-instantiating the outer base reproduces the inner deletion");
+            check(ovr(sr, sr.EnsureFileId(rin), "-Camera"),
+                  "struct: the inner \"-C\" record is re-seeded through the outer base");
+            const nlohmann::json ib = lib2.Get(innerHash)->entities;
+            Prefab::PropagateBaseChange(sr, ib, ib, innerHash);
+            check(sr.GetWorld().GetComponent<CameraComponent>(rin) == nullptr,
+                  "struct: inner-base propagation respects the re-seeded \"-C\"");
+            std::error_code ec;
+            std::filesystem::remove(outerP, ec); // CreateAsset は実ファイルを書く
+        }
+
+        // (13) レガシー (レコード無し) は従来どおり復活する — フォールバック現状維持ピン
+        {
+            Scene sl;
+            World& wl = sl.GetWorld();
+            const uint64_t lf = Prefab::Instantiate(sl, lib, baseHash, 0);
+            wl.ApplyStructuralChanges();
+            const EntityID le = sl.FindByFileId(lf).Id();
+            wl.RemoveComponentRaw(le, CameraComponent::sTypeId);
+            wl.ApplyStructuralChanges();
+            sl.ClearOverrides(lf); // レガシー化 (M48d 以前 = レコード無し)
+            const nlohmann::json cur = lib.Get(baseHash)->entities;
+            Prefab::PropagateBaseChange(sl, cur, cur, baseHash);
+            check(wl.GetComponent<CameraComponent>(le) != nullptr,
+                  "struct: a legacy member (no record) still resurrects the component");
+        }
+
+        std::error_code ec;
+        std::filesystem::remove(basePath, ec); // ApplyInstance が実ファイルを書く
+    }
+
     // ---- Undo 復元でプレハブタグが消えること (M48c) ----
     // UndoStack は before/after のサブツリー全量スナップショットなので JSON がタグの正解。
     // 隠しコンポーネントを消せないままだと「Create Prefab → Undo」でタグだけ残り、

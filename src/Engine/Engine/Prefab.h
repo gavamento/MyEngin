@@ -89,7 +89,24 @@ private:
 // (これが M13 のライブ diff 方式にあった欠陥の修理そのもの)。
 //
 // v1 の制限: 値が偶然ベースと一致する上書きは記録されない (ライブ diff 由来の性質)。
-// 構造変更 (コンポーネントの追加/削除、子の増減) も上書きとして追跡しない
+//
+// ---- 構造上書き = コンポーネントの追加/削除 (M50c) ----
+// override キーに `"+Component"` / `"-Component"` を追加し、コンポーネント単位の構造変更を
+// 上書きとして追跡する (エンティティ = 子の増減の追跡は v2 のまま非対応)。
+//   - キーはライブ diff からの**純導出** (OverridesAgainstBase) — RecordOverrides の
+//     全置換スナップショット方式とそのまま両立する
+//   - 追跡対象 = ReadEntityComponents の removeMissing 除外集合のミラー
+//     (NoSerialize / Hidden / Name / LocalTransform 以外。C# スクリプト状態は含む)
+//   - PropagateBaseChange: "-C" 付き欠落は復活させない / "+C" 付き既存はベース値で
+//     クロバーしない。レコード無し (レガシー) は従来どおり復活
+//   - シーン文書 version 2→3: v3 は「キー不在 = ベース追随」が構造にも及ぶ契約 —
+//     ベースにあり実体に無く "-C" の無い comp はロード時にベース値で追加される。
+//     v2 以前の文書はロード時に構造キーをレコードへマージするだけで実体は不変
+//     (v2 では削除と閉間ベース成長が区別できず、どちらも "-C" になる — 一度きりの制限)
+//   - 旧エンジンは "+/-" キーを素通しで保存・復元するだけ (不活性)。ReplayFile /
+//     WorldHash / ABI の bump は無し (レコードはハッシュ対象外)
+// 制限: ベースに追加された C# comp は伝播/復元で既定値のまま生える (フィールドは
+// managed 側が持つため充填できない — 既存ギャップ、スコープ外)
 //
 // ---- 入れ子インスタンスの ID ドメイン (M48c) ----
 // プレハブは **展開保存** される (シーンにもアセットにも実体が丸ごと入る) ので、入れ子は
@@ -153,7 +170,33 @@ bool IsNameOverridden(Scene& scene, const PrefabLibrary& lib, EntityID e);
 // e の 1 フィールドをプレハブベース値へ戻す
 void RevertField(Scene& scene, const PrefabLibrary& lib, EntityID e, const char* compName,
                  const FieldDesc& field);
+
+// ---- 構造上書き (M50c) ----
+
+// コンポーネント単位の構造上書き状態
+enum class CompOverride {
+    None,    // ベースと構造一致 (または非対象)
+    Added,   // インスタンスで追加された comp ("+Component")
+    Removed, // インスタンスで削除された comp ("-Component")
+};
+
+// e の 1 コンポーネントの構造上書き状態。保存済みレコードが一次情報、
+// 無ければライブ diff (レガシー) に落ちる。プレハブ非所属なら None
+CompOverride ComponentOverrideState(Scene& scene, const PrefabLibrary& lib, EntityID e,
+                                    const char* compName);
+
+// e でインスタンス削除されたベース comp 名の一覧 (名前順)。Inspector の
+// 「Removed prefab components [Restore]」節が使う。実体・ベースと突き合わせ済みなので
+// Restore (RevertComponent) が no-op になるエントリは含まれない
+std::vector<std::string> RemovedPrefabComponents(Scene& scene, const PrefabLibrary& lib, EntityID e);
+
+// e の 1 コンポーネントの構造上書きを戻す (双方向):
+//   - ベースにあり実体に無い ("-C") → ベース値で再生成 (EntityRef は null のまま)
+//   - ベースに無く実体にある ("+C") → 除去
+// 構造が一致しているときは false (値の Revert は RevertField)。レコードのキーも消す
+bool RevertComponent(Scene& scene, const PrefabLibrary& lib, EntityID e, const char* compName);
 // rootFileId のインスタンス全体をベース値へ戻す (全フィールド + 名前。EntityRef は除く)。
+// 構造も戻す (M50c): 削除された comp をベース値で再生成し、追加された comp を除去する。
 // 入れ子インスタンスは**境界を越えない** — 内側は内側の Revert で戻す (M48c)
 void RevertInstance(Scene& scene, const PrefabLibrary& lib, uint64_t rootFileId);
 
@@ -184,7 +227,9 @@ void RecordOverridesSubtree(Scene& scene, const PrefabLibrary& lib, EntityID roo
 
 // **ロード直後に 1 回だけ**呼ぶ: 全インスタンスの「上書きされていない」フィールドと名前を
 // ベースの最新値へ更新する。シーンを閉じている間にプレハブが更新されていても追随する。
-//   - 記録のあるメンバ : リストに無いフィールドをベース値で更新
+//   - 記録のあるメンバ : リストに無いフィールドをベース値で更新。文書が v3 なら構造も
+//     追随する ("-C" の無い欠落 comp をベース値で追加。M50c)。v2 以前は構造キーを
+//     ライブ diff からレコードへマージするだけで実体は不変
 //   - 記録の無いメンバ : レガシー。**値には触らず**ライブ diff から記録だけ作る (移行)
 // 順序は fileId 昇順 → localId 昇順の固定順で、入力 (シーン JSON / アセット JSON) だけに
 // 依存する純関数 = 決定論的。Play/Stop の LoadFromJson では**呼ばない** (往復で値が動かない)

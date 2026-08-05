@@ -444,12 +444,26 @@ void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
             }
         }
         const bool managed = ctx.managedHost && ctx.managedHost->IsManagedComponent(t);
+        // 構造上書きの状態 (M50c)。Added = インスタンスで追加された comp
+        const Prefab::CompOverride compState = isPrefabMember
+            ? Prefab::ComponentOverrideState(*ctx.scene, *ctx.prefabs, e, desc.name)
+            : Prefab::CompOverride::None;
 
         ImGui::PushID(static_cast<int>(t));
         const std::string headerLabel =
             std::string(ComponentUiFor(desc.name).icon) + " " + ComponentDisplayName(desc.name) + "###" + desc.name;
         const bool openHeader =
             ImGui::CollapsingHeader(headerLabel.c_str(), ImGuiTreeNodeFlags_DefaultOpen);
+        if (compState == Prefab::CompOverride::Added) {
+            // ヘッダ右端に「+」バッジ (M50c)。ヘッダは全幅アイテムなので SameLine では
+            // 右端に置けない — アイテム矩形へ直接描く (折りたたみ中でも見える)
+            const ImVec2 mn = ImGui::GetItemRectMin();
+            const ImVec2 mx = ImGui::GetItemRectMax();
+            ImGui::GetWindowDrawList()->AddText(
+                ImVec2(mx.x - ImGui::GetFontSize() - ImGui::GetStyle().FramePadding.x,
+                       mn.y + ImGui::GetStyle().FramePadding.y),
+                ImGui::GetColorU32(kPrefabBlue), "+");
+        }
         if (ImGui::BeginPopupContextItem("##comp_ctx")) {
             // 全対象の before/after を取り 1 Undo エントリにするバッチヘルパ (M40a)
             auto batchOp = [&](const char* label, auto&& mutate) {
@@ -493,6 +507,17 @@ void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
                     }
                 });
             }
+            // インスタンスで追加した comp の取り消し (M50c)。Remove と結果は同じだが
+            // レコードの "+C" キーも消える (RevertComponent 内)。primary のみ対象
+            if (isPrefabMember
+                && ImGui::MenuItem(Tr(StrId::Insp_RevertAddedComp), nullptr, false,
+                                   compState == Prefab::CompOverride::Added)) {
+                undo.BeginRecord("Revert Added Component", selection);
+                undo.CaptureBefore(*ctx.scene, fid);
+                Prefab::RevertComponent(*ctx.scene, *ctx.prefabs, e, desc.name);
+                undo.CaptureAfter(*ctx.scene, fid);
+                undo.EndRecord(selection);
+            }
             ImGui::EndPopup();
         }
         if (openHeader) {
@@ -533,8 +558,12 @@ void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
                     if (isPrefabMember) {
                         if (f.type != FieldType::AssetRef && f.type != FieldType::EntityRef
                             && ImGui::BeginPopupContextItem()) {
+                            // 追加 comp ("+C") はベースにフィールドが無く RevertField が
+                            // no-op — 押せるのに何も起きない穴だったので disabled (M50c)。
+                            // 構造ごと戻すのはヘッダ右クリックの Revert Added Component
                             const bool ov = Prefab::IsFieldOverridden(*ctx.scene, *ctx.prefabs, e,
-                                                                      desc.name, f);
+                                                                      desc.name, f)
+                                && compState != Prefab::CompOverride::Added;
                             if (ImGui::MenuItem(Tr(StrId::Insp_RevertToPrefab), nullptr, false, ov)) {
                                 undo.BeginRecord("Revert Field", selection);
                                 undo.CaptureBefore(*ctx.scene, fid);
@@ -564,6 +593,32 @@ void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
             }
         }
         ImGui::PopID();
+    }
+
+    // ---- 削除されたプレハブコンポーネント (M50c) ----
+    // インスタンスで削除されたベース comp ("-C") の一覧 + Restore。一覧はレコード由来だが
+    // 実体・ベースと突き合わせ済み (RemovedPrefabComponents) なので no-op 行は出ない
+    if (isPrefabMember && !multi) {
+        const std::vector<std::string> removed =
+            Prefab::RemovedPrefabComponents(*ctx.scene, *ctx.prefabs, e);
+        if (!removed.empty()) {
+            ImGui::Separator();
+            ImGui::TextColored(kPrefabBlue, "%s", Tr(StrId::Insp_RemovedComps));
+            for (const std::string& name : removed) {
+                ImGui::PushID(name.c_str());
+                ImGui::TextDisabled("%s %s", ComponentUiFor(name.c_str()).icon,
+                                    ComponentDisplayName(name.c_str()));
+                ImGui::SameLine();
+                if (ImGui::SmallButton(Tr(StrId::Insp_RestoreComp))) {
+                    undo.BeginRecord("Restore Component", selection);
+                    undo.CaptureBefore(*ctx.scene, fid);
+                    Prefab::RevertComponent(*ctx.scene, *ctx.prefabs, e, name.c_str());
+                    undo.CaptureAfter(*ctx.scene, fid);
+                    undo.EndRecord(selection);
+                }
+                ImGui::PopID();
+            }
+        }
     }
 
     // ---- Add Component ----

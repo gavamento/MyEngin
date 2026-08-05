@@ -292,6 +292,10 @@ MYE_STR(Insp_ApplyToPrefab,   "Apply to Prefab",            "プレハブに適�
 MYE_STR(Insp_RevertToPrefab,  "Revert to Prefab",           "プレハブに戻す")
 MYE_STR(Insp_ApplyAll,        "Apply All",                  "すべて適用")
 MYE_STR(Insp_RevertAll,       "Revert All",                 "すべて戻す")
+// 構造上書き = コンポーネント追加/削除の Revert (M50c)
+MYE_STR(Insp_RevertAddedComp, "Revert Added Component",     "追加したコンポーネントを戻す")
+MYE_STR(Insp_RemovedComps,    "Removed prefab components:", "削除されたプレハブコンポーネント:")
+MYE_STR(Insp_RestoreComp,     "Restore",                    "復元")
 // Collider の衝突マスク。元から "##mask" で ID を分けていたので "###" 付きに揃える
 MYE_STR(Insp_Everything,      "Everything###mask_all",      "すべて###mask_all")
 MYE_STR(Insp_Nothing,         "Nothing###mask_none",        "なし###mask_none")
