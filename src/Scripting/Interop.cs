@@ -159,6 +159,11 @@ namespace MyeScripting
         // ---- 部位ボリューム レイキャスト (v10、M49)。宣言順 = ネイティブと一致 ----
         public delegate* unmanaged<void*, MyeEntityId, ulong, MyeVec3, MyeVec3, float,
             MyeRaycastHit*, int> RaycastParts;
+        // ---- 汎用フィールドアクセス (v11、M50d)。宣言順 = ネイティブと一致 ----
+        public delegate* unmanaged<void*, MyeEntityId, ulong, ulong, void*, int, int*, int>
+            GetComponentField;
+        public delegate* unmanaged<void*, MyeEntityId, ulong, ulong, void*, int, int>
+            SetComponentField;
     }
 
     // ネイティブ ManagedHost が保持する関数ポインタ表。Bootstrap がここに書き込む。
@@ -539,6 +544,70 @@ namespace MyeScripting
             {
                 return _api->RaycastParts(_api->Engine, root, PartTag(tagName), origin, dir,
                                           maxDist, p) != 0;
+            }
+        }
+
+        // ---- 汎用フィールドアクセス (v11、M50d) ----
+        // comp/field は名前の FNV-1a 64bit (スキーマ codegen の生成定数を使う)。値コピーのみ。
+        // C# スクリプト状態 (NoHash = 非決定論レーン) はエンジン側で遮断され失敗する。
+        // Shared/ScriptTypes.h の MyeFieldType と同値 (文字列判定に使う分だけ)
+        private const int FieldTypeString64 = 12;
+        private const int FieldTypeString256 = 14;
+
+        public static bool TryGetField<T>(MyeEntityId id, ulong compHash, ulong fieldHash,
+                                          out T value) where T : unmanaged
+        {
+            value = default;
+            if (_api == null) return false;
+            T v = default;
+            int type;
+            int got = _api->GetComponentField(_api->Engine, id, compHash, fieldHash, &v,
+                                              sizeof(T), &type);
+            if (got != sizeof(T)) return false; // サイズ不一致 = 型違い (エンジン側でも拒否)
+            value = v;
+            return true;
+        }
+
+        public static bool SetField<T>(MyeEntityId id, ulong compHash, ulong fieldHash, T value)
+            where T : unmanaged
+        {
+            if (_api == null) return false;
+            return _api->SetComponentField(_api->Engine, id, compHash, fieldHash, &value,
+                                           sizeof(T)) != 0;
+        }
+
+        // 文字列 (String64/256)。Get は終端までを UTF-8 で復元、Set はエンジン側が
+        // 尾部ゼロ埋め + 終端を保証する (String64 ハッシュ罠対策)
+        public static bool TryGetFieldString(MyeEntityId id, ulong compHash, ulong fieldHash,
+                                             out string value)
+        {
+            value = null;
+            if (_api == null) return false;
+            var buf = new byte[256]; // String64/256 の両方を受ける (実サイズは戻り値)
+            int type;
+            int got;
+            fixed (byte* p = buf)
+            {
+                got = _api->GetComponentField(_api->Engine, id, compHash, fieldHash, p,
+                                              buf.Length, &type);
+            }
+            if (got <= 0 || (type != FieldTypeString64 && type != FieldTypeString256))
+                return false;
+            int n = 0;
+            while (n < got && buf[n] != 0) n++;
+            value = Encoding.UTF8.GetString(buf, 0, n);
+            return true;
+        }
+
+        public static bool SetFieldString(MyeEntityId id, ulong compHash, ulong fieldHash,
+                                          string value)
+        {
+            if (_api == null) return false;
+            var b = Utf8(value ?? "");
+            fixed (byte* p = b)
+            {
+                return _api->SetComponentField(_api->Engine, id, compHash, fieldHash, p,
+                                               b.Length) != 0;
             }
         }
     }

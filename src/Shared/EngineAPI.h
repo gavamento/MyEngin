@@ -26,7 +26,12 @@
 //            SetParent、位置取得は既存 Transform getter で足りるので新スロットは 2 本だけ
 // v10 (M49): 部位ボリューム (PartBounds) へのレイキャスト RaycastParts を追加。
 //            root/tag のフィルタ込みで 1 本に収めた (root null = シーン全体、tag 0 = 全部位)
-#define MYE_API_VERSION 10u
+// v11 (M50d): 汎用フィールドアクセス GetComponentField / SetComponentField を追加。
+//             コンポーネント名/フィールド名の FNV-1a 64bit ハッシュで任意コンポーネント
+//             (組込み / スキーマ / C++ スクリプト) の登録フィールドを値コピーで読み書きする。
+//             スキーマ codegen (SchemaComponents.gen.h / Schema.gen.cs) の呼び先で、
+//             型ごとのスロットを増やさずに済ませるための 2 本 (家風: 足す本数を減らす)
+#define MYE_API_VERSION 11u
 
 // MYE_LOG レベル (Engine/Core/Log.h の LogLevel と同値)
 enum MyeLogLevel {
@@ -258,6 +263,28 @@ struct MyeEngineApi {
     //   前 tick の TransformSystem の結果 (既存の Raycast と同条件)
     int32_t (*RaycastParts)(void* engine, MyeEntityId root, uint64_t tag, MyeVec3 origin,
                             MyeVec3 dir, float maxDist, MyeRaycastHit* outHit);
+
+    // ---- 汎用フィールドアクセス (v11、M50d) ----
+    //
+    // 登録フィールド (Reflection.h の FieldDesc) を名前ハッシュで読み書きする。
+    // compNameHash / fieldNameHash は FNV-1a 64bit (ScriptAPI.h の MyeNameHash /
+    // C# は生成定数)。ポインタは越境しない — 常に値コピー (DLL 境界規則)。
+    //
+    // ★読み書きできるのは決定論レーンのコンポーネントだけ。kComponentNoHash
+    //   (C# スクリプト状態 = 非決定論レーン) は読みも書きも 0 を返す — そこから
+    //   1 bit でも sim に読み込むとリプレイ (spec 11.3) が壊れるため。
+    //
+    // GetComponentField: 成功でフィールドの実バイト数を返し buf へ値コピー、outType
+    //   (null 可) へ MyeFieldType を書く。未知の comp/field・死んだエンティティ・
+    //   bufSize 不足は 0。文字列型 (String64/256) は固定長全体をコピーする
+    int32_t (*GetComponentField)(void* engine, MyeEntityId e, uint64_t compNameHash,
+                                 uint64_t fieldNameHash, void* buf, int32_t bufSize,
+                                 int32_t* outType);
+    // SetComponentField: 成功で 1。size はフィールドの実バイト数と一致が必須
+    //   (文字列型のみ size <= 固定長を許し、残りはエンジンがゼロ埋めする —
+    //   String64 は終端以降もハッシュ対象なので尾部の残骸をここで断つ)
+    int32_t (*SetComponentField)(void* engine, MyeEntityId e, uint64_t compNameHash,
+                                 uint64_t fieldNameHash, const void* buf, int32_t size);
 };
 
 // スクリプトの各コールバックに渡されるコンテキスト (POD)

@@ -1,6 +1,8 @@
 #pragma once
 #include <cstddef>
+#include <cstdint>
 #include <string>
+#include <vector>
 
 namespace mye {
 
@@ -36,6 +38,10 @@ size_t RegisterSchemaComponents(const std::wstring& assetsRoot);
 
 // 上と同じだが走査対象ディレクトリを直接指定する (selftest 用)
 size_t RegisterSchemaComponentsFrom(const std::wstring& schemaDir);
+
+// このプロセスでスキーマから登録された型の TypeId (登録順 = 相対パス昇順)。
+// codegen (SchemaCodegen) が「レジストリのどれがスキーマ型か」を知る唯一の入口
+const std::vector<uint32_t>& RegisteredSchemaTypeIds();
 
 } // namespace schema
 } // namespace mye

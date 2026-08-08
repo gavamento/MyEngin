@@ -33,6 +33,7 @@
 #include "Engine/Engine/ModelLoader.h"
 #include "Engine/Engine/Prefab.h"
 #include "Engine/Engine/Scene.h"
+#include "Engine/Engine/SchemaCodegen.h"
 #include "Engine/Engine/Script/ManagedHost.h"
 #include "Engine/Platform/PathUtil.h"
 #include "Engine/Renderer/GpuResources.h"
@@ -526,6 +527,9 @@ void CompileCSharpScripts(EngineContext& ctx)
         return;
     }
     MYE_LOG_INFO(Tr(StrId::Log_CsCompiling));
+    // スキーマ定数/アクセサを生成してからコンパイル (M50d)。Compile は assets\scripts を
+    // 再帰収集するので Generated\ は追加設定ゼロで混ざる
+    schema::WriteCSharpBindings(ctx.assetsRoot);
     ctx.managedHost->CompileScripts(ctx.assetsRoot + L"\\scripts");
 }
 
@@ -991,8 +995,14 @@ bool WriteGeneratedVcxproj(const std::wstring& path, const std::wstring& engineR
     x += "    <OutDir>" + XmlEscape(cacheDir) + "\\</OutDir>\r\n";
     x += "    <IntDir>" + XmlEscape(cacheDir) + "\\obj\\</IntDir>\r\n";
     x += "  </PropertyGroup>\r\n";
-    // cache\hot\v{N}\ へコピーした PDB をデバッガが隣から読めるようにする (本家と同じ)
+    // cache\hot\v{N}\ へコピーした PDB をデバッガが隣から読めるようにする (本家と同じ)。
+    // ClCompile の追加 include は cacheDir — 生成ヘッダ (Generated\SchemaComponents.gen.h)
+    // を "Generated/..." で引くため (Common.props はエンジン側 src しか通していない)
     x += "  <ItemDefinitionGroup>\r\n";
+    x += "    <ClCompile>\r\n";
+    x += "      <AdditionalIncludeDirectories>" + XmlEscape(cacheDir)
+         + ";%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>\r\n";
+    x += "    </ClCompile>\r\n";
     x += "    <Link>\r\n";
     x += "      <AdditionalOptions>/PDBALTPATH:$(TargetName).pdb %(AdditionalOptions)"
          "</AdditionalOptions>\r\n";
@@ -1038,6 +1048,14 @@ void BuildProjectScripts(EngineContext& ctx)
     std::sort(sources.begin(), sources.end());
 
     const std::wstring projPath = cacheDir + L"\\GameLogic.vcxproj";
+    // スキーマ型付きヘッダ (M50d)。cache\Generated\ に生成し、vcxproj 側で cacheDir を
+    // include 経路に足す → スクリプトからは #include "Generated/SchemaComponents.gen.h"
+    {
+        const std::wstring genDir = cacheDir + L"\\Generated";
+        fs::create_directories(genDir, ec);
+        schema::WriteIfChanged(genDir + L"\\SchemaComponents.gen.h",
+                               schema::EmitCppHeader(schema::BuildCodegenModel()));
+    }
     if (!WriteGeneratedMain(cacheDir + L"\\GameLogicMain.cpp")
         || !WriteGeneratedVcxproj(projPath, engineRepo, cacheDir, sources)) {
         return;

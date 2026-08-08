@@ -25,6 +25,9 @@
     <ClCompile Include="..\src\GameLogic\Scripts\Rotator.cpp">
       <Filter>Scripts</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\GameLogic\Scripts\SchemaHealthDemo.cpp">
+      <Filter>Scripts</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\GameLogic\Scripts\Spawner.cpp">
       <Filter>Scripts</Filter>
     </ClCompile>

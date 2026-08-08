@@ -47,6 +47,8 @@ public:
     const ComponentDesc& Desc(ComponentTypeId id) const { return descs_[id]; }
     uint32_t Count() const { return static_cast<uint32_t>(descs_.size()); }
     ComponentTypeId FindByName(std::string_view name) const; // 見つからなければ kInvalidComponentType
+    // 名前ハッシュで引く (汎用フィールド ABI v11 の解決経路。FindByName と同一の走査)
+    ComponentTypeId FindByNameHash(uint64_t hash) const;
 
 private:
     std::vector<ComponentDesc> descs_;

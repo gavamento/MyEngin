@@ -1,6 +1,7 @@
 #include "Engine/Engine/Script/EngineApiTable.h"
 
 #include <cstddef>
+#include <cstring>
 
 #include "Engine/Core/Components.h"
 #include "Engine/Core/Hash.h"
@@ -647,6 +648,64 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
             outHit->distance = hit.distance;
         }
         return 1;
+    };
+
+    // ---- 汎用フィールドアクセス (v11、M50d) ----
+    // 解決は「compNameHash → TypeId → FieldDesc」の 1 本道 (Inspector / シリアライザと
+    // 同じメタデータを読む = スキーマ型も組込み型も同じ道)。ポインタは越境させない —
+    // 常に値コピー。★kComponentNoHash (C# スクリプト状態 = 非決定論レーン) は読み書き
+    // とも遮断する — そこから 1 bit でも sim へ読むとリプレイが壊れる (EngineAPI.h の契約)
+    out.GetComponentField = [](void* engine, MyeEntityId e, uint64_t compNameHash,
+                               uint64_t fieldNameHash, void* buf, int32_t bufSize,
+                               int32_t* outType) -> int32_t {
+        World& w = Sc(engine)->GetWorld();
+        if (!w.IsAlive(ToEngine(e))) { return 0; }
+        const ComponentTypeId t = ComponentRegistry::Get().FindByNameHash(compNameHash);
+        if (t == kInvalidComponentType) { return 0; }
+        const ComponentDesc& desc = ComponentRegistry::Get().Desc(t);
+        if (desc.flags & kComponentNoHash) { return 0; }
+        const void* comp = w.GetComponentRaw(ToEngine(e), t);
+        if (!comp) { return 0; }
+        for (const FieldDesc& f : desc.fields) {
+            if (HashStr(f.name) != fieldNameHash) { continue; }
+            const int32_t size = static_cast<int32_t>(FieldTypeSize(f.type));
+            if (buf == nullptr || bufSize < size) { return 0; }
+            std::memcpy(buf, static_cast<const uint8_t*>(comp) + f.offset,
+                        static_cast<size_t>(size));
+            if (outType) { *outType = static_cast<int32_t>(f.type); }
+            return size;
+        }
+        return 0;
+    };
+    out.SetComponentField = [](void* engine, MyeEntityId e, uint64_t compNameHash,
+                               uint64_t fieldNameHash, const void* buf, int32_t size) -> int32_t {
+        if (buf == nullptr || size <= 0) { return 0; }
+        World& w = Sc(engine)->GetWorld();
+        if (!w.IsAlive(ToEngine(e))) { return 0; }
+        const ComponentTypeId t = ComponentRegistry::Get().FindByNameHash(compNameHash);
+        if (t == kInvalidComponentType) { return 0; }
+        const ComponentDesc& desc = ComponentRegistry::Get().Desc(t);
+        if (desc.flags & kComponentNoHash) { return 0; }
+        void* comp = w.GetComponentRaw(ToEngine(e), t);
+        if (!comp) { return 0; }
+        for (const FieldDesc& f : desc.fields) {
+            if (HashStr(f.name) != fieldNameHash) { continue; }
+            const int32_t cap = static_cast<int32_t>(FieldTypeSize(f.type));
+            uint8_t* dst = static_cast<uint8_t*>(comp) + f.offset;
+            if (f.type == FieldType::String64 || f.type == FieldType::String256) {
+                // 文字列は size <= cap を許し、残りをゼロ埋め + 終端を保証する。
+                // String64 は終端以降もハッシュ対象 (M48i の罠) — 残骸をこの境界で断つ
+                if (size > cap) { return 0; }
+                std::memcpy(dst, buf, static_cast<size_t>(size));
+                std::memset(dst + size, 0, static_cast<size_t>(cap - size));
+                dst[cap - 1] = 0;
+            } else {
+                if (size != cap) { return 0; } // 値型はサイズ厳密一致 (型違いの静かな破壊を防ぐ)
+                std::memcpy(dst, buf, static_cast<size_t>(size));
+            }
+            return 1;
+        }
+        return 0;
     };
 }
 

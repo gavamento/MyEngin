@@ -53,7 +53,11 @@ void ComponentRegistry::UpdateDesc(ComponentTypeId id, ComponentDesc desc)
 
 ComponentTypeId ComponentRegistry::FindByName(std::string_view name) const
 {
-    const uint64_t hash = HashStr(name);
+    return FindByNameHash(HashStr(name));
+}
+
+ComponentTypeId ComponentRegistry::FindByNameHash(uint64_t hash) const
+{
     for (uint32_t i = 0; i < descs_.size(); ++i) {
         if (descs_[i].nameHash == hash) {
             return i;

@@ -160,6 +160,18 @@ void BuildDemoScene(EngineContext& ctx, float perfRate, int perfMax)
     if (spawner != kInvalidComponentType) {
         s.GetWorld().AddComponentRaw(fire.Id(), spawner);
     }
+
+    // ---- 汎用フィールド ABI (v11、M50d) をリプレイ被覆に入れる ----
+    // Health (assets\schemas 由来のスキーマ型) を Spinner に載せ、probe スクリプトが
+    // 毎 tick GetComponentField → 減衰 → SetComponentField で書き戻す
+    // (詳細は SchemaHealthDemo.cpp)。スキーマ未登録 (ヘッドレス selftest) や DLL 未ロード
+    // では対ごとスキップ — Health 単独でも probe 単独でも被覆にならないため 2 つで 1 対
+    const ComponentTypeId health = ComponentRegistry::Get().FindByName("Health");
+    const ComponentTypeId healthDemo = ComponentRegistry::Get().FindByName("SchemaHealthDemo");
+    if (health != kInvalidComponentType && healthDemo != kInvalidComponentType) {
+        s.GetWorld().AddComponentRaw(spinner.Id(), health);
+        s.GetWorld().AddComponentRaw(spinner.Id(), healthDemo);
+    }
 }
 
 void RegisterRtShowcaseContent(EngineContext& ctx)

@@ -386,6 +386,61 @@ inline bool MyeRaycastParts(const MyeUpdateContext& ctx, MyeEntityId root, const
         != 0;
 }
 
+// ---- 汎用フィールドアクセス (v11、M50d)。スキーマ codegen の呼び先 ----
+//
+// コンポーネント名 / フィールド名の FNV-1a 64bit ハッシュで、任意の登録コンポーネント
+// (組込み / スキーマ / C++ スクリプト) のフィールドを値コピーで読み書きする。
+// 型付きの入口は生成ヘッダ (<project>\cache\Generated\SchemaComponents.gen.h) が
+// スキーマごとに提供する — 手書きでここを直接呼ぶのは probe / 一時実験くらいのはず。
+// ★C# スクリプト状態 (非決定論レーン) は読み書きとも 0 が返る (EngineAPI.h の契約)
+
+// 名前 → ハッシュ。FNV-1a 64bit で **Engine/Core/Hash.h の HashStr と同一の定数**
+// (MyePartTag と同じ再掲。一致は SchemaSelfTest が機械検査している)
+inline constexpr uint64_t MyeNameHash(const char* name)
+{
+    uint64_t h = 14695981039346656037ull;
+    if (name != nullptr) {
+        for (const char* c = name; *c != '\0'; ++c) {
+            h ^= static_cast<unsigned char>(*c);
+            h *= 1099511628211ull;
+        }
+    }
+    return h;
+}
+
+// 生スロットの糖衣。戻り値は Get = 実サイズ / Set = 1 (0 = 無し/不一致)
+inline int32_t MyeGetComponentField(const MyeUpdateContext& ctx, MyeEntityId e, uint64_t comp,
+                                    uint64_t field, void* buf, int32_t bufSize,
+                                    int32_t* outType = nullptr)
+{
+    return ctx.api->GetComponentField(ctx.api->engine, e, comp, field, buf, bufSize, outType);
+}
+
+inline int32_t MyeSetComponentField(const MyeUpdateContext& ctx, MyeEntityId e, uint64_t comp,
+                                    uint64_t field, const void* buf, int32_t size)
+{
+    return ctx.api->SetComponentField(ctx.api->engine, e, comp, field, buf, size);
+}
+
+// 型付き糖衣。T はフィールドと**同サイズ**の trivially copyable 型 (float / int32_t /
+// MyeVec3 ...)。サイズ不一致はエンジン側が 0 で拒否する (型違いの静かな破壊を防ぐ)
+template <typename T>
+inline bool MyeGetField(const MyeUpdateContext& ctx, MyeEntityId e, uint64_t comp, uint64_t field,
+                        T& out)
+{
+    static_assert(std::is_trivially_copyable_v<T>, "field value must be a POD");
+    return MyeGetComponentField(ctx, e, comp, field, &out, static_cast<int32_t>(sizeof(T)))
+        == static_cast<int32_t>(sizeof(T));
+}
+
+template <typename T>
+inline bool MyeSetField(const MyeUpdateContext& ctx, MyeEntityId e, uint64_t comp, uint64_t field,
+                        const T& v)
+{
+    static_assert(std::is_trivially_copyable_v<T>, "field value must be a POD");
+    return MyeSetComponentField(ctx, e, comp, field, &v, static_cast<int32_t>(sizeof(T))) != 0;
+}
+
 // ---- ゲーム内 UI ヒットテスト (M21) ----
 // UI 描画はエンジン (UIElementComponent) が行うが、ボタン操作は **決定論のため
 // InputSnapshot のマウス経由** で判定する (ABI 追加なし = bump 不要)。verify では記録された

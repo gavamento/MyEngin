@@ -438,10 +438,14 @@ the subset with a single root, no parts and no override list. See
 | Asset | `.actor.json` (`"actor": 1`) / `.prefab.json` (`"prefab": 1`), flat expanded subtree with local `fileId` |
 | Identity | 64-bit path hash + `.meta` GUID (no UUIDs) |
 | Placement | Expanded values **plus** a saved `"overrides"` key; non-overridden fields are refreshed from the base once at load |
+| Structural overrides | `"+Component"` / `"-Component"` override keys (M50c). Scene document v3: a component missing without `-C` is re-added from the base at load. See [ADR-012](docs/adr/ADR-012-structural-overrides.md) |
 | Part (socket) | `PartComponent { tag, joint, source }` on a child entity — no special syntax |
 | Part lookup | `FindPart(root, "Hips/HandR")` / `FindPartsByTag(root, tag)` (ABI v9); attaching reuses `SetParent` |
+| Part volumes | `PartBoundsComponent` (box/sphere) + `RaycastParts(root, tag, ray)` (ABI v10, M49); same function drives editor click-selection and the script lane |
 | Bone following | `PartFollowSystem`, inserted after skinning and before physics/transform in the fixed tick |
 | Schema components | `assets/schemas/*.component.schema.json` registered at startup, **after built-ins and before script types** |
+| Generic field access | `GetComponentField` / `SetComponentField` by FNV-1a name hashes (ABI v11, M50d). Value copies only; the NoHash (C#) lane is blocked both ways for replay safety |
+| Schema codegen | Generated from the runtime registry (no re-parse): `<project>/cache/Generated/SchemaComponents.gen.h` (layout mirror + typed accessors + `static_assert`s) and `assets/scripts/Generated/Schema.gen.cs` (constants + typed accessors). Name hashes are baked, TypeIds never are |
 | Asset editing | Mini-scene edit mode: the asset is expanded into a private `Scene`; only `EditorApp::OnImGui`/`OnRenderViews` swap `ctx.scene`, so the tick path is untouched |
 
 ---

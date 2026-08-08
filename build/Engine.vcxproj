@@ -94,6 +94,7 @@
     <ClCompile Include="..\src\Engine\Engine\Scene.cpp" />
     <ClCompile Include="..\src\Engine\Engine\SceneSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\SceneSerializer.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\SchemaCodegen.cpp" />
     <ClCompile Include="..\src\Engine\Engine\SchemaComponents.cpp" />
     <ClCompile Include="..\src\Engine\Engine\SchemaSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Script\EngineApiTable.cpp" />
@@ -215,6 +216,7 @@
     <ClInclude Include="..\src\Engine\Engine\Scene.h" />
     <ClInclude Include="..\src\Engine\Engine\SceneSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\SceneSerializer.h" />
+    <ClInclude Include="..\src\Engine\Engine\SchemaCodegen.h" />
     <ClInclude Include="..\src\Engine\Engine\SchemaComponents.h" />
     <ClInclude Include="..\src\Engine\Engine\SchemaSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Script\EngineApiTable.h" />

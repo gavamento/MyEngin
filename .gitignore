@@ -6,3 +6,5 @@ cache/
 *.ilk
 *.log
 imgui.ini
+# スキーマ codegen の生成物 (起動時に毎回再生成される。M50d)
+assets/scripts/Generated/

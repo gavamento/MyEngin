@@ -31,6 +31,7 @@
 #include "Engine/Engine/Script/ManagedHost.h"
 #include "Engine/Engine/EffectSystem.h"
 #include "Engine/Engine/Script/ScriptHost.h"
+#include "Engine/Engine/SchemaCodegen.h"
 #include "Engine/Engine/SchemaComponents.h"
 #include "Engine/Engine/PartFollowSystem.h"
 #include "Engine/Engine/SkinningSystem.h"
@@ -363,6 +364,9 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
 
     // C# スクリプトホスト (CoreCLR)。未導入でも失敗ログのみでエンジンは継続する
     if (managedHost.Init(GetExecutableDir(), &scene)) {
+        // スキーマ定数/アクセサを生成してからコンパイル (M50d)。Compile は
+        // assets\scripts を再帰収集するので Generated\ は追加設定ゼロで混ざる
+        schema::WriteCSharpBindings(assetsRoot);
         managedHost.CompileScripts(assetsRoot + L"\\scripts"); // 起動時に既存 C# を一括コンパイル
     }
     // シーン保存/復元時に C# コンポーネントのフィールドを永続化する hook を登録

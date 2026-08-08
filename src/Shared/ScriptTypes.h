@@ -19,6 +19,12 @@ enum MyeFieldType {
     MYE_FIELD_QUAT = 8,
     MYE_FIELD_COLOR = 9,
     MYE_FIELD_ENTITYREF = 10,
+    // v11 (M50d) 末尾追加。★番号は Reflection.h の宣言順そのまま — String256 は
+    // String64 の隣ではなく Float4x4 の後 (M34 で末尾追加された歴史をミラーする)
+    MYE_FIELD_ASSETREF = 11,  // uint64 (AssetID)
+    MYE_FIELD_STRING64 = 12,  // char[64] 固定長 (終端以降もハッシュ対象 — 尾部はゼロに)
+    MYE_FIELD_FLOAT4X4 = 13,  // float[16]
+    MYE_FIELD_STRING256 = 14, // char[256] 固定長
 };
 
 struct MyeScriptField {

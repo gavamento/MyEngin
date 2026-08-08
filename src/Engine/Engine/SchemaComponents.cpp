@@ -61,6 +61,13 @@ std::vector<uint64_t>& UsedIds()
     return ids;
 }
 
+// スキーマ由来で登録された TypeId の記録 (codegen が参照する)
+std::vector<uint32_t>& RegisteredIds()
+{
+    static std::vector<uint32_t> ids;
+    return ids;
+}
+
 // ---- 型マップ ---------------------------------------------------------------
 // **FieldType は閉集合** (Reflection.h)。新しい型はここでも増やさない — スキーマで
 // 表現できないものは「既存 15 種の組み合わせ」に落とす (固定長配列はフィールド展開)
@@ -320,6 +327,7 @@ bool RegisterOne(const std::filesystem::path& path)
 
     UsedIds().push_back(stableId);
     const ComponentTypeId id = ComponentRegistry::Get().Register(std::move(cd));
+    RegisteredIds().push_back(id);
     MYE_LOG_INFO("[schema] registered '%s' (id %llu, %u bytes, %zu fields) -> TypeId %u",
                  name.c_str(), static_cast<unsigned long long>(stableId), size, built.size(), id);
     return true;
@@ -363,6 +371,11 @@ size_t RegisterSchemaComponentsFrom(const std::wstring& schemaDir)
 size_t RegisterSchemaComponents(const std::wstring& assetsRoot)
 {
     return RegisterSchemaComponentsFrom(assetsRoot + L"\\schemas");
+}
+
+const std::vector<uint32_t>& RegisteredSchemaTypeIds()
+{
+    return RegisteredIds();
 }
 
 } // namespace mye::schema

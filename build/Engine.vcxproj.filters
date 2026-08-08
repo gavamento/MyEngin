@@ -261,6 +261,9 @@
     <ClCompile Include="..\src\Engine\Engine\SceneSerializer.cpp">
       <Filter>Engine</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\SchemaCodegen.cpp">
+      <Filter>Engine</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\SchemaComponents.cpp">
       <Filter>Engine</Filter>
     </ClCompile>
@@ -622,6 +625,9 @@
       <Filter>Engine</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\SceneSerializer.h">
+      <Filter>Engine</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\SchemaCodegen.h">
       <Filter>Engine</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\SchemaComponents.h">

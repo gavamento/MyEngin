@@ -174,11 +174,13 @@ bool RunPartSelfTest()
         };
         const MyeEntityId root = toShared(enemy.Id());
 
-        check(api.version == MYE_API_VERSION && MYE_API_VERSION == 10u,
-              "abi: the table reports v10");
+        check(api.version == MYE_API_VERSION && MYE_API_VERSION == 11u,
+              "abi: the table reports v11");
         check(api.FindPart != nullptr && api.FindPartsByTag != nullptr,
               "abi: the v9 part slots are filled in");
         check(api.RaycastParts != nullptr, "abi: the v10 RaycastParts slot is filled in");
+        check(api.GetComponentField != nullptr && api.SetComponentField != nullptr,
+              "abi: the v11 generic field slots are filled in");
 
         // ★Shared/ScriptAPI.h は Engine/Core/Hash.h を include できず FNV 定数を再掲して
         //   いる。ここがズレると「同じタグ名なのに引けない」という静かな壊れ方をする

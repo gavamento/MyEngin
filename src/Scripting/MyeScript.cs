@@ -20,6 +20,21 @@ namespace MyeScripting
 
         public static MyeEntity Create(string name) => new MyeEntity(Engine.CreateGameObject(name));
         public static MyeEntity Find(string name) => new MyeEntity(Engine.FindByName(name));
+
+        // ---- 汎用フィールドアクセス (v11、M50d) ----
+        // スキーマ codegen (assets/scripts/Generated/Schema.gen.cs) の呼び先。通常は生成側の
+        // 型付きアクセサ (HealthSchema.GetCurrent 等) を使う。comp/field は名前の FNV-1a
+        // 64bit (生成定数)。T はフィールドと同サイズの unmanaged 型 — サイズ不一致は false。
+        // C# スクリプト状態 (非決定論レーン) はエンジン側で遮断され false が返る
+        public bool TryGetField<T>(ulong compHash, ulong fieldHash, out T value) where T : unmanaged
+            => Engine.TryGetField(Id, compHash, fieldHash, out value);
+        public bool SetField<T>(ulong compHash, ulong fieldHash, T value) where T : unmanaged
+            => Engine.SetField(Id, compHash, fieldHash, value);
+        // 文字列 (String64/256)。Get は終端までを UTF-8 で復元する
+        public bool TryGetFieldString(ulong compHash, ulong fieldHash, out string value)
+            => Engine.TryGetFieldString(Id, compHash, fieldHash, out value);
+        public bool SetFieldString(ulong compHash, ulong fieldHash, string value)
+            => Engine.SetFieldString(Id, compHash, fieldHash, value);
     }
 
     // Transform ハンドル。get/set は毎回エンジンの ECS を読み書きする。

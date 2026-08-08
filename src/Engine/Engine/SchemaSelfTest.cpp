@@ -14,7 +14,10 @@
 #include "Engine/Engine/Replay/WorldHasher.h"
 #include "Engine/Engine/Scene.h"
 #include "Engine/Engine/SceneSerializer.h"
+#include "Engine/Engine/SchemaCodegen.h"
 #include "Engine/Engine/SchemaComponents.h"
+#include "Engine/Engine/Script/EngineApiTable.h" // v11 汎用フィールドスロットの実配線 (M50d)
+#include "Shared/ScriptAPI.h"                    // MyeNameHash (Shared 再掲 FNV の機械検査)
 
 #include "nlohmann/json.hpp"
 
@@ -210,6 +213,190 @@ bool RunSchemaSelfTest()
         check(again == 0 && reg.Count() == before && reg.FindByName("MyeTestStats") == statsId
                   && reg.FindByName("MyeTestMarker") == markerId,
               "idempotent: re-registering the same schemas adds nothing and keeps the TypeIds");
+    }
+
+    // ---- 汎用フィールド ABI (v11、M50d): C ABI 経路の Get/Set ----
+    // スキーマ型は C++ の struct を持たない = このレーンの主客。テーブル経由で
+    // 「GameLogic.dll / C# が実際に呼ぶ道」を検査する (PartSelfTest の ABI 節と同じ流儀)
+    {
+        ScriptApiContext apiCtx;
+        apiCtx.scene = &scene;
+        MyeEngineApi api = {};
+        BuildEngineApi(api, &apiCtx);
+        const MyeEntityId se = { e.Id().index, e.Id().generation };
+        const uint64_t compH = HashStr("MyeTestStats");
+        const uint64_t hpH = HashStr("hp");
+
+        // Shared 再掲の FNV とエンジン HashStr の一致 (MyePartTag と同じ機械検査)
+        check(MyeNameHash("MyeTestStats") == compH && MyeNameHash("hp") == hpH
+                  && MyeNameHash("") == HashStr(""),
+              "abi: MyeNameHash (Shared) equals HashStr (engine)");
+
+        float hp = 0.0f;
+        int32_t type = -1;
+        check(api.GetComponentField(&apiCtx, se, compH, hpH, &hp, 4, &type) == 4 && hp == 42.5f
+                  && type == MYE_FIELD_FLOAT,
+              "abi: GetComponentField returns size, value and type");
+        const float newHp = 55.25f;
+        check(api.SetComponentField(&apiCtx, se, compH, hpH, &newHp, 4) == 1
+                  && Read<float>(w.GetComponentRaw(e.Id(), statsId), *fHp) == 55.25f,
+              "abi: SetComponentField writes the sim state (hash-covered lane)");
+        double big = 0.0;
+        check(api.GetComponentField(&apiCtx, se, compH, hpH, &big, 2, nullptr) == 0,
+              "abi: a too-small buffer is refused");
+        check(api.SetComponentField(&apiCtx, se, compH, hpH, &big, 8) == 0,
+              "abi: a size mismatch on set is refused (no silent type punning)");
+        check(api.GetComponentField(&apiCtx, se, compH, HashStr("nope"), &hp, 4, nullptr) == 0
+                  && api.GetComponentField(&apiCtx, se, HashStr("NopeComp"), hpH, &hp, 4,
+                                           nullptr) == 0,
+              "abi: unknown component / field hashes yield 0");
+        const MyeEntityId dead = { 0xFFFFFFFFu, 0u }; // null id (MyeEntityIdIsNull)
+        check(api.GetComponentField(&apiCtx, dead, compH, hpH, &hp, 4, nullptr) == 0,
+              "abi: a dead entity yields 0");
+
+        // ---- String64: Set が尾部ゼロ埋め + 終端を保証する (M48i のハッシュ罠を境界で断つ) ----
+        {
+            const uint64_t markH = HashStr("MyeTestMarker");
+            const uint64_t labelH = HashStr("label");
+            uint8_t* lbl =
+                static_cast<uint8_t*>(w.GetComponentRaw(e.Id(), markerId)) + fLabel->offset;
+            std::memset(lbl, 0, 64);
+            std::memcpy(lbl, "abc", 3);
+            const uint64_t cleanHash = HashWorld(w, nullptr);
+            lbl[10] = 'Z'; // 終端より後ろの残骸 (文字列としては同じ "abc")
+            check(HashWorld(w, nullptr) != cleanHash,
+                  "abi: tail garbage is hash-visible (precondition for the next check)");
+            check(api.SetComponentField(&apiCtx, se, markH, labelH, "abc", 4) == 1
+                      && HashWorld(w, nullptr) == cleanHash,
+                  "abi: a short string set zeroes the tail (String64 trap closed at the boundary)");
+            char sout[64] = {};
+            int32_t st = -1;
+            check(api.GetComponentField(&apiCtx, se, markH, labelH, sout, 64, &st) == 64
+                      && std::strcmp(sout, "abc") == 0 && st == MYE_FIELD_STRING64,
+                  "abi: a string get returns the full fixed buffer and its type");
+            check(api.SetComponentField(&apiCtx, se, markH, labelH, sout, 65) == 0,
+                  "abi: an oversized string set is refused");
+        }
+
+        // ---- 非所持 / NoHash (C# レーン) の遮断 ----
+        {
+            GameObject bare = scene.CreateGameObjectTracked("SchemaBare");
+            w.ApplyStructuralChanges();
+            const MyeEntityId sb = { bare.Id().index, bare.Id().generation };
+            check(api.GetComponentField(&apiCtx, sb, compH, hpH, &hp, 4, nullptr) == 0,
+                  "abi: an entity without the component yields 0");
+
+            // NoHash (C# スクリプト状態 = 非決定論レーン) は読み書きとも遮断される。
+            // 実物の C# 型はヘッドレス selftest に居ないので、旗だけ立てた代理を登録する
+            ComponentDesc nh;
+            nh.name = "MyeTestNoHash";
+            nh.nameHash = HashStr("MyeTestNoHash");
+            nh.size = 4;
+            nh.align = 4;
+            nh.flags = kComponentNoHash;
+            nh.construct = [](void* dst) { std::memset(dst, 0, 4); };
+            FieldDesc nf;
+            nf.name = "v";
+            nf.type = FieldType::Float;
+            nf.offset = 0;
+            nh.fields.push_back(nf);
+            const ComponentTypeId nhId = ComponentRegistry::Get().Register(std::move(nh));
+            w.AddComponentRaw(e.Id(), nhId);
+            w.ApplyStructuralChanges();
+            const MyeEntityId se2 = { e.Id().index, e.Id().generation };
+            float v = 1.0f;
+            check(api.GetComponentField(&apiCtx, se2, HashStr("MyeTestNoHash"), HashStr("v"), &v,
+                                        4, nullptr) == 0
+                      && api.SetComponentField(&apiCtx, se2, HashStr("MyeTestNoHash"),
+                                               HashStr("v"), &v, 4) == 0,
+                  "abi: the NoHash (C#) lane is blocked in both directions");
+        }
+    }
+
+    // ---- codegen (M50d): モデルは実行時登録の完全ミラー ----
+    {
+        // 登録は通るが生成では落ちる名前 (C++/C# キーワード) — 実行時アクセスは
+        // ハッシュ経由なので登録自体は正しい
+        const fs::path dir2 = fs::temp_directory_path() / L"mye_selftest_schema_cg";
+        fs::remove_all(dir2, ec);
+        fs::create_directories(dir2, ec);
+        WriteFile(dir2 / L"kw.component.schema.json", R"({
+  "componentSchema": 1, "id": 90100, "name": "MyeTestKeyword",
+  "fields": [ { "name": "class", "type": "Float" } ]
+})");
+        // 全型網羅 (EntityRef の align 8 / Float4x4 / String256 の詰め物ミラーを生成で通す)
+        WriteFile(dir2 / L"all.component.schema.json", R"({
+  "componentSchema": 1, "id": 90101, "name": "MyeTestAllTypes",
+  "fields": [
+    { "name": "f2",    "type": "Float2" },
+    { "name": "who",   "type": "EntityRef" },
+    { "name": "f3",    "type": "Float3" },
+    { "name": "asset", "type": "AssetRef" },
+    { "name": "u32",   "type": "UInt32" },
+    { "name": "xf",    "type": "Float4x4" },
+    { "name": "note",  "type": "String256" },
+    { "name": "rot",   "type": "Quat" },
+    { "name": "f4",    "type": "Float4" }
+  ]
+})");
+        check(schema::RegisterSchemaComponentsFrom(dir2.wstring()) == 2,
+              "codegen: a keyword field name still registers (runtime access is hash-based)");
+
+        const std::vector<schema::CodegenComponent> model = schema::BuildCodegenModel();
+        const schema::CodegenComponent* cgStats = nullptr;
+        const schema::CodegenComponent* cgAll = nullptr;
+        bool kwPresent = false;
+        for (const schema::CodegenComponent& c : model) {
+            if (c.name == "MyeTestStats") {
+                cgStats = &c;
+            }
+            if (c.name == "MyeTestAllTypes") {
+                cgAll = &c;
+            }
+            if (c.name == "MyeTestKeyword") {
+                kwPresent = true;
+            }
+        }
+        check(cgStats != nullptr && cgAll != nullptr,
+              "codegen: registered schemas appear in the model");
+        check(!kwPresent, "codegen: a keyword field name drops the component from generation");
+        check(cgAll != nullptr && cgAll->size == 400 && cgAll->fields.size() == 9
+                  && cgAll->fields[1].name == "who" && cgAll->fields[1].offset == 8
+                  && cgAll->fields[3].name == "asset" && cgAll->fields[3].offset == 32
+                  && cgAll->fields[5].name == "xf" && cgAll->fields[5].offset == 44
+                  && cgAll->fields[5].size == 64 && cgAll->fields[6].name == "note"
+                  && cgAll->fields[6].offset == 108 && cgAll->fields[6].size == 256,
+              "codegen: the all-types schema mirrors alignment-heavy offsets");
+        check(cgStats != nullptr && cgStats->nameHash == HashStr("MyeTestStats")
+                  && cgStats->size == 24 && cgStats->fields.size() == 4
+                  && cgStats->fields[0].name == "hp" && cgStats->fields[0].offset == 0
+                  && cgStats->fields[0].type == FieldType::Float && cgStats->fields[0].size == 4
+                  && cgStats->fields[2].name == "alive" && cgStats->fields[2].offset == 8
+                  && cgStats->fields[3].name == "tag" && cgStats->fields[3].offset == 16
+                  && cgStats->fields[3].size == 8,
+              "codegen: offsets/sizes/hashes mirror the runtime registry");
+
+        // 生成物のスモーク。レイアウトの最終検査は生成ヘッダ内の static_assert が
+        // プロジェクトのコンパイル時に行う (ここでは「詰め物とサイズが焼かれた」ことを見る)
+        const std::string hpp = schema::EmitCppHeader(model);
+        check(hpp.find("struct MyeTestStatsSchema {") != std::string::npos
+                  && hpp.find("uint8_t _pad0_[7];") != std::string::npos
+                  && hpp.find("static_assert(sizeof(MyeTestStatsSchema) == 24,")
+                         != std::string::npos
+                  && hpp.find("MyeNameHash(\"MyeTestStats\")") != std::string::npos,
+              "codegen: the C++ emission bakes padding, size and hash cross-checks");
+        const std::string cs = schema::EmitCSharpSource(model);
+        check(cs.find("public static class MyeTestStatsSchema") != std::string::npos
+                  && cs.find("public static bool GetHp(MyeEntity e, out float v)")
+                         != std::string::npos
+                  && cs.find("TryGetFieldString") != std::string::npos,
+              "codegen: the C# emission contains classes and typed accessors");
+        // 生成ヘッダを温存ダンプ (%TEMP%\mye_selftest_schema_gen.h)。ABI/emitter を触った
+        // ときの手動コンパイルスモーク用 — cl /std:c++20 /I src /I %TEMP% で include すれば
+        // 生成物内の static_assert (offset/size/FNV) が実コンパイラで検査される
+        schema::WriteIfChanged(
+            (fs::temp_directory_path() / L"mye_selftest_schema_gen.h").wstring(), hpp);
+        fs::remove_all(dir2, ec);
     }
 
     fs::remove_all(dir, ec);
