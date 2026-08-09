@@ -303,6 +303,9 @@
     <ClCompile Include="..\src\Engine\Engine\UfbxImpl.cpp">
       <Filter>Engine</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\UI\UILayout.cpp">
+      <Filter>Engine\UI</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\UI\UIRenderer.cpp">
       <Filter>Engine\UI</Filter>
     </ClCompile>
@@ -684,6 +687,9 @@
     <ClInclude Include="..\src\Engine\Engine\UI\UIGeometry.h">
       <Filter>Engine\UI</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\UI\UILayout.h">
+      <Filter>Engine\UI</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\UI\UINav.h">
       <Filter>Engine\UI</Filter>
     </ClInclude>
@@ -691,6 +697,9 @@
       <Filter>Engine\UI</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\UI\UISelfTest.h">
+      <Filter>Engine\UI</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\UI\UITextLayout.h">
       <Filter>Engine\UI</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Vfx\VfxGeometry.h">

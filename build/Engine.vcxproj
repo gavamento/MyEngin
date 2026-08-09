@@ -107,6 +107,7 @@
     <ClCompile Include="..\src\Engine\Engine\SkinningSystem.cpp" />
     <ClCompile Include="..\src\Engine\Engine\TransformSystem.cpp" />
     <ClCompile Include="..\src\Engine\Engine\UfbxImpl.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\UI\UILayout.cpp" />
     <ClCompile Include="..\src\Engine\Engine\UI\UIRenderer.cpp" />
     <ClCompile Include="..\src\Engine\Engine\UI\UISelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Vfx\VfxRenderer.cpp" />
@@ -234,9 +235,11 @@
     <ClInclude Include="..\src\Engine\Engine\SkinningSystem.h" />
     <ClInclude Include="..\src\Engine\Engine\TransformSystem.h" />
     <ClInclude Include="..\src\Engine\Engine\UI\UIGeometry.h" />
+    <ClInclude Include="..\src\Engine\Engine\UI\UILayout.h" />
     <ClInclude Include="..\src\Engine\Engine\UI\UINav.h" />
     <ClInclude Include="..\src\Engine\Engine\UI\UIRenderer.h" />
     <ClInclude Include="..\src\Engine\Engine\UI\UISelfTest.h" />
+    <ClInclude Include="..\src\Engine\Engine\UI\UITextLayout.h" />
     <ClInclude Include="..\src\Engine\Engine\Vfx\VfxGeometry.h" />
     <ClInclude Include="..\src\Engine\Engine\Vfx\VfxRenderer.h" />
     <ClInclude Include="..\src\Engine\Engine\VfxSelfTest.h" />

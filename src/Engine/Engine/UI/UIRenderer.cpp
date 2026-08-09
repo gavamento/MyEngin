@@ -1,12 +1,14 @@
 #include "Engine/Engine/UI/UIRenderer.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
-#include <tuple>
 
 #include "Engine/Core/Components.h"
 #include "Engine/Core/World.h"
 #include "Engine/Engine/UI/UIGeometry.h"
+#include "Engine/Engine/UI/UILayout.h"
+#include "Engine/Engine/UI/UITextLayout.h"
 #include "Engine/Renderer/GpuResources.h"
 #include "Engine/Renderer/GraphicsDevice.h"
 #include "Engine/Renderer/ShaderManager.h"
@@ -15,19 +17,25 @@ using namespace DirectX;
 using Microsoft::WRL::ComPtr;
 
 namespace mye {
+namespace {
 
-void UIRenderer::ResolveAnchor(int anchor, float x, float y, float w, float h, int screenW,
-                               int screenH, float& outX, float& outY)
+// 解決済み矩形 (float px) → シザー矩形。RT 外へはみ出す分は D3D が切るので clamp 不要
+D3D11_RECT ToScissor(const uilayout::UIRect& r)
 {
-    (void)w;
-    (void)h;
-    const int col = anchor % 3;  // 0=左 1=中 2=右
-    const int rowa = anchor / 3; // 0=上 1=中 2=下
-    const float ox = (col == 0) ? 0.0f : (col == 1) ? screenW * 0.5f : static_cast<float>(screenW);
-    const float oy = (rowa == 0) ? 0.0f : (rowa == 1) ? screenH * 0.5f : static_cast<float>(screenH);
-    outX = ox + x;
-    outY = oy + y;
+    D3D11_RECT s;
+    s.left = static_cast<LONG>(std::lroundf(r.x));
+    s.top = static_cast<LONG>(std::lroundf(r.y));
+    s.right = static_cast<LONG>(std::lroundf(r.x + r.w));
+    s.bottom = static_cast<LONG>(std::lroundf(r.y + r.h));
+    return s;
 }
+
+bool SameScissor(const D3D11_RECT& a, const D3D11_RECT& b)
+{
+    return a.left == b.left && a.top == b.top && a.right == b.right && a.bottom == b.bottom;
+}
+
+} // namespace
 
 bool UIRenderer::Init(GraphicsDevice& device, ShaderManager& shaders,
                       const std::wstring& assetsRoot)
@@ -81,6 +89,7 @@ bool UIRenderer::Init(GraphicsDevice& device, ShaderManager& shaders,
     rd.FillMode = D3D11_FILL_SOLID;
     rd.CullMode = D3D11_CULL_NONE;
     rd.DepthClipEnable = TRUE;
+    rd.ScissorEnable = TRUE; // M51e: clipChildren。クリップ無し要素は RT 全域シザー
     if (FAILED(dev->CreateRasterizerState(&rd, raster_.GetAddressOf()))) {
         return false;
     }
@@ -106,41 +115,15 @@ void UIRenderer::Shutdown()
     ready_ = false;
 }
 
-float UIRenderer::TextWidth(const char* s, float scale) const
-{
-    if (!s || !font_.IsReady()) {
-        return 0.0f;
-    }
-    const float k = font_.GlyphScale(scale);
-    const FontGlyphInfo* fallback = font_.Find(static_cast<uint32_t>('?'));
-    float wsum = 0.0f;
-    const char* p = s;
-    for (;;) {
-        const uint32_t cp = fontgeom::Utf8Next(p);
-        if (cp == 0 || cp == '\n') {
-            break; // 単一行幅
-        }
-        if (cp < 0x20) {
-            continue;
-        }
-        const FontGlyphInfo* g = font_.Find(cp);
-        if (!g) {
-            g = fallback;
-        }
-        if (g) {
-            wsum += g->advance * k;
-        }
-    }
-    return wsum;
-}
-
 void UIRenderer::PushQuad(ID3D11ShaderResourceView* srv, bool linear, float x, float y, float w,
                           float h, float u0, float v0, float u1, float v1, const XMFLOAT4& col)
 {
-    if (batches_.empty() || batches_.back().srv != srv || batches_.back().linear != linear) {
+    if (batches_.empty() || batches_.back().srv != srv || batches_.back().linear != linear
+        || !SameScissor(batches_.back().scissor, curScissor_)) {
         Batch b;
         b.srv = srv;
         b.linear = linear;
+        b.scissor = curScissor_;
         b.start = static_cast<uint32_t>(verts_.size());
         b.count = 0;
         batches_.push_back(b);
@@ -156,9 +139,10 @@ void UIRenderer::PushQuad(ID3D11ShaderResourceView* srv, bool linear, float x, f
     batches_.back().count += 6;
 }
 
-void UIRenderer::PushText(const char* s, float x, float y, float scale, const XMFLOAT4& col)
+void UIRenderer::PushTextLine(const char* begin, const char* end, float x, float y, float scale,
+                              const XMFLOAT4& col)
 {
-    if (!s || !font_.IsReady() || !font_.SRV()) {
+    if (!begin || !font_.IsReady() || !font_.SRV()) {
         return;
     }
     const float k = font_.GlyphScale(scale); // ベイク px → 画面 px
@@ -166,20 +150,14 @@ void UIRenderer::PushText(const char* s, float x, float y, float scale, const XM
     const bool linear = font_.IsTtf();
     const FontGlyphInfo* fallback = font_.Find(static_cast<uint32_t>('?'));
     float penX = x;
-    float lineY = y;
-    const char* p = s;
-    for (;;) {
+    const char* p = begin;
+    while (p < end) {
         const uint32_t cp = fontgeom::Utf8Next(p);
         if (cp == 0) {
             break;
         }
-        if (cp == '\n') {
-            penX = x;
-            lineY += LineHeight(scale);
-            continue;
-        }
         if (cp < 0x20) {
-            continue;
+            continue; // 行分割は textlayout 済み — '\n' もここには来ない前提だが無害
         }
         const FontGlyphInfo* gp = font_.Find(cp);
         if (!gp) {
@@ -192,10 +170,32 @@ void UIRenderer::PushText(const char* s, float x, float y, float scale, const XM
         // 可視グリフのみクアッド化 (空白は advance だけ)。ベースライン = topY + ascent
         if (g.w > 0.0f && g.h > 0.0f) {
             const float gx = penX + g.xoff * k;
-            const float gy = lineY + (ascent + g.yoff) * k;
+            const float gy = y + (ascent + g.yoff) * k;
             PushQuad(font_.SRV(), linear, gx, gy, g.w * k, g.h * k, g.u0, g.v0, g.u1, g.v1, col);
         }
         penX += g.advance * k;
+    }
+}
+
+void UIRenderer::PushTextInRect(const char* s, float rx, float ry, float rw, float rh, float scale,
+                                const XMFLOAT4& col, int align, bool wrap)
+{
+    if (!s || !font_.IsReady() || !font_.SRV()) {
+        return;
+    }
+    const float k = font_.GlyphScale(scale);
+    const float lineH = LineHeight(scale);
+    std::vector<textlayout::Line> lines;
+    textlayout::LayoutText(font_.Glyphs(), s, k, wrap, rw, lines);
+    if (lines.empty()) {
+        return;
+    }
+    const float totalH = static_cast<float>(lines.size()) * lineH;
+    float lineY = ry + textlayout::AlignY(align, totalH, rh);
+    for (const textlayout::Line& ln : lines) {
+        PushTextLine(ln.begin, ln.end, rx + textlayout::AlignX(align, ln.width, rw), lineY, scale,
+                     col);
+        lineY += lineH;
     }
 }
 
@@ -212,7 +212,12 @@ void UIRenderer::Render(World& world, GraphicsDevice& device, ShaderManager& sha
     }
 
     // ---- 収集 (order → entity.index の明示キーで安定ソート) ----
-    std::vector<std::tuple<int32_t, uint32_t, const UIElementComponent*>> items;
+    struct Item {
+        int32_t order;
+        EntityID e;
+        const UIElementComponent* el;
+    };
+    std::vector<Item> items;
     const ComponentTypeId req[] = { UIElementComponent::sTypeId };
     world.ForEachArchetype(req, [&](Archetype& arch) {
         const int ci = arch.FindTypeIndex(UIElementComponent::sTypeId);
@@ -222,24 +227,23 @@ void UIRenderer::Render(World& world, GraphicsDevice& device, ShaderManager& sha
                 continue;
             }
             const auto* el = static_cast<const UIElementComponent*>(arch.GetPtr(ci, row));
-            items.emplace_back(el->order, e.index, el);
+            items.push_back({ el->order, e, el });
         }
     });
     if (items.empty()) {
         return;
     }
-    std::sort(items.begin(), items.end(), [](const auto& a, const auto& b) {
-        if (std::get<0>(a) != std::get<0>(b)) {
-            return std::get<0>(a) < std::get<0>(b);
+    std::sort(items.begin(), items.end(), [](const Item& a, const Item& b) {
+        if (a.order != b.order) {
+            return a.order < b.order;
         }
-        return std::get<1>(a) < std::get<1>(b);
+        return a.e.index < b.e.index;
     });
 
     // ---- フェーズ 1: 全テキストのグリフを焼成 (アトラス成長はここだけで起きる) ----
-    for (const auto& it : items) {
-        const UIElementComponent& el = *std::get<2>(it);
-        if (el.kind == 1 || el.kind == 2) {
-            font_.EnsureText(el.text);
+    for (const Item& it : items) {
+        if (it.el->kind == 1 || it.el->kind == 2) {
+            font_.EnsureText(it.el->text);
         }
     }
 
@@ -252,14 +256,30 @@ void UIRenderer::Render(World& world, GraphicsDevice& device, ShaderManager& sha
         return;
     }
 
-    for (const auto& it : items) {
-        const UIElementComponent& el = *std::get<2>(it);
-        float rx, ry;
-        ResolveAnchor(el.anchor, el.x, el.y, el.w, el.h, width, height, rx, ry);
+    const D3D11_RECT fullScissor = { 0, 0, width, height };
+    for (const Item& it : items) {
+        const UIElementComponent& el = *it.el;
+        // 矩形解決 (M51e: 親子/クリップは UILayout — UIFocusNav と共有)。クリップ祖先が
+        // 無い要素は RT 全域シザー = 従来と同じバッチにまとまる
+        const uilayout::UIRect rect = uilayout::ResolveRect(world, it.e, width, height);
+        const float rx = rect.x;
+        const float ry = rect.y;
+        curScissor_ = fullScissor;
+        {
+            const uilayout::UIRect clip = uilayout::ResolveClipRect(world, it.e, width, height);
+            if (clip.w <= 0.0f || clip.h <= 0.0f) {
+                continue; // 祖先クリップで完全に隠れている
+            }
+            if (clip.x > 0.0f || clip.y > 0.0f || clip.x + clip.w < static_cast<float>(width)
+                || clip.y + clip.h < static_cast<float>(height)) {
+                curScissor_ = ToScissor(clip);
+            }
+        }
 
         if (el.kind == 1) {
-            // テキスト (背景無し)
-            PushText(el.text, rx, ry, el.fontScale, el.color);
+            // テキスト (背景無し)。M51e: 矩形 (w,h) 内で整列 + 折返し (既定 0/0 = 従来どおり左上)
+            PushTextInRect(el.text, rx, ry, el.w, el.h, el.fontScale, el.color, el.align,
+                           el.wrap != 0);
         } else if (el.kind == 2) {
             // ボタン: 背景 + hover/press ハイライト (display only) + 中央ラベル
             XMFLOAT4 bg = el.color;
@@ -272,10 +292,8 @@ void UIRenderer::Render(World& world, GraphicsDevice& device, ShaderManager& sha
                 bg.z = std::min(1.0f, bg.z * k);
             }
             PushQuad(whiteSrv_, false, rx, ry, el.w, el.h, 0, 0, 1, 1, bg);
-            const float tw = TextWidth(el.text, el.fontScale);
-            const float th = LineHeight(el.fontScale);
             const XMFLOAT4 label = { 1, 1, 1, 1 };
-            PushText(el.text, rx + (el.w - tw) * 0.5f, ry + (el.h - th) * 0.5f, el.fontScale, label);
+            PushTextInRect(el.text, rx, ry, el.w, el.h, el.fontScale, label, 4, false);
         } else {
             // パネル / 画像 (M35: 9-slice / fillAmount 対応)
             ID3D11ShaderResourceView* srv = whiteSrv_;
@@ -382,6 +400,7 @@ void UIRenderer::Render(World& world, GraphicsDevice& device, ShaderManager& sha
         dc->PSSetSamplers(0, 1, samps);
         ID3D11ShaderResourceView* srvs[1] = { b.srv };
         dc->PSSetShaderResources(0, 1, srvs);
+        dc->RSSetScissorRects(1, &b.scissor); // ラスタライザは常時 ScissorEnable (M51e)
         dc->Draw(b.count, b.start);
     }
 }

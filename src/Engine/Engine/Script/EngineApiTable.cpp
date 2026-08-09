@@ -13,8 +13,8 @@
 #include "Engine/Engine/Parts.h" // v9 部位クエリ (M48h)
 #include "Engine/Engine/Physics/PhysicsSystem.h"
 #include "Engine/Engine/Scene.h"
-#include "Engine/Engine/UI/UINav.h"      // v7 UIFocusNav (M37)
-#include "Engine/Engine/UI/UIRenderer.h" // ResolveAnchor (基準解像度でのナビ矩形解決)
+#include "Engine/Engine/UI/UILayout.h" // M51e: 矩形解決を描画と共有 (基準解像度でのナビ矩形)
+#include "Engine/Engine/UI/UINav.h"    // v7 UIFocusNav (M37)
 #include "Engine/Platform/PathUtil.h"
 
 namespace mye {
@@ -424,11 +424,18 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
                 if (el->focusable == 0) {
                     continue;
                 }
+                // M51e: 描画と同じ UILayout で解決 (親子 space 対応)。祖先クリップで完全に
+                // 隠れた要素はナビ候補から外す (スクロール外の項目へ飛ばない)
+                const auto vis = uilayout::ResolveVisibleRect(w, e, kRefW, kRefH);
+                if (vis.w <= 0.0f || vis.h <= 0.0f) {
+                    continue;
+                }
+                const auto rect = uilayout::ResolveRect(w, e, kRefW, kRefH);
                 uinav::NavRect r;
-                UIRenderer::ResolveAnchor(el->anchor, el->x, el->y, el->w, el->h, kRefW, kRefH,
-                                          r.x, r.y);
-                r.w = el->w;
-                r.h = el->h;
+                r.x = rect.x;
+                r.y = rect.y;
+                r.w = rect.w;
+                r.h = rect.h;
                 r.index = e.index;
                 if (e.index == current.index) {
                     cur = r;

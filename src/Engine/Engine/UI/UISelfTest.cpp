@@ -1,11 +1,15 @@
 #include "Engine/Engine/UI/UISelfTest.h"
 
 #include <cmath>
+#include <vector>
 
+#include "Engine/Core/Components.h"
 #include "Engine/Core/Log.h"
+#include "Engine/Core/World.h"
 #include "Engine/Engine/UI/UIGeometry.h"
+#include "Engine/Engine/UI/UILayout.h"
 #include "Engine/Engine/UI/UINav.h"
-#include "Engine/Engine/UI/UIRenderer.h"
+#include "Engine/Engine/UI/UITextLayout.h"
 
 namespace mye {
 
@@ -22,7 +26,8 @@ bool RunUISelfTest()
         }
     };
 
-    // ResolveAnchor: 9-grid が正しい画面基準点にマップされるか (x/y は基準点からのオフセット)
+    // ResolveRect (M51e): 9-grid が正しい画面基準点にマップされるか (x/y は基準点からのオフセット)
+    RegisterBuiltinComponents();
     constexpr int W = 1000;
     constexpr int H = 800;
     constexpr float ox = 10.0f;
@@ -40,12 +45,208 @@ bool RunUISelfTest()
         { 6, 0.0f, 800.0f, "bottom-left" }, { 7, 500.0f, 800.0f, "bottom-center" },
         { 8, 1000.0f, 800.0f, "bottom-right" },
     };
-    for (const Case& c : cases) {
-        float rx = 0, ry = 0;
-        UIRenderer::ResolveAnchor(c.anchor, ox, oy, 100.0f, 40.0f, W, H, rx, ry);
-        const bool ok = std::fabs(rx - (c.baseX + ox)) < 1e-4f
-            && std::fabs(ry - (c.baseY + oy)) < 1e-4f;
-        check(ok, c.name);
+    {
+        World w;
+        const EntityID e = w.CreateEntity("ui");
+        auto* el = w.AddComponent<UIElementComponent>(e);
+        el->x = ox;
+        el->y = oy;
+        el->w = 100.0f;
+        el->h = 40.0f;
+        for (const Case& c : cases) {
+            w.GetComponent<UIElementComponent>(e)->anchor = c.anchor;
+            const auto r = uilayout::ResolveRect(w, e, W, H);
+            const bool ok = std::fabs(r.x - (c.baseX + ox)) < 1e-4f
+                && std::fabs(r.y - (c.baseY + oy)) < 1e-4f && r.w == 100.0f && r.h == 40.0f;
+            check(ok, c.name);
+        }
+    }
+
+    // ---- ResolveRect (M51e): space=1 の入れ子 — 親矩形基準の 9 アンカー ----
+    {
+        World w;
+        const EntityID parent = w.CreateEntity("panel");
+        auto* pel = w.AddComponent<UIElementComponent>(parent);
+        pel->anchor = 4; // 画面中央
+        pel->x = 0.0f;
+        pel->y = 0.0f;
+        pel->w = 200.0f;
+        pel->h = 100.0f;
+        const EntityID child = w.CreateEntity("child");
+        auto* cel = w.AddComponent<UIElementComponent>(child);
+        cel->space = 1;
+        cel->x = ox;
+        cel->y = oy;
+        cel->w = 50.0f;
+        cel->h = 20.0f;
+        w.SetParent(child, parent);
+        w.ApplyStructuralChanges();
+        // 親の解決済み矩形: anchor は「左上をアンカー点に置く」(センタリングしない —
+        // 旧 ResolveAnchor と同じ) ので anchor=4 → 左上 (500,400)、(500,400)-(700,500)
+        const float px = 500.0f, py = 400.0f, pw = 200.0f, ph = 100.0f;
+        for (const Case& c : cases) {
+            w.GetComponent<UIElementComponent>(child)->anchor = c.anchor;
+            const auto r = uilayout::ResolveRect(w, child, W, H);
+            const float bx = px + (c.baseX / W) * pw; // 9-grid 基準点を親矩形に写像
+            const float by = py + (c.baseY / H) * ph;
+            const bool ok = std::fabs(r.x - (bx + ox)) < 1e-4f && std::fabs(r.y - (by + oy)) < 1e-4f;
+            check(ok, "nested space=1 anchor");
+        }
+        // 3 段入れ子: 孫 (space=1, anchor=0) は子の左上基準
+        const EntityID gc = w.CreateEntity("grandchild");
+        auto* gel = w.AddComponent<UIElementComponent>(gc);
+        gel->space = 1;
+        gel->x = 3.0f;
+        gel->y = 4.0f;
+        gel->w = 10.0f;
+        gel->h = 10.0f;
+        w.SetParent(gc, child);
+        w.ApplyStructuralChanges();
+        w.GetComponent<UIElementComponent>(child)->anchor = 0; // 子 = 親左上 + (ox,oy)
+        const auto rg = uilayout::ResolveRect(w, gc, W, H);
+        check(std::fabs(rg.x - (px + ox + 3.0f)) < 1e-4f && std::fabs(rg.y - (py + oy + 4.0f)) < 1e-4f,
+              "3-level nesting resolves through chain");
+        // space=1 でも UIElement 祖先が無ければ screen 基準へフォールバック
+        const EntityID orphanParent = w.CreateEntity("plain"); // UIElement 無し
+        const EntityID orphan = w.CreateEntity("orphan");
+        auto* oel = w.AddComponent<UIElementComponent>(orphan);
+        oel->space = 1;
+        oel->x = 7.0f;
+        oel->y = 8.0f;
+        w.SetParent(orphan, orphanParent);
+        w.ApplyStructuralChanges();
+        const auto ro = uilayout::ResolveRect(w, orphan, W, H);
+        check(std::fabs(ro.x - 7.0f) < 1e-4f && std::fabs(ro.y - 8.0f) < 1e-4f,
+              "space=1 without UI ancestor falls back to screen");
+        // 非 UI ノードを挟んでも最寄りの UIElement 祖先に到達する
+        const EntityID mid = w.CreateEntity("group"); // UIElement 無し
+        const EntityID leaf = w.CreateEntity("leaf");
+        auto* lel = w.AddComponent<UIElementComponent>(leaf);
+        lel->space = 1;
+        lel->x = 1.0f;
+        lel->y = 2.0f;
+        w.SetParent(mid, parent);
+        w.SetParent(leaf, mid);
+        w.ApplyStructuralChanges();
+        const auto rl = uilayout::ResolveRect(w, leaf, W, H);
+        check(std::fabs(rl.x - (px + 1.0f)) < 1e-4f && std::fabs(rl.y - (py + 2.0f)) < 1e-4f,
+              "non-UI middle node is skipped");
+        // 循環親 (壊れデータ) でもハングしない — 深度上限打ち切り
+        const EntityID a = w.CreateEntity("cycA");
+        const EntityID b = w.CreateEntity("cycB");
+        w.AddComponent<UIElementComponent>(a)->space = 1;
+        w.AddComponent<UIElementComponent>(b)->space = 1;
+        w.AddComponent<HierarchyComponent>(a)->parent = b;
+        w.AddComponent<HierarchyComponent>(b)->parent = a;
+        const auto rc = uilayout::ResolveRect(w, a, W, H);
+        check(rc.w >= 0.0f, "parent cycle terminates (depth cap)");
+    }
+
+    // ---- ResolveClipRect / ResolveVisibleRect (M51e): 祖先 clipChildren の交差 ----
+    {
+        World w;
+        const EntityID outer = w.CreateEntity("outer");
+        auto* oel = w.AddComponent<UIElementComponent>(outer);
+        oel->x = 100.0f;
+        oel->y = 100.0f;
+        oel->w = 300.0f;
+        oel->h = 200.0f;
+        oel->clipChildren = 1;
+        const EntityID inner = w.CreateEntity("inner");
+        auto* iel = w.AddComponent<UIElementComponent>(inner);
+        iel->space = 1;
+        iel->x = 50.0f;
+        iel->y = 50.0f;
+        iel->w = 200.0f;
+        iel->h = 100.0f;
+        iel->clipChildren = 1;
+        const EntityID item = w.CreateEntity("item");
+        auto* tel = w.AddComponent<UIElementComponent>(item);
+        tel->space = 1;
+        tel->x = 100.0f;
+        tel->y = 80.0f;
+        tel->w = 500.0f;
+        tel->h = 40.0f;
+        w.SetParent(inner, outer);
+        w.SetParent(item, inner);
+        w.ApplyStructuralChanges();
+        // outer=(100,100,300,200) ∩ inner=(150,150,200,100) = inner 自身
+        const auto clip = uilayout::ResolveClipRect(w, item, W, H);
+        check(std::fabs(clip.x - 150.0f) < 1e-4f && std::fabs(clip.y - 150.0f) < 1e-4f
+                  && std::fabs(clip.w - 200.0f) < 1e-4f && std::fabs(clip.h - 100.0f) < 1e-4f,
+              "clip = intersection of ancestor clipChildren rects");
+        // item の解決矩形 (250,230,500,40) は clip 右端 350 で切られる
+        const auto vis = uilayout::ResolveVisibleRect(w, item, W, H);
+        check(std::fabs(vis.x - 250.0f) < 1e-4f && std::fabs(vis.w - 100.0f) < 1e-4f,
+              "visible rect = rect clipped by ancestors");
+        // クリップ外へ出し切ると可視矩形は退化する
+        w.GetComponent<UIElementComponent>(item)->y = 500.0f;
+        const auto gone = uilayout::ResolveVisibleRect(w, item, W, H);
+        check(gone.w <= 0.0f || gone.h <= 0.0f, "fully scrolled-out item has empty visible rect");
+        // 自分の clipChildren は自分を切らない
+        const auto self = uilayout::ResolveClipRect(w, outer, W, H);
+        check(std::fabs(self.w - W) < 1e-4f, "own clipChildren does not clip self");
+        // クリップ祖先が無ければ screen 全域
+        const auto noclip = uilayout::ResolveClipRect(w, outer, W, H);
+        check(std::fabs(noclip.x) < 1e-4f && std::fabs(noclip.h - H) < 1e-4f,
+              "no clipping ancestor -> full screen");
+    }
+
+    // ---- LayoutText (M51e): 折返し行数・整列オフセット (合成グリフマップで D3D 非依存) ----
+    {
+        using textlayout::AlignX;
+        using textlayout::AlignY;
+        using textlayout::LayoutText;
+        using textlayout::Line;
+        auto approx = [](float a, float b) { return std::fabs(a - b) < 1e-4f; };
+        FontGlyphMap glyphs;
+        auto put = [&](uint32_t cp, float adv) {
+            FontGlyphInfo g;
+            g.advance = adv;
+            g.valid = true;
+            glyphs[cp] = g;
+        };
+        for (uint32_t c = 'A'; c <= 'Z'; ++c) {
+            put(c, 10.0f);
+        }
+        put(' ', 5.0f);
+        put('?', 7.0f);
+        put(0x3042, 20.0f); // あ (全角は倍幅 — 日本語折返しの検証)
+        std::vector<Line> lines;
+        // 折返しなし: 1 行 + 幅 = advance 合計
+        LayoutText(glyphs, "ABC", 1.0f, false, 0.0f, lines);
+        check(lines.size() == 1 && approx(lines[0].width, 30.0f), "layout: single line width");
+        // '\n' 分割: 空行 ("a\n\nb" の中間) も行として出る
+        LayoutText(glyphs, "AB\n\nC", 1.0f, false, 0.0f, lines);
+        check(lines.size() == 3 && approx(lines[1].width, 0.0f) && approx(lines[2].width, 10.0f),
+              "layout: newline split keeps empty middle line");
+        // 末尾 '\n' は空行を出さない (旧 PushText の描画と同じ見え方)
+        LayoutText(glyphs, "AB\n", 1.0f, false, 0.0f, lines);
+        check(lines.size() == 1, "layout: trailing newline emits no empty line");
+        // 文字単位折返し: 幅 25 に 10px 字 → 2 字 (20) + 次で折る
+        LayoutText(glyphs, "ABCDE", 1.0f, true, 25.0f, lines);
+        check(lines.size() == 3 && approx(lines[0].width, 20.0f) && approx(lines[2].width, 10.0f),
+              "layout: char wrap at width");
+        // 全角 20px は幅 25 で 1 字/行
+        LayoutText(glyphs, "\xE3\x81\x82\xE3\x81\x82\xE3\x81\x82", 1.0f, true, 25.0f, lines);
+        check(lines.size() == 3 && approx(lines[0].width, 20.0f), "layout: wide glyph wraps per char");
+        // 行頭 1 文字は必ず載る (幅より広い字でも無限ループしない)
+        LayoutText(glyphs, "\xE3\x81\x82\xE3\x81\x82", 1.0f, true, 10.0f, lines);
+        check(lines.size() == 2 && approx(lines[0].width, 20.0f),
+              "layout: first char always placed (progress guarantee)");
+        // 未焼成グリフは '?' の幅で代用
+        LayoutText(glyphs, "z", 1.0f, false, 0.0f, lines);
+        check(lines.size() == 1 && approx(lines[0].width, 7.0f), "layout: missing glyph uses '?'");
+        // k 係数は幅に掛かる
+        LayoutText(glyphs, "AB", 2.0f, false, 0.0f, lines);
+        check(lines.size() == 1 && approx(lines[0].width, 40.0f), "layout: scale multiplies width");
+        // 整列オフセット (9-grid): 列 = x、行 = y
+        check(approx(AlignX(0, 30, 100), 0.0f) && approx(AlignX(4, 30, 100), 35.0f)
+                  && approx(AlignX(8, 30, 100), 70.0f),
+              "align: x offsets (left/center/right)");
+        check(approx(AlignY(1, 20, 100), 0.0f) && approx(AlignY(4, 20, 100), 40.0f)
+                  && approx(AlignY(7, 20, 100), 80.0f),
+              "align: y offsets (top/middle/bottom)");
     }
 
     // ---- BuildFillQuad (M35): 境界値 0 / 0.5 / 1、水平と垂直 ----

@@ -200,6 +200,11 @@ void RegisterBuiltinComponents()
         MYE_JP("9 スライス", MYE_FIELD(UIElementComponent, sliced, Int32)),
         MYE_JP("フォーカス可", MYE_FIELD(UIElementComponent, focusable, Int32)),
         MYE_JP("フォーカス中", MYE_FIELD(UIElementComponent, focused, Int32)),
+        // M51e 拡張 (末尾 append)
+        MYE_JP("配置空間", MYE_FIELD_TIP(UIElementComponent, space, Int32, "0=screen 1=parent rect")),
+        MYE_JP("子をクリップ", MYE_FIELD(UIElementComponent, clipChildren, Int32)),
+        MYE_JP("文字整列", MYE_FIELD_TIP(UIElementComponent, align, Int32, "9-grid 0..8 (text only)")),
+        MYE_JP("折返し", MYE_FIELD_TIP(UIElementComponent, wrap, Int32, "0=off 1=char wrap at width")),
     }, kComponentNoHash);
 
     // M22: Animator Controller。LocalTransform を駆動するので **hash 対象** (kComponentNoHash 無し)。

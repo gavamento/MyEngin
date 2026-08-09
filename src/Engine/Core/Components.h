@@ -260,6 +260,11 @@ struct UIElementComponent {
     int32_t sliced = 0;      // kind0 + texture 有りで 9-slice 描画
     int32_t focusable = 0;   // パッドナビ候補 (状態はスクリプト側 — UINav.h 参照)
     int32_t focused = 0;     // フォーカス枠の表示 (表示専用。スクリプトが書く)
+    // ---- M51e 拡張 (末尾 append、NoHash なので旧シーンは既定値ロードで互換) ----
+    int32_t space = 0;        // 0=screen 基準 / 1=最寄りの UIElement 祖先の解決済み矩形基準 (UILayout.h)
+    int32_t clipChildren = 0; // !=0 で子孫要素を自矩形へシザークリップ (自分自身は切らない)
+    int32_t align = 0;        // kind1(text) の矩形内整列 (anchor と同じ 9-grid 0..8)。ボタンラベルは中央固定
+    int32_t wrap = 0;         // kind1(text) の文字単位折返し (幅 w で折る、日本語前提)。0=off
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
