@@ -5,6 +5,7 @@
 #include <unordered_map>
 
 #include "Engine/Core/World.h"
+#include "Engine/Engine/GameFlow.h"
 #include "Engine/Engine/GameObject.h"
 
 namespace mye {
@@ -47,13 +48,29 @@ public:
     // e に fileId が無ければ採番して返す (Undo/選択が同一性キーとして使う)。0 = 無効
     uint64_t EnsureFileId(EntityID e);
 
-    // 全エンティティ破棄 (名前と nextFileId は保持)
+    // 全エンティティ破棄 (名前と nextFileId は保持)。
+    // TimeControl / PersistStore も保持する (M51g) — PersistStore は LoadScene
+    // (LoadFromJson → Clear) を生き延びるのが存在意義。TimeControl も跨ぎ維持
+    // (Unity の timeScale と同じ意味論。スクリプト層は非ゲートなのでいつでも解除できる)
     void Clear()
     {
         world_.Clear();
         overrides_.clear();
         fileIdCache_.clear();
     }
+
+    // ---- ゲームフロー (M51g、決定台帳 5) ----
+    // どちらも Scene 保持の sim 状態で WorldHash 対象 (RNG の直後に追記)。
+    // Play/Stop の復元は PlayModeController がスナップショットする
+    TimeControl& Time() { return time_; }
+    const TimeControl& Time() const { return time_; }
+    PersistStore& Persist() { return persist_; }
+    const PersistStore& Persist() const { return persist_; }
+
+    // このシーンを読み書きしたファイルの絶対パス (SceneSerializer::SaveToFile/LoadFromFile
+    // が設定)。メモリ上で組んだシーン (デモ構築) は空。SaveGame の「現シーンパス」記録用 (M51g)
+    const std::wstring& SourcePath() const { return sourcePath_; }
+    void SetSourcePath(std::wstring p) { sourcePath_ = std::move(p); }
 
     World& GetWorld() { return world_; }
     const std::string& Name() const { return name_; }
@@ -118,6 +135,9 @@ private:
     // fileId → EntityID の検証つきキャッシュ (M51a)。ヒット時に生存 + 値一致を必ず確認
     // するため stale エントリは無害 (書込点の網羅は不要)。0 (未採番) は入れない
     std::unordered_map<uint64_t, EntityID> fileIdCache_;
+    TimeControl time_;       // ポーズ/タイムスケール (M51g)
+    PersistStore persist_;   // シーン跨ぎ永続 (M51g)。Clear で消えない
+    std::wstring sourcePath_; // ロード/保存元の絶対パス (M51g)。メモリ構築シーンは空
 };
 
 } // namespace mye

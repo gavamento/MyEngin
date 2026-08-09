@@ -666,6 +666,7 @@ bool SaveToFile(Scene& scene, const std::wstring& path)
     }
     const std::string text = root.dump(2);
     f.write(text.data(), static_cast<std::streamsize>(text.size()));
+    scene.SetSourcePath(path); // M51g: SaveGame の「現シーンパス」記録用
     MYE_LOG_INFO("scene saved: %s (%zu entities)", WideToUtf8(path).c_str(), root["entities"].size());
     return true;
 }
@@ -686,6 +687,7 @@ bool LoadFromFile(Scene& scene, const std::wstring& path)
     }
     const bool ok = LoadFromJson(scene, root);
     if (ok) {
+        scene.SetSourcePath(path); // M51g: SaveGame の「現シーンパス」記録用
         MYE_LOG_INFO("scene loaded: %s (%u entities)", WideToUtf8(path).c_str(),
                      scene.GetWorld().AliveCount());
     }

@@ -20,6 +20,7 @@
     <ClCompile Include="..\src\Editor\EditorMain.cpp" />
     <ClCompile Include="..\src\Editor\EditorSettings.cpp" />
     <ClCompile Include="..\src\Editor\EditorToolbar.cpp" />
+    <ClCompile Include="..\src\Editor\GameFlowSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\LayoutManager.cpp" />
     <ClCompile Include="..\src\Editor\PartSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\PartTagNames.cpp" />
@@ -89,6 +90,7 @@
     <ClInclude Include="..\src\Editor\EditorGlobalSettings.h" />
     <ClInclude Include="..\src\Editor\EditorSettings.h" />
     <ClInclude Include="..\src\Editor\EditorToolbar.h" />
+    <ClInclude Include="..\src\Editor\GameFlowSelfTest.h" />
     <ClInclude Include="..\src\Editor\LayoutManager.h" />
     <ClInclude Include="..\src\Editor\PartSelfTest.h" />
     <ClInclude Include="..\src\Editor\PartTagNames.h" />

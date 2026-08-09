@@ -8,6 +8,7 @@
 
 #include "Editor/EditorApp.h"
 #include "Editor/EditorGlobalSettings.h"
+#include "Editor/GameFlowSelfTest.h"
 #include "Editor/PartSelfTest.h"
 #include "Engine/Engine/Asset/CookedCacheSelfTest.h"
 #include "Engine/Engine/SchemaSelfTest.h"
@@ -239,7 +240,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             && mye::RunFontSelfTest() && mye::RunAudioSelfTest() && mye::RunRtSelfTest()
             && mye::RunLocalizationSelfTest() && mye::RunSkeletonSelfTest()
             && mye::RunPartSelfTest() && mye::RunSchemaSelfTest()
-            && mye::RunCookedCacheSelfTest() && mye::RunInputActionsSelfTest();
+            && mye::RunCookedCacheSelfTest() && mye::RunInputActionsSelfTest()
+            && mye::RunGameFlowSelfTest();
         return ok ? 0 : 1;
     }
 

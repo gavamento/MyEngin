@@ -264,6 +264,9 @@
     <ClCompile Include="..\src\Engine\Engine\Replay\WorldHasher.cpp">
       <Filter>Engine\Replay</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\SaveGame.cpp">
+      <Filter>Engine</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Scene.cpp">
       <Filter>Engine</Filter>
     </ClCompile>
@@ -573,6 +576,9 @@
     <ClInclude Include="..\src\Engine\Engine\FontSelfTest.h">
       <Filter>Engine</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\GameFlow.h">
+      <Filter>Engine</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\GameObject.h">
       <Filter>Engine</Filter>
     </ClInclude>
@@ -647,6 +653,9 @@
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Replay\WorldHasher.h">
       <Filter>Engine\Replay</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\SaveGame.h">
+      <Filter>Engine</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Scene.h">
       <Filter>Engine</Filter>

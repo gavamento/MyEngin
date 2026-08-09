@@ -5,6 +5,7 @@
 #include "Engine/Core/Components.h"
 #include "Engine/Core/Hash.h"
 #include "Engine/Core/World.h"
+#include "Engine/Engine/GameFlow.h"
 #include "Engine/Engine/Particles/CpuParticleBackend.h"
 
 namespace mye {
@@ -76,6 +77,27 @@ uint64_t HashCpuParticles(const CpuParticleBackend& cpu)
     return h;
 }
 
+// M51g: ゲームフロー状態 (決定台帳 5)。RNG の直後・パーティクルの前に畳み込む。
+// PersistStore は std::map = キー昇順走査 (挿入順に依存しない — selftest が固定)
+uint64_t HashGameFlow(uint64_t h, const TimeControl* time, const PersistStore* persist)
+{
+    if (time) {
+        h = HashCombine(h, time->paused ? 1u : 0u);
+        h = HashCombine(h, static_cast<uint32_t>(time->scalePercent));
+        h = HashCombine(h, static_cast<uint32_t>(time->accum));
+    }
+    if (persist) {
+        for (const auto& [key, blob] : persist->Entries()) {
+            h = HashCombine(h, key);
+            h = HashCombine(h, static_cast<uint64_t>(blob.size()));
+            if (!blob.empty()) {
+                h = HashBytes(blob.data(), blob.size(), h);
+            }
+        }
+    }
+    return h;
+}
+
 void CollectEntitiesSorted(World& world, std::vector<EntityID>& out)
 {
     out.clear();
@@ -92,7 +114,8 @@ void CollectEntitiesSorted(World& world, std::vector<EntityID>& out)
 } // namespace
 
 void HashWorldDetailed(World& world, const CpuParticleBackend* cpuParticles,
-                       std::vector<EntityHash>& outEntities, uint64_t& outTotal)
+                       std::vector<EntityHash>& outEntities, uint64_t& outTotal,
+                       const TimeControl* time, const PersistStore* persist)
 {
     std::vector<EntityID> entities;
     CollectEntitiesSorted(world, entities);
@@ -108,6 +131,8 @@ void HashWorldDetailed(World& world, const CpuParticleBackend* cpuParticles,
     // ワールド RNG ストリーム
     total = HashCombine(total, world.Rng().State());
     total = HashCombine(total, world.Rng().Inc());
+    // ゲームフロー状態 (M51g: RNG の直後)
+    total = HashGameFlow(total, time, persist);
     // CPU パーティクル (spec 11.3: ハッシュ対象)
     if (cpuParticles) {
         total = HashCombine(total, HashCpuParticles(*cpuParticles));
@@ -115,7 +140,8 @@ void HashWorldDetailed(World& world, const CpuParticleBackend* cpuParticles,
     outTotal = total;
 }
 
-uint64_t HashWorld(World& world, const CpuParticleBackend* cpuParticles)
+uint64_t HashWorld(World& world, const CpuParticleBackend* cpuParticles,
+                   const TimeControl* time, const PersistStore* persist)
 {
     std::vector<EntityID> entities;
     CollectEntitiesSorted(world, entities);
@@ -126,6 +152,7 @@ uint64_t HashWorld(World& world, const CpuParticleBackend* cpuParticles)
     }
     total = HashCombine(total, world.Rng().State());
     total = HashCombine(total, world.Rng().Inc());
+    total = HashGameFlow(total, time, persist);
     if (cpuParticles) {
         total = HashCombine(total, HashCpuParticles(*cpuParticles));
     }

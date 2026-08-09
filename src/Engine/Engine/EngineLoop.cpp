@@ -27,6 +27,7 @@
 #include "Engine/Engine/RenderSystem.h"
 #include "Engine/Engine/Replay/Replay.h"
 #include "Engine/Engine/Replay/WorldHasher.h"
+#include "Engine/Engine/SaveGame.h"
 #include "Engine/Engine/Scene.h"
 #include "Engine/Engine/SceneSerializer.h"
 #include "Engine/Engine/Script/ManagedHost.h"
@@ -236,6 +237,11 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // RNG state はワールドハッシュ対象なので、オーディオが引くと sim が壊れる
     Pcg32 audioScriptRng;
     std::wstring pendingScene;                // LoadScene の遅延ロード先 (tick 末に消費)
+    // M51g: SaveGame/LoadGame のスロット要求 (-1 = なし)。積み手はスクリプト API (M51h で
+    // 開通)。Save は tick 末ハッシュ後の出力レーンで書出、Load は pendingScene と同じ
+    // セーフポイントで消費し record/verify 中は no-op + WARN (決定台帳 5)
+    int pendingSaveSlot = -1;
+    int pendingLoadSlot = -1;
     std::vector<EffectSpawnRequest> effectQueue; // PlayEffect の spawn 要求 (tick 末に消費、M32f)
     std::vector<DebugLineCmd> debugLines; // DebugDrawLine (v7)。tick 頭クリア → 描画で消費
     IRenderPath* activePath = &forwardPath;
@@ -447,6 +453,9 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                      config.useCookCache ? "enabled" : "disabled (parse every launch)",
                      WideToUtf8(cookedDir).c_str());
     }
+    // M51g: セーブディレクトリ (SaveGame/LoadGame)。二経路は cache\cooked と同じ規則
+    const std::wstring saveDir =
+        (config.projectRoot.empty() ? GetExecutableDir() : config.projectRoot) + L"\\save";
     ctx.fixedDt = static_cast<float>(kFixedDt);
 
     app.OnStart(ctx);
@@ -550,6 +559,14 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             debugLines.clear();
             app.OnTick(ctx); // エディタ更新 + simulateScripts の決定
             lastTickSimulated = ctx.simulateScripts; // M36b: 編集中 (非 Play) は補間を切る
+            // M51g: ゲームフローの tick ゲート (決定台帳 5)。ポーズ/タイムスケールは dt を
+            // 触らず「この tick でゲート対象を進めるか」で表現する (整数 tick 決定論と噛み合う)。
+            // ゲート対象 = アニメ (3.5) / 物理 (3.6、CC 込み) / 衝突・パーティクル・トレイル (4)。
+            // スクリプト層 (C++/C#) は非ゲート — 止めると sim レーンからアンポーズ不能になる
+            // (ポーズ UI を動かすのもスクリプト)。Transform / 構造変更適用 / 入力 / ハッシュ /
+            // シーン遷移も常時実行。Advance() は accum を進める副作用があるので
+            // sim が走る tick に 1 回だけ呼ぶ (編集中に呼ぶと Play 開始時の位相がずれる)
+            const bool stepSim = ctx.simulateScripts && scene.Time().Advance();
             // ---- フェーズ 3: スクリプト層 Start → Update ----
             const bool runScripts = ctx.simulateScripts && scriptHost.IsLoaded();
             if (runScripts) {
@@ -564,9 +581,11 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                 managedHost.RunStartAndUpdate();
             }
             // ---- アニメーション (フェーズ 3.5): スクリプト後・Transform 前に LocalTransform を確定 ----
-            // Play 中のみ進行 (編集時は Animation 窓が明示サンプリングする)。
+            // Play 中のみ進行 (編集時は Animation 窓が明示サンプリングする)。M51g からは
+            // TimeControl の tick ゲート (stepSim) も掛かる — エフェクトの duration/linger や
+            // アニメ時刻などの「タイマー」はここが止まることで一緒に止まる。
             // AnimatorComponent 非存在シーンでは完全 no-op = 既存シーンのリプレイ不変
-            if (ctx.simulateScripts) {
+            if (stepSim) {
                 MYE_PROFILE_SCOPE("animation");
                 animationSystem.Update(scene.GetWorld(), animLibrary);
                 // Animator Controller (M22): ステートマシンでクリップを切替・ブレンド。
@@ -586,7 +605,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             // ---- 物理 (フェーズ 3.6): スクリプト/アニメ後・Transform 前に剛体を積分 ----
             // LocalTransform.position を書き換えるので TransformSystem 前に走らせ、確定した
             // ワールド位置でコライダ判定させる。Rigidbody 非存在シーンでは完全 no-op (opt-in)
-            if (ctx.simulateScripts) {
+            if (stepSim) {
                 MYE_PROFILE_SCOPE("physics");
                 // ソリッド接触ペアを受け取り CollisionSystem へ渡す (M28c OnCollision 配信)
                 physicsSystem.Update(scene.GetWorld(), ctx.fixedDt, &solidContacts);
@@ -597,7 +616,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                 MYE_PROFILE_SCOPE("transform");
                 transformSystem.Update(scene.GetWorld());
             }
-            if (ctx.simulateScripts) {
+            if (stepSim) {
                 {
                     MYE_PROFILE_SCOPE("collision");
                     // C# にもトリガー配信 (別レーン: 記録/検証中は managed=null で純 C++)
@@ -658,13 +677,15 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
 
             // ---- リプレイ: tick 末の状態ハッシュ (spec 11.3) ----
             if (recorder.IsActive()) {
-                recorder.RecordTick(ctx.input, HashWorld(scene.GetWorld(), &particleSystem.Cpu()));
+                recorder.RecordTick(ctx.input, HashWorld(scene.GetWorld(), &particleSystem.Cpu(),
+                                                         &scene.Time(), &scene.Persist()));
                 if (recorder.TickCount() >= static_cast<uint64_t>(config.replayTicks)) {
                     recorder.Finish();
                     ctx.requestExit = true;
                 }
             } else if (verifying) {
-                const uint64_t actual = HashWorld(scene.GetWorld(), &particleSystem.Cpu());
+                const uint64_t actual = HashWorld(scene.GetWorld(), &particleSystem.Cpu(),
+                                                  &scene.Time(), &scene.Persist());
                 const uint64_t expected = player.ExpectedHash(ctx.tickIndex);
                 if (actual != expected) {
                     // 乖離: 初回の tick とエンティティ別サブハッシュを報告して失敗終了
@@ -677,7 +698,8 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                                   static_cast<unsigned long long>(actual));
                     std::vector<EntityHash> detail;
                     uint64_t total = 0;
-                    HashWorldDetailed(scene.GetWorld(), &particleSystem.Cpu(), detail, total);
+                    HashWorldDetailed(scene.GetWorld(), &particleSystem.Cpu(), detail, total,
+                                      &scene.Time(), &scene.Persist());
                     MYE_LOG_ERROR("[replay]   entities=%zu rng=%016llX", detail.size(),
                                   static_cast<unsigned long long>(scene.GetWorld().Rng().State()));
                     for (size_t i = 0; i < detail.size() && i < 8; ++i) {
@@ -701,6 +723,53 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                                       audioScriptRng);
             }
             audioQueue.clear();
+
+            // ---- セーブ書出 (M51g): 出力レーン — tick 末ハッシュの後に書く (決定論を
+            // 汚さない)。record/verify 中もゲートしない: 同じスクリプトが同じ tick で
+            // 同じ内容を要求するだけで、sim 状態は一切読み書きしない ----
+            if (pendingSaveSlot >= 0) {
+                const int slot = pendingSaveSlot;
+                pendingSaveSlot = -1;
+                // シーンパスは assets 相対へ落として書く (プロジェクト移動でセーブが死なない
+                // ように)。assets 外 (メモリ構築シーン = 空 / 外部絶対パス) はそのまま
+                std::wstring sp = scene.SourcePath();
+                if (sp.size() > assetsRoot.size() + 1
+                    && _wcsnicmp(sp.c_str(), assetsRoot.c_str(), assetsRoot.size()) == 0
+                    && sp[assetsRoot.size()] == L'\\') {
+                    sp = sp.substr(assetsRoot.size() + 1);
+                }
+                const std::wstring savePath = SaveGameFile::PathForSlot(saveDir, slot);
+                if (SaveGameFile::Write(savePath, sp, scene.Persist())) {
+                    MYE_LOG_INFO("[save] slot %d written (%zu keys): %s", slot,
+                                 scene.Persist().Entries().size(),
+                                 WideToUtf8(savePath).c_str());
+                }
+            }
+            // ---- ロード消費 (M51g): pendingScene と同じセーフポイント。PersistStore を
+            // 置換し、記録されたシーンを pendingScene へ積む → 直下のブロックが同 tick で
+            // ロードする。record/verify 中は no-op + WARN (「リプレイはセーブ読込を
+            // 跨がない」— 決定台帳 5) ----
+            if (pendingLoadSlot >= 0) {
+                const int slot = pendingLoadSlot;
+                pendingLoadSlot = -1;
+                if (recorder.IsActive() || player.IsActive()) {
+                    MYE_LOG_WARN("[save] LoadGame(slot %d) is a no-op during record/verify",
+                                 slot);
+                } else {
+                    SaveGameData data;
+                    const std::wstring savePath = SaveGameFile::PathForSlot(saveDir, slot);
+                    if (SaveGameFile::Read(savePath, data)) {
+                        scene.Persist().Entries() = std::move(data.persist);
+                        if (!data.scenePath.empty()) {
+                            pendingScene = data.scenePath; // assets 相対は下の消費で絶対化
+                        }
+                        MYE_LOG_INFO("[save] slot %d loaded (%zu keys)", slot,
+                                     scene.Persist().Entries().size());
+                    } else {
+                        MYE_LOG_WARN("[save] load failed: %s", WideToUtf8(savePath).c_str());
+                    }
+                }
+            }
 
             // ---- シーン遷移 (M19.4): pendingScene が積まれていれば tick 末にロードする ----
             // スクリプトが決定論的に LoadScene → 記録/検証とも同一 tick に再現される。

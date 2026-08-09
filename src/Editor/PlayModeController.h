@@ -1,6 +1,8 @@
 #pragma once
 #include "nlohmann/json.hpp"
 
+#include "Engine/Engine/GameFlow.h"
+
 namespace mye {
 
 class Scene;
@@ -26,6 +28,10 @@ public:
 private:
     PlayState state_ = PlayState::Editing;
     nlohmann::json snapshot_;
+    // M51g: TimeControl / PersistStore はシーン文書 (SaveToJson) の外にある sim 状態なので
+    // 別途スナップショットする。忘れると Play 中の永続値/ポーズが Stop 後の編集状態へ漏れる
+    TimeControl timeSnapshot_;
+    PersistStore persistSnapshot_;
     bool stepPending_ = false;
 };
 
