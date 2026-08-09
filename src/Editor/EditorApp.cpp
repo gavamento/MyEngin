@@ -363,6 +363,11 @@ void EditorApp::OnImGui(EngineContext& ctx)
     // 構成アセットのダブルクリック → ミニシーン編集モード (M48k)
     if (std::wstring p = assetBrowser_.TakePendingOpenActor(); !p.empty()) {
         OpenActorEdit(ctx, p);
+        // ★編集中に別 actor へ乗り換えた場合、OpenActorEdit 冒頭の CloseActorEdit が
+        //   直前まで ctx.scene が指していた旧ミニシーンの World を破棄している。
+        //   残りのフレームが dangling を触らないよう、今の文書 (新ミニシーン、開けなければ
+        //   本シーン) へ即座に張り替える (exitRequested の UAF fix e7a584f と同族)
+        ctx.scene = actorEdit_ ? &actorEdit_->scene : mainScene;
     }
     animation_.OnImGui(ctx, selection_, undo_);
     animatorController_.OnImGui(ctx, selection_);
