@@ -8,6 +8,7 @@
 #include "Engine/Core/Components.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Core/World.h"
+#include "Engine/Engine/TransformSystem.h"
 
 namespace mye {
 namespace {
@@ -264,6 +265,84 @@ void TestFindTypeIndexMatchesLinear()
     TEST_CHECK(absentOk);
 }
 
+void TestTransformSkipCache()
+{
+    MYE_LOG_INFO("[selftest] transform skip cache (M51c)");
+    const bool savedFlag = World::SimCacheEnabled();
+    World::SetSimCacheEnabled(true);
+    World w;
+    TransformSystem ts;
+
+    // 子→親の順で生成する — Rebuild のメモ化が「未確定チェーンの巻き戻し」経路を通るように
+    // (親→子の順だと親の深度が常にメモ化済みで、1 段ヒットしか被覆できない)
+    const EntityID c = w.CreateEntity("C");
+    const EntityID b = w.CreateEntity("B");
+    const EntityID a = w.CreateEntity("A");
+    const EntityID r2 = w.CreateEntity("R2");
+    const EntityID f = w.CreateEntity("F");
+    w.SetParent(b, a);
+    w.SetParent(c, b);
+    w.SetParent(f, r2);
+    w.ApplyStructuralChanges();
+
+    // 再構築直後は全再計算 + メモ化深度が親チェーン長と一致 (旧 O(N×深度) ロジックと同値)
+    ts.Update(w);
+    TEST_CHECK(ts.LastStats().computed == 5 && ts.LastStats().skipped == 0);
+    TEST_CHECK(w.GetComponent<HierarchyComponent>(a)->depth == 0);
+    TEST_CHECK(w.GetComponent<HierarchyComponent>(b)->depth == 1);
+    TEST_CHECK(w.GetComponent<HierarchyComponent>(c)->depth == 2);
+    TEST_CHECK(w.GetComponent<HierarchyComponent>(r2)->depth == 0);
+    TEST_CHECK(w.GetComponent<HierarchyComponent>(f)->depth == 1);
+
+    // 不変 tick は全スキップ
+    ts.Update(w);
+    TEST_CHECK(ts.LastStats().computed == 0 && ts.LastStats().skipped == 5);
+
+    // 中間ノード B を移動 → B と子孫 C のみ再計算 (親 A と兄弟家系 R2/F は波及しない)
+    w.GetComponent<LocalTransform>(b)->position.x = 5.0f;
+    ts.Update(w);
+    TEST_CHECK(ts.LastStats().computed == 2 && ts.LastStats().skipped == 3);
+
+    // 同値を書き直してもビット不変ならスキップ
+    w.GetComponent<LocalTransform>(b)->position.x = 5.0f;
+    ts.Update(w);
+    TEST_CHECK(ts.LastStats().computed == 0 && ts.LastStats().skipped == 5);
+
+    // ルート A を移動 → A の家系 (A/B/C) 全更新
+    w.GetComponent<LocalTransform>(a)->position.y = -2.0f;
+    ts.Update(w);
+    TEST_CHECK(ts.LastStats().computed == 3 && ts.LastStats().skipped == 2);
+
+    // 構造変更 (生成) → HierarchyDirty → 側テーブル全無効化 = 全再計算
+    const EntityID g = w.CreateEntity("G");
+    ts.Update(w);
+    TEST_CHECK(ts.LastStats().computed == 6 && ts.LastStats().skipped == 0);
+
+    // スキップが温存した WorldMatrix が OFF (毎 tick 全件再計算) とビット一致すること。
+    // 回転/スケールも載せて数式の全経路を通す
+    auto* alt = w.GetComponent<LocalTransform>(a);
+    alt->rotation = { 0.5f, 0.5f, 0.5f, 0.5f };
+    alt->scale = { 2.0f, 1.0f, 0.5f };
+    ts.Update(w); // A 家系のみ再計算。R2/F/G の温存値がスナップショットに入る
+    TEST_CHECK(ts.LastStats().computed == 3 && ts.LastStats().skipped == 3);
+    const EntityID order[] = { a, b, c, r2, f, g };
+    std::vector<DirectX::XMFLOAT4X4> onValues;
+    for (const EntityID id : order) {
+        onValues.push_back(w.GetComponent<WorldMatrixComponent>(id)->value);
+    }
+    World::SetSimCacheEnabled(false);
+    ts.Update(w); // OFF: キャッシュ素通しで全件再計算
+    TEST_CHECK(ts.LastStats().computed == 6 && ts.LastStats().skipped == 0);
+    std::vector<DirectX::XMFLOAT4X4> offValues;
+    for (const EntityID id : order) {
+        offValues.push_back(w.GetComponent<WorldMatrixComponent>(id)->value);
+    }
+    TEST_CHECK(std::memcmp(onValues.data(), offValues.data(),
+                           onValues.size() * sizeof(DirectX::XMFLOAT4X4)) == 0);
+
+    World::SetSimCacheEnabled(savedFlag);
+}
+
 } // namespace
 
 bool RunEcsSelfTest()
@@ -277,6 +356,7 @@ bool RunEcsSelfTest()
     TestDeterministicRng();
     TestQueryCacheTransparency();
     TestFindTypeIndexMatchesLinear();
+    TestTransformSkipCache();
     if (g_failCount == 0) {
         MYE_LOG_INFO("==== ECS self test: ALL PASS ====");
         return true;
