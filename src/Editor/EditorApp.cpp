@@ -331,9 +331,11 @@ void EditorApp::OnImGui(EngineContext& ctx)
     if (editBar.saveRequested) {
         SaveActorEdit(ctx);
     }
-    if (editBar.exitRequested) {
-        RequestGuardedAction(ctx, PendingAction::ExitActorEdit); // dirty なら確認モーダル
-    }
+    // ★exitRequested はここでは処理しない — clean 時の RequestGuardedAction は即時実行で、
+    //   CloseActorEdit が actorEdit_->scene (World) をその場で破棄する。ctx.scene は
+    //   ミニシーンに差し替え中なので、フレーム残りのウィンドウ描画が破棄済み World を触って
+    //   落ちる (M51a のクエリキャッシュ挿入で顕在化した M48k 由来の use-after-free)。
+    //   処理は本シーンへ戻した後 (下の ctx.scene = mainScene 直後) で行う
     statusBar_.OnImGui(ctx, projectName_, scenePath_, IsSceneDirty(), playMode_.State(),
                        &console_.open);
 
@@ -407,6 +409,14 @@ void EditorApp::OnImGui(EngineContext& ctx)
 
     // ---- 以降はアプリのライフサイクル (シーン読み書き / 終了) なので本シーンに戻す ----
     ctx.scene = mainScene;
+
+    // ミニシーン編集の「戻る」(M48k)。**必ず ctx.scene 復帰後に処理する** — clean 時は
+    // 即時実行 = CloseActorEdit がミニシーンの World を破棄するため、差し替え中に実行すると
+    // フレーム残りが破棄済み World を触って落ちる。dirty 時のモーダル実行 (DrawSaveConfirmModal)
+    // も同じくこの位置以降なので、経路が二つとも復帰後に揃う
+    if (editBar.exitRequested) {
+        RequestGuardedAction(ctx, PendingAction::ExitActorEdit); // dirty なら確認モーダル
+    }
 
     // ---- フィードバック層 (M27b): 最前面に描く ----
     if (closeRequested_) {
