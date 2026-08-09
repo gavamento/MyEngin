@@ -10,6 +10,7 @@
 #include "Engine/Core/Random.h"
 #include "Engine/Engine/Animation.h"
 #include "Engine/Engine/AnimatorController.h"
+#include "Engine/Engine/Asset/CookedCache.h"
 #include "Engine/Engine/AssetDatabase.h"
 #include "Engine/Engine/CollisionSystem.h"
 #include "Engine/Engine/HotReload/DllReloader.h"
@@ -429,6 +430,18 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // M51a: sim 索引 (World クエリキャッシュ / Scene fileId 索引)。--no-sim-cache で素通し
     World::SetSimCacheEnabled(config.useSimCache);
     MYE_LOG_INFO("[simcache] %s", config.useSimCache ? "enabled" : "disabled (linear)");
+    // M51b: アセットクックキャッシュ (モデル + .ogg PCM)。--no-cook-cache で毎回フルパース。
+    // ディレクトリの二経路は GameLogic.dll と同じ規則 — 分岐は必ず projectRoot で判定する。
+    // RegisterAssetLibraries (app.OnStart) より前に設定しておくこと
+    {
+        const std::wstring cookedDir =
+            (config.projectRoot.empty() ? GetExecutableDir() : config.projectRoot)
+            + L"\\cache\\cooked";
+        CookedCache::Configure(cookedDir, config.useCookCache);
+        MYE_LOG_INFO("[cook] %s (%s)",
+                     config.useCookCache ? "enabled" : "disabled (parse every launch)",
+                     WideToUtf8(cookedDir).c_str());
+    }
     ctx.fixedDt = static_cast<float>(kFixedDt);
 
     app.OnStart(ctx);

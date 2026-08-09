@@ -12,6 +12,8 @@
 #include "Engine/Core/Components.h"
 #include "Engine/Core/Hash.h"
 #include "Engine/Core/Log.h"
+#include "Engine/Engine/Asset/CookedCache.h"
+#include "Engine/Engine/Asset/ModelCook.h"
 #include "Engine/Engine/GameObject.h"
 #include "Engine/Engine/Scene.h"
 #include "Engine/Platform/PathUtil.h"
@@ -43,6 +45,8 @@ struct LoadContext {
         AssetID id;
     };
     std::vector<SkinCacheEntry> skinCache;
+    // 非 null なら各 Register サイトが登録内容を追記する (M51b クックの sink)
+    ModelCook::ModelCookData* cook = nullptr;
 };
 
 // ufbx_vec3 → XMFLOAT3。左手系への変換は ufbx 側で完了済み (MakeOpts を参照)
@@ -224,6 +228,9 @@ AssetID LoadMeshPart(LoadContext& lc, const ufbx_mesh* mesh, const ufbx_mesh_par
         MYE_LOG_WARN("FBX skin: cluster index >= 256 のウェイトを破棄しました (%s)", key);
     }
     // 巻き順は ufbx が左手系変換時に反転済み (MakeOpts を参照)
+    if (lc.cook) {
+        lc.cook->AddMesh(key, vertices, indices);
+    }
     return lc.resources->meshes.Register(key, vertices, indices);
 }
 
@@ -258,6 +265,9 @@ AssetID ResolveTexture(LoadContext& lc, const ufbx_texture* tex, bool srgb, cons
             lc.resources->textures.CreateFromEncoded(texKey, file->content.data, file->content.size, srgb);
         if (!id.IsNull()) {
             ++lc.resolvedTextures;
+            if (lc.cook) {
+                lc.cook->AddTexture(0, srgb, texKey, {}, file->content.data, file->content.size);
+            }
             return id;
         }
         // デコード失敗 (stb 非対応の埋め込み形式) は外部ファイル探索へフォールバックする
@@ -280,7 +290,11 @@ AssetID ResolveTexture(LoadContext& lc, const ufbx_texture* tex, bool srgb, cons
         if (!std::filesystem::exists(p, ec)) {
             return {};
         }
-        return lc.resources->textures.LoadFile(p, srgb);
+        const AssetID loaded = lc.resources->textures.LoadFile(p, srgb);
+        if (!loaded.IsNull() && lc.cook) {
+            lc.cook->AddTexture(1, srgb, {}, p, nullptr, 0);
+        }
+        return loaded;
     };
 
     const std::string fileName = NormalizeSeps(StrOf(file->filename));
@@ -382,6 +396,9 @@ AssetID LoadMaterial(LoadContext& lc, const ufbx_material* mat, const ufbx_mesh*
     m.shader = lc.shaderId;
     m.texture = lc.resources->textures.White();
     if (!mat) {
+        if (lc.cook) {
+            lc.cook->AddMaterial(key, m);
+        }
         return lc.resources->materials.Register(key, m);
     }
     const std::string matName = StrOf(mat->name);
@@ -501,6 +518,9 @@ AssetID LoadMaterial(LoadContext& lc, const ufbx_material* mat, const ufbx_mesh*
                 }
             }
         }
+    }
+    if (lc.cook) {
+        lc.cook->AddMaterial(key, m);
     }
     return lc.resources->materials.Register(key, m);
 }
@@ -634,6 +654,9 @@ AssetID LoadSkin(LoadContext& lc, const ufbx_mesh* mesh, const ufbx_skin_deforme
     char key[512];
     snprintf(key, sizeof(key), "%s#mesh%u#skin%u", lc.pathUtf8.c_str(), mesh->element_id,
              skin->element_id);
+    if (lc.cook) {
+        lc.cook->AddSkin(key, model); // move 前にコピーを記録
+    }
     return lc.resources->skinnedModels.Register(key, std::move(model));
 }
 
@@ -806,6 +829,12 @@ GameObject Load(Scene& scene, RenderResources& resources, ShaderManager& shaders
 bool RegisterAssets(RenderResources& resources, ShaderManager& shaders, const std::wstring& path,
                     bool logErrors)
 {
+    // M51b: クック済みキャッシュが有効ならパースを丸ごと飛ばして登録を再生する。
+    // 挿入点はこの RegisterAssets 経路のみ — Load (D&D 配置) は従来パースのまま
+    if (ModelCook::TryReplayFromCache(resources, shaders, path)) {
+        return true;
+    }
+
     const std::string utf8 = WideToUtf8(path);
     const ufbx_load_opts opts = MakeOpts();
     ufbx_error error;
@@ -825,6 +854,10 @@ bool RegisterAssets(RenderResources& resources, ShaderManager& shaders, const st
     lc.pathUtf8 = WideToUtf8(NormalizePathKey(path));
     lc.baseDir = std::filesystem::path(path).parent_path().wstring();
     lc.shaderId = shaders.Load("forward_lit");
+    ModelCook::ModelCookData cookData;
+    if (CookedCache::Enabled()) {
+        lc.cook = &cookData;
+    }
 
     for (size_t ni = 0; ni < fbx->nodes.count; ++ni) {
         const ufbx_node* node = fbx->nodes.data[ni];
@@ -833,6 +866,9 @@ bool RegisterAssets(RenderResources& resources, ShaderManager& shaders, const st
         }
     }
     ufbx_free_scene(fbx);
+    if (lc.cook) {
+        ModelCook::SaveToCache(path, cookData);
+    }
     return true;
 }
 

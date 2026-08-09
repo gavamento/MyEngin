@@ -1,6 +1,7 @@
 #include "Engine/Engine/DemoContent.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <cwctype>
 #include <filesystem>
@@ -451,6 +452,8 @@ void RegisterAssetLibraries(EngineContext& ctx)
     if (!std::filesystem::is_directory(ctx.assetsRoot, ec)) {
         return;
     }
+    // 起動時アセット走査の所要時間 (M51b のクック効果を含む診断値。sim には無関係)
+    const auto scanStart = std::chrono::steady_clock::now();
     std::vector<std::wstring> audioFiles; // 走査後にまとめて判定する (M45f。下の注記参照)
     for (const auto& e : std::filesystem::recursive_directory_iterator(ctx.assetsRoot, ec)) {
         if (!e.is_regular_file()) {
@@ -537,6 +540,11 @@ void RegisterAssetLibraries(EngineContext& ctx)
                          static_cast<int>(m->buses.size()));
         }
     }
+
+    const double scanMs = std::chrono::duration<double, std::milli>(
+                              std::chrono::steady_clock::now() - scanStart)
+                              .count();
+    MYE_LOG_INFO("[assets] startup asset scan: %.1f ms", scanMs);
 }
 
 } // namespace mye

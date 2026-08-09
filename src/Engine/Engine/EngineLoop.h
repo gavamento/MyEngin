@@ -61,6 +61,11 @@ struct EngineConfig {
     // (決定論ゲート / 障害切り分け用)。結果はキャッシュ有無でビット同一
     bool useSimCache = true;
 
+    // ---- アセットクックキャッシュ (M51b) ----
+    // false で cache\cooked\ を読み書きせず毎回フルパース (障害切り分け / A-B 計測用)。
+    // 登録される内容はクック有無でビット同一 (CookedCacheSelfTest + replay_verify が保証)
+    bool useCookCache = true;
+
     // ---- レイトレのデバッグ表示 (M46b、--rt-debug N) ----
     // 0=off 1=BVH ヒートマップ 2=ヒット法線 3=インスタンス ID
     // 4=生 GI (1spp) 5=蓄積 GI 6=履歴長 (M46c/M46d) 7=SVGF 後 8=推定分散 (M46e)。

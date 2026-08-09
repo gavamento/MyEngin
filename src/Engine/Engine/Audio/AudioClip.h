@@ -61,7 +61,14 @@ bool DecodeOgg(const uint8_t* bytes, size_t len, AudioClip& out);
 // 先頭マジック ("RIFF" / "OggS") で振り分ける。拡張子には依存しない
 bool DecodeAudio(const uint8_t* bytes, size_t len, AudioClip& out);
 
-// ファイルを丸ごと読んで DecodeAudio に流す (唯一の非純粋な入口)
+// ファイルを丸ごと読んで DecodeAudio に流す (非純粋な入口)。
+// .ogg は M51b からクックキャッシュ (.mpcm = デコード済み 16bit PCM) を先に引き、
+// ヒットすれば読み込みも Vorbis デコードも省略する (.wav は展開費用ほぼゼロなので対象外)
 bool LoadAudioFile(const std::wstring& path, AudioClip& out);
+
+// .mpcm の読み書き (CookedCache 無効時は常に false / no-op)。selftest が合成クリップで
+// 往復を検証できるよう公開している — 実運用の入口は LoadAudioFile のみ
+bool LoadCookedClip(const std::wstring& srcPath, AudioClip& out);
+void SaveCookedClip(const std::wstring& srcPath, const AudioClip& clip);
 
 } // namespace mye

@@ -8,6 +8,8 @@
 #include "Engine/Core/Components.h"
 #include "Engine/Core/Hash.h"
 #include "Engine/Core/Log.h"
+#include "Engine/Engine/Asset/CookedCache.h"
+#include "Engine/Engine/Asset/ModelCook.h"
 #include "Engine/Engine/GameObject.h"
 #include "Engine/Engine/Scene.h"
 #include "Engine/Platform/PathUtil.h"
@@ -27,6 +29,8 @@ struct LoadContext {
     std::string pathUtf8;   // AssetID 用のキー
     std::wstring baseDir;   // 外部テクスチャの解決基準
     AssetID shaderId;
+    // 非 null なら各 Register サイトが登録内容を追記する (M51b クックの sink)
+    ModelCook::ModelCookData* cook = nullptr;
 };
 
 // 右手系 → 左手系: 位置/法線は z 反転、クォータニオンは (-x, -y, z, w)
@@ -118,6 +122,9 @@ AssetID LoadPrimitiveMesh(LoadContext& lc, const cgltf_primitive* prim, const ch
         std::swap(indices[i + 1], indices[i + 2]);
     }
 
+    if (lc.cook) {
+        lc.cook->AddMesh(key, vertices, indices);
+    }
     return lc.resources->meshes.Register(key, vertices, indices);
 }
 
@@ -145,16 +152,26 @@ AssetID LoadMaterial(LoadContext& lc, const cgltf_material* mat, const char* key
                     texKey, bytes, img->buffer_view->size, /*srgb=*/true); // ベースカラー (M38a)
                 if (!tex.IsNull()) {
                     m.texture = tex;
+                    if (lc.cook) {
+                        lc.cook->AddTexture(0, true, texKey, {}, bytes, img->buffer_view->size);
+                    }
                 }
             } else if (img->uri && strncmp(img->uri, "data:", 5) != 0) {
                 // 外部ファイル
-                const AssetID tex = lc.resources->textures.LoadFile(
-                    lc.baseDir + L"\\" + Utf8ToWide(img->uri), /*srgb=*/true); // ベースカラー (M38a)
+                const std::wstring texPath = lc.baseDir + L"\\" + Utf8ToWide(img->uri);
+                const AssetID tex =
+                    lc.resources->textures.LoadFile(texPath, /*srgb=*/true); // ベースカラー (M38a)
                 if (!tex.IsNull()) {
                     m.texture = tex;
+                    if (lc.cook) {
+                        lc.cook->AddTexture(1, true, {}, texPath, nullptr, 0);
+                    }
                 }
             }
         }
+    }
+    if (lc.cook) {
+        lc.cook->AddMaterial(key, m);
     }
     return lc.resources->materials.Register(key, m);
 }
@@ -260,6 +277,9 @@ AssetID LoadSkin(LoadContext& lc, const cgltf_data* data, const cgltf_skin* skin
 
     char key[512];
     snprintf(key, sizeof(key), "%s#skin%zu", lc.pathUtf8.c_str(), skinIdx);
+    if (lc.cook) {
+        lc.cook->AddSkin(key, model); // move 前にコピーを記録
+    }
     return lc.resources->skinnedModels.Register(key, std::move(model));
 }
 
@@ -399,6 +419,12 @@ GameObject Load(Scene& scene, RenderResources& resources, ShaderManager& shaders
 bool RegisterAssets(RenderResources& resources, ShaderManager& shaders, const std::wstring& path,
                     bool logErrors)
 {
+    // M51b: クック済みキャッシュが有効ならパースを丸ごと飛ばして登録を再生する。
+    // 挿入点はこの RegisterAssets 経路のみ — Load (D&D 配置) は従来パースのまま
+    if (ModelCook::TryReplayFromCache(resources, shaders, path)) {
+        return true;
+    }
+
     const std::string utf8 = WideToUtf8(path);
 
     cgltf_options options = {};
@@ -420,6 +446,10 @@ bool RegisterAssets(RenderResources& resources, ShaderManager& shaders, const st
     lc.pathUtf8 = WideToUtf8(NormalizePathKey(path));
     lc.baseDir = std::filesystem::path(path).parent_path().wstring();
     lc.shaderId = shaders.Load("forward_lit");
+    ModelCook::ModelCookData cookData;
+    if (CookedCache::Enabled()) {
+        lc.cook = &cookData;
+    }
 
     // 全メッシュ / プリミティブを同じキーで再登録 (= GPU バッファ差し替え)
     for (cgltf_size m = 0; m < data->meshes_count; ++m) {
@@ -442,6 +472,9 @@ bool RegisterAssets(RenderResources& resources, ShaderManager& shaders, const st
         LoadSkin(lc, data, &data->skins[i], static_cast<size_t>(i));
     }
     cgltf_free(data);
+    if (lc.cook) {
+        ModelCook::SaveToCache(path, cookData);
+    }
     return true;
 }
 

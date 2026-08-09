@@ -9,6 +9,7 @@
 #include "Editor/EditorApp.h"
 #include "Editor/EditorGlobalSettings.h"
 #include "Editor/PartSelfTest.h"
+#include "Engine/Engine/Asset/CookedCacheSelfTest.h"
 #include "Engine/Engine/SchemaSelfTest.h"
 #include "Editor/ProjectManager.h"
 #include "Editor/ProjectRegistry.h"
@@ -151,6 +152,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 config.useJobs = false; // M25: 並列を直列化 (決定論ゲート / 計測比較)
             } else if (arg == L"--no-sim-cache") {
                 config.useSimCache = false; // M51a: sim 索引を素通し (決定論ゲート / 切り分け)
+            } else if (arg == L"--no-cook-cache") {
+                config.useCookCache = false; // M51b: クックを使わず毎回フルパース (切り分け)
             } else if (arg == L"--rt-debug" && i + 1 < argc) {
                 config.rtDebugMode = _wtoi(argv[++i]); // M46b (Deferred のみ)
             } else if (arg == L"--rt-no-temporal") {
@@ -234,7 +237,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             && mye::RunParticleSelfTest() && mye::RunAssetOpsSelfTest()
             && mye::RunFontSelfTest() && mye::RunAudioSelfTest() && mye::RunRtSelfTest()
             && mye::RunLocalizationSelfTest() && mye::RunSkeletonSelfTest()
-            && mye::RunPartSelfTest() && mye::RunSchemaSelfTest();
+            && mye::RunPartSelfTest() && mye::RunSchemaSelfTest()
+            && mye::RunCookedCacheSelfTest();
         return ok ? 0 : 1;
     }
 

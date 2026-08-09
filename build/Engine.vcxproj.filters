@@ -7,6 +7,9 @@
     <Filter Include="Engine">
       <UniqueIdentifier>{582F5D06-2930-51DE-CAD8-59B10249443A}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Engine\Asset">
+      <UniqueIdentifier>{9A2B1019-B5E2-F703-E666-AD9277ECABC5}</UniqueIdentifier>
+    </Filter>
     <Filter Include="Engine\Audio">
       <UniqueIdentifier>{5725AD66-3920-E794-128E-9D8078930437}</UniqueIdentifier>
     </Filter>
@@ -125,6 +128,15 @@
     </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\AnimatorControllerSelfTest.cpp">
       <Filter>Engine</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Asset\CookedCache.cpp">
+      <Filter>Engine\Asset</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Asset\CookedCacheSelfTest.cpp">
+      <Filter>Engine\Asset</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Asset\ModelCook.cpp">
+      <Filter>Engine\Asset</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\AssetDatabase.cpp">
       <Filter>Engine</Filter>
@@ -476,6 +488,15 @@
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\AnimatorControllerSelfTest.h">
       <Filter>Engine</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Asset\CookedCache.h">
+      <Filter>Engine\Asset</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Asset\CookedCacheSelfTest.h">
+      <Filter>Engine\Asset</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Asset\ModelCook.h">
+      <Filter>Engine\Asset</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\AssetDatabase.h">
       <Filter>Engine</Filter>

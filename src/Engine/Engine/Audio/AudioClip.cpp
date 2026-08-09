@@ -6,6 +6,7 @@
 #include <fstream>
 
 #include "Engine/Core/Log.h"
+#include "Engine/Engine/Asset/CookedCache.h"
 #include "Engine/Engine/Audio/StbVorbis.h"
 #include "Engine/Platform/PathUtil.h"
 
@@ -253,9 +254,79 @@ bool DecodeAudio(const uint8_t* bytes, size_t len, AudioClip& out)
     return false;
 }
 
+namespace {
+
+// .mpcm の payload: sampleRate(u32) + channels(u16) + 予約(u16) + サンプル数(u64) + i16 列
+bool HasOggExt(const std::wstring& path)
+{
+    if (path.size() < 4) {
+        return false;
+    }
+    const std::wstring ext = path.substr(path.size() - 4);
+    return ext == L".ogg" || ext == L".OGG" || ext == L".Ogg";
+}
+
+} // namespace
+
+bool LoadCookedClip(const std::wstring& srcPath, AudioClip& out)
+{
+    std::vector<uint8_t> payload;
+    if (!CookedCache::ReadValidated(srcPath, L".mpcm", payload)) {
+        return false;
+    }
+    if (payload.size() < 16) {
+        return false;
+    }
+    uint32_t rate = 0;
+    uint16_t channels = 0;
+    uint64_t count = 0;
+    memcpy(&rate, payload.data(), 4);
+    memcpy(&channels, payload.data() + 4, 2);
+    memcpy(&count, payload.data() + 8, 8);
+    // count は残量から逆算した値と厳密一致でなければ破損 (巨大 count の乗算オーバーフロー対策)
+    const uint64_t expected = (payload.size() - 16) / sizeof(int16_t);
+    if (count != expected || (payload.size() - 16) % sizeof(int16_t) != 0 || channels == 0
+        || rate == 0) {
+        MYE_LOG_WARN("[cook] corrupt pcm blob, recooking: %s", WideToUtf8(srcPath).c_str());
+        return false;
+    }
+    out = AudioClip{};
+    out.sampleRate = rate;
+    out.channels = channels;
+    out.samples.resize(static_cast<size_t>(count));
+    memcpy(out.samples.data(), payload.data() + 16, out.samples.size() * sizeof(int16_t));
+    MYE_LOG_INFO("[cook] pcm cache hit: %s", WideToUtf8(srcPath).c_str());
+    return true;
+}
+
+void SaveCookedClip(const std::wstring& srcPath, const AudioClip& clip)
+{
+    if (!CookedCache::Enabled() || clip.Empty()) {
+        return;
+    }
+    std::vector<uint8_t> payload(16 + clip.samples.size() * sizeof(int16_t));
+    const uint16_t reserved = 0;
+    const uint64_t count = clip.samples.size();
+    memcpy(payload.data(), &clip.sampleRate, 4);
+    memcpy(payload.data() + 4, &clip.channels, 2);
+    memcpy(payload.data() + 6, &reserved, 2);
+    memcpy(payload.data() + 8, &count, 8);
+    memcpy(payload.data() + 16, clip.samples.data(), clip.samples.size() * sizeof(int16_t));
+    if (CookedCache::Write(srcPath, L".mpcm", payload.data(), payload.size())) {
+        MYE_LOG_INFO("[cook] pcm cooked: %s (%zu KB)", WideToUtf8(srcPath).c_str(),
+                     payload.size() / 1024);
+    }
+}
+
 bool LoadAudioFile(const std::wstring& path, AudioClip& out)
 {
     out = AudioClip{};
+    // .ogg はデコード結果をクックしてある — ヒットすればファイル読みも Vorbis デコードも省略。
+    // .wav は変換がほぼ memcpy なので対象外 (spec §10)
+    const bool ogg = HasOggExt(path);
+    if (ogg && LoadCookedClip(path, out)) {
+        return true;
+    }
     std::error_code ec;
     const std::filesystem::path fsPath{ path };
     const auto size = std::filesystem::file_size(fsPath, ec);
@@ -277,6 +348,9 @@ bool LoadAudioFile(const std::wstring& path, AudioClip& out)
     if (!DecodeAudio(bytes.data(), bytes.size(), out)) {
         MYE_LOG_WARN("[audio] unsupported audio file: %s", WideToUtf8(path).c_str());
         return false;
+    }
+    if (ogg) {
+        SaveCookedClip(path, out);
     }
     return true;
 }

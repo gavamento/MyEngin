@@ -22,6 +22,13 @@ set REP=cache\golden.rep
 set TICKS=600
 if not "%~1"=="" set TICKS=%~1
 
+rem ---- M51b: アセットクックキャッシュをコールドから始める ----
+rem レガシー起動のキャッシュは exe ディレクトリ配下 (<exeDir>\cache\cooked)。
+rem 削除直後の record はコールド (フルパース + クック書き込み)、以降の verify はウォーム
+rem (クック再生)。600 tick のハッシュ一致が「クック有無で登録内容がビット同一」の機械証明
+if exist bin\x64\Debug\cache\cooked rd /s /q bin\x64\Debug\cache\cooked
+if exist bin\x64\Release\cache\cooked rd /s /q bin\x64\Release\cache\cooked
+
 echo === record golden replay (Debug, %TICKS% ticks) ===
 bin\x64\Debug\Editor.exe --replay-record %REP% --replay-ticks %TICKS% || exit /b 1
 

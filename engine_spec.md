@@ -419,12 +419,12 @@ The editor ships in **Japanese by default** and can be switched to English at ru
 
 | Asset Type | Source Format | Runtime Format |
 |---|---|---|
-| Textures | png, tga | [TBD: direct loading / DDS conversion cache] |
-| Models | [TBD: FBX using the SDK / glTF using a custom parser or library] | Custom binary cache |
+| Textures | png, tga, jpg, dds | Direct loading (stb / DDS); manual DDS cook in the Asset Browser (M39b), batch cook planned for M51j |
+| Models | fbx (ufbx), glTF/glb (cgltf) | Cooked binary cache `cache/cooked/*.mmdl` (M51b, §10.2); cold start parses and cooks |
+| Audio | wav, ogg | wav decodes directly (near-memcpy); ogg decodes to a cooked PCM cache `cache/cooked/*.mpcm` (M51b) |
 | Shaders | hlsl | Runtime compilation during development / precompiled for distribution |
 | Scenes / Prefabs | Text format defined in Section 8.3 | Same as source |
 
-- Import assets asynchronously while the editor is running and generate intermediate-format caches under `cache/`
 - glTF is recommended because it avoids FBX SDK licensing and redistribution issues, while a custom parser can also demonstrate technical ability
 
 ### 10.1 Compose assets (`.actor.json`) — prefab 2.0
@@ -447,6 +447,20 @@ the subset with a single root, no parts and no override list. See
 | Generic field access | `GetComponentField` / `SetComponentField` by FNV-1a name hashes (ABI v11, M50d). Value copies only; the NoHash (C#) lane is blocked both ways for replay safety |
 | Schema codegen | Generated from the runtime registry (no re-parse): `<project>/cache/Generated/SchemaComponents.gen.h` (layout mirror + typed accessors + `static_assert`s) and `assets/scripts/Generated/Schema.gen.cs` (constants + typed accessors). Name hashes are baked, TypeIds never are |
 | Asset editing | Mini-scene edit mode: the asset is expanded into a private `Scene`; only `EditorApp::OnImGui`/`OnRenderViews` swap `ctx.scene`, so the tick path is untouched |
+
+### 10.2 Cooked asset cache (`cache/cooked/`, M51b)
+
+Startup used to re-parse every FBX/glTF and re-decode every ogg on each launch. The cooked cache
+persists the parse results so warm starts skip the parsers entirely.
+
+| Concept | Decision |
+|---|---|
+| Files | `<project>/cache/cooked/<guid 16hex>.mmdl` (models) / `.mpcm` (ogg PCM). Legacy launch and distributed builds use `<exeDir>/cache/cooked/` — the branch is on `projectRoot`, never on `assetsRoot` |
+| Blob contents | The raw bytes handed to the resource libraries (vertices / indices / materials / skins / clips, and texture sources). Float bit patterns are preserved; replaying registers content bit-identical to a fresh parse (`CookedCacheSelfTest` enforces this, `replay_verify` records cold and verifies warm) |
+| Insertion point | `RegisterAssets` (the startup scan via `RegisterAssetLibraries`, shared by Editor/Runtime) and the ogg branch of `LoadAudioFile`. `ModelLoader::Load` (drag & drop placement) always parses fresh. wav files are not cooked — their decode is near-memcpy |
+| Invalidation | Header `{magic, kCookVersion, guid, srcSize, srcMtime, srcContentHash, srcPathKey, deps}`. size+mtime match → valid; mtime mismatch → re-hash the source, and if the content is unchanged the header mtime self-heals; content change → recook. A moved source recooks (sub-asset AssetIDs derive from the normalized path, so a fresh parse would register different keys). Recorded external texture paths (`deps`) are existence-checked; texture *content* stays live because replay re-reads the files |
+| Textures | Embedded images are stored encoded and re-decoded on replay (so `.meta` import settings keep working); external files are re-loaded from the recorded resolved path |
+| Escape hatch | `--no-cook-cache` (mirrors `--no-jobs` / `--no-sim-cache`): parse everything fresh, never read or write the cache |
 
 ---
 
