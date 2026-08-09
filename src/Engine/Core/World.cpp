@@ -179,6 +179,47 @@ const char* World::GetName(EntityID e)
 
 // ---------------------------------------------------------------- structural
 
+namespace {
+
+bool MatchesAll(const Archetype& arch, std::span<const ComponentTypeId> required)
+{
+    for (ComponentTypeId t : required) {
+        if (!arch.HasType(t)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+} // namespace
+
+const std::vector<uint32_t>* World::QueryArchetypes(std::span<const ComponentTypeId> required)
+{
+    if (!sSimCacheEnabled_) {
+        return nullptr; // 素通し: 呼び出し側が線形マッチに落ちる (A/B ゲート)
+    }
+    const uint64_t key = ComputeSignatureHash(required);
+    auto& bucket = queryCache_[key];
+    for (const auto& entry : bucket) {
+        if (entry->required.size() == required.size()
+            && std::equal(entry->required.begin(), entry->required.end(), required.begin())) {
+            return &entry->archetypeIndices;
+        }
+    }
+    // 初出クエリ: 現在の全アーキタイプを線形マッチして充填。
+    // マッチ判定は Count に依存させない (空アーキタイプも集合に含め、列挙時に飛ばす) —
+    // 行数の増減はキャッシュへ通知されないため、集合は型構成だけで決める
+    auto entry = std::make_unique<QueryCacheEntry>();
+    entry->required.assign(required.begin(), required.end());
+    for (uint32_t i = 0; i < static_cast<uint32_t>(archetypes_.size()); ++i) {
+        if (MatchesAll(*archetypes_[i], entry->required)) {
+            entry->archetypeIndices.push_back(i);
+        }
+    }
+    bucket.push_back(std::move(entry));
+    return &bucket.back()->archetypeIndices;
+}
+
 Archetype* World::GetOrCreateArchetype(std::vector<ComponentTypeId> sortedTypes)
 {
     const uint64_t hash = ComputeSignatureHash(sortedTypes);
@@ -194,7 +235,19 @@ Archetype* World::GetOrCreateArchetype(std::vector<ComponentTypeId> sortedTypes)
     }
     MYE_CHECKF(!IsIterating(), "archetype creation during iteration (invalidates iteration)");
     archetypes_.push_back(std::make_unique<Archetype>(std::move(sortedTypes), hash));
-    return archetypes_.back().get();
+    // M51a: クエリキャッシュへ追記マッチ。アーキタイプは Clear() まで append-only なので
+    // 生成点での追記だけで全エントリが最新に保たれる (新 index は末尾 = 生成順も不変)。
+    // ゲート OFF 中も維持する — フラグを実行中に切り替えても集合が欠けないようにするため
+    Archetype* arch = archetypes_.back().get();
+    const uint32_t newIndex = static_cast<uint32_t>(archetypes_.size() - 1);
+    for (auto& [key, bucket] : queryCache_) {
+        for (auto& entry : bucket) {
+            if (MatchesAll(*arch, entry->required)) {
+                entry->archetypeIndices.push_back(newIndex);
+            }
+        }
+    }
+    return arch;
 }
 
 void World::MoveEntity(EntityID e, Archetype* dst)
@@ -474,6 +527,7 @@ void World::Clear()
     commands_.clear();
     cmdPayloads_.clear();
     archetypes_.clear();
+    queryCache_.clear(); // archetype index が全て無効化されるため必ず同時破棄 (M51a)
     freeIndices_.clear();
     firstRoot_ = kNullEntity; // ルートリストも破棄 (全エンティティ削除)
     // 世代を進めて全スロットを解放 (降順 push → 昇順割り当てで新規ワールドと同じ順になる)

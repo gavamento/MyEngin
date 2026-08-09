@@ -3,6 +3,7 @@
 #include <memory>
 #include <span>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 #include "Engine/Core/Archetype.h"
@@ -56,6 +57,14 @@ public:
     bool HierarchyDirty() const { return hierarchyDirty_; }
     void ClearHierarchyDirty() { hierarchyDirty_ = false; }
 
+    // ---- sim 索引ゲート (M51a) ----
+    // false で World のクエリキャッシュと Scene の fileId 索引を素通しし、従来の
+    // 線形経路に落とす (決定論 A/B / 障害切り分け用。useJobs と同じ設計)。
+    // キャッシュは「結果不変・計算省略」型 — ON record → OFF verify のビット一致で
+    // 透過性を実証する。既定 ON、EngineLoop が EngineConfig::useSimCache で設定する
+    static void SetSimCacheEnabled(bool enabled) { sSimCacheEnabled_ = enabled; }
+    static bool SimCacheEnabled() { return sSimCacheEnabled_; }
+
     // ---- イテレーション ----
     // required の全型を含むアーキタイプを列挙する。fn(Archetype&)。
     // コールバック中の構造変更は自動的にコマンドバッファ行きになる
@@ -63,19 +72,29 @@ public:
     void ForEachArchetype(std::span<const ComponentTypeId> required, Fn&& fn)
     {
         ++iterationDepth_;
-        for (auto& arch : archetypes_) {
-            if (arch->Count() == 0) {
-                continue;
-            }
-            bool match = true;
-            for (ComponentTypeId t : required) {
-                if (!arch->HasType(t)) {
-                    match = false;
-                    break;
+        if (const std::vector<uint32_t>* cached = QueryArchetypes(required)) {
+            // キャッシュ経路: マッチ集合は archetype 生成順 = 線形経路と同一の列挙順
+            for (uint32_t idx : *cached) {
+                Archetype& arch = *archetypes_[idx];
+                if (arch.Count() != 0) {
+                    fn(arch);
                 }
             }
-            if (match) {
-                fn(*arch);
+        } else {
+            for (auto& arch : archetypes_) {
+                if (arch->Count() == 0) {
+                    continue;
+                }
+                bool match = true;
+                for (ComponentTypeId t : required) {
+                    if (!arch->HasType(t)) {
+                        match = false;
+                        break;
+                    }
+                }
+                if (match) {
+                    fn(*arch);
+                }
             }
         }
         --iterationDepth_;
@@ -126,6 +145,18 @@ private:
         uint32_t order = 0;           // SetSiblingIndex 用の位置
     };
 
+    // クエリキャッシュ (M51a): required 型リスト → マッチする archetype index 列 (生成順)。
+    // アーキタイプは Clear() まで append-only なので、無効化は「生成点で全エントリへ
+    // 追記マッチ」だけで済む。キャッシュ無効時 (SimCacheEnabled()==false) は nullptr を
+    // 返し、呼び出し側が従来の線形マッチに落ちる。
+    // エントリは unique_ptr 保持 — ネストした ForEachArchetype が別クエリを充填しても
+    // 外側が掴んでいる index 列が再配置されないようにするため
+    struct QueryCacheEntry {
+        std::vector<ComponentTypeId> required;  // 完全一致キー (ハッシュ衝突ガード)
+        std::vector<uint32_t> archetypeIndices; // マッチ集合 (archetype 生成順)
+    };
+    const std::vector<uint32_t>* QueryArchetypes(std::span<const ComponentTypeId> required);
+
     Archetype* GetOrCreateArchetype(std::vector<ComponentTypeId> sortedTypes);
     void MoveEntity(EntityID e, Archetype* dst); // 共通カラムをコピーして移動
     bool IsIterating() const { return iterationDepth_ > 0; }
@@ -143,6 +174,8 @@ private:
     std::vector<EntityRecord> records_;
     std::vector<uint32_t> freeIndices_; // LIFO (決定論)
     std::vector<std::unique_ptr<Archetype>> archetypes_;
+    // クエリキャッシュ: key = required リストのハッシュ、値は同ハッシュのエントリ列
+    std::unordered_map<uint64_t, std::vector<std::unique_ptr<QueryCacheEntry>>> queryCache_;
     std::vector<Command> commands_;
     // 遅延 AddComponent の初期値。コマンド追加でベクタが伸びても
     // 呼び出し側へ返した scratch ポインタが無効化されないよう、要素毎にヒープ確保
@@ -153,6 +186,8 @@ private:
     bool hierarchyDirty_ = true;
     uint32_t aliveCount_ = 0;
     Pcg32 rng_;
+
+    inline static bool sSimCacheEnabled_ = true;
 };
 
 } // namespace mye

@@ -1,6 +1,9 @@
 #include "Engine/Core/EcsSelfTest.h"
 
+#include <algorithm>
 #include <cstring>
+#include <span>
+#include <vector>
 
 #include "Engine/Core/Components.h"
 #include "Engine/Core/Log.h"
@@ -174,6 +177,93 @@ void TestDeterministicRng()
     TEST_CHECK(c.NextU32() == next);
 }
 
+void TestQueryCacheTransparency()
+{
+    MYE_LOG_INFO("[selftest] query cache transparency (M51a)");
+    const bool savedFlag = World::SimCacheEnabled();
+    World w;
+
+    // 型構成の異なるエンティティ群 (base のみ / base+MR)
+    w.CreateEntity("A");
+    const EntityID b = w.CreateEntity("B");
+    w.AddComponent<MeshRendererComponent>(b);
+    const EntityID c = w.CreateEntity("C");
+    w.AddComponent<MeshRendererComponent>(c);
+
+    const ComponentTypeId mrType = MeshRendererComponent::sTypeId;
+    auto enumerate = [&](std::span<const ComponentTypeId> req) {
+        std::vector<EntityID> out;
+        w.ForEachArchetype(req, [&](Archetype& arch) {
+            for (uint32_t row = 0; row < arch.Count(); ++row) {
+                out.push_back(arch.EntityAt(row));
+            }
+        });
+        return out;
+    };
+
+    // キャッシュ経路 (初回充填 + 2 回目ヒット) と線形経路が同一順・同一集合であること
+    World::SetSimCacheEnabled(true);
+    const auto cachedFill = enumerate({ &mrType, 1 });
+    const auto cachedHit = enumerate({ &mrType, 1 });
+    World::SetSimCacheEnabled(false);
+    const auto linear = enumerate({ &mrType, 1 });
+    TEST_CHECK(cachedFill.size() == 2);
+    TEST_CHECK(cachedFill == linear);
+    TEST_CHECK(cachedHit == linear);
+
+    // キャッシュ充填「後」に生成された新アーキタイプ (base+MR+FileId) を追記マッチで拾うこと
+    World::SetSimCacheEnabled(true);
+    (void)enumerate({ &mrType, 1 }); // 充填 (Clear はしていないので既存エントリが残っている)
+    const EntityID d = w.CreateEntity("D");
+    w.AddComponent<MeshRendererComponent>(d);
+    w.AddComponent<FileIdComponent>(d); // 新しい型組み合わせ → GetOrCreateArchetype の追記点
+    const auto afterCached = enumerate({ &mrType, 1 });
+    World::SetSimCacheEnabled(false);
+    const auto afterLinear = enumerate({ &mrType, 1 });
+    TEST_CHECK(afterCached.size() == 3);
+    TEST_CHECK(afterCached == afterLinear);
+
+    // Clear でキャッシュも破棄されること (index が張り替わっても誤マッチしない)
+    World::SetSimCacheEnabled(true);
+    w.Clear();
+    TEST_CHECK(enumerate({ &mrType, 1 }).empty());
+    const EntityID e2 = w.CreateEntity("E");
+    w.AddComponent<MeshRendererComponent>(e2);
+    TEST_CHECK(enumerate({ &mrType, 1 }).size() == 1);
+
+    World::SetSimCacheEnabled(savedFlag);
+}
+
+void TestFindTypeIndexMatchesLinear()
+{
+    MYE_LOG_INFO("[selftest] FindTypeIndex binary search matches linear (M51a)");
+    World w;
+    const EntityID e = w.CreateEntity("T");
+    w.AddComponent<MeshRendererComponent>(e);
+    w.AddComponent<FileIdComponent>(e);
+
+    bool sortedOk = true;
+    bool foundOk = true;
+    bool absentOk = true;
+    for (const auto& archPtr : w.Archetypes()) {
+        const auto types = archPtr->Types();
+        sortedOk &= std::is_sorted(types.begin(), types.end());
+        for (size_t i = 0; i < types.size(); ++i) {
+            foundOk &= (archPtr->FindTypeIndex(types[i]) == static_cast<int>(i));
+        }
+        // 含まない型は -1 (線形参照): 登録済み型のうち types に無いものを総当たり
+        for (ComponentTypeId t = 0; t < 96; ++t) {
+            const bool has = std::find(types.begin(), types.end(), t) != types.end();
+            if (!has) {
+                absentOk &= (archPtr->FindTypeIndex(t) < 0);
+            }
+        }
+    }
+    TEST_CHECK(sortedOk);
+    TEST_CHECK(foundOk);
+    TEST_CHECK(absentOk);
+}
+
 } // namespace
 
 bool RunEcsSelfTest()
@@ -185,6 +275,8 @@ bool RunEcsSelfTest()
     TestDeferredCommandsDuringIteration();
     TestHierarchyAndSubtreeDestroy();
     TestDeterministicRng();
+    TestQueryCacheTransparency();
+    TestFindTypeIndexMatchesLinear();
     if (g_failCount == 0) {
         MYE_LOG_INFO("==== ECS self test: ALL PASS ====");
         return true;

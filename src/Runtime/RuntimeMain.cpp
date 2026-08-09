@@ -151,6 +151,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 config.postFxFxaa = false;
             } else if (arg == L"--no-jobs") {
                 config.useJobs = false; // M25: 並列を直列化 (決定論ゲート / 計測比較)
+            } else if (arg == L"--no-sim-cache") {
+                config.useSimCache = false; // M51a: sim 索引を素通し (決定論ゲート / 切り分け)
             } else if (arg == L"--rt-debug" && i + 1 < argc) {
                 config.rtDebugMode = _wtoi(argv[++i]); // M46b (Deferred のみ)
             } else if (arg == L"--rt-no-temporal") {

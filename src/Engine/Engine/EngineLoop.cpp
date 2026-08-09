@@ -426,6 +426,9 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     jobs::System().SetEnabled(config.useJobs);
     MYE_LOG_INFO("[jobs] %s (%d workers)", config.useJobs ? "enabled" : "disabled (serial)",
                  jobs::System().WorkerCount());
+    // M51a: sim 索引 (World クエリキャッシュ / Scene fileId 索引)。--no-sim-cache で素通し
+    World::SetSimCacheEnabled(config.useSimCache);
+    MYE_LOG_INFO("[simcache] %s", config.useSimCache ? "enabled" : "disabled (linear)");
     ctx.fixedDt = static_cast<float>(kFixedDt);
 
     app.OnStart(ctx);

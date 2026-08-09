@@ -56,6 +56,11 @@ struct EngineConfig {
     // ---- ジョブシステム (M25) ----
     bool useJobs = true; // false で全並列を直列化 (決定論ゲート / 計測比較用)
 
+    // ---- sim 索引 (M51a) ----
+    // false で World クエリキャッシュ / Scene fileId 索引を素通しして線形経路に落とす
+    // (決定論ゲート / 障害切り分け用)。結果はキャッシュ有無でビット同一
+    bool useSimCache = true;
+
     // ---- レイトレのデバッグ表示 (M46b、--rt-debug N) ----
     // 0=off 1=BVH ヒートマップ 2=ヒット法線 3=インスタンス ID
     // 4=生 GI (1spp) 5=蓄積 GI 6=履歴長 (M46c/M46d) 7=SVGF 後 8=推定分散 (M46e)。

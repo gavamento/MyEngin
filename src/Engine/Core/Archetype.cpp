@@ -1,5 +1,6 @@
 #include "Engine/Core/Archetype.h"
 
+#include <algorithm>
 #include <cstring>
 
 #include "Engine/Core/Check.h"
@@ -25,14 +26,11 @@ Archetype::Archetype(std::vector<ComponentTypeId> sortedTypes, uint64_t signatur
 
 int Archetype::FindTypeIndex(ComponentTypeId t) const
 {
-    // types_ は昇順 — 型数は少ないので線形で十分 (分岐予測が効く)
-    for (size_t i = 0; i < types_.size(); ++i) {
-        if (types_[i] == t) {
-            return static_cast<int>(i);
-        }
-        if (types_[i] > t) {
-            break;
-        }
+    // types_ は昇順 (コンストラクタ不変)。スキーマコンポーネント (最大 64 型) が積まれると
+    // 型数が伸びるため二分探索 (M51a)。線形との等価性は EcsSelfTest が固定する
+    const auto it = std::lower_bound(types_.begin(), types_.end(), t);
+    if (it != types_.end() && *it == t) {
+        return static_cast<int>(it - types_.begin());
     }
     return -1;
 }

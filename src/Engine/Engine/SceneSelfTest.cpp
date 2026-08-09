@@ -1936,6 +1936,35 @@ bool RunSceneSerializerSelfTest()
         std::filesystem::remove(path, ec);
     }
 
+    // ---- fileId 索引 (M51a): ヒット時検証つきキャッシュの補修と線形一致 ----
+    {
+        const bool savedFlag = World::SimCacheEnabled();
+        World::SetSimCacheEnabled(true);
+        Scene s;
+        GameObject g1 = s.CreateGameObjectTracked("IdxA");
+        GameObject g2 = s.CreateGameObjectTracked("IdxB");
+        const uint64_t id1 = g1.GetComponent<FileIdComponent>()->value;
+        const uint64_t id2 = g2.GetComponent<FileIdComponent>()->value;
+        check(s.FindByFileId(id1).Id() == g1.Id(), "fileId index: hit returns the tracked entity");
+
+        // 破棄 → stale エントリが検証で弾かれ、無効が返る (補修)
+        g1.Destroy();
+        s.GetWorld().ApplyStructuralChanges();
+        check(!s.FindByFileId(id1), "fileId index: destroyed entity is repaired to not-found");
+
+        // 同じ fileId を別エンティティへ再付与 (シーンリロード相当) → 線形走査で発見し再キャッシュ
+        GameObject g3 = s.CreateGameObject("IdxA2");
+        g3.AddComponent<FileIdComponent>()->value = id1;
+        check(s.FindByFileId(id1).Id() == g3.Id(), "fileId index: reassigned fileId is found again");
+        check(s.FindByFileId(id1).Id() == g3.Id(), "fileId index: cached hit stays correct");
+
+        // 索引 OFF (線形経路) と同じ答えであること
+        World::SetSimCacheEnabled(false);
+        check(s.FindByFileId(id1).Id() == g3.Id() && s.FindByFileId(id2).Id() == g2.Id(),
+              "fileId index: linear path agrees with cached path");
+        World::SetSimCacheEnabled(savedFlag);
+    }
+
     if (failCount == 0) {
         MYE_LOG_INFO("==== Scene serializer self test: ALL PASS ====");
         return true;
