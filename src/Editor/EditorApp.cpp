@@ -347,7 +347,7 @@ void EditorApp::OnImGui(EngineContext& ctx)
     inspector_.OnImGui(ctx, selection_, undo_);
     console_.OnImGui(settings_.externalEditorCmd);
     sceneView_.OnImGui(ctx, selection_, undo_, settings_);
-    gameView_.OnImGui(ctx);
+    gameView_.OnImGui(ctx, selection_);
     particleSettings_.OnImGui(ctx);
     profiler_.OnImGui(ctx);
     assetBrowser_.OnImGui(ctx, selection_, undo_, settings_.externalEditorCmd, preview_);

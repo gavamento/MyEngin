@@ -27,6 +27,10 @@ GameObject CreateSpotLight(EngineContext& ctx, const char* name);
 GameObject CreateCamera(EngineContext& ctx, const char* name);
 GameObject CreateAudioSource(EngineContext& ctx, const char* name);   // M45e
 GameObject CreateAudioListener(EngineContext& ctx, const char* name); // M45e
+GameObject CreateUIPanel(EngineContext& ctx, const char* name);       // M51f
+GameObject CreateUIImage(EngineContext& ctx, const char* name);       // M51f
+GameObject CreateUIButton(EngineContext& ctx, const char* name);      // M51f
+GameObject CreateUIText(EngineContext& ctx, const char* name);        // M51f
 
 // 生成操作を 1 つの Undo エントリとして記録し、生成物を選択する。
 GameObject RecordCreate(EngineContext& ctx, Selection& selection, UndoStack& undo, const char* label,

@@ -182,6 +182,9 @@ constexpr const char* kTonemapLabels[] = { "Passthrough", "ACES", "Reinhard" };
 constexpr const char* kOffOnLabels[] = { "Off", "On" };
 // M49: PartBounds は 0=Box (Collider の 0=Sphere と並びが違うので専用配列)
 constexpr const char* kPartBoundsShapeLabels[] = { "Box", "Sphere" };
+// M51f: UI オーサリング
+constexpr const char* kUIFillModeLabels[] = { "Off", "Horizontal", "Vertical" };
+constexpr const char* kUISpaceLabels[] = { "Screen", "Parent Rect" };
 // M47c: 日本語表示。ACES / Reinhard / Exp2 のような固有名詞・数式名は英語のまま
 constexpr const char* kColliderShapeJa[] = { "スフィア", "ボックス", "カプセル", "メッシュ" };
 constexpr const char* kLightTypeJa[] = { "平行光", "ポイント", "スポット" };
@@ -197,13 +200,20 @@ constexpr const char* kFogModeJa[] = { "線形", "Exp", "Exp2" };
 constexpr const char* kTonemapJa[] = { "そのまま", "ACES", "Reinhard" };
 constexpr const char* kOffOnJa[] = { "オフ", "オン" };
 constexpr const char* kPartBoundsShapeJa[] = { "ボックス", "スフィア" };
+constexpr const char* kUIFillModeJa[] = { "オフ", "水平 (左→右)", "垂直 (下→上)" };
+constexpr const char* kUISpaceJa[] = { "スクリーン", "親の矩形" };
 constexpr EnumFieldLabels kEnumFields[] = {
     { "Collider", "shape", kColliderShapeLabels, 3, kColliderShapeJa },
     { "Light", "type", kLightTypeLabels, 3, kLightTypeJa },
     { "ParticleEmitter", "shape", kEmitterShapeLabels, 4, kEmitterShapeJa },
     { "ParticleEmitter", "blendMode", kBlendModeLabels, 3, kBlendModeJa },
     { "UIElement", "kind", kUIKindLabels, 3, kUIKindJa },
-    { "UIElement", "anchor", kUIAnchorLabels, 9, kUIAnchorJa },
+    // M51f: anchor はコンボではなく 9-grid ピッカー (DrawField の特例) — 行はここに置かない
+    { "UIElement", "align", kUIAnchorLabels, 9, kUIAnchorJa },
+    { "UIElement", "fillMode", kUIFillModeLabels, 3, kUIFillModeJa },
+    { "UIElement", "space", kUISpaceLabels, 2, kUISpaceJa },
+    { "UIElement", "clipChildren", kOffOnLabels, 2, kOffOnJa },
+    { "UIElement", "wrap", kOffOnLabels, 2, kOffOnJa },
     { "ConstantForce", "relative", kForceSpaceLabels, 2, kForceSpaceJa },
     { "SpriteRenderer", "billboardMode", kBillboardLabels, 3, kBillboardJa },
     { "TextMesh", "billboardMode", kBillboardLabels, 3, kBillboardJa },
@@ -550,14 +560,20 @@ void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
                     const bool ownUndo = f.type == FieldType::AssetRef
                         || f.type == FieldType::EntityRef
                         || (std::strcmp(desc.name, "Collider") == 0
-                            && std::strcmp(f.name, "mask") == 0);
+                            && std::strcmp(f.name, "mask") == 0)
+                        // M51f: anchor 9-grid はクリック即確定 (ボタン群) なので自前 Undo
+                        || (std::strcmp(desc.name, "UIElement") == 0
+                            && std::strcmp(f.name, "anchor") == 0);
                     if (!ownUndo) {
                         HandleEditUndoMulti(ctx, selection, undo, tfids, "Modify");
                     }
                     // ---- プレハブオーバーライド: 右クリック Revert/Apply + マーカー ----
                     if (isPrefabMember) {
+                        // ID は f.name を明示する (M51f)。既定 (最終アイテムの ID) だと
+                        // ラベルを TextUnformatted で締める field (mask / anchor 9-grid) が
+                        // ID=0 で IM_ASSERT に落ちる
                         if (f.type != FieldType::AssetRef && f.type != FieldType::EntityRef
-                            && ImGui::BeginPopupContextItem()) {
+                            && ImGui::BeginPopupContextItem(f.name)) {
                             // 追加 comp ("+C") はベースにフィールドが無く RevertField が
                             // no-op — 押せるのに何も起きない穴だったので disabled (M50c)。
                             // 構造ごと戻すのはヘッダ右クリックの Revert Added Component
@@ -746,6 +762,55 @@ bool InspectorWindow::DrawField(EngineContext& ctx, const char* componentName, v
             if (changed) {
                 *static_cast<int*>(p) = v;
             }
+        } else if (componentName && std::strcmp(componentName, "UIElement") == 0
+                   && std::strcmp(field.name, "anchor") == 0) {
+            // M51f: anchor は 3x3 の 9-grid ピッカー。クリック即確定なので Undo は自前で
+            // 1 エントリ記録する (Collider.mask と同じ ownUndo 方式 — 呼び出し側の
+            // HandleEditUndoMulti はグリッド最後のボタンしか見ないため機能しない)
+            const int32_t cur = *static_cast<int32_t*>(p);
+            const char* const* names =
+                (CurrentLanguage() != Lang::En) ? kUIAnchorJa : kUIAnchorLabels;
+            ImGui::BeginGroup();
+            for (int row = 0; row < 3; ++row) {
+                for (int col = 0; col < 3; ++col) {
+                    const int idx = row * 3 + col;
+                    if (col > 0) {
+                        ImGui::SameLine(0.0f, 3.0f);
+                    }
+                    ImGui::PushID(idx);
+                    const bool sel = (cur == idx);
+                    if (sel) {
+                        const ImVec4 c = ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive);
+                        ImGui::PushStyleColor(ImGuiCol_Button, c);
+                        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, c);
+                    }
+                    if (ImGui::Button("##cell", ImVec2(20, 20)) && !sel) {
+                        undo.BeginRecord("Modify", selection);
+                        for (uint64_t tf : fids) {
+                            undo.CaptureBefore(*ctx.scene, tf);
+                        }
+                        for (void* c2 : comps) {
+                            *reinterpret_cast<int32_t*>(static_cast<uint8_t*>(c2)
+                                                        + field.offset) = idx;
+                        }
+                        for (uint64_t tf : fids) {
+                            undo.CaptureAfter(*ctx.scene, tf);
+                        }
+                        undo.EndRecord(selection);
+                        changed = true;
+                    }
+                    if (sel) {
+                        ImGui::PopStyleColor(2);
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("%s", names[idx]);
+                    }
+                    ImGui::PopID();
+                }
+            }
+            ImGui::EndGroup();
+            ImGui::SameLine();
+            ImGui::TextUnformatted(labelText);
         } else if (const EnumFieldLabels* ef = FindEnumLabels(componentName, field.name)) {
             int v = *static_cast<int*>(p);
             if (v < 0 || v >= ef->count) {

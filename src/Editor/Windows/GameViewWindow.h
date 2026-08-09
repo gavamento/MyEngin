@@ -4,12 +4,14 @@
 
 namespace mye {
 
+struct Selection;
+
 // ゲームカメラ (シーン内の CameraComponent) 視点の表示 (engine_spec.md 9 章)
 class GameViewWindow {
 public:
     bool open = true; // 閉じる / 再表示 (タブ [x] と Window メニューに連動)
     void OnRenderViews(EngineContext& ctx);
-    void OnImGui(EngineContext& ctx);
+    void OnImGui(EngineContext& ctx, const Selection& selection); // M51f: 選択 UI の矩形表示
 
 private:
     RenderTexture rt_;

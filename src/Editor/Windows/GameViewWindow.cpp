@@ -3,9 +3,12 @@
 #include <algorithm>
 #include <cstdio>
 
+#include "Editor/Selection.h"
+#include "Engine/Core/Components.h"
 #include "Engine/Core/Localization.h"
 #include "Engine/Engine/RenderSystem.h"
 #include "Engine/Engine/Scene.h"
+#include "Engine/Engine/UI/UILayout.h"
 #include "Engine/Engine/UI/UIRenderer.h"
 #include "Engine/Renderer/RenderPath.h"
 
@@ -40,7 +43,7 @@ void GameViewWindow::OnRenderViews(EngineContext& ctx)
     }
 }
 
-void GameViewWindow::OnImGui(EngineContext& ctx)
+void GameViewWindow::OnImGui(EngineContext& ctx, const Selection& selection)
 {
     if (!open) {
         return;
@@ -101,6 +104,31 @@ void GameViewWindow::OnImGui(EngineContext& ctx)
         if (!hasCamera_) {
             dl->AddText(ImVec2(imgPos.x + imgSize.x * 0.5f - 60.0f, imgPos.y + imgSize.y * 0.5f),
                         IM_COL32(255, 200, 80, 255), "No CameraComponent in scene");
+        }
+
+        // ---- 選択 UI 要素の解決済み矩形アウトライン (M51f) ----
+        // UIRenderer と同じ uilayout::ResolveRect を RT 実寸で解く = 描画とズレない。
+        // RT px → 表示 px はスケール変換 (RT はリサイズが 1 フレーム遅れるので、窓リサイズ中
+        // だけ僅かに伸縮するが表示専用なので許容)
+        {
+            World& world = ctx.scene->GetWorld();
+            const float sx = imgSize.x / static_cast<float>(rt_.Width());
+            const float sy = imgSize.y / static_cast<float>(rt_.Height());
+            for (uint64_t fid : selection.ids) {
+                GameObject go = ctx.scene->FindByFileId(fid);
+                if (!go || world.GetComponent<UIElementComponent>(go.Id()) == nullptr) {
+                    continue;
+                }
+                const uilayout::UIRect r =
+                    uilayout::ResolveRect(world, go.Id(), rt_.Width(), rt_.Height());
+                if (r.w <= 0.0f || r.h <= 0.0f) {
+                    continue;
+                }
+                const ImVec2 p0(imgPos.x + r.x * sx, imgPos.y + r.y * sy);
+                const ImVec2 p1(imgPos.x + (r.x + r.w) * sx, imgPos.y + (r.y + r.h) * sy);
+                dl->AddRect(p0, p1, IM_COL32(255, 160, 40, 255), 0.0f,
+                            (fid == selection.primary) ? 2.0f : 1.0f);
+            }
         }
     }
     ImGui::End();

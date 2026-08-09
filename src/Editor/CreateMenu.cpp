@@ -1,5 +1,6 @@
 #include "Editor/CreateMenu.h"
 
+#include <cstdio>
 #include <string>
 
 #include "Editor/Selection.h"
@@ -104,6 +105,51 @@ GameObject CreateAudioListener(EngineContext& ctx, const char* name)
     return obj;
 }
 
+// ---- UI (M51f) ----
+// text はシーンに保存されるデータなのでエディタ言語に依存しない英語固定 (メニュー表示とは別物)
+
+GameObject CreateUIPanel(EngineContext& ctx, const char* name)
+{
+    GameObject obj = ctx.scene->CreateGameObjectTracked(name);
+    auto* el = obj.AddComponent<UIElementComponent>();
+    el->kind = 0;
+    el->w = 240.0f;
+    el->h = 160.0f;
+    el->color = { 0.10f, 0.10f, 0.12f, 0.85f }; // 半透明ダーク = メニュー背景の定番
+    return obj;
+}
+
+GameObject CreateUIImage(EngineContext& ctx, const char* name)
+{
+    GameObject obj = ctx.scene->CreateGameObjectTracked(name);
+    auto* el = obj.AddComponent<UIElementComponent>();
+    el->kind = 0; // 画像 = kind0 + texture (未割当の間は白い矩形。Inspector か D&D で割り当てる)
+    el->w = 100.0f;
+    el->h = 100.0f;
+    return obj;
+}
+
+GameObject CreateUIButton(EngineContext& ctx, const char* name)
+{
+    GameObject obj = ctx.scene->CreateGameObjectTracked(name);
+    auto* el = obj.AddComponent<UIElementComponent>();
+    el->kind = 2;
+    // ラベルは UIRenderer が白固定で描く — 既定色 (白) のままだと白背景に白文字で潰れる
+    el->color = { 0.22f, 0.27f, 0.38f, 1.0f };
+    el->focusable = 1; // 生成したボタンは既定でパッドナビ候補
+    std::snprintf(el->text, sizeof(el->text), "Button");
+    return obj;
+}
+
+GameObject CreateUIText(EngineContext& ctx, const char* name)
+{
+    GameObject obj = ctx.scene->CreateGameObjectTracked(name);
+    auto* el = obj.AddComponent<UIElementComponent>();
+    el->kind = 1;
+    std::snprintf(el->text, sizeof(el->text), "Text");
+    return obj;
+}
+
 GameObject RecordCreate(EngineContext& ctx, Selection& selection, UndoStack& undo, const char* label,
                         const std::function<GameObject()>& make)
 {
@@ -146,6 +192,39 @@ void CreateItem(EngineContext& ctx, Selection& selection, UndoStack& undo, Entit
     }
 }
 
+// UI 要素の生成項目 (M51f)。汎用 CreateItem と違い spawnPos は使わない (UI の位置は
+// LocalTransform ではなく anchor/x/y)。親が UIElement を持つなら space=1 (親矩形基準) で作る。
+// 親指定が無いときは選択中 (primary) が UIElement を持てばその子にする — Unity で選択中の
+// Canvas の下に UI が生成されるのと同じ感覚。
+void CreateUIItem(EngineContext& ctx, Selection& selection, UndoStack& undo, EntityID parent,
+                  const char* menuLabel, const char* objName, Factory factory)
+{
+    if (!ImGui::MenuItem(menuLabel)) {
+        return;
+    }
+    const std::string undoLabel = std::string("Create ") + objName;
+    RecordCreate(ctx, selection, undo, undoLabel.c_str(), [&] {
+        World& world = ctx.scene->GetWorld();
+        EntityID effParent = parent;
+        if (effParent.IsNull()) {
+            GameObject sel = ctx.scene->FindByFileId(selection.primary);
+            if (sel && world.GetComponent<UIElementComponent>(sel.Id()) != nullptr) {
+                effParent = sel.Id();
+            }
+        }
+        const std::string unique =
+            MakeUniqueSiblingName(world, effParent, objName, /*exclude=*/kNullEntity);
+        GameObject obj = factory(ctx, unique.c_str());
+        if (!effParent.IsNull()) {
+            world.SetParent(obj.Id(), effParent);
+            if (world.GetComponent<UIElementComponent>(effParent) != nullptr) {
+                obj.GetComponent<UIElementComponent>()->space = 1; // 親矩形基準 (M51e)
+            }
+        }
+        return obj;
+    });
+}
+
 } // namespace
 
 void DrawCreateMenuItems(EngineContext& ctx, Selection& selection, UndoStack& undo, EntityID parent,
@@ -168,6 +247,13 @@ void DrawCreateMenuItems(EngineContext& ctx, Selection& selection, UndoStack& un
                    &CreatePointLight);
         CreateItem(ctx, selection, undo, parent, spawnPos, Tr(StrId::Create_SpotLight), "Spot Light",
                    &CreateSpotLight);
+        ImGui::EndMenu();
+    }
+    if (ImGui::BeginMenu(Tr(StrId::Create_UI))) { // M51f
+        CreateUIItem(ctx, selection, undo, parent, Tr(StrId::Create_UIPanel), "Panel", &CreateUIPanel);
+        CreateUIItem(ctx, selection, undo, parent, Tr(StrId::Create_UIImage), "Image", &CreateUIImage);
+        CreateUIItem(ctx, selection, undo, parent, Tr(StrId::Create_UIButton), "Button", &CreateUIButton);
+        CreateUIItem(ctx, selection, undo, parent, Tr(StrId::Create_UIText), "Text", &CreateUIText);
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu(Tr(StrId::Create_Audio))) {

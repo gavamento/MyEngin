@@ -520,6 +520,12 @@ MYE_STR(Create_AudioSource,   "Audio Source",      "オーディオソース")
 MYE_STR(Create_AudioListener, "Audio Listener",    "オーディオリスナー")
 MYE_STR(Create_Camera,        "Camera",            "カメラ")
 MYE_STR(Create_Part,          "Part (with Bounds)", "部位 (範囲付き)")
+// M51f: UI オーサリング (生成メニュー)
+MYE_STR(Create_UI,            "UI",                "UI")
+MYE_STR(Create_UIPanel,       "Panel",             "パネル")
+MYE_STR(Create_UIImage,       "Image",             "画像")
+MYE_STR(Create_UIButton,      "Button",            "ボタン")
+MYE_STR(Create_UIText,        "Text",              "テキスト")
 
 // ---- 統計ウィンドウ / 未保存確認 (M47b) ----
 MYE_STR(Stats_Fps,            "FPS: %.1f (%.3f ms)",        "FPS: %.1f (%.3f ms)")
