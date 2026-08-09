@@ -15,6 +15,7 @@
 #include "Engine/Engine/Scene.h"
 #include "Engine/Engine/UI/UILayout.h" // M51e: 矩形解決を描画と共有 (基準解像度でのナビ矩形)
 #include "Engine/Engine/UI/UINav.h"    // v7 UIFocusNav (M37)
+#include "Engine/Platform/InputActions.h" // v12 GetActionState/GetAxisValue (M51h)
 #include "Engine/Platform/PathUtil.h"
 
 namespace mye {
@@ -713,6 +714,144 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
             return 1;
         }
         return 0;
+    };
+
+    // ---- v12 (M51h): 入力アクション / UI 拡張 / ゲームフロー / パッド振動 ----
+
+    out.GetMouseWheel = [](void* engine) -> int32_t {
+        return Ctx(engine)->input.wheelDelta; // InputSnapshot 由来 = verify では記録値
+    };
+
+    // UI 書込 (write-only、決定台帳 3)。UIElement は NoHash なので毎 tick 書いても sim 安全
+    out.SetUIRect = [](void* engine, MyeEntityId id, float x, float y, float w, float h) -> int {
+        auto* el = Sc(engine)->GetWorld().GetComponent<UIElementComponent>(ToEngine(id));
+        if (!el) { return 0; }
+        el->x = x;
+        el->y = y;
+        if (w >= 0.0f) { el->w = w; } // 負値 = 現値維持 (write-only で読めないための keep)
+        if (h >= 0.0f) { el->h = h; }
+        return 1;
+    };
+    out.SetUILayout = [](void* engine, MyeEntityId id, int32_t anchor, int32_t space,
+                         int32_t clipChildren, int32_t align, int32_t wrap) -> int {
+        auto* el = Sc(engine)->GetWorld().GetComponent<UIElementComponent>(ToEngine(id));
+        if (!el) { return 0; }
+        if (anchor >= 0) { el->anchor = anchor > 8 ? 8 : anchor; }
+        if (space >= 0) { el->space = space ? 1 : 0; }
+        if (clipChildren >= 0) { el->clipChildren = clipChildren ? 1 : 0; }
+        if (align >= 0) { el->align = align > 8 ? 8 : align; }
+        if (wrap >= 0) { el->wrap = wrap ? 1 : 0; }
+        return 1;
+    };
+    out.SetUITexture = [](void* engine, MyeEntityId id, const char* textureKey) -> int {
+        auto* el = Sc(engine)->GetWorld().GetComponent<UIElementComponent>(ToEngine(id));
+        if (!el) { return 0; }
+        el->texture = (textureKey && textureKey[0] != '\0') ? AssetID{ HashStr(textureKey) }
+                                                            : AssetID{};
+        return 1;
+    };
+    // 基準解像度でのヒットテスト (UIFocusNav と同じ解決 = 描画とズレない)。
+    // 最前面 = order 最大、同値は entity.index 最大 (UIRenderer の描画順で上のもの)
+    out.UIHitTest = [](void* engine, float x, float y) -> MyeEntityId {
+        static constexpr int kRefW = 1920;
+        static constexpr int kRefH = 1080;
+        World& w = Sc(engine)->GetWorld();
+        MyeEntityId best = {}; // 既定 = null id (index 0xFFFFFFFF)
+        int32_t bestOrder = 0;
+        bool have = false;
+        const ComponentTypeId req[] = { UIElementComponent::sTypeId };
+        w.ForEachArchetype(req, [&](Archetype& arch) {
+            const int ci = arch.FindTypeIndex(UIElementComponent::sTypeId);
+            for (uint32_t row = 0; row < arch.Count(); ++row) {
+                const EntityID e = arch.EntityAt(row);
+                if (!IsEntityActive(w, e)) {
+                    continue;
+                }
+                const auto* el = static_cast<const UIElementComponent*>(arch.GetPtr(ci, row));
+                // 可視矩形 (祖先クリップ適用済み) で判定 — 見えない部分には当たらない
+                const auto vis = uilayout::ResolveVisibleRect(w, e, kRefW, kRefH);
+                if (vis.w <= 0.0f || vis.h <= 0.0f || x < vis.x || x >= vis.x + vis.w
+                    || y < vis.y || y >= vis.y + vis.h) {
+                    continue;
+                }
+                if (!have || el->order > bestOrder
+                    || (el->order == bestOrder && e.index > best.index)) {
+                    best = { e.index, e.generation };
+                    bestOrder = el->order;
+                    have = true;
+                }
+            }
+        });
+        return best;
+    };
+
+    // アクションマップ (M51d)。評価は EngineLoop が tick 頭 (verify 入力置換後) に済ませて
+    // いるので、ここは評価済みスナップショットを引くだけ (記録済み入力の純関数 = 決定論)
+    out.GetActionState = [](void* engine, uint64_t nameHash) -> uint32_t {
+        const InputActions* ia = Ctx(engine)->inputActions;
+        return ia ? ia->ActionState(nameHash) : 0u;
+    };
+    out.GetAxisValue = [](void* engine, uint64_t nameHash) -> float {
+        const InputActions* ia = Ctx(engine)->inputActions;
+        return ia ? ia->AxisValue(nameHash) : 0.0f;
+    };
+
+    // ゲームフロー (M51g、決定台帳 5)。TimeControl / PersistStore は WorldHash 対象の
+    // sim 状態への決定論的書込 (SetLocalPosition と同格)
+    out.SetTimeControl = [](void* engine, int paused, int scalePercent) {
+        TimeControl& tc = Sc(engine)->Time();
+        tc.paused = (paused != 0);
+        // 正規形 (0..100) で保持する — Advance はどのみちクランプするが、
+        // ハッシュに載る値なので境界で canonical にしておく
+        tc.scalePercent = scalePercent < 0 ? 0 : (scalePercent > 100 ? 100 : scalePercent);
+    };
+    out.GetTimeControl = [](void* engine, int* outPaused, int* outScalePercent) {
+        const TimeControl& tc = Sc(engine)->Time();
+        if (outPaused) { *outPaused = tc.paused ? 1 : 0; }
+        if (outScalePercent) { *outScalePercent = tc.scalePercent; }
+    };
+    out.PersistSet = [](void* engine, uint64_t key, const void* data, int32_t size) -> int {
+        if (size < 0 || size > MYE_PERSIST_MAX_BLOB || (size > 0 && data == nullptr)) {
+            return 0;
+        }
+        Sc(engine)->Persist().Set(key, data, static_cast<size_t>(size));
+        return 1;
+    };
+    out.PersistGet = [](void* engine, uint64_t key, void* buf, int32_t cap) -> int32_t {
+        const std::vector<uint8_t>* v = Sc(engine)->Persist().Find(key);
+        if (!v) {
+            return -1; // 不在 (-1) と空 blob (0) を区別する
+        }
+        const int32_t size = static_cast<int32_t>(v->size());
+        if (buf && cap > 0 && size > 0) {
+            std::memcpy(buf, v->data(), static_cast<size_t>(size < cap ? size : cap));
+        }
+        return size;
+    };
+    // セーブ/ロード要求 (pendingScene と同じ「書くだけ」— tick 末に EngineLoop が消費)。
+    // 同 tick 複数回は後勝ち。LoadGame の record/verify ゲートは消費側 (EngineLoop) にある
+    out.SaveGame = [](void* engine, int slot) {
+        ScriptApiContext* c = Ctx(engine);
+        if (c->pendingSaveSlot && slot >= 0) {
+            *c->pendingSaveSlot = slot;
+        }
+    };
+    out.LoadGame = [](void* engine, int slot) {
+        ScriptApiContext* c = Ctx(engine);
+        if (c->pendingLoadSlot && slot >= 0) {
+            *c->pendingLoadSlot = slot;
+        }
+    };
+
+    // パッド振動 (出力レーン)。目標値を書くだけ — 適用/ゲートは EngineLoop (フレーム末)
+    out.SetPadVibration = [](void* engine, float left, float right) {
+        PadVibrationState* v = Ctx(engine)->padVibration;
+        if (!v) {
+            return;
+        }
+        const auto clamp01 = [](float f) { return f < 0.0f ? 0.0f : (f > 1.0f ? 1.0f : f); };
+        v->left = clamp01(left);
+        v->right = clamp01(right);
     };
 }
 

@@ -31,7 +31,17 @@
 //             (組込み / スキーマ / C++ スクリプト) の登録フィールドを値コピーで読み書きする。
 //             スキーマ codegen (SchemaComponents.gen.h / Schema.gen.cs) の呼び先で、
 //             型ごとのスロットを増やさずに済ませるための 2 本 (家風: 足す本数を減らす)
-#define MYE_API_VERSION 11u
+// v12 (M51h): M51 のエンジン内機能 (d 入力アクション / e UI / g ゲームフロー) を 14 本で
+//             一括開通 (M48h の「束ねて 1 回だけ bump」運用)。GetMouseWheel / UI 矩形・
+//             レイアウト・テクスチャ・ヒットテスト / アクションマップ 2 本 / TimeControl 2 本 /
+//             PersistSet・Get / SaveGame・LoadGame / SetPadVibration。
+//             ミラー照合は tools\check_rules.ps1 規則 11 (順序・件数・名前・引数個数 +
+//             version⇄スロット数の同時性) が機械検査する
+#define MYE_API_VERSION 12u
+
+// PersistSet の 1 エントリ最大バイト数 (v12)。PersistStore は WorldHash / セーブ出力に
+// 全量が載るため、無制限だと 1 キーでハッシュとセーブが肥大する
+#define MYE_PERSIST_MAX_BLOB 65536
 
 // MYE_LOG レベル (Engine/Core/Log.h の LogLevel と同値)
 enum MyeLogLevel {
@@ -285,6 +295,64 @@ struct MyeEngineApi {
     //   String64 は終端以降もハッシュ対象なので尾部の残骸をここで断つ)
     int32_t (*SetComponentField)(void* engine, MyeEntityId e, uint64_t compNameHash,
                                  uint64_t fieldNameHash, const void* buf, int32_t size);
+
+    // ---- v12 (M51h): 入力アクション / UI 拡張 / ゲームフロー / パッド振動 ----
+
+    // このフレームに累積したマウスホイール生値 (WHEEL_DELTA=120 単位)。
+    // InputSnapshot 由来 = 記録/検証で記録値が返る (決定論)
+    int32_t (*GetMouseWheel)(void* engine);
+
+    // ---- UI 矩形/レイアウト書込 (M51e の回収)。UIElement は NoHash の描画状態 →
+    //      **write-only 専用** (決定台帳 3)。読み取りは今後も追加しない — C# レーンは
+    //      record/verify 中走らないため、C# が書いた UI 値を sim が読み返すと
+    //      リプレイが壊れる。成功で 1、UIElement 非所持は 0 ----
+    // SetUIRect: anchor 基準オフセット (x,y) とサイズ (w,h) を設定。w/h < 0 は現値維持
+    //            (UI は write-only で読めないため「位置だけ動かす」用の keep 意味論)
+    int (*SetUIRect)(void* engine, MyeEntityId id, float x, float y, float w, float h);
+    // SetUILayout: anchor/align は 9-grid (0..8)、space/clipChildren/wrap は 0/1。
+    //              負値はいずれも現値維持 (SetUIRect と同じ keep 意味論)
+    int (*SetUILayout)(void* engine, MyeEntityId id, int32_t anchor, int32_t space,
+                       int32_t clipChildren, int32_t align, int32_t wrap);
+    // SetUITexture: 登録テクスチャキー名 (SetMeshRenderer と同じ規約)。null/空 = 単色に戻す
+    int (*SetUITexture)(void* engine, MyeEntityId id, const char* textureKey);
+    // UIHitTest: 基準解像度 (1920x1080、UIFocusNav と同じ) で点 (x,y) を含む最前面の
+    //   active UIElement を返す (order 最大、同値は entity.index 最大 = 描画で上のもの)。
+    //   祖先クリップで見えない部分には当たらない。無ヒットは null id。
+    //   ★ウィンドウ実寸は決定論のため読まない — クライアント実寸が基準解像度と異なる
+    //     場合のスケーリングは呼び出し側の責務 (Canvas スケーリングは M52 候補)
+    MyeEntityId (*UIHitTest)(void* engine, float x, float y);
+
+    // ---- 入力アクションマップ (M51d の回収)。assets\input\actions.json で定義し、
+    //      エンジンが tick 頭 (verify の入力置換後) に評価済み。名前は FNV-1a 64bit
+    //      (MyeNameHash / C# は Engine 側でハッシュ)。未定義名は 0 ----
+    uint32_t (*GetActionState)(void* engine, uint64_t nameHash); // bit0=held 1=pressed 2=released
+    float (*GetAxisValue)(void* engine, uint64_t nameHash);      // [-1, +1]
+
+    // ---- ゲームフロー (M51g の回収、決定台帳 5) ----
+    // TimeControl は WorldHash 対象の sim 状態。スクリプト実行順は決定論なので
+    // 直接書いてよい (SetLocalPosition と同格)。スクリプト層自体は非ゲート —
+    // ポーズ中もスクリプトは走り続けるので、ここからいつでも解除できる。
+    // scalePercent は 0..100 (100 = 等速)。範囲外はクランプ。ポーズ/スケールが
+    // 止めるのはアニメ/物理/衝突/パーティクルで、入力・UI・スクリプトは動き続ける
+    void (*SetTimeControl)(void* engine, int paused, int scalePercent);
+    void (*GetTimeControl)(void* engine, int* outPaused, int* outScalePercent);
+    // PersistStore (シーン跨ぎ永続 KV)。key は名前の FNV-1a 64bit。値は生バイト列の
+    // 値コピー (DLL 境界規則)。WorldHash 対象 = sim 状態なので record/verify で再現される。
+    // PersistSet: 成功で 1 (size < 0 / MYE_PERSIST_MAX_BLOB 超 / data null で size > 0 は 0)。
+    //             size 0 は「空 blob あり」として保存される (不在と区別される)
+    int (*PersistSet)(void* engine, uint64_t key, const void* data, int32_t size);
+    // PersistGet: 不在は -1。存在すれば実バイト数を返し、buf へ min(実サイズ, cap) を書く
+    int32_t (*PersistGet)(void* engine, uint64_t key, void* buf, int32_t cap);
+    // セーブ/ロード要求 (tick 末に消費、同 tick 内は後勝ち)。slot < 0 は無視。
+    // SaveGame は出力レーン (ハッシュ後の書出 = 決定論を汚さない)。
+    // LoadGame は record/verify 中 no-op + WARN (「リプレイはセーブ読込を跨がない」)
+    void (*SaveGame)(void* engine, int slot);
+    void (*LoadGame)(void* engine, int slot);
+
+    // ---- パッド振動 (出力レーン、XInput パッド 0)。値は 0..1 (範囲外クランプ)。
+    //      record/verify 中とフォーカス喪失中は 0 に落とされ、終了時も 0 リセット。
+    //      オーディオと同じ write-only — 振動状態の読み取りは存在しない ----
+    void (*SetPadVibration)(void* engine, float left, float right);
 };
 
 // スクリプトの各コールバックに渡されるコンテキスト (POD)

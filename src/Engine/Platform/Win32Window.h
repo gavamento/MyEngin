@@ -31,6 +31,9 @@ public:
     int Width() const { return width_; }
     int Height() const { return height_; }
     bool IsMinimized() const { return minimized_; }
+    // 自分がフォアグラウンドウィンドウか (M51h: パッド振動を裏で鳴らさないためのゲート。
+    // 出力レーン専用 — sim からこの値を読んではいけない。決定論の対象外)
+    bool HasFocus() const;
 
     // 前回呼び出し以降にクライアント領域サイズが変わっていたら true (1 回で消費)
     bool ConsumeResize();

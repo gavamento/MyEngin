@@ -467,3 +467,132 @@ inline bool MyeButtonClicked(const MyeUpdateContext& ctx, MyeUIRect r, int32_t& 
     prevDown = down;
     return clicked;
 }
+
+// ---- v12 (M51h): 入力アクション / UI 拡張 / ゲームフロー / パッド振動 ----
+
+inline int32_t MyeGetMouseWheel(const MyeUpdateContext& ctx)
+{
+    return ctx.api->GetMouseWheel(ctx.api->engine);
+}
+
+// アクションマップ (assets\input\actions.json)。名前は MyeNameHash で 64bit 化して引く。
+// 未定義名は常に false / 0
+inline bool MyeActionHeld(const MyeUpdateContext& ctx, const char* name)
+{
+    return (ctx.api->GetActionState(ctx.api->engine, MyeNameHash(name)) & 1u) != 0;
+}
+inline bool MyeActionPressed(const MyeUpdateContext& ctx, const char* name)
+{
+    return (ctx.api->GetActionState(ctx.api->engine, MyeNameHash(name)) & 2u) != 0;
+}
+inline bool MyeActionReleased(const MyeUpdateContext& ctx, const char* name)
+{
+    return (ctx.api->GetActionState(ctx.api->engine, MyeNameHash(name)) & 4u) != 0;
+}
+inline float MyeAxis(const MyeUpdateContext& ctx, const char* name)
+{
+    return ctx.api->GetAxisValue(ctx.api->engine, MyeNameHash(name));
+}
+
+// UI 書込 (write-only)。w/h・anchor 以降の負値は「現値維持」(EngineAPI.h の keep 意味論)
+inline bool MyeSetUIRect(const MyeUpdateContext& ctx, MyeEntityId id, float x, float y,
+                         float w = -1.0f, float h = -1.0f)
+{
+    return ctx.api->SetUIRect(ctx.api->engine, id, x, y, w, h) != 0;
+}
+inline bool MyeSetUILayout(const MyeUpdateContext& ctx, MyeEntityId id, int32_t anchor,
+                           int32_t space = -1, int32_t clipChildren = -1, int32_t align = -1,
+                           int32_t wrap = -1)
+{
+    return ctx.api->SetUILayout(ctx.api->engine, id, anchor, space, clipChildren, align, wrap)
+        != 0;
+}
+inline bool MyeSetUITexture(const MyeUpdateContext& ctx, MyeEntityId id, const char* textureKey)
+{
+    return ctx.api->SetUITexture(ctx.api->engine, id, textureKey) != 0;
+}
+// 基準解像度 (1920x1080) でのヒットテスト。無ヒットは null id (MyeEntityIdIsNull で判定)
+inline MyeEntityId MyeUIHitTest(const MyeUpdateContext& ctx, float x, float y)
+{
+    return ctx.api->UIHitTest(ctx.api->engine, x, y);
+}
+
+// ゲームフロー (M51g)。ポーズ/スケールが止めるのはアニメ/物理/衝突/パーティクルで、
+// スクリプト自身は動き続ける (だからここから解除できる)
+inline void MyeSetPaused(const MyeUpdateContext& ctx, bool paused)
+{
+    int p = 0, s = 100;
+    ctx.api->GetTimeControl(ctx.api->engine, &p, &s);
+    ctx.api->SetTimeControl(ctx.api->engine, paused ? 1 : 0, s);
+}
+inline bool MyeIsPaused(const MyeUpdateContext& ctx)
+{
+    int p = 0, s = 100;
+    ctx.api->GetTimeControl(ctx.api->engine, &p, &s);
+    return p != 0;
+}
+inline void MyeSetTimeScale(const MyeUpdateContext& ctx, int32_t percent)
+{
+    int p = 0, s = 100;
+    ctx.api->GetTimeControl(ctx.api->engine, &p, &s);
+    ctx.api->SetTimeControl(ctx.api->engine, p, percent);
+}
+inline int32_t MyeGetTimeScale(const MyeUpdateContext& ctx)
+{
+    int p = 0, s = 100;
+    ctx.api->GetTimeControl(ctx.api->engine, &p, &s);
+    return s;
+}
+
+// PersistStore (シーン跨ぎ永続)。key は名前を MyeNameHash した 64bit
+inline bool MyePersistSet(const MyeUpdateContext& ctx, const char* key, const void* data,
+                          int32_t size)
+{
+    return ctx.api->PersistSet(ctx.api->engine, MyeNameHash(key), data, size) != 0;
+}
+// 戻り値は実バイト数 (-1 = 不在)。buf へは min(実サイズ, cap) が書かれる
+inline int32_t MyePersistGet(const MyeUpdateContext& ctx, const char* key, void* buf, int32_t cap)
+{
+    return ctx.api->PersistGet(ctx.api->engine, MyeNameHash(key), buf, cap);
+}
+// 型付き糖衣。サイズ厳密一致で読めたときだけ true (POD 前提)
+template <typename T>
+inline bool MyePersistSetValue(const MyeUpdateContext& ctx, const char* key, const T& v)
+{
+    static_assert(std::is_trivially_copyable_v<T>, "persist value must be a POD");
+    return MyePersistSet(ctx, key, &v, static_cast<int32_t>(sizeof(T)));
+}
+template <typename T>
+inline bool MyePersistGetValue(const MyeUpdateContext& ctx, const char* key, T& out)
+{
+    static_assert(std::is_trivially_copyable_v<T>, "persist value must be a POD");
+    return MyePersistGet(ctx, key, &out, static_cast<int32_t>(sizeof(T)))
+        == static_cast<int32_t>(sizeof(T));
+}
+// int/float の省略形 (不在・型違いは def を返す)
+inline int32_t MyePersistGetInt(const MyeUpdateContext& ctx, const char* key, int32_t def = 0)
+{
+    int32_t v = 0;
+    return MyePersistGetValue(ctx, key, v) ? v : def;
+}
+inline float MyePersistGetFloat(const MyeUpdateContext& ctx, const char* key, float def = 0.0f)
+{
+    float v = 0.0f;
+    return MyePersistGetValue(ctx, key, v) ? v : def;
+}
+
+// セーブ/ロード (tick 末に消費、同 tick 内は後勝ち)。LoadGame は record/verify 中 no-op
+inline void MyeSaveGame(const MyeUpdateContext& ctx, int slot = 0)
+{
+    ctx.api->SaveGame(ctx.api->engine, slot);
+}
+inline void MyeLoadGame(const MyeUpdateContext& ctx, int slot = 0)
+{
+    ctx.api->LoadGame(ctx.api->engine, slot);
+}
+
+// パッド振動 (出力レーン、0..1)。record/verify 中とフォーカス喪失中はエンジンが 0 に落とす
+inline void MyeSetPadVibration(const MyeUpdateContext& ctx, float left, float right)
+{
+    ctx.api->SetPadVibration(ctx.api->engine, left, right);
+}

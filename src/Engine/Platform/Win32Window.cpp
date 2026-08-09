@@ -106,6 +106,11 @@ bool Win32Window::ConsumeResize()
     return r;
 }
 
+bool Win32Window::HasFocus() const
+{
+    return hwnd_ != nullptr && GetForegroundWindow() == static_cast<HWND>(hwnd_);
+}
+
 intptr_t Win32Window::HandleMsg(void* hwndRaw, uint32_t msg, uint64_t wparam, int64_t lparam)
 {
     const HWND hwnd = static_cast<HWND>(hwndRaw);

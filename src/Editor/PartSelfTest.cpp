@@ -174,13 +174,21 @@ bool RunPartSelfTest()
         };
         const MyeEntityId root = toShared(enemy.Id());
 
-        check(api.version == MYE_API_VERSION && MYE_API_VERSION == 11u,
-              "abi: the table reports v11");
+        check(api.version == MYE_API_VERSION && MYE_API_VERSION == 12u,
+              "abi: the table reports v12");
         check(api.FindPart != nullptr && api.FindPartsByTag != nullptr,
               "abi: the v9 part slots are filled in");
         check(api.RaycastParts != nullptr, "abi: the v10 RaycastParts slot is filled in");
         check(api.GetComponentField != nullptr && api.SetComponentField != nullptr,
               "abi: the v11 generic field slots are filled in");
+        check(api.GetMouseWheel != nullptr && api.SetUIRect != nullptr
+                  && api.SetUILayout != nullptr && api.SetUITexture != nullptr
+                  && api.UIHitTest != nullptr && api.GetActionState != nullptr
+                  && api.GetAxisValue != nullptr && api.SetTimeControl != nullptr
+                  && api.GetTimeControl != nullptr && api.PersistSet != nullptr
+                  && api.PersistGet != nullptr && api.SaveGame != nullptr
+                  && api.LoadGame != nullptr && api.SetPadVibration != nullptr,
+              "abi: the 14 v12 slots are filled in");
 
         // ★Shared/ScriptAPI.h は Engine/Core/Hash.h を include できず FNV 定数を再掲して
         //   いる。ここがズレると「同じタグ名なのに引けない」という静かな壊れ方をする

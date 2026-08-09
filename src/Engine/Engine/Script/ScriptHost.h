@@ -33,13 +33,20 @@ public:
     void SetSharedServices(std::vector<ScriptAudioEvent>* audioQueue, std::wstring* pendingScene,
                            std::vector<EffectSpawnRequest>* effectQueue = nullptr,
                            std::vector<DebugLineCmd>* debugLines = nullptr,
-                           uint64_t* audioHandleSeq = nullptr)
+                           uint64_t* audioHandleSeq = nullptr,
+                           const InputActions* inputActions = nullptr,
+                           int* pendingSaveSlot = nullptr, int* pendingLoadSlot = nullptr,
+                           PadVibrationState* padVibration = nullptr)
     {
         apiCtx_.audioQueue = audioQueue;
         apiCtx_.pendingScene = pendingScene;
         apiCtx_.effectQueue = effectQueue;
         apiCtx_.debugLines = debugLines;
         apiCtx_.audioHandleSeq = audioHandleSeq;
+        apiCtx_.inputActions = inputActions;
+        apiCtx_.pendingSaveSlot = pendingSaveSlot;
+        apiCtx_.pendingLoadSlot = pendingLoadSlot;
+        apiCtx_.padVibration = padVibration;
     }
 
     // シーン遷移 (M19.4): Start 済み記録をクリアして新シーンのエンティティで Start を再実行させる

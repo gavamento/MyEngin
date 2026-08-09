@@ -88,4 +88,23 @@ InputSnapshot Input::CaptureSnapshot()
     return s;
 }
 
+void Input::ApplyVibration(float left, float right)
+{
+    const auto quantize = [](float v) -> uint16_t {
+        const float c = (v < 0.0f) ? 0.0f : (v > 1.0f ? 1.0f : v);
+        return static_cast<uint16_t>(c * 65535.0f + 0.5f);
+    };
+    const uint16_t l = quantize(left);
+    const uint16_t r = quantize(right);
+    if (l == lastVibLeft_ && r == lastVibRight_) {
+        return; // 値が変わらない限りドライバへ再送しない
+    }
+    lastVibLeft_ = l;
+    lastVibRight_ = r;
+    XINPUT_VIBRATION vib = {};
+    vib.wLeftMotorSpeed = l;
+    vib.wRightMotorSpeed = r;
+    XInputSetState(0, &vib);
+}
+
 } // namespace mye

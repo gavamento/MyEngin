@@ -40,6 +40,11 @@ public:
     // フレーム頭 (spec 5.3 フェーズ 1) で呼ぶ。wheel 累積はここでリセットされる
     InputSnapshot CaptureSnapshot();
 
+    // パッド振動を適用する (M51h、XInput パッド 0、値 0..1)。**出力レーン専用** —
+    // sim から振動状態を読み返す API は作らない。実際の XInputSetState は
+    // 量子化後の値が前回から変わったときだけ発行する (毎フレーム呼んで良い)
+    void ApplyVibration(float left, float right);
+
 private:
     void SetKey(uint8_t vk, bool down);
 
@@ -48,6 +53,8 @@ private:
     int32_t mouseY_ = 0;
     int32_t wheelAccum_ = 0;
     uint8_t buttons_ = 0;
+    uint16_t lastVibLeft_ = 0;  // 最後に XInput へ送った量子化値 (重複送信の抑止)
+    uint16_t lastVibRight_ = 0;
 };
 
 } // namespace mye

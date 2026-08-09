@@ -237,11 +237,14 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // RNG state はワールドハッシュ対象なので、オーディオが引くと sim が壊れる
     Pcg32 audioScriptRng;
     std::wstring pendingScene;                // LoadScene の遅延ロード先 (tick 末に消費)
-    // M51g: SaveGame/LoadGame のスロット要求 (-1 = なし)。積み手はスクリプト API (M51h で
-    // 開通)。Save は tick 末ハッシュ後の出力レーンで書出、Load は pendingScene と同じ
+    // M51g: SaveGame/LoadGame のスロット要求 (-1 = なし)。積み手はスクリプト API (v12)。
+    // Save は tick 末ハッシュ後の出力レーンで書出、Load は pendingScene と同じ
     // セーフポイントで消費し record/verify 中は no-op + WARN (決定台帳 5)
     int pendingSaveSlot = -1;
     int pendingLoadSlot = -1;
+    // M51h: SetPadVibration の目標値。スロットは書くだけで、適用はフレーム末の出力レーン
+    // (record/verify 中とフォーカス喪失中は 0 に落とし、終了時も 0 リセット)
+    PadVibrationState padVibration;
     std::vector<EffectSpawnRequest> effectQueue; // PlayEffect の spawn 要求 (tick 末に消費、M32f)
     std::vector<DebugLineCmd> debugLines; // DebugDrawLine (v7)。tick 頭クリア → 描画で消費
     IRenderPath* activePath = &forwardPath;
@@ -388,9 +391,11 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     audioSystem.Init(config.audio);
     audioScriptRng.Seed(0x4D796541536372ull); // "MyeAScr" — world.Rng() とは別ストリーム
     scriptHost.SetSharedServices(&audioQueue, &pendingScene, &effectQueue, &debugLines,
-                                 &audioHandleSeq);
+                                 &audioHandleSeq, &inputActions, &pendingSaveSlot,
+                                 &pendingLoadSlot, &padVibration);
     managedHost.SetSharedServices(&audioQueue, &pendingScene, &effectQueue, &debugLines,
-                                  &audioHandleSeq);
+                                  &audioHandleSeq, &inputActions, &pendingSaveSlot,
+                                  &pendingLoadSlot, &padVibration);
 
     clock.Init();
 
@@ -837,6 +842,15 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         // dt は**実時間**を渡す (M45f の BGM クロスフェードは絶対経過時間で進むため。
         // 固定 dt を渡すと 6500fps ではフェードが 100 倍速で終わる)
         audioSystem.Update(static_cast<float>(dt));
+        // ---- パッド振動の適用 (M51h、出力レーン)。record/verify 中は 0 に落とす
+        // (オーディオ suspend と同型)。フォーカス喪失中も 0 (裏で振動し続けない)。
+        // 実際の XInputSetState は Input 側が値の変化時だけ発行する ----
+        {
+            const bool vibSuspend =
+                recorder.IsActive() || player.IsActive() || !window.HasFocus();
+            input.ApplyVibration(vibSuspend ? 0.0f : padVibration.left,
+                                 vibSuspend ? 0.0f : padVibration.right);
+        }
         const double tRender = clock.Now();
 
         // エディタ (または将来の設定) によるレンダリングパス切替を反映
@@ -935,6 +949,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     }
 
     // ---- 終了 (起動の逆順) ----
+    input.ApplyVibration(0.0f, 0.0f); // M51h: 終了後に振動を残さない
     app.OnShutdown(ctx);
     meshcol::Install(nullptr); // M41 (meshColliders 破棄前に必ず外す)
     AssetDatabase::UninstallKeyResolver(); // M30c (assetDatabase 破棄前に必ず外す)

@@ -1,5 +1,24 @@
 namespace MyeScripting
 {
+    // gamepad ボタンマスク (Shared/EngineAPI.h の MyePadButton と同値 = XINPUT_GAMEPAD_*)
+    public static class PadButtons
+    {
+        public const ushort DPadUp = 0x0001;
+        public const ushort DPadDown = 0x0002;
+        public const ushort DPadLeft = 0x0004;
+        public const ushort DPadRight = 0x0008;
+        public const ushort Start = 0x0010;
+        public const ushort Back = 0x0020;
+        public const ushort LThumb = 0x0040;
+        public const ushort RThumb = 0x0080;
+        public const ushort LB = 0x0100;
+        public const ushort RB = 0x0200;
+        public const ushort A = 0x1000;
+        public const ushort B = 0x2000;
+        public const ushort X = 0x4000;
+        public const ushort Y = 0x8000;
+    }
+
     // エンティティへの薄いハンドル。Transform 操作の入口。
     public readonly struct MyeEntity
     {
@@ -17,6 +36,22 @@ namespace MyeScripting
         // PlayAudio は鳴っている音を鳴らし直す (Unity の AudioSource.Play と同じ)
         public bool PlayAudio() => Engine.PlayAudioSource(Id);
         public bool StopAudio(float fadeSeconds = 0.0f) => Engine.StopAudioSource(Id, fadeSeconds);
+
+        // ---- ゲーム内 UI (UIElement を持つエンティティ、v7 + v12)。**write-only** —
+        // UIElement は描画レーン (非ハッシュ) なので毎 tick 書いてよいが、読み返す API は無い。
+        // UIElement 非所持なら false
+        public bool SetUIText(string text) => Engine.SetUIText(Id, text);
+        public bool SetUIFill(float amount) => Engine.SetUIFill(Id, amount);
+        public bool SetUIColor(float r, float g, float b, float a = 1.0f)
+            => Engine.SetUIColor(Id, new MyeColor(r, g, b, a));
+        public bool SetUIFocused(bool focused) => Engine.SetUIFocused(Id, focused);
+        // 矩形/レイアウト書込 (v12、M51h)。w/h・anchor 以降の負値は「現値維持」
+        public bool SetUIRect(float x, float y, float w = -1.0f, float h = -1.0f)
+            => Engine.SetUIRect(Id, x, y, w, h);
+        public bool SetUILayout(int anchor, int space = -1, int clipChildren = -1,
+                                int align = -1, int wrap = -1)
+            => Engine.SetUILayout(Id, anchor, space, clipChildren, align, wrap);
+        public bool SetUITexture(string textureKey) => Engine.SetUITexture(Id, textureKey);
 
         public static MyeEntity Create(string name) => new MyeEntity(Engine.CreateGameObject(name));
         public static MyeEntity Find(string name) => new MyeEntity(Engine.FindByName(name));
@@ -88,6 +123,73 @@ namespace MyeScripting
         protected bool GetMouseButton(int button) => Engine.MouseButton(button);
         protected float Random01() => Engine.RandomFloat01();
         protected float RandomRange(float lo, float hi) => Engine.RandomRange(lo, hi);
+
+        // ---- 入力アクション (v12、M51h)。assets/input/actions.json で定義した名前で引く。
+        // 未定義名は常に false / 0。マッピングは ProjectSettings の入力タブで編集できる ----
+        protected static bool ActionHeld(string name) => (Engine.GetActionState(name) & 1u) != 0;
+        protected static bool ActionPressed(string name) => (Engine.GetActionState(name) & 2u) != 0;
+        protected static bool ActionReleased(string name) => (Engine.GetActionState(name) & 4u) != 0;
+        protected static float Axis(string name) => Engine.GetAxisValue(name);
+        // このフレームに累積したホイール生値 (WHEEL_DELTA=120 単位)
+        protected static int MouseWheel() => Engine.GetMouseWheel();
+
+        // ---- gamepad (v3 の回収、M51h)。パッド 0。mask は PadButtons.* ----
+        protected static bool PadConnected() => Engine.PadConnected();
+        protected static bool PadButton(ushort mask) => Engine.PadButton(mask);
+        protected static MyeVec2 PadStickLeft() { Engine.PadSticks(out var l, out _); return l; }
+        protected static MyeVec2 PadStickRight() { Engine.PadSticks(out _, out var r); return r; }
+        protected static float PadTriggerLeft() { Engine.PadTriggers(out var l, out _); return l; }
+        protected static float PadTriggerRight() { Engine.PadTriggers(out _, out var r); return r; }
+        // 振動 (v12、出力レーン、0..1)。record/verify 中とフォーカス喪失中はエンジンが 0 に落とす
+        protected static void SetPadVibration(float left, float right)
+            => Engine.SetPadVibration(left, right);
+
+        // ---- UI ナビ/ヒットテスト (v7 + v12)。どちらも基準解像度 1920x1080 で解決 ----
+        protected static MyeEntity UIFocusNav(MyeEntity current, int dir)
+            => new MyeEntity(Engine.UIFocusNav(current.Id, dir));
+        protected static MyeEntity UIHitTest(float x, float y)
+            => new MyeEntity(Engine.UIHitTest(x, y));
+
+        // ---- ゲームフロー (v12、M51g/M51h)。ポーズ/スケールが止めるのはアニメ/物理/衝突/
+        // パーティクルで、スクリプト (C#/C++)・UI・入力は動き続ける (だからここから解除できる)。
+        // C# レーンは record/verify 中走らない — リプレイで再現したいフロー制御は C++ 側で ----
+        protected static void PauseGame(bool paused)
+        {
+            Engine.GetTimeControl(out _, out int scale);
+            Engine.SetTimeControl(paused, scale);
+        }
+        protected static bool IsGamePaused()
+        {
+            Engine.GetTimeControl(out bool paused, out _);
+            return paused;
+        }
+        // タイムスケール 0..100 (%)。100 = 等速、50 = 半速。範囲外はクランプ
+        protected static void SetTimeScale(int percent)
+        {
+            Engine.GetTimeControl(out bool paused, out _);
+            Engine.SetTimeControl(paused, percent);
+        }
+        protected static int GetTimeScale()
+        {
+            Engine.GetTimeControl(out _, out int scale);
+            return scale;
+        }
+
+        // ---- 永続ストア (v12、M51g)。シーンを跨いで生きる KV (LoadScene で消えない)。
+        // 値は unmanaged 型のバイトコピー。sim 状態 (WorldHash 対象) なので書き込みは
+        // 決定論レーンの作法で — C# からの書込はリプレイ被覆外 (演出用途向け) ----
+        protected static bool PersistSet<T>(string key, T value) where T : unmanaged
+            => Engine.PersistSet(key, value);
+        protected static bool TryPersistGet<T>(string key, out T value) where T : unmanaged
+            => Engine.TryPersistGet(key, out value);
+        protected static T PersistGetOr<T>(string key, T fallback) where T : unmanaged
+            => Engine.TryPersistGet(key, out T v) ? v : fallback;
+
+        // ---- セーブ/ロード/シーン遷移 (v12 + v3 の回収)。要求は tick 末に消費される。
+        // LoadGame は record/verify 中 no-op (「リプレイはセーブ読込を跨がない」) ----
+        protected static void SaveGame(int slot = 0) => Engine.SaveGame(slot);
+        protected static void LoadGame(int slot = 0) => Engine.LoadGame(slot);
+        protected static void LoadScene(string scenePath) => Engine.LoadScene(scenePath);
 
         // ---- 剛体物理 (v4、M28a)。Rigidbody 非所持なら no-op / Zero ----
         public MyeVec3 Velocity { get => Engine.GetVelocity(SelfId); set => Engine.SetVelocity(SelfId, value); }

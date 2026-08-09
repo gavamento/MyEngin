@@ -10,6 +10,15 @@
 namespace mye {
 
 class Scene;
+class InputActions;
+
+// パッド振動の目標値 (v12、M51h)。スロットはここへ書くだけで、実際の XInputSetState は
+// EngineLoop がフレーム末 (出力レーン) に適用する — record/verify 中とフォーカス喪失中は
+// 0 に落とし、終了時も 0 リセットする (オーディオの suspend と同型)
+struct PadVibrationState {
+    float left = 0.0f;  // 低周波モーター 0..1
+    float right = 0.0f; // 高周波モーター 0..1
+};
 
 // スクリプトが tick 内で積むオーディオ操作 (M19 の再生イベントを v8 でタグ付きに拡張)。
 // ハッシュ後に EngineLoop が drain して AudioSystem へ流す。
@@ -72,6 +81,14 @@ struct ScriptApiContext {
     // drain はゲートされるがこのカウンタは常に進むので、スクリプトが受け取る値が
     // 記録/検証で一致する (v7 Instantiate の fileId 予約と同型)。null 時は 0 を返す
     uint64_t* audioHandleSeq = nullptr;
+    // v12 (M51h): アクションマップ (EngineLoop 所有、tick 頭に評価済み)。null 時は状態 0
+    const InputActions* inputActions = nullptr;
+    // v12 (M51h): SaveGame/LoadGame のスロット要求の書き先 (-1 = なし、tick 末に消費)。
+    // pendingScene と同じ「書くだけ」パターン。null 時は該当 API が no-op
+    int* pendingSaveSlot = nullptr;
+    int* pendingLoadSlot = nullptr;
+    // v12 (M51h): パッド振動の目標値の書き先。適用は EngineLoop (出力レーン)
+    PadVibrationState* padVibration = nullptr;
 };
 
 // out に MyeEngineApi (engine = ctx) を構築する。ctx の生存は呼び出し側が管理する。

@@ -164,6 +164,22 @@ namespace MyeScripting
             GetComponentField;
         public delegate* unmanaged<void*, MyeEntityId, ulong, ulong, void*, int, int>
             SetComponentField;
+        // ---- v12 (M51h): 入力アクション / UI 拡張 / ゲームフロー / パッド振動。
+        //      宣言順 = ネイティブと一致 (tools\check_rules.ps1 規則 11 が機械照合) ----
+        public delegate* unmanaged<void*, int> GetMouseWheel;
+        public delegate* unmanaged<void*, MyeEntityId, float, float, float, float, int> SetUIRect;
+        public delegate* unmanaged<void*, MyeEntityId, int, int, int, int, int, int> SetUILayout;
+        public delegate* unmanaged<void*, MyeEntityId, byte*, int> SetUITexture;
+        public delegate* unmanaged<void*, float, float, MyeEntityId> UIHitTest;
+        public delegate* unmanaged<void*, ulong, uint> GetActionState;
+        public delegate* unmanaged<void*, ulong, float> GetAxisValue;
+        public delegate* unmanaged<void*, int, int, void> SetTimeControl;
+        public delegate* unmanaged<void*, int*, int*, void> GetTimeControl;
+        public delegate* unmanaged<void*, ulong, void*, int, int> PersistSet;
+        public delegate* unmanaged<void*, ulong, void*, int, int> PersistGet;
+        public delegate* unmanaged<void*, int, void> SaveGame;
+        public delegate* unmanaged<void*, int, void> LoadGame;
+        public delegate* unmanaged<void*, float, float, void> SetPadVibration;
     }
 
     // ネイティブ ManagedHost が保持する関数ポインタ表。Bootstrap がここに書き込む。
@@ -609,6 +625,139 @@ namespace MyeScripting
                 return _api->SetComponentField(_api->Engine, id, compHash, fieldHash, p,
                                                b.Length) != 0;
             }
+        }
+
+        // ---- v3 の回収 (M51h): LoadScene / gamepad ----
+        // これまでスロットはあったが C# へ公開していなかった分。
+        // LoadScene は tick 末に遅延ロードされる (パスは assets 相対)
+        public static void LoadScene(string scenePath)
+        {
+            if (_api == null) return;
+            var b = Utf8(scenePath ?? "");
+            fixed (byte* p = b) { _api->LoadScene(_api->Engine, p); }
+        }
+        public static bool PadConnected() => _api != null && _api->PadConnected(_api->Engine) != 0;
+        public static bool PadButton(ushort buttonMask)
+            => _api != null && _api->PadButton(_api->Engine, buttonMask) != 0;
+        public static void PadSticks(out MyeVec2 left, out MyeVec2 right)
+        {
+            left = default; right = default;
+            if (_api == null) return;
+            fixed (MyeVec2* pl = &left) fixed (MyeVec2* pr = &right)
+            {
+                _api->PadSticks(_api->Engine, pl, pr);
+            }
+        }
+        public static void PadTriggers(out float left, out float right)
+        {
+            left = 0; right = 0;
+            if (_api == null) return;
+            fixed (float* pl = &left) fixed (float* pr = &right)
+            {
+                _api->PadTriggers(_api->Engine, pl, pr);
+            }
+        }
+
+        // ---- v4 の回収 (M51h): 無印 Overlap / SphereCast (マスク無し全レイヤー版) ----
+        public static int OverlapSphere(MyeVec3 center, float radius, MyeEntityId[] outEntities)
+        {
+            if (_api == null) return 0;
+            fixed (MyeEntityId* p = outEntities)
+            {
+                return _api->OverlapSphere(_api->Engine, center, radius, p,
+                                           outEntities?.Length ?? 0);
+            }
+        }
+        public static int OverlapBox(MyeVec3 center, MyeVec3 halfExtents, MyeQuat rotation,
+                                     MyeEntityId[] outEntities)
+        {
+            if (_api == null) return 0;
+            fixed (MyeEntityId* p = outEntities)
+            {
+                return _api->OverlapBox(_api->Engine, center, halfExtents, rotation, p,
+                                        outEntities?.Length ?? 0);
+            }
+        }
+        public static bool SphereCast(MyeVec3 origin, MyeVec3 dir, float radius, float maxDist,
+                                      out MyeRaycastHit hit)
+        {
+            hit = default;
+            if (_api == null) return false;
+            fixed (MyeRaycastHit* p = &hit)
+            {
+                return _api->SphereCast(_api->Engine, origin, dir, radius, maxDist, p) != 0;
+            }
+        }
+
+        // ---- v12 (M51h): 入力アクション / UI 拡張 / ゲームフロー / パッド振動 ----
+        // 名前 → FNV-1a 64bit (ネイティブ HashStr と同一定数。PartTag と同じ実装)
+        public static ulong NameHash(string name) => PartTag(name);
+
+        public static int GetMouseWheel()
+            => _api != null ? _api->GetMouseWheel(_api->Engine) : 0;
+
+        // アクションマップ (assets/input/actions.json)。bit0=held 1=pressed 2=released
+        public static uint GetActionState(string name)
+            => _api != null ? _api->GetActionState(_api->Engine, NameHash(name)) : 0u;
+        public static float GetAxisValue(string name)
+            => _api != null ? _api->GetAxisValue(_api->Engine, NameHash(name)) : 0.0f;
+
+        // UI 書込 (write-only — UIElement は描画レーンなので読み取り API は無い)。
+        // w/h・anchor 以降の負値は「現値維持」
+        public static bool SetUIRect(MyeEntityId id, float x, float y, float w = -1.0f,
+                                     float h = -1.0f)
+            => _api != null && _api->SetUIRect(_api->Engine, id, x, y, w, h) != 0;
+        public static bool SetUILayout(MyeEntityId id, int anchor, int space = -1,
+                                       int clipChildren = -1, int align = -1, int wrap = -1)
+            => _api != null
+               && _api->SetUILayout(_api->Engine, id, anchor, space, clipChildren, align, wrap)
+                  != 0;
+        public static bool SetUITexture(MyeEntityId id, string textureKey)
+        {
+            if (_api == null) return false;
+            var b = Utf8(textureKey ?? "");
+            fixed (byte* p = b) { return _api->SetUITexture(_api->Engine, id, p) != 0; }
+        }
+        // 基準解像度 (1920x1080) でのヒットテスト。無ヒットは MyeEntityId.Null
+        public static MyeEntityId UIHitTest(float x, float y)
+            => _api != null ? _api->UIHitTest(_api->Engine, x, y) : MyeEntityId.Null;
+
+        // ゲームフロー (M51g)。ポーズ中もスクリプト (C#/C++) は走り続ける
+        public static void SetTimeControl(bool paused, int scalePercent)
+        {
+            if (_api != null) _api->SetTimeControl(_api->Engine, paused ? 1 : 0, scalePercent);
+        }
+        public static void GetTimeControl(out bool paused, out int scalePercent)
+        {
+            int p = 0, s = 100;
+            if (_api != null) _api->GetTimeControl(_api->Engine, &p, &s);
+            paused = p != 0;
+            scalePercent = s;
+        }
+
+        // PersistStore (シーン跨ぎ永続)。値は unmanaged 型のバイトコピー
+        public static bool PersistSet<T>(string key, T value) where T : unmanaged
+            => _api != null
+               && _api->PersistSet(_api->Engine, NameHash(key), &value, sizeof(T)) != 0;
+        public static bool TryPersistGet<T>(string key, out T value) where T : unmanaged
+        {
+            value = default;
+            if (_api == null) return false;
+            T v = default;
+            // 戻り値は実バイト数 (-1 = 不在)。サイズ厳密一致で読めたときだけ採用 (型違い防止)
+            if (_api->PersistGet(_api->Engine, NameHash(key), &v, sizeof(T)) != sizeof(T))
+                return false;
+            value = v;
+            return true;
+        }
+
+        public static void SaveGame(int slot) { if (_api != null) _api->SaveGame(_api->Engine, slot); }
+        public static void LoadGame(int slot) { if (_api != null) _api->LoadGame(_api->Engine, slot); }
+
+        // パッド振動 (出力レーン、0..1)。record/verify 中とフォーカス喪失中はエンジンが 0 に落とす
+        public static void SetPadVibration(float left, float right)
+        {
+            if (_api != null) _api->SetPadVibration(_api->Engine, left, right);
         }
     }
 }
