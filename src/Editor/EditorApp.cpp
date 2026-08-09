@@ -306,6 +306,8 @@ void EditorApp::OnImGui(EngineContext& ctx)
     if (actorEdit_) {
         ctx.scene = &actorEdit_->scene;
     }
+    // アセットファイル操作エントリの実行に使う (M51i)。毎フレーム設定で常に最新を保証
+    undo_.SetFileOpContext(&ctx);
 
     // レイアウトロードは **どの ImGui::Begin よりも前** に実行する — LoadIniSettingsFromDisk が
     // 既存ウィンドウの DockId を差し替え、同フレームの Begin で新ドックに再バインドされる

@@ -6,10 +6,13 @@
 #include <cwctype>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <vector>
 
 #include <Windows.h>
 #include <shellapi.h>
+#include <shobjidl.h> // IFileOperation (ごみ箱削除、M51i)
+#include <wrl/client.h>
 
 #include "nlohmann/json.hpp"
 
@@ -262,16 +265,16 @@ std::wstring MakeUniqueAssetPath(const std::wstring& destDir, const std::wstring
     return MakeUniquePath(destDir, filename, /*isDir=*/false);
 }
 
-bool CreateFolderAsset(const std::wstring& dir, const std::string& name)
+std::wstring CreateFolderAsset(const std::wstring& dir, const std::string& name)
 {
     const std::wstring p = dir + L"\\" + Utf8ToWide(SanitizeFileName(name, "New Folder"));
     std::error_code ec;
     if (fs::create_directory(p, ec)) {
         MYE_LOG_INFO(Tr(StrId::Log_CreatedFolder), WideToUtf8(p).c_str());
-        return true;
+        return p;
     }
     MYE_LOG_WARN(Tr(StrId::Log_MkdirFail), WideToUtf8(p).c_str());
-    return false;
+    return {};
 }
 
 std::wstring CreateSceneAsset(const std::wstring& dir, const std::string& name)
@@ -691,10 +694,26 @@ bool PerformAssetRelocate(EngineContext& ctx, const std::wstring& src, const std
     return true;
 }
 
+// リネーム/移動成功後の Relocate エントリ記録 (M51i)。Undo が pathB→pathA、Redo が
+// pathA→pathB を PerformAssetRelocate で再実行する (実行部は ExecuteAssetFileOp)
+void PushRelocateOp(UndoStack* undo, const char* label, const std::wstring& src,
+                    const std::wstring& dst, bool isDir)
+{
+    if (!undo) {
+        return;
+    }
+    UndoFileOp op;
+    op.kind = UndoFileOp::Kind::Relocate;
+    op.pathA = src;
+    op.pathB = dst;
+    op.isDir = isDir;
+    undo->PushFileOp(label, std::move(op));
+}
+
 } // namespace
 
 std::wstring MoveAssetToFolder(EngineContext& ctx, const std::wstring& srcPath,
-                               const std::wstring& destDir)
+                               const std::wstring& destDir, UndoStack* undo)
 {
     std::error_code ec;
     const fs::path src{ srcPath };
@@ -717,11 +736,15 @@ std::wstring MoveAssetToFolder(EngineContext& ctx, const std::wstring& srcPath,
         }
     }
     const std::wstring dst = MakeUniquePath(destDir, src.filename().wstring(), isDir);
-    return PerformAssetRelocate(ctx, srcPath, dst, isDir) ? dst : std::wstring();
+    if (!PerformAssetRelocate(ctx, srcPath, dst, isDir)) {
+        return {};
+    }
+    PushRelocateOp(undo, "Move Asset", srcPath, dst, isDir);
+    return dst;
 }
 
 std::wstring RenameAsset(EngineContext& ctx, const std::wstring& srcPath,
-                         const std::string& newName)
+                         const std::string& newName, UndoStack* undo)
 {
     std::error_code ec;
     const fs::path src{ srcPath };
@@ -749,7 +772,224 @@ std::wstring RenameAsset(EngineContext& ctx, const std::wstring& srcPath,
     }
     const std::wstring parent = src.parent_path().wstring();
     const std::wstring dst = MakeUniquePath(parent, newFilename, isDir);
-    return PerformAssetRelocate(ctx, srcPath, dst, isDir) ? dst : std::wstring();
+    if (!PerformAssetRelocate(ctx, srcPath, dst, isDir)) {
+        return {};
+    }
+    PushRelocateOp(undo, "Rename Asset", srcPath, dst, isDir);
+    return dst;
+}
+
+namespace {
+
+// パス群をごみ箱へ移動する (FOF_ALLOWUNDO、M51i)。IFileOperation を使う —
+// SHFileOperationW (ProjectManager) と違い長パスに強く、複数項目 (本体 + .meta) を
+// 1 操作に束ねられる (ごみ箱の「元に戻す」も 1 回で済む)。
+// エディタ main スレッドは COM 未初期化なので都度初期化する。既に別モデルで初期化済み
+// (RPC_E_CHANGED_MODE) ならそのまま続行し、対応する Uninitialize もしない
+bool RecycleToBin(const std::vector<std::wstring>& paths)
+{
+    if (paths.empty()) {
+        return true;
+    }
+    const HRESULT co =
+        CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+    bool ok = false;
+    {
+        Microsoft::WRL::ComPtr<IFileOperation> op;
+        if (SUCCEEDED(CoCreateInstance(CLSID_FileOperation, nullptr, CLSCTX_ALL,
+                                       IID_PPV_ARGS(&op)))) {
+            // ヘッドレス (selftest) でも止まらないよう確認/エラー UI は全部抑止する
+            op->SetOperationFlags(FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT
+                                  | FOF_NOERRORUI);
+            bool queued = false;
+            for (const std::wstring& p : paths) {
+                Microsoft::WRL::ComPtr<IShellItem> item;
+                if (SUCCEEDED(SHCreateItemFromParsingName(p.c_str(), nullptr,
+                                                          IID_PPV_ARGS(&item)))) {
+                    queued = SUCCEEDED(op->DeleteItem(item.Get(), nullptr)) || queued;
+                }
+            }
+            if (queued && SUCCEEDED(op->PerformOperations())) {
+                BOOL aborted = FALSE;
+                op->GetAnyOperationsAborted(&aborted);
+                ok = !aborted;
+            }
+        }
+    } // ComPtr は CoUninitialize より先に解放する
+    if (co == S_OK || co == S_FALSE) {
+        CoUninitialize();
+    }
+    return ok;
+}
+
+// 複製の実体 (DuplicateAsset と redo が共用、M51i)。**旧 .meta はコピーしない** —
+// 複製物には新パスのパスハッシュで新規 GUID を発行する
+bool CopyForDuplicate(EngineContext& ctx, const std::wstring& src, const std::wstring& dst,
+                      bool isDir)
+{
+    std::error_code ec;
+    if (isDir) {
+        ImportResult r;
+        CopyDirRecursive(ctx, src, dst, r); // .meta 除外コピー + 1 ファイルずつ新 GUID 登録
+        return r.failed == 0;
+    }
+    if (!fs::copy_file(src, dst, ec) || ec) {
+        MYE_LOG_ERROR(Tr(StrId::Log_ImportCopyFail), WideToUtf8(src).c_str(),
+                      ec.message().c_str());
+        return false;
+    }
+    // 宛先に孤児 .meta (消えたファイルの残骸) があると EnsureMeta が旧 GUID を「尊重」して
+    // 継いでしまう — 死んだ参照が複製物に着地するので、必ず先に除去してから発行する
+    fs::remove(dst + L".meta", ec);
+    RegisterImported(ctx, dst); // 新パスハッシュ GUID の .meta 発行 + 実行時テーブル反映
+    return true;
+}
+
+} // namespace
+
+bool DeleteAssetToRecycleBin(EngineContext& ctx, const std::wstring& path)
+{
+    std::error_code ec;
+    if (!fs::exists(path, ec) || AssetDatabase::IsMetaPath(path)) {
+        return false;
+    }
+    std::vector<std::wstring> targets{ path };
+    if (!fs::is_directory(path, ec)) {
+        const std::wstring meta = path + L".meta";
+        if (fs::exists(meta, ec)) {
+            targets.push_back(meta); // GUID サイドカーも同伴 (孤児 .meta を残さない)
+        }
+    } // フォルダは配下の .meta ごと 1 項目で移動する
+    if (!RecycleToBin(targets)) {
+        MYE_LOG_ERROR(Tr(StrId::Log_DeleteFail), WideToUtf8(path).c_str());
+        return false;
+    }
+    if (ctx.assetDb) {
+        // 旧キーの除去だけが起きる — 新パス (= 同じパス) はもう存在しないので
+        // MoveAsset の再登録フェーズは何もしない
+        ctx.assetDb->MoveAsset(path, path);
+    }
+    MYE_LOG_INFO(Tr(StrId::Log_DeletedToBin), WideToUtf8(path).c_str());
+    return true;
+}
+
+std::wstring DuplicateAsset(EngineContext& ctx, const std::wstring& srcPath, UndoStack* undo)
+{
+    std::error_code ec;
+    const fs::path src{ srcPath };
+    if (!fs::exists(src, ec) || AssetDatabase::IsMetaPath(srcPath)) {
+        return {};
+    }
+    const bool isDir = fs::is_directory(src, ec);
+    const std::wstring dst =
+        MakeUniquePath(src.parent_path().wstring(), src.filename().wstring(), isDir);
+    if (!CopyForDuplicate(ctx, srcPath, dst, isDir)) {
+        return {};
+    }
+    if (undo) {
+        UndoFileOp op;
+        op.kind = UndoFileOp::Kind::Duplicate;
+        op.pathA = srcPath;
+        op.pathB = dst;
+        op.isDir = isDir;
+        undo->PushFileOp("Duplicate Asset", std::move(op));
+    }
+    MYE_LOG_INFO(Tr(StrId::Log_Duplicated), WideToUtf8(srcPath).c_str(),
+                 WideToUtf8(dst).c_str());
+    return dst;
+}
+
+void RecordAssetCreated(UndoStack& undo, const std::wstring& path)
+{
+    std::error_code ec;
+    if (path.empty() || !fs::exists(path, ec)) {
+        return;
+    }
+    UndoFileOp op;
+    op.kind = UndoFileOp::Kind::Create;
+    op.pathB = path;
+    op.isDir = fs::is_directory(path, ec);
+    if (!op.isDir) {
+        // redo 用の内容スナップショット (Create 直後の小さな JSON 雛形)
+        std::ifstream f{ fs::path(path), std::ios::binary };
+        op.bytes.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+    }
+    undo.PushFileOp("Create Asset", std::move(op));
+}
+
+// UndoStack のファイル操作エントリ実行部 (M51i)。宣言は UndoStack.h。
+// 「逆操作先消滅時は WARN + no-op」— Explorer 側でファイルが動いた後の Undo で
+// 何かを上書きしたり例外で落ちたりしないことを最優先にする
+bool ExecuteAssetFileOp(EngineContext* ctx, const UndoFileOp& op, bool redo)
+{
+    if (!ctx) {
+        MYE_LOG_WARN("asset file op skipped: no engine context (SetFileOpContext missing)");
+        return false;
+    }
+    std::error_code ec;
+    switch (op.kind) {
+    case UndoFileOp::Kind::Relocate: {
+        const std::wstring& from = redo ? op.pathA : op.pathB;
+        const std::wstring& to = redo ? op.pathB : op.pathA;
+        if (!fs::exists(from, ec)) {
+            MYE_LOG_WARN(Tr(StrId::Log_UndoTargetGone), WideToUtf8(from).c_str());
+            return false;
+        }
+        if (fs::exists(to, ec)) {
+            MYE_LOG_WARN(Tr(StrId::Log_UndoDestBlocked), WideToUtf8(to).c_str());
+            return false;
+        }
+        return PerformAssetRelocate(*ctx, from, to, op.isDir);
+    }
+    case UndoFileOp::Kind::Duplicate:
+        if (!redo) {
+            if (!fs::exists(op.pathB, ec)) {
+                MYE_LOG_WARN(Tr(StrId::Log_UndoTargetGone), WideToUtf8(op.pathB).c_str());
+                return false;
+            }
+            return DeleteAssetToRecycleBin(*ctx, op.pathB); // 複製物をごみ箱へ
+        }
+        if (!fs::exists(op.pathA, ec)) {
+            MYE_LOG_WARN(Tr(StrId::Log_UndoTargetGone), WideToUtf8(op.pathA).c_str());
+            return false;
+        }
+        if (fs::exists(op.pathB, ec)) {
+            MYE_LOG_WARN(Tr(StrId::Log_UndoDestBlocked), WideToUtf8(op.pathB).c_str());
+            return false;
+        }
+        // 再複製。GUID は新パスのパスハッシュで再発行 = undo 前と同じ値に戻る (パス不変)
+        return CopyForDuplicate(*ctx, op.pathA, op.pathB, op.isDir);
+    case UndoFileOp::Kind::Create:
+        if (!redo) {
+            if (!fs::exists(op.pathB, ec)) {
+                MYE_LOG_WARN(Tr(StrId::Log_UndoTargetGone), WideToUtf8(op.pathB).c_str());
+                return false;
+            }
+            return DeleteAssetToRecycleBin(*ctx, op.pathB); // 生成物をごみ箱へ
+        }
+        if (fs::exists(op.pathB, ec)) {
+            MYE_LOG_WARN(Tr(StrId::Log_UndoDestBlocked), WideToUtf8(op.pathB).c_str());
+            return false;
+        }
+        if (op.isDir) {
+            return fs::create_directories(op.pathB, ec) && !ec;
+        }
+        {
+            // 内容スナップショットを書き戻すだけ。ライブラリ登録 (anims 等) はしない —
+            // 参照時の LoadFromFile で遅延解決される。.meta も作らない (元の Create も
+            // 作っておらず、次回スキャン / GuidForPath が同じパスハッシュ GUID を発行する)
+            std::ofstream f{ fs::path(op.pathB), std::ios::binary };
+            if (!f) {
+                MYE_LOG_ERROR(Tr(StrId::Log_WriteFail), WideToUtf8(op.pathB).c_str());
+                return false;
+            }
+            f.write(op.bytes.data(), static_cast<std::streamsize>(op.bytes.size()));
+            return true;
+        }
+    case UndoFileOp::Kind::None:
+    default:
+        return false;
+    }
 }
 
 void InstantiateAssetAtPath(EngineContext& ctx, Selection& selection, UndoStack& undo,

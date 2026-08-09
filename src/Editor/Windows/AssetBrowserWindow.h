@@ -56,7 +56,8 @@ public:
 
 private:
     void DrawDirTree(EngineContext& ctx, const std::wstring& dir);
-    void DoCreate(EngineContext& ctx, const std::string& externalEditorCmd); // 命名モーダルの確定処理
+    // 命名モーダルの確定処理 (M51i: Create Undo 記録のため undo を受ける)
+    void DoCreate(EngineContext& ctx, UndoStack& undo, const std::string& externalEditorCmd);
     // リネームモーダルを開く準備 (createName_ に現在の stem をプリフィル、M30d)
     void BeginRename(const std::wstring& path);
 
@@ -74,6 +75,14 @@ private:
     std::wstring pendingImportPath_;
     importmeta::TextureImportSettings importEdit_;
     bool requestImportModal_ = false;
+    // 削除 (M51i)。対象パスを保持し確認モーダルの確定で DeleteAssetToRecycleBin を呼ぶ
+    std::wstring pendingDeletePath_;
+    bool requestDeleteModal_ = false;
+    // 複製 (M51i)。実行はフレーム末 (D&D 移動と同じ fs 変更の集約点)
+    std::wstring pendingDuplicatePath_;
+    // 検索 + 型フィルタ (M51i)。どちらかが有効な間は current_ 以下の再帰検索モードになる
+    char searchBuf_[96] = {};
+    int typeFilterIdx_ = 0; // kTypeFilters の添字 (0 = すべて)
     bool init_ = false;
     int pendingCreate_ = 0;     // Create モーダルで作る種別 (0=なし)
     bool requestModal_ = false; // 次フレームで命名モーダルを開く

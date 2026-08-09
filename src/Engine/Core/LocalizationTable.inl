@@ -403,6 +403,24 @@ MYE_STR(Asset_TipCompileCs,   "Compile the C# scripts (assets\\scripts\\*.cs) in
                               "C# スクリプト (assets\\scripts\\*.cs) をエンジン内でコンパイル (Roslyn)")
 MYE_STR(Asset_NameField,      "Name",                "名前")
 
+// ---- アセットブラウザ M51i (検索 / 型フィルタ / 削除 / 複製) ----
+MYE_STR(Asset_DuplicateItem,  "Duplicate",           "複製")
+MYE_STR(Asset_SearchHint,     "Search (subfolders included)", "検索 (サブフォルダ含む)")
+MYE_STR(Asset_FilterAll,      "All types",           "すべての種類")
+MYE_STR(Asset_ClearFilter,    "Clear",               "解除")
+MYE_STR(Asset_TrashNote,      "It is moved to the Recycle Bin (recoverable).",
+                              "ごみ箱へ移動します (元に戻せます)。")
+MYE_STR(Asset_DeleteMsg,      "Delete \"%s\"",       "\"%s\" を削除します")
+MYE_STR(Popup_DeleteAsset,    "Delete Asset###DeleteAsset", "アセットを削除###DeleteAsset")
+MYE_STR(Type_Texture,         "Texture",             "テクスチャ")
+MYE_STR(Type_Model,           "Model",               "モデル")
+MYE_STR(Type_Prefab,          "Prefab",              "プレハブ")
+MYE_STR(Type_Controller,      "Animator Controller", "アニメーターコントローラー")
+MYE_STR(Type_Audio,           "Audio File (wav/ogg)", "音声ファイル (wav/ogg)")
+MYE_STR(Type_Script,          "Script",              "スクリプト")
+MYE_STR(Type_Shader,          "Shader",              "シェーダー")
+MYE_STR(Type_Schema,          "Component Schema",    "コンポーネントスキーマ")
+
 // ---- プロジェクトマネージャ / Hub (M47b) ----
 MYE_STR(Hub_Title,            "MyEngine Hub",              "MyEngine Hub")
 MYE_STR(Hub_NewProject,       "New project",               "新規プロジェクト")
@@ -657,6 +675,16 @@ MYE_STR(Log_MoveSelf,         "[assets] cannot move folder into itself: %s",
                               "[assets] フォルダを自分自身の中へは移動できません: %s")
 MYE_STR(Log_RenameInvalid,    "[assets] rename: invalid name: %s",
                               "[assets] 名前の変更: 使えない名前です: %s")
+MYE_STR(Log_DeletedToBin,     "[assets] moved to recycle bin: %s",
+                              "[assets] ごみ箱へ移動しました: %s")
+MYE_STR(Log_DeleteFail,       "[assets] delete failed: %s",
+                              "[assets] 削除に失敗しました: %s")
+MYE_STR(Log_Duplicated,       "[assets] duplicated: %s -> %s",
+                              "[assets] 複製しました: %s -> %s")
+MYE_STR(Log_UndoTargetGone,   "[assets] undo/redo skipped (file is gone): %s",
+                              "[assets] 取り消し/やり直しをスキップしました (ファイルがありません): %s")
+MYE_STR(Log_UndoDestBlocked,  "[assets] undo/redo skipped (destination already exists): %s",
+                              "[assets] 取り消し/やり直しをスキップしました (移動先が既に存在します): %s")
 MYE_STR(Log_PlaceNoSound,     "placed AudioSource but could not resolve a sound asset: %s",
                               "AudioSource は置きましたが、サウンドアセットを解決できませんでした: %s")
 MYE_STR(Log_PlaceUnsupported, "cannot place asset (drag a prefab, model, image, or sound): %s",

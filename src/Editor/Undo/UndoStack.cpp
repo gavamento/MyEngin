@@ -118,6 +118,19 @@ void UndoStack::CancelRecord()
     pending_ = Entry{};
 }
 
+void UndoStack::PushFileOp(const char* label, UndoFileOp op)
+{
+    Entry e;
+    e.label = label ? label : "File Op";
+    e.fileOp = std::move(op);
+    // serial は現状態を継承 — ファイル操作はシーン状態を変えないので、これを新規採番すると
+    // 保存済みシーンが偽 dirty (未保存確認モーダル) になる。session は既定の 0 のまま
+    // (Play 停止でディスクは巻き戻らない = EndPlaySession の破棄対象にしない)
+    e.serial = StateSerial();
+    undo_.push_back(std::move(e));
+    redo_.clear();
+}
+
 void UndoStack::ApplyStep(Scene& scene, Selection& sel, const json& payload,
                           const std::vector<uint64_t>& destroyFirst,
                           const std::vector<uint64_t>& selIds, uint64_t primary)
@@ -143,8 +156,14 @@ void UndoStack::Undo(Scene& scene, Selection& sel)
     }
     Entry e = std::move(undo_.back());
     undo_.pop_back();
-    // op が生成したものを破棄してから before を適用 (= op 前の状態へ)
-    ApplyStep(scene, sel, e.before, e.createdIds, e.selBefore, e.primaryBefore);
+    if (e.fileOp.kind != UndoFileOp::Kind::None) {
+        // ファイル操作エントリ (M51i)。失敗 (逆操作先消滅 = WARN 済み no-op) でも
+        // redo 側へ送る — 死んだエントリで Ctrl+Z が詰まらないようにする
+        ExecuteAssetFileOp(fileOpCtx_, e.fileOp, /*redo=*/false);
+    } else {
+        // op が生成したものを破棄してから before を適用 (= op 前の状態へ)
+        ApplyStep(scene, sel, e.before, e.createdIds, e.selBefore, e.primaryBefore);
+    }
     redo_.push_back(std::move(e));
 }
 
@@ -155,8 +174,12 @@ void UndoStack::Redo(Scene& scene, Selection& sel)
     }
     Entry e = std::move(redo_.back());
     redo_.pop_back();
-    // op が破棄したものを破棄してから after を適用 (= op 後の状態へ)
-    ApplyStep(scene, sel, e.after, e.destroyedIds, e.selAfter, e.primaryAfter);
+    if (e.fileOp.kind != UndoFileOp::Kind::None) {
+        ExecuteAssetFileOp(fileOpCtx_, e.fileOp, /*redo=*/true); // 順操作の再適用 (M51i)
+    } else {
+        // op が破棄したものを破棄してから after を適用 (= op 後の状態へ)
+        ApplyStep(scene, sel, e.after, e.destroyedIds, e.selAfter, e.primaryAfter);
+    }
     undo_.push_back(std::move(e));
 }
 

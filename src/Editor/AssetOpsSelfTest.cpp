@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <system_error>
 
 #include "Editor/AssetOps.h"
@@ -176,6 +177,111 @@ bool RunAssetOpsSelfTest()
         UndoStack undo;
         check(!AttachScriptToEntity(ctx, sel, undo, L"model.glb", kNullEntity),
               "AttachScriptToEntity rejects non-.cs payload (guard, no scene deref)");
+    }
+
+    // ---- (8) M51i: Duplicate = 連番 + 新 GUID / Delete = ごみ箱 / ファイル操作 Undo ----
+    {
+        const fs::path r2 = fs::temp_directory_path(ec) / L"mye_assetops_selftest_m51i";
+        fs::remove_all(r2, ec);
+        fs::create_directories(r2, ec);
+        Scene scene; // ファイル操作エントリは Scene に触れない (Undo 呼び出しのダミー)
+        Selection sel;
+        UndoStack undo;
+        undo.SetFileOpContext(&ctx);
+
+        // Duplicate: 連番命名 + 新 GUID 発行 (本体コピー・旧 .meta 非コピー)
+        const fs::path hero = r2 / L"hero.png";
+        WriteDummy(hero);
+        const uint64_t srcGuid = AssetDatabase::EnsureMeta(hero.wstring());
+        const std::wstring dup = DuplicateAsset(ctx, hero.wstring(), &undo);
+        check(dup == (r2 / L"hero (1).png").wstring(), "duplicate numbers the copy");
+        check(fs::exists(dup, ec) && fs::exists(dup + L".meta", ec),
+              "duplicate writes the body and issues a sidecar .meta");
+        AssetMeta dm;
+        check(AssetDatabase::ReadMeta(dup + L".meta", dm) && dm.guid != 0 && dm.guid != srcGuid,
+              "duplicate gets a fresh GUID (old .meta is not copied)");
+
+        // 複合サフィックスも連番で維持される
+        const fs::path unit = r2 / L"unit.actor.json";
+        WriteDummy(unit);
+        check(DuplicateAsset(ctx, unit.wstring(), nullptr)
+                  == (r2 / L"unit (1).actor.json").wstring(),
+              "duplicate keeps the compound suffix while numbering");
+
+        // 宛先に孤児 .meta が残っていても旧 GUID を継がない (先に除去して新規発行)
+        AssetMeta stale;
+        stale.guid = 0xDEADBEEFDEADBEEFull;
+        stale.type = AssetType::Texture;
+        AssetDatabase::WriteMeta((r2 / L"hero (2).png.meta").wstring(), stale);
+        const std::wstring dup2 = DuplicateAsset(ctx, hero.wstring(), nullptr);
+        AssetMeta dm2;
+        check(dup2 == (r2 / L"hero (2).png").wstring()
+                  && AssetDatabase::ReadMeta(dup2 + L".meta", dm2) && dm2.guid != stale.guid,
+              "duplicate does not inherit a stale orphan .meta GUID");
+
+        // Duplicate の Undo/Redo (undo = ごみ箱へ / redo = 再複製で同じパスハッシュ GUID)
+        const uint64_t serial0 = undo.StateSerial();
+        undo.Undo(scene, sel);
+        check(!fs::exists(dup, ec) && !fs::exists(dup + L".meta", ec),
+              "undo duplicate recycles the copy together with its .meta");
+        undo.Redo(scene, sel);
+        AssetMeta dm3;
+        check(fs::exists(dup, ec) && AssetDatabase::ReadMeta(dup + L".meta", dm3)
+                  && dm3.guid == dm.guid,
+              "redo duplicate re-copies and re-issues the same path-hash GUID");
+        check(undo.StateSerial() == serial0,
+              "file op entries do not disturb the scene dirty serial");
+
+        // Rename の Undo/Redo (Relocate の往復 + .meta 同伴)
+        const std::wstring renamed = RenameAsset(ctx, dup, "clone", &undo);
+        check(renamed == (r2 / L"clone.png").wstring(), "rename with undo recording works");
+        undo.Undo(scene, sel);
+        check(fs::exists(dup, ec) && fs::exists(dup + L".meta", ec) && !fs::exists(renamed, ec),
+              "undo rename moves the file (and .meta) back");
+        undo.Redo(scene, sel);
+        check(fs::exists(renamed, ec) && !fs::exists(dup, ec),
+              "redo rename applies the forward relocate again");
+
+        // 逆操作先の消滅は WARN + no-op (何も上書きせず、落ちない)
+        fs::remove(renamed, ec);
+        fs::remove(renamed + L".meta", ec);
+        undo.Undo(scene, sel); // clone.png はもう居ない
+        check(!fs::exists(dup, ec) && !fs::exists(renamed, ec),
+              "undo with a missing target is a safe no-op");
+
+        // Create の Undo/Redo (undo = ごみ箱へ / redo = 内容の書き戻し)
+        const std::wstring made = CreateActorAsset(ctx, r2.wstring(), "UndoActor");
+        std::string bytes0;
+        {
+            std::ifstream f{ fs::path(made), std::ios::binary };
+            bytes0.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+        }
+        RecordAssetCreated(undo, made);
+        undo.Undo(scene, sel);
+        check(!fs::exists(made, ec), "undo create recycles the created asset");
+        undo.Redo(scene, sel);
+        std::string bytes1;
+        {
+            std::ifstream f{ fs::path(made), std::ios::binary };
+            bytes1.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+        }
+        check(fs::exists(made, ec) && bytes0 == bytes1 && !bytes0.empty(),
+              "redo create restores the exact original content");
+
+        // Delete: 本体 + .meta がごみ箱へ / フォルダは配下ごと / 不在は静かに失敗
+        check(DeleteAssetToRecycleBin(ctx, hero.wstring()) && !fs::exists(hero, ec)
+                  && !fs::exists(hero.wstring() + L".meta", ec),
+              "delete moves the asset and its .meta to the recycle bin");
+        const fs::path delDir = r2 / L"deldir";
+        fs::create_directories(delDir, ec);
+        WriteDummy(delDir / L"a.png");
+        AssetDatabase::EnsureMeta((delDir / L"a.png").wstring());
+        check(DeleteAssetToRecycleBin(ctx, delDir.wstring()) && !fs::exists(delDir, ec),
+              "delete recycles a folder recursively");
+        check(!DeleteAssetToRecycleBin(ctx, (r2 / L"nope.png").wstring()),
+              "delete of a missing path fails gracefully");
+
+        fs::remove_all(r2, ec);
     }
 
     if (failCount == 0) {

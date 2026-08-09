@@ -25,7 +25,8 @@ std::string SanitizeFileName(const std::string& in, const char* fallback);
 std::wstring MakeUniqueAssetPath(const std::wstring& destDir, const std::wstring& filename);
 
 // ---- アセット新規作成 (AssetBrowser の右クリック Create) ----
-bool CreateFolderAsset(const std::wstring& dir, const std::string& name);
+// M51i: 戻り値を作成パスに変更 (Create Undo 記録のため。失敗は空)
+std::wstring CreateFolderAsset(const std::wstring& dir, const std::string& name);
 std::wstring CreateSceneAsset(const std::wstring& dir, const std::string& name);   // .scene.json (空)
 std::wstring CreateAnimationAsset(EngineContext& ctx, const std::wstring& dir,
                                   const std::string& name);                        // .anim.json
@@ -59,17 +60,39 @@ ImportResult ImportExternalPaths(EngineContext& ctx, const std::vector<std::wstr
 // srcPath (ファイル or フォルダ) を destDir 直下へ移動する。**.meta を同伴移動** して GUID を
 // 永続させ (インポートと違い外部由来でないので安全)、ctx.assetDb の実行時テーブルも更新する。
 // 同一フォルダ / 自己・子孫への移動 / .meta 直接指定は無視。同名衝突は " (1)" 連番。
-// 戻り値: 移動後の絶対パス (無視/失敗は空)
+// undo 非 null なら Relocate エントリを積む (M51i)。戻り値: 移動後の絶対パス (無視/失敗は空)
 std::wstring MoveAssetToFolder(EngineContext& ctx, const std::wstring& srcPath,
-                               const std::wstring& destDir);
+                               const std::wstring& destDir, UndoStack* undo = nullptr);
 
 // ---- アセットリネーム (右クリック → Rename、M30d) ----
 // srcPath を同じフォルダ内で newName にリネームする。ファイルは拡張子/複合サフィックス
 // (.prefab.json 等) を維持し newName は stem のみ (Unity 同様)。.meta を同伴リネームして
 // GUID を永続させ (= シーン参照維持)、ctx.assetDb のテーブルも更新する。
-// 不正文字 (\/:*?"<>|) は拒否。同名衝突は " (1)" 連番。戻り値: 新パス (無視/失敗は空)
+// 不正文字 (\/:*?"<>|) は拒否。同名衝突は " (1)" 連番。
+// undo 非 null なら Relocate エントリを積む (M51i)。戻り値: 新パス (無視/失敗は空)
 std::wstring RenameAsset(EngineContext& ctx, const std::wstring& srcPath,
-                         const std::string& newName);
+                         const std::string& newName, UndoStack* undo = nullptr);
+
+// ---- アセット削除 (M51i) ----
+// path (ファイル or フォルダ) を **ごみ箱** へ移動する (IFileOperation + FOF_ALLOWUNDO)。
+// ファイルは .meta を同伴し、フォルダは配下ごと。ctx.assetDb の実行時テーブルからも除去する。
+// UndoStack には積まない — 復元手段はごみ箱 (OS の「元に戻す」→ エディタ再起動の再走査で復活)
+bool DeleteAssetToRecycleBin(EngineContext& ctx, const std::wstring& path);
+
+// ---- アセット複製 (M51i、Ctrl+D) ----
+// srcPath を同じフォルダ内へ "name (1).ext" 連番でコピーする。**旧 .meta はコピーしない** —
+// 新パスのパスハッシュで新規 GUID を発行する (GUID の複製は byGuid_ の後勝ち上書きで
+// 既存シーン参照が複製物へ張り替わる事故になる)。フォルダは配下を再帰コピー
+// (.meta 除外 = 全ファイル新 GUID)。undo 非 null なら Duplicate エントリを積む。
+// 戻り値: 複製先の絶対パス (失敗は空)
+std::wstring DuplicateAsset(EngineContext& ctx, const std::wstring& srcPath,
+                            UndoStack* undo = nullptr);
+
+// ---- Create の Undo 記録 (M51i) ----
+// 生成直後のアセットを Create エントリとして積む (undo = ごみ箱へ / redo = 内容を書き戻す)。
+// Create* の署名は変えない — InstantiateAssetAtPath 内部の CreateSoundAsset (シーン Undo
+// エントリの一部) を独立エントリに割らないため、記録は AssetBrowser の Create 経路だけが行う
+void RecordAssetCreated(UndoStack& undo, const std::wstring& path);
 
 // 複合サフィックス (.scene.json 等) を保ったままファイル名を stem/suffix に分割する
 // (リネーム UI のプリフィル用に公開。実装は ImportExternalPaths と共用)

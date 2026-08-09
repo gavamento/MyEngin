@@ -10,6 +10,25 @@ namespace mye {
 class Scene;
 class PrefabLibrary;
 struct Selection;
+struct EngineContext;
+
+// アセットファイル操作の Undo エントリ (M51i)。シーン編集と同じスタックに積まれ、
+// Undo/Redo は Scene ではなくディスクへ逆/順操作を適用する。
+//   Relocate  = Rename / Move (undo: pathB→pathA、redo: pathA→pathB)
+//   Duplicate = 複製          (undo: pathB をごみ箱へ、redo: pathA から再複製 + 新 GUID)
+//   Create    = 新規作成      (undo: pathB をごみ箱へ、redo: bytes を書き戻す)
+struct UndoFileOp {
+    enum class Kind : uint8_t { None, Relocate, Duplicate, Create };
+    Kind kind = Kind::None;
+    std::wstring pathA; // Relocate: 移動前 / Duplicate: 複製元 (Create では未使用)
+    std::wstring pathB; // Relocate: 移動後 / Duplicate・Create: 生成物
+    std::string bytes;  // Create (ファイルのみ): redo で書き戻す内容スナップショット
+    bool isDir = false;
+};
+
+// UndoFileOp の実行部。実装は AssetOps.cpp (fs 操作 + assetDb テーブル更新の集約先)。
+// 逆操作先が消滅している / 宛先が塞がっている場合は WARN + no-op (false を返す)
+bool ExecuteAssetFileOp(EngineContext* ctx, const UndoFileOp& op, bool redo);
 
 // エディタの Undo/Redo スタック (M8)。
 //
@@ -33,6 +52,16 @@ public:
     // プレハブ override リストの記録に使うライブラリ (M48e)。EditorApp が起動時に一度設定する。
     // **未設定なら override の記録だけを飛ばす** — Undo 自体は従来どおり動く
     void SetPrefabLibrary(const PrefabLibrary* lib) { prefabs_ = lib; }
+
+    // ファイル操作エントリの実行に使うコンテキスト (assetDb テーブル更新、M51i)。
+    // EditorApp が OnImGui 冒頭で毎フレーム設定する (未設定なら実行時 WARN + no-op)
+    void SetFileOpContext(EngineContext* ctx) { fileOpCtx_ = ctx; }
+
+    // ファイル操作 (Rename/Move/Duplicate/Create) を 1 エントリとして積む (M51i)。
+    // serial は現状態を継承する — ディスク操作はシーンを変えないため dirty 判定
+    // (StateSerial) を汚さない。session も常に 0 のまま — Play 停止はディスクを
+    // 巻き戻さないので、EndPlaySession の一括破棄から外して Undo 手段を残す
+    void PushFileOp(const char* label, UndoFileOp op);
 
     // ---- 記録 ----
     void BeginRecord(const char* label, const Selection& selBefore);
@@ -74,6 +103,7 @@ private:
         uint64_t primaryBefore = 0, primaryAfter = 0;
         uint32_t session = 0;
         uint64_t serial = 0; // push 時に採番される状態 ID (StateSerial 用)
+        UndoFileOp fileOp;   // kind != None ならファイル操作エントリ (before/after は空、M51i)
     };
 
     static void ApplyStep(Scene& scene, Selection& sel, const nlohmann::json& payload,
@@ -94,6 +124,7 @@ private:
     uint64_t baseSerial_ = 0;    // スタックが空のときの状態 ID
 
     const PrefabLibrary* prefabs_ = nullptr; // override リスト記録用 (M48e)
+    EngineContext* fileOpCtx_ = nullptr;     // ファイル操作エントリ実行用 (M51i)
 };
 
 } // namespace mye

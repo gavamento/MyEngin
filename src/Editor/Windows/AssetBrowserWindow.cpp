@@ -53,6 +53,29 @@ enum CreateKind {
     kCreateActor
 };
 
+// 型フィルタのコンボ内容 (M51i)。先頭 = フィルタなし (Unknown を「すべて」に転用)
+struct TypeFilterEntry {
+    AssetType type;
+    StrId label;
+};
+constexpr TypeFilterEntry kTypeFilters[] = {
+    { AssetType::Unknown, StrId::Asset_FilterAll },
+    { AssetType::Texture, StrId::Type_Texture },
+    { AssetType::Model, StrId::Type_Model },
+    { AssetType::Material, StrId::Asset_MaterialItem },
+    { AssetType::Prefab, StrId::Type_Prefab },
+    { AssetType::Actor, StrId::Asset_Actor },
+    { AssetType::Anim, StrId::Asset_AnimationClip },
+    { AssetType::Controller, StrId::Type_Controller },
+    { AssetType::Scene, StrId::Asset_Scene },
+    { AssetType::Audio, StrId::Type_Audio },
+    { AssetType::Sound, StrId::Asset_Sound },
+    { AssetType::Mixer, StrId::Asset_Mixer },
+    { AssetType::Script, StrId::Type_Script },
+    { AssetType::Shader, StrId::Type_Shader },
+    { AssetType::Schema, StrId::Type_Schema },
+};
+
 const char* IconFor(const std::wstring& ext)
 {
     if (ext == L".hlsl" || ext == L".hlsli") {
@@ -218,6 +241,24 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
         init_ = true;
     }
 
+    // ---- キーボード (M51i): 選択中アセットへ Delete / Ctrl+D ----
+    // パネル (子ウィンドウ含む) がフォーカスされている間だけ。エンティティ側の
+    // Delete / Ctrl+D (EditorApp::HandleShortcuts) とは選択の排他 (M40c) で二重発火しない。
+    // チョードは ShortcutHub の Delete / Duplicate と同じ割り当て
+    if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)
+        && !ImGui::GetIO().WantTextInput && selection.HasAsset()) {
+        std::error_code kec;
+        if (fs::exists(selection.assetPath, kec)) {
+            if (ImGui::IsKeyPressed(ImGuiKey_Delete, false)) {
+                pendingDeletePath_ = selection.assetPath;
+                requestDeleteModal_ = true;
+            }
+            if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_D)) {
+                pendingDuplicatePath_ = selection.assetPath;
+            }
+        }
+    }
+
     // ---- 左: フォルダツリー ----
     ImGui::BeginChild("##dirtree", ImVec2(170, 0), ImGuiChildFlags_Borders);
     ImGuiTreeNodeFlags rootFlags = ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAvailWidth;
@@ -298,20 +339,70 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
             current_ = navTo;
         }
     }
+    // ---- 検索 + 型フィルタ (M51i)。どちらかが有効な間は再帰検索モード ----
+    ImGui::SetNextItemWidth(220.0f);
+    ImGui::InputTextWithHint("##assetsearch", Tr(StrId::Asset_SearchHint), searchBuf_,
+                             sizeof(searchBuf_));
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(170.0f);
+    if (ImGui::BeginCombo("##assettype", Tr(kTypeFilters[typeFilterIdx_].label))) {
+        for (int t = 0; t < static_cast<int>(IM_ARRAYSIZE(kTypeFilters)); ++t) {
+            if (ImGui::Selectable(Tr(kTypeFilters[t].label), t == typeFilterIdx_)) {
+                typeFilterIdx_ = t;
+            }
+        }
+        ImGui::EndCombo();
+    }
+    if (searchBuf_[0] != '\0' || typeFilterIdx_ != 0) {
+        ImGui::SameLine();
+        if (ImGui::SmallButton(Tr(StrId::Asset_ClearFilter))) {
+            searchBuf_[0] = '\0';
+            typeFilterIdx_ = 0;
+        }
+    }
     ImGui::Separator();
 
     constexpr float kCell = 88.0f;
     const int cols = std::max(1, static_cast<int>(ImGui::GetContentRegionAvail().x / (kCell + 12.0f)));
 
     // ---- エントリ収集 (M30a): フォルダ → ファイルの順、それぞれ名前昇順で安定表示 ----
+    // M51i: 検索/型フィルタ中は current_ 以下の再帰列挙 (ファイルのみ) に切り替わる
     std::error_code ec;
     std::vector<fs::path> dirEntries;
     std::vector<fs::path> fileEntries;
-    for (const auto& entry : fs::directory_iterator(current_, ec)) {
-        if (entry.is_directory()) {
-            dirEntries.push_back(entry.path());
-        } else if (entry.path().extension().wstring() != L".meta") {
-            fileEntries.push_back(entry.path()); // M23: GUID サイドカーは表示しない
+    const bool filtering = searchBuf_[0] != '\0' || typeFilterIdx_ != 0;
+    if (!filtering) {
+        for (const auto& entry : fs::directory_iterator(current_, ec)) {
+            if (entry.is_directory()) {
+                dirEntries.push_back(entry.path());
+            } else if (entry.path().extension().wstring() != L".meta") {
+                fileEntries.push_back(entry.path()); // M23: GUID サイドカーは表示しない
+            }
+        }
+    } else {
+        std::wstring query = Utf8ToWide(searchBuf_);
+        std::transform(query.begin(), query.end(), query.begin(), ::towlower);
+        for (const auto& entry : fs::recursive_directory_iterator(current_, ec)) {
+            if (!entry.is_regular_file(ec)) {
+                continue;
+            }
+            const fs::path& p = entry.path();
+            if (p.extension().wstring() == L".meta") {
+                continue;
+            }
+            if (typeFilterIdx_ != 0
+                && AssetDatabase::ClassifyPath(p.wstring())
+                       != kTypeFilters[typeFilterIdx_].type) {
+                continue;
+            }
+            if (!query.empty()) {
+                std::wstring name = p.filename().wstring();
+                std::transform(name.begin(), name.end(), name.begin(), ::towlower);
+                if (name.find(query) == std::wstring::npos) {
+                    continue;
+                }
+            }
+            fileEntries.push_back(p);
         }
     }
     auto nameLess = [](const fs::path& a, const fs::path& b) {
@@ -363,10 +454,17 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
             }
             ImGui::EndDragDropTarget();
         }
-        // 右クリック → Rename (M30d)
+        // 右クリック → Rename (M30d) / Duplicate / Delete (M51i)
         if (ImGui::BeginPopupContextItem("##folderctx")) {
             if (ImGui::MenuItem(Tr(StrId::Asset_RenameItem))) {
                 BeginRename(dirPath.wstring());
+            }
+            if (ImGui::MenuItem(Tr(StrId::Asset_DuplicateItem), "Ctrl+D")) {
+                pendingDuplicatePath_ = dirPath.wstring();
+            }
+            if (ImGui::MenuItem(Tr(StrId::Common_Delete), "Del")) {
+                pendingDeletePath_ = dirPath.wstring();
+                requestDeleteModal_ = true;
             }
             if (ImGui::MenuItem(Tr(StrId::Asset_ShowInExplorer))) {
                 ShellExecuteW(nullptr, L"open", dirPath.wstring().c_str(), nullptr, nullptr,
@@ -448,6 +546,12 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
                 dl->AddRect(mn, mx, IM_COL32(255, 255, 255, 96)); // 透明ボタンの代わりのホバー表示
             }
         }
+        // 再帰検索モードではどのサブフォルダの一致か分かるよう相対パスを添える (M51i)
+        if (filtering && ImGui::IsItemHovered()) {
+            std::error_code rec;
+            const fs::path rel = fs::relative(filePath, current_, rec);
+            ImGui::SetTooltip("%s", WideToUtf8((rec ? filePath : rel).wstring()).c_str());
+        }
         // ドラッグソース: パスをペイロードに (Hierarchy / SceneView が受け取り配置)
         if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_None)) {
             const std::string u = WideToUtf8(path);
@@ -455,10 +559,18 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
             ImGui::TextUnformatted(nameU.c_str());
             ImGui::EndDragDropSource();
         }
-        // 右クリックメニュー: Rename (M30d) + 画像なら Import Settings (M39b) / DDS 圧縮 (M24)
+        // 右クリックメニュー: Rename (M30d) + Duplicate/Delete (M51i)
+        // + 画像なら Import Settings (M39b) / DDS 圧縮 (M24)
         if (ImGui::BeginPopupContextItem("##filectx")) {
             if (ImGui::MenuItem(Tr(StrId::Asset_RenameItem))) {
                 BeginRename(path);
+            }
+            if (ImGui::MenuItem(Tr(StrId::Asset_DuplicateItem), "Ctrl+D")) {
+                pendingDuplicatePath_ = path;
+            }
+            if (ImGui::MenuItem(Tr(StrId::Common_Delete), "Del")) {
+                pendingDeletePath_ = path;
+                requestDeleteModal_ = true;
             }
             // M48k でダブルクリックが「編集モードで開く」に変わったので、旧来の
             // 「シーンへ配置」はここに残す (D&D 配置も従来どおり使える)
@@ -635,9 +747,18 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
 
     // ---- D&D 移動の実行 (M30b)。描画終了後にまとめて行う (directory_iterator 保護) ----
     if (!pendingMoveSrc_.empty()) {
-        MoveAssetToFolder(ctx, pendingMoveSrc_, pendingMoveDstDir_);
+        MoveAssetToFolder(ctx, pendingMoveSrc_, pendingMoveDstDir_, &undo); // M51i: Undo 記録
         pendingMoveSrc_.clear();
         pendingMoveDstDir_.clear();
+    }
+
+    // ---- 複製の実行 (M51i)。fs 変更はフレーム末にまとめる (D&D 移動と同じ理由) ----
+    if (!pendingDuplicatePath_.empty()) {
+        const std::wstring d = DuplicateAsset(ctx, pendingDuplicatePath_, &undo);
+        if (!d.empty()) {
+            selection.SelectAsset(d);
+        }
+        pendingDuplicatePath_.clear();
     }
 
     // ---- リネームモーダル (M30d) ----
@@ -654,7 +775,8 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
         ImGui::SameLine();
         const bool cancelRename = ImGui::Button(Tr(StrId::Common_Cancel), ImVec2(90, 0));
         if (doRename && createName_[0] != '\0') {
-            const std::wstring newPath = RenameAsset(ctx, pendingRenamePath_, createName_);
+            const std::wstring newPath =
+                RenameAsset(ctx, pendingRenamePath_, createName_, &undo); // M51i: Undo 記録
             if (!newPath.empty()) {
                 // 表示中フォルダがリネーム対象 (またはその配下) なら追従する
                 const std::wstring oldKey = NormalizePathKey(pendingRenamePath_);
@@ -671,6 +793,41 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
             ImGui::CloseCurrentPopup();
         } else if (cancelRename) {
             pendingRenamePath_.clear();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+
+    // ---- 削除確認モーダル (M51i): ごみ箱送り。UndoStack には積まない (復元手段はごみ箱) ----
+    if (requestDeleteModal_) {
+        ImGui::OpenPopup(Tr(StrId::Popup_DeleteAsset));
+        requestDeleteModal_ = false;
+    }
+    if (ImGui::BeginPopupModal(Tr(StrId::Popup_DeleteAsset), nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text(Tr(StrId::Asset_DeleteMsg),
+                    WideToUtf8(fs::path(pendingDeletePath_).filename().wstring()).c_str());
+        ImGui::TextDisabled("%s", WideToUtf8(pendingDeletePath_).c_str());
+        ImGui::TextUnformatted(Tr(StrId::Asset_TrashNote));
+        if (ImGui::Button(Tr(StrId::Common_Delete), ImVec2(90, 0))) {
+            if (DeleteAssetToRecycleBin(ctx, pendingDeletePath_)) {
+                // 消した本人 (またはその配下) を選択していたら解除する。
+                // 表示中フォルダが消えた場合はパンくず側のフォールバックが assets へ戻す
+                const std::wstring delKey = NormalizePathKey(pendingDeletePath_);
+                const std::wstring selKey = NormalizePathKey(selection.assetPath);
+                if (selKey == delKey
+                    || (selKey.size() > delKey.size()
+                        && selKey.compare(0, delKey.size(), delKey) == 0
+                        && selKey[delKey.size()] == L'\\')) {
+                    selection.Clear();
+                }
+            }
+            pendingDeletePath_.clear();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(Tr(StrId::Common_Cancel), ImVec2(90, 0))) {
+            pendingDeletePath_.clear();
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
@@ -730,7 +887,7 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
         ImGui::SameLine();
         const bool cancel = ImGui::Button(Tr(StrId::Common_Cancel), ImVec2(90, 0));
         if (create && createName_[0] != '\0') {
-            DoCreate(ctx, externalEditorCmd);
+            DoCreate(ctx, undo, externalEditorCmd);
             pendingCreate_ = 0;
             ImGui::CloseCurrentPopup();
         } else if (cancel) {
@@ -742,32 +899,36 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
     ImGui::End();
 }
 
-void AssetBrowserWindow::DoCreate(EngineContext& ctx, const std::string& externalEditorCmd)
+void AssetBrowserWindow::DoCreate(EngineContext& ctx, UndoStack& undo,
+                                  const std::string& externalEditorCmd)
 {
+    // アセット系 7 種は Create Undo を記録する (M51i: undo = ごみ箱へ / redo = 書き戻し)
     const std::string name = createName_;
     switch (pendingCreate_) {
     case kCreateFolder:
-        CreateFolderAsset(current_, name);
+        RecordAssetCreated(undo, CreateFolderAsset(current_, name));
         break;
     case kCreateScene:
-        CreateSceneAsset(current_, name);
+        RecordAssetCreated(undo, CreateSceneAsset(current_, name));
         break;
     case kCreateAnim:
-        CreateAnimationAsset(ctx, current_, name);
+        RecordAssetCreated(undo, CreateAnimationAsset(ctx, current_, name));
         break;
     case kCreateMaterial:
-        CreateMaterialAsset(ctx, current_, name);
+        RecordAssetCreated(undo, CreateMaterialAsset(ctx, current_, name));
         break;
     case kCreateActor:
-        CreateActorAsset(ctx, current_, name);
+        RecordAssetCreated(undo, CreateActorAsset(ctx, current_, name));
         break;
     case kCreateSound:
-        CreateSoundAsset(ctx, current_, name);
+        RecordAssetCreated(undo, CreateSoundAsset(ctx, current_, name));
         break;
     case kCreateMixer:
-        CreateMixerAsset(ctx, current_, name);
+        RecordAssetCreated(undo, CreateMixerAsset(ctx, current_, name));
         break;
     case kCreateScript: {
+        // スクリプトは Create Undo 対象外 — 既存ファイルなら「開くだけ」で返る経路と
+        // 区別できず、Undo が既存ソースをごみ箱送りにしてしまう
         const std::wstring p = CreateCppScript(ctx, name);
         if (!p.empty()) {
             OpenInExternalEditor(externalEditorCmd, p);
