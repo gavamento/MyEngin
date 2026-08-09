@@ -20,6 +20,7 @@ constexpr size_t kFixedHeaderSize = 40; // magic..srcContentHash
 
 std::wstring g_dir;
 bool g_enabled = false;
+bool g_sealed = false; // M51j: 配布ビルドの封印キャッシュ (kSealedMarker の有無で決まる)
 
 bool ReadWholeFile(const std::wstring& path, std::vector<uint8_t>& out)
 {
@@ -104,11 +105,24 @@ void Configure(const std::wstring& cookedDir, bool enabled)
 {
     g_dir = cookedDir;
     g_enabled = enabled && !cookedDir.empty();
+    std::error_code ec;
+    g_sealed = g_enabled
+        && std::filesystem::exists(cookedDir + L"\\" + kSealedMarker, ec);
+    if (g_sealed) {
+        // 配布ビルド (BuildSettings のパッケージ段がマーカーを書く)。ソース検証を跳ばして
+        // クック時の登録列をそのまま再生する — 詳細はヘッダの kSealedMarker コメント
+        MYE_LOG_INFO("[cook] sealed bundle detected - replaying cooked registrations as-is");
+    }
 }
 
 bool Enabled()
 {
     return g_enabled;
+}
+
+bool Sealed()
+{
+    return g_sealed;
 }
 
 const std::wstring& Dir()
@@ -159,26 +173,31 @@ bool ReadValidated(const std::wstring& srcPath, const wchar_t* ext,
         || guid != assetkey::Resolve(NormalizePathKey(srcPath))) {
         return false; // 旧版/別アセット — 再クックで上書きされる
     }
-    if (pathKey != WideToUtf8(NormalizePathKey(srcPath))) {
-        return false; // 移動/リネーム — フレッシュパースは別キーを登録するので追随する
-    }
-
-    uint64_t curSize = 0;
-    int64_t curMtime = 0;
-    if (!StatSource(srcPath, curSize, curMtime) || curSize != srcSize) {
-        return false;
-    }
-    if (curMtime != srcMtime) {
-        std::vector<uint8_t> src;
-        if (!ReadWholeFile(srcPath, src) || HashBytes(src.data(), src.size()) != srcHash) {
-            return false; // 内容が変わった — 再クック
+    // M51j: 封印キャッシュ (配布ビルド) はソース検証を跳ばす。移設先では絶対パスが変わり
+    // pathKey は必ず不一致になるが、配布シーンはクック元パス由来のサブアセット ID を
+    // 参照しているので、クック時の登録列をそのまま再生するのが正しい (kSealedMarker 参照)
+    if (!g_sealed) {
+        if (pathKey != WideToUtf8(NormalizePathKey(srcPath))) {
+            return false; // 移動/リネーム — フレッシュパースは別キーを登録するので追随する
         }
-        // touch 等で mtime だけ動いた: ヘッダの mtime を自己修復して次回はハッシュ計算を省く
-        std::fstream patch(std::filesystem::path{ cookPath },
-                           std::ios::binary | std::ios::in | std::ios::out);
-        if (patch) {
-            patch.seekp(static_cast<std::streamoff>(kOffMtime));
-            patch.write(reinterpret_cast<const char*>(&curMtime), sizeof(curMtime));
+
+        uint64_t curSize = 0;
+        int64_t curMtime = 0;
+        if (!StatSource(srcPath, curSize, curMtime) || curSize != srcSize) {
+            return false;
+        }
+        if (curMtime != srcMtime) {
+            std::vector<uint8_t> src;
+            if (!ReadWholeFile(srcPath, src) || HashBytes(src.data(), src.size()) != srcHash) {
+                return false; // 内容が変わった — 再クック
+            }
+            // touch 等で mtime だけ動いた: ヘッダの mtime を自己修復して次回はハッシュ計算を省く
+            std::fstream patch(std::filesystem::path{ cookPath },
+                               std::ios::binary | std::ios::in | std::ios::out);
+            if (patch) {
+                patch.seekp(static_cast<std::streamoff>(kOffMtime));
+                patch.write(reinterpret_cast<const char*>(&curMtime), sizeof(curMtime));
+            }
         }
     }
 
@@ -192,7 +211,7 @@ bool ReadValidated(const std::wstring& srcPath, const wchar_t* ext,
             return false;
         }
         std::error_code ec;
-        if (!std::filesystem::exists(Utf8ToWide(depUtf8), ec)) {
+        if (!g_sealed && !std::filesystem::exists(Utf8ToWide(depUtf8), ec)) {
             MYE_LOG_INFO("[cook] dependency missing, recooking: %s (dep %s)",
                          WideToUtf8(srcPath).c_str(), depUtf8.c_str());
             return false; // 外部テクスチャが消えた/動いた — フレッシュ探索に任せる

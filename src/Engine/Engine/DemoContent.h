@@ -43,6 +43,21 @@ void BuildPartsShowcaseScene(EngineContext& ctx);
 // 上のショーケースが参照するメッシュ/マテリアルの実体登録 (RegisterRtShowcaseContent と同じ役割)
 void RegisterPartsShowcaseContent(EngineContext& ctx);
 
+// M51j: ゲームフロー統合デモ (--flow-demo) のシーン 2 本を確保する。
+// タイトル (flow_title) → ゲーム (flow_game) → タイトル、を LoadScene で循環し、
+// ポーズ/タイムスケール/PersistStore 持ち越し/セーブを 1 本の tick タイムラインで実走する
+// (replay_verify 3 ペア目 = M51 決定論保証の総括)。
+//
+// **両シーンをファイルとして assets\scenes\ へ書く** (無いときだけ) — 遷移は
+// LoadScene("scenes/flow_*.scene.json") = assets 相対解決なので、ファイルが無いと
+// 遷移で詰む。builtin メッシュ + 名前キーのマテリアルしか使わないため内容は
+// チェックアウト非依存だが、版管理された唯一の正解はコード側 (parts と同じ流儀) なので
+// 生成物は gitignore にしてある。呼んだ後の ctx.scene は空 (呼び出し側がタイトルをロードする)
+void EnsureFlowShowcaseScenes(EngineContext& ctx);
+
+// 上のショーケースが参照するマテリアルの実体登録 (RegisterRtShowcaseContent と同じ役割)
+void RegisterFlowShowcaseContent(EngineContext& ctx);
+
 // assets\ 以下の .prefab.json / .anim.json を各ライブラリへ登録する (Editor / Runtime 共用)。
 // M48g からは .glb / .gltf / .fbx のスケルトンもここで (エンティティを作らずに) 登録する
 void RegisterAssetLibraries(EngineContext& ctx);

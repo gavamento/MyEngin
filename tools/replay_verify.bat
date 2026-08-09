@@ -63,9 +63,35 @@ bin\x64\Debug\Editor.exe --parts-demo --replay-verify %REP2% || (echo [FAIL] Deb
 echo === verify parts in Release ===
 bin\x64\Release\Editor.exe --parts-demo --replay-verify %REP2% || (echo [FAIL] Release parts verify & exit /b 1)
 
+rem ---- 3 本目: ゲームフロー統合デモ (M51j) ----
+rem M51 のフロー系 (LoadScene 遷移 / TimeControl ポーズ+タイムスケール / PersistStore の
+rem シーン跨ぎ持ち越し / SaveGame 書出 / アクションマップ評価) を 1 本の tick タイムラインで
+rem 実走し、Debug/Release のビット一致まで機械検証する = M51 決定論保証の総括。
+rem シーンはコードから毎回組み直す (parts と同じ流儀)。builtin メッシュ + 名前マテリアル
+rem のみなので内容はチェックアウト非依存だが、正解はコード側なので生成物は gitignore
+set REP3=cache\golden_flow.rep
+set FLOW_TITLE=assets\scenes\flow_title.scene.json
+set FLOW_GAME=assets\scenes\flow_game.scene.json
+
+echo === build flow demo scenes (from code) ===
+if exist %FLOW_TITLE% del /q %FLOW_TITLE%
+if exist %FLOW_GAME% del /q %FLOW_GAME%
+bin\x64\Debug\Editor.exe --flow-demo --frames 2 --no-audio || exit /b 1
+if not exist %FLOW_TITLE% (echo [FAIL] flow title scene was not written & exit /b 1)
+if not exist %FLOW_GAME% (echo [FAIL] flow game scene was not written & exit /b 1)
+
+echo === record golden replay: flow (Debug, %TICKS% ticks) ===
+bin\x64\Debug\Editor.exe --flow-demo --replay-record %REP3% --replay-ticks %TICKS% || exit /b 1
+
+echo === verify flow in Debug ===
+bin\x64\Debug\Editor.exe --flow-demo --replay-verify %REP3% || (echo [FAIL] Debug flow verify & exit /b 1)
+
+echo === verify flow in Release ===
+bin\x64\Release\Editor.exe --flow-demo --replay-verify %REP3% || (echo [FAIL] Release flow verify & exit /b 1)
+
 echo === static rule check ===
 pwsh -NoProfile -ExecutionPolicy Bypass -File tools\check_rules.ps1 || (echo [FAIL] rule check & exit /b 1)
 
 echo.
-echo [PASS] replay consistency (Debug/Release, 2 scenes: demo + parts) + rule check
+echo [PASS] replay consistency (Debug/Release, 3 scenes: demo + parts + flow) + rule check
 exit /b 0

@@ -311,6 +311,52 @@ bool RunCookedCacheSelfTest()
         check(!ModelCook::Deserialize(contentB, junkOut), "corruption: junk blob deserialize fails");
     }
 
+    // ---- (3b) 封印キャッシュ (M51j、配布ビルド): kSealedMarker でソース検証が跳ぶ ----
+    // 配布物は移設で pathKey/mtime が必ずズレ、DDS 一括クック後は元画像自体が無い。
+    // 封印中は magic/version/guid だけ見て再生し、マーカーを外せば通常の無効化に戻る
+    {
+        const fs::path src = tempRoot / L"sealed_src.bin";
+        const fs::path dep = tempRoot / L"sealed_dep.png";
+        const std::vector<uint8_t> content = { 9, 8, 7, 6, 5 };
+        const std::vector<uint8_t> payload = { 42, 43, 44 };
+        std::vector<uint8_t> got;
+        WriteFileBytes(src, content);
+        WriteFileBytes(dep, content);
+        CookedCache::Write(src.wstring(), L".tst", payload.data(), payload.size(),
+                           { dep.wstring() });
+
+        // 対照実験: 封印前は内容改変 + 依存消失で miss (通常の無効化が生きている)
+        WriteFileBytes(src, { 9, 8, 7, 6, 4 });
+        fs::remove(dep, ec);
+        check(!CookedCache::ReadValidated(src.wstring(), L".tst", got),
+              "sealed: without marker, changed source misses (control)");
+
+        WriteFileBytes(cookDir / CookedCache::kSealedMarker, { 1 });
+        CookedCache::Configure(cookDir.wstring(), true); // エンジン同様、起動時判定を再現
+        check(CookedCache::Sealed(), "sealed: marker detected by Configure");
+        check(CookedCache::ReadValidated(src.wstring(), L".tst", got) && got == payload,
+              "sealed: changed source + missing dep still hit (validation skipped)");
+        fs::remove(src, ec); // DDS 一括クック後の「元画像なし」相当
+        check(CookedCache::ReadValidated(src.wstring(), L".tst", got) && got == payload,
+              "sealed: even a deleted source replays");
+
+        // 破損はやはり弾く (magic/version/guid は封印中も見る)
+        const fs::path cookFile = CookedCache::PathFor(src.wstring(), L".tst");
+        std::vector<uint8_t> cookBytes;
+        {
+            std::ifstream f(cookFile, std::ios::binary);
+            cookBytes.assign(std::istreambuf_iterator<char>(f), {});
+        }
+        cookBytes[0] ^= 0xFF;
+        WriteFileBytes(cookFile, cookBytes);
+        check(!CookedCache::ReadValidated(src.wstring(), L".tst", got),
+              "sealed: corrupt magic still misses");
+
+        fs::remove(cookDir / CookedCache::kSealedMarker, ec);
+        CookedCache::Configure(cookDir.wstring(), true);
+        check(!CookedCache::Sealed(), "sealed: marker removal restores live validation");
+    }
+
     // ---- (4) 形式往復: エッジな float ビットパターン (NaN / -0.0 / 非正規化数) を保つ ----
     {
         ModelCook::ModelCookData d;

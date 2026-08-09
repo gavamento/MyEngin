@@ -74,7 +74,12 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     float perfRate = 0.0f;
     bool rtShowcase = false; // --rt-demo (M46i)
     bool partsShowcase = false; // --parts-demo (M48g: 部位追従のリプレイ被覆シーン)
+    bool flowShowcase = false;  // --flow-demo (M51j: ゲームフロー統合デモ)
     std::wstring editActorPath;  // --edit-actor PATH (M48k)
+    std::wstring packageDir;     // --package DIR (M51j: CLI パッケージ)
+    bool packageDds = false;     // --package-dds
+    bool packageZip = false;     // --package-zip
+    std::string packageBoot;     // --package-boot <scene.json>
     int perfMax = 0;
     bool startDeferred = false;
     std::string selectName;
@@ -176,8 +181,18 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 rtShowcase = true; // M46i: コーネル箱のショーケースシーンを構築
             } else if (arg == L"--parts-demo") {
                 partsShowcase = true; // M48g: 部位追従の被覆シーンを構築
+            } else if (arg == L"--flow-demo") {
+                flowShowcase = true; // M51j: ゲームフロー統合デモ (タイトル⇄ゲームの 2 シーン)
             } else if (arg == L"--edit-actor" && i + 1 < argc) {
                 editActorPath = argv[++i]; // M48k: 起動直後にミニシーン編集モードで開く
+            } else if (arg == L"--package" && i + 1 < argc) {
+                packageDir = argv[++i]; // M51j: BuildSettings パイプラインを CLI 実行
+            } else if (arg == L"--package-dds") {
+                packageDds = true;
+            } else if (arg == L"--package-zip") {
+                packageZip = true;
+            } else if (arg == L"--package-boot" && i + 1 < argc) {
+                packageBoot = mye::WideToUtf8(argv[++i]);
             } else if (arg == L"--project" && i + 1 < argc) {
                 projectDir = argv[++i];
             } else if (arg == L"--create-project" && i + 1 < argc) {
@@ -201,7 +216,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                             || !config.replayRecordPath.empty() || !config.replayVerifyPath.empty()
                             || !sceneOverride.empty() || autoPlay || saveSceneOnStart
                             || pickTestFrame >= 0 || !selectName.empty() || perfRate > 0.0f
-                            || !editActorPath.empty();
+                            || !editActorPath.empty() || !packageDir.empty();
 
     // UI 言語 (M47a)。Hub はプロジェクト未確定のまま描かれる別プロセスなので、
     // 設定はプロジェクト配下ではなく %LOCALAPPDATA%\MyEngine\editor_global.json から読む。
@@ -278,7 +293,12 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     app.autoPlay = autoPlay;
     app.rtShowcase = rtShowcase;
     app.partsShowcase = partsShowcase;
+    app.flowShowcase = flowShowcase;
     app.editActorPath = editActorPath;
+    app.packageDir = packageDir;
+    app.packageDds = packageDds;
+    app.packageZip = packageZip;
+    app.packageBoot = packageBoot;
     app.perfRate = perfRate;
     app.perfMax = perfMax;
     app.startDeferred = startDeferred;

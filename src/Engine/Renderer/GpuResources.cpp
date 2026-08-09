@@ -519,6 +519,25 @@ AssetID TextureLibrary::LoadFile(const std::wstring& path, bool srgb)
         names_[id.value] = utf8;
         return id;
     }
+    // M51j: DDS 一括クック済みの配布ビルド対応。**元画像が存在しないときだけ**、同名の
+    // .dds を同じ AssetID で読む (開発環境ではソースが常にあるので挙動は 1 ビットも
+    // 変わらない)。srgb / mips は元パスの .meta で解決済み (effSrgb — .meta は配布へ残す)
+    {
+        std::error_code fbEc;
+        if (!std::filesystem::exists(path, fbEc)) {
+            const std::wstring sibling =
+                std::filesystem::path(path).replace_extension(L".dds").wstring();
+            if (std::filesystem::exists(sibling, fbEc)) {
+                if (!LoadDdsInto(t, sibling, effSrgb)) {
+                    return {};
+                }
+                MYE_LOG_INFO("texture served from cooked dds: %s", utf8.c_str());
+                textures_.emplace(id.value, std::move(t));
+                names_[id.value] = utf8;
+                return id;
+            }
+        }
+    }
     int w = 0, h = 0, comp = 0;
     stbi_uc* pixels = stbi_load(utf8.c_str(), &w, &h, &comp, 4);
     if (!pixels) {

@@ -234,6 +234,24 @@ MYE_STR(Build_BootScene,      "Boot scene",     "起動シーン")
 MYE_STR(Build_OutputFolder,   "Output folder",  "出力フォルダ")
 MYE_STR(Build_Package,        "Package Build",  "ビルドを作成")
 MYE_STR(Build_OpenFolder,     "Open Folder",    "フォルダを開く")
+// ---- ビルド段階化 (M51j) ----
+MYE_STR(Build_OptScripts,     "Rebuild scripts first (C++ / C#)",
+                              "先にスクリプトを再ビルド (C++ / C#)")
+MYE_STR(Build_OptDds,         "Cook textures to DDS in the package",
+                              "パッケージ内のテクスチャを DDS にクック")
+MYE_STR(Build_OptZip,         "Zip the output folder",
+                              "出力フォルダを zip 圧縮")
+MYE_STR(Build_StScripts,      "1) Script rebuild",      "1) スクリプト再ビルド")
+MYE_STR(Build_StCs,           "2) C# compile",          "2) C# コンパイル")
+MYE_STR(Build_StCook,         "3) Asset cook warm-up",  "3) アセットクック温め")
+MYE_STR(Build_StCopy,         "4) Package copy",        "4) パッケージコピー")
+MYE_STR(Build_StDds,          "5) DDS texture cook",    "5) DDS テクスチャクック")
+MYE_STR(Build_StZip,          "6) Zip archive",         "6) zip 圧縮")
+MYE_STR(Build_Skipped,        "(skipped)",              "(スキップ)")
+MYE_STR(Build_Working,        "Working:",               "実行中:")
+MYE_STR(Build_DoneOk,         "Build finished.",        "ビルドが完了しました。")
+MYE_STR(Build_Failed,         "Build failed - see the stage list / Console.",
+                              "ビルドに失敗しました — 段の一覧とコンソールを確認してください。")
 
 // ---- プロジェクト設定 (M47b) ----
 MYE_STR(PrjSet_Rendering,     "Rendering",           "レンダリング")
@@ -284,6 +302,12 @@ MYE_STR(Build_TipBundle,      "ON: bundles the .NET 8 runtime under dotnet\\ so 
                               "OFF: the target machine must have the .NET 8 runtime installed",
                               "ON: .NET 8 ランタイムを dotnet\\ に同梱し、配布先に .NET 不要にする\n"
                               "OFF: 配布先に .NET 8 ランタイムのインストールが必要")
+MYE_STR(Build_TipDds,         "Converts .png/.jpg/.tga inside the package to .dds (per-texture .meta settings apply)\n"
+                              "and removes the source images. The runtime falls back to the .dds automatically.\n"
+                              "BC compression is lossy - set compress=none in Import Settings for LUTs etc.",
+                              "パッケージ内の .png/.jpg/.tga を .dds へ変換し (各テクスチャの .meta 設定を適用)、元画像を除去します。\n"
+                              "ランタイムは元画像が無ければ自動で同名 .dds を読みます。\n"
+                              "BC 圧縮は非可逆 — LUT 等はインポート設定で「圧縮なし」にしてください。")
 
 // ---- シーンビューのツールバー (M47b) ----
 MYE_STR(SceneView_Move,       "Move",       "移動")

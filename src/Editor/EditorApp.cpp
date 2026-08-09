@@ -74,6 +74,11 @@ void EditorApp::OnStart(EngineContext& ctx)
         // 版管理された唯一の正解は BuildPartsShowcaseScene (コード) 側で、
         // replay_verify.bat は毎回そこから組み直してから記録する
         scenePath_ = L"cache\\parts_showcase.scene.json";
+    } else if (flowShowcase) {
+        // M51j: フロー統合デモのタイトルシーン。ファイルは EnsureFlowShowcaseScenes が
+        // assets\scenes\ に生成する (gitignore 済み) — タイトル⇄ゲームの遷移が
+        // LoadScene("scenes/flow_*.scene.json") = assets 相対解決のため、cache\ には置けない
+        scenePath_ = ctx.assetsRoot + L"\\scenes\\flow_title.scene.json";
     } else {
         scenePath_ = ctx.assetsRoot + L"\\scenes\\main.scene.json";
         ProjectManifest manifest; // ブートシーンはマニフェスト優先 (M26)
@@ -94,6 +99,13 @@ void EditorApp::OnStart(EngineContext& ctx)
     // 材質が解決されず、キューブ群が描画されない
     RegisterRtShowcaseContent(ctx);
     RegisterPartsShowcaseContent(ctx);
+    RegisterFlowShowcaseContent(ctx); // M51j (flow_* 材質。少数の名前キー登録なので常時)
+    if (flowShowcase) {
+        // 両シーンファイルを確保してからタイトルを普通のロード経路で開く。
+        // ここで組む = GameLogic.dll / C# コンパイル済み (EngineLoop が OnStart 前に実施)
+        // なので FlowTitleDriver / FlowMenu のアタッチが解決できる
+        EnsureFlowShowcaseScenes(ctx);
+    }
     undo_.SetPrefabLibrary(ctx.prefabs); // 編集直後の override リスト記録 (M48e)
     if (std::filesystem::exists(scenePath_)) {
         SceneSerializer::LoadFromFile(*ctx.scene, scenePath_);
@@ -121,6 +133,11 @@ void EditorApp::OnStart(EngineContext& ctx)
     if (!editActorPath.empty()) {
         // M48k: ダブルクリック相当の口。他の検証フラグと同じく起動直後に 1 回だけ効く
         OpenActorEdit(ctx, std::filesystem::absolute(editActorPath).wstring());
+    }
+    if (!packageDir.empty()) {
+        // M51j: CLI パッケージ (GUI の「ビルドを作成」と同じパイプライン)
+        buildSettings_.StartCliPackage(std::filesystem::absolute(packageDir).wstring(),
+                                       packageDds, packageZip, packageBoot);
     }
     if (autoPlay && !actorEdit_) { // 編集モード中の Play は禁止 (ツールバーでも無効化している)
         playMode_.Play(*ctx.scene);
@@ -374,6 +391,13 @@ void EditorApp::OnImGui(EngineContext& ctx)
     search_.OnImGui(ctx, selection_);
     projectSettings_.OnImGui(ctx, settings_, shortcuts_);
     buildSettings_.OnImGui(ctx);
+    // --package (M51j): CLI パッケージが完了したら結果を出して終了する (CI/検証用)
+    if (!packageDir.empty() && buildSettings_.PipelineFinished()) {
+        MYE_LOG_INFO("[build] CLI package result: %s",
+                     buildSettings_.PipelineSucceeded() ? "PASS" : "FAIL");
+        packageDir.clear(); // 多重報告を防ぐ
+        ctx.requestExit = true;
+    }
     // 書き出し先は AssetBrowser の表示中フォルダ (未初期化なら窓側が <assets>\audio に落とす)
     soundGen_.OnImGui(ctx, assetBrowser_.CurrentDir());
     // Asset Browser で .mixer.json がダブルクリックされたら Audio Mixer を開く (M45d)

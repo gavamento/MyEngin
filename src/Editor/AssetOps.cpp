@@ -1260,18 +1260,19 @@ bool WriteGeneratedVcxproj(const std::wstring& path, const std::wstring& engineR
     return true;
 }
 
-// プロジェクトの C++ スクリプトをビルドする。
-// C# の [Compile C# Scripts] と同じ「プロジェクト内のソースをエンジンがビルドする」モデル。
-// エンジンリポジトリの vcxproj や gen_project_files.ps1 には一切依存せず、
-// <project>\cache\ に自己完結したビルド一式を生成して MSBuild にかける。
-// vcvars は使わない — MSBuild はツールチェーンを自前で解決するので環境依存が少ない
-void BuildProjectScripts(EngineContext& ctx)
+// プロジェクトの C++ スクリプトのビルド一式 (vcxproj + bat) を <project>\cache\ に生成し、
+// bat の絶対パスを返す (空 = 失敗)。C# の [Compile C# Scripts] と同じ
+// 「プロジェクト内のソースをエンジンがビルドする」モデル。エンジンリポジトリの vcxproj や
+// gen_project_files.ps1 には一切依存しない。vcvars は使わない — MSBuild はツールチェーンを
+// 自前で解決するので環境依存が少ない。起動は呼び出し側 (RebuildGameLogic =
+// fire-and-forget / StartGameLogicBuild = ハンドルをポーリング) の責務
+std::wstring PrepareProjectScriptsBat(EngineContext& ctx)
 {
     const std::wstring engineRepo = FindEngineRepoRoot();
     if (engineRepo.empty()) {
         MYE_LOG_ERROR("engine repo not found (src\\Shared\\ScriptAPI.h) - "
                       "C++ scripts need the engine sources to compile");
-        return;
+        return {};
     }
     const std::wstring cacheDir = ctx.projectRoot + L"\\cache";
     const std::wstring scriptsDir = ctx.projectRoot + L"\\src\\GameLogic\\Scripts";
@@ -1298,7 +1299,7 @@ void BuildProjectScripts(EngineContext& ctx)
     }
     if (!WriteGeneratedMain(cacheDir + L"\\GameLogicMain.cpp")
         || !WriteGeneratedVcxproj(projPath, engineRepo, cacheDir, sources)) {
-        return;
+        return {};
     }
 
     // MSBuild の起動は tools\build_scripts.bat と同じ vswhere パターン。
@@ -1309,7 +1310,7 @@ void BuildProjectScripts(EngineContext& ctx)
         std::ofstream b{ fs::path(batPath), std::ios::binary };
         if (!b) {
             MYE_LOG_ERROR(Tr(StrId::Log_WriteFail), WideToUtf8(batPath).c_str());
-            return;
+            return {};
         }
         const std::wstring bat =
             L"@echo off\r\n"
@@ -1337,6 +1338,17 @@ void BuildProjectScripts(EngineContext& ctx)
 
     MYE_LOG_INFO(Tr(StrId::Log_BuildingCpp), sources.size(),
                  WideToUtf8(cacheDir).c_str(), WideToUtf8(cfg).c_str());
+    return batPath;
+}
+
+// 生成した bat を可視の cmd 窓で起動する (従来の Rebuild Scripts ボタン挙動)
+void BuildProjectScripts(EngineContext& ctx)
+{
+    const std::wstring batPath = PrepareProjectScriptsBat(ctx);
+    if (batPath.empty()) {
+        return;
+    }
+    const std::wstring cacheDir = ctx.projectRoot + L"\\cache";
     const std::wstring args = L"/c \"\"" + batPath + L"\"\"";
     ShellExecuteW(nullptr, L"open", L"cmd.exe", args.c_str(), cacheDir.c_str(), SW_SHOWNORMAL);
 }
@@ -1364,6 +1376,65 @@ void RebuildGameLogic(EngineContext& ctx)
     MYE_LOG_INFO(Tr(StrId::Log_BuildingGameLogic),
                  WideToUtf8(cfg).c_str());
     ShellExecuteW(nullptr, L"open", L"cmd.exe", args.c_str(), repo.c_str(), SW_SHOWNORMAL);
+}
+
+void* StartGameLogicBuild(EngineContext& ctx, std::wstring& logPathOut)
+{
+    // RebuildGameLogic の二経路と同じ bat を使う。違いは起動形態のみ:
+    //   - stdout/stderr をログファイルへリダイレクト (エディタは完了後に失敗の尻尾を出せる)
+    //   - stdin を NUL に繋ぐ — bat の失敗系 `pause` が EOF を読んで即抜ける = 詰まらない
+    //   - CREATE_NO_WINDOW + プロセスハンドル返し = BuildSettings が毎フレームポーリング
+    std::wstring bat, workDir, args;
+    const std::wstring cfg = RunningRelease() ? L"Release" : L"Debug";
+    if (!ctx.projectRoot.empty()) {
+        bat = PrepareProjectScriptsBat(ctx);
+        workDir = ctx.projectRoot + L"\\cache";
+        args = L"cmd.exe /c \"\"" + bat + L"\"\"";
+    } else {
+        const std::wstring repo = ScriptsRoot(ctx);
+        bat = repo + L"\\tools\\build_scripts.bat";
+        workDir = repo;
+        args = L"cmd.exe /c \"\"" + bat + L"\" " + cfg + L"\"";
+    }
+    if (bat.empty() || !fs::exists(bat)) {
+        if (!bat.empty()) {
+            MYE_LOG_ERROR(Tr(StrId::Log_BatMissing), WideToUtf8(bat).c_str());
+        }
+        return nullptr;
+    }
+    logPathOut = workDir + L"\\build_scripts.log";
+
+    SECURITY_ATTRIBUTES sa = {};
+    sa.nLength = sizeof(sa);
+    sa.bInheritHandle = TRUE;
+    HANDLE log = CreateFileW(logPathOut.c_str(), GENERIC_WRITE, FILE_SHARE_READ, &sa,
+                             CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    HANDLE nulIn = CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa,
+                               OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    STARTUPINFOW si = {};
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESTDHANDLES;
+    si.hStdOutput = log;
+    si.hStdError = log;
+    si.hStdInput = nulIn;
+    PROCESS_INFORMATION pi = {};
+    std::vector<wchar_t> cmdline(args.begin(), args.end());
+    cmdline.push_back(L'\0'); // CreateProcessW は書込可能バッファを要求する
+    const BOOL ok = CreateProcessW(nullptr, cmdline.data(), nullptr, nullptr, TRUE,
+                                   CREATE_NO_WINDOW, nullptr, workDir.c_str(), &si, &pi);
+    if (log != INVALID_HANDLE_VALUE) {
+        CloseHandle(log); // 子が継承済み — 親側は即クローズでよい
+    }
+    if (nulIn != INVALID_HANDLE_VALUE) {
+        CloseHandle(nulIn);
+    }
+    if (!ok) {
+        MYE_LOG_ERROR("[build] CreateProcess failed for script build (%lu)", GetLastError());
+        return nullptr;
+    }
+    CloseHandle(pi.hThread);
+    MYE_LOG_INFO(Tr(StrId::Log_BuildingGameLogic), WideToUtf8(cfg).c_str());
+    return pi.hProcess;
 }
 
 } // namespace mye

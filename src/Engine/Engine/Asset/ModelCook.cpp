@@ -1,6 +1,8 @@
 #include "Engine/Engine/Asset/ModelCook.h"
 
 #include <cstring>
+#include <filesystem>
+#include <system_error>
 
 #include "Engine/Core/Log.h"
 #include "Engine/Engine/Asset/CookedCache.h"
@@ -286,7 +288,20 @@ void Replay(RenderResources& resources, ShaderManager& shaders, const ModelCookD
             resources.textures.CreateFromEncoded(t.key, t.bytes.data(), t.bytes.size(),
                                                  t.srgb != 0);
         } else {
-            resources.textures.LoadFile(t.path, t.srgb != 0);
+            std::wstring p = t.path;
+            // M51j: 封印キャッシュ (配布ビルド) ではクック元の絶対パスが移設先に存在しない。
+            // "\assets\" 以降のテールを現行の assets ルートへ付け替えて読む。.meta も同伴
+            // コピーされているので、解決される AssetID はクック時に Material.texture へ
+            // 記録された値 (= .meta GUID) と一致する — 参照は壊れない
+            std::error_code ec;
+            if (CookedCache::Sealed() && !std::filesystem::exists(p, ec)) {
+                const std::wstring key = NormalizePathKey(p);
+                const size_t pos = key.rfind(L"\\assets\\");
+                if (pos != std::wstring::npos) {
+                    p = FindAssetsRoot() + key.substr(pos + 7); // "\assets" 直後の '\' から
+                }
+            }
+            resources.textures.LoadFile(p, t.srgb != 0);
         }
     }
     for (const CookedMesh& m : d.meshes) {

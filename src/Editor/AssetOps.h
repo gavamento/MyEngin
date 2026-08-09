@@ -128,4 +128,12 @@ void OpenInExternalEditor(const std::string& editorCmd, const std::wstring& path
 void RebuildGameLogic(EngineContext& ctx);
 void CompileCSharpScripts(EngineContext& ctx); // assets\scripts\*.cs をエンジン内 Roslyn でコンパイル
 
+// M51j: ビルドワンストップ (BuildSettings) 用の非対話スクリプトビルド。
+// RebuildGameLogic と同じ生成物 (bat) を使うが、fire-and-forget ではなく
+// プロセスハンドル (void* = HANDLE) を返し、呼び出し側が毎フレームポーリングして
+// 完了と終了コードを拾う。出力は logPathOut のファイルへリダイレクトされる
+// (pause で止まらないよう stdin は NUL)。失敗 (bat 不在等) は nullptr。
+// ハンドルは呼び出し側が CloseHandle すること
+void* StartGameLogicBuild(EngineContext& ctx, std::wstring& logPathOut);
+
 } // namespace mye

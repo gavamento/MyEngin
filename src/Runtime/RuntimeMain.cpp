@@ -62,6 +62,7 @@ public:
         // Runtime には --parts-demo が無いので、ゲートしたままだと parts 材質は常に欠落する
         mye::RegisterRtShowcaseContent(ctx);
         mye::RegisterPartsShowcaseContent(ctx);
+        mye::RegisterFlowShowcaseContent(ctx); // M51j: flow_* 材質 (配布ブートシーンにも使う)
         if (std::filesystem::exists(scenePath)) {
             mye::SceneSerializer::LoadFromFile(*ctx.scene, scenePath);
             // Editor と同じ「ロード直後 1 回」(M48e)。ここを揃えないと Editor で録った .rep と

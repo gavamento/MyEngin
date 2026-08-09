@@ -8,3 +8,7 @@ cache/
 imgui.ini
 # スキーマ codegen の生成物 (起動時に毎回再生成される。M50d)
 assets/scripts/Generated/
+# flow 統合デモの生成シーン (M51j)。版管理された正解はコード側 (DemoContent) —
+# replay_verify が毎回組み直す。parts_showcase (cache/) と同じ流儀
+assets/scenes/flow_title.scene.json*
+assets/scenes/flow_game.scene.json*

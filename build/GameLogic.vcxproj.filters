@@ -13,6 +13,12 @@
     <ClCompile Include="..\src\GameLogic\Scripts\AudioDemo.cpp">
       <Filter>Scripts</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\GameLogic\Scripts\FlowGameDriver.cpp">
+      <Filter>Scripts</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\GameLogic\Scripts\FlowTitleDriver.cpp">
+      <Filter>Scripts</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\GameLogic\Scripts\PartAttachDemo.cpp">
       <Filter>Scripts</Filter>
     </ClCompile>

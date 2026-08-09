@@ -392,6 +392,7 @@ As a shared foundation for all hot-reload targets, the Core layer provides **fil
 | Profiler | Display frame time, phase timings, and particle update time for CPU and GPU implementations |
 | Particle Settings | **Switch particle backends between GPU and CPU**, launch comparison mode, and configure maximum particle counts |
 | Asset Browser | List files under `assets/` and display reload status |
+| Build Settings | One-stop staged packaging (M51j): 1) script rebuild (C++ GameLogic + C# Roslyn, opt-out) → 2) asset cook warm-up → 3) package copy (Runtime.exe + GameLogic.dll + C# host + assets + boot scene + **sealed cooked cache**, §10.2) → 4) batch DDS texture cook (opt-in) → 5) zip (opt-in). Child processes (script build / `tar.exe`) are polled per frame so the UI stays live; each stage reports OK/NG in a list. The same pipeline runs from the CLI for CI: `Editor.exe --package <dir> [--package-dds] [--package-zip]` |
 
 - Provide Play / Pause / Step controls. Editing policy during Play mode: [TBD: discard changes as Unity does / save changes]
 
@@ -419,7 +420,7 @@ The editor ships in **Japanese by default** and can be switched to English at ru
 
 | Asset Type | Source Format | Runtime Format |
 |---|---|---|
-| Textures | png, tga, jpg, dds | Direct loading (stb / DDS); manual DDS cook in the Asset Browser (M39b), batch cook planned for M51j |
+| Textures | png, tga, jpg, dds | Direct loading (stb / DDS); manual DDS cook in the Asset Browser (M39b). Batch DDS cook at packaging time (M51j, opt-in): images inside the package are cooked to `.dds` with their `.meta` import settings and the sources removed; `TextureLibrary::LoadFile` falls back to a same-stem `.dds` **only when the source image is missing**, under the same AssetID — development behavior is untouched |
 | Models | fbx (ufbx), glTF/glb (cgltf) | Cooked binary cache `cache/cooked/*.mmdl` (M51b, §10.2); cold start parses and cooks |
 | Audio | wav, ogg | wav decodes directly (near-memcpy); ogg decodes to a cooked PCM cache `cache/cooked/*.mpcm` (M51b) |
 | Shaders | hlsl | Runtime compilation during development / precompiled for distribution |
@@ -461,6 +462,7 @@ persists the parse results so warm starts skip the parsers entirely.
 | Invalidation | Header `{magic, kCookVersion, guid, srcSize, srcMtime, srcContentHash, srcPathKey, deps}`. size+mtime match → valid; mtime mismatch → re-hash the source, and if the content is unchanged the header mtime self-heals; content change → recook. A moved source recooks (sub-asset AssetIDs derive from the normalized path, so a fresh parse would register different keys). Recorded external texture paths (`deps`) are existence-checked; texture *content* stays live because replay re-reads the files |
 | Textures | Embedded images are stored encoded and re-decoded on replay (so `.meta` import settings keep working); external files are re-loaded from the recorded resolved path |
 | Escape hatch | `--no-cook-cache` (mirrors `--no-jobs` / `--no-sim-cache`): parse everything fresh, never read or write the cache |
+| Sealed bundle (M51j) | A `.sealed` marker inside `cache/cooked/` (written only by Build Settings into the package) makes `ReadValidated` skip the pathKey / stat / content-hash / deps checks (magic / version / guid still apply). This is a **correctness** device, not an optimization: sub-asset AssetIDs derive from the packaging machine's absolute paths, so a relocated package that recooked would register different IDs and every scene reference to model meshes/materials would silently break. Replaying the sealed registrations reproduces the original IDs anywhere. External texture paths recorded in the blob are remapped onto the package's `assets/` root when missing (`ModelCook::Replay`) |
 
 ---
 
@@ -497,6 +499,13 @@ Eliminate cases in which the engine works in Debug but fails in Release, or vice
 - Introducing a fixed timestep, marked [TBD] in Section 5.3, is strongly recommended as a prerequisite
 - CPU particles are included in the hash. GPU particles are excluded because they are rendering output; their behavior is verified separately through comparison mode without readback
 - The test can run in CI through a command-line invocation such as `Editor.exe --replay-verify xxx.rep`
+- `tools\replay_verify.bat` runs **three scene pairs**, each rebuilt from code before recording:
+  the default demo (scripts, physics, particles, schema fields), the parts showcase
+  (`--parts-demo`: skinned bones, part following, part raycasts) and the game-flow showcase
+  (`--flow-demo`, M51j: **LoadScene transitions across two scenes, TimeControl pause and
+  50% time-scale windows, PersistStore carry-over, SaveGame writes and action-map evaluation**
+  driven by a deterministic tick timeline in `FlowTitleDriver` / `FlowGameDriver`). The flow
+  pair is the aggregate proof that the M51 gameplay-flow features are replay-deterministic
 
 ---
 

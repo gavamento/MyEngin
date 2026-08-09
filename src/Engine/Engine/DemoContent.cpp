@@ -22,6 +22,7 @@
 #include "Engine/Engine/ModelLoader.h"
 #include "Engine/Engine/Prefab.h"
 #include "Engine/Engine/Scene.h"
+#include "Engine/Engine/SceneSerializer.h"
 #include "Engine/Platform/PathUtil.h"
 #include "Engine/Renderer/GpuResources.h"
 #include "Engine/Renderer/ShaderManager.h"
@@ -444,6 +445,234 @@ void BuildPartsShowcaseScene(EngineContext& ctx)
         w.AddComponentRaw(target.Id(), rayDemo);
     }
     w.ApplyStructuralChanges();
+}
+
+void RegisterFlowShowcaseContent(EngineContext& ctx)
+{
+    RenderResources& res = *ctx.resources;
+    const AssetID white = res.textures.White();
+    const AssetID shader = AssetID{ HashStr("forward_lit") };
+    res.meshes.Cube();
+    res.meshes.Sphere();
+
+    auto makeMat = [&](const char* name, float r, float g, float b) {
+        Material m;
+        m.shader = shader;
+        m.texture = white;
+        m.baseColor = { r, g, b, 1.0f };
+        return res.materials.Register(name, m);
+    };
+    makeMat("flow_floor", 0.30f, 0.33f, 0.40f);
+    makeMat("flow_wall", 0.20f, 0.22f, 0.28f);
+    makeMat("flow_ball", 1.00f, 0.55f, 0.10f);
+    makeMat("flow_paddle", 0.25f, 0.70f, 0.95f);
+    makeMat("flow_deco", 0.60f, 0.35f, 0.85f);
+}
+
+namespace {
+
+// flow シーン共通の骨格 (カメラ/太陽/床)。名前キーのマテリアルと builtin メッシュのみ =
+// シーンファイルがチェックアウト非依存になる (モデル由来のサブアセット ID は使わない)
+void BuildFlowStage(Scene& s, RenderResources& res, bool withColliders)
+{
+    const AssetID cube = res.meshes.Cube();
+
+    GameObject camera = s.CreateGameObject("Main Camera");
+    camera.AddComponent<CameraComponent>();
+    camera.SetLocalPosition(0.0f, 6.0f, -14.0f);
+    camera.SetLocalRotationEuler(20.0f, 0.0f, 0.0f);
+
+    GameObject sun = s.CreateGameObject("Sun");
+    sun.AddComponent<LightComponent>();
+    sun.SetLocalRotationEuler(50.0f, -30.0f, 0.0f);
+
+    GameObject floor = s.CreateGameObject("Floor");
+    floor.SetLocalPosition(0.0f, -0.25f, 0.0f);
+    floor.SetLocalScale(16.0f, 0.5f, 16.0f);
+    {
+        auto* mr = floor.AddComponent<MeshRendererComponent>();
+        mr->mesh = cube;
+        mr->material = AssetID{ HashStr("flow_floor") };
+        if (withColliders) {
+            auto* col = floor.AddComponent<ColliderComponent>();
+            col->shape = 1; // box
+            col->halfExtents = { 0.5f, 0.5f, 0.5f }; // ローカル半径 (スケールは Collider 側で掛かる)
+            col->isTrigger = 0;
+        }
+    }
+}
+
+// UI テキスト要素 (kind=1)。矩形左上がアンカー点 + オフセットに置かれる (M51e 意味論)
+GameObject MakeUiText(Scene& s, const char* name, int anchor, float x, float y, float w, float h,
+                      const char* text, float fontScale, int align)
+{
+    GameObject go = s.CreateGameObject(name);
+    auto* ui = go.AddComponent<UIElementComponent>();
+    ui->kind = 1;
+    ui->anchor = anchor;
+    ui->x = x;
+    ui->y = y;
+    ui->w = w;
+    ui->h = h;
+    ui->fontScale = fontScale;
+    ui->align = align;
+    std::snprintf(ui->text, sizeof(ui->text), "%s", text);
+    return go;
+}
+
+void AttachScriptIfRegistered(World& w, EntityID e, const char* name)
+{
+    const ComponentTypeId t = ComponentRegistry::Get().FindByName(name);
+    if (t != kInvalidComponentType) {
+        w.AddComponentRaw(e, t);
+    }
+}
+
+// タイトル/リザルト画面: 装飾 + UI + FlowTitleDriver (C++) + FlowMenu (C#、演出レーン)
+void BuildFlowTitleScene(EngineContext& ctx)
+{
+    Scene& s = *ctx.scene;
+    RenderResources& res = *ctx.resources;
+    s.SetName("flow_title");
+    BuildFlowStage(s, res, /*withColliders=*/false);
+    const AssetID cube = res.meshes.Cube();
+
+    // 回転する装飾キューブ (Rotator があれば回る — 無くてもシーンは成立する)
+    for (int i = 0; i < 3; ++i) {
+        char name[32];
+        std::snprintf(name, sizeof(name), "Deco_%d", i);
+        GameObject deco = s.CreateGameObject(name);
+        deco.SetLocalPosition(-3.0f + 3.0f * i, 1.2f, 2.0f);
+        deco.SetLocalRotationEuler(0.0f, 20.0f * i, 0.0f);
+        deco.SetLocalScale(1.4f, 1.4f, 1.4f);
+        auto* mr = deco.AddComponent<MeshRendererComponent>();
+        mr->mesh = cube;
+        mr->material = AssetID{ HashStr("flow_deco") };
+        AttachScriptIfRegistered(s.GetWorld(), deco.Id(), "Rotator");
+    }
+
+    MakeUiText(s, "TitleText", 1, -400.0f, 120.0f, 800.0f, 80.0f, "MyEngine FLOW DEMO", 3.0f, 4);
+    GameObject hint = MakeUiText(s, "TitleHint", 4, -300.0f, 120.0f, 600.0f, 40.0f,
+                                 "Space / Pad A : START   (auto start in 90 ticks)", 1.2f, 4);
+    AttachScriptIfRegistered(s.GetWorld(), hint.Id(), "FlowMenu"); // C# 点滅 (別レーン)
+    MakeUiText(s, "TitleBest", 7, -300.0f, -140.0f, 600.0f, 40.0f, "BEST 0   LAST 0   RUNS 0",
+               1.4f, 4);
+
+    GameObject director = s.CreateGameObject("FlowDirector");
+    AttachScriptIfRegistered(s.GetWorld(), director.Id(), "FlowTitleDriver");
+    s.GetWorld().ApplyStructuralChanges();
+}
+
+// ゲーム画面: 弾む球 (Rigidbody + FlowGameDriver) + パドル + HUD
+void BuildFlowGameScene(EngineContext& ctx)
+{
+    Scene& s = *ctx.scene;
+    RenderResources& res = *ctx.resources;
+    s.SetName("flow_game");
+    BuildFlowStage(s, res, /*withColliders=*/true);
+    const AssetID cube = res.meshes.Cube();
+    const AssetID sphere = res.meshes.Sphere();
+
+    // 球を囲う壁 (静的コライダー)。転がり出てもデモが破綻しないように
+    auto wall = [&](const char* name, float px, float pz, float sx, float sz) {
+        GameObject go = s.CreateGameObject(name);
+        go.SetLocalPosition(px, 1.0f, pz);
+        go.SetLocalScale(sx, 2.0f, sz);
+        auto* mr = go.AddComponent<MeshRendererComponent>();
+        mr->mesh = cube;
+        mr->material = AssetID{ HashStr("flow_wall") };
+        auto* col = go.AddComponent<ColliderComponent>();
+        col->shape = 1;
+        col->halfExtents = { 0.5f, 0.5f, 0.5f };
+        col->isTrigger = 0;
+    };
+    wall("WallN", 0.0f, 8.25f, 16.0f, 0.5f);
+    wall("WallS", 0.0f, -8.25f, 16.0f, 0.5f);
+    wall("WallE", 8.25f, 0.0f, 0.5f, 16.0f);
+    wall("WallW", -8.25f, 0.0f, 0.5f, 16.0f);
+
+    // パドル (MoveX 軸で動かせる静的コライダー。リプレイでは軸 0 = 不動)
+    GameObject paddle = s.CreateGameObject("Player");
+    paddle.SetLocalPosition(0.0f, 0.45f, 0.0f);
+    paddle.SetLocalScale(2.4f, 0.4f, 2.4f);
+    {
+        auto* mr = paddle.AddComponent<MeshRendererComponent>();
+        mr->mesh = cube;
+        mr->material = AssetID{ HashStr("flow_paddle") };
+        auto* col = paddle.AddComponent<ColliderComponent>();
+        col->shape = 1;
+        col->halfExtents = { 0.5f, 0.5f, 0.5f };
+        col->isTrigger = 0;
+    }
+
+    // 弾む球 = このシーンの sim 本体。FlowGameDriver がフロー全体を駆動する
+    GameObject ball = s.CreateGameObject("Ball");
+    ball.SetLocalPosition(1.3f, 5.0f, 0.7f);
+    {
+        auto* mr = ball.AddComponent<MeshRendererComponent>();
+        mr->mesh = sphere;
+        mr->material = AssetID{ HashStr("flow_ball") };
+        auto* col = ball.AddComponent<ColliderComponent>();
+        col->shape = 0; // sphere
+        col->radius = 0.5f;
+        col->isTrigger = 0;
+        auto* rb = ball.AddComponent<RigidbodyComponent>();
+        rb->restitution = 0.82f;
+    }
+    AttachScriptIfRegistered(s.GetWorld(), ball.Id(), "FlowGameDriver");
+
+    MakeUiText(s, "GameScore", 0, 40.0f, 30.0f, 400.0f, 50.0f, "SCORE 0", 2.0f, 0);
+    {
+        GameObject bar = s.CreateGameObject("GameScoreBar");
+        auto* ui = bar.AddComponent<UIElementComponent>();
+        ui->kind = 0;
+        ui->anchor = 0;
+        ui->x = 40.0f;
+        ui->y = 95.0f;
+        ui->w = 400.0f;
+        ui->h = 22.0f;
+        ui->color = { 0.30f, 0.85f, 0.45f, 0.9f };
+        ui->fillMode = 1; // 水平バー (FlowGameDriver が SetUIFill で書く)
+        ui->fillAmount = 0.0f;
+    }
+    // PAUSED 表示はアルファ 0 で常設し、ドライバが SetUIColor で出し入れする
+    GameObject paused = MakeUiText(s, "GamePause", 4, -300.0f, -40.0f, 600.0f, 80.0f, "PAUSED",
+                                   4.0f, 4);
+    if (auto* ui = paused.GetComponent<UIElementComponent>()) {
+        ui->color = { 1.0f, 0.85f, 0.30f, 0.0f };
+    }
+    MakeUiText(s, "GameHint", 6, 40.0f, -60.0f, 900.0f, 40.0f,
+               "A/D : MOVE   Esc/Start : PAUSE   J : LOAD SAVE", 1.2f, 0);
+    s.GetWorld().ApplyStructuralChanges();
+}
+
+} // namespace
+
+void EnsureFlowShowcaseScenes(EngineContext& ctx)
+{
+    RegisterFlowShowcaseContent(ctx);
+    const std::wstring dir = ctx.assetsRoot + L"\\scenes";
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+
+    // ctx.scene に組んで保存 → Clear、を欠けているファイルの分だけ繰り返す。
+    // 呼び出し時点の ctx.scene は空 (OnStart のシーンロード前) が前提
+    auto ensure = [&](const wchar_t* file, void (*build)(EngineContext&)) {
+        const std::wstring path = dir + L"\\" + file;
+        if (std::filesystem::exists(path, ec)) {
+            return;
+        }
+        build(ctx);
+        if (SceneSerializer::SaveToFile(*ctx.scene, path)) {
+            MYE_LOG_INFO("[flow] scene generated: %s", WideToUtf8(path).c_str());
+        } else {
+            MYE_LOG_ERROR("[flow] scene write failed: %s", WideToUtf8(path).c_str());
+        }
+        ctx.scene->Clear();
+        ctx.scene->GetWorld().ApplyStructuralChanges();
+    };
+    ensure(L"flow_game.scene.json", &BuildFlowGameScene);
+    ensure(L"flow_title.scene.json", &BuildFlowTitleScene);
 }
 
 void RegisterAssetLibraries(EngineContext& ctx)

@@ -55,10 +55,17 @@ public:
     std::wstring sceneOverride;    // --scene PATH (既定の main.scene.json の代わりに読むシーン)
     bool rtShowcase = false;       // --rt-demo (M46i: コーネル箱のショーケースを構築)
     bool partsShowcase = false;    // --parts-demo (M48g: 部位追従のリプレイ被覆シーン)
+    bool flowShowcase = false;     // --flow-demo (M51j: ゲームフロー統合デモ 2 シーン)
     // --edit-actor PATH (M48k): 起動直後にミニシーン編集モードで開く。
     // 編集モードの入口はダブルクリックだけで自動検証できないため、既存の検証フラグ
     // (--select / --pick-test / --parts-demo) と同じ流儀で口を開けてある
     std::wstring editActorPath;
+    // --package DIR (M51j): BuildSettings の段階パイプラインを CLI から実行して終了する
+    // (検証/CI 用。GUI とコード経路を完全共有)。--package-dds / --package-zip で opt-in 段も
+    std::wstring packageDir;
+    bool packageDds = false;
+    bool packageZip = false;
+    std::string packageBoot; // --package-boot <scene.json> (空 = 既定 main.scene.json)
 
 private:
     // 未保存変更ガード (M27b): dirty なら確認モーダルを経由して実行する
