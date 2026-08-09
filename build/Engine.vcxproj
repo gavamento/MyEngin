@@ -113,6 +113,8 @@
     <ClCompile Include="..\src\Engine\Engine\VfxSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Platform\Clock.cpp" />
     <ClCompile Include="..\src\Engine\Platform\Input.cpp" />
+    <ClCompile Include="..\src\Engine\Platform\InputActions.cpp" />
+    <ClCompile Include="..\src\Engine\Platform\InputActionsSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Platform\PathUtil.cpp" />
     <ClCompile Include="..\src\Engine\Platform\Win32Window.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\DeferredPath.cpp" />
@@ -240,7 +242,10 @@
     <ClInclude Include="..\src\Engine\Engine\VfxSelfTest.h" />
     <ClInclude Include="..\src\Engine\Platform\Clock.h" />
     <ClInclude Include="..\src\Engine\Platform\Input.h" />
+    <ClInclude Include="..\src\Engine\Platform\InputActions.h" />
+    <ClInclude Include="..\src\Engine\Platform\InputActionsSelfTest.h" />
     <ClInclude Include="..\src\Engine\Platform\PathUtil.h" />
+    <ClInclude Include="..\src\Engine\Platform\VkNameTable.inl" />
     <ClInclude Include="..\src\Engine\Platform\Win32Window.h" />
     <ClInclude Include="..\src\Engine\Renderer\DeferredPath.h" />
     <ClInclude Include="..\src\Engine\Renderer\EditorLinePass.h" />

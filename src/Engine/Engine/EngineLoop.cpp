@@ -40,6 +40,7 @@
 #include "Engine/Engine/UI/UIRenderer.h"
 #include "Engine/Engine/Vfx/VfxRenderer.h"
 #include "Engine/Platform/Clock.h"
+#include "Engine/Platform/InputActions.h"
 #include "Engine/Platform/PathUtil.h"
 #include "Engine/Platform/Win32Window.h"
 #include "Engine/Renderer/DeferredPath.h"
@@ -193,6 +194,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     SwapChain swapChain;
     ImGuiRenderer imgui;
     Input input;
+    InputActions inputActions;
     Clock clock;
     Scene scene;
     ShaderManager shaderManager;
@@ -414,6 +416,9 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     ctx.assetsRoot = assetsRoot;
     ctx.projectRoot = config.projectRoot;
     ctx.imguiIniPath = imguiIniPath;
+    // M51d: 入力アクションマップ (assets\input\actions.json)。不在 = 空マップ = no-op
+    inputActions.Load(assetsRoot);
+    ctx.inputActions = &inputActions;
 
     // M23: assets\ を走査して .meta サイドカー (GUID) を生成/同期する。
     // アセット登録 (app.OnStart → RegisterAssetLibraries) の前に済ませ、パス⇄GUID 解決を利用可能にする。
@@ -471,6 +476,8 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // M36b 描画補間: 前 tick 末のワールド行列 (tick 頭に採取)。record/verify 中は不使用
     PrevWorldStore prevWorld;
     bool lastTickSimulated = false;
+    // M51d: 前 tick の入力 (アクションの pressed/released 判定用)。tick 0 はゼロ値 (決定台帳 4)
+    InputSnapshot prevTickInput = {};
     const auto capturePrevWorld = [&prevWorld](World& w) {
         const ComponentTypeId req[] = { WorldMatrixComponent::sTypeId };
         w.ForEachArchetype(req, [&](Archetype& arch) {
@@ -529,6 +536,11 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             if (verifying) {
                 ctx.input = player.InputForTick(ctx.tickIndex); // フェーズ 1 の入力を置換
             }
+            // M51d: アクション評価。tick の入力が確定した直後 (verify の置換の後) に
+            // 前 tick との比較で held/pressed/released と軸値を確定する。
+            // 記録済みスナップショット 2 枚の純関数なので record/verify に透過 (決定台帳 4)
+            inputActions.Evaluate(ctx.input, prevTickInput);
+            prevTickInput = ctx.input;
             // M36b: tick 頭のワールド行列を補間用に採取 (record/verify 中は補間しないので省く)
             if (!recorder.IsActive() && !player.IsActive()) {
                 capturePrevWorld(scene.GetWorld());

@@ -1,0 +1,11 @@
+{
+  "actions": [
+    { "name": "Jump", "keys": ["Space"], "pad": ["A"], "mouse": [] },
+    { "name": "Fire", "keys": ["J"], "pad": ["RB"], "mouse": ["Left"] },
+    { "name": "Pause", "keys": ["Escape"], "pad": ["Start"], "mouse": [] }
+  ],
+  "axes": [
+    { "name": "MoveX", "posKey": "D", "negKey": "A", "padAxis": "LX", "deadzone": 0.24 },
+    { "name": "MoveY", "posKey": "W", "negKey": "S", "padAxis": "LY", "deadzone": 0.24 }
+  ]
+}

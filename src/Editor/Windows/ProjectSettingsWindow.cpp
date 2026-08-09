@@ -1,12 +1,15 @@
 #include "Editor/Windows/ProjectSettingsWindow.h"
 
+#include <algorithm>
 #include <string>
 
 #include "Editor/EditorSettings.h"
 #include "Editor/PartTagNames.h"
 #include "Editor/PhysicsLayerNames.h"
 #include "Editor/ShortcutHub.h"
+#include "Engine/Core/Hash.h"
 #include "Engine/Core/Localization.h"
+#include "Engine/Platform/InputActions.h"
 #include "Engine/Renderer/RenderPath.h"
 
 #include "imgui.h"
@@ -17,8 +20,12 @@ void ProjectSettingsWindow::OnImGui(EngineContext& ctx, EditorSettings& settings
                                     ShortcutHub& shortcuts)
 {
     if (!open) {
+        captureKind_ = 0; // 窓を閉じたら捕捉も取り消す
         return;
     }
+    // M51d: キー捕捉はセクションの開閉と無関係に毎フレーム処理する
+    // (折り畳み中に lastInput_ が止まると、再展開時に偽の押下エッジを拾う)
+    UpdateKeyCapture(ctx);
     if (!ImGui::Begin(Tr(StrId::Win_ProjectSettings), &open)) {
         ImGui::End();
         return;
@@ -104,6 +111,11 @@ void ProjectSettingsWindow::OnImGui(EngineContext& ctx, EditorSettings& settings
         }
     }
 
+    // ---- 入力アクション (M51d、assets\input\actions.json) ----
+    if (ImGui::CollapsingHeader(Tr(StrId::PrjSet_Input))) {
+        DrawInputSection(ctx);
+    }
+
     // ---- ショートカット一覧 (読み取り専用) ----
     if (ImGui::CollapsingHeader(Tr(StrId::PrjSet_Shortcuts))) {
         static const char* kNames[] = {
@@ -126,6 +138,250 @@ void ProjectSettingsWindow::OnImGui(EngineContext& ctx, EditorSettings& settings
     }
 
     ImGui::End();
+}
+
+void ProjectSettingsWindow::UpdateKeyCapture(EngineContext& ctx)
+{
+    if (captureKind_ != 0 && ctx.inputActions != nullptr) {
+        // 0x00-0x07 はマウスボタン等 — 捕捉ボタンのクリック自体を拾わないため除外
+        for (int vk = 0x08; vk < 256; ++vk) {
+            const uint8_t v = static_cast<uint8_t>(vk);
+            if (!ctx.input.KeyDown(v) || lastInput_.KeyDown(v)) {
+                continue; // 新規押下エッジのみ
+            }
+            InputActions& ia = *ctx.inputActions;
+            if (v == 0x1B) { // Esc = 取消
+            } else if (captureKind_ == 1
+                       && captureIndex_ < static_cast<int>(ia.Actions().size())) {
+                std::vector<uint8_t>& keys = ia.Actions()[captureIndex_].keys;
+                if (std::find(keys.begin(), keys.end(), v) == keys.end()) {
+                    keys.push_back(v);
+                }
+            } else if (captureKind_ == 2 && captureIndex_ < static_cast<int>(ia.Axes().size())) {
+                ia.Axes()[captureIndex_].posKey = v;
+            } else if (captureKind_ == 3 && captureIndex_ < static_cast<int>(ia.Axes().size())) {
+                ia.Axes()[captureIndex_].negKey = v;
+            }
+            captureKind_ = 0;
+            break;
+        }
+    }
+    lastInput_ = ctx.input;
+}
+
+void ProjectSettingsWindow::DrawInputSection(EngineContext& ctx)
+{
+    if (ctx.inputActions == nullptr) {
+        return;
+    }
+    InputActions& ia = *ctx.inputActions;
+    ImGui::TextWrapped("%s", Tr(StrId::PrjSet_InputHint));
+    ImGui::TextDisabled("%s", Tr(StrId::PrjSet_LiveLegend));
+    if (captureKind_ != 0) {
+        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "%s", Tr(StrId::PrjSet_CaptureWait));
+    }
+    const ImVec4 colOn(0.3f, 1.0f, 0.3f, 1.0f);
+    const ImVec4 colOff(0.4f, 0.4f, 0.4f, 1.0f);
+
+    // ---- アクション一覧 ----
+    ImGui::SeparatorText(Tr(StrId::PrjSet_Actions));
+    int removeAction = -1;
+    for (int i = 0; i < static_cast<int>(ia.Actions().size()); ++i) {
+        InputActionDef& a = ia.Actions()[i];
+        ImGui::PushID(i);
+        char name[64];
+        std::snprintf(name, sizeof(name), "%s", a.name.c_str());
+        ImGui::SetNextItemWidth(140.0f);
+        if (ImGui::InputText("##name", name, sizeof(name))) {
+            a.name = name;
+            a.nameHash = HashStr(a.name); // 鍵は名前のハッシュ — リネームに追随させる
+        }
+        // ライブ状態 (直近 tick の評価結果)
+        const uint32_t st = ia.ActionStateAt(static_cast<size_t>(i));
+        ImGui::SameLine();
+        ImGui::TextColored((st & kActionHeld) != 0 ? colOn : colOff, "H");
+        ImGui::SameLine(0.0f, 4.0f);
+        ImGui::TextColored((st & kActionPressed) != 0 ? colOn : colOff, "P");
+        ImGui::SameLine(0.0f, 4.0f);
+        ImGui::TextColored((st & kActionReleased) != 0 ? colOn : colOff, "R");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("x")) {
+            removeAction = i;
+        }
+        // 束縛チップ (クリックで削除) + 追加ボタン
+        ImGui::Indent();
+        int removeKey = -1;
+        for (int k = 0; k < static_cast<int>(a.keys.size()); ++k) {
+            ImGui::PushID(k);
+            if (ImGui::SmallButton(InputActions::VkNameStr(a.keys[k]).c_str())) {
+                removeKey = k;
+            }
+            ImGui::PopID();
+            ImGui::SameLine();
+        }
+        if (removeKey >= 0) {
+            a.keys.erase(a.keys.begin() + removeKey);
+        }
+        if (ImGui::SmallButton(Tr(StrId::PrjSet_AddKey))) {
+            captureKind_ = 1;
+            captureIndex_ = i;
+        }
+        ImGui::SameLine();
+        for (int b = 0; b < 16; ++b) {
+            const uint16_t mask = static_cast<uint16_t>(1u << b);
+            if ((a.padMask & mask) == 0) {
+                continue;
+            }
+            const char* pn = InputActions::PadButtonName(mask);
+            ImGui::PushID(100 + b);
+            if (pn != nullptr && ImGui::SmallButton(pn)) {
+                a.padMask &= static_cast<uint16_t>(~mask);
+            }
+            ImGui::PopID();
+            ImGui::SameLine();
+        }
+        if (ImGui::SmallButton(Tr(StrId::PrjSet_AddPad))) {
+            ImGui::OpenPopup("padadd");
+        }
+        if (ImGui::BeginPopup("padadd")) {
+            // 表示順は UX 優先 (ボタン → ショルダー → スティック押込 → システム → 十字)
+            static constexpr uint16_t kOrder[] = { 0x1000, 0x2000, 0x4000, 0x8000, 0x0100,
+                                                   0x0200, 0x0040, 0x0080, 0x0010, 0x0020,
+                                                   0x0001, 0x0002, 0x0004, 0x0008 };
+            for (uint16_t mask : kOrder) {
+                if ((a.padMask & mask) == 0
+                    && ImGui::Selectable(InputActions::PadButtonName(mask))) {
+                    a.padMask |= mask;
+                }
+            }
+            ImGui::EndPopup();
+        }
+        ImGui::SameLine();
+        for (int b = 0; b < 5; ++b) {
+            const uint8_t mask = static_cast<uint8_t>(1u << b);
+            if ((a.mouseMask & mask) == 0) {
+                continue;
+            }
+            ImGui::PushID(200 + b);
+            if (ImGui::SmallButton(InputActions::MouseButtonName(b))) {
+                a.mouseMask &= static_cast<uint8_t>(~mask);
+            }
+            ImGui::PopID();
+            ImGui::SameLine();
+        }
+        if (ImGui::SmallButton(Tr(StrId::PrjSet_AddMouse))) {
+            ImGui::OpenPopup("mouseadd");
+        }
+        if (ImGui::BeginPopup("mouseadd")) {
+            for (int b = 0; b < 5; ++b) {
+                const uint8_t mask = static_cast<uint8_t>(1u << b);
+                if ((a.mouseMask & mask) == 0
+                    && ImGui::Selectable(InputActions::MouseButtonName(b))) {
+                    a.mouseMask |= mask;
+                }
+            }
+            ImGui::EndPopup();
+        }
+        ImGui::Unindent();
+        ImGui::PopID();
+    }
+    if (removeAction >= 0) {
+        ia.Actions().erase(ia.Actions().begin() + removeAction);
+    }
+    if (ImGui::Button(Tr(StrId::PrjSet_AddAction))) {
+        InputActionDef def;
+        def.name = "NewAction" + std::to_string(ia.Actions().size());
+        def.nameHash = HashStr(def.name);
+        ia.Actions().push_back(std::move(def));
+    }
+
+    // ---- 軸一覧 ----
+    ImGui::SeparatorText(Tr(StrId::PrjSet_Axes));
+    int removeAxis = -1;
+    for (int i = 0; i < static_cast<int>(ia.Axes().size()); ++i) {
+        InputAxisDef& a = ia.Axes()[i];
+        ImGui::PushID(1000 + i);
+        char name[64];
+        std::snprintf(name, sizeof(name), "%s", a.name.c_str());
+        ImGui::SetNextItemWidth(140.0f);
+        if (ImGui::InputText("##name", name, sizeof(name))) {
+            a.name = name;
+            a.nameHash = HashStr(a.name);
+        }
+        // ライブ値 [-1, +1]
+        const float v = ia.AxisValueAt(static_cast<size_t>(i));
+        char overlay[16];
+        std::snprintf(overlay, sizeof(overlay), "%+.2f", v);
+        ImGui::SameLine();
+        ImGui::ProgressBar((v + 1.0f) * 0.5f, ImVec2(90.0f, 0.0f), overlay);
+        ImGui::SameLine();
+        if (ImGui::SmallButton("x")) {
+            removeAxis = i;
+        }
+        ImGui::Indent();
+        // posKey / negKey (クリックで捕捉、右クリックで解除)。
+        // 同じキー名が両方に付いても ID が割れないよう "###" で固定 ID にする
+        char posLabel[32];
+        std::snprintf(posLabel, sizeof(posLabel), "%s###pos",
+                      a.posKey != 0 ? InputActions::VkNameStr(a.posKey).c_str() : "---");
+        ImGui::TextUnformatted("+");
+        ImGui::SameLine();
+        if (ImGui::SmallButton(posLabel)) {
+            captureKind_ = 2;
+            captureIndex_ = i;
+        }
+        if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
+            a.posKey = 0;
+            captureKind_ = 0;
+        }
+        char negLabel[32];
+        std::snprintf(negLabel, sizeof(negLabel), "%s###neg",
+                      a.negKey != 0 ? InputActions::VkNameStr(a.negKey).c_str() : "---");
+        ImGui::SameLine();
+        ImGui::TextUnformatted("-");
+        ImGui::SameLine();
+        if (ImGui::SmallButton(negLabel)) {
+            captureKind_ = 3;
+            captureIndex_ = i;
+        }
+        if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
+            a.negKey = 0;
+            captureKind_ = 0;
+        }
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(70.0f);
+        if (ImGui::BeginCombo(Tr(StrId::PrjSet_PadAxis),
+                              InputActions::PadAxisName(a.padAxis))) {
+            for (int ax = 0; ax < static_cast<int>(PadAxis::Count); ++ax) {
+                const PadAxis pa = static_cast<PadAxis>(ax);
+                if (ImGui::Selectable(InputActions::PadAxisName(pa), pa == a.padAxis)) {
+                    a.padAxis = pa;
+                }
+            }
+            ImGui::EndCombo();
+        }
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(90.0f);
+        ImGui::DragFloat(Tr(StrId::PrjSet_Deadzone), &a.deadzone, 0.01f, 0.0f, 0.95f, "%.2f");
+        ImGui::Unindent();
+        ImGui::PopID();
+    }
+    if (removeAxis >= 0) {
+        ia.Axes().erase(ia.Axes().begin() + removeAxis);
+    }
+    if (ImGui::Button(Tr(StrId::PrjSet_AddAxis))) {
+        InputAxisDef def;
+        def.name = "NewAxis" + std::to_string(ia.Axes().size());
+        def.nameHash = HashStr(def.name);
+        ia.Axes().push_back(std::move(def));
+    }
+
+    // 保存ホットリロード: 書き出してから正規形 (重複除去・不明名落ち) を読み直す
+    if (ImGui::Button(Tr(StrId::PrjSet_SaveInput))) {
+        if (ia.Save(ctx.assetsRoot)) {
+            ia.Load(ctx.assetsRoot, true);
+        }
+    }
 }
 
 } // namespace mye

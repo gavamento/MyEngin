@@ -27,6 +27,7 @@ class AssetDatabase;
 class AudioSystem;
 class SoundLibrary;
 class MixerLibrary;
+class InputActions;
 struct RenderResources;
 
 struct EngineConfig {
@@ -147,6 +148,9 @@ struct EngineContext {
     std::wstring projectRoot;           // プロジェクトルート (M26)。レガシー起動時は空
     std::wstring imguiIniPath;          // imgui.ini の解決済みパス (レガシー時は L"imgui.ini")
     InputSnapshot input = {}; // 現フレームのスナップショット (tick 中も同一)
+    // アクションマップ (M51d)。EngineLoop が所有し tick 頭に評価済み。
+    // assets\input\actions.json が無ければ空マップ (ActionState/AxisValue は常に 0)
+    InputActions* inputActions = nullptr;
     // この tick でスクリプト層 (フェーズ 3/5) を実行するか。
     // エディタは OnTick で Play 状態に応じて設定する (Runtime は常に true)
     bool simulateScripts = true;

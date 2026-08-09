@@ -321,6 +321,12 @@
     <ClCompile Include="..\src\Engine\Platform\Input.cpp">
       <Filter>Platform</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Platform\InputActions.cpp">
+      <Filter>Platform</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Platform\InputActionsSelfTest.cpp">
+      <Filter>Platform</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Platform\PathUtil.cpp">
       <Filter>Platform</Filter>
     </ClCompile>
@@ -702,7 +708,16 @@
     <ClInclude Include="..\src\Engine\Platform\Input.h">
       <Filter>Platform</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Platform\InputActions.h">
+      <Filter>Platform</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Platform\InputActionsSelfTest.h">
+      <Filter>Platform</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Platform\PathUtil.h">
+      <Filter>Platform</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Platform\VkNameTable.inl">
       <Filter>Platform</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Platform\Win32Window.h">

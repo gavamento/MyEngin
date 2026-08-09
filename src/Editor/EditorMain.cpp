@@ -34,6 +34,7 @@
 #include "Engine/Engine/FontSelfTest.h"
 #include "Engine/Engine/UI/UISelfTest.h"
 #include "Engine/Engine/VfxSelfTest.h"
+#include "Engine/Platform/InputActionsSelfTest.h"
 #include "Engine/Platform/PathUtil.h"
 #include "Engine/Renderer/RenderSelfTest.h"
 #include "Engine/Renderer/TextureCookSelfTest.h"
@@ -238,7 +239,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             && mye::RunFontSelfTest() && mye::RunAudioSelfTest() && mye::RunRtSelfTest()
             && mye::RunLocalizationSelfTest() && mye::RunSkeletonSelfTest()
             && mye::RunPartSelfTest() && mye::RunSchemaSelfTest()
-            && mye::RunCookedCacheSelfTest();
+            && mye::RunCookedCacheSelfTest() && mye::RunInputActionsSelfTest();
         return ok ? 0 : 1;
     }
 

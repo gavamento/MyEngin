@@ -262,6 +262,24 @@ MYE_STR(PrjSet_PartTagHint,   "The tag ID is the hash of its NAME — renaming a
                               "(unlike physics layers, where the number is the identity)",
                               "タグ ID は**名前のハッシュ**です — 名前を変えると、既にそのタグを使っているシーンの参照が切れます "
                               "(番号が実体の物理レイヤーとは性質が違います)")
+// ---- 入力アクション (M51d) ----
+MYE_STR(PrjSet_Input,         "Input Actions",       "入力アクション")
+MYE_STR(PrjSet_InputHint,     "Action map (assets/input/actions.json). Evaluated every tick; Save applies immediately. "
+                              "Click a binding to remove it; right-click +/- keys to clear",
+                              "アクションマップ (assets/input/actions.json)。毎 tick 評価。保存で即反映。"
+                              "割り当てはクリックで削除、+/- キーは右クリックで解除")
+MYE_STR(PrjSet_Actions,       "Actions",             "アクション")
+MYE_STR(PrjSet_Axes,          "Axes",                "軸")
+MYE_STR(PrjSet_AddAction,     "Add Action",          "アクションを追加")
+MYE_STR(PrjSet_AddAxis,       "Add Axis",            "軸を追加")
+MYE_STR(PrjSet_AddKey,        "+ Key",               "+ キー")
+MYE_STR(PrjSet_AddPad,        "+ Pad",               "+ パッド")
+MYE_STR(PrjSet_AddMouse,      "+ Mouse",             "+ マウス")
+MYE_STR(PrjSet_CaptureWait,   "Press a key... (Esc to cancel)", "キー入力待ち... (Esc で取消)")
+MYE_STR(PrjSet_SaveInput,     "Save Input",          "入力設定を保存")
+MYE_STR(PrjSet_Deadzone,      "Deadzone",            "デッドゾーン")
+MYE_STR(PrjSet_LiveLegend,    "Live: H=held P=pressed R=released", "ライブ: H=押下中 P=押した瞬間 R=離した瞬間")
+MYE_STR(PrjSet_PadAxis,       "Pad axis",            "パッド軸")
 MYE_STR(Build_TipBundle,      "ON: bundles the .NET 8 runtime under dotnet\\ so the target machine does not need .NET\n"
                               "OFF: the target machine must have the .NET 8 runtime installed",
                               "ON: .NET 8 ランタイムを dotnet\\ に同梱し、配布先に .NET 不要にする\n"
