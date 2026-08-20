@@ -21,6 +21,16 @@
       <FloatingPointModel>Precise</FloatingPointModel>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <!--
+        警告 0 の機械化 (M52b)。**既定 off** — ローカル開発が警告 1 個で止まらないように。
+        CI だけ /p:MyeWarnAsError=true で有効にする (tools\replay_verify.bat が
+        MYE_MSBUILD_ARGS 経由で受け取る)。
+        ★ C++ の TreatWarningAsError は ClCompile の**項目メタデータ**なので、
+          MSBuild のグローバルプロパティ /p:TreatWarningAsError=true では効かない
+          (プロパティは設定されるが誰も読まない = 静かに素通り)。ここで明示的に橋渡しする。
+        external\ の第三者コードは Engine.vcxproj 側で個別に false へ落としてある。
+      -->
+      <TreatWarningAsError Condition="'$(MyeWarnAsError)'=='true'">true</TreatWarningAsError>
       <AdditionalOptions>/utf-8 /Zc:preprocessor %(AdditionalOptions)</AdditionalOptions>
       <PreprocessorDefinitions>NOMINMAX;WIN32_LEAN_AND_MEAN;_CRT_SECURE_NO_WARNINGS;IMGUI_DISABLE_OBSOLETE_FUNCTIONS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <AdditionalIncludeDirectories>$(RepoRoot)src;$(RepoRoot)external;$(RepoRoot)external\imgui;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>

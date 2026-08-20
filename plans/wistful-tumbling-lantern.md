@@ -39,8 +39,8 @@ M51 完遂 (`a0d5081` → 後続 `760ac83`、ABI v12、kEngineVersion 0.66) の�
 
 | サブ | 状態 | コミット | メモ |
 |---|---|---|---|
-| M52a ハッシュ差分診断 | 完了 | (本コミット) | 下記「M52a の申し送り」参照 |
-| M52b CI + WARP | 未着手 | | |
+| M52a ハッシュ差分診断 | 完了 | `55fe1ce` | 下記「M52a の申し送り」参照 |
+| M52b CI + WARP | 完了 | (本コミット) | 下記「M52b の申し送り」参照 |
 | M52c スクショ回帰 | 未着手 | | |
 | M52d SimSnapshot 基盤 | 未着手 | | |
 | M52e タイムトラベル | 未着手 | | |
@@ -78,6 +78,40 @@ M51 完遂 (`a0d5081` → 後続 `760ac83`、ABI v12、kEngineVersion 0.66) の�
    **PowerShell から `cmd /c "..."`** の一手に統一する。
 7. M52d 以降で ReplayFile を v4 にするとき、`--hash-dump` の出力形式 (`#mye-hash-dump v1`) は
    .rep とは独立に版を持つ。ダンプ形式を変えるときはこのヘッダ行の版を上げること。
+
+### M52b の申し送り (計画外の事実・罠)
+
+1. **`/p:TreatWarningAsError=true` は C++ に効かない。** 計画に書いてあった通りに CI へ入れると
+   「警告 0 を機械化した」という**嘘の緑**になる。C++ の `TreatWarningAsError` は
+   ClCompile の**項目メタデータ**で、MSBuild のグローバルプロパティは誰にも読まれず素通りする
+   (実測: C4189 を仕込んでも warning のまま exit 0)。橋渡しが要る:
+   `Common.props` の ItemDefinitionGroup に
+   `<TreatWarningAsError Condition="'$(MyeWarnAsError)'=='true'">true</TreatWarningAsError>`
+   を置き、CI は `/p:MyeWarnAsError=true` を渡す。**既定 off なのでローカル開発は止まらない**
+   (計画が Common.props を触らないと決めた動機はここで満たされる)。
+   `external\` の第三者ソース 8 本は `Engine.vcxproj` 側で個別に `false` へ落とす
+   (手書き ItemGroup なので `gen_project_files.ps1` は上書きしない)。
+   検証は「仕込んで赤 → 外して全体 Rebuild が緑」の両方向で実施。
+2. **WARP のハッシュは実 GPU と一致する — 実測済み。** 計画では「sim は CPU 専用だから同一のはず」
+   という推論だったが、**WARP で録った 3 本の .rep を RTX 3060 でそのまま `--replay-verify` して
+   600 tick 全一致**することを確認した (逆向きも同様)。つまり CI と開発機の .rep は相互運用でき、
+   CI 失敗時に artifact の .rep を持ち帰ってローカルで `--hash-diff` にかけられる。
+3. **WARP でも所要時間はほとんど増えない。** tick はアキュムレータで追いつくので、
+   描画が遅いフレームほど 1 フレームあたりの tick 数が増えるだけ (600 tick が 10 frames で消化された)。
+   sim の回数は同じ = リプレイ検証の壁時計は描画性能にほぼ依存しない。
+   ただし**スクショ回帰 (M52c) は逆** — あちらはフレーム番号基準なので WARP の遅さが直撃する。
+4. **`--package` は成否を終了コードに載せていなかった** (ログに PASS/FAIL を出すだけ)。
+   CI が機械判定できないので `EditorApp::packageExitCode` を足して `EditorMain` が返すようにした
+   (エンジン自体の失敗コードが優先)。CI 側は exit code に加えて dist の中身も見る。
+5. **push には `workflow` スコープが要る。** `gh auth login` の既定トークン (repo/gist/read:org) では
+   `.github\workflows\*` を含む push が remote 側で拒否される。
+   `gh auth refresh -h github.com -s workflow` を**人間が対話で**一度実行する必要がある。
+6. runner image `windows-2022` は 2026-08 時点で現役 (deprecated ではない)。
+   固定した理由は再現性 — `windows-latest` は Windows Server 2025 を指す。
+7. CI のステップは `shell: cmd` を使う。GUI サブシステムの exe を待つには cmd 経由が要る
+   (M52a の罠 6 と同根。pwsh から `& Editor.exe` は待たない)。
+8. Hub (`ProjectManager`) は `GraphicsDevice::Init()` の既定引数を使うので、
+   `--warp` は届かないが**自動フォールバック側に乗る** (GPU 無し環境でも Hub は起動する)。
 
 ---
 

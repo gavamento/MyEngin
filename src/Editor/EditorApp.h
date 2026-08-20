@@ -66,6 +66,9 @@ public:
     bool packageDds = false;
     bool packageZip = false;
     std::string packageBoot; // --package-boot <scene.json> (空 = 既定 main.scene.json)
+    // パイプラインの成否 (M52b)。EditorMain がプロセスの終了コードへ載せる —
+    // CI は「dist が出来たか」ではなく exit code で機械判定する
+    int packageExitCode = 0;
 
 private:
     // 未保存変更ガード (M27b): dirty なら確認モーダルを経由して実行する

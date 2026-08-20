@@ -393,8 +393,9 @@ void EditorApp::OnImGui(EngineContext& ctx)
     buildSettings_.OnImGui(ctx);
     // --package (M51j): CLI パッケージが完了したら結果を出して終了する (CI/検証用)
     if (!packageDir.empty() && buildSettings_.PipelineFinished()) {
-        MYE_LOG_INFO("[build] CLI package result: %s",
-                     buildSettings_.PipelineSucceeded() ? "PASS" : "FAIL");
+        const bool ok = buildSettings_.PipelineSucceeded();
+        MYE_LOG_INFO("[build] CLI package result: %s", ok ? "PASS" : "FAIL");
+        packageExitCode = ok ? 0 : 1; // M52b: CI が終了コードで判定できるようにする
         packageDir.clear(); // 多重報告を防ぐ
         ctx.requestExit = true;
     }

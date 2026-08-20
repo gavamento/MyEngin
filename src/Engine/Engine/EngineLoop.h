@@ -90,6 +90,14 @@ struct EngineConfig {
     // M46h: スペキュラ環境項をレイトレ反射で置き換える (--rt-refl)。Deferred パスのみ。同上
     bool rtRefl = false;
 
+    // ---- グラフィックスドライバ (M52b) ----
+    // true (--warp) で D3D_DRIVER_TYPE_WARP (ソフトウェアラスタライザ) を直接使う。
+    // false でも HARDWARE の生成に失敗すれば WARP へ自動フォールバックするので、
+    // GPU の無い CI runner でも selftest / replay_verify がそのまま回る。
+    // sim は CPU 専用 = リプレイのハッシュは採用ドライバに依らない。
+    // golden スクリーンショットは撮影機と CI を一致させるため --warp 固定で撮る
+    bool forceWarp = false;
+
     // ---- オーディオ (M45) ----
     // false (--no-audio) で XAudio2 を一切初期化しない。オーディオ端末の無い CI や
     // スクリーンショット専用実行で、デバイス確保とストリーミングスレッドを避けるため

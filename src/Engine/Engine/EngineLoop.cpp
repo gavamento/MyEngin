@@ -277,7 +277,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     if (!window.Create(wd)) {
         return 1;
     }
-    if (!device.Init()) {
+    if (!device.Init(config.forceWarp)) {
         return 1;
     }
     if (!swapChain.Init(device, window.Hwnd(), window.Width(), window.Height())) {

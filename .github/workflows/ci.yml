@@ -1,0 +1,96 @@
+# CI (M52b) — ローカルの検証 bat を **そのまま** 呼ぶ単一 job。
+#
+# 方針: CI 専用の検証ロジックは書かない (二重メンテを作らない)。
+# CI 固有の事情は環境変数 3 本だけで注入し、bat 本体はローカルと 1 文字も変えない:
+#   MYE_EXTRA_ARGS   … 全 Editor.exe 実行へ後置する引数
+#                      --warp    = GPU の無い runner でも D3D11 デバイスを作る (WARP)
+#                      --no-audio = 音声デバイスが無いので XAudio2 を初期化しない
+#   MYE_MSBUILD_ARGS … MSBuild へ後置 (警告 0 の機械化)。
+#                      /p:MyeWarnAsError=true は Common.props の**既定 off** の
+#                      オプトイン (ローカル開発は警告 1 個で止まらない)。
+#                      ★ /p:TreatWarningAsError=true は効かない — C++ ではこれは
+#                        ClCompile の項目メタデータで、グローバルプロパティは
+#                        誰にも読まれず静かに素通りする (M52b で実測)
+#   MYE_DOTNET_ARGS  … dotnet build へ後置 (C# は綴りが TreatWarningsAsErrors)
+#
+# sim は CPU 専用なのでリプレイのワールドハッシュは WARP でも実 GPU でも同一 —
+# GPU 無し runner で replay_verify を回せる根拠がここ (計画の決定台帳 4)。
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+# 同一 ref の古い run は捨てる (windows runner は分単価が高い)
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    name: build x8 + selftest + replay determinism
+    runs-on: windows-2022
+    timeout-minutes: 90
+    env:
+      MYE_EXTRA_ARGS: --warp --no-audio
+      MYE_MSBUILD_ARGS: /p:MyeWarnAsError=true
+      MYE_DOTNET_ARGS: /p:TreatWarningsAsErrors=true
+    steps:
+      - uses: actions/checkout@v4
+
+      # ① マネージドスクリプトホスト (CoreCLR + Roslyn)。ネイティブ exe と同じ
+      #    bin\x64\<Config>\ へ出る。両構成とも起動時にロードされるので両方作る
+      - name: managed host (Debug)
+        shell: cmd
+        run: tools\build_managed.bat Debug
+
+      - name: managed host (Release)
+        shell: cmd
+        run: tools\build_managed.bat Release
+
+      # ② ローカルで打つのと同じ 1 行。この中で
+      #    8 ビルド (4 プロジェクト x Debug/Release) → 3 ペアのリプレイ照合
+      #    (既定デモ / 部位ショーケース / ゲームフロー) → check_rules.ps1 まで回る。
+      #    照合が割れたときは bat 自身がフィールド単位の差分を出す (M52a)
+      - name: replay determinism (build x8 + 3 scene pairs + rule check)
+        shell: cmd
+        run: tools\replay_verify.bat
+
+      # ③ ヘッドレス回帰テスト (D3D もウィンドウも作らない)
+      - name: selftest (Debug)
+        shell: cmd
+        run: bin\x64\Debug\Editor.exe --selftest %MYE_EXTRA_ARGS%
+
+      - name: selftest (Release)
+        shell: cmd
+        run: bin\x64\Release\Editor.exe --selftest %MYE_EXTRA_ARGS%
+
+      # ④ 配布パッケージのスモーク。GUI の「ビルドを作成」と同一パイプラインを
+      #    CLI で回す (M51j)。成否は終了コードに載る (M52b)
+      - name: package smoke (Release)
+        shell: cmd
+        run: bin\x64\Release\Editor.exe --package cache\dist_ci %MYE_EXTRA_ARGS%
+
+      - name: package contents
+        shell: pwsh
+        run: |
+          $need = @('Runtime.exe', 'GameLogic.dll', 'assets\shaders', 'assets\scenes')
+          $missing = $need | Where-Object { -not (Test-Path "cache\dist_ci\$_") }
+          if ($missing) { throw "package is missing: $($missing -join ', ')" }
+          '[package] ' + ((Get-ChildItem -Recurse -File cache\dist_ci | Measure-Object -Property Length -Sum).Sum / 1MB).ToString('0.0') + ' MB'
+
+      # 失敗したときだけ .rep とダンプを持ち帰る (ローカルで --hash-diff にかけられる)
+      - name: failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mye-ci-failure
+          path: |
+            cache/*.rep
+            cache/*.dump
+            cache/*.mismatch.txt
+            cache/*.scene.json
+            cache/*.log
+          if-no-files-found: ignore
+          retention-days: 7

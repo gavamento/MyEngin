@@ -527,6 +527,31 @@ the terminator stays visible instead of being hidden by string semantics.
 - `tools\bisect_replay.bat` is a `git bisect run` wrapper (0 = good, 1 = bad, 125 = build
   failure) that verifies a golden replay recorded on a known-good commit
 
+**Continuous integration (M52b).** `.github\workflows\ci.yml` is a single Windows job that calls
+the *same* scripts a developer runs locally — no CI-only verification logic, so there is nothing
+to keep in sync twice. It builds the managed host for both configurations, runs
+`tools\replay_verify.bat` (eight project builds, three replay pairs, `check_rules.ps1`),
+runs `--selftest` in both configurations, and finishes with a `--package` smoke test whose
+success is reported through the process exit code. On failure the replay files and field dumps
+are uploaded as artifacts, so a divergence found in CI can be diffed locally with `--hash-diff`.
+
+CI-specific concerns are injected through three environment variables that the scripts append
+verbatim, which is why the script bodies are identical locally and in CI:
+
+| Variable | Value in CI | Purpose |
+|---|---|---|
+| `MYE_EXTRA_ARGS` | `--warp --no-audio` | appended to every `Editor.exe` invocation |
+| `MYE_MSBUILD_ARGS` | `/p:MyeWarnAsError=true` | opt-in warnings-as-errors (off by default) |
+| `MYE_DOTNET_ARGS` | `/p:TreatWarningsAsErrors=true` | the same for the C# host |
+
+`GraphicsDevice::Init` tries `D3D_DRIVER_TYPE_HARDWARE` first and falls back to
+`D3D_DRIVER_TYPE_WARP`, logging the adapter it actually adopted; `--warp` skips straight to WARP.
+This is a configuration-value branch, not a `#ifdef _DEBUG` branch, so rule 1 still holds.
+Because simulation is CPU-only, the world hash does not depend on the adopted driver: a replay
+recorded on WARP verifies bit-identically on a discrete GPU and vice versa, which is what makes
+a GPU-less runner an acceptable place to prove determinism. Golden screenshots, unlike hashes,
+*are* driver-dependent and are therefore always captured with `--warp`.
+
 ---
 
 ## 12. Milestones

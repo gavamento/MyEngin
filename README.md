@@ -1,5 +1,7 @@
 # MyEngine
 
+[![CI](https://github.com/gavamento/MyEngin/actions/workflows/ci.yml/badge.svg)](https://github.com/gavamento/MyEngin/actions/workflows/ci.yml)
+
 C++20 / DirectX 11 製の自作ゲームエンジン。**Unity 風の使いやすさ × ECS の性能 × 壊れない開発体験** をコンセプトに、就職活動用ポートフォリオとして開発。仕様は [engine_spec.md](engine_spec.md)、設計判断の記録は [docs/adr/](docs/adr/) を参照。
 
 ## ビルドと実行
@@ -44,8 +46,15 @@ C++20 / DirectX 11 製の自作ゲームエンジン。**Unity 風の使いや�
 - **Debug/Release 一貫性** — 固定 60Hz tick、`/fp:precise`、PCG32、明示ソートキー。
   リプレイ (.rep) の tick 毎ワールドハッシュ比較で機械検証:
   `tools\replay_verify.bat` が両構成ビルド → Debug 記録 → Debug/Release 照合 → 静的規則検査。
-  **被覆は 2 シーン**: 既定デモ (物理 / パーティクル / スクリプト) と部位ショーケース
-  (スキンメッシュのボーン追従 = 骨駆動 LocalTransform の構成間ビット一致)
+  **被覆は 3 シーン**: 既定デモ (物理 / パーティクル / スクリプト) / 部位ショーケース
+  (スキンメッシュのボーン追従 = 骨駆動 LocalTransform の構成間ビット一致) /
+  ゲームフロー統合デモ (シーン遷移・ポーズ・セーブ・アクションマップ)。
+  割れた tick は**どのエンティティのどのフィールドが**割れたかまで自動で出る (`--hash-diff`)
+- **CI (GitHub Actions)** — push ごとに 8 ビルド (4 プロジェクト × Debug/Release、警告 0 を強制) +
+  リプレイ照合 3 ペア + 静的規則検査 + セルフテスト両構成 + 配布パッケージのスモークが回る。
+  **GPU の無い runner でも回る**のは sim が CPU 専用だから — 描画は WARP
+  (ソフトウェアラスタライザ) へ自動フォールバックし、ワールドハッシュはドライバに依らず一致する
+  (WARP で録った .rep が RTX 3060 でそのまま照合できることを実測)
 
 ## エディタ操作
 
@@ -66,10 +75,21 @@ Editor.exe --autoplay --deferred --frames 600 --screenshot shot.png
 Runtime.exe --deferred --rt-demo --rt-gi --rt-shadow --rt-refl --rt-anim-seed
                                           # レイトレのショーケース (コーネル箱)
 Editor.exe --parts-demo                   # 部位 (ソケット) のボーン追従シーン
-tools\replay_verify.bat                   # 一貫性検証一式 (2 シーン被覆)
+Editor.exe --warp                         # WARP (ソフトウェアラスタライザ) 固定で起動
+Editor.exe --package dist                 # 配布パッケージを CLI で作成 (exit code で成否)
+tools\replay_verify.bat                   # 一貫性検証一式 (3 シーン被覆)
 tools\check_rules.ps1                     # コーディング規則の静的検査
 tools\gen_project_files.ps1               # ソース一覧を vcxproj に反映
 ```
+
+CI (`.github\workflows\ci.yml`) は**この bat をそのまま呼ぶ** — CI 専用の検証ロジックは
+書かない。CI 固有の事情は環境変数 3 本だけで注入する:
+
+| 変数 | CI での値 | 用途 |
+|---|---|---|
+| `MYE_EXTRA_ARGS` | `--warp --no-audio` | 全 `Editor.exe` 実行へ後置 (GPU / 音源の無い runner 用) |
+| `MYE_MSBUILD_ARGS` | `/p:MyeWarnAsError=true` | 警告 0 を強制 (既定 off。ローカル開発は止めない) |
+| `MYE_DOTNET_ARGS` | `/p:TreatWarningsAsErrors=true` | 同上 (C# 側。綴りが違う) |
 
 ## 計測 (RTX 3060 / 1600x900 / Release)
 
