@@ -10,6 +10,7 @@
 #include "Engine/Engine/EngineLoop.h"
 #include "Engine/Engine/Prefab.h"
 #include "Engine/Engine/Project.h"
+#include "Engine/Engine/Replay/WorldHasher.h"
 #include "Engine/Engine/Scene.h"
 #include "Engine/Engine/SceneSerializer.h"
 #include "Engine/Platform/PathUtil.h"
@@ -102,6 +103,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     config.enableImGui = false;            // エディタ UI 無し
 
     RuntimeApp app;
+    std::wstring hashDiffA; // --hash-diff A B (M52a)
+    std::wstring hashDiffB;
 
     int argc = 0;
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
@@ -132,6 +135,14 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 config.vsync = false;
             } else if (arg == L"--replay-ticks" && i + 1 < argc) {
                 config.replayTicks = _wtoi64(argv[++i]);
+            } else if (arg == L"--hash-dump" && i + 1 < argc) {
+                config.hashDumpPath = argv[++i]; // M52a: フィールド単位ダンプの出力先
+            } else if (arg == L"--hash-dump-tick" && i + 1 < argc) {
+                config.hashDumpTick = _wtoi64(argv[++i]);
+            } else if (arg == L"--hash-diff" && i + 2 < argc) {
+                // M52a: 配布ビルド単体でもクラッシュ報告のダンプを突き合わせられるように
+                hashDiffA = argv[++i];
+                hashDiffB = argv[++i];
             } else if (arg == L"--deferred") {
                 app.startDeferred = true;
             } else if (arg == L"--postfx-mode" && i + 1 < argc) {
@@ -180,6 +191,16 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             }
         }
         LocalFree(argv);
+    }
+
+    // --hash-diff A B: ダンプ 2 本を突き合わせて終了 (M52a)。同一なら 0、食い違えば 1
+    if (!hashDiffA.empty() && !hashDiffB.empty()) {
+        mye::HashDump a;
+        mye::HashDump b;
+        if (!mye::ReadHashDump(hashDiffA, a) || !mye::ReadHashDump(hashDiffB, b)) {
+            return 2;
+        }
+        return mye::DiffHashDumps(a, b).Same() ? 0 : 1;
     }
 
     mye::EngineLoop loop;

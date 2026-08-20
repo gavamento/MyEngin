@@ -5,6 +5,11 @@ rem   2. Debug でゴールデンリプレイを記録
 rem   3. Debug と Release の両方でハッシュ照合
 rem   4. 静的規則チェック
 rem 全て成功で exit 0、いずれか失敗で exit 1
+rem
+rem M52a: 照合が失敗したときだけ :diagnose を呼び、
+rem   失敗側の <rep>.tickN.actual.dump (EngineLoop が自動で残す) と
+rem   期待側 (同じコマンドで録り直した Debug) のフィールド単位ダンプを
+rem   --hash-diff で突き合わせて「どのフィールドが割れたか」まで表示する
 setlocal
 cd /d "%~dp0.."
 
@@ -29,14 +34,17 @@ rem (クック再生)。600 tick のハッシュ一致が「クック有無で�
 if exist bin\x64\Debug\cache\cooked rd /s /q bin\x64\Debug\cache\cooked
 if exist bin\x64\Release\cache\cooked rd /s /q bin\x64\Release\cache\cooked
 
+rem 前回の失敗マーカーが残っていると :diagnose が古い tick を掴む (M52a)
+del /q cache\*.mismatch.txt 2>nul
+
 echo === record golden replay (Debug, %TICKS% ticks) ===
 bin\x64\Debug\Editor.exe --replay-record %REP% --replay-ticks %TICKS% || exit /b 1
 
 echo === verify in Debug ===
-bin\x64\Debug\Editor.exe --replay-verify %REP% || (echo [FAIL] Debug verify & exit /b 1)
+bin\x64\Debug\Editor.exe --replay-verify %REP% || (call :diagnose "%REP%" "" & echo [FAIL] Debug verify & exit /b 1)
 
 echo === verify in Release ===
-bin\x64\Release\Editor.exe --replay-verify %REP% || (echo [FAIL] Release verify & exit /b 1)
+bin\x64\Release\Editor.exe --replay-verify %REP% || (call :diagnose "%REP%" "" & echo [FAIL] Release verify & exit /b 1)
 
 rem ---- 2 本目: 部位のボーン追従シーン (M48g) ----
 rem 既定デモシーンにはスキンメッシュが 1 体も無く、骨演算は一度もハッシュ被覆に
@@ -58,10 +66,10 @@ echo === record golden replay: parts (Debug, %TICKS% ticks) ===
 bin\x64\Debug\Editor.exe --parts-demo --replay-record %REP2% --replay-ticks %TICKS% || exit /b 1
 
 echo === verify parts in Debug ===
-bin\x64\Debug\Editor.exe --parts-demo --replay-verify %REP2% || (echo [FAIL] Debug parts verify & exit /b 1)
+bin\x64\Debug\Editor.exe --parts-demo --replay-verify %REP2% || (call :diagnose "%REP2%" "--parts-demo" & echo [FAIL] Debug parts verify & exit /b 1)
 
 echo === verify parts in Release ===
-bin\x64\Release\Editor.exe --parts-demo --replay-verify %REP2% || (echo [FAIL] Release parts verify & exit /b 1)
+bin\x64\Release\Editor.exe --parts-demo --replay-verify %REP2% || (call :diagnose "%REP2%" "--parts-demo" & echo [FAIL] Release parts verify & exit /b 1)
 
 rem ---- 3 本目: ゲームフロー統合デモ (M51j) ----
 rem M51 のフロー系 (LoadScene 遷移 / TimeControl ポーズ+タイムスケール / PersistStore の
@@ -84,10 +92,10 @@ echo === record golden replay: flow (Debug, %TICKS% ticks) ===
 bin\x64\Debug\Editor.exe --flow-demo --replay-record %REP3% --replay-ticks %TICKS% || exit /b 1
 
 echo === verify flow in Debug ===
-bin\x64\Debug\Editor.exe --flow-demo --replay-verify %REP3% || (echo [FAIL] Debug flow verify & exit /b 1)
+bin\x64\Debug\Editor.exe --flow-demo --replay-verify %REP3% || (call :diagnose "%REP3%" "--flow-demo" & echo [FAIL] Debug flow verify & exit /b 1)
 
 echo === verify flow in Release ===
-bin\x64\Release\Editor.exe --flow-demo --replay-verify %REP3% || (echo [FAIL] Release flow verify & exit /b 1)
+bin\x64\Release\Editor.exe --flow-demo --replay-verify %REP3% || (call :diagnose "%REP3%" "--flow-demo" & echo [FAIL] Release flow verify & exit /b 1)
 
 echo === static rule check ===
 pwsh -NoProfile -ExecutionPolicy Bypass -File tools\check_rules.ps1 || (echo [FAIL] rule check & exit /b 1)
@@ -95,3 +103,26 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File tools\check_rules.ps1 || (echo [FA
 echo.
 echo [PASS] replay consistency (Debug/Release, 3 scenes: demo + parts + flow) + rule check
 exit /b 0
+
+rem ---------------------------------------------------------------- :diagnose
+rem 失敗した照合の「どのフィールドが割れたか」を出す (M52a)。
+rem   %1 = .rep パス / %2 = シーン切替の追加引数 ("" / "--parts-demo" / "--flow-demo")
+rem 失敗側のダンプは EngineLoop が MISMATCH 時に自動で残しているので、
+rem ここでは期待側 (= その .rep を録ったのと同じコマンド) を撮り直して突き合わせる
+:diagnose
+setlocal
+set "DREP=%~1"
+set "DARG=%~2"
+if not exist "%DREP%.mismatch.txt" (
+    echo [diag] no mismatch marker - the run failed before any hash comparison
+    endlocal & exit /b 0
+)
+set /p DTICK=<"%DREP%.mismatch.txt"
+echo.
+echo [diag] first mismatch tick: %DTICK%
+echo [diag] re-recording in Debug to capture the expected-side field dump
+bin\x64\Debug\Editor.exe %DARG% --replay-record "%DREP%.diag.rep" --replay-ticks %TICKS% --hash-dump "%DREP%.tick%DTICK%.expected.dump" --hash-dump-tick %DTICK%
+echo [diag] field-level diff (expected vs actual):
+bin\x64\Debug\Editor.exe --hash-diff "%DREP%.tick%DTICK%.expected.dump" "%DREP%.tick%DTICK%.actual.dump"
+echo.
+endlocal & exit /b 0

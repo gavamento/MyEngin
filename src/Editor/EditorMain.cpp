@@ -30,6 +30,8 @@
 #include "Engine/Engine/PhysicsSelfTest.h"
 #include "Engine/Engine/RayTracing/RtSelfTest.h"
 #include "Engine/Engine/Project.h"
+#include "Engine/Engine/Replay/WorldHasher.h"
+#include "Engine/Engine/Replay/WorldHasherSelfTest.h"
 #include "Engine/Engine/SceneSelfTest.h"
 #include "Engine/Engine/SkeletonSelfTest.h"
 #include "Engine/Engine/FontSelfTest.h"
@@ -91,6 +93,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     int managerFrames = 0;                // --manager-frames N (Hub を N フレームで自動終了、CI 用)
     std::wstring managerShot;             // --manager-shot <path> (Hub のスクリーンショット)
     std::wstring langOverride;            // --lang <ja|en> (M47a。保存設定と自動化既定の両方に優先)
+    std::wstring hashDiffA;               // --hash-diff A B (M52a: ダンプ 2 本の差分)
+    std::wstring hashDiffB;
 
     int argc = 0;
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
@@ -131,6 +135,13 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 config.vsync = false;
             } else if (arg == L"--replay-ticks" && i + 1 < argc) {
                 config.replayTicks = _wtoi64(argv[++i]);
+            } else if (arg == L"--hash-dump" && i + 1 < argc) {
+                config.hashDumpPath = argv[++i]; // M52a: フィールド単位ダンプの出力先
+            } else if (arg == L"--hash-dump-tick" && i + 1 < argc) {
+                config.hashDumpTick = _wtoi64(argv[++i]);
+            } else if (arg == L"--hash-diff" && i + 2 < argc) {
+                hashDiffA = argv[++i]; // M52a: 2 つのダンプを突き合わせて終了
+                hashDiffB = argv[++i];
             } else if (arg == L"--deferred") {
                 startDeferred = true;
             } else if (arg == L"--select" && i + 1 < argc) {
@@ -216,7 +227,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                             || !config.replayRecordPath.empty() || !config.replayVerifyPath.empty()
                             || !sceneOverride.empty() || autoPlay || saveSceneOnStart
                             || pickTestFrame >= 0 || !selectName.empty() || perfRate > 0.0f
-                            || !editActorPath.empty() || !packageDir.empty();
+                            || !editActorPath.empty() || !packageDir.empty()
+                            || !config.hashDumpPath.empty();
 
     // UI 言語 (M47a)。Hub はプロジェクト未確定のまま描かれる別プロセスなので、
     // 設定はプロジェクト配下ではなく %LOCALAPPDATA%\MyEngine\editor_global.json から読む。
@@ -244,6 +256,17 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         return ok ? 0 : 1;
     }
 
+    // --hash-diff A B: ワールドハッシュのフィールド単位ダンプを突き合わせて終了 (M52a)。
+    // 同一なら exit 0、1 フィールドでも食い違えば exit 1
+    if (!hashDiffA.empty() && !hashDiffB.empty()) {
+        mye::HashDump a;
+        mye::HashDump b;
+        if (!mye::ReadHashDump(hashDiffA, a) || !mye::ReadHashDump(hashDiffB, b)) {
+            return 2;
+        }
+        return mye::DiffHashDumps(a, b).Same() ? 0 : 1;
+    }
+
     if (selftest) {
         // ウィンドウ/D3D 不要のヘッドレス回帰テスト
         const bool ok = mye::RunEcsSelfTest() && mye::RunSceneSerializerSelfTest()
@@ -256,7 +279,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             && mye::RunLocalizationSelfTest() && mye::RunSkeletonSelfTest()
             && mye::RunPartSelfTest() && mye::RunSchemaSelfTest()
             && mye::RunCookedCacheSelfTest() && mye::RunInputActionsSelfTest()
-            && mye::RunGameFlowSelfTest();
+            && mye::RunGameFlowSelfTest() && mye::RunWorldHasherSelfTest();
         return ok ? 0 : 1;
     }
 

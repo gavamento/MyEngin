@@ -507,6 +507,26 @@ Eliminate cases in which the engine works in Debug but fails in Release, or vice
   driven by a deterministic tick timeline in `FlowTitleDriver` / `FlowGameDriver`). The flow
   pair is the aggregate proof that the M51 gameplay-flow features are replay-deterministic
 
+**Field-level divergence diagnosis (M52a).** Knowing *which tick* broke is not the same as
+knowing *what* broke. `HashWorld`, `HashWorldDetailed` and `HashWorldDump` are three exits of a
+single walk — three separate implementations would eventually disagree and make the diagnosis
+lie — and the third exit writes one tab-separated line per hashed unit
+(`tick / entity / name / component / field / raw value in hex / folded hash`). The value column
+covers exactly the byte range the hash reads (`FieldTypeSize`), so a `String64` difference past
+the terminator stays visible instead of being hidden by string semantics.
+
+- `--hash-dump PATH --hash-dump-tick T` writes the dump at the end of tick `T`, in record,
+  verify or plain playback, from either `Editor.exe` or `Runtime.exe`
+- A verify mismatch writes `<rep>.tick<N>.actual.dump` plus `<rep>.mismatch.txt` (the tick)
+  without being asked
+- `--hash-diff A B` compares two dumps and exits 1 if any leaf field differs. Roll-up rows
+  (`#nameHash` / `#entity` / `#total`) are counted separately, so a one-field divergence is
+  reported as exactly one row instead of drowning in the fold chain that follows it
+- `tools\replay_verify.bat` calls this automatically **only when a pair fails**: it re-records
+  the expected side in Debug at the mismatching tick and prints the field-level diff
+- `tools\bisect_replay.bat` is a `git bisect run` wrapper (0 = good, 1 = bad, 125 = build
+  failure) that verifies a golden replay recorded on a known-good commit
+
 ---
 
 ## 12. Milestones

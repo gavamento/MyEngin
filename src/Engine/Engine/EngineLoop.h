@@ -104,6 +104,14 @@ struct EngineConfig {
     std::wstring replayRecordPath; // 空でなければ記録モード (replayTicks 分記録して終了)
     std::wstring replayVerifyPath; // 空でなければ検証モード (全 tick 照合、exit code 0/1)
     int64_t replayTicks = 600;     // 記録する tick 数 (60Hz で 10 秒)
+
+    // ---- ハッシュ差分診断 (M52a) ----
+    // 空でなければ hashDumpTick の tick 末 (= ハッシュを撮るのと同じ点) で
+    // フィールド単位ダンプを書き出す。記録/検証/通常再生のどのモードでも効く。
+    // 検証中の MISMATCH では指定の有無に関わらず自動で
+    // <rep>.tick<N>.actual.dump + <rep>.mismatch.txt (tick 番号) を吐く
+    std::wstring hashDumpPath;
+    int64_t hashDumpTick = 0;
 };
 
 // フレーム計測 (Profiler ウィンドウ表示用)。EngineLoop が毎フレーム更新する

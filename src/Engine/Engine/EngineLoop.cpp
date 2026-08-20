@@ -53,6 +53,7 @@
 #include "Engine/Renderer/SwapChain.h"
 
 #include <filesystem>
+#include <fstream>
 
 #include <Windows.h>
 
@@ -680,6 +681,16 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             }
             scene.GetWorld().ApplyStructuralChanges(); // フェーズ 7 (tick 末適用 = ADR-005)
 
+            // ---- ハッシュ差分診断 (M52a): 指定 tick のフィールド単位ダンプ ----
+            // ハッシュを撮るのと**同じ点**で撮る (ここより前後だと診断が別の状態を指す)
+            if (!config.hashDumpPath.empty()
+                && ctx.tickIndex == static_cast<uint64_t>(config.hashDumpTick)) {
+                HashDump dump;
+                HashWorldDump(scene.GetWorld(), &particleSystem.Cpu(), ctx.tickIndex, dump,
+                              &scene.Time(), &scene.Persist());
+                WriteHashDump(config.hashDumpPath, dump);
+            }
+
             // ---- リプレイ: tick 末の状態ハッシュ (spec 11.3) ----
             if (recorder.IsActive()) {
                 recorder.RecordTick(ctx.input, HashWorld(scene.GetWorld(), &particleSystem.Cpu(),
@@ -712,6 +723,25 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                                       detail[i].entity.index, detail[i].entity.generation,
                                       static_cast<unsigned long long>(detail[i].hash),
                                       scene.GetWorld().GetName(detail[i].entity));
+                    }
+                    // M52a: 失敗側のフィールド単位ダンプを自動で残す。
+                    // 期待側は「同じコマンドで録り直して --hash-dump-tick N」で撮り、
+                    // --hash-diff で突き合わせる (tools\replay_verify.bat が自動でやる)。
+                    // tick 番号は bat から読めるよう別ファイルにも落とす
+                    {
+                        const std::wstring tickStr = std::to_wstring(ctx.tickIndex);
+                        const std::wstring dumpPath =
+                            config.replayVerifyPath + L".tick" + tickStr + L".actual.dump";
+                        HashDump dump;
+                        HashWorldDump(scene.GetWorld(), &particleSystem.Cpu(), ctx.tickIndex, dump,
+                                      &scene.Time(), &scene.Persist());
+                        WriteHashDump(dumpPath, dump);
+                        std::ofstream mf(
+                            std::filesystem::path(config.replayVerifyPath + L".mismatch.txt"));
+                        if (mf) {
+                            mf << ctx.tickIndex << "\n";
+                        }
+                        MYE_LOG_ERROR("[replay]   field dump: %s", WideToUtf8(dumpPath).c_str());
                     }
                     exitCode = 1;
                     ctx.requestExit = true;
