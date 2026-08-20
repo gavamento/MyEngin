@@ -1,5 +1,6 @@
 #include "Engine/Engine/Asset/CookedCacheSelfTest.h"
 
+#include <chrono>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -244,17 +245,29 @@ bool RunCookedCacheSelfTest()
         const std::vector<uint8_t> payload = { 10, 20, 30, 40 };
         std::vector<uint8_t> got;
 
-        WriteFileBytes(src, contentA);
+        // ★書いた**後に mtime を明示的に固定する**。ReadValidated は「サイズ同一 かつ
+        //   mtime 同一」なら内容を読まずに hit する高速路を持つ (M51b の設計意図)。
+        //   NTFS の最終更新時刻は約 14 ms 刻みなので、2 回の書き込みが同じ刻みに入ると
+        //   mtime が動かず、同サイズ書換でも**正当に** hit してしまう = 時計運で落ちる
+        //   テストになる (M52b の CI が実際にこれで赤くなった)。
+        //   刻みをまたぐ保証を「速く書けば動く」に委ねず、秒単位で離して確定させる
+        auto writeAt = [&](const std::vector<uint8_t>& bytes, int secondsAgo) {
+            WriteFileBytes(src, bytes);
+            fs::last_write_time(
+                src, fs::file_time_type::clock::now() - std::chrono::seconds(secondsAgo), ec);
+        };
+
+        writeAt(contentA, 300);
         check(CookedCache::Write(src.wstring(), L".tst", payload.data(), payload.size()),
               "invalidation: write succeeds");
         check(CookedCache::ReadValidated(src.wstring(), L".tst", got) && got == payload,
               "invalidation: unchanged source hits");
 
-        WriteFileBytes(src, contentB); // 同サイズの内容改変 (mtime も動く) → ハッシュで検出
+        writeAt(contentB, 200); // 同サイズの内容改変 + mtime も違う → ハッシュで検出
         check(!CookedCache::ReadValidated(src.wstring(), L".tst", got),
               "invalidation: same-size content change misses (hash check)");
 
-        WriteFileBytes(src, contentA); // 内容を戻す = mtime だけが違う状態
+        writeAt(contentA, 100); // 内容を戻す = mtime だけが違う状態
         check(CookedCache::ReadValidated(src.wstring(), L".tst", got) && got == payload,
               "invalidation: mtime-only change hits via content hash (self-heal)");
         check(CookedCache::ReadValidated(src.wstring(), L".tst", got),

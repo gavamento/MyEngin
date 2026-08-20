@@ -552,6 +552,32 @@ recorded on WARP verifies bit-identically on a discrete GPU and vice versa, whic
 a GPU-less runner an acceptable place to prove determinism. Golden screenshots, unlike hashes,
 *are* driver-dependent and are therefore always captured with `--warp`.
 
+**Screenshot regression (M52c).** Hashes prove that the *simulation* is reproducible; they say
+nothing about what is drawn. `tools\shot_verify.bat` captures five deterministic screenshots with
+`Runtime.exe` (no ImGui, so neither `imgui.ini` nor the cursor position can leak in) and compares
+them against `tests\golden\*.png` pixel by pixel, writing a difference heat map next to any shot
+that moved. `--update` re-records the golden set.
+
+Determinism of a *frame* needs two guarantees that determinism of a *tick* does not:
+
+- **Frame-to-tick coupling.** The tick loop consumes an accumulator fed by real elapsed time, so
+  the number of ticks simulated by frame *N* normally depends on how fast the machine drew the
+  previous frames. Passing `--screenshot` (without `--shot-every`) therefore switches the loop to
+  a fixed frame delta equal to the tick length: the accumulator gains and loses exactly one tick
+  per frame, making **frame index equal tick index**. `--shot-realtime` restores wall-clock pacing
+- **Resource residency.** Textures decode on a worker thread and are published at a frame
+  boundary (M23), so "did the decode finish in time" is another wall-clock dependency. The same
+  capture mode drains the async queue before drawing
+
+Two machine-dependent inputs are pinned rather than tolerated: the rasterizer (`--warp`, because
+WARP and a discrete GPU differ by up to two levels per channel over most of the frame) and the
+font atlas (`--font-embedded`, because the atlas otherwise picks whichever Japanese TTF the
+machine happens to have installed, and an English Windows Server runner has none). Debug and
+Release produce bit-identical images, so the golden set is captured from Release only. The
+comparison itself (`--img-diff A B [--tol N] [--fail-pixels N] [--diff-out PNG]`) distinguishes
+*equal* (exit 0) from *different* (exit 1) from *not comparable* (exit 2) — folding a size
+mismatch or an unreadable file into the success path would let a broken capture read as green.
+
 ---
 
 ## 12. Milestones

@@ -318,7 +318,8 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     if (!deferredPath.Init(device, shaderManager)) {
         return 1;
     }
-    uiRenderer.Init(device, shaderManager, assetsRoot); // M21: 失敗してもエンジンは継続 (UI が出ないだけ)
+    // M21: 失敗してもエンジンは継続 (UI が出ないだけ)。M52c: --font-embedded でフォント固定
+    uiRenderer.Init(device, shaderManager, assetsRoot, config.fontEmbedded);
     vfxRenderer.Init(device, shaderManager, &uiRenderer); // M29c: 同上 (VFX が出ないだけ)
     reloadHub.Init(&shaderManager, &resources, &scene, &prefabLibrary, &animLibrary, &soundLibrary,
                    &mixerLibrary, &audioSystem, assetsRoot);
@@ -485,6 +486,17 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                        scene.GetWorld().Rng().Inc(), scene.GetWorld().AliveCount());
     }
 
+    // ---- 決定的スクショ (M52c) ----
+    // 「同じコマンドを 2 回叩いたら同じ PNG が出る」を成立させるモード。連番撮影
+    // (--shot-every) は実時間で回したいライブ検証用なので対象外、--shot-realtime で明示解除。
+    // ★frame 番号 == tick 番号になるので --shot-frame N は「N tick 目の絵」を指す
+    const bool deterministicShot =
+        !config.screenshotPath.empty() && config.screenshotEvery == 0 && !config.shotRealtime;
+    if (deterministicShot) {
+        MYE_LOG_INFO("[shot] deterministic capture: fixed dt + async texture drain "
+                     "(frame index == tick index)");
+    }
+
     // ---- メインループ (フェーズ構成は engine_spec.md 5.3 / ADR-005) ----
     double accumulator = 0.0;
     bool running = true;
@@ -521,6 +533,11 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         if (dt > kMaxFrameDt) {
             dt = kMaxFrameDt;
         }
+        if (deterministicShot) {
+            // M52c: accumulator は毎フレームちょうど kFixedDt 増えて 1 tick 消費し 0 に戻る
+            // (同じ double を足して引くので誤差ゼロ) = フレームと tick が 1:1 で固定される
+            dt = kFixedDt;
+        }
         ctx.input = input.CaptureSnapshot();
         logging::SetCurrentFrame(ctx.frameIndex);
         prof::BeginFrame();
@@ -530,6 +547,11 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         reloadHub.Update();
         dllReloader.Update();
         resources.textures.PollAsyncLoads(); // M23: 非同期デコード完了分を GPU 公開 (セーフポイント)
+        if (deterministicShot) {
+            // M52c: 「間に合ったテクスチャだけが写る」を潰す。撮影経路だけの追加待ちなので
+            // 通常のフレームレートには一切影響しない
+            resources.textures.WaitForAsyncLoads();
+        }
         FrameTimings timings;
         timings.reloadMs = static_cast<float>((clock.Now() - tReload) * 1000.0);
         const double tTicks = clock.Now();

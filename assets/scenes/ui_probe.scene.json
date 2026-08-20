@@ -1,0 +1,972 @@
+{
+  "engine": "MyEngine",
+  "entities": [
+    {
+      "childIndex": 0,
+      "components": {
+        "Camera": {
+          "farZ": 1000.0,
+          "fovYDeg": 60.0,
+          "isPrimary": 1,
+          "nearZ": 0.1
+        },
+        "LocalTransform": {
+          "position": [
+            0.0,
+            2.0,
+            -8.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "fileId": 1,
+      "name": "Main Camera"
+    },
+    {
+      "childIndex": 1,
+      "components": {
+        "LocalTransform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "UIElement": {
+          "align": 0,
+          "anchor": 4,
+          "clipChildren": 0,
+          "color": [
+            0.1,
+            0.12,
+            0.18,
+            1.0
+          ],
+          "fillAmount": 1.0,
+          "fillMode": 0,
+          "focusable": 0,
+          "focused": 0,
+          "fontScale": 1.0,
+          "h": 500.0,
+          "kind": 0,
+          "order": -10,
+          "sliceBorder": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "sliced": 0,
+          "space": 0,
+          "text": "",
+          "texture": 0,
+          "w": 920.0,
+          "wrap": 0,
+          "x": -460.0,
+          "y": -250.0
+        }
+      },
+      "fileId": 2,
+      "name": "BgPanel"
+    },
+    {
+      "childIndex": 2,
+      "components": {
+        "LocalTransform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "UIElement": {
+          "align": 4,
+          "anchor": 1,
+          "clipChildren": 0,
+          "color": [
+            0.95,
+            0.95,
+            1.0,
+            1.0
+          ],
+          "fillAmount": 1.0,
+          "fillMode": 0,
+          "focusable": 0,
+          "focused": 0,
+          "fontScale": 2.0,
+          "h": 48.0,
+          "kind": 1,
+          "order": 0,
+          "sliceBorder": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "sliced": 0,
+          "space": 0,
+          "text": "UI PROBE / M52c",
+          "texture": 0,
+          "w": 600.0,
+          "wrap": 0,
+          "x": -300.0,
+          "y": 30.0
+        }
+      },
+      "fileId": 3,
+      "name": "HeaderText"
+    },
+    {
+      "childIndex": 3,
+      "components": {
+        "LocalTransform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "UIElement": {
+          "align": 0,
+          "anchor": 0,
+          "clipChildren": 0,
+          "color": [
+            0.85,
+            0.9,
+            1.0,
+            1.0
+          ],
+          "fillAmount": 1.0,
+          "fillMode": 0,
+          "focusable": 0,
+          "focused": 0,
+          "fontScale": 1.0,
+          "h": 140.0,
+          "kind": 1,
+          "order": 0,
+          "sliceBorder": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "sliced": 0,
+          "space": 0,
+          "text": "Wrap probe: the quick brown fox jumps over the lazy dog 0123456789. 日本語混在。",
+          "texture": 0,
+          "w": 250.0,
+          "wrap": 1,
+          "x": 32.0,
+          "y": 110.0
+        }
+      },
+      "fileId": 4,
+      "name": "WrapText"
+    },
+    {
+      "childIndex": 4,
+      "components": {
+        "LocalTransform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "UIElement": {
+          "align": 0,
+          "anchor": 0,
+          "clipChildren": 1,
+          "color": [
+            0.18,
+            0.22,
+            0.3,
+            1.0
+          ],
+          "fillAmount": 1.0,
+          "fillMode": 0,
+          "focusable": 0,
+          "focused": 0,
+          "fontScale": 1.0,
+          "h": 140.0,
+          "kind": 0,
+          "order": 0,
+          "sliceBorder": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "sliced": 0,
+          "space": 0,
+          "text": "",
+          "texture": 0,
+          "w": 280.0,
+          "wrap": 0,
+          "x": 310.0,
+          "y": 110.0
+        }
+      },
+      "fileId": 5,
+      "name": "ClipParent"
+    },
+    {
+      "childIndex": 0,
+      "components": {
+        "LocalTransform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "UIElement": {
+          "align": 0,
+          "anchor": 0,
+          "clipChildren": 0,
+          "color": [
+            0.9,
+            0.45,
+            0.2,
+            1.0
+          ],
+          "fillAmount": 1.0,
+          "fillMode": 0,
+          "focusable": 0,
+          "focused": 0,
+          "fontScale": 1.0,
+          "h": 220.0,
+          "kind": 0,
+          "order": 1,
+          "sliceBorder": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "sliced": 0,
+          "space": 1,
+          "text": "",
+          "texture": 0,
+          "w": 400.0,
+          "wrap": 0,
+          "x": 40.0,
+          "y": 40.0
+        }
+      },
+      "fileId": 6,
+      "name": "ClipChild",
+      "parent": 5
+    },
+    {
+      "childIndex": 5,
+      "components": {
+        "LocalTransform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "UIElement": {
+          "align": 0,
+          "anchor": 2,
+          "clipChildren": 0,
+          "color": [
+            0.2,
+            0.55,
+            0.35,
+            1.0
+          ],
+          "fillAmount": 1.0,
+          "fillMode": 0,
+          "focusable": 0,
+          "focused": 0,
+          "fontScale": 1.0,
+          "h": 90.0,
+          "kind": 0,
+          "order": 1,
+          "sliceBorder": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "sliced": 0,
+          "space": 0,
+          "text": "",
+          "texture": 0,
+          "w": 180.0,
+          "wrap": 0,
+          "x": -260.0,
+          "y": 110.0
+        }
+      },
+      "fileId": 7,
+      "name": "OverlapBack"
+    },
+    {
+      "childIndex": 6,
+      "components": {
+        "LocalTransform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "UIElement": {
+          "align": 0,
+          "anchor": 2,
+          "clipChildren": 0,
+          "color": [
+            0.55,
+            0.25,
+            0.55,
+            1.0
+          ],
+          "fillAmount": 1.0,
+          "fillMode": 0,
+          "focusable": 0,
+          "focused": 0,
+          "fontScale": 1.0,
+          "h": 90.0,
+          "kind": 0,
+          "order": 2,
+          "sliceBorder": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "sliced": 0,
+          "space": 0,
+          "text": "",
+          "texture": 0,
+          "w": 180.0,
+          "wrap": 0,
+          "x": -200.0,
+          "y": 150.0
+        }
+      },
+      "fileId": 8,
+      "name": "OverlapFront"
+    },
+    {
+      "childIndex": 7,
+      "components": {
+        "LocalTransform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "UIElement": {
+          "align": 0,
+          "anchor": 0,
+          "clipChildren": 0,
+          "color": [
+            0.16,
+            0.16,
+            0.22,
+            1.0
+          ],
+          "fillAmount": 1.0,
+          "fillMode": 0,
+          "focusable": 0,
+          "focused": 0,
+          "fontScale": 1.0,
+          "h": 70.0,
+          "kind": 0,
+          "order": 0,
+          "sliceBorder": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "sliced": 0,
+          "space": 0,
+          "text": "",
+          "texture": 0,
+          "w": 180.0,
+          "wrap": 0,
+          "x": 32.0,
+          "y": 280.0
+        }
+      },
+      "fileId": 9,
+      "name": "AlignBox_0"
+    },
+    {
+      "childIndex": 0,
+      "components": {
+        "LocalTransform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "UIElement": {
+          "align": 0,
+          "anchor": 0,
+          "clipChildren": 0,
+          "color": [
+            1.0,
+            0.85,
+            0.4,
+            1.0
+          ],
+          "fillAmount": 1.0,
+          "fillMode": 0,
+          "focusable": 0,
+          "focused": 0,
+          "fontScale": 1.0,
+          "h": 70.0,
+          "kind": 1,
+          "order": 1,
+          "sliceBorder": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "sliced": 0,
+          "space": 1,
+          "text": "align 0",
+          "texture": 0,
+          "w": 180.0,
+          "wrap": 0,
+          "x": 0.0,
+          "y": 0.0
+        }
+      },
+      "fileId": 10,
+      "name": "AlignText_0",
+      "parent": 9
+    },
+    {
+      "childIndex": 8,
+      "components": {
+        "LocalTransform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "UIElement": {
+          "align": 0,
+          "anchor": 0,
+          "clipChildren": 0,
+          "color": [
+            0.16,
+            0.16,
+            0.22,
+            1.0
+          ],
+          "fillAmount": 1.0,
+          "fillMode": 0,
+          "focusable": 0,
+          "focused": 0,
+          "fontScale": 1.0,
+          "h": 70.0,
+          "kind": 0,
+          "order": 0,
+          "sliceBorder": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "sliced": 0,
+          "space": 0,
+          "text": "",
+          "texture": 0,
+          "w": 180.0,
+          "wrap": 0,
+          "x": 232.0,
+          "y": 280.0
+        }
+      },
+      "fileId": 11,
+      "name": "AlignBox_1"
+    },
+    {
+      "childIndex": 0,
+      "components": {
+        "LocalTransform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "UIElement": {
+          "align": 4,
+          "anchor": 0,
+          "clipChildren": 0,
+          "color": [
+            1.0,
+            0.85,
+            0.4,
+            1.0
+          ],
+          "fillAmount": 1.0,
+          "fillMode": 0,
+          "focusable": 0,
+          "focused": 0,
+          "fontScale": 1.0,
+          "h": 70.0,
+          "kind": 1,
+          "order": 1,
+          "sliceBorder": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "sliced": 0,
+          "space": 1,
+          "text": "align 4",
+          "texture": 0,
+          "w": 180.0,
+          "wrap": 0,
+          "x": 0.0,
+          "y": 0.0
+        }
+      },
+      "fileId": 12,
+      "name": "AlignText_1",
+      "parent": 11
+    },
+    {
+      "childIndex": 9,
+      "components": {
+        "LocalTransform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "UIElement": {
+          "align": 0,
+          "anchor": 0,
+          "clipChildren": 0,
+          "color": [
+            0.16,
+            0.16,
+            0.22,
+            1.0
+          ],
+          "fillAmount": 1.0,
+          "fillMode": 0,
+          "focusable": 0,
+          "focused": 0,
+          "fontScale": 1.0,
+          "h": 70.0,
+          "kind": 0,
+          "order": 0,
+          "sliceBorder": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "sliced": 0,
+          "space": 0,
+          "text": "",
+          "texture": 0,
+          "w": 180.0,
+          "wrap": 0,
+          "x": 432.0,
+          "y": 280.0
+        }
+      },
+      "fileId": 13,
+      "name": "AlignBox_2"
+    },
+    {
+      "childIndex": 0,
+      "components": {
+        "LocalTransform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "UIElement": {
+          "align": 8,
+          "anchor": 0,
+          "clipChildren": 0,
+          "color": [
+            1.0,
+            0.85,
+            0.4,
+            1.0
+          ],
+          "fillAmount": 1.0,
+          "fillMode": 0,
+          "focusable": 0,
+          "focused": 0,
+          "fontScale": 1.0,
+          "h": 70.0,
+          "kind": 1,
+          "order": 1,
+          "sliceBorder": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "sliced": 0,
+          "space": 1,
+          "text": "align 8",
+          "texture": 0,
+          "w": 180.0,
+          "wrap": 0,
+          "x": 0.0,
+          "y": 0.0
+        }
+      },
+      "fileId": 14,
+      "name": "AlignText_2",
+      "parent": 13
+    },
+    {
+      "childIndex": 10,
+      "components": {
+        "LocalTransform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "UIElement": {
+          "align": 0,
+          "anchor": 6,
+          "clipChildren": 0,
+          "color": [
+            0.08,
+            0.08,
+            0.1,
+            1.0
+          ],
+          "fillAmount": 1.0,
+          "fillMode": 0,
+          "focusable": 0,
+          "focused": 0,
+          "fontScale": 1.0,
+          "h": 28.0,
+          "kind": 0,
+          "order": 0,
+          "sliceBorder": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "sliced": 0,
+          "space": 0,
+          "text": "",
+          "texture": 0,
+          "w": 300.0,
+          "wrap": 0,
+          "x": 32.0,
+          "y": -80.0
+        }
+      },
+      "fileId": 15,
+      "name": "HpBarBg"
+    },
+    {
+      "childIndex": 0,
+      "components": {
+        "LocalTransform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "UIElement": {
+          "align": 0,
+          "anchor": 0,
+          "clipChildren": 0,
+          "color": [
+            0.85,
+            0.25,
+            0.3,
+            1.0
+          ],
+          "fillAmount": 0.42,
+          "fillMode": 1,
+          "focusable": 0,
+          "focused": 0,
+          "fontScale": 1.0,
+          "h": 28.0,
+          "kind": 0,
+          "order": 1,
+          "sliceBorder": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "sliced": 0,
+          "space": 1,
+          "text": "",
+          "texture": 0,
+          "w": 300.0,
+          "wrap": 0,
+          "x": 0.0,
+          "y": 0.0
+        }
+      },
+      "fileId": 16,
+      "name": "HpBarFill",
+      "parent": 15
+    },
+    {
+      "childIndex": 11,
+      "components": {
+        "LocalTransform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "UIElement": {
+          "align": 0,
+          "anchor": 8,
+          "clipChildren": 0,
+          "color": [
+            0.2,
+            0.3,
+            0.5,
+            1.0
+          ],
+          "fillAmount": 1.0,
+          "fillMode": 0,
+          "focusable": 1,
+          "focused": 1,
+          "fontScale": 1.2,
+          "h": 44.0,
+          "kind": 2,
+          "order": 0,
+          "sliceBorder": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "sliced": 0,
+          "space": 0,
+          "text": "START",
+          "texture": 0,
+          "w": 168.0,
+          "wrap": 0,
+          "x": -200.0,
+          "y": -80.0
+        }
+      },
+      "fileId": 17,
+      "name": "StartButton"
+    }
+  ],
+  "nextFileId": 18,
+  "sceneName": "ui_probe",
+  "version": 3
+}

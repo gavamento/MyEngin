@@ -151,6 +151,10 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 config.postFx = false;
             } else if (arg == L"--no-audio") {
                 config.audio = false; // M45: XAudio2 を初期化しない (端末の無い CI / 撮影専用実行)
+            } else if (arg == L"--font-embedded") {
+                config.fontEmbedded = true; // M52c: 撮影のフォントを機種非依存に固定
+            } else if (arg == L"--shot-realtime") {
+                config.shotRealtime = true; // M52c: 決定的撮影を解除して実時間で回す
             } else if (arg == L"--warp") {
                 config.forceWarp = true; // M52b: ソフトウェアラスタライザ固定 (CI / 撮影再現)
             } else if (arg == L"--exposure" && i + 1 < argc) {

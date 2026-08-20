@@ -41,6 +41,17 @@ struct EngineConfig {
     std::wstring screenshotPath; // 空でなければ screenshotFrame で PNG 保存 (検証用)
     int64_t screenshotFrame = 60;
     int64_t screenshotEvery = 0; // >0 で N フレーム毎に連番保存 (ライブ検証用)
+    // ---- 決定的スクショ (M52c) ----
+    // --screenshot 指定 (連番の --shot-every を除く) で**自動 on**。フレームの dt を実時間
+    // ではなく固定 tick 幅に固定し (= frame 番号がそのまま tick 番号)、非同期テクスチャの
+    // デコードを撮影前に待ち切る。これが無いと「1 フレームに何 tick 回ったか」と
+    // 「テクスチャが間に合ったか」が実時間で変わり、同条件 2 回の PNG が一致しない
+    // (M52c で実測)。--shot-realtime で従来の実時間駆動へ戻せる
+    bool shotRealtime = false;
+    // --font-embedded: UI のフォントアトラスを内蔵 8x8 (ASCII) に固定する。
+    // golden PNG を「そのマシンに入っている TTF」から切り離すためのもので、
+    // 英語版 Windows Server の CI ランナーには日本語 TTF が無い = 探索させると別の絵になる
+    bool fontEmbedded = false;
     // true: シーンをバックバッファへ直接描画 (Runtime / M1 デモ)。
     // false: 描画は app の OnRenderViews に委ねる (エディタは SceneView/GameView の RT へ描く)
     bool renderSceneToBackbuffer = true;

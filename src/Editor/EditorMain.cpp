@@ -39,6 +39,8 @@
 #include "Engine/Engine/VfxSelfTest.h"
 #include "Engine/Platform/InputActionsSelfTest.h"
 #include "Engine/Platform/PathUtil.h"
+#include "Engine/Renderer/ImageDiff.h"
+#include "Engine/Renderer/ImageDiffSelfTest.h"
 #include "Engine/Renderer/RenderSelfTest.h"
 #include "Engine/Renderer/TextureCookSelfTest.h"
 
@@ -95,6 +97,11 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     std::wstring langOverride;            // --lang <ja|en> (M47a。保存設定と自動化既定の両方に優先)
     std::wstring hashDiffA;               // --hash-diff A B (M52a: ダンプ 2 本の差分)
     std::wstring hashDiffB;
+    std::wstring imgDiffA;                // --img-diff A B (M52c: スクショ回帰の判定)
+    std::wstring imgDiffB;
+    std::wstring imgDiffOut;              // --diff-out PNG (差分ヒートマップ)
+    int imgTolerance = 0;                 // --tol N (チャンネル差の許容)
+    int64_t imgFailPixels = 0;            // --fail-pixels N (許容を超えてよい画素数)
 
     int argc = 0;
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
@@ -142,6 +149,19 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             } else if (arg == L"--hash-diff" && i + 2 < argc) {
                 hashDiffA = argv[++i]; // M52a: 2 つのダンプを突き合わせて終了
                 hashDiffB = argv[++i];
+            } else if (arg == L"--img-diff" && i + 2 < argc) {
+                imgDiffA = argv[++i]; // M52c: PNG 2 枚を突き合わせて終了
+                imgDiffB = argv[++i];
+            } else if (arg == L"--tol" && i + 1 < argc) {
+                imgTolerance = _wtoi(argv[++i]);
+            } else if (arg == L"--fail-pixels" && i + 1 < argc) {
+                imgFailPixels = _wtoi64(argv[++i]);
+            } else if (arg == L"--diff-out" && i + 1 < argc) {
+                imgDiffOut = argv[++i];
+            } else if (arg == L"--font-embedded") {
+                config.fontEmbedded = true; // M52c: 撮影のフォントを機種非依存に固定
+            } else if (arg == L"--shot-realtime") {
+                config.shotRealtime = true; // M52c: 決定的撮影を解除して実時間で回す
             } else if (arg == L"--deferred") {
                 startDeferred = true;
             } else if (arg == L"--select" && i + 1 < argc) {
@@ -269,6 +289,36 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         return mye::DiffHashDumps(a, b).Same() ? 0 : 1;
     }
 
+    // --img-diff A B [--tol N] [--fail-pixels N] [--diff-out PNG]: スクショ回帰の判定 (M52c)。
+    // 一致 (許容内) なら exit 0、差があれば exit 1、そもそも比較できなければ exit 2。
+    // ★「差が無い」と「比べられなかった」を同じ終了コードにしない — 寸法違いや読み込み失敗を
+    //   PASS に混ぜると、撮影が壊れた日に回帰テストが静かに緑になる
+    if (!imgDiffA.empty() && !imgDiffB.empty()) {
+        const mye::ImageDiffResult r =
+            mye::CompareImageFiles(imgDiffA, imgDiffB, imgTolerance, imgDiffOut);
+        if (!r.valid) {
+            std::fprintf(stderr, "[img-diff] ERROR: %s\n", r.error.c_str());
+            return 2;
+        }
+        const bool pass = r.diffPixels <= imgFailPixels;
+        std::printf("[img-diff] %s: %dx%d maxDiff=%d diffPixels=%lld (tol=%d, allow=%lld) "
+                    "anyDiff=%lld/%lld\n",
+                    pass ? "PASS" : "FAIL", r.width, r.height, r.maxChannelDiff,
+                    static_cast<long long>(r.diffPixels), imgTolerance,
+                    static_cast<long long>(imgFailPixels),
+                    static_cast<long long>(r.diffPixelsAny),
+                    static_cast<long long>(r.totalPixels));
+        if (!pass) {
+            std::printf("[img-diff]   worst pixel at (%d, %d)\n", r.worstX, r.worstY);
+            std::printf("[img-diff]   A = %s\n", mye::WideToUtf8(imgDiffA).c_str());
+            std::printf("[img-diff]   B = %s\n", mye::WideToUtf8(imgDiffB).c_str());
+            if (!imgDiffOut.empty()) {
+                std::printf("[img-diff]   heat map = %s\n", mye::WideToUtf8(imgDiffOut).c_str());
+            }
+        }
+        return pass ? 0 : 1;
+    }
+
     if (selftest) {
         // ウィンドウ/D3D 不要のヘッドレス回帰テスト
         const bool ok = mye::RunEcsSelfTest() && mye::RunSceneSerializerSelfTest()
@@ -281,7 +331,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             && mye::RunLocalizationSelfTest() && mye::RunSkeletonSelfTest()
             && mye::RunPartSelfTest() && mye::RunSchemaSelfTest()
             && mye::RunCookedCacheSelfTest() && mye::RunInputActionsSelfTest()
-            && mye::RunGameFlowSelfTest() && mye::RunWorldHasherSelfTest();
+            && mye::RunGameFlowSelfTest() && mye::RunWorldHasherSelfTest()
+            && mye::RunImageDiffSelfTest();
         return ok ? 0 : 1;
     }
 

@@ -38,7 +38,7 @@ bool SameScissor(const D3D11_RECT& a, const D3D11_RECT& b)
 } // namespace
 
 bool UIRenderer::Init(GraphicsDevice& device, ShaderManager& shaders,
-                      const std::wstring& assetsRoot)
+                      const std::wstring& assetsRoot, bool fontEmbedded)
 {
     ID3D11Device* dev = device.Device();
     shader_ = shaders.Load("ui");
@@ -94,7 +94,7 @@ bool UIRenderer::Init(GraphicsDevice& device, ShaderManager& shaders,
         return false;
     }
 
-    font_.Init(device, assetsRoot); // 失敗しても UI 自体は動く (テキストが出ないだけ)
+    font_.Init(device, assetsRoot, fontEmbedded); // 失敗しても UI 自体は動く (テキストが出ないだけ)
 
     ready_ = true;
     return true;

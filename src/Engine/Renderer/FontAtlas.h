@@ -34,7 +34,11 @@ public:
     ~FontAtlas();
 
     // assetsRoot は空可 (フォント探索をシステム→8x8 のみにする)
-    bool Init(GraphicsDevice& device, const std::wstring& assetsRoot);
+    // forceEmbedded=true で TTF 探索を丸ごと飛ばして内蔵 8x8 (ASCII) に固定する。
+    // M52c: スクショ回帰の golden を「そのマシンに入っているフォント」から切り離すため —
+    // 英語版 Windows Server の CI ランナーには日本語 TTF が無く、探索させると別の絵になる
+    bool Init(GraphicsDevice& device, const std::wstring& assetsRoot,
+              bool forceEmbedded = false);
     void Shutdown();
     bool IsReady() const { return ready_; }
     bool IsTtf() const { return ttfMode_; }

@@ -29,7 +29,7 @@ concurrency:
 
 jobs:
   windows:
-    name: build x8 + selftest + replay determinism
+    name: build x8 + selftest + replay determinism + screenshots
     runs-on: windows-2022
     timeout-minutes: 90
     env:
@@ -66,7 +66,15 @@ jobs:
         shell: cmd
         run: bin\x64\Release\Editor.exe --selftest %MYE_EXTRA_ARGS%
 
-      # ④ 配布パッケージのスモーク。GUI の「ビルドを作成」と同一パイプラインを
+      # ④ 決定的スクリーンショットの回帰 (M52c)。tests\golden\*.png と
+      #    撮り直しをピクセル比較する。撮影は Runtime.exe (imgui なし) で
+      #    --warp --font-embedded 固定 = ラスタライザとフォントを開発機と揃える。
+      #    replay_verify が先に Release をビルドしている前提 (bat はビルドしない)
+      - name: screenshot regression (5 shots)
+        shell: cmd
+        run: tools\shot_verify.bat
+
+      # ⑤ 配布パッケージのスモーク。GUI の「ビルドを作成」と同一パイプラインを
       #    CLI で回す (M51j)。成否は終了コードに載る (M52b)
       - name: package smoke (Release)
         shell: cmd
@@ -92,5 +100,6 @@ jobs:
             cache/*.mismatch.txt
             cache/*.scene.json
             cache/*.log
+            tests/actual/*.png
           if-no-files-found: ignore
           retention-days: 7

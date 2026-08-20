@@ -127,13 +127,14 @@ const unsigned char kFont8x8[96][8] = {
 FontAtlas::FontAtlas() = default;
 FontAtlas::~FontAtlas() = default;
 
-bool FontAtlas::Init(GraphicsDevice& device, const std::wstring& assetsRoot)
+bool FontAtlas::Init(GraphicsDevice& device, const std::wstring& assetsRoot,
+                     bool forceEmbedded)
 {
     device_ = &device;
 
     // フォント候補: assets\fonts\*.ttf/.ttc (名前順) → システム日本語フォント
     std::vector<std::wstring> candidates;
-    if (!assetsRoot.empty()) {
+    if (!assetsRoot.empty() && !forceEmbedded) {
         std::error_code ec;
         const std::filesystem::path dir = std::filesystem::path(assetsRoot) / L"fonts";
         std::vector<std::wstring> found;
@@ -153,7 +154,7 @@ bool FontAtlas::Init(GraphicsDevice& device, const std::wstring& assetsRoot)
         candidates.insert(candidates.end(), found.begin(), found.end());
     }
     wchar_t windir[MAX_PATH] = {};
-    if (GetWindowsDirectoryW(windir, MAX_PATH) > 0) {
+    if (!forceEmbedded && GetWindowsDirectoryW(windir, MAX_PATH) > 0) {
         const std::wstring fonts = std::wstring(windir) + L"\\Fonts\\";
         candidates.push_back(fonts + L"YuGothM.ttc"); // ImGuiTheme と同じ優先順
         candidates.push_back(fonts + L"meiryo.ttc");
@@ -173,7 +174,10 @@ bool FontAtlas::Init(GraphicsDevice& device, const std::wstring& assetsRoot)
             break;
         }
     }
-    if (!ttfMode_) {
+    if (!ttfMode_ && forceEmbedded) {
+        MYE_LOG_INFO("[font] atlas font: embedded 8x8 (forced, ascii only)");
+        InitEmbedded8x8();
+    } else if (!ttfMode_) {
         MYE_LOG_WARN("[font] no usable ttf found — falling back to embedded 8x8 (ASCII only)");
         InitEmbedded8x8();
     }

@@ -12,3 +12,6 @@ assets/scripts/Generated/
 # replay_verify が毎回組み直す。parts_showcase (cache/) と同じ流儀
 assets/scenes/flow_title.scene.json*
 assets/scenes/flow_game.scene.json*
+
+# スクショ回帰の撮り直し結果 (M52c)。golden だけを版管理する
+tests/actual/

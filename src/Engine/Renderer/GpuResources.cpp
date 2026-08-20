@@ -1,11 +1,13 @@
 #include "Engine/Renderer/GpuResources.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <thread>
 #include <vector>
 
 #include "nlohmann/json.hpp"
@@ -801,6 +803,28 @@ void TextureLibrary::PollAsyncLoads()
                              imp.generateMips != 0)) {
             textures_[r.id] = std::move(t); // プレースホルダを実体に差し替え
         }
+    }
+}
+
+// M52c: 決定的スクショの前提づくり。pending_ はメインスレッド専用なので
+// ここ (メインスレッド) から見れば「まだ公開されていないテクスチャの集合」そのもの。
+// ワーカーは成功・失敗どちらでも必ず結果を積み、PollAsyncLoads が両方で pending_ から
+// 消すので、このループは必ず終わる (それでも保険のタイムアウトを持つ)
+void TextureLibrary::WaitForAsyncLoads(int timeoutMs)
+{
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
+    for (;;) {
+        PollAsyncLoads();
+        if (pending_.empty()) {
+            return;
+        }
+        if (std::chrono::steady_clock::now() >= deadline) {
+            MYE_LOG_WARN("WaitForAsyncLoads: timed out with %zu texture(s) still pending",
+                         pending_.size());
+            return;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 }
 

@@ -26,7 +26,9 @@ struct RenderResources;
 // ボタン操作は描画に非関与 — スクリプトが InputSnapshot のマウス (決定論) でヒットテストする。
 class UIRenderer {
 public:
-    bool Init(GraphicsDevice& device, ShaderManager& shaders, const std::wstring& assetsRoot);
+    // fontEmbedded=true でフォントアトラスを内蔵 8x8 に固定する (M52c: 決定的スクショ)
+    bool Init(GraphicsDevice& device, ShaderManager& shaders, const std::wstring& assetsRoot,
+              bool fontEmbedded = false);
     void Shutdown();
     bool IsReady() const { return ready_; }
 

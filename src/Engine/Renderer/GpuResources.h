@@ -119,6 +119,10 @@ public:
     AssetID RequestLoadFileAsync(const std::wstring& path);
     // メインスレッドで毎フレーム呼ぶ。デコード完了分を GPU テクスチャ化して公開する。
     void PollAsyncLoads();
+    // M52c: 決定的スクショ用。進行中の非同期デコードが**全て公開されるまで**待つ。
+    // これが無いと「撮影フレームまでにデコードが間に合ったか」= 実時間で絵が変わる。
+    // タイムアウト付き (デコード結果が返らない事故でも CI を吊らさない)
+    void WaitForAsyncLoads(int timeoutMs = 30000);
 
     // ファイルパスに対応する AssetID (正規化パスのハッシュ)。ロード有無に関わらず同じ値
     static AssetID IdForFile(const std::wstring& path);

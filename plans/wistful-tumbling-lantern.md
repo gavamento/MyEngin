@@ -41,7 +41,7 @@ M51 完遂 (`a0d5081` → 後続 `760ac83`、ABI v12、kEngineVersion 0.66) の�
 |---|---|---|---|
 | M52a ハッシュ差分診断 | 完了 | `55fe1ce` | 下記「M52a の申し送り」参照 |
 | M52b CI + WARP | 完了 | (本コミット) | 下記「M52b の申し送り」参照 |
-| M52c スクショ回帰 | 未着手 | | |
+| M52c スクショ回帰 | 完了 | (本コミット) | 下記「M52c の申し送り」参照 |
 | M52d SimSnapshot 基盤 | 未着手 | | |
 | M52e タイムトラベル | 未着手 | | |
 | M52f クラッシュバンドル | 未着手 | | |
@@ -112,6 +112,61 @@ M51 完遂 (`a0d5081` → 後続 `760ac83`、ABI v12、kEngineVersion 0.66) の�
    (M52a の罠 6 と同根。pwsh から `& Editor.exe` は待たない)。
 8. Hub (`ProjectManager`) は `GraphicsDevice::Init()` の既定引数を使うので、
    `--warp` は届かないが**自動フォールバック側に乗る** (GPU 無し環境でも Hub は起動する)。
+
+### M52c の申し送り (計画外の事実・罠)
+
+1. **計画の撮影条件 (`--shot-frame 3 --frames 8`) は決定的ではなかった — 実測で崩れた。**
+   1 フレームに何 tick 回るかは `accumulator += dt` の **実時間**で決まる (`EngineLoop.cpp:538`)。
+   WARP は 1 フレーム数十 ms かかるので、同じコマンドを 2 回叩くと撮影フレームまでの
+   tick 数が変わり **PNG がバイト不一致**になった (計測: 同条件 2 回で 273669B と 273612B、
+   どちらも「8 frames / 22 ticks」なのに**フレームごとの配分**が違う)。
+   対処は `EngineConfig::shotRealtime` の裏返しとして入れた**決定的撮影モード**:
+   `--screenshot` 指定 (連番 `--shot-every` を除く) で自動 on になり、
+   ①フレームの `dt` を `kFixedDt` に固定する (accumulator が毎フレームちょうど 1 tick
+   消費して 0 に戻る = **frame 番号 == tick 番号**。同じ double を足して引くので誤差ゼロ)、
+   ②`TextureLibrary::WaitForAsyncLoads()` で非同期デコードを撮影前に待ち切る
+   (M23 の非同期テクスチャは「間に合ったかどうか」が実時間依存 = もう 1 つの非決定性)。
+   これで同条件 2 回が SHA256 一致になった。副産物として計画の ★罠 (`--shot-frame` は
+   tick ではなくフレーム番号) は**消滅した** — 撮影中は両者が一致する。
+   解除は `--shot-realtime` (連番ライブ撮影は従来どおり実時間)。
+2. **フォントも機種依存だった。** `FontAtlas::Init` は `assetsonts\*.ttf` → システムの
+   YuGothM/meiryo/msgothic の順で探し、全滅すると内蔵 8x8 (ASCII) に落ちる。
+   **英語版 Windows Server の CI ランナーには日本語 TTF が入っていない**ので、
+   探索させると golden と別の絵になる (テキストのあるシーンは全滅する)。
+   `--font-embedded` を足して撮影時は内蔵 8x8 に固定した。これで golden は
+   「そのマシンに何のフォントが入っているか」から完全に切り離される。
+   代償として **CI のスクショは日本語グリフ焼成を被覆しない** (probe シーンでは `??????` になる)。
+   被覆を戻したければ OFL 系の日本語 TTF を `assetsonts\` に同梱すればよい (M53 候補)。
+3. **測った数字 (許容値の根拠)。**
+   - Debug と Release は WARP 同士で**ビット一致** (maxDiff=0) → 撮影は Release だけでよい。
+   - WARP と実 GPU (RTX 3060) は同じシーンで **maxDiff=2、518400 画素中 376856 が非ゼロ差**。
+     FXAA/トーンマップの丸め差。**つまり golden は必ず `--warp` で撮る**。
+   - 逆に言えば「まるごと別のラスタライザ」でも差は 2 に収まる。既定 tolerance を
+     **2** にしたのはこの実測が根拠 (`MYE_SHOT_TOL` で上書き可)。実測 maxDiff は毎回ログに出す。
+   - Forward と Deferred は maxDiff=84 / 195759 画素で違う = 2 本撮る価値がある (`--deferred` が
+     本当に効いていることの確認も兼ねる)。
+4. **`--img-diff` は「差が無い」と「比べられなかった」を分ける** (0 / 1 / **2**)。
+   寸法違いや読み込み失敗を PASS 側に混ぜると、撮影自体が壊れた日に回帰テストが静かに緑になる。
+5. **`.bat` は CRLF で書くこと。** LF だけで書いた `shot_verify.bat` は cmd.exe が
+   行の途中で切って「'y_verify.bat' is not recognized」等の意味不明なエラーを撒いた
+   (UTF-8 の日本語コメントと組み合わさると特に壊れる)。既存の `replay_verify.bat` も CRLF。
+6. **`Runtime.exe --scene` は相対パスで通る** (計画の未検証事項)。
+   `cache\parts_showcase.scene.json` も `assets\sceneslow_title.scene.json` もそのまま読める。
+7. **`shot_verify.bat` はビルドしない。** `replay_verify.bat` の後に回す前提 (CI もその順序)。
+   parts/flow のシーンは shot 側でも組み直す (replay_verify と同じ流儀 — 単体で回せるように)。
+8. **M52b の CI が赤かった件 (`selftest (Debug)` の CookedCache 1 項目) をここで直した。**
+   環境差ではなく**時計運**だった: `CookedCache::ReadValidated` は「サイズ同一 かつ mtime 同一」
+   なら内容を読まずに hit する高速路を持ち (M51b の設計意図)、テストは同サイズ書換で miss を
+   期待して「mtime も動く」を暗黙の前提にしていた。NTFS の最終更新時刻は約 14 ms 刻みなので
+   2 回の書込が同じ刻みに入ると mtime が動かず**正当に** hit する。修理はテスト側で
+   `fs::last_write_time` を秒単位で明示的にずらす (エンジンの高速路は触らない)。
+   ★同型の罠: 「速く書けば時刻が動く」に依存したテストは全部これになる。
+9. **CI ランナー上での実地確認だけは未。** ローカルでは 8 ビルド (警告 0、`MyeWarnAsError=true`)
+   / selftest 両構成 / replay_verify 3 ペア / check_rules 0 error / shot_verify 5 本 maxDiff=0 /
+   golden 1 画素改竄で赤 まで確認済み。残る未知数は **runner の WARP が開発機の WARP と
+   何レベル違うか** (tol=2 で足りるか) と **ウィンドウのクライアント実寸が 960x540 になるか**
+   (DPI/デスクトップ解像度次第。ズレたら `--img-diff` が exit 2 =「比較不能」で明示的に落ちる)。
+   初回 push の run で確認し、tol が足りなければ `MYE_SHOT_TOL` を CI の env に足す。
 
 ---
 
@@ -303,6 +358,7 @@ bat が読む環境変数 `MYE_EXTRA_ARGS` 経由で注入し、bat 本体はロ
 - C# レーンの決定論化 (現状は record/verify・ネット・タイムトラベルの全てで対象外)
 - スナップショットの差分圧縮 (現状は毎回フルコピー。60 秒リングが重ければここ)
 - 実 GPU のセルフホストランナー (WARP と実機のピクセル差を CI で見る)
+- OFL 日本語フォントの `assetsonts\` 同梱 (CI のスクショに日本語グリフ焼成を戻す。M52c 申し送り 2)
 - ネットの遅延補償 (補間・スムージング) / 観戦モード / .rep からの動画書き出し
 
 ## 実装セッション冒頭で要確認 (未検証事項)
@@ -310,5 +366,4 @@ bat が読む環境変数 `MYE_EXTRA_ARGS` 経由で注入し、bat 本体はロ
 - `World` の private メンバへスナップショットが触る手段 (メンバ関数追加 vs friend) — レイヤ規約との相性
 - `AudioSystem::Init` が音声デバイス無し環境で失敗したときの挙動 (CI runner。`--no-audio` で回避できるはずだが未確認)
 - GitHub Actions windows-2022 での D3D11 WARP デバイス生成 + ウィンドウ生成の実地確認 (**M52b 唯一の未知数**)
-- `Runtime.exe --scene` が絶対パス / `cache\parts_showcase.scene.json` を受けるか (M52c の撮影経路)
 - `EngineLoop.cpp` tick 本体のローカル変数依存の全量 (M52d の `TickServices` 構造体サイズ = 抽出コスト)
