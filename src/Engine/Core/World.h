@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "Engine/Core/Archetype.h"
+#include "Engine/Core/ByteIo.h"
 #include "Engine/Core/ComponentRegistry.h"
 #include "Engine/Core/EntityID.h"
 #include "Engine/Core/Random.h"
@@ -122,6 +123,22 @@ public:
     //   名前と型が一致するフィールドのみコピー、新規フィールドはデフォルト値。
     // 最後にレジストリの記述子も更新する
     void ReplaceComponentStorage(ComponentTypeId t, ComponentDesc newDesc);
+
+    // ---- sim スナップショット (M52d、決定台帳 1) ----
+    // World の sim 状態一式 (アーキタイプのカラム生バイト / レコード表 / freeIndices /
+    // ルートリスト / RNG) を生バイト列へ出し入れする。SimSnapshot 専用の入り口で、
+    // private メンバへ触れる必要があるためここに置く (friend は使わない)。
+    //
+    // ★不変条件 1: 撮れるのは commands_ / cmdPayloads_ が空で非イテレーション中の点
+    //   だけ = ApplyStructuralChanges 直後の tick 末。遅延コマンドを抱えたまま撮ると
+    //   「まだ適用されていない構造変更」が消える (MYE_CHECK で固定)。
+    // ★不変条件 2: アーキタイプは**生成順**で書き出す。ForEachArchetype の列挙順が
+    //   そのままワールドハッシュの畳み込み順なので、復元で順序が変わるとハッシュが変わる。
+    // ★復元では派生物を捨てる: queryCache_ (archetype index を持つ) は全破棄、
+    //   hierarchyDirty_ は必ず true にして TransformSystem (M51c) の側テーブルを
+    //   Rebuild 経由で全無効化させる (= 次 tick は全件再計算 = スキップ経路とビット同値)。
+    void SnapshotWrite(ByteWriter& w) const;
+    bool SnapshotRead(ByteReader& r);
 
     // ワールド標準の RNG ストリーム (シード管理は Scene/Replay 側)
     Pcg32& Rng() { return rng_; }

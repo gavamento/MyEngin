@@ -261,6 +261,12 @@
     <ClCompile Include="..\src\Engine\Engine\Replay\Replay.cpp">
       <Filter>Engine\Replay</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Replay\SimSnapshot.cpp">
+      <Filter>Engine\Replay</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Replay\SimSnapshotSelfTest.cpp">
+      <Filter>Engine\Replay</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Replay\WorldHasher.cpp">
       <Filter>Engine\Replay</Filter>
     </ClCompile>
@@ -301,6 +307,9 @@
       <Filter>Engine</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\SkinningSystem.cpp">
+      <Filter>Engine</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\TickRunner.cpp">
       <Filter>Engine</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\TransformSystem.cpp">
@@ -433,6 +442,9 @@
       <Filter>Core</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Core\AssetKeyResolver.h">
+      <Filter>Core</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Core\ByteIo.h">
       <Filter>Core</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Core\Check.h">
@@ -660,6 +672,12 @@
     <ClInclude Include="..\src\Engine\Engine\Replay\Replay.h">
       <Filter>Engine\Replay</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Replay\SimSnapshot.h">
+      <Filter>Engine\Replay</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Replay\SimSnapshotSelfTest.h">
+      <Filter>Engine\Replay</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Replay\WorldHasher.h">
       <Filter>Engine\Replay</Filter>
     </ClInclude>
@@ -700,6 +718,9 @@
       <Filter>Engine</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\SkinningSystem.h">
+      <Filter>Engine</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\TickRunner.h">
       <Filter>Engine</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\TransformSystem.h">

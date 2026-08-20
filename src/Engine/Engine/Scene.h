@@ -126,6 +126,19 @@ public:
     }
     bool HasOverrideRecord(uint64_t fileId) const { return overrides_.count(fileId) != 0; }
 
+    // ---- sim スナップショット (M52d) ----
+    // SimSnapshot 専用の入り口。override 表は編集メタデータで WorldHash 非対象だが、
+    // タイムトラベルで「過去の tick に戻る」ときは編集状態ごと戻さないと辻褄が合わない
+    // ので撮影対象に含める (決定台帳 1)。書き出しは fileId 昇順に整列すること —
+    // unordered_map の走査順は決定論ではなく、blob のバイト列が実行ごとに変わってしまう
+    const std::unordered_map<uint64_t, OverrideSet>& OverridesTable() const { return overrides_; }
+    void ReplaceOverridesTable(std::unordered_map<uint64_t, OverrideSet> t)
+    {
+        overrides_ = std::move(t);
+    }
+    // fileId 索引は派生物 (M51a)。復元後の EntityID は総入れ替えなので必ず捨てる
+    void InvalidateFileIdCache() { fileIdCache_.clear(); }
+
 private:
     World world_;
     std::string name_ = "Untitled";

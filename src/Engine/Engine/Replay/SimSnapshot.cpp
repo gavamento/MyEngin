@@ -1,0 +1,338 @@
+#include "Engine/Engine/Replay/SimSnapshot.h"
+
+#include <algorithm>
+#include <map>
+#include <string>
+#include <unordered_map>
+#include <vector>
+
+#include "Engine/Core/ByteIo.h"
+#include "Engine/Core/Check.h"
+#include "Engine/Core/Log.h"
+#include "Engine/Core/World.h"
+#include "Engine/Engine/CollisionSystem.h"
+#include "Engine/Engine/Particles/CpuParticleBackend.h"
+#include "Engine/Engine/Scene.h"
+#include "Engine/Engine/Script/ScriptHost.h"
+
+namespace mye {
+namespace {
+
+// 節ごとの目印。壊れた/別形式の blob を「途中まで復元」する前に止めるため
+constexpr uint32_t kMagic = 0x504E534Du;      // 'MSNP'
+constexpr uint32_t kSceneMagic = 0x314E4353u; // 'SCN1'
+constexpr uint32_t kPtclMagic = 0x31435450u;  // 'PTC1'
+constexpr uint32_t kCollMagic = 0x314C4F43u;  // 'COL1'
+constexpr uint32_t kScrMagic = 0x31524353u;   // 'SCR1'
+constexpr uint32_t kLoopMagic = 0x31504F4Cu;  // 'LOP1'
+
+constexpr size_t kHeaderBytes = 4 * sizeof(uint32_t) + sizeof(uint64_t);
+
+// ---- Scene (TimeControl / PersistStore / nextFileId / sourcePath / override 表) ----
+//
+// override 表は unordered_map なので、そのまま走査すると blob のバイト列が実行ごとに
+// 変わる (規則 7)。fileId 昇順に整列してから書く — 「同じ状態なら同じ blob」は
+// 撮り直しの比較・desync 診断・selftest の全てが依存する不変条件
+void WriteScene(ByteWriter& w, const Scene& scene)
+{
+    w.U32(kSceneMagic);
+    const TimeControl& t = scene.Time();
+    w.U8(t.paused ? 1u : 0u);
+    w.I32(t.scalePercent);
+    w.I32(t.accum);
+
+    const PersistStore::Map& persist = scene.Persist().Entries(); // std::map = キー昇順
+    w.Count(persist.size());
+    for (const auto& [key, blob] : persist) {
+        w.U64(key);
+        w.Blob(blob.data(), blob.size());
+    }
+
+    w.U64(scene.PeekNextFileId());
+    w.WStr(scene.SourcePath());
+
+    const std::unordered_map<uint64_t, Scene::OverrideSet>& ov = scene.OverridesTable();
+    std::vector<uint64_t> ids;
+    ids.reserve(ov.size());
+    for (const auto& kv : ov) {
+        ids.push_back(kv.first);
+    }
+    std::sort(ids.begin(), ids.end());
+    w.Count(ids.size());
+    for (uint64_t id : ids) {
+        w.U64(id);
+        const Scene::OverrideSet& keys = ov.find(id)->second; // std::set = 昇順
+        w.Count(keys.size());
+        for (const std::string& k : keys) {
+            w.Str(k);
+        }
+    }
+}
+
+struct SceneState {
+    TimeControl time;
+    PersistStore::Map persist;
+    uint64_t nextFileId = 1;
+    std::wstring sourcePath;
+    std::unordered_map<uint64_t, Scene::OverrideSet> overrides;
+};
+
+bool ReadScene(ByteReader& r, SceneState& out)
+{
+    if (r.U32() != kSceneMagic) {
+        MYE_LOG_ERROR("[snapshot] scene section magic mismatch");
+        return false;
+    }
+    out.time.paused = r.U8() != 0;
+    out.time.scalePercent = r.I32();
+    out.time.accum = r.I32();
+
+    const size_t persistCount = r.Count(sizeof(uint64_t) * 2);
+    for (size_t i = 0; i < persistCount && r.Ok(); ++i) {
+        const uint64_t key = r.U64();
+        const size_t n = r.Count(sizeof(uint8_t));
+        std::vector<uint8_t> blob(n);
+        r.Raw(blob.data(), n);
+        out.persist.emplace(key, std::move(blob));
+    }
+
+    out.nextFileId = r.U64();
+    out.sourcePath = r.WStr();
+
+    const size_t ovCount = r.Count(sizeof(uint64_t) * 2);
+    for (size_t i = 0; i < ovCount && r.Ok(); ++i) {
+        const uint64_t id = r.U64();
+        const size_t keyCount = r.Count(sizeof(uint64_t));
+        Scene::OverrideSet keys;
+        for (size_t k = 0; k < keyCount && r.Ok(); ++k) {
+            keys.insert(r.Str());
+        }
+        out.overrides.emplace(id, std::move(keys));
+    }
+    return r.Ok();
+}
+
+// ---- CPU パーティクル池 ----
+// SoA 配列は要素数が数千になりうるので生バイトで一括 (要素毎ループは撮影コストに直結する)
+void WriteParticles(ByteWriter& w, const CpuParticleBackend* particles)
+{
+    w.U32(kPtclMagic);
+    w.U32(static_cast<uint32_t>(sizeof(ParticleEmitterComponent)));
+    const std::vector<CpuParticleBackend::EmitterPool> empty;
+    const std::vector<CpuParticleBackend::EmitterPool>& pools =
+        particles != nullptr ? particles->Pools() : empty;
+    w.Count(pools.size());
+    for (const CpuParticleBackend::EmitterPool& p : pools) {
+        w.U32(p.owner.index);
+        w.U32(p.owner.generation);
+        w.U32(p.alive);
+        w.F32(p.emitAccum);
+        w.I32(p.ageTicks);
+        w.U64(p.rng.State());
+        w.U64(p.rng.Inc());
+        w.Raw(&p.descCache, sizeof(ParticleEmitterComponent));
+        w.PodVector(p.px);
+        w.PodVector(p.py);
+        w.PodVector(p.pz);
+        w.PodVector(p.vx);
+        w.PodVector(p.vy);
+        w.PodVector(p.vz);
+        w.PodVector(p.life);
+        w.PodVector(p.invLife);
+        w.PodVector(p.size0);
+    }
+}
+
+bool ReadParticles(ByteReader& r, std::vector<CpuParticleBackend::EmitterPool>& out)
+{
+    if (r.U32() != kPtclMagic) {
+        MYE_LOG_ERROR("[snapshot] particle section magic mismatch");
+        return false;
+    }
+    const uint32_t descSize = r.U32();
+    if (descSize != sizeof(ParticleEmitterComponent)) {
+        MYE_LOG_ERROR("[snapshot] emitter layout changed (%u vs %zu bytes)", descSize,
+                      sizeof(ParticleEmitterComponent));
+        return false;
+    }
+    const size_t count = r.Count(sizeof(uint32_t) * 4);
+    out.resize(count);
+    for (size_t i = 0; i < count && r.Ok(); ++i) {
+        CpuParticleBackend::EmitterPool& p = out[i];
+        p.owner.index = r.U32();
+        p.owner.generation = r.U32();
+        p.alive = r.U32();
+        p.emitAccum = r.F32();
+        p.ageTicks = r.I32();
+        const uint64_t state = r.U64();
+        const uint64_t inc = r.U64();
+        p.rng.Restore(state, inc);
+        r.Raw(&p.descCache, sizeof(ParticleEmitterComponent));
+        p.px = r.PodVector<float>();
+        p.py = r.PodVector<float>();
+        p.pz = r.PodVector<float>();
+        p.vx = r.PodVector<float>();
+        p.vy = r.PodVector<float>();
+        p.vz = r.PodVector<float>();
+        p.life = r.PodVector<float>();
+        p.invLife = r.PodVector<float>();
+        p.size0 = r.PodVector<float>();
+    }
+    return r.Ok();
+}
+
+// ---- CollisionSystem の前 tick ペア ----
+void WriteCollision(ByteWriter& w, CollisionSystem* collision)
+{
+    w.U32(kCollMagic);
+    const std::vector<uint64_t> empty;
+    w.PodVector(collision != nullptr ? collision->PrevPairsForSnapshot() : empty);
+    w.PodVector(collision != nullptr ? collision->PrevSolidPairsForSnapshot() : empty);
+}
+
+// ---- ScriptHost の Start 済み記録 ----
+// unordered_set なので昇順へ整列してから書く (override 表と同じ理由)
+void WriteScripts(ByteWriter& w, ScriptHost* scripts)
+{
+    w.U32(kScrMagic);
+    std::vector<uint64_t> keys;
+    if (scripts != nullptr) {
+        const std::unordered_set<uint64_t>& started = scripts->StartedForSnapshot();
+        keys.assign(started.begin(), started.end());
+        std::sort(keys.begin(), keys.end());
+    }
+    w.PodVector(keys);
+}
+
+// ---- EngineLoop の前 tick 入力 (M51d のアクション評価が読む) ----
+void WriteLoop(ByteWriter& w, const InputSnapshot* prevTickInput)
+{
+    w.U32(kLoopMagic);
+    InputSnapshot zero = {};
+    w.Raw(prevTickInput != nullptr ? prevTickInput : &zero, sizeof(InputSnapshot));
+}
+
+} // namespace
+
+bool CaptureSimSnapshot(const SimRefs& refs, std::vector<std::byte>& out)
+{
+    if (refs.scene == nullptr) {
+        MYE_LOG_ERROR("[snapshot] capture without a scene");
+        return false;
+    }
+    out.clear();
+    ByteWriter w(out);
+    w.U32(kMagic);
+    w.U32(kSimSnapshotVersion);
+    w.U32(static_cast<uint32_t>(sizeof(InputSnapshot)));
+    w.U32(0); // 予約 (将来の節追加フラグ用)
+    w.U64(refs.tickIndex != nullptr ? *refs.tickIndex : 0);
+
+    WriteScene(w, *refs.scene);
+    WriteParticles(w, refs.particles);
+    WriteCollision(w, refs.collision);
+    WriteScripts(w, refs.scripts);
+    WriteLoop(w, refs.prevTickInput);
+    // ★World は**最後**に置く。復元は「小さい節を全部一時領域へ読み切ってから
+    //   World::SnapshotRead (それ自体が全読み後に一括差し替え) を呼ぶ」順で走るので、
+    //   どこで失敗しても現世界に手が付いていない状態で戻れる
+    refs.scene->GetWorld().SnapshotWrite(w);
+    return true;
+}
+
+bool RestoreSimSnapshot(const SimRefs& refs, const std::byte* data, size_t size)
+{
+    if (refs.scene == nullptr || data == nullptr) {
+        MYE_LOG_ERROR("[snapshot] restore without a scene/blob");
+        return false;
+    }
+    ByteReader r(data, size);
+    if (r.U32() != kMagic) {
+        MYE_LOG_ERROR("[snapshot] bad blob magic");
+        return false;
+    }
+    const uint32_t version = r.U32();
+    const uint32_t inputSize = r.U32();
+    r.U32(); // 予約
+    const uint64_t tick = r.U64();
+    if (version != kSimSnapshotVersion || inputSize != sizeof(InputSnapshot)) {
+        MYE_LOG_ERROR("[snapshot] incompatible blob (v%u, input %u bytes)", version, inputSize);
+        return false;
+    }
+
+    SceneState scene;
+    std::vector<CpuParticleBackend::EmitterPool> pools;
+    if (!ReadScene(r, scene) || !ReadParticles(r, pools)) {
+        return false;
+    }
+    if (r.U32() != kCollMagic) {
+        MYE_LOG_ERROR("[snapshot] collision section magic mismatch");
+        return false;
+    }
+    std::vector<uint64_t> prevPairs = r.PodVector<uint64_t>();
+    std::vector<uint64_t> prevSolidPairs = r.PodVector<uint64_t>();
+    if (r.U32() != kScrMagic) {
+        MYE_LOG_ERROR("[snapshot] script section magic mismatch");
+        return false;
+    }
+    std::vector<uint64_t> started = r.PodVector<uint64_t>();
+    if (r.U32() != kLoopMagic) {
+        MYE_LOG_ERROR("[snapshot] loop section magic mismatch");
+        return false;
+    }
+    InputSnapshot prevTickInput = {};
+    r.Raw(&prevTickInput, sizeof(InputSnapshot));
+    if (!r.Ok()) {
+        MYE_LOG_ERROR("[snapshot] truncated blob");
+        return false;
+    }
+
+    // ここまでで現世界には一切触れていない。World も全読み後の一括差し替え
+    if (!refs.scene->GetWorld().SnapshotRead(r)) {
+        return false;
+    }
+
+    refs.scene->Time() = scene.time;
+    refs.scene->Persist().Entries() = std::move(scene.persist);
+    refs.scene->SetNextFileId(scene.nextFileId);
+    refs.scene->SetSourcePath(std::move(scene.sourcePath));
+    refs.scene->ReplaceOverridesTable(std::move(scene.overrides));
+    refs.scene->InvalidateFileIdCache(); // 派生物 (EntityID が総入れ替えされたので必ず)
+
+    if (refs.particles != nullptr) {
+        refs.particles->PoolsForSnapshot() = std::move(pools);
+    }
+    if (refs.collision != nullptr) {
+        refs.collision->PrevPairsForSnapshot() = std::move(prevPairs);
+        refs.collision->PrevSolidPairsForSnapshot() = std::move(prevSolidPairs);
+    }
+    if (refs.scripts != nullptr) {
+        std::unordered_set<uint64_t>& dst = refs.scripts->StartedForSnapshot();
+        dst.clear();
+        dst.insert(started.begin(), started.end());
+    }
+    if (refs.prevTickInput != nullptr) {
+        *refs.prevTickInput = prevTickInput;
+    }
+    if (refs.tickIndex != nullptr) {
+        *refs.tickIndex = tick;
+    }
+    return true;
+}
+
+bool PeekSimSnapshotTick(const std::byte* data, size_t size, uint64_t& outTick)
+{
+    if (data == nullptr || size < kHeaderBytes) {
+        return false;
+    }
+    ByteReader r(data, size);
+    if (r.U32() != kMagic || r.U32() != kSimSnapshotVersion) {
+        return false;
+    }
+    r.U32();
+    r.U32();
+    outTick = r.U64();
+    return r.Ok();
+}
+
+} // namespace mye

@@ -135,10 +135,16 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 config.vsync = false;
             } else if (arg == L"--replay-ticks" && i + 1 < argc) {
                 config.replayTicks = _wtoi64(argv[++i]);
+            } else if (arg == L"--rep-snapshot") {
+                // M52d: .rep へ記録開始時点の sim 状態を埋め込む (シーン非依存の再生)
+                config.replayEmbedSnapshot = true;
             } else if (arg == L"--hash-dump" && i + 1 < argc) {
                 config.hashDumpPath = argv[++i]; // M52a: フィールド単位ダンプの出力先
             } else if (arg == L"--hash-dump-tick" && i + 1 < argc) {
                 config.hashDumpTick = _wtoi64(argv[++i]);
+            } else if (arg == L"--snapshot-stress" && i + 1 < argc) {
+                // M52d: N tick ごとにスナップショット往復を挟む (期待ハッシュ不変が合格条件)
+                config.snapshotStress = _wtoi64(argv[++i]);
             } else if (arg == L"--hash-diff" && i + 2 < argc) {
                 // M52a: 配布ビルド単体でもクラッシュ報告のダンプを突き合わせられるように
                 hashDiffA = argv[++i];

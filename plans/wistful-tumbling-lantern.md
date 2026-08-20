@@ -42,7 +42,7 @@ M51 完遂 (`a0d5081` → 後続 `760ac83`、ABI v12、kEngineVersion 0.66) の�
 | M52a ハッシュ差分診断 | 完了 | `55fe1ce` | 下記「M52a の申し送り」参照 |
 | M52b CI + WARP | 完了 | (本コミット) | 下記「M52b の申し送り」参照 |
 | M52c スクショ回帰 | 完了 | (本コミット) | 下記「M52c の申し送り」参照 |
-| M52d SimSnapshot 基盤 | 未着手 | | |
+| M52d SimSnapshot 基盤 | 完了 | (本コミット) | 下記「M52d の申し送り」参照 |
 | M52e タイムトラベル | 未着手 | | |
 | M52f クラッシュバンドル | 未着手 | | |
 | M52g マルチ入力レーン | 未着手 | | |
@@ -167,6 +167,71 @@ M51 完遂 (`a0d5081` → 後続 `760ac83`、ABI v12、kEngineVersion 0.66) の�
    何レベル違うか** (tol=2 で足りるか) と **ウィンドウのクライアント実寸が 960x540 になるか**
    (DPI/デスクトップ解像度次第。ズレたら `--img-diff` が exit 2 =「比較不能」で明示的に落ちる)。
    初回 push の run で確認し、tol が足りなければ `MYE_SHOT_TOL` を CI の env に足す。
+
+
+### M52d の申し送り (計画外の事実・罠)
+
+1. **抽出の検証順序が肝だった。** `RunOneTick` の抽出 (`TickRunner.h/.cpp` へ 289 行を移動) は
+   M52a 申し送り 1 の手をそのまま使った: **旧ビルドで demo / parts / flow の .rep を録っておき、
+   抽出後の新ビルドでそれを verify** (3 本とも 600 tick 全一致)。
+   ★**この検証を済ませてから ReplayFile を v4 に上げること** — 順序を逆にすると v3 の .rep が
+   読めなくなり、抽出が挙動を変えていないことを確かめる唯一の手段を自分で捨てる。
+2. **`recorder.IsActive()` を tick 頭でキャッシュしてはいけない。** 記録は最終 tick の**途中**で
+   `Finish()` を呼んで `active_` を落とすので、`const bool recording` に畳むと同じ tick の後半
+   (`pendingLoadSlot` のゲート) の挙動が変わる。`RunOneTick` では毎回引き直すラムダ
+   (`Recording()` / `Verifying()`) にして、移動が純粋な「移動」で済むようにした。
+3. **World の節は blob の最後に置く。** 復元は「小さい節 (Scene / パーティクル / 衝突 /
+   スクリプト / prevTickInput) を全部一時領域へ読み切る → `World::SnapshotRead` (それ自体が
+   全読み後の一括差し替え)」の順で走る。この順序だから**どこで失敗しても現世界に手が
+   付いていない**。逆順だと壊れた blob で「途中まで復元された世界」ができ、これが一番たちが悪い。
+4. **`hierarchyDirty_ = true` が TransformSystem 側テーブル (M51c) の唯一の解除口。**
+   復元で立て忘れると「LocalTransform が前回と同ビットだから据え置き」判定に入り、
+   復元前の WorldMatrix が生き残る。`Rebuild` が `lastTrs_` / `state_` を全無効化する
+   既存経路にそのまま相乗りできるので、TransformSystem 側は 1 行も触っていない。
+5. **blob のバイト決定性は unordered コンテナの整列で作る。** Scene の override 表
+   (`unordered_map`) と ScriptHost の `started_` (`unordered_set`) は昇順へ整列してから書く。
+   selftest の「撮り直しがバイト同一」はこれが無いと落ちる。同じ状態 → 同じ blob は
+   M52i の desync 比較が乗る土台なので、ここは仕様として固定した。
+6. **非 sim レーン (C# / GPU パーティクル / トレイル) の Reset は `RestoreSimSnapshot` の
+   仕事にしなかった** (決定台帳 1 は「復元時に Reset」とだけ書いていた)。
+   「戻した後どう見せたいか」は消費者ごとに違うため — タイムトラベルは未来のトレイルを
+   消したいが、`--snapshot-stress` は描画を乱したくない。**M52e で明示的に呼ぶこと**
+   (`SimSnapshot.h` の冒頭コメントに責務を明記した)。
+7. **実測 (1 枚あたり)**:
+   | シーン | エンティティ | blob | capture (Dbg/Rel) | restore (Dbg/Rel) |
+   |---|---|---|---|---|
+   | 既定デモ | 528 | 148 KB | 0.65 / **0.040** ms | 0.66 / **0.059** ms |
+   | parts | 31 | 10.0 KB | 0.13 / 0.010 ms | 0.47 / 0.030 ms |
+   | flow | 10-13 | 5.2 KB | 0.10 / 0.007 ms | 0.37 / 0.021 ms |
+
+   ★**Release は Debug の約 16 倍速い** (STL のイテレータデバッグが効く形のコードなので差が大きい)。
+   M52i のロールバック予算はこの Release 値で見ること — 528 エンティティのシーンでも
+   「Restore + 8 tick 再シム」の Restore 側は 0.06 ms しか食わない。
+   **3 ペアとも「全 600 tick で毎 tick 往復」させても期待ハッシュ全一致**を実走で確認した
+   (bat には 37 tick 間隔を恒久化 = verify 1 回分の追加コスト)。
+   M52e のリング (30 tick ごと最大 120 枚) は既定デモ規模で **約 17 MB** になる勘定。
+   差分圧縮が要るかはこの数字で判断する (M53 候補のまま据え置き)。
+8. **`--snapshot-stress` の撮影点は tick 境界 (`RunOneTick` 直後)。** LoadScene を跨ぐ flow デモを
+   毎 tick 撮っても `commands_` 空の `MYE_CHECK` は一度も鳴らなかった = **シーンロードは
+   tick 内で構造変更を閉じている**ことが実走で確かめられた (計画の未検証事項の 1 つ)。
+9. **v4 の tick レコードは `InputSnapshot × playerCount + uint64 hash`。** 書き手は
+   `playerCount = 1` 固定だが、読み書きのループは playerCount 一般で回してあるので
+   **M52g は header の値を変えるだけ**で済む。`snapshotSize` は M52d では常に 0
+   (埋め込みを使い始めるのは M52f)。`ReplayTick` 構造体は廃止し、入力列とハッシュ列を
+   別々に持って書き出しで綴じ直す形にした (playerCount 可変への素直な対応)。
+10. **v4 の埋め込みスナップショットは M52d で実走まで通した** (計画では「blob があれば
+    EngineLoop はシーンロードの代わりに Restore する」とだけ書かれていた)。
+    使い始めるのは M52f だが、**producer が無いと consumer は必ず腐る**ので
+    `--rep-snapshot` (記録時に開始状態を埋め込む、既定 off) を足して両側を実走で固定した。
+    ★実証: **`--flow-demo` で録った .rep を `--flow-demo` 無しの既定デモ起動で verify して
+    300 tick 全一致**した = 埋め込みがあれば .rep は**起動シーンに依存しない**。
+    これが M52f の「クラッシュ .rep をシーン非依存に再現する」の土台そのもの。
+    埋め込み時は RNG も prevTickInput も blob 側に入っているので、従来の
+    `Rng().Restore(header)` 経路は通らない (埋め込みが無い .rep は従来どおり)。
+
+11. **`TickServices` は 41 フィールド** (計画の未検証事項「tick 本体のローカル変数依存の全量」の答え)。
+    内訳はシステム 15 / tick 内バッファ 4 / 出力レーン 5 / 遅延要求 3 / その他 14。
+    全部このスコープのローカルなので、ループ前に 1 回組んで使い回している。
 
 ---
 
@@ -363,7 +428,12 @@ bat が読む環境変数 `MYE_EXTRA_ARGS` 経由で注入し、bat 本体はロ
 
 ## 実装セッション冒頭で要確認 (未検証事項)
 
-- `World` の private メンバへスナップショットが触る手段 (メンバ関数追加 vs friend) — レイヤ規約との相性
+- ~~`World` の private メンバへスナップショットが触る手段 (メンバ関数追加 vs friend) — レイヤ規約との相性~~
+  → **M52d で解決**: `World::SnapshotWrite/SnapshotRead` をメンバ関数で追加 (friend は不採用)。
+  バイト列ヘルパは `Engine/Core/ByteIo.h` に置く — SimSnapshot 本体は Engine 層なので、
+  Core の World から参照するとレイヤ規約に反するため
 - `AudioSystem::Init` が音声デバイス無し環境で失敗したときの挙動 (CI runner。`--no-audio` で回避できるはずだが未確認)
 - GitHub Actions windows-2022 での D3D11 WARP デバイス生成 + ウィンドウ生成の実地確認 (**M52b 唯一の未知数**)
-- `EngineLoop.cpp` tick 本体のローカル変数依存の全量 (M52d の `TickServices` 構造体サイズ = 抽出コスト)
+- ~~`EngineLoop.cpp` tick 本体のローカル変数依存の全量 (M52d の `TickServices` 構造体サイズ = 抽出コスト)~~
+  → **M52d で解決**: 41 フィールド。抽出後の `TickRunner.cpp` は 535 行で、本体は元コードの
+  純粋な移動 (差分は `recorder`/`player`/`app`/`prevWorld` の null 許容化だけ)

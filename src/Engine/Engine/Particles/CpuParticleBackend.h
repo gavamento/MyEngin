@@ -44,6 +44,9 @@ public:
         std::vector<float> size0;   // 初期サイズ
     };
     const std::vector<EmitterPool>& Pools() const { return pools_; }
+    // sim スナップショット (M52d): エミッタ池は WorldHash 対象の sim 状態なので
+    // 撮影/復元の対象。**SimSnapshot 以外から書き換えないこと**
+    std::vector<EmitterPool>& PoolsForSnapshot() { return pools_; }
 
 private:
     void SyncEmitters(World& world);

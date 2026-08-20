@@ -26,6 +26,7 @@
 #include "Engine/Engine/Project.h"
 #include "Engine/Engine/RenderSystem.h"
 #include "Engine/Engine/Replay/Replay.h"
+#include "Engine/Engine/Replay/SimSnapshot.h"
 #include "Engine/Engine/Replay/WorldHasher.h"
 #include "Engine/Engine/SaveGame.h"
 #include "Engine/Engine/Scene.h"
@@ -37,6 +38,7 @@
 #include "Engine/Engine/SchemaComponents.h"
 #include "Engine/Engine/PartFollowSystem.h"
 #include "Engine/Engine/SkinningSystem.h"
+#include "Engine/Engine/TickRunner.h"
 #include "Engine/Engine/TransformSystem.h"
 #include "Engine/Engine/UI/UIRenderer.h"
 #include "Engine/Engine/Vfx/VfxRenderer.h"
@@ -63,129 +65,6 @@ namespace {
 constexpr double kFixedDt = 1.0 / 60.0;
 constexpr int kMaxTicksPerFrame = 5;   // スパイラルオブデス防止
 constexpr double kMaxFrameDt = 0.25;   // ブレークポイント等の巨大 dt をクランプ
-
-// スクリプトが積んだオーディオイベント 1 件を実際の発音へ流す (M45g)。
-// **必ずワールドハッシュの後に呼ぶこと** — ここから先は決定論レーンの外で、
-// 記録/検証中は AudioSystem が suspend されているので個々の API が no-op になる。
-// rng は AudioSystem 側の専用ストリーム。**world.Rng() は絶対に使わない** (hash 対象)。
-void ApplyScriptAudioEvent(const ScriptAudioEvent& e, World& world, AudioSystem& audio,
-                           const SoundLibrary& sounds, AudioSourceSystem& sources, Pcg32& rng)
-{
-    switch (e.op) {
-    case ScriptAudioOp::PlayOneShot:
-    case ScriptAudioOp::PlayAtPoint: {
-        const bool at = e.op == ScriptAudioOp::PlayAtPoint;
-        const ResolvedSound rs = ResolveSoundKey(audio, sounds, e.key);
-        if (!rs.Valid()) {
-            // ★黙って無音にしない — 綴り間違いは「壊れている」と見分けが付かないため
-            MYE_LOG_WARN("[audio] unknown sound key (hash %016llx) from script",
-                         static_cast<unsigned long long>(e.key));
-            break;
-        }
-        PlayDesc d;
-        AudioSpatial spatial;
-        bool spatialize = false;
-        if (rs.asset != nullptr) {
-            if (rs.asset->stream) {
-                // stream = BGM。ワンショットのレーンには載らないので BGM として鳴らす
-                // (エディタ試聴 PreviewSound と同じ扱い。返したハンドルは無効のまま)
-                SoundAsset a = *rs.asset;
-                a.volume = std::clamp(a.volume * e.a, 0.0f, 1.0f);
-                PlayMusicSound(audio, a, kMusicDefaultFadeSeconds);
-                break;
-            }
-            const int index = PickVariationIndex(*rs.asset, rng.NextU32());
-            if (index < 0) {
-                break; // クリップが 1 つも割り当たっていないアセット
-            }
-            d = MakePlayDesc(*rs.asset, index, rng.Range(-1.0f, 1.0f), rng.Range(-1.0f, 1.0f),
-                             audio);
-            // スクリプト引数はアセット既定への**乗算**(コンポーネント上書きと同じ規約)
-            d.volume = std::clamp(d.volume * e.a, 0.0f, 1.0f);
-            d.pitch = std::clamp(d.pitch * e.b, 1.0f / AudioSystem::kMaxFreqRatio,
-                                 AudioSystem::kMaxFreqRatio);
-            spatial.spatialBlend = rs.asset->spatialBlend;
-            spatial.minDistance = rs.asset->minDistance;
-            spatial.maxDistance = rs.asset->maxDistance;
-            spatial.rolloff = static_cast<int>(rs.asset->rolloff);
-            spatial.dopplerScale = rs.asset->dopplerScale;
-            spatial.reverbSend = rs.asset->reverbSend;
-        } else {
-            // 生クリップ (M19 からの PlaySound("beep") 経路)。アセットが無いので既定値
-            d.clip = rs.clip;
-            d.bus = audio.DefaultBus();
-            d.volume = std::clamp(e.a, 0.0f, 1.0f);
-            d.pitch = e.b;
-            d.loop = e.i0 != 0;
-        }
-        if (at) {
-            // ★PlaySoundAt は「その座標で鳴らせ」という明示指定なので、2D 設定の音でも
-            //   3D に載せる。ここで落とすと座標を渡したのに定位しない = 一番分かりにくい
-            spatial.position = AudioVec3{ e.pos.x, e.pos.y, e.pos.z };
-            spatial.velocity = {}; // 置き音なので静止 (ドップラーは掛からない)
-            if (spatial.spatialBlend <= 0.0f) {
-                spatial.spatialBlend = 1.0f;
-            }
-            spatial.pitch = d.pitch;
-            spatialize = true;
-        }
-        d.tag = e.handle; // 後の tick から StopVoice / SetVoiceVolume で引けるようにする
-        d.spatial = spatialize ? &spatial : nullptr;
-        audio.Play(d);
-        break;
-    }
-    case ScriptAudioOp::StopVoice:
-        audio.Stop(audio.FindByTag(e.handle), e.a);
-        break;
-    case ScriptAudioOp::SetVoiceVolume:
-        audio.SetVoiceVolume(audio.FindByTag(e.handle), e.a);
-        break;
-    case ScriptAudioOp::SetVoicePitch:
-        audio.SetVoicePitch(audio.FindByTag(e.handle), e.b);
-        break;
-    case ScriptAudioOp::PlaySource:
-        sources.PlayEntity(world, audio, sounds, { e.entity.index, e.entity.generation });
-        break;
-    case ScriptAudioOp::StopSource:
-        sources.StopEntity(world, audio, sounds, { e.entity.index, e.entity.generation }, e.a);
-        break;
-    case ScriptAudioOp::SetBusVolume: {
-        const int bus = audio.FindBusHashed(e.key);
-        if (bus >= 0) {
-            audio.SetBusVolume(bus, e.a); // 未知のバス名は黙って無視 (既存の音量を壊さない)
-        }
-        break;
-    }
-    case ScriptAudioOp::PlayMusic: {
-        const ResolvedSound rs = ResolveSoundKey(audio, sounds, e.key);
-        if (rs.asset != nullptr) {
-            SoundAsset a = *rs.asset;
-            a.loop = e.i0 != 0;
-            PlayMusicSound(audio, a, e.a);
-        } else if (!rs.clip.IsNull()) {
-            // .sound.json を作らずに素の .wav/.ogg を BGM 指定した場合。
-            // GUID から実ファイルを引いて既定パラメータでストリーミングする
-            MusicDesc d;
-            d.path = assetguid::ResolvePath(rs.clip.value);
-            d.key = rs.clip.value;
-            const int bus = audio.FindBus("BGM");
-            d.bus = bus >= 0 ? bus : audio.DefaultBus();
-            d.fadeSeconds = e.a;
-            d.loop = e.i0 != 0;
-            if (!d.path.empty()) {
-                audio.PlayMusic(d);
-            }
-        }
-        break;
-    }
-    case ScriptAudioOp::StopMusic:
-        audio.StopMusic(e.a);
-        break;
-    case ScriptAudioOp::SetListener:
-        sources.SetListenerOverride({ e.entity.index, e.entity.generation });
-        break;
-    }
-}
 
 } // namespace
 
@@ -471,6 +350,20 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     MYE_LOG_INFO("Engine loop started (fixed dt = %.4f s, assets = %s)",
                  kFixedDt, WideToUtf8(assetsRoot).c_str());
 
+    // M51d: 前 tick の入力 (アクションの pressed/released 判定用)。tick 0 はゼロ値 (決定台帳 4)
+    InputSnapshot prevTickInput = {};
+
+    // ---- sim スナップショットの参照束 (M52d) ----
+    // 撮影対象は record/verify がハッシュを撮っている範囲と同一 (決定台帳 1)。
+    // --snapshot-stress と、後続サブ (タイムトラベル / クラッシュ / ロールバック) が共有する
+    SimRefs simRefs;
+    simRefs.scene = &scene;
+    simRefs.particles = &particleSystem.Cpu();
+    simRefs.collision = &collisionSystem;
+    simRefs.scripts = &scriptHost;
+    simRefs.prevTickInput = &prevTickInput;
+    simRefs.tickIndex = &ctx.tickIndex;
+
     // ---- リプレイ記録/検証の準備 (spec 11.3) ----
     ReplayRecorder recorder;
     ReplayPlayer player;
@@ -479,11 +372,31 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         if (!player.Load(config.replayVerifyPath)) {
             return 1;
         }
-        // 記録開始時の RNG 状態を復元して同一 tick 列を再現する
-        scene.GetWorld().Rng().Restore(player.RngState(), player.RngInc());
+        if (!player.Snapshot().empty()) {
+            // v4 の埋め込み初期状態 (M52d)。**シーンの中身に依存せず**記録開始時点へ丸ごと
+            // 戻せるので、配布ビルドで落ちた .rep をどのシーンからでも再生できる (M52f が本命)。
+            // RNG も prevTickInput も blob に入っているので個別復元は不要
+            if (!RestoreSimSnapshot(simRefs, player.Snapshot().data(), player.Snapshot().size())) {
+                MYE_LOG_ERROR("[replay] embedded snapshot could not be restored");
+                return 1;
+            }
+            MYE_LOG_INFO("[replay] restored embedded snapshot (%zu bytes)",
+                         player.Snapshot().size());
+        } else {
+            // 記録開始時の RNG 状態を復元して同一 tick 列を再現する (v3 以来の従来経路)
+            scene.GetWorld().Rng().Restore(player.RngState(), player.RngInc());
+        }
     } else if (!config.replayRecordPath.empty()) {
+        // --rep-snapshot: 記録開始時点の sim 状態を .rep の先頭へ埋め込む。
+        // ここは app.OnStart + ApplyStructuralChanges の直後 = 構造変更が空の撮影点
+        std::vector<std::byte> startSnapshot;
+        if (config.replayEmbedSnapshot && !CaptureSimSnapshot(simRefs, startSnapshot)) {
+            MYE_LOG_ERROR("[replay] could not capture the embedded snapshot");
+            return 1;
+        }
         recorder.Start(config.replayRecordPath, scene.GetWorld().Rng().State(),
-                       scene.GetWorld().Rng().Inc(), scene.GetWorld().AliveCount());
+                       scene.GetWorld().Rng().Inc(), scene.GetWorld().AliveCount(),
+                       startSnapshot.data(), startSnapshot.size());
     }
 
     // ---- 決定的スクショ (M52c) ----
@@ -503,24 +416,63 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // M36b 描画補間: 前 tick 末のワールド行列 (tick 頭に採取)。record/verify 中は不使用
     PrevWorldStore prevWorld;
     bool lastTickSimulated = false;
-    // M51d: 前 tick の入力 (アクションの pressed/released 判定用)。tick 0 はゼロ値 (決定台帳 4)
-    InputSnapshot prevTickInput = {};
-    const auto capturePrevWorld = [&prevWorld](World& w) {
-        const ComponentTypeId req[] = { WorldMatrixComponent::sTypeId };
-        w.ForEachArchetype(req, [&](Archetype& arch) {
-            const int wi = arch.FindTypeIndex(WorldMatrixComponent::sTypeId);
-            for (uint32_t row = 0; row < arch.Count(); ++row) {
-                const EntityID e = arch.EntityAt(row);
-                if (e.index >= prevWorld.world.size()) {
-                    prevWorld.world.resize(e.index + 1);
-                    prevWorld.generation.resize(e.index + 1, 0);
-                }
-                prevWorld.world[e.index] =
-                    static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row))->value;
-                prevWorld.generation[e.index] = e.generation + 1;
-            }
-        });
-    };
+
+    // --snapshot-stress の作業領域と実測 (M52d)。撮り直し用にバッファを 2 本持つのは、
+    // 「撮る → 戻す → 撮り直してバイト比較」で非対称な復元をその場で捕まえるため
+    std::vector<std::byte> stressBlob;
+    std::vector<std::byte> stressBlobAgain;
+    uint64_t stressCount = 0;
+    size_t stressBytes = 0;
+    double stressCaptureMs = 0.0;
+    double stressRestoreMs = 0.0;
+
+    // ---- tick 本体へ渡す参照束 (M52d) ----
+    // 中身はすべてこのスコープのローカルなので、ループ前に 1 回組んで使い回す。
+    // 「tick が何を消費するか」をこの 1 構造体に閉じたことで、後続サブ (タイムトラベル /
+    // ロールバック) は別の入力源で同じ RunOneTick を回せる
+    TickServices tickServices;
+    tickServices.ctx = &ctx;
+    tickServices.config = &config;
+    tickServices.scene = &scene;
+    tickServices.app = &app;
+    tickServices.inputActions = &inputActions;
+    tickServices.prevTickInput = &prevTickInput;
+    tickServices.scriptHost = &scriptHost;
+    tickServices.managedHost = &managedHost;
+    tickServices.animationSystem = &animationSystem;
+    tickServices.animLibrary = &animLibrary;
+    tickServices.controllerSystem = &controllerSystem;
+    tickServices.controllerLibrary = &controllerLibrary;
+    tickServices.skinningSystem = &skinningSystem;
+    tickServices.partFollowSystem = &partFollowSystem;
+    tickServices.effectSystem = &effectSystem;
+    tickServices.physicsSystem = &physicsSystem;
+    tickServices.transformSystem = &transformSystem;
+    tickServices.collisionSystem = &collisionSystem;
+    tickServices.particleSystem = &particleSystem;
+    tickServices.vfxRenderer = &vfxRenderer;
+    tickServices.resources = &resources;
+    tickServices.solidContacts = &solidContacts;
+    tickServices.effectQueue = &effectQueue;
+    tickServices.debugLines = &debugLines;
+    tickServices.audioQueue = &audioQueue;
+    tickServices.audioSystem = &audioSystem;
+    tickServices.audioSources = &audioSources;
+    tickServices.soundLibrary = &soundLibrary;
+    tickServices.audioScriptRng = &audioScriptRng;
+    tickServices.audioHandleSeq = &audioHandleSeq;
+    tickServices.pendingScene = &pendingScene;
+    tickServices.pendingSaveSlot = &pendingSaveSlot;
+    tickServices.pendingLoadSlot = &pendingLoadSlot;
+    tickServices.prefabLibrary = &prefabLibrary;
+    tickServices.assetsRoot = &assetsRoot;
+    tickServices.saveDir = &saveDir;
+    tickServices.recorder = &recorder;
+    tickServices.player = &player;
+    tickServices.prevWorld = &prevWorld;
+    tickServices.lastTickSimulated = &lastTickSimulated;
+    tickServices.exitCode = &exitCode;
+
     while (running) {
         // ---- フェーズ 1: 時間更新 / 入力取得 ----
         if (!window.PumpMessages()) {
@@ -573,295 +525,35 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             if (verifying) {
                 ctx.input = player.InputForTick(ctx.tickIndex); // フェーズ 1 の入力を置換
             }
-            // M51d: アクション評価。tick の入力が確定した直後 (verify の置換の後) に
-            // 前 tick との比較で held/pressed/released と軸値を確定する。
-            // 記録済みスナップショット 2 枚の純関数なので record/verify に透過 (決定台帳 4)
-            inputActions.Evaluate(ctx.input, prevTickInput);
-            prevTickInput = ctx.input;
-            // M36b: tick 頭のワールド行列を補間用に採取 (record/verify 中は補間しないので省く)
-            if (!recorder.IsActive() && !player.IsActive()) {
-                capturePrevWorld(scene.GetWorld());
-            }
-            // v7 DebugDrawLine (M37): 前 tick の線を捨てて今 tick 分を積み直す。
-            // 0 tick フレームでは最後の tick の線が描かれ続ける (意図どおり)
-            debugLines.clear();
-            app.OnTick(ctx); // エディタ更新 + simulateScripts の決定
-            lastTickSimulated = ctx.simulateScripts; // M36b: 編集中 (非 Play) は補間を切る
-            // M51g: ゲームフローの tick ゲート (決定台帳 5)。ポーズ/タイムスケールは dt を
-            // 触らず「この tick でゲート対象を進めるか」で表現する (整数 tick 決定論と噛み合う)。
-            // ゲート対象 = アニメ (3.5) / 物理 (3.6、CC 込み) / 衝突・パーティクル・トレイル (4)。
-            // スクリプト層 (C++/C#) は非ゲート — 止めると sim レーンからアンポーズ不能になる
-            // (ポーズ UI を動かすのもスクリプト)。Transform / 構造変更適用 / 入力 / ハッシュ /
-            // シーン遷移も常時実行。Advance() は accum を進める副作用があるので
-            // sim が走る tick に 1 回だけ呼ぶ (編集中に呼ぶと Play 開始時の位相がずれる)
-            const bool stepSim = ctx.simulateScripts && scene.Time().Advance();
-            // ---- フェーズ 3: スクリプト層 Start → Update ----
-            const bool runScripts = ctx.simulateScripts && scriptHost.IsLoaded();
-            if (runScripts) {
-                scriptHost.SetTickContext(ctx.input, ctx.tickIndex, ctx.fixedDt);
-                scriptHost.RunStartAndUpdate();
-            }
-            // C# スクリプト層 (別レーン): 記録/検証中は走らせない → 純 C++ 決定論を保持
-            const bool runManaged = ctx.simulateScripts && managedHost.IsReady()
-                && !recorder.IsActive() && !player.IsActive();
-            if (runManaged) {
-                managedHost.SetTickContext(ctx.input, ctx.tickIndex, ctx.fixedDt);
-                managedHost.RunStartAndUpdate();
-            }
-            // ---- アニメーション (フェーズ 3.5): スクリプト後・Transform 前に LocalTransform を確定 ----
-            // Play 中のみ進行 (編集時は Animation 窓が明示サンプリングする)。M51g からは
-            // TimeControl の tick ゲート (stepSim) も掛かる — エフェクトの duration/linger や
-            // アニメ時刻などの「タイマー」はここが止まることで一緒に止まる。
-            // AnimatorComponent 非存在シーンでは完全 no-op = 既存シーンのリプレイ不変
-            if (stepSim) {
-                MYE_PROFILE_SCOPE("animation");
-                animationSystem.Update(scene.GetWorld(), animLibrary);
-                // Animator Controller (M22): ステートマシンでクリップを切替・ブレンド。
-                // LocalTransform を駆動するので hash 対象、決定論 (整数 tick・整数比ブレンド)
-                controllerSystem.Update(scene.GetWorld(), controllerLibrary, animLibrary);
-                // スケルタルアニメの時刻を進める (M18)。ポーズは非ハッシュなのでリプレイ不変
-                skinningSystem.Update(scene.GetWorld(), resources);
-                // 部位のボーン追従 (M48g): 上で進めた timeTicks のポーズで LocalTransform を作る。
-                // **skinning の直後・物理と TransformSystem の前**に置くこと — 同じ tick の
-                // WorldMatrix に反映され、追従した部位のコライダ位置も同じ tick で確定する。
-                // Part 非存在シーンでは完全 no-op = 既存シーンのリプレイ不変
-                partFollowSystem.Update(scene.GetWorld(), resources);
-                // 合成エフェクト (M32e): 子エミッタの停止/再開・duration+linger 後の自動破棄。
-                // EffectComponent 非存在シーンでは完全 no-op = 既存シーンのリプレイ不変
-                effectSystem.Update(scene.GetWorld());
-            }
-            // ---- 物理 (フェーズ 3.6): スクリプト/アニメ後・Transform 前に剛体を積分 ----
-            // LocalTransform.position を書き換えるので TransformSystem 前に走らせ、確定した
-            // ワールド位置でコライダ判定させる。Rigidbody 非存在シーンでは完全 no-op (opt-in)
-            if (stepSim) {
-                MYE_PROFILE_SCOPE("physics");
-                // ソリッド接触ペアを受け取り CollisionSystem へ渡す (M28c OnCollision 配信)
-                physicsSystem.Update(scene.GetWorld(), ctx.fixedDt, &solidContacts);
-            }
-            // ---- フェーズ 4: システム層 ----
-            // Transform を先に確定 (エミッタ/コライダのワールド位置は tick 決定論の一部)
-            {
-                MYE_PROFILE_SCOPE("transform");
-                transformSystem.Update(scene.GetWorld());
-            }
-            if (stepSim) {
-                {
-                    MYE_PROFILE_SCOPE("collision");
-                    // C# にもトリガー配信 (別レーン: 記録/検証中は managed=null で純 C++)
-                    collisionSystem.Update(scene.GetWorld(), &scriptHost,
-                                           runManaged ? &managedHost : nullptr, &solidContacts);
-                }
-                {
-                    MYE_PROFILE_SCOPE("particles");
-                    particleSystem.Update(scene.GetWorld(), ctx.fixedDt);
-                }
-                // トレイル点列の蓄積 (M29c)。WorldMatrix 確定後の tick 側で 1 回だけ —
-                // Render 側だと SceneView/GameView の多重描画で多重サンプルされる
-                vfxRenderer.UpdateTrails(scene.GetWorld(), ctx.tickIndex);
-            }
-            // ---- フェーズ 5: スクリプト層 LateUpdate ----
-            if (runScripts) {
-                scriptHost.RunLateUpdate();
-            }
-            if (runManaged) {
-                managedHost.RunLateUpdate();
-            }
-            // ---- エフェクト spawn を drain (M32f): Prefab::Instantiate は内部で構造変更を確定する
-            // ため tick 末のここで。verify でもゲートしない = sim 状態として同 tick のハッシュに含まれる。
-            // C++ スクリプトは verify 中も走り同一キューを積む → 同一 fileId/EntityID 列で再現される。
-            if (!effectQueue.empty()) {
-                for (const EffectSpawnRequest& req : effectQueue) {
-                    std::wstring full = Utf8ToWide(req.prefabKey);
-                    if (!PrefabLibrary::IsComposePath(full)) {
-                        full += PrefabLibrary::kPrefabSuffix; // 既定は従来どおり (既存キー互換)
-                    }
-                    if (full.find(L':') == std::wstring::npos) {
-                        full = assetsRoot + L"\\" + full; // assets ルート相対を絶対化
-                    }
-                    const uint64_t hash = PrefabLibrary::HashForPath(full);
-                    if (!prefabLibrary.Contains(hash)) {
-                        prefabLibrary.LoadFromFile(full);
-                    }
-                    const bool hasParent = (req.parent.index != 0u || req.parent.generation != 0u);
-                    const uint64_t parentFid =
-                        hasParent ? scene.EnsureFileId(
-                                        EntityID{ req.parent.index, req.parent.generation })
-                                  : 0;
-                    const uint64_t rootFid = Prefab::Instantiate(
-                        scene, prefabLibrary, hash, parentFid, req.reservedRootFid);
-                    if (rootFid != 0) {
-                        const EntityID root = scene.FindByFileId(rootFid).Id();
-                        if (auto* t = scene.GetWorld().GetComponent<LocalTransform>(root)) {
-                            t->position = { req.pos.x, req.pos.y, req.pos.z };
-                        }
-                    } else {
-                        MYE_LOG_WARN("PlayEffect: prefab not found: %s",
-                                     WideToUtf8(full).c_str());
-                    }
-                }
-                effectQueue.clear();
-            }
-            scene.GetWorld().ApplyStructuralChanges(); // フェーズ 7 (tick 末適用 = ADR-005)
-
-            // ---- ハッシュ差分診断 (M52a): 指定 tick のフィールド単位ダンプ ----
-            // ハッシュを撮るのと**同じ点**で撮る (ここより前後だと診断が別の状態を指す)
-            if (!config.hashDumpPath.empty()
-                && ctx.tickIndex == static_cast<uint64_t>(config.hashDumpTick)) {
-                HashDump dump;
-                HashWorldDump(scene.GetWorld(), &particleSystem.Cpu(), ctx.tickIndex, dump,
-                              &scene.Time(), &scene.Persist());
-                WriteHashDump(config.hashDumpPath, dump);
-            }
-
-            // ---- リプレイ: tick 末の状態ハッシュ (spec 11.3) ----
-            if (recorder.IsActive()) {
-                recorder.RecordTick(ctx.input, HashWorld(scene.GetWorld(), &particleSystem.Cpu(),
-                                                         &scene.Time(), &scene.Persist()));
-                if (recorder.TickCount() >= static_cast<uint64_t>(config.replayTicks)) {
-                    recorder.Finish();
-                    ctx.requestExit = true;
-                }
-            } else if (verifying) {
-                const uint64_t actual = HashWorld(scene.GetWorld(), &particleSystem.Cpu(),
-                                                  &scene.Time(), &scene.Persist());
-                const uint64_t expected = player.ExpectedHash(ctx.tickIndex);
-                if (actual != expected) {
-                    // 乖離: 初回の tick とエンティティ別サブハッシュを報告して失敗終了
-                    player.failed = true;
-                    player.firstMismatchTick = ctx.tickIndex;
-                    MYE_LOG_ERROR("[replay] HASH MISMATCH at tick %llu",
+            // ---- 固定 tick 本体 (M52d、決定台帳 2) ----
+            // 通常 tick / タイムトラベル再シム / ロールバック再シムが通る唯一の実装。
+            // ここでの仕事は「この tick が消費する入力を確定させて呼ぶ」だけ
+            RunOneTick(tickServices);
+            // ---- スナップショット往復ストレス (M52d、--snapshot-stress N) ----
+            // tick 境界 (= 構造変更が空でハッシュを撮ったのと同じ状態) で「撮る → 戻す →
+            // 撮り直す」。sim の意味論は変わらないので、これを挟んでも .rep の期待ハッシュは
+            // 全 tick 一致するはず。撮り直しのバイト比較まで見るのは、非対称な復元
+            // (撮れているのに戻していない項目) をその場で捕まえるため
+            if (config.snapshotStress > 0
+                && ctx.tickIndex % static_cast<uint64_t>(config.snapshotStress) == 0) {
+                const double tCap = clock.Now();
+                bool ok = CaptureSimSnapshot(simRefs, stressBlob);
+                const double tRes = clock.Now();
+                ok = ok && RestoreSimSnapshot(simRefs, stressBlob.data(), stressBlob.size());
+                const double tEnd = clock.Now();
+                ok = ok && CaptureSimSnapshot(simRefs, stressBlobAgain)
+                    && stressBlobAgain == stressBlob;
+                if (!ok) {
+                    MYE_LOG_ERROR("[snapshot] round-trip failed at tick %llu",
                                   static_cast<unsigned long long>(ctx.tickIndex));
-                    MYE_LOG_ERROR("[replay]   expected %016llX / actual %016llX",
-                                  static_cast<unsigned long long>(expected),
-                                  static_cast<unsigned long long>(actual));
-                    std::vector<EntityHash> detail;
-                    uint64_t total = 0;
-                    HashWorldDetailed(scene.GetWorld(), &particleSystem.Cpu(), detail, total,
-                                      &scene.Time(), &scene.Persist());
-                    MYE_LOG_ERROR("[replay]   entities=%zu rng=%016llX", detail.size(),
-                                  static_cast<unsigned long long>(scene.GetWorld().Rng().State()));
-                    for (size_t i = 0; i < detail.size() && i < 8; ++i) {
-                        MYE_LOG_ERROR("[replay]   entity %u:%u hash=%016llX (%s)",
-                                      detail[i].entity.index, detail[i].entity.generation,
-                                      static_cast<unsigned long long>(detail[i].hash),
-                                      scene.GetWorld().GetName(detail[i].entity));
-                    }
-                    // M52a: 失敗側のフィールド単位ダンプを自動で残す。
-                    // 期待側は「同じコマンドで録り直して --hash-dump-tick N」で撮り、
-                    // --hash-diff で突き合わせる (tools\replay_verify.bat が自動でやる)。
-                    // tick 番号は bat から読めるよう別ファイルにも落とす
-                    {
-                        const std::wstring tickStr = std::to_wstring(ctx.tickIndex);
-                        const std::wstring dumpPath =
-                            config.replayVerifyPath + L".tick" + tickStr + L".actual.dump";
-                        HashDump dump;
-                        HashWorldDump(scene.GetWorld(), &particleSystem.Cpu(), ctx.tickIndex, dump,
-                                      &scene.Time(), &scene.Persist());
-                        WriteHashDump(dumpPath, dump);
-                        std::ofstream mf(
-                            std::filesystem::path(config.replayVerifyPath + L".mismatch.txt"));
-                        if (mf) {
-                            mf << ctx.tickIndex << "\n";
-                        }
-                        MYE_LOG_ERROR("[replay]   field dump: %s", WideToUtf8(dumpPath).c_str());
-                    }
                     exitCode = 1;
                     ctx.requestExit = true;
-                } else {
-                    ++player.verifiedTicks;
                 }
+                ++stressCount;
+                stressBytes = stressBlob.size();
+                stressCaptureMs += (tRes - tCap) * 1000.0;
+                stressRestoreMs += (tEnd - tRes) * 1000.0;
             }
-
-            // ---- オーディオ drain (M19/M45): ハッシュ後に再生する (voice 状態は絶対に
-            // hashed state へ戻さない)。記録/検証中は AudioSystem 自体が suspend されており
-            // Play が no-op になる。**キューの clear だけはゲートの外**で毎 tick 行う ----
-            for (const ScriptAudioEvent& e : audioQueue) {
-                ApplyScriptAudioEvent(e, scene.GetWorld(), audioSystem, soundLibrary, audioSources,
-                                      audioScriptRng);
-            }
-            audioQueue.clear();
-
-            // ---- セーブ書出 (M51g): 出力レーン — tick 末ハッシュの後に書く (決定論を
-            // 汚さない)。record/verify 中もゲートしない: 同じスクリプトが同じ tick で
-            // 同じ内容を要求するだけで、sim 状態は一切読み書きしない ----
-            if (pendingSaveSlot >= 0) {
-                const int slot = pendingSaveSlot;
-                pendingSaveSlot = -1;
-                // シーンパスは assets 相対へ落として書く (プロジェクト移動でセーブが死なない
-                // ように)。assets 外 (メモリ構築シーン = 空 / 外部絶対パス) はそのまま
-                std::wstring sp = scene.SourcePath();
-                if (sp.size() > assetsRoot.size() + 1
-                    && _wcsnicmp(sp.c_str(), assetsRoot.c_str(), assetsRoot.size()) == 0
-                    && sp[assetsRoot.size()] == L'\\') {
-                    sp = sp.substr(assetsRoot.size() + 1);
-                }
-                const std::wstring savePath = SaveGameFile::PathForSlot(saveDir, slot);
-                if (SaveGameFile::Write(savePath, sp, scene.Persist())) {
-                    MYE_LOG_INFO("[save] slot %d written (%zu keys): %s", slot,
-                                 scene.Persist().Entries().size(),
-                                 WideToUtf8(savePath).c_str());
-                }
-            }
-            // ---- ロード消費 (M51g): pendingScene と同じセーフポイント。PersistStore を
-            // 置換し、記録されたシーンを pendingScene へ積む → 直下のブロックが同 tick で
-            // ロードする。record/verify 中は no-op + WARN (「リプレイはセーブ読込を
-            // 跨がない」— 決定台帳 5) ----
-            if (pendingLoadSlot >= 0) {
-                const int slot = pendingLoadSlot;
-                pendingLoadSlot = -1;
-                if (recorder.IsActive() || player.IsActive()) {
-                    MYE_LOG_WARN("[save] LoadGame(slot %d) is a no-op during record/verify",
-                                 slot);
-                } else {
-                    SaveGameData data;
-                    const std::wstring savePath = SaveGameFile::PathForSlot(saveDir, slot);
-                    if (SaveGameFile::Read(savePath, data)) {
-                        scene.Persist().Entries() = std::move(data.persist);
-                        if (!data.scenePath.empty()) {
-                            pendingScene = data.scenePath; // assets 相対は下の消費で絶対化
-                        }
-                        MYE_LOG_INFO("[save] slot %d loaded (%zu keys)", slot,
-                                     scene.Persist().Entries().size());
-                    } else {
-                        MYE_LOG_WARN("[save] load failed: %s", WideToUtf8(savePath).c_str());
-                    }
-                }
-            }
-
-            // ---- シーン遷移 (M19.4): pendingScene が積まれていれば tick 末にロードする ----
-            // スクリプトが決定論的に LoadScene → 記録/検証とも同一 tick に再現される。
-            // world.Clear (LoadFromFile 内) + carry-state リセット + RNG 決定論的再シードで
-            // 新シーンが決定論的に始まる。mid-iteration の world 破棄を避けるため必ず tick 末。
-            if (!pendingScene.empty()) {
-                std::wstring full = pendingScene;
-                pendingScene.clear();
-                if (full.find(L':') == std::wstring::npos) {
-                    full = assetsRoot + L"\\" + full; // assets ルート相対を絶対化
-                }
-                if (SceneSerializer::LoadFromFile(scene, full)) {
-                    scene.GetWorld().Rng().Seed(0x4D794531ull); // 決定論的再シード (World 既定値)
-                    collisionSystem.Reset();
-                    particleSystem.ResetParticles();
-                    vfxRenderer.Reset(); // M29c: トレイル点列も新シーンでリセット
-                    partFollowSystem.Reset(); // M48g: 旧シーンの warn 抑制を捨てる
-                    scriptHost.ClearStarted();
-                    managedHost.OnSceneReloaded();
-                    // M45: 旧シーンの SE を断ち、ハンドル採番も 0 から振り直す。
-                    // 採番列は「スクリプトの呼出順」だけで決まる必要があるので、
-                    // 記録/検証の別なく **必ず** リセットする (サスペンド中でも進む値のため)。
-                    // ★M45f: StopAll はボイスプール (SE) だけを止め、**BGM は止めない** —
-                    //   シーンをまたいで曲が途切れないのが BGM の要件。新シーンが別の曲を
-                    //   指定すれば PlayMusic 側でクロスフェードし、同じ曲なら鳴り続ける
-                    audioSystem.StopAll();
-                    audioSources.Reset(); // 旧シーンの音源キャッシュ (速度推定 / 再生済みフラグ)
-                    audioHandleSeq = 0;
-                    MYE_LOG_INFO("[scene] loaded: %s", WideToUtf8(full).c_str());
-                } else {
-                    MYE_LOG_WARN("[scene] load failed: %s", WideToUtf8(full).c_str());
-                }
-            }
-
-            ++ctx.tickIndex;
             ++ticks;
             if (!verifying) {
                 accumulator -= kFixedDt;
@@ -1034,6 +726,14 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                      renderSystem.RtTemporalGpuMs(), renderSystem.RtSvgfGpuMs(),
                      renderSystem.RtShadowGpuMs(), renderSystem.RtShadowFilterGpuMs(),
                      renderSystem.RtReflGpuMs(), renderSystem.RtReflDenoiseGpuMs());
+    }
+    if (stressCount > 0) {
+        // 1 枚のバイト数と往復の実測 (M52e のリング枚数 / M52i のロールバック予算の一次データ)
+        MYE_LOG_INFO("[snapshot] %llu round-trips: %zu bytes/snapshot, "
+                     "capture %.3f ms avg / restore %.3f ms avg",
+                     static_cast<unsigned long long>(stressCount), stressBytes,
+                     stressCaptureMs / static_cast<double>(stressCount),
+                     stressRestoreMs / static_cast<double>(stressCount));
     }
     MYE_LOG_INFO("Engine loop finished (%llu frames, %llu ticks)",
                  static_cast<unsigned long long>(ctx.frameIndex),

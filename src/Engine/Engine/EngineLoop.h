@@ -123,6 +123,10 @@ struct EngineConfig {
     std::wstring replayRecordPath; // 空でなければ記録モード (replayTicks 分記録して終了)
     std::wstring replayVerifyPath; // 空でなければ検証モード (全 tick 照合、exit code 0/1)
     int64_t replayTicks = 600;     // 記録する tick 数 (60Hz で 10 秒)
+    // M52d: --rep-snapshot で「記録開始時点の sim 状態」を .rep の先頭へ埋め込む。
+    // 埋め込みがあれば検証側は**シーンの中身に依存せず**その状態から再生できる
+    // (配布ビルドのクラッシュ .rep が本命 = M52f)。既定 off なので .rep のサイズは従来どおり
+    bool replayEmbedSnapshot = false;
 
     // ---- ハッシュ差分診断 (M52a) ----
     // 空でなければ hashDumpTick の tick 末 (= ハッシュを撮るのと同じ点) で
@@ -131,6 +135,14 @@ struct EngineConfig {
     // <rep>.tick<N>.actual.dump + <rep>.mismatch.txt (tick 番号) を吐く
     std::wstring hashDumpPath;
     int64_t hashDumpTick = 0;
+
+    // ---- スナップショット往復ストレス (M52d) ----
+    // >0 で N tick ごとに「撮って戻して撮り直す」を tick 境界へ挟む。sim の意味論は
+    // 一切変わらないので**期待ハッシュは全一致するはず** — 復元の非対称性 (撮れるが
+    // 戻らない項目) を 600 tick の実データで炙り出すための道具で、selftest の小さな
+    // 世界では出ない取りこぼしはここでしか捕まらない。tools\replay_verify.bat が
+    // 3 ペアすべてに掛ける
+    int64_t snapshotStress = 0;
 };
 
 // フレーム計測 (Profiler ウィンドウ表示用)。EngineLoop が毎フレーム更新する

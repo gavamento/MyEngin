@@ -31,6 +31,12 @@ public:
     }
 
     // テスト / デバッグ用の観測点 (非ハッシュ・決定論)。直近 Update で配信したキー列
+    // sim スナップショット (M52d): 前 tick の接触ペアは「次 tick に enter/exit の
+    // どちらを配信するか」を決める sim 状態。ハッシュ対象ではないが、戻し忘れると
+    // 復元直後の 1 tick だけイベントが二重/欠落する。**SimSnapshot 専用**
+    std::vector<uint64_t>& PrevPairsForSnapshot() { return prevPairs_; }
+    std::vector<uint64_t>& PrevSolidPairsForSnapshot() { return prevSolidPairs_; }
+
     const std::vector<uint64_t>& LastTriggerEnter() const { return trigEnter_; }
     const std::vector<uint64_t>& LastTriggerExit() const { return trigExit_; }
     const std::vector<uint64_t>& LastCollisionEnter() const { return solidEnter_; }

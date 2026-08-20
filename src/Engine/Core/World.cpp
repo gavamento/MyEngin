@@ -544,6 +544,167 @@ void World::Clear()
     GetOrCreateArchetype(baseTypes_); // 基本アーキタイプを再生成
 }
 
+// ---------------------------------------------------------------- snapshot (M52d)
+
+namespace {
+// blob の節ごとに小さな目印を置く。壊れた/別形式の blob を「途中まで復元」してしまう
+// 事故を、確保する前に止めるため
+constexpr uint32_t kWorldSnapshotMagic = 0x314C5257u; // 'WRL1'
+constexpr uint32_t kNoArchetype = 0xFFFFFFFFu;
+} // namespace
+
+void World::SnapshotWrite(ByteWriter& w) const
+{
+    // 遅延コマンドを抱えたまま撮ると、復元後にその構造変更が消える。撮影点は
+    // ApplyStructuralChanges 直後 (tick 末) 以外にありえない
+    MYE_CHECKF(commands_.empty() && cmdPayloads_.empty(),
+               "SnapshotWrite with %zu pending structural command(s)", commands_.size());
+    MYE_CHECK(iterationDepth_ == 0);
+
+    w.U32(kWorldSnapshotMagic);
+
+    // ---- アーキタイプ (生成順 = ハッシュの畳み込み順) ----
+    w.Count(archetypes_.size());
+    for (const std::unique_ptr<Archetype>& arch : archetypes_) {
+        const std::span<const ComponentTypeId> types = arch->Types();
+        w.Count(types.size());
+        for (ComponentTypeId t : types) {
+            w.U32(t);
+        }
+        for (size_t i = 0; i < types.size(); ++i) {
+            w.U32(arch->ElemSize(static_cast<int>(i)));
+        }
+        const std::span<const EntityID> ents = arch->Entities();
+        w.Count(ents.size());
+        w.Raw(ents.data(), ents.size() * sizeof(EntityID));
+        for (size_t i = 0; i < types.size(); ++i) {
+            const std::vector<std::byte>& col = arch->ColumnBytes(static_cast<int>(i));
+            w.Blob(col.data(), col.size());
+        }
+    }
+
+    // ---- レコード表 (index 昇順。generation はここでしか保てない) ----
+    // アーキタイプの生ポインタは index へ落とす (復元先では別アドレスになるため)
+    std::unordered_map<const Archetype*, uint32_t> indexOf;
+    indexOf.reserve(archetypes_.size());
+    for (uint32_t i = 0; i < static_cast<uint32_t>(archetypes_.size()); ++i) {
+        indexOf.emplace(archetypes_[i].get(), i);
+    }
+    w.Count(records_.size());
+    for (const EntityRecord& rec : records_) {
+        w.U32(rec.generation);
+        uint32_t archIndex = kNoArchetype;
+        if (rec.archetype != nullptr) {
+            const auto it = indexOf.find(rec.archetype);
+            MYE_CHECK(it != indexOf.end());
+            archIndex = (it != indexOf.end()) ? it->second : kNoArchetype;
+        }
+        w.U32(archIndex);
+        w.U32(rec.row);
+    }
+
+    w.PodVector(freeIndices_); // LIFO の並びそのまま = 次に払い出す index まで再現する
+    w.U32(firstRoot_.index);
+    w.U32(firstRoot_.generation);
+    w.U32(aliveCount_);
+    w.U64(rng_.State());
+    w.U64(rng_.Inc());
+}
+
+bool World::SnapshotRead(ByteReader& r)
+{
+    MYE_CHECK(iterationDepth_ == 0);
+    if (r.U32() != kWorldSnapshotMagic) {
+        MYE_LOG_ERROR("[snapshot] world section magic mismatch");
+        return false;
+    }
+
+    // ---- 読み切ってから差し替える (途中で失敗しても現世界を壊さない) ----
+    std::vector<std::unique_ptr<Archetype>> archetypes;
+    const size_t archCount = r.Count(sizeof(uint64_t)); // 1 アーキタイプ最低 8B は消費する
+    archetypes.reserve(archCount);
+    for (size_t a = 0; a < archCount && r.Ok(); ++a) {
+        const size_t typeCount = r.Count(sizeof(uint32_t));
+        std::vector<ComponentTypeId> types(typeCount);
+        for (size_t i = 0; i < typeCount; ++i) {
+            types[i] = r.U32();
+        }
+        std::vector<uint32_t> sizes(typeCount);
+        for (size_t i = 0; i < typeCount; ++i) {
+            sizes[i] = r.U32();
+        }
+        const size_t rowCount = r.Count(sizeof(EntityID));
+        std::vector<EntityID> ents(rowCount);
+        r.Raw(ents.data(), rowCount * sizeof(EntityID));
+        std::vector<std::vector<std::byte>> columns(typeCount);
+        for (size_t i = 0; i < typeCount && r.Ok(); ++i) {
+            const size_t n = r.Count(sizeof(std::byte));
+            columns[i].resize(n);
+            r.Raw(columns[i].data(), n);
+        }
+        if (!r.Ok()) {
+            break;
+        }
+        const uint64_t sig = ComputeSignatureHash(types);
+        auto arch = std::make_unique<Archetype>(types, sig);
+        arch->SnapshotLoad(std::move(columns), std::move(sizes), std::move(ents));
+        archetypes.push_back(std::move(arch));
+    }
+
+    const size_t recCount = r.Count(sizeof(uint32_t) * 3);
+    struct RawRecord {
+        uint32_t generation;
+        uint32_t archIndex;
+        uint32_t row;
+    };
+    std::vector<RawRecord> raw(recCount);
+    for (size_t i = 0; i < recCount && r.Ok(); ++i) {
+        raw[i].generation = r.U32();
+        raw[i].archIndex = r.U32();
+        raw[i].row = r.U32();
+    }
+    std::vector<uint32_t> freeIndices = r.PodVector<uint32_t>();
+    EntityID firstRoot;
+    firstRoot.index = r.U32();
+    firstRoot.generation = r.U32();
+    const uint32_t aliveCount = r.U32();
+    const uint64_t rngState = r.U64();
+    const uint64_t rngInc = r.U64();
+    if (!r.Ok()) {
+        MYE_LOG_ERROR("[snapshot] world section truncated");
+        return false;
+    }
+    for (const RawRecord& rec : raw) {
+        if (rec.archIndex != kNoArchetype && rec.archIndex >= archetypes.size()) {
+            MYE_LOG_ERROR("[snapshot] world record points at archetype %u of %zu", rec.archIndex,
+                          archetypes.size());
+            return false;
+        }
+    }
+
+    // ---- 差し替え ----
+    commands_.clear();
+    cmdPayloads_.clear();
+    queryCache_.clear(); // archetype index を持つ派生物なので必ず破棄 (M51a)
+    archetypes_ = std::move(archetypes);
+    records_.resize(raw.size());
+    for (size_t i = 0; i < raw.size(); ++i) {
+        records_[i].generation = raw[i].generation;
+        records_[i].archetype =
+            (raw[i].archIndex == kNoArchetype) ? nullptr : archetypes_[raw[i].archIndex].get();
+        records_[i].row = raw[i].row;
+    }
+    freeIndices_ = std::move(freeIndices);
+    firstRoot_ = firstRoot;
+    aliveCount_ = aliveCount;
+    rng_.Restore(rngState, rngInc);
+    // 側テーブル (TransformSystem M51c) を Rebuild 経由で全無効化させる。
+    // ここを立て忘れると「LocalTransform が前回と同ビットだから据え置き」で
+    // 復元前の WorldMatrix が残る
+    hierarchyDirty_ = true;
+    return true;
+}
+
 void World::ApplyStructuralChanges()
 {
     MYE_CHECK(!IsIterating());

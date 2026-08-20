@@ -51,6 +51,10 @@ public:
 
     // シーン遷移 (M19.4): Start 済み記録をクリアして新シーンのエンティティで Start を再実行させる
     void ClearStarted() { started_.clear(); }
+    // sim スナップショット (M52d): Start 済み記録は sim 状態 (戻し忘れると復元後の
+    // エンティティで Start が再実行される / されない が食い違う)。**SimSnapshot 専用**。
+    // 書き出しはキー昇順に整列すること — unordered_set の走査順は決定論ではない
+    std::unordered_set<uint64_t>& StartedForSnapshot() { return started_; }
 
     // 毎 tick、フェーズ 3/5 で呼ぶ (Play 中のみ)
     void SetTickContext(const InputSnapshot& input, uint64_t tickIndex, float dt);

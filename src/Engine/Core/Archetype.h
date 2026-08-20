@@ -48,6 +48,22 @@ public:
         return reinterpret_cast<T*>(columns_[typeIndex].data());
     }
 
+    // ---- sim スナップショット (M52d) ----
+    // カラムの生バイトをそのまま出し入れする。**World::SnapshotWrite/SnapshotRead 以外から
+    // 呼ばないこと** — 行数とレコード表 (World 側) の整合はワールドでしか保てない。
+    // 要素サイズを一緒に持ち回るのは、スクリプトのレイアウト移行 (ReplaceColumn) の後でも
+    // 「そのとき実際に入っていたサイズ」で往復できるようにするため
+    uint32_t ElemSize(int typeIndex) const { return sizes_[typeIndex]; }
+    const std::vector<std::byte>& ColumnBytes(int typeIndex) const { return columns_[typeIndex]; }
+    std::span<const EntityID> Entities() const { return entities_; }
+    void SnapshotLoad(std::vector<std::vector<std::byte>> columns, std::vector<uint32_t> sizes,
+                      std::vector<EntityID> entities)
+    {
+        columns_ = std::move(columns);
+        sizes_ = std::move(sizes);
+        entities_ = std::move(entities);
+    }
+
 private:
     uint64_t signatureHash_;
     std::vector<ComponentTypeId> types_;          // 昇順

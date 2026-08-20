@@ -1,4 +1,5 @@
 #pragma once
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -10,38 +11,46 @@ namespace mye {
 // リプレイファイル (.rep) — engine_spec.md 11.3。
 // 形式 (リトルエンディアン、バイナリ):
 //   MyeReplayHeader
-//   tick 毎: InputSnapshot (64B) + uint64 worldHash
-// InputSnapshot / WorldHasher のレイアウトが変わったら version を上げること
+//   埋め込み sim スナップショット (snapshotSize バイト、0 なら無し)
+//   tick 毎: InputSnapshot × playerCount + uint64 worldHash
+// InputSnapshot / WorldHasher のレイアウトが変わったら version を上げること。
+//
+// v4 (M52d、決定台帳 3): 版を上げるのは M52 を通してこの 1 回だけ。使い始めるのは
+// 後のサブでも、フォーマットの改版は 1 回に束ねる (M51h の ABI 束ねと同じ思想):
+//   snapshotSize … ヘッダ直後に置く「開始時点の sim 状態」。これがあると .rep は
+//                  シーン非依存に再生できる (M52f のクラッシュ再現が本命)
+//   playerCount  … tick レコードあたりの入力本数 (M52g のマルチ入力レーン)
 struct MyeReplayHeader {
     uint32_t magic = 0x5045524Du; // 'MREP'
-    uint32_t version = 3; // v3: InputSnapshot に gamepad 追加 (48B→64B、M19)
+    uint32_t version = 4;
     float fixedDt = 1.0f / 60.0f;
     uint32_t inputSize = sizeof(InputSnapshot);
     uint64_t tickCount = 0;   // 終了時に確定
     uint64_t rngState = 0;    // 記録開始時のワールド RNG (再生時に復元)
     uint64_t rngInc = 0;
     uint32_t entityCount = 0; // 記録開始時 (サニティチェック)
-    uint32_t pad = 0;
+    uint32_t playerCount = 1; // v4: 1 = 従来のシングル入力
+    uint64_t snapshotSize = 0; // v4: 埋め込みスナップショットのバイト数 (0 = 無し)
 };
 
-struct ReplayTick {
-    InputSnapshot input;
-    uint64_t worldHash;
-};
-
-// 記録: tick 毎の入力 + ワールドハッシュを蓄積し、Stop でファイルへ書き出す
+// 記録: tick 毎の入力 + ワールドハッシュを蓄積し、Finish でファイルへ書き出す
 class ReplayRecorder {
 public:
-    void Start(const std::wstring& path, uint64_t rngState, uint64_t rngInc, uint32_t entityCount);
+    // snapshot 非 null で「開始時点の sim 状態」をヘッダ直後へ埋め込む (M52f が使う)。
+    // 埋め込みの有無は再生側が header.snapshotSize で判断する
+    void Start(const std::wstring& path, uint64_t rngState, uint64_t rngInc, uint32_t entityCount,
+               const std::byte* snapshot = nullptr, size_t snapshotSize = 0);
     void RecordTick(const InputSnapshot& input, uint64_t worldHash);
     bool Finish(); // ファイル書き出し
     bool IsActive() const { return active_; }
-    uint64_t TickCount() const { return ticks_.size(); }
+    uint64_t TickCount() const { return hashes_.size(); }
 
 private:
     std::wstring path_;
     MyeReplayHeader header_;
-    std::vector<ReplayTick> ticks_;
+    std::vector<std::byte> snapshot_;
+    std::vector<InputSnapshot> inputs_; // playerCount 本ずつ tick 順に並ぶ
+    std::vector<uint64_t> hashes_;
     bool active_ = false;
 };
 
@@ -50,13 +59,24 @@ class ReplayPlayer {
 public:
     bool Load(const std::wstring& path);
     bool IsActive() const { return active_; }
-    uint64_t TickCount() const { return ticks_.size(); }
+    uint64_t TickCount() const { return hashes_.size(); }
     uint64_t RngState() const { return header_.rngState; }
     uint64_t RngInc() const { return header_.rngInc; }
+    uint32_t PlayerCount() const { return header_.playerCount; }
+    // 埋め込みスナップショット (空 = 無し)。EngineLoop はこれがあれば
+    // シーンロードの代わりに Restore して再生を始められる (M52f)
+    const std::vector<std::byte>& Snapshot() const { return snapshot_; }
 
-    const InputSnapshot& InputForTick(uint64_t tick) const { return ticks_[tick].input; }
-    uint64_t ExpectedHash(uint64_t tick) const { return ticks_[tick].worldHash; }
-    bool HasTick(uint64_t tick) const { return tick < ticks_.size(); }
+    const InputSnapshot& InputForTick(uint64_t tick) const
+    {
+        return inputs_[static_cast<size_t>(tick) * header_.playerCount];
+    }
+    const InputSnapshot& InputForTick(uint64_t tick, uint32_t player) const
+    {
+        return inputs_[static_cast<size_t>(tick) * header_.playerCount + player];
+    }
+    uint64_t ExpectedHash(uint64_t tick) const { return hashes_[static_cast<size_t>(tick)]; }
+    bool HasTick(uint64_t tick) const { return tick < hashes_.size(); }
 
     // 照合結果
     uint64_t verifiedTicks = 0;
@@ -65,7 +85,9 @@ public:
 
 private:
     MyeReplayHeader header_;
-    std::vector<ReplayTick> ticks_;
+    std::vector<std::byte> snapshot_;
+    std::vector<InputSnapshot> inputs_;
+    std::vector<uint64_t> hashes_;
     bool active_ = false;
 };
 

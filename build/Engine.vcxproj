@@ -93,6 +93,8 @@
     <ClCompile Include="..\src\Engine\Engine\RayTracing\RtSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\RenderSystem.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Replay\Replay.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Replay\SimSnapshot.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Replay\SimSnapshotSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Replay\WorldHasher.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Replay\WorldHasherSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\SaveGame.cpp" />
@@ -107,6 +109,7 @@
     <ClCompile Include="..\src\Engine\Engine\Script\ScriptHost.cpp" />
     <ClCompile Include="..\src\Engine\Engine\SkeletonSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\SkinningSystem.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\TickRunner.cpp" />
     <ClCompile Include="..\src\Engine\Engine\TransformSystem.cpp" />
     <ClCompile Include="..\src\Engine\Engine\UfbxImpl.cpp" />
     <ClCompile Include="..\src\Engine\Engine\UI\UILayout.cpp" />
@@ -151,6 +154,7 @@
     <ClInclude Include="..\src\Engine\Core\Archetype.h" />
     <ClInclude Include="..\src\Engine\Core\AssetGuidResolver.h" />
     <ClInclude Include="..\src\Engine\Core\AssetKeyResolver.h" />
+    <ClInclude Include="..\src\Engine\Core\ByteIo.h" />
     <ClInclude Include="..\src\Engine\Core\Check.h" />
     <ClInclude Include="..\src\Engine\Core\ComponentRegistry.h" />
     <ClInclude Include="..\src\Engine\Core\Components.h" />
@@ -226,6 +230,8 @@
     <ClInclude Include="..\src\Engine\Engine\RayTracing\RtSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\RenderSystem.h" />
     <ClInclude Include="..\src\Engine\Engine\Replay\Replay.h" />
+    <ClInclude Include="..\src\Engine\Engine\Replay\SimSnapshot.h" />
+    <ClInclude Include="..\src\Engine\Engine\Replay\SimSnapshotSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Replay\WorldHasher.h" />
     <ClInclude Include="..\src\Engine\Engine\Replay\WorldHasherSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\SaveGame.h" />
@@ -240,6 +246,7 @@
     <ClInclude Include="..\src\Engine\Engine\Script\ScriptHost.h" />
     <ClInclude Include="..\src\Engine\Engine\SkeletonSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\SkinningSystem.h" />
+    <ClInclude Include="..\src\Engine\Engine\TickRunner.h" />
     <ClInclude Include="..\src\Engine\Engine\TransformSystem.h" />
     <ClInclude Include="..\src\Engine\Engine\UI\UIGeometry.h" />
     <ClInclude Include="..\src\Engine\Engine\UI\UILayout.h" />

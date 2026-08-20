@@ -3,7 +3,8 @@ rem replay_verify.bat — Debug/Release 一貫性の自動検証 (engine_spec.md
 rem   1. 両構成をビルド
 rem   2. Debug でゴールデンリプレイを記録
 rem   3. Debug と Release の両方でハッシュ照合
-rem   4. 静的規則チェック
+rem   4. スナップショット往復ストレス (M52d)
+rem   5. 静的規則チェック
 rem 全て成功で exit 0、いずれか失敗で exit 1
 rem
 rem M52a: 照合が失敗したときだけ :diagnose を呼び、
@@ -105,11 +106,22 @@ bin\x64\Debug\Editor.exe --flow-demo --replay-verify %REP3% %MYE_EXTRA_ARGS% || 
 echo === verify flow in Release ===
 bin\x64\Release\Editor.exe --flow-demo --replay-verify %REP3% %MYE_EXTRA_ARGS% || (call :diagnose "%REP3%" "--flow-demo" & echo [FAIL] Release flow verify & exit /b 1)
 
+rem ---- 4 段目: スナップショット往復ストレス (M52d) ----
+rem 「撮って戻す」を 37 tick ごとに挟んでも 600 tick の期待ハッシュが全一致することを
+rem 3 ペアすべてで固定する。既存の .rep をそのまま使い回すので追加コストは verify 1 回分。
+rem ここが赤い = 復元が非対称 (撮れているのに戻していない sim 状態がある) という意味で、
+rem タイムトラベル (M52e) / クラッシュ再現 (M52f) / ロールバック (M52i) の土台が崩れている。
+rem selftest の小さな世界では出ない取りこぼしは、この実データ 600 tick でしか捕まらない
+echo === snapshot round-trip stress (Debug, every 37 ticks) ===
+bin\x64\Debug\Editor.exe --replay-verify %REP% --snapshot-stress 37 %MYE_EXTRA_ARGS% || (echo [FAIL] snapshot stress: demo & exit /b 1)
+bin\x64\Debug\Editor.exe --parts-demo --replay-verify %REP2% --snapshot-stress 37 %MYE_EXTRA_ARGS% || (echo [FAIL] snapshot stress: parts & exit /b 1)
+bin\x64\Debug\Editor.exe --flow-demo --replay-verify %REP3% --snapshot-stress 37 %MYE_EXTRA_ARGS% || (echo [FAIL] snapshot stress: flow & exit /b 1)
+
 echo === static rule check ===
 pwsh -NoProfile -ExecutionPolicy Bypass -File tools\check_rules.ps1 || (echo [FAIL] rule check & exit /b 1)
 
 echo.
-echo [PASS] replay consistency (Debug/Release, 3 scenes: demo + parts + flow) + rule check
+echo [PASS] replay consistency (Debug/Release, 3 scenes: demo + parts + flow) + snapshot round-trip + rule check
 exit /b 0
 
 rem ---------------------------------------------------------------- :diagnose
