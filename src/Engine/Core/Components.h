@@ -145,7 +145,10 @@ struct ColliderComponent {
     int32_t shape = 0; // 0=sphere 1=box(OBB) 2=capsule(ローカル Y 軸) 3=mesh (静的専用、M41)
     float radius = 0.5f; // sphere / capsule
     DirectX::XMFLOAT3 halfExtents = { 0.5f, 0.5f, 0.5f }; // box
-    int32_t isTrigger = 1;
+    // M51 後続で int32→bool 化 + 既定をソリッドへ (旧データの 0/1 数値は FieldFromJson が受理)。
+    // 1B 化で WorldHash のバイト列が変わるため golden は再記録済み。後続 3B はパディング
+    // (ハッシュ/シリアライズはフィールド単位なので不算入)
+    bool isTrigger = false;
     // ---- M28a 追加 (末尾 append = シーン/リプレイ互換維持) ----
     float height = 2.0f;   // capsule 全高 (両端の半球を含む)。線分半長 = max(0, height/2 − radius)
     float friction = 0.5f; // クーロン摩擦係数 (M28b のソルバで使用。ペアは sqrt(μa·μb))

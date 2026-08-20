@@ -29,7 +29,7 @@ void RegisterBuiltinComponents()
     RegisterComponent<LocalTransform>("LocalTransform", {
         MYE_JP("位置", MYE_FIELD(LocalTransform, position, Float3)),
         MYE_JP("回転", MYE_FIELD(LocalTransform, rotation, Quat)),
-        MYE_JP("拡縮", MYE_FIELD(LocalTransform, scale, Float3)),
+        MYE_JP("サイズ", MYE_FIELD(LocalTransform, scale, Float3)),
     });
 
     RegisterComponent<WorldMatrixComponent>("WorldMatrix", {
@@ -119,7 +119,7 @@ void RegisterBuiltinComponents()
         MYE_JP("形状", MYE_FIELD(ColliderComponent, shape, Int32)),
         MYE_JP("半径", MYE_FIELD(ColliderComponent, radius, Float)),
         MYE_JP("ハーフサイズ", MYE_FIELD(ColliderComponent, halfExtents, Float3)),
-        MYE_JP("トリガー", MYE_FIELD(ColliderComponent, isTrigger, Int32)),
+        MYE_JP("トリガー", MYE_FIELD(ColliderComponent, isTrigger, Bool)),
         MYE_JP("高さ", MYE_FIELD(ColliderComponent, height, Float)),
         MYE_JP("摩擦", MYE_FIELD(ColliderComponent, friction, Float)),
         MYE_JP("レイヤー", MYE_FIELD_TIP(ColliderComponent, layer, Int32, "collision layer 0..31")),

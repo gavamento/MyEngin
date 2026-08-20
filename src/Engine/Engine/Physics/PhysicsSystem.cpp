@@ -399,7 +399,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             if (col && col->shape == 3 && !rb->isKinematic) {
                 col = nullptr;
             }
-            if (col && col->isTrigger == 0) {
+            if (col && !col->isTrigger) {
                 b.solid = true;
                 b.col = col;
                 b.friction = col->friction;
@@ -424,7 +424,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                 continue; // 動的側で収集済み
             }
             auto* col = static_cast<const ColliderComponent*>(arch.GetPtr(ci, row));
-            if (col->isTrigger != 0) {
+            if (col->isTrigger) {
                 continue; // トリガーはソリッド衝突面でない (CollisionSystem がイベントを出す)
             }
             auto* lt = static_cast<const LocalTransform*>(arch.GetPtr(li, row));

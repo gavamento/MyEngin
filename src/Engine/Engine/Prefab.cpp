@@ -335,7 +335,7 @@ std::set<std::string> OverridesAgainstBase(World& w, EntityID e, const json& bas
             if (!fields.contains(f.name)) {
                 continue;
             }
-            if (FieldToJson(comp, f) != fields[f.name]) {
+            if (!FieldJsonEquals(f, FieldToJson(comp, f), fields[f.name])) {
                 keys.insert(OverrideKey(compName, f.name));
             }
         }
@@ -931,7 +931,7 @@ bool IsFieldOverridden(Scene& scene, const PrefabLibrary& lib, EntityID e, const
     if (!comp) {
         return false;
     }
-    return FieldToJson(comp, field) != bc[field.name];
+    return !FieldJsonEquals(field, FieldToJson(comp, field), bc[field.name]);
 }
 
 bool IsNameOverridden(Scene& scene, const PrefabLibrary& lib, EntityID e)
@@ -1240,12 +1240,12 @@ void PropagateBaseChange(Scene& scene, const json& oldBase, const json& newBase,
                         FieldFromJson(comp, f, newVal); // 新規コンポーネント → ベース値で埋める
                         continue;
                     }
-                    if (hadOld && obFields[f.name] == newVal) {
+                    if (hadOld && FieldJsonEquals(f, obFields[f.name], newVal)) {
                         continue; // ベース側で変化なし → 触らない
                     }
                     // 非オーバーライド (現在値が旧ベースと一致、または旧ベースに無い) のみ伝播
                     const json cur = FieldToJson(comp, f);
-                    if (!hadOld || cur == obFields[f.name]) {
+                    if (!hadOld || FieldJsonEquals(f, cur, obFields[f.name])) {
                         FieldFromJson(comp, f, newVal);
                     }
                 }

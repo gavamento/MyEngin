@@ -938,7 +938,60 @@ bool InspectorWindow::DrawField(EngineContext& ctx, const char* componentName, v
         changed = ImGui::DragFloat2(label, static_cast<float*>(p), speed, lo, hi);
         break;
     case FieldType::Float3:
-        changed = ImGui::DragFloat3(label, static_cast<float*>(p), speed, lo, hi);
+        // サイズの比率固定: チェック中は 1 軸の編集で他 2 軸を同率スケール。
+        // チェックボックスは DragFloat3 より**先**に描く — 呼び出し側の HandleEditUndoMulti
+        // は直前 1 アイテムしか見ないので、最後のアイテムを編集本体にしておく必要がある
+        if (componentName && std::strcmp(componentName, "LocalTransform") == 0
+            && std::strcmp(field.name, "scale") == 0) {
+            ImGui::Checkbox("##scale_link", &scaleLinked_);
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("%s", Tr(StrId::Insp_ScaleLink));
+            }
+            ImGui::SameLine(0.0f, 3.0f);
+            auto* v = static_cast<XMFLOAT3*>(p);
+            const XMFLOAT3 prev = *v;
+            ImGui::SetNextItemWidth(ImGui::CalcItemWidth() - ImGui::GetFrameHeight() - 3.0f);
+            changed = ImGui::DragFloat3(label, &v->x, speed, lo, hi);
+            const bool usingCache =
+                scaleLinkEditing_ && scaleLinkEntity_ == entity && scaleLinkField_ == p;
+            if (scaleLinked_ && changed) {
+                const XMFLOAT3 base = usingCache ? scaleLinkBase_ : prev;
+                int axis = -1; // Drag/入力は 1 フレーム 1 軸しか変えない
+                if (v->x != prev.x) {
+                    axis = 0;
+                } else if (v->y != prev.y) {
+                    axis = 1;
+                } else if (v->z != prev.z) {
+                    axis = 2;
+                }
+                if (axis >= 0) {
+                    const float b = (&base.x)[axis];
+                    const float n = (&v->x)[axis];
+                    if (std::fabs(b) > 1e-12f) {
+                        const float r = n / b;
+                        for (int i = 0; i < 3; ++i) {
+                            if (i != axis) {
+                                (&v->x)[i] = (&base.x)[i] * r;
+                            }
+                        }
+                    } else {
+                        *v = { n, n, n }; // 基準 0 は比率が定義できない — 一様値に落とす
+                    }
+                }
+            }
+            if (ImGui::IsItemActive()) {
+                if (!usingCache) {
+                    scaleLinkBase_ = prev;
+                    scaleLinkEntity_ = entity;
+                    scaleLinkField_ = p;
+                    scaleLinkEditing_ = true;
+                }
+            } else if (usingCache) {
+                scaleLinkEditing_ = false;
+            }
+        } else {
+            changed = ImGui::DragFloat3(label, static_cast<float*>(p), speed, lo, hi);
+        }
         break;
     case FieldType::Float4:
         changed = ImGui::DragFloat4(label, static_cast<float*>(p), speed, lo, hi);

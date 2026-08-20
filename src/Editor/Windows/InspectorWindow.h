@@ -79,6 +79,14 @@ private:
     const void* eulerCacheField_ = nullptr;
     bool eulerEditing_ = false;
 
+    // サイズ (LocalTransform.scale) の比率固定。エディタ UI 状態 — シリアライズ/ハッシュ非対象。
+    // 基準はドラッグ開始時の値 (毎フレームの比率累積だと 0 通過で他軸が潰れたまま戻らない)
+    bool scaleLinked_ = false;
+    DirectX::XMFLOAT3 scaleLinkBase_ = { 1, 1, 1 };
+    EntityID scaleLinkEntity_ = kNullEntity;
+    const void* scaleLinkField_ = nullptr;
+    bool scaleLinkEditing_ = false;
+
     // 名前欄の編集開始時の値 (確定時に同一なら改名しない — Esc の revert 対策、M48b)
     std::string nameOriginal_;
 };

@@ -26,7 +26,7 @@ GameObject MakeBox(Scene& s, const char* name, float x, float y, float z, float 
     go.SetLocalPosition(x, y, z);
     auto* col = go.AddComponent<ColliderComponent>();
     col->shape = 1; // aabb
-    col->isTrigger = 0;
+    col->isTrigger = false;
     col->halfExtents = { hx, hy, hz };
     auto* rb = go.AddComponent<RigidbodyComponent>();
     rb->mass = 1.0f;
@@ -37,7 +37,7 @@ GameObject MakeBox(Scene& s, const char* name, float x, float y, float z, float 
 
 // 静的な床 (ソリッド aabb コライダーのみ、Rigidbody 無し)
 GameObject MakeGround(Scene& s, const char* name, float x, float y, float z, float hx, float hy,
-                      float hz, int isTrigger = 0)
+                      float hz, bool isTrigger = false)
 {
     GameObject go = s.CreateGameObjectTracked(name);
     go.SetLocalPosition(x, y, z);
@@ -57,7 +57,7 @@ GameObject MakeSphereBody(Scene& s, const char* name, float x, float y, float z,
     go.SetLocalPosition(x, y, z);
     auto* col = go.AddComponent<ColliderComponent>();
     col->shape = 0;
-    col->isTrigger = 0;
+    col->isTrigger = false;
     col->radius = r;
     auto* rb = go.AddComponent<RigidbodyComponent>();
     rb->mass = 1.0f;
@@ -73,7 +73,7 @@ GameObject MakeCapsuleBody(Scene& s, const char* name, float x, float y, float z
     go.SetLocalPosition(x, y, z);
     auto* col = go.AddComponent<ColliderComponent>();
     col->shape = 2;
-    col->isTrigger = 0;
+    col->isTrigger = false;
     col->radius = r;
     col->height = height;
     auto* rb = go.AddComponent<RigidbodyComponent>();
@@ -144,7 +144,7 @@ bool RunPhysicsSelfTest()
     // ---- (3) トリガーコライダーは衝突面でない (透過して落下し続ける) ----
     {
         Scene s;
-        MakeGround(s, "TrigGround", 0, -0.5f, 0, 5.0f, 0.5f, 5.0f, /*isTrigger=*/1);
+        MakeGround(s, "TrigGround", 0, -0.5f, 0, 5.0f, 0.5f, 5.0f, /*isTrigger=*/true);
         GameObject box = MakeBox(s, "Passer", 0, 3.0f, 0, 0.5f, 0.5f, 0.5f);
         s.GetWorld().ApplyStructuralChanges();
         for (int i = 0; i < 180; ++i) {
@@ -229,7 +229,7 @@ bool RunPhysicsSelfTest()
         auto* col = sph.AddComponent<ColliderComponent>();
         col->shape = 0; // sphere
         col->radius = 1.0f;
-        col->isTrigger = 0;
+        col->isTrigger = false;
         s.GetWorld().ApplyStructuralChanges();
         ts.Update(s.GetWorld());
         MyeRaycastHit hit = {};
@@ -344,7 +344,7 @@ bool RunPhysicsSelfTest()
         col->shape = 2;
         col->radius = 1.0f;
         col->height = 4.0f; // 線分半長 = 1
-        col->isTrigger = 0;
+        col->isTrigger = false;
         s.GetWorld().ApplyStructuralChanges();
         ts.Update(s.GetWorld());
         MyeRaycastHit hit = {};
@@ -521,7 +521,7 @@ bool RunPhysicsSelfTest()
         TransformSystem ts;
         MakeGround(s, "SolidA", 0, 0, 0, 1.0f, 1.0f, 1.0f);
         MakeGround(s, "SolidB", 0.5f, 0, 0, 1.0f, 1.0f, 1.0f);            // ソリッド同士で重なる
-        MakeGround(s, "Trig", 10.0f, 0, 0, 1.0f, 1.0f, 1.0f, /*isTrigger=*/1);
+        MakeGround(s, "Trig", 10.0f, 0, 0, 1.0f, 1.0f, 1.0f, /*isTrigger=*/true);
         MakeGround(s, "SolidC", 10.5f, 0, 0, 1.0f, 1.0f, 1.0f);           // トリガーと重なる
         s.GetWorld().ApplyStructuralChanges();
         ts.Update(s.GetWorld());
@@ -559,7 +559,7 @@ bool RunPhysicsSelfTest()
         auto* col = sph.AddComponent<ColliderComponent>();
         col->shape = 0;
         col->radius = 1.0f;
-        col->isTrigger = 0;
+        col->isTrigger = false;
         MakeStaticBoxRot(s, "ScObb", 5.0f, 0, 0, 0.5f, 0.5f, 0.5f,
                          { 0, 0.3826834f, 0, 0.9238795f }); // Y 軸回り 45°
         s.GetWorld().ApplyStructuralChanges();
@@ -1047,7 +1047,7 @@ bool RunPhysicsSelfTest()
         Scene s;
         TransformSystem ts;
         CollisionSystem cs;
-        GameObject trig = MakeGround(s, "LTrig", 0, 0, 0, 1.0f, 1.0f, 1.0f, 1); // isTrigger
+        GameObject trig = MakeGround(s, "LTrig", 0, 0, 0, 1.0f, 1.0f, 1.0f, true); // isTrigger
         trig.GetComponent<ColliderComponent>()->layer = 2;
         GameObject inA = MakeGround(s, "LInA", 0.5f, 0, 0, 0.5f, 0.5f, 0.5f, 0);
         GameObject inB = MakeGround(s, "LInB", -0.5f, 0, 0, 0.5f, 0.5f, 0.5f, 0);
@@ -1189,7 +1189,7 @@ bool RunPhysicsSelfTest()
             GameObject ground = s.CreateGameObjectTracked("MeshGround");
             auto* col = ground.AddComponent<ColliderComponent>();
             col->shape = 3;
-            col->isTrigger = 0; // 既定は 1 (トリガー) — ソリッド衝突面にする
+            col->isTrigger = false; // ソリッド衝突面 (M51 後続で既定が false になったが明示のまま)
             col->meshAsset = meshId;
             GameObject ball = MakeSphereBody(s, "Ball", 0.5f, 3.0f, 0.5f, 0.5f);
             (void)ball;

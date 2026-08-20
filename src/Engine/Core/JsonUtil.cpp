@@ -76,7 +76,14 @@ bool FieldFromJson(void* comp, const FieldDesc& field, const json& value)
         case FieldType::Int32:  *static_cast<int32_t*>(p) = value.get<int32_t>(); return true;
         case FieldType::UInt32: *static_cast<uint32_t*>(p) = value.get<uint32_t>(); return true;
         case FieldType::UInt64: *static_cast<uint64_t*>(p) = value.get<uint64_t>(); return true;
-        case FieldType::Bool:   *static_cast<uint8_t*>(p) = value.get<bool>() ? 1 : 0; return true;
+        case FieldType::Bool:
+            // 旧データ互換: isTrigger の int32→bool 化 (M51 後続) 以前は 0/1 数値で保存
+            if (value.is_number()) {
+                *static_cast<uint8_t*>(p) = (value.get<double>() != 0.0) ? 1 : 0;
+                return true;
+            }
+            *static_cast<uint8_t*>(p) = value.get<bool>() ? 1 : 0;
+            return true;
         case FieldType::Float2: return ReadArray<float>(p, 2, value);
         case FieldType::Float3: return ReadArray<float>(p, 3, value);
         case FieldType::Float4:
@@ -110,6 +117,25 @@ bool FieldFromJson(void* comp, const FieldDesc& field, const json& value)
         return false;
     }
     return false;
+}
+
+bool FieldJsonEquals(const FieldDesc& field, const json& a, const json& b)
+{
+    if (field.type == FieldType::Bool) {
+        // 旧データは 0/1 数値、新データは真偽値 — 真理値で同一視しないと
+        // プレハブ override 判定が偽陽性を出す (伝播停止 = 静かなデータ劣化)
+        auto truthy = [](const json& v) -> int {
+            if (v.is_boolean()) { return v.get<bool>() ? 1 : 0; }
+            if (v.is_number()) { return (v.get<double>() != 0.0) ? 1 : 0; }
+            return -1;
+        };
+        const int ta = truthy(a);
+        const int tb = truthy(b);
+        if (ta >= 0 && tb >= 0) {
+            return ta == tb;
+        }
+    }
+    return a == b;
 }
 
 } // namespace mye

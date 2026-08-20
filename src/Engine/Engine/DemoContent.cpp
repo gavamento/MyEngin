@@ -157,6 +157,8 @@ void BuildDemoScene(EngineContext& ctx, float perfRate, int perfMax)
         auto* col = model.AddComponent<ColliderComponent>();
         col->shape = 0;
         col->radius = 1.2f;
+        // M7 以来の OnTrigger 用検知球。既定が bool 化でソリッドに変わったため明示
+        col->isTrigger = true;
     }
     const ComponentTypeId spawner = ComponentRegistry::Get().FindByName("Spawner");
     if (spawner != kInvalidComponentType) {
@@ -334,7 +336,7 @@ void BuildPartsShowcaseScene(EngineContext& ctx)
         auto* col = floor.AddComponent<ColliderComponent>();
         col->shape = 1; // box
         col->halfExtents = { 0.5f, 0.5f, 0.5f }; // ローカル半径 (スケールは Collider 側で掛かる)
-        col->isTrigger = 0;
+        col->isTrigger = false;
     }
 
     // ---- スキンメッシュ本体 ----
@@ -405,7 +407,7 @@ void BuildPartsShowcaseScene(EngineContext& ctx)
         auto* col = drop.AddComponent<ColliderComponent>();
         col->shape = 1;
         col->halfExtents = { 0.5f, 0.5f, 0.5f };
-        col->isTrigger = 0;
+        col->isTrigger = false;
         drop.AddComponent<RigidbodyComponent>();
     }
 
@@ -497,7 +499,7 @@ void BuildFlowStage(Scene& s, RenderResources& res, bool withColliders)
             auto* col = floor.AddComponent<ColliderComponent>();
             col->shape = 1; // box
             col->halfExtents = { 0.5f, 0.5f, 0.5f }; // ローカル半径 (スケールは Collider 側で掛かる)
-            col->isTrigger = 0;
+            col->isTrigger = false;
         }
     }
 }
@@ -584,7 +586,7 @@ void BuildFlowGameScene(EngineContext& ctx)
         auto* col = go.AddComponent<ColliderComponent>();
         col->shape = 1;
         col->halfExtents = { 0.5f, 0.5f, 0.5f };
-        col->isTrigger = 0;
+        col->isTrigger = false;
     };
     wall("WallN", 0.0f, 8.25f, 16.0f, 0.5f);
     wall("WallS", 0.0f, -8.25f, 16.0f, 0.5f);
@@ -602,7 +604,7 @@ void BuildFlowGameScene(EngineContext& ctx)
         auto* col = paddle.AddComponent<ColliderComponent>();
         col->shape = 1;
         col->halfExtents = { 0.5f, 0.5f, 0.5f };
-        col->isTrigger = 0;
+        col->isTrigger = false;
     }
 
     // 弾む球 = このシーンの sim 本体。FlowGameDriver がフロー全体を駆動する
@@ -615,7 +617,7 @@ void BuildFlowGameScene(EngineContext& ctx)
         auto* col = ball.AddComponent<ColliderComponent>();
         col->shape = 0; // sphere
         col->radius = 0.5f;
-        col->isTrigger = 0;
+        col->isTrigger = false;
         auto* rb = ball.AddComponent<RigidbodyComponent>();
         rb->restitution = 0.82f;
     }

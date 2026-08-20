@@ -22,7 +22,7 @@ namespace {
 struct Body {
     EntityID entity;
     ShapePose pose;
-    int32_t isTrigger = 0;
+    bool isTrigger = false;
     int32_t layer = 0;           // M36a: 衝突レイヤー (Collider から複製)
     uint32_t mask = 0xFFFFFFFFu;
 };
@@ -86,7 +86,7 @@ void CollisionSystem::Update(World& world, ScriptHost* scripts, ManagedHost* man
         for (const uint64_t key : candidates) {
             const Body& a = bodies[static_cast<size_t>(key >> 32)];
             const Body& b = bodies[static_cast<size_t>(key & 0xFFFFFFFFu)];
-            if (a.isTrigger == 0 && b.isTrigger == 0) {
+            if (!a.isTrigger && !b.isTrigger) {
                 continue;
             }
             if (!shapes::CanCollide(a.layer, a.mask, b.layer, b.mask)) {
