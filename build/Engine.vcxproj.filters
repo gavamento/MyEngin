@@ -16,6 +16,9 @@
     <Filter Include="Engine\HotReload">
       <UniqueIdentifier>{45E1E3BD-577C-EB21-9437-FCBCEC610D8C}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Engine\Net">
+      <UniqueIdentifier>{ED389294-AB46-D963-50F2-AF0CEB244C3C}</UniqueIdentifier>
+    </Filter>
     <Filter Include="Engine\Particles">
       <UniqueIdentifier>{DCDC7B06-EF20-69BD-0BF7-3CA3702AC5ED}</UniqueIdentifier>
     </Filter>
@@ -48,6 +51,9 @@
     </Filter>
     <Filter Include="Platform">
       <UniqueIdentifier>{BD2C6E02-B1AD-784C-9836-25575071D222}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Platform\Net">
+      <UniqueIdentifier>{1909BF0F-5625-5162-E855-09D4614DF712}</UniqueIdentifier>
     </Filter>
     <Filter Include="Renderer">
       <UniqueIdentifier>{FA760276-7897-C107-03A6-426F3AAFB41D}</UniqueIdentifier>
@@ -203,6 +209,12 @@
     </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\ModelLoader.cpp">
       <Filter>Engine</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Net\NetSelfTest.cpp">
+      <Filter>Engine\Net</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Net\NetSession.cpp">
+      <Filter>Engine\Net</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\PartFollowSystem.cpp">
       <Filter>Engine</Filter>
@@ -362,6 +374,9 @@
     </ClCompile>
     <ClCompile Include="..\src\Engine\Platform\InputActionsSelfTest.cpp">
       <Filter>Platform</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Platform\Net\UdpSocket.cpp">
+      <Filter>Platform\Net</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Platform\PathUtil.cpp">
       <Filter>Platform</Filter>
@@ -630,6 +645,12 @@
     <ClInclude Include="..\src\Engine\Engine\ModelLoader.h">
       <Filter>Engine</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Net\NetSelfTest.h">
+      <Filter>Engine\Net</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Net\NetSession.h">
+      <Filter>Engine\Net</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\PartFollowSystem.h">
       <Filter>Engine</Filter>
     </ClInclude>
@@ -800,6 +821,9 @@
     </ClInclude>
     <ClInclude Include="..\src\Engine\Platform\InputActionsSelfTest.h">
       <Filter>Platform</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Platform\Net\UdpSocket.h">
+      <Filter>Platform\Net</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Platform\PathUtil.h">
       <Filter>Platform</Filter>

@@ -108,6 +108,14 @@ struct TickServices {
     ReplayRecorder* recorder = nullptr;
     ReplayPlayer* player = nullptr;
 
+    // ネットのロックステップ中 (M52h)。record/verify と**同じ決定論の境界**を要求する:
+    // C# レーンは巻き戻せず 2 台で同じ列を回す保証も無いので停止し、LoadGame は禁止する
+    // (LoadScene は許可 — record/verify と同じ扱い)。
+    // ★オーディオは止めない。record/verify で止めているのは「1 フレームに 64 tick 回る」
+    //   早送り実行だからで、決定論のためではない (音は tick 末のハッシュより後の出力レーン)。
+    //   ネットは実時間で回るので、ここを止めると理由なく無音になる
+    bool netLockstep = false;
+
     // 再シム中 (M52e タイムトラベルのシーク / M52i ロールバック) は true。
     // **過去に一度起きたことをもう一度なぞっている**状態なので、外へ出す側 (オーディオ /
     // セーブ書出) と巻き戻せない側 (C# レーン) を record/verify と同じ条件で抑止する。

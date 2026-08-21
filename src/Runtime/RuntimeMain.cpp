@@ -10,6 +10,7 @@
 #include "Engine/Engine/EngineLoop.h"
 #include "Engine/Engine/Prefab.h"
 #include "Engine/Engine/Project.h"
+#include "Engine/Engine/Replay/Replay.h"
 #include "Engine/Engine/Replay/WorldHasher.h"
 #include "Engine/Engine/Scene.h"
 #include "Engine/Engine/SceneSerializer.h"
@@ -112,6 +113,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     config.enableImGui = false;            // エディタ UI 無し
 
     RuntimeApp app;
+    std::wstring repDiffA;
+    std::wstring repDiffB;
     std::wstring hashDiffA; // --hash-diff A B (M52a)
     std::wstring hashDiffB;
     std::wstring crashTestArg; // --crash-test <kind> (M52f)
@@ -170,6 +173,26 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 config.crashTestTick = _wtoi64(argv[++i]);
             } else if (arg == L"--no-crash-handler") {
                 config.crashHandler = false; // M52f: 既定 on を外す (デバッガ下での切り分け用)
+            } else if (arg == L"--net-host") {
+                // M52h: ホストとして待受 (ポート省略時は 7777)。参加側は --net-join
+                config.netRole = 1;
+                if (i + 1 < argc && argv[i + 1][0] != L'-') {
+                    config.netPort = _wtoi(argv[++i]);
+                }
+            } else if (arg == L"--net-join" && i + 1 < argc) {
+                config.netRole = 2;
+                config.netJoinTarget = argv[++i]; // HOST:PORT
+            } else if (arg == L"--net-players" && i + 1 < argc) {
+                config.netPlayers = _wtoi(argv[++i]); // 現状 2 のみ
+            } else if (arg == L"--net-delay" && i + 1 < argc) {
+                // 入力遅延 (tick)。**全 peer で一致必須** — 違うとハンドシェイクで弾かれる
+                config.netInputDelay = _wtoi(argv[++i]);
+            } else if (arg == L"--net-loss" && i + 1 < argc) {
+                config.netLossPercent = _wtoi(argv[++i]); // 入力パケットを故意に捨てる (検証用)
+            } else if (arg == L"--rep-diff" && i + 2 < argc) {
+                // M52h: .rep 2 本の突き合わせ (ネットの 2 プロセスが同じ tick 列を回したか)
+                repDiffA = argv[++i];
+                repDiffB = argv[++i];
             } else if (arg == L"--hash-diff" && i + 2 < argc) {
                 // M52a: 配布ビルド単体でもクラッシュ報告のダンプを突き合わせられるように
                 hashDiffA = argv[++i];
@@ -258,6 +281,18 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             return 2;
         }
         return mye::DiffHashDumps(a, b).Same() ? 0 : 1;
+    }
+
+    // --rep-diff A B: .rep 2 本を突き合わせて終了 (M52h)。一致なら 0、食い違えば 1、
+    // そもそも読めなければ 2。ネットの 2 プロセスが**同じ tick 列を回した**ことの機械証明で、
+    // 割れたときは「どの tick の どのレーンの どのフィールドか」まで 1 行で出る
+    if (!repDiffA.empty() && !repDiffB.empty()) {
+        const mye::ReplayDiffResult r = mye::DiffReplayFiles(repDiffA, repDiffB);
+        std::fprintf(stdout, "[rep-diff] %s\n", r.summary.c_str());
+        if (r.same) {
+            return 0;
+        }
+        return r.summary.find("could not be loaded") != std::string::npos ? 2 : 1;
     }
 
     mye::EngineLoop loop;

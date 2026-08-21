@@ -235,6 +235,8 @@ void RunOneTick(TickServices& ts)
     //   IsActive() が落ちるので、tick 頭の値で判定すると挙動が変わってしまう
     const auto Recording = [&ts] { return ts.recorder != nullptr && ts.recorder->IsActive(); };
     const auto Verifying = [&ts] { return ts.player != nullptr && ts.player->IsActive(); };
+    // M52h: ネットのロックステップ中も「巻き戻せない側 / 2 台で揃わない側」を止める
+    const auto Networked = [&ts] { return ts.netLockstep; };
 
     // M51d: アクション評価。tick の入力が確定した直後 (verify の置換の後) に
     // 前 tick との比較で held/pressed/released と軸値を確定する。
@@ -275,11 +277,11 @@ void RunOneTick(TickServices& ts)
         scriptHost.SetTickContext(ctx.Input(), ctx.tickIndex, ctx.fixedDt);
         scriptHost.RunStartAndUpdate();
     }
-    // C# スクリプト層 (別レーン): 記録/検証中は走らせない → 純 C++ 決定論を保持。
+    // C# スクリプト層 (別レーン): 記録/検証/ネット中は走らせない → 純 C++ 決定論を保持。
     // 再シム (M52e) でも同じ — C# の状態はスナップショットに入っておらず巻き戻らないので、
     // ここで走らせると「戻せない側だけが余分に進む」= どのみち世界が割れる
     const bool runManaged = ctx.simulateScripts && managedHost.IsReady()
-        && !Recording() && !Verifying() && !ts.resim;
+        && !Recording() && !Verifying() && !Networked() && !ts.resim;
     if (runManaged) {
         managedHost.SetTickContext(ctx.Input(), ctx.tickIndex, ctx.fixedDt);
         managedHost.RunStartAndUpdate();
@@ -510,8 +512,8 @@ void RunOneTick(TickServices& ts)
     if (pendingLoadSlot >= 0) {
         const int slot = pendingLoadSlot;
         pendingLoadSlot = -1;
-        if (Recording() || Verifying()) {
-            MYE_LOG_WARN("[save] LoadGame(slot %d) is a no-op during record/verify",
+        if (Recording() || Verifying() || Networked()) {
+            MYE_LOG_WARN("[save] LoadGame(slot %d) is a no-op during record/verify/netplay",
                          slot);
         } else {
             SaveGameData data;

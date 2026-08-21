@@ -29,9 +29,14 @@ namespace mye {
 //   ★記録側は 0 を書かない: 実ハッシュが偶然 0 になる確率は 2^-64 で、その場合も
 //     「その 1 tick が未照合になる」だけで誤検出にはならない (安全側に倒れる)。
 //   この予約は v4 のレイアウトを一切変えない = 版は上げない (決定台帳 3)。
+
+// .rep のフォーマット版。ネットのハンドシェイク (M52h) でも照合するので、
+// Replay.cpp の中に閉じずにここへ出してある
+inline constexpr uint32_t kReplayFileVersion = 4;
+
 struct MyeReplayHeader {
     uint32_t magic = 0x5045524Du; // 'MREP'
-    uint32_t version = 4;
+    uint32_t version = kReplayFileVersion;
     float fixedDt = 1.0f / 60.0f;
     uint32_t inputSize = sizeof(InputSnapshot);
     uint64_t tickCount = 0;   // 終了時に確定
@@ -82,6 +87,7 @@ public:
     // 埋め込みスナップショット (空 = 無し)。EngineLoop はこれがあれば
     // シーンロードの代わりに Restore して再生を始められる (M52f)
     const std::vector<std::byte>& Snapshot() const { return snapshot_; }
+    const MyeReplayHeader& Header() const { return header_; }
 
     const InputSnapshot& InputForTick(uint64_t tick) const
     {
@@ -109,5 +115,16 @@ private:
     std::vector<uint64_t> hashes_;
     bool active_ = false;
 };
+
+// .rep 2 本の突き合わせ (M52h、--rep-diff A B)。
+// ネット対戦の 2 プロセスが**本当に同じ tick 列を回したか**を機械判定するための道具。
+// ★`fc /b` で済ませない理由は M52a と同じ: 割れたときに「どの tick の どのレーンの
+//   どのフィールドか」まで出ないと、原因の切り分けにそのまま何時間も溶ける。
+struct ReplayDiffResult {
+    bool same = false;
+    uint64_t firstDiffTick = 0; // same=false かつ tick 列で割れたときのみ意味を持つ
+    std::string summary;        // 1 行の結論 (そのままログへ出す)
+};
+ReplayDiffResult DiffReplayFiles(const std::wstring& a, const std::wstring& b);
 
 } // namespace mye

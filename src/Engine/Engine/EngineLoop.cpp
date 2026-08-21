@@ -26,6 +26,7 @@
 #include "Engine/Engine/Prefab.h"
 #include "Engine/Engine/Project.h"
 #include "Engine/Engine/RenderSystem.h"
+#include "Engine/Engine/Net/NetSession.h"
 #include "Engine/Engine/Replay/CrashRing.h"
 #include "Engine/Engine/Replay/Replay.h"
 #include "Engine/Engine/Replay/SimSnapshot.h"
@@ -57,6 +58,7 @@
 #include "Engine/Renderer/ImGuiRenderer.h"
 #include "Engine/Renderer/ShaderManager.h"
 #include "Engine/Renderer/SwapChain.h"
+#include "Shared/EngineAPI.h" // MYE_API_VERSION (ネットのハンドシェイクで照合する)
 
 #include <filesystem>
 #include <fstream>
@@ -69,6 +71,10 @@ namespace {
 constexpr double kFixedDt = 1.0 / 60.0;
 constexpr int kMaxTicksPerFrame = 5;   // スパイラルオブデス防止
 constexpr double kMaxFrameDt = 0.25;   // ブレークポイント等の巨大 dt をクランプ
+// ネットの入力待ち (M52h)。届いていない tick をこの時間だけ受信を回して待つ。
+// 長くするとフレームが詰まり、短くすると 1 フレーム空振りして描画が 1 回無駄になる —
+// どちらも sim には影響しない (待つのは「いつ回すか」だけ) ので体感で決めてよい値
+constexpr uint32_t kNetStallWaitMs = 6;
 
 } // namespace
 
@@ -256,7 +262,14 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             ? GetExecutableDir() + L"\\GameLogic.dll"
             : config.projectRoot + L"\\cache\\GameLogic.dll";
         dllReloader.Init(&scriptHost, dllPath, cacheHot);
-        dllReloader.LoadInitial();
+        if (!dllReloader.LoadInitial()) {
+            // ★黙って続けない。C++ スクリプトが 1 本も無い世界は「動くけれど別物」で、
+            //   リプレイもネットも全く違う結果になる (M52h でシャドウコピーの衝突により
+            //   実際に踏んだ)。エンジンは継続できるので停止まではしないが、
+            //   ログ上で必ず目立たせる
+            MYE_LOG_ERROR("[dll] GameLogic.dll was not loaded - NO C++ scripts are registered "
+                          "(the world will not match a normal run)");
+        }
     }
 
     // C# スクリプトホスト (CoreCLR)。未導入でも失敗ログのみでエンジンは継続する
@@ -421,10 +434,87 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             : static_cast<uint32_t>(config.localPlayers);
     }
 
+    // ---- ネット対戦セッション (M52h、決定台帳 5) ----
+    // ここでやることは 2 つだけ: 「同じものを走らせているか」を入口で照合することと、
+    // 消費するレーン数を確定させること。以降、tick が何を消費するかは NetSession が
+    // そろえた確定入力だけで決まる (= 2 台の .rep がバイト一致する根拠)
+    NetSession net;
+    InputSnapshot netLiveInput = {}; // フレーム頭のライブ入力 (自レーンぶん)
+    // ★接続できなかったときは **return せずにフレームループを 0 周で抜ける**。
+    //   ここで早期 return すると下の Shutdown 群 (ジョブのワーカー join / CoreCLR /
+    //   D3D) を素通りして、デストラクタ順で abort する = 「相手に断られた」だけなのに
+    //   クラッシュハンドラがバンドルを吐く (実装中に実測: exit code 3 + crash\<stamp>\)。
+    //   ネットは「繋がらない」が日常的に起きるレーンなので、そこを異常終了にしない
+    bool netFailed = false;
+    // ★--replay-verify はネットに勝つ。.rep には全レーンの入力が既に入っているので、
+    //   そこへネット越しの入力を混ぜたら検証にならない
+    const bool netEnabled = config.netRole != 0 && config.replayVerifyPath.empty();
+    if (config.netRole != 0 && !config.replayVerifyPath.empty()) {
+        MYE_LOG_WARN("[net] --replay-verify wins over the net session (the .rep already carries "
+                     "every lane's input)");
+    }
+    // 自レーンの tick 入力。**「tick T の値は T と入力源だけで決まる」**ようにしてあるので、
+    // 先出し (priming) でも通常 tick でも同じ関数で作れる。合成入力のときは
+    // SynthLaneInput(T, 自レーン) なので、2 台合わせた列は
+    // 「--local-players 2 --synth-input のローカル実行」と 1 バイトも変わらない
+    // (net_verify.bat はそこまで含めて照合する)
+    const auto NetLocalInput = [&](uint64_t targetTick) -> InputSnapshot {
+        return config.synthInput ? SynthLaneInput(targetTick, net.LocalPlayerIndex())
+                                 : netLiveInput;
+    };
+    if (netEnabled) {
+        NetConfig ncfg;
+        ncfg.role = static_cast<NetRole>(config.netRole);
+        ncfg.port = static_cast<uint16_t>(config.netPort);
+        ncfg.joinTarget = config.netJoinTarget;
+        ncfg.playerCount = static_cast<uint32_t>(config.netPlayers);
+        ncfg.inputDelay = static_cast<uint32_t>(config.netInputDelay);
+        ncfg.lossPercent = static_cast<uint32_t>(config.netLossPercent);
+        // ★M52 は 2 人 P2P に限定 (計画「見送り」)。3 人以上はメッシュ / リレー /
+        //   NAT 越えが要るので、黙って動くふりをせずここで止める
+        if (ncfg.playerCount != 2) {
+            MYE_LOG_ERROR("[net] --net-players %u is not supported: this build does 2-player "
+                          "peer-to-peer only", ncfg.playerCount);
+            netFailed = true;
+        }
+        NetIdentity id;
+        id.apiVersion = MYE_API_VERSION;
+        id.repVersion = kReplayFileVersion;
+        id.snapshotVersion = kSimSnapshotVersion;
+        id.playerCount = ncfg.playerCount;
+        id.inputDelay = ncfg.inputDelay;
+        id.configBits = (config.synthInput ? kNetCfgSynthInput : 0u)
+            | (config.useJobs ? kNetCfgJobs : 0u) | (config.useSimCache ? kNetCfgSimCache : 0u)
+            | (config.useCookCache ? kNetCfgCookCache : 0u);
+        // 開始点のワールドハッシュ。**tick 末にハッシュを撮るのと同じ点** (OnStart +
+        // ApplyStructuralChanges の直後) で撮る = 「同じシーンから始めたか」の機械照合
+        id.startWorldHash = HashWorld(scene.GetWorld(), &particleSystem.Cpu(), &scene.Time(),
+                                      &scene.Persist());
+        const bool ok = !netFailed && net.Start(ncfg, id, ctx.tickIndex)
+            && net.WaitUntilReady([&window] { return window.PumpMessages(); });
+        if (!ok) {
+            MYE_LOG_ERROR("[net] could not establish the session - exiting");
+            netFailed = true;
+        }
+        ctx.playerCount = ncfg.playerCount;
+        // ---- 先出し (priming) ----
+        // 入力遅延 N tick = 「tick T が消費するのは T-N フレームで確定した入力」。
+        // 最初の N tick には対応する過去が無いので、ここで作って送っておく。
+        // ★これをやらないと tick 0 の時点で自レーンが空 = 双方が永久に stall する
+        for (uint32_t k = 0; k < ncfg.inputDelay && !netFailed; ++k) {
+            const uint64_t target = ctx.tickIndex + k;
+            net.SubmitLocalInput(target, NetLocalInput(target));
+        }
+        if (!netFailed) {
+            MYE_LOG_INFO("[net] lockstep ready: local lane %u of %u, input delay %u ticks",
+                         net.LocalPlayerIndex(), ctx.playerCount, ncfg.inputDelay);
+        }
+    }
+
     // ---- リプレイ記録/検証の準備 (spec 11.3) ----
     ReplayRecorder recorder;
     ReplayPlayer player;
-    int exitCode = 0;
+    int exitCode = netFailed ? 1 : 0;
     if (!config.replayVerifyPath.empty()) {
         if (!player.Load(config.replayVerifyPath)) {
             return 1;
@@ -448,7 +538,9 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             // 記録開始時の RNG 状態を復元して同一 tick 列を再現する (v3 以来の従来経路)
             scene.GetWorld().Rng().Restore(player.RngState(), player.RngInc());
         }
-    } else if (!config.replayRecordPath.empty()) {
+    } else if (!config.replayRecordPath.empty() && !netFailed) {
+        // 接続できなかったときは記録も始めない (0 tick の .rep を残すと、後で
+        // 「録れているのに中身が無い」という別の謎になる)。
         // --rep-snapshot: 記録開始時点の sim 状態を .rep の先頭へ埋め込む。
         // ここは app.OnStart + ApplyStructuralChanges の直後 = 構造変更が空の撮影点
         std::vector<std::byte> startSnapshot;
@@ -487,7 +579,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
 
     // ---- メインループ (フェーズ構成は engine_spec.md 5.3 / ADR-005) ----
     double accumulator = 0.0;
-    bool running = true;
+    bool running = !netFailed; // 接続失敗時は 1 フレームも回さずに通常の後始末へ落ちる
     // M36b 描画補間: 前 tick 末のワールド行列 (tick 頭に採取)。record/verify 中は不使用
     PrevWorldStore prevWorld;
     bool lastTickSimulated = false;
@@ -547,6 +639,9 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     tickServices.prevWorld = &prevWorld;
     tickServices.lastTickSimulated = &lastTickSimulated;
     tickServices.exitCode = &exitCode;
+    // M52h: セッションが立った時点で C# レーンは最後まで止める。途中で on/off すると
+    // 「片方だけ C# が動いた tick」が生まれて必ず割れるので、走行中は変えない
+    tickServices.netLockstep = netEnabled;
 
     // ---- タイムトラベルのシーク本体 (M52e) ----
     // 「target 以下の最寄りスナップショットへ Restore → 記録入力で target まで描画なし再シム」。
@@ -678,8 +773,21 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         // ---- 入力レーンの確定 (M52g) ----
         // レーン 0 = キーボード + マウス + パッド 0、レーン n>0 = パッド n (Input.h の規約)。
         // playerCount を超えるレーンには一度も書かない = 恒常ゼロ値
-        for (uint32_t p = 0; p < ctx.playerCount; ++p) {
-            ctx.inputs[p] = input.CaptureSnapshot(p);
+        // ★ネット中はローカルのデバイスを 1 レーンぶんしか読まない。レーン n>0 は
+        //   相手の端末が持っている = XInput スロット n を撃つ意味が無い (M52g 申し送り 4 の
+        //   「未接続スロットへの XInputGetState は重い」がそのまま効く)
+        {
+            const uint32_t captureLanes = netEnabled ? 1u : ctx.playerCount;
+            for (uint32_t p = 0; p < captureLanes; ++p) {
+                ctx.inputs[p] = input.CaptureSnapshot(p);
+            }
+            if (netEnabled) {
+                // ★ライブ入力は tick ループへ入る前に退避する。ループ内で ctx.inputs は
+                //   ネットの確定入力で丸ごと上書きされるので、そこから自レーンを読むと
+                //   「相手から返ってきた自分の入力」を送り直す循環になる
+                netLiveInput = ctx.inputs[0];
+                net.Poll();
+            }
         }
         logging::SetCurrentFrame(ctx.frameIndex);
         prof::BeginFrame();
@@ -744,12 +852,42 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         }
         // 検証モードは実時間と切り離して最速で回す (spec 11.3 の CLI 実行)
         const int maxTicksThisFrame = verifying ? 64 : kMaxTicksPerFrame;
+        // ---- 遅延ロックステップのゲート (M52h) ----
+        // ★全 peer の tick 入力がそろうまで **1 tick も進めない**。ここが「揃った入力で
+        //   回る」の全部で、これ以上の同期機構は要らない (予測して先へ進むのは M52i)。
+        //   届いていなければ数 ms だけ受信を回して待つ — フレームの見た目を滑らかに
+        //   するためだけの待ちで、sim には一切影響しない
+        bool netStalled = false;
+        const auto NetReady = [&](uint64_t tick) {
+            if (!netEnabled || !net.Running()) {
+                return true;
+            }
+            if (net.HasInputs(tick)) {
+                return true;
+            }
+            const double t0 = clock.Now();
+            const bool got = net.WaitForInputs(tick, kNetStallWaitMs);
+            net.NoteStall((clock.Now() - t0) * 1000.0);
+            netStalled = !got;
+            return got;
+        };
         while (!scrubbing && ticks < maxTicksThisFrame
-               && (verifying ? player.HasTick(ctx.tickIndex) : accumulator >= kFixedDt)) {
+               && (verifying ? player.HasTick(ctx.tickIndex)
+                             : (accumulator >= kFixedDt && NetReady(ctx.tickIndex)))) {
             if (verifying) {
                 // フェーズ 1 の入力をレーンごと置換する
                 for (uint32_t p = 0; p < ctx.playerCount; ++p) {
                     ctx.inputs[p] = player.InputForTick(ctx.tickIndex, p);
+                }
+            } else if (netEnabled && net.Running()) {
+                // ネットの確定入力で全レーンを置換する。**verify の置換と同じ場所**に
+                // 置いてあるので、この tick が消費した列がそのまま .rep に載る
+                // (= 2 台の .rep のバイト一致が「同じ tick 列を回した」証明になる)。
+                // ★合成入力より先に見る: ネット中の合成入力は既に相手側のレーンにも
+                //   載っていて、ここで上書きすると自分の値で相手のレーンを潰す
+                const InputSnapshot* lanes = net.InputsFor(ctx.tickIndex);
+                for (uint32_t p = 0; p < ctx.playerCount; ++p) {
+                    ctx.inputs[p] = lanes[p];
                 }
             } else if (config.synthInput) {
                 // 合成入力 (M52g、--synth-input)。**verify の置換と同じ場所**に置くのが要点 —
@@ -764,6 +902,15 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             // 通常 tick / タイムトラベル再シム / ロールバック再シムが通る唯一の実装。
             // ここでの仕事は「この tick が消費する入力を確定させて呼ぶ」だけ
             const uint64_t ranTick = ctx.tickIndex;
+            // ---- 自レーンの未来入力を確定させる (M52h) ----
+            // ★tick t を回す**直前**に t + delay を送る。ここに置くことで
+            //   「1 tick につきちょうど 1 回」が構造的に保証される — フレーム頭に置くと
+            //   tick が回らないフレームで同じ target を違う値で送り直してしまい、
+            //   相手が先に消費した値と食い違って即 desync する
+            if (netEnabled && net.Running()) {
+                const uint64_t target = ranTick + net.InputDelay();
+                net.SubmitLocalInput(target, NetLocalInput(target));
+            }
             // ★クラッシュ .rep へは tick に**入る前**に入力を載せる (M52f)。
             //   落ちるのは RunOneTick の中なので、tick 末に載せる作りだと
             //   「まさに落ちた tick」が .rep に残らず、再生してもその tick へ入れない
@@ -784,6 +931,9 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                 ctx.requestExit = true;
             }
             RunOneTick(tickServices);
+            if (netEnabled) {
+                net.OnTickConsumed(ranTick); // 消費済み tick はリングの保護下限を進める
+            }
             if (crashRing.Enabled()) {
                 // tick 末 (= 構造変更が空 = .rep が記録するのと同じ点) のハッシュ。
                 // これがあるので、届いた crash.rep は「本当に同じ世界を再現したか」を
@@ -835,6 +985,18 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         if (!verifying && ticks == kMaxTicksPerFrame && accumulator > kFixedDt) {
             // 追いつけない分は捨てる (スローモーション化を許容し、tick 爆発を防ぐ)
             accumulator = kFixedDt;
+        }
+        // ★stall 中は実時間を溜めない。溜めると「相手を待っていた 2 秒」ぶんが
+        //   復帰した瞬間に早送りとして流れ、遊べたものではなくなる。待たされたのは
+        //   ゲームの都合ではないので、その時間は無かったことにする
+        if (netStalled && accumulator > kFixedDt) {
+            accumulator = kFixedDt;
+        }
+        if (netEnabled && net.State() == NetState::Failed) {
+            MYE_LOG_ERROR("[net] session failed at tick %llu - exiting",
+                          static_cast<unsigned long long>(ctx.tickIndex));
+            exitCode = 1;
+            ctx.requestExit = true;
         }
         // ---- タイムトラベルの自動プローブ (M52e、--timetravel-selftest N) ----
         // 「T まで進める → T-K へ戻す → 記録入力で T まで再シム → 元の T とハッシュ一致」を
@@ -1062,6 +1224,11 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     swapChain.Shutdown();
     device.Shutdown();
     window.Destroy();
+    if (netEnabled) {
+        // ★抜ける前に最後の入力を撃ち切る。相手はこちらの最後の数 tick をまだ受け取って
+        //   いないかもしれず、黙って終了すると相手だけが stall タイムアウトで落ちる
+        net.Finish();
+    }
     if (recorder.IsActive()) {
         recorder.Finish(); // maxFrames 等で先に抜けた場合も書き出す
     }

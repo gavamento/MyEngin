@@ -165,6 +165,16 @@ struct EngineConfig {
     //   記録側と検証側で対称に起きてハッシュ一致してしまう (Input.h の SynthLaneInput 参照)
     bool synthInput = false;
 
+    // ---- ネット対戦: UDP + 遅延ロックステップ (M52h、決定台帳 5) ----
+    // NetRole の生値 (0=off / 1=host / 2=join)。**Engine/Net の型をここへ持ち込まない**
+    // ために int で持つ (crashTest と同じ流儀 — EngineLoop.h はほぼ全 TU が読む)
+    int netRole = 0;
+    int netPort = 7777;            // --net-host PORT
+    std::wstring netJoinTarget;    // --net-join HOST:PORT
+    int netPlayers = 2;            // --net-players N (M52 は 2 人 P2P 固定)
+    int netInputDelay = 3;         // --net-delay N (tick)。全 peer で一致必須
+    int netLossPercent = 0;        // --net-loss N (入力パケットを故意に捨てる。検証用)
+
     // ---- クラッシュバンドル (M52f) ----
     // 落ちたら <projectRoot|exeDir>\crash\<timestamp>\ に minidump + crash.rep +
     // crash.txt + scene.json を残す。既定 on (配布ビルドのバグ報告が本命なので、

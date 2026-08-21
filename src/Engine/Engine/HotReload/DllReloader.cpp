@@ -1,6 +1,9 @@
 #include "Engine/Engine/HotReload/DllReloader.h"
 
+#include <cwchar>
 #include <filesystem>
+#include <string>
+#include <vector>
 
 #include <Windows.h>
 
@@ -23,6 +26,22 @@ uint64_t GetWriteTime(const std::wstring& path)
         | data.ftLastWriteTime.dwLowDateTime;
 }
 
+// PID が今も生きているか。棚の掃除で「他プロセスが使用中のものを消さない」ための判定。
+// ★ファイルのロック有無で代用してはいけない — コピーしてから LoadLibrary するまでの
+//   一瞬はロックが無く、そこを掃除に踏まれると自分の棚が消えて LoadLibrary が
+//   ERROR_PATH_NOT_FOUND (3) で落ちる (実測)
+bool IsProcessAlive(unsigned long pid)
+{
+    const HANDLE h = OpenProcess(SYNCHRONIZE, FALSE, pid);
+    if (h == nullptr) {
+        return false; // 存在しない (アクセス拒否なら「生きている」と読めるが、
+                      // その場合も消せないので結果は同じ)
+    }
+    const bool alive = WaitForSingleObject(h, 0) == WAIT_TIMEOUT;
+    CloseHandle(h);
+    return alive;
+}
+
 } // namespace
 
 void DllReloader::Init(ScriptHost* host, const std::wstring& buildDllPath,
@@ -31,11 +50,40 @@ void DllReloader::Init(ScriptHost* host, const std::wstring& buildDllPath,
     host_ = host;
     dllPath_ = buildDllPath;
     pdbPath_ = buildDllPath.substr(0, buildDllPath.find_last_of(L'.')) + L".pdb";
-    cacheDir_ = cacheDir;
-
-    // 前セッションのコピーを掃除 (ロック中のものはスキップ)
+    // ★シャドウコピーの棚は**プロセスごとに分ける** (M52h)。
+    //   cacheDir はリポジトリの cache\hot 1 個で、Debug/Release も Editor/Runtime も
+    //   同じ場所を指す。ここを共有したまま 2 プロセスを同時に走らせると:
+    //     ・後から起きた側の remove_all が相手のロック中コピーに当たって失敗する
+    //     ・両方が v1 へコピーしようとして CopyFile が共有違反 (32) で弾かれる
+    //   → 片方だけ **C++ スクリプトが 1 本も登録されない世界**になる。
+    //   ネット対戦は 2 プロセス同時起動が常態なのでこれが日常的に踏まれる
+    //   (実際に net_verify で踏み、開始ワールドハッシュ照合が検出した)。
+    //   PID を 1 段挟むだけで衝突は原理的に無くなる。
+    const std::wstring root = cacheDir;
+    const unsigned long selfPid = GetCurrentProcessId();
     std::error_code ec;
-    std::filesystem::remove_all(cacheDir_, ec);
+    std::filesystem::create_directories(root, ec);
+    // 掃除は「もう居ないプロセスの棚」だけ。**走っている相手の棚には触らない** —
+    // ここを一律 remove_all にすると、同時起動した相手がコピー直後・LoadLibrary 直前の
+    // 一瞬に自分の棚を消され、相手が「スクリプト 0 本の世界」で走り出す。
+    // 走査中に消すと反復子が壊れるので、いったん集めてから消す
+    std::vector<std::filesystem::path> stale;
+    for (const auto& e : std::filesystem::directory_iterator(root, ec)) {
+        const std::wstring name = e.path().filename().wstring();
+        if (name.size() < 2 || name[0] != L'p') {
+            stale.push_back(e.path()); // 旧レイアウト (PID 無しの v<n>) は無条件で片付ける
+            continue;
+        }
+        const unsigned long pid = std::wcstoul(name.c_str() + 1, nullptr, 10);
+        if (pid == selfPid || !IsProcessAlive(pid)) {
+            stale.push_back(e.path());
+        }
+    }
+    for (const auto& dead : stale) {
+        std::error_code rmEc;
+        std::filesystem::remove_all(dead, rmEc);
+    }
+    cacheDir_ = root + L"\\p" + std::to_wstring(selfPid);
     std::filesystem::create_directories(cacheDir_, ec);
 }
 
