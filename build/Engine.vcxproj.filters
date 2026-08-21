@@ -258,6 +258,12 @@
     <ClCompile Include="..\src\Engine\Engine\RenderSystem.cpp">
       <Filter>Engine</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Replay\CrashRing.cpp">
+      <Filter>Engine\Replay</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Replay\CrashRingSelfTest.cpp">
+      <Filter>Engine\Replay</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Replay\Replay.cpp">
       <Filter>Engine\Replay</Filter>
     </ClCompile>
@@ -340,6 +346,9 @@
       <Filter>Engine</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Platform\Clock.cpp">
+      <Filter>Platform</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Platform\CrashHandler.cpp">
       <Filter>Platform</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Platform\Input.cpp">
@@ -675,6 +684,12 @@
     <ClInclude Include="..\src\Engine\Engine\RenderSystem.h">
       <Filter>Engine</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Replay\CrashRing.h">
+      <Filter>Engine\Replay</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Replay\CrashRingSelfTest.h">
+      <Filter>Engine\Replay</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Replay\Replay.h">
       <Filter>Engine\Replay</Filter>
     </ClInclude>
@@ -766,6 +781,9 @@
       <Filter>Engine</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Platform\Clock.h">
+      <Filter>Platform</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Platform\CrashHandler.h">
       <Filter>Platform</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Platform\Input.h">

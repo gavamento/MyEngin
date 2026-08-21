@@ -36,6 +36,13 @@ size_t ReadSince(uint64_t& cursor, LogEntry* out, size_t maxOut);
 uint64_t TotalWritten();
 void Clear();
 
+// クラッシュハンドラ専用: リングの直近 maxOut 件を**ロックを取らずに**古い順で写す (M52f)。
+// ★落ちたスレッドが内部 mutex を握ったままハンドラへ来ることがあり、そこで lock すると
+//   そのままデッドロックして報告が 1 バイトも残らない。競合して 1 行乱れる方が、
+//   バンドルごと消えるより遥かにましなので**意図的に無施錠**で読む。
+//   通常の読み出しには使わないこと (Console は ReadSince を使う)。
+size_t ReadRecentUnsafe(LogEntry* out, size_t maxOut);
+
 } // namespace logging
 } // namespace mye
 

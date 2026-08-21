@@ -92,6 +92,8 @@
     <ClCompile Include="..\src\Engine\Engine\RayTracing\RtSceneBuild.cpp" />
     <ClCompile Include="..\src\Engine\Engine\RayTracing\RtSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\RenderSystem.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Replay\CrashRing.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Replay\CrashRingSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Replay\Replay.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Replay\SimSnapshot.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Replay\SimSnapshotSelfTest.cpp" />
@@ -120,6 +122,7 @@
     <ClCompile Include="..\src\Engine\Engine\Vfx\VfxRenderer.cpp" />
     <ClCompile Include="..\src\Engine\Engine\VfxSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Platform\Clock.cpp" />
+    <ClCompile Include="..\src\Engine\Platform\CrashHandler.cpp" />
     <ClCompile Include="..\src\Engine\Platform\Input.cpp" />
     <ClCompile Include="..\src\Engine\Platform\InputActions.cpp" />
     <ClCompile Include="..\src\Engine\Platform\InputActionsSelfTest.cpp" />
@@ -231,6 +234,8 @@
     <ClInclude Include="..\src\Engine\Engine\RayTracing\RtSceneBuild.h" />
     <ClInclude Include="..\src\Engine\Engine\RayTracing\RtSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\RenderSystem.h" />
+    <ClInclude Include="..\src\Engine\Engine\Replay\CrashRing.h" />
+    <ClInclude Include="..\src\Engine\Engine\Replay\CrashRingSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Replay\Replay.h" />
     <ClInclude Include="..\src\Engine\Engine\Replay\SimSnapshot.h" />
     <ClInclude Include="..\src\Engine\Engine\Replay\SimSnapshotSelfTest.h" />
@@ -262,6 +267,7 @@
     <ClInclude Include="..\src\Engine\Engine\Vfx\VfxRenderer.h" />
     <ClInclude Include="..\src\Engine\Engine\VfxSelfTest.h" />
     <ClInclude Include="..\src\Engine\Platform\Clock.h" />
+    <ClInclude Include="..\src\Engine\Platform\CrashHandler.h" />
     <ClInclude Include="..\src\Engine\Platform\Input.h" />
     <ClInclude Include="..\src\Engine\Platform\InputActions.h" />
     <ClInclude Include="..\src\Engine\Platform\InputActionsSelfTest.h" />

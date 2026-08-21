@@ -13,6 +13,7 @@
 #include "Engine/Engine/Replay/WorldHasher.h"
 #include "Engine/Engine/Scene.h"
 #include "Engine/Engine/SceneSerializer.h"
+#include "Engine/Platform/CrashHandler.h"
 #include "Engine/Platform/PathUtil.h"
 #include "Engine/Renderer/ShaderManager.h"
 
@@ -105,6 +106,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     RuntimeApp app;
     std::wstring hashDiffA; // --hash-diff A B (M52a)
     std::wstring hashDiffB;
+    std::wstring crashTestArg; // --crash-test <kind> (M52f)
 
     int argc = 0;
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
@@ -153,6 +155,13 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                     config.timeTravelProbeTicks = _wtoi64(argv[++i]);
                 }
                 config.vsync = false;
+            } else if (arg == L"--crash-test" && i + 1 < argc) {
+                crashTestArg = argv[++i]; // M52f (綴り違いは下で弾く)
+                config.vsync = false;
+            } else if (arg == L"--crash-at-tick" && i + 1 < argc) {
+                config.crashTestTick = _wtoi64(argv[++i]);
+            } else if (arg == L"--no-crash-handler") {
+                config.crashHandler = false; // M52f: 既定 on を外す (デバッガ下での切り分け用)
             } else if (arg == L"--hash-diff" && i + 2 < argc) {
                 // M52a: 配布ビルド単体でもクラッシュ報告のダンプを突き合わせられるように
                 hashDiffA = argv[++i];
@@ -211,6 +220,20 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             }
         }
         LocalFree(argv);
+    }
+
+    // --crash-test の綴り違いを黙って無視しない (M52f)。
+    // 「落とすつもりで走らせたのに何も起きない」を 1 時間追いかける事故を潰す
+    if (!crashTestArg.empty()) {
+        const mye::CrashTestKind kind = mye::ParseCrashTestKind(crashTestArg.c_str());
+        if (kind == mye::CrashTestKind::None) {
+            std::fprintf(stderr,
+                         "unknown --crash-test kind: %s "
+                         "(av | purecall | terminate | invalidparam | stackoverflow)\n",
+                         mye::WideToUtf8(crashTestArg).c_str());
+            return 2;
+        }
+        config.crashTest = static_cast<int>(kind);
     }
 
     // --hash-diff A B: ダンプ 2 本を突き合わせて終了 (M52a)。同一なら 0、食い違えば 1

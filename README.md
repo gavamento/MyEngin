@@ -50,6 +50,14 @@ C++20 / DirectX 11 製の自作ゲームエンジン。**Unity 風の使いや�
   (スキンメッシュのボーン追従 = 骨駆動 LocalTransform の構成間ビット一致) /
   ゲームフロー統合デモ (シーン遷移・ポーズ・セーブ・アクションマップ)。
   割れた tick は**どのエンティティのどのフィールドが**割れたかまで自動で出る (`--hash-diff`)
+- **クラッシュしたら「再現可能なバグ報告」が自動で残る** — 例外 (スタックオーバーフロー含む) /
+  `std::terminate` / 純粋仮想呼び出し / CRT 不正パラメータを捕まえ、`crash\<日時>\` に
+  minidump + `crash.txt` (障害モジュール + RVA + ビルドの git ハッシュ + 起動コマンドライン) +
+  **`crash.rep`** を吐く。`crash.rep` は開始スナップショットを埋め込んだリプレイなので、
+  受け取った側が `Runtime.exe --replay-verify crash.rep` するだけで
+  **起動シーンに依らず落ちる直前の tick までハッシュ一致で再現**する
+  (Debug の Editor で出た報告を Release の Runtime で再生できることを実測)。
+  ハンドラ内では一切ヒープを触らないよう、.rep のバイト列は平常時から組み上げて持っている
 - **CI (GitHub Actions)** — push ごとに 8 ビルド (4 プロジェクト × Debug/Release、警告 0 を強制) +
   リプレイ照合 3 ペア + 静的規則検査 + セルフテスト両構成 + 配布パッケージのスモークが回る。
   **GPU の無い runner でも回る**のは sim が CPU 専用だから — 描画は WARP
@@ -77,7 +85,10 @@ Runtime.exe --deferred --rt-demo --rt-gi --rt-shadow --rt-refl --rt-anim-seed
 Editor.exe --parts-demo                   # 部位 (ソケット) のボーン追従シーン
 Editor.exe --warp                         # WARP (ソフトウェアラスタライザ) 固定で起動
 Editor.exe --package dist                 # 配布パッケージを CLI で作成 (exit code で成否)
+Runtime.exe --crash-test av --crash-at-tick 60
+                                          # 意図的に落としてクラッシュバンドルを作る
 tools\replay_verify.bat                   # 一貫性検証一式 (3 シーン被覆)
+tools\crash_verify.bat                    # 5 経路で実際に落として .rep の再現性を検証
 tools\check_rules.ps1                     # コーディング規則の静的検査
 tools\gen_project_files.ps1               # ソース一覧を vcxproj に反映
 ```

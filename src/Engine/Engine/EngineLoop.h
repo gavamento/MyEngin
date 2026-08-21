@@ -151,6 +151,17 @@ struct EngineConfig {
     // ★これがエディタ GUI を開かずにタイムトラベルを検証できる唯一の口。
     // Editor では --autoplay と併用しないと sim が進まない (両 Main が自動で立てる)
     int64_t timeTravelProbeTicks = 0;
+
+    // ---- クラッシュバンドル (M52f) ----
+    // 落ちたら <projectRoot|exeDir>\crash\<timestamp>\ に minidump + crash.rep +
+    // crash.txt + scene.json を残す。既定 on (配布ビルドのバグ報告が本命なので、
+    // 「調子が悪いときだけ有効にする」形にはしない)。--no-crash-handler で外せる
+    bool crashHandler = true;
+    // --crash-test <av|purecall|terminate|invalidparam|stackoverflow>: crashTestTick の
+    // tick 本体へ入る直前に意図的に落とす。ハンドラが「本当に落ちたときに動くか」は
+    // 実際に落として確かめるしかない (M52a 申し送り 5 と同じ流儀)
+    int crashTest = 0;            // CrashTestKind の生値 (Platform への依存を持ち込まない)
+    int64_t crashTestTick = 120;  // --crash-at-tick N
 };
 
 // フレーム計測 (Profiler ウィンドウ表示用)。EngineLoop が毎フレーム更新する

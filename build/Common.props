@@ -33,7 +33,7 @@
       <TreatWarningAsError Condition="'$(MyeWarnAsError)'=='true'">true</TreatWarningAsError>
       <AdditionalOptions>/utf-8 /Zc:preprocessor %(AdditionalOptions)</AdditionalOptions>
       <PreprocessorDefinitions>NOMINMAX;WIN32_LEAN_AND_MEAN;_CRT_SECURE_NO_WARNINGS;IMGUI_DISABLE_OBSOLETE_FUNCTIONS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>$(RepoRoot)src;$(RepoRoot)external;$(RepoRoot)external\imgui;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(RepoRoot)src;$(RepoRoot)external;$(RepoRoot)external\imgui;$(RepoRoot)obj\generated\$(Configuration);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>
@@ -58,4 +58,32 @@
       <OptimizeReferences>true</OptimizeReferences>
     </Link>
   </ItemDefinitionGroup>
+  <!--
+    ビルド情報の埋め込み (M52f)。クラッシュ報告に「どのコミットの・どの構成のビルドか」が
+    無いと、届いた minidump の RVA を突き合わせる相手 (pdb) を特定できない = 報告が死ぬ。
+    ★ClCompile の PreprocessorDefinitions へ直接書かない。git ハッシュはコミットの度に
+      変わるので、定義値が変われば全 .cpp のコマンドラインが変わり毎回フルリビルドになる。
+      生成ヘッダに逃がして、包含している 1 ファイル (CrashHandler.cpp) だけが焼き直る形にする。
+    ★書き手は Engine プロジェクトだけ。/m の並列ビルドで 4 プロジェクトが同じファイルを
+      書くと競る (WriteOnlyWhenDifferent でも読みが割れうる)。Editor/Runtime は Engine.lib
+      経由で文字列を受け取るので生成は要らない。
+    ★出力は構成ごとに分ける — Debug と Release で MYE_BUILD_CONFIG が違うため。
+    git が無い / リポジトリ外へ展開された場合は "unknown" に落とす (ビルドは止めない)。
+  -->
+  <Target Name="MyeBuildInfo" BeforeTargets="ClCompile" Condition="'$(MSBuildProjectName)'=='Engine'">
+    <!-- exclude=* でタグ名を使わせず、always で短縮ハッシュ、dirty で未コミット差分を明示 -->
+    <Exec Command="git -C &quot;$(RepoRoot).&quot; describe --always --dirty --abbrev=12 --exclude=*"
+          ConsoleToMSBuild="true" ContinueOnError="true" IgnoreExitCode="true"
+          StandardOutputImportance="low" StandardErrorImportance="low">
+      <Output TaskParameter="ConsoleOutput" PropertyName="MyeGitRaw" />
+    </Exec>
+    <PropertyGroup>
+      <!-- git のエラー文が混ざりうるので、形が合ったときだけ採用する -->
+      <MyeGitHash>unknown</MyeGitHash>
+      <MyeGitHash Condition="$([System.Text.RegularExpressions.Regex]::IsMatch('$(MyeGitRaw)', '^[0-9a-f]{7,40}(-dirty)?$'))">$(MyeGitRaw)</MyeGitHash>
+    </PropertyGroup>
+    <WriteLinesToFile File="$(RepoRoot)obj\generated\$(Configuration)\MyeBuildInfo.h"
+                      Overwrite="true" WriteOnlyWhenDifferent="true"
+                      Lines="#pragma once;// build\Common.props の MyeBuildInfo ターゲットが生成する。手で編集しない;#define MYE_GIT_HASH &quot;$(MyeGitHash)&quot;;#define MYE_BUILD_CONFIG &quot;$(Configuration)&quot;" />
+  </Target>
 </Project>

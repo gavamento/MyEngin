@@ -612,6 +612,56 @@ transform side table, audio) is *not* captured; it is either reset by the caller
   several distances, re-simulates forward, compares hashes, and then confirms on the live frame
   loop that scrubbing holds the tick index still and that resuming truncates the ring
 
+**Crash bundles (M52f).** A shipped build that dies leaves nothing behind unless it was prepared
+in advance, so both executables install four handlers at startup — the unhandled SEH filter,
+`std::terminate`, the pure-virtual call handler and the CRT invalid-parameter handler — and write
+`crash\<yyyyMMdd_HHmmss>\` containing `minidump.dmp`, `crash.txt` (exception code, faulting module
+with its RVA and PE `TimeDateStamp`, build configuration, git hash, current tick, the original
+command line and the tail of the log ring), `crash.rep` and, when the scene came from a file, a
+copy of it as `scene.json`. `--no-crash-handler` disables the whole thing.
+
+- **Nothing is allocated inside a handler.** The heap may already be corrupt and the crashing
+  thread may hold a lock, so every output buffer is reserved at install time, all formatting goes
+  through a fixed-capacity sink instead of `printf`, `dbghelp.dll` is resolved during install
+  rather than under the loader lock, the faulting module is located with `VirtualQuery` instead of
+  `GetModuleHandleEx`, and the log ring is read *without* taking its mutex — a garbled line is a
+  far better outcome than a deadlocked report
+- Nothing is placed on the stack either, because the worst case is a stack overflow, where only
+  about a page remains. `--crash-test stackoverflow` proves the point: `crash.txt` and `crash.rep`
+  are written normally, but `MiniDumpWriteDump` itself needs more stack than is left and faulted,
+  leaving a zero-byte dump behind. The minidump is therefore written from a thread created for the
+  purpose — a fresh stack — with the *crashing* thread's id in the exception information, a
+  bounded wait, and deletion of the file if it fails. It is also the last file written, so the two
+  that matter are already on disk before the heaviest step is attempted
+- `crash.rep` is therefore not built when the crash happens: the engine keeps the finished `.rep`
+  byte image alive at all times — one embedded snapshot plus every input since it — so the handler
+  only has to `WriteFile` it. Appending a tick publishes itself with a single store to
+  `tickCount`, a completed tick's hash is a single aligned 8-byte store, and the image is marked
+  not-ready while a fresh snapshot is copied in, so no partially written file can escape
+- The input of the tick that was *running* is recorded **before** the tick executes. Recording it
+  afterwards would lose the very tick that crashed and make the replay stop one tick short of the
+  fault. That tick has no hash yet, so **a `worldHash` of 0 is reserved to mean "no expected
+  value"**: the verifier skips the comparison, counts the tick as unverified and says out loud
+  that the crash did not reproduce this time. Writing a plausible-looking hash instead would turn
+  "it did not reproduce" into a spurious mismatch. The reservation does not change the v4 layout
+- Verifying `crash.rep` restores the embedded snapshot, so reproduction does not depend on the
+  boot scene, and every tick up to the fault is checked hash-by-hash — that check, not the crash
+  itself, is the evidence that the receiver's machine rebuilt the same world
+- `--crash-test <av|purecall|terminate|invalidparam|stackoverflow> [--crash-at-tick N]` crashes on
+  purpose; `tools\crash_verify.bat` runs all five and requires, for each, that the bundle is complete, that
+  the `.rep` replays hash-identically, and that re-running it with the same trigger crashes again
+  at the same tick. It is deliberately **not** part of CI, because a job that kills its own
+  process cannot cleanly distinguish a staged failure from a real one. CI does, however, upload
+  `bin\x64\*\crash\**` with its failure artifacts, so an *unplanned* crash on the runner arrives
+  as a replayable bundle rather than as a bare exit code
+- In Debug the CRT reports an invalid parameter through an assertion *before* calling the handler,
+  and its default report target is a modal dialog — which would hang the process instead of
+  producing a bundle. When no debugger is attached the report target is redirected so the handler
+  is reached; in Release `crtdbg.h` compiles those calls away, so rule 1 is not involved
+- `MYE_GIT_HASH` and `MYE_BUILD_CONFIG` come from a generated header written by an MSBuild target,
+  not from a preprocessor definition on the compiler command line: the hash changes with every
+  commit, and a changing command line would rebuild every translation unit
+
 ---
 
 ## 12. Milestones

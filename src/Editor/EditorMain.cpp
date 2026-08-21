@@ -39,6 +39,8 @@
 #include "Engine/Engine/FontSelfTest.h"
 #include "Engine/Engine/UI/UISelfTest.h"
 #include "Engine/Engine/VfxSelfTest.h"
+#include "Engine/Engine/Replay/CrashRingSelfTest.h"
+#include "Engine/Platform/CrashHandler.h"
 #include "Engine/Platform/InputActionsSelfTest.h"
 #include "Engine/Platform/PathUtil.h"
 #include "Engine/Renderer/ImageDiff.h"
@@ -97,6 +99,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     int managerFrames = 0;                // --manager-frames N (Hub を N フレームで自動終了、CI 用)
     std::wstring managerShot;             // --manager-shot <path> (Hub のスクリーンショット)
     std::wstring langOverride;            // --lang <ja|en> (M47a。保存設定と自動化既定の両方に優先)
+    std::wstring crashTestArg;            // --crash-test <kind> (M52f)
     std::wstring hashDiffA;               // --hash-diff A B (M52a: ダンプ 2 本の差分)
     std::wstring hashDiffB;
     std::wstring imgDiffA;                // --img-diff A B (M52c: スクショ回帰の判定)
@@ -164,6 +167,16 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 }
                 autoPlay = true;
                 config.vsync = false;
+            } else if (arg == L"--crash-test" && i + 1 < argc) {
+                // M52f: 意図的に落としてクラッシュバンドルを検証する。
+                // ★Play 中でなくても tick は進む (ポーズ tick) ので --autoplay は要らない。
+                //   綴り違いは下で弾く (黙って無視すると「落ちない」だけで原因が見えない)
+                crashTestArg = argv[++i];
+                config.vsync = false;
+            } else if (arg == L"--crash-at-tick" && i + 1 < argc) {
+                config.crashTestTick = _wtoi64(argv[++i]);
+            } else if (arg == L"--no-crash-handler") {
+                config.crashHandler = false; // M52f: 既定 on を外す (デバッガ下での切り分け用)
             } else if (arg == L"--hash-diff" && i + 2 < argc) {
                 hashDiffA = argv[++i]; // M52a: 2 つのダンプを突き合わせて終了
                 hashDiffB = argv[++i];
@@ -261,6 +274,20 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         LocalFree(argv);
     }
 
+    // --crash-test の綴り違いを黙って無視しない (M52f)。
+    // 「落とすつもりで走らせたのに何も起きない」を 1 時間追いかける事故を潰す
+    if (!crashTestArg.empty()) {
+        const mye::CrashTestKind kind = mye::ParseCrashTestKind(crashTestArg.c_str());
+        if (kind == mye::CrashTestKind::None) {
+            std::fprintf(stderr,
+                         "unknown --crash-test kind: %s "
+                         "(av | purecall | terminate | invalidparam | stackoverflow)\n",
+                         mye::WideToUtf8(crashTestArg).c_str());
+            return 2;
+        }
+        config.crashTest = static_cast<int>(kind);
+    }
+
     // 自動化 (CI/検証) 起動かどうか。既存の CI/検証コマンド列 (--frames / --screenshot /
     // --scene / --replay-* 等) は従来のレガシー動作 (リポジトリ assets) を維持する
     const bool automation = config.maxFrames > 0 || !config.screenshotPath.empty()
@@ -268,7 +295,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                             || !sceneOverride.empty() || autoPlay || saveSceneOnStart
                             || pickTestFrame >= 0 || !selectName.empty() || perfRate > 0.0f
                             || !editActorPath.empty() || !packageDir.empty()
-                            || !config.hashDumpPath.empty();
+                            || !config.hashDumpPath.empty() || config.crashTest != 0;
 
     // UI 言語 (M47a)。Hub はプロジェクト未確定のまま描かれる別プロセスなので、
     // 設定はプロジェクト配下ではなく %LOCALAPPDATA%\MyEngine\editor_global.json から読む。
@@ -351,7 +378,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             && mye::RunCookedCacheSelfTest() && mye::RunInputActionsSelfTest()
             && mye::RunGameFlowSelfTest() && mye::RunWorldHasherSelfTest()
             && mye::RunSimSnapshotSelfTest() && mye::RunTimeTravelSelfTest()
-            && mye::RunImageDiffSelfTest();
+            && mye::RunCrashRingSelfTest() && mye::RunImageDiffSelfTest();
         return ok ? 0 : 1;
     }
 

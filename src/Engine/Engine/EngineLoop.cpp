@@ -1,6 +1,7 @@
 #include "Engine/Engine/EngineLoop.h"
 
 #include <algorithm>
+#include <cstring>
 
 #include "Engine/Core/AssetGuidResolver.h" // v8 PlayMusic の生クリップ経路 (GUID → 実パス)
 #include "Engine/Core/Check.h"
@@ -25,6 +26,7 @@
 #include "Engine/Engine/Prefab.h"
 #include "Engine/Engine/Project.h"
 #include "Engine/Engine/RenderSystem.h"
+#include "Engine/Engine/Replay/CrashRing.h"
 #include "Engine/Engine/Replay/Replay.h"
 #include "Engine/Engine/Replay/SimSnapshot.h"
 #include "Engine/Engine/Replay/TimeTravel.h"
@@ -44,6 +46,7 @@
 #include "Engine/Engine/UI/UIRenderer.h"
 #include "Engine/Engine/Vfx/VfxRenderer.h"
 #include "Engine/Platform/Clock.h"
+#include "Engine/Platform/CrashHandler.h"
 #include "Engine/Platform/InputActions.h"
 #include "Engine/Platform/PathUtil.h"
 #include "Engine/Platform/Win32Window.h"
@@ -345,6 +348,36 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         (config.projectRoot.empty() ? GetExecutableDir() : config.projectRoot) + L"\\save";
     ctx.fixedDt = static_cast<float>(kFixedDt);
 
+    // ---- クラッシュバンドル (M52f) ----
+    // ★設置は app.OnStart の**前**。シーンロードやスクリプト初期化で落ちるのは
+    //   もっともありふれた壊れ方で、そこを取りこぼすとハンドラの価値が半分になる。
+    //   この時点ではリングがまだ空 (crash.rep 無し) だが、minidump と crash.txt は残る。
+    // リングとペイロードは Run のスコープに置く = ハンドラが掴むポインタはこの関数が
+    // 生きている間だけ有効。解除は下の CrashHandlerScope (RAII) が受け持つ
+    CrashRing crashRing;
+    CrashPayload crashPayload;
+    crashPayload.ring = &crashRing;
+    const CrashTestKind crashTestKind = static_cast<CrashTestKind>(config.crashTest);
+    if (config.crashHandler) {
+        CrashHandlerConfig crashCfg;
+        crashCfg.crashRoot =
+            config.projectRoot.empty() ? GetExecutableDir() : config.projectRoot;
+        crashCfg.appName = config.title;
+        crashCfg.tickIndex = &ctx.tickIndex;
+        crashCfg.frameIndex = &ctx.frameIndex;
+        crashCfg.sceneLabel = crashPayload.sceneSource;
+        crashCfg.payload = &WriteCrashPayload;
+        crashCfg.payloadUser = &crashPayload;
+        InstallCrashHandler(crashCfg);
+    }
+    // ★Install 以降には early return が何本かある (埋め込みスナップショットの復元失敗など)。
+    //   そこで外し忘れると、破棄済みの ctx / crashRing を指したハンドラが Run を抜けた後も
+    //   居座る。RAII に任せて経路を数えないで済ませる — この guard は crashRing /
+    //   crashPayload / ctx より**後**に宣言してあるので、必ずそれらより先に走る
+    struct CrashHandlerScope {
+        ~CrashHandlerScope() { UninstallCrashHandler(); }
+    } crashHandlerScope;
+
     app.OnStart(ctx);
     // OnStart で積まれた構造変更 (SetParent 等) を最初の描画前に反映する
     scene.GetWorld().ApplyStructuralChanges();
@@ -408,6 +441,15 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         recorder.Start(config.replayRecordPath, scene.GetWorld().Rng().State(),
                        scene.GetWorld().Rng().Inc(), scene.GetWorld().AliveCount(),
                        startSnapshot.data(), startSnapshot.size());
+    }
+
+    // ---- クラッシュ .rep のリングを起こす (M52f) ----
+    // ★ここが「構造変更が空」の最初の撮影点で、かつ埋め込みスナップショットの復元
+    //   (verify) より**後**。先に起こすと復元で tick 番号が飛んでリングが取り直しになる。
+    // 記録/検証中も動かす — そこで落ちた .rep も同じ価値がある
+    if (config.crashHandler) {
+        crashRing.SetEnabled(true);
+        crashRing.Begin(simRefs, ctx.tickIndex);
     }
 
     // ---- 決定的スクショ (M52c) ----
@@ -633,6 +675,16 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         // サスペンド中も voice 回収 (Update) は動き続ける (止めるとスロットが枯れる) ----
         audioSystem.SetSuspended(recorder.IsActive() || verifying);
 
+        // ---- クラッシュバンドルへ添える元シーンのパス (M52f) ----
+        // ハンドラ内で std::wstring を触らない (再確保済みの領域を掴む事故) ために、
+        // 毎フレーム固定バッファへ写しておく。LoadScene で変わりうるので毎フレーム
+        {
+            const std::wstring& src = scene.SourcePath();
+            const size_t n = src.size() < 519 ? src.size() : 519;
+            std::memcpy(crashPayload.sceneSource, src.c_str(), n * sizeof(wchar_t));
+            crashPayload.sceneSource[n] = L'\0';
+        }
+
         // ---- タイムトラベル (M52e): リングの開始とシーク要求を tick 境界で捌く ----
         // ★どちらもフレーム頭 (= 前フレームの tick が終わった直後) でしか行わない。
         //   ImGui の途中で世界を差し替えると、その後のウィンドウが破棄済み EntityID を掴む
@@ -667,7 +719,34 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             // 通常 tick / タイムトラベル再シム / ロールバック再シムが通る唯一の実装。
             // ここでの仕事は「この tick が消費する入力を確定させて呼ぶ」だけ
             const uint64_t ranTick = ctx.tickIndex;
+            // ★クラッシュ .rep へは tick に**入る前**に入力を載せる (M52f)。
+            //   落ちるのは RunOneTick の中なので、tick 末に載せる作りだと
+            //   「まさに落ちた tick」が .rep に残らず、再生してもその tick へ入れない
+            crashRing.OnTickBegin(ranTick, ctx.input);
+            if (crashTestKind != CrashTestKind::None
+                && ranTick == static_cast<uint64_t>(config.crashTestTick)) {
+                MYE_LOG_ERROR("[crash] --crash-test %s: crashing on purpose at tick %llu",
+                              CrashTestKindName(crashTestKind),
+                              static_cast<unsigned long long>(ranTick));
+                TriggerTestCrash(crashTestKind);
+                // ★ここへ戻ってきたら「落とすつもりが落ちなかった」= 検出器自身の故障。
+                //   黙って走り続けると bat が無限に待つ (実装中に踏んだ: Debug CRT の
+                //   不正パラメータがアサートダイアログで止まっていた)
+                MYE_LOG_ERROR("[crash] --crash-test %s did NOT crash - the handler was not "
+                              "exercised (this is a bug in the trigger)",
+                              CrashTestKindName(crashTestKind));
+                exitCode = 2;
+                ctx.requestExit = true;
+            }
             RunOneTick(tickServices);
+            if (crashRing.Enabled()) {
+                // tick 末 (= 構造変更が空 = .rep が記録するのと同じ点) のハッシュ。
+                // これがあるので、届いた crash.rep は「本当に同じ世界を再現したか」を
+                // 受け取り側が tick 単位で機械判定できる
+                crashRing.OnTickEnd(simRefs, ranTick,
+                                    HashWorld(scene.GetWorld(), &particleSystem.Cpu(),
+                                              &scene.Time(), &scene.Persist()));
+            }
             // ---- タイムトラベルのリングへ記録 (M52e) ----
             // 記録/検証中は .rep がその役なので載せない。simulateScripts は
             // RunOneTick の中で app が決めた**その tick の実効値**を読む
@@ -787,8 +866,13 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             ctx.requestExit = true;
         }
         if (verifying && !player.failed && !player.HasTick(ctx.tickIndex)) {
-            MYE_LOG_INFO("[replay] VERIFY PASS: %llu ticks hash-identical",
-                         static_cast<unsigned long long>(player.verifiedTicks));
+            // 未完了 tick (クラッシュ .rep の最後の 1 本) がある場合は必ず併記する。
+            // 「600 tick 一致」と「599 tick 一致 + 1 tick 未照合」を同じ文で出さない
+            MYE_LOG_INFO("[replay] VERIFY PASS: %llu ticks hash-identical%s",
+                         static_cast<unsigned long long>(player.verifiedTicks),
+                         player.unverifiedTicks > 0
+                             ? " (plus in-flight tick(s) with no expected hash - crash bundle)"
+                             : "");
             ctx.requestExit = true;
         }
         timings.tickMs = static_cast<float>((clock.Now() - tTicks) * 1000.0);
@@ -956,9 +1040,18 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                      stressCaptureMs / static_cast<double>(stressCount),
                      stressRestoreMs / static_cast<double>(stressCount));
     }
+    if (crashRing.Enabled()) {
+        // 1 本の .rep がどこまで小さく収まっているかの一次データ (バンドルの上限見積り)
+        MYE_LOG_INFO("[crash] rep ring: %llu snapshots taken, last image %zu bytes "
+                     "(snapshot %zu + %llu ticks)",
+                     static_cast<unsigned long long>(crashRing.SnapshotCount()),
+                     crashRing.ImageBytes(), crashRing.SnapshotBytes(),
+                     static_cast<unsigned long long>(crashRing.RecordCount()));
+    }
     MYE_LOG_INFO("Engine loop finished (%llu frames, %llu ticks)",
                  static_cast<unsigned long long>(ctx.frameIndex),
                  static_cast<unsigned long long>(ctx.tickIndex));
+    // ハンドラを外すのは crashHandlerScope (RAII) の仕事 — ここでは何もしない
     return exitCode;
 }
 

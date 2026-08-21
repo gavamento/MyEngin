@@ -101,5 +101,6 @@ jobs:
             cache/*.scene.json
             cache/*.log
             tests/actual/*.png
+            bin/x64/*/crash/**
           if-no-files-found: ignore
           retention-days: 7

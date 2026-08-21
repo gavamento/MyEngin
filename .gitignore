@@ -15,3 +15,7 @@ assets/scenes/flow_game.scene.json*
 
 # スクショ回帰の撮り直し結果 (M52c)。golden だけを版管理する
 tests/actual/
+
+# クラッシュバンドル (M52f)。レガシー起動なら bin/ 配下だが、プロジェクト起動では
+# <projectRoot>\crash\ に出る = リポジトリ直下にも落ちうる
+crash/

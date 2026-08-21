@@ -20,6 +20,15 @@ namespace mye {
 //   snapshotSize … ヘッダ直後に置く「開始時点の sim 状態」。これがあると .rep は
 //                  シーン非依存に再生できる (M52f のクラッシュ再現が本命)
 //   playerCount  … tick レコードあたりの入力本数 (M52g のマルチ入力レーン)
+//
+// ★**worldHash == 0 は「期待値なし (未完了 tick)」の予約値** (M52f)。
+//   クラッシュ .rep の最後の 1 本は「入力は確定したが走り切らなかった tick」で、
+//   期待ハッシュが原理的に存在しない。ここに嘘の値を書くと、再現しなかったときに
+//   MISMATCH という別の事故に化けるので、値そのもので「照合しない」を表す。
+//   検証側 (TickRunner) は 0 のレコードを照合せず unverifiedTicks へ数える。
+//   ★記録側は 0 を書かない: 実ハッシュが偶然 0 になる確率は 2^-64 で、その場合も
+//     「その 1 tick が未照合になる」だけで誤検出にはならない (安全側に倒れる)。
+//   この予約は v4 のレイアウトを一切変えない = 版は上げない (決定台帳 3)。
 struct MyeReplayHeader {
     uint32_t magic = 0x5045524Du; // 'MREP'
     uint32_t version = 4;
@@ -77,9 +86,12 @@ public:
     }
     uint64_t ExpectedHash(uint64_t tick) const { return hashes_[static_cast<size_t>(tick)]; }
     bool HasTick(uint64_t tick) const { return tick < hashes_.size(); }
+    // 0 = 期待値なし (未完了 tick)。クラッシュ .rep の最後の 1 本がこれになる
+    bool HasExpectedHash(uint64_t tick) const { return ExpectedHash(tick) != 0; }
 
     // 照合結果
     uint64_t verifiedTicks = 0;
+    uint64_t unverifiedTicks = 0; // 期待値なしで走らせた tick (M52f)
     bool failed = false;
     uint64_t firstMismatchTick = 0;
 

@@ -44,7 +44,7 @@ M51 完遂 (`a0d5081` → 後続 `760ac83`、ABI v12、kEngineVersion 0.66) の�
 | M52c スクショ回帰 | 完了 | (本コミット) | 下記「M52c の申し送り」参照 |
 | M52d SimSnapshot 基盤 | 完了 | (本コミット) | 下記「M52d の申し送り」参照 |
 | M52e タイムトラベル | 完了 | (本コミット) | 下記「M52e の申し送り」参照 |
-| M52f クラッシュバンドル | 未着手 | | |
+| M52f クラッシュバンドル | 完了 | (本コミット) | 下記「M52f の申し送り」参照 |
 | M52g マルチ入力レーン | 未着手 | | |
 | M52h UDP + ロックステップ | 未着手 | | |
 | M52i ロールバック + ABI v13 | 未着手 | | |
@@ -320,6 +320,149 @@ M51 完遂 (`a0d5081` → 後続 `760ac83`、ABI v12、kEngineVersion 0.66) の�
 12. **エディタ GUI の実機目視は未** (タイムライン窓のスクラブ / つまみ追従 / 分岐して再開 /
     ツールバーの巻き戻しボタン)。機械検証は `--timetravel-selftest` が全経路を通しているが、
     「掴んで動かしたときの見た目」だけは自動化できていない。M51f/M51i と同じ積み残し。
+
+### M52f の申し送り (計画外の事実・罠)
+
+1. ★**「落ちた tick の入力」をどう .rep に載せるかが、このサブ唯一の設計上の難所だった。**
+   落ちるのは `RunOneTick` の**中**なので、tick 末に入力を載せる作りだと
+   「まさに落ちた tick」が .rep に残らず、再生してもその tick へ**入れない** =
+   再現できない再現用ファイルになる。対策は `OnTickBegin` で先に入力を載せること。
+   ただしその tick の期待ハッシュはまだ存在しないので、**`worldHash == 0` を
+   「期待値なし (未完了 tick)」の予約値に決めた** (`Replay.h` に明記)。
+   - ここに「前 tick のハッシュ」等の嘘を書くと、**再現しなかったときに MISMATCH という
+     別の事故に化ける**。値そのもので「照合しない」を表すのが唯一まともな解。
+   - v4 のレイアウトは 1 バイトも変わらない = **版は上げていない** (決定台帳 3 を守れた)。
+     偶然ハッシュが 0 になる確率は 2^-64 で、その場合も「その 1 tick が未照合になる」
+     だけ = 安全側に倒れる。
+   - 検証側は `unverifiedTicks` に数え、**「落ちずに通り抜けた = 今回は再現しなかった」**を
+     WARN で明示する。VERIFY PASS の行にも未完了 tick がある旨を出す。
+
+2. **バンドラは 2 層に割った** (計画は `CrashHandler.h/.cpp` 1 本だった)。
+   `Platform\CrashHandler.*` … OS 側 (4 ハンドラ / minidump / crash.txt / 固定バッファ書式化)
+   `Engine\Replay\CrashRing.*` … sim 側 (.rep イメージの常時維持 + scene.json のコピー)
+   理由は層規則そのもの: リングは `SimSnapshot` を要るので Platform には置けない。
+   両者は `CrashPayloadFn` (関数ポインタ + `void*`) 1 本だけで繋いである。
+
+3. ★**リングは「.rep のバイト列そのもの」を常時維持する。** ハンドラ内で
+   `std::vector` を舐めてファイルを組み立てる余裕は無い (確保も走査もできない前提)。
+   `[header][snapshot][records...]` を 1 本の `image_` に持ち、
+   - 入力の追記 = レコード書き込み → **`header.tickCount` の 1 ストアで発行**
+     (書きかけのレコードは常に範囲外に居るので、どこで落ちてもイメージは整合する)
+   - ハッシュの確定 = 8 バイト整列の単一ストア (破れない)
+   - 撮り直し中だけ `ready_ = false` にして、ハンドラは**中途半端なイメージを書かない**
+   実測 (既定デモ 528 体): スナップショット 130,797 B + 600 tick 分 43,200 B ≒ **170KB**。
+   17 体の `ui_probe` シーンなら crash.rep は **12KB**。計画の「数 MB に収める」に対して桁 2 つ余裕。
+
+4. ★**Debug CRT の不正パラメータは、ハンドラより先にアサートを報告する。**
+   既定の報告先は**モーダルダイアログ**なので、そこで止まって
+   `_set_invalid_parameter_handler` が永久に呼ばれない = Debug ではこの経路が実質死んでいた
+   (実測: `Runtime.exe --crash-test invalidparam` が固まってバンドルが出ず、
+   タイムアウトで気づいた)。`IsDebuggerPresent()` が偽のときだけ
+   `_CrtSetReportMode(_CRT_ASSERT/_CRT_ERROR, _CRTDBG_MODE_DEBUG|_CRTDBG_MODE_FILE)` で
+   報告先を落としてハンドラまで到達させる。
+   **Release では `crtdbg.h` がこの 2 本を no-op マクロにするので `#ifdef _DEBUG` は不要**
+   (= 規則 1 に触れずに済む。`check_rules.ps1` の許可リストを増やさなかった)。
+
+5. ★**バッチの `if errorlevel 1` は SEH で落ちた exit code を拾えない。**
+   AV の終了コードは `0xC0000005` = 符号付きだと負なので「1 以上か」の判定が**偽になる**。
+   `crash_verify.bat` は全部 `if !ERRORLEVEL! EQU 0` / `NEQ 0` の数値比較で書いてある。
+   実測の終了コード: av = `-1073741819`、purecall / terminate / invalidparam = `3`
+   (非 SEH 経路はバンドルを書いてから `TerminateProcess(.., 3)`)。
+
+6. **合成クラッシュの引き金はフラグ側にあるので、再現コマンドにも同じ引数を渡す。**
+   `--crash-test` は「tick N で落とす」でしかないので、`crash.rep` だけでは再現しない
+   (実バグは sim 状態が引き金なので素の再生で再現する)。`crash_verify.bat` は
+   **2 段構え**で検証している:
+   ① 素の `--replay-verify crash.rep` … 落ちる直前 tick まで**ハッシュ一致で再生**
+      = 「同じ世界を復元できた」の機械的な証拠 (これが本命)
+   ② `--crash-test` を足した `--replay-verify` … **同じ tick でまた落ちて 2 個目の
+      バンドルを書く** = tick 番号ごと復元されている証拠
+   実走: 5 種 × 3 検査すべて PASS (Debug / Release)。
+   ★`crash_verify.bat` 自体は CI に入れない (プロセスを故意に落とすので、赤が本物か
+   仕込みか区別しづらい) が、**CI の失敗アーティファクトに `bin/x64/*/crash/**` を足した** —
+   ランナー上で*予定外に*落ちたときは、exit code ではなく再生可能なバンドルが手に入る。
+   ★さらに強い実証として、**Debug の Editor で落ちて出た crash.rep が、Debug Runtime でも
+   Release Runtime でも 25 tick ハッシュ一致で再生できた** (exe も構成も跨いで再現する)。
+   埋め込みスナップショットがあるので `--scene` すら要らない。
+
+7. **ハンドラ内の作業領域はスタックに置かない。** スタックオーバーフローで飛んできたときに
+   残っているスタックは 1 ページ程度しか無く、数 KB のローカル配列を積んだ瞬間に
+   二重フォルトして報告ごと消える。パス組み立ても書式化もファイル単位の `static` バッファ
+   (再入ガードで単一スレッド化済み)。`dbghelp.dll` も **Install 時に**解決する
+   (ハンドラ内の `LoadLibrary` はローダロック)。
+   障害モジュールの特定も `GetModuleHandleEx` ではなく `VirtualQuery` の `AllocationBase`
+   (素性の分からないポインタは `IsReadable` = `VirtualQuery` の `MEM_COMMIT` + 保護属性を
+   確かめてから触る。**ハンドラの中で AV を起こすと再入ガードに弾かれて報告ごと消える**)。
+
+8. ★**この方針を実地で検証するために `--crash-test stackoverflow` を足した** (計画は 3 種、
+   結果 5 種)。**最悪ケースを試さないと「スタックを使わない設計」が効いているか分からない**。
+   実測でそのまま 2 つ分かった:
+   - **crash.txt と crash.rep は問題なく出た** = 事前確保方針は効いている。
+   - **`MiniDumpWriteDump` は落ちた** — 残りスタックが足りず、0 バイトのダンプを残したまま
+     入れ子フォルトでプロセスが即死し、後始末すら走らなかった。
+   → **minidump だけ `CreateThread` で新品のスタックへ逃がした** (`MINIDUMP_EXCEPTION_INFORMATION`
+   には**落ちたスレッドの id** を渡す。呼び出し元は有限待ち 20 秒、失敗なら空ファイルを消す)。
+   結果、スタックオーバーフローでも **2.1 MB の正常な minidump** が出るようになった。
+   ★minidump をバンドルの**最後**に書く順序 (txt → rep → dump) もここで効いている —
+   一番重い処理が転んでも、本体の 2 つは既にディスクにある。
+
+9. **hashdump はバンドルに入れていない** (決定台帳 6 は 4 点セットと書いていた)。
+   `HashWorldDump` は 7500 行規模の文字列を作る = ハンドラ内では絶対に踏めない。
+   ただし**受け取り側が crash.rep から生成できる**ので情報は失われない
+   (`--replay-verify crash.rep --hash-dump-tick N`)。
+   M52i の desync バンドラは**ハンドラの外**で走るのでそちらには入れられる。
+
+10. **`crash.txt` には起動コマンドラインを丸ごと入れた。** 再現手順が
+   「同じコミットの同じ構成 + このコマンドライン + `--replay-verify crash.rep`」で閉じる。
+   `scene` 行はシーンの**元ファイル**で、コードから組んだデモは
+   `(built in memory - no source file)` と正直に出る (既定デモがまさにこれ —
+   `assets\scenes\main.scene.json` は存在しないので Runtime は `BuildDemoScene` に落ちている)。
+   `scene.json` のコピーもその場合は出ない。**crash.rep は埋め込みスナップショット付きなので
+   scene.json 無しでも再現できる** = 添付は人間向けの補助でしかない。
+
+11. **リングは既定 on・記録/検証中も動かす。代償は tick 末の `HashWorld` が常時 1 回増えること。**
+    ★実測 (Release / WARP / 既定デモ 528 体 / 600 tick の verify を 2 回ずつ):
+    ring ON = 4512, 4458 ms / ring OFF = 4380, 4351 ms → 差 107〜132 ms / 600 tick
+    = **約 0.2 ms/tick**。60Hz なら 1 フレーム 16.6ms の **約 1.2%**。
+    「落ちたら再現可能な報告が必ず残る」の対価としては安いと判断して既定 on にしたが、
+    タダではない — 外したいときは `--no-crash-handler`。
+    なお TimeTravel が有効なとき (エディタの Play / `--timetravel-selftest`) は TimeTravel も
+    自前でハッシュを撮るので**同じ tick で 2 回**走る。**M52i でロールバックが毎 tick ハッシュを
+    要求したら、そこで 3 者を 1 本に畳む** (`TickServices` に「この tick のハッシュ」を持たせて
+    RunOneTick / TimeTravel / CrashRing で共有する) のが自然。今は畳んでいない。
+
+12. **設置は `app.OnStart` の前、解除は RAII。** シーンロードやスクリプト初期化で落ちるのは
+    最もありふれた壊れ方なので、そこを取りこぼさない (その時点ではリングが空 =
+    crash.rep 無しだが minidump と crash.txt は出る)。
+    ★ハンドラが掴むのは `Run` のローカル (`ctx` / `crashRing` / `crashPayload`) なので、
+    Install 以降の **early return が何本もある** (埋め込みスナップショットの復元失敗など)。
+    経路を数える代わりに `CrashHandlerScope` の RAII に任せてある
+    (`crashRing` より**後**に宣言 = 必ず先に走る)。
+
+13. **`--crash-test` の綴り違いは exit 2 で弾く。** 黙って無視すると
+    「落とすつもりで走らせたのに何も起きない」を延々追いかけることになる。
+    同じ理由で、`TriggerTestCrash` から**戻ってきてしまった**場合も
+    `[crash] ... did NOT crash` を出して exit 2 で止める (4 の罠はこれで気づけるようにした)。
+
+14. **ビルド情報は生成ヘッダ経由** (`obj\generated\<Config>\MyeBuildInfo.h`)。
+    `ClCompile` の `PreprocessorDefinitions` へ直接入れると、git ハッシュが変わるたびに
+    全 .cpp のコマンドラインが変わって**毎回フルリビルド**になる。
+    書き手は Engine プロジェクトだけ (`/m` で 4 プロジェクトが同じファイルを書くと競る)。
+    `git describe --always --dirty --abbrev=12 --exclude=*` の出力を正規表現で検証してから
+    採用し、git が無ければ `unknown` に落とす。
+    ★`.props` の **XML コメントに `--` を書くと MSBuild が読めない** (`--dirty` と書いて
+    `MSB4024` で全ビルドが即死した)。
+
+15. **バンドルの出力先は `save\` / `cache\cooked\` と同じ二経路規則** —
+    `projectRoot` があればその下、無ければ exe の隣。つまり配布 dist を
+    `C:\Program Files\` 配下へ置くと**書けない** (バンドルが出ない)。
+    M52 の範囲では既存の規則に揃えることを優先した。配布形態を詰めるとき
+    (`%LOCALAPPDATA%` へ逃がす等) に見直す論点として残す。
+
+16. **未検証**: ①ワーカースレッド (JobSystem) で落ちたときの挙動 — リングが撮影中なら
+    crash.rep は出ない設計だが、実走で踏んではいない ②エディタ GUI を人が触っている最中の
+    クラッシュ (実機目視は未。`--crash-test` 経由の機械検証は Editor でも通っている)
+    ③同一秒に 2 回落ちたときの連番 (`_1`.. のフォールバック経路)。
 
 ---
 

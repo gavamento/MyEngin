@@ -394,7 +394,16 @@ void RunOneTick(TickServices& ts)
         const uint64_t actual = HashWorld(scene.GetWorld(), &particleSystem.Cpu(),
                                           &scene.Time(), &scene.Persist());
         const uint64_t expected = ts.player->ExpectedHash(ctx.tickIndex);
-        if (actual != expected) {
+        if (expected == 0) {
+            // ★期待値なし = クラッシュ .rep の「走り切らなかった最後の tick」(M52f)。
+            //   照合対象が存在しないので数えるだけ。ここまで来たということは
+            //   **落ちずに通り抜けた** = 再現しなかった、という情報そのものになる
+            ++ts.player->unverifiedTicks;
+            MYE_LOG_WARN("[replay] tick %llu has no expected hash (in-flight tick of a crash "
+                         "bundle) - it did NOT crash this time (actual %016llX)",
+                         static_cast<unsigned long long>(ctx.tickIndex),
+                         static_cast<unsigned long long>(actual));
+        } else if (actual != expected) {
             // 乖離: 初回の tick とエンティティ別サブハッシュを報告して失敗終了
             ts.player->failed = true;
             ts.player->firstMismatchTick = ctx.tickIndex;

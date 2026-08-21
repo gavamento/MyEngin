@@ -133,6 +133,29 @@ size_t ReadSince(uint64_t& cursor, LogEntry* out, size_t maxOut)
     return count;
 }
 
+size_t ReadRecentUnsafe(LogEntry* out, size_t maxOut)
+{
+    // ★ロックを取らない (Log.h の理由参照)。g_totalWritten を 1 回だけ読んで固定し、
+    //   そこから遡る。書き込みと競合したエントリは中途半端な文字列になりうるが、
+    //   utf8::CopyTruncated が常に終端を書くので読み出し側が暴走することは無い
+    if (out == nullptr || maxOut == 0) {
+        return 0;
+    }
+    const uint64_t total = g_totalWritten;
+    const uint64_t oldest = (total > kCapacity) ? total - kCapacity : 0;
+    uint64_t begin = (total > maxOut) ? total - maxOut : 0;
+    if (begin < oldest) {
+        begin = oldest;
+    }
+    size_t count = 0;
+    for (uint64_t i = begin; i < total && count < maxOut; ++i) {
+        out[count++] = g_ring[i & (kCapacity - 1)];
+        out[count - 1].message[sizeof(out[count - 1].message) - 1] = '\0';
+        out[count - 1].file[sizeof(out[count - 1].file) - 1] = '\0';
+    }
+    return count;
+}
+
 uint64_t TotalWritten()
 {
     std::lock_guard<std::mutex> lock(g_mutex);
