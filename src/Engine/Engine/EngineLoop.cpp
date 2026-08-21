@@ -27,6 +27,7 @@
 #include "Engine/Engine/RenderSystem.h"
 #include "Engine/Engine/Replay/Replay.h"
 #include "Engine/Engine/Replay/SimSnapshot.h"
+#include "Engine/Engine/Replay/TimeTravel.h"
 #include "Engine/Engine/Replay/WorldHasher.h"
 #include "Engine/Engine/SaveGame.h"
 #include "Engine/Engine/Scene.h"
@@ -362,7 +363,17 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     simRefs.collision = &collisionSystem;
     simRefs.scripts = &scriptHost;
     simRefs.prevTickInput = &prevTickInput;
+    // M52e: 音の再生ハンドル採番も sim へ戻る値なのでリングに載せる (SimSnapshot.h 参照)
+    simRefs.audioHandleSeq = &audioHandleSeq;
     simRefs.tickIndex = &ctx.tickIndex;
+
+    // ---- タイムトラベルのリング (M52e) ----
+    // 有効化はエディタ (Play/Stop) か CLI プローブが行う。ここでは器を持つだけ
+    TimeTravel timeTravel;
+    ctx.timeTravel = &timeTravel;
+    if (config.timeTravelProbeTicks > 0) {
+        timeTravel.SetEnabled(true);
+    }
 
     // ---- リプレイ記録/検証の準備 (spec 11.3) ----
     ReplayRecorder recorder;
@@ -473,6 +484,107 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     tickServices.lastTickSimulated = &lastTickSimulated;
     tickServices.exitCode = &exitCode;
 
+    // ---- タイムトラベルのシーク本体 (M52e) ----
+    // 「target 以下の最寄りスナップショットへ Restore → 記録入力で target まで描画なし再シム」。
+    // ★再シムは**通常 tick と同じ RunOneTick** を通す (決定台帳 2)。ここで tick を書き直すと
+    //   「巻き戻したときだけ挙動が違う」種類のバグが必ず入る。
+    // ★呼べるのは tick 境界だけ (構造変更が空)。フレーム頭から呼ぶので、直前フレームの
+    //   ImGui が積んだ編集要求を先に捌いてから戻す (捌かないと破棄済み世界のコマンドが残る)
+    const auto SeekTo = [&](uint64_t target) {
+        SeekReport rep;
+        rep.target = target;
+        const double t0 = clock.Now();
+        scene.GetWorld().ApplyStructuralChanges();
+        if (target < ctx.tickIndex) {
+            uint64_t snapTick = 0;
+            const std::vector<std::byte>* blob = timeTravel.SnapshotAtOrBefore(target, snapTick);
+            if (blob == nullptr
+                || !RestoreSimSnapshot(simRefs, blob->data(), blob->size())) {
+                MYE_LOG_ERROR("[timetravel] no restorable snapshot at or before tick %llu",
+                              static_cast<unsigned long long>(target));
+                rep.outcome = SeekOutcome::Failed;
+                rep.ms = (clock.Now() - t0) * 1000.0;
+                timeTravel.ReportSeek(rep);
+                return rep;
+            }
+            rep.fromSnapshot = snapTick;
+            // 非 sim レーンの見せ方は消費者の責務 (SimSnapshot.h、M52d 申し送り 6)。
+            // タイムトラベルは「未来の残像」を消したいので、トレイルと GPU パーティクルを
+            // 落とす。**CPU パーティクルの池は blob 側で戻っている**ので触ってはいけない
+            vfxRenderer.Reset();
+            particleSystem.Gpu().Reset();
+        } else {
+            // 前進シークは現在地からそのまま再シムする (戻す必要が無い)。
+            // 「T-K へ戻ってから記録入力で T まで進めると元の T と一致する」という
+            // プローブの主検査はこの経路を通る
+            rep.fromSnapshot = ctx.tickIndex;
+        }
+        // ---- 記録入力で target まで再シム (描画なし) ----
+        const bool savedSimulate = ctx.simulateScripts;
+        const InputSnapshot savedInput = ctx.input;
+        audioSystem.SetSuspended(true); // 立ち上がりで全停止 = 捨てた未来の音を断つ
+        tickServices.app = nullptr;      // エディタ更新は回さない
+        tickServices.recorder = nullptr; // 記録も照合もしない
+        tickServices.player = nullptr;
+        tickServices.prevWorld = nullptr;
+        tickServices.resim = true;
+        while (ctx.tickIndex < target) {
+            const TimeTravelEntry* e = timeTravel.Entry(ctx.tickIndex);
+            if (e == nullptr) {
+                MYE_LOG_ERROR("[timetravel] missing input for tick %llu",
+                              static_cast<unsigned long long>(ctx.tickIndex));
+                rep.outcome = SeekOutcome::Failed;
+                break;
+            }
+            ctx.input = e->input;
+            // ★ポーズ中の tick も「進めない tick」として忠実になぞる —
+            //   飛ばすと prevTickInput が食い違ってアクションの pressed/released が割れる
+            ctx.simulateScripts = e->simulated;
+            RunOneTick(tickServices);
+            ++rep.resimTicks;
+        }
+        tickServices.app = &app;
+        tickServices.recorder = &recorder;
+        tickServices.player = &player;
+        tickServices.prevWorld = &prevWorld;
+        tickServices.resim = false;
+        ctx.simulateScripts = savedSimulate;
+        ctx.input = savedInput;
+        audioSystem.SetSuspended(recorder.IsActive() || player.IsActive());
+        // M36b の補間参照を捨てる: 過去へ飛んだ直後のフレームが「シーク前の行列」と
+        // 混ざって 1 フレームだけ幽霊が出るのを防ぐ (Get() が null を返す = 補間しない)
+        prevWorld.world.clear();
+        prevWorld.generation.clear();
+        if (rep.outcome != SeekOutcome::Failed) {
+            // ★シークは毎回**自己検証する**。戻して同じ入力で回した結果が記録と
+            //   ビット一致しなければ、決定論の外 (C# レーン等) が混ざっている証拠
+            rep.expectedHash = timeTravel.HashAtTick(target);
+            rep.actualHash = HashWorld(scene.GetWorld(), &particleSystem.Cpu(), &scene.Time(),
+                                       &scene.Persist());
+            rep.outcome = (rep.expectedHash == rep.actualHash) ? SeekOutcome::Ok
+                                                              : SeekOutcome::HashMismatch;
+        }
+        rep.ms = (clock.Now() - t0) * 1000.0;
+        timeTravel.ReportSeek(rep);
+        MYE_LOG_INFO("[timetravel] seek to tick %llu from snapshot %llu (%llu ticks re-simulated, "
+                     "%.2f ms) -> %s",
+                     static_cast<unsigned long long>(rep.target),
+                     static_cast<unsigned long long>(rep.fromSnapshot),
+                     static_cast<unsigned long long>(rep.resimTicks), rep.ms,
+                     rep.outcome == SeekOutcome::Ok
+                         ? "hash OK"
+                         : (rep.outcome == SeekOutcome::HashMismatch ? "HASH MISMATCH" : "FAILED"));
+        return rep;
+    };
+    // --timetravel-selftest の進行状態 (M52e)。
+    // 0 = 走行中 / 1 = シーク往復を検査済みでスクラブ静止の確認待ち /
+    // 2 = 再開後の分岐の確認待ち / 3 = 終了
+    int ttProbeStage = 0;
+    int ttProbeFails = 0;
+    int ttProbeFramesLeft = 0;
+    uint64_t ttScrubTarget = 0;
+    uint64_t ttPreScrubEnd = 0;
+
     while (running) {
         // ---- フェーズ 1: 時間更新 / 入力取得 ----
         if (!window.PumpMessages()) {
@@ -485,9 +597,11 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         if (dt > kMaxFrameDt) {
             dt = kMaxFrameDt;
         }
-        if (deterministicShot) {
+        const bool ttProbeRunning = config.timeTravelProbeTicks > 0 && ttProbeStage < 3;
+        if (deterministicShot || ttProbeRunning) {
             // M52c: accumulator は毎フレームちょうど kFixedDt 増えて 1 tick 消費し 0 に戻る
-            // (同じ double を足して引くので誤差ゼロ) = フレームと tick が 1:1 で固定される
+            // (同じ double を足して引くので誤差ゼロ) = フレームと tick が 1:1 で固定される。
+            // M52e のプローブも同じ扱い — 実時間で回すと 400 tick に 6.7 秒かかる
             dt = kFixedDt;
         }
         ctx.input = input.CaptureSnapshot();
@@ -518,9 +632,33 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         // playOnAwake がその頻度で走ってしまう。サスペンドの立ち上がりで一度だけ全停止し、
         // サスペンド中も voice 回収 (Update) は動き続ける (止めるとスロットが枯れる) ----
         audioSystem.SetSuspended(recorder.IsActive() || verifying);
+
+        // ---- タイムトラベル (M52e): リングの開始とシーク要求を tick 境界で捌く ----
+        // ★どちらもフレーム頭 (= 前フレームの tick が終わった直後) でしか行わない。
+        //   ImGui の途中で世界を差し替えると、その後のウィンドウが破棄済み EntityID を掴む
+        // 記録/検証中は .rep がタイムラインの役なので、リングは起こさない
+        // (起こすと 1 枚撮って entry が 1 つも積まれない空リングが残る)
+        if (timeTravel.BeginPending() && !recorder.IsActive() && !verifying) {
+            scene.GetWorld().ApplyStructuralChanges(); // 撮影点の前提 (構造変更が空)
+            timeTravel.Begin(simRefs, ctx.tickIndex);
+        }
+        if (timeTravel.HasPendingSeek()) {
+            const uint64_t target = timeTravel.PendingSeek();
+            timeTravel.ClearPendingSeek();
+            SeekTo(target);
+        }
+        // スクラブ中は tick を 1 本も進めない。
+        // ★ここを止めないと、シーク直後のポーズ tick が「分岐」としてリングの未来を
+        //   消してしまい、行ったり来たりのスクラブが成立しない (実装中に踏んだ罠)。
+        //   ポーズ tick は sim を進めないが prevTickInput と tickIndex は動かすので、
+        //   「ポーズしているから無害」ではない
+        const bool scrubbing = timeTravel.Scrubbing();
+        if (scrubbing) {
+            accumulator = 0.0; // 再開時に溜まった分が一気に流れないように
+        }
         // 検証モードは実時間と切り離して最速で回す (spec 11.3 の CLI 実行)
         const int maxTicksThisFrame = verifying ? 64 : kMaxTicksPerFrame;
-        while (ticks < maxTicksThisFrame
+        while (!scrubbing && ticks < maxTicksThisFrame
                && (verifying ? player.HasTick(ctx.tickIndex) : accumulator >= kFixedDt)) {
             if (verifying) {
                 ctx.input = player.InputForTick(ctx.tickIndex); // フェーズ 1 の入力を置換
@@ -528,7 +666,14 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             // ---- 固定 tick 本体 (M52d、決定台帳 2) ----
             // 通常 tick / タイムトラベル再シム / ロールバック再シムが通る唯一の実装。
             // ここでの仕事は「この tick が消費する入力を確定させて呼ぶ」だけ
+            const uint64_t ranTick = ctx.tickIndex;
             RunOneTick(tickServices);
+            // ---- タイムトラベルのリングへ記録 (M52e) ----
+            // 記録/検証中は .rep がその役なので載せない。simulateScripts は
+            // RunOneTick の中で app が決めた**その tick の実効値**を読む
+            if (timeTravel.Enabled() && !recorder.IsActive() && !verifying) {
+                timeTravel.OnTickEnd(simRefs, ranTick, ctx.input, ctx.simulateScripts);
+            }
             // ---- スナップショット往復ストレス (M52d、--snapshot-stress N) ----
             // tick 境界 (= 構造変更が空でハッシュを撮ったのと同じ状態) で「撮る → 戻す →
             // 撮り直す」。sim の意味論は変わらないので、これを挟んでも .rep の期待ハッシュは
@@ -566,6 +711,81 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             // 追いつけない分は捨てる (スローモーション化を許容し、tick 爆発を防ぐ)
             accumulator = kFixedDt;
         }
+        // ---- タイムトラベルの自動プローブ (M52e、--timetravel-selftest N) ----
+        // 「T まで進める → T-K へ戻す → 記録入力で T まで再シム → 元の T とハッシュ一致」を
+        // 複数の K で実走する。エディタ GUI を開かずに巻き戻しの正しさを機械判定する唯一の口
+        if (config.timeTravelProbeTicks > 0 && ttProbeStage == 0
+            && ctx.tickIndex >= static_cast<uint64_t>(config.timeTravelProbeTicks)) {
+            const uint64_t here = ctx.tickIndex;
+            MYE_LOG_INFO("==== time travel probe: tick %llu, ring [%llu, %llu), %zu snapshots "
+                         "(%zu KB) ====",
+                         static_cast<unsigned long long>(here),
+                         static_cast<unsigned long long>(timeTravel.FirstTick()),
+                         static_cast<unsigned long long>(timeTravel.EndTick()),
+                         timeTravel.SnapshotCount(), timeTravel.SnapshotBytes() / 1024);
+            // K は「スナップショット間隔より短い / ちょうど / 跨ぐ / 大きく跨ぐ」を混ぜる。
+            // 短い K は再シム 0 tick の縮退経路 (スナップショットそのものへ戻る) も踏む
+            const uint64_t kList[] = { 1, 7, 30, 61, 120 };
+            for (uint64_t k : kList) {
+                if (here < k || here - k < timeTravel.FirstTick()) {
+                    MYE_LOG_INFO("[timetravel]   K=%llu: skipped (outside the ring)",
+                                 static_cast<unsigned long long>(k));
+                    continue;
+                }
+                const SeekReport back = SeekTo(here - k);
+                const SeekReport fwd = SeekTo(here);
+                const bool ok = back.outcome == SeekOutcome::Ok && fwd.outcome == SeekOutcome::Ok;
+                if (!ok) {
+                    ++ttProbeFails;
+                }
+                MYE_LOG_INFO("[timetravel]   K=%llu: %s (back %llu ticks / forward %llu ticks)",
+                             static_cast<unsigned long long>(k), ok ? "PASS" : "FAIL",
+                             static_cast<unsigned long long>(back.resimTicks),
+                             static_cast<unsigned long long>(fwd.resimTicks));
+            }
+            // ---- ここから先はリング操作の「生のループ上での」検査 ----
+            // SeekTo を直接叩く上の検査では、スクラブ中に tick が止まることと、
+            // 再開したときに未来が捨てられることが確かめられない。この 2 つは
+            // 「ポーズ tick が黙ってリングの未来を食う」という一番痛い壊れ方の防波堤なので、
+            // 実際に RequestSeek を出してフレームを回して確認する
+            ttPreScrubEnd = timeTravel.EndTick();
+            ttScrubTarget = (here >= timeTravel.FirstTick() + 60) ? here - 60
+                                                                  : timeTravel.FirstTick();
+            timeTravel.RequestSeek(ttScrubTarget);
+            ttProbeFramesLeft = 3;
+            ttProbeStage = 1;
+        } else if (ttProbeStage == 1 && --ttProbeFramesLeft <= 0) {
+            // 3 フレーム回した後: tick は 1 つも進んでおらず、記録済みの未来も残っているはず
+            const bool still = ctx.tickIndex == ttScrubTarget;
+            const bool futureKept = timeTravel.EndTick() == ttPreScrubEnd;
+            if (!still || !futureKept || !timeTravel.Scrubbing()) {
+                ++ttProbeFails;
+            }
+            MYE_LOG_INFO("[timetravel]   scrub hold: %s (tick %llu, ring end %llu)",
+                         (still && futureKept) ? "PASS" : "FAIL",
+                         static_cast<unsigned long long>(ctx.tickIndex),
+                         static_cast<unsigned long long>(timeTravel.EndTick()));
+            timeTravel.EndScrub(); // 再生を再開した = ここから分岐する
+            ttProbeStage = 2;
+        } else if (ttProbeStage == 2 && ctx.tickIndex > ttScrubTarget) {
+            const bool branched = timeTravel.EndTick() == ctx.tickIndex
+                && timeTravel.EndTick() < ttPreScrubEnd;
+            if (!branched) {
+                ++ttProbeFails;
+            }
+            MYE_LOG_INFO("[timetravel]   branch: %s (ring end %llu, was %llu)",
+                         branched ? "PASS" : "FAIL",
+                         static_cast<unsigned long long>(timeTravel.EndTick()),
+                         static_cast<unsigned long long>(ttPreScrubEnd));
+            if (ttProbeFails == 0) {
+                MYE_LOG_INFO("==== time travel probe: ALL PASS ====");
+            } else {
+                MYE_LOG_ERROR("==== time travel probe: %d FAILED ====", ttProbeFails);
+                exitCode = 1;
+            }
+            ttProbeStage = 3;
+            ctx.requestExit = true;
+        }
         if (verifying && !player.failed && !player.HasTick(ctx.tickIndex)) {
             MYE_LOG_INFO("[replay] VERIFY PASS: %llu ticks hash-identical",
                          static_cast<unsigned long long>(player.verifiedTicks));
@@ -590,8 +810,9 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         // (オーディオ suspend と同型)。フォーカス喪失中も 0 (裏で振動し続けない)。
         // 実際の XInputSetState は Input 側が値の変化時だけ発行する ----
         {
-            const bool vibSuspend =
-                recorder.IsActive() || player.IsActive() || !window.HasFocus();
+            // M52e: スクラブ中も 0 (止まった世界の裏で振動し続けない = 出力レーンの抑止)
+            const bool vibSuspend = recorder.IsActive() || player.IsActive()
+                || !window.HasFocus() || timeTravel.Scrubbing();
             input.ApplyVibration(vibSuspend ? 0.0f : padVibration.left,
                                  vibSuspend ? 0.0f : padVibration.right);
         }

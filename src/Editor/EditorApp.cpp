@@ -24,6 +24,7 @@
 #include "Engine/Engine/Script/ScriptHost.h"
 #include "Engine/Platform/PathUtil.h"
 #include "Engine/Platform/Win32Window.h"
+#include "Engine/Engine/Replay/TimeTravel.h"
 #include "Engine/Engine/Scene.h"
 #include "Engine/Engine/SceneSerializer.h"
 #include "Engine/Renderer/GpuResources.h"
@@ -55,6 +56,7 @@ void EditorApp::OnStart(EngineContext& ctx)
                     { "Animator", &animatorController_.open },
                     { "Search", &search_.open },
                     { "Profiler", &profiler_.open },
+                    { "Timeline", &timeline_.open },
                     { "Particle Settings", &particleSettings_.open },
                     { "Sound Generator", &soundGen_.open },
                     { "Audio Mixer", &audioMixer_.open },
@@ -326,6 +328,26 @@ void EditorApp::OnImGui(EngineContext& ctx)
     // アセットファイル操作エントリの実行に使う (M51i)。毎フレーム設定で常に最新を保証
     undo_.SetFileOpContext(&ctx);
 
+    // ---- タイムトラベルのリング (M52e) ----
+    // Play 中だけ回す (編集中は sim が進まないので撮っても意味が無く、
+    // ミニシーン編集中は Play 自体が禁止されている)。
+    // Stop で SetEnabled(false) → リングごと破棄 = Play セッションを跨いで持ち越さない。
+    // ★スクラブ中は EngineLoop が tick を止めているので、再生/ステップの再開要求は
+    //   ここ (フレーム側) で拾って明示的にスクラブを抜ける = そこから分岐する
+    if (ctx.timeTravel != nullptr) {
+        ctx.timeTravel->SetEnabled(playMode_.InPlayMode());
+        const PlayState playState = playMode_.State();
+        // ★見るのは「今 Playing か」ではなく **Paused → Playing の遷移**。
+        //   スクラブは必ずポーズを伴うので、状態だけで判定すると --autoplay のように
+        //   最初から Playing のままの経路でシーク要求が即座に取り消される
+        if (ctx.timeTravel->Scrubbing()
+            && ((playState == PlayState::Playing && prevPlayState_ != PlayState::Playing)
+                || playMode_.StepPending())) {
+            ctx.timeTravel->EndScrub();
+        }
+        prevPlayState_ = playState;
+    }
+
     // レイアウトロードは **どの ImGui::Begin よりも前** に実行する — LoadIniSettingsFromDisk が
     // 既存ウィンドウの DockId を差し替え、同フレームの Begin で新ドックに再バインドされる
     layouts_.ApplyPendingLoad();
@@ -371,6 +393,7 @@ void EditorApp::OnImGui(EngineContext& ctx)
     gameView_.OnImGui(ctx, selection_);
     particleSettings_.OnImGui(ctx);
     profiler_.OnImGui(ctx);
+    timeline_.OnImGui(ctx, playMode_);
     assetBrowser_.OnImGui(ctx, selection_, undo_, settings_.externalEditorCmd, preview_);
     // AssetBrowser で .scene.json がダブルクリックされたら未保存変更ガード経由で開く
     if (std::wstring p = assetBrowser_.TakePendingOpenScene(); !p.empty()) {
@@ -649,6 +672,7 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
         ImGui::MenuItem(Tr(StrId::Win_Animator), nullptr, &animatorController_.open);
         ImGui::MenuItem(Tr(StrId::Win_Search), nullptr, &search_.open);
         ImGui::MenuItem(Tr(StrId::Win_Profiler), nullptr, &profiler_.open);
+        ImGui::MenuItem(Tr(StrId::Win_Timeline), nullptr, &timeline_.open);
         ImGui::MenuItem(Tr(StrId::Win_ParticleSettings), nullptr, &particleSettings_.open);
         ImGui::MenuItem(Tr(StrId::Win_SoundGenerator), nullptr, &soundGen_.open);
         ImGui::MenuItem(Tr(StrId::Win_AudioMixer), nullptr, &audioMixer_.open);
@@ -852,6 +876,7 @@ void EditorApp::SetupDockLayout(unsigned int dockspaceId)
     ImGui::DockBuilderDockWindow("Sound Generator", rightBottom);
     ImGui::DockBuilderDockWindow("Audio Mixer", bottom);
     ImGui::DockBuilderDockWindow("Profiler", rightBottom);
+    ImGui::DockBuilderDockWindow("Timeline", bottom);
     ImGui::DockBuilderDockWindow("Console", bottom);
     ImGui::DockBuilderDockWindow("Assets", bottomRight);
     ImGui::DockBuilderDockWindow("Animation", bottom);

@@ -48,6 +48,20 @@ void PlayModeController::TogglePause()
     }
 }
 
+void PlayModeController::Pause()
+{
+    if (state_ == PlayState::Playing) {
+        state_ = PlayState::Paused;
+    }
+}
+
+void PlayModeController::Resume()
+{
+    if (state_ == PlayState::Paused) {
+        state_ = PlayState::Playing;
+    }
+}
+
 void PlayModeController::Step()
 {
     if (state_ == PlayState::Paused) {

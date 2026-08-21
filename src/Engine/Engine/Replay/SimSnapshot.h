@@ -21,7 +21,8 @@ class ScriptHost;
 //   World (全アーキタイプのカラム生バイト + レコード表 + freeIndices + ルート + RNG)
 //   Scene (TimeControl / PersistStore / nextFileId / sourcePath / override 表)
 //   CpuParticleBackend の池 / CollisionSystem の前 tick ペア / ScriptHost の Start 済み記録
-//   EngineLoop の prevTickInput (アクション評価の pressed/released 判定に効く)
+//   EngineLoop の prevTickInput (アクション評価の pressed/released 判定に効く) と
+//   audioHandleSeq (再生ハンドルの採番列)
 // **対象外**: C# (ManagedHost) レーン / GPU パーティクル / VfxRenderer トレイル /
 //   TransformSystem の側テーブル (M51c) / オーディオ。
 //   側テーブルは World::SnapshotRead が hierarchyDirty_ を立てることで Rebuild →
@@ -38,12 +39,18 @@ struct SimRefs {
     CollisionSystem* collision = nullptr;
     ScriptHost* scripts = nullptr;
     InputSnapshot* prevTickInput = nullptr;
+    // M52e: 再生ハンドルの採番カウンタ (EngineApiTable の PlaySound 系が ++ して script へ返す)。
+    // ★ハッシュには入らないが**戻り値がスクリプト経由で sim 状態へ入りうる**ので、
+    //   複数 tick の再シムを跨ぐと採番がずれて世界が割れる。--snapshot-stress は
+    //   同一 tick の往復しか見ないのでこの穴を検出できなかった (M52e で発見)
+    uint64_t* audioHandleSeq = nullptr;
     uint64_t* tickIndex = nullptr; // 撮影時に読み、復元時に書き戻す (null なら素通し)
 };
 
 // blob の形式版。**.rep の版とは独立** (M52a 申し送り 7 と同じ規約) —
-// blob のレイアウトを変えたらここだけを上げる
-inline constexpr uint32_t kSimSnapshotVersion = 1;
+// blob のレイアウトを変えたらここだけを上げる。
+// v2 (M52e): LOP 節へ audioHandleSeq を追加
+inline constexpr uint32_t kSimSnapshotVersion = 2;
 
 // 撮る: out を clear して blob を書く。成功で true。
 // 節ごとの参照が null なら「空の節」を書くのでレイアウトは常に同じ

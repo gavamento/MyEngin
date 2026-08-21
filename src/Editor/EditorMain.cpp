@@ -32,6 +32,7 @@
 #include "Engine/Engine/Project.h"
 #include "Engine/Engine/Replay/WorldHasher.h"
 #include "Engine/Engine/Replay/SimSnapshotSelfTest.h"
+#include "Engine/Engine/Replay/TimeTravelSelfTest.h"
 #include "Engine/Engine/Replay/WorldHasherSelfTest.h"
 #include "Engine/Engine/SceneSelfTest.h"
 #include "Engine/Engine/SkeletonSelfTest.h"
@@ -153,6 +154,16 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             } else if (arg == L"--snapshot-stress" && i + 1 < argc) {
                 // M52d: N tick ごとにスナップショット往復を挟む (期待ハッシュ不変が合格条件)
                 config.snapshotStress = _wtoi64(argv[++i]);
+            } else if (arg == L"--timetravel-selftest") {
+                // M52e: N tick 進めてから複数の K で巻き戻し + 再シムし、ハッシュを照合する。
+                // tick 数は省略可 (既定 400)。**--autoplay を一緒に立てる** — エディタは
+                // Play 中しか sim を進めないので、これが無いとリングが空のまま終わる
+                config.timeTravelProbeTicks = 400;
+                if (i + 1 < argc && argv[i + 1][0] != L'-') {
+                    config.timeTravelProbeTicks = _wtoi64(argv[++i]);
+                }
+                autoPlay = true;
+                config.vsync = false;
             } else if (arg == L"--hash-diff" && i + 2 < argc) {
                 hashDiffA = argv[++i]; // M52a: 2 つのダンプを突き合わせて終了
                 hashDiffB = argv[++i];
@@ -339,7 +350,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             && mye::RunPartSelfTest() && mye::RunSchemaSelfTest()
             && mye::RunCookedCacheSelfTest() && mye::RunInputActionsSelfTest()
             && mye::RunGameFlowSelfTest() && mye::RunWorldHasherSelfTest()
-            && mye::RunSimSnapshotSelfTest() && mye::RunImageDiffSelfTest();
+            && mye::RunSimSnapshotSelfTest() && mye::RunTimeTravelSelfTest()
+            && mye::RunImageDiffSelfTest();
         return ok ? 0 : 1;
     }
 

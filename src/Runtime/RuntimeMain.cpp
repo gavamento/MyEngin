@@ -145,6 +145,14 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             } else if (arg == L"--snapshot-stress" && i + 1 < argc) {
                 // M52d: N tick ごとにスナップショット往復を挟む (期待ハッシュ不変が合格条件)
                 config.snapshotStress = _wtoi64(argv[++i]);
+            } else if (arg == L"--timetravel-selftest") {
+                // M52e: 巻き戻し + 再シムのハッシュ照合 (tick 数は省略可、既定 400)。
+                // Runtime は常に sim を進めるので --autoplay 相当の細工は要らない
+                config.timeTravelProbeTicks = 400;
+                if (i + 1 < argc && argv[i + 1][0] != L'-') {
+                    config.timeTravelProbeTicks = _wtoi64(argv[++i]);
+                }
+                config.vsync = false;
             } else if (arg == L"--hash-diff" && i + 2 < argc) {
                 // M52a: 配布ビルド単体でもクラッシュ報告のダンプを突き合わせられるように
                 hashDiffA = argv[++i];

@@ -11,6 +11,7 @@
 #include "Engine/Core/Localization.h"
 #include "Engine/Engine/Audio/AudioSystem.h"
 #include "Engine/Engine/EngineLoop.h"
+#include "Engine/Engine/Replay/TimeTravel.h"
 #include "Engine/Renderer/ImGuiTheme.h"
 
 #include "imgui.h"
@@ -160,6 +161,24 @@ bool EditorToolbar::OnImGui(EngineContext& ctx, PlayModeController& playMode, Se
                 if (ImGui::IsItemHovered()) {
                     ImGui::SetTooltip("%s", Tr(StrId::Tool_TipStep));
                 }
+            }
+            // ---- 巻き戻し (M52e) ----
+            // タイムライン窓を開かずに「今の少し前」へ飛ぶための最短経路。
+            // リングが始まる前 (Play 直後の 1 フレーム) は無効
+            ImGui::SameLine();
+            TimeTravel* const tt = ctx.timeTravel;
+            ImGui::BeginDisabled(tt == nullptr || !tt->Enabled());
+            if (ImGui::Button(ICON_FA_CLOCK_ROTATE_LEFT) && tt != nullptr && tt->Enabled()) {
+                const uint64_t back = 30;
+                const uint64_t target = (ctx.tickIndex > tt->FirstTick() + back)
+                    ? ctx.tickIndex - back
+                    : tt->FirstTick();
+                playMode.Pause(); // 巻き戻した先で世界が止まっていないと観察できない
+                tt->RequestSeek(target);
+            }
+            ImGui::EndDisabled();
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("%s", Tr(StrId::Tool_TipTimeTravel));
             }
         }
         ImGui::EndDisabled();

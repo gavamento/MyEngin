@@ -4,7 +4,8 @@ rem   1. 両構成をビルド
 rem   2. Debug でゴールデンリプレイを記録
 rem   3. Debug と Release の両方でハッシュ照合
 rem   4. スナップショット往復ストレス (M52d)
-rem   5. 静的規則チェック
+rem   5. タイムトラベルの巻き戻し (M52e)
+rem   6. 静的規則チェック
 rem 全て成功で exit 0、いずれか失敗で exit 1
 rem
 rem M52a: 照合が失敗したときだけ :diagnose を呼び、
@@ -117,11 +118,20 @@ bin\x64\Debug\Editor.exe --replay-verify %REP% --snapshot-stress 37 %MYE_EXTRA_A
 bin\x64\Debug\Editor.exe --parts-demo --replay-verify %REP2% --snapshot-stress 37 %MYE_EXTRA_ARGS% || (echo [FAIL] snapshot stress: parts & exit /b 1)
 bin\x64\Debug\Editor.exe --flow-demo --replay-verify %REP3% --snapshot-stress 37 %MYE_EXTRA_ARGS% || (echo [FAIL] snapshot stress: flow & exit /b 1)
 
+rem ---- 5 段目: タイムトラベルの巻き戻し (M52e) ----
+rem 「T まで進める → T-K へ戻す → 記録入力で T まで再シム → 元の T とハッシュ一致」を
+rem 複数の K で実走し、続けて「スクラブ中は tick が止まる」「再開すると分岐して未来を捨てる」
+rem をライブのフレームループ上で確認する。ここが赤い = 巻き戻した世界が元と別物という意味で、
+rem タイムライン窓が見せる過去がそもそも嘘になる。Debug/Release 両方で回す
+echo === time travel probe (Debug/Release, 400 ticks) ===
+bin\x64\Debug\Editor.exe --timetravel-selftest 400 %MYE_EXTRA_ARGS% || (echo [FAIL] time travel: Debug & exit /b 1)
+bin\x64\Release\Editor.exe --timetravel-selftest 400 %MYE_EXTRA_ARGS% || (echo [FAIL] time travel: Release & exit /b 1)
+
 echo === static rule check ===
 pwsh -NoProfile -ExecutionPolicy Bypass -File tools\check_rules.ps1 || (echo [FAIL] rule check & exit /b 1)
 
 echo.
-echo [PASS] replay consistency (Debug/Release, 3 scenes: demo + parts + flow) + snapshot round-trip + rule check
+echo [PASS] replay consistency (Debug/Release, 3 scenes: demo + parts + flow) + snapshot round-trip + time travel + rule check
 exit /b 0
 
 rem ---------------------------------------------------------------- :diagnose

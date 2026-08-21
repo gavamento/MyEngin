@@ -106,6 +106,13 @@ struct TickServices {
     ReplayRecorder* recorder = nullptr;
     ReplayPlayer* player = nullptr;
 
+    // 再シム中 (M52e タイムトラベルのシーク / M52i ロールバック) は true。
+    // **過去に一度起きたことをもう一度なぞっている**状態なので、外へ出す側 (オーディオ /
+    // セーブ書出) と巻き戻せない側 (C# レーン) を record/verify と同じ条件で抑止する。
+    // ★入力側 (LoadGame / LoadScene) は抑止しない — 抑止すると元の tick 列と違う世界に
+    //   なって必ずハッシュが割れる。「読むもの」と「書き出すもの」を混同しないこと
+    bool resim = false;
+
     // 観測点 (呼び出し側のフレーム処理が読む)
     PrevWorldStore* prevWorld = nullptr;
     bool* lastTickSimulated = nullptr;

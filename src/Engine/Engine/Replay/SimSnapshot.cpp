@@ -204,12 +204,13 @@ void WriteScripts(ByteWriter& w, ScriptHost* scripts)
     w.PodVector(keys);
 }
 
-// ---- EngineLoop の前 tick 入力 (M51d のアクション評価が読む) ----
-void WriteLoop(ByteWriter& w, const InputSnapshot* prevTickInput)
+// ---- EngineLoop の tick 間キャリー (M51d の前 tick 入力 + M52e の音ハンドル採番) ----
+void WriteLoop(ByteWriter& w, const InputSnapshot* prevTickInput, const uint64_t* audioHandleSeq)
 {
     w.U32(kLoopMagic);
     InputSnapshot zero = {};
     w.Raw(prevTickInput != nullptr ? prevTickInput : &zero, sizeof(InputSnapshot));
+    w.U64(audioHandleSeq != nullptr ? *audioHandleSeq : 0);
 }
 
 } // namespace
@@ -232,7 +233,7 @@ bool CaptureSimSnapshot(const SimRefs& refs, std::vector<std::byte>& out)
     WriteParticles(w, refs.particles);
     WriteCollision(w, refs.collision);
     WriteScripts(w, refs.scripts);
-    WriteLoop(w, refs.prevTickInput);
+    WriteLoop(w, refs.prevTickInput, refs.audioHandleSeq);
     // ★World は**最後**に置く。復元は「小さい節を全部一時領域へ読み切ってから
     //   World::SnapshotRead (それ自体が全読み後に一括差し替え) を呼ぶ」順で走るので、
     //   どこで失敗しても現世界に手が付いていない状態で戻れる
@@ -282,6 +283,7 @@ bool RestoreSimSnapshot(const SimRefs& refs, const std::byte* data, size_t size)
     }
     InputSnapshot prevTickInput = {};
     r.Raw(&prevTickInput, sizeof(InputSnapshot));
+    const uint64_t audioHandleSeq = r.U64();
     if (!r.Ok()) {
         MYE_LOG_ERROR("[snapshot] truncated blob");
         return false;
@@ -313,6 +315,9 @@ bool RestoreSimSnapshot(const SimRefs& refs, const std::byte* data, size_t size)
     }
     if (refs.prevTickInput != nullptr) {
         *refs.prevTickInput = prevTickInput;
+    }
+    if (refs.audioHandleSeq != nullptr) {
+        *refs.audioHandleSeq = audioHandleSeq;
     }
     if (refs.tickIndex != nullptr) {
         *refs.tickIndex = tick;

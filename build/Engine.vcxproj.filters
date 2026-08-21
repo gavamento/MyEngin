@@ -267,6 +267,12 @@
     <ClCompile Include="..\src\Engine\Engine\Replay\SimSnapshotSelfTest.cpp">
       <Filter>Engine\Replay</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Replay\TimeTravel.cpp">
+      <Filter>Engine\Replay</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Replay\TimeTravelSelfTest.cpp">
+      <Filter>Engine\Replay</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Replay\WorldHasher.cpp">
       <Filter>Engine\Replay</Filter>
     </ClCompile>
@@ -676,6 +682,12 @@
       <Filter>Engine\Replay</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Replay\SimSnapshotSelfTest.h">
+      <Filter>Engine\Replay</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Replay\TimeTravel.h">
+      <Filter>Engine\Replay</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Replay\TimeTravelSelfTest.h">
       <Filter>Engine\Replay</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Replay\WorldHasher.h">

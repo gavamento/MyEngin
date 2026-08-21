@@ -25,6 +25,7 @@
 #include "Editor/Windows/InspectorWindow.h"
 #include "Editor/Windows/ParticleSettingsWindow.h"
 #include "Editor/Windows/ProfilerWindow.h"
+#include "Editor/Windows/TimelineWindow.h"
 #include "Editor/Windows/ProjectSettingsWindow.h"
 #include "Editor/Windows/SceneViewWindow.h"
 #include "Editor/Windows/SearchWindow.h"
@@ -138,6 +139,9 @@ private:
     GameViewWindow gameView_;
     ParticleSettingsWindow particleSettings_;
     ProfilerWindow profiler_;
+    TimelineWindow timeline_; // M52e: 巻き戻しスクラブ (Play 中のみ中身がある)
+    // M52e: スクラブ解除の判定に使う前フレームの再生状態 (状態ではなく遷移を見るため)
+    PlayState prevPlayState_ = PlayState::Editing;
     AssetBrowserWindow assetBrowser_;
     AnimationWindow animation_;
     AnimatorControllerWindow animatorController_;

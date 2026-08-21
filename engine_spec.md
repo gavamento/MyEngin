@@ -578,6 +578,40 @@ comparison itself (`--img-diff A B [--tol N] [--fail-pixels N] [--diff-out PNG]`
 *equal* (exit 0) from *different* (exit 1) from *not comparable* (exit 2) — folding a size
 mismatch or an unreadable file into the success path would let a broken capture read as green.
 
+**Snapshots and time travel (M52d / M52e).** Determinism is normally spent once, at verification
+time. The same property also buys the ability to *re-enter* a past tick: `SimSnapshot` captures
+the whole simulation lane — the World (archetype columns, entity records, free list, roots, RNG),
+the Scene's `TimeControl` / `PersistStore` / file-id counter / source path / override table, the
+CPU particle pools, the collision system's previous-pair sets, the script host's started set and
+the loop's carried `prevTickInput` and audio-handle counter — into one blob, and restores it
+bit-identically. Everything outside that boundary (the C# lane, GPU particles, trails, the
+transform side table, audio) is *not* captured; it is either reset by the caller or recomputed.
+
+- Snapshots may only be taken at a tick boundary where no structural change is pending, and the
+  restore reads every small section into scratch before touching the world, so a corrupt blob
+  fails without leaving a half-restored world behind
+- `--snapshot-stress N` inserts a capture → restore → re-capture round trip every `N` ticks of a
+  verify run and requires the byte-identical re-capture *and* the unchanged expected hash chain;
+  `tools\replay_verify.bat` runs it on all three pairs
+- The editor's **Timeline** window keeps a ring of snapshots (one per 30 simulated ticks, capped
+  by count and bytes) plus the input of *every* tick, including paused ones — a paused tick still
+  advances `prevTickInput`, so skipping it would desynchronise action edges. Seeking restores the
+  nearest snapshot at or before the target and re-simulates forward through `RunOneTick`, the
+  same function a live tick uses (a second implementation would drift from the first)
+- A seek **verifies itself**: the hash after the re-simulation is compared against the hash
+  recorded when those ticks first ran, and a mismatch is reported in the window rather than
+  silently showing a past that never happened. C# script state is the expected cause, since it
+  lies outside the snapshot boundary
+- Scrubbing pauses the simulation *and* stops the tick loop entirely. Resuming branches from the
+  scrub point and discards the recorded future, which is announced in the window because Unity
+  has no equivalent behaviour
+- Re-simulation suppresses the output lanes (audio playback, pad vibration, save writes) exactly
+  as recording and verification do, but never the *input* lanes (`LoadScene`, `LoadGame`):
+  suppressing a read would produce a different world and guarantee a hash mismatch
+- `--timetravel-selftest [N]` is the machine-checkable form: it runs `N` ticks, seeks back by
+  several distances, re-simulates forward, compares hashes, and then confirms on the live frame
+  loop that scrubbing holds the tick index still and that resuming truncates the ring
+
 ---
 
 ## 12. Milestones

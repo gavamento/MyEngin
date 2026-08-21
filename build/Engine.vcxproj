@@ -95,6 +95,8 @@
     <ClCompile Include="..\src\Engine\Engine\Replay\Replay.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Replay\SimSnapshot.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Replay\SimSnapshotSelfTest.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Replay\TimeTravel.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Replay\TimeTravelSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Replay\WorldHasher.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Replay\WorldHasherSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\SaveGame.cpp" />
@@ -232,6 +234,8 @@
     <ClInclude Include="..\src\Engine\Engine\Replay\Replay.h" />
     <ClInclude Include="..\src\Engine\Engine\Replay\SimSnapshot.h" />
     <ClInclude Include="..\src\Engine\Engine\Replay\SimSnapshotSelfTest.h" />
+    <ClInclude Include="..\src\Engine\Engine\Replay\TimeTravel.h" />
+    <ClInclude Include="..\src\Engine\Engine\Replay\TimeTravelSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Replay\WorldHasher.h" />
     <ClInclude Include="..\src\Engine\Engine\Replay\WorldHasherSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\SaveGame.h" />

@@ -74,6 +74,7 @@
     <ClCompile Include="..\src\Editor\Windows\SceneViewWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\SearchWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\SoundGenWindow.cpp" />
+    <ClCompile Include="..\src\Editor\Windows\TimelineWindow.cpp" />
     <ClInclude Include="..\src\Editor\AssetOps.h" />
     <ClInclude Include="..\src\Editor\AssetOpsSelfTest.h" />
     <ClInclude Include="..\src\Editor\AssetPreviewCache.h" />
@@ -114,6 +115,7 @@
     <ClInclude Include="..\src\Editor\Windows\SceneViewWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\SearchWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\SoundGenWindow.h" />
+    <ClInclude Include="..\src\Editor\Windows\TimelineWindow.h" />
   </ItemGroup>
   <!-- END FILES -->
   <ItemGroup>

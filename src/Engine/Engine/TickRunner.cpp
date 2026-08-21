@@ -267,9 +267,11 @@ void RunOneTick(TickServices& ts)
         scriptHost.SetTickContext(ctx.input, ctx.tickIndex, ctx.fixedDt);
         scriptHost.RunStartAndUpdate();
     }
-    // C# スクリプト層 (別レーン): 記録/検証中は走らせない → 純 C++ 決定論を保持
+    // C# スクリプト層 (別レーン): 記録/検証中は走らせない → 純 C++ 決定論を保持。
+    // 再シム (M52e) でも同じ — C# の状態はスナップショットに入っておらず巻き戻らないので、
+    // ここで走らせると「戻せない側だけが余分に進む」= どのみち世界が割れる
     const bool runManaged = ctx.simulateScripts && managedHost.IsReady()
-        && !Recording() && !Verifying();
+        && !Recording() && !Verifying() && !ts.resim;
     if (runManaged) {
         managedHost.SetTickContext(ctx.input, ctx.tickIndex, ctx.fixedDt);
         managedHost.RunStartAndUpdate();
@@ -444,31 +446,44 @@ void RunOneTick(TickServices& ts)
     // ---- オーディオ drain (M19/M45): ハッシュ後に再生する (voice 状態は絶対に
     // hashed state へ戻さない)。記録/検証中は AudioSystem 自体が suspend されており
     // Play が no-op になる。**キューの clear だけはゲートの外**で毎 tick 行う ----
-    for (const ScriptAudioEvent& e : audioQueue) {
-        ApplyScriptAudioEvent(e, scene.GetWorld(), audioSystem, soundLibrary, audioSources,
-                              audioScriptRng);
+    // 再シム中 (M52e) も同型に抑止する。EngineLoop 側で AudioSystem を suspend しても
+    // いるので二重だが、**RunOneTick 単体で出力レーンが閉じている**方が後続の消費者
+    // (M52i のロールバック) が抑止を忘れられない
+    if (!ts.resim) {
+        for (const ScriptAudioEvent& e : audioQueue) {
+            ApplyScriptAudioEvent(e, scene.GetWorld(), audioSystem, soundLibrary, audioSources,
+                                  audioScriptRng);
+        }
     }
     audioQueue.clear();
 
     // ---- セーブ書出 (M51g): 出力レーン — tick 末ハッシュの後に書く (決定論を
     // 汚さない)。record/verify 中もゲートしない: 同じスクリプトが同じ tick で
-    // 同じ内容を要求するだけで、sim 状態は一切読み書きしない ----
+    // 同じ内容を要求するだけで、sim 状態は一切読み書きしない。
+    // 再シム (M52e) だけはゲートする — 巻き戻しのたびに同じセーブを書き直すのは
+    // 「デバッグのために覗いただけ」の副作用として大きすぎる ----
     if (pendingSaveSlot >= 0) {
         const int slot = pendingSaveSlot;
         pendingSaveSlot = -1;
-        // シーンパスは assets 相対へ落として書く (プロジェクト移動でセーブが死なない
-        // ように)。assets 外 (メモリ構築シーン = 空 / 外部絶対パス) はそのまま
-        std::wstring sp = scene.SourcePath();
-        if (sp.size() > assetsRoot.size() + 1
-            && _wcsnicmp(sp.c_str(), assetsRoot.c_str(), assetsRoot.size()) == 0
-            && sp[assetsRoot.size()] == L'\\') {
-            sp = sp.substr(assetsRoot.size() + 1);
-        }
-        const std::wstring savePath = SaveGameFile::PathForSlot(saveDir, slot);
-        if (SaveGameFile::Write(savePath, sp, scene.Persist())) {
-            MYE_LOG_INFO("[save] slot %d written (%zu keys): %s", slot,
-                         scene.Persist().Entries().size(),
-                         WideToUtf8(savePath).c_str());
+        if (ts.resim) {
+            // 再シム (M52e): 同じ内容をもう一度書くだけなので抑止する。
+            // 要求の**消費**は上で済ませてある (溜めたまま抜けると次の tick で書いてしまう)
+            MYE_LOG_INFO("[save] slot %d write skipped (re-simulating)", slot);
+        } else {
+            // シーンパスは assets 相対へ落として書く (プロジェクト移動でセーブが死なない
+            // ように)。assets 外 (メモリ構築シーン = 空 / 外部絶対パス) はそのまま
+            std::wstring sp = scene.SourcePath();
+            if (sp.size() > assetsRoot.size() + 1
+                && _wcsnicmp(sp.c_str(), assetsRoot.c_str(), assetsRoot.size()) == 0
+                && sp[assetsRoot.size()] == L'\\') {
+                sp = sp.substr(assetsRoot.size() + 1);
+            }
+            const std::wstring savePath = SaveGameFile::PathForSlot(saveDir, slot);
+            if (SaveGameFile::Write(savePath, sp, scene.Persist())) {
+                MYE_LOG_INFO("[save] slot %d written (%zu keys): %s", slot,
+                             scene.Persist().Entries().size(),
+                             WideToUtf8(savePath).c_str());
+            }
         }
     }
     // ---- ロード消費 (M51g): pendingScene と同じセーフポイント。PersistStore を

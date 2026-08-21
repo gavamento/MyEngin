@@ -20,7 +20,15 @@ public:
     void Play(Scene& scene);
     void Stop(Scene& scene);
     void TogglePause();
+    // M52e: 状態を明示して指定する版 (タイムラインのスクラブが使う)。
+    // TogglePause だと「今どちらか」を呼び側が知っている必要があり、
+    // スクラブのたびに再生/停止が反転する事故になる
+    void Pause();
+    void Resume();
     void Step(); // Paused 中に 1 tick だけ進める
+    // M52e: ステップ要求が立っているか。スクラブ中は tick が止まっているので、
+    // 「ステップを押した = 分岐して 1 tick 進めたい」を外から観測する必要がある
+    bool StepPending() const { return stepPending_; }
 
     // 毎 tick 呼ぶ。true ならこの tick でゲームロジックを進める (Step は 1 回で消費)
     bool ConsumeSimulateTick();

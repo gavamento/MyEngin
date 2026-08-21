@@ -36,6 +36,7 @@ MYE_STR(Win_AudioMixer,       "Audio Mixer###Audio Mixer",             "オー�
 MYE_STR(Win_ProjectSettings,  "Project Settings###Project Settings",   "プロジェクト設定###Project Settings")
 MYE_STR(Win_BuildSettings,    "Build Settings###Build Settings",       "ビルド設定###Build Settings")
 MYE_STR(Win_Stats,            "Stats###Stats",                         "統計###Stats")
+MYE_STR(Win_Timeline,         "Timeline###Timeline",                   "タイムライン###Timeline")
 
 // ---- タイトルを表示するモーダル (M47a) ----
 // ID は OpenPopup / BeginPopupModal の両方が Tr() を通すので "###" 右辺は自由に決めてよい。
@@ -727,3 +728,28 @@ MYE_STR(Log_BatMissing,       "build_scripts.bat not found: %s",
                               "build_scripts.bat が見つかりません: %s")
 MYE_STR(Log_BuildingGameLogic, "building GameLogic (%s)... hot reload applies on success",
                                "GameLogic (%s) をビルドしています... 成功するとホットリロードされます")
+
+// ---- タイムライン / タイムトラベル (M52e) ----
+MYE_STR(TT_NotPlaying,        "Time travel records only while Play is running.",
+                              "タイムトラベルは再生中だけ記録します。")
+MYE_STR(TT_Warming,           "starting the ring at the next tick...",
+                              "次の tick からリングを開始します...")
+MYE_STR(TT_Range,             "tick %llu - %llu   (now %llu)",
+                              "tick %llu - %llu   (現在 %llu)")
+MYE_STR(TT_Snapshots,         "%d snapshots / %.1f MB   (one every %d simulated ticks)",
+                              "スナップショット %d 枚 / %.1f MB   (sim %d tick ごと)")
+MYE_STR(TT_Scrubbing,         "Scrubbing. Resuming Play branches from here and drops the recorded future.",
+                              "スクラブ中。再生するとここから分岐し、記録済みの未来は破棄されます。")
+MYE_STR(TT_Resume,            "Branch and resume###TTResume",
+                              "分岐して再開###TTResume")
+MYE_STR(TT_SeekOk,            "last seek: tick %llu OK (%llu ticks re-simulated, %.1f ms)",
+                              "直前のシーク: tick %llu 一致 (%llu tick 再シム、%.1f ms)")
+MYE_STR(TT_SeekMismatch,      "last seek: tick %llu HASH MISMATCH - state outside the snapshot "
+                              "boundary moved (C# scripts?)",
+                              "直前のシーク: tick %llu ハッシュ不一致 — 撮影対象の外にある状態が "
+                              "動いています (C# スクリプト?)")
+MYE_STR(TT_SeekFailed,        "last seek: failed (no snapshot old enough)",
+                              "直前のシーク: 失敗しました (そこまで戻れるスナップショットがありません)")
+MYE_STR(TT_CsharpNote,        "C# script state does not rewind - only the C++ sim lane is captured.",
+                              "C# スクリプトの状態は巻き戻りません — 撮影対象は C++ の sim レーンだけです。")
+MYE_STR(Tool_TipTimeTravel,   "rewind 30 ticks (time travel)", "30 tick 巻き戻す (タイムトラベル)")

@@ -28,6 +28,7 @@ class AudioSystem;
 class SoundLibrary;
 class MixerLibrary;
 class InputActions;
+class TimeTravel;
 struct RenderResources;
 
 struct EngineConfig {
@@ -143,6 +144,13 @@ struct EngineConfig {
     // 世界では出ない取りこぼしはここでしか捕まらない。tools\replay_verify.bat が
     // 3 ペアすべてに掛ける
     int64_t snapshotStress = 0;
+
+    // ---- タイムトラベルの自動プローブ (M52e、--timetravel-selftest [N]) ----
+    // >0 で「N tick 進める → N-K へシーク → 記録入力で N まで再シム → ハッシュが
+    // 元の N と一致するか」を複数の K で実走し、結果を exit code で返す。
+    // ★これがエディタ GUI を開かずにタイムトラベルを検証できる唯一の口。
+    // Editor では --autoplay と併用しないと sim が進まない (両 Main が自動で立てる)
+    int64_t timeTravelProbeTicks = 0;
 };
 
 // フレーム計測 (Profiler ウィンドウ表示用)。EngineLoop が毎フレーム更新する
@@ -190,6 +198,10 @@ struct EngineContext {
     // アクションマップ (M51d)。EngineLoop が所有し tick 頭に評価済み。
     // assets\input\actions.json が無ければ空マップ (ActionState/AxisValue は常に 0)
     InputActions* inputActions = nullptr;
+    // タイムトラベルのリング (M52e)。EngineLoop が所有し、シーク要求は tick 境界で捌く。
+    // エディタは「Play で有効化 → タイムライン窓から RequestSeek」しか触らない
+    // (Restore と再シムはここでは起きない = 途中の状態を UI に見せない)
+    TimeTravel* timeTravel = nullptr;
     // この tick でスクリプト層 (フェーズ 3/5) を実行するか。
     // エディタは OnTick で Play 状態に応じて設定する (Runtime は常に true)
     bool simulateScripts = true;
