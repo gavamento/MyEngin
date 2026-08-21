@@ -499,13 +499,15 @@ Eliminate cases in which the engine works in Debug but fails in Release, or vice
 - Introducing a fixed timestep, marked [TBD] in Section 5.3, is strongly recommended as a prerequisite
 - CPU particles are included in the hash. GPU particles are excluded because they are rendering output; their behavior is verified separately through comparison mode without readback
 - The test can run in CI through a command-line invocation such as `Editor.exe --replay-verify xxx.rep`
-- `tools\replay_verify.bat` runs **three scene pairs**, each rebuilt from code before recording:
+- `tools\replay_verify.bat` runs **four scene pairs**, each rebuilt from code before recording:
   the default demo (scripts, physics, particles, schema fields), the parts showcase
-  (`--parts-demo`: skinned bones, part following, part raycasts) and the game-flow showcase
+  (`--parts-demo`: skinned bones, part following, part raycasts), the game-flow showcase
   (`--flow-demo`, M51j: **LoadScene transitions across two scenes, TimeControl pause and
   50% time-scale windows, PersistStore carry-over, SaveGame writes and action-map evaluation**
-  driven by a deterministic tick timeline in `FlowTitleDriver` / `FlowGameDriver`). The flow
-  pair is the aggregate proof that the M51 gameplay-flow features are replay-deterministic
+  driven by a deterministic tick timeline in `FlowTitleDriver` / `FlowGameDriver`) and the
+  local-multiplayer showcase (`--local-demo --local-players 2 --synth-input`, M52g: per-player
+  input lanes). The flow pair is the aggregate proof that the M51 gameplay-flow features are
+  replay-deterministic
 
 **Field-level divergence diagnosis (M52a).** Knowing *which tick* broke is not the same as
 knowing *what* broke. `HashWorld`, `HashWorldDetailed` and `HashWorldDump` are three exits of a
@@ -530,7 +532,7 @@ the terminator stays visible instead of being hidden by string semantics.
 **Continuous integration (M52b).** `.github\workflows\ci.yml` is a single Windows job that calls
 the *same* scripts a developer runs locally — no CI-only verification logic, so there is nothing
 to keep in sync twice. It builds the managed host for both configurations, runs
-`tools\replay_verify.bat` (eight project builds, three replay pairs, `check_rules.ps1`),
+`tools\replay_verify.bat` (eight project builds, four replay pairs, `check_rules.ps1`),
 runs `--selftest` in both configurations, and finishes with a `--package` smoke test whose
 success is reported through the process exit code. On failure the replay files and field dumps
 are uploaded as artifacts, so a divergence found in CI can be diffed locally with `--hash-diff`.
@@ -592,7 +594,7 @@ transform side table, audio) is *not* captured; it is either reset by the caller
   fails without leaving a half-restored world behind
 - `--snapshot-stress N` inserts a capture → restore → re-capture round trip every `N` ticks of a
   verify run and requires the byte-identical re-capture *and* the unchanged expected hash chain;
-  `tools\replay_verify.bat` runs it on all three pairs
+  `tools\replay_verify.bat` runs it on all four pairs
 - The editor's **Timeline** window keeps a ring of snapshots (one per 30 simulated ticks, capped
   by count and bytes) plus the input of *every* tick, including paused ones — a paused tick still
   advances `prevTickInput`, so skipping it would desynchronise action edges. Seeking restores the
@@ -661,6 +663,41 @@ copy of it as `scene.json`. `--no-crash-handler` disables the whole thing.
 - `MYE_GIT_HASH` and `MYE_BUILD_CONFIG` come from a generated header written by an MSBuild target,
   not from a preprocessor definition on the compiler command line: the hash changes with every
   commit, and a changing command line would rebuild every translation unit
+
+**Multiplayer input lanes (M52g).** The simulation consumes `kMaxPlayers = 4` `InputSnapshot`
+lanes per tick instead of one. Lane 0 is exactly the historical single input — keyboard, mouse and
+XInput slot 0 — and `EngineContext::Input()` is its alias, so every consumer that predates lanes
+(editor hit-testing, the C++ and C# script `KeyDown` family) keeps reading it unchanged. Lane *n*
+carries XInput slot *n* only; the keyboard is not split between players, because the key
+assignment lives in one project-wide action map and per-player maps are out of scope here. The
+`.rep` header field `playerCount`, reserved in v4, is what finally varies, so the format itself is
+unchanged. `--local-players N` selects the lane count, and during verification **the `.rep` wins
+over the flag**, since the tick record length is a property of the file.
+
+`InputActions::Evaluate` now takes the lane array and evaluates the same map once per lane. Lanes
+at or beyond `playerCount` are actively zeroed every tick rather than skipped: a skipped lane
+would keep the last state a disconnected pad left behind, which reads as a button held forever.
+
+Two pieces are what make this *verifiable* rather than merely present:
+
+- **`PlayerInputComponent`** binds an entity to a lane and mirrors that lane's evaluated action map
+  (four axis values, and held / pressed / released bit masks by definition index) into the ECS
+  every tick, right after evaluation and before scripts run. Action state is otherwise a temporary
+  that never reaches the world hash, so a mis-wired lane would break the recording and the
+  verification *symmetrically* and the hashes would still agree. Mirroring it makes the wiring a
+  hashed value. The mirror fields must therefore **not** be marked `kFieldNoSerialize`, since the
+  hasher skips those. It also gives scripts a way in without new ABI: they read the mirror through
+  the v11 `GetComponentField` slot, and the lane-aware slots are deferred to the v13 bundle
+- **`--synth-input`** replaces the live capture with `SynthLaneInput(tick, lane)`, a pure function
+  that gives each lane a different, block-quantised key and stick pattern. Headless runs otherwise
+  have identically empty input on every lane, which no amount of lane plumbing can distinguish.
+  It is injected at the same point verification substitutes recorded input, so the synthesised
+  values are recorded normally and a `.rep` produced this way replays without the flag
+
+`tools\replay_verify.bat` combines both in its fourth pair. The scene places all four players, so
+running it with `--local-players 2` also pins "lanes beyond `playerCount` stay zero" in the same
+hash chain. Forcing every entity to read lane 0 makes the pair fail at tick 0, and `--hash-diff`
+names the offending `PlayerInput.axes` / `heldBits` / `pressedBits` fields directly.
 
 ---
 

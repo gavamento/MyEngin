@@ -240,6 +240,9 @@
     <ClCompile Include="..\src\Engine\Engine\PhysicsSelfTest.cpp">
       <Filter>Engine</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\PlayerInputSystem.cpp">
+      <Filter>Engine</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Prefab.cpp">
       <Filter>Engine</Filter>
     </ClCompile>
@@ -664,6 +667,9 @@
       <Filter>Engine\Physics</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\PhysicsSelfTest.h">
+      <Filter>Engine</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\PlayerInputSystem.h">
       <Filter>Engine</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Prefab.h">

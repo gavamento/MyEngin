@@ -384,8 +384,10 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     MYE_LOG_INFO("Engine loop started (fixed dt = %.4f s, assets = %s)",
                  kFixedDt, WideToUtf8(assetsRoot).c_str());
 
-    // M51d: 前 tick の入力 (アクションの pressed/released 判定用)。tick 0 はゼロ値 (決定台帳 4)
-    InputSnapshot prevTickInput = {};
+    // M51d: 前 tick の入力 (アクションの pressed/released 判定用)。tick 0 はゼロ値 (決定台帳 4)。
+    // M52g: レーンごとに持つ。**常に kMaxPlayers 本**確保する — 実効レーン数で伸縮させると
+    // スナップショット blob のレイアウトが起動オプション依存になる (SimSnapshot.cpp 参照)
+    InputSnapshot prevTickInput[kMaxPlayers] = {};
 
     // ---- sim スナップショットの参照束 (M52d) ----
     // 撮影対象は record/verify がハッシュを撮っている範囲と同一 (決定台帳 1)。
@@ -395,7 +397,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     simRefs.particles = &particleSystem.Cpu();
     simRefs.collision = &collisionSystem;
     simRefs.scripts = &scriptHost;
-    simRefs.prevTickInput = &prevTickInput;
+    simRefs.prevTickInput = prevTickInput;
     // M52e: 音の再生ハンドル採番も sim へ戻る値なのでリングに載せる (SimSnapshot.h 参照)
     simRefs.audioHandleSeq = &audioHandleSeq;
     simRefs.tickIndex = &ctx.tickIndex;
@@ -408,6 +410,17 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         timeTravel.SetEnabled(true);
     }
 
+    // ---- 入力レーン数の確定 (M52g) ----
+    // 走行中は変えない。**検証時だけは .rep の playerCount が指定に勝つ** —
+    // tick レコード長がファイル側で決まっているので、ここで食い違うと入力が
+    // 1 レーンぶんずつずれて読まれる (無音で全 tick MISMATCH になる最悪の壊れ方)
+    ctx.playerCount = 1;
+    if (config.localPlayers > 1) {
+        ctx.playerCount = (config.localPlayers >= static_cast<int>(kMaxPlayers))
+            ? kMaxPlayers
+            : static_cast<uint32_t>(config.localPlayers);
+    }
+
     // ---- リプレイ記録/検証の準備 (spec 11.3) ----
     ReplayRecorder recorder;
     ReplayPlayer player;
@@ -415,6 +428,11 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     if (!config.replayVerifyPath.empty()) {
         if (!player.Load(config.replayVerifyPath)) {
             return 1;
+        }
+        if (player.PlayerCount() != ctx.playerCount) {
+            MYE_LOG_INFO("[replay] player lanes: %u (from the .rep; --local-players said %u)",
+                         player.PlayerCount(), ctx.playerCount);
+            ctx.playerCount = player.PlayerCount();
         }
         if (!player.Snapshot().empty()) {
             // v4 の埋め込み初期状態 (M52d)。**シーンの中身に依存せず**記録開始時点へ丸ごと
@@ -440,7 +458,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         }
         recorder.Start(config.replayRecordPath, scene.GetWorld().Rng().State(),
                        scene.GetWorld().Rng().Inc(), scene.GetWorld().AliveCount(),
-                       startSnapshot.data(), startSnapshot.size());
+                       ctx.playerCount, startSnapshot.data(), startSnapshot.size());
     }
 
     // ---- クラッシュ .rep のリングを起こす (M52f) ----
@@ -448,6 +466,10 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     //   (verify) より**後**。先に起こすと復元で tick 番号が飛んでリングが取り直しになる。
     // 記録/検証中も動かす — そこで落ちた .rep も同じ価値がある
     if (config.crashHandler) {
+        // ★レコード長を決めるので Begin より前に (M52g)。ここから先 playerCount は動かない
+        CrashRingConfig crashCfg = crashRing.Config();
+        crashCfg.playerCount = ctx.playerCount;
+        crashRing.Configure(crashCfg);
         crashRing.SetEnabled(true);
         crashRing.Begin(simRefs, ctx.tickIndex);
     }
@@ -489,7 +511,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     tickServices.scene = &scene;
     tickServices.app = &app;
     tickServices.inputActions = &inputActions;
-    tickServices.prevTickInput = &prevTickInput;
+    tickServices.prevTickInput = prevTickInput;
     tickServices.scriptHost = &scriptHost;
     tickServices.managedHost = &managedHost;
     tickServices.animationSystem = &animationSystem;
@@ -563,7 +585,10 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         }
         // ---- 記録入力で target まで再シム (描画なし) ----
         const bool savedSimulate = ctx.simulateScripts;
-        const InputSnapshot savedInput = ctx.input;
+        InputSnapshot savedInputs[kMaxPlayers] = {};
+        for (uint32_t p = 0; p < kMaxPlayers; ++p) {
+            savedInputs[p] = ctx.inputs[p];
+        }
         audioSystem.SetSuspended(true); // 立ち上がりで全停止 = 捨てた未来の音を断つ
         tickServices.app = nullptr;      // エディタ更新は回さない
         tickServices.recorder = nullptr; // 記録も照合もしない
@@ -578,7 +603,9 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                 rep.outcome = SeekOutcome::Failed;
                 break;
             }
-            ctx.input = e->input;
+            for (uint32_t p = 0; p < kMaxPlayers; ++p) {
+                ctx.inputs[p] = e->inputs[p];
+            }
             // ★ポーズ中の tick も「進めない tick」として忠実になぞる —
             //   飛ばすと prevTickInput が食い違ってアクションの pressed/released が割れる
             ctx.simulateScripts = e->simulated;
@@ -591,7 +618,9 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         tickServices.prevWorld = &prevWorld;
         tickServices.resim = false;
         ctx.simulateScripts = savedSimulate;
-        ctx.input = savedInput;
+        for (uint32_t p = 0; p < kMaxPlayers; ++p) {
+            ctx.inputs[p] = savedInputs[p];
+        }
         audioSystem.SetSuspended(recorder.IsActive() || player.IsActive());
         // M36b の補間参照を捨てる: 過去へ飛んだ直後のフレームが「シーク前の行列」と
         // 混ざって 1 フレームだけ幽霊が出るのを防ぐ (Get() が null を返す = 補間しない)
@@ -646,7 +675,12 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             // M52e のプローブも同じ扱い — 実時間で回すと 400 tick に 6.7 秒かかる
             dt = kFixedDt;
         }
-        ctx.input = input.CaptureSnapshot();
+        // ---- 入力レーンの確定 (M52g) ----
+        // レーン 0 = キーボード + マウス + パッド 0、レーン n>0 = パッド n (Input.h の規約)。
+        // playerCount を超えるレーンには一度も書かない = 恒常ゼロ値
+        for (uint32_t p = 0; p < ctx.playerCount; ++p) {
+            ctx.inputs[p] = input.CaptureSnapshot(p);
+        }
         logging::SetCurrentFrame(ctx.frameIndex);
         prof::BeginFrame();
 
@@ -713,7 +747,18 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         while (!scrubbing && ticks < maxTicksThisFrame
                && (verifying ? player.HasTick(ctx.tickIndex) : accumulator >= kFixedDt)) {
             if (verifying) {
-                ctx.input = player.InputForTick(ctx.tickIndex); // フェーズ 1 の入力を置換
+                // フェーズ 1 の入力をレーンごと置換する
+                for (uint32_t p = 0; p < ctx.playerCount; ++p) {
+                    ctx.inputs[p] = player.InputForTick(ctx.tickIndex, p);
+                }
+            } else if (config.synthInput) {
+                // 合成入力 (M52g、--synth-input)。**verify の置換と同じ場所**に置くのが要点 —
+                // ここで入れた値がそのまま .rep へ記録され、検証では上の分岐で記録値として
+                // 戻ってくる。つまり「合成入力で録った .rep」は普通の .rep と区別なく再生でき、
+                // 検証側に --synth-input を渡す必要も無い
+                for (uint32_t p = 0; p < ctx.playerCount; ++p) {
+                    ctx.inputs[p] = SynthLaneInput(ctx.tickIndex, p);
+                }
             }
             // ---- 固定 tick 本体 (M52d、決定台帳 2) ----
             // 通常 tick / タイムトラベル再シム / ロールバック再シムが通る唯一の実装。
@@ -722,7 +767,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             // ★クラッシュ .rep へは tick に**入る前**に入力を載せる (M52f)。
             //   落ちるのは RunOneTick の中なので、tick 末に載せる作りだと
             //   「まさに落ちた tick」が .rep に残らず、再生してもその tick へ入れない
-            crashRing.OnTickBegin(ranTick, ctx.input);
+            crashRing.OnTickBegin(ranTick, ctx.inputs, ctx.playerCount);
             if (crashTestKind != CrashTestKind::None
                 && ranTick == static_cast<uint64_t>(config.crashTestTick)) {
                 MYE_LOG_ERROR("[crash] --crash-test %s: crashing on purpose at tick %llu",
@@ -751,7 +796,8 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             // 記録/検証中は .rep がその役なので載せない。simulateScripts は
             // RunOneTick の中で app が決めた**その tick の実効値**を読む
             if (timeTravel.Enabled() && !recorder.IsActive() && !verifying) {
-                timeTravel.OnTickEnd(simRefs, ranTick, ctx.input, ctx.simulateScripts);
+                timeTravel.OnTickEnd(simRefs, ranTick, ctx.inputs, ctx.playerCount,
+                                     ctx.simulateScripts);
             }
             // ---- スナップショット往復ストレス (M52d、--snapshot-stress N) ----
             // tick 境界 (= 構造変更が空でハッシュを撮ったのと同じ状態) で「撮る → 戻す →
@@ -939,8 +985,8 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                                     target, nullptr, &particleSystem, &vfxRenderer);
                 // M21: ゲーム内 UI を backbuffer に重ねる (Runtime 経路)。マウスは hover 表示用
                 uiRenderer.Render(scene.GetWorld(), device, shaderManager, resources, target.rtv,
-                                  target.width, target.height, ctx.input.mouseX, ctx.input.mouseY,
-                                  ctx.input.MouseDown(0));
+                                  target.width, target.height, ctx.Input().mouseX,
+                                  ctx.Input().mouseY, ctx.Input().MouseDown(0));
             } else {
                 // ImGui 描画の下地としてクリアのみ
                 ID3D11DeviceContext* dc = device.Context();

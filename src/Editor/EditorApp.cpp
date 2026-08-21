@@ -81,6 +81,10 @@ void EditorApp::OnStart(EngineContext& ctx)
         // assets\scenes\ に生成する (gitignore 済み) — タイトル⇄ゲームの遷移が
         // LoadScene("scenes/flow_*.scene.json") = assets 相対解決のため、cache\ には置けない
         scenePath_ = ctx.assetsRoot + L"\\scenes\\flow_title.scene.json";
+    } else if (localDemo) {
+        // M52g: コードから毎回組む (ファイルは作らない)。パスだけ cache\ へ振っておくと、
+        // 万一 Ctrl+S されても既定デモシーン = golden.rep の入力を潰さない
+        scenePath_ = L"cache\\local_players.scene.json";
     } else {
         scenePath_ = ctx.assetsRoot + L"\\scenes\\main.scene.json";
         ProjectManifest manifest; // ブートシーンはマニフェスト優先 (M26)
@@ -102,6 +106,7 @@ void EditorApp::OnStart(EngineContext& ctx)
     RegisterRtShowcaseContent(ctx);
     RegisterPartsShowcaseContent(ctx);
     RegisterFlowShowcaseContent(ctx); // M51j (flow_* 材質。少数の名前キー登録なので常時)
+    RegisterLocalPlayersContent(ctx); // M52g (mp_* 材質。同上の理由で常時)
     if (flowShowcase) {
         // 両シーンファイルを確保してからタイトルを普通のロード経路で開く。
         // ここで組む = GameLogic.dll / C# コンパイル済み (EngineLoop が OnStart 前に実施)
@@ -117,6 +122,8 @@ void EditorApp::OnStart(EngineContext& ctx)
         BuildRtShowcaseScene(ctx); // M46i
     } else if (partsShowcase) {
         BuildPartsShowcaseScene(ctx); // M48g
+    } else if (localDemo) {
+        BuildLocalPlayersScene(ctx); // M52g
     } else {
         BuildDemoScene(ctx, perfRate, perfMax);
     }

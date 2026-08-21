@@ -31,8 +31,11 @@ namespace mye {
 
 // リング 1 tick 分の記録
 struct TimeTravelEntry {
-    InputSnapshot input = {}; // その tick が消費した入力 (ライブ入力の確定値)
-    uint64_t hashAfter = 0;   // tick 末のワールドハッシュ (シークの自己検証に使う)
+    // その tick が消費した入力レーン (ライブ入力の確定値)。M52g から **kMaxPlayers 本**。
+    // 実効レーン数に関わらず上限本数を持つのは、1 エントリ長を固定して
+    // 「途中でレーン数が変わったリング」という状態を作らないため (64B × 4 = 256B/tick)
+    InputSnapshot inputs[kMaxPlayers] = {};
+    uint64_t hashAfter = 0; // tick 末のワールドハッシュ (シークの自己検証に使う)
     // その tick で sim を進めたか。ポーズ中の tick は false で記録する —
     // ★ポーズ tick も sim 状態を 1 つだけ動かす (prevTickInput) ので、
     //   「飛ばして良い tick」ではない。再シムでも同じ値で再現する
@@ -81,9 +84,10 @@ public:
     void Clear();
 
     // tick 1 本走った直後に呼ぶ。ranTick = いま走り終えた tick の番号。
-    // ranTick がリングの途中なら「シーク後に走った = 分岐」とみなして未来を捨てる
-    void OnTickEnd(const SimRefs& refs, uint64_t ranTick, const InputSnapshot& input,
-                   bool simulated);
+    // ranTick がリングの途中なら「シーク後に走った = 分岐」とみなして未来を捨てる。
+    // inputs は playerCount 本のレーン配列 (残りはゼロ値で埋める)
+    void OnTickEnd(const SimRefs& refs, uint64_t ranTick, const InputSnapshot* inputs,
+                   uint32_t playerCount, bool simulated);
 
     // ---- シーク要求 (UI → EngineLoop) ----
     // 要求した時点でスクラブ状態に入る = EngineLoop は tick を進めなくなる。

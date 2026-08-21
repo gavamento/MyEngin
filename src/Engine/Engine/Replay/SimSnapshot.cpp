@@ -208,8 +208,15 @@ void WriteScripts(ByteWriter& w, ScriptHost* scripts)
 void WriteLoop(ByteWriter& w, const InputSnapshot* prevTickInput, const uint64_t* audioHandleSeq)
 {
     w.U32(kLoopMagic);
-    InputSnapshot zero = {};
-    w.Raw(prevTickInput != nullptr ? prevTickInput : &zero, sizeof(InputSnapshot));
+    // M52g: 前 tick 入力は **kMaxPlayers 本のレーン配列**。実効レーン数 (playerCount) では
+    // なく常に上限本数を書くのは、blob のレイアウトを起動オプションから独立させるため —
+    // --local-players 2 で撮った blob を 1 レーンの実行で復元できないと、
+    // クラッシュ .rep がマルチプレイ設定に縛られてしまう
+    w.U32(kMaxPlayers);
+    const InputSnapshot zero = {};
+    for (uint32_t p = 0; p < kMaxPlayers; ++p) {
+        w.Raw(prevTickInput != nullptr ? &prevTickInput[p] : &zero, sizeof(InputSnapshot));
+    }
     w.U64(audioHandleSeq != nullptr ? *audioHandleSeq : 0);
 }
 
@@ -281,8 +288,15 @@ bool RestoreSimSnapshot(const SimRefs& refs, const std::byte* data, size_t size)
         MYE_LOG_ERROR("[snapshot] loop section magic mismatch");
         return false;
     }
-    InputSnapshot prevTickInput = {};
-    r.Raw(&prevTickInput, sizeof(InputSnapshot));
+    const uint32_t laneCount = r.U32();
+    if (laneCount != kMaxPlayers) {
+        MYE_LOG_ERROR("[snapshot] lane count mismatch (blob %u, build %u)", laneCount, kMaxPlayers);
+        return false;
+    }
+    InputSnapshot prevTickInput[kMaxPlayers] = {};
+    for (uint32_t p = 0; p < kMaxPlayers; ++p) {
+        r.Raw(&prevTickInput[p], sizeof(InputSnapshot));
+    }
     const uint64_t audioHandleSeq = r.U64();
     if (!r.Ok()) {
         MYE_LOG_ERROR("[snapshot] truncated blob");
@@ -314,7 +328,9 @@ bool RestoreSimSnapshot(const SimRefs& refs, const std::byte* data, size_t size)
         dst.insert(started.begin(), started.end());
     }
     if (refs.prevTickInput != nullptr) {
-        *refs.prevTickInput = prevTickInput;
+        for (uint32_t p = 0; p < kMaxPlayers; ++p) {
+            refs.prevTickInput[p] = prevTickInput[p];
+        }
     }
     if (refs.audioHandleSeq != nullptr) {
         *refs.audioHandleSeq = audioHandleSeq;

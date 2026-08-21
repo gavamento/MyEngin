@@ -46,10 +46,14 @@ struct MyeReplayHeader {
 class ReplayRecorder {
 public:
     // snapshot 非 null で「開始時点の sim 状態」をヘッダ直後へ埋め込む (M52f が使う)。
-    // 埋め込みの有無は再生側が header.snapshotSize で判断する
+    // 埋め込みの有無は再生側が header.snapshotSize で判断する。
+    // playerCount = 入力レーン数 (M52g)。1 なら v4 以前と 1 バイトも変わらない列になる
     void Start(const std::wstring& path, uint64_t rngState, uint64_t rngInc, uint32_t entityCount,
-               const std::byte* snapshot = nullptr, size_t snapshotSize = 0);
-    void RecordTick(const InputSnapshot& input, uint64_t worldHash);
+               uint32_t playerCount = 1, const std::byte* snapshot = nullptr,
+               size_t snapshotSize = 0);
+    // lanes は playerCount 本の配列。**Start で宣言した本数と一致すること** —
+    // ここが食い違うとファイルの tick レコード長と中身がずれる
+    void RecordTick(const InputSnapshot* lanes, uint32_t playerCount, uint64_t worldHash);
     bool Finish(); // ファイル書き出し
     bool IsActive() const { return active_; }
     uint64_t TickCount() const { return hashes_.size(); }
@@ -71,6 +75,9 @@ public:
     uint64_t TickCount() const { return hashes_.size(); }
     uint64_t RngState() const { return header_.rngState; }
     uint64_t RngInc() const { return header_.rngInc; }
+    // 1 tick あたりの入力レーン数 (M52g)。**EngineLoop はこの値を ctx.playerCount へ
+    // 採用する** — レコード長はファイル側で決まっているので、--local-players の指定より
+    // .rep が優先される
     uint32_t PlayerCount() const { return header_.playerCount; }
     // 埋め込みスナップショット (空 = 無し)。EngineLoop はこれがあれば
     // シーンロードの代わりに Restore して再生を始められる (M52f)

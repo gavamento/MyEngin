@@ -55,8 +55,10 @@ struct TickServices {
     Scene* scene = nullptr;
     IEngineApp* app = nullptr;
 
-    // 入力 (M51d)
+    // 入力 (M51d / M52g)
     InputActions* inputActions = nullptr;
+    // **kMaxPlayers 本のレーン配列**の先頭 (1 本ではない)。消費するのは ctx->playerCount 本で、
+    // 残りは Evaluate が毎 tick ゼロへ落とす
     InputSnapshot* prevTickInput = nullptr;
 
     // スクリプト層
@@ -121,8 +123,9 @@ struct TickServices {
 
 // tick 1 回 (フェーズ 3 → 3.5 → 3.6 → 4 → 5 → 7 → tick 末の出力レーン) を回し、
 // 最後に ctx.tickIndex を 1 進める。
-// ★ctx.input は**呼び出し側が確定させてから**渡すこと — ライブ入力 / .rep の記録入力 /
-//   タイムトラベルのリング入力を RunOneTick 側で区別しないための取り決め (決定台帳 5)。
+// ★ctx.inputs[0..playerCount) は**呼び出し側が確定させてから**渡すこと — ライブ入力 /
+//   合成入力 / .rep の記録入力 / タイムトラベルのリング入力を RunOneTick 側で
+//   区別しないための取り決め (決定台帳 5)。
 void RunOneTick(TickServices& ts);
 
 } // namespace mye

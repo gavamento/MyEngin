@@ -59,12 +59,26 @@ public:
     std::string ToJsonText() const; // Save の実体 (LoadFromJsonText と往復可能)
 
     // 今 tick の状態を確定する。(cur, prev) 以外を読まないこと — record/verify 透過の根拠。
-    // 呼出しは EngineLoop の tick 頭 (verify の入力置換の後)。tick 0 の prev はゼロ値
-    void Evaluate(const InputSnapshot& cur, const InputSnapshot& prev);
+    // 呼出しは EngineLoop の tick 頭 (verify の入力置換の後)。tick 0 の prev はゼロ値。
+    //
+    // M52g: cur / prev は **kMaxPlayers 本のレーン配列**で、playerCount 本だけを評価する。
+    // マップ定義 (actions.json) は全レーン共通で、レーン間で違うのは入力スナップショット
+    // だけ — 評価そのものが (cur, prev) の純関数なので、レーン化しても record/verify
+    // 透過という根拠は 1 ミリも変わらない。
+    // ★playerCount 以降のレーンは**明示的にゼロへ落とす** (前回の残骸を残さない)。
+    //   未接続レーンを読んだスクリプトが「前の tick の値」を拾うのが一番たちが悪い
+    void Evaluate(const InputSnapshot* cur, const InputSnapshot* prev, uint32_t playerCount);
+    // 単一レーンの糖衣 (レーンを意識しない呼び出し側とセルフテスト用)。
+    // レーン 1 以降はゼロ入力で評価される = 「1 人ぶんしか無い」状態そのもの
+    void Evaluate(const InputSnapshot& cur, const InputSnapshot& prev)
+    {
+        Evaluate(&cur, &prev, 1);
+    }
 
-    // 名前ハッシュ (HashStr) で引く。未定義は 0。線形走査 (アクションは高々数十本)
-    uint32_t ActionState(uint64_t nameHash) const; // kAction* の論理和
-    float AxisValue(uint64_t nameHash) const;      // [-1, +1]
+    // 名前ハッシュ (HashStr) で引く。未定義は 0。線形走査 (アクションは高々数十本)。
+    // player 省略時はレーン 0 = 従来の単一入力 (既存の呼び出し側は 1 文字も変わらない)
+    uint32_t ActionState(uint64_t nameHash, uint32_t player = 0) const; // kAction* の論理和
+    float AxisValue(uint64_t nameHash, uint32_t player = 0) const;      // [-1, +1]
 
     // 編集 UI 用 (Project Settings)。書き換えたら Save → Load(force) で正規形に確定する。
     // 定義列を伸縮した場合、次の Evaluate までライブ状態 (At 系) は 0 を返す
@@ -72,8 +86,8 @@ public:
     std::vector<InputAxisDef>& Axes() { return axes_; }
     const std::vector<InputActionDef>& Actions() const { return actions_; }
     const std::vector<InputAxisDef>& Axes() const { return axes_; }
-    uint32_t ActionStateAt(size_t i) const; // ライブ表示用 (index 直引き、範囲外 = 0)
-    float AxisValueAt(size_t i) const;
+    uint32_t ActionStateAt(size_t i, uint32_t player = 0) const; // ライブ表示用 (範囲外 = 0)
+    float AxisValueAt(size_t i, uint32_t player = 0) const;
 
     // ---- 名前テーブル (VkNameTable.inl / MyePadButton) ----
     static const char* VkNameInTable(uint8_t vk);   // 未収載は nullptr
@@ -93,7 +107,9 @@ public:
 private:
     std::vector<InputActionDef> actions_;
     std::vector<InputAxisDef> axes_;
-    // Evaluate の結果 (actions_ / axes_ と同 index)。ロードで 0 クリア
+    // Evaluate の結果。**レーン major** で並べる: [player * 定義数 + index]。
+    // 長さは常に 定義数 * kMaxPlayers (playerCount で伸縮させない — 伸縮させると
+    // 「レーンを増やした tick だけ添字がずれる」種類の事故が入る)。ロードで 0 クリア
     std::vector<uint8_t> actionBits_;
     std::vector<float> axisValues_;
     std::wstring loadedRoot_; // Load の冪等判定 (PhysicsLayerNames と同型)

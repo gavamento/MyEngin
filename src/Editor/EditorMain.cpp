@@ -83,6 +83,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     bool rtShowcase = false; // --rt-demo (M46i)
     bool partsShowcase = false; // --parts-demo (M48g: 部位追従のリプレイ被覆シーン)
     bool flowShowcase = false;  // --flow-demo (M51j: ゲームフロー統合デモ)
+    bool localDemo = false;     // --local-demo (M52g: ローカルマルチプレイの入力レーンデモ)
     std::wstring editActorPath;  // --edit-actor PATH (M48k)
     std::wstring packageDir;     // --package DIR (M51j: CLI パッケージ)
     bool packageDds = false;     // --package-dds
@@ -247,6 +248,12 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 partsShowcase = true; // M48g: 部位追従の被覆シーンを構築
             } else if (arg == L"--flow-demo") {
                 flowShowcase = true; // M51j: ゲームフロー統合デモ (タイトル⇄ゲームの 2 シーン)
+            } else if (arg == L"--local-demo") {
+                localDemo = true; // M52g: 入力レーンのローカルマルチプレイデモ
+            } else if (arg == L"--local-players" && i + 1 < argc) {
+                config.localPlayers = _wtoi(argv[++i]); // M52g: 消費する入力レーン数
+            } else if (arg == L"--synth-input") {
+                config.synthInput = true; // M52g: レーンごとの合成入力 (検証用)
             } else if (arg == L"--edit-actor" && i + 1 < argc) {
                 editActorPath = argv[++i]; // M48k: 起動直後にミニシーン編集モードで開く
             } else if (arg == L"--package" && i + 1 < argc) {
@@ -416,6 +423,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     app.rtShowcase = rtShowcase;
     app.partsShowcase = partsShowcase;
     app.flowShowcase = flowShowcase;
+    app.localDemo = localDemo;
     app.editActorPath = editActorPath;
     app.packageDir = packageDir;
     app.packageDds = packageDds;

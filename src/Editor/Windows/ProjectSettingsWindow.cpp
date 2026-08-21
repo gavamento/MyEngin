@@ -146,7 +146,7 @@ void ProjectSettingsWindow::UpdateKeyCapture(EngineContext& ctx)
         // 0x00-0x07 はマウスボタン等 — 捕捉ボタンのクリック自体を拾わないため除外
         for (int vk = 0x08; vk < 256; ++vk) {
             const uint8_t v = static_cast<uint8_t>(vk);
-            if (!ctx.input.KeyDown(v) || lastInput_.KeyDown(v)) {
+            if (!ctx.Input().KeyDown(v) || lastInput_.KeyDown(v)) {
                 continue; // 新規押下エッジのみ
             }
             InputActions& ia = *ctx.inputActions;
@@ -166,7 +166,7 @@ void ProjectSettingsWindow::UpdateKeyCapture(EngineContext& ctx)
             break;
         }
     }
-    lastInput_ = ctx.input;
+    lastInput_ = ctx.Input(); // キー割り当ての取得はレーン 0 (キーボード) 固定
 }
 
 void ProjectSettingsWindow::DrawInputSection(EngineContext& ctx)

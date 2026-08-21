@@ -49,11 +49,17 @@ bool CrashRing::TakeSnapshot(const SimRefs& refs, uint64_t tick)
         return false;
     }
     World& world = refs.scene->GetWorld(); // Rng() は非 const 版しか無い
-    const size_t need = sizeof(MyeReplayHeader) + scratch_.size() + config_.maxTicks * kRecordBytes;
+    const uint32_t lanes = (config_.playerCount == 0) ? 1u : config_.playerCount; // M52g
+    const size_t recordBytes = sizeof(InputSnapshot) * lanes + sizeof(uint64_t);
+    const size_t need = sizeof(MyeReplayHeader) + scratch_.size() + config_.maxTicks * recordBytes;
 
     // ★ここから ready_ = true までは .rep として一貫していない。
-    //   image_ の再確保も含むので、この区間で落ちたら crash.rep は諦める (crash.txt は残る)
+    //   image_ の再確保も含むので、この区間で落ちたら crash.rep は諦める (crash.txt は残る)。
+    //   ★recordBytes_ の更新も**この中**でやること — ハンドラは RecordBytes() と
+    //     イメージ内のヘッダ (playerCount) を突き合わせて長さを出すので、
+    //     フラグを下ろす前に片方だけ書き換えると一貫しないイメージが出口を通れてしまう
     ready_ = false;
+    recordBytes_ = recordBytes;
     if (image_.size() < need) {
         image_.assign(need, std::byte{ 0 });
     }
@@ -63,6 +69,7 @@ bool CrashRing::TakeSnapshot(const SimRefs& refs, uint64_t tick)
     header.entityCount = world.AliveCount();
     header.snapshotSize = scratch_.size();
     header.tickCount = 0;
+    header.playerCount = lanes; // M52g
     std::memcpy(image_.data(), &header, sizeof(header));
     std::memcpy(image_.data() + sizeof(header), scratch_.data(), scratch_.size());
 
@@ -79,10 +86,10 @@ bool CrashRing::TakeSnapshot(const SimRefs& refs, uint64_t tick)
 
 std::byte* CrashRing::RecordAt(uint64_t index)
 {
-    return image_.data() + recordBase_ + static_cast<size_t>(index) * kRecordBytes;
+    return image_.data() + recordBase_ + static_cast<size_t>(index) * RecordBytes();
 }
 
-void CrashRing::OnTickBegin(uint64_t tick, const InputSnapshot& input)
+void CrashRing::OnTickBegin(uint64_t tick, const InputSnapshot* inputs, uint32_t playerCount)
 {
     if (!enabled_ || !ready_) {
         return;
@@ -100,10 +107,15 @@ void CrashRing::OnTickBegin(uint64_t tick, const InputSnapshot& input)
         return;
     }
     std::byte* rec = RecordAt(header->tickCount);
-    std::memcpy(rec, &input, sizeof(InputSnapshot));
+    const uint32_t lanes = header->playerCount;
+    const InputSnapshot zero = {};
+    for (uint32_t p = 0; p < lanes; ++p) {
+        const InputSnapshot& src = (inputs != nullptr && p < playerCount) ? inputs[p] : zero;
+        std::memcpy(rec + sizeof(InputSnapshot) * p, &src, sizeof(InputSnapshot));
+    }
     // ★まだ走っていない tick なので期待ハッシュは存在しない = 予約値 0 (Replay.h)
     const uint64_t unverified = 0;
-    std::memcpy(rec + sizeof(InputSnapshot), &unverified, sizeof(uint64_t));
+    std::memcpy(rec + sizeof(InputSnapshot) * lanes, &unverified, sizeof(uint64_t));
     // ここで初めてレコードが「見える」。発行は tickCount の 1 ストアだけなので、
     // どこで落ちてもイメージは常に整合する (書きかけのレコードは範囲外に居る)
     header->tickCount += 1;
@@ -119,7 +131,8 @@ void CrashRing::OnTickEnd(const SimRefs& refs, uint64_t ranTick, uint64_t hashAf
         MyeReplayHeader* header = HeaderOf(image_);
         std::byte* rec = RecordAt(header->tickCount - 1);
         // 8 バイト整列の単一ストア = 途中で落ちても中途半端な値にはならない
-        std::memcpy(rec + sizeof(InputSnapshot), &hashAfter, sizeof(uint64_t));
+        std::memcpy(rec + sizeof(InputSnapshot) * header->playerCount, &hashAfter,
+                    sizeof(uint64_t));
         inFlight_ = false;
         nextTick_ = ranTick + 1;
         ++ticksSinceSnapshot_;
@@ -138,7 +151,7 @@ const std::byte* CrashRing::RepImage(size_t& outSize) const
     }
     const MyeReplayHeader* header = HeaderOf(image_);
     const size_t size = sizeof(MyeReplayHeader) + static_cast<size_t>(header->snapshotSize)
-        + static_cast<size_t>(header->tickCount) * kRecordBytes;
+        + static_cast<size_t>(header->tickCount) * RecordBytes();
     if (size > image_.size()) {
         return nullptr; // 整合していない (ここへ来たら実装のバグ)
     }

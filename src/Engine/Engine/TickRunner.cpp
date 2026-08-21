@@ -22,6 +22,7 @@
 #include "Engine/Engine/DebugDraw.h"
 #include "Engine/Engine/EffectSystem.h"
 #include "Engine/Engine/PartFollowSystem.h"
+#include "Engine/Engine/PlayerInputSystem.h"
 #include "Engine/Engine/Particles/ParticleSystem.h"
 #include "Engine/Engine/Physics/PhysicsSystem.h"
 #include "Engine/Engine/Prefab.h"
@@ -198,7 +199,7 @@ void RunOneTick(TickServices& ts)
     const EngineConfig& config = *ts.config;
     Scene& scene = *ts.scene;
     InputActions& inputActions = *ts.inputActions;
-    InputSnapshot& prevTickInput = *ts.prevTickInput;
+    InputSnapshot* prevTickInput = ts.prevTickInput; // kMaxPlayers 本のレーン配列 (M52g)
     ScriptHost& scriptHost = *ts.scriptHost;
     ManagedHost& managedHost = *ts.managedHost;
     AnimationSystem& animationSystem = *ts.animationSystem;
@@ -237,9 +238,16 @@ void RunOneTick(TickServices& ts)
 
     // M51d: アクション評価。tick の入力が確定した直後 (verify の置換の後) に
     // 前 tick との比較で held/pressed/released と軸値を確定する。
-    // 記録済みスナップショット 2 枚の純関数なので record/verify に透過 (決定台帳 4)
-    inputActions.Evaluate(ctx.input, prevTickInput);
-    prevTickInput = ctx.input;
+    // 記録済みスナップショット 2 枚の純関数なので record/verify に透過 (決定台帳 4)。
+    // M52g: レーン数ぶんまとめて評価する (playerCount 以降のレーンは Evaluate がゼロへ落とす)
+    inputActions.Evaluate(ctx.inputs, prevTickInput, ctx.playerCount);
+    for (uint32_t p = 0; p < kMaxPlayers; ++p) {
+        prevTickInput[p] = ctx.inputs[p];
+    }
+    // M52g: 評価結果を PlayerInputComponent へ写す。**スクリプト層より前**に置くこと —
+    // スクリプトはこの tick のミラーを読んで動く。ここで書いた値が tick 末のハッシュに
+    // 載ることが、レーンの配線を replay_verify が検査できる唯一の根拠
+    UpdatePlayerInputMirror(scene.GetWorld(), inputActions, ctx.inputs, ctx.playerCount);
     // M36b: tick 頭のワールド行列を補間用に採取 (record/verify 中は補間しないので省く)
     if (ts.prevWorld != nullptr && !Recording() && !Verifying()) {
         CapturePrevWorld(*ts.prevWorld, scene.GetWorld());
@@ -264,7 +272,7 @@ void RunOneTick(TickServices& ts)
     // ---- フェーズ 3: スクリプト層 Start → Update ----
     const bool runScripts = ctx.simulateScripts && scriptHost.IsLoaded();
     if (runScripts) {
-        scriptHost.SetTickContext(ctx.input, ctx.tickIndex, ctx.fixedDt);
+        scriptHost.SetTickContext(ctx.Input(), ctx.tickIndex, ctx.fixedDt);
         scriptHost.RunStartAndUpdate();
     }
     // C# スクリプト層 (別レーン): 記録/検証中は走らせない → 純 C++ 決定論を保持。
@@ -273,7 +281,7 @@ void RunOneTick(TickServices& ts)
     const bool runManaged = ctx.simulateScripts && managedHost.IsReady()
         && !Recording() && !Verifying() && !ts.resim;
     if (runManaged) {
-        managedHost.SetTickContext(ctx.input, ctx.tickIndex, ctx.fixedDt);
+        managedHost.SetTickContext(ctx.Input(), ctx.tickIndex, ctx.fixedDt);
         managedHost.RunStartAndUpdate();
     }
     // ---- アニメーション (フェーズ 3.5): スクリプト後・Transform 前に LocalTransform を確定 ----
@@ -383,7 +391,7 @@ void RunOneTick(TickServices& ts)
 
     // ---- リプレイ: tick 末の状態ハッシュ (spec 11.3) ----
     if (Recording()) {
-        ts.recorder->RecordTick(ctx.input,
+        ts.recorder->RecordTick(ctx.inputs, ctx.playerCount,
                                 HashWorld(scene.GetWorld(), &particleSystem.Cpu(), &scene.Time(),
                                           &scene.Persist()));
         if (ts.recorder->TickCount() >= static_cast<uint64_t>(config.replayTicks)) {

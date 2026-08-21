@@ -13,13 +13,15 @@ constexpr uint32_t kReplayVersion = 4;
 } // namespace
 
 void ReplayRecorder::Start(const std::wstring& path, uint64_t rngState, uint64_t rngInc,
-                           uint32_t entityCount, const std::byte* snapshot, size_t snapshotSize)
+                           uint32_t entityCount, uint32_t playerCount, const std::byte* snapshot,
+                           size_t snapshotSize)
 {
     path_ = path;
     header_ = {};
     header_.rngState = rngState;
     header_.rngInc = rngInc;
     header_.entityCount = entityCount;
+    header_.playerCount = (playerCount == 0) ? 1u : playerCount;
     snapshot_.clear();
     if (snapshot != nullptr && snapshotSize > 0) {
         snapshot_.assign(snapshot, snapshot + snapshotSize);
@@ -28,13 +30,19 @@ void ReplayRecorder::Start(const std::wstring& path, uint64_t rngState, uint64_t
     inputs_.clear();
     hashes_.clear();
     active_ = true;
-    MYE_LOG_INFO("[replay] recording to %s (snapshot %zu bytes)", WideToUtf8(path).c_str(),
-                 snapshot_.size());
+    MYE_LOG_INFO("[replay] recording to %s (players %u, snapshot %zu bytes)",
+                 WideToUtf8(path).c_str(), header_.playerCount, snapshot_.size());
 }
 
-void ReplayRecorder::RecordTick(const InputSnapshot& input, uint64_t worldHash)
+void ReplayRecorder::RecordTick(const InputSnapshot* lanes, uint32_t playerCount,
+                                uint64_t worldHash)
 {
-    inputs_.push_back(input); // playerCount == 1 (マルチ入力は M52g)
+    // 宣言と実際が食い違ったら**宣言側に合わせて**書く (足りない分はゼロ値)。
+    // ここで黙って可変長にすると、ファイルの tick レコード長が tick ごとに変わって
+    // 再生側が一切読めなくなる
+    for (uint32_t p = 0; p < header_.playerCount; ++p) {
+        inputs_.push_back((lanes != nullptr && p < playerCount) ? lanes[p] : InputSnapshot{});
+    }
     hashes_.push_back(worldHash);
 }
 

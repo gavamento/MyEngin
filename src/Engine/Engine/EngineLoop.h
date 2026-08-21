@@ -152,6 +152,19 @@ struct EngineConfig {
     // Editor では --autoplay と併用しないと sim が進まない (両 Main が自動で立てる)
     int64_t timeTravelProbeTicks = 0;
 
+    // ---- マルチプレイヤー入力レーン (M52g) ----
+    // --local-players N (1..kMaxPlayers)。sim が消費する入力レーンの本数で、
+    // .rep の playerCount にそのまま入る。**検証中は .rep 側の値が優先**
+    // (レコード長がファイルで決まっているので、指定と食い違ったら .rep に従う)。
+    // レーン n はキーボードではなく XInput スロット n を見る (Input.h のレーン規約)
+    int localPlayers = 1;
+    // --synth-input: レーンごとに違う合成入力を tick へ流し込む (SynthLaneInput)。
+    // ライブ入力の代わりに置くだけなので **記録もされ検証でも再現する** =
+    // 「合成入力で録った .rep」は普通の .rep と同じ扱いで verify できる。
+    // ★これが無いとヘッドレスの入力は全レーン恒常ゼロで、レーンの配線ミスが
+    //   記録側と検証側で対称に起きてハッシュ一致してしまう (Input.h の SynthLaneInput 参照)
+    bool synthInput = false;
+
     // ---- クラッシュバンドル (M52f) ----
     // 落ちたら <projectRoot|exeDir>\crash\<timestamp>\ に minidump + crash.rep +
     // crash.txt + scene.json を残す。既定 on (配布ビルドのバグ報告が本命なので、
@@ -205,7 +218,18 @@ struct EngineContext {
     std::wstring assetsRoot;            // assets\ の絶対パス
     std::wstring projectRoot;           // プロジェクトルート (M26)。レガシー起動時は空
     std::wstring imguiIniPath;          // imgui.ini の解決済みパス (レガシー時は L"imgui.ini")
-    InputSnapshot input = {}; // 現フレームのスナップショット (tick 中も同一)
+    // 入力レーン (M52g)。現フレームのスナップショット (tick 中も同一)。
+    // inputs[0] が従来の単一入力そのもので、Input() はその別名 —
+    // 「1 本の入力」を前提にしていた既存コード (エディタの UI ヒットテスト / C++ / C#
+    // スクリプトの KeyDown 系) は全部レーン 0 を見続ける。
+    // playerCount 以降のレーンは常にゼロ値 (Evaluate が毎 tick 潰す)
+    InputSnapshot inputs[kMaxPlayers] = {};
+    // 消費するレーン数 (1..kMaxPlayers)。--local-players N か、検証中は .rep の
+    // playerCount がそのまま入る。**走行中は変わらない** (途中で変えると .rep の
+    // tick レコード長が変わって読めなくなる)
+    uint32_t playerCount = 1;
+    InputSnapshot& Input() { return inputs[0]; }
+    const InputSnapshot& Input() const { return inputs[0]; }
     // アクションマップ (M51d)。EngineLoop が所有し tick 頭に評価済み。
     // assets\input\actions.json が無ければ空マップ (ActionState/AxisValue は常に 0)
     InputActions* inputActions = nullptr;

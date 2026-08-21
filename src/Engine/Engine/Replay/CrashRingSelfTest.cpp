@@ -112,12 +112,12 @@ bool RunCrashRingSelfTest()
 
     Scene scene;
     BuildScene(scene);
-    InputSnapshot prevTickInput = {};
+    InputSnapshot prevTickInput[kMaxPlayers] = {};
     uint64_t audioHandleSeq = 0;
     uint64_t tickIndex = 100;
     SimRefs refs;
     refs.scene = &scene;
-    refs.prevTickInput = &prevTickInput;
+    refs.prevTickInput = prevTickInput;
     refs.audioHandleSeq = &audioHandleSeq;
     refs.tickIndex = &tickIndex;
 
@@ -134,7 +134,8 @@ bool RunCrashRingSelfTest()
     // 3 tick 完走させる
     uint64_t hashes[3] = { 0x1111111111111111ull, 0x2222222222222222ull, 0x3333333333333333ull };
     for (uint64_t i = 0; i < 3; ++i) {
-        ring.OnTickBegin(100 + i, MakeInput(static_cast<uint32_t>(i)));
+        const InputSnapshot in = MakeInput(static_cast<uint32_t>(i));
+        ring.OnTickBegin(100 + i, &in, 1);
         tickIndex = 101 + i;
         ring.OnTickEnd(refs, 100 + i, hashes[i]);
     }
@@ -159,12 +160,12 @@ bool RunCrashRingSelfTest()
             // 埋め込みを実際に復元できること (= シーン非依存に再生できる .rep である証拠)
             Scene other;
             BuildScene(other);
-            InputSnapshot otherPrev = {};
+            InputSnapshot otherPrev[kMaxPlayers] = {};
             uint64_t otherSeq = 0;
             uint64_t otherTick = 0;
             SimRefs otherRefs;
             otherRefs.scene = &other;
-            otherRefs.prevTickInput = &otherPrev;
+            otherRefs.prevTickInput = otherPrev;
             otherRefs.audioHandleSeq = &otherSeq;
             otherRefs.tickIndex = &otherTick;
             const bool restored =
@@ -176,7 +177,10 @@ bool RunCrashRingSelfTest()
     // ---- 3. in-flight tick (このサブの肝) ----
     // tick に入ったが走り切っていない = 期待ハッシュが存在しない。
     // ★ここに嘘の値を書くと「再現しなかった」が「MISMATCH」に化ける (Replay.h の予約)
-    ring.OnTickBegin(103, MakeInput(9));
+    {
+        const InputSnapshot in = MakeInput(9);
+        ring.OnTickBegin(103, &in, 1);
+    }
     check(ring.InFlight() && ring.RecordCount() == 4, "OnTickBegin だけで 1 レコード増える");
     {
         ReplayPlayer p;
@@ -203,7 +207,8 @@ bool RunCrashRingSelfTest()
     // ---- 4. 撮り直し (interval) ----
     const uint64_t snapsBefore = ring.SnapshotCount();
     for (uint64_t i = 4; i < 10; ++i) {
-        ring.OnTickBegin(100 + i, MakeInput(static_cast<uint32_t>(i)));
+        const InputSnapshot in = MakeInput(static_cast<uint32_t>(i));
+        ring.OnTickBegin(100 + i, &in, 1);
         tickIndex = 101 + i;
         ring.OnTickEnd(refs, 100 + i, 0x5000000000000000ull + i);
     }
@@ -217,7 +222,8 @@ bool RunCrashRingSelfTest()
     // 出してしまうと「再現できない再現用ファイル」になるので、取り直しへ落とす
     {
         const uint64_t before = ring.SnapshotCount();
-        ring.OnTickBegin(9999, MakeInput(1)); // 明らかに不連続
+        const InputSnapshot in = MakeInput(1);
+        ring.OnTickBegin(9999, &in, 1); // 明らかに不連続
         size_t size = 0;
         check(ring.RepImage(size) == nullptr && size == 0,
               "tick が飛んだ直後はイメージを出さない (壊れた .rep を渡さない)");
@@ -229,10 +235,59 @@ bool RunCrashRingSelfTest()
         check(ring.RepImage(size) != nullptr && size > 0, "復帰後はまたイメージを出す");
     }
 
+    // ---- 5.5 マルチ入力レーン (M52g) ----
+    // レコード長は playerCount で決まる。ここが 1 レーン固定のままだと、2P で落ちた
+    // crash.rep は「入力列とハッシュ列が 1 レーンぶんずつずれた」ファイルになり、
+    // 読めるのに再現しないという最悪の壊れ方をする
+    {
+        CrashRing ring2;
+        CrashRingConfig cfg2;
+        cfg2.snapshotInterval = 100;
+        cfg2.maxTicks = 8;
+        cfg2.playerCount = 2;
+        ring2.Configure(cfg2);
+        ring2.SetEnabled(true);
+        uint64_t tick2 = 500;
+        InputSnapshot prev2[kMaxPlayers] = {};
+        uint64_t seq2 = 0;
+        SimRefs refs2;
+        refs2.scene = &scene;
+        refs2.prevTickInput = prev2;
+        refs2.audioHandleSeq = &seq2;
+        refs2.tickIndex = &tick2;
+        check(ring2.Begin(refs2, 500), "2P: Begin");
+        check(ring2.RecordBytes() == sizeof(InputSnapshot) * 2 + sizeof(uint64_t),
+              "2P: レコード長は 入力 2 本 + ハッシュ");
+        for (uint64_t i = 0; i < 3; ++i) {
+            const InputSnapshot lanes[2] = { MakeInput(static_cast<uint32_t>(i)),
+                                             MakeInput(static_cast<uint32_t>(i) + 50) };
+            ring2.OnTickBegin(500 + i, lanes, 2);
+            tick2 = 501 + i;
+            ring2.OnTickEnd(refs2, 500 + i, 0x7000000000000000ull + i);
+        }
+        ReplayPlayer p2;
+        if (check(RoundTrip(ring2, repPath, p2), "2P: 本物の ReplayPlayer で読み直せる")) {
+            check(p2.PlayerCount() == 2 && p2.TickCount() == 3, "2P: playerCount / tickCount");
+            bool lanesOk = true;
+            for (uint64_t i = 0; i < 3; ++i) {
+                const InputSnapshot w0 = MakeInput(static_cast<uint32_t>(i));
+                const InputSnapshot w1 = MakeInput(static_cast<uint32_t>(i) + 50);
+                lanesOk = lanesOk
+                    && std::memcmp(&p2.InputForTick(i, 0), &w0, sizeof(InputSnapshot)) == 0
+                    && std::memcmp(&p2.InputForTick(i, 1), &w1, sizeof(InputSnapshot)) == 0
+                    && p2.ExpectedHash(i) == 0x7000000000000000ull + i;
+            }
+            check(lanesOk, "2P: レーンごとの入力とハッシュがそのまま往復する");
+        }
+    }
+
     // ---- 6. 無効化 ----
     ring.SetEnabled(false);
     const uint64_t recBefore = ring.RecordCount();
-    ring.OnTickBegin(10000, MakeInput(2));
+    {
+        const InputSnapshot in = MakeInput(2);
+        ring.OnTickBegin(10000, &in, 1);
+    }
     ring.OnTickEnd(refs, 10000, 0x7777777777777777ull);
     check(ring.RecordCount() == recBefore, "無効化したら何も記録しない");
 

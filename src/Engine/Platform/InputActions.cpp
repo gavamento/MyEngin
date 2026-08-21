@@ -272,8 +272,8 @@ bool InputActions::LoadFromJsonText(const std::string& text)
         }
     }
 
-    actionBits_.assign(actions_.size(), 0);
-    axisValues_.assign(axes_.size(), 0.0f);
+    actionBits_.assign(actions_.size() * kMaxPlayers, 0);
+    axisValues_.assign(axes_.size() * kMaxPlayers, 0.0f);
     return true;
 }
 
@@ -325,63 +325,88 @@ std::string InputActions::ToJsonText() const
     return j.dump(2) + "\n";
 }
 
-void InputActions::Evaluate(const InputSnapshot& cur, const InputSnapshot& prev)
+void InputActions::Evaluate(const InputSnapshot* cur, const InputSnapshot* prev,
+                            uint32_t playerCount)
 {
     // 定義列がロード以外で伸縮した場合 (編集 UI) もここで追随する
-    if (actionBits_.size() != actions_.size()) {
-        actionBits_.assign(actions_.size(), 0);
+    if (actionBits_.size() != actions_.size() * kMaxPlayers) {
+        actionBits_.assign(actions_.size() * kMaxPlayers, 0);
     }
-    if (axisValues_.size() != axes_.size()) {
-        axisValues_.assign(axes_.size(), 0.0f);
+    if (axisValues_.size() != axes_.size() * kMaxPlayers) {
+        axisValues_.assign(axes_.size() * kMaxPlayers, 0.0f);
     }
-    for (size_t i = 0; i < actions_.size(); ++i) {
-        const bool now = ActionDown(actions_[i], cur);
-        const bool was = ActionDown(actions_[i], prev);
-        uint8_t bits = 0;
-        if (now) {
-            bits |= kActionHeld;
-        }
-        if (now && !was) {
-            bits |= kActionPressed;
-        }
-        if (!now && was) {
-            bits |= kActionReleased;
-        }
-        actionBits_[i] = bits;
+    if (cur == nullptr || prev == nullptr) {
+        return;
     }
-    for (size_t i = 0; i < axes_.size(); ++i) {
-        axisValues_[i] = EvalAxis(axes_[i], cur);
+    if (playerCount > kMaxPlayers) {
+        playerCount = kMaxPlayers;
+    }
+    // 未接続レーン (playerCount 以降) はゼロ値の入力で評価する。
+    // 「評価をスキップして前回値を残す」のではなく毎 tick 潰しに行くのが要点 —
+    // スキップだとパッドを抜いた瞬間の値が残り、押しっぱなしのまま固まる
+    const InputSnapshot zero = {};
+    for (uint32_t p = 0; p < kMaxPlayers; ++p) {
+        const InputSnapshot& c = (p < playerCount) ? cur[p] : zero;
+        const InputSnapshot& v = (p < playerCount) ? prev[p] : zero;
+        const size_t aBase = static_cast<size_t>(p) * actions_.size();
+        const size_t xBase = static_cast<size_t>(p) * axes_.size();
+        for (size_t i = 0; i < actions_.size(); ++i) {
+            const bool now = ActionDown(actions_[i], c);
+            const bool was = ActionDown(actions_[i], v);
+            uint8_t bits = 0;
+            if (now) {
+                bits |= kActionHeld;
+            }
+            if (now && !was) {
+                bits |= kActionPressed;
+            }
+            if (!now && was) {
+                bits |= kActionReleased;
+            }
+            actionBits_[aBase + i] = bits;
+        }
+        for (size_t i = 0; i < axes_.size(); ++i) {
+            axisValues_[xBase + i] = EvalAxis(axes_[i], c);
+        }
     }
 }
 
-uint32_t InputActions::ActionState(uint64_t nameHash) const
+uint32_t InputActions::ActionState(uint64_t nameHash, uint32_t player) const
 {
     for (size_t i = 0; i < actions_.size(); ++i) {
         if (actions_[i].nameHash == nameHash) {
-            return ActionStateAt(i);
+            return ActionStateAt(i, player);
         }
     }
     return 0;
 }
 
-float InputActions::AxisValue(uint64_t nameHash) const
+float InputActions::AxisValue(uint64_t nameHash, uint32_t player) const
 {
     for (size_t i = 0; i < axes_.size(); ++i) {
         if (axes_[i].nameHash == nameHash) {
-            return AxisValueAt(i);
+            return AxisValueAt(i, player);
         }
     }
     return 0.0f;
 }
 
-uint32_t InputActions::ActionStateAt(size_t i) const
+uint32_t InputActions::ActionStateAt(size_t i, uint32_t player) const
 {
-    return (i < actionBits_.size()) ? actionBits_[i] : 0u;
+    if (i >= actions_.size() || player >= kMaxPlayers) {
+        return 0u;
+    }
+    const size_t k = static_cast<size_t>(player) * actions_.size() + i;
+    return (k < actionBits_.size()) ? actionBits_[k] : 0u;
 }
 
-float InputActions::AxisValueAt(size_t i) const
+float InputActions::AxisValueAt(size_t i, uint32_t player) const
 {
-    return (i < axisValues_.size()) ? axisValues_[i] : 0.0f;
+    if (i >= axes_.size() || player >= kMaxPlayers) {
+        return 0.0f;
+    }
+    const size_t k = static_cast<size_t>(player) * axes_.size() + i;
+    return (k < axisValues_.size()) ? axisValues_[k] : 0.0f;
 }
 
 const char* InputActions::VkNameInTable(uint8_t vk)

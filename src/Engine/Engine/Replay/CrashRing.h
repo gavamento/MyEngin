@@ -31,12 +31,19 @@ struct CrashRingConfig {
     // 短くするほど .rep は小さくなるが撮影が増える (Release 実測 0.040ms/枚)
     uint64_t snapshotInterval = 600;
     size_t maxTicks = 720; // レコード上限 (安全余裕。到達したら次の境界で撮り直す)
+    // 入力レーン数 (M52g)。**レコード長を決める**ので Begin より前に確定していること。
+    // チューニング値ではなく実行の性質だが、ここに置くと「撮り直しのたびに読み直す」
+    // 1 経路で済む (別 setter だと Begin 前後で食い違う窓ができる)
+    uint32_t playerCount = 1;
 };
 
 class CrashRing {
 public:
-    // レコード 1 本 = 入力 (playerCount 本ぶん、現状 1) + tick 末ハッシュ
-    static constexpr size_t kRecordBytes = sizeof(InputSnapshot) + sizeof(uint64_t);
+    // レコード 1 本 = 入力 (playerCount 本ぶん) + tick 末ハッシュ。
+    // ★**撮影時に固めた値**を返す (config_ を直接読まない) — 撮影後に Configure で
+    //   レーン数が変わると、イメージ内のヘッダ (= 実際のレイアウト) と食い違って
+    //   レコードの読み書き位置がずれる。取り直すまでは撮影時の形が正しい
+    size_t RecordBytes() const { return recordBytes_; }
 
     void Configure(const CrashRingConfig& c) { config_ = c; }
     const CrashRingConfig& Config() const { return config_; }
@@ -47,8 +54,9 @@ public:
     // tick 境界 (構造変更が空) で 1 枚目を撮って記録を始める。撮影に失敗したら無効化する
     bool Begin(const SimRefs& refs, uint64_t tick);
 
-    // tick 本体を呼ぶ**直前**。その tick が消費する入力を先に載せる
-    void OnTickBegin(uint64_t tick, const InputSnapshot& input);
+    // tick 本体を呼ぶ**直前**。その tick が消費する入力レーンを先に載せる
+    // (inputs は playerCount 本の配列)
+    void OnTickBegin(uint64_t tick, const InputSnapshot* inputs, uint32_t playerCount);
     // tick が走り切った直後。in-flight レコードのハッシュを確定し、必要なら撮り直す
     void OnTickEnd(const SimRefs& refs, uint64_t ranTick, uint64_t hashAfter);
 
@@ -80,6 +88,7 @@ private:
     uint64_t ticksSinceSnapshot_ = 0;
     uint64_t snapshotCount_ = 0;
     size_t snapshotBytes_ = 0;
+    size_t recordBytes_ = sizeof(InputSnapshot) + sizeof(uint64_t); // 撮影時に確定 (M52g)
     size_t recordBase_ = 0;               // レコード 0 本目のオフセット
     std::vector<std::byte> image_;        // .rep そのもののバイト列
     std::vector<std::byte> scratch_;      // 撮影の作業領域 (tick 境界でしか触らない)

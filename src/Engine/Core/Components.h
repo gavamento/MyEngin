@@ -543,6 +543,41 @@ struct PartBoundsComponent {
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
+// ---- 入力レーンの結び付け (M52g) ----
+// 「このエンティティはどのプレイヤーの入力で動くか」。`playerIndex` 以外は
+// **エンジン (PlayerInputSystem) が毎 tick 上書きする読み取り専用ミラー**で、
+// アクションマップ (assets\input\actions.json) をそのレーンの入力で評価した結果を写す。
+//
+// なぜミラーを ECS に置くのか (2 つとも効いている):
+//  1. **ハッシュ被覆**。アクション状態は ECS の外にある tick 限りの一時値なので、入力を
+//     レーン化しただけではワールドハッシュに 1 ビットも現れない = replay_verify が
+//     レーンの配線を検査できない (記録側と検証側で対称に壊れて一致してしまう)。
+//     ミラーを登録フィールドにすると「レーン 1 がレーン 0 を読んでいる」類の配線ミスが
+//     その tick のハッシュ差として必ず出る。
+//  2. **ABI を増やさずにスクリプトから読める**。v11 の GetComponentField (名前ハッシュで
+//     任意コンポーネントの登録フィールドを引く汎用スロット) がそのまま使える。
+//     レーン別の専用スロット (GetActionForPlayer 等) は M52i の ABI v13 へ束ねる
+//     (M48h / M51h と同じ「bump は 1 マイルストーン 1 回」運用)。
+//
+// 参照は**アクション名ではなく index** で行う: 名前で持つと固定長文字列表が要るうえ、
+// actions.json を並べ替えるたびにシーンが壊れる。index は actions.json の定義順
+// (= ProjectSettings の表示順) そのもの。定義が無い index は 0 / false になる。
+//
+// opt-in (TypeId 末尾 append) なので既存シーンのハッシュは 1 バイトも変わらない
+// = ReplayFile bump 不要 (Part / PartBounds と同じ判断)
+struct PlayerInputComponent {
+    int32_t playerIndex = 0; // 読むレーン (0..kMaxPlayers-1)。作者が設定する唯一の値
+    // ---- 以下はエンジンが毎 tick 書く (Inspector では読み取り専用) ----
+    // そのレーンに入力源があるか。レーン 0 はキーボード/マウスがあるので常に true、
+    // レーン n>0 は XInput スロット n の接続状態そのもの
+    bool connected = false;
+    DirectX::XMFLOAT4 axes = { 0.0f, 0.0f, 0.0f, 0.0f }; // 軸 index 0..3 の値 [-1,+1]
+    uint32_t heldBits = 0;     // アクション index 0..31 の held (bit i = actions[i])
+    uint32_t pressedBits = 0;  // 同 pressed (この tick で押された)
+    uint32_t releasedBits = 0; // 同 released
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
 class World;
 
 // エンティティが有効か (ActiveComponent が無ければ有効 / enabled==0 なら無効)

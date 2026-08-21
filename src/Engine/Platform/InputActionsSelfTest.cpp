@@ -166,6 +166,43 @@ bool RunInputActionsSelfTest()
         check(Near(ia.AxisValue(hMoveX), 1.0f), "key + pad sum clamps to +1");
     }
 
+    // ---- マルチ入力レーン (M52g) ----
+    // ここで固定したいのは 3 つ: レーンが独立していること / 未接続レーンがゼロであること /
+    // レーン 1 以降の pressed・released が**そのレーンの前 tick**で決まること
+    {
+        InputSnapshot cur[kMaxPlayers] = {};
+        InputSnapshot prev[kMaxPlayers] = {};
+        Down(cur[0], 0x20);   // レーン 0: Space (Jump 押下)
+        Down(cur[1], 0x44);   // レーン 1: D (MoveX +1)
+        Down(prev[1], 0x44);  // レーン 1 は前 tick も押している = held のみ
+        Down(cur[2], 0x20);   // レーン 2 にも入れておく (playerCount=2 で無視されること)
+        ia.Evaluate(cur, prev, 2);
+
+        check(ia.ActionState(hJump, 0) == (kActionHeld | kActionPressed),
+              "lane 0 evaluates its own snapshot");
+        check(ia.ActionState(hJump, 1) == 0, "lane 1 does not see lane 0's keys");
+        check(Near(ia.AxisValue(hMoveX, 1), 1.0f), "lane 1 evaluates its own axis");
+        check(Near(ia.AxisValue(hMoveX, 0), 0.0f), "lane 0 does not see lane 1's keys");
+        check(ia.ActionState(hJump, 2) == 0 && Near(ia.AxisValue(hMoveX, 2), 0.0f),
+              "lanes beyond playerCount are forced to zero (not left stale)");
+        check(ia.ActionState(hJump, kMaxPlayers) == 0
+                  && Near(ia.AxisValue(hMoveX, kMaxPlayers), 0.0f),
+              "out-of-range lane index reads as zero");
+
+        // 未接続レーンは「評価をスキップ」ではなく「毎 tick ゼロで潰す」— スキップだと
+        // 切断した瞬間の値が残り、押しっぱなしのまま止まる
+        InputSnapshot cur2[kMaxPlayers] = {};
+        Down(cur2[1], 0x44);
+        ia.Evaluate(cur2, cur, 2); // レーン 0 は離した / レーン 1 は継続
+        check(ia.ActionState(hJump, 0) == kActionReleased,
+              "lane 0 released is decided by lane 0's previous snapshot");
+        check(ia.ActionState(hJump, 1) == 0 && Near(ia.AxisValue(hMoveX, 1), 1.0f),
+              "lane 1 is unaffected by what lane 0 did");
+        ia.Evaluate(cur2, cur2, 1); // playerCount を 1 へ落とす
+        check(Near(ia.AxisValue(hMoveX, 1), 0.0f),
+              "shrinking playerCount zeroes the lanes that dropped out");
+    }
+
     // ---- ApplyDeadzone の端 ----
     {
         check(Near(InputActions::ApplyDeadzone(2.0f, 0.0f), 1.0f)

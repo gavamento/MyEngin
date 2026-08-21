@@ -63,19 +63,24 @@ bool Input::HandleMessage(void* hwnd, uint32_t msg, uint64_t wparam, int64_t lpa
     return false; // 消費しない (ImGui など他のハンドラにも流す)
 }
 
-InputSnapshot Input::CaptureSnapshot()
+InputSnapshot Input::CaptureSnapshot(uint32_t lane)
 {
     InputSnapshot s = {};
-    memcpy(s.keys, keys_, sizeof(s.keys));
-    s.mouseX = mouseX_;
-    s.mouseY = mouseY_;
-    s.wheelDelta = wheelAccum_;
-    s.mouseButtons = buttons_;
-    wheelAccum_ = 0;
+    if (lane == 0) {
+        // キーボード/マウスはレーン 0 だけが受け取る (Input.h のレーン規約)。
+        // ★wheel の累積リセットもここでしかしない — レーンの数だけ呼ばれるので、
+        //   どのレーンでも消費する作りにすると 2 人目以降でホイールが消える
+        memcpy(s.keys, keys_, sizeof(s.keys));
+        s.mouseX = mouseX_;
+        s.mouseY = mouseY_;
+        s.wheelDelta = wheelAccum_;
+        s.mouseButtons = buttons_;
+        wheelAccum_ = 0;
+    }
 
-    // gamepad (XInput、パッド 0 のみ)。verify 中は記録値が上書きするので透過 (spec 11.3)
+    // gamepad (XInput、スロット = レーン番号)。verify 中は記録値が上書きするので透過 (spec 11.3)
     XINPUT_STATE xs = {};
-    if (XInputGetState(0, &xs) == ERROR_SUCCESS) {
+    if (lane < kMaxPlayers && XInputGetState(lane, &xs) == ERROR_SUCCESS) {
         s.padConnected = 1;
         s.padButtons = xs.Gamepad.wButtons;
         s.padLeftTrigger = xs.Gamepad.bLeftTrigger;
@@ -105,6 +110,58 @@ void Input::ApplyVibration(float left, float right)
     vib.wLeftMotorSpeed = l;
     vib.wRightMotorSpeed = r;
     XInputSetState(0, &vib);
+}
+
+namespace {
+
+// SplitMix64 (整数四則とシフトのみ = /fp:precise 以前に浮動小数を触らない)。
+// PCG32 (エンジンの sim 乱数) を使わないのは、合成入力が **sim の外**で作られる値で、
+// ワールド RNG の列を 1 歩でも進めてはいけないため
+uint64_t SplitMix64(uint64_t x)
+{
+    x += 0x9E3779B97F4A7C15ull;
+    x = (x ^ (x >> 30)) * 0xBF58476D1CE4E5B9ull;
+    x = (x ^ (x >> 27)) * 0x94D049BB133111EBull;
+    return x ^ (x >> 31);
+}
+
+} // namespace
+
+InputSnapshot SynthLaneInput(uint64_t tick, uint32_t lane)
+{
+    InputSnapshot s = {};
+    // レーンごとにブロック長を変える = 同じ tick でもレーン間で位相も内容も揃わない。
+    // 「全レーンに同じ入力を配ってしまった」実装ミスがここで必ず値の差として出る
+    const uint64_t block = 11ull + static_cast<uint64_t>(lane) * 5ull;
+    const uint64_t h = SplitMix64((tick / block) * 4ull + lane + 1ull);
+
+    const auto press = [&s](uint8_t vk) { s.keys[vk >> 3] |= static_cast<uint8_t>(1u << (vk & 7)); };
+    // actions.json の既定マップ (MoveX = A/D、MoveY = W/S、Jump = Space) を叩く。
+    // 左右/上下は排他にする — 同時押しは軸が 0 になるだけで動きが死ぬ
+    if (h & 1u) {
+        press('A');
+    } else if (h & 2u) {
+        press('D');
+    }
+    if (h & 4u) {
+        press('W');
+    } else if (h & 8u) {
+        press('S');
+    }
+    if (((h >> 4) & 7u) == 0u) {
+        press(VK_SPACE); // Jump は疎に (pressed/released のエッジを作るのが目的)
+    }
+
+    // パッド成分も埋める: アクションマップのデッドゾーン適用とパッドボタンの経路、
+    // および「レーン n はパッド n を見る」という規約そのものを被覆に入れる
+    s.padConnected = 1;
+    s.padLX = static_cast<int16_t>((static_cast<int32_t>((h >> 8) & 0xFFFFu) - 32768) / 2);
+    s.padLY = static_cast<int16_t>((static_cast<int32_t>((h >> 24) & 0xFFFFu) - 32768) / 2);
+    s.padButtons = static_cast<uint16_t>((h >> 40) & 0x1000u); // A ボタンだけ
+
+    // ★マウスは動かさない。動かすとエディタの GameView ヒットテストと UI が
+    //   合成入力で誤爆し、「検証フラグを足した途端に UI が勝手に操作される」ことになる
+    return s;
 }
 
 } // namespace mye

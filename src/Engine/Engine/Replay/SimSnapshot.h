@@ -38,6 +38,8 @@ struct SimRefs {
     CpuParticleBackend* particles = nullptr;
     CollisionSystem* collision = nullptr;
     ScriptHost* scripts = nullptr;
+    // M52g: **kMaxPlayers 本のレーン配列**の先頭を指す (1 本ではない)。
+    // blob には常に kMaxPlayers 本ぶん書く = --local-players の指定に依らず往復できる
     InputSnapshot* prevTickInput = nullptr;
     // M52e: 再生ハンドルの採番カウンタ (EngineApiTable の PlaySound 系が ++ して script へ返す)。
     // ★ハッシュには入らないが**戻り値がスクリプト経由で sim 状態へ入りうる**ので、
@@ -50,7 +52,8 @@ struct SimRefs {
 // blob の形式版。**.rep の版とは独立** (M52a 申し送り 7 と同じ規約) —
 // blob のレイアウトを変えたらここだけを上げる。
 // v2 (M52e): LOP 節へ audioHandleSeq を追加
-inline constexpr uint32_t kSimSnapshotVersion = 2;
+// v3 (M52g): LOP 節の prevTickInput を kMaxPlayers 本のレーン配列へ (レーン数を節に明記)
+inline constexpr uint32_t kSimSnapshotVersion = 3;
 
 // 撮る: out を clear して blob を書く。成功で true。
 // 節ごとの参照が null なら「空の節」を書くのでレイアウトは常に同じ

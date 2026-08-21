@@ -57,6 +57,7 @@ public:
     bool rtShowcase = false;       // --rt-demo (M46i: コーネル箱のショーケースを構築)
     bool partsShowcase = false;    // --parts-demo (M48g: 部位追従のリプレイ被覆シーン)
     bool flowShowcase = false;     // --flow-demo (M51j: ゲームフロー統合デモ 2 シーン)
+    bool localDemo = false;        // --local-demo (M52g: 入力レーンのローカルマルチプレイデモ)
     // --edit-actor PATH (M48k): 起動直後にミニシーン編集モードで開く。
     // 編集モードの入口はダブルクリックだけで自動検証できないため、既存の検証フラグ
     // (--select / --pick-test / --parts-demo) と同じ流儀で口を開けてある

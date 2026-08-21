@@ -97,10 +97,14 @@ bool RunSimSnapshotSelfTest()
 
     SimRefs refs;
     refs.scene = &scene;
-    InputSnapshot prevInput = {};
-    prevInput.mouseX = 321;
-    prevInput.mouseY = 654;
-    refs.prevTickInput = &prevInput;
+    // M52g: 前 tick 入力は kMaxPlayers 本のレーン配列。レーンごとに違う目印を入れて
+    // 「往復でレーンが混ざらない」ことまで固定する
+    InputSnapshot prevInput[kMaxPlayers] = {};
+    prevInput[0].mouseX = 321;
+    prevInput[0].mouseY = 654;
+    prevInput[1].mouseX = 1321;
+    prevInput[kMaxPlayers - 1].mouseX = 4321;
+    refs.prevTickInput = prevInput;
     uint64_t tick = 4242;
     refs.tickIndex = &tick;
 
@@ -134,7 +138,9 @@ bool RunSimSnapshotSelfTest()
     scene.SetSourcePath(L"");
     scene.ReplaceOverridesTable({});
     scene.SetNextFileId(9999);
-    prevInput = {};
+    for (uint32_t p = 0; p < kMaxPlayers; ++p) {
+        prevInput[p] = {};
+    }
     tick = 0;
     check(HashWorld(w, nullptr, &scene.Time(), &scene.Persist()) != hash0,
           "the world really diverged before restore");
@@ -156,7 +162,10 @@ bool RunSimSnapshotSelfTest()
     check(scene.HasOverrideRecord(1) && scene.GetOverrides(3) != nullptr
               && scene.GetOverrides(3)->size() == 2,
           "prefab override records are restored");
-    check(prevInput.mouseX == 321 && prevInput.mouseY == 654, "prev tick input is restored");
+    check(prevInput[0].mouseX == 321 && prevInput[0].mouseY == 654,
+          "prev tick input is restored");
+    check(prevInput[1].mouseX == 1321 && prevInput[kMaxPlayers - 1].mouseX == 4321,
+          "...for every input lane (M52g)");
     check(tick == 4242, "tick index is restored");
 
     // ---- ハッシュに出ない状態: EntityID 世代と freeIndices の LIFO 順 ----

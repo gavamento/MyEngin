@@ -409,6 +409,26 @@ void RegisterBuiltinComponents()
         MYE_JP("ハーフサイズ", MYE_FIELD_TIP(PartBoundsComponent, halfExtents, Float3,
                                              "sphere uses x as radius")),
     });
+
+    // M52g: 入力レーンの結び付け。**hash 対象** — レーンごとのアクション評価結果を
+    // ワールドハッシュに載せること自体が目的 (Components.h の理由 1)。
+    // opt-in (TypeId 末尾 append =32) なので既存シーンのハッシュは不変 = ReplayFile bump 不要。
+    //
+    // ★ミラー 5 本に kFieldNoSerialize を**付けてはいけない**: WorldHasher は
+    //   NoSerialize フィールドをハッシュから除外する (WorldHasher.cpp) ので、
+    //   付けた瞬間に「毎 tick 書いているのにハッシュに 1 ビットも出ない」= 被覆ゼロになる。
+    //   代償としてシーン JSON に tick 限りの入力値が載るが、次の tick で上書きされる
+    //   派生値なので実害は無い (ReadOnly で編集は塞いである)
+    RegisterComponent<PlayerInputComponent>("PlayerInput", {
+        // 範囲外の値は PlayerInputSystem 側で「未接続レーン」に落ちる (= 全ゼロ) ので、
+        // Inspector に範囲を持たせない (Int32 のスライダ経路を新規に踏まない)
+        MYE_JP("プレイヤー番号", MYE_FIELD(PlayerInputComponent, playerIndex, Int32)),
+        MYE_JP("接続", MYE_FIELD_FLAGS(PlayerInputComponent, connected, Bool, kFieldReadOnly)),
+        MYE_JP("軸 0-3", MYE_FIELD_FLAGS(PlayerInputComponent, axes, Float4, kFieldReadOnly)),
+        MYE_JP("押下中ビット", MYE_FIELD_FLAGS(PlayerInputComponent, heldBits, UInt32, kFieldReadOnly)),
+        MYE_JP("押した瞬間ビット", MYE_FIELD_FLAGS(PlayerInputComponent, pressedBits, UInt32, kFieldReadOnly)),
+        MYE_JP("離した瞬間ビット", MYE_FIELD_FLAGS(PlayerInputComponent, releasedBits, UInt32, kFieldReadOnly)),
+    });
 }
 
 } // namespace mye

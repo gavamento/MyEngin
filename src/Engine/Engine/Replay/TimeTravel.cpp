@@ -68,8 +68,8 @@ void TimeTravel::Begin(const SimRefs& refs, uint64_t tick)
                  config_.maxSnapshots);
 }
 
-void TimeTravel::OnTickEnd(const SimRefs& refs, uint64_t ranTick, const InputSnapshot& input,
-                           bool simulated)
+void TimeTravel::OnTickEnd(const SimRefs& refs, uint64_t ranTick, const InputSnapshot* inputs,
+                           uint32_t playerCount, bool simulated)
 {
     if (!enabled_) {
         return;
@@ -94,7 +94,12 @@ void TimeTravel::OnTickEnd(const SimRefs& refs, uint64_t ranTick, const InputSna
         simSinceSnapshot_ = 0;
     }
     TimeTravelEntry e;
-    e.input = input;
+    if (inputs != nullptr) {
+        const uint32_t n = (playerCount < kMaxPlayers) ? playerCount : kMaxPlayers;
+        for (uint32_t p = 0; p < n; ++p) {
+            e.inputs[p] = inputs[p];
+        }
+    }
     e.simulated = simulated;
     e.hashAfter = HashOf(refs);
     entries_.push_back(e);

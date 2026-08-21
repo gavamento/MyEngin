@@ -107,9 +107,37 @@ bin\x64\Debug\Editor.exe --flow-demo --replay-verify %REP3% %MYE_EXTRA_ARGS% || 
 echo === verify flow in Release ===
 bin\x64\Release\Editor.exe --flow-demo --replay-verify %REP3% %MYE_EXTRA_ARGS% || (call :diagnose "%REP3%" "--flow-demo" & echo [FAIL] Release flow verify & exit /b 1)
 
-rem ---- 4 段目: スナップショット往復ストレス (M52d) ----
+rem ---- 4 本目: マルチプレイヤー入力レーン (M52g) ----
+rem レーンを足しただけでは決定論の証明にならない: ヘッドレスの実入力は全レーン恒常ゼロで、
+rem 「レーン 1 がレーン 0 を読んでいる」類の配線ミスは記録側と検証側で**対称に**起きて
+rem ハッシュが一致してしまう。そこで
+rem   --synth-input   … (tick, lane) の純関数でレーンごとに違う入力を流し込む
+rem   PlayerInput     … その評価結果を ECS のミラーへ書いてワールドハッシュに載せる
+rem の 2 つを噛ませる。これで「レーン n の入力がレーン n のエンティティへ届いたか」が
+rem Debug/Release のビット一致として機械検証される。
+rem シーンは 4 体 (kMaxPlayers) 置いてあり、--local-players 2 では 3-4 体目のミラーが
+rem 恒常ゼロであることまで同じハッシュで固定される。コードから毎回組む (parts と同じ流儀)
+set REP4=cache\golden_mp.rep
+set MP_ARGS=--local-demo --local-players 2 --synth-input
+
+rem 保存済みシーンが残っていると読み込み経路に落ちてコード側の正解と食い違う
+if exist cache\local_players.scene.json del /q cache\local_players.scene.json
+
+echo === record golden replay: local multiplayer (Debug, %TICKS% ticks) ===
+bin\x64\Debug\Editor.exe %MP_ARGS% --replay-record %REP4% --replay-ticks %TICKS% %MYE_EXTRA_ARGS% || exit /b 1
+
+rem ★検証側に --synth-input は渡さない。合成入力は .rep に記録済みで、verify は
+rem   記録値で置換するのが正しい経路 (ここで渡すと「合成入力が無いと再生できない .rep」
+rem   という嘘の仕様を作ってしまう)
+echo === verify local multiplayer in Debug ===
+bin\x64\Debug\Editor.exe --local-demo --replay-verify %REP4% %MYE_EXTRA_ARGS% || (call :diagnose "%REP4%" "--local-demo" & echo [FAIL] Debug mp verify & exit /b 1)
+
+echo === verify local multiplayer in Release ===
+bin\x64\Release\Editor.exe --local-demo --replay-verify %REP4% %MYE_EXTRA_ARGS% || (call :diagnose "%REP4%" "--local-demo" & echo [FAIL] Release mp verify & exit /b 1)
+
+rem ---- 5 段目: スナップショット往復ストレス (M52d) ----
 rem 「撮って戻す」を 37 tick ごとに挟んでも 600 tick の期待ハッシュが全一致することを
-rem 3 ペアすべてで固定する。既存の .rep をそのまま使い回すので追加コストは verify 1 回分。
+rem 4 ペアすべてで固定する。既存の .rep をそのまま使い回すので追加コストは verify 1 回分。
 rem ここが赤い = 復元が非対称 (撮れているのに戻していない sim 状態がある) という意味で、
 rem タイムトラベル (M52e) / クラッシュ再現 (M52f) / ロールバック (M52i) の土台が崩れている。
 rem selftest の小さな世界では出ない取りこぼしは、この実データ 600 tick でしか捕まらない
@@ -117,8 +145,9 @@ echo === snapshot round-trip stress (Debug, every 37 ticks) ===
 bin\x64\Debug\Editor.exe --replay-verify %REP% --snapshot-stress 37 %MYE_EXTRA_ARGS% || (echo [FAIL] snapshot stress: demo & exit /b 1)
 bin\x64\Debug\Editor.exe --parts-demo --replay-verify %REP2% --snapshot-stress 37 %MYE_EXTRA_ARGS% || (echo [FAIL] snapshot stress: parts & exit /b 1)
 bin\x64\Debug\Editor.exe --flow-demo --replay-verify %REP3% --snapshot-stress 37 %MYE_EXTRA_ARGS% || (echo [FAIL] snapshot stress: flow & exit /b 1)
+bin\x64\Debug\Editor.exe --local-demo --replay-verify %REP4% --snapshot-stress 37 %MYE_EXTRA_ARGS% || (echo [FAIL] snapshot stress: mp & exit /b 1)
 
-rem ---- 5 段目: タイムトラベルの巻き戻し (M52e) ----
+rem ---- 6 段目: タイムトラベルの巻き戻し (M52e) ----
 rem 「T まで進める → T-K へ戻す → 記録入力で T まで再シム → 元の T とハッシュ一致」を
 rem 複数の K で実走し、続けて「スクラブ中は tick が止まる」「再開すると分岐して未来を捨てる」
 rem をライブのフレームループ上で確認する。ここが赤い = 巻き戻した世界が元と別物という意味で、
@@ -131,7 +160,7 @@ echo === static rule check ===
 pwsh -NoProfile -ExecutionPolicy Bypass -File tools\check_rules.ps1 || (echo [FAIL] rule check & exit /b 1)
 
 echo.
-echo [PASS] replay consistency (Debug/Release, 3 scenes: demo + parts + flow) + snapshot round-trip + time travel + rule check
+echo [PASS] replay consistency (Debug/Release, 4 scenes: demo + parts + flow + mp) + snapshot round-trip + time travel + rule check
 exit /b 0
 
 rem ---------------------------------------------------------------- :diagnose

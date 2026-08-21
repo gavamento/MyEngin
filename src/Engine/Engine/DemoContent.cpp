@@ -677,6 +677,72 @@ void EnsureFlowShowcaseScenes(EngineContext& ctx)
     ensure(L"flow_title.scene.json", &BuildFlowTitleScene);
 }
 
+void RegisterLocalPlayersContent(EngineContext& ctx)
+{
+    RenderResources& res = *ctx.resources;
+    const AssetID white = res.textures.White();
+    const AssetID shader = AssetID{ HashStr("forward_lit") };
+    res.meshes.Cube();
+
+    auto makeMat = [&](const char* name, float r, float g, float b) {
+        Material m;
+        m.shader = shader;
+        m.texture = white;
+        m.baseColor = { r, g, b, 1.0f };
+        return res.materials.Register(name, m);
+    };
+    makeMat("mp_floor", 0.26f, 0.28f, 0.34f);
+    makeMat("mp_p0", 0.95f, 0.35f, 0.25f); // P1 = 赤
+    makeMat("mp_p1", 0.25f, 0.65f, 0.95f); // P2 = 青
+    makeMat("mp_p2", 0.35f, 0.85f, 0.40f); // P3 = 緑
+    makeMat("mp_p3", 0.90f, 0.80f, 0.25f); // P4 = 黄
+}
+
+void BuildLocalPlayersScene(EngineContext& ctx)
+{
+    Scene& s = *ctx.scene;
+    RenderResources& res = *ctx.resources;
+    s.SetName("local_players");
+    const AssetID cube = res.meshes.Cube();
+
+    GameObject camera = s.CreateGameObject("Main Camera");
+    camera.AddComponent<CameraComponent>();
+    camera.SetLocalPosition(0.0f, 7.0f, -13.0f);
+    camera.SetLocalRotationEuler(24.0f, 0.0f, 0.0f);
+
+    GameObject sun = s.CreateGameObject("Sun");
+    sun.AddComponent<LightComponent>();
+    sun.SetLocalRotationEuler(52.0f, -28.0f, 0.0f);
+
+    GameObject floor = s.CreateGameObject("Floor");
+    floor.SetLocalPosition(0.0f, -0.25f, 0.0f);
+    floor.SetLocalScale(18.0f, 0.5f, 12.0f);
+    {
+        auto* mr = floor.AddComponent<MeshRendererComponent>();
+        mr->mesh = cube;
+        mr->material = AssetID{ HashStr("mp_floor") };
+    }
+
+    // ★**kMaxPlayers 体すべて置く**。--local-players 2 で走らせると 3 体目以降の
+    //   PlayerInput ミラーは全ゼロのまま = 「playerCount を超えたレーンは恒常ゼロ」が
+    //   ワールドハッシュの上で固定される (動かない 2 体も立派な検査対象)
+    static const char* kMats[] = { "mp_p0", "mp_p1", "mp_p2", "mp_p3" };
+    for (uint32_t i = 0; i < kMaxPlayers; ++i) {
+        char name[32];
+        std::snprintf(name, sizeof(name), "Player_%u", i + 1);
+        GameObject go = s.CreateGameObject(name);
+        go.SetLocalPosition(-6.0f + 4.0f * static_cast<float>(i), 0.5f, 0.0f);
+        auto* mr = go.AddComponent<MeshRendererComponent>();
+        mr->mesh = cube;
+        mr->material = AssetID{ HashStr(kMats[i]) };
+        auto* pi = go.AddComponent<PlayerInputComponent>();
+        pi->playerIndex = static_cast<int32_t>(i);
+        // 動きは C++ スクリプト側。**エンジンの ABI は 1 本も足していない** —
+        // ミラーは v11 の GetComponentField (名前ハッシュの汎用スロット) で読む
+        AttachScriptIfRegistered(s.GetWorld(), go.Id(), "LocalPlayerDemo");
+    }
+}
+
 void RegisterAssetLibraries(EngineContext& ctx)
 {
     std::error_code ec;

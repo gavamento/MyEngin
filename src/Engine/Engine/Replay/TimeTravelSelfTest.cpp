@@ -52,9 +52,12 @@ bool RunTimeTravelSelfTest()
                 t->position.x += 1.0f;
             }
         }
-        InputSnapshot in = {};
-        in.mouseX = static_cast<int32_t>(tick); // 入力の同一性を後で照合するための目印
-        tt.OnTickEnd(refs, tick, in, simulated);
+        // M52g: レーン 2 本で積む。レーン 1 に別の目印を入れて「レーン 0 の値が
+        // 全レーンへ配られていないか」までここで固定する
+        InputSnapshot in[2] = {};
+        in[0].mouseX = static_cast<int32_t>(tick); // 入力の同一性を後で照合するための目印
+        in[1].mouseX = static_cast<int32_t>(tick) + 1000;
+        tt.OnTickEnd(refs, tick, in, 2, simulated);
         ++tick;
     };
 
@@ -81,9 +84,14 @@ bool RunTimeTravelSelfTest()
     check(tt.EndTick() == 190, "90 ticks -> [100, 190)");
     check(tt.EntryCount() == 90, "one entry per tick");
     check(tt.SnapshotCount() == 4, "snapshots at 100 / 130 / 160 / 190");
-    check(tt.Entry(100) != nullptr && tt.Entry(100)->input.mouseX == 100,
+    check(tt.Entry(100) != nullptr && tt.Entry(100)->inputs[0].mouseX == 100,
           "Entry(t) returns the input that tick consumed");
-    check(tt.Entry(189) != nullptr && tt.Entry(189)->input.mouseX == 189, "...for the last tick");
+    check(tt.Entry(189) != nullptr && tt.Entry(189)->inputs[0].mouseX == 189,
+          "...for the last tick");
+    check(tt.Entry(150) != nullptr && tt.Entry(150)->inputs[1].mouseX == 1150,
+          "each lane keeps its own snapshot (M52g)");
+    check(tt.Entry(150) != nullptr && tt.Entry(150)->inputs[2].mouseX == 0,
+          "lanes beyond playerCount stay zero");
     check(tt.Entry(190) == nullptr, "EndTick() itself has no entry (it has not run yet)");
     check(tt.HashAtTick(190) == tt.Entry(189)->hashAfter,
           "HashAtTick(t) is the hash after tick t-1");

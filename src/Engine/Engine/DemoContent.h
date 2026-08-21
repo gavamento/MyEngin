@@ -58,6 +58,23 @@ void EnsureFlowShowcaseScenes(EngineContext& ctx);
 // 上のショーケースが参照するマテリアルの実体登録 (RegisterRtShowcaseContent と同じ役割)
 void RegisterFlowShowcaseContent(EngineContext& ctx);
 
+// M52g: ローカルマルチプレイ (入力レーン) のデモシーン。--local-demo で選ぶ。
+// kMaxPlayers 体のキューブがそれぞれ `PlayerInputComponent` でレーンに結び付いていて、
+// LocalPlayerDemo (C++ スクリプト) がそのミラーを読んで動かす。
+//
+// **replay_verify 4 ペア目の入力そのもの**。`--local-players 2 --synth-input` で回すと
+//   ・レーン 0/1 は違う合成入力で違う動きをする
+//   ・レーン 2/3 のミラーは恒常ゼロ (playerCount 超過)
+// が毎 tick のワールドハッシュに載るので、「レーン n の入力がレーン n のエンティティに
+// 届いたか」が Debug/Release のビット一致として機械検証される。
+//
+// builtin メッシュ + 名前キーのマテリアルだけで組むのでチェックアウト非依存。
+// ★既定のデモシーンは 1 バイトも変えない (BuildRtShowcaseScene と同じ理由)
+void BuildLocalPlayersScene(EngineContext& ctx);
+
+// 上のデモが参照するマテリアルの実体登録 (RegisterRtShowcaseContent と同じ役割)
+void RegisterLocalPlayersContent(EngineContext& ctx);
+
 // assets\ 以下の .prefab.json / .anim.json を各ライブラリへ登録する (Editor / Runtime 共用)。
 // M48g からは .glb / .gltf / .fbx のスケルトンもここで (エンティティを作らずに) 登録する
 void RegisterAssetLibraries(EngineContext& ctx);

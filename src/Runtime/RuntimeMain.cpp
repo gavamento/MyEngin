@@ -42,13 +42,18 @@ public:
     std::wstring scenePath;
     bool startDeferred = false;
     bool rtShowcase = false; // --rt-demo (M46i: コーネル箱のショーケース)
+    bool localDemo = false;  // --local-demo (M52g: ローカルマルチプレイの入力レーンデモ)
 
     void OnStart(mye::EngineContext& ctx) override
     {
         ctx.shaders->Load("forward_lit");
         mye::RegisterDemoContent(ctx);   // Editor と同じ実体登録 (AssetID 解決)
         mye::RegisterAssetLibraries(ctx); // .prefab / .anim を登録
-        if (scenePath.empty() && rtShowcase) {
+        if (scenePath.empty() && localDemo) {
+            // M52g: コードから毎回組む (ファイルは作らない)。パスだけ cache\ に振っておくと
+            // 万一保存されても main.scene.json を潰さない
+            scenePath = L"cache\\local_players.scene.json";
+        } else if (scenePath.empty() && rtShowcase) {
             // M46i: ショーケースはブートシーンと別枠。保存済みファイルがあればそれを読み、
             // 無ければコードから組む (main.scene.json には一切触らない)
             scenePath = ctx.assetsRoot + L"\\scenes\\rt_showcase.scene.json";
@@ -65,11 +70,14 @@ public:
         mye::RegisterRtShowcaseContent(ctx);
         mye::RegisterPartsShowcaseContent(ctx);
         mye::RegisterFlowShowcaseContent(ctx); // M51j: flow_* 材質 (配布ブートシーンにも使う)
+        mye::RegisterLocalPlayersContent(ctx);  // M52g: mp_* 材質 (同上の理由で常時)
         if (std::filesystem::exists(scenePath)) {
             mye::SceneSerializer::LoadFromFile(*ctx.scene, scenePath);
             // Editor と同じ「ロード直後 1 回」(M48e)。ここを揃えないと Editor で録った .rep と
             // Runtime の verify で初期状態が食い違う
             mye::Prefab::RefreshNonOverridden(*ctx.scene, *ctx.prefabs);
+        } else if (localDemo) {
+            mye::BuildLocalPlayersScene(ctx); // M52g
         } else if (rtShowcase) {
             mye::BuildRtShowcaseScene(ctx); // M46i
         } else {
@@ -214,6 +222,12 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 config.rtRefl = true; // M46h: スペキュラ環境項をレイトレ反射で (Deferred のみ)
             } else if (arg == L"--rt-demo") {
                 app.rtShowcase = true; // M46i: コーネル箱のショーケースシーンを構築
+            } else if (arg == L"--local-demo") {
+                app.localDemo = true; // M52g: 入力レーンのローカルマルチプレイデモ
+            } else if (arg == L"--local-players" && i + 1 < argc) {
+                config.localPlayers = _wtoi(argv[++i]); // M52g: 消費する入力レーン数
+            } else if (arg == L"--synth-input") {
+                config.synthInput = true; // M52g: レーンごとの合成入力 (検証用)
             } else if (arg == L"--project" && i + 1 < argc) {
                 // M26: プロジェクト指定。dist 配布物は従来どおり exe 隣の assets を自動発見する
                 config.projectRoot = std::filesystem::absolute(argv[++i]).wstring();
