@@ -24,6 +24,7 @@
 #include "Engine/Core/Log.h"
 #include "Editor/AssetOpsSelfTest.h"
 #include "Editor/TerrainSelfTest.h"
+#include "Editor/DecalSelfTest.h"
 #include "Engine/Engine/AnimatorControllerSelfTest.h"
 #include "Engine/Engine/AssetDatabaseSelfTest.h"
 #include "Engine/Engine/Audio/AudioSelfTest.h"
@@ -461,7 +462,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             && mye::RunNetSelfTest()
             // 連鎖の**末尾**に append する (統合契約の予約 7)。短絡なので位置がそのまま実行順
             && mye::RunLightSelectionSelfTest() // M54b
-            && mye::RunTerrainSelfTest();       // M58b
+            && mye::RunTerrainSelfTest()        // M58b
+            && mye::RunDecalSelfTest();         // M56a
         return ok ? 0 : 1;
     }
 

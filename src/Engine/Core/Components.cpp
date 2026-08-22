@@ -453,6 +453,24 @@ void RegisterBuiltinComponents()
                MYE_FIELD_TIP(TerrainComponent, skirtDepth, Float,
                              "0 = auto (measured LOD edge gap), <0 = no skirt")),
     }, kComponentNoHash);
+
+    // M56a: デカール (投影ボックス)。**kComponentNoHash** — GBuffer の albedo を
+    // 上描きするだけの描画レーンで、sim には 1 バイトも触らない。
+    // opt-in (TypeId 末尾 append) なので既存シーンのハッシュは不変 = ReplayFile bump 不要
+    RegisterComponent<DecalComponent>("Decal", {
+        // フィールド名に "tex" が入っていることが Inspector のピッカーが
+        // TextureLibrary を引く条件 (InspectorWindow::DrawAssetRef の名前推定)
+        MYE_JP("テクスチャ", MYE_FIELD(DecalComponent, texture, AssetRef)),
+        MYE_JP("色と不透明度", MYE_FIELD_TIP(DecalComponent, color, Color,
+                                             "alpha = decal opacity")),
+        MYE_JP("UV スケール", MYE_FIELD_TIP(DecalComponent, uvScale, Float2,
+                                            "atlas sub-rect (v1 sampler is LINEAR/CLAMP)")),
+        MYE_JP("UV オフセット", MYE_FIELD(DecalComponent, uvOffset, Float2)),
+        // 180 を超える値は cos が単調でなくなるので Inspector 側でも止める
+        // (範囲外を渡されても DecalAngleFadeCos が丸めるが、表示と食い違わせない)
+        MYE_JP("角度フェード", MYE_FIELD_RANGE(DecalComponent, angleFadeDeg, Float, 0.0f, 180.0f)),
+        MYE_JP("描画順", MYE_FIELD(DecalComponent, sortOrder, Int32)),
+    }, kComponentNoHash);
 }
 
 } // namespace mye

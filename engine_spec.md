@@ -277,6 +277,7 @@ that follows the editor camera fights with editing.
 | Skeletal animation | Implemented | 128-bone palette, glTF / FBX skinning |
 | Image-based lighting | Implemented | Irradiance + prefiltered specular + BRDF LUT |
 | Ray-traced secondary rays | Implemented | See §6.4 (default off) |
+| Decals (projector boxes) | Implemented | See §6.6. **Deferred path only** in v1 |
 
 ### 6.3 DirectX 11 Abstraction
 
@@ -335,6 +336,37 @@ were considered and **deliberately left out**. They are non-goals of v1, not ove
 | **Ray-traced shadows for local lights** | The RT lane is default-off *and* excluded from the screenshot regression (`tools\shot_verify.bat`: the RT demo is too slow under WARP), so the feature would carry permanently zero automated coverage. The M54 shadow atlas produces the same image on a lane CI does exercise. The §6.4 v1 limitation "local lights cast no ray-traced shadows" therefore stands. |
 | **Diffuse SH probe grid** | Two implementations of diffuse ambient already exist (IBL irradiance, and RT diffuse GI + SVGF). An SH grid would be a third, lower in quality than the RT lane, and would require a whole bake infrastructure. M56 ships *specular* reflection probes only. |
 | **Terrain collision** | Terrain (M58) is a render-only lane: `TerrainComponent` is `kComponentNoHash` and nothing it does reaches the simulation. A heightfield collider would move terrain into the hashed lane, requiring a fifth scene pair in `tools\replay_verify.bat` and an ABI bump for height/normal queries. Deferred to M59. |
+
+### 6.6 Decals (M56a)
+
+`DecalComponent` projects a texture (or a flat tint) onto whatever the G-Buffer already
+holds inside an oriented box. The box is the entity's world matrix applied to the unit cube
+`[-0.5, 0.5]^3`, and the **projection direction is local +Z** — the same rule
+`LightComponent` uses, so a decal is aimed exactly like a spotlight.
+
+- **Where it runs**: right after the deferred geometry pass (terrain included) and *before*
+  SSAO / the ray-traced lane / the light pass. The decal therefore participates in ambient
+  occlusion, shadowing and every lighting term, exactly like painted-on albedo.
+- **How the surface is found**: G-Buffer RT2 already stores the world position, so no depth
+  un-projection is needed. The pixel's world position is pushed through the decal's inverse
+  matrix; anything outside `|local| <= 0.5` is discarded, and `RT2.a < 0.5` (no geometry)
+  is discarded first — the G-Buffer is zero-cleared, so a box containing the world origin
+  would otherwise "catch the sky".
+- **Angle fade**: `saturate((dot(N, -projDir) - cos(angleFadeDeg)) / (1 - cos(angleFadeDeg)))`.
+  The default 90° collapses to a plain cosine fade, which is what stops a downward decal
+  from smearing down the vertical faces of whatever it lands on.
+- **Render targets**: the pass binds **only RT0 (albedo)**. RT1 (normal) and RT2 (position)
+  are read as SRVs in the same draw, and RT2 (SSAO / RT / SSR input) and RT4 (velocity, the
+  TAA input) must never receive decal writes.
+
+**v1 limitations:**
+
+| Limitation | Why |
+|---|---|
+| **Forward path is not supported** | Forward has no G-Buffer, so there is no "already-shaded surface" to overwrite. A forward decal would have to be a second pass over the receiving geometry with its own clip volume, which is a different feature. Decals silently do nothing on the forward path and in asset thumbnails (`AssetPreviewCache` is forward-only). |
+| **Albedo only** | Normals and roughness are M56b. |
+| **Sampler is LINEAR/CLAMP** | The reservation for M56 adds no new sampler states, and CLAMP is what keeps a decal from bleeding its opposite edge. `uvScale`/`uvOffset` therefore select an atlas sub-rect rather than tiling. |
+| **No frustum culling** | Off-screen decals still rasterize their 12 triangles. Decal counts are expected to be small; this becomes worth fixing only when it shows up in a profile. |
 
 ---
 

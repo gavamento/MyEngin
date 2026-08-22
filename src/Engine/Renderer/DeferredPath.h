@@ -30,6 +30,11 @@ public:
     ID3D11ShaderResourceView* VelocitySRV() const override { return gbVelocity_.SRV(); }
 
 private:
+    // M56a: デカール (投影ボックス)。ジオメトリパス直後・SSAO 前に albedo を上描きする。
+    // view.decals が null / 空なら 1 命令も発行せずに return する
+    void RenderDecals(GraphicsDevice& device, ShaderManager& shaders, const RenderView& view,
+                      RenderResources& resources, const DirectX::XMFLOAT4X4& viewProjT);
+
     RenderTexture gbAlbedo_;   // a=1 でジオメトリ有りマーク
     RenderTexture gbNormal_;   // ワールド法線 *0.5+0.5
     RenderTexture gbPosition_; // ワールド座標 (Point/Spot ライティング用)
@@ -71,6 +76,12 @@ private:
     // M55c: velocity の可視化 (RenderView::velocityDebug != 0 のときだけ)
     AssetID velocityDebugShader_ = {};
     Microsoft::WRL::ComPtr<ID3D11Buffer> velocityDebugCB_;
+    // ---- M56a: デカール ----
+    AssetID decalShader_ = {};
+    Microsoft::WRL::ComPtr<ID3D11Buffer> decalCB_;
+    // 投影ボックス専用のラスタライザ。CULL_FRONT (裏面を描く = カメラが箱に入っても消えない)
+    // + DepthClipEnable=FALSE (箱が near/far を跨いでも欠けない)
+    Microsoft::WRL::ComPtr<ID3D11RasterizerState> rasterizerDecal_;
     SkyboxPass skybox_; // ライトパス後・透明前に空を塗る (M29d)
     // 地形 (M58c)。GBuffer へ専用シェーダで書く — 不透明パスは material->shader を
     // 見ないのでマテリアル経由では通せない (TerrainPass.h の頭のコメント参照)

@@ -162,6 +162,19 @@ struct VelocityCB {
     float pad;
 };
 
+// M56a: decal_project.hlsl の DecalParams (b0) と同一レイアウト。
+// ★b0 を使えるのは、デカールパスの前後で b0 が必ず張り替わるから (前 = ジオメトリパスの
+//   PerFrame、後 = SSAO / 光パス / 透明後段がそれぞれ自分の CB を張る)。
+//   地形パス (M58c) が b4 へ逃げているのは「地形の後に透明後段が来る」ため
+struct DecalCB {
+    XMFLOAT4X4 viewProj;      // transpose(view*proj)。ジッタ込み
+    XMFLOAT4X4 decalWorld;    // transpose(ローカル → ワールド)
+    XMFLOAT4X4 decalInvWorld; // transpose(ワールド → ローカル)
+    XMFLOAT4 color;           // rgb = リニア tint / a = 不透明度
+    XMFLOAT4 uv;              // xy = スケール / zw = オフセット
+    XMFLOAT4 proj;            // xyz = 投影方向 / w = 角度フェードの cos
+};
+
 // debug_velocity.hlsl の VelocityDebugCB と同一レイアウト
 struct VelocityDebugCB {
     float dstSize[2];
@@ -197,6 +210,8 @@ bool DeferredPath::Init(GraphicsDevice& device, ShaderManager& shaders)
 
     // M55c: velocity の可視化 (デバッグ表示。既定 off なので失敗しても描画は続く)
     velocityDebugShader_ = shaders.Load("debug_velocity");
+    // M56a: デカール。失敗しても続行 (デカールが描かれないだけ = 従来の絵)
+    decalShader_ = shaders.Load("decal_project");
 
     if (!CreateConstant(dev, sizeof(PerFrameCB), perFrameCB_)
         || !CreateConstant(dev, sizeof(PerObjectCB), perObjectCB_)
@@ -204,6 +219,7 @@ bool DeferredPath::Init(GraphicsDevice& device, ShaderManager& shaders)
         || !CreateConstant(dev, sizeof(LightPassCB), lightCB_)
         || !CreateConstant(dev, sizeof(VelocityCB), velocityCB_)           // M55c (b4)
         || !CreateConstant(dev, sizeof(VelocityDebugCB), velocityDebugCB_) // M55c
+        || !CreateConstant(dev, sizeof(DecalCB), decalCB_)                 // M56a
         || !CreateConstant(dev, sizeof(XMFLOAT4X4) * kMaxBones, boneCB_)) {
         return false;
     }
@@ -300,6 +316,17 @@ bool DeferredPath::Init(GraphicsDevice& device, ShaderManager& shaders)
     if (FAILED(dev->CreateRasterizerState(&rd, rasterizerWire_.GetAddressOf()))) {
         return false;
     }
+    // M56a: デカールの投影ボックス。**表面ではなく裏面を描く** — 表面 (CULL_BACK) だと
+    // カメラが箱の中に入った瞬間にデカールが丸ごと消える。深度テストは切ってあるので
+    // 「箱が壁の裏に完全に隠れている」場合もラスタライズはされるが、受け面のワールド座標が
+    // 箱の外に出るので PS 側の OBB 判定で必ず捨てられる。
+    // DepthClipEnable=FALSE は「箱が near/far を跨いだときに面が欠ける」対策
+    rd.FillMode = D3D11_FILL_SOLID;
+    rd.CullMode = D3D11_CULL_FRONT;
+    rd.DepthClipEnable = FALSE;
+    if (FAILED(dev->CreateRasterizerState(&rd, rasterizerDecal_.GetAddressOf()))) {
+        return false;
+    }
 
     D3D11_DEPTH_STENCIL_DESC dd = {};
     dd.DepthEnable = TRUE;
@@ -369,7 +396,89 @@ void DeferredPath::Shutdown()
     prevInstanceBuf_.Reset();
     velocityCB_.Reset();
     velocityDebugCB_.Reset();
+    // M56a: デカール
+    decalCB_.Reset();
+    rasterizerDecal_.Reset();
     terrain_.Shutdown(); // M58c
+}
+
+// ---- M56a: デカール (投影ボックス、albedo のみ) ----
+void DeferredPath::RenderDecals(GraphicsDevice& device, ShaderManager& shaders,
+                                const RenderView& view, RenderResources& resources,
+                                const XMFLOAT4X4& viewProjT)
+{
+    // デカール 0 個なら 1 命令も発行しない。**これが「デカールを置いていない golden は
+    // 1 バイトも動かない」という受け入れ基準の根拠**なので、この早期 return より前に
+    // 状態を触る行を足さないこと
+    if (view.decals == nullptr || view.decals->items.empty()) {
+        return;
+    }
+    ShaderProgram* prog = shaders.Get(decalShader_);
+    if (!prog || !prog->valid) {
+        return;
+    }
+    ID3D11DeviceContext* dc = device.Context();
+
+    // ★**GBuffer の RT は albedo (RT0) 1 枚だけ張り直す。**
+    //   計画は「IndependentBlendEnable=TRUE で RT2 (position) と RT4 (velocity) を
+    //   RenderTargetWriteMask=0 で塞ぐ」を想定していたが、
+    //     ・法線 (RT1) と ワールド座標 (RT2) は**この場で SRV として読む**ので、
+    //       そもそも RTV に残したままには出来ない (同一リソースの読み書き二重バインド)。
+    //     ・書込マスク 0 は「PS が値を出さなかった RT の内容は未定義」という D3D の規則を
+    //       消してくれるが、**bind しない方がそれより強い**。
+    //   → M56b で法線 / roughness を書くときも **RT1 と RT3 を足すだけ**にして、
+    //     RT2 (SSAO / RT / SSR の入力) と RT4 (TAA の入力) は nullptr のまま据え置くこと。
+    //     RT4 を 1 バイトでも書くと TAA の履歴 UV が壊れる
+    ID3D11RenderTargetView* rtv[1] = { gbAlbedo_.RTV() };
+    dc->OMSetRenderTargets(1, rtv, nullptr); // 深度も外す (深度テストは使わない)
+
+    ID3D11Buffer* cb[1] = { decalCB_.Get() };
+    dc->VSSetConstantBuffers(0, 1, cb);
+    dc->PSSetConstantBuffers(0, 1, cb);
+    // s0 = LINEAR/CLAMP (光パスの IBL 用サンプラを流用 = サンプラは 1 つも増やさない)。
+    // CLAMP なのはデカールの縁で反対側の画素がにじまないようにするため
+    ID3D11SamplerState* samp[1] = { iblSampler_.Get() };
+    dc->PSSetSamplers(0, 1, samp);
+    dc->IASetInputLayout(nullptr); // 頂点は SV_VertexID から組む (VB / IB を持たない)
+    dc->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    dc->VSSetShader(prog->vs.Get(), nullptr, 0);
+    dc->PSSetShader(prog->ps.Get(), nullptr, 0);
+    dc->RSSetState(rasterizerDecal_.Get());
+    dc->OMSetDepthStencilState(depthDisabled_.Get(), 0);
+    dc->OMSetBlendState(blendAlpha_.Get(), nullptr, 0xFFFFFFFFu);
+
+    uint64_t boundTexture = 0;
+    for (const DecalRenderItem& d : view.decals->items) {
+        const AssetID texId = d.texture.IsNull() ? resources.textures.White() : d.texture;
+        if (texId.value != boundTexture) {
+            Texture* tex = resources.textures.Get(texId);
+            ID3D11ShaderResourceView* tsrv = tex ? tex->srv.Get() : nullptr;
+            // t0 = ワールド座標 / t1 = 法線 / t2 = デカール画像。
+            // t0/t1 は毎回同じだが、テクスチャが変わるたびに 3 本まとめて張り直す方が
+            // 「後から t2 だけ張って t0/t1 を張り忘れる」事故が起きない
+            ID3D11ShaderResourceView* srvs[3] = { gbPosition_.SRV(), gbNormal_.SRV(), tsrv };
+            dc->PSSetShaderResources(0, 3, srvs);
+            boundTexture = texId.value;
+        }
+        DecalCB dc0 = {};
+        dc0.viewProj = viewProjT;
+        XMStoreFloat4x4(&dc0.decalWorld, XMMatrixTranspose(XMLoadFloat4x4(&d.world)));
+        XMStoreFloat4x4(&dc0.decalInvWorld, XMMatrixTranspose(XMLoadFloat4x4(&d.invWorld)));
+        dc0.color = { d.color.x, d.color.y, d.color.z, d.opacity };
+        dc0.uv = { d.uvScale[0], d.uvScale[1], d.uvOffset[0], d.uvOffset[1] };
+        dc0.proj = { d.projDir.x, d.projDir.y, d.projDir.z, d.angleFadeCos };
+        UploadCB(dc, decalCB_.Get(), dc0);
+        dc->Draw(36, 0); // 立方体 12 三角形
+        prof::AddDraw(12);
+    }
+
+    // GBuffer を SRV で読んだまま残さない。加えて **ラスタライザを必ず戻す** —
+    // rasterizerDecal_ は CULL_FRONT なので、後段のフルスクリーン三角形が
+    // 丸ごと裏面として消える (SSAO を off にした経路で最初に踏む)
+    ID3D11ShaderResourceView* nullSrvs[3] = {};
+    dc->PSSetShaderResources(0, 3, nullSrvs);
+    dc->RSSetState(rasterizer_.Get());
+    dc->OMSetBlendState(blendOpaque_.Get(), nullptr, 0xFFFFFFFFu);
 }
 
 void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const RenderQueue& queue,
@@ -674,6 +783,15 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
     // Wireframe (M40b) は GBuffer パスのみ — フルスクリーン解決系は solid に戻す
     if (wire) {
         dc->RSSetState(rasterizer_.Get());
+    }
+
+    // ---- 1.2) デカール (M56a): ジオメトリパス (地形込み) の直後・SSAO の前。
+    //      「もう GBuffer に書かれた面」の albedo を投影ボックスで上描きするので、
+    //      **地形の後**でなければ地形に貼れない。SSAO / RT / 光パスの**前**でなければ
+    //      デカールの色がライティングにも AO にも乗らない。
+    //      Wireframe (M40b) では線の画素しか GBuffer に無く投影しても意味が無いので飛ばす ----
+    if (!wire) {
+        RenderDecals(device, shaders, view, resources, pf.viewProj);
     }
 
     // ---- 1.5) SSAO (M38e): worldpos + normal → 半解像度 AO → 4x4 ブラー ----

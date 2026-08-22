@@ -1023,6 +1023,43 @@ void BuildRenderShowcaseScene(EngineContext& ctx)
     point("PointCool", 5.5f, 2.6f, 13.0f, 0.35f, 0.65f, 1.00f, 6.0f, 18.0f,
           AssetID{ HashStr("rdemo_lamp_cool") });
 
+    // ---- デカール 2 枚 (M56a) ----
+    // ★**golden に載せるために置いている。** 1 枚も置かないと「デカールが壊れても
+    //   demo_render_deferred は緑のまま」= 回帰の被覆がゼロになる (M54a でこのシーンを
+    //   作った理由そのもの)。置いた代償として demo_render_deferred / demo_render_taa の
+    //   2 枚が M56a で動く (demo_render_forward が**動かない**ことが v1 の Forward 非対応の証明)。
+    // ★テクスチャは付けない (null = 白 = color がそのまま出る)。AssetRef はシーン JSON へ
+    //   64bit の AssetID をそのまま書く仕様で、テクスチャの AssetID は正規化絶対パスの
+    //   ハッシュ = チェックアウト依存になる (M51j で踏んだ穴)。色だけでも
+    //   「面に沿って貼り付く」ことは絵に出る。
+    // 向きは **ローカル +Z が投影方向** (LightComponent と同じ規約)。
+    auto decal = [&](const char* name, float px, float py, float pz, float pitchDeg, float yawDeg,
+                     float sx, float sy, float sz, float r, float g, float b, float a,
+                     float angleFadeDeg, int32_t sortOrder) {
+        GameObject go = s.CreateGameObject(name);
+        go.SetLocalPosition(px, py, pz);
+        go.SetLocalRotationEuler(pitchDeg, yawDeg, 0.0f);
+        go.SetLocalScale(sx, sy, sz);
+        auto* d = go.AddComponent<DecalComponent>();
+        d->color = { r, g, b, a };
+        d->angleFadeDeg = angleFadeDeg;
+        d->sortOrder = sortOrder;
+        return go;
+    };
+    // 1 枚目: 床へ真下投影 (pitch 90 = ローカル +Z が世界の -Y)。箱は
+    // x ∈ [-12,-4] / z ∈ [-9,-3] / y ∈ [-1,3] で、Pillar_01 (x=-9 z=-6 高さ 2.4) を
+    // すっぽり含む位置にしてある。**床と柱の天面には乗り、柱の側面には乗らない**
+    // (側面は法線が投影方向と直角 = 角度フェード 0) — スクリーンスペースの貼り絵ではなく
+    // 面へ投影していることが 1 枚の絵で分かる
+    decal("DecalGround", -8.0f, 1.0f, -6.0f, 90.0f, 0.0f, 8.0f, 6.0f, 4.0f,
+          0.95f, 0.42f, 0.12f, 0.85f, 90.0f, 0);
+    // 2 枚目: 柱の側面へ水平投影 (回転なし = ローカル +Z が世界の +Z = カメラの奥向き)。
+    // Pillar_03 (x=4, z=-6, 幅 1.8, 高さ 3.0) の手前の面だけを覆う箱で、床 (y=0) は
+    // 箱の下端 y=0.5 の外なので掛からない = 「箱の外は捨てる」が角度フェードとは
+    // 独立に効いていることの目印になる
+    decal("DecalPillar", 4.0f, 1.5f, -5.0f, 0.0f, 0.0f, 2.5f, 2.0f, 4.0f,
+          0.20f, 0.75f, 0.95f, 0.90f, 70.0f, 1);
+
     // ---- 回転する物体 (M55c の velocity / M55e のモーションブラー) ----
     // 既定デモの Spinner (DemoContent.cpp の Rotator) と同じ流儀。腕を付けてあるのは
     // 「回っていること」が静止画 1 枚でも分かるようにするため

@@ -242,6 +242,80 @@ struct RenderView {
     //      **null / 空 = 地形なし = 従来と完全に同じ絵** — AssetPreviewCache の
     //      RenderSystem はここを埋めないので、サムネイルは地形を一切描かない ----
     const struct TerrainDrawList* terrain = nullptr;
+    // ---- M56a: デカール (末尾 append)。RenderSystem が毎フレーム作り直す実体を指す。
+    //      **null / 空 = デカール 0 個 = 従来と完全に同じ絵** (Deferred のデカールパスは
+    //      1 命令も発行せずに return する) — golden 全枚がビット一致し続ける根拠。
+    //      Forward は v1 非対応なのでここを読まない (engine_spec.md §6.4) ----
+    const struct DecalDrawList* decals = nullptr;
+};
+
+// ---- デカール (M56a) ----
+// 投影ボックス 1 個の描画指示 (Renderer 層の純データ)。箱は単位立方体 [-0.5,0.5]^3 を
+// world で変換したもので、**投影方向はローカル +Z** (ライトの向きと同じ規約)。
+struct DecalRenderItem {
+    DirectX::XMFLOAT4X4 world = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
+    DirectX::XMFLOAT4X4 invWorld = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
+    DirectX::XMFLOAT3 projDir = { 0.0f, 0.0f, 1.0f }; // ローカル +Z のワールド向き (正規化)
+    float angleFadeCos = 0.0f;                        // cos(角度フェード上限)
+    DirectX::XMFLOAT3 color = { 1.0f, 1.0f, 1.0f };   // リニア済み tint
+    float opacity = 1.0f;
+    float uvScale[2] = { 1.0f, 1.0f };
+    float uvOffset[2] = { 0.0f, 0.0f };
+    AssetID texture = {}; // null = 白 (DeferredPath が TextureLibrary::White() を張る)
+    int32_t sortOrder = 0;
+    uint32_t sortKey = 0; // EntityID::index (規則 7 の決定論タイブレーク)
+};
+
+// デカールの描画順。**タイブレークが本体**: sortOrder が同値のデカールが並んだとき、
+// 比較が「収集順」に依存するとアーキタイプの並びの揺れで上下が入れ替わる (規則 7)。
+// ポインタ比較も禁止なので EntityID::index を second key にしてある。
+// 純関数なので DecalSelfTest が直接検査する (TerrainDrawOrderLess と同じ流儀)
+inline bool DecalDrawOrderLess(const DecalRenderItem& a, const DecalRenderItem& b)
+{
+    if (a.sortOrder != b.sortOrder) {
+        return a.sortOrder < b.sortOrder;
+    }
+    return a.sortKey < b.sortKey;
+}
+
+// 角度フェードのしきい値 [度] → cos。**既定 90 度 = cos 0** で、シェーダ側の式が
+// saturate(dot(N,-projDir)) そのもの (= 正対で 1、直角で 0 の素直な cos フェード) に落ちる。
+// 範囲外は [0,180] に丸める — cos がその外で単調でなくなり「角度を狭めたのに広がる」が起きる
+inline float DecalAngleFadeCos(float degrees)
+{
+    const float d = (degrees < 0.0f) ? 0.0f : ((degrees > 180.0f) ? 180.0f : degrees);
+    return std::cos(d * 3.14159265358979323846f / 180.0f);
+}
+
+// world 行列からデカールの GPU パラメータ (逆行列 + 投影方向) を作る。
+// ★**行列を 2 箇所で作らないための 1 本**。逆行列の転置を片方で忘れると
+//   「絵は出るのに箱の外へはみ出す」という気付きにくい壊れ方をするので、
+//   RenderSystem はここだけを呼び、DecalSelfTest はここを直接検査する。
+// 戻り値 false = 退化スケール (行列式 0) = そのデカールは描かない
+inline bool FillDecalTransform(const DirectX::XMFLOAT4X4& world, DecalRenderItem& dst)
+{
+    const DirectX::XMMATRIX w = DirectX::XMLoadFloat4x4(&world);
+    DirectX::XMVECTOR det = {};
+    const DirectX::XMMATRIX inv = DirectX::XMMatrixInverse(&det, w);
+    if (std::fabs(DirectX::XMVectorGetX(det)) < 1e-12f) {
+        return false;
+    }
+    dst.world = world;
+    DirectX::XMStoreFloat4x4(&dst.invWorld, inv);
+    // 第 3 行 = ローカル +Z のワールド向き (LightComponent の向きと同じ規約)
+    const DirectX::XMVECTOR z =
+        DirectX::XMVectorSet(world._31, world._32, world._33, 0.0f);
+    if (DirectX::XMVectorGetX(DirectX::XMVector3LengthSq(z)) < 1e-20f) {
+        return false;
+    }
+    DirectX::XMStoreFloat3(&dst.projDir, DirectX::XMVector3Normalize(z));
+    return true;
+}
+
+// このフレームのデカール描画リスト。RenderSystem が所有し RenderView から指す。
+// 空 = デカール無し = 従来と完全に同じ絵 (AssetPreview の RenderSystem は常に空)
+struct DecalDrawList {
+    std::vector<DecalRenderItem> items;
 };
 
 // M55c: 「**前フレームに実際に描いた** world 行列」の viewKey 別ストア (velocity の出所)。

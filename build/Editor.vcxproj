@@ -40,6 +40,7 @@
     <ClCompile Include="..\src\Editor\AssetPreviewCache.cpp" />
     <ClCompile Include="..\src\Editor\ComponentClipboard.cpp" />
     <ClCompile Include="..\src\Editor\CreateMenu.cpp" />
+    <ClCompile Include="..\src\Editor\DecalSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\EditorApp.cpp" />
     <ClCompile Include="..\src\Editor\EditorComponentCatalog.cpp" />
     <ClCompile Include="..\src\Editor\EditorGlobalSettings.cpp" />
@@ -83,6 +84,7 @@
     <ClInclude Include="..\src\Editor\AssetPreviewCache.h" />
     <ClInclude Include="..\src\Editor\ComponentClipboard.h" />
     <ClInclude Include="..\src\Editor\CreateMenu.h" />
+    <ClInclude Include="..\src\Editor\DecalSelfTest.h" />
     <ClInclude Include="..\src\Editor\EditorApp.h" />
     <ClInclude Include="..\src\Editor\EditorComponentCatalog.h" />
     <ClInclude Include="..\src\Editor\EditorGlobalSettings.h" />

@@ -618,6 +618,37 @@ struct TerrainComponent {
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
+// ---- デカール (M56a、spec §6.4) ----
+// **描画専用 (kComponentNoHash)** — 弾痕 / 汚れ / 路面標示のような「既に描かれた面の
+// albedo を後から上描きする」投影ボックス。sim / ワールドハッシュには 1 バイトも触らない。
+//
+// 箱の形はエンティティのワールド行列そのもの (単位立方体 [-0.5,0.5]^3 をスケール/回転/移動
+// したもの) で、**投影方向はローカル +Z**。ライトの向きと同じ規約 (RenderSystem が
+// ワールド行列の第 3 行を使う) に揃えてあるので、「ライトを置くのと同じ感覚で向ける」で通る。
+//
+// ★**Deferred 専用 (v1)**。Forward には GBuffer が無く、「もう描かれた面の albedo」という
+//   上描き先が存在しない。engine_spec.md §6.4 に制限として明記してある。
+//
+// opt-in (TypeId 末尾 append) なので既存シーンのハッシュは不変 = ReplayFile bump 不要
+struct DecalComponent {
+    AssetID texture = {}; // 貼る画像 (null = 白 = color がそのまま出る)
+    // authored な sRGB 色 (RenderSystem がリニアへ)。**a = 不透明度** —
+    // 色と濃さを 1 つの ColorEdit で扱えるようにするための相乗り (a<=0 は描かない)
+    DirectX::XMFLOAT4 color = { 1.0f, 1.0f, 1.0f, 1.0f };
+    // UV の切り出し (アトラスから 1 枚選ぶ用)。**v1 のサンプラは LINEAR/CLAMP 固定**
+    // (デカールの縁で反対側の画素がにじむのを防ぐため) なので、
+    // uvScale > 1 は「繰り返す」ではなく「端で伸びる」になる。この 2 本は [0,1] の
+    // 内側に収まる部分矩形を選ぶためのもの
+    DirectX::XMFLOAT2 uvScale = { 1.0f, 1.0f };
+    DirectX::XMFLOAT2 uvOffset = { 0.0f, 0.0f };
+    // 受け面の法線が投影方向からどれだけ傾いたら消えるか [度]。既定 90 = cos フェード
+    // (正対で 1、直角で 0)。小さくするほど「正面を向いた面にしか乗らない」
+    float angleFadeDeg = 90.0f;
+    // 同じ画素に複数枚乗るときの順序 (小さいほど先 = 下)。同値は EntityID で決定論に割る
+    int32_t sortOrder = 0;
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
 class World;
 
 // エンティティが有効か (ActiveComponent が無ければ有効 / enabled==0 なら無効)

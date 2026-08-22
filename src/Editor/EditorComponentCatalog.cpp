@@ -33,6 +33,8 @@ const std::unordered_map<std::string, ComponentUiInfo>& Table()
         // M58b: 地形。描画専用レーンなので Rendering に置く
         // (Environment = Skybox/Fog は「シーン全体の環境設定」の棚で、地形は実体を持つ形状)
         { "Terrain", { ICON_FA_MOUNTAIN, "Rendering", "地形" } },
+        // M56a: デカール。GBuffer の albedo を上描きする描画レーンなので Rendering に置く
+        { "Decal", { ICON_FA_STAMP, "Rendering", "デカール" } },
         // Physics
         { "Collider", { ICON_FA_VECTOR_SQUARE, "Physics", "コライダー" } },
         { "Rigidbody", { ICON_FA_CIRCLE_DOT, "Physics", "リジッドボディ" } },

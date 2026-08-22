@@ -248,6 +248,9 @@ private:
     TerrainSystem terrainSystem_;
     std::vector<TerrainDrawItem> terrainScratch_; // フレーム毎の収集バッファ (再利用)
     TerrainDrawList terrainList_;                 // view.terrain が指す実体
+    // M56a: デカール。ECS から集めて Renderer 層の純データへ写すだけなので、
+    // 地形と違いキャッシュもチャンク分割も要らない = 専用システムを持たない
+    DecalDrawList decalList_; // view.decals が指す実体
 };
 
 } // namespace mye
