@@ -57,6 +57,7 @@
     <ClCompile Include="..\src\Editor\ProjectRegistry.cpp" />
     <ClCompile Include="..\src\Editor\ProjectTemplates.cpp" />
     <ClCompile Include="..\src\Editor\StatusBar.cpp" />
+    <ClCompile Include="..\src\Editor\TerrainSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\ToastCenter.cpp" />
     <ClCompile Include="..\src\Editor\Undo\UndoStack.cpp" />
     <ClCompile Include="..\src\Editor\UndoSelfTest.cpp" />
@@ -100,6 +101,7 @@
     <ClInclude Include="..\src\Editor\Selection.h" />
     <ClInclude Include="..\src\Editor\ShortcutHub.h" />
     <ClInclude Include="..\src\Editor\StatusBar.h" />
+    <ClInclude Include="..\src\Editor\TerrainSelfTest.h" />
     <ClInclude Include="..\src\Editor\ToastCenter.h" />
     <ClInclude Include="..\src\Editor\Undo\UndoStack.h" />
     <ClInclude Include="..\src\Editor\UndoSelfTest.h" />

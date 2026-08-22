@@ -2,12 +2,14 @@
 #include <d3d11.h>
 
 #include <deque>
+#include <string>
 #include <vector>
 
 #include "Engine/Core/EntityID.h"
 #include "Engine/Engine/DebugDraw.h"
 #include "Engine/Engine/LightSelection.h"
 #include "Engine/Engine/RayTracing/RtScene.h"
+#include "Engine/Engine/TerrainSystem.h"
 #include "Engine/Renderer/EditorLinePass.h"
 #include "Engine/Renderer/EnvMapBaker.h"
 #include "Engine/Renderer/PostProcess.h"
@@ -15,6 +17,7 @@
 #include "Engine/Renderer/RenderTypes.h"
 #include "Engine/Renderer/ShadowAtlas.h"
 #include "Engine/Renderer/ShadowPass.h"
+#include "Engine/Renderer/TerrainPass.h"
 
 namespace mye {
 
@@ -111,6 +114,12 @@ public:
     float interpAlpha = 1.0f;
     const PrevWorldStore* prevWorld = nullptr;
 
+    // M58c: 地形アセットの解決に使う assets\ の絶対パス (EngineLoop が設定)。
+    // **空 = 地形を 1 枚も収集しない** — AssetPreviewCache の専用 RenderSystem は
+    // ここを空のままにしてあるので、サムネイル描画に地形が混ざることはない。
+    // ポインタでなく実体で持つのは、EngineLoop のローカルとの寿命関係を考えなくて済むため
+    std::wstring assetsRoot;
+
     // スクリプトの DebugDrawLine (v7、M37)。EngineLoop が接続。非 null かつ非空で
     // シーン描画後 (ポスプロ解決前) に深度テスト付きの線として重ねる
     const std::vector<DebugLineCmd>* debugLines = nullptr;
@@ -180,6 +189,11 @@ public:
     // M54b: 直近フレームのライト選別結果 (カリング + 決定論ソート + 上限)。
     // shadowSlot は M54c のシャドウアトラスが読む — この時点ではまだ誰も配線していない
     LightSelection lightSelection;
+    // M58c: 地形の統計 (ProfilerWindow / 手動確認用)。検査したチャンク総数と可視数
+    uint32_t TerrainChunkCount() const { return terrainSystem_.LastChunkCount(); }
+    uint32_t TerrainVisibleCount() const { return terrainSystem_.LastVisibleCount(); }
+    // M58f のブラシがハイトマップを焼き直したら呼ぶ (次フレームで組み直る)
+    void InvalidateTerrain() { terrainSystem_.Clear(); }
 
 private:
     // M54d: 面カリング (シーン AABB と交差しない点光源の面) で描画を省いた枚数。
@@ -229,6 +243,11 @@ private:
     RtPasses rtPasses_;
     std::vector<RtScene::InstanceDesc> rtInstances_; // フレーム毎に再構築
     uint32_t rtFrameCounter_ = 0; // 乱数列をフレームでずらすための描画専用カウンタ
+    // M58c: 地形。TerrainSystem がチャンクのキャッシュ + 視錐台カリングを持ち、
+    // ここで Renderer 層の型 (TerrainDrawList) へ写して RenderView から指す
+    TerrainSystem terrainSystem_;
+    std::vector<TerrainDrawItem> terrainScratch_; // フレーム毎の収集バッファ (再利用)
+    TerrainDrawList terrainList_;                 // view.terrain が指す実体
 };
 
 } // namespace mye

@@ -616,12 +616,16 @@ a GPU-less runner an acceptable place to prove determinism. Golden screenshots, 
 nothing about what is drawn. `tools\shot_verify.bat` captures nine deterministic screenshots with
 `Runtime.exe` (no ImGui, so neither `imgui.ini` nor the cursor position can leak in) and compares
 them against `tests\golden\*.png` pixel by pixel, writing a difference heat map next to any shot
-that moved. `--update` re-records the golden set. Seven of the nine gate CI; the other two exist
-only to cover FXAA and TAA — both compared at `--tol 0` and both skipped on the runner
-(`MYE_SHOT_SKIP_FXAA` / `MYE_SHOT_SKIP_TAA`, see below). Two of the seven
+that moved. `--update` re-records the golden set. Eight of the ten gate CI; the other two
+exist only to cover FXAA and TAA -- both compared at `--tol 0` and both skipped on the
+runner (`MYE_SHOT_SKIP_FXAA` / `MYE_SHOT_SKIP_TAA`, see below). Two of the eight
 (`demo_render_forward` / `demo_render_deferred`, M54a) shoot the `--render-demo` showcase, which
 is the only golden scene carrying spot and point lights -- without it every feature added by the
 M54-M58 rendering roadmap would be pixel-invariant by default and land with zero coverage.
+A further shot (`demo_terrain_deferred`, M58c) uses its own `--terrain-demo` scene rather than
+extending `--render-demo`: terrain covers the whole frame, so folding it into the existing
+showcase would have re-recorded goldens shared with other in-flight branches, and
+`tests\golden\*.png` is binary and therefore unmergeable.
 
 Determinism of a *frame* needs two guarantees that determinism of a *tick* does not:
 

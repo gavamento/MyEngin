@@ -117,6 +117,24 @@ void BuildRenderShowcaseScene(EngineContext& ctx);
 // 上のショーケースが参照するメッシュ/マテリアルの実体登録 (RegisterRtShowcaseContent と同じ役割)
 void RegisterRenderShowcaseContent(EngineContext& ctx);
 
+// M58c: 地形のショーケースシーン。--terrain-demo で選ぶ (golden `demo_terrain_deferred`)。
+//
+// ★**--render-demo に地形を足さない**のがこの別シーンの唯一の存在理由。既存の golden
+//   `demo_render_forward` / `demo_render_deferred` を 1 ピクセルでも動かすと、同じ Wave で
+//   走っている M54/M55 のブランチと **PNG (マージ不能なバイナリ) で衝突**する。
+// ★被写体は assets\terrain\demo.terrain.json (M58a の手続き生成地形 = 画像非同梱)。
+//   起伏が画面いっぱいに入る俯瞰カメラ + 平行光 1 本 + 参照用の箱だけ —
+//   地形以外の要素を増やすほど「地形が壊れた」以外の理由で golden が割れる
+//
+// M58e: lodDistance > 0 で地形の LOD を有効化する (--terrain-lod)。**既定 0 = 無効** —
+// golden `demo_terrain_deferred` は LOD 無しの絵のままで、LOD は A/B 撮影でだけ点ける。
+// skirtDepth は TerrainComponent と同じ意味論 (0 = 自動 / < 0 = スカート無し)
+void BuildTerrainShowcaseScene(EngineContext& ctx, float lodDistance = 0.0f,
+                               float skirtDepth = 0.0f);
+
+// 上のショーケースが参照するマテリアルの実体登録
+void RegisterTerrainShowcaseContent(EngineContext& ctx);
+
 // assets\ 以下の .prefab.json / .anim.json を各ライブラリへ登録する (Editor / Runtime 共用)。
 // M48g からは .glb / .gltf / .fbx のスケルトンもここで (エンティティを作らずに) 登録する
 void RegisterAssetLibraries(EngineContext& ctx);

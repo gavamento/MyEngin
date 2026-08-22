@@ -91,6 +91,9 @@ AssetType AssetDatabase::ClassifyPath(const std::wstring& path)
     if (EndsWith(s, ".mixer.json")) {
         return AssetType::Mixer;
     }
+    if (EndsWith(s, ".terrain.json")) {
+        return AssetType::Terrain;
+    }
     if (EndsWith(s, ".png") || EndsWith(s, ".jpg") || EndsWith(s, ".jpeg") || EndsWith(s, ".tga")
         || EndsWith(s, ".bmp") || EndsWith(s, ".dds")) {
         return AssetType::Texture;
@@ -127,6 +130,7 @@ const char* AssetDatabase::TypeName(AssetType t)
     case AssetType::Sound: return "sound";
     case AssetType::Mixer: return "mixer";
     case AssetType::Schema: return "schema";
+    case AssetType::Terrain: return "terrain";
     case AssetType::Unknown:
     default: return "unknown";
     }
@@ -148,6 +152,7 @@ AssetType AssetDatabase::ParseTypeName(const std::string& s)
     if (s == "sound") return AssetType::Sound;
     if (s == "mixer") return AssetType::Mixer;
     if (s == "schema") return AssetType::Schema;
+    if (s == "terrain") return AssetType::Terrain;
     return AssetType::Unknown;
 }
 

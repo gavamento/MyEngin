@@ -13,6 +13,8 @@
 #include "Engine/Core/Log.h"
 #include "Engine/Platform/PathUtil.h"
 #include "Engine/Core/World.h"
+#include "Engine/Engine/Asset/TerrainAsset.h" // M58f: 地形ブラシ
+#include "Engine/Engine/Asset/TerrainEdit.h"
 #include "Engine/Engine/AssetDatabase.h"
 #include "Engine/Engine/Audio/AudioSourceSystem.h"
 #include "Engine/Engine/Audio/SoundAsset.h"
@@ -77,6 +79,55 @@ bool RayAabbExit(const XMFLOAT3& o, const XMFLOAT3& d, const XMFLOAT3& lo, const
     }
     outExitT = tmax;
     return true;
+}
+
+// ---- 地形ブラシ (M58f) ----
+
+// ブラシの対象になる地形 1 枚。
+// ★選択中のエンティティを優先し、無ければ**最初に見つかった 1 枚**に落とす。
+//   「選択しないと塗れない」は地形を選ぶ手段 (地形はアイコンを持たない = クリック選択も
+//   ブラシモード中は止めている) が無いので詰む。逆に「常に最初の 1 枚」だと地形が
+//   2 枚あるシーンで切り替えられない
+struct TerrainTarget {
+    EntityID entity = kNullEntity;
+    XMFLOAT4X4 world = {};
+    const char* source = nullptr;
+};
+
+bool FindTerrainTarget(EngineContext& ctx, const Selection& sel, TerrainTarget& out)
+{
+    if (ctx.scene == nullptr) {
+        return false;
+    }
+    World& world = ctx.scene->GetWorld();
+    EntityID preferred = kNullEntity;
+    if (sel.primary != 0) {
+        GameObject g = ctx.scene->FindByFileId(sel.primary);
+        if (g) {
+            preferred = g.Id();
+        }
+    }
+    bool found = false;
+    const ComponentTypeId req[] = { TerrainComponent::sTypeId, WorldMatrixComponent::sTypeId };
+    world.ForEachArchetype(req, [&](Archetype& arch) {
+        const int ti = arch.FindTypeIndex(TerrainComponent::sTypeId);
+        const int wi = arch.FindTypeIndex(WorldMatrixComponent::sTypeId);
+        for (uint32_t row = 0; row < arch.Count(); ++row) {
+            const auto* tc = static_cast<const TerrainComponent*>(arch.GetPtr(ti, row));
+            if (tc->source[0] == '\0') {
+                continue;
+            }
+            const EntityID e = arch.EntityAt(row);
+            if (found && !(preferred == e)) {
+                continue; // 既に候補がある — 選択中のものだけが上書きできる
+            }
+            out.entity = e;
+            out.world = static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row))->value;
+            out.source = tc->source;
+            found = true;
+        }
+    });
+    return found;
 }
 
 // ワールド行列から各軸のスケール量を取り出す
@@ -580,6 +631,21 @@ void SceneViewWindow::DrawToolbar(EditorSettings& settings)
         camSpeedDirty_ = false;
         settings.Save();
     }
+    ImGui::SameLine();
+    ImGui::TextUnformatted("|");
+    ImGui::SameLine();
+    // 地形ブラシ (M58f)。on の間はピッキングもギズモも止まる = 「別のツール」であることを
+    // 押しっぱなしの色で見せる
+    if (terrainBrush_) {
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.78f, 0.45f, 0.20f, 1.0f));
+    }
+    if (ImGui::Button(Tr(StrId::Terrain_Brush))) {
+        terrainBrush_ = !terrainBrush_;
+        terrainStroking_ = false;
+    }
+    if (terrainBrush_) {
+        ImGui::PopStyleColor();
+    }
     ImGui::EndChild();
     ImGui::PopStyleColor();
 }
@@ -764,6 +830,200 @@ void SceneViewWindow::HandleCamera(EngineContext& ctx, Selection& selection,
     }
 }
 
+bool SceneViewWindow::HandleTerrainBrush(EngineContext& ctx, Selection& selection, UndoStack& undo,
+                                         const ImVec2& imgPos, const ImVec2& size)
+{
+    terrainHasTarget_ = false;
+    TerrainTarget target;
+    if (!terrainBrush_ || ctx.assetsRoot.empty() || !FindTerrainTarget(ctx, selection, target)) {
+        terrainStroking_ = false;
+        return false;
+    }
+    std::wstring abs = ctx.assetsRoot;
+    if (!abs.empty() && abs.back() != L'\\' && abs.back() != L'/') {
+        abs += L'\\';
+    }
+    abs += Utf8ToWide(target.source);
+    terrainHasTarget_ = true;
+
+    // 作業コピー。ストロークの外でも必要 (ブラシリングを地表に貼るのに高さが要る)。
+    // ★ストロークの開始時には**必ず読み直す** — Undo/Redo はサイドカーを直接書き換えるので、
+    //   ここのコピーを使い回すと「取り消した結果」を握り潰して塗り戻してしまう
+    if (terrainStrokeSrc_ != abs && !terrainStroking_) {
+        if (!TerrainAsset::Load(abs, terrainStrokeWork_)) {
+            terrainStrokeSrc_.clear();
+            return false;
+        }
+        terrainStrokeSrc_ = abs;
+    }
+    if (!terrainStrokeWork_.Valid()) {
+        return false;
+    }
+
+    // カーソル下の地表 (地形ローカル空間)
+    XMFLOAT3 hitLocal = { 0.0f, 0.0f, 0.0f };
+    bool haveHit = false;
+    XMFLOAT3 ro, rd;
+    if (MouseRay(imgPos, size, ro, rd)) {
+        XMVECTOR det;
+        const XMMATRIX inv = XMMatrixInverse(&det, XMLoadFloat4x4(&target.world));
+        if (XMVectorGetX(det) != 0.0f) {
+            XMFLOAT3 lo, ld;
+            XMStoreFloat3(&lo, XMVector3TransformCoord(XMLoadFloat3(&ro), inv));
+            XMStoreFloat3(&ld, XMVector3TransformNormal(XMLoadFloat3(&rd), inv));
+            haveHit = TerrainEdit::RaycastLocal(terrainStrokeWork_, lo, ld, kFarZ, hitLocal);
+        }
+    }
+
+    // ブラシリング (ImGui drawlist に world→screen 投影。GPU パスを増やさない)
+    if (haveHit) {
+        const XMMATRIX wvp = XMMatrixMultiply(
+            XMLoadFloat4x4(&target.world),
+            XMMatrixMultiply(XMLoadFloat4x4(&lastView_), XMLoadFloat4x4(&lastProj_)));
+        constexpr int kRingSegments = 48;
+        ImVec2 pts[kRingSegments];
+        int n = 0;
+        for (int i = 0; i < kRingSegments; ++i) {
+            const float a = 6.28318530718f * static_cast<float>(i) / kRingSegments;
+            const float lx = hitLocal.x + terrainRadius_ * std::cos(a);
+            const float lz = hitLocal.z + terrainRadius_ * std::sin(a);
+            // 地表から少し浮かせる (Z ファイトではなく、リングが尾根に隠れて途切れないよう)
+            const float ly = TerrainEdit::SampleHeightLocal(terrainStrokeWork_, lx, lz) + 0.05f;
+            const XMVECTOR clip = XMVector4Transform(XMVectorSet(lx, ly, lz, 1.0f), wvp);
+            const float w = XMVectorGetW(clip);
+            if (w <= 0.01f) {
+                continue; // カメラ後方の点は落とす (残りだけで輪を描く)
+            }
+            pts[n++] = ImVec2(imgPos.x + (XMVectorGetX(clip) / w * 0.5f + 0.5f) * size.x,
+                              imgPos.y + (0.5f - XMVectorGetY(clip) / w * 0.5f) * size.y);
+        }
+        if (n >= 3) {
+            // ★imgui 1.92.8 で thickness と flags の順序が入れ替わっている
+            //   (旧順序のオーバーロードは = delete。M51f の AddRect と同じ罠)
+            ImGui::GetWindowDrawList()->AddPolyline(pts, n, IM_COL32(0xFF, 0xC0, 0x40, 0xE0), 2.0f,
+                                                    ImDrawFlags_Closed);
+        }
+    }
+
+    const ImGuiIO& io = ImGui::GetIO();
+    const bool hovered = ImGui::IsWindowHovered();
+    bool consumed = false;
+
+    if (hovered && haveHit && !io.KeyAlt && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        if (TerrainAsset::Load(abs, terrainStrokeWork_)) {
+            terrainStrokeSrc_ = abs;
+            terrainStrokeBase_ = terrainStrokeWork_; // 差分の基準 (ストローク全体で 1 エントリ)
+            terrainStroking_ = true;
+            terrainHasDab_ = false;
+        }
+    }
+
+    if (terrainStroking_ && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+        consumed = true;
+        // ダブの間隔。★カーソルが止まっている間も塗り続けると、押しっぱなしで穴が
+        //   底まで抜ける (しかも 1 ダブ = 1 回のサイドカー書き出しなのでディスクも回り続ける)。
+        //   実際のブラシと同じ「一定距離ごとに 1 ダブ」にしてある
+        const float spacing = std::max(0.05f, terrainRadius_ * 0.25f);
+        const float dx = hitLocal.x - terrainLastDab_.x;
+        const float dz = hitLocal.z - terrainLastDab_.z;
+        if (haveHit && (!terrainHasDab_ || dx * dx + dz * dz >= spacing * spacing)) {
+            TerrainEdit::Brush b;
+            b.mode = static_cast<TerrainEdit::BrushMode>(terrainBrushMode_);
+            if (io.KeyShift) {
+                b.mode = TerrainEdit::BrushMode::Smooth; // Shift = 一時的に平滑化
+            }
+            b.centerX = hitLocal.x;
+            b.centerZ = hitLocal.z;
+            b.radius = terrainRadius_;
+            b.strength = terrainStrength_;
+            if (b.mode == TerrainEdit::BrushMode::Raise && io.KeyCtrl) {
+                b.strength = -terrainStrength_; // Ctrl = 掘る
+            }
+            b.layer = static_cast<uint32_t>(std::clamp(terrainLayer_, 0, 3));
+            if (TerrainEdit::ApplyBrush(terrainStrokeWork_, b)) {
+                if (TerrainEdit::SaveEdits(abs, terrainStrokeWork_)) {
+                    if (ctx.renderSystem != nullptr) {
+                        ctx.renderSystem->InvalidateTerrain();
+                    }
+                } else {
+                    MYE_LOG_ERROR(Tr(StrId::Terrain_SaveFail), WideToUtf8(abs).c_str());
+                }
+            }
+            terrainLastDab_ = hitLocal;
+            terrainHasDab_ = true;
+        }
+    }
+
+    if (terrainStroking_ && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+        terrainStroking_ = false;
+        consumed = true;
+        // ★Undo エントリは**ストローク全体で 1 個**。ダブごとに積むと 1 撫でで数十回の
+        //   Ctrl+Z が必要になる (ギズモのドラッグを 1 エントリにまとめているのと同じ流儀)
+        TerrainEdit::TerrainPatch patch;
+        if (TerrainEdit::MakeDiffPatch(terrainStrokeBase_, terrainStrokeWork_, patch)
+            && !patch.Empty()) {
+            UndoFileOp op;
+            op.kind = UndoFileOp::Kind::TerrainPaint;
+            op.pathA = abs;
+            TerrainEdit::SerializePatch(patch, op.bytes);
+            undo.PushFileOp("Terrain Brush", std::move(op));
+        }
+        terrainStrokeBase_ = TerrainAsset::TerrainData{}; // 基準コピーを手放す
+    }
+    return consumed;
+}
+
+void SceneViewWindow::DrawTerrainBrushPanel(EngineContext& ctx)
+{
+    if (!terrainBrush_) {
+        return;
+    }
+    (void)ctx;
+    // ツールバー (直前に描いた子ウィンドウ) の真下に貼る
+    const ImVec2 tl = ImGui::GetItemRectMin();
+    const float top = ImGui::GetItemRectMax().y;
+    ImGui::SetCursorScreenPos(ImVec2(tl.x, top + 6.0f));
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.10f, 0.11f, 0.13f, 0.85f));
+    ImGui::BeginChild("##sv_terrain_brush", ImVec2(0.0f, 84.0f), ImGuiChildFlags_AutoResizeX,
+                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    if (!terrainHasTarget_) {
+        ImGui::TextUnformatted(Tr(StrId::Terrain_NoTarget));
+    } else {
+        auto modeBtn = [&](StrId id, int mode) {
+            const bool on = (terrainBrushMode_ == mode);
+            if (on) {
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.26f, 0.45f, 0.78f, 1.0f));
+            }
+            if (ImGui::Button(Tr(id))) {
+                terrainBrushMode_ = mode;
+            }
+            if (on) {
+                ImGui::PopStyleColor();
+            }
+            ImGui::SameLine();
+        };
+        modeBtn(StrId::Terrain_ModeRaise, 0);
+        modeBtn(StrId::Terrain_ModeSmooth, 1);
+        modeBtn(StrId::Terrain_ModePaint, 2);
+        if (terrainBrushMode_ == 2) {
+            ImGui::SetNextItemWidth(90.0f);
+            ImGui::Combo(Tr(StrId::Terrain_Layer), &terrainLayer_, "0\0" "1\0" "2\0" "3\0");
+        } else {
+            ImGui::NewLine();
+        }
+        ImGui::SetNextItemWidth(180.0f);
+        ImGui::SliderFloat(Tr(StrId::Terrain_Radius), &terrainRadius_, 1.0f, 64.0f, "%.1f m");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(180.0f);
+        // Raise だけ単位が m/ダブ、Smooth/Paint は 0..1 の寄せ率 (上限を共有しても
+        // ApplyBrush 側が clamp するので害は無い)
+        ImGui::SliderFloat(Tr(StrId::Terrain_Strength), &terrainStrength_, 0.05f, 4.0f, "%.2f");
+        ImGui::TextUnformatted(Tr(StrId::Terrain_Hint));
+    }
+    ImGui::EndChild();
+    ImGui::PopStyleColor();
+}
+
 void SceneViewWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStack& undo,
                               EditorSettings& settings)
 {
@@ -828,15 +1088,19 @@ void SceneViewWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
         }
     }
 
+    // 地形ブラシ (M58f)。★ギズモ**より前**に置く — 塗っている最中にギズモが左ボタンを
+    // 掴むと、地形を撫でたつもりで選択オブジェクトが飛んでいく
+    const bool brushConsumed = HandleTerrainBrush(ctx, selection, undo, imgPos, avail);
+
     // ギズモ (ImGui 描画レイヤ — シーン RT/backbuffer には焼き込まれない)
-    if (selection.primary != 0) {
+    if (selection.primary != 0 && !terrainBrush_) {
         DrawGizmo(ctx, selection, undo, settings, imgPos.x, imgPos.y, avail.x, avail.y);
     }
 
     // ---- ビルボードアイコン (M40b): カメラ/ライト/エミッタ位置に FA アイコンを重ねる。
     //      GPU パス不要 (ImGui drawlist に world→screen 投影) + クリックで選択 ----
     const ImGuiIO& io = ImGui::GetIO();
-    bool iconClicked = false;
+    bool iconClicked = brushConsumed; // ブラシが左ボタンを掴んでいる間は選択させない
     if (showGizmos_ && rt_.IsValid()) {
         World& world = ctx.scene->GetWorld();
         const XMMATRIX vp =
@@ -891,7 +1155,7 @@ void SceneViewWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
 
         // アイコンクリックで選択 (ピッキングより優先。Ctrl はトグル = ピッキングと同じ流儀)
         if (ImGui::IsWindowHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Left)
-            && !ImGuizmo::IsOver() && !ImGuizmo::IsUsing() && !io.KeyAlt
+            && !ImGuizmo::IsOver() && !ImGuizmo::IsUsing() && !io.KeyAlt && !terrainBrush_
             && !best.entity.IsNull()) {
             const uint64_t iconFid = ctx.scene->EnsureFileId(best.entity);
             if (io.KeyCtrl) {
@@ -984,6 +1248,7 @@ void SceneViewWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
     }
 
     DrawToolbar(settings);
+    DrawTerrainBrushPanel(ctx); // ツールバー直下 (GetItemRect* が上の子ウィンドウを指す)
     ImGui::End();
 }
 

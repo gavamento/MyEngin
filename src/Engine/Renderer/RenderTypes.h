@@ -237,6 +237,11 @@ struct RenderView {
     int32_t taaEnabled = 0;
     ID3D11ShaderResourceView* velocitySRV = nullptr;
     uint32_t viewKey = 0;
+    // ---- M58c: 地形の可視チャンク (末尾 append)。RenderSystem が TerrainSystem の
+    //      収集結果を指す。実体は TerrainPass.h の TerrainDrawList (Renderer 層の純データ)。
+    //      **null / 空 = 地形なし = 従来と完全に同じ絵** — AssetPreviewCache の
+    //      RenderSystem はここを埋めないので、サムネイルは地形を一切描かない ----
+    const struct TerrainDrawList* terrain = nullptr;
 };
 
 // M55c: 「**前フレームに実際に描いた** world 行列」の viewKey 別ストア (velocity の出所)。

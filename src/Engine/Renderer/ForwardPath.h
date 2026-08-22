@@ -5,6 +5,7 @@
 #include "Engine/Renderer/MeshInstancing.h"
 #include "Engine/Renderer/RenderPath.h"
 #include "Engine/Renderer/SkyboxPass.h"
+#include "Engine/Renderer/TerrainPass.h"
 
 namespace mye {
 
@@ -47,6 +48,8 @@ private:
     Microsoft::WRL::ComPtr<ID3D11BlendState> blendOpaque_;
     Microsoft::WRL::ComPtr<ID3D11BlendState> blendAlpha_;
     SkyboxPass skybox_; // 不透明後・透明前に空を塗る (M29d)
+    // 地形 (M58c)。不透明メッシュの直後・スカイボックスの前に描く (深度を書くため)
+    TerrainPass terrain_;
 };
 
 } // namespace mye

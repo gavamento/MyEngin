@@ -52,6 +52,8 @@
     <ClCompile Include="..\src\Engine\Engine\Asset\CookedCache.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Asset\CookedCacheSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Asset\ModelCook.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Asset\TerrainAsset.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Asset\TerrainEdit.cpp" />
     <ClCompile Include="..\src\Engine\Engine\AssetDatabase.cpp" />
     <ClCompile Include="..\src\Engine\Engine\AssetDatabaseSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Audio\AudioClip.cpp" />
@@ -118,6 +120,7 @@
     <ClCompile Include="..\src\Engine\Engine\Script\ScriptHost.cpp" />
     <ClCompile Include="..\src\Engine\Engine\SkeletonSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\SkinningSystem.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\TerrainSystem.cpp" />
     <ClCompile Include="..\src\Engine\Engine\TickRunner.cpp" />
     <ClCompile Include="..\src\Engine\Engine\TransformSystem.cpp" />
     <ClCompile Include="..\src\Engine\Engine\UfbxImpl.cpp" />
@@ -162,6 +165,7 @@
     <ClCompile Include="..\src\Engine\Renderer\StbImpl.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\SwapChain.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\TaaPass.cpp" />
+    <ClCompile Include="..\src\Engine\Renderer\TerrainPass.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\TextureCook.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\TextureCookSelfTest.cpp" />
     <ClInclude Include="..\src\Engine\Core\Archetype.h" />
@@ -196,6 +200,8 @@
     <ClInclude Include="..\src\Engine\Engine\Asset\CookedCache.h" />
     <ClInclude Include="..\src\Engine\Engine\Asset\CookedCacheSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Asset\ModelCook.h" />
+    <ClInclude Include="..\src\Engine\Engine\Asset\TerrainAsset.h" />
+    <ClInclude Include="..\src\Engine\Engine\Asset\TerrainEdit.h" />
     <ClInclude Include="..\src\Engine\Engine\AssetDatabase.h" />
     <ClInclude Include="..\src\Engine\Engine\AssetDatabaseSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Audio\AudioClip.h" />
@@ -269,6 +275,7 @@
     <ClInclude Include="..\src\Engine\Engine\Script\ScriptHost.h" />
     <ClInclude Include="..\src\Engine\Engine\SkeletonSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\SkinningSystem.h" />
+    <ClInclude Include="..\src\Engine\Engine\TerrainSystem.h" />
     <ClInclude Include="..\src\Engine\Engine\TickRunner.h" />
     <ClInclude Include="..\src\Engine\Engine\TransformSystem.h" />
     <ClInclude Include="..\src\Engine\Engine\UI\UIGeometry.h" />
@@ -323,6 +330,7 @@
     <ClInclude Include="..\src\Engine\Renderer\SkyboxPass.h" />
     <ClInclude Include="..\src\Engine\Renderer\SwapChain.h" />
     <ClInclude Include="..\src\Engine\Renderer\TaaPass.h" />
+    <ClInclude Include="..\src\Engine\Renderer\TerrainPass.h" />
     <ClInclude Include="..\src\Engine\Renderer\TextureCook.h" />
     <ClInclude Include="..\src\Engine\Renderer\TextureCookSelfTest.h" />
     <ClInclude Include="..\src\Shared\EngineAPI.h" />

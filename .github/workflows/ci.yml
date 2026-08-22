@@ -12,13 +12,13 @@
 #                        ClCompile の項目メタデータで、グローバルプロパティは
 #                        誰にも読まれず静かに素通りする (M52b で実測)
 #   MYE_DOTNET_ARGS  … dotnet build へ後置 (C# は綴りが TreatWarningsAsErrors)
-#   MYE_SHOT_SKIP_FXAA … スクショ 6 枚目 (FXAA を通す 1 枚) を飛ばす。
+#   MYE_SHOT_SKIP_FXAA … スクショ 9 枚目 (FXAA を通す 1 枚) を飛ばす。
 #                      WARP 同士でも **OS ビルドが違うと** FXAA の出力はビット一致しない
 #                      (開発機 10.0.26100 / ランナー 10.0.20348 の d3d10warp・d3dcompiler)。
 #                      素の描画の機種差は最大 1 レベルなのに、FXAA の輝度しきい値分岐が
 #                      それを 35 レベルへ増幅する — 実測は shot_verify.bat の冒頭に表がある。
-#                      残り 7 枚は --no-fxaa 撮影なので tol=3 の厳格判定のまま回せる
-#   MYE_SHOT_SKIP_TAA … スクショ 9 枚目 (TAA を通す 1 枚、M55d) を飛ばす。
+#                      残り 8 枚は --no-fxaa 撮影なので tol=3 の厳格判定のまま回せる
+#   MYE_SHOT_SKIP_TAA … スクショ 10 枚目 (TAA を通す 1 枚、M55d) を飛ばす。
 #                      TAA の近傍 min/max クランプは FXAA と同型のしきい値分岐で、しかも
 #                      履歴でフレーム間に蓄積する = 同じ増幅が起きうる。増幅率を実測する
 #                      までは CI に載せない (載せると「理由不明で赤い」1 枚が増えるだけ)

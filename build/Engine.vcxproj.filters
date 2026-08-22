@@ -144,6 +144,12 @@
     <ClCompile Include="..\src\Engine\Engine\Asset\ModelCook.cpp">
       <Filter>Engine\Asset</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Asset\TerrainAsset.cpp">
+      <Filter>Engine\Asset</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Asset\TerrainEdit.cpp">
+      <Filter>Engine\Asset</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\AssetDatabase.cpp">
       <Filter>Engine</Filter>
     </ClCompile>
@@ -342,6 +348,9 @@
     <ClCompile Include="..\src\Engine\Engine\SkinningSystem.cpp">
       <Filter>Engine</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\TerrainSystem.cpp">
+      <Filter>Engine</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\TickRunner.cpp">
       <Filter>Engine</Filter>
     </ClCompile>
@@ -474,6 +483,9 @@
     <ClCompile Include="..\src\Engine\Renderer\TaaPass.cpp">
       <Filter>Renderer</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Renderer\TerrainPass.cpp">
+      <Filter>Renderer</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Renderer\TextureCook.cpp">
       <Filter>Renderer</Filter>
     </ClCompile>
@@ -574,6 +586,12 @@
       <Filter>Engine\Asset</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Asset\ModelCook.h">
+      <Filter>Engine\Asset</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Asset\TerrainAsset.h">
+      <Filter>Engine\Asset</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Asset\TerrainEdit.h">
       <Filter>Engine\Asset</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\AssetDatabase.h">
@@ -795,6 +813,9 @@
     <ClInclude Include="..\src\Engine\Engine\SkinningSystem.h">
       <Filter>Engine</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\TerrainSystem.h">
+      <Filter>Engine</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\TickRunner.h">
       <Filter>Engine</Filter>
     </ClInclude>
@@ -955,6 +976,9 @@
       <Filter>Renderer</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\TaaPass.h">
+      <Filter>Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\TerrainPass.h">
       <Filter>Renderer</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\TextureCook.h">

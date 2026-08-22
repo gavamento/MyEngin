@@ -867,6 +867,25 @@ AssetID TextureLibrary::CreateSolid(std::string_view name, uint8_t r, uint8_t g,
     return id;
 }
 
+AssetID TextureLibrary::CreateFromRgba8(std::string_view name, const uint8_t* rgba, int w, int h,
+                                        bool srgb, bool mips)
+{
+    if (rgba == nullptr || w <= 0 || h <= 0) {
+        return {};
+    }
+    const AssetID id{ HashStr(name) };
+    if (textures_.contains(id.value)) {
+        return id; // 先勝ち (同名の再生成は差し替えない — 呼び手が名前に版を混ぜる)
+    }
+    Texture t;
+    if (!CreateFromPixels(t, rgba, w, h, srgb, mips)) {
+        return {}; // device_ 未設定 (ヘッドレス) もここに落ちる
+    }
+    textures_.emplace(id.value, std::move(t));
+    names_[id.value].assign(name);
+    return id;
+}
+
 std::vector<AssetEntry> TextureLibrary::Enumerate() const
 {
     return EnumerateNames(names_);

@@ -23,6 +23,7 @@
 #include "Engine/Core/LocalizationSelfTest.h"
 #include "Engine/Core/Log.h"
 #include "Editor/AssetOpsSelfTest.h"
+#include "Editor/TerrainSelfTest.h"
 #include "Engine/Engine/AnimatorControllerSelfTest.h"
 #include "Engine/Engine/AssetDatabaseSelfTest.h"
 #include "Engine/Engine/Audio/AudioSelfTest.h"
@@ -89,6 +90,9 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     bool localDemo = false;     // --local-demo (M52g: ローカルマルチプレイの入力レーンデモ)
     bool netDemo = false;       // --net-demo (M52i: 2 人ネット対戦のデモ)
     bool renderShowcase = false; // --render-demo (M54a: 描画ロードマップのショーケース)
+    bool terrainShowcase = false; // --terrain-demo (M58c: 地形のショーケース)
+    float terrainLodDistance = 0.0f; // --terrain-lod DIST (M58e: 0 = LOD 無効)
+    float terrainSkirtDepth = 0.0f;  // --terrain-skirt D (M58e: 0 = 自動 / < 0 = 無し)
     std::wstring editActorPath;  // --edit-actor PATH (M48k)
     std::wstring packageDir;     // --package DIR (M51j: CLI パッケージ)
     bool packageDds = false;     // --package-dds
@@ -297,6 +301,14 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 netDemo = true; // M52i: 2 人ネット対戦のデモシーン
             } else if (arg == L"--render-demo") {
                 renderShowcase = true; // M54a: 描画ショーケース (局所ライト/反射/フォグ/遠景)
+            } else if (arg == L"--terrain-demo") {
+                terrainShowcase = true; // M58c: 地形ショーケース (golden demo_terrain_deferred)
+            } else if (arg == L"--terrain-lod" && i + 1 < argc) {
+                // M58e: 地形 LOD の切替距離。**golden は LOD 無しのまま**で、
+                // クラック A/B のときだけ点ける
+                terrainLodDistance = static_cast<float>(_wtof(argv[++i]));
+            } else if (arg == L"--terrain-skirt" && i + 1 < argc) {
+                terrainSkirtDepth = static_cast<float>(_wtof(argv[++i])); // M58e (負値 = 無し)
             } else if (arg == L"--local-players" && i + 1 < argc) {
                 config.localPlayers = _wtoi(argv[++i]); // M52g: 消費する入力レーン数
             } else if (arg == L"--synth-input") {
@@ -446,7 +458,10 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             && mye::RunGameFlowSelfTest() && mye::RunWorldHasherSelfTest()
             && mye::RunSimSnapshotSelfTest() && mye::RunTimeTravelSelfTest()
             && mye::RunCrashRingSelfTest() && mye::RunImageDiffSelfTest()
-            && mye::RunNetSelfTest() && mye::RunLightSelectionSelfTest(); // M54b で末尾 append
+            && mye::RunNetSelfTest()
+            // 連鎖の**末尾**に append する (統合契約の予約 7)。短絡なので位置がそのまま実行順
+            && mye::RunLightSelectionSelfTest() // M54b
+            && mye::RunTerrainSelfTest();       // M58b
         return ok ? 0 : 1;
     }
 
@@ -487,6 +502,9 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     app.localDemo = localDemo;
     app.netDemo = netDemo;
     app.renderShowcase = renderShowcase;
+    app.terrainShowcase = terrainShowcase; // M58c
+    app.terrainLodDistance = terrainLodDistance; // M58e
+    app.terrainSkirtDepth = terrainSkirtDepth;   // M58e
     app.editActorPath = editActorPath;
     app.packageDir = packageDir;
     app.packageDds = packageDds;

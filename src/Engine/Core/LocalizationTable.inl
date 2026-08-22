@@ -796,3 +796,25 @@ MYE_STR(Net_Desync,           "DESYNC at tick %llu - a bundle was written to cra
                               "tick %llu で DESYNC — crash\\desync_<tick>_p<lane>\\ にバンドルを出力しました。")
 MYE_STR(Net_HashNote,         "World hashes are exchanged every 8 confirmed ticks; a mismatch halts the session.",
                               "確定 tick 8 個ごとにワールドハッシュを交換します。食い違うとセッションを停止します。")
+
+// ---- 地形 (M58) ----
+MYE_STR(Terrain_AssetType,    "Terrain",             "地形")
+
+// ---- 地形ブラシ (M58f) ----
+// ### の右辺は両言語一致 + テーブル内で一意 (規則 10)。ツールバーとブラシ設定の
+// ウィジェットは言語切替で ImGui の状態を失わないよう全部 ID を明示する
+MYE_STR(Terrain_Brush,        "Terrain Brush###Terrain_Brush", "地形ブラシ###Terrain_Brush")
+MYE_STR(Terrain_ModeRaise,    "Raise###Terrain_ModeRaise",     "上げ下げ###Terrain_ModeRaise")
+MYE_STR(Terrain_ModeSmooth,   "Smooth###Terrain_ModeSmooth",   "平滑化###Terrain_ModeSmooth")
+MYE_STR(Terrain_ModePaint,    "Paint###Terrain_ModePaint",     "塗り###Terrain_ModePaint")
+MYE_STR(Terrain_Radius,       "Radius###Terrain_Radius",       "半径###Terrain_Radius")
+MYE_STR(Terrain_Strength,     "Strength###Terrain_Strength",   "強さ###Terrain_Strength")
+MYE_STR(Terrain_Layer,        "Layer###Terrain_Layer",         "レイヤ###Terrain_Layer")
+MYE_STR(Terrain_NoTarget,     "No terrain in the scene - add a Terrain component first.",
+                              "シーンに地形がありません。先に Terrain コンポーネントを追加してください。")
+MYE_STR(Terrain_Hint,         "drag: paint   Ctrl: invert (dig)   Shift: smooth",
+                              "ドラッグ: 塗る   Ctrl: 反転 (掘る)   Shift: 平滑化")
+MYE_STR(Terrain_SaveFail,     "Could not write the terrain edit sidecar: %s",
+                              "地形の編集サイドカーを書き出せませんでした: %s")
+MYE_STR(Terrain_UndoStale,    "The terrain changed since this stroke was recorded - undo skipped: %s",
+                              "記録時から地形が変わっています。この取り消しは適用できません: %s")

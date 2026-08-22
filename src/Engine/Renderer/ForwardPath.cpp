@@ -189,6 +189,8 @@ bool ForwardPath::Init(GraphicsDevice& device, ShaderManager& shaders)
     litInstancedShader_ = shaders.Load("forward_lit_instanced");
     // スカイボックス (M29d)。失敗しても続行 (空が clearColor になるだけ)
     skybox_.Init(device, shaders);
+    // 地形 (M58c)。失敗しても続行 (地形が描かれないだけ = 従来の絵)
+    terrain_.Init(device, shaders);
     return true;
 }
 
@@ -203,6 +205,7 @@ void ForwardPath::Shutdown()
     blendOpaque_.Reset();
     blendAlpha_.Reset();
     instanceBuf_.Reset();
+    terrain_.Shutdown(); // M58c
 }
 
 void ForwardPath::Render(GraphicsDevice& device, const RenderView& view, const RenderQueue& queue,
@@ -327,6 +330,12 @@ void ForwardPath::Render(GraphicsDevice& device, const RenderView& view, const R
     // インスタンス SRV を外す (次フレームの Map と競合させない)
     ID3D11ShaderResourceView* nullVsSrv = nullptr;
     dc->VSSetShaderResources(0, 1, &nullVsSrv);
+
+    // 地形 (M58c): 不透明メッシュの直後・スカイボックスの前。深度を書くので
+    // 「地形の向こうの空が塗られない」が成立する。CB は b4 なので b0-b2 は張り替わらず、
+    // 透明段の DrawItems はシェーダを張り直すだけでよい。
+    // 地形が無いフレームは TerrainPass が即 return する = 従来とビット一致
+    terrain_.RenderForward(device, shaders, view, resources);
 
     // スカイボックス (M29d): 不透明後・透明前。深度 1.0 のピクセルだけ塗る。
     // PS の b3 のみ使うので b0-b2 / トポロジは不変 (透明段は DrawItems がシェーダ再バインド)。

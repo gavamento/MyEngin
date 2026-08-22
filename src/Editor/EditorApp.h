@@ -61,6 +61,11 @@ public:
     bool localDemo = false;        // --local-demo (M52g: 入力レーンのローカルマルチプレイデモ)
     bool netDemo = false;          // --net-demo (M52i: 2 人ネット対戦のデモ)
     bool renderShowcase = false;   // --render-demo (M54a: 描画ロードマップのショーケース)
+    bool terrainShowcase = false;  // --terrain-demo (M58c: 地形のショーケース)
+    // --terrain-lod DIST (M58e): 地形ショーケースの LOD 切替距離。0 = 無効 (既定 = golden の絵)
+    float terrainLodDistance = 0.0f;
+    // --terrain-skirt D (M58e): 0 = 自動 / < 0 = スカート無し (クラックの A/B 撮影用)
+    float terrainSkirtDepth = 0.0f;
     // --edit-actor PATH (M48k): 起動直後にミニシーン編集モードで開く。
     // 編集モードの入口はダブルクリックだけで自動検証できないため、既存の検証フラグ
     // (--select / --pick-test / --parts-demo) と同じ流儀で口を開けてある

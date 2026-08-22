@@ -192,6 +192,8 @@ bool DeferredPath::Init(GraphicsDevice& device, ShaderManager& shaders)
     gbufferInstancedShader_ = shaders.Load("deferred_gbuffer_instanced");
     // スカイボックス (M29d)。失敗しても続行 (空が clearColor になるだけ)
     skybox_.Init(device, shaders);
+    // 地形 (M58c)。失敗しても続行 (地形が描かれないだけ = 従来の絵)
+    terrain_.Init(device, shaders);
 
     // M55c: velocity の可視化 (デバッグ表示。既定 off なので失敗しても描画は続く)
     velocityDebugShader_ = shaders.Load("debug_velocity");
@@ -367,6 +369,7 @@ void DeferredPath::Shutdown()
     prevInstanceBuf_.Reset();
     velocityCB_.Reset();
     velocityDebugCB_.Reset();
+    terrain_.Shutdown(); // M58c
 }
 
 void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const RenderQueue& queue,
@@ -660,6 +663,13 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
     // インスタンス SRV を外す (次フレームの Map と競合させない、M38f。M55c で 2 本に)
     ID3D11ShaderResourceView* nullVsSrvs[2] = {};
     dc->VSSetShaderResources(0, 2, nullVsSrvs);
+
+    // ---- 1.1) 地形 (M58c): 同じ GBuffer + 同じ深度へ専用シェーダで書く。
+    //      RT / ビューポート / ラスタライザ (Wireframe 込み) / 深度 / ブレンドは
+    //      上の設定をそのまま使う。CB は b4 なので b0-b3 は張り替わらない =
+    //      この後の透明後段 (forward_lit) は何も張り直さなくてよい。
+    //      地形が無いフレームは TerrainPass が即 return する = 従来とビット一致 ----
+    terrain_.RenderGBuffer(device, shaders, view, resources);
 
     // Wireframe (M40b) は GBuffer パスのみ — フルスクリーン解決系は solid に戻す
     if (wire) {

@@ -217,6 +217,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     particleSystem.Init(device, shaderManager, assetsRoot);
 
     // ポストプロセス設定を config から反映 (M16)。全ビューポート共通の renderSystem に載る
+    renderSystem.assetsRoot = assetsRoot; // M58c: TerrainComponent.source の解決基点
     renderSystem.enablePostFx = config.postFx;
     renderSystem.rtDebugMode = config.rtDebugMode; // M46b (--rt-debug N、Deferred のみ)
     renderSystem.velocityDebugMode = config.velocityDebug; // M55c (--velocity-debug)

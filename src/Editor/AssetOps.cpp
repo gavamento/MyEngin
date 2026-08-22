@@ -26,6 +26,8 @@
 #include "Engine/Core/World.h"
 #include "Engine/Engine/Animation.h"
 #include "Engine/Engine/EntityNaming.h"
+#include "Engine/Engine/Asset/TerrainAsset.h" // M58f: 地形ブラシの Undo/Redo
+#include "Engine/Engine/Asset/TerrainEdit.h"
 #include "Engine/Engine/AssetDatabase.h"
 #include "Engine/Engine/Audio/AudioMixer.h"
 #include "Engine/Engine/Audio/AudioSystem.h"
@@ -35,6 +37,7 @@
 #include "Engine/Engine/FbxLoader.h"
 #include "Engine/Engine/ModelLoader.h"
 #include "Engine/Engine/Prefab.h"
+#include "Engine/Engine/RenderSystem.h" // M58f: 地形ブラシ Undo 後のチャンク再構築
 #include "Engine/Engine/Scene.h"
 #include "Engine/Engine/SchemaCodegen.h"
 #include "Engine/Engine/Script/ManagedHost.h"
@@ -917,6 +920,47 @@ void RecordAssetCreated(UndoStack& undo, const std::wstring& path)
     undo.PushFileOp("Create Asset", std::move(op));
 }
 
+namespace {
+
+// 地形ブラシ 1 ストロークの逆/順適用 (M58f)。
+// ★**ブラシ本体とまったく同じ永続化経路 (TerrainEdit::SaveEdits) を通す。**
+//   「塗るときは A、戻すときは B」と分けると、クックキャッシュの更新漏れが
+//   どちらか一方でだけ起きて「Undo したのに絵が戻らない」になる。
+//   ディスク上のサイドカーが唯一の真値なので、毎回そこから読み直して当て直す
+bool ApplyTerrainPaintOp(EngineContext& ctx, const UndoFileOp& op, bool redo)
+{
+    std::error_code ec;
+    if (op.pathA.empty() || !fs::exists(op.pathA, ec)) {
+        MYE_LOG_WARN(Tr(StrId::Log_UndoTargetGone), WideToUtf8(op.pathA).c_str());
+        return false;
+    }
+    TerrainEdit::TerrainPatch patch;
+    if (!TerrainEdit::DeserializePatch(op.bytes, patch)) {
+        MYE_LOG_WARN("terrain undo: the recorded patch is malformed");
+        return false;
+    }
+    TerrainAsset::TerrainData data;
+    if (!TerrainAsset::Load(op.pathA, data)) {
+        MYE_LOG_WARN(Tr(StrId::Log_UndoTargetGone), WideToUtf8(op.pathA).c_str());
+        return false;
+    }
+    // 解像度が変わっている (JSON の heightRes を触った) 等でパッチが当たらないときは
+    // 何も書かない — 半分だけ巻き戻った地形を残さない
+    if (!TerrainEdit::ApplyPatch(data, patch, redo)) {
+        MYE_LOG_WARN(Tr(StrId::Terrain_UndoStale), WideToUtf8(op.pathA).c_str());
+        return false;
+    }
+    if (!TerrainEdit::SaveEdits(op.pathA, data)) {
+        return false;
+    }
+    if (ctx.renderSystem != nullptr) {
+        ctx.renderSystem->InvalidateTerrain(); // 次フレームでチャンクを焼き直す
+    }
+    return true;
+}
+
+} // namespace
+
 // UndoStack のファイル操作エントリ実行部 (M51i)。宣言は UndoStack.h。
 // 「逆操作先消滅時は WARN + no-op」— Explorer 側でファイルが動いた後の Undo で
 // 何かを上書きしたり例外で落ちたりしないことを最優先にする
@@ -986,6 +1030,8 @@ bool ExecuteAssetFileOp(EngineContext* ctx, const UndoFileOp& op, bool redo)
             f.write(op.bytes.data(), static_cast<std::streamsize>(op.bytes.size()));
             return true;
         }
+    case UndoFileOp::Kind::TerrainPaint:
+        return ApplyTerrainPaintOp(*ctx, op, redo);
     case UndoFileOp::Kind::None:
     default:
         return false;

@@ -46,13 +46,19 @@ public:
     bool localDemo = false;  // --local-demo (M52g: ローカルマルチプレイの入力レーンデモ)
     bool netDemo = false;    // --net-demo (M52i: 2 人ネット対戦のデモ)
     bool renderShowcase = false; // --render-demo (M54a: 描画ロードマップのショーケース)
+    bool terrainShowcase = false; // --terrain-demo (M58c: 地形のショーケース)
+    float terrainLodDistance = 0.0f; // --terrain-lod DIST (M58e: 0 = LOD 無効)
+    float terrainSkirtDepth = 0.0f;  // --terrain-skirt D (M58e: 0 = 自動 / < 0 = 無し)
 
     void OnStart(mye::EngineContext& ctx) override
     {
         ctx.shaders->Load("forward_lit");
         mye::RegisterDemoContent(ctx);   // Editor と同じ実体登録 (AssetID 解決)
         mye::RegisterAssetLibraries(ctx); // .prefab / .anim を登録
-        if (scenePath.empty() && renderShowcase) {
+        if (scenePath.empty() && terrainShowcase) {
+            // M58c: render-demo と同じ理由でコードから毎回組む (bat が撮影前に消す)
+            scenePath = L"cache\\terrain_showcase.scene.json";
+        } else if (scenePath.empty() && renderShowcase) {
             // M54a: コードから毎回組む (local-demo と同じ理由)。**shot_verify はこの経路で
             // 撮る**ので、cache\ に保存済みが残っていると exists() 側へ落ちて golden が
             // 静かに変わる — bat 側で撮影前に消している
@@ -85,11 +91,14 @@ public:
         mye::RegisterLocalPlayersContent(ctx);  // M52g: mp_* 材質 (同上の理由で常時)
         mye::RegisterNetDuelContent(ctx);       // M52i: duel_* 材質 (同上)
         mye::RegisterRenderShowcaseContent(ctx); // M54a: rdemo_* 材質 (同上)
+        mye::RegisterTerrainShowcaseContent(ctx); // M58c: tdemo_* 材質 (同上)
         if (std::filesystem::exists(scenePath)) {
             mye::SceneSerializer::LoadFromFile(*ctx.scene, scenePath);
             // Editor と同じ「ロード直後 1 回」(M48e)。ここを揃えないと Editor で録った .rep と
             // Runtime の verify で初期状態が食い違う
             mye::Prefab::RefreshNonOverridden(*ctx.scene, *ctx.prefabs);
+        } else if (terrainShowcase) {
+            mye::BuildTerrainShowcaseScene(ctx, terrainLodDistance, terrainSkirtDepth); // M58c/e
         } else if (renderShowcase) {
             mye::BuildRenderShowcaseScene(ctx); // M54a
         } else if (netDemo) {
@@ -282,6 +291,14 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 app.netDemo = true; // M52i: 2 人ネット対戦のデモシーン
             } else if (arg == L"--render-demo") {
                 app.renderShowcase = true; // M54a: 描画ショーケース (shot_verify の 6/7 枚目)
+            } else if (arg == L"--terrain-demo") {
+                app.terrainShowcase = true; // M58c: 地形ショーケース (shot_verify の 8 枚目)
+            } else if (arg == L"--terrain-lod" && i + 1 < argc) {
+                // M58e: 地形 LOD の切替距離。**golden は LOD 無しのまま**で、
+                // クラック A/B のときだけ点ける
+                app.terrainLodDistance = static_cast<float>(_wtof(argv[++i]));
+            } else if (arg == L"--terrain-skirt" && i + 1 < argc) {
+                app.terrainSkirtDepth = static_cast<float>(_wtof(argv[++i])); // 負値 = 無し
             } else if (arg == L"--local-players" && i + 1 < argc) {
                 config.localPlayers = _wtoi(argv[++i]); // M52g: 消費する入力レーン数
             } else if (arg == L"--synth-input") {
