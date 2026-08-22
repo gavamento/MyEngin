@@ -584,6 +584,14 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
             ImGui::MenuItem(Tr(StrId::Menu_RtShadow), nullptr, &ctx.renderSystem->enableRtShadow);
             // M46h: 滑らかな面のスペキュラ環境項をレイトレ反射で置換 (画面外も映る)
             ImGui::MenuItem(Tr(StrId::Menu_RtReflection), nullptr, &ctx.renderSystem->enableRtRefl);
+            // M55c: GBuffer RT4 (velocity) の可視化。bool ではなく int なので MenuItem の
+            // 選択状態で表し、クリックでトグルする (rtDebugMode の 0/N と同じ流儀)
+            {
+                int& velDbg = ctx.renderSystem->velocityDebugMode;
+                if (ImGui::MenuItem(Tr(StrId::Taa_VelocityDebug), nullptr, velDbg != 0)) {
+                    velDbg = (velDbg != 0) ? 0 : 1;
+                }
+            }
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu(Tr(StrId::Menu_RtDebug))) {

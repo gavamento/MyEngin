@@ -86,6 +86,9 @@ struct EngineConfig {
     // Deferred パスのみ効く。
     // 終了時に BVH の規模とトラバーサルの GPU 時間をログに出す (性能実測用)
     int rtDebugMode = 0;
+    // M55c: velocity バッファ (GBuffer RT4) の可視化 (--velocity-debug)。0=off。
+    // Deferred パスのみ効く。TAA / モーションブラー v2 が入るまでの唯一の目視口
+    int velocityDebug = 0;
     // M46d: テンポラル蓄積 (--rt-no-temporal で off = 1spp 生のまま。A/B 計測用)。
     // 乱数列の freeze は既定でスクショ/リプレイ時に自動 on (M46c)。
     // --rt-freeze-seed で常時 on、--rt-anim-seed でその自動 on を解除する

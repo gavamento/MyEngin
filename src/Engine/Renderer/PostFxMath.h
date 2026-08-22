@@ -212,4 +212,56 @@ inline DirectX::XMFLOAT4X4 ApplyToProj(const DirectX::XMFLOAT4X4& proj, float nd
 
 } // namespace camerajitter
 
+// M55c: GBuffer RT4 (R16G16_FLOAT) へ書く画面速度。
+// **deferred_gbuffer{,_instanced,_skinned}.hlsl の ComputeVelocity と同じ式** —
+// 片方だけ直すと「velocity が静かに間違っている」形で壊れる (誰も読んでいない間は
+// 絵にも出ない) ので、変更時は 4 箇所すべてを更新すること。
+//
+// 規約: **velocity = 今フレームの UV − 前フレームの UV**。読む側は prevUv = uv - velocity。
+//   ・今フレームのクリップ座標は**ジッタ込み**の proj で作られている (ラスタライズと
+//     同じ行列で無いとピクセル中心とずれる) ので、NDC にしてからジッタを引き戻す。
+//   ・前フレーム側は RenderView::prevViewProj = **非ジッタ**なので何も引かない。
+//     ここを揃えないと「静止物が毎フレーム半ピクセル動く」velocity になる。
+namespace velocity {
+
+// clip 空間の 2 点 (今 / 前) → UV 速度。false = どちらかがカメラ背面 (速度 0 とみなす)
+inline bool FromClip(const DirectX::XMFLOAT4& curClip, const DirectX::XMFLOAT4& prevClip,
+                     float jitterNdcX, float jitterNdcY, float& outU, float& outV)
+{
+    outU = 0.0f;
+    outV = 0.0f;
+    if (curClip.w <= 1e-6f || prevClip.w <= 1e-6f) {
+        return false;
+    }
+    const float curX = curClip.x / curClip.w - jitterNdcX;
+    const float curY = curClip.y / curClip.w - jitterNdcY;
+    const float prevX = prevClip.x / prevClip.w;
+    const float prevY = prevClip.y / prevClip.w;
+    outU = (curX - prevX) * 0.5f;
+    outV = (curY - prevY) * -0.5f; // NDC は上向き / UV は下向き
+    return true;
+}
+
+// ワールド座標 2 点 (今フレームの位置 / 前フレームに実際に描かれた位置) からの一括計算。
+// curViewProj はジッタ込み・prevViewProj は非ジッタ (どちらも未転置 = 行ベクトル規約)
+inline bool FromWorld(const DirectX::XMFLOAT4X4& curViewProjJittered,
+                      const DirectX::XMFLOAT4X4& prevViewProj,
+                      const DirectX::XMFLOAT3& curWorldPos,
+                      const DirectX::XMFLOAT3& prevWorldPos, float jitterNdcX, float jitterNdcY,
+                      float& outU, float& outV)
+{
+    using namespace DirectX;
+    DirectX::XMFLOAT4 cur;
+    DirectX::XMFLOAT4 prev;
+    XMStoreFloat4(&cur,
+                  XMVector4Transform(XMVectorSet(curWorldPos.x, curWorldPos.y, curWorldPos.z, 1.0f),
+                                     XMLoadFloat4x4(&curViewProjJittered)));
+    XMStoreFloat4(&prev, XMVector4Transform(XMVectorSet(prevWorldPos.x, prevWorldPos.y,
+                                                        prevWorldPos.z, 1.0f),
+                                            XMLoadFloat4x4(&prevViewProj)));
+    return FromClip(cur, prev, jitterNdcX, jitterNdcY, outU, outV);
+}
+
+} // namespace velocity
+
 } // namespace mye

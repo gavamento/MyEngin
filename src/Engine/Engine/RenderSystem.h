@@ -55,6 +55,10 @@ struct PrevWorldStore {
     }
 };
 
+// M55c の PrevRenderWorldStore (「前フレームに **実際に描いた** world 行列」) は
+// RenderTypes.h にある。ここ (Engine 層) ではなく Renderer 層に置いたのは、
+// RenderSelfTest が Renderer 層にあり、上位層を include できないため。
+
 // エディタカメラ等でシーンカメラを上書きするためのビュー指定
 struct CameraOverride {
     DirectX::XMFLOAT4X4 view = {};
@@ -136,6 +140,10 @@ public:
     // 上げるのは TAA 本体 (M55d) が「このビューで TAA が有効」と判断したときだけ。
     // ジッタ列は viewKey 別の描画通番から引くので実時間に依存しない (決定的撮影で再現する)。
     float jitterAmplitude = 0.0f;
+    // M55c: velocity バッファ (GBuffer RT4) の可視化 (--velocity-debug / View メニュー)。
+    // 0 = off。Deferred のみ。velocity を読む本番の消費者はまだ居ない (M55d/M55e/M55f)
+    // ので、これが唯一の「本当に書けているか」の目視口になる
+    int velocityDebugMode = 0;
 
     // M44d: ポストプロセス解決の GPU 時間 (直近の Resolve、ProfilerWindow 表示用)
     float PostFxGpuMs() const { return postFx_.ResolveGpuMs(); }
@@ -176,6 +184,9 @@ private:
     // M46d: viewKey 毎の描画通番 (Render 1 回で 1 進む)。テンポラル蓄積が
     // 「前フレームも同じビューを描いたか」を判定するのに使う (RT の on/off で履歴が混ざらない)
     uint32_t viewSerial_[4] = {};
+    // M55c: viewKey 毎の「前フレームに実際に描いた world 行列」(velocity の出所)。
+    // viewKey==0 (AssetPreview) は履歴を持たない = velocity は常に 0
+    PrevRenderWorldStore prevRender_[4];
     // M46b: レイトレ (遅延 Init)。rtDebugMode == 0 のあいだは一切触らない
     RtScene rtScene_;
     RtPasses rtPasses_;

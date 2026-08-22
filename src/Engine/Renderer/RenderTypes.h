@@ -69,6 +69,11 @@ struct RenderItem {
     // 指す先は RenderSystem のフレームアリーナ (transpose 済みボーン行列、描画完了まで有効)。
     const DirectX::XMFLOAT4X4* bones = nullptr;
     int32_t boneCount = 0;
+    // ---- M55c: 前フレームに **実際に描いた** ワールド行列 (末尾 append、velocity 用) ----
+    // 「前 tick」ではない (詳細は RenderSystem.h の PrevRenderWorldStore の頭)。
+    // 履歴が無い場合は world と同値が入る = 画面速度が厳密に 0 になり、
+    // 消費側は「カメラ再投影のみ」へ自然に縮退する
+    DirectX::XMFLOAT4X4 prevWorld = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
 };
 
 struct RenderView {
@@ -172,6 +177,77 @@ struct RenderView {
     float jitterPixels[2] = { 0.0f, 0.0f }; // proj に載せたサブピクセル量 (0,0 = ジッタ無効)
     float jitterNdc[2] = { 0.0f, 0.0f };    // 同じものを NDC で (TAA が履歴サンプルに使う)
     uint32_t viewFrameIndex = 0;            // viewKey 別の描画通番 = ジッタ列のインデックス
+    // ---- M55c: velocity バッファの可視化 (末尾 append。0 = 何も起きない) ----
+    // Deferred のみ。GBuffer RT4 を画面へ貼り替える純デバッグ表示で、消費側は誰もいない
+    int32_t velocityDebug = 0;
+};
+
+// M55c: 「**前フレームに実際に描いた** world 行列」の viewKey 別ストア (velocity の出所)。
+//
+// ★★RenderSystem.h の PrevWorldStore (M36b) では代用できない。あちらは **tick 頭**の
+//   スナップショットで、実際に描かれるのは LerpWorld(prev, cur, interpAlpha)。つまり
+//   前フレームの画面にあった行列は「LerpWorld(prev, cur, 前フレームの alpha)」であって
+//   prev ではない。prev をそのまま velocity に使うと最大 1 tick 分過大になり、
+//   TAA が履歴を外しモーションブラーが過剰にブレる。
+//   ★さらに悪いことに **決定的撮影モードでは dt 固定で interpAlpha == 1.0 になる**ので、
+//   この誤りは golden に 1 ピクセルも現れない (対話プレイでだけ出る)。だから機械検査は
+//   スクショではなく selftest (RenderSelfTest の TestPrevRenderWorldStore) 側にある。
+//
+// 構造は RtPasses::RtHistory (viewKey 別 + 描画通番の連続性判定 + リサイズ破棄) に倣う。
+// 「前フレームも描かれたか」はスロット毎の通番で見るので、消えた/カリングされた
+// エンティティの古い行列を拾うことがない (毎フレームのクリアも要らない)。
+struct PrevRenderWorldStore {
+    std::vector<DirectX::XMFLOAT4X4> world; // entity.index キー
+    std::vector<uint32_t> generation;       // entity.generation + 1 (0 = 未使用スロット)
+    std::vector<uint32_t> slotSerial;       // そのスロットを書いたときの描画通番
+
+    // 今フレームの描画通番とビューサイズを宣言する。
+    // 戻り値 = 前フレームの記録が使えるか (通番がちょうど 1 つ違い かつ 同サイズ)。
+    // 使えないときも記録は続ける (次フレームのため)
+    bool Begin(uint32_t frameSerial, int width, int height)
+    {
+        usable_ = valid_ && w_ == width && h_ == height && lastSerial_ + 1u == frameSerial;
+        cur_ = frameSerial;
+        prev_ = frameSerial - 1u; // frameSerial==0 は 0xFFFFFFFF へ回る = どのスロットとも不一致
+        lastSerial_ = frameSerial;
+        w_ = width;
+        h_ = height;
+        valid_ = true;
+        return usable_;
+    }
+
+    // 前フレームに描いた行列 (無ければ null)。同じエンティティの Record より **先**に呼ぶこと
+    const DirectX::XMFLOAT4X4* Lookup(EntityID e) const
+    {
+        if (!usable_ || e.index >= world.size()) {
+            return nullptr;
+        }
+        if (generation[e.index] != e.generation + 1u || slotSerial[e.index] != prev_) {
+            return nullptr; // 前フレームは描かれていない / index が再利用された
+        }
+        return &world[e.index];
+    }
+
+    void Record(EntityID e, const DirectX::XMFLOAT4X4& m)
+    {
+        if (e.index >= world.size()) {
+            world.resize(e.index + 1);
+            generation.resize(e.index + 1, 0);
+            slotSerial.resize(e.index + 1, 0);
+        }
+        world[e.index] = m;
+        generation[e.index] = e.generation + 1u;
+        slotSerial[e.index] = cur_;
+    }
+
+private:
+    uint32_t cur_ = 0;
+    uint32_t prev_ = 0;
+    uint32_t lastSerial_ = 0;
+    int w_ = 0;
+    int h_ = 0;
+    bool valid_ = false;
+    bool usable_ = false;
 };
 
 // GPU へ渡すライト 1 個 (定数バッファ配列要素、16 バイト境界に揃えた 64 バイト)。

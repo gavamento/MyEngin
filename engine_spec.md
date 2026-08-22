@@ -222,8 +222,19 @@ letting the Deferred path carry the effects that need a G-Buffer. See ADR-007.
 
 - **Forward** — opaque + transparent + particles in one pass. Also used as the transparent
   tail of the Deferred path, so the two never diverge in lighting
-- **Deferred** — 4 render targets (albedo / world normal / world position / metal-roughness-emissive).
+- **Deferred** — 5 render targets (albedo / world normal / world position /
+  metal-roughness-emissive / screen-space velocity, M55c).
   SSAO, screen-space effects and the ray-traced lanes of §6.4 hook in here
+  - **Velocity (RT4, `R16G16_FLOAT`)** holds `current UV - previous UV`, so a consumer
+    reads history at `uv - velocity`. The previous position comes from a per-view store of
+    the world matrix that was **actually drawn last frame** — not the previous *tick*
+    snapshot used for render interpolation, which would overshoot by up to one tick.
+    The current clip position is jittered (§ TAA), so the jitter is subtracted back out
+    before differencing; the stored previous view-projection is jitter-free.
+    **Not covered in v1**: there is no previous-frame bone palette, so a skinned mesh
+    reports only camera and object-transform motion — the bone deformation itself
+    contributes zero velocity. Consumers arrive in M55d (TAA) / M55e (motion blur) / M55f.
+    `View > Rendering > Velocity Buffer` (or `--velocity-debug`) visualizes it
 
 ### 6.2 Feature Scope
 

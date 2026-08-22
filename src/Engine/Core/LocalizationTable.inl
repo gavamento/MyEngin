@@ -86,6 +86,8 @@ MYE_STR(Menu_PostFx,          "Post FX",           "ポストエフェクト")
 MYE_STR(Menu_RtGi,            "RT GI (Deferred)",  "RT GI (Deferred)")
 MYE_STR(Menu_RtShadow,        "RT Shadow (Deferred)",     "RT 影 (Deferred)")
 MYE_STR(Menu_RtReflection,    "RT Reflection (Deferred)", "RT 反射 (Deferred)")
+// M55c: velocity バッファ (GBuffer RT4) の可視化。接頭辞 Taa_* は M55 の予約 (統合契約 予約 5)
+MYE_STR(Taa_VelocityDebug,    "Velocity Buffer (Deferred)", "velocity バッファ (Deferred)")
 
 MYE_STR(Menu_RtDebug,         "RT Debug (Deferred)",   "RT デバッグ (Deferred)")
 MYE_STR(Menu_RtDbgOff,        "Off",                   "オフ")

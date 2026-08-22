@@ -219,6 +219,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // ポストプロセス設定を config から反映 (M16)。全ビューポート共通の renderSystem に載る
     renderSystem.enablePostFx = config.postFx;
     renderSystem.rtDebugMode = config.rtDebugMode; // M46b (--rt-debug N、Deferred のみ)
+    renderSystem.velocityDebugMode = config.velocityDebug; // M55c (--velocity-debug)
     renderSystem.rtTemporal = config.rtTemporal;   // M46d (--rt-no-temporal / --rt-freeze-seed)
     renderSystem.rtFreezeSeed = config.rtFreezeSeed;
     renderSystem.rtSvgf = config.rtSvgf;   // M46e (--rt-no-svgf)

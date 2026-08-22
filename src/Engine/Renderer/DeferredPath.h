@@ -29,6 +29,10 @@ private:
     RenderTexture gbNormal_;   // ワールド法線 *0.5+0.5
     RenderTexture gbPosition_; // ワールド座標 (Point/Spot ライティング用)
     RenderTexture gbMaterial_; // r=metallic g=roughness (PBR、M17)
+    // M55c: 画面速度 (R16G16_FLOAT)。**このサブでは誰も読まない** — 消費者は
+    // M55d (TAA) / M55e (モーションブラー v2) / M55f (RT の物体モーション)。
+    // 読む側は自分で SRV を bind する (光パスの t0-t11 の並びは 1 つも動かさない)
+    RenderTexture gbVelocity_;
 
     Microsoft::WRL::ComPtr<ID3D11Buffer> perFrameCB_;
     Microsoft::WRL::ComPtr<ID3D11Buffer> perObjectCB_;
@@ -54,6 +58,14 @@ private:
     std::vector<uint8_t> canInstance_; // フレーム毎スクラッチ
     std::vector<MeshInstanceRun> runs_;
     std::vector<DirectX::XMFLOAT4X4> worlds_;
+    // M55c: worlds_ と**同じ並び**の「前フレームに描いた world」(VS t1)。
+    // BuildInstanceRuns は共有 (Forward/Shadow も呼ぶ) なので触らず、runs_ から組み直す
+    std::vector<DirectX::XMFLOAT4X4> prevWorlds_;
+    MeshInstanceBuffer prevInstanceBuf_;
+    Microsoft::WRL::ComPtr<ID3D11Buffer> velocityCB_; // b4 (GBuffer パス専用)
+    // M55c: velocity の可視化 (RenderView::velocityDebug != 0 のときだけ)
+    AssetID velocityDebugShader_ = {};
+    Microsoft::WRL::ComPtr<ID3D11Buffer> velocityDebugCB_;
     SkyboxPass skybox_; // ライトパス後・透明前に空を塗る (M29d)
 
     // ---- SSAO (M38e、半解像度) ----

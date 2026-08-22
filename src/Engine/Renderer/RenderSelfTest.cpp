@@ -483,6 +483,124 @@ void TestCameraJitter()
     }
 }
 
+// M55c: 画面速度 (common.hlsli::ComputeVelocityUv のミラー検証)。
+// velocity を読む消費者は M55d 以降まで居ない = **ピクセル回帰では 1 ミリも被覆できない**
+// ので、式の正しさはここで固定するしかない
+void TestVelocityUv()
+{
+    MYE_LOG_INFO("[selftest] velocity buffer (M55c)");
+    XMFLOAT4X4 proj;
+    XMStoreFloat4x4(&proj,
+                    XMMatrixPerspectiveFovLH(XMConvertToRadians(60.0f), 16.0f / 9.0f, 0.1f, 100.0f));
+    XMFLOAT4X4 viewM;
+    XMStoreFloat4x4(&viewM, XMMatrixIdentity()); // カメラは原点・+Z 向き
+    XMFLOAT4X4 vp;
+    XMStoreFloat4x4(&vp, XMLoadFloat4x4(&viewM) * XMLoadFloat4x4(&proj));
+
+    const XMFLOAT3 p = { 1.0f, 0.5f, 8.0f };
+    float u = 1.0f;
+    float v = 1.0f;
+
+    // ① 静止 (カメラも物体も動かない) → 厳密に 0。これが「既定で絵が変わらない」の根拠
+    TEST_CHECK(velocity::FromWorld(vp, vp, p, p, 0.0f, 0.0f, u, v));
+    TEST_CHECK(u == 0.0f && v == 0.0f);
+
+    // ② 物体が +X へ動いた → velocity は「今 UV − 前 UV」= 正の u。
+    //    大きさは UV 差そのものと一致すること (符号規約 prevUv = uv - velocity の担保)
+    const XMFLOAT3 prevPos = { 0.5f, 0.5f, 8.0f };
+    TEST_CHECK(velocity::FromWorld(vp, vp, p, prevPos, 0.0f, 0.0f, u, v));
+    TEST_CHECK(u > 0.0f);
+    {
+        auto uvOf = [&](const XMFLOAT3& w) {
+            const XMVECTOR c =
+                XMVector4Transform(XMVectorSet(w.x, w.y, w.z, 1.0f), XMLoadFloat4x4(&vp));
+            const float cw = XMVectorGetW(c);
+            return XMFLOAT2{ XMVectorGetX(c) / cw * 0.5f + 0.5f,
+                             0.5f - XMVectorGetY(c) / cw * 0.5f };
+        };
+        const XMFLOAT2 cur = uvOf(p);
+        const XMFLOAT2 old = uvOf(prevPos);
+        TEST_CHECK(std::fabs((cur.x - old.x) - u) < 1e-6f);
+        TEST_CHECK(std::fabs((cur.y - old.y) - v) < 1e-6f);
+    }
+
+    // ③ ★核心: **ジッタを載せても velocity は変わらない**。
+    //    今フレームだけジッタ込みの proj でラスタライズされ、prevViewProj は非ジッタ —
+    //    引き戻しを忘れると静止物が毎フレーム半ピクセル動いて TAA が履歴を外す
+    const float jx = 0.0031f;
+    const float jy = -0.0047f;
+    const XMFLOAT4X4 projJit = camerajitter::ApplyToProj(proj, jx, jy);
+    XMFLOAT4X4 vpJit;
+    XMStoreFloat4x4(&vpJit, XMLoadFloat4x4(&viewM) * XMLoadFloat4x4(&projJit));
+    float uj = 0.0f;
+    float vj = 0.0f;
+    TEST_CHECK(velocity::FromWorld(vpJit, vp, p, p, jx, jy, uj, vj));
+    TEST_CHECK(std::fabs(uj) < 1e-6f && std::fabs(vj) < 1e-6f);
+    TEST_CHECK(velocity::FromWorld(vpJit, vp, p, prevPos, jx, jy, uj, vj));
+    TEST_CHECK(std::fabs(uj - u) < 1e-6f && std::fabs(vj - v) < 1e-6f);
+    // 引き戻しを忘れた場合はちょうどジッタ分ずれる (この試験に歯があることの確認)
+    float uBad = 0.0f;
+    float vBad = 0.0f;
+    TEST_CHECK(velocity::FromWorld(vpJit, vp, p, p, 0.0f, 0.0f, uBad, vBad));
+    TEST_CHECK(std::fabs(uBad - jx * 0.5f) < 1e-6f);
+
+    // ④ カメラ背面 (w<=0) は false + 速度 0 (消費側はカメラ再投影のみへ縮退)
+    const XMFLOAT3 behind = { 0.0f, 0.0f, -5.0f };
+    TEST_CHECK(!velocity::FromWorld(vp, vp, behind, behind, 0.0f, 0.0f, u, v));
+    TEST_CHECK(u == 0.0f && v == 0.0f);
+}
+
+// M55c: 「前フレームに実際に描いた world 行列」ストア。
+// ★★決定的撮影モードでは interpAlpha == 1.0 なので「前 tick の行列で代用する」誤りは
+// golden に一切現れない。だから通番の連続性判定はここで機械検査するしかない
+void TestPrevRenderWorldStore()
+{
+    MYE_LOG_INFO("[selftest] prev-render world store (M55c)");
+    PrevRenderWorldStore s;
+    const EntityID a = { 3, 0 };
+    const EntityID b = { 7, 0 };
+    XMFLOAT4X4 m0;
+    XMStoreFloat4x4(&m0, XMMatrixTranslation(1.0f, 0.0f, 0.0f));
+    XMFLOAT4X4 m1;
+    XMStoreFloat4x4(&m1, XMMatrixTranslation(2.0f, 0.0f, 0.0f));
+
+    // ① 初フレーム: 履歴なし
+    TEST_CHECK(!s.Begin(0, 960, 540));
+    TEST_CHECK(s.Lookup(a) == nullptr);
+    s.Record(a, m0);
+    s.Record(b, m0);
+
+    // ② 次フレーム: 通番が 1 つ違い + 同サイズ → 前フレームの行列が引ける
+    TEST_CHECK(s.Begin(1, 960, 540));
+    const XMFLOAT4X4* got = s.Lookup(a);
+    TEST_CHECK(got != nullptr && std::memcmp(got, &m0, sizeof(XMFLOAT4X4)) == 0);
+    s.Record(a, m1);
+    // b は今フレーム描かれなかった (Record しない) — 次フレームで拾われないこと
+
+    // ③ さらに次: a は m1、b は「前フレームに描かれていない」ので null
+    TEST_CHECK(s.Begin(2, 960, 540));
+    got = s.Lookup(a);
+    TEST_CHECK(got != nullptr && std::memcmp(got, &m1, sizeof(XMFLOAT4X4)) == 0);
+    TEST_CHECK(s.Lookup(b) == nullptr);
+    s.Record(a, m1);
+
+    // ④ 通番が飛んだ (別ビューを挟んだ / このビューが 1 フレーム描かれなかった) → 破棄
+    TEST_CHECK(!s.Begin(5, 960, 540));
+    TEST_CHECK(s.Lookup(a) == nullptr);
+    s.Record(a, m0);
+
+    // ⑤ リサイズ → 破棄 (再投影の前提が崩れる)
+    TEST_CHECK(!s.Begin(6, 1280, 720));
+    TEST_CHECK(s.Lookup(a) == nullptr);
+    s.Record(a, m0);
+
+    // ⑥ index 再利用 (generation 違い) は別エンティティとして扱う
+    TEST_CHECK(s.Begin(7, 1280, 720));
+    TEST_CHECK(s.Lookup(a) != nullptr);
+    const EntityID reused = { 3, 1 };
+    TEST_CHECK(s.Lookup(reused) == nullptr);
+}
+
 } // namespace
 
 bool RunRenderSelfTest()
@@ -501,6 +619,8 @@ bool RunRenderSelfTest()
     TestReprojectUv();
     TestEmissiveEncoding();
     TestCameraJitter();
+    TestVelocityUv();
+    TestPrevRenderWorldStore();
     if (g_failCount == 0) {
         MYE_LOG_INFO("[selftest] render: ALL PASS");
         return true;

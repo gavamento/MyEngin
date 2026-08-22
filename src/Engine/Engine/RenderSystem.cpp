@@ -412,6 +412,15 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
         }
     }
 
+    // ---- M55c: 「前フレームに実際に描いた world 行列」のストアを今フレームへ進める ----
+    // viewKey==0 (AssetPreview) は履歴を持たない = velocity は常に 0 に落ちる。
+    // viewSerial_ はこの Render の末尾で +1 されるので、ここでの値が「今フレームの通番」
+    const uint32_t prevRenderKey = (target.viewKey > 0 && target.viewKey < 4) ? target.viewKey : 0u;
+    PrevRenderWorldStore* prevRender = (prevRenderKey != 0) ? &prevRender_[prevRenderKey] : nullptr;
+    if (prevRender != nullptr) {
+        prevRender->Begin(viewSerial_[prevRenderKey], target.width, target.height);
+    }
+
     // ---- 収集 ----
     queue_.Clear();
     skinPalettes_.clear(); // スキンメッシュのボーンパレット (M18、フレーム毎に再構築)
@@ -499,6 +508,17 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
             item.material = c.material;
             item.world = c.world;
             item.viewZ = c.viewZ;
+            // M55c: velocity 用に「前フレームに実際に描いた行列」を載せる。履歴が無い
+            // (初回 / リサイズ / 前フレームは視錐台の外だった / 生成直後) ときは現在値と
+            // 同値を入れる = 画面速度が厳密に 0 = カメラ再投影のみへ縮退する。
+            // Lookup は Record より先 (同じスロットを読んでから上書きする)
+            item.prevWorld = c.world;
+            if (prevRender != nullptr) {
+                if (const XMFLOAT4X4* pr = prevRender->Lookup(c.e)) {
+                    item.prevWorld = *pr;
+                }
+                prevRender->Record(c.e, c.world);
+            }
 
             // スキンメッシュ (M18): ポーズを評価してボーンパレットを構築し item に載せる。
             // ポーズは描画専用 (SkinnedMeshComponent は kComponentNoHash)
@@ -580,6 +600,7 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
 
     view.ssaoEnabled = enableSsao ? 1 : 0; // M38e (Deferred のみ消費)
     view.instancingEnabled = enableInstancing ? 1 : 0; // M38f
+    view.velocityDebug = velocityDebugMode;            // M55c (Deferred のみ消費)
     // M40d: シーンカメラの CameraPostFx から SSAO パラメータ (override = エディタ視界は既定)
     if (!cameraOverride && !camEntity.IsNull()) {
         if (const auto* pfx = world.GetComponent<CameraPostFxComponent>(camEntity)) {

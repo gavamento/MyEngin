@@ -137,6 +137,30 @@ struct SsaoBlurCB {
     float pad[2];
 };
 
+// M55c: deferred_gbuffer{,_instanced,_skinned}.hlsl の VelocityParams (b4) と同一レイアウト。
+// **b4 は GBuffer パス専用** — Forward 系の CB (b0-b3) を 1 バイトも触らずに済ませるための
+// 割り切りで、代償は「非インスタンス描画 1 回につき CB 更新が 1 本増える」こと
+struct VelocityCB {
+    XMFLOAT4X4 prevViewProj; // transpose(前フレームの **非ジッタ** view*proj)
+    XMFLOAT4X4 prevWorld;    // transpose(前フレームに実際に描いた world)
+    float jitterNdc[2];
+    int32_t valid; // 0 = 履歴なし → シェーダは velocity 0 を書く
+    float pad;
+};
+
+// debug_velocity.hlsl の VelocityDebugCB と同一レイアウト
+struct VelocityDebugCB {
+    float dstSize[2];
+    float pxRange;
+    float pad;
+};
+
+// M55c: velocity 可視化が色を振り切る速度 [px/frame]。
+// 1.0 は「--render-demo の Spinner (30deg/s、半径 ~4、カメラ距離 ~18.6) の刃先が
+// ちょうど 1 px/frame 動く」という実測から採った値 — つまりこのデモで刃だけが色付き、
+// 静止した床/柱/背景は灰のまま、という絵になる。デバッグ表示専用 (絵には影響しない)
+constexpr float kVelocityDebugPxRange = 1.0f;
+
 // M46a: 定数バッファ生成 / CB 更新は GpuBufferUtil.h へ集約 (定義は同一)
 using namespace gpubuf;
 
@@ -155,10 +179,15 @@ bool DeferredPath::Init(GraphicsDevice& device, ShaderManager& shaders)
     // スカイボックス (M29d)。失敗しても続行 (空が clearColor になるだけ)
     skybox_.Init(device, shaders);
 
+    // M55c: velocity の可視化 (デバッグ表示。既定 off なので失敗しても描画は続く)
+    velocityDebugShader_ = shaders.Load("debug_velocity");
+
     if (!CreateConstant(dev, sizeof(PerFrameCB), perFrameCB_)
         || !CreateConstant(dev, sizeof(PerObjectCB), perObjectCB_)
         || !CreateConstant(dev, sizeof(MaterialCB), materialCB_)
         || !CreateConstant(dev, sizeof(LightPassCB), lightCB_)
+        || !CreateConstant(dev, sizeof(VelocityCB), velocityCB_)           // M55c (b4)
+        || !CreateConstant(dev, sizeof(VelocityDebugCB), velocityDebugCB_) // M55c
         || !CreateConstant(dev, sizeof(XMFLOAT4X4) * kMaxBones, boneCB_)) {
         return false;
     }
@@ -297,6 +326,7 @@ void DeferredPath::Shutdown()
     gbNormal_.Release();
     gbPosition_.Release();
     gbMaterial_.Release();
+    gbVelocity_.Release(); // M55c
     perFrameCB_.Reset();
     perObjectCB_.Reset();
     materialCB_.Reset();
@@ -319,6 +349,10 @@ void DeferredPath::Shutdown()
     noiseSrv_.Reset();
     // インスタンシング (M38f)
     instanceBuf_.Reset();
+    // M55c: velocity
+    prevInstanceBuf_.Reset();
+    velocityCB_.Reset();
+    velocityDebugCB_.Reset();
 }
 
 void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const RenderQueue& queue,
@@ -338,8 +372,10 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
     gbNormal_.Resize(device, view.width, view.height, DXGI_FORMAT_R10G10B10A2_UNORM, false);
     gbPosition_.Resize(device, view.width, view.height, DXGI_FORMAT_R16G16B16A16_FLOAT, false);
     gbMaterial_.Resize(device, view.width, view.height, DXGI_FORMAT_R8G8B8A8_UNORM, false);
+    // M55c: 画面速度 (RT4)。UV 変位は ±1 に収まる小さな符号付き量なので R16G16_FLOAT で足りる
+    gbVelocity_.Resize(device, view.width, view.height, DXGI_FORMAT_R16G16_FLOAT, false);
     if (!gbAlbedo_.IsValid() || !gbNormal_.IsValid() || !gbPosition_.IsValid()
-        || !gbMaterial_.IsValid()) {
+        || !gbMaterial_.IsValid() || !gbVelocity_.IsValid()) {
         return;
     }
 
@@ -349,15 +385,18 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
     vp.MaxDepth = 1.0f;
 
     // ---- 1) ジオメトリパス ----
-    ID3D11RenderTargetView* gbufs[4] = { gbAlbedo_.RTV(), gbNormal_.RTV(), gbPosition_.RTV(),
-                                         gbMaterial_.RTV() };
-    dc->OMSetRenderTargets(4, gbufs, view.dsv);
+    // M55c: MRT は 5 本 (RT4 = velocity)。blendOpaque_ は IndependentBlendEnable=FALSE なので
+    // RT0 の設定 (ブレンド無効・全チャンネル書込) がそのまま 5 本すべてに適用される
+    ID3D11RenderTargetView* gbufs[5] = { gbAlbedo_.RTV(), gbNormal_.RTV(), gbPosition_.RTV(),
+                                         gbMaterial_.RTV(), gbVelocity_.RTV() };
+    dc->OMSetRenderTargets(5, gbufs, view.dsv);
     dc->RSSetViewports(1, &vp);
     const float zero[4] = { 0, 0, 0, 0 };
     dc->ClearRenderTargetView(gbAlbedo_.RTV(), zero);
     dc->ClearRenderTargetView(gbNormal_.RTV(), zero);
     dc->ClearRenderTargetView(gbPosition_.RTV(), zero);
     dc->ClearRenderTargetView(gbMaterial_.RTV(), zero);
+    dc->ClearRenderTargetView(gbVelocity_.RTV(), zero); // 背景 = 速度 0
     if (view.dsv) {
         dc->ClearDepthStencilView(view.dsv, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
     }
@@ -410,6 +449,26 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
     dc->PSSetConstantBuffers(0, 2, cbs);
     ID3D11Buffer* matCbs[1] = { materialCB_.Get() };
     dc->PSSetConstantBuffers(2, 1, matCbs);
+    // ---- M55c: velocity 用 CB (b4)。VS が prevWorld/prevViewProj を、PS が jitter/valid を読む ----
+    // prevViewProj は **非ジッタ** (RenderSystem が projNoJitter で保存している)。
+    // 履歴が無いフレームは valid=0 → シェーダは velocity 0 を書く (行列は使われないが、
+    // 未初期化を渡さないよう今フレームの非ジッタ VP で埋めておく)
+    VelocityCB vel = {};
+    if (view.prevViewProjValid != 0) {
+        XMStoreFloat4x4(&vel.prevViewProj, XMMatrixTranspose(XMLoadFloat4x4(&view.prevViewProj)));
+        vel.valid = 1;
+    } else {
+        const XMMATRIX nj = v * XMLoadFloat4x4(&view.projNoJitter);
+        XMStoreFloat4x4(&vel.prevViewProj, XMMatrixTranspose(nj));
+        vel.valid = 0;
+    }
+    XMStoreFloat4x4(&vel.prevWorld, XMMatrixIdentity()); // 非インスタンス描画が毎回上書きする
+    vel.jitterNdc[0] = view.jitterNdc[0];
+    vel.jitterNdc[1] = view.jitterNdc[1];
+    UploadCB(dc, velocityCB_.Get(), vel);
+    ID3D11Buffer* velCbs[1] = { velocityCB_.Get() };
+    dc->VSSetConstantBuffers(4, 1, velCbs);
+    dc->PSSetConstantBuffers(4, 1, velCbs);
     ID3D11SamplerState* samplers[3] = { sampler_.Get(), shadowSampler_.Get(), iblSampler_.Get() };
     dc->PSSetSamplers(0, 3, samplers);
     dc->RSSetState(wire ? rasterizerWire_.Get() : rasterizer_.Get()); // M40b
@@ -436,9 +495,19 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
                 : 0;
         }
         BuildInstanceRuns(queue.opaque, canInstance_, runs_, worlds_);
-        if (!worlds_.empty() && instanceBuf_.Upload(device, worlds_)) {
-            ID3D11ShaderResourceView* isrv = instanceBuf_.SRV();
-            dc->VSSetShaderResources(0, 1, &isrv);
+        // M55c: 前フレーム world を worlds_ と同じ並びで積む。BuildInstanceRuns は
+        // Forward/Shadow も呼ぶ共有関数なので触らず、runs_ から組み直す (並びは定義上一致)
+        prevWorlds_.clear();
+        prevWorlds_.reserve(worlds_.size());
+        for (const MeshInstanceRun& r : runs_) {
+            for (uint32_t k = 0; k < r.count; ++k) {
+                prevWorlds_.push_back(queue.opaque[r.first + k].prevWorld);
+            }
+        }
+        if (!worlds_.empty() && instanceBuf_.Upload(device, worlds_)
+            && prevInstanceBuf_.Upload(device, prevWorlds_)) {
+            ID3D11ShaderResourceView* isrvs[2] = { instanceBuf_.SRV(), prevInstanceBuf_.SRV() };
+            dc->VSSetShaderResources(0, 2, isrvs);
         } else {
             runs_.clear();
         }
@@ -554,6 +623,10 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
         XMStoreFloat4x4(&po.world, XMMatrixTranspose(XMLoadFloat4x4(&item.world)));
         po.baseColor = SrgbToLinear(mat->baseColor); // M38a: authored 色をリニアへ
         UploadCB(dc, perObjectCB_.Get(), po);
+        // M55c: この描画の「前フレームに実際に描いた world」。b4 の他のフィールドは
+        // フレーム頭で埋めた値をそのまま持ち回る
+        XMStoreFloat4x4(&vel.prevWorld, XMMatrixTranspose(XMLoadFloat4x4(&item.prevWorld)));
+        UploadCB(dc, velocityCB_.Get(), vel);
         MaterialCB mc = {};
         mc.metallic = mat->metallic;
         mc.roughness = mat->roughness;
@@ -564,9 +637,9 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
         prof::AddDraw(static_cast<int>(mesh->indexCount / 3));
     }
 
-    // インスタンス SRV を外す (次フレームの Map と競合させない、M38f)
-    ID3D11ShaderResourceView* nullVsSrv = nullptr;
-    dc->VSSetShaderResources(0, 1, &nullVsSrv);
+    // インスタンス SRV を外す (次フレームの Map と競合させない、M38f。M55c で 2 本に)
+    ID3D11ShaderResourceView* nullVsSrvs[2] = {};
+    dc->VSSetShaderResources(0, 2, nullVsSrvs);
 
     // Wireframe (M40b) は GBuffer パスのみ — フルスクリーン解決系は solid に戻す
     if (wire) {
@@ -855,6 +928,39 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
         dc->OMSetRenderTargets(1, &view.rtv, view.dsv);
         dc->OMSetDepthStencilState(nullptr, 0);
         dc->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFFu);
+    }
+
+    // ---- 5) velocity の可視化 (M55c)。既定 (velocityDebug==0) では 1 命令も走らない。
+    //      RT4 を読む本番の消費者は M55d/M55e/M55f まで居ないので、ここが唯一の目視口 ----
+    if (view.velocityDebug != 0) {
+        ShaderProgram* velDbg = shaders.Get(velocityDebugShader_);
+        if (velDbg && velDbg->valid) {
+            VelocityDebugCB vd = {};
+            vd.dstSize[0] = static_cast<float>(view.width);
+            vd.dstSize[1] = static_cast<float>(view.height);
+            vd.pxRange = kVelocityDebugPxRange;
+            UploadCB(dc, velocityDebugCB_.Get(), vd);
+            // GBuffer を SRV で読むので深度は外す (光パスと同じ作法)
+            dc->OMSetRenderTargets(1, &view.rtv, nullptr);
+            dc->RSSetViewports(1, &vp);
+            ID3D11Buffer* vdCbs[1] = { velocityDebugCB_.Get() };
+            dc->PSSetConstantBuffers(0, 1, vdCbs);
+            ID3D11ShaderResourceView* velSrv[1] = { gbVelocity_.SRV() };
+            dc->PSSetShaderResources(0, 1, velSrv);
+            dc->IASetInputLayout(nullptr);
+            dc->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+            dc->OMSetDepthStencilState(depthDisabled_.Get(), 0);
+            dc->OMSetBlendState(blendOpaque_.Get(), nullptr, 0xFFFFFFFFu);
+            dc->VSSetShader(velDbg->vs.Get(), nullptr, 0);
+            dc->PSSetShader(velDbg->ps.Get(), nullptr, 0);
+            dc->Draw(3, 0);
+            ID3D11ShaderResourceView* velNull[1] = {};
+            dc->PSSetShaderResources(0, 1, velNull); // 次フレームで RTV に戻すため解除
+            // パーティクル後段のために RTV+DSV と状態を戻す (RT デバッグ表示と同じ後始末)
+            dc->OMSetRenderTargets(1, &view.rtv, view.dsv);
+            dc->OMSetDepthStencilState(nullptr, 0);
+            dc->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFFu);
+        }
     }
 }
 
