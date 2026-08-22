@@ -342,6 +342,9 @@
     <ClCompile Include="..\src\Engine\Engine\SkinningSystem.cpp">
       <Filter>Engine</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\TerrainSystem.cpp">
+      <Filter>Engine</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\TickRunner.cpp">
       <Filter>Engine</Filter>
     </ClCompile>
@@ -787,6 +790,9 @@
       <Filter>Engine</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\SkinningSystem.h">
+      <Filter>Engine</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\TerrainSystem.h">
       <Filter>Engine</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\TickRunner.h">

@@ -429,6 +429,18 @@ void RegisterBuiltinComponents()
         MYE_JP("押した瞬間ビット", MYE_FIELD_FLAGS(PlayerInputComponent, pressedBits, UInt32, kFieldReadOnly)),
         MYE_JP("離した瞬間ビット", MYE_FIELD_FLAGS(PlayerInputComponent, releasedBits, UInt32, kFieldReadOnly)),
     });
+
+    // M58b: 地形。**kComponentNoHash** — 地形は描画専用レーンで、ハイトフィールドが
+    // sim に入る (= ワールドハッシュに載る) のは M59 の地形コリジョンから。
+    // opt-in (TypeId 末尾 append) なので既存シーンのハッシュは不変 = ReplayFile bump 不要
+    RegisterComponent<TerrainComponent>("Terrain", {
+        MYE_JP("地形アセット", MYE_FIELD_TIP(TerrainComponent, source, String64,
+                                             "assets-relative .terrain.json path")),
+        // 範囲は TerrainSystem::ClampChunkTiles と同じ 2..256。Inspector 側にも入れておくと
+        // 「打った数字が黙って丸められて表示と食い違う」事故が起きない
+        MYE_JP("チャンクのタイル数",
+               MYE_FIELD_RANGE(TerrainComponent, chunkTiles, Int32, 2.0f, 256.0f)),
+    }, kComponentNoHash);
 }
 
 } // namespace mye

@@ -30,6 +30,9 @@ const std::unordered_map<std::string, ComponentUiInfo>& Table()
         { "SkinnedMesh", { ICON_FA_PERSON, "Rendering", "スキンメッシュ" } },
         { "Camera", { ICON_FA_VIDEO, "Rendering", "カメラ" } },
         { "Light", { ICON_FA_LIGHTBULB, "Rendering", "ライト" } },
+        // M58b: 地形。描画専用レーンなので Rendering に置く
+        // (Environment = Skybox/Fog は「シーン全体の環境設定」の棚で、地形は実体を持つ形状)
+        { "Terrain", { ICON_FA_MOUNTAIN, "Rendering", "地形" } },
         // Physics
         { "Collider", { ICON_FA_VECTOR_SQUARE, "Physics", "コライダー" } },
         { "Rigidbody", { ICON_FA_CIRCLE_DOT, "Physics", "リジッドボディ" } },

@@ -578,6 +578,27 @@ struct PlayerInputComponent {
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
+// ---- 地形 (M58b、spec §6.5) ----
+// **描画専用 (kComponentNoHash)** — 地形は sim / ワールドハッシュに 1 バイトも触らない。
+// 地形コリジョン (ハイトフィールド = sim レーン入り) は engine_spec §6.5 で M59 送り。
+//
+// アセットを AssetID ではなく**相対パス文字列**で持つ理由が 2 つある:
+//  1. AssetRef の Inspector ピッカーはフィールド名から Mesh/Material/Texture 等の
+//     ランタイムライブラリを推定する (InspectorWindow::DrawAssetRef) が、地形は
+//     そのライブラリを持たない — TerrainSystem がパスをキーに直接キャッシュする。
+//  2. 相対パスならシーン JSON がチェックアウト先に依存しない。モデル由来のサブアセット ID が
+//     正規化絶対パスのハッシュだったせいでシーンをコミットできなくなった M51j の穴を踏まない。
+//
+// opt-in (TypeId 末尾 append) なので既存シーンは 1 バイトも変わらない
+struct TerrainComponent {
+    char source[64] = {}; // assets\ からの相対パス (例 "terrain/demo.terrain.json")。空 = 無効
+    // チャンク 1 辺のタイル数。**範囲外の値は TerrainSystem::ClampChunkTiles が丸める**ので
+    // ここでは検査しない (Core 層は Engine 層のヘッダを読めないため定数を共有できない —
+    // 既定 32 / 範囲 2..256 の正本は Engine\Engine\TerrainSystem.h の kTerrain*ChunkTiles)
+    int32_t chunkTiles = 32;
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
 class World;
 
 // エンティティが有効か (ActiveComponent が無ければ有効 / enabled==0 なら無効)

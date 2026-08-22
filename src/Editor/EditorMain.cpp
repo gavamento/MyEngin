@@ -22,6 +22,7 @@
 #include "Engine/Core/LocalizationSelfTest.h"
 #include "Engine/Core/Log.h"
 #include "Editor/AssetOpsSelfTest.h"
+#include "Editor/TerrainSelfTest.h"
 #include "Engine/Engine/AnimatorControllerSelfTest.h"
 #include "Engine/Engine/AssetDatabaseSelfTest.h"
 #include "Engine/Engine/Audio/AudioSelfTest.h"
@@ -437,7 +438,9 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             && mye::RunGameFlowSelfTest() && mye::RunWorldHasherSelfTest()
             && mye::RunSimSnapshotSelfTest() && mye::RunTimeTravelSelfTest()
             && mye::RunCrashRingSelfTest() && mye::RunImageDiffSelfTest()
-            && mye::RunNetSelfTest();
+            && mye::RunNetSelfTest()
+            // M58b: 連鎖の**末尾** (統合契約の予約 7)。短絡なので位置がそのまま実行順
+            && mye::RunTerrainSelfTest();
         return ok ? 0 : 1;
     }
 
