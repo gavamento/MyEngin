@@ -33,6 +33,42 @@ struct RenderView;
 // `register(b4)` と必ず一致させること。**
 inline constexpr uint32_t kTerrainObjectCbSlot = 4;
 
+// ★**地形パス専用の SRV スロット (M58d)。** t0-t7 はホスト (Deferred 光パス / Forward) の
+//   持ち物で、t12-t15 / t6-t7 は他のマイルストーンの予約席 (計画の付録「予約 2」)。
+//   地形は**誰とも隣り合わない t20 以降**へ逃がす — こうしておけば
+//   「統合で番号がぶつかったが *コンパイルは通る*」という一番静かな壊れ方が起きない。
+//   描画後に必ず null で剥がす (剥がさないと後段のパスが読まないだけの残留になるが、
+//   RT との二重バインド警告の温床になる)。**HLSL の register(t20/t21/t25) と一致必須**
+inline constexpr uint32_t kTerrainSplatSrvSlot = 20;      // スプラット (RGBA8 = 4 レイヤの重み)
+inline constexpr uint32_t kTerrainAlbedoSrvSlot = 21;     // レイヤ albedo x4 (t21..t24)
+inline constexpr uint32_t kTerrainNormalSrvSlot = 25;     // レイヤ normal x4 (t25..t28)
+
+// スプラットは RGBA8 の 4 チャンネル = レイヤ 4 枚が構造的な上限。
+// **`TerrainAsset::kMaxLayers` の Renderer 層ミラー** (Renderer は Engine のヘッダを読めない —
+// 層規約)。食い違いは TerrainSystem.cpp の static_assert が止める
+inline constexpr uint32_t kTerrainLayerCount = 4;
+
+// 地表レイヤ 1 枚の bind (M58d)。テクスチャは `Material` に載せない —
+// `Material` はテクスチャ 2 枚までで 4 レイヤ x (albedo + normal) = 8 枚が入らないため
+// (拡張すると ParseMaterialJson とシーン互換に波及する)。
+struct TerrainLayerBinding {
+    AssetID albedo = {}; // null 不可 (TerrainSystem が 1x1 白で埋める)
+    AssetID normal = {}; // null 不可 (TerrainSystem が 1x1 平坦法線で埋める)
+    // リニア済みの色味。rgb = albedo への乗算、a = レイヤ有効フラグ (0 = 重みを殺す)。
+    // **フラグを tint の a に相乗りさせている**のは CB を 16 バイト境界に保つため
+    DirectX::XMFLOAT4 tint = { 1.0f, 1.0f, 1.0f, 1.0f };
+    float tilingU = 8.0f; // 地形全幅あたりの繰り返し回数
+    float tilingV = 8.0f;
+};
+
+// 地形 1 枚ぶんのサーフェス (= チャンク間で共通の材質)。
+struct TerrainSurface {
+    AssetID splat = {}; // null 不可 (TerrainSystem が「レイヤ 0 が 100%」の 1x1 で埋める)
+    TerrainLayerBinding layers[kTerrainLayerCount];
+    float metallic = 0.0f;
+    float roughness = 0.92f; // 土/草は完全な拡散面に近い
+};
+
 // 可視チャンク 1 枚の描画指示 (Renderer 層の純データ)。
 // Engine 層の `TerrainDrawItem` (TerrainSystem.h) を RenderSystem がここへ写す —
 // Renderer は Engine のヘッダを読めない (層規約) ので型を分けてある。
@@ -40,11 +76,11 @@ struct TerrainRenderItem {
     AssetID mesh = {};
     DirectX::XMFLOAT4X4 world = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
     float viewZ = 0.0f; // ソート用 (カメラ空間深度)。RenderItem::viewZ と同じ規約
-    // M58c v1 の暫定サーフェス。**authored (sRGB) 色**で持ち、CB へ載せる直前に
-    // リニアへ変換する (他パスと同じ規約)。M58d の 4 レイヤスプラットが置き換える
-    DirectX::XMFLOAT4 baseColor = { 0.40f, 0.43f, 0.33f, 1.0f };
-    float metallic = 0.0f;
-    float roughness = 0.92f; // 土/草は完全な拡散面に近い
+    // ★サーフェスは**チャンクごとに複製して持つ**。同じ地形のチャンクは全部同じ値だが、
+    //   ソートで並びが変わるので「地形単位の表を index で引く」形にすると
+    //   index の付け替えが要る。1 件 ~200 バイト x 可視チャンク数 (既定デモで 16) は
+    //   毎フレーム作り直しても無視できる
+    TerrainSurface surface;
 };
 
 // 地形チャンクの描画順 (近い順 = early-z が効く順)。

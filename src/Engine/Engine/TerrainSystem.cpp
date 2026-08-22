@@ -9,12 +9,19 @@
 #include "Engine/Core/Log.h"
 #include "Engine/Core/World.h"
 #include "Engine/Platform/PathUtil.h"
+#include "Engine/Renderer/RenderTypes.h" // SrgbToLinear (M58d: tint を CB 前にリニアへ)
 
 using DirectX::XMFLOAT3;
 using DirectX::XMFLOAT4X4;
 using DirectX::XMVECTOR;
 
 namespace mye {
+
+// Renderer 層のミラー定数の突合。層規約 (Renderer は Engine を読めない) で 2 箇所に
+// 分かれているので、両方を読める唯一の場所であるここで機械的に止める
+static_assert(kTerrainLayerCount == TerrainAsset::kMaxLayers,
+              "TerrainPass.h の kTerrainLayerCount と TerrainAsset::kMaxLayers が食い違っている");
+
 namespace {
 
 // texel 座標を地形の範囲へクランプして高さを引く。
@@ -27,6 +34,10 @@ float HeightClamped(const TerrainAsset::TerrainData& d, int32_t x, int32_t z)
     const int32_t cz = std::clamp(z, 0, static_cast<int32_t>(d.heightH) - 1);
     return d.HeightAtTexel(static_cast<uint32_t>(cx), static_cast<uint32_t>(cz));
 }
+
+// レイヤが 1 枚も無い地形の色 (M58c の暫定サーフェスと同値。authored sRGB)。
+// ここを変えると「レイヤ未設定の地形」の絵が変わる = M58c の golden とは別物になる
+constexpr float kNoLayerColor[3] = { 0.40f, 0.43f, 0.33f };
 
 } // namespace
 
@@ -187,10 +198,79 @@ size_t CullChunks(const TerrainChunkLayout& layout, const Frustum& frustum,
     return outVisible.size();
 }
 
+// ==== レイヤ解決 (M58d) ====
+
+TerrainSurface BuildTerrainSurface(const TerrainAsset::TerrainData& data,
+                                   const std::wstring& srcPath, TextureLibrary& textures)
+{
+    TerrainSurface s;
+
+    // 平坦法線の 1x1 (128,128,255)。**シェーダに分岐を持たせない**ための受け皿で、
+    // 法線マップ未設定のレイヤはこれをサンプルする (*2-1 して ~(0,0,1) = 摂動なし)。
+    // 分岐で逃がすと ddx/ddy が非一様フローに入り、PerturbNormal の勾配が壊れる
+    const AssetID flatNormal = textures.CreateSolid("terrain://flatnormal", 128, 128, 255, 255);
+    const AssetID white = textures.White();
+
+    // スプラットマップは `.mterr` の中にしかない生成物なので生画素から作る。
+    // ★名前に**中身のハッシュ**を混ぜる: TextureLibrary は同名先勝ちなので、パスだけを
+    //   キーにすると M58f のブラシで焼き直しても古い重みが出続ける
+    if (!data.splat.empty()) {
+        const uint64_t contentHash = HashBytes(data.splat.data(), data.splat.size());
+        char name[64] = {};
+        std::snprintf(name, sizeof(name), "terrain://splat/%016llx",
+                      static_cast<unsigned long long>(contentHash));
+        s.splat = textures.CreateFromRgba8(name, data.splat.data(),
+                                           static_cast<int>(data.splatW),
+                                           static_cast<int>(data.splatH));
+    }
+
+    const uint32_t layerCount =
+        std::min<uint32_t>(static_cast<uint32_t>(data.layers.size()), kTerrainLayerCount);
+    for (uint32_t i = 0; i < kTerrainLayerCount; ++i) {
+        TerrainLayerBinding& b = s.layers[i];
+        b.albedo = white;
+        b.normal = flatNormal;
+        b.tilingU = 1.0f;
+        b.tilingV = 1.0f;
+        b.tint = { 0.0f, 0.0f, 0.0f, 0.0f }; // a=0 = このレイヤの重みを殺す
+        if (i >= layerCount) {
+            continue;
+        }
+        const TerrainAsset::TerrainLayer& l = data.layers[i];
+        if (!l.albedo.empty()) {
+            // アルベドは sRGB (サンプル時に HW デコード)、法線はデータ系なのでリニア
+            const AssetID id = textures.LoadFile(TerrainAsset::ResolveLayerPath(srcPath, l.albedo),
+                                                 true);
+            if (!id.IsNull()) {
+                b.albedo = id;
+            }
+        }
+        if (!l.normal.empty()) {
+            const AssetID id = textures.LoadFile(TerrainAsset::ResolveLayerPath(srcPath, l.normal),
+                                                 false);
+            if (!id.IsNull()) {
+                b.normal = id;
+            }
+        }
+        const DirectX::XMFLOAT3 lin = SrgbToLinear(DirectX::XMFLOAT3{ l.tintR, l.tintG, l.tintB });
+        b.tint = { lin.x, lin.y, lin.z, 1.0f };
+        b.tilingU = l.tilingU;
+        b.tilingV = l.tilingV;
+    }
+
+    if (layerCount == 0) {
+        // レイヤ表が空 = M58c の単色地形に倒す (既定値 = 従来の見た目)
+        const DirectX::XMFLOAT3 lin = SrgbToLinear(
+            DirectX::XMFLOAT3{ kNoLayerColor[0], kNoLayerColor[1], kNoLayerColor[2] });
+        s.layers[0].tint = { lin.x, lin.y, lin.z, 1.0f };
+    }
+    return s;
+}
+
 // ==== ランタイム ====
 
 const TerrainSystem::Entry* TerrainSystem::Acquire(const char* source, int32_t chunkTiles,
-                                                   MeshLibrary& meshes,
+                                                   MeshLibrary& meshes, TextureLibrary& textures,
                                                    const std::wstring& assetsRoot)
 {
     if (source == nullptr || source[0] == '\0') {
@@ -241,6 +321,7 @@ const TerrainSystem::Entry* TerrainSystem::Acquire(const char* source, int32_t c
                       static_cast<unsigned long long>(pathHash), static_cast<unsigned>(i));
         entry.chunkMeshes[i] = meshes.Register(name, verts, indices);
     }
+    entry.surface = BuildTerrainSurface(entry.data, abs, textures); // M58d
     entry.valid = true;
     MYE_LOG_INFO("terrain: %s -> %ux%u chunks (%u tiles each)", source, entry.layout.countX,
                  entry.layout.countZ, entry.layout.chunkTiles);
@@ -250,9 +331,9 @@ const TerrainSystem::Entry* TerrainSystem::Acquire(const char* source, int32_t c
     return &pos->second;
 }
 
-uint32_t TerrainSystem::Collect(World& world, MeshLibrary& meshes, const std::wstring& assetsRoot,
-                                const Frustum& frustum, const XMFLOAT4X4& view,
-                                std::vector<TerrainDrawItem>& out)
+uint32_t TerrainSystem::Collect(World& world, MeshLibrary& meshes, TextureLibrary& textures,
+                                const std::wstring& assetsRoot, const Frustum& frustum,
+                                const XMFLOAT4X4& view, std::vector<TerrainDrawItem>& out)
 {
     out.clear();
     lastTotal_ = 0;
@@ -269,7 +350,7 @@ uint32_t TerrainSystem::Collect(World& world, MeshLibrary& meshes, const std::ws
                 continue;
             }
             const auto* tc = static_cast<const TerrainComponent*>(arch.GetPtr(ti, row));
-            const Entry* entry = Acquire(tc->source, tc->chunkTiles, meshes, assetsRoot);
+            const Entry* entry = Acquire(tc->source, tc->chunkTiles, meshes, textures, assetsRoot);
             if (entry == nullptr || !entry->valid) {
                 continue;
             }
@@ -286,6 +367,7 @@ uint32_t TerrainSystem::Collect(World& world, MeshLibrary& meshes, const std::ws
                 item.terrain = &entry->data;
                 item.entity = e;
                 item.chunkIndex = ci;
+                item.surface = entry->surface; // M58d (地形単位の値をチャンクへ複製)
                 // viewZ はチャンク AABB 中心のカメラ空間深度 (RenderItem と同じ規約)。
                 // 地形はエンティティ原点が全チャンクで共通なので、原点を使うと
                 // どのチャンクも同じ深度になり LOD (M58e) もソートも成立しない

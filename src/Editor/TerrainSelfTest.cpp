@@ -322,7 +322,8 @@ bool RunTerrainSelfTest()
         }
 
         World world;
-        MeshLibrary meshes; // Init を呼ばない = GPU バッファを作らない CPU 専用モード
+        MeshLibrary meshes;      // Init を呼ばない = GPU バッファを作らない CPU 専用モード
+        TextureLibrary textures; // 同上 (M58d のレイヤ解決は AssetID が空のまま返る)
         TerrainSystem terrain;
         const EntityID e = world.CreateEntity("terrain");
         auto* tc = world.AddComponent<TerrainComponent>(e);
@@ -337,7 +338,8 @@ bool RunTerrainSelfTest()
                                                            DirectX::XMVectorSet(0, 0, 0, 1),
                                                            DirectX::XMVectorSet(0, 1, 0, 0)));
         std::vector<TerrainDrawItem> items;
-        const uint32_t total = terrain.Collect(world, meshes, root.wstring(), wide, view, items);
+        const uint32_t total =
+            terrain.Collect(world, meshes, textures, root.wstring(), wide, view, items);
         check(total == 4 && items.size() == 4,
               "terrain: Collect builds the chunk grid and reports every chunk visible");
         check(terrain.CacheSize() == 1, "terrain: the built terrain is cached once");
@@ -355,25 +357,25 @@ bool RunTerrainSelfTest()
 
         // 2 回目はキャッシュから (メッシュを作り直さない = AssetID が変わらない)
         const AssetID firstMesh = items[0].mesh;
-        terrain.Collect(world, meshes, root.wstring(), wide, view, items);
+        terrain.Collect(world, meshes, textures, root.wstring(), wide, view, items);
         check(terrain.CacheSize() == 1 && !items.empty() && items[0].mesh == firstMesh,
               "terrain: a second Collect reuses the cached chunk meshes");
 
         // 無効エンティティは収集しない
         world.AddComponent<ActiveComponent>(e)->enabled = 0;
-        terrain.Collect(world, meshes, root.wstring(), wide, view, items);
+        terrain.Collect(world, meshes, textures, root.wstring(), wide, view, items);
         check(items.empty(), "terrain: an inactive entity contributes no chunks");
         world.GetComponent<ActiveComponent>(e)->enabled = 1;
 
         // 空パス / 存在しないパスは黙って 0 件 (毎フレーム開き直さないよう失敗もキャッシュ)
         tc = world.GetComponent<TerrainComponent>(e);
         tc->source[0] = '\0';
-        terrain.Collect(world, meshes, root.wstring(), wide, view, items);
+        terrain.Collect(world, meshes, textures, root.wstring(), wide, view, items);
         check(items.empty(), "terrain: an empty source path is a no-op");
         std::snprintf(tc->source, sizeof(tc->source), "terrain/missing.terrain.json");
         const size_t cacheBefore = terrain.CacheSize();
-        terrain.Collect(world, meshes, root.wstring(), wide, view, items);
-        terrain.Collect(world, meshes, root.wstring(), wide, view, items);
+        terrain.Collect(world, meshes, textures, root.wstring(), wide, view, items);
+        terrain.Collect(world, meshes, textures, root.wstring(), wide, view, items);
         check(items.empty() && terrain.CacheSize() == cacheBefore + 1,
               "terrain: a missing asset fails once and is remembered (no per-frame retry)");
 
@@ -415,6 +417,86 @@ bool RunTerrainSelfTest()
         check(same && a[0].mesh.value == 3 && a[1].mesh.value == 9 && a[2].mesh.value == 2
                   && a[3].mesh.value == 8,
               "terrain: sorting is independent of the input order");
+    }
+
+    // ---- (11) スプラットのレイヤ解決 (M58d) ----
+    // シェーダのブレンドそのものは GPU が要るが、**ブレンドの入力を組む部分は純関数**。
+    // ここが崩れる形は 2 つあって、どちらも絵では気付きにくい:
+    //   ・レイヤ数に満たないスロットを殺し忘れる → 未使用チャンネルの重みが生き残り、
+    //     シェーダの再正規化で有効レイヤの色が痩せる (「なんとなく暗い」としか見えない)
+    //   ・tint を sRGB のまま CB へ載せる → 中間調だけがずれる (単色なら気付けない)
+    {
+        TextureLibrary textures; // ヘッドレス = GPU 生成なし。AssetID は空のまま返る
+        TerrainAsset::TerrainData d = MakeTestTerrain();
+
+        // (11a) レイヤ 2 枚 = 後半 2 スロットは tint.a = 0 で殺されていること
+        d.layers.clear();
+        d.layers.push_back({ "a", "", "", 4.0f, 6.0f, 1.0f, 1.0f, 1.0f });
+        d.layers.push_back({ "b", "", "", 2.0f, 3.0f, 0.5f, 0.25f, 0.0f });
+        TerrainSurface s = BuildTerrainSurface(d, L"C:\\nonexistent\\x.terrain.json", textures);
+        check(s.layers[0].tint.w == 1.0f && s.layers[1].tint.w == 1.0f
+                  && s.layers[2].tint.w == 0.0f && s.layers[3].tint.w == 0.0f,
+              "terrain: layers beyond the authored count are disabled (tint.a = 0)");
+        check(s.layers[0].tilingU == 4.0f && s.layers[0].tilingV == 6.0f
+                  && s.layers[1].tilingU == 2.0f && s.layers[1].tilingV == 3.0f,
+              "terrain: per-layer tiling is carried through to the binding");
+
+        // (11b) tint は authored sRGB → リニア。白は 1 のまま (恒等)、中間調は必ず沈む
+        check(s.layers[0].tint.x == 1.0f && s.layers[0].tint.y == 1.0f
+                  && s.layers[0].tint.z == 1.0f,
+              "terrain: a white tint is the identity after the sRGB conversion");
+        check(s.layers[1].tint.x < 0.5f && s.layers[1].tint.x > 0.0f
+                  && s.layers[1].tint.y < 0.25f && s.layers[1].tint.z == 0.0f,
+              "terrain: layer tint is converted from authored sRGB to linear");
+
+        // (11c) 有効フラグを掛けた後の重みが 1 に正規化できること。
+        // シェーダ (terrain_common.hlsli) が毎ピクセルやっている計算を CPU で写して、
+        // 「アセット側の不変量 + 有効フラグ」から必ず合計 1 が作れることを固定する
+        auto normalizedSum = [](const TerrainSurface& surf, const uint8_t* texel) {
+            float w[4] = {};
+            float total = 0.0f;
+            for (int i = 0; i < 4; ++i) {
+                w[i] = static_cast<float>(texel[i]) / 255.0f * surf.layers[i].tint.w;
+                total += w[i];
+            }
+            if (!(total > 1e-5f)) {
+                return 1.0f; // シェーダはレイヤ 0 の 100% へ倒す = 合計 1
+            }
+            float sum = 0.0f;
+            for (int i = 0; i < 4; ++i) {
+                sum += w[i] / total;
+            }
+            return sum;
+        };
+        // 4 チャンネルすべてに重みが載った texel (= 手書きスプラットの最悪ケース)
+        const uint8_t mixed[4] = { 64, 64, 64, 63 };
+        check(std::fabs(normalizedSum(s, mixed) - 1.0f) < 1e-4f,
+              "terrain: weights renormalize to 1 even when disabled layers carry weight");
+        // 有効レイヤに重みが 1 つも無い texel (殺されたレイヤだけが 255)
+        const uint8_t dead[4] = { 0, 0, 255, 0 };
+        check(std::fabs(normalizedSum(s, dead) - 1.0f) < 1e-4f,
+              "terrain: an all-disabled texel falls back to layer 0 instead of going black");
+
+        // (11d) レイヤ表が空 = M58c の単色に倒す (既定値 = 従来の見た目)
+        d.layers.clear();
+        s = BuildTerrainSurface(d, L"C:\\nonexistent\\x.terrain.json", textures);
+        check(s.layers[0].tint.w == 1.0f && s.layers[1].tint.w == 0.0f
+                  && s.layers[0].tint.x > 0.1f && s.layers[0].tint.x < 0.2f
+                  && s.layers[0].tint.y > s.layers[0].tint.x
+                  && s.layers[0].tint.z < s.layers[0].tint.x,
+              "terrain: a layerless terrain falls back to the M58c flat colour");
+
+        // (11e) 5 枚目以降は kMaxLayers で切られる (アセット側の上限がここまで届くこと)
+        d.layers.clear();
+        for (int i = 0; i < 6; ++i) {
+            d.layers.push_back({ "L", "", "", 1.0f, 1.0f, 1.0f, 1.0f, 1.0f });
+        }
+        s = BuildTerrainSurface(d, L"C:\\nonexistent\\x.terrain.json", textures);
+        bool allEnabled = true;
+        for (uint32_t i = 0; i < kTerrainLayerCount; ++i) {
+            allEnabled = allEnabled && s.layers[i].tint.w == 1.0f;
+        }
+        check(allEnabled, "terrain: all four splat channels are usable");
     }
 
     MYE_LOG_INFO("==== Terrain self test: %s ====", failCount == 0 ? "PASS" : "FAIL");

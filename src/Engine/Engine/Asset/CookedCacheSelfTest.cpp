@@ -455,7 +455,7 @@ bool RunCookedCacheSelfTest()
                   R"({"type":"terrain","version":1,"worldSize":[64.0,48.0],)"
                   R"("heightRes":[33,17],"splatRes":[16,8],"heightBase":-2.0,"heightScale":10.0,)"
                   R"("procedural":{"seed":7,"octaves":4,"frequency":2.5,"lacunarity":2.0,"gain":0.5},)"
-                  R"("layers":[{"name":"a","albedo":"../t.png","tiling":[4.0,4.0]},)"
+                  R"("layers":[{"name":"a","albedo":"../t.png","tiling":[4.0,4.0],"tint":[0.25,0.5,0.75]},)"
                   R"({"name":"b","normal":"../n.png"},{"name":"c"},{"name":"d"},{"name":"ignored"}]})");
         TerrainData d1;
         check(TerrainAsset::CookFromSource(procSrc.wstring(), d1) && d1.Valid(),
@@ -465,6 +465,11 @@ bool RunCookedCacheSelfTest()
               "terrain: resolutions and buffer sizes come from the source");
         check(d1.layers.size() == TerrainAsset::kMaxLayers,
               "terrain: layer count is clamped to the splat channel count");
+        // M58d: tint は指定があれば読み、無ければ白 (= 恒等 = albedo をそのまま出す)
+        check(d1.layers[0].tintR == 0.25f && d1.layers[0].tintG == 0.5f
+                  && d1.layers[0].tintB == 0.75f && d1.layers[1].tintR == 1.0f
+                  && d1.layers[1].tintG == 1.0f && d1.layers[1].tintB == 1.0f,
+              "terrain: layer tint defaults to white and is read when authored");
 
         // 高さが定数でない = ノイズが本当に走っている (恒等な生成器を PASS にしない)
         bool varies = false;
@@ -492,7 +497,8 @@ bool RunCookedCacheSelfTest()
         check(rt && blob1 == blob2, "terrain: serialize(deserialize(blob)) round-trips bit-identical");
         check(rt && back.heights == d1.heights && back.splat == d1.splat
                   && back.layers.size() == d1.layers.size() && back.layers[0].name == "a"
-                  && back.layers[0].albedo == "../t.png" && back.layers[1].normal == "../n.png",
+                  && back.layers[0].albedo == "../t.png" && back.layers[1].normal == "../n.png"
+                  && back.layers[0].tintR == 0.25f && back.layers[0].tintB == 0.75f,
               "terrain: layer table survives the round-trip");
 
         TerrainData d2;

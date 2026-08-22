@@ -10,6 +10,7 @@
 #include "Engine/Engine/Asset/TerrainAsset.h"
 #include "Engine/Renderer/FrustumCull.h"
 #include "Engine/Renderer/GpuResources.h"
+#include "Engine/Renderer/TerrainPass.h" // M58d: TerrainSurface (レイヤ bind の正本)
 
 namespace mye {
 
@@ -83,6 +84,20 @@ void BuildChunkMesh(const TerrainAsset::TerrainData& data, const TerrainChunk& c
 size_t CullChunks(const TerrainChunkLayout& layout, const Frustum& frustum,
                   const DirectX::XMFLOAT4X4& world, std::vector<uint32_t>& outVisible);
 
+// 地形のレイヤ表 (アセット) → 描画側の bind (TerrainSurface) へ解決する (M58d)。
+// テクスチャのロードとスプラットマップの GPU 化もここで行う (ヘッドレス =
+// TextureLibrary::Init 前なら AssetID は空のまま返る。tint / tiling / 有効フラグの
+// 組み立ては GPU 非依存なので TerrainSelfTest がそこを検査する)。
+//
+// ★**レイヤ数に満たないスロットは tint.a = 0 で殺す。** シェーダは有効フラグを掛けてから
+//   合計 1 へ再正規化するので、レイヤが 4 未満でも / 手書きのスプラット画像で未使用
+//   チャンネルに重みが載っていても色が痩せない。
+// ★**レイヤが 1 枚も無い地形は M58c の単色 (くすんだ緑) に倒す** — 「既定値 = 従来の
+//   見た目」の規約。レイヤ表を空にしただけで真っ白になるのは事故にしか見えない。
+// srcPath = `.terrain.json` の絶対パス (レイヤの相対パス解決の基準)
+TerrainSurface BuildTerrainSurface(const TerrainAsset::TerrainData& data,
+                                   const std::wstring& srcPath, TextureLibrary& textures);
+
 // 描画側 (M58c の TerrainPass) へ渡す可視チャンク 1 件。
 struct TerrainDrawItem {
     AssetID mesh = {};
@@ -93,6 +108,9 @@ struct TerrainDrawItem {
     const TerrainAsset::TerrainData* terrain = nullptr;
     EntityID entity = {};
     uint32_t chunkIndex = 0;
+    // M58d: 解決済みのレイヤ bind (スプラット + 4 レイヤの albedo/normal/tint/tiling)。
+    // 地形単位の値だが、描画側がソートで並べ替えるのでチャンクごとに複製して持つ
+    TerrainSurface surface;
 };
 
 // 地形インスタンスのキャッシュ + 収集。RenderSystem が 1 つ持つ想定 (M58c で配線)。
@@ -105,9 +123,9 @@ public:
     //   ForEachArchetype/row (決定的) + layout.chunks の固定順だけで決まる。
     //   描画順が実行ごとに揺れるとアルファブレンドや Z 争いの見た目が非決定になるため。
     // 戻り値 = 検査したチャンク総数 (out.size() が可視数)
-    uint32_t Collect(World& world, MeshLibrary& meshes, const std::wstring& assetsRoot,
-                     const Frustum& frustum, const DirectX::XMFLOAT4X4& view,
-                     std::vector<TerrainDrawItem>& out);
+    uint32_t Collect(World& world, MeshLibrary& meshes, TextureLibrary& textures,
+                     const std::wstring& assetsRoot, const Frustum& frustum,
+                     const DirectX::XMFLOAT4X4& view, std::vector<TerrainDrawItem>& out);
 
     uint32_t LastChunkCount() const { return lastTotal_; }
     uint32_t LastVisibleCount() const { return lastVisible_; }
@@ -120,13 +138,14 @@ private:
         TerrainAsset::TerrainData data;
         TerrainChunkLayout layout;
         std::vector<AssetID> chunkMeshes; // layout.chunks と同じ並び
+        TerrainSurface surface;           // M58d: レイヤ bind (地形単位)
         bool valid = false;               // false = ロードに失敗した (毎フレーム再試行しない)
     };
 
     // source (assets\ 相対) + chunkTiles をキーに構築済みインスタンスを引く。
     // 失敗も含めてキャッシュする — 壊れたパスを毎フレーム開き直すと編集中に固まるため
     const Entry* Acquire(const char* source, int32_t chunkTiles, MeshLibrary& meshes,
-                         const std::wstring& assetsRoot);
+                         TextureLibrary& textures, const std::wstring& assetsRoot);
 
     std::unordered_map<std::wstring, Entry> cache_;
     std::vector<uint32_t> visibleScratch_; // Collect 内で再利用 (毎フレームの確保を避ける)

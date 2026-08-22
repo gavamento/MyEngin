@@ -14,9 +14,9 @@
     "gain": 0.5
   },
   "layers": [
-    { "name": "sand",  "albedo": "../textures/test.png", "normal": "../textures/demo_normal.png", "tiling": [ 32.0, 32.0 ] },
-    { "name": "grass", "albedo": "../textures/test.png", "normal": "../textures/demo_normal.png", "tiling": [ 24.0, 24.0 ] },
-    { "name": "rock",  "albedo": "../textures/test.png", "normal": "../textures/demo_normal.png", "tiling": [ 16.0, 16.0 ] },
-    { "name": "snow",  "albedo": "../textures/test.png", "normal": "../textures/demo_normal.png", "tiling": [ 12.0, 12.0 ] }
+    { "name": "sand",  "tiling": [ 8.0, 8.0 ],  "tint": [ 0.86, 0.72, 0.44 ] },
+    { "name": "grass", "albedo": "../textures/test.png", "tiling": [ 6.0, 6.0 ], "tint": [ 0.62, 1.00, 0.52 ] },
+    { "name": "rock",  "normal": "../textures/demo_normal.png", "tiling": [ 5.0, 5.0 ], "tint": [ 0.52, 0.47, 0.44 ] },
+    { "name": "snow",  "tiling": [ 4.0, 4.0 ],  "tint": [ 0.95, 0.97, 1.00 ] }
   ]
 }

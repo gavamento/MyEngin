@@ -146,11 +146,45 @@ $constGroups = @(
         # 自分の値は b1-b3 を避けて b4 に置く (b1-b3 を張り替えると後段の透明描画が壊れる)。
         # C++ 側の定数と HLSL の register(b4) が食い違うと **CB が丸ごと 0 のまま描かれる** —
         # 地形が真っ黒になるだけでコンパイルも実行も通るので、機械照合が唯一の防波堤
+        # ★M58d で cbuffer の宣言は terrain_common.hlsli へ移った (deferred / forward の
+        #   2 本が同じ地表を出すための共有点。宣言が 1 箇所になったので照合先も 1 本)
         label = 'kTerrainObjectCbSlot / register(b4)'
         sites = @{
-            'src\Engine\Renderer\TerrainPass.h'    = 'constexpr\s+uint32_t\s+kTerrainObjectCbSlot\s*=\s*(\d+)'
-            'assets\shaders\deferred_terrain.hlsl' = 'cbuffer\s+TerrainObject\s*:\s*register\(b(\d+)\)'
-            'assets\shaders\forward_terrain.hlsl'  = 'cbuffer\s+TerrainObject\s*:\s*register\(b(\d+)\)'
+            'src\Engine\Renderer\TerrainPass.h'      = 'constexpr\s+uint32_t\s+kTerrainObjectCbSlot\s*=\s*(\d+)'
+            'assets\shaders\terrain_common.hlsli'    = 'cbuffer\s+TerrainObject\s*:\s*register\(b(\d+)\)'
+        }
+    },
+    # M58d: 地形パス専用の SRV スロット (t20 以降)。ホストのスロットとも他マイルストーンの
+    # 予約席とも隣り合わない位置に逃がしてある。食い違うと**地形だけが真っ黒**になるが
+    # コンパイルも実行も通る (テクスチャが張られていないスロットは 0 を返すため)
+    @{
+        label = 'kTerrainSplatSrvSlot / register(t20)'
+        sites = @{
+            'src\Engine\Renderer\TerrainPass.h'   = 'constexpr\s+uint32_t\s+kTerrainSplatSrvSlot\s*=\s*(\d+)'
+            'assets\shaders\terrain_common.hlsli' = 'Texture2D\s+gTerrainSplat\s*:\s*register\(t(\d+)\)'
+        }
+    },
+    @{
+        label = 'kTerrainAlbedoSrvSlot / register(t21)'
+        sites = @{
+            'src\Engine\Renderer\TerrainPass.h'   = 'constexpr\s+uint32_t\s+kTerrainAlbedoSrvSlot\s*=\s*(\d+)'
+            'assets\shaders\terrain_common.hlsli' = 'Texture2D\s+gTerrainAlbedo\[[^\]]*\]\s*:\s*register\(t(\d+)\)'
+        }
+    },
+    @{
+        label = 'kTerrainNormalSrvSlot / register(t25)'
+        sites = @{
+            'src\Engine\Renderer\TerrainPass.h'   = 'constexpr\s+uint32_t\s+kTerrainNormalSrvSlot\s*=\s*(\d+)'
+            'assets\shaders\terrain_common.hlsli' = 'Texture2D\s+gTerrainNormal\[[^\]]*\]\s*:\s*register\(t(\d+)\)'
+        }
+    },
+    @{
+        # レイヤ数は CB の配列長そのもの。ずれると tint / tiling が丸ごと別の場所を指す
+        label = 'kTerrainLayerCount / MYE_TERRAIN_LAYERS'
+        sites = @{
+            'src\Engine\Renderer\TerrainPass.h'   = 'constexpr\s+uint32_t\s+kTerrainLayerCount\s*=\s*(\d+)'
+            'assets\shaders\terrain_common.hlsli' = '#\s*define\s+MYE_TERRAIN_LAYERS\s+(\d+)'
+            'src\Engine\Engine\Asset\TerrainAsset.h' = 'constexpr\s+uint32_t\s+kMaxLayers\s*=\s*(\d+)'
         }
     }
 )

@@ -8,12 +8,15 @@
 //   C++ ミラー (ForwardPath.cpp / DeferredPath.cpp の PerFrameCB)。食い違うと定数バッファの
 //   ずれとして静かに壊れる (絵が暗くなる/影が消える形で出る)。
 // ★**地形固有の値は b4** (b1-b3 を張り替えるとホストの透明描画が壊れる。
-//   理由は deferred_terrain.hlsl の頭のコメントに書いた)。
+//   理由は deferred_terrain.hlsl の頭のコメントに書いた)。b4 の中身とレイヤの bind /
+//   ブレンド本体は terrain_common.hlsli — deferred_terrain.hlsl と共有している。
 // ★t0 (albedo) / t2 (normal) は宣言しない — 地形はマテリアルテクスチャを持たない
 //   (`Material` はテクスチャ 2 枚までで 4 レイヤ x (albedo+normal) = 8 枚が入らない。M58d)。
+//   レイヤのテクスチャは t20 以降の自前スロットへ逃がしてある。
 //   t1 (CSM) と t3-t5 (IBL) は ForwardPath がフレーム頭で張ったものをそのまま読む。
 
 #include "common.hlsli"
+#include "terrain_common.hlsli"
 
 cbuffer PerFrame : register(b0)
 {
@@ -52,22 +55,13 @@ cbuffer PerFrame : register(b0)
     float    _fogPad3;
 };
 
-// TerrainPass.cpp の TerrainObjectCB と同一レイアウト (96 バイト)
-cbuffer TerrainObject : register(b4)
-{
-    float4x4 gWorld;
-    float4   gBaseColor;   // リニア変換済み
-    float    gMetallic;
-    float    gRoughness;
-    float2   _terrainPad;
-};
-
 Texture2DArray         gShadowMap     : register(t1); // M38d: CSM カスケード配列
 TextureCube            gIblIrradiance : register(t3); // M38c
 TextureCube            gIblPrefiltered: register(t4);
 Texture2D              gIblBrdfLut    : register(t5);
+SamplerState           gLayerSampler  : register(s0); // 異方性 WRAP (レイヤの繰り返し)
 SamplerComparisonState gShadowSampler : register(s1);
-SamplerState           gIblSampler    : register(s2); // LINEAR/CLAMP
+SamplerState           gIblSampler    : register(s2); // LINEAR/CLAMP (IBL + スプラット)
 
 struct VSIn
 {
@@ -87,9 +81,9 @@ struct VSOut
 VSOut VSMain(VSIn v)
 {
     VSOut o;
-    const float4 posW = mul(float4(v.pos, 1.0f), gWorld);
+    const float4 posW = mul(float4(v.pos, 1.0f), gTerrainWorld);
     o.pos = mul(posW, gViewProj);
-    o.normalW = normalize(mul(v.normal, (float3x3)gWorld));
+    o.normalW = normalize(mul(v.normal, (float3x3)gTerrainWorld));
     o.uv = v.uv;
     o.posW = posW.xyz;
     return o;
@@ -97,18 +91,22 @@ VSOut VSMain(VSIn v)
 
 float4 PSMain(VSOut i) : SV_Target
 {
-    const float3 n = normalize(i.normalW);
+    const float3 nGeom = normalize(i.normalW);
+    // ★スプラットのサンプルは**分岐の外**で行う (ddx/ddy を使う PerturbNormal が
+    //   非一様フローに入らないように)。影の分岐より先に済ませておく
+    const TerrainSurfaceSample surf = SampleTerrainSurface(gLayerSampler, gIblSampler, i.uv);
+    const float3 n = PerturbNormal(nGeom, i.posW, i.uv, normalize(surf.normalTS));
+
     float dirShadow = 1.0f;
     if (gShadowEnabled != 0) {
         dirShadow = SampleShadowCSM(gShadowMap, gShadowSampler, gShadowVP, gShadowVP12[0],
                                     gShadowVP12[1], (int)gCascadeInfo.w, i.posW, gShadowTexel);
     }
-    // M58c v1: 単色サーフェス (M58d のスプラットブレンドが gBaseColor を置き換える)。
     // SSAO は Deferred 専用なので Forward は 1.0 固定 (forward_lit と同じ)
-    float3 color = ApplyLighting(gBaseColor.rgb, n, i.posW, gCameraPos, gMetallic, gRoughness,
-                                 gAmbient, gLights, gLightCount, dirShadow, gIblEnabled,
-                                 gIblSpecMips, gIblIrradiance, gIblPrefiltered, gIblBrdfLut,
-                                 gIblSampler, 1.0f);
+    float3 color = ApplyLighting(surf.albedo, n, i.posW, gCameraPos, gTerrainSurface.x,
+                                 gTerrainSurface.y, gAmbient, gLights, gLightCount, dirShadow,
+                                 gIblEnabled, gIblSpecMips, gIblIrradiance, gIblPrefiltered,
+                                 gIblBrdfLut, gIblSampler, 1.0f);
     color = ApplyFog(color, gFogColor, gFogMode, gFogDensity, gFogStart, gFogEnd,
                      gCameraPos, i.posW, gFogHeightFalloff, gFogBaseHeight, gSunDirection,
                      gSunColor, gFogInscatterIntensity, gFogInscatterPower);

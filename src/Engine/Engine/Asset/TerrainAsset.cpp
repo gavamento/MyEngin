@@ -162,6 +162,18 @@ void ReadPair2(const json& j, const char* key, float& a, float& b)
     b = j[key][1].get<float>();
 }
 
+// [r, g, b] 形式の 3 要素配列 (レイヤの tint)。無ければ既定値のまま
+void ReadTriple(const json& j, const char* key, float& a, float& b, float& c)
+{
+    if (!j.contains(key) || !j[key].is_array() || j[key].size() != 3 || !j[key][0].is_number()
+        || !j[key][1].is_number() || !j[key][2].is_number()) {
+        return;
+    }
+    a = j[key][0].get<float>();
+    b = j[key][1].get<float>();
+    c = j[key][2].get<float>();
+}
+
 void ReadPair2u(const json& j, const char* key, uint32_t& a, uint32_t& b)
 {
     if (!j.contains(key) || !j[key].is_array() || j[key].size() != 2
@@ -491,6 +503,9 @@ void Serialize(const TerrainData& d, std::vector<uint8_t>& out)
         AppendStr(out, l.normal);
         AppendPod(out, l.tilingU);
         AppendPod(out, l.tilingV);
+        AppendPod(out, l.tintR); // v2 で末尾 append (M58d)
+        AppendPod(out, l.tintG);
+        AppendPod(out, l.tintB);
     }
     AppendPod(out, static_cast<uint64_t>(d.heights.size()));
     Append(out, d.heights.data(), d.heights.size() * sizeof(uint16_t));
@@ -527,7 +542,7 @@ bool Deserialize(const std::vector<uint8_t>& in, TerrainData& out)
     out.layers.resize(layerCount);
     for (TerrainLayer& l : out.layers) {
         if (!r.Str(l.name) || !r.Str(l.albedo) || !r.Str(l.normal) || !r.Pod(l.tilingU)
-            || !r.Pod(l.tilingV)) {
+            || !r.Pod(l.tilingV) || !r.Pod(l.tintR) || !r.Pod(l.tintG) || !r.Pod(l.tintB)) {
             return false;
         }
     }
@@ -563,6 +578,11 @@ bool IsSourcePath(const std::wstring& path)
 {
     const std::string s = LowerAscii(WideToUtf8(path));
     return EndsWith(s, ".terrain.json");
+}
+
+std::wstring ResolveLayerPath(const std::wstring& srcPath, const std::string& rel)
+{
+    return ResolveRel(srcPath, rel);
 }
 
 bool CookFromSource(const std::wstring& srcPath, TerrainData& out)
@@ -621,6 +641,7 @@ bool CookFromSource(const std::wstring& srcPath, TerrainData& out)
             l.albedo = ReadStr(lj, "albedo");
             l.normal = ReadStr(lj, "normal");
             ReadPair2(lj, "tiling", l.tilingU, l.tilingV);
+            ReadTriple(lj, "tint", l.tintR, l.tintG, l.tintB); // M58d (既定 = 白 = 恒等)
             d.layers.push_back(std::move(l));
         }
     }

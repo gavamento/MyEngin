@@ -109,6 +109,12 @@ public:
     AssetID CreateFromEncoded(std::string_view name, const void* bytes, size_t size,
                               bool srgb = false); // GLB 埋め込み等 (再呼び出しで差し替え)
     AssetID CreateSolid(std::string_view name, uint8_t r, uint8_t g, uint8_t b, uint8_t a);
+    // 生 RGBA8 画素からテクスチャを作る (ファイル実体を持たない生成物用。M58d の地形
+    // スプラットマップが最初の利用者 — 重みは `.mterr` の中にしか無い)。
+    // **srgb は既定 false**: スプラットの中身は色ではなく重みで、sRGB デコードを掛けると
+    // チャンネル和が 255 でなくなる (= レイヤの合計が狂う)。名前が同じなら先勝ち
+    AssetID CreateFromRgba8(std::string_view name, const uint8_t* rgba, int w, int h,
+                            bool srgb = false, bool mips = true);
     Texture* Get(AssetID id);
     AssetID White(); // 1x1 白 (遅延生成)
 

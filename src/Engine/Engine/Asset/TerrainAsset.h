@@ -19,8 +19,11 @@ inline constexpr const wchar_t* kTerrainExt = L".mterr";
 inline constexpr const wchar_t* kSourceSuffix = L".terrain.json";
 
 // blob 形式の版。**形式を変えたら必ず上げる** (CookedCache::kCookVersion とは独立 —
-// あちらはキャッシュ全体の無効化、こちらは .mterr の中身の互換性)
-inline constexpr uint32_t kBlobVersion = 1;
+// あちらはキャッシュ全体の無効化、こちらは .mterr の中身の互換性)。
+// v2 = M58d でレイヤに tint (3 float) を足した。古い .mterr は Deserialize が版違いで
+// 弾く → Load が黙って再クックする (旧版を読む互換コードは持たない: `.mterr` は
+// cache\ の生成物で、版が上がったら焼き直すのが最も安いし壊れようがない)
+inline constexpr uint32_t kBlobVersion = 2;
 
 // スプラットマップは RGBA8 の 4 チャンネル = レイヤ 4 枚が構造的な上限 (M58d)。
 inline constexpr uint32_t kMaxLayers = 4;
@@ -43,6 +46,14 @@ struct TerrainLayer {
     std::string normal;
     float tilingU = 8.0f; // ワールド全幅あたりの繰り返し回数
     float tilingV = 8.0f;
+    // レイヤの色味 (**authored sRGB**。CB へ載せる直前にリニアへ変換する)。albedo に乗算し、
+    // albedo が空ならこれがそのまま地表色になる。
+    // ★これがあるおかげで「画像を 1 枚も同梱しない手続きデモ」でも 4 層の切り分けが絵に出る =
+    //   スプラットブレンド (M58d) を golden で検証できる。素材を 4 種コミットするのは
+    //   「生成物はコード側から組み直す」既存の流儀 (parts / flow) に反する
+    float tintR = 1.0f;
+    float tintG = 1.0f;
+    float tintB = 1.0f;
 };
 
 // クックで焼き込んだソース画像の同一性。
@@ -104,6 +115,11 @@ bool Load(const std::wstring& srcPath, TerrainData& out);
 
 // path が `.terrain.json` か (大文字小文字を無視)
 bool IsSourcePath(const std::wstring& path);
+
+// レイヤのテクスチャパス (`.terrain.json` からの相対) を絶対パスへ。空文字列は空のまま。
+// 描画側 (TerrainSystem) がレイヤ画像を引くのに使う — 相対のまま保存してあるのは
+// 配布物を移設しても空振りしないため (M51j の封印クックで踏んだ穴)
+std::wstring ResolveLayerPath(const std::wstring& srcPath, const std::string& rel);
 
 // 4 レイヤの重み (任意スケール) を合計 kSplatWeightSum の RGBA8 へ量子化する。
 // 端数は最大剰余法 + レイヤ番号順のタイブレークで配る = 決定論。純関数なので selftest 可

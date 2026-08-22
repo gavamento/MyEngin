@@ -15,16 +15,23 @@ namespace {
 using namespace gpubuf;
 
 // deferred_terrain.hlsl / forward_terrain.hlsl の TerrainObject (b4) と同一レイアウト。
-// **末尾 append + 16 バイト境界**を守ること (既定値 = 恒等の規約は色に無いので、
-// 増やすときは HLSL 側にも同じ順で足す)
+// **末尾 append + 16 バイト境界**を守ること (増やすときは HLSL 側にも同じ順で足す)
 struct TerrainObjectCB {
-    XMFLOAT4X4 world;    // transpose 済み (HLSL は column_major 既定)
-    XMFLOAT4 baseColor;  // リニア
-    float metallic;
-    float roughness;
-    float pad[2];
+    XMFLOAT4X4 world;      // transpose 済み (HLSL は column_major 既定)
+    XMFLOAT4 surfaceParams; // x=metallic y=roughness zw=予約
+    // レイヤ表 (M58d)。rgb = リニア tint / a = 有効フラグ、xy = tiling / zw = 予約。
+    // float4 に詰めているのは HLSL の配列が 16 バイト刻みでしか置けないため
+    // (float2 の配列にすると 1 要素ごとに 8 バイトのパディングが入って C++ 側とずれる)
+    XMFLOAT4 layerTint[kTerrainLayerCount];
+    XMFLOAT4 layerTiling[kTerrainLayerCount];
 };
-static_assert(sizeof(TerrainObjectCB) == 96, "TerrainObjectCB must match the HLSL b4 layout");
+static_assert(sizeof(TerrainObjectCB) == 208, "TerrainObjectCB must match the HLSL b4 layout");
+
+// t20..t28 を 1 回で張る (splat + albedo x4 + normal x4)。スロットが連続していることが前提
+constexpr uint32_t kTerrainSrvCount = 1 + kTerrainLayerCount * 2;
+static_assert(kTerrainAlbedoSrvSlot == kTerrainSplatSrvSlot + 1
+                  && kTerrainNormalSrvSlot == kTerrainAlbedoSrvSlot + kTerrainLayerCount,
+              "terrain SRV slots must be contiguous (they are bound in one call)");
 
 } // namespace
 
@@ -71,6 +78,17 @@ void TerrainPass::Draw(GraphicsDevice& device, ShaderProgram* prog, const Render
     dc->VSSetConstantBuffers(kTerrainObjectCbSlot, 1, &cb);
     dc->PSSetConstantBuffers(kTerrainObjectCbSlot, 1, &cb);
 
+    // 欠けた AssetID の受け皿。地形の bind は 9 枚が常に埋まっている前提なので
+    // (シェーダは分岐を持たない = 常に 9 枚サンプルする)、null は必ず白へ倒す
+    ID3D11ShaderResourceView* white = nullptr;
+    if (Texture* w = resources.textures.Get(resources.textures.White())) {
+        white = w->srv.Get();
+    }
+    auto srvOf = [&](AssetID id) -> ID3D11ShaderResourceView* {
+        Texture* t = resources.textures.Get(id);
+        return (t != nullptr && t->srv) ? t->srv.Get() : white;
+    };
+
     for (const TerrainRenderItem& item : view.terrain->items) {
         Mesh* mesh = resources.meshes.Get(item.mesh);
         if (mesh == nullptr) {
@@ -83,15 +101,34 @@ void TerrainPass::Draw(GraphicsDevice& device, ShaderProgram* prog, const Render
         dc->IASetVertexBuffers(0, 1, &vb, &stride, &offset);
         dc->IASetIndexBuffer(mesh->ib.Get(), DXGI_FORMAT_R32_UINT, 0);
 
+        // ---- スプラット + レイヤ x4 の SRV (M58d) ----
+        // サンプラは**ホストが張った s0 (異方性 WRAP) と s2 (LINEAR CLAMP) を流用**する。
+        // 計画の付録「予約 2」が「サンプラは 1 つも増やさない」なので、地形も従う
+        ID3D11ShaderResourceView* srvs[kTerrainSrvCount] = {};
+        srvs[0] = srvOf(item.surface.splat);
+        for (uint32_t l = 0; l < kTerrainLayerCount; ++l) {
+            srvs[1 + l] = srvOf(item.surface.layers[l].albedo);
+            srvs[1 + kTerrainLayerCount + l] = srvOf(item.surface.layers[l].normal);
+        }
+        dc->PSSetShaderResources(kTerrainSplatSrvSlot, kTerrainSrvCount, srvs);
+
         TerrainObjectCB oc = {};
         XMStoreFloat4x4(&oc.world, XMMatrixTranspose(XMLoadFloat4x4(&item.world)));
-        oc.baseColor = SrgbToLinear(item.baseColor); // M38a: authored 色をリニアへ
-        oc.metallic = item.metallic;
-        oc.roughness = item.roughness;
+        oc.surfaceParams = { item.surface.metallic, item.surface.roughness, 0.0f, 0.0f };
+        for (uint32_t l = 0; l < kTerrainLayerCount; ++l) {
+            const TerrainLayerBinding& lb = item.surface.layers[l];
+            oc.layerTint[l] = lb.tint; // TerrainSystem がリニアへ変換済み (a = 有効フラグ)
+            oc.layerTiling[l] = { lb.tilingU, lb.tilingV, 0.0f, 0.0f };
+        }
         UploadCB(dc, objectCB_.Get(), oc);
         dc->DrawIndexed(mesh->indexCount, 0, 0);
         prof::AddDraw(static_cast<int>(mesh->indexCount / 3));
     }
+
+    // 借りた 9 枚を返す。ホストは t20 以降を一切知らないので、剥がさないと
+    // フレームを跨いで残り続ける (次にそのテクスチャを RT にした瞬間に警告になる)
+    ID3D11ShaderResourceView* nulls[kTerrainSrvCount] = {};
+    dc->PSSetShaderResources(kTerrainSplatSrvSlot, kTerrainSrvCount, nulls);
 }
 
 } // namespace mye

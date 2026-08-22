@@ -401,14 +401,15 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
         //   混ぜないための元栓はここ 1 箇所 (「配線の 2 箇所目」で毎回漏れるところ)
         terrainList_.items.clear();
         if (cullEnabled && !assetsRoot.empty()) {
-            terrainSystem_.Collect(world, resources.meshes, assetsRoot, frustum, view.view,
-                                   terrainScratch_);
+            terrainSystem_.Collect(world, resources.meshes, resources.textures, assetsRoot,
+                                   frustum, view.view, terrainScratch_);
             terrainList_.items.reserve(terrainScratch_.size());
             for (const TerrainDrawItem& t : terrainScratch_) {
                 TerrainRenderItem it;
                 it.mesh = t.mesh;
                 it.world = t.world;
                 it.viewZ = t.viewZ;
+                it.surface = t.surface; // M58d: スプラット + 4 レイヤの bind
                 terrainList_.items.push_back(it);
             }
             // 近い順 (early-z が効く順)。比較規則の正本は TerrainPass.h の
