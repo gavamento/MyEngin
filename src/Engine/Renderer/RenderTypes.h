@@ -374,4 +374,69 @@ public:
     void Sort();
 };
 
+// ---- M57a: フロクセル (視錐台に沿った 3D グリッド) の幾何 ----
+//
+// 視錐台を XY は画面タイル、Z は指数分布のスライスに割った 3D テクスチャへ散乱と消散を
+// 積み、最後に手前から積分して「そのピクセルまでの inscatter / transmittance」を作る。
+// ここに置いてあるのは**グリッドの幾何だけ** (パスの実体は M57b の FroxelPass)。
+// 全部純関数なので RenderSelfTest が機械検査できる — GPU を起こさずに済む部分は
+// 起こさずに検査するのがこのリポジトリの流儀 (テストは機能の隣に置く)。
+namespace froxel {
+
+// CS のスレッドグループ (XY のみ。Z はディスパッチ側でスライス数ぶん並べる)。
+// XY だけをタイルにしているのは、注入も積分も「同じ (x,y) の Z 列」を扱うから —
+// 積分パス (M57c) は 1 スレッドが 1 本の Z 列を手前から舐めるので Z を割れない。
+// **HLSL の MYE_FROXEL_GROUP (assets\shaders\froxel_*.cs.hlsl) と必ず一致させること** —
+// 食い違うとグリッドの一部が書かれないまま残り、前フレームの残骸を積分する形で
+// 静かに壊れる。tools\check_rules.ps1 の規則 9 が一致を検査する
+constexpr int kGroupSize = 8;
+
+// 既定のグリッド解像度。**M57a の WARP 実測 (Editor.exe --froxel-probe) で決めた値**。
+// 960x540 に対して 6x6 画素タイル x 64 スライス = 921,600 セル / 7.03MB。
+//
+//   グリッド        セル数    WARP clear   RTX3060 clear   1 枚の VRAM
+//   160x90x64      921,600     0.95 ms       0.026 ms        7.03 MB   ← 既定
+//   128x72x48      442,368     0.55 ms       0.014 ms        3.38 MB
+//   80x45x32       115,200     0.27 ms       0.007 ms        0.88 MB
+//
+// 落とさなかった理由: WARP のスループットが 8 倍のセル数域でほぼ一定 (約 0.9 Gcell/s) =
+// **コストがセル数に線形**で、固定費に食われていない。つまり解像度は後から素直に効く
+// 品質/コストのつまみで、先に絞る必要が無い。注入 (M57b) が WARP で重すぎたら
+// この表の下段へ落とす — 数字が線形なので予測が立つ。
+// ★clear は「空の CS」= 下限であって、注入パスのコストではない
+constexpr int kGridX = 160;
+constexpr int kGridY = 90;
+constexpr int kGridZ = 64;
+
+// ディスパッチのグループ数 (切り上げ)。extent <= 0 でも 0 を返して Dispatch を空振りさせる
+constexpr int DispatchGroups(int extent, int group)
+{
+    return (extent <= 0 || group <= 0) ? 0 : (extent + group - 1) / group;
+}
+
+// スライス境界の view 深度 (指数分布)。slice = 0 → nearZ、slice = sliceCount → farZ。
+// 手前を厚く割るのは、フォグの見た目の情報量がカメラ近傍に集中しているから
+// (等間隔だと近景が 1 スライスに潰れて縞が出る)。
+// nearZ は正でなければならない — 0 だと log が発散するので下限で潰す
+inline float SliceToViewDepth(float slice, int sliceCount, float nearZ, float farZ)
+{
+    const float n = (nearZ > 1e-4f) ? nearZ : 1e-4f;
+    const float f = (farZ > n) ? farZ : (n * 2.0f);
+    const int count = (sliceCount > 0) ? sliceCount : 1;
+    return n * std::pow(f / n, slice / static_cast<float>(count));
+}
+
+// 上の逆関数。view 深度 → スライス座標 (小数)。範囲外もそのまま外挿して返す
+// (クランプは呼び出し側の責任 — グリッド外を最遠スライスへ丸めると空が濁る)
+inline float ViewDepthToSlice(float depth, int sliceCount, float nearZ, float farZ)
+{
+    const float n = (nearZ > 1e-4f) ? nearZ : 1e-4f;
+    const float f = (farZ > n) ? farZ : (n * 2.0f);
+    const int count = (sliceCount > 0) ? sliceCount : 1;
+    const float d = (depth > 1e-6f) ? depth : 1e-6f;
+    return static_cast<float>(count) * std::log(d / n) / std::log(f / n);
+}
+
+} // namespace froxel
+
 } // namespace mye

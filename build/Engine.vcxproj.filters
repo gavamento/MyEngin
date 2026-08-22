@@ -492,6 +492,9 @@
     <ClCompile Include="..\src\Engine\Renderer\TextureCookSelfTest.cpp">
       <Filter>Renderer</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Renderer\VolumeTexture.cpp">
+      <Filter>Renderer</Filter>
+    </ClCompile>
     <ClInclude Include="..\src\Engine\Core\Archetype.h">
       <Filter>Core</Filter>
     </ClInclude>
@@ -985,6 +988,9 @@
       <Filter>Renderer</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\TextureCookSelfTest.h">
+      <Filter>Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\VolumeTexture.h">
       <Filter>Renderer</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Shared\EngineAPI.h">

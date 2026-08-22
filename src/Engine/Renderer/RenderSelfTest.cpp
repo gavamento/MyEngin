@@ -11,6 +11,7 @@
 #include "Engine/Renderer/MeshInstancing.h"
 #include "Engine/Renderer/PostFxMath.h"
 #include "Engine/Renderer/PostProcess.h"
+#include "Engine/Renderer/RenderTypes.h" // M57a: mye::froxel (グリッドの幾何)
 
 using namespace DirectX;
 
@@ -730,6 +731,64 @@ void TestTaaResolve()
     }
 }
 
+// M57a: フロクセルグリッドの幾何 (RenderTypes.h の mye::froxel)。
+// GPU を起こさずに検査できるのはここまで — 3D UAV が本当に書けるかは
+// `Editor.exe --froxel-probe` (実デバイスが要る) 側の担当
+void TestFroxelGrid()
+{
+    MYE_LOG_INFO("[selftest] froxel grid geometry");
+
+    // ① ディスパッチのグループ数は切り上げ。**90 は 8 で割り切れない**ので、
+    //    切り捨てだと最後の 2 行が永久に書かれない (= 前フレームの残骸を積分する)
+    TEST_CHECK(froxel::DispatchGroups(160, 8) == 20);
+    TEST_CHECK(froxel::DispatchGroups(90, 8) == 12); // 11.25 → 12
+    TEST_CHECK(froxel::DispatchGroups(1, 8) == 1);
+    TEST_CHECK(froxel::DispatchGroups(0, 8) == 0); // 空グリッドは空振り
+    // グループ数 x スレッド数がグリッドを必ず覆う (シェーダ側の範囲外判定の前提)
+    TEST_CHECK(froxel::DispatchGroups(froxel::kGridY, froxel::kGroupSize) * froxel::kGroupSize
+               >= froxel::kGridY);
+
+    // ② スライス境界は near から far まで単調増加し、両端はぴったり一致する
+    const int slices = froxel::kGridZ;
+    const float nearZ = 0.1f;
+    const float farZ = 200.0f;
+    TEST_CHECK(std::fabs(froxel::SliceToViewDepth(0.0f, slices, nearZ, farZ) - nearZ) < 1e-4f);
+    TEST_CHECK(std::fabs(froxel::SliceToViewDepth(static_cast<float>(slices), slices, nearZ, farZ)
+                         - farZ)
+               < 1e-2f);
+    bool monotonic = true;
+    for (int s = 1; s <= slices; ++s) {
+        const float prev = froxel::SliceToViewDepth(static_cast<float>(s - 1), slices, nearZ, farZ);
+        const float cur = froxel::SliceToViewDepth(static_cast<float>(s), slices, nearZ, farZ);
+        monotonic = monotonic && (cur > prev);
+    }
+    TEST_CHECK(monotonic);
+
+    // ③ 指数分布 = 手前のスライスのほうが薄い。等間隔にすると近景が 1 枚に潰れて縞が出る
+    const float firstThickness = froxel::SliceToViewDepth(1.0f, slices, nearZ, farZ)
+        - froxel::SliceToViewDepth(0.0f, slices, nearZ, farZ);
+    const float lastThickness
+        = froxel::SliceToViewDepth(static_cast<float>(slices), slices, nearZ, farZ)
+        - froxel::SliceToViewDepth(static_cast<float>(slices - 1), slices, nearZ, farZ);
+    TEST_CHECK(firstThickness < lastThickness);
+
+    // ④ 深度 → スライス → 深度の往復。M57c の再投影がこの逆関数に乗るので、
+    //    片方だけ式を直したときに気付ける形にしておく
+    bool roundTrip = true;
+    for (int s = 0; s <= slices; ++s) {
+        const float d = froxel::SliceToViewDepth(static_cast<float>(s), slices, nearZ, farZ);
+        const float back = froxel::ViewDepthToSlice(d, slices, nearZ, farZ);
+        roundTrip = roundTrip && (std::fabs(back - static_cast<float>(s)) < 1e-2f);
+    }
+    TEST_CHECK(roundTrip);
+
+    // ⑤ 退化した入力でも NaN を出さない (nearZ=0 は log の発散点。CameraPostFx から
+    //    0 が来る経路は無いが、ここで NaN を作ると積分結果が丸ごと消える)
+    const float degenerate = froxel::SliceToViewDepth(0.5f, slices, 0.0f, 0.0f);
+    TEST_CHECK(std::isfinite(degenerate) && degenerate > 0.0f);
+    TEST_CHECK(std::isfinite(froxel::ViewDepthToSlice(0.0f, slices, 0.0f, 0.0f)));
+}
+
 } // namespace
 
 bool RunRenderSelfTest()
@@ -752,6 +811,7 @@ bool RunRenderSelfTest()
     TestPrevRenderWorldStore();
     TestTaaResolve();
     TestMotionBlurVelocity();
+    TestFroxelGrid(); // M57a
     if (g_failCount == 0) {
         MYE_LOG_INFO("[selftest] render: ALL PASS");
         return true;

@@ -51,6 +51,7 @@
 #include "Engine/Renderer/ImageDiffSelfTest.h"
 #include "Engine/Renderer/RenderSelfTest.h"
 #include "Engine/Renderer/TextureCookSelfTest.h"
+#include "Engine/Renderer/VolumeTexture.h"
 
 namespace {
 
@@ -119,6 +120,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     std::wstring imgDiffOut;              // --diff-out PNG (差分ヒートマップ)
     int imgTolerance = 0;                 // --tol N (チャンネル差の許容)
     int64_t imgFailPixels = 0;            // --fail-pixels N (許容を超えてよい画素数)
+    int froxelProbeIters = 0;             // --froxel-probe [N] (M57a: 3D テクスチャの実測)
 
     int argc = 0;
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
@@ -229,6 +231,13 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 imgFailPixels = _wtoi64(argv[++i]);
             } else if (arg == L"--diff-out" && i + 1 < argc) {
                 imgDiffOut = argv[++i];
+            } else if (arg == L"--froxel-probe") {
+                // M57a: フロクセルの 3D テクスチャ基盤を裸の D3D デバイスだけで計測する。
+                // 回数は省略可 (既定 64)。--warp と組み合わせて CI と同じ絵の環境で測る
+                froxelProbeIters = 64;
+                if (i + 1 < argc && argv[i + 1][0] != L'-') {
+                    froxelProbeIters = _wtoi(argv[++i]);
+                }
             } else if (arg == L"--font-embedded") {
                 config.fontEmbedded = true; // M52c: 撮影のフォントを機種非依存に固定
             } else if (arg == L"--shot-realtime") {
@@ -441,6 +450,31 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             }
         }
         return pass ? 0 : 1;
+    }
+
+    // --froxel-probe [N] [--warp]: フロクセル用 3D テクスチャの実測 (M57a)。
+    // ウィンドウも sim も作らず、D3D デバイス + ShaderManager だけで
+    // 「typed 3D UAV が本当に書けるか」と「空の CS 1 回の壁時計」を出して終了する。
+    // 数字が設計の入力になるので、実装より先にこれを回すのが M57a の手順そのもの。
+    // exit 0 = 全候補で UAV ストア一致 / 1 = 食い違い / 2 = 計測に至らなかった
+    if (froxelProbeIters > 0) {
+        mye::FroxelProbeOptions probe;
+        probe.forceWarp = config.forceWarp;
+        probe.iterations = froxelProbeIters;
+        // シェーダは EngineLoop と同じ 2 ルート解決 (プロジェクト側 → エンジン組込み)。
+        // 裸起動では両者が同一になるので 1 本に畳む
+        const std::wstring assetsRoot = mye::FindAssetsRoot();
+        if (!assetsRoot.empty()) {
+            probe.shaderDirs.push_back(assetsRoot + L"\\shaders");
+        }
+        const std::wstring engineShaders = mye::FindEngineShaderDir();
+        if (!engineShaders.empty()
+            && (probe.shaderDirs.empty()
+                || mye::NormalizePathKey(engineShaders)
+                    != mye::NormalizePathKey(probe.shaderDirs.front()))) {
+            probe.shaderDirs.push_back(engineShaders);
+        }
+        return mye::RunFroxelVolumeProbe(probe);
     }
 
     if (selftest) {

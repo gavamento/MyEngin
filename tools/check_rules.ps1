@@ -195,6 +195,17 @@ $constGroups = @(
             'assets\shaders\terrain_common.hlsli' = '#\s*define\s+MYE_TERRAIN_LAYERS\s+(\d+)'
             'src\Engine\Engine\Asset\TerrainAsset.h' = 'constexpr\s+uint32_t\s+kMaxLayers\s*=\s*(\d+)'
         }
+    },
+    @{
+        # M57a: フロクセル CS のスレッドグループ (XY)。C++ 側はこの値でディスパッチの
+        # グループ数を切り上げ計算し、HLSL 側は numthreads に使う。食い違うと
+        # **グリッドの一部が書かれないまま残り、前フレームの残骸を積分する** —
+        # 絵は出るのにフォグだけがちらつくという、目で追いにくい壊れ方をする
+        label = 'froxel::kGroupSize / MYE_FROXEL_GROUP'
+        sites = @{
+            'src\Engine\Renderer\RenderTypes.h'   = 'constexpr\s+int\s+kGroupSize\s*=\s*(\d+)'
+            'assets\shaders\froxel_clear.cs.hlsl' = '#\s*define\s+MYE_FROXEL_GROUP\s+(\d+)'
+        }
     }
 )
 foreach ($g in $constGroups) {
