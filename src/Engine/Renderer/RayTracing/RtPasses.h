@@ -39,6 +39,9 @@ struct RtFrameInputs {
     ID3D11ShaderResourceView* gbAlbedo = nullptr;   // a = ジオメトリ有りマーク
     ID3D11ShaderResourceView* gbMaterial = nullptr; // M46h: r=metallic g=roughness
     ID3D11ShaderResourceView* skyCube = nullptr;    // skyMode==1 のときのみ
+    // M55f: 画面速度 (RT4)。テンポラル蓄積の履歴 UV に使う。null = 前フレーム VP への
+    // 射影 (M46d) へ縮退する — 絵は M55f 以前と 1 ビットも変わらない
+    ID3D11ShaderResourceView* gbVelocity = nullptr;
 };
 
 // GI パスの出力 (M46d/M46e)。デノイズの段階ごとに参照できるよう 3 つ返す。

@@ -731,6 +731,10 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
         rtIn.gbPosition = gbPosition_.SRV();
         rtIn.gbAlbedo = gbAlbedo_.SRV();
         rtIn.gbMaterial = gbMaterial_.SRV(); // M46h: metallic / roughness
+        // M55f: 画面速度 (RT4)。テンポラル蓄積が履歴 UV に使う。velocity を書けなかった
+        // フレーム (vel.valid==0 = 履歴なし) は渡さない — 全画素 0 の RT4 を「動いていない」と
+        // 読むと、カメラが動いた初回フレームの履歴を取り違える
+        rtIn.gbVelocity = (vel.valid != 0) ? gbVelocity_.SRV() : nullptr;
         rtIn.skyCube = view.skyCubemap;
         const bool needGi = rtGiOn || (view.rtDebugMode >= 4 && view.rtDebugMode <= 8);
         const bool needShadow = rtShadowOn || view.rtDebugMode == 9;

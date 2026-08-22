@@ -233,8 +233,8 @@ letting the Deferred path carry the effects that need a G-Buffer. See ADR-007.
     before differencing; the stored previous view-projection is jitter-free.
     **Not covered in v1**: there is no previous-frame bone palette, so a skinned mesh
     reports only camera and object-transform motion — the bone deformation itself
-    contributes zero velocity. Consumed by TAA (M55d) and motion blur (M55e); the ray-traced
-    temporal lane (M55f) is next.
+    contributes zero velocity. Consumed by TAA (M55d), motion blur (M55e) and the
+    ray-traced temporal lane (M55f).
     `View > Rendering > Velocity Buffer` (or `--velocity-debug`) visualizes it
 
 **Temporal antialiasing (M55d, default off).** `CameraPostFx.taaOn` — or the global
@@ -312,9 +312,17 @@ Design rationale and measured cost: **ADR-009**.
 - **Determinism**: this is a render-only lane. Randomness is a stateless PCG3D hash of
   (pixel, frame index), never read back to the CPU, and never hashed into the world state —
   the same exemption ADR-008 grants GPU particles
+- **Reprojection (M55f)**: the temporal lane reads its history at `uv - velocity` (§6.2 RT4),
+  which carries camera *and* object motion, so a moving object no longer drags its history
+  behind it. Where the velocity target is unavailable — the frame that has no previous-frame
+  matrices — it falls back to the original M46d path, projecting the current world position
+  through the previous view-projection (camera motion only). The disocclusion test still
+  compares the *current* world position's distance to the previous camera, because a 2D
+  velocity cannot restore the previous camera distance: an object that changes its distance
+  to the camera by more than 5% in one frame drops its history and falls back to 1 spp
 - **Not covered in v1**: skinned meshes and transparents are absent from the BVH, secondary
-  hits shade from material constants only (no bindless textures), moving objects ghost
-  (no object motion vectors), and local lights cast no ray-traced shadows
+  hits shade from material constants only (no bindless textures), and local lights cast no
+  ray-traced shadows
 
 ### 6.5 Deliberate Non-Goals of the Rendering Roadmap (M54-M58)
 
