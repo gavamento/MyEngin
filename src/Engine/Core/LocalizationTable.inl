@@ -87,6 +87,14 @@ MYE_STR(Menu_RtGi,            "RT GI (Deferred)",  "RT GI (Deferred)")
 MYE_STR(Menu_RtShadow,        "RT Shadow (Deferred)",     "RT 影 (Deferred)")
 MYE_STR(Menu_RtReflection,    "RT Reflection (Deferred)", "RT 反射 (Deferred)")
 
+// ---- 影 (M54e)。View > 影 サブメニュー。統合契約 予約 5 の接頭辞 Shadow_* ----
+// 統計行の書式指定子の並びは en / ja で一致必須 (規則 10 が機械検査する)
+MYE_STR(Shadow_Directional,   "Directional (CSM)",                    "平行光 (CSM)")
+MYE_STR(Shadow_LocalLights,   "Local Lights (Spot / Point)",          "局所ライト (スポット / 点)")
+MYE_STR(Shadow_AtlasStats,    "Atlas: %d tiles, %d draws (%d culled)", "アトラス: %d タイル / %d 描画 (%d 省略)")
+MYE_STR(Shadow_AtlasGpu,      "GPU: CSM %.2f ms / atlas %.2f ms",     "GPU: CSM %.2f ms / アトラス %.2f ms")
+MYE_STR(Shadow_AtlasIdle,     "Atlas: unused (no local shadow caster)", "アトラス: 未使用 (影を投げる局所ライトなし)")
+
 MYE_STR(Menu_RtDebug,         "RT Debug (Deferred)",   "RT デバッグ (Deferred)")
 MYE_STR(Menu_RtDbgOff,        "Off",                   "オフ")
 MYE_STR(Menu_RtDbgBvhHeat,    "BVH Heatmap",           "BVH ヒートマップ")

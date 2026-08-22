@@ -53,6 +53,12 @@ struct PerFrameCB {
     float fogPad2;
     XMFLOAT3 sunColor;
     float fogPad3;
+    // ---- M54e: 局所ライトのシャドウアトラス (末尾 append)。透明後段の forward_lit が参照。
+    //      ★ForwardPath.cpp の PerFrameCB と**同一の末尾**でなければならない ----
+    int32_t shadowAtlasEnabled;
+    float shadowAtlasTexel;
+    float atlasPad[2];
+    ShadowTileCB shadowTiles[kMaxShadowTiles];
 };
 
 struct PerObjectCB {
@@ -71,14 +77,8 @@ struct MaterialCB {
     float emissive;    // M46i: 自己発光の強さ (0 = 発光なし)
 };
 
-// common.hlsli の ShadowTile と同一レイアウト (96 バイト、M54c)。
-// RenderTypes.h の ShadowTile (描画側の生データ) を CB 向けに転置 + 詰め替えたもの
-struct ShadowTileCB {
-    XMFLOAT4X4 lightViewProj; // transpose(lightView*lightProj)
-    XMFLOAT4 uvScaleBias;     // xy = スケール / zw = オフセット
-    XMFLOAT4 params;          // x = 定数深度バイアス / yzw = 予約 (M54d)
-};
-static_assert(sizeof(ShadowTileCB) == 96, "ShadowTileCB must match HLSL 16-byte packing");
+// (M54c の ShadowTileCB は M54e で RenderTypes.h へ引き上げた — Forward の PerFrameCB も
+//  同じ形を要求するようになったため。転置の式は FillShadowTilesCB 1 本きり)
 
 // deferred_light.hlsl の LightPass と同一レイアウト
 struct LightPassCB {
@@ -417,6 +417,12 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
         && view.iblBrdfLut != nullptr;
     pf.iblEnabled = ibl ? 1 : 0;
     pf.iblSpecMips = view.iblSpecMips;
+    // M54e: 透明後段 (forward_lit) 用の局所シャドウアトラス。判定式は光パスの
+    // lp.shadowAtlasEnabled と同一 — 不透明と透明で影の有無が食い違わないようにする
+    pf.shadowAtlasEnabled =
+        (!unlit && view.shadowAtlasSRV != nullptr && view.shadowTileCount > 0) ? 1 : 0;
+    pf.shadowAtlasTexel = view.shadowAtlasTexel;
+    FillShadowTilesCB(view, pf.shadowTiles);
     UploadCB(dc, perFrameCB_.Get(), pf);
 
     ID3D11Buffer* cbs[2] = { perFrameCB_.Get(), perObjectCB_.Get() };
@@ -740,13 +746,7 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
     lp.shadowAtlasEnabled =
         (!unlit && view.shadowAtlasSRV != nullptr && view.shadowTileCount > 0) ? 1 : 0;
     lp.shadowAtlasTexel = view.shadowAtlasTexel;
-    for (int t = 0; t < view.shadowTileCount && t < kMaxShadowTiles; ++t) {
-        const ShadowTile& src = view.shadowTiles[t];
-        ShadowTileCB& dst = lp.shadowTiles[t];
-        XMStoreFloat4x4(&dst.lightViewProj, XMMatrixTranspose(XMLoadFloat4x4(&src.lightViewProj)));
-        dst.uvScaleBias = { src.uvScale[0], src.uvScale[1], src.uvOffset[0], src.uvOffset[1] };
-        dst.params = { src.depthBias, 0.0f, 0.0f, 0.0f };
-    }
+    FillShadowTilesCB(view, lp.shadowTiles);
     UploadCB(dc, lightCB_.Get(), lp);
     ID3D11Buffer* lightCbs[1] = { lightCB_.Get() };
     dc->PSSetConstantBuffers(0, 1, lightCbs);
@@ -791,11 +791,15 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
         if (wire) {
             dc->RSSetState(rasterizerWire_.Get()); // M40b: 透明メッシュもワイヤ表示
         }
-        // forward_lit はシャドウ t1 / IBL t3-5 を参照 (M38c)。s0 は光パスで IBL 用に
-        // 差し替えたのでマテリアル用 (異方性) に戻す。s2 (IBL) はフレーム頭で bind 済み
-        ID3D11ShaderResourceView* fwdSrvs[5] = { view.shadowSRV, nullptr, view.iblIrradiance,
-                                                 view.iblPrefiltered, view.iblBrdfLut };
-        dc->PSSetShaderResources(1, 5, fwdSrvs);
+        // forward_lit はシャドウ t1 / IBL t3-5 / 局所シャドウアトラス t6 を参照
+        // (M38c + M54e)。s0 は光パスで IBL 用に差し替えたのでマテリアル用 (異方性) に戻す。
+        // s1 (比較サンプラ = アトラスと CSM で共有) と s2 (IBL) はフレーム頭で bind 済み。
+        // ★t6 を足したら**本数も 5 → 6 へ**増やすこと (増やし忘れると透明メッシュだけが
+        //   前段の光パスが t6 に残したもの、または null を読む = 影が出ない/ゴミが出る)
+        ID3D11ShaderResourceView* fwdSrvs[6] = { view.shadowSRV,      nullptr,
+                                                 view.iblIrradiance,  view.iblPrefiltered,
+                                                 view.iblBrdfLut,     view.shadowAtlasSRV };
+        dc->PSSetShaderResources(1, 6, fwdSrvs);
         ID3D11SamplerState* matSampler[1] = { sampler_.Get() };
         dc->PSSetSamplers(0, 1, matSampler);
         dc->VSSetConstantBuffers(0, 2, cbs);

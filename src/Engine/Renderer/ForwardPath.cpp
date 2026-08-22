@@ -49,6 +49,14 @@ struct PerFrameCB {
     float fogPad2;
     XMFLOAT3 sunColor;
     float fogPad3;
+    // ---- M54e: 局所ライトのシャドウアトラス (末尾 append。0 = 従来と完全に同一の式) ----
+    // ★DeferredPath.cpp の PerFrameCB と**必ず同じ末尾**を持たせること — Deferred の
+    //   透明後段は forward_lit.hlsl をそのまま使うので、片方だけ足すと透明メッシュだけが
+    //   ゴミ (アトラス以外の CB 内容) をタイル行列として読む
+    int32_t shadowAtlasEnabled;
+    float shadowAtlasTexel;
+    float atlasPad[2];
+    ShadowTileCB shadowTiles[kMaxShadowTiles];
 };
 
 struct PerObjectCB {
@@ -259,6 +267,13 @@ void ForwardPath::Render(GraphicsDevice& device, const RenderView& view, const R
         && view.iblBrdfLut != nullptr;
     pf.iblEnabled = ibl ? 1 : 0;
     pf.iblSpecMips = view.iblSpecMips;
+    // M54e: 局所ライトのシャドウアトラス。SRV が null (影を投げる局所ライトが 1 本も無い
+    // シーン / AssetPreviewCache の enableShadows=false / Unlit・Wireframe) なら 0 =
+    // 従来と 1 ビットも変わらない経路へ落ちる。**Deferred 光パスと同じ判定式**
+    pf.shadowAtlasEnabled =
+        (!unlit && view.shadowAtlasSRV != nullptr && view.shadowTileCount > 0) ? 1 : 0;
+    pf.shadowAtlasTexel = view.shadowAtlasTexel;
+    FillShadowTilesCB(view, pf.shadowTiles);
     UploadCB(dc, perFrameCB_.Get(), pf);
 
     ID3D11Buffer* cbs[2] = { perFrameCB_.Get(), perObjectCB_.Get() };
@@ -268,10 +283,13 @@ void ForwardPath::Render(GraphicsDevice& device, const RenderView& view, const R
     dc->PSSetConstantBuffers(2, 1, matCbs);
     ID3D11SamplerState* samplers[3] = { sampler_.Get(), shadowSampler_.Get(), iblSampler_.Get() };
     dc->PSSetSamplers(0, 3, samplers);
-    // シャドウマップを t1 に (マテリアルの albedo は t0)、IBL を t3-5 に (M38c)
-    ID3D11ShaderResourceView* frameSrvs[5] = { view.shadowSRV, nullptr, view.iblIrradiance,
-                                               view.iblPrefiltered, view.iblBrdfLut };
-    dc->PSSetShaderResources(1, 5, frameSrvs);
+    // シャドウマップを t1 に (マテリアルの albedo は t0)、IBL を t3-5 に (M38c)、
+    // 局所ライトのアトラスを t6 に (M54e。統合契約 予約 2)。
+    // アトラス用のサンプラは増やさず s1 の比較サンプラを共有する (CSM と同じ設定でよい)
+    ID3D11ShaderResourceView* frameSrvs[6] = { view.shadowSRV,      nullptr,
+                                               view.iblIrradiance,  view.iblPrefiltered,
+                                               view.iblBrdfLut,     view.shadowAtlasSRV };
+    dc->PSSetShaderResources(1, 6, frameSrvs);
     dc->RSSetState(wire ? rasterizerWire_.Get() : rasterizer_.Get());
     dc->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 

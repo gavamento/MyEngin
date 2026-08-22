@@ -88,7 +88,12 @@ public:
     // ポストプロセス設定 (M16)。config / エディタから書き換え可能。全ビューポート共通。
     PostProcess::Settings postFxSettings;
     bool enablePostFx = true; // false で HDR 配管を丸ごとバイパス (従来の直描き)
-    bool enableShadows = true; // false で平行光シャドウを無効 (M17)
+    bool enableShadows = true; // false で影を全部無効 (M17。CSM と局所アトラスの親スイッチ)
+    // M54e: 局所ライト (スポット/点) の影だけを切る。enableShadows が親で、こちらが子。
+    // アトラスは 4096^2 = 64MB + タイル数ぶんの深度パスなので、CSM は残したまま
+    // 局所影のコストだけを外せる口が要る (View > 影 メニュー)。
+    // ★false にすると GpuLight::shadowFaces が全部 0 のまま = シェーダは M54c 以前の式
+    bool enableLocalShadows = true;
     bool enableSsao = true;    // SSAO (M38e、Deferred パスのみ効く)
     bool enableInstancing = true; // メッシュ GPU インスタンシング (M38f、A/B 比較用トグル)
 

@@ -38,6 +38,14 @@ cbuffer PerFrame : register(b0)
     float    _fogPad2;
     float3   gSunColor;              // リニア・強度込み (平行光無し = 黒 + intensity 0)
     float    _fogPad3;
+    // ---- M54e: 局所ライト (スポット/点) のシャドウアトラス (末尾 append)。
+    //      0 = 従来と完全に同一の式 (Light.shadowFaces も 0 のまま)。
+    //      ★C++ ミラーは **2 つ** — ForwardPath.cpp の PerFrameCB と DeferredPath.cpp の
+    //      PerFrameCB。Deferred は透明後段でこのシェーダをそのまま使うので両方を揃える ----
+    int      gShadowAtlasEnabled;
+    float    gShadowAtlasTexel; // 1/アトラス解像度
+    float2   _atlasPad;
+    ShadowTile gShadowTiles[MYE_MAX_SHADOW_TILES];
 };
 
 cbuffer PerObject : register(b1)
@@ -60,6 +68,7 @@ Texture2D                gNormalTex     : register(t2);
 TextureCube              gIblIrradiance : register(t3); // M38c
 TextureCube              gIblPrefiltered: register(t4);
 Texture2D                gIblBrdfLut    : register(t5);
+Texture2D                gShadowAtlas   : register(t6); // M54e (局所ライトの深度アトラス)
 SamplerState             gSampler       : register(s0);
 SamplerComparisonState   gShadowSampler : register(s1);
 SamplerState             gIblSampler    : register(s2); // LINEAR/CLAMP (M38c)
@@ -103,10 +112,14 @@ float4 PSMain(VSOut i) : SV_Target
         dirShadow = SampleShadowCSM(gShadowMap, gShadowSampler, gShadowVP, gShadowVP12[0],
                                     gShadowVP12[1], (int)gCascadeInfo.w, i.posW, gShadowTexel);
     }
+    // M54e: 局所ライトの影 (Deferred と同一の関数 = 両経路の絵が一致する)
+    float localShadow[MAX_LIGHTS];
+    ResolveLocalShadows(gShadowAtlas, gShadowSampler, gShadowTiles, gLights, gLightCount,
+                        gShadowAtlasEnabled, i.posW, gShadowAtlasTexel, localShadow);
     float3 color = ApplyLighting(albedo.rgb, n, i.posW, gCameraPos, gMetallic, gRoughness,
-                                 gAmbient, gLights, gLightCount, dirShadow, gIblEnabled,
-                                 gIblSpecMips, gIblIrradiance, gIblPrefiltered, gIblBrdfLut,
-                                 gIblSampler, 1.0f); // SSAO は Deferred のみ
+                                 gAmbient, gLights, gLightCount, dirShadow, localShadow,
+                                 gIblEnabled, gIblSpecMips, gIblIrradiance, gIblPrefiltered,
+                                 gIblBrdfLut, gIblSampler, 1.0f); // SSAO は Deferred のみ
     // M46i: 自己発光。ライティングに依らず放射する分を足す (フォグより前 =
     // 遠くの発光もフォグに減衰される)。gEmissive=0 なら加算項がちょうど 0
     color += albedo.rgb * gEmissive;

@@ -95,6 +95,18 @@ struct ShadowTile {
     float depthBias = 0.0f; // シェーダ側の定数バイアス (NDC 深度。ラスタライザ側と併用)
 };
 
+// 定数バッファへ載せる形のタイル (HLSL common.hlsli の ShadowTile と同一 96 バイト、M54c)。
+// 上の ShadowTile (描画側の生データ) を転置 + 詰め替えたもの。
+// ★M54e で Deferred 光パス / Forward / Deferred 透明後段の **3 箇所**が同じ変換を要求する
+//   ようになったのでここへ引き上げた。転置を 1 箇所でも書き忘れると
+//   「その経路だけ影が明後日の方向に出る」という、絵は出るのに合わないだけの壊れ方をする
+struct ShadowTileCB {
+    DirectX::XMFLOAT4X4 lightViewProj = {}; // transpose(lightView*lightProj)
+    DirectX::XMFLOAT4 uvScaleBias = {};     // xy = スケール / zw = オフセット
+    DirectX::XMFLOAT4 params = {};          // x = 定数深度バイアス (NDC) / yzw = 予約
+};
+static_assert(sizeof(ShadowTileCB) == 96, "ShadowTileCB must match HLSL 16-byte packing");
+
 struct RenderView {
     DirectX::XMFLOAT4X4 view = {};
     DirectX::XMFLOAT4X4 proj = {};
@@ -187,13 +199,28 @@ struct RenderView {
     int32_t rtReflEnabled = 0;
     // ---- M54c: 局所ライト (スポット/点) のシャドウアトラス (末尾 append)。
     //      null / 0 = 従来と完全に同一の絵。RenderSystem がアトラス描画後に埋める。
-    //      アトラスを持たない経路 (Forward は M54e まで / AssetPreview は永久に) は
+    //      アトラスを持たない経路 (AssetPreview は永久に = enableShadows=false) は
     //      SRV が null のままなので、光パス側の「null ならフラグ 0」ゲートで自然に無効化される ----
     ID3D11ShaderResourceView* shadowAtlasSRV = nullptr; // Texture2D (R32_FLOAT)
     float shadowAtlasTexel = 0.0f;                      // 1/アトラス解像度 (PCF オフセット)
     int32_t shadowTileCount = 0;                        // 0 = 影を投げる局所ライトが居ない
     ShadowTile shadowTiles[kMaxShadowTiles] = {};
 };
+
+// view のタイル列を CB 形式へ詰め替える (M54e)。dst は kMaxShadowTiles 要素を要求する。
+// 呼び出し側が「アトラスを使うか」を判定した後で呼ぶ — ここは判定しない
+// (使わない経路では dst をゼロのまま渡せばよく、シェーダ側のフラグが 0 なら読まれない)。
+inline void FillShadowTilesCB(const RenderView& view, ShadowTileCB* dst)
+{
+    for (int t = 0; t < view.shadowTileCount && t < kMaxShadowTiles; ++t) {
+        const ShadowTile& src = view.shadowTiles[t];
+        DirectX::XMStoreFloat4x4(
+            &dst[t].lightViewProj,
+            DirectX::XMMatrixTranspose(DirectX::XMLoadFloat4x4(&src.lightViewProj)));
+        dst[t].uvScaleBias = { src.uvScale[0], src.uvScale[1], src.uvOffset[0], src.uvOffset[1] };
+        dst[t].params = { src.depthBias, 0.0f, 0.0f, 0.0f };
+    }
+}
 
 // GPU へ渡すライト 1 個 (定数バッファ配列要素、16 バイト境界に揃えた 64 バイト)。
 // HLSL 側 common.hlsli の Light 構造体とレイアウト一致。

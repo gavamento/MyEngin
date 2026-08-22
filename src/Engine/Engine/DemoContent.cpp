@@ -979,6 +979,10 @@ void BuildRenderShowcaseScene(EngineContext& ctx)
         l->range = 42.0f;
         l->spotInnerDeg = 18.0f;
         l->spotOuterDeg = 30.0f;
+        // M54e: ここで初めて局所影を立てる。M54b〜M54d の間は既定 0 のままにしてあった
+        // ので、golden 8 枚は「機能を足しても絵が動かない」でビット一致し続けていた。
+        // このコミットから demo_render_* の 2 枚だけが動く (それ以外が動いたらバグ)
+        l->castShadow = 1;
         // 目印 (発光する小球)。ライトエンティティの子にすると位置が自動で追従する
         GameObject marker = s.CreateGameObject((std::string(name) + "_Marker").c_str());
         marker.SetParent(go);
@@ -1005,6 +1009,7 @@ void BuildRenderShowcaseScene(EngineContext& ctx)
         l->color = { r, g, b };
         l->intensity = intensity;
         l->range = range;
+        l->castShadow = 1; // M54e: 点光源はキューブ 6 面 (M54d) をアトラスへ焼く
         GameObject marker = s.CreateGameObject((std::string(name) + "_Marker").c_str());
         marker.SetParent(go);
         marker.SetLocalScale(0.4f, 0.4f, 0.4f);

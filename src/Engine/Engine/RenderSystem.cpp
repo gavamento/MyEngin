@@ -641,7 +641,7 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
         view.shadowAtlasSRV = nullptr;
         view.shadowTileCount = 0;
         shadowAtlasFaceCulled_ = 0;
-        if (enableShadows && hasScene) {
+        if (enableShadows && enableLocalShadows && hasScene) {
             int tileCount = 0;
             int culledFaces = 0;
             int casters = 0;

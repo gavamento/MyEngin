@@ -571,9 +571,36 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
             }
             ImGui::EndMenu();
         }
+        // M54e: 影の内訳 (平行光 CSM / 局所ライトのアトラス) と統計。
+        // M40d までは Rendering メニューの「影」1 個で全部を切っていたが、局所ライトの
+        // アトラスは 4096^2 = 64MB + タイル数ぶんの深度パスという別勘定のコストなので、
+        // CSM を残したまま局所影だけ外せる口が要る。旧トグルはここへ移動した
+        if (ImGui::BeginMenu(Tr(StrId::Menu_Shadows))) {
+            ImGui::MenuItem(Tr(StrId::Shadow_Directional), nullptr,
+                            &ctx.renderSystem->enableShadows);
+            // 親 (enableShadows) が off なら局所影も出ないので、子は無効表示にする
+            ImGui::BeginDisabled(!ctx.renderSystem->enableShadows);
+            ImGui::MenuItem(Tr(StrId::Shadow_LocalLights), nullptr,
+                            &ctx.renderSystem->enableLocalShadows);
+            ImGui::EndDisabled();
+            ImGui::Separator();
+            // 統計はヘッドレス撮影では読めない (ProfilerWindow も同じ値を出す)。
+            // ★Tr() を書式文字列として渡している = 訳文の % が指定子として解釈される。
+            //   ここは意図した書式付き文字列なので正しい (規則 10 が並びを機械検査する)
+            const int tiles = ctx.renderSystem->ShadowAtlasTiles();
+            if (tiles > 0) {
+                ImGui::TextDisabled(Tr(StrId::Shadow_AtlasStats), tiles,
+                                    ctx.renderSystem->ShadowAtlasDraws(),
+                                    ctx.renderSystem->ShadowAtlasCulledDraws());
+            } else {
+                ImGui::TextUnformatted(Tr(StrId::Shadow_AtlasIdle));
+            }
+            ImGui::TextDisabled(Tr(StrId::Shadow_AtlasGpu), ctx.renderSystem->ShadowCsmGpuMs(),
+                                ctx.renderSystem->ShadowAtlasGpuMs());
+            ImGui::EndMenu();
+        }
         if (ImGui::BeginMenu(Tr(StrId::Menu_Rendering))) {
             // 描画専用トグル (M40d)。sim/hash 非影響
-            ImGui::MenuItem(Tr(StrId::Menu_Shadows), nullptr, &ctx.renderSystem->enableShadows);
             ImGui::MenuItem(Tr(StrId::Menu_Ssao), nullptr, &ctx.renderSystem->enableSsao);
             ImGui::MenuItem(Tr(StrId::Menu_GpuInstancing), nullptr, &ctx.renderSystem->enableInstancing);
             ImGui::MenuItem(Tr(StrId::Menu_PostFx), nullptr, &ctx.renderSystem->enablePostFx);

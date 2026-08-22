@@ -294,6 +294,12 @@ bool AssetPreviewCache::RenderOne(EngineContext& ctx, const std::wstring& path, 
     cam.farZ = dist * 10.0f;
 
     // ---- 専用 RenderSystem で描画 (postFx/shadow 無し → 中間 RT を確保しない) ----
+    // ★M54e: enableShadows=false は局所ライトのシャドウアトラス (M54c/M54d) も止める —
+    //   RenderSystem がアトラス節に入らない = view.shadowAtlasSRV が null のまま +
+    //   GpuLight::shadowFaces が全部 0 のまま。ForwardPath はその null を見て
+    //   gShadowAtlasEnabled=0 を送り、t6 にも null を張る。**このゲートが 1 枚でも
+    //   抜けるとサムネイルだけが未初期化のタイル行列でアトラスをサンプルする**
+    //   (プレビューは 64MB のアトラスを一生確保しないので中身は他ビューの残骸)
     previewRender_.enablePostFx = false;
     previewRender_.enableShadows = false;
     FrameTarget target;

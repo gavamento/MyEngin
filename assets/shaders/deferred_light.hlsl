@@ -114,21 +114,10 @@ float4 PSMain(VSOut i) : SV_Target
         ao = gSsao.SampleLevel(gIblSampler, i.pos.xy / gScreenSize, 0).r; // M38e
     }
     // M54c: 局所ライトの影を先に解決して配列で渡す (ApplyLighting にテクスチャを
-    // 持ち込まないための規約。Forward は M54e まで全要素 1.0 のまま)
+    // 持ち込まないための規約)。M54e で Forward 3 本と同じ関数へ畳んだ
     float localShadow[MAX_LIGHTS];
-    [unroll] for (int si = 0; si < MAX_LIGHTS; ++si) {
-        localShadow[si] = 1.0f;
-    }
-    if (gShadowAtlasEnabled != 0) {
-        for (int li = 0; li < gLightCount; ++li) {
-            if (gLights[li].shadowFaces > 0) {
-                // M54d: 点光源は 6 面ぶんのタイルを連番で持つので、表面の向きで面を選ぶ
-                const int ti = ShadowTileIndexForLight(gLights[li], posW);
-                localShadow[li] = SampleShadowAtlas(gShadowAtlas, gShadowSampler, gShadowTiles[ti],
-                                                    posW, gShadowAtlasTexel);
-            }
-        }
-    }
+    ResolveLocalShadows(gShadowAtlas, gShadowSampler, gShadowTiles, gLights, gLightCount,
+                        gShadowAtlasEnabled, posW, gShadowAtlasTexel, localShadow);
     float3 color;
     if (gRtGiEnabled != 0 || gRtReflEnabled != 0) {
         // M46f/M46h: GI と反射は内部解像度 (rtResolutionScale) なので

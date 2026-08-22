@@ -132,6 +132,37 @@ float SampleShadowAtlas(Texture2D atlas, SamplerComparisonState samp, ShadowTile
     return sum / 9.0f;
 }
 
+// ライト配列ぶんの局所シャドウ係数をまとめて解決する (M54e)。
+// **光パス 4 経路 (deferred_light / forward_lit / forward_lit_instanced / forward_skinned)
+//   が呼ぶ**。M54c/M54d では Deferred にこのループを直書きしていたが、経路が 4 つに増えると
+//   「1 箇所だけ面選択を忘れる」「1 箇所だけ enabled を見ない」が起きてもコンパイルは通り、
+//   絵の食い違いにしか現れない (= Forward と Deferred の一致という ADR-007 の主張が
+//   静かに壊れる) ので 1 本に畳んである。
+// enabled == 0 のときは全要素が厳密に 1.0 = ApplyLighting の乗算が恒等になり、出力は
+// M54c 以前とビット単位で一致する (「機能 off で直前コミットとビット一致」の根拠)。
+//
+// ★tiles を値渡しの配列で受けるのは ApplyLighting の lights[MAX_LIGHTS] と同じ流儀。
+//   HLSL の関数は必ずインライン展開されるので、cbuffer 配列の動的添字にそのまま落ちる。
+void ResolveLocalShadows(Texture2D atlas, SamplerComparisonState samp,
+                         ShadowTile tiles[MYE_MAX_SHADOW_TILES], Light lights[MAX_LIGHTS],
+                         int count, int enabled, float3 posW, float atlasTexel,
+                         out float localShadow[MAX_LIGHTS])
+{
+    [unroll] for (int si = 0; si < MAX_LIGHTS; ++si) {
+        localShadow[si] = 1.0f;
+    }
+    if (enabled == 0) {
+        return;
+    }
+    for (int li = 0; li < count; ++li) {
+        if (lights[li].shadowFaces > 0) {
+            // M54d: 点光源は 6 面ぶんのタイルを連番で持つので、表面の向きで面を選ぶ
+            const int ti = ShadowTileIndexForLight(lights[li], posW);
+            localShadow[li] = SampleShadowAtlas(atlas, samp, tiles[ti], posW, atlasTexel);
+        }
+    }
+}
+
 // (M17 の単一シャドウマップ用 SampleShadowPCF は M54d で削除した — M38d の CSM 化で
 //  呼び出しが消えて以来 5 マイルストーン誰も呼んでおらず、SampleShadowAtlas / SampleShadowCSM
 //  と 3 つ目の「ほぼ同じ 3x3 PCF」が並ぶと、どれを直せばよいかが読み手に分からなくなる)
