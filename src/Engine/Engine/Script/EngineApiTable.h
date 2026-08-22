@@ -66,6 +66,8 @@ struct EffectSpawnRequest {
 // MyeEngineApi の engine 不透明ポインタが指すコンテキスト。
 // C++ の ScriptHost と C# の ManagedHost が同じ C ABI テーブルを共有するために使う
 // (Transform / Log / Input / Random は両ホストで同一実装)。
+struct NetRuntimeInfo;
+
 struct ScriptApiContext {
     Scene* scene = nullptr;
     InputSnapshot input = {};
@@ -89,6 +91,9 @@ struct ScriptApiContext {
     int* pendingLoadSlot = nullptr;
     // v12 (M51h): パッド振動の目標値の書き先。適用は EngineLoop (出力レーン)
     PadVibrationState* padVibration = nullptr;
+    // v13 (M52i): ネットセッションの状態 (EngineLoop が毎フレーム書く読み取り専用 POD)。
+    // null = ネットを張っていない → Net* スロットは既定値を返す
+    const NetRuntimeInfo* net = nullptr;
 };
 
 // out に MyeEngineApi (engine = ctx) を構築する。ctx の生存は呼び出し側が管理する。

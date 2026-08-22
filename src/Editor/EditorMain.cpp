@@ -86,6 +86,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     bool partsShowcase = false; // --parts-demo (M48g: 部位追従のリプレイ被覆シーン)
     bool flowShowcase = false;  // --flow-demo (M51j: ゲームフロー統合デモ)
     bool localDemo = false;     // --local-demo (M52g: ローカルマルチプレイの入力レーンデモ)
+    bool netDemo = false;       // --net-demo (M52i: 2 人ネット対戦のデモ)
     std::wstring editActorPath;  // --edit-actor PATH (M48k)
     std::wstring packageDir;     // --package DIR (M51j: CLI パッケージ)
     bool packageDds = false;     // --package-dds
@@ -198,6 +199,14 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 config.netInputDelay = _wtoi(argv[++i]);
             } else if (arg == L"--net-loss" && i + 1 < argc) {
                 config.netLossPercent = _wtoi(argv[++i]); // 入力パケットを故意に捨てる (検証用)
+            } else if (arg == L"--net-no-rollback") {
+                // M52i: 予測ロールバックを切って M52h の素の遅延ロックステップへ落とす
+                config.netRollback = false;
+            } else if (arg == L"--net-no-halt-on-desync") {
+                config.netHaltOnDesync = false; // 検出しても止めずに走り続ける (観察用)
+            } else if (arg == L"--net-poke-tick" && i + 1 < argc) {
+                // M52i: 片側にだけ渡して意図的に desync を起こす (検出器の実地検証)
+                config.netPokeTick = _wtoi64(argv[++i]);
             } else if (arg == L"--rep-diff" && i + 2 < argc) {
                 // M52h: .rep 2 本の突き合わせ (ネットの 2 プロセスが同じ tick 列を回したか)
                 repDiffA = argv[++i];
@@ -274,6 +283,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 flowShowcase = true; // M51j: ゲームフロー統合デモ (タイトル⇄ゲームの 2 シーン)
             } else if (arg == L"--local-demo") {
                 localDemo = true; // M52g: 入力レーンのローカルマルチプレイデモ
+            } else if (arg == L"--net-demo") {
+                netDemo = true; // M52i: 2 人ネット対戦のデモシーン
             } else if (arg == L"--local-players" && i + 1 < argc) {
                 config.localPlayers = _wtoi(argv[++i]); // M52g: 消費する入力レーン数
             } else if (arg == L"--synth-input") {
@@ -462,6 +473,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     app.partsShowcase = partsShowcase;
     app.flowShowcase = flowShowcase;
     app.localDemo = localDemo;
+    app.netDemo = netDemo;
     app.editActorPath = editActorPath;
     app.packageDir = packageDir;
     app.packageDds = packageDds;

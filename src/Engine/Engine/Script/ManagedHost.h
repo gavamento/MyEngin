@@ -60,7 +60,8 @@ public:
                            uint64_t* audioHandleSeq = nullptr,
                            const InputActions* inputActions = nullptr,
                            int* pendingSaveSlot = nullptr, int* pendingLoadSlot = nullptr,
-                           PadVibrationState* padVibration = nullptr)
+                           PadVibrationState* padVibration = nullptr,
+                           const NetRuntimeInfo* net = nullptr)
     {
         apiCtx_.audioQueue = audioQueue;
         apiCtx_.pendingScene = pendingScene;
@@ -71,6 +72,10 @@ public:
         apiCtx_.pendingSaveSlot = pendingSaveSlot;
         apiCtx_.pendingLoadSlot = pendingLoadSlot;
         apiCtx_.padVibration = padVibration;
+        // v13 (M52i)。★C# レーンはネット中は止まっている (TickServices::netLockstep) ので
+        //   ここが読まれるのは非ネット時だけ。それでも配線しておくのは、Interop.cs が
+        //   位置ミラーで全スロットを写す以上「片方だけ null」という状態を作らないため
+        apiCtx_.net = net;
     }
 
     // シーン遷移 (M19.4): C# インスタンス handle をリセットして新シーンで再生成させる (非ハッシュ)

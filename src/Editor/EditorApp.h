@@ -25,6 +25,7 @@
 #include "Editor/Windows/InspectorWindow.h"
 #include "Editor/Windows/ParticleSettingsWindow.h"
 #include "Editor/Windows/ProfilerWindow.h"
+#include "Editor/Windows/NetWindow.h"
 #include "Editor/Windows/TimelineWindow.h"
 #include "Editor/Windows/ProjectSettingsWindow.h"
 #include "Editor/Windows/SceneViewWindow.h"
@@ -58,6 +59,7 @@ public:
     bool partsShowcase = false;    // --parts-demo (M48g: 部位追従のリプレイ被覆シーン)
     bool flowShowcase = false;     // --flow-demo (M51j: ゲームフロー統合デモ 2 シーン)
     bool localDemo = false;        // --local-demo (M52g: 入力レーンのローカルマルチプレイデモ)
+    bool netDemo = false;          // --net-demo (M52i: 2 人ネット対戦のデモ)
     // --edit-actor PATH (M48k): 起動直後にミニシーン編集モードで開く。
     // 編集モードの入口はダブルクリックだけで自動検証できないため、既存の検証フラグ
     // (--select / --pick-test / --parts-demo) と同じ流儀で口を開けてある
@@ -141,6 +143,7 @@ private:
     ParticleSettingsWindow particleSettings_;
     ProfilerWindow profiler_;
     TimelineWindow timeline_; // M52e: 巻き戻しスクラブ (Play 中のみ中身がある)
+    NetWindow net_;           // M52i: ネットセッションの状態 (--net-host/join 時のみ中身がある)
     // M52e: スクラブ解除の判定に使う前フレームの再生状態 (状態ではなく遷移を見るため)
     PlayState prevPlayState_ = PlayState::Editing;
     AssetBrowserWindow assetBrowser_;

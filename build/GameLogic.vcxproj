@@ -47,6 +47,8 @@
     <ClCompile Include="..\src\GameLogic\Scripts\FlowGameDriver.cpp" />
     <ClCompile Include="..\src\GameLogic\Scripts\FlowTitleDriver.cpp" />
     <ClCompile Include="..\src\GameLogic\Scripts\LocalPlayerDemo.cpp" />
+    <ClCompile Include="..\src\GameLogic\Scripts\NetDuelDemo.cpp" />
+    <ClCompile Include="..\src\GameLogic\Scripts\NetHudDemo.cpp" />
     <ClCompile Include="..\src\GameLogic\Scripts\PartAttachDemo.cpp" />
     <ClCompile Include="..\src\GameLogic\Scripts\PartRaycastDemo.cpp" />
     <ClCompile Include="..\src\GameLogic\Scripts\PlayerController.cpp" />

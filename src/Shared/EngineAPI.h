@@ -37,7 +37,17 @@
 //             PersistSet・Get / SaveGame・LoadGame / SetPadVibration。
 //             ミラー照合は tools\check_rules.ps1 規則 11 (順序・件数・名前・引数個数 +
 //             version⇄スロット数の同時性) が機械検査する
-#define MYE_API_VERSION 12u
+// v13 (M52i): ネット対戦 (2 人 P2P + 予測ロールバック) の状態参照 5 本 +
+//             入力アクションのレーン指定版 2 本。
+//             ★Net* の 5 本が返すのは**すべて機種依存の値** (自分がどちら側か / ping /
+//               巻き戻し回数)。読むのは表示・カメラ・UI といった描画レーンに限り、
+//               **sim 状態へ書き戻さないこと** — 書き戻した瞬間に 2 台のワールド
+//               ハッシュが割れる。誤用は M52i の desync 検出が毎 tick 見張っていて、
+//               「静かに壊れる」のではなく desync バンドルが出て止まる形で表面化する。
+//             ★レーン指定版は v12 の GetActionState/GetAxisValue と**同じ評価結果**を
+//               引くだけ (InputActions がレーン major で全 kMaxPlayers 本を持っている)。
+//               既存 2 本は「レーン 0」の別名として 1 文字も変えずに残す
+#define MYE_API_VERSION 13u
 
 // PersistSet の 1 エントリ最大バイト数 (v12)。PersistStore は WorldHash / セーブ出力に
 // 全量が載るため、無制限だと 1 キーでハッシュとセーブが肥大する
@@ -353,6 +363,23 @@ struct MyeEngineApi {
     //      record/verify 中とフォーカス喪失中は 0 に落とされ、終了時も 0 リセット。
     //      オーディオと同じ write-only — 振動状態の読み取りは存在しない ----
     void (*SetPadVibration)(void* engine, float left, float right);
+
+    // ---- v13 (M52i): ネット対戦の状態参照 ----
+    // ★**表示用**。ここで得た値を sim 状態へ書くとリプレイもネットも壊れる (上の注記)。
+    //   セッションが張られていないときは 0 / 1 レーンの既定値を返す
+    int (*NetIsConnected)(void* engine);      // 入力交換中なら 1
+    uint32_t (*NetLocalPlayer)(void* engine); // 自分が動かすレーン (非ネットは 0)
+    uint32_t (*NetPlayerCount)(void* engine); // セッションのレーン数 (非ネットは 1)
+    float (*NetPingMs)(void* engine);         // ピギーバック RTT の移動平均 (ms)
+    // これまでに巻き戻した回数。0 のまま増えないなら予測が当たり続けている
+    uint64_t (*NetRollbackCount)(void* engine);
+
+    // ---- v13 (M52i): 入力アクションのレーン指定版 ----
+    // v12 の GetActionState / GetAxisValue と同じ評価結果の player レーンを引く。
+    // player >= kMaxPlayers や未接続レーンは 0 (レーン 0 へフォールバックしない —
+    // 黙って別プレイヤーの入力で動くのが一番たちの悪い壊れ方)
+    uint32_t (*GetActionForPlayer)(void* engine, uint64_t nameHash, uint32_t player);
+    float (*GetAxisForPlayer)(void* engine, uint64_t nameHash, uint32_t player);
 };
 
 // スクリプトの各コールバックに渡されるコンテキスト (POD)

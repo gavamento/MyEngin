@@ -62,6 +62,9 @@
     <ClCompile Include="..\src\Editor\Windows\InspectorWindow.cpp">
       <Filter>Windows</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Editor\Windows\NetWindow.cpp">
+      <Filter>Windows</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Editor\Windows\ParticleSettingsWindow.cpp">
       <Filter>Windows</Filter>
     </ClCompile>
@@ -135,6 +138,9 @@
       <Filter>Windows</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\Windows\InspectorWindow.h">
+      <Filter>Windows</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Windows\NetWindow.h">
       <Filter>Windows</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\Windows\ParticleSettingsWindow.h">

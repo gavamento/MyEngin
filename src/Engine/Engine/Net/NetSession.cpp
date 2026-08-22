@@ -90,6 +90,12 @@ bool NetSession::Start(const NetConfig& cfg, const NetIdentity& localId, uint64_
     lastSubmitted_ = 0;
     hasSubmitted_ = false;
     peerSaidBye_ = false;
+    localConfirmTick_ = peerConfirmTick_ = 0;
+    localConfirmHash_ = peerConfirmHash_ = 0;
+    for (uint32_t i = 0; i < kNetPeerHashRing; ++i) {
+        peerHashTick_[i] = 0;
+        peerHashValue_[i] = 0;
+    }
     reject_ = NetReject::None;
     startMs_ = MonoMs();
     packetsSent_ = packetsRecv_ = packetsDropped_ = stallCount_ = 0;
@@ -172,6 +178,8 @@ void NetSession::SendTo(NetMsg type, const void* payload, size_t payloadSize, ui
     h.lastAckTick = nextNeededTick_;
     h.sendTimeMs = NowMs();
     h.echoTimeMs = peerSendTimeMs_;
+    h.confirmTick = localConfirmTick_;
+    h.confirmHash = localConfirmHash_;
     std::memcpy(buf, &h, sizeof(h));
     if (payload != nullptr && payloadSize > 0) {
         std::memcpy(buf + sizeof(h), payload, payloadSize);
@@ -342,6 +350,20 @@ void NetSession::HandlePacket(const NetAddress& from, const uint8_t* data, int s
     }
     lastRecvMs_ = NowMs();
     peerSendTimeMs_ = h.sendTimeMs;
+    // M52i: 相手の確定点。**後退させない** — 冗長送信で古いパケットが後から届くので、
+    // 単純代入だと確定点が行ったり来たりして desync の照合対象が安定しない
+    if (h.confirmHash != 0) {
+        const size_t slot =
+            static_cast<size_t>((h.confirmTick / kNetHashCheckpoint) % kNetPeerHashRing);
+        peerHashTick_[slot] = h.confirmTick;
+        peerHashValue_[slot] = h.confirmHash;
+        // 「いま相手がどこまで確定したか」は**後退させない** — 冗長送信で古いパケットが
+        // 後から届くので、単純代入だと進捗表示が行ったり来たりする
+        if (peerConfirmHash_ == 0 || h.confirmTick >= peerConfirmTick_) {
+            peerConfirmTick_ = h.confirmTick;
+            peerConfirmHash_ = h.confirmHash;
+        }
+    }
     if (h.echoTimeMs != 0) {
         // 相手が echo し返した「こちらの送信時刻」との差 = RTT (どちらも自分の時計で完結)
         const float rtt = static_cast<float>(static_cast<int32_t>(NowMs() - h.echoTimeMs));
@@ -475,6 +497,64 @@ bool NetSession::WaitForInputs(uint64_t tick, uint32_t maxWaitMs)
 const InputSnapshot* NetSession::InputsFor(uint64_t tick) const
 {
     return &ring_[Slot(tick)];
+}
+
+const InputSnapshot* NetSession::LaneInput(uint64_t tick, uint32_t player) const
+{
+    if (player >= kMaxPlayers) {
+        return nullptr;
+    }
+    const size_t idx = Slot(tick) + player;
+    return (stamp_[idx] == tick) ? &ring_[idx] : nullptr;
+}
+
+const InputSnapshot* NetSession::PredictLane(uint64_t tick, uint32_t player) const
+{
+    if (player >= kMaxPlayers) {
+        return nullptr;
+    }
+    const uint64_t limit = kNetRedundancy * 2;
+    uint64_t t = tick;
+    for (uint64_t k = 0; k < limit; ++k) {
+        if (t == 0) {
+            break;
+        }
+        --t;
+        const size_t idx = Slot(t) + player;
+        if (stamp_[idx] == t) {
+            return &ring_[idx];
+        }
+    }
+    return nullptr; // 手掛かりゼロ = 呼び出し側がゼロ入力で埋める
+}
+
+void NetSession::SetLocalConfirmed(uint64_t tick, uint64_t hash)
+{
+    if (hash == 0) {
+        return; // 0 は「確定なし」の予約値 (嘘の確定点を主張しない)
+    }
+    localConfirmTick_ = tick;
+    localConfirmHash_ = hash;
+}
+
+bool NetSession::PeerConfirmed(uint64_t& outTick, uint64_t& outHash) const
+{
+    if (peerConfirmHash_ == 0) {
+        return false;
+    }
+    outTick = peerConfirmTick_;
+    outHash = peerConfirmHash_;
+    return true;
+}
+
+bool NetSession::PeerHashFor(uint64_t tick, uint64_t& outHash) const
+{
+    const size_t slot = static_cast<size_t>((tick / kNetHashCheckpoint) % kNetPeerHashRing);
+    if (peerHashTick_[slot] != tick || peerHashValue_[slot] == 0) {
+        return false;
+    }
+    outHash = peerHashValue_[slot];
+    return true;
 }
 
 void NetSession::SubmitLocalInput(uint64_t tick, const InputSnapshot& in)

@@ -186,7 +186,10 @@ ReplayDiffResult DiffReplayFiles(const std::wstring& a, const std::wstring& b)
         { "rngInc", ha.rngInc, hb.rngInc },
         { "entityCount", ha.entityCount, hb.entityCount },
         { "snapshotSize", ha.snapshotSize, hb.snapshotSize },
-        { "tickCount", ha.tickCount, hb.tickCount },
+        // ★tickCount はここに入れない (M52i)。desync バンドルの 2 本は「割れた側が先に
+        //   気づいて先に止まる」ので**必ず長さが違う**。長さ違いを門前払いにすると、
+        //   本当に見たい「どの tick から割れたか」に一生たどり着けない。
+        //   共通部分を比べてから、最後に長さの違いを結論として述べる
     };
     for (const HeaderField& f : fields) {
         if (f.a != f.b) {
@@ -201,7 +204,7 @@ ReplayDiffResult DiffReplayFiles(const std::wstring& a, const std::wstring& b)
         r.summary = "the embedded start snapshots differ";
         return r;
     }
-    const uint64_t ticks = pa.TickCount();
+    const uint64_t ticks = (pa.TickCount() < pb.TickCount()) ? pa.TickCount() : pb.TickCount();
     for (uint64_t t = 0; t < ticks; ++t) {
         for (uint32_t p = 0; p < ha.playerCount; ++p) {
             const std::string field =
@@ -227,6 +230,19 @@ ReplayDiffResult DiffReplayFiles(const std::wstring& a, const std::wstring& b)
             r.summary = buf;
             return r;
         }
+    }
+    if (pa.TickCount() != pb.TickCount()) {
+        // 共通部分は完全一致した = 「同じ tick 列を回したが、片方が先に止まった」。
+        // これは一致ではないので same は立てない (検証としては失敗のまま)
+        std::snprintf(buf, sizeof(buf),
+                      "the first %llu ticks are identical but the runs have different lengths "
+                      "(%llu vs %llu ticks)",
+                      static_cast<unsigned long long>(ticks),
+                      static_cast<unsigned long long>(pa.TickCount()),
+                      static_cast<unsigned long long>(pb.TickCount()));
+        r.firstDiffTick = ticks;
+        r.summary = buf;
+        return r;
     }
     std::snprintf(buf, sizeof(buf), "identical: %llu ticks x %u lanes",
                   static_cast<unsigned long long>(ticks), ha.playerCount);

@@ -85,9 +85,18 @@ public:
 
     // tick 1 本走った直後に呼ぶ。ranTick = いま走り終えた tick の番号。
     // ranTick がリングの途中なら「シーク後に走った = 分岐」とみなして未来を捨てる。
-    // inputs は playerCount 本のレーン配列 (残りはゼロ値で埋める)
+    // inputs は playerCount 本のレーン配列 (残りはゼロ値で埋める)。
+    // ★hashAfter は**呼び出し側が撮った tick 末ハッシュ**を渡す (M52i)。
+    //   M52f までは中で HashOf していたが、クラッシュリング / ロールバックが同じ tick で
+    //   同じものを撮るので、消費者ごとに撮ると 1 tick に 2〜3 回走る (実測 約 0.2ms/回)。
+    //   撮る点そのものは変えていない — HashOf を公開してあるので、呼び出し側が
+    //   「同じ 3 出口・同じ引数」で撮っていることは型で担保できる
     void OnTickEnd(const SimRefs& refs, uint64_t ranTick, const InputSnapshot* inputs,
-                   uint32_t playerCount, bool simulated);
+                   uint32_t playerCount, bool simulated, uint64_t hashAfter);
+
+    // record/verify が撮っているのと同じ 3 出口・同じ引数のワールドハッシュ。
+    // OnTickEnd へ渡す値はこれと一致していること
+    static uint64_t HashOf(const SimRefs& refs);
 
     // ---- シーク要求 (UI → EngineLoop) ----
     // 要求した時点でスクラブ状態に入る = EngineLoop は tick を進めなくなる。
@@ -126,7 +135,6 @@ private:
     bool TakeSnapshot(const SimRefs& refs, uint64_t tick);
     void Evict();
     void DropSnapshotsAfter(uint64_t tick);
-    static uint64_t HashOf(const SimRefs& refs);
 
     TimeTravelConfig config_;
     bool want_ = false;

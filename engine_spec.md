@@ -699,6 +699,76 @@ running it with `--local-players 2` also pins "lanes beyond `playerCount` stay z
 hash chain. Forcing every entity to read lane 0 makes the pair fail at tick 0, and `--hash-diff`
 names the offending `PlayerInput.axes` / `heldBits` / `pressedBits` fields directly.
 
+### 11.4 Networked Determinism (2-player P2P, delay lockstep + predictive rollback)
+
+M52h/M52i turn the replay determinism this chapter guarantees into a netcode. The claim being
+cashed in is narrow and exact:
+
+> **When a tick runs** may depend on wall-clock time, packet arrival and frame rate.
+> **What a tick consumes** may depend on nothing but confirmed input.
+
+Everything else follows. `NetSession` never writes a byte of simulation state; its only job is to
+have every peer's lane for tick *T* in hand before *T* is consumed. `tools\net_verify.bat` proves
+the separation held by recording a `.rep` on both peers and requiring that they are byte-identical
+**and** identical to a single-process `--local-players 2 --synth-input` reference.
+
+**Transport.** UDP, non-blocking, two peers only (mesh, relay and NAT traversal are out of scope).
+There is no retransmission: every packet carries the last `kNetRedundancy = 8` ticks of the
+sender's lane, which absorbs loss without any ordering or duplicate handling. A keep-alive every
+50 ms is not decoration — while a peer stalls it submits no input, so a lost packet the other side
+is waiting for would never be resent and both would deadlock. The handshake compares protocol
+version, `MYE_API_VERSION`, `.rep` version, snapshot-blob version, lane count, input delay,
+determinism-relevant launch options and **the starting world hash**, and refuses on the first
+mismatch: the largest single cause of desync is stopped at the door rather than debugged later.
+
+**Delay lockstep (M52h).** Each peer confirms its own lane for tick `T + inputDelay` immediately
+before running tick `T` — once, structurally, per tick. Confirming from the frame head instead
+would re-send a different value for the same target tick on frames that run no tick, and the peer
+that already consumed the first value desyncs at once. During a session the C# lane is stopped and
+`LoadGame` is refused (neither is snapshotted, so neither can be re-simulated); audio is **not**
+suspended, because the reason record/verify suspends it is fast-forward playback, not determinism.
+
+**Predictive rollback (M52i).** Waiting for a late lane is only acceptable while the wait is short.
+Instead the missing lane is predicted — the newest confirmed value, repeated — the tick runs, and
+the world is corrected once the truth arrives:
+
+1. Every tick end captures a `SimSnapshot` of the state *before the next tick* and records what
+   the tick consumed, its end-of-tick hash, and whether any lane was predicted
+2. Each frame the arrived input is compared against what was actually fed. If they match, the
+   speculative flag is simply cleared. If they differ at tick `B`, the snapshot taken before `B`
+   is restored and ticks `B..now` are re-simulated through **the same `RunOneTick`** normal ticks
+   and time-travel seeks use
+3. Speculation is capped at `kNetMaxSpeculation = 8` ticks (133 ms); beyond that the session
+   stalls, which is exactly the M52h behaviour. `--net-no-rollback` pins it there permanently
+
+A tick that ran on a prediction is not final, so it is **not** written to the `.rep` and its hash is
+**not** advertised to the peer. Recording moves out of `RunOneTick` and into the confirmation step,
+where a tick is appended only once its inputs can no longer be overturned. That is why a rollback
+run and a lockstep run produce the same file, and why `net_verify.bat` can compare them.
+
+**Desync detection.** Every 8 confirmed ticks a peer advertises `(tick, world hash)`, piggybacked
+on the input packets it already sends. The checkpoint interval is fixed rather than "whatever
+arrived last" so that both peers converge on the *same* first disagreeing tick — comparing only the
+newest advertisement makes the reported tick a function of arrival timing, and the two peers name
+different ticks. On a mismatch each peer writes `crash\desync_<tick>_p<lane>\` containing the
+`CrashRing` `.rep` (snapshot-embedded, replayable), a field-level hash dump, and the exact command
+sequence to localise the divergence, then halts with exit code 4 (`--net-no-halt-on-desync` keeps
+running for observation). Continuing silently is the worst option available: after a desync the two
+worlds are simply different games that still look playable.
+
+`--net-poke-tick N` corrupts one field of simulation state on purpose, inside the tick body so that
+record, verify and networked play all reproduce it. `net_verify.bat` case E uses it end to end:
+both peers halt at the same checkpoint, `--rep-diff` names the exact tick, and replaying the two
+bundles at that tick and running `--hash-diff` names the single corrupted field.
+
+**What is *not* deterministic here, and must not leak into the simulation.** The ABI v13 slots
+`NetLocalPlayer` / `NetPlayerCount` / `NetIsConnected` / `NetPingMs` / `NetRollbackCount` all return
+machine-dependent values. Scripts may read them for presentation — UI text, camera framing, debug
+draw — but writing any of them into hashed state breaks the peers apart. The engine does not
+prevent this; the checkpoint comparison catches it within eight ticks and produces a bundle, which
+is the same bargain the rest of this chapter makes: rules plus mechanical verification, not
+enforcement. `--net-demo` (`NetDuelDemo` + `NetHudDemo`) exists as the worked example of the split.
+
 ---
 
 ## 12. Milestones
@@ -735,7 +805,9 @@ ADR-001 hybrid ECS / ADR-002 DLL-only hot reload / ADR-003 engine-side script st
 ADR-004 replay consistency / ADR-005 fixed tick, per-tick structural changes /
 ADR-006 build system / ADR-007 dual render path / ADR-008 particle determinism /
 ADR-009 hybrid path tracing (§6.4) / ADR-010 editor localization (§9.1) /
-**ADR-011 compose assets (`.actor.json` = prefab 2.0)** (§10).
+**ADR-011 compose assets (`.actor.json` = prefab 2.0)** (§10) /
+ADR-012 structural prefab overrides / **ADR-013 predictive rollback netcode** (§11.4) /
+**ADR-014 CI and pixel regression** (§11).
 
 ---
 

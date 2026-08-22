@@ -210,6 +210,9 @@
     <ClCompile Include="..\src\Engine\Engine\ModelLoader.cpp">
       <Filter>Engine</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Net\NetRollback.cpp">
+      <Filter>Engine\Net</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Net\NetSelfTest.cpp">
       <Filter>Engine\Net</Filter>
     </ClCompile>
@@ -644,6 +647,12 @@
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\ModelLoader.h">
       <Filter>Engine</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Net\NetRollback.h">
+      <Filter>Engine\Net</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Net\NetRuntime.h">
+      <Filter>Engine\Net</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Net\NetSelfTest.h">
       <Filter>Engine\Net</Filter>

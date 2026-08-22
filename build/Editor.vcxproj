@@ -68,6 +68,7 @@
     <ClCompile Include="..\src\Editor\Windows\GameViewWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\HierarchyWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\InspectorWindow.cpp" />
+    <ClCompile Include="..\src\Editor\Windows\NetWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\ParticleSettingsWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\ProfilerWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\ProjectSettingsWindow.cpp" />
@@ -109,6 +110,7 @@
     <ClInclude Include="..\src\Editor\Windows\GameViewWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\HierarchyWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\InspectorWindow.h" />
+    <ClInclude Include="..\src\Editor\Windows\NetWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\ParticleSettingsWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\ProfilerWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\ProjectSettingsWindow.h" />

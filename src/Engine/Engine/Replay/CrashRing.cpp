@@ -143,6 +143,23 @@ void CrashRing::OnTickEnd(const SimRefs& refs, uint64_t ranTick, uint64_t hashAf
     }
 }
 
+void CrashRing::Rewind(uint64_t tick)
+{
+    if (!enabled_ || !ready_) {
+        return;
+    }
+    if (tick < snapshotTick_ || tick > nextTick_) {
+        // 保持スナップショットより前へは戻せない = 記録を止めて次の tick 末に撮り直す
+        ready_ = false;
+        return;
+    }
+    const uint64_t keep = tick - snapshotTick_;
+    HeaderOf(image_)->tickCount = keep;
+    nextTick_ = tick;
+    ticksSinceSnapshot_ = keep;
+    inFlight_ = false;
+}
+
 const std::byte* CrashRing::RepImage(size_t& outSize) const
 {
     outSize = 0;

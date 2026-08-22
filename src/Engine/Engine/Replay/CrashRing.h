@@ -60,6 +60,14 @@ public:
     // tick が走り切った直後。in-flight レコードのハッシュを確定し、必要なら撮り直す
     void OnTickEnd(const SimRefs& refs, uint64_t ranTick, uint64_t hashAfter);
 
+    // tick 列を tick まで巻き戻す (M52i)。**ロールバック再シムの直前に呼ぶ**。
+    // ★これが無いと、再シムの OnTickBegin が「tick 列が飛んだ」と判定して毎回
+    //   撮り直しになり、リングが常に 1〜2 tick しか持たない .rep へ痩せる
+    //   (実測: ネット対戦中の crash.rep / desync バンドルが役に立たなくなる)。
+    //   保持しているスナップショット 1 枚の tick 以降なら、レコード本数を切り詰める
+    //   だけで整合するので撮り直しは要らない
+    void Rewind(uint64_t tick);
+
     // ---- ここから下はクラッシュハンドラの中から呼ばれる (確保もロックもしない) ----
     // 完成済みの .rep イメージ。撮影中 (= 一貫していない) なら nullptr
     const std::byte* RepImage(size_t& outSize) const;

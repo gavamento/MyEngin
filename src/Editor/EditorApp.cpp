@@ -57,6 +57,7 @@ void EditorApp::OnStart(EngineContext& ctx)
                     { "Search", &search_.open },
                     { "Profiler", &profiler_.open },
                     { "Timeline", &timeline_.open },
+                    { "Network", &net_.open },
                     { "Particle Settings", &particleSettings_.open },
                     { "Sound Generator", &soundGen_.open },
                     { "Audio Mixer", &audioMixer_.open },
@@ -85,6 +86,8 @@ void EditorApp::OnStart(EngineContext& ctx)
         // M52g: コードから毎回組む (ファイルは作らない)。パスだけ cache\ へ振っておくと、
         // 万一 Ctrl+S されても既定デモシーン = golden.rep の入力を潰さない
         scenePath_ = L"cache\\local_players.scene.json";
+    } else if (netDemo) {
+        scenePath_ = L"cache\\net_duel.scene.json"; // M52i (同上)
     } else {
         scenePath_ = ctx.assetsRoot + L"\\scenes\\main.scene.json";
         ProjectManifest manifest; // ブートシーンはマニフェスト優先 (M26)
@@ -107,6 +110,7 @@ void EditorApp::OnStart(EngineContext& ctx)
     RegisterPartsShowcaseContent(ctx);
     RegisterFlowShowcaseContent(ctx); // M51j (flow_* 材質。少数の名前キー登録なので常時)
     RegisterLocalPlayersContent(ctx); // M52g (mp_* 材質。同上の理由で常時)
+    RegisterNetDuelContent(ctx);      // M52i (duel_* 材質。同上)
     if (flowShowcase) {
         // 両シーンファイルを確保してからタイトルを普通のロード経路で開く。
         // ここで組む = GameLogic.dll / C# コンパイル済み (EngineLoop が OnStart 前に実施)
@@ -124,6 +128,8 @@ void EditorApp::OnStart(EngineContext& ctx)
         BuildPartsShowcaseScene(ctx); // M48g
     } else if (localDemo) {
         BuildLocalPlayersScene(ctx); // M52g
+    } else if (netDemo) {
+        BuildNetDuelScene(ctx); // M52i
     } else {
         BuildDemoScene(ctx, perfRate, perfMax);
     }
@@ -401,6 +407,7 @@ void EditorApp::OnImGui(EngineContext& ctx)
     particleSettings_.OnImGui(ctx);
     profiler_.OnImGui(ctx);
     timeline_.OnImGui(ctx, playMode_);
+    net_.OnImGui(ctx);
     assetBrowser_.OnImGui(ctx, selection_, undo_, settings_.externalEditorCmd, preview_);
     // AssetBrowser で .scene.json がダブルクリックされたら未保存変更ガード経由で開く
     if (std::wstring p = assetBrowser_.TakePendingOpenScene(); !p.empty()) {
@@ -680,6 +687,7 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
         ImGui::MenuItem(Tr(StrId::Win_Search), nullptr, &search_.open);
         ImGui::MenuItem(Tr(StrId::Win_Profiler), nullptr, &profiler_.open);
         ImGui::MenuItem(Tr(StrId::Win_Timeline), nullptr, &timeline_.open);
+        ImGui::MenuItem(Tr(StrId::Win_Net), nullptr, &net_.open);
         ImGui::MenuItem(Tr(StrId::Win_ParticleSettings), nullptr, &particleSettings_.open);
         ImGui::MenuItem(Tr(StrId::Win_SoundGenerator), nullptr, &soundGen_.open);
         ImGui::MenuItem(Tr(StrId::Win_AudioMixer), nullptr, &audioMixer_.open);

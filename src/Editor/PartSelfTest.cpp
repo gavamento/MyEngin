@@ -174,11 +174,24 @@ bool RunPartSelfTest()
         };
         const MyeEntityId root = toShared(enemy.Id());
 
-        check(api.version == MYE_API_VERSION && MYE_API_VERSION == 12u,
-              "abi: the table reports v12");
+        check(api.version == MYE_API_VERSION && MYE_API_VERSION == 13u,
+              "abi: the table reports v13");
         check(api.FindPart != nullptr && api.FindPartsByTag != nullptr,
               "abi: the v9 part slots are filled in");
         check(api.RaycastParts != nullptr, "abi: the v10 RaycastParts slot is filled in");
+        // v13 (M52i): ネット状態 + レーン指定アクション。**充填漏れ**は規則 11 が静的に
+        // 見るが、ここでは「テーブルを組み立てた実物に入っているか」を実行時に見る
+        check(api.NetIsConnected != nullptr && api.NetLocalPlayer != nullptr
+                  && api.NetPlayerCount != nullptr && api.NetPingMs != nullptr
+                  && api.NetRollbackCount != nullptr,
+              "abi: the v13 net slots are filled in");
+        check(api.GetActionForPlayer != nullptr && api.GetAxisForPlayer != nullptr,
+              "abi: the v13 per-lane action slots are filled in");
+        // セッションを張っていない実行での既定値 (スクリプトが分岐に使う値そのもの)
+        check(api.NetIsConnected(api.engine) == 0 && api.NetLocalPlayer(api.engine) == 0
+                  && api.NetPlayerCount(api.engine) == 1
+                  && api.NetRollbackCount(api.engine) == 0ull,
+              "abi: without a session the net slots report 'local, one lane'");
         check(api.GetComponentField != nullptr && api.SetComponentField != nullptr,
               "abi: the v11 generic field slots are filled in");
         check(api.GetMouseWheel != nullptr && api.SetUIRect != nullptr

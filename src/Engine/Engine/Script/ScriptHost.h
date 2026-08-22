@@ -36,7 +36,8 @@ public:
                            uint64_t* audioHandleSeq = nullptr,
                            const InputActions* inputActions = nullptr,
                            int* pendingSaveSlot = nullptr, int* pendingLoadSlot = nullptr,
-                           PadVibrationState* padVibration = nullptr)
+                           PadVibrationState* padVibration = nullptr,
+                           const NetRuntimeInfo* net = nullptr)
     {
         apiCtx_.audioQueue = audioQueue;
         apiCtx_.pendingScene = pendingScene;
@@ -47,6 +48,7 @@ public:
         apiCtx_.pendingSaveSlot = pendingSaveSlot;
         apiCtx_.pendingLoadSlot = pendingLoadSlot;
         apiCtx_.padVibration = padVibration;
+        apiCtx_.net = net; // v13 (M52i)。null = ネット非使用
     }
 
     // シーン遷移 (M19.4): Start 済み記録をクリアして新シーンのエンティティで Start を再実行させる

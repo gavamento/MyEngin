@@ -596,3 +596,51 @@ inline void MyeSetPadVibration(const MyeUpdateContext& ctx, float left, float ri
 {
     ctx.api->SetPadVibration(ctx.api->engine, left, right);
 }
+
+// ---- v13 (M52i): ネット対戦の状態 + 入力アクションのレーン指定版 ----
+
+// ★Net* が返すのは**機種依存の値** (自分がどちら側か / 実時間 / 巻き戻し回数)。
+//   読んだ値を sim 状態へ書き戻すと 2 台のワールドハッシュが割れる — 表示・カメラ・
+//   UI の判断にだけ使うこと (詳細は EngineAPI.h の v13 の注記)。
+//   誤用は M52i の desync 検出が捕まえて desync バンドルを吐いて止まる
+inline bool MyeNetIsConnected(const MyeUpdateContext& ctx)
+{
+    return ctx.api->NetIsConnected(ctx.api->engine) != 0;
+}
+// 自分が動かすレーン。ネット非使用なら 0
+inline uint32_t MyeNetLocalPlayer(const MyeUpdateContext& ctx)
+{
+    return ctx.api->NetLocalPlayer(ctx.api->engine);
+}
+// セッションのレーン数。ネット非使用なら 1
+inline uint32_t MyeNetPlayerCount(const MyeUpdateContext& ctx)
+{
+    return ctx.api->NetPlayerCount(ctx.api->engine);
+}
+inline float MyeNetPingMs(const MyeUpdateContext& ctx)
+{
+    return ctx.api->NetPingMs(ctx.api->engine);
+}
+inline uint64_t MyeNetRollbackCount(const MyeUpdateContext& ctx)
+{
+    return ctx.api->NetRollbackCount(ctx.api->engine);
+}
+
+// レーン指定のアクション/軸。**これは決定論の内側** (記録済み入力の純関数) なので
+// sim 状態へそのまま書いてよい。player は 0..kMaxPlayers-1、範囲外は 0
+inline bool MyeActionHeldFor(const MyeUpdateContext& ctx, const char* name, uint32_t player)
+{
+    return (ctx.api->GetActionForPlayer(ctx.api->engine, MyeNameHash(name), player) & 1u) != 0;
+}
+inline bool MyeActionPressedFor(const MyeUpdateContext& ctx, const char* name, uint32_t player)
+{
+    return (ctx.api->GetActionForPlayer(ctx.api->engine, MyeNameHash(name), player) & 2u) != 0;
+}
+inline bool MyeActionReleasedFor(const MyeUpdateContext& ctx, const char* name, uint32_t player)
+{
+    return (ctx.api->GetActionForPlayer(ctx.api->engine, MyeNameHash(name), player) & 4u) != 0;
+}
+inline float MyeAxisFor(const MyeUpdateContext& ctx, const char* name, uint32_t player)
+{
+    return ctx.api->GetAxisForPlayer(ctx.api->engine, MyeNameHash(name), player);
+}

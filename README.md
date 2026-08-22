@@ -46,9 +46,10 @@ C++20 / DirectX 11 製の自作ゲームエンジン。**Unity 風の使いや�
 - **Debug/Release 一貫性** — 固定 60Hz tick、`/fp:precise`、PCG32、明示ソートキー。
   リプレイ (.rep) の tick 毎ワールドハッシュ比較で機械検証:
   `tools\replay_verify.bat` が両構成ビルド → Debug 記録 → Debug/Release 照合 → 静的規則検査。
-  **被覆は 3 シーン**: 既定デモ (物理 / パーティクル / スクリプト) / 部位ショーケース
+  **被覆は 4 シーン**: 既定デモ (物理 / パーティクル / スクリプト) / 部位ショーケース
   (スキンメッシュのボーン追従 = 骨駆動 LocalTransform の構成間ビット一致) /
-  ゲームフロー統合デモ (シーン遷移・ポーズ・セーブ・アクションマップ)。
+  ゲームフロー統合デモ (シーン遷移・ポーズ・セーブ・アクションマップ) /
+  ローカル 2P デモ (プレイヤー別入力レーンの配線)。
   割れた tick は**どのエンティティのどのフィールドが**割れたかまで自動で出る (`--hash-diff`)
 - **クラッシュしたら「再現可能なバグ報告」が自動で残る** — 例外 (スタックオーバーフロー含む) /
   `std::terminate` / 純粋仮想呼び出し / CRT 不正パラメータを捕まえ、`crash\<日時>\` に
@@ -58,8 +59,18 @@ C++20 / DirectX 11 製の自作ゲームエンジン。**Unity 風の使いや�
   **起動シーンに依らず落ちる直前の tick までハッシュ一致で再現**する
   (Debug の Editor で出た報告を Release の Runtime で再生できることを実測)。
   ハンドラ内では一切ヒープを触らないよう、.rep のバイト列は平常時から組み上げて持っている
+- **決定論を転用したネットコード (2 人 P2P)** — UDP + 遅延ロックステップ + **予測ロールバック**。
+  未着の相手入力を「直近の確定値の繰り返し」で予測して先へ進み、外れたら最大 8 tick 巻き戻して
+  **通常 tick と同じ `RunOneTick`** で再シムする。ネット層は sim 状態を 1 バイトも書かない —
+  「いつ tick が回るか」は実時間依存でよいが「tick が何を消費するか」は確定入力だけで決まる、
+  という分離がすべて。`tools\net_verify.bat` は 2 プロセスを実際に起動して
+  **2 台の .rep がバイト一致**し、さらに**ローカル 2P 実行の .rep とも一致**することを確かめる
+  (遅延 1 tick + ロス 30% で 21 回巻き戻しても一致を実測)。接続時は API 版 / .rep 版 /
+  起動オプション / **開始ワールドハッシュ**を照合して不一致は拒否。走行中も 8 tick ごとに
+  確定ハッシュを交換し、割れたら `crash\desync_<tick>_p<lane>\` に再現可能なバンドルを吐いて停止する。
+  詳細は [ADR-013](docs/adr/ADR-013-predictive-rollback-netcode.md)
 - **CI (GitHub Actions)** — push ごとに 8 ビルド (4 プロジェクト × Debug/Release、警告 0 を強制) +
-  リプレイ照合 3 ペア + 静的規則検査 + セルフテスト両構成 + 配布パッケージのスモークが回る。
+  リプレイ照合 4 ペア + 静的規則検査 + セルフテスト両構成 + 配布パッケージのスモークが回る。
   **GPU の無い runner でも回る**のは sim が CPU 専用だから — 描画は WARP
   (ソフトウェアラスタライザ) へ自動フォールバックし、ワールドハッシュはドライバに依らず一致する
   (WARP で録った .rep が RTX 3060 でそのまま照合できることを実測)
@@ -87,8 +98,14 @@ Editor.exe --warp                         # WARP (ソフトウェアラスタラ
 Editor.exe --package dist                 # 配布パッケージを CLI で作成 (exit code で成否)
 Runtime.exe --crash-test av --crash-at-tick 60
                                           # 意図的に落としてクラッシュバンドルを作る
-tools\replay_verify.bat                   # 一貫性検証一式 (3 シーン被覆)
+Runtime.exe --net-demo --net-host 7777    # 2 人対戦デモ (ホスト)
+Runtime.exe --net-demo --net-join 127.0.0.1:7777 --net-delay 3
+                                          # 同 (参加側)。--net-no-rollback で素のロックステップ
+Runtime.exe --net-poke-tick 60            # 片側だけ壊して desync 検出と診断チェーンを試す
+Runtime.exe --rep-diff a.rep b.rep        # 2 本の .rep がどの tick で割れたか
+tools\replay_verify.bat                   # 一貫性検証一式 (4 シーン被覆)
 tools\crash_verify.bat                    # 5 経路で実際に落として .rep の再現性を検証
+tools\net_verify.bat                      # 2 プロセスのネット対戦 + desync 検出の実地検証
 tools\check_rules.ps1                     # コーディング規則の静的検査
 tools\gen_project_files.ps1               # ソース一覧を vcxproj に反映
 ```

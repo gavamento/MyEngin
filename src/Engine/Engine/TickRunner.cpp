@@ -381,6 +381,33 @@ void RunOneTick(TickServices& ts)
     }
     scene.GetWorld().ApplyStructuralChanges(); // フェーズ 7 (tick 末適用 = ADR-005)
 
+    // ---- 意図的な状態の変異 (M52i、--net-poke-tick N) ----
+    // desync 検出と診断チェーン (--rep-diff → --hash-diff) が本当に働くかは、
+    // 実際に壊して確かめるしかない (--crash-test と同じ流儀)。
+    // ★**ここ (構造変更適用の直後 = ハッシュもダンプも撮る前) に置くのが要点**。
+    //   tick の外から壊すと、その tick の記録ハッシュに載らず「再生では再現しない変異」に
+    //   なる。--hash-dump より後ろだと、今度は診断ダンプにだけ映らない。ここに置けば
+    //   record / verify / ネット / --hash-dump のすべてが同じ 1 フィールドの変異を見る。
+    // ★ネット専用ではない (名前は用途由来)。片側のプロセスにだけ渡して使う
+    if (config.netPokeTick >= 0 && ctx.tickIndex == static_cast<uint64_t>(config.netPokeTick)) {
+        // 壊す先は**ハッシュの走査順で最初に出てくる LocalTransform**。
+        // HashWorldDetailed と同じ列を使うので、--hash-diff が指す行と必ず対応する
+        std::vector<EntityHash> order;
+        uint64_t total = 0;
+        HashWorldDetailed(scene.GetWorld(), &particleSystem.Cpu(), order, total, &scene.Time(),
+                          &scene.Persist());
+        for (const EntityHash& e : order) {
+            if (auto* t = scene.GetWorld().GetComponent<LocalTransform>(e.entity)) {
+                t->position.x += 0.001f;
+                MYE_LOG_ERROR("[net] --net-poke-tick %llu: corrupted %s LocalTransform.position.x "
+                              "on purpose (this build will desync)",
+                              static_cast<unsigned long long>(ctx.tickIndex),
+                              scene.GetWorld().GetName(e.entity));
+                break;
+            }
+        }
+    }
+
     // ---- ハッシュ差分診断 (M52a): 指定 tick のフィールド単位ダンプ ----
     // ハッシュを撮るのと**同じ点**で撮る (ここより前後だと診断が別の状態を指す)
     if (!config.hashDumpPath.empty()

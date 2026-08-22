@@ -753,3 +753,29 @@ MYE_STR(TT_SeekFailed,        "last seek: failed (no snapshot old enough)",
 MYE_STR(TT_CsharpNote,        "C# script state does not rewind - only the C++ sim lane is captured.",
                               "C# スクリプトの状態は巻き戻りません — 撮影対象は C++ の sim レーンだけです。")
 MYE_STR(Tool_TipTimeTravel,   "rewind 30 ticks (time travel)", "30 tick 巻き戻す (タイムトラベル)")
+
+// ---- ネットワーク (M52i) ----
+MYE_STR(Win_Net,              "Network###Net", "ネットワーク###Net")
+MYE_STR(Net_Inactive,         "No net session. Launch with --net-host PORT or --net-join HOST:PORT.",
+                              "ネットセッションはありません。--net-host PORT か --net-join HOST:PORT で起動してください。")
+MYE_STR(Net_Connecting,       "connecting...", "接続中...")
+MYE_STR(Net_Role,             "role: %s   lane %u of %u   input delay %u ticks",
+                              "役: %s   レーン %u / %u   入力遅延 %u tick")
+MYE_STR(Net_RoleHost,         "host", "ホスト")
+MYE_STR(Net_RoleJoin,         "join", "参加")
+MYE_STR(Net_Ping,             "ping %.0f ms   (piggybacked: includes the peer frame time)",
+                              "ping %.0f ms   (ピギーバック計測なので相手のフレーム時間を含みます)")
+MYE_STR(Net_Rollback,         "rollback: %llu times / %llu re-simulated ticks / max depth %llu",
+                              "ロールバック: %llu 回 / 再シム %llu tick / 最大 %llu tick")
+MYE_STR(Net_Predicted,        "predicted ticks: %llu   (now %u ticks ahead of the confirmed frontier)",
+                              "予測実行した tick: %llu   (確定点より %u tick 先行中)")
+MYE_STR(Net_RollbackOff,      "rollback is off (--net-no-rollback): the sim stalls until every lane arrives.",
+                              "ロールバックは無効です (--net-no-rollback)。全レーンがそろうまで sim が止まります。")
+MYE_STR(Net_Confirmed,        "confirmed through tick %llu   local %016llX / peer %016llX (tick %llu)",
+                              "tick %llu まで確定   自分 %016llX / 相手 %016llX (tick %llu)")
+MYE_STR(Net_Packets,          "packets: sent %llu / recv %llu / dropped %llu   stalls %llu (%.0f ms)",
+                              "パケット: 送信 %llu / 受信 %llu / 破棄 %llu   stall %llu 回 (%.0f ms)")
+MYE_STR(Net_Desync,           "DESYNC at tick %llu - a bundle was written to crash\\desync_<tick>_p<lane>\\.",
+                              "tick %llu で DESYNC — crash\\desync_<tick>_p<lane>\\ にバンドルを出力しました。")
+MYE_STR(Net_HashNote,         "World hashes are exchanged every 8 confirmed ticks; a mismatch halts the session.",
+                              "確定 tick 8 個ごとにワールドハッシュを交換します。食い違うとセッションを停止します。")

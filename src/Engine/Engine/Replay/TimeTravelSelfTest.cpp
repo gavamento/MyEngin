@@ -57,7 +57,7 @@ bool RunTimeTravelSelfTest()
         InputSnapshot in[2] = {};
         in[0].mouseX = static_cast<int32_t>(tick); // 入力の同一性を後で照合するための目印
         in[1].mouseX = static_cast<int32_t>(tick) + 1000;
-        tt.OnTickEnd(refs, tick, in, 2, simulated);
+        tt.OnTickEnd(refs, tick, in, 2, simulated, TimeTravel::HashOf(refs));
         ++tick;
     };
 

@@ -231,7 +231,7 @@ if (-not (Test-Path $tablePath)) {
 # 11-c  MYE_API_VERSION とスロット数の対応が下表と一致 — スロットを足すときは
 #       version の bump とこの表の更新を**同時に**行うこと (どちらか片方だとここで止まる)
 # 11-d  EngineApiTable.cpp が全スロットに `out.<Name> =` で実装を充填している
-$apiVersionSlots = @{ 11 = 73; 12 = 87 }
+$apiVersionSlots = @{ 11 = 73; 12 = 87; 13 = 94 }
 $apiHeaderPath = Join-Path $repo 'src\Shared\EngineAPI.h'
 $interopPath = Join-Path $repo 'src\Scripting\Interop.cs'
 $apiTablePath = Join-Path $repo 'src\Engine\Engine\Script\EngineApiTable.cpp'

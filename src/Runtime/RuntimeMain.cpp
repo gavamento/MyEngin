@@ -44,13 +44,18 @@ public:
     bool startDeferred = false;
     bool rtShowcase = false; // --rt-demo (M46i: コーネル箱のショーケース)
     bool localDemo = false;  // --local-demo (M52g: ローカルマルチプレイの入力レーンデモ)
+    bool netDemo = false;    // --net-demo (M52i: 2 人ネット対戦のデモ)
 
     void OnStart(mye::EngineContext& ctx) override
     {
         ctx.shaders->Load("forward_lit");
         mye::RegisterDemoContent(ctx);   // Editor と同じ実体登録 (AssetID 解決)
         mye::RegisterAssetLibraries(ctx); // .prefab / .anim を登録
-        if (scenePath.empty() && localDemo) {
+        if (scenePath.empty() && netDemo) {
+            // M52i: コードから毎回組む (local-demo と同じ理由 — 保存済みが残っていると
+            // ロード経路に落ちてコード側の正解と食い違う)
+            scenePath = L"cache\\net_duel.scene.json";
+        } else if (scenePath.empty() && localDemo) {
             // M52g: コードから毎回組む (ファイルは作らない)。パスだけ cache\ に振っておくと
             // 万一保存されても main.scene.json を潰さない
             scenePath = L"cache\\local_players.scene.json";
@@ -72,11 +77,14 @@ public:
         mye::RegisterPartsShowcaseContent(ctx);
         mye::RegisterFlowShowcaseContent(ctx); // M51j: flow_* 材質 (配布ブートシーンにも使う)
         mye::RegisterLocalPlayersContent(ctx);  // M52g: mp_* 材質 (同上の理由で常時)
+        mye::RegisterNetDuelContent(ctx);       // M52i: duel_* 材質 (同上)
         if (std::filesystem::exists(scenePath)) {
             mye::SceneSerializer::LoadFromFile(*ctx.scene, scenePath);
             // Editor と同じ「ロード直後 1 回」(M48e)。ここを揃えないと Editor で録った .rep と
             // Runtime の verify で初期状態が食い違う
             mye::Prefab::RefreshNonOverridden(*ctx.scene, *ctx.prefabs);
+        } else if (netDemo) {
+            mye::BuildNetDuelScene(ctx); // M52i
         } else if (localDemo) {
             mye::BuildLocalPlayersScene(ctx); // M52g
         } else if (rtShowcase) {
@@ -189,6 +197,14 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 config.netInputDelay = _wtoi(argv[++i]);
             } else if (arg == L"--net-loss" && i + 1 < argc) {
                 config.netLossPercent = _wtoi(argv[++i]); // 入力パケットを故意に捨てる (検証用)
+            } else if (arg == L"--net-no-rollback") {
+                // M52i: 予測ロールバックを切って M52h の素の遅延ロックステップへ落とす
+                config.netRollback = false;
+            } else if (arg == L"--net-no-halt-on-desync") {
+                config.netHaltOnDesync = false; // 検出しても止めずに走り続ける (観察用)
+            } else if (arg == L"--net-poke-tick" && i + 1 < argc) {
+                // M52i: 片側にだけ渡して意図的に desync を起こす (検出器の実地検証)
+                config.netPokeTick = _wtoi64(argv[++i]);
             } else if (arg == L"--rep-diff" && i + 2 < argc) {
                 // M52h: .rep 2 本の突き合わせ (ネットの 2 プロセスが同じ tick 列を回したか)
                 repDiffA = argv[++i];
@@ -247,6 +263,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 app.rtShowcase = true; // M46i: コーネル箱のショーケースシーンを構築
             } else if (arg == L"--local-demo") {
                 app.localDemo = true; // M52g: 入力レーンのローカルマルチプレイデモ
+            } else if (arg == L"--net-demo") {
+                app.netDemo = true; // M52i: 2 人ネット対戦のデモシーン
             } else if (arg == L"--local-players" && i + 1 < argc) {
                 config.localPlayers = _wtoi(argv[++i]); // M52g: 消費する入力レーン数
             } else if (arg == L"--synth-input") {

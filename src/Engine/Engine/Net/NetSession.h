@@ -27,11 +27,22 @@ namespace mye {
 // 再送機構は持たない。**直近 kNetRedundancy tick 分を毎回まるごと送り直す**ことで
 // ロスを吸収する (ロスに強く、順序も重複も気にしなくてよい)。
 
-inline constexpr uint32_t kNetProtoVersion = 1;
+// v2 (M52i): ヘッダへ「確定済み tick とそのワールドハッシュ」を 1 組ピギーバックした。
+// desync 検出のためで、入力交換の意味論は 1 バイトも変えていない
+inline constexpr uint32_t kNetProtoVersion = 2;
 inline constexpr uint32_t kNetMagic = 0x4E45594Du; // 'MYEN'
 inline constexpr uint32_t kNetRedundancy = 8;  // 1 パケットに載せる直近 tick 数
 inline constexpr uint32_t kNetRingTicks = 512; // 入力リングの深さ (tick)
 inline constexpr uint32_t kNetKeepAliveMs = 50;
+// desync 照合の刻み (M52i)。**この tick 番号のときだけ**確定ハッシュを主張する。
+// ★毎 tick 主張して「最後に受け取ったもの」を比べる作りにすると、比較対象の tick が
+//   到着タイミング (= 実時間) で決まってしまい、**2 台が別々の tick を desync として
+//   報告する** (実装中に実測: 片方が 60、もう片方が 68)。刻みを固定すると、
+//   どちらも「最初に食い違った checkpoint」という同じ答えにたどり着く。
+//   厳密な初発 tick は 2 本の .rep を --rep-diff にかければ出る (そちらが本命の道具)
+inline constexpr uint64_t kNetHashCheckpoint = 8;
+// 受け取った checkpoint ハッシュの保持数 (8 tick 刻み x 64 = 512 tick ぶん)
+inline constexpr uint32_t kNetPeerHashRing = 64;
 
 enum class NetRole : int { None = 0, Host = 1, Join = 2 };
 
@@ -112,8 +123,17 @@ struct NetPacketHeader {
     uint64_t lastAckTick = 0;     // 送信者が次に消費する tick (診断用: どこで詰まっているか)
     uint32_t sendTimeMs = 0;      // 送信者のセッション内経過 ms
     uint32_t echoTimeMs = 0;      // 直前に受け取った相手の sendTimeMs (RTT 計測)
+    // ---- v2 (M52i): desync 検出のピギーバック ----
+    // 「送信者が**確定入力で走り切った**最後の tick」とその tick 末ワールドハッシュ。
+    // ★確定 (= ロールバックでもう覆らない) tick のものしか載せない。予測で走った tick の
+    //   ハッシュを載せると、正常なロールバックが desync として誤検出される。
+    // confirmHash == 0 は「確定 tick がまだ無い」の予約値 (Replay.h の worldHash == 0 と
+    // 同じ規約: 実ハッシュが偶然 0 になる確率は 2^-64 で、その場合も 1 tick 照合を
+    // 見送るだけ = 安全側)。tick 番号 0 は正当な値なのでそちらを予約値にはできない
+    uint64_t confirmTick = 0;
+    uint64_t confirmHash = 0;
 };
-static_assert(sizeof(NetPacketHeader) == 48, "NetPacketHeader is part of the wire format");
+static_assert(sizeof(NetPacketHeader) == 64, "NetPacketHeader is part of the wire format");
 
 // Join / Accept / Reject の本体
 struct NetHandshakePayload {
@@ -147,6 +167,25 @@ public:
     bool WaitForInputs(uint64_t tick, uint32_t maxWaitMs);
     // kMaxPlayers 本ぶんの連続領域。HasInputs が true のときだけ意味がある
     const InputSnapshot* InputsFor(uint64_t tick) const;
+
+    // ---- 予測ロールバック (M52i) が使う細粒度の問い合わせ ----
+    // レーン単位の確定入力。まだ届いていなければ nullptr
+    const InputSnapshot* LaneInput(uint64_t tick, uint32_t player) const;
+    // 予測値 = **tick 以前で最も新しい確定値をそのまま繰り返す**。
+    // ★「1 つ前の tick の入力」ではなく「最新の確定値」なのが要点 — 3 tick 前までしか
+    //   届いていない状況では、その 3 tick 前の値を全部の未確定 tick へ広げるのが
+    //   「押しっぱなし/離しっぱなし」という最も当たりやすい仮定になる。
+    //   遡る上限は kNetRedundancy*2 tick (それより古ければ相手はもう居ないに等しい)
+    const InputSnapshot* PredictLane(uint64_t tick, uint32_t player) const;
+
+    // ---- desync 検出 (M52i) ----
+    // 自分の「確定して覆らなくなった checkpoint」を登録する。以後の全パケットに載る。
+    // ★呼ぶのは tick % kNetHashCheckpoint == 0 のときだけ (呼び出し側の責務)
+    void SetLocalConfirmed(uint64_t tick, uint64_t hash);
+    // 相手が最後に主張した (tick, hash)。hash == 0 は「まだ無い」
+    bool PeerConfirmed(uint64_t& outTick, uint64_t& outHash) const;
+    // 相手が主張した checkpoint tick のハッシュ (届いていなければ false)
+    bool PeerHashFor(uint64_t tick, uint64_t& outHash) const;
     // 自レーンの tick 入力を確定して送る。**同じ tick へ 2 回呼ばないこと**
     void SubmitLocalInput(uint64_t tick, const InputSnapshot& in);
     void OnTickConsumed(uint64_t tick); // リングの下限を進める
@@ -201,6 +240,14 @@ private:
 
     std::vector<InputSnapshot> ring_; // [tick % kNetRingTicks][player]
     std::vector<uint64_t> stamp_;     // 同じ添字。入っている tick 番号
+
+    // M52i: 自分が主張する確定点 (送信ヘッダへ載る) と、相手が主張してきた確定点
+    uint64_t localConfirmTick_ = 0;
+    uint64_t localConfirmHash_ = 0;
+    uint64_t peerConfirmTick_ = 0;
+    uint64_t peerConfirmHash_ = 0;
+    uint64_t peerHashTick_[kNetPeerHashRing] = {};
+    uint64_t peerHashValue_[kNetPeerHashRing] = {}; // 0 = 空き
 
     Pcg32 lossRng_;
     uint32_t startMs_ = 0;

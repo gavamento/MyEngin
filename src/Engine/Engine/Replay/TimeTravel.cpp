@@ -69,7 +69,7 @@ void TimeTravel::Begin(const SimRefs& refs, uint64_t tick)
 }
 
 void TimeTravel::OnTickEnd(const SimRefs& refs, uint64_t ranTick, const InputSnapshot* inputs,
-                           uint32_t playerCount, bool simulated)
+                           uint32_t playerCount, bool simulated, uint64_t hashAfter)
 {
     if (!enabled_) {
         return;
@@ -101,7 +101,7 @@ void TimeTravel::OnTickEnd(const SimRefs& refs, uint64_t ranTick, const InputSna
         }
     }
     e.simulated = simulated;
-    e.hashAfter = HashOf(refs);
+    e.hashAfter = hashAfter;
     entries_.push_back(e);
 
     if (simulated) {

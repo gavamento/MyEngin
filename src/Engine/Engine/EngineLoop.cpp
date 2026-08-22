@@ -26,6 +26,8 @@
 #include "Engine/Engine/Prefab.h"
 #include "Engine/Engine/Project.h"
 #include "Engine/Engine/RenderSystem.h"
+#include "Engine/Engine/Net/NetRollback.h"
+#include "Engine/Engine/Net/NetRuntime.h"
 #include "Engine/Engine/Net/NetSession.h"
 #include "Engine/Engine/Replay/CrashRing.h"
 #include "Engine/Engine/Replay/Replay.h"
@@ -288,12 +290,15 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // 担う — 単一ファイルのハードコードはここには置かない
     audioSystem.Init(config.audio);
     audioScriptRng.Seed(0x4D796541536372ull); // "MyeAScr" — world.Rng() とは別ストリーム
+    // v13 (M52i): ネットセッションの状態 POD。**宣言はここ** (スクリプトへ配線する
+    // 時点で生きていること = Run のスコープ)。中身を書くのはフレーム末の 1 か所だけ
+    NetRuntimeInfo netInfo;
     scriptHost.SetSharedServices(&audioQueue, &pendingScene, &effectQueue, &debugLines,
                                  &audioHandleSeq, &inputActions, &pendingSaveSlot,
-                                 &pendingLoadSlot, &padVibration);
+                                 &pendingLoadSlot, &padVibration, &netInfo);
     managedHost.SetSharedServices(&audioQueue, &pendingScene, &effectQueue, &debugLines,
                                   &audioHandleSeq, &inputActions, &pendingSaveSlot,
-                                  &pendingLoadSlot, &padVibration);
+                                  &pendingLoadSlot, &padVibration, &netInfo);
 
     clock.Init();
 
@@ -440,6 +445,15 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // そろえた確定入力だけで決まる (= 2 台の .rep がバイト一致する根拠)
     NetSession net;
     InputSnapshot netLiveInput = {}; // フレーム頭のライブ入力 (自レーンぶん)
+    // ---- 予測ロールバック (M52i) ----
+    // netRb   … 投機記録 + 巻き戻し先スナップショットのリング
+    // netInfo … 上位 (エディタの NetWindow / ABI v13 のスロット) へ見せる POD。
+    //           **毎フレーム 1 回だけ EngineLoop が書く** (読み手は触らない)
+    NetRollback netRb;
+    bool netRollbackActive = false;
+    bool netDesync = false;
+    uint64_t netDesyncTick = 0;
+    uint64_t netDesyncScan = 0; // 次に突き合わせる checkpoint tick (M52i)
     // ★接続できなかったときは **return せずにフレームループを 0 周で抜ける**。
     //   ここで早期 return すると下の Shutdown 群 (ジョブのワーカー join / CoreCLR /
     //   D3D) を素通りして、デストラクタ順で abort する = 「相手に断られた」だけなのに
@@ -505,10 +519,25 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             const uint64_t target = ctx.tickIndex + k;
             net.SubmitLocalInput(target, NetLocalInput(target));
         }
-        if (!netFailed) {
-            MYE_LOG_INFO("[net] lockstep ready: local lane %u of %u, input delay %u ticks",
-                         net.LocalPlayerIndex(), ctx.playerCount, ncfg.inputDelay);
+        // ---- ロールバックのリング開始 (M52i) ----
+        // ★撮影点は startWorldHash を撮ったのと**同じ点** (OnStart + 構造変更適用の直後)。
+        //   ここが「tick startTick が走る前」の状態 = 最初の巻き戻し先になる
+        if (!netFailed && config.netRollback) {
+            netRollbackActive = netRb.Begin(simRefs, ctx.tickIndex);
         }
+        if (!netFailed) {
+            MYE_LOG_INFO("[net] lockstep ready: local lane %u of %u, input delay %u ticks, "
+                         "rollback %s (max %u ticks ahead)",
+                         net.LocalPlayerIndex(), ctx.playerCount, ncfg.inputDelay,
+                         netRollbackActive ? "on" : "off", kNetMaxSpeculation);
+        }
+        netInfo.active = true;
+        netInfo.rollbackEnabled = netRollbackActive;
+        netInfo.role = config.netRole;
+        ctx.net = &netInfo;
+        // 最初の checkpoint (開始 tick 以上で kNetHashCheckpoint の倍数)
+        netDesyncScan = ((ctx.tickIndex + kNetHashCheckpoint - 1) / kNetHashCheckpoint)
+            * kNetHashCheckpoint;
     }
 
     // ---- リプレイ記録/検証の準備 (spec 11.3) ----
@@ -642,6 +671,15 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // M52h: セッションが立った時点で C# レーンは最後まで止める。途中で on/off すると
     // 「片方だけ C# が動いた tick」が生まれて必ず割れるので、走行中は変えない
     tickServices.netLockstep = netEnabled;
+    // ★ロールバック中は .rep の記録を EngineLoop が引き取る (M52i)。
+    //   RunOneTick の中で記録すると**予測で走った tick までファイルに載る**ので、
+    //   巻き戻して走り直した tick が二重に並んだ .rep になる。記録してよいのは
+    //   「確定入力で走り、もう覆らない」と分かった tick だけ = 確定した瞬間に書く。
+    //   ロールバック無しの素のロックステップ (M52h) は全 tick が最初から確定なので
+    //   従来どおり RunOneTick の中で記録する (経路を増やさない)
+    if (netRollbackActive) {
+        tickServices.recorder = nullptr;
+    }
 
     // ---- タイムトラベルのシーク本体 (M52e) ----
     // 「target 以下の最寄りスナップショットへ Restore → 記録入力で target まで描画なし再シム」。
@@ -742,6 +780,248 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                          : (rep.outcome == SeekOutcome::HashMismatch ? "HASH MISMATCH" : "FAILED"));
         return rep;
     };
+    // ---- tick 末のワールドハッシュ (M52f 申し送り 6 の畳み込み) ----
+    // クラッシュリング / タイムトラベル / ロールバックの 3 者が**同じ 1 個**を使う。
+    // M52f までは消費者ごとに撮っていて、両方 on だと同じ tick で 2 回走っていた
+    // (実測 約 0.2ms/回)。ロールバックが毎 tick ハッシュを要求するようになったので
+    // ここで 1 本に畳んだ
+    const auto TickEndHash = [&]() -> uint64_t {
+        return HashWorld(scene.GetWorld(), &particleSystem.Cpu(), &scene.Time(),
+                         &scene.Persist());
+    };
+
+    // ---- 予測ロールバック (M52i、決定台帳 2) ----
+    // tick が消費する入力レーンを組む。**未着レーンは直近の確定値の繰り返しで埋める**。
+    // 1 本でも埋めたら true (= 後で覆りうる投機 tick)
+    const auto BuildNetInputs = [&](uint64_t tick, InputSnapshot* out) -> bool {
+        bool predicted = false;
+        for (uint32_t p = 0; p < ctx.playerCount; ++p) {
+            if (const InputSnapshot* in = net.LaneInput(tick, p)) {
+                out[p] = *in;
+                continue;
+            }
+            const InputSnapshot* guess = net.PredictLane(tick, p);
+            out[p] = (guess != nullptr) ? *guess : InputSnapshot{};
+            predicted = true;
+        }
+        return predicted;
+    };
+
+    // from の**直前**まで巻き戻し、そこから現在 tick まで確定入力で走り直す。
+    // ★通常 tick と同じ RunOneTick を通す (決定台帳 2)。タイムトラベルの SeekTo と
+    //   まったく同じ形にしてあるのは、抑止する対象 (出力レーン / C# / 記録) が
+    //   「過去をなぞっている」という一点で完全に同じだから。
+    // ★ここで net.SubmitLocalInput を呼んではいけない — 自レーンの値は tick ごとに
+    //   ちょうど 1 回しか確定させない (M52h 申し送り 6)。再シムで撃ち直すと、相手が
+    //   先に消費した値と食い違って本物の desync になる
+    const auto NetResimFrom = [&](uint64_t from) -> uint64_t {
+        const uint64_t resume = ctx.tickIndex;
+        if (from >= resume) {
+            return 0;
+        }
+        scene.GetWorld().ApplyStructuralChanges();
+        // ★クラッシュ .rep の tick 列も一緒に巻き戻す。これをしないと再シムの
+        //   OnTickBegin が「tick が飛んだ」と見て毎回撮り直し、ネット対戦中は
+        //   リングが常に数 tick しか持たない = crash.rep も desync バンドルも
+        //   再現に使えない .rep になる (実装中に実測: tickCount が 1 だった)
+        crashRing.Rewind(from);
+        const std::vector<std::byte>* blob = netRb.SnapshotBefore(from);
+        if (blob == nullptr || !RestoreSimSnapshot(simRefs, blob->data(), blob->size())) {
+            MYE_LOG_ERROR("[net] rollback: no restorable snapshot for tick %llu",
+                          static_cast<unsigned long long>(from));
+            return 0;
+        }
+        // ★非 sim レーン (トレイル / GPU パーティクル) は**あえて落とさない**。
+        //   巻き戻し幅は最大 8 tick = 133ms で、残像より「毎ロールバックで全消し」の
+        //   ちらつきの方が実害が大きい。タイムトラベル (任意の過去へ飛ぶ) とは
+        //   ここだけ方針が違う — 見せ方は消費者の責務 (SimSnapshot.h)
+        const bool savedSimulate = ctx.simulateScripts;
+        InputSnapshot savedInputs[kMaxPlayers] = {};
+        for (uint32_t p = 0; p < kMaxPlayers; ++p) {
+            savedInputs[p] = ctx.inputs[p];
+        }
+        IEngineApp* const savedApp = tickServices.app;
+        PrevWorldStore* const savedPrev = tickServices.prevWorld;
+        tickServices.app = nullptr;       // エディタ更新は回さない
+        tickServices.prevWorld = nullptr; // 描画補間の採取も要らない
+        tickServices.resim = true;
+        audioSystem.SetSuspended(true); // 捨てた未来の音を断つ
+        for (uint64_t t = from; t < resume; ++t) {
+            const NetSpecTick* e = netRb.Entry(t);
+            const bool predicted = BuildNetInputs(t, ctx.inputs);
+            // ポーズ tick も忠実になぞる (飛ばすと prevTickInput が食い違う)
+            ctx.simulateScripts = (e != nullptr) ? e->simulated : savedSimulate;
+            crashRing.OnTickBegin(t, ctx.inputs, ctx.playerCount);
+            RunOneTick(tickServices);
+            const uint64_t h = TickEndHash();
+            crashRing.OnTickEnd(simRefs, t, h);
+            netRb.OnTickEnd(simRefs, t, ctx.inputs, ctx.playerCount, h, predicted,
+                            ctx.simulateScripts);
+        }
+        tickServices.app = savedApp;
+        tickServices.prevWorld = savedPrev;
+        tickServices.resim = false;
+        ctx.simulateScripts = savedSimulate;
+        for (uint32_t p = 0; p < kMaxPlayers; ++p) {
+            ctx.inputs[p] = savedInputs[p];
+        }
+        audioSystem.SetSuspended(recorder.IsActive() || player.IsActive());
+        return resume - from;
+    };
+
+    // 確定した tick を .rep へ落とし、相手へ「ここまで確定した」と主張する。
+    // ★.rep に載るのはここを通った tick だけ = **予測で走った tick は 1 本も載らない**。
+    //   これが「ロールバック有りで録った .rep がロックステップのものとバイト一致する」
+    //   ことの根拠で、net_verify.bat はそれを機械検証している
+    const auto NetCommitConfirmed = [&]() {
+        uint64_t confirmed = netRb.ConfirmedTick();
+        uint64_t lastTick = 0;
+        uint64_t lastHash = 0;
+        bool any = false;
+        while (confirmed < ctx.tickIndex && net.HasInputs(confirmed)) {
+            const NetSpecTick* e = netRb.Entry(confirmed);
+            if (e == nullptr || e->predicted) {
+                break; // まだ覆りうる (次の Reconcile で片付く)
+            }
+            if (recorder.IsActive()) {
+                recorder.RecordTick(e->inputs, ctx.playerCount, e->hashAfter);
+                if (recorder.TickCount() >= static_cast<uint64_t>(config.replayTicks)) {
+                    recorder.Finish();
+                    ctx.requestExit = true;
+                }
+            }
+            netRb.NoteCommitted(confirmed, e->hashAfter);
+            // ★リングの保護下限を進めるのは**確定した tick まで**。投機 tick で進めると、
+            //   後から届いた本物の入力が「消費済み」として捨てられ、予測が永久に
+            //   直らないまま静かに走り続ける (実装中に最初に踏む罠)
+            net.OnTickConsumed(confirmed);
+            // 相手へ主張するのは checkpoint tick だけ (NetSession.h の kNetHashCheckpoint)
+            if (confirmed % kNetHashCheckpoint == 0) {
+                lastTick = confirmed;
+                lastHash = e->hashAfter;
+                any = true;
+            }
+            ++confirmed;
+        }
+        netRb.SetConfirmedTick(confirmed);
+        if (any) {
+            net.SetLocalConfirmed(lastTick, lastHash);
+        }
+    };
+
+    // フレーム頭に 1 回。届いた確定入力と投機記録を突き合わせ、外れていたら巻き戻す
+    const auto NetReconcile = [&]() {
+        if (!netRollbackActive || !net.Running()) {
+            return;
+        }
+        uint64_t bad = ~0ull;
+        for (uint64_t t = netRb.ConfirmedTick(); t < ctx.tickIndex; ++t) {
+            if (!net.HasInputs(t)) {
+                break; // まだ確定していない = ここから先は判定できない
+            }
+            const NetSpecTick* e = netRb.Entry(t);
+            if (e == nullptr) {
+                break; // リングから溢れた (投機上限があるので通常は起きない)
+            }
+            if (!e->predicted) {
+                continue; // 最初から確定入力で走った tick
+            }
+            if (netRb.InputsMatch(t, net.InputsFor(t), ctx.playerCount)) {
+                netRb.MarkConfirmed(t); // 予測が当たった = 巻き戻す理由が無い
+                continue;
+            }
+            bad = t;
+            break;
+        }
+        if (bad != ~0ull) {
+            const uint64_t depth = ctx.tickIndex - bad;
+            const double t0 = clock.Now();
+            if (NetResimFrom(bad) == 0) {
+                MYE_LOG_ERROR("[net] rollback failed at tick %llu - cannot continue",
+                              static_cast<unsigned long long>(bad));
+                exitCode = 1;
+                ctx.requestExit = true;
+                return;
+            }
+            netRb.NoteRollback(depth);
+            MYE_LOG_TRACE("[net] rolled back %llu tick(s) to %llu (%.2f ms)",
+                          static_cast<unsigned long long>(depth),
+                          static_cast<unsigned long long>(bad),
+                          (clock.Now() - t0) * 1000.0);
+        }
+        NetCommitConfirmed();
+    };
+
+    // ---- desync 検出 (M52i) ----
+    // 相手が主張する確定 (tick, hash) と自分の確定ハッシュを突き合わせる。
+    // ★突き合わせてよいのは**確定 tick だけ**。予測で走った tick のハッシュを比べると、
+    //   正常に働いているロールバックが desync として誤検出される
+    const auto NetCheckDesync = [&]() {
+        if (!netEnabled || !net.Running() || netDesync) {
+            return;
+        }
+        // 確定済みの checkpoint を**古い順に**突き合わせる。
+        // ★「相手が最後に主張した 1 個」だけを見る作りにすると、比較する tick が
+        //   到着タイミングで決まって 2 台が別々の tick を報告する (実測: 60 と 68)。
+        //   古い順に舐めれば、どちらも「最初に食い違った checkpoint」に落ち着く
+        uint64_t peerTick = 0;
+        uint64_t peerHash = 0;
+        uint64_t mine = 0;
+        while (netDesyncScan < netRb.ConfirmedTick()) {
+            if (!net.PeerHashFor(netDesyncScan, peerHash)) {
+                uint64_t newestTick = 0;
+                uint64_t newestHash = 0;
+                // 主張そのものが落ちた (ロス) なら、相手はとうに先へ行っている。
+                // ここで待ち続けると検出が永久に止まるので、諦めて次の checkpoint へ
+                if (net.PeerConfirmed(newestTick, newestHash)
+                    && newestTick > netDesyncScan + kNetHashCheckpoint * 4) {
+                    netDesyncScan += kNetHashCheckpoint;
+                    continue;
+                }
+                return; // まだ届いていないだけ
+            }
+            if (netRb.CommittedHash(netDesyncScan, mine) && mine != peerHash) {
+                break; // 見つけた
+            }
+            netDesyncScan += kNetHashCheckpoint;
+        }
+        if (netDesyncScan >= netRb.ConfirmedTick()) {
+            return; // 食い違いなし
+        }
+        peerTick = netDesyncScan;
+        netDesync = true;
+        netDesyncTick = peerTick;
+        MYE_LOG_ERROR("[net] DESYNC at tick %llu: local %016llX / peer %016llX",
+                      static_cast<unsigned long long>(peerTick),
+                      static_cast<unsigned long long>(mine),
+                      static_cast<unsigned long long>(peerHash));
+        NetDesyncReport report;
+        report.tick = peerTick;
+        report.nowTick = ctx.tickIndex;
+        report.localHash = mine;
+        report.peerHash = peerHash;
+        report.localPlayer = net.LocalPlayerIndex();
+        report.role = config.netRole;
+        HashDump dump;
+        HashWorldDump(scene.GetWorld(), &particleSystem.Cpu(), ctx.tickIndex, dump,
+                      &scene.Time(), &scene.Persist());
+        std::wstring dir;
+        const std::wstring crashRoot =
+            config.projectRoot.empty() ? GetExecutableDir() : config.projectRoot;
+        if (WriteNetDesyncBundle(crashRoot, report, crashRing, dump, dir)) {
+            MYE_LOG_ERROR("[net]   bundle: %s", WideToUtf8(dir).c_str());
+            MYE_LOG_ERROR("[net]   next: --rep-diff both local.rep, then --replay-verify "
+                          "--hash-dump-tick %llu on each and --hash-diff (see desync.txt)",
+                          static_cast<unsigned long long>(peerTick));
+        }
+        if (config.netHaltOnDesync) {
+            // ★既定で止める。desync 後の世界は 2 台で別物であって「遊べているように
+            //   見えるだけ」なので、黙って続けるのが一番たちが悪い
+            exitCode = 4; // 4 = desync (1 = 通常の失敗 / 2 = 落とし損ね と区別する)
+            ctx.requestExit = true;
+        }
+    };
+
     // --timetravel-selftest の進行状態 (M52e)。
     // 0 = 走行中 / 1 = シーク往復を検査済みでスクラブ静止の確認待ち /
     // 2 = 再開後の分岐の確認待ち / 3 = 終了
@@ -832,7 +1112,11 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         //   ImGui の途中で世界を差し替えると、その後のウィンドウが破棄済み EntityID を掴む
         // 記録/検証中は .rep がタイムラインの役なので、リングは起こさない
         // (起こすと 1 枚撮って entry が 1 つも積まれない空リングが残る)
-        if (timeTravel.BeginPending() && !recorder.IsActive() && !verifying) {
+        // ★ネット中はタイムラインを起こさない (M52i)。相手の居る tick 列を勝手に
+        //   巻き戻しても相手はついてこないので、スクラブは原理的に成立しない。
+        //   同じ tick 境界を 2 種類の巻き戻し (シークとロールバック) が奪い合う状態も
+        //   作らずに済む — この排他は「機能の削り」ではなく意味論の帰結
+        if (timeTravel.BeginPending() && !recorder.IsActive() && !verifying && !netEnabled) {
             scene.GetWorld().ApplyStructuralChanges(); // 撮影点の前提 (構造変更が空)
             timeTravel.Begin(simRefs, ctx.tickIndex);
         }
@@ -865,15 +1149,31 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             if (net.HasInputs(tick)) {
                 return true;
             }
+            // ---- 予測ロールバック (M52i) ----
+            // ★そろっていなくても**待たずに**進む。ここで数 ms 待ってから予測すると
+            //   「遅延が小さいときだけ滑らか」という中途半端な挙動になり、
+            //   ロールバックが本当に効いているのかも分からなくなる。
+            //   上限まで先行したら、そこから先は M52h と同じく待つ
+            if (netRollbackActive && tick - netRb.ConfirmedTick() < kNetMaxSpeculation) {
+                return true;
+            }
             const double t0 = clock.Now();
             const bool got = net.WaitForInputs(tick, kNetStallWaitMs);
             net.NoteStall((clock.Now() - t0) * 1000.0);
             netStalled = !got;
             return got;
         };
+        // ---- 突き合わせ (M52i) ----
+        // ★tick ループへ入る**直前**に置く。フレーム頭 (ImGui の直後) だと、前フレームの
+        //   エディタ操作が積んだ構造変更を巻き込んだ状態で世界を差し替えることになる。
+        //   ここはホットリロードのセーフポイントも通過済みで、確実に tick 境界
+        NetReconcile();
+        NetCheckDesync();
         while (!scrubbing && ticks < maxTicksThisFrame
                && (verifying ? player.HasTick(ctx.tickIndex)
                              : (accumulator >= kFixedDt && NetReady(ctx.tickIndex)))) {
+            // M52i: この tick が未確定レーンを予測で埋めて走ったか (tick 末の投機記録へ)
+            bool netTickPredicted = false;
             if (verifying) {
                 // フェーズ 1 の入力をレーンごと置換する
                 for (uint32_t p = 0; p < ctx.playerCount; ++p) {
@@ -885,9 +1185,14 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                 // (= 2 台の .rep のバイト一致が「同じ tick 列を回した」証明になる)。
                 // ★合成入力より先に見る: ネット中の合成入力は既に相手側のレーンにも
                 //   載っていて、ここで上書きすると自分の値で相手のレーンを潰す
-                const InputSnapshot* lanes = net.InputsFor(ctx.tickIndex);
-                for (uint32_t p = 0; p < ctx.playerCount; ++p) {
-                    ctx.inputs[p] = lanes[p];
+                if (netRollbackActive) {
+                    // M52i: 未着レーンは予測で埋める (そろっていれば確定値がそのまま入る)
+                    netTickPredicted = BuildNetInputs(ctx.tickIndex, ctx.inputs);
+                } else {
+                    const InputSnapshot* lanes = net.InputsFor(ctx.tickIndex);
+                    for (uint32_t p = 0; p < ctx.playerCount; ++p) {
+                        ctx.inputs[p] = lanes[p];
+                    }
                 }
             } else if (config.synthInput) {
                 // 合成入力 (M52g、--synth-input)。**verify の置換と同じ場所**に置くのが要点 —
@@ -931,23 +1236,47 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                 ctx.requestExit = true;
             }
             RunOneTick(tickServices);
-            if (netEnabled) {
-                net.OnTickConsumed(ranTick); // 消費済み tick はリングの保護下限を進める
-            }
+            // ---- tick 末ハッシュは 1 回だけ (M52i、M52f 申し送り 6) ----
+            // クラッシュリング / ロールバック / タイムトラベルの 3 者が同じ 1 個を使う。
+            // 撮る点は「構造変更が空 = .rep が記録するのと同じ点」で M52f から不変
+            const bool ttRing = timeTravel.Enabled() && !recorder.IsActive() && !verifying;
+            const bool needTickHash = crashRing.Enabled() || netEnabled || ttRing;
+            const uint64_t tickHash = needTickHash ? TickEndHash() : 0;
             if (crashRing.Enabled()) {
-                // tick 末 (= 構造変更が空 = .rep が記録するのと同じ点) のハッシュ。
                 // これがあるので、届いた crash.rep は「本当に同じ世界を再現したか」を
                 // 受け取り側が tick 単位で機械判定できる
-                crashRing.OnTickEnd(simRefs, ranTick,
-                                    HashWorld(scene.GetWorld(), &particleSystem.Cpu(),
-                                              &scene.Time(), &scene.Persist()));
+                crashRing.OnTickEnd(simRefs, ranTick, tickHash);
+            }
+            if (netEnabled && net.Running()) {
+                if (netRollbackActive) {
+                    // 投機記録 + 「次 tick が走る前」のスナップショット (M52i)。
+                    // ★ここでは .rep へ書かない / 相手へハッシュを主張しない —
+                    //   この tick はまだ覆りうる。確定は NetCommitConfirmed の仕事
+                    netRb.OnTickEnd(simRefs, ranTick, ctx.inputs, ctx.playerCount, tickHash,
+                                    netTickPredicted, ctx.simulateScripts);
+                    if (!netRb.Active()) {
+                        MYE_LOG_ERROR("[net] rollback ring failed at tick %llu - exiting",
+                                      static_cast<unsigned long long>(ranTick));
+                        exitCode = 1;
+                        ctx.requestExit = true;
+                    }
+                } else {
+                    // 素のロックステップ (M52h): 走った tick はその場で確定している。
+                    // desync 検出はこちらの経路でも同じように効く
+                    netRb.NoteCommitted(ranTick, tickHash);
+                    netRb.SetConfirmedTick(ranTick + 1);
+                    if (ranTick % kNetHashCheckpoint == 0) {
+                        net.SetLocalConfirmed(ranTick, tickHash);
+                    }
+                    net.OnTickConsumed(ranTick); // 消費済み tick はリングの保護下限を進める
+                }
             }
             // ---- タイムトラベルのリングへ記録 (M52e) ----
             // 記録/検証中は .rep がその役なので載せない。simulateScripts は
             // RunOneTick の中で app が決めた**その tick の実効値**を読む
-            if (timeTravel.Enabled() && !recorder.IsActive() && !verifying) {
+            if (ttRing) {
                 timeTravel.OnTickEnd(simRefs, ranTick, ctx.inputs, ctx.playerCount,
-                                     ctx.simulateScripts);
+                                     ctx.simulateScripts, tickHash);
             }
             // ---- スナップショット往復ストレス (M52d、--snapshot-stress N) ----
             // tick 境界 (= 構造変更が空でハッシュを撮ったのと同じ状態) で「撮る → 戻す →
@@ -997,6 +1326,35 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                           static_cast<unsigned long long>(ctx.tickIndex));
             exitCode = 1;
             ctx.requestExit = true;
+        }
+        // ---- 上位へ見せる状態を更新する (M52i) ----
+        // ★書くのはここ 1 か所だけ。エディタの NetWindow も ABI v13 のスロットも
+        //   この POD を読むので、複数箇所で書くと「窓とスクリプトで値が違う」になる
+        if (netEnabled) {
+            netInfo.connected = net.Running();
+            netInfo.localPlayer = net.LocalPlayerIndex();
+            netInfo.playerCount = net.PlayerCount();
+            netInfo.inputDelay = net.InputDelay();
+            netInfo.pingMs = net.PingMs();
+            netInfo.confirmedTick = netRb.ConfirmedTick();
+            netInfo.speculation = static_cast<uint32_t>(
+                ctx.tickIndex > netRb.ConfirmedTick() ? ctx.tickIndex - netRb.ConfirmedTick() : 0);
+            netInfo.predictedTicks = netRb.PredictedTicks();
+            netInfo.rollbacks = netRb.RollbackCount();
+            netInfo.rollbackTicks = netRb.RollbackTicks();
+            netInfo.maxRollbackDepth = netRb.MaxRollbackDepth();
+            uint64_t h = 0;
+            if (netRb.ConfirmedTick() > 0 && netRb.CommittedHash(netRb.ConfirmedTick() - 1, h)) {
+                netInfo.localHash = h;
+            }
+            net.PeerConfirmed(netInfo.peerTick, netInfo.peerHash);
+            netInfo.desync = netDesync;
+            netInfo.desyncTick = netDesyncTick;
+            netInfo.packetsSent = net.PacketsSent();
+            netInfo.packetsRecv = net.PacketsRecv();
+            netInfo.packetsDropped = net.PacketsDropped();
+            netInfo.stalls = net.StallCount();
+            netInfo.stallMs = net.StallMs();
         }
         // ---- タイムトラベルの自動プローブ (M52e、--timetravel-selftest N) ----
         // 「T まで進める → T-K へ戻す → 記録入力で T まで再シム → 元の T とハッシュ一致」を
@@ -1228,6 +1586,23 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         // ★抜ける前に最後の入力を撃ち切る。相手はこちらの最後の数 tick をまだ受け取って
         //   いないかもしれず、黙って終了すると相手だけが stall タイムアウトで落ちる
         net.Finish();
+        if (netRollbackActive) {
+            // M52i: ロールバックの実測値。予測が当たっていれば rollbacks は 0 に近づき、
+            // ロスや相手の遅れが増えるほど伸びる = 回線品質の一次データにもなる
+            MYE_LOG_INFO("[net] rollback: %llu rollback(s) / %llu re-simulated tick(s) / "
+                         "max depth %llu / %llu predicted tick(s) / snapshots %.1f MB / "
+                         "confirmed up to tick %llu",
+                         static_cast<unsigned long long>(netRb.RollbackCount()),
+                         static_cast<unsigned long long>(netRb.RollbackTicks()),
+                         static_cast<unsigned long long>(netRb.MaxRollbackDepth()),
+                         static_cast<unsigned long long>(netRb.PredictedTicks()),
+                         static_cast<double>(netRb.SnapshotBytes()) / (1024.0 * 1024.0),
+                         static_cast<unsigned long long>(netRb.ConfirmedTick()));
+        }
+        if (netDesync) {
+            MYE_LOG_ERROR("[net] session ended on a DESYNC at tick %llu",
+                          static_cast<unsigned long long>(netDesyncTick));
+        }
     }
     if (recorder.IsActive()) {
         recorder.Finish(); // maxFrames 等で先に抜けた場合も書き出す

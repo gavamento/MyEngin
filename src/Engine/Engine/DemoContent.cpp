@@ -677,6 +677,82 @@ void EnsureFlowShowcaseScenes(EngineContext& ctx)
     ensure(L"flow_title.scene.json", &BuildFlowTitleScene);
 }
 
+void BuildNetDuelScene(EngineContext& ctx)
+{
+    Scene& s = *ctx.scene;
+    RenderResources& res = *ctx.resources;
+    s.SetName("net_duel");
+    const AssetID cube = res.meshes.Cube();
+
+    GameObject camera = s.CreateGameObject("Main Camera");
+    camera.AddComponent<CameraComponent>();
+    camera.SetLocalPosition(0.0f, 9.0f, -12.0f);
+    camera.SetLocalRotationEuler(34.0f, 0.0f, 0.0f);
+
+    GameObject sun = s.CreateGameObject("Sun");
+    sun.AddComponent<LightComponent>();
+    sun.SetLocalRotationEuler(52.0f, -28.0f, 0.0f);
+
+    GameObject floor = s.CreateGameObject("Floor");
+    floor.SetLocalPosition(0.0f, -0.25f, 0.0f);
+    floor.SetLocalScale(20.0f, 0.5f, 14.0f);
+    {
+        auto* mr = floor.AddComponent<MeshRendererComponent>();
+        mr->mesh = cube;
+        mr->material = AssetID{ HashStr("duel_floor") };
+    }
+    // 得点リング。**当たり判定は持たない** — 判定はスクリプト側の距離計算だけで完結させる
+    // (物理を挟むとデモの読み筋が「ネットの話」から離れる)。ここは目印
+    GameObject ring = s.CreateGameObject("ScoreRing");
+    ring.SetLocalPosition(0.0f, 0.02f, 0.0f);
+    ring.SetLocalScale(6.4f, 0.04f, 6.4f);
+    {
+        auto* mr = ring.AddComponent<MeshRendererComponent>();
+        mr->mesh = cube;
+        mr->material = AssetID{ HashStr("duel_ring") };
+    }
+
+    static const char* kMats[] = { "duel_p0", "duel_p1" };
+    for (uint32_t i = 0; i < 2; ++i) {
+        char name[32];
+        std::snprintf(name, sizeof(name), "Duelist_%u", i + 1);
+        GameObject go = s.CreateGameObject(name);
+        go.SetLocalPosition(i == 0 ? -6.0f : 6.0f, 0.5f, 0.0f);
+        auto* mr = go.AddComponent<MeshRendererComponent>();
+        mr->mesh = cube;
+        mr->material = AssetID{ HashStr(kMats[i]) };
+        // レーンの結び付けは PlayerInput のミラー (M52g) をそのまま使う。
+        // スクリプトは playerIndex を読んで v13 の GetAxisForPlayer を引く
+        auto* pi = go.AddComponent<PlayerInputComponent>();
+        pi->playerIndex = static_cast<int32_t>(i);
+        AttachScriptIfRegistered(s.GetWorld(), go.Id(), "NetDuelDemo");
+    }
+
+    // HUD。**ここだけがネット状態 (機種依存の値) を書いてよい場所**
+    GameObject hud = MakeUiText(s, "NetHud", 0, 16.0f, 16.0f, 640.0f, 28.0f, "net", 2.0f, 0);
+    AttachScriptIfRegistered(s.GetWorld(), hud.Id(), "NetHudDemo");
+}
+
+void RegisterNetDuelContent(EngineContext& ctx)
+{
+    RenderResources& res = *ctx.resources;
+    const AssetID white = res.textures.White();
+    const AssetID shader = AssetID{ HashStr("forward_lit") };
+    res.meshes.Cube();
+
+    auto makeMat = [&](const char* name, float r, float g, float b) {
+        Material m;
+        m.shader = shader;
+        m.texture = white;
+        m.baseColor = { r, g, b, 1.0f };
+        return res.materials.Register(name, m);
+    };
+    makeMat("duel_floor", 0.24f, 0.26f, 0.30f);
+    makeMat("duel_ring", 0.55f, 0.50f, 0.20f);
+    makeMat("duel_p0", 0.95f, 0.35f, 0.25f); // P1 = 赤
+    makeMat("duel_p1", 0.25f, 0.65f, 0.95f); // P2 = 青
+}
+
 void RegisterLocalPlayersContent(EngineContext& ctx)
 {
     RenderResources& res = *ctx.resources;

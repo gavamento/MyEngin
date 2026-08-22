@@ -75,6 +75,25 @@ void BuildLocalPlayersScene(EngineContext& ctx);
 // 上のデモが参照するマテリアルの実体登録 (RegisterRtShowcaseContent と同じ役割)
 void RegisterLocalPlayersContent(EngineContext& ctx);
 
+// M52i: 2 人ネット対戦のデモシーン。--net-demo で選ぶ。
+// 中央のリングに出入りするたびに得点が入り、得点はキューブの大きさで見える。
+//
+// **入るのは 2 つの新しい経路だけ**:
+//   ・プレイヤーの動きは ABI v13 の `GetAxisForPlayer` / `GetActionForPlayer`
+//     (レーン指定のアクションマップ) で読む = 決定論の内側
+//   ・HUD は ABI v13 の `NetLocalPlayer` / `NetPingMs` / `NetRollbackCount` を読む =
+//     **機種依存の値なので UIElement (NoHash の描画レーン) にしか書かない**。
+//     ここを sim 状態へ書いた瞬間に 2 台のワールドハッシュが割れる — その誤用を
+//     見張っているのが M52i の desync 検出で、このデモは「正しい使い分け」の実例。
+//
+// ★C++ スクリプトで書く (C# はネット対戦中は止まっている)。
+// ★builtin メッシュ + 名前キーのマテリアルだけ = チェックアウト非依存。
+//   --local-players 2 --synth-input でも同じシーンがそのまま回る (1 台で挙動を見る用)
+void BuildNetDuelScene(EngineContext& ctx);
+
+// 上のデモが参照するマテリアルの実体登録
+void RegisterNetDuelContent(EngineContext& ctx);
+
 // assets\ 以下の .prefab.json / .anim.json を各ライブラリへ登録する (Editor / Runtime 共用)。
 // M48g からは .glb / .gltf / .fbx のスケルトンもここで (エンティティを作らずに) 登録する
 void RegisterAssetLibraries(EngineContext& ctx);

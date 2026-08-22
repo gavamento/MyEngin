@@ -130,8 +130,29 @@ namespace MyeScripting
         protected static bool ActionPressed(string name) => (Engine.GetActionState(name) & 2u) != 0;
         protected static bool ActionReleased(string name) => (Engine.GetActionState(name) & 4u) != 0;
         protected static float Axis(string name) => Engine.GetAxisValue(name);
+        // レーン指定版 (v13、M52i)。player は 0..3 (--local-players / ネットのレーン)。
+        // 範囲外や未接続レーンは 0 — レーン 0 へは落ちない (配線ミスを隠さないため)
+        protected static bool ActionHeldFor(string name, uint player)
+            => (Engine.GetActionForPlayer(name, player) & 1u) != 0;
+        protected static bool ActionPressedFor(string name, uint player)
+            => (Engine.GetActionForPlayer(name, player) & 2u) != 0;
+        protected static bool ActionReleasedFor(string name, uint player)
+            => (Engine.GetActionForPlayer(name, player) & 4u) != 0;
+        protected static float AxisFor(string name, uint player)
+            => Engine.GetAxisForPlayer(name, player);
         // このフレームに累積したホイール生値 (WHEEL_DELTA=120 単位)
         protected static int MouseWheel() => Engine.GetMouseWheel();
+
+        // ---- ネット対戦の状態 (v13、M52i) ----
+        // ★返る値は**機種依存** (自分がどちら側か / 実時間 / 巻き戻し回数)。
+        //   sim 状態へ書き戻すとリプレイもネットも壊れる — 表示・カメラ・UI の判断だけに使う。
+        // ★C# レーンはネット対戦中は停止している。ここが意味を持つのは非ネット時
+        //   (NetConnected() == false / NetPlayerCount() == 1) の分岐だけ
+        protected static bool NetConnected() => Engine.NetIsConnected();
+        protected static uint NetLocalPlayer() => Engine.NetLocalPlayer();
+        protected static uint NetPlayerCount() => Engine.NetPlayerCount();
+        protected static float NetPingMs() => Engine.NetPingMs();
+        protected static ulong NetRollbackCount() => Engine.NetRollbackCount();
 
         // ---- gamepad (v3 の回収、M51h)。パッド 0。mask は PadButtons.* ----
         protected static bool PadConnected() => Engine.PadConnected();

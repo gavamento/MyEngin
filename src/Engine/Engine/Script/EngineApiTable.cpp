@@ -10,6 +10,7 @@
 #include "Engine/Engine/Audio/AudioSystem.h" // HashBusName (バス名ハッシュの規則は 1 本だけ)
 #include "Engine/Engine/EffectSystem.h"
 #include "Engine/Engine/GameObject.h"
+#include "Engine/Engine/Net/NetRuntime.h" // v13 Net* の参照先 POD (M52i)
 #include "Engine/Engine/Parts.h" // v9 部位クエリ (M48h)
 #include "Engine/Engine/Physics/PhysicsSystem.h"
 #include "Engine/Engine/Scene.h"
@@ -841,6 +842,46 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
         if (c->pendingLoadSlot && slot >= 0) {
             *c->pendingLoadSlot = slot;
         }
+    };
+
+    // ---- ネット対戦の状態参照 (M52i、v13) ----
+    // ★ここが返すのは**機種依存の値**。EngineApiTable の他のスロットと違って
+    //   「同じ入力なら同じ答え」ではない (自分がどちら側かで違う / 実時間で変わる)。
+    //   スクリプトが sim 状態へ書き戻すと 2 台のワールドハッシュが割れる —
+    //   その誤用を毎 tick 見張っているのが M52i の desync 検出 (EngineAPI.h の注記)
+    out.NetIsConnected = [](void* engine) -> int {
+        const NetRuntimeInfo* n = Ctx(engine)->net;
+        return (n != nullptr && n->connected) ? 1 : 0;
+    };
+    out.NetLocalPlayer = [](void* engine) -> uint32_t {
+        const NetRuntimeInfo* n = Ctx(engine)->net;
+        return n != nullptr ? n->localPlayer : 0u;
+    };
+    out.NetPlayerCount = [](void* engine) -> uint32_t {
+        const NetRuntimeInfo* n = Ctx(engine)->net;
+        // 非ネットは 1 (「セッションが無い」の自然な答え)。--local-players のレーン数を
+        // ここへ混ぜない — 混ぜると「ネット越しの相手が居るか」を判定できなくなる
+        return n != nullptr ? n->playerCount : 1u;
+    };
+    out.NetPingMs = [](void* engine) -> float {
+        const NetRuntimeInfo* n = Ctx(engine)->net;
+        return n != nullptr ? n->pingMs : 0.0f;
+    };
+    out.NetRollbackCount = [](void* engine) -> uint64_t {
+        const NetRuntimeInfo* n = Ctx(engine)->net;
+        return n != nullptr ? n->rollbacks : 0ull;
+    };
+
+    // ---- 入力アクションのレーン指定版 (M52i、v13) ----
+    // v12 の 2 本と**同じ評価結果**の player レーンを引くだけ。範囲外レーンは
+    // InputActions 側が 0 を返す (レーン 0 へ落とさない = 配線ミスを隠さない)
+    out.GetActionForPlayer = [](void* engine, uint64_t nameHash, uint32_t player) -> uint32_t {
+        const InputActions* ia = Ctx(engine)->inputActions;
+        return ia ? ia->ActionState(nameHash, player) : 0u;
+    };
+    out.GetAxisForPlayer = [](void* engine, uint64_t nameHash, uint32_t player) -> float {
+        const InputActions* ia = Ctx(engine)->inputActions;
+        return ia ? ia->AxisValue(nameHash, player) : 0.0f;
     };
 
     // パッド振動 (出力レーン)。目標値を書くだけ — 適用/ゲートは EngineLoop (フレーム末)

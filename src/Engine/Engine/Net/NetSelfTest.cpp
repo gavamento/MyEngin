@@ -5,8 +5,14 @@
 #include <string>
 #include <thread>
 
+#include "Engine/Core/Components.h"
 #include "Engine/Core/Log.h"
+#include "Engine/Core/World.h"
+#include "Engine/Engine/GameObject.h"
+#include "Engine/Engine/Net/NetRollback.h"
 #include "Engine/Engine/Net/NetSession.h"
+#include "Engine/Engine/Replay/WorldHasher.h"
+#include "Engine/Engine/Scene.h"
 
 namespace mye {
 namespace {
@@ -101,10 +107,12 @@ bool RunNetSelfTest()
     };
 
     // ---- 1. 線上のレイアウト ----
-    check(sizeof(NetPacketHeader) == 48, "packet header is 48 bytes");
+    // proto v2 (M52i) でヘッダへ確定 (tick, hash) の 16 バイトが増えた
+    check(sizeof(NetPacketHeader) == 64, "packet header is 64 bytes");
     check(sizeof(NetHandshakePayload) == 48, "handshake payload is 48 bytes");
     check(sizeof(InputSnapshot) == 64, "input snapshot is 64 bytes");
-    check(kNetMaxPacket == 48 + 8 * 64, "max packet = header + 8 inputs");
+    check(kNetMaxPacket == 64 + 8 * 64, "max packet = header + 8 inputs");
+    check(kNetProtoVersion == 2, "protocol version is 2 (M52i hash piggyback)");
 
     // ---- 2. 指紋の照合はフィールドごとに理由を返す ----
     {
@@ -226,6 +234,128 @@ bool RunNetSelfTest()
         join.Finish();
         host.Close();
         join.Close();
+    }
+
+    // ---- 7. 予測値の取り出し (M52i) ----
+    // 「未着 tick の予測 = 直近の確定値の繰り返し」がリング越しに成立するか。
+    // ★ここは**実際に受信したレーン**で見る (自分で書き込んだ値では、リングの
+    //   stamp 管理が壊れていても素通りしてしまう)
+    {
+        NetSession host;
+        NetSession join;
+        const NetIdentity id = MakeIdentity();
+        if (!Connect(host, join, 0, id, id)) {
+            check(false, "prediction: loopback session");
+        } else {
+            const uint32_t delay = host.InputDelay();
+            Prime(host, delay);
+            Prime(join, delay);
+            // host のレーン 0 を tick 0..9 まで確定させ、join 側へ届くのを待つ
+            for (uint32_t t = delay; t < 10; ++t) {
+                host.SubmitLocalInput(t, SynthLaneInput(t, 0));
+            }
+            const bool got = DriveUntil(host, join, [&] { return join.LaneInput(9, 0) != nullptr; });
+            check(got, "prediction: the peer lane arrives through the ring");
+            check(join.LaneInput(10, 0) == nullptr,
+                  "prediction: a tick the peer has not sent yet is absent");
+            const InputSnapshot* guess = join.PredictLane(10, 0);
+            const InputSnapshot want = SynthLaneInput(9, 0);
+            check(guess != nullptr && std::memcmp(guess, &want, sizeof(InputSnapshot)) == 0,
+                  "prediction: an unknown tick repeats the newest confirmed value");
+            check(join.PredictLane(0, 0) == nullptr,
+                  "prediction: there is nothing to repeat before the first tick");
+
+            // ---- 8. 確定ハッシュのピギーバック (desync 検出の土台) ----
+            host.SetLocalConfirmed(7, 0xFEEDFACE12345678ull);
+            host.SubmitLocalInput(10, SynthLaneInput(10, 0)); // 次のパケットに載る
+            uint64_t pt = 0;
+            uint64_t ph = 0;
+            const bool carried = DriveUntil(host, join, [&] { return join.PeerConfirmed(pt, ph); });
+            check(carried && pt == 7 && ph == 0xFEEDFACE12345678ull,
+                  "desync: the confirmed (tick, hash) rides along with the input packets");
+            uint64_t bt = 0;
+            uint64_t bh = 0;
+            check(!host.PeerConfirmed(bt, bh),
+                  "desync: a peer that never confirmed anything reports nothing");
+        }
+        host.Close();
+        join.Close();
+    }
+
+    // ---- 9. ロールバックのリング (M52i) ----
+    // **本物のワールドを撮って戻す**ところまで見る。器だけのテストにすると
+    // 「撮れているのに戻していない」型の非対称が丸ごと素通りする (M52d と同じ理由)
+    {
+        Scene scene;
+        World& w = scene.GetWorld();
+        GameObject a = scene.CreateGameObjectTracked("Alpha");
+        w.ApplyStructuralChanges();
+        uint64_t tickIndex = 100;
+        InputSnapshot prevLanes[kMaxPlayers] = {};
+        SimRefs refs;
+        refs.scene = &scene;
+        refs.prevTickInput = prevLanes;
+        refs.tickIndex = &tickIndex;
+
+        NetRollback rb;
+        check(rb.Begin(refs, 100), "rollback: the ring starts with a snapshot");
+        check(rb.Active() && rb.ConfirmedTick() == 100,
+              "rollback: the confirmed frontier starts at the first tick");
+        check(rb.SnapshotBefore(100) != nullptr, "rollback: the state before tick 100 is kept");
+        check(rb.SnapshotBefore(101) == nullptr, "rollback: nothing is kept for a future tick");
+        const uint64_t hash100 = HashWorld(w, nullptr, &scene.Time(), &scene.Persist());
+
+        // tick 100 を「予測入力で走った」ことにして世界を動かす
+        InputSnapshot lanes[kMaxPlayers] = {};
+        lanes[0] = SynthLaneInput(100, 0);
+        lanes[1] = SynthLaneInput(100, 1);
+        if (auto* t = w.GetComponent<LocalTransform>(a.Id())) {
+            t->position.x = 5.0f;
+        }
+        tickIndex = 101;
+        const uint64_t hash101 = HashWorld(w, nullptr, &scene.Time(), &scene.Persist());
+        rb.OnTickEnd(refs, 100, lanes, 2, hash101, true, true);
+        const NetSpecTick* e = rb.Entry(100);
+        check(e != nullptr && e->predicted && e->hashAfter == hash101 && e->simulated,
+              "rollback: the speculative tick is recorded with its hash");
+        check(rb.SnapshotBefore(101) != nullptr, "rollback: the state before the next tick is kept");
+        check(rb.InputsMatch(100, lanes, 2), "rollback: matching inputs compare equal");
+        InputSnapshot other[kMaxPlayers] = {};
+        other[0] = lanes[0];
+        other[1] = SynthLaneInput(999, 1);
+        check(!rb.InputsMatch(100, other, 2), "rollback: a different peer lane compares unequal");
+        rb.MarkConfirmed(100);
+        check(rb.Entry(100) != nullptr && !rb.Entry(100)->predicted,
+              "rollback: a correct prediction clears the speculative flag");
+
+        // 巻き戻す: tick 100 が走る前へ戻すと世界がビット同値へ返る
+        const std::vector<std::byte>* blob = rb.SnapshotBefore(100);
+        check(blob != nullptr && RestoreSimSnapshot(refs, blob->data(), blob->size()),
+              "rollback: the snapshot restores");
+        check(tickIndex == 100, "rollback: restoring rewinds the tick index");
+        check(HashWorld(w, nullptr, &scene.Time(), &scene.Persist()) == hash100,
+              "rollback: the restored world hashes to the pre-tick state");
+
+        // 確定ハッシュのリング
+        rb.NoteCommitted(100, hash101);
+        uint64_t out = 0;
+        check(rb.CommittedHash(100, out) && out == hash101,
+              "rollback: the committed hash comes back");
+        check(!rb.CommittedHash(101, out), "rollback: an uncommitted tick has no hash");
+        rb.NoteCommitted(102, 0);
+        check(!rb.CommittedHash(102, out), "rollback: hash 0 keeps meaning no value");
+
+        // リングの追い出し: 投機上限より深く進めたら古い tick は消える
+        tickIndex = 100;
+        for (uint64_t t = 100; t < 100 + kNetSpecRing + 2; ++t) {
+            tickIndex = t + 1;
+            rb.OnTickEnd(refs, t, lanes, 2, 0x1234ull + t, false, true);
+        }
+        check(rb.Entry(100) == nullptr && rb.SnapshotBefore(100) == nullptr,
+              "rollback: entries older than the ring are gone");
+        check(rb.Entry(100 + kNetSpecRing + 1) != nullptr,
+              "rollback: the newest entry is still there");
+        check(rb.SnapshotBytes() > 0, "rollback: the ring accounts for its snapshot bytes");
     }
 
     if (failCount == 0) {

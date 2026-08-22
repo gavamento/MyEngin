@@ -180,6 +180,14 @@ namespace MyeScripting
         public delegate* unmanaged<void*, int, void> SaveGame;
         public delegate* unmanaged<void*, int, void> LoadGame;
         public delegate* unmanaged<void*, float, float, void> SetPadVibration;
+        // ---- v13 (M52i): ネット対戦の状態 + 入力アクションのレーン指定版 ----
+        public delegate* unmanaged<void*, int> NetIsConnected;
+        public delegate* unmanaged<void*, uint> NetLocalPlayer;
+        public delegate* unmanaged<void*, uint> NetPlayerCount;
+        public delegate* unmanaged<void*, float> NetPingMs;
+        public delegate* unmanaged<void*, ulong> NetRollbackCount;
+        public delegate* unmanaged<void*, ulong, uint, uint> GetActionForPlayer;
+        public delegate* unmanaged<void*, ulong, uint, float> GetAxisForPlayer;
     }
 
     // ネイティブ ManagedHost が保持する関数ポインタ表。Bootstrap がここに書き込む。
@@ -759,5 +767,28 @@ namespace MyeScripting
         {
             if (_api != null) _api->SetPadVibration(_api->Engine, left, right);
         }
+
+        // ---- v13 (M52i): ネット対戦の状態 ----
+        // ★返る値は機種依存 (自分がどちら側か / 実時間 / 巻き戻し回数)。
+        //   sim 状態へ書き戻すと 2 台のワールドハッシュが割れる (EngineAPI.h の注記)。
+        // ★そもそも C# レーンはネット中は停止している (TickServices::netLockstep) ので、
+        //   ネット対戦中の C# からこれらを読む機会は無い。用意してあるのは
+        //   「非ネット時に 0 / 1 が返る」を C++ と同じ形で見せるため
+        public static bool NetIsConnected()
+            => _api != null && _api->NetIsConnected(_api->Engine) != 0;
+        public static uint NetLocalPlayer()
+            => _api != null ? _api->NetLocalPlayer(_api->Engine) : 0u;
+        public static uint NetPlayerCount()
+            => _api != null ? _api->NetPlayerCount(_api->Engine) : 1u;
+        public static float NetPingMs()
+            => _api != null ? _api->NetPingMs(_api->Engine) : 0.0f;
+        public static ulong NetRollbackCount()
+            => _api != null ? _api->NetRollbackCount(_api->Engine) : 0ul;
+
+        // レーン指定のアクション/軸 (M52g の入力レーン)。**こちらは決定論の内側**
+        public static uint GetActionForPlayer(string name, uint player)
+            => _api != null ? _api->GetActionForPlayer(_api->Engine, NameHash(name), player) : 0u;
+        public static float GetAxisForPlayer(string name, uint player)
+            => _api != null ? _api->GetAxisForPlayer(_api->Engine, NameHash(name), player) : 0.0f;
     }
 }

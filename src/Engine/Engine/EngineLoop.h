@@ -30,6 +30,7 @@ class MixerLibrary;
 class InputActions;
 class TimeTravel;
 struct RenderResources;
+struct NetRuntimeInfo;
 
 struct EngineConfig {
     std::wstring title = L"MyEngine";
@@ -175,6 +176,22 @@ struct EngineConfig {
     int netInputDelay = 3;         // --net-delay N (tick)。全 peer で一致必須
     int netLossPercent = 0;        // --net-loss N (入力パケットを故意に捨てる。検証用)
 
+    // ---- 予測ロールバック + desync 検出 (M52i) ----
+    // 既定 on。未着レーンを予測 (直近の確定値の繰り返し) で埋めて先へ進み、外れたら
+    // 巻き戻して確定入力で再シムする。--net-no-rollback で M52h の素の遅延ロックステップ
+    // (そろうまで止まる) へ落とせる — 「ロールバックが原因か」を切り分けるための口
+    bool netRollback = true;
+    // 確定 tick のワールドハッシュを交換し、割れたら crash\desync_<tick>\ を吐いて停止する。
+    // --net-no-halt-on-desync で「検出して警告するが走り続ける」へ落とせる (観察用)。
+    // ★止めるのが既定なのは、desync 後の世界は 2 台で別物であって「遊べているように
+    //   見えるだけ」だから。黙って続けるのは一番たちが悪い
+    bool netHaltOnDesync = true;
+    // --net-poke-tick N: **意図的に desync を起こす**。tick N の末に sim 状態を 1 フィールド
+    // だけ壊す (ハッシュ順で最初のエンティティの位置 x に +0.001)。検出器と診断チェーン
+    // (--rep-diff → --hash-diff) が本当に働くかは、実際に壊して確かめるしかない
+    // (--crash-test と同じ流儀)。ネット非依存で効くので **.rep の再生でも再現できる**
+    int64_t netPokeTick = -1;
+
     // ---- クラッシュバンドル (M52f) ----
     // 落ちたら <projectRoot|exeDir>\crash\<timestamp>\ に minidump + crash.rep +
     // crash.txt + scene.json を残す。既定 on (配布ビルドのバグ報告が本命なので、
@@ -247,6 +264,11 @@ struct EngineContext {
     // エディタは「Play で有効化 → タイムライン窓から RequestSeek」しか触らない
     // (Restore と再シムはここでは起きない = 途中の状態を UI に見せない)
     TimeTravel* timeTravel = nullptr;
+    // ネットセッションの状態 (M52i)。EngineLoop が毎フレーム 1 回書く読み取り専用の POD。
+    // null = このビルド/実行ではネットを張っていない。
+    // ★中身はすべて機種依存 (自分がどちら側か / ping / ロールバック回数)。
+    //   **sim 状態へ書き戻さないこと** — 詳細は NetRuntime.h
+    const NetRuntimeInfo* net = nullptr;
     // この tick でスクリプト層 (フェーズ 3/5) を実行するか。
     // エディタは OnTick で Play 状態に応じて設定する (Runtime は常に true)
     bool simulateScripts = true;
