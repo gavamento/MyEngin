@@ -173,6 +173,10 @@ struct DecalCB {
     XMFLOAT4 color;           // rgb = リニア tint / a = 不透明度
     XMFLOAT4 uv;              // xy = スケール / zw = オフセット
     XMFLOAT4 proj;            // xyz = 投影方向 / w = 角度フェードの cos
+    // ---- M56b (末尾 append)。既定 0 = 法線も roughness も書かない = 恒等 ----
+    XMFLOAT4 axisX; // xyz = ローカル +X のワールド向き (正規化) / w = 法線の強さ
+    XMFLOAT4 axisY; // xyz = ローカル +Y のワールド向き (正規化) / w = 上書き roughness
+    XMFLOAT4 surf;  // x = 粗さの強さ / y = 法線マップ有無 (0/1) / zw = 予約
 };
 
 // debug_velocity.hlsl の VelocityDebugCB と同一レイアウト
@@ -360,6 +364,45 @@ bool DeferredPath::Init(GraphicsDevice& device, ShaderManager& shaders)
     if (FAILED(dev->CreateBlendState(&bd, blendAlpha_.GetAddressOf()))) {
         return false;
     }
+
+    // ---- M56b: デカール専用ブレンド (MRT ごとに別設定) ----
+    // ★**IndependentBlendEnable がこのサブの肝**。3 枚を 1 draw で書くのに、
+    //   ・RT1 (法線) は「デカールの法線へどれだけ寄せるか」= SV_Target1.a
+    //   ・RT3 (material) は「roughness をどれだけ上書きするか」= SV_Target3.a
+    //   と **別々の係数**が要る。D3D11 は独立ブレンドのとき RT n の SRC_ALPHA を
+    //   「RT n 向けの PS 出力のアルファ」から取るので、強度をそのままそこへ載せれば
+    //   「強度 0 → src*0 + dst*1 = dst を厳密に維持」がハードウェア側の性質になる。
+    //   シェーダに「書かない」分岐を持たせるより強い (分岐は書き忘れると壊れる)。
+    // ★**RT3 の書込マスクは GREEN だけ**。metallic (r) / emissive (b) をデカールが
+    //   触ると「色を貼っただけなのに金属になる」が静かに起きる。
+    // ★RT1 は RGB のみ (R10G10B10A2 の 2bit アルファは誰も読まない。
+    //   ここを書くと 2bit へ丸められた値が入るだけで害しかない)。
+    // ★RT2 (ワールド座標) と RT4 (画面速度 = TAA の入力) は BlendEnable=FALSE +
+    //   マスク 0。そもそも RTV も張らないし PS も SV_Target2/4 を持たないが、
+    //   3 重に塞いでおく (ここが緩むと TAA の履歴 UV が壊れる = 気付きにくい)
+    D3D11_BLEND_DESC dbd = {};
+    dbd.IndependentBlendEnable = TRUE;
+    for (int rt = 0; rt < 5; ++rt) {
+        dbd.RenderTarget[rt].BlendEnable = FALSE;
+        dbd.RenderTarget[rt].RenderTargetWriteMask = 0;
+    }
+    auto setAlphaBlend = [&](int rt, UINT8 mask) {
+        dbd.RenderTarget[rt].BlendEnable = TRUE;
+        dbd.RenderTarget[rt].SrcBlend = D3D11_BLEND_SRC_ALPHA;
+        dbd.RenderTarget[rt].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
+        dbd.RenderTarget[rt].BlendOp = D3D11_BLEND_OP_ADD;
+        dbd.RenderTarget[rt].SrcBlendAlpha = D3D11_BLEND_ONE;
+        dbd.RenderTarget[rt].DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA;
+        dbd.RenderTarget[rt].BlendOpAlpha = D3D11_BLEND_OP_ADD;
+        dbd.RenderTarget[rt].RenderTargetWriteMask = mask;
+    };
+    setAlphaBlend(0, D3D11_COLOR_WRITE_ENABLE_ALL); // albedo (a = ジオメトリ有りマークを維持)
+    setAlphaBlend(1, D3D11_COLOR_WRITE_ENABLE_RED | D3D11_COLOR_WRITE_ENABLE_GREEN
+                         | D3D11_COLOR_WRITE_ENABLE_BLUE); // 法線
+    setAlphaBlend(3, D3D11_COLOR_WRITE_ENABLE_GREEN);       // roughness だけ
+    if (FAILED(dev->CreateBlendState(&dbd, blendDecal_.GetAddressOf()))) {
+        return false;
+    }
     return true;
 }
 
@@ -399,10 +442,61 @@ void DeferredPath::Shutdown()
     // M56a: デカール
     decalCB_.Reset();
     rasterizerDecal_.Reset();
+    // M56b
+    blendDecal_.Reset();
+    gbNormalCopy_.Reset();
+    gbNormalCopySrv_.Reset();
+    normalCopyW_ = 0;
+    normalCopyH_ = 0;
     terrain_.Shutdown(); // M58c
 }
 
-// ---- M56a: デカール (投影ボックス、albedo のみ) ----
+// M56b: 受け面の法線 (RT1) を読みながら RT1 へ書くための読み取り用コピー。
+// **フォーマットとサイズは gbNormal_ から取る** — CopyResource は寸法・フォーマットが
+// 完全一致でないと黙って何もしないので、ここで数値を二重管理しない
+bool DeferredPath::EnsureNormalCopy(GraphicsDevice& device)
+{
+    if (gbNormal_.SRV() == nullptr) {
+        return false;
+    }
+    Microsoft::WRL::ComPtr<ID3D11Resource> res;
+    gbNormal_.SRV()->GetResource(res.GetAddressOf());
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> srcTex;
+    if (FAILED(res.As(&srcTex))) {
+        return false;
+    }
+    D3D11_TEXTURE2D_DESC td = {};
+    srcTex->GetDesc(&td);
+    if (td.Width == 0 || td.Height == 0) {
+        return false;
+    }
+    if (gbNormalCopySrv_ && normalCopyW_ == static_cast<int>(td.Width)
+        && normalCopyH_ == static_cast<int>(td.Height)) {
+        return true;
+    }
+    gbNormalCopy_.Reset();
+    gbNormalCopySrv_.Reset();
+    normalCopyW_ = 0;
+    normalCopyH_ = 0;
+    td.MipLevels = 1;
+    td.Usage = D3D11_USAGE_DEFAULT;
+    td.BindFlags = D3D11_BIND_SHADER_RESOURCE; // RTV は要らない (読むだけ)
+    td.CPUAccessFlags = 0;
+    td.MiscFlags = 0;
+    ID3D11Device* dev = device.Device();
+    if (FAILED(dev->CreateTexture2D(&td, nullptr, gbNormalCopy_.GetAddressOf()))
+        || FAILED(dev->CreateShaderResourceView(gbNormalCopy_.Get(), nullptr,
+                                                gbNormalCopySrv_.GetAddressOf()))) {
+        gbNormalCopy_.Reset();
+        gbNormalCopySrv_.Reset();
+        return false;
+    }
+    normalCopyW_ = static_cast<int>(td.Width);
+    normalCopyH_ = static_cast<int>(td.Height);
+    return true;
+}
+
+// ---- M56a/M56b: デカール (投影ボックス。albedo + 法線 + roughness) ----
 void DeferredPath::RenderDecals(GraphicsDevice& device, ShaderManager& shaders,
                                 const RenderView& view, RenderResources& resources,
                                 const XMFLOAT4X4& viewProjT)
@@ -419,18 +513,43 @@ void DeferredPath::RenderDecals(GraphicsDevice& device, ShaderManager& shaders,
     }
     ID3D11DeviceContext* dc = device.Context();
 
-    // ★**GBuffer の RT は albedo (RT0) 1 枚だけ張り直す。**
+    // M56b: このフレームに 1 枚でも法線 / roughness を書くデカールが居るか。
+    // 居なければ M56a と 1 命令も違わない経路 (RT0 だけ / コピー無し) に落ちる
+    bool writesSurface = false;
+    for (const DecalRenderItem& d : view.decals->items) {
+        writesSurface = writesSurface || DecalWritesSurface(d);
+    }
+
+    // ★**GBuffer の RT は「書くものだけ」張り直す。**
     //   計画は「IndependentBlendEnable=TRUE で RT2 (position) と RT4 (velocity) を
     //   RenderTargetWriteMask=0 で塞ぐ」を想定していたが、
-    //     ・法線 (RT1) と ワールド座標 (RT2) は**この場で SRV として読む**ので、
-    //       そもそも RTV に残したままには出来ない (同一リソースの読み書き二重バインド)。
+    //     ・ワールド座標 (RT2) は**この場で SRV として読む**ので、そもそも RTV に
+    //       残したままには出来ない (同一リソースの読み書き二重バインド)。
     //     ・書込マスク 0 は「PS が値を出さなかった RT の内容は未定義」という D3D の規則を
     //       消してくれるが、**bind しない方がそれより強い**。
-    //   → M56b で法線 / roughness を書くときも **RT1 と RT3 を足すだけ**にして、
-    //     RT2 (SSAO / RT / SSR の入力) と RT4 (TAA の入力) は nullptr のまま据え置くこと。
-    //     RT4 を 1 バイトでも書くと TAA の履歴 UV が壊れる
-    ID3D11RenderTargetView* rtv[1] = { gbAlbedo_.RTV() };
-    dc->OMSetRenderTargets(1, rtv, nullptr); // 深度も外す (深度テストは使わない)
+    //   → M56b で足したのは RT1 (法線) と RT3 (material) だけ。
+    //     **RT2 (SSAO / RT / SSR の入力) と RT4 (TAA の入力) は nullptr のまま据え置き**
+    //     (RT4 を 1 バイトでも書くと TAA の履歴 UV が壊れる)。
+    // ★法線 (RT1) は角度フェードのために**読みながら書く**ので、RTV に張る前に
+    //   コピーを取って SRV 側はコピーを見る。順序が命 — RTV を外してからでないと
+    //   CopyResource は「まだ RTV に bind されているリソース」に当たる
+    dc->OMSetRenderTargets(0, nullptr, nullptr);
+    ID3D11ShaderResourceView* normalSrv = gbNormal_.SRV();
+    if (writesSurface && EnsureNormalCopy(device)) {
+        Microsoft::WRL::ComPtr<ID3D11Resource> src;
+        gbNormal_.SRV()->GetResource(src.GetAddressOf());
+        dc->CopyResource(gbNormalCopy_.Get(), src.Get());
+        normalSrv = gbNormalCopySrv_.Get();
+    } else {
+        writesSurface = false; // コピーが作れなかった = 法線を読めない → albedo だけに縮退
+    }
+    ID3D11RenderTargetView* rtv[4] = { gbAlbedo_.RTV(), nullptr, nullptr, nullptr };
+    if (writesSurface) {
+        rtv[1] = gbNormal_.RTV();
+        rtv[3] = gbMaterial_.RTV();
+    }
+    // 深度は外す (深度テストは使わない)
+    dc->OMSetRenderTargets(writesSurface ? 4 : 1, rtv, nullptr);
 
     ID3D11Buffer* cb[1] = { decalCB_.Get() };
     dc->VSSetConstantBuffers(0, 1, cb);
@@ -445,20 +564,30 @@ void DeferredPath::RenderDecals(GraphicsDevice& device, ShaderManager& shaders,
     dc->PSSetShader(prog->ps.Get(), nullptr, 0);
     dc->RSSetState(rasterizerDecal_.Get());
     dc->OMSetDepthStencilState(depthDisabled_.Get(), 0);
-    dc->OMSetBlendState(blendAlpha_.Get(), nullptr, 0xFFFFFFFFu);
+    // M56b: MRT ごとに書込マスクとブレンド係数が違う専用ステート (Init のコメント参照)。
+    // RT1 / RT3 を張らないフレームでも RT0 の設定は blendAlpha_ と同一なので絵は変わらない
+    dc->OMSetBlendState(blendDecal_.Get(), nullptr, 0xFFFFFFFFu);
 
     uint64_t boundTexture = 0;
+    uint64_t boundNormalTex = 0;
     for (const DecalRenderItem& d : view.decals->items) {
         const AssetID texId = d.texture.IsNull() ? resources.textures.White() : d.texture;
-        if (texId.value != boundTexture) {
+        // 法線マップ非対応 / 未指定は白 1x1 を張っておく (シェーダは gDecalSurf.y で
+        // サンプルするかを決めるので、中身は読まれない。null SRV を残さないためだけ)
+        const bool hasNormalTex = writesSurface && !d.normalTexture.IsNull();
+        const AssetID nrmId = hasNormalTex ? d.normalTexture : resources.textures.White();
+        if (texId.value != boundTexture || nrmId.value != boundNormalTex) {
             Texture* tex = resources.textures.Get(texId);
-            ID3D11ShaderResourceView* tsrv = tex ? tex->srv.Get() : nullptr;
-            // t0 = ワールド座標 / t1 = 法線 / t2 = デカール画像。
-            // t0/t1 は毎回同じだが、テクスチャが変わるたびに 3 本まとめて張り直す方が
-            // 「後から t2 だけ張って t0/t1 を張り忘れる」事故が起きない
-            ID3D11ShaderResourceView* srvs[3] = { gbPosition_.SRV(), gbNormal_.SRV(), tsrv };
-            dc->PSSetShaderResources(0, 3, srvs);
+            Texture* nrm = resources.textures.Get(nrmId);
+            // t0 = ワールド座標 / t1 = 受け面の法線 (コピー) / t2 = デカール画像 /
+            // t3 = デカールの法線マップ。t0/t1 は毎回同じだが、テクスチャが変わるたびに
+            // 4 本まとめて張り直す方が「後から t2 だけ張って t0/t1 を張り忘れる」事故が起きない
+            ID3D11ShaderResourceView* srvs[4] = { gbPosition_.SRV(), normalSrv,
+                                                  tex ? tex->srv.Get() : nullptr,
+                                                  nrm ? nrm->srv.Get() : nullptr };
+            dc->PSSetShaderResources(0, 4, srvs);
             boundTexture = texId.value;
+            boundNormalTex = nrmId.value;
         }
         DecalCB dc0 = {};
         dc0.viewProj = viewProjT;
@@ -467,6 +596,13 @@ void DeferredPath::RenderDecals(GraphicsDevice& device, ShaderManager& shaders,
         dc0.color = { d.color.x, d.color.y, d.color.z, d.opacity };
         dc0.uv = { d.uvScale[0], d.uvScale[1], d.uvOffset[0], d.uvOffset[1] };
         dc0.proj = { d.projDir.x, d.projDir.y, d.projDir.z, d.angleFadeCos };
+        // M56b: RT1 / RT3 を張っていないフレームは強度を 0 に潰す。
+        // **張っていない RT へ書いても捨てられるだけ**だが、CB を見たときに
+        // 「効いていない値が入っている」状態を残さない (デバッグの誤読を減らす)
+        dc0.axisX = { d.axisX.x, d.axisX.y, d.axisX.z, writesSurface ? d.normalStrength : 0.0f };
+        dc0.axisY = { d.axisY.x, d.axisY.y, d.axisY.z, d.roughness };
+        dc0.surf = { writesSurface ? d.roughnessStrength : 0.0f, hasNormalTex ? 1.0f : 0.0f,
+                     0.0f, 0.0f };
         UploadCB(dc, decalCB_.Get(), dc0);
         dc->Draw(36, 0); // 立方体 12 三角形
         prof::AddDraw(12);
@@ -475,8 +611,12 @@ void DeferredPath::RenderDecals(GraphicsDevice& device, ShaderManager& shaders,
     // GBuffer を SRV で読んだまま残さない。加えて **ラスタライザを必ず戻す** —
     // rasterizerDecal_ は CULL_FRONT なので、後段のフルスクリーン三角形が
     // 丸ごと裏面として消える (SSAO を off にした経路で最初に踏む)
-    ID3D11ShaderResourceView* nullSrvs[3] = {};
-    dc->PSSetShaderResources(0, 3, nullSrvs);
+    ID3D11ShaderResourceView* nullSrvs[4] = {};
+    dc->PSSetShaderResources(0, 4, nullSrvs);
+    // ★M56b: **RTV も明示的に外す**。RT1 (法線) / RT3 (material) を RTV に残したまま
+    //   後段 (SSAO / 光パス) が同じリソースを SRV で読むと、ドライバが暗黙に片方を
+    //   外して「AO だけが真っ黒」のような読みにくい壊れ方をする
+    dc->OMSetRenderTargets(0, nullptr, nullptr);
     dc->RSSetState(rasterizer_.Get());
     dc->OMSetBlendState(blendOpaque_.Get(), nullptr, 0xFFFFFFFFu);
 }
@@ -785,8 +925,9 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
         dc->RSSetState(rasterizer_.Get());
     }
 
-    // ---- 1.2) デカール (M56a): ジオメトリパス (地形込み) の直後・SSAO の前。
-    //      「もう GBuffer に書かれた面」の albedo を投影ボックスで上描きするので、
+    // ---- 1.2) デカール (M56a/M56b): ジオメトリパス (地形込み) の直後・SSAO の前。
+    //      「もう GBuffer に書かれた面」の albedo / 法線 / roughness を投影ボックスで
+    //      上描きするので、
     //      **地形の後**でなければ地形に貼れない。SSAO / RT / 光パスの**前**でなければ
     //      デカールの色がライティングにも AO にも乗らない。
     //      Wireframe (M40b) では線の画素しか GBuffer に無く投影しても意味が無いので飛ばす ----

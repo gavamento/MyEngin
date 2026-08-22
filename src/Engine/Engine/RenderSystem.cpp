@@ -616,6 +616,13 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
                     it.texture = d->texture;
                     it.sortOrder = d->sortOrder;
                     it.sortKey = e.index; // 決定論キー (アーキタイプの並び順に依存しない)
+                    // M56b: 強度は [0,1] に丸めてから渡す。**そのままハードウェアの
+                    // ブレンド係数になる**ので、1 を超えると dst 側の係数 (1-src) が負に
+                    // なって法線が反転する (Inspector のスライダは止めるがスクリプト経由は素通り)
+                    it.normalTexture = d->normalTex;
+                    it.normalStrength = DecalStrength01(d->normalStrength);
+                    it.roughness = DecalStrength01(d->roughness);
+                    it.roughnessStrength = DecalStrength01(d->roughnessStrength);
                     decalList_.items.push_back(it);
                 }
             });

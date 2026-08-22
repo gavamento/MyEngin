@@ -337,7 +337,7 @@ were considered and **deliberately left out**. They are non-goals of v1, not ove
 | **Diffuse SH probe grid** | Two implementations of diffuse ambient already exist (IBL irradiance, and RT diffuse GI + SVGF). An SH grid would be a third, lower in quality than the RT lane, and would require a whole bake infrastructure. M56 ships *specular* reflection probes only. |
 | **Terrain collision** | Terrain (M58) is a render-only lane: `TerrainComponent` is `kComponentNoHash` and nothing it does reaches the simulation. A heightfield collider would move terrain into the hashed lane, requiring a fifth scene pair in `tools\replay_verify.bat` and an ABI bump for height/normal queries. Deferred to M59. |
 
-### 6.6 Decals (M56a)
+### 6.6 Decals (M56a, M56b)
 
 `DecalComponent` projects a texture (or a flat tint) onto whatever the G-Buffer already
 holds inside an oriented box. The box is the entity's world matrix applied to the unit cube
@@ -355,16 +355,34 @@ holds inside an oriented box. The box is the entity's world matrix applied to th
 - **Angle fade**: `saturate((dot(N, -projDir) - cos(angleFadeDeg)) / (1 - cos(angleFadeDeg)))`.
   The default 90° collapses to a plain cosine fade, which is what stops a downward decal
   from smearing down the vertical faces of whatever it lands on.
-- **Render targets**: the pass binds **only RT0 (albedo)**. RT1 (normal) and RT2 (position)
-  are read as SRVs in the same draw, and RT2 (SSAO / RT / SSR input) and RT4 (velocity, the
-  TAA input) must never receive decal writes.
+- **Render targets**: the pass binds **RT0 (albedo)** always, plus **RT1 (normal)** and
+  **RT3 (material)** on any frame where at least one decal asks for them (M56b). RT2
+  (position, the SSAO / RT / SSR input) and RT4 (velocity, the TAA input) are never bound
+  and the pixel shader has no `SV_Target2` / `SV_Target4` to write them with.
+- **Surface writes (M56b)**: `normalStrength` and `roughnessStrength` are not shader
+  branches — **they are the hardware blend factors**, carried as the alpha of each render
+  target's own pixel-shader output under `IndependentBlendEnable`. Strength `0` therefore
+  degenerates to `src*0 + dst*1` and leaves the G-Buffer *bit-identical*, which is what
+  makes the feature free for decals that only paint albedo. RT1 is masked to RGB and RT3 to
+  **green only**, so a decal can never turn a surface metallic or emissive by accident.
+- **Tangent frame**: `PerturbNormal` (the derivative-based TBN in `common.hlsli`) cannot be
+  used here — `ddx/ddy` of the projector box's own surface has nothing to do with the
+  receiving surface. The frame comes from the **decal's own OBB basis**: `T` = local +X,
+  `B` = local −Y (the UV generator flips `v`), `N` = −projection direction. The three axes
+  are normalized on the CPU in `FillDecalTransform`, so the shader never normalizes a basis.
+- **Reading RT1 while writing RT1**: the angle fade needs the receiving normal, so on frames
+  that bind RT1 as a render target the pass first copies it to an SRV-only scratch texture
+  and samples the copy (a resource may not be bound for read and write at once). Frames with
+  no surface-writing decal skip the copy entirely.
 
 **v1 limitations:**
 
 | Limitation | Why |
 |---|---|
 | **Forward path is not supported** | Forward has no G-Buffer, so there is no "already-shaded surface" to overwrite. A forward decal would have to be a second pass over the receiving geometry with its own clip volume, which is a different feature. Decals silently do nothing on the forward path and in asset thumbnails (`AssetPreviewCache` is forward-only). |
-| **Albedo only** | Normals and roughness are M56b. |
+| **Metallic and emissive are never touched** | The material target is write-masked to its green (roughness) channel. A "rust" decal that also changes metalness would need a second masked channel and a second blend factor, which the single alpha output per target cannot carry. |
+| **Normals blend in encoded space** | The hardware lerps the `*0.5+0.5` encoding, and the light pass renormalizes. This is exact for the endpoints and close enough in between; it is not a slerp. |
+| **No decals on transparent surfaces** | Transparent geometry never reaches the G-Buffer, so there is nothing for the projector to land on. |
 | **Sampler is LINEAR/CLAMP** | The reservation for M56 adds no new sampler states, and CLAMP is what keeps a decal from bleeding its opposite edge. `uvScale`/`uvOffset` therefore select an atlas sub-rect rather than tiling. |
 | **No frustum culling** | Off-screen decals still rasterize their 12 triangles. Decal counts are expected to be small; this becomes worth fixing only when it shows up in a profile. |
 

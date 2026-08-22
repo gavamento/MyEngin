@@ -618,16 +618,17 @@ struct TerrainComponent {
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
-// ---- デカール (M56a、spec §6.4) ----
+// ---- デカール (M56a / M56b、spec §6.6) ----
 // **描画専用 (kComponentNoHash)** — 弾痕 / 汚れ / 路面標示のような「既に描かれた面の
-// albedo を後から上描きする」投影ボックス。sim / ワールドハッシュには 1 バイトも触らない。
+// albedo (M56a) と法線 / roughness (M56b) を後から上描きする」投影ボックス。
+// sim / ワールドハッシュには 1 バイトも触らない。
 //
 // 箱の形はエンティティのワールド行列そのもの (単位立方体 [-0.5,0.5]^3 をスケール/回転/移動
 // したもの) で、**投影方向はローカル +Z**。ライトの向きと同じ規約 (RenderSystem が
 // ワールド行列の第 3 行を使う) に揃えてあるので、「ライトを置くのと同じ感覚で向ける」で通る。
 //
 // ★**Deferred 専用 (v1)**。Forward には GBuffer が無く、「もう描かれた面の albedo」という
-//   上描き先が存在しない。engine_spec.md §6.4 に制限として明記してある。
+//   上描き先が存在しない。engine_spec.md §6.6 に制限として明記してある。
 //
 // opt-in (TypeId 末尾 append) なので既存シーンのハッシュは不変 = ReplayFile bump 不要
 struct DecalComponent {
@@ -646,6 +647,22 @@ struct DecalComponent {
     float angleFadeDeg = 90.0f;
     // 同じ画素に複数枚乗るときの順序 (小さいほど先 = 下)。同値は EntityID で決定論に割る
     int32_t sortOrder = 0;
+    // ---- M56b: 受け面の法線 / roughness も上描きする (末尾 append) ----
+    // ★**強度がそのままハードウェアのブレンド係数になる**設計。既定 0 は
+    //   「src*0 + dst*1」= GBuffer を 1 ビットも変えない = 恒等が式として保証される
+    //   (シェーダ側で「書かない」分岐を持つのではなく、係数 0 で殺す)。
+    // 接線空間の法線マップ。null = 平坦 (0,0,1) = デカール面そのものの向き。
+    // ★TBN はデカールの OBB 基底から作る (T = ローカル +X / B = ローカル -Y /
+    //   N = -投影方向)。common.hlsli の PerturbNormal は使えない — posW の ddx/ddy が
+    //   「投影ボックスの面」のものになって受け面の微分にならないため。
+    // 注: Inspector のアセットピッカーの名前推定は小文字 "tex" を探す (大文字 T の
+    //     "normalTex" は一致しない) ので、このフィールドは総当たりの一覧に落ちる
+    AssetID normalTex = {};
+    // 受け面の法線をデカールの法線へどれだけ寄せるか [0,1]。0 = 法線を書かない
+    float normalStrength = 0.0f;
+    // 上書きする roughness (GBuffer RT3 の g)。metallic / emissive は書込マスクで守る
+    float roughness = 0.5f;
+    float roughnessStrength = 0.0f; // 0 = roughness を書かない
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 

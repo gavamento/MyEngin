@@ -34,6 +34,9 @@ private:
     // view.decals が null / 空なら 1 命令も発行せずに return する
     void RenderDecals(GraphicsDevice& device, ShaderManager& shaders, const RenderView& view,
                       RenderResources& resources, const DirectX::XMFLOAT4X4& viewProjT);
+    // M56b: RT1 (法線) の読み取り用コピーを用意する (無ければ作る / サイズが変わったら作り直す)。
+    // 戻り値 false = 確保できなかった → そのフレームは albedo だけの M56a 相当へ縮退する
+    bool EnsureNormalCopy(GraphicsDevice& device);
 
     RenderTexture gbAlbedo_;   // a=1 でジオメトリ有りマーク
     RenderTexture gbNormal_;   // ワールド法線 *0.5+0.5
@@ -82,6 +85,18 @@ private:
     // 投影ボックス専用のラスタライザ。CULL_FRONT (裏面を描く = カメラが箱に入っても消えない)
     // + DepthClipEnable=FALSE (箱が near/far を跨いでも欠けない)
     Microsoft::WRL::ComPtr<ID3D11RasterizerState> rasterizerDecal_;
+    // ---- M56b: 法線 / roughness の上描き ----
+    // MRT ごとに別の書込マスクとブレンド係数を持つ独立ブレンド (Init のコメント参照)
+    Microsoft::WRL::ComPtr<ID3D11BlendState> blendDecal_;
+    // ★**RT1 (法線) のコピー**。デカールは受け面の法線を角度フェードのために読むので、
+    //   RT1 を RTV として bind するフレームは同じリソースを SRV でも読めない
+    //   (同一リソースの読み書き二重バインドは D3D が禁じている)。RenderTexture を
+    //   使わないのは RTV / DSV が要らないため — SRV だけの素の Texture2D で足りる。
+    //   **法線も roughness も書かないフレームでは 1 バイトも確保しない** (遅延生成)
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> gbNormalCopy_;
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> gbNormalCopySrv_;
+    int normalCopyW_ = 0;
+    int normalCopyH_ = 0;
     SkyboxPass skybox_; // ライトパス後・透明前に空を塗る (M29d)
     // 地形 (M58c)。GBuffer へ専用シェーダで書く — 不透明パスは material->shader を
     // 見ないのでマテリアル経由では通せない (TerrainPass.h の頭のコメント参照)

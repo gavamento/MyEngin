@@ -264,7 +264,34 @@ struct DecalRenderItem {
     AssetID texture = {}; // null = 白 (DeferredPath が TextureLibrary::White() を張る)
     int32_t sortOrder = 0;
     uint32_t sortKey = 0; // EntityID::index (規則 7 の決定論タイブレーク)
+    // ---- M56b: 法線 / roughness (末尾 append) ----
+    // TBN の T / B。**投影パスでは posW の微分から TBN を作れない**ので、デカール自身の
+    // OBB 基底を CPU 側で正規化して渡す (シェーダは正規化しない)。
+    // B は「ローカル -Y」— UV の v を反転している (uv.y = 0.5 - lp.y) ぶん符号が入れ替わる
+    DirectX::XMFLOAT3 axisX = { 1.0f, 0.0f, 0.0f }; // ローカル +X のワールド向き (正規化)
+    DirectX::XMFLOAT3 axisY = { 0.0f, 1.0f, 0.0f }; // ローカル +Y のワールド向き (正規化)
+    AssetID normalTexture = {};     // 接線空間の法線マップ (null = 平坦)
+    float normalStrength = 0.0f;    // そのままブレンド係数になる。0 = RT1 を触らない
+    float roughness = 0.5f;         // 上書きする roughness (RT3 の g)
+    float roughnessStrength = 0.0f; // そのままブレンド係数になる。0 = RT3 を触らない
 };
+
+// この 1 枚が GBuffer の**表面属性** (法線 / roughness) にも書くか。
+// ★DeferredPath はリスト全体でこれを or して「RT1/RT3 を bind するか」「法線バッファを
+//   コピーするか」を決める。1 枚も書かないフレームは M56a と 1 命令も違わない経路に落ちる
+//   = デカールを albedo だけで使っている限り M56b の追加コストはゼロ
+inline bool DecalWritesSurface(const DecalRenderItem& d)
+{
+    return d.normalStrength > 0.0f || d.roughnessStrength > 0.0f;
+}
+
+// M56b の強度を [0,1] へ丸める。★**強度はそのままハードウェアのブレンド係数**なので、
+// 1 を超えると dst 側の係数 (1-src) が負になって法線が裏返り、負なら符号が反転する。
+// Inspector のスライダは止めるがスクリプト / 手書き JSON は素通りするので収集側で潰す
+inline float DecalStrength01(float v)
+{
+    return (v < 0.0f) ? 0.0f : ((v > 1.0f) ? 1.0f : v);
+}
 
 // デカールの描画順。**タイブレークが本体**: sortOrder が同値のデカールが並んだとき、
 // 比較が「収集順」に依存するとアーキタイプの並びの揺れで上下が入れ替わる (規則 7)。
@@ -309,6 +336,13 @@ inline bool FillDecalTransform(const DirectX::XMFLOAT4X4& world, DecalRenderItem
         return false;
     }
     DirectX::XMStoreFloat3(&dst.projDir, DirectX::XMVector3Normalize(z));
+    // M56b: TBN の元になる第 1 行 (ローカル +X) と 第 2 行 (ローカル +Y)。
+    // 退化 (スケール 0 の軸) は行列式 0 で既に弾かれているので長さ 0 にはならないが、
+    // 「正規化はここ 1 箇所」を守るためにシェーダ側では一切正規化しない
+    const DirectX::XMVECTOR ax = DirectX::XMVectorSet(world._11, world._12, world._13, 0.0f);
+    const DirectX::XMVECTOR ay = DirectX::XMVectorSet(world._21, world._22, world._23, 0.0f);
+    DirectX::XMStoreFloat3(&dst.axisX, DirectX::XMVector3Normalize(ax));
+    DirectX::XMStoreFloat3(&dst.axisY, DirectX::XMVector3Normalize(ay));
     return true;
 }
 

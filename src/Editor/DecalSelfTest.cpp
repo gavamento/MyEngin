@@ -55,6 +55,25 @@ bool Near(float a, float b, float eps = 1e-4f)
     return std::fabs(a - b) <= eps;
 }
 
+// M56b: decal_project.hlsl が法線を組み立てている式の **CPU 鏡**。
+//   nDecal = normalize(ts.x * axisX - ts.y * axisY + ts.z * (-projDir))
+// T = ローカル +X / B = ローカル -Y (UV の v を反転しているぶん符号が入れ替わる) /
+// N = -投影方向。★ここが 1 箇所でもずれると「絵は出るのに陰影だけ嘘」になる
+XMFLOAT3 DecalTangentNormal(const DecalRenderItem& d, float tx, float ty, float tz)
+{
+    const XMVECTOR t = XMVectorScale(XMLoadFloat3(&d.axisX), tx);
+    const XMVECTOR b = XMVectorScale(XMLoadFloat3(&d.axisY), -ty);
+    const XMVECTOR n = XMVectorScale(XMLoadFloat3(&d.projDir), -tz);
+    XMFLOAT3 out;
+    XMStoreFloat3(&out, XMVector3Normalize(XMVectorAdd(XMVectorAdd(t, b), n)));
+    return out;
+}
+
+float Dot3(const XMFLOAT3& a, const XMFLOAT3& b)
+{
+    return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+
 DecalRenderItem MakeOrderItem(int32_t sortOrder, uint32_t sortKey)
 {
     DecalRenderItem d;
@@ -124,6 +143,62 @@ bool RunDecalSelfTest()
         const float len = std::sqrt(d.projDir.x * d.projDir.x + d.projDir.y * d.projDir.y
                                     + d.projDir.z * d.projDir.z);
         check(Near(len, 1.0f), "projDir is normalized (non-uniform scale does not leak in)");
+
+        // ---- M56b: TBN の元になる 2 本の軸 ----
+        // 非一様スケール (3,5,0.5) を掛けた行列なので、正規化を忘れると長さがそのまま漏れる
+        XMFLOAT3 ex, ey;
+        XMStoreFloat3(&ex, XMVector3Normalize(
+                               XMVectorSet(world._11, world._12, world._13, 0.0f)));
+        XMStoreFloat3(&ey, XMVector3Normalize(
+                               XMVectorSet(world._21, world._22, world._23, 0.0f)));
+        check(Near(d.axisX.x, ex.x) && Near(d.axisX.y, ex.y) && Near(d.axisX.z, ex.z),
+              "axisX is the normalized 1st row of world (local +X)");
+        check(Near(d.axisY.x, ey.x) && Near(d.axisY.y, ey.y) && Near(d.axisY.z, ey.z),
+              "axisY is the normalized 2nd row of world (local +Y)");
+        // 回転 + スケールの行列なので 3 軸は直交する。ここが崩れる = 行と列の取り違え
+        check(Near(Dot3(d.axisX, d.axisY), 0.0f, 1e-3f)
+                  && Near(Dot3(d.axisX, d.projDir), 0.0f, 1e-3f)
+                  && Near(Dot3(d.axisY, d.projDir), 0.0f, 1e-3f),
+              "the three decal axes stay orthogonal under non-uniform scale");
+
+        // シェーダの TBN 合成 (CPU 鏡)。**平坦な法線マップ (0,0,1) は投影方向の逆**に
+        // ならなければならない — ここが反転していると、デカールを貼った面だけが
+        // 裏返って真っ黒になる (絵は出るので気付きにくい)
+        const XMFLOAT3 flat = DecalTangentNormal(d, 0.0f, 0.0f, 1.0f);
+        check(Near(flat.x, -d.projDir.x) && Near(flat.y, -d.projDir.y)
+                  && Near(flat.z, -d.projDir.z),
+              "a flat tangent normal (0,0,1) maps to -projDir (the decal faces the projector)");
+        const XMFLOAT3 alongU = DecalTangentNormal(d, 1.0f, 0.0f, 0.0f);
+        check(Near(alongU.x, d.axisX.x) && Near(alongU.y, d.axisX.y)
+                  && Near(alongU.z, d.axisX.z),
+              "tangent (1,0,0) maps to +axisX (u grows with local +X)");
+        // ★v は反転している (uv.y = 0.5 - lp.y) ので、接線空間の +y は **-axisY**
+        const XMFLOAT3 alongV = DecalTangentNormal(d, 0.0f, 1.0f, 0.0f);
+        check(Near(alongV.x, -d.axisY.x) && Near(alongV.y, -d.axisY.y)
+                  && Near(alongV.z, -d.axisY.z),
+              "tangent (0,1,0) maps to -axisY (the decal flips v when it builds the UV)");
+        const XMFLOAT3 tilted = DecalTangentNormal(d, 0.6f, -0.3f, 0.8f);
+        check(Near(std::sqrt(Dot3(tilted, tilted)), 1.0f),
+              "a perturbed normal comes back normalized");
+    }
+
+    // ---- M56b: 表面属性を書くか / 強度の丸め ----
+    {
+        DecalRenderItem d;
+        check(!DecalWritesSurface(d),
+              "a default decal writes neither normal nor roughness (albedo only = M56a)");
+        d.normalStrength = 0.5f;
+        check(DecalWritesSurface(d), "a decal with normalStrength > 0 writes the normal target");
+        d.normalStrength = 0.0f;
+        d.roughnessStrength = 0.25f;
+        check(DecalWritesSurface(d), "a decal with roughnessStrength > 0 writes the material target");
+
+        // ★強度はそのままハードウェアのブレンド係数になるので、範囲外は必ず潰す。
+        //   1.2 を通すと dst 側が (1 - 1.2) = -0.2 になって法線が裏返る
+        check(Near(DecalStrength01(-1.0f), 0.0f), "a negative strength clamps to 0");
+        check(Near(DecalStrength01(0.0f), 0.0f), "strength 0 stays 0 (the identity blend factor)");
+        check(Near(DecalStrength01(0.37f), 0.37f), "an in-range strength passes through");
+        check(Near(DecalStrength01(1.2f), 1.0f), "a strength above 1 clamps to 1");
     }
 
     // ---- 退化した行列は弾く ----
@@ -191,9 +266,14 @@ bool RunDecalSelfTest()
             d->color = { 0.25f, 0.5f, 0.75f, 0.6f };
             d->angleFadeDeg = 42.0f;
             d->sortOrder = 3;
+            // M56b で足したフィールドも同じ檻の中に居ることを確かめる
+            d->normalStrength = 1.0f;
+            d->roughness = 0.2f;
+            d->roughnessStrength = 0.8f;
         }
         const uint64_t after = HashWorld(w, nullptr);
-        check(before == after, "DecalComponent is kComponentNoHash (the world hash never moves)");
+        check(before == after,
+              "DecalComponent is kComponentNoHash (the world hash never moves, M56b fields too)");
     }
 
     MYE_LOG_INFO("==== Decal self test: %s ====", failCount == 0 ? "PASS" : "FAIL");

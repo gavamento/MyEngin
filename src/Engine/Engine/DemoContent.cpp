@@ -1023,15 +1023,16 @@ void BuildRenderShowcaseScene(EngineContext& ctx)
     point("PointCool", 5.5f, 2.6f, 13.0f, 0.35f, 0.65f, 1.00f, 6.0f, 18.0f,
           AssetID{ HashStr("rdemo_lamp_cool") });
 
-    // ---- デカール 2 枚 (M56a) ----
+    // ---- デカール 2 枚 (M56a / M56b) ----
     // ★**golden に載せるために置いている。** 1 枚も置かないと「デカールが壊れても
     //   demo_render_deferred は緑のまま」= 回帰の被覆がゼロになる (M54a でこのシーンを
     //   作った理由そのもの)。置いた代償として demo_render_deferred / demo_render_taa の
     //   2 枚が M56a で動く (demo_render_forward が**動かない**ことが v1 の Forward 非対応の証明)。
-    // ★テクスチャは付けない (null = 白 = color がそのまま出る)。AssetRef はシーン JSON へ
-    //   64bit の AssetID をそのまま書く仕様で、テクスチャの AssetID は正規化絶対パスの
-    //   ハッシュ = チェックアウト依存になる (M51j で踏んだ穴)。色だけでも
-    //   「面に沿って貼り付く」ことは絵に出る。
+    // ★albedo テクスチャは付けない (null = 白 = color がそのまま出る)。AssetRef はシーン
+    //   JSON へ 64bit の AssetID をそのまま書く仕様で、テクスチャの AssetID は正規化絶対
+    //   パスのハッシュ = チェックアウト依存になる (M51j で踏んだ穴)。**このシーンは
+    //   コードから毎回組み直す生成物 (cache\render_showcase.scene.json は gitignore) なので
+    //   それでも構わない** — 実際 M56b では法線マップをファイルから読んでいる。
     // 向きは **ローカル +Z が投影方向** (LightComponent と同じ規約)。
     auto decal = [&](const char* name, float px, float py, float pz, float pitchDeg, float yawDeg,
                      float sx, float sy, float sz, float r, float g, float b, float a,
@@ -1051,8 +1052,27 @@ void BuildRenderShowcaseScene(EngineContext& ctx)
     // すっぽり含む位置にしてある。**床と柱の天面には乗り、柱の側面には乗らない**
     // (側面は法線が投影方向と直角 = 角度フェード 0) — スクリーンスペースの貼り絵ではなく
     // 面へ投影していることが 1 枚の絵で分かる
-    decal("DecalGround", -8.0f, 1.0f, -6.0f, 90.0f, 0.0f, 8.0f, 6.0f, 4.0f,
-          0.95f, 0.42f, 0.12f, 0.85f, 90.0f, 0);
+    GameObject decalGround = decal("DecalGround", -8.0f, 1.0f, -6.0f, 90.0f, 0.0f, 8.0f, 6.0f,
+                                   4.0f, 0.95f, 0.42f, 0.12f, 0.85f, 90.0f, 0);
+    // ---- M56b: この 1 枚だけ法線 / roughness も上描きする ----
+    // ★**2 枚のうち 1 枚だけ**にしてあるのが要点。DecalPillar は強度 0 のまま =
+    //   「M56b を足しても albedo だけのデカールは 1 ビットも動かない」が同じ 1 枚の絵で
+    //   検証できる (img-diff の差分が DecalGround の footprint に閉じるはず)。
+    // ★法線マップは既にリポジトリに居る assets\textures\demo_normal.png (256^2、
+    //   平坦 128,128,255 に凹凸)。**リニアで読む** (法線マップに sRGB を掛けると凹凸が歪む)。
+    //   平坦な床と柱の天面に貼るので、法線を書き換えないと絵が 1 画素も変わらない
+    //   (投影方向 = -Y = 受け面の法線そのものなので、法線マップ無しの「平坦なデカール」は
+    //   定義上なにもしない) — つまり**このテクスチャが無いと M56b の被覆が作れない**。
+    //   assetsRoot にファイルが無い環境では null が返り、平坦 = 恒等に落ちる。
+    if (auto* dg = decalGround.GetComponent<DecalComponent>()) {
+        dg->normalTex = res.textures.LoadFile(ctx.assetsRoot + L"\\textures\\demo_normal.png",
+                                              /*srgb=*/false);
+        dg->normalStrength = 1.0f;
+        // 濡れた路面のように鏡面を立てる。床 (rdemo_ground) の粗さは 0.90 なので
+        // 0.15 との差はスポット 2 本と点光源 2 個のハイライトとしてはっきり出る
+        dg->roughness = 0.15f;
+        dg->roughnessStrength = 1.0f;
+    }
     // 2 枚目: 柱の側面へ水平投影 (回転なし = ローカル +Z が世界の +Z = カメラの奥向き)。
     // Pillar_03 (x=4, z=-6, 幅 1.8, 高さ 3.0) の手前の面だけを覆う箱で、床 (y=0) は
     // 箱の下端 y=0.5 の外なので掛からない = 「箱の外は捨てる」が角度フェードとは
