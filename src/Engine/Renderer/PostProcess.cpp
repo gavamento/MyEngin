@@ -129,13 +129,17 @@ struct DofCB {
     float pad;
 };
 
-// postfx_motionblur.hlsl の MotionBlurCB (144 バイト)
+// postfx_motionblur.hlsl の MotionBlurCB (160 バイト)。
+// M55e: useVelocity を末尾 append。CreateConstant は size を丸めないので 16 バイト
+// 倍数になるよう pad を明示する (144 + 4 のままだと CreateBuffer が落ちる)
 struct MotionBlurCB {
     DirectX::XMFLOAT4X4 invViewProj;  // transpose(inverse(view*proj))
     DirectX::XMFLOAT4X4 prevViewProj; // transpose(前フレームの view*proj)
     float intensity;
     float maxPixels;
     float screenW, screenH;
+    int32_t useVelocity; // M55e: 1 = GBuffer RT4 (画面速度) を速度源に使う
+    float pad[3];
 };
 
 // M46a: 構造化バッファ / 定数バッファ / CB 更新は GpuBufferUtil.h へ集約 (定義は同一)
@@ -354,9 +358,11 @@ bool PostProcess::RunDof(GraphicsDevice& device, ShaderManager& shaders, Target&
     return true;
 }
 
-// M44d: カメラモーションブラー (深度再投影)。uv+深度 → ワールド → 前フレーム viewProj で
-// 再投影した UV との差を速度として 8 タップ平均。カメラの動きのみ (オブジェクト velocity
-// 対象外 = v1 制限)。行列の逆行列/転置は CPU 側で用意する
+// M44d/M55e: モーションブラー。速度ベクトルの向きへ 8 タップ平均。
+// 速度源は画素ごとに 2 通り — ジオメトリ画素は GBuffer RT4 の画面速度 (カメラ +
+// **オブジェクト**が合成済み)、背景と Forward パスは従来の深度再投影。
+// 行列の逆行列/転置は CPU 側で用意する。選択規則の CPU ミラーは
+// PostFxMath.h::motionblur::BlurVector (RenderSelfTest が検証)
 bool PostProcess::RunMotionBlur(GraphicsDevice& device, ShaderManager& shaders,
                                 const Settings& s, const RenderView& view,
                                 ID3D11ShaderResourceView* inputSRV, RenderTexture& dst)
@@ -385,6 +391,11 @@ bool PostProcess::RunMotionBlur(GraphicsDevice& device, ShaderManager& shaders,
     cb.maxPixels = s.mbMaxPixels;
     cb.screenW = static_cast<float>(dst.Width());
     cb.screenH = static_cast<float>(dst.Height());
+    // M55e: 画面速度は GBuffer と同じ画素格子でしか Load できないので、解像度が
+    // 一致するときだけ使う (不一致・Forward・AssetPreview は深度再投影へ縮退)
+    const bool useVelocity = view.velocitySRV != nullptr && dst.Width() == view.width
+        && dst.Height() == view.height;
+    cb.useVelocity = useVelocity ? 1 : 0;
     UploadCB(dc, mbCB_.Get(), cb);
 
     // フルスクリーンパス (RunBloom と同じ規約)。入力 SRV を読むため RTV を先に外す
@@ -405,13 +416,15 @@ bool PostProcess::RunMotionBlur(GraphicsDevice& device, ShaderManager& shaders,
     dc->PSSetConstantBuffers(0, 1, cbs);
     ID3D11RenderTargetView* rtv = dst.RTV();
     dc->OMSetRenderTargets(1, &rtv, nullptr);
-    ID3D11ShaderResourceView* srvs[2] = { inputSRV, view.depthSRV };
-    dc->PSSetShaderResources(0, 2, srvs);
+    // t2 = 画面速度 (M55e)。useVelocity=0 のときは null のまま = シェーダも参照しない
+    ID3D11ShaderResourceView* srvs[3] = { inputSRV, view.depthSRV,
+                                          useVelocity ? view.velocitySRV : nullptr };
+    dc->PSSetShaderResources(0, 3, srvs);
     dc->VSSetShader(prog->vs.Get(), nullptr, 0);
     dc->PSSetShader(prog->ps.Get(), nullptr, 0);
     dc->Draw(3, 0);
-    ID3D11ShaderResourceView* nullSrv[2] = { nullptr, nullptr };
-    dc->PSSetShaderResources(0, 2, nullSrv); // 深度 SRV は即解除 (次フレーム DSV bind 対策)
+    ID3D11ShaderResourceView* nullSrv[3] = { nullptr, nullptr, nullptr };
+    dc->PSSetShaderResources(0, 3, nullSrv); // 深度 SRV は即解除 (次フレーム DSV bind 対策)
     return true;
 }
 

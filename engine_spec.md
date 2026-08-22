@@ -233,7 +233,8 @@ letting the Deferred path carry the effects that need a G-Buffer. See ADR-007.
     before differencing; the stored previous view-projection is jitter-free.
     **Not covered in v1**: there is no previous-frame bone palette, so a skinned mesh
     reports only camera and object-transform motion — the bone deformation itself
-    contributes zero velocity. Consumers arrive in M55d (TAA) / M55e (motion blur) / M55f.
+    contributes zero velocity. Consumed by TAA (M55d) and motion blur (M55e); the ray-traced
+    temporal lane (M55f) is next.
     `View > Rendering > Velocity Buffer` (or `--velocity-debug`) visualizes it
 
 **Temporal antialiasing (M55d, default off).** `CameraPostFx.taaOn` — or the global
@@ -250,6 +251,17 @@ current frame unchanged (the first frames of a capture therefore behave, rather 
 converged history).
 **Not covered in v1**: TAA is Deferred-only, since velocity is a G-Buffer target. Asking for it
 on the Forward path is a no-op down to the jitter, so that image stays bit-identical.
+
+**Motion blur (M44d, extended in M55e, default off).** `CameraPostFx.motionBlurIntensity` — or the
+global `--motion-blur N` — smears each pixel along its screen-space velocity with an 8-tap average,
+clamped to `mbMaxPixels`. The velocity source is chosen **per pixel**: a pixel that has G-Buffer
+geometry (`depth < 1`) reads the velocity target, which already carries camera *and* object motion,
+so a spinning object blurs under a stationary camera; every other pixel — the sky, the background,
+and the whole Forward path — falls back to the M44d depth reprojection, which is camera-only.
+The fallback is not a leftover: the background never writes the G-Buffer, so its velocity stays
+zero, and reading it there would freeze the sky while the camera pans. Both branches use the
+jitter-free projection at both ends. Motion blur is forced off in the Scene view, because a smear
+that follows the editor camera fights with editing.
 
 ### 6.2 Feature Scope
 

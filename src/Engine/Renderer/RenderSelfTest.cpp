@@ -364,6 +364,69 @@ void TestReprojectUv()
     TEST_CHECK(!ReprojectUv(identity, persp, 0.5f, 0.5f, -1.0f, pu, pv));
 }
 
+// M55e: モーションブラーの速度源の選択 + クランプ (postfx_motionblur.hlsl のミラー検証)。
+// **この関数が M55e の唯一の機械検査** — golden は motionBlurIntensity=0 (既定) しか
+// 押さえていないので、on 側の挙動は絵からは確かめられない
+void TestMotionBlurVelocity()
+{
+    MYE_LOG_INFO("[selftest] motion blur velocity source (M55e)");
+    XMFLOAT4X4 identity;
+    XMStoreFloat4x4(&identity, XMMatrixIdentity());
+    XMFLOAT4X4 shifted; // 前フレームがワールド +X に 0.2 ずれた投影 = カメラが動いた状態
+    XMStoreFloat4x4(&shifted, XMMatrixTranslation(0.2f, 0.0f, 0.0f));
+    const float w = 960.0f;
+    const float h = 540.0f;
+    const float kNoClamp = 1.0e6f; // クランプを見たいケース以外は効かせない (px 長で効くため)
+    float du = 0.0f, dv = 0.0f;
+
+    // ① velocity 無し (Forward) → v1 と完全に同じ深度再投影。カメラ不動なら速度 0
+    TEST_CHECK(motionblur::BlurVector(false, 0.0f, 0.0f, identity, identity, 0.3f, 0.7f, 0.5f,
+                                      1.0f, kNoClamp, w, h, du, dv));
+    TEST_CHECK(du == 0.0f && dv == 0.0f);
+    // ② velocity 無し + カメラが動いた → uv - prevUv = -0.1 (prevU = u + 0.1)
+    TEST_CHECK(motionblur::BlurVector(false, 0.0f, 0.0f, identity, shifted, 0.5f, 0.5f, 0.5f,
+                                      1.0f, kNoClamp, w, h, du, dv));
+    TEST_CHECK(std::fabs(du + 0.1f) < 1e-5f && std::fabs(dv) < 1e-5f);
+
+    // ③ ★M55e の本題: velocity があるジオメトリ画素は **カメラが静止していても**
+    //    バッファの値をそのまま使う (v1 ではここが 0 = 回る物体がブレなかった)
+    TEST_CHECK(motionblur::BlurVector(true, 0.01f, -0.004f, identity, identity, 0.5f, 0.5f, 0.4f,
+                                      1.0f, kNoClamp, w, h, du, dv));
+    TEST_CHECK(std::fabs(du - 0.01f) < 1e-6f && std::fabs(dv + 0.004f) < 1e-6f);
+
+    // ④ ★背景 (depth==1.0) は velocity バッファがあっても再投影へ落ちる。
+    //    GBuffer を書いていない画素の RT4 は 0 のままなので、ここを分けないと
+    //    「カメラを振っても空だけ止まる」= v1 より悪い絵になる
+    TEST_CHECK(motionblur::BlurVector(true, 0.0f, 0.0f, identity, shifted, 0.5f, 0.5f, 1.0f,
+                                      1.0f, kNoClamp, w, h, du, dv));
+    TEST_CHECK(std::fabs(du + 0.1f) < 1e-5f && std::fabs(dv) < 1e-5f);
+
+    // ⑤ intensity は速度に線形に効く (0 = 恒等)
+    TEST_CHECK(motionblur::BlurVector(true, 0.01f, 0.0f, identity, identity, 0.5f, 0.5f, 0.4f,
+                                      0.5f, kNoClamp, w, h, du, dv));
+    TEST_CHECK(std::fabs(du - 0.005f) < 1e-6f);
+    TEST_CHECK(motionblur::BlurVector(true, 0.01f, 0.0f, identity, identity, 0.5f, 0.5f, 0.4f,
+                                      0.0f, kNoClamp, w, h, du, dv));
+    TEST_CHECK(du == 0.0f && dv == 0.0f);
+
+    // ⑥ クランプは px 長で効く: du=0.5 → 480px を maxPixels=16 へ切り詰める
+    TEST_CHECK(motionblur::BlurVector(true, 0.5f, 0.0f, identity, identity, 0.5f, 0.5f, 0.4f,
+                                      1.0f, 16.0f, w, h, du, dv));
+    TEST_CHECK(std::fabs(du * w - 16.0f) < 1e-3f && dv == 0.0f);
+    // 縦方向は h でスケールされる (UV 長でクランプしていたら 16/540 にならない)
+    TEST_CHECK(motionblur::BlurVector(true, 0.0f, 0.5f, identity, identity, 0.5f, 0.5f, 0.4f,
+                                      1.0f, 16.0f, w, h, du, dv));
+    TEST_CHECK(std::fabs(dv * h - 16.0f) < 1e-3f && du == 0.0f);
+
+    // ⑦ 前フレームで背面 = ブラーしない (velocity 側の経路には無い縮退)
+    XMFLOAT4X4 persp;
+    XMStoreFloat4x4(&persp, XMMatrixPerspectiveFovLH(XMConvertToRadians(60.0f), 1.0f, 0.1f,
+                                                     100.0f));
+    TEST_CHECK(!motionblur::BlurVector(false, 0.0f, 0.0f, identity, persp, 0.5f, 0.5f, -1.0f,
+                                       1.0f, kNoClamp, w, h, du, dv));
+    TEST_CHECK(du == 0.0f && dv == 0.0f);
+}
+
 // 自己発光の G-Buffer 符号化 (M46i)。common.hlsli の EncodeEmissive/DecodeEmissive と対
 void TestEmissiveEncoding()
 {
@@ -688,6 +751,7 @@ bool RunRenderSelfTest()
     TestVelocityUv();
     TestPrevRenderWorldStore();
     TestTaaResolve();
+    TestMotionBlurVelocity();
     if (g_failCount == 0) {
         MYE_LOG_INFO("[selftest] render: ALL PASS");
         return true;

@@ -116,7 +116,7 @@ inline float ComputeSunScreenPos(const DirectX::XMFLOAT4X4& view,
 }
 
 // M44d: 深度再投影 — 現フレームの UV+深度 → ワールド → 前フレームの viewProj で UV へ。
-// postfx_motionblur.hlsl とコメント同期 — 変更時は両方更新。
+// postfx_motionblur.hlsl の**背景フォールバック側**とコメント同期 — 変更時は両方更新。
 // 行列は未転置 (row ベクトル規約)。false = 復元不能または前フレームで背面 (ブラー 0)
 inline bool ReprojectUv(const DirectX::XMFLOAT4X4& invViewProj,
                         const DirectX::XMFLOAT4X4& prevViewProj, float u, float v, float depth,
@@ -141,6 +141,61 @@ inline bool ReprojectUv(const DirectX::XMFLOAT4X4& invViewProj,
     prevV = 0.5f - XMVectorGetY(clip) / cw * 0.5f;
     return true;
 }
+
+// M55e: モーションブラーの速度ベクトル (UV)。**postfx_motionblur.hlsl の PSMain と同手順** —
+// 片方だけ直すと「ブラーの向きだけ静かに違う」形で壊れるので変更時は両方更新
+// (RenderSelfTest の TestMotionBlurVelocity が CPU 側を固定する)。
+//
+// ★速度源は画素ごとに選ぶ。ここが v1 (M44d、カメラのみ) から変わった唯一の点:
+//   ① hasVelocity かつ **その画素にジオメトリがある** (depth < 1) → GBuffer RT4 の
+//      画面速度をそのまま使う。カメラ + オブジェクトが合成済みなので、静止カメラでも
+//      回る物体がブレる。
+//   ② それ以外 → 深度再投影 (v1 と完全に同じ式)。Forward パスには velocity が無く、
+//      背景 / スカイは GBuffer を書かないので RT4 が 0 のまま残る。ここを分けないと
+//      「カメラを振っても空だけ止まって見える」= v1 より悪い絵になる。
+// 戻り値 false = 速度 0 (ブラーしない)
+namespace motionblur {
+
+inline bool BlurVector(bool hasVelocity, float velU, float velV,
+                       const DirectX::XMFLOAT4X4& invViewProj,
+                       const DirectX::XMFLOAT4X4& prevViewProj, float u, float v, float depth,
+                       float intensity, float maxPixels, float screenW, float screenH,
+                       float& outU, float& outV)
+{
+    outU = 0.0f;
+    outV = 0.0f;
+    float du = 0.0f;
+    float dv = 0.0f;
+    if (hasVelocity && depth < 1.0f) {
+        du = velU;
+        dv = velV;
+    } else {
+        float prevU = 0.0f;
+        float prevV = 0.0f;
+        if (!ReprojectUv(invViewProj, prevViewProj, u, v, depth, prevU, prevV)) {
+            return false;
+        }
+        du = u - prevU;
+        dv = v - prevV;
+    }
+    du *= intensity;
+    dv *= intensity;
+    // クランプは **px 長** で行う (UV 長だと縦横比で暴走量が変わる)。HLSL 側の
+    // length(vel * gScreenSize) と同じ
+    const float px = du * screenW;
+    const float py = dv * screenH;
+    const float lenPx = std::sqrt(px * px + py * py);
+    if (lenPx > maxPixels) {
+        const float k = maxPixels / lenPx;
+        du *= k;
+        dv *= k;
+    }
+    outU = du;
+    outV = dv;
+    return true;
+}
+
+} // namespace motionblur
 
 // M55b: TAA 用カメラジッタ。HLSL ミラーは無い (CPU で射影行列に畳んでしまうので
 // シェーダ側は自分がジッタされていることを知らない) が、複数パスが共有する描画数式

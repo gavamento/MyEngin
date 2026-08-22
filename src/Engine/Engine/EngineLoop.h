@@ -66,6 +66,10 @@ struct EngineConfig {
     float postFxBloomThreshold = 1.0f;
     float postFxBloomIntensity = 0.6f;
     bool postFxFxaa = true;
+    // M55e: モーションブラー強度のグローバル既定 (--motion-blur N)。0 = off。
+    // シーンカメラに CameraPostFx があればそちらが勝ち、SceneView は常に強制 0。
+    // これが無いと「既定 off の機能を撮影して確かめる」手段が Inspector 操作しかない
+    float postFxMotionBlur = 0.0f;
 
     // ---- ジョブシステム (M25) ----
     bool useJobs = true; // false で全並列を直列化 (決定論ゲート / 計測比較用)
