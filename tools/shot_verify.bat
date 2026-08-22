@@ -15,6 +15,24 @@ rem ★--font-embedded も必須。フォントアトラスは assets\fonts → 
 rem   探すので、golden を撮った機械と CI ランナーで別のフォントになりうる
 rem   (英語版 Windows Server には日本語 TTF が無い)。内蔵 8x8 に固定して機種差を消す。
 rem
+rem ★--no-fxaa も撮影条件の一部 (M52c 追補)。WARP 同士でも **OS ビルドが違うと** 出力は
+rem   ビット一致しない: 開発機 Win11 (d3d10warp/d3dcompiler 10.0.26100) と CI の
+rem   windows-2022 (同 10.0.20348) で下記の実測が出た (AVX-512 はどちらの CPU にも無し)。
+rem
+rem       構成            maxDiff  tol=2 超え画素
+rem       素の描画のみ          1       0        (--no-postfx)
+rem       + トーンマップ        3    1601        (--no-fxaa、deferred。差は全部ちょうど 3)
+rem       + ブルーム            3       -        (--no-bloom の有無で数字が動かない = 無関係)
+rem       + FXAA               35    1443        (既定。forward でも 17)
+rem
+rem   ラスタライズとライティングの素の出力は 2 台で **最大 1 レベル** しか違わない。
+rem   その 1 レベルを FXAA が一桁に増幅する — 近傍輝度のしきい値で分岐する演算なので、
+rem   ULP 差が分岐を反転させるとブレンド係数ごと変わるため (差はエッジと路面ラインに乗る)。
+rem   つまり「tol を 35 まで緩める」のは FXAA 1 パスのために画面全体の検出力を捨てる取引で、
+rem   撮影から FXAA を外せば tol=3 の厳格運用がランナー上でも成立する。
+rem   代わりに FXAA 自体の被覆は **ローカル限定の 6 枚目** (demo_forward_fxaa、tol=0 の
+rem   ビット一致検査) で確保する。CI は MYE_SHOT_SKIP_FXAA=1 でこの 1 枚を飛ばす。
+rem
 rem ★ビルドはしない。replay_verify.bat の後に回す前提 (CI もその順序)。
 setlocal enabledelayedexpansion
 cd /d "%~dp0.."
@@ -30,10 +48,10 @@ if not exist %REL%\Editor.exe (
     echo [shot_verify] %REL%\Editor.exe not found - build Release first ^(tools\replay_verify.bat^) & exit /b 1
 )
 
-rem チャンネル差の許容。同一マシンなら 0 で一致するが、WARP は OS 同梱 (d3d10warp.dll) で
-rem ランナーと開発機でビルドが違いうる。実 GPU との差ですら maxDiff=2 だったので 2 を既定にし、
-rem 実測値は毎回ログに出す (数字を隠さないことがこのテストの価値)
-set TOL=2
+rem チャンネル差の許容。同一マシンなら 0 で一致する。3 は「開発機と windows-2022 ランナーで
+rem 実測した最大差がちょうど 3 (deferred のトーンマップ)」という数字そのもので、余裕は 1 レベル
+rem しかない。数字は毎回ログに出す — 隠さないことがこのテストの価値
+set TOL=3
 if defined MYE_SHOT_TOL set TOL=%MYE_SHOT_TOL%
 
 set GOLDEN=tests\golden
@@ -41,9 +59,11 @@ set ACTUAL=tests\actual
 if not exist %GOLDEN% mkdir %GOLDEN%
 if not exist %ACTUAL% mkdir %ACTUAL%
 
-rem 撮影条件はこの 1 行に固定する (golden を撮った条件と照合の条件が食い違わないように)。
+rem 撮影条件はこの 2 行に固定する (golden を撮った条件と照合の条件が食い違わないように)。
 rem --screenshot 指定で EngineLoop が決定的撮影モードに入る = frame 番号 == tick 番号
-set SHOT=--warp --no-audio --font-embedded --width 960 --height 540 --frames 6 --shot-frame 3
+set SHOTBASE=--warp --no-audio --font-embedded --width 960 --height 540 --frames 6 --shot-frame 3
+set SHOT=%SHOTBASE% --no-fxaa
+set TOLNOW=%TOL%
 
 rem ---- コードから組み直すシーン (replay_verify と同じ流儀) ----
 rem parts はモデル由来のサブアセット ID が絶対パスのハッシュなのでシーンファイルを
@@ -60,6 +80,7 @@ if exist %FLOW_TITLE% del /q %FLOW_TITLE%
 if not exist %FLOW_TITLE% (echo [shot_verify] flow title scene was not written & exit /b 1)
 
 set FAILED=0
+set SHOTS=0
 
 rem ---- 5 本。既定デモの 2 経路 (Forward / Deferred) + 生成シーン 2 本 + UI プローブ ----
 rem RT デモは WARP では重すぎるので CI 対象外 (ローカル任意)
@@ -68,6 +89,17 @@ call :shot demo_deferred --deferred
 call :shot parts --scene %PARTS_SCENE%
 call :shot flow_title --scene %FLOW_TITLE%
 call :shot ui_probe --scene assets\scenes\ui_probe.scene.json
+
+rem ---- 6 枚目: FXAA を通した 1 枚。機種差が乗るので照合はローカルだけ (tol=0 の
+rem      ビット一致)。CI は MYE_SHOT_SKIP_FXAA=1 を立てて飛ばす。
+rem      golden は --update で一緒に撮り直される (CI 側で撮ることは無い)
+if defined MYE_SHOT_SKIP_FXAA goto :skip_fxaa
+set SHOT=%SHOTBASE%
+set TOLNOW=0
+call :shot demo_forward_fxaa
+set SHOT=%SHOTBASE% --no-fxaa
+set TOLNOW=%TOL%
+:skip_fxaa
 
 echo.
 if %UPDATE%==1 (
@@ -80,11 +112,16 @@ if not %FAILED%==0 (
     echo          tools\shot_verify.bat --update
     exit /b 1
 )
-echo [PASS] screenshot regression (5 shots, warp, tol=%TOL%)
+if defined MYE_SHOT_SKIP_FXAA (
+    echo [PASS] screenshot regression ^(%SHOTS% shots, warp, no-fxaa, tol=%TOL%^)
+) else (
+    echo [PASS] screenshot regression ^(%SHOTS% shots, warp, tol=%TOL% + 1 fxaa shot at tol=0^)
+)
 exit /b 0
 
 rem -------------------------------------------------------------------- :shot
 rem %1 = 名前 / %2.. = Runtime へ渡す追加引数 (シーン指定など)
+rem 撮影条件は %SHOT%、判定の許容は %TOLNOW% を見る (呼ぶ側が組み立てる)
 :shot
 set NAME=%1
 shift
@@ -92,10 +129,13 @@ set EXTRA=%1 %2 %3
 set OUT=%ACTUAL%\%NAME%.png
 if %UPDATE%==1 set OUT=%GOLDEN%\%NAME%.png
 if exist "%OUT%" del /q "%OUT%"
+set /a SHOTS+=1
 
-echo === shot: %NAME% ===
+echo === shot: %NAME% ^(tol=%TOLNOW%^) ===
 %REL%\Runtime.exe %SHOT% %EXTRA% --screenshot %OUT%
-if errorlevel 1 (
+rem ★"if errorlevel 1" は使わない — SEH で落ちた exit code (0xC0000005 等) は符号付きだと
+rem   負なので「1 以上か」の判定が偽になり、クラッシュを PASS に混ぜてしまう (M52f)
+if !ERRORLEVEL! NEQ 0 (
     echo [shot_verify] %NAME%: runtime exited with an error
     set /a FAILED+=1
     goto :eof
@@ -112,6 +152,6 @@ if not exist "%GOLDEN%\%NAME%.png" (
     set /a FAILED+=1
     goto :eof
 )
-%REL%\Editor.exe --img-diff %GOLDEN%\%NAME%.png %OUT% --tol %TOL% --diff-out %ACTUAL%\%NAME%.diff.png
-if errorlevel 1 set /a FAILED+=1
+%REL%\Editor.exe --img-diff %GOLDEN%\%NAME%.png %OUT% --tol %TOLNOW% --diff-out %ACTUAL%\%NAME%.diff.png
+if !ERRORLEVEL! NEQ 0 set /a FAILED+=1
 goto :eof

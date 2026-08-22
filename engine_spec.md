@@ -555,10 +555,11 @@ a GPU-less runner an acceptable place to prove determinism. Golden screenshots, 
 *are* driver-dependent and are therefore always captured with `--warp`.
 
 **Screenshot regression (M52c).** Hashes prove that the *simulation* is reproducible; they say
-nothing about what is drawn. `tools\shot_verify.bat` captures five deterministic screenshots with
+nothing about what is drawn. `tools\shot_verify.bat` captures six deterministic screenshots with
 `Runtime.exe` (no ImGui, so neither `imgui.ini` nor the cursor position can leak in) and compares
 them against `tests\golden\*.png` pixel by pixel, writing a difference heat map next to any shot
-that moved. `--update` re-records the golden set.
+that moved. `--update` re-records the golden set. Five of the six gate CI; the sixth exists only
+to cover FXAA and is skipped there (`MYE_SHOT_SKIP_FXAA`, see below).
 
 Determinism of a *frame* needs two guarantees that determinism of a *tick* does not:
 
@@ -571,11 +572,28 @@ Determinism of a *frame* needs two guarantees that determinism of a *tick* does 
   boundary (M23), so "did the decode finish in time" is another wall-clock dependency. The same
   capture mode drains the async queue before drawing
 
-Two machine-dependent inputs are pinned rather than tolerated: the rasterizer (`--warp`, because
-WARP and a discrete GPU differ by up to two levels per channel over most of the frame) and the
+Three machine-dependent inputs are pinned rather than tolerated: the rasterizer (`--warp`, because
+WARP and a discrete GPU differ by up to two levels per channel over most of the frame), the
 font atlas (`--font-embedded`, because the atlas otherwise picks whichever Japanese TTF the
-machine happens to have installed, and an English Windows Server runner has none). Debug and
-Release produce bit-identical images, so the golden set is captured from Release only. The
+machine happens to have installed, and an English Windows Server runner has none), and the
+antialiasing resolve (`--no-fxaa`).
+
+The third one is not obvious and was measured, not guessed. Pinning the rasterizer to WARP is
+*not* enough to make two machines agree: WARP ships in the OS, so a Windows 11 workstation
+(`d3d10warp.dll` / `d3dcompiler_47.dll` 10.0.26100, shaders are compiled at runtime with no
+on-disk cache) and a `windows-2022` runner (the same two DLLs at 10.0.20348) run different code.
+Ablating the frame one stage at a time puts a number on each stage: raw raster and lighting differ
+by **at most one level per channel**, tonemapping raises that to three in the deferred path, bloom
+contributes nothing measurable — and FXAA amplifies the whole thing to **thirty-five**. That is the
+expected behaviour of an edge filter that branches on neighbourhood luma: a one-ULP difference
+flips a threshold and the blend weight changes with it, which is why the residual lands as speckle
+along geometry edges rather than as a uniform shift. Dropping FXAA from the capture therefore buys
+back a strict `--tol 3` comparison over the entire frame, instead of the `--tol 35` that keeping it
+would demand — a bad trade, since a 35-level allowance would hide a real regression anywhere on
+screen for the sake of one resolve pass. FXAA itself stays covered by the sixth shot, compared at
+`--tol 0` on the developer's machine where bit-exactness does hold.
+
+Debug and Release produce bit-identical images, so the golden set is captured from Release only. The
 comparison itself (`--img-diff A B [--tol N] [--fail-pixels N] [--diff-out PNG]`) distinguishes
 *equal* (exit 0) from *different* (exit 1) from *not comparable* (exit 2) — folding a size
 mismatch or an unreadable file into the success path would let a broken capture read as green.
