@@ -278,6 +278,18 @@ Design rationale and measured cost: **ADR-009**.
   hits shade from material constants only (no bindless textures), moving objects ghost
   (no object motion vectors), and local lights cast no ray-traced shadows
 
+### 6.5 Deliberate Non-Goals of the Rendering Roadmap (M54-M58)
+
+The M54-M58 roadmap (`plans/radiant-shimmering-lumen.md`) adds local-light shadows, TAA,
+decals, SSR, reflection probes, froxel volumetrics and terrain. Three neighbouring features
+were considered and **deliberately left out**. They are non-goals of v1, not oversights.
+
+| Non-goal | Why it is out |
+|---|---|
+| **Ray-traced shadows for local lights** | The RT lane is default-off *and* excluded from the screenshot regression (`tools\shot_verify.bat`: the RT demo is too slow under WARP), so the feature would carry permanently zero automated coverage. The M54 shadow atlas produces the same image on a lane CI does exercise. The §6.4 v1 limitation "local lights cast no ray-traced shadows" therefore stands. |
+| **Diffuse SH probe grid** | Two implementations of diffuse ambient already exist (IBL irradiance, and RT diffuse GI + SVGF). An SH grid would be a third, lower in quality than the RT lane, and would require a whole bake infrastructure. M56 ships *specular* reflection probes only. |
+| **Terrain collision** | Terrain (M58) is a render-only lane: `TerrainComponent` is `kComponentNoHash` and nothing it does reaches the simulation. A heightfield collider would move terrain into the hashed lane, requiring a fifth scene pair in `tools\replay_verify.bat` and an ABI bump for height/normal queries. Deferred to M59. |
+
 ---
 
 ## 7. Particle System Specification

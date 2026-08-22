@@ -40,13 +40,15 @@ M52 (決定論の再利用) 全 9 サブ完遂・push 済み・CI 全緑 (`9e729
 
 ## 実装開始時の手順
 
-1. 1 サブ = 1 コミット (`M54a:` 形式) = 1 セッション + /clear。進捗の一次情報は git log、
+1. 1 サブ = 1 コミット (`M54a:` 形式)。進捗の一次情報は git log、
    下の進捗表には計画外の事実・罠・申し送りのみ書く。
-2. **M54a に入る前に** `engine_spec.md` の v1 制限リスト (§6.4 周辺) へ、切り落とした 3 項目
-   (RT 影の局所ライト / 拡散 SH プローブグリッド / 地形コリジョン) を明示的に書く。
-   「やらないと決めた」ことが仕様側に残っていないと、次のセッションで蒸し返される。
+2. **マイルストーンを並列で実装する場合は、先に本ファイル末尾の
+   「付録: 並列実装の統合契約」を読むこと。** TypeId / シェーダレジスタ / golden スロット /
+   `CameraPostFx` の append 順 / ローカライズ接頭辞は**全部そこで予約済み**で、
+   表の外の番号を勝手に取ると統合で無言の上書きになる (食い違ってもコンパイルは通る)。
 
-済み: M53 (マテリアルのライブプレビュー) = `a69c78d` / エージェント向けガイド = `4a11e70`。
+済み: M53 (マテリアルのライブプレビュー) = `a69c78d` / エージェント向けガイド = `4a11e70` /
+切り落とし 3 項目の仕様記載 = `engine_spec.md §6.5`。
 
 ## 再開手順 (セッション跨ぎ用)
 
@@ -524,3 +526,145 @@ tools\shot_verify.bat
 - AssetBrowser のサムネイルと Inspector のマテリアルプレビューが壊れていないこと
   (別 RenderSystem 経路の回帰。M53 の作業と隣接する)。
 - 各マイルストーンの Rendering メニューのトグルで A/B。
+
+---
+
+## 付録: 並列実装の統合契約 (Wave 構成と共有資源の予約表)
+
+M54〜M58 を **worktree で同時に走らせる**ために、後から取り合いになる資源をここで先に予約する。
+**各ブランチはこの表の外にある番号・名前・レジスタを勝手に取らないこと。** 取った瞬間に
+統合で無言の上書きが起きる (TypeId とレジスタ番号は、食い違っても *コンパイルは通る*)。
+
+### Wave 構成
+
+| Wave | 中身 | 並列度 | 出る先 |
+|---|---|---|---|
+| **Wave 0** | `engine_spec §6.5` (切り落とし 3 件) / **M54a** / **M55a** / 本契約 | 1 (master 直) | master |
+| **Wave 1** | **M54b-e** / **M55b-f** / **M58a-f** | 3 (worktree) | 統合 1 |
+| **Wave 2** | **M56a-f** / **M57a-e** | 2 (worktree、統合 1 の master から切る) | 統合 2 |
+
+依存の根拠 (これ以外の順序制約は無い):
+- **M57b は M54d の `SampleShadowAtlas` と M54b の `LightSelection` を直接呼ぶ** → M57 は M54 の後。
+- **M56d/M56f は M55b のジッタ非適用 VP を前提にする** → M56 は M55 の後。
+- M58 は他のどれにも依存しない (Wave 1 の 3 本目に置いたのは並列度の都合)。
+- M54a (ショーケースシーン) は **全ての golden の土台**なので Wave 0。
+  M55a (`LinearizeDepth` 共有化) は M56c/M56d/M57 が読むので同じく Wave 0。
+
+### 予約 1: ComponentTypeId (`RegisterBuiltinComponents()` 末尾 append)
+
+現在の最大は 32 (`PlayerInput`)。**登録順 = TypeId** なので、統合の順序がそのまま番号になる。
+
+| TypeId | コンポーネント | サブ | 統合 |
+|---|---|---|---|
+| 33 | `TerrainComponent` | M58b | 統合 1 |
+| 34 | `DecalComponent` | M56a | 統合 2 |
+| 35 | `ReflectionProbeComponent` | M56f | 統合 2 |
+
+**3 つとも `kComponentNoHash`** (描画専用) なので `.rep` 互換の作業はゼロ。シーン JSON は
+コンポーネント**名**で引くので、統合時に並び替えても保存済みシーンは壊れない。
+ブランチ内で単独ビルドすると番号は前倒しになる — **数値をコード/コメントに焼かないこと**。
+
+### 予約 2: シェーダレジスタ
+
+実測 (Wave 0 時点): Deferred 光パス = `t0..t11` / `s0..s1`、Forward = `t0..t5` / `s0..s2`。
+
+| レジスタ | 用途 | サブ |
+|---|---|---|
+| Deferred 光パス `t12` | シャドウアトラス (`Texture2D`) | M54c |
+| Deferred 光パス `t13` | SSR 結果 | M56d |
+| Deferred 光パス `t14` | ローカル反射プローブ (`TextureCubeArray`) | M56f |
+| Deferred 光パス `t15` | froxel 積分結果 (`Texture3D`) | M57e |
+| Forward `t6` | シャドウアトラス | M54c |
+| Forward `t7` | froxel 積分結果 | M57e |
+| GBuffer MRT `RT4` | velocity (`R16G16_FLOAT`) | M55c |
+| `GpuLight::pad0` | アトラススロット index | M54c |
+| `GpuLight::pad1` | アトラス面数 (点光源=6 / スポット=1 / 未割当=0) | M54c/d |
+
+- **サンプラは 1 つも増やさない。** アトラスは `s1` の比較サンプラ、SSR/froxel/プローブは
+  `s0` の LINEAR/CLAMP を流用する。`DeferredPath.cpp:728-732` が既に警告しているとおり
+  SSAO パスが `s1` を point-wrap で上書きするので、光パスで**必ず張り直す**。
+- `nullSrvs[12]` (`DeferredPath.cpp:750`) は最終的に `[16]` になる。**自分が足した分だけ広げる**
+  (M54 は `[13]`、M56 は `[15]`、M57 は `[16]`)。
+- Deferred の透明後段は `PSSetShaderResources(1, 5, fwdSrvs)` (`DeferredPath.cpp:769`) で
+  Forward の `t1..t5` を張り直している。Forward に `t6`/`t7` を足したらこの本数も増やす。
+
+### 予約 3: golden スロット (`tools\shot_verify.bat` の呼び順)
+
+| # | 名前 | tol | CI | サブ |
+|---|---|---|---|---|
+| 1-5 | `demo_forward` / `demo_deferred` / `parts` / `flow_title` / `ui_probe` | 3 | ○ | 既存 |
+| 6 | `demo_render_forward` | 3 | ○ | M54a |
+| 7 | `demo_render_deferred` | 3 | ○ | M54a |
+| 8 | `demo_terrain_deferred` | 3 | ○ | M58c |
+| 9 | `demo_render_ssr` | 3 | ○ | M56d |
+| 10 | `demo_forward_fxaa` | 0 | × (`MYE_SHOT_SKIP_FXAA`) | 既存 |
+| 11 | `demo_render_taa` | 0 | × (`MYE_SHOT_SKIP_TAA`) | M55d |
+| 12 | `demo_render_froxel` | 0 | × (`MYE_SHOT_SKIP_FROXEL`) | M57c (実測後に CI 昇格を判断) |
+
+- **★`tests\golden\*.png` はバイナリ = マージ不能。** 各ブランチは**自分が新設した golden だけ**を
+  コミットし、**既存の golden には 1 バイトも触らない**。触った瞬間に
+  「機能 off で直前コミットとビット一致」というこのロードマップ唯一の受入基準が消える。
+- 統合後に `shot_verify.bat --update` を**回さない**。回すと全部を「現状が正解」で塗り潰す。
+- CI 判定枚数が 5 → 9 に増える = WARP 撮影の壁時計が約 1.8 倍。**M54a で 1 枚あたりを実測し、
+  9 枚で CI 予算に収まるかを判断する** (収まらなければ 8/9 をローカル限定へ降格)。
+
+### 予約 4: `CameraPostFxComponent` の末尾 append 順
+
+全て `kComponentNoHash` なので順序は互換に影響しないが、統合の競合を機械的に解くために固定する。
+**既定値は必ず「恒等 = 従来の見た目」**。
+
+1. M55d: `int32_t taaOn = 0` / `float taaFeedback = 0.9f`
+2. M56d: `int32_t ssrOn = 0` / `float ssrMaxRoughness = 0.6f` / `float ssrIntensity = 1.0f`
+3. M57c: `int32_t froxelOn = 0` / `float froxelDensity = 0.02f` / `float froxelAnisotropy = 0.3f`
+
+### 予約 5: `LocalizationTable.inl` のキー接頭辞
+
+| M54 | M55 | M56 | M57 | M58 |
+|---|---|---|---|---|
+| `Shadow_*` | `Taa_*` | `Decal_*` / `Ssr_*` / `Probe_*` | `Froxel_*` | `Terrain_*` |
+
+`###` の右辺 (ImGui ID) も同じ接頭辞を使う (両言語一致・テーブル内で一意)。
+
+### 予約 6: 新規ファイルの置き場所
+
+| サブ | ファイル |
+|---|---|
+| M54b | `src\Engine\Engine\LightSelection.{h,cpp}` / `src\Editor\LightSelectionSelfTest.{h,cpp}` |
+| M54c | `src\Engine\Renderer\ShadowAtlas.{h,cpp}` |
+| M55d | `src\Engine\Renderer\TaaPass.{h,cpp}` / `assets\shaders\postfx_taa.hlsl` |
+| M56a | `assets\shaders\decal_project.hlsl` |
+| M56c | `src\Engine\Renderer\HzbPass.{h,cpp}` / `assets\shaders\hzb_reduce.cs.hlsl` |
+| M56e | `src\Engine\Engine\ProbeBaker.{h,cpp}` |
+| M57a | `src\Engine\Renderer\VolumeTexture.{h,cpp}` / `assets\shaders\froxel_*.cs.hlsl` |
+| M57b | `src\Engine\Renderer\FroxelPass.{h,cpp}` |
+| M58a | `src\Engine\Engine\Asset\TerrainAsset.{h,cpp}` |
+| M58b | `src\Engine\Engine\TerrainSystem.{h,cpp}` / `src\Editor\TerrainSelfTest.{h,cpp}` |
+| M58c | `src\Engine\Renderer\TerrainPass.{h,cpp}` / `assets\shaders\{deferred,forward}_terrain.hlsl` |
+
+- 新シェーダには **`.meta` が要る** (`{"guid":<64bit>,"type":"shader","version":1}`)。
+- ソース追加のたび `pwsh -File tools\gen_project_files.ps1`。
+- **`.vcxproj` の `<!-- BEGIN FILES -->` 区間はマージしない** — 統合後に生成器を 1 回回して
+  作り直す (競合は ours/theirs どちらで潰してもよい)。
+
+### 予約 7: selftest 連鎖 (`EditorMain.cpp` の `&&` 連鎖) の追加順
+
+末尾 append。統合順に並ぶ: `LightSelectionSelfTest` (M54b) → `TerrainSelfTest` (M58b)。
+29 → 31 スイート。**連鎖は短絡なので、最初に落ちた 1 本で以降は走らない** — 追加位置は必ず末尾。
+
+### 予約 8: `check_rules.ps1` の `$constGroups`
+
+**Wave 0 で既存の未登録ペア 2 件を回収する** (規則 9 の穴):
+`kMaxLights=16` ↔ `MAX_LIGHTS` ↔ `MYE_RT_MAX_LIGHTS` / `ShadowPass::kCascades=3` ↔ `vps[3]`。
+各ブランチは自分の共有定数を**末尾に追記**する。
+
+### 統合時のチェックリスト (統合 1 / 統合 2 で毎回)
+
+1. マージ順は上の表の TypeId 順 (統合 1 = M54 → M55 → M58、統合 2 = M56 → M57)。
+2. `Components.cpp` / `Components.h` / `LocalizationTable.inl` / `shot_verify.bat` /
+   `check_rules.ps1` / `common.hlsli` の競合は **全部「両方採用・予約表の順に並べる」** で解く。
+3. `pwsh -File tools\gen_project_files.ps1` を回して `.vcxproj` を作り直す。
+4. `nullSrvs[]` の本数と `PSSetShaderResources` の件数が予約表と合っているか目視。
+5. Debug + Release ビルド (警告 0) → `--selftest` → `check_rules.ps1` → `shot_verify.bat`
+   → `replay_verify.bat`。**`shot_verify` の既存 golden が全部ビット一致すること**が
+   「並列で入れた機能がどれも既定の絵を動かしていない」証明になる。
+6. 動いた golden があったら **`--update` で潰さず、なぜ動いたかを先に説明する**。
