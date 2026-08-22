@@ -63,6 +63,11 @@ struct CameraOverride {
     float nearZ = 0.1f;
     float farZ = 1000.0f;
     int32_t debugViewMode = 0; // SceneView 表示モード (M40b): 0=Lit 1=Unlit 2=Wireframe
+    // M55b: 呼び出し側が組んだ射影をそのまま使う。SceneView は Ortho トグルと
+    // ギズモ/ピッキング用に同じ行列を自前で持っていたので、渡してもらって二重構築を無くす
+    // (fovYDeg/nearZ/farZ から組み直す従来経路は hasProj=false のときだけ通る)。
+    bool hasProj = false;
+    DirectX::XMFLOAT4X4 proj = {};
 };
 
 // 環境コンポーネント収集 (M29d): 最初 (entity.index 最小) の active な Skybox/Fog を
@@ -126,6 +131,11 @@ public:
     // roughness が kRtReflMaxRoughness を超える面は従来どおり IBL プリフィルタのまま
     // (ローブが広すぎて 1spp が成立せず、かつ IBL との差も縮むため)
     bool enableRtRefl = false;
+    // M55b: TAA 用カメラジッタの振幅 (サブピクセル単位。1.0 = ±0.5 画素の全振幅)。
+    // **0 = ジッタ無効 = 従来と 1 ビットも変わらない絵**。基盤だけ先に入れてあり、
+    // 上げるのは TAA 本体 (M55d) が「このビューで TAA が有効」と判断したときだけ。
+    // ジッタ列は viewKey 別の描画通番から引くので実時間に依存しない (決定的撮影で再現する)。
+    float jitterAmplitude = 0.0f;
 
     // M44d: ポストプロセス解決の GPU 時間 (直近の Resolve、ProfilerWindow 表示用)
     float PostFxGpuMs() const { return postFx_.ResolveGpuMs(); }

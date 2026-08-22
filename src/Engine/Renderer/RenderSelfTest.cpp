@@ -1,6 +1,7 @@
 #include "Engine/Renderer/RenderSelfTest.h"
 
 #include <cmath>
+#include <cstring>
 
 #include <DirectXMath.h>
 
@@ -399,6 +400,89 @@ void TestEmissiveEncoding()
     }
 }
 
+// M55b: TAA 用カメラジッタ。ここで守りたい性質は 4 つ —
+//  ① 列が frame index の純関数 (実時間も rand() も入らない = 決定的撮影で再現する)
+//  ② 振幅 0 で射影行列が 1 ビットも変わらない (既定の絵が動かない受入基準そのもの)
+//  ③ NDC オフセットが「指定したサブピクセル量」ちょうどになる (透視 / 正射影の両方)
+//  ④ 1 周期の平均が原点付近 (偏ると TAA の収束先が本来の絵からずれる)
+void TestCameraJitter()
+{
+    using namespace camerajitter;
+
+    // ① radical inverse の既知値 (van der Corput)
+    TEST_CHECK(RadicalInverse(1, 2) == 0.5f);
+    TEST_CHECK(RadicalInverse(2, 2) == 0.25f);
+    TEST_CHECK(RadicalInverse(3, 2) == 0.75f);
+    TEST_CHECK(RadicalInverse(0, 2) == 0.0f);
+    TEST_CHECK(std::fabs(RadicalInverse(1, 3) - 1.0f / 3.0f) < 1e-6f);
+    TEST_CHECK(std::fabs(RadicalInverse(2, 3) - 2.0f / 3.0f) < 1e-6f);
+
+    // ① 純関数 = 同じ frame index なら何度呼んでも同じ / 周期 kSequenceLength で厳密に一巡
+    float sx = 0.0f, sy = 0.0f, tx = 0.0f, ty = 0.0f;
+    Sample(3, sx, sy);
+    Sample(3, tx, ty);
+    TEST_CHECK(sx == tx && sy == ty);
+    Sample(3 + kSequenceLength, tx, ty);
+    TEST_CHECK(sx == tx && sy == ty);
+
+    // ④ 全サンプルが [-0.5,0.5] に収まり、原点ちょうど (= 揺れないフレーム) が無く、
+    //    1 周期の平均が原点近傍
+    float sumX = 0.0f, sumY = 0.0f;
+    for (uint32_t i = 0; i < kSequenceLength; ++i) {
+        float jx = 0.0f, jy = 0.0f;
+        Sample(i, jx, jy);
+        TEST_CHECK(jx >= -0.5f && jx <= 0.5f && jy >= -0.5f && jy <= 0.5f);
+        TEST_CHECK(jx != 0.0f || jy != 0.0f);
+        sumX += jx;
+        sumY += jy;
+    }
+    TEST_CHECK(std::fabs(sumX / kSequenceLength) < 0.1f);
+    TEST_CHECK(std::fabs(sumY / kSequenceLength) < 0.1f);
+
+    // ピクセル → NDC。y は符号反転 (NDC は上向き、ピクセルは下向き)。
+    // 幅/高さ 0 は 0 を返す (ヘッドレスや未リサイズのビューでゼロ除算しない)
+    float nx = 0.0f, ny = 0.0f;
+    PixelsToNdc(0.5f, 0.5f, 960, 540, nx, ny);
+    TEST_CHECK(std::fabs(nx - 1.0f / 960.0f) < 1e-7f);
+    TEST_CHECK(std::fabs(ny + 1.0f / 540.0f) < 1e-7f);
+    PixelsToNdc(0.5f, 0.5f, 0, 0, nx, ny);
+    TEST_CHECK(nx == 0.0f && ny == 0.0f);
+
+    XMFLOAT4X4 persp;
+    XMStoreFloat4x4(&persp, XMMatrixPerspectiveFovLH(XMConvertToRadians(60.0f), 16.0f / 9.0f,
+                                                     0.1f, 1000.0f));
+    // ② 振幅 0 = ビット同一 (memcmp。「ほぼ同じ」では受入基準にならない)
+    const XMFLOAT4X4 zero = ApplyToProj(persp, 0.0f, 0.0f);
+    TEST_CHECK(std::memcmp(&zero, &persp, sizeof(XMFLOAT4X4)) == 0);
+
+    // ③ 透視: view 空間の任意の点の NDC が、深度に依らず指定量ちょうどずれる
+    const XMFLOAT4X4 jit = ApplyToProj(persp, 0.02f, -0.03f);
+    for (float z : { 1.0f, 10.0f, 250.0f }) {
+        const XMVECTOR pv = XMVectorSet(3.0f, -2.0f, z, 1.0f);
+        const XMVECTOR a = XMVector4Transform(pv, XMLoadFloat4x4(&persp));
+        const XMVECTOR b = XMVector4Transform(pv, XMLoadFloat4x4(&jit));
+        const float aw = XMVectorGetW(a);
+        const float bw = XMVectorGetW(b);
+        TEST_CHECK(aw == bw); // w (= viewZ) は不変 = 深度は 1 ビットも動かない
+        TEST_CHECK(std::fabs((XMVectorGetX(b) / bw - XMVectorGetX(a) / aw) - 0.02f) < 1e-5f);
+        TEST_CHECK(std::fabs((XMVectorGetY(b) / bw - XMVectorGetY(a) / aw) + 0.03f) < 1e-5f);
+    }
+
+    // ③ 正射影 (エディタの Ortho ビュー): w=1 なので平行移動は _41/_42 側に載る。
+    // _31/_32 に足すと view z に比例した歪みになるので、経路を間違えるとここで落ちる
+    XMFLOAT4X4 ortho;
+    XMStoreFloat4x4(&ortho, XMMatrixOrthographicLH(19.2f, 10.8f, 0.1f, 1000.0f));
+    const XMFLOAT4X4 orthoJit = ApplyToProj(ortho, 0.02f, -0.03f);
+    for (float z : { 1.0f, 10.0f, 250.0f }) {
+        const XMVECTOR pv = XMVectorSet(3.0f, -2.0f, z, 1.0f);
+        const XMVECTOR a = XMVector4Transform(pv, XMLoadFloat4x4(&ortho));
+        const XMVECTOR b = XMVector4Transform(pv, XMLoadFloat4x4(&orthoJit));
+        TEST_CHECK(std::fabs((XMVectorGetX(b) - XMVectorGetX(a)) - 0.02f) < 1e-5f);
+        TEST_CHECK(std::fabs((XMVectorGetY(b) - XMVectorGetY(a)) + 0.03f) < 1e-5f);
+        TEST_CHECK(XMVectorGetZ(a) == XMVectorGetZ(b));
+    }
+}
+
 } // namespace
 
 bool RunRenderSelfTest()
@@ -416,6 +500,7 @@ bool RunRenderSelfTest()
     TestLinearizeDepth();
     TestReprojectUv();
     TestEmissiveEncoding();
+    TestCameraJitter();
     if (g_failCount == 0) {
         MYE_LOG_INFO("[selftest] render: ALL PASS");
         return true;

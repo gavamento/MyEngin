@@ -805,7 +805,9 @@ bool RtPasses::RenderDebug(GraphicsDevice& device, ShaderManager& shaders, const
     BindCommon(device, view, in);
 
     RtDebugCB db = {};
-    const XMMATRIX vp = XMLoadFloat4x4(&view.view) * XMLoadFloat4x4(&view.proj);
+    // M55b: RT の一次光線はラスタライズ結果を読まない独立描画なので非ジッタ側で撃つ。
+    // テンポラル蓄積 (Accumulate) が使う prevViewProj も非ジッタなので出所が揃う
+    const XMMATRIX vp = XMLoadFloat4x4(&view.view) * XMLoadFloat4x4(&view.projNoJitter);
     XMStoreFloat4x4(&db.invViewProj, XMMatrixTranspose(XMMatrixInverse(nullptr, vp)));
     db.cameraPos = view.cameraPos;
     db.tMax = (view.farZ > 0.0f) ? view.farZ : 1000.0f;

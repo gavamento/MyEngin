@@ -368,7 +368,9 @@ bool PostProcess::RunMotionBlur(GraphicsDevice& device, ShaderManager& shaders,
     ID3D11DeviceContext* dc = device.Context();
 
     MotionBlurCB cb = {};
-    const XMMATRIX vpMat = XMLoadFloat4x4(&view.view) * XMLoadFloat4x4(&view.proj);
+    // M55b: 前フレーム側 (prevViewProj) が非ジッタで保存されているので、今フレーム側も
+    // 非ジッタで揃える。片方だけジッタが載ると静止画でもサブピクセル速度が出続ける
+    const XMMATRIX vpMat = XMLoadFloat4x4(&view.view) * XMLoadFloat4x4(&view.projNoJitter);
     XMVECTOR det;
     const XMMATRIX inv = XMMatrixInverse(&det, vpMat);
     XMStoreFloat4x4(&cb.invViewProj, XMMatrixTranspose(inv));
@@ -507,7 +509,9 @@ bool PostProcess::RunGodray(GraphicsDevice& device, ShaderManager& shaders, Targ
         return false;
     }
     float sunU = 0.5f, sunV = 0.5f;
-    const float fade = ComputeSunScreenPos(view.view, view.proj, view.sunDirection, sunU, sunV);
+    // M55b: 光芒の中心は非ジッタ側で決める (揺らすと放射方向がフレーム毎に振れる)
+    const float fade =
+        ComputeSunScreenPos(view.view, view.projNoJitter, view.sunDirection, sunU, sunV);
     if (fade <= 0.0f) {
         return false; // 太陽が背面または画面から遠すぎる
     }

@@ -1,6 +1,7 @@
 #pragma once
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 
 #include <DirectXMath.h>
 
@@ -140,5 +141,75 @@ inline bool ReprojectUv(const DirectX::XMFLOAT4X4& invViewProj,
     prevV = 0.5f - XMVectorGetY(clip) / cw * 0.5f;
     return true;
 }
+
+// M55b: TAA 用カメラジッタ。HLSL ミラーは無い (CPU で射影行列に畳んでしまうので
+// シェーダ側は自分がジッタされていることを知らない) が、複数パスが共有する描画数式
+// なのでこのヘッダの方針に従ってここへ置く。
+//
+// **設計の要**: 揺らした射影を受け取るのはラスタライズ経路だけ (Deferred GBuffer /
+// Forward / スカイ / パーティクル / デバッグ線)。再投影 (prevViewProj・モーションブラー・
+// RT テンポラル)、シャドウのカスケードフィット、視錐台カリング、太陽の画面位置、
+// エディタのギズモ/ピッキングは **ジッタ前**の射影 (RenderView::projNoJitter) を読む。
+// ジッタ付きを履歴側へ混ぜると「カメラが毎フレーム半ピクセル動いた」ことになり、
+// RT テンポラルとモーションブラーが同時に壊れる。
+//
+// 列は frame index 由来の Halton なので実時間も rand() も混ざらない。決定的撮影モード
+// (frame 番号 == tick 番号) ではジッタ列そのものが自動的に決定論になる。
+namespace camerajitter {
+
+// ジッタ列の周期。TAA の履歴が 1 巡する長さと揃えてある
+constexpr uint32_t kSequenceLength = 8;
+
+// 基数 base の radical inverse (van der Corput)。Halton 列の 1 次元分
+inline float RadicalInverse(uint32_t index, uint32_t base)
+{
+    const float invBase = 1.0f / static_cast<float>(base);
+    float result = 0.0f;
+    float f = invBase;
+    while (index > 0) {
+        result += static_cast<float>(index % base) * f;
+        index /= base;
+        f *= invBase;
+    }
+    return result;
+}
+
+// frameIndex → サブピクセルオフセット [-0.5, 0.5] (ピクセル単位、Halton(2,3))。
+// index に +1 しているのは Halton(0) が (0,0) = 「1 巡に 1 回だけ揺れないフレーム」に
+// なるのを避けるため (そのフレームだけ実効サンプル位置が重複し、周期的なちらつきになる)
+inline void Sample(uint32_t frameIndex, float& outX, float& outY)
+{
+    const uint32_t i = (frameIndex % kSequenceLength) + 1u;
+    outX = RadicalInverse(i, 2) - 0.5f;
+    outY = RadicalInverse(i, 3) - 0.5f;
+}
+
+// ピクセル単位のオフセット → NDC オフセット。
+// y を反転するのは NDC が上向き・ピクセル座標が下向きだから
+inline void PixelsToNdc(float px, float py, int width, int height, float& outX, float& outY)
+{
+    outX = (width > 0) ? (px * 2.0f / static_cast<float>(width)) : 0.0f;
+    outY = (height > 0) ? (-py * 2.0f / static_cast<float>(height)) : 0.0f;
+}
+
+// 射影行列に NDC オフセットを載せる (行ベクトル規約)。
+// 透視 (_34 == 1、w = viewZ) は _31/_32 への加算がそのまま NDC の平行移動になる。
+// 正射影 (_34 == 0、w = 1) は _41/_42 側 — エディタの Ortho ビューが実際にここへ来る
+// (ComputeCascadeVPs も同じ _34 判定で経路を分けている)。
+// オフセットが 0 なら 1 ビットも変わらない = 振幅 0 の既定で従来と完全一致。
+inline DirectX::XMFLOAT4X4 ApplyToProj(const DirectX::XMFLOAT4X4& proj, float ndcX, float ndcY)
+{
+    DirectX::XMFLOAT4X4 m = proj;
+    if (std::fabs(proj._34) > 1e-6f) {
+        m._31 += ndcX;
+        m._32 += ndcY;
+    } else {
+        m._41 += ndcX;
+        m._42 += ndcY;
+    }
+    return m;
+}
+
+} // namespace camerajitter
 
 } // namespace mye

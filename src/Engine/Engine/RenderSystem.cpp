@@ -15,6 +15,7 @@
 #include "Engine/Renderer/FrustumCull.h"
 #include "Engine/Renderer/GpuResources.h"
 #include "Engine/Renderer/GraphicsDevice.h"
+#include "Engine/Renderer/PostFxMath.h" // M55b: camerajitter
 #include "Engine/Renderer/RenderPath.h"
 
 using namespace DirectX;
@@ -104,7 +105,9 @@ void ComputeCascadeVPs(const XMFLOAT3& lightDir, const XMFLOAT3& sceneMin,
                        XMFLOAT4X4* outVPs, float* outSplits, int count)
 {
     const XMMATRIX camView = XMLoadFloat4x4(&view.view);
-    const XMMATRIX camProj = XMLoadFloat4x4(&view.proj);
+    // M55b: カスケードのフィットは非ジッタ側で行う。ジッタ付きだとカメラフラスタムの
+    // 8 隅がサブピクセル分毎フレーム動き、テクセルスナップで殺したはずの影の揺れが戻る
+    const XMMATRIX camProj = XMLoadFloat4x4(&view.projNoJitter);
     XMFLOAT4X4 pj;
     XMStoreFloat4x4(&pj, camProj);
     const bool perspective = std::fabs(pj._34 - 1.0f) < 1e-3f; // LH perspective は _34 == 1
@@ -279,10 +282,17 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
     EntityID camEntity = kNullEntity; // シーンカメラの実体 (CameraPostFx 参照用、M29e)
     if (cameraOverride) {
         view.view = cameraOverride->view;
-        const XMMATRIX p = XMMatrixPerspectiveFovLH(
-            XMConvertToRadians(cameraOverride->fovYDeg), aspectRatio,
-            cameraOverride->nearZ, cameraOverride->farZ);
-        XMStoreFloat4x4(&view.proj, p);
+        if (cameraOverride->hasProj) {
+            // M55b: 呼び出し側 (SceneView) が既に組んである行列をそのまま使う。
+            // ここで組み直すと Ortho トグルが描画へ届かず、ギズモ/ピッキングの行列
+            // (SceneViewWindow::lastProj_) と食い違ったままになる
+            view.proj = cameraOverride->proj;
+        } else {
+            const XMMATRIX p = XMMatrixPerspectiveFovLH(
+                XMConvertToRadians(cameraOverride->fovYDeg), aspectRatio,
+                cameraOverride->nearZ, cameraOverride->farZ);
+            XMStoreFloat4x4(&view.proj, p);
+        }
         view.cameraPos = cameraOverride->position;
         view.debugViewMode = cameraOverride->debugViewMode; // M40b (SceneView のみ非 0)
         view.nearZ = cameraOverride->nearZ; // M42a: 深度線形化用
@@ -330,6 +340,31 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
             XMStoreFloat4x4(&view.view, XMMatrixIdentity());
             XMStoreFloat4x4(&view.proj, XMMatrixIdentity());
         }
+    }
+
+    // ---- M55b: カメラジッタの一元化 ----
+    // 射影の組み立ては上の 2 経路 (CameraOverride / シーンカメラ) に分かれているが、
+    // ジッタを載せるのは **ここ 1 箇所だけ**。projNoJitter が「ジッタ前」の正本で、
+    // 再投影 (prevVP_ の保存 / モーションブラー / RT テンポラル)、シャドウのカスケード
+    // フィット、視錐台カリング、太陽の画面位置はすべてそちらを読む
+    // (混ぜると「カメラが毎フレーム半ピクセル動いた」ことになり履歴が毎回外れる)。
+    // viewKey==0 (AssetPreview) は履歴も TAA も持たないので常に非ジッタ。
+    view.projNoJitter = view.proj;
+    view.viewFrameIndex = (target.viewKey < 4) ? viewSerial_[target.viewKey] : 0u;
+    if (jitterAmplitude > 0.0f && cameraFound && target.viewKey > 0 && target.viewKey < 4) {
+        float px = 0.0f;
+        float py = 0.0f;
+        camerajitter::Sample(view.viewFrameIndex, px, py);
+        px *= jitterAmplitude;
+        py *= jitterAmplitude;
+        float ndcX = 0.0f;
+        float ndcY = 0.0f;
+        camerajitter::PixelsToNdc(px, py, view.width, view.height, ndcX, ndcY);
+        view.jitterPixels[0] = px;
+        view.jitterPixels[1] = py;
+        view.jitterNdc[0] = ndcX;
+        view.jitterNdc[1] = ndcY;
+        view.proj = camerajitter::ApplyToProj(view.proj, ndcX, ndcY);
     }
 
     // ---- ライト (最大 kMaxLights 個収集。Directional/Point/Spot) ----
@@ -387,7 +422,9 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
         const bool cullEnabled = cameraFound;
         if (cullEnabled) {
             XMFLOAT4X4 vp;
-            XMStoreFloat4x4(&vp, v * XMLoadFloat4x4(&view.proj));
+            // M55b: カリングは非ジッタ側。サブピクセルで可視判定が反転すると
+            // 境界の物体がフレーム毎に出入りして TAA の履歴に穴が空く
+            XMStoreFloat4x4(&vp, v * XMLoadFloat4x4(&view.projNoJitter));
             frustum = BuildFrustum(vp);
         }
         int culledCount = 0;
@@ -760,10 +797,13 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
                         effective, view, distortionActive); // M43b: view = 深度/太陽の供給口
     }
     // M44d: 次フレームのモーションブラー用に viewProj を保存 (viewKey=0 = AssetPreview は対象外)。
-    // M46d: カメラ位置と描画通番も同じ場所で更新する (再投影とテンポラル履歴の連続性判定)
+    // M46d: カメラ位置と描画通番も同じ場所で更新する (再投影とテンポラル履歴の連続性判定)。
+    // ★M55b: ここに保存するのは **非ジッタ側** (projNoJitter)。この 1 箇所を
+    // RtPasses (M46d) と PostProcess::RunMotionBlur (M44d) の **両方** が読むので、
+    // ジッタ付きを入れると RT テンポラルとモーションブラーが同時に壊れる
     if (target.viewKey > 0 && target.viewKey < 4) {
         PrevViewProj& p = prevVP_[target.viewKey];
-        XMStoreFloat4x4(&p.m, XMLoadFloat4x4(&view.view) * XMLoadFloat4x4(&view.proj));
+        XMStoreFloat4x4(&p.m, XMLoadFloat4x4(&view.view) * XMLoadFloat4x4(&view.projNoJitter));
         p.pos = view.cameraPos;
         p.w = target.width;
         p.h = target.height;

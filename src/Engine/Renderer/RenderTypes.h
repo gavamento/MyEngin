@@ -161,6 +161,17 @@ struct RenderView {
     // ---- M46h: RT 反射 (末尾 append)。1 = ライトパスのスペキュラ環境項を
     //      roughness に応じてレイトレ反射で置換する (粗い面は IBL のまま) ----
     int32_t rtReflEnabled = 0;
+    // ---- M55b: カメラジッタ (末尾 append。既定 = 振幅 0 = proj と 1 ビットも変わらない) ----
+    //   proj         = ラスタライズに使う射影 (ジッタ込み)。
+    //   projNoJitter = ジッタを載せる前の射影。**再投影 (prevViewProj / モーションブラー /
+    //     RT テンポラル)・シャドウのカスケードフィット・視錐台カリング・太陽の画面位置は
+    //     必ずこちらを読む** (詳細は PostFxMath.h の camerajitter の頭)。
+    //   RenderSystem::Render が両方を必ず埋める。手組みの RenderView (selftest) では
+    //     projNoJitter が単位行列のままになるので、そちらを読む経路は通らないこと。
+    DirectX::XMFLOAT4X4 projNoJitter = {};
+    float jitterPixels[2] = { 0.0f, 0.0f }; // proj に載せたサブピクセル量 (0,0 = ジッタ無効)
+    float jitterNdc[2] = { 0.0f, 0.0f };    // 同じものを NDC で (TAA が履歴サンプルに使う)
+    uint32_t viewFrameIndex = 0;            // viewKey 別の描画通番 = ジッタ列のインデックス
 };
 
 // GPU へ渡すライト 1 個 (定数バッファ配列要素、16 バイト境界に揃えた 64 バイト)。
