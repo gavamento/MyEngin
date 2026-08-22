@@ -283,6 +283,12 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 config.rtShadow = true; // M46g: 平行光の影をレイトレで (Deferred のみ)
             } else if (arg == L"--rt-refl") {
                 config.rtRefl = true; // M46h: スペキュラ環境項をレイトレ反射で (Deferred のみ)
+            } else if (arg == L"--froxel") {
+                // M57b: フロクセルへの注入 (積分 = M57c / 合成 = M57e まで絵は不変)
+                config.froxel = true;
+            } else if (arg == L"--froxel-dump" && i + 1 < argc) {
+                config.froxelDumpFrame = _wtoi(argv[++i]); // M57b: 読み戻して統計をログへ
+                config.froxel = true;
             } else if (arg == L"--rt-demo") {
                 app.rtShowcase = true; // M46i: コーネル箱のショーケースシーンを構築
             } else if (arg == L"--local-demo") {

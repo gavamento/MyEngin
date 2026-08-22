@@ -414,6 +414,9 @@
     <ClCompile Include="..\src\Engine\Renderer\ForwardPath.cpp">
       <Filter>Renderer</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Renderer\FroxelPass.cpp">
+      <Filter>Renderer</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Renderer\GpuResources.cpp">
       <Filter>Renderer</Filter>
     </ClCompile>
@@ -895,6 +898,9 @@
       <Filter>Renderer</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\ForwardPath.h">
+      <Filter>Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\FroxelPass.h">
       <Filter>Renderer</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\FrustumCull.h">

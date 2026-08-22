@@ -48,6 +48,12 @@ public:
     // R32G32B32A32_FLOAT のみ — それ以外は false を返す。
     bool ReadbackTexel(GraphicsDevice& device, int x, int y, int z, float out[4]) const;
 
+    // M57b: 全セルの同期読み戻し (`--froxel-dump`)。out は w*h*d*4 の float 列
+    // (x が最内、次に y、最後に z)。**7MB のボリュームで float 換算 14.7MB を
+    // 確保して GPU を完全に待たせる**ので、デバッグの一発勝負にしか使わないこと。
+    // 対応フォーマットは ReadbackTexel と同じ 2 つ
+    bool ReadbackAll(GraphicsDevice& device, std::vector<float>& out) const;
+
 private:
     Microsoft::WRL::ComPtr<ID3D11Texture3D> tex_;
     Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> srv_;

@@ -112,6 +112,13 @@ struct EngineConfig {
     bool rtShadow = false;
     // M46h: スペキュラ環境項をレイトレ反射で置き換える (--rt-refl)。Deferred パスのみ。同上
     bool rtRefl = false;
+    // M57b: フロクセルへの注入 (--froxel)。**まだ絵は変わらない** — 積分 (M57c) と
+    // 最終画像への合成 (M57e) が入るまで、注入結果を読む者が居ない。
+    // 実シーンで注入の GPU コストを測るための口として先に配線してある
+    bool froxel = false;
+    // M57b: --froxel-dump N。そのビューの N 回目の描画でグリッド全セルを読み戻し、
+    // 影あり/なしの統計をログへ出す (負値 = 何もしない)。--froxel も一緒に立てる
+    int froxelDumpFrame = -1;
 
     // ---- グラフィックスドライバ (M52b) ----
     // true (--warp) で D3D_DRIVER_TYPE_WARP (ソフトウェアラスタライザ) を直接使う。

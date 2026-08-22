@@ -789,6 +789,75 @@ void TestFroxelGrid()
     TEST_CHECK(std::isfinite(froxel::ViewDepthToSlice(0.0f, slices, 0.0f, 0.0f)));
 }
 
+// M57b: 注入パスの数式 (RenderTypes.h の mye::froxel。HLSL froxel_inject.cs.hlsl と同一式)。
+// ★ここが「注入が物理的に正しいか」を言える唯一の場所 — 積分 (M57c) も合成 (M57e) も
+//   まだ無いので、絵からは 1 画素も分からない。GPU 側で本当に走るかは
+//   `Editor.exe --froxel-probe` (値の照合つき) の担当
+void TestFroxelScattering()
+{
+    MYE_LOG_INFO("[selftest] froxel scattering math");
+
+    // ① 等方 (g=0) はどの向きでも 1/4π。**この係数を落とすと、霧の明るさが密度と
+    //    一緒にしか動かせなくなる** (見た目は「それらしい」ので気付けない)
+    const float isotropic = 1.0f / (4.0f * 3.14159265f);
+    for (float c : { -1.0f, -0.5f, 0.0f, 0.5f, 1.0f }) {
+        TEST_CHECK(std::fabs(froxel::HenyeyGreenstein(c, 0.0f) - isotropic) < 1e-6f);
+    }
+
+    // ② 全立体角の積分が 1 (位相関数の定義そのもの)。∫p dΩ = 2π∫p(cosθ)sinθ dθ を
+    //    台形則で。正規化を間違えた実装はここで必ず落ちる
+    for (float g : { -0.6f, -0.2f, 0.0f, 0.3f, 0.8f }) {
+        const int steps = 4096;
+        double sum = 0.0;
+        for (int i = 0; i < steps; ++i) {
+            const double t0 = 3.14159265358979 * i / steps;
+            const double t1 = 3.14159265358979 * (i + 1) / steps;
+            const double f0 = froxel::HenyeyGreenstein(static_cast<float>(std::cos(t0)), g)
+                * std::sin(t0);
+            const double f1 = froxel::HenyeyGreenstein(static_cast<float>(std::cos(t1)), g)
+                * std::sin(t1);
+            sum += (f0 + f1) * 0.5 * (t1 - t0);
+        }
+        sum *= 2.0 * 3.14159265358979;
+        TEST_CHECK(std::fabs(sum - 1.0) < 2e-3);
+    }
+
+    // ③ g>0 は前方散乱 = 「光源のほうを向くと明るい」。符号を取り違えると
+    //    ビームがカメラの反対側でだけ光る (デモの絵では気付きにくい)
+    TEST_CHECK(froxel::HenyeyGreenstein(1.0f, 0.5f) > froxel::HenyeyGreenstein(-1.0f, 0.5f));
+    TEST_CHECK(froxel::HenyeyGreenstein(1.0f, -0.5f) < froxel::HenyeyGreenstein(-1.0f, -0.5f));
+    // g の符号反転 = 向きの反転 (HG の対称性)
+    TEST_CHECK(std::fabs(froxel::HenyeyGreenstein(0.4f, 0.7f)
+                         - froxel::HenyeyGreenstein(-0.4f, -0.7f))
+               < 1e-6f);
+
+    // ④ 特異点 (g = ±1) でも有限。CameraPostFx から ±1 が来る経路は無いが、
+    //    inf を 1 セルでも作るとグリッド全体が NaN で埋まって積分結果が消える
+    TEST_CHECK(std::isfinite(froxel::HenyeyGreenstein(1.0f, 1.0f)));
+    TEST_CHECK(std::isfinite(froxel::HenyeyGreenstein(-1.0f, -1.0f)));
+    TEST_CHECK(std::isfinite(froxel::HenyeyGreenstein(1.0f, 2.0f))); // 範囲外もクランプされる
+
+    // ⑤ セル中心は必ずスライス境界の内側 (端でも外れない)。境界を代表点にすると
+    //    1 スライスぶんの厚みが消える
+    const int slices = froxel::kGridZ;
+    bool centered = true;
+    for (int s = 0; s < slices; ++s) {
+        const float lo = froxel::SliceToViewDepth(static_cast<float>(s), slices, 0.1f, 64.0f);
+        const float hi = froxel::SliceToViewDepth(static_cast<float>(s + 1), slices, 0.1f, 64.0f);
+        const float c = froxel::SliceCenterViewDepth(s, slices, 0.1f, 64.0f);
+        centered = centered && (c > lo) && (c < hi);
+    }
+    TEST_CHECK(centered);
+
+    // ⑥ 高度スケール: falloff=0 は**厳密に** 1 (= 一様媒質へビット単位で縮退する)。
+    //    基準高度ではどの falloff でも 1、上へ行くほど薄い
+    TEST_CHECK(froxel::HeightDensityScale(123.0f, 0.0f, 0.0f) == 1.0f);
+    TEST_CHECK(froxel::HeightDensityScale(5.0f, 5.0f, 0.3f) == 1.0f);
+    TEST_CHECK(froxel::HeightDensityScale(10.0f, 0.0f, 0.1f)
+               < froxel::HeightDensityScale(1.0f, 0.0f, 0.1f));
+    TEST_CHECK(froxel::HeightDensityScale(10.0f, 0.0f, 0.1f) > 0.0f);
+}
+
 } // namespace
 
 bool RunRenderSelfTest()
@@ -811,7 +880,8 @@ bool RunRenderSelfTest()
     TestPrevRenderWorldStore();
     TestTaaResolve();
     TestMotionBlurVelocity();
-    TestFroxelGrid(); // M57a
+    TestFroxelGrid();       // M57a
+    TestFroxelScattering(); // M57b
     if (g_failCount == 0) {
         MYE_LOG_INFO("[selftest] render: ALL PASS");
         return true;

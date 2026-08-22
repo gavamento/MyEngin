@@ -940,6 +940,22 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
         }
     }
 
+    // ---- M57b: フロクセルへの注入 (密度 + 局所ライトの散乱) ----
+    // ★置き場所はここしかない: 上流に CollectEnvironment (高度フォグのパラメータ) と
+    //   シャドウアトラス (SampleShadowAtlas の入力) が要り、下流の path.Render より
+    //   前でないと M57e が積分結果を消費できない。
+    // ★消費者がまだ居ない = 既定 off のこの節は絵に 1 ビットも影響しない。
+    //   注入結果を確かめる口は --froxel-dump (読み戻して数える) だけ
+    if (enableFroxel && (froxelPass_.IsReady() || froxelPass_.Init(device, shaders))) {
+        froxelPass_.Inject(device, shaders, view, lights, froxelSettings);
+        // 「そのビューの N 回目の描画」= 決定的撮影モードでは frame 番号と一致する
+        // (viewSerial_ はこの Render の末尾で +1 される = ここでの値が今フレームの通番)
+        const uint32_t serial = (target.viewKey < 4) ? viewSerial_[target.viewKey] : 0u;
+        if (froxelDumpFrame >= 0 && static_cast<uint32_t>(froxelDumpFrame) == serial) {
+            froxelPass_.DebugDumpAB(device, shaders, view, lights, froxelSettings);
+        }
+    }
+
     queue_.Sort();
     path.Render(device, view, queue_, lights, resources, shaders);
     // M55d: 画面速度 (GBuffer RT4) はパスが所有する — 描いた後でないと SRV が無い。

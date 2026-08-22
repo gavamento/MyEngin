@@ -55,6 +55,15 @@ void ProfilerWindow::OnImGui(EngineContext& ctx)
                     ctx.renderSystem->ShadowAtlasTiles(), ctx.renderSystem->ShadowAtlasDraws(),
                     ctx.renderSystem->ShadowAtlasCulledDraws(),
                     ctx.renderSystem->ShadowAtlasCulledFaces());
+        // M57b: フロクセルへの注入 (--froxel。off のときは行ごと出さない)。
+        // **積分 (M57c) も合成 (M57e) もまだ無いので、この ms は「注入だけ」の値**。
+        // cells が 0 = ボリューム未確保 = まだ 1 度も注入していない (正射影のビュー等)
+        if (ctx.renderSystem->enableFroxel) {
+            ImGui::Text("  froxel: %6.3f ms inject (GpuTimer, %d cells, density %.3f, g %.2f)",
+                        ctx.renderSystem->FroxelInjectGpuMs(), ctx.renderSystem->FroxelCellCount(),
+                        ctx.renderSystem->froxelSettings.density,
+                        ctx.renderSystem->froxelSettings.anisotropy);
+        }
         // M46b: レイトレ (デバッグ表示も GI 合成も off のときは行ごと出さない)
         const bool rtGiOn = ctx.renderSystem->enableRtGi;             // M46f
         const bool rtShadowOn = ctx.renderSystem->enableRtShadow;     // M46g

@@ -298,6 +298,14 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 config.rtShadow = true; // M46g: 平行光の影をレイトレで (Deferred のみ)
             } else if (arg == L"--rt-refl") {
                 config.rtRefl = true; // M46h: スペキュラ環境項をレイトレ反射で (Deferred のみ)
+            } else if (arg == L"--froxel") {
+                // M57b: フロクセルへの注入を回す。**絵はまだ変わらない**
+                // (積分 = M57c / 合成 = M57e が入るまで消費者が居ない)
+                config.froxel = true;
+            } else if (arg == L"--froxel-dump" && i + 1 < argc) {
+                // M57b: N 回目の描画でグリッドを読み戻して統計をログへ (--froxel も立てる)
+                config.froxelDumpFrame = _wtoi(argv[++i]);
+                config.froxel = true;
             } else if (arg == L"--rt-demo") {
                 rtShowcase = true; // M46i: コーネル箱のショーケースシーンを構築
             } else if (arg == L"--parts-demo") {

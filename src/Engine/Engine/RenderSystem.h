@@ -12,6 +12,7 @@
 #include "Engine/Engine/TerrainSystem.h"
 #include "Engine/Renderer/EditorLinePass.h"
 #include "Engine/Renderer/EnvMapBaker.h"
+#include "Engine/Renderer/FroxelPass.h"
 #include "Engine/Renderer/PostProcess.h"
 #include "Engine/Renderer/RayTracing/RtPasses.h"
 #include "Engine/Renderer/RenderTypes.h"
@@ -163,6 +164,19 @@ public:
     // ので、これが唯一の「本当に書けているか」の目視口になる
     int velocityDebugMode = 0;
 
+    // ---- M57b: フロクセル・ボリュメトリック (--froxel) ----
+    // ★既定 off。**このサブでは注入結果を読む者が誰も居ない** (積分 = M57c /
+    //   最終画像への合成 = M57e) ので、on にしても絵は 1 ビットも変わらない。
+    //   それでも配線してあるのは、注入の GPU コストを実シーンで測れるようにするため
+    //   (WARP の壁時計が M57c の設計 — テンポラルを入れるか / golden を CI に載せるか —
+    //   の入力になる)。on のあいだだけ 7MB の 3D テクスチャを確保する
+    bool enableFroxel = false;
+    FroxelSettings froxelSettings;
+    // --froxel-dump N: **そのビューの N 回目の描画**で全セルを読み戻し、影あり/なしの
+    // 統計をログへ出す (フレーム番号ではなく viewKey 毎の描画通番。決定的撮影モードでは
+    // 両者が一致する)。負値 = 何もしない。7MB を Map する完全同期経路なので調査専用
+    int froxelDumpFrame = -1;
+
     // M44d: ポストプロセス解決の GPU 時間 (直近の Resolve、ProfilerWindow 表示用)
     float PostFxGpuMs() const { return postFx_.ResolveGpuMs(); }
     // M46b: レイトレの統計 (ProfilerWindow 表示用)
@@ -185,6 +199,10 @@ public:
     int ShadowAtlasDraws() const { return shadowAtlas_.DrawCalls(); }
     int ShadowAtlasCulledDraws() const { return shadowAtlas_.CulledDraws(); }
     int ShadowAtlasCulledFaces() const { return shadowAtlasFaceCulled_; }
+    // M57b: フロクセル注入の GPU 時間とグリッド規模 (ProfilerWindow 表示用)。
+    // cells が 0 = ボリュームをまだ確保していない (= 一度も注入していない)
+    float FroxelInjectGpuMs() const { return froxelPass_.InjectGpuMs(); }
+    int FroxelCellCount() const { return froxelPass_.CellCount(); }
 
     // M54b: 直近フレームのライト選別結果 (カリング + 決定論ソート + 上限)。
     // shadowSlot は M54c のシャドウアトラスが読む — この時点ではまだ誰も配線していない
@@ -215,6 +233,10 @@ private:
     // Init しない** — 4096^2 R32 = 64MB を、影を使わないシーン (AssetPreview の別
     // RenderSystem を含む) にまで払わせないため
     ShadowAtlas shadowAtlas_;
+    // M57b: フロクセルの注入パス。**enableFroxel が立つまで Init しない** —
+    // 3D テクスチャ 7MB と CS を、霧を使わないシーン (AssetPreview の別 RenderSystem を
+    // 含む) にまで払わせないため (ShadowAtlas の 64MB と同じ理由)
+    FroxelPass froxelPass_;
     EditorLinePass linePass_; // DebugDrawLine 用 (v7、遅延 Init)
     EnvMapBaker envBaker_;    // IBL 環境マップ (M38c、lazy ベイク + キャッシュ)
     // スキンメッシュのボーンパレット (M18)。フレーム毎に再構築。deque = push_back で

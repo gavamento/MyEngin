@@ -203,8 +203,10 @@ $constGroups = @(
         # 絵は出るのにフォグだけがちらつくという、目で追いにくい壊れ方をする
         label = 'froxel::kGroupSize / MYE_FROXEL_GROUP'
         sites = @{
-            'src\Engine\Renderer\RenderTypes.h'   = 'constexpr\s+int\s+kGroupSize\s*=\s*(\d+)'
-            'assets\shaders\froxel_clear.cs.hlsl' = '#\s*define\s+MYE_FROXEL_GROUP\s+(\d+)'
+            'src\Engine\Renderer\RenderTypes.h'    = 'constexpr\s+int\s+kGroupSize\s*=\s*(\d+)'
+            'assets\shaders\froxel_clear.cs.hlsl'  = '#\s*define\s+MYE_FROXEL_GROUP\s+(\d+)'
+            # M57b: 注入も clear と同じ割り方 (同じ (x,y) の Z 列) でなければならない
+            'assets\shaders\froxel_inject.cs.hlsl' = '#\s*define\s+MYE_FROXEL_GROUP\s+(\d+)'
         }
     }
 )

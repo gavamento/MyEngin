@@ -437,6 +437,42 @@ inline float ViewDepthToSlice(float depth, int sliceCount, float nearZ, float fa
     return static_cast<float>(count) * std::log(d / n) / std::log(f / n);
 }
 
+// ---- M57b: 注入パスの数式 (HLSL froxel_inject.cs.hlsl と同一式) ----
+//
+// GPU 側と CPU 側で式を二重に持つのは、位相関数の正規化やセル中心の取り方が
+// 「絵はそれらしく出るのに物理的に間違っている」形で壊れるため。
+// RenderSelfTest が CPU 版を全立体角で数値積分して 1 になることまで見ている。
+
+// セル中心の view 深度。**境界ではなく中心**を代表点にする — 境界だと隣のセルと
+// 同じ点を評価してしまい、1 スライスぶんの厚みが消える。
+// M57c のジッタはこの 0.5 を [0,1) の擬似乱数で置き換える形で入る
+inline float SliceCenterViewDepth(int slice, int sliceCount, float nearZ, float farZ)
+{
+    return SliceToViewDepth(static_cast<float>(slice) + 0.5f, sliceCount, nearZ, farZ);
+}
+
+// Henyey-Greenstein 位相関数。cosTheta = dot(光の進行方向, セル→カメラ方向)。
+// g > 0 = 前方散乱 = 「光源のほうを向くと明るい」。全立体角の積分が 1 になる正規化つき
+// (この 1/4π を落とすと霧の明るさが密度と一緒にしか調整できなくなる)
+inline float HenyeyGreenstein(float cosTheta, float g)
+{
+    // ±1 は分母が 0 に落ちる特異点。CameraPostFx から ±1 が来る経路は無いが、
+    // ここで inf を作るとグリッド全体が NaN で埋まる (積分結果が丸ごと消える)
+    const float gg = (g < -0.95f) ? -0.95f : ((g > 0.95f) ? 0.95f : g);
+    const float d = 1.0f + gg * gg - 2.0f * gg * cosTheta;
+    const float dd = (d > 1e-4f) ? d : 1e-4f;
+    // x^1.5 を pow で書かない — HLSL 側は WARP で pow が exp/log の 2 段になり、
+    // セル × ライト本数ぶん効く。**両方を同じ形に揃えておく**のがこのミラーの意味
+    return (1.0f - gg * gg) / (4.0f * 3.14159265f * (dd * std::sqrt(dd)));
+}
+
+// 高度による密度スケール。M43a のハイトフォグ ρ(y)=e^{-k(y-base)} と同じプロファイル
+// (falloff == 0 なら厳密に 1 = 一様媒質)
+inline float HeightDensityScale(float y, float baseHeight, float falloff)
+{
+    return std::exp(-falloff * (y - baseHeight));
+}
+
 } // namespace froxel
 
 } // namespace mye

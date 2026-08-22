@@ -142,6 +142,7 @@
     <ClCompile Include="..\src\Engine\Renderer\EnvMapBaker.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\FontAtlas.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\ForwardPath.cpp" />
+    <ClCompile Include="..\src\Engine\Renderer\FroxelPass.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\GpuResources.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\GpuTimer.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\GraphicsDevice.cpp" />
@@ -303,6 +304,7 @@
     <ClInclude Include="..\src\Engine\Renderer\FontAtlas.h" />
     <ClInclude Include="..\src\Engine\Renderer\FontGeometry.h" />
     <ClInclude Include="..\src\Engine\Renderer\ForwardPath.h" />
+    <ClInclude Include="..\src\Engine\Renderer\FroxelPass.h" />
     <ClInclude Include="..\src\Engine\Renderer\FrustumCull.h" />
     <ClInclude Include="..\src\Engine\Renderer\GpuBufferUtil.h" />
     <ClInclude Include="..\src\Engine\Renderer\GpuResources.h" />
