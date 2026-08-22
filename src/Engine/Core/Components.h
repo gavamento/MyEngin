@@ -442,6 +442,11 @@ struct CameraPostFxComponent {
     // ---- M44d: カメラモーションブラー (末尾 append、NoHash なので hash 不変) ----
     float motionBlurIntensity = 0.0f; // 0=off (SceneView は常に強制 0)
     float mbMaxPixels = 16.0f;        // 速度クランプ (px)
+    // ---- M55d: TAA (末尾 append、NoHash なので hash 不変) ----
+    // **Deferred 専用** — 画面速度が GBuffer RT4 にしか無いため。Forward では
+    // カメラジッタごと無効化する (TAA 無しでジッタだけ載ると画面が揺れるだけになる)
+    int32_t taaOn = 0;        // 0=off 1=on
+    float taaFeedback = 0.9f; // 履歴の残し率 [0,0.95]。大きいほど滑らかで残像も増える
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 

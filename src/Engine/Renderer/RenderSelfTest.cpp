@@ -108,6 +108,8 @@ void TestPostFxMerge()
     comp.dofMaxRadius = 12.0f;
     comp.motionBlurIntensity = 0.6f; // M44d
     comp.mbMaxPixels = 24.0f;
+    comp.taaOn = 1; // M55d
+    comp.taaFeedback = 0.75f;
     const PostProcess::Settings s = MergeCameraPostFx(base, comp);
     TEST_CHECK(s.chromAberration == 0.01f);
     TEST_CHECK(s.vignetteIntensity == 0.4f);
@@ -123,6 +125,10 @@ void TestPostFxMerge()
     TEST_CHECK(s.dofFocusDistance == 20.0f && s.dofFocusRange == 8.0f
                && s.dofMaxRadius == 12.0f); // M44c
     TEST_CHECK(s.motionBlurIntensity == 0.6f && s.mbMaxPixels == 24.0f); // M44d
+    TEST_CHECK(s.taaOn == 1 && s.taaFeedback == 0.75f);                  // M55d
+    // 既定のコンポーネント (= シーンに置いただけ) では TAA は off のまま =
+    // CameraPostFx を足しても絵が変わらない
+    TEST_CHECK(MergeCameraPostFx(base, CameraPostFxComponent{}).taaOn == 0);
     // M44b: aeInstant は base 維持 (applyGamma と同じ Settings 専用フィールド)
     PostProcess::Settings instantBase;
     instantBase.aeInstant = true;
@@ -601,6 +607,66 @@ void TestPrevRenderWorldStore()
     TEST_CHECK(s.Lookup(reused) == nullptr);
 }
 
+// M55d: TAA の解決式 (postfx_taa.hlsl::PSMain のミラー検証)。
+// ★golden (demo_render_taa) は「TAA を on にした 1 枚」しか押さえない = **恒等の側**
+//   (履歴が無い / 画面外 / feedback=0 で cur がビット単位でそのまま出ること) は
+//   絵からは確かめられない。既定 off の受け入れ基準を支えているのはここ
+void TestTaaResolve()
+{
+    MYE_LOG_INFO("[selftest] TAA resolve (M55d)");
+    const XMFLOAT3 cur = { 0.40f, 0.50f, 0.60f };
+    const XMFLOAT3 hist = { 0.80f, 0.10f, 0.60f };
+    // 近傍の箱は履歴を丸ごと含む広さ (クランプが効かない条件) にしておく
+    const XMFLOAT3 wideMin = { 0.0f, 0.0f, 0.0f };
+    const XMFLOAT3 wideMax = { 1.0f, 1.0f, 1.0f };
+
+    auto same = [](const XMFLOAT3& a, const XMFLOAT3& b) {
+        return a.x == b.x && a.y == b.y && a.z == b.z; // ビット同一を要求する
+    };
+
+    // ① 履歴なし (初回フレーム / 通番が飛んだ / リサイズ直後) → cur がそのまま出る。
+    //    ★shot_verify は --frames 6 --shot-frame 3 = 撮影時点で履歴 3 枚しかない。
+    //    「収束後の絵」前提の実装だとここが崩れる
+    TEST_CHECK(same(taa::Resolve(cur, hist, wideMin, wideMax, 0.5f, 0.5f, false, 0.9f), cur));
+
+    // ② 履歴 UV が画面外 → 前フレームにその画素は無いので cur。境界は [0,1) の半開区間
+    TEST_CHECK(same(taa::Resolve(cur, hist, wideMin, wideMax, -0.001f, 0.5f, true, 0.9f), cur));
+    TEST_CHECK(same(taa::Resolve(cur, hist, wideMin, wideMax, 0.5f, 1.0f, true, 0.9f), cur));
+    TEST_CHECK(taa::HistoryUvValid(0.0f, 0.0f) && !taa::HistoryUvValid(1.0f, 0.0f));
+
+    // ③ feedback=0 → 履歴が有効でも cur がそのまま (A/B 比較の恒等点)
+    TEST_CHECK(same(taa::Resolve(cur, hist, wideMin, wideMax, 0.5f, 0.5f, true, 0.0f), cur));
+
+    // ④ 通常経路: cur と履歴の線形補間。feedback=0.5 なら中点
+    {
+        const XMFLOAT3 r = taa::Resolve(cur, hist, wideMin, wideMax, 0.5f, 0.5f, true, 0.5f);
+        TEST_CHECK(std::fabs(r.x - 0.60f) < 1e-6f);
+        TEST_CHECK(std::fabs(r.y - 0.30f) < 1e-6f);
+        TEST_CHECK(std::fabs(r.z - 0.60f) < 1e-6f); // 同値の成分は動かない
+    }
+
+    // ⑤ 近傍クランプ = ゴースト抑制の本体。履歴が今フレームの近傍の箱から外れていたら
+    //    箱の面まで引き寄せてから混ぜる (遮蔽が解けた画素で前の像が残らない)
+    {
+        const XMFLOAT3 nmin = { 0.35f, 0.45f, 0.55f };
+        const XMFLOAT3 nmax = { 0.45f, 0.55f, 0.65f };
+        const XMFLOAT3 c = taa::ClampToNeighborhood(hist, nmin, nmax);
+        TEST_CHECK(c.x == 0.45f && c.y == 0.45f && c.z == 0.60f);
+        const XMFLOAT3 r = taa::Resolve(cur, hist, nmin, nmax, 0.5f, 0.5f, true, 1.0f);
+        TEST_CHECK(same(r, c)); // feedback=1 ならクランプ後の履歴そのもの
+    }
+
+    // ⑥ 収束済みの静止画 (cur == hist、速度 0) は何フレーム回しても値が動かない。
+    //    これが崩れると「止まっているのに絵がじりじり変わる」= 決定的撮影が成立しない
+    {
+        XMFLOAT3 acc = cur;
+        for (int i = 0; i < 8; ++i) {
+            acc = taa::Resolve(cur, acc, cur, cur, 0.5f, 0.5f, true, 0.9f);
+        }
+        TEST_CHECK(same(acc, cur));
+    }
+}
+
 } // namespace
 
 bool RunRenderSelfTest()
@@ -621,6 +687,7 @@ bool RunRenderSelfTest()
     TestCameraJitter();
     TestVelocityUv();
     TestPrevRenderWorldStore();
+    TestTaaResolve();
     if (g_failCount == 0) {
         MYE_LOG_INFO("[selftest] render: ALL PASS");
         return true;

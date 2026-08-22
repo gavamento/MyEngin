@@ -42,6 +42,8 @@ PostProcess::Settings MergeCameraPostFx(const PostProcess::Settings& base,
     s.dofMaxRadius = comp.dofMaxRadius;
     s.motionBlurIntensity = comp.motionBlurIntensity; // M44d
     s.mbMaxPixels = comp.mbMaxPixels;
+    s.taaOn = comp.taaOn; // M55d
+    s.taaFeedback = comp.taaFeedback;
     return s;
 }
 namespace {
@@ -171,6 +173,8 @@ bool PostProcess::Init(GraphicsDevice& device, ShaderManager& shaders)
         return false;
     }
     resolveTimer_.Init(device); // M44d: 失敗しても致命ではない (計測 0 のまま)
+    // M55d: TAA。失敗しても致命ではない (Run が nullptr を返し従来チェーンのまま動く)
+    taa_.Init(device, shaders);
 
     D3D11_SAMPLER_DESC sd = {};
     sd.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
@@ -259,7 +263,8 @@ PostProcess::Target* PostProcess::Acquire(GraphicsDevice& device, int width, int
 // 円盤ギャザー (dofA → dofB) → 合成 (scene+dofB+depth → sceneB フル解像度)。
 // 実行後は bloom/トーンマップが sceneB を読む (ボケた高輝度が自然にブルームする順序)
 bool PostProcess::RunDof(GraphicsDevice& device, ShaderManager& shaders, Target& t,
-                         const Settings& s, const RenderView& view)
+                         const Settings& s, const RenderView& view,
+                         ID3D11ShaderResourceView* sceneSRV)
 {
     if (s.dofMaxRadius <= 0.0f || view.depthSRV == nullptr) {
         return false;
@@ -308,7 +313,7 @@ bool PostProcess::RunDof(GraphicsDevice& device, ShaderManager& shaders, Target&
         dc->RSSetViewports(1, &vp);
         ID3D11RenderTargetView* rtv = t.dofA.RTV();
         dc->OMSetRenderTargets(1, &rtv, nullptr);
-        ID3D11ShaderResourceView* srvs[2] = { t.scene.SRV(), view.depthSRV };
+        ID3D11ShaderResourceView* srvs[2] = { sceneSRV, view.depthSRV }; // M55d: TAA 後なら履歴面
         dc->PSSetShaderResources(0, 2, srvs);
         dc->VSSetShader(pre->vs.Get(), nullptr, 0);
         dc->PSSetShader(pre->ps.Get(), nullptr, 0);
@@ -339,7 +344,7 @@ bool PostProcess::RunDof(GraphicsDevice& device, ShaderManager& shaders, Target&
         dc->RSSetViewports(1, &vp);
         ID3D11RenderTargetView* rtv = t.sceneB.RTV();
         dc->OMSetRenderTargets(1, &rtv, nullptr);
-        ID3D11ShaderResourceView* srvs[3] = { t.scene.SRV(), t.dofB.SRV(), view.depthSRV };
+        ID3D11ShaderResourceView* srvs[3] = { sceneSRV, t.dofB.SRV(), view.depthSRV };
         dc->PSSetShaderResources(0, 3, srvs);
         dc->VSSetShader(comp->vs.Get(), nullptr, 0);
         dc->PSSetShader(comp->ps.Get(), nullptr, 0);
@@ -656,12 +661,24 @@ void PostProcess::Resolve(GraphicsDevice& device, ShaderManager& shaders, Target
     }
     resolveTimer_.Begin(device); // M44d: Resolve 全体の GPU 時間 (ProfilerWindow "postfx" 行)
 
-    // M44c: DoF (scene → sceneB)。実行後は bloom/AE/トーンマップが sceneB を読む
-    // (ボケた高輝度が自然にブルームする順序)。off/不成立時は従来どおり t.scene。
-    // M44d: モーションブラーは DoF 出力と scene のピンポン (DoF off なら scene → sceneB)
+    // M55d: TAA はチェーンの **先頭** (DoF より前)。ボケや速度スミアを掛けた後の絵を
+    // 積むと履歴が二重にぼやけるので、素の HDR に対して先に解決する。
+    // 出力は TaaPass 内の履歴面 (viewKey 別) — 走らなければ nullptr で従来どおり t.scene。
+    // ★t.scene へ書き戻さないのは、書き戻しには全画面コピーが 1 回要るのと、
+    //   次フレームの読み元 (t.scene = 素の描画) を汚さないため
     ID3D11ShaderResourceView* sceneSRV = t.scene.SRV();
+    if (s.taaOn != 0) {
+        if (ID3D11ShaderResourceView* taaOut =
+                taa_.Run(device, shaders, view, sceneSRV, s.taaFeedback)) {
+            sceneSRV = taaOut;
+        }
+    }
+
+    // M44c: DoF (scene → sceneB)。実行後は bloom/AE/トーンマップが sceneB を読む
+    // (ボケた高輝度が自然にブルームする順序)。off/不成立時は従来どおり sceneSRV。
+    // M44d: モーションブラーは DoF 出力と scene のピンポン (DoF off なら → sceneB)
     RenderTexture* mbDst = &t.sceneB;
-    if (RunDof(device, shaders, t, s, view)) {
+    if (RunDof(device, shaders, t, s, view, sceneSRV)) {
         sceneSRV = t.sceneB.SRV();
         mbDst = &t.scene;
     }

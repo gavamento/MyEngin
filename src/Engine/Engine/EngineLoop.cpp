@@ -232,6 +232,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     renderSystem.postFxSettings.bloomThreshold = config.postFxBloomThreshold;
     renderSystem.postFxSettings.bloomIntensity = config.postFxBloomIntensity;
     renderSystem.postFxSettings.fxaa = config.postFxFxaa;
+    renderSystem.postFxSettings.taaOn = config.postFxTaa ? 1 : 0; // M55d (--taa、Deferred のみ)
     // M44b: リプレイ記録/検証・スクショの実行では露出適応を 1 フレーム収束にして
     // 決定的スクショを成立させる (aeInstant は Merge が base 維持する Settings 専用フィールド)
     renderSystem.postFxSettings.aeInstant = !config.replayVerifyPath.empty()

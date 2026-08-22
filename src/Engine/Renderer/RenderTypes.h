@@ -180,6 +180,19 @@ struct RenderView {
     // ---- M55c: velocity バッファの可視化 (末尾 append。0 = 何も起きない) ----
     // Deferred のみ。GBuffer RT4 を画面へ貼り替える純デバッグ表示で、消費側は誰もいない
     int32_t velocityDebug = 0;
+    // ---- M55d: TAA (末尾 append。既定 0/null = 従来と 1 ビットも変わらない) ----
+    //   taaEnabled  = このビューで TAA を走らせる (= カメラジッタも載っている)。
+    //     RenderSystem が「CameraPostFx の taaOn / グローバル設定」と
+    //     「パスが velocity を書くか (Deferred のみ)」の両方を見て決める。
+    //     ★ジッタと TAA は**必ず同じ条件**で on/off する — 片方だけだと画面が
+    //       毎フレーム半ピクセル揺れるだけになる。
+    //   velocitySRV = GBuffer RT4。path.Render の直後に RenderSystem が
+    //     IRenderPath::VelocitySRV() から充填する (Forward は null)。
+    //   viewKey     = 履歴スロット (FrameTarget::viewKey と同値。0=AssetPreview は履歴なし)。
+    //     履歴の連続性判定は既存の viewFrameIndex (viewKey 毎の描画通番) を使う
+    int32_t taaEnabled = 0;
+    ID3D11ShaderResourceView* velocitySRV = nullptr;
+    uint32_t viewKey = 0;
 };
 
 // M55c: 「**前フレームに実際に描いた** world 行列」の viewKey 別ストア (velocity の出所)。

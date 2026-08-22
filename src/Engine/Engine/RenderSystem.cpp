@@ -350,8 +350,26 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
     // (混ぜると「カメラが毎フレーム半ピクセル動いた」ことになり履歴が毎回外れる)。
     // viewKey==0 (AssetPreview) は履歴も TAA も持たないので常に非ジッタ。
     view.projNoJitter = view.proj;
+    view.viewKey = target.viewKey; // M55d: TAA の履歴スロット
     view.viewFrameIndex = (target.viewKey < 4) ? viewSerial_[target.viewKey] : 0u;
-    if (jitterAmplitude > 0.0f && cameraFound && target.viewKey > 0 && target.viewKey < 4) {
+    // ---- M55d: TAA の有効判定 ----
+    // ★ジッタと TAA は**必ず同じ条件**で on/off する。TAA 抜きでジッタだけ載せると
+    //   画面が毎フレーム半ピクセル揺れるだけになるので、「velocity を書かないパス
+    //   (Forward)」「HDR 配管なし」「AssetPreview」はジッタごと落とす。
+    // 設定の出所はポスプロと同じ規則 (グローバル設定 → シーンカメラの CameraPostFx で上書き)
+    // だが、判定はマージ (Resolve 直前) より前に要るのでここで先に引く
+    {
+        bool taaOn = postFxSettings.taaOn != 0;
+        if (!cameraOverride && !camEntity.IsNull()) {
+            if (const auto* pfx = world.GetComponent<CameraPostFxComponent>(camEntity)) {
+                taaOn = pfx->taaOn != 0;
+            }
+        }
+        view.taaEnabled = (taaOn && cameraFound && hdr != nullptr && path.WritesVelocity()
+                           && target.viewKey > 0 && target.viewKey < 4)
+            ? 1 : 0;
+    }
+    if (view.taaEnabled != 0 && jitterAmplitude > 0.0f) {
         float px = 0.0f;
         float py = 0.0f;
         camerajitter::Sample(view.viewFrameIndex, px, py);
@@ -717,6 +735,9 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
 
     queue_.Sort();
     path.Render(device, view, queue_, lights, resources, shaders);
+    // M55d: 画面速度 (GBuffer RT4) はパスが所有する — 描いた後でないと SRV が無い。
+    // TAA (ポスプロ) がこの後で読む。Forward は null = TAA は自然に不成立になる
+    view.velocitySRV = path.VelocitySRV();
 
     // VFX (M29c): Sprite/Trail/TextMesh をメッシュ (不透明+透明) の後・パーティクルの前に
     // 重ねる。HDR 中間へ描かれ postfx を通る。RT はパスがバインドしたまま

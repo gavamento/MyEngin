@@ -264,4 +264,44 @@ inline bool FromWorld(const DirectX::XMFLOAT4X4& curViewProjJittered,
 
 } // namespace velocity
 
+// M55d: TAA の解決式。**postfx_taa.hlsl の PSMain と同じ手順** — 片方だけ直すと
+// 「ゴーストが取れない / 静止画が動く」形で静かに壊れる (RenderSelfTest の
+// TestTaaResolve が CPU 側を検証し、HLSL との一致はコメント同期で担保する)。
+//
+// 規約: 再投影は **prevUv = uv - velocity** (M55c と同じ)。velocity 側でジッタは
+// 既に引き戻されているので、ここでは何も足し引きしない。
+namespace taa {
+
+// 履歴 UV が画面内か。外れていたら前フレームにその画素は無い = 履歴を捨てる
+inline bool HistoryUvValid(float u, float v)
+{
+    return u >= 0.0f && v >= 0.0f && u < 1.0f && v < 1.0f;
+}
+
+// 今フレームの近傍が作る色の箱へ履歴を押し込む (ゴースト抑制)。
+// 遮蔽が解けた画素では履歴が近傍のどれとも似ていないので、この 1 行で自動的に捨てられる
+inline DirectX::XMFLOAT3 ClampToNeighborhood(const DirectX::XMFLOAT3& hist,
+                                             const DirectX::XMFLOAT3& nmin,
+                                             const DirectX::XMFLOAT3& nmax)
+{
+    return { std::clamp(hist.x, nmin.x, nmax.x), std::clamp(hist.y, nmin.y, nmax.y),
+             std::clamp(hist.z, nmin.z, nmax.z) };
+}
+
+// 最終色。histValid=false / 履歴 UV が画面外 / feedback=0 のいずれでも
+// **cur をビット単位でそのまま返す** — これが「TAA off で絵が 1 ビットも変わらない」の根拠
+inline DirectX::XMFLOAT3 Resolve(const DirectX::XMFLOAT3& cur, const DirectX::XMFLOAT3& hist,
+                                 const DirectX::XMFLOAT3& nmin, const DirectX::XMFLOAT3& nmax,
+                                 float prevU, float prevV, bool histValid, float feedback)
+{
+    if (!histValid || !HistoryUvValid(prevU, prevV)) {
+        return cur;
+    }
+    const DirectX::XMFLOAT3 c = ClampToNeighborhood(hist, nmin, nmax);
+    return { cur.x + (c.x - cur.x) * feedback, cur.y + (c.y - cur.y) * feedback,
+             cur.z + (c.z - cur.z) * feedback };
+}
+
+} // namespace taa
+
 } // namespace mye

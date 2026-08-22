@@ -23,6 +23,10 @@ public:
     void Render(GraphicsDevice& device, const RenderView& view, const RenderQueue& queue,
                 const SceneLightData& lights, RenderResources& resources,
                 ShaderManager& shaders) override;
+    // M55c/M55d: GBuffer RT4 = 画面速度。Deferred だけが書ける (Forward に MRT は無い) ので、
+    // TAA / モーションブラー v2 / RT の物体モーションは **Deferred 限定**の機能になる
+    bool WritesVelocity() const override { return true; }
+    ID3D11ShaderResourceView* VelocitySRV() const override { return gbVelocity_.SRV(); }
 
 private:
     RenderTexture gbAlbedo_;   // a=1 でジオメトリ有りマーク

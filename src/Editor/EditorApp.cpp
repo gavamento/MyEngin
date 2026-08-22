@@ -592,6 +592,15 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
                     velDbg = (velDbg != 0) ? 0 : 1;
                 }
             }
+            // M55d: TAA (グローバル設定。シーンカメラに CameraPostFx があればそちらが勝つ)。
+            // カメラジッタもこのトグルと連動する — 別々に切れると「TAA 無しでジッタだけ」
+            // = 画面が半ピクセル揺れるだけの状態を作れてしまう
+            {
+                int& taa = ctx.renderSystem->postFxSettings.taaOn;
+                if (ImGui::MenuItem(Tr(StrId::Taa_Enable), nullptr, taa != 0)) {
+                    taa = (taa != 0) ? 0 : 1;
+                }
+            }
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu(Tr(StrId::Menu_RtDebug))) {

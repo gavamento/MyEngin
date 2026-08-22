@@ -10,6 +10,7 @@
 #include "Engine/Core/EntityID.h"
 #include "Engine/Renderer/GpuTimer.h"
 #include "Engine/Renderer/RenderTexture.h"
+#include "Engine/Renderer/TaaPass.h" // M55d: チェーン先頭の TAA (履歴は viewKey 別に持つ)
 
 namespace mye {
 
@@ -65,6 +66,11 @@ public:
         // ---- M44d: カメラモーションブラー (既定 = 無効)。深度再投影方式 ----
         float motionBlurIntensity = 0.0f; // ブラー量スケール (0=off、SceneView は強制 0)
         float mbMaxPixels = 16.0f;        // 速度クランプ (px、スミアの暴走防止)
+        // ---- M55d: TAA (既定 = 無効)。**Deferred のみ** (画面速度が GBuffer RT4 にしかない) ----
+        // 有効化の判定は RenderSystem 側にもある — カメラジッタと TAA は必ず同時に
+        // on/off しないと画面が半ピクセル揺れるだけになるため (RenderView::taaEnabled)
+        int taaOn = 0;            // 0=off 1=on
+        float taaFeedback = 0.9f; // 履歴の残し率 [0,0.95]
     };
 
     // サイズ別の中間ターゲット群 (フルスクリーン HDR シーン + 半解像度ブルーム ping-pong)。
@@ -114,9 +120,10 @@ private:
     void RunBloom(GraphicsDevice& device, ShaderManager& shaders, Target& t, const Settings& s,
                   ID3D11ShaderResourceView* sceneSRV);
     // M44c: プリフィルタ → 円盤ギャザー → 合成で t.sceneB を作る。
-    // 実行しなかった (radius 0 / depthSRV 無し / シェーダ未コンパイル) 場合は false
+    // 実行しなかった (radius 0 / depthSRV 無し / シェーダ未コンパイル) 場合は false。
+    // M55d: 入力は t.scene 固定ではなく sceneSRV (TAA が走ったらその出力になる)
     bool RunDof(GraphicsDevice& device, ShaderManager& shaders, Target& t, const Settings& s,
-                const RenderView& view);
+                const RenderView& view, ID3D11ShaderResourceView* sceneSRV);
     // M43b: 空マスク → 太陽へ向けた放射ブラー ×2 を行い、結果を t.godA (半解像度) に残す。
     // 実行しなかった (intensity 0 / 太陽が背面・画面外 / depthSRV 無し等) 場合は false
     bool RunGodray(GraphicsDevice& device, ShaderManager& shaders, Target& t, const Settings& s,
@@ -146,6 +153,7 @@ private:
     AssetID dofGatherShader_ = {};
     AssetID dofCompositeShader_ = {};
     AssetID motionBlurShader_ = {}; // M44d
+    TaaPass taa_;                   // M55d (遅延ではなく Init で一緒に立ち上げる)
 
     Microsoft::WRL::ComPtr<ID3D11Buffer> cb_;     // PostFx CB (tonemap)
     Microsoft::WRL::ComPtr<ID3D11Buffer> brightCB_;
