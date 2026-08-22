@@ -15,6 +15,7 @@
 #include "Engine/Core/Localization.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Engine/Asset/CookedCache.h"
+#include "Engine/Engine/Asset/TerrainAsset.h"
 #include "Engine/Engine/AssetDatabase.h"
 #include "Engine/Engine/FbxLoader.h"
 #include "Engine/Engine/ModelLoader.h"
@@ -90,17 +91,24 @@ std::wstring LowerExt(const fs::path& p)
 // ---- 段 2: アセットクック温め ----
 // assets\ のモデルを RegisterAssets へ通す。ウォームなら .mmdl 再生で即時、コールド
 // (セッション中に追加されたばかり等) ならここでパース + クックされる。
-// 音声 (.mpcm) は起動時走査が済ませている — cooked ディレクトリごと同梱するので追加作業なし
+// 音声 (.mpcm) は起動時走査が済ませている — cooked ディレクトリごと同梱するので追加作業なし。
+// 地形 (.mterr、M58a) は「シーンに置かれていなければ誰もロードしない」ので、ここで
+// 明示的に焼く必要がある。焼き忘れは配布物にだけ現れて --package を叩かない限り再現しない
 bool BuildSettingsWindow::StageCookWarm(EngineContext& ctx, std::string& detail)
 {
     if (!CookedCache::Enabled()) {
         detail = "cook cache disabled (--no-cook-cache)";
         return true; // 温めるものが無いだけで失敗ではない (同梱段が空になる)
     }
-    int models = 0, failed = 0;
+    int models = 0, terrains = 0, failed = 0;
     std::error_code ec;
     for (const auto& e : fs::recursive_directory_iterator(ctx.assetsRoot, ec)) {
         if (!e.is_regular_file()) {
+            continue;
+        }
+        if (TerrainAsset::IsSourcePath(e.path().wstring())) {
+            TerrainAsset::TerrainData terrain;
+            TerrainAsset::Load(e.path().wstring(), terrain) ? ++terrains : ++failed;
             continue;
         }
         const std::wstring ext = LowerExt(e.path());
@@ -113,7 +121,7 @@ bool BuildSettingsWindow::StageCookWarm(EngineContext& ctx, std::string& detail)
         ok ? ++models : ++failed;
     }
     char buf[96];
-    std::snprintf(buf, sizeof(buf), "%d model(s) warm%s", models,
+    std::snprintf(buf, sizeof(buf), "%d model(s) + %d terrain(s) warm%s", models, terrains,
                   failed ? " (some failed)" : "");
     detail = buf;
     return failed == 0;
@@ -250,7 +258,7 @@ bool BuildSettingsWindow::StageCopy(EngineContext& ctx, std::string& detail)
                 continue;
             }
             const std::wstring ext = LowerExt(e.path());
-            if (ext == L".mmdl" || ext == L".mpcm") {
+            if (ext == L".mmdl" || ext == L".mpcm" || ext == TerrainAsset::kTerrainExt) {
                 if (copyFile(e.path(), cookedDst / e.path().filename())) {
                     ++cooked;
                 }

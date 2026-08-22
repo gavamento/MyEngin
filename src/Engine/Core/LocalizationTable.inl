@@ -784,3 +784,6 @@ MYE_STR(Net_Desync,           "DESYNC at tick %llu - a bundle was written to cra
                               "tick %llu で DESYNC — crash\\desync_<tick>_p<lane>\\ にバンドルを出力しました。")
 MYE_STR(Net_HashNote,         "World hashes are exchanged every 8 confirmed ticks; a mismatch halts the session.",
                               "確定 tick 8 個ごとにワールドハッシュを交換します。食い違うとセッションを停止します。")
+
+// ---- 地形 (M58) ----
+MYE_STR(Terrain_AssetType,    "Terrain",             "地形")

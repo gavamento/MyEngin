@@ -88,7 +88,7 @@ M52 (決定論の再利用) 全 9 サブ完遂・push 済み・CI 全緑 (`9e729
 | M57c テンポラル + 前方積分 | 未 | | |
 | M57d フォグ合成の一元化 | 未 | | |
 | M57e 透明/スカイ/パーティクル + UI | 未 | | |
-| M58a 地形アセット + クック (.mterr) | 未 | | |
+| M58a 地形アセット + クック (.mterr) | 済 | (本コミット — ハッシュは `git log --oneline --grep=M58a` で引く) | ソース = `.terrain.json`、クック = `.mterr` (小ヘッダ + レイヤ表 + R16 + RGBA8 の生バイト)。**計画に無い追加: 画像を 1 枚も要求しない「手続き生成」経路** — デモ地形をバイナリ非同梱でリポジトリに置けて M58b/c が即座に被写体を得られる (値ノイズ + fBm、格子値は FNV 整数ハッシュ由来なので実時間も `rand()` も混ざらない)。★**`CookedCache` の deps は存在しか見ない**ので、画像の**中身を焼き込む**地形には足りない (`.terrain.json` を触らずに PNG だけ差し替えると古い絵が出続ける)。取り込み画像の size + FNV ハッシュを blob に持たせて `Load` で照合する (封印キャッシュ中は元画像が無いので跳ばす)。selftest が「同サイズの内容改変」で実証。★スプラットは cook 時に**最大剰余法で合計 255 へ量子化正規化**する = M58d のシェーダ側が正規化を持たなくてよい。★`BuildSettingsWindow` は 2 箇所要る: 拡張子リストだけでなく **`StageCookWarm`** も — 地形はシーンに置かれるまで誰もロードしないので、温めが無いと dist が空になる。実測: 129x129 R16 + 128x128 RGBA8 + 4 レイヤ = payload **99,329 bytes**、`--package` の sealed dist に入ることを確認。★**worktree の罠 (M58 とは無関係だが後続が必ず踏む)**: 新しい worktree には `MyeScripting.dll` が無く、`--flow-demo` が C# の `FlowMenu` を attach せずにシーンを保存するため golden `flow_title` が 1073 画素ずれる。`tools\build_managed.bat Debug` と `Release` を両方走らせてから `shot_verify` を回すこと |
 | M58b チャンク生成 + カリング | 未 | | |
 | M58c 地形描画パス | 未 | | |
 | M58d スプラットブレンド 4 層 | 未 | | |

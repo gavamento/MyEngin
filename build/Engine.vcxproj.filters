@@ -144,6 +144,9 @@
     <ClCompile Include="..\src\Engine\Engine\Asset\ModelCook.cpp">
       <Filter>Engine\Asset</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Asset\TerrainAsset.cpp">
+      <Filter>Engine\Asset</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\AssetDatabase.cpp">
       <Filter>Engine</Filter>
     </ClCompile>
@@ -565,6 +568,9 @@
       <Filter>Engine\Asset</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Asset\ModelCook.h">
+      <Filter>Engine\Asset</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Asset\TerrainAsset.h">
       <Filter>Engine\Asset</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\AssetDatabase.h">

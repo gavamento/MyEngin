@@ -74,6 +74,7 @@ constexpr TypeFilterEntry kTypeFilters[] = {
     { AssetType::Script, StrId::Type_Script },
     { AssetType::Shader, StrId::Type_Shader },
     { AssetType::Schema, StrId::Type_Schema },
+    { AssetType::Terrain, StrId::Terrain_AssetType },
 };
 
 const char* IconFor(const std::wstring& ext)

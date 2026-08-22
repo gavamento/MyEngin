@@ -52,6 +52,7 @@
     <ClCompile Include="..\src\Engine\Engine\Asset\CookedCache.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Asset\CookedCacheSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Asset\ModelCook.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Asset\TerrainAsset.cpp" />
     <ClCompile Include="..\src\Engine\Engine\AssetDatabase.cpp" />
     <ClCompile Include="..\src\Engine\Engine\AssetDatabaseSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Audio\AudioClip.cpp" />
@@ -193,6 +194,7 @@
     <ClInclude Include="..\src\Engine\Engine\Asset\CookedCache.h" />
     <ClInclude Include="..\src\Engine\Engine\Asset\CookedCacheSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Asset\ModelCook.h" />
+    <ClInclude Include="..\src\Engine\Engine\Asset\TerrainAsset.h" />
     <ClInclude Include="..\src\Engine\Engine\AssetDatabase.h" />
     <ClInclude Include="..\src\Engine\Engine\AssetDatabaseSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Audio\AudioClip.h" />

@@ -1,0 +1,22 @@
+{
+  "type": "terrain",
+  "version": 1,
+  "worldSize": [ 256.0, 256.0 ],
+  "heightRes": [ 129, 129 ],
+  "splatRes": [ 128, 128 ],
+  "heightBase": -4.0,
+  "heightScale": 36.0,
+  "procedural": {
+    "seed": 20260822,
+    "octaves": 5,
+    "frequency": 3.0,
+    "lacunarity": 2.0,
+    "gain": 0.5
+  },
+  "layers": [
+    { "name": "sand",  "albedo": "../textures/test.png", "normal": "../textures/demo_normal.png", "tiling": [ 32.0, 32.0 ] },
+    { "name": "grass", "albedo": "../textures/test.png", "normal": "../textures/demo_normal.png", "tiling": [ 24.0, 24.0 ] },
+    { "name": "rock",  "albedo": "../textures/test.png", "normal": "../textures/demo_normal.png", "tiling": [ 16.0, 16.0 ] },
+    { "name": "snow",  "albedo": "../textures/test.png", "normal": "../textures/demo_normal.png", "tiling": [ 12.0, 12.0 ] }
+  ]
+}

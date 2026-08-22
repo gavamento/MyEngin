@@ -4,6 +4,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -11,11 +12,13 @@
 #include "Engine/Core/Log.h"
 #include "Engine/Engine/Asset/CookedCache.h"
 #include "Engine/Engine/Asset/ModelCook.h"
+#include "Engine/Engine/Asset/TerrainAsset.h"
 #include "Engine/Engine/Audio/AudioClip.h"
 #include "Engine/Engine/FbxLoader.h"
 #include "Engine/Engine/ModelLoader.h"
 #include "Engine/Platform/PathUtil.h"
 #include "Engine/Renderer/GpuResources.h"
+#include "Engine/Renderer/ImageWrite.h"
 #include "Engine/Renderer/ShaderManager.h"
 #include "Engine/Renderer/Skeleton.h"
 
@@ -432,6 +435,217 @@ bool RunCookedCacheSelfTest()
         check(hit && back.sampleRate == clip.sampleRate && back.channels == clip.channels
                   && back.samples == clip.samples,
               "pcm: synthetic clip round-trips bit-exactly");
+    }
+
+    // ---- (6) 地形クック (.mterr、M58a) ----
+    // 地形は描画専用レーンだが、M59 の地形コリジョンがこの blob をハッシュレーンへ持ち込む。
+    // その前提条件が「クックがバイト決定論」なので、ここで先に固定しておく
+    {
+        using TerrainAsset::TerrainData;
+        const fs::path terrDir = tempRoot / L"terr";
+        fs::create_directories(terrDir, ec);
+        auto writeText = [&](const fs::path& p, const std::string& s) {
+            std::ofstream f(p, std::ios::binary | std::ios::trunc);
+            f.write(s.data(), static_cast<std::streamsize>(s.size()));
+        };
+
+        // (6a) 手続き生成のソース (画像を 1 枚も要求しない経路)
+        const fs::path procSrc = terrDir / L"proc.terrain.json";
+        writeText(procSrc,
+                  R"({"type":"terrain","version":1,"worldSize":[64.0,48.0],)"
+                  R"("heightRes":[33,17],"splatRes":[16,8],"heightBase":-2.0,"heightScale":10.0,)"
+                  R"("procedural":{"seed":7,"octaves":4,"frequency":2.5,"lacunarity":2.0,"gain":0.5},)"
+                  R"("layers":[{"name":"a","albedo":"../t.png","tiling":[4.0,4.0]},)"
+                  R"({"name":"b","normal":"../n.png"},{"name":"c"},{"name":"d"},{"name":"ignored"}]})");
+        TerrainData d1;
+        check(TerrainAsset::CookFromSource(procSrc.wstring(), d1) && d1.Valid(),
+              "terrain: procedural source cooks and validates");
+        check(d1.heightW == 33 && d1.heightH == 17 && d1.splatW == 16 && d1.splatH == 8
+                  && d1.heights.size() == 33u * 17u && d1.splat.size() == 16u * 8u * 4u,
+              "terrain: resolutions and buffer sizes come from the source");
+        check(d1.layers.size() == TerrainAsset::kMaxLayers,
+              "terrain: layer count is clamped to the splat channel count");
+
+        // 高さが定数でない = ノイズが本当に走っている (恒等な生成器を PASS にしない)
+        bool varies = false;
+        for (uint16_t h : d1.heights) {
+            varies = varies || h != d1.heights[0];
+        }
+        check(varies, "terrain: procedural heights are not constant");
+
+        // スプラットの不変量: 1 テクセルの重み合計 = kSplatWeightSum
+        bool splatSums = true;
+        for (size_t i = 0; i + 3 < d1.splat.size(); i += 4) {
+            const uint32_t sum = static_cast<uint32_t>(d1.splat[i]) + d1.splat[i + 1]
+                + d1.splat[i + 2] + d1.splat[i + 3];
+            splatSums = splatSums && sum == TerrainAsset::kSplatWeightSum;
+        }
+        check(splatSums, "terrain: every splat texel sums to the normalized weight total");
+
+        // (6b) 形式往復 + クック決定論
+        std::vector<uint8_t> blob1;
+        TerrainAsset::Serialize(d1, blob1);
+        TerrainData back;
+        std::vector<uint8_t> blob2;
+        const bool rt = TerrainAsset::Deserialize(blob1, back);
+        TerrainAsset::Serialize(back, blob2);
+        check(rt && blob1 == blob2, "terrain: serialize(deserialize(blob)) round-trips bit-identical");
+        check(rt && back.heights == d1.heights && back.splat == d1.splat
+                  && back.layers.size() == d1.layers.size() && back.layers[0].name == "a"
+                  && back.layers[0].albedo == "../t.png" && back.layers[1].normal == "../n.png",
+              "terrain: layer table survives the round-trip");
+
+        TerrainData d2;
+        std::vector<uint8_t> blob3;
+        TerrainAsset::CookFromSource(procSrc.wstring(), d2);
+        TerrainAsset::Serialize(d2, blob3);
+        check(blob3 == blob1, "terrain: re-cook is bit-identical (cook determinism)");
+
+        // (6c) キャッシュ経路: 1 回目で .mterr が書かれ、2 回目は同じバイトで再生される
+        TerrainData l1;
+        check(TerrainAsset::Load(procSrc.wstring(), l1), "terrain: cold Load cooks");
+        std::vector<uint8_t> payload;
+        check(CookedCache::ReadValidated(procSrc.wstring(), TerrainAsset::kTerrainExt, payload)
+                  && payload == blob1,
+              "terrain: the cook file payload is the same bytes as a fresh cook");
+        TerrainData l2;
+        check(TerrainAsset::Load(procSrc.wstring(), l2) && l2.heights == l1.heights
+                  && l2.splat == l1.splat,
+              "terrain: warm Load replays the cached blob");
+
+        // (6d) 画像取り込み (.r16 生ハイトマップ + PNG スプラット)
+        const fs::path rawHeight = terrDir / L"h.r16";
+        std::vector<uint8_t> rawBytes(9u * 9u * 2u);
+        for (size_t i = 0; i < 81; ++i) {
+            const uint16_t v = static_cast<uint16_t>(i * 701u);
+            rawBytes[i * 2] = static_cast<uint8_t>(v & 0xFF);
+            rawBytes[i * 2 + 1] = static_cast<uint8_t>(v >> 8);
+        }
+        WriteFileBytes(rawHeight, rawBytes);
+        std::vector<uint8_t> splatPixels(8u * 8u * 4u);
+        for (size_t i = 0; i < 64; ++i) {
+            splatPixels[i * 4 + 0] = static_cast<uint8_t>(i * 3);
+            splatPixels[i * 4 + 1] = static_cast<uint8_t>(255 - i * 3);
+            splatPixels[i * 4 + 2] = 0;
+            splatPixels[i * 4 + 3] = 0; // 合計は 255 にならない = 正規化が効くこと自体が試験
+        }
+        const fs::path splatPng = terrDir / L"s.png";
+        check(WritePngRGBA(splatPng.wstring(), splatPixels.data(), 8, 8, 8 * 4),
+              "terrain: test splat png written");
+        const fs::path imgSrc = terrDir / L"img.terrain.json";
+        writeText(imgSrc,
+                  R"({"type":"terrain","version":1,"worldSize":[16.0,16.0],"heightRes":[9,9],)"
+                  R"("heightmap":"h.r16","splatmap":"s.png","heightScale":8.0,)"
+                  R"("layers":[{"name":"only"}]})");
+        TerrainData img;
+        const bool imgOk = TerrainAsset::CookFromSource(imgSrc.wstring(), img);
+        check(imgOk && img.heightW == 9 && img.heightH == 9 && img.splatW == 8 && img.splatH == 8,
+              "terrain: image source drives the resolution");
+        bool rawMatches = imgOk && img.heights.size() == 81;
+        for (size_t i = 0; rawMatches && i < 81; ++i) {
+            rawMatches = img.heights[i] == static_cast<uint16_t>(i * 701u);
+        }
+        check(rawMatches, "terrain: raw .r16 heights are ingested verbatim (little endian)");
+        bool imgSplatSums = imgOk;
+        for (size_t i = 0; imgOk && i + 3 < img.splat.size(); i += 4) {
+            const uint32_t sum = static_cast<uint32_t>(img.splat[i]) + img.splat[i + 1]
+                + img.splat[i + 2] + img.splat[i + 3];
+            imgSplatSums = imgSplatSums && sum == TerrainAsset::kSplatWeightSum;
+        }
+        check(imgSplatSums, "terrain: an un-normalized splat png is normalized at cook time");
+
+        // ★焼き込んだ画像だけを差し替える。.terrain.json の stat は動かないので CookedCache は
+        //   ヒットしてしまう (deps は存在しか見ない) — TerrainSourceImage の内容ハッシュが
+        //   唯一の防波堤で、ここが抜けると「PNG を直したのに絵が変わらない」になる
+        TerrainData warm;
+        check(TerrainAsset::Load(imgSrc.wstring(), warm) && warm.heights == img.heights,
+              "terrain: image-backed cold Load cooks");
+        std::vector<uint8_t> tweaked = rawBytes;
+        tweaked[0] = static_cast<uint8_t>(tweaked[0] ^ 0xFF); // 同サイズ・別内容
+        WriteFileBytes(rawHeight, tweaked);
+        TerrainData restale;
+        check(TerrainAsset::Load(imgSrc.wstring(), restale)
+                  && restale.heights[0] != img.heights[0],
+              "terrain: changing only the heightmap image invalidates the cook");
+        WriteFileBytes(rawHeight, rawBytes);
+
+        // (6e) 破損 blob の境界検査 — 落ちずに false であること
+        TerrainData junkOut;
+        check(!TerrainAsset::Deserialize(std::vector<uint8_t>{}, junkOut),
+              "terrain corruption: empty blob is rejected");
+        check(!TerrainAsset::Deserialize({ 1, 2, 3, 4, 5, 6, 7, 8 }, junkOut),
+              "terrain corruption: junk blob is rejected");
+        std::vector<uint8_t> badMagic = blob1;
+        badMagic[0] = static_cast<uint8_t>(badMagic[0] ^ 0xFF);
+        check(!TerrainAsset::Deserialize(badMagic, junkOut),
+              "terrain corruption: bad magic is rejected");
+        std::vector<uint8_t> tail = blob1;
+        tail.push_back(0);
+        check(!TerrainAsset::Deserialize(tail, junkOut),
+              "terrain corruption: trailing bytes are rejected");
+        bool truncSafe = true;
+        for (size_t cut = 0; cut < blob1.size(); cut += 13) {
+            std::vector<uint8_t> part(blob1.begin(), blob1.begin() + static_cast<ptrdiff_t>(cut));
+            truncSafe = truncSafe && !TerrainAsset::Deserialize(part, junkOut);
+        }
+        check(truncSafe, "terrain corruption: every truncation is rejected without crashing");
+
+        // 巨大な要素数: resize する前に残量で検算していないと bad_alloc で即死する。
+        // レイヤ 0 本 / 相対パス空の blob を作ればカウント位置は固定計算できる
+        TerrainData tiny;
+        tiny.heightW = tiny.heightH = 4;
+        tiny.splatW = tiny.splatH = 2;
+        tiny.worldSizeX = tiny.worldSizeZ = 10.0f;
+        tiny.heightScale = 1.0f;
+        tiny.heights.assign(16, 100);
+        tiny.splat.assign(2u * 2u * 4u, 0);
+        for (size_t i = 0; i < tiny.splat.size(); i += 4) {
+            tiny.splat[i] = 255;
+        }
+        std::vector<uint8_t> tinyBlob;
+        TerrainAsset::Serialize(tiny, tinyBlob);
+        check(TerrainAsset::Deserialize(tinyBlob, junkOut), "terrain: minimal blob is accepted");
+        // magic+version(8) + 解像度 4x u32(16) + float 4 本(16) + src 2 本((4+8+8) x2 = 40)
+        // + procedural(20) + layerCount(4) = 104
+        constexpr size_t kHeightCountOff = 104;
+        uint64_t seen = 0;
+        std::memcpy(&seen, tinyBlob.data() + kHeightCountOff, sizeof(seen));
+        check(seen == tiny.heights.size(),
+              "terrain: blob layout matches what the corruption test patches");
+        const uint64_t absurd = 0x00FFFFFFFFFFFFFFull;
+        std::memcpy(tinyBlob.data() + kHeightCountOff, &absurd, sizeof(absurd));
+        check(!TerrainAsset::Deserialize(tinyBlob, junkOut),
+              "terrain corruption: an absurd element count is rejected before allocating");
+
+        // (6f) 重み量子化の純関数検査 (M58d のブレンドがこの不変量に乗る)
+        uint8_t q[4] = { 0, 0, 0, 0 };
+        const float even[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+        TerrainAsset::QuantizeSplatWeights(even, q);
+        check(q[0] + q[1] + q[2] + q[3] == 255 && q[0] == 64 && q[3] == 63,
+              "terrain: equal weights quantize to 255 with a deterministic remainder");
+        const float zero[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+        TerrainAsset::QuantizeSplatWeights(zero, q);
+        check(q[0] == 255 && q[1] == 0 && q[2] == 0 && q[3] == 0,
+              "terrain: an all-zero texel falls back to layer 0 (no divide by zero downstream)");
+        const float nan4[4] = { std::numeric_limits<float>::quiet_NaN(), -1.0f, 3.0f, 1.0f };
+        TerrainAsset::QuantizeSplatWeights(nan4, q);
+        check(q[0] + q[1] + q[2] + q[3] == 255 && q[0] == 0 && q[1] == 0,
+              "terrain: NaN / negative weights are dropped and the rest still sums to 255");
+
+        // (6g) リポジトリ同梱のデモ地形が実際に焼けること (--package が同梱する現物)
+        const fs::path demo = fs::path(assetsRoot) / L"terrain" / L"demo.terrain.json";
+        if (fs::exists(demo, ec)) {
+            TerrainData a, b;
+            std::vector<uint8_t> ba, bb;
+            const bool okA = TerrainAsset::CookFromSource(demo.wstring(), a);
+            const bool okB = TerrainAsset::CookFromSource(demo.wstring(), b);
+            TerrainAsset::Serialize(a, ba);
+            TerrainAsset::Serialize(b, bb);
+            check(okA && okB && ba == bb && a.Valid(),
+                  "terrain: the bundled demo terrain cooks deterministically");
+        } else {
+            check(false, "terrain: bundled demo terrain is present");
+        }
     }
 
     // ---- 後始末: 以降のテスト/実行に影響を残さない ----
