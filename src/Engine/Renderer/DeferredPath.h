@@ -6,6 +6,7 @@
 #include "Engine/Renderer/RenderPath.h"
 #include "Engine/Renderer/RenderTexture.h"
 #include "Engine/Renderer/SkyboxPass.h"
+#include "Engine/Renderer/TerrainPass.h"
 
 namespace mye {
 
@@ -55,6 +56,9 @@ private:
     std::vector<MeshInstanceRun> runs_;
     std::vector<DirectX::XMFLOAT4X4> worlds_;
     SkyboxPass skybox_; // ライトパス後・透明前に空を塗る (M29d)
+    // 地形 (M58c)。GBuffer へ専用シェーダで書く — 不透明パスは material->shader を
+    // 見ないのでマテリアル経由では通せない (TerrainPass.h の頭のコメント参照)
+    TerrainPass terrain_;
 
     // ---- SSAO (M38e、半解像度) ----
     RenderTexture ssaoRaw_;

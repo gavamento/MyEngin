@@ -1067,6 +1067,108 @@ void BuildRenderShowcaseScene(EngineContext& ctx)
     s.GetWorld().ApplyStructuralChanges();
 }
 
+void RegisterTerrainShowcaseContent(EngineContext& ctx)
+{
+    RenderResources& res = *ctx.resources;
+    const AssetID white = res.textures.White();
+    const AssetID shader = AssetID{ HashStr("forward_lit") };
+    res.meshes.Cube();
+
+    // 名前は **tdemo_ 接頭辞** (rdemo_ / mat_ / rt_ / parts / flow / mp_ / duel_ と衝突させない —
+    // 材質は全ショーケース分が無条件登録されるので、被ると後勝ちで別の色に化ける)
+    Material m;
+    m.shader = shader;
+    m.texture = white;
+    m.baseColor = { 0.86f, 0.36f, 0.20f, 1.0f };
+    m.metallic = 0.0f;
+    m.roughness = 0.55f;
+    // 参照用の柱。**地形の起伏に対する縦のスケール**を絵の中に置くためだけの存在で、
+    // 「地形と通常メッシュが同じ深度バッファを共有しているか」を 1 枚の絵で見分ける材料になる
+    // (地形だけだと前後関係のバグが画に出ない)
+    res.materials.Register("tdemo_marker", m);
+}
+
+void BuildTerrainShowcaseScene(EngineContext& ctx)
+{
+    Scene& s = *ctx.scene;
+    RenderResources& res = *ctx.resources;
+
+    RegisterTerrainShowcaseContent(ctx); // 単独で呼ばれても実体が揃うようにしておく
+    s.SetName("terrain_showcase");
+    const AssetID cube = res.meshes.Cube();
+    const AssetID matMarker = AssetID{ HashStr("tdemo_marker") };
+
+    // ---- カメラ ----
+    // 地形は 256x256 m / 高さ -4..+32 m (assets\terrain\demo.terrain.json)。
+    // 960x540 (16:9) の shot_verify で「起伏の陰影 + 地平線 + 空」が入る位置に置く。
+    //
+    // ★**手前の縁 (z=-128) を画面の下に追い出す**位置合わせが要る。地形は「面」であって
+    //   「塊」ではないので、視線が縁の高さより下を通ると**裏面カリングで地形が消え、
+    //   画面の下端に空色の帯が出る** (最初の試写で実際に出た。バグにしか見えない)。
+    //   条件は atan((camY - 地形の最大高さ) / 縁までの距離) > 俯角 + 縦画角の半分:
+    //   camY=50 / 縁まで 14 m / 最大高さ 32 m → 52° > 17 + 27.5 = 44.5° (余裕 7.5°)。
+    //   カメラを引くほどこの余裕が減る — 引きたくなったら高さも一緒に上げること
+    GameObject camera = s.CreateGameObject("Main Camera");
+    {
+        auto* cam = camera.AddComponent<CameraComponent>();
+        cam->fovYDeg = 55.0f;
+        cam->farZ = 800.0f; // 奥の縁 (約 270 m 先) まで確実に入る
+    }
+    camera.SetLocalPosition(0.0f, 50.0f, -142.0f);
+    camera.SetLocalRotationEuler(17.0f, 0.0f, 0.0f);
+
+    // ---- 太陽 (平行光) ----
+    // 斜めから当てて尾根と谷にコントラストを付ける。真上だと起伏が飛んで
+    // 「法線が正しいか」が絵で判別できなくなる (M58b の継ぎ目検査の目視版)
+    GameObject sun = s.CreateGameObject("Sun");
+    {
+        auto* l = sun.AddComponent<LightComponent>();
+        l->intensity = 1.15f;
+        l->color = { 1.00f, 0.95f, 0.86f };
+        l->ambient = { 0.16f, 0.18f, 0.22f };
+    }
+    sun.SetLocalRotationEuler(38.0f, -28.0f, 0.0f);
+
+    // ---- 空 (グラデーション) ----
+    // 地形の輪郭が空との境界で出る = 「チャンクが 1 枚欠けた」が絵で分かる
+    GameObject sky = s.CreateGameObject("Sky");
+    {
+        auto* sk = sky.AddComponent<SkyboxComponent>();
+        sk->topColor = { 0.20f, 0.38f, 0.72f, 1.0f };
+        sk->horizonColor = { 0.72f, 0.80f, 0.88f, 1.0f };
+        sk->bottomColor = { 0.30f, 0.28f, 0.24f, 1.0f };
+    }
+
+    // ---- 地形 ----
+    // source は **assets\ 相対**で持つ (M58b: AssetID にすると Inspector の参照ピッカーが
+    // 引くべきランタイムライブラリが無い。相対パスならシーン JSON がチェックアウト先に
+    // 依存しない = M51j の絶対パスハッシュ問題も踏まない)
+    GameObject terrain = s.CreateGameObject("Terrain");
+    {
+        auto* t = terrain.AddComponent<TerrainComponent>();
+        std::snprintf(t->source, sizeof(t->source), "terrain/demo.terrain.json");
+        t->chunkTiles = 32; // 128 タイル / 32 = 4x4 = 16 チャンク
+    }
+
+    // ---- 参照用の柱 ----
+    // 手前側に等間隔で並べる。y は地形の高さを問い合わせずに固定値で置いてある —
+    // 高さ問い合わせ API は M59 (地形コリジョン) の話で、今は ECS にも ABI にも無い。
+    // 柱の足元が地面に埋まるか浮くかは golden の主張ではない (縦の目盛りとしてだけ使う)
+    static const float kMarkerX[] = { -60.0f, -20.0f, 20.0f, 60.0f };
+    for (int i = 0; i < static_cast<int>(std::size(kMarkerX)); ++i) {
+        char name[32];
+        std::snprintf(name, sizeof(name), "Marker_%d", i);
+        GameObject go = s.CreateGameObject(name);
+        go.SetLocalPosition(kMarkerX[i], 16.0f, -70.0f);
+        go.SetLocalScale(3.0f, 32.0f, 3.0f);
+        auto* mr = go.AddComponent<MeshRendererComponent>();
+        mr->mesh = cube;
+        mr->material = matMarker;
+    }
+
+    s.GetWorld().ApplyStructuralChanges();
+}
+
 void RegisterAssetLibraries(EngineContext& ctx)
 {
     std::error_code ec;

@@ -84,6 +84,10 @@ rem       cache\ に残っていると RuntimeMain の exists() 経路へ落ち�
 set RENDER_SCENE=cache\render_showcase.scene.json
 if exist %RENDER_SCENE% del /q %RENDER_SCENE%
 
+rem M58c: 地形ショーケース (--terrain-demo) も同じ理由でコードから毎回組む
+set TERRAIN_SCENE=cache\terrain_showcase.scene.json
+if exist %TERRAIN_SCENE% del /q %TERRAIN_SCENE%
+
 set FAILED=0
 set SHOTS=0
 
@@ -103,7 +107,12 @@ rem      「壊れても誰も気づかない」。この 2 枚がそれ以降 2
 call :shot demo_render_forward --render-demo
 call :shot demo_render_deferred --render-demo --deferred
 
-rem ---- 8 枚目 (統合契約の予約 3 では 10 番): FXAA を通した 1 枚。機種差が乗るので照合はローカルだけ (tol=0 の
+rem ---- 8 枚目 (M58c): 地形。**--render-demo に地形を足さない**のがこの 1 枚の存在理由 —
+rem      足すと既存 golden 2 枚 (demo_render_*) が動き、同じ Wave の M54/M55 ブランチと
+rem      PNG (マージ不能なバイナリ) で衝突する。専用シーンなら新設 1 枚で済む
+call :shot demo_terrain_deferred --terrain-demo --deferred
+
+rem ---- 9 枚目 (統合契約の予約 3 では 10 番): FXAA を通した 1 枚。機種差が乗るので照合はローカルだけ (tol=0 の
 rem      ビット一致)。CI は MYE_SHOT_SKIP_FXAA=1 を立てて飛ばす。
 rem      golden は --update で一緒に撮り直される (CI 側で撮ることは無い)
 if defined MYE_SHOT_SKIP_FXAA goto :skip_fxaa

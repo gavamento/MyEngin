@@ -161,6 +161,7 @@
     <ClCompile Include="..\src\Engine\Renderer\SkyboxPass.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\StbImpl.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\SwapChain.cpp" />
+    <ClCompile Include="..\src\Engine\Renderer\TerrainPass.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\TextureCook.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\TextureCookSelfTest.cpp" />
     <ClInclude Include="..\src\Engine\Core\Archetype.h" />
@@ -321,6 +322,7 @@
     <ClInclude Include="..\src\Engine\Renderer\Skeleton.h" />
     <ClInclude Include="..\src\Engine\Renderer\SkyboxPass.h" />
     <ClInclude Include="..\src\Engine\Renderer\SwapChain.h" />
+    <ClInclude Include="..\src\Engine\Renderer\TerrainPass.h" />
     <ClInclude Include="..\src\Engine\Renderer\TextureCook.h" />
     <ClInclude Include="..\src\Engine\Renderer\TextureCookSelfTest.h" />
     <ClInclude Include="..\src\Shared\EngineAPI.h" />

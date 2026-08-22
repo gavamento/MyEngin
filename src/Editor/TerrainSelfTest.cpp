@@ -20,6 +20,7 @@
 #include "Engine/Engine/TerrainSystem.h"
 #include "Engine/Renderer/FrustumCull.h"
 #include "Engine/Renderer/GpuResources.h"
+#include "Engine/Renderer/TerrainPass.h" // M58c: 描画順 (TerrainDrawOrderLess)
 
 namespace fs = std::filesystem;
 
@@ -377,6 +378,43 @@ bool RunTerrainSelfTest()
               "terrain: a missing asset fails once and is remembered (no per-frame retry)");
 
         fs::remove_all(root, ec);
+    }
+
+    // ---- (10) 描画順 (M58c): TerrainDrawOrderLess ----
+    // 描画パスそのものは GPU が要るのでここでは回せないが、**描画順だけは純関数**で、
+    // かつ決定論の規則 7 が直接掛かる場所なので単体で固定しておく
+    {
+        auto make = [](float viewZ, uint64_t mesh) {
+            TerrainRenderItem it;
+            it.viewZ = viewZ;
+            it.mesh = AssetID{ mesh };
+            return it;
+        };
+        // 近い順 (early-z が効く順)
+        check(TerrainDrawOrderLess(make(3.0f, 1), make(9.0f, 1)),
+              "terrain: draw order puts the nearer chunk first");
+        check(!TerrainDrawOrderLess(make(9.0f, 1), make(3.0f, 1)),
+              "terrain: draw order is antisymmetric in viewZ");
+        // 同じ viewZ は AssetID で割る (元の並びに依存させない)
+        check(TerrainDrawOrderLess(make(5.0f, 7), make(5.0f, 8))
+                  && !TerrainDrawOrderLess(make(5.0f, 8), make(5.0f, 7)),
+              "terrain: equal viewZ is broken by the mesh AssetID (deterministic key)");
+        check(!TerrainDrawOrderLess(make(5.0f, 7), make(5.0f, 7)),
+              "terrain: draw order is irreflexive (strict weak ordering)");
+        // ★入力の並び順に結果が依存しないこと。ここが崩れると「収集順が揺れた日に
+        //   描画順だけが変わる」= 再現しないピクセル差になる
+        std::vector<TerrainRenderItem> a = { make(5.0f, 8), make(1.0f, 3), make(5.0f, 2),
+                                             make(1.0f, 9) };
+        std::vector<TerrainRenderItem> b(a.rbegin(), a.rend());
+        std::sort(a.begin(), a.end(), TerrainDrawOrderLess);
+        std::sort(b.begin(), b.end(), TerrainDrawOrderLess);
+        bool same = a.size() == b.size();
+        for (size_t i = 0; same && i < a.size(); ++i) {
+            same = a[i].viewZ == b[i].viewZ && a[i].mesh == b[i].mesh;
+        }
+        check(same && a[0].mesh.value == 3 && a[1].mesh.value == 9 && a[2].mesh.value == 2
+                  && a[3].mesh.value == 8,
+              "terrain: sorting is independent of the input order");
     }
 
     MYE_LOG_INFO("==== Terrain self test: %s ====", failCount == 0 ? "PASS" : "FAIL");

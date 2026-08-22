@@ -90,6 +90,8 @@ void EditorApp::OnStart(EngineContext& ctx)
         scenePath_ = L"cache\\net_duel.scene.json"; // M52i (同上)
     } else if (renderShowcase) {
         scenePath_ = L"cache\\render_showcase.scene.json"; // M54a (同上)
+    } else if (terrainShowcase) {
+        scenePath_ = L"cache\\terrain_showcase.scene.json"; // M58c (同上)
     } else {
         scenePath_ = ctx.assetsRoot + L"\\scenes\\main.scene.json";
         ProjectManifest manifest; // ブートシーンはマニフェスト優先 (M26)
@@ -114,6 +116,7 @@ void EditorApp::OnStart(EngineContext& ctx)
     RegisterLocalPlayersContent(ctx); // M52g (mp_* 材質。同上の理由で常時)
     RegisterNetDuelContent(ctx);      // M52i (duel_* 材質。同上)
     RegisterRenderShowcaseContent(ctx); // M54a (rdemo_* 材質。同上)
+    RegisterTerrainShowcaseContent(ctx); // M58c (tdemo_* 材質。同上)
     if (flowShowcase) {
         // 両シーンファイルを確保してからタイトルを普通のロード経路で開く。
         // ここで組む = GameLogic.dll / C# コンパイル済み (EngineLoop が OnStart 前に実施)
@@ -135,6 +138,8 @@ void EditorApp::OnStart(EngineContext& ctx)
         BuildNetDuelScene(ctx); // M52i
     } else if (renderShowcase) {
         BuildRenderShowcaseScene(ctx); // M54a
+    } else if (terrainShowcase) {
+        BuildTerrainShowcaseScene(ctx); // M58c
     } else {
         BuildDemoScene(ctx, perfRate, perfMax);
     }

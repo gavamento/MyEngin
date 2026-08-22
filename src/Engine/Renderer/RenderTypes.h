@@ -161,6 +161,11 @@ struct RenderView {
     // ---- M46h: RT 反射 (末尾 append)。1 = ライトパスのスペキュラ環境項を
     //      roughness に応じてレイトレ反射で置換する (粗い面は IBL のまま) ----
     int32_t rtReflEnabled = 0;
+    // ---- M58c: 地形の可視チャンク (末尾 append)。RenderSystem が TerrainSystem の
+    //      収集結果を指す。実体は TerrainPass.h の TerrainDrawList (Renderer 層の純データ)。
+    //      **null / 空 = 地形なし = 従来と完全に同じ絵** — AssetPreviewCache の
+    //      RenderSystem はここを埋めないので、サムネイルは地形を一切描かない ----
+    const struct TerrainDrawList* terrain = nullptr;
 };
 
 // GPU へ渡すライト 1 個 (定数バッファ配列要素、16 バイト境界に揃えた 64 バイト)。

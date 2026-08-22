@@ -140,6 +140,18 @@ $constGroups = @(
             'src\Engine\Renderer\ShadowPass.h' = 'static\s+constexpr\s+int\s+kCascades\s*=\s*(\d+)'
             'assets\shaders\common.hlsli'      = 'float4x4\s+vps\[(\d+)\]'
         }
+    },
+    @{
+        # M58c: 地形の CB スロット。地形パスは b0 (ホストパスの PerFrame) をそのまま読み、
+        # 自分の値は b1-b3 を避けて b4 に置く (b1-b3 を張り替えると後段の透明描画が壊れる)。
+        # C++ 側の定数と HLSL の register(b4) が食い違うと **CB が丸ごと 0 のまま描かれる** —
+        # 地形が真っ黒になるだけでコンパイルも実行も通るので、機械照合が唯一の防波堤
+        label = 'kTerrainObjectCbSlot / register(b4)'
+        sites = @{
+            'src\Engine\Renderer\TerrainPass.h'    = 'constexpr\s+uint32_t\s+kTerrainObjectCbSlot\s*=\s*(\d+)'
+            'assets\shaders\deferred_terrain.hlsl' = 'cbuffer\s+TerrainObject\s*:\s*register\(b(\d+)\)'
+            'assets\shaders\forward_terrain.hlsl'  = 'cbuffer\s+TerrainObject\s*:\s*register\(b(\d+)\)'
+        }
     }
 )
 foreach ($g in $constGroups) {

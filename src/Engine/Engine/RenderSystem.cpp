@@ -390,6 +390,34 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
             XMStoreFloat4x4(&vp, v * XMLoadFloat4x4(&view.proj));
             frustum = BuildFrustum(vp);
         }
+
+        // ---- 地形 (M58c): メッシュとは別レーンで収集する ----
+        // TerrainComponent は kComponentNoHash = 描画専用。ここで作るのは
+        // 「可視チャンクの描画指示」だけで sim には 1 バイトも触れない。
+        // ★カメラが無いフレーム (cullEnabled==false) は収集しない — 視錐台がゼロ行列のままで
+        //   CullChunks に渡しても意味のある結果にならない (メッシュ側がカリングを
+        //   丸ごと飛ばしているのと同じ扱い)。
+        // ★assetsRoot が空 = AssetPreviewCache の専用 RenderSystem。サムネイルに地形を
+        //   混ぜないための元栓はここ 1 箇所 (「配線の 2 箇所目」で毎回漏れるところ)
+        terrainList_.items.clear();
+        if (cullEnabled && !assetsRoot.empty()) {
+            terrainSystem_.Collect(world, resources.meshes, assetsRoot, frustum, view.view,
+                                   terrainScratch_);
+            terrainList_.items.reserve(terrainScratch_.size());
+            for (const TerrainDrawItem& t : terrainScratch_) {
+                TerrainRenderItem it;
+                it.mesh = t.mesh;
+                it.world = t.world;
+                it.viewZ = t.viewZ;
+                terrainList_.items.push_back(it);
+            }
+            // 近い順 (early-z が効く順)。比較規則の正本は TerrainPass.h の
+            // TerrainDrawOrderLess (規則 7 のタイブレークつき。TerrainSelfTest が検査する)
+            std::sort(terrainList_.items.begin(), terrainList_.items.end(),
+                      TerrainDrawOrderLess);
+        }
+        view.terrain = &terrainList_;
+
         int culledCount = 0;
         // 不透明キャスターの world AABB を集約 → シャドウ範囲のフィットに使う (M17)
         XMFLOAT3 sceneMin = { FLT_MAX, FLT_MAX, FLT_MAX };
