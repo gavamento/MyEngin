@@ -567,11 +567,14 @@ a GPU-less runner an acceptable place to prove determinism. Golden screenshots, 
 *are* driver-dependent and are therefore always captured with `--warp`.
 
 **Screenshot regression (M52c).** Hashes prove that the *simulation* is reproducible; they say
-nothing about what is drawn. `tools\shot_verify.bat` captures six deterministic screenshots with
+nothing about what is drawn. `tools\shot_verify.bat` captures eight deterministic screenshots with
 `Runtime.exe` (no ImGui, so neither `imgui.ini` nor the cursor position can leak in) and compares
 them against `tests\golden\*.png` pixel by pixel, writing a difference heat map next to any shot
-that moved. `--update` re-records the golden set. Five of the six gate CI; the sixth exists only
-to cover FXAA and is skipped there (`MYE_SHOT_SKIP_FXAA`, see below).
+that moved. `--update` re-records the golden set. Seven of the eight gate CI; the eighth exists
+only to cover FXAA and is skipped there (`MYE_SHOT_SKIP_FXAA`, see below). Two of the seven
+(`demo_render_forward` / `demo_render_deferred`, M54a) shoot the `--render-demo` showcase, which
+is the only golden scene carrying spot and point lights -- without it every feature added by the
+M54-M58 rendering roadmap would be pixel-invariant by default and land with zero coverage.
 
 Determinism of a *frame* needs two guarantees that determinism of a *tick* does not:
 
