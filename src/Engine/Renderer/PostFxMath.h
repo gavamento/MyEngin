@@ -1,6 +1,7 @@
 #pragma once
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 
 #include <DirectXMath.h>
 
@@ -115,7 +116,7 @@ inline float ComputeSunScreenPos(const DirectX::XMFLOAT4X4& view,
 }
 
 // M44d: 深度再投影 — 現フレームの UV+深度 → ワールド → 前フレームの viewProj で UV へ。
-// postfx_motionblur.hlsl とコメント同期 — 変更時は両方更新。
+// postfx_motionblur.hlsl の**背景フォールバック側**とコメント同期 — 変更時は両方更新。
 // 行列は未転置 (row ベクトル規約)。false = 復元不能または前フレームで背面 (ブラー 0)
 inline bool ReprojectUv(const DirectX::XMFLOAT4X4& invViewProj,
                         const DirectX::XMFLOAT4X4& prevViewProj, float u, float v, float depth,
@@ -140,5 +141,222 @@ inline bool ReprojectUv(const DirectX::XMFLOAT4X4& invViewProj,
     prevV = 0.5f - XMVectorGetY(clip) / cw * 0.5f;
     return true;
 }
+
+// M55e: モーションブラーの速度ベクトル (UV)。**postfx_motionblur.hlsl の PSMain と同手順** —
+// 片方だけ直すと「ブラーの向きだけ静かに違う」形で壊れるので変更時は両方更新
+// (RenderSelfTest の TestMotionBlurVelocity が CPU 側を固定する)。
+//
+// ★速度源は画素ごとに選ぶ。ここが v1 (M44d、カメラのみ) から変わった唯一の点:
+//   ① hasVelocity かつ **その画素にジオメトリがある** (depth < 1) → GBuffer RT4 の
+//      画面速度をそのまま使う。カメラ + オブジェクトが合成済みなので、静止カメラでも
+//      回る物体がブレる。
+//   ② それ以外 → 深度再投影 (v1 と完全に同じ式)。Forward パスには velocity が無く、
+//      背景 / スカイは GBuffer を書かないので RT4 が 0 のまま残る。ここを分けないと
+//      「カメラを振っても空だけ止まって見える」= v1 より悪い絵になる。
+// 戻り値 false = 速度 0 (ブラーしない)
+namespace motionblur {
+
+inline bool BlurVector(bool hasVelocity, float velU, float velV,
+                       const DirectX::XMFLOAT4X4& invViewProj,
+                       const DirectX::XMFLOAT4X4& prevViewProj, float u, float v, float depth,
+                       float intensity, float maxPixels, float screenW, float screenH,
+                       float& outU, float& outV)
+{
+    outU = 0.0f;
+    outV = 0.0f;
+    float du = 0.0f;
+    float dv = 0.0f;
+    if (hasVelocity && depth < 1.0f) {
+        du = velU;
+        dv = velV;
+    } else {
+        float prevU = 0.0f;
+        float prevV = 0.0f;
+        if (!ReprojectUv(invViewProj, prevViewProj, u, v, depth, prevU, prevV)) {
+            return false;
+        }
+        du = u - prevU;
+        dv = v - prevV;
+    }
+    du *= intensity;
+    dv *= intensity;
+    // クランプは **px 長** で行う (UV 長だと縦横比で暴走量が変わる)。HLSL 側の
+    // length(vel * gScreenSize) と同じ
+    const float px = du * screenW;
+    const float py = dv * screenH;
+    const float lenPx = std::sqrt(px * px + py * py);
+    if (lenPx > maxPixels) {
+        const float k = maxPixels / lenPx;
+        du *= k;
+        dv *= k;
+    }
+    outU = du;
+    outV = dv;
+    return true;
+}
+
+} // namespace motionblur
+
+// M55b: TAA 用カメラジッタ。HLSL ミラーは無い (CPU で射影行列に畳んでしまうので
+// シェーダ側は自分がジッタされていることを知らない) が、複数パスが共有する描画数式
+// なのでこのヘッダの方針に従ってここへ置く。
+//
+// **設計の要**: 揺らした射影を受け取るのはラスタライズ経路だけ (Deferred GBuffer /
+// Forward / スカイ / パーティクル / デバッグ線)。再投影 (prevViewProj・モーションブラー・
+// RT テンポラル)、シャドウのカスケードフィット、視錐台カリング、太陽の画面位置、
+// エディタのギズモ/ピッキングは **ジッタ前**の射影 (RenderView::projNoJitter) を読む。
+// ジッタ付きを履歴側へ混ぜると「カメラが毎フレーム半ピクセル動いた」ことになり、
+// RT テンポラルとモーションブラーが同時に壊れる。
+//
+// 列は frame index 由来の Halton なので実時間も rand() も混ざらない。決定的撮影モード
+// (frame 番号 == tick 番号) ではジッタ列そのものが自動的に決定論になる。
+namespace camerajitter {
+
+// ジッタ列の周期。TAA の履歴が 1 巡する長さと揃えてある
+constexpr uint32_t kSequenceLength = 8;
+
+// 基数 base の radical inverse (van der Corput)。Halton 列の 1 次元分
+inline float RadicalInverse(uint32_t index, uint32_t base)
+{
+    const float invBase = 1.0f / static_cast<float>(base);
+    float result = 0.0f;
+    float f = invBase;
+    while (index > 0) {
+        result += static_cast<float>(index % base) * f;
+        index /= base;
+        f *= invBase;
+    }
+    return result;
+}
+
+// frameIndex → サブピクセルオフセット [-0.5, 0.5] (ピクセル単位、Halton(2,3))。
+// index に +1 しているのは Halton(0) が (0,0) = 「1 巡に 1 回だけ揺れないフレーム」に
+// なるのを避けるため (そのフレームだけ実効サンプル位置が重複し、周期的なちらつきになる)
+inline void Sample(uint32_t frameIndex, float& outX, float& outY)
+{
+    const uint32_t i = (frameIndex % kSequenceLength) + 1u;
+    outX = RadicalInverse(i, 2) - 0.5f;
+    outY = RadicalInverse(i, 3) - 0.5f;
+}
+
+// ピクセル単位のオフセット → NDC オフセット。
+// y を反転するのは NDC が上向き・ピクセル座標が下向きだから
+inline void PixelsToNdc(float px, float py, int width, int height, float& outX, float& outY)
+{
+    outX = (width > 0) ? (px * 2.0f / static_cast<float>(width)) : 0.0f;
+    outY = (height > 0) ? (-py * 2.0f / static_cast<float>(height)) : 0.0f;
+}
+
+// 射影行列に NDC オフセットを載せる (行ベクトル規約)。
+// 透視 (_34 == 1、w = viewZ) は _31/_32 への加算がそのまま NDC の平行移動になる。
+// 正射影 (_34 == 0、w = 1) は _41/_42 側 — エディタの Ortho ビューが実際にここへ来る
+// (ComputeCascadeVPs も同じ _34 判定で経路を分けている)。
+// オフセットが 0 なら 1 ビットも変わらない = 振幅 0 の既定で従来と完全一致。
+inline DirectX::XMFLOAT4X4 ApplyToProj(const DirectX::XMFLOAT4X4& proj, float ndcX, float ndcY)
+{
+    DirectX::XMFLOAT4X4 m = proj;
+    if (std::fabs(proj._34) > 1e-6f) {
+        m._31 += ndcX;
+        m._32 += ndcY;
+    } else {
+        m._41 += ndcX;
+        m._42 += ndcY;
+    }
+    return m;
+}
+
+} // namespace camerajitter
+
+// M55c: GBuffer RT4 (R16G16_FLOAT) へ書く画面速度。
+// **deferred_gbuffer{,_instanced,_skinned}.hlsl の ComputeVelocity と同じ式** —
+// 片方だけ直すと「velocity が静かに間違っている」形で壊れる (誰も読んでいない間は
+// 絵にも出ない) ので、変更時は 4 箇所すべてを更新すること。
+//
+// 規約: **velocity = 今フレームの UV − 前フレームの UV**。読む側は prevUv = uv - velocity。
+//   ・今フレームのクリップ座標は**ジッタ込み**の proj で作られている (ラスタライズと
+//     同じ行列で無いとピクセル中心とずれる) ので、NDC にしてからジッタを引き戻す。
+//   ・前フレーム側は RenderView::prevViewProj = **非ジッタ**なので何も引かない。
+//     ここを揃えないと「静止物が毎フレーム半ピクセル動く」velocity になる。
+namespace velocity {
+
+// clip 空間の 2 点 (今 / 前) → UV 速度。false = どちらかがカメラ背面 (速度 0 とみなす)
+inline bool FromClip(const DirectX::XMFLOAT4& curClip, const DirectX::XMFLOAT4& prevClip,
+                     float jitterNdcX, float jitterNdcY, float& outU, float& outV)
+{
+    outU = 0.0f;
+    outV = 0.0f;
+    if (curClip.w <= 1e-6f || prevClip.w <= 1e-6f) {
+        return false;
+    }
+    const float curX = curClip.x / curClip.w - jitterNdcX;
+    const float curY = curClip.y / curClip.w - jitterNdcY;
+    const float prevX = prevClip.x / prevClip.w;
+    const float prevY = prevClip.y / prevClip.w;
+    outU = (curX - prevX) * 0.5f;
+    outV = (curY - prevY) * -0.5f; // NDC は上向き / UV は下向き
+    return true;
+}
+
+// ワールド座標 2 点 (今フレームの位置 / 前フレームに実際に描かれた位置) からの一括計算。
+// curViewProj はジッタ込み・prevViewProj は非ジッタ (どちらも未転置 = 行ベクトル規約)
+inline bool FromWorld(const DirectX::XMFLOAT4X4& curViewProjJittered,
+                      const DirectX::XMFLOAT4X4& prevViewProj,
+                      const DirectX::XMFLOAT3& curWorldPos,
+                      const DirectX::XMFLOAT3& prevWorldPos, float jitterNdcX, float jitterNdcY,
+                      float& outU, float& outV)
+{
+    using namespace DirectX;
+    DirectX::XMFLOAT4 cur;
+    DirectX::XMFLOAT4 prev;
+    XMStoreFloat4(&cur,
+                  XMVector4Transform(XMVectorSet(curWorldPos.x, curWorldPos.y, curWorldPos.z, 1.0f),
+                                     XMLoadFloat4x4(&curViewProjJittered)));
+    XMStoreFloat4(&prev, XMVector4Transform(XMVectorSet(prevWorldPos.x, prevWorldPos.y,
+                                                        prevWorldPos.z, 1.0f),
+                                            XMLoadFloat4x4(&prevViewProj)));
+    return FromClip(cur, prev, jitterNdcX, jitterNdcY, outU, outV);
+}
+
+} // namespace velocity
+
+// M55d: TAA の解決式。**postfx_taa.hlsl の PSMain と同じ手順** — 片方だけ直すと
+// 「ゴーストが取れない / 静止画が動く」形で静かに壊れる (RenderSelfTest の
+// TestTaaResolve が CPU 側を検証し、HLSL との一致はコメント同期で担保する)。
+//
+// 規約: 再投影は **prevUv = uv - velocity** (M55c と同じ)。velocity 側でジッタは
+// 既に引き戻されているので、ここでは何も足し引きしない。
+namespace taa {
+
+// 履歴 UV が画面内か。外れていたら前フレームにその画素は無い = 履歴を捨てる
+inline bool HistoryUvValid(float u, float v)
+{
+    return u >= 0.0f && v >= 0.0f && u < 1.0f && v < 1.0f;
+}
+
+// 今フレームの近傍が作る色の箱へ履歴を押し込む (ゴースト抑制)。
+// 遮蔽が解けた画素では履歴が近傍のどれとも似ていないので、この 1 行で自動的に捨てられる
+inline DirectX::XMFLOAT3 ClampToNeighborhood(const DirectX::XMFLOAT3& hist,
+                                             const DirectX::XMFLOAT3& nmin,
+                                             const DirectX::XMFLOAT3& nmax)
+{
+    return { std::clamp(hist.x, nmin.x, nmax.x), std::clamp(hist.y, nmin.y, nmax.y),
+             std::clamp(hist.z, nmin.z, nmax.z) };
+}
+
+// 最終色。histValid=false / 履歴 UV が画面外 / feedback=0 のいずれでも
+// **cur をビット単位でそのまま返す** — これが「TAA off で絵が 1 ビットも変わらない」の根拠
+inline DirectX::XMFLOAT3 Resolve(const DirectX::XMFLOAT3& cur, const DirectX::XMFLOAT3& hist,
+                                 const DirectX::XMFLOAT3& nmin, const DirectX::XMFLOAT3& nmax,
+                                 float prevU, float prevV, bool histValid, float feedback)
+{
+    if (!histValid || !HistoryUvValid(prevU, prevV)) {
+        return cur;
+    }
+    const DirectX::XMFLOAT3 c = ClampToNeighborhood(hist, nmin, nmax);
+    return { cur.x + (c.x - cur.x) * feedback, cur.y + (c.y - cur.y) * feedback,
+             cur.z + (c.z - cur.z) * feedback };
+}
+
+} // namespace taa
 
 } // namespace mye

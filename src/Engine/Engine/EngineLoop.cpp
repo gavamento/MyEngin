@@ -219,6 +219,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // ポストプロセス設定を config から反映 (M16)。全ビューポート共通の renderSystem に載る
     renderSystem.enablePostFx = config.postFx;
     renderSystem.rtDebugMode = config.rtDebugMode; // M46b (--rt-debug N、Deferred のみ)
+    renderSystem.velocityDebugMode = config.velocityDebug; // M55c (--velocity-debug)
     renderSystem.rtTemporal = config.rtTemporal;   // M46d (--rt-no-temporal / --rt-freeze-seed)
     renderSystem.rtFreezeSeed = config.rtFreezeSeed;
     renderSystem.rtSvgf = config.rtSvgf;   // M46e (--rt-no-svgf)
@@ -231,6 +232,8 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     renderSystem.postFxSettings.bloomThreshold = config.postFxBloomThreshold;
     renderSystem.postFxSettings.bloomIntensity = config.postFxBloomIntensity;
     renderSystem.postFxSettings.fxaa = config.postFxFxaa;
+    renderSystem.postFxSettings.taaOn = config.postFxTaa ? 1 : 0; // M55d (--taa、Deferred のみ)
+    renderSystem.postFxSettings.motionBlurIntensity = config.postFxMotionBlur; // M55e
     // M44b: リプレイ記録/検証・スクショの実行では露出適応を 1 フレーム収束にして
     // 決定的スクショを成立させる (aeInstant は Merge が base 維持する Settings 専用フィールド)
     renderSystem.postFxSettings.aeInstant = !config.replayVerifyPath.empty()

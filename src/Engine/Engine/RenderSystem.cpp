@@ -15,6 +15,7 @@
 #include "Engine/Renderer/FrustumCull.h"
 #include "Engine/Renderer/GpuResources.h"
 #include "Engine/Renderer/GraphicsDevice.h"
+#include "Engine/Renderer/PostFxMath.h" // M55b: camerajitter
 #include "Engine/Renderer/RenderPath.h"
 
 using namespace DirectX;
@@ -172,7 +173,9 @@ void ComputeCascadeVPs(const XMFLOAT3& lightDir, const XMFLOAT3& sceneMin,
                        XMFLOAT4X4* outVPs, float* outSplits, int count)
 {
     const XMMATRIX camView = XMLoadFloat4x4(&view.view);
-    const XMMATRIX camProj = XMLoadFloat4x4(&view.proj);
+    // M55b: カスケードのフィットは非ジッタ側で行う。ジッタ付きだとカメラフラスタムの
+    // 8 隅がサブピクセル分毎フレーム動き、テクセルスナップで殺したはずの影の揺れが戻る
+    const XMMATRIX camProj = XMLoadFloat4x4(&view.projNoJitter);
     XMFLOAT4X4 pj;
     XMStoreFloat4x4(&pj, camProj);
     const bool perspective = std::fabs(pj._34 - 1.0f) < 1e-3f; // LH perspective は _34 == 1
@@ -347,10 +350,17 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
     EntityID camEntity = kNullEntity; // シーンカメラの実体 (CameraPostFx 参照用、M29e)
     if (cameraOverride) {
         view.view = cameraOverride->view;
-        const XMMATRIX p = XMMatrixPerspectiveFovLH(
-            XMConvertToRadians(cameraOverride->fovYDeg), aspectRatio,
-            cameraOverride->nearZ, cameraOverride->farZ);
-        XMStoreFloat4x4(&view.proj, p);
+        if (cameraOverride->hasProj) {
+            // M55b: 呼び出し側 (SceneView) が既に組んである行列をそのまま使う。
+            // ここで組み直すと Ortho トグルが描画へ届かず、ギズモ/ピッキングの行列
+            // (SceneViewWindow::lastProj_) と食い違ったままになる
+            view.proj = cameraOverride->proj;
+        } else {
+            const XMMATRIX p = XMMatrixPerspectiveFovLH(
+                XMConvertToRadians(cameraOverride->fovYDeg), aspectRatio,
+                cameraOverride->nearZ, cameraOverride->farZ);
+            XMStoreFloat4x4(&view.proj, p);
+        }
         view.cameraPos = cameraOverride->position;
         view.debugViewMode = cameraOverride->debugViewMode; // M40b (SceneView のみ非 0)
         view.nearZ = cameraOverride->nearZ; // M42a: 深度線形化用
@@ -400,13 +410,58 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
         }
     }
 
+    // ---- M55b: カメラジッタの一元化 ----
+    // 射影の組み立ては上の 2 経路 (CameraOverride / シーンカメラ) に分かれているが、
+    // ジッタを載せるのは **ここ 1 箇所だけ**。projNoJitter が「ジッタ前」の正本で、
+    // 再投影 (prevVP_ の保存 / モーションブラー / RT テンポラル)、シャドウのカスケード
+    // フィット、視錐台カリング、太陽の画面位置はすべてそちらを読む
+    // (混ぜると「カメラが毎フレーム半ピクセル動いた」ことになり履歴が毎回外れる)。
+    // viewKey==0 (AssetPreview) は履歴も TAA も持たないので常に非ジッタ。
+    view.projNoJitter = view.proj;
+    view.viewKey = target.viewKey; // M55d: TAA の履歴スロット
+    view.viewFrameIndex = (target.viewKey < 4) ? viewSerial_[target.viewKey] : 0u;
+    // ---- M55d: TAA の有効判定 ----
+    // ★ジッタと TAA は**必ず同じ条件**で on/off する。TAA 抜きでジッタだけ載せると
+    //   画面が毎フレーム半ピクセル揺れるだけになるので、「velocity を書かないパス
+    //   (Forward)」「HDR 配管なし」「AssetPreview」はジッタごと落とす。
+    // 設定の出所はポスプロと同じ規則 (グローバル設定 → シーンカメラの CameraPostFx で上書き)
+    // だが、判定はマージ (Resolve 直前) より前に要るのでここで先に引く
+    {
+        bool taaOn = postFxSettings.taaOn != 0;
+        if (!cameraOverride && !camEntity.IsNull()) {
+            if (const auto* pfx = world.GetComponent<CameraPostFxComponent>(camEntity)) {
+                taaOn = pfx->taaOn != 0;
+            }
+        }
+        view.taaEnabled = (taaOn && cameraFound && hdr != nullptr && path.WritesVelocity()
+                           && target.viewKey > 0 && target.viewKey < 4)
+            ? 1 : 0;
+    }
+    if (view.taaEnabled != 0 && jitterAmplitude > 0.0f) {
+        float px = 0.0f;
+        float py = 0.0f;
+        camerajitter::Sample(view.viewFrameIndex, px, py);
+        px *= jitterAmplitude;
+        py *= jitterAmplitude;
+        float ndcX = 0.0f;
+        float ndcY = 0.0f;
+        camerajitter::PixelsToNdc(px, py, view.width, view.height, ndcX, ndcY);
+        view.jitterPixels[0] = px;
+        view.jitterPixels[1] = py;
+        view.jitterNdc[0] = ndcX;
+        view.jitterNdc[1] = ndcY;
+        view.proj = camerajitter::ApplyToProj(view.proj, ndcX, ndcY);
+    }
+
     // ---- 視錐台 (M16: メッシュのカリング用。カメラがある時のみ。描画専用でハッシュ非対象) ----
     // M54b からライト選別も同じ視錐台を使うので、収集ブロックの中からここへ引き上げた
     Frustum frustum = {};
     const bool cullEnabled = cameraFound;
     if (cullEnabled) {
         XMFLOAT4X4 vp;
-        XMStoreFloat4x4(&vp, XMLoadFloat4x4(&view.view) * XMLoadFloat4x4(&view.proj));
+        // M55b: カリングは非ジッタ側。サブピクセルで可視判定が反転すると
+        // 境界の物体がフレーム毎に出入りして TAA の履歴に穴が空く
+        XMStoreFloat4x4(&vp, XMLoadFloat4x4(&view.view) * XMLoadFloat4x4(&view.projNoJitter));
         frustum = BuildFrustum(vp);
     }
 
@@ -476,6 +531,15 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
                              lightSelection.shadowCount);
             }
         }
+    }
+
+    // ---- M55c: 「前フレームに実際に描いた world 行列」のストアを今フレームへ進める ----
+    // viewKey==0 (AssetPreview) は履歴を持たない = velocity は常に 0 に落ちる。
+    // viewSerial_ はこの Render の末尾で +1 されるので、ここでの値が「今フレームの通番」
+    const uint32_t prevRenderKey = (target.viewKey > 0 && target.viewKey < 4) ? target.viewKey : 0u;
+    PrevRenderWorldStore* prevRender = (prevRenderKey != 0) ? &prevRender_[prevRenderKey] : nullptr;
+    if (prevRender != nullptr) {
+        prevRender->Begin(viewSerial_[prevRenderKey], target.width, target.height);
     }
 
     // ---- 収集 ----
@@ -555,6 +619,17 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
             item.material = c.material;
             item.world = c.world;
             item.viewZ = c.viewZ;
+            // M55c: velocity 用に「前フレームに実際に描いた行列」を載せる。履歴が無い
+            // (初回 / リサイズ / 前フレームは視錐台の外だった / 生成直後) ときは現在値と
+            // 同値を入れる = 画面速度が厳密に 0 = カメラ再投影のみへ縮退する。
+            // Lookup は Record より先 (同じスロットを読んでから上書きする)
+            item.prevWorld = c.world;
+            if (prevRender != nullptr) {
+                if (const XMFLOAT4X4* pr = prevRender->Lookup(c.e)) {
+                    item.prevWorld = *pr;
+                }
+                prevRender->Record(c.e, c.world);
+            }
 
             // スキンメッシュ (M18): ポーズを評価してボーンパレットを構築し item に載せる。
             // ポーズは描画専用 (SkinnedMeshComponent は kComponentNoHash)
@@ -722,6 +797,7 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
 
     view.ssaoEnabled = enableSsao ? 1 : 0; // M38e (Deferred のみ消費)
     view.instancingEnabled = enableInstancing ? 1 : 0; // M38f
+    view.velocityDebug = velocityDebugMode;            // M55c (Deferred のみ消費)
     // M40d: シーンカメラの CameraPostFx から SSAO パラメータ (override = エディタ視界は既定)
     if (!cameraOverride && !camEntity.IsNull()) {
         if (const auto* pfx = world.GetComponent<CameraPostFxComponent>(camEntity)) {
@@ -838,6 +914,9 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
 
     queue_.Sort();
     path.Render(device, view, queue_, lights, resources, shaders);
+    // M55d: 画面速度 (GBuffer RT4) はパスが所有する — 描いた後でないと SRV が無い。
+    // TAA (ポスプロ) がこの後で読む。Forward は null = TAA は自然に不成立になる
+    view.velocitySRV = path.VelocitySRV();
 
     // VFX (M29c): Sprite/Trail/TextMesh をメッシュ (不透明+透明) の後・パーティクルの前に
     // 重ねる。HDR 中間へ描かれ postfx を通る。RT はパスがバインドしたまま
@@ -939,10 +1018,13 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
                         effective, view, distortionActive); // M43b: view = 深度/太陽の供給口
     }
     // M44d: 次フレームのモーションブラー用に viewProj を保存 (viewKey=0 = AssetPreview は対象外)。
-    // M46d: カメラ位置と描画通番も同じ場所で更新する (再投影とテンポラル履歴の連続性判定)
+    // M46d: カメラ位置と描画通番も同じ場所で更新する (再投影とテンポラル履歴の連続性判定)。
+    // ★M55b: ここに保存するのは **非ジッタ側** (projNoJitter)。この 1 箇所を
+    // RtPasses (M46d) と PostProcess::RunMotionBlur (M44d) の **両方** が読むので、
+    // ジッタ付きを入れると RT テンポラルとモーションブラーが同時に壊れる
     if (target.viewKey > 0 && target.viewKey < 4) {
         PrevViewProj& p = prevVP_[target.viewKey];
-        XMStoreFloat4x4(&p.m, XMLoadFloat4x4(&view.view) * XMLoadFloat4x4(&view.proj));
+        XMStoreFloat4x4(&p.m, XMLoadFloat4x4(&view.view) * XMLoadFloat4x4(&view.projNoJitter));
         p.pos = view.cameraPos;
         p.w = target.width;
         p.h = target.height;

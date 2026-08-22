@@ -7,10 +7,19 @@
 //               viewKey 別に ping-pong する。深度は view 行列を要らなくするため
 //               「カメラ距離」で持つ (カメラの向きが変わっても意味が変わらない)。
 //
-// 再投影: 現フレームの可視点 P を前フレームの viewProj で射影して履歴 UV を得る。
-//         得られた画素の記録法線/距離が現在の面と食い違えば (disocclusion) 履歴を捨てる。
+// 再投影 (M55f で 2 経路になった):
+//   ① 画面速度あり (gTempUseVelocity != 0) → prevUv = uv - velocity。GBuffer RT4 は
+//      カメラと物体の運動を合成済みなので、**動く物体でも同じ材質点の履歴**に当たる。
+//   ② それ以外 (履歴なしフレーム / velocity 未バインド) → M46d のまま、現フレームの
+//      可視点 P を前フレームの viewProj で射影する (カメラ運動のみ)。
+// どちらの経路でも、得られた画素の記録法線/距離が現在の面と食い違えば履歴を捨てる。
+// ★①でも深度判定は「**現**フレームの P を前カメラから測った距離」と比べている
+//   (画面速度は 2D なので前フレームのカメラ距離を復元できない)。物体が 1 フレームで
+//   カメラ距離を kRtTemporalDepthThreshold 以上動かすと履歴を捨てる = 尾を引く代わりに
+//   ノイズへ落ちる。安全側なので v1 はこれで許容する。
 // v1 制限: 履歴のタップは最近傍 1 点 (バイリニアの部分棄却はしない)。
-//          物体自身の運動ベクトルを持たないので、動く物体は履歴が残る (ゴースト)。
+//          スキンメッシュは前フレームのボーンパレットが無いので velocity が
+//          カメラ + 物体トランスフォームぶんしか出ない (M55c から続く制限)。
 
 // C++ の kRtTemporalMaxHistory と一致検査される (tools/check_rules.ps1 規則 9)
 #define MYE_RT_TEMPORAL_MAX_HISTORY 32
@@ -29,7 +38,10 @@ cbuffer RtTemporalCB : register(b2)
     // 反射はより短い値 (鏡面はカメラ運動で反射像が大きく動くので長く積むとラグになる)。
     // 下の #define はハードキャップとして残す (C++ 定数との一致を規則 9 が検査する)
     float gTempMaxHistory;
-    float2 gTempPad;
+    // M55f: 1 = 履歴 UV を GBuffer RT4 (画面速度) から作る。0 = 前フレーム VP へ射影 (M46d)。
+    // RtPasses が「velocity SRV が張れている かつ 履歴が有効」のときだけ 1 にする
+    int gTempUseVelocity;
+    float gTempPad;
 };
 
 Texture2D gTempCur : register(t0);       // このフレームの 1spp GI (内部解像度)
@@ -39,6 +51,9 @@ Texture2D gTempGbNormal : register(t3);  // GBuffer 法線 (*0.5+0.5、フル解
 Texture2D gTempGbPosition : register(t4); // GBuffer ワールド座標 (フル解像度)
 Texture2D gTempGbMark : register(t5);    // GBuffer アルベド (a = ジオメトリ有りマーク)
 Texture2D gTempHistMoments : register(t6); // 前フレームの輝度モーメント (x = μ, y = μ²)
+// M55f: GBuffer RT4 = 画面速度 (今 UV − 前 UV、フル解像度)。gTempUseVelocity==0 のときは
+// null が張られる (Load は 0 を返すが、そもそも読まない)
+Texture2D<float2> gTempGbVelocity : register(t7);
 
 RWTexture2D<float4> gTempOutColor : register(u0);
 RWTexture2D<float4> gTempOutGeom : register(u1);
@@ -58,6 +73,17 @@ bool RtClipToPrevUv(float4 clip, out float2 outUv)
         ok = all(outUv >= 0.0f) && all(outUv < 1.0f);
     }
     return ok;
+}
+
+// M55f: 履歴 UV をどちらの経路で作るか。useVelocity != 0 なら画面速度、0 なら前フレーム VP。
+// 画面外の棄却は 2 経路で同じ規約 (RtClipToPrevUv と揃えて [0,1) 判定)
+bool RtHistoryUv(int useVelocity, float2 uv, float2 velocity, float4 prevClip, out float2 outUv)
+{
+    if (useVelocity != 0) {
+        outUv = uv - velocity;
+        return all(outUv >= 0.0f) && all(outUv < 1.0f);
+    }
+    return RtClipToPrevUv(prevClip, outUv);
 }
 
 // 再投影先の履歴が現在の面と同じものか (深度 = カメラ距離の相対差 + 法線 cos)
@@ -121,7 +147,10 @@ void CSMain(uint3 tid : SV_DispatchThreadID)
     const float expectedDepth = length(P - gTempPrevCameraPos);
     if (gTempHistValid != 0) {
         float2 prevUv;
-        if (RtClipToPrevUv(mul(float4(P, 1.0f), gTempPrevViewProj), prevUv)) {
+        // velocity は GBuffer と同解像度なので、P/N と同じ gp で引く
+        const float2 vel = gTempGbVelocity.Load(gp);
+        if (RtHistoryUv(gTempUseVelocity, uv, vel, mul(float4(P, 1.0f), gTempPrevViewProj),
+                        prevUv)) {
             const int3 hp = int3(int2(prevUv * gTempOutSize), 0);
             const float4 geom = gTempHistGeom.Load(hp);
             if (RtReprojectValid(expectedDepth, geom.w, N, geom.xyz, gTempDepthThreshold,

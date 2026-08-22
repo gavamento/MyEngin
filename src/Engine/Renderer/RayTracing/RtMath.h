@@ -265,6 +265,21 @@ inline bool RtClipToPrevUv(const DirectX::XMFLOAT4& clip, DirectX::XMFLOAT2& out
     return outUv.x >= 0.0f && outUv.x < 1.0f && outUv.y >= 0.0f && outUv.y < 1.0f;
 }
 
+// M55f: 履歴 UV をどちらの経路で作るか。
+//   useVelocity = true  → prevUv = uv - velocity (GBuffer RT4。カメラ + 物体の運動が入っている)
+//   useVelocity = false → prevClip (= 現在の可視点を前フレーム VP で射影) へ縮退 (M46d のまま)
+// 画面外の棄却は 2 経路で同じ規約。HLSL の RtHistoryUv と同一式
+inline bool RtHistoryUv(bool useVelocity, const DirectX::XMFLOAT2& uv,
+                        const DirectX::XMFLOAT2& velocity, const DirectX::XMFLOAT4& prevClip,
+                        DirectX::XMFLOAT2& outUv)
+{
+    if (useVelocity) {
+        outUv = { uv.x - velocity.x, uv.y - velocity.y };
+        return outUv.x >= 0.0f && outUv.x < 1.0f && outUv.y >= 0.0f && outUv.y < 1.0f;
+    }
+    return RtClipToPrevUv(prevClip, outUv);
+}
+
 // 再投影先の履歴が現在の面と同じものか。
 // expectedDepth = 現在の可視点を前フレームのカメラから測った距離、
 // storedDepth   = 履歴バッファがそのピクセルに記録している距離 (0 以下 = 未記録)。

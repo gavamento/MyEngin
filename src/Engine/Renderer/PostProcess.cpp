@@ -42,6 +42,8 @@ PostProcess::Settings MergeCameraPostFx(const PostProcess::Settings& base,
     s.dofMaxRadius = comp.dofMaxRadius;
     s.motionBlurIntensity = comp.motionBlurIntensity; // M44d
     s.mbMaxPixels = comp.mbMaxPixels;
+    s.taaOn = comp.taaOn; // M55d
+    s.taaFeedback = comp.taaFeedback;
     return s;
 }
 namespace {
@@ -127,13 +129,17 @@ struct DofCB {
     float pad;
 };
 
-// postfx_motionblur.hlsl の MotionBlurCB (144 バイト)
+// postfx_motionblur.hlsl の MotionBlurCB (160 バイト)。
+// M55e: useVelocity を末尾 append。CreateConstant は size を丸めないので 16 バイト
+// 倍数になるよう pad を明示する (144 + 4 のままだと CreateBuffer が落ちる)
 struct MotionBlurCB {
     DirectX::XMFLOAT4X4 invViewProj;  // transpose(inverse(view*proj))
     DirectX::XMFLOAT4X4 prevViewProj; // transpose(前フレームの view*proj)
     float intensity;
     float maxPixels;
     float screenW, screenH;
+    int32_t useVelocity; // M55e: 1 = GBuffer RT4 (画面速度) を速度源に使う
+    float pad[3];
 };
 
 // M46a: 構造化バッファ / 定数バッファ / CB 更新は GpuBufferUtil.h へ集約 (定義は同一)
@@ -171,6 +177,8 @@ bool PostProcess::Init(GraphicsDevice& device, ShaderManager& shaders)
         return false;
     }
     resolveTimer_.Init(device); // M44d: 失敗しても致命ではない (計測 0 のまま)
+    // M55d: TAA。失敗しても致命ではない (Run が nullptr を返し従来チェーンのまま動く)
+    taa_.Init(device, shaders);
 
     D3D11_SAMPLER_DESC sd = {};
     sd.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
@@ -259,7 +267,8 @@ PostProcess::Target* PostProcess::Acquire(GraphicsDevice& device, int width, int
 // 円盤ギャザー (dofA → dofB) → 合成 (scene+dofB+depth → sceneB フル解像度)。
 // 実行後は bloom/トーンマップが sceneB を読む (ボケた高輝度が自然にブルームする順序)
 bool PostProcess::RunDof(GraphicsDevice& device, ShaderManager& shaders, Target& t,
-                         const Settings& s, const RenderView& view)
+                         const Settings& s, const RenderView& view,
+                         ID3D11ShaderResourceView* sceneSRV)
 {
     if (s.dofMaxRadius <= 0.0f || view.depthSRV == nullptr) {
         return false;
@@ -308,7 +317,7 @@ bool PostProcess::RunDof(GraphicsDevice& device, ShaderManager& shaders, Target&
         dc->RSSetViewports(1, &vp);
         ID3D11RenderTargetView* rtv = t.dofA.RTV();
         dc->OMSetRenderTargets(1, &rtv, nullptr);
-        ID3D11ShaderResourceView* srvs[2] = { t.scene.SRV(), view.depthSRV };
+        ID3D11ShaderResourceView* srvs[2] = { sceneSRV, view.depthSRV }; // M55d: TAA 後なら履歴面
         dc->PSSetShaderResources(0, 2, srvs);
         dc->VSSetShader(pre->vs.Get(), nullptr, 0);
         dc->PSSetShader(pre->ps.Get(), nullptr, 0);
@@ -339,7 +348,7 @@ bool PostProcess::RunDof(GraphicsDevice& device, ShaderManager& shaders, Target&
         dc->RSSetViewports(1, &vp);
         ID3D11RenderTargetView* rtv = t.sceneB.RTV();
         dc->OMSetRenderTargets(1, &rtv, nullptr);
-        ID3D11ShaderResourceView* srvs[3] = { t.scene.SRV(), t.dofB.SRV(), view.depthSRV };
+        ID3D11ShaderResourceView* srvs[3] = { sceneSRV, t.dofB.SRV(), view.depthSRV };
         dc->PSSetShaderResources(0, 3, srvs);
         dc->VSSetShader(comp->vs.Get(), nullptr, 0);
         dc->PSSetShader(comp->ps.Get(), nullptr, 0);
@@ -349,9 +358,11 @@ bool PostProcess::RunDof(GraphicsDevice& device, ShaderManager& shaders, Target&
     return true;
 }
 
-// M44d: カメラモーションブラー (深度再投影)。uv+深度 → ワールド → 前フレーム viewProj で
-// 再投影した UV との差を速度として 8 タップ平均。カメラの動きのみ (オブジェクト velocity
-// 対象外 = v1 制限)。行列の逆行列/転置は CPU 側で用意する
+// M44d/M55e: モーションブラー。速度ベクトルの向きへ 8 タップ平均。
+// 速度源は画素ごとに 2 通り — ジオメトリ画素は GBuffer RT4 の画面速度 (カメラ +
+// **オブジェクト**が合成済み)、背景と Forward パスは従来の深度再投影。
+// 行列の逆行列/転置は CPU 側で用意する。選択規則の CPU ミラーは
+// PostFxMath.h::motionblur::BlurVector (RenderSelfTest が検証)
 bool PostProcess::RunMotionBlur(GraphicsDevice& device, ShaderManager& shaders,
                                 const Settings& s, const RenderView& view,
                                 ID3D11ShaderResourceView* inputSRV, RenderTexture& dst)
@@ -368,7 +379,9 @@ bool PostProcess::RunMotionBlur(GraphicsDevice& device, ShaderManager& shaders,
     ID3D11DeviceContext* dc = device.Context();
 
     MotionBlurCB cb = {};
-    const XMMATRIX vpMat = XMLoadFloat4x4(&view.view) * XMLoadFloat4x4(&view.proj);
+    // M55b: 前フレーム側 (prevViewProj) が非ジッタで保存されているので、今フレーム側も
+    // 非ジッタで揃える。片方だけジッタが載ると静止画でもサブピクセル速度が出続ける
+    const XMMATRIX vpMat = XMLoadFloat4x4(&view.view) * XMLoadFloat4x4(&view.projNoJitter);
     XMVECTOR det;
     const XMMATRIX inv = XMMatrixInverse(&det, vpMat);
     XMStoreFloat4x4(&cb.invViewProj, XMMatrixTranspose(inv));
@@ -378,6 +391,11 @@ bool PostProcess::RunMotionBlur(GraphicsDevice& device, ShaderManager& shaders,
     cb.maxPixels = s.mbMaxPixels;
     cb.screenW = static_cast<float>(dst.Width());
     cb.screenH = static_cast<float>(dst.Height());
+    // M55e: 画面速度は GBuffer と同じ画素格子でしか Load できないので、解像度が
+    // 一致するときだけ使う (不一致・Forward・AssetPreview は深度再投影へ縮退)
+    const bool useVelocity = view.velocitySRV != nullptr && dst.Width() == view.width
+        && dst.Height() == view.height;
+    cb.useVelocity = useVelocity ? 1 : 0;
     UploadCB(dc, mbCB_.Get(), cb);
 
     // フルスクリーンパス (RunBloom と同じ規約)。入力 SRV を読むため RTV を先に外す
@@ -398,13 +416,15 @@ bool PostProcess::RunMotionBlur(GraphicsDevice& device, ShaderManager& shaders,
     dc->PSSetConstantBuffers(0, 1, cbs);
     ID3D11RenderTargetView* rtv = dst.RTV();
     dc->OMSetRenderTargets(1, &rtv, nullptr);
-    ID3D11ShaderResourceView* srvs[2] = { inputSRV, view.depthSRV };
-    dc->PSSetShaderResources(0, 2, srvs);
+    // t2 = 画面速度 (M55e)。useVelocity=0 のときは null のまま = シェーダも参照しない
+    ID3D11ShaderResourceView* srvs[3] = { inputSRV, view.depthSRV,
+                                          useVelocity ? view.velocitySRV : nullptr };
+    dc->PSSetShaderResources(0, 3, srvs);
     dc->VSSetShader(prog->vs.Get(), nullptr, 0);
     dc->PSSetShader(prog->ps.Get(), nullptr, 0);
     dc->Draw(3, 0);
-    ID3D11ShaderResourceView* nullSrv[2] = { nullptr, nullptr };
-    dc->PSSetShaderResources(0, 2, nullSrv); // 深度 SRV は即解除 (次フレーム DSV bind 対策)
+    ID3D11ShaderResourceView* nullSrv[3] = { nullptr, nullptr, nullptr };
+    dc->PSSetShaderResources(0, 3, nullSrv); // 深度 SRV は即解除 (次フレーム DSV bind 対策)
     return true;
 }
 
@@ -507,7 +527,9 @@ bool PostProcess::RunGodray(GraphicsDevice& device, ShaderManager& shaders, Targ
         return false;
     }
     float sunU = 0.5f, sunV = 0.5f;
-    const float fade = ComputeSunScreenPos(view.view, view.proj, view.sunDirection, sunU, sunV);
+    // M55b: 光芒の中心は非ジッタ側で決める (揺らすと放射方向がフレーム毎に振れる)
+    const float fade =
+        ComputeSunScreenPos(view.view, view.projNoJitter, view.sunDirection, sunU, sunV);
     if (fade <= 0.0f) {
         return false; // 太陽が背面または画面から遠すぎる
     }
@@ -652,12 +674,24 @@ void PostProcess::Resolve(GraphicsDevice& device, ShaderManager& shaders, Target
     }
     resolveTimer_.Begin(device); // M44d: Resolve 全体の GPU 時間 (ProfilerWindow "postfx" 行)
 
-    // M44c: DoF (scene → sceneB)。実行後は bloom/AE/トーンマップが sceneB を読む
-    // (ボケた高輝度が自然にブルームする順序)。off/不成立時は従来どおり t.scene。
-    // M44d: モーションブラーは DoF 出力と scene のピンポン (DoF off なら scene → sceneB)
+    // M55d: TAA はチェーンの **先頭** (DoF より前)。ボケや速度スミアを掛けた後の絵を
+    // 積むと履歴が二重にぼやけるので、素の HDR に対して先に解決する。
+    // 出力は TaaPass 内の履歴面 (viewKey 別) — 走らなければ nullptr で従来どおり t.scene。
+    // ★t.scene へ書き戻さないのは、書き戻しには全画面コピーが 1 回要るのと、
+    //   次フレームの読み元 (t.scene = 素の描画) を汚さないため
     ID3D11ShaderResourceView* sceneSRV = t.scene.SRV();
+    if (s.taaOn != 0) {
+        if (ID3D11ShaderResourceView* taaOut =
+                taa_.Run(device, shaders, view, sceneSRV, s.taaFeedback)) {
+            sceneSRV = taaOut;
+        }
+    }
+
+    // M44c: DoF (scene → sceneB)。実行後は bloom/AE/トーンマップが sceneB を読む
+    // (ボケた高輝度が自然にブルームする順序)。off/不成立時は従来どおり sceneSRV。
+    // M44d: モーションブラーは DoF 出力と scene のピンポン (DoF off なら → sceneB)
     RenderTexture* mbDst = &t.sceneB;
-    if (RunDof(device, shaders, t, s, view)) {
+    if (RunDof(device, shaders, t, s, view, sceneSRV)) {
         sceneSRV = t.sceneB.SRV();
         mbDst = &t.scene;
     }

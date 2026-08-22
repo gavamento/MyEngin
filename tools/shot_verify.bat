@@ -33,6 +33,11 @@ rem   撮影から FXAA を外せば tol=3 の厳格運用がランナー上で�
 rem   代わりに FXAA 自体の被覆は **ローカル限定の 6 枚目** (demo_forward_fxaa、tol=0 の
 rem   ビット一致検査) で確保する。CI は MYE_SHOT_SKIP_FXAA=1 でこの 1 枚を飛ばす。
 rem
+rem ★TAA (M55d) も同じ扱い。近傍 min/max のクランプは FXAA と同型の「しきい値で分岐する」
+rem   演算で、しかも履歴でフレーム間に蓄積する。増幅率は測っていない — 測る前に CI へ
+rem   載せると「理由不明で赤い」1 枚が増えるだけなので、demo_render_taa もローカル限定の
+rem   tol=0 検査 (MYE_SHOT_SKIP_TAA=1 で飛ばす) にしてある。
+rem
 rem ★ビルドはしない。replay_verify.bat の後に回す前提 (CI もその順序)。
 setlocal enabledelayedexpansion
 cd /d "%~dp0.."
@@ -87,7 +92,7 @@ if exist %RENDER_SCENE% del /q %RENDER_SCENE%
 set FAILED=0
 set SHOTS=0
 
-rem ---- 7 本。既定デモの 2 経路 (Forward / Deferred) + 生成シーン 2 本 + UI プローブ
+rem ---- 9 本。既定デモの 2 経路 (Forward / Deferred) + 生成シーン 2 本 + UI プローブ
 rem      + 描画ショーケースの 2 経路 (M54a) ----
 rem RT デモは WARP では重すぎるので CI 対象外 (ローカル任意)
 call :shot demo_forward
@@ -114,6 +119,16 @@ set SHOT=%SHOTBASE% --no-fxaa
 set TOLNOW=%TOL%
 :skip_fxaa
 
+rem ---- 9 枚目 (統合契約の予約 3 では 11 番、M55d): TAA を通した 1 枚。
+rem      FXAA と同じ理由でローカル限定 (tol=0 のビット一致)。CI は MYE_SHOT_SKIP_TAA=1 で飛ばす。
+rem      TAA は Deferred のみ (画面速度が GBuffer RT4 にしかない) なので --deferred が要る。
+rem      撮影条件は --no-fxaa のまま = demo_render_deferred との差が **TAA だけ** になる
+if defined MYE_SHOT_SKIP_TAA goto :skip_taa
+set TOLNOW=0
+call :shot demo_render_taa --render-demo --deferred --taa
+set TOLNOW=%TOL%
+:skip_taa
+
 echo.
 if %UPDATE%==1 (
     echo [shot_verify] golden updated in %GOLDEN% - review the images before committing
@@ -128,7 +143,7 @@ if not %FAILED%==0 (
 if defined MYE_SHOT_SKIP_FXAA (
     echo [PASS] screenshot regression ^(%SHOTS% shots, warp, no-fxaa, tol=%TOL%^)
 ) else (
-    echo [PASS] screenshot regression ^(%SHOTS% shots, warp, tol=%TOL% + 1 fxaa shot at tol=0^)
+    echo [PASS] screenshot regression ^(%SHOTS% shots, warp, tol=%TOL% + fxaa/taa at tol=0^)
 )
 exit /b 0
 

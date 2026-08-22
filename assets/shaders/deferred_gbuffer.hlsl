@@ -25,6 +25,19 @@ cbuffer MaterialParams : register(b2)
     float  gEmissive; // M46i: 自己発光の強さ (0 = 発光なし)
 };
 
+// M55c: 画面速度 (GBuffer RT4) 用。b4 は GBuffer パス専用 — b0-b3 は PerFrame /
+// PerObject / MaterialParams / BonePalette が使っており、Forward 系の CB には触らない。
+// gPrevWorld は「**前フレームに実際に描いた** world」(前 tick ではない — 詳細は
+// RenderSystem.h の PrevRenderWorldStore)。gVelocityValid==0 (初フレーム/リサイズ) は 0 を書く
+cbuffer VelocityParams : register(b4)
+{
+    float4x4 gPrevViewProj;  // 非ジッタ (RenderView::prevViewProj)
+    float4x4 gPrevWorld;     // インスタンス版では未使用 (StructuredBuffer から引く)
+    float2   gJitterNdc;     // 今フレームの proj に載っているジッタ量
+    int      gVelocityValid; // 0 = 履歴なし → velocity 0
+    float    _velPad;
+};
+
 Texture2D    gAlbedoTex : register(t0);
 Texture2D    gNormalTex : register(t1);
 SamplerState gSampler   : register(s0);
@@ -42,6 +55,9 @@ struct VSOut
     float3 normalW : NORMAL;
     float2 uv      : TEXCOORD0;
     float3 posW    : TEXCOORD1;
+    // M55c: SV_Position は PS ではピクセル座標に化けるので、クリップ座標の複製を渡す
+    float4 curClip  : TEXCOORD2;
+    float4 prevClip : TEXCOORD3;
 };
 
 VSOut VSMain(VSIn v)
@@ -52,6 +68,8 @@ VSOut VSMain(VSIn v)
     o.normalW = normalize(mul(v.normal, (float3x3)gWorld));
     o.uv = v.uv;
     o.posW = posW.xyz;
+    o.curClip = o.pos;
+    o.prevClip = mul(mul(float4(v.pos, 1.0f), gPrevWorld), gPrevViewProj);
     return o;
 }
 
@@ -61,6 +79,7 @@ struct PSOut
     float4 normal   : SV_Target1; // ワールド法線 *0.5+0.5 (R10G10B10A2)
     float4 position : SV_Target2; // ワールド座標 (R16G16B16A16_FLOAT)
     float4 material : SV_Target3; // r=metallic g=roughness b=emissive/MYE_EMISSIVE_MAX
+    float2 velocity : SV_Target4; // M55c: 画面速度 UV (R16G16_FLOAT)
 };
 
 PSOut PSMain(VSOut i)
@@ -76,5 +95,7 @@ PSOut PSMain(VSOut i)
     o.normal = float4(n * 0.5f + 0.5f, 1.0f);
     o.position = float4(i.posW, 1.0f);
     o.material = float4(gMetallic, gRoughness, EncodeEmissive(gEmissive), 1.0f);
+    o.velocity = (gVelocityValid != 0) ? ComputeVelocityUv(i.curClip, i.prevClip, gJitterNdc)
+                                       : float2(0.0f, 0.0f);
     return o;
 }

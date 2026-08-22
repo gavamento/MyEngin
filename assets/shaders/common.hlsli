@@ -15,6 +15,25 @@ float LinearizeDepth(float d, float nearZ, float farZ)
     return nearZ * farZ / max(farZ - d * (farZ - nearZ), 1e-4f);
 }
 
+// ---- 画面速度 (M55c: GBuffer RT4 = velocity) ----
+// **velocity = 今フレームの UV − 前フレームの UV**。読む側は prevUv = uv - velocity。
+// curClip は**ジッタ込み**の proj で作られている (ラスタライズと同じ行列でないとピクセル
+// 中心とずれる) ので、NDC にしてからジッタを引き戻す。prevClip 側の行列は
+// RenderView::prevViewProj = **非ジッタ**なので何も引かない — ここを揃えないと
+// 「静止物が毎フレーム半ピクセル動く」velocity になり TAA が履歴を外す。
+// w<=0 (カメラ背面) は 0 を返す = 消費側はカメラ再投影のみへ縮退する。
+// **CPU ミラー: PostFxMath.h の mye::velocity::FromClip — 変更時は両方更新**
+// (RenderSelfTest の TestVelocityUv が検証)。
+float2 ComputeVelocityUv(float4 curClip, float4 prevClip, float2 jitterNdc)
+{
+    if (curClip.w <= 1e-6f || prevClip.w <= 1e-6f) {
+        return float2(0.0f, 0.0f);
+    }
+    const float2 curNdc = curClip.xy / curClip.w - jitterNdc;
+    const float2 prevNdc = prevClip.xy / prevClip.w;
+    return (curNdc - prevNdc) * float2(0.5f, -0.5f); // NDC は上向き / UV は下向き
+}
+
 float3 ApplyDirectionalLight(float3 albedo, float3 normal, float3 lightDir, float3 lightColor,
                              float intensity, float3 ambient)
 {

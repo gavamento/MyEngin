@@ -354,6 +354,9 @@ void RegisterBuiltinComponents()
         // M44d: カメラモーションブラー (末尾 append、NoHash なので bump 不要)
         MYE_JP("モーションブラー強度", MYE_FIELD_RANGE(CameraPostFxComponent, motionBlurIntensity, Float, 0.0f, 1.0f)),
         MYE_JP("モーションブラー最大画素", MYE_FIELD_RANGE(CameraPostFxComponent, mbMaxPixels, Float, 1.0f, 64.0f)),
+        // M55d: TAA (末尾 append、NoHash なので bump 不要)。Deferred のみ効く
+        MYE_JP("TAA", MYE_FIELD(CameraPostFxComponent, taaOn, Int32)),
+        MYE_JP("TAA 履歴の残し率", MYE_FIELD_RANGE(CameraPostFxComponent, taaFeedback, Float, 0.0f, 0.95f)),
     }, kComponentNoHash);
 
     // M32e: 合成エフェクトのライフサイクル。DestroyEntity + 子エミッタ playing を駆動 = hash 対象。

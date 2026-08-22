@@ -1,6 +1,7 @@
 #include "Engine/Renderer/RenderSelfTest.h"
 
 #include <cmath>
+#include <cstring>
 
 #include <DirectXMath.h>
 
@@ -107,6 +108,8 @@ void TestPostFxMerge()
     comp.dofMaxRadius = 12.0f;
     comp.motionBlurIntensity = 0.6f; // M44d
     comp.mbMaxPixels = 24.0f;
+    comp.taaOn = 1; // M55d
+    comp.taaFeedback = 0.75f;
     const PostProcess::Settings s = MergeCameraPostFx(base, comp);
     TEST_CHECK(s.chromAberration == 0.01f);
     TEST_CHECK(s.vignetteIntensity == 0.4f);
@@ -122,6 +125,10 @@ void TestPostFxMerge()
     TEST_CHECK(s.dofFocusDistance == 20.0f && s.dofFocusRange == 8.0f
                && s.dofMaxRadius == 12.0f); // M44c
     TEST_CHECK(s.motionBlurIntensity == 0.6f && s.mbMaxPixels == 24.0f); // M44d
+    TEST_CHECK(s.taaOn == 1 && s.taaFeedback == 0.75f);                  // M55d
+    // 既定のコンポーネント (= シーンに置いただけ) では TAA は off のまま =
+    // CameraPostFx を足しても絵が変わらない
+    TEST_CHECK(MergeCameraPostFx(base, CameraPostFxComponent{}).taaOn == 0);
     // M44b: aeInstant は base 維持 (applyGamma と同じ Settings 専用フィールド)
     PostProcess::Settings instantBase;
     instantBase.aeInstant = true;
@@ -357,6 +364,69 @@ void TestReprojectUv()
     TEST_CHECK(!ReprojectUv(identity, persp, 0.5f, 0.5f, -1.0f, pu, pv));
 }
 
+// M55e: モーションブラーの速度源の選択 + クランプ (postfx_motionblur.hlsl のミラー検証)。
+// **この関数が M55e の唯一の機械検査** — golden は motionBlurIntensity=0 (既定) しか
+// 押さえていないので、on 側の挙動は絵からは確かめられない
+void TestMotionBlurVelocity()
+{
+    MYE_LOG_INFO("[selftest] motion blur velocity source (M55e)");
+    XMFLOAT4X4 identity;
+    XMStoreFloat4x4(&identity, XMMatrixIdentity());
+    XMFLOAT4X4 shifted; // 前フレームがワールド +X に 0.2 ずれた投影 = カメラが動いた状態
+    XMStoreFloat4x4(&shifted, XMMatrixTranslation(0.2f, 0.0f, 0.0f));
+    const float w = 960.0f;
+    const float h = 540.0f;
+    const float kNoClamp = 1.0e6f; // クランプを見たいケース以外は効かせない (px 長で効くため)
+    float du = 0.0f, dv = 0.0f;
+
+    // ① velocity 無し (Forward) → v1 と完全に同じ深度再投影。カメラ不動なら速度 0
+    TEST_CHECK(motionblur::BlurVector(false, 0.0f, 0.0f, identity, identity, 0.3f, 0.7f, 0.5f,
+                                      1.0f, kNoClamp, w, h, du, dv));
+    TEST_CHECK(du == 0.0f && dv == 0.0f);
+    // ② velocity 無し + カメラが動いた → uv - prevUv = -0.1 (prevU = u + 0.1)
+    TEST_CHECK(motionblur::BlurVector(false, 0.0f, 0.0f, identity, shifted, 0.5f, 0.5f, 0.5f,
+                                      1.0f, kNoClamp, w, h, du, dv));
+    TEST_CHECK(std::fabs(du + 0.1f) < 1e-5f && std::fabs(dv) < 1e-5f);
+
+    // ③ ★M55e の本題: velocity があるジオメトリ画素は **カメラが静止していても**
+    //    バッファの値をそのまま使う (v1 ではここが 0 = 回る物体がブレなかった)
+    TEST_CHECK(motionblur::BlurVector(true, 0.01f, -0.004f, identity, identity, 0.5f, 0.5f, 0.4f,
+                                      1.0f, kNoClamp, w, h, du, dv));
+    TEST_CHECK(std::fabs(du - 0.01f) < 1e-6f && std::fabs(dv + 0.004f) < 1e-6f);
+
+    // ④ ★背景 (depth==1.0) は velocity バッファがあっても再投影へ落ちる。
+    //    GBuffer を書いていない画素の RT4 は 0 のままなので、ここを分けないと
+    //    「カメラを振っても空だけ止まる」= v1 より悪い絵になる
+    TEST_CHECK(motionblur::BlurVector(true, 0.0f, 0.0f, identity, shifted, 0.5f, 0.5f, 1.0f,
+                                      1.0f, kNoClamp, w, h, du, dv));
+    TEST_CHECK(std::fabs(du + 0.1f) < 1e-5f && std::fabs(dv) < 1e-5f);
+
+    // ⑤ intensity は速度に線形に効く (0 = 恒等)
+    TEST_CHECK(motionblur::BlurVector(true, 0.01f, 0.0f, identity, identity, 0.5f, 0.5f, 0.4f,
+                                      0.5f, kNoClamp, w, h, du, dv));
+    TEST_CHECK(std::fabs(du - 0.005f) < 1e-6f);
+    TEST_CHECK(motionblur::BlurVector(true, 0.01f, 0.0f, identity, identity, 0.5f, 0.5f, 0.4f,
+                                      0.0f, kNoClamp, w, h, du, dv));
+    TEST_CHECK(du == 0.0f && dv == 0.0f);
+
+    // ⑥ クランプは px 長で効く: du=0.5 → 480px を maxPixels=16 へ切り詰める
+    TEST_CHECK(motionblur::BlurVector(true, 0.5f, 0.0f, identity, identity, 0.5f, 0.5f, 0.4f,
+                                      1.0f, 16.0f, w, h, du, dv));
+    TEST_CHECK(std::fabs(du * w - 16.0f) < 1e-3f && dv == 0.0f);
+    // 縦方向は h でスケールされる (UV 長でクランプしていたら 16/540 にならない)
+    TEST_CHECK(motionblur::BlurVector(true, 0.0f, 0.5f, identity, identity, 0.5f, 0.5f, 0.4f,
+                                      1.0f, 16.0f, w, h, du, dv));
+    TEST_CHECK(std::fabs(dv * h - 16.0f) < 1e-3f && du == 0.0f);
+
+    // ⑦ 前フレームで背面 = ブラーしない (velocity 側の経路には無い縮退)
+    XMFLOAT4X4 persp;
+    XMStoreFloat4x4(&persp, XMMatrixPerspectiveFovLH(XMConvertToRadians(60.0f), 1.0f, 0.1f,
+                                                     100.0f));
+    TEST_CHECK(!motionblur::BlurVector(false, 0.0f, 0.0f, identity, persp, 0.5f, 0.5f, -1.0f,
+                                       1.0f, kNoClamp, w, h, du, dv));
+    TEST_CHECK(du == 0.0f && dv == 0.0f);
+}
+
 // 自己発光の G-Buffer 符号化 (M46i)。common.hlsli の EncodeEmissive/DecodeEmissive と対
 void TestEmissiveEncoding()
 {
@@ -399,6 +469,267 @@ void TestEmissiveEncoding()
     }
 }
 
+// M55b: TAA 用カメラジッタ。ここで守りたい性質は 4 つ —
+//  ① 列が frame index の純関数 (実時間も rand() も入らない = 決定的撮影で再現する)
+//  ② 振幅 0 で射影行列が 1 ビットも変わらない (既定の絵が動かない受入基準そのもの)
+//  ③ NDC オフセットが「指定したサブピクセル量」ちょうどになる (透視 / 正射影の両方)
+//  ④ 1 周期の平均が原点付近 (偏ると TAA の収束先が本来の絵からずれる)
+void TestCameraJitter()
+{
+    using namespace camerajitter;
+
+    // ① radical inverse の既知値 (van der Corput)
+    TEST_CHECK(RadicalInverse(1, 2) == 0.5f);
+    TEST_CHECK(RadicalInverse(2, 2) == 0.25f);
+    TEST_CHECK(RadicalInverse(3, 2) == 0.75f);
+    TEST_CHECK(RadicalInverse(0, 2) == 0.0f);
+    TEST_CHECK(std::fabs(RadicalInverse(1, 3) - 1.0f / 3.0f) < 1e-6f);
+    TEST_CHECK(std::fabs(RadicalInverse(2, 3) - 2.0f / 3.0f) < 1e-6f);
+
+    // ① 純関数 = 同じ frame index なら何度呼んでも同じ / 周期 kSequenceLength で厳密に一巡
+    float sx = 0.0f, sy = 0.0f, tx = 0.0f, ty = 0.0f;
+    Sample(3, sx, sy);
+    Sample(3, tx, ty);
+    TEST_CHECK(sx == tx && sy == ty);
+    Sample(3 + kSequenceLength, tx, ty);
+    TEST_CHECK(sx == tx && sy == ty);
+
+    // ④ 全サンプルが [-0.5,0.5] に収まり、原点ちょうど (= 揺れないフレーム) が無く、
+    //    1 周期の平均が原点近傍
+    float sumX = 0.0f, sumY = 0.0f;
+    for (uint32_t i = 0; i < kSequenceLength; ++i) {
+        float jx = 0.0f, jy = 0.0f;
+        Sample(i, jx, jy);
+        TEST_CHECK(jx >= -0.5f && jx <= 0.5f && jy >= -0.5f && jy <= 0.5f);
+        TEST_CHECK(jx != 0.0f || jy != 0.0f);
+        sumX += jx;
+        sumY += jy;
+    }
+    TEST_CHECK(std::fabs(sumX / kSequenceLength) < 0.1f);
+    TEST_CHECK(std::fabs(sumY / kSequenceLength) < 0.1f);
+
+    // ピクセル → NDC。y は符号反転 (NDC は上向き、ピクセルは下向き)。
+    // 幅/高さ 0 は 0 を返す (ヘッドレスや未リサイズのビューでゼロ除算しない)
+    float nx = 0.0f, ny = 0.0f;
+    PixelsToNdc(0.5f, 0.5f, 960, 540, nx, ny);
+    TEST_CHECK(std::fabs(nx - 1.0f / 960.0f) < 1e-7f);
+    TEST_CHECK(std::fabs(ny + 1.0f / 540.0f) < 1e-7f);
+    PixelsToNdc(0.5f, 0.5f, 0, 0, nx, ny);
+    TEST_CHECK(nx == 0.0f && ny == 0.0f);
+
+    XMFLOAT4X4 persp;
+    XMStoreFloat4x4(&persp, XMMatrixPerspectiveFovLH(XMConvertToRadians(60.0f), 16.0f / 9.0f,
+                                                     0.1f, 1000.0f));
+    // ② 振幅 0 = ビット同一 (memcmp。「ほぼ同じ」では受入基準にならない)
+    const XMFLOAT4X4 zero = ApplyToProj(persp, 0.0f, 0.0f);
+    TEST_CHECK(std::memcmp(&zero, &persp, sizeof(XMFLOAT4X4)) == 0);
+
+    // ③ 透視: view 空間の任意の点の NDC が、深度に依らず指定量ちょうどずれる
+    const XMFLOAT4X4 jit = ApplyToProj(persp, 0.02f, -0.03f);
+    for (float z : { 1.0f, 10.0f, 250.0f }) {
+        const XMVECTOR pv = XMVectorSet(3.0f, -2.0f, z, 1.0f);
+        const XMVECTOR a = XMVector4Transform(pv, XMLoadFloat4x4(&persp));
+        const XMVECTOR b = XMVector4Transform(pv, XMLoadFloat4x4(&jit));
+        const float aw = XMVectorGetW(a);
+        const float bw = XMVectorGetW(b);
+        TEST_CHECK(aw == bw); // w (= viewZ) は不変 = 深度は 1 ビットも動かない
+        TEST_CHECK(std::fabs((XMVectorGetX(b) / bw - XMVectorGetX(a) / aw) - 0.02f) < 1e-5f);
+        TEST_CHECK(std::fabs((XMVectorGetY(b) / bw - XMVectorGetY(a) / aw) + 0.03f) < 1e-5f);
+    }
+
+    // ③ 正射影 (エディタの Ortho ビュー): w=1 なので平行移動は _41/_42 側に載る。
+    // _31/_32 に足すと view z に比例した歪みになるので、経路を間違えるとここで落ちる
+    XMFLOAT4X4 ortho;
+    XMStoreFloat4x4(&ortho, XMMatrixOrthographicLH(19.2f, 10.8f, 0.1f, 1000.0f));
+    const XMFLOAT4X4 orthoJit = ApplyToProj(ortho, 0.02f, -0.03f);
+    for (float z : { 1.0f, 10.0f, 250.0f }) {
+        const XMVECTOR pv = XMVectorSet(3.0f, -2.0f, z, 1.0f);
+        const XMVECTOR a = XMVector4Transform(pv, XMLoadFloat4x4(&ortho));
+        const XMVECTOR b = XMVector4Transform(pv, XMLoadFloat4x4(&orthoJit));
+        TEST_CHECK(std::fabs((XMVectorGetX(b) - XMVectorGetX(a)) - 0.02f) < 1e-5f);
+        TEST_CHECK(std::fabs((XMVectorGetY(b) - XMVectorGetY(a)) + 0.03f) < 1e-5f);
+        TEST_CHECK(XMVectorGetZ(a) == XMVectorGetZ(b));
+    }
+}
+
+// M55c: 画面速度 (common.hlsli::ComputeVelocityUv のミラー検証)。
+// velocity を読む消費者は M55d 以降まで居ない = **ピクセル回帰では 1 ミリも被覆できない**
+// ので、式の正しさはここで固定するしかない
+void TestVelocityUv()
+{
+    MYE_LOG_INFO("[selftest] velocity buffer (M55c)");
+    XMFLOAT4X4 proj;
+    XMStoreFloat4x4(&proj,
+                    XMMatrixPerspectiveFovLH(XMConvertToRadians(60.0f), 16.0f / 9.0f, 0.1f, 100.0f));
+    XMFLOAT4X4 viewM;
+    XMStoreFloat4x4(&viewM, XMMatrixIdentity()); // カメラは原点・+Z 向き
+    XMFLOAT4X4 vp;
+    XMStoreFloat4x4(&vp, XMLoadFloat4x4(&viewM) * XMLoadFloat4x4(&proj));
+
+    const XMFLOAT3 p = { 1.0f, 0.5f, 8.0f };
+    float u = 1.0f;
+    float v = 1.0f;
+
+    // ① 静止 (カメラも物体も動かない) → 厳密に 0。これが「既定で絵が変わらない」の根拠
+    TEST_CHECK(velocity::FromWorld(vp, vp, p, p, 0.0f, 0.0f, u, v));
+    TEST_CHECK(u == 0.0f && v == 0.0f);
+
+    // ② 物体が +X へ動いた → velocity は「今 UV − 前 UV」= 正の u。
+    //    大きさは UV 差そのものと一致すること (符号規約 prevUv = uv - velocity の担保)
+    const XMFLOAT3 prevPos = { 0.5f, 0.5f, 8.0f };
+    TEST_CHECK(velocity::FromWorld(vp, vp, p, prevPos, 0.0f, 0.0f, u, v));
+    TEST_CHECK(u > 0.0f);
+    {
+        auto uvOf = [&](const XMFLOAT3& w) {
+            const XMVECTOR c =
+                XMVector4Transform(XMVectorSet(w.x, w.y, w.z, 1.0f), XMLoadFloat4x4(&vp));
+            const float cw = XMVectorGetW(c);
+            return XMFLOAT2{ XMVectorGetX(c) / cw * 0.5f + 0.5f,
+                             0.5f - XMVectorGetY(c) / cw * 0.5f };
+        };
+        const XMFLOAT2 cur = uvOf(p);
+        const XMFLOAT2 old = uvOf(prevPos);
+        TEST_CHECK(std::fabs((cur.x - old.x) - u) < 1e-6f);
+        TEST_CHECK(std::fabs((cur.y - old.y) - v) < 1e-6f);
+    }
+
+    // ③ ★核心: **ジッタを載せても velocity は変わらない**。
+    //    今フレームだけジッタ込みの proj でラスタライズされ、prevViewProj は非ジッタ —
+    //    引き戻しを忘れると静止物が毎フレーム半ピクセル動いて TAA が履歴を外す
+    const float jx = 0.0031f;
+    const float jy = -0.0047f;
+    const XMFLOAT4X4 projJit = camerajitter::ApplyToProj(proj, jx, jy);
+    XMFLOAT4X4 vpJit;
+    XMStoreFloat4x4(&vpJit, XMLoadFloat4x4(&viewM) * XMLoadFloat4x4(&projJit));
+    float uj = 0.0f;
+    float vj = 0.0f;
+    TEST_CHECK(velocity::FromWorld(vpJit, vp, p, p, jx, jy, uj, vj));
+    TEST_CHECK(std::fabs(uj) < 1e-6f && std::fabs(vj) < 1e-6f);
+    TEST_CHECK(velocity::FromWorld(vpJit, vp, p, prevPos, jx, jy, uj, vj));
+    TEST_CHECK(std::fabs(uj - u) < 1e-6f && std::fabs(vj - v) < 1e-6f);
+    // 引き戻しを忘れた場合はちょうどジッタ分ずれる (この試験に歯があることの確認)
+    float uBad = 0.0f;
+    float vBad = 0.0f;
+    TEST_CHECK(velocity::FromWorld(vpJit, vp, p, p, 0.0f, 0.0f, uBad, vBad));
+    TEST_CHECK(std::fabs(uBad - jx * 0.5f) < 1e-6f);
+
+    // ④ カメラ背面 (w<=0) は false + 速度 0 (消費側はカメラ再投影のみへ縮退)
+    const XMFLOAT3 behind = { 0.0f, 0.0f, -5.0f };
+    TEST_CHECK(!velocity::FromWorld(vp, vp, behind, behind, 0.0f, 0.0f, u, v));
+    TEST_CHECK(u == 0.0f && v == 0.0f);
+}
+
+// M55c: 「前フレームに実際に描いた world 行列」ストア。
+// ★★決定的撮影モードでは interpAlpha == 1.0 なので「前 tick の行列で代用する」誤りは
+// golden に一切現れない。だから通番の連続性判定はここで機械検査するしかない
+void TestPrevRenderWorldStore()
+{
+    MYE_LOG_INFO("[selftest] prev-render world store (M55c)");
+    PrevRenderWorldStore s;
+    const EntityID a = { 3, 0 };
+    const EntityID b = { 7, 0 };
+    XMFLOAT4X4 m0;
+    XMStoreFloat4x4(&m0, XMMatrixTranslation(1.0f, 0.0f, 0.0f));
+    XMFLOAT4X4 m1;
+    XMStoreFloat4x4(&m1, XMMatrixTranslation(2.0f, 0.0f, 0.0f));
+
+    // ① 初フレーム: 履歴なし
+    TEST_CHECK(!s.Begin(0, 960, 540));
+    TEST_CHECK(s.Lookup(a) == nullptr);
+    s.Record(a, m0);
+    s.Record(b, m0);
+
+    // ② 次フレーム: 通番が 1 つ違い + 同サイズ → 前フレームの行列が引ける
+    TEST_CHECK(s.Begin(1, 960, 540));
+    const XMFLOAT4X4* got = s.Lookup(a);
+    TEST_CHECK(got != nullptr && std::memcmp(got, &m0, sizeof(XMFLOAT4X4)) == 0);
+    s.Record(a, m1);
+    // b は今フレーム描かれなかった (Record しない) — 次フレームで拾われないこと
+
+    // ③ さらに次: a は m1、b は「前フレームに描かれていない」ので null
+    TEST_CHECK(s.Begin(2, 960, 540));
+    got = s.Lookup(a);
+    TEST_CHECK(got != nullptr && std::memcmp(got, &m1, sizeof(XMFLOAT4X4)) == 0);
+    TEST_CHECK(s.Lookup(b) == nullptr);
+    s.Record(a, m1);
+
+    // ④ 通番が飛んだ (別ビューを挟んだ / このビューが 1 フレーム描かれなかった) → 破棄
+    TEST_CHECK(!s.Begin(5, 960, 540));
+    TEST_CHECK(s.Lookup(a) == nullptr);
+    s.Record(a, m0);
+
+    // ⑤ リサイズ → 破棄 (再投影の前提が崩れる)
+    TEST_CHECK(!s.Begin(6, 1280, 720));
+    TEST_CHECK(s.Lookup(a) == nullptr);
+    s.Record(a, m0);
+
+    // ⑥ index 再利用 (generation 違い) は別エンティティとして扱う
+    TEST_CHECK(s.Begin(7, 1280, 720));
+    TEST_CHECK(s.Lookup(a) != nullptr);
+    const EntityID reused = { 3, 1 };
+    TEST_CHECK(s.Lookup(reused) == nullptr);
+}
+
+// M55d: TAA の解決式 (postfx_taa.hlsl::PSMain のミラー検証)。
+// ★golden (demo_render_taa) は「TAA を on にした 1 枚」しか押さえない = **恒等の側**
+//   (履歴が無い / 画面外 / feedback=0 で cur がビット単位でそのまま出ること) は
+//   絵からは確かめられない。既定 off の受け入れ基準を支えているのはここ
+void TestTaaResolve()
+{
+    MYE_LOG_INFO("[selftest] TAA resolve (M55d)");
+    const XMFLOAT3 cur = { 0.40f, 0.50f, 0.60f };
+    const XMFLOAT3 hist = { 0.80f, 0.10f, 0.60f };
+    // 近傍の箱は履歴を丸ごと含む広さ (クランプが効かない条件) にしておく
+    const XMFLOAT3 wideMin = { 0.0f, 0.0f, 0.0f };
+    const XMFLOAT3 wideMax = { 1.0f, 1.0f, 1.0f };
+
+    auto same = [](const XMFLOAT3& a, const XMFLOAT3& b) {
+        return a.x == b.x && a.y == b.y && a.z == b.z; // ビット同一を要求する
+    };
+
+    // ① 履歴なし (初回フレーム / 通番が飛んだ / リサイズ直後) → cur がそのまま出る。
+    //    ★shot_verify は --frames 6 --shot-frame 3 = 撮影時点で履歴 3 枚しかない。
+    //    「収束後の絵」前提の実装だとここが崩れる
+    TEST_CHECK(same(taa::Resolve(cur, hist, wideMin, wideMax, 0.5f, 0.5f, false, 0.9f), cur));
+
+    // ② 履歴 UV が画面外 → 前フレームにその画素は無いので cur。境界は [0,1) の半開区間
+    TEST_CHECK(same(taa::Resolve(cur, hist, wideMin, wideMax, -0.001f, 0.5f, true, 0.9f), cur));
+    TEST_CHECK(same(taa::Resolve(cur, hist, wideMin, wideMax, 0.5f, 1.0f, true, 0.9f), cur));
+    TEST_CHECK(taa::HistoryUvValid(0.0f, 0.0f) && !taa::HistoryUvValid(1.0f, 0.0f));
+
+    // ③ feedback=0 → 履歴が有効でも cur がそのまま (A/B 比較の恒等点)
+    TEST_CHECK(same(taa::Resolve(cur, hist, wideMin, wideMax, 0.5f, 0.5f, true, 0.0f), cur));
+
+    // ④ 通常経路: cur と履歴の線形補間。feedback=0.5 なら中点
+    {
+        const XMFLOAT3 r = taa::Resolve(cur, hist, wideMin, wideMax, 0.5f, 0.5f, true, 0.5f);
+        TEST_CHECK(std::fabs(r.x - 0.60f) < 1e-6f);
+        TEST_CHECK(std::fabs(r.y - 0.30f) < 1e-6f);
+        TEST_CHECK(std::fabs(r.z - 0.60f) < 1e-6f); // 同値の成分は動かない
+    }
+
+    // ⑤ 近傍クランプ = ゴースト抑制の本体。履歴が今フレームの近傍の箱から外れていたら
+    //    箱の面まで引き寄せてから混ぜる (遮蔽が解けた画素で前の像が残らない)
+    {
+        const XMFLOAT3 nmin = { 0.35f, 0.45f, 0.55f };
+        const XMFLOAT3 nmax = { 0.45f, 0.55f, 0.65f };
+        const XMFLOAT3 c = taa::ClampToNeighborhood(hist, nmin, nmax);
+        TEST_CHECK(c.x == 0.45f && c.y == 0.45f && c.z == 0.60f);
+        const XMFLOAT3 r = taa::Resolve(cur, hist, nmin, nmax, 0.5f, 0.5f, true, 1.0f);
+        TEST_CHECK(same(r, c)); // feedback=1 ならクランプ後の履歴そのもの
+    }
+
+    // ⑥ 収束済みの静止画 (cur == hist、速度 0) は何フレーム回しても値が動かない。
+    //    これが崩れると「止まっているのに絵がじりじり変わる」= 決定的撮影が成立しない
+    {
+        XMFLOAT3 acc = cur;
+        for (int i = 0; i < 8; ++i) {
+            acc = taa::Resolve(cur, acc, cur, cur, 0.5f, 0.5f, true, 0.9f);
+        }
+        TEST_CHECK(same(acc, cur));
+    }
+}
+
 } // namespace
 
 bool RunRenderSelfTest()
@@ -416,6 +747,11 @@ bool RunRenderSelfTest()
     TestLinearizeDepth();
     TestReprojectUv();
     TestEmissiveEncoding();
+    TestCameraJitter();
+    TestVelocityUv();
+    TestPrevRenderWorldStore();
+    TestTaaResolve();
+    TestMotionBlurVelocity();
     if (g_failCount == 0) {
         MYE_LOG_INFO("[selftest] render: ALL PASS");
         return true;

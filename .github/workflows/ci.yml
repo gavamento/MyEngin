@@ -17,7 +17,11 @@
 #                      (開発機 10.0.26100 / ランナー 10.0.20348 の d3d10warp・d3dcompiler)。
 #                      素の描画の機種差は最大 1 レベルなのに、FXAA の輝度しきい値分岐が
 #                      それを 35 レベルへ増幅する — 実測は shot_verify.bat の冒頭に表がある。
-#                      残り 5 枚は --no-fxaa 撮影なので tol=3 の厳格判定のまま回せる
+#                      残り 7 枚は --no-fxaa 撮影なので tol=3 の厳格判定のまま回せる
+#   MYE_SHOT_SKIP_TAA … スクショ 9 枚目 (TAA を通す 1 枚、M55d) を飛ばす。
+#                      TAA の近傍 min/max クランプは FXAA と同型のしきい値分岐で、しかも
+#                      履歴でフレーム間に蓄積する = 同じ増幅が起きうる。増幅率を実測する
+#                      までは CI に載せない (載せると「理由不明で赤い」1 枚が増えるだけ)
 #
 # sim は CPU 専用なのでリプレイのワールドハッシュは WARP でも実 GPU でも同一 —
 # GPU 無し runner で replay_verify を回せる根拠がここ (計画の決定台帳 4)。
@@ -43,6 +47,7 @@ jobs:
       MYE_MSBUILD_ARGS: /p:MyeWarnAsError=true
       MYE_DOTNET_ARGS: /p:TreatWarningsAsErrors=true
       MYE_SHOT_SKIP_FXAA: 1
+      MYE_SHOT_SKIP_TAA: 1
     steps:
       - uses: actions/checkout@v4
 
@@ -78,7 +83,7 @@ jobs:
       #    --warp --font-embedded --no-fxaa 固定 = ラスタライザ・フォント・
       #    機種差を増幅する 1 パスを開発機と揃える。
       #    replay_verify が先に Release をビルドしている前提 (bat はビルドしない)
-      - name: screenshot regression (5 shots, no-fxaa)
+      - name: screenshot regression (7 shots, no-fxaa)
         shell: cmd
         run: tools\shot_verify.bat
 

@@ -492,6 +492,28 @@ void TestTemporal()
     TEST_CHECK(!RtClipToPrevUv({ 3.0f, 0.0f, 1.0f, 2.0f }, uv)); // ndc.x = 1.5 → 画面右外
     TEST_CHECK(!RtClipToPrevUv({ 0.0f, -3.0f, 1.0f, 2.0f }, uv)); // ndc.y = -1.5 → 画面下外
 
+    // ---- M55f: 履歴 UV の 2 経路 (画面速度 / 前フレーム VP への射影) ----
+    {
+        const XMFLOAT2 px = { 0.25f, 0.75f };
+        // 画面中央を指すクリップ座標。velocity 経路のときは**使われない**ことをこれで見る
+        const XMFLOAT4 centerClip = { 0.0f, 0.0f, 5.0f, 10.0f };
+        XMFLOAT2 out;
+        // ① 速度 0 = 静止物 → 同じ画素をそのまま引く (ビット単位で一致すること。
+        //    ここがずれると静止した絵が毎フレーム 1 テクセル揺れる)
+        TEST_CHECK(RtHistoryUv(true, px, { 0.0f, 0.0f }, centerClip, out));
+        TEST_CHECK(out.x == px.x && out.y == px.y);
+        // ② 速度あり → prevUv = uv - velocity (TAA / モーションブラーと同じ規約)
+        TEST_CHECK(RtHistoryUv(true, px, { 0.1f, -0.05f }, centerClip, out));
+        TEST_CHECK(std::fabs(out.x - 0.15f) < 1e-6f && std::fabs(out.y - 0.80f) < 1e-6f);
+        // ③ 前フレームの画面外 = 履歴なし ([0,1) 規約なので 1.0 ちょうども棄却)
+        TEST_CHECK(!RtHistoryUv(true, px, { 0.30f, 0.0f }, centerClip, out));
+        TEST_CHECK(!RtHistoryUv(true, px, { -0.75f, 0.0f }, centerClip, out)); // x = 1.0 ちょうど
+        // ④ useVelocity=false は M46d の経路へ縮退 — velocity をいくら渡しても無視される
+        TEST_CHECK(RtHistoryUv(false, px, { 0.4f, 0.4f }, centerClip, out));
+        TEST_CHECK(std::fabs(out.x - 0.5f) < 1e-6f && std::fabs(out.y - 0.5f) < 1e-6f);
+        TEST_CHECK(!RtHistoryUv(false, px, { 0.0f, 0.0f }, { 3.0f, 0.0f, 1.0f, 2.0f }, out));
+    }
+
     // ---- 再投影の妥当性 (深度 = カメラ距離の相対差 / 法線 = cos) ----
     const XMFLOAT3 n = { 0.0f, 1.0f, 0.0f };
     constexpr float kD = kRtTemporalDepthThreshold;   // 0.05

@@ -74,7 +74,10 @@ struct RtTemporalCB {
     // M46h: この信号の履歴長上限 (GI = kRtTemporalMaxHistory / 反射 = kRtReflMaxHistory)。
     // HLSL 側で MYE_RT_TEMPORAL_MAX_HISTORY とのより小さい方に丸められる
     float maxHistory = static_cast<float>(kRtTemporalMaxHistory);
-    float pad[2] = { 0, 0 };
+    // M55f: 1 = 履歴 UV を GBuffer RT4 から作る。0 = 前フレーム VP へ射影 (M46d の挙動)。
+    // pad を 1 つ潰しているので CB のサイズは 128 のまま
+    int32_t useVelocity = 0;
+    float pad = 0;
 };
 static_assert(sizeof(RtTemporalCB) == 128, "HLSL の RtTemporalCB と一致させること");
 
@@ -447,14 +450,23 @@ RtPasses::AccumResult RtPasses::Accumulate(GraphicsDevice& device, ShaderManager
     tc.depthThreshold = kRtTemporalDepthThreshold;
     tc.normalThreshold = kRtTemporalNormalThreshold;
     tc.maxHistory = maxHistory; // M46h: 反射は GI より短く積む (鏡面のラグを避けるため)
+    // M55f: 画面速度で履歴 UV を作れるのは「RT4 が張れている かつ 履歴が有効」なときだけ。
+    // histValid には prevViewProjValid が含まれており、それは GBuffer 側の gVelocityValid と
+    // **同じ条件** — つまり velocity が全画素 0 で書かれたフレームをここで読むことはない
+    tc.useVelocity = (in.gbVelocity != nullptr && histValid) ? 1 : 0;
     UploadCB(dc, temporalCB_.Get(), tc);
     ID3D11Buffer* cbs[1] = { temporalCB_.Get() };
     dc->CSSetConstantBuffers(2, 1, cbs);
 
-    ID3D11ShaderResourceView* srvs[7] = { src,         h.color[rd].SRV(), h.geom[rd].SRV(),
-                                          in.gbNormal, in.gbPosition,     in.gbAlbedo,
-                                          h.moments[rd].SRV() };
-    dc->CSSetShaderResources(0, 7, srvs);
+    ID3D11ShaderResourceView* srvs[8] = { src,
+                                          h.color[rd].SRV(),
+                                          h.geom[rd].SRV(),
+                                          in.gbNormal,
+                                          in.gbPosition,
+                                          in.gbAlbedo,
+                                          h.moments[rd].SRV(),
+                                          in.gbVelocity }; // M55f: t7
+    dc->CSSetShaderResources(0, 8, srvs);
     ID3D11UnorderedAccessView* uavs[3] = { h.color[wr].UAV(), h.geom[wr].UAV(),
                                            h.moments[wr].UAV() };
     dc->CSSetUnorderedAccessViews(0, 3, uavs, nullptr);
@@ -805,7 +817,9 @@ bool RtPasses::RenderDebug(GraphicsDevice& device, ShaderManager& shaders, const
     BindCommon(device, view, in);
 
     RtDebugCB db = {};
-    const XMMATRIX vp = XMLoadFloat4x4(&view.view) * XMLoadFloat4x4(&view.proj);
+    // M55b: RT の一次光線はラスタライズ結果を読まない独立描画なので非ジッタ側で撃つ。
+    // テンポラル蓄積 (Accumulate) が使う prevViewProj も非ジッタなので出所が揃う
+    const XMMATRIX vp = XMLoadFloat4x4(&view.view) * XMLoadFloat4x4(&view.projNoJitter);
     XMStoreFloat4x4(&db.invViewProj, XMMatrixTranspose(XMMatrixInverse(nullptr, vp)));
     db.cameraPos = view.cameraPos;
     db.tMax = (view.farZ > 0.0f) ? view.farZ : 1000.0f;

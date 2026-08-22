@@ -254,6 +254,12 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 config.useCookCache = false; // M51b: クックを使わず毎回フルパース (切り分け)
             } else if (arg == L"--rt-debug" && i + 1 < argc) {
                 config.rtDebugMode = _wtoi(argv[++i]); // M46b (Deferred のみ)
+            } else if (arg == L"--velocity-debug") {
+                config.velocityDebug = 1; // M55c: GBuffer RT4 の可視化 (Deferred のみ)
+            } else if (arg == L"--taa") {
+                config.postFxTaa = true; // M55d: TAA + カメラジッタ (Deferred のみ)
+            } else if (arg == L"--motion-blur" && i + 1 < argc) {
+                config.postFxMotionBlur = static_cast<float>(_wtof(argv[++i])); // M55e
             } else if (arg == L"--rt-no-temporal") {
                 config.rtTemporal = false; // M46d: 1spp 生のまま (A/B 計測用)
             } else if (arg == L"--rt-freeze-seed") {

@@ -611,6 +611,23 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
             ImGui::MenuItem(Tr(StrId::Menu_RtShadow), nullptr, &ctx.renderSystem->enableRtShadow);
             // M46h: 滑らかな面のスペキュラ環境項をレイトレ反射で置換 (画面外も映る)
             ImGui::MenuItem(Tr(StrId::Menu_RtReflection), nullptr, &ctx.renderSystem->enableRtRefl);
+            // M55c: GBuffer RT4 (velocity) の可視化。bool ではなく int なので MenuItem の
+            // 選択状態で表し、クリックでトグルする (rtDebugMode の 0/N と同じ流儀)
+            {
+                int& velDbg = ctx.renderSystem->velocityDebugMode;
+                if (ImGui::MenuItem(Tr(StrId::Taa_VelocityDebug), nullptr, velDbg != 0)) {
+                    velDbg = (velDbg != 0) ? 0 : 1;
+                }
+            }
+            // M55d: TAA (グローバル設定。シーンカメラに CameraPostFx があればそちらが勝つ)。
+            // カメラジッタもこのトグルと連動する — 別々に切れると「TAA 無しでジッタだけ」
+            // = 画面が半ピクセル揺れるだけの状態を作れてしまう
+            {
+                int& taa = ctx.renderSystem->postFxSettings.taaOn;
+                if (ImGui::MenuItem(Tr(StrId::Taa_Enable), nullptr, taa != 0)) {
+                    taa = (taa != 0) ? 0 : 1;
+                }
+            }
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu(Tr(StrId::Menu_RtDebug))) {

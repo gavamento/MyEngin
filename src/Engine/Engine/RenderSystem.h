@@ -57,6 +57,10 @@ struct PrevWorldStore {
     }
 };
 
+// M55c の PrevRenderWorldStore (「前フレームに **実際に描いた** world 行列」) は
+// RenderTypes.h にある。ここ (Engine 層) ではなく Renderer 層に置いたのは、
+// RenderSelfTest が Renderer 層にあり、上位層を include できないため。
+
 // エディタカメラ等でシーンカメラを上書きするためのビュー指定
 struct CameraOverride {
     DirectX::XMFLOAT4X4 view = {};
@@ -65,6 +69,11 @@ struct CameraOverride {
     float nearZ = 0.1f;
     float farZ = 1000.0f;
     int32_t debugViewMode = 0; // SceneView 表示モード (M40b): 0=Lit 1=Unlit 2=Wireframe
+    // M55b: 呼び出し側が組んだ射影をそのまま使う。SceneView は Ortho トグルと
+    // ギズモ/ピッキング用に同じ行列を自前で持っていたので、渡してもらって二重構築を無くす
+    // (fovYDeg/nearZ/farZ から組み直す従来経路は hasProj=false のときだけ通る)。
+    bool hasProj = false;
+    DirectX::XMFLOAT4X4 proj = {};
 };
 
 // 環境コンポーネント収集 (M29d): 最初 (entity.index 最小) の active な Skybox/Fog を
@@ -133,6 +142,17 @@ public:
     // roughness が kRtReflMaxRoughness を超える面は従来どおり IBL プリフィルタのまま
     // (ローブが広すぎて 1spp が成立せず、かつ IBL との差も縮むため)
     bool enableRtRefl = false;
+    // M55b: TAA 用カメラジッタの振幅 (サブピクセル単位。1.0 = ±0.5 画素の全振幅)。
+    // ジッタ列は viewKey 別の描画通番から引くので実時間に依存しない (決定的撮影で再現する)。
+    // ★M55d: **ジッタが載るのは RenderView::taaEnabled != 0 のビューだけ**。
+    //   TAA が走らないのにジッタだけ載せると画面が毎フレーム半ピクセル揺れるので、
+    //   「TAA off = ジッタ 0 = 従来と 1 ビットも変わらない絵」を判定 1 箇所で守る。
+    //   この値は「TAA が有効なときの振幅」で、0 にすればジッタだけ止められる (A/B 用)
+    float jitterAmplitude = 1.0f;
+    // M55c: velocity バッファ (GBuffer RT4) の可視化 (--velocity-debug / View メニュー)。
+    // 0 = off。Deferred のみ。velocity を読む本番の消費者はまだ居ない (M55d/M55e/M55f)
+    // ので、これが唯一の「本当に書けているか」の目視口になる
+    int velocityDebugMode = 0;
 
     // M44d: ポストプロセス解決の GPU 時間 (直近の Resolve、ProfilerWindow 表示用)
     float PostFxGpuMs() const { return postFx_.ResolveGpuMs(); }
@@ -201,6 +221,9 @@ private:
     // M46d: viewKey 毎の描画通番 (Render 1 回で 1 進む)。テンポラル蓄積が
     // 「前フレームも同じビューを描いたか」を判定するのに使う (RT の on/off で履歴が混ざらない)
     uint32_t viewSerial_[4] = {};
+    // M55c: viewKey 毎の「前フレームに実際に描いた world 行列」(velocity の出所)。
+    // viewKey==0 (AssetPreview) は履歴を持たない = velocity は常に 0
+    PrevRenderWorldStore prevRender_[4];
     // M46b: レイトレ (遅延 Init)。rtDebugMode == 0 のあいだは一切触らない
     RtScene rtScene_;
     RtPasses rtPasses_;

@@ -33,6 +33,20 @@ cbuffer BonePalette : register(b3)
     float4x4 gBones[MYE_MAX_BONES];
 };
 
+// M55c: 画面速度 (GBuffer RT4) 用。詳細は deferred_gbuffer.hlsl と同じ。
+// ★v1 制限: **前フレームのボーンパレットを持っていない** ので、前フレーム位置は
+//   「今フレームのスキニング済みローカル座標 × 前フレームの world」で作る。
+//   カメラの動きとエンティティ自体の移動は正確に出るが、**ボーン変形ぶんの速度は 0**。
+//   (計画の言う「スキンメッシュはカメラのみ再投影へ縮退」の実体がこれ)
+cbuffer VelocityParams : register(b4)
+{
+    float4x4 gPrevViewProj;
+    float4x4 gPrevWorld;
+    float2   gJitterNdc;
+    int      gVelocityValid;
+    float    _velPad;
+};
+
 Texture2D    gAlbedoTex : register(t0);
 Texture2D    gNormalTex : register(t1);
 SamplerState gSampler   : register(s0);
@@ -52,6 +66,8 @@ struct VSOut
     float3 normalW : NORMAL;
     float2 uv      : TEXCOORD0;
     float3 posW    : TEXCOORD1;
+    float4 curClip  : TEXCOORD2; // M55c
+    float4 prevClip : TEXCOORD3;
 };
 
 VSOut VSMain(VSIn v)
@@ -78,6 +94,9 @@ VSOut VSMain(VSIn v)
     o.normalW = normalize(mul(localNrm, (float3x3)gWorld));
     o.uv = v.uv;
     o.posW = posW.xyz;
+    o.curClip = o.pos;
+    // localPos は「今フレームの」スキニング結果 (v1 制限。上の cbuffer コメント参照)
+    o.prevClip = mul(mul(float4(localPos, 1.0f), gPrevWorld), gPrevViewProj);
     return o;
 }
 
@@ -87,6 +106,7 @@ struct PSOut
     float4 normal   : SV_Target1;
     float4 position : SV_Target2;
     float4 material : SV_Target3;
+    float2 velocity : SV_Target4; // M55c
 };
 
 // --- 以下 PS は deferred_gbuffer.hlsl と同一 ---
@@ -103,5 +123,7 @@ PSOut PSMain(VSOut i)
     o.normal = float4(n * 0.5f + 0.5f, 1.0f);
     o.position = float4(i.posW, 1.0f);
     o.material = float4(gMetallic, gRoughness, EncodeEmissive(gEmissive), 1.0f);
+    o.velocity = (gVelocityValid != 0) ? ComputeVelocityUv(i.curClip, i.prevClip, gJitterNdc)
+                                       : float2(0.0f, 0.0f);
     return o;
 }

@@ -86,6 +86,10 @@ MYE_STR(Menu_PostFx,          "Post FX",           "ポストエフェクト")
 MYE_STR(Menu_RtGi,            "RT GI (Deferred)",  "RT GI (Deferred)")
 MYE_STR(Menu_RtShadow,        "RT Shadow (Deferred)",     "RT 影 (Deferred)")
 MYE_STR(Menu_RtReflection,    "RT Reflection (Deferred)", "RT 反射 (Deferred)")
+// M55c: velocity バッファ (GBuffer RT4) の可視化。接頭辞 Taa_* は M55 の予約 (統合契約 予約 5)
+MYE_STR(Taa_VelocityDebug,    "Velocity Buffer (Deferred)", "velocity バッファ (Deferred)")
+// M55d: TAA 本体。カメラジッタもこのトグルと連動する (片方だけ on にはできない)
+MYE_STR(Taa_Enable,           "TAA (Deferred)",             "TAA (Deferred)")
 
 // ---- 影 (M54e)。View > 影 サブメニュー。統合契約 予約 5 の接頭辞 Shadow_* ----
 // 統計行の書式指定子の並びは en / ja で一致必須 (規則 10 が機械検査する)

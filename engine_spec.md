@@ -222,8 +222,46 @@ letting the Deferred path carry the effects that need a G-Buffer. See ADR-007.
 
 - **Forward** — opaque + transparent + particles in one pass. Also used as the transparent
   tail of the Deferred path, so the two never diverge in lighting
-- **Deferred** — 4 render targets (albedo / world normal / world position / metal-roughness-emissive).
+- **Deferred** — 5 render targets (albedo / world normal / world position /
+  metal-roughness-emissive / screen-space velocity, M55c).
   SSAO, screen-space effects and the ray-traced lanes of §6.4 hook in here
+  - **Velocity (RT4, `R16G16_FLOAT`)** holds `current UV - previous UV`, so a consumer
+    reads history at `uv - velocity`. The previous position comes from a per-view store of
+    the world matrix that was **actually drawn last frame** — not the previous *tick*
+    snapshot used for render interpolation, which would overshoot by up to one tick.
+    The current clip position is jittered (§ TAA), so the jitter is subtracted back out
+    before differencing; the stored previous view-projection is jitter-free.
+    **Not covered in v1**: there is no previous-frame bone palette, so a skinned mesh
+    reports only camera and object-transform motion — the bone deformation itself
+    contributes zero velocity. Consumed by TAA (M55d), motion blur (M55e) and the
+    ray-traced temporal lane (M55f).
+    `View > Rendering > Velocity Buffer` (or `--velocity-debug`) visualizes it
+
+**Temporal antialiasing (M55d, default off).** `CameraPostFx.taaOn` — or the global
+`View > Rendering > TAA` / `--taa` — turns the camera jitter and the TAA resolve on *together*.
+They are deliberately one switch: jittering without resolving is just a frame that shakes by half
+a pixel. The resolve runs at the head of the post-processing chain, ahead of depth of field, and
+blends the current HDR frame with the previous TAA result reprojected through the velocity buffer
+(`prevUv = uv - velocity`, so the jitter is already subtracted out). The reprojected history is
+clamped into the colour box formed by the current 3x3 neighbourhood, which is what throws history
+away on a pixel whose occluder has just moved. History is keyed by **view key**, not by
+resolution, so the Scene view and the Game view cannot eat each other's history at equal sizes;
+it is dropped when the draw serial skips or the view resizes, and a dropped history emits the
+current frame unchanged (the first frames of a capture therefore behave, rather than needing a
+converged history).
+**Not covered in v1**: TAA is Deferred-only, since velocity is a G-Buffer target. Asking for it
+on the Forward path is a no-op down to the jitter, so that image stays bit-identical.
+
+**Motion blur (M44d, extended in M55e, default off).** `CameraPostFx.motionBlurIntensity` — or the
+global `--motion-blur N` — smears each pixel along its screen-space velocity with an 8-tap average,
+clamped to `mbMaxPixels`. The velocity source is chosen **per pixel**: a pixel that has G-Buffer
+geometry (`depth < 1`) reads the velocity target, which already carries camera *and* object motion,
+so a spinning object blurs under a stationary camera; every other pixel — the sky, the background,
+and the whole Forward path — falls back to the M44d depth reprojection, which is camera-only.
+The fallback is not a leftover: the background never writes the G-Buffer, so its velocity stays
+zero, and reading it there would freeze the sky while the camera pans. Both branches use the
+jitter-free projection at both ends. Motion blur is forced off in the Scene view, because a smear
+that follows the editor camera fights with editing.
 
 ### 6.2 Feature Scope
 
@@ -235,7 +273,7 @@ letting the Deferred path carry the effects that need a G-Buffer. See ADR-007.
 | Lighting | Implemented | Directional / Point / Spot (max 16) + ambient, Cook-Torrance PBR |
 | Particle rendering | Implemented | See Chapter 7 |
 | Shadow mapping | Implemented | 3-cascade CSM with PCF |
-| Post-processing | Implemented | HDR, bloom, tonemap, FXAA, DoF, motion blur, auto-exposure, LUT |
+| Post-processing | Implemented | HDR, bloom, tonemap, FXAA, TAA, DoF, motion blur, auto-exposure, LUT |
 | Skeletal animation | Implemented | 128-bone palette, glTF / FBX skinning |
 | Image-based lighting | Implemented | Irradiance + prefiltered specular + BRDF LUT |
 | Ray-traced secondary rays | Implemented | See §6.4 (default off) |
@@ -274,9 +312,17 @@ Design rationale and measured cost: **ADR-009**.
 - **Determinism**: this is a render-only lane. Randomness is a stateless PCG3D hash of
   (pixel, frame index), never read back to the CPU, and never hashed into the world state —
   the same exemption ADR-008 grants GPU particles
+- **Reprojection (M55f)**: the temporal lane reads its history at `uv - velocity` (§6.2 RT4),
+  which carries camera *and* object motion, so a moving object no longer drags its history
+  behind it. Where the velocity target is unavailable — the frame that has no previous-frame
+  matrices — it falls back to the original M46d path, projecting the current world position
+  through the previous view-projection (camera motion only). The disocclusion test still
+  compares the *current* world position's distance to the previous camera, because a 2D
+  velocity cannot restore the previous camera distance: an object that changes its distance
+  to the camera by more than 5% in one frame drops its history and falls back to 1 spp
 - **Not covered in v1**: skinned meshes and transparents are absent from the BVH, secondary
-  hits shade from material constants only (no bindless textures), moving objects ghost
-  (no object motion vectors), and local lights cast no ray-traced shadows
+  hits shade from material constants only (no bindless textures), and local lights cast no
+  ray-traced shadows
 
 ### 6.5 Deliberate Non-Goals of the Rendering Roadmap (M54-M58)
 
@@ -567,11 +613,12 @@ a GPU-less runner an acceptable place to prove determinism. Golden screenshots, 
 *are* driver-dependent and are therefore always captured with `--warp`.
 
 **Screenshot regression (M52c).** Hashes prove that the *simulation* is reproducible; they say
-nothing about what is drawn. `tools\shot_verify.bat` captures eight deterministic screenshots with
+nothing about what is drawn. `tools\shot_verify.bat` captures nine deterministic screenshots with
 `Runtime.exe` (no ImGui, so neither `imgui.ini` nor the cursor position can leak in) and compares
 them against `tests\golden\*.png` pixel by pixel, writing a difference heat map next to any shot
-that moved. `--update` re-records the golden set. Seven of the eight gate CI; the eighth exists
-only to cover FXAA and is skipped there (`MYE_SHOT_SKIP_FXAA`, see below). Two of the seven
+that moved. `--update` re-records the golden set. Seven of the nine gate CI; the other two exist
+only to cover FXAA and TAA — both compared at `--tol 0` and both skipped on the runner
+(`MYE_SHOT_SKIP_FXAA` / `MYE_SHOT_SKIP_TAA`, see below). Two of the seven
 (`demo_render_forward` / `demo_render_deferred`, M54a) shoot the `--render-demo` showcase, which
 is the only golden scene carrying spot and point lights -- without it every feature added by the
 M54-M58 rendering roadmap would be pixel-invariant by default and land with zero coverage.
@@ -605,8 +652,16 @@ flips a threshold and the blend weight changes with it, which is why the residua
 along geometry edges rather than as a uniform shift. Dropping FXAA from the capture therefore buys
 back a strict `--tol 3` comparison over the entire frame, instead of the `--tol 35` that keeping it
 would demand — a bad trade, since a 35-level allowance would hide a real regression anywhere on
-screen for the sake of one resolve pass. FXAA itself stays covered by the sixth shot, compared at
-`--tol 0` on the developer's machine where bit-exactness does hold.
+screen for the sake of one resolve pass. FXAA itself stays covered by `demo_forward_fxaa`, compared
+at `--tol 0` on the developer's machine where bit-exactness does hold.
+
+TAA (M55d) is held out of CI for the same reason, pre-emptively: its neighbourhood min/max clamp
+is the same shape of computation as the FXAA luma threshold — a branch that a one-ULP difference
+can flip — and unlike FXAA its result feeds the next frame's history, so any divergence
+accumulates instead of staying local. The amplification factor has not been measured on a runner,
+and putting the shot in CI before measuring it would only add a red image nobody can explain.
+`demo_render_taa` is therefore local-only at `--tol 0` (`MYE_SHOT_SKIP_TAA`), captured with
+`--no-fxaa` so that its whole difference from `demo_render_deferred` is TAA and nothing else.
 
 Debug and Release produce bit-identical images, so the golden set is captured from Release only. The
 comparison itself (`--img-diff A B [--tol N] [--fail-pixels N] [--diff-out PNG]`) distinguishes

@@ -107,6 +107,8 @@ void SceneViewWindow::OnRenderViews(EngineContext& ctx, Selection& selection)
     XMStoreFloat4x4(&cam.view, XMMatrixInverse(nullptr, camWorld));
     cam.position = camPos_;
     cam.fovYDeg = kEditorFovDeg;
+    cam.nearZ = kNearZ; // 下の lastProj_ と同じ定数から引く (既定値への暗黙依存を切る)
+    cam.farZ = kFarZ;
     cam.debugViewMode = viewMode_; // M40b: Lit/Unlit/Wireframe (SceneView のみ)
 
     // ギズモがレンダ画像とピクセル一致するよう、描画と同じ view/proj を保存する
@@ -118,6 +120,13 @@ void SceneViewWindow::OnRenderViews(EngineContext& ctx, Selection& selection)
                                  static_cast<float>(rt_.Height()) * 0.02f, kNearZ, kFarZ)
         : XMMatrixPerspectiveFovLH(XMConvertToRadians(kEditorFovDeg), aspect, kNearZ, kFarZ);
     XMStoreFloat4x4(&lastProj_, proj);
+    // M55b: 射影の組み立てはここ 1 箇所に集約し、描画側 (RenderSystem) には組み直させない。
+    // これまで RenderSystem は fovYDeg から透視を組み直していたので、Ortho トグルが
+    // オーバーレイ/ギズモ/ピッキングにしか効かず絵は常に透視のまま = 3 者が食い違っていた。
+    // ジッタ (M55b) はこの行列を **元** に RenderSystem 側で載せる — lastProj_ は
+    // 非ジッタのまま = ギズモとピッキングは揺れない
+    cam.hasProj = true;
+    cam.proj = lastProj_;
 
     FrameTarget target;
     target.rtv = rt_.RTV();
