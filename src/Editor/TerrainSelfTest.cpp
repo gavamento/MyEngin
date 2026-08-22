@@ -60,6 +60,45 @@ TerrainAsset::TerrainData MakeTestTerrain(uint32_t hw = 17, uint32_t hh = 9)
     return d;
 }
 
+// LOD の検査用に**わざと非線形**な地形 (M58e)。
+// ★MakeTestTerrain は高さが x と z の 1 次式なので、LOD で間引いた制御点を線形補間しても
+//   元の高さと**完全に一致してしまう** — 「LOD 境界の段差」が構造的にゼロになり、
+//   クラック検査が何も検査しないまま緑になる (実際に一度そうなった)。
+//   整数ハッシュで隣接 texel を無相関にして、間引きが必ず誤差を生む状態にする
+TerrainAsset::TerrainData MakeBumpyTerrain(uint32_t hw = 17, uint32_t hh = 17)
+{
+    TerrainAsset::TerrainData d;
+    d.heightW = hw;
+    d.heightH = hh;
+    d.splatW = 4;
+    d.splatH = 4;
+    d.worldSizeX = 64.0f;
+    d.worldSizeZ = 64.0f;
+    d.heightBase = -2.0f;
+    d.heightScale = 20.0f;
+    d.heights.resize(static_cast<size_t>(hw) * hh);
+    for (uint32_t z = 0; z < hh; ++z) {
+        for (uint32_t x = 0; x < hw; ++x) {
+            uint32_t h = 2166136261u; // FNV-1a (実時間も rand() も混ざらない = 決定論)
+            h = (h ^ (x + 1u)) * 16777619u;
+            h = (h ^ (z + 1u)) * 16777619u;
+            // ★雪崩化 (finalizer) が要る。FNV だけだと隣の texel との差が「低位ビットの差 x
+            //   16777619」= 抽出する bit 8..23 でほぼ 1 しか動かず、**結果としてまた
+            //   ほぼ 1 次式の地形**になる (段差 1.2m しか出ず、検査がほとんど効かなかった)
+            h ^= h >> 15;
+            h *= 2246822519u;
+            h ^= h >> 13;
+            d.heights[static_cast<size_t>(z) * hw + x] = static_cast<uint16_t>(h & 0xFFFFu);
+        }
+    }
+    d.splat.assign(static_cast<size_t>(d.splatW) * d.splatH * 4, 0);
+    for (size_t i = 0; i < d.splat.size(); i += 4) {
+        d.splat[i] = static_cast<uint8_t>(TerrainAsset::kSplatWeightSum);
+    }
+    d.layers.push_back({ "base", "", "", 8.0f, 8.0f });
+    return d;
+}
+
 // 行ベクトル規約の view*proj から視錐台を作る (RenderSystem と同じ手順)
 Frustum MakeFrustum(const XMFLOAT3& eye, const XMFLOAT3& at, const XMFLOAT3& up, float fovDeg,
                     float nearZ, float farZ)
@@ -497,6 +536,423 @@ bool RunTerrainSelfTest()
             allEnabled = allEnabled && s.layers[i].tint.w == 1.0f;
         }
         check(allEnabled, "terrain: all four splat channels are usable");
+    }
+
+    // ---- (12) LOD + スカート (M58e) ----
+    // ★このサブの主張は「LOD 境界に隙間が出ない」。絵で見ると 1〜2 画素の筋なので、
+    //   目視は当てにならない。ここでは**生成したメッシュそのもの**から縁の折れ線を
+    //   取り出して、LOD の違う 2 枚の縁の縦の食い違いがスカート深さ以下であることを測る
+    //   (この不等式が成り立てば 2 枚の面の縦区間が必ず重なる = 幾何的に穴が開かない)。
+    {
+        // 折れ線 (t 昇順) を t で評価する。範囲外は端の値
+        auto evalPoly = [](const std::vector<std::pair<float, float>>& pts, float t) {
+            if (pts.empty()) {
+                return 0.0f;
+            }
+            if (t <= pts.front().first) {
+                return pts.front().second;
+            }
+            if (t >= pts.back().first) {
+                return pts.back().second;
+            }
+            for (size_t i = 0; i + 1 < pts.size(); ++i) {
+                if (t <= pts[i + 1].first) {
+                    const float span = pts[i + 1].first - pts[i].first;
+                    const float w = span > 0.0f ? (t - pts[i].first) / span : 0.0f;
+                    return pts[i].second + (pts[i + 1].second - pts[i].second) * w;
+                }
+            }
+            return pts.back().second;
+        };
+        // 生成済みメッシュの縁 1 列/1 行を (沿った座標, y) の折れ線として取り出す。
+        // **メッシュから取る**のが要点 — ComputeMaxLodEdgeGap の内部式を写して比べると
+        // 実装を実装で検算するだけになる
+        auto rim = [](const std::vector<MeshVertex>& v, uint32_t vx, uint32_t vz, bool alongZ,
+                      bool farSide, std::vector<std::pair<float, float>>& out) {
+            out.clear();
+            if (alongZ) {
+                const uint32_t ix = farSide ? vx - 1 : 0;
+                for (uint32_t iz = 0; iz < vz; ++iz) {
+                    const MeshVertex& mv = v[static_cast<size_t>(iz) * vx + ix];
+                    out.push_back({ mv.position.z, mv.position.y });
+                }
+            } else {
+                const uint32_t iz = farSide ? vz - 1 : 0;
+                for (uint32_t ix = 0; ix < vx; ++ix) {
+                    const MeshVertex& mv = v[static_cast<size_t>(iz) * vx + ix];
+                    out.push_back({ mv.position.x, mv.position.y });
+                }
+            }
+        };
+        // 格子の頂点数 (スカートを除いた本体ぶん)
+        auto gridSize = [](const TerrainChunk& c, uint32_t lod, uint32_t& vx, uint32_t& vz) {
+            std::vector<uint32_t> s;
+            TerrainLodSamples(c.tileX0, c.tilesX, TerrainLodStride(lod), s);
+            vx = static_cast<uint32_t>(s.size());
+            TerrainLodSamples(c.tileZ0, c.tilesZ, TerrainLodStride(lod), s);
+            vz = static_cast<uint32_t>(s.size());
+        };
+
+        // (12a) LOD 選択 — 純関数。lodDistance == 0 は「無効」であって「最遠」ではない
+        check(SelectTerrainLod(0.0f, 0.0f) == 0 && SelectTerrainLod(1e9f, 0.0f) == 0,
+              "terrain lod: lodDistance 0 disables LOD entirely (never picks a coarse level)");
+        check(SelectTerrainLod(79.0f, 80.0f) == 0 && SelectTerrainLod(80.0f, 80.0f) == 1
+                  && SelectTerrainLod(159.0f, 80.0f) == 1 && SelectTerrainLod(160.0f, 80.0f) == 2,
+              "terrain lod: the switch distance doubles with each level");
+        check(SelectTerrainLod(1e9f, 80.0f) == kTerrainLodCount - 1,
+              "terrain lod: the level is clamped to the last built LOD");
+        check(SelectTerrainLod(-50.0f, 80.0f) == 0
+                  && SelectTerrainLod(std::nanf(""), 80.0f) == 0,
+              "terrain lod: a chunk behind the camera (or NaN depth) falls back to LOD 0");
+
+        // (12b) 刻み — 末尾がチャンクの端でないと同 LOD の隣接チャンクすら縁を共有できない
+        {
+            std::vector<uint32_t> s;
+            TerrainLodSamples(0, 8, 1, s);
+            check(s.size() == 9 && s.front() == 0 && s.back() == 8,
+                  "terrain lod: stride 1 samples every texel (LOD 0 is the full grid)");
+            TerrainLodSamples(8, 8, 4, s);
+            check(s.size() == 3 && s[0] == 8 && s[1] == 12 && s[2] == 16,
+                  "terrain lod: a stride that divides the chunk gives an even sample list");
+            TerrainLodSamples(0, 5, 4, s);
+            check(s.size() == 3 && s[0] == 0 && s[1] == 4 && s[2] == 5,
+                  "terrain lod: a remainder chunk keeps its exact end texel (short last cell)");
+            TerrainLodSamples(0, 2, 8, s);
+            check(s.size() == 2 && s[0] == 0 && s[1] == 2,
+                  "terrain lod: a chunk smaller than the stride collapses to a single cell");
+        }
+
+        const TerrainAsset::TerrainData d = MakeBumpyTerrain(); // tiles 16 x 16 (非線形)
+        TerrainChunkLayout layout;
+        BuildChunkLayout(d, 4, layout); // 4 x 4 = 16 チャンク (両方向に内側の縁がある)
+        const float rawGap = ComputeMaxLodEdgeGap(d, layout, kTerrainLodCount);
+        const float skirt = rawGap * kTerrainSkirtMargin;
+
+        // (12c) 段差の計測そのもの
+        check(rawGap > 0.0f, "terrain lod: a bumpy heightfield reports a non-zero LOD edge gap");
+        check(ComputeMaxLodEdgeGap(d, layout, 1) == 0.0f,
+              "terrain lod: with a single LOD there is no edge gap to close");
+        {
+            TerrainAsset::TerrainData flat = MakeBumpyTerrain();
+            std::fill(flat.heights.begin(), flat.heights.end(), static_cast<uint16_t>(12345));
+            TerrainChunkLayout fl;
+            BuildChunkLayout(flat, 4, fl);
+            check(ComputeMaxLodEdgeGap(flat, fl, kTerrainLodCount) == 0.0f,
+                  "terrain lod: a flat heightfield needs no skirt at all (gap is exactly 0)");
+        }
+
+        // (12d) LOD メッシュの形 — 頂点が減り、index は自分の頂点だけを指す
+        {
+            const TerrainChunk& c = *layout.At(1, 0); // 内側 (4 辺すべてに隣が居るとは限らない)
+            std::vector<MeshVertex> v0, v2;
+            std::vector<uint32_t> i0, i2;
+            BuildChunkMesh(d, c, v0, i0, 0, 0.0f);
+            BuildChunkMesh(d, c, v2, i2, 2, 0.0f);
+            uint32_t vx2 = 0, vz2 = 0;
+            gridSize(c, 2, vx2, vz2);
+            check(v2.size() == static_cast<size_t>(vx2) * vz2 && v2.size() < v0.size(),
+                  "terrain lod: a coarser LOD builds a smaller vertex grid");
+            bool inRange = true;
+            for (uint32_t i : i2) {
+                inRange = inRange && i < v2.size();
+            }
+            // ★index を chunk.tilesX で回すと LOD で間引いた分だけ頂点数を飛び越える
+            check(inRange && !i2.empty(),
+                  "terrain lod: coarse indices address the coarse grid (not the LOD 0 counts)");
+            // 4 隅は LOD に依らず同じ texel = ビット一致 (縁の共有の土台)
+            check(std::memcmp(&v0[0].position, &v2[0].position, sizeof(XMFLOAT3)) == 0
+                      && std::memcmp(&v0[v0.size() - 1].position, &v2[v2.size() - 1].position,
+                                     sizeof(XMFLOAT3)) == 0,
+                  "terrain lod: the chunk corners are identical at every LOD");
+        }
+
+        // (12e) ★本命: LOD 境界の食い違い <= スカート深さ (= 隙間が幾何的に塞がる)
+        {
+            float worstSeen = 0.0f;
+            bool covered = true;
+            std::vector<MeshVertex> va, vb;
+            std::vector<uint32_t> ia, ib;
+            std::vector<std::pair<float, float>> pa, pb;
+            // alongZ = x 方向に隣り合う 2 枚 (縁は z に沿う) / false = z 方向に隣り合う 2 枚。
+            // **両方向を回す** — 片方だけだと「行と列を取り違えた」実装が緑のまま通る
+            auto sweepPair = [&](const TerrainChunk& a, const TerrainChunk& b, bool alongZ) {
+                for (uint32_t la = 0; la < kTerrainLodCount; ++la) {
+                    for (uint32_t lb = 0; lb < kTerrainLodCount; ++lb) {
+                        BuildChunkMesh(d, a, va, ia, la, skirt);
+                        BuildChunkMesh(d, b, vb, ib, lb, skirt);
+                        uint32_t ax = 0, az = 0, bx = 0, bz = 0;
+                        gridSize(a, la, ax, az);
+                        gridSize(b, lb, bx, bz);
+                        rim(va, ax, az, alongZ, true, pa);  // a の +X / +Z 縁
+                        rim(vb, bx, bz, alongZ, false, pb); // b の -X / -Z 縁
+                        // 縁を 64 点で舐める (制御点の位置が LOD でずれるので、格子ではなく
+                        // 連続なパラメータで比べないと最悪点を跨いでしまう)
+                        for (int k = 0; k <= 64; ++k) {
+                            const float t = pa.front().first
+                                + (pa.back().first - pa.front().first)
+                                    * (static_cast<float>(k) / 64.0f);
+                            const float diff = std::fabs(evalPoly(pa, t) - evalPoly(pb, t));
+                            worstSeen = std::max(worstSeen, diff);
+                            covered = covered && diff <= skirt;
+                        }
+                    }
+                }
+            };
+            for (uint32_t cz = 0; cz < layout.countZ; ++cz) {
+                for (uint32_t cx = 0; cx + 1 < layout.countX; ++cx) {
+                    sweepPair(*layout.At(cx, cz), *layout.At(cx + 1, cz), true);
+                }
+            }
+            for (uint32_t cz = 0; cz + 1 < layout.countZ; ++cz) {
+                for (uint32_t cx = 0; cx < layout.countX; ++cx) {
+                    sweepPair(*layout.At(cx, cz), *layout.At(cx, cz + 1), false);
+                }
+            }
+            // ★1 m 以上の食い違いを要求する。「> 0」だと、地形の高さが縁に沿って 1 次式に
+            //   なっている fixture (旧 MakeTestTerrain がまさにそれだった) で丸め誤差だけの
+            //   1e-5 が通ってしまい、クラック検査が何も検査しないまま緑になる
+            check(worstSeen > 1.0f,
+                  "terrain lod: mixed-LOD neighbours really do disagree along the shared edge");
+            // ★これが「クラックが出ない」の機械証明。スカートは勘の値ではなく、
+            //   ComputeMaxLodEdgeGap が測った最悪段差から導いている
+            check(covered,
+                  "terrain lod: the auto skirt is deeper than every LOD edge mismatch (no cracks)");
+            MYE_LOG_INFO("  terrain lod: worst edge mismatch %.4f m, auto skirt %.4f m",
+                         static_cast<double>(worstSeen), static_cast<double>(skirt));
+        }
+
+        // (12f) スカートの形 — 外周には出さない / 深さはちょうど skirt / index は範囲内
+        {
+            const TerrainChunk& corner = *layout.At(0, 0); // 隣は +X と +Z の 2 辺だけ
+            const TerrainChunk& mid = *layout.At(1, 0);    // -X / +X / +Z の 3 辺
+            std::vector<MeshVertex> v;
+            std::vector<uint32_t> idx;
+            uint32_t vx = 0, vz = 0;
+
+            BuildChunkMesh(d, corner, v, idx, 0, skirt);
+            gridSize(corner, 0, vx, vz);
+            const size_t grid = static_cast<size_t>(vx) * vz;
+            check(v.size() == grid + vz + vx,
+                  "terrain lod: a corner chunk skirts only its two interior edges");
+
+            BuildChunkMesh(d, mid, v, idx, 0, skirt);
+            gridSize(mid, 0, vx, vz);
+            const size_t gridMid = static_cast<size_t>(vx) * vz;
+            check(v.size() == gridMid + 2 * vz + vx,
+                  "terrain lod: an edge chunk skirts three edges (the outer one stays open)");
+
+            bool depthOk = true;
+            bool idxOk = true;
+            for (size_t i = gridMid; i < v.size(); ++i) {
+                // スカート頂点は必ず「格子のどこかの頂点のちょうど skirt 下」
+                bool found = false;
+                for (size_t g = 0; g < gridMid && !found; ++g) {
+                    found = v[i].position.x == v[g].position.x
+                        && v[i].position.z == v[g].position.z
+                        && std::fabs((v[g].position.y - v[i].position.y) - skirt) < 1e-3f;
+                }
+                depthOk = depthOk && found;
+            }
+            for (uint32_t i : idx) {
+                idxOk = idxOk && i < v.size();
+            }
+            check(depthOk, "terrain lod: every skirt vertex hangs exactly the skirt depth below");
+            check(idxOk, "terrain lod: skirt indices stay inside the chunk's vertex buffer");
+
+            // 単一チャンクの地形 = 割れる縁が無い = スカートを 1 枚も出さない
+            TerrainChunkLayout single;
+            BuildChunkLayout(d, kTerrainMaxChunkTiles, single);
+            check(single.chunks.size() == 1, "terrain lod: the test terrain fits one chunk");
+            BuildChunkMesh(d, single.chunks[0], v, idx, 0, skirt);
+            uint32_t sx = 0, sz = 0;
+            gridSize(single.chunks[0], 0, sx, sz);
+            check(v.size() == static_cast<size_t>(sx) * sz,
+                  "terrain lod: a single-chunk terrain grows no skirt (nothing can crack)");
+
+            // スカート無し (skirtDepth <= 0) は M58d までとビット一致のメッシュ
+            std::vector<MeshVertex> plain;
+            std::vector<uint32_t> plainIdx;
+            BuildChunkMesh(d, mid, plain, plainIdx, 0, 0.0f);
+            std::vector<MeshVertex> legacy;
+            std::vector<uint32_t> legacyIdx;
+            BuildChunkMesh(d, mid, legacy, legacyIdx);
+            check(plain.size() == legacy.size() && plainIdx == legacyIdx
+                      && std::memcmp(plain.data(), legacy.data(),
+                                     plain.size() * sizeof(MeshVertex)) == 0,
+                  "terrain lod: LOD 0 without a skirt is bit-identical to the pre-LOD mesh");
+        }
+
+        // (12g) スカートの表はチャンクの外向き。裏返っていると裏面カリングで消え、
+        //       絵の上では「隙間が塞がっていない」のと区別が付かない
+        {
+            const TerrainChunk& c = *layout.At(1, 0);
+            std::vector<MeshVertex> v;
+            std::vector<uint32_t> idx;
+            BuildChunkMesh(d, c, v, idx, 1, skirt);
+            uint32_t vx = 0, vz = 0;
+            gridSize(c, 1, vx, vz);
+            const size_t grid = static_cast<size_t>(vx) * vz;
+            const float ccx = (c.localMin.x + c.localMax.x) * 0.5f;
+            const float ccz = (c.localMin.z + c.localMax.z) * 0.5f;
+            bool outward = true;
+            int skirtTris = 0;
+            for (size_t t = 0; t + 2 < idx.size(); t += 3) {
+                if (idx[t] < grid && idx[t + 1] < grid && idx[t + 2] < grid) {
+                    continue; // 地表の三角
+                }
+                ++skirtTris;
+                const XMFLOAT3& p0 = v[idx[t]].position;
+                const XMFLOAT3& p1 = v[idx[t + 1]].position;
+                const XMFLOAT3& p2 = v[idx[t + 2]].position;
+                const XMFLOAT3 e1 = { p1.x - p0.x, p1.y - p0.y, p1.z - p0.z };
+                const XMFLOAT3 e2 = { p2.x - p0.x, p2.y - p0.y, p2.z - p0.z };
+                const float nx = e1.y * e2.z - e1.z * e2.y;
+                const float nz = e1.x * e2.y - e1.y * e2.x;
+                const float cxm = (p0.x + p1.x + p2.x) / 3.0f - ccx;
+                const float czm = (p0.z + p1.z + p2.z) / 3.0f - ccz;
+                outward = outward && (nx * cxm + nz * czm) > 0.0f;
+            }
+            check(skirtTris > 0 && outward,
+                  "terrain lod: skirt triangles face away from the chunk (visible from next door)");
+        }
+
+        // (12h) AABB はスカートの底まで含む (含まないとカリングが見えているチャンクを落とす)
+        {
+            TerrainChunkLayout expanded;
+            BuildChunkLayout(d, 4, expanded);
+            const float before = expanded.chunks[0].localMin.y;
+            ExpandLayoutForSkirt(expanded, kTerrainLodCount, skirt);
+            check(expanded.skirtDepth == skirt && expanded.lodCount == kTerrainLodCount
+                      && std::fabs((before - expanded.chunks[0].localMin.y) - skirt) < 1e-4f,
+                  "terrain lod: the layout records the skirt and drops every AABB floor by it");
+
+            std::vector<MeshVertex> v;
+            std::vector<uint32_t> idx;
+            bool inAabb = true;
+            for (const TerrainChunk& c : expanded.chunks) {
+                for (uint32_t lod = 0; lod < kTerrainLodCount; ++lod) {
+                    BuildChunkMesh(d, c, v, idx, lod, skirt);
+                    for (const MeshVertex& mv : v) {
+                        inAabb = inAabb && mv.position.x >= c.localMin.x
+                            && mv.position.x <= c.localMax.x && mv.position.y >= c.localMin.y
+                            && mv.position.y <= c.localMax.y && mv.position.z >= c.localMin.z
+                            && mv.position.z <= c.localMax.z;
+                    }
+                }
+            }
+            check(inAabb, "terrain lod: the expanded AABB contains every LOD and skirt vertex");
+
+            // LOD 無効ならスカートは出ない = AABB も動かない (既定 = 従来どおり)
+            TerrainChunkLayout off;
+            BuildChunkLayout(d, 4, off);
+            const float floorBefore = off.chunks[0].localMin.y;
+            ExpandLayoutForSkirt(off, 1, skirt);
+            check(off.skirtDepth == 0.0f && off.chunks[0].localMin.y == floorBefore,
+                  "terrain lod: with LOD off the skirt is suppressed and the AABB is untouched");
+        }
+
+        // (12i) 決定論 (LOD + スカートを 2 回組んでバイト一致)
+        {
+            std::vector<MeshVertex> a, b;
+            std::vector<uint32_t> ia, ib;
+            BuildChunkMesh(d, layout.chunks[1], a, ia, 2, skirt);
+            BuildChunkMesh(d, layout.chunks[1], b, ib, 2, skirt);
+            check(ia == ib && a.size() == b.size()
+                      && std::memcmp(a.data(), b.data(), a.size() * sizeof(MeshVertex)) == 0,
+                  "terrain lod: rebuilding a LOD chunk with a skirt yields identical bytes");
+        }
+    }
+
+    // ---- (13) TerrainSystem 経由の LOD 選択 (M58e) ----
+    {
+        std::error_code ec;
+        const fs::path root = fs::temp_directory_path(ec) / L"mye_terrain_lod_selftest";
+        fs::remove_all(root, ec);
+        fs::create_directories(root / L"terrain", ec);
+        const std::string src =
+            R"({"type":"terrain","version":1,"worldSize":[256.0,256.0],)"
+            R"("heightRes":[65,65],"splatRes":[8,8],"heightBase":0.0,"heightScale":24.0,)"
+            R"("procedural":{"seed":7,"octaves":4,"frequency":3.0,"lacunarity":2.0,"gain":0.5},)"
+            R"("layers":[{"name":"a"}]})";
+        {
+            std::ofstream f(root / L"terrain" / L"t.terrain.json",
+                            std::ios::binary | std::ios::trunc);
+            f.write(src.data(), static_cast<std::streamsize>(src.size()));
+        }
+
+        World world;
+        MeshLibrary meshes;
+        TextureLibrary textures;
+        TerrainSystem terrain;
+        const EntityID e = world.CreateEntity("terrain");
+        auto* tc = world.AddComponent<TerrainComponent>(e);
+        std::snprintf(tc->source, sizeof(tc->source), "terrain/t.terrain.json");
+        tc->chunkTiles = 16; // 64 タイル / 16 = 4 x 4 = 16 チャンク
+
+        // 手前から奥まで一望する俯瞰カメラ (チャンクごとに viewZ が大きく違う配置)
+        const Frustum wide =
+            MakeFrustum({ 0, 120, -260 }, { 0, 0, 0 }, { 0, 1, 0 }, 70.0f, 0.1f, 2000.0f);
+        XMFLOAT4X4 view;
+        DirectX::XMStoreFloat4x4(&view,
+                                 DirectX::XMMatrixLookAtLH(DirectX::XMVectorSet(0, 120, -260, 1),
+                                                           DirectX::XMVectorSet(0, 0, 0, 1),
+                                                           DirectX::XMVectorSet(0, 1, 0, 0)));
+        std::vector<TerrainDrawItem> items;
+
+        // LOD 無効 (既定) = 全チャンク LOD 0
+        terrain.Collect(world, meshes, textures, root.wstring(), wide, view, items);
+        bool allLod0 = !items.empty();
+        float minZ = 1e30f, maxZ = -1e30f;
+        for (const TerrainDrawItem& it : items) {
+            allLod0 = allLod0 && it.lod == 0;
+            minZ = std::min(minZ, it.viewZ);
+            maxZ = std::max(maxZ, it.viewZ);
+        }
+        check(allLod0 && terrain.LastLodCount(0) == items.size(),
+              "terrain lod: the default component (lodDistance 0) keeps every chunk at LOD 0");
+        const size_t baseCount = items.size();
+        const AssetID lod0Mesh = items.empty() ? AssetID{} : items[0].mesh;
+
+        // 手前と奥の中間に切替距離を置くと LOD が割れる。**チャンクごとの viewZ を
+        // 使って距離を決める** — 定数を焼くとカメラを触った日に無言で意味を失う
+        tc = world.GetComponent<TerrainComponent>(e);
+        tc->lodDistance = (minZ + maxZ) * 0.5f;
+        terrain.Collect(world, meshes, textures, root.wstring(), wide, view, items);
+        uint32_t lodBits = 0;
+        for (const TerrainDrawItem& it : items) {
+            lodBits |= 1u << it.lod;
+        }
+        // 可視数は「同じ」ではなく「減らない」— スカートぶん AABB が下に伸びるので、
+        // 縁を掠めていたチャンクが増える方向にだけ動きうる
+        check(items.size() >= baseCount && (lodBits & 1u) != 0 && lodBits != 1u,
+              "terrain lod: a mid switch distance splits the visible chunks across LOD levels");
+        check(terrain.LastLodCount(0) + terrain.LastLodCount(1) + terrain.LastLodCount(2)
+                  == items.size(),
+              "terrain lod: the per-level counters add up to the visible chunk count");
+        check(terrain.CacheSize() == 2,
+              "terrain lod: enabling LOD builds a separate cached instance (params are the key)");
+
+        // 極端に短い切替距離 = 全チャンクが最粗 LOD。三角数が LOD 0 より確実に減っていること
+        tc->lodDistance = 0.001f;
+        terrain.Collect(world, meshes, textures, root.wstring(), wide, view, items);
+        bool allCoarse = !items.empty();
+        for (const TerrainDrawItem& it : items) {
+            allCoarse = allCoarse && it.lod == kTerrainLodCount - 1;
+        }
+        const Mesh* coarse = items.empty() ? nullptr : meshes.Get(items[0].mesh);
+        const Mesh* fine = meshes.Get(lod0Mesh);
+        check(allCoarse && coarse != nullptr && fine != nullptr
+                  && coarse->indexCount < fine->indexCount,
+              "terrain lod: the coarsest level really draws fewer triangles than LOD 0");
+
+        // スカート無し (負値) はメッシュを別物にする = キャッシュのキーに効いている
+        tc->skirtDepth = -1.0f;
+        const size_t cacheBefore = terrain.CacheSize();
+        terrain.Collect(world, meshes, textures, root.wstring(), wide, view, items);
+        check(terrain.CacheSize() == cacheBefore + 1,
+              "terrain lod: the skirt setting is part of the cache key (meshes are rebuilt)");
+
+        fs::remove_all(root, ec);
     }
 
     MYE_LOG_INFO("==== Terrain self test: %s ====", failCount == 0 ? "PASS" : "FAIL");

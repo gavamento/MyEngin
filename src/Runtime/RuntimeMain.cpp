@@ -47,6 +47,8 @@ public:
     bool netDemo = false;    // --net-demo (M52i: 2 人ネット対戦のデモ)
     bool renderShowcase = false; // --render-demo (M54a: 描画ロードマップのショーケース)
     bool terrainShowcase = false; // --terrain-demo (M58c: 地形のショーケース)
+    float terrainLodDistance = 0.0f; // --terrain-lod DIST (M58e: 0 = LOD 無効)
+    float terrainSkirtDepth = 0.0f;  // --terrain-skirt D (M58e: 0 = 自動 / < 0 = 無し)
 
     void OnStart(mye::EngineContext& ctx) override
     {
@@ -96,7 +98,7 @@ public:
             // Runtime の verify で初期状態が食い違う
             mye::Prefab::RefreshNonOverridden(*ctx.scene, *ctx.prefabs);
         } else if (terrainShowcase) {
-            mye::BuildTerrainShowcaseScene(ctx); // M58c
+            mye::BuildTerrainShowcaseScene(ctx, terrainLodDistance, terrainSkirtDepth); // M58c/e
         } else if (renderShowcase) {
             mye::BuildRenderShowcaseScene(ctx); // M54a
         } else if (netDemo) {
@@ -285,6 +287,12 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 app.renderShowcase = true; // M54a: 描画ショーケース (shot_verify の 6/7 枚目)
             } else if (arg == L"--terrain-demo") {
                 app.terrainShowcase = true; // M58c: 地形ショーケース (shot_verify の 8 枚目)
+            } else if (arg == L"--terrain-lod" && i + 1 < argc) {
+                // M58e: 地形 LOD の切替距離。**golden は LOD 無しのまま**で、
+                // クラック A/B のときだけ点ける
+                app.terrainLodDistance = static_cast<float>(_wtof(argv[++i]));
+            } else if (arg == L"--terrain-skirt" && i + 1 < argc) {
+                app.terrainSkirtDepth = static_cast<float>(_wtof(argv[++i])); // 負値 = 無し
             } else if (arg == L"--local-players" && i + 1 < argc) {
                 config.localPlayers = _wtoi(argv[++i]); // M52g: 消費する入力レーン数
             } else if (arg == L"--synth-input") {

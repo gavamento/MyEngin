@@ -596,6 +596,16 @@ struct TerrainComponent {
     // ここでは検査しない (Core 層は Engine 層のヘッダを読めないため定数を共有できない —
     // 既定 32 / 範囲 2..256 の正本は Engine\Engine\TerrainSystem.h の kTerrain*ChunkTiles)
     int32_t chunkTiles = 32;
+    // ---- LOD (M58e) ----
+    // LOD 1 へ落とす**カメラ空間深度** (m)。0 = LOD 無効 (既定 = 従来と 1 画素も変わらない)。
+    // LOD n の切替は lodDistance * 2^n で、段が上がるほど遠い。段数の正本は
+    // Engine\Engine\TerrainSystem.h の kTerrainLodCount (Core 層は Engine を読めない)
+    float lodDistance = 0.0f;
+    // LOD 境界の隙間を塞ぐスカートの深さ (m)。**0 = 自動**が既定で、「LOD 対がこの地形の縁に
+    // 作りうる最大段差」を測って使う (TerrainSystem の ComputeMaxLodEdgeGap)。
+    // > 0 で明示指定、**< 0 でスカート無し** (クラックの A/B 用)。
+    // lodDistance == 0 のときは無視される (スカートは LOD 有効時にしか出ない)
+    float skirtDepth = 0.0f;
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 

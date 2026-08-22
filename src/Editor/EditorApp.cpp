@@ -139,7 +139,7 @@ void EditorApp::OnStart(EngineContext& ctx)
     } else if (renderShowcase) {
         BuildRenderShowcaseScene(ctx); // M54a
     } else if (terrainShowcase) {
-        BuildTerrainShowcaseScene(ctx); // M58c
+        BuildTerrainShowcaseScene(ctx, terrainLodDistance, terrainSkirtDepth); // M58c / M58e
     } else {
         BuildDemoScene(ctx, perfRate, perfMax);
     }

@@ -1088,7 +1088,7 @@ void RegisterTerrainShowcaseContent(EngineContext& ctx)
     res.materials.Register("tdemo_marker", m);
 }
 
-void BuildTerrainShowcaseScene(EngineContext& ctx)
+void BuildTerrainShowcaseScene(EngineContext& ctx, float lodDistance, float skirtDepth)
 {
     Scene& s = *ctx.scene;
     RenderResources& res = *ctx.resources;
@@ -1148,6 +1148,12 @@ void BuildTerrainShowcaseScene(EngineContext& ctx)
         auto* t = terrain.AddComponent<TerrainComponent>();
         std::snprintf(t->source, sizeof(t->source), "terrain/demo.terrain.json");
         t->chunkTiles = 32; // 128 タイル / 32 = 4x4 = 16 チャンク
+        // M58e: 既定 0 = LOD 無効。--terrain-lod のときだけ点く。
+        // ★このカメラ (y=50 / z=-142 / 俯角 17°) だとチャンク行の viewZ はおおよそ
+        //   57 / 118 / 179 / 241 m。lodDistance=80 で 3 段すべてが 1 枚の絵に入る =
+        //   LOD 境界が 2 本できるので、クラックが出るなら必ず映る
+        t->lodDistance = lodDistance;
+        t->skirtDepth = skirtDepth;
     }
 
     // ---- 参照用の柱 ----

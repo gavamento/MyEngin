@@ -125,7 +125,12 @@ void RegisterRenderShowcaseContent(EngineContext& ctx);
 // ★被写体は assets\terrain\demo.terrain.json (M58a の手続き生成地形 = 画像非同梱)。
 //   起伏が画面いっぱいに入る俯瞰カメラ + 平行光 1 本 + 参照用の箱だけ —
 //   地形以外の要素を増やすほど「地形が壊れた」以外の理由で golden が割れる
-void BuildTerrainShowcaseScene(EngineContext& ctx);
+//
+// M58e: lodDistance > 0 で地形の LOD を有効化する (--terrain-lod)。**既定 0 = 無効** —
+// golden `demo_terrain_deferred` は LOD 無しの絵のままで、LOD は A/B 撮影でだけ点ける。
+// skirtDepth は TerrainComponent と同じ意味論 (0 = 自動 / < 0 = スカート無し)
+void BuildTerrainShowcaseScene(EngineContext& ctx, float lodDistance = 0.0f,
+                               float skirtDepth = 0.0f);
 
 // 上のショーケースが参照するマテリアルの実体登録
 void RegisterTerrainShowcaseContent(EngineContext& ctx);

@@ -440,6 +440,14 @@ void RegisterBuiltinComponents()
         // 「打った数字が黙って丸められて表示と食い違う」事故が起きない
         MYE_JP("チャンクのタイル数",
                MYE_FIELD_RANGE(TerrainComponent, chunkTiles, Int32, 2.0f, 256.0f)),
+        // M58e: LOD (フィールド表の末尾 append)。既定 0 = 無効なので、既存シーンを
+        // 開き直しても絵は 1 画素も変わらない
+        MYE_JP("LOD 切替距離",
+               MYE_FIELD_TIP(TerrainComponent, lodDistance, Float,
+                             "camera-space depth for LOD 1 (0 = LOD off)")),
+        MYE_JP("スカート深さ",
+               MYE_FIELD_TIP(TerrainComponent, skirtDepth, Float,
+                             "0 = auto (measured LOD edge gap), <0 = no skirt")),
     }, kComponentNoHash);
 }
 
