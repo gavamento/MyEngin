@@ -6,6 +6,7 @@
 #include <DirectXMath.h>
 
 #include "Engine/Core/Components.h"
+#include "Engine/Renderer/PostFxMath.h" // M55a: LinearizeDepth (CPU ミラーの正本)
 
 // パーティクルの放出計画 (burst/duration/loop/playing) と多点グラデーション評価を
 // CPU/GPU 両バックエンドと selftest で共有する純関数群 (D3D 非依存)。
@@ -89,12 +90,13 @@ inline DirectX::XMFLOAT4 EvalParticleColor(const ParticleEmitterComponent& d, fl
     return keys[n - 1].c;
 }
 
-// M42b: ソフトパーティクル。HLSL 側 (particle_render.hlsl / particle_render_gpu.hlsl) と
-// 同一式のミラー — selftest はこちらを検証する。描画専用 (sim/hash 非関与)。
-// 非線形深度 [0,1] -> ビュー空間 z (透視投影)
+// M42b: ソフトパーティクル。非線形深度 [0,1] -> ビュー空間 z (透視投影)。
+// M55a: 式そのものは Renderer/PostFxMath.h::LinearizeDepth へ移した (HLSL 側も
+// common.hlsli の共有版に一本化済み)。ここは既存の呼び出し元と selftest のための別名。
+// PostFxMath.h は D3D 非依存の純数式ヘッダなので、Engine → Renderer の依存方向に沿う。
 inline float LinearizeParticleDepth(float d, float nearZ, float farZ)
 {
-    return nearZ * farZ / std::max(farZ - d * (farZ - nearZ), 1e-4f);
+    return LinearizeDepth(d, nearZ, farZ);
 }
 
 // 深度フェード係数 [0,1]。fadeDist<=0 = 無効 (1.0 = 従来とビット同一)。

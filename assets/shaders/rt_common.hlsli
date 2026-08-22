@@ -65,7 +65,9 @@ struct RtLight {
     float2 _pad;
 };
 
-#define MYE_RT_MAX_LIGHTS 16 // C++ の kMaxLights と同値
+// C++ の kMaxLights (RenderTypes.h) / common.hlsli の MAX_LIGHTS と同値。
+// tools\check_rules.ps1 の規則 9 が 3 者の一致を静的に検査する (M55a で登録)
+#define MYE_RT_MAX_LIGHTS 16
 
 // シーンバッファ (全 RT シェーダ共通の t0-t6 / b0-b1 / s0)
 StructuredBuffer<RtBvhNode> gRtNodes : register(t0);     // 全 BLAS を連結したノード配列

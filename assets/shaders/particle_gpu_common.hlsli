@@ -1,5 +1,12 @@
 // GPU パーティクルの共通定義 (emit / sim / render で共有)
 
+// M55a: LinearizeDepth を共有するために include する。common.hlsli は register 宣言を
+// 一切持たない純関数/構造体だけの束なので、CS (emit/sim) へ持ち込んでも衝突しない。
+// ★懸念だった「PerturbNormal の ddx/ddy が cs_5_0 で落ちる」は起きない —
+//   D3DCompile は未使用関数を検証前に落とすため (fxc /T cs_5_0 /Ges /O3 で実測。
+//   deferred_gbuffer.hlsl の VSMain が同じ理由で通っているのが既存の傍証)。
+#include "common.hlsli"
+
 struct GpuParticle
 {
     float3 pos;

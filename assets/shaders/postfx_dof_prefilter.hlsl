@@ -3,6 +3,8 @@
 // CoC 式は PostFxMath.h::SignedCoC とコメント同期 — 変更時は両方更新。
 // CB は PostProcess.cpp の DofCB と同一レイアウト (3 パス共通)。
 
+#include "common.hlsli" // LinearizeDepth (M55a で共有化)
+
 cbuffer DofCB : register(b0)
 {
     float gFocusDist;  // 焦点距離 (ビュー空間 z)
@@ -34,19 +36,13 @@ VSOut VSMain(uint vid : SV_VertexID)
     return o;
 }
 
-// 非線形深度 [0,1] -> ビュー空間 z (particle_render.hlsl と同式)
-float LinearizeDepth(float d)
-{
-    return gNearZ * gFarZ / max(gFarZ - d * (gFarZ - gNearZ), 1e-4f);
-}
-
 float4 PSMain(VSOut i) : SV_Target
 {
     // 色は linear sample がダウンサンプルを兼ねる。深度は最近傍 1 点 (中心) で十分
     const float3 c = gScene.Sample(gLinear, i.uv).rgb;
     const float2 full = float2(1.0f / gTexelX, 1.0f / gTexelY) * 2.0f; // フル解像度
     const float d = gDepth.Load(int3(int2(i.uv * full), 0));
-    const float z = LinearizeDepth(d);
+    const float z = LinearizeDepth(d, gNearZ, gFarZ);
     const float coc = clamp((z - gFocusDist) / max(gFocusRange, 1e-4f), -1.0f, 1.0f);
     return float4(c, coc);
 }

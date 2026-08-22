@@ -19,7 +19,9 @@ struct RenderResources;
 // ライティングへ渡す (PCF 比較 + 範囲ベースのカスケード選択)。描画専用でハッシュ非対象。
 class ShadowPass {
 public:
-    static constexpr int kCascades = 3; // シェーダの SampleShadowCSM と対
+    // シェーダの SampleShadowCSM (common.hlsli) の vps[] と対。
+    // tools\check_rules.ps1 の規則 9 が配列長の一致を静的に検査する (M55a で登録)
+    static constexpr int kCascades = 3;
 
     bool Init(GraphicsDevice& device, ShaderManager& shaders, int resolution = 2048);
     bool IsReady() const { return ready_; }

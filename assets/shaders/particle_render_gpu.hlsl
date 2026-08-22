@@ -49,13 +49,6 @@ VSOut VSMain(uint vid : SV_VertexID, uint iid : SV_InstanceID)
     return o;
 }
 
-// M42b: 非線形深度 [0,1] -> ビュー空間 z (particle_render.hlsl と同一式)
-float LinearizeSceneDepth(float d)
-{
-    const float n = gParams2.y, f = gParams2.z;
-    return n * f / max(f - d * (f - n), 1e-4f);
-}
-
 float4 PSMain(VSOut i) : SV_Target
 {
     float4 col;
@@ -84,7 +77,8 @@ float4 PSMain(VSOut i) : SV_Target
 
     // ソフトパーティクル (M42b): 0=off (従来とビット同一)。CPU 版 particle_render.hlsl と同一式
     if (gParams2.x > 0.0f) {
-        const float sceneZ = LinearizeSceneDepth(gDepth.Load(int3(int2(i.pos.xy), 0)).r);
+        const float sceneZ =
+            LinearizeDepth(gDepth.Load(int3(int2(i.pos.xy), 0)).r, gParams2.y, gParams2.z);
         col *= saturate((sceneZ - i.viewZ) / max(gParams2.x, 1e-4f));
     }
     return col;

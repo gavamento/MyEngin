@@ -71,7 +71,7 @@ M52 (決定論の再利用) 全 9 サブ完遂・push 済み・CI 全緑 (`9e729
 | M54c シャドウアトラス + スポット | 未 | | |
 | M54d 点光源 (キューブ 6 面) | 未 | | |
 | M54e 3 経路への配線 + UI | 未 | | |
-| M55a `LinearizeDepth` 共有化 | 未 | | |
+| M55a `LinearizeDepth` 共有化 | 済 | (本コミット — `git log --oneline --grep=M55a`) | **ローカルコピーは 3 つではなく 5 つあった** (計画の 3 つ + `particle_render.hlsl` / `particle_render_gpu.hlsl`)。5 つとも完全同値 `n*f/max(f-d*(f-n),1e-4)` で、違いは near/far の出所だけ (cbuffer の名前付きスカラ / `gParams2.yz` / `gCollScreen.zw`) = 全部共有版へ寄せられた。**★計画が懸念した「CS から `common.hlsli` を include すると `PerturbNormal` の ddx/ddy で cs_5_0 が落ちる」は起きない** — D3DCompile は未使用関数を検証前に落とす (`deferred_gbuffer.hlsl` の VSMain が同じ理由で通っているのが既存の傍証)。`common.hlsli` は register 宣言を 1 つも持たないので postfx/particle の独自スロット割当とも衝突しない → **意図的な二重定義はゼロ**で着地。**★検証は golden より強い手が取れる**: fxc を engine と同じフラグ (`/Ges /O3`) で回して全 46 シェーダ・80 エントリポイントのバイトコード SHA256 を HEAD と比較 → **80/80 一致**。golden 8 枚 (全部 maxDiff=0) は「実際に使われるシェーダ」しか被覆しないので、シェーダの純リファクタではこちらを主証拠にする (使い捨てスクリプトなのでリポジトリには残していない — 30 行程度、再作成が早い)。`$constGroups` は 2 件とも登録でき、変異注入 (`MAX_LIGHTS` 16→15 / `vps[3]`→`[4]`) で両方が赤くなることを実証。★限界 1 件: `SampleShadowCSM` は `vp0/vp1/vp2` を個別引数で受けるが「1 ファイル 1 整数」の表現力では引数の本数を検査できない (配列長だけ) — HLSL 側にコメントで注意喚起した。CPU ミラーも 1 本化 (`PostFxMath.h::LinearizeDepth` が正本、`ParticleCurves.h::LinearizeParticleDepth` は別名へ縮退) |
 | M55b カメラジッタの一元化 | 未 | | |
 | M55c velocity バッファ + prev-render ストア | 未 | | |
 | M55d TAA 本体 | 未 | | |

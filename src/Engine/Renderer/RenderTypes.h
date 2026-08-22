@@ -179,6 +179,9 @@ struct GpuLight {
 };
 static_assert(sizeof(GpuLight) == 64, "GpuLight must match HLSL 16-byte packing");
 
+// ライト配列長。**HLSL の MAX_LIGHTS (common.hlsli) / MYE_RT_MAX_LIGHTS (rt_common.hlsli) と
+// 必ず一致させること** — 食い違うと定数バッファのレイアウト不一致として静かに壊れる。
+// tools\check_rules.ps1 の規則 9 が静的に検査する (M55a で登録)
 constexpr int kMaxLights = 16;
 
 // シーンのライト一式 (アンビエント + ライト配列)。RenderSystem が構築し各パスへ渡す。

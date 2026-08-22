@@ -1,6 +1,20 @@
 // 共通ライティングヘルパ。
 // このファイルの変更は include 依存グラフ経由で全依存シェーダを再コンパイルさせる (spec 8.1)
 
+// ---- 深度ユーティリティ (M55a) ----
+// 透視投影の非線形深度 [0,1] → ビュー空間 z。逆行列を要求せず near/far だけで解けるので、
+// 深度 SRV さえあればどのパスからでも呼べる (DoF / ソフトパーティクル / 今後の HZB・SSR・froxel)。
+// 分母の 1e-4 クランプは d==1 かつ near==0 のゼロ除算よけ — 一本化前の 5 つの複製すべてに
+// 同じ形で入っていたので、そのまま共有版の仕様として残す。
+// **CPU ミラー: PostFxMath.h::LinearizeDepth — 変更時は両方更新** (RenderSelfTest が検証)。
+// ★このファイルは register 宣言を 1 つも持たない (純関数 + 構造体だけ) ので、
+//   postfx / particle 系のように独自のスロット割当を持つシェーダからも安全に include できる。
+//   cs_5_0 でも通る — 未使用の PerturbNormal (ddx/ddy) は検証前に落とされるため。
+float LinearizeDepth(float d, float nearZ, float farZ)
+{
+    return nearZ * farZ / max(farZ - d * (farZ - nearZ), 1e-4f);
+}
+
 float3 ApplyDirectionalLight(float3 albedo, float3 normal, float3 lightDir, float3 lightColor,
                              float intensity, float3 ambient)
 {
@@ -8,6 +22,8 @@ float3 ApplyDirectionalLight(float3 albedo, float3 normal, float3 lightDir, floa
     return albedo * (ambient + lightColor * intensity * ndl);
 }
 
+// C++ の kMaxLights (RenderTypes.h) / rt_common.hlsli の MYE_RT_MAX_LIGHTS と同値。
+// tools\check_rules.ps1 の規則 9 が 3 者の一致を静的に検査する (M55a で登録)
 #define MAX_LIGHTS 16
 
 // 自己発光強度を G-Buffer (R8G8B8A8 の b チャンネル) へ詰めるときの正規化上限 (M46i)。
@@ -65,6 +81,9 @@ float SampleShadowPCF(Texture2D shadowMap, SamplerComparisonState samp, float4x4
 // CSM のカスケード選択付き PCF (M38d)。カスケード 0 (最詳細) から順に posW を射影し、
 // 最初にマップ範囲へ収まったスライスで 3x3 比較平均。どれにも入らなければ 1 (影なし)。
 // 範囲ベース選択なので view 深度の受け渡しが不要 (splits はデバッグ用に CB へ残す)。
+// **カスケード数は C++ の ShadowPass::kCascades と一致必須** — 下の vps[3] の配列長は
+// tools\check_rules.ps1 の規則 9 が機械照合する (M55a で登録)。ただし vp0/vp1/vp2 の
+// 引数本数までは照合できないので、増やすときはこの 3 本と呼び出し側も手で直すこと。
 float SampleShadowCSM(Texture2DArray shadowMap, SamplerComparisonState samp, float4x4 vp0,
                       float4x4 vp1, float4x4 vp2, int count, float3 posW, float texelSize)
 {

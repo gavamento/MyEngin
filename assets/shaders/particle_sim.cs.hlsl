@@ -9,13 +9,6 @@ StructuredBuffer<uint> gAliveIn : register(t0);
 Buffer<uint> gCounts : register(t1); // [1] = aliveInCount (typed — CopyStructureCount の宛先)
 Texture2D<float> gDepth : register(t2); // M42e: 前フレームのシーン深度 (未バインド時は enabled=0)
 
-// M42e: 非線形深度 [0,1] -> ビュー空間 z (particle_render 系と同一式)
-float CollLinearizeDepth(float d)
-{
-    const float n = gCollScreen.z, f = gCollScreen.w;
-    return n * f / max(f - d * (f - n), 1e-4f);
-}
-
 // M42e: ピクセル + 深度 -> ワールド位置再構成 (法線推定用)
 float3 CollReconstructWorld(int2 pix, float d)
 {
@@ -56,7 +49,7 @@ void CSMain(uint3 tid : SV_DispatchThreadID)
                 const int2 pix = clamp(int2(uv * gCollScreen.xy), int2(0, 0), maxPix);
                 const float d0 = gDepth.Load(int3(pix, 0));
                 if (d0 < 1.0f) {
-                    const float sceneZ = CollLinearizeDepth(d0);
+                    const float sceneZ = LinearizeDepth(d0, gCollScreen.z, gCollScreen.w);
                     const float pen = clip.w - sceneZ; // >0 = 表面より奥
                     // 貫通が (0, 粒子サイズ + thickness) 内のときだけ反射 (奥の遠景は素通し)
                     if (pen > 0.0f && pen < p.size0 + gCollParams.z) {

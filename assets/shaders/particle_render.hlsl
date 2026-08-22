@@ -1,6 +1,8 @@
 // CPU パーティクル描画 (ビルボード展開を VS で行う)
 // DrawInstanced(4, count) + TRIANGLESTRIP。頂点入力なし (SV_VertexID / SV_InstanceID)
 
+#include "common.hlsli" // LinearizeDepth (M55a で共有化)。register 宣言は含まないので衝突しない
+
 cbuffer ParticleCB : register(b0)
 {
     float4x4 gViewProj;
@@ -23,7 +25,7 @@ cbuffer ParticleCB : register(b0)
     float    gFogEnd;
     // M42b: ソフトパーティクル (旧 _p3 パディングを転用、CB サイズ不変)
     float    gSoftFade; // 深度フェード距離 (0=off)。ParticleCurves.h::SoftFadeFactor と同一式
-    float    gNearZ;    // 深度線形化用 (ParticleCurves.h::LinearizeParticleDepth と同一式)
+    float    gNearZ;    // 深度線形化用 (common.hlsli::LinearizeDepth へ渡す)
     float    gFarZ;
 };
 
@@ -67,13 +69,9 @@ VSOut VSMain(uint vid : SV_VertexID, uint iid : SV_InstanceID)
     return o;
 }
 
-// M42b: 非線形深度 [0,1] -> ビュー空間 z。ParticleCurves.h::LinearizeParticleDepth と同一式
-float LinearizeSceneDepth(float d)
-{
-    return gNearZ * gFarZ / max(gFarZ - d * (gFarZ - gNearZ), 1e-4f);
-}
-
-// 距離フォグ係数 (common.hlsli::ApplyFog と同一。粒子は register 衝突回避のため独立定義)
+// 距離フォグ係数 (common.hlsli::ApplyFog の f と同一式)。
+// M55a で common.hlsli を include したが ApplyFog へは寄せない — 粒子は additive なら
+// 「減光」、alpha なら「フォグ色へ補間」と合成の仕方が分かれるので、色ではなく係数が要る
 float ParticleFogFactor(float dist)
 {
     if (gFogMode < 0) { return 0.0f; }
@@ -120,7 +118,8 @@ float4 PSMain(VSOut i) : SV_Target
     // ソフトパーティクル (M42b): シーン深度との差でフェード。0=off (従来とビット同一)。
     // ParticleCurves.h::SoftFadeFactor と同一式 (selftest はそちらを検証)
     if (gSoftFade > 0.0f) {
-        const float sceneZ = LinearizeSceneDepth(gDepth.Load(int3(int2(i.pos.xy), 0)).r);
+        const float sceneZ =
+            LinearizeDepth(gDepth.Load(int3(int2(i.pos.xy), 0)).r, gNearZ, gFarZ);
         const float fade = saturate((sceneZ - i.viewZ) / max(gSoftFade, 1e-4f));
         col *= fade; // rgb + a 両方 -> additive/alpha どちらのブレンドでも正しく消える
     }

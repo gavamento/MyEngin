@@ -5,6 +5,8 @@
 // v1 制限: 近景の前景滲み (シャープな背景への bleed) 非対応 / 半解像度境界のハロ。
 // CB は PostProcess.cpp の DofCB と同一レイアウト。
 
+#include "common.hlsli" // LinearizeDepth (M55a で共有化)
+
 cbuffer DofCB : register(b0)
 {
     float gFocusDist;
@@ -37,16 +39,11 @@ VSOut VSMain(uint vid : SV_VertexID)
     return o;
 }
 
-float LinearizeDepth(float d)
-{
-    return gNearZ * gFarZ / max(gFarZ - d * (gFarZ - gNearZ), 1e-4f);
-}
-
 float4 PSMain(VSOut i) : SV_Target
 {
     const int3 pixel = int3(int2(i.pos.xy), 0);
     const float3 sharp = gScene.Load(pixel).rgb;
-    const float z = LinearizeDepth(gDepth.Load(pixel));
+    const float z = LinearizeDepth(gDepth.Load(pixel), gNearZ, gFarZ);
     const float coc = clamp((z - gFocusDist) / max(gFocusRange, 1e-4f), -1.0f, 1.0f);
     const float3 blur = gBlur.Sample(gLinear, i.uv).rgb;
     return float4(lerp(sharp, blur, saturate(abs(coc))), 1.0f);

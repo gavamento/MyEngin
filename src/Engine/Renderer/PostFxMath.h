@@ -7,7 +7,19 @@
 // ポストプロセス/大気系シェーダの数式を C++ に複製した純関数群 (D3D 非依存)。
 // HLSL 側 (common.hlsli / postfx_*.hlsl) とコメント同期で複製し、selftest がこちらを検証する。
 // 描画専用 (sim/hash 非関与)。
+// M55a 以降、複数パスで共有する描画数式の CPU ミラーはポストプロセス由来でなくても
+// ここへ置く (LinearizeDepth は DoF / パーティクル / 今後の HZB・SSR・froxel が共有する)。
 namespace mye {
+
+// M55a: 透視投影の非線形深度 [0,1] → ビュー空間 z。
+// common.hlsli::LinearizeDepth と同一式 — 変更時は両方更新 (RenderSelfTest が検証)。
+// 分母の 1e-4 クランプは d==1 かつ near==0 のゼロ除算よけで、HLSL 側と揃えてある。
+// Particles/ParticleCurves.h::LinearizeParticleDepth はこの関数への別名 (呼び出し元と
+// 既存 selftest の名前を残すためだけの薄いラッパ) — CPU 側の式はここ 1 つだけ。
+inline float LinearizeDepth(float d, float nearZ, float farZ)
+{
+    return nearZ * farZ / (std::max)(farZ - d * (farZ - nearZ), 1e-4f);
+}
 
 // M43a: ハイトフォグ。高度で exp 減衰する密度 ρ(y)=e^{-k(y-base)} の視線積分を
 // 「実効距離」に畳む: ∫ρ = e^{-k(camY-base)} · (1-e^{-kΔy})/(kΔy) · dist (Δy=posY-camY)。

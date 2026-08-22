@@ -303,6 +303,36 @@ void TestSignedCoC()
     TEST_CHECK(SignedCoC(11.0f, 10.0f, 0.0f) == 1.0f);
 }
 
+// M55a: 深度線形化 (common.hlsli::LinearizeDepth のミラー検証)。
+// M55a 以前は同じ式が 5 つのシェーダにローカルコピーで散っていて CPU 側の検査も
+// パーティクル文脈 (LinearizeParticleDepth の端点 2 点) しか無かった。共有版になったので
+// 「実際の透視投影行列が吐く NDC 深度を戻せるか」まで踏み込んで固定する
+void TestLinearizeDepth()
+{
+    MYE_LOG_INFO("[selftest] depth linearization (M55a)");
+    // near=1/far=100: far-(far-near) が桁落ちしない組 (0.1/1000 だと端点が ~0.02% ずれる)
+    const float n = 1.0f;
+    const float f = 100.0f;
+    // 端点: d=0 → near / d=1 → far
+    TEST_CHECK(std::fabs(LinearizeDepth(0.0f, n, f) - n) < 1e-4f);
+    TEST_CHECK(std::fabs(LinearizeDepth(1.0f, n, f) - f) < 1e-3f);
+    // 実際の透視投影が吐く NDC 深度から元のビュー z を復元できること。
+    // 行ベクトル規約: clip = mul(float4(0,0,z,1), proj)、d = clip.z / clip.w
+    XMFLOAT4X4 proj;
+    XMStoreFloat4x4(&proj,
+                    XMMatrixPerspectiveFovLH(XMConvertToRadians(60.0f), 16.0f / 9.0f, n, f));
+    for (const float viewZ : { 1.5f, 4.0f, 12.5f, 50.0f }) {
+        const XMVECTOR clip =
+            XMVector4Transform(XMVectorSet(0.0f, 0.0f, viewZ, 1.0f), XMLoadFloat4x4(&proj));
+        const float d = XMVectorGetZ(clip) / XMVectorGetW(clip);
+        TEST_CHECK(std::fabs(LinearizeDepth(d, n, f) - viewZ) < viewZ * 1e-4f);
+    }
+    // 単調増加 (深度が大きいほど遠い)
+    TEST_CHECK(LinearizeDepth(0.25f, n, f) < LinearizeDepth(0.75f, n, f));
+    // near==0 かつ d==1 のゼロ除算ガード (分母の 1e-4 クランプ)。HLSL 側と同じ形で入っている
+    TEST_CHECK(std::isfinite(LinearizeDepth(1.0f, 0.0f, f)));
+}
+
 // M44d: 深度再投影 (postfx_motionblur.hlsl のミラー検証)
 void TestReprojectUv()
 {
@@ -383,6 +413,7 @@ bool RunRenderSelfTest()
     TestLutStripUv();
     TestAutoExposureBins();
     TestSignedCoC();
+    TestLinearizeDepth();
     TestReprojectUv();
     TestEmissiveEncoding();
     if (g_failCount == 0) {

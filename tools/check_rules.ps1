@@ -116,6 +116,30 @@ $constGroups = @(
             'assets\shaders\rt_variance.cs.hlsl'       = '#\s*define\s+MYE_RT_ATROUS_RADIUS\s+(\d+)'
             'assets\shaders\rt_shadow_filter.cs.hlsl'  = '#\s*define\s+MYE_RT_ATROUS_RADIUS\s+(\d+)'
         }
+    },
+    # M55a: ここから下の 2 件は M17/M38d 以来ずっと未登録だった穴の回収。
+    # ライト配列長は CB のレイアウトそのものなので、食い違うと「静かに壊れる」の典型
+    # (RtPasses.cpp:40 の static_assert は C++ 内の 2 者しか見ていない)
+    @{
+        label = 'kMaxLights / MAX_LIGHTS / MYE_RT_MAX_LIGHTS'
+        sites = @{
+            'src\Engine\Renderer\RenderTypes.h' = 'constexpr\s+int\s+kMaxLights\s*=\s*(\d+)'
+            'assets\shaders\common.hlsli'       = '#\s*define\s+MAX_LIGHTS\s+(\d+)'
+            'assets\shaders\rt_common.hlsli'    = '#\s*define\s+MYE_RT_MAX_LIGHTS\s+(\d+)'
+        }
+    },
+    @{
+        # HLSL 側は #define ではなくローカル配列の宣言 (SampleShadowCSM の vps[3]) が
+        # カスケード数の正体なので、配列長そのものを拾う。
+        # ★限界: SampleShadowCSM は vp0/vp1/vp2 を個別引数で受けるので、カスケードを
+        #   4 本にするときは引数の本数も増える。$constGroups は「1 ファイル 1 整数」しか
+        #   比べられないのでそこまでは検査できない — 配列長の食い違い (= 一番静かに
+        #   壊れる形) だけを止める。引数側は SampleShadowCSM のコメントで注意喚起する
+        label = 'ShadowPass::kCascades / SampleShadowCSM vps[]'
+        sites = @{
+            'src\Engine\Renderer\ShadowPass.h' = 'static\s+constexpr\s+int\s+kCascades\s*=\s*(\d+)'
+            'assets\shaders\common.hlsli'      = 'float4x4\s+vps\[(\d+)\]'
+        }
     }
 )
 foreach ($g in $constGroups) {
