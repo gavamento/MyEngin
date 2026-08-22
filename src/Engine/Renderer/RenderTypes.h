@@ -71,6 +71,30 @@ struct RenderItem {
     int32_t boneCount = 0;
 };
 
+// ---- 局所ライトのシャドウアトラス (M54c) ----
+// 4096^2 の深度テクスチャ 1 枚を正方タイルに割り、スポットは 1 枚 (透視 1 面)、
+// 点光源は 6 枚 (M54d) を使う。タイル数は 4096^2 / 1024^2 = 16。
+// **HLSL の MYE_MAX_SHADOW_TILES (common.hlsli) と必ず一致させること** —
+// 定数バッファの配列長そのものなので、食い違うとレイアウト不一致として静かに壊れる。
+// tools\check_rules.ps1 の規則 9 が一致を検査する。
+// ★per-light パラメータを StructuredBuffer ではなく CB で渡しているのは、統合契約の
+//   予約 2 が M54 に許した SRV スロットが t12 (アトラス本体) の 1 本きりだから
+//   (計画本文の「StructuredBuffer で t7/t13」は予約表と食い違っており、予約表が正)。
+//   16 枚 × 96 バイト = 1.5KB で、64KB の CB 上限には遠く届かない
+constexpr int kMaxShadowTiles = 16;
+
+// アトラスのタイル 1 枚。ShadowAtlas が描画に、光パスが CB 充填に使う (描画専用)。
+// lightViewProj は**非転置** — ShadowAtlas が world と合成するため。CB へ載せる側が転置する
+struct ShadowTile {
+    DirectX::XMFLOAT4X4 lightViewProj = {}; // 行ベクトル規約 (world * lightViewProj)
+    float uvScale[2] = { 0.0f, 0.0f };      // タイル UV [0,1] → アトラス UV の拡大率
+    float uvOffset[2] = { 0.0f, 0.0f };
+    int32_t pixelX = 0;     // アトラス内のピクセル矩形 (RSSetViewports 用)
+    int32_t pixelY = 0;
+    int32_t pixelSize = 0;
+    float depthBias = 0.0f; // シェーダ側の定数バイアス (NDC 深度。ラスタライザ側と併用)
+};
+
 struct RenderView {
     DirectX::XMFLOAT4X4 view = {};
     DirectX::XMFLOAT4X4 proj = {};
@@ -161,6 +185,14 @@ struct RenderView {
     // ---- M46h: RT 反射 (末尾 append)。1 = ライトパスのスペキュラ環境項を
     //      roughness に応じてレイトレ反射で置換する (粗い面は IBL のまま) ----
     int32_t rtReflEnabled = 0;
+    // ---- M54c: 局所ライト (スポット/点) のシャドウアトラス (末尾 append)。
+    //      null / 0 = 従来と完全に同一の絵。RenderSystem がアトラス描画後に埋める。
+    //      アトラスを持たない経路 (Forward は M54e まで / AssetPreview は永久に) は
+    //      SRV が null のままなので、光パス側の「null ならフラグ 0」ゲートで自然に無効化される ----
+    ID3D11ShaderResourceView* shadowAtlasSRV = nullptr; // Texture2D (R32_FLOAT)
+    float shadowAtlasTexel = 0.0f;                      // 1/アトラス解像度 (PCF オフセット)
+    int32_t shadowTileCount = 0;                        // 0 = 影を投げる局所ライトが居ない
+    ShadowTile shadowTiles[kMaxShadowTiles] = {};
 };
 
 // GPU へ渡すライト 1 個 (定数バッファ配列要素、16 バイト境界に揃えた 64 バイト)。
@@ -174,8 +206,11 @@ struct GpuLight {
     int32_t type = 0;      // 0=Directional 1=Point 2=Spot
     float cosInner = 0.9f; // Spot: cos(内角)
     float cosOuter = 0.8f; // Spot: cos(外角)
-    float pad0 = 0.0f;
-    float pad1 = 0.0f;
+    // ---- M54c: シャドウアトラス (旧 pad0/pad1 の再利用。64 バイトのレイアウトは不変) ----
+    // 統合契約 (plans/radiant-shimmering-lumen.md 付録 予約 2) が pad0/pad1 に予約した枠。
+    // rt_common.hlsli の RtLight は同じ 8 バイトを _pad のまま持つ (RT は局所影を持たない)
+    int32_t shadowTile = 0;  // アトラスのタイル index (先頭面)。shadowFaces==0 なら無意味
+    int32_t shadowFaces = 0; // 面数: 0=影を投げない / 1=スポット (M54c) / 6=点光源 (M54d)
 };
 static_assert(sizeof(GpuLight) == 64, "GpuLight must match HLSL 16-byte packing");
 

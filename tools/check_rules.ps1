@@ -140,6 +140,15 @@ $constGroups = @(
             'src\Engine\Renderer\ShadowPass.h' = 'static\s+constexpr\s+int\s+kCascades\s*=\s*(\d+)'
             'assets\shaders\common.hlsli'      = 'float4x4\s+vps\[(\d+)\]'
         }
+    },
+    @{
+        # M54c: シャドウアトラスのタイル数 = 定数バッファ内の配列長そのもの。
+        # 食い違うと ShadowTile 配列の後ろが読めなくなる (= 静かに壊れる) 典型
+        label = 'kMaxShadowTiles / MYE_MAX_SHADOW_TILES'
+        sites = @{
+            'src\Engine\Renderer\RenderTypes.h' = 'constexpr\s+int\s+kMaxShadowTiles\s*=\s*(\d+)'
+            'assets\shaders\common.hlsli'       = '#\s*define\s+MYE_MAX_SHADOW_TILES\s+(\d+)'
+        }
     }
 )
 foreach ($g in $constGroups) {

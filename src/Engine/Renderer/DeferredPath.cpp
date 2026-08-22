@@ -71,6 +71,15 @@ struct MaterialCB {
     float emissive;    // M46i: 自己発光の強さ (0 = 発光なし)
 };
 
+// common.hlsli の ShadowTile と同一レイアウト (96 バイト、M54c)。
+// RenderTypes.h の ShadowTile (描画側の生データ) を CB 向けに転置 + 詰め替えたもの
+struct ShadowTileCB {
+    XMFLOAT4X4 lightViewProj; // transpose(lightView*lightProj)
+    XMFLOAT4 uvScaleBias;     // xy = スケール / zw = オフセット
+    XMFLOAT4 params;          // x = 定数深度バイアス / yzw = 予約 (M54d)
+};
+static_assert(sizeof(ShadowTileCB) == 96, "ShadowTileCB must match HLSL 16-byte packing");
+
 // deferred_light.hlsl の LightPass と同一レイアウト
 struct LightPassCB {
     XMFLOAT3 ambient;
@@ -119,6 +128,11 @@ struct LightPassCB {
     float rtReflFadeStart;
     float rtReflMaxRough;
     float rtPad[3];
+    // ---- M54c: 局所ライトのシャドウアトラス (末尾 append。0 = 従来と完全に同一の式) ----
+    int32_t shadowAtlasEnabled;
+    float shadowAtlasTexel;
+    float atlasPad[2];
+    ShadowTileCB shadowTiles[kMaxShadowTiles];
 };
 
 // ssao.hlsl の SsaoCB と同一レイアウト
@@ -721,6 +735,18 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
     lp.rtReflEnabled = rtReflBound ? 1 : 0;     // M46h
     lp.rtReflFadeStart = kRtReflFadeStart;      // しきい値の出所は RtTypes.h
     lp.rtReflMaxRough = kRtReflMaxRoughness;
+    // M54c: 局所ライトのシャドウアトラス。SRV が null (Forward / AssetPreview / 影を投げる
+    // 局所ライトが 1 本も無いシーン) なら 0 = 従来と 1 ビットも変わらない経路へ落ちる
+    lp.shadowAtlasEnabled =
+        (!unlit && view.shadowAtlasSRV != nullptr && view.shadowTileCount > 0) ? 1 : 0;
+    lp.shadowAtlasTexel = view.shadowAtlasTexel;
+    for (int t = 0; t < view.shadowTileCount && t < kMaxShadowTiles; ++t) {
+        const ShadowTile& src = view.shadowTiles[t];
+        ShadowTileCB& dst = lp.shadowTiles[t];
+        XMStoreFloat4x4(&dst.lightViewProj, XMMatrixTranspose(XMLoadFloat4x4(&src.lightViewProj)));
+        dst.uvScaleBias = { src.uvScale[0], src.uvScale[1], src.uvOffset[0], src.uvOffset[1] };
+        dst.params = { src.depthBias, 0.0f, 0.0f, 0.0f };
+    }
     UploadCB(dc, lightCB_.Get(), lp);
     ID3D11Buffer* lightCbs[1] = { lightCB_.Get() };
     dc->PSSetConstantBuffers(0, 1, lightCbs);
@@ -731,24 +757,27 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
     ID3D11SamplerState* lightSamplers[2] = { iblSampler_.Get(), shadowSampler_.Get() };
     dc->PSSetSamplers(0, 2, lightSamplers);
     // GBuffer t0-3 + シャドウ t4 + IBL t5-7 (M38c) + SSAO t8 (M38e) + RT GI t9 (M46f)
-    // + RT 影 t10 (M46g) + RT 反射 t11 (M46h)。s0=IBL サンプラ / s1=比較サンプラ bind 済み
-    ID3D11ShaderResourceView* gbSrvs[12] = { gbAlbedo_.SRV(),     gbNormal_.SRV(),
+    // + RT 影 t10 (M46g) + RT 反射 t11 (M46h) + シャドウアトラス t12 (M54c)。
+    // s0=IBL サンプラ / s1=比較サンプラ bind 済み (アトラスも s1 を共有する = サンプラ増やさず)
+    ID3D11ShaderResourceView* gbSrvs[13] = { gbAlbedo_.SRV(),     gbNormal_.SRV(),
                                              gbPosition_.SRV(),   gbMaterial_.SRV(),
                                              view.shadowSRV,      view.iblIrradiance,
                                              view.iblPrefiltered, view.iblBrdfLut,
                                              ssaoOn ? ssaoBlur_.SRV() : nullptr,
                                              rtGiBound ? rtGi.filtered : nullptr,
                                              rtShadowBound ? rtShadowSrv : nullptr,
-                                             rtReflBound ? rtRefl.filtered : nullptr };
-    dc->PSSetShaderResources(0, 12, gbSrvs);
+                                             rtReflBound ? rtRefl.filtered : nullptr,
+                                             view.shadowAtlasSRV };
+    dc->PSSetShaderResources(0, 13, gbSrvs);
     dc->IASetInputLayout(nullptr);
     dc->OMSetBlendState(blendOpaque_.Get(), nullptr, 0xFFFFFFFFu);
     dc->VSSetShader(lightProg->vs.Get(), nullptr, 0);
     dc->PSSetShader(lightProg->ps.Get(), nullptr, 0);
     dc->OMSetDepthStencilState(depthDisabled_.Get(), 0);
     dc->Draw(3, 0);
-    ID3D11ShaderResourceView* nullSrvs[12] = {};
-    dc->PSSetShaderResources(0, 12, nullSrvs); // 次フレームで RT に戻すため解除
+    // 統合契約 予約 2: 最終的に [16] になる (M54 が [13]、M56 が [15]、M57 が [16])
+    ID3D11ShaderResourceView* nullSrvs[13] = {};
+    dc->PSSetShaderResources(0, 13, nullSrvs); // 次フレームで RT に戻すため解除
 
     // ---- 2.5) スカイボックス (M29d): clearColor ピクセルを深度 1.0 判定で上書き ----
     // (Wireframe はフルスクリーン三角形が線になるためスキップ、M40b)

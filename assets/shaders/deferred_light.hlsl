@@ -51,6 +51,12 @@ cbuffer LightPass : register(b0)
     float    gRtReflFadeStart; // ここから gRtReflMaxRough まで IBL へ smoothstep で戻す
     float    gRtReflMaxRough;  // これを超える roughness はレイを撃っていない
     float3   _rtPad;
+    // ---- M54c: 局所ライト (スポット/点) のシャドウアトラス (末尾 append)。
+    //      0 = 従来と完全に同一の式 (Light.shadowFaces も 0 のまま) ----
+    int      gShadowAtlasEnabled;
+    float    gShadowAtlasTexel; // 1/アトラス解像度
+    float2   _atlasPad;
+    ShadowTile gShadowTiles[MYE_MAX_SHADOW_TILES];
 };
 
 Texture2D gAlbedo    : register(t0);
@@ -65,6 +71,7 @@ Texture2D   gSsao           : register(t8); // M38e (半解像度、ブラー済
 Texture2D   gRtGi           : register(t9); // M46f (内部解像度、demodulated 入射放射輝度)
 Texture2D   gRtShadow       : register(t10); // M46g (フル解像度 R8、太陽の可視率)
 Texture2D   gRtRefl         : register(t11); // M46h (内部解像度、反射方向の入射放射輝度)
+Texture2D   gShadowAtlas    : register(t12); // M54c (局所ライトの深度アトラス、R32_FLOAT)
 SamplerState gIblSampler : register(s0); // LINEAR/CLAMP (M38c、s0 は光パスで空きだった)
 SamplerComparisonState gShadowSampler : register(s1);
 
@@ -106,6 +113,21 @@ float4 PSMain(VSOut i) : SV_Target
     if (gSsaoEnabled != 0) {
         ao = gSsao.SampleLevel(gIblSampler, i.pos.xy / gScreenSize, 0).r; // M38e
     }
+    // M54c: 局所ライトの影を先に解決して配列で渡す (ApplyLighting にテクスチャを
+    // 持ち込まないための規約。Forward は M54e まで全要素 1.0 のまま)
+    float localShadow[MAX_LIGHTS];
+    [unroll] for (int si = 0; si < MAX_LIGHTS; ++si) {
+        localShadow[si] = 1.0f;
+    }
+    if (gShadowAtlasEnabled != 0) {
+        for (int li = 0; li < gLightCount; ++li) {
+            if (gLights[li].shadowFaces > 0) {
+                localShadow[li] = SampleShadowAtlas(gShadowAtlas, gShadowSampler,
+                                                    gShadowTiles[gLights[li].shadowTile], posW,
+                                                    gShadowAtlasTexel);
+            }
+        }
+    }
     float3 color;
     if (gRtGiEnabled != 0 || gRtReflEnabled != 0) {
         // M46f/M46h: GI と反射は内部解像度 (rtResolutionScale) なので
@@ -120,14 +142,15 @@ float4 PSMain(VSOut i) : SV_Target
             refl = gRtRefl.SampleLevel(gIblSampler, rtUv, 0).rgb;
         }
         color = ApplyLightingHybrid(albedo.rgb, n, posW, gCameraPos, mr.x, mr.y, gAmbient,
-                                    gLights, gLightCount, dirShadow, gIblEnabled, gIblSpecMips,
-                                    gIblIrradiance, gIblPrefiltered, gIblBrdfLut, gIblSampler, ao,
-                                    gi, gRtGiEnabled, refl, gRtReflEnabled, gRtReflFadeStart,
-                                    gRtReflMaxRough);
+                                    gLights, gLightCount, dirShadow, localShadow, gIblEnabled,
+                                    gIblSpecMips, gIblIrradiance, gIblPrefiltered, gIblBrdfLut,
+                                    gIblSampler, ao, gi, gRtGiEnabled, refl, gRtReflEnabled,
+                                    gRtReflFadeStart, gRtReflMaxRough);
     } else {
         color = ApplyLighting(albedo.rgb, n, posW, gCameraPos, mr.x, mr.y, gAmbient,
-                              gLights, gLightCount, dirShadow, gIblEnabled, gIblSpecMips,
-                              gIblIrradiance, gIblPrefiltered, gIblBrdfLut, gIblSampler, ao);
+                              gLights, gLightCount, dirShadow, localShadow, gIblEnabled,
+                              gIblSpecMips, gIblIrradiance, gIblPrefiltered, gIblBrdfLut,
+                              gIblSampler, ao);
     }
     // M46i: 自己発光 (G-Buffer の b に正規化して詰めてある)。ライティングに依らず
     // 放射する分を足す。発光なしのマテリアルは b が厳密に 0 なので加算項もちょうど 0 になり、

@@ -54,8 +54,56 @@ struct Light
     int    type;      // 0=Directional 1=Point 2=Spot
     float  cosInner;  // Spot: cos(内角)
     float  cosOuter;  // Spot: cos(外角)
-    float2 _pad;
+    // ---- M54c: シャドウアトラス (旧 _pad の再利用。64 バイトのままなので既存 3 ミラー不変) ----
+    int    shadowTile;  // アトラスのタイル index (先頭面)
+    int    shadowFaces; // 0=影を投げない / 1=スポット / 6=点光源 (M54d)
 };
+
+// ---- 局所ライトのシャドウアトラス (M54c) ----
+// C++ の kMaxShadowTiles (RenderTypes.h) と同値。
+// tools\check_rules.ps1 の規則 9 が一致を静的に検査する
+#define MYE_MAX_SHADOW_TILES 16
+
+// アトラスのタイル 1 枚 (C++ の DeferredPath::ShadowTileCB と 96 バイトで一致)。
+// SRV スロットを 1 本しか取れない (統合契約 予約 2) ので StructuredBuffer ではなく CB に置く
+struct ShadowTile
+{
+    float4x4 lightViewProj; // transpose(lightView * lightProj)
+    float4   uvScaleBias;   // xy = タイル UV → アトラス UV の拡大率 / zw = オフセット
+    float4   params;        // x = 定数深度バイアス (NDC) / yzw = 予約 (M54d)
+};
+
+// アトラスの 1 タイルを 3x3 PCF で引く (M54c)。戻り値 1=影なし / 0=完全に影。
+// ★タイル外へのタップ漏れを clamp で殺している — アトラスは 1 枚のテクスチャなので、
+//   サンプラのアドレスモードでは「隣のライトの深度」を拾うのを防げない。
+//   タイル内側 1.5 テクセルへ寄せると、3x3 の中心が枠のきわに来ても隣を舐めない。
+// ★w <= 0 (ライトの背後) を先に弾く。透視射影は w で割るので、これを通すと
+//   背面の点が前面へ折り返して「ライトの真後ろだけ影が抜ける」形で壊れる。
+float SampleShadowAtlas(Texture2D atlas, SamplerComparisonState samp, ShadowTile tile,
+                        float3 posW, float atlasTexel)
+{
+    float4 lp = mul(float4(posW, 1.0f), tile.lightViewProj);
+    if (lp.w <= 0.0f) {
+        return 1.0f;
+    }
+    lp.xyz /= lp.w;
+    const float2 uv = lp.xy * float2(0.5f, -0.5f) + 0.5f;
+    if (uv.x < 0.0f || uv.x > 1.0f || uv.y < 0.0f || uv.y > 1.0f || lp.z > 1.0f || lp.z < 0.0f) {
+        return 1.0f; // タイルの外 = 深度を持っていない → 影を落とさない
+    }
+    const float2 lo = tile.uvScaleBias.zw + atlasTexel * 1.5f;
+    const float2 hi = tile.uvScaleBias.zw + tile.uvScaleBias.xy - atlasTexel * 1.5f;
+    const float2 base = uv * tile.uvScaleBias.xy + tile.uvScaleBias.zw;
+    const float d = lp.z - tile.params.x;
+    float sum = 0.0f;
+    [unroll] for (int y = -1; y <= 1; ++y) {
+        [unroll] for (int x = -1; x <= 1; ++x) {
+            const float2 t = clamp(base + float2(x, y) * atlasTexel, lo, hi);
+            sum += atlas.SampleCmpLevelZero(samp, t, d);
+        }
+    }
+    return sum / 9.0f;
+}
 
 // シャドウマップの PCF サンプル (M17)。posW をライトクリップ空間へ射影し 3x3 比較平均。
 // 戻り値 1=完全に照らされる, 0=完全に影。範囲外は 1 (影なし)。
@@ -179,11 +227,16 @@ float GeometrySmith(float ndv, float ndl, float rough)
 // 無効なら従来の定数アンビエント。IBL テクスチャは呼び出しシェーダのスロットから引数で渡す
 // (forward=t3-5/s2、deferred=t5-7/s0 — スロットが異なるため)。
 // ao (M38e): 環境項に掛ける遮蔽係数 (1=遮蔽なし。SSAO は Deferred のみ、Forward は 1 を渡す)
+// localShadow (M54c): 局所ライト (点/スポット) 1 本ごとの影係数 (1=影なし)。ライト配列と同添字。
+//   ★テクスチャ引数をここへ持ち込まないための設計。呼び出し側が SampleShadowAtlas で
+//     先に解決して配列で渡す。こうしておくと Forward 3 本 (forward_lit /
+//     forward_lit_instanced / forward_skinned) は**1 文字も変えずに済む** — 下の
+//     オーバーロードが全要素 1.0 の配列を作って呼ぶだけなので、乗算は厳密に恒等になる。
 float3 ApplyLighting(float3 albedo, float3 normal, float3 posW, float3 cameraPos, float metallic,
                      float roughness, float3 ambient, Light lights[MAX_LIGHTS], int count,
-                     float dirShadow, int iblEnabled, float iblSpecMips, TextureCube iblIrradiance,
-                     TextureCube iblPrefiltered, Texture2D iblBrdfLut, SamplerState iblSampler,
-                     float ao)
+                     float dirShadow, float localShadow[MAX_LIGHTS], int iblEnabled,
+                     float iblSpecMips, TextureCube iblIrradiance, TextureCube iblPrefiltered,
+                     Texture2D iblBrdfLut, SamplerState iblSampler, float ao)
 {
     const float3 N = normal;
     const float3 V = normalize(cameraPos - posW);
@@ -215,6 +268,7 @@ float3 ApplyLighting(float3 albedo, float3 normal, float3 posW, float3 cameraPos
                     saturate((cosA - L.cosOuter) / max(L.cosInner - L.cosOuter, 1e-4f));
                 atten *= spot * spot;
             }
+            atten *= localShadow[i]; // M54c: シャドウアトラス (未割当のライトは厳密に 1.0)
         }
         const float3 Ldir = toLightDir;
         const float3 H = normalize(V + Ldir);
@@ -249,6 +303,25 @@ float3 ApplyLighting(float3 albedo, float3 normal, float3 posW, float3 cameraPos
     return ambientTerm * ao + Lo; // SSAO は環境項のみ減衰 (直接光には掛けない)
 }
 
+// 局所ライトの影を持たない呼び出し用のオーバーロード (M54c、M54c 以前と同一シグネチャ)。
+// Forward 3 本と ApplyLightingHybrid の非アトラス経路がここを通る。
+// **1.0 の乗算は IEEE で厳密なので、この経路の出力は M54c 以前とビット単位で一致する**
+// (受入基準「機能 off で直前コミットの PNG とビット一致」の根拠がこれ)
+float3 ApplyLighting(float3 albedo, float3 normal, float3 posW, float3 cameraPos, float metallic,
+                     float roughness, float3 ambient, Light lights[MAX_LIGHTS], int count,
+                     float dirShadow, int iblEnabled, float iblSpecMips, TextureCube iblIrradiance,
+                     TextureCube iblPrefiltered, Texture2D iblBrdfLut, SamplerState iblSampler,
+                     float ao)
+{
+    float ones[MAX_LIGHTS];
+    [unroll] for (int i = 0; i < MAX_LIGHTS; ++i) {
+        ones[i] = 1.0f;
+    }
+    return ApplyLighting(albedo, normal, posW, cameraPos, metallic, roughness, ambient, lights,
+                         count, dirShadow, ones, iblEnabled, iblSpecMips, iblIrradiance,
+                         iblPrefiltered, iblBrdfLut, iblSampler, ao);
+}
+
 // M46h: レイトレ反射を IBL スペキュラへ混ぜる重み (1 = 反射 100% / 0 = IBL 100%)。
 // しきい値は RtTypes.h が出所で CB 経由で渡る。RtMath.h の RtReflWeight と同一式
 float RtReflWeight(float roughness, float fadeStart, float maxRough)
@@ -267,9 +340,12 @@ float RtReflWeight(float roughness, float fadeStart, float maxRough)
 // Lo だけを取り出す — こうしておくと Forward と Deferred のライティングが永久に一致する。
 // ao はレイトレ由来の項には掛けない (可視性はレイが持っている = 二重遮蔽になるため)。
 // IBL 由来の環境項は従来どおり ao で減衰させる。**既存 ApplyLighting は無変更**。
+// M54c: localShadow は直接光の側なので、そのまま ApplyLighting へ素通しする
+// (レイトレ経路でも局所ライトの影はラスタのアトラスが担当する — RT 影は平行光だけ)。
 float3 ApplyLightingHybrid(float3 albedo, float3 normal, float3 posW, float3 cameraPos,
                            float metallic, float roughness, float3 ambient,
-                           Light lights[MAX_LIGHTS], int count, float dirShadow, int iblEnabled,
+                           Light lights[MAX_LIGHTS], int count, float dirShadow,
+                           float localShadow[MAX_LIGHTS], int iblEnabled,
                            float iblSpecMips, TextureCube iblIrradiance,
                            TextureCube iblPrefiltered, Texture2D iblBrdfLut,
                            SamplerState iblSampler, float ao, float3 gi, int giEnabled,
@@ -278,8 +354,8 @@ float3 ApplyLightingHybrid(float3 albedo, float3 normal, float3 posW, float3 cam
     const float3 zero3 = float3(0.0f, 0.0f, 0.0f);
     const float3 Lo =
         ApplyLighting(albedo, normal, posW, cameraPos, metallic, roughness, zero3, lights, count,
-                      dirShadow, 0, iblSpecMips, iblIrradiance, iblPrefiltered, iblBrdfLut,
-                      iblSampler, ao);
+                      dirShadow, localShadow, 0, iblSpecMips, iblIrradiance, iblPrefiltered,
+                      iblBrdfLut, iblSampler, ao);
 
     const float3 N = normal;
     const float3 V = normalize(cameraPos - posW);

@@ -13,6 +13,7 @@
 #include "Engine/Renderer/PostProcess.h"
 #include "Engine/Renderer/RayTracing/RtPasses.h"
 #include "Engine/Renderer/RenderTypes.h"
+#include "Engine/Renderer/ShadowAtlas.h"
 #include "Engine/Renderer/ShadowPass.h"
 
 namespace mye {
@@ -157,6 +158,10 @@ private:
     RenderQueue queue_;     // フレーム毎に再利用 (アロケーション回避)
     PostProcess postFx_;    // HDR 中間 + トーンマップ (遅延 Init)
     ShadowPass shadowPass_; // 平行光シャドウマップ (遅延 Init)
+    // M54c: 局所ライトのシャドウアトラス。**影を投げる局所ライトが初めて現れるまで
+    // Init しない** — 4096^2 R32 = 64MB を、影を使わないシーン (AssetPreview の別
+    // RenderSystem を含む) にまで払わせないため
+    ShadowAtlas shadowAtlas_;
     EditorLinePass linePass_; // DebugDrawLine 用 (v7、遅延 Init)
     EnvMapBaker envBaker_;    // IBL 環境マップ (M38c、lazy ベイク + キャッシュ)
     // スキンメッシュのボーンパレット (M18)。フレーム毎に再構築。deque = push_back で

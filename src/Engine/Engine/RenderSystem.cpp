@@ -92,6 +92,34 @@ XMFLOAT4X4 ComputeDirectionalLightVP(const XMFLOAT3& lightDir, const XMFLOAT3& s
     return out;
 }
 
+// スポットライトの view-proj (M54c、行ベクトル規約 world*view*proj)。戻り値は非転置。
+// 円錐をちょうど包む透視 1 面。fov は外角の 2 倍 + 余白 —
+// ★余白が要る理由: 3x3 PCF はタイル境界の外へタップを伸ばす。円錐の縁が
+//   ぴったり枠に接していると、縁だけ「タイル外 = 影なし」に落ちて輪郭が硬くなる。
+// near は 0.05 固定 (これ以上手前は減衰式でもほぼ寄与しない)、far は減衰半径。
+// far を range に合わせるのは深度精度のため — シーン全体に合わせると近傍が潰れる。
+XMFLOAT4X4 ComputeSpotLightVP(const XMFLOAT3& position, const XMFLOAT3& direction, float cosOuter,
+                              float range)
+{
+    const XMVECTOR eye = XMLoadFloat3(&position);
+    const XMVECTOR dir = XMVector3Normalize(XMLoadFloat3(&direction));
+    const bool nearlyVertical = std::fabs(XMVectorGetY(dir)) > 0.99f;
+    const XMVECTOR up = nearlyVertical ? XMVectorSet(0, 0, 1, 0) : XMVectorSet(0, 1, 0, 0);
+    const XMMATRIX lightView = XMMatrixLookToLH(eye, dir, up);
+
+    const float clamped = std::min(std::max(cosOuter, -0.99f), 0.9999f);
+    const float halfAngle = std::acos(clamped);
+    // 余白 6 度。上限 85 度 (= fov 170 度) は透視行列が発散しない範囲
+    const float fovY = std::min(2.0f * (halfAngle + XMConvertToRadians(6.0f)),
+                                XMConvertToRadians(170.0f));
+    const float farZ = std::max(range, 1.0f);
+    const XMMATRIX lightProj = XMMatrixPerspectiveFovLH(fovY, 1.0f, 0.05f, farZ);
+
+    XMFLOAT4X4 out;
+    XMStoreFloat4x4(&out, XMMatrixMultiply(lightView, lightProj));
+    return out;
+}
+
 // CSM のカスケード VP 列 (M38d)。カメラの部分フラスタム 8 隅をライトビューへ射影して
 // フィットした ortho を作る。practical split (λ=0.5)、影距離は kShadowMaxDist まで。
 // テクセルスナップで安定化。ライト方向のキャスター (フラスタム外) を拾うため
@@ -562,6 +590,50 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
                 view.cascadeCount = ShadowPass::kCascades;
                 view.shadowSRV = shadowPass_.SRV();
                 view.shadowTexelSize = 1.0f / static_cast<float>(shadowPass_.Resolution());
+            }
+        }
+
+        // ---- 局所ライトのシャドウアトラス (M54c): スポットを透視 1 面でタイルへ描く ----
+        // 枠は「M54b の決定論キーで並んだライト順に前詰め」= シーンが変わらなければ
+        // frame をまたいでも同じライトが同じ枠に落ちる (割当が揺れると影がポップする)。
+        // 点光源 (6 面) は M54d — ここでは shadowSlot を持っていても素通りさせる
+        view.shadowAtlasSRV = nullptr;
+        view.shadowTileCount = 0;
+        if (enableShadows && hasScene) {
+            int tileCount = 0;
+            for (int i = 0; i < lightSelection.count && i < lights.count; ++i) {
+                if (lightSelection.lights[i].shadowSlot < 0) {
+                    continue;
+                }
+                if (lights.lights[i].type != 2) {
+                    continue; // M54c はスポットのみ
+                }
+                // アトラス未生成ならここで初めて作る (64MB。影を使わないシーンでは払わない)
+                if (!shadowAtlas_.IsReady() && !shadowAtlas_.Init(device, shaders)) {
+                    break;
+                }
+                if (tileCount >= shadowAtlas_.TileCapacity()) {
+                    break;
+                }
+                const GpuLight& g = lights.lights[i];
+                ShadowTile& tile = view.shadowTiles[tileCount];
+                shadowAtlas_.FillTileRect(tileCount, tile);
+                tile.lightViewProj =
+                    ComputeSpotLightVP(g.position, g.direction, g.cosOuter, g.range);
+                // 定数バイアスはラスタライザ側 (傾斜依存) を主役にしているので極小。
+                // 0 にすると自己遮蔽の縞が出る距離帯が残る (実測で詰めた値)
+                tile.depthBias = 0.00015f;
+                lights.lights[i].shadowTile = tileCount;
+                lights.lights[i].shadowFaces = 1;
+                ++tileCount;
+            }
+            if (tileCount > 0) {
+                shadowAtlas_.Render(device, shaders, queue_, resources, view.shadowTiles,
+                                    tileCount, enableInstancing);
+                view.shadowAtlasSRV = shadowAtlas_.SRV();
+                view.shadowAtlasTexel =
+                    1.0f / static_cast<float>(shadowAtlas_.Resolution());
+                view.shadowTileCount = tileCount;
             }
         }
     }
