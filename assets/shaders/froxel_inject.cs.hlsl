@@ -18,10 +18,9 @@
 //   このサブでは「局所ライトだけをフロクセルに載せる」= 既存の霧と絶対に重ならない
 //   範囲に限定してある。
 #include "common.hlsli"
-
-// C++ の mye::froxel::kGroupSize (src\Engine\Renderer\RenderTypes.h) と一致検査される
-// (tools\check_rules.ps1 規則 9)。froxel_clear.cs.hlsl と同じ割り方 = 同じ (x,y) の Z 列
-#define MYE_FROXEL_GROUP 8
+// M57c: スライス深度と逆射影は 3 パス (注入 / テンポラル / 積分) の共有物になったので
+// froxel_common.hlsli へ移した (MYE_FROXEL_GROUP もそちらが正本)
+#include "froxel_common.hlsli"
 
 // C++ の FroxelInjectCB (src\Engine\Renderer\FroxelPass.cpp) とレイアウト一致 (2720 バイト)
 cbuffer FroxelInjectCB : register(b0)
@@ -43,7 +42,10 @@ cbuffer FroxelInjectCB : register(b0)
     int gFroxelLightCount;
     int gFroxelShadowAtlasEnabled; // 0 = アトラス無し (影なし = 全部 1.0)
     float gFroxelShadowAtlasTexel;
-    float2 gFroxelPad1;
+    // M57c: セル中心のスライス方向オフセット [0,1)。0.5 = ジッタ無し (M57b と同じ位置)。
+    // CPU が viewKey 別の描画通番から引く (froxel::SliceJitter) = 実時間に依存しない
+    float gFroxelSliceJitter;
+    float gFroxelPad1;
     Light gFroxelLights[MAX_LIGHTS];
     ShadowTile gFroxelShadowTiles[MYE_MAX_SHADOW_TILES];
 };
@@ -53,17 +55,6 @@ cbuffer FroxelInjectCB : register(b0)
 Texture2D gFroxelShadowAtlas : register(t0);
 SamplerComparisonState gFroxelShadowSampler : register(s0);
 RWTexture3D<float4> gFroxelScatter : register(u0);
-
-// スライス境界の view 深度 (指数分布)。
-// **C++ の froxel::SliceToViewDepth (RenderTypes.h) と同一式** — 片方だけ直すと
-// M57c の再投影がグリッドの外を指すようになる
-float FroxelSliceDepth(float slice)
-{
-    // max() が要る: 比が負になる経路は無いが、無いと fxc が X3571
-    // (pow は負の底で動かない) を出す = 実行時コンパイルの警告が毎回ログに出る
-    const float ratio = max(gFroxelFarZ / gFroxelNearZ, 1e-4f);
-    return gFroxelNearZ * pow(ratio, slice / (float)gFroxelGridSize.z);
-}
 
 // Henyey-Greenstein 位相関数。cosTheta = dot(光の進行方向, セル→カメラ方向)。
 // g > 0 = 前方散乱 = 「光源のほうを向くと明るい」。全立体角で積分すると 1。
@@ -87,16 +78,16 @@ void CSMain(uint3 id : SV_DispatchThreadID)
     }
 
     // ---- セル中心 → ワールド座標 ----
-    // ★スライスの**中心**を代表点にする。境界を使うと隣のセルと同じ点を評価してしまい、
+    // ★スライスの**内側**を代表点にする。境界を使うと隣のセルと同じ点を評価してしまい、
     //   1 スライスぶんの厚みが消える (手前のスライスほど薄いので近景で顕著に出る)。
-    //   M57c のジッタはこの +0.5 を [0,1) の擬似乱数で置き換える形で入る
-    const float viewZ = FroxelSliceDepth((float)id.z + 0.5f);
+    // ★M57c: 0.5 (= 中心) 固定ではなく CB から来るジッタで置く。フレーム毎に
+    //   代表点をスライス内で動かし、テンポラル (froxel_temporal.cs.hlsl) が
+    //   混ぜることでスライス方向の多重サンプルになる。**テンポラル off のときは
+    //   CPU 側が厳密に 0.5 を入れる** = M57b とビット一致する
+    const float viewZ = FroxelSliceDepth((float)id.z + gFroxelSliceJitter,
+                                         (float)gFroxelGridSize.z, gFroxelNearZ, gFroxelFarZ);
     const float2 uv = ((float2)id.xy + 0.5f) / (float2)gFroxelGridSize.xy;
-    const float2 ndc = float2(uv.x * 2.0f - 1.0f, 1.0f - uv.y * 2.0f);
-    // 透視射影の逆算 (行ベクトル規約: clip = view * proj、clip.w = view.z)。
-    // 逆行列を掛けるより素直で、深度の非線形性を経由しないぶん精度も良い
-    const float3 viewPos =
-        float3(ndc.x * viewZ * gFroxelInvProj00, ndc.y * viewZ * gFroxelInvProj11, viewZ);
+    const float3 viewPos = FroxelViewPos(uv, viewZ, gFroxelInvProj00, gFroxelInvProj11);
     const float3 posW = mul(float4(viewPos, 1.0f), gFroxelInvView).xyz;
 
     // ---- 密度 (消散係数) ----

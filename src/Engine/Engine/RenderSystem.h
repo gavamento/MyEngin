@@ -164,12 +164,14 @@ public:
     // ので、これが唯一の「本当に書けているか」の目視口になる
     int velocityDebugMode = 0;
 
-    // ---- M57b: フロクセル・ボリュメトリック (--froxel) ----
-    // ★既定 off。**このサブでは注入結果を読む者が誰も居ない** (積分 = M57c /
-    //   最終画像への合成 = M57e) ので、on にしても絵は 1 ビットも変わらない。
-    //   それでも配線してあるのは、注入の GPU コストを実シーンで測れるようにするため
-    //   (WARP の壁時計が M57c の設計 — テンポラルを入れるか / golden を CI に載せるか —
-    //   の入力になる)。on のあいだだけ 7MB の 3D テクスチャを確保する
+    // ---- M57b/M57c: フロクセル・ボリュメトリック (--froxel) ----
+    // ★既定 off。**M57c の時点でも積分結果を読む者は居ない** (最終画像への合成は
+    //   M57d/M57e) ので、on にしても絵は 1 ビットも変わらない。それでも配線して
+    //   あるのは GPU コストを実シーンで測り、値を読み戻して検査できるようにするため。
+    //   on のあいだだけ 3D テクスチャを確保する (注入 7MB + 積分 7MB +
+    //   テンポラル履歴が viewKey あたり 14MB)。
+    // ★シーンカメラに CameraPostFx があれば **そちらの froxelOn が勝つ**
+    //   (TAA / ポスプロと同じ規則)。SceneView のエディタカメラは常にこの値
     bool enableFroxel = false;
     FroxelSettings froxelSettings;
     // --froxel-dump N: **そのビューの N 回目の描画**で全セルを読み戻し、影あり/なしの
@@ -199,10 +201,15 @@ public:
     int ShadowAtlasDraws() const { return shadowAtlas_.DrawCalls(); }
     int ShadowAtlasCulledDraws() const { return shadowAtlas_.CulledDraws(); }
     int ShadowAtlasCulledFaces() const { return shadowAtlasFaceCulled_; }
-    // M57b: フロクセル注入の GPU 時間とグリッド規模 (ProfilerWindow 表示用)。
+    // M57b/M57c: フロクセル各パスの GPU 時間とグリッド規模 (ProfilerWindow 表示用)。
     // cells が 0 = ボリュームをまだ確保していない (= 一度も注入していない)
     float FroxelInjectGpuMs() const { return froxelPass_.InjectGpuMs(); }
+    float FroxelTemporalGpuMs() const { return froxelPass_.TemporalGpuMs(); }
+    float FroxelIntegrateGpuMs() const { return froxelPass_.IntegrateGpuMs(); }
     int FroxelCellCount() const { return froxelPass_.CellCount(); }
+    // 直近フレームで履歴を混ぜられたか (0 = 初フレーム / 通番が飛んだ / テンポラル off)
+    bool FroxelHistoryValid() const { return froxelPass_.LastHistoryValid(); }
+    float FroxelSliceJitter() const { return froxelPass_.LastSliceJitter(); }
 
     // M54b: 直近フレームのライト選別結果 (カリング + 決定論ソート + 上限)。
     // shadowSlot は M54c のシャドウアトラスが読む — この時点ではまだ誰も配線していない

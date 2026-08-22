@@ -203,10 +203,22 @@ $constGroups = @(
         # 絵は出るのにフォグだけがちらつくという、目で追いにくい壊れ方をする
         label = 'froxel::kGroupSize / MYE_FROXEL_GROUP'
         sites = @{
-            'src\Engine\Renderer\RenderTypes.h'    = 'constexpr\s+int\s+kGroupSize\s*=\s*(\d+)'
-            'assets\shaders\froxel_clear.cs.hlsl'  = '#\s*define\s+MYE_FROXEL_GROUP\s+(\d+)'
-            # M57b: 注入も clear と同じ割り方 (同じ (x,y) の Z 列) でなければならない
-            'assets\shaders\froxel_inject.cs.hlsl' = '#\s*define\s+MYE_FROXEL_GROUP\s+(\d+)'
+            'src\Engine\Renderer\RenderTypes.h'   = 'constexpr\s+int\s+kGroupSize\s*=\s*(\d+)'
+            # M57c: HLSL 側の正本は froxel_common.hlsli 1 本にまとめた (clear / inject /
+            # temporal / integrate の 4 本が同じ割り方を要求するようになったため)。
+            # 各 .cs.hlsl が #define を持たなくなったので、照合先もここへ移す
+            'assets\shaders\froxel_common.hlsli'  = '#\s*define\s+MYE_FROXEL_GROUP\s+(\d+)'
+        }
+    },
+    @{
+        # M57c: フロクセルのジッタ列の周期。C++ が実際にジッタ値を計算して CB へ載せるので
+        # HLSL 側には出てこないが、**カメラジッタ (TAA) の周期と同じ長さ**でなければ
+        # 「1 巡」が最小公倍数まで伸びて、決定的撮影で撮った 2 枚がどちらも収束前の
+        # 別状態になる。両者は別ヘッダに住んでいるので機械照合しておく
+        label = 'froxel::kJitterSequenceLength / camerajitter::kSequenceLength'
+        sites = @{
+            'src\Engine\Renderer\RenderTypes.h' = 'constexpr\s+uint32_t\s+kJitterSequenceLength\s*=\s*(\d+)'
+            'src\Engine\Renderer\PostFxMath.h'  = 'constexpr\s+uint32_t\s+kSequenceLength\s*=\s*(\d+)'
         }
     }
 )

@@ -302,8 +302,14 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 // M57b: フロクセルへの注入を回す。**絵はまだ変わらない**
                 // (積分 = M57c / 合成 = M57e が入るまで消費者が居ない)
                 config.froxel = true;
+            } else if (arg == L"--froxel-no-temporal") {
+                // M57c: 深度スライスジッタと履歴の混合を止める (A/B 用)。
+                // 代表点が厳密にスライス中心 = M57b の注入とビット一致する
+                config.froxelTemporal = false;
+                config.froxel = true;
             } else if (arg == L"--froxel-dump" && i + 1 < argc) {
-                // M57b: N 回目の描画でグリッドを読み戻して統計をログへ (--froxel も立てる)
+                // M57b/M57c: N 回目の描画でグリッドを読み戻して統計と検査をログへ
+                // (--froxel も立てる)
                 config.froxelDumpFrame = _wtoi(argv[++i]);
                 config.froxel = true;
             } else if (arg == L"--rt-demo") {

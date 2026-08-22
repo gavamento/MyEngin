@@ -437,6 +437,22 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
                            && target.viewKey > 0 && target.viewKey < 4)
             ? 1 : 0;
     }
+    // ---- M57c: フロクセルの有効判定とパラメータ ----
+    // 設定の出所は TAA / ポスプロと同じ規則 (グローバル設定 → シーンカメラの
+    // CameraPostFx があればそちらが勝つ)。**判定だけここで先に引く** — 実際の
+    // ディスパッチはシャドウアトラスと環境の収集が終わったあと (path.Render の直前)。
+    // ★SceneView のエディタカメラ (CameraOverride) には CameraPostFx が効かない
+    //   規約なので、そちらは --froxel / Rendering メニューのグローバル設定だけで動く
+    bool froxelOn = enableFroxel;
+    FroxelSettings effectiveFroxel = froxelSettings;
+    if (!cameraOverride && !camEntity.IsNull()) {
+        if (const auto* pfx = world.GetComponent<CameraPostFxComponent>(camEntity)) {
+            froxelOn = pfx->froxelOn != 0;
+            effectiveFroxel.density = pfx->froxelDensity;
+            effectiveFroxel.anisotropy = pfx->froxelAnisotropy;
+        }
+    }
+    froxelOn = froxelOn && cameraFound;
     if (view.taaEnabled != 0 && jitterAmplitude > 0.0f) {
         float px = 0.0f;
         float py = 0.0f;
@@ -940,19 +956,19 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
         }
     }
 
-    // ---- M57b: フロクセルへの注入 (密度 + 局所ライトの散乱) ----
+    // ---- M57b/M57c: フロクセル (注入 → テンポラル → 前方積分) ----
     // ★置き場所はここしかない: 上流に CollectEnvironment (高度フォグのパラメータ) と
     //   シャドウアトラス (SampleShadowAtlas の入力) が要り、下流の path.Render より
     //   前でないと M57e が積分結果を消費できない。
-    // ★消費者がまだ居ない = 既定 off のこの節は絵に 1 ビットも影響しない。
-    //   注入結果を確かめる口は --froxel-dump (読み戻して数える) だけ
-    if (enableFroxel && (froxelPass_.IsReady() || froxelPass_.Init(device, shaders))) {
-        froxelPass_.Inject(device, shaders, view, lights, froxelSettings);
+    // ★M57c でも**消費者はまだ居ない** (合成は M57d/M57e) ので絵は 1 ビットも変わらない。
+    //   積分結果を確かめる口は --froxel-dump (読み戻して CPU 参照と突き合わせる) だけ
+    if (froxelOn && (froxelPass_.IsReady() || froxelPass_.Init(device, shaders))) {
+        froxelPass_.Render(device, shaders, view, lights, effectiveFroxel);
         // 「そのビューの N 回目の描画」= 決定的撮影モードでは frame 番号と一致する
         // (viewSerial_ はこの Render の末尾で +1 される = ここでの値が今フレームの通番)
         const uint32_t serial = (target.viewKey < 4) ? viewSerial_[target.viewKey] : 0u;
         if (froxelDumpFrame >= 0 && static_cast<uint32_t>(froxelDumpFrame) == serial) {
-            froxelPass_.DebugDumpAB(device, shaders, view, lights, froxelSettings);
+            froxelPass_.DebugDumpAB(device, shaders, view, lights, effectiveFroxel);
         }
     }
 

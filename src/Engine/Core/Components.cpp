@@ -357,6 +357,10 @@ void RegisterBuiltinComponents()
         // M55d: TAA (末尾 append、NoHash なので bump 不要)。Deferred のみ効く
         MYE_JP("TAA", MYE_FIELD(CameraPostFxComponent, taaOn, Int32)),
         MYE_JP("TAA 履歴の残し率", MYE_FIELD_RANGE(CameraPostFxComponent, taaFeedback, Float, 0.0f, 0.95f)),
+        // M57c: フロクセル・ボリュメトリック (末尾 append、NoHash なので bump 不要)
+        MYE_JP("ボリュメトリック霧", MYE_FIELD(CameraPostFxComponent, froxelOn, Int32)),
+        MYE_JP("霧の密度", MYE_FIELD_RANGE(CameraPostFxComponent, froxelDensity, Float, 0.0f, 0.5f)),
+        MYE_JP("霧の異方性", MYE_FIELD_RANGE(CameraPostFxComponent, froxelAnisotropy, Float, -0.9f, 0.9f)),
     }, kComponentNoHash);
 
     // M32e: 合成エフェクトのライフサイクル。DestroyEntity + 子エミッタ playing を駆動 = hash 対象。

@@ -312,7 +312,9 @@ int RunFroxelInjectProbe(GraphicsDevice& device, ShaderManager& shaders, int ite
 
     int rc = 0;
     lights.count = 1;
-    if (!pass.Inject(device, shaders, view, lights, settings)) {
+    // M57c: 値の照合はジッタ 0.5 (= スライス中心) で撮る。CPU 期待値側の
+    // SliceCenterViewDepth と代表点を揃えるため
+    if (!pass.Inject(device, shaders, view, lights, settings, 0.5f)) {
         std::fprintf(stderr, "[froxel-probe] ERROR: inject dispatch was skipped\n");
         return 2;
     }
@@ -401,13 +403,13 @@ int RunFroxelInjectProbe(GraphicsDevice& device, ShaderManager& shaders, int ite
     for (const int lc : { 0, 1, 4, 16 }) {
         lights.count = lc;
         for (int i = 0; i < 2; ++i) { // ウォームアップ
-            pass.Inject(device, shaders, view, lights, settings);
+            pass.Inject(device, shaders, view, lights, settings, 0.5f);
         }
         float dummy[4] = {};
         pass.Volume().ReadbackTexel(device, 0, 0, 0, dummy); // Map で完全同期
         const auto t0 = std::chrono::steady_clock::now();
         for (int i = 0; i < iterations; ++i) {
-            pass.Inject(device, shaders, view, lights, settings);
+            pass.Inject(device, shaders, view, lights, settings, 0.5f);
         }
         pass.Volume().ReadbackTexel(device, 0, 0, 0, dummy);
         const auto t1 = std::chrono::steady_clock::now();
@@ -415,6 +417,64 @@ int RunFroxelInjectProbe(GraphicsDevice& device, ShaderManager& shaders, int ite
             / static_cast<double>(iterations);
         std::printf("[froxel-probe]   lights %2d: %8.3f ms/dispatch (gpu %.3f ms)\n", lc, ms,
                     static_cast<double>(pass.InjectGpuMs()));
+    }
+
+    // ---- M57c: テンポラル + 前方積分 ----
+    // ★viewKey を 2 にしておく — 0 (AssetPreview) は履歴を持たない規約なので、
+    //   そのままだとテンポラルが降りて「積分だけ」を測ってしまう
+    view.viewKey = 2;
+    view.prevViewProjValid = 1;
+    DirectX::XMStoreFloat4x4(&view.prevViewProj,
+                             DirectX::XMLoadFloat4x4(&view.view)
+                                 * DirectX::XMLoadFloat4x4(&view.projNoJitter));
+    lights.count = 4;
+    uint32_t serial = 0;
+    for (int i = 0; i < 4; ++i) { // ウォームアップ (履歴を「有効」にしてから測る)
+        view.viewFrameIndex = serial++;
+        pass.Render(device, shaders, view, lights, settings);
+    }
+    float dummy[4] = {};
+    pass.Integrated().ReadbackTexel(device, 0, 0, 0, dummy);
+    const auto t0 = std::chrono::steady_clock::now();
+    for (int i = 0; i < iterations; ++i) {
+        view.viewFrameIndex = serial++;
+        pass.Render(device, shaders, view, lights, settings);
+    }
+    pass.Integrated().ReadbackTexel(device, 0, 0, 0, dummy);
+    const auto t1 = std::chrono::steady_clock::now();
+    const double fullMs = std::chrono::duration<double, std::milli>(t1 - t0).count()
+        / static_cast<double>(iterations);
+    std::printf("[froxel-probe] full frame (inject+temporal+integrate, 4 lights): "
+                "%8.3f ms/frame (gpu %.3f + %.3f + %.3f ms)\n",
+                fullMs, static_cast<double>(pass.InjectGpuMs()),
+                static_cast<double>(pass.TemporalGpuMs()),
+                static_cast<double>(pass.IntegrateGpuMs()));
+
+    // ---- M57c: 積分の解析検算 ----
+    // 一様媒質 (heightFalloff = 0) なので、**最奥スライスの透過率は厳密に
+    // e^{-σ_t·(far-near)}** になる。スライスの厚みを 1 枚ずらす / 中心差で刻む /
+    // 手前と奥を取り違える、どの間違いもこの 1 本で落ちる (絵では絶対に分からない)
+    float deep[4] = {};
+    const float gridFarZ = (std::min)(view.farZ, settings.maxDistance);
+    if (pass.Integrated().ReadbackTexel(device, 0, 0, pass.Integrated().Depth() - 1, deep)) {
+        const float expectT = std::exp(-settings.density * (gridFarZ - view.nearZ));
+        const bool transOk = std::fabs(deep[3] - expectT) < expectT * 0.01f;
+        // 内向き散乱は「単調非減少で 0 より大きい」ことだけを見る (値そのものは
+        // --froxel-dump が全セルを CPU 参照と突き合わせる)
+        const bool scatterOk = deep[0] > 0.0f;
+        if (!transOk || !scatterOk) {
+            std::printf("[froxel-probe]   INTEGRATE MISMATCH: farT=%g (expected %g) / "
+                        "inscatter=%g\n",
+                        deep[3], expectT, deep[0]);
+            rc = 1;
+        } else {
+            std::printf("[froxel-probe]   integrate values OK: far transmittance %g vs "
+                        "analytic %g / accumulated inscatter %g\n",
+                        deep[3], expectT, deep[0]);
+        }
+    } else {
+        std::fprintf(stderr, "[froxel-probe] ERROR: integrate readback failed\n");
+        return 2;
     }
     return rc;
 }

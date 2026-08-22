@@ -858,6 +858,111 @@ void TestFroxelScattering()
     TEST_CHECK(froxel::HeightDensityScale(10.0f, 0.0f, 0.1f) > 0.0f);
 }
 
+// M57c: 深度スライスジッタ + 前方積分 (RenderTypes.h の mye::froxel。
+// HLSL froxel_common.hlsli / froxel_integrate.cs.hlsl と同一式)。
+// ★ここも「絵からは 1 画素も分からない」— 合成は M57d/M57e。GPU 側で本当に同じ値が
+//   出るかは `Editor.exe --froxel-dump N` (読み戻して CPU 参照と突き合わせる) の担当
+void TestFroxelIntegration()
+{
+    MYE_LOG_INFO("[selftest] froxel jitter + forward integration");
+
+    // ① ジッタ列は camerajitter の Halton 基数 2 と**同じ数列**でなければならない。
+    //    RenderTypes.h は PostFxMath.h を include できないので実装が 2 つある —
+    //    その一致をここで機械照合する (片方だけ直したら落ちる)
+    for (uint32_t f = 0; f < 32; ++f) {
+        const uint32_t i = (f % froxel::kJitterSequenceLength) + 1u;
+        TEST_CHECK(std::fabs(froxel::SliceJitter(f) - camerajitter::RadicalInverse(i, 2)) < 1e-7f);
+    }
+    // ② 値域 (0,1)。0 や 1 に張り付くとスライス境界を代表点にしてしまう
+    bool inRange = true;
+    for (uint32_t f = 0; f < 64; ++f) {
+        const float j = froxel::SliceJitter(f);
+        inRange = inRange && (j > 0.0f) && (j < 1.0f);
+    }
+    TEST_CHECK(inRange);
+    // ③ 通番 0 は厳密に 0.5 = スライス中心 = M57b の注入とビット一致する位置。
+    //    「ジッタを入れても 1 フレーム目は動いていない」と言えるのはこの性質のおかげ
+    TEST_CHECK(froxel::SliceJitter(0) == 0.5f);
+    // ④ 周期ぶん進むと元へ戻る (決定的撮影で撮った 2 枚が同じ位相になる条件)
+    TEST_CHECK(froxel::SliceJitter(7) == froxel::SliceJitter(7 + froxel::kJitterSequenceLength));
+    // ⑤ 1 周期のあいだに同じ値が出ない (出ると実効サンプル数がその分減る)
+    bool distinct = true;
+    for (uint32_t a = 0; a < froxel::kJitterSequenceLength; ++a) {
+        for (uint32_t b = a + 1; b < froxel::kJitterSequenceLength; ++b) {
+            distinct = distinct && (froxel::SliceJitter(a) != froxel::SliceJitter(b));
+        }
+    }
+    TEST_CHECK(distinct);
+
+    // ⑥ 解析積分。σ_t → 0 の極限はちょうど厚み (素朴な式と一致する)
+    TEST_CHECK(std::fabs(froxel::IntegratedSliceScatter(0.0f, 2.5f) - 2.5f) < 1e-6f);
+    TEST_CHECK(std::fabs(froxel::IntegratedSliceScatter(1e-9f, 2.5f) - 2.5f) < 1e-5f);
+    // 濃いほど「厚みの素掛け」より**小さく**なる (1 スライス内の自己遮蔽)。
+    // ここが逆向きだと濃い霧ほど明るいという絵になる
+    TEST_CHECK(froxel::IntegratedSliceScatter(2.0f, 1.0f) < 1.0f);
+    TEST_CHECK(froxel::IntegratedSliceScatter(2.0f, 1.0f) > froxel::IntegratedSliceScatter(4.0f, 1.0f));
+    // 定義そのもの: (1-e^{-σd})/σ
+    TEST_CHECK(std::fabs(froxel::IntegratedSliceScatter(0.5f, 3.0f)
+                         - (1.0f - std::exp(-1.5f)) / 0.5f)
+               < 1e-6f);
+
+    // ⑦ 透過率は Beer-Lambert。厚み 0 は厳密に 1 (恒等)
+    TEST_CHECK(froxel::SliceTransmittance(0.7f, 0.0f) == 1.0f);
+    TEST_CHECK(froxel::SliceTransmittance(0.0f, 5.0f) == 1.0f);
+    TEST_CHECK(std::fabs(froxel::SliceTransmittance(0.25f, 4.0f) - std::exp(-1.0f)) < 1e-6f);
+
+    // ⑧ グリッド全体を一様媒質で積分すると、
+    //    (a) 透過率の総積 = e^{-σ_t(far-near)} (= スライス厚みの総和が過不足なく far-near)
+    //    (b) 内向き散乱の総和 = L·(1-T) (σ_s = σ_t のときのエネルギー保存)
+    //    ★スライスを 1 枚ずらす / 厚みを中心差にする、どちらの取り違えもここで落ちる
+    {
+        const int slices = froxel::kGridZ;
+        const float nearZ = 0.1f;
+        const float farZ = 64.0f;
+        const float sigmaT = 0.03f;
+        const float radiance = 2.0f; // 単位長あたりの内向き散乱 (σ_s·L)
+        float trans = 1.0f;
+        float accum = 0.0f;
+        float prevDepth = nearZ;
+        bool monotone = true;
+        for (int z = 0; z < slices; ++z) {
+            const float depth = froxel::SliceToViewDepth(static_cast<float>(z + 1), slices, nearZ,
+                                                         farZ);
+            const float thickness = depth - prevDepth;
+            prevDepth = depth;
+            const float next = trans * froxel::SliceTransmittance(sigmaT, thickness);
+            monotone = monotone && (next <= trans);
+            accum += trans * radiance * froxel::IntegratedSliceScatter(sigmaT, thickness);
+            trans = next;
+        }
+        TEST_CHECK(monotone);
+        TEST_CHECK(std::fabs(trans - std::exp(-sigmaT * (farZ - nearZ))) < 1e-5f);
+        // σ_s = σ_t = sigmaT なら L = radiance/sigmaT で、積分値は L(1-T) に収束する
+        TEST_CHECK(std::fabs(accum - (radiance / sigmaT) * (1.0f - trans)) < 1e-3f);
+    }
+
+    // ⑨ 積分結果のサンプル座標。テクセル z には「スライス z の奥端まで」が入るので、
+    //    sliceCoord z+1 を引くと**テクセル z の中心** (z+0.5)/count を指す
+    {
+        const int slices = froxel::kGridZ;
+        for (int z = 0; z < 4; ++z) {
+            const float w = froxel::IntegratedSampleW(static_cast<float>(z + 1), slices);
+            TEST_CHECK(std::fabs(w - (static_cast<float>(z) + 0.5f) / slices) < 1e-6f);
+        }
+    }
+
+    // ⑩ テンポラルの混合。histValid=false / feedback=0 は**厳密に**現フレーム
+    //    (ここがビット恒等でないと「テンポラル off でビット一致」が崩れる)
+    TEST_CHECK(froxel::TemporalBlend(0.375f, 99.0f, 0.9f, false) == 0.375f);
+    TEST_CHECK(froxel::TemporalBlend(0.375f, 99.0f, 0.0f, true) == 0.375f);
+    TEST_CHECK(std::fabs(froxel::TemporalBlend(0.0f, 1.0f, 0.9f, true) - 0.9f) < 1e-6f);
+    // 上限クランプ: 1.0 を渡しても今フレームが必ず 1/20 は入る (絵が固まらない)
+    TEST_CHECK(froxel::TemporalBlend(0.0f, 1.0f, 1.0f, true) < 1.0f);
+    TEST_CHECK(std::fabs(froxel::TemporalBlend(0.0f, 1.0f, 1.0f, true)
+                         - froxel::kMaxTemporalFeedback)
+               < 1e-6f);
+}
+
 } // namespace
 
 bool RunRenderSelfTest()
@@ -882,6 +987,7 @@ bool RunRenderSelfTest()
     TestMotionBlurVelocity();
     TestFroxelGrid();       // M57a
     TestFroxelScattering(); // M57b
+    TestFroxelIntegration(); // M57c
     if (g_failCount == 0) {
         MYE_LOG_INFO("[selftest] render: ALL PASS");
         return true;

@@ -451,6 +451,12 @@ struct CameraPostFxComponent {
     // カメラジッタごと無効化する (TAA 無しでジッタだけ載ると画面が揺れるだけになる)
     int32_t taaOn = 0;        // 0=off 1=on
     float taaFeedback = 0.9f; // 履歴の残し率 [0,0.95]。大きいほど滑らかで残像も増える
+    // ---- M57c: フロクセル・ボリュメトリック (末尾 append、NoHash なので hash 不変) ----
+    // ★既定 0 = 恒等。**M57c の時点では積分結果を読む者が居ない**ので、1 にしても
+    //   絵はまだ変わらない (合成は M57d/M57e)。GPU コストだけが増える
+    int32_t froxelOn = 0;          // 0=off 1=on
+    float froxelDensity = 0.02f;   // 基準の消散係数 σ_t [1/m] (高度スケール前)
+    float froxelAnisotropy = 0.3f; // HG 位相関数の g (>0 = 前方散乱 = 光源側が明るい)
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 

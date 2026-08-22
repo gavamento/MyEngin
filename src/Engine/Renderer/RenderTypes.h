@@ -473,6 +473,81 @@ inline float HeightDensityScale(float y, float baseHeight, float falloff)
     return std::exp(-falloff * (y - baseHeight));
 }
 
+// ---- M57c: 深度スライスジッタ + 前方積分 (HLSL froxel_common.hlsli と同一式) ----
+
+// スライスジッタ列の周期。camerajitter::kSequenceLength (= 8) と同じ長さにしてある。
+// 別の周期にすると TAA の収束周期との最小公倍数まで「1 巡」が伸びて、
+// 決定的撮影で撮った 2 枚が「どちらも収束前」の別状態になる
+constexpr uint32_t kJitterSequenceLength = 8;
+
+// frameIndex → セル中心のスライス方向オフセット [0,1)。0.5 = ジッタ無し (M57b と同じ位置)。
+// ★実時間ではなく **viewKey 別の描画通番** から引く = 決定的撮影モード
+//   (frame 番号 == tick 番号) でフレーム列がそのまま再現する。
+// 中身は基数 2 の van der Corput で、camerajitter::RadicalInverse(i, 2) と**同じ数列**。
+// PostFxMath.h の実装を呼ばないのは RenderTypes.h がそれより下の層で include できないため
+// (逆向きの依存になる)。**両者が一致することは RenderSelfTest が機械で照合している**。
+// frameIndex==0 が 0.5 になるのは意図的 — テンポラル 1 フレーム目が M57b の注入と
+// ビット一致し、「ジッタを入れても初期状態は変わっていない」ことを言えるようにするため
+inline float SliceJitter(uint32_t frameIndex)
+{
+    uint32_t i = (frameIndex % kJitterSequenceLength) + 1u;
+    float result = 0.0f;
+    float f = 0.5f;
+    while (i > 0u) {
+        result += static_cast<float>(i & 1u) * f;
+        i >>= 1;
+        f *= 0.5f;
+    }
+    return result;
+}
+
+// スライス 1 枚ぶんの透過率 T = e^{-σ_t·d} (Beer-Lambert)
+inline float SliceTransmittance(float sigmaT, float thickness)
+{
+    const float s = (sigmaT > 0.0f) ? sigmaT : 0.0f;
+    const float d = (thickness > 0.0f) ? thickness : 0.0f;
+    return std::exp(-s * d);
+}
+
+// スライス 1 枚を均質と見なしたときの散乱の解析積分 ∫₀^d e^{-σ_t·s} ds = (1-e^{-σ_t·d})/σ_t。
+// ★ここを「厚み d をそのまま掛ける」で済ませてはいけない — 濃い霧で 1 スライス内の
+//   自己遮蔽が消え、透過率が下がるほど明るくなるという逆向きの絵になる (Hillaire 2015)。
+//   σ_t → 0 の極限はちょうど d なので、薄い霧では素朴な式と一致する
+inline float IntegratedSliceScatter(float sigmaT, float thickness)
+{
+    const float s = (sigmaT > 0.0f) ? sigmaT : 0.0f;
+    const float d = (thickness > 0.0f) ? thickness : 0.0f;
+    if (s < 1e-5f) {
+        return d; // 極限。ゼロ除算よけを兼ねる
+    }
+    return (1.0f - std::exp(-s * d)) / s;
+}
+
+// 積分結果ボリュームのサンプル座標 (w = 正規化スライス方向)。
+// **格納規約: テクセル z には「スライス z の奥端 (= sliceCoord z+1) までの積分」が入る。**
+// テクセル中心は sliceCoord z+0.5 の位置にあるので、任意の sliceCoord s を引くには
+// 半テクセルぶん手前を指す必要がある: w = (s - 0.5) / count。
+// ★この -0.5 を落とすと霧が 1 スライスぶん手前にずれる (スライスが薄い近景ほど効く)
+inline float IntegratedSampleW(float sliceCoord, int sliceCount)
+{
+    const int count = (sliceCount > 0) ? sliceCount : 1;
+    return (sliceCoord - 0.5f) / static_cast<float>(count);
+}
+
+// テンポラルの混合。feedback = 履歴の残し率 [0, kMaxTemporalFeedback]。
+// ★histValid=false / feedback=0 は **厳密に現フレームそのまま** を返す —
+//   ここがビット恒等でないと「テンポラル off で直前コミットとビット一致」という
+//   このロードマップの受入基準が成立しない (lerp の丸めで最下位ビットが動く)
+constexpr float kMaxTemporalFeedback = 0.95f;
+inline float TemporalBlend(float cur, float hist, float feedback, bool histValid)
+{
+    if (!histValid || feedback <= 0.0f) {
+        return cur;
+    }
+    const float f = (feedback > kMaxTemporalFeedback) ? kMaxTemporalFeedback : feedback;
+    return cur + (hist - cur) * f; // HLSL の lerp(cur, hist, f) と同じ展開順
+}
+
 } // namespace froxel
 
 } // namespace mye

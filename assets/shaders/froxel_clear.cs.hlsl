@@ -13,10 +13,10 @@
 //   だが、ここは**ストアしかしない**ので R16G16B16A16_FLOAT で通る。
 //   WARP が本当に通すかは机上で決まらない — プローブが書いて読み戻して確かめる。
 
-// C++ の mye::froxel::kGroupSize (src\Engine\Renderer\RenderTypes.h) と一致検査される
-// (tools\check_rules.ps1 規則 9)。XY だけをタイルにしているのは、注入も積分も
-// 「同じ (x,y) の Z 列」を扱うため (積分は 1 スレッドが 1 列を手前から舐めるので Z を割れない)
-#define MYE_FROXEL_GROUP 8
+// M57c: MYE_FROXEL_GROUP の正本は froxel_common.hlsli へ移した
+// (注入 / テンポラル / 積分 の 3 本が同じ割り方を要求するようになったため)。
+// C++ の mye::froxel::kGroupSize との一致は tools\check_rules.ps1 規則 9 が検査する
+#include "froxel_common.hlsli"
 
 // C++ の FroxelClearCB (VolumeTexture.cpp) とレイアウト一致 (32 バイト)
 cbuffer FroxelClearCB : register(b0)
