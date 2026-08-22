@@ -87,6 +87,31 @@ inline bool AabbInFrustum(const Frustum& f, const DirectX::XMFLOAT4X4& m,
     return true;
 }
 
+// 既に world 空間へ落ちている AABB が視錐台と交差するか (M54d)。
+// AabbInFrustum は「ローカル AABB + world 行列」を受けるが、シーン AABB や
+// 「タイル毎に使い回すため一度だけ world へ落としたキャッシュ」はもう行列を持たない。
+// 単位行列を作って渡す遠回りを避けるためのオーバーロード (判定式は p-vertex で同一)。
+inline bool WorldAabbInFrustum(const Frustum& f, const DirectX::XMFLOAT3& wmin,
+                               const DirectX::XMFLOAT3& wmax)
+{
+    using DirectX::XMFLOAT3;
+    using DirectX::XMFLOAT4;
+    const XMFLOAT3 wc = { (wmin.x + wmax.x) * 0.5f, (wmin.y + wmax.y) * 0.5f,
+                          (wmin.z + wmax.z) * 0.5f };
+    const XMFLOAT3 we = { (wmax.x - wmin.x) * 0.5f, (wmax.y - wmin.y) * 0.5f,
+                          (wmax.z - wmin.z) * 0.5f };
+    for (int i = 0; i < 6; ++i) {
+        const XMFLOAT4& p = f.planes[i];
+        const float px = wc.x + (p.x >= 0.0f ? we.x : -we.x);
+        const float py = wc.y + (p.y >= 0.0f ? we.y : -we.y);
+        const float pz = wc.z + (p.z >= 0.0f ? we.z : -we.z);
+        if (p.x * px + p.y * py + p.z * pz + p.w < 0.0f) {
+            return false;
+        }
+    }
+    return true;
+}
+
 // ローカル AABB をワールド行列で変換した world AABB (絶対値 3x3 法) を out に返す (M17 シャドウ範囲用)。
 inline void WorldAabb(const DirectX::XMFLOAT4X4& m, const DirectX::XMFLOAT3& lmin,
                       const DirectX::XMFLOAT3& lmax, DirectX::XMFLOAT3& outMin,

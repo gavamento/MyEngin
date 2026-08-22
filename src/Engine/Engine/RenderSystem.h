@@ -143,12 +143,26 @@ public:
     float RtBuildCpuMs() const { return rtScene_.BuildCpuMs(); }
     int RtInstanceCount() const { return rtScene_.InstanceCount(); }
     int RtTriangleCount() const { return rtScene_.TriangleCount(); }
+    // M54d: 影の統計 (ProfilerWindow 表示用)。csm = 平行光 3 カスケード、
+    // atlas = 局所ライトのタイル。tiles が 0 = 影を投げる局所ライトが 1 本も居ない
+    float ShadowCsmGpuMs() const { return shadowPass_.GpuMs(); }
+    float ShadowAtlasGpuMs() const { return shadowAtlas_.GpuMs(); }
+    int ShadowAtlasTiles() const { return shadowAtlas_.DrawnTiles(); }
+    int ShadowAtlasDraws() const { return shadowAtlas_.DrawCalls(); }
+    int ShadowAtlasCulledDraws() const { return shadowAtlas_.CulledDraws(); }
+    int ShadowAtlasCulledFaces() const { return shadowAtlasFaceCulled_; }
 
     // M54b: 直近フレームのライト選別結果 (カリング + 決定論ソート + 上限)。
     // shadowSlot は M54c のシャドウアトラスが読む — この時点ではまだ誰も配線していない
     LightSelection lightSelection;
 
 private:
+    // M54d: 面カリング (シーン AABB と交差しない点光源の面) で描画を省いた枚数。
+    // 統計専用 — 枠自体は連番を崩さないために確保したまま (クリア値 = 影なし)
+    int shadowAtlasFaceCulled_ = 0;
+    // M54d: タイル割当ログの既出セット (lightLogSeen_ と同じ理由・同じ方式)
+    uint64_t shadowLogSeen_[8] = {};
+    int shadowLogSeenCount_ = 0;
     // M54b: ライト選別ログの既出セット (描画専用)。「直近値と違ったら出す」にすると、
     // SceneView と GameView が同じ RenderSystem を共有していて選別結果が食い違う場合に
     // 毎フレーム 2 行出続ける。出たことのある組み合わせを覚えて 1 回ずつだけ出す

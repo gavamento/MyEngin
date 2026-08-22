@@ -5,6 +5,7 @@
 #include <wrl/client.h>
 
 #include "Engine/Core/EntityID.h"
+#include "Engine/Renderer/GpuTimer.h"
 #include "Engine/Renderer/MeshInstancing.h"
 #include "Engine/Renderer/RenderTypes.h"
 
@@ -62,6 +63,12 @@ public:
 
     ID3D11ShaderResourceView* SRV() const { return srv_.Get(); } // Texture2D (R32_FLOAT)
 
+    // ---- 直近 Render の計測 (M54d、ProfilerWindow 行)。描画専用の統計 ----
+    float GpuMs() const { return timer_.Milliseconds(); }
+    int DrawnTiles() const { return drawnTiles_; }   // 実際に描いたタイル数 (面カリング後)
+    int DrawCalls() const { return drawCalls_; }     // 発行した DrawIndexed(Instanced) 数
+    int CulledDraws() const { return culledDraws_; } // タイル毎の視錐台カリングで省いた分
+
 private:
     bool ready_ = false;
     int resolution_ = 0;
@@ -75,6 +82,19 @@ private:
     std::vector<uint8_t> canInstance_;
     std::vector<MeshInstanceRun> runs_;
     std::vector<DirectX::XMFLOAT4X4> worlds_;
+    // ★タイル毎の視錐台カリング用 world AABB キャッシュ (M54d)。
+    //   点光源 1 本 = 6 面なので、タイル数は M54c の数倍まで増える。キューを毎タイル
+    //   舐め直すのは避けられないが、AABB の再計算 (mesh 取得 + 絶対値 3x3) までタイル数倍に
+    //   するのは無駄なので 1 回だけ作って使い回す。run は「全要素が枠外なら run ごと飛ばす」
+    //   ための合併 AABB を持つ (途中だけ落とすと run が分割できず描画がむしろ増える)
+    std::vector<DirectX::XMFLOAT3> itemMin_;
+    std::vector<DirectX::XMFLOAT3> itemMax_;
+    std::vector<DirectX::XMFLOAT3> runMin_;
+    std::vector<DirectX::XMFLOAT3> runMax_;
+    GpuTimer timer_;
+    int drawnTiles_ = 0;
+    int drawCalls_ = 0;
+    int culledDraws_ = 0;
 
     Microsoft::WRL::ComPtr<ID3D11Texture2D> tex_;
     Microsoft::WRL::ComPtr<ID3D11DepthStencilView> dsv_;

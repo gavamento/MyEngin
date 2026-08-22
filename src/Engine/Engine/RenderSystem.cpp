@@ -120,6 +120,46 @@ XMFLOAT4X4 ComputeSpotLightVP(const XMFLOAT3& position, const XMFLOAT3& directio
     return out;
 }
 
+// D3D cubemap 面順 (+X,-X,+Y,-Y,+Z,-Z) の forward/up 基底 (M54d)。
+// **EnvMapBaker.cpp の kFaces と同一表を意図的に複製している** — あちらは IBL ベイクの
+// 匿名 namespace にあり、公開すると「環境マップの都合」がシャドウ側の依存になる。
+// HLSL 側 common.hlsli の CubeFaceIndex もこの順番。3 者がずれると絵は出るが合わない
+struct CubeFaceBasis {
+    XMFLOAT3 forward;
+    XMFLOAT3 up;
+};
+constexpr CubeFaceBasis kCubeFaces[6] = {
+    { { 1, 0, 0 }, { 0, 1, 0 } },  // +X
+    { { -1, 0, 0 }, { 0, 1, 0 } }, // -X
+    { { 0, 1, 0 }, { 0, 0, -1 } }, // +Y
+    { { 0, -1, 0 }, { 0, 0, 1 } }, // -Y
+    { { 0, 0, 1 }, { 0, 1, 0 } },  // +Z
+    { { 0, 0, -1 }, { 0, 1, 0 } }, // -Z
+};
+
+// 点光源 1 面ぶんの lightViewProj (M54d)。face は kCubeFaces の添字。
+// ★fov はちょうど 90 度ではなく「タイル境界に PCF 用の余白を marginTexels 取る」ぶんだけ
+//   広い。CubeFaceIndex はちょうど 90 度で面を切り替えるので、90 度で焼くと境界画素の
+//   3x3 タップがタイルの外へ出る → SampleShadowAtlas の clamp が働いて自分の深度でなく
+//   縁の深度を舐め、面の継ぎ目に沿って影の線が走る。tan(fov/2) を 1+2m/S にすると
+//   90 度境界がタイル内側 m テクセルへ寄る (実測 S=1024 / m=2 で継ぎ目が消える)
+XMFLOAT4X4 ComputePointLightFaceVP(const XMFLOAT3& position, int face, float range, int tileSize)
+{
+    const CubeFaceBasis& b = kCubeFaces[(face < 0 || face > 5) ? 0 : face];
+    const XMVECTOR eye = XMLoadFloat3(&position);
+    const XMMATRIX lightView =
+        XMMatrixLookToLH(eye, XMLoadFloat3(&b.forward), XMLoadFloat3(&b.up));
+    constexpr float kMarginTexels = 2.0f;
+    const float s = static_cast<float>(std::max(tileSize, 16));
+    const float fovY = 2.0f * std::atan(1.0f + 2.0f * kMarginTexels / s);
+    const float farZ = std::max(range, 1.0f);
+    const XMMATRIX lightProj = XMMatrixPerspectiveFovLH(fovY, 1.0f, 0.05f, farZ);
+
+    XMFLOAT4X4 out;
+    XMStoreFloat4x4(&out, XMMatrixMultiply(lightView, lightProj));
+    return out;
+}
+
 // CSM のカスケード VP 列 (M38d)。カメラの部分フラスタム 8 隅をライトビューへ射影して
 // フィットした ortho を作る。practical split (λ=0.5)、影距離は kShadowMaxDist まで。
 // テクセルスナップで安定化。ライト方向のキャスター (フラスタム外) を拾うため
@@ -593,39 +633,60 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
             }
         }
 
-        // ---- 局所ライトのシャドウアトラス (M54c): スポットを透視 1 面でタイルへ描く ----
+        // ---- 局所ライトのシャドウアトラス (M54c: スポット 1 面 / M54d: 点光源 6 面) ----
         // 枠は「M54b の決定論キーで並んだライト順に前詰め」= シーンが変わらなければ
         // frame をまたいでも同じライトが同じ枠に落ちる (割当が揺れると影がポップする)。
-        // 点光源 (6 面) は M54d — ここでは shadowSlot を持っていても素通りさせる
+        // ★点光源は 6 枚を**連番**で取る — シェーダは shadowTile + 面番号で引くので、
+        //   途中に他のライトの枠が挟まると隣の深度を読んでしまう
         view.shadowAtlasSRV = nullptr;
         view.shadowTileCount = 0;
+        shadowAtlasFaceCulled_ = 0;
         if (enableShadows && hasScene) {
             int tileCount = 0;
+            int culledFaces = 0;
+            int casters = 0;
             for (int i = 0; i < lightSelection.count && i < lights.count; ++i) {
                 if (lightSelection.lights[i].shadowSlot < 0) {
                     continue;
                 }
-                if (lights.lights[i].type != 2) {
-                    continue; // M54c はスポットのみ
+                const GpuLight& g = lights.lights[i];
+                const int faces = (g.type == 1) ? 6 : ((g.type == 2) ? 1 : 0);
+                if (faces == 0) {
+                    continue; // 平行光の影は CSM (ShadowPass) の担当
                 }
                 // アトラス未生成ならここで初めて作る (64MB。影を使わないシーンでは払わない)
                 if (!shadowAtlas_.IsReady() && !shadowAtlas_.Init(device, shaders)) {
                     break;
                 }
-                if (tileCount >= shadowAtlas_.TileCapacity()) {
-                    break;
+                // ★入り切らないライトは break ではなく skip。6 枚要る点光源が入らなくても
+                //   後ろに並ぶ 1 枚のスポットはまだ入る。選別順に前詰めという規則は
+                //   保たれるので、割当は決定論のまま
+                if (tileCount + faces > shadowAtlas_.TileCapacity()) {
+                    continue;
                 }
-                const GpuLight& g = lights.lights[i];
-                ShadowTile& tile = view.shadowTiles[tileCount];
-                shadowAtlas_.FillTileRect(tileCount, tile);
-                tile.lightViewProj =
-                    ComputeSpotLightVP(g.position, g.direction, g.cosOuter, g.range);
-                // 定数バイアスはラスタライザ側 (傾斜依存) を主役にしているので極小。
-                // 0 にすると自己遮蔽の縞が出る距離帯が残る (実測で詰めた値)
-                tile.depthBias = 0.00015f;
-                lights.lights[i].shadowTile = tileCount;
-                lights.lights[i].shadowFaces = 1;
-                ++tileCount;
+                const int base = tileCount;
+                for (int f = 0; f < faces; ++f) {
+                    ShadowTile& tile = view.shadowTiles[base + f];
+                    shadowAtlas_.FillTileRect(base + f, tile);
+                    tile.lightViewProj = (faces == 6)
+                        ? ComputePointLightFaceVP(g.position, f, g.range, shadowAtlas_.TileSize())
+                        : ComputeSpotLightVP(g.position, g.direction, g.cosOuter, g.range);
+                    // 定数バイアスはラスタライザ側 (傾斜依存) を主役にしているので極小。
+                    // 0 にすると自己遮蔽の縞が出る距離帯が残る (実測で詰めた値)
+                    tile.depthBias = 0.00015f;
+                    // ★面カリング (M54d): この面の視錐台がシーン AABB に触れないなら描かない。
+                    //   タイルは**確保したまま** pixelSize=0 にする — 連番を詰めると
+                    //   shadowTile + 面番号の対応が崩れる。描かれないタイルはクリア値
+                    //   1.0 (最遠) のままなので、サンプルしても「影なし」に落ちる
+                    if (!WorldAabbInFrustum(BuildFrustum(tile.lightViewProj), sceneMin, sceneMax)) {
+                        tile.pixelSize = 0;
+                        ++culledFaces;
+                    }
+                }
+                lights.lights[i].shadowTile = base;
+                lights.lights[i].shadowFaces = faces;
+                tileCount += faces;
+                ++casters;
             }
             if (tileCount > 0) {
                 shadowAtlas_.Render(device, shaders, queue_, resources, view.shadowTiles,
@@ -634,6 +695,27 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
                 view.shadowAtlasTexel =
                     1.0f / static_cast<float>(shadowAtlas_.Resolution());
                 view.shadowTileCount = tileCount;
+            }
+            shadowAtlasFaceCulled_ = culledFaces;
+            // M54d: 割当の実測をログへ。ヘッドレス撮影では ProfilerWindow が見えないので、
+            // 「6 面が連番で取れたか / 面カリングが効いたか」はここでしか確認できない。
+            // M54b のライト選別ログと同じ「出たことのある組み合わせを 1 回ずつ」方式
+            // (SceneView と GameView で結果が食い違うと毎フレーム 2 行出続けるため)
+            if (tileCount > 0) {
+                auto pack = [](int v) { return static_cast<uint64_t>(v & 0xFFFF); };
+                const uint64_t key = pack(tileCount) | (pack(culledFaces) << 16)
+                    | (pack(casters) << 32) | (pack(shadowAtlas_.DrawCalls()) << 48);
+                bool seen = false;
+                for (int i = 0; i < shadowLogSeenCount_; ++i) {
+                    seen = seen || shadowLogSeen_[i] == key;
+                }
+                if (!seen && shadowLogSeenCount_ < static_cast<int>(std::size(shadowLogSeen_))) {
+                    shadowLogSeen_[shadowLogSeenCount_++] = key;
+                    MYE_LOG_INFO("ShadowAtlas: %d tiles for %d local casters (%d faces culled, "
+                                 "%d draws, %d draws culled)",
+                                 tileCount, casters, culledFaces, shadowAtlas_.DrawCalls(),
+                                 shadowAtlas_.CulledDraws());
+                }
             }
         }
     }

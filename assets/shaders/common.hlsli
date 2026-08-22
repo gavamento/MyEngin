@@ -73,6 +73,33 @@ struct ShadowTile
     float4   params;        // x = 定数深度バイアス (NDC) / yzw = 予約 (M54d)
 };
 
+// 点光源のキューブ 6 面のうち dir がどの面へ落ちるか (M54d)。
+// 面順は **D3D の cubemap 面順 (+X,-X,+Y,-Y,+Z,-Z)** — C++ 側 RenderSystem.cpp の
+// kCubeFaces / EnvMapBaker.cpp の kFaces と同一表。3 者がずれると「影が隣の面から来る」
+// という、絵は出るのに合わないだけの静かな壊れ方をする。
+// ★絶対値最大の軸を選ぶ = ちょうど 90 度の境界で切れる。面 VP 側は 90 度より僅かに
+//   広く (タイル境界に PCF 用の余白を 2 テクセル) 焼いてあるので、境界画素の 3x3 タップが
+//   タイル外へ出てクランプされることがない (RenderSystem.cpp の ComputePointLightFaceVP)。
+int CubeFaceIndex(float3 dir)
+{
+    const float3 a = abs(dir);
+    if (a.x >= a.y && a.x >= a.z) {
+        return dir.x >= 0.0f ? 0 : 1;
+    }
+    if (a.y >= a.z) {
+        return dir.y >= 0.0f ? 2 : 3;
+    }
+    return dir.z >= 0.0f ? 4 : 5;
+}
+
+// ライト 1 本のアトラス内タイル index (M54d)。スポットは先頭タイルそのまま、点光源は
+// 6 面のうち表面がどの面から見えるかで先頭 + 面番号。**光パス 3 経路 (M54e) で同じ式を
+// 使うためにここへ置いてある** — 呼び出し側でインライン展開すると面順の定義が散る。
+int ShadowTileIndexForLight(Light L, float3 posW)
+{
+    return (L.shadowFaces == 6) ? (L.shadowTile + CubeFaceIndex(posW - L.position)) : L.shadowTile;
+}
+
 // アトラスの 1 タイルを 3x3 PCF で引く (M54c)。戻り値 1=影なし / 0=完全に影。
 // ★タイル外へのタップ漏れを clamp で殺している — アトラスは 1 枚のテクスチャなので、
 //   サンプラのアドレスモードでは「隣のライトの深度」を拾うのを防げない。
@@ -105,26 +132,9 @@ float SampleShadowAtlas(Texture2D atlas, SamplerComparisonState samp, ShadowTile
     return sum / 9.0f;
 }
 
-// シャドウマップの PCF サンプル (M17)。posW をライトクリップ空間へ射影し 3x3 比較平均。
-// 戻り値 1=完全に照らされる, 0=完全に影。範囲外は 1 (影なし)。
-float SampleShadowPCF(Texture2D shadowMap, SamplerComparisonState samp, float4x4 lightViewProj,
-                      float3 posW, float texelSize)
-{
-    float4 lp = mul(float4(posW, 1.0f), lightViewProj);
-    lp.xyz /= lp.w;
-    const float2 uv = lp.xy * float2(0.5f, -0.5f) + 0.5f;
-    if (uv.x < 0.0f || uv.x > 1.0f || uv.y < 0.0f || uv.y > 1.0f || lp.z > 1.0f) {
-        return 1.0f; // シャドウマップ範囲外は影を落とさない
-    }
-    const float d = lp.z - 0.0008f; // 定数バイアス (ラスタライザ側の傾斜バイアスと併用)
-    float sum = 0.0f;
-    [unroll] for (int y = -1; y <= 1; ++y) {
-        [unroll] for (int x = -1; x <= 1; ++x) {
-            sum += shadowMap.SampleCmpLevelZero(samp, uv + float2(x, y) * texelSize, d);
-        }
-    }
-    return sum / 9.0f;
-}
+// (M17 の単一シャドウマップ用 SampleShadowPCF は M54d で削除した — M38d の CSM 化で
+//  呼び出しが消えて以来 5 マイルストーン誰も呼んでおらず、SampleShadowAtlas / SampleShadowCSM
+//  と 3 つ目の「ほぼ同じ 3x3 PCF」が並ぶと、どれを直せばよいかが読み手に分からなくなる)
 
 // CSM のカスケード選択付き PCF (M38d)。カスケード 0 (最詳細) から順に posW を射影し、
 // 最初にマップ範囲へ収まったスライスで 3x3 比較平均。どれにも入らなければ 1 (影なし)。

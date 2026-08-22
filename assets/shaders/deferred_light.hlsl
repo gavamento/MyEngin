@@ -122,9 +122,10 @@ float4 PSMain(VSOut i) : SV_Target
     if (gShadowAtlasEnabled != 0) {
         for (int li = 0; li < gLightCount; ++li) {
             if (gLights[li].shadowFaces > 0) {
-                localShadow[li] = SampleShadowAtlas(gShadowAtlas, gShadowSampler,
-                                                    gShadowTiles[gLights[li].shadowTile], posW,
-                                                    gShadowAtlasTexel);
+                // M54d: 点光源は 6 面ぶんのタイルを連番で持つので、表面の向きで面を選ぶ
+                const int ti = ShadowTileIndexForLight(gLights[li], posW);
+                localShadow[li] = SampleShadowAtlas(gShadowAtlas, gShadowSampler, gShadowTiles[ti],
+                                                    posW, gShadowAtlasTexel);
             }
         }
     }

@@ -5,6 +5,7 @@
 #include <wrl/client.h>
 
 #include "Engine/Core/EntityID.h"
+#include "Engine/Renderer/GpuTimer.h"
 #include "Engine/Renderer/MeshInstancing.h"
 
 namespace mye {
@@ -35,6 +36,9 @@ public:
 
     ID3D11ShaderResourceView* SRV() const { return srv_.Get(); } // Texture2DArray (R32_FLOAT)
     int Resolution() const { return resolution_; }
+    // M54d: 直近 Render の GPU 時間。局所ライトのアトラス (ShadowAtlas) と並べて
+    // 「影の総コストのうちどちらが重いか」を ProfilerWindow で読むために足した
+    float GpuMs() const { return timer_.Milliseconds(); }
 
 private:
     bool ready_ = false;
@@ -53,6 +57,7 @@ private:
     Microsoft::WRL::ComPtr<ID3D11Buffer> objectCB_; // 1 オブジェクトあたり transpose(world*lightVP)
     Microsoft::WRL::ComPtr<ID3D11DepthStencilState> depthState_;
     Microsoft::WRL::ComPtr<ID3D11RasterizerState> rasterizer_; // 深度バイアス付き
+    GpuTimer timer_;                                           // M54d
 };
 
 } // namespace mye

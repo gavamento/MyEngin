@@ -46,6 +46,15 @@ void ProfilerWindow::OnImGui(EngineContext& ctx)
     // M44d: ポストプロセス解決の GPU 時間 (複数ビューでは最後に完了した Resolve)
     if (ctx.renderSystem) {
         ImGui::Text("  postfx: %6.3f ms (GpuTimer)", ctx.renderSystem->PostFxGpuMs());
+        // M54d: 影 (csm = 平行光 3 カスケード / atlas = 局所ライトのタイル)。
+        // 点光源 1 本 = 6 タイルなので、tiles と draws がアトラスの重さの実体。
+        // culled はタイル毎の視錐台カリングで省いた draw と、シーン AABB に触れない面の数
+        ImGui::Text("  shadow: %6.3f ms csm / %6.3f ms atlas (GpuTimer, %d tiles, %d draws, "
+                    "culled %d draws / %d faces)",
+                    ctx.renderSystem->ShadowCsmGpuMs(), ctx.renderSystem->ShadowAtlasGpuMs(),
+                    ctx.renderSystem->ShadowAtlasTiles(), ctx.renderSystem->ShadowAtlasDraws(),
+                    ctx.renderSystem->ShadowAtlasCulledDraws(),
+                    ctx.renderSystem->ShadowAtlasCulledFaces());
         // M46b: レイトレ (デバッグ表示も GI 合成も off のときは行ごと出さない)
         const bool rtGiOn = ctx.renderSystem->enableRtGi;             // M46f
         const bool rtShadowOn = ctx.renderSystem->enableRtShadow;     // M46g

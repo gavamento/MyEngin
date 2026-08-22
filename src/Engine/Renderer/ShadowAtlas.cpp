@@ -1,8 +1,10 @@
 #include "Engine/Renderer/ShadowAtlas.h"
 
 #include <algorithm>
+#include <cfloat>
 
 #include "Engine/Core/Log.h"
+#include "Engine/Renderer/FrustumCull.h"
 #include "Engine/Renderer/GpuResources.h"
 #include "Engine/Renderer/GraphicsDevice.h"
 #include "Engine/Renderer/ShaderManager.h"
@@ -109,6 +111,8 @@ bool ShadowAtlas::Init(GraphicsDevice& device, ShaderManager& shaders, int resol
         return false;
     }
 
+    timer_.Init(device); // M54d: 失敗しても計測が 0 になるだけなので戻り値は見ない
+
     ready_ = true;
     MYE_LOG_INFO("ShadowAtlas: %dx%d, tile %d, capacity %d", resolution_, resolution_, tileSize_,
                  capacity_);
@@ -139,6 +143,9 @@ void ShadowAtlas::Render(GraphicsDevice& device, ShaderManager& shaders, const R
                          bool instancing)
 {
     ShaderProgram* prog = shaders.Get(depthShader_);
+    drawnTiles_ = 0;
+    drawCalls_ = 0;
+    culledDraws_ = 0;
     if (!ready_ || !prog || !prog->valid || tiles == nullptr || count <= 0) {
         return;
     }
@@ -160,6 +167,41 @@ void ShadowAtlas::Render(GraphicsDevice& device, ShaderManager& shaders, const R
             runs_.clear();
         }
     }
+
+    // ---- タイル毎カリング用の world AABB を 1 回だけ作る (M54d) ----
+    // ★これを入れないと「点光源 1 個 = 6 タイル × 不透明キュー全件」が素通しで積まれる。
+    //   M54c はスポット 2 本 = 2 パスだったので問題にならなかったが、点光源が入ると
+    //   一気に 6 倍になり、WARP 撮影が計測不能に遅くなる (計画 M54d の★罠)
+    const size_t itemCount = queue.opaque.size();
+    itemMin_.assign(itemCount, XMFLOAT3{ 0.0f, 0.0f, 0.0f });
+    itemMax_.assign(itemCount, XMFLOAT3{ 0.0f, 0.0f, 0.0f });
+    for (size_t i = 0; i < itemCount; ++i) {
+        const RenderItem& it = queue.opaque[i];
+        const Mesh* mesh = resources.meshes.Get(it.mesh);
+        if (!mesh) {
+            continue; // 描画ループ側で弾かれる (AABB は使われない)
+        }
+        WorldAabb(it.world, mesh->aabbMin, mesh->aabbMax, itemMin_[i], itemMax_[i]);
+    }
+    // run は合併 AABB。「一部だけ枠外」で run を割ると描画数がむしろ増えるので、
+    // run 全体が外にあるときだけ丸ごと飛ばす (保守的)
+    runMin_.assign(runs_.size(), XMFLOAT3{ 0.0f, 0.0f, 0.0f });
+    runMax_.assign(runs_.size(), XMFLOAT3{ 0.0f, 0.0f, 0.0f });
+    for (size_t r = 0; r < runs_.size(); ++r) {
+        const MeshInstanceRun& run = runs_[r];
+        XMFLOAT3 lo = { FLT_MAX, FLT_MAX, FLT_MAX };
+        XMFLOAT3 hi = { -FLT_MAX, -FLT_MAX, -FLT_MAX };
+        for (uint32_t k = 0; k < run.count && run.first + k < itemCount; ++k) {
+            const XMFLOAT3& a = itemMin_[run.first + k];
+            const XMFLOAT3& b = itemMax_[run.first + k];
+            lo = { (std::min)(lo.x, a.x), (std::min)(lo.y, a.y), (std::min)(lo.z, a.z) };
+            hi = { (std::max)(hi.x, b.x), (std::max)(hi.y, b.y), (std::max)(hi.z, b.z) };
+        }
+        runMin_[r] = lo;
+        runMax_[r] = hi;
+    }
+
+    timer_.Begin(device);
 
     // アトラスが SRV に残ったままだと DSV へ束ねられない。
     // ★ShadowPass は t0..t7 しか解除していないが、こちらは **t12 (Deferred 光パスの
@@ -200,8 +242,12 @@ void ShadowAtlas::Render(GraphicsDevice& device, ShaderManager& shaders, const R
         vp.Height = static_cast<float>(tile.pixelSize);
         vp.MaxDepth = 1.0f;
         dc->RSSetViewports(1, &vp);
+        ++drawnTiles_;
 
         const XMMATRIX lvp = XMLoadFloat4x4(&tile.lightViewProj);
+        // タイル毎の視錐台 (= このライト面の錐台)。lightViewProj は非転置 = 行ベクトル規約
+        // なので BuildFrustum にそのまま渡せる
+        const Frustum tileFrustum = BuildFrustum(tile.lightViewProj);
         uint64_t boundMesh = 0;
         size_t nextRun = 0;
         for (size_t idx = 0; idx < queue.opaque.size(); ++idx) {
@@ -212,6 +258,12 @@ void ShadowAtlas::Render(GraphicsDevice& device, ShaderManager& shaders, const R
             }
             if (nextRun < runs_.size() && runs_[nextRun].first == idx) {
                 const MeshInstanceRun& run = runs_[nextRun];
+                if (!WorldAabbInFrustum(tileFrustum, runMin_[nextRun], runMax_[nextRun])) {
+                    idx += run.count - 1; // run ごと飛ばす
+                    ++nextRun;
+                    ++culledDraws_;
+                    continue;
+                }
                 ++nextRun;
                 if (depthInstancedShader_.value != boundShader) {
                     dc->IASetInputLayout(instProg->inputLayout.Get());
@@ -231,7 +283,12 @@ void ShadowAtlas::Render(GraphicsDevice& device, ShaderManager& shaders, const R
                     boundMesh = item.mesh.value;
                 }
                 dc->DrawIndexedInstanced(mesh->indexCount, run.count, 0, 0, 0);
+                ++drawCalls_;
                 idx += run.count - 1;
+                continue;
+            }
+            if (!WorldAabbInFrustum(tileFrustum, itemMin_[idx], itemMax_[idx])) {
+                ++culledDraws_;
                 continue;
             }
             if (depthShader_.value != boundShader) {
@@ -252,8 +309,11 @@ void ShadowAtlas::Render(GraphicsDevice& device, ShaderManager& shaders, const R
                 boundMesh = item.mesh.value;
             }
             dc->DrawIndexed(mesh->indexCount, 0, 0);
+            ++drawCalls_;
         }
     }
+
+    timer_.End(device);
 
     if (!runs_.empty()) {
         ID3D11ShaderResourceView* nullVsSrv = nullptr;

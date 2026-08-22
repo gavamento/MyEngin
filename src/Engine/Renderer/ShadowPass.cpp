@@ -102,6 +102,8 @@ bool ShadowPass::Init(GraphicsDevice& device, ShaderManager& shaders, int resolu
         return false;
     }
 
+    timer_.Init(device); // M54d: 失敗しても計測が 0 になるだけなので戻り値は見ない
+
     ready_ = true;
     return true;
 }
@@ -136,6 +138,8 @@ void ShadowPass::Render(GraphicsDevice& device, ShaderManager& shaders, const Re
             runs_.clear();
         }
     }
+
+    timer_.Begin(device); // M54d
 
     // シャドウテクスチャが前フレームから SRV に残っていると DSV へ束ねられない → 先に解除
     ID3D11ShaderResourceView* nullSrvs[8] = {};
@@ -220,6 +224,8 @@ void ShadowPass::Render(GraphicsDevice& device, ShaderManager& shaders, const Re
             dc->DrawIndexed(mesh->indexCount, 0, 0);
         }
     }
+
+    timer_.End(device); // M54d
 
     // インスタンス SRV を外す (次フレームの Map と競合させない、M38f)
     if (!runs_.empty()) {
