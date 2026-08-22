@@ -79,10 +79,16 @@ if exist %FLOW_TITLE% del /q %FLOW_TITLE%
 %REL%\Editor.exe --flow-demo --frames 2 --no-audio --warp || exit /b 1
 if not exist %FLOW_TITLE% (echo [shot_verify] flow title scene was not written & exit /b 1)
 
+rem M54a: 描画ショーケース (--render-demo) は Runtime がコードから毎回組む。保存済みが
+rem       cache\ に残っていると RuntimeMain の exists() 経路へ落ちて **golden が静かに変わる**
+set RENDER_SCENE=cache\render_showcase.scene.json
+if exist %RENDER_SCENE% del /q %RENDER_SCENE%
+
 set FAILED=0
 set SHOTS=0
 
-rem ---- 5 本。既定デモの 2 経路 (Forward / Deferred) + 生成シーン 2 本 + UI プローブ ----
+rem ---- 7 本。既定デモの 2 経路 (Forward / Deferred) + 生成シーン 2 本 + UI プローブ
+rem      + 描画ショーケースの 2 経路 (M54a) ----
 rem RT デモは WARP では重すぎるので CI 対象外 (ローカル任意)
 call :shot demo_forward
 call :shot demo_deferred --deferred
@@ -90,7 +96,14 @@ call :shot parts --scene %PARTS_SCENE%
 call :shot flow_title --scene %FLOW_TITLE%
 call :shot ui_probe --scene assets\scenes\ui_probe.scene.json
 
-rem ---- 6 枚目: FXAA を通した 1 枚。機種差が乗るので照合はローカルだけ (tol=0 の
+rem ---- 6/7 枚目 (M54a): 描画ロードマップ M54〜M58 の被写体が揃ったショーケース。
+rem      既存 5 枚は平行光 1 本だけで組まれていて点光源もスポットも無いため、局所ライトの影 /
+rem      デカール / SSR / プローブ / フロクセル / 地形は **どれも既定でピクセル不変** =
+rem      「壊れても誰も気づかない」。この 2 枚がそれ以降 27 サブの回帰の土台になる
+call :shot demo_render_forward --render-demo
+call :shot demo_render_deferred --render-demo --deferred
+
+rem ---- 8 枚目 (統合契約の予約 3 では 10 番): FXAA を通した 1 枚。機種差が乗るので照合はローカルだけ (tol=0 の
 rem      ビット一致)。CI は MYE_SHOT_SKIP_FXAA=1 を立てて飛ばす。
 rem      golden は --update で一緒に撮り直される (CI 側で撮ることは無い)
 if defined MYE_SHOT_SKIP_FXAA goto :skip_fxaa

@@ -87,6 +87,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     bool flowShowcase = false;  // --flow-demo (M51j: ゲームフロー統合デモ)
     bool localDemo = false;     // --local-demo (M52g: ローカルマルチプレイの入力レーンデモ)
     bool netDemo = false;       // --net-demo (M52i: 2 人ネット対戦のデモ)
+    bool renderShowcase = false; // --render-demo (M54a: 描画ロードマップのショーケース)
     std::wstring editActorPath;  // --edit-actor PATH (M48k)
     std::wstring packageDir;     // --package DIR (M51j: CLI パッケージ)
     bool packageDds = false;     // --package-dds
@@ -285,6 +286,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 localDemo = true; // M52g: 入力レーンのローカルマルチプレイデモ
             } else if (arg == L"--net-demo") {
                 netDemo = true; // M52i: 2 人ネット対戦のデモシーン
+            } else if (arg == L"--render-demo") {
+                renderShowcase = true; // M54a: 描画ショーケース (局所ライト/反射/フォグ/遠景)
             } else if (arg == L"--local-players" && i + 1 < argc) {
                 config.localPlayers = _wtoi(argv[++i]); // M52g: 消費する入力レーン数
             } else if (arg == L"--synth-input") {
@@ -474,6 +477,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     app.flowShowcase = flowShowcase;
     app.localDemo = localDemo;
     app.netDemo = netDemo;
+    app.renderShowcase = renderShowcase;
     app.editActorPath = editActorPath;
     app.packageDir = packageDir;
     app.packageDds = packageDds;

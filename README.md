@@ -94,6 +94,8 @@ Editor.exe --autoplay --deferred --frames 600 --screenshot shot.png
 Runtime.exe --deferred --rt-demo --rt-gi --rt-shadow --rt-refl --rt-anim-seed
                                           # レイトレのショーケース (コーネル箱)
 Editor.exe --parts-demo                   # 部位 (ソケット) のボーン追従シーン
+Runtime.exe --render-demo [--deferred]    # 描画ショーケース (スポット/点光源/反射床/フォグ/遠景)
+                                          #   = スクショ回帰 6/7 枚目の被写体
 Editor.exe --warp                         # WARP (ソフトウェアラスタライザ) 固定で起動
 Editor.exe --package dist                 # 配布パッケージを CLI で作成 (exit code で成否)
 Runtime.exe --crash-test av --crash-at-tick 60

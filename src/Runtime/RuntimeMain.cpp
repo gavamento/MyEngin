@@ -45,13 +45,19 @@ public:
     bool rtShowcase = false; // --rt-demo (M46i: コーネル箱のショーケース)
     bool localDemo = false;  // --local-demo (M52g: ローカルマルチプレイの入力レーンデモ)
     bool netDemo = false;    // --net-demo (M52i: 2 人ネット対戦のデモ)
+    bool renderShowcase = false; // --render-demo (M54a: 描画ロードマップのショーケース)
 
     void OnStart(mye::EngineContext& ctx) override
     {
         ctx.shaders->Load("forward_lit");
         mye::RegisterDemoContent(ctx);   // Editor と同じ実体登録 (AssetID 解決)
         mye::RegisterAssetLibraries(ctx); // .prefab / .anim を登録
-        if (scenePath.empty() && netDemo) {
+        if (scenePath.empty() && renderShowcase) {
+            // M54a: コードから毎回組む (local-demo と同じ理由)。**shot_verify はこの経路で
+            // 撮る**ので、cache\ に保存済みが残っていると exists() 側へ落ちて golden が
+            // 静かに変わる — bat 側で撮影前に消している
+            scenePath = L"cache\\render_showcase.scene.json";
+        } else if (scenePath.empty() && netDemo) {
             // M52i: コードから毎回組む (local-demo と同じ理由 — 保存済みが残っていると
             // ロード経路に落ちてコード側の正解と食い違う)
             scenePath = L"cache\\net_duel.scene.json";
@@ -78,11 +84,14 @@ public:
         mye::RegisterFlowShowcaseContent(ctx); // M51j: flow_* 材質 (配布ブートシーンにも使う)
         mye::RegisterLocalPlayersContent(ctx);  // M52g: mp_* 材質 (同上の理由で常時)
         mye::RegisterNetDuelContent(ctx);       // M52i: duel_* 材質 (同上)
+        mye::RegisterRenderShowcaseContent(ctx); // M54a: rdemo_* 材質 (同上)
         if (std::filesystem::exists(scenePath)) {
             mye::SceneSerializer::LoadFromFile(*ctx.scene, scenePath);
             // Editor と同じ「ロード直後 1 回」(M48e)。ここを揃えないと Editor で録った .rep と
             // Runtime の verify で初期状態が食い違う
             mye::Prefab::RefreshNonOverridden(*ctx.scene, *ctx.prefabs);
+        } else if (renderShowcase) {
+            mye::BuildRenderShowcaseScene(ctx); // M54a
         } else if (netDemo) {
             mye::BuildNetDuelScene(ctx); // M52i
         } else if (localDemo) {
@@ -265,6 +274,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 app.localDemo = true; // M52g: 入力レーンのローカルマルチプレイデモ
             } else if (arg == L"--net-demo") {
                 app.netDemo = true; // M52i: 2 人ネット対戦のデモシーン
+            } else if (arg == L"--render-demo") {
+                app.renderShowcase = true; // M54a: 描画ショーケース (shot_verify の 6/7 枚目)
             } else if (arg == L"--local-players" && i + 1 < argc) {
                 config.localPlayers = _wtoi(argv[++i]); // M52g: 消費する入力レーン数
             } else if (arg == L"--synth-input") {

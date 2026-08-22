@@ -32,7 +32,7 @@ MyEngine — C++20 / DirectX 11 の自作ゲームエンジン (VS2022 / x64 / W
 |---|---|
 | `bin\x64\Debug\Editor.exe --selftest` | ヘッドレス回帰 29 スイート (D3D もウィンドウも作らない) |
 | `tools\replay_verify.bat [ticks]` | 8 ビルド → 4 シーンペアのリプレイ照合 → snapshot 往復 → タイムトラベル巻き戻し → 規則検査 |
-| `tools\shot_verify.bat [--update]` | 決定的スクショ 5 枚を `tests\golden\*.png` と比較 (**先に Release ビルドが必要**) |
+| `tools\shot_verify.bat [--update]` | 決定的スクショ 8 枚を `tests\golden\*.png` と比較 (CI 判定は 7 枚 — FXAA の 1 枚だけローカル限定。**先に Release ビルドが必要**) |
 | `pwsh -File tools\check_rules.ps1` | 規則 1/2/4/7/8/9/10/11 の静的検査 |
 | `tools\crash_verify.bat [Debug\|Release]` | 5 経路で実際に落として crash バンドル → .rep が再生・再現すること (**CI 対象外**) |
 | `tools\net_verify.bat [ticks]` | host/join 2 プロセスの .rep が一致 + ローカル 2P 参照とも一致 + ロールバック 3 帯 + desync 注入の検出 (**CI 対象外**) |
@@ -58,6 +58,7 @@ MyEngine — C++20 / DirectX 11 の自作ゲームエンジン (VS2022 / x64 / W
   `--rep-diff A B` /
   `--scene PATH` (相対可) / `--screenshot PNG --shot-frame N --frames N` / `--warp` /
   `--font-embedded` / `--no-audio` / `--parts-demo` / `--flow-demo` / `--rt-demo` /
+  `--render-demo` (M54a: 描画ショーケース。スクショ回帰 6/7 枚目) /
   `--package DIR` / `--img-diff A B [--tol N]`。
 
 ## 決定論の契約

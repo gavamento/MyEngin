@@ -94,6 +94,29 @@ void BuildNetDuelScene(EngineContext& ctx);
 // 上のデモが参照するマテリアルの実体登録
 void RegisterNetDuelContent(EngineContext& ctx);
 
+// M54a: 描画ロードマップ (M54〜M58) のショーケースシーン。--render-demo で選ぶ。
+//
+// ★これが無いと以降の描画サブは**回帰テストの被覆がゼロ**になる。既存の golden 5 枚は
+//   全部 LightComponent の既定 (type=0 = 平行光 1 本) だけで組まれていて、点光源もスポットも
+//   1 個も無い。つまり「局所ライトの影 / デカール / SSR / 反射プローブ / ボリュメトリック /
+//   地形」はどれも**勝手にピクセル不変**になり、「golden が緑」が何も主張しなくなる。
+//   絵の良し悪しではなく「M54〜M58 の全機能が画に出る被写体が揃っているか」で組んである:
+//     ・床 200x200 (大スケール)    … CSM のカスケード分割 / M58 の地形スケール
+//     ・柱 20 本                   … 影の落とし手と受け手 (座標は決定論的な固定表)
+//     ・スポット 2 + 点光源 2      … M54c (透視シャドウ) / M54d (キューブ 6 面)
+//     ・平行光 1 本                … 既存デモと同じ。CSM の被覆を落とさないため必ず残す
+//     ・反射床パッチ (金属 0.9 / 粗さ 0.1) … M56d (SSR) / M56f (反射プローブ)
+//     ・高さフォグ                 … M57d のフロクセルが置き換える対象
+//     ・遠景オブジェクト           … DoF / フォグ / M58e の LOD
+//     ・回転する物体               … M55c/M55e の velocity とモーションブラー
+//
+// ★builtin メッシュ + 名前キーのマテリアルだけ = チェックアウト非依存。
+//   既定のデモシーンは 1 バイトも変えない (BuildRtShowcaseScene と同じ理由)
+void BuildRenderShowcaseScene(EngineContext& ctx);
+
+// 上のショーケースが参照するメッシュ/マテリアルの実体登録 (RegisterRtShowcaseContent と同じ役割)
+void RegisterRenderShowcaseContent(EngineContext& ctx);
+
 // assets\ 以下の .prefab.json / .anim.json を各ライブラリへ登録する (Editor / Runtime 共用)。
 // M48g からは .glb / .gltf / .fbx のスケルトンもここで (エンティティを作らずに) 登録する
 void RegisterAssetLibraries(EngineContext& ctx);
