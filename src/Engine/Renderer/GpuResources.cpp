@@ -932,6 +932,14 @@ AssetID MaterialLibrary::Register(std::string_view name, const Material& mat)
     return id;
 }
 
+AssetID MaterialLibrary::RegisterAnonymous(uint64_t key, const Material& mat)
+{
+    const AssetID id{ key };
+    materials_[id.value] = mat;
+    // names_ には**入れない** — Enumerate = 参照ピッカーに出さないための唯一の仕掛け (M53)
+    return id;
+}
+
 Material* MaterialLibrary::Get(AssetID id)
 {
     auto it = materials_.find(id.value);
@@ -963,22 +971,11 @@ AssetID MaterialLibrary::HashForPath(const std::wstring& path)
     return AssetID{ assetkey::Resolve(NormalizePathKey(path)) };
 }
 
-AssetID MaterialLibrary::LoadFromFile(const std::wstring& path, TextureLibrary& textures,
-                                      const std::wstring& assetsRoot)
+// JSON オブジェクト → Material。ファイル読み (LoadFromFile) と Inspector のプレビュー
+// (MaterialFromJsonText) の**唯一の本体**。フィールドを足すときはここだけ触ること (M53)
+static void ParseMaterialJson(const nlohmann::json& root, TextureLibrary& textures,
+                              const std::wstring& assetsRoot, Material& m)
 {
-    std::ifstream f(std::filesystem::path(path), std::ios::binary);
-    if (!f) {
-        return {};
-    }
-    nlohmann::json root;
-    try {
-        f >> root;
-    } catch (const nlohmann::json::exception& ex) {
-        MYE_LOG_WARN("material parse failed: %s (%s)", WideToUtf8(path).c_str(), ex.what());
-        return {};
-    }
-
-    Material m;
     m.shader = AssetID{ HashStr(root.value("shader", std::string("forward_lit"))) };
     if (root.contains("baseColor") && root["baseColor"].is_array()) {
         const nlohmann::json& c = root["baseColor"];
@@ -1008,8 +1005,8 @@ AssetID MaterialLibrary::LoadFromFile(const std::wstring& path, TextureLibrary& 
             }
             const std::wstring full = assetguid::ResolvePath(guid);
             if (full.empty()) {
-                MYE_LOG_WARN("material texture guid %llu unresolved: %s",
-                             static_cast<unsigned long long>(guid), WideToUtf8(path).c_str());
+                MYE_LOG_WARN("material texture guid %llu unresolved",
+                             static_cast<unsigned long long>(guid));
                 return {};
             }
             return textures.LoadFile(full, srgb);
@@ -1027,6 +1024,43 @@ AssetID MaterialLibrary::LoadFromFile(const std::wstring& path, TextureLibrary& 
     const AssetID baseTex = resolveTex("texture", true);
     m.texture = baseTex.IsNull() ? textures.White() : baseTex;
     m.normalTex = resolveTex("normalMap", false);
+}
+
+bool MaterialLibrary::MaterialFromJsonText(std::string_view text, TextureLibrary& textures,
+                                           const std::wstring& assetsRoot, Material& out)
+{
+    nlohmann::json root;
+    try {
+        root = nlohmann::json::parse(text);
+    } catch (const nlohmann::json::exception& ex) {
+        MYE_LOG_WARN("material json parse failed: %s", ex.what());
+        return false;
+    }
+    if (!root.is_object()) {
+        return false;
+    }
+    out = Material{};
+    ParseMaterialJson(root, textures, assetsRoot, out);
+    return true;
+}
+
+AssetID MaterialLibrary::LoadFromFile(const std::wstring& path, TextureLibrary& textures,
+                                      const std::wstring& assetsRoot)
+{
+    std::ifstream f(std::filesystem::path(path), std::ios::binary);
+    if (!f) {
+        return {};
+    }
+    nlohmann::json root;
+    try {
+        f >> root;
+    } catch (const nlohmann::json::exception& ex) {
+        MYE_LOG_WARN("material parse failed: %s (%s)", WideToUtf8(path).c_str(), ex.what());
+        return {};
+    }
+
+    Material m;
+    ParseMaterialJson(root, textures, assetsRoot, m);
 
     const AssetID id = HashForPath(path);
     materials_[id.value] = m;

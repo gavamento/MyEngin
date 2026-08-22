@@ -69,7 +69,7 @@ public:
     AssetID Cube();     // 単位キューブ (辺長 1)
     AssetID Sphere();   // UV 球 (半径 0.5)
     AssetID Plane();    // XZ 平面 (1x1, 法線 +Y)
-    AssetID Quad();     // XY 平面 (1x1, 法線 +Z)
+    AssetID Quad();     // XY 平面 (1x1, 法線 **-Z** = +Z を向く既定カメラから正面が見える)
     AssetID Cylinder(); // 円柱 (半径 0.5, 高さ 1)
     AssetID Capsule();  // カプセル (半径 0.5, 全高 2)
 
@@ -189,6 +189,10 @@ struct Material {
 class MaterialLibrary {
 public:
     AssetID Register(std::string_view name, const Material& mat);
+    // 名前を持たない一時マテリアル (エディタのプレビュー用、M53)。Enumerate は names_ を
+    // 舐めるので、ここで入れたものは参照ピッカー (MeshRenderer.material 等) に現れない。
+    // key は呼び出し側が決める固定値 (同じ key への再登録は上書き)
+    AssetID RegisterAnonymous(uint64_t key, const Material& mat);
     Material* Get(AssetID id);
     AssetID Default(ShaderManager& shaders, TextureLibrary& textures); // 灰色 forward_lit (遅延生成)
 
@@ -199,6 +203,12 @@ public:
     static AssetID HashForPath(const std::wstring& path);
     AssetID LoadFromFile(const std::wstring& path, TextureLibrary& textures,
                          const std::wstring& assetsRoot); // 失敗時 null
+
+    // JSON テキストから Material を組むだけ (ライブラリには登録しない、M53)。
+    // LoadFromFile と**同じ本体**を通るので、Inspector のプレビューは「保存したらこう見える」と
+    // 必ず一致する。テキストを受けるのはこのヘッダに nlohmann を持ち込まないため
+    static bool MaterialFromJsonText(std::string_view text, TextureLibrary& textures,
+                                     const std::wstring& assetsRoot, Material& out);
 
     // 登録済みマテリアルを名前順で列挙 (エディタ UI 用)
     std::vector<AssetEntry> Enumerate() const;

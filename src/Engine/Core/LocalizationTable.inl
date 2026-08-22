@@ -385,6 +385,11 @@ MYE_STR(Insp_LoopPoints,      "Loop points (frames)",       "ループ位置 (�
 MYE_STR(Insp_AddVariation,    "+ Add Variation",            "+ バリエーションを追加")
 MYE_STR(Insp_Preview,         "Preview",                    "プレビュー")
 MYE_STR(Insp_StopAll,         "Stop All",                   "すべて停止")
+// マテリアルプレビューの形状トグル (M53)
+MYE_STR(Insp_PreviewShape,    "shape",                      "形状")
+MYE_STR(Insp_ShapeSphere,     "Sphere",                     "球")
+MYE_STR(Insp_ShapeCube,       "Cube",                       "立方体")
+MYE_STR(Insp_ShapePlane,      "Plane",                      "平面")
 MYE_STR(Insp_PreviewNote,     "(preview uses the saved-in-editor values, not the file on disk)",
                               "(プレビューはエディタ上の値を使います。ディスク上のファイルではありません)")
 MYE_STR(Insp_TipEmissive,     "Emissive strength. With RT GI on, the surface itself becomes an indirect light source",

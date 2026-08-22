@@ -20,6 +20,7 @@
 #include "Editor/Undo/UndoStack.h"
 #include "Engine/Core/ComponentRegistry.h"
 #include "Engine/Core/Components.h"
+#include "Engine/Core/Hash.h" // マテリアルプレビューの同一性キー (M53)
 #include "Engine/Core/Localization.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Core/World.h"
@@ -304,7 +305,8 @@ void DrawManagedComponentFields(EngineContext& ctx, ComponentTypeId t, void* com
 
 } // namespace
 
-void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStack& undo)
+void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStack& undo,
+                              AssetPreviewCache& preview)
 {
     if (!open) {
         return;
@@ -315,7 +317,7 @@ void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
     }
     // ---- アセット選択 (M40c): AssetBrowser タイルクリックで Inspector に情報表示 ----
     if (selection.HasAsset()) {
-        DrawAssetInspector(ctx, selection);
+        DrawAssetInspector(ctx, selection, preview);
         ImGui::End();
         return;
     }
@@ -1113,7 +1115,8 @@ bool InspectorWindow::DrawField(EngineContext& ctx, const char* componentName, v
     return changed;
 }
 
-void InspectorWindow::DrawAssetInspector(EngineContext& ctx, Selection& selection)
+void InspectorWindow::DrawAssetInspector(EngineContext& ctx, Selection& selection,
+                                         AssetPreviewCache& preview)
 {
     namespace fs = std::filesystem;
     const std::wstring path = selection.assetPath;
@@ -1187,7 +1190,7 @@ void InspectorWindow::DrawAssetInspector(EngineContext& ctx, Selection& selectio
     }
 
     if (type == AssetType::Material) {
-        DrawMaterialInspector(ctx, path); // M40d
+        DrawMaterialInspector(ctx, path, preview); // M40d + M53 プレビュー
         return;
     }
 
@@ -1315,13 +1318,82 @@ void InspectorWindow::LoadMaterialEdit(EngineContext& ctx, const std::wstring& p
     matEdit_.valid = true;
 }
 
-void InspectorWindow::DrawMaterialInspector(EngineContext& ctx, const std::wstring& path)
+std::string InspectorWindow::MaterialEditToJson(const std::wstring& path) const
+{
+    namespace fs = std::filesystem;
+    nlohmann::json root;
+    root["engine"] = "MyEngine";
+    root["material"] = 1;
+    root["name"] = matEdit_.name.empty() ? WideToUtf8(fs::path(path).stem().stem().wstring())
+                                         : matEdit_.name;
+    root["shader"] = matEdit_.shader;
+    root["baseColor"] = { matEdit_.baseColor[0], matEdit_.baseColor[1], matEdit_.baseColor[2],
+                          matEdit_.baseColor[3] };
+    root["metallic"] = matEdit_.metallic;
+    root["roughness"] = matEdit_.roughness;
+    root["emissive"] = matEdit_.emissive; // M46i
+    // サブ参照は GUID 数値で書く (M39a)。0 = 空文字列 (従来互換の「なし」)
+    if (matEdit_.textureGuid != 0) {
+        root["texture"] = matEdit_.textureGuid;
+    } else {
+        root["texture"] = "";
+    }
+    if (matEdit_.normalGuid != 0) {
+        root["normalMap"] = matEdit_.normalGuid;
+    } else {
+        root["normalMap"] = "";
+    }
+    root["transparent"] = matEdit_.transparent;
+    return root.dump(2);
+}
+
+void InspectorWindow::DrawMaterialInspector(EngineContext& ctx, const std::wstring& path,
+                                            AssetPreviewCache& preview)
 {
     namespace fs = std::filesystem;
     if (!matEdit_.valid) {
         ImGui::TextDisabled("%s", Tr(StrId::Insp_MaterialFailed));
         return;
     }
+
+    // ---- ライブプレビュー (M53) ----
+    // 保存する JSON をそのまま Material に組み直して描く = 「保存したらこう見える」が保証される。
+    // JSON 本文のハッシュを同一性キーにしているので、フィールドを足しても取りこぼしが出ない
+    const std::string matJson = MaterialEditToJson(path);
+    const uint64_t jsonHash = HashStr(matJson);
+    if (jsonHash != matPreviewHash_) {
+        Material built;
+        if (MaterialLibrary::MaterialFromJsonText(matJson, ctx.resources->textures, ctx.assetsRoot,
+                                                  built)) {
+            matPreviewMat_ = built;
+            matPreviewHash_ = jsonHash;
+        }
+    }
+    if (matPreviewHash_ != 0) {
+        const auto shape = static_cast<PreviewShape>(matPreviewShape_);
+        ID3D11ShaderResourceView* srv =
+            preview.GetOrRequestMaterial(ctx, matPreviewMat_, shape, matPreviewHash_);
+        const float side = static_cast<float>(AssetPreviewCache::kPreviewSize);
+        if (srv) {
+            ImGui::Image(reinterpret_cast<ImTextureID>(srv), ImVec2(side, side));
+        } else {
+            ImGui::Dummy(ImVec2(side, side)); // 生成待ち (次フレームに絵が入る)
+        }
+        ImGui::SameLine();
+        ImGui::BeginGroup();
+        const char* shapeItems[] = { Tr(StrId::Insp_ShapeSphere), Tr(StrId::Insp_ShapeCube),
+                                     Tr(StrId::Insp_ShapePlane) };
+        static_assert(static_cast<int>(PreviewShape::Count) == 3,
+                      "shapeItems は PreviewShape と同数にすること");
+        ImGui::SetNextItemWidth(110.0f);
+        ImGui::Combo(Tr(StrId::Insp_PreviewShape), &matPreviewShape_, shapeItems, 3);
+        ImGui::EndGroup();
+        // 注記は画像の**下**に全幅で折り返す。右に置くと Inspector の幅で右端が切れる
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+        ImGui::TextWrapped("%s", Tr(StrId::Insp_PreviewNote));
+        ImGui::PopStyleColor();
+    }
+
     ImGui::SeparatorText(Tr(StrId::Insp_Material));
     ImGui::TextDisabled("shader: %s", matEdit_.shader.c_str());
     ImGui::ColorEdit4("baseColor", matEdit_.baseColor);
@@ -1393,33 +1465,9 @@ void InspectorWindow::DrawMaterialInspector(EngineContext& ctx, const std::wstri
     texPicker("normalMap", matEdit_.normalGuid);
 
     if (ImGui::Button(Tr(StrId::Common_Save), ImVec2(90, 0))) {
-        nlohmann::json root;
-        root["engine"] = "MyEngine";
-        root["material"] = 1;
-        root["name"] = matEdit_.name.empty()
-            ? WideToUtf8(fs::path(path).stem().stem().wstring())
-            : matEdit_.name;
-        root["shader"] = matEdit_.shader;
-        root["baseColor"] = { matEdit_.baseColor[0], matEdit_.baseColor[1],
-                              matEdit_.baseColor[2], matEdit_.baseColor[3] };
-        root["metallic"] = matEdit_.metallic;
-        root["roughness"] = matEdit_.roughness;
-        root["emissive"] = matEdit_.emissive; // M46i
-        // サブ参照は GUID 数値で書く (M39a)。0 = 空文字列 (従来互換の「なし」)
-        if (matEdit_.textureGuid != 0) {
-            root["texture"] = matEdit_.textureGuid;
-        } else {
-            root["texture"] = "";
-        }
-        if (matEdit_.normalGuid != 0) {
-            root["normalMap"] = matEdit_.normalGuid;
-        } else {
-            root["normalMap"] = "";
-        }
-        root["transparent"] = matEdit_.transparent;
         std::ofstream out(std::filesystem::path(path), std::ios::binary);
         if (out) {
-            out << root.dump(2);
+            out << matJson; // プレビューが描いたのと**同じ本文**
             out.close();
             // 即時反映: 同一 AssetID のまま再ロード → 全ビューの MeshRenderer に反映
             ctx.resources->materials.LoadFromFile(path, ctx.resources->textures,

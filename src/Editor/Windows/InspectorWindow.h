@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 
+#include "Editor/AssetPreviewCache.h"
 #include "Editor/Selection.h"
 #include "Engine/Core/EntityID.h"
 #include "Engine/Core/ImportMetaResolver.h"
@@ -23,11 +24,13 @@ class UndoStack;
 class InspectorWindow {
 public:
     bool open = true; // 閉じる / 再表示 (タブ [x] と Window メニューに連動)
-    void OnImGui(EngineContext& ctx, Selection& selection, UndoStack& undo);
+    // preview はマテリアルのライブプレビュー用 (M53)。AssetBrowser のサムネイルと同一インスタンス
+    void OnImGui(EngineContext& ctx, Selection& selection, UndoStack& undo,
+                 AssetPreviewCache& preview);
 
 private:
     // アセット選択時の表示 (M40c): 名前/種別/GUID + テクスチャは Import Settings 編集
-    void DrawAssetInspector(EngineContext& ctx, Selection& selection);
+    void DrawAssetInspector(EngineContext& ctx, Selection& selection, AssetPreviewCache& preview);
 
     // fids/comps は同コンポーネントを持つ選択エンティティ列 (要素 [0] = primary、comp と同一)。
     // 単一選択では要素 1 個。ポップアップ系 (mask/参照ピッカー) はこの列へバッチ書込する
@@ -64,7 +67,18 @@ private:
     };
     MaterialEditState matEdit_;
     void LoadMaterialEdit(EngineContext& ctx, const std::wstring& path);
-    void DrawMaterialInspector(EngineContext& ctx, const std::wstring& path);
+    void DrawMaterialInspector(EngineContext& ctx, const std::wstring& path,
+                               AssetPreviewCache& preview);
+    // 保存する .mat.json 本文。Save とプレビューの**両方**がこれを使うので、
+    // 「プレビューで見た絵」と「保存した結果」が構造的にずれない (M53)
+    std::string MaterialEditToJson(const std::wstring& path) const;
+
+    // マテリアルのライブプレビュー (M53)。エディタ UI 状態 — シリアライズもハッシュもしない。
+    // matEdit_ から組んだ Material は JSON 本文のハッシュが変わったときだけ作り直す
+    // (毎フレーム作ると GUID 解決とテクスチャ検索を無駄に踏む)
+    int matPreviewShape_ = 0; // PreviewShape の添字 (0=球)
+    Material matPreviewMat_;
+    uint64_t matPreviewHash_ = 0; // 0 = 未構築
 
     // サウンドインスペクタの編集キャッシュ (M45c)。.sound.json のスキーマ固定編集。
     // マテリアルと同じく **アセット編集は UndoStack 対象外** (既存規約)

@@ -6,6 +6,7 @@
 #include <system_error>
 
 #include "Editor/AssetOps.h"
+#include "Editor/AssetPreviewCache.h"
 #include "Editor/Selection.h"
 #include "Editor/Undo/UndoStack.h"
 #include "Engine/Core/Log.h"
@@ -282,6 +283,52 @@ bool RunAssetOpsSelfTest()
               "delete of a missing path fails gracefully");
 
         fs::remove_all(r2, ec);
+    }
+
+    // ---- マテリアルプレビュー (M53) ----
+    // 描画そのものは D3D 依存でヘッドレスに回せないので、絵を決める **入力** 側だけ見る:
+    // どのパスがプレビュー対象になるか、と「保存する JSON → Material」の変換
+    {
+        check(AssetPreviewCache::IsMaterialPath(L"C:\\a\\hero.mat.json")
+                  && AssetPreviewCache::IsMaterialPath(L"C:\\a\\HERO.MAT.JSON")
+                  && !AssetPreviewCache::IsMaterialPath(L"C:\\a\\hero.prefab.json")
+                  && !AssetPreviewCache::IsMaterialPath(L"C:\\a\\mat.json"),
+              "preview: .mat.json is detected case-insensitively (and only as a suffix)");
+        check(AssetPreviewCache::IsPreviewable(L"C:\\a\\hero.mat.json")
+                  && AssetPreviewCache::IsPreviewable(L"C:\\a\\hero.glb")
+                  && AssetPreviewCache::IsPreviewable(L"C:\\a\\hero.actor.json")
+                  && !AssetPreviewCache::IsPreviewable(L"C:\\a\\hero.png")
+                  && !AssetPreviewCache::IsPreviewable(L"C:\\a\\hero.scene.json"),
+              "preview: materials joined the previewable set without dragging others in");
+
+        // ヘッドレスなので TextureLibrary::Init は呼ばない = GPU 生成は全て空振りする。
+        // 見たいのは数値フィールドの写りと、テクスチャ無し (=White) 経路が落ちないこと
+        RenderResources res;
+        Material m;
+        const char* json = R"({"engine":"MyEngine","material":1,"name":"t",
+            "shader":"forward_lit","baseColor":[0.25,0.5,0.75,1.0],"metallic":0.5,
+            "roughness":0.125,"emissive":2.5,"texture":"","normalMap":"","transparent":true})";
+        check(MaterialLibrary::MaterialFromJsonText(json, res.textures, L"", m)
+                  && m.baseColor.x == 0.25f && m.baseColor.y == 0.5f && m.baseColor.z == 0.75f
+                  && m.metallic == 0.5f && m.roughness == 0.125f && m.emissiveIntensity == 2.5f
+                  && m.transparent == 1,
+              "preview: MaterialFromJsonText maps every editable field");
+        Material def;
+        check(MaterialLibrary::MaterialFromJsonText("{}", res.textures, L"", def)
+                  && def.metallic == 0.0f && def.roughness == 0.5f
+                  && def.emissiveIntensity == 0.0f && def.transparent == 0,
+              "preview: missing keys fall back to the same defaults as LoadFromFile");
+        Material broken = m;
+        check(!MaterialLibrary::MaterialFromJsonText("{ not json", res.textures, L"", broken)
+                  && !MaterialLibrary::MaterialFromJsonText("[1,2]", res.textures, L"", broken),
+              "preview: malformed / non-object json is rejected (caller keeps the last good one)");
+
+        // 匿名登録はプレビュー専用 — 参照ピッカー (Enumerate) に漏れてはいけない
+        const size_t before = res.materials.Enumerate().size();
+        const AssetID anon = res.materials.RegisterAnonymous(0x9E3779B97F4A7C15ull, m);
+        check(!anon.IsNull() && res.materials.Get(anon) != nullptr
+                  && res.materials.Enumerate().size() == before,
+              "preview: RegisterAnonymous is resolvable by Get but stays out of Enumerate");
     }
 
     if (failCount == 0) {
