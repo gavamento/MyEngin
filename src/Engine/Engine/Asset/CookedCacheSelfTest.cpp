@@ -611,9 +611,10 @@ bool RunCookedCacheSelfTest()
         std::vector<uint8_t> tinyBlob;
         TerrainAsset::Serialize(tiny, tinyBlob);
         check(TerrainAsset::Deserialize(tinyBlob, junkOut), "terrain: minimal blob is accepted");
-        // magic+version(8) + 解像度 4x u32(16) + float 4 本(16) + src 2 本((4+8+8) x2 = 40)
-        // + procedural(20) + layerCount(4) = 104
-        constexpr size_t kHeightCountOff = 104;
+        // magic+version(8) + 解像度 4x u32(16) + float 4 本(16) + src **3 本**((4+8+8) x3 = 60)
+        // + procedural(20) + layerCount(4) = 124
+        // ★M58f で編集サイドカーの刻印 (editSrc) が 3 本目として増えたので +20 (blob v3)
+        constexpr size_t kHeightCountOff = 124;
         uint64_t seen = 0;
         std::memcpy(&seen, tinyBlob.data() + kHeightCountOff, sizeof(seen));
         check(seen == tiny.heights.size(),

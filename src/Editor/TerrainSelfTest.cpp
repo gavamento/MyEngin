@@ -16,7 +16,9 @@
 #include "Engine/Core/Components.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Core/World.h"
+#include "Engine/Engine/Asset/CookedCache.h" // M58f: サイドカーとクックキャッシュの相互作用
 #include "Engine/Engine/Asset/TerrainAsset.h"
+#include "Engine/Engine/Asset/TerrainEdit.h" // M58f: ブラシ / パッチ / サイドカー
 #include "Engine/Engine/TerrainSystem.h"
 #include "Engine/Renderer/FrustumCull.h"
 #include "Engine/Renderer/GpuResources.h"
@@ -97,6 +99,62 @@ TerrainAsset::TerrainData MakeBumpyTerrain(uint32_t hw = 17, uint32_t hh = 17)
     }
     d.layers.push_back({ "base", "", "", 8.0f, 8.0f });
     return d;
+}
+
+// ブラシ検査用 (M58f)。高さは MakeBumpyTerrain と同じ非線形 (平滑化が効いたことを測れる) で、
+// スプラットを 32x32 まで細かくして 4 レイヤ持たせる (4x4 だとブラシ 1 個で全 texel が
+// 変わってしまい「半径の外は触らない」を検査できない)
+TerrainAsset::TerrainData MakeBrushTerrain()
+{
+    TerrainAsset::TerrainData d = MakeBumpyTerrain(33, 33);
+    d.splatW = 32;
+    d.splatH = 32;
+    d.splat.assign(static_cast<size_t>(d.splatW) * d.splatH * 4, 0);
+    for (size_t i = 0; i < d.splat.size(); i += 4) {
+        d.splat[i] = static_cast<uint8_t>(TerrainAsset::kSplatWeightSum);
+    }
+    d.layers.clear();
+    for (const char* name : { "a", "b", "c", "d" }) {
+        d.layers.push_back({ name, "", "", 8.0f, 8.0f });
+    }
+    return d;
+}
+
+// 頂点 texel → 地形ローカル XZ (TerrainEdit の内部と同じ規約。テスト側でも要る)
+float TexelLocalX(const TerrainAsset::TerrainData& d, uint32_t x)
+{
+    return (static_cast<float>(x) / static_cast<float>(d.heightW - 1) - 0.5f) * d.worldSizeX;
+}
+float TexelLocalZ(const TerrainAsset::TerrainData& d, uint32_t z)
+{
+    return (static_cast<float>(z) / static_cast<float>(d.heightH - 1) - 0.5f) * d.worldSizeZ;
+}
+
+// 隣接 texel の高さ差の総和 (= 地表の粗さ)。平滑化が本当に均しているかの尺度
+uint64_t Roughness(const TerrainAsset::TerrainData& d)
+{
+    uint64_t sum = 0;
+    for (uint32_t z = 0; z < d.heightH; ++z) {
+        for (uint32_t x = 0; x + 1 < d.heightW; ++x) {
+            const size_t i = static_cast<size_t>(z) * d.heightW + x;
+            sum += static_cast<uint64_t>(std::abs(static_cast<int32_t>(d.heights[i + 1])
+                                                  - static_cast<int32_t>(d.heights[i])));
+        }
+    }
+    return sum;
+}
+
+// X 方向に鏡映した地形 (走査順依存を炙り出すための変換。詳細は節 (14)(c))
+TerrainAsset::TerrainData MirrorX(const TerrainAsset::TerrainData& s)
+{
+    TerrainAsset::TerrainData m = s;
+    for (uint32_t z = 0; z < s.heightH; ++z) {
+        for (uint32_t x = 0; x < s.heightW; ++x) {
+            m.heights[static_cast<size_t>(z) * s.heightW + x] =
+                s.heights[static_cast<size_t>(z) * s.heightW + (s.heightW - 1 - x)];
+        }
+    }
+    return m;
 }
 
 // 行ベクトル規約の view*proj から視錐台を作る (RenderSystem と同じ手順)
@@ -951,6 +1009,333 @@ bool RunTerrainSelfTest()
         terrain.Collect(world, meshes, textures, root.wstring(), wide, view, items);
         check(terrain.CacheSize() == cacheBefore + 1,
               "terrain lod: the skirt setting is part of the cache key (meshes are rebuilt)");
+
+        fs::remove_all(root, ec);
+    }
+
+    // ---- (14) ブラシ編集 + Undo/Redo (M58f) ----
+    {
+        const TerrainAsset::TerrainData base = MakeBrushTerrain();
+
+        // (a) 上げ: 中心が上がり、**半径の外は 1 バイトも動かない**
+        {
+            TerrainAsset::TerrainData d = base;
+            TerrainEdit::Brush b;
+            b.mode = TerrainEdit::BrushMode::Raise;
+            b.radius = 8.0f;
+            b.strength = 2.0f;
+            check(TerrainEdit::ApplyBrush(d, b), "terrain brush: raise reports that it changed the map");
+            const uint32_t cx = (d.heightW - 1) / 2;
+            const uint32_t cz = (d.heightH - 1) / 2;
+            check(d.HeightAtTexel(cx, cz) > base.HeightAtTexel(cx, cz),
+                  "terrain brush: raise lifts the texel under the brush centre");
+            bool outsideIntact = true;
+            for (uint32_t z = 0; z < d.heightH; ++z) {
+                for (uint32_t x = 0; x < d.heightW; ++x) {
+                    const float lx = TexelLocalX(d, x) - b.centerX;
+                    const float lz = TexelLocalZ(d, z) - b.centerZ;
+                    if (std::sqrt(lx * lx + lz * lz) <= b.radius) {
+                        continue;
+                    }
+                    const size_t i = static_cast<size_t>(z) * d.heightW + x;
+                    outsideIntact = outsideIntact && d.heights[i] == base.heights[i];
+                }
+            }
+            check(outsideIntact, "terrain brush: nothing outside the brush radius is touched");
+            check(d.splat == base.splat, "terrain brush: raise leaves the splat map untouched");
+
+            // 強さ 0 / 半径 0 は「変化なし」を返すだけで、地形に触らない
+            TerrainEdit::Brush zero = b;
+            zero.strength = 0.0f;
+            TerrainAsset::TerrainData z0 = base;
+            const bool zeroChanged = TerrainEdit::ApplyBrush(z0, zero);
+            zero.strength = 2.0f;
+            zero.radius = 0.0f;
+            TerrainAsset::TerrainData z1 = base;
+            const bool zeroRadius = TerrainEdit::ApplyBrush(z1, zero);
+            check(!zeroChanged && !zeroRadius && z0.heights == base.heights
+                      && z1.heights == base.heights,
+                  "terrain brush: a zero strength / zero radius dab is a true no-op");
+        }
+
+        // (b) 決定論: 同じ地形に同じブラシ → バイト一致
+        {
+            TerrainEdit::Brush b;
+            b.mode = TerrainEdit::BrushMode::Raise;
+            b.centerX = -7.5f;
+            b.centerZ = 11.25f;
+            b.radius = 13.0f;
+            b.strength = -1.75f; // 掘る側も通す
+            TerrainAsset::TerrainData a = base;
+            TerrainAsset::TerrainData c = base;
+            TerrainEdit::ApplyBrush(a, b);
+            TerrainEdit::ApplyBrush(c, b);
+            check(a.heights == c.heights,
+                  "terrain brush: the same dab on the same terrain yields identical bytes");
+        }
+
+        // (c) 平滑化: 粗さが減る + **走査順に依存しない**
+        {
+            TerrainEdit::Brush b;
+            b.mode = TerrainEdit::BrushMode::Smooth;
+            b.radius = 40.0f; // 地形全体を覆う
+            b.strength = 1.0f;
+            TerrainAsset::TerrainData d = base;
+            check(TerrainEdit::ApplyBrush(d, b) && Roughness(d) < Roughness(base),
+                  "terrain brush: smoothing really flattens the neighbour-to-neighbour steps");
+
+            // ★「近傍平均を書き込み前の高さから読む」の実証。ブラシは centerX=0 について
+            //   左右対称なので、**鏡映してから平滑化して鏡映し戻す**と元と一致するはず。
+            //   自分の書き込みを読み返す実装だと、x 昇順の走査が鏡映で別の順序になり
+            //   ここで割れる (「決定論だが順序依存」を素通りさせないための検査)
+            const TerrainAsset::TerrainData mirrored = MirrorX(base);
+            TerrainAsset::TerrainData m = mirrored;
+            TerrainEdit::ApplyBrush(m, b);
+            check(MirrorX(m).heights == d.heights,
+                  "terrain brush: smoothing reads the pre-dab heights (mirroring the input mirrors "
+                  "the output exactly)");
+        }
+
+        // (d) 塗り: 合計 255 の不変量を保ち、対象レイヤが増え、半径の外は不変
+        {
+            TerrainEdit::Brush b;
+            b.mode = TerrainEdit::BrushMode::Paint;
+            b.radius = 10.0f;
+            b.strength = 0.75f;
+            b.layer = 2;
+            TerrainAsset::TerrainData d = base;
+            check(TerrainEdit::ApplyBrush(d, b), "terrain brush: paint reports that it changed the map");
+            bool sums = true;
+            bool outside = true;
+            for (uint32_t z = 0; z < d.splatH; ++z) {
+                for (uint32_t x = 0; x < d.splatW; ++x) {
+                    const size_t i = (static_cast<size_t>(z) * d.splatW + x) * 4;
+                    const uint32_t total = static_cast<uint32_t>(d.splat[i]) + d.splat[i + 1]
+                        + d.splat[i + 2] + d.splat[i + 3];
+                    sums = sums && total == TerrainAsset::kSplatWeightSum;
+                    const float lx =
+                        ((static_cast<float>(x) + 0.5f) / d.splatW - 0.5f) * d.worldSizeX - b.centerX;
+                    const float lz =
+                        ((static_cast<float>(z) + 0.5f) / d.splatH - 0.5f) * d.worldSizeZ - b.centerZ;
+                    if (std::sqrt(lx * lx + lz * lz) > b.radius) {
+                        outside = outside && std::memcmp(&d.splat[i], &base.splat[i], 4) == 0;
+                    }
+                }
+            }
+            check(sums, "terrain brush: every painted texel still sums to kSplatWeightSum");
+            check(outside, "terrain brush: paint leaves the splat outside the radius untouched");
+            const size_t centre =
+                (static_cast<size_t>(d.splatH / 2) * d.splatW + d.splatW / 2) * 4;
+            check(d.splat[centre + b.layer] > base.splat[centre + b.layer],
+                  "terrain brush: paint raises the weight of the target layer under the centre");
+            check(d.heights == base.heights, "terrain brush: paint leaves the heightmap untouched");
+            TerrainEdit::Brush bad = b;
+            bad.layer = TerrainAsset::kMaxLayers; // 存在しないレイヤ
+            TerrainAsset::TerrainData d2 = base;
+            check(!TerrainEdit::ApplyBrush(d2, bad) && d2.splat == base.splat,
+                  "terrain brush: painting a layer index past the end is a no-op");
+        }
+
+        // (e) ★本命: 1 ストローク (重なる 5 ダブ) の Undo/Redo でバイト一致
+        TerrainAsset::TerrainData work = base;
+        TerrainEdit::TerrainPatch patch;
+        {
+            struct Step {
+                TerrainEdit::BrushMode mode;
+                float cx, cz, radius, strength;
+                uint32_t layer;
+            };
+            const Step steps[] = {
+                { TerrainEdit::BrushMode::Raise, -10.0f, -10.0f, 12.0f, 3.0f, 0 },
+                { TerrainEdit::BrushMode::Raise, 6.0f, -4.0f, 10.0f, -2.0f, 0 }, // 掘る (重ねる)
+                { TerrainEdit::BrushMode::Smooth, 0.0f, 0.0f, 16.0f, 1.0f, 0 },
+                { TerrainEdit::BrushMode::Paint, 4.0f, 8.0f, 14.0f, 0.8f, 2 },
+                { TerrainEdit::BrushMode::Paint, -6.0f, 2.0f, 9.0f, 0.5f, 1 }, // 重ね塗り
+            };
+            bool anyChange = false;
+            for (const Step& s : steps) {
+                TerrainEdit::Brush b;
+                b.mode = s.mode;
+                b.centerX = s.cx;
+                b.centerZ = s.cz;
+                b.radius = s.radius;
+                b.strength = s.strength;
+                b.layer = s.layer;
+                anyChange = TerrainEdit::ApplyBrush(work, b) || anyChange;
+            }
+            check(anyChange && work.heights != base.heights && work.splat != base.splat,
+                  "terrain brush: a 5-dab stroke moves both the heightmap and the splat map");
+
+            check(TerrainEdit::MakeDiffPatch(base, work, patch) && !patch.Empty(),
+                  "terrain brush: the stroke produces a non-empty undo patch");
+
+            TerrainAsset::TerrainData undone = work;
+            check(TerrainEdit::ApplyPatch(undone, patch, /*redo=*/false)
+                      && undone.heights == base.heights && undone.splat == base.splat,
+                  "terrain brush: UNDO restores the heightmap and splat map byte for byte");
+            TerrainAsset::TerrainData redone = undone;
+            check(TerrainEdit::ApplyPatch(redone, patch, /*redo=*/true)
+                      && redone.heights == work.heights && redone.splat == work.splat,
+                  "terrain brush: REDO reproduces the painted result byte for byte");
+            for (int i = 0; i < 3; ++i) {
+                TerrainEdit::ApplyPatch(redone, patch, false);
+                TerrainEdit::ApplyPatch(redone, patch, true);
+            }
+            check(redone.heights == work.heights && redone.splat == work.splat,
+                  "terrain brush: repeated undo/redo cycles do not drift a single byte");
+        }
+
+        // (f) パッチの直列化往復 (Undo エントリはバイト列として持ち回る)
+        std::string patchBytes;
+        {
+            TerrainEdit::SerializePatch(patch, patchBytes);
+            TerrainEdit::TerrainPatch back;
+            check(TerrainEdit::DeserializePatch(patchBytes, back),
+                  "terrain brush: the undo patch deserializes");
+            std::string again;
+            TerrainEdit::SerializePatch(back, again);
+            check(patchBytes == again,
+                  "terrain brush: the undo patch survives a byte-exact serialize round trip");
+            TerrainAsset::TerrainData r = work;
+            check(TerrainEdit::ApplyPatch(r, back, false) && r.heights == base.heights
+                      && r.splat == base.splat,
+                  "terrain brush: the deserialized patch undoes exactly like the original");
+        }
+
+        // (g) 壊れた入力 / 合わない地形では**何も書かない**
+        {
+            TerrainEdit::TerrainPatch bad;
+            check(!TerrainEdit::DeserializePatch(patchBytes.substr(0, patchBytes.size() / 2), bad),
+                  "terrain brush: a truncated patch is rejected instead of read past the end");
+            check(!TerrainEdit::DeserializePatch(patchBytes + std::string(1, 'x'), bad),
+                  "terrain brush: a patch with trailing junk is rejected");
+            // ★ローカル変数に `small` は使えない (rpcndr.h の `#define small char` で潰れる。
+            //   節 (12) の near/far と同じ罠)
+            TerrainAsset::TerrainData tinyTerrain = MakeBumpyTerrain(5, 5);
+            const TerrainAsset::TerrainData tinyCopy = tinyTerrain;
+            check(!TerrainEdit::ApplyPatch(tinyTerrain, patch, false)
+                      && tinyTerrain.heights == tinyCopy.heights
+                      && tinyTerrain.splat == tinyCopy.splat,
+                  "terrain brush: a patch that does not fit the terrain writes zero bytes");
+            check(!TerrainEdit::MakeDiffPatch(base, tinyTerrain, bad),
+                  "terrain brush: diffing two different resolutions fails instead of guessing");
+        }
+
+        // (h) パッチは**触った矩形だけ** (Undo エントリの大きさが地形の大きさに比例しない
+        //     ことが、全量スナップショットではなく矩形を選んだ理由そのもの)
+        {
+            TerrainEdit::Brush b;
+            b.mode = TerrainEdit::BrushMode::Raise;
+            b.radius = 4.0f;
+            b.strength = 1.0f;
+            TerrainAsset::TerrainData one = base;
+            TerrainEdit::ApplyBrush(one, b);
+            TerrainEdit::TerrainPatch tiny;
+            check(TerrainEdit::MakeDiffPatch(base, one, tiny) && tiny.hw > 0 && tiny.hw <= 7
+                      && tiny.hh <= 7 && tiny.sw == 0,
+                  "terrain brush: the undo patch covers only the rectangle the dab touched");
+        }
+
+        // (i) サイドカーの往復 / 決定論 / 拒否
+        {
+            std::vector<uint8_t> blob;
+            TerrainEdit::SerializeSidecar(work, blob);
+            std::vector<uint8_t> blob2;
+            TerrainEdit::SerializeSidecar(work, blob2);
+            check(blob == blob2,
+                  "terrain edit: serializing the same pixels twice yields identical bytes");
+            TerrainAsset::TerrainData recv = base;
+            check(TerrainEdit::ApplySidecarBlob(blob, recv) && recv.heights == work.heights
+                      && recv.splat == work.splat,
+                  "terrain edit: the sidecar carries the edited pixels byte for byte");
+            TerrainAsset::TerrainData other = MakeBumpyTerrain(9, 9);
+            const TerrainAsset::TerrainData otherCopy = other;
+            check(!TerrainEdit::ApplySidecarBlob(blob, other)
+                      && other.heights == otherCopy.heights,
+                  "terrain edit: a sidecar whose resolution disagrees is ignored (terrain intact)");
+            const std::vector<uint8_t> cut(blob.begin(), blob.begin() + blob.size() / 2);
+            TerrainAsset::TerrainData t = base;
+            check(!TerrainEdit::ApplySidecarBlob(cut, t) && t.heights == base.heights,
+                  "terrain edit: a truncated sidecar is rejected without touching the terrain");
+        }
+
+        // (j) パス変換
+        {
+            check(TerrainEdit::EditPathFor(L"C:\\a\\b.terrain.json") == L"C:\\a\\b.terrain.edit",
+                  "terrain edit: the sidecar path is the source with .json swapped for .edit");
+            check(TerrainEdit::EditPathFor(L"C:\\a\\b.json").empty()
+                      && TerrainEdit::EditPathFor(L"").empty(),
+                  "terrain edit: a non-terrain path has no sidecar");
+        }
+    }
+
+    // ---- (15) クック経由の実地: サイドカーとクックキャッシュ (M58f) ----
+    {
+        std::error_code ec;
+        const fs::path root = fs::temp_directory_path(ec) / L"mye_terrain_brush_selftest";
+        fs::remove_all(root, ec);
+        fs::create_directories(root / L"cooked", ec);
+        const fs::path src = root / L"t.terrain.json";
+        const std::string json =
+            R"({"type":"terrain","version":1,"worldSize":[64.0,64.0],)"
+            R"("heightRes":[17,17],"splatRes":[8,8],"heightBase":0.0,"heightScale":24.0,)"
+            R"("procedural":{"seed":11,"octaves":3,"frequency":3.0,"lacunarity":2.0,"gain":0.5},)"
+            R"("layers":[{"name":"a"},{"name":"b"}]})";
+        {
+            std::ofstream f(src, std::ios::binary | std::ios::trunc);
+            f.write(json.data(), static_cast<std::streamsize>(json.size()));
+        }
+        const std::wstring srcPath = src.wstring();
+        const std::wstring editPath = TerrainEdit::EditPathFor(srcPath);
+
+        TerrainEdit::Brush dab;
+        dab.mode = TerrainEdit::BrushMode::Raise;
+        dab.radius = 20.0f;
+        dab.strength = 5.0f;
+
+        // (a) キャッシュ無効 (既定): SaveEdits → Load でブラシ結果が戻ってくる
+        TerrainAsset::TerrainData plain;
+        check(TerrainAsset::Load(srcPath, plain), "terrain edit: the fixture terrain cooks");
+        TerrainAsset::TerrainData edited = plain;
+        check(TerrainEdit::ApplyBrush(edited, dab) && TerrainEdit::SaveEdits(srcPath, edited),
+              "terrain edit: SaveEdits writes the sidecar");
+        {
+            TerrainAsset::TerrainData reloaded;
+            check(TerrainAsset::Load(srcPath, reloaded) && reloaded.heights == edited.heights,
+                  "terrain edit: a fresh cook picks the brush result up from the sidecar");
+            check(!reloaded.editSrc.relPath.empty()
+                      && reloaded.editSrc.contentHash == edited.editSrc.contentHash,
+                  "terrain edit: the cooked data stamps the sidecar (size + content hash)");
+        }
+
+        // (b) クックキャッシュ有効。★**キャッシュを焼いた後にサイドカーが現れた**ケース。
+        //     `.terrain.json` は 1 ビットも変わらないので、mtime も deps も miss を出せない —
+        //     EditSidecarStillMatches の「ディスク側の存在と blob の主張を突き合わせる」
+        //     判定が無いと、ここでブラシ結果が**キャッシュに隠される**
+        fs::remove(editPath, ec);
+        CookedCache::Configure((root / L"cooked").wstring(), true);
+        TerrainAsset::TerrainData cached0;
+        check(TerrainAsset::Load(srcPath, cached0) && cached0.heights == plain.heights
+                  && cached0.editSrc.relPath.empty(),
+              "terrain edit: the un-edited terrain cooks into the cache");
+        TerrainAsset::TerrainData behindBack = cached0;
+        TerrainEdit::ApplyBrush(behindBack, dab);
+        {
+            // SaveEdits を通さずに**サイドカーだけ**置く (= よそのプロセス / VCS が置いた)
+            std::vector<uint8_t> blob;
+            TerrainEdit::SerializeSidecar(behindBack, blob);
+            std::ofstream f(fs::path{ editPath }, std::ios::binary | std::ios::trunc);
+            f.write(reinterpret_cast<const char*>(blob.data()),
+                    static_cast<std::streamsize>(blob.size()));
+        }
+        TerrainAsset::TerrainData cached1;
+        check(TerrainAsset::Load(srcPath, cached1) && cached1.heights == behindBack.heights,
+              "terrain edit: the cooked cache does not hide a sidecar that appeared behind its back");
+        fs::remove(editPath, ec);
+        TerrainAsset::TerrainData cached2;
+        check(TerrainAsset::Load(srcPath, cached2) && cached2.heights == plain.heights,
+              "terrain edit: deleting the sidecar takes the terrain back to the recipe");
+        CookedCache::Configure(L"", false); // 他スイートへ漏らさない (CookedCacheSelfTest と同じ後始末)
 
         fs::remove_all(root, ec);
     }

@@ -9,6 +9,7 @@
 #include "Engine/Core/Hash.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Engine/Asset/CookedCache.h"
+#include "Engine/Engine/Asset/TerrainEdit.h" // M58f: ブラシ編集サイドカーの取り込み
 #include "Engine/Platform/PathUtil.h"
 
 #include "nlohmann/json.hpp"
@@ -359,6 +360,26 @@ bool StampSource(const std::wstring& absPath, const std::string& rel, TerrainSou
     return true;
 }
 
+// 編集サイドカー (M58f) をクック結果へ被せる。サイドカーが在るかどうかに関わらず
+// 「在れば刻印する」— 解像度違いで**中身を捨てた**ときも刻印は残す。残さないと
+// 「サイドカーは在るのに blob は無いと言っている」= 下の EditSidecarStillMatches が
+// 毎回 miss を返し、開くたびにフルクックし続ける状態になる
+void ApplyEditSidecar(const std::wstring& srcPath, TerrainData& d)
+{
+    const std::wstring editPath = TerrainEdit::EditPathFor(srcPath);
+    std::vector<uint8_t> blob;
+    if (editPath.empty() || !ReadWholeFile(editPath, blob)) {
+        return;
+    }
+    if (!TerrainEdit::ApplySidecarBlob(blob, d)) {
+        MYE_LOG_WARN("[terrain] edit sidecar ignored (resolution mismatch): %s",
+                     WideToUtf8(editPath).c_str());
+    }
+    d.editSrc.relPath = WideToUtf8(fs::path(editPath).filename().wstring());
+    d.editSrc.byteSize = blob.size();
+    d.editSrc.contentHash = HashBytes(blob.data(), blob.size());
+}
+
 // Load() のキャッシュ照合。焼き込んだ画像が差し替わっていたら miss にする
 bool SourceImageStillMatches(const std::wstring& srcPath, const TerrainSourceImage& s)
 {
@@ -373,6 +394,24 @@ bool SourceImageStillMatches(const std::wstring& srcPath, const TerrainSourceIma
         return false;
     }
     return bytes.size() == s.byteSize && HashBytes(bytes.data(), bytes.size()) == s.contentHash;
+}
+
+// 編集サイドカー用のキャッシュ照合 (M58f)。
+// ★SourceImageStillMatches だけでは足りない: relPath が空だと「外部入力なし」で素通りするので、
+//   **無かったサイドカーが増えた**ケース (= 初めてブラシを当てた地形をよそのプロセスが開く)
+//   をキャッシュが隠してしまう。ディスク側の存在と blob の主張が食い違ったら miss にする
+bool EditSidecarStillMatches(const std::wstring& srcPath, const TerrainData& cached)
+{
+    if (CookedCache::Sealed()) {
+        return true; // 配布物にサイドカーは無い (焼き込み済み)
+    }
+    const std::wstring editPath = TerrainEdit::EditPathFor(srcPath);
+    std::error_code ec;
+    const bool present = !editPath.empty() && fs::exists(editPath, ec);
+    if (present != !cached.editSrc.relPath.empty()) {
+        return false;
+    }
+    return SourceImageStillMatches(srcPath, cached.editSrc);
 }
 
 } // namespace
@@ -486,7 +525,7 @@ void Serialize(const TerrainData& d, std::vector<uint8_t>& out)
     AppendPod(out, d.worldSizeZ);
     AppendPod(out, d.heightBase);
     AppendPod(out, d.heightScale);
-    for (const TerrainSourceImage* s : { &d.heightSrc, &d.splatSrc }) {
+    for (const TerrainSourceImage* s : { &d.heightSrc, &d.splatSrc, &d.editSrc }) {
         AppendStr(out, s->relPath);
         AppendPod(out, s->byteSize);
         AppendPod(out, s->contentHash);
@@ -526,7 +565,7 @@ bool Deserialize(const std::vector<uint8_t>& in, TerrainData& out)
         || !r.Pod(out.heightScale)) {
         return false;
     }
-    for (TerrainSourceImage* s : { &out.heightSrc, &out.splatSrc }) {
+    for (TerrainSourceImage* s : { &out.heightSrc, &out.splatSrc, &out.editSrc }) {
         if (!r.Str(s->relPath) || !r.Pod(s->byteSize) || !r.Pod(s->contentHash)) {
             return false;
         }
@@ -668,12 +707,35 @@ bool CookFromSource(const std::wstring& srcPath, TerrainData& out)
         GenerateSplat(d);
     }
 
+    // ★サイドカーはレシピを解いた**後**に被せる。JSON は「地形の作り方」、サイドカーは
+    //   「ブラシが直した画素」なので、解像度が一致する限り後者が勝つ (M58f)
+    ApplyEditSidecar(srcPath, d);
+
     if (!d.Valid()) {
         MYE_LOG_ERROR("[terrain] cooked data failed validation: %s", WideToUtf8(srcPath).c_str());
         return false;
     }
     out = std::move(d);
     return true;
+}
+
+bool WriteCache(const std::wstring& srcPath, const TerrainData& d)
+{
+    if (!CookedCache::Enabled()) {
+        return false;
+    }
+    std::vector<uint8_t> blob;
+    Serialize(d, blob);
+    // deps は「存在検証」だけなので、焼き込んだ画像/サイドカーの**内容**は
+    // TerrainSourceImage 側で見る。それでも deps に載せるのは、消えた/動いたを
+    // 1 回のファイル読みで即 miss にできるため
+    std::vector<std::wstring> deps;
+    for (const TerrainSourceImage* s : { &d.heightSrc, &d.splatSrc, &d.editSrc }) {
+        if (!s->relPath.empty()) {
+            deps.push_back(ResolveRel(srcPath, s->relPath));
+        }
+    }
+    return CookedCache::Write(srcPath, kTerrainExt, blob.data(), blob.size(), deps);
 }
 
 bool Load(const std::wstring& srcPath, TerrainData& out)
@@ -683,7 +745,8 @@ bool Load(const std::wstring& srcPath, TerrainData& out)
     if (CookedCache::ReadValidated(srcPath, kTerrainExt, payload)) {
         TerrainData cached;
         if (Deserialize(payload, cached) && SourceImageStillMatches(srcPath, cached.heightSrc)
-            && SourceImageStillMatches(srcPath, cached.splatSrc)) {
+            && SourceImageStillMatches(srcPath, cached.splatSrc)
+            && EditSidecarStillMatches(srcPath, cached)) {
             MYE_LOG_INFO("[cook] terrain cache hit: %s", WideToUtf8(srcPath).c_str());
             out = std::move(cached);
             return true;
@@ -693,21 +756,8 @@ bool Load(const std::wstring& srcPath, TerrainData& out)
     if (!CookFromSource(srcPath, out)) {
         return false;
     }
-    if (CookedCache::Enabled()) {
-        std::vector<uint8_t> blob;
-        Serialize(out, blob);
-        // deps は「存在検証」だけなので、焼き込んだ画像の**内容**は TerrainSourceImage 側で見る。
-        // それでも deps に載せるのは、消えた/動いたを 1 回のファイル読みで即 miss にできるため
-        std::vector<std::wstring> deps;
-        for (const TerrainSourceImage* s : { &out.heightSrc, &out.splatSrc }) {
-            if (!s->relPath.empty()) {
-                deps.push_back(ResolveRel(srcPath, s->relPath));
-            }
-        }
-        if (CookedCache::Write(srcPath, kTerrainExt, blob.data(), blob.size(), deps)) {
-            MYE_LOG_INFO("[cook] terrain cooked: %s (%zu KB)", WideToUtf8(srcPath).c_str(),
-                         blob.size() / 1024);
-        }
+    if (WriteCache(srcPath, out)) {
+        MYE_LOG_INFO("[cook] terrain cooked: %s", WideToUtf8(srcPath).c_str());
     }
     return true;
 }

@@ -20,10 +20,11 @@ inline constexpr const wchar_t* kSourceSuffix = L".terrain.json";
 
 // blob 形式の版。**形式を変えたら必ず上げる** (CookedCache::kCookVersion とは独立 —
 // あちらはキャッシュ全体の無効化、こちらは .mterr の中身の互換性)。
-// v2 = M58d でレイヤに tint (3 float) を足した。古い .mterr は Deserialize が版違いで
-// 弾く → Load が黙って再クックする (旧版を読む互換コードは持たない: `.mterr` は
+// v2 = M58d でレイヤに tint (3 float) を足した。
+// v3 = M58f で編集サイドカー (`.terrain.edit`) の刻印を足した。古い .mterr は Deserialize が
+// 版違いで弾く → Load が黙って再クックする (旧版を読む互換コードは持たない: `.mterr` は
 // cache\ の生成物で、版が上がったら焼き直すのが最も安いし壊れようがない)
-inline constexpr uint32_t kBlobVersion = 2;
+inline constexpr uint32_t kBlobVersion = 3;
 
 // スプラットマップは RGBA8 の 4 チャンネル = レイヤ 4 枚が構造的な上限 (M58d)。
 inline constexpr uint32_t kMaxLayers = 4;
@@ -89,6 +90,10 @@ struct TerrainData {
     float heightScale = 0.0f; // 正規化高さ 1 に対応する Y との差
     TerrainSourceImage heightSrc;
     TerrainSourceImage splatSrc;
+    // M58f: ブラシ編集のサイドカー (`.terrain.edit`)。relPath が空 = 未編集。
+    // 画像と同じ「size + 内容ハッシュ」の刻印なので、サイドカーを外部から書き換えても
+    // Load が miss にできる (ブラシ自身は SaveEdits でクックごと更新する)
+    TerrainSourceImage editSrc;
     TerrainProcedural proc;
     std::vector<TerrainLayer> layers;
     std::vector<uint16_t> heights; // heightW * heightH、行優先 (Z が外側)
@@ -112,6 +117,11 @@ bool CookFromSource(const std::wstring& srcPath, TerrainData& out);
 // クックキャッシュ優先のロード。ヒットすれば画像デコードを丸ごと省略する。
 // ミスなら CookFromSource + キャッシュ書き出しまで面倒を見る
 bool Load(const std::wstring& srcPath, TerrainData& out);
+
+// 現在の d でクックキャッシュを書き直す (M58f のブラシが編集直後に呼ぶ)。
+// これが無いと、サイドカーだけ新しくキャッシュが古い状態になって次の Load が
+// 毎回フルクック (JSON 再パース + ノイズ再生成) に落ちる。キャッシュ無効時は no-op
+bool WriteCache(const std::wstring& srcPath, const TerrainData& d);
 
 // path が `.terrain.json` か (大文字小文字を無視)
 bool IsSourcePath(const std::wstring& path);

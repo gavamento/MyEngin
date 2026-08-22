@@ -4,6 +4,7 @@
 #include "imgui.h"
 #include "ImGuizmo/ImGuizmo.h"
 
+#include "Engine/Engine/Asset/TerrainEdit.h" // M58f: 地形ブラシ
 #include "Engine/Engine/EngineLoop.h"
 #include "Engine/Renderer/EditorLinePass.h"
 #include "Engine/Renderer/PickingPass.h"
@@ -39,6 +40,11 @@ private:
                    const EditorSettings& settings, float rectX, float rectY, float rectW,
                    float rectH);
     void HandleCamera(EngineContext& ctx, Selection& selection, EditorSettings& settings);
+    // 地形ブラシ (M58f)。カーソル下の地表を求めてダブを置き、リング表示を重ねる。
+    // 戻り値 = 左ボタンを消費した (= ピッキング/ギズモへ流さない)
+    bool HandleTerrainBrush(EngineContext& ctx, Selection& selection, UndoStack& undo,
+                            const ImVec2& imgPos, const ImVec2& size);
+    void DrawTerrainBrushPanel(EngineContext& ctx);
     void FocusOnSelection(EngineContext& ctx, Selection& selection);
     // カーソル位置のワールドレイ (origin + 正規化 dir)。ビュー行列が特異なら false
     bool MouseRay(const ImVec2& imgPos, const ImVec2& size, DirectX::XMFLOAT3& origin,
@@ -72,6 +78,22 @@ private:
     // 動くため開いた時点で固定する)
     DirectX::XMFLOAT3 ctxSpawnPos_ = {};
     bool ctxSpawnValid_ = false;
+
+    // ---- 地形ブラシ (M58f) ----
+    // ★状態はエディタ側にしか無い (シーンにも設定ファイルにも保存しない) — ブラシは
+    //   「いまの操作」であって地形アセットの属性ではないため。
+    bool terrainBrush_ = false; // ブラシモード (on の間はピッキングとギズモを止める)
+    int terrainBrushMode_ = 0;  // 0=Raise 1=Smooth 2=Paint (TerrainEdit::BrushMode と同順)
+    float terrainRadius_ = 12.0f;
+    float terrainStrength_ = 1.0f; // Raise は m/ダブ、Smooth/Paint は 0..1
+    int terrainLayer_ = 0;         // Paint の対象レイヤ
+    bool terrainStroking_ = false;  // 左ドラッグ中 (= 1 Undo エントリの単位)
+    bool terrainHasTarget_ = false; // 直近のフレームで塗れる地形が見つかったか (パネル表示用)
+    std::wstring terrainStrokeSrc_;              // ストローク対象の `.terrain.json` 絶対パス
+    TerrainAsset::TerrainData terrainStrokeBase_; // ストローク開始時の画素 (差分の基準)
+    TerrainAsset::TerrainData terrainStrokeWork_; // 進行中の画素 (ダブごとに書き出す)
+    DirectX::XMFLOAT3 terrainLastDab_ = { 0.0f, 0.0f, 0.0f }; // 直前のダブ位置 (間隔判定)
+    bool terrainHasDab_ = false;
 
     PickingPass picking_;    // クリック選択 (遅延 Init)
     EditorLinePass lines_;   // グリッド/ワイヤ/アウトライン (遅延 Init)

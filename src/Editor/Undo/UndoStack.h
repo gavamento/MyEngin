@@ -17,12 +17,16 @@ struct EngineContext;
 //   Relocate  = Rename / Move (undo: pathB→pathA、redo: pathA→pathB)
 //   Duplicate = 複製          (undo: pathB をごみ箱へ、redo: pathA から再複製 + 新 GUID)
 //   Create    = 新規作成      (undo: pathB をごみ箱へ、redo: bytes を書き戻す)
+//   TerrainPaint = 地形ブラシ 1 ストローク (M58f。pathA = `.terrain.json`、
+//                  bytes = TerrainEdit のパッチ。undo/redo とも「読む → 逆/順に当てる →
+//                  サイドカーへ書き戻す」で、ブラシ本体と同じ永続化経路を通る)
 struct UndoFileOp {
-    enum class Kind : uint8_t { None, Relocate, Duplicate, Create };
+    enum class Kind : uint8_t { None, Relocate, Duplicate, Create, TerrainPaint };
     Kind kind = Kind::None;
-    std::wstring pathA; // Relocate: 移動前 / Duplicate: 複製元 (Create では未使用)
+    std::wstring pathA; // Relocate: 移動前 / Duplicate: 複製元 / TerrainPaint: 地形ソース
     std::wstring pathB; // Relocate: 移動後 / Duplicate・Create: 生成物
-    std::string bytes;  // Create (ファイルのみ): redo で書き戻す内容スナップショット
+    std::string bytes;  // Create (ファイルのみ): redo で書き戻す内容スナップショット /
+                        // TerrainPaint: 矩形パッチ (before と after の両方を持つ)
     bool isDir = false;
 };
 
