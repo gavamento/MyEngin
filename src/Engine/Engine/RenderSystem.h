@@ -6,6 +6,7 @@
 
 #include "Engine/Core/EntityID.h"
 #include "Engine/Engine/DebugDraw.h"
+#include "Engine/Engine/LightSelection.h"
 #include "Engine/Engine/RayTracing/RtScene.h"
 #include "Engine/Renderer/EditorLinePass.h"
 #include "Engine/Renderer/EnvMapBaker.h"
@@ -142,7 +143,17 @@ public:
     int RtInstanceCount() const { return rtScene_.InstanceCount(); }
     int RtTriangleCount() const { return rtScene_.TriangleCount(); }
 
+    // M54b: 直近フレームのライト選別結果 (カリング + 決定論ソート + 上限)。
+    // shadowSlot は M54c のシャドウアトラスが読む — この時点ではまだ誰も配線していない
+    LightSelection lightSelection;
+
 private:
+    // M54b: ライト選別ログの既出セット (描画専用)。「直近値と違ったら出す」にすると、
+    // SceneView と GameView が同じ RenderSystem を共有していて選別結果が食い違う場合に
+    // 毎フレーム 2 行出続ける。出たことのある組み合わせを覚えて 1 回ずつだけ出す
+    uint64_t lightLogSeen_[8] = {};
+    int lightLogSeenCount_ = 0;
+
     RenderQueue queue_;     // フレーム毎に再利用 (アロケーション回避)
     PostProcess postFx_;    // HDR 中間 + トーンマップ (遅延 Init)
     ShadowPass shadowPass_; // 平行光シャドウマップ (遅延 Init)

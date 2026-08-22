@@ -65,7 +65,11 @@ struct LightComponent {
     float range = 15.0f;        // Point/Spot: 減衰半径
     float spotInnerDeg = 25.0f; // Spot: フル強度の内角 (度)
     float spotOuterDeg = 35.0f; // Spot: 減衰端の外角 (度)
-    float pad = 0.0f;
+    // M54b: 影を落とすか (0/1)。旧 `float pad` の枠をそのまま使っているので sizeof も
+    // 既存フィールドの offsetof も 1 バイト動いていない (シーン JSON も .rep も無風)。
+    // 対象は**局所ライト (点/スポット)** — 平行光の影は既存の CSM が常に担当する。
+    // bool ではなく int32_t なのはパディングの 4 バイトを潰さないため
+    int32_t castShadow = 0;
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 

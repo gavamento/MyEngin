@@ -332,24 +332,40 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
         }
     }
 
-    // ---- ライト (最大 kMaxLights 個収集。Directional/Point/Spot) ----
+    // ---- 視錐台 (M16: メッシュのカリング用。カメラがある時のみ。描画専用でハッシュ非対象) ----
+    // M54b からライト選別も同じ視錐台を使うので、収集ブロックの中からここへ引き上げた
+    Frustum frustum = {};
+    const bool cullEnabled = cameraFound;
+    if (cullEnabled) {
+        XMFLOAT4X4 vp;
+        XMStoreFloat4x4(&vp, XMLoadFloat4x4(&view.view) * XMLoadFloat4x4(&view.proj));
+        frustum = BuildFrustum(vp);
+    }
+
+    // ---- ライト (Directional/Point/Spot) ----
+    // M54b: ここは候補を集めるだけで、カリング / 決定論ソート / 上限 kMaxLights の適用は
+    // LightSelection.cpp の純関数が行う (M54c のシャドウアトラスが「影を投げるライトの列」の
+    // frame 間安定性を要求するため、順序を決める場所を 1 箇所に閉じた)。
+    // M54b 以前はカリングもソートも無い「登録順の先着 16 本」だった
     SceneLightData lights;
     {
         const ComponentTypeId req[] = { LightComponent::sTypeId, WorldMatrixComponent::sTypeId };
         bool ambientSet = false;
+        std::vector<LightCandidate> cands;
         world.ForEachArchetype(req, [&](Archetype& arch) {
             const int li = arch.FindTypeIndex(LightComponent::sTypeId);
             const int wi = arch.FindTypeIndex(WorldMatrixComponent::sTypeId);
             for (uint32_t row = 0; row < arch.Count(); ++row) {
-                if (lights.count >= kMaxLights) {
-                    return;
-                }
-                if (!IsEntityActive(world, arch.EntityAt(row))) {
+                const EntityID e = arch.EntityAt(row);
+                if (!IsEntityActive(world, e)) {
                     continue; // 無効化されたライトは寄与しない
                 }
                 const auto* l = static_cast<const LightComponent*>(arch.GetPtr(li, row));
                 const auto* w = static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row));
-                GpuLight& g = lights.lights[lights.count++];
+                LightCandidate& c = cands.emplace_back();
+                c.sortKey = e.index; // 決定論キー (アーキタイプの並び順に依存しない)
+                c.castShadow = l->castShadow;
+                GpuLight& g = c.light;
                 // ワールド行列の第 3 行 = ローカル +Z の向き、第 4 行 = 位置
                 XMVECTOR dir = XMVector3Normalize(
                     XMVectorSet(w->value._31, w->value._32, w->value._33, 0));
@@ -362,18 +378,35 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
                 g.cosInner = std::cos(XMConvertToRadians(l->spotInnerDeg));
                 g.cosOuter = std::cos(XMConvertToRadians(l->spotOuterDeg));
                 if (!ambientSet) {
-                    // アンビエントは最初のライトの値を全体に使う (M38a: リニアへ)
+                    // アンビエントは最初のライトの値を全体に使う (M38a: リニアへ)。
+                    // ★選別後の先頭ではなく**走査順の先頭** — 従来挙動を 1 ビットも変えない
                     lights.ambient = SrgbToLinear(l->ambient);
                     ambientSet = true;
                 }
             }
         });
-        // ライトが 1 つも無いシーンでも見えるよう、既定の平行光を 1 つ補う (従来挙動)
-        if (lights.count == 0) {
-            GpuLight& g = lights.lights[lights.count++];
-            XMStoreFloat3(&g.direction,
-                          XMVector3Normalize(XMVectorSet(0.3f, -0.8f, 0.5f, 0)));
-            g.type = 0;
+        lightSelection = SelectLights(cands.data(), static_cast<int>(cands.size()),
+                                      cullEnabled ? &frustum : nullptr);
+        lights.count = lightSelection.count;
+        for (int i = 0; i < lightSelection.count; ++i) {
+            lights.lights[i] = lightSelection.lights[i].light;
+        }
+        // カリングで意図せずライトが消えていないかを目視するための 1 行。
+        // 毎フレーム出すとログが埋まるので、初めて見る組み合わせのときだけ出す
+        {
+            auto pack = [](int v) { return static_cast<uint64_t>((std::min)((std::max)(v, 0), 0xFFFF)); };
+            const uint64_t key = pack(lightSelection.count) | (pack(lightSelection.culled) << 16)
+                | (pack(lightSelection.overflow) << 32) | (pack(lightSelection.shadowCount) << 48);
+            bool seen = false;
+            for (int i = 0; i < lightLogSeenCount_; ++i) {
+                seen = seen || lightLogSeen_[i] == key;
+            }
+            if (!seen && lightLogSeenCount_ < static_cast<int>(std::size(lightLogSeen_))) {
+                lightLogSeen_[lightLogSeenCount_++] = key;
+                MYE_LOG_INFO("Lights: %d selected (culled %d, dropped %d, shadow casters %d)",
+                             lightSelection.count, lightSelection.culled, lightSelection.overflow,
+                             lightSelection.shadowCount);
+            }
         }
     }
 
@@ -382,14 +415,6 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
     skinPalettes_.clear(); // スキンメッシュのボーンパレット (M18、フレーム毎に再構築)
     {
         const XMMATRIX v = XMLoadFloat4x4(&view.view);
-        // フラスタムカリング用の視錐台 (カメラがある時のみ。描画専用でハッシュ非対象 — M16)
-        Frustum frustum = {};
-        const bool cullEnabled = cameraFound;
-        if (cullEnabled) {
-            XMFLOAT4X4 vp;
-            XMStoreFloat4x4(&vp, v * XMLoadFloat4x4(&view.proj));
-            frustum = BuildFrustum(vp);
-        }
         int culledCount = 0;
         // 不透明キャスターの world AABB を集約 → シャドウ範囲のフィットに使う (M17)
         XMFLOAT3 sceneMin = { FLT_MAX, FLT_MAX, FLT_MAX };

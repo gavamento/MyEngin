@@ -15,6 +15,7 @@
 #include "Editor/ProjectManager.h"
 #include "Editor/ProjectRegistry.h"
 #include "Editor/ProjectTemplates.h"
+#include "Editor/LightSelectionSelfTest.h"
 #include "Editor/UndoSelfTest.h"
 #include "Engine/Core/EcsSelfTest.h"
 #include "Engine/Core/JobSystemSelfTest.h"
@@ -437,7 +438,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             && mye::RunGameFlowSelfTest() && mye::RunWorldHasherSelfTest()
             && mye::RunSimSnapshotSelfTest() && mye::RunTimeTravelSelfTest()
             && mye::RunCrashRingSelfTest() && mye::RunImageDiffSelfTest()
-            && mye::RunNetSelfTest();
+            && mye::RunNetSelfTest() && mye::RunLightSelectionSelfTest(); // M54b で末尾 append
         return ok ? 0 : 1;
     }
 
