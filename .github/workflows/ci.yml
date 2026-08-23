@@ -22,7 +22,13 @@
 #                      TAA の近傍 min/max クランプは FXAA と同型のしきい値分岐で、しかも
 #                      履歴でフレーム間に蓄積する = 同じ増幅が起きうる。増幅率を実測する
 #                      までは CI に載せない (載せると「理由不明で赤い」1 枚が増えるだけ)
-#   MYE_SHOT_SKIP_FROXEL … スクショ 11 枚目 (フロクセルを通す 1 枚、M57d) を飛ばす。
+#   MYE_SHOT_SKIP_SSR … スクショ 9 枚目 (SSR を通す 1 枚、M56d) を飛ばす。
+#                      **当初は CI 判定 (tol=3) に載せていたが実測で降格した** (run 32622063559)。
+#                      SSR の交差判定はレイの hit/miss で離散的に分岐するので、1 ULP の深度差が
+#                      反転すると画素が反射色 ⇔ IBL フォールバックへ丸ごと飛ぶ:
+#                      実測 maxDiff=95 だが tol 超えはわずか 30 画素 (FXAA の 1→35 と同型)。
+#                      tol を上げると本物の SSR 回帰も同じ形なので一緒に見逃す。
+#   MYE_SHOT_SKIP_FROXEL … スクショ 12 枚目 (フロクセルを通す 1 枚、M57d) を飛ばす。
 #                      テンポラル蓄積を含む = TAA と同じ「フレーム間に蓄積するしきい値
 #                      分岐」の系統で、さらに WARP の注入が実シーンで 60ms/フレーム
 #                      掛かる (M57b 実測)。増幅率を測るまで CI に載せない
@@ -53,6 +59,7 @@ jobs:
       MYE_SHOT_SKIP_FXAA: 1
       MYE_SHOT_SKIP_TAA: 1
       MYE_SHOT_SKIP_FROXEL: 1
+      MYE_SHOT_SKIP_SSR: 1
     steps:
       - uses: actions/checkout@v4
 
@@ -70,7 +77,7 @@ jobs:
       #    8 ビルド (4 プロジェクト x Debug/Release) → 3 ペアのリプレイ照合
       #    (既定デモ / 部位ショーケース / ゲームフロー) → check_rules.ps1 まで回る。
       #    照合が割れたときは bat 自身がフィールド単位の差分を出す (M52a)
-      - name: replay determinism (build x8 + 3 scene pairs + rule check)
+      - name: replay determinism (build x8 + 4 scene pairs + rule check)
         shell: cmd
         run: tools\replay_verify.bat
 
@@ -88,7 +95,7 @@ jobs:
       #    --warp --font-embedded --no-fxaa 固定 = ラスタライザ・フォント・
       #    機種差を増幅する 1 パスを開発機と揃える。
       #    replay_verify が先に Release をビルドしている前提 (bat はビルドしない)
-      - name: screenshot regression (7 shots, no-fxaa)
+      - name: screenshot regression (8 shots, no-fxaa/taa/ssr/froxel)
         shell: cmd
         run: tools\shot_verify.bat
 

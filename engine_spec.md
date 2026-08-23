@@ -908,10 +908,16 @@ a GPU-less runner an acceptable place to prove determinism. Golden screenshots, 
 nothing about what is drawn. `tools\shot_verify.bat` captures twelve deterministic screenshots with
 `Runtime.exe` (no ImGui, so neither `imgui.ini` nor the cursor position can leak in) and compares
 them against `tests\golden\*.png` pixel by pixel, writing a difference heat map next to any shot
-that moved. `--update` re-records the golden set. Nine of the twelve gate CI; the other three
-exist only to cover FXAA, TAA and froxel volumetrics -- all three compared at `--tol 0` and all
-three skipped on the runner (`MYE_SHOT_SKIP_FXAA` / `_TAA` / `_FROXEL`, see below): each is a
-temporal or threshold-branching pass whose dev-vs-runner amplification is unmeasured. Two of the nine
+that moved. `--update` re-records the golden set. Eight of the twelve gate CI; the other four
+exist only to cover FXAA, TAA, SSR and froxel volumetrics -- all four compared at `--tol 0` and
+all four skipped on the runner (`MYE_SHOT_SKIP_FXAA` / `_TAA` / `_SSR` / `_FROXEL`). Each is a
+pass that **branches discretely**, so a 1-ULP difference flips the branch and throws a few dozen
+pixels a long way: FXAA was measured at maxDiff 35 (M52c) and SSR at maxDiff 95 over just 30
+pixels (M56d). No tolerance can cover that shape -- a genuine regression looks the same -- so the
+runner does not shoot them at all and only bit-identity on the dev machine is claimed. A ninth,
+`demo_terrain_deferred`, gates CI at `--tol 12` rather than 3: **anisotropic filtering is
+implementation-defined** and the two WARP builds disagree by up to 8 levels on terrain viewed at
+grazing angles (four splat layers x albedo+normal, amplified by the derivative-based TBN). Two of the eight
 (`demo_render_forward` / `demo_render_deferred`, M54a) shoot the `--render-demo` showcase, which
 is the only golden scene carrying spot and point lights -- without it every feature added by the
 M54-M58 rendering roadmap would be pixel-invariant by default and land with zero coverage.
