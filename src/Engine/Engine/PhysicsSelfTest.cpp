@@ -1652,7 +1652,12 @@ bool RunPhysicsSelfTest()
         {
             Scene s;
             GameObject envGo = s.CreateGameObjectTracked("Env");
-            envGo.AddComponent<PhysicsEnvironmentComponent>()->gravity = { 0.0f, 0.0f, 0.0f };
+            auto* menv = envGo.AddComponent<PhysicsEnvironmentComponent>();
+            menv->gravity = { 0.0f, 0.0f, 0.0f };
+            // ★**1 tick の閉形式と突き合わせる「式の試験」**なのでサブステップを 1 に固定する
+            //   (M59g2 の既定 4 だと tick 内で速度ベクトルが回るぶんだけ値がずれ、
+            //   マグヌス係数そのものの検証にならない。実測 -0.80144 vs 閉形式 -0.80176)
+            menv->substeps = 1;
             GameObject ball = MakeSphereBody(s, "Curve", 0, 0, 0, 0.5f);
             auto* aero = ball.AddComponent<AeroComponent>();
             aero->enableDrag = false;
@@ -1969,6 +1974,13 @@ bool RunPhysicsSelfTest()
             Scene sa, sb;
             MakeGround(sa, "G", 0, -0.5f, 0, 5.0f, 0.5f, 5.0f);
             GameObject plainA = MakeBox(sa, "Plain", 0, 3.0f, 0, 0.5f, 0.5f, 0.5f, 0.3f);
+            // ★**参照側にも同じ env を置く** — M59g2 から PhysicsEnvironment は値の出所だけでなく
+            //   **積分スケジュール (substeps) を選ぶ**。env の有無が違うと Buoyancy を持たない
+            //   ボディの軌跡まで変わる (重力を h 刻みで N 回足すので float の丸めが違う)。
+            //   この試験が見たいのは「**浮いているボディが隣に居ても影響しない**」ことなので、
+            //   差分は「浮くボディが居るかどうか」だけにする
+            GameObject wgoA = sa.CreateGameObjectTracked("Water");
+            wgoA.AddComponent<PhysicsEnvironmentComponent>()->waterPlaneY = 20.0f;
             sa.GetWorld().ApplyStructuralChanges();
             MakeGround(sb, "G", 0, -0.5f, 0, 5.0f, 0.5f, 5.0f);
             GameObject plainB = MakeBox(sb, "Plain", 0, 3.0f, 0, 0.5f, 0.5f, 0.5f, 0.3f);
@@ -1991,12 +2003,9 @@ bool RunPhysicsSelfTest()
                     MYE_LOG_ERROR("  buoyancy mix diverged at tick %d", i);
                 }
             }
-            // ★このシーンだけ env が居る = 重力経路が env 側に切り替わっている。
-            //   それでも plainB が plainA (env 無し) とビット一致するのは、
-            //   gravity 既定 (0,-9.81,0) の x/z 加算が両方 +0.0f で、この初期条件では
-            //   vx/vz が負のゼロにならないため — **一般には成り立たない** (存在ゲートの理由)。
-            //   ここで見たいのは「浮いているボディが隣に居ても影響しない」ことなので、
+            // ★両シーンに同じ env が居るので重力経路も積分スケジュールも同一。
             //   ハッシュ等価ではなく plain 同士の軌跡一致で判定している
+            //   (シーン b にはボートが余分に居る = ワールドハッシュは必ず違う)
             check(same,
                   "buoyancy: a body without Buoyancy is unaffected by floating bodies nearby "
                   "(240 ticks bit-identical)");
@@ -2760,6 +2769,243 @@ bool RunPhysicsSelfTest()
             // 静定していること自体も見る (跳ねていれば上の値も揺れる)
             check(std::fabs(s.Find("B1").GetComponent<RigidbodyComponent>()->velocity.y) < 0.02f,
                   "solver: the top box is actually at rest, not bouncing in a limit cycle");
+        }
+    }
+
+    // ================= M59g2: サブステップ =================
+    // 1 tick を substeps 回の「積分 → 制約生成 → 解決 → 位置補正 → 前進」に割る。
+    // ★substeps は PhysicsEnvironment のフィールド = **存在ゲートの内側**。env を置いて
+    //   いないシーンは 1 固定で M59g1 までと同じ経路を通る。定数にしなかったのは
+    //   車両 (M60) が 8 を要求しがちだから (予約事項 4)。
+    {
+        // -- クランプ: [1, kMaxSubsteps] の外は端へ丸められる --
+        {
+            auto fall = [&](int substeps) {
+                Scene s;
+                GameObject envGo = s.CreateGameObjectTracked("Env");
+                envGo.AddComponent<PhysicsEnvironmentComponent>()->substeps = substeps;
+                GameObject b = MakeBox(s, "F", 0, 10.0f, 0, 0.5f, 0.5f, 0.5f);
+                s.GetWorld().ApplyStructuralChanges();
+                for (int i = 0; i < 60; ++i) {
+                    phys.Update(s.GetWorld(), kDt);
+                }
+                return b.GetComponent<LocalTransform>()->position.y;
+            };
+            const float y0 = fall(0), y1 = fall(1), y16 = fall(16), y100 = fall(100);
+            check(y0 == y1, "substeps: 0 and below is clamped up to 1 (bit-identical)");
+            check(y100 == y16, "substeps: above kMaxSubsteps is clamped down to 16");
+            // ★クランプ試験が空転していないこと — 分割すれば自由落下でさえ結果が動く
+            //   (半陰的 Euler は h を細かくすると真の解に近づく)
+            check(y1 != y16, "substeps: the clamp test is not vacuous (1 and 16 differ)");
+        }
+
+        // -- 減衰は「毎 tick の率」: サブステップ数に依らない --
+        // ★h ごとに掛けると (1-d)^N になる。substeps を上げただけで減衰が強くなるのは
+        //   物理でも意味論でもない — 最初のサブステップで 1 回だけ適用する
+        {
+            auto damped = [&](int substeps) {
+                Scene s;
+                GameObject envGo = s.CreateGameObjectTracked("Env");
+                auto* e = envGo.AddComponent<PhysicsEnvironmentComponent>();
+                e->substeps = substeps;
+                e->gravity = { 0.0f, 0.0f, 0.0f };
+                GameObject b = MakeBox(s, "D", 0, 0, 0, 0.5f, 0.5f, 0.5f);
+                s.GetWorld().ApplyStructuralChanges();
+                auto* rb = b.GetComponent<RigidbodyComponent>();
+                rb->linearDamping = 0.5f;
+                rb->velocity = { 10.0f, 0.0f, 0.0f };
+                phys.Update(s.GetWorld(), kDt);
+                return rb->velocity.x;
+            };
+            check(damped(1) == 5.0f && damped(8) == 5.0f && damped(16) == 5.0f,
+                  "substeps: linear damping is a per-tick rate, not a per-substep rate");
+        }
+
+        // -- 接触インパルスの意味は substeps に依らない (MergeSubstepContacts の契約) --
+        // 消費者 (M59e の可視化 / M59k の GetContactInfo) から見た「この tick に入った
+        // 法線インパルス」は m*g*dt のまま — サブステップをまたいで**足す**からこうなる。
+        // (平均を取ると substeps を上げるだけで報告値が 1/N になり、意味が壊れる)
+        {
+            auto restingImpulse = [&](int substeps) {
+                Scene s;
+                GameObject envGo = s.CreateGameObjectTracked("Env");
+                envGo.AddComponent<PhysicsEnvironmentComponent>()->substeps = substeps;
+                MakeGround(s, "G", 0, -0.5f, 0, 5.0f, 0.5f, 5.0f);
+                MakeBox(s, "B", 0, 0.5f, 0, 0.5f, 0.5f, 0.5f);
+                s.GetWorld().ApplyStructuralChanges();
+                std::vector<SolidContact> contacts;
+                for (int i = 0; i < 120; ++i) {
+                    phys.Update(s.GetWorld(), kDt, &contacts);
+                }
+                return contacts.empty() ? 0.0f : contacts[0].impulse;
+            };
+            const float i1 = restingImpulse(1), i4 = restingImpulse(4), i16 = restingImpulse(16);
+            const float expectI = 9.81f * kDt;
+            MYE_LOG_INFO("  [phys] resting impulse vs substeps: 1=%.5f 4=%.5f 16=%.5f "
+                         "(expect m*g*dt = %.5f)",
+                         i1, i4, i16, expectI);
+            check(std::fabs(i1 - expectI) < 0.005f && std::fabs(i4 - expectI) < 0.005f
+                      && std::fabs(i16 - expectI) < 0.005f,
+                  "substeps: the reported normal impulse stays m*g*dt at any substep count");
+        }
+
+        // -- e=1 の反発: 頂点は理想の弾性衝突へ**両側から**近づく --
+        // 反発バイアスはマニフォールド生成時の接近速度で 1 回だけ決まる (M59g1)。接触を
+        // 検出したときには重力で 1 ステップぶん余計に加速し、貫通も進んでいるので、
+        // その速度を丸ごと跳ね返すと**理想より速く**戻る。刻みが細かいほどその過剰が減る。
+        // ★実測 (落下 1.5m に対する頂点の回復率): substeps 1 = 108.1% / 4 = 102.7% /
+        //   16 = 100.6%。**e=1 で discrete ソルバはエネルギーを足す**のであって引かない —
+        //   「跳ね続ける球がだんだん高く上がる」の正体がこれ。判定は保存率そのものではなく
+        //   **100% からの乖離が単調に縮むこと**で書く (方向を取り違えると試験が嘘になる)
+        {
+            // ★**静的コライダーは既存フィールドとしての反発係数を持たない** (M59a2)。
+            //   e = min(ea, eb) なので床が 0 のままだと min が 0 になり、球にいくら e=1 を
+            //   与えても跳ねない (最初これで頂点が測れず -33% を出した)。材料経由でだけ
+            //   静的側が e を主張できる = ここで .physmat を 1 枚仕込む
+            PhysMatLibrary* prevBounceLib = physmat::Library();
+            PhysMatLibrary bounceLib;
+            PhysMat bouncy;
+            bouncy.restitution = 1.0f;
+            bouncy.dynamicFriction = 0.5f; // Collider 既定と同値 (摩擦は今回の観測対象外)
+            const uint64_t hBouncy = bounceLib.Register(L"x\\t_bouncy.physmat.json", bouncy);
+            physmat::Install(&bounceLib);
+            auto apexRatio = [&](int substeps) {
+                Scene s;
+                GameObject envGo = s.CreateGameObjectTracked("Env");
+                envGo.AddComponent<PhysicsEnvironmentComponent>()->substeps = substeps;
+                GameObject ground = MakeGround(s, "G", 0, -0.5f, 0, 5.0f, 0.5f, 5.0f);
+                ground.GetComponent<ColliderComponent>()->physMaterial = { hBouncy };
+                GameObject ball = MakeSphereBody(s, "Bouncer", 0, 2.0f, 0, 0.5f);
+                s.GetWorld().ApplyStructuralChanges();
+                auto* rb = ball.GetComponent<RigidbodyComponent>();
+                rb->restitution = 1.0f;
+                rb->angularDamping = 0.0f;
+                const auto* lt = ball.GetComponent<LocalTransform>();
+                bool hit = false;
+                float apex = 0.0f;
+                for (int i = 0; i < 120; ++i) {
+                    phys.Update(s.GetWorld(), kDt);
+                    if (!hit && rb->velocity.y > 0.0f) {
+                        hit = true; // 最初の跳ね返りをとらえてから頂点を探す
+                    }
+                    if (hit && lt->position.y > apex) {
+                        apex = lt->position.y;
+                    }
+                }
+                return (apex - 0.5f) / 1.5f; // 落下高さ 1.5m に対する回復率
+            };
+            const float r1 = apexRatio(1), r4 = apexRatio(4), r16 = apexRatio(16);
+            MYE_LOG_INFO("  [phys] e=1 apex retention: substeps 1=%.1f%% 4=%.1f%% 16=%.1f%%",
+                         r1 * 100.0f, r4 * 100.0f, r16 * 100.0f);
+            const float e1 = std::fabs(r1 - 1.0f);
+            const float e4 = std::fabs(r4 - 1.0f);
+            const float e16 = std::fabs(r16 - 1.0f);
+            check(e4 < e1 && e16 < e4,
+                  "substeps: the e=1 bounce converges monotonically to the ideal elastic collision");
+            check(e16 < 0.01f, "substeps: 16 substeps land within 1% of the drop height at e=1");
+            physmat::Install(prevBounceLib);
+        }
+
+        // -- 剛いバネ: 陽的積分の安定限界 h*omega < 2 をサブステップで買う --
+        // k=20000, m=1 なら omega=141 — dt=1/60 では h*omega=2.36 で発散側。
+        // substeps=4 (h=1/240) なら 0.59 で安定。これが差分として見える
+        // (発散そのものはバネ側の Δv クランプで止まるので、見るのは振幅)
+        {
+            auto springAmp = [&](int substeps) {
+                Scene s;
+                GameObject envGo = s.CreateGameObjectTracked("Env");
+                auto* e = envGo.AddComponent<PhysicsEnvironmentComponent>();
+                e->substeps = substeps;
+                e->gravity = { 0.0f, 0.0f, 0.0f };
+                GameObject anchor = s.CreateGameObjectTracked("Anchor");
+                anchor.SetLocalPosition(0, 0, 0);
+                GameObject bob = MakeSphereBody(s, "Bob", 0, -2.1f, 0, 0.3f);
+                auto* sj = bob.AddComponent<SpringJointComponent>();
+                sj->connectedEntity = anchor.Id();
+                sj->restLength = 2.0f;
+                sj->stiffness = 20000.0f;
+                sj->damping = 0.0f;
+                s.GetWorld().ApplyStructuralChanges();
+                const auto* lt = bob.GetComponent<LocalTransform>();
+                float maxStretch = 0.0f;
+                for (int i = 0; i < 300; ++i) {
+                    phys.Update(s.GetWorld(), kDt);
+                    const float st = std::fabs(-lt->position.y - 2.0f);
+                    if (st > maxStretch) {
+                        maxStretch = st;
+                    }
+                }
+                return maxStretch;
+            };
+            const float sa1 = springAmp(1), sa4 = springAmp(4);
+            MYE_LOG_INFO("  [phys] stiff spring (k=20000) max stretch: substeps 1=%.4f 4=%.4f "
+                         "(initial 0.1)",
+                         sa1, sa4);
+            check(sa4 < 0.15f, "substeps: 4 substeps keep a k=20000 spring near its initial swing");
+            check(sa1 > sa4 * 2.0f, "substeps: the same spring is unusable at 1 substep per tick");
+        }
+
+        // -- スタックの定量化 (M59h への引き継ぎ) --
+        // M59g1 のゲートで「1cm ジグザグの塔は崩れる」と分かっている。サブステップで
+        // 直るのか、warm starting が要るのかをここで測る
+        {
+            auto tower = [&](int floors, float jitter, int substeps, float& outTopY,
+                             float& outMaxDrift, float& outMinY) {
+                Scene s;
+                GameObject envGo = s.CreateGameObjectTracked("Env");
+                envGo.AddComponent<PhysicsEnvironmentComponent>()->substeps = substeps;
+                // ★床は M59g1 のゲート (6m) より**大きく** 60m 取る。崩れ方が激しいと箱が
+                //   端から転げ落ちて y が -800m まで行き、「床を抜けた」と区別できなくなる
+                //   (実測: substeps=4 で水平 93m まで飛んだ)。ここで見たいのは貫通だけ
+                MakeGround(s, "G", 0, -0.5f, 0, 60.0f, 0.5f, 60.0f);
+                std::vector<GameObject> boxes;
+                for (int i = 0; i < floors; ++i) {
+                    char name[24];
+                    std::snprintf(name, sizeof(name), "S%d", i);
+                    boxes.push_back(MakeBox(s, name, jitter * static_cast<float>(i % 3 - 1),
+                                            0.5f + 1.0f * static_cast<float>(i), 0.0f, 0.5f, 0.5f,
+                                            0.5f));
+                }
+                s.GetWorld().ApplyStructuralChanges();
+                for (int i = 0; i < 1200; ++i) {
+                    phys.Update(s.GetWorld(), kDt);
+                }
+                outMaxDrift = 0.0f;
+                outMinY = 1e9f;
+                for (int i = 0; i < floors; ++i) {
+                    const auto* lt = boxes[static_cast<size_t>(i)].GetComponent<LocalTransform>();
+                    const float dx = std::fabs(lt->position.x);
+                    const float dz = std::fabs(lt->position.z);
+                    const float d = (dx > dz) ? dx : dz;
+                    if (d > outMaxDrift) {
+                        outMaxDrift = d;
+                    }
+                    if (lt->position.y < outMinY) {
+                        outMinY = lt->position.y;
+                    }
+                    if (i == floors - 1) {
+                        outTopY = lt->position.y;
+                    }
+                }
+            };
+            float t1 = 0, d1 = 0, m1 = 0, t4 = 0, d4 = 0, m4 = 0, t8 = 0, d8 = 0, m8 = 0;
+            tower(10, 0.01f, 1, t1, d1, m1);
+            tower(10, 0.01f, 4, t4, d4, m4);
+            tower(10, 0.01f, 8, t8, d8, m8);
+            MYE_LOG_INFO("  [phys] jittered 10-high @1200: substeps 1 top %.3f drift %.3f / "
+                         "4 top %.3f drift %.3f / 8 top %.3f drift %.3f",
+                         t1, d1, t4, d4, t8, d8);
+            check(m1 > -1.0f && m4 > -1.0f && m8 > -1.0f,
+                  "substeps: a collapsing stack never tunnels through the floor at any count");
+            float a1 = 0, ad1 = 0, am1 = 0, a8 = 0, ad8 = 0, am8 = 0;
+            tower(10, 0.0f, 1, a1, ad1, am1);
+            tower(10, 0.0f, 8, a8, ad8, am8);
+            MYE_LOG_INFO("  [phys] aligned 10-high @1200: substeps 1 top %.3f drift %.4f / "
+                         "8 top %.3f drift %.4f  (built at 9.5)",
+                         a1, ad1, a8, ad8);
+            check(a1 > 9.0f && a8 > 9.0f,
+                  "substeps: an aligned 10-high stack stands at any substep count");
+            check(ad1 == 0.0f && ad8 == 0.0f, "substeps: and does not walk at any substep count");
         }
     }
 

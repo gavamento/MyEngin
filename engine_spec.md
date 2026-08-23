@@ -854,6 +854,24 @@ the end of the component registration order, so existing scenes are untouched.
 | **No righting moment in v1** | The height-ratio approximation cannot see the horizontal shift of the centre of buoyancy, so a tilted raft keeps its tilt forever (only the angular water drag acts on it). The force is nonetheless applied *at the buoyancy centre* via `ApplyImpulse`, so the torque is provably zero today and starts working by itself once M59f1 adds a centre-of-mass offset. A true righting moment needs per-face pressure integration — that is M59c |
 | Buoyancy direction | Always **+Y**, magnitude scaled by `|gravity|`. The water surface is an axis-aligned Y plane in M59, so tilting the gravity vector while keeping a horizontal surface has no coherent reading |
 
+#### Substepping (M59g2)
+
+`PhysicsEnvironment.substeps` splits one tick into N repetitions of *integrate → generate → solve →
+position-correct → advance*. It is a component field rather than a constant because vehicles (M60)
+want a different value from ragdolls, and it lives **inside the existence gate**: a scene with no
+`PhysicsEnvironment` runs at 1 and takes the M59g1 path unchanged.
+
+| Concept | Decision |
+|---|---|
+| Range | Clamped to `[1, kMaxSubsteps = 16]`. The clamp is in the solver, not the setter, so a scene file with a nonsense value still loads and still simulates identically everywhere |
+| What scales with `h` | Everything that consumes a step: gravity, aerodynamic and buoyancy impulses, springs, constraint bias, integration, and the broadphase sweep margin |
+| What does **not** | `linearDamping` / `angularDamping` are documented as **per-tick rates**. Applying them per substep would raise them to the Nth power, so damping runs once, in the first substep |
+| Restitution threshold | `kRestitutionVelThreshold` is designed as "about twice the speed gravity adds in one step". It is scaled by `h/dt`, otherwise raising the substep count would make the world *less* bouncy |
+| Contact reporting | The per-substep contact lists are merged by `MergeSubstepContacts`: impulses **sum**, geometry comes from the later substep, and the reported set is the **union**. Summing is what keeps "the normal impulse this tick" equal to `m·g·dt` for a resting body at any substep count — averaging would divide the reported value by N and silently change what the number means |
+| Measured — elastic bounce | Dropping an `e = 1` sphere 1.5 m and reading the apex: **108.1 % at 1 substep, 102.7 % at 4, 100.6 % at 16**. The discrete solver **gains** energy at `e = 1`, because the approach speed frozen at manifold generation already includes one step of extra gravity. Finer steps shrink the excess; they do not merely reduce a loss |
+| Measured — stiff springs | Explicit integration is stable while `h·ω < 2`. A `k = 20000, m = 1` spring (`ω = 141`) sits at `h·ω = 2.36` at 60 Hz and swings to **30.6 m** from a 0.1 m displacement; at 4 substeps it stays at **0.105 m**. This is the cheapest way to raise the stiffness ceiling without a stiffness-aware integrator |
+| Measured — stacks | The 1 cm zigzag 10-high tower that M59g1 flagged for warm starting **stands at 8 substeps** (top at 9.483 of 9.5, drift 0.73) where it collapses at 1 and 4. An aligned 10-high tower settles slightly higher too (9.494 vs 9.416) because less penetration accumulates. Warm starting is still the right answer for cost, but it is no longer the *only* answer |
+
 #### Surface-sampling aerodynamics (M59c)
 
 `Aero.surfaceModel` switches how drag is computed — from the orientation-blind representative area

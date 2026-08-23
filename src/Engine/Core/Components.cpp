@@ -540,6 +540,15 @@ void RegisterBuiltinComponents()
         MYE_JP("水面の高さ", MYE_FIELD(PhysicsEnvironmentComponent, waterPlaneY, Float)),
         MYE_JP("水の密度",
                MYE_FIELD_RANGE(PhysicsEnvironmentComponent, waterDensity, Float, 0.0f, 20000.0f)),
+        // レンジとツールチップを両方付けたいので生 FieldDesc で書く (マクロは片方ずつ)。
+        // 宣言順 (name/type/offset/…/minVal/maxVal/tooltip) を崩さないこと
+        MYE_JP("サブステップ数",
+               ::mye::FieldDesc{
+                   .name = "substeps", .type = ::mye::FieldType::Int32,
+                   .offset = static_cast<uint32_t>(offsetof(PhysicsEnvironmentComponent, substeps)),
+                   .minVal = 1.0f, .maxVal = 16.0f,
+                   .tooltip = "1 tick is split into this many integrate+solve steps. Higher = "
+                              "stiffer springs and cleaner stacks, at a proportional cost" }),
     });
 
     // M59b: 等方空力。**hash 対象** — velocity / angularVelocity を駆動する。

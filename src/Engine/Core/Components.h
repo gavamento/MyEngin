@@ -756,6 +756,15 @@ struct PhysicsEnvironmentComponent {
     DirectX::XMFLOAT3 windVelocity = { 0.0f, 0.0f, 0.0f };
     float waterPlaneY = 0.0f;     // 水面の高さ (M59b2 の Buoyancy が使う。それまで未消費)
     float waterDensity = 1000.0f; // kg/m^3 (M59b2)
+    // ---- M59g2 追加: サブステップ数 (末尾 append) ----
+    // 1 tick を何分割して積分・解決するか。**定数にしないのは車両 (M60) が 8 を要求しがち**
+    // だから (予約事項 4)。範囲は [1, 16] にクランプされる。
+    // ★**env が無いシーンは 1 固定** — 存在ゲートの一部で、置いていないシーンは
+    //   M59g1 までと同じ 1 回積分の経路をそのまま通る。
+    // ★サブステップは反復回数を増やすより効く: 同じコストなら接触の解像度が上がり、
+    //   反発の頂点保存も貫通も改善する。代償として「1 tick あたりの力」を使う項
+    //   (ConstantForce / 空力 / 浮力 / 翼 / ばね) は h = dt / substeps 刻みで効く
+    int32_t substeps = 4;
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 

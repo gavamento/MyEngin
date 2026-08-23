@@ -31,13 +31,16 @@ constexpr int kSolverIterations = 8;
 // (速度ソルバと違い、接触点を反復間で持ち越す必要が無い)。M28b が速度ソルバと同じループで
 // 8 回押し出していたのに合わせてある。**4 に減らすと 10 段スタックが床を突き抜けた** (実測)
 constexpr int kPositionIterations = 8;
+// サブステップ数の上限 (M59g2)。PhysicsEnvironment のフィールドをここでクランプする
+constexpr int kMaxSubsteps = 16;
 constexpr float kPenetrationSlop = 0.0005f; // 微小めり込みは許容 (ジッタ抑制)
 // |vn| がこの閾値未満の接触は反発 0 扱い (micro-bounce 除去 = 静止安定の柱。~2g·dt)
 constexpr float kRestitutionVelThreshold = 0.3f;
 // ブロードフェーズ AABB の膨張量 (M28d)。ソルバ内の位置補正移動を保守的にカバーする。
 // 仮に候補から漏れても「次 tick で解決」に留まり、候補列は決定論なのでハッシュ一致性は不変
 constexpr float kBroadphaseMargin = 0.1f;
-// **陽的な**項 (マグヌス M59b / 浮力 M59b2) の 1 tick あたり Delta-v 上限。SpringJoint の
+// **陽的な**項 (マグヌス M59b / 浮力 M59b2) の 1 **ステップ**あたり Delta-v 上限
+// (M59g2 以降サブステップごとに効くので、実効上限は 100*substeps m/s)。SpringJoint の
 // 100 m/s 前例と同じ「発散防止の決定論的クランプ」— 物理的に届くことはまず無く、
 // 係数を極端にしたオーサリングミスでシーンが吹き飛ぶのを止めるための防波堤。
 // 抗力系は閉形式 implicit なのでクランプを要らない (除算しかしないため発散し得ない)
@@ -246,6 +249,43 @@ void ApplyImpulse(Body& b, float rx, float ry, float rz, float jx, float jy, flo
     b.wx += ix;
     b.wy += iy;
     b.wz += iz;
+}
+
+// サブステップ 1 回ぶんの接触列 (key 昇順) を tick 全体の列へ合流させる (M59g2)。
+// 同じペアが複数のサブステップで出たら**インパルスを足し、幾何は後のもので上書き**する。
+// どちらも key 昇順なので線形マージで済む (順序が結果のビットを決めるので手順は固定)
+void MergeSubstepContacts(const std::vector<SolidContact>& sub, std::vector<SolidContact>& acc)
+{
+    if (sub.empty()) {
+        return;
+    }
+    if (acc.empty()) {
+        acc = sub;
+        return;
+    }
+    std::vector<SolidContact> merged;
+    merged.reserve(acc.size() + sub.size());
+    size_t i = 0, j = 0;
+    while (i < acc.size() && j < sub.size()) {
+        if (acc[i].key < sub[j].key) {
+            merged.push_back(acc[i++]);
+        } else if (sub[j].key < acc[i].key) {
+            merged.push_back(sub[j++]);
+        } else {
+            SolidContact c = sub[j];          // 幾何は後のサブステップを採る
+            c.impulse += acc[i].impulse;      // インパルスは足す
+            merged.push_back(c);
+            ++i;
+            ++j;
+        }
+    }
+    while (i < acc.size()) {
+        merged.push_back(acc[i++]);
+    }
+    while (j < sub.size()) {
+        merged.push_back(sub[j++]);
+    }
+    acc.swap(merged);
 }
 
 // ---- キャラクターコントローラ (M29b) ----
@@ -527,146 +567,213 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
     // ---- 物理環境の解決 (M59b)。不在 (= 既存シーンの全部) なら以降は全て従来経路 ----
     const PhysicsEnvironmentComponent* env = ResolvePhysicsEnvironment(world);
 
-    // ---- 速度積分 (動的・非 kinematic のみ)。位置はまだ動かさない ----
-    // M28b で「速度積分 → ソルバ → 位置積分」の順に変更 (Box2D 流)。摩擦や法線インパルスで
-    // 静止した速度がそのまま位置積分に使われるため、静止接触の毎 tick クリープが出ない
-    for (Body& b : bodies) {
-        if (b.invMass == 0.0f || !b.rb) {
-            continue;
-        }
-        // M59b: env は**存在ゲート**。不在なら従来式を 1 文字も変えずに通す。
-        // gravity=(0,-9.81,0) でも無条件のベクトル加算にすると vx += -0.0f * s * dt が走り、
-        // vx が -0.0f のときに +0.0f へ化けてワールドハッシュが動く
-        // (= 「係数 0 なら中立」という値ゲートが float では成立しない理由。決定台帳 1)
-        if (env) {
-            const float gs = b.rb->gravityScale;
-            b.vx += env->gravity.x * gs * dt;
-            b.vy += env->gravity.y * gs * dt;
-            b.vz += env->gravity.z * gs * dt;
-        } else {
-            b.vy += kGravity * b.rb->gravityScale * dt;
-        }
-        float damp = 1.0f - b.rb->linearDamping;
-        if (damp < 0.0f) { damp = 0.0f; }
-        b.vx *= damp; b.vy *= damp; b.vz *= damp;
-        if (!b.freezeRot) {
-            float adamp = 1.0f - b.rb->angularDamping;
-            if (adamp < 0.0f) { adamp = 0.0f; }
-            b.wx *= adamp; b.wy *= adamp; b.wz *= adamp;
+    // ---- サブステップ (M59g2) ----
+    // 1 tick を substeps 回に割って「積分 → 制約生成 → 解決 → 位置補正 → 前進」を繰り返す。
+    // 反復回数を増やすより効く — 接触が生まれてから解かれるまでの時間が短くなるので、
+    // 反発の頂点保存も貫通も改善する。**env が無ければ 1 = M59g1 までと同一経路**
+    // (存在ゲート。文の並びも変えていないのでサブステップ 1 は構造的にそのまま)。
+    int substeps = 1;
+    if (env) {
+        substeps = env->substeps;
+        if (substeps < 1) {
+            substeps = 1;
+        } else if (substeps > kMaxSubsteps) {
+            substeps = kMaxSubsteps;
         }
     }
-
-    // ---- 動的ボディの pose (基底) と慣性を確定 (前 tick 末の姿勢で) ----
-    for (Body& b : bodies) {
-        if (!b.rb) {
-            continue; // 静的は収集時に確定済み
-        }
-        if (b.col) {
-            const XMFLOAT3 pos = { b.pose.px, b.pose.py, b.pose.pz };
-            const XMFLOAT4 rot = { b.qx, b.qy, b.qz, b.qw };
-            b.pose = shapes::MakePose(*b.col, pos, rot, b.scale);
-        }
-        if (!b.freezeRot && b.invMass > 0.0f) {
-            float ix, iy, iz;
-            LocalInertiaDiag(b.col, b.pose, 1.0f / b.invMass, ix, iy, iz);
-            InvInertiaWorld(b.pose, ix, iy, iz, b.invI);
-        } // freezeRot / kinematic は零行列のまま = 角応答なし
-    }
-
-    // ---- ConstantForce (M29a): 毎 tick の定常力/トルク。opt-in — 非所持ボディは
-    //      ルックアップのみで fp 演算ゼロ = 既存シーンとビット同一 ----
-    for (Body& b : bodies) {
-        if (!b.rb || b.invMass == 0.0f) {
-            continue;
-        }
-        const auto* cf = world.GetComponent<ConstantForceComponent>(b.entity);
-        if (!cf) {
-            continue;
-        }
-        float fx = cf->force.x, fy = cf->force.y, fz = cf->force.z;
-        float tx = cf->torque.x, ty = cf->torque.y, tz = cf->torque.z;
-        if (cf->relative != 0) {
-            float rx, ry, rz;
-            QuatRotate(b.qx, b.qy, b.qz, b.qw, fx, fy, fz, rx, ry, rz);
-            fx = rx; fy = ry; fz = rz;
-            QuatRotate(b.qx, b.qy, b.qz, b.qw, tx, ty, tz, rx, ry, rz);
-            tx = rx; ty = ry; tz = rz;
-        }
-        b.vx += fx * b.invMass * dt;
-        b.vy += fy * b.invMass * dt;
-        b.vz += fz * b.invMass * dt;
-        // 角: freezeRot / kinematic は invI が零行列なので自然に無効
-        float ax, ay, az;
-        MulInvI(b.invI, tx * dt, ty * dt, tz * dt, ax, ay, az);
-        b.wx += ax;
-        b.wy += ay;
-        b.wz += az;
-    }
-
-    // ---- 空力 (M59b): 等方抗力 / マグヌス / 角抗力。ConstantForce の直後 = 「その tick の
-    //      力を足し終えた速度」に効かせる。**AeroComponent 非所持ボディはルックアップのみで
-    //      fp 演算ゼロ** = 既存シーンとビット同一 (ConstantForce 帯と同じ opt-in の作り) ----
-    for (Body& b : bodies) {
-        if (!b.rb || b.invMass == 0.0f) {
-            continue;
-        }
-        const auto* aero = world.GetComponent<AeroComponent>(b.entity);
-        if (!aero) {
-            continue;
-        }
-        // 基準面積 = Cauchy の平均投影面積 x 演出用倍率。0 以下 (半径 0 / 面積倍率 0) は
-        // 空力が定義できないので項ごと落とす (入力だけに依存する決定論的分岐)
-        const float area = MeanProjectedAreaWorld(b.shapeCol, b.scale.x, b.scale.y, b.scale.z)
-                         * aero->areaScale;
-        if (area <= 0.0f) {
-            continue;
-        }
-        const float rho = env ? env->airDensity : kDefaultAirDensity;
-        // Cd: Aero の上書き (>0) → 材料の既定 → 球の 0.47。Cd は形状特性なので
-        // Aero 側が正で、材料値はあくまで既定 (PhysMatLibrary.h の換算表コメント参照)
-        float cd = aero->dragCoefficient;
-        if (cd <= 0.0f) {
-            const PhysMat* mat = b.shapeCol ? physmat::Resolve(b.shapeCol->physMaterial) : nullptr;
-            cd = mat ? mat->dragCoefficient : kDefaultDragCoefficient;
-        }
-        // 面積から作る等価半径 (球なら実半径に一致)。マグヌスと角抗力の「腕の長さ」
-        const float rEq = std::sqrt(area / XM_PI);
-        // ---- 並進: 風に対する相対速度に効かせ、最後に風を足し戻す ----
-        // ★両方 OFF のときは相対速度への往復自体を走らせない — v - w + w は float では
-        //   元の v に戻るとは限らず、「全部 OFF の Aero を付けただけで挙動が動く」を避ける。
-        // M59c: 面モデルを使うときは抗力を等方経路から外す (「抗力を出すか」= enableDrag と
-        //       「どう出すか」= surfaceModel の 2 段。マグヌスは常に等方経路のまま)
-        const bool isoDrag = aero->enableDrag && !aero->surfaceModel;
-        if (isoDrag || aero->enableMagnus) {
-            const float wndX = env ? env->windVelocity.x : 0.0f;
-            const float wndY = env ? env->windVelocity.y : 0.0f;
-            const float wndZ = env ? env->windVelocity.z : 0.0f;
-            float rvx = b.vx - wndX, rvy = b.vy - wndY, rvz = b.vz - wndZ;
-            if (isoDrag) {
-                // F = k |v| v (k = 0.5 rho Cd A) を**閉形式 implicit** で解く:
-                //   v' = v / (1 + (k |v| / m) dt)。除算のみなので k をいくら大きくしても
-                //   符号が反転せず無条件安定 (陽的 v -= k|v|v/m dt は簡単に発散する)。
-                // 終端速度は mg = k v_t^2 → v_t = sqrt(mg/k) に収束する (selftest が断言)
-                const float speed = std::sqrt(rvx * rvx + rvy * rvy + rvz * rvz);
-                if (speed > 0.0f) {
-                    const float k = 0.5f * rho * cd * area;
-                    const float scale = 1.0f / (1.0f + (k * speed * b.invMass) * dt);
-                    rvx *= scale;
-                    rvy *= scale;
-                    rvz *= scale;
+    const float h = dt / static_cast<float>(substeps);
+    // 反発の速度閾値は「重力が 1 ステップで与える速度の ~2 倍」という設計 (kGravity の
+    // すぐ上のコメント参照)。刻みが細かくなれば閾値も比例して下げないと、
+    // サブステップを増やすほど跳ねなくなるという逆転が起きる
+    const float restitutionVelThreshold = kRestitutionVelThreshold * (h / dt);
+    std::vector<SolidContact> subContacts; // サブステップ 1 回ぶんの接触 (合算前)
+    for (int sub = 0; sub < substeps; ++sub) {
+        // ---- 速度積分 (動的・非 kinematic のみ)。位置はまだ動かさない ----
+        // M28b で「速度積分 → ソルバ → 位置積分」の順に変更 (Box2D 流)。摩擦や法線インパルスで
+        // 静止した速度がそのまま位置積分に使われるため、静止接触の毎 tick クリープが出ない
+        for (Body& b : bodies) {
+            if (b.invMass == 0.0f || !b.rb) {
+                continue;
+            }
+            // M59b: env は**存在ゲート**。不在なら従来式を 1 文字も変えずに通す。
+            // gravity=(0,-9.81,0) でも無条件のベクトル加算にすると vx += -0.0f * s * h が走り、
+            // vx が -0.0f のときに +0.0f へ化けてワールドハッシュが動く
+            // (= 「係数 0 なら中立」という値ゲートが float では成立しない理由。決定台帳 1)
+            if (env) {
+                const float gs = b.rb->gravityScale;
+                b.vx += env->gravity.x * gs * h;
+                b.vy += env->gravity.y * gs * h;
+                b.vz += env->gravity.z * gs * h;
+            } else {
+                b.vy += kGravity * b.rb->gravityScale * h;
+            }
+            // ★減衰は**毎 tick の率**なのでサブステップごとに掛けてはいけない (N 乗になる)。
+            //   最初のサブステップで 1 回だけ適用する — substeps=1 なら文の並びも M59g1 と同一
+            if (sub == 0) {
+                float damp = 1.0f - b.rb->linearDamping;
+                if (damp < 0.0f) { damp = 0.0f; }
+                b.vx *= damp; b.vy *= damp; b.vz *= damp;
+                if (!b.freezeRot) {
+                    float adamp = 1.0f - b.rb->angularDamping;
+                    if (adamp < 0.0f) { adamp = 0.0f; }
+                    b.wx *= adamp; b.wy *= adamp; b.wz *= adamp;
                 }
             }
-            if (aero->enableMagnus) {
-                // F = S (omega x v_rel)、S = magnus * 0.5 rho A r。符号の確認:
-                // +X へ進み +Y 軸まわりに回る球は omega x v = -Z を向く — +Z 側の表面が
-                // 流れに逆らって動き圧力が上がる側なので、力は -Z で物理的に正しい
-                // (PhysicsSelfTest がこの配置そのままで符号を断言する)
-                float mx, my, mz;
-                Cross(b.wx, b.wy, b.wz, rvx, rvy, rvz, mx, my, mz);
-                const float sMag = aero->magnusCoefficient * 0.5f * rho * area * rEq;
-                float dvx = mx * sMag * b.invMass * dt;
-                float dvy = my * sMag * b.invMass * dt;
-                float dvz = mz * sMag * b.invMass * dt;
+        }
+
+        // ---- 動的ボディの pose (基底) と慣性を確定 (前 tick 末の姿勢で) ----
+        for (Body& b : bodies) {
+            if (!b.rb) {
+                continue; // 静的は収集時に確定済み
+            }
+            if (b.col) {
+                const XMFLOAT3 pos = { b.pose.px, b.pose.py, b.pose.pz };
+                const XMFLOAT4 rot = { b.qx, b.qy, b.qz, b.qw };
+                b.pose = shapes::MakePose(*b.col, pos, rot, b.scale);
+            }
+            if (!b.freezeRot && b.invMass > 0.0f) {
+                float ix, iy, iz;
+                LocalInertiaDiag(b.col, b.pose, 1.0f / b.invMass, ix, iy, iz);
+                InvInertiaWorld(b.pose, ix, iy, iz, b.invI);
+            } // freezeRot / kinematic は零行列のまま = 角応答なし
+        }
+
+        // ---- ConstantForce (M29a): 定常な力/トルク (M59g2 以降は h 刻みで積む)。opt-in — 非所持ボディは
+        //      ルックアップのみで fp 演算ゼロ = 既存シーンとビット同一 ----
+        for (Body& b : bodies) {
+            if (!b.rb || b.invMass == 0.0f) {
+                continue;
+            }
+            const auto* cf = world.GetComponent<ConstantForceComponent>(b.entity);
+            if (!cf) {
+                continue;
+            }
+            float fx = cf->force.x, fy = cf->force.y, fz = cf->force.z;
+            float tx = cf->torque.x, ty = cf->torque.y, tz = cf->torque.z;
+            if (cf->relative != 0) {
+                float rx, ry, rz;
+                QuatRotate(b.qx, b.qy, b.qz, b.qw, fx, fy, fz, rx, ry, rz);
+                fx = rx; fy = ry; fz = rz;
+                QuatRotate(b.qx, b.qy, b.qz, b.qw, tx, ty, tz, rx, ry, rz);
+                tx = rx; ty = ry; tz = rz;
+            }
+            b.vx += fx * b.invMass * h;
+            b.vy += fy * b.invMass * h;
+            b.vz += fz * b.invMass * h;
+            // 角: freezeRot / kinematic は invI が零行列なので自然に無効
+            float ax, ay, az;
+            MulInvI(b.invI, tx * h, ty * h, tz * h, ax, ay, az);
+            b.wx += ax;
+            b.wy += ay;
+            b.wz += az;
+        }
+
+        // ---- 空力 (M59b): 等方抗力 / マグヌス / 角抗力。ConstantForce の直後 = 「その tick の
+        //      力を足し終えた速度」に効かせる。**AeroComponent 非所持ボディはルックアップのみで
+        //      fp 演算ゼロ** = 既存シーンとビット同一 (ConstantForce 帯と同じ opt-in の作り) ----
+        for (Body& b : bodies) {
+            if (!b.rb || b.invMass == 0.0f) {
+                continue;
+            }
+            const auto* aero = world.GetComponent<AeroComponent>(b.entity);
+            if (!aero) {
+                continue;
+            }
+            // 基準面積 = Cauchy の平均投影面積 x 演出用倍率。0 以下 (半径 0 / 面積倍率 0) は
+            // 空力が定義できないので項ごと落とす (入力だけに依存する決定論的分岐)
+            const float area = MeanProjectedAreaWorld(b.shapeCol, b.scale.x, b.scale.y, b.scale.z)
+                             * aero->areaScale;
+            if (area <= 0.0f) {
+                continue;
+            }
+            const float rho = env ? env->airDensity : kDefaultAirDensity;
+            // Cd: Aero の上書き (>0) → 材料の既定 → 球の 0.47。Cd は形状特性なので
+            // Aero 側が正で、材料値はあくまで既定 (PhysMatLibrary.h の換算表コメント参照)
+            float cd = aero->dragCoefficient;
+            if (cd <= 0.0f) {
+                const PhysMat* mat = b.shapeCol ? physmat::Resolve(b.shapeCol->physMaterial) : nullptr;
+                cd = mat ? mat->dragCoefficient : kDefaultDragCoefficient;
+            }
+            // 面積から作る等価半径 (球なら実半径に一致)。マグヌスと角抗力の「腕の長さ」
+            const float rEq = std::sqrt(area / XM_PI);
+            // ---- 並進: 風に対する相対速度に効かせ、最後に風を足し戻す ----
+            // ★両方 OFF のときは相対速度への往復自体を走らせない — v - w + w は float では
+            //   元の v に戻るとは限らず、「全部 OFF の Aero を付けただけで挙動が動く」を避ける。
+            // M59c: 面モデルを使うときは抗力を等方経路から外す (「抗力を出すか」= enableDrag と
+            //       「どう出すか」= surfaceModel の 2 段。マグヌスは常に等方経路のまま)
+            const bool isoDrag = aero->enableDrag && !aero->surfaceModel;
+            if (isoDrag || aero->enableMagnus) {
+                const float wndX = env ? env->windVelocity.x : 0.0f;
+                const float wndY = env ? env->windVelocity.y : 0.0f;
+                const float wndZ = env ? env->windVelocity.z : 0.0f;
+                float rvx = b.vx - wndX, rvy = b.vy - wndY, rvz = b.vz - wndZ;
+                if (isoDrag) {
+                    // F = k |v| v (k = 0.5 rho Cd A) を**閉形式 implicit** で解く:
+                    //   v' = v / (1 + (k |v| / m) h)。除算のみなので k をいくら大きくしても
+                    //   符号が反転せず無条件安定 (陽的 v -= k|v|v/m h は簡単に発散する)。
+                    // 終端速度は mg = k v_t^2 → v_t = sqrt(mg/k) に収束する (selftest が断言)
+                    const float speed = std::sqrt(rvx * rvx + rvy * rvy + rvz * rvz);
+                    if (speed > 0.0f) {
+                        const float k = 0.5f * rho * cd * area;
+                        const float scale = 1.0f / (1.0f + (k * speed * b.invMass) * h);
+                        rvx *= scale;
+                        rvy *= scale;
+                        rvz *= scale;
+                    }
+                }
+                if (aero->enableMagnus) {
+                    // F = S (omega x v_rel)、S = magnus * 0.5 rho A r。符号の確認:
+                    // +X へ進み +Y 軸まわりに回る球は omega x v = -Z を向く — +Z 側の表面が
+                    // 流れに逆らって動き圧力が上がる側なので、力は -Z で物理的に正しい
+                    // (PhysicsSelfTest がこの配置そのままで符号を断言する)
+                    float mx, my, mz;
+                    Cross(b.wx, b.wy, b.wz, rvx, rvy, rvz, mx, my, mz);
+                    const float sMag = aero->magnusCoefficient * 0.5f * rho * area * rEq;
+                    float dvx = mx * sMag * b.invMass * h;
+                    float dvy = my * sMag * b.invMass * h;
+                    float dvz = mz * sMag * b.invMass * h;
+                    const float d2 = dvx * dvx + dvy * dvy + dvz * dvz;
+                    if (d2 > kExplicitMaxDeltaV * kExplicitMaxDeltaV) {
+                        const float clamp = kExplicitMaxDeltaV / std::sqrt(d2);
+                        dvx *= clamp;
+                        dvy *= clamp;
+                        dvz *= clamp;
+                    }
+                    rvx += dvx;
+                    rvy += dvy;
+                    rvz += dvz;
+                }
+                b.vx = rvx + wndX;
+                b.vy = rvy + wndY;
+                b.vz = rvz + wndZ;
+            }
+            // ---- 面サンプリング空力 (M59c): 向きを見る抗力・揚力・風見安定 ----
+            // 等方抗力の置き換え。面ごとの陽的な力なので Delta-v / Delta-omega をクランプする
+            if (aero->enableDrag && aero->surfaceModel) {
+                ShapePose ap = b.pose;
+                if (b.shapeCol) {
+                    ap = shapes::MakePose(*b.shapeCol, { b.pose.px, b.pose.py, b.pose.pz },
+                                          { b.qx, b.qy, b.qz, b.qw }, b.scale);
+                } else {
+                    ap.shape = 0;
+                    ap.radius = 0.5f; // 慣性・等方空力と同じ既定
+                    ap.identityRot = 1;
+                }
+                AeroCoeffs ac;
+                ac.density = rho;
+                ac.windX = env ? env->windVelocity.x : 0.0f;
+                ac.windY = env ? env->windVelocity.y : 0.0f;
+                ac.windZ = env ? env->windVelocity.z : 0.0f;
+                // 正対した平板の抗力が 1/2 rho Cd A u^2 と一致するのは Cn = Cd/2 のとき
+                ac.normalCoeff = cd * 0.5f;
+                ac.tangentCoeff = aero->skinFriction;
+                AeroAccum acm;
+                AccumulateShapeAero(ap, b.vx, b.vy, b.vz, b.wx, b.wy, b.wz, ac, acm);
+                // 面積倍率は力もトルクも線形なので後掛けでよい
+                const float as = aero->areaScale;
+                float dvx = acm.fx * as * b.invMass * h;
+                float dvy = acm.fy * as * b.invMass * h;
+                float dvz = acm.fz * as * b.invMass * h;
                 const float d2 = dvx * dvx + dvy * dvy + dvz * dvz;
                 if (d2 > kExplicitMaxDeltaV * kExplicitMaxDeltaV) {
                     const float clamp = kExplicitMaxDeltaV / std::sqrt(d2);
@@ -674,820 +781,788 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                     dvy *= clamp;
                     dvz *= clamp;
                 }
-                rvx += dvx;
-                rvy += dvy;
-                rvz += dvz;
+                b.vx += dvx;
+                b.vy += dvy;
+                b.vz += dvz;
+                // トルク (freezeRot / kinematic は invI が零行列なので自然に無効)
+                float dwx, dwy, dwz;
+                MulInvI(b.invI, acm.tx * as * h, acm.ty * as * h, acm.tz * as * h, dwx, dwy, dwz);
+                const float w2 = dwx * dwx + dwy * dwy + dwz * dwz;
+                if (w2 > kExplicitMaxDeltaOmega * kExplicitMaxDeltaOmega) {
+                    const float clamp = kExplicitMaxDeltaOmega / std::sqrt(w2);
+                    dwx *= clamp;
+                    dwy *= clamp;
+                    dwz *= clamp;
+                }
+                b.wx += dwx;
+                b.wy += dwy;
+                b.wz += dwz;
             }
-            b.vx = rvx + wndX;
-            b.vy = rvy + wndY;
-            b.vz = rvz + wndZ;
-        }
-        // ---- 面サンプリング空力 (M59c): 向きを見る抗力・揚力・風見安定 ----
-        // 等方抗力の置き換え。面ごとの陽的な力なので Delta-v / Delta-omega をクランプする
-        if (aero->enableDrag && aero->surfaceModel) {
-            ShapePose ap = b.pose;
-            if (b.shapeCol) {
-                ap = shapes::MakePose(*b.shapeCol, { b.pose.px, b.pose.py, b.pose.pz },
-                                      { b.qx, b.qy, b.qz, b.qw }, b.scale);
-            } else {
-                ap.shape = 0;
-                ap.radius = 0.5f; // 慣性・等方空力と同じ既定
-                ap.identityRot = 1;
+
+            // ---- 角速度の二次抗力 (同じ閉形式 implicit) ----
+            // これが無いとマグヌスで回り始めた球が永遠に回り続ける (angularDamping は
+            // 非物理の定率なので、空力を使うシーンでは 0 にしてこちらへ寄せるのが推奨)。
+            // 慣性は invI の対角平均 = 逆テンソルの等方読み。freezeRot / kinematic は
+            // 零行列なので invIbar が 0 になり自然に無効化される
+            if (aero->enableAngularDrag) {
+                const float invIbar = (b.invI[0][0] + b.invI[1][1] + b.invI[2][2]) / 3.0f;
+                const float wlen = std::sqrt(b.wx * b.wx + b.wy * b.wy + b.wz * b.wz);
+                if (invIbar > 0.0f && wlen > 0.0f) {
+                    const float kw = 0.5f * rho * aero->angularDragCoefficient * area * rEq * rEq
+                                   * rEq;
+                    const float scale = 1.0f / (1.0f + (kw * wlen * invIbar) * h);
+                    b.wx *= scale;
+                    b.wy *= scale;
+                    b.wz *= scale;
+                }
             }
-            AeroCoeffs ac;
-            ac.density = rho;
-            ac.windX = env ? env->windVelocity.x : 0.0f;
-            ac.windY = env ? env->windVelocity.y : 0.0f;
-            ac.windZ = env ? env->windVelocity.z : 0.0f;
-            // 正対した平板の抗力が 1/2 rho Cd A u^2 と一致するのは Cn = Cd/2 のとき
-            ac.normalCoeff = cd * 0.5f;
-            ac.tangentCoeff = aero->skinFriction;
-            AeroAccum acm;
-            AccumulateShapeAero(ap, b.vx, b.vy, b.vz, b.wx, b.wy, b.wz, ac, acm);
-            // 面積倍率は力もトルクも線形なので後掛けでよい
-            const float as = aero->areaScale;
-            float dvx = acm.fx * as * b.invMass * dt;
-            float dvy = acm.fy * as * b.invMass * dt;
-            float dvz = acm.fz * as * b.invMass * dt;
-            const float d2 = dvx * dvx + dvy * dvy + dvz * dvz;
-            if (d2 > kExplicitMaxDeltaV * kExplicitMaxDeltaV) {
-                const float clamp = kExplicitMaxDeltaV / std::sqrt(d2);
-                dvx *= clamp;
-                dvy *= clamp;
-                dvz *= clamp;
-            }
-            b.vx += dvx;
-            b.vy += dvy;
-            b.vz += dvz;
-            // トルク (freezeRot / kinematic は invI が零行列なので自然に無効)
-            float dwx, dwy, dwz;
-            MulInvI(b.invI, acm.tx * as * dt, acm.ty * as * dt, acm.tz * as * dt, dwx, dwy, dwz);
-            const float w2 = dwx * dwx + dwy * dwy + dwz * dwz;
-            if (w2 > kExplicitMaxDeltaOmega * kExplicitMaxDeltaOmega) {
-                const float clamp = kExplicitMaxDeltaOmega / std::sqrt(w2);
-                dwx *= clamp;
-                dwy *= clamp;
-                dwz *= clamp;
-            }
-            b.wx += dwx;
-            b.wy += dwy;
-            b.wz += dwz;
         }
 
-        // ---- 角速度の二次抗力 (同じ閉形式 implicit) ----
-        // これが無いとマグヌスで回り始めた球が永遠に回り続ける (angularDamping は
-        // 非物理の定率なので、空力を使うシーンでは 0 にしてこちらへ寄せるのが推奨)。
-        // 慣性は invI の対角平均 = 逆テンソルの等方読み。freezeRot / kinematic は
-        // 零行列なので invIbar が 0 になり自然に無効化される
-        if (aero->enableAngularDrag) {
-            const float invIbar = (b.invI[0][0] + b.invI[1][1] + b.invI[2][2]) / 3.0f;
-            const float wlen = std::sqrt(b.wx * b.wx + b.wy * b.wy + b.wz * b.wz);
-            if (invIbar > 0.0f && wlen > 0.0f) {
-                const float kw = 0.5f * rho * aero->angularDragCoefficient * area * rEq * rEq
-                               * rEq;
-                const float scale = 1.0f / (1.0f + (kw * wlen * invIbar) * dt);
+        // ---- 翼面 (M59d): 子エンティティに置いた翼パネルが「最も近い Rigidbody 祖先」へ
+        //      力とトルクを入れる。**子に置くことでレバー腕が生まれる**のが設計の核心 —
+        //      M59c で確かめたとおり、対称形状の幾何中心まわりのトルクは原理的に 0 で、
+        //      風見安定は圧力中心と質量中心のずれからしか出てこない ----
+        {
+            struct Panel {
+                EntityID owner;
+                const AeroSurfaceComponent* surf = nullptr;
+                const LocalTransform* lt = nullptr;
+            };
+            std::vector<Panel> panels;
+            const ComponentTypeId asReq[] = { AeroSurfaceComponent::sTypeId, LocalTransform::sTypeId };
+            world.ForEachArchetype(asReq, [&](Archetype& arch) {
+                const int si = arch.FindTypeIndex(AeroSurfaceComponent::sTypeId);
+                const int li = arch.FindTypeIndex(LocalTransform::sTypeId);
+                for (uint32_t row = 0; row < arch.Count(); ++row) {
+                    const EntityID e = arch.EntityAt(row);
+                    if (!IsEntityActive(world, e)) {
+                        continue;
+                    }
+                    panels.push_back({ e,
+                                       static_cast<const AeroSurfaceComponent*>(arch.GetPtr(si, row)),
+                                       static_cast<const LocalTransform*>(arch.GetPtr(li, row)) });
+                }
+            });
+            if (!panels.empty()) {
+                std::sort(panels.begin(), panels.end(),
+                          [](const Panel& a, const Panel& b) { return a.owner.index < b.owner.index; });
+                // bodies は index 昇順ソート済 → 二分探索 (SpringJoint と同じ流儀)
+                auto findBody = [&bodies](EntityID e) -> Body* {
+                    auto it = std::lower_bound(
+                        bodies.begin(), bodies.end(), e.index,
+                        [](const Body& b, uint32_t idx) { return b.entity.index < idx; });
+                    if (it != bodies.end() && it->entity.index == e.index
+                        && it->entity.generation == e.generation) {
+                        return &(*it);
+                    }
+                    return nullptr;
+                };
+                const float rhoAir = env ? env->airDensity : kDefaultAirDensity;
+                const float wndX = env ? env->windVelocity.x : 0.0f;
+                const float wndY = env ? env->windVelocity.y : 0.0f;
+                const float wndZ = env ? env->windVelocity.z : 0.0f;
+                constexpr float kDeg2Rad = 3.14159265f / 180.0f;
+                for (const Panel& p : panels) {
+                    if (p.surf->area <= 0.0f) {
+                        continue;
+                    }
+                    // 力の入り先 = 自分 → 祖先の順に最初に見つかった動的剛体
+                    Body* body = nullptr;
+                    for (EntityID cur = p.owner; !cur.IsNull(); cur = world.GetParent(cur)) {
+                        Body* b = findBody(cur);
+                        if (b && b->rb && b->invMass > 0.0f) {
+                            body = b;
+                            break;
+                        }
+                    }
+                    if (!body) {
+                        continue; // 静的 / kinematic 祖先しかいない = 翼は何も動かせない
+                    }
+                    // パネルのワールド姿勢 (剛体と同じ scalar 合成)
+                    const WorldFrame pf = ComposeParentFrame(world, p.owner);
+                    XMFLOAT3 wpos;
+                    XMFLOAT4 wrot;
+                    XMFLOAT3 wscale;
+                    ApplyFrame(pf, *p.lt, wpos, wrot, wscale);
+                    float nx, ny, nz;
+                    QuatRotate(wrot.x, wrot.y, wrot.z, wrot.w, p.surf->normal.x, p.surf->normal.y,
+                               p.surf->normal.z, nx, ny, nz);
+                    const float nlen2 = nx * nx + ny * ny + nz * nz;
+                    if (nlen2 < 1e-12f) {
+                        continue; // 法線が定義できない (決定論的分岐)
+                    }
+                    const float ninv = 1.0f / std::sqrt(nlen2);
+                    nx *= ninv;
+                    ny *= ninv;
+                    nz *= ninv;
+                    // パネル点の速度 (親剛体の剛体運動) から見た相対風
+                    const float rx = wpos.x - body->pose.px;
+                    const float ry = wpos.y - body->pose.py;
+                    const float rz = wpos.z - body->pose.pz;
+                    float wr0, wr1, wr2;
+                    Cross(body->wx, body->wy, body->wz, rx, ry, rz, wr0, wr1, wr2);
+                    const float ux = body->vx + wr0 - wndX;
+                    const float uy = body->vy + wr1 - wndY;
+                    const float uz = body->vz + wr2 - wndZ;
+                    const float sp2 = ux * ux + uy * uy + uz * uz;
+                    if (sp2 < 1e-8f) {
+                        continue; // 流れが無い
+                    }
+                    const float sp = std::sqrt(sp2);
+                    const float ihx = ux / sp, ihy = uy / sp, ihz = uz / sp;
+                    const float ndotu = nx * ihx + ny * ihy + nz * ihz;
+                    const float sinA = -ndotu; // 正 = 法線側から風を受ける = 正の迎角
+                    // 揚力方向 = 流れに垂直な法線成分 (正の迎角で法線側を向く)
+                    float lx = nx - ndotu * ihx;
+                    float ly = ny - ndotu * ihy;
+                    float lz = nz - ndotu * ihz;
+                    const float l2 = lx * lx + ly * ly + lz * lz;
+                    float cl = 0.0f;
+                    if (l2 > 1e-12f) {
+                        const float linv = 1.0f / std::sqrt(l2);
+                        lx *= linv;
+                        ly *= linv;
+                        lz *= linv;
+                        // CL: 失速角までは薄翼理論の線形、超えたら平板 (2 sin cos) へ落ちる。
+                        // ★平板側を「失速点で連続」になるよう正規化しては**いけない** —
+                        //   2 sin cos は 45 度で最大なので、正規化すると失速後に CL が
+                        //   CLmax の 2 倍まで**増えて**しまい失速の意味が逆転する。
+                        //   素の平板値は失速点で CLmax より低いので、そこへ向かって落とすのが正しい
+                        //   (= 揚力の崩壊そのもの)。段差でびびらないよう失速角の 0.5 倍の幅で
+                        //   線形に混ぜる (三角関数を増やさず滑らかにするための最小の細工)
+                        const float sStall = std::sin(p.surf->stallAngleDeg * kDeg2Rad);
+                        const float aAbs = std::fabs(sinA);
+                        if (aAbs <= sStall) {
+                            cl = p.surf->liftSlope * sinA;
+                        } else {
+                            const float c2 = 1.0f - sinA * sinA;
+                            const float cosA = (c2 > 0.0f) ? std::sqrt(c2) : 0.0f;
+                            const float flat = 2.0f * aAbs * cosA;
+                            const float clMax = p.surf->liftSlope * sStall;
+                            const float wnd = sStall * 0.5f;
+                            float t = (wnd > 1e-8f) ? (aAbs - sStall) / wnd : 1.0f;
+                            if (t > 1.0f) {
+                                t = 1.0f;
+                            }
+                            const float sign = (sinA >= 0.0f) ? 1.0f : -1.0f;
+                            cl = sign * (clMax * (1.0f - t) + flat * t);
+                        }
+                    } else {
+                        lx = 0.0f;
+                        ly = 0.0f;
+                        lz = 0.0f; // 流れが法線と平行 = 揚力の向きが定義できない
+                    }
+                    const float cd = p.surf->dragCoefficient + p.surf->inducedDrag * cl * cl
+                                   + p.surf->stalledDrag * sinA * sinA;
+                    const float q = 0.5f * rhoAir * sp2 * p.surf->area;
+                    const float fx = q * (cl * lx - cd * ihx);
+                    const float fy = q * (cl * ly - cd * ihy);
+                    const float fz = q * (cl * lz - cd * ihz);
+                    // 陽的な力なので Delta-v / Delta-omega に決定論的な頭打ちを掛ける
+                    float dvx = fx * body->invMass * h;
+                    float dvy = fy * body->invMass * h;
+                    float dvz = fz * body->invMass * h;
+                    const float d2 = dvx * dvx + dvy * dvy + dvz * dvz;
+                    if (d2 > kExplicitMaxDeltaV * kExplicitMaxDeltaV) {
+                        const float clampV = kExplicitMaxDeltaV / std::sqrt(d2);
+                        dvx *= clampV;
+                        dvy *= clampV;
+                        dvz *= clampV;
+                    }
+                    body->vx += dvx;
+                    body->vy += dvy;
+                    body->vz += dvz;
+                    float tx, ty, tz;
+                    Cross(rx, ry, rz, fx, fy, fz, tx, ty, tz);
+                    float dwx, dwy, dwz;
+                    MulInvI(body->invI, tx * h, ty * h, tz * h, dwx, dwy, dwz);
+                    const float w2 = dwx * dwx + dwy * dwy + dwz * dwz;
+                    if (w2 > kExplicitMaxDeltaOmega * kExplicitMaxDeltaOmega) {
+                        const float clampW = kExplicitMaxDeltaOmega / std::sqrt(w2);
+                        dwx *= clampW;
+                        dwy *= clampW;
+                        dwz *= clampW;
+                    }
+                    body->wx += dwx;
+                    body->wy += dwy;
+                    body->wz += dwz;
+                }
+            }
+        }
+
+        // ---- 浮力 (M59b2): 水面より下の排除体積ぶんの上向き力 + 水中抗力。空力の直後に
+        //      置くのは、浮力 (陽的な復元力) で付いた速度をその tick のうちに水中抗力が
+        //      減衰させるため。**非所持ボディはルックアップのみで fp 演算ゼロ** ----
+        for (Body& b : bodies) {
+            if (!b.rb || b.invMass == 0.0f) {
+                continue;
+            }
+            const auto* buoy = world.GetComponent<BuoyancyComponent>(b.entity);
+            if (!buoy || buoy->volumeScale <= 0.0f) {
+                continue;
+            }
+            const float planeY = env ? env->waterPlaneY : kDefaultWaterPlaneY;
+            const float rhoW = env ? env->waterDensity : kDefaultWaterDensity;
+            if (rhoW <= 0.0f) {
+                continue;
+            }
+            // 形状は shapeCol から組み直す — b.pose はソリッドなコライダーのときしか
+            // 形状が入っていない (トリガー併用のボディでも浮きたいので自前で作る)
+            ShapePose bp = b.pose;
+            if (b.shapeCol) {
+                bp = shapes::MakePose(*b.shapeCol, { b.pose.px, b.pose.py, b.pose.pz },
+                                      { b.qx, b.qy, b.qz, b.qw }, b.scale);
+            } else {
+                bp.shape = 0;
+                bp.radius = 0.5f; // 慣性・空力と同じ「半径 0.5 の球」既定
+                bp.identityRot = 1;
+            }
+            float centroidY = bp.py;
+            const float frac = SubmergedFractionWorld(bp, planeY, centroidY);
+            if (frac <= 0.0f) {
+                continue; // 完全に水面より上 = 何も足さない (陸上シーンは従来経路のまま)
+            }
+            float total = b.shapeCol ? ShapeVolumeWorld(*b.shapeCol, b.scale.x, b.scale.y, b.scale.z)
+                                     : 0.0f;
+            if (total <= 0.0f) {
+                total = (4.0f / 3.0f) * XM_PI * 0.125f; // 半径 0.5 の球 (mesh / コライダー無し)
+            }
+            const float vSub = total * buoy->volumeScale * frac;
+            // 浮力 = rho_w * V_sub * |g|、向きは **+Y 固定**。水面が軸平行 (ワールド Y) である
+            // 以上、重力ベクトルを傾けたときに浮力だけ傾けても意味を成さない (M59 の割り切り)
+            float gMag = -kGravity; // env 不在は従来定数の大きさ
+            if (env) {
+                gMag = std::sqrt(env->gravity.x * env->gravity.x + env->gravity.y * env->gravity.y
+                                 + env->gravity.z * env->gravity.z);
+            }
+            float jy = rhoW * vSub * gMag * h;
+            const float maxJ = kExplicitMaxDeltaV / b.invMass;
+            if (jy > maxJ) {
+                jy = maxJ;
+            }
+            // 作用点は浮力中心 (没水部分の体積重心)。**v1 では復原モーメントが出ない** —
+            // 重心の水平ずれを近似が拾わないので r と力がどちらも +Y = 外積が恒等 0 になる。
+            // この形にしてあるのは、M59f1 の質量中心オフセットが入った時点で
+            // 「r = 浮力中心 - 質量中心」が自然に水平成分を持ち、式を変えずに効き出すため
+            ApplyImpulse(b, 0.0f, centroidY - bp.py, 0.0f, 0.0f, jy, 0.0f, 1.0f);
+            // 水中抗力: 没水割合で按分した閉形式 implicit (静水前提 = 流れの場は持たない)
+            if (buoy->linearDrag > 0.0f) {
+                const float scale = 1.0f / (1.0f + buoy->linearDrag * frac * h);
+                b.vx *= scale;
+                b.vy *= scale;
+                b.vz *= scale;
+            }
+            if (buoy->angularDrag > 0.0f) {
+                const float scale = 1.0f / (1.0f + buoy->angularDrag * frac * h);
                 b.wx *= scale;
                 b.wy *= scale;
                 b.wz *= scale;
             }
         }
-    }
 
-    // ---- 翼面 (M59d): 子エンティティに置いた翼パネルが「最も近い Rigidbody 祖先」へ
-    //      力とトルクを入れる。**子に置くことでレバー腕が生まれる**のが設計の核心 —
-    //      M59c で確かめたとおり、対称形状の幾何中心まわりのトルクは原理的に 0 で、
-    //      風見安定は圧力中心と質量中心のずれからしか出てこない ----
-    {
-        struct Panel {
-            EntityID owner;
-            const AeroSurfaceComponent* surf = nullptr;
-            const LocalTransform* lt = nullptr;
-        };
-        std::vector<Panel> panels;
-        const ComponentTypeId asReq[] = { AeroSurfaceComponent::sTypeId, LocalTransform::sTypeId };
-        world.ForEachArchetype(asReq, [&](Archetype& arch) {
-            const int si = arch.FindTypeIndex(AeroSurfaceComponent::sTypeId);
-            const int li = arch.FindTypeIndex(LocalTransform::sTypeId);
-            for (uint32_t row = 0; row < arch.Count(); ++row) {
-                const EntityID e = arch.EntityAt(row);
-                if (!IsEntityActive(world, e)) {
-                    continue;
-                }
-                panels.push_back({ e,
-                                   static_cast<const AeroSurfaceComponent*>(arch.GetPtr(si, row)),
-                                   static_cast<const LocalTransform*>(arch.GetPtr(li, row)) });
-            }
-        });
-        if (!panels.empty()) {
-            std::sort(panels.begin(), panels.end(),
-                      [](const Panel& a, const Panel& b) { return a.owner.index < b.owner.index; });
-            // bodies は index 昇順ソート済 → 二分探索 (SpringJoint と同じ流儀)
-            auto findBody = [&bodies](EntityID e) -> Body* {
-                auto it = std::lower_bound(
-                    bodies.begin(), bodies.end(), e.index,
-                    [](const Body& b, uint32_t idx) { return b.entity.index < idx; });
-                if (it != bodies.end() && it->entity.index == e.index
-                    && it->entity.generation == e.generation) {
-                    return &(*it);
-                }
-                return nullptr;
-            };
-            const float rhoAir = env ? env->airDensity : kDefaultAirDensity;
-            const float wndX = env ? env->windVelocity.x : 0.0f;
-            const float wndY = env ? env->windVelocity.y : 0.0f;
-            const float wndZ = env ? env->windVelocity.z : 0.0f;
-            constexpr float kDeg2Rad = 3.14159265f / 180.0f;
-            for (const Panel& p : panels) {
-                if (p.surf->area <= 0.0f) {
-                    continue;
-                }
-                // 力の入り先 = 自分 → 祖先の順に最初に見つかった動的剛体
-                Body* body = nullptr;
-                for (EntityID cur = p.owner; !cur.IsNull(); cur = world.GetParent(cur)) {
-                    Body* b = findBody(cur);
-                    if (b && b->rb && b->invMass > 0.0f) {
-                        body = b;
-                        break;
-                    }
-                }
-                if (!body) {
-                    continue; // 静的 / kinematic 祖先しかいない = 翼は何も動かせない
-                }
-                // パネルのワールド姿勢 (剛体と同じ scalar 合成)
-                const WorldFrame pf = ComposeParentFrame(world, p.owner);
-                XMFLOAT3 wpos;
-                XMFLOAT4 wrot;
-                XMFLOAT3 wscale;
-                ApplyFrame(pf, *p.lt, wpos, wrot, wscale);
-                float nx, ny, nz;
-                QuatRotate(wrot.x, wrot.y, wrot.z, wrot.w, p.surf->normal.x, p.surf->normal.y,
-                           p.surf->normal.z, nx, ny, nz);
-                const float nlen2 = nx * nx + ny * ny + nz * nz;
-                if (nlen2 < 1e-12f) {
-                    continue; // 法線が定義できない (決定論的分岐)
-                }
-                const float ninv = 1.0f / std::sqrt(nlen2);
-                nx *= ninv;
-                ny *= ninv;
-                nz *= ninv;
-                // パネル点の速度 (親剛体の剛体運動) から見た相対風
-                const float rx = wpos.x - body->pose.px;
-                const float ry = wpos.y - body->pose.py;
-                const float rz = wpos.z - body->pose.pz;
-                float wr0, wr1, wr2;
-                Cross(body->wx, body->wy, body->wz, rx, ry, rz, wr0, wr1, wr2);
-                const float ux = body->vx + wr0 - wndX;
-                const float uy = body->vy + wr1 - wndY;
-                const float uz = body->vz + wr2 - wndZ;
-                const float sp2 = ux * ux + uy * uy + uz * uz;
-                if (sp2 < 1e-8f) {
-                    continue; // 流れが無い
-                }
-                const float sp = std::sqrt(sp2);
-                const float ihx = ux / sp, ihy = uy / sp, ihz = uz / sp;
-                const float ndotu = nx * ihx + ny * ihy + nz * ihz;
-                const float sinA = -ndotu; // 正 = 法線側から風を受ける = 正の迎角
-                // 揚力方向 = 流れに垂直な法線成分 (正の迎角で法線側を向く)
-                float lx = nx - ndotu * ihx;
-                float ly = ny - ndotu * ihy;
-                float lz = nz - ndotu * ihz;
-                const float l2 = lx * lx + ly * ly + lz * lz;
-                float cl = 0.0f;
-                if (l2 > 1e-12f) {
-                    const float linv = 1.0f / std::sqrt(l2);
-                    lx *= linv;
-                    ly *= linv;
-                    lz *= linv;
-                    // CL: 失速角までは薄翼理論の線形、超えたら平板 (2 sin cos) へ落ちる。
-                    // ★平板側を「失速点で連続」になるよう正規化しては**いけない** —
-                    //   2 sin cos は 45 度で最大なので、正規化すると失速後に CL が
-                    //   CLmax の 2 倍まで**増えて**しまい失速の意味が逆転する。
-                    //   素の平板値は失速点で CLmax より低いので、そこへ向かって落とすのが正しい
-                    //   (= 揚力の崩壊そのもの)。段差でびびらないよう失速角の 0.5 倍の幅で
-                    //   線形に混ぜる (三角関数を増やさず滑らかにするための最小の細工)
-                    const float sStall = std::sin(p.surf->stallAngleDeg * kDeg2Rad);
-                    const float aAbs = std::fabs(sinA);
-                    if (aAbs <= sStall) {
-                        cl = p.surf->liftSlope * sinA;
-                    } else {
-                        const float c2 = 1.0f - sinA * sinA;
-                        const float cosA = (c2 > 0.0f) ? std::sqrt(c2) : 0.0f;
-                        const float flat = 2.0f * aAbs * cosA;
-                        const float clMax = p.surf->liftSlope * sStall;
-                        const float wnd = sStall * 0.5f;
-                        float t = (wnd > 1e-8f) ? (aAbs - sStall) / wnd : 1.0f;
-                        if (t > 1.0f) {
-                            t = 1.0f;
-                        }
-                        const float sign = (sinA >= 0.0f) ? 1.0f : -1.0f;
-                        cl = sign * (clMax * (1.0f - t) + flat * t);
-                    }
-                } else {
-                    lx = 0.0f;
-                    ly = 0.0f;
-                    lz = 0.0f; // 流れが法線と平行 = 揚力の向きが定義できない
-                }
-                const float cd = p.surf->dragCoefficient + p.surf->inducedDrag * cl * cl
-                               + p.surf->stalledDrag * sinA * sinA;
-                const float q = 0.5f * rhoAir * sp2 * p.surf->area;
-                const float fx = q * (cl * lx - cd * ihx);
-                const float fy = q * (cl * ly - cd * ihy);
-                const float fz = q * (cl * lz - cd * ihz);
-                // 陽的な力なので Delta-v / Delta-omega に決定論的な頭打ちを掛ける
-                float dvx = fx * body->invMass * dt;
-                float dvy = fy * body->invMass * dt;
-                float dvz = fz * body->invMass * dt;
-                const float d2 = dvx * dvx + dvy * dvy + dvz * dvz;
-                if (d2 > kExplicitMaxDeltaV * kExplicitMaxDeltaV) {
-                    const float clampV = kExplicitMaxDeltaV / std::sqrt(d2);
-                    dvx *= clampV;
-                    dvy *= clampV;
-                    dvz *= clampV;
-                }
-                body->vx += dvx;
-                body->vy += dvy;
-                body->vz += dvz;
-                float tx, ty, tz;
-                Cross(rx, ry, rz, fx, fy, fz, tx, ty, tz);
-                float dwx, dwy, dwz;
-                MulInvI(body->invI, tx * dt, ty * dt, tz * dt, dwx, dwy, dwz);
-                const float w2 = dwx * dwx + dwy * dwy + dwz * dwz;
-                if (w2 > kExplicitMaxDeltaOmega * kExplicitMaxDeltaOmega) {
-                    const float clampW = kExplicitMaxDeltaOmega / std::sqrt(w2);
-                    dwx *= clampW;
-                    dwy *= clampW;
-                    dwz *= clampW;
-                }
-                body->wx += dwx;
-                body->wy += dwy;
-                body->wz += dwz;
-            }
-        }
-    }
-
-    // ---- 浮力 (M59b2): 水面より下の排除体積ぶんの上向き力 + 水中抗力。空力の直後に
-    //      置くのは、浮力 (陽的な復元力) で付いた速度をその tick のうちに水中抗力が
-    //      減衰させるため。**非所持ボディはルックアップのみで fp 演算ゼロ** ----
-    for (Body& b : bodies) {
-        if (!b.rb || b.invMass == 0.0f) {
-            continue;
-        }
-        const auto* buoy = world.GetComponent<BuoyancyComponent>(b.entity);
-        if (!buoy || buoy->volumeScale <= 0.0f) {
-            continue;
-        }
-        const float planeY = env ? env->waterPlaneY : kDefaultWaterPlaneY;
-        const float rhoW = env ? env->waterDensity : kDefaultWaterDensity;
-        if (rhoW <= 0.0f) {
-            continue;
-        }
-        // 形状は shapeCol から組み直す — b.pose はソリッドなコライダーのときしか
-        // 形状が入っていない (トリガー併用のボディでも浮きたいので自前で作る)
-        ShapePose bp = b.pose;
-        if (b.shapeCol) {
-            bp = shapes::MakePose(*b.shapeCol, { b.pose.px, b.pose.py, b.pose.pz },
-                                  { b.qx, b.qy, b.qz, b.qw }, b.scale);
-        } else {
-            bp.shape = 0;
-            bp.radius = 0.5f; // 慣性・空力と同じ「半径 0.5 の球」既定
-            bp.identityRot = 1;
-        }
-        float centroidY = bp.py;
-        const float frac = SubmergedFractionWorld(bp, planeY, centroidY);
-        if (frac <= 0.0f) {
-            continue; // 完全に水面より上 = 何も足さない (陸上シーンは従来経路のまま)
-        }
-        float total = b.shapeCol ? ShapeVolumeWorld(*b.shapeCol, b.scale.x, b.scale.y, b.scale.z)
-                                 : 0.0f;
-        if (total <= 0.0f) {
-            total = (4.0f / 3.0f) * XM_PI * 0.125f; // 半径 0.5 の球 (mesh / コライダー無し)
-        }
-        const float vSub = total * buoy->volumeScale * frac;
-        // 浮力 = rho_w * V_sub * |g|、向きは **+Y 固定**。水面が軸平行 (ワールド Y) である
-        // 以上、重力ベクトルを傾けたときに浮力だけ傾けても意味を成さない (M59 の割り切り)
-        float gMag = -kGravity; // env 不在は従来定数の大きさ
-        if (env) {
-            gMag = std::sqrt(env->gravity.x * env->gravity.x + env->gravity.y * env->gravity.y
-                             + env->gravity.z * env->gravity.z);
-        }
-        float jy = rhoW * vSub * gMag * dt;
-        const float maxJ = kExplicitMaxDeltaV / b.invMass;
-        if (jy > maxJ) {
-            jy = maxJ;
-        }
-        // 作用点は浮力中心 (没水部分の体積重心)。**v1 では復原モーメントが出ない** —
-        // 重心の水平ずれを近似が拾わないので r と力がどちらも +Y = 外積が恒等 0 になる。
-        // この形にしてあるのは、M59f1 の質量中心オフセットが入った時点で
-        // 「r = 浮力中心 - 質量中心」が自然に水平成分を持ち、式を変えずに効き出すため
-        ApplyImpulse(b, 0.0f, centroidY - bp.py, 0.0f, 0.0f, jy, 0.0f, 1.0f);
-        // 水中抗力: 没水割合で按分した閉形式 implicit (静水前提 = 流れの場は持たない)
-        if (buoy->linearDrag > 0.0f) {
-            const float scale = 1.0f / (1.0f + buoy->linearDrag * frac * dt);
-            b.vx *= scale;
-            b.vy *= scale;
-            b.vz *= scale;
-        }
-        if (buoy->angularDrag > 0.0f) {
-            const float scale = 1.0f / (1.0f + buoy->angularDrag * frac * dt);
-            b.wx *= scale;
-            b.wy *= scale;
-            b.wz *= scale;
-        }
-    }
-
-    // ---- SpringJoint (M29a): 距離バネ (速度レベル・ステートレス)。owner index 昇順。
-    //      broadphase の前に置く = ばねで変わった速度が候補 AABB の margin に反映される ----
-    {
-        struct Joint {
-            EntityID owner;
-            const SpringJointComponent* sj = nullptr;
-        };
-        std::vector<Joint> joints;
-        const ComponentTypeId sjReq[] = { SpringJointComponent::sTypeId, LocalTransform::sTypeId };
-        world.ForEachArchetype(sjReq, [&](Archetype& arch) {
-            const int si = arch.FindTypeIndex(SpringJointComponent::sTypeId);
-            for (uint32_t row = 0; row < arch.Count(); ++row) {
-                const EntityID e = arch.EntityAt(row);
-                if (!IsEntityActive(world, e)) {
-                    continue;
-                }
-                joints.push_back(
-                    { e, static_cast<const SpringJointComponent*>(arch.GetPtr(si, row)) });
-            }
-        });
-        if (!joints.empty()) {
-            std::sort(joints.begin(), joints.end(),
-                      [](const Joint& a, const Joint& b) { return a.owner.index < b.owner.index; });
-            // bodies は index 昇順ソート済 → 二分探索 (generation も一致確認)
-            auto findBody = [&bodies](EntityID e) -> Body* {
-                auto it = std::lower_bound(
-                    bodies.begin(), bodies.end(), e.index,
-                    [](const Body& b, uint32_t idx) { return b.entity.index < idx; });
-                if (it != bodies.end() && it->entity.index == e.index
-                    && it->entity.generation == e.generation) {
-                    return &(*it);
-                }
-                return nullptr;
-            };
-            // bodies に居ないエンティティ (コライダー/Rigidbody 無し) は変換から不動アンカー位置
-            auto anchorPos = [&world](EntityID e, float& px, float& py, float& pz) -> bool {
-                const auto* alt = world.GetComponent<LocalTransform>(e);
-                if (!alt) {
-                    return false;
-                }
-                const WorldFrame f = ComposeParentFrame(world, e);
-                XMFLOAT3 wpos;
-                XMFLOAT4 wrot;
-                XMFLOAT3 wscale;
-                ApplyFrame(f, *alt, wpos, wrot, wscale);
-                px = wpos.x;
-                py = wpos.y;
-                pz = wpos.z;
-                return true;
-            };
-            for (const Joint& j : joints) {
-                const EntityID other = j.sj->connectedEntity;
-                if (other.IsNull() || !world.IsAlive(other) || !IsEntityActive(world, other)) {
-                    continue;
-                }
-                Body* ba = findBody(j.owner);
-                Body* bb = findBody(other);
-                float pax, pay, paz, pbx, pby, pbz;
-                if (ba) {
-                    pax = ba->pose.px; pay = ba->pose.py; paz = ba->pose.pz;
-                } else if (!anchorPos(j.owner, pax, pay, paz)) {
-                    continue;
-                }
-                if (bb) {
-                    pbx = bb->pose.px; pby = bb->pose.py; pbz = bb->pose.pz;
-                } else if (!anchorPos(other, pbx, pby, pbz)) {
-                    continue;
-                }
-                const float invA = ba ? ba->invMass : 0.0f;
-                const float invB = bb ? bb->invMass : 0.0f;
-                const float invSum = invA + invB;
-                if (invSum == 0.0f) {
-                    continue; // 両側不動 = ばねは何も動かせない
-                }
-                const float dxv = pax - pbx, dyv = pay - pby, dzv = paz - pbz;
-                const float dist2 = dxv * dxv + dyv * dyv + dzv * dzv;
-                if (dist2 < 1e-16f) {
-                    continue; // 同一点はばね方向が定義できない (決定論的分岐)
-                }
-                const float dist = std::sqrt(dist2);
-                const float ux = dxv / dist, uy = dyv / dist, uz = dzv / dist;
-                const float k = (j.sj->stiffness > 0.0f) ? j.sj->stiffness : 0.0f;
-                const float c = (j.sj->damping > 0.0f) ? j.sj->damping : 0.0f;
-                const float stretch = dist - j.sj->restLength;
-                const float vax = ba ? ba->vx : 0.0f, vay = ba ? ba->vy : 0.0f,
-                            vaz = ba ? ba->vz : 0.0f;
-                const float vbx = bb ? bb->vx : 0.0f, vby = bb ? bb->vy : 0.0f,
-                            vbz = bb ? bb->vz : 0.0f;
-                const float vrel = (vax - vbx) * ux + (vay - vby) * uy + (vaz - vbz) * uz;
-                // λ = −(k·stretch + c·vrel)·dt / (1 + c·dt·Σinvm)。分母が implicit damping
-                float lambda = -(k * stretch + c * vrel) * dt / (1.0f + c * dt * invSum);
-                // 極端な剛性でも 1 tick の Δv を 100 m/s に制限 (発散防止の決定論的クランプ)
-                const float maxInv = (invA > invB) ? invA : invB; // invSum>0 → maxInv>0
-                const float maxJ = 100.0f / maxInv;
-                if (lambda > maxJ) { lambda = maxJ; }
-                if (lambda < -maxJ) { lambda = -maxJ; }
-                if (ba && invA > 0.0f) {
-                    ba->vx += ux * lambda * invA;
-                    ba->vy += uy * lambda * invA;
-                    ba->vz += uz * lambda * invA;
-                }
-                if (bb && invB > 0.0f) {
-                    bb->vx -= ux * lambda * invB;
-                    bb->vy -= uy * lambda * invB;
-                    bb->vz -= uz * lambda * invB;
-                }
-            }
-        }
-    }
-
-    // ---- ブロードフェーズ (M28d): 候補ペア列挙 (1 軸 sort & sweep、margin 込み) ----
-    // 候補列は真の接触ペアの純粋なスーパーセット + 走査順は (小,大) 昇順 = 総当たりと
-    // ビット同一の解決結果 (等価性は selftest が総当たりとのハッシュ比較で常時検証)
-    const size_t n = bodies.size();
-    std::vector<uint64_t> candidates;
-    {
-        std::vector<BroadphaseEntry> entries;
-        entries.reserve(n);
-        for (size_t i = 0; i < n; ++i) {
-            if (!bodies[i].solid) {
-                continue;
-            }
-            BroadphaseEntry e;
-            e.id = static_cast<uint32_t>(i);
-            shapes::ComputeAabb(bodies[i].pose, e.minX, e.minY, e.minZ, e.maxX, e.maxY, e.maxZ);
-            const float mx = std::fabs(bodies[i].vx) * dt + kBroadphaseMargin;
-            const float my = std::fabs(bodies[i].vy) * dt + kBroadphaseMargin;
-            const float mz = std::fabs(bodies[i].vz) * dt + kBroadphaseMargin;
-            e.minX -= mx; e.maxX += mx;
-            e.minY -= my; e.maxY += my;
-            e.minZ -= mz; e.maxZ += mz;
-            entries.push_back(e);
-        }
-        if (PhysicsSystem::sDisableBroadphaseForTest) {
-            // 等価性テスト用: 全ソリッドペア (昇順) を候補にする
-            for (size_t i = 0; i < entries.size(); ++i) {
-                for (size_t j = i + 1; j < entries.size(); ++j) {
-                    candidates.push_back((static_cast<uint64_t>(entries[i].id) << 32)
-                                         | entries[j].id);
-                }
-            }
-        } else {
-            ComputeCandidatePairs(entries, candidates);
-        }
-    }
-
-    // ---- レイヤーフィルタ (M36a): 非マッチペアを候補から除外 (順序保存 = 決定論)。
-    //      既定 (layer=0, mask=all) は全ペア通過 = 従来挙動 ----
-    {
-        size_t w = 0;
-        for (const uint64_t key : candidates) {
-            const Body& A = bodies[static_cast<size_t>(key >> 32)];
-            const Body& B = bodies[static_cast<size_t>(key & 0xFFFFFFFFu)];
-            if (shapes::CanCollide(A.layer, A.mask, B.layer, B.mask)) {
-                candidates[w++] = key;
-            }
-        }
-        candidates.resize(w);
-    }
-
-    // ---- 接触制約の生成 (M59g1): マニフォールドは **1 tick に 1 回だけ**作る ----
-    // M28b は反復のたびに CollideManifold を呼び直していた。それをやめたのは、
-    // **蓄積インパルスの前提が「接触点が反復をまたいで同じであること」**だから —
-    // 毎回作り直すと「この接触点にこれまで何 N*s 入れたか」を持ち越す先が消える。
-    //
-    // ★**解き方の「形」は M28b のまま**にした (中央法線 1 発 → 点毎 Jacobi → 重心摩擦)。
-    //   点ごとの逐次 (Gauss-Seidel) へ作り替える方が教科書的だが、**warm starting 無しでは
-    //   スタックが目に見えて歩く** (実測: 3 段タワーの 600 tick ドリフトが 0.7mm → 75mm)。
-    //   中央法線インパルスが「並進を全質量で 1 発で解く」役をしていて、それが 8 反復しか
-    //   回さないソルバの安定性を支えている。warm starting は M59h の計測ゲート付き別コミット
-    //   なので、ここでは**蓄積とクランプだけ**を足す。
-    // ★物理モデルは 1 つも変えていない: mu = sqrt(mu_a * mu_b) / e = min(e_a, e_b) /
-    //   kRestitutionVelThreshold / kPenetrationSlop はそのまま。
-    struct ContactPoint {
-        float ra[3] = { 0, 0, 0 }; // 接触点 - A 重心 (生成時に固定)
-        float rb[3] = { 0, 0, 0 };
-        float depth = 0.0f;
-        float massN = 0.0f;   // 法線方向の有効質量
-        float lambdaN = 0.0f; // 蓄積法線インパルス (>= 0)
-    };
-    struct ContactConstraint {
-        uint32_t ai = 0, bi = 0;
-        float nx = 0, ny = 1, nz = 0;
-        float t1[3] = { 1, 0, 0 };
-        float t2[3] = { 0, 0, 1 };
-        float mu = 0.0f;
-        int count = 0;
-        float cpx = 0, cpy = 0, cpz = 0; // 代表点 = マニフォールド重心 (M59e の出力)
-        float raC[3] = { 0, 0, 0 };      // 重心の r (中央インパルスと摩擦の作用点)
-        float rbC[3] = { 0, 0, 0 };
-        float massNc = 0.0f;             // 重心での法線有効質量
-        float massT1 = 0.0f, massT2 = 0.0f;
-        float biasC = 0.0f;              // 反発の目標法線速度 (閾値適用済み)
-        float lambdaNc = 0.0f;           // 蓄積: 中央法線
-        float lambdaT1 = 0.0f, lambdaT2 = 0.0f; // 蓄積: 重心摩擦
-        ContactPoint pts[4];
-    };
-    std::vector<ContactConstraint> constraints;
-    constraints.reserve(candidates.size());
-    for (const uint64_t pairKey : candidates) {
-        const uint32_t ai = static_cast<uint32_t>(pairKey >> 32);
-        const uint32_t bi = static_cast<uint32_t>(pairKey & 0xFFFFFFFFu);
-        Body& A = bodies[ai];
-        Body& B = bodies[bi];
-        if (A.invMass + B.invMass == 0.0f) {
-            continue; // 両方不動 (静的 / kinematic 同士)
-        }
-        shapes::Manifold m;
-        if (!shapes::CollideManifold(A.pose, B.pose, m)) {
-            continue;
-        }
-        ContactConstraint c;
-        c.ai = ai;
-        c.bi = bi;
-        c.nx = m.nx;
-        c.ny = m.ny;
-        c.nz = m.nz;
-        c.mu = std::sqrt(A.friction * B.friction);
-        c.count = m.count;
-        // 法線から接線基底を決定論的に作る (分岐は入力だけに依存)。
-        // 0.57735 = 1/sqrt(3) — 最も長い成分を避けて正規化の桁落ちを防ぐ古典手法。
-        // ★接線が**固定**なのが M28b との違い: 蓄積するには方向が動いてはいけない
-        //   (旧実装は毎反復その場の滑り方向を測っていたので蓄積できなかった)
+        // ---- SpringJoint (M29a): 距離バネ (速度レベル・ステートレス)。owner index 昇順。
+        //      broadphase の前に置く = ばねで変わった速度が候補 AABB の margin に反映される ----
         {
-            float ax, ay, az;
-            if (std::fabs(c.nx) >= 0.57735f) {
-                ax = c.ny; ay = -c.nx; az = 0.0f;
+            struct Joint {
+                EntityID owner;
+                const SpringJointComponent* sj = nullptr;
+            };
+            std::vector<Joint> joints;
+            const ComponentTypeId sjReq[] = { SpringJointComponent::sTypeId, LocalTransform::sTypeId };
+            world.ForEachArchetype(sjReq, [&](Archetype& arch) {
+                const int si = arch.FindTypeIndex(SpringJointComponent::sTypeId);
+                for (uint32_t row = 0; row < arch.Count(); ++row) {
+                    const EntityID e = arch.EntityAt(row);
+                    if (!IsEntityActive(world, e)) {
+                        continue;
+                    }
+                    joints.push_back(
+                        { e, static_cast<const SpringJointComponent*>(arch.GetPtr(si, row)) });
+                }
+            });
+            if (!joints.empty()) {
+                std::sort(joints.begin(), joints.end(),
+                          [](const Joint& a, const Joint& b) { return a.owner.index < b.owner.index; });
+                // bodies は index 昇順ソート済 → 二分探索 (generation も一致確認)
+                auto findBody = [&bodies](EntityID e) -> Body* {
+                    auto it = std::lower_bound(
+                        bodies.begin(), bodies.end(), e.index,
+                        [](const Body& b, uint32_t idx) { return b.entity.index < idx; });
+                    if (it != bodies.end() && it->entity.index == e.index
+                        && it->entity.generation == e.generation) {
+                        return &(*it);
+                    }
+                    return nullptr;
+                };
+                // bodies に居ないエンティティ (コライダー/Rigidbody 無し) は変換から不動アンカー位置
+                auto anchorPos = [&world](EntityID e, float& px, float& py, float& pz) -> bool {
+                    const auto* alt = world.GetComponent<LocalTransform>(e);
+                    if (!alt) {
+                        return false;
+                    }
+                    const WorldFrame f = ComposeParentFrame(world, e);
+                    XMFLOAT3 wpos;
+                    XMFLOAT4 wrot;
+                    XMFLOAT3 wscale;
+                    ApplyFrame(f, *alt, wpos, wrot, wscale);
+                    px = wpos.x;
+                    py = wpos.y;
+                    pz = wpos.z;
+                    return true;
+                };
+                for (const Joint& j : joints) {
+                    const EntityID other = j.sj->connectedEntity;
+                    if (other.IsNull() || !world.IsAlive(other) || !IsEntityActive(world, other)) {
+                        continue;
+                    }
+                    Body* ba = findBody(j.owner);
+                    Body* bb = findBody(other);
+                    float pax, pay, paz, pbx, pby, pbz;
+                    if (ba) {
+                        pax = ba->pose.px; pay = ba->pose.py; paz = ba->pose.pz;
+                    } else if (!anchorPos(j.owner, pax, pay, paz)) {
+                        continue;
+                    }
+                    if (bb) {
+                        pbx = bb->pose.px; pby = bb->pose.py; pbz = bb->pose.pz;
+                    } else if (!anchorPos(other, pbx, pby, pbz)) {
+                        continue;
+                    }
+                    const float invA = ba ? ba->invMass : 0.0f;
+                    const float invB = bb ? bb->invMass : 0.0f;
+                    const float invSum = invA + invB;
+                    if (invSum == 0.0f) {
+                        continue; // 両側不動 = ばねは何も動かせない
+                    }
+                    const float dxv = pax - pbx, dyv = pay - pby, dzv = paz - pbz;
+                    const float dist2 = dxv * dxv + dyv * dyv + dzv * dzv;
+                    if (dist2 < 1e-16f) {
+                        continue; // 同一点はばね方向が定義できない (決定論的分岐)
+                    }
+                    const float dist = std::sqrt(dist2);
+                    const float ux = dxv / dist, uy = dyv / dist, uz = dzv / dist;
+                    const float k = (j.sj->stiffness > 0.0f) ? j.sj->stiffness : 0.0f;
+                    const float c = (j.sj->damping > 0.0f) ? j.sj->damping : 0.0f;
+                    const float stretch = dist - j.sj->restLength;
+                    const float vax = ba ? ba->vx : 0.0f, vay = ba ? ba->vy : 0.0f,
+                                vaz = ba ? ba->vz : 0.0f;
+                    const float vbx = bb ? bb->vx : 0.0f, vby = bb ? bb->vy : 0.0f,
+                                vbz = bb ? bb->vz : 0.0f;
+                    const float vrel = (vax - vbx) * ux + (vay - vby) * uy + (vaz - vbz) * uz;
+                    // λ = −(k·stretch + c·vrel)·h / (1 + c·h·Σinvm)。分母が implicit damping
+                    float lambda = -(k * stretch + c * vrel) * h / (1.0f + c * h * invSum);
+                    // 極端な剛性でも 1 ステップの Δv を 100 m/s に制限 (発散防止の決定論的
+                    // クランプ)。★M59g2 からこれは**サブステップごと**なので実効上限は
+                    // 100*substeps m/s へ緩む — 防波堤としての役割は変わらない
+                    const float maxInv = (invA > invB) ? invA : invB; // invSum>0 → maxInv>0
+                    const float maxJ = 100.0f / maxInv;
+                    if (lambda > maxJ) { lambda = maxJ; }
+                    if (lambda < -maxJ) { lambda = -maxJ; }
+                    if (ba && invA > 0.0f) {
+                        ba->vx += ux * lambda * invA;
+                        ba->vy += uy * lambda * invA;
+                        ba->vz += uz * lambda * invA;
+                    }
+                    if (bb && invB > 0.0f) {
+                        bb->vx -= ux * lambda * invB;
+                        bb->vy -= uy * lambda * invB;
+                        bb->vz -= uz * lambda * invB;
+                    }
+                }
+            }
+        }
+
+        // ---- ブロードフェーズ (M28d): 候補ペア列挙 (1 軸 sort & sweep、margin 込み) ----
+        // 候補列は真の接触ペアの純粋なスーパーセット + 走査順は (小,大) 昇順 = 総当たりと
+        // ビット同一の解決結果 (等価性は selftest が総当たりとのハッシュ比較で常時検証)
+        const size_t n = bodies.size();
+        std::vector<uint64_t> candidates;
+        {
+            std::vector<BroadphaseEntry> entries;
+            entries.reserve(n);
+            for (size_t i = 0; i < n; ++i) {
+                if (!bodies[i].solid) {
+                    continue;
+                }
+                BroadphaseEntry e;
+                e.id = static_cast<uint32_t>(i);
+                shapes::ComputeAabb(bodies[i].pose, e.minX, e.minY, e.minZ, e.maxX, e.maxY, e.maxZ);
+                const float mx = std::fabs(bodies[i].vx) * h + kBroadphaseMargin;
+                const float my = std::fabs(bodies[i].vy) * h + kBroadphaseMargin;
+                const float mz = std::fabs(bodies[i].vz) * h + kBroadphaseMargin;
+                e.minX -= mx; e.maxX += mx;
+                e.minY -= my; e.maxY += my;
+                e.minZ -= mz; e.maxZ += mz;
+                entries.push_back(e);
+            }
+            if (PhysicsSystem::sDisableBroadphaseForTest) {
+                // 等価性テスト用: 全ソリッドペア (昇順) を候補にする
+                for (size_t i = 0; i < entries.size(); ++i) {
+                    for (size_t j = i + 1; j < entries.size(); ++j) {
+                        candidates.push_back((static_cast<uint64_t>(entries[i].id) << 32)
+                                             | entries[j].id);
+                    }
+                }
             } else {
-                ax = 0.0f; ay = c.nz; az = -c.ny;
-            }
-            const float al = std::sqrt(ax * ax + ay * ay + az * az);
-            if (al > 1e-8f) {
-                c.t1[0] = ax / al; c.t1[1] = ay / al; c.t1[2] = az / al;
-            }
-            Cross(c.nx, c.ny, c.nz, c.t1[0], c.t1[1], c.t1[2], c.t2[0], c.t2[1], c.t2[2]);
-        }
-        const float e = std::min(A.restitution, B.restitution);
-        const float invCount = 1.0f / static_cast<float>(m.count);
-        for (int k = 0; k < m.count; ++k) {
-            ContactPoint& p = c.pts[k];
-            p.ra[0] = m.pts[k].px - A.pose.px;
-            p.ra[1] = m.pts[k].py - A.pose.py;
-            p.ra[2] = m.pts[k].pz - A.pose.pz;
-            p.rb[0] = m.pts[k].px - B.pose.px;
-            p.rb[1] = m.pts[k].py - B.pose.py;
-            p.rb[2] = m.pts[k].pz - B.pose.pz;
-            p.depth = m.pts[k].depth;
-            c.cpx += m.pts[k].px * invCount;
-            c.cpy += m.pts[k].py * invCount;
-            c.cpz += m.pts[k].pz * invCount;
-            const float kn = EffectiveMassInv(A, p.ra[0], p.ra[1], p.ra[2], c.nx, c.ny, c.nz)
-                           + EffectiveMassInv(B, p.rb[0], p.rb[1], p.rb[2], c.nx, c.ny, c.nz);
-            p.massN = (kn > 0.0f) ? 1.0f / kn : 0.0f;
-        }
-        c.raC[0] = c.cpx - A.pose.px;
-        c.raC[1] = c.cpy - A.pose.py;
-        c.raC[2] = c.cpz - A.pose.pz;
-        c.rbC[0] = c.cpx - B.pose.px;
-        c.rbC[1] = c.cpy - B.pose.py;
-        c.rbC[2] = c.cpz - B.pose.pz;
-        {
-            const float kn = EffectiveMassInv(A, c.raC[0], c.raC[1], c.raC[2], c.nx, c.ny, c.nz)
-                           + EffectiveMassInv(B, c.rbC[0], c.rbC[1], c.rbC[2], c.nx, c.ny, c.nz);
-            c.massNc = (kn > 0.0f) ? 1.0f / kn : 0.0f;
-            const float kt1 = EffectiveMassInv(A, c.raC[0], c.raC[1], c.raC[2], c.t1[0], c.t1[1],
-                                               c.t1[2])
-                            + EffectiveMassInv(B, c.rbC[0], c.rbC[1], c.rbC[2], c.t1[0], c.t1[1],
-                                               c.t1[2]);
-            c.massT1 = (kt1 > 0.0f) ? 1.0f / kt1 : 0.0f;
-            const float kt2 = EffectiveMassInv(A, c.raC[0], c.raC[1], c.raC[2], c.t2[0], c.t2[1],
-                                               c.t2[2])
-                            + EffectiveMassInv(B, c.rbC[0], c.rbC[1], c.rbC[2], c.t2[0], c.t2[1],
-                                               c.t2[2]);
-            c.massT2 = (kt2 > 0.0f) ? 1.0f / kt2 : 0.0f;
-        }
-        // 反発のバイアスは**生成時の接近速度から 1 回だけ**決める。反復ごとに測り直すと
-        // 自分が入れたインパルスで接近速度が消えていくので、反発が二重に効いたり
-        // 消えたりする (蓄積インパルスで反発を扱うときの定石)
-        {
-            float wax, way, waz, wbx, wby, wbz;
-            Cross(A.wx, A.wy, A.wz, c.raC[0], c.raC[1], c.raC[2], wax, way, waz);
-            Cross(B.wx, B.wy, B.wz, c.rbC[0], c.rbC[1], c.rbC[2], wbx, wby, wbz);
-            const float rvx = (A.vx + wax) - (B.vx + wbx);
-            const float rvy = (A.vy + way) - (B.vy + wby);
-            const float rvz = (A.vz + waz) - (B.vz + wbz);
-            const float vn = rvx * c.nx + rvy * c.ny + rvz * c.nz;
-            // 低速接触は e=0 扱い (micro-bounce 除去 = 静止安定の柱。M28b から不変)
-            if (vn < 0.0f && -vn >= kRestitutionVelThreshold) {
-                c.biasC = -e * vn;
+                ComputeCandidatePairs(entries, candidates);
             }
         }
-        constraints.push_back(c);
-    }
 
-    // ---- 接触解決 (固定反復・生成順 = 候補ペアの (小,大) 昇順 = 決定論) ----
-    // 3 段構成は M28b のまま。違うのは各段が**蓄積量 lambda を持ちクランプする**こと:
-    //   1. 重心での中央法線インパルス (反発込み) — 並進を全質量で 1 発。lambda >= 0
-    //   2. 点毎 Jacobi 法線インパルス (同一速度から一括計算・点数分配) — 回転の不均衡だけ。
-    //      対称接触では自動的にゼロになる = スタックが歩かない性質はここから来ている
-    //   3. 重心でのクーロン摩擦 (固定接線 2 方向)。上限は**その時点の蓄積法線インパルス合計**
-    //      — 旧実装の「その反復ぶんの法線インパルス」より正しい Coulomb 境界になっている
-    for (int iter = 0; iter < kSolverIterations; ++iter) {
-        for (ContactConstraint& c : constraints) {
-            Body& A = bodies[c.ai];
-            Body& B = bodies[c.bi];
-            auto relVelAt = [&](const float rA[3], const float rB[3], float& rvx, float& rvy,
-                                float& rvz) {
-                float wax, way, waz, wbx, wby, wbz;
-                Cross(A.wx, A.wy, A.wz, rA[0], rA[1], rA[2], wax, way, waz);
-                Cross(B.wx, B.wy, B.wz, rB[0], rB[1], rB[2], wbx, wby, wbz);
-                rvx = (A.vx + wax) - (B.vx + wbx);
-                rvy = (A.vy + way) - (B.vy + wby);
-                rvz = (A.vz + waz) - (B.vz + wbz);
-            };
-            // ---- 1. 中央法線インパルス ----
-            if (c.massNc > 0.0f) {
-                float rvx, rvy, rvz;
-                relVelAt(c.raC, c.rbC, rvx, rvy, rvz);
-                const float vn = rvx * c.nx + rvy * c.ny + rvz * c.nz;
-                float dl = -(vn - c.biasC) * c.massNc;
-                const float old = c.lambdaNc;
-                float now = old + dl;
-                if (now < 0.0f) {
-                    now = 0.0f; // 接触は押すだけ (引っ張らない)
-                }
-                dl = now - old;
-                c.lambdaNc = now;
-                if (dl != 0.0f) {
-                    ApplyImpulse(A, c.raC[0], c.raC[1], c.raC[2], c.nx * dl, c.ny * dl, c.nz * dl,
-                                 1.0f);
-                    ApplyImpulse(B, c.rbC[0], c.rbC[1], c.rbC[2], c.nx * dl, c.ny * dl, c.nz * dl,
-                                 -1.0f);
+        // ---- レイヤーフィルタ (M36a): 非マッチペアを候補から除外 (順序保存 = 決定論)。
+        //      既定 (layer=0, mask=all) は全ペア通過 = 従来挙動 ----
+        {
+            size_t w = 0;
+            for (const uint64_t key : candidates) {
+                const Body& A = bodies[static_cast<size_t>(key >> 32)];
+                const Body& B = bodies[static_cast<size_t>(key & 0xFFFFFFFFu)];
+                if (shapes::CanCollide(A.layer, A.mask, B.layer, B.mask)) {
+                    candidates[w++] = key;
                 }
             }
-            // ---- 2. 点毎 法線インパルス (反発なし。回転の不均衡だけを担当) ----
-            // ★M28b はここを 1/count に緩和した Jacobi にしていた。**蓄積インパルスでは
-            //   その緩和が収束の律速になる** — 4 点マニフォールドだと毎反復 1/4 しか
-            //   進まないので、8 反復では回転の残差が消えず 2 段タワーすら静定しない
-            //   (実測。旧方式は毎反復ゼロから解き直していたので緩和が効いていた)。
-            //   蓄積 + 0 クランプがあれば緩和無しでも暴れないので、緩和を外した。
-            //   一括適用 (Jacobi) は維持している — 点を順に適用すると走査順の非対称が
-            //   トルクとして残り、対称なスタックが歩き出すため
-            float totalJn = c.lambdaNc;
-            if (c.count > 1) {
-                float dls[4] = {};
-                for (int k = 0; k < c.count; ++k) { // 同一速度から一括計算 = Jacobi
-                    ContactPoint& p = c.pts[k];
-                    if (p.massN <= 0.0f) {
-                        continue;
-                    }
-                    float rvx, rvy, rvz;
-                    relVelAt(p.ra, p.rb, rvx, rvy, rvz);
-                    const float vn = rvx * c.nx + rvy * c.ny + rvz * c.nz;
-                    float dl = -vn * p.massN;
-                    const float old = p.lambdaN;
-                    float now = old + dl;
-                    if (now < 0.0f) {
-                        now = 0.0f;
-                    }
-                    dls[k] = now - old;
-                    p.lambdaN = now;
-                }
-                for (int k = 0; k < c.count; ++k) { // まとめて適用
-                    if (dls[k] != 0.0f) {
-                        const ContactPoint& p = c.pts[k];
-                        ApplyImpulse(A, p.ra[0], p.ra[1], p.ra[2], c.nx * dls[k], c.ny * dls[k],
-                                     c.nz * dls[k], 1.0f);
-                        ApplyImpulse(B, p.rb[0], p.rb[1], p.rb[2], c.nx * dls[k], c.ny * dls[k],
-                                     c.nz * dls[k], -1.0f);
-                    }
-                }
-            }
-            for (int k = 0; k < c.count; ++k) {
-                totalJn += c.pts[k].lambdaN;
-            }
-            // ---- 3. 重心でのクーロン摩擦 (固定接線 2 方向、蓄積してクランプ) ----
-            if (totalJn > 0.0f) {
-                const float maxF = c.mu * totalJn;
-                for (int ti = 0; ti < 2; ++ti) {
-                    const float* d = (ti == 0) ? c.t1 : c.t2;
-                    const float mass = (ti == 0) ? c.massT1 : c.massT2;
-                    float& acc = (ti == 0) ? c.lambdaT1 : c.lambdaT2;
-                    if (mass <= 0.0f) {
-                        continue;
-                    }
-                    float rvx, rvy, rvz;
-                    relVelAt(c.raC, c.rbC, rvx, rvy, rvz);
-                    const float vt = rvx * d[0] + rvy * d[1] + rvz * d[2];
-                    float dl = -vt * mass;
-                    const float old = acc;
-                    float now = old + dl;
-                    if (now > maxF) {
-                        now = maxF;
-                    } else if (now < -maxF) {
-                        now = -maxF;
-                    }
-                    dl = now - old;
-                    acc = now;
-                    if (dl != 0.0f) {
-                        ApplyImpulse(A, c.raC[0], c.raC[1], c.raC[2], d[0] * dl, d[1] * dl,
-                                     d[2] * dl, 1.0f);
-                        ApplyImpulse(B, c.rbC[0], c.rbC[1], c.rbC[2], d[0] * dl, d[1] * dl,
-                                     d[2] * dl, -1.0f);
-                    }
-                }
-            }
+            candidates.resize(w);
         }
-    }
 
-    // ---- 位置補正 (M59g1): 速度ソルバから**切り離した別パス** ----
-    // 速度を解いている最中に姿勢を動かすと、生成時に固定した接触点・有効質量・法線と
-    // 食い違っていく (M28b は毎反復マニフォールドを作り直していたので問題にならなかった。
-    // 実測: 分離しないと 2 段タワーですら跳ね続け、下の接触インパルスが 2*m*g*dt の
-    // 2.3 倍に膨らんだ)。押し出しだけは**その場の真の貫通量**が要るので、ここでだけ
-    // CollideManifold を呼び直す。回転補正はしない (簡易ソルバの発散防止。M28b から不変)
-    for (int pass = 0; pass < kPositionIterations; ++pass) {
+        // ---- 接触制約の生成 (M59g1): マニフォールドは **1 ステップに 1 回だけ**作る ----
+        // M28b は反復のたびに CollideManifold を呼び直していた。それをやめたのは、
+        // **蓄積インパルスの前提が「接触点が反復をまたいで同じであること」**だから —
+        // 毎回作り直すと「この接触点にこれまで何 N*s 入れたか」を持ち越す先が消える。
+        //
+        // ★**解き方の「形」は M28b のまま**にした (中央法線 1 発 → 点毎 Jacobi → 重心摩擦)。
+        //   点ごとの逐次 (Gauss-Seidel) へ作り替える方が教科書的だが、**warm starting 無しでは
+        //   スタックが目に見えて歩く** (実測: 3 段タワーの 600 tick ドリフトが 0.7mm → 75mm)。
+        //   中央法線インパルスが「並進を全質量で 1 発で解く」役をしていて、それが 8 反復しか
+        //   回さないソルバの安定性を支えている。warm starting は M59h の計測ゲート付き別コミット
+        //   なので、ここでは**蓄積とクランプだけ**を足す。
+        // ★物理モデルは 1 つも変えていない: mu = sqrt(mu_a * mu_b) / e = min(e_a, e_b) /
+        //   kRestitutionVelThreshold / kPenetrationSlop はそのまま。
+        struct ContactPoint {
+            float ra[3] = { 0, 0, 0 }; // 接触点 - A 重心 (生成時に固定)
+            float rb[3] = { 0, 0, 0 };
+            float depth = 0.0f;
+            float massN = 0.0f;   // 法線方向の有効質量
+            float lambdaN = 0.0f; // 蓄積法線インパルス (>= 0)
+        };
+        struct ContactConstraint {
+            uint32_t ai = 0, bi = 0;
+            float nx = 0, ny = 1, nz = 0;
+            float t1[3] = { 1, 0, 0 };
+            float t2[3] = { 0, 0, 1 };
+            float mu = 0.0f;
+            int count = 0;
+            float cpx = 0, cpy = 0, cpz = 0; // 代表点 = マニフォールド重心 (M59e の出力)
+            float raC[3] = { 0, 0, 0 };      // 重心の r (中央インパルスと摩擦の作用点)
+            float rbC[3] = { 0, 0, 0 };
+            float massNc = 0.0f;             // 重心での法線有効質量
+            float massT1 = 0.0f, massT2 = 0.0f;
+            float biasC = 0.0f;              // 反発の目標法線速度 (閾値適用済み)
+            float lambdaNc = 0.0f;           // 蓄積: 中央法線
+            float lambdaT1 = 0.0f, lambdaT2 = 0.0f; // 蓄積: 重心摩擦
+            ContactPoint pts[4];
+        };
+        std::vector<ContactConstraint> constraints;
+        constraints.reserve(candidates.size());
         for (const uint64_t pairKey : candidates) {
-            Body& A = bodies[static_cast<size_t>(pairKey >> 32)];
-            Body& B = bodies[static_cast<size_t>(pairKey & 0xFFFFFFFFu)];
-            const float tim = A.invMass + B.invMass;
-            if (tim == 0.0f) {
-                continue;
+            const uint32_t ai = static_cast<uint32_t>(pairKey >> 32);
+            const uint32_t bi = static_cast<uint32_t>(pairKey & 0xFFFFFFFFu);
+            Body& A = bodies[ai];
+            Body& B = bodies[bi];
+            if (A.invMass + B.invMass == 0.0f) {
+                continue; // 両方不動 (静的 / kinematic 同士)
             }
             shapes::Manifold m;
             if (!shapes::CollideManifold(A.pose, B.pose, m)) {
                 continue;
             }
-            float maxDepth = 0.0f;
+            ContactConstraint c;
+            c.ai = ai;
+            c.bi = bi;
+            c.nx = m.nx;
+            c.ny = m.ny;
+            c.nz = m.nz;
+            c.mu = std::sqrt(A.friction * B.friction);
+            c.count = m.count;
+            // 法線から接線基底を決定論的に作る (分岐は入力だけに依存)。
+            // 0.57735 = 1/sqrt(3) — 最も長い成分を避けて正規化の桁落ちを防ぐ古典手法。
+            // ★接線が**固定**なのが M28b との違い: 蓄積するには方向が動いてはいけない
+            //   (旧実装は毎反復その場の滑り方向を測っていたので蓄積できなかった)
+            {
+                float ax, ay, az;
+                if (std::fabs(c.nx) >= 0.57735f) {
+                    ax = c.ny; ay = -c.nx; az = 0.0f;
+                } else {
+                    ax = 0.0f; ay = c.nz; az = -c.ny;
+                }
+                const float al = std::sqrt(ax * ax + ay * ay + az * az);
+                if (al > 1e-8f) {
+                    c.t1[0] = ax / al; c.t1[1] = ay / al; c.t1[2] = az / al;
+                }
+                Cross(c.nx, c.ny, c.nz, c.t1[0], c.t1[1], c.t1[2], c.t2[0], c.t2[1], c.t2[2]);
+            }
+            const float e = std::min(A.restitution, B.restitution);
+            const float invCount = 1.0f / static_cast<float>(m.count);
             for (int k = 0; k < m.count; ++k) {
-                if (m.pts[k].depth > maxDepth) {
-                    maxDepth = m.pts[k].depth;
+                ContactPoint& p = c.pts[k];
+                p.ra[0] = m.pts[k].px - A.pose.px;
+                p.ra[1] = m.pts[k].py - A.pose.py;
+                p.ra[2] = m.pts[k].pz - A.pose.pz;
+                p.rb[0] = m.pts[k].px - B.pose.px;
+                p.rb[1] = m.pts[k].py - B.pose.py;
+                p.rb[2] = m.pts[k].pz - B.pose.pz;
+                p.depth = m.pts[k].depth;
+                c.cpx += m.pts[k].px * invCount;
+                c.cpy += m.pts[k].py * invCount;
+                c.cpz += m.pts[k].pz * invCount;
+                const float kn = EffectiveMassInv(A, p.ra[0], p.ra[1], p.ra[2], c.nx, c.ny, c.nz)
+                               + EffectiveMassInv(B, p.rb[0], p.rb[1], p.rb[2], c.nx, c.ny, c.nz);
+                p.massN = (kn > 0.0f) ? 1.0f / kn : 0.0f;
+            }
+            c.raC[0] = c.cpx - A.pose.px;
+            c.raC[1] = c.cpy - A.pose.py;
+            c.raC[2] = c.cpz - A.pose.pz;
+            c.rbC[0] = c.cpx - B.pose.px;
+            c.rbC[1] = c.cpy - B.pose.py;
+            c.rbC[2] = c.cpz - B.pose.pz;
+            {
+                const float kn = EffectiveMassInv(A, c.raC[0], c.raC[1], c.raC[2], c.nx, c.ny, c.nz)
+                               + EffectiveMassInv(B, c.rbC[0], c.rbC[1], c.rbC[2], c.nx, c.ny, c.nz);
+                c.massNc = (kn > 0.0f) ? 1.0f / kn : 0.0f;
+                const float kt1 = EffectiveMassInv(A, c.raC[0], c.raC[1], c.raC[2], c.t1[0], c.t1[1],
+                                                   c.t1[2])
+                                + EffectiveMassInv(B, c.rbC[0], c.rbC[1], c.rbC[2], c.t1[0], c.t1[1],
+                                                   c.t1[2]);
+                c.massT1 = (kt1 > 0.0f) ? 1.0f / kt1 : 0.0f;
+                const float kt2 = EffectiveMassInv(A, c.raC[0], c.raC[1], c.raC[2], c.t2[0], c.t2[1],
+                                                   c.t2[2])
+                                + EffectiveMassInv(B, c.rbC[0], c.rbC[1], c.rbC[2], c.t2[0], c.t2[1],
+                                                   c.t2[2]);
+                c.massT2 = (kt2 > 0.0f) ? 1.0f / kt2 : 0.0f;
+            }
+            // 反発のバイアスは**生成時の接近速度から 1 回だけ**決める。反復ごとに測り直すと
+            // 自分が入れたインパルスで接近速度が消えていくので、反発が二重に効いたり
+            // 消えたりする (蓄積インパルスで反発を扱うときの定石)
+            {
+                float wax, way, waz, wbx, wby, wbz;
+                Cross(A.wx, A.wy, A.wz, c.raC[0], c.raC[1], c.raC[2], wax, way, waz);
+                Cross(B.wx, B.wy, B.wz, c.rbC[0], c.rbC[1], c.rbC[2], wbx, wby, wbz);
+                const float rvx = (A.vx + wax) - (B.vx + wbx);
+                const float rvy = (A.vy + way) - (B.vy + wby);
+                const float rvz = (A.vz + waz) - (B.vz + wbz);
+                const float vn = rvx * c.nx + rvy * c.ny + rvz * c.nz;
+                // 低速接触は e=0 扱い (micro-bounce 除去 = 静止安定の柱。M28b から不変)
+                if (vn < 0.0f && -vn >= restitutionVelThreshold) {
+                    c.biasC = -e * vn;
                 }
             }
-            const float corr = std::max(maxDepth - kPenetrationSlop, 0.0f);
-            const float ci = corr * A.invMass / tim;
-            const float cj = corr * B.invMass / tim;
-            A.pose.px += m.nx * ci;
-            A.pose.py += m.ny * ci;
-            A.pose.pz += m.nz * ci;
-            B.pose.px -= m.nx * cj;
-            B.pose.py -= m.ny * cj;
-            B.pose.pz -= m.nz * cj;
+            constraints.push_back(c);
         }
-    }
 
-    // ---- 接触ペアの出力 (M28c、M59e で代表点と法線インパルスを追加) ----
-    // 生成順 = 候補ペアの (小,大) 昇順なので key も自動的に昇順のまま
-    // (CollisionSystem の二分探索 FindContactNormal の前提)。
-    // ★M59g1 から impulse は**真の蓄積 lambda の合計** — 反復ごとの寄せ集めではない
-    if (outContacts) {
-        for (const ContactConstraint& c : constraints) {
-            SolidContact sc;
-            sc.key = (static_cast<uint64_t>(bodies[c.ai].entity.index) << 32)
-                   | bodies[c.bi].entity.index;
-            sc.nx = c.nx;
-            sc.ny = c.ny;
-            sc.nz = c.nz;
-            sc.px = c.cpx;
-            sc.py = c.cpy;
-            sc.pz = c.cpz;
-            float total = c.lambdaNc;
-            for (int k = 0; k < c.count; ++k) {
-                total += c.pts[k].lambdaN;
+        // ---- 接触解決 (固定反復・生成順 = 候補ペアの (小,大) 昇順 = 決定論) ----
+        // 3 段構成は M28b のまま。違うのは各段が**蓄積量 lambda を持ちクランプする**こと:
+        //   1. 重心での中央法線インパルス (反発込み) — 並進を全質量で 1 発。lambda >= 0
+        //   2. 点毎 Jacobi 法線インパルス (同一速度から一括計算・点数分配) — 回転の不均衡だけ。
+        //      対称接触では自動的にゼロになる = スタックが歩かない性質はここから来ている
+        //   3. 重心でのクーロン摩擦 (固定接線 2 方向)。上限は**その時点の蓄積法線インパルス合計**
+        //      — 旧実装の「その反復ぶんの法線インパルス」より正しい Coulomb 境界になっている
+        for (int iter = 0; iter < kSolverIterations; ++iter) {
+            for (ContactConstraint& c : constraints) {
+                Body& A = bodies[c.ai];
+                Body& B = bodies[c.bi];
+                auto relVelAt = [&](const float rA[3], const float rB[3], float& rvx, float& rvy,
+                                    float& rvz) {
+                    float wax, way, waz, wbx, wby, wbz;
+                    Cross(A.wx, A.wy, A.wz, rA[0], rA[1], rA[2], wax, way, waz);
+                    Cross(B.wx, B.wy, B.wz, rB[0], rB[1], rB[2], wbx, wby, wbz);
+                    rvx = (A.vx + wax) - (B.vx + wbx);
+                    rvy = (A.vy + way) - (B.vy + wby);
+                    rvz = (A.vz + waz) - (B.vz + wbz);
+                };
+                // ---- 1. 中央法線インパルス ----
+                if (c.massNc > 0.0f) {
+                    float rvx, rvy, rvz;
+                    relVelAt(c.raC, c.rbC, rvx, rvy, rvz);
+                    const float vn = rvx * c.nx + rvy * c.ny + rvz * c.nz;
+                    float dl = -(vn - c.biasC) * c.massNc;
+                    const float old = c.lambdaNc;
+                    float now = old + dl;
+                    if (now < 0.0f) {
+                        now = 0.0f; // 接触は押すだけ (引っ張らない)
+                    }
+                    dl = now - old;
+                    c.lambdaNc = now;
+                    if (dl != 0.0f) {
+                        ApplyImpulse(A, c.raC[0], c.raC[1], c.raC[2], c.nx * dl, c.ny * dl, c.nz * dl,
+                                     1.0f);
+                        ApplyImpulse(B, c.rbC[0], c.rbC[1], c.rbC[2], c.nx * dl, c.ny * dl, c.nz * dl,
+                                     -1.0f);
+                    }
+                }
+                // ---- 2. 点毎 法線インパルス (反発なし。回転の不均衡だけを担当) ----
+                // ★M28b はここを 1/count に緩和した Jacobi にしていた。**蓄積インパルスでは
+                //   その緩和が収束の律速になる** — 4 点マニフォールドだと毎反復 1/4 しか
+                //   進まないので、8 反復では回転の残差が消えず 2 段タワーすら静定しない
+                //   (実測。旧方式は毎反復ゼロから解き直していたので緩和が効いていた)。
+                //   蓄積 + 0 クランプがあれば緩和無しでも暴れないので、緩和を外した。
+                //   一括適用 (Jacobi) は維持している — 点を順に適用すると走査順の非対称が
+                //   トルクとして残り、対称なスタックが歩き出すため
+                float totalJn = c.lambdaNc;
+                if (c.count > 1) {
+                    float dls[4] = {};
+                    for (int k = 0; k < c.count; ++k) { // 同一速度から一括計算 = Jacobi
+                        ContactPoint& p = c.pts[k];
+                        if (p.massN <= 0.0f) {
+                            continue;
+                        }
+                        float rvx, rvy, rvz;
+                        relVelAt(p.ra, p.rb, rvx, rvy, rvz);
+                        const float vn = rvx * c.nx + rvy * c.ny + rvz * c.nz;
+                        float dl = -vn * p.massN;
+                        const float old = p.lambdaN;
+                        float now = old + dl;
+                        if (now < 0.0f) {
+                            now = 0.0f;
+                        }
+                        dls[k] = now - old;
+                        p.lambdaN = now;
+                    }
+                    for (int k = 0; k < c.count; ++k) { // まとめて適用
+                        if (dls[k] != 0.0f) {
+                            const ContactPoint& p = c.pts[k];
+                            ApplyImpulse(A, p.ra[0], p.ra[1], p.ra[2], c.nx * dls[k], c.ny * dls[k],
+                                         c.nz * dls[k], 1.0f);
+                            ApplyImpulse(B, p.rb[0], p.rb[1], p.rb[2], c.nx * dls[k], c.ny * dls[k],
+                                         c.nz * dls[k], -1.0f);
+                        }
+                    }
+                }
+                for (int k = 0; k < c.count; ++k) {
+                    totalJn += c.pts[k].lambdaN;
+                }
+                // ---- 3. 重心でのクーロン摩擦 (固定接線 2 方向、蓄積してクランプ) ----
+                if (totalJn > 0.0f) {
+                    const float maxF = c.mu * totalJn;
+                    for (int ti = 0; ti < 2; ++ti) {
+                        const float* d = (ti == 0) ? c.t1 : c.t2;
+                        const float mass = (ti == 0) ? c.massT1 : c.massT2;
+                        float& acc = (ti == 0) ? c.lambdaT1 : c.lambdaT2;
+                        if (mass <= 0.0f) {
+                            continue;
+                        }
+                        float rvx, rvy, rvz;
+                        relVelAt(c.raC, c.rbC, rvx, rvy, rvz);
+                        const float vt = rvx * d[0] + rvy * d[1] + rvz * d[2];
+                        float dl = -vt * mass;
+                        const float old = acc;
+                        float now = old + dl;
+                        if (now > maxF) {
+                            now = maxF;
+                        } else if (now < -maxF) {
+                            now = -maxF;
+                        }
+                        dl = now - old;
+                        acc = now;
+                        if (dl != 0.0f) {
+                            ApplyImpulse(A, c.raC[0], c.raC[1], c.raC[2], d[0] * dl, d[1] * dl,
+                                         d[2] * dl, 1.0f);
+                            ApplyImpulse(B, c.rbC[0], c.rbC[1], c.rbC[2], d[0] * dl, d[1] * dl,
+                                         d[2] * dl, -1.0f);
+                        }
+                    }
+                }
             }
-            sc.impulse = total;
-            outContacts->push_back(sc);
         }
-    }
 
-    // ---- 位置・姿勢積分 (解決後の速度で前進) ----
-    for (Body& b : bodies) {
-        if (b.invMass == 0.0f || !b.rb) {
-            continue;
-        }
-        b.pose.px += b.vx * dt;
-        b.pose.py += b.vy * dt;
-        b.pose.pz += b.vz * dt;
-        if (!b.freezeRot) {
-            // q += 0.5·dt·(ω_quat ⊗ q)、その後正規化 (全て scalar)
-            const float hx = b.wx * 0.5f * dt, hy = b.wy * 0.5f * dt, hz = b.wz * 0.5f * dt;
-            const float dqw = -(hx * b.qx + hy * b.qy + hz * b.qz);
-            const float dqx = hx * b.qw + hy * b.qz - hz * b.qy;
-            const float dqy = hy * b.qw + hz * b.qx - hx * b.qz;
-            const float dqz = hz * b.qw + hx * b.qy - hy * b.qx;
-            b.qx += dqx; b.qy += dqy; b.qz += dqz; b.qw += dqw;
-            const float len2 = b.qx * b.qx + b.qy * b.qy + b.qz * b.qz + b.qw * b.qw;
-            if (len2 > 1e-12f) {
-                const float inv = 1.0f / std::sqrt(len2);
-                b.qx *= inv; b.qy *= inv; b.qz *= inv; b.qw *= inv;
-            } else {
-                b.qx = 0; b.qy = 0; b.qz = 0; b.qw = 1;
+        // ---- 位置補正 (M59g1): 速度ソルバから**切り離した別パス** ----
+        // 速度を解いている最中に姿勢を動かすと、生成時に固定した接触点・有効質量・法線と
+        // 食い違っていく (M28b は毎反復マニフォールドを作り直していたので問題にならなかった。
+        // 実測: 分離しないと 2 段タワーですら跳ね続け、下の接触インパルスが 2*m*g*dt の
+        // 2.3 倍に膨らんだ)。押し出しだけは**その場の真の貫通量**が要るので、ここでだけ
+        // CollideManifold を呼び直す。回転補正はしない (簡易ソルバの発散防止。M28b から不変)
+        for (int pass = 0; pass < kPositionIterations; ++pass) {
+            for (const uint64_t pairKey : candidates) {
+                Body& A = bodies[static_cast<size_t>(pairKey >> 32)];
+                Body& B = bodies[static_cast<size_t>(pairKey & 0xFFFFFFFFu)];
+                const float tim = A.invMass + B.invMass;
+                if (tim == 0.0f) {
+                    continue;
+                }
+                shapes::Manifold m;
+                if (!shapes::CollideManifold(A.pose, B.pose, m)) {
+                    continue;
+                }
+                float maxDepth = 0.0f;
+                for (int k = 0; k < m.count; ++k) {
+                    if (m.pts[k].depth > maxDepth) {
+                        maxDepth = m.pts[k].depth;
+                    }
+                }
+                const float corr = std::max(maxDepth - kPenetrationSlop, 0.0f);
+                const float ci = corr * A.invMass / tim;
+                const float cj = corr * B.invMass / tim;
+                A.pose.px += m.nx * ci;
+                A.pose.py += m.ny * ci;
+                A.pose.pz += m.nz * ci;
+                B.pose.px -= m.nx * cj;
+                B.pose.py -= m.ny * cj;
+                B.pose.pz -= m.nz * cj;
             }
         }
+
+        // ---- 接触ペアの出力 (M28c、M59e で代表点と法線インパルス、M59g2 でサブステップ合算) ----
+        // 生成順 = 候補ペアの (小,大) 昇順なので key も自動的に昇順のまま
+        // (CollisionSystem の二分探索 FindContactNormal の前提)。
+        // ★impulse は**真の蓄積 lambda の合計**で、サブステップをまたいで足す — 消費者から見た
+        //   「その tick に入った法線インパルス」の意味を substeps に依らず保つため
+        //   (静止した質量 m の物体はサブステップ数に関係なく m*g*dt になる)。
+        // ★出力は各サブステップの**和集合**。1 度でも触れたペアは報告される — Enter/Exit の
+        //   意味論として「この tick に接触したか」が欲しいのは CollisionSystem 側の要求
+        if (outContacts) {
+            for (const ContactConstraint& c : constraints) {
+                SolidContact sc;
+                sc.key = (static_cast<uint64_t>(bodies[c.ai].entity.index) << 32)
+                       | bodies[c.bi].entity.index;
+                sc.nx = c.nx;
+                sc.ny = c.ny;
+                sc.nz = c.nz;
+                sc.px = c.cpx;
+                sc.py = c.cpy;
+                sc.pz = c.cpz;
+                float total = c.lambdaNc;
+                for (int k = 0; k < c.count; ++k) {
+                    total += c.pts[k].lambdaN;
+                }
+                sc.impulse = total;
+                subContacts.push_back(sc);
+            }
+            MergeSubstepContacts(subContacts, *outContacts);
+            subContacts.clear();
+        }
+
+        // ---- 位置・姿勢積分 (解決後の速度で前進) ----
+        for (Body& b : bodies) {
+            if (b.invMass == 0.0f || !b.rb) {
+                continue;
+            }
+            b.pose.px += b.vx * h;
+            b.pose.py += b.vy * h;
+            b.pose.pz += b.vz * h;
+            if (!b.freezeRot) {
+                // q += 0.5·h·(ω_quat ⊗ q)、その後正規化 (全て scalar)
+                const float hx = b.wx * 0.5f * h, hy = b.wy * 0.5f * h, hz = b.wz * 0.5f * h;
+                const float dqw = -(hx * b.qx + hy * b.qy + hz * b.qz);
+                const float dqx = hx * b.qw + hy * b.qz - hz * b.qy;
+                const float dqy = hy * b.qw + hz * b.qx - hx * b.qz;
+                const float dqz = hz * b.qw + hx * b.qy - hy * b.qx;
+                b.qx += dqx; b.qy += dqy; b.qz += dqz; b.qw += dqw;
+                const float len2 = b.qx * b.qx + b.qy * b.qy + b.qz * b.qz + b.qw * b.qw;
+                if (len2 > 1e-12f) {
+                    const float inv = 1.0f / std::sqrt(len2);
+                    b.qx *= inv; b.qy *= inv; b.qz *= inv; b.qw *= inv;
+                } else {
+                    b.qx = 0; b.qy = 0; b.qz = 0; b.qw = 1;
+                }
+            }
+        }
+
     }
 
     // ---- 書き戻し (動的・非 kinematic のみ。kinematic は物理が何も変えないので
