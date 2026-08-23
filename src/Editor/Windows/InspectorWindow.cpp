@@ -563,6 +563,9 @@ void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
                         || f.type == FieldType::EntityRef
                         || (std::strcmp(desc.name, "Collider") == 0
                             && std::strcmp(f.name, "mask") == 0)
+                        // M59a2: 材料上書きチェックボックスもクリック即確定 = 自前 Undo
+                        || (std::strcmp(desc.name, "Collider") == 0
+                            && std::strcmp(f.name, "materialOverrideBits") == 0)
                         // M51f: anchor 9-grid はクリック即確定 (ボタン群) なので自前 Undo
                         || (std::strcmp(desc.name, "UIElement") == 0
                             && std::strcmp(f.name, "anchor") == 0);
@@ -886,6 +889,36 @@ bool InspectorWindow::DrawField(EngineContext& ctx, const char* componentName, v
                 }
                 ImGui::EndPopup();
             }
+        } else if (componentName && std::strcmp(componentName, "Collider") == 0
+                   && std::strcmp(field.name, "materialOverrideBits") == 0) {
+            // M59a2: 材料の上書きはプロパティ別チェックボックス (mask と同じ自前 Undo 方式 —
+            // クリック即確定なので呼び出し側の HandleEditUndoMulti からは除外されている)
+            uint32_t& bits = *static_cast<uint32_t*>(p);
+            auto applyBits = [&](uint32_t next) {
+                undo.BeginRecord("Modify Material Override", selection);
+                for (uint64_t tf : fids) {
+                    undo.CaptureBefore(*ctx.scene, tf);
+                }
+                for (void* c : comps) {
+                    *reinterpret_cast<uint32_t*>(static_cast<uint8_t*>(c) + field.offset) = next;
+                }
+                for (uint64_t tf : fids) {
+                    undo.CaptureAfter(*ctx.scene, tf);
+                }
+                undo.EndRecord(selection);
+                changed = true;
+            };
+            ImGui::PushID(field.name);
+            bool fricOn = (bits & kPhysMatOverrideFriction) != 0u;
+            if (ImGui::Checkbox(Tr(StrId::Insp_PmOvFriction), &fricOn)) {
+                applyBits(bits ^ kPhysMatOverrideFriction);
+            }
+            ImGui::SameLine();
+            bool restOn = (bits & kPhysMatOverrideRestitution) != 0u;
+            if (ImGui::Checkbox(Tr(StrId::Insp_PmOvRestitution), &restOn)) {
+                applyBits(bits ^ kPhysMatOverrideRestitution);
+            }
+            ImGui::PopID();
         } else {
             changed = ImGui::InputScalar(label, ImGuiDataType_U32, p);
         }

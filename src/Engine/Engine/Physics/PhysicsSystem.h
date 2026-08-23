@@ -7,6 +7,9 @@
 namespace mye {
 
 class World;
+struct ColliderComponent;
+struct RigidbodyComponent;
+struct PhysMat;
 
 // ソリッド接触ペア (M28c)。PhysicsSystem が tick 毎に最終ソルバ反復で検出したペアを
 // key 昇順で出力し、CollisionSystem が前 tick 差分から OnCollisionEnter/Stay/Exit を配信する。
@@ -42,6 +45,30 @@ public:
     // 挙動はビット同一のはず — selftest がハッシュ比較で常時検証する
     static inline bool sDisableBroadphaseForTest = false;
 };
+
+// ---- 物理マテリアル解決 (M59a2)。全て純関数 — ソルバ収集と ABI が共有する ----
+// 摩擦/反発は fp 演算を挟まない「値の選択」のみ: overrideBits のビット → 既存フィールド /
+// 材料割当あり → .physmat 値 / 未割当 → 既存フィールド。未割当シーンは従来と同じメモリを
+// 同じ経路で読むので既存挙動はビット同一 (PhysicsSelfTest の body ビットパターンで機械照合)。
+// 結合則は従来のまま: μ = sqrt(μa·μb) / e = min(ea, eb)。材料付き静的コライダーが
+// e を主張できるのは新規能力 (従来は構造的に 0 — engine_spec 10.3)
+float SelectFriction(const ColliderComponent& col, const PhysMat* mat);
+float SelectRestitution(const ColliderComponent* col, const RigidbodyComponent* rb,
+                        const PhysMat* mat);
+
+// ワールドスケール済み衝突形状の体積 (m^3)。スケール規約は shapes::ApplyScaledExtents と
+// 同一 (球 = 最大成分 / box = 成分別 / capsule = 半径 max(sx,sz)・高さ sy)。mesh (shape=3) は 0
+float ShapeVolumeWorld(const ColliderComponent& col, float sx, float sy, float sz);
+
+// 質量の解決: useDensity かつ材料割当ありなら 材料密度 × 形状体積、それ以外は従来の
+// 「(mass>0) ? mass : 1」。導出値が 0 以下 (半径 0 等) も従来値へフォールバック (1/m の防波堤)
+float ResolveBodyMass(const RigidbodyComponent& rb, const ColliderComponent* col,
+                      const PhysMat* mat, float sx, float sy, float sz);
+
+// ABI (AddForce/AddImpulse/AddTorque) 用の 1 発解決。スケールは LocalTransform 直読み
+// (ApplyTorqueWorld の慣性導出と同じ規約。スケール付きの親を持つ剛体ではソルバの
+// 親合成スケールと厳密には一致しない — 既存の慣性導出と同じ割り切り)
+float EffectiveMassWorld(World& world, EntityID e, const RigidbodyComponent& rb);
 
 // ワールドトルクを 1 tick 分適用 (M28b、ABI AddTorque の実装本体)。
 // ω += I⁻¹·τ·dt を即時適用 (蓄積フィールドなし = ステートレス)。

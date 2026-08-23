@@ -126,6 +126,11 @@ void RegisterBuiltinComponents()
         MYE_JP("レイヤー", MYE_FIELD_TIP(ColliderComponent, layer, Int32, "collision layer 0..31")),
         MYE_JP("衝突マスク", MYE_FIELD_TIP(ColliderComponent, mask, UInt32, "layers this collider hits (bitmask)")),
         MYE_JP("メッシュアセット", MYE_FIELD(ColliderComponent, meshAsset, AssetRef)), // M41 予約 (現状未使用)
+        // M59a2: 物理マテリアル (末尾 append)。hash 対象フィールドの追加だが .rep は毎回
+        // 録り直しの使い捨てで、挙動のビット同一は PhysicsSelfTest の [phys] body
+        // ビットパターン照合で証明する (ワールドハッシュ値自体はフィールド追加で変わる)
+        MYE_JP("物理マテリアル", MYE_FIELD(ColliderComponent, physMaterial, AssetRef)),
+        MYE_JP("材料の上書き", MYE_FIELD(ColliderComponent, materialOverrideBits, UInt32)),
     });
 
     // M10: 末尾追加 (TypeId 順を壊さない)。無ければ有効なので既存シーンは不変
@@ -178,6 +183,10 @@ void RegisterBuiltinComponents()
         MYE_JP("角速度", MYE_FIELD(RigidbodyComponent, angularVelocity, Float3)),
         MYE_JP("回転の減衰", MYE_FIELD(RigidbodyComponent, angularDamping, Float)),
         MYE_JP("回転を固定", MYE_FIELD(RigidbodyComponent, freezeRotation, Int32)),
+        // M59a2: 密度→質量導出 (opt-in、末尾 append)
+        MYE_JP("密度から質量", MYE_FIELD_TIP(RigidbodyComponent, useDensity, Bool,
+                                             "mass = material density x scaled shape volume "
+                                             "(needs a collider with a phys material)")),
     });
 
     // M21: ゲーム内 UI。描画専用なので **kComponentNoHash** (既存シーンのハッシュ不変)。

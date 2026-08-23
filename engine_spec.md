@@ -814,6 +814,23 @@ persists the parse results so warm starts skip the parsers entirely.
 | Escape hatch | `--no-cook-cache` (mirrors `--no-jobs` / `--no-sim-cache`): parse everything fresh, never read or write the cache |
 | Sealed bundle (M51j) | A `.sealed` marker inside `cache/cooked/` (written only by Build Settings into the package) makes `ReadValidated` skip the pathKey / stat / content-hash / deps checks (magic / version / guid still apply). This is a **correctness** device, not an optimization: sub-asset AssetIDs derive from the packaging machine's absolute paths, so a relocated package that recooked would register different IDs and every scene reference to model meshes/materials would silently break. Replaying the sealed registrations reproduces the original IDs anywhere. External texture paths recorded in the blob are remapped onto the package's `assets/` root when missing (`ModelCook::Replay`) |
 
+### 10.3 Physics material assets (`.physmat.json`, M59a1/M59a2)
+
+Material properties for the rigid-body solver, stored as assets (`PhysMatLibrary`, SI units).
+Schema: `density` / `staticFriction` / `dynamicFriction` / `restitution` / `rollingResistance` /
+`dragCoefficient` (static friction, rolling resistance and Cd are parsed and stored but not
+consumed until M59f2/M59b). Values are sanitized on load (non-finite → default, finite but out of
+range → clamp) so NaN can never reach the pair-combination rules. Material values are **not**
+world-hashed (same class as mesh collider data: replay assumes the same assets are present).
+
+| Concept | Decision |
+|---|---|
+| Assignment | `Collider.physMaterial` (AssetRef). Empty = unassigned = the legacy component fields are read through the exact same code path — existing scenes stay bit-identical |
+| Resolution priority | Per property: `Collider.materialOverrideBits` bit set → legacy component field / material assigned → material value / unassigned → legacy field. Resolution is a pure value selection at solver collection time (no fp arithmetic), shared by the solver and the script ABI (`SelectFriction` / `SelectRestitution` / `ResolveBodyMass` in `PhysicsSystem.h`) |
+| Pair combination | Unchanged from M28b: `μ = sqrt(μa·μb)`, `e = min(ea, eb)` |
+| Static restitution | **New capability in M59a2**: a static collider used to be structurally `e = 0` (no Rigidbody to store the field, so `e = min` killed every bounce off static geometry). A material assigned to a static collider now supplies its `e`. Unassigned static colliders keep `e = 0` |
+| Mass from density | `Rigidbody.useDensity` (opt-in): mass = material `density` × world-scaled collider volume (sphere/box/capsule; scaling rules identical to `shapes::ApplyScaledExtents`). Falls back to the `mass` field when there is no material, no collider, a mesh collider (shape 3), or a degenerate volume. The ABI entry points (`AddForce` / `AddImpulse` / `AddTorque`) resolve mass through the same function, so mass is never two different values |
+
 ---
 
 ## 11. Debug/Release Consistency Policy

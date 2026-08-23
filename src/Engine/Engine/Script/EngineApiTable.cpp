@@ -214,7 +214,8 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
         if (!rb || rb->isKinematic) { return 0; }
         // 固定 tick (EngineLoop kFixedDt = 1/60) 前提の 1 tick 分加速。毎 tick 呼べば連続力
         constexpr float kFixedDt = 1.0f / 60.0f;
-        const float mass = (rb->mass > 0.0f) ? rb->mass : 1.0f;
+        // M59a2: 密度導出質量 (useDensity) をソルバと同じ関数で解決 (質量を二義にしない)
+        const float mass = EffectiveMassWorld(Sc(engine)->GetWorld(), ToEngine(id), *rb);
         const float s = kFixedDt / mass;
         rb->velocity.x += f.x * s;
         rb->velocity.y += f.y * s;
@@ -224,7 +225,7 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
     out.AddImpulse = [](void* engine, MyeEntityId id, MyeVec3 imp) -> int {
         auto* rb = Sc(engine)->GetWorld().GetComponent<RigidbodyComponent>(ToEngine(id));
         if (!rb || rb->isKinematic) { return 0; }
-        const float mass = (rb->mass > 0.0f) ? rb->mass : 1.0f;
+        const float mass = EffectiveMassWorld(Sc(engine)->GetWorld(), ToEngine(id), *rb); // M59a2
         rb->velocity.x += imp.x / mass;
         rb->velocity.y += imp.y / mass;
         rb->velocity.z += imp.z / mass;

@@ -874,3 +874,5 @@ MYE_STR(Insp_PmRollingResistance, "Rolling Resistance", "転がり抵抗")
 MYE_STR(Insp_PmDragCoefficient, "Drag Coefficient (Cd)", "抗力係数 (Cd)")
 MYE_STR(Insp_PhysMatNote,     "Applied when assigned to a collider.",
                               "コライダーに割り当てると適用されます。")
+MYE_STR(Insp_PmOvFriction,    "Override Friction",   "摩擦を上書き")
+MYE_STR(Insp_PmOvRestitution, "Override Restitution", "反発を上書き")

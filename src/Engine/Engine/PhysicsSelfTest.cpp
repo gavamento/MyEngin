@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <cstring>
+#include <vector>
 
 #include "Engine/Core/Components.h"
 #include "Engine/Core/Log.h"
@@ -9,6 +10,7 @@
 #include "Engine/Engine/CollisionSystem.h"
 #include "Engine/Engine/GameObject.h"
 #include "Engine/Engine/Physics/MeshColliderLibrary.h"
+#include "Engine/Engine/Physics/PhysMatLibrary.h" // M59a2: 材料解決の検証
 #include "Engine/Engine/Physics/PhysicsSystem.h"
 #include "Engine/Engine/Physics/Shapes.h"
 #include "Engine/Engine/Replay/WorldHasher.h"
@@ -1225,6 +1227,283 @@ bool RunPhysicsSelfTest()
         check(rc == 1 && std::fabs(hit.distance - 2.0f) < 0.01f && hit.normal.y > 0.99f,
               "mesh: RaycastWorld hits mesh collider (dist/normal)");
         meshcol::Install(nullptr);
+    }
+
+    // ---- (M59a2) 物理マテリアル: 解決純関数 / 密度→質量 / 等価並走 / 静的床の反発 ----
+    {
+        PhysMatLibrary* prevLib = physmat::Library(); // selftest 中は通常 nullptr だが復元する
+        PhysMatLibrary lib;
+
+        // -- 純関数: 優先順位 (bit → 既存フィールド / 材料 → .physmat / 未割当 → 既存) --
+        {
+            PhysMat m;
+            m.dynamicFriction = 0.9f;
+            m.restitution = 0.8f;
+            ColliderComponent col; // friction 既定 0.5
+            RigidbodyComponent rb; // restitution 既定 0
+            check(SelectFriction(col, &m) == 0.9f, "physmat: friction comes from the material");
+            check(SelectFriction(col, nullptr) == 0.5f,
+                  "physmat: no material falls back to the collider field");
+            col.materialOverrideBits = kPhysMatOverrideFriction;
+            check(SelectFriction(col, &m) == 0.5f,
+                  "physmat: override bit beats the material (friction)");
+            check(SelectRestitution(&col, &rb, &m) == 0.8f,
+                  "physmat: restitution comes from the material");
+            check(SelectRestitution(&col, nullptr, &m) == 0.8f,
+                  "physmat: a static collider can claim restitution (new in M59a2)");
+            check(SelectRestitution(&col, nullptr, nullptr) == 0.0f,
+                  "physmat: static without material stays 0 (legacy)");
+            col.materialOverrideBits |= kPhysMatOverrideRestitution;
+            check(SelectRestitution(&col, &rb, &m) == 0.0f,
+                  "physmat: override bit beats the material (restitution)");
+        }
+
+        // -- 体積と質量導出 (解析値。スケール規約は ApplyScaledExtents と同一) --
+        {
+            constexpr float kPiT = 3.14159265f;
+            ColliderComponent sphere;
+            sphere.shape = 0;
+            sphere.radius = 0.5f;
+            const float vsExpect = (4.0f / 3.0f) * kPiT * 0.125f;
+            const float vs = ShapeVolumeWorld(sphere, 1, 1, 1);
+            check(std::fabs(vs - vsExpect) < vsExpect * 1e-5f,
+                  "physmat: sphere volume = 4/3 pi r^3");
+            const float vs2 = ShapeVolumeWorld(sphere, 2.0f, 1, 1); // 球は最大成分 → r=1
+            check(std::fabs(vs2 - (4.0f / 3.0f) * kPiT) < 1e-4f,
+                  "physmat: sphere volume uses the max scale component");
+            ColliderComponent box;
+            box.shape = 1;
+            box.halfExtents = { 1.0f, 0.5f, 0.25f };
+            check(ShapeVolumeWorld(box, 1, 2.0f, 1) == 2.0f,
+                  "physmat: box volume scales per component");
+            ColliderComponent cap;
+            cap.shape = 2;
+            cap.radius = 0.5f;
+            cap.height = 3.0f; // halfSeg = 1.5 - 0.5 = 1.0
+            const float vcExpect = kPiT * 0.25f * 2.0f + (4.0f / 3.0f) * kPiT * 0.125f;
+            check(std::fabs(ShapeVolumeWorld(cap, 1, 1, 1) - vcExpect) < vcExpect * 1e-5f,
+                  "physmat: capsule volume = cylinder + end spheres");
+
+            PhysMat steel;
+            steel.density = 7850.0f;
+            RigidbodyComponent rb;
+            rb.mass = 2.0f;
+            rb.useDensity = true;
+            check(std::fabs(ResolveBodyMass(rb, &sphere, &steel, 1, 1, 1) - 7850.0f * vsExpect)
+                      < 1.0f,
+                  "physmat: mass = density x shape volume");
+            rb.useDensity = false;
+            check(ResolveBodyMass(rb, &sphere, &steel, 1, 1, 1) == 2.0f,
+                  "physmat: useDensity off keeps the mass field");
+            rb.useDensity = true;
+            check(ResolveBodyMass(rb, &sphere, nullptr, 1, 1, 1) == 2.0f,
+                  "physmat: no material keeps the mass field");
+            check(ResolveBodyMass(rb, nullptr, &steel, 1, 1, 1) == 2.0f,
+                  "physmat: no collider keeps the mass field");
+            ColliderComponent degen;
+            degen.shape = 0;
+            degen.radius = 0.0f; // 体積 0 → 1/m をゼロ除算にしない
+            check(ResolveBodyMass(rb, &degen, &steel, 1, 1, 1) == 2.0f,
+                  "physmat: zero volume keeps the mass field (no div0)");
+        }
+
+        // -- 以降はワールド経由 (physmat::Resolve が要る) --
+        physmat::Install(&lib);
+
+        // EffectiveMassWorld: ABI (AddForce/AddImpulse/AddTorque) と同じ入口でスケールが効く
+        {
+            PhysMat steel;
+            steel.density = 7850.0f;
+            const uint64_t hs = lib.Register(L"x\\t_steel.physmat.json", steel);
+            Scene s;
+            GameObject go = MakeSphereBody(s, "M", 0, 0, 0, 0.5f);
+            go.GetComponent<LocalTransform>()->scale = { 2.0f, 2.0f, 2.0f }; // r=1 に拡大
+            auto* rb = go.GetComponent<RigidbodyComponent>();
+            rb->useDensity = true;
+            go.GetComponent<ColliderComponent>()->physMaterial = { hs };
+            s.GetWorld().ApplyStructuralChanges();
+            const float expect = 7850.0f * (4.0f / 3.0f) * 3.14159265f;
+            const float m = EffectiveMassWorld(s.GetWorld(), go.Id(), *rb);
+            check(std::fabs(m - expect) < expect * 1e-4f,
+                  "physmat: EffectiveMassWorld applies the world scale");
+        }
+
+        // 剛体軌跡 (pos/rot/vel/angVel) を index 昇順でビット列に吸い出す (以降の並走比較用。
+        // ワールドハッシュは physMaterial フィールド自体が載って必ず異なるため使えない)
+        auto dumpBodies = [](World& w, std::vector<uint8_t>& out) {
+            out.clear();
+            const ComponentTypeId req[] = { RigidbodyComponent::sTypeId, LocalTransform::sTypeId };
+            w.ForEachArchetype(req, [&](Archetype& arch) {
+                const int li = arch.FindTypeIndex(LocalTransform::sTypeId);
+                const int ri = arch.FindTypeIndex(RigidbodyComponent::sTypeId);
+                for (uint32_t row = 0; row < arch.Count(); ++row) {
+                    const auto* lt = static_cast<const LocalTransform*>(arch.GetPtr(li, row));
+                    const auto* rb = static_cast<const RigidbodyComponent*>(arch.GetPtr(ri, row));
+                    auto push = [&](const void* p, size_t n) {
+                        const auto* b = static_cast<const uint8_t*>(p);
+                        out.insert(out.end(), b, b + n);
+                    };
+                    push(&lt->position, sizeof(lt->position));
+                    push(&lt->rotation, sizeof(lt->rotation));
+                    push(&rb->velocity, sizeof(rb->velocity));
+                    push(&rb->angularVelocity, sizeof(rb->angularVelocity));
+                }
+            });
+        };
+
+        // -- 等価並走: 既定同値材料シーン ⇔ 未割当シーンの軌跡ビット一致 (値経路の等価性) --
+        {
+            PhysMat md; // 動的側の既定同値 (μd=col 既定 0.5 / e=rb に与える 0.2)
+            md.dynamicFriction = 0.5f;
+            md.restitution = 0.2f;
+            PhysMat mg; // 静的側の既定同値 (e=0 が従来の構造的既定)
+            mg.dynamicFriction = 0.5f;
+            mg.restitution = 0.0f;
+            const uint64_t hd = lib.Register(L"x\\t_eq_dyn.physmat.json", md);
+            const uint64_t hg = lib.Register(L"x\\t_eq_gnd.physmat.json", mg);
+            auto build = [&](Scene& s, bool withMats) {
+                GameObject g = MakeGround(s, "G", 0, -0.5f, 0, 5.0f, 0.5f, 5.0f);
+                GameObject b0 = MakeBox(s, "B0", -1.0f, 2.0f, 0, 0.5f, 0.5f, 0.5f, 0.2f);
+                GameObject b1 = MakeBox(s, "B1", 0.9f, 3.5f, 0.1f, 0.5f, 0.5f, 0.5f, 0.2f);
+                GameObject sp = MakeSphereBody(s, "S", 0.1f, 5.0f, 0.05f, 0.5f);
+                sp.GetComponent<RigidbodyComponent>()->restitution = 0.2f;
+                if (withMats) {
+                    g.GetComponent<ColliderComponent>()->physMaterial = { hg };
+                    b0.GetComponent<ColliderComponent>()->physMaterial = { hd };
+                    b1.GetComponent<ColliderComponent>()->physMaterial = { hd };
+                    sp.GetComponent<ColliderComponent>()->physMaterial = { hd };
+                }
+                s.GetWorld().ApplyStructuralChanges();
+            };
+            Scene sa, sb;
+            build(sa, true);
+            build(sb, false);
+            bool same = true;
+            std::vector<uint8_t> da, db;
+            for (int i = 0; i < 240 && same; ++i) {
+                phys.Update(sa.GetWorld(), kDt);
+                phys.Update(sb.GetWorld(), kDt);
+                dumpBodies(sa.GetWorld(), da);
+                dumpBodies(sb.GetWorld(), db);
+                if (da.empty() || da != db) {
+                    same = false;
+                    MYE_LOG_ERROR("  physmat equivalence diverged at tick %d", i);
+                }
+            }
+            check(same,
+                  "physmat: default-equivalent materials replicate the unassigned trajectory "
+                  "bit-exactly (240 ticks)");
+        }
+
+        // -- overrideBits: 過激な材料 (μ=0 / e=0.9) を両ビットで殺すと未割当と軌跡ビット一致 --
+        {
+            PhysMat wild;
+            wild.dynamicFriction = 0.0f;
+            wild.restitution = 0.9f;
+            const uint64_t hw = lib.Register(L"x\\t_wild.physmat.json", wild);
+            auto build = [&](Scene& s, bool withMat) {
+                MakeGround(s, "G", 0, -0.5f, 0, 8.0f, 0.5f, 8.0f);
+                GameObject b = MakeBox(s, "B", -3.0f, 0.6f, 0, 0.5f, 0.5f, 0.5f, 0.0f);
+                b.GetComponent<RigidbodyComponent>()->velocity = { 4.0f, 0.0f, 0.0f }; // 摩擦滑走
+                if (withMat) {
+                    auto* c = b.GetComponent<ColliderComponent>();
+                    c->physMaterial = { hw };
+                    c->materialOverrideBits =
+                        kPhysMatOverrideFriction | kPhysMatOverrideRestitution;
+                }
+                s.GetWorld().ApplyStructuralChanges();
+            };
+            Scene sa, sb;
+            build(sa, true);
+            build(sb, false);
+            bool same = true;
+            std::vector<uint8_t> da, db;
+            for (int i = 0; i < 180 && same; ++i) {
+                phys.Update(sa.GetWorld(), kDt);
+                phys.Update(sb.GetWorld(), kDt);
+                dumpBodies(sa.GetWorld(), da);
+                dumpBodies(sb.GetWorld(), db);
+                if (da.empty() || da != db) {
+                    same = false;
+                    MYE_LOG_ERROR("  physmat override diverged at tick %d", i);
+                }
+            }
+            check(same, "physmat: override bits restore the legacy field path bit-exactly");
+        }
+
+        // -- 密度→質量がソルバに効く: 鋼球 (m~4110) と 1kg 球の正面弾性衝突 --
+        // 解析値 (e=1): 重い側 v1' ~= 2.0 のまま / 軽い側 v2' ~= +6.0 (2m1v1+(m2-m1)v2)/(m1+m2)
+        {
+            PhysMat steel;
+            steel.density = 7850.0f;
+            steel.dynamicFriction = 0.5f;
+            steel.restitution = 1.0f;
+            const uint64_t hs = lib.Register(L"x\\t_steel_e1.physmat.json", steel);
+            Scene s;
+            GameObject a = MakeSphereBody(s, "A", -2.0f, 0, 0, 0.5f);
+            GameObject b = MakeSphereBody(s, "B", 2.0f, 0, 0, 0.5f);
+            auto* ra = a.GetComponent<RigidbodyComponent>();
+            auto* rbb = b.GetComponent<RigidbodyComponent>();
+            ra->gravityScale = 0.0f;
+            rbb->gravityScale = 0.0f;
+            ra->velocity = { 2.0f, 0.0f, 0.0f };
+            rbb->velocity = { -2.0f, 0.0f, 0.0f };
+            ra->useDensity = true;
+            rbb->restitution = 1.0f; // e = min(材料 1.0, 1.0)
+            a.GetComponent<ColliderComponent>()->physMaterial = { hs };
+            s.GetWorld().ApplyStructuralChanges();
+            for (int i = 0; i < 120; ++i) {
+                phys.Update(s.GetWorld(), kDt);
+            }
+            MYE_LOG_INFO("  [phys] dense-vs-light: heavy vx=%.3f light vx=%.3f (expect ~2 / ~6)",
+                         ra->velocity.x, rbb->velocity.x);
+            check(rbb->velocity.x > 5.0f,
+                  "physmat: light ball rebounds fast off the dense (useDensity) ball");
+            check(std::fabs(ra->velocity.x - 2.0f) < 0.1f,
+                  "physmat: dense ball keeps its velocity (m1 >> m2)");
+        }
+
+        // -- 材料付き静的床は弾む (新規能力): e=0.8 の床で h*e^2 付近まで戻る --
+        {
+            PhysMat bouncy;
+            bouncy.dynamicFriction = 0.5f;
+            bouncy.restitution = 0.8f;
+            const uint64_t hb = lib.Register(L"x\\t_bouncy.physmat.json", bouncy);
+            auto run = [&](bool withMat, float& outApex) {
+                Scene s;
+                GameObject g = MakeGround(s, "G", 0, -0.5f, 0, 5.0f, 0.5f, 5.0f);
+                GameObject ball = MakeSphereBody(s, "Ball", 0, 2.5f, 0, 0.5f); // h = 2.0
+                ball.GetComponent<RigidbodyComponent>()->restitution = 0.8f;
+                if (withMat) {
+                    g.GetComponent<ColliderComponent>()->physMaterial = { hb };
+                }
+                s.GetWorld().ApplyStructuralChanges();
+                auto* lt = ball.GetComponent<LocalTransform>();
+                auto* rb = ball.GetComponent<RigidbodyComponent>();
+                bool contacted = false;
+                outApex = 0.0f;
+                for (int i = 0; i < 240; ++i) {
+                    phys.Update(s.GetWorld(), kDt);
+                    if (!contacted && rb->velocity.y > 0.0f) {
+                        contacted = true; // 反発で上向きに転じた
+                    }
+                    if (contacted && lt->position.y > outApex) {
+                        outApex = lt->position.y;
+                    }
+                }
+            };
+            float apexMat = 0.0f, apexBare = 0.0f;
+            run(true, apexMat);
+            run(false, apexBare);
+            MYE_LOG_INFO("  [phys] static-floor bounce: material=%.3f bare=%.3f (expect ~%.3f)",
+                         apexMat - 0.5f, apexBare - 0.5f, 2.0f * 0.8f * 0.8f);
+            check(apexMat - 0.5f > 0.9f && apexMat - 0.5f < 1.5f,
+                  "physmat: e=0.8 static floor bounces back to ~h*e^2 (new in M59a2)");
+            check(apexBare - 0.5f < 0.2f,
+                  "physmat: bare static floor stays inelastic (legacy e=0)");
+        }
+
+        physmat::Install(prevLib);
     }
 
     if (failCount == 0) {

@@ -142,6 +142,13 @@ struct ParticleEmitterComponent {
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
+// M59a2: Collider.materialOverrideBits のビット割当。材料 (.physmat.json) を割り当てたまま
+// 特定プロパティだけ既存フィールドの値へ戻すための opt-out。将来の材料プロパティ
+// (M59f2 静止摩擦/転がり抵抗、M59b Cd) は下へ append する — 値はシーン JSON に焼かれるので
+// 既存ビットの再割当は不可
+constexpr uint32_t kPhysMatOverrideFriction = 1u << 0;    // 摩擦は Collider.friction を使う
+constexpr uint32_t kPhysMatOverrideRestitution = 1u << 1; // 反発は Rigidbody.restitution (静的は 0)
+
 // 衝突形状 (M7 トリガー / M20 ソリッド / M28a 形状拡張)。判定は Physics/Shapes.cpp に統合。
 // box はエンティティ回転を考慮する OBB (M28a)。無回転なら M20 の AABB 判定とビット同一。
 // 球はスケールの最大成分で拡大、capsule はローカル Y 軸・radius は max(sx,sz) スケール。
@@ -160,6 +167,12 @@ struct ColliderComponent {
     int32_t layer = 0;          // 所属レイヤー 0..31 (名前は project_settings.json、sim は index のみ)
     uint32_t mask = 0xFFFFFFFFu; // 衝突相手レイヤーのビット集合。判定は双方向 (CanCollide)
     AssetID meshAsset = {};     // M41 予約: 静的メッシュコライダー (空 = 従来形状。M36 では未使用)
+    // ---- M59a2 追加: 物理マテリアル (末尾 append = シーン/リプレイ互換維持) ----
+    // 摩擦/反発の解決順は「overrideBits のビット → 既存フィールド / 材料割当あり → .physmat 値 /
+    // 未割当 → 既存フィールド」(PhysicsSystem.h の SelectFriction/SelectRestitution が正本)。
+    // 未割当なら従来と同じメモリを同じ経路で読む = 既存シーンはビット同一
+    AssetID physMaterial = {};         // .physmat.json (PhysMatLibrary のキー。空 = 未割当)
+    uint32_t materialOverrideBits = 0; // kPhysMatOverride* の集合 (立てたビットは材料より既存フィールドが勝つ)
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
@@ -239,6 +252,12 @@ struct RigidbodyComponent {
     DirectX::XMFLOAT3 angularVelocity = { 0.0f, 0.0f, 0.0f }; // rad/s (ワールド)。sim 状態 = hash 対象
     float angularDamping = 0.05f;  // 毎 tick の角速度減衰率 (スタック静止安定の柱の 1 つ)
     int32_t freezeRotation = 0;    // 1 = 回転積分・角応答をしない (M28a 以前の並進のみ挙動)
+    // ---- M59a2 追加: 密度→質量導出 (opt-in、末尾 append = シーン互換維持) ----
+    // true かつ コライダーに材料割当済みなら 質量 = 材料密度 × ワールドスケール済み形状体積
+    // (PhysicsSystem.h の ResolveBodyMass が正本。ソルバと ABI の AddForce/AddImpulse/AddTorque
+    // が同じ関数を通る = 質量は常に一義)。材料なし / コライダーなし / mesh 形状は mass へ
+    // フォールバック (= 従来値)。ON 中も mass フィールドは保存され OFF で復帰する
+    bool useDensity = false;
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 

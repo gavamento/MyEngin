@@ -9,6 +9,7 @@
 #include "Engine/Core/Components.h"
 #include "Engine/Core/World.h"
 #include "Engine/Engine/Physics/Broadphase.h"
+#include "Engine/Engine/Physics/PhysMatLibrary.h" // M59a2: physmat::Resolve (材料解決)
 #include "Engine/Engine/Physics/Shapes.h"
 
 using namespace DirectX;
@@ -388,21 +389,23 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             b.wx = rb->angularVelocity.x;
             b.wy = rb->angularVelocity.y;
             b.wz = rb->angularVelocity.z;
-            const float mass = (rb->mass > 0.0f) ? rb->mass : 1.0f;
-            b.invMass = rb->isKinematic ? 0.0f : (1.0f / mass);
-            b.restitution = rb->restitution;
-            b.freezeRot = (rb->freezeRotation != 0) || rb->isKinematic;
             // コライダーがあり isTrigger==0 ならソリッド (衝突解決に参加)。
             // M41: メッシュ (shape=3) は静的/kinematic 専用 — 動的剛体では無視する
             // (慣性テンソルを定義しないため。kinematic は invMass=0 なので許可)
+            // M59a2: 質量導出が形状体積を要るためコライダー取得を質量計算の前へ移動
             auto* col = world.GetComponent<ColliderComponent>(e);
             if (col && col->shape == 3 && !rb->isKinematic) {
                 col = nullptr;
             }
+            const PhysMat* mat = col ? physmat::Resolve(col->physMaterial) : nullptr; // M59a2
+            const float mass = ResolveBodyMass(*rb, col, mat, wscale.x, wscale.y, wscale.z);
+            b.invMass = rb->isKinematic ? 0.0f : (1.0f / mass);
+            b.restitution = SelectRestitution(col, rb, mat);
+            b.freezeRot = (rb->freezeRotation != 0) || rb->isKinematic;
             if (col && !col->isTrigger) {
                 b.solid = true;
                 b.col = col;
-                b.friction = col->friction;
+                b.friction = SelectFriction(*col, mat);
                 b.layer = col->layer; // M36a
                 b.mask = col->mask;
             }
@@ -432,7 +435,11 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             b.entity = e;
             b.solid = true;
             b.invMass = 0.0f; // 静的 = 不動
-            b.friction = col->friction;
+            const PhysMat* mat = physmat::Resolve(col->physMaterial); // M59a2
+            b.friction = SelectFriction(*col, mat);
+            // M59a2: 材料付き静的コライダーは e を主張できる (従来は構造的に 0 = 新規能力。
+            // 未割当は mat=nullptr → SelectRestitution が従来どおり 0 を返す)
+            b.restitution = SelectRestitution(col, nullptr, mat);
             b.layer = col->layer; // M36a
             b.mask = col->mask;
             // M28d: 親付き静的コライダーもワールド姿勢で判定 (従来は lt 直読みのバグ)
@@ -946,6 +953,78 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
     SolveCharacters(bodies, chars, dt);
 }
 
+// ==== 物理マテリアル解決 (M59a2) ====
+// 宣言側 (PhysicsSystem.h) のコメントが契約の正本。ここは実装の注意のみ:
+// Select* は fp 演算ゼロの値選択に保つこと — 未割当シーンのビット同一はそれだけで自明に立つ
+
+float SelectFriction(const ColliderComponent& col, const PhysMat* mat)
+{
+    if ((col.materialOverrideBits & kPhysMatOverrideFriction) != 0u) {
+        return col.friction;
+    }
+    return mat ? mat->dynamicFriction : col.friction;
+}
+
+float SelectRestitution(const ColliderComponent* col, const RigidbodyComponent* rb,
+                        const PhysMat* mat)
+{
+    // 既存フィールドの格納庫は Rigidbody 側 (静的コライダーは持たない = 従来どおり 0)
+    const float legacy = rb ? rb->restitution : 0.0f;
+    if (col && (col->materialOverrideBits & kPhysMatOverrideRestitution) != 0u) {
+        return legacy;
+    }
+    return mat ? mat->restitution : legacy;
+}
+
+float ShapeVolumeWorld(const ColliderComponent& col, float sx, float sy, float sz)
+{
+    // MakePose 経由と同じく負スケールは絶対値 (shapes::ApplyScaledExtents 参照)
+    sx = std::fabs(sx);
+    sy = std::fabs(sy);
+    sz = std::fabs(sz);
+    switch (col.shape) {
+    case 0: { // 球 = 最大成分スケール
+        const float r = col.radius * std::max(sx, std::max(sy, sz));
+        return (4.0f / 3.0f) * XM_PI * r * r * r;
+    }
+    case 1: // box = 成分別スケール
+        return 8.0f * (col.halfExtents.x * sx) * (col.halfExtents.y * sy)
+             * (col.halfExtents.z * sz);
+    case 2: { // capsule = 円柱 + 両端半球 (halfSeg 規約は ApplyScaledExtents と同一)
+        const float wr = col.radius * std::max(sx, sz);
+        const float wh = col.height * 0.5f * sy;
+        const float halfSeg = (wh > wr) ? (wh - wr) : 0.0f;
+        return XM_PI * wr * wr * (2.0f * halfSeg) + (4.0f / 3.0f) * XM_PI * wr * wr * wr;
+    }
+    default: // mesh (shape=3) は体積を定義しない → 呼び出し側が mass へフォールバック
+        return 0.0f;
+    }
+}
+
+float ResolveBodyMass(const RigidbodyComponent& rb, const ColliderComponent* col,
+                      const PhysMat* mat, float sx, float sy, float sz)
+{
+    const float base = (rb.mass > 0.0f) ? rb.mass : 1.0f; // 従来の既定 (M20)
+    if (!rb.useDensity || !mat || !col || col->shape == 3) {
+        return base; // 未割当シーンは常にここ = 従来と同一式
+    }
+    const float m = mat->density * ShapeVolumeWorld(*col, sx, sy, sz);
+    return (m > 0.0f) ? m : base; // 体積 0 (半径 0 等) をゼロ除算にしない
+}
+
+float EffectiveMassWorld(World& world, EntityID e, const RigidbodyComponent& rb)
+{
+    const auto* col = world.GetComponent<ColliderComponent>(e);
+    const PhysMat* mat = col ? physmat::Resolve(col->physMaterial) : nullptr;
+    float sx = 1.0f, sy = 1.0f, sz = 1.0f;
+    if (const auto* lt = world.GetComponent<LocalTransform>(e)) {
+        sx = lt->scale.x;
+        sy = lt->scale.y;
+        sz = lt->scale.z;
+    }
+    return ResolveBodyMass(rb, col, mat, sx, sy, sz);
+}
+
 int ApplyTorqueWorld(World& world, EntityID e, MyeVec3 torque, float dt)
 {
     auto* rb = world.GetComponent<RigidbodyComponent>(e);
@@ -954,7 +1033,8 @@ int ApplyTorqueWorld(World& world, EntityID e, MyeVec3 torque, float dt)
         return 0;
     }
     const auto* col = world.GetComponent<ColliderComponent>(e);
-    const float mass = (rb->mass > 0.0f) ? rb->mass : 1.0f;
+    // M59a2: 密度導出質量をソルバ収集と同じ関数で解決 (質量を二義にしない)
+    const float mass = EffectiveMassWorld(world, e, *rb);
     ShapePose pose;
     if (col) {
         pose = shapes::MakePose(*col, lt->position, lt->rotation, lt->scale);
