@@ -730,6 +730,65 @@ struct ReflectionProbeComponent {
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
+// ---- 物理環境 (M59b、TypeId 36) ----
+// 重力ベクトル / 空気 / 風 / 水面 を **シーン全体で 1 つ**持つ設定。消費は Skybox / Fog と
+// 同じ「**entity.index 最小の active な 1 個**」規約 (RenderSystem::CollectEnvironment 前例)。
+//
+// ★**存在ゲート**が契約 (M59 決定台帳 1): このコンポーネントが無いシーンは
+//   PhysicsSystem の従来式 `vy += kGravity * gravityScale * dt` を 1 文字も変えずに通る
+//   分岐へ落ちる。「gravity を (0,-9.81,0) にしておけば置いても挙動不変」は**約束しない** —
+//   -0.0f + 0.0f = +0.0f でビットが動くので、値ゲート (係数 0 で中立) は成立しない。
+//   **置いた = 新しい数式に opt-in した**と読むこと。
+//
+// velocity (hash 対象) を駆動する sim 入力なので **hash 対象**。
+// opt-in (TypeId 末尾 append) なので既存シーンは 1 バイトも変わらない = ReplayFile bump 不要。
+//
+// ★CharacterController は M59 では**この env に従わない** (kGravity 直参照のまま) —
+//   接地判定が Y 軸前提で組まれており、任意重力ベクトルは CC の意味論ごと壊すため。
+//   engine_spec 10.4 に制限として明記してある。
+struct PhysicsEnvironmentComponent {
+    // 重力加速度 (m/s^2、ワールド)。既定は従来の定数と同じ -9.81 (ただし上記のとおり
+    // 「置くだけでビット不変」は約束しない)
+    DirectX::XMFLOAT3 gravity = { 0.0f, -9.81f, 0.0f };
+    float airDensity = 1.225f; // kg/m^3 (海面 15 degC)。Aero の抗力・マグヌスが使う
+    // 一様定常風 (m/s、ワールド)。抗力は **相対速度 v - wind** に効く。
+    // 乱流 (tick とセル座標から PCG32 で導出) は M59 のスコープ外 (予約事項 5)
+    DirectX::XMFLOAT3 windVelocity = { 0.0f, 0.0f, 0.0f };
+    float waterPlaneY = 0.0f;     // 水面の高さ (M59b2 の Buoyancy が使う。それまで未消費)
+    float waterDensity = 1000.0f; // kg/m^3 (M59b2)
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
+// ---- 等方空力 (M59b、TypeId 37) ----
+// 「向きを持たない代表面積」1 つで効かせる抗力・角抗力・マグヌス。**無ければ何もしない**
+// (opt-in)。面ごとの正しい積分 (揚力・失速・風見安定) は M59c/M59d の面サンプリングが担当し、
+// こちらは終端速度とカーブボールを安く出すための等方近似。
+//
+// 基準面積は **Cauchy の平均投影面積 (= 凸形状の表面積 / 4)**。球で pi*r^2 に一致する
+// = 「向きに依らない代表面積」の物理的に正しい唯一の選び方 (PhysicsSystem.h の
+// MeanProjectedAreaWorld が正本)。
+//
+// 抗力は**閉形式 implicit** (`v <- v / (1 + (k|v|/m) dt)`、除算のみ) なので係数をいくら
+// 大きくしても発散しない。マグヌスだけは方向を変える陽的な項なので、SpringJoint の前例に
+// ならって 1 tick の Delta-v に決定論的な上限クランプを掛けてある。
+//
+// velocity / angularVelocity (hash 対象) を駆動するので **hash 対象**。
+// opt-in (TypeId 末尾 append) なので既存シーンは 1 バイトも変わらない。
+// bool の OFF は**項の計算ごとスキップ**する (係数 0 を掛けるのではない = fp 演算が走らない)。
+struct AeroComponent {
+    bool enableDrag = true;        // 等方二次抗力 F = 0.5 rho Cd A |v_rel| v_rel
+    bool enableAngularDrag = true; // 角二次抗力 (無いとマグヌスで回った球が永遠に回り続ける)
+    bool enableMagnus = false;     // マグヌス力 F = S (omega x v_rel)。既定 OFF (球技用)
+    // Cd の上書き。**<= 0 で「材料の dragCoefficient を使う」**(材料も無ければ球の 0.47)。
+    // Cd は本来こちら (形状) 側が正 — 材料値はあくまで既定値
+    float dragCoefficient = 0.0f;
+    float areaScale = 1.0f; // 基準面積の倍率 (パラシュートを開く等の演出用)
+    // 角抗力係数。トルク = 0.5 rho Cda A r^3 |omega| omega (r = 面積から作る等価半径)
+    float angularDragCoefficient = 0.1f;
+    float magnusCoefficient = 1.0f; // S = magnusCoefficient * 0.5 rho A r の倍率
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
 class World;
 
 // エンティティが有効か (ActiveComponent が無ければ有効 / enabled==0 なら無効)

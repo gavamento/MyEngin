@@ -524,6 +524,39 @@ void RegisterBuiltinComponents()
         MYE_JP("遠クリップ",
                MYE_FIELD_RANGE(ReflectionProbeComponent, farZ, Float, 1.0f, 5000.0f)),
     }, kComponentNoHash);
+
+    // M59b: 物理環境。**hash 対象** — 重力ベクトル / 風 / 空気密度は velocity を決定論的に
+    // 駆動する sim 入力そのもの。opt-in (TypeId 末尾 append =36) なので既存シーンのハッシュは
+    // 1 バイトも変わらない = ReplayFile bump 不要。
+    // 消費は「entity.index 最小の active な 1 個」(Skybox/Fog 規約) — 2 個以上置いても
+    // 決定論は保たれるが 2 個目以降は黙って無視される
+    RegisterComponent<PhysicsEnvironmentComponent>("PhysicsEnvironment", {
+        MYE_JP("重力", MYE_FIELD_TIP(PhysicsEnvironmentComponent, gravity, Float3,
+                                     "world-space gravity vector (m/s^2)")),
+        MYE_JP("空気密度",
+               MYE_FIELD_RANGE(PhysicsEnvironmentComponent, airDensity, Float, 0.0f, 100.0f)),
+        MYE_JP("風", MYE_FIELD_TIP(PhysicsEnvironmentComponent, windVelocity, Float3,
+                                   "uniform steady wind (m/s). Drag acts on v - wind")),
+        MYE_JP("水面の高さ", MYE_FIELD(PhysicsEnvironmentComponent, waterPlaneY, Float)),
+        MYE_JP("水の密度",
+               MYE_FIELD_RANGE(PhysicsEnvironmentComponent, waterDensity, Float, 0.0f, 20000.0f)),
+    });
+
+    // M59b: 等方空力。**hash 対象** — velocity / angularVelocity を駆動する。
+    // opt-in (TypeId 末尾 append =37)。**装着 = 新数式への opt-in** (係数 0 でのビット中立は
+    // 約束しない = M59 決定台帳 1 の存在ゲート)
+    RegisterComponent<AeroComponent>("Aero", {
+        MYE_JP("抗力", MYE_FIELD(AeroComponent, enableDrag, Bool)),
+        MYE_JP("角抗力", MYE_FIELD(AeroComponent, enableAngularDrag, Bool)),
+        MYE_JP("マグヌス", MYE_FIELD(AeroComponent, enableMagnus, Bool)),
+        MYE_JP("抗力係数 Cd", MYE_FIELD_TIP(AeroComponent, dragCoefficient, Float,
+                                            "<= 0 uses the physics material's Cd (0.47 if none)")),
+        MYE_JP("面積倍率", MYE_FIELD_RANGE(AeroComponent, areaScale, Float, 0.0f, 100.0f)),
+        MYE_JP("角抗力係数",
+               MYE_FIELD_RANGE(AeroComponent, angularDragCoefficient, Float, 0.0f, 100.0f)),
+        MYE_JP("マグヌス係数",
+               MYE_FIELD_RANGE(AeroComponent, magnusCoefficient, Float, 0.0f, 100.0f)),
+    });
 }
 
 } // namespace mye

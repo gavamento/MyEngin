@@ -10,6 +10,7 @@ class World;
 struct ColliderComponent;
 struct RigidbodyComponent;
 struct PhysMat;
+struct PhysicsEnvironmentComponent;
 
 // ソリッド接触ペア (M28c)。PhysicsSystem が tick 毎に最終ソルバ反復で検出したペアを
 // key 昇順で出力し、CollisionSystem が前 tick 差分から OnCollisionEnter/Stay/Exit を配信する。
@@ -69,6 +70,27 @@ float ResolveBodyMass(const RigidbodyComponent& rb, const ColliderComponent* col
 // (ApplyTorqueWorld の慣性導出と同じ規約。スケール付きの親を持つ剛体ではソルバの
 // 親合成スケールと厳密には一致しない — 既存の慣性導出と同じ割り切り)
 float EffectiveMassWorld(World& world, EntityID e, const RigidbodyComponent& rb);
+
+// ---- 物理環境と等方空力 (M59b)。全て純関数 ----
+
+// env 不在時の既定値。**「env を置く」= 新しい数式への opt-in** なので、これらは
+// 「env が無いが Aero だけ付いている」ボディのための値であって、
+// 「env を既定値で置けば挙動不変」を意味しない (M59 決定台帳 1 の存在ゲート)
+inline constexpr float kDefaultAirDensity = 1.225f;      // kg/m^3 (海面 15 degC)
+inline constexpr float kDefaultDragCoefficient = 0.47f;  // 球の Cd (PhysMat の既定と同値)
+
+// シーンの物理環境 = **entity.index 最小の active な 1 個** (Skybox/Fog と同じ規約。
+// RenderSystem::CollectEnvironment が前例)。無ければ nullptr = 従来の定数重力へ落ちる。
+// 戻り値はアーキタイプ記憶域を指す — 構造変更を挟むと無効になるので tick 内で使い切ること
+const PhysicsEnvironmentComponent* ResolvePhysicsEnvironment(World& world);
+
+// 等方空力の基準面積 [m^2] = **Cauchy の平均投影面積 (凸形状の表面積 / 4)**。
+// 「向きに依らない代表面積」の物理的に正しい唯一の選び方で、球で pi*r^2、
+// 1 辺 a の立方体で 1.5*a^2 という既知の値に一致する。向きを見る正しい面積分は
+// M59c/M59d の面サンプリングカーネルが担当する。
+// スケール規約は ShapeVolumeWorld と同一。col == nullptr / mesh (shape=3) は
+// 慣性導出 (LocalInertiaDiag) と同じ「半径 0.5 の球」既定へ落ちる
+float MeanProjectedAreaWorld(const ColliderComponent* col, float sx, float sy, float sz);
 
 // ワールドトルクを 1 tick 分適用 (M28b、ABI AddTorque の実装本体)。
 // ω += I⁻¹·τ·dt を即時適用 (蓄積フィールドなし = ステートレス)。

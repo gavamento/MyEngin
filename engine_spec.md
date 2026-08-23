@@ -831,6 +831,24 @@ world-hashed (same class as mesh collider data: replay assumes the same assets a
 | Static restitution | **New capability in M59a2**: a static collider used to be structurally `e = 0` (no Rigidbody to store the field, so `e = min` killed every bounce off static geometry). A material assigned to a static collider now supplies its `e`. Unassigned static colliders keep `e = 0` |
 | Mass from density | `Rigidbody.useDensity` (opt-in): mass = material `density` × world-scaled collider volume (sphere/box/capsule; scaling rules identical to `shapes::ApplyScaledExtents`). Falls back to the `mass` field when there is no material, no collider, a mesh collider (shape 3), or a degenerate volume. The ABI entry points (`AddForce` / `AddImpulse` / `AddTorque`) resolve mass through the same function, so mass is never two different values |
 
+### 10.4 Physics environment and isotropic aerodynamics (M59b)
+
+Two opt-in components extend the rigid-body solver with a scene-wide environment and per-body air
+forces. Both are world-hashed (they drive `velocity` / `angularVelocity`) and both are appended at
+the end of the component registration order, so existing scenes are untouched.
+
+| Concept | Decision |
+|---|---|
+| `PhysicsEnvironment` (TypeId 36) | `gravity` (vector) / `airDensity` / `windVelocity` / `waterPlaneY` / `waterDensity`. Consumed as the **active component with the lowest `entity.index`**, the same rule as Skybox and Fog. The water fields are parsed and stored but not consumed until M59b2 |
+| `Aero` (TypeId 37) | `enableDrag` / `enableAngularDrag` / `enableMagnus` plus `dragCoefficient` (≤ 0 = fall back to the physics material's Cd, else 0.47) / `areaScale` / `angularDragCoefficient` / `magnusCoefficient` |
+| **Presence gate, not value gate** | A scene without `PhysicsEnvironment` runs the legacy `vy += kGravity * gravityScale * dt` statement unchanged; a body without `Aero` costs one component lookup and zero fp operations. Setting `gravity = (0, -9.81, 0)` is **not** promised to be bit-neutral — `-0.0f + 0.0f` is `+0.0f`, so an unconditional vector add can move the world hash of a body whose `vx` happens to be negative zero. **Attaching the component is opting in to the new formula.** Boolean fields inside `Aero` are a second, finer gate: an off flag skips the term rather than multiplying by zero (an all-off `Aero` is bit-neutral, and the self test asserts it) |
+| Reference area | **Cauchy's mean projected area (convex surface area / 4)** — the only orientation-independent representative area with a physical basis. It reproduces `πr²` for a sphere and `1.5a²` for a cube of side `a`. `MeanProjectedAreaWorld` in `PhysicsSystem.h` is the single source; a missing or mesh collider falls back to the same "radius 0.5 sphere" default the inertia derivation uses. Orientation-aware integration (lift, stall, weathercock stability) is M59c/M59d |
+| Drag | `F = ½ρ·Cd·A·|v_rel|·v_rel` solved in **closed-form implicit** shape `v ← v / (1 + (k|v|/m)·dt)`. Division only, so no coefficient can flip the sign or diverge. `v_rel` is measured against `windVelocity`, and the wind is added back after the update. Terminal speed converges to `sqrt(mg/k)`; the discrete fixed point `v(v + g·dt) = g/k` sits slightly below it (measured 6.5057 vs 6.5870 for a 1 kg, r = 0.5 sphere) |
+| Angular drag | The same implicit form applied to `ω`, with the isotropic reading of the inverse inertia tensor (mean of the `invI` diagonal) as the scalar inertia. `freezeRotation` and kinematic bodies have a zero inverse tensor, so the term disables itself. Without this an object spun up by Magnus never slows down; `angularDamping` remains for compatibility but is a non-physical fixed rate and should be set to 0 on bodies that use `Aero` |
+| Magnus | `F = S·(ω × v_rel)`, `S = magnusCoefficient · ½ρ·A·r`. This is the only explicit, direction-changing term, so it carries the same deterministic per-tick Δv clamp `SpringJoint` uses (100 m/s) as a divergence guard. Because the force stays perpendicular to velocity, explicit integration adds a small amount of energy per tick; in practice drag and angular drag absorb it |
+| Wind | Uniform and steady in M59. Turbulence is reserved as "a dedicated PCG32 stream evaluated as a pure function of tick and cell coordinates" (rule 8) and is out of scope for M59 |
+| `CharacterController` | **Does not follow the environment in M59.** It reads the `kGravity` constant directly and its ground test assumes the Y axis; an arbitrary gravity vector would break the controller's semantics rather than generalize it |
+
 ---
 
 ## 11. Debug/Release Consistency Policy

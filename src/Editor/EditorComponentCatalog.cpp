@@ -43,6 +43,11 @@ const std::unordered_map<std::string, ComponentUiInfo>& Table()
         { "ConstantForce", { ICON_FA_BOLT, "Physics", "定常力" } },
         { "SpringJoint", { ICON_FA_LINK, "Physics", "スプリングジョイント" } },
         { "CharacterController", { ICON_FA_PERSON_RUNNING, "Physics", "キャラクターコントローラー" } },
+        // M59b: シーン全体の物理環境 (重力ベクトル / 空気 / 風 / 水面)。Skybox/Fog と同じ
+        // 「1 個だけ効く」設定物だが、消費者が物理なので棚は Physics に置く
+        { "PhysicsEnvironment", { ICON_FA_GLOBE, "Physics", "物理環境" } },
+        // M59b: 等方空力 (抗力 / 角抗力 / マグヌス)
+        { "Aero", { ICON_FA_WIND, "Physics", "空力" } },
         // Animation
         { "Animator", { ICON_FA_FILM, "Animation", "アニメーター" } },
         { "AnimatorController", { ICON_FA_CIRCLE_NODES, "Animation", "アニメーターコントローラー" } },

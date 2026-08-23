@@ -1506,6 +1506,302 @@ bool RunPhysicsSelfTest()
         physmat::Install(prevLib);
     }
 
+    // ================= M59b: 物理環境 + 等方空力 =================
+    // 既存シーンのビット不変は「新コンポーネントは登録順末尾 append = 既存エンティティに
+    // 付いていない」で自明に立つ (上の各 `hash @240` ログが変更前後で一致することが
+    // 機械的証明)。ここで確かめるのは新経路そのものの正しさ。
+    {
+        constexpr float kPi = DirectX::XM_PI;
+
+        // -- 基準面積 (Cauchy の平均投影面積) の解析値 --
+        {
+            ColliderComponent sph;
+            sph.shape = 0;
+            sph.radius = 0.5f;
+            const float aSph = MeanProjectedAreaWorld(&sph, 1.0f, 1.0f, 1.0f);
+            check(std::fabs(aSph - kPi * 0.25f) < 1e-6f, "aero area: sphere == pi*r^2");
+            // 球は最大成分スケール (ShapeVolumeWorld と同一規約)
+            const float aSph2 = MeanProjectedAreaWorld(&sph, 1.0f, 2.0f, 1.0f);
+            check(std::fabs(aSph2 - kPi) < 1e-5f, "aero area: sphere scales by max component");
+
+            ColliderComponent box;
+            box.shape = 1;
+            box.halfExtents = { 0.5f, 0.5f, 0.5f }; // 1 辺 1 の立方体
+            const float aBox = MeanProjectedAreaWorld(&box, 1.0f, 1.0f, 1.0f);
+            check(std::fabs(aBox - 1.5f) < 1e-6f, "aero area: unit cube == 1.5 (known result)");
+
+            ColliderComponent cap;
+            cap.shape = 2;
+            cap.radius = 0.5f;
+            cap.height = 2.0f; // halfSeg = 0.5
+            const float aCap = MeanProjectedAreaWorld(&cap, 1.0f, 1.0f, 1.0f);
+            check(std::fabs(aCap - (kPi * 0.25f + kPi * 0.25f)) < 1e-6f,
+                  "aero area: capsule == pi*r*halfSeg + pi*r^2");
+
+            // コライダー無し / 動的 mesh は慣性導出と同じ「半径 0.5 の球」既定へ落ちる
+            check(std::fabs(MeanProjectedAreaWorld(nullptr, 1.0f, 1.0f, 1.0f) - kPi * 0.25f)
+                      < 1e-6f,
+                  "aero area: no collider falls back to the r=0.5 sphere default");
+            ColliderComponent mesh;
+            mesh.shape = 3;
+            check(std::fabs(MeanProjectedAreaWorld(&mesh, 3.0f, 3.0f, 3.0f) - kPi * 0.25f) < 1e-6f,
+                  "aero area: mesh shape falls back to the same default");
+        }
+
+        // -- env: 重力がベクトルになる (横重力で落ちずに横へ加速する) --
+        {
+            Scene s;
+            GameObject envGo = s.CreateGameObjectTracked("Env");
+            auto* env = envGo.AddComponent<PhysicsEnvironmentComponent>();
+            env->gravity = { 3.0f, 0.0f, 0.0f };
+            GameObject ball = MakeSphereBody(s, "Ball", 0, 0, 0, 0.5f);
+            s.GetWorld().ApplyStructuralChanges();
+            for (int i = 0; i < 60; ++i) {
+                phys.Update(s.GetWorld(), kDt);
+            }
+            auto* rb = ball.GetComponent<RigidbodyComponent>();
+            check(rb && std::fabs(rb->velocity.x - 3.0f) < 0.05f,
+                  "env: gravity vector accelerates +X (vx ~= 3 after 1s)");
+            // gravity.y は +0.0f なので vy += 0.0f * gs * dt = 0 のまま (厳密一致)
+            check(rb && rb->velocity.y == 0.0f, "env: zero-Y gravity leaves vy exactly 0");
+        }
+
+        // -- env の消費規約: entity.index 最小の active な 1 個 (Skybox/Fog と同じ) --
+        {
+            auto run = [&](bool disableFirst, float& outVx) {
+                Scene s;
+                GameObject e0 = s.CreateGameObjectTracked("Env0");
+                e0.AddComponent<PhysicsEnvironmentComponent>()->gravity = { 3.0f, 0.0f, 0.0f };
+                GameObject e1 = s.CreateGameObjectTracked("Env1");
+                e1.AddComponent<PhysicsEnvironmentComponent>()->gravity = { -7.0f, 0.0f, 0.0f };
+                if (disableFirst) {
+                    e0.AddComponent<ActiveComponent>()->enabled = 0;
+                }
+                GameObject ball = MakeSphereBody(s, "Ball", 0, 0, 0, 0.5f);
+                s.GetWorld().ApplyStructuralChanges();
+                for (int i = 0; i < 60; ++i) {
+                    phys.Update(s.GetWorld(), kDt);
+                }
+                outVx = ball.GetComponent<RigidbodyComponent>()->velocity.x;
+            };
+            float vxFirst = 0.0f, vxSecond = 0.0f;
+            run(false, vxFirst);
+            run(true, vxSecond);
+            check(std::fabs(vxFirst - 3.0f) < 0.05f, "env: lowest entity.index wins");
+            check(std::fabs(vxSecond + 7.0f) < 0.05f,
+                  "env: an inactive environment is skipped (next index wins)");
+        }
+
+        // -- 終端速度が閉形式 v_t = sqrt(mg/k) に一致する (env 無し = 既定の空気で成立) --
+        {
+            Scene s;
+            GameObject ball = MakeSphereBody(s, "Faller", 0, 0, 0, 0.5f);
+            ball.AddComponent<AeroComponent>(); // 既定 = 抗力 ON / マグヌス OFF
+            s.GetWorld().ApplyStructuralChanges();
+            auto* rb = ball.GetComponent<RigidbodyComponent>();
+            bool monotone = true;
+            float prev = 0.0f;
+            for (int i = 0; i < 900; ++i) { // 15 秒 (時定数 v_t/g ~ 0.67s に対して十分)
+                phys.Update(s.GetWorld(), kDt);
+                if (rb->velocity.y > prev) {
+                    monotone = false; // 下向きに単調 = 抗力が符号を反転させていない
+                }
+                prev = rb->velocity.y;
+            }
+            const float area = kPi * 0.25f;
+            const float k = 0.5f * kDefaultAirDensity * kDefaultDragCoefficient * area;
+            const float vt = std::sqrt(9.81f / k); // m = 1
+            const float measured = -rb->velocity.y;
+            MYE_LOG_INFO("  [phys] aero terminal speed: %.4f (closed form %.4f)", measured, vt);
+            check(monotone, "aero: implicit drag never overshoots (speed is monotone)");
+            // 離散化 (重力を足してから抗力を掛ける) のぶん閉形式をわずかに下回る:
+            // 固定点は v(v + g*dt) = g/k なので dt->0 で閉形式に一致する
+            check(measured < vt && measured > vt * 0.95f,
+                  "aero: terminal speed matches sqrt(mg/k) within the discretization gap");
+        }
+
+        // -- 風: 静止した物体が風速へ漸近する (超えない = implicit の無条件安定) --
+        {
+            Scene s;
+            GameObject envGo = s.CreateGameObjectTracked("Env");
+            auto* env = envGo.AddComponent<PhysicsEnvironmentComponent>();
+            env->gravity = { 0.0f, 0.0f, 0.0f };
+            env->windVelocity = { 5.0f, 0.0f, 0.0f };
+            GameObject ball = MakeSphereBody(s, "Leaf", 0, 0, 0, 0.5f);
+            auto* aero = ball.AddComponent<AeroComponent>();
+            aero->areaScale = 20.0f; // 収束を早める (葉っぱのような大面積小質量)
+            s.GetWorld().ApplyStructuralChanges();
+            auto* rb = ball.GetComponent<RigidbodyComponent>();
+            bool neverExceeds = true;
+            for (int i = 0; i < 600; ++i) {
+                phys.Update(s.GetWorld(), kDt);
+                if (rb->velocity.x >= 5.0f) {
+                    neverExceeds = false;
+                }
+            }
+            check(neverExceeds, "aero/wind: velocity never overshoots the wind speed");
+            check(rb->velocity.x > 4.95f, "aero/wind: body converges to the wind velocity");
+            check(rb->velocity.y == 0.0f && rb->velocity.z == 0.0f,
+                  "aero/wind: no drift on the axes the wind does not touch");
+        }
+
+        // -- マグヌス: 符号 (+X へ進み +Y 軸で回る球は -Z へ曲がる) と大きさ --
+        {
+            Scene s;
+            GameObject envGo = s.CreateGameObjectTracked("Env");
+            envGo.AddComponent<PhysicsEnvironmentComponent>()->gravity = { 0.0f, 0.0f, 0.0f };
+            GameObject ball = MakeSphereBody(s, "Curve", 0, 0, 0, 0.5f);
+            auto* aero = ball.AddComponent<AeroComponent>();
+            aero->enableDrag = false;
+            aero->enableAngularDrag = false;
+            aero->enableMagnus = true;
+            s.GetWorld().ApplyStructuralChanges();
+            // ★ポインタは**構造変更を確定した後**に取る — AddComponent はアーキタイプを
+            //   移すので、それ以前に取った参照は tick の結果が反映されない古い記憶域を指す
+            auto* rb = ball.GetComponent<RigidbodyComponent>();
+            rb->velocity = { 10.0f, 0.0f, 0.0f };
+            rb->angularVelocity = { 0.0f, 20.0f, 0.0f };
+            rb->angularDamping = 0.0f; // 非物理の定率減衰を切って空力だけを見る
+            phys.Update(s.GetWorld(), kDt);
+            // S = magnus * 0.5 * rho * A * r、F = S (omega x v) = S * (0, 0, -omega*vx)
+            const float area = kPi * 0.25f;
+            const float sMag = 0.5f * kDefaultAirDensity * area * 0.5f;
+            const float expectDvz = -sMag * 20.0f * 10.0f * kDt;
+            MYE_LOG_INFO("  [phys] magnus 1 tick dvz = %.5f (expect %.5f)", rb->velocity.z,
+                         expectDvz);
+            check(rb->velocity.z < 0.0f, "magnus: +X motion with +Y spin curves toward -Z");
+            check(std::fabs(rb->velocity.z - expectDvz) < 1e-4f,
+                  "magnus: magnitude matches S*(omega x v)/m*dt");
+            check(rb->velocity.y == 0.0f, "magnus: no force along the spin axis");
+            // マグヌス単独では力が常に速度と直交する = 速度ベクトルが等速で回り続ける
+            // (角速度 S*omega/m ~ 4.8 rad/s)。長く回すと 1 周してしまうので、
+            // 4 分の 1 周に満たない範囲で「軌跡が -Z 側へ曲がっている」ことを見る
+            auto* lt = ball.GetComponent<LocalTransform>();
+            for (int i = 0; i < 10; ++i) {
+                phys.Update(s.GetWorld(), kDt);
+            }
+            check(lt->position.z < -0.1f, "magnus: the trajectory bends toward -Z");
+            // マグヌスは仕事をしない。陽的積分ぶん速さがわずかに増えるだけ
+            // (回転の陽的積分の既知の性質。実運用では抗力・角抗力が打ち消す)
+            const float sp = std::sqrt(rb->velocity.x * rb->velocity.x
+                                       + rb->velocity.z * rb->velocity.z);
+            check(sp > 10.0f && sp < 10.5f,
+                  "magnus: does no work (speed is preserved up to the explicit-integration drift)");
+        }
+
+        // -- 角抗力: 回転が単調減衰し、係数を極端にしても符号が反転しない --
+        {
+            Scene s;
+            GameObject ball = MakeSphereBody(s, "Spinner", 0, 0, 0, 0.5f);
+            auto* aero = ball.AddComponent<AeroComponent>();
+            aero->enableDrag = false;
+            aero->angularDragCoefficient = 1000.0f; // 陽的なら即発散する領域
+            s.GetWorld().ApplyStructuralChanges();
+            auto* rb = ball.GetComponent<RigidbodyComponent>(); // 構造変更の後に取る
+            rb->gravityScale = 0.0f;
+            rb->angularVelocity = { 0.0f, 50.0f, 0.0f };
+            rb->angularDamping = 0.0f;
+            bool monotone = true, positive = true;
+            float prev = 50.0f;
+            for (int i = 0; i < 600; ++i) {
+                phys.Update(s.GetWorld(), kDt);
+                const float w = rb->angularVelocity.y;
+                if (w > prev) {
+                    monotone = false;
+                }
+                if (w <= 0.0f) {
+                    positive = false;
+                }
+                prev = w;
+            }
+            check(positive, "angular drag: implicit form never flips the spin sign (Cda=1000)");
+            check(monotone, "angular drag: spin decays monotonically");
+            check(rb->angularVelocity.y < 1.0f, "angular drag: 50 rad/s is nearly killed in 10s");
+        }
+
+        // -- 混在シーン: Aero 非所持ボディの軌跡は 1 ビットも変わらない --
+        {
+            auto dumpOne = [](GameObject go, std::vector<uint8_t>& out) {
+                out.clear();
+                const auto* lt = go.GetComponent<LocalTransform>();
+                const auto* rb = go.GetComponent<RigidbodyComponent>();
+                auto push = [&](const void* p, size_t n) {
+                    const auto* b = static_cast<const uint8_t*>(p);
+                    out.insert(out.end(), b, b + n);
+                };
+                push(&lt->position, sizeof(lt->position));
+                push(&lt->rotation, sizeof(lt->rotation));
+                push(&rb->velocity, sizeof(rb->velocity));
+                push(&rb->angularVelocity, sizeof(rb->angularVelocity));
+            };
+            Scene sa, sb;
+            MakeGround(sa, "G", 0, -0.5f, 0, 5.0f, 0.5f, 5.0f);
+            GameObject plainA = MakeBox(sa, "Plain", 0, 3.0f, 0, 0.5f, 0.5f, 0.5f, 0.3f);
+            sa.GetWorld().ApplyStructuralChanges();
+            MakeGround(sb, "G", 0, -0.5f, 0, 5.0f, 0.5f, 5.0f);
+            GameObject plainB = MakeBox(sb, "Plain", 0, 3.0f, 0, 0.5f, 0.5f, 0.5f, 0.3f);
+            // 接触しない遠方に空力ボディを足す (混在させても非所持側は従来経路のまま)
+            GameObject winged = MakeSphereBody(sb, "Winged", 50.0f, 3.0f, 0, 0.5f);
+            winged.AddComponent<AeroComponent>()->enableMagnus = true;
+            sb.GetWorld().ApplyStructuralChanges();
+            // ★水平初速を与える — 自由落下だと omega が v と平行になり omega x v が恒等 0 に
+            //   なって「空力が効いた」証明にならない (マグヌスは軸に平行な運動を曲げない)
+            auto* wrb = winged.GetComponent<RigidbodyComponent>();
+            wrb->velocity = { 0.0f, 0.0f, 8.0f };
+            wrb->angularVelocity = { 0.0f, 30.0f, 0.0f };
+            bool same = true;
+            std::vector<uint8_t> da, db;
+            for (int i = 0; i < 240 && same; ++i) {
+                phys.Update(sa.GetWorld(), kDt);
+                phys.Update(sb.GetWorld(), kDt);
+                dumpOne(plainA, da);
+                dumpOne(plainB, db);
+                if (da.empty() || da != db) {
+                    same = false;
+                    MYE_LOG_ERROR("  aero mix diverged at tick %d", i);
+                }
+            }
+            check(same,
+                  "aero: a body without AeroComponent keeps its legacy trajectory bit-exactly "
+                  "even next to aero bodies (240 ticks)");
+            // 空力側は実際に動いている (試験が空振りでない証明)
+            check(std::fabs(wrb->velocity.x) > 0.01f,
+                  "aero: the aero body itself did curve (the mix test is not vacuous)");
+        }
+
+        // -- 全項目 OFF の Aero は付けても何も足さない (bool OFF = 項ごとスキップ) --
+        {
+            auto run = [&](bool withAero, std::vector<uint8_t>& out) {
+                Scene s;
+                MakeGround(s, "G", 0, -0.5f, 0, 5.0f, 0.5f, 5.0f);
+                GameObject b = MakeSphereBody(s, "B", 0.1f, 3.0f, 0.05f, 0.5f);
+                b.GetComponent<RigidbodyComponent>()->velocity = { 1.0f, 0.0f, 0.5f };
+                if (withAero) {
+                    auto* a = b.AddComponent<AeroComponent>();
+                    a->enableDrag = false;
+                    a->enableAngularDrag = false;
+                    a->enableMagnus = false;
+                }
+                s.GetWorld().ApplyStructuralChanges();
+                for (int i = 0; i < 240; ++i) {
+                    phys.Update(s.GetWorld(), kDt);
+                }
+                out.clear();
+                const auto* lt = b.GetComponent<LocalTransform>();
+                const auto* rb = b.GetComponent<RigidbodyComponent>();
+                const auto* p = reinterpret_cast<const uint8_t*>(&lt->position);
+                out.insert(out.end(), p, p + sizeof(lt->position));
+                const auto* v = reinterpret_cast<const uint8_t*>(&rb->velocity);
+                out.insert(out.end(), v, v + sizeof(rb->velocity));
+            };
+            std::vector<uint8_t> withA, withoutA;
+            run(true, withA);
+            run(false, withoutA);
+            check(!withA.empty() && withA == withoutA,
+                  "aero: an all-off AeroComponent is bit-neutral (terms are skipped, not zeroed)");
+        }
+    }
+
     if (failCount == 0) {
         MYE_LOG_INFO("==== Physics self test: ALL PASS ====");
         return true;

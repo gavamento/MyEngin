@@ -28,6 +28,10 @@ constexpr float kRestitutionVelThreshold = 0.3f;
 // ブロードフェーズ AABB の膨張量 (M28d)。ソルバ内の位置補正移動を保守的にカバーする。
 // 仮に候補から漏れても「次 tick で解決」に留まり、候補列は決定論なのでハッシュ一致性は不変
 constexpr float kBroadphaseMargin = 0.1f;
+// マグヌス (方向を変える陽的な項) の 1 tick あたり Delta-v 上限 (M59b)。SpringJoint の
+// 100 m/s 前例と同じ「発散防止の決定論的クランプ」— 物理的に届くことはまず無く、
+// 係数を極端にしたオーサリングミスでシーンが吹き飛ぶのを止めるための防波堤
+constexpr float kAeroMaxDeltaV = 100.0f;
 
 // ---- scalar クォータニオン演算 (親子合成用。XMVECTOR 禁止 = 決定論契約) ----
 
@@ -120,6 +124,9 @@ struct Body {
     LocalTransform* lt = nullptr;   // 位置/回転書き込み先
     RigidbodyComponent* rb = nullptr; // null = 静的コライダー (動かない衝突面)
     const ColliderComponent* col = nullptr; // ソリッド形状 (null = コライダー無し動的ボディ)
+    // M59b: 質量/面積の導出に使う形状。**トリガーも含む** (形状とソリッド性は独立 —
+    // M59a2 の質量導出と同じ規約) が、動的剛体の mesh (shape=3) は除外済み
+    const ColliderComponent* shapeCol = nullptr;
     bool solid = false;            // 衝突解決に参加するか (isTrigger==0)
     bool freezeRot = true;         // 回転積分・角応答をしない (静的 / kinematic / freezeRotation)
     ShapePose pose;                // 形状 + 作業用ワールド位置 (pose.px/py/pz をソルバが更新)
@@ -398,6 +405,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                 col = nullptr;
             }
             const PhysMat* mat = col ? physmat::Resolve(col->physMaterial) : nullptr; // M59a2
+            b.shapeCol = col; // M59b: 空力の基準面積も同じ「形状」の読みを共有する
             const float mass = ResolveBodyMass(*rb, col, mat, wscale.x, wscale.y, wscale.z);
             b.invMass = rb->isKinematic ? 0.0f : (1.0f / mass);
             b.restitution = SelectRestitution(col, rb, mat);
@@ -504,6 +512,9 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
     std::sort(bodies.begin(), bodies.end(),
               [](const Body& a, const Body& b) { return a.entity.index < b.entity.index; });
 
+    // ---- 物理環境の解決 (M59b)。不在 (= 既存シーンの全部) なら以降は全て従来経路 ----
+    const PhysicsEnvironmentComponent* env = ResolvePhysicsEnvironment(world);
+
     // ---- 速度積分 (動的・非 kinematic のみ)。位置はまだ動かさない ----
     // M28b で「速度積分 → ソルバ → 位置積分」の順に変更 (Box2D 流)。摩擦や法線インパルスで
     // 静止した速度がそのまま位置積分に使われるため、静止接触の毎 tick クリープが出ない
@@ -511,7 +522,18 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
         if (b.invMass == 0.0f || !b.rb) {
             continue;
         }
-        b.vy += kGravity * b.rb->gravityScale * dt;
+        // M59b: env は**存在ゲート**。不在なら従来式を 1 文字も変えずに通す。
+        // gravity=(0,-9.81,0) でも無条件のベクトル加算にすると vx += -0.0f * s * dt が走り、
+        // vx が -0.0f のときに +0.0f へ化けてワールドハッシュが動く
+        // (= 「係数 0 なら中立」という値ゲートが float では成立しない理由。決定台帳 1)
+        if (env) {
+            const float gs = b.rb->gravityScale;
+            b.vx += env->gravity.x * gs * dt;
+            b.vy += env->gravity.y * gs * dt;
+            b.vz += env->gravity.z * gs * dt;
+        } else {
+            b.vy += kGravity * b.rb->gravityScale * dt;
+        }
         float damp = 1.0f - b.rb->linearDamping;
         if (damp < 0.0f) { damp = 0.0f; }
         b.vx *= damp; b.vy *= damp; b.vz *= damp;
@@ -567,6 +589,101 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
         b.wx += ax;
         b.wy += ay;
         b.wz += az;
+    }
+
+    // ---- 空力 (M59b): 等方抗力 / マグヌス / 角抗力。ConstantForce の直後 = 「その tick の
+    //      力を足し終えた速度」に効かせる。**AeroComponent 非所持ボディはルックアップのみで
+    //      fp 演算ゼロ** = 既存シーンとビット同一 (ConstantForce 帯と同じ opt-in の作り) ----
+    for (Body& b : bodies) {
+        if (!b.rb || b.invMass == 0.0f) {
+            continue;
+        }
+        const auto* aero = world.GetComponent<AeroComponent>(b.entity);
+        if (!aero) {
+            continue;
+        }
+        // 基準面積 = Cauchy の平均投影面積 x 演出用倍率。0 以下 (半径 0 / 面積倍率 0) は
+        // 空力が定義できないので項ごと落とす (入力だけに依存する決定論的分岐)
+        const float area = MeanProjectedAreaWorld(b.shapeCol, b.scale.x, b.scale.y, b.scale.z)
+                         * aero->areaScale;
+        if (area <= 0.0f) {
+            continue;
+        }
+        const float rho = env ? env->airDensity : kDefaultAirDensity;
+        // Cd: Aero の上書き (>0) → 材料の既定 → 球の 0.47。Cd は形状特性なので
+        // Aero 側が正で、材料値はあくまで既定 (PhysMatLibrary.h の換算表コメント参照)
+        float cd = aero->dragCoefficient;
+        if (cd <= 0.0f) {
+            const PhysMat* mat = b.shapeCol ? physmat::Resolve(b.shapeCol->physMaterial) : nullptr;
+            cd = mat ? mat->dragCoefficient : kDefaultDragCoefficient;
+        }
+        // 面積から作る等価半径 (球なら実半径に一致)。マグヌスと角抗力の「腕の長さ」
+        const float rEq = std::sqrt(area / XM_PI);
+        // ---- 並進: 風に対する相対速度に効かせ、最後に風を足し戻す ----
+        // ★両方 OFF のときは相対速度への往復自体を走らせない — v - w + w は float では
+        //   元の v に戻るとは限らず、「全部 OFF の Aero を付けただけで挙動が動く」を避ける
+        if (aero->enableDrag || aero->enableMagnus) {
+            const float wndX = env ? env->windVelocity.x : 0.0f;
+            const float wndY = env ? env->windVelocity.y : 0.0f;
+            const float wndZ = env ? env->windVelocity.z : 0.0f;
+            float rvx = b.vx - wndX, rvy = b.vy - wndY, rvz = b.vz - wndZ;
+            if (aero->enableDrag) {
+                // F = k |v| v (k = 0.5 rho Cd A) を**閉形式 implicit** で解く:
+                //   v' = v / (1 + (k |v| / m) dt)。除算のみなので k をいくら大きくしても
+                //   符号が反転せず無条件安定 (陽的 v -= k|v|v/m dt は簡単に発散する)。
+                // 終端速度は mg = k v_t^2 → v_t = sqrt(mg/k) に収束する (selftest が断言)
+                const float speed = std::sqrt(rvx * rvx + rvy * rvy + rvz * rvz);
+                if (speed > 0.0f) {
+                    const float k = 0.5f * rho * cd * area;
+                    const float scale = 1.0f / (1.0f + (k * speed * b.invMass) * dt);
+                    rvx *= scale;
+                    rvy *= scale;
+                    rvz *= scale;
+                }
+            }
+            if (aero->enableMagnus) {
+                // F = S (omega x v_rel)、S = magnus * 0.5 rho A r。符号の確認:
+                // +X へ進み +Y 軸まわりに回る球は omega x v = -Z を向く — +Z 側の表面が
+                // 流れに逆らって動き圧力が上がる側なので、力は -Z で物理的に正しい
+                // (PhysicsSelfTest がこの配置そのままで符号を断言する)
+                float mx, my, mz;
+                Cross(b.wx, b.wy, b.wz, rvx, rvy, rvz, mx, my, mz);
+                const float sMag = aero->magnusCoefficient * 0.5f * rho * area * rEq;
+                float dvx = mx * sMag * b.invMass * dt;
+                float dvy = my * sMag * b.invMass * dt;
+                float dvz = mz * sMag * b.invMass * dt;
+                const float d2 = dvx * dvx + dvy * dvy + dvz * dvz;
+                if (d2 > kAeroMaxDeltaV * kAeroMaxDeltaV) {
+                    const float clamp = kAeroMaxDeltaV / std::sqrt(d2);
+                    dvx *= clamp;
+                    dvy *= clamp;
+                    dvz *= clamp;
+                }
+                rvx += dvx;
+                rvy += dvy;
+                rvz += dvz;
+            }
+            b.vx = rvx + wndX;
+            b.vy = rvy + wndY;
+            b.vz = rvz + wndZ;
+        }
+        // ---- 角速度の二次抗力 (同じ閉形式 implicit) ----
+        // これが無いとマグヌスで回り始めた球が永遠に回り続ける (angularDamping は
+        // 非物理の定率なので、空力を使うシーンでは 0 にしてこちらへ寄せるのが推奨)。
+        // 慣性は invI の対角平均 = 逆テンソルの等方読み。freezeRot / kinematic は
+        // 零行列なので invIbar が 0 になり自然に無効化される
+        if (aero->enableAngularDrag) {
+            const float invIbar = (b.invI[0][0] + b.invI[1][1] + b.invI[2][2]) / 3.0f;
+            const float wlen = std::sqrt(b.wx * b.wx + b.wy * b.wy + b.wz * b.wz);
+            if (invIbar > 0.0f && wlen > 0.0f) {
+                const float kw = 0.5f * rho * aero->angularDragCoefficient * area * rEq * rEq
+                               * rEq;
+                const float scale = 1.0f / (1.0f + (kw * wlen * invIbar) * dt);
+                b.wx *= scale;
+                b.wy *= scale;
+                b.wz *= scale;
+            }
+        }
     }
 
     // ---- SpringJoint (M29a): 距離バネ (速度レベル・ステートレス)。owner index 昇順。
@@ -974,6 +1091,58 @@ float SelectRestitution(const ColliderComponent* col, const RigidbodyComponent* 
         return legacy;
     }
     return mat ? mat->restitution : legacy;
+}
+
+const PhysicsEnvironmentComponent* ResolvePhysicsEnvironment(World& world)
+{
+    // Skybox / Fog と同じ「entity.index 最小の active な 1 個」。アーキタイプの走査順に
+    // 依存させないため、早期 return せず全件見てから最小 index を採る
+    const PhysicsEnvironmentComponent* best = nullptr;
+    uint32_t bestIndex = 0xFFFFFFFFu;
+    const ComponentTypeId req[] = { PhysicsEnvironmentComponent::sTypeId };
+    world.ForEachArchetype(req, [&](Archetype& arch) {
+        const int ei = arch.FindTypeIndex(PhysicsEnvironmentComponent::sTypeId);
+        for (uint32_t row = 0; row < arch.Count(); ++row) {
+            const EntityID e = arch.EntityAt(row);
+            if (e.index >= bestIndex || !IsEntityActive(world, e)) {
+                continue;
+            }
+            bestIndex = e.index;
+            best = static_cast<const PhysicsEnvironmentComponent*>(arch.GetPtr(ei, row));
+        }
+    });
+    return best;
+}
+
+float MeanProjectedAreaWorld(const ColliderComponent* col, float sx, float sy, float sz)
+{
+    // 負スケールは絶対値 (ShapeVolumeWorld / shapes::ApplyScaledExtents と同一規約)
+    sx = std::fabs(sx);
+    sy = std::fabs(sy);
+    sz = std::fabs(sz);
+    // コライダー無し / 動的 mesh は慣性導出 (LocalInertiaDiag) と同じ「半径 0.5 の球」既定。
+    // ここを 0 にすると「空力が黙って効かない」になるので、既定の代表形状へ落とす
+    if (!col || col->shape == 3) {
+        return XM_PI * 0.25f;
+    }
+    switch (col->shape) {
+    case 0: { // 球 = 最大成分スケール。表面積 4 pi r^2 の 1/4 = pi r^2
+        const float r = col->radius * std::max(sx, std::max(sy, sz));
+        return XM_PI * r * r;
+    }
+    case 1: { // box = 成分別スケール。表面積 8(hx hy + hy hz + hz hx) の 1/4
+        const float hx = col->halfExtents.x * sx;
+        const float hy = col->halfExtents.y * sy;
+        const float hz = col->halfExtents.z * sz;
+        return 2.0f * (hx * hy + hy * hz + hz * hx);
+    }
+    default: { // capsule = 側面 2 pi r (2 halfSeg) + 両端の球面 4 pi r^2、の 1/4
+        const float wr = col->radius * std::max(sx, sz);
+        const float wh = col->height * 0.5f * sy;
+        const float halfSeg = (wh > wr) ? (wh - wr) : 0.0f;
+        return XM_PI * wr * halfSeg + XM_PI * wr * wr;
+    }
+    }
 }
 
 float ShapeVolumeWorld(const ColliderComponent& col, float sx, float sy, float sz)
