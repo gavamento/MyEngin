@@ -28,7 +28,7 @@ struct SolidContact {
 // (isTrigger==0) が衝突面。RigidbodyComponent 非存在シーンでは完全 no-op = 既存リプレイ不変。
 // 形状判定 (sphere / OBB / capsule) は Physics/Shapes.cpp に統合 (M28a)。
 // 慣性テンソルは形状+質量から毎 tick 導出 (コンポーネントに持たない = ステートレス維持)。
-// freezeRotation=1 で回転積分・角応答を無効化 (M28a 以前の並進のみ挙動)。スリープ機構は無し。
+// freezeRotation で回転積分・角応答を無効化 (M28a 以前の並進のみ挙動)。スリープ機構は無し。
 // 親子階層対応 (M28d): 親チェーンを LocalTransform から scalar 合成してワールド姿勢で sim し、
 // 親フレームの逆変換でローカルに書き戻す。親は運動学的フレーム扱い (同 tick の親の積分結果は
 // 子に伝播しない)。velocity / angularVelocity は常にワールド系。ジョイント/複合コライダーは対象外。

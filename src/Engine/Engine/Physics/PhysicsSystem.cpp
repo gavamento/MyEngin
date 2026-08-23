@@ -401,7 +401,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             const float mass = ResolveBodyMass(*rb, col, mat, wscale.x, wscale.y, wscale.z);
             b.invMass = rb->isKinematic ? 0.0f : (1.0f / mass);
             b.restitution = SelectRestitution(col, rb, mat);
-            b.freezeRot = (rb->freezeRotation != 0) || rb->isKinematic;
+            b.freezeRot = rb->freezeRotation || rb->isKinematic;
             if (col && !col->isTrigger) {
                 b.solid = true;
                 b.col = col;

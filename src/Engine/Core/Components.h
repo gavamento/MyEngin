@@ -251,7 +251,10 @@ struct RigidbodyComponent {
     // ---- M28b 追加 (末尾 append = シーン互換維持)。回転剛体 ----
     DirectX::XMFLOAT3 angularVelocity = { 0.0f, 0.0f, 0.0f }; // rad/s (ワールド)。sim 状態 = hash 対象
     float angularDamping = 0.05f;  // 毎 tick の角速度減衰率 (スタック静止安定の柱の 1 つ)
-    int32_t freezeRotation = 0;    // 1 = 回転積分・角応答をしない (M28a 以前の並進のみ挙動)
+    // true = 回転積分・角応答をしない (M28a 以前の並進のみ挙動)。M59a2 後続で int32→bool 化
+    // (M28b 当時は FieldType::Bool が無かっただけで機能上の理由は無い。旧シーンの 0/1 数値は
+    // isTrigger と同じ FieldFromJson のシムが受理。1B 化でハッシュのバイト列は変わるが挙動不変)
+    bool freezeRotation = false;
     // ---- M59a2 追加: 密度→質量導出 (opt-in、末尾 append = シーン互換維持) ----
     // true かつ コライダーに材料割当済みなら 質量 = 材料密度 × ワールドスケール済み形状体積
     // (PhysicsSystem.h の ResolveBodyMass が正本。ソルバと ABI の AddForce/AddImpulse/AddTorque

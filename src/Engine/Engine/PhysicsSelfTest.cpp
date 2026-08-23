@@ -306,7 +306,7 @@ bool RunPhysicsSelfTest()
         MakeGround(s, "G11", 0, -0.5f, 0, 5.0f, 0.5f, 5.0f);
         GameObject box = MakeBox(s, "TiltBox", 0, 3.0f, 0, 0.5f, 0.5f, 0.5f);
         box.GetComponent<LocalTransform>()->rotation = { 0, 0, 0.3826834f, 0.9238795f };
-        box.GetComponent<RigidbodyComponent>()->freezeRotation = 1; // M28b: 回転を固定して幾何検証
+        box.GetComponent<RigidbodyComponent>()->freezeRotation = true; // M28b: 回転を固定して幾何検証
         s.GetWorld().ApplyStructuralChanges();
         for (int i = 0; i < 180; ++i) {
             phys.Update(s.GetWorld(), kDt);
@@ -391,7 +391,7 @@ bool RunPhysicsSelfTest()
             box.GetComponent<LocalTransform>()->rotation = { 0, 0, 0.1736482f, 0.9848078f };
             box.GetComponent<ColliderComponent>()->friction = mu;
             auto* rb = box.GetComponent<RigidbodyComponent>();
-            rb->freezeRotation = 1; // 転がり抜きの純粋な滑り摩擦を検証
+            rb->freezeRotation = true; // 転がり抜きの純粋な滑り摩擦を検証
             s.GetWorld().ApplyStructuralChanges();
             float x0 = 0;
             for (int i = 0; i < 150; ++i) {
@@ -470,7 +470,7 @@ bool RunPhysicsSelfTest()
         check(rb && rb->angularVelocity.y > 1.0f, "torque: +Y torque accumulates +Y spin");
         check(lt && std::fabs(lt->rotation.y) > 0.05f, "torque: orientation integrates over ticks");
         // freezeRotation では拒否される
-        rb->freezeRotation = 1;
+        rb->freezeRotation = true;
         const int rejected = ApplyTorqueWorld(s.GetWorld(), box.Id(), { 0, 2.0f, 0 }, kDt);
         check(rejected == 0, "torque: rejected when freezeRotation=1");
     }

@@ -182,7 +182,7 @@ void RegisterBuiltinComponents()
         MYE_JP("キネマティック", MYE_FIELD(RigidbodyComponent, isKinematic, Int32)),
         MYE_JP("角速度", MYE_FIELD(RigidbodyComponent, angularVelocity, Float3)),
         MYE_JP("回転の減衰", MYE_FIELD(RigidbodyComponent, angularDamping, Float)),
-        MYE_JP("回転を固定", MYE_FIELD(RigidbodyComponent, freezeRotation, Int32)),
+        MYE_JP("回転を固定", MYE_FIELD(RigidbodyComponent, freezeRotation, Bool)), // M59a2 後続で bool 化
         // M59a2: 密度→質量導出 (opt-in、末尾 append)
         MYE_JP("密度から質量", MYE_FIELD_TIP(RigidbodyComponent, useDensity, Bool,
                                              "mass = material density x scaled shape volume "
