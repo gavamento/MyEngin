@@ -48,6 +48,8 @@ const std::unordered_map<std::string, ComponentUiInfo>& Table()
         { "PhysicsEnvironment", { ICON_FA_GLOBE, "Physics", "物理環境" } },
         // M59b: 等方空力 (抗力 / 角抗力 / マグヌス)
         { "Aero", { ICON_FA_WIND, "Physics", "空力" } },
+        // M59b2: 浮力 (水面は PhysicsEnvironment 側)
+        { "Buoyancy", { ICON_FA_WATER, "Physics", "浮力" } },
         // Animation
         { "Animator", { ICON_FA_FILM, "Animation", "アニメーター" } },
         { "AnimatorController", { ICON_FA_CIRCLE_NODES, "Animation", "アニメーターコントローラー" } },

@@ -831,7 +831,7 @@ world-hashed (same class as mesh collider data: replay assumes the same assets a
 | Static restitution | **New capability in M59a2**: a static collider used to be structurally `e = 0` (no Rigidbody to store the field, so `e = min` killed every bounce off static geometry). A material assigned to a static collider now supplies its `e`. Unassigned static colliders keep `e = 0` |
 | Mass from density | `Rigidbody.useDensity` (opt-in): mass = material `density` × world-scaled collider volume (sphere/box/capsule; scaling rules identical to `shapes::ApplyScaledExtents`). Falls back to the `mass` field when there is no material, no collider, a mesh collider (shape 3), or a degenerate volume. The ABI entry points (`AddForce` / `AddImpulse` / `AddTorque`) resolve mass through the same function, so mass is never two different values |
 
-### 10.4 Physics environment and isotropic aerodynamics (M59b)
+### 10.4 Physics environment, isotropic aerodynamics and buoyancy (M59b / M59b2)
 
 Two opt-in components extend the rigid-body solver with a scene-wide environment and per-body air
 forces. Both are world-hashed (they drive `velocity` / `angularVelocity`) and both are appended at
@@ -839,7 +839,7 @@ the end of the component registration order, so existing scenes are untouched.
 
 | Concept | Decision |
 |---|---|
-| `PhysicsEnvironment` (TypeId 36) | `gravity` (vector) / `airDensity` / `windVelocity` / `waterPlaneY` / `waterDensity`. Consumed as the **active component with the lowest `entity.index`**, the same rule as Skybox and Fog. The water fields are parsed and stored but not consumed until M59b2 |
+| `PhysicsEnvironment` (TypeId 36) | `gravity` (vector) / `airDensity` / `windVelocity` / `waterPlaneY` / `waterDensity`. Consumed as the **active component with the lowest `entity.index`**, the same rule as Skybox and Fog |
 | `Aero` (TypeId 37) | `enableDrag` / `enableAngularDrag` / `enableMagnus` plus `dragCoefficient` (≤ 0 = fall back to the physics material's Cd, else 0.47) / `areaScale` / `angularDragCoefficient` / `magnusCoefficient` |
 | **Presence gate, not value gate** | A scene without `PhysicsEnvironment` runs the legacy `vy += kGravity * gravityScale * dt` statement unchanged; a body without `Aero` costs one component lookup and zero fp operations. Setting `gravity = (0, -9.81, 0)` is **not** promised to be bit-neutral — `-0.0f + 0.0f` is `+0.0f`, so an unconditional vector add can move the world hash of a body whose `vx` happens to be negative zero. **Attaching the component is opting in to the new formula.** Boolean fields inside `Aero` are a second, finer gate: an off flag skips the term rather than multiplying by zero (an all-off `Aero` is bit-neutral, and the self test asserts it) |
 | Reference area | **Cauchy's mean projected area (convex surface area / 4)** — the only orientation-independent representative area with a physical basis. It reproduces `πr²` for a sphere and `1.5a²` for a cube of side `a`. `MeanProjectedAreaWorld` in `PhysicsSystem.h` is the single source; a missing or mesh collider falls back to the same "radius 0.5 sphere" default the inertia derivation uses. Orientation-aware integration (lift, stall, weathercock stability) is M59c/M59d |
@@ -848,6 +848,11 @@ the end of the component registration order, so existing scenes are untouched.
 | Magnus | `F = S·(ω × v_rel)`, `S = magnusCoefficient · ½ρ·A·r`. This is the only explicit, direction-changing term, so it carries the same deterministic per-tick Δv clamp `SpringJoint` uses (100 m/s) as a divergence guard. Because the force stays perpendicular to velocity, explicit integration adds a small amount of energy per tick; in practice drag and angular drag absorb it |
 | Wind | Uniform and steady in M59. Turbulence is reserved as "a dedicated PCG32 stream evaluated as a pure function of tick and cell coordinates" (rule 8) and is out of scope for M59 |
 | `CharacterController` | **Does not follow the environment in M59.** It reads the `kGravity` constant directly and its ground test assumes the Y axis; an arbitrary gravity vector would break the controller's semantics rather than generalize it |
+| `Buoyancy` (TypeId 38, M59b2) | Upward force `ρ_water · V_submerged · |g|` plus water drag, gated on the same opt-in rule. `volumeScale` ≤ 0 disables it; a body entirely above the surface is bit-identical to having no component at all. Without a `PhysicsEnvironment` the defaults (surface at y = 0, 1000 kg/m³) apply, matching how `Aero` treats air |
+| Submerged volume | Spheres use the **spherical cap closed form** `V = π(R²t − t³/3 + 2R³/3)`, `M = π(R²t²/2 − t⁴/4 − R⁴/4)` with `t = planeY − centreY` — polynomials only, no trigonometry anywhere in the determinism-critical path. Boxes and capsules use the height ratio of the conservative AABB. `SubmergedFractionWorld` in `PhysicsSystem.h` is the single source |
+| Water drag | Linear and prorated by the submerged fraction, in the same closed-form implicit shape as air drag. Note this makes a lightly-submerged floating body **very lightly damped** (measured: default drag 2 with 5 % submersion gives a damping ratio of ≈ 0.004) — that is the correct physics, not a bug |
+| **No righting moment in v1** | The height-ratio approximation cannot see the horizontal shift of the centre of buoyancy, so a tilted raft keeps its tilt forever (only the angular water drag acts on it). The force is nonetheless applied *at the buoyancy centre* via `ApplyImpulse`, so the torque is provably zero today and starts working by itself once M59f1 adds a centre-of-mass offset. A true righting moment needs per-face pressure integration — that is M59c |
+| Buoyancy direction | Always **+Y**, magnitude scaled by `|gravity|`. The water surface is an axis-aligned Y plane in M59, so tilting the gravity vector while keeping a horizontal surface has no coherent reading |
 
 ---
 

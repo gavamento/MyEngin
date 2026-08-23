@@ -11,6 +11,7 @@ struct ColliderComponent;
 struct RigidbodyComponent;
 struct PhysMat;
 struct PhysicsEnvironmentComponent;
+struct ShapePose;
 
 // ソリッド接触ペア (M28c)。PhysicsSystem が tick 毎に最終ソルバ反復で検出したペアを
 // key 昇順で出力し、CollisionSystem が前 tick 差分から OnCollisionEnter/Stay/Exit を配信する。
@@ -78,6 +79,8 @@ float EffectiveMassWorld(World& world, EntityID e, const RigidbodyComponent& rb)
 // 「env を既定値で置けば挙動不変」を意味しない (M59 決定台帳 1 の存在ゲート)
 inline constexpr float kDefaultAirDensity = 1.225f;      // kg/m^3 (海面 15 degC)
 inline constexpr float kDefaultDragCoefficient = 0.47f;  // 球の Cd (PhysMat の既定と同値)
+inline constexpr float kDefaultWaterDensity = 1000.0f;   // kg/m^3 (真水 4 degC)
+inline constexpr float kDefaultWaterPlaneY = 0.0f;       // 水面のワールド Y
 
 // シーンの物理環境 = **entity.index 最小の active な 1 個** (Skybox/Fog と同じ規約。
 // RenderSystem::CollectEnvironment が前例)。無ければ nullptr = 従来の定数重力へ落ちる。
@@ -91,6 +94,15 @@ const PhysicsEnvironmentComponent* ResolvePhysicsEnvironment(World& world);
 // スケール規約は ShapeVolumeWorld と同一。col == nullptr / mesh (shape=3) は
 // 慣性導出 (LocalInertiaDiag) と同じ「半径 0.5 の球」既定へ落ちる
 float MeanProjectedAreaWorld(const ColliderComponent* col, float sx, float sy, float sz);
+
+// 水面 (ワールド Y = planeY) より下にある**体積の割合** [0,1] と、その没水部分の
+// 体積重心の Y (outCentroidY) を返す (M59b2)。
+// 球だけは球冠の解析式 — V = pi(R^2 t - t^3/3 + 2R^3/3) / M = pi(R^2 t^2/2 - t^4/4 - R^4/4)
+// (t = planeY - 中心Y) で**多項式のみ**。三角関数も逆三角関数も通らないので、
+// 決定論の観点で最も安全な閉形式になっている。
+// box / capsule は保守 AABB の高さ比近似 (M59 の割り切り。向きを見た正しい積分は M59c)。
+// 水面より上なら 0 を返し、呼び出し側は項ごとスキップする = 陸上のボディは fp 演算ゼロ
+float SubmergedFractionWorld(const ShapePose& pose, float planeY, float& outCentroidY);
 
 // ワールドトルクを 1 tick 分適用 (M28b、ABI AddTorque の実装本体)。
 // ω += I⁻¹·τ·dt を即時適用 (蓄積フィールドなし = ステートレス)。

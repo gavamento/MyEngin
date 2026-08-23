@@ -28,10 +28,11 @@ constexpr float kRestitutionVelThreshold = 0.3f;
 // ブロードフェーズ AABB の膨張量 (M28d)。ソルバ内の位置補正移動を保守的にカバーする。
 // 仮に候補から漏れても「次 tick で解決」に留まり、候補列は決定論なのでハッシュ一致性は不変
 constexpr float kBroadphaseMargin = 0.1f;
-// マグヌス (方向を変える陽的な項) の 1 tick あたり Delta-v 上限 (M59b)。SpringJoint の
+// **陽的な**項 (マグヌス M59b / 浮力 M59b2) の 1 tick あたり Delta-v 上限。SpringJoint の
 // 100 m/s 前例と同じ「発散防止の決定論的クランプ」— 物理的に届くことはまず無く、
-// 係数を極端にしたオーサリングミスでシーンが吹き飛ぶのを止めるための防波堤
-constexpr float kAeroMaxDeltaV = 100.0f;
+// 係数を極端にしたオーサリングミスでシーンが吹き飛ぶのを止めるための防波堤。
+// 抗力系は閉形式 implicit なのでクランプを要らない (除算しかしないため発散し得ない)
+constexpr float kExplicitMaxDeltaV = 100.0f;
 
 // ---- scalar クォータニオン演算 (親子合成用。XMVECTOR 禁止 = 決定論契約) ----
 
@@ -653,8 +654,8 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                 float dvy = my * sMag * b.invMass * dt;
                 float dvz = mz * sMag * b.invMass * dt;
                 const float d2 = dvx * dvx + dvy * dvy + dvz * dvz;
-                if (d2 > kAeroMaxDeltaV * kAeroMaxDeltaV) {
-                    const float clamp = kAeroMaxDeltaV / std::sqrt(d2);
+                if (d2 > kExplicitMaxDeltaV * kExplicitMaxDeltaV) {
+                    const float clamp = kExplicitMaxDeltaV / std::sqrt(d2);
                     dvx *= clamp;
                     dvy *= clamp;
                     dvz *= clamp;
@@ -683,6 +684,76 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                 b.wy *= scale;
                 b.wz *= scale;
             }
+        }
+    }
+
+    // ---- 浮力 (M59b2): 水面より下の排除体積ぶんの上向き力 + 水中抗力。空力の直後に
+    //      置くのは、浮力 (陽的な復元力) で付いた速度をその tick のうちに水中抗力が
+    //      減衰させるため。**非所持ボディはルックアップのみで fp 演算ゼロ** ----
+    for (Body& b : bodies) {
+        if (!b.rb || b.invMass == 0.0f) {
+            continue;
+        }
+        const auto* buoy = world.GetComponent<BuoyancyComponent>(b.entity);
+        if (!buoy || buoy->volumeScale <= 0.0f) {
+            continue;
+        }
+        const float planeY = env ? env->waterPlaneY : kDefaultWaterPlaneY;
+        const float rhoW = env ? env->waterDensity : kDefaultWaterDensity;
+        if (rhoW <= 0.0f) {
+            continue;
+        }
+        // 形状は shapeCol から組み直す — b.pose はソリッドなコライダーのときしか
+        // 形状が入っていない (トリガー併用のボディでも浮きたいので自前で作る)
+        ShapePose bp = b.pose;
+        if (b.shapeCol) {
+            bp = shapes::MakePose(*b.shapeCol, { b.pose.px, b.pose.py, b.pose.pz },
+                                  { b.qx, b.qy, b.qz, b.qw }, b.scale);
+        } else {
+            bp.shape = 0;
+            bp.radius = 0.5f; // 慣性・空力と同じ「半径 0.5 の球」既定
+            bp.identityRot = 1;
+        }
+        float centroidY = bp.py;
+        const float frac = SubmergedFractionWorld(bp, planeY, centroidY);
+        if (frac <= 0.0f) {
+            continue; // 完全に水面より上 = 何も足さない (陸上シーンは従来経路のまま)
+        }
+        float total = b.shapeCol ? ShapeVolumeWorld(*b.shapeCol, b.scale.x, b.scale.y, b.scale.z)
+                                 : 0.0f;
+        if (total <= 0.0f) {
+            total = (4.0f / 3.0f) * XM_PI * 0.125f; // 半径 0.5 の球 (mesh / コライダー無し)
+        }
+        const float vSub = total * buoy->volumeScale * frac;
+        // 浮力 = rho_w * V_sub * |g|、向きは **+Y 固定**。水面が軸平行 (ワールド Y) である
+        // 以上、重力ベクトルを傾けたときに浮力だけ傾けても意味を成さない (M59 の割り切り)
+        float gMag = -kGravity; // env 不在は従来定数の大きさ
+        if (env) {
+            gMag = std::sqrt(env->gravity.x * env->gravity.x + env->gravity.y * env->gravity.y
+                             + env->gravity.z * env->gravity.z);
+        }
+        float jy = rhoW * vSub * gMag * dt;
+        const float maxJ = kExplicitMaxDeltaV / b.invMass;
+        if (jy > maxJ) {
+            jy = maxJ;
+        }
+        // 作用点は浮力中心 (没水部分の体積重心)。**v1 では復原モーメントが出ない** —
+        // 重心の水平ずれを近似が拾わないので r と力がどちらも +Y = 外積が恒等 0 になる。
+        // この形にしてあるのは、M59f1 の質量中心オフセットが入った時点で
+        // 「r = 浮力中心 - 質量中心」が自然に水平成分を持ち、式を変えずに効き出すため
+        ApplyImpulse(b, 0.0f, centroidY - bp.py, 0.0f, 0.0f, jy, 0.0f, 1.0f);
+        // 水中抗力: 没水割合で按分した閉形式 implicit (静水前提 = 流れの場は持たない)
+        if (buoy->linearDrag > 0.0f) {
+            const float scale = 1.0f / (1.0f + buoy->linearDrag * frac * dt);
+            b.vx *= scale;
+            b.vy *= scale;
+            b.vz *= scale;
+        }
+        if (buoy->angularDrag > 0.0f) {
+            const float scale = 1.0f / (1.0f + buoy->angularDrag * frac * dt);
+            b.wx *= scale;
+            b.wy *= scale;
+            b.wz *= scale;
         }
     }
 
@@ -1143,6 +1214,47 @@ float MeanProjectedAreaWorld(const ColliderComponent* col, float sx, float sy, f
         return XM_PI * wr * halfSeg + XM_PI * wr * wr;
     }
     }
+}
+
+float SubmergedFractionWorld(const ShapePose& pose, float planeY, float& outCentroidY)
+{
+    outCentroidY = pose.py;
+    if (pose.shape == 0) {
+        // 球冠。中心を原点に取り t = planeY - 中心Y。t <= -R は完全に水面上、t >= R は完全没水。
+        // V(t) = pi(R^2 t - t^3/3 + 2R^3/3)、M(t) = pi(R^2 t^2/2 - t^4/4 - R^4/4)
+        // (どちらも多項式 — 球冠の体積・重心に三角関数は要らない)
+        const float R = pose.radius;
+        if (R <= 0.0f) {
+            return 0.0f;
+        }
+        const float t = planeY - pose.py;
+        if (t <= -R) {
+            return 0.0f;
+        }
+        if (t >= R) {
+            return 1.0f; // 完全没水。重心は中心のまま
+        }
+        const float R2 = R * R;
+        const float t2 = t * t;
+        const float v = R2 * t - t2 * t / 3.0f + 2.0f * R2 * R / 3.0f; // pi は約分で消える
+        if (v <= 0.0f) {
+            return 0.0f;
+        }
+        const float m = R2 * t2 * 0.5f - t2 * t2 * 0.25f - R2 * R2 * 0.25f;
+        outCentroidY = pose.py + m / v;
+        return v / (4.0f * R2 * R / 3.0f); // V_cap / V_sphere
+    }
+    // box / capsule: 保守 AABB の高さ比近似。傾いた箱の没水重心が水平にずれるのを
+    // 拾えない (= 復原モーメントが出ない) のが v1 の既知の限界
+    float minX, minY, minZ, maxX, maxY, maxZ;
+    shapes::ComputeAabb(pose, minX, minY, minZ, maxX, maxY, maxZ);
+    const float h = maxY - minY;
+    if (h <= 0.0f || planeY <= minY) {
+        return 0.0f;
+    }
+    const float top = (planeY < maxY) ? planeY : maxY;
+    outCentroidY = (minY + top) * 0.5f;
+    return (top - minY) / h;
 }
 
 float ShapeVolumeWorld(const ColliderComponent& col, float sx, float sy, float sz)

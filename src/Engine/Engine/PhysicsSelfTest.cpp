@@ -1802,6 +1802,206 @@ bool RunPhysicsSelfTest()
         }
     }
 
+    // ================= M59b2: 浮力 =================
+    {
+        constexpr float kPi = DirectX::XM_PI;
+
+        // -- 没水割合と没水重心の解析値 (球冠は多項式のみ) --
+        {
+            ShapePose sp;
+            sp.shape = 0;
+            sp.radius = 0.5f;
+            sp.px = sp.py = sp.pz = 0.0f;
+            float cy = 0.0f;
+            check(SubmergedFractionWorld(sp, -1.0f, cy) == 0.0f,
+                  "buoyancy: a sphere entirely above the surface is exactly 0 submerged");
+            check(SubmergedFractionWorld(sp, 1.0f, cy) == 1.0f,
+                  "buoyancy: a fully submerged sphere is exactly 1");
+            const float half = SubmergedFractionWorld(sp, 0.0f, cy);
+            check(std::fabs(half - 0.5f) < 1e-6f,
+                  "buoyancy: a sphere centred on the surface is half submerged");
+            // 半球の重心は中心から 3R/8 下
+            check(std::fabs(cy + 0.1875f) < 1e-5f,
+                  "buoyancy: the hemisphere centroid sits 3R/8 below the centre");
+
+            ShapePose bp;
+            bp.shape = 1;
+            bp.hx = bp.hy = bp.hz = 0.5f;
+            const float bhalf = SubmergedFractionWorld(bp, 0.0f, cy);
+            check(std::fabs(bhalf - 0.5f) < 1e-6f, "buoyancy: box slab fraction is the height ratio");
+            check(std::fabs(cy + 0.25f) < 1e-6f, "buoyancy: box slab centroid is the slab midpoint");
+            check(SubmergedFractionWorld(bp, -0.5f, cy) == 0.0f,
+                  "buoyancy: a box touching the surface from above is still 0");
+        }
+
+        // 水面 y=0 / 真水の環境をつくる小道具
+        auto makeWater = [](Scene& s) {
+            GameObject go = s.CreateGameObjectTracked("Water");
+            auto* env = go.AddComponent<PhysicsEnvironmentComponent>();
+            env->waterPlaneY = 0.0f;
+            env->waterDensity = 1000.0f;
+            return go;
+        };
+
+        // -- 中性浮力: 密度が水の半分の球は中心が水面に来る (解析値) --
+        {
+            Scene s;
+            makeWater(s);
+            GameObject ball = MakeSphereBody(s, "Float", 0, 3.0f, 0, 0.5f);
+            ball.AddComponent<BuoyancyComponent>()->linearDrag = 5.0f;
+            s.GetWorld().ApplyStructuralChanges();
+            auto* rb = ball.GetComponent<RigidbodyComponent>();
+            // V = 4/3 pi r^3、平衡は V_sub = m / rho_w。m をその半分にすると半没 = 中心が水面
+            const float vol = (4.0f / 3.0f) * kPi * 0.125f;
+            rb->mass = 1000.0f * vol * 0.5f;
+            auto* lt = ball.GetComponent<LocalTransform>();
+            for (int i = 0; i < 1800; ++i) { // 30 秒 (減衰比が小さいので長めに沈める)
+                phys.Update(s.GetWorld(), kDt);
+            }
+            MYE_LOG_INFO("  [phys] buoyancy equilibrium y = %.4f (expect ~0)", lt->position.y);
+            check(std::fabs(lt->position.y) < 0.05f,
+                  "buoyancy: a half-density sphere settles with its centre on the surface");
+            check(std::fabs(rb->velocity.y) < 0.05f, "buoyancy: it actually comes to rest");
+        }
+
+        // -- 密度が水より大きければ沈み続ける / 小さければ浅く浮く --
+        {
+            // ★水中抗力は**没水割合で按分される**ので、浅く浮く軽い物体はほとんど減衰
+            //   しない (実測: 既定 drag=2 / 没水 5% で減衰比 0.004 = 30 秒でも揺れ続ける)。
+            //   物理として正しい振る舞いなので、平衡位置を測る側が drag を上げて対処する
+            auto settle = [&](float mass, float drag, int ticks, float& outY) {
+                Scene s;
+                makeWater(s);
+                GameObject ball = MakeSphereBody(s, "B", 0, 1.5f, 0, 0.5f);
+                ball.AddComponent<BuoyancyComponent>()->linearDrag = drag;
+                s.GetWorld().ApplyStructuralChanges();
+                ball.GetComponent<RigidbodyComponent>()->mass = mass;
+                for (int i = 0; i < ticks; ++i) {
+                    phys.Update(s.GetWorld(), kDt);
+                }
+                outY = ball.GetComponent<LocalTransform>()->position.y;
+            };
+            const float vol = (4.0f / 3.0f) * kPi * 0.125f;
+            float ySink = 0.0f, yFloat = 0.0f;
+            settle(1000.0f * vol * 4.0f, 2.0f, 600, ySink);    // 密度 4000 = 沈む
+            settle(1000.0f * vol * 0.05f, 20.0f, 1800, yFloat); // 密度 50 = 5% だけ沈む
+            MYE_LOG_INFO("  [phys] buoyancy sink=%.3f float=%.3f", ySink, yFloat);
+            check(ySink < -5.0f, "buoyancy: a body denser than water keeps sinking");
+            // 没水割合 5% を球冠の式 (0.25t - t^3/3 = -0.075) で解くと t ~= -0.365
+            // = 中心は水面より約 0.365 上
+            check(yFloat > 0.34f && yFloat < 0.39f,
+                  "buoyancy: a light body floats with only its bottom submerged");
+        }
+
+        // -- 水面より上では完全 no-op (陸上シーンは Buoyancy を付けても従来経路) --
+        {
+            auto run = [&](bool withBuoy, std::vector<uint8_t>& out) {
+                Scene s;
+                makeWater(s);
+                // 床を水面より上 (y=2 の上面) に置き、水に触れないまま着地させる
+                MakeGround(s, "G", 0, 1.5f, 0, 5.0f, 0.5f, 5.0f);
+                GameObject b = MakeSphereBody(s, "B", 0.1f, 5.0f, 0.05f, 0.5f);
+                if (withBuoy) {
+                    b.AddComponent<BuoyancyComponent>();
+                }
+                s.GetWorld().ApplyStructuralChanges();
+                for (int i = 0; i < 240; ++i) {
+                    phys.Update(s.GetWorld(), kDt);
+                }
+                const auto* lt = b.GetComponent<LocalTransform>();
+                const auto* rb = b.GetComponent<RigidbodyComponent>();
+                out.clear();
+                const auto* p = reinterpret_cast<const uint8_t*>(&lt->position);
+                out.insert(out.end(), p, p + sizeof(lt->position));
+                const auto* v = reinterpret_cast<const uint8_t*>(&rb->velocity);
+                out.insert(out.end(), v, v + sizeof(rb->velocity));
+                check(lt->position.y > 0.5f, "buoyancy: the dry-run body never reached the water");
+            };
+            std::vector<uint8_t> withB, withoutB;
+            run(true, withB);
+            run(false, withoutB);
+            check(!withB.empty() && withB == withoutB,
+                  "buoyancy: a body that stays above the surface is bit-identical to no Buoyancy");
+        }
+
+        // -- v1 の既知の限界: 傾いて浮かぶ箱に復原モーメントは出ない --
+        // (没水重心の水平ずれを高さ比近似が拾えないため。面ごとの圧力積分 = M59c の仕事)
+        {
+            Scene s;
+            makeWater(s);
+            GameObject box = MakeBox(s, "Raft", 0, 0.2f, 0, 1.0f, 0.25f, 1.0f);
+            box.AddComponent<BuoyancyComponent>();
+            s.GetWorld().ApplyStructuralChanges();
+            auto* lt = box.GetComponent<LocalTransform>();
+            auto* rb = box.GetComponent<RigidbodyComponent>();
+            rb->mass = 1000.0f; // 体積 2 m^3 の半分が沈む重さ
+            const float a = 0.34906585f * 0.5f; // 20 度の半角
+            lt->rotation = { 0.0f, 0.0f, std::sin(a), std::cos(a) };
+            const DirectX::XMFLOAT4 tilt0 = lt->rotation;
+            for (int i = 0; i < 600; ++i) {
+                phys.Update(s.GetWorld(), kDt);
+            }
+            check(rb->angularVelocity.x == 0.0f && rb->angularVelocity.y == 0.0f
+                      && rb->angularVelocity.z == 0.0f,
+                  "buoyancy (v1 limit): no righting moment is produced (angular velocity stays 0)");
+            check(lt->rotation.z == tilt0.z && lt->rotation.w == tilt0.w,
+                  "buoyancy (v1 limit): the tilt is preserved exactly");
+            check(lt->position.y > -1.0f && lt->position.y < 1.0f,
+                  "buoyancy: the tilted raft still floats near the surface");
+        }
+
+        // -- 混在シーン: Buoyancy 非所持ボディの軌跡は 1 ビットも変わらない --
+        {
+            auto dumpOne = [](GameObject go, std::vector<uint8_t>& out) {
+                out.clear();
+                const auto* lt = go.GetComponent<LocalTransform>();
+                const auto* rb = go.GetComponent<RigidbodyComponent>();
+                auto push = [&](const void* p, size_t n) {
+                    const auto* b = static_cast<const uint8_t*>(p);
+                    out.insert(out.end(), b, b + n);
+                };
+                push(&lt->position, sizeof(lt->position));
+                push(&rb->velocity, sizeof(rb->velocity));
+            };
+            Scene sa, sb;
+            MakeGround(sa, "G", 0, -0.5f, 0, 5.0f, 0.5f, 5.0f);
+            GameObject plainA = MakeBox(sa, "Plain", 0, 3.0f, 0, 0.5f, 0.5f, 0.5f, 0.3f);
+            sa.GetWorld().ApplyStructuralChanges();
+            MakeGround(sb, "G", 0, -0.5f, 0, 5.0f, 0.5f, 5.0f);
+            GameObject plainB = MakeBox(sb, "Plain", 0, 3.0f, 0, 0.5f, 0.5f, 0.5f, 0.3f);
+            // 水面を y=20 に上げて遠方のボディだけを水中に置く (接触しない位置)
+            GameObject wgo = sb.CreateGameObjectTracked("Water");
+            wgo.AddComponent<PhysicsEnvironmentComponent>()->waterPlaneY = 20.0f;
+            GameObject boat = MakeSphereBody(sb, "Boat", 60.0f, 19.0f, 0, 0.5f);
+            boat.AddComponent<BuoyancyComponent>();
+            sb.GetWorld().ApplyStructuralChanges();
+            boat.GetComponent<RigidbodyComponent>()->mass = 100.0f;
+            bool same = true;
+            std::vector<uint8_t> da, db;
+            for (int i = 0; i < 240 && same; ++i) {
+                phys.Update(sa.GetWorld(), kDt);
+                phys.Update(sb.GetWorld(), kDt);
+                dumpOne(plainA, da);
+                dumpOne(plainB, db);
+                if (da.empty() || da != db) {
+                    same = false;
+                    MYE_LOG_ERROR("  buoyancy mix diverged at tick %d", i);
+                }
+            }
+            // ★このシーンだけ env が居る = 重力経路が env 側に切り替わっている。
+            //   それでも plainB が plainA (env 無し) とビット一致するのは、
+            //   gravity 既定 (0,-9.81,0) の x/z 加算が両方 +0.0f で、この初期条件では
+            //   vx/vz が負のゼロにならないため — **一般には成り立たない** (存在ゲートの理由)。
+            //   ここで見たいのは「浮いているボディが隣に居ても影響しない」ことなので、
+            //   ハッシュ等価ではなく plain 同士の軌跡一致で判定している
+            check(same,
+                  "buoyancy: a body without Buoyancy is unaffected by floating bodies nearby "
+                  "(240 ticks bit-identical)");
+            check(boat.GetComponent<LocalTransform>()->position.y > 18.5f,
+                  "buoyancy: the floating body did float (the mix test is not vacuous)");
+        }
+    }
+
     if (failCount == 0) {
         MYE_LOG_INFO("==== Physics self test: ALL PASS ====");
         return true;

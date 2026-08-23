@@ -789,6 +789,31 @@ struct AeroComponent {
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
+// ---- 浮力 (M59b2、TypeId 38) ----
+// PhysicsEnvironment の waterPlaneY / waterDensity が定める**軸平行な水面**より下に沈んだ
+// 排除体積ぶんの上向き力と、水中の抗力。**無ければ何もしない** (opt-in)。
+// env が無いシーンでも既定の水 (y=0 / 1000 kg/m^3) で働く (Aero と同じ扱い)。
+//
+// 没水体積は球だけ球冠の解析式 (多項式のみ)、box / capsule は保守 AABB の高さ比近似。
+//
+// ★**v1 に復原モーメントは無い** — 没水重心の水平ずれを近似が拾わないため、傾いて浮かぶ
+//   箱は傾いたまま (角度は水中角抗力で減衰するだけ) になる。船が自力で起き上がる挙動は
+//   面ごとの圧力積分が要る = M59c の面サンプリングカーネルの仕事。
+//   engine_spec 10.4 に制限として明記してある。
+// ★水面は軸平行なので、重力ベクトルを傾けても**浮力は常に +Y** (大きさだけ |g| に従う)。
+//
+// velocity / angularVelocity (hash 対象) を駆動するので **hash 対象**。
+// opt-in (TypeId 末尾 append) なので既存シーンは 1 バイトも変わらない。
+struct BuoyancyComponent {
+    // 排除体積の倍率 (中空の船体・積荷の近似)。**<= 0 で無効** (項ごとスキップ)
+    float volumeScale = 1.0f;
+    // 水中の線形抗力 [1/s]。没水割合で按分され、閉形式 implicit なので大きくても発散しない。
+    // 浮力は陽的な復元力なので、これを 0 にすると軽い物体がいつまでも上下に揺れる
+    float linearDrag = 2.0f;
+    float angularDrag = 2.0f; // 水中の角抗力 [1/s] (同じ按分・同じ implicit)
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
 class World;
 
 // エンティティが有効か (ActiveComponent が無ければ有効 / enabled==0 なら無効)

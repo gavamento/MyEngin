@@ -557,6 +557,17 @@ void RegisterBuiltinComponents()
         MYE_JP("マグヌス係数",
                MYE_FIELD_RANGE(AeroComponent, magnusCoefficient, Float, 0.0f, 100.0f)),
     });
+
+    // M59b2: 浮力。**hash 対象** — velocity / angularVelocity を駆動する。
+    // opt-in (TypeId 末尾 append =38)。水面と水の密度は PhysicsEnvironment 側 (env 不在なら
+    // 既定の水)。**v1 に復原モーメントは無い** (Components.h の制限コメント参照)
+    RegisterComponent<BuoyancyComponent>("Buoyancy", {
+        MYE_JP("排除体積倍率", MYE_FIELD_TIP(BuoyancyComponent, volumeScale, Float,
+                                             "<= 0 disables buoyancy entirely")),
+        MYE_JP("水中の抵抗", MYE_FIELD_RANGE(BuoyancyComponent, linearDrag, Float, 0.0f, 100.0f)),
+        MYE_JP("水中の回転抵抗",
+               MYE_FIELD_RANGE(BuoyancyComponent, angularDrag, Float, 0.0f, 100.0f)),
+    });
 }
 
 } // namespace mye
