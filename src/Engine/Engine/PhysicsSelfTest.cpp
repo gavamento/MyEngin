@@ -2829,7 +2829,12 @@ bool RunPhysicsSelfTest()
             auto restingImpulse = [&](int substeps) {
                 Scene s;
                 GameObject envGo = s.CreateGameObjectTracked("Env");
-                envGo.AddComponent<PhysicsEnvironmentComponent>()->substeps = substeps;
+                auto* renv = envGo.AddComponent<PhysicsEnvironmentComponent>();
+                renv->substeps = substeps;
+                // ★M59h のスリープを切る — 静止した箱は 60 tick で眠り、眠っている
+                //   ペアの報告インパルスは 0 になる (それ自体は正しい)。ここで測りたいのは
+                //   「サブステップをまたいで合算しているか」なので、寝かせない
+                renv->sleepDelayTicks = 0;
                 MakeGround(s, "G", 0, -0.5f, 0, 5.0f, 0.5f, 5.0f);
                 MakeBox(s, "B", 0, 0.5f, 0, 0.5f, 0.5f, 0.5f);
                 s.GetWorld().ApplyStructuralChanges();
@@ -3496,6 +3501,166 @@ bool RunPhysicsSelfTest()
         }
 
         physmat::Install(prevFricLib);
+    }
+
+    // ================= M59h: スリープ + アイランド =================
+    // ★閾値は PhysicsEnvironment に置いてある = **存在ゲート**。env が無いシーンは
+    //   1 体も眠らず、M59f2 までとビット同一の経路を通る。
+    // ★状態 (sleepTicks / isSleeping) は Rigidbody 側 = hash / JSON / SimSnapshot /
+    //   DLL 移行がフィールド表の既存機構で自動被覆される。
+    {
+        // 「床 + 箱 n 段」の共通シーン。delay<=0 ならスリープ無効
+        auto makeStack = [&](Scene& s, int floors, int delay) {
+            GameObject envGo = s.CreateGameObjectTracked("Env");
+            auto* e = envGo.AddComponent<PhysicsEnvironmentComponent>();
+            e->sleepDelayTicks = delay;
+            MakeGround(s, "G", 0, -0.5f, 0, 6.0f, 0.5f, 6.0f);
+            std::vector<GameObject> boxes;
+            for (int i = 0; i < floors; ++i) {
+                char name[24];
+                std::snprintf(name, sizeof(name), "B%d", i);
+                boxes.push_back(
+                    MakeBox(s, name, 0, 0.5f + 1.0f * static_cast<float>(i), 0, 0.5f, 0.5f, 0.5f));
+            }
+            s.GetWorld().ApplyStructuralChanges();
+            return boxes;
+        };
+
+        // -- 入眠する / 速度が厳密 0 になる / ワールドハッシュが完全に止まる --
+        {
+            Scene s;
+            auto boxes = makeStack(s, 1, 60);
+            auto* rb = boxes[0].GetComponent<RigidbodyComponent>();
+            int sleptAt = -1;
+            for (int i = 0; i < 300; ++i) {
+                phys.Update(s.GetWorld(), kDt);
+                if (sleptAt < 0 && rb->isSleeping) {
+                    sleptAt = i;
+                }
+            }
+            MYE_LOG_INFO("  [phys] sleep: a resting box fell asleep at tick %d", sleptAt);
+            check(sleptAt >= 0, "sleep: a resting box eventually falls asleep");
+            // ★厳密 0 を要求する — 「ほぼ 0」だと残留ビットが構成差を運ぶ余地が残る
+            check(rb->velocity.x == 0.0f && rb->velocity.y == 0.0f && rb->velocity.z == 0.0f
+                      && rb->angularVelocity.x == 0.0f && rb->angularVelocity.y == 0.0f
+                      && rb->angularVelocity.z == 0.0f,
+                  "sleep: the velocities are written as exact zeros");
+            // 眠っているあいだハッシュが 1 ビットも動かない (sleepTicks の据え置きも込み)
+            const uint64_t h0 = HashWorld(s.GetWorld(), nullptr);
+            bool frozen = true;
+            for (int i = 0; i < 120; ++i) {
+                phys.Update(s.GetWorld(), kDt);
+                if (HashWorld(s.GetWorld(), nullptr) != h0) {
+                    frozen = false;
+                }
+            }
+            check(frozen, "sleep: the world hash stays bit-identical for 120 ticks while asleep");
+        }
+
+        // -- 閾値 0 = スリープ無効 (導入前と同じ経路) --
+        {
+            Scene s;
+            auto boxes = makeStack(s, 1, 0);
+            auto* rb = boxes[0].GetComponent<RigidbodyComponent>();
+            for (int i = 0; i < 300; ++i) {
+                phys.Update(s.GetWorld(), kDt);
+            }
+            check(!rb->isSleeping && rb->sleepTicks == 0,
+                  "sleep: sleepDelayTicks <= 0 disables the feature outright");
+        }
+
+        // -- 島単位: 3 段の塔は**全員そろって**眠る --
+        // 1 体ずつ眠らせると、上がまだ動いているのに土台が眠って次 tick に起こされる
+        // 「まばたき」が出る。島の最小カウンタで揃えるのが要点
+        {
+            Scene s;
+            auto boxes = makeStack(s, 3, 60);
+            int firstSleep[3] = { -1, -1, -1 };
+            for (int i = 0; i < 600; ++i) {
+                phys.Update(s.GetWorld(), kDt);
+                for (int k = 0; k < 3; ++k) {
+                    if (firstSleep[k] < 0
+                        && boxes[static_cast<size_t>(k)]
+                               .GetComponent<RigidbodyComponent>()
+                               ->isSleeping) {
+                        firstSleep[k] = i;
+                    }
+                }
+            }
+            MYE_LOG_INFO("  [phys] sleep island: 3-high stack fell asleep at ticks %d/%d/%d",
+                         firstSleep[0], firstSleep[1], firstSleep[2]);
+            check(firstSleep[0] >= 0 && firstSleep[1] >= 0 && firstSleep[2] >= 0,
+                  "sleep: a 3-high stack falls asleep");
+            check(firstSleep[0] == firstSleep[1] && firstSleep[1] == firstSleep[2],
+                  "sleep: and the whole island goes down on the same tick");
+        }
+
+        // -- 静的な床の隣で眠り続ける (床は起床トリガにならない) --
+        {
+            Scene s;
+            auto boxes = makeStack(s, 1, 60);
+            auto* rb = boxes[0].GetComponent<RigidbodyComponent>();
+            for (int i = 0; i < 200; ++i) {
+                phys.Update(s.GetWorld(), kDt);
+            }
+            bool stayed = rb->isSleeping;
+            for (int i = 0; i < 600; ++i) {
+                phys.Update(s.GetWorld(), kDt);
+                if (!rb->isSleeping) {
+                    stayed = false;
+                }
+            }
+            check(stayed, "sleep: a static floor never wakes the body resting on it");
+        }
+
+        // -- 眠っているあいだも接触ペアは報告され続ける (OnCollisionExit の誤発火防止) --
+        // ★力積は 0 で報告する — 眠っている tick に交換した力積は本当に無いので
+        {
+            Scene s;
+            auto boxes = makeStack(s, 1, 60);
+            auto* rb = boxes[0].GetComponent<RigidbodyComponent>();
+            std::vector<SolidContact> cs;
+            for (int i = 0; i < 200; ++i) {
+                phys.Update(s.GetWorld(), kDt, &cs);
+            }
+            check(rb->isSleeping, "sleep: (setup) the box is asleep");
+            check(cs.size() == 1, "sleep: the contact pair is still reported while asleep");
+            check(!cs.empty() && cs[0].impulse == 0.0f,
+                  "sleep: and reports exactly zero impulse for that tick");
+        }
+
+        // -- 投擲物で起きる --
+        {
+            Scene s;
+            auto boxes = makeStack(s, 1, 60);
+            GameObject ball = MakeSphereBody(s, "Ball", -4.0f, 0.5f, 0, 0.3f);
+            s.GetWorld().ApplyStructuralChanges();
+            // ★ポインタは**最後の構造変更のあと**に取る — 球は箱と同じアーキタイプに
+            //   入るので、追加で列が再確保されると先に取った箱のポインタが死ぬ
+            //   (最初これで「箱は動いたのに isSleeping が false にならない」を出した)
+            auto* rb = boxes[0].GetComponent<RigidbodyComponent>();
+            auto* brb = ball.GetComponent<RigidbodyComponent>();
+            brb->mass = 5.0f;
+            for (int i = 0; i < 200; ++i) {
+                phys.Update(s.GetWorld(), kDt);
+            }
+            const bool wasAsleep = rb->isSleeping;
+            brb->isSleeping = false; // 球も眠っているので投げる前に起こす
+            brb->velocity = { 12.0f, 0.0f, 0.0f };
+            // ★起床は AABB + margin の近接で起きるので、覚醒した瞬間はまだ触れていない。
+            //   最後まで回してから変位を見る (早期 break だと「起きたが動いていない」になる)
+            bool woke = false;
+            for (int i = 0; i < 120; ++i) {
+                phys.Update(s.GetWorld(), kDt);
+                if (!rb->isSleeping) {
+                    woke = true;
+                }
+            }
+            check(wasAsleep, "sleep: (setup) the target was asleep before the throw");
+            check(woke, "sleep: a moving body wakes what it touches");
+            check(std::fabs(boxes[0].GetComponent<LocalTransform>()->position.x) > 0.01f,
+                  "sleep: and the woken body actually moves again");
+        }
     }
 
     if (failCount == 0) {

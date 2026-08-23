@@ -163,6 +163,12 @@ struct Body {
     // `p - pose.p - com` で従来とビット同一になるのはこの前提に依る (x - (+0.0f) == x)
     bool hasCom = false;
     bool gyro = false;
+    // M59h: スリープ。眠っているあいだ invMass / freezeRot を「不動」へ倒して
+    // ソルバの全帯から自然に外す (専用の分岐を各帯に撒かないための作り)。
+    // 起こすときに戻す値を awake* に控えておく
+    bool sleeping = false;
+    float awakeInvMass = 0.0f;
+    bool awakeFreezeRot = true;
     float comLx = 0, comLy = 0, comLz = 0;
     float comx = 0, comy = 0, comz = 0;
     float restitution = 0;
@@ -507,6 +513,16 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             // M59f1: ジャイロ項と質量中心オフセット。**どちらも既定は無効**で、
             // 無効のあいだは以降の分岐が全て従来側へ落ちる (ビット同一)
             b.gyro = rb->gyroscopic;
+            // M59h: 眠っているボディは**不動として収集する**。ブロードフェーズには残る
+            // (残さないと起きているボディがすり抜ける) が、重力・積分・書き戻しは
+            // invMass==0 の既存分岐でそのまま外れる
+            b.awakeInvMass = b.invMass;
+            b.awakeFreezeRot = b.freezeRot;
+            if (rb->isSleeping && !rb->isKinematic) {
+                b.sleeping = true;
+                b.invMass = 0.0f;
+                b.freezeRot = true;
+            }
             if (rb->centerOfMass.x != 0.0f || rb->centerOfMass.y != 0.0f
                 || rb->centerOfMass.z != 0.0f) {
                 // ワールドスケールを掛けてローカルオフセットを作る (形状の寸法と同じ扱い)
@@ -644,6 +660,9 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
     // サブステップを増やすほど跳ねなくなるという逆転が起きる
     const float restitutionVelThreshold = kRestitutionVelThreshold * (h / dt);
     std::vector<SolidContact> subContacts; // サブステップ 1 回ぶんの接触 (合算前)
+    // M59h: 島 (union-find) の材料。最後のサブステップの候補ペアを使う — サブステップ
+    // ごとに作り直されるが、入眠判定は tick 末の速度で行うので最後のものが正しい
+    std::vector<uint64_t> islandPairs;
     for (int sub = 0; sub < substeps; ++sub) {
         // ---- 速度積分 (動的・非 kinematic のみ)。位置はまだ動かさない ----
         // M28b で「速度積分 → ソルバ → 位置積分」の順に変更 (Box2D 流)。摩擦や法線インパルスで
@@ -1367,6 +1386,45 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             candidates.resize(w);
         }
 
+        // ---- 起床 (M59h): 覚醒中のボディに触られたら起きる ----
+        // 候補ペア (小,大) 昇順の **1 パス**。A→B→C と伝播する連鎖は 1 パスでは届かない
+        // ことがあるが、届かなかったぶんは次 tick へ持ち越される (決定論的で、
+        // 1/60 秒の遅れは許容する)。収束まで多パス回すと、走査コストがシーンの形に
+        // 依存して読めなくなる
+        auto wakeBody = [&](Body& b) {
+            if (!b.sleeping) {
+                return;
+            }
+            b.sleeping = false;
+            b.rb->isSleeping = false;
+            b.rb->sleepTicks = 0;
+            b.invMass = b.awakeInvMass;
+            b.freezeRot = b.awakeFreezeRot;
+            // 眠っていたあいだ pose 確定で飛ばされていた慣性を組み直す
+            if (!b.freezeRot && b.invMass > 0.0f) {
+                float ix, iy, iz;
+                LocalInertiaDiag(b.col, b.pose, 1.0f / b.invMass, ix, iy, iz);
+                InvInertiaWorld(b.pose, ix, iy, iz, b.invI);
+                b.Ilx = ix;
+                b.Ily = iy;
+                b.Ilz = iz;
+            }
+        };
+        for (const uint64_t pairKey : candidates) {
+            Body& A = bodies[static_cast<size_t>(pairKey >> 32)];
+            Body& B = bodies[static_cast<size_t>(pairKey & 0xFFFFFFFFu)];
+            // 相手が「動いている剛体」のときだけ起こす — 静的な床の隣で寝ているだけの
+            // ボディが永久に起き続けるのを防ぐ (invMass>0 は覚醒中の動的剛体だけが満たす)
+            if (A.sleeping && B.invMass > 0.0f) {
+                wakeBody(A);
+            } else if (B.sleeping && A.invMass > 0.0f) {
+                wakeBody(B);
+            }
+        }
+
+        // 眠っているペアの接触 (M59h)。key 昇順で溜め、出力時に本線へマージする
+        std::vector<SolidContact> sleepContacts;
+
         // ---- 接触制約の生成 (M59g1): マニフォールドは **1 ステップに 1 回だけ**作る ----
         // M28b は反復のたびに CollideManifold を呼び直していた。それをやめたのは、
         // **蓄積インパルスの前提が「接触点が反復をまたいで同じであること」**だから —
@@ -1419,7 +1477,35 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             Body& A = bodies[ai];
             Body& B = bodies[bi];
             if (A.invMass + B.invMass == 0.0f) {
-                continue; // 両方不動 (静的 / kinematic 同士)
+                // ★眠っているペアは「解かないが**報告はする**」(M59h)。ここで落とすと
+                //   接触ペア列から消えて CollisionSystem が OnCollisionExit を誤発火し、
+                //   起きた瞬間に Enter が再発火する。計画は CollisionSystem 側に
+                //   「両者睡眠なら前 tick から Stay を繰り越す」規則を足す案だったが、
+                //   こちらのほうが (a) 生存確認が要らない (b) 毎 tick 実際に重なりを
+                //   確かめるので嘘をつかない。コストは最後のサブステップの 1 回だけ
+                if ((A.sleeping || B.sleeping) && outContacts && sub == substeps - 1) {
+                    shapes::Manifold sm;
+                    if (shapes::CollideManifold(A.pose, B.pose, sm) && sm.count > 0) {
+                        SolidContact sc;
+                        sc.key = (static_cast<uint64_t>(A.entity.index) << 32) | B.entity.index;
+                        sc.nx = sm.nx;
+                        sc.ny = sm.ny;
+                        sc.nz = sm.nz;
+                        float cx = 0.0f, cy = 0.0f, cz = 0.0f;
+                        for (int k = 0; k < sm.count; ++k) {
+                            cx += sm.pts[k].px;
+                            cy += sm.pts[k].py;
+                            cz += sm.pts[k].pz;
+                        }
+                        const float inv = 1.0f / static_cast<float>(sm.count);
+                        sc.px = cx * inv;
+                        sc.py = cy * inv;
+                        sc.pz = cz * inv;
+                        sc.impulse = 0.0f; // 眠っている = この tick に交換した力積は無い
+                        sleepContacts.push_back(sc);
+                    }
+                }
+                continue; // 両方不動 (静的 / kinematic 同士 / 睡眠)
             }
             shapes::Manifold m;
             if (!shapes::CollideManifold(A.pose, B.pose, m)) {
@@ -1801,8 +1887,15 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                 sc.impulse = total;
                 subContacts.push_back(sc);
             }
+            // 眠りペア (key 昇順) を先に合流させる。どちらも候補ペア昇順で作られて
+            // いるのでキーが衝突することはなく、線形マージで昇順が保たれる
+            MergeSubstepContacts(sleepContacts, subContacts);
             MergeSubstepContacts(subContacts, *outContacts);
             subContacts.clear();
+        }
+
+        if (sub == substeps - 1) {
+            islandPairs = candidates; // M59h: 入眠判定に使う (最後のステップのぶん)
         }
 
         // ---- 位置・姿勢積分 (解決後の速度で前進) ----
@@ -1851,6 +1944,97 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             }
         }
 
+    }
+
+    // ---- 入眠判定 (M59h): 島の全員が静かなときだけ眠らせる ----
+    // ★**閾値は env の中** = 存在ゲート。env が無いシーンはここを 1 文字も通らない。
+    // ★判定は int の tick カウンタ (秒の float 累積は加算順で割れるので禁止)。
+    // ★1 体だけ静かでも眠らせない — 上に乗っている箱がまだ動いているのに土台が
+    //   眠ると、次 tick に起こされて跳ねる「まばたき」が出る。島単位で揃えるのが要点
+    if (env && env->sleepDelayTicks > 0) {
+        const float linT = env->sleepLinearThreshold;
+        const float angT = env->sleepAngularThreshold;
+        const int32_t delay = env->sleepDelayTicks;
+        // 1) 静けさの計数。眠っているボディは触らない (= sleepTicks が動かない
+        //    = 眠っているあいだワールドハッシュが完全に静止する)
+        for (Body& b : bodies) {
+            if (!b.rb || b.sleeping || b.invMass == 0.0f) {
+                continue;
+            }
+            const float v2 = b.vx * b.vx + b.vy * b.vy + b.vz * b.vz;
+            const float w2 = b.wx * b.wx + b.wy * b.wy + b.wz * b.wz;
+            if (v2 <= linT * linT && w2 <= angT * angT) {
+                if (b.rb->sleepTicks < delay) {
+                    b.rb->sleepTicks += 1; // ★閾値でクランプ (眠る前もハッシュを揺らさない)
+                }
+            } else {
+                b.rb->sleepTicks = 0;
+            }
+        }
+        // 2) 島 (union-find)。**根は常に最小 index へ正規化**するので、
+        //    ペアの処理順に依らずラベルが一意 = 総当たり実装と一致する
+        std::vector<uint32_t> parent(bodies.size());
+        for (size_t i = 0; i < parent.size(); ++i) {
+            parent[i] = static_cast<uint32_t>(i);
+        }
+        auto findRoot = [&](uint32_t x) -> uint32_t {
+            while (parent[x] != x) {
+                parent[x] = parent[parent[x]]; // 経路圧縮 (結果は根なので決定論に影響しない)
+                x = parent[x];
+            }
+            return x;
+        };
+        auto unite = [&](uint32_t a, uint32_t b) {
+            const uint32_t ra = findRoot(a);
+            const uint32_t rb2 = findRoot(b);
+            if (ra == rb2) {
+                return;
+            }
+            // 小さいほうを根にする = ラベルが入力順に依存しない
+            if (ra < rb2) {
+                parent[rb2] = ra;
+            } else {
+                parent[ra] = rb2;
+            }
+        };
+        // 静的/kinematic は繋がない — 繋ぐと床を介して世界中が 1 つの島になる
+        auto isDynamic = [&](const Body& b) { return b.rb && !b.rb->isKinematic; };
+        for (const uint64_t pairKey : islandPairs) {
+            const uint32_t ai = static_cast<uint32_t>(pairKey >> 32);
+            const uint32_t bi = static_cast<uint32_t>(pairKey & 0xFFFFFFFFu);
+            if (isDynamic(bodies[ai]) && isDynamic(bodies[bi])) {
+                unite(ai, bi);
+            }
+        }
+        // 3) 島ごとの最小カウンタ。1 体でも足りなければ島全体が起きたまま
+        std::vector<int32_t> islandMin(bodies.size(), delay);
+        std::vector<uint8_t> islandHas(bodies.size(), 0);
+        for (size_t i = 0; i < bodies.size(); ++i) {
+            Body& b = bodies[i];
+            if (!b.rb || b.sleeping || b.invMass == 0.0f) {
+                continue;
+            }
+            const uint32_t r = findRoot(static_cast<uint32_t>(i));
+            islandHas[r] = 1;
+            if (b.rb->sleepTicks < islandMin[r]) {
+                islandMin[r] = b.rb->sleepTicks;
+            }
+        }
+        // 4) 入眠。**velocity / angularVelocity を厳密 0.0f へ書く** (書き戻しが拾う)
+        for (size_t i = 0; i < bodies.size(); ++i) {
+            Body& b = bodies[i];
+            if (!b.rb || b.sleeping || b.invMass == 0.0f) {
+                continue;
+            }
+            const uint32_t r = findRoot(static_cast<uint32_t>(i));
+            if (!islandHas[r] || islandMin[r] < delay) {
+                continue;
+            }
+            b.rb->isSleeping = true;
+            b.rb->sleepTicks = delay;
+            b.vx = 0.0f; b.vy = 0.0f; b.vz = 0.0f;
+            b.wx = 0.0f; b.wy = 0.0f; b.wz = 0.0f;
+        }
     }
 
     // ---- 書き戻し (動的・非 kinematic のみ。kinematic は物理が何も変えないので
@@ -2087,6 +2271,8 @@ int ApplyTorqueWorld(World& world, EntityID e, MyeVec3 torque, float dt)
     if (!rb || !lt || rb->isKinematic || rb->freezeRotation) {
         return 0;
     }
+    rb->isSleeping = false; // M59h: トルクも起床トリガ
+    rb->sleepTicks = 0;
     const auto* col = world.GetComponent<ColliderComponent>(e);
     // M59a2: 密度導出質量をソルバ収集と同じ関数で解決 (質量を二義にしない)
     const float mass = EffectiveMassWorld(world, e, *rb);

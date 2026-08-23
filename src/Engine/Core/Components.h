@@ -279,6 +279,15 @@ struct RigidbodyComponent {
     //   導いた対角慣性を平行軸で移し替えることはしない — 重心をずらす = 質量分布が形状と
     //   違うという宣言なので、移し替えには根拠が無い
     DirectX::XMFLOAT3 centerOfMass = { 0.0f, 0.0f, 0.0f };
+    // ---- M59h 追加: スリープ状態 (末尾 append) ----
+    // **状態を Rigidbody に置くのが肝** — hash / JSON / SimSnapshot / DLL 移行が
+    // フィールド表の既存機構で自動的に被覆される (専用の節を足さずに済む)。
+    // ★入眠時に velocity / angularVelocity を**厳密に 0.0f** へ書く: 眠っているあいだ
+    //   ワールドハッシュが完全に静止し、残留ビットが構成差を運ぶ余地も消える。
+    // ★sleepTicks は閾値でクランプする — 眠っているあいだ増え続けると
+    //   「ハッシュが動かない」という上の性質そのものが壊れる
+    int32_t sleepTicks = 0;
+    bool isSleeping = false;
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
@@ -783,6 +792,13 @@ struct PhysicsEnvironmentComponent {
     //   反発の頂点保存も貫通も改善する。代償として「1 tick あたりの力」を使う項
     //   (ConstantForce / 空力 / 浮力 / 翼 / ばね) は h = dt / substeps 刻みで効く
     int32_t substeps = 4;
+    // ---- M59h 追加: スリープ (末尾 append) ----
+    // ★**閾値の置き場が env = 存在ゲートの内側**。env を置いていないシーンは
+    //   スリープしない = M59f2 までとビット同一。sleepDelayTicks <= 0 でも無効。
+    // ★判定は **int の tick カウンタ**で行う (秒の float 累積は禁止 — 加算順で割れる)。
+    float sleepLinearThreshold = 0.05f;  // m/s。これ未満が続いたら候補
+    float sleepAngularThreshold = 0.1f;  // rad/s
+    int32_t sleepDelayTicks = 60;        // 連続して下回った tick 数がこれに達したら入眠
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 

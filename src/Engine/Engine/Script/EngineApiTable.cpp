@@ -209,9 +209,14 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
 
     // ---- 剛体操作 (v4、M28a)。velocity は hash 対象の sim 状態だが、スクリプト実行順は
     // 決定論なので直接更新してよい (SetLocalPosition と同格)。蓄積フィールドは持たない ----
+    // M59h: 速度・力を触るスロットは**必ず起こす**。眠っているボディはソルバが
+    // 丸ごと飛ばすので、起こさずに velocity を書くと「書いたのに動かない」になる
+    // (ABI の Wake/IsSleeping そのものは M59k で足す)
     out.AddForce = [](void* engine, MyeEntityId id, MyeVec3 f) -> int {
         auto* rb = Sc(engine)->GetWorld().GetComponent<RigidbodyComponent>(ToEngine(id));
         if (!rb || rb->isKinematic) { return 0; }
+        rb->isSleeping = false; // M59h
+        rb->sleepTicks = 0;
         // 固定 tick (EngineLoop kFixedDt = 1/60) 前提の 1 tick 分加速。毎 tick 呼べば連続力
         constexpr float kFixedDt = 1.0f / 60.0f;
         // M59a2: 密度導出質量 (useDensity) をソルバと同じ関数で解決 (質量を二義にしない)
@@ -225,6 +230,8 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
     out.AddImpulse = [](void* engine, MyeEntityId id, MyeVec3 imp) -> int {
         auto* rb = Sc(engine)->GetWorld().GetComponent<RigidbodyComponent>(ToEngine(id));
         if (!rb || rb->isKinematic) { return 0; }
+        rb->isSleeping = false; // M59h
+        rb->sleepTicks = 0;
         const float mass = EffectiveMassWorld(Sc(engine)->GetWorld(), ToEngine(id), *rb); // M59a2
         rb->velocity.x += imp.x / mass;
         rb->velocity.y += imp.y / mass;
@@ -245,6 +252,8 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
     out.SetVelocity = [](void* engine, MyeEntityId id, MyeVec3 v) -> int {
         auto* rb = Sc(engine)->GetWorld().GetComponent<RigidbodyComponent>(ToEngine(id));
         if (!rb) { return 0; }
+        rb->isSleeping = false; // M59h
+        rb->sleepTicks = 0;
         rb->velocity = { v.x, v.y, v.z };
         return 1;
     };

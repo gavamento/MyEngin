@@ -196,6 +196,13 @@ void RegisterBuiltinComponents()
                MYE_FIELD_TIP(RigidbodyComponent, centerOfMass, Float3,
                              "Local offset of the centre of mass from the shape origin. The "
                              "inertia tensor is taken to be about this point")),
+        // M59h: スリープ状態 (ソルバが書く sim 状態。Inspector からは観測用)
+        MYE_JP("スリープ計数",
+               MYE_FIELD_TIP(RigidbodyComponent, sleepTicks, Int32,
+                             "Consecutive quiet ticks. Driven by the solver")),
+        MYE_JP("スリープ中",
+               MYE_FIELD_TIP(RigidbodyComponent, isSleeping, Bool,
+                             "Asleep: the solver skips it and its velocities are exactly zero")),
     });
 
     // M21: ゲーム内 UI。描画専用なので **kComponentNoHash** (既存シーンのハッシュ不変)。
@@ -558,6 +565,17 @@ void RegisterBuiltinComponents()
                    .minVal = 1.0f, .maxVal = 16.0f,
                    .tooltip = "1 tick is split into this many integrate+solve steps. Higher = "
                               "stiffer springs and cleaner stacks, at a proportional cost" }),
+        // M59h: スリープ閾値 (この env が居るシーンだけ眠る)
+        MYE_JP("スリープ速度しきい値",
+               MYE_FIELD_RANGE(PhysicsEnvironmentComponent, sleepLinearThreshold, Float, 0.0f,
+                               10.0f)),
+        MYE_JP("スリープ角速度しきい値",
+               MYE_FIELD_RANGE(PhysicsEnvironmentComponent, sleepAngularThreshold, Float, 0.0f,
+                               10.0f)),
+        MYE_JP("スリープ遅延 (tick)",
+               MYE_FIELD_TIP(PhysicsEnvironmentComponent, sleepDelayTicks, Int32,
+                             "Ticks of continuous quiet before an island falls asleep. "
+                             "0 or below disables sleeping entirely")),
     });
 
     // M59b: 等方空力。**hash 対象** — velocity / angularVelocity を駆動する。

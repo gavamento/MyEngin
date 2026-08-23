@@ -854,6 +854,26 @@ the end of the component registration order, so existing scenes are untouched.
 | **No righting moment in v1** | The height-ratio approximation cannot see the horizontal shift of the centre of buoyancy, so a tilted raft keeps its tilt forever (only the angular water drag acts on it). The force is nonetheless applied *at the buoyancy centre* via `ApplyImpulse`, so the torque is provably zero today and starts working by itself once M59f1 adds a centre-of-mass offset. A true righting moment needs per-face pressure integration — that is M59c |
 | Buoyancy direction | Always **+Y**, magnitude scaled by `|gravity|`. The water surface is an axis-aligned Y plane in M59, so tilting the gravity vector while keeping a horizontal surface has no coherent reading |
 
+#### Sleep and islands (M59h)
+
+Bodies that have been quiet for a while stop being simulated. The thresholds live on
+`PhysicsEnvironment`, so a scene without one never sleeps and takes exactly the M59f2 path.
+
+| Concept | Decision |
+|---|---|
+| State on the `Rigidbody` | `sleepTicks` and `isSleeping` are ordinary fields, so the world hash, scene JSON, `SimSnapshot` and the DLL-reload migration all cover them through the existing field table. Nothing new had to be taught about sleep — that is the whole reason the state does not live in a side table |
+| Integer counter | The quiet run is counted in ticks, never in accumulated seconds: a float accumulator would depend on addition order |
+| Exact zeros on falling asleep | Velocity and angular velocity are written as literal `0.0f`. The world hash then stops moving completely while the body sleeps, which makes "asleep" cheap to verify and leaves no residual bits to carry a configuration difference |
+| The counter is clamped | `sleepTicks` stops at the threshold. Letting it keep counting would move the hash every tick and destroy the property above |
+| Immobile, not absent | A sleeping body keeps its place in the body array with `invMass = 0`. It stays in the broadphase (otherwise awake bodies fall through it) and drops out of gravity, integration and writeback through the `invMass == 0` branches that were already there |
+| Waking is one pass | The candidate pairs are swept once in `(small, large)` order and a sleeping body touched by a **moving** body wakes on the spot. A chain that needs more than one hop finishes next tick. Iterating to convergence would make the sweep cost depend on the shape of the scene |
+| Static neighbours never wake | The wake test is `invMass > 0`, which only an awake dynamic body satisfies, so a box asleep on the floor is not woken by the floor |
+| Islands decide together | Union-find over the candidate pairs, roots normalised to the smallest index so the labelling does not depend on the order pairs are processed. Static and kinematic bodies are not united — through the floor everything would become one island. A body sleeps only when the **minimum** counter in its island reaches the threshold; otherwise a base would fall asleep under a box that is still moving and be woken again the next tick |
+| Sleeping pairs are still reported | A pair where both sides are immobile is normally dropped before the manifold is built, which would remove it from the contact list and fire a spurious `OnCollisionExit`. Sleeping pairs instead get a manifold on the last substep and are reported with **zero impulse** — no impulse really was exchanged. The plan had `CollisionSystem` carry the pair forward from the previous tick instead; reporting it needs no liveness bookkeeping and re-checks the overlap every tick rather than asserting it from memory |
+| Waking from script | `AddForce`, `AddImpulse`, `AddTorque` and `SetVelocity` clear the flag. Writing a velocity onto a sleeping body without waking it would look like the write was ignored |
+| Measured | A resting box sleeps at tick 59 with a 60-tick threshold and its world hash is then bit-identical for 120 ticks. A 3-high stack sleeps on **the same tick for all three**. `sleepDelayTicks <= 0` disables the feature outright |
+| Warm starting | Deferred. The M59g1 gate asked whether stacks needed it; M59g2 showed that 8 substeps hold the jittered 10-high tower that collapses at 1 and 4, so the stateful-backend box stays closed |
+
 #### Static friction and rolling resistance (M59f2)
 
 The solver finally consumes the two `.physmat` fields that have been in the schema since M59a1.
