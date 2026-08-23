@@ -786,6 +786,13 @@ struct AeroComponent {
     // 角抗力係数。トルク = 0.5 rho Cda A r^3 |omega| omega (r = 面積から作る等価半径)
     float angularDragCoefficient = 0.1f;
     float magnusCoefficient = 1.0f; // S = magnusCoefficient * 0.5 rho A r の倍率
+    // ---- M59c 追加: 面ベース空力 (末尾 append) ----
+    // true で抗力の計算を**向きを見る面サンプリング** (AeroSampling.h) に切り替える。
+    // enableDrag が OFF なら無関係 (「抗力を出すか」と「どう出すか」の 2 段)。
+    // 等方近似と違って**揚力・風見安定が式の別成分として自然に出る**代わりに、
+    // 面ごとの陽的な力になるので 1 tick の Delta-v / Delta-omega をクランプしてある
+    bool surfaceModel = false;
+    float skinFriction = 0.01f; // 面モデルの表面摩擦係数 (風上/風下を問わず接線に効く)
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 

@@ -12,6 +12,7 @@
 #include "Engine/Engine/Physics/MeshColliderLibrary.h"
 #include "Engine/Engine/Physics/PhysMatLibrary.h" // M59a2: 材料解決の検証
 #include "Engine/Engine/DebugDraw.h"
+#include "Engine/Engine/Physics/AeroSampling.h"
 #include "Engine/Engine/Physics/PhysicsDebugDraw.h"
 #include "Engine/Engine/Physics/PhysicsSystem.h"
 #include "Engine/Engine/Physics/Shapes.h"
@@ -2141,6 +2142,297 @@ bool RunPhysicsSelfTest()
             const float lb = std::fabs(nb.by - nb.ay);
             check(la > 0.0f && lb > 0.0f && std::fabs(la - lb) > 1e-4f,
                   "phys debug: a weak resting contact draws a shorter normal than the fixed length");
+        }
+    }
+
+    // ================= M59c: 面サンプリングカーネル + 平板空力 =================
+    {
+        constexpr float kPi = DirectX::XM_PI;
+
+        // -- 一様流中の球: 細かく分割して同じカーネルへ流すと解析 1 発に収束する --
+        // (「球 = 解析 1 発」が面積分の閉形式であることの証明。流れは軸に乗せない)
+        {
+            AeroCoeffs c;
+            c.density = 1.225f;
+            c.normalCoeff = 0.5f;
+            c.tangentCoeff = 0.0f; // 圧力項だけを見る
+            const float R = 0.7f;
+            const float ux = 6.0f, uy = -3.0f, uz = 2.0f; // 斜めの一様流
+            ShapePose sp;
+            sp.shape = 0;
+            sp.radius = R;
+            AeroAccum analytic;
+            AccumulateShapeAero(sp, ux, uy, uz, 0, 0, 0, c, analytic);
+
+            // 緯度 x 経度の格子で表面を分割 (試験専用。実行時の経路では使わない)
+            AeroAccum summed;
+            constexpr int kLat = 128, kLon = 256;
+            for (int i = 0; i < kLat; ++i) {
+                const float th0 = kPi * static_cast<float>(i) / static_cast<float>(kLat);
+                const float th1 = kPi * static_cast<float>(i + 1) / static_cast<float>(kLat);
+                const float th = 0.5f * (th0 + th1);
+                // 帯の面積 = 2 pi R^2 (cos th0 - cos th1) を経度で割る
+                const float band = 2.0f * kPi * R * R * (std::cos(th0) - std::cos(th1));
+                const float area = band / static_cast<float>(kLon);
+                const float st = std::sin(th), ct = std::cos(th);
+                for (int j = 0; j < kLon; ++j) {
+                    const float ph = 2.0f * kPi * (static_cast<float>(j) + 0.5f)
+                                   / static_cast<float>(kLon);
+                    SurfaceElement e;
+                    e.nx = st * std::cos(ph);
+                    e.ny = ct;
+                    e.nz = st * std::sin(ph);
+                    e.px = e.nx * R;
+                    e.py = e.ny * R;
+                    e.pz = e.nz * R;
+                    e.area = area;
+                    e.vx = ux;
+                    e.vy = uy;
+                    e.vz = uz;
+                    AccumulateSurfaceElement(e, c, 0, 0, 0, summed);
+                }
+            }
+            const float fa = std::sqrt(analytic.fx * analytic.fx + analytic.fy * analytic.fy
+                                       + analytic.fz * analytic.fz);
+            const float fs = std::sqrt(summed.fx * summed.fx + summed.fy * summed.fy
+                                       + summed.fz * summed.fz);
+            MYE_LOG_INFO("  [phys] aero sphere: analytic %.4f N vs tessellated %.4f N", fa, fs);
+            check(fa > 0.0f && std::fabs(fs - fa) < fa * 0.01f,
+                  "aero kernel: a tessellated sphere converges to the closed-form drag (1%)");
+            // 抗力は流れ方向へ真っ直ぐ (等方形状なので横力は出ない)
+            const float sp2 = std::sqrt(ux * ux + uy * uy + uz * uz);
+            check(std::fabs(summed.fx / fs + ux / sp2) < 0.01f
+                      && std::fabs(summed.fy / fs + uy / sp2) < 0.01f,
+                  "aero kernel: the tessellated sphere force opposes the flow exactly");
+        }
+
+        // -- 対称な OBB に正面から流すとトルクは厳密に 0 --
+        {
+            AeroCoeffs c;
+            c.tangentCoeff = 0.02f; // 摩擦を入れても打ち消し合うことまで見る
+            ShapePose bp;
+            bp.shape = 1;
+            bp.hx = 0.5f;
+            bp.hy = 0.3f;
+            bp.hz = 0.4f;
+            AeroAccum acc;
+            AccumulateShapeAero(bp, 12.0f, 0.0f, 0.0f, 0, 0, 0, c, acc);
+            check(acc.tx == 0.0f && acc.ty == 0.0f && acc.tz == 0.0f,
+                  "aero kernel: head-on flow over a symmetric box yields exactly zero torque");
+            check(acc.fx < 0.0f && acc.fy == 0.0f && acc.fz == 0.0f,
+                  "aero kernel: the force is pure drag along -X");
+            // 正対面の抗力は 1/2 rho Cd A u^2 (Cn = Cd/2 の規約)。摩擦ぶん少し上回る
+            const float expect = c.normalCoeff * c.density * (4.0f * bp.hy * bp.hz) * 144.0f;
+            check(std::fabs(acc.fx) > expect * 0.99f && std::fabs(acc.fx) < expect * 1.3f,
+                  "aero kernel: box drag matches Cn*rho*A*u^2 (plus a little skin friction)");
+        }
+
+        // -- 平板の揚力: alpha=0 と alpha=90 で厳密 0、間で正 --
+        // 板は XZ 面 (法線 = ローカル Y)。速度を (cos a, -sin a, 0) 方向に取ると、
+        // 下面が風上になって揚力は +Y 側へ出る
+        {
+            AeroCoeffs c;
+            c.tangentCoeff = 0.0f; // 揚力の符号だけを見る (摩擦は流れ方向にしか効かない)
+            ShapePose plate;
+            plate.shape = 1;
+            plate.hx = 1.0f;
+            plate.hy = 0.0f; // 厚さ 0 = 側面の寄与を消した理想平板
+            plate.hz = 1.0f;
+            auto lift = [&](float cosA, float sinA) {
+                AeroAccum acc;
+                const float U = 10.0f;
+                AccumulateShapeAero(plate, U * cosA, -U * sinA, 0.0f, 0, 0, 0, c, acc);
+                // 流れに垂直な成分 (板の上向き側が正)
+                return acc.fx * sinA + acc.fy * cosA;
+            };
+            check(lift(1.0f, 0.0f) == 0.0f, "flat plate: zero lift at alpha = 0 (exactly)");
+            check(lift(0.0f, 1.0f) == 0.0f, "flat plate: zero lift at alpha = 90 (exactly)");
+            const float l37 = lift(0.8f, 0.6f);  // alpha ~ 36.87 deg
+            const float l53 = lift(0.6f, 0.8f);  // alpha ~ 53.13 deg
+            MYE_LOG_INFO("  [phys] flat plate lift: 37deg %.3f N / 53deg %.3f N", l37, l53);
+            check(l37 > 0.0f && l53 > 0.0f, "flat plate: positive lift between 0 and 90 degrees");
+            // sin^2 a * cos a は 54.7 度で最大 → 53 度側が大きい
+            check(l53 > l37, "flat plate: lift follows sin^2(a)cos(a) (peaks near 55 degrees)");
+        }
+
+        // -- 風見安定の**機構**: 圧力中心が基準点からずれて初めてトルクが出る --
+        // ★対称な凸形状に一様流を当てても、幾何中心まわりのトルクは**原理的に厳密 0**。
+        //   平らな面にかかる圧力は一様なので合力は必ず面心を通り、面心は法線軸上にある
+        //   (r // n // F → 外積 0)。これは近似の粗さではなく物理的に正しい結果で、
+        //   実際の風見安定は「圧力中心が質量中心の後ろにある」ことから来る。
+        //   本エンジンでは M59d の翼面 (子エンティティに置く = 親の中心からずれる) と
+        //   M59f1 の質量中心オフセットがその役を担う。ここではカーネルが
+        //   「ずれていればちゃんと復元トルクを出す」ことを直接確かめる
+        {
+            AeroCoeffs c;
+            c.tangentCoeff = 0.0f;
+            auto finTorque = [&](float finX) {
+                SurfaceElement fin; // 水平尾翼 (法線 +Y)
+                fin.px = finX;
+                fin.py = 0.0f;
+                fin.pz = 0.0f;
+                fin.nx = 0.0f;
+                fin.ny = 1.0f;
+                fin.nz = 0.0f;
+                fin.area = 0.2f;
+                fin.vx = 20.0f; // +X へ進みながら上へ流れている = 迎角 +
+                fin.vy = 2.0f;
+                fin.vz = 0.0f;
+                AeroAccum acc;
+                AccumulateSurfaceElement(fin, c, 0, 0, 0, acc);
+                return acc.tz;
+            };
+            const float tail = finTorque(-1.0f); // 基準点の後ろ = 尾翼
+            const float nose = finTorque(1.0f);  // 前 = カナード (不安定化する)
+            MYE_LOG_INFO("  [phys] weathercock: tail tz = %.5f / nose tz = %.5f", tail, nose);
+            // 機体の +X 軸を流れ (上向きに傾いている) へ合わせるには機首上げ = +Z 回転
+            check(tail > 0.0f, "weathercock: a fin behind the reference point restores the axis");
+            check(nose < 0.0f, "weathercock: the same fin in front destabilises it (sign flips)");
+            check(std::fabs(tail + nose) < 1e-6f,
+                  "weathercock: the torque is linear in the lever arm");
+        }
+
+        // -- 対称な箱は幾何中心まわりに厳密 0 のトルクしか出さない (上の理由の直接確認) --
+        {
+            AeroCoeffs c;
+            c.tangentCoeff = 0.0f;
+            ShapePose dart;
+            dart.shape = 1;
+            dart.hx = 1.0f;
+            dart.hy = 0.05f;
+            dart.hz = 0.05f;
+            AeroAccum acc;
+            AccumulateShapeAero(dart, 20.0f, -2.0f, 0.0f, 0, 0, 0, c, acc);
+            check(acc.tx == 0.0f && acc.ty == 0.0f && acc.tz == 0.0f,
+                  "aero kernel: a symmetric box has zero torque about its centre at any angle "
+                  "(pressure on a flat face is uniform -> the resultant passes through the "
+                  "face centre)");
+            check(acc.fy > 0.0f,
+                  "aero kernel: it still produces lift (the force is what tilts, not the torque)");
+        }
+
+        // -- 純関数であること: 2 回実行でビット一致 --
+        {
+            AeroCoeffs c;
+            c.windX = 3.0f;
+            ShapePose cap;
+            cap.shape = 2;
+            cap.radius = 0.4f;
+            cap.halfSeg = 0.9f;
+            AeroAccum a1, a2;
+            AccumulateShapeAero(cap, 5.0f, -2.0f, 1.0f, 0.5f, 1.5f, -0.5f, c, a1);
+            AccumulateShapeAero(cap, 5.0f, -2.0f, 1.0f, 0.5f, 1.5f, -0.5f, c, a2);
+            check(a1.fx == a2.fx && a1.fy == a2.fy && a1.fz == a2.fz && a1.tx == a2.tx
+                      && a1.ty == a2.ty && a1.tz == a2.tz,
+                  "aero kernel: the same input yields bit-identical output (pure function)");
+        }
+
+        // -- 端の半球の置き換えが軸方向で解析球と一致する (halfSeg=0 のカプセル == 球) --
+        {
+            AeroCoeffs c;
+            c.tangentCoeff = 0.0f;
+            const float R = 0.6f;
+            ShapePose deg; // 線分長 0 のカプセル = 球
+            deg.shape = 2;
+            deg.radius = R;
+            deg.halfSeg = 0.0f;
+            ShapePose sph;
+            sph.shape = 0;
+            sph.radius = R;
+            AeroAccum ac, as;
+            AccumulateShapeAero(deg, 0.0f, 9.0f, 0.0f, 0, 0, 0, c, ac); // 軸 (Y) 方向の流れ
+            AccumulateShapeAero(sph, 0.0f, 9.0f, 0.0f, 0, 0, 0, c, as);
+            check(std::fabs(ac.fy - as.fy) < std::fabs(as.fy) * 0.001f,
+                  "aero kernel: the hemisphere-as-disk substitution matches the analytic sphere "
+                  "for axial flow");
+        }
+
+        // -- ソルバ結線: 面モデルの板は等方近似より遠くまで滑空する --
+        {
+            auto glide = [&](bool surface, float& outZ, float& outY) {
+                Scene s;
+                GameObject go = s.CreateGameObjectTracked("Plate");
+                go.SetLocalPosition(0, 20.0f, 0);
+                auto* col = go.AddComponent<ColliderComponent>();
+                col->shape = 1;
+                col->isTrigger = false;
+                col->halfExtents = { 0.6f, 0.02f, 0.6f };
+                auto* rbc = go.AddComponent<RigidbodyComponent>();
+                rbc->mass = 0.2f;
+                rbc->freezeRotation = true; // 姿勢を固定して「滑空するか」だけを見る
+                auto* aero = go.AddComponent<AeroComponent>();
+                aero->surfaceModel = surface;
+                aero->enableAngularDrag = false;
+                s.GetWorld().ApplyStructuralChanges();
+                auto* rb = go.GetComponent<RigidbodyComponent>();
+                rb->velocity = { 0.0f, 0.0f, 8.0f }; // +Z へ水平に射出
+                auto* lt = go.GetComponent<LocalTransform>();
+                for (int i = 0; i < 240; ++i) {
+                    phys.Update(s.GetWorld(), kDt);
+                }
+                outZ = lt->position.z;
+                outY = lt->position.y;
+            };
+            float zSurf = 0.0f, ySurf = 0.0f, zIso = 0.0f, yIso = 0.0f;
+            glide(true, zSurf, ySurf);
+            glide(false, zIso, yIso);
+            MYE_LOG_INFO("  [phys] plate glide: surface z=%.2f y=%.2f / isotropic z=%.2f y=%.2f",
+                         zSurf, ySurf, zIso, yIso);
+            // 水平な板は落下方向 (下面) に大きな面積を向けるので、面モデルの方がよく沈まない
+            check(ySurf > yIso, "aero surface: a flat plate falls slower than the isotropic model");
+            // 逆に前方投影面積は小さいので前進はよく伸びる
+            check(zSurf > zIso, "aero surface: and travels further forward");
+        }
+
+        // -- 面モデルでも Aero 非所持ボディはビット不変 --
+        {
+            auto dumpOne = [](GameObject go, std::vector<uint8_t>& out) {
+                out.clear();
+                const auto* lt = go.GetComponent<LocalTransform>();
+                const auto* rb = go.GetComponent<RigidbodyComponent>();
+                const auto* p = reinterpret_cast<const uint8_t*>(&lt->position);
+                out.insert(out.end(), p, p + sizeof(lt->position));
+                const auto* v = reinterpret_cast<const uint8_t*>(&rb->velocity);
+                out.insert(out.end(), v, v + sizeof(rb->velocity));
+            };
+            Scene sa, sb;
+            MakeGround(sa, "G", 0, -0.5f, 0, 5.0f, 0.5f, 5.0f);
+            GameObject plainA = MakeBox(sa, "Plain", 0, 3.0f, 0, 0.5f, 0.5f, 0.5f, 0.3f);
+            sa.GetWorld().ApplyStructuralChanges();
+            MakeGround(sb, "G", 0, -0.5f, 0, 5.0f, 0.5f, 5.0f);
+            GameObject plainB = MakeBox(sb, "Plain", 0, 3.0f, 0, 0.5f, 0.5f, 0.5f, 0.3f);
+            GameObject wing = MakeBox(sb, "Wing", 40.0f, 6.0f, 0, 1.0f, 0.05f, 1.0f);
+            wing.AddComponent<AeroComponent>()->surfaceModel = true;
+            sb.GetWorld().ApplyStructuralChanges();
+            wing.GetComponent<RigidbodyComponent>()->velocity = { 0.0f, -1.0f, 6.0f };
+            bool same = true;
+            std::vector<uint8_t> da, db;
+            for (int i = 0; i < 240 && same; ++i) {
+                phys.Update(sa.GetWorld(), kDt);
+                phys.Update(sb.GetWorld(), kDt);
+                dumpOne(plainA, da);
+                dumpOne(plainB, db);
+                if (da.empty() || da != db) {
+                    same = false;
+                    MYE_LOG_ERROR("  aero surface mix diverged at tick %d", i);
+                }
+            }
+            check(same,
+                  "aero surface: bodies without Aero keep their legacy trajectory bit-exactly");
+            // 板は対称なのでトルクは出ない (上記) — 「揚力で沈み方が変わった」で空振りでないことを示す
+            MYE_LOG_INFO("  [phys] aero mix wing: pos=(%.2f %.2f %.2f) vel=(%.2f %.2f %.2f)",
+                         wing.GetComponent<LocalTransform>()->position.x,
+                         wing.GetComponent<LocalTransform>()->position.y,
+                         wing.GetComponent<LocalTransform>()->position.z,
+                         wing.GetComponent<RigidbodyComponent>()->velocity.x,
+                         wing.GetComponent<RigidbodyComponent>()->velocity.y,
+                         wing.GetComponent<RigidbodyComponent>()->velocity.z);
+            // 4 秒間の自由落下なら -39 m/s。面モデルの終端速度 sqrt(mg / (Cn rho A)) ~= 2.9 に
+            // 落ち着いていることが「効いている」証拠 (A = 下面 4 m^2)
+            check(wing.GetComponent<RigidbodyComponent>()->velocity.y > -4.0f
+                      && wing.GetComponent<RigidbodyComponent>()->velocity.y < -2.0f
+                      && wing.GetComponent<LocalTransform>()->position.z > 5.0f,
+                  "aero surface: the wing reached its own terminal speed (not a vacuous test)");
         }
     }
 

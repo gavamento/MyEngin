@@ -246,6 +246,9 @@
     <ClCompile Include="..\src\Engine\Engine\Parts.cpp">
       <Filter>Engine</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Physics\AeroSampling.cpp">
+      <Filter>Engine\Physics</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Physics\Broadphase.cpp">
       <Filter>Engine\Physics</Filter>
     </ClCompile>
@@ -737,6 +740,9 @@
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Parts.h">
       <Filter>Engine</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Physics\AeroSampling.h">
+      <Filter>Engine\Physics</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Physics\Broadphase.h">
       <Filter>Engine\Physics</Filter>

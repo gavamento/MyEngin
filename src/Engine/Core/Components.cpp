@@ -556,6 +556,10 @@ void RegisterBuiltinComponents()
                MYE_FIELD_RANGE(AeroComponent, angularDragCoefficient, Float, 0.0f, 100.0f)),
         MYE_JP("マグヌス係数",
                MYE_FIELD_RANGE(AeroComponent, magnusCoefficient, Float, 0.0f, 100.0f)),
+        MYE_JP("面ベース空力", MYE_FIELD_TIP(AeroComponent, surfaceModel, Bool,
+                                             "orientation-aware: produces lift and weathercock "
+                                             "stability (needs the drag flag)")),
+        MYE_JP("表面摩擦", MYE_FIELD_RANGE(AeroComponent, skinFriction, Float, 0.0f, 10.0f)),
     });
 
     // M59b2: 浮力。**hash 対象** — velocity / angularVelocity を駆動する。

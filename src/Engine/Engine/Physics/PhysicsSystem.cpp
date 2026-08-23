@@ -8,6 +8,7 @@
 
 #include "Engine/Core/Components.h"
 #include "Engine/Core/World.h"
+#include "Engine/Engine/Physics/AeroSampling.h" // M59c: 面サンプリング
 #include "Engine/Engine/Physics/Broadphase.h"
 #include "Engine/Engine/Physics/PhysMatLibrary.h" // M59a2: physmat::Resolve (材料解決)
 #include "Engine/Engine/Physics/Shapes.h"
@@ -33,6 +34,8 @@ constexpr float kBroadphaseMargin = 0.1f;
 // 係数を極端にしたオーサリングミスでシーンが吹き飛ぶのを止めるための防波堤。
 // 抗力系は閉形式 implicit なのでクランプを要らない (除算しかしないため発散し得ない)
 constexpr float kExplicitMaxDeltaV = 100.0f;
+// 面サンプリング (M59c) のトルク側の同じ防波堤 [rad/s]
+constexpr float kExplicitMaxDeltaOmega = 100.0f;
 
 // ---- scalar クォータニオン演算 (親子合成用。XMVECTOR 禁止 = 決定論契約) ----
 
@@ -622,13 +625,16 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
         const float rEq = std::sqrt(area / XM_PI);
         // ---- 並進: 風に対する相対速度に効かせ、最後に風を足し戻す ----
         // ★両方 OFF のときは相対速度への往復自体を走らせない — v - w + w は float では
-        //   元の v に戻るとは限らず、「全部 OFF の Aero を付けただけで挙動が動く」を避ける
-        if (aero->enableDrag || aero->enableMagnus) {
+        //   元の v に戻るとは限らず、「全部 OFF の Aero を付けただけで挙動が動く」を避ける。
+        // M59c: 面モデルを使うときは抗力を等方経路から外す (「抗力を出すか」= enableDrag と
+        //       「どう出すか」= surfaceModel の 2 段。マグヌスは常に等方経路のまま)
+        const bool isoDrag = aero->enableDrag && !aero->surfaceModel;
+        if (isoDrag || aero->enableMagnus) {
             const float wndX = env ? env->windVelocity.x : 0.0f;
             const float wndY = env ? env->windVelocity.y : 0.0f;
             const float wndZ = env ? env->windVelocity.z : 0.0f;
             float rvx = b.vx - wndX, rvy = b.vy - wndY, rvz = b.vz - wndZ;
-            if (aero->enableDrag) {
+            if (isoDrag) {
                 // F = k |v| v (k = 0.5 rho Cd A) を**閉形式 implicit** で解く:
                 //   v' = v / (1 + (k |v| / m) dt)。除算のみなので k をいくら大きくしても
                 //   符号が反転せず無条件安定 (陽的 v -= k|v|v/m dt は簡単に発散する)。
@@ -668,6 +674,58 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             b.vy = rvy + wndY;
             b.vz = rvz + wndZ;
         }
+        // ---- 面サンプリング空力 (M59c): 向きを見る抗力・揚力・風見安定 ----
+        // 等方抗力の置き換え。面ごとの陽的な力なので Delta-v / Delta-omega をクランプする
+        if (aero->enableDrag && aero->surfaceModel) {
+            ShapePose ap = b.pose;
+            if (b.shapeCol) {
+                ap = shapes::MakePose(*b.shapeCol, { b.pose.px, b.pose.py, b.pose.pz },
+                                      { b.qx, b.qy, b.qz, b.qw }, b.scale);
+            } else {
+                ap.shape = 0;
+                ap.radius = 0.5f; // 慣性・等方空力と同じ既定
+                ap.identityRot = 1;
+            }
+            AeroCoeffs ac;
+            ac.density = rho;
+            ac.windX = env ? env->windVelocity.x : 0.0f;
+            ac.windY = env ? env->windVelocity.y : 0.0f;
+            ac.windZ = env ? env->windVelocity.z : 0.0f;
+            // 正対した平板の抗力が 1/2 rho Cd A u^2 と一致するのは Cn = Cd/2 のとき
+            ac.normalCoeff = cd * 0.5f;
+            ac.tangentCoeff = aero->skinFriction;
+            AeroAccum acm;
+            AccumulateShapeAero(ap, b.vx, b.vy, b.vz, b.wx, b.wy, b.wz, ac, acm);
+            // 面積倍率は力もトルクも線形なので後掛けでよい
+            const float as = aero->areaScale;
+            float dvx = acm.fx * as * b.invMass * dt;
+            float dvy = acm.fy * as * b.invMass * dt;
+            float dvz = acm.fz * as * b.invMass * dt;
+            const float d2 = dvx * dvx + dvy * dvy + dvz * dvz;
+            if (d2 > kExplicitMaxDeltaV * kExplicitMaxDeltaV) {
+                const float clamp = kExplicitMaxDeltaV / std::sqrt(d2);
+                dvx *= clamp;
+                dvy *= clamp;
+                dvz *= clamp;
+            }
+            b.vx += dvx;
+            b.vy += dvy;
+            b.vz += dvz;
+            // トルク (freezeRot / kinematic は invI が零行列なので自然に無効)
+            float dwx, dwy, dwz;
+            MulInvI(b.invI, acm.tx * as * dt, acm.ty * as * dt, acm.tz * as * dt, dwx, dwy, dwz);
+            const float w2 = dwx * dwx + dwy * dwy + dwz * dwz;
+            if (w2 > kExplicitMaxDeltaOmega * kExplicitMaxDeltaOmega) {
+                const float clamp = kExplicitMaxDeltaOmega / std::sqrt(w2);
+                dwx *= clamp;
+                dwy *= clamp;
+                dwz *= clamp;
+            }
+            b.wx += dwx;
+            b.wy += dwy;
+            b.wz += dwz;
+        }
+
         // ---- 角速度の二次抗力 (同じ閉形式 implicit) ----
         // これが無いとマグヌスで回り始めた球が永遠に回り続ける (angularDamping は
         // 非物理の定率なので、空力を使うシーンでは 0 にしてこちらへ寄せるのが推奨)。

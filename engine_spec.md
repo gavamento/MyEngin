@@ -854,6 +854,23 @@ the end of the component registration order, so existing scenes are untouched.
 | **No righting moment in v1** | The height-ratio approximation cannot see the horizontal shift of the centre of buoyancy, so a tilted raft keeps its tilt forever (only the angular water drag acts on it). The force is nonetheless applied *at the buoyancy centre* via `ApplyImpulse`, so the torque is provably zero today and starts working by itself once M59f1 adds a centre-of-mass offset. A true righting moment needs per-face pressure integration — that is M59c |
 | Buoyancy direction | Always **+Y**, magnitude scaled by `|gravity|`. The water surface is an axis-aligned Y plane in M59, so tilting the gravity vector while keeping a horizontal surface has no coherent reading |
 
+#### Surface-sampling aerodynamics (M59c)
+
+`Aero.surfaceModel` switches how drag is computed — from the orientation-blind representative area
+of M59b to a per-face pressure integral (`Physics/AeroSampling.h`). The kernel is one pure function
+over a **surface element** (point, outward normal, area, the velocity of that point); the shape
+emitters that feed it are the only part that knows about boxes and capsules, and M60' cloth is
+expected to become its second caller by emitting its own elements.
+
+| Concept | Decision |
+|---|---|
+| Element force | Newtonian flat plate: a windward face (`n·u > 0`) gets `F = −Cn·ρ·A·(n·u)²·n`, plus skin friction `−Ct·ρ·A·\|u_t\|·u_t` on every face. Because the pressure force is along `−n` rather than along the flow, an inclined surface produces a component perpendicular to the flow — **lift falls out of the same expression**, with `sin²α` appearing as `(n·u)²` and `sin α cos α` as a product of dot products. **No trigonometric function is called anywhere in the kernel** |
+| Coefficient mapping | `Cn = Cd / 2`, so a plate square to the flow reproduces the textbook `½ρ·Cd·A·u²`. Integrating the same `Cn` over a sphere yields an effective `Cd = Cn` — half the plate's. That is the Newtonian model's own answer to "the same frontal area resists less when it is round", and it tracks the measured ratio (sphere 0.47 vs plate 1.28 ≈ 0.37) |
+| Fixed order | Boxes emit six faces in basis order (+X, −X, +Y, −Y, +Z, −Z); capsules emit eight azimuthal side strips from a **constant table** (`std::cos`/`std::sin` are CRT-dependent) followed by the +Y and −Y ends; spheres use the closed form. **Float addition is not associative, so this order is part of the result — parallelising the element loop is permanently forbidden** |
+| Capsule ends | Each hemisphere is replaced by a disk of area `πR²/2`, which reproduces the hemisphere's pressure integral exactly for axial flow (asserted against the analytic sphere in the self test). Lateral force on an inclined end is lost |
+| **Symmetric bodies produce no torque** | Pressure on a flat face is uniform, so its resultant passes through the face centre, which lies on the normal axis (`r ∥ n ∥ F`). A symmetric convex body in uniform flow therefore has **exactly zero torque about its geometric centre at any angle of attack** — that is the correct physics, not a coarseness artefact. Real weathercock stability comes from the centre of pressure being offset from the centre of mass, which in this engine means M59d's wing panels on child entities or M59f1's centre-of-mass offset. The self test pins both the zero and the mechanism (a fin behind the reference point restores, the same fin in front destabilises) |
+| Stability | The surface force is explicit, so the per-tick Δv and Δω are clamped with the same deterministic guard the isotropic Magnus term uses |
+
 #### Contact reporting and physics debug draw (M59e)
 
 `SolidContact` — the per-tick, stateless output of `PhysicsSystem::Update` — carries a
