@@ -918,8 +918,17 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
     }
 
     // ---- 接触解決 (固定反復・候補ペアを (小,大) 昇順走査 = 決定論) ----
+    // M59e: 接触の**強さ**を出すため、ペアごとの法線インパルスを反復をまたいで積む。
+    // 最終反復ぶんだけでは駄目 — 静止接触は 1 回目でほぼ解決してしまうので最後の反復は
+    // ほぼ 0 になり、「載っている重さ」を表さない (積めば静止箱で m*g*dt に一致する)。
+    // 書き込み専用のブックキーピングなので sim には 1 ビットも影響しない
+    std::vector<float> pairImpulse;
+    if (outContacts) {
+        pairImpulse.assign(candidates.size(), 0.0f);
+    }
     for (int iter = 0; iter < kSolverIterations; ++iter) {
-        for (const uint64_t pairKey : candidates) {
+        for (size_t pairIdx = 0; pairIdx < candidates.size(); ++pairIdx) {
+            const uint64_t pairKey = candidates[pairIdx];
             {
                 Body& A = bodies[static_cast<size_t>(pairKey >> 32)];
                 Body& B = bodies[static_cast<size_t>(pairKey & 0xFFFFFFFFu)];
@@ -932,12 +941,6 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                     continue;
                 }
                 const float nx = m.nx, ny = m.ny, nz = m.nz; // b→a (A を押し出す)
-                // 最終反復の接触ペアを記録 (M28c)。i<j × index 昇順走査 → key も自動的に昇順
-                if (outContacts && iter == kSolverIterations - 1) {
-                    outContacts->push_back(
-                        { (static_cast<uint64_t>(A.entity.index) << 32) | B.entity.index, nx, ny,
-                          nz });
-                }
                 // 位置補正 (並進のみ = 回転補正はしない: 簡易ソルバの発散防止)。最深点で分配
                 float maxDepth = 0.0f;
                 for (int k = 0; k < m.count; ++k) {
@@ -1065,6 +1068,24 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                             ApplyImpulse(B, rbC[0], rbC[1], rbC[2], tx * jt, ty * jt, tz * jt,
                                          -1.0f);
                         }
+                    }
+                }
+                // 接触ペアの記録 (M28c、M59e で代表点と法線インパルスを追加)。
+                // ★**インパルスを出し終えた後**に積む — totalJn がここで確定するため。
+                //   i<j x index 昇順走査なので key は自動的に昇順のまま (二分探索の前提)
+                if (outContacts) {
+                    pairImpulse[pairIdx] += totalJn;
+                    if (iter == kSolverIterations - 1) {
+                        SolidContact sc;
+                        sc.key = (static_cast<uint64_t>(A.entity.index) << 32) | B.entity.index;
+                        sc.nx = nx;
+                        sc.ny = ny;
+                        sc.nz = nz;
+                        sc.px = cpx; // 代表点は最終反復の (位置補正後の) マニフォールド重心
+                        sc.py = cpy;
+                        sc.pz = cpz;
+                        sc.impulse = pairImpulse[pairIdx];
+                        outContacts->push_back(sc);
                     }
                 }
             }

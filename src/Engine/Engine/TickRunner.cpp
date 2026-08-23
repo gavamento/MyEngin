@@ -24,6 +24,7 @@
 #include "Engine/Engine/PartFollowSystem.h"
 #include "Engine/Engine/PlayerInputSystem.h"
 #include "Engine/Engine/Particles/ParticleSystem.h"
+#include "Engine/Engine/Physics/PhysicsDebugDraw.h"
 #include "Engine/Engine/Physics/PhysicsSystem.h"
 #include "Engine/Engine/Prefab.h"
 #include "Engine/Engine/RenderSystem.h"
@@ -336,6 +337,16 @@ void RunOneTick(TickServices& ts)
         // トレイル点列の蓄積 (M29c)。WorldMatrix 確定後の tick 側で 1 回だけ —
         // Render 側だと SceneView/GameView の多重描画で多重サンプルされる
         vfxRenderer.UpdateTrails(scene.GetWorld(), ctx.tickIndex);
+        // 物理デバッグ可視化 (M59e)。**出力レーン**なので debugLines へ積むだけで
+        // sim には触れない。Transform の後に置くのは速度ベクトルの根元に当 tick の
+        // ワールド位置が要るため。再シム (M52e/M52i) は抑止する — 巻き戻すたびに
+        // 同じ線を積み直すと、シークの途中経過が 1 フレームに折り重なって見える
+        if (!ts.resim) {
+            const PhysicsDebugFlags& physDebug = GetPhysicsDebugFlags();
+            if (physDebug.Any()) {
+                BuildPhysicsDebugLines(scene.GetWorld(), solidContacts, physDebug, debugLines);
+            }
+        }
     }
     // ---- フェーズ 5: スクリプト層 LateUpdate ----
     if (runScripts) {

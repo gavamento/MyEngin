@@ -11,6 +11,8 @@
 #include "Engine/Engine/GameObject.h"
 #include "Engine/Engine/Physics/MeshColliderLibrary.h"
 #include "Engine/Engine/Physics/PhysMatLibrary.h" // M59a2: 材料解決の検証
+#include "Engine/Engine/DebugDraw.h"
+#include "Engine/Engine/Physics/PhysicsDebugDraw.h"
 #include "Engine/Engine/Physics/PhysicsSystem.h"
 #include "Engine/Engine/Physics/Shapes.h"
 #include "Engine/Engine/Replay/WorldHasher.h"
@@ -1999,6 +2001,146 @@ bool RunPhysicsSelfTest()
                   "(240 ticks bit-identical)");
             check(boat.GetComponent<LocalTransform>()->position.y > 18.5f,
                   "buoyancy: the floating body did float (the mix test is not vacuous)");
+        }
+    }
+
+    // ================= M59e: SolidContact 拡張 + 物理デバッグ可視化 =================
+    {
+        // -- 代表接触点と法線インパルスの意味 --
+        // 静止した質量 m の箱を支えている接触の法線インパルス合計は m*g*dt になる
+        // (重力が毎 tick 与える運動量をソルバがそっくり打ち消しているため)
+        {
+            Scene s;
+            MakeGround(s, "G", 0, -0.5f, 0, 5.0f, 0.5f, 5.0f); // 上面 y=0
+            GameObject box = MakeBox(s, "Rester", 0, 0.5f, 0, 0.5f, 0.5f, 0.5f);
+            s.GetWorld().ApplyStructuralChanges();
+            box.GetComponent<RigidbodyComponent>()->mass = 2.0f;
+            std::vector<SolidContact> contacts;
+            for (int i = 0; i < 240; ++i) { // 静定させる
+                phys.Update(s.GetWorld(), kDt, &contacts);
+            }
+            check(contacts.size() == 1, "contact: a settled box reports exactly one pair");
+            if (contacts.size() == 1) {
+                const SolidContact& c = contacts[0];
+                // 代表点は箱の底 = 床の上面 (y=0) の近く
+                check(std::fabs(c.py) < 0.02f,
+                      "contact: the representative point sits on the contact plane");
+                check(std::fabs(c.px) < 0.02f && std::fabs(c.pz) < 0.02f,
+                      "contact: the representative point is the manifold centroid");
+                const float expect = 2.0f * 9.81f * kDt; // m*g*dt
+                MYE_LOG_INFO("  [phys] resting contact impulse = %.5f (expect m*g*dt = %.5f)",
+                             c.impulse, expect);
+                check(std::fabs(c.impulse - expect) < 0.02f,
+                      "contact: the accumulated normal impulse equals m*g*dt while resting");
+                check(c.ny < -0.9f,
+                      "contact: the normal points from the high index to the low index (box->ground)");
+            }
+        }
+
+        // -- 落下中 (接触なし) は 1 件も出さない / 出力を渡さない呼び方でも同じ挙動 --
+        {
+            Scene s;
+            MakeGround(s, "G", 0, -0.5f, 0, 5.0f, 0.5f, 5.0f);
+            MakeBox(s, "Faller", 0, 8.0f, 0, 0.5f, 0.5f, 0.5f);
+            s.GetWorld().ApplyStructuralChanges();
+            std::vector<SolidContact> contacts;
+            phys.Update(s.GetWorld(), kDt, &contacts);
+            check(contacts.empty(), "contact: a body in free fall reports no pair");
+        }
+
+        // -- 接触情報の収集は sim を変えない (outContacts を渡す/渡さないで並走ハッシュ一致) --
+        {
+            auto build = [](Scene& s) {
+                MakeGround(s, "G", 0, -0.5f, 0, 5.0f, 0.5f, 5.0f);
+                MakeBox(s, "B0", -0.6f, 1.2f, 0, 0.5f, 0.5f, 0.5f, 0.2f);
+                MakeBox(s, "B1", 0.6f, 2.4f, 0.1f, 0.5f, 0.5f, 0.5f, 0.2f);
+                MakeSphereBody(s, "S", 0.0f, 4.0f, 0.05f, 0.5f);
+                s.GetWorld().ApplyStructuralChanges();
+            };
+            Scene sa, sb;
+            build(sa);
+            build(sb);
+            std::vector<SolidContact> contacts;
+            bool same = true;
+            for (int i = 0; i < 240 && same; ++i) {
+                phys.Update(sa.GetWorld(), kDt, &contacts); // 収集あり
+                phys.Update(sb.GetWorld(), kDt, nullptr);   // 収集なし
+                if (HashWorld(sa.GetWorld(), nullptr) != HashWorld(sb.GetWorld(), nullptr)) {
+                    same = false;
+                    MYE_LOG_ERROR("  contact collection changed the sim at tick %d", i);
+                }
+            }
+            check(same,
+                  "contact: collecting contacts is read-only (hash-identical to not collecting, "
+                  "240 ticks)");
+        }
+
+        // -- 可視化は World を読むだけ / トグルの意味 --
+        {
+            Scene s;
+            MakeGround(s, "G", 0, -0.5f, 0, 5.0f, 0.5f, 5.0f);
+            GameObject box = MakeBox(s, "Rester", 0, 0.5f, 0, 0.5f, 0.5f, 0.5f);
+            GameObject flyer = MakeSphereBody(s, "Flyer", 3.0f, 3.0f, 0, 0.5f);
+            s.GetWorld().ApplyStructuralChanges();
+            flyer.GetComponent<RigidbodyComponent>()->velocity = { 2.0f, 0.0f, 0.0f };
+            std::vector<SolidContact> contacts;
+            for (int i = 0; i < 120; ++i) {
+                phys.Update(s.GetWorld(), kDt, &contacts);
+            }
+            TransformSystem ts;
+            ts.Update(s.GetWorld()); // 速度ベクトルの根元にワールド行列が要る
+            const uint64_t before = HashWorld(s.GetWorld(), nullptr);
+
+            std::vector<DebugLineCmd> lines;
+            PhysicsDebugFlags off;
+            BuildPhysicsDebugLines(s.GetWorld(), contacts, off, lines);
+            check(lines.empty(), "phys debug: all flags off emits nothing");
+
+            PhysicsDebugFlags onContacts;
+            onContacts.contacts = true;
+            BuildPhysicsDebugLines(s.GetWorld(), contacts, onContacts, lines);
+            // 接触 1 件につき 十字 3 本 + 法線 1 本
+            check(lines.size() == contacts.size() * 4,
+                  "phys debug: contacts emit a 3-line cross plus one normal each");
+
+            lines.clear();
+            PhysicsDebugFlags onVel;
+            onVel.velocities = true;
+            BuildPhysicsDebugLines(s.GetWorld(), contacts, onVel, lines);
+            // 静止した箱は閾値未満で描かれず、飛んでいる球だけが 1 本出す
+            check(lines.size() == 1,
+                  "phys debug: only bodies above the speed threshold emit a velocity line");
+
+            check(HashWorld(s.GetWorld(), nullptr) == before,
+                  "phys debug: building the lines does not touch the world (hash unchanged)");
+        }
+
+        // -- インパルス表示は法線の長さだけを変える (本数は同じ) --
+        {
+            Scene s;
+            MakeGround(s, "G", 0, -0.5f, 0, 5.0f, 0.5f, 5.0f);
+            MakeBox(s, "Rester", 0, 0.5f, 0, 0.5f, 0.5f, 0.5f);
+            s.GetWorld().ApplyStructuralChanges();
+            std::vector<SolidContact> contacts;
+            for (int i = 0; i < 120; ++i) {
+                phys.Update(s.GetWorld(), kDt, &contacts);
+            }
+            std::vector<DebugLineCmd> a, b;
+            PhysicsDebugFlags f1;
+            f1.contacts = true;
+            PhysicsDebugFlags f2;
+            f2.contacts = true;
+            f2.impulses = true;
+            BuildPhysicsDebugLines(s.GetWorld(), contacts, f1, a);
+            BuildPhysicsDebugLines(s.GetWorld(), contacts, f2, b);
+            check(!a.empty() && a.size() == b.size(),
+                  "phys debug: the impulse flag changes lengths, not the line count");
+            const DebugLineCmd& na = a.back();
+            const DebugLineCmd& nb = b.back();
+            const float la = std::fabs(na.by - na.ay);
+            const float lb = std::fabs(nb.by - nb.ay);
+            check(la > 0.0f && lb > 0.0f && std::fabs(la - lb) > 1e-4f,
+                  "phys debug: a weak resting contact draws a shorter normal than the fixed length");
         }
     }
 

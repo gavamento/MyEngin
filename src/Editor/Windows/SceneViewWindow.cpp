@@ -21,6 +21,7 @@
 #include "Engine/Engine/Audio/SoundAsset.h"
 #include "Engine/Engine/GameObject.h"
 #include "Engine/Engine/Parts.h"
+#include "Engine/Engine/Physics/PhysicsDebugDraw.h"
 #include "Engine/Engine/Physics/Shapes.h"
 #include "Engine/Engine/RenderSystem.h"
 #include "Engine/Engine/Scene.h"
@@ -807,6 +808,28 @@ void SceneViewWindow::DrawToolbar(EditorSettings& settings)
     ImGui::Checkbox(Tr(StrId::SceneView_Grid), &showGrid_);
     ImGui::SameLine();
     ImGui::Checkbox(Tr(StrId::SceneView_Gizmos), &showGizmos_);
+    ImGui::SameLine();
+    // 物理デバッグ可視化 (M59e)。**Play 中しか線は出ない** — 積むのは tick 側なので
+    // (編集中は物理が走らず接触も速度も無い)。有効中はボタンを着色して気付けるようにする
+    {
+        PhysicsDebugFlags& pd = GetPhysicsDebugFlags();
+        const bool anyOn = pd.contacts || pd.velocities;
+        if (anyOn) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.26f, 0.45f, 0.78f, 1.0f));
+        }
+        if (ImGui::Button(Tr(StrId::SceneView_PhysDebug))) {
+            ImGui::OpenPopup("##sv_physdbg_popup");
+        }
+        if (anyOn) {
+            ImGui::PopStyleColor();
+        }
+        if (ImGui::BeginPopup("##sv_physdbg_popup")) {
+            ImGui::Checkbox(Tr(StrId::SceneView_PhysContact), &pd.contacts);
+            ImGui::Checkbox(Tr(StrId::SceneView_PhysImpulse), &pd.impulses);
+            ImGui::Checkbox(Tr(StrId::SceneView_PhysVel), &pd.velocities);
+            ImGui::EndPopup();
+        }
+    }
     ImGui::SameLine();
     ImGui::TextUnformatted("|");
     ImGui::SameLine();

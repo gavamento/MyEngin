@@ -854,6 +854,27 @@ the end of the component registration order, so existing scenes are untouched.
 | **No righting moment in v1** | The height-ratio approximation cannot see the horizontal shift of the centre of buoyancy, so a tilted raft keeps its tilt forever (only the angular water drag acts on it). The force is nonetheless applied *at the buoyancy centre* via `ApplyImpulse`, so the torque is provably zero today and starts working by itself once M59f1 adds a centre-of-mass offset. A true righting moment needs per-face pressure integration — that is M59c |
 | Buoyancy direction | Always **+Y**, magnitude scaled by `|gravity|`. The water surface is an axis-aligned Y plane in M59, so tilting the gravity vector while keeping a horizontal surface has no coherent reading |
 
+#### Contact reporting and physics debug draw (M59e)
+
+`SolidContact` — the per-tick, stateless output of `PhysicsSystem::Update` — carries a
+**representative contact point** (the manifold centroid the solver actually applies the central
+normal impulse and friction at) and the **accumulated normal impulse** for the pair, in addition to
+the pair key and normal it has had since M28c. The impulse is summed across all eight solver
+iterations, not taken from the last one: a settled contact is resolved almost entirely on the first
+iteration, so the last iteration's value is near zero and does not represent the load being carried.
+Summed, a body of mass `m` resting on the ground reports exactly `m·g·dt`. The intended consumers
+are the debug draw below, the contact query in the M59k ABI, the stress input for M61 fracture, and
+impact sound. Collecting contacts is read-only — the self test asserts hash-identity against a
+parallel run that passes `nullptr`.
+
+`PhysicsDebugFlags` / `BuildPhysicsDebugLines` (`Physics/PhysicsDebugDraw.h`) turn those contacts
+and the rigid-body velocities into debug lines. The flags are a process-wide global rather than sim
+state, which is sound precisely because the collection is read-only and the output is one-way into
+the `debugLines` lane shared with the script `DebugDrawLine` — so the lines appear in the Game View
+as well as the Scene View. `TickRunner` calls it after `TransformSystem` (the velocity arrows need
+the current tick's world matrices) and suppresses it while re-simulating, so a time-travel seek does
+not pile every intermediate tick's lines into one frame.
+
 ---
 
 ## 11. Debug/Release Consistency Policy

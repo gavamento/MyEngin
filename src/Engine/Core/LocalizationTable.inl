@@ -372,6 +372,14 @@ MYE_STR(SceneView_Lit,        "Lit",        "陰影あり")
 MYE_STR(SceneView_Unlit,      "Unlit",      "陰影なし")
 MYE_STR(SceneView_Wire,       "Wire",       "ワイヤー")
 MYE_STR(SceneView_CamSpeed,   "cam %.1f",   "カメラ %.1f")
+// ---- 物理デバッグ可視化 (M59e)。ボタン + ポップアップの 3 トグル ----
+// 出力は debugLines なので SceneView だけでなく GameView にも出る
+MYE_STR(SceneView_PhysDebug,  "Physics###sv_physdbg_btn", "物理###sv_physdbg_btn")
+MYE_STR(SceneView_PhysContact, "Contact points###sv_phys_contacts",
+                              "接触点と法線###sv_phys_contacts")
+MYE_STR(SceneView_PhysImpulse, "Impulse strength###sv_phys_impulse",
+                              "衝突の強さ###sv_phys_impulse")
+MYE_STR(SceneView_PhysVel,    "Velocities###sv_phys_vel", "速度ベクトル###sv_phys_vel")
 // ---- カメラの視錐台ワイヤ / 操縦モード / プレビュー窓 ----
 // 視錐台は選択中のカメラだけに出る。far は既定 1000 で素直に描くと画面を埋めるので、
 // 「表示上の打ち切り距離」をここで可変にする (実 farZ の方が小さければそちらが勝つ)
