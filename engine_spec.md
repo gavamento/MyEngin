@@ -429,6 +429,64 @@ of M56d; nothing consumes it yet.
 | **Built only on demand** | Until SSR lands, the only thing that asks for the pyramid is the debug view (`View > Rendering > HZB` or `--hzb-debug N`, where `N` shows level `N-1`). With it off, nothing is allocated and no dispatch is issued, so the rendered image is bit-identical to the previous milestone. |
 | **Whole-screen only** | There is no partial or incremental update; the entire pyramid is rebuilt every frame it is requested. |
 
+### 6.8 Screen-Space Reflections (M56d)
+
+`SsrPass` marches the HZB of §6.7 through screen space and feeds what is already on screen
+back into the image as reflections. It runs on the deferred path only, after the light pass
+and the skybox, and is **off by default** (`CameraPostFxComponent::ssrOn`, the global
+`View > Rendering > SSR` toggle, or `--ssr`). Turning it on is also what makes the HZB get
+built at all — the debug view and SSR are the two things that can ask for the pyramid.
+
+- **What is added is a difference, not a reflection.** The light pass has already added a
+  specular environment term (`iblPrefiltered * ao * (F0*brdf.x + brdf.y)`). Adding a raw
+  reflection on top would count the same light twice, so the pass adds
+  `(reflection - iblSpecular) * envBRDF * weight`, which lands on exactly the value
+  `ApplyLightingHybrid` would have produced had it lerped the two — the same "swap one
+  radiance for another of the same dimension" rule the ray-traced reflection uses. Weight 0
+  therefore adds a hard zero, which is why a scene with SSR off is bit-identical.
+- **Roughness fade**: `1 - smoothstep(maxRoughness * 2/3, maxRoughness, roughness)`. At the
+  default cutoff of 0.6 this is *numerically identical* to `RtReflWeight(roughness)` with
+  `kRtReflFadeStart = 0.4`, so a surface never shows a seam between the SSR and the
+  ray-traced reflection lane. `SsrSelfTest` pins that equality.
+- **Fog**: the light pass fogs the pixel *after* adding the environment term, so the
+  difference added afterwards is scaled by the same transmittance `1 - f`. The factor is
+  obtained by calling the shared `ApplyFog` with black over white rather than by
+  reimplementing the fog curve.
+- **Positions come from depth, never from G-Buffer RT2.** RT2 is `R16G16B16A16_FLOAT`; away
+  from the origin its steps are coarse enough in world units to make a mirror image
+  visibly jitter. The pass un-projects HZB level 0 (which *is* the depth buffer) with the
+  inverse of **the jittered `view * proj`** — the very matrix that rasterized the depth. Using
+  the un-jittered projection here would displace every reconstructed position by half a pixel.
+- **The trace compares against the cell exit, not the cell entry.** For each level the pass
+  computes `tCell` (where the ray leaves the current HZB cell) and `tPlane` (where the ray
+  reaches that cell's minimum depth). `tPlane > tCell` means the whole segment inside the
+  cell is in front of everything there, so the ray jumps to `tCell` and goes one level
+  coarser; otherwise it advances to `tPlane` and goes one level finer, and a crossing found
+  at level 0 is a hit. Testing only the entry point would let a ray dive through a surface
+  inside a coarse cell.
+- **Every step advances.** `SsrCellAdvance` clamps its result to at least half a pixel and
+  overshoots the cell boundary slightly, and it drops axis-parallel components instead of
+  dividing by zero. Without that floor a ray sitting exactly on a cell edge burns its whole
+  step budget in one place, and the only symptom is "the reflection is missing".
+- **Reading the target it writes to**: the trace samples the light pass' own render target,
+  so the pass copies it to an SRV-only scratch texture first (same trick as the RT1 copy in
+  §6.6) and then blends the difference additively back into the original. One copy plus one
+  full-screen pass is cheaper under WARP than tracing into a second target and compositing.
+- Cost at 960x540 with 10 HZB levels: **0.11 ms trace + 0.08 ms HZB on an RTX 3060,
+  11.0-12.0 ms trace + 3.2-3.5 ms HZB under WARP**. The screenshot suite pays this on one
+  shot (`demo_render_ssr`); every other shot has SSR off and issues no instruction.
+
+**v1 limitations:**
+
+| Limitation | Why |
+|---|---|
+| **Deferred path only** | The pass needs the G-Buffer (albedo / normal / metallic-roughness) and the HZB, neither of which the forward path has. `--ssr` on the forward path is a no-op, proven by `demo_render_forward` staying bit-identical with the flag set. Asset thumbnails are forward-only too. |
+| **Only what is on screen reflects** | A ray that leaves the viewport, or that never crosses a surface, contributes nothing and the pixel keeps its IBL specular. Hits fade out over the outer 12% of the screen so the reflection dissolves instead of being cut off. This is inherent to the technique; the local reflection probes of M56f are the intended fallback. |
+| **Transparent surfaces are neither reflected nor reflective** | Transparency is drawn after SSR and writes no G-Buffer, so it cannot receive a reflection and cannot appear in one. |
+| **One thickness for the whole scene** | Surfaces are treated as `kSsrThickness` (1 world unit) thick when deciding whether a ray that ended up behind the depth buffer actually hit. Geometry much thinner than that can be missed; geometry much thicker can catch a ray that should have passed behind it. |
+| **No roughness-aware blur** | A single mirror ray is traced and the result is faded out by roughness rather than being blurred into a glossy lobe, so surfaces just under the cutoff reflect too sharply. A blurred variant needs its own history and denoiser, which is what the ray-traced reflection lane already provides. |
+| **Reflections lag under TAA** | The velocity buffer describes the motion of surfaces, not of what they reflect, so a moving reflection is reprojected as if it were painted on the surface. |
+
 ---
 
 ## 7. Particle System Specification

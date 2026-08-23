@@ -451,6 +451,12 @@ struct CameraPostFxComponent {
     // カメラジッタごと無効化する (TAA 無しでジッタだけ載ると画面が揺れるだけになる)
     int32_t taaOn = 0;        // 0=off 1=on
     float taaFeedback = 0.9f; // 履歴の残し率 [0,0.95]。大きいほど滑らかで残像も増える
+    // ---- M56d: SSR (末尾 append、NoHash なので hash 不変) ----
+    // **Deferred 専用** — GBuffer と HZB (min-Z ピラミッド) が前提。
+    // ssrMaxRoughness 以上の粗さの面には厳密に 0 を足す (= その面は IBL のまま)
+    int32_t ssrOn = 0;            // 0=off 1=on
+    float ssrMaxRoughness = 0.6f; // これを超える粗さの面は反射しない (RT 反射と同じ既定値)
+    float ssrIntensity = 1.0f;    // 1 = IBL スペキュラをちょうど反射で置き換える
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 

@@ -163,6 +163,7 @@
     <ClCompile Include="..\src\Engine\Renderer\ShadowPass.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\Skeleton.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\SkyboxPass.cpp" />
+    <ClCompile Include="..\src\Engine\Renderer\SsrPass.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\StbImpl.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\SwapChain.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\TaaPass.cpp" />
@@ -330,6 +331,7 @@
     <ClInclude Include="..\src\Engine\Renderer\ShadowPass.h" />
     <ClInclude Include="..\src\Engine\Renderer\Skeleton.h" />
     <ClInclude Include="..\src\Engine\Renderer\SkyboxPass.h" />
+    <ClInclude Include="..\src\Engine\Renderer\SsrPass.h" />
     <ClInclude Include="..\src\Engine\Renderer\SwapChain.h" />
     <ClInclude Include="..\src\Engine\Renderer\TaaPass.h" />
     <ClInclude Include="..\src\Engine\Renderer\TerrainPass.h" />

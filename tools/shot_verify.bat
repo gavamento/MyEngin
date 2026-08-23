@@ -96,7 +96,7 @@ if exist %TERRAIN_SCENE% del /q %TERRAIN_SCENE%
 set FAILED=0
 set SHOTS=0
 
-rem ---- 9 本。既定デモの 2 経路 (Forward / Deferred) + 生成シーン 2 本 + UI プローブ
+rem ---- 10 本。既定デモの 2 経路 (Forward / Deferred) + 生成シーン 2 本 + UI プローブ
 rem      + 描画ショーケースの 2 経路 (M54a) ----
 rem RT デモは WARP では重すぎるので CI 対象外 (ローカル任意)
 call :shot demo_forward
@@ -117,7 +117,19 @@ rem      足すと既存 golden 2 枚 (demo_render_*) が動き、同じ Wave �
 rem      PNG (マージ不能なバイナリ) で衝突する。専用シーンなら新設 1 枚で済む
 call :shot demo_terrain_deferred --terrain-demo --deferred
 
-rem ---- 9 枚目 (統合契約の予約 3 では 10 番): FXAA を通した 1 枚。機種差が乗るので照合はローカルだけ (tol=0 の
+rem ---- 9 枚目 (M56d): SSR。--render-demo の反射床パッチ (rdemo_mirror、粗さ 0.10) に
+rem      柱と灯りが映り込む。**この 1 枚が SSR の唯一の自動被覆**で、既定 off の SSR は
+rem      これが無いと壊れても全 golden が緑のままになる。
+rem      撮影条件は demo_render_deferred と --ssr だけ違う = 差分がまるごと SSR の寄与。
+rem      ★予約表 (統合契約 予約 3) どおり CI 判定 (tol=3)。ただし SSR の交差判定は
+rem        「しきい値で分岐する」演算なので、FXAA / TAA と同じく機種差が増幅されうる
+rem        (未実測)。ランナーで理由不明に赤くなったら MYE_SHOT_SKIP_SSR=1 でローカル限定へ
+rem        降格できる — golden を撮り直さずに切れる口をここに用意しておく
+if defined MYE_SHOT_SKIP_SSR goto :skip_ssr
+call :shot demo_render_ssr --render-demo --deferred --ssr
+:skip_ssr
+
+rem ---- 10 枚目 (統合契約の予約 3 では 10 番): FXAA を通した 1 枚。機種差が乗るので照合はローカルだけ (tol=0 の
 rem      ビット一致)。CI は MYE_SHOT_SKIP_FXAA=1 を立てて飛ばす。
 rem      golden は --update で一緒に撮り直される (CI 側で撮ることは無い)
 if defined MYE_SHOT_SKIP_FXAA goto :skip_fxaa
@@ -128,7 +140,7 @@ set SHOT=%SHOTBASE% --no-fxaa
 set TOLNOW=%TOL%
 :skip_fxaa
 
-rem ---- 9 枚目 (統合契約の予約 3 では 11 番、M55d): TAA を通した 1 枚。
+rem ---- 11 枚目 (統合契約の予約 3 では 11 番、M55d): TAA を通した 1 枚。
 rem      FXAA と同じ理由でローカル限定 (tol=0 のビット一致)。CI は MYE_SHOT_SKIP_TAA=1 で飛ばす。
 rem      TAA は Deferred のみ (画面速度が GBuffer RT4 にしかない) なので --deferred が要る。
 rem      撮影条件は --no-fxaa のまま = demo_render_deferred との差が **TAA だけ** になる

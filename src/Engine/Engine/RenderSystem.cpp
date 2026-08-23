@@ -884,11 +884,17 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
     view.instancingEnabled = enableInstancing ? 1 : 0; // M38f
     view.velocityDebug = velocityDebugMode;            // M55c (Deferred のみ消費)
     view.hzbDebug = hzbDebugMip;                       // M56c (Deferred のみ消費)
+    view.ssrEnabled = enableSsr ? 1 : 0;               // M56d (Deferred のみ消費)
     // M40d: シーンカメラの CameraPostFx から SSAO パラメータ (override = エディタ視界は既定)
     if (!cameraOverride && !camEntity.IsNull()) {
         if (const auto* pfx = world.GetComponent<CameraPostFxComponent>(camEntity)) {
             view.ssaoRadius = pfx->ssaoRadius;
             view.ssaoIntensity = pfx->ssaoIntensity;
+            // M56d: SSR はグローバル設定をシーンカメラが上書きする (TAA と同じ規則)。
+            // SceneView (cameraOverride あり) はグローバル設定のまま = エディタ視界は不変
+            view.ssrEnabled = pfx->ssrOn ? 1 : 0;
+            view.ssrMaxRoughness = pfx->ssrMaxRoughness;
+            view.ssrIntensity = pfx->ssrIntensity;
         }
     }
     CollectEnvironment(world, view); // M29d: Skybox/Fog を view に反映
@@ -997,6 +1003,14 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
             }
         }
     }
+    // M56d: SSR も split-sum なので環境 BRDF LUT が要る。RT 反射 (すぐ上) と同じ理屈で、
+    // **スカイの無いシーンでも LUT だけは焼く** — LUT はスカイに依らない純関数で、
+    // irradiance / prefiltered は null のままなので pf.iblEnabled は false に留まる。
+    // ★これを忘れると LUT が null → SampleLevel が 0 を返す → 環境 BRDF が 0 →
+    //   **SSR を on にしても絵が 1 ピクセルも変わらない** (--render-demo にはスカイが無い)
+    if (view.ssrEnabled != 0 && view.iblBrdfLut == nullptr) {
+        view.iblBrdfLut = envBaker_.GetBrdfLut(device, shaders);
+    }
 
     queue_.Sort();
     path.Render(device, view, queue_, lights, resources, shaders);
@@ -1007,6 +1021,7 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
     // 行が消えるのではなく 0.000 ms になる (「計っていない」と「速い」の区別は
     // ProfilerWindow が hzbDebugMip で行を出し分けることで付けている)
     hzbGpuMs_ = path.HzbGpuMs();
+    ssrGpuMs_ = path.SsrGpuMs(); // M56d (同上)
 
     // VFX (M29c): Sprite/Trail/TextMesh をメッシュ (不透明+透明) の後・パーティクルの前に
     // 重ねる。HDR 中間へ描かれ postfx を通る。RT はパスがバインドしたまま

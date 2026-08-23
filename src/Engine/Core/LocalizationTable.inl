@@ -96,6 +96,8 @@ MYE_STR(Taa_Enable,           "TAA (Deferred)",             "TAA (Deferred)")
 MYE_STR(Hzb_Debug,            "HZB (Deferred)",             "HZB (Deferred)")
 MYE_STR(Hzb_DebugOff,         "Off",                        "オフ")
 MYE_STR(Hzb_DebugMip,         "Mip %d",                     "ミップ %d")
+// M56d: SSR (スクリーンスペース反射)。接頭辞 Ssr_* も M56 の予約 (統合契約 予約 5)
+MYE_STR(Ssr_Enable,           "SSR (Deferred)",             "SSR (Deferred)")
 
 // ---- 影 (M54e)。View > 影 サブメニュー。統合契約 予約 5 の接頭辞 Shadow_* ----
 // 統計行の書式指定子の並びは en / ja で一致必須 (規則 10 が機械検査する)

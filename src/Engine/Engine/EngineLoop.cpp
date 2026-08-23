@@ -222,6 +222,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     renderSystem.rtDebugMode = config.rtDebugMode; // M46b (--rt-debug N、Deferred のみ)
     renderSystem.velocityDebugMode = config.velocityDebug; // M55c (--velocity-debug)
     renderSystem.hzbDebugMip = config.hzbDebug;            // M56c (--hzb-debug N)
+    renderSystem.enableSsr = config.ssr;                   // M56d (--ssr、Deferred のみ)
     renderSystem.rtTemporal = config.rtTemporal;   // M46d (--rt-no-temporal / --rt-freeze-seed)
     renderSystem.rtFreezeSeed = config.rtFreezeSeed;
     renderSystem.rtSvgf = config.rtSvgf;   // M46e (--rt-no-svgf)
@@ -1624,6 +1625,13 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                      renderSystem.RtTemporalGpuMs(), renderSystem.RtSvgfGpuMs(),
                      renderSystem.RtShadowGpuMs(), renderSystem.RtShadowFilterGpuMs(),
                      renderSystem.RtReflGpuMs(), renderSystem.RtReflDenoiseGpuMs());
+    }
+    if (config.ssr) {
+        // M56d: SSR の実測 (ヘッドレス撮影で数字を残す唯一の口。理由は下の [hzb] と同じ)。
+        // HZB も一緒に出す — SSR の総コストは「ピラミッド構築 + トレース」の和で、
+        // WARP でどちらが支配項かはこの 2 つを並べないと分からない
+        MYE_LOG_INFO("[ssr] --ssr: trace %.3f ms + hzb %.3f ms (GPU, last frame)",
+                     renderSystem.SsrGpuMs(), renderSystem.HzbGpuMs());
     }
     if (config.hzbDebug != 0) {
         // M56c: HZB の実測 (SSR (M56d) が「加速構造の元が取れるか」を判断する一次データ)。

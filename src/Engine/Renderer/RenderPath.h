@@ -36,6 +36,11 @@ public:
     // 直近の Render で HZB を組むのに掛かった GPU 時間 [ms]。組まないパス / フレームは 0。
     // ProfilerWindow が RenderSystem 経由で読むだけの純計測口 (絵にも sim にも影響しない)
     virtual float HzbGpuMs() const { return 0.0f; }
+
+    // ---- M56d: SSR ----
+    // 直近の Render で SSR に掛かった GPU 時間 [ms]。走らせないパス / フレームは 0。
+    // HzbGpuMs と同じく ProfilerWindow 用の純計測口
+    virtual float SsrGpuMs() const { return 0.0f; }
 };
 
 } // namespace mye

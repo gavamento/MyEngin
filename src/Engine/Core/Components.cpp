@@ -357,6 +357,10 @@ void RegisterBuiltinComponents()
         // M55d: TAA (末尾 append、NoHash なので bump 不要)。Deferred のみ効く
         MYE_JP("TAA", MYE_FIELD(CameraPostFxComponent, taaOn, Int32)),
         MYE_JP("TAA 履歴の残し率", MYE_FIELD_RANGE(CameraPostFxComponent, taaFeedback, Float, 0.0f, 0.95f)),
+        // M56d: SSR (末尾 append、NoHash なので bump 不要)。Deferred のみ効く
+        MYE_JP("SSR", MYE_FIELD(CameraPostFxComponent, ssrOn, Int32)),
+        MYE_JP("SSR 最大粗さ", MYE_FIELD_RANGE(CameraPostFxComponent, ssrMaxRoughness, Float, 0.0f, 1.0f)),
+        MYE_JP("SSR 強度", MYE_FIELD_RANGE(CameraPostFxComponent, ssrIntensity, Float, 0.0f, 2.0f)),
     }, kComponentNoHash);
 
     // M32e: 合成エフェクトのライフサイクル。DestroyEntity + 子エミッタ playing を駆動 = hash 対象。

@@ -236,6 +236,8 @@ bool DeferredPath::Init(GraphicsDevice& device, ShaderManager& shaders)
     // 失敗しても続行する (HzbPass::Build が false を返して消費者が自然に無効化される)
     hzb_.Init(device, shaders);
     hzbDebugShader_ = shaders.Load("debug_hzb");
+    // M56d: SSR。同じく既定 off なので失敗しても続行 (SsrPass::Render が false を返すだけ)
+    ssr_.Init(device, shaders);
 
     if (!CreateConstant(dev, sizeof(PerFrameCB), perFrameCB_)
         || !CreateConstant(dev, sizeof(PerObjectCB), perObjectCB_)
@@ -472,6 +474,7 @@ void DeferredPath::Shutdown()
     // M56c: HZB
     hzb_.Shutdown();
     hzbDebugCB_.Reset();
+    ssr_.Shutdown(); // M56d
     terrain_.Shutdown(); // M58c
 }
 
@@ -1029,15 +1032,20 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
     //      ここに置く理由は「不透明 + 地形が深度を書き終えていて、まだ半透明が乗る前」だから
     //      (半透明は深度を書かないので後でも同じだが、消費者の SSR (M56d) が光パス直後に
     //      入るので、それより前という制約の方が強い)。
-    //      **このサブの発火条件はデバッグ表示だけ** — 既定 (hzbDebug==0) では
-    //      確保もディスパッチも走らず、絵は 1 ビットも変わらない ----
-    const bool hzbOn = view.hzbDebug != 0 && view.depthSRV != nullptr;
+    //      発火条件は「**誰かが見せろと言ったとき**」の 1 本 — 可視化 (M56c) か
+    //      SSR (M56d) のどちらかが要求したときだけ組む。既定 (両方 0) では確保も
+    //      ディスパッチも走らず、絵は 1 ビットも変わらない。
+    //      ★SSR は HZB を唯一の加速構造として使うので、ここに ssrEnabled を or で
+    //        入れ忘れると SSR が null のピラミッドを見て何も映らない ----
+    const bool ssrWanted = view.ssrEnabled != 0 && !unlit && !wire;
+    const bool hzbOn = (view.hzbDebug != 0 || ssrWanted) && view.depthSRV != nullptr;
+    bool hzbBuilt = false;
     if (hzbOn) {
         // ★CS が深度を SRV で読む前に RTV / DSV を明示的に外す。SSAO が off の経路では
         //   GBuffer + view.dsv がまだ OM に載ったままで、深度を SRV と DSV に同時に
         //   張ることになる (M44b / RT パスと同じ罠。実際に踏んだ記録が計画にある)
         dc->OMSetRenderTargets(0, nullptr, nullptr);
-        hzb_.Build(device, shaders, view.depthSRV, view.width, view.height);
+        hzbBuilt = hzb_.Build(device, shaders, view.depthSRV, view.width, view.height);
     }
 
     // ---- 1.7) レイトレ拡散 GI (M46f) / RT 影 (M46g) / RT 反射 (M46h): ライトパスの前に撃つ。
@@ -1160,7 +1168,10 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
     dc->PSSetShader(lightProg->ps.Get(), nullptr, 0);
     dc->OMSetDepthStencilState(depthDisabled_.Get(), 0);
     dc->Draw(3, 0);
-    // 統合契約 予約 2: 最終的に [16] になる (M54 が [13]、M56 が [15]、M57 が [16])
+    // 統合契約 予約 2: 最終的に [16] になる (M54 が [13]、M56 が [15]、M57 が [16])。
+    // ★**M56d (SSR) は予約席の t13 を取らなかった** — SSR はライトパスの**出力**を読む
+    //   ので、ライトパスに入力として渡せない (鶏と卵)。加算合成する別パスにしたため、
+    //   ここは M54c の 13 本のまま。t13 は M56f 以降が使ってよい空き席
     ID3D11ShaderResourceView* nullSrvs[13] = {};
     dc->PSSetShaderResources(0, 13, nullSrvs); // 次フレームで RT に戻すため解除
 
@@ -1168,6 +1179,31 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
     // (Wireframe はフルスクリーン三角形が線になるためスキップ、M40b)
     if (!wire) {
         skybox_.Render(device, shaders, view);
+    }
+
+    // ---- 2.6) SSR (M56d): 反射の差分を加算する。既定 (ssrEnabled==0) では
+    //      1 命令も走らない = golden 全枚がビット一致し続ける根拠。
+    //      ★**スカイボックスの後**に置いている。SSR はシーン色を読むので、空がまだ
+    //        clearColor の平板なままだと、地平線際の反射に「本当の空ではない色」が写る。
+    //      ★**透明後段より前**。半透明は深度も GBuffer も書かないので反射に写せない
+    //        (v1 の制限。engine_spec §6.8) — 先に描くと二重に映って崩れる ----
+    if (ssrWanted && hzbBuilt && hzb_.SRV() != nullptr) {
+        dc->OMSetRenderTargets(0, nullptr, nullptr); // シーン色を CopyResource するため外す
+        dc->RSSetViewports(1, &vp);
+        dc->OMSetDepthStencilState(depthDisabled_.Get(), 0);
+        SsrPass::Inputs si;
+        si.hzb = hzb_.SRV();
+        si.hzbMipCount = hzb_.MipCount();
+        si.gbAlbedo = gbAlbedo_.SRV();
+        si.gbNormal = gbNormal_.SRV();
+        si.gbMaterial = gbMaterial_.SRV();
+        si.ssao = ssaoOn ? ssaoBlur_.SRV() : nullptr;
+        si.linearClamp = iblSampler_.Get(); // サンプラは新設しない (統合契約 予約 2)
+        ssr_.Render(device, shaders, view, si);
+        // 後始末は velocity / HZB の可視化と同じ (透明後段とパーティクルが続く)
+        dc->OMSetRenderTargets(1, &view.rtv, view.dsv);
+        dc->OMSetDepthStencilState(nullptr, 0);
+        dc->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFFu);
     }
 
     // ---- 3) 透明後段 (Forward — マテリアルのシェーダで上描き) ----
@@ -1309,8 +1345,10 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
     }
 
     // ---- 6) HZB の可視化 (M56c)。既定 (hzbDebug==0) では 1 命令も走らない。
-    //      HZB を読む本番の消費者は M56d (SSR) まで居ないので、ここが唯一の目視口 ----
-    if (hzbOn && hzb_.SRV() != nullptr) {
+    //      ★条件は **hzbDebug** であって hzbOn ではない。M56d が hzbOn に ssrEnabled を
+    //        or で足したので、hzbOn で判定すると **--ssr を付けただけで画面が
+    //        HZB の可視化に置き換わる** (実際に踏んだ: 518309/518400 画素が変わった) ----
+    if (view.hzbDebug != 0 && hzbBuilt && hzb_.SRV() != nullptr) {
         ShaderProgram* hzbDbg = shaders.Get(hzbDebugShader_);
         if (hzbDbg && hzbDbg->valid) {
             // 指定が段数を超えたら最上段 (1x1 付近) で頭打ち — 範囲外の Load は

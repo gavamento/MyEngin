@@ -206,6 +206,16 @@ $constGroups = @(
             'assets\shaders\hzb_reduce.cs.hlsl' = '#\s*define\s+MYE_HZB_TG\s+(\d+)'
         }
     }
+    @{
+        # M56d: SSR の光線 1 本あたりの最大反復回数。C++ 側は SsrSelfTest が上限の妥当性を
+        # 見るためだけに持っているが、食い違うと **HLSL 側だけが本当の予算**になり、
+        # 「反射が途中で切れる」形でしか現れない (絵は普通に出る) ので機械照合しておく
+        label = 'kSsrMaxSteps / MYE_SSR_MAX_STEPS'
+        sites = @{
+            'src\Engine\Renderer\SsrPass.h' = 'constexpr\s+int\s+kSsrMaxSteps\s*=\s*(\d+)'
+            'assets\shaders\ssr_trace.hlsl'  = '#\s*define\s+MYE_SSR_MAX_STEPS\s+(\d+)'
+        }
+    }
 )
 foreach ($g in $constGroups) {
     $values = @{}

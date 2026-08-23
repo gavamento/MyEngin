@@ -477,6 +477,9 @@
     <ClCompile Include="..\src\Engine\Renderer\SkyboxPass.cpp">
       <Filter>Renderer</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Renderer\SsrPass.cpp">
+      <Filter>Renderer</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Renderer\StbImpl.cpp">
       <Filter>Renderer</Filter>
     </ClCompile>
@@ -976,6 +979,9 @@
       <Filter>Renderer</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\SkyboxPass.h">
+      <Filter>Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\SsrPass.h">
       <Filter>Renderer</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\SwapChain.h">

@@ -62,6 +62,12 @@ void ProfilerWindow::OnImGui(EngineContext& ctx)
             ImGui::Text("  hzb: %6.3f ms (GpuTimer, mip %d)", ctx.renderSystem->HzbGpuMs(),
                         ctx.renderSystem->hzbDebugMip - 1);
         }
+        // M56d: SSR。HZB とセットで出す — SSR の総コストは「ピラミッド構築 + トレース」の
+        // 和で、片方だけ見ても支配項が分からない (可視化が off でも HZB は組まれている)
+        if (ctx.renderSystem->enableSsr) {
+            ImGui::Text("  ssr: %6.3f ms trace + %6.3f ms hzb (GpuTimer)",
+                        ctx.renderSystem->SsrGpuMs(), ctx.renderSystem->HzbGpuMs());
+        }
         // M46b: レイトレ (デバッグ表示も GI 合成も off のときは行ごと出さない)
         const bool rtGiOn = ctx.renderSystem->enableRtGi;             // M46f
         const bool rtShadowOn = ctx.renderSystem->enableRtShadow;     // M46g

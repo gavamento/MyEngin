@@ -26,6 +26,7 @@
 #include "Editor/TerrainSelfTest.h"
 #include "Editor/DecalSelfTest.h"
 #include "Editor/HzbSelfTest.h"
+#include "Editor/SsrSelfTest.h"
 #include "Engine/Engine/AnimatorControllerSelfTest.h"
 #include "Engine/Engine/AssetDatabaseSelfTest.h"
 #include "Engine/Engine/Audio/AudioSelfTest.h"
@@ -273,6 +274,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 config.velocityDebug = 1; // M55c: GBuffer RT4 の可視化 (Deferred のみ)
             } else if (arg == L"--hzb-debug" && i + 1 < argc) {
                 config.hzbDebug = _wtoi(argv[++i]); // M56c: N=ミップ N-1 (Deferred のみ)
+            } else if (arg == L"--ssr") {
+                config.ssr = true; // M56d: SSR (Deferred のみ。HZB も一緒に組まれる)
             } else if (arg == L"--taa") {
                 config.postFxTaa = true; // M55d: TAA + カメラジッタ (Deferred のみ)
             } else if (arg == L"--motion-blur" && i + 1 < argc) {
@@ -467,7 +470,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             && mye::RunLightSelectionSelfTest() // M54b
             && mye::RunTerrainSelfTest()        // M58b
             && mye::RunDecalSelfTest()          // M56a
-            && mye::RunHzbSelfTest();           // M56c
+            && mye::RunHzbSelfTest()            // M56c
+            && mye::RunSsrSelfTest();           // M56d
         return ok ? 0 : 1;
     }
 

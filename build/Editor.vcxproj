@@ -58,6 +58,7 @@
     <ClCompile Include="..\src\Editor\ProjectManager.cpp" />
     <ClCompile Include="..\src\Editor\ProjectRegistry.cpp" />
     <ClCompile Include="..\src\Editor\ProjectTemplates.cpp" />
+    <ClCompile Include="..\src\Editor\SsrSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\StatusBar.cpp" />
     <ClCompile Include="..\src\Editor\TerrainSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\ToastCenter.cpp" />
@@ -104,6 +105,7 @@
     <ClInclude Include="..\src\Editor\ProjectTemplates.h" />
     <ClInclude Include="..\src\Editor\Selection.h" />
     <ClInclude Include="..\src\Editor\ShortcutHub.h" />
+    <ClInclude Include="..\src\Editor\SsrSelfTest.h" />
     <ClInclude Include="..\src\Editor\StatusBar.h" />
     <ClInclude Include="..\src\Editor\TerrainSelfTest.h" />
     <ClInclude Include="..\src\Editor\ToastCenter.h" />

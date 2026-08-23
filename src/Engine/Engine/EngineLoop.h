@@ -97,6 +97,10 @@ struct EngineConfig {
     // Deferred パスのみ効く。**0 のときはピラミッドを組みもしない** = 従来と 1 命令も違わない。
     // SSR (M56d) が入るまでは、これが「本当に段が積めているか」の唯一の目視口になる
     int hzbDebug = 0;
+    // M56d: SSR (--ssr)。**Deferred のみ** (GBuffer と HZB が前提)。
+    // シーンカメラに CameraPostFx があればそちらの ssrOn が勝つ (TAA と同じ規則)。
+    // on にすると HZB (min-Z ピラミッド) も一緒に組まれる
+    bool ssr = false;
     // M55d: TAA (--taa)。**Deferred のみ** (画面速度が GBuffer RT4 にしかない)。
     // シーンカメラに CameraPostFx があればそちらの taaOn が勝つ (ポスプロ設定と同じ規則)
     bool postFxTaa = false;

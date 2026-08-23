@@ -7,6 +7,7 @@
 #include "Engine/Renderer/RenderPath.h"
 #include "Engine/Renderer/RenderTexture.h"
 #include "Engine/Renderer/SkyboxPass.h"
+#include "Engine/Renderer/SsrPass.h"
 #include "Engine/Renderer/TerrainPass.h"
 
 namespace mye {
@@ -31,6 +32,8 @@ public:
     ID3D11ShaderResourceView* VelocitySRV() const override { return gbVelocity_.SRV(); }
     // M56c: HZB を組んだ GPU 時間 (ProfilerWindow 表示用)。組まないフレームは前の値が残る
     float HzbGpuMs() const override { return hzb_.GpuMs(); }
+    // M56d: SSR (コピー + 階層 Z トレース + 加算合成) の GPU 時間。同上
+    float SsrGpuMs() const override { return ssr_.GpuMs(); }
 
 private:
     // M56a: デカール (投影ボックス)。ジオメトリパス直後・SSAO 前に albedo を上描きする。
@@ -106,6 +109,10 @@ private:
     HzbPass hzb_;
     AssetID hzbDebugShader_ = {};
     Microsoft::WRL::ComPtr<ID3D11Buffer> hzbDebugCB_;
+    // ---- M56d: SSR (スクリーンスペース反射) ----
+    // HZB の唯一の本番消費者。**view.ssrEnabled が HZB を組む条件に or で入る** —
+    // 忘れると SSR が null のピラミッドを見て何も映らない (M56c からの申し送り)
+    SsrPass ssr_;
     SkyboxPass skybox_; // ライトパス後・透明前に空を塗る (M29d)
     // 地形 (M58c)。GBuffer へ専用シェーダで書く — 不透明パスは material->shader を
     // 見ないのでマテリアル経由では通せない (TerrainPass.h の頭のコメント参照)

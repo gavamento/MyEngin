@@ -663,6 +663,10 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
                 }
                 ImGui::EndMenu();
             }
+            // M56d: SSR (スクリーンスペース反射)。グローバル設定で、シーンカメラに
+            // CameraPostFx があればそちらの ssrOn が勝つ (TAA と同じ規則)。
+            // on の間は HZB (min-Z ピラミッド) も一緒に組まれる
+            ImGui::MenuItem(Tr(StrId::Ssr_Enable), nullptr, &ctx.renderSystem->enableSsr);
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu(Tr(StrId::Menu_RtDebug))) {

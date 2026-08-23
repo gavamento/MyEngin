@@ -253,6 +253,14 @@ struct RenderView {
     //      (本番の消費者 = SSR は M56d。そちらが入ったら ssrOn も「作る」条件に加わる)。
     //      Deferred のみ。depthSRV が null の経路 (AssetPreview) では自然に無効化される
     int32_t hzbDebug = 0;
+    // ---- M56d: SSR (スクリーンスペース反射、末尾 append。既定 0 = 従来と 1 ビットも同じ) ----
+    //      1 = 光パス + スカイボックスの後に反射の**差分**を加算する。**HZB を組む条件は
+    //      hzbDebug との or** — SSR は min-Z ピラミッドを唯一の加速構造として使う。
+    //      Deferred のみ (GBuffer と HZB が前提)。Forward / AssetPreview は読まない。
+    //      ssrMaxRoughness 以上の粗さの面には厳密に 0 を足す = 粗い面は IBL のまま
+    int32_t ssrEnabled = 0;
+    float ssrMaxRoughness = 0.6f; // RT 反射の kRtReflMaxRoughness と同じ既定値
+    float ssrIntensity = 1.0f;    // 1 = 「IBL スペキュラを反射で置き換える」ちょうど 100%
 };
 
 // ---- デカール (M56a) ----
