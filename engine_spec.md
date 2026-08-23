@@ -263,6 +263,40 @@ zero, and reading it there would freeze the sky while the camera pans. Both bran
 jitter-free projection at both ends. Motion blur is forced off in the Scene view, because a smear
 that follows the editor camera fights with editing.
 
+**Volumetric fog (froxel, M57, default off).** `CameraPostFx.froxelOn` — or the global
+`--froxel` — fills a 160x90x64 view-aligned 3D grid (exponentially distributed slices, jittered
+per frame and reprojected against the previous frame) with the participating medium and the
+in-scattering of every local light, sampling the same shadow atlas the surfaces do, so a spot
+light casts a shadowed shaft. A second pass integrates each Z column front-to-back into
+`(accumulated in-scatter, transmittance)` and every surface that has a depth composites it as
+`scene * T + inScatter`: the Deferred light pass (opaque, `t15`), the Forward family
+(`forward_lit` / `_instanced` / `_skinned` / `_terrain`, `t7` — which is also what the Deferred
+transparent tail runs), the skybox, and CPU particles (`t3`). Additive particles get the
+transmittance **only**: the surface behind them already added the in-scatter once, so adding it
+again would scale the fog with the number of overlapping billboards. Pixels with no depth at all
+(the skybox, and the clear-colour background of a scene without one) sample the far end of the
+grid, which is what keeps the horizon from stepping between the fogged ground and an unfogged sky.
+
+**Three separate mechanisms model atmospheric scattering, so M57d split them by range instead
+of summing them** — added naively the fog is applied three times over:
+
+| Mechanism | Owns | Behaviour when the froxel volume is on |
+|---|---|---|
+| Froxel volume (M57) | `[near, grid far]` — the range where beams, local lights and shadowed shafts are actually visible | The only source of fog in that range |
+| `ApplyFog` (`common.hlsli`, M29d distance fog + M43a height fog / sun in-scatter) | Everything beyond the grid | Its **origin is pushed out** to the point where the view ray leaves the grid, so the two ranges never overlap. For a surface inside the grid that pushed-out origin *is* the surface, which makes the call exactly the identity |
+| God rays (`postfx_godray_*`, M43b) | A screen-space radial blur of a sky-only occlusion mask | **Automatically disabled.** It is the low-spec simplification of the froxel volume — the same phenomenon with a cruder occluder — so running both counts the sun's scattering twice |
+
+The hand-off fraction is a pure function shared by the C++ mirror and the HLSL, and
+`RenderSelfTest` asserts that the two ranges add up to the whole ray with neither a gap nor an
+overlap; a golden screenshot (`demo_render_froxel`, local-only at tol=0, the same treatment
+FXAA and TAA get) pins the composited image.
+**Not covered in v1**: an orthographic view skips the grid entirely, because the froxel depth
+slices assume a perspective frustum; the GPU particle backend has never applied any fog and is
+left alone; the analytic fog beyond the grid is *not* applied to the sky (it never was before
+M57, and adding it would sink a skybox into flat fog colour as soon as the density rises); and
+distortion particles (`blendMode=2`) write UV offsets rather than colour, so there is nothing to
+attenuate.
+
 ### 6.2 Feature Scope
 
 | Feature | Status | Notes |
@@ -280,6 +314,7 @@ that follows the editor camera fights with editing.
 | Decals (projector boxes) | Implemented | See §6.6. **Deferred path only** in v1 |
 | Hierarchical Z-buffer (min-Z pyramid) | Implemented | See §6.7. **Deferred path only**, built on demand |
 | Reflection probe capture | Implemented | See §6.9. Explicit bake only; nothing consumes it until M56f |
+| Volumetric fog (froxel) | Implemented | 160x90x64 view grid + local lights + shadow atlas, temporally reprojected. Composited on opaque / transparent / terrain / sky / CPU particles in both paths, default off (§6.1) |
 
 ### 6.3 DirectX 11 Abstraction
 
@@ -870,12 +905,13 @@ a GPU-less runner an acceptable place to prove determinism. Golden screenshots, 
 *are* driver-dependent and are therefore always captured with `--warp`.
 
 **Screenshot regression (M52c).** Hashes prove that the *simulation* is reproducible; they say
-nothing about what is drawn. `tools\shot_verify.bat` captures nine deterministic screenshots with
+nothing about what is drawn. `tools\shot_verify.bat` captures twelve deterministic screenshots with
 `Runtime.exe` (no ImGui, so neither `imgui.ini` nor the cursor position can leak in) and compares
 them against `tests\golden\*.png` pixel by pixel, writing a difference heat map next to any shot
-that moved. `--update` re-records the golden set. Eight of the ten gate CI; the other two
-exist only to cover FXAA and TAA -- both compared at `--tol 0` and both skipped on the
-runner (`MYE_SHOT_SKIP_FXAA` / `MYE_SHOT_SKIP_TAA`, see below). Two of the eight
+that moved. `--update` re-records the golden set. Nine of the twelve gate CI; the other three
+exist only to cover FXAA, TAA and froxel volumetrics -- all three compared at `--tol 0` and all
+three skipped on the runner (`MYE_SHOT_SKIP_FXAA` / `_TAA` / `_FROXEL`, see below): each is a
+temporal or threshold-branching pass whose dev-vs-runner amplification is unmeasured. Two of the nine
 (`demo_render_forward` / `demo_render_deferred`, M54a) shoot the `--render-demo` showcase, which
 is the only golden scene carrying spot and point lights -- without it every feature added by the
 M54-M58 rendering roadmap would be pixel-invariant by default and land with zero coverage.

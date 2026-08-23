@@ -51,6 +51,15 @@ struct ParticleCB {
     float softFade; // 深度フェード距離 (0=off)
     float nearZ;    // 深度線形化用
     float farZ;
+    // ---- M57e: フロクセル (末尾 append。0 = 従来と 1 ビットも変わらない) ----
+    // ★particle_distort.hlsl は ParticleCB を**手前で切り詰めて**宣言しているので
+    //   あちらには触らなくてよい (歪みは色を出さないので霧も要らない)
+    int32_t froxelEnabled;
+    float froxelNearZ;
+    float froxelFarZ;
+    float froxelSlices;
+    float froxelScreenSize[2]; // SV_Position → uv
+    float froxelPad[2];
 };
 
 } // namespace
@@ -511,6 +520,23 @@ void CpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
         dc->PSSetShaderResources(2, 1, &view.depthSRV);
     }
 
+    // M57e: フロクセルの積分結果を t3 へ。**適用しないと霧の中で粒子だけが浮く** —
+    // 加算合成は背景の減衰を受けないので、周囲が霞むほど粒子だけがくっきり残る。
+    // 判定は FroxelIsBound 1 本 (Deferred / Forward / スカイと共有) = 「サムネイル
+    // (AssetPreviewCache の別 RenderSystem) だけがゴミを読む」を構造的に潰してある
+    const bool froxelBound = FroxelIsBound(view);
+    cbData.froxelEnabled = froxelBound ? 1 : 0;
+    cbData.froxelNearZ = view.froxelNearZ;
+    cbData.froxelFarZ = view.froxelFarZ;
+    cbData.froxelSlices = static_cast<float>(view.froxelSlices);
+    cbData.froxelScreenSize[0] = static_cast<float>(view.width);
+    cbData.froxelScreenSize[1] = static_cast<float>(view.height);
+    {
+        ID3D11ShaderResourceView* froxelSrv[1] = { froxelBound ? view.froxelSRV : nullptr };
+        static_assert(froxel::kParticleSrvSlot == 3, "パーティクルのフロクセル SRV は t3");
+        dc->PSSetShaderResources(froxel::kParticleSrvSlot, 1, froxelSrv);
+    }
+
     bool anyDistortion = false; // M42d
     for (const DrawRange& range : ranges) {
         if (range.blendMode == 2) { // M42d: 歪みは後段の専用パスで描く
@@ -574,11 +600,14 @@ void CpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
         }
     }
 
-    // SRV を外す (次フレームの Map と競合させない。t2=深度は RTV/DSV 戻し前の解除 — M42a 流儀)
+    // SRV を外す (次フレームの Map と競合させない。t2=深度は RTV/DSV 戻し前の解除 — M42a 流儀)。
+    // ★t3 (M57e のフロクセル) も必ず外す — 残すと次フレームの積分パスが同じテクスチャを
+    //   UAV に取った瞬間に D3D が片方を黙って外す
     ID3D11ShaderResourceView* nullSrv = nullptr;
     dc->VSSetShaderResources(0, 1, &nullSrv);
     dc->PSSetShaderResources(1, 1, &nullSrv);
     dc->PSSetShaderResources(2, 1, &nullSrv);
+    dc->PSSetShaderResources(3, 1, &nullSrv);
     dc->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFFu);
     dc->OMSetDepthStencilState(nullptr, 0);
 }

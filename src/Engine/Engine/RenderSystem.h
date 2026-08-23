@@ -12,6 +12,7 @@
 #include "Engine/Engine/TerrainSystem.h"
 #include "Engine/Renderer/EditorLinePass.h"
 #include "Engine/Renderer/EnvMapBaker.h"
+#include "Engine/Renderer/FroxelPass.h"
 #include "Engine/Renderer/PostProcess.h"
 #include "Engine/Renderer/RayTracing/RtPasses.h"
 #include "Engine/Renderer/RenderTypes.h"
@@ -178,6 +179,21 @@ public:
     // ★束を破棄する前に必ず nullptr へ戻すこと (ぶら下がりポインタになる)
     const ReflectionProbeSet* reflectionProbes = nullptr;
 
+    // ---- M57b/M57c: フロクセル・ボリュメトリック (--froxel) ----
+    // ★既定 off。**M57c の時点でも積分結果を読む者は居ない** (最終画像への合成は
+    //   M57d/M57e) ので、on にしても絵は 1 ビットも変わらない。それでも配線して
+    //   あるのは GPU コストを実シーンで測り、値を読み戻して検査できるようにするため。
+    //   on のあいだだけ 3D テクスチャを確保する (注入 7MB + 積分 7MB +
+    //   テンポラル履歴が viewKey あたり 14MB)。
+    // ★シーンカメラに CameraPostFx があれば **そちらの froxelOn が勝つ**
+    //   (TAA / ポスプロと同じ規則)。SceneView のエディタカメラは常にこの値
+    bool enableFroxel = false;
+    FroxelSettings froxelSettings;
+    // --froxel-dump N: **そのビューの N 回目の描画**で全セルを読み戻し、影あり/なしの
+    // 統計をログへ出す (フレーム番号ではなく viewKey 毎の描画通番。決定的撮影モードでは
+    // 両者が一致する)。負値 = 何もしない。7MB を Map する完全同期経路なので調査専用
+    int froxelDumpFrame = -1;
+
     // M44d: ポストプロセス解決の GPU 時間 (直近の Resolve、ProfilerWindow 表示用)
     float PostFxGpuMs() const { return postFx_.ResolveGpuMs(); }
     // M56c: HZB を組んだ GPU 時間 (パスが持つ計測を Render 直後に写したもの)
@@ -204,6 +220,15 @@ public:
     int ShadowAtlasDraws() const { return shadowAtlas_.DrawCalls(); }
     int ShadowAtlasCulledDraws() const { return shadowAtlas_.CulledDraws(); }
     int ShadowAtlasCulledFaces() const { return shadowAtlasFaceCulled_; }
+    // M57b/M57c: フロクセル各パスの GPU 時間とグリッド規模 (ProfilerWindow 表示用)。
+    // cells が 0 = ボリュームをまだ確保していない (= 一度も注入していない)
+    float FroxelInjectGpuMs() const { return froxelPass_.InjectGpuMs(); }
+    float FroxelTemporalGpuMs() const { return froxelPass_.TemporalGpuMs(); }
+    float FroxelIntegrateGpuMs() const { return froxelPass_.IntegrateGpuMs(); }
+    int FroxelCellCount() const { return froxelPass_.CellCount(); }
+    // 直近フレームで履歴を混ぜられたか (0 = 初フレーム / 通番が飛んだ / テンポラル off)
+    bool FroxelHistoryValid() const { return froxelPass_.LastHistoryValid(); }
+    float FroxelSliceJitter() const { return froxelPass_.LastSliceJitter(); }
 
     // M54b: 直近フレームのライト選別結果 (カリング + 決定論ソート + 上限)。
     // shadowSlot は M54c のシャドウアトラスが読む — この時点ではまだ誰も配線していない
@@ -241,6 +266,10 @@ private:
     // Init しない** — 4096^2 R32 = 64MB を、影を使わないシーン (AssetPreview の別
     // RenderSystem を含む) にまで払わせないため
     ShadowAtlas shadowAtlas_;
+    // M57b: フロクセルの注入パス。**enableFroxel が立つまで Init しない** —
+    // 3D テクスチャ 7MB と CS を、霧を使わないシーン (AssetPreview の別 RenderSystem を
+    // 含む) にまで払わせないため (ShadowAtlas の 64MB と同じ理由)
+    FroxelPass froxelPass_;
     EditorLinePass linePass_; // DebugDrawLine 用 (v7、遅延 Init)
     EnvMapBaker envBaker_;    // IBL 環境マップ (M38c、lazy ベイク + キャッシュ)
     // スキンメッシュのボーンパレット (M18)。フレーム毎に再構築。deque = push_back で

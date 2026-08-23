@@ -3,13 +3,31 @@
 // 視線方向は invViewProj で NDC の near/far 2 点を逆射影して求める。
 // CB は b3 (b0-b2 はメッシュ描画の PerFrame/PerObject/Material が使用中)。
 
+// M57e: フロクセルのサンプル座標 (register 宣言を持たないヘッダ)
+#include "froxel_common.hlsli"
+
 cbuffer SkyCB : register(b3)
 {
     float4x4 gInvViewProj; // transpose(inverse(view*proj))
     float4 gTopColor;
     float4 gHorizonColor;
     float4 gBottomColor;
+    // ---- M57e: フロクセル (末尾 append。x=0 = 従来と 1 ビットも変わらない) ----
+    // 空は深度を持たないので「グリッド全体ぶん」を引く (FroxelSampleWFar)。
+    // ★グリッドより奥の解析フォグは掛けない — 空に ApplyFog が掛かる挙動は M29d 以来
+    //   一度も無く、足すと濃霧のとき空が丸ごとフォグ色に潰れる。フロクセル区間ぶんの
+    //   段 (= 地表と空の食い違い) だけを消すのが M57e の受け持ち
+    float4 gSkyFroxel;       // x = enabled / y = スライス数 / zw = 未使用
+    float4 gSkyFroxelScreen; // xy = レンダーターゲット実寸 (px) / zw = 未使用
 };
+
+// ★t7 / s2 は **SkyboxPath 自身が張らない** — ホストのパス (ForwardPath / DeferredPath) が
+//   フレーム内で既に張っているものをそのまま読む。ここで別のスロットへ張ると、
+//   Forward ではスカイの直後に描く半透明メッシュの t1 (CSM) / s0 (異方性 WRAP) を
+//   潰してしまう (スカイは不透明と透明の間に入るパスなので、触った SRV が後段へ漏れる)。
+//   t7 = フロクセル積分結果 (統合契約 予約 2) / s2 = IBL 用 LINEAR/CLAMP
+Texture3D    gFroxelVolume  : register(t7); // M57e
+SamplerState gFroxelSampler : register(s2); // LINEAR/CLAMP (ホストがフレーム頭で張る)
 
 struct VSOut
 {
@@ -39,6 +57,12 @@ float4 PSMain(VSOut i) : SV_Target
         c = lerp(gHorizonColor.rgb, gTopColor.rgb, saturate(t * 1.4f));
     } else {
         c = lerp(gHorizonColor.rgb, gBottomColor.rgb, saturate(-t * 1.4f));
+    }
+    if (gSkyFroxel.x != 0.0f) {
+        const float4 v = gFroxelVolume.SampleLevel(
+            gFroxelSampler,
+            float3(i.pos.xy / gSkyFroxelScreen.xy, FroxelSampleWFar(gSkyFroxel.y)), 0);
+        c = c * v.a + v.rgb;
     }
     return float4(c, 1.0f);
 }

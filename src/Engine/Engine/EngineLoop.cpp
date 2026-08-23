@@ -231,6 +231,9 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     renderSystem.enableRtGi = config.rtGi;             // M46f (--rt-gi、Deferred のみ)
     renderSystem.enableRtShadow = config.rtShadow;     // M46g (--rt-shadow、Deferred のみ)
     renderSystem.enableRtRefl = config.rtRefl;         // M46h (--rt-refl、Deferred のみ)
+    renderSystem.enableFroxel = config.froxel;         // M57b (--froxel。まだ絵は変わらない)
+    renderSystem.froxelSettings.temporal = config.froxelTemporal; // M57c (--froxel-no-temporal)
+    renderSystem.froxelDumpFrame = config.froxelDumpFrame; // M57b/M57c (--froxel-dump N)
     renderSystem.postFxSettings.tonemap = config.postFxTonemap;
     renderSystem.postFxSettings.exposure = config.postFxExposure;
     renderSystem.postFxSettings.bloom = config.postFxBloom;

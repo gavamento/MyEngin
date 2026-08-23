@@ -34,6 +34,11 @@ public:
     float HzbGpuMs() const override { return hzb_.GpuMs(); }
     // M56d: SSR (コピー + 階層 Z トレース + 加算合成) の GPU 時間。同上
     float SsrGpuMs() const override { return ssr_.GpuMs(); }
+    // M57d: 光パス (t15) で不透明ピクセルへ合成する。M57e で背景ピクセルと透明後段
+    // (Forward t7) も受け持つようになった。スカイとパーティクルは SkyboxPass /
+    // ParticleSystem が view.froxelSRV を直接読む。ここが true になった時点で
+    // ゴッドレイは自動 off になる (三重計上の解消)
+    bool AppliesFroxel() const override { return true; }
 
 private:
     // M56a: デカール (投影ボックス)。ジオメトリパス直後・SSAO 前に albedo を上描きする。

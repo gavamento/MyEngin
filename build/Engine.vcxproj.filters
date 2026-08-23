@@ -417,6 +417,9 @@
     <ClCompile Include="..\src\Engine\Renderer\ForwardPath.cpp">
       <Filter>Renderer</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Renderer\FroxelPass.cpp">
+      <Filter>Renderer</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Renderer\GpuResources.cpp">
       <Filter>Renderer</Filter>
     </ClCompile>
@@ -499,6 +502,9 @@
       <Filter>Renderer</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Renderer\TextureCookSelfTest.cpp">
+      <Filter>Renderer</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Renderer\VolumeTexture.cpp">
       <Filter>Renderer</Filter>
     </ClCompile>
     <ClInclude Include="..\src\Engine\Core\Archetype.h">
@@ -906,6 +912,9 @@
     <ClInclude Include="..\src\Engine\Renderer\ForwardPath.h">
       <Filter>Renderer</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\FroxelPass.h">
+      <Filter>Renderer</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\FrustumCull.h">
       <Filter>Renderer</Filter>
     </ClInclude>
@@ -1003,6 +1012,9 @@
       <Filter>Renderer</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\TextureCookSelfTest.h">
+      <Filter>Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\VolumeTexture.h">
       <Filter>Renderer</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Shared\EngineAPI.h">

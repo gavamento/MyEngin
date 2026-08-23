@@ -437,6 +437,22 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
                            && target.viewKey > 0 && target.viewKey < 4)
             ? 1 : 0;
     }
+    // ---- M57c: フロクセルの有効判定とパラメータ ----
+    // 設定の出所は TAA / ポスプロと同じ規則 (グローバル設定 → シーンカメラの
+    // CameraPostFx があればそちらが勝つ)。**判定だけここで先に引く** — 実際の
+    // ディスパッチはシャドウアトラスと環境の収集が終わったあと (path.Render の直前)。
+    // ★SceneView のエディタカメラ (CameraOverride) には CameraPostFx が効かない
+    //   規約なので、そちらは --froxel / Rendering メニューのグローバル設定だけで動く
+    bool froxelOn = enableFroxel;
+    FroxelSettings effectiveFroxel = froxelSettings;
+    if (!cameraOverride && !camEntity.IsNull()) {
+        if (const auto* pfx = world.GetComponent<CameraPostFxComponent>(camEntity)) {
+            froxelOn = pfx->froxelOn != 0;
+            effectiveFroxel.density = pfx->froxelDensity;
+            effectiveFroxel.anisotropy = pfx->froxelAnisotropy;
+        }
+    }
+    froxelOn = froxelOn && cameraFound;
     if (view.taaEnabled != 0 && jitterAmplitude > 0.0f) {
         float px = 0.0f;
         float py = 0.0f;
@@ -1020,6 +1036,29 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
         view.iblBrdfLut = envBaker_.GetBrdfLut(device, shaders);
     }
 
+    // ---- M57b/M57c/M57d: フロクセル (注入 → テンポラル → 前方積分 → 光パスへ供給) ----
+    // ★置き場所はここしかない: 上流に CollectEnvironment (高度フォグのパラメータ) と
+    //   シャドウアトラス (SampleShadowAtlas の入力) が要り、下流の path.Render より
+    //   前でないと消費側 (Deferred 光パス) が積分結果を読めない。
+    // M57d でここが初めて絵に出る。**積分が走らなかったフレームは SRV が null のまま** =
+    //   光パス側のゲートで従来の ApplyFog へ落ちる (正射影ビュー / シェーダ未ロードなど)
+    if (froxelOn && (froxelPass_.IsReady() || froxelPass_.Init(device, shaders))) {
+        view.froxelSRV = froxelPass_.Render(device, shaders, view, lights, effectiveFroxel);
+        view.froxelNearZ = froxelPass_.GridNearZ();
+        view.froxelFarZ = froxelPass_.GridFarZ();
+        view.froxelSlices = froxelPass_.GridSliceCount();
+        // 「そのビューの N 回目の描画」= 決定的撮影モードでは frame 番号と一致する
+        // (viewSerial_ はこの Render の末尾で +1 される = ここでの値が今フレームの通番)
+        const uint32_t serial = (target.viewKey < 4) ? viewSerial_[target.viewKey] : 0u;
+        if (froxelDumpFrame >= 0 && static_cast<uint32_t>(froxelDumpFrame) == serial) {
+            froxelPass_.DebugDumpAB(device, shaders, view, lights, effectiveFroxel);
+            // DebugDumpAB は検査のために注入をもう 2 回走らせてボリュームを塗り替える。
+            // その状態の scatter_ を積分し直さないまま光パスへ渡すと「ダンプした
+            // フレームだけ絵が違う」になるので、確定した設定でもう一度回して戻す
+            view.froxelSRV = froxelPass_.Render(device, shaders, view, lights, effectiveFroxel);
+        }
+    }
+
     queue_.Sort();
     path.Render(device, view, queue_, lights, resources, shaders);
     // M55d: 画面速度 (GBuffer RT4) はパスが所有する — 描いた後でないと SRV が無い。
@@ -1110,6 +1149,17 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
         // SceneView (cameraOverride) はエディタ操作中のスミアが UX を阻害するため強制 off
         if (cameraOverride) {
             effective.motionBlurIntensity = 0.0f;
+        }
+        // M57d: フォグ三重計上の 3 つめを降ろす。ゴッドレイ (postfx_godray_mask/blur) は
+        // 「遮蔽マスクが空だけ」の**スクリーンスペース近似**で、フロクセルはその上位互換
+        // (深度を持つ全ての遮蔽物 + 局所ライト + シャドウアトラス) にあたる。
+        // 両方走らせると太陽まわりの散乱を 2 回足すことになるので、フロクセルが
+        // 実際に絵へ出たフレームだけ自動で降ろす。**ユーザー設定は書き換えない** —
+        // ここで潰すのは「このフレームで使う実効値」だけなので、froxel を切れば戻る
+        // ★条件に path.AppliesFroxel() が要る — Forward はまだ積分結果を読まない (M57e) ので、
+        //   ここを SRV の有無だけで判定すると「ゴッドレイだけ消えて霧が増えない」になる
+        if (view.froxelSRV != nullptr && path.AppliesFroxel()) {
+            effective.godrayIntensity = 0.0f;
         }
         // M44a: LUT の SRV 解決 (MaterialLibrary の GUID→パス解決と同じ流儀)。
         // 未ロードなら遅延ロード — LUT はデータなので srgb=false (デコード禁止)。

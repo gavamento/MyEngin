@@ -30,9 +30,9 @@ MyEngine — C++20 / DirectX 11 の自作ゲームエンジン (VS2022 / x64 / W
 
 | コマンド | 担保するもの |
 |---|---|
-| `bin\x64\Debug\Editor.exe --selftest` | ヘッドレス回帰 31 スイート (D3D もウィンドウも作らない) |
+| `bin\x64\Debug\Editor.exe --selftest` | ヘッドレス回帰 35 スイート (D3D もウィンドウも作らない) |
 | `tools\replay_verify.bat [ticks]` | 8 ビルド → 4 シーンペアのリプレイ照合 → snapshot 往復 → タイムトラベル巻き戻し → 規則検査 |
-| `tools\shot_verify.bat [--update]` | 決定的スクショ 10 枚を `tests\golden\*.png` と比較 (CI 判定は 8 枚 — FXAA と TAA の 2 枚は tol=0 のローカル限定。**先に Release ビルドが必要**) |
+| `tools\shot_verify.bat [--update]` | 決定的スクショ 12 枚を `tests\golden\*.png` と比較 (CI 判定は 9 枚 — FXAA / TAA / froxel の 3 枚は tol=0 のローカル限定。**先に Release ビルドが必要**) |
 | `pwsh -File tools\check_rules.ps1` | 規則 1/2/4/7/8/9/10/11 の静的検査 |
 | `tools\crash_verify.bat [Debug\|Release]` | 5 経路で実際に落として crash バンドル → .rep が再生・再現すること (**CI 対象外**) |
 | `tools\net_verify.bat [ticks]` | host/join 2 プロセスの .rep が一致 + ローカル 2P 参照とも一致 + ロールバック 3 帯 + desync 注入の検出 (**CI 対象外**) |
@@ -60,7 +60,8 @@ MyEngine — C++20 / DirectX 11 の自作ゲームエンジン (VS2022 / x64 / W
   `--font-embedded` / `--no-audio` / `--parts-demo` / `--flow-demo` / `--rt-demo` /
   `--render-demo` (M54a: 描画ショーケース。スクショ回帰 6/7 枚目) /
   `--terrain-demo` (M58c: 地形ショーケース。8 枚目) / `--terrain-lod N` / `--terrain-skirt N` /
-  `--taa` (M55d: 撮影用に TAA を強制 on。10 枚目) / `--velocity-debug` (M55c) /
+  `--taa` (M55d) / `--ssr` (M56d) / `--froxel` (M57) / `--hzb-debug N` (M56c) /
+  `--velocity-debug` (M55c) / `--froxel-dump N` / `--froxel-no-temporal` (M57) /
   `--package DIR` / `--img-diff A B [--tol N]`。
 
 ## 決定論の契約

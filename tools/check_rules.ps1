@@ -225,6 +225,71 @@ $constGroups = @(
             'src\Engine\Renderer\RenderTypes.h' = 'constexpr\s+int\s+kMaxReflectionProbes\s*=\s*(\d+)'
             'assets\shaders\common.hlsli'       = '#\s*define\s+MYE_MAX_REFLECTION_PROBES\s+(\d+)'
         }
+    },
+    @{
+        # M57a: フロクセル CS のスレッドグループ (XY)。C++ 側はこの値でディスパッチの
+        # グループ数を切り上げ計算し、HLSL 側は numthreads に使う。食い違うと
+        # **グリッドの一部が書かれないまま残り、前フレームの残骸を積分する** —
+        # 絵は出るのにフォグだけがちらつくという、目で追いにくい壊れ方をする
+        label = 'froxel::kGroupSize / MYE_FROXEL_GROUP'
+        sites = @{
+            'src\Engine\Renderer\RenderTypes.h'   = 'constexpr\s+int\s+kGroupSize\s*=\s*(\d+)'
+            # M57c: HLSL 側の正本は froxel_common.hlsli 1 本にまとめた (clear / inject /
+            # temporal / integrate の 4 本が同じ割り方を要求するようになったため)。
+            # 各 .cs.hlsl が #define を持たなくなったので、照合先もここへ移す
+            'assets\shaders\froxel_common.hlsli'  = '#\s*define\s+MYE_FROXEL_GROUP\s+(\d+)'
+        }
+    },
+    @{
+        # M57c: フロクセルのジッタ列の周期。C++ が実際にジッタ値を計算して CB へ載せるので
+        # HLSL 側には出てこないが、**カメラジッタ (TAA) の周期と同じ長さ**でなければ
+        # 「1 巡」が最小公倍数まで伸びて、決定的撮影で撮った 2 枚がどちらも収束前の
+        # 別状態になる。両者は別ヘッダに住んでいるので機械照合しておく
+        label = 'froxel::kJitterSequenceLength / camerajitter::kSequenceLength'
+        sites = @{
+            'src\Engine\Renderer\RenderTypes.h' = 'constexpr\s+uint32_t\s+kJitterSequenceLength\s*=\s*(\d+)'
+            'src\Engine\Renderer\PostFxMath.h'  = 'constexpr\s+uint32_t\s+kSequenceLength\s*=\s*(\d+)'
+        }
+    },
+    @{
+        # M57d: Deferred 光パスがフロクセルの積分結果を読む SRV スロット (統合契約 予約 2 の t15)。
+        # C++ 側は gbSrvs[] の**位置**でしか表現されないので、static_assert で定数へ結び直し
+        # てある (DeferredPath.cpp)。ここが HLSL の register(t15) と食い違うと
+        # **霧が丸ごと 0 になるだけ**でコンパイルも実行も通る (張られていないスロットは 0)。
+        # ★t13/t14 は M56 (SSR / 反射プローブ) の空席。詰めると統合時に無言で潰し合う
+        label = 'froxel::kSrvSlot / deferred_light register(t15)'
+        sites = @{
+            'src\Engine\Renderer\RenderTypes.h' = 'constexpr\s+int\s+kSrvSlot\s*=\s*(\d+)'
+            'assets\shaders\deferred_light.hlsl' = 'Texture3D\s+gFroxelVolume\s*:\s*register\(t(\d+)\)'
+        }
+    },
+    @{
+        # M57e: Forward 系がフロクセルの積分結果を読む SRV スロット (統合契約 予約 2 の t7)。
+        # **同じ番号を要求するファイルが 5 つ**ある — forward_lit / _instanced / _skinned /
+        # _terrain の 4 本と、スカイボックス (ホストが張った t7 をそのまま読む)。
+        # C++ 側は frameSrvs[] / fwdSrvs[] の**位置**でしか表現されないので static_assert で
+        # 定数へ結び直してある (ForwardPath.cpp / DeferredPath.cpp)。食い違うと
+        # **その 1 本だけ霧が 0 になる** = 半透明だけ霧が抜ける、という形で静かに壊れる
+        label = 'froxel::kForwardSrvSlot / forward_* + skybox register(t7)'
+        sites = @{
+            'src\Engine\Renderer\RenderTypes.h'          = 'constexpr\s+int\s+kForwardSrvSlot\s*=\s*(\d+)'
+            'assets\shaders\forward_lit.hlsl'            = 'Texture3D\s+gFroxelVolume\s*:\s*register\(t(\d+)\)'
+            'assets\shaders\forward_lit_instanced.hlsl'  = 'Texture3D\s+gFroxelVolume\s*:\s*register\(t(\d+)\)'
+            'assets\shaders\forward_skinned.hlsl'        = 'Texture3D\s+gFroxelVolume\s*:\s*register\(t(\d+)\)'
+            'assets\shaders\forward_terrain.hlsl'        = 'Texture3D\s+gFroxelVolume\s*:\s*register\(t(\d+)\)'
+            'assets\shaders\skybox.hlsl'                 = 'Texture3D\s+gFroxelVolume\s*:\s*register\(t(\d+)\)'
+            'assets\shaders\skybox_cubemap.hlsl'         = 'Texture3D\s+gFroxelVolume\s*:\s*register\(t(\d+)\)'
+        }
+    },
+    @{
+        # M57e: パーティクル PS のフロクセルスロット。t0=インスタンス / t1=テクスチャ /
+        # t2=深度 の次。CPU バックエンドの PSSetShaderResources と食い違うと
+        # **粒子だけ霧が 0** (加算合成なので「粒子が浮く」形で出る)
+        label = 'froxel::kParticleSrvSlot / particle_render register(t3)'
+        sites = @{
+            'src\Engine\Renderer\RenderTypes.h'      = 'constexpr\s+int\s+kParticleSrvSlot\s*=\s*(\d+)'
+            'assets\shaders\particle_render.hlsl'    = 'Texture3D\s+gFroxelVolume\s*:\s*register\(t(\d+)\)'
+        }
     }
 )
 foreach ($g in $constGroups) {

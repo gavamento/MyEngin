@@ -457,6 +457,12 @@ struct CameraPostFxComponent {
     int32_t ssrOn = 0;            // 0=off 1=on
     float ssrMaxRoughness = 0.6f; // これを超える粗さの面は反射しない (RT 反射と同じ既定値)
     float ssrIntensity = 1.0f;    // 1 = IBL スペキュラをちょうど反射で置き換える
+    // ---- M57c: フロクセル・ボリュメトリック (末尾 append、NoHash なので hash 不変) ----
+    // ★既定 0 = 恒等。1 にすると不透明 / 透明 / 地形 / スカイ / パーティクルの全部に
+    //   合成され、同時に **ゴッドレイが自動 off** になる (フォグの三重計上の解消。M57d)
+    int32_t froxelOn = 0;          // 0=off 1=on
+    float froxelDensity = 0.02f;   // 基準の消散係数 σ_t [1/m] (高度スケール前)
+    float froxelAnisotropy = 0.3f; // HG 位相関数の g (>0 = 前方散乱 = 光源側が明るい)
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 

@@ -68,6 +68,21 @@ void ProfilerWindow::OnImGui(EngineContext& ctx)
             ImGui::Text("  ssr: %6.3f ms trace + %6.3f ms hzb (GpuTimer)",
                         ctx.renderSystem->SsrGpuMs(), ctx.renderSystem->HzbGpuMs());
         }
+        // M57: フロクセル (--froxel。off のときは行ごと出さない)。
+        // cells が 0 = ボリューム未確保 = まだ 1 度も注入していない (正射影のビュー等)。
+        // hist=0 が続くなら履歴が毎フレーム捨てられている (通番が飛んでいる)
+        if (ctx.renderSystem->enableFroxel) {
+            ImGui::Text("  froxel: %6.3f inject / %6.3f temporal / %6.3f integrate ms "
+                        "(GpuTimer, %d cells, density %.3f, g %.2f, jitter %.3f, hist %d)",
+                        ctx.renderSystem->FroxelInjectGpuMs(),
+                        ctx.renderSystem->FroxelTemporalGpuMs(),
+                        ctx.renderSystem->FroxelIntegrateGpuMs(),
+                        ctx.renderSystem->FroxelCellCount(),
+                        ctx.renderSystem->froxelSettings.density,
+                        ctx.renderSystem->froxelSettings.anisotropy,
+                        ctx.renderSystem->FroxelSliceJitter(),
+                        ctx.renderSystem->FroxelHistoryValid() ? 1 : 0);
+        }
         // M46b: レイトレ (デバッグ表示も GI 合成も off のときは行ごと出さない)
         const bool rtGiOn = ctx.renderSystem->enableRtGi;             // M46f
         const bool rtShadowOn = ctx.renderSystem->enableRtShadow;     // M46g

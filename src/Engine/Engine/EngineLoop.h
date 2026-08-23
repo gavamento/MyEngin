@@ -133,6 +133,16 @@ struct EngineConfig {
     bool rtShadow = false;
     // M46h: スペキュラ環境項をレイトレ反射で置き換える (--rt-refl)。Deferred パスのみ。同上
     bool rtRefl = false;
+    // M57: フロクセル (--froxel)。注入 → テンポラル → 前方積分 → 最終画像へ合成まで。
+    // Deferred/Forward の両方 + 地形 / スカイ / パーティクルに載る (既定 off)
+    bool froxel = false;
+    // M57c: --froxel-no-temporal。深度スライスジッタと履歴の混合を止める (A/B 用)。
+    // off にすると代表点が厳密にスライス中心 = M57b の注入とビット一致する
+    bool froxelTemporal = true;
+    // M57b/M57c: --froxel-dump N。そのビューの N 回目の描画でグリッド全セルを読み戻し、
+    // 影あり/なしの統計・積分と CPU 参照の突き合わせ・テンポラルの恒等性検査をログへ出す
+    // (負値 = 何もしない)。--froxel も一緒に立てる
+    int froxelDumpFrame = -1;
 
     // ---- グラフィックスドライバ (M52b) ----
     // true (--warp) で D3D_DRIVER_TYPE_WARP (ソフトウェアラスタライザ) を直接使う。

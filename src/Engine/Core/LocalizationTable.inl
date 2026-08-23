@@ -125,6 +125,19 @@ MYE_STR(Shadow_AtlasStats,    "Atlas: %d tiles, %d draws (%d culled)", "アト�
 MYE_STR(Shadow_AtlasGpu,      "GPU: CSM %.2f ms / atlas %.2f ms",     "GPU: CSM %.2f ms / アトラス %.2f ms")
 MYE_STR(Shadow_AtlasIdle,     "Atlas: unused (no local shadow caster)", "アトラス: 未使用 (影を投げる局所ライトなし)")
 
+// ---- ボリュメトリックフォグ (M57e)。View > レンダリング の入れ子サブメニュー。
+//      統合契約 予約 5 の接頭辞 Froxel_*。書式指定子の並びは en / ja で一致必須 ----
+MYE_STR(Froxel_Menu,          "Volumetric Fog",                       "ボリュメトリックフォグ")
+MYE_STR(Froxel_Enable,        "Enabled",                              "有効")
+MYE_STR(Froxel_Temporal,      "Temporal Accumulation",                "テンポラル蓄積")
+MYE_STR(Froxel_Density,       "Density (1/m)###Froxel_Density",       "密度 (1/m)###Froxel_Density")
+MYE_STR(Froxel_Anisotropy,    "Anisotropy (g)###Froxel_Anisotropy",   "異方性 (g)###Froxel_Anisotropy")
+MYE_STR(Froxel_Grid,          "Grid: %d x %d x %d (%d cells)",        "グリッド: %d x %d x %d (%d セル)")
+MYE_STR(Froxel_Gpu,           "GPU: inject %.2f / temporal %.2f / integrate %.2f ms",
+                                                                      "GPU: 注入 %.2f / テンポラル %.2f / 積分 %.2f ms")
+MYE_STR(Froxel_GodrayOff,     "God rays are auto-disabled while this is on",
+                                                                      "有効の間はゴッドレイを自動で降ろします")
+
 MYE_STR(Menu_RtDebug,         "RT Debug (Deferred)",   "RT デバッグ (Deferred)")
 MYE_STR(Menu_RtDbgOff,        "Off",                   "オフ")
 MYE_STR(Menu_RtDbgBvhHeat,    "BVH Heatmap",           "BVH ヒートマップ")

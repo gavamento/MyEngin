@@ -360,6 +360,19 @@ struct RenderView {
     //      Deferred のみ (Forward は v1 非対応。engine_spec §6.10)。
     //      AssetPreviewCache の RenderSystem はここを埋めない = サムネイルは常にプローブ無し
     const ReflectionProbeSet* probes = nullptr;
+    // ---- M57d: フロクセルの積分結果 (末尾 append。null/0 = 従来と 1 ビットも変わらない) ----
+    //   froxelSRV = Texture3D (rgb = カメラからそこまでに積算した内向き散乱 /
+    //     a = そこまでの透過率)。FroxelPass::Render が返したものを RenderSystem が入れる。
+    //     ★null のままになる経路が 3 つある (Forward / AssetPreviewCache の RenderSystem /
+    //       froxel off)。**消費側は「null ならフラグ 0」のゲートを必ず置くこと** —
+    //       置かないとサムネイルだけが前フレームの残骸をサンプルする。
+    //   froxelNearZ/FarZ/Slices = 注入時に確定したグリッドの深度分割。**カメラの
+    //     near/far ではない** (FroxelSettings::maxDistance で手前に切ってある) ので、
+    //     ここを取り違えるとサンプル位置が丸ごとずれる
+    ID3D11ShaderResourceView* froxelSRV = nullptr;
+    float froxelNearZ = 0.0f;
+    float froxelFarZ = 0.0f;
+    int32_t froxelSlices = 0;
 };
 
 // ---- デカール (M56a) ----
@@ -548,6 +561,50 @@ inline void FillShadowTilesCB(const RenderView& view, ShadowTileCB* dst)
     }
 }
 
+// M57e: 「このビューでフロクセルの積分結果を合成してよいか」の唯一の判定。
+// **消費者が 5 つに増えた**ので式を 1 本に畳んである (Deferred 光パス / Deferred の
+// 透明後段 / ForwardPath / SkyboxPass / CpuParticleBackend)。
+//   ・froxelSRV == nullptr になる経路が 3 つある (froxel off / 正射影などで注入が
+//     走らなかったフレーム / AssetPreviewCache の別 RenderSystem)。**ここを通さないと
+//     サムネイルだけが前フレームの残骸をサンプルする。**
+//   ・Unlit / Wireframe (debugViewMode != 0) も外す — 大気散乱はライティングの一部で、
+//     既に fogMode を -1 に潰してある表示モードに霧だけ載せるのは筋が通らない
+inline bool FroxelIsBound(const RenderView& view)
+{
+    return view.debugViewMode == 0 && view.froxelSRV != nullptr && view.froxelSlices > 0
+        && view.froxelFarZ > 0.0f;
+}
+
+// M57e: Forward 系 PerFrame CB (b0) の末尾に置くフロクセルのブロック。
+// **C++ ミラーが 2 つある** (ForwardPath.cpp / DeferredPath.cpp の PerFrameCB) ので、
+// 形を 1 本にして「片方だけ直す」を構造的に不可能にしてある。
+// HLSL 側は forward_lit / forward_lit_instanced / forward_skinned / forward_terrain の 4 本
+struct FroxelForwardCB {
+    int32_t enabled = 0;
+    float nearZ = 0.0f;
+    float farZ = 0.0f;
+    float slices = 0.0f;
+    // dot(float4(posW,1), これ) = view 深度。view 行列の第 3 列そのもの。
+    // ★カメラ前方ベクトルを正規化して内積する式にしない — 非一様スケールの入った
+    //   ビュー行列で静かにずれる (M57d が Deferred 側で確定させた規約)
+    DirectX::XMFLOAT4 viewZRow = { 0.0f, 0.0f, 0.0f, 0.0f };
+    float screenSize[2] = { 0.0f, 0.0f }; // SV_Position → uv (Forward に gScreenSize は無い)
+    float pad[2] = { 0.0f, 0.0f };
+};
+
+inline FroxelForwardCB MakeFroxelForwardCB(const RenderView& view, bool bound)
+{
+    FroxelForwardCB out;
+    out.enabled = bound ? 1 : 0;
+    out.nearZ = view.froxelNearZ;
+    out.farZ = view.froxelFarZ;
+    out.slices = static_cast<float>(view.froxelSlices);
+    out.viewZRow = { view.view._13, view.view._23, view.view._33, view.view._43 };
+    out.screenSize[0] = static_cast<float>(view.width);
+    out.screenSize[1] = static_cast<float>(view.height);
+    return out;
+}
+
 // GPU へ渡すライト 1 個 (定数バッファ配列要素、16 バイト境界に揃えた 64 バイト)。
 // HLSL 側 common.hlsli の Light 構造体とレイアウト一致。
 struct GpuLight {
@@ -594,5 +651,261 @@ public:
     // opaque: material → mesh → 深度 (近い順) / transparent: 深度 (遠い順) → material → mesh
     void Sort();
 };
+
+// ---- M57a: フロクセル (視錐台に沿った 3D グリッド) の幾何 ----
+//
+// 視錐台を XY は画面タイル、Z は指数分布のスライスに割った 3D テクスチャへ散乱と消散を
+// 積み、最後に手前から積分して「そのピクセルまでの inscatter / transmittance」を作る。
+// ここに置いてあるのは**グリッドの幾何だけ** (パスの実体は M57b の FroxelPass)。
+// 全部純関数なので RenderSelfTest が機械検査できる — GPU を起こさずに済む部分は
+// 起こさずに検査するのがこのリポジトリの流儀 (テストは機能の隣に置く)。
+namespace froxel {
+
+// CS のスレッドグループ (XY のみ。Z はディスパッチ側でスライス数ぶん並べる)。
+// XY だけをタイルにしているのは、注入も積分も「同じ (x,y) の Z 列」を扱うから —
+// 積分パス (M57c) は 1 スレッドが 1 本の Z 列を手前から舐めるので Z を割れない。
+// **HLSL の MYE_FROXEL_GROUP (assets\shaders\froxel_*.cs.hlsl) と必ず一致させること** —
+// 食い違うとグリッドの一部が書かれないまま残り、前フレームの残骸を積分する形で
+// 静かに壊れる。tools\check_rules.ps1 の規則 9 が一致を検査する
+constexpr int kGroupSize = 8;
+
+// 既定のグリッド解像度。**M57a の WARP 実測 (Editor.exe --froxel-probe) で決めた値**。
+// 960x540 に対して 6x6 画素タイル x 64 スライス = 921,600 セル / 7.03MB。
+//
+//   グリッド        セル数    WARP clear   RTX3060 clear   1 枚の VRAM
+//   160x90x64      921,600     0.95 ms       0.026 ms        7.03 MB   ← 既定
+//   128x72x48      442,368     0.55 ms       0.014 ms        3.38 MB
+//   80x45x32       115,200     0.27 ms       0.007 ms        0.88 MB
+//
+// 落とさなかった理由: WARP のスループットが 8 倍のセル数域でほぼ一定 (約 0.9 Gcell/s) =
+// **コストがセル数に線形**で、固定費に食われていない。つまり解像度は後から素直に効く
+// 品質/コストのつまみで、先に絞る必要が無い。注入 (M57b) が WARP で重すぎたら
+// この表の下段へ落とす — 数字が線形なので予測が立つ。
+// ★clear は「空の CS」= 下限であって、注入パスのコストではない
+constexpr int kGridX = 160;
+constexpr int kGridY = 90;
+constexpr int kGridZ = 64;
+
+// ディスパッチのグループ数 (切り上げ)。extent <= 0 でも 0 を返して Dispatch を空振りさせる
+constexpr int DispatchGroups(int extent, int group)
+{
+    return (extent <= 0 || group <= 0) ? 0 : (extent + group - 1) / group;
+}
+
+// スライス境界の view 深度 (指数分布)。slice = 0 → nearZ、slice = sliceCount → farZ。
+// 手前を厚く割るのは、フォグの見た目の情報量がカメラ近傍に集中しているから
+// (等間隔だと近景が 1 スライスに潰れて縞が出る)。
+// nearZ は正でなければならない — 0 だと log が発散するので下限で潰す
+inline float SliceToViewDepth(float slice, int sliceCount, float nearZ, float farZ)
+{
+    const float n = (nearZ > 1e-4f) ? nearZ : 1e-4f;
+    const float f = (farZ > n) ? farZ : (n * 2.0f);
+    const int count = (sliceCount > 0) ? sliceCount : 1;
+    return n * std::pow(f / n, slice / static_cast<float>(count));
+}
+
+// 上の逆関数。view 深度 → スライス座標 (小数)。範囲外もそのまま外挿して返す
+// (クランプは呼び出し側の責任 — グリッド外を最遠スライスへ丸めると空が濁る)
+inline float ViewDepthToSlice(float depth, int sliceCount, float nearZ, float farZ)
+{
+    const float n = (nearZ > 1e-4f) ? nearZ : 1e-4f;
+    const float f = (farZ > n) ? farZ : (n * 2.0f);
+    const int count = (sliceCount > 0) ? sliceCount : 1;
+    const float d = (depth > 1e-6f) ? depth : 1e-6f;
+    return static_cast<float>(count) * std::log(d / n) / std::log(f / n);
+}
+
+// ---- M57b: 注入パスの数式 (HLSL froxel_inject.cs.hlsl と同一式) ----
+//
+// GPU 側と CPU 側で式を二重に持つのは、位相関数の正規化やセル中心の取り方が
+// 「絵はそれらしく出るのに物理的に間違っている」形で壊れるため。
+// RenderSelfTest が CPU 版を全立体角で数値積分して 1 になることまで見ている。
+
+// セル中心の view 深度。**境界ではなく中心**を代表点にする — 境界だと隣のセルと
+// 同じ点を評価してしまい、1 スライスぶんの厚みが消える。
+// M57c のジッタはこの 0.5 を [0,1) の擬似乱数で置き換える形で入る
+inline float SliceCenterViewDepth(int slice, int sliceCount, float nearZ, float farZ)
+{
+    return SliceToViewDepth(static_cast<float>(slice) + 0.5f, sliceCount, nearZ, farZ);
+}
+
+// Henyey-Greenstein 位相関数。cosTheta = dot(光の進行方向, セル→カメラ方向)。
+// g > 0 = 前方散乱 = 「光源のほうを向くと明るい」。全立体角の積分が 1 になる正規化つき
+// (この 1/4π を落とすと霧の明るさが密度と一緒にしか調整できなくなる)
+inline float HenyeyGreenstein(float cosTheta, float g)
+{
+    // ±1 は分母が 0 に落ちる特異点。CameraPostFx から ±1 が来る経路は無いが、
+    // ここで inf を作るとグリッド全体が NaN で埋まる (積分結果が丸ごと消える)
+    const float gg = (g < -0.95f) ? -0.95f : ((g > 0.95f) ? 0.95f : g);
+    const float d = 1.0f + gg * gg - 2.0f * gg * cosTheta;
+    const float dd = (d > 1e-4f) ? d : 1e-4f;
+    // x^1.5 を pow で書かない — HLSL 側は WARP で pow が exp/log の 2 段になり、
+    // セル × ライト本数ぶん効く。**両方を同じ形に揃えておく**のがこのミラーの意味
+    return (1.0f - gg * gg) / (4.0f * 3.14159265f * (dd * std::sqrt(dd)));
+}
+
+// 高度による密度スケール。M43a のハイトフォグ ρ(y)=e^{-k(y-base)} と同じプロファイル
+// (falloff == 0 なら厳密に 1 = 一様媒質)
+inline float HeightDensityScale(float y, float baseHeight, float falloff)
+{
+    return std::exp(-falloff * (y - baseHeight));
+}
+
+// ---- M57c: 深度スライスジッタ + 前方積分 (HLSL froxel_common.hlsli と同一式) ----
+
+// スライスジッタ列の周期。camerajitter::kSequenceLength (= 8) と同じ長さにしてある。
+// 別の周期にすると TAA の収束周期との最小公倍数まで「1 巡」が伸びて、
+// 決定的撮影で撮った 2 枚が「どちらも収束前」の別状態になる
+constexpr uint32_t kJitterSequenceLength = 8;
+
+// frameIndex → セル中心のスライス方向オフセット [0,1)。0.5 = ジッタ無し (M57b と同じ位置)。
+// ★実時間ではなく **viewKey 別の描画通番** から引く = 決定的撮影モード
+//   (frame 番号 == tick 番号) でフレーム列がそのまま再現する。
+// 中身は基数 2 の van der Corput で、camerajitter::RadicalInverse(i, 2) と**同じ数列**。
+// PostFxMath.h の実装を呼ばないのは RenderTypes.h がそれより下の層で include できないため
+// (逆向きの依存になる)。**両者が一致することは RenderSelfTest が機械で照合している**。
+// frameIndex==0 が 0.5 になるのは意図的 — テンポラル 1 フレーム目が M57b の注入と
+// ビット一致し、「ジッタを入れても初期状態は変わっていない」ことを言えるようにするため
+inline float SliceJitter(uint32_t frameIndex)
+{
+    uint32_t i = (frameIndex % kJitterSequenceLength) + 1u;
+    float result = 0.0f;
+    float f = 0.5f;
+    while (i > 0u) {
+        result += static_cast<float>(i & 1u) * f;
+        i >>= 1;
+        f *= 0.5f;
+    }
+    return result;
+}
+
+// スライス 1 枚ぶんの透過率 T = e^{-σ_t·d} (Beer-Lambert)
+inline float SliceTransmittance(float sigmaT, float thickness)
+{
+    const float s = (sigmaT > 0.0f) ? sigmaT : 0.0f;
+    const float d = (thickness > 0.0f) ? thickness : 0.0f;
+    return std::exp(-s * d);
+}
+
+// スライス 1 枚を均質と見なしたときの散乱の解析積分 ∫₀^d e^{-σ_t·s} ds = (1-e^{-σ_t·d})/σ_t。
+// ★ここを「厚み d をそのまま掛ける」で済ませてはいけない — 濃い霧で 1 スライス内の
+//   自己遮蔽が消え、透過率が下がるほど明るくなるという逆向きの絵になる (Hillaire 2015)。
+//   σ_t → 0 の極限はちょうど d なので、薄い霧では素朴な式と一致する
+inline float IntegratedSliceScatter(float sigmaT, float thickness)
+{
+    const float s = (sigmaT > 0.0f) ? sigmaT : 0.0f;
+    const float d = (thickness > 0.0f) ? thickness : 0.0f;
+    if (s < 1e-5f) {
+        return d; // 極限。ゼロ除算よけを兼ねる
+    }
+    return (1.0f - std::exp(-s * d)) / s;
+}
+
+// 積分結果ボリュームのサンプル座標 (w = 正規化スライス方向)。
+// **格納規約: テクセル z には「スライス z の奥端 (= sliceCoord z+1) までの積分」が入る。**
+// テクセル中心は sliceCoord z+0.5 の位置にあるので、任意の sliceCoord s を引くには
+// 半テクセルぶん手前を指す必要がある: w = (s - 0.5) / count。
+// ★この -0.5 を落とすと霧が 1 スライスぶん手前にずれる (スライスが薄い近景ほど効く)
+inline float IntegratedSampleW(float sliceCoord, int sliceCount)
+{
+    const int count = (sliceCount > 0) ? sliceCount : 1;
+    return (sliceCoord - 0.5f) / static_cast<float>(count);
+}
+
+// テンポラルの混合。feedback = 履歴の残し率 [0, kMaxTemporalFeedback]。
+// ★histValid=false / feedback=0 は **厳密に現フレームそのまま** を返す —
+//   ここがビット恒等でないと「テンポラル off で直前コミットとビット一致」という
+//   このロードマップの受入基準が成立しない (lerp の丸めで最下位ビットが動く)
+constexpr float kMaxTemporalFeedback = 0.95f;
+inline float TemporalBlend(float cur, float hist, float feedback, bool histValid)
+{
+    if (!histValid || feedback <= 0.0f) {
+        return cur;
+    }
+    const float f = (feedback > kMaxTemporalFeedback) ? kMaxTemporalFeedback : feedback;
+    return cur + (hist - cur) * f; // HLSL の lerp(cur, hist, f) と同じ展開順
+}
+
+// ---- M57d: 最終画像への合成 (HLSL froxel_common.hlsli と同一式) ----
+
+// Deferred 光パスが積分結果を読む SRV スロット (統合契約 予約 2 の t15)。
+// **deferred_light.hlsl の register(t15) と食い違うと、霧が丸ごと 0 になるだけで
+// コンパイルも実行も通る** (張られていないスロットは 0 を返す) ので、
+// tools\check_rules.ps1 の規則 9 で機械照合している
+constexpr int kSrvSlot = 15;
+
+// view 深度 → 積分ボリュームの w 座標。
+// 奥はグリッドの最終テクセル (= グリッド全体ぶんの霧) で止める — 最遠スライスより
+// 奥の区間は「解析フォグの残り」が持つので、ここを外挿すると二重に霧が乗る。
+// 手前は最初のテクセル中心で止める (w<0 は CLAMP サンプラでも同じ値になるが、
+// 「意図して止めている」ことを式に残す。それが無いと 0.5 の由来が読めない)
+inline float IntegratedSampleWForDepth(float viewZ, int sliceCount, float nearZ, float farZ)
+{
+    const int count = (sliceCount > 0) ? sliceCount : 1;
+    const float hi = static_cast<float>(count);
+    float s = ViewDepthToSlice(viewZ, count, nearZ, farZ);
+    s = (s < 0.5f) ? 0.5f : ((s > hi) ? hi : s);
+    return IntegratedSampleW(s, count);
+}
+
+// M57d: 解析フォグ (common.hlsli::ApplyFog) の起点をどこまで押し出すかの割合 [0,1]
+// (カメラ → サーフェスの線分上のパラメータ)。
+//
+// ★**フォグ三重計上を解く鍵がこの 1 本**。フロクセルが持つのは [nearZ, gridFarZ] の
+//   区間だけなので、解析フォグの起点を「グリッドの奥端とレイの交点」まで押し出せば
+//   両者の受け持ちが 1m も重ならない。1.0 = サーフェスがグリッドの中 = 残り区間ゼロ =
+//   起点が posW と厳密に一致 = ApplyFog は距離 0 で恒等になる。
+//   グリッドの奥端は view 深度が gridFarZ の点なので、相似比は gridFarZ / viewZ
+inline float FogHandoffFraction(float viewZ, float gridFarZ)
+{
+    if (gridFarZ <= 0.0f || !(viewZ > gridFarZ)) {
+        return 1.0f; // グリッドの中 (NaN もここへ落ちる = 恒等側で安全に潰れる)
+    }
+    return gridFarZ / viewZ;
+}
+
+// M57d: 参加媒質の合成 (1 チャンネルぶん)。scene = 霧が無いときの色。
+// transmittance==1 && inscatter==0 は**厳密に恒等** (積が 1 倍・和が 0 なので IEEE でも)
+inline float CompositeFroxel(float scene, float inscatter, float transmittance)
+{
+    return scene * transmittance + inscatter;
+}
+
+// ---- M57e: 深度を持つ残りの描画物への適用 (HLSL froxel_common.hlsli と同一式) ----
+
+// Forward 系 (forward_lit / _instanced / _skinned / _terrain) と**スカイボックス**が
+// 積分結果を読む SRV スロット (統合契約 予約 2 の t7)。
+//   ・Deferred の透明後段も forward_lit をそのまま使うので、この 1 本が「透明メッシュ」と
+//     「Forward パス全体」の両方の口になる。
+//   ・スカイボックスも同じ t7 を読む。**スカイに専用スロットを与えてはいけない** —
+//     スカイは不透明と透明の間に挟まるパスなので、別スロットを張ると Forward で
+//     後段の半透明が読む t1 (CSM) / t3-5 (IBL) を潰す。既に張ってある席に相乗りする。
+// Deferred 光パス側の kSrvSlot と同じ理由で check_rules.ps1 規則 9 が機械照合する
+constexpr int kForwardSrvSlot = 7;
+// パーティクル PS のスロット (t0 = インスタンス / t1 = テクスチャ / t2 = 深度 の次)。
+// パーティクルは独立したシェーダで、上の 4 本とはバインド空間を共有しない
+constexpr int kParticleSrvSlot = 3;
+
+// スカイ / 背景 (= 深度が無いピクセル) 用のサンプル w。**グリッド全体ぶんの積分**を指す。
+// ★ここは必ず IntegratedSampleWForDepth(viewZ >= farZ) と**同じ値**でなければならない —
+//   食い違うと地平線で「最遠のジオメトリ」と「その真上の空」が別のテクセルを引き、
+//   1 テクセルぶんの段が水平線に残る (RenderSelfTest が両者の一致を見ている)
+inline float IntegratedSampleWFar(int sliceCount)
+{
+    const int count = (sliceCount > 0) ? sliceCount : 1;
+    return IntegratedSampleW(static_cast<float>(count), count);
+}
+
+// M57e: **加算合成**の描画物 (additive パーティクル) への適用。
+// ★内向き散乱を足してはいけない — 背後のサーフェス (またはスカイ) が既に 1 回足して
+//   いるので、加算で重ねるたびに足すと粒子の枚数ぶん霧が濃くなる。
+//   加算の粒子が受け取るのは「自分からカメラまでの減衰」だけ。
+//   透過率 1 で厳密に恒等 (1 倍なので IEEE でも)
+inline float CompositeFroxelAdditive(float src, float transmittance)
+{
+    return src * transmittance;
+}
+
+} // namespace froxel
 
 } // namespace mye

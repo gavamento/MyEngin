@@ -143,6 +143,7 @@
     <ClCompile Include="..\src\Engine\Renderer\EnvMapBaker.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\FontAtlas.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\ForwardPath.cpp" />
+    <ClCompile Include="..\src\Engine\Renderer\FroxelPass.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\GpuResources.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\GpuTimer.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\GraphicsDevice.cpp" />
@@ -171,6 +172,7 @@
     <ClCompile Include="..\src\Engine\Renderer\TerrainPass.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\TextureCook.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\TextureCookSelfTest.cpp" />
+    <ClCompile Include="..\src\Engine\Renderer\VolumeTexture.cpp" />
     <ClInclude Include="..\src\Engine\Core\Archetype.h" />
     <ClInclude Include="..\src\Engine\Core\AssetGuidResolver.h" />
     <ClInclude Include="..\src\Engine\Core\AssetKeyResolver.h" />
@@ -306,6 +308,7 @@
     <ClInclude Include="..\src\Engine\Renderer\FontAtlas.h" />
     <ClInclude Include="..\src\Engine\Renderer\FontGeometry.h" />
     <ClInclude Include="..\src\Engine\Renderer\ForwardPath.h" />
+    <ClInclude Include="..\src\Engine\Renderer\FroxelPass.h" />
     <ClInclude Include="..\src\Engine\Renderer\FrustumCull.h" />
     <ClInclude Include="..\src\Engine\Renderer\GpuBufferUtil.h" />
     <ClInclude Include="..\src\Engine\Renderer\GpuResources.h" />
@@ -339,6 +342,7 @@
     <ClInclude Include="..\src\Engine\Renderer\TerrainPass.h" />
     <ClInclude Include="..\src\Engine\Renderer\TextureCook.h" />
     <ClInclude Include="..\src\Engine\Renderer\TextureCookSelfTest.h" />
+    <ClInclude Include="..\src\Engine\Renderer\VolumeTexture.h" />
     <ClInclude Include="..\src\Shared\EngineAPI.h" />
     <ClInclude Include="..\src\Shared\MathPod.h" />
     <ClInclude Include="..\src\Shared\ScriptAPI.h" />
