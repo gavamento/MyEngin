@@ -2605,6 +2605,164 @@ bool RunPhysicsSelfTest()
         }
     }
 
+    // ================= M59g1: 蓄積インパルスソルバ =================
+    {
+        // -- 2 体衝突の運動量保存 (解析値) --
+        // 反発 e=1 の正面弾性衝突では等質量なら速度が入れ替わる。e=0 なら合体して v/2。
+        // どちらでも運動量の総和は保存する — 蓄積インパルスが「押すだけ」を守っている証拠
+        {
+            auto collide = [&](float e, float& outA, float& outB) {
+                Scene s;
+                GameObject a = MakeSphereBody(s, "A", -2.0f, 0.0f, 0.0f, 0.5f);
+                GameObject b = MakeSphereBody(s, "B", 2.0f, 0.0f, 0.0f, 0.5f);
+                s.GetWorld().ApplyStructuralChanges();
+                auto* ra = a.GetComponent<RigidbodyComponent>();
+                auto* rb = b.GetComponent<RigidbodyComponent>();
+                ra->gravityScale = 0.0f;
+                rb->gravityScale = 0.0f;
+                ra->restitution = e;
+                rb->restitution = e;
+                ra->velocity = { 4.0f, 0.0f, 0.0f };
+                for (int i = 0; i < 120; ++i) {
+                    phys.Update(s.GetWorld(), kDt);
+                }
+                outA = ra->velocity.x;
+                outB = rb->velocity.x;
+            };
+            float ea = 0.0f, eb = 0.0f, ia = 0.0f, ib = 0.0f;
+            collide(1.0f, ea, eb);
+            collide(0.0f, ia, ib);
+            MYE_LOG_INFO("  [phys] 2-body collide: elastic %.4f/%.4f  inelastic %.4f/%.4f", ea,
+                         eb, ia, ib);
+            check(std::fabs((ea + eb) - 4.0f) < 0.02f,
+                  "solver: momentum is conserved in the elastic collision");
+            check(std::fabs((ia + ib) - 4.0f) < 0.02f,
+                  "solver: momentum is conserved in the inelastic collision");
+            check(std::fabs(ea) < 0.2f && std::fabs(eb - 4.0f) < 0.2f,
+                  "solver: equal masses exchange velocity when e = 1");
+            check(std::fabs(ia - 2.0f) < 0.2f && std::fabs(ib - 2.0f) < 0.2f,
+                  "solver: equal masses move together at v/2 when e = 0");
+        }
+
+        // -- 高い塔 1200 tick: warm starting を入れるかどうかの計測ゲート (M59h) --
+        // 予約事項 1 の「ステートフルバックエンドの箱」を開けるかどうかをここの実測で決める。
+        //
+        // 実測 (1200 tick 後の最上段 y / 最大水平ドリフト):
+        //                        M28b (改装前)          M59g1 (蓄積インパルス)
+        //   整列 5 段            4.493 / 0.0000         4.493 / 0.0000   ← 完全一致
+        //   整列 10 段           9.416 / 0.0000         9.416 / 0.0000   ← 完全一致
+        //   1cm ジグザグ 5 段   -455.3 / 16.38 (貫通)    0.500 / 5.67
+        //   1cm ジグザグ 10 段    1.500 / 3.68           0.500 / 5.02
+        //
+        // ★読み取れること 2 つ:
+        //   ① **整列した塔は 10 段でもドリフト厳密 0** で、改装前後で結果が一致する。
+        //      つまり M59g1 は「効く場面では何も壊していない」。
+        //   ② **1cm ずらすと崩れる**のは改装前からの性質で、しかも旧ソルバは
+        //      **床を突き抜けて -455m まで落ちていた**。新ソルバは崩れても床の上に残る。
+        //      崩れること自体を直すには warm starting が要る = **M59h でこの箱を開ける**。
+        // ここで守るのは「崩れても壊れないこと」(床を抜けない・数値が飛ばない)。
+        // M59g1 の途中経過では実際に床を抜けて -975m まで落ちた — 位置補正パスを 8 回
+        // 維持することが効いている (4 回に減らすと再現する)
+        {
+            auto tower = [&](int floors, float jitter, float& outTopY, float& outMaxDrift,
+                             float& outMinY) {
+                Scene s;
+                MakeGround(s, "G", 0, -0.5f, 0, 6.0f, 0.5f, 6.0f);
+                std::vector<GameObject> boxes;
+                for (int i = 0; i < floors; ++i) {
+                    char name[24];
+                    std::snprintf(name, sizeof(name), "S%d", i);
+                    // わずかにずらして積む (完全に揃えると対称性で不安定さが出ない)
+                    boxes.push_back(MakeBox(s, name, jitter * static_cast<float>(i % 3 - 1),
+                                            0.5f + 1.0f * static_cast<float>(i), 0.0f, 0.5f, 0.5f,
+                                            0.5f));
+                }
+                s.GetWorld().ApplyStructuralChanges();
+                for (int i = 0; i < 1200; ++i) { // 20 秒
+                    phys.Update(s.GetWorld(), kDt);
+                }
+                outMaxDrift = 0.0f;
+                outMinY = 1e9f;
+                for (int i = 0; i < floors; ++i) {
+                    const auto* lt = boxes[static_cast<size_t>(i)].GetComponent<LocalTransform>();
+                    const float dx = std::fabs(lt->position.x);
+                    const float dz = std::fabs(lt->position.z);
+                    const float d = (dx > dz) ? dx : dz;
+                    if (d > outMaxDrift) {
+                        outMaxDrift = d;
+                    }
+                    if (lt->position.y < outMinY) {
+                        outMinY = lt->position.y;
+                    }
+                    if (i == floors - 1) {
+                        outTopY = lt->position.y;
+                    }
+                }
+            };
+            float top5 = 0.0f, drift5 = 0.0f, min5 = 0.0f;
+            float top10 = 0.0f, drift10 = 0.0f, min10 = 0.0f;
+            float top5j = 0.0f, drift5j = 0.0f, min5j = 0.0f;
+            float top10j = 0.0f, drift10j = 0.0f, min10j = 0.0f;
+            tower(5, 0.0f, top5, drift5, min5);
+            tower(10, 0.0f, top10, drift10, min10);
+            tower(5, 0.01f, top5j, drift5j, min5j);
+            tower(10, 0.01f, top10j, drift10j, min10j);
+            MYE_LOG_INFO("  [phys] tower @1200 aligned : 5-high top %.3f drift %.4f / "
+                         "10-high top %.3f drift %.4f  (built at 4.5 / 9.5)",
+                         top5, drift5, top10, drift10);
+            MYE_LOG_INFO("  [phys] tower @1200 jittered: 5-high top %.3f drift %.4f / "
+                         "10-high top %.3f drift %.4f  (1cm zigzag)",
+                         top5j, drift5j, top10j, drift10j);
+            // 5 段は実用範囲 — ここが崩れたら本物の回帰
+            check(top5 > 4.0f, "tower: a 5-high stack is still standing after 1200 ticks");
+            check(drift5 < 0.2f, "tower: and has not walked");
+            // 10 段は現状の到達点の記録。**崩れること自体は許すが、壊れてはいけない**
+            check(min10 > -1.0f && min5j > -1.0f && min10j > -1.0f,
+                  "tower (M59h gate): a collapsing stack never tunnels through the floor");
+            check(drift10 < 50.0f && drift10j < 50.0f && top10 > -1.0f && top10j > -1.0f,
+                  "tower (M59h gate): the collapse stays bounded (no numerical blow-up)");
+        }
+
+        // -- 蓄積インパルスの構造的な性質: 接触は押すだけ (負の法線インパルスが出ない) --
+        {
+            Scene s;
+            MakeGround(s, "G", 0, -0.5f, 0, 5.0f, 0.5f, 5.0f);
+            MakeBox(s, "B0", 0, 0.5f, 0, 0.5f, 0.5f, 0.5f);
+            MakeBox(s, "B1", 0.02f, 1.5f, 0, 0.5f, 0.5f, 0.5f);
+            s.GetWorld().ApplyStructuralChanges();
+            std::vector<SolidContact> contacts;
+            bool everNegative = false;
+            for (int i = 0; i < 300; ++i) {
+                phys.Update(s.GetWorld(), kDt, &contacts);
+                for (const SolidContact& c : contacts) {
+                    if (c.impulse < 0.0f) {
+                        everNegative = true;
+                    }
+                }
+            }
+            check(!everNegative,
+                  "solver: the accumulated normal impulse never goes negative (contacts push only)");
+            // 2 段タワーの下の接触は 2 箱ぶんの重さを支える = 2 * m * g * dt
+            float bottom = 0.0f;
+            for (const SolidContact& c : contacts) {
+                if ((c.key >> 32) == 0u) { // 床 (index 0) が絡む接触
+                    bottom = c.impulse;
+                }
+            }
+            const float expect = 2.0f * 1.0f * 9.81f * kDt;
+            MYE_LOG_INFO("  [phys] 2-floor tower bottom impulse = %.5f (expect 2*m*g*dt = %.5f)",
+                         bottom, expect);
+            // ★これが M59g1 で一番効いた指標。ソルバが収束していないと「支えきれずに
+            //   跳ね続ける」状態になり、この値が理論値から大きく外れる (実測: 点毎 Jacobi の
+            //   1/count 緩和を残したままだと 8 反復で 88%、緩和を外すと 0.32704 = 100.01%)
+            check(std::fabs(bottom - expect) < 0.02f,
+                  "solver: the bottom contact carries the weight of both boxes (m*g*dt each)");
+            // 静定していること自体も見る (跳ねていれば上の値も揺れる)
+            check(std::fabs(s.Find("B1").GetComponent<RigidbodyComponent>()->velocity.y) < 0.02f,
+                  "solver: the top box is actually at rest, not bouncing in a limit cycle");
+        }
+    }
+
     if (failCount == 0) {
         MYE_LOG_INFO("==== Physics self test: ALL PASS ====");
         return true;

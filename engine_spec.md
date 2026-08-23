@@ -871,6 +871,25 @@ expected to become its second caller by emitting its own elements.
 | **Symmetric bodies produce no torque** | Pressure on a flat face is uniform, so its resultant passes through the face centre, which lies on the normal axis (`r ∥ n ∥ F`). A symmetric convex body in uniform flow therefore has **exactly zero torque about its geometric centre at any angle of attack** — that is the correct physics, not a coarseness artefact. Real weathercock stability comes from the centre of pressure being offset from the centre of mass, which in this engine means M59d's wing panels on child entities or M59f1's centre-of-mass offset. The self test pins both the zero and the mechanism (a fin behind the reference point restores, the same fin in front destabilises) |
 | Stability | The surface force is explicit, so the per-tick Δv and Δω are clamped with the same deterministic guard the isotropic Magnus term uses |
 
+#### Accumulated-impulse contact solver (M59g1)
+
+The contact solver keeps the three-stage shape it has had since M28b — a central normal impulse at
+the manifold centroid, a per-point Jacobi pass for the rotational imbalance, then Coulomb friction
+at the centroid — but each stage now carries an **accumulated λ that is clamped rather than
+recomputed from scratch**, and the manifold is built **once per tick** instead of once per
+iteration.
+
+| Concept | Decision |
+|---|---|
+| Why accumulate | Clamping the running total is what makes "contacts only push" (`λn ≥ 0`) and the Coulomb bound (`|λt| ≤ μ·Σλn`) structural rather than incidental. It is also the prerequisite for warm starting (M59h) and for the constraint rows M60 needs |
+| Manifold once | Accumulation requires the contact points to be the same across iterations — regenerating them each iteration leaves nowhere to carry "how much impulse this point has already taken" |
+| Model unchanged | `μ = sqrt(μa·μb)`, `e = min(ea, eb)`, `kRestitutionVelThreshold`, `kPenetrationSlop` and the iteration count are all exactly as in M28b. Only the structure changed — but the solution does move, so **existing physics scenes stop being bit-identical from here** (M59 ledger 8) |
+| Restitution | The bias velocity is computed **once at manifold generation**. Measuring the approach speed each iteration would let the solver's own impulses erase it, making restitution double-apply or vanish |
+| Fixed tangents | Friction uses two tangents derived deterministically from the normal instead of the instantaneous slip direction, because an accumulated impulse cannot follow a rotating axis |
+| **No relaxation on the per-point pass** | M28b scaled the per-point Jacobi correction by `1/count`, which is correct when each iteration re-solves from scratch. With accumulation that relaxation becomes the **convergence bottleneck** — a four-point manifold advances a quarter per iteration, and eight iterations left a two-box tower bouncing at 88 % of the load it should carry. Removing it (accumulation plus the `λ ≥ 0` clamp already prevent overshoot) brings the bottom contact to `m·g·dt` within 0.01 %. Simultaneous application is kept: applying the points in sequence leaves the sweep order as a residual torque and symmetric stacks start to walk |
+| Position correction | Split into its own pass after the velocity solve. Moving bodies mid-solve contradicts the contact points, normals and effective masses that were fixed at generation; interleaving them left a two-box tower hopping with 2.3× the correct impulse. This pass is the one place that still calls `CollideManifold` per iteration, since depenetration needs the true current overlap |
+| Measured | Perfectly aligned towers are unchanged from M28b — 5 and 10 high both settle with **exactly zero** drift after 1200 ticks. A 1 cm zigzag topples them in both solvers, but M28b **fell through the floor** (top box at −455 m) where the new solver leaves the rubble on the ground. Fixing the topple itself needs warm starting, which is the M59h gate |
+
 #### Wing panels (M59d)
 
 `AeroSurface` (TypeId 39) is a single lifting surface with a stall-aware CL curve. Force and torque

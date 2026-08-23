@@ -22,7 +22,15 @@ namespace {
 // 形状判定は Physics/Shapes.cpp に統合 (M28a)。M28b で回転剛体 (角速度・慣性テンソル)、
 // クーロン摩擦、接触マニフォールド (最大 4 点)、反発速度閾値を追加。
 constexpr float kGravity = -9.81f;      // m/s^2 (重力加速度、-Y)
-constexpr int kSolverIterations = 8;    // 固定反復回数 (収束判定による早期終了はしない = 決定論)
+// 速度ソルバの固定反復回数 (収束判定による早期終了はしない = 決定論)。M28b から 8 のまま。
+// ★tick あたりのコストは M59g1 で**下がっている** — M28b は反復のたびに CollideManifold を
+//   呼んでいた (8 回) のに対し、いまは生成 1 回 + 位置補正 8 回。速度反復そのものは
+//   有効質量も再計算しない安い計算になった
+constexpr int kSolverIterations = 8;
+// 位置補正のパス数 (M59g1)。**ここだけは真の貫通量が要るので毎回 CollideManifold を呼ぶ**
+// (速度ソルバと違い、接触点を反復間で持ち越す必要が無い)。M28b が速度ソルバと同じループで
+// 8 回押し出していたのに合わせてある。**4 に減らすと 10 段スタックが床を突き抜けた** (実測)
+constexpr int kPositionIterations = 8;
 constexpr float kPenetrationSlop = 0.0005f; // 微小めり込みは許容 (ジッタ抑制)
 // |vn| がこの閾値未満の接触は反発 0 扱い (micro-bounce 除去 = 静止安定の柱。~2g·dt)
 constexpr float kRestitutionVelThreshold = 0.3f;
@@ -1147,178 +1155,312 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
         candidates.resize(w);
     }
 
-    // ---- 接触解決 (固定反復・候補ペアを (小,大) 昇順走査 = 決定論) ----
-    // M59e: 接触の**強さ**を出すため、ペアごとの法線インパルスを反復をまたいで積む。
-    // 最終反復ぶんだけでは駄目 — 静止接触は 1 回目でほぼ解決してしまうので最後の反復は
-    // ほぼ 0 になり、「載っている重さ」を表さない (積めば静止箱で m*g*dt に一致する)。
-    // 書き込み専用のブックキーピングなので sim には 1 ビットも影響しない
-    std::vector<float> pairImpulse;
-    if (outContacts) {
-        pairImpulse.assign(candidates.size(), 0.0f);
+    // ---- 接触制約の生成 (M59g1): マニフォールドは **1 tick に 1 回だけ**作る ----
+    // M28b は反復のたびに CollideManifold を呼び直していた。それをやめたのは、
+    // **蓄積インパルスの前提が「接触点が反復をまたいで同じであること」**だから —
+    // 毎回作り直すと「この接触点にこれまで何 N*s 入れたか」を持ち越す先が消える。
+    //
+    // ★**解き方の「形」は M28b のまま**にした (中央法線 1 発 → 点毎 Jacobi → 重心摩擦)。
+    //   点ごとの逐次 (Gauss-Seidel) へ作り替える方が教科書的だが、**warm starting 無しでは
+    //   スタックが目に見えて歩く** (実測: 3 段タワーの 600 tick ドリフトが 0.7mm → 75mm)。
+    //   中央法線インパルスが「並進を全質量で 1 発で解く」役をしていて、それが 8 反復しか
+    //   回さないソルバの安定性を支えている。warm starting は M59h の計測ゲート付き別コミット
+    //   なので、ここでは**蓄積とクランプだけ**を足す。
+    // ★物理モデルは 1 つも変えていない: mu = sqrt(mu_a * mu_b) / e = min(e_a, e_b) /
+    //   kRestitutionVelThreshold / kPenetrationSlop はそのまま。
+    struct ContactPoint {
+        float ra[3] = { 0, 0, 0 }; // 接触点 - A 重心 (生成時に固定)
+        float rb[3] = { 0, 0, 0 };
+        float depth = 0.0f;
+        float massN = 0.0f;   // 法線方向の有効質量
+        float lambdaN = 0.0f; // 蓄積法線インパルス (>= 0)
+    };
+    struct ContactConstraint {
+        uint32_t ai = 0, bi = 0;
+        float nx = 0, ny = 1, nz = 0;
+        float t1[3] = { 1, 0, 0 };
+        float t2[3] = { 0, 0, 1 };
+        float mu = 0.0f;
+        int count = 0;
+        float cpx = 0, cpy = 0, cpz = 0; // 代表点 = マニフォールド重心 (M59e の出力)
+        float raC[3] = { 0, 0, 0 };      // 重心の r (中央インパルスと摩擦の作用点)
+        float rbC[3] = { 0, 0, 0 };
+        float massNc = 0.0f;             // 重心での法線有効質量
+        float massT1 = 0.0f, massT2 = 0.0f;
+        float biasC = 0.0f;              // 反発の目標法線速度 (閾値適用済み)
+        float lambdaNc = 0.0f;           // 蓄積: 中央法線
+        float lambdaT1 = 0.0f, lambdaT2 = 0.0f; // 蓄積: 重心摩擦
+        ContactPoint pts[4];
+    };
+    std::vector<ContactConstraint> constraints;
+    constraints.reserve(candidates.size());
+    for (const uint64_t pairKey : candidates) {
+        const uint32_t ai = static_cast<uint32_t>(pairKey >> 32);
+        const uint32_t bi = static_cast<uint32_t>(pairKey & 0xFFFFFFFFu);
+        Body& A = bodies[ai];
+        Body& B = bodies[bi];
+        if (A.invMass + B.invMass == 0.0f) {
+            continue; // 両方不動 (静的 / kinematic 同士)
+        }
+        shapes::Manifold m;
+        if (!shapes::CollideManifold(A.pose, B.pose, m)) {
+            continue;
+        }
+        ContactConstraint c;
+        c.ai = ai;
+        c.bi = bi;
+        c.nx = m.nx;
+        c.ny = m.ny;
+        c.nz = m.nz;
+        c.mu = std::sqrt(A.friction * B.friction);
+        c.count = m.count;
+        // 法線から接線基底を決定論的に作る (分岐は入力だけに依存)。
+        // 0.57735 = 1/sqrt(3) — 最も長い成分を避けて正規化の桁落ちを防ぐ古典手法。
+        // ★接線が**固定**なのが M28b との違い: 蓄積するには方向が動いてはいけない
+        //   (旧実装は毎反復その場の滑り方向を測っていたので蓄積できなかった)
+        {
+            float ax, ay, az;
+            if (std::fabs(c.nx) >= 0.57735f) {
+                ax = c.ny; ay = -c.nx; az = 0.0f;
+            } else {
+                ax = 0.0f; ay = c.nz; az = -c.ny;
+            }
+            const float al = std::sqrt(ax * ax + ay * ay + az * az);
+            if (al > 1e-8f) {
+                c.t1[0] = ax / al; c.t1[1] = ay / al; c.t1[2] = az / al;
+            }
+            Cross(c.nx, c.ny, c.nz, c.t1[0], c.t1[1], c.t1[2], c.t2[0], c.t2[1], c.t2[2]);
+        }
+        const float e = std::min(A.restitution, B.restitution);
+        const float invCount = 1.0f / static_cast<float>(m.count);
+        for (int k = 0; k < m.count; ++k) {
+            ContactPoint& p = c.pts[k];
+            p.ra[0] = m.pts[k].px - A.pose.px;
+            p.ra[1] = m.pts[k].py - A.pose.py;
+            p.ra[2] = m.pts[k].pz - A.pose.pz;
+            p.rb[0] = m.pts[k].px - B.pose.px;
+            p.rb[1] = m.pts[k].py - B.pose.py;
+            p.rb[2] = m.pts[k].pz - B.pose.pz;
+            p.depth = m.pts[k].depth;
+            c.cpx += m.pts[k].px * invCount;
+            c.cpy += m.pts[k].py * invCount;
+            c.cpz += m.pts[k].pz * invCount;
+            const float kn = EffectiveMassInv(A, p.ra[0], p.ra[1], p.ra[2], c.nx, c.ny, c.nz)
+                           + EffectiveMassInv(B, p.rb[0], p.rb[1], p.rb[2], c.nx, c.ny, c.nz);
+            p.massN = (kn > 0.0f) ? 1.0f / kn : 0.0f;
+        }
+        c.raC[0] = c.cpx - A.pose.px;
+        c.raC[1] = c.cpy - A.pose.py;
+        c.raC[2] = c.cpz - A.pose.pz;
+        c.rbC[0] = c.cpx - B.pose.px;
+        c.rbC[1] = c.cpy - B.pose.py;
+        c.rbC[2] = c.cpz - B.pose.pz;
+        {
+            const float kn = EffectiveMassInv(A, c.raC[0], c.raC[1], c.raC[2], c.nx, c.ny, c.nz)
+                           + EffectiveMassInv(B, c.rbC[0], c.rbC[1], c.rbC[2], c.nx, c.ny, c.nz);
+            c.massNc = (kn > 0.0f) ? 1.0f / kn : 0.0f;
+            const float kt1 = EffectiveMassInv(A, c.raC[0], c.raC[1], c.raC[2], c.t1[0], c.t1[1],
+                                               c.t1[2])
+                            + EffectiveMassInv(B, c.rbC[0], c.rbC[1], c.rbC[2], c.t1[0], c.t1[1],
+                                               c.t1[2]);
+            c.massT1 = (kt1 > 0.0f) ? 1.0f / kt1 : 0.0f;
+            const float kt2 = EffectiveMassInv(A, c.raC[0], c.raC[1], c.raC[2], c.t2[0], c.t2[1],
+                                               c.t2[2])
+                            + EffectiveMassInv(B, c.rbC[0], c.rbC[1], c.rbC[2], c.t2[0], c.t2[1],
+                                               c.t2[2]);
+            c.massT2 = (kt2 > 0.0f) ? 1.0f / kt2 : 0.0f;
+        }
+        // 反発のバイアスは**生成時の接近速度から 1 回だけ**決める。反復ごとに測り直すと
+        // 自分が入れたインパルスで接近速度が消えていくので、反発が二重に効いたり
+        // 消えたりする (蓄積インパルスで反発を扱うときの定石)
+        {
+            float wax, way, waz, wbx, wby, wbz;
+            Cross(A.wx, A.wy, A.wz, c.raC[0], c.raC[1], c.raC[2], wax, way, waz);
+            Cross(B.wx, B.wy, B.wz, c.rbC[0], c.rbC[1], c.rbC[2], wbx, wby, wbz);
+            const float rvx = (A.vx + wax) - (B.vx + wbx);
+            const float rvy = (A.vy + way) - (B.vy + wby);
+            const float rvz = (A.vz + waz) - (B.vz + wbz);
+            const float vn = rvx * c.nx + rvy * c.ny + rvz * c.nz;
+            // 低速接触は e=0 扱い (micro-bounce 除去 = 静止安定の柱。M28b から不変)
+            if (vn < 0.0f && -vn >= kRestitutionVelThreshold) {
+                c.biasC = -e * vn;
+            }
+        }
+        constraints.push_back(c);
     }
+
+    // ---- 接触解決 (固定反復・生成順 = 候補ペアの (小,大) 昇順 = 決定論) ----
+    // 3 段構成は M28b のまま。違うのは各段が**蓄積量 lambda を持ちクランプする**こと:
+    //   1. 重心での中央法線インパルス (反発込み) — 並進を全質量で 1 発。lambda >= 0
+    //   2. 点毎 Jacobi 法線インパルス (同一速度から一括計算・点数分配) — 回転の不均衡だけ。
+    //      対称接触では自動的にゼロになる = スタックが歩かない性質はここから来ている
+    //   3. 重心でのクーロン摩擦 (固定接線 2 方向)。上限は**その時点の蓄積法線インパルス合計**
+    //      — 旧実装の「その反復ぶんの法線インパルス」より正しい Coulomb 境界になっている
     for (int iter = 0; iter < kSolverIterations; ++iter) {
-        for (size_t pairIdx = 0; pairIdx < candidates.size(); ++pairIdx) {
-            const uint64_t pairKey = candidates[pairIdx];
-            {
-                Body& A = bodies[static_cast<size_t>(pairKey >> 32)];
-                Body& B = bodies[static_cast<size_t>(pairKey & 0xFFFFFFFFu)];
-                const float tim = A.invMass + B.invMass;
-                if (tim == 0.0f) {
-                    continue; // 両方不動 (静的 / kinematic 同士)
+        for (ContactConstraint& c : constraints) {
+            Body& A = bodies[c.ai];
+            Body& B = bodies[c.bi];
+            auto relVelAt = [&](const float rA[3], const float rB[3], float& rvx, float& rvy,
+                                float& rvz) {
+                float wax, way, waz, wbx, wby, wbz;
+                Cross(A.wx, A.wy, A.wz, rA[0], rA[1], rA[2], wax, way, waz);
+                Cross(B.wx, B.wy, B.wz, rB[0], rB[1], rB[2], wbx, wby, wbz);
+                rvx = (A.vx + wax) - (B.vx + wbx);
+                rvy = (A.vy + way) - (B.vy + wby);
+                rvz = (A.vz + waz) - (B.vz + wbz);
+            };
+            // ---- 1. 中央法線インパルス ----
+            if (c.massNc > 0.0f) {
+                float rvx, rvy, rvz;
+                relVelAt(c.raC, c.rbC, rvx, rvy, rvz);
+                const float vn = rvx * c.nx + rvy * c.ny + rvz * c.nz;
+                float dl = -(vn - c.biasC) * c.massNc;
+                const float old = c.lambdaNc;
+                float now = old + dl;
+                if (now < 0.0f) {
+                    now = 0.0f; // 接触は押すだけ (引っ張らない)
                 }
-                shapes::Manifold m;
-                if (!shapes::CollideManifold(A.pose, B.pose, m)) {
-                    continue;
+                dl = now - old;
+                c.lambdaNc = now;
+                if (dl != 0.0f) {
+                    ApplyImpulse(A, c.raC[0], c.raC[1], c.raC[2], c.nx * dl, c.ny * dl, c.nz * dl,
+                                 1.0f);
+                    ApplyImpulse(B, c.rbC[0], c.rbC[1], c.rbC[2], c.nx * dl, c.ny * dl, c.nz * dl,
+                                 -1.0f);
                 }
-                const float nx = m.nx, ny = m.ny, nz = m.nz; // b→a (A を押し出す)
-                // 位置補正 (並進のみ = 回転補正はしない: 簡易ソルバの発散防止)。最深点で分配
-                float maxDepth = 0.0f;
-                for (int k = 0; k < m.count; ++k) {
-                    if (m.pts[k].depth > maxDepth) {
-                        maxDepth = m.pts[k].depth;
+            }
+            // ---- 2. 点毎 法線インパルス (反発なし。回転の不均衡だけを担当) ----
+            // ★M28b はここを 1/count に緩和した Jacobi にしていた。**蓄積インパルスでは
+            //   その緩和が収束の律速になる** — 4 点マニフォールドだと毎反復 1/4 しか
+            //   進まないので、8 反復では回転の残差が消えず 2 段タワーすら静定しない
+            //   (実測。旧方式は毎反復ゼロから解き直していたので緩和が効いていた)。
+            //   蓄積 + 0 クランプがあれば緩和無しでも暴れないので、緩和を外した。
+            //   一括適用 (Jacobi) は維持している — 点を順に適用すると走査順の非対称が
+            //   トルクとして残り、対称なスタックが歩き出すため
+            float totalJn = c.lambdaNc;
+            if (c.count > 1) {
+                float dls[4] = {};
+                for (int k = 0; k < c.count; ++k) { // 同一速度から一括計算 = Jacobi
+                    ContactPoint& p = c.pts[k];
+                    if (p.massN <= 0.0f) {
+                        continue;
                     }
-                }
-                const float corr = std::max(maxDepth - kPenetrationSlop, 0.0f);
-                const float ci = corr * A.invMass / tim;
-                const float cj = corr * B.invMass / tim;
-                A.pose.px += nx * ci; A.pose.py += ny * ci; A.pose.pz += nz * ci;
-                B.pose.px -= nx * cj; B.pose.py -= ny * cj; B.pose.pz -= nz * cj;
-                // 接触点解決の 2 段構成 (非対称トルクと収束不足を両立して解決する):
-                //   1. 重心 (接触点平均) での中央法線インパルス — 並進成分を 1 発で解決。
-                //      面接触では重心が法線軸上に乗り有効質量 = 全質量 → 沈み込み残留なし
-                //   2. 点毎 Jacobi 法線インパルス (同一速度から一括計算・点数分配) —
-                //      回転の不均衡のみ担当。対称接触では自動的にゼロ = スタックが歩かない
-                //   3. 重心でのクーロン摩擦 (合計法線インパルスでクランプ)
-                const float mu = std::sqrt(A.friction * B.friction);
-                const float invCount = 1.0f / static_cast<float>(m.count);
-                float ra[4][3], rrb[4][3];
-                float cpx = 0, cpy = 0, cpz = 0;
-                for (int k = 0; k < m.count; ++k) {
-                    ra[k][0] = m.pts[k].px - A.pose.px;
-                    ra[k][1] = m.pts[k].py - A.pose.py;
-                    ra[k][2] = m.pts[k].pz - A.pose.pz;
-                    rrb[k][0] = m.pts[k].px - B.pose.px;
-                    rrb[k][1] = m.pts[k].py - B.pose.py;
-                    rrb[k][2] = m.pts[k].pz - B.pose.pz;
-                    cpx += m.pts[k].px;
-                    cpy += m.pts[k].py;
-                    cpz += m.pts[k].pz;
-                }
-                cpx *= invCount;
-                cpy *= invCount;
-                cpz *= invCount;
-                const float raC[3] = { cpx - A.pose.px, cpy - A.pose.py, cpz - A.pose.pz };
-                const float rbC[3] = { cpx - B.pose.px, cpy - B.pose.py, cpz - B.pose.pz };
-                // 接触点 r での相対速度 (回転寄与込み)
-                auto relVelAt = [&](const float rA[3], const float rB[3], float& rvx, float& rvy,
-                                    float& rvz) {
-                    float wax, way, waz, wbx, wby, wbz;
-                    Cross(A.wx, A.wy, A.wz, rA[0], rA[1], rA[2], wax, way, waz);
-                    Cross(B.wx, B.wy, B.wz, rB[0], rB[1], rB[2], wbx, wby, wbz);
-                    rvx = (A.vx + wax) - (B.vx + wbx);
-                    rvy = (A.vy + way) - (B.vy + wby);
-                    rvz = (A.vz + waz) - (B.vz + wbz);
-                };
-                // ---- 1. 中央法線インパルス ----
-                float totalJn = 0.0f;
-                {
                     float rvx, rvy, rvz;
-                    relVelAt(raC, rbC, rvx, rvy, rvz);
-                    const float vn = rvx * nx + rvy * ny + rvz * nz;
-                    if (vn < 0.0f) {
-                        // 反発: 低速接触は e=0 (micro-bounce 除去)
-                        float e = std::min(A.restitution, B.restitution);
-                        if (-vn < kRestitutionVelThreshold) {
-                            e = 0.0f;
-                        }
-                        const float kn = EffectiveMassInv(A, raC[0], raC[1], raC[2], nx, ny, nz)
-                                       + EffectiveMassInv(B, rbC[0], rbC[1], rbC[2], nx, ny, nz);
-                        if (kn > 0.0f) {
-                            const float jc = -(1.0f + e) * vn / kn;
-                            ApplyImpulse(A, raC[0], raC[1], raC[2], nx * jc, ny * jc, nz * jc,
-                                         1.0f);
-                            ApplyImpulse(B, rbC[0], rbC[1], rbC[2], nx * jc, ny * jc, nz * jc,
-                                         -1.0f);
-                            totalJn = jc;
-                        }
+                    relVelAt(p.ra, p.rb, rvx, rvy, rvz);
+                    const float vn = rvx * c.nx + rvy * c.ny + rvz * c.nz;
+                    float dl = -vn * p.massN;
+                    const float old = p.lambdaN;
+                    float now = old + dl;
+                    if (now < 0.0f) {
+                        now = 0.0f;
                     }
+                    dls[k] = now - old;
+                    p.lambdaN = now;
                 }
-                // ---- 2. 点毎 Jacobi 法線インパルス (回転不均衡の解消。反発なし) ----
-                if (m.count > 1) {
-                    float jnStored[4] = {};
-                    for (int k = 0; k < m.count; ++k) {
-                        float rvx, rvy, rvz;
-                        relVelAt(ra[k], rrb[k], rvx, rvy, rvz);
-                        const float vn = rvx * nx + rvy * ny + rvz * nz;
-                        if (vn >= 0.0f) {
-                            continue; // 離反中
-                        }
-                        const float kn = EffectiveMassInv(A, ra[k][0], ra[k][1], ra[k][2], nx, ny,
-                                                          nz)
-                                       + EffectiveMassInv(B, rrb[k][0], rrb[k][1], rrb[k][2], nx,
-                                                          ny, nz);
-                        if (kn <= 0.0f) {
-                            continue;
-                        }
-                        jnStored[k] = -vn / kn * invCount;
-                    }
-                    for (int k = 0; k < m.count; ++k) {
-                        if (jnStored[k] <= 0.0f) {
-                            continue;
-                        }
-                        const float jn = jnStored[k];
-                        ApplyImpulse(A, ra[k][0], ra[k][1], ra[k][2], nx * jn, ny * jn, nz * jn,
-                                     1.0f);
-                        ApplyImpulse(B, rrb[k][0], rrb[k][1], rrb[k][2], nx * jn, ny * jn,
-                                     nz * jn, -1.0f);
-                        totalJn += jn;
-                    }
-                }
-                // ---- 3. 重心でのクーロン摩擦 (|jt| <= μ·合計法線インパルス) ----
-                if (totalJn > 0.0f) {
-                    float rvx, rvy, rvz;
-                    relVelAt(raC, rbC, rvx, rvy, rvz);
-                    const float vn2 = rvx * nx + rvy * ny + rvz * nz;
-                    float tx = rvx - vn2 * nx;
-                    float ty = rvy - vn2 * ny;
-                    float tz = rvz - vn2 * nz;
-                    const float t2 = tx * tx + ty * ty + tz * tz;
-                    if (t2 > 1e-10f) { // 接線速度なしは摩擦スキップ (決定論的分岐)
-                        const float tlen = std::sqrt(t2);
-                        tx /= tlen; ty /= tlen; tz /= tlen;
-                        const float kt = EffectiveMassInv(A, raC[0], raC[1], raC[2], tx, ty, tz)
-                                       + EffectiveMassInv(B, rbC[0], rbC[1], rbC[2], tx, ty, tz);
-                        if (kt > 0.0f) {
-                            float jt = -tlen / kt; // vrel·t̂ = tlen
-                            const float maxJt = mu * totalJn;
-                            if (jt < -maxJt) { jt = -maxJt; }
-                            if (jt > maxJt) { jt = maxJt; }
-                            ApplyImpulse(A, raC[0], raC[1], raC[2], tx * jt, ty * jt, tz * jt,
-                                         1.0f);
-                            ApplyImpulse(B, rbC[0], rbC[1], rbC[2], tx * jt, ty * jt, tz * jt,
-                                         -1.0f);
-                        }
-                    }
-                }
-                // 接触ペアの記録 (M28c、M59e で代表点と法線インパルスを追加)。
-                // ★**インパルスを出し終えた後**に積む — totalJn がここで確定するため。
-                //   i<j x index 昇順走査なので key は自動的に昇順のまま (二分探索の前提)
-                if (outContacts) {
-                    pairImpulse[pairIdx] += totalJn;
-                    if (iter == kSolverIterations - 1) {
-                        SolidContact sc;
-                        sc.key = (static_cast<uint64_t>(A.entity.index) << 32) | B.entity.index;
-                        sc.nx = nx;
-                        sc.ny = ny;
-                        sc.nz = nz;
-                        sc.px = cpx; // 代表点は最終反復の (位置補正後の) マニフォールド重心
-                        sc.py = cpy;
-                        sc.pz = cpz;
-                        sc.impulse = pairImpulse[pairIdx];
-                        outContacts->push_back(sc);
+                for (int k = 0; k < c.count; ++k) { // まとめて適用
+                    if (dls[k] != 0.0f) {
+                        const ContactPoint& p = c.pts[k];
+                        ApplyImpulse(A, p.ra[0], p.ra[1], p.ra[2], c.nx * dls[k], c.ny * dls[k],
+                                     c.nz * dls[k], 1.0f);
+                        ApplyImpulse(B, p.rb[0], p.rb[1], p.rb[2], c.nx * dls[k], c.ny * dls[k],
+                                     c.nz * dls[k], -1.0f);
                     }
                 }
             }
+            for (int k = 0; k < c.count; ++k) {
+                totalJn += c.pts[k].lambdaN;
+            }
+            // ---- 3. 重心でのクーロン摩擦 (固定接線 2 方向、蓄積してクランプ) ----
+            if (totalJn > 0.0f) {
+                const float maxF = c.mu * totalJn;
+                for (int ti = 0; ti < 2; ++ti) {
+                    const float* d = (ti == 0) ? c.t1 : c.t2;
+                    const float mass = (ti == 0) ? c.massT1 : c.massT2;
+                    float& acc = (ti == 0) ? c.lambdaT1 : c.lambdaT2;
+                    if (mass <= 0.0f) {
+                        continue;
+                    }
+                    float rvx, rvy, rvz;
+                    relVelAt(c.raC, c.rbC, rvx, rvy, rvz);
+                    const float vt = rvx * d[0] + rvy * d[1] + rvz * d[2];
+                    float dl = -vt * mass;
+                    const float old = acc;
+                    float now = old + dl;
+                    if (now > maxF) {
+                        now = maxF;
+                    } else if (now < -maxF) {
+                        now = -maxF;
+                    }
+                    dl = now - old;
+                    acc = now;
+                    if (dl != 0.0f) {
+                        ApplyImpulse(A, c.raC[0], c.raC[1], c.raC[2], d[0] * dl, d[1] * dl,
+                                     d[2] * dl, 1.0f);
+                        ApplyImpulse(B, c.rbC[0], c.rbC[1], c.rbC[2], d[0] * dl, d[1] * dl,
+                                     d[2] * dl, -1.0f);
+                    }
+                }
+            }
+        }
+    }
+
+    // ---- 位置補正 (M59g1): 速度ソルバから**切り離した別パス** ----
+    // 速度を解いている最中に姿勢を動かすと、生成時に固定した接触点・有効質量・法線と
+    // 食い違っていく (M28b は毎反復マニフォールドを作り直していたので問題にならなかった。
+    // 実測: 分離しないと 2 段タワーですら跳ね続け、下の接触インパルスが 2*m*g*dt の
+    // 2.3 倍に膨らんだ)。押し出しだけは**その場の真の貫通量**が要るので、ここでだけ
+    // CollideManifold を呼び直す。回転補正はしない (簡易ソルバの発散防止。M28b から不変)
+    for (int pass = 0; pass < kPositionIterations; ++pass) {
+        for (const uint64_t pairKey : candidates) {
+            Body& A = bodies[static_cast<size_t>(pairKey >> 32)];
+            Body& B = bodies[static_cast<size_t>(pairKey & 0xFFFFFFFFu)];
+            const float tim = A.invMass + B.invMass;
+            if (tim == 0.0f) {
+                continue;
+            }
+            shapes::Manifold m;
+            if (!shapes::CollideManifold(A.pose, B.pose, m)) {
+                continue;
+            }
+            float maxDepth = 0.0f;
+            for (int k = 0; k < m.count; ++k) {
+                if (m.pts[k].depth > maxDepth) {
+                    maxDepth = m.pts[k].depth;
+                }
+            }
+            const float corr = std::max(maxDepth - kPenetrationSlop, 0.0f);
+            const float ci = corr * A.invMass / tim;
+            const float cj = corr * B.invMass / tim;
+            A.pose.px += m.nx * ci;
+            A.pose.py += m.ny * ci;
+            A.pose.pz += m.nz * ci;
+            B.pose.px -= m.nx * cj;
+            B.pose.py -= m.ny * cj;
+            B.pose.pz -= m.nz * cj;
+        }
+    }
+
+    // ---- 接触ペアの出力 (M28c、M59e で代表点と法線インパルスを追加) ----
+    // 生成順 = 候補ペアの (小,大) 昇順なので key も自動的に昇順のまま
+    // (CollisionSystem の二分探索 FindContactNormal の前提)。
+    // ★M59g1 から impulse は**真の蓄積 lambda の合計** — 反復ごとの寄せ集めではない
+    if (outContacts) {
+        for (const ContactConstraint& c : constraints) {
+            SolidContact sc;
+            sc.key = (static_cast<uint64_t>(bodies[c.ai].entity.index) << 32)
+                   | bodies[c.bi].entity.index;
+            sc.nx = c.nx;
+            sc.ny = c.ny;
+            sc.nz = c.nz;
+            sc.px = c.cpx;
+            sc.py = c.cpy;
+            sc.pz = c.cpz;
+            float total = c.lambdaNc;
+            for (int k = 0; k < c.count; ++k) {
+                total += c.pts[k].lambdaN;
+            }
+            sc.impulse = total;
+            outContacts->push_back(sc);
         }
     }
 
