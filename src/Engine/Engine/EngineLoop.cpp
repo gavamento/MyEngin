@@ -49,6 +49,7 @@
 #include "Engine/Engine/SkinningSystem.h"
 #include "Engine/Engine/TickRunner.h"
 #include "Engine/Engine/TransformSystem.h"
+#include "Engine/Engine/UI/UILayout.h" // ワールド追従 UI の射影コンテキスト
 #include "Engine/Engine/UI/UIRenderer.h"
 #include "Engine/Engine/Vfx/VfxRenderer.h"
 #include "Engine/Platform/Clock.h"
@@ -1531,10 +1532,17 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             if (config.renderSceneToBackbuffer) {
                 renderSystem.Render(scene.GetWorld(), device, *activePath, shaderManager, resources,
                                     target, nullptr, &particleSystem, &vfxRenderer);
-                // M21: ゲーム内 UI を backbuffer に重ねる (Runtime 経路)。マウスは hover 表示用
+                // M21: ゲーム内 UI を backbuffer に重ねる (Runtime 経路)。マウスは hover 表示用。
+                // ワールド追従 UI は直近 Render のカメラ (補間済み・ジッタ無し) + prevWorld で
+                // 3D パスと同じ絵の位置に射影する
+                uilayout::UIWorldContext uiWc;
+                uiWc.viewProj = renderSystem.lastViewProjNoJitter;
+                uiWc.prevWorld = renderSystem.prevWorld;
+                uiWc.alpha = renderSystem.interpAlpha;
                 uiRenderer.Render(scene.GetWorld(), device, shaderManager, resources, target.rtv,
                                   target.width, target.height, ctx.Input().mouseX,
-                                  ctx.Input().mouseY, ctx.Input().MouseDown(0));
+                                  ctx.Input().mouseY, ctx.Input().MouseDown(0),
+                                  renderSystem.lastCamValid ? &uiWc : nullptr);
             } else {
                 // ImGui 描画の下地としてクリアのみ
                 ID3D11DeviceContext* dc = device.Context();

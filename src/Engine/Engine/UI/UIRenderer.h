@@ -16,6 +16,9 @@ class World;
 class GraphicsDevice;
 class ShaderManager;
 struct RenderResources;
+namespace uilayout {
+struct UIWorldContext;
+}
 
 // ゲーム内 UI 描画 (M21、M34 で日本語対応、M51e で親子/クリップ/整列/折返し)。
 // UIElementComponent を screen-space クアッド (色/画像/テキスト) として backbuffer /
@@ -34,9 +37,12 @@ public:
 
     // world の UIElementComponent を rtv に重ね描画する (クリアしない)。
     // mouse* は button の hover/press 表示にのみ使う (display only、非決定論可)。
+    // worldCtx はワールド追従 UI の射影入力 (RenderSystem::lastViewProjNoJitter +
+    // prevWorld/interpAlpha)。nullptr = 追従要素は描かない (screen UI は無関係)
     void Render(World& world, GraphicsDevice& device, ShaderManager& shaders,
                 RenderResources& resources, ID3D11RenderTargetView* rtv, int width, int height,
-                int mouseX, int mouseY, bool mouseDown);
+                int mouseX, int mouseY, bool mouseDown,
+                const uilayout::UIWorldContext* worldCtx = nullptr);
 
     // ---- レイアウト補助 ----
     float LineHeight(float scale) const { return FontAtlas::kUILineH * scale; }

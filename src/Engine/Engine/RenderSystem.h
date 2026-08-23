@@ -115,6 +115,12 @@ public:
     float interpAlpha = 1.0f;
     const PrevWorldStore* prevWorld = nullptr;
 
+    // ワールド追従 UI (uilayout): 直近の Render() が解決したカメラの view×projNoJitter。
+    // 補間済み・ジッタ無し = 3D パスと同じ絵の位置に UI が乗る。呼び出し側 (EngineLoop /
+    // GameViewWindow) は自分の Render() の**直後**に読む前提 (単一スレッドなので競合しない)
+    bool lastCamValid = false;
+    DirectX::XMFLOAT4X4 lastViewProjNoJitter = {};
+
     // M58c: 地形アセットの解決に使う assets\ の絶対パス (EngineLoop が設定)。
     // **空 = 地形を 1 枚も収集しない** — AssetPreviewCache の専用 RenderSystem は
     // ここを空のままにしてあるので、サムネイル描画に地形が混ざることはない。

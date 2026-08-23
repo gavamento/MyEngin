@@ -36,10 +36,16 @@ void GameViewWindow::OnRenderViews(EngineContext& ctx)
     hasCamera_ = ctx.renderSystem->Render(ctx.scene->GetWorld(), *ctx.device, *ctx.renderPath,
                                           *ctx.shaders, *ctx.resources, target, nullptr,
                                           ctx.particles, ctx.vfx);
+    // ワールド追従 UI の射影 (直近 Render のカメラ)。OnImGui のアウトラインも同じ値を読む
+    uiWcValid_ = ctx.renderSystem->lastCamValid;
+    uiWc_.viewProj = ctx.renderSystem->lastViewProjNoJitter;
+    uiWc_.prevWorld = ctx.renderSystem->prevWorld;
+    uiWc_.alpha = ctx.renderSystem->interpAlpha;
     // M21: ゲーム内 UI を GameView RT に重ねる。hover はエディタでは無効 (mouse=-1)
     if (ctx.uiRenderer) {
         ctx.uiRenderer->Render(ctx.scene->GetWorld(), *ctx.device, *ctx.shaders, *ctx.resources,
-                               target.rtv, target.width, target.height, -1, -1, false);
+                               target.rtv, target.width, target.height, -1, -1, false,
+                               uiWcValid_ ? &uiWc_ : nullptr);
     }
 }
 
@@ -119,8 +125,8 @@ void GameViewWindow::OnImGui(EngineContext& ctx, const Selection& selection)
                 if (!go || world.GetComponent<UIElementComponent>(go.Id()) == nullptr) {
                     continue;
                 }
-                const uilayout::UIRect r =
-                    uilayout::ResolveRect(world, go.Id(), rt_.Width(), rt_.Height());
+                const uilayout::UIRect r = uilayout::ResolveRect(
+                    world, go.Id(), rt_.Width(), rt_.Height(), uiWcValid_ ? &uiWc_ : nullptr);
                 if (r.w <= 0.0f || r.h <= 0.0f) {
                     continue;
                 }

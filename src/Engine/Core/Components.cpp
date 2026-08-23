@@ -215,6 +215,13 @@ void RegisterBuiltinComponents()
         MYE_JP("子をクリップ", MYE_FIELD(UIElementComponent, clipChildren, Int32)),
         MYE_JP("文字整列", MYE_FIELD_TIP(UIElementComponent, align, Int32, "9-grid 0..8 (text only)")),
         MYE_JP("折返し", MYE_FIELD_TIP(UIElementComponent, wrap, Int32, "0=off 1=char wrap at width")),
+        // ワールド追従 UI (末尾 append、NoHash)。追従は自動判定 — これらは追従要素の見た目調整
+        MYE_JP("距離で縮む", MYE_FIELD_TIP(UIElementComponent, distanceScale, Bool,
+                                           "scale by camera distance (world-attached UI only)")),
+        MYE_JP("等倍距離 (m)", MYE_FIELD_TIP(UIElementComponent, distanceRef, Float,
+                                             "distance at which scale = 1.0")),
+        MYE_JP("画面内にクランプ", MYE_FIELD_TIP(UIElementComponent, clampToScreen, Bool,
+                                                 "keep the rect on screen (world-attached UI only)")),
     }, kComponentNoHash);
 
     // M22: Animator Controller。LocalTransform を駆動するので **hash 対象** (kComponentNoHash 無し)。

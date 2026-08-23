@@ -411,6 +411,11 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
         static constexpr int kRefW = 1920; // 内側ラムダから ODR 非使用で参照 (C4189 回避に static)
         static constexpr int kRefH = 1080;
         World& w = Sc(engine)->GetWorld();
+        // ワールド追従 UI 用の決定論カメラ (UIHitTest と同じ)。背面の追従ボタンは
+        // ResolveVisibleRect が退化矩形を返す = ナビ候補から自然に外れる
+        uilayout::UIWorldContext wcData;
+        const uilayout::UIWorldContext* wc =
+            uilayout::BuildSimWorldContext(w, kRefW, kRefH, wcData) ? &wcData : nullptr;
         std::vector<uinav::NavRect> rects;
         std::vector<uint32_t> gens;
         uinav::NavRect cur = {};
@@ -429,11 +434,11 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
                 }
                 // M51e: 描画と同じ UILayout で解決 (親子 space 対応)。祖先クリップで完全に
                 // 隠れた要素はナビ候補から外す (スクロール外の項目へ飛ばない)
-                const auto vis = uilayout::ResolveVisibleRect(w, e, kRefW, kRefH);
+                const auto vis = uilayout::ResolveVisibleRect(w, e, kRefW, kRefH, wc);
                 if (vis.w <= 0.0f || vis.h <= 0.0f) {
                     continue;
                 }
-                const auto rect = uilayout::ResolveRect(w, e, kRefW, kRefH);
+                const auto rect = uilayout::ResolveRect(w, e, kRefW, kRefH, wc);
                 uinav::NavRect r;
                 r.x = rect.x;
                 r.y = rect.y;
@@ -758,6 +763,11 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
         static constexpr int kRefW = 1920;
         static constexpr int kRefH = 1080;
         World& w = Sc(engine)->GetWorld();
+        // ワールド追従 UI 用の決定論カメラ (scalar 構築)。カメラ不在なら追従要素は
+        // 非表示扱い = 当たらない (screen UI は無関係)
+        uilayout::UIWorldContext wcData;
+        const uilayout::UIWorldContext* wc =
+            uilayout::BuildSimWorldContext(w, kRefW, kRefH, wcData) ? &wcData : nullptr;
         MyeEntityId best = {}; // 既定 = null id (index 0xFFFFFFFF)
         int32_t bestOrder = 0;
         bool have = false;
@@ -771,7 +781,7 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
                 }
                 const auto* el = static_cast<const UIElementComponent*>(arch.GetPtr(ci, row));
                 // 可視矩形 (祖先クリップ適用済み) で判定 — 見えない部分には当たらない
-                const auto vis = uilayout::ResolveVisibleRect(w, e, kRefW, kRefH);
+                const auto vis = uilayout::ResolveVisibleRect(w, e, kRefW, kRefH, wc);
                 if (vis.w <= 0.0f || vis.h <= 0.0f || x < vis.x || x >= vis.x + vis.w
                     || y < vis.y || y >= vis.y + vis.h) {
                     continue;

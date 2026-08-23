@@ -1,11 +1,14 @@
 #include "Engine/Engine/UI/UISelfTest.h"
 
 #include <cmath>
+#include <cstring>
 #include <vector>
 
+#include "Engine/Core/ComponentRegistry.h" // ワールド追従 UI の検証 (スクリプト状態の脇役扱い)
 #include "Engine/Core/Components.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Core/World.h"
+#include "Engine/Engine/TransformSystem.h" // ワールド追従 UI の検証 (WorldMatrix 生成)
 #include "Engine/Engine/UI/UIGeometry.h"
 #include "Engine/Engine/UI/UILayout.h"
 #include "Engine/Engine/UI/UINav.h"
@@ -325,6 +328,161 @@ bool RunUISelfTest()
             { 130, 70, 20, 20, 2 },  // 斜め (axial 30 + ortho 30*2 = 90)
         };
         check(FindNext(wt, 3, wt[0], kNavUp) == 1, "nav: orthogonal drift is penalized");
+    }
+
+    // ---- ワールド追従 UI (エンティティ構成による完全自動判定) ----
+    // 規則: UI 専用オブジェクト (基本 4 種 + UIElement + 帳簿 + スクリプト状態のみ) は画面 UI、
+    // それ以外のコンポーネントを持つオブジェクト上の UIElement はそのオブジェクトに追従。
+    // カメラ = 原点・無回転 (+Z を向く LH)。光軸上の点は厳密に画面中心へ射影される。
+    // ★構造変更 (AddComponent/SetParent) のたびに ApplyStructuralChanges + ポインタ再取得
+    //   (アーキタイプ移動で古いポインタは無効になる)
+    {
+        World w;
+        TransformSystem xform;
+        const EntityID cam = w.CreateEntity("cam");
+        w.AddComponent<CameraComponent>(cam); // isPrimary=1 / fovY 60 / near 0.1 / far 1000
+        // 3D オブジェクト (MeshRenderer 持ち = UI 専用でない) に UIElement を直付け
+        const EntityID obj = w.CreateEntity("enemy");
+        w.AddComponent<MeshRendererComponent>(obj);
+        {
+            auto* el = w.AddComponent<UIElementComponent>(obj);
+            el->w = 100.0f;
+            el->h = 40.0f;
+        }
+        w.ApplyStructuralChanges();
+        w.GetComponent<LocalTransform>(obj)->position = { 0, 0, 10.0f };
+        xform.Update(w);
+
+        uilayout::UIWorldContext wc;
+        check(uilayout::BuildSimWorldContext(w, 1920, 1080, wc),
+              "world UI: sim camera context builds (scalar)");
+        auto res = uilayout::Resolve(w, obj, 1920, 1080, &wc);
+        check(res.visible && std::fabs(res.rect.x - 960.0f) < 1e-2f
+                  && std::fabs(res.rect.y - 540.0f) < 1e-2f,
+              "world UI: UI on a mesh entity projects to the object (screen center)");
+        check(res.rect.w == 100.0f && res.rect.h == 40.0f,
+              "world UI: size is unscaled by default");
+        check(!uilayout::Resolve(w, obj, 1920, 1080, nullptr).visible,
+              "world UI: hidden without a camera context");
+
+        // 符号: +X は画面右、+Y は画面上 (= y 減少)
+        w.GetComponent<LocalTransform>(obj)->position = { 2.0f, 0, 10.0f };
+        xform.Update(w);
+        res = uilayout::Resolve(w, obj, 1920, 1080, &wc);
+        check(res.visible && res.rect.x > 960.0f, "world UI: +X moves right on screen");
+        w.GetComponent<LocalTransform>(obj)->position = { 0, 2.0f, 10.0f };
+        xform.Update(w);
+        res = uilayout::Resolve(w, obj, 1920, 1080, &wc);
+        check(res.visible && res.rect.y < 540.0f, "world UI: +Y moves up on screen");
+
+        // 距離スケール: 等倍距離 10m → z=10 で 1.0 / z=20 で 0.5 (子 space=1 にも伝播)
+        w.GetComponent<LocalTransform>(obj)->position = { 0, 0, 10.0f };
+        {
+            auto* el = w.GetComponent<UIElementComponent>(obj);
+            el->distanceScale = true;
+            el->distanceRef = 10.0f;
+        }
+        xform.Update(w);
+        res = uilayout::Resolve(w, obj, 1920, 1080, &wc);
+        check(res.visible && std::fabs(res.rect.w - 100.0f) < 1e-3f,
+              "world UI: scale = 1 at the reference distance");
+        w.GetComponent<LocalTransform>(obj)->position = { 0, 0, 20.0f };
+        xform.Update(w);
+        res = uilayout::Resolve(w, obj, 1920, 1080, &wc);
+        check(res.visible && std::fabs(res.rect.w - 50.0f) < 1e-3f
+                  && std::fabs(res.rect.h - 20.0f) < 1e-3f,
+              "world UI: size halves at twice the reference distance");
+        // 複合ウィジェット: UI 専用の子を space=1 でぶら下げると親矩形基準で一緒に追従し、
+        // 距離スケールも伝播する
+        const EntityID fill = w.CreateEntity("fill");
+        {
+            auto* cel = w.AddComponent<UIElementComponent>(fill);
+            cel->space = 1;
+            cel->w = 60.0f;
+            cel->h = 10.0f;
+        }
+        w.SetParent(fill, obj);
+        w.ApplyStructuralChanges();
+        res = uilayout::Resolve(w, fill, 1920, 1080, &wc);
+        check(res.visible && std::fabs(res.rect.w - 30.0f) < 1e-3f,
+              "world UI: distance scale propagates to space=1 children");
+
+        // 背面: クランプ OFF は非表示 (子ごと)、ON は画面内へ
+        w.GetComponent<UIElementComponent>(obj)->distanceScale = false;
+        w.GetComponent<LocalTransform>(obj)->position = { 0, 0, -10.0f };
+        xform.Update(w);
+        check(!uilayout::Resolve(w, obj, 1920, 1080, &wc).visible,
+              "world UI: behind the camera is hidden (clamp off)");
+        check(!uilayout::Resolve(w, fill, 1920, 1080, &wc).visible,
+              "world UI: children vanish with their hidden parent");
+        w.GetComponent<UIElementComponent>(obj)->clampToScreen = true;
+        res = uilayout::Resolve(w, obj, 1920, 1080, &wc);
+        check(res.visible && res.rect.x >= 0.0f && res.rect.y >= 0.0f
+                  && res.rect.x + res.rect.w <= 1920.0f && res.rect.y + res.rect.h <= 1080.0f,
+              "world UI: behind + clamp stays on screen");
+
+        // クランプ (前方だが画面外): 右端に貼り付く
+        w.GetComponent<LocalTransform>(obj)->position = { 1000.0f, 0, 10.0f };
+        xform.Update(w);
+        res = uilayout::Resolve(w, obj, 1920, 1080, &wc);
+        check(res.visible && std::fabs((res.rect.x + res.rect.w) - 1920.0f) < 1e-3f,
+              "world UI: clamp pins the rect to the screen edge");
+
+        // 既存不変 1: UI 専用のルートエンティティはカメラコンテキストが有っても従来とビット同一
+        const EntityID rootUi = w.CreateEntity("screen");
+        {
+            auto* rel = w.AddComponent<UIElementComponent>(rootUi);
+            rel->x = 10.0f;
+            rel->y = 20.0f;
+            rel->w = 100.0f;
+            rel->h = 40.0f;
+        }
+        w.ApplyStructuralChanges();
+        const auto ra = uilayout::ResolveRect(w, rootUi, 1920, 1080, &wc);
+        const auto rb = uilayout::ResolveRect(w, rootUi, 1920, 1080);
+        check(std::memcmp(&ra, &rb, sizeof(ra)) == 0 && ra.x == 10.0f && ra.y == 20.0f,
+              "world UI: screen elements are bit-identical with/without a camera context");
+
+        // 既存不変 2: UI 専用の子を 3D オブジェクトの下に整理してもそれ自体は画面 UI のまま
+        // (space=0 なので screen 基準。追従はコンポーネント構成でのみ決まる)
+        const EntityID grouped = w.CreateEntity("grouped");
+        {
+            auto* gel = w.AddComponent<UIElementComponent>(grouped);
+            gel->x = 30.0f;
+            gel->y = 40.0f;
+            gel->w = 50.0f;
+            gel->h = 20.0f;
+        }
+        w.SetParent(grouped, obj);
+        w.ApplyStructuralChanges();
+        // 親 obj は UIElement 持ちだが grouped は space=0 = screen 基準 (従来意味論)
+        const auto rg = uilayout::ResolveRect(w, grouped, 1920, 1080, &wc);
+        check(rg.x == 30.0f && rg.y == 40.0f,
+              "world UI: a ui-only child under a 3D object stays screen-anchored (space=0)");
+
+        // 既存不変 3: スクリプト状態コンポーネントは「UI 専用」を壊さない
+        // (ボタンにロジックを付けても画面 UI のまま)
+        ComponentDesc sd;
+        sd.name = "UiSelfTestScriptState";
+        sd.nameHash = HashStr("UiSelfTestScriptState");
+        sd.size = 4;
+        sd.align = 4;
+        sd.flags = kComponentScriptState;
+        sd.construct = [](void* dst) { *static_cast<int32_t*>(dst) = 0; };
+        const ComponentTypeId scriptType = ComponentRegistry::Get().Register(sd);
+        const EntityID button = w.CreateEntity("button");
+        {
+            auto* bel = w.AddComponent<UIElementComponent>(button);
+            bel->x = 5.0f;
+            bel->y = 6.0f;
+            bel->w = 80.0f;
+            bel->h = 30.0f;
+        }
+        w.AddComponentRaw(button, scriptType);
+        w.ApplyStructuralChanges();
+        const auto rs = uilayout::ResolveRect(w, button, 1920, 1080, &wc);
+        check(rs.x == 5.0f && rs.y == 6.0f,
+              "world UI: script-state components keep an entity ui-only (screen)");
     }
 
     if (failCount == 0) {

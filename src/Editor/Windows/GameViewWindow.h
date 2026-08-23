@@ -1,5 +1,6 @@
 #pragma once
 #include "Engine/Engine/EngineLoop.h"
+#include "Engine/Engine/UI/UILayout.h" // ワールド追従 UI の射影コンテキスト
 #include "Engine/Renderer/RenderTexture.h"
 
 namespace mye {
@@ -18,6 +19,9 @@ private:
     int desiredW_ = 0;
     int desiredH_ = 0;
     bool hasCamera_ = false;
+    // OnRenderViews で採ったワールド追従 UI の射影 (OnImGui のアウトラインが同フレームで読む)
+    uilayout::UIWorldContext uiWc_;
+    bool uiWcValid_ = false;
     int aspectMode_ = 0;    // 0=Free 1=16:9 2=4:3 3=1:1 (レターボックス)
     bool showStats_ = true; // 統計オーバーレイ (FPS/entities/tick)
 };

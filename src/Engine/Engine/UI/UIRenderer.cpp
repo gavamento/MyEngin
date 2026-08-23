@@ -201,7 +201,8 @@ void UIRenderer::PushTextInRect(const char* s, float rx, float ry, float rw, flo
 
 void UIRenderer::Render(World& world, GraphicsDevice& device, ShaderManager& shaders,
                         RenderResources& resources, ID3D11RenderTargetView* rtv, int width,
-                        int height, int mouseX, int mouseY, bool mouseDown)
+                        int height, int mouseX, int mouseY, bool mouseDown,
+                        const uilayout::UIWorldContext* worldCtx)
 {
     if (!ready_ || width <= 0 || height <= 0) {
         return;
@@ -260,13 +261,21 @@ void UIRenderer::Render(World& world, GraphicsDevice& device, ShaderManager& sha
     for (const Item& it : items) {
         const UIElementComponent& el = *it.el;
         // 矩形解決 (M51e: 親子/クリップは UILayout — UIFocusNav と共有)。クリップ祖先が
-        // 無い要素は RT 全域シザー = 従来と同じバッチにまとまる
-        const uilayout::UIRect rect = uilayout::ResolveRect(world, it.e, width, height);
+        // 無い要素は RT 全域シザー = 従来と同じバッチにまとまる。
+        // ワールド追従要素はここで射影され、背面 (クランプ OFF) は visible=false で消える。
+        // res.scale (距離スケール) は矩形に折り込み済み — テキストのグリフ倍率にだけ手で掛ける
+        const uilayout::UIResolved res = uilayout::Resolve(world, it.e, width, height, worldCtx);
+        if (!res.visible) {
+            continue;
+        }
+        const uilayout::UIRect rect = res.rect;
         const float rx = rect.x;
         const float ry = rect.y;
+        const float textScale = el.fontScale * res.scale;
         curScissor_ = fullScissor;
         {
-            const uilayout::UIRect clip = uilayout::ResolveClipRect(world, it.e, width, height);
+            const uilayout::UIRect clip =
+                uilayout::ResolveClipRect(world, it.e, width, height, worldCtx);
             if (clip.w <= 0.0f || clip.h <= 0.0f) {
                 continue; // 祖先クリップで完全に隠れている
             }
@@ -278,22 +287,23 @@ void UIRenderer::Render(World& world, GraphicsDevice& device, ShaderManager& sha
 
         if (el.kind == 1) {
             // テキスト (背景無し)。M51e: 矩形 (w,h) 内で整列 + 折返し (既定 0/0 = 従来どおり左上)
-            PushTextInRect(el.text, rx, ry, el.w, el.h, el.fontScale, el.color, el.align,
+            PushTextInRect(el.text, rx, ry, rect.w, rect.h, textScale, el.color, el.align,
                            el.wrap != 0);
         } else if (el.kind == 2) {
             // ボタン: 背景 + hover/press ハイライト (display only) + 中央ラベル
             XMFLOAT4 bg = el.color;
-            const bool hover = mouseX >= static_cast<int>(rx) && mouseX < static_cast<int>(rx + el.w)
-                && mouseY >= static_cast<int>(ry) && mouseY < static_cast<int>(ry + el.h);
+            const bool hover = mouseX >= static_cast<int>(rx)
+                && mouseX < static_cast<int>(rx + rect.w) && mouseY >= static_cast<int>(ry)
+                && mouseY < static_cast<int>(ry + rect.h);
             if (hover) {
                 const float k = mouseDown ? 0.8f : 1.25f; // press で暗く、hover で明るく
                 bg.x = std::min(1.0f, bg.x * k);
                 bg.y = std::min(1.0f, bg.y * k);
                 bg.z = std::min(1.0f, bg.z * k);
             }
-            PushQuad(whiteSrv_, false, rx, ry, el.w, el.h, 0, 0, 1, 1, bg);
+            PushQuad(whiteSrv_, false, rx, ry, rect.w, rect.h, 0, 0, 1, 1, bg);
             const XMFLOAT4 label = { 1, 1, 1, 1 };
-            PushTextInRect(el.text, rx, ry, el.w, el.h, el.fontScale, label, 4, false);
+            PushTextInRect(el.text, rx, ry, rect.w, rect.h, textScale, label, 4, false);
         } else {
             // パネル / 画像 (M35: 9-slice / fillAmount 対応)
             ID3D11ShaderResourceView* srv = whiteSrv_;
@@ -307,8 +317,9 @@ void UIRenderer::Render(World& world, GraphicsDevice& device, ShaderManager& sha
                 }
             }
             if (el.sliced != 0 && texW > 0.0f) {
+                // 9-slice の境界 px は距離スケール対象外 (枠の太さは見た目の一貫性を優先)
                 uigeom::UIQuad quads[9];
-                const int n = uigeom::Build9Slice(rx, ry, el.w, el.h, el.sliceBorder.x,
+                const int n = uigeom::Build9Slice(rx, ry, rect.w, rect.h, el.sliceBorder.x,
                                                   el.sliceBorder.y, el.sliceBorder.z,
                                                   el.sliceBorder.w, texW, texH, quads);
                 for (int i = 0; i < n; ++i) {
@@ -317,12 +328,12 @@ void UIRenderer::Render(World& world, GraphicsDevice& device, ShaderManager& sha
                 }
             } else if (el.fillMode != 0) {
                 const uigeom::UIQuad q =
-                    uigeom::BuildFillQuad(rx, ry, el.w, el.h, el.fillMode, el.fillAmount);
+                    uigeom::BuildFillQuad(rx, ry, rect.w, rect.h, el.fillMode, el.fillAmount);
                 if (q.w > 0.0f && q.h > 0.0f) {
                     PushQuad(srv, false, q.x, q.y, q.w, q.h, q.u0, q.v0, q.u1, q.v1, el.color);
                 }
             } else {
-                PushQuad(srv, false, rx, ry, el.w, el.h, 0, 0, 1, 1, el.color);
+                PushQuad(srv, false, rx, ry, rect.w, rect.h, 0, 0, 1, 1, el.color);
             }
         }
 
@@ -331,12 +342,12 @@ void UIRenderer::Render(World& world, GraphicsDevice& device, ShaderManager& sha
         if (el.focusable != 0 && el.focused != 0) {
             constexpr float kRing = 2.0f;
             const XMFLOAT4 ring = { 1.0f, 1.0f, 1.0f, 0.9f };
-            PushQuad(whiteSrv_, false, rx - kRing, ry - kRing, el.w + kRing * 2, kRing, 0, 0, 1, 1,
-                     ring); // 上
-            PushQuad(whiteSrv_, false, rx - kRing, ry + el.h, el.w + kRing * 2, kRing, 0, 0, 1, 1,
-                     ring); // 下
-            PushQuad(whiteSrv_, false, rx - kRing, ry, kRing, el.h, 0, 0, 1, 1, ring); // 左
-            PushQuad(whiteSrv_, false, rx + el.w, ry, kRing, el.h, 0, 0, 1, 1, ring);  // 右
+            PushQuad(whiteSrv_, false, rx - kRing, ry - kRing, rect.w + kRing * 2, kRing, 0, 0, 1,
+                     1, ring); // 上
+            PushQuad(whiteSrv_, false, rx - kRing, ry + rect.h, rect.w + kRing * 2, kRing, 0, 0, 1,
+                     1, ring); // 下
+            PushQuad(whiteSrv_, false, rx - kRing, ry, kRing, rect.h, 0, 0, 1, 1, ring); // 左
+            PushQuad(whiteSrv_, false, rx + rect.w, ry, kRing, rect.h, 0, 0, 1, 1, ring); // 右
         }
     }
 

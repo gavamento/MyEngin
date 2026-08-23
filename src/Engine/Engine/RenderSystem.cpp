@@ -418,6 +418,13 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
     // (混ぜると「カメラが毎フレーム半ピクセル動いた」ことになり履歴が毎回外れる)。
     // viewKey==0 (AssetPreview) は履歴も TAA も持たないので常に非ジッタ。
     view.projNoJitter = view.proj;
+    // ワールド追従 UI 用: 補間済みカメラのジッタ無し view×proj を公開 (UIRenderer が
+    // この Render の直後に読む)。ジッタ入りを渡すと UI が毎フレーム半ピクセル揺れる
+    lastCamValid = cameraFound;
+    if (cameraFound) {
+        XMStoreFloat4x4(&lastViewProjNoJitter,
+                        XMLoadFloat4x4(&view.view) * XMLoadFloat4x4(&view.projNoJitter));
+    }
     view.viewKey = target.viewKey; // M55d: TAA の履歴スロット
     view.viewFrameIndex = (target.viewKey < 4) ? viewSerial_[target.viewKey] : 0u;
     // ---- M55d: TAA の有効判定 ----

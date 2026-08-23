@@ -294,6 +294,13 @@ struct UIElementComponent {
     int32_t clipChildren = 0; // !=0 で子孫要素を自矩形へシザークリップ (自分自身は切らない)
     int32_t align = 0;        // kind1(text) の矩形内整列 (anchor と同じ 9-grid 0..8)。ボタンラベルは中央固定
     int32_t wrap = 0;         // kind1(text) の文字単位折返し (幅 w で折る、日本語前提)。0=off
+    // ---- ワールド追従 UI 拡張 (末尾 append、NoHash = 旧シーン互換・リプレイ不変) ----
+    // 追従自体は**エンティティ構成による完全自動判定** (UILayout.h 冒頭): UI 専用でない
+    // オブジェクト (メッシュ/コライダー等を持つ) に付いた UIElement はそのオブジェクトの
+    // ワールド位置の射影点が基準になる。以下はその追従要素にだけ効くオプション
+    bool distanceScale = false; // 距離で縮む (distanceRef の距離で等倍。子 space=1 にも伝播)
+    float distanceRef = 5.0f;   // 等倍になるカメラ距離 (m)。<=0 は 1m 扱い
+    bool clampToScreen = false; // 画面端クランプ (ON: 背面も方向反転で端に貼る / OFF: 背面は非表示)
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
