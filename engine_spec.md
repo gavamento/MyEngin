@@ -736,7 +736,7 @@ As a shared foundation for all hot-reload targets, the Core layer provides **fil
 |---|---|
 | Hierarchy | Display the scene’s GameObject tree; select objects; modify parent-child relationships; create and delete objects |
 | Inspector | Display and edit components on the selected GameObject; generated automatically through reflection |
-| Scene View | Render the scene and provide translation, rotation, and scale gizmos [TBD: whether gizmos are included in the initial scope] |
+| Scene View | Render the scene and provide translation, rotation, and scale gizmos [TBD: whether gizmos are included in the initial scope]. Camera authoring: the **selected** camera draws a frustum wire (aspect fixed at 16:9, far clipped for legibility by a toolbar slider) and a small preview of what it sees in the bottom-right corner; the Camera component has a **Pilot** button that redirects the scene view's fly controls (RMB look + WASDQE / wheel dolly / MMB pan) to that camera entity while the viewpoint stays put. Piloting rotates the pose as a quaternion delta — yaw about world up, pitch about the camera's own right axis — so an authored roll survives; decomposing to yaw/pitch would silently flatten it (`CameraPilotSelfTest`) |
 | Game View | Display the game camera view |
 | Console | Display logs, shader compilation errors, and hot-reload notifications |
 | Profiler | Display frame time, phase timings, and particle update time for CPU and GPU implementations |

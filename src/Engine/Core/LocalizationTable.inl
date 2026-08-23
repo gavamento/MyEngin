@@ -372,6 +372,17 @@ MYE_STR(SceneView_Lit,        "Lit",        "陰影あり")
 MYE_STR(SceneView_Unlit,      "Unlit",      "陰影なし")
 MYE_STR(SceneView_Wire,       "Wire",       "ワイヤー")
 MYE_STR(SceneView_CamSpeed,   "cam %.1f",   "カメラ %.1f")
+// ---- カメラの視錐台ワイヤ / 操縦モード / プレビュー窓 ----
+// 視錐台は選択中のカメラだけに出る。far は既定 1000 で素直に描くと画面を埋めるので、
+// 「表示上の打ち切り距離」をここで可変にする (実 farZ の方が小さければそちらが勝つ)
+MYE_STR(SceneView_FrustumFar, "frustum %.0fm", "視錐台 %.0fm")
+MYE_STR(SceneView_PilotOn,    "Piloting: %s",  "操縦中: %s")
+MYE_STR(SceneView_PilotStop,  "Stop###sv_pilot_stop", "停止###sv_pilot_stop")
+MYE_STR(SceneView_PilotKeys,  "RMB look + WASDQE / wheel dolly / MMB pan move this camera."
+                              "  Esc stops, F reframes the view.",
+                              "右ドラッグで向き + WASDQE / ホイールで前後 / 中ドラッグで平行移動。"
+                              "Esc で停止、F で視点を戻します。")
+MYE_STR(SceneView_CamPreview, "Camera Preview", "カメラプレビュー")
 
 // ---- インスペクター (M47b) ----
 // フィールド名 (position / roughness など) はリフレクション由来なので M47c で扱う。
@@ -396,6 +407,13 @@ MYE_STR(Insp_Nothing,         "Nothing###mask_none",        "なし###mask_none"
 MYE_STR(Insp_MaskMixed,       "Mixed (0x%08X)###mask_mixed", "一部 (0x%08X)###mask_mixed")
 // サイズの比率固定チェック (ツールチップ)
 MYE_STR(Insp_ScaleLink,       "Constrain proportions",      "比率を固定")
+// カメラ操縦モードの入口 (Camera コンポーネント固有のボタン)
+// ★ラベルは切り替わるが ID は別々にしてある — 規則 10-b が "###" 右辺の一意を要求する
+//   (Button は状態を持たないので ID が入れ替わっても実害は無い)
+MYE_STR(Insp_PilotCamera,     "Pilot###insp_pilot_go",      "このカメラを操縦###insp_pilot_go")
+MYE_STR(Insp_PilotStop,       "Stop###insp_pilot_stop",     "操縦を停止###insp_pilot_stop")
+MYE_STR(Insp_PilotHint,       "(scene view camera controls move this camera)",
+                              "(シーンビューのカメラ操作でこのカメラが動きます)")
 // ミニシーン編集モード (M48k)
 MYE_STR(Tool_TipExitActorEdit, "Back to the scene",   "シーンへ戻る")
 MYE_STR(Tool_TipSaveActor,    "Save this asset",      "このアセットを保存")

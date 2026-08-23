@@ -28,6 +28,7 @@
 #include "Editor/HzbSelfTest.h"
 #include "Editor/SsrSelfTest.h"
 #include "Editor/ProbeBakerSelfTest.h"
+#include "Editor/CameraPilotSelfTest.h"
 #include "Engine/Engine/AnimatorControllerSelfTest.h"
 #include "Engine/Engine/AssetDatabaseSelfTest.h"
 #include "Engine/Engine/Audio/AudioSelfTest.h"
@@ -543,7 +544,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             && mye::RunHzbSelfTest()            // M56c
             && mye::RunSsrSelfTest()            // M56d
             && mye::RunProbeBakerSelfTest()     // M56e
-            && mye::RunPhysMatSelfTest();       // M59a1
+            && mye::RunPhysMatSelfTest()        // M59a1
+            && mye::RunCameraPilotSelfTest();   // カメラ操縦 (視錐台 UI 追補)
         return ok ? 0 : 1;
     }
 

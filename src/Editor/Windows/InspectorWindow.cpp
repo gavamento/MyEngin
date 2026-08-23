@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "Editor/AssetOps.h"
+#include "Editor/CameraPilot.h"
 #include "Editor/ComponentClipboard.h"
 #include "Engine/Core/AssetGuidResolver.h"
 #include "Editor/EditorComponentCatalog.h"
@@ -611,6 +612,26 @@ void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
             if (std::strcmp(desc.name, "PartBounds") == 0
                 && world.GetComponent<PartComponent>(e) == nullptr) {
                 ImGui::TextDisabled("%s", Tr(StrId::Insp_BoundsNoPart));
+            }
+            // カメラ操縦モードの入口。押すと SceneView の飛行操作 (右ドラッグ + WASDQE /
+            // ホイール / 中ドラッグ) の**書き込み先**がエディタカメラからこのカメラへ移る。
+            // 視点はエディタのまま = 外から見ながら置ける。
+            // マルチ選択では出さない — 操縦できるのは 1 台だけで、「どれが対象か」が
+            // ボタンからは読めなくなるため
+            if (std::strcmp(desc.name, "Camera") == 0 && !multi) {
+                CameraPilotState& pilot = GetCameraPilot();
+                const bool on = (pilot.fileId == fid);
+                if (on) {
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.78f, 0.45f, 0.20f, 1.0f));
+                }
+                if (ImGui::Button(Tr(on ? StrId::Insp_PilotStop : StrId::Insp_PilotCamera))) {
+                    pilot.fileId = on ? 0 : fid;
+                }
+                if (on) {
+                    ImGui::PopStyleColor();
+                }
+                ImGui::SameLine();
+                ImGui::TextDisabled("%s", Tr(StrId::Insp_PilotHint));
             }
         }
         ImGui::PopID();

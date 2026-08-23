@@ -4,6 +4,7 @@
 #include <cmath>
 
 #include "Editor/AssetOps.h"
+#include "Editor/CameraPilot.h"
 #include "Editor/CreateMenu.h"
 #include "Editor/EditorSettings.h"
 #include "Editor/Selection.h"
@@ -38,6 +39,13 @@ constexpr float kDeg2Rad = 3.14159265358979323846f / 180.0f;
 constexpr float kEditorFovDeg = 60.0f;
 constexpr float kNearZ = 0.1f;
 constexpr float kFarZ = 1000.0f;
+
+// カメラプレビュー窓の RT。★視錐台ワイヤもこのアスペクトで描く — 「線の内側に写る」が
+// 成り立たないとワイヤが嘘になるので、両者は必ず同じ 1 つの値から引く。
+// CameraComponent は aspect を持たない (描画時にターゲット実寸で決まる) ため固定値
+constexpr int kCamPreviewW = 320;
+constexpr int kCamPreviewH = 180;
+constexpr float kCamPreviewAspect = static_cast<float>(kCamPreviewW) / kCamPreviewH;
 
 void CamBasis(float pitchDeg, float yawDeg, XMVECTOR& fwd, XMVECTOR& right, XMVECTOR& up)
 {
@@ -130,6 +138,28 @@ bool FindTerrainTarget(EngineContext& ctx, const Selection& sel, TerrainTarget& 
     return found;
 }
 
+// ワールド行列を「親を考慮したローカル TRS」へ落として書き戻す。
+// ギズモのドラッグとカメラ操縦が共有する — 親付きのカメラを操縦したときに
+// 親のワールド変換を掛け戻し忘れると、動かした瞬間に飛ぶ。
+// 分解できない (退化した) 行列では何も書かない (NaN を撒かない)
+void WriteWorldToLocal(World& world, EntityID e, LocalTransform& lt, const XMFLOAT4X4& worldM)
+{
+    XMMATRIX localMat = XMLoadFloat4x4(&worldM);
+    const EntityID parent = world.GetParent(e);
+    if (!parent.IsNull()) {
+        if (auto* pwm = world.GetComponent<WorldMatrixComponent>(parent)) {
+            const XMMATRIX pw = XMLoadFloat4x4(&pwm->value);
+            localMat = XMMatrixMultiply(localMat, XMMatrixInverse(nullptr, pw));
+        }
+    }
+    XMVECTOR s, r, t;
+    if (XMMatrixDecompose(&s, &r, &t, localMat)) {
+        XMStoreFloat3(&lt.position, t);
+        XMStoreFloat4(&lt.rotation, r);
+        XMStoreFloat3(&lt.scale, s);
+    }
+}
+
 // ワールド行列から各軸のスケール量を取り出す
 XMFLOAT3 MatrixScale(const XMFLOAT4X4& m)
 {
@@ -142,6 +172,12 @@ XMFLOAT3 MatrixScale(const XMFLOAT4X4& m)
 
 void SceneViewWindow::OnRenderViews(EngineContext& ctx, Selection& selection)
 {
+    // 視錐台ワイヤ / プレビュー窓の対象を先に決める (BuildOverlays が読む)。
+    // 死んだ操縦対象をここで畳むので、ワイヤ・プレビュー・バナー・入力の 4 者が
+    // 常に同じ 1 台を指す
+    camTargetFid_ = ResolveCameraFid(ctx, selection);
+    previewValid_ = false; // 下の RenderCameraPreview が描けたときだけ立てる
+
     if (desiredW_ <= 0 || desiredH_ <= 0) {
         return;
     }
@@ -199,6 +235,141 @@ void SceneViewWindow::OnRenderViews(EngineContext& ctx, Selection& selection)
     BuildOverlays(ctx, selection);
     lines_.Render(*ctx.device, *ctx.shaders, rt_.RTV(), rt_.DSV(), rt_.Width(), rt_.Height(),
                   lastView_, lastProj_);
+
+    // カメラプレビュー窓 (SceneView の絵とは独立した 2 枚目の RT)。
+    // ★SceneView の描画と補助線を**全部済ませてから**描く — RTV を握り替えるので
+    //   途中に挟むと補助線がプレビュー面へ流れ込む (M56e のプローブ焼きと同じ罠)
+    RenderCameraPreview(ctx);
+}
+
+// 操縦対象のエンティティ。対象が消えていたら操縦自体を畳んで kNullEntity を返す
+EntityID SceneViewWindow::PilotTarget(EngineContext& ctx)
+{
+    CameraPilotState& pilot = GetCameraPilot();
+    if (!pilot.Active() || ctx.scene == nullptr) {
+        return kNullEntity;
+    }
+    World& world = ctx.scene->GetWorld();
+    GameObject obj = ctx.scene->FindByFileId(pilot.fileId);
+    // ★fileId はシーンを跨いで使い回されるので「生きている」だけでは足りない。
+    //   Camera を持っているかまで見て初めて、シーンを読み直したあとに無関係な
+    //   オブジェクトを操縦し始める事故が消える
+    if (obj && world.GetComponent<CameraComponent>(obj.Id()) != nullptr
+        && world.GetComponent<WorldMatrixComponent>(obj.Id()) != nullptr
+        && world.GetComponent<LocalTransform>(obj.Id()) != nullptr) {
+        return obj.Id();
+    }
+    pilot.Stop();
+    return kNullEntity;
+}
+
+uint64_t SceneViewWindow::ResolveCameraFid(EngineContext& ctx, const Selection& selection)
+{
+    previewLabel_.clear();
+    if (ctx.scene == nullptr) {
+        return 0;
+    }
+    World& world = ctx.scene->GetWorld();
+    uint64_t fid = 0;
+    if (!PilotTarget(ctx).IsNull()) {
+        fid = GetCameraPilot().fileId;
+    } else if (selection.primary != 0) {
+        GameObject obj = ctx.scene->FindByFileId(selection.primary);
+        if (obj && world.GetComponent<CameraComponent>(obj.Id()) != nullptr
+            && world.GetComponent<WorldMatrixComponent>(obj.Id()) != nullptr) {
+            fid = selection.primary;
+        }
+    }
+    if (fid != 0) {
+        if (GameObject obj = ctx.scene->FindByFileId(fid)) {
+            previewLabel_ = world.GetName(obj.Id());
+        }
+    }
+    return fid;
+}
+
+void SceneViewWindow::AddFrustumWire(const XMFLOAT4X4& world, const CameraComponent& cam)
+{
+    constexpr uint32_t kFrustum = 0x60E0FFFFu;
+    constexpr uint32_t kFrustumCut = 0x2E5F78FFu; // 打ち切った far 面 (暗くする)
+
+    // 表示上の far。既定 farZ=1000 を素直に描くと視錐台が画面を埋めて何も見えないので
+    // ツールバーのスライダで打ち切る。★実 farZ の方が小さければそちらが勝つ
+    // (打ち切りは「見やすさのための嘘」なので、本物より遠くを主張してはいけない)
+    const float shownFar = std::max(cam.nearZ + 0.01f, std::min(cam.farZ, frustumFar_));
+    const bool cut = shownFar < cam.farZ;
+
+    XMFLOAT3 c[8];
+    ComputeFrustumCorners(world, cam.fovYDeg, kCamPreviewAspect, cam.nearZ, shownFar, c);
+    const uint32_t farColor = cut ? kFrustumCut : kFrustum;
+    for (int i = 0; i < 4; ++i) {
+        const int n = (i + 1) & 3; // 隣の隅 (面内の順が 左下→右下→右上→左上 なので辺になる)
+        lines_.AddLine(c[i], c[n], kFrustum);         // near 面
+        lines_.AddLine(c[4 + i], c[4 + n], farColor); // far 面
+        lines_.AddLine(c[i], c[4 + i], farColor);     // 側面の稜線
+    }
+    // 頂点 (カメラ位置) から near 四隅へ。「どこから見ているか」が一目で分かる
+    const XMFLOAT3 apex = { world._41, world._42, world._43 };
+    for (int i = 0; i < 4; ++i) {
+        lines_.AddLine(apex, c[i], kFrustum);
+    }
+    // 上方向マーカー (near 面の上辺に載せる三角)。ロールが付いていると一緒に傾くので、
+    // 「このカメラは傾いている」が絵で分かる = 操縦モードがロールを保つ理由が見える
+    const XMVECTOR topMid =
+        XMVectorScale(XMVectorAdd(XMLoadFloat3(&c[2]), XMLoadFloat3(&c[3])), 0.5f);
+    const XMVECTOR bottomMid =
+        XMVectorScale(XMVectorAdd(XMLoadFloat3(&c[0]), XMLoadFloat3(&c[1])), 0.5f);
+    XMFLOAT3 tip;
+    XMStoreFloat3(&tip, XMVectorAdd(topMid, XMVectorScale(XMVectorSubtract(topMid, bottomMid),
+                                                          0.35f)));
+    lines_.AddLine(c[2], tip, kFrustum);
+    lines_.AddLine(c[3], tip, kFrustum);
+}
+
+void SceneViewWindow::RenderCameraPreview(EngineContext& ctx)
+{
+    if (camTargetFid_ == 0 || ctx.scene == nullptr) {
+        return;
+    }
+    World& world = ctx.scene->GetWorld();
+    GameObject obj = ctx.scene->FindByFileId(camTargetFid_);
+    if (!obj) {
+        return;
+    }
+    const auto* cam = world.GetComponent<CameraComponent>(obj.Id());
+    const auto* wmc = world.GetComponent<WorldMatrixComponent>(obj.Id());
+    if (cam == nullptr || wmc == nullptr) {
+        return;
+    }
+    previewRt_.Resize(*ctx.device, kCamPreviewW, kCamPreviewH);
+    if (!previewRt_.IsValid()) {
+        return;
+    }
+
+    // view = inverse(world) — RenderSystem がシーンカメラに使う式そのまま。
+    // 射影は渡さない (hasProj=false) ので RenderSystem が fov/near/far と
+    // **この RT の実寸**から組む = プレビューのアスペクトは常に kCamPreviewAspect
+    CameraOverride pv;
+    XMStoreFloat4x4(&pv.view, XMMatrixInverse(nullptr, XMLoadFloat4x4(&wmc->value)));
+    pv.position = { wmc->value._41, wmc->value._42, wmc->value._43 };
+    pv.fovYDeg = cam->fovYDeg;
+    pv.nearZ = cam->nearZ;
+    pv.farZ = cam->farZ;
+
+    FrameTarget target;
+    target.rtv = previewRt_.RTV();
+    target.dsv = previewRt_.DSV();
+    target.width = previewRt_.Width();
+    target.height = previewRt_.Height();
+    target.depthSRV = previewRt_.DepthSRV();
+    target.dsvReadOnly = previewRt_.DSVReadOnly();
+    // ★viewKey = 0 (= 履歴を持たないビュー)。1..3 を借りると SceneView / GameView の
+    //   TAA 履歴・前フレーム world 行列・前フレーム viewProj を上書きして、本編の絵が
+    //   毎フレーム壊れる。ProbeBaker が 0 を選んでいるのと同じ理由
+    target.viewKey = 0;
+    ctx.renderSystem->Render(world, *ctx.device, *ctx.renderPath, *ctx.shaders, *ctx.resources,
+                             target, &pv, ctx.particles, ctx.vfx);
+    previewValid_ = true;
 }
 
 void SceneViewWindow::BuildOverlays(EngineContext& ctx, Selection& selection)
@@ -271,6 +442,18 @@ void SceneViewWindow::BuildOverlays(EngineContext& ctx, Selection& selection)
                 lines_.AddWireBox(wm, { 0.3f, 0.3f, 0.45f }, kCamera);
             }
         });
+
+        // 視錐台ワイヤは**選択中 (= 操縦中) の 1 台だけ**。全カメラに出すと、カメラが
+        // 数台あるだけで画面が線だらけになって何も読めなくなる
+        if (camTargetFid_ != 0) {
+            if (GameObject obj = ctx.scene->FindByFileId(camTargetFid_)) {
+                const auto* cam = world.GetComponent<CameraComponent>(obj.Id());
+                const auto* wmc = world.GetComponent<WorldMatrixComponent>(obj.Id());
+                if (cam != nullptr && wmc != nullptr) {
+                    AddFrustumWire(wmc->value, *cam);
+                }
+            }
+        }
 
         // パーティクルエミッタ (クロス glyph)
         const ComponentTypeId emReq[] = { ParticleEmitterComponent::sTypeId,
@@ -659,6 +842,16 @@ void SceneViewWindow::DrawToolbar(EditorSettings& settings)
     ImGui::SameLine();
     ImGui::TextUnformatted("|");
     ImGui::SameLine();
+    // 視錐台ワイヤの表示上の打ち切り距離。既定 farZ=1000 のカメラを素直に描くと
+    // 視錐台が画面を埋めるので、ここで「どこまで描くか」を手元で決められるようにする。
+    // ★シーンにも設定ファイルにも保存しない — 地形ブラシと同じで「いまの見え方」であって
+    //   カメラの属性ではない (保存すると別プロジェクトへ持ち出したときに意味が変わる)
+    ImGui::SetNextItemWidth(110.0f);
+    ImGui::SliderFloat("##frustumfar", &frustumFar_, 2.0f, 500.0f,
+                       Tr(StrId::SceneView_FrustumFar), ImGuiSliderFlags_Logarithmic);
+    ImGui::SameLine();
+    ImGui::TextUnformatted("|");
+    ImGui::SameLine();
     // 地形ブラシ (M58f)。on の間はピッキングもギズモも止まる = 「別のツール」であることを
     // 押しっぱなしの色で見せる
     if (terrainBrush_) {
@@ -673,6 +866,58 @@ void SceneViewWindow::DrawToolbar(EditorSettings& settings)
     }
     ImGui::EndChild();
     ImGui::PopStyleColor();
+}
+
+void SceneViewWindow::DrawPilotBanner()
+{
+    CameraPilotState& pilot = GetCameraPilot();
+    if (!pilot.Active()) {
+        return;
+    }
+    // ツールバー (直前に描いた子ウィンドウ) の真下に貼る。★「今どのカメラを動かして
+    // いるのか」と「どうやって抜けるのか」が画面に出ていないと、操縦中なのに気づかず
+    // ギズモのつもりでカメラを飛ばす事故になる
+    const ImVec2 tl = ImGui::GetItemRectMin();
+    const float top = ImGui::GetItemRectMax().y;
+    ImGui::SetCursorScreenPos(ImVec2(tl.x, top + 6.0f));
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.30f, 0.18f, 0.07f, 0.88f));
+    ImGui::BeginChild("##sv_pilot", ImVec2(0.0f, 52.0f), ImGuiChildFlags_AutoResizeX,
+                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    ImGui::Text(Tr(StrId::SceneView_PilotOn),
+                previewLabel_.empty() ? "?" : previewLabel_.c_str());
+    ImGui::SameLine();
+    if (ImGui::Button(Tr(StrId::SceneView_PilotStop))) {
+        pilot.Stop();
+    }
+    ImGui::TextUnformatted(Tr(StrId::SceneView_PilotKeys));
+    ImGui::EndChild();
+    ImGui::PopStyleColor();
+}
+
+void SceneViewWindow::DrawCameraPreview(const ImVec2& imgPos, const ImVec2& size)
+{
+    if (!previewValid_ || !previewRt_.IsValid()) {
+        return;
+    }
+    // ★ImGui のアイテムを作らず drawlist だけで描く — ツールバー/地形パネルが
+    //   「直前のアイテム矩形」で位置を決めているので、ここで矩形を動かすと全部ずれる
+    const float w = 256.0f;
+    const float h = w * static_cast<float>(kCamPreviewH) / static_cast<float>(kCamPreviewW);
+    const float pad = 12.0f;
+    const float titleH = ImGui::GetTextLineHeight() + 4.0f;
+    if (size.x < w + pad * 2.0f || size.y < h + titleH + pad * 2.0f) {
+        return; // ビューが小さすぎる — 出すと本編を覆ってしまう
+    }
+    const ImVec2 tl(imgPos.x + size.x - w - pad, imgPos.y + size.y - h - pad);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(ImVec2(tl.x - 4.0f, tl.y - titleH - 2.0f),
+                      ImVec2(tl.x + w + 4.0f, tl.y + h + 4.0f), IM_COL32(26, 28, 33, 220), 4.0f);
+    dl->AddImage(reinterpret_cast<ImTextureID>(previewRt_.SRV()), tl, ImVec2(tl.x + w, tl.y + h));
+    dl->AddRect(tl, ImVec2(tl.x + w, tl.y + h), IM_COL32(0x40, 0xC0, 0xF0, 0xFF));
+    const std::string title = previewLabel_.empty()
+        ? std::string(Tr(StrId::SceneView_CamPreview))
+        : std::string(Tr(StrId::SceneView_CamPreview)) + " - " + previewLabel_;
+    dl->AddText(ImVec2(tl.x, tl.y - titleH), IM_COL32(0xD8, 0xE0, 0xE8, 0xFF), title.c_str());
 }
 
 void SceneViewWindow::DrawGizmo(EngineContext& ctx, Selection& selection, UndoStack& undo,
@@ -720,20 +965,7 @@ void SceneViewWindow::DrawGizmo(EngineContext& ctx, Selection& selection, UndoSt
 
     if (used) {
         // ワールド行列 → ローカル行列 (親があれば親ワールドの逆行列を掛ける)
-        XMMATRIX localMat = XMLoadFloat4x4(&worldM);
-        const EntityID parent = world.GetParent(e);
-        if (!parent.IsNull()) {
-            if (auto* pwm = world.GetComponent<WorldMatrixComponent>(parent)) {
-                const XMMATRIX pw = XMLoadFloat4x4(&pwm->value);
-                localMat = XMMatrixMultiply(localMat, XMMatrixInverse(nullptr, pw));
-            }
-        }
-        XMVECTOR s, r, t;
-        if (XMMatrixDecompose(&s, &r, &t, localMat)) {
-            XMStoreFloat3(&lt->position, t);
-            XMStoreFloat4(&lt->rotation, r);
-            XMStoreFloat3(&lt->scale, s);
-        }
+        WriteWorldToLocal(world, e, *lt, worldM);
     }
 
     // ドラッグ終了 (falling edge): after を撮って 1 エントリ確定
@@ -780,10 +1012,9 @@ void SceneViewWindow::FocusOnSelection(EngineContext& ctx, Selection& selection)
     XMStoreFloat3(&camPos_, pos);
 }
 
-void SceneViewWindow::HandleCamera(EngineContext& ctx, Selection& selection,
+void SceneViewWindow::HandleCamera(EngineContext& ctx, Selection& selection, UndoStack& undo,
                                    EditorSettings& settings)
 {
-    (void)ctx;
     const ImGuiIO& io = ImGui::GetIO();
 
     // F: 選択をフレーミング
@@ -798,29 +1029,135 @@ void SceneViewWindow::HandleCamera(EngineContext& ctx, Selection& selection,
     XMVECTOR fwd, right, up;
     CamBasis(camPitch_, camYaw_, fwd, right, up);
 
-    // ホイール: RMB ホールド中は移動速度調整 (M27d、Unity/UE 風)、それ以外は前後ズーム
-    if (io.MouseWheel != 0.0f) {
+    // 操縦モード: RMB / MMB / ホイールの**書き込み先**をエディタカメラからカメラ本体へ
+    // 振り替える。操作そのものは同じ (右ドラッグでルック + WASDQE / 中ドラッグでパン /
+    // ホイールで前後) — 「いつものカメラ操作でカメラを動かす」がこの機能の要件そのもの
+    const EntityID pilotCam = PilotTarget(ctx);
+    bool consumed = false;
+    if (!pilotCam.IsNull()) {
+        HandlePilotCamera(ctx, selection, undo, settings, pilotCam);
+        consumed = ImGui::IsMouseDown(ImGuiMouseButton_Right)
+            || ImGui::IsMouseDown(ImGuiMouseButton_Middle);
+    } else {
+        // ホイール: RMB ホールド中は移動速度調整 (M27d、Unity/UE 風)、それ以外は前後ズーム
+        if (io.MouseWheel != 0.0f) {
+            if (ImGui::IsMouseDown(ImGuiMouseButton_Right)) {
+                settings.camMoveSpeed = std::clamp(
+                    settings.camMoveSpeed * std::pow(1.15f, io.MouseWheel), 0.5f, 60.0f);
+                camSpeedDirty_ = true;
+            } else {
+                const XMVECTOR pos =
+                    XMVectorAdd(XMLoadFloat3(&camPos_), XMVectorScale(fwd, io.MouseWheel * 1.5f));
+                XMStoreFloat3(&camPos_, pos);
+            }
+        }
+        // 速度変更はドラッグ終了時にまとめて永続化 (ホイール毎のファイル IO を避ける)
+        if (camSpeedDirty_ && !ImGui::IsMouseDown(ImGuiMouseButton_Right)) {
+            camSpeedDirty_ = false;
+            settings.Save();
+        }
+
+        // RMB ドラッグ: FPS ルック + WASDQE 移動 (RMB 中のみ W/E/R は移動として扱う)
         if (ImGui::IsMouseDown(ImGuiMouseButton_Right)) {
-            settings.camMoveSpeed = std::clamp(
-                settings.camMoveSpeed * std::pow(1.15f, io.MouseWheel), 0.5f, 60.0f);
-            camSpeedDirty_ = true;
-        } else {
-            const XMVECTOR pos =
-                XMVectorAdd(XMLoadFloat3(&camPos_), XMVectorScale(fwd, io.MouseWheel * 1.5f));
+            camYaw_ += io.MouseDelta.x * 0.25f;
+            camPitch_ = std::clamp(camPitch_ + io.MouseDelta.y * 0.25f, -89.0f, 89.0f);
+            CamBasis(camPitch_, camYaw_, fwd, right, up);
+            XMVECTOR move = XMVectorZero();
+            if (ImGui::IsKeyDown(ImGuiKey_W)) { move = XMVectorAdd(move, fwd); }
+            if (ImGui::IsKeyDown(ImGuiKey_S)) { move = XMVectorSubtract(move, fwd); }
+            if (ImGui::IsKeyDown(ImGuiKey_D)) { move = XMVectorAdd(move, right); }
+            if (ImGui::IsKeyDown(ImGuiKey_A)) { move = XMVectorSubtract(move, right); }
+            if (ImGui::IsKeyDown(ImGuiKey_E)) { move = XMVectorAdd(move, XMVectorSet(0, 1, 0, 0)); }
+            if (ImGui::IsKeyDown(ImGuiKey_Q)) { move = XMVectorSubtract(move, XMVectorSet(0, 1, 0, 0)); }
+            if (XMVectorGetX(XMVector3LengthSq(move)) > 0.0001f) {
+                const float speed =
+                    settings.camMoveSpeed * (ImGui::IsKeyDown(ImGuiKey_LeftShift) ? 3.0f : 1.0f);
+                move = XMVectorScale(XMVector3Normalize(move), speed * io.DeltaTime);
+                XMStoreFloat3(&camPos_, XMVectorAdd(XMLoadFloat3(&camPos_), move));
+            }
+            consumed = true;
+        }
+        // MMB ドラッグ: パン (画面平面移動)
+        else if (ImGui::IsMouseDown(ImGuiMouseButton_Middle)) {
+            const float k = 0.02f;
+            XMVECTOR pos = XMLoadFloat3(&camPos_);
+            pos = XMVectorSubtract(pos, XMVectorScale(right, io.MouseDelta.x * k));
+            pos = XMVectorAdd(pos, XMVectorScale(up, io.MouseDelta.y * k));
             XMStoreFloat3(&camPos_, pos);
+            consumed = true;
         }
     }
-    // 速度変更はドラッグ終了時にまとめて永続化 (ホイール毎のファイル IO を避ける)
-    if (camSpeedDirty_ && !ImGui::IsMouseDown(ImGuiMouseButton_Right)) {
+
+    // Alt+LMB ドラッグ: 選択を中心にオービット。
+    // ★操縦中も**エディタ視点**に効かせる (F のフレーミングも同じ) — 操縦中に視点を
+    //   動かす手段が無いと、カメラを遠くへ飛ばした瞬間に何も見えなくなって詰む。
+    //   オービットとフレーミングは「見る位置」しか変えないので対象を取り違えようが無い
+    if (!consumed && io.KeyAlt && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+        const float orbitDist = 12.0f;
+        const XMVECTOR pivot = XMVectorAdd(XMLoadFloat3(&camPos_), XMVectorScale(fwd, orbitDist));
+        camYaw_ += io.MouseDelta.x * 0.3f;
+        camPitch_ = std::clamp(camPitch_ + io.MouseDelta.y * 0.3f, -89.0f, 89.0f);
+        CamBasis(camPitch_, camYaw_, fwd, right, up);
+        const XMVECTOR pos = XMVectorSubtract(pivot, XMVectorScale(fwd, orbitDist));
+        XMStoreFloat3(&camPos_, pos);
+    }
+}
+
+void SceneViewWindow::HandlePilotCamera(EngineContext& ctx, Selection& selection, UndoStack& undo,
+                                        EditorSettings& settings, EntityID cam)
+{
+    const ImGuiIO& io = ImGui::GetIO();
+    World& world = ctx.scene->GetWorld();
+    auto* wmc = world.GetComponent<WorldMatrixComponent>(cam);
+    auto* lt = world.GetComponent<LocalTransform>(cam);
+    if (wmc == nullptr || lt == nullptr) {
+        return;
+    }
+
+    const bool rmb = ImGui::IsMouseDown(ImGuiMouseButton_Right);
+    const bool mmb = ImGui::IsMouseDown(ImGuiMouseButton_Middle);
+    float wheel = io.MouseWheel;
+
+    // RMB ホールド中のホイールは移動速度の調整 (エディタカメラと同じ約束)。
+    // カメラ本体は動かないので Undo エントリも作らない
+    if (rmb && wheel != 0.0f) {
+        settings.camMoveSpeed =
+            std::clamp(settings.camMoveSpeed * std::pow(1.15f, wheel), 0.5f, 60.0f);
+        camSpeedDirty_ = true;
+        wheel = 0.0f;
+    }
+    if (camSpeedDirty_ && !rmb) {
         camSpeedDirty_ = false;
         settings.Save();
     }
 
-    // RMB ドラッグ: FPS ルック + WASDQE 移動 (RMB 中のみ W/E/R は移動として扱う)
-    if (ImGui::IsMouseDown(ImGuiMouseButton_Right)) {
-        camYaw_ += io.MouseDelta.x * 0.25f;
-        camPitch_ = std::clamp(camPitch_ + io.MouseDelta.y * 0.25f, -89.0f, 89.0f);
-        CamBasis(camPitch_, camYaw_, fwd, right, up);
+    // ★姿勢は四元数のまま差分回転で回す。yaw/pitch へ分解して組み直すとロール
+    //   (視線軸まわりの傾き) の受け皿が無く、操縦した瞬間に水平へ戻ってしまう —
+    //   ギズモで付けた傾きが黙って消える = 静かなデータ損失になる。
+    //   スケールも分解した値をそのまま戻すので、親のスケールごと保たれる
+    XMVECTOR scale, rot, pos;
+    if (!XMMatrixDecompose(&scale, &rot, &pos, XMLoadFloat4x4(&wmc->value))) {
+        return; // 退化した行列 (スケール 0 等) — 触ると NaN を撒く
+    }
+    bool mutated = false;
+
+    if (rmb && (io.MouseDelta.x != 0.0f || io.MouseDelta.y != 0.0f)) {
+        // 姿勢の更新は純関数へ切り出してある (CameraPilotSelfTest が唯一の機械検査 —
+        // 操縦は ImGui のマウス入力で駆動されるのでリプレイにもスクショにも載らない)
+        const XMVECTOR next = PilotApplyLook(rot, io.MouseDelta.x, io.MouseDelta.y);
+        if (!XMVector4Equal(next, rot)) {
+            rot = next;
+            mutated = true;
+        }
+    }
+
+    // 基底は**カメラの現在の姿勢**から取る (ロールが乗っていれば右も上も一緒に傾く =
+    // 傾けたカメラの平行移動が画面と一致する)
+    const XMVECTOR fwd = XMVector3Rotate(XMVectorSet(0, 0, 1, 0), rot);
+    const XMVECTOR right = XMVector3Rotate(XMVectorSet(1, 0, 0, 0), rot);
+    const XMVECTOR up = XMVector3Rotate(XMVectorSet(0, 1, 0, 0), rot);
+
+    if (rmb) {
         XMVECTOR move = XMVectorZero();
         if (ImGui::IsKeyDown(ImGuiKey_W)) { move = XMVectorAdd(move, fwd); }
         if (ImGui::IsKeyDown(ImGuiKey_S)) { move = XMVectorSubtract(move, fwd); }
@@ -831,28 +1168,56 @@ void SceneViewWindow::HandleCamera(EngineContext& ctx, Selection& selection,
         if (XMVectorGetX(XMVector3LengthSq(move)) > 0.0001f) {
             const float speed =
                 settings.camMoveSpeed * (ImGui::IsKeyDown(ImGuiKey_LeftShift) ? 3.0f : 1.0f);
-            move = XMVectorScale(XMVector3Normalize(move), speed * io.DeltaTime);
-            XMStoreFloat3(&camPos_, XMVectorAdd(XMLoadFloat3(&camPos_), move));
+            pos = XMVectorAdd(pos, XMVectorScale(XMVector3Normalize(move), speed * io.DeltaTime));
+            mutated = true;
+        }
+    } else if (mmb) {
+        // MMB ドラッグ: パン (画面平面移動)
+        const float k = 0.02f;
+        if (io.MouseDelta.x != 0.0f || io.MouseDelta.y != 0.0f) {
+            pos = XMVectorSubtract(pos, XMVectorScale(right, io.MouseDelta.x * k));
+            pos = XMVectorAdd(pos, XMVectorScale(up, io.MouseDelta.y * k));
+            mutated = true;
         }
     }
-    // MMB ドラッグ: パン (画面平面移動)
-    else if (ImGui::IsMouseDown(ImGuiMouseButton_Middle)) {
-        const float k = 0.02f;
-        XMVECTOR pos = XMLoadFloat3(&camPos_);
-        pos = XMVectorSubtract(pos, XMVectorScale(right, io.MouseDelta.x * k));
-        pos = XMVectorAdd(pos, XMVectorScale(up, io.MouseDelta.y * k));
-        XMStoreFloat3(&camPos_, pos);
+    if (wheel != 0.0f) {
+        pos = XMVectorAdd(pos, XMVectorScale(fwd, wheel * 1.5f));
+        mutated = true;
     }
-    // Alt+LMB ドラッグ: 選択を中心にオービット
-    else if (io.KeyAlt && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
-        const float orbitDist = 12.0f;
-        const XMVECTOR pivot = XMVectorAdd(XMLoadFloat3(&camPos_), XMVectorScale(fwd, orbitDist));
-        camYaw_ += io.MouseDelta.x * 0.3f;
-        camPitch_ = std::clamp(camPitch_ + io.MouseDelta.y * 0.3f, -89.0f, 89.0f);
-        CamBasis(camPitch_, camYaw_, fwd, right, up);
-        const XMVECTOR pos = XMVectorSubtract(pivot, XMVectorScale(fwd, orbitDist));
-        XMStoreFloat3(&camPos_, pos);
+
+    if (mutated) {
+        // Undo はギズモと同じ流儀 — ドラッグの立ち上がりで before を撮り、ボタンを
+        // 離した時点 (ClosePilotRecord) で 1 エントリに閉じる。まだ書き戻していない
+        // ここで撮るので before は「動かす前」のまま
+        if (!pilotRecording_) {
+            pilotRecording_ = true;
+            pilotRecordFid_ = ctx.scene->EnsureFileId(cam);
+            undo.BeginRecord("Pilot Camera", selection);
+            undo.CaptureBefore(*ctx.scene, pilotRecordFid_);
+        }
+        XMFLOAT4X4 worldM;
+        XMStoreFloat4x4(&worldM, XMMatrixScalingFromVector(scale)
+                                     * XMMatrixRotationQuaternion(rot)
+                                     * XMMatrixTranslationFromVector(pos));
+        WriteWorldToLocal(world, cam, *lt, worldM);
     }
+}
+
+void SceneViewWindow::ClosePilotRecord(EngineContext& ctx, Selection& selection, UndoStack& undo)
+{
+    if (!pilotRecording_) {
+        return;
+    }
+    // ★ボタンを離す場所は SceneView の外かもしれない (ドラッグしたままウィンドウを出る)。
+    //   HandleCamera はホバー中しか呼ばれないので、閉じ判定は OnImGui から**無条件で**
+    //   回す。開きっぱなしにすると次の編集が全部このエントリに巻き込まれる
+    if (ImGui::IsMouseDown(ImGuiMouseButton_Right) || ImGui::IsMouseDown(ImGuiMouseButton_Middle)) {
+        return;
+    }
+    pilotRecording_ = false;
+    undo.CaptureAfter(*ctx.scene, pilotRecordFid_);
+    undo.EndRecord(selection);
+    pilotRecordFid_ = 0;
 }
 
 bool SceneViewWindow::HandleTerrainBrush(EngineContext& ctx, Selection& selection, UndoStack& undo,
@@ -1052,6 +1417,11 @@ void SceneViewWindow::DrawTerrainBrushPanel(EngineContext& ctx)
 void SceneViewWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStack& undo,
                               EditorSettings& settings)
 {
+    // 開きっぱなしの操縦 Undo をまず閉じる。★ここは `open` チェックより**前**でなければ
+    // ならない — ドラッグしたままビューの外でボタンを離す / タブを閉じる経路があり、
+    // 記録が開いたままだと以降の編集が全部そのエントリに巻き込まれる
+    ClosePilotRecord(ctx, selection, undo);
+
     if (!open) {
         return;
     }
@@ -1269,10 +1639,17 @@ void SceneViewWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
 
     // カメラ操作: ウィンドウ上 & ギズモ操作中でない時のみ
     if (ImGui::IsWindowHovered() && !ImGuizmo::IsUsing()) {
-        HandleCamera(ctx, selection, settings);
+        HandleCamera(ctx, selection, undo, settings);
     }
-
+    // Esc で操縦を抜ける (ホバーでも フォーカスでも効かせる — 操縦を止めたいときに
+    // カーソルがビューの上にあるとは限らない)
+    if (GetCameraPilot().Active() && ImGui::IsKeyPressed(ImGuiKey_Escape, false)
+        && (ImGui::IsWindowHovered() || ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows))) {
+        GetCameraPilot().Stop();
+    }
+    DrawCameraPreview(imgPos, avail); // drawlist のみ = 下の GetItemRect* を汚さない
     DrawToolbar(settings);
+    DrawPilotBanner();          // ツールバー直下
     DrawTerrainBrushPanel(ctx); // ツールバー直下 (GetItemRect* が上の子ウィンドウを指す)
     ImGui::End();
 }

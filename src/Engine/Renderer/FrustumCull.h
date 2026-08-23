@@ -112,6 +112,36 @@ inline bool WorldAabbInFrustum(const Frustum& f, const DirectX::XMFLOAT3& wmin,
     return true;
 }
 
+// 視錐台の 8 隅をワールド空間で返す (SceneView のカメラワイヤ用)。
+// out[0..3] = near 面、out[4..7] = far 面。面内の順は 左下 → 右下 → 右上 → 左上
+// (隣り合う添字が辺になるので、そのまま 4 本のループとして線を引ける)。
+// カメラのローカル前方は **+Z** — RenderSystem の `view = inverse(world)` と対の規約で、
+// ライトの向き (wm._31/_32/_33) やエディタカメラの CamBasis もすべて同じ向きを使っている。
+// world にスケールが載っていれば隅もそのぶん動く = 実際に描かれる絵と同じ扱いになる
+// (view が inverse(world) なので、スケールは視錐台の見かけの大きさに効く)。
+// aspect は CameraComponent が持っていない — 描画時に**レンダーターゲットの実寸**で
+// 決まる値なので、呼び出し側が「どのターゲットの絵の話か」を明示して渡す。
+// 純関数 (RenderSelfTest 対象)。
+inline void ComputeFrustumCorners(const DirectX::XMFLOAT4X4& world, float fovYDeg, float aspect,
+                                  float nearZ, float farZ, DirectX::XMFLOAT3* out)
+{
+    using namespace DirectX;
+    const XMMATRIX w = XMLoadFloat4x4(&world);
+    const float tanHalf = std::tan(XMConvertToRadians(fovYDeg) * 0.5f);
+    const float planeZ[2] = { nearZ, farZ };
+    const float sx[4] = { -1.0f, 1.0f, 1.0f, -1.0f };
+    const float sy[4] = { -1.0f, -1.0f, 1.0f, 1.0f };
+    for (int p = 0; p < 2; ++p) {
+        const float z = planeZ[p];
+        const float hy = tanHalf * z;
+        const float hx = hy * aspect;
+        for (int i = 0; i < 4; ++i) {
+            XMStoreFloat3(&out[p * 4 + i],
+                          XMVector3TransformCoord(XMVectorSet(sx[i] * hx, sy[i] * hy, z, 1.0f), w));
+        }
+    }
+}
+
 // ローカル AABB をワールド行列で変換した world AABB (絶対値 3x3 法) を out に返す (M17 シャドウ範囲用)。
 inline void WorldAabb(const DirectX::XMFLOAT4X4& m, const DirectX::XMFLOAT3& lmin,
                       const DirectX::XMFLOAT3& lmax, DirectX::XMFLOAT3& outMin,

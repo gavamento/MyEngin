@@ -1,4 +1,6 @@
 #pragma once
+#include <string>
+
 #include <DirectXMath.h>
 
 #include "imgui.h"
@@ -15,6 +17,7 @@ namespace mye {
 struct Selection;
 class UndoStack;
 struct EditorSettings;
+struct CameraComponent;
 
 // エディタカメラでシーンを描画するビュー (engine_spec.md 9 章)。
 // カメラはエンティティではなくエディタ所有 (Play 状態と無関係に操作できる)。
@@ -42,7 +45,23 @@ private:
     void DrawGizmo(EngineContext& ctx, Selection& selection, UndoStack& undo,
                    const EditorSettings& settings, float rectX, float rectY, float rectW,
                    float rectH);
-    void HandleCamera(EngineContext& ctx, Selection& selection, EditorSettings& settings);
+    void HandleCamera(EngineContext& ctx, Selection& selection, UndoStack& undo,
+                      EditorSettings& settings);
+    // ---- カメラの視錐台ワイヤ / 操縦モード / プレビュー窓 ----
+    // 操縦対象のエンティティ。操縦していない / 対象が消えた / Camera を失ったら kNullEntity
+    // (消えていたら操縦自体も畳む — バナーだけ残り続けるのを防ぐ)
+    EntityID PilotTarget(EngineContext& ctx);
+    // ワイヤ/プレビューの対象 = 操縦中ならその対象、でなければ選択中のカメラ。0 = 無し
+    uint64_t ResolveCameraFid(EngineContext& ctx, const Selection& selection);
+    void AddFrustumWire(const DirectX::XMFLOAT4X4& world, const CameraComponent& cam);
+    void RenderCameraPreview(EngineContext& ctx);
+    // 操縦中のカメラ操作 (エディタカメラと同じ入力を、書き込み先だけ振り替える)
+    void HandlePilotCamera(EngineContext& ctx, Selection& selection, UndoStack& undo,
+                           EditorSettings& settings, EntityID cam);
+    // 開きっぱなしの Undo 記録を閉じる (ボタンを離した / 操縦をやめた / 窓の外で離した)
+    void ClosePilotRecord(EngineContext& ctx, Selection& selection, UndoStack& undo);
+    void DrawPilotBanner();
+    void DrawCameraPreview(const ImVec2& imgPos, const ImVec2& size);
     // 地形ブラシ (M58f)。カーソル下の地表を求めてダブを置き、リング表示を重ねる。
     // 戻り値 = 左ボタンを消費した (= ピッキング/ギズモへ流さない)
     bool HandleTerrainBrush(EngineContext& ctx, Selection& selection, UndoStack& undo,
@@ -97,6 +116,22 @@ private:
     TerrainAsset::TerrainData terrainStrokeWork_; // 進行中の画素 (ダブごとに書き出す)
     DirectX::XMFLOAT3 terrainLastDab_ = { 0.0f, 0.0f, 0.0f }; // 直前のダブ位置 (間隔判定)
     bool terrainHasDab_ = false;
+
+    // ---- カメラの視錐台ワイヤ / 操縦モード / プレビュー窓 ----
+    // ワイヤもプレビューも「選択中のカメラ 1 台」だけに出す。全カメラに視錐台を描くと
+    // カメラが数台あるだけで画面が線だらけになるため (Unity/Unreal も選択中のみ)。
+    // ★ワイヤの画角とプレビューの絵は**同じ 1 つのアスペクト**から引く (食い違うと
+    //   「線の通りに写らない」= 嘘の絵になる)。CameraComponent は aspect を持たない —
+    //   描画時にレンダーターゲットの実寸で決まる値なので、ここで 16:9 に固定している
+    uint64_t camTargetFid_ = 0;   // ワイヤ/プレビューの対象 (0 = 無し)
+    float frustumFar_ = 25.0f;    // 視錐台の**表示上の**打ち切り距離 (実 farZ が小さければそちら)
+    RenderTexture previewRt_;
+    bool previewValid_ = false;   // 直近の OnRenderViews でプレビューを描けたか
+    std::string previewLabel_;    // プレビュー窓とバナーに出す対象カメラの名前
+    // 操縦ドラッグ中の Undo 記録 (ドラッグ全体で 1 エントリ = ギズモと同じ流儀)。
+    // 対象 fileId を控えるのは、記録の途中で対象が消えても同じ相手で閉じるため
+    bool pilotRecording_ = false;
+    uint64_t pilotRecordFid_ = 0;
 
     PickingPass picking_;    // クリック選択 (遅延 Init)
     EditorLinePass lines_;   // グリッド/ワイヤ/アウトライン (遅延 Init)

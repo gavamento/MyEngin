@@ -84,6 +84,73 @@ void TestFrustumCulling()
     TEST_CHECK(AabbInFrustum(f, MakeWorld(0, 0, 0.05f), unitMin, unitMax) == true);
 }
 
+// 視錐台の 8 隅 (SceneView のカメラワイヤ)。
+// ★受け入れ基準は「ワイヤが実際に描かれる絵と一致すること」なので、期待値を手で並べる
+//   だけでは足りない — RenderSystem がシーンカメラに使う view/proj (view = inverse(world) /
+//   PerspectiveFovLH) へ隅を通して、クリップ空間の**箱の角ちょうど**に落ちることまで見る。
+//   ここが緩いと「ワイヤは出ているが実際の画角とずれている」が誰にも検出できない
+void TestFrustumCorners()
+{
+    MYE_LOG_INFO("[selftest] frustum corners (camera wire)");
+
+    XMFLOAT4X4 identity;
+    XMStoreFloat4x4(&identity, XMMatrixIdentity());
+    XMFLOAT3 c[8];
+
+    // ① fov 90 / aspect 1 → 半角の tan が 1 なので隅は (±z, ±z, z)。
+    //    面内の順は 左下 → 右下 → 右上 → 左上
+    ComputeFrustumCorners(identity, 90.0f, 1.0f, 1.0f, 2.0f, c);
+    TEST_CHECK(std::fabs(c[0].x + 1.0f) < 1e-5f && std::fabs(c[0].y + 1.0f) < 1e-5f
+               && std::fabs(c[0].z - 1.0f) < 1e-5f);
+    TEST_CHECK(c[1].x > 0.0f && c[1].y < 0.0f); // 右下
+    TEST_CHECK(c[2].x > 0.0f && c[2].y > 0.0f); // 右上
+    TEST_CHECK(c[3].x < 0.0f && c[3].y > 0.0f); // 左上
+    TEST_CHECK(std::fabs(c[4].x + 2.0f) < 1e-5f && std::fabs(c[4].z - 2.0f) < 1e-5f); // far 面
+
+    // ② aspect は横だけを広げる (縦は fov そのもの)
+    ComputeFrustumCorners(identity, 90.0f, 16.0f / 9.0f, 1.0f, 2.0f, c);
+    TEST_CHECK(std::fabs(c[1].x - 16.0f / 9.0f) < 1e-5f);
+    TEST_CHECK(std::fabs(c[1].y + 1.0f) < 1e-5f);
+
+    // ③ ワールド行列が効く: 180° ヨーで前方が -Z を向く (= 隅の z が負側へ回る)
+    XMFLOAT4X4 turned;
+    XMStoreFloat4x4(&turned, XMMatrixRotationY(XM_PI) * XMMatrixTranslation(5.0f, 0.0f, 0.0f));
+    ComputeFrustumCorners(turned, 90.0f, 1.0f, 1.0f, 2.0f, c);
+    TEST_CHECK(c[0].z < 0.0f && c[4].z < 0.0f);
+    TEST_CHECK(std::fabs((c[0].x + c[1].x + c[2].x + c[3].x) * 0.25f - 5.0f) < 1e-5f);
+
+    // ④ ★本題: 実際の描画行列へ通すと、8 隅がクリップ空間の箱の角ちょうどに乗る。
+    //    near 面は z/w == 0、far 面は z/w == 1 (D3D の NDC 深度は [0,1])
+    {
+        const float fov = 55.0f;
+        const float aspect = 16.0f / 9.0f;
+        const float n = 0.3f;
+        const float f = 40.0f;
+        XMFLOAT4X4 camWorld;
+        XMStoreFloat4x4(&camWorld, XMMatrixRotationRollPitchYaw(0.2f, -0.7f, 0.4f)
+                                       * XMMatrixTranslation(-3.0f, 2.5f, 8.0f));
+        ComputeFrustumCorners(camWorld, fov, aspect, n, f, c);
+        const XMMATRIX vp = XMMatrixInverse(nullptr, XMLoadFloat4x4(&camWorld))
+            * XMMatrixPerspectiveFovLH(XMConvertToRadians(fov), aspect, n, f);
+        bool onBox = true;
+        for (int i = 0; i < 8; ++i) {
+            const XMVECTOR clip =
+                XMVector4Transform(XMVectorSet(c[i].x, c[i].y, c[i].z, 1.0f), vp);
+            const float cw = XMVectorGetW(clip);
+            const float ndcX = XMVectorGetX(clip) / cw;
+            const float ndcY = XMVectorGetY(clip) / cw;
+            const float ndcZ = XMVectorGetZ(clip) / cw;
+            onBox = onBox && std::fabs(std::fabs(ndcX) - 1.0f) < 1e-4f;
+            onBox = onBox && std::fabs(std::fabs(ndcY) - 1.0f) < 1e-4f;
+            onBox = onBox && std::fabs(ndcZ - ((i < 4) ? 0.0f : 1.0f)) < 1e-4f;
+        }
+        TEST_CHECK(onBox);
+        // ロール (第 3 回転) を持つカメラでも成立する = 分解を挟まずワールド行列を
+        // そのまま使っている証拠。操縦モードがロールを保つ前提そのもの
+        TEST_CHECK(std::fabs(c[0].y - c[1].y) > 1e-3f);
+    }
+}
+
 // M32d: カメラ別ポスト効果のマージ (色収差 / ビネット / グレーディング)
 void TestPostFxMerge()
 {
@@ -1134,6 +1201,7 @@ bool RunRenderSelfTest()
 {
     g_failCount = 0;
     TestFrustumCulling();
+    TestFrustumCorners();
     TestPostFxMerge();
     TestCascadeSplits();
     TestInstanceRuns();
