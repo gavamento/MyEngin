@@ -55,6 +55,13 @@ void ProfilerWindow::OnImGui(EngineContext& ctx)
                     ctx.renderSystem->ShadowAtlasTiles(), ctx.renderSystem->ShadowAtlasDraws(),
                     ctx.renderSystem->ShadowAtlasCulledDraws(),
                     ctx.renderSystem->ShadowAtlasCulledFaces());
+        // M56c: HZB (min-Z ピラミッド)。組んでいないフレームは GpuTimer に前の値が
+        // 残るので、**組む条件が立っていないときは行ごと出さない** (RT と同じ流儀)。
+        // 出ている間の値は「全段の縮小ディスパッチ 1 フレーム分」の合計
+        if (ctx.renderSystem->hzbDebugMip != 0) {
+            ImGui::Text("  hzb: %6.3f ms (GpuTimer, mip %d)", ctx.renderSystem->HzbGpuMs(),
+                        ctx.renderSystem->hzbDebugMip - 1);
+        }
         // M46b: レイトレ (デバッグ表示も GI 合成も off のときは行ごと出さない)
         const bool rtGiOn = ctx.renderSystem->enableRtGi;             // M46f
         const bool rtShadowOn = ctx.renderSystem->enableRtShadow;     // M46g

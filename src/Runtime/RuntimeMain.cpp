@@ -265,6 +265,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 config.rtDebugMode = _wtoi(argv[++i]); // M46b (Deferred のみ)
             } else if (arg == L"--velocity-debug") {
                 config.velocityDebug = 1; // M55c: GBuffer RT4 の可視化 (Deferred のみ)
+            } else if (arg == L"--hzb-debug" && i + 1 < argc) {
+                config.hzbDebug = _wtoi(argv[++i]); // M56c: N=ミップ N-1 (Deferred のみ)
             } else if (arg == L"--taa") {
                 config.postFxTaa = true; // M55d: TAA + カメラジッタ (Deferred のみ)
             } else if (arg == L"--motion-blur" && i + 1 < argc) {

@@ -221,6 +221,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     renderSystem.enablePostFx = config.postFx;
     renderSystem.rtDebugMode = config.rtDebugMode; // M46b (--rt-debug N、Deferred のみ)
     renderSystem.velocityDebugMode = config.velocityDebug; // M55c (--velocity-debug)
+    renderSystem.hzbDebugMip = config.hzbDebug;            // M56c (--hzb-debug N)
     renderSystem.rtTemporal = config.rtTemporal;   // M46d (--rt-no-temporal / --rt-freeze-seed)
     renderSystem.rtFreezeSeed = config.rtFreezeSeed;
     renderSystem.rtSvgf = config.rtSvgf;   // M46e (--rt-no-svgf)
@@ -1623,6 +1624,15 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                      renderSystem.RtTemporalGpuMs(), renderSystem.RtSvgfGpuMs(),
                      renderSystem.RtShadowGpuMs(), renderSystem.RtShadowFilterGpuMs(),
                      renderSystem.RtReflGpuMs(), renderSystem.RtReflDenoiseGpuMs());
+    }
+    if (config.hzbDebug != 0) {
+        // M56c: HZB の実測 (SSR (M56d) が「加速構造の元が取れるか」を判断する一次データ)。
+        // ProfilerWindow は GUI がある経路にしか無いので、ヘッドレス撮影で数字を残す口が
+        // ここしかない。値は最後に描いたフレームの全段ディスパッチ合計
+        // 表示段は DeferredPath 側で段数に頭打ちされるので、ここでは指定値をそのまま出す
+        // (「10 段しか無いのに 11 を指定した」が数字から読めるようにするため)
+        MYE_LOG_INFO("[hzb] --hzb-debug %d: build %.3f ms (GPU, last frame)", config.hzbDebug,
+                     renderSystem.HzbGpuMs());
     }
     if (stressCount > 0) {
         // 1 枚のバイト数と往復の実測 (M52e のリング枚数 / M52i のロールバック予算の一次データ)

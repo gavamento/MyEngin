@@ -278,6 +278,7 @@ that follows the editor camera fights with editing.
 | Image-based lighting | Implemented | Irradiance + prefiltered specular + BRDF LUT |
 | Ray-traced secondary rays | Implemented | See §6.4 (default off) |
 | Decals (projector boxes) | Implemented | See §6.6. **Deferred path only** in v1 |
+| Hierarchical Z-buffer (min-Z pyramid) | Implemented | See §6.7. **Deferred path only**, built on demand |
 
 ### 6.3 DirectX 11 Abstraction
 
@@ -385,6 +386,48 @@ holds inside an oriented box. The box is the entity's world matrix applied to th
 | **No decals on transparent surfaces** | Transparent geometry never reaches the G-Buffer, so there is nothing for the projector to land on. |
 | **Sampler is LINEAR/CLAMP** | The reservation for M56 adds no new sampler states, and CLAMP is what keeps a decal from bleeding its opposite edge. `uvScale`/`uvOffset` therefore select an atlas sub-rect rather than tiling. |
 | **No frustum culling** | Off-screen decals still rasterize their 12 triangles. Decal counts are expected to be small; this becomes worth fixing only when it shows up in a profile. |
+
+### 6.7 Hierarchical Z-Buffer (M56c)
+
+`HzbPass` builds a **min-Z pyramid** from the finished scene depth: texel *(x, y)* of level
+*n* holds the depth of the **closest** surface anywhere in the screen region it covers. A
+ray marcher can then read one texel of a coarse level and, if the ray is in front of that
+minimum, skip the whole region in a single step. It exists for the screen-space reflections
+of M56d; nothing consumes it yet.
+
+- The pyramid is a **private `ID3D11Texture2D` (`R32_FLOAT`, full mip chain)**, not a
+  `RenderTexture`. `RenderTexture` hard-codes `MipLevels = 1` and is shared by the G-Buffer,
+  the post-processing intermediates, the SceneView target and the ray-tracing passes;
+  teaching it about mips would put every one of those on the same code path for the sake of
+  one consumer. The HZB needs neither an RTV nor a DSV — a compute shader writes it through
+  a UAV and reads it back through an SRV — so owning the texture outright is both cheaper
+  and narrower.
+- One compute shader (`hzb_reduce.cs.hlsl`) does every level. Level 0 reads the depth buffer
+  with source and destination the same size, which degenerates the reduction footprint to a
+  single texel — i.e. a copy — so no separate blit shader is needed.
+- **Odd extents are covered by widening, not by rounding.** Folding 15 texels into 7 with a
+  plain 2x2 box drops the last row and column, and the only symptom is a ray passing through
+  a wall that the HZB claims is empty. The footprint of output *i* is
+  `[floor(i*src/dst), ceil((i+1)*src/dst) - 1]`, which overlaps on odd levels; overlap is
+  harmless under `min`. `HzbReduceSpan` is the CPU mirror of that formula and `HzbSelfTest`
+  checks the no-gap property for every level of a set of awkward resolutions.
+- Depth stays **non-linear device depth**. Linearization is the consumer's job
+  (`LinearizeDepth` in `common.hlsli`). `min` means "closest" because this engine does not
+  use reversed-Z — every `ClearDepthStencilView` clears to 1.0.
+- Each level is built with its own single-mip SRV and UAV. Reading through the full-chain
+  SRV while writing the next level would bind the same subresource for read and write.
+- Build cost is one dispatch per level. Measured at 960x540 (10 levels): **0.078 ms on an
+  RTX 3060, 3.3-5.5 ms under WARP** — under the software rasterizer this is a real cost that
+  M56d has to weigh against the tracing it saves, and it is the reason the pyramid is only
+  built when someone asks for it.
+
+**v1 limitations:**
+
+| Limitation | Why |
+|---|---|
+| **Deferred path only** | It is built from the deferred depth target, and no forward-path consumer exists. On the forward path and in asset thumbnails (`AssetPreviewCache`, whose `depthSRV` is deliberately null) the pass disables itself. |
+| **Built only on demand** | Until SSR lands, the only thing that asks for the pyramid is the debug view (`View > Rendering > HZB` or `--hzb-debug N`, where `N` shows level `N-1`). With it off, nothing is allocated and no dispatch is issued, so the rendered image is bit-identical to the previous milestone. |
+| **Whole-screen only** | There is no partial or incremental update; the entire pyramid is rebuilt every frame it is requested. |
 
 ---
 

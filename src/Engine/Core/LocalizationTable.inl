@@ -90,6 +90,12 @@ MYE_STR(Menu_RtReflection,    "RT Reflection (Deferred)", "RT 反射 (Deferred)"
 MYE_STR(Taa_VelocityDebug,    "Velocity Buffer (Deferred)", "velocity バッファ (Deferred)")
 // M55d: TAA 本体。カメラジッタもこのトグルと連動する (片方だけ on にはできない)
 MYE_STR(Taa_Enable,           "TAA (Deferred)",             "TAA (Deferred)")
+// M56c: HZB (min-Z ピラミッド) の可視化。接頭辞 Hzb_* は M56 の予約 (統合契約 予約 5)。
+// Hzb_DebugMip は「訳文自体が書式」の正当な用法 (規則 10-a が明示的に許している形)。
+// %d の並びは en / ja で一致必須 — 規則 10-b が機械検査している
+MYE_STR(Hzb_Debug,            "HZB (Deferred)",             "HZB (Deferred)")
+MYE_STR(Hzb_DebugOff,         "Off",                        "オフ")
+MYE_STR(Hzb_DebugMip,         "Mip %d",                     "ミップ %d")
 
 // ---- 影 (M54e)。View > 影 サブメニュー。統合契約 予約 5 の接頭辞 Shadow_* ----
 // 統計行の書式指定子の並びは en / ja で一致必須 (規則 10 が機械検査する)

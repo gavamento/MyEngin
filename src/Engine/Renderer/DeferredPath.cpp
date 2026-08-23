@@ -1,5 +1,6 @@
 #include "Engine/Renderer/DeferredPath.h"
 
+#include <algorithm>
 #include <cmath>
 
 #include "Engine/Core/Log.h"
@@ -192,6 +193,21 @@ struct VelocityDebugCB {
 // 静止した床/柱/背景は灰のまま、という絵になる。デバッグ表示専用 (絵には影響しない)
 constexpr float kVelocityDebugPxRange = 1.0f;
 
+// M56c: debug_hzb.hlsl の HzbDebugCB と同一レイアウト
+struct HzbDebugCB {
+    float dstSize[2];
+    float mipSize[2];
+    float nearZ;
+    float farZ;
+    float range;
+    float mip;
+};
+
+// M56c: HZB 可視化が黒に振り切る距離 [world]。--render-demo のカメラは原点から約 18.6 の
+// 位置にいて床の奥行きがその倍ほど伸びる — 40 にすると「手前の柱が白く、床の奥が黒へ落ちる」
+// 階調になり、段が上がるほど四角が粗くなる様子が一番読み取りやすい。デバッグ表示専用
+constexpr float kHzbDebugRange = 40.0f;
+
 // M46a: 定数バッファ生成 / CB 更新は GpuBufferUtil.h へ集約 (定義は同一)
 using namespace gpubuf;
 
@@ -216,6 +232,10 @@ bool DeferredPath::Init(GraphicsDevice& device, ShaderManager& shaders)
     velocityDebugShader_ = shaders.Load("debug_velocity");
     // M56a: デカール。失敗しても続行 (デカールが描かれないだけ = 従来の絵)
     decalShader_ = shaders.Load("decal_project");
+    // M56c: HZB。CS も可視化シェーダも既定 off の経路では 1 度も使われないので、
+    // 失敗しても続行する (HzbPass::Build が false を返して消費者が自然に無効化される)
+    hzb_.Init(device, shaders);
+    hzbDebugShader_ = shaders.Load("debug_hzb");
 
     if (!CreateConstant(dev, sizeof(PerFrameCB), perFrameCB_)
         || !CreateConstant(dev, sizeof(PerObjectCB), perObjectCB_)
@@ -224,6 +244,7 @@ bool DeferredPath::Init(GraphicsDevice& device, ShaderManager& shaders)
         || !CreateConstant(dev, sizeof(VelocityCB), velocityCB_)           // M55c (b4)
         || !CreateConstant(dev, sizeof(VelocityDebugCB), velocityDebugCB_) // M55c
         || !CreateConstant(dev, sizeof(DecalCB), decalCB_)                 // M56a
+        || !CreateConstant(dev, sizeof(HzbDebugCB), hzbDebugCB_)           // M56c
         || !CreateConstant(dev, sizeof(XMFLOAT4X4) * kMaxBones, boneCB_)) {
         return false;
     }
@@ -448,6 +469,9 @@ void DeferredPath::Shutdown()
     gbNormalCopySrv_.Reset();
     normalCopyW_ = 0;
     normalCopyH_ = 0;
+    // M56c: HZB
+    hzb_.Shutdown();
+    hzbDebugCB_.Reset();
     terrain_.Shutdown(); // M58c
 }
 
@@ -1001,6 +1025,21 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
         dc->PSSetShaderResources(0, 3, aoNull); // 光パスで再バインドする前に解除
     }
 
+    // ---- 1.6) HZB (M56c): 完成した深度から min-Z ピラミッドを組む。
+    //      ここに置く理由は「不透明 + 地形が深度を書き終えていて、まだ半透明が乗る前」だから
+    //      (半透明は深度を書かないので後でも同じだが、消費者の SSR (M56d) が光パス直後に
+    //      入るので、それより前という制約の方が強い)。
+    //      **このサブの発火条件はデバッグ表示だけ** — 既定 (hzbDebug==0) では
+    //      確保もディスパッチも走らず、絵は 1 ビットも変わらない ----
+    const bool hzbOn = view.hzbDebug != 0 && view.depthSRV != nullptr;
+    if (hzbOn) {
+        // ★CS が深度を SRV で読む前に RTV / DSV を明示的に外す。SSAO が off の経路では
+        //   GBuffer + view.dsv がまだ OM に載ったままで、深度を SRV と DSV に同時に
+        //   張ることになる (M44b / RT パスと同じ罠。実際に踏んだ記録が計画にある)
+        dc->OMSetRenderTargets(0, nullptr, nullptr);
+        hzb_.Build(device, shaders, view.depthSRV, view.width, view.height);
+    }
+
     // ---- 1.7) レイトレ拡散 GI (M46f) / RT 影 (M46g) / RT 反射 (M46h): ライトパスの前に撃つ。
     //      デバッグ表示 (mode 4-8 = GI / 9 = 影 / 10-11 = 反射) も**この結果を使い回す** —
     //      1 フレームに 2 回撃つとテンポラル履歴が二重に進んで蓄積が壊れるため。
@@ -1263,6 +1302,46 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
             ID3D11ShaderResourceView* velNull[1] = {};
             dc->PSSetShaderResources(0, 1, velNull); // 次フレームで RTV に戻すため解除
             // パーティクル後段のために RTV+DSV と状態を戻す (RT デバッグ表示と同じ後始末)
+            dc->OMSetRenderTargets(1, &view.rtv, view.dsv);
+            dc->OMSetDepthStencilState(nullptr, 0);
+            dc->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFFu);
+        }
+    }
+
+    // ---- 6) HZB の可視化 (M56c)。既定 (hzbDebug==0) では 1 命令も走らない。
+    //      HZB を読む本番の消費者は M56d (SSR) まで居ないので、ここが唯一の目視口 ----
+    if (hzbOn && hzb_.SRV() != nullptr) {
+        ShaderProgram* hzbDbg = shaders.Get(hzbDebugShader_);
+        if (hzbDbg && hzbDbg->valid) {
+            // 指定が段数を超えたら最上段 (1x1 付近) で頭打ち — 範囲外の Load は
+            // 0 を返すので「真っ白」になり、指定ミスと本物の min-Z が区別できなくなる。
+            // 下側も 0 で止める (--hzb-debug に負値を渡されても同じ理由で画面が白くなる)
+            const int mip = std::clamp(view.hzbDebug - 1, 0, hzb_.MipCount() - 1);
+            HzbDebugCB hd = {};
+            hd.dstSize[0] = static_cast<float>(view.width);
+            hd.dstSize[1] = static_cast<float>(view.height);
+            hd.mipSize[0] = static_cast<float>(HzbMipExtent(hzb_.Width(), mip));
+            hd.mipSize[1] = static_cast<float>(HzbMipExtent(hzb_.Height(), mip));
+            hd.nearZ = view.nearZ;
+            hd.farZ = view.farZ;
+            hd.range = kHzbDebugRange;
+            hd.mip = static_cast<float>(mip);
+            UploadCB(dc, hzbDebugCB_.Get(), hd);
+            dc->OMSetRenderTargets(1, &view.rtv, nullptr); // 深度は SRV で読んでいるので外す
+            dc->RSSetViewports(1, &vp);
+            ID3D11Buffer* hdCbs[1] = { hzbDebugCB_.Get() };
+            dc->PSSetConstantBuffers(0, 1, hdCbs);
+            ID3D11ShaderResourceView* hzbSrv[1] = { hzb_.SRV() }; // 全段を覆う SRV
+            dc->PSSetShaderResources(0, 1, hzbSrv);
+            dc->IASetInputLayout(nullptr);
+            dc->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+            dc->OMSetDepthStencilState(depthDisabled_.Get(), 0);
+            dc->OMSetBlendState(blendOpaque_.Get(), nullptr, 0xFFFFFFFFu);
+            dc->VSSetShader(hzbDbg->vs.Get(), nullptr, 0);
+            dc->PSSetShader(hzbDbg->ps.Get(), nullptr, 0);
+            dc->Draw(3, 0);
+            ID3D11ShaderResourceView* hzbNull[1] = {};
+            dc->PSSetShaderResources(0, 1, hzbNull); // 次フレームの UAV 書込前に解除
             dc->OMSetRenderTargets(1, &view.rtv, view.dsv);
             dc->OMSetDepthStencilState(nullptr, 0);
             dc->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFFu);

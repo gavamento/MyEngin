@@ -31,6 +31,11 @@ public:
     // 消費側 (TAA / モーションブラー v2 / RT) が自分でバインドする —
     // 「光パスの t0-t11 の並びは 1 つも動かさない」が M55c からの約束
     virtual ID3D11ShaderResourceView* VelocitySRV() const { return nullptr; }
+
+    // ---- M56c: HZB (min-Z ピラミッド) ----
+    // 直近の Render で HZB を組むのに掛かった GPU 時間 [ms]。組まないパス / フレームは 0。
+    // ProfilerWindow が RenderSystem 経由で読むだけの純計測口 (絵にも sim にも影響しない)
+    virtual float HzbGpuMs() const { return 0.0f; }
 };
 
 } // namespace mye

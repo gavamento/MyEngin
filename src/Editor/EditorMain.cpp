@@ -25,6 +25,7 @@
 #include "Editor/AssetOpsSelfTest.h"
 #include "Editor/TerrainSelfTest.h"
 #include "Editor/DecalSelfTest.h"
+#include "Editor/HzbSelfTest.h"
 #include "Engine/Engine/AnimatorControllerSelfTest.h"
 #include "Engine/Engine/AssetDatabaseSelfTest.h"
 #include "Engine/Engine/Audio/AudioSelfTest.h"
@@ -270,6 +271,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 config.rtDebugMode = _wtoi(argv[++i]); // M46b (Deferred のみ)
             } else if (arg == L"--velocity-debug") {
                 config.velocityDebug = 1; // M55c: GBuffer RT4 の可視化 (Deferred のみ)
+            } else if (arg == L"--hzb-debug" && i + 1 < argc) {
+                config.hzbDebug = _wtoi(argv[++i]); // M56c: N=ミップ N-1 (Deferred のみ)
             } else if (arg == L"--taa") {
                 config.postFxTaa = true; // M55d: TAA + カメラジッタ (Deferred のみ)
             } else if (arg == L"--motion-blur" && i + 1 < argc) {
@@ -463,7 +466,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             // 連鎖の**末尾**に append する (統合契約の予約 7)。短絡なので位置がそのまま実行順
             && mye::RunLightSelectionSelfTest() // M54b
             && mye::RunTerrainSelfTest()        // M58b
-            && mye::RunDecalSelfTest();         // M56a
+            && mye::RunDecalSelfTest()          // M56a
+            && mye::RunHzbSelfTest();           // M56c
         return ok ? 0 : 1;
     }
 

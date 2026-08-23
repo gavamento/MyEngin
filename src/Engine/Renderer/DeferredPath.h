@@ -2,6 +2,7 @@
 #include <vector>
 #include <wrl/client.h>
 
+#include "Engine/Renderer/HzbPass.h"
 #include "Engine/Renderer/MeshInstancing.h"
 #include "Engine/Renderer/RenderPath.h"
 #include "Engine/Renderer/RenderTexture.h"
@@ -28,6 +29,8 @@ public:
     // TAA / モーションブラー v2 / RT の物体モーションは **Deferred 限定**の機能になる
     bool WritesVelocity() const override { return true; }
     ID3D11ShaderResourceView* VelocitySRV() const override { return gbVelocity_.SRV(); }
+    // M56c: HZB を組んだ GPU 時間 (ProfilerWindow 表示用)。組まないフレームは前の値が残る
+    float HzbGpuMs() const override { return hzb_.GpuMs(); }
 
 private:
     // M56a: デカール (投影ボックス)。ジオメトリパス直後・SSAO 前に albedo を上描きする。
@@ -97,6 +100,12 @@ private:
     Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> gbNormalCopySrv_;
     int normalCopyW_ = 0;
     int normalCopyH_ = 0;
+    // ---- M56c: HZB (min-Z ピラミッド) ----
+    // 本番の消費者 (SSR) は M56d。**このサブでは view.hzbDebug != 0 のときしか組まない**ので、
+    // 既定の絵は 1 命令も増えない。可視化シェーダは velocityDebugShader_ と同じ立ち位置
+    HzbPass hzb_;
+    AssetID hzbDebugShader_ = {};
+    Microsoft::WRL::ComPtr<ID3D11Buffer> hzbDebugCB_;
     SkyboxPass skybox_; // ライトパス後・透明前に空を塗る (M29d)
     // 地形 (M58c)。GBuffer へ専用シェーダで書く — 不透明パスは material->shader を
     // 見ないのでマテリアル経由では通せない (TerrainPass.h の頭のコメント参照)

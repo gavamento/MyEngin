@@ -1,6 +1,7 @@
 #include "Editor/EditorApp.h"
 
 #include <algorithm>
+#include <cstdio> // M56c: HZB のミップ番号入りメニューラベルを訳文書式から組む
 #include <filesystem>
 #include <vector>
 
@@ -35,6 +36,15 @@
 #include "ImGuizmo/ImGuizmo.h"
 
 namespace mye {
+namespace {
+
+// M56c: Rendering > HZB に並べる段数。960x540 のピラミッドは 11 段あるが、上の方は
+// 数テクセルしか無くて可視化しても情報が無い — 「段ごとに四角が倍になる」が読み取れる
+// 範囲だけをメニューに出す。それより上を見たいときは --hzb-debug N で任意の段を指定できる
+// (指定が段数を超えたら DeferredPath 側が最上段で頭打ちにする)
+constexpr int kHzbDebugMenuMips = 6;
+
+} // namespace
 
 void EditorApp::OnStart(EngineContext& ctx)
 {
@@ -632,6 +642,26 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
                 if (ImGui::MenuItem(Tr(StrId::Taa_Enable), nullptr, taa != 0)) {
                     taa = (taa != 0) ? 0 : 1;
                 }
+            }
+            // M56c: HZB (min-Z ピラミッド) の可視化。段を選べないと「段が積めているか」を
+            // 確かめられない (velocity と違い、絵が変わらないのが正常な段も混ざる) ので
+            // トグルではなくサブメニューにする。ピラミッド自体もここが 0 でない間しか組まない
+            if (ImGui::BeginMenu(Tr(StrId::Hzb_Debug))) {
+                int& hzb = ctx.renderSystem->hzbDebugMip;
+                if (ImGui::MenuItem(Tr(StrId::Hzb_DebugOff), nullptr, hzb == 0)) {
+                    hzb = 0;
+                }
+                for (int m = 0; m < kHzbDebugMenuMips; ++m) {
+                    // 訳文が書式 ("Mip %d" / "ミップ %d")。ImGui の ID はラベル全体なので、
+                    // 段ごとに文字列が違う = 衝突しない (言語で ID が変わるが、この
+                    // メニューは状態を持たないので影響しない)
+                    char label[32] = {};
+                    std::snprintf(label, sizeof(label), Tr(StrId::Hzb_DebugMip), m);
+                    if (ImGui::MenuItem(label, nullptr, hzb == m + 1)) {
+                        hzb = m + 1;
+                    }
+                }
+                ImGui::EndMenu();
             }
             ImGui::EndMenu();
         }

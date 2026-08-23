@@ -93,6 +93,10 @@ struct EngineConfig {
     // M55c: velocity バッファ (GBuffer RT4) の可視化 (--velocity-debug)。0=off。
     // Deferred パスのみ効く。TAA / モーションブラー v2 が入るまでの唯一の目視口
     int velocityDebug = 0;
+    // M56c: HZB (min-Z ピラミッド) の可視化 (--hzb-debug N)。0=off / N=ミップ N-1 を表示。
+    // Deferred パスのみ効く。**0 のときはピラミッドを組みもしない** = 従来と 1 命令も違わない。
+    // SSR (M56d) が入るまでは、これが「本当に段が積めているか」の唯一の目視口になる
+    int hzbDebug = 0;
     // M55d: TAA (--taa)。**Deferred のみ** (画面速度が GBuffer RT4 にしかない)。
     // シーンカメラに CameraPostFx があればそちらの taaOn が勝つ (ポスプロ設定と同じ規則)
     bool postFxTaa = false;

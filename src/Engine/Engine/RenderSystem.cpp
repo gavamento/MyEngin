@@ -883,6 +883,7 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
     view.ssaoEnabled = enableSsao ? 1 : 0; // M38e (Deferred のみ消費)
     view.instancingEnabled = enableInstancing ? 1 : 0; // M38f
     view.velocityDebug = velocityDebugMode;            // M55c (Deferred のみ消費)
+    view.hzbDebug = hzbDebugMip;                       // M56c (Deferred のみ消費)
     // M40d: シーンカメラの CameraPostFx から SSAO パラメータ (override = エディタ視界は既定)
     if (!cameraOverride && !camEntity.IsNull()) {
         if (const auto* pfx = world.GetComponent<CameraPostFxComponent>(camEntity)) {
@@ -1002,6 +1003,10 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
     // M55d: 画面速度 (GBuffer RT4) はパスが所有する — 描いた後でないと SRV が無い。
     // TAA (ポスプロ) がこの後で読む。Forward は null = TAA は自然に不成立になる
     view.velocitySRV = path.VelocitySRV();
+    // M56c: HZB の GPU 時間を写す。Forward は既定の 0 を返すので、パスを切り替えると
+    // 行が消えるのではなく 0.000 ms になる (「計っていない」と「速い」の区別は
+    // ProfilerWindow が hzbDebugMip で行を出し分けることで付けている)
+    hzbGpuMs_ = path.HzbGpuMs();
 
     // VFX (M29c): Sprite/Trail/TextMesh をメッシュ (不透明+透明) の後・パーティクルの前に
     // 重ねる。HDR 中間へ描かれ postfx を通る。RT はパスがバインドしたまま

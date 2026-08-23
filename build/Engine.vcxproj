@@ -145,6 +145,7 @@
     <ClCompile Include="..\src\Engine\Renderer\GpuResources.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\GpuTimer.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\GraphicsDevice.cpp" />
+    <ClCompile Include="..\src\Engine\Renderer\HzbPass.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\ImageDiff.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\ImageDiffSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\ImageWrite.cpp" />
@@ -307,6 +308,7 @@
     <ClInclude Include="..\src\Engine\Renderer\GpuResources.h" />
     <ClInclude Include="..\src\Engine\Renderer\GpuTimer.h" />
     <ClInclude Include="..\src\Engine\Renderer\GraphicsDevice.h" />
+    <ClInclude Include="..\src\Engine\Renderer\HzbPass.h" />
     <ClInclude Include="..\src\Engine\Renderer\ImageDiff.h" />
     <ClInclude Include="..\src\Engine\Renderer\ImageDiffSelfTest.h" />
     <ClInclude Include="..\src\Engine\Renderer\ImageWrite.h" />

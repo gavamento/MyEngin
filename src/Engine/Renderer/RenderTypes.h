@@ -247,6 +247,12 @@ struct RenderView {
     //      1 命令も発行せずに return する) — golden 全枚がビット一致し続ける根拠。
     //      Forward は v1 非対応なのでここを読まない (engine_spec.md §6.4) ----
     const struct DecalDrawList* decals = nullptr;
+    // ---- M56c: HZB (min-Z ピラミッド) の可視化 (末尾 append。0 = 何も起きない) ----
+    //      0 = off / N = ミップ N-1 を画面へ貼る。**このサブではピラミッドを作るかどうかも
+    //      この値だけで決まる** — 0 なら確保も CS ディスパッチも 1 つも走らない
+    //      (本番の消費者 = SSR は M56d。そちらが入ったら ssrOn も「作る」条件に加わる)。
+    //      Deferred のみ。depthSRV が null の経路 (AssetPreview) では自然に無効化される
+    int32_t hzbDebug = 0;
 };
 
 // ---- デカール (M56a) ----

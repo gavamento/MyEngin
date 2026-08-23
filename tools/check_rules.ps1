@@ -195,6 +195,16 @@ $constGroups = @(
             'assets\shaders\terrain_common.hlsli' = '#\s*define\s+MYE_TERRAIN_LAYERS\s+(\d+)'
             'src\Engine\Engine\Asset\TerrainAsset.h' = 'constexpr\s+uint32_t\s+kMaxLayers\s*=\s*(\d+)'
         }
+    },
+    @{
+        # M56c: HZB の縮小 CS のスレッドグループ辺長。C++ はディスパッチ数の切り上げに、
+        # HLSL は numthreads に使う。食い違うと**画面の右端・下端だけ**が縮小されずに
+        # 前フレームの値が残る — 絵は普通に出てしまうので、機械照合が唯一の防波堤
+        label = 'kHzbThreadGroupSize / MYE_HZB_TG'
+        sites = @{
+            'src\Engine\Renderer\HzbPass.h'     = 'constexpr\s+int\s+kHzbThreadGroupSize\s*=\s*(\d+)'
+            'assets\shaders\hzb_reduce.cs.hlsl' = '#\s*define\s+MYE_HZB_TG\s+(\d+)'
+        }
     }
 )
 foreach ($g in $constGroups) {

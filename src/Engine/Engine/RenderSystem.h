@@ -162,9 +162,15 @@ public:
     // 0 = off。Deferred のみ。velocity を読む本番の消費者はまだ居ない (M55d/M55e/M55f)
     // ので、これが唯一の「本当に書けているか」の目視口になる
     int velocityDebugMode = 0;
+    // M56c: HZB (min-Z ピラミッド) の可視化 (--hzb-debug N / Rendering メニュー)。
+    // 0 = off / N = ミップ N-1 を表示。Deferred のみ。**0 のときはピラミッドを組みもしない** —
+    // HZB を読む本番の消費者 (SSR) は M56d まで居ないので、これが唯一の目視口になる
+    int hzbDebugMip = 0;
 
     // M44d: ポストプロセス解決の GPU 時間 (直近の Resolve、ProfilerWindow 表示用)
     float PostFxGpuMs() const { return postFx_.ResolveGpuMs(); }
+    // M56c: HZB を組んだ GPU 時間 (パスが持つ計測を Render 直後に写したもの)
+    float HzbGpuMs() const { return hzbGpuMs_; }
     // M46b: レイトレの統計 (ProfilerWindow 表示用)
     float RtDebugGpuMs() const { return rtPasses_.DebugGpuMs(); }
     float RtGiGpuMs() const { return rtPasses_.GiGpuMs(); }
@@ -207,6 +213,11 @@ private:
     // 毎フレーム 2 行出続ける。出たことのある組み合わせを覚えて 1 回ずつだけ出す
     uint64_t lightLogSeen_[8] = {};
     int lightLogSeenCount_ = 0;
+    // M56c: HZB を組んだ GPU 時間。パス側 (DeferredPath::hzb_) の計測を Render 直後に写す。
+    // ここに置くのは ProfilerWindow が IRenderPath を持っていないから (postFx_ / rtPasses_ の
+    // ように RenderSystem がパスを所有していれば直接読めるが、パスは呼び出し側の持ち物)。
+    // 複数ビューを描くフレームでは最後に描いたビューの値が残る (PostFxGpuMs と同じ規約)
+    float hzbGpuMs_ = 0.0f;
 
     RenderQueue queue_;     // フレーム毎に再利用 (アロケーション回避)
     PostProcess postFx_;    // HDR 中間 + トーンマップ (遅延 Init)
