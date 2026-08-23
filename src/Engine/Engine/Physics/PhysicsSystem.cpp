@@ -33,6 +33,10 @@ constexpr int kSolverIterations = 8;
 constexpr int kPositionIterations = 8;
 // サブステップ数の上限 (M59g2)。PhysicsEnvironment のフィールドをここでクランプする
 constexpr int kMaxSubsteps = 16;
+// ジャイロ項の Newton 反復数 (M59f1)。収束判定による早期終了はしない = 決定論。
+// ★**2 以上でないと陰的中点にならない** — 1 反復目は ω̄ = ω₀ なので後退 Euler と同じ式に
+//   なり、保存性が出てこない (実測: 1 反復だと無トルクの箱の |L| が 4 秒で 7.3% 落ちる)
+constexpr int kGyroIterations = 3;
 constexpr float kPenetrationSlop = 0.0005f; // 微小めり込みは許容 (ジッタ抑制)
 // |vn| がこの閾値未満の接触は反発 0 扱い (micro-bounce 除去 = 静止安定の柱。~2g·dt)
 constexpr float kRestitutionVelThreshold = 0.3f;
@@ -151,6 +155,16 @@ struct Body {
     float wx = 0, wy = 0, wz = 0;  // 作業用角速度 (rad/s、ワールド)
     float invMass = 0;             // 0 = 不動 (静的 / kinematic)
     float invI[3][3] = {};         // ワールド逆慣性テンソル (freezeRot は零行列)
+    // M59f1: 主軸ローカルの対角慣性。ジャイロ項は逆テンソルでは書けない (ω×Iω に I 自身が
+    // 要る) ので invI とは別に持つ。freezeRot / kinematic は 0 のまま
+    float Ilx = 0, Ily = 0, Ilz = 0;
+    // M59f1: 質量中心。comL* = ローカル (スケール適用済み)、com* = 形状原点からのワールド
+    // オフセット。**hasCom が false のあいだ com* は必ず +0.0f** — 腕の計算が
+    // `p - pose.p - com` で従来とビット同一になるのはこの前提に依る (x - (+0.0f) == x)
+    bool hasCom = false;
+    bool gyro = false;
+    float comLx = 0, comLy = 0, comLz = 0;
+    float comx = 0, comy = 0, comz = 0;
     float restitution = 0;
     float friction = 0.5f;         // クーロン摩擦係数 (Collider から。ペアは sqrt(μa·μb))
     int32_t layer = 0;             // 衝突レイヤー (M36a、Collider から複製)
@@ -207,6 +221,30 @@ void InvInertiaWorld(const ShapePose& pose, float ix, float iy, float iz, float 
                       + inv[2] * B[2][r] * B[2][c];
         }
     }
+}
+
+// 3x3 の線形方程式 A x = b を Cramer で解く (M59f1)。除算しか増やさないので決定論的。
+// 行列式がほぼ 0 なら false を返して呼び側が「何もしない」を選べるようにする
+bool Solve3x3(const float a[3][3], const float b[3], float out[3])
+{
+    const float c00 = a[1][1] * a[2][2] - a[1][2] * a[2][1];
+    const float c01 = a[1][2] * a[2][0] - a[1][0] * a[2][2];
+    const float c02 = a[1][0] * a[2][1] - a[1][1] * a[2][0];
+    const float det = a[0][0] * c00 + a[0][1] * c01 + a[0][2] * c02;
+    if (det > -1e-12f && det < 1e-12f) {
+        return false;
+    }
+    const float inv = 1.0f / det;
+    const float c10 = a[0][2] * a[2][1] - a[0][1] * a[2][2];
+    const float c11 = a[0][0] * a[2][2] - a[0][2] * a[2][0];
+    const float c12 = a[0][1] * a[2][0] - a[0][0] * a[2][1];
+    const float c20 = a[0][1] * a[1][2] - a[0][2] * a[1][1];
+    const float c21 = a[0][2] * a[1][0] - a[0][0] * a[1][2];
+    const float c22 = a[0][0] * a[1][1] - a[0][1] * a[1][0];
+    out[0] = (c00 * b[0] + c10 * b[1] + c20 * b[2]) * inv;
+    out[1] = (c01 * b[0] + c11 * b[1] + c21 * b[2]) * inv;
+    out[2] = (c02 * b[0] + c12 * b[1] + c22 * b[2]) * inv;
+    return true;
 }
 
 void MulInvI(const float m[3][3], float x, float y, float z, float& ox, float& oy, float& oz)
@@ -462,6 +500,17 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             b.invMass = rb->isKinematic ? 0.0f : (1.0f / mass);
             b.restitution = SelectRestitution(col, rb, mat);
             b.freezeRot = rb->freezeRotation || rb->isKinematic;
+            // M59f1: ジャイロ項と質量中心オフセット。**どちらも既定は無効**で、
+            // 無効のあいだは以降の分岐が全て従来側へ落ちる (ビット同一)
+            b.gyro = rb->gyroscopic;
+            if (rb->centerOfMass.x != 0.0f || rb->centerOfMass.y != 0.0f
+                || rb->centerOfMass.z != 0.0f) {
+                // ワールドスケールを掛けてローカルオフセットを作る (形状の寸法と同じ扱い)
+                b.comLx = rb->centerOfMass.x * wscale.x;
+                b.comLy = rb->centerOfMass.y * wscale.y;
+                b.comLz = rb->centerOfMass.z * wscale.z;
+                b.hasCom = true;
+            }
             if (col && !col->isTrigger) {
                 b.solid = true;
                 b.col = col;
@@ -635,7 +684,15 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                 float ix, iy, iz;
                 LocalInertiaDiag(b.col, b.pose, 1.0f / b.invMass, ix, iy, iz);
                 InvInertiaWorld(b.pose, ix, iy, iz, b.invI);
+                b.Ilx = ix; // M59f1: ジャイロ項は I 自身が要る
+                b.Ily = iy;
+                b.Ilz = iz;
             } // freezeRot / kinematic は零行列のまま = 角応答なし
+            if (b.hasCom) {
+                // 形状原点 → 質量中心のワールドオフセット。姿勢が変わるたび取り直す
+                QuatRotate(b.qx, b.qy, b.qz, b.qw, b.comLx, b.comLy, b.comLz, b.comx, b.comy,
+                           b.comz);
+            }
         }
 
         // ---- ConstantForce (M29a): 定常な力/トルク (M59g2 以降は h 刻みで積む)。opt-in — 非所持ボディは
@@ -768,7 +825,26 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                 ac.normalCoeff = cd * 0.5f;
                 ac.tangentCoeff = aero->skinFriction;
                 AeroAccum acm;
-                AccumulateShapeAero(ap, b.vx, b.vy, b.vz, b.wx, b.wy, b.wz, ac, acm);
+                // ★M59f1: カーネルは「ap の原点まわり」で速度もトルクも組む。質量中心が
+                //   ずれているときは (a) 原点における速度 v - ω×com を渡し、
+                //   (b) 返ってきたトルクを τ - com×F で質量中心まわりへ移す。
+                //   これで面の速度 v + ω×(p - com) とモーメント腕の両方が正しくなる
+                float avx = b.vx, avy = b.vy, avz = b.vz;
+                if (b.hasCom) {
+                    float wcx, wcy, wcz;
+                    Cross(b.wx, b.wy, b.wz, b.comx, b.comy, b.comz, wcx, wcy, wcz);
+                    avx -= wcx;
+                    avy -= wcy;
+                    avz -= wcz;
+                }
+                AccumulateShapeAero(ap, avx, avy, avz, b.wx, b.wy, b.wz, ac, acm);
+                if (b.hasCom) {
+                    float ccx, ccy, ccz;
+                    Cross(b.comx, b.comy, b.comz, acm.fx, acm.fy, acm.fz, ccx, ccy, ccz);
+                    acm.tx -= ccx;
+                    acm.ty -= ccy;
+                    acm.tz -= ccz;
+                }
                 // 面積倍率は力もトルクも線形なので後掛けでよい
                 const float as = aero->areaScale;
                 float dvx = acm.fx * as * b.invMass * h;
@@ -896,9 +972,11 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                     ny *= ninv;
                     nz *= ninv;
                     // パネル点の速度 (親剛体の剛体運動) から見た相対風
-                    const float rx = wpos.x - body->pose.px;
-                    const float ry = wpos.y - body->pose.py;
-                    const float rz = wpos.z - body->pose.pz;
+                    // M59f1: 腕は**質量中心から**測る。com は hasCom が false なら +0.0f
+                    // 固定なので、この 3 行は従来とビット同一のまま
+                    const float rx = wpos.x - body->pose.px - body->comx;
+                    const float ry = wpos.y - body->pose.py - body->comy;
+                    const float rz = wpos.z - body->pose.pz - body->comz;
                     float wr0, wr1, wr2;
                     Cross(body->wx, body->wy, body->wz, rx, ry, rz, wr0, wr1, wr2);
                     const float ux = body->vx + wr0 - wndX;
@@ -1040,11 +1118,11 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             if (jy > maxJ) {
                 jy = maxJ;
             }
-            // 作用点は浮力中心 (没水部分の体積重心)。**v1 では復原モーメントが出ない** —
-            // 重心の水平ずれを近似が拾わないので r と力がどちらも +Y = 外積が恒等 0 になる。
-            // この形にしてあるのは、M59f1 の質量中心オフセットが入った時点で
-            // 「r = 浮力中心 - 質量中心」が自然に水平成分を持ち、式を変えずに効き出すため
-            ApplyImpulse(b, 0.0f, centroidY - bp.py, 0.0f, 0.0f, jy, 0.0f, 1.0f);
+            // 作用点は浮力中心 (没水部分の体積重心)。腕は **質量中心から** 測る。
+            // ★M59f1 でここが効き出した: centerOfMass を下げた浮体は r が水平成分を持ち、
+            //   r × (0, jy, 0) が**復原モーメント**になる (式は M59b2 から 1 文字も変えていない)。
+            //   質量中心が形状原点のままなら r は +Y のみ = 外積が恒等 0 で従来どおり
+            ApplyImpulse(b, -b.comx, centroidY - bp.py - b.comy, -b.comz, 0.0f, jy, 0.0f, 1.0f);
             // 水中抗力: 没水割合で按分した閉形式 implicit (静水前提 = 流れの場は持たない)
             if (buoy->linearDrag > 0.0f) {
                 const float scale = 1.0f / (1.0f + buoy->linearDrag * frac * h);
@@ -1058,6 +1136,65 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                 b.wy *= scale;
                 b.wz *= scale;
             }
+        }
+
+        // ---- ジャイロ項 ω×Iω (M59f1): **陰的**に解く。opt-in (Rigidbody.gyroscopic) ----
+        // 剛体の回転方程式は I ω̇ + ω×Iω = τ。従来はこの第 2 項を丸ごと落としていた
+        // (= 対称でない物体が回っても軸が動かない)。陽的に足すとエネルギーが単調に増えて
+        // 必ず発散するので、後退 Euler を Newton で解く:
+        //   f(ω) = I ω - I ω₀ + h (ω̄ × I ω̄) = 0    (ω̄ = (ω + ω₀)/2)
+        //   J     = I + (h/2) ( skew(ω̄)·I - skew(I ω̄) )
+        // ★中点を使う (**後退 Euler ではない**)。後退 Euler は無条件安定だが保存則を
+        //   1 つも持たず、実測で無トルクの箱の |L| が 4 秒に 7.3% 落ちた。陰的中点は
+        //   この系の二次不変量 (|L|²・回転エネルギー) を保つので、同じコストで
+        //   「無トルクなら L は保存する」を試験に書けるようになる。
+        //   ※1 反復目は ω̄ = ω₀ で後退 Euler と同一 — 中点が効くのは 2 反復目から
+        // 主軸ローカル (I が対角) で解いてワールドへ戻す。反復数は固定 (収束判定なし)
+        for (Body& b : bodies) {
+            if (!b.rb || !b.gyro || b.freezeRot || b.invMass == 0.0f) {
+                continue;
+            }
+            const float* B[3] = { b.pose.bx, b.pose.by, b.pose.bz };
+            const float I[3] = { b.Ilx, b.Ily, b.Ilz };
+            // ワールド → 主軸ローカル (基底は正規直交なので転置が逆行列)
+            float w[3] = { b.wx * B[0][0] + b.wy * B[0][1] + b.wz * B[0][2],
+                           b.wx * B[1][0] + b.wy * B[1][1] + b.wz * B[1][2],
+                           b.wx * B[2][0] + b.wy * B[2][1] + b.wz * B[2][2] };
+            const float Iw0[3] = { I[0] * w[0], I[1] * w[1], I[2] * w[2] };
+            const float w0[3] = { w[0], w[1], w[2] };
+            const float hh = h * 0.5f;
+            for (int it = 0; it < kGyroIterations; ++it) {
+                // 中点の角速度で ω×Iω を評価する
+                const float wm[3] = { (w[0] + w0[0]) * 0.5f, (w[1] + w0[1]) * 0.5f,
+                                      (w[2] + w0[2]) * 0.5f };
+                const float Iwm[3] = { I[0] * wm[0], I[1] * wm[1], I[2] * wm[2] };
+                float cx, cy, cz;
+                Cross(wm[0], wm[1], wm[2], Iwm[0], Iwm[1], Iwm[2], cx, cy, cz);
+                const float f[3] = { I[0] * w[0] - Iw0[0] + h * cx,
+                                     I[1] * w[1] - Iw0[1] + h * cy,
+                                     I[2] * w[2] - Iw0[2] + h * cz };
+                // J = diag(I) + (h/2) ( skew(ω̄)diag(I) - skew(Iω̄) )。行 i の非対角は
+                // 共通因子 (I_{i+2} - I_{i+1}) を持つ — 主軸慣性が全て等しい球では
+                // J が対角 = f も恒等 0 になり、**球には何も起こらない**のが構造から言える
+                const float d0 = I[2] - I[1];
+                const float d1 = I[0] - I[2];
+                const float d2 = I[1] - I[0];
+                const float J[3][3] = {
+                    { I[0], hh * wm[2] * d0, hh * wm[1] * d0 },
+                    { hh * wm[2] * d1, I[1], hh * wm[0] * d1 },
+                    { hh * wm[1] * d2, hh * wm[0] * d2, I[2] },
+                };
+                float dw[3];
+                if (!Solve3x3(J, f, dw)) {
+                    break; // 退化 (慣性 0 等) — 何もしないのが安全側
+                }
+                w[0] -= dw[0];
+                w[1] -= dw[1];
+                w[2] -= dw[2];
+            }
+            b.wx = w[0] * B[0][0] + w[1] * B[1][0] + w[2] * B[2][0];
+            b.wy = w[0] * B[0][1] + w[1] * B[1][1] + w[2] * B[2][1];
+            b.wz = w[0] * B[0][2] + w[1] * B[1][2] + w[2] * B[2][2];
         }
 
         // ---- SpringJoint (M29a): 距離バネ (速度レベル・ステートレス)。owner index 昇順。
@@ -1302,12 +1439,14 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             const float invCount = 1.0f / static_cast<float>(m.count);
             for (int k = 0; k < m.count; ++k) {
                 ContactPoint& p = c.pts[k];
-                p.ra[0] = m.pts[k].px - A.pose.px;
-                p.ra[1] = m.pts[k].py - A.pose.py;
-                p.ra[2] = m.pts[k].pz - A.pose.pz;
-                p.rb[0] = m.pts[k].px - B.pose.px;
-                p.rb[1] = m.pts[k].py - B.pose.py;
-                p.rb[2] = m.pts[k].pz - B.pose.pz;
+                // M59f1: 腕は質量中心から。com* は hasCom が false なら +0.0f 固定なので
+                // 「x - (+0.0f) == x」でビット同一 (-0.0f も保つ = 従来経路そのまま)
+                p.ra[0] = m.pts[k].px - A.pose.px - A.comx;
+                p.ra[1] = m.pts[k].py - A.pose.py - A.comy;
+                p.ra[2] = m.pts[k].pz - A.pose.pz - A.comz;
+                p.rb[0] = m.pts[k].px - B.pose.px - B.comx;
+                p.rb[1] = m.pts[k].py - B.pose.py - B.comy;
+                p.rb[2] = m.pts[k].pz - B.pose.pz - B.comz;
                 p.depth = m.pts[k].depth;
                 c.cpx += m.pts[k].px * invCount;
                 c.cpy += m.pts[k].py * invCount;
@@ -1316,12 +1455,12 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                                + EffectiveMassInv(B, p.rb[0], p.rb[1], p.rb[2], c.nx, c.ny, c.nz);
                 p.massN = (kn > 0.0f) ? 1.0f / kn : 0.0f;
             }
-            c.raC[0] = c.cpx - A.pose.px;
-            c.raC[1] = c.cpy - A.pose.py;
-            c.raC[2] = c.cpz - A.pose.pz;
-            c.rbC[0] = c.cpx - B.pose.px;
-            c.rbC[1] = c.cpy - B.pose.py;
-            c.rbC[2] = c.cpz - B.pose.pz;
+            c.raC[0] = c.cpx - A.pose.px - A.comx;
+            c.raC[1] = c.cpy - A.pose.py - A.comy;
+            c.raC[2] = c.cpz - A.pose.pz - A.comz;
+            c.rbC[0] = c.cpx - B.pose.px - B.comx;
+            c.rbC[1] = c.cpy - B.pose.py - B.comy;
+            c.rbC[2] = c.cpz - B.pose.pz - B.comz;
             {
                 const float kn = EffectiveMassInv(A, c.raC[0], c.raC[1], c.raC[2], c.nx, c.ny, c.nz)
                                + EffectiveMassInv(B, c.rbC[0], c.rbC[1], c.rbC[2], c.nx, c.ny, c.nz);
@@ -1542,9 +1681,20 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             if (b.invMass == 0.0f || !b.rb) {
                 continue;
             }
-            b.pose.px += b.vx * h;
-            b.pose.py += b.vy * h;
-            b.pose.pz += b.vz * h;
+            // ★M59f1: 回転の中心は**質量中心**であって形状原点ではない。オフセットが
+            //   あるときは「質量中心を v·h だけ前進 → 姿勢を積分 → 新しい姿勢で形状原点を
+            //   逆算」の順に組む。オフセットが無いときは従来の 3 行をそのまま通す —
+            //   `pose.p + 0.0f` が -0.0f を +0.0f に化けさせるので、共通化してはいけない
+            float comWx = 0.0f, comWy = 0.0f, comWz = 0.0f;
+            if (b.hasCom) {
+                comWx = b.pose.px + b.comx + b.vx * h;
+                comWy = b.pose.py + b.comy + b.vy * h;
+                comWz = b.pose.pz + b.comz + b.vz * h;
+            } else {
+                b.pose.px += b.vx * h;
+                b.pose.py += b.vy * h;
+                b.pose.pz += b.vz * h;
+            }
             if (!b.freezeRot) {
                 // q += 0.5·h·(ω_quat ⊗ q)、その後正規化 (全て scalar)
                 const float hx = b.wx * 0.5f * h, hy = b.wy * 0.5f * h, hz = b.wz * 0.5f * h;
@@ -1560,6 +1710,15 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                 } else {
                     b.qx = 0; b.qy = 0; b.qz = 0; b.qw = 1;
                 }
+            }
+            if (b.hasCom) {
+                // 新しい姿勢でのオフセットを引いて形状原点を戻す (com* 自体は次のサブ
+                // ステップ頭の pose 確定で取り直される)
+                float ox, oy, oz;
+                QuatRotate(b.qx, b.qy, b.qz, b.qw, b.comLx, b.comLy, b.comLz, ox, oy, oz);
+                b.pose.px = comWx - ox;
+                b.pose.py = comWy - oy;
+                b.pose.pz = comWz - oz;
             }
         }
 

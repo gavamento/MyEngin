@@ -854,6 +854,27 @@ the end of the component registration order, so existing scenes are untouched.
 | **No righting moment in v1** | The height-ratio approximation cannot see the horizontal shift of the centre of buoyancy, so a tilted raft keeps its tilt forever (only the angular water drag acts on it). The force is nonetheless applied *at the buoyancy centre* via `ApplyImpulse`, so the torque is provably zero today and starts working by itself once M59f1 adds a centre-of-mass offset. A true righting moment needs per-face pressure integration — that is M59c |
 | Buoyancy direction | Always **+Y**, magnitude scaled by `|gravity|`. The water surface is an axis-aligned Y plane in M59, so tilting the gravity vector while keeping a horizontal surface has no coherent reading |
 
+#### Gyroscopic term and centre of mass (M59f1)
+
+Two opt-in fields on `Rigidbody`. With their defaults (`gyroscopic = false`, `centerOfMass =
+(0,0,0)`) the wiring is **bit-neutral** — verified by building the field additions alone, recording
+the physics log, then building the wiring and diffing: every pre-existing measurement, including the
+four scene hashes, is identical.
+
+| Concept | Decision |
+|---|---|
+| The missing term | The rotational equation of motion is `I ω̇ + ω × Iω = τ`. The solver had always dropped the second term, so an asymmetric body spun about a fixed axis forever. `gyroscopic` restores it |
+| Why implicit | Adding `ω × Iω` explicitly injects energy every step and diverges. The solve runs in the body's principal frame, where `I` is diagonal, with a fixed Newton count and no convergence test |
+| **Implicit midpoint, not backward Euler** | The first Newton iteration is identical for both (`ω̄ = ω₀`), so the difference only appears from the second iteration on. It is worth paying for: backward Euler conserves nothing and lost **7.3 % of \|L\| in 4 s** and 23 % in 15 s on a torque-free tumbling box. The midpoint rule conserves this system's quadratic invariants, and the same box drifts **0.006 % over 15 s**. A symplectic scheme lets the energy *oscillate* rather than decay, so the test asserts a bounded energy, not a monotone one |
+| Spheres | `J` is diagonal and `f` is identically zero when the three principal moments are equal, so a sphere is unaffected by construction — not by a special case. Measured drift over 240 ticks: under 1e-5 rad/s, which is pure float rounding |
+| Tennis racket | Spinning a `(0.15, 0.5, 1.0)` box about its intermediate axis with a 0.2 % perturbation flips it; with the flag off it does not. The observable is `ω` **in the body frame** — in world space `L` is fixed, so the world-space components barely change sign |
+| COM as a branch, not a value | `centerOfMass` selects a different integration path rather than adding a zero. `p + 0.0f` turns `-0.0f` into `+0.0f`, so "adding zero is neutral" is never safe here (the same reason the environment is an existence gate). Lever arms use `p − pose.p − com` with `com` pinned to `+0.0f` while unused, because subtracting positive zero *is* bit-preserving |
+| Rotation centre | Bodies rotate about the centre of mass, so the shape origin is recovered from it after the attitude update: advance the COM by `v·h`, integrate `q`, then place the origin at `com − R·comLocal` |
+| Inertia convention | The tensor derived from the shape is taken to be **about the declared centre of mass** (Unity / PhysX convention). Offsetting the COM is a statement that the mass distribution differs from the shape, so there is nothing to apply the parallel-axis theorem to |
+| Where the arm now bites | Contact constraints, wing panels, buoyancy, and surface-sampling aerodynamics all measure `r` from the COM. For the surface kernel that means passing `v − ω×com` in and moving the returned torque by `τ − com×F` |
+| What stays central | Gravity, `ConstantForce`, `SpringJoint`, and the isotropic drag / Magnus terms act through the centre of mass and produce no moment. The isotropic model has no centre of pressure to separate from the COM — that is what the surface model is for |
+| Cashed promises | M59b2 noted that buoyancy could not produce a righting moment because `r` and the force were both `+Y`. Lowering the COM makes `r` horizontal and the raft self-rights: a 20° tilt decays to zero, while a centred raft holds the tilt **exactly**. M59c noted that a symmetric body gets no aerodynamic torque; offsetting the COM gives the plate a moment arm and equal-and-opposite weathercock moments fore and aft |
+
 #### Substepping (M59g2)
 
 `PhysicsEnvironment.substeps` splits one tick into N repetitions of *integrate → generate → solve →

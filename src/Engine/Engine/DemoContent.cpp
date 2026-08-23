@@ -1012,8 +1012,30 @@ void BuildPhysicsShowcaseScene(EngineContext& ctx)
         auto* rb = buoy.AddComponent<RigidbodyComponent>();
         // 半径 0.4 の球 = 0.268 m^3。その半分の水を押しのける重さ = 半没で釣り合う
         rb->mass = 134.0f;
+        // M59f1: 重心を球心より下げる = 復原モーメントが立つ (傾けても起き上がる浮き)
+        rb->centerOfMass = { 0.0f, -0.25f, 0.0f };
         auto* b = buoy.AddComponent<BuoyancyComponent>();
         b->linearDrag = 3.0f;
+    }
+
+    // ---- 4b. ジャイロ: 中間軸で回す平たい箱 (テニスラケット定理が replay に載る) ----
+    // 無重力にはできないので落下しながら回る。**ジャイロ項は opt-in** なので、
+    // このシーンに 1 体だけ置いて Debug/Release のビット一致を .rep で担保する
+    {
+        GameObject t = s.CreateGameObject("Tumbler");
+        t.SetLocalPosition(8.0f, 9.0f, 5.0f);
+        t.SetLocalScale(0.3f, 1.0f, 2.0f);
+        auto* mr = t.AddComponent<MeshRendererComponent>();
+        mr->mesh = cube;
+        mr->material = AssetID{ HashStr("pdemo_rubber") };
+        auto* col = t.AddComponent<ColliderComponent>();
+        col->shape = 1;
+        col->halfExtents = { 0.5f, 0.5f, 0.5f };
+        auto* rb = t.AddComponent<RigidbodyComponent>();
+        rb->mass = 1.0f;
+        rb->gyroscopic = true;
+        rb->angularDamping = 0.0f;
+        rb->angularVelocity = { 0.05f, 12.0f, 0.0f }; // 中間軸 (ローカル Y) + 擾乱
     }
 
     // ---- 5. 材料プリセット: ゴム球が鋼の床で弾む (静的側が e を主張する新能力) ----

@@ -187,6 +187,15 @@ void RegisterBuiltinComponents()
         MYE_JP("密度から質量", MYE_FIELD_TIP(RigidbodyComponent, useDensity, Bool,
                                              "mass = material density x scaled shape volume "
                                              "(needs a collider with a phys material)")),
+        // M59f1: ジャイロ項 + 質量中心オフセット (どちらも opt-in、末尾 append)
+        MYE_JP("ジャイロ効果",
+               MYE_FIELD_TIP(RigidbodyComponent, gyroscopic, Bool,
+                             "Integrate the gyroscopic term (omega x I omega). Off by default; "
+                             "a sphere is unaffected by construction")),
+        MYE_JP("質量中心",
+               MYE_FIELD_TIP(RigidbodyComponent, centerOfMass, Float3,
+                             "Local offset of the centre of mass from the shape origin. The "
+                             "inertia tensor is taken to be about this point")),
     });
 
     // M21: ゲーム内 UI。描画専用なので **kComponentNoHash** (既存シーンのハッシュ不変)。

@@ -3009,6 +3009,365 @@ bool RunPhysicsSelfTest()
         }
     }
 
+    // ================= M59f1: ジャイロ項 + 質量中心オフセット =================
+    // どちらも Rigidbody の opt-in フィールド。既定 (false / (0,0,0)) では
+    // **配線が 1 ビットも動かさない**ことを 2 段階ビルドで確認済み
+    // (フィールドだけ足したビルドと配線後のビルドで [phys] ログが完全一致)。
+    {
+        // ローカルベクトルを姿勢で回す (試験側で重心のワールド位置を出すため)
+        auto rotQ = [](const DirectX::XMFLOAT4& q, float vx, float vy, float vz, float& ox, float& oy,
+                       float& oz) {
+            const float tx = 2.0f * (q.y * vz - q.z * vy);
+            const float ty = 2.0f * (q.z * vx - q.x * vz);
+            const float tz = 2.0f * (q.x * vy - q.y * vx);
+            ox = vx + q.w * tx + (q.y * tz - q.z * ty);
+            oy = vy + q.w * ty + (q.z * tx - q.x * tz);
+            oz = vz + q.w * tz + (q.x * ty - q.y * tx);
+        };
+
+        // -- 球にはジャイロ項が効かない (主軸慣性が全て等しい = J が対角、f が数学的に 0) --
+        // 浮動小数の丸めぶんしか動かないことを見る
+        {
+            Scene s;
+            GameObject envGo = s.CreateGameObjectTracked("Env");
+            envGo.AddComponent<PhysicsEnvironmentComponent>()->gravity = { 0.0f, 0.0f, 0.0f };
+            GameObject ball = MakeSphereBody(s, "G", 0, 0, 0, 0.5f);
+            s.GetWorld().ApplyStructuralChanges();
+            auto* rb = ball.GetComponent<RigidbodyComponent>();
+            rb->gyroscopic = true;
+            rb->angularDamping = 0.0f;
+            rb->angularVelocity = { 3.0f, 7.0f, -2.0f };
+            for (int i = 0; i < 240; ++i) {
+                phys.Update(s.GetWorld(), kDt);
+            }
+            const float dx = rb->angularVelocity.x - 3.0f;
+            const float dy = rb->angularVelocity.y - 7.0f;
+            const float dz = rb->angularVelocity.z + 2.0f;
+            MYE_LOG_INFO("  [phys] gyro sphere drift after 240 ticks: (%.2e, %.2e, %.2e)", dx, dy,
+                         dz);
+            check(std::fabs(dx) < 1e-4f && std::fabs(dy) < 1e-4f && std::fabs(dz) < 1e-4f,
+                  "gyro: a sphere is unaffected (equal principal moments)");
+        }
+
+        // -- テニスラケット定理: 中間軸まわりの回転は不安定で符号が反転する --
+        // 箱の主軸慣性は I ∝ (hy²+hz², hx²+hz², hx²+hy²)。(0.15, 0.5, 1.0) なら
+        // Iz < Iy < Ix なので **Y が中間軸**。わずかな擾乱で軸が反転する
+        {
+            auto racket = [&](bool gyro) {
+                Scene s;
+                GameObject envGo = s.CreateGameObjectTracked("Env");
+                envGo.AddComponent<PhysicsEnvironmentComponent>()->gravity = { 0.0f, 0.0f, 0.0f };
+                GameObject box = MakeBox(s, "R", 0, 0, 0, 0.15f, 0.5f, 1.0f);
+                s.GetWorld().ApplyStructuralChanges();
+                auto* rb = box.GetComponent<RigidbodyComponent>();
+                rb->gyroscopic = gyro;
+                rb->angularDamping = 0.0f;
+                rb->angularVelocity = { 0.02f, 10.0f, 0.0f }; // 中間軸 + 擾乱
+                const auto* lt = box.GetComponent<LocalTransform>();
+                bool flipped = false;
+                for (int i = 0; i < 900; ++i) {
+                    phys.Update(s.GetWorld(), kDt);
+                    // ★観測量は**ボディ座標系の** ω₂ — 反転するのは Euler 方程式の
+                    //   ω₂ であって、ワールドの y 成分ではない (無トルクなら L は
+                    //   ワールドで不動なので、ワールド ω はほとんど符号を変えない)
+                    float ax, ay, az;
+                    rotQ(lt->rotation, 0.0f, 1.0f, 0.0f, ax, ay, az);
+                    const float w2 = rb->angularVelocity.x * ax + rb->angularVelocity.y * ay
+                                   + rb->angularVelocity.z * az;
+                    if (w2 < 0.0f) {
+                        flipped = true;
+                    }
+                }
+                return flipped;
+            };
+            const bool flipOn = racket(true);
+            const bool flipOff = racket(false);
+            MYE_LOG_INFO("  [phys] tennis racket: gyro on flipped=%d / off flipped=%d",
+                         flipOn ? 1 : 0, flipOff ? 1 : 0);
+            check(flipOn, "gyro: the intermediate axis flips (tennis racket theorem)");
+            check(!flipOff, "gyro: and stays put with the term off (the test is not vacuous)");
+        }
+
+        // -- 角運動量とエネルギー: 陰的形は増えない (陽的だと必ず発散する) --
+        // 無トルクなら |L| = |I ω| は保存量。T = 1/2 ω·Iω は陰的形でわずかに減る
+        {
+            Scene s;
+            GameObject envGo = s.CreateGameObjectTracked("Env");
+            envGo.AddComponent<PhysicsEnvironmentComponent>()->gravity = { 0.0f, 0.0f, 0.0f };
+            GameObject box = MakeBox(s, "L", 0, 0, 0, 0.15f, 0.5f, 1.0f);
+            s.GetWorld().ApplyStructuralChanges();
+            auto* rb = box.GetComponent<RigidbodyComponent>();
+            rb->gyroscopic = true;
+            rb->angularDamping = 0.0f;
+            rb->angularVelocity = { 0.5f, 9.0f, 0.3f };
+            const auto* lt = box.GetComponent<LocalTransform>();
+            // I は箱の式そのまま (m=1、h=半辺)
+            const float Ii[3] = { (0.5f * 0.5f + 1.0f * 1.0f) / 3.0f,
+                                  (0.15f * 0.15f + 1.0f * 1.0f) / 3.0f,
+                                  (0.15f * 0.15f + 0.5f * 0.5f) / 3.0f };
+            auto measure = [&](float& outL, float& outT) {
+                // ワールドの主軸ベクトル (姿勢で回した基底) へ ω を射影して I を掛ける
+                float ax[3][3];
+                rotQ(lt->rotation, 1, 0, 0, ax[0][0], ax[0][1], ax[0][2]);
+                rotQ(lt->rotation, 0, 1, 0, ax[1][0], ax[1][1], ax[1][2]);
+                rotQ(lt->rotation, 0, 0, 1, ax[2][0], ax[2][1], ax[2][2]);
+                float L[3] = { 0, 0, 0 };
+                outT = 0.0f;
+                for (int k = 0; k < 3; ++k) {
+                    const float wk = rb->angularVelocity.x * ax[k][0]
+                                   + rb->angularVelocity.y * ax[k][1]
+                                   + rb->angularVelocity.z * ax[k][2];
+                    const float Lk = Ii[k] * wk;
+                    L[0] += Lk * ax[k][0];
+                    L[1] += Lk * ax[k][1];
+                    L[2] += Lk * ax[k][2];
+                    outT += 0.5f * Ii[k] * wk * wk;
+                }
+                outL = std::sqrt(L[0] * L[0] + L[1] * L[1] + L[2] * L[2]);
+            };
+            float l0 = 0, t0 = 0;
+            measure(l0, t0);
+            float maxT = t0;
+            float l240 = 0, t240 = 0;
+            for (int i = 0; i < 900; ++i) {
+                phys.Update(s.GetWorld(), kDt);
+                float lc = 0, tc = 0;
+                measure(lc, tc);
+                if (tc > maxT) {
+                    maxT = tc;
+                }
+                if (i == 239) {
+                    l240 = lc;
+                    t240 = tc;
+                }
+            }
+            float l1 = 0, t1 = 0;
+            measure(l1, t1);
+            MYE_LOG_INFO("  [phys] gyro |L| %.5f -> %.5f @240 -> %.5f @900 (peak T %.5f of %.5f)",
+                         l0, l240, l1, maxT, t0);
+            // ★陰的**中点**なのでこの系の二次不変量が保たれる。実測の |L| ドリフトは
+            //   900 tick (15 秒) で 0.006% — 後退 Euler (1 反復) だと同条件で
+            //   **4 秒に 7.3% / 15 秒に 23% 落ちた**ので、桁が 3 つ違う。
+            //   シンプレクティックな解法はエネルギーが**振動する**(単調減少ではない)
+            //   ので、断言は「増え続けない = 有界」で書く
+            check(std::fabs(l240 - l0) < l0 * 0.001f,
+                  "gyro: |L| is conserved over 4 s of torque-free tumbling");
+            check(std::fabs(l1 - l0) < l0 * 0.001f, "gyro: and still at 15 s (no secular drift)");
+            check(maxT <= t0 * 1.001f,
+                  "gyro: the rotational energy stays bounded (it oscillates, it does not grow)");
+        }
+
+        // -- 混在: gyroscopic を持たないボディの軌跡は 1 ビットも変わらない --
+        {
+            auto dumpOne = [](GameObject go, std::vector<uint8_t>& out) {
+                out.clear();
+                const auto* lt = go.GetComponent<LocalTransform>();
+                const auto* rb = go.GetComponent<RigidbodyComponent>();
+                auto push = [&](const void* p, size_t n) {
+                    const auto* b = static_cast<const uint8_t*>(p);
+                    out.insert(out.end(), b, b + n);
+                };
+                push(&lt->position, sizeof(lt->position));
+                push(&lt->rotation, sizeof(lt->rotation));
+                push(&rb->angularVelocity, sizeof(rb->angularVelocity));
+            };
+            Scene sa, sb;
+            GameObject plainA = MakeBox(sa, "Plain", 0, 3.0f, 0, 0.15f, 0.5f, 1.0f);
+            sa.GetWorld().ApplyStructuralChanges();
+            plainA.GetComponent<RigidbodyComponent>()->angularVelocity = { 0.02f, 10.0f, 0.0f };
+            GameObject plainB = MakeBox(sb, "Plain", 0, 3.0f, 0, 0.15f, 0.5f, 1.0f);
+            GameObject spun = MakeBox(sb, "Spun", 40.0f, 3.0f, 0, 0.15f, 0.5f, 1.0f);
+            sb.GetWorld().ApplyStructuralChanges();
+            plainB.GetComponent<RigidbodyComponent>()->angularVelocity = { 0.02f, 10.0f, 0.0f };
+            auto* srb = spun.GetComponent<RigidbodyComponent>();
+            srb->gyroscopic = true;
+            srb->angularDamping = 0.0f;
+            srb->angularVelocity = { 0.02f, 10.0f, 0.0f };
+            bool same = true;
+            std::vector<uint8_t> da, db;
+            for (int i = 0; i < 240 && same; ++i) {
+                phys.Update(sa.GetWorld(), kDt);
+                phys.Update(sb.GetWorld(), kDt);
+                dumpOne(plainA, da);
+                dumpOne(plainB, db);
+                if (da.empty() || da != db) {
+                    same = false;
+                    MYE_LOG_ERROR("  gyro mix diverged at tick %d", i);
+                }
+            }
+            check(same, "gyro: a body without the flag keeps its legacy trajectory bit-exactly "
+                        "next to a gyroscopic one (240 ticks)");
+        }
+
+        // ================= 質量中心オフセット =================
+
+        // -- 回転の中心は形状原点ではなく質量中心 --
+        // 重力・接触なしで ω だけ与えると、質量中心は動かず**形状原点がその周りを回る**
+        {
+            Scene s;
+            GameObject envGo = s.CreateGameObjectTracked("Env");
+            envGo.AddComponent<PhysicsEnvironmentComponent>()->gravity = { 0.0f, 0.0f, 0.0f };
+            GameObject box = MakeBox(s, "C", 0, 0, 0, 0.5f, 0.5f, 0.5f);
+            s.GetWorld().ApplyStructuralChanges();
+            auto* rb = box.GetComponent<RigidbodyComponent>();
+            rb->centerOfMass = { 0.5f, 0.0f, 0.0f };
+            rb->angularDamping = 0.0f;
+            rb->angularVelocity = { 0.0f, 2.0f, 0.0f };
+            const auto* lt = box.GetComponent<LocalTransform>();
+            float maxComDrift = 0.0f;
+            float minRadErr = 1e9f, maxRadErr = 0.0f;
+            float maxOriginX = -1e9f, minOriginX = 1e9f;
+            for (int i = 0; i < 240; ++i) {
+                phys.Update(s.GetWorld(), kDt);
+                float ox, oy, oz;
+                rotQ(lt->rotation, 0.5f, 0.0f, 0.0f, ox, oy, oz);
+                const float cx = lt->position.x + ox;
+                const float cy = lt->position.y + oy;
+                const float cz = lt->position.z + oz;
+                const float d = std::sqrt((cx - 0.5f) * (cx - 0.5f) + cy * cy + cz * cz);
+                if (d > maxComDrift) {
+                    maxComDrift = d;
+                }
+                const float r = std::sqrt(ox * ox + oy * oy + oz * oz);
+                const float e = std::fabs(r - 0.5f);
+                if (e < minRadErr) {
+                    minRadErr = e;
+                }
+                if (e > maxRadErr) {
+                    maxRadErr = e;
+                }
+                if (lt->position.x > maxOriginX) {
+                    maxOriginX = lt->position.x;
+                }
+                if (lt->position.x < minOriginX) {
+                    minOriginX = lt->position.x;
+                }
+            }
+            MYE_LOG_INFO("  [phys] com spin: centre drift %.2e, radius err %.2e, origin x in "
+                         "[%.4f, %.4f]",
+                         maxComDrift, maxRadErr, minOriginX, maxOriginX);
+            check(maxComDrift < 1e-3f, "com: the centre of mass stays put under pure rotation");
+            check(maxRadErr < 1e-3f, "com: the shape origin keeps its distance from it");
+            // 質量中心は (0.5,0,0) なので形状原点は半径 0.5 の円 = x が [0, 1] を舐める
+            check(minOriginX < 0.01f && maxOriginX > 0.99f,
+                  "com: and actually swings a full circle around it (not vacuous)");
+        }
+
+        // -- 重力は質量中心に効く = オフセットがあっても自由落下は回らない --
+        {
+            Scene s;
+            GameObject box = MakeBox(s, "F", 0, 10.0f, 0, 0.5f, 0.5f, 0.5f);
+            s.GetWorld().ApplyStructuralChanges();
+            auto* rb = box.GetComponent<RigidbodyComponent>();
+            rb->centerOfMass = { 0.4f, -0.3f, 0.2f };
+            for (int i = 0; i < 120; ++i) {
+                phys.Update(s.GetWorld(), kDt);
+            }
+            check(rb->angularVelocity.x == 0.0f && rb->angularVelocity.y == 0.0f
+                      && rb->angularVelocity.z == 0.0f,
+                  "com: gravity acts at the centre of mass, so free fall never spins up");
+        }
+
+        // -- 接触インパルスの腕が質量中心から測られる --
+        // ★被写体は**球**にする。箱だと 4 点マニフォールドの点毎 Jacobi が不均衡を
+        //   打ち消してしまい、腕の効果が正味の回転として出てこない (実測 0.0168 で
+        //   符号も直感と逆になった)。球なら接触点が 1 つ = τ = r × j がそのまま出る
+        {
+            auto landSpin = [&](float comX) {
+                Scene s;
+                MakeGround(s, "G", 0, -0.5f, 0, 5.0f, 0.5f, 5.0f);
+                GameObject ball = MakeSphereBody(s, "B", 0, 2.0f, 0, 0.5f);
+                s.GetWorld().ApplyStructuralChanges();
+                auto* rb = ball.GetComponent<RigidbodyComponent>();
+                rb->centerOfMass = { comX, 0.0f, 0.0f };
+                rb->angularDamping = 0.0f;
+                std::vector<SolidContact> cs;
+                for (int i = 0; i < 120; ++i) {
+                    phys.Update(s.GetWorld(), kDt, &cs);
+                    if (!cs.empty()) {
+                        return rb->angularVelocity.z; // 接触した最初の tick で見る
+                    }
+                }
+                return 0.0f;
+            };
+            const float w0 = landSpin(0.0f);
+            const float wp = landSpin(0.4f);
+            const float wn = landSpin(-0.4f);
+            MYE_LOG_INFO("  [phys] landing spin wz: com 0 = %.4f / +X = %.4f / -X = %.4f", w0, wp,
+                         wn);
+            check(w0 == 0.0f, "com: a centred sphere lands without spin (legacy path)");
+            check(std::fabs(wp) > 0.01f,
+                  "com: an offset centre of mass turns the landing impulse into a spin");
+            check(wp == -wn, "com: and the sign follows the offset");
+        }
+
+        // -- 浮力の復原モーメント: 重心が低い浮体は傾きを戻す (M59b2 の予告の回収) --
+        {
+            auto tiltAfter = [&](float comY) {
+                Scene s;
+                GameObject wgo = s.CreateGameObjectTracked("Water");
+                wgo.AddComponent<PhysicsEnvironmentComponent>()->waterPlaneY = 0.0f;
+                GameObject raft = MakeBox(s, "Raft", 0, 0.0f, 0, 1.0f, 0.25f, 1.0f);
+                raft.AddComponent<BuoyancyComponent>();
+                s.GetWorld().ApplyStructuralChanges();
+                auto* rb = raft.GetComponent<RigidbodyComponent>();
+                rb->mass = 500.0f; // 体積 1.0 m^3 の半分だけ沈む重さ
+                rb->centerOfMass = { 0.0f, comY, 0.0f };
+                // Z 軸まわりに 20 度傾けて放す
+                auto* lt = raft.GetComponent<LocalTransform>();
+                lt->rotation = { 0.0f, 0.0f, 0.17364818f, 0.98480775f };
+                float maxTilt = 0.17364818f;
+                for (int i = 0; i < 900; ++i) {
+                    phys.Update(s.GetWorld(), kDt);
+                    const float t = std::fabs(lt->rotation.z);
+                    if (t > maxTilt) {
+                        maxTilt = t;
+                    }
+                }
+                return std::fabs(lt->rotation.z);
+            };
+            const float flat = tiltAfter(0.0f);
+            const float low = tiltAfter(-0.2f);
+            MYE_LOG_INFO("  [phys] raft |sin(tilt/2)| after 900: com centred %.5f / lowered %.5f "
+                         "(released at 0.17365)",
+                         flat, low);
+            check(flat == 0.17364818f,
+                  "buoyancy: a centred centre of mass still produces no righting moment (M59b2)");
+            check(low < 0.17364818f * 0.5f,
+                  "buoyancy: lowering the centre of mass rights the raft (M59f1 cashes the note)");
+        }
+
+        // -- 面サンプリング空力: 重心オフセットが圧力中心とのずれを作り風見安定が出る --
+        // M59c で「対称形状にトルクが出ないのは正しい物理」と結論した件の続き。
+        // 圧力中心 (形状中心) と質量中心がずれれば、式を変えずにモーメントが立つ
+        {
+            auto weathercock = [&](float comZ) {
+                Scene s;
+                GameObject envGo = s.CreateGameObjectTracked("Env");
+                auto* e = envGo.AddComponent<PhysicsEnvironmentComponent>();
+                e->gravity = { 0.0f, 0.0f, 0.0f };
+                GameObject plate = MakeBox(s, "P", 0, 0, 0, 1.0f, 0.05f, 1.0f);
+                auto* aero = plate.AddComponent<AeroComponent>();
+                aero->surfaceModel = true;
+                s.GetWorld().ApplyStructuralChanges();
+                auto* rb = plate.GetComponent<RigidbodyComponent>();
+                rb->angularDamping = 0.0f;
+                rb->centerOfMass = { 0.0f, 0.0f, comZ };
+                rb->velocity = { 0.0f, -6.0f, 0.0f }; // 平板を面で押す流れ
+                phys.Update(s.GetWorld(), kDt);
+                return rb->angularVelocity.x;
+            };
+            const float w0 = weathercock(0.0f);
+            const float wb = weathercock(-0.8f); // 重心を後ろへ
+            const float wf = weathercock(0.8f);
+            MYE_LOG_INFO("  [phys] aero weathercock via com: centred %.5f / back %.5f / front %.5f",
+                         w0, wb, wf);
+            check(w0 == 0.0f, "aero: a symmetric plate about its own centre still gets no torque");
+            check(std::fabs(wb) > 1e-3f && wb == -wf,
+                  "aero: offsetting the centre of mass produces an equal and opposite moment");
+        }
+    }
+
     if (failCount == 0) {
         MYE_LOG_INFO("==== Physics self test: ALL PASS ====");
         return true;
