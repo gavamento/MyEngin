@@ -55,6 +55,7 @@
     <ClCompile Include="..\src\Editor\PartTagNames.cpp" />
     <ClCompile Include="..\src\Editor\PhysicsLayerNames.cpp" />
     <ClCompile Include="..\src\Editor\PlayModeController.cpp" />
+    <ClCompile Include="..\src\Editor\ProbeBakerSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\ProjectManager.cpp" />
     <ClCompile Include="..\src\Editor\ProjectRegistry.cpp" />
     <ClCompile Include="..\src\Editor\ProjectTemplates.cpp" />
@@ -100,6 +101,7 @@
     <ClInclude Include="..\src\Editor\PartTagNames.h" />
     <ClInclude Include="..\src\Editor\PhysicsLayerNames.h" />
     <ClInclude Include="..\src\Editor\PlayModeController.h" />
+    <ClInclude Include="..\src\Editor\ProbeBakerSelfTest.h" />
     <ClInclude Include="..\src\Editor\ProjectManager.h" />
     <ClInclude Include="..\src\Editor\ProjectRegistry.h" />
     <ClInclude Include="..\src\Editor\ProjectTemplates.h" />

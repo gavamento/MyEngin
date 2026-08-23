@@ -98,6 +98,17 @@ MYE_STR(Hzb_DebugOff,         "Off",                        "オフ")
 MYE_STR(Hzb_DebugMip,         "Mip %d",                     "ミップ %d")
 // M56d: SSR (スクリーンスペース反射)。接頭辞 Ssr_* も M56 の予約 (統合契約 予約 5)
 MYE_STR(Ssr_Enable,           "SSR (Deferred)",             "SSR (Deferred)")
+// M56e: 反射プローブのシーンキャプチャ。接頭辞 Probe_* も M56 の予約 (統合契約 予約 5)。
+// ★Probe_BakeHere は**トグルではなくボタン**の文言 — 自動ベイクの口はどこにも無い
+MYE_STR(Probe_BakeHere,       "Bake Reflection Probe Here",      "反射プローブをここでベイク")
+MYE_STR(Probe_Preview,        "Reflection Probe###ProbePreview", "反射プローブ###ProbePreview")
+MYE_STR(Probe_NotBaked,       "Nothing baked yet.",              "まだベイクしていません")
+MYE_STR(Probe_Position,       "Position: %.2f, %.2f, %.2f",      "位置: %.2f, %.2f, %.2f")
+MYE_STR(Probe_BakeMs,         "Bake: %.1f ms (CPU)",             "ベイク: %.1f ms (CPU)")
+MYE_STR(Probe_HdrNote,        "Raw HDR capture (linear, not tone mapped)",
+                              "生 HDR キャプチャ (リニア、トーンマップ無し)")
+MYE_STR(Probe_Baked,          "Reflection probe baked",          "反射プローブを焼きました")
+MYE_STR(Probe_BakeFailed,     "Reflection probe bake failed",    "反射プローブのベイクに失敗しました")
 
 // ---- 影 (M54e)。View > 影 サブメニュー。統合契約 予約 5 の接頭辞 Shadow_* ----
 // 統計行の書式指定子の並びは en / ja で一致必須 (規則 10 が機械検査する)

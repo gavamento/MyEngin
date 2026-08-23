@@ -265,6 +265,69 @@ void EditorApp::OnRenderViews(EngineContext& ctx)
     }
     gameView_.OnRenderViews(ctx); // GameView は常に本シーン (編集モードでも実行結果を見せる)
     preview_.OnRenderViews(ctx);  // アセットサムネイル生成 (D3D 描画はこのフェーズのみ)
+
+    // ---- 反射プローブのベイク (M56e) ----
+    // ★ここでしか焼かない (メニューのコールバックから直接呼ばない — 理由は EditorApp.h)。
+    //   焼くのは押された次の 1 フレームだけ = 「見えたら焼く」自動ベイクは存在しない
+    if (probeBakeRequested_) {
+        probeBakeRequested_ = false;
+        probeBaker_.assetsRoot = ctx.assetsRoot;
+        // キャプチャは Forward 固定 (共有 GBuffer を 128^2 へ縮めない。EngineLoop と同じ理由)
+        if (probeBaker_.Bake(ctx.scene->GetWorld(), *ctx.device, *ctx.renderPathForward,
+                             *ctx.shaders, *ctx.resources, sceneView_.CameraPosition(), 0.1f,
+                             500.0f, probePreview_)) {
+            showProbePreview_ = true;
+            toasts_.Notify(LogLevel::Info, Tr(StrId::Probe_Baked));
+        } else {
+            toasts_.Notify(LogLevel::Warn, Tr(StrId::Probe_BakeFailed));
+        }
+    }
+}
+
+// 焼いた 6 面のサムネイル (M56e)。**Inspector ではなく専用の小窓**にしてある —
+// 反射プローブのコンポーネント自体は M56f で入るので、それまで「どのエンティティの
+// インスペクタに出すか」が決まらない。並びは十字 (ProbeWriteFacesPng と同一) で、
+// 隣り合う面が画面上でも隣り合う = 面の向きが壊れていれば継ぎ目の段差で分かる
+void EditorApp::DrawProbePreview()
+{
+    if (!showProbePreview_) {
+        return;
+    }
+    if (!ImGui::Begin(Tr(StrId::Probe_Preview), &showProbePreview_)) {
+        ImGui::End();
+        return;
+    }
+    if (!probePreview_.valid) {
+        ImGui::TextUnformatted(Tr(StrId::Probe_NotBaked));
+        ImGui::End();
+        return;
+    }
+    ImGui::Text(Tr(StrId::Probe_Position), probePreview_.position.x, probePreview_.position.y,
+                probePreview_.position.z);
+    ImGui::Text(Tr(StrId::Probe_BakeMs), probeBaker_.LastBakeCpuMs());
+    ImGui::TextUnformatted(Tr(StrId::Probe_HdrNote));
+    static const int kCell[3][4] = {
+        { -1, 2, -1, -1 }, // +Y
+        { 1, 4, 0, 5 },    // -X +Z +X -Z (水平に一周するパノラマ)
+        { -1, 3, -1, -1 }, // -Y
+    };
+    const float side = 88.0f;
+    const ImVec2 base = ImGui::GetCursorScreenPos();
+    ImGui::Dummy(ImVec2(side * 4.0f, side * 3.0f)); // 先に領域を確保 (スクロール量が正しく出る)
+    for (int cy = 0; cy < 3; ++cy) {
+        for (int cx = 0; cx < 4; ++cx) {
+            const int f = kCell[cy][cx];
+            if (f < 0 || !probePreview_.faceSrv[f]) {
+                continue;
+            }
+            ImGui::SetCursorScreenPos(
+                ImVec2(base.x + static_cast<float>(cx) * side, base.y + static_cast<float>(cy) * side));
+            ImGui::Image(reinterpret_cast<ImTextureID>(probePreview_.faceSrv[f].Get()),
+                         ImVec2(side, side));
+        }
+    }
+    ImGui::SetCursorScreenPos(ImVec2(base.x, base.y + side * 3.0f));
+    ImGui::End();
 }
 
 // ---- ミニシーン編集モード (M48k) ----
@@ -428,6 +491,7 @@ void EditorApp::OnImGui(EngineContext& ctx)
     profiler_.OnImGui(ctx);
     timeline_.OnImGui(ctx, playMode_);
     net_.OnImGui(ctx);
+    DrawProbePreview();
     assetBrowser_.OnImGui(ctx, selection_, undo_, settings_.externalEditorCmd, preview_);
     // AssetBrowser で .scene.json がダブルクリックされたら未保存変更ガード経由で開く
     if (std::wstring p = assetBrowser_.TakePendingOpenScene(); !p.empty()) {
@@ -667,6 +731,14 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
             // CameraPostFx があればそちらの ssrOn が勝つ (TAA と同じ規則)。
             // on の間は HZB (min-Z ピラミッド) も一緒に組まれる
             ImGui::MenuItem(Tr(StrId::Ssr_Enable), nullptr, &ctx.renderSystem->enableSsr);
+            // M56e: 反射プローブを「今 SceneView が居る場所」で焼く。
+            // ★トグルではなく**明示ボタン**。自動ベイクにすると撮影ごとに焼き上がりが
+            //   変わって決定的撮影 (M52c) が壊れるので、口はここ 1 つだけにしてある。
+            //   押しても即座には焼かない — 次の OnRenderViews まで要求を持ち越す
+            if (ImGui::MenuItem(Tr(StrId::Probe_BakeHere))) {
+                probeBakeRequested_ = true;
+            }
+            ImGui::MenuItem(Tr(StrId::Probe_Preview), nullptr, &showProbePreview_);
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu(Tr(StrId::Menu_RtDebug))) {

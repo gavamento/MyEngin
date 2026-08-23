@@ -27,6 +27,7 @@
 #include "Editor/DecalSelfTest.h"
 #include "Editor/HzbSelfTest.h"
 #include "Editor/SsrSelfTest.h"
+#include "Editor/ProbeBakerSelfTest.h"
 #include "Engine/Engine/AnimatorControllerSelfTest.h"
 #include "Engine/Engine/AssetDatabaseSelfTest.h"
 #include "Engine/Engine/Audio/AudioSelfTest.h"
@@ -276,6 +277,21 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 config.hzbDebug = _wtoi(argv[++i]); // M56c: N=ミップ N-1 (Deferred のみ)
             } else if (arg == L"--ssr") {
                 config.ssr = true; // M56d: SSR (Deferred のみ。HZB も一緒に組まれる)
+            } else if (arg == L"--probe-bake" && i + 1 < argc) {
+                // M56e: 反射プローブを 1 回だけ焼く (引数は "X,Y,Z")。**明示指示専用** —
+                // 自動ベイクの口はどこにも無い (撮影ごとに焼き上がりが変わると決定的撮影が
+                // 壊れるため)。焼いた 6 面は PNG に落ちて継ぎ目の一致が機械判定される
+                config.probeBake = true;
+                float px = 0.0f, py = 0.0f, pz = 0.0f;
+                if (swscanf_s(argv[++i], L"%f,%f,%f", &px, &py, &pz) == 3) {
+                    config.probeBakePos[0] = px;
+                    config.probeBakePos[1] = py;
+                    config.probeBakePos[2] = pz;
+                }
+            } else if (arg == L"--probe-bake-frame" && i + 1 < argc) {
+                config.probeBakeFrame = _wtoi(argv[++i]); // M56e (既定 3 = --shot-frame と同じ)
+            } else if (arg == L"--probe-bake-png" && i + 1 < argc) {
+                config.probeBakePng = argv[++i]; // M56e (既定 testsctual\probe_faces.png)
             } else if (arg == L"--taa") {
                 config.postFxTaa = true; // M55d: TAA + カメラジッタ (Deferred のみ)
             } else if (arg == L"--motion-blur" && i + 1 < argc) {
@@ -471,7 +487,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             && mye::RunTerrainSelfTest()        // M58b
             && mye::RunDecalSelfTest()          // M56a
             && mye::RunHzbSelfTest()            // M56c
-            && mye::RunSsrSelfTest();           // M56d
+            && mye::RunSsrSelfTest()            // M56d
+            && mye::RunProbeBakerSelfTest();    // M56e
         return ok ? 0 : 1;
     }
 

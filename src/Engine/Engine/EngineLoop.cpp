@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <memory>
 
 #include "Engine/Core/AssetGuidResolver.h" // v8 PlayMusic の生クリップ経路 (GUID → 実パス)
 #include "Engine/Core/Check.h"
@@ -24,6 +25,7 @@
 #include "Engine/Engine/Physics/MeshColliderLibrary.h"
 #include "Engine/Engine/Physics/PhysicsSystem.h"
 #include "Engine/Engine/Prefab.h"
+#include "Engine/Engine/ProbeBaker.h"
 #include "Engine/Engine/Project.h"
 #include "Engine/Engine/RenderSystem.h"
 #include "Engine/Engine/Net/NetRollback.h"
@@ -550,6 +552,16 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     ReplayRecorder recorder;
     ReplayPlayer player;
     int exitCode = netFailed ? 1 : 0;
+
+    // ---- 反射プローブのベイカ (M56e、--probe-bake のときだけ実体を持つ) ----
+    // 専用の RenderSystem を内側に抱えるので、使わない実行では確保もしない
+    std::unique_ptr<ProbeBaker> probeBaker;
+    bool probeBaked = false;
+    if (config.probeBake) {
+        probeBaker = std::make_unique<ProbeBaker>();
+        probeBaker->assetsRoot = ctx.assetsRoot; // 地形もキャプチャに写す
+        memcpy(probeBaker->clearColor, config.clearColor, sizeof(probeBaker->clearColor));
+    }
     if (!config.replayVerifyPath.empty()) {
         if (!player.Load(config.replayVerifyPath)) {
             return 1;
@@ -1549,6 +1561,54 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                     swapChain.SaveBackbufferPng(config.screenshotPath);
                 }
             }
+            // ---- 反射プローブのベイク (M56e、--probe-bake) ----
+            // ★スクショ保存の**後**に置く。ベイクは RTV / ビューポート / ラスタライザを
+            //   総取り替えするので、撮影より前でやるとその日の PNG が説明のつかない形で
+            //   変わりうる。ここなら残るのは Present だけ = 撮影経路と完全に独立
+            if (probeBaker && !probeBaked
+                && ctx.frameIndex == static_cast<uint64_t>(config.probeBakeFrame)) {
+                probeBaked = true; // 成否によらず 1 回で打ち切る (自動リトライは決定性の敵)
+                BakedProbe probe;
+                const DirectX::XMFLOAT3 pos = { config.probeBakePos[0], config.probeBakePos[1],
+                                                config.probeBakePos[2] };
+                // ★キャプチャは **Forward パス固定**。Deferred で撮ると共有 GBuffer 5 枚が
+                //   128^2 へ縮んで次フレームに戻される (メイン描画の TAA / SSR 履歴を巻き添えに
+                //   する) うえ、プローブの 128^2 に SSAO も SSR も意味が無い
+                if (probeBaker->Bake(scene.GetWorld(), device, forwardPath, shaderManager,
+                                     resources, pos, 0.1f, 500.0f, probe)) {
+                    std::vector<float> faces;
+                    int faceSize = 0;
+                    ProbeSeamStats seam;
+                    if (ProbeReadFaces(device, probe, faces, faceSize)
+                        && ProbeSeamCheck(faces, faceSize, seam)) {
+                        const std::wstring png = config.probeBakePng.empty()
+                            ? std::wstring(L"tests\\actual\\probe_faces.png")
+                            : config.probeBakePng;
+                        ProbeWriteFacesPng(faces, faceSize, png);
+                        // 「継ぎ目の段差 / 面の中の段差」が 1 前後なら面の向きは合っている。
+                        // max は輪郭が継ぎ目をまたぐだけで跳ねるので参考値にとどめる
+                        const bool seamOk = seam.seamRatio < kProbeSeamRatioLimit;
+                        MYE_LOG_INFO("[probe] seam check %s: ratio %.3f (limit %.2f) = "
+                                     "seam %.5f / interior %.5f, max seam %.4f, "
+                                     "%d samples, mean luma %.4f",
+                                     seamOk ? "PASS" : "FAIL",
+                                     static_cast<double>(seam.seamRatio),
+                                     static_cast<double>(kProbeSeamRatioLimit),
+                                     static_cast<double>(seam.meanSeamDiff),
+                                     static_cast<double>(seam.meanInteriorDiff),
+                                     static_cast<double>(seam.maxSeamDiff), seam.samples,
+                                     static_cast<double>(seam.meanLuma));
+                        if (!seamOk) {
+                            exitCode = 5; // 5 = プローブの面が合っていない (4 = desync と区別)
+                        }
+                    } else {
+                        MYE_LOG_ERROR("[probe] readback failed");
+                        exitCode = 5;
+                    }
+                } else {
+                    exitCode = 5;
+                }
+            }
             swapChain.Present(config.vsync);
         } else {
             Sleep(10); // 最小化中はスピンしない
@@ -1632,6 +1692,19 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         // WARP でどちらが支配項かはこの 2 つを並べないと分からない
         MYE_LOG_INFO("[ssr] --ssr: trace %.3f ms + hzb %.3f ms (GPU, last frame)",
                      renderSystem.SsrGpuMs(), renderSystem.HzbGpuMs());
+    }
+    if (probeBaker) {
+        // ★「--frames が baked フレームに届かず 1 度も焼かなかった」を黙って緑にしない。
+        //   ベイクは 1 フレームの中で完結するので、走らなかった = 指定が噛み合っていない
+        if (!probeBaked) {
+            MYE_LOG_ERROR("[probe] --probe-bake never fired (frame %d was not reached; "
+                          "%llu frames ran)",
+                          config.probeBakeFrame, static_cast<unsigned long long>(ctx.frameIndex));
+            exitCode = 5;
+        } else {
+            MYE_LOG_INFO("[probe] bake %.1f ms (CPU, one shot)", probeBaker->LastBakeCpuMs());
+        }
+        probeBaker->Shutdown();
     }
     if (config.hzbDebug != 0) {
         // M56c: HZB の実測 (SSR (M56d) が「加速構造の元が取れるか」を判断する一次データ)。

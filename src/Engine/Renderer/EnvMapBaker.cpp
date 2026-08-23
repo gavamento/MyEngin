@@ -22,11 +22,9 @@ struct BakeCB {
     XMFLOAT3 gradBottom;  float pad3;
 };
 
-// D3D cubemap 面順 (+X,-X,+Y,-Y,+Z,-Z) の forward/right/up 基底
-struct FaceBasis {
-    XMFLOAT3 forward, right, up;
-};
-constexpr FaceBasis kFaces[6] = {
+// D3D cubemap 面順 (+X,-X,+Y,-Y,+Z,-Z) の forward/right/up 基底。
+// ★M56e: プローブの撮影カメラ (ProbeFaceView) も同じ表を読む — 詳細はヘッダのコメント
+constexpr CubeFaceBasis kFaces[6] = {
     { { 1, 0, 0 }, { 0, 0, -1 }, { 0, 1, 0 } },  // +X
     { { -1, 0, 0 }, { 0, 0, 1 }, { 0, 1, 0 } },  // -X
     { { 0, 1, 0 }, { 1, 0, 0 }, { 0, 0, -1 } },  // +Y
@@ -68,6 +66,11 @@ bool CreateCube(ID3D11Device* dev, int size, int mips, ComPtr<ID3D11Texture2D>& 
 }
 
 } // namespace
+
+const CubeFaceBasis& CubeFace(int face)
+{
+    return kFaces[(face >= 0 && face < 6) ? face : 0];
+}
 
 bool EnvMapBaker::EnsureCommon(GraphicsDevice& device, ShaderManager& shaders)
 {
@@ -141,7 +144,7 @@ bool EnvMapBaker::EnsureCommon(GraphicsDevice& device, ShaderManager& shaders)
 }
 
 bool EnvMapBaker::Bake(GraphicsDevice& device, ShaderManager& shaders,
-                       ID3D11ShaderResourceView* src, const GradientColors& grad, Baked& out)
+                       ID3D11ShaderResourceView* src, const GradientColors& grad, BakedEnv& out)
 {
     if (!EnsureCommon(device, shaders)) {
         return false;
@@ -228,7 +231,7 @@ bool EnvMapBaker::Bake(GraphicsDevice& device, ShaderManager& shaders,
     return ok;
 }
 
-EnvMaps EnvMapBaker::Result(const Baked& b) const
+EnvMaps EnvMapBaker::MapsFor(const BakedEnv& b) const
 {
     EnvMaps em;
     em.irradiance = b.irrSrv.Get();
@@ -245,18 +248,18 @@ EnvMaps EnvMapBaker::GetForCubemap(GraphicsDevice& device, ShaderManager& shader
         return {};
     }
     if (const auto it = cache_.find(id.value); it != cache_.end()) {
-        return Result(it->second);
+        return MapsFor(it->second);
     }
     if (cache_.size() >= 4) {
         cache_.clear(); // 再ベイクは安いので単純化 (LRU 不要)
     }
-    Baked b;
+    BakedEnv b;
     if (!Bake(device, shaders, src, {}, b)) {
         return {};
     }
     MYE_LOG_INFO("[ibl] env maps baked for cubemap %016llx",
                  static_cast<unsigned long long>(id.value));
-    return Result(cache_.emplace(id.value, std::move(b)).first->second);
+    return MapsFor(cache_.emplace(id.value, std::move(b)).first->second);
 }
 
 EnvMaps EnvMapBaker::GetForGradient(GraphicsDevice& device, ShaderManager& shaders,
@@ -265,12 +268,12 @@ EnvMaps EnvMapBaker::GetForGradient(GraphicsDevice& device, ShaderManager& shade
 {
     const uint64_t key = HashGradient(top, horizon, bottom);
     if (const auto it = cache_.find(key); it != cache_.end()) {
-        return Result(it->second);
+        return MapsFor(it->second);
     }
     if (cache_.size() >= 4) {
         cache_.clear();
     }
-    Baked b;
+    BakedEnv b;
     GradientColors grad;
     grad.top = top;
     grad.horizon = horizon;
@@ -279,7 +282,19 @@ EnvMaps EnvMapBaker::GetForGradient(GraphicsDevice& device, ShaderManager& shade
         return {};
     }
     MYE_LOG_INFO("[ibl] env maps baked for gradient sky");
-    return Result(cache_.emplace(key, std::move(b)).first->second);
+    return MapsFor(cache_.emplace(key, std::move(b)).first->second);
+}
+
+// M56e: キャッシュを通さないベイク。ソースが「空の cubemap」から「シーンを 6 面へ
+// 実描画した cubemap」へ変わるだけで、prefilter / irradiance の式は一切変わらない —
+// 反射プローブが独自のプリフィルタを持たないための入口
+bool EnvMapBaker::BakeFrom(GraphicsDevice& device, ShaderManager& shaders,
+                           ID3D11ShaderResourceView* src, BakedEnv& out)
+{
+    if (src == nullptr) {
+        return false;
+    }
+    return Bake(device, shaders, src, {}, out);
 }
 
 // M46h: BRDF LUT だけを確保する。EnsureCommon の中でグローバル 1 枚として

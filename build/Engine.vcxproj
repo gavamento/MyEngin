@@ -94,6 +94,7 @@
     <ClCompile Include="..\src\Engine\Engine\PhysicsSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\PlayerInputSystem.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Prefab.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\ProbeBaker.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Project.cpp" />
     <ClCompile Include="..\src\Engine\Engine\RayTracing\RtScene.cpp" />
     <ClCompile Include="..\src\Engine\Engine\RayTracing\RtSceneBuild.cpp" />
@@ -251,6 +252,7 @@
     <ClInclude Include="..\src\Engine\Engine\PhysicsSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\PlayerInputSystem.h" />
     <ClInclude Include="..\src\Engine\Engine\Prefab.h" />
+    <ClInclude Include="..\src\Engine\Engine\ProbeBaker.h" />
     <ClInclude Include="..\src\Engine\Engine\Project.h" />
     <ClInclude Include="..\src\Engine\Engine\RayTracing\RtScene.h" />
     <ClInclude Include="..\src\Engine\Engine\RayTracing\RtSceneBuild.h" />

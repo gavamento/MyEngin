@@ -34,6 +34,7 @@
 #include "Editor/Windows/SoundGenWindow.h"
 #include "Engine/Engine/EngineLoop.h"
 #include "Engine/Engine/GameObject.h"
+#include "Engine/Engine/ProbeBaker.h"
 #include "Engine/Engine/Scene.h"
 #include "Engine/Engine/TransformSystem.h"
 
@@ -93,6 +94,7 @@ private:
     void RequestGuardedAction(EngineContext& ctx, PendingAction action);
     void ExecuteAction(EngineContext& ctx, PendingAction action);
     void DrawSaveConfirmModal(EngineContext& ctx);
+    void DrawProbePreview(); // M56e: 焼いた 6 面のサムネイル (専用の小窓)
     void UpdateWindowTitle(EngineContext& ctx);
     void PollReloadToasts(EngineContext& ctx);
     // 選択エンティティ操作 (グローバルショートカット。全て Undo 統合)
@@ -161,6 +163,16 @@ private:
     SoundGenWindow soundGen_;
     AudioMixerWindow audioMixer_;
     AssetPreviewCache preview_; // AssetBrowser のメッシュ/プレハブサムネイル (M27d)
+
+    // ---- 反射プローブのベイク (M56e) ----
+    // ★メニューのコールバックの中で焼いてはいけない。OnImGui は ImGui の描画提出の
+    //   直前なので、そこで 6 面を描くと RTV を握り替えたまま UI の描画が始まり、
+    //   UI がプローブの面へ流れ込む。要求フラグだけ立てて、次フレームの OnRenderViews
+    //   (= SceneView / GameView と同じ「描いてよい場所」) で焼く
+    bool probeBakeRequested_ = false;
+    bool showProbePreview_ = false;
+    ProbeBaker probeBaker_;
+    BakedProbe probePreview_; // 直近に焼いた 1 個 (M56f が複数を持つまでの暫定)
 
     nlohmann::json clipboard_; // コピー/カットしたサブツリー群 (SubtreeToJson 形式の配列)
     std::wstring scenePath_;

@@ -29,6 +29,9 @@ public:
     // ビュー中心をピッキングして選択する (自動テスト用 — --pick-test)。ヒットで true
     bool PickAtCenter(EngineContext& ctx, Selection& selection);
 
+    // M56e: エディタカメラのワールド位置。反射プローブを「今見ている場所」で焼くのに使う
+    const DirectX::XMFLOAT3& CameraPosition() const { return camPos_; }
+
     // ギズモ状態への参照 (M27c: グローバルツールバーと共有)
     ImGuizmo::OPERATION& GizmoOp() { return gizmoOp_; }
     ImGuizmo::MODE& GizmoMode() { return gizmoMode_; }

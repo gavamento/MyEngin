@@ -101,6 +101,14 @@ struct EngineConfig {
     // シーンカメラに CameraPostFx があればそちらの ssrOn が勝つ (TAA と同じ規則)。
     // on にすると HZB (min-Z ピラミッド) も一緒に組まれる
     bool ssr = false;
+    // M56e: 反射プローブのシーンキャプチャ (--probe-bake X,Y,Z)。
+    // probeBakeFrame でちょうど **1 回だけ** 焼き、6 面を PNG に落として面の向きを
+    // 機械判定する。★自動ベイクにしない — 「見えたら焼く」にすると撮影ごとに焼き上がりが
+    // 変わって決定的撮影 (M52c) が根元から壊れるため、常に明示指示だけで走らせる
+    bool probeBake = false;
+    float probeBakePos[3] = { 0.0f, 3.0f, 8.0f }; // --render-demo の反射パッチの真上あたり
+    int probeBakeFrame = 3;                       // 撮影 (--shot-frame) と同じ既定
+    std::wstring probeBakePng;                    // 空 = tests\actual\probe_faces.png
     // M55d: TAA (--taa)。**Deferred のみ** (画面速度が GBuffer RT4 にしかない)。
     // シーンカメラに CameraPostFx があればそちらの taaOn が勝つ (ポスプロ設定と同じ規則)
     bool postFxTaa = false;

@@ -279,6 +279,7 @@ that follows the editor camera fights with editing.
 | Ray-traced secondary rays | Implemented | See §6.4 (default off) |
 | Decals (projector boxes) | Implemented | See §6.6. **Deferred path only** in v1 |
 | Hierarchical Z-buffer (min-Z pyramid) | Implemented | See §6.7. **Deferred path only**, built on demand |
+| Reflection probe capture | Implemented | See §6.9. Explicit bake only; nothing consumes it until M56f |
 
 ### 6.3 DirectX 11 Abstraction
 
@@ -486,6 +487,57 @@ built at all — the debug view and SSR are the two things that can ask for the 
 | **One thickness for the whole scene** | Surfaces are treated as `kSsrThickness` (1 world unit) thick when deciding whether a ray that ended up behind the depth buffer actually hit. Geometry much thinner than that can be missed; geometry much thicker can catch a ray that should have passed behind it. |
 | **No roughness-aware blur** | A single mirror ray is traced and the result is faded out by roughness rather than being blurred into a glossy lobe, so surfaces just under the cutoff reflect too sharply. A blurred variant needs its own history and denoiser, which is what the ray-traced reflection lane already provides. |
 | **Reflections lag under TAA** | The velocity buffer describes the motion of surfaces, not of what they reflect, so a moving reflection is reprojected as if it were painted on the surface. |
+
+### 6.9 Reflection probe capture (M56e)
+
+`EnvMapBaker` can only bake *the sky*: its source is either a cubemap SRV or an analytic
+gradient, and it has no notion of a position. A reflection probe needs "the view from this
+point", so `ProbeBaker` (`src\Engine\Engine\ProbeBaker.{h,cpp}`) renders the scene into the
+six faces of a 128² HDR cube and hands that cube to the *same* prefilter
+(`EnvMapBaker::BakeFrom`). Not one line of the GGX prefilter or of the irradiance integral is
+duplicated. Baking is always explicit: the `View > Rendering > Bake Reflection Probe Here`
+menu item, or `--probe-bake X,Y,Z` on the command line.
+
+- **Explicit only, never automatic.** A "bake whatever is visible" policy would make the
+  result depend on what happened to be loaded and drawn that frame, which breaks the
+  deterministic screenshot mode outright. No code path bakes on its own.
+- **A dedicated `RenderSystem`.** `RenderSystem::Render` is not re-entrant (the render queue,
+  the skin palettes, the per-view draw serials and the previous view-projections all live in
+  the instance), so recursing into it six times would advance the temporal serial by six and
+  throw away the TAA / RT history of the real view. `ProbeBaker` owns its own instance — the
+  same solution `AssetPreviewCache` uses for thumbnails. Faces are drawn with `viewKey = 0`,
+  the "no history" slot.
+- **Forward path, post-processing off.** Capturing through the deferred path would resize the
+  shared 5-target G-Buffer down to 128² and back on every bake, and at 128² neither SSAO nor
+  SSR buys anything. With post-processing off the path writes linear radiance straight into
+  the `R16G16B16A16_FLOAT` face, which is exactly what the prefilter wants — so the clear
+  colour is converted to linear by the baker itself (the main path only does that when it has
+  an HDR intermediate).
+- **One table for the face basis.** `CubeFace()` in `EnvMapBaker.h` is read both by the bake
+  shader (through `BakeCB`) and by `ProbeFaceView()`. Two tables would let the capture and the
+  sampling disagree, which shows up as a reflection rotated 90° on some faces and is
+  essentially impossible to diagnose from the picture. `ProbeBakerSelfTest` pins the invariant
+  by un-projecting through the face camera and comparing against the direction the prefilter
+  samples (worst error 1.1e-5 over 6 faces x 81 samples).
+- **Seam check.** `--probe-bake` reads the six faces back, writes them to
+  `tests\actual\probe_faces.png` as a cross (`+Y` / `-X +Z +X -Z` / `-Y`, so neighbouring faces
+  are neighbours in the image too) and reports
+  `seam ratio = mean texel step across a seam / mean texel step inside the faces`.
+  Normalising against the faces' own texture rather than against scene brightness is what
+  makes the number mean anything in a dark scene. Measured on `--render-demo` under WARP:
+  **2.66 aligned, 6.06 with one face deliberately rotated 90°**; the CLI fails (exit 5) above
+  4.0.
+- Cost: **~0.4-0.6 s per bake under WARP** (Debug; 6 faces at 128² plus the 5-mip GGX
+  prefilter and the 32² irradiance cube). Nothing pays it unless a bake is requested.
+
+**v1 limitations:**
+
+| Limitation | Why |
+|---|---|
+| **Nothing consumes the result yet** | M56e is the capture plumbing. The baked cube is shown in the `Reflection Probe` preview window and dumped to PNG; feeding it into the lighting is M56f (`ReflectionProbeComponent`, box projection, `SSR -> local probe -> global env`). |
+| **No probe component, no persistence** | The bake lives in memory for the session. There is nothing to place in a scene and nothing is written to disk. |
+| **Probes do not see each other** | A face is captured against whatever environment the scene already has (the sky IBL), so probe-to-probe inter-reflection does not exist. |
+| **The seam check is scene-dependent** | Aligned and broken are only 2.3x apart on real content, so the threshold is a coarse tripwire for a gross orientation bug, not a quality metric. The PNG is the authoritative check. |
 
 ---
 
