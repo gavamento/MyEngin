@@ -484,6 +484,26 @@ void RegisterBuiltinComponents()
         MYE_JP("粗さの強さ",
                MYE_FIELD_RANGE(DecalComponent, roughnessStrength, Float, 0.0f, 1.0f)),
     }, kComponentNoHash);
+
+    // M56f: ローカル反射プローブ。**kComponentNoHash** — 焼いた cubemap をスペキュラ
+    // 環境項へ差し込むだけの描画レーンで、sim には 1 バイトも触らない。
+    // 置いただけでは何も起きない (ベイクは常に明示指示) ので、既存シーンへ足しても
+    // 絵は 1 ビットも変わらない
+    RegisterComponent<ReflectionProbeComponent>("ReflectionProbe", {
+        MYE_JP("影響範囲 (半径)",
+               MYE_FIELD_TIP(ReflectionProbeComponent, extents, Float3,
+                             "half extents of the axis-aligned influence / projection box")),
+        MYE_JP("ブレンド距離",
+               MYE_FIELD_RANGE(ReflectionProbeComponent, blendDistance, Float, 0.0f, 32.0f)),
+        MYE_JP("強度", MYE_FIELD_RANGE(ReflectionProbeComponent, intensity, Float, 0.0f, 4.0f)),
+        MYE_JP("ボックス投影",
+               MYE_FIELD_TIP(ReflectionProbeComponent, boxProjection, Bool,
+                             "off = infinitely distant cube (no parallax correction)")),
+        MYE_JP("近クリップ",
+               MYE_FIELD_RANGE(ReflectionProbeComponent, nearZ, Float, 0.001f, 10.0f)),
+        MYE_JP("遠クリップ",
+               MYE_FIELD_RANGE(ReflectionProbeComponent, farZ, Float, 1.0f, 5000.0f)),
+    }, kComponentNoHash);
 }
 
 } // namespace mye

@@ -557,7 +557,9 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // 専用の RenderSystem を内側に抱えるので、使わない実行では確保もしない
     std::unique_ptr<ProbeBaker> probeBaker;
     bool probeBaked = false;
-    if (config.probeBake) {
+    // M56f: 焼き上がった束 (テクスチャの所有者)。renderSystem がここを指す
+    ReflectionProbeArray probeArray;
+    if (config.probeBake || config.probeBakeAll) {
         probeBaker = std::make_unique<ProbeBaker>();
         probeBaker->assetsRoot = ctx.assetsRoot; // 地形もキャプチャに写す
         memcpy(probeBaker->clearColor, config.clearColor, sizeof(probeBaker->clearColor));
@@ -1568,14 +1570,59 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             if (probeBaker && !probeBaked
                 && ctx.frameIndex == static_cast<uint64_t>(config.probeBakeFrame)) {
                 probeBaked = true; // 成否によらず 1 回で打ち切る (自動リトライは決定性の敵)
+                // ---- M56f: シーンのプローブを全部焼いて描画へ載せる (--probe-bake-all) ----
+                // ★焼いた束の**面の向き**は M56e と同じ継ぎ目比で機械判定する。ここを
+                //   省くと「複数プローブを配列へ詰め替える」段が無検査になり、スライスの
+                //   取り違え (プローブ A の絵が B の箱で出る) が絵からしか分からなくなる
+                if (config.probeBakeAll) {
+                    if (probeBaker->BakeAll(scene.GetWorld(), device, forwardPath, shaderManager,
+                                            resources, probeArray)) {
+                        renderSystem.reflectionProbes = &probeArray.set;
+                        for (size_t pi = 0; pi < probeArray.probes.size(); ++pi) {
+                            std::vector<float> faces;
+                            int faceSize = 0;
+                            ProbeSeamStats seam;
+                            if (!ProbeReadFaces(device, probeArray.probes[pi], faces, faceSize)
+                                || !ProbeSeamCheck(faces, faceSize, seam)) {
+                                MYE_LOG_ERROR("[probe] readback failed (probe %zu)", pi);
+                                exitCode = 5;
+                                continue;
+                            }
+                            const bool seamOk = seam.seamRatio < kProbeSeamRatioLimit;
+                            MYE_LOG_INFO("[probe] probe %zu at (%.2f, %.2f, %.2f): seam %s, "
+                                         "ratio %.3f (limit %.2f)",
+                                         pi,
+                                         static_cast<double>(probeArray.probes[pi].position.x),
+                                         static_cast<double>(probeArray.probes[pi].position.y),
+                                         static_cast<double>(probeArray.probes[pi].position.z),
+                                         seamOk ? "PASS" : "FAIL",
+                                         static_cast<double>(seam.seamRatio),
+                                         static_cast<double>(kProbeSeamRatioLimit));
+                            if (!seamOk) {
+                                exitCode = 5;
+                            }
+                            // PNG は先頭 1 個だけ (目視の口。残りは上の比が受け持つ)
+                            if (pi == 0) {
+                                ProbeWriteFacesPng(faces, faceSize,
+                                                   config.probeBakePng.empty()
+                                                       ? std::wstring(L"tests\\actual\\probe_faces.png")
+                                                       : config.probeBakePng);
+                            }
+                        }
+                    } else {
+                        exitCode = 5;
+                    }
+                }
                 BakedProbe probe;
                 const DirectX::XMFLOAT3 pos = { config.probeBakePos[0], config.probeBakePos[1],
                                                 config.probeBakePos[2] };
                 // ★キャプチャは **Forward パス固定**。Deferred で撮ると共有 GBuffer 5 枚が
                 //   128^2 へ縮んで次フレームに戻される (メイン描画の TAA / SSR 履歴を巻き添えに
                 //   する) うえ、プローブの 128^2 に SSAO も SSR も意味が無い
-                if (probeBaker->Bake(scene.GetWorld(), device, forwardPath, shaderManager,
-                                     resources, pos, 0.1f, 500.0f, probe)) {
+                if (!config.probeBake) {
+                    // --probe-bake-all だけ指定された = 位置指定の 1 個焼きは走らせない
+                } else if (probeBaker->Bake(scene.GetWorld(), device, forwardPath, shaderManager,
+                                            resources, pos, 0.1f, 500.0f, probe)) {
                     std::vector<float> faces;
                     int faceSize = 0;
                     ProbeSeamStats seam;
@@ -1704,6 +1751,11 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         } else {
             MYE_LOG_INFO("[probe] bake %.1f ms (CPU, one shot)", probeBaker->LastBakeCpuMs());
         }
+        // M56f: 束を捨てる前に指している側を必ず外す (ぶら下がりポインタ)。
+        // 描画はもう止まっているので順序が効くわけではないが、「所有者が死ぬ前に
+        // 参照を切る」を 1 箇所で守っておかないと、後でここに描画が挟まったときに死ぬ
+        renderSystem.reflectionProbes = nullptr;
+        probeArray.Clear();
         probeBaker->Shutdown();
     }
     if (config.hzbDebug != 0) {

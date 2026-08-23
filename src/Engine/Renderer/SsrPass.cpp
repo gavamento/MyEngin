@@ -1,6 +1,7 @@
 #include "Engine/Renderer/SsrPass.h"
 
 #include <cstdint>
+#include <cstring>
 
 #include <DirectXMath.h>
 
@@ -38,8 +39,14 @@ struct SsrCB {
     float fogHeightFalloff;
     float fogBaseHeight;
     float pad0[2];
+    // ---- M56f: ローカル反射プローブ (末尾 append。count 0 = M56d と 1 ビットも同じ) ----
+    int32_t probeCount;
+    float probeSpecMips;
+    float probePad[2];
+    ReflectionProbeGpu probes[kMaxReflectionProbes];
 };
-static_assert(sizeof(SsrCB) == 224, "SsrCB must match the HLSL 16-byte packing");
+static_assert(sizeof(SsrCB) == 224 + 16 + 48 * kMaxReflectionProbes,
+              "SsrCB must match the HLSL 16-byte packing");
 
 using namespace gpubuf;
 
@@ -198,6 +205,15 @@ bool SsrPass::Render(GraphicsDevice& device, ShaderManager& shaders, const Rende
     c.fogEnd = view.fogEnd;
     c.fogHeightFalloff = view.fogHeightFalloff;
     c.fogBaseHeight = view.fogBaseHeight;
+    // M56f: 引く基準値をプローブ側へ差し替える (呼び出し側が光パスと同じ束を渡している)
+    const bool probesOn = in.probes != nullptr && in.probes->count > 0
+        && in.probes->cubeArray != nullptr;
+    if (probesOn) {
+        c.probeCount = (in.probes->count < kMaxReflectionProbes) ? in.probes->count
+                                                                 : kMaxReflectionProbes;
+        c.probeSpecMips = in.probes->specMips;
+        memcpy(c.probes, in.probes->probes, sizeof(c.probes));
+    }
     UploadCB(dc, cb_.Get(), c);
 
     ID3D11RenderTargetView* rtvs[1] = { view.rtv };
@@ -206,15 +222,16 @@ bool SsrPass::Render(GraphicsDevice& device, ShaderManager& shaders, const Rende
     dc->PSSetConstantBuffers(0, 1, cbs);
     ID3D11SamplerState* samplers[1] = { in.linearClamp };
     dc->PSSetSamplers(0, 1, samplers);
-    ID3D11ShaderResourceView* srvs[8] = { sceneCopySrv_.Get(),
+    ID3D11ShaderResourceView* srvs[9] = { sceneCopySrv_.Get(),
                                           in.hzb,
                                           in.gbAlbedo,
                                           in.gbNormal,
                                           in.gbMaterial,
                                           view.iblPrefiltered,
                                           view.iblBrdfLut,
-                                          in.ssao };
-    dc->PSSetShaderResources(0, 8, srvs);
+                                          in.ssao,
+                                          probesOn ? in.probes->cubeArray : nullptr };
+    dc->PSSetShaderResources(0, 9, srvs);
     dc->IASetInputLayout(nullptr);
     dc->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     dc->OMSetBlendState(blendAdd_.Get(), nullptr, 0xFFFFFFFFu);
@@ -223,8 +240,8 @@ bool SsrPass::Render(GraphicsDevice& device, ShaderManager& shaders, const Rende
     dc->Draw(3, 0);
 
     // シーンコピーと GBuffer を SRV に残さない (次フレームの CopyResource / RTV 化と競合する)
-    ID3D11ShaderResourceView* nullSrvs[8] = {};
-    dc->PSSetShaderResources(0, 8, nullSrvs);
+    ID3D11ShaderResourceView* nullSrvs[9] = {};
+    dc->PSSetShaderResources(0, 9, nullSrvs);
     timer_.End(device);
     return true;
 }

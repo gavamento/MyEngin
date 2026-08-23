@@ -534,10 +534,64 @@ menu item, or `--probe-bake X,Y,Z` on the command line.
 
 | Limitation | Why |
 |---|---|
-| **Nothing consumes the result yet** | M56e is the capture plumbing. The baked cube is shown in the `Reflection Probe` preview window and dumped to PNG; feeding it into the lighting is M56f (`ReflectionProbeComponent`, box projection, `SSR -> local probe -> global env`). |
-| **No probe component, no persistence** | The bake lives in memory for the session. There is nothing to place in a scene and nothing is written to disk. |
+| **Ad-hoc captures feed nothing** | `Bake Reflection Probe Here` / `--probe-bake X,Y,Z` capture at an arbitrary point for diagnosis only: the result goes to the `Reflection Probe` preview window and to PNG. What the lighting consumes are the probes placed in the scene — §6.10. |
+| **No persistence** | A bake lives in memory for the session; nothing is written to disk. |
 | **Probes do not see each other** | A face is captured against whatever environment the scene already has (the sky IBL), so probe-to-probe inter-reflection does not exist. |
 | **The seam check is scene-dependent** | Aligned and broken are only 2.3x apart on real content, so the threshold is a coarse tripwire for a gross orientation bug, not a quality metric. The PNG is the authoritative check. |
+
+### 6.10 Local reflection probes (M56f)
+
+`ReflectionProbeComponent` places one of the cubes of §6.9 in the world, and the deferred light
+pass blends it into the **specular environment term**, producing the fallback chain
+**SSR -> local probe -> global environment**. The component is `kComponentNoHash`, and — like
+the capture itself — nothing happens until a bake is explicitly requested
+(`View > Rendering > Bake All Reflection Probes`, or `--probe-bake-all`). A scene full of
+probes that have never been baked renders bit-identically to one with no probes at all.
+
+- **What is added is a difference, not a reflection** — the same construction as SSR (§6.8).
+  The light pass has already added `iblPrefiltered * ao * envBRDF`, so the probe lane adds
+  `(probe - ibl) * ao * envBRDF * weight * (1 - rtReflWeight)`, which lands exactly on
+  "swap one radiance for another of the same dimension". Weight 0 adds a hard zero, and
+  `ApplyLighting` / `ApplyLightingHybrid` keep their signatures — so the three forward shaders
+  are untouched by construction.
+- **SSR subtracts what the light pass actually added.** `ssr_trace.hlsl` receives the same
+  probe array and uses `lerp(iblSpec, probeSpec, weight)` as the value it subtracts. Leaving it
+  as the raw IBL would count the probe twice on every pixel where SSR also hit. The visible
+  proof is the difference image between "SSR" and "SSR + probe": the reflected pillars — the
+  pixels where SSR found a hit — are *black* in that diff, and only the pixels SSR missed move.
+- **Box projection.** The reflection vector is extended to the inside wall of the probe's box
+  and re-based on the capture point, so the mirror image slides correctly as the viewer moves
+  inside the box; `boxProjection = false` selects the infinitely-distant-cubemap behaviour
+  instead. `ReflProbeDir` floors the magnitude of each reflection-vector component before
+  dividing, because a single NaN from an axis-parallel ray would poison the `min` and blank
+  the pixel.
+- **One probe per pixel** — the one the pixel is deepest inside, measured in units of that
+  probe's blend distance. Ties go to the lower index, and probes are collected in `EntityID`
+  order, so the choice never depends on archetype ordering (rule 7).
+- **One `TextureCubeArray`**, bound at `t14` in the light pass and `t8` in SSR. The light pass
+  has exactly one free SRV slot for this, so the prefiltered cubes are copied slice by slice
+  into a single array (`kSpecMips * 6` `CopySubresourceRegion` calls per probe) instead of
+  being bound one at a time. No new sampler — `s0` (LINEAR/CLAMP) is reused.
+- **`ProbeBaker::Bake` has to unbind the render targets before prefiltering.** The last capture
+  face can still be bound as an RTV when the same texture is handed to the prefilter as an SRV,
+  and D3D11 responds by silently forcing the *SRV* to NULL. The result is a black cube for that
+  probe with nothing in the log. M56e never hit it because it baked once; the second bake in a
+  row hits it every time.
+- Cost: **~33 ms per probe under WARP** once the IBL shaders are compiled; the first bake in a
+  process also pays that compilation (measured 350-450 ms). Nothing pays anything unless a bake
+  is requested.
+
+**v1 limitations:**
+
+| Limitation | Why |
+|---|---|
+| **Deferred path only** | The composition lives in the deferred light pass and in SSR; the forward path has no G-Buffer and nowhere to swap the environment term. Probes are simply absent there, and asset thumbnails (forward, own `RenderSystem`) never see them. |
+| **Specular only** | A probe replaces the specular environment radiance, not the irradiance. Diffuse still comes from the sky IBL or the constant ambient, so a probe cannot supply a room's bounce light. |
+| **Axis-aligned boxes** | Neither the influence volume nor the parallax box follows the entity's rotation or scale; only `extents` counts. A rotated box would push the parallax correction into box-local space and double the CPU/GPU mirror that has to be kept in step. |
+| **No blending between probes** | The strongest probe wins outright, so two overlapping probes pop against each other where their weights cross. Blending needs a weighted sum over several cubes per pixel. |
+| **At most `kMaxReflectionProbes` (8)** | The array lives in the light pass' constant buffer. Probes past the eighth are dropped with a warning rather than silently ignored. |
+| **The baked state is frozen, and lives only in memory** | Position, box and intensity are captured *at bake time*; moving or editing a probe afterwards does not re-bake it (the picture and the box would then disagree). Nothing is written to disk, so a packaged build has no probes until something bakes them. |
+| **Probes do not see each other** | Inherited from §6.9: each capture only sees the sky IBL, never another probe's reflection. |
 
 ---
 

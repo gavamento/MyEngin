@@ -57,6 +57,21 @@ struct BakedProbe {
     bool valid = false;
 };
 
+// 焼き上がったプローブ束 (M56f)。**テクスチャの所有者**で、`set` はそこへの非所有ビュー。
+// RenderView::probes はこの `set` を指す = 束を破棄したら必ず指す側も外すこと。
+//
+// ★1 本の TextureCubeArray にまとめてあるのは、光パスが SRV スロットを **t14 の 1 本**
+//   しか持っていないから (統合契約 予約 2)。プローブごとに 1 枚張る設計はスロットが尽きる。
+// ★キャプチャ 1 個ずつ (BakedProbe) も残す — Inspector / プレビュー窓が 6 面のサムネイルを
+//   出すのに要る (ImGui はキューブを描けないので面の 2D ビューが要る)
+struct ReflectionProbeArray {
+    std::vector<BakedProbe> probes; // 焼いた順 = set.probes の添字 = cube array のスライス順
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> arrayTex;
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> arraySrv;
+    ReflectionProbeSet set;
+    void Clear();
+};
+
 class ProbeBaker {
 public:
     // キャプチャ解像度。EnvMapBaker::kSpecSize と同じ 128 にしてある —
@@ -67,6 +82,14 @@ public:
     bool Bake(World& world, GraphicsDevice& device, IRenderPath& path, ShaderManager& shaders,
               RenderResources& resources, const DirectX::XMFLOAT3& position, float nearZ,
               float farZ, BakedProbe& out);
+    // M56f: シーン中の ReflectionProbeComponent を**全部**焼いて 1 本の TextureCubeArray に
+    // まとめる。out は毎回作り直す (差分ベイクはしない — 「焼いた面と箱の対応」が
+    // 途中で入れ替わると原因を追えない形で壊れるため)。
+    // ★呼べるのは「描いてよい場所」だけ (EditorApp::OnRenderViews / EngineLoop の
+    //   スクショ保存後)。RTV / ビューポート / ラスタライザを総取り替えするので、
+    //   ImGui のコールバックや UI 提出の途中から呼ぶと画面が壊れる (M56e で踏んだ)
+    bool BakeAll(World& world, GraphicsDevice& device, IRenderPath& path, ShaderManager& shaders,
+                 RenderResources& resources, ReflectionProbeArray& out);
     // BakedProbe → シェーダへ渡す非所有ポインタ束 (BRDF LUT はプローブ間で 1 枚共有)
     EnvMaps MapsFor(const BakedProbe& p) { return env_.MapsFor(p.env); }
     void Shutdown();

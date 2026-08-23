@@ -389,6 +389,103 @@ float RtReflWeight(float roughness, float fadeStart, float maxRough)
     return 1.0f - smoothstep(fadeStart, maxRough, roughness);
 }
 
+// ---- ローカル反射プローブ (M56f) ----
+// 「この場所から見た景色」を焼いた cubemap (ProbeBaker) を、グローバルな env の**代わりに**
+// スペキュラ環境項へ差し込む。ApplyLightingHybrid が RT 反射に対してやっている
+// 「同次元の放射輝度を差し替える」規約と同じで、重み 0 でちょうど何も起きない。
+//
+// ★**ここに置いてある理由**: 光パス (deferred_light) と SSR (ssr_trace) の **2 経路**が
+//   同じ値を要求する。光パスは「グローバル env との差分」を足し、SSR は「自分が引く
+//   基準値」に使う — 片方だけ式を持つと、SSR とプローブを同時に on にした画素だけが
+//   同じ光を二重に数える (絵は普通に出るので気付けない)。
+// ★このファイルは register 宣言を持たない契約なので、テクスチャとプローブ配列は
+//   ResolveLocalShadows と同じく**引数で受け取る** (HLSL の関数は必ず展開されるので、
+//   cbuffer 配列の動的添字にそのまま落ちる)。
+//
+// C++ 側の kMaxReflectionProbes (RenderTypes.h) と同値。
+// tools\check_rules.ps1 の規則 9 が一致を静的に検査する
+#define MYE_MAX_REFLECTION_PROBES 8
+
+// プローブ 1 個 (C++ の ReflectionProbeGpu と 48 バイトで一致)。
+// ★箱は**軸平行** (v1)。回転を持たせると視差補正が箱のローカル空間への往復になり、
+//   CPU ミラー (RenderTypes.h) との一致を保つ手間が跳ね上がる
+struct ReflProbe
+{
+    float4 centerIntensity; // xyz = キャプチャ位置 (視差補正の原点) / w = 強度
+    float4 boxMin;          // xyz = 影響ボックスの min (ワールド) / w = ブレンド距離
+    float4 boxMax;          // xyz = 影響ボックスの max / w = 1 ならボックス投影を使う
+};
+
+// 影響の重み。箱の外 = 0 / 内側へブレンド距離ぶん入ると 1。
+// **CPU ミラー: RenderTypes.h の ReflProbeWeight — 変更時は両方更新**
+// (ProbeBakerSelfTest が検証)
+float ReflProbeWeight(ReflProbe p, float3 posW)
+{
+    const float3 d = min(posW - p.boxMin.xyz, p.boxMax.xyz - posW);
+    const float m = min(min(d.x, d.y), d.z); // 一番近い面までの距離 (負 = 箱の外)
+    if (m <= 0.0f) {
+        return 0.0f;
+    }
+    return saturate(m / max(p.boxMin.w, 1e-4f));
+}
+
+// 視差補正 (ボックス投影)。反射ベクトルを箱の内壁まで延ばし、**プローブの撮影位置から
+// 見た向き**へ直す。これをしないと、箱の中を歩いたときに映り込みが動かない
+// (無限遠のキューブマップと同じ挙動になる)。
+// **CPU ミラー: RenderTypes.h の ReflProbeDir**
+float3 ReflProbeDir(ReflProbe p, float3 posW, float3 R)
+{
+    if (p.boxMax.w < 0.5f) {
+        return R; // 無限遠プローブ (視差補正なし)
+    }
+    // ★0 除算よけ。R の成分がちょうど 0 のとき (軸に平行な反射) は
+    //   (面 - posW)/0 が numerator の符号次第で ±inf / NaN になる。NaN が 1 つ混ざると
+    //   min の結果ごと壊れて「その画素だけ黒い」形で出るので、符号を保ったまま床を張る
+    const float3 sgn = (R >= 0.0f) ? float3(1.0f, 1.0f, 1.0f) : float3(-1.0f, -1.0f, -1.0f);
+    const float3 safeR = sgn * max(abs(R), 1e-6f);
+    const float3 tmax = max((p.boxMax.xyz - posW) / safeR, (p.boxMin.xyz - posW) / safeR);
+    const float t = min(min(tmax.x, tmax.y), tmax.z);
+    if (t <= 0.0f) {
+        return R; // 箱の外 (重み 0 のはずだが、念のため素の反射へ落とす)
+    }
+    return normalize((posW + R * t) - p.centerIntensity.xyz);
+}
+
+// 一番効いているプローブ 1 個を選ぶ (v1 は**混ぜない**)。戻り値 -1 = どれにも入っていない。
+// ★同点は添字が小さい方。収集側が EntityID で決定論に並べているので、選択も決定論になる。
+// **CPU ミラー: RenderTypes.h の ReflProbeSelect**
+int ReflProbeSelect(ReflProbe list[MYE_MAX_REFLECTION_PROBES], int count, float3 posW,
+                    out float weight)
+{
+    weight = 0.0f;
+    int best = -1;
+    for (int i = 0; i < count; ++i) {
+        const float w = ReflProbeWeight(list[i], posW);
+        if (w > weight) {
+            weight = w;
+            best = i;
+        }
+    }
+    return best;
+}
+
+// プローブのスペキュラ放射輝度 (IBL の prefiltered と**同次元**)。weight は影響の重み。
+// cubes の配列添字はプローブの添字そのもの (ベイカが同じ順で 6 面ずつ詰める)
+float3 ReflProbeRadiance(TextureCubeArray cubes, SamplerState samp,
+                         ReflProbe list[MYE_MAX_REFLECTION_PROBES], int count, float3 posW,
+                         float3 R, float roughness, float specMips, out float weight)
+{
+    const int idx = ReflProbeSelect(list, count, posW, weight);
+    if (idx < 0) {
+        weight = 0.0f;
+        return float3(0.0f, 0.0f, 0.0f);
+    }
+    const ReflProbe p = list[idx];
+    const float3 dir = ReflProbeDir(p, posW, R);
+    return cubes.SampleLevel(samp, float4(dir, (float)idx), roughness * specMips).rgb
+        * p.centerIntensity.w;
+}
+
 // M46f/M46h: ハイブリッド合成版。**環境項だけ**をレイトレの結果で置き換える。
 //   拡散 = rt_gi.cs.hlsl の出力 (albedo を掛けない demodulated 入射放射輝度、M46c の規約)。
 //          IBL irradiance / 定数アンビエントとちょうど同じ位置に代入できる。

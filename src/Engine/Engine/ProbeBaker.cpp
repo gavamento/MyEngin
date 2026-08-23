@@ -6,7 +6,9 @@
 
 #include <DirectXPackedVector.h>
 
+#include "Engine/Core/Components.h"
 #include "Engine/Core/Log.h"
+#include "Engine/Core/World.h"
 #include "Engine/Renderer/GraphicsDevice.h"
 #include "Engine/Renderer/ImageWrite.h"
 #include "Engine/Renderer/RenderPath.h"
@@ -204,7 +206,14 @@ bool ProbeBaker::Bake(World& world, GraphicsDevice& device, IRenderPath& path,
 
     // ---- プリフィルタ (EnvMapBaker と完全共有) ----
     // ★ラスタライザを既定へ戻してから渡す。直前に走ったパス (デカールの CULL_FRONT など) が
-    //   残っていると、ベイクのフルスクリーン三角形が裏面として消えて焼き上がりが黒になる
+    //   残っていると、ベイクのフルスクリーン三角形が裏面として消えて焼き上がりが黒になる。
+    // ★**RTV も明示的に外す (M56f で踏んだ)**。面を描いた直後は capture cube の面が RTV に
+    //   残っていることがあり、そのまま同じテクスチャを t0 へ SRV で渡すと D3D が
+    //   「出力に bind 済み」として **SRV 側を黙って NULL にする** → プリフィルタが
+    //   真っ黒なキューブを焼く。症状は「そのプローブだけ何も反射しない」だけで、
+    //   ログにも絵にも原因が出ない (Debug の検証レイヤだけが警告を出す)。
+    //   M56e は 1 回しか焼かなかったので露見しなかった — **2 個目以降で必ず踏む**
+    dc->OMSetRenderTargets(0, nullptr, nullptr);
     dc->RSSetState(nullptr);
     if (!env_.BakeFrom(device, shaders, out.captureSrv.Get(), out.env)) {
         MYE_LOG_ERROR("[probe] prefilter failed");
@@ -216,6 +225,158 @@ bool ProbeBaker::Bake(World& world, GraphicsDevice& device, IRenderPath& path,
             .count());
     MYE_LOG_INFO("[probe] baked at (%.2f, %.2f, %.2f): %d^2 x 6 faces, %.1f ms (CPU)", position.x,
                  position.y, position.z, kCaptureSize, lastBakeMs_);
+    return true;
+}
+
+void ReflectionProbeArray::Clear()
+{
+    probes.clear();
+    arraySrv.Reset();
+    arrayTex.Reset();
+    set = {};
+}
+
+bool ProbeBaker::BakeAll(World& world, GraphicsDevice& device, IRenderPath& path,
+                         ShaderManager& shaders, RenderResources& resources,
+                         ReflectionProbeArray& out)
+{
+    const auto started = std::chrono::steady_clock::now();
+    out.Clear();
+
+    // ---- 収集 (決定論順) ----
+    // ★並び順が**そのまま** cube array のスライス番号と CB の添字になるので、
+    //   アーキタイプの並びに依存させてはいけない (規則 7)。EntityID::index で整列する —
+    //   ここが揺れると「同じシーンを 2 回焼くと別のプローブが選ばれる」が起きる
+    struct Collected {
+        uint32_t key = 0;
+        DirectX::XMFLOAT3 position = { 0, 0, 0 };
+        ReflectionProbeComponent desc;
+    };
+    std::vector<Collected> found;
+    {
+        const ComponentTypeId req[] = { ReflectionProbeComponent::sTypeId,
+                                        WorldMatrixComponent::sTypeId };
+        world.ForEachArchetype(req, [&](Archetype& arch) {
+            const int pi = arch.FindTypeIndex(ReflectionProbeComponent::sTypeId);
+            const int wi = arch.FindTypeIndex(WorldMatrixComponent::sTypeId);
+            for (uint32_t row = 0; row < arch.Count(); ++row) {
+                const EntityID e = arch.EntityAt(row);
+                if (!IsEntityActive(world, e)) {
+                    continue; // 無効化されたプローブは焼かない
+                }
+                const auto* p =
+                    static_cast<const ReflectionProbeComponent*>(arch.GetPtr(pi, row));
+                const auto* w = static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row));
+                Collected c;
+                c.key = e.index;
+                c.position = { w->value._41, w->value._42, w->value._43 };
+                c.desc = *p;
+                found.push_back(c);
+            }
+        });
+        std::sort(found.begin(), found.end(),
+                  [](const Collected& a, const Collected& b) { return a.key < b.key; });
+    }
+    if (found.empty()) {
+        MYE_LOG_WARN("[probe] no ReflectionProbeComponent in the scene - nothing to bake");
+        return false;
+    }
+    if (found.size() > static_cast<size_t>(kMaxReflectionProbes)) {
+        // 溢れた分は静かに捨てない (「置いたのに効かない」を黙って作らない)
+        MYE_LOG_WARN("[probe] %zu probes found, only the first %d are baked (kMaxReflectionProbes)",
+                     found.size(), kMaxReflectionProbes);
+        found.resize(static_cast<size_t>(kMaxReflectionProbes));
+    }
+
+    // ---- 1 個ずつ焼く (6 面キャプチャ + プリフィルタ。M56e の Bake をそのまま使う) ----
+    out.probes.resize(found.size());
+    for (size_t i = 0; i < found.size(); ++i) {
+        if (!Bake(world, device, path, shaders, resources, found[i].position, found[i].desc.nearZ,
+                  found[i].desc.farZ, out.probes[i])) {
+            MYE_LOG_ERROR("[probe] bake failed for probe %zu", i);
+            out.Clear();
+            return false;
+        }
+    }
+
+    // ---- プリフィルタ済みキューブを 1 本の TextureCubeArray へ写す ----
+    // ★スロットが 1 本しかないので配列にまとめる以外の手が無い。CopySubresourceRegion を
+    //   (mip, 面) ごとに呼ぶ = プローブ 1 個あたり kSpecMips * 6 回。RTV を作って描き直す
+    //   より安く、プリフィルタの式を 1 行も複製せずに済む
+    const int count = static_cast<int>(found.size());
+    D3D11_TEXTURE2D_DESC td = {};
+    td.Width = EnvMapBaker::kSpecSize;
+    td.Height = EnvMapBaker::kSpecSize;
+    td.MipLevels = EnvMapBaker::kSpecMips;
+    td.ArraySize = static_cast<UINT>(6 * count);
+    td.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+    td.SampleDesc = { 1, 0 };
+    td.Usage = D3D11_USAGE_DEFAULT;
+    td.BindFlags = D3D11_BIND_SHADER_RESOURCE; // 描かずにコピーで埋めるので RTV は不要
+    td.MiscFlags = D3D11_RESOURCE_MISC_TEXTURECUBE;
+    ID3D11Device* dev = device.Device();
+    if (FAILED(dev->CreateTexture2D(&td, nullptr, out.arrayTex.GetAddressOf()))) {
+        MYE_LOG_ERROR("[probe] cube array creation failed (%d probes)", count);
+        out.Clear();
+        return false;
+    }
+    D3D11_SHADER_RESOURCE_VIEW_DESC sd = {};
+    sd.Format = td.Format;
+    sd.ViewDimension = D3D11_SRV_DIMENSION_TEXTURECUBEARRAY;
+    sd.TextureCubeArray.MipLevels = td.MipLevels;
+    sd.TextureCubeArray.NumCubes = static_cast<UINT>(count);
+    if (FAILED(dev->CreateShaderResourceView(out.arrayTex.Get(), &sd,
+                                             out.arraySrv.GetAddressOf()))) {
+        MYE_LOG_ERROR("[probe] cube array SRV creation failed");
+        out.Clear();
+        return false;
+    }
+    ID3D11DeviceContext* dc = device.Context();
+    for (int i = 0; i < count; ++i) {
+        ID3D11Texture2D* src = out.probes[static_cast<size_t>(i)].env.preTex.Get();
+        if (src == nullptr) {
+            out.Clear();
+            return false;
+        }
+        for (int m = 0; m < EnvMapBaker::kSpecMips; ++m) {
+            for (int f = 0; f < 6; ++f) {
+                const UINT dstSub = D3D11CalcSubresource(static_cast<UINT>(m),
+                                                         static_cast<UINT>(i * 6 + f),
+                                                         EnvMapBaker::kSpecMips);
+                const UINT srcSub = D3D11CalcSubresource(static_cast<UINT>(m),
+                                                         static_cast<UINT>(f),
+                                                         EnvMapBaker::kSpecMips);
+                dc->CopySubresourceRegion(out.arrayTex.Get(), dstSub, 0, 0, 0, src, srcSub,
+                                          nullptr);
+            }
+        }
+    }
+
+    // ---- シェーダへ渡すパラメータ ----
+    // ★箱は**ベイク時点の値で固定**する。ベイクした景色と箱がフレームごとに食い違うと
+    //   視差補正が嘘をつくので、プローブを動かしたら焼き直す規約にしてある (spec §6.10)
+    out.set = {};
+    out.set.cubeArray = out.arraySrv.Get();
+    out.set.count = count;
+    out.set.specMips = static_cast<float>(EnvMapBaker::kSpecMips - 1);
+    for (int i = 0; i < count; ++i) {
+        const Collected& c = found[static_cast<size_t>(i)];
+        const XMFLOAT3 e = { std::fabs(c.desc.extents.x), std::fabs(c.desc.extents.y),
+                             std::fabs(c.desc.extents.z) };
+        ReflectionProbeGpu& g = out.set.probes[i];
+        g.centerIntensity = { c.position.x, c.position.y, c.position.z,
+                              (c.desc.intensity > 0.0f) ? c.desc.intensity : 0.0f };
+        g.boxMin = { c.position.x - e.x, c.position.y - e.y, c.position.z - e.z,
+                     (c.desc.blendDistance > 0.0f) ? c.desc.blendDistance : 0.0f };
+        g.boxMax = { c.position.x + e.x, c.position.y + e.y, c.position.z + e.z,
+                     c.desc.boxProjection ? 1.0f : 0.0f };
+    }
+
+    lastBakeMs_ = static_cast<float>(
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started)
+            .count());
+    MYE_LOG_INFO("[probe] baked %d reflection probe(s): %d^2 x 6 faces each, %.1f ms total (CPU)",
+                 count, kCaptureSize, static_cast<double>(lastBakeMs_));
     return true;
 }
 

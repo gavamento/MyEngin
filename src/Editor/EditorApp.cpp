@@ -277,11 +277,46 @@ void EditorApp::OnRenderViews(EngineContext& ctx)
                              *ctx.shaders, *ctx.resources, sceneView_.CameraPosition(), 0.1f,
                              500.0f, probePreview_)) {
             showProbePreview_ = true;
+            probePreviewAdHoc_ = true; // 窓は「今焼いたもの」を出す
             toasts_.Notify(LogLevel::Info, Tr(StrId::Probe_Baked));
         } else {
             toasts_.Notify(LogLevel::Warn, Tr(StrId::Probe_BakeFailed));
         }
     }
+    // ---- M56f: シーンに置いた反射プローブを全部焼いて描画へ載せる ----
+    // ★同じ理由でここでしか焼かない。焼き終えた束を RenderSystem へ向けるところまでが
+    //   1 組 — 向けないと「焼いたのに何も変わらない」になる
+    if (probeBakeAllRequested_) {
+        probeBakeAllRequested_ = false;
+        probeBaker_.assetsRoot = ctx.assetsRoot;
+        if (ctx.renderSystem != nullptr) {
+            // 作り直す前に参照を切る (BakeAll は先頭で束を破棄する = ぶら下がる)
+            ctx.renderSystem->reflectionProbes = nullptr;
+        }
+        if (probeBaker_.BakeAll(ctx.scene->GetWorld(), *ctx.device, *ctx.renderPathForward,
+                                *ctx.shaders, *ctx.resources, probeSet_)) {
+            if (ctx.renderSystem != nullptr) {
+                ctx.renderSystem->reflectionProbes = &probeSet_.set;
+            }
+            probePreviewAdHoc_ = false;
+            probePreviewIndex_ = 0;
+            showProbePreview_ = true;
+            toasts_.Notify(LogLevel::Info, Tr(StrId::Probe_BakedAll));
+        } else {
+            toasts_.Notify(LogLevel::Warn, Tr(StrId::Probe_BakeAllFailed));
+        }
+    }
+}
+
+void EditorApp::OnShutdown(EngineContext& ctx)
+{
+    // M56f: 束を捨てる前に参照を切る → デバイスが生きているうちにテクスチャを解放する
+    if (ctx.renderSystem != nullptr) {
+        ctx.renderSystem->reflectionProbes = nullptr;
+    }
+    probeSet_.Clear();
+    probePreview_ = {};
+    probeBaker_.Shutdown();
 }
 
 // 焼いた 6 面のサムネイル (M56e)。**Inspector ではなく専用の小窓**にしてある —
@@ -297,13 +332,30 @@ void EditorApp::DrawProbePreview()
         ImGui::End();
         return;
     }
-    if (!probePreview_.valid) {
+    // M56f: 束を焼いてあるならそちらを出す (「ここでベイク」の 1 個はシーンのプローブとは
+    // 別物なので、どちらを見ているかを probePreviewAdHoc_ で分けている)
+    const int setCount = static_cast<int>(probeSet_.probes.size());
+    const bool showSet = !probePreviewAdHoc_ && setCount > 0;
+    if (showSet && probePreviewIndex_ >= setCount) {
+        probePreviewIndex_ = setCount - 1;
+    }
+    if (showSet && probePreviewIndex_ < 0) {
+        probePreviewIndex_ = 0;
+    }
+    const BakedProbe& shown = showSet ? probeSet_.probes[static_cast<size_t>(probePreviewIndex_)]
+                                      : probePreview_;
+    if (!shown.valid) {
         ImGui::TextUnformatted(Tr(StrId::Probe_NotBaked));
         ImGui::End();
         return;
     }
-    ImGui::Text(Tr(StrId::Probe_Position), probePreview_.position.x, probePreview_.position.y,
-                probePreview_.position.z);
+    if (showSet) {
+        ImGui::Text(Tr(StrId::Probe_SetCount), setCount);
+        if (setCount > 1) {
+            ImGui::SliderInt(Tr(StrId::Probe_PreviewIndex), &probePreviewIndex_, 0, setCount - 1);
+        }
+    }
+    ImGui::Text(Tr(StrId::Probe_Position), shown.position.x, shown.position.y, shown.position.z);
     ImGui::Text(Tr(StrId::Probe_BakeMs), probeBaker_.LastBakeCpuMs());
     ImGui::TextUnformatted(Tr(StrId::Probe_HdrNote));
     static const int kCell[3][4] = {
@@ -317,12 +369,12 @@ void EditorApp::DrawProbePreview()
     for (int cy = 0; cy < 3; ++cy) {
         for (int cx = 0; cx < 4; ++cx) {
             const int f = kCell[cy][cx];
-            if (f < 0 || !probePreview_.faceSrv[f]) {
+            if (f < 0 || !shown.faceSrv[f]) {
                 continue;
             }
             ImGui::SetCursorScreenPos(
                 ImVec2(base.x + static_cast<float>(cx) * side, base.y + static_cast<float>(cy) * side));
-            ImGui::Image(reinterpret_cast<ImTextureID>(probePreview_.faceSrv[f].Get()),
+            ImGui::Image(reinterpret_cast<ImTextureID>(shown.faceSrv[f].Get()),
                          ImVec2(side, side));
         }
     }
@@ -737,6 +789,18 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
             //   押しても即座には焼かない — 次の OnRenderViews まで要求を持ち越す
             if (ImGui::MenuItem(Tr(StrId::Probe_BakeHere))) {
                 probeBakeRequested_ = true;
+            }
+            // M56f: シーンに置いた ReflectionProbeComponent を全部焼いて描画へ載せる。
+            // ★ここも**明示ボタン**。焼くまでプローブは絵に 1 ビットも寄与しない
+            if (ImGui::MenuItem(Tr(StrId::Probe_BakeAll))) {
+                probeBakeAllRequested_ = true;
+            }
+            // 焼いた束を捨てる (A/B 比較用。プローブ有り/無しをその場で見比べられる)
+            if (ImGui::MenuItem(Tr(StrId::Probe_ClearBaked), nullptr, false,
+                                !probeSet_.probes.empty())) {
+                ctx.renderSystem->reflectionProbes = nullptr; // 先に参照を切る
+                probeSet_.Clear();
+                probePreviewAdHoc_ = true;
             }
             ImGui::MenuItem(Tr(StrId::Probe_Preview), nullptr, &showProbePreview_);
             ImGui::EndMenu();

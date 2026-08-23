@@ -170,6 +170,13 @@ public:
     // シーンカメラに CameraPostFx があればそちらの ssrOn が勝つ (TAA と同じ規則)。
     // true にすると HZB も一緒に組まれる — SSR にとって唯一の加速構造なので
     bool enableSsr = false;
+    // M56f: 焼き上がったローカル反射プローブ束への**非所有ポインタ** (実体は ProbeBaker が
+    // 所有する ReflectionProbeArray)。null = プローブ無し = 従来と完全に同じ絵。
+    // ★ここを埋めるのは「ベイクした所有者」= EditorApp / EngineLoop で、RenderSystem は
+    //   毎フレーム view へ写すだけ。**AssetPreviewCache の RenderSystem はここを埋めない**
+    //   ので、サムネイルにプローブが漏れることは構造的に起きない。
+    // ★束を破棄する前に必ず nullptr へ戻すこと (ぶら下がりポインタになる)
+    const ReflectionProbeSet* reflectionProbes = nullptr;
 
     // M44d: ポストプロセス解決の GPU 時間 (直近の Resolve、ProfilerWindow 表示用)
     float PostFxGpuMs() const { return postFx_.ResolveGpuMs(); }

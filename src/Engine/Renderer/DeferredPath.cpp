@@ -134,6 +134,11 @@ struct LightPassCB {
     float shadowAtlasTexel;
     float atlasPad[2];
     ShadowTileCB shadowTiles[kMaxShadowTiles];
+    // ---- M56f: ローカル反射プローブ (末尾 append。count 0 = 従来と完全に同一の式) ----
+    int32_t probeCount;
+    float probeSpecMips;
+    float probePad[2];
+    ReflectionProbeGpu probes[kMaxReflectionProbes];
 };
 
 // ssao.hlsl の SsaoCB と同一レイアウト
@@ -1140,6 +1145,22 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
         (!unlit && view.shadowAtlasSRV != nullptr && view.shadowTileCount > 0) ? 1 : 0;
     lp.shadowAtlasTexel = view.shadowAtlasTexel;
     FillShadowTilesCB(view, lp.shadowTiles);
+    // M56f: ローカル反射プローブ。**焼いた束が無ければ count 0 = 1 命令も増えない**。
+    // ★環境 BRDF LUT (t7) が無いと差分の係数が 0 になって「プローブを置いたのに絵が
+    //   1 画素も変わらない」になる (M56d が --render-demo で踏んだのと同じ穴) ので、
+    //   LUT が揃っていることも条件に入れる — RenderSystem 側が先に焼いてくれている。
+    // ★Unlit / Wireframe では合成しない (SSAO / IBL / SSR と同じ扱い)
+    const ReflectionProbeSet* probeSet =
+        (!unlit && !wire && view.probes != nullptr && view.probes->count > 0
+         && view.probes->cubeArray != nullptr && view.iblBrdfLut != nullptr)
+        ? view.probes
+        : nullptr;
+    if (probeSet != nullptr) {
+        lp.probeCount = (probeSet->count < kMaxReflectionProbes) ? probeSet->count
+                                                                 : kMaxReflectionProbes;
+        lp.probeSpecMips = probeSet->specMips;
+        memcpy(lp.probes, probeSet->probes, sizeof(lp.probes));
+    }
     UploadCB(dc, lightCB_.Get(), lp);
     ID3D11Buffer* lightCbs[1] = { lightCB_.Get() };
     dc->PSSetConstantBuffers(0, 1, lightCbs);
@@ -1152,7 +1173,8 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
     // GBuffer t0-3 + シャドウ t4 + IBL t5-7 (M38c) + SSAO t8 (M38e) + RT GI t9 (M46f)
     // + RT 影 t10 (M46g) + RT 反射 t11 (M46h) + シャドウアトラス t12 (M54c)。
     // s0=IBL サンプラ / s1=比較サンプラ bind 済み (アトラスも s1 を共有する = サンプラ増やさず)
-    ID3D11ShaderResourceView* gbSrvs[13] = { gbAlbedo_.SRV(),     gbNormal_.SRV(),
+    // + t13 は**空き席** (SSR が取らなかった予約席) / t14 = 反射プローブ (M56f)
+    ID3D11ShaderResourceView* gbSrvs[15] = { gbAlbedo_.SRV(),     gbNormal_.SRV(),
                                              gbPosition_.SRV(),   gbMaterial_.SRV(),
                                              view.shadowSRV,      view.iblIrradiance,
                                              view.iblPrefiltered, view.iblBrdfLut,
@@ -1160,8 +1182,11 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
                                              rtGiBound ? rtGi.filtered : nullptr,
                                              rtShadowBound ? rtShadowSrv : nullptr,
                                              rtReflBound ? rtRefl.filtered : nullptr,
-                                             view.shadowAtlasSRV };
-    dc->PSSetShaderResources(0, 13, gbSrvs);
+                                             view.shadowAtlasSRV,
+                                             nullptr,
+                                             (probeSet != nullptr) ? probeSet->cubeArray
+                                                                   : nullptr };
+    dc->PSSetShaderResources(0, 15, gbSrvs);
     dc->IASetInputLayout(nullptr);
     dc->OMSetBlendState(blendOpaque_.Get(), nullptr, 0xFFFFFFFFu);
     dc->VSSetShader(lightProg->vs.Get(), nullptr, 0);
@@ -1170,10 +1195,11 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
     dc->Draw(3, 0);
     // 統合契約 予約 2: 最終的に [16] になる (M54 が [13]、M56 が [15]、M57 が [16])。
     // ★**M56d (SSR) は予約席の t13 を取らなかった** — SSR はライトパスの**出力**を読む
-    //   ので、ライトパスに入力として渡せない (鶏と卵)。加算合成する別パスにしたため、
-    //   ここは M54c の 13 本のまま。t13 は M56f 以降が使ってよい空き席
-    ID3D11ShaderResourceView* nullSrvs[13] = {};
-    dc->PSSetShaderResources(0, 13, nullSrvs); // 次フレームで RT に戻すため解除
+    //   ので、ライトパスに入力として渡せない (鶏と卵)。加算合成する別パスにしたため
+    //   t13 は空き席のまま残っている。M56f が取ったのは予約どおり **t14** の 1 本だけで、
+    //   本数は [15] になった (t13 には常に nullptr を張る)
+    ID3D11ShaderResourceView* nullSrvs[15] = {};
+    dc->PSSetShaderResources(0, 15, nullSrvs); // 次フレームで RT に戻すため解除
 
     // ---- 2.5) スカイボックス (M29d): clearColor ピクセルを深度 1.0 判定で上書き ----
     // (Wireframe はフルスクリーン三角形が線になるためスキップ、M40b)
@@ -1199,6 +1225,7 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
         si.gbMaterial = gbMaterial_.SRV();
         si.ssao = ssaoOn ? ssaoBlur_.SRV() : nullptr;
         si.linearClamp = iblSampler_.Get(); // サンプラは新設しない (統合契約 予約 2)
+        si.probes = probeSet;               // M56f: SSR が「引く基準値」に使う (光パスと同じ束)
         ssr_.Render(device, shaders, view, si);
         // 後始末は velocity / HZB の可視化と同じ (透明後段とパーティクルが続く)
         dc->OMSetRenderTargets(1, &view.rtv, view.dsv);

@@ -533,6 +533,31 @@ void SceneViewWindow::BuildOverlays(EngineContext& ctx, Selection& selection)
                 }
             }
         });
+
+        // 反射プローブの影響ボックス (M56f)。**箱は軸平行**なのでワールド行列は平行移動だけ
+        // (エンティティの回転もスケールも見ない = ここで拾わないのが仕様どおり)。
+        // ★これが無いとプローブは画面に一切現れない — メッシュを持たず、焼くまでは絵にも
+        //   寄与しないので、置いた箱の大きさを確かめる手段が他に無い
+        constexpr uint32_t kProbeBox = 0x60C0FFFFu; // 水色
+        const ComponentTypeId rpReq[] = { ReflectionProbeComponent::sTypeId,
+                                          WorldMatrixComponent::sTypeId };
+        world.ForEachArchetype(rpReq, [&](Archetype& arch) {
+            const int ri = arch.FindTypeIndex(ReflectionProbeComponent::sTypeId);
+            const int wi = arch.FindTypeIndex(WorldMatrixComponent::sTypeId);
+            for (uint32_t row = 0; row < arch.Count(); ++row) {
+                const auto* rp = static_cast<const ReflectionProbeComponent*>(arch.GetPtr(ri, row));
+                const XMFLOAT4X4& wm =
+                    static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row))->value;
+                const XMFLOAT4X4 boxWorld = {
+                    1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, wm._41, wm._42, wm._43, 1,
+                };
+                lines_.AddWireBox(boxWorld,
+                                  { std::fabs(rp->extents.x), std::fabs(rp->extents.y),
+                                    std::fabs(rp->extents.z) },
+                                  kProbeBox);
+                lines_.AddWireSphere({ wm._41, wm._42, wm._43 }, 0.2f, kProbeBox); // 撮影点
+            }
+        });
     }
 
     // 選択アウトライン (常時最前面)

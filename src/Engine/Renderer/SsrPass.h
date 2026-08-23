@@ -43,6 +43,10 @@ public:
         ID3D11ShaderResourceView* gbMaterial = nullptr; // r=metallic g=roughness
         ID3D11ShaderResourceView* ssao = nullptr;      // 半解像度 AO (null = 遮蔽なし)
         ID3D11SamplerState* linearClamp = nullptr;     // s0 (新設しない = 光パスの iblSampler_)
+        // M56f: ローカル反射プローブ。**光パスが合成に使ったのと同じ束**を渡すこと —
+        // SSR が引く基準値 (= ライトパスが実際に足した環境スペキュラ) がずれると、
+        // SSR とプローブを同時に on にした画素だけプローブの寄与が二重に乗る
+        const ReflectionProbeSet* probes = nullptr;
     };
 
     bool Init(GraphicsDevice& device, ShaderManager& shaders);

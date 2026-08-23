@@ -48,6 +48,13 @@ cbuffer SsrCB : register(b0)
     float    gSsrFogHeightFalloff;
     float    gSsrFogBaseHeight;
     float2   _ssrPad;
+    // ---- M56f: ローカル反射プローブ (末尾 append)。0 = M56d と 1 ビットも変わらない ----
+    // **引く基準値**を差し替えるためだけに要る。ライトパスがプローブで置き換えた画素から
+    // 素の IBL を引くと、その差だけプローブの寄与が二重に乗る (絵は普通に出る)
+    int      gSsrProbeCount;
+    float    gSsrProbeSpecMips;
+    float2   _ssrProbePad;
+    ReflProbe gSsrProbes[MYE_MAX_REFLECTION_PROBES];
 };
 
 Texture2D   gSsrScene   : register(t0); // ライトパス出力のコピー (SRV 専用)
@@ -58,6 +65,7 @@ Texture2D   gSsrMaterial : register(t4); // r=metallic g=roughness
 TextureCube gSsrIblPrefiltered : register(t5);
 Texture2D   gSsrIblBrdfLut     : register(t6);
 Texture2D   gSsrAo             : register(t7); // 半解像度 AO (ライトパスと同じ引き方)
+TextureCubeArray gSsrProbeCubes : register(t8); // M56f (光パスの t14 と同じ実体)
 SamplerState gSsrSamp : register(s0);          // LINEAR/CLAMP (光パスの iblSampler_ を流用)
 
 // **CPU ミラー: SsrPass.h の同名関数 — 変更時は両方更新** (SsrSelfTest が検証)。
@@ -239,6 +247,17 @@ float4 PSMain(VSOut i) : SV_Target
     if (gSsrIblEnabled != 0) {
         iblSpec =
             gSsrIblPrefiltered.SampleLevel(gSsrSamp, R, roughness * gSsrIblSpecMips).rgb * ao;
+    }
+    // M56f: フォールバック連鎖 **SSR → ローカルプローブ → グローバル env**。
+    // 引く基準値はライトパスが実際に足したもの = プローブが効いている画素では
+    // 「lerp(IBL, プローブ, 重み)」。ここを素の IBL のままにすると、SSR とプローブを
+    // 同時に on にした画素だけプローブの寄与が二重に乗る (deferred_light.hlsl の対)
+    if (gSsrProbeCount > 0) {
+        float pw = 0.0f;
+        const float3 probeSpec = ReflProbeRadiance(gSsrProbeCubes, gSsrSamp, gSsrProbes,
+                                                   gSsrProbeCount, posW, R, roughness,
+                                                   gSsrProbeSpecMips, pw);
+        iblSpec = lerp(iblSpec, probeSpec * ao, pw);
     }
     float3 delta = (hitColor - iblSpec) * (F0 * brdf.x + brdf.y) * w;
 

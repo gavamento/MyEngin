@@ -288,6 +288,11 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                     config.probeBakePos[1] = py;
                     config.probeBakePos[2] = pz;
                 }
+            } else if (arg == L"--probe-bake-all") {
+                // M56f: シーン中の ReflectionProbeComponent を全部焼いて描画へ載せる。
+                // ★撮影に映すならベイクのフレームを --shot-frame より前に置くこと
+                //   (ベイクはスクショ保存の後に走る)
+                config.probeBakeAll = true;
             } else if (arg == L"--probe-bake-frame" && i + 1 < argc) {
                 config.probeBakeFrame = _wtoi(argv[++i]); // M56e (既定 3 = --shot-frame と同じ)
             } else if (arg == L"--probe-bake-png" && i + 1 < argc) {

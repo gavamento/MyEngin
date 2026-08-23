@@ -885,6 +885,10 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
     view.velocityDebug = velocityDebugMode;            // M55c (Deferred のみ消費)
     view.hzbDebug = hzbDebugMip;                       // M56c (Deferred のみ消費)
     view.ssrEnabled = enableSsr ? 1 : 0;               // M56d (Deferred のみ消費)
+    // M56f: 焼いたプローブ束をそのまま指す (Deferred のみ消費)。ベイクした所有者が
+    // このポインタを立てるまで null = 1 命令も増えない。**トグルを設けていない**のは、
+    // 「焼いていない = 無い」で十分だから (焼く操作そのものが明示 opt-in)
+    view.probes = reflectionProbes;
     // M40d: シーンカメラの CameraPostFx から SSAO パラメータ (override = エディタ視界は既定)
     if (!cameraOverride && !camEntity.IsNull()) {
         if (const auto* pfx = world.GetComponent<CameraPostFxComponent>(camEntity)) {
@@ -1008,7 +1012,11 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
     // irradiance / prefiltered は null のままなので pf.iblEnabled は false に留まる。
     // ★これを忘れると LUT が null → SampleLevel が 0 を返す → 環境 BRDF が 0 →
     //   **SSR を on にしても絵が 1 ピクセルも変わらない** (--render-demo にはスカイが無い)
-    if (view.ssrEnabled != 0 && view.iblBrdfLut == nullptr) {
+    // M56f: 反射プローブも split-sum で合成する = 同じ理由で LUT が要る。
+    // ★これを忘れると「プローブを焼いたのに絵が 1 画素も変わらない」になる
+    //   (--render-demo にはスカイが無いので LUT が誰にも焼かれない)
+    if ((view.ssrEnabled != 0 || (view.probes != nullptr && view.probes->count > 0))
+        && view.iblBrdfLut == nullptr) {
         view.iblBrdfLut = envBaker_.GetBrdfLut(device, shaders);
     }
 

@@ -216,6 +216,16 @@ $constGroups = @(
             'assets\shaders\ssr_trace.hlsl'  = '#\s*define\s+MYE_SSR_MAX_STEPS\s+(\d+)'
         }
     }
+    @{
+        # M56f: 反射プローブの最大数 = 定数バッファ内の配列長そのもの。**光パス
+        # (deferred_light) と SSR (ssr_trace) の 2 本が同じ配列を持つ**ので、C++ と
+        # 食い違うと CB のレイアウトごとずれる (絵は普通に出る) — 機械照合が唯一の防波堤
+        label = 'kMaxReflectionProbes / MYE_MAX_REFLECTION_PROBES'
+        sites = @{
+            'src\Engine\Renderer\RenderTypes.h' = 'constexpr\s+int\s+kMaxReflectionProbes\s*=\s*(\d+)'
+            'assets\shaders\common.hlsli'       = '#\s*define\s+MYE_MAX_REFLECTION_PROBES\s+(\d+)'
+        }
+    }
 )
 foreach ($g in $constGroups) {
     $values = @{}

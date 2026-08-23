@@ -109,6 +109,11 @@ struct EngineConfig {
     float probeBakePos[3] = { 0.0f, 3.0f, 8.0f }; // --render-demo の反射パッチの真上あたり
     int probeBakeFrame = 3;                       // 撮影 (--shot-frame) と同じ既定
     std::wstring probeBakePng;                    // 空 = tests\actual\probe_faces.png
+    // M56f: シーン中の ReflectionProbeComponent を**全部**焼いて描画へ載せる
+    // (--probe-bake-all)。--probe-bake と同じく probeBakeFrame でちょうど 1 回だけ走る。
+    // ★撮影に映したいならベイクのフレームを **--shot-frame より前**にすること —
+    //   ベイクはスクショ保存の**後**に走るので、同じフレームを指定すると間に合わない
+    bool probeBakeAll = false;
     // M55d: TAA (--taa)。**Deferred のみ** (画面速度が GBuffer RT4 にしかない)。
     // シーンカメラに CameraPostFx があればそちらの taaOn が勝つ (ポスプロ設定と同じ規則)
     bool postFxTaa = false;

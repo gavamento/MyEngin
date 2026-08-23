@@ -5,8 +5,14 @@
 
 #include <DirectXMath.h>
 
+#include "Engine/Core/Components.h"
 #include "Engine/Core/Log.h"
+#include "Engine/Core/World.h"
+#include "Engine/Engine/GameObject.h"
 #include "Engine/Engine/ProbeBaker.h"
+#include "Engine/Engine/Replay/WorldHasher.h"
+#include "Engine/Engine/Scene.h"
+#include "Engine/Renderer/RenderTypes.h"
 
 using namespace DirectX;
 
@@ -251,6 +257,139 @@ bool RunProbeBakerSelfTest()
               "the capture resolution matches the prefiltered cube (finer would be thrown away)");
         check((ProbeBaker::kCaptureSize & (ProbeBaker::kCaptureSize - 1)) == 0,
               "the capture resolution is a power of two (the prefilter halves it per mip)");
+    }
+
+    // ================= M56f: 合成 (ボックス投影 + 影響の重み + 選択) =================
+    // ★ここは**シェーダの CPU 鏡**。HLSL 側 (common.hlsli の ReflProbe*) と式が
+    //   食い違っても絵は普通に出る (反射がわずかにずれるだけ) ので、機械検査でしか
+    //   捕まらない。両者を同時に直す約束は各関数のコメントに書いてある
+    RegisterBuiltinComponents(); // sTypeId 解決 (冪等)
+
+    // 中心 (10, 2, -4) / 半径 (4, 2, 6) / ブレンド 1 / ボックス投影 on
+    ReflectionProbeGpu probe;
+    probe.centerIntensity = { 10.0f, 2.0f, -4.0f, 1.0f };
+    probe.boxMin = { 6.0f, 0.0f, -10.0f, 1.0f };
+    probe.boxMax = { 14.0f, 4.0f, 2.0f, 1.0f };
+
+    // ---- レイアウト (CB の配列長そのもの) ----
+    {
+        check(sizeof(ReflectionProbeGpu) == 48, "ReflectionProbeGpu is 48 bytes (3 x float4)");
+        ReflectionProbeSet empty;
+        check(empty.count == 0 && empty.cubeArray == nullptr,
+              "a default ReflectionProbeSet means 'no probes' (the light pass skips it)");
+        check(kMaxReflectionProbes > 0
+                  && sizeof(empty.probes) / sizeof(empty.probes[0]) == kMaxReflectionProbes,
+              "the CB array length is kMaxReflectionProbes (mirrored by MYE_MAX_REFLECTION_PROBES)");
+    }
+
+    // ---- 影響の重み ----
+    {
+        check(ReflProbeWeight(probe, XMFLOAT3{ 10.0f, 2.0f, -4.0f }) == 1.0f,
+              "the box centre has full weight");
+        check(ReflProbeWeight(probe, XMFLOAT3{ 20.0f, 2.0f, -4.0f }) == 0.0f,
+              "a point outside the box has exactly zero weight");
+        check(ReflProbeWeight(probe, XMFLOAT3{ 14.0f, 2.0f, -4.0f }) == 0.0f,
+              "a point exactly on the box surface has exactly zero weight");
+        // ★ちょうど 0 が出ることが「プローブの外は 1 ビットも足さない」の根拠
+        check(std::fabs(ReflProbeWeight(probe, XMFLOAT3{ 13.5f, 2.0f, -4.0f }) - 0.5f) < 1e-6f,
+              "half a blend distance inside the surface gives half weight");
+        // 一番近い面が効く (y は半径 2 なので、y 方向の縁の方が近い)
+        check(std::fabs(ReflProbeWeight(probe, XMFLOAT3{ 10.0f, 3.7f, -4.0f }) - 0.3f) < 1e-6f,
+              "the nearest face decides the weight, not the first axis");
+        ReflectionProbeGpu hard = probe;
+        hard.boxMin.w = 0.0f; // ブレンド距離 0 = 境界でいきなり切り替わる
+        check(ReflProbeWeight(hard, XMFLOAT3{ 13.999f, 2.0f, -4.0f }) == 1.0f
+                  && ReflProbeWeight(hard, XMFLOAT3{ 14.001f, 2.0f, -4.0f }) == 0.0f,
+              "a zero blend distance is a hard edge instead of a divide by zero");
+    }
+
+    // ---- ボックス投影 (視差補正) ----
+    {
+        // 撮影点そのものから見た方向は補正しても変わらない (交点 - 中心 == R * t)
+        const XMFLOAT3 c = { 10.0f, 2.0f, -4.0f };
+        const XMFLOAT3 up = { 0.0f, 1.0f, 0.0f };
+        check(NearVec(ReflProbeDir(probe, c, up), up, 1e-5f),
+              "at the capture point box projection is the identity");
+
+        // ★**これが視差補正の本体**: 同じ反射ベクトルでも立つ場所が違えば向きが変わる。
+        //   ここが恒等になっていたら「無限遠キューブ」と同じ = 補正が効いていない
+        const XMFLOAT3 offCentre = { 13.0f, 1.0f, 1.0f };
+        const XMFLOAT3 d1 = ReflProbeDir(probe, offCentre, up);
+        check(!NearVec(d1, up, 1e-3f),
+              "away from the capture point the same reflection vector maps to a different direction");
+        // 上向きの光線は必ず天井 (y = boxMax.y = 4) に当たる = 補正後も上を向いている
+        check(d1.y > 0.0f, "an upward ray still points upward after the correction");
+        // 交点は箱の面の上に乗る (天井なら y == 4)。撮影点 + dir*len で戻して確かめる
+        {
+            const XMFLOAT3 hit = { offCentre.x, 4.0f, offCentre.z };
+            XMFLOAT3 want = { hit.x - c.x, hit.y - c.y, hit.z - c.z };
+            const float len = std::sqrt(want.x * want.x + want.y * want.y + want.z * want.z);
+            want = { want.x / len, want.y / len, want.z / len };
+            check(NearVec(d1, want, 1e-5f),
+                  "the corrected direction points from the capture point to the box wall hit");
+        }
+        // 軸に平行な光線で 0 除算しない (NaN が 1 つ混ざると min ごと壊れる)
+        const XMFLOAT3 axis = ReflProbeDir(probe, offCentre, XMFLOAT3{ 1.0f, 0.0f, 0.0f });
+        check(!std::isnan(axis.x) && !std::isnan(axis.y) && !std::isnan(axis.z),
+              "an axis-parallel reflection vector does not produce NaN");
+        // 無限遠プローブは素通し
+        ReflectionProbeGpu infinite = probe;
+        infinite.boxMax.w = 0.0f;
+        check(NearVec(ReflProbeDir(infinite, offCentre, up), up, 1e-6f),
+              "with box projection off the reflection vector is passed through unchanged");
+    }
+
+    // ---- 選択 (どのプローブが効くか) ----
+    {
+        ReflectionProbeGpu list[3];
+        // 0: 大きい箱 (ブレンドが広い = 中心でも重み 0.5) / 1: 小さい箱 (中心で 1.0) /
+        // 2: 遠くの箱。**重みが飽和しない値**にしてあるのが要点 — どちらも 1.0 だと
+        // 同点になり、「深く入っている方が勝つ」ではなく「添字が小さい方が勝つ」を試験してしまう
+        list[0].centerIntensity = { 0, 0, 0, 1 };
+        list[0].boxMin = { -20.0f, -20.0f, -20.0f, 40.0f };
+        list[0].boxMax = { 20.0f, 20.0f, 20.0f, 1.0f };
+        list[1].centerIntensity = { 0, 0, 0, 1 };
+        list[1].boxMin = { -3.0f, -3.0f, -3.0f, 0.5f };
+        list[1].boxMax = { 3.0f, 3.0f, 3.0f, 1.0f };
+        list[2].centerIntensity = { 100, 0, 0, 1 };
+        list[2].boxMin = { 90.0f, -5.0f, -5.0f, 1.0f };
+        list[2].boxMax = { 110.0f, 5.0f, 5.0f, 1.0f };
+
+        float w = -1.0f;
+        check(ReflProbeSelect(list, 3, XMFLOAT3{ 0.0f, 0.0f, 0.0f }, w) == 1 && w == 1.0f,
+              "the probe the point is deepest inside wins");
+        check(ReflProbeSelect(list, 3, XMFLOAT3{ 10.0f, 0.0f, 0.0f }, w) == 0,
+              "outside the small box the large one takes over");
+        check(ReflProbeSelect(list, 3, XMFLOAT3{ 200.0f, 0.0f, 0.0f }, w) == -1 && w == 0.0f,
+              "a point outside every box selects nothing and reports zero weight");
+        check(ReflProbeSelect(list, 0, XMFLOAT3{ 0.0f, 0.0f, 0.0f }, w) == -1 && w == 0.0f,
+              "an empty probe list selects nothing");
+        // ★同点は**添字の小さい方**。ここが揺れると、収集順が変わっただけで
+        //   映り込みが別のプローブへ飛ぶ (規則 7 のタイブレークと同じ話)
+        ReflectionProbeGpu tie[2] = { list[1], list[1] };
+        check(ReflProbeSelect(tie, 2, XMFLOAT3{ 0.0f, 0.0f, 0.0f }, w) == 0,
+              "a tie is broken towards the lower index (deterministic selection)");
+    }
+
+    // ---- kComponentNoHash: プローブを置いてもワールドハッシュが動かない ----
+    // ★「M56 は .rep 互換の作業が 1 つも要らない」の機械証明 (DecalSelfTest と同じ檻)
+    {
+        Scene scene;
+        GameObject host = scene.CreateGameObjectTracked("ProbeHost");
+        World& w = scene.GetWorld();
+        w.ApplyStructuralChanges();
+        const uint64_t before = HashWorld(w, nullptr);
+        auto* rp = w.AddComponent<ReflectionProbeComponent>(host.Id());
+        w.ApplyStructuralChanges();
+        check(rp != nullptr, "ReflectionProbeComponent can be added to an entity");
+        if (rp != nullptr) {
+            rp->extents = { 3.0f, 4.0f, 5.0f };
+            rp->blendDistance = 2.0f;
+            rp->intensity = 0.5f;
+            rp->boxProjection = false;
+        }
+        check(before == HashWorld(w, nullptr),
+              "ReflectionProbeComponent is kComponentNoHash (the world hash never moves)");
     }
 
     MYE_LOG_INFO("==== reflection probe capture self test: %s ====",

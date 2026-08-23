@@ -35,6 +35,8 @@ const std::unordered_map<std::string, ComponentUiInfo>& Table()
         { "Terrain", { ICON_FA_MOUNTAIN, "Rendering", "地形" } },
         // M56a: デカール。GBuffer の albedo を上描きする描画レーンなので Rendering に置く
         { "Decal", { ICON_FA_STAMP, "Rendering", "デカール" } },
+        // M56f: ローカル反射プローブ。焼いた cubemap を環境スペキュラへ差し込む描画レーン
+        { "ReflectionProbe", { ICON_FA_GLOBE, "Rendering", "反射プローブ" } },
         // Physics
         { "Collider", { ICON_FA_VECTOR_SQUARE, "Physics", "コライダー" } },
         { "Rigidbody", { ICON_FA_CIRCLE_DOT, "Physics", "リジッドボディ" } },

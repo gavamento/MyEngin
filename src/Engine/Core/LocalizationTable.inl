@@ -109,6 +109,13 @@ MYE_STR(Probe_HdrNote,        "Raw HDR capture (linear, not tone mapped)",
                               "生 HDR キャプチャ (リニア、トーンマップ無し)")
 MYE_STR(Probe_Baked,          "Reflection probe baked",          "反射プローブを焼きました")
 MYE_STR(Probe_BakeFailed,     "Reflection probe bake failed",    "反射プローブのベイクに失敗しました")
+// M56f: シーンに置いた ReflectionProbeComponent の一括ベイク (これも明示ボタン)
+MYE_STR(Probe_BakeAll,        "Bake All Reflection Probes",      "すべての反射プローブをベイク")
+MYE_STR(Probe_ClearBaked,     "Discard Baked Probes",            "焼いたプローブを破棄")
+MYE_STR(Probe_BakedAll,       "Scene reflection probes baked",   "シーンの反射プローブを焼きました")
+MYE_STR(Probe_BakeAllFailed,  "No reflection probe was baked",   "反射プローブを焼けませんでした")
+MYE_STR(Probe_SetCount,       "Baked probes: %d",                "焼いたプローブ: %d 個")
+MYE_STR(Probe_PreviewIndex,   "Probe###ProbePreviewIndex",       "プローブ###ProbePreviewIndex")
 
 // ---- 影 (M54e)。View > 影 サブメニュー。統合契約 予約 5 の接頭辞 Shadow_* ----
 // 統計行の書式指定子の並びは en / ja で一致必須 (規則 10 が機械検査する)

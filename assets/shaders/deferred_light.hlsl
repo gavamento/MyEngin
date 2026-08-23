@@ -57,6 +57,11 @@ cbuffer LightPass : register(b0)
     float    gShadowAtlasTexel; // 1/アトラス解像度
     float2   _atlasPad;
     ShadowTile gShadowTiles[MYE_MAX_SHADOW_TILES];
+    // ---- M56f: ローカル反射プローブ (末尾 append)。0 = 従来と完全に同一の式 ----
+    int      gProbeCount;
+    float    gProbeSpecMips; // プリフィルタ済みキューブの最終 mip index
+    float2   _probePad;
+    ReflProbe gProbes[MYE_MAX_REFLECTION_PROBES];
 };
 
 Texture2D gAlbedo    : register(t0);
@@ -72,6 +77,9 @@ Texture2D   gRtGi           : register(t9); // M46f (内部解像度、demodulat
 Texture2D   gRtShadow       : register(t10); // M46g (フル解像度 R8、太陽の可視率)
 Texture2D   gRtRefl         : register(t11); // M46h (内部解像度、反射方向の入射放射輝度)
 Texture2D   gShadowAtlas    : register(t12); // M54c (局所ライトの深度アトラス、R32_FLOAT)
+// t13 は統合契約 予約 2 が SSR に取ってあった席だが、SSR (M56d) は光パスの**出力**を読む
+// 別パスになったので空いたまま。**埋めないこと** (M57 が froxel で t15 を取る)
+TextureCubeArray gProbeCubes : register(t14); // M56f (プリフィルタ済みプローブ、6 面 × N)
 SamplerState gIblSampler : register(s0); // LINEAR/CLAMP (M38c、s0 は光パスで空きだった)
 SamplerComparisonState gShadowSampler : register(s1);
 
@@ -141,6 +149,35 @@ float4 PSMain(VSOut i) : SV_Target
                               gLights, gLightCount, dirShadow, localShadow, gIblEnabled,
                               gIblSpecMips, gIblIrradiance, gIblPrefiltered, gIblBrdfLut,
                               gIblSampler, ao);
+    }
+    // ---- M56f: ローカル反射プローブ ----
+    // ★足すのは反射そのものではなく **「グローバル env との差分」**。SSR (M56d) と同じ理屈で、
+    //   上の ApplyLighting[Hybrid] が既にスペキュラ環境項 (`iblPrefiltered * ao * 環境BRDF`) を
+    //   足しているので、生の放射輝度を上乗せすると同じ光を二重に数える。
+    //   `(プローブ - IBL) * ao * 環境BRDF * 重み` を足すと、結果は
+    //   「スペキュラ放射輝度を lerp で差し替えた」値とちょうど一致し、**重み 0 で厳密に 0**。
+    //   ApplyLighting 系のシグネチャを触らずに済む = Forward 3 本が 1 文字も動かない。
+    // ★RT 反射が効いている画素では、その重みぶんは既にレイの結果で置き換わっているので
+    //   (1-wRt) を掛ける。**フォールバック連鎖は SSR → プローブ → グローバル env** で、
+    //   SSR 側は「自分が引く基準値」に同じプローブ放射輝度を使う (ssr_trace.hlsl)
+    if (gProbeCount > 0) {
+        const float3 V = normalize(gCameraPos - posW);
+        const float3 R = reflect(-V, n);
+        float pw = 0.0f;
+        const float3 probeSpec = ReflProbeRadiance(gProbeCubes, gIblSampler, gProbes, gProbeCount,
+                                                   posW, R, mr.y, gProbeSpecMips, pw);
+        if (pw > 0.0f) {
+            float3 iblSpec = float3(0.0f, 0.0f, 0.0f);
+            if (gIblEnabled != 0) {
+                iblSpec = gIblPrefiltered.SampleLevel(gIblSampler, R, mr.y * gIblSpecMips).rgb;
+            }
+            const float wRt =
+                (gRtReflEnabled != 0) ? RtReflWeight(mr.y, gRtReflFadeStart, gRtReflMaxRough) : 0.0f;
+            const float ndv = saturate(dot(n, V));
+            const float3 F0 = lerp(float3(0.04f, 0.04f, 0.04f), albedo.rgb, mr.x);
+            const float2 brdf = gIblBrdfLut.SampleLevel(gIblSampler, float2(ndv, mr.y), 0).rg;
+            color += (probeSpec - iblSpec) * ao * (F0 * brdf.x + brdf.y) * (pw * (1.0f - wRt));
+        }
     }
     // M46i: 自己発光 (G-Buffer の b に正規化して詰めてある)。ライティングに依らず
     // 放射する分を足す。発光なしのマテリアルは b が厳密に 0 なので加算項もちょうど 0 になり、

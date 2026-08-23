@@ -1080,6 +1080,21 @@ void BuildRenderShowcaseScene(EngineContext& ctx)
     decal("DecalPillar", 4.0f, 1.5f, -5.0f, 0.0f, 0.0f, 2.5f, 2.0f, 4.0f,
           0.20f, 0.75f, 0.95f, 0.90f, 70.0f, 1);
 
+    // ---- 反射プローブ 1 個 (M56f) ----
+    // ★**置いても絵は 1 ビットも変わらない** — ベイクは常に明示指示 (`--probe-bake-all` /
+    //   `View > Rendering > すべての反射プローブをベイク`) なので、golden はプローブを
+    //   足しても不変のまま。デカール (M56a) が golden 2 枚を動かしたのとはここが違う。
+    // 箱は反射パッチ MirrorPatch (中心 (0,0.05,8) / 18 x 12) をちょうど覆う大きさで、
+    // 撮影点は床から 3 の高さ = 柱が水平 4 面にしっかり写る位置。**視差補正 (ボックス投影)
+    // が効いているかは、床の映り込みが箱の壁で切り替わるかで読める**
+    {
+        GameObject probe = s.CreateGameObject("ReflectionProbe");
+        probe.SetLocalPosition(0.0f, 3.0f, 8.0f);
+        auto* rp = probe.AddComponent<ReflectionProbeComponent>();
+        rp->extents = { 11.0f, 6.0f, 8.0f };
+        rp->blendDistance = 1.5f;
+    }
+
     // ---- 回転する物体 (M55c の velocity / M55e のモーションブラー) ----
     // 既定デモの Spinner (DemoContent.cpp の Rotator) と同じ流儀。腕を付けてあるのは
     // 「回っていること」が静止画 1 枚でも分かるようにするため

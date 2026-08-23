@@ -47,6 +47,10 @@ public:
     void OnTick(EngineContext& ctx) override;
     void OnRenderViews(EngineContext& ctx) override;
     void OnImGui(EngineContext& ctx) override;
+    // M56f: 焼いたプローブ束を**デバイスより先に**解放する。ComPtr のデストラクタ任せに
+    // すると EditorApp の破棄 (= device.Shutdown の後) まで生き残る。
+    // ★同じ問題は preview_ (AssetPreviewCache) にもあるが、そちらは M56f の範囲外
+    void OnShutdown(EngineContext& ctx) override;
 
     bool saveSceneOnStart = false; // --save-scene-on-start (シーンリロード検証用)
     bool autoPlay = false;         // --autoplay (起動直後に Play。スクリプト検証用)
@@ -172,7 +176,15 @@ private:
     bool probeBakeRequested_ = false;
     bool showProbePreview_ = false;
     ProbeBaker probeBaker_;
-    BakedProbe probePreview_; // 直近に焼いた 1 個 (M56f が複数を持つまでの暫定)
+    BakedProbe probePreview_; // 「ここでベイク」で焼いた 1 個 (シーンのプローブとは無関係)
+    // ---- M56f: シーンに置いたプローブの束 ----
+    // ★焼いた瞬間に ctx.renderSystem->reflectionProbes をここへ向ける = SceneView も
+    //   GameView も同じ束を見る (AssetPreviewCache は別インスタンスなので影響しない)
+    bool probeBakeAllRequested_ = false;
+    ReflectionProbeArray probeSet_;
+    int probePreviewIndex_ = 0; // プレビュー窓に出す束の添字
+    // true = プレビュー窓は「ここでベイク」の結果を出す。BakeAll で false になる
+    bool probePreviewAdHoc_ = true;
 
     nlohmann::json clipboard_; // コピー/カットしたサブツリー群 (SubtreeToJson 形式の配列)
     std::wstring scenePath_;

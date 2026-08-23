@@ -672,6 +672,29 @@ struct DecalComponent {
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
+// ローカル反射プローブ (M56f)。**kComponentNoHash** — 「この場所から見た景色」を焼いた
+// cubemap をスペキュラ環境項へ差し込むだけの描画レーンで、sim には 1 バイトも触らない。
+//
+// ★**ベイクは明示指示のときだけ** (`View > Rendering` のボタン / `--probe-bake-all`)。
+//   置いただけでは 1 命令も走らず絵は 1 ビットも変わらない — 「見えたら焼く」にすると
+//   撮影ごとに焼き上がりが変わって決定的撮影 (M52c) が根元から壊れる。
+// ★**箱は軸平行** (v1)。エンティティの回転もスケールも見ない — 影響範囲も視差補正で
+//   ぶつける内壁も下の extents だけで決まる (engine_spec §6.10 に制限として明記)。
+// ★**Deferred 専用 (v1)**。Forward には差し替える環境項の受け皿 (GBuffer) が無い。
+struct ReflectionProbeComponent {
+    // 影響ボックスの半径 (エンティティのワールド位置が中心)。この箱が「どこに効くか」と
+    // 「視差補正でぶつける内壁」の**両方**を兼ねる — 部屋なら部屋の寸法に合わせる
+    DirectX::XMFLOAT3 extents = { 8.0f, 4.0f, 8.0f };
+    // 箱の内側どれだけで重みが 0 → 1 へ立ち上がるか [world]。0 = 境界でいきなり切り替わる
+    float blendDistance = 1.0f;
+    float intensity = 1.0f;    // 焼いた放射輝度に掛ける倍率 (1 = そのまま)
+    bool boxProjection = true; // false = 無限遠キューブ (視差補正なし)
+    // キャプチャの near/far。far がシーンの奥行きに届かないと遠景が抜ける
+    float nearZ = 0.1f;
+    float farZ = 500.0f;
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
 class World;
 
 // エンティティが有効か (ActiveComponent が無ければ有効 / enabled==0 なら無効)

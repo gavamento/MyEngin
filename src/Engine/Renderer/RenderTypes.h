@@ -112,6 +112,99 @@ struct ShadowTileCB {
 };
 static_assert(sizeof(ShadowTileCB) == 96, "ShadowTileCB must match HLSL 16-byte packing");
 
+// ---- ローカル反射プローブ (M56f) ----
+// 同時に合成できるプローブ数 = 定数バッファ内の配列長そのもの。
+// **HLSL の MYE_MAX_REFLECTION_PROBES (common.hlsli) と必ず一致させること** —
+// tools\check_rules.ps1 の規則 9 が静的に検査する。
+// 8 個 × 48 バイト = 384 バイトで CB 上限には遠く、プリフィルタ済みキューブの実体も
+// 8 × (128² × 6面 × 5mip × 8B) ≒ 10MB に収まる
+constexpr int kMaxReflectionProbes = 8;
+
+// プローブ 1 個ぶんの GPU パラメータ (HLSL common.hlsli の ReflProbe と 48 バイトで一致)。
+// **箱は軸平行** (v1)。エンティティの回転は見ない — 視差補正が箱ローカルへの往復になり、
+// CPU ミラーとの一致を保つ手間に見合わないため (engine_spec §6.10 に制限として明記)
+struct ReflectionProbeGpu {
+    DirectX::XMFLOAT4 centerIntensity = { 0.0f, 0.0f, 0.0f, 1.0f }; // xyz=撮影位置 / w=強度
+    DirectX::XMFLOAT4 boxMin = { -1.0f, -1.0f, -1.0f, 1.0f };       // xyz=min / w=ブレンド距離
+    DirectX::XMFLOAT4 boxMax = { 1.0f, 1.0f, 1.0f, 1.0f };          // xyz=max / w=1=ボックス投影
+};
+static_assert(sizeof(ReflectionProbeGpu) == 48, "ReflectionProbeGpu must match HLSL packing");
+
+// 焼き上がったプローブ束の**非所有ビュー**。実体 (テクスチャ) は ProbeBaker が持つ。
+// count==0 / cubeArray==nullptr = プローブ無し = 従来と完全に同じ絵
+struct ReflectionProbeSet {
+    ID3D11ShaderResourceView* cubeArray = nullptr; // TextureCubeArray (プリフィルタ済み + mips)
+    int32_t count = 0;
+    float specMips = 0.0f; // 最終 mip index (roughness 1.0 の行き先)
+    ReflectionProbeGpu probes[kMaxReflectionProbes] = {};
+};
+
+// 影響の重み。箱の外 = 0 / 内側へブレンド距離ぶん入ると 1。
+// **HLSL ミラー: common.hlsli の ReflProbeWeight — 変更時は両方更新**
+// (ProbeBakerSelfTest が両者の一致を…ではなく、CPU 側の値を機械で固定する)
+inline float ReflProbeWeight(const ReflectionProbeGpu& p, const DirectX::XMFLOAT3& posW)
+{
+    const float dx = (posW.x - p.boxMin.x < p.boxMax.x - posW.x) ? posW.x - p.boxMin.x
+                                                                 : p.boxMax.x - posW.x;
+    const float dy = (posW.y - p.boxMin.y < p.boxMax.y - posW.y) ? posW.y - p.boxMin.y
+                                                                 : p.boxMax.y - posW.y;
+    const float dz = (posW.z - p.boxMin.z < p.boxMax.z - posW.z) ? posW.z - p.boxMin.z
+                                                                 : p.boxMax.z - posW.z;
+    float m = (dx < dy) ? dx : dy;
+    m = (m < dz) ? m : dz;
+    if (m <= 0.0f) {
+        return 0.0f;
+    }
+    const float blend = (p.boxMin.w > 1e-4f) ? p.boxMin.w : 1e-4f;
+    const float w = m / blend;
+    return (w > 1.0f) ? 1.0f : w;
+}
+
+// 視差補正 (ボックス投影)。**HLSL ミラー: common.hlsli の ReflProbeDir**
+inline DirectX::XMFLOAT3 ReflProbeDir(const ReflectionProbeGpu& p, const DirectX::XMFLOAT3& posW,
+                                      const DirectX::XMFLOAT3& R)
+{
+    if (p.boxMax.w < 0.5f) {
+        return R;
+    }
+    const float rx = (R.x >= 0.0f ? 1.0f : -1.0f) * ((std::fabs(R.x) > 1e-6f) ? std::fabs(R.x) : 1e-6f);
+    const float ry = (R.y >= 0.0f ? 1.0f : -1.0f) * ((std::fabs(R.y) > 1e-6f) ? std::fabs(R.y) : 1e-6f);
+    const float rz = (R.z >= 0.0f ? 1.0f : -1.0f) * ((std::fabs(R.z) > 1e-6f) ? std::fabs(R.z) : 1e-6f);
+    const float tx = std::fmax((p.boxMax.x - posW.x) / rx, (p.boxMin.x - posW.x) / rx);
+    const float ty = std::fmax((p.boxMax.y - posW.y) / ry, (p.boxMin.y - posW.y) / ry);
+    const float tz = std::fmax((p.boxMax.z - posW.z) / rz, (p.boxMin.z - posW.z) / rz);
+    float t = (tx < ty) ? tx : ty;
+    t = (t < tz) ? t : tz;
+    if (t <= 0.0f) {
+        return R;
+    }
+    DirectX::XMFLOAT3 d = { posW.x + R.x * t - p.centerIntensity.x,
+                            posW.y + R.y * t - p.centerIntensity.y,
+                            posW.z + R.z * t - p.centerIntensity.z };
+    const float len = std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
+    if (len <= 1e-12f) {
+        return R;
+    }
+    return { d.x / len, d.y / len, d.z / len };
+}
+
+// 一番効いているプローブ 1 個。**同点は添字が小さい方** (収集が EntityID 順なので決定論)。
+// **HLSL ミラー: common.hlsli の ReflProbeSelect**
+inline int ReflProbeSelect(const ReflectionProbeGpu* probes, int count,
+                           const DirectX::XMFLOAT3& posW, float& weight)
+{
+    weight = 0.0f;
+    int best = -1;
+    for (int i = 0; i < count; ++i) {
+        const float w = ReflProbeWeight(probes[i], posW);
+        if (w > weight) {
+            weight = w;
+            best = i;
+        }
+    }
+    return best;
+}
+
 struct RenderView {
     DirectX::XMFLOAT4X4 view = {};
     DirectX::XMFLOAT4X4 proj = {};
@@ -261,6 +354,12 @@ struct RenderView {
     int32_t ssrEnabled = 0;
     float ssrMaxRoughness = 0.6f; // RT 反射の kRtReflMaxRoughness と同じ既定値
     float ssrIntensity = 1.0f;    // 1 = 「IBL スペキュラを反射で置き換える」ちょうど 100%
+    // ---- M56f: ローカル反射プローブ (末尾 append)。**null / count 0 = 従来と同じ絵** ----
+    //      焼いた束を指すだけの非所有ポインタ。ベイクは明示指示のときしか走らないので、
+    //      「プローブを置いただけ」のシーンではここは null のまま = 1 命令も増えない。
+    //      Deferred のみ (Forward は v1 非対応。engine_spec §6.10)。
+    //      AssetPreviewCache の RenderSystem はここを埋めない = サムネイルは常にプローブ無し
+    const ReflectionProbeSet* probes = nullptr;
 };
 
 // ---- デカール (M56a) ----
