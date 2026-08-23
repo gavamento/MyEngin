@@ -91,4 +91,38 @@ float FroxelFogHandoffFraction(float viewZ, float gridFarZ)
     return (viewZ > gridFarZ) ? (gridFarZ / viewZ) : 1.0f;
 }
 
+// ---- M57e: 深度を持つ残りの描画物 (透明 / スカイ / パーティクル) ----
+
+// スカイ / 背景 (= 深度を持たないピクセル) 用のサンプル w。グリッド全体ぶんの積分を指す。
+// ★FroxelSampleW(viewZ >= farZ, ...) と**厳密に同じ値**でなければならない — 食い違うと
+//   地平線で「最遠のジオメトリ」と「その真上の空」が別テクセルを引き、1 テクセルの段が残る。
+// **C++ の froxel::IntegratedSampleWFar と同一式**
+float FroxelSampleWFar(float sliceCount)
+{
+    return (sliceCount - 0.5f) / sliceCount;
+}
+
+// 解析フォグ (ApplyFog) に渡す起点。グリッドの中なら **posW をそのまま返す**。
+// ★lerp(cameraPos, posW, frac) で書いてはいけない — frac==1 でも a+(b-a) は b と
+//   厳密には一致せず、近景に最下位ビットの霧が二重に乗る (絵では気づけない)。
+//   M57d が deferred_light.hlsl で踏んだ罠をそのまま関数にしたもの
+float3 FroxelFogOrigin(float3 cameraPos, float3 posW, float viewZ, float gridFarZ)
+{
+    if (viewZ > gridFarZ) {
+        return cameraPos + (posW - cameraPos) * FroxelFogHandoffFraction(viewZ, gridFarZ);
+    }
+    return posW;
+}
+
+// 深度を持つサーフェスへの合成 (Lo = scene·T + inscatter)。
+// screenPos = SV_Position.xy / screenSize = レンダーターゲットの実寸。
+// サンプラは各パスが既に持っている LINEAR/CLAMP を渡す (統合契約 予約 2「サンプラを増やさない」)
+float3 FroxelComposite(Texture3D vol, SamplerState smp, float2 screenPos, float2 screenSize,
+                       float viewZ, float sliceCount, float nearZ, float farZ, float3 color)
+{
+    const float w = FroxelSampleW(viewZ, sliceCount, nearZ, farZ);
+    const float4 v = vol.SampleLevel(smp, float3(screenPos / screenSize, w), 0);
+    return color * v.a + v.rgb;
+}
+
 #endif // MYE_FROXEL_COMMON_HLSLI

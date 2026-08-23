@@ -3,6 +3,8 @@
 // PerObject の gWorld は未使用 (レイアウト互換のため残す)。gInstanceBase は末尾 append。
 
 #include "common.hlsli"
+// M57e: フロクセルのサンプル座標と合成 (register 宣言を持たないヘッダなので衝突しない)
+#include "froxel_common.hlsli"
 
 cbuffer PerFrame : register(b0)
 {
@@ -44,6 +46,14 @@ cbuffer PerFrame : register(b0)
     float    gShadowAtlasTexel; // 1/アトラス解像度
     float2   _atlasPad;
     ShadowTile gShadowTiles[MYE_MAX_SHADOW_TILES];
+    // ---- M57e: フロクセル・ボリュメトリック (末尾 append)。forward_lit.hlsl と同一 ----
+    int      gFroxelEnabled;
+    float    gFroxelNearZ;
+    float    gFroxelFarZ;
+    float    gFroxelSlices;
+    float4   gFroxelViewZRow;
+    float2   gFroxelScreenSize;
+    float2   _froxelPad;
 };
 
 cbuffer PerObject : register(b1)
@@ -77,6 +87,7 @@ TextureCube              gIblIrradiance : register(t3); // M38c
 TextureCube              gIblPrefiltered: register(t4);
 Texture2D                gIblBrdfLut    : register(t5);
 Texture2D                gShadowAtlas   : register(t6); // M54e (局所ライトの深度アトラス)
+Texture3D                gFroxelVolume  : register(t7); // M57e (rgb=積算内向き散乱 / a=透過率)
 SamplerState             gSampler       : register(s0);
 SamplerComparisonState   gShadowSampler : register(s1);
 SamplerState             gIblSampler    : register(s2); // LINEAR/CLAMP (M38c)
@@ -133,8 +144,19 @@ float4 PSMain(VSOut i) : SV_Target
     // M46i: 自己発光。ライティングに依らず放射する分を足す (フォグより前 =
     // 遠くの発光もフォグに減衰される)。gEmissive=0 なら加算項がちょうど 0
     color += albedo.rgb * gEmissive;
-    color = ApplyFog(color, gFogColor, gFogMode, gFogDensity, gFogStart, gFogEnd,
-                     gCameraPos, i.posW, gFogHeightFalloff, gFogBaseHeight, gSunDirection,
-                     gSunColor, gFogInscatterIntensity, gFogInscatterPower); // M29d+M43a
+    // 大気散乱 (M29d + M43a、M57e でフロクセルと分担)。forward_lit.hlsl と同一の分岐
+    if (gFroxelEnabled != 0) {
+        const float fviewZ = dot(float4(i.posW, 1.0f), gFroxelViewZRow);
+        color = ApplyFog(color, gFogColor, gFogMode, gFogDensity, gFogStart, gFogEnd,
+                         FroxelFogOrigin(gCameraPos, i.posW, fviewZ, gFroxelFarZ), i.posW,
+                         gFogHeightFalloff, gFogBaseHeight, gSunDirection, gSunColor,
+                         gFogInscatterIntensity, gFogInscatterPower);
+        color = FroxelComposite(gFroxelVolume, gIblSampler, i.pos.xy, gFroxelScreenSize, fviewZ,
+                                gFroxelSlices, gFroxelNearZ, gFroxelFarZ, color);
+    } else {
+        color = ApplyFog(color, gFogColor, gFogMode, gFogDensity, gFogStart, gFogEnd,
+                         gCameraPos, i.posW, gFogHeightFalloff, gFogBaseHeight, gSunDirection,
+                         gSunColor, gFogInscatterIntensity, gFogInscatterPower); // M29d+M43a
+    }
     return float4(color, albedo.a);
 }

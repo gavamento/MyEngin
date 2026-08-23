@@ -232,6 +232,34 @@ $constGroups = @(
             'src\Engine\Renderer\RenderTypes.h' = 'constexpr\s+int\s+kSrvSlot\s*=\s*(\d+)'
             'assets\shaders\deferred_light.hlsl' = 'Texture3D\s+gFroxelVolume\s*:\s*register\(t(\d+)\)'
         }
+    },
+    @{
+        # M57e: Forward 系がフロクセルの積分結果を読む SRV スロット (統合契約 予約 2 の t7)。
+        # **同じ番号を要求するファイルが 5 つ**ある — forward_lit / _instanced / _skinned /
+        # _terrain の 4 本と、スカイボックス (ホストが張った t7 をそのまま読む)。
+        # C++ 側は frameSrvs[] / fwdSrvs[] の**位置**でしか表現されないので static_assert で
+        # 定数へ結び直してある (ForwardPath.cpp / DeferredPath.cpp)。食い違うと
+        # **その 1 本だけ霧が 0 になる** = 半透明だけ霧が抜ける、という形で静かに壊れる
+        label = 'froxel::kForwardSrvSlot / forward_* + skybox register(t7)'
+        sites = @{
+            'src\Engine\Renderer\RenderTypes.h'          = 'constexpr\s+int\s+kForwardSrvSlot\s*=\s*(\d+)'
+            'assets\shaders\forward_lit.hlsl'            = 'Texture3D\s+gFroxelVolume\s*:\s*register\(t(\d+)\)'
+            'assets\shaders\forward_lit_instanced.hlsl'  = 'Texture3D\s+gFroxelVolume\s*:\s*register\(t(\d+)\)'
+            'assets\shaders\forward_skinned.hlsl'        = 'Texture3D\s+gFroxelVolume\s*:\s*register\(t(\d+)\)'
+            'assets\shaders\forward_terrain.hlsl'        = 'Texture3D\s+gFroxelVolume\s*:\s*register\(t(\d+)\)'
+            'assets\shaders\skybox.hlsl'                 = 'Texture3D\s+gFroxelVolume\s*:\s*register\(t(\d+)\)'
+            'assets\shaders\skybox_cubemap.hlsl'         = 'Texture3D\s+gFroxelVolume\s*:\s*register\(t(\d+)\)'
+        }
+    },
+    @{
+        # M57e: パーティクル PS のフロクセルスロット。t0=インスタンス / t1=テクスチャ /
+        # t2=深度 の次。CPU バックエンドの PSSetShaderResources と食い違うと
+        # **粒子だけ霧が 0** (加算合成なので「粒子が浮く」形で出る)
+        label = 'froxel::kParticleSrvSlot / particle_render register(t3)'
+        sites = @{
+            'src\Engine\Renderer\RenderTypes.h'      = 'constexpr\s+int\s+kParticleSrvSlot\s*=\s*(\d+)'
+            'assets\shaders\particle_render.hlsl'    = 'Texture3D\s+gFroxelVolume\s*:\s*register\(t(\d+)\)'
+        }
     }
 )
 foreach ($g in $constGroups) {

@@ -99,7 +99,10 @@ Runtime.exe --render-demo [--deferred]    # 描画ショーケース (スポッ�
 Runtime.exe --render-demo --deferred --froxel
                                           # ボリュメトリック霧 (フロクセル)。on にすると
                                           #   距離フォグはグリッドの外側だけを持ち、
-                                          #   ゴッドレイは自動 off になる (三重計上の解消)
+                                          #   ゴッドレイは自動 off になる (三重計上の解消)。
+                                          #   Forward / Deferred どちらでも効き、不透明・半透明・
+                                          #   地形・空・CPU パーティクルに載る。UI は
+                                          #   表示 > レンダリング > ボリュメトリックフォグ
 Editor.exe --warp                         # WARP (ソフトウェアラスタライザ) 固定で起動
 Editor.exe --package dist                 # 配布パッケージを CLI で作成 (exit code で成否)
 Runtime.exe --crash-test av --crash-at-tick 60

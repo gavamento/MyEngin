@@ -110,7 +110,20 @@ float4 PSMain(VSOut i) : SV_Target
     const int3 pixel = int3(int2(i.pos.xy), 0);
     const float4 albedo = gAlbedo.Load(pixel);
     if (albedo.a < 0.5f) {
-        return gClearColor; // ジオメトリ無し
+        // ジオメトリ無し = 背景。**M57e: ここにもフロクセルを載せる。**
+        // スカイボックスが無いシーン (--render-demo が実例) では clearColor が
+        // そのまま地平線の上に出るので、床だけに霧が乗ると水平線に段ができる。
+        // 深度が無いので「グリッド全体ぶん」を引く (= 最遠テクセル)。
+        // ★グリッドより奥の解析フォグは**掛けない** — 背景に ApplyFog が掛かる挙動は
+        //   M29d 以来一度も無く、ここで足すと froxel off の絵まで動かしたくなる。
+        //   フロクセル区間ぶんの段だけを消す、が M57e の受け持ち
+        if (gFroxelEnabled != 0) {
+            const float2 bguv = i.pos.xy / gScreenSize;
+            const float4 bgvol = gFroxelVolume.SampleLevel(
+                gIblSampler, float3(bguv, FroxelSampleWFar(gFroxelSlices)), 0);
+            return float4(gClearColor.rgb * bgvol.a + bgvol.rgb, gClearColor.a);
+        }
+        return gClearColor;
     }
     const float3 n = normalize(gNormal.Load(pixel).xyz * 2.0f - 1.0f);
     const float3 posW = gPosition.Load(pixel).xyz;

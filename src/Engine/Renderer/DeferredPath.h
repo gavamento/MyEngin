@@ -28,8 +28,9 @@ public:
     // TAA / モーションブラー v2 / RT の物体モーションは **Deferred 限定**の機能になる
     bool WritesVelocity() const override { return true; }
     ID3D11ShaderResourceView* VelocitySRV() const override { return gbVelocity_.SRV(); }
-    // M57d: 光パス (t15) で不透明ピクセルへ合成する。**透明後段 / スカイ / パーティクルは
-    // まだ** — それらは Forward の t7 が要るので M57e。ここが true になった時点で
+    // M57d: 光パス (t15) で不透明ピクセルへ合成する。M57e で背景ピクセルと透明後段
+    // (Forward t7) も受け持つようになった。スカイとパーティクルは SkyboxPass /
+    // ParticleSystem が view.froxelSRV を直接読む。ここが true になった時点で
     // ゴッドレイは自動 off になる (三重計上の解消)
     bool AppliesFroxel() const override { return true; }
 

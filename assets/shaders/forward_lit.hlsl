@@ -2,6 +2,8 @@
 // エントリ: VSMain / PSMain (ShaderManager の規約)
 
 #include "common.hlsli"
+// M57e: フロクセルのサンプル座標と合成 (register 宣言を持たないヘッダなので衝突しない)
+#include "froxel_common.hlsli"
 
 cbuffer PerFrame : register(b0)
 {
@@ -46,6 +48,16 @@ cbuffer PerFrame : register(b0)
     float    gShadowAtlasTexel; // 1/アトラス解像度
     float2   _atlasPad;
     ShadowTile gShadowTiles[MYE_MAX_SHADOW_TILES];
+    // ---- M57e: フロクセル・ボリュメトリック (末尾 append)。
+    //      0 = 従来と完全に同一の式 (ApplyFog をそのまま呼ぶ経路へ落ちる)。
+    //      ★C++ ミラーは M54e と同じく **2 つ** (ForwardPath.cpp / DeferredPath.cpp) ----
+    int      gFroxelEnabled;
+    float    gFroxelNearZ;   // グリッドの手前端 (カメラの near とは限らない)
+    float    gFroxelFarZ;    // グリッドの奥端。ここから先は解析フォグが持つ
+    float    gFroxelSlices;  // スライス数 (float で持つ = 全部の式が float 演算)
+    float4   gFroxelViewZRow;   // dot(float4(posW,1), これ) = view 深度 (view 行列の第 3 列)
+    float2   gFroxelScreenSize; // SV_Position → uv。Forward 系に gScreenSize は無い
+    float2   _froxelPad;
 };
 
 cbuffer PerObject : register(b1)
@@ -69,6 +81,7 @@ TextureCube              gIblIrradiance : register(t3); // M38c
 TextureCube              gIblPrefiltered: register(t4);
 Texture2D                gIblBrdfLut    : register(t5);
 Texture2D                gShadowAtlas   : register(t6); // M54e (局所ライトの深度アトラス)
+Texture3D                gFroxelVolume  : register(t7); // M57e (rgb=積算内向き散乱 / a=透過率)
 SamplerState             gSampler       : register(s0);
 SamplerComparisonState   gShadowSampler : register(s1);
 SamplerState             gIblSampler    : register(s2); // LINEAR/CLAMP (M38c)
@@ -123,8 +136,22 @@ float4 PSMain(VSOut i) : SV_Target
     // M46i: 自己発光。ライティングに依らず放射する分を足す (フォグより前 =
     // 遠くの発光もフォグに減衰される)。gEmissive=0 なら加算項がちょうど 0
     color += albedo.rgb * gEmissive;
-    color = ApplyFog(color, gFogColor, gFogMode, gFogDensity, gFogStart, gFogEnd,
-                     gCameraPos, i.posW, gFogHeightFalloff, gFogBaseHeight, gSunDirection,
-                     gSunColor, gFogInscatterIntensity, gFogInscatterPower); // M29d+M43a
+    // ---- 大気散乱 (M29d + M43a の解析フォグ、M57e でフロクセルと分担) ----
+    // 受け持ちの分け方は deferred_light.hlsl (M57d) と同一: グリッドの中はフロクセル、
+    // グリッドの奥は解析フォグ (起点を押し出して残り区間だけ)。
+    // gFroxelEnabled==0 なら下の 1 行へ落ちる = 従来とビット恒等
+    if (gFroxelEnabled != 0) {
+        const float fviewZ = dot(float4(i.posW, 1.0f), gFroxelViewZRow);
+        color = ApplyFog(color, gFogColor, gFogMode, gFogDensity, gFogStart, gFogEnd,
+                         FroxelFogOrigin(gCameraPos, i.posW, fviewZ, gFroxelFarZ), i.posW,
+                         gFogHeightFalloff, gFogBaseHeight, gSunDirection, gSunColor,
+                         gFogInscatterIntensity, gFogInscatterPower);
+        color = FroxelComposite(gFroxelVolume, gIblSampler, i.pos.xy, gFroxelScreenSize, fviewZ,
+                                gFroxelSlices, gFroxelNearZ, gFroxelFarZ, color);
+    } else {
+        color = ApplyFog(color, gFogColor, gFogMode, gFogDensity, gFogStart, gFogEnd,
+                         gCameraPos, i.posW, gFogHeightFalloff, gFogBaseHeight, gSunDirection,
+                         gSunColor, gFogInscatterIntensity, gFogInscatterPower); // M29d+M43a
+    }
     return float4(color, albedo.a);
 }

@@ -17,6 +17,8 @@
 
 #include "common.hlsli"
 #include "terrain_common.hlsli"
+// M57e: フロクセルのサンプル座標と合成 (register 宣言を持たないヘッダ)
+#include "froxel_common.hlsli"
 
 cbuffer PerFrame : register(b0)
 {
@@ -53,12 +55,28 @@ cbuffer PerFrame : register(b0)
     float    _fogPad2;
     float3   gSunColor;
     float    _fogPad3;
+    // ---- M54e: 局所ライトのシャドウアトラス。**地形は読まないが宣言だけ要る** —
+    //      この後ろに M57e のフロクセルを足すので、飛ばすとオフセットが丸ごとずれる。
+    //      (M54e は forward_terrain を切り詰めたまま残したので、ここが穴だった) ----
+    int      gShadowAtlasEnabled;
+    float    gShadowAtlasTexel;
+    float2   _atlasPad;
+    ShadowTile gShadowTiles[MYE_MAX_SHADOW_TILES];
+    // ---- M57e: フロクセル・ボリュメトリック (末尾 append)。forward_lit.hlsl と同一 ----
+    int      gFroxelEnabled;
+    float    gFroxelNearZ;
+    float    gFroxelFarZ;
+    float    gFroxelSlices;
+    float4   gFroxelViewZRow;
+    float2   gFroxelScreenSize;
+    float2   _froxelPad;
 };
 
 Texture2DArray         gShadowMap     : register(t1); // M38d: CSM カスケード配列
 TextureCube            gIblIrradiance : register(t3); // M38c
 TextureCube            gIblPrefiltered: register(t4);
 Texture2D              gIblBrdfLut    : register(t5);
+Texture3D              gFroxelVolume  : register(t7); // M57e (ForwardPath がフレーム頭で張る)
 SamplerState           gLayerSampler  : register(s0); // 異方性 WRAP (レイヤの繰り返し)
 SamplerComparisonState gShadowSampler : register(s1);
 SamplerState           gIblSampler    : register(s2); // LINEAR/CLAMP (IBL + スプラット)
@@ -107,8 +125,20 @@ float4 PSMain(VSOut i) : SV_Target
                                  gTerrainSurface.y, gAmbient, gLights, gLightCount, dirShadow,
                                  gIblEnabled, gIblSpecMips, gIblIrradiance, gIblPrefiltered,
                                  gIblBrdfLut, gIblSampler, 1.0f);
-    color = ApplyFog(color, gFogColor, gFogMode, gFogDensity, gFogStart, gFogEnd,
-                     gCameraPos, i.posW, gFogHeightFalloff, gFogBaseHeight, gSunDirection,
-                     gSunColor, gFogInscatterIntensity, gFogInscatterPower);
+    // 大気散乱 (M29d + M43a、M57e でフロクセルと分担)。forward_lit.hlsl と同一の分岐 —
+    // 地形だけ霧が乗らないと Forward + froxel で地表と柱の霧が食い違う
+    if (gFroxelEnabled != 0) {
+        const float fviewZ = dot(float4(i.posW, 1.0f), gFroxelViewZRow);
+        color = ApplyFog(color, gFogColor, gFogMode, gFogDensity, gFogStart, gFogEnd,
+                         FroxelFogOrigin(gCameraPos, i.posW, fviewZ, gFroxelFarZ), i.posW,
+                         gFogHeightFalloff, gFogBaseHeight, gSunDirection, gSunColor,
+                         gFogInscatterIntensity, gFogInscatterPower);
+        color = FroxelComposite(gFroxelVolume, gIblSampler, i.pos.xy, gFroxelScreenSize, fviewZ,
+                                gFroxelSlices, gFroxelNearZ, gFroxelFarZ, color);
+    } else {
+        color = ApplyFog(color, gFogColor, gFogMode, gFogDensity, gFogStart, gFogEnd,
+                         gCameraPos, i.posW, gFogHeightFalloff, gFogBaseHeight, gSunDirection,
+                         gSunColor, gFogInscatterIntensity, gFogInscatterPower);
+    }
     return float4(color, 1.0f);
 }

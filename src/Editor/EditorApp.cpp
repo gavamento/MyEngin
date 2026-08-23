@@ -633,6 +633,37 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
                     taa = (taa != 0) ? 0 : 1;
                 }
             }
+            // M57e: ボリュメトリックフォグ (フロクセル)。CLI の --froxel と同じ元栓。
+            // ★シーンカメラに CameraPostFx があれば **そちらの froxelOn が勝つ** (TAA と
+            //   同じ規則) ので、ここを点けても効かないシーンがある
+            if (ImGui::BeginMenu(Tr(StrId::Froxel_Menu))) {
+                ImGui::MenuItem(Tr(StrId::Froxel_Enable), nullptr,
+                                &ctx.renderSystem->enableFroxel);
+                ImGui::TextDisabled("%s", Tr(StrId::Froxel_GodrayOff));
+                ImGui::Separator();
+                // 親が off ならボリュームすら作られない (遅延 Init) ので子は無効表示
+                ImGui::BeginDisabled(!ctx.renderSystem->enableFroxel);
+                FroxelSettings& fs = ctx.renderSystem->froxelSettings;
+                // テンポラルとスライスジッタは **必ずセット**で切れる (片方だけだと霧が
+                // 奥行き方向に脈打つだけになる)。FroxelSettings::temporal がその 1 本
+                ImGui::MenuItem(Tr(StrId::Froxel_Temporal), nullptr, &fs.temporal);
+                ImGui::SetNextItemWidth(160.0f);
+                ImGui::SliderFloat(Tr(StrId::Froxel_Density), &fs.density, 0.0f, 0.2f, "%.4f");
+                ImGui::SetNextItemWidth(160.0f);
+                ImGui::SliderFloat(Tr(StrId::Froxel_Anisotropy), &fs.anisotropy, -0.9f, 0.9f,
+                                   "%.2f");
+                ImGui::EndDisabled();
+                ImGui::Separator();
+                // ★Tr() を書式文字列として渡している = 訳文の % が指定子として解釈される。
+                //   ここは意図した書式付き文字列 (規則 10 が並びを機械検査する)
+                ImGui::TextDisabled(Tr(StrId::Froxel_Grid), froxel::kGridX, froxel::kGridY,
+                                    froxel::kGridZ,
+                                    froxel::kGridX * froxel::kGridY * froxel::kGridZ);
+                ImGui::TextDisabled(Tr(StrId::Froxel_Gpu), ctx.renderSystem->FroxelInjectGpuMs(),
+                                    ctx.renderSystem->FroxelTemporalGpuMs(),
+                                    ctx.renderSystem->FroxelIntegrateGpuMs());
+                ImGui::EndMenu();
+            }
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu(Tr(StrId::Menu_RtDebug))) {

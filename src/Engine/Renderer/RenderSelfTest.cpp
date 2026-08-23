@@ -1061,6 +1061,73 @@ void TestFroxelComposite()
     }
 }
 
+// M57e: 透明 / スカイ / パーティクルへ広げたときの取り決め。
+void TestFroxelSurfaces()
+{
+    MYE_LOG_INFO("[selftest] froxel surface application (M57e)");
+
+    const int slices = froxel::kGridZ;
+    const float nearZ = 0.1f;
+    const float farZ = 64.0f;
+
+    // ① スカイ / 背景のサンプル w は「グリッド全体ぶん」= 最終テクセルの中心。
+    //    ★**最遠のジオメトリが引くテクセルと厳密に同じでなければならない。**
+    //      1 テクセルずれると地平線で「床の霧」と「その真上の空の霧」が食い違い、
+    //      M57e が消しに来たはずの段がそのまま残る (しかも段の幅が 1 テクセルなので
+    //      「なんとなく境界が見える」で片付けてしまう)
+    TEST_CHECK(froxel::IntegratedSampleWFar(slices)
+               == froxel::IntegratedSampleWForDepth(farZ, slices, nearZ, farZ));
+    TEST_CHECK(froxel::IntegratedSampleWFar(slices)
+               == froxel::IntegratedSampleWForDepth(farZ * 1000.0f, slices, nearZ, farZ));
+    TEST_CHECK(std::fabs(froxel::IntegratedSampleWFar(slices)
+                         - (static_cast<float>(slices) - 0.5f) / static_cast<float>(slices))
+               < 1e-6f);
+    // スライス数が壊れていても [0,1) に収まる (テクスチャ座標として渡すため)
+    TEST_CHECK(froxel::IntegratedSampleWFar(0) >= 0.0f && froxel::IntegratedSampleWFar(0) < 1.0f);
+    TEST_CHECK(froxel::IntegratedSampleWFar(1) == 0.5f);
+
+    // ② 加算合成 (additive パーティクル) には**内向き散乱を足さない**。
+    //    足すと粒子の枚数ぶん霧が濃くなる — 背後のサーフェスが既に 1 回足しているため。
+    //    透過率 1 で厳密に恒等 (= froxel off とビット一致する側の主張)
+    TEST_CHECK(froxel::CompositeFroxelAdditive(0.375f, 1.0f) == 0.375f);
+    TEST_CHECK(froxel::CompositeFroxelAdditive(0.375f, 0.0f) == 0.0f);
+    TEST_CHECK(std::fabs(froxel::CompositeFroxelAdditive(2.0f, 0.25f) - 0.5f) < 1e-6f);
+    // N 枚重ねても増えるのは「元の輝度 × 透過率」の総和だけ (inscatter は 1 回きり)。
+    // ★alpha 版 (CompositeFroxel) と混同すると、粒子 8 枚で霧が 8 倍になる
+    {
+        const float T = 0.5f;
+        const float inscatter = 0.3f;
+        float additive = froxel::CompositeFroxel(1.0f, inscatter, T); // 背景 1 枚
+        float alpha = additive;
+        for (int n = 0; n < 8; ++n) {
+            additive += froxel::CompositeFroxelAdditive(0.1f, T);
+            alpha += froxel::CompositeFroxel(0.1f, inscatter, T);
+        }
+        // 加算側は背景ぶんの inscatter 1 回きり / alpha 側は 9 回積み上がる
+        TEST_CHECK(std::fabs(additive - (1.0f * T + inscatter + 8.0f * 0.1f * T)) < 1e-5f);
+        TEST_CHECK(alpha > additive + 2.0f * inscatter);
+    }
+
+    // ③ パーティクルの解析フォグ距離。フロクセル on では「視線がグリッドを出てから
+    //    粒子まで」の残り区間だけを渡す (deferred_light の起点押し出しと同じ規約)。
+    //    ★グリッドの中の粒子は残り 0m = 解析フォグが厳密に恒等でなければならない
+    {
+        bool ok = true;
+        for (int i = 1; i <= 32; ++i) {
+            const float viewZ = farZ * 0.25f * static_cast<float>(i);
+            const float dist = viewZ * 1.3f; // 画面端 = 斜めなのでワールド距離のほうが長い
+            const float remain = dist * (1.0f - froxel::FogHandoffFraction(viewZ, farZ));
+            if (viewZ <= farZ) {
+                ok = ok && (remain == 0.0f); // 厳密に 0 (乗算なので IEEE でも 0)
+            } else {
+                // 残り区間 / 全長 の比は深度の比とちょうど一致する (相似)
+                ok = ok && std::fabs(remain / dist - (1.0f - farZ / viewZ)) < 1e-5f;
+            }
+        }
+        TEST_CHECK(ok);
+    }
+}
+
 } // namespace
 
 bool RunRenderSelfTest()
@@ -1087,6 +1154,7 @@ bool RunRenderSelfTest()
     TestFroxelScattering(); // M57b
     TestFroxelIntegration(); // M57c
     TestFroxelComposite();   // M57d
+    TestFroxelSurfaces();    // M57e
     if (g_failCount == 0) {
         MYE_LOG_INFO("[selftest] render: ALL PASS");
         return true;

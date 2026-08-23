@@ -57,6 +57,10 @@ struct PerFrameCB {
     float shadowAtlasTexel;
     float atlasPad[2];
     ShadowTileCB shadowTiles[kMaxShadowTiles];
+    // ---- M57e: フロクセル (末尾 append)。0 = 従来と完全に同一の式。
+    //      形は RenderTypes.h の FroxelForwardCB 1 本きりで DeferredPath.cpp と共有する
+    //      (上の M54e の轍 = 「片方だけ足す」を型で潰した) ----
+    FroxelForwardCB froxel;
 };
 
 struct PerObjectCB {
@@ -277,6 +281,10 @@ void ForwardPath::Render(GraphicsDevice& device, const RenderView& view, const R
         (!unlit && view.shadowAtlasSRV != nullptr && view.shadowTileCount > 0) ? 1 : 0;
     pf.shadowAtlasTexel = view.shadowAtlasTexel;
     FillShadowTilesCB(view, pf.shadowTiles);
+    // M57e: フロクセル。判定は FroxelIsBound 1 本 (Deferred / スカイ / パーティクルと共有)。
+    // SRV が null なら 0 = 従来の ApplyFog へ落ちる = 1 ビットも変わらない
+    const bool froxelBound = FroxelIsBound(view);
+    pf.froxel = MakeFroxelForwardCB(view, froxelBound);
     UploadCB(dc, perFrameCB_.Get(), pf);
 
     ID3D11Buffer* cbs[2] = { perFrameCB_.Get(), perObjectCB_.Get() };
@@ -287,12 +295,16 @@ void ForwardPath::Render(GraphicsDevice& device, const RenderView& view, const R
     ID3D11SamplerState* samplers[3] = { sampler_.Get(), shadowSampler_.Get(), iblSampler_.Get() };
     dc->PSSetSamplers(0, 3, samplers);
     // シャドウマップを t1 に (マテリアルの albedo は t0)、IBL を t3-5 に (M38c)、
-    // 局所ライトのアトラスを t6 に (M54e。統合契約 予約 2)。
-    // アトラス用のサンプラは増やさず s1 の比較サンプラを共有する (CSM と同じ設定でよい)
-    ID3D11ShaderResourceView* frameSrvs[6] = { view.shadowSRV,      nullptr,
+    // 局所ライトのアトラスを t6 に (M54e。統合契約 予約 2)、フロクセルの積分結果を
+    // t7 に (M57e。統合契約 予約 2)。
+    // アトラス用のサンプラは増やさず s1 の比較サンプラを共有する (CSM と同じ設定でよい)。
+    // froxel は s2 (IBL 用 LINEAR/CLAMP) を流用する = サンプラは 1 つも増えない
+    ID3D11ShaderResourceView* frameSrvs[7] = { view.shadowSRV,      nullptr,
                                                view.iblIrradiance,  view.iblPrefiltered,
-                                               view.iblBrdfLut,     view.shadowAtlasSRV };
-    dc->PSSetShaderResources(1, 6, frameSrvs);
+                                               view.iblBrdfLut,     view.shadowAtlasSRV,
+                                               froxelBound ? view.froxelSRV : nullptr };
+    static_assert(froxel::kForwardSrvSlot == 7, "froxel の Forward SRV は統合契約 予約 2 の t7");
+    dc->PSSetShaderResources(1, 7, frameSrvs);
     dc->RSSetState(wire ? rasterizerWire_.Get() : rasterizer_.Get());
     dc->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
@@ -346,6 +358,12 @@ void ForwardPath::Render(GraphicsDevice& device, const RenderView& view, const R
 
     // 半透明 (インスタンシング対象外)
     if (!queue.transparent.empty()) {
+        // M57e: スカイボックスの cubemap 経路が s0 を LINEAR/CLAMP へ差し替えたままなので
+        // マテリアル用 (異方性 WRAP) へ戻す。M38b からの潜在バグで、フロクセルとは
+        // 独立に効く (Deferred の透明後段は前から同じことをしている)
+        ID3D11SamplerState* samplers2[3] = { sampler_.Get(), shadowSampler_.Get(),
+                                             iblSampler_.Get() };
+        dc->PSSetSamplers(0, 3, samplers2);
         dc->OMSetDepthStencilState(depthTransparent_.Get(), 0);
         dc->OMSetBlendState(blendAlpha_.Get(), nullptr, 0xFFFFFFFFu);
         DrawItems(device, queue.transparent, view, resources, shaders, nullptr);
@@ -355,6 +373,12 @@ void ForwardPath::Render(GraphicsDevice& device, const RenderView& view, const R
     if (wire) {
         dc->RSSetState(rasterizer_.Get());
     }
+
+    // ---- M57e: t1-t7 を剥がす。**t7 (フロクセル積分結果) を残してはいけない** ----
+    // 残すと次フレームの積分パスが同じテクスチャを UAV に取った瞬間に D3D が
+    // 片方を黙って外す (M57d が Deferred の t15 で踏んだのと同じ罠)
+    ID3D11ShaderResourceView* fwdNull[7] = {};
+    dc->PSSetShaderResources(1, 7, fwdNull);
 }
 
 void ForwardPath::DrawItems(GraphicsDevice& device, const std::vector<RenderItem>& items,

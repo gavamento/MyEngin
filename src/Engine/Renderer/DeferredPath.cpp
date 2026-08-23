@@ -59,6 +59,10 @@ struct PerFrameCB {
     float shadowAtlasTexel;
     float atlasPad[2];
     ShadowTileCB shadowTiles[kMaxShadowTiles];
+    // ---- M57e: フロクセル (末尾 append)。透明後段の forward_lit が参照。
+    //      形は RenderTypes.h の FroxelForwardCB 1 本きりで ForwardPath.cpp と共有する
+    //      (M54e の「2 つのミラーを手で揃える」を型で潰した) ----
+    FroxelForwardCB froxel;
 };
 
 struct PerObjectCB {
@@ -471,6 +475,10 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
         (!unlit && view.shadowAtlasSRV != nullptr && view.shadowTileCount > 0) ? 1 : 0;
     pf.shadowAtlasTexel = view.shadowAtlasTexel;
     FillShadowTilesCB(view, pf.shadowTiles);
+    // M57e: 透明後段 (forward_lit) のフロクセル。判定は光パスと**同じ FroxelIsBound** —
+    // 不透明と透明で霧の有無が食い違うと、ガラス越しの絵だけ霧が抜ける
+    const bool froxelBound = FroxelIsBound(view);
+    pf.froxel = MakeFroxelForwardCB(view, froxelBound);
     UploadCB(dc, perFrameCB_.Get(), pf);
 
     ID3D11Buffer* cbs[2] = { perFrameCB_.Get(), perObjectCB_.Get() };
@@ -841,11 +849,11 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
     lp.shadowAtlasTexel = view.shadowAtlasTexel;
     FillShadowTilesCB(view, lp.shadowTiles);
     // M57d: フロクセルの積分結果。**SRV が null なら 0** = ApplyFog をそのまま呼ぶ
-    // 従来経路へ落ちる (Forward / AssetPreviewCache / froxel off の 3 経路がここを通る)。
+    // 従来経路へ落ちる (AssetPreviewCache / froxel off / 正射影の 3 経路がここを通る)。
     // Unlit / Wireframe も外す — 大気散乱はライティングの一部で、既に fogMode を -1 に
-    // 潰してある表示モードに霧だけ載せると「Unlit なのに霧がある」になる
-    const bool froxelBound =
-        !unlit && view.froxelSRV != nullptr && view.froxelSlices > 0 && view.froxelFarZ > 0.0f;
+    // 潰してある表示モードに霧だけ載せると「Unlit なのに霧がある」になる。
+    // ★M57e: 判定式は透明後段 (pf.froxel) と**同じ変数**にした。式を 2 つ書くと
+    //   「不透明にだけ霧がある」形で静かに食い違う
     lp.froxelEnabled = froxelBound ? 1 : 0;
     lp.froxelNearZ = view.froxelNearZ;
     lp.froxelFarZ = view.froxelFarZ;
@@ -899,6 +907,12 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
     // ---- 2.5) スカイボックス (M29d): clearColor ピクセルを深度 1.0 判定で上書き ----
     // (Wireframe はフルスクリーン三角形が線になるためスキップ、M40b)
     if (!wire) {
+        // M57e: スカイもフロクセルを載せる (載せないと地平線に段が残る)。
+        // ★SkyboxPass は SRV を自分で張らない — Forward ではスカイの直後に半透明が
+        //   来るので、あちらで張ると t1 (CSM) を潰す。Deferred は直前に t0-t15 を
+        //   剥がしたので、**呼ぶ側のここで** t7 を張り直すのが役割分担
+        ID3D11ShaderResourceView* skyFroxel[1] = { froxelBound ? view.froxelSRV : nullptr };
+        dc->PSSetShaderResources(froxel::kForwardSrvSlot, 1, skyFroxel);
         skybox_.Render(device, shaders, view);
     }
 
@@ -908,15 +922,19 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
         if (wire) {
             dc->RSSetState(rasterizerWire_.Get()); // M40b: 透明メッシュもワイヤ表示
         }
-        // forward_lit はシャドウ t1 / IBL t3-5 / 局所シャドウアトラス t6 を参照
-        // (M38c + M54e)。s0 は光パスで IBL 用に差し替えたのでマテリアル用 (異方性) に戻す。
-        // s1 (比較サンプラ = アトラスと CSM で共有) と s2 (IBL) はフレーム頭で bind 済み。
-        // ★t6 を足したら**本数も 5 → 6 へ**増やすこと (増やし忘れると透明メッシュだけが
-        //   前段の光パスが t6 に残したもの、または null を読む = 影が出ない/ゴミが出る)
-        ID3D11ShaderResourceView* fwdSrvs[6] = { view.shadowSRV,      nullptr,
+        // forward_lit はシャドウ t1 / IBL t3-5 / 局所シャドウアトラス t6 /
+        // フロクセル積分結果 t7 を参照 (M38c + M54e + M57e)。
+        // s0 は光パスで IBL 用に差し替えたのでマテリアル用 (異方性) に戻す。
+        // s1 (比較サンプラ = アトラスと CSM で共有) と s2 (IBL。froxel も流用) は
+        // フレーム頭で bind 済み。
+        // ★t6/t7 を足したら**本数も増やすこと** (増やし忘れると透明メッシュだけが
+        //   前段の光パスが残したもの、または null を読む = 影が出ない/霧が抜ける)
+        ID3D11ShaderResourceView* fwdSrvs[7] = { view.shadowSRV,      nullptr,
                                                  view.iblIrradiance,  view.iblPrefiltered,
-                                                 view.iblBrdfLut,     view.shadowAtlasSRV };
-        dc->PSSetShaderResources(1, 6, fwdSrvs);
+                                                 view.iblBrdfLut,     view.shadowAtlasSRV,
+                                                 froxelBound ? view.froxelSRV : nullptr };
+        static_assert(froxel::kForwardSrvSlot == 7, "froxel の Forward SRV は統合契約 予約 2 の t7");
+        dc->PSSetShaderResources(1, 7, fwdSrvs);
         ID3D11SamplerState* matSampler[1] = { sampler_.Get() };
         dc->PSSetSamplers(0, 1, matSampler);
         dc->VSSetConstantBuffers(0, 2, cbs);
@@ -1039,6 +1057,13 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
             dc->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFFu);
         }
     }
+
+    // ---- M57e: t1-t7 を剥がす。**t7 (フロクセル積分結果) を残してはいけない** ----
+    // 光パスの nullSrvs[16] より後にスカイと透明後段が t7 を張り直しているので、
+    // ここで剥がさないと次フレームの積分パスが同じテクスチャを UAV に取った瞬間に
+    // D3D が片方を黙って外す (M57d が t15 で踏んだのと同じ罠。今度は Render の末尾)
+    ID3D11ShaderResourceView* fwdNull[7] = {};
+    dc->PSSetShaderResources(1, 7, fwdNull);
 }
 
 } // namespace mye

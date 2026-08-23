@@ -2,6 +2,7 @@
 // DrawInstanced(4, count) + TRIANGLESTRIP。頂点入力なし (SV_VertexID / SV_InstanceID)
 
 #include "common.hlsli" // LinearizeDepth (M55a で共有化)。register 宣言は含まないので衝突しない
+#include "froxel_common.hlsli" // M57e: フロクセルのサンプル座標と受け持ちの分け方 (同上)
 
 cbuffer ParticleCB : register(b0)
 {
@@ -27,6 +28,15 @@ cbuffer ParticleCB : register(b0)
     float    gSoftFade; // 深度フェード距離 (0=off)。ParticleCurves.h::SoftFadeFactor と同一式
     float    gNearZ;    // 深度線形化用 (common.hlsli::LinearizeDepth へ渡す)
     float    gFarZ;
+    // ---- M57e: フロクセル (末尾 append。0 = 従来と 1 ビットも変わらない) ----
+    // ★粒子に適用しないと「霧の中で粒子だけが浮く」— 加算合成は背景の減衰を
+    //   受けないので、周囲が霞むほど粒子だけが不自然にくっきり残る
+    int      gFroxelEnabled;
+    float    gFroxelNearZ;
+    float    gFroxelFarZ;
+    float    gFroxelSlices;
+    float2   gFroxelScreenSize; // SV_Position → uv
+    float2   _froxelPad;
 };
 
 struct ParticleInstance
@@ -41,7 +51,8 @@ StructuredBuffer<ParticleInstance> gParticles : register(t0);
 
 Texture2D    gTex   : register(t1);
 Texture2D    gDepth : register(t2); // M42b: シーン深度 (read-only DSV とセットでバインド)
-SamplerState gSamp  : register(s0);
+Texture3D    gFroxelVolume : register(t3); // M57e (rgb=積算内向き散乱 / a=透過率)
+SamplerState gSamp  : register(s0); // LINEAR/CLAMP — froxel もこれを流用する
 
 struct VSOut
 {
@@ -107,12 +118,30 @@ float4 PSMain(VSOut i) : SV_Target
         col = float4(i.color.rgb * m, i.color.a * m);
     }
 
-    // フォグ (M32c): additive は減光、alpha はフォグ色へ補間
-    const float f = ParticleFogFactor(i.dist);
+    // フォグ (M32c): additive は減光、alpha はフォグ色へ補間。
+    // M57e: フロクセルが on のときは受け持ちを分ける — 解析フォグが担うのは
+    // 「視線がグリッドを出てから粒子まで」の残り区間だけ。グリッドの中の粒子は
+    // 残り 0m = f が厳密に 0 になり、フロクセル側だけが効く (deferred_light と同じ規約)
+    float fogDist = i.dist;
+    if (gFroxelEnabled != 0) {
+        fogDist = i.dist * (1.0f - FroxelFogHandoffFraction(i.viewZ, gFroxelFarZ));
+    }
+    const float f = ParticleFogFactor(fogDist);
     if (gBlendAdditive != 0) {
         col.rgb *= (1.0f - f);
     } else {
         col.rgb = lerp(col.rgb, gFogColor, f);
+    }
+    // M57e: フロクセルの合成。**加算合成には内向き散乱を足さない** — 背後のサーフェス
+    // (またはスカイ) が既に 1 回足しているので、加算で重ねるたびに足すと粒子の枚数ぶん
+    // 霧が濃くなる。加算の粒子が受け取るのは「自分からカメラまでの減衰」だけ。
+    // alpha 側は src.rgb がそのまま「その場の放射輝度」なので scene·T + inscatter を作る
+    // (ブレンドの SRC_ALPHA が後で a を掛ける = 上の lerp とまったく同じ形)
+    if (gFroxelEnabled != 0) {
+        const float fw = FroxelSampleW(i.viewZ, gFroxelSlices, gFroxelNearZ, gFroxelFarZ);
+        const float4 vol =
+            gFroxelVolume.SampleLevel(gSamp, float3(i.pos.xy / gFroxelScreenSize, fw), 0);
+        col.rgb = (gBlendAdditive != 0) ? (col.rgb * vol.a) : (col.rgb * vol.a + vol.rgb);
     }
 
     // ソフトパーティクル (M42b): シーン深度との差でフェード。0=off (従来とビット同一)。

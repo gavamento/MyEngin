@@ -340,6 +340,50 @@ inline void FillShadowTilesCB(const RenderView& view, ShadowTileCB* dst)
     }
 }
 
+// M57e: 「このビューでフロクセルの積分結果を合成してよいか」の唯一の判定。
+// **消費者が 5 つに増えた**ので式を 1 本に畳んである (Deferred 光パス / Deferred の
+// 透明後段 / ForwardPath / SkyboxPass / CpuParticleBackend)。
+//   ・froxelSRV == nullptr になる経路が 3 つある (froxel off / 正射影などで注入が
+//     走らなかったフレーム / AssetPreviewCache の別 RenderSystem)。**ここを通さないと
+//     サムネイルだけが前フレームの残骸をサンプルする。**
+//   ・Unlit / Wireframe (debugViewMode != 0) も外す — 大気散乱はライティングの一部で、
+//     既に fogMode を -1 に潰してある表示モードに霧だけ載せるのは筋が通らない
+inline bool FroxelIsBound(const RenderView& view)
+{
+    return view.debugViewMode == 0 && view.froxelSRV != nullptr && view.froxelSlices > 0
+        && view.froxelFarZ > 0.0f;
+}
+
+// M57e: Forward 系 PerFrame CB (b0) の末尾に置くフロクセルのブロック。
+// **C++ ミラーが 2 つある** (ForwardPath.cpp / DeferredPath.cpp の PerFrameCB) ので、
+// 形を 1 本にして「片方だけ直す」を構造的に不可能にしてある。
+// HLSL 側は forward_lit / forward_lit_instanced / forward_skinned / forward_terrain の 4 本
+struct FroxelForwardCB {
+    int32_t enabled = 0;
+    float nearZ = 0.0f;
+    float farZ = 0.0f;
+    float slices = 0.0f;
+    // dot(float4(posW,1), これ) = view 深度。view 行列の第 3 列そのもの。
+    // ★カメラ前方ベクトルを正規化して内積する式にしない — 非一様スケールの入った
+    //   ビュー行列で静かにずれる (M57d が Deferred 側で確定させた規約)
+    DirectX::XMFLOAT4 viewZRow = { 0.0f, 0.0f, 0.0f, 0.0f };
+    float screenSize[2] = { 0.0f, 0.0f }; // SV_Position → uv (Forward に gScreenSize は無い)
+    float pad[2] = { 0.0f, 0.0f };
+};
+
+inline FroxelForwardCB MakeFroxelForwardCB(const RenderView& view, bool bound)
+{
+    FroxelForwardCB out;
+    out.enabled = bound ? 1 : 0;
+    out.nearZ = view.froxelNearZ;
+    out.farZ = view.froxelFarZ;
+    out.slices = static_cast<float>(view.froxelSlices);
+    out.viewZRow = { view.view._13, view.view._23, view.view._33, view.view._43 };
+    out.screenSize[0] = static_cast<float>(view.width);
+    out.screenSize[1] = static_cast<float>(view.height);
+    return out;
+}
+
 // GPU へ渡すライト 1 個 (定数バッファ配列要素、16 バイト境界に揃えた 64 バイト)。
 // HLSL 側 common.hlsli の Light 構造体とレイアウト一致。
 struct GpuLight {
@@ -604,6 +648,41 @@ inline float FogHandoffFraction(float viewZ, float gridFarZ)
 inline float CompositeFroxel(float scene, float inscatter, float transmittance)
 {
     return scene * transmittance + inscatter;
+}
+
+// ---- M57e: 深度を持つ残りの描画物への適用 (HLSL froxel_common.hlsli と同一式) ----
+
+// Forward 系 (forward_lit / _instanced / _skinned / _terrain) と**スカイボックス**が
+// 積分結果を読む SRV スロット (統合契約 予約 2 の t7)。
+//   ・Deferred の透明後段も forward_lit をそのまま使うので、この 1 本が「透明メッシュ」と
+//     「Forward パス全体」の両方の口になる。
+//   ・スカイボックスも同じ t7 を読む。**スカイに専用スロットを与えてはいけない** —
+//     スカイは不透明と透明の間に挟まるパスなので、別スロットを張ると Forward で
+//     後段の半透明が読む t1 (CSM) / t3-5 (IBL) を潰す。既に張ってある席に相乗りする。
+// Deferred 光パス側の kSrvSlot と同じ理由で check_rules.ps1 規則 9 が機械照合する
+constexpr int kForwardSrvSlot = 7;
+// パーティクル PS のスロット (t0 = インスタンス / t1 = テクスチャ / t2 = 深度 の次)。
+// パーティクルは独立したシェーダで、上の 4 本とはバインド空間を共有しない
+constexpr int kParticleSrvSlot = 3;
+
+// スカイ / 背景 (= 深度が無いピクセル) 用のサンプル w。**グリッド全体ぶんの積分**を指す。
+// ★ここは必ず IntegratedSampleWForDepth(viewZ >= farZ) と**同じ値**でなければならない —
+//   食い違うと地平線で「最遠のジオメトリ」と「その真上の空」が別のテクセルを引き、
+//   1 テクセルぶんの段が水平線に残る (RenderSelfTest が両者の一致を見ている)
+inline float IntegratedSampleWFar(int sliceCount)
+{
+    const int count = (sliceCount > 0) ? sliceCount : 1;
+    return IntegratedSampleW(static_cast<float>(count), count);
+}
+
+// M57e: **加算合成**の描画物 (additive パーティクル) への適用。
+// ★内向き散乱を足してはいけない — 背後のサーフェス (またはスカイ) が既に 1 回足して
+//   いるので、加算で重ねるたびに足すと粒子の枚数ぶん霧が濃くなる。
+//   加算の粒子が受け取るのは「自分からカメラまでの減衰」だけ。
+//   透過率 1 で厳密に恒等 (1 倍なので IEEE でも)
+inline float CompositeFroxelAdditive(float src, float transmittance)
+{
+    return src * transmittance;
 }
 
 } // namespace froxel

@@ -268,8 +268,14 @@ that follows the editor camera fights with editing.
 per frame and reprojected against the previous frame) with the participating medium and the
 in-scattering of every local light, sampling the same shadow atlas the surfaces do, so a spot
 light casts a shadowed shaft. A second pass integrates each Z column front-to-back into
-`(accumulated in-scatter, transmittance)` and the Deferred light pass composites it as
-`scene * T + inScatter`.
+`(accumulated in-scatter, transmittance)` and every surface that has a depth composites it as
+`scene * T + inScatter`: the Deferred light pass (opaque, `t15`), the Forward family
+(`forward_lit` / `_instanced` / `_skinned` / `_terrain`, `t7` — which is also what the Deferred
+transparent tail runs), the skybox, and CPU particles (`t3`). Additive particles get the
+transmittance **only**: the surface behind them already added the in-scatter once, so adding it
+again would scale the fog with the number of overlapping billboards. Pixels with no depth at all
+(the skybox, and the clear-colour background of a scene without one) sample the far end of the
+grid, which is what keeps the horizon from stepping between the fogged ground and an unfogged sky.
 
 **Three separate mechanisms model atmospheric scattering, so M57d split them by range instead
 of summing them** — added naively the fog is applied three times over:
@@ -284,9 +290,12 @@ The hand-off fraction is a pure function shared by the C++ mirror and the HLSL, 
 `RenderSelfTest` asserts that the two ranges add up to the whole ray with neither a gap nor an
 overlap; a golden screenshot (`demo_render_froxel`, local-only at tol=0, the same treatment
 FXAA and TAA get) pins the composited image.
-**Not covered in v1**: only the Deferred *opaque* pass composites the volume — transparents,
-the skybox and particles still see the analytic fog alone (M57e) — and an orthographic view
-skips the grid entirely, because the froxel depth slices assume a perspective frustum.
+**Not covered in v1**: an orthographic view skips the grid entirely, because the froxel depth
+slices assume a perspective frustum; the GPU particle backend has never applied any fog and is
+left alone; the analytic fog beyond the grid is *not* applied to the sky (it never was before
+M57, and adding it would sink a skybox into flat fog colour as soon as the density rises); and
+distortion particles (`blendMode=2`) write UV offsets rather than colour, so there is nothing to
+attenuate.
 
 ### 6.2 Feature Scope
 
@@ -302,7 +311,7 @@ skips the grid entirely, because the froxel depth slices assume a perspective fr
 | Skeletal animation | Implemented | 128-bone palette, glTF / FBX skinning |
 | Image-based lighting | Implemented | Irradiance + prefiltered specular + BRDF LUT |
 | Ray-traced secondary rays | Implemented | See §6.4 (default off) |
-| Volumetric fog (froxel) | Implemented | 160x90x64 view grid + local lights + shadow atlas, temporally reprojected. Deferred opaque only, default off (§6.1) |
+| Volumetric fog (froxel) | Implemented | 160x90x64 view grid + local lights + shadow atlas, temporally reprojected. Composited on opaque / transparent / terrain / sky / CPU particles in both paths, default off (§6.1) |
 
 ### 6.3 DirectX 11 Abstraction
 

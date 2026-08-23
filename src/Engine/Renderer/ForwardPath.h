@@ -19,6 +19,11 @@ public:
     void Render(GraphicsDevice& device, const RenderView& view, const RenderQueue& queue,
                 const SceneLightData& lights, RenderResources& resources,
                 ShaderManager& shaders) override;
+    // M57e: Forward も t7 でフロクセルを合成する (不透明 / 透明 / 地形 + スカイ)。
+    // ★M57d の時点では false だった — 合成が Deferred の光パスにしか無く、true に
+    //   すると「ゴッドレイだけ消えて霧が増えない」= 霧が減るだけになったため。
+    //   M57e で Forward 側の合成が入ったので true にできる
+    bool AppliesFroxel() const override { return true; }
 
 private:
     // runs 非 null = opaque のインスタンス run 一括描画を併用 (M38f)。transparent は nullptr

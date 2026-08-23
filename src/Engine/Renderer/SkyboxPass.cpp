@@ -12,12 +12,15 @@ using namespace DirectX;
 namespace mye {
 namespace {
 
-// skybox.hlsl の SkyCB (b3) と同一レイアウト
+// skybox.hlsl / skybox_cubemap.hlsl の SkyCB (b3) と同一レイアウト
 struct SkyCB {
     XMFLOAT4X4 invViewProj; // transpose(inverse(view*proj))
     XMFLOAT4 top;
     XMFLOAT4 horizon;
     XMFLOAT4 bottom;
+    // ---- M57e: フロクセル (末尾 append。x=0 = 従来と 1 ビットも変わらない) ----
+    XMFLOAT4 froxel;       // x = enabled / y = スライス数 / zw = 未使用
+    XMFLOAT4 froxelScreen; // xy = レンダーターゲット実寸 (px) / zw = 未使用
 };
 
 } // namespace
@@ -85,6 +88,15 @@ void SkyboxPass::Render(GraphicsDevice& device, ShaderManager& shaders, const Re
     cb.top = { view.skyTop.x, view.skyTop.y, view.skyTop.z, 1.0f };
     cb.horizon = { view.skyHorizon.x, view.skyHorizon.y, view.skyHorizon.z, 1.0f };
     cb.bottom = { view.skyBottom.x, view.skyBottom.y, view.skyBottom.z, 1.0f };
+    // M57e: 空にもフロクセルを載せる。空は深度を持たないので「グリッド全体ぶん」を引く。
+    // ★SRV もサンプラも**ここでは張らない** — t7 / s2 はホストのパスが張ったものを
+    //   そのまま読む。スカイは不透明と透明の間に挟まるパスなので、ここで別スロットを
+    //   触ると後段の半透明メッシュへ漏れる (Forward の t1 = CSM を潰した形で顕在化する)。
+    //   Deferred は光パスの後で t0-t15 を剥がしているので、呼ぶ側が t7 を張り直している
+    const bool froxelBound = FroxelIsBound(view);
+    cb.froxel = { froxelBound ? 1.0f : 0.0f, static_cast<float>(view.froxelSlices), 0.0f, 0.0f };
+    cb.froxelScreen = { static_cast<float>(view.width), static_cast<float>(view.height), 0.0f,
+                        0.0f };
     D3D11_MAPPED_SUBRESOURCE mapped = {};
     if (SUCCEEDED(dc->Map(cb_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
         memcpy(mapped.pData, &cb, sizeof(cb));
