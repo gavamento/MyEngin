@@ -220,6 +220,18 @@ $constGroups = @(
             'src\Engine\Renderer\RenderTypes.h' = 'constexpr\s+uint32_t\s+kJitterSequenceLength\s*=\s*(\d+)'
             'src\Engine\Renderer\PostFxMath.h'  = 'constexpr\s+uint32_t\s+kSequenceLength\s*=\s*(\d+)'
         }
+    },
+    @{
+        # M57d: Deferred 光パスがフロクセルの積分結果を読む SRV スロット (統合契約 予約 2 の t15)。
+        # C++ 側は gbSrvs[] の**位置**でしか表現されないので、static_assert で定数へ結び直し
+        # てある (DeferredPath.cpp)。ここが HLSL の register(t15) と食い違うと
+        # **霧が丸ごと 0 になるだけ**でコンパイルも実行も通る (張られていないスロットは 0)。
+        # ★t13/t14 は M56 (SSR / 反射プローブ) の空席。詰めると統合時に無言で潰し合う
+        label = 'froxel::kSrvSlot / deferred_light register(t15)'
+        sites = @{
+            'src\Engine\Renderer\RenderTypes.h' = 'constexpr\s+int\s+kSrvSlot\s*=\s*(\d+)'
+            'assets\shaders\deferred_light.hlsl' = 'Texture3D\s+gFroxelVolume\s*:\s*register\(t(\d+)\)'
+        }
     }
 )
 foreach ($g in $constGroups) {

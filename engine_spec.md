@@ -263,6 +263,31 @@ zero, and reading it there would freeze the sky while the camera pans. Both bran
 jitter-free projection at both ends. Motion blur is forced off in the Scene view, because a smear
 that follows the editor camera fights with editing.
 
+**Volumetric fog (froxel, M57, default off).** `CameraPostFx.froxelOn` — or the global
+`--froxel` — fills a 160x90x64 view-aligned 3D grid (exponentially distributed slices, jittered
+per frame and reprojected against the previous frame) with the participating medium and the
+in-scattering of every local light, sampling the same shadow atlas the surfaces do, so a spot
+light casts a shadowed shaft. A second pass integrates each Z column front-to-back into
+`(accumulated in-scatter, transmittance)` and the Deferred light pass composites it as
+`scene * T + inScatter`.
+
+**Three separate mechanisms model atmospheric scattering, so M57d split them by range instead
+of summing them** — added naively the fog is applied three times over:
+
+| Mechanism | Owns | Behaviour when the froxel volume is on |
+|---|---|---|
+| Froxel volume (M57) | `[near, grid far]` — the range where beams, local lights and shadowed shafts are actually visible | The only source of fog in that range |
+| `ApplyFog` (`common.hlsli`, M29d distance fog + M43a height fog / sun in-scatter) | Everything beyond the grid | Its **origin is pushed out** to the point where the view ray leaves the grid, so the two ranges never overlap. For a surface inside the grid that pushed-out origin *is* the surface, which makes the call exactly the identity |
+| God rays (`postfx_godray_*`, M43b) | A screen-space radial blur of a sky-only occlusion mask | **Automatically disabled.** It is the low-spec simplification of the froxel volume — the same phenomenon with a cruder occluder — so running both counts the sun's scattering twice |
+
+The hand-off fraction is a pure function shared by the C++ mirror and the HLSL, and
+`RenderSelfTest` asserts that the two ranges add up to the whole ray with neither a gap nor an
+overlap; a golden screenshot (`demo_render_froxel`, local-only at tol=0, the same treatment
+FXAA and TAA get) pins the composited image.
+**Not covered in v1**: only the Deferred *opaque* pass composites the volume — transparents,
+the skybox and particles still see the analytic fog alone (M57e) — and an orthographic view
+skips the grid entirely, because the froxel depth slices assume a perspective frustum.
+
 ### 6.2 Feature Scope
 
 | Feature | Status | Notes |
@@ -277,6 +302,7 @@ that follows the editor camera fights with editing.
 | Skeletal animation | Implemented | 128-bone palette, glTF / FBX skinning |
 | Image-based lighting | Implemented | Irradiance + prefiltered specular + BRDF LUT |
 | Ray-traced secondary rays | Implemented | See §6.4 (default off) |
+| Volumetric fog (froxel) | Implemented | 160x90x64 view grid + local lights + shadow atlas, temporally reprojected. Deferred opaque only, default off (§6.1) |
 
 ### 6.3 DirectX 11 Abstraction
 

@@ -100,6 +100,12 @@ public:
     // froxel::IntegratedSampleW で半テクセル手前を指すこと
     ID3D11ShaderResourceView* IntegratedSRV() const { return integrated_.SRV(); }
     const VolumeTexture& Integrated() const { return integrated_; }
+    // M57d: 直近の注入で確定したグリッドの深度分割。**カメラの near/far ではない**
+    // (FroxelSettings::maxDistance で手前に切ってある) — 消費側がここを取り違えると
+    // サンプル位置が丸ごとずれる。Inject が走る前は 0 = 消費側のゲートで弾かれる
+    float GridNearZ() const { return gridNearZ_; }
+    float GridFarZ() const { return gridFarZ_; }
+    int GridSliceCount() const { return integrated_.Depth(); }
 
     // 直近のディスパッチの GPU 時間 (ProfilerWindow 表示用)
     float InjectGpuMs() const { return timer_.Milliseconds(); }

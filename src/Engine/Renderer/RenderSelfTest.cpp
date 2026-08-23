@@ -963,6 +963,104 @@ void TestFroxelIntegration()
                < 1e-6f);
 }
 
+// M57d: フォグ合成の一元化 (解析フォグ / フロクセル / ゴッドレイ の受け持ち分け)
+void TestFroxelComposite()
+{
+    MYE_LOG_INFO("[selftest] froxel fog composition (M57d)");
+
+    const int slices = froxel::kGridZ;
+    const float nearZ = 0.1f;
+    const float farZ = 64.0f;
+
+    // ① グリッドの中は**厳密に 1.0** = 解析フォグの起点が posW と一致 = 距離 0 =
+    //    ApplyFog が恒等になる。ここが 1.0 でないと近景に霧が二重に乗る
+    TEST_CHECK(froxel::FogHandoffFraction(0.05f, farZ) == 1.0f);
+    TEST_CHECK(froxel::FogHandoffFraction(farZ, farZ) == 1.0f); // 境界は froxel 側
+    TEST_CHECK(froxel::FogHandoffFraction(farZ * 0.999f, farZ) == 1.0f);
+    // ② グリッドより奥はレイ上の相似比。2 倍の深さなら「半分から先」が解析フォグ
+    TEST_CHECK(std::fabs(froxel::FogHandoffFraction(farZ * 2.0f, farZ) - 0.5f) < 1e-6f);
+    TEST_CHECK(std::fabs(froxel::FogHandoffFraction(farZ * 4.0f, farZ) - 0.25f) < 1e-6f);
+    // ③ 単調減少 + 境界で連続 (段差があると遠景の縁に霧の輪郭が出る)
+    {
+        bool monotone = true;
+        float prev = 1.0f;
+        for (int i = 0; i <= 64; ++i) {
+            const float z = farZ * (1.0f + static_cast<float>(i) * 0.25f);
+            const float f = froxel::FogHandoffFraction(z, farZ);
+            monotone = monotone && (f <= prev + 1e-7f) && (f > 0.0f);
+            prev = f;
+        }
+        TEST_CHECK(monotone);
+        // 境界の 0.01% 奥では、解析フォグの受け持ちも 0.01% ぶんしか無い
+        // (1/(1+e) ≒ 1-e)。段差があるとこの桁で落ちる
+        TEST_CHECK(1.0f - froxel::FogHandoffFraction(farZ * 1.0001f, farZ) < 2.0e-4f);
+    }
+    // ④ グリッドの深度が壊れている (0 以下) ときは恒等側へ倒す。
+    //    注入が 1 度も走っていないフレーム (gridFarZ_ == 0) がここを通る
+    TEST_CHECK(froxel::FogHandoffFraction(10.0f, 0.0f) == 1.0f);
+
+    // ⑤ サンプル w。手前は最初のテクセル中心 (0)、奥端は最後のテクセル中心で**止まる**。
+    //    ★止めないとグリッドの外を外挿して、遠景にグリッド全体より濃い霧が乗る
+    //    (解析フォグの残りと合わせて二重計上 = このサブが解いた問題の再発)
+    TEST_CHECK(froxel::IntegratedSampleWForDepth(nearZ, slices, nearZ, farZ) == 0.0f);
+    TEST_CHECK(std::fabs(froxel::IntegratedSampleWForDepth(farZ, slices, nearZ, farZ)
+                         - (static_cast<float>(slices) - 0.5f) / slices)
+               < 1e-6f);
+    TEST_CHECK(froxel::IntegratedSampleWForDepth(farZ * 100.0f, slices, nearZ, farZ)
+               == froxel::IntegratedSampleWForDepth(farZ, slices, nearZ, farZ));
+    TEST_CHECK(froxel::IntegratedSampleWForDepth(nearZ * 0.01f, slices, nearZ, farZ) == 0.0f);
+    {
+        // 単調増加 + 全域が [0,1) に収まる (テクスチャ座標なので出たら CLAMP で潰れる)
+        bool ok = true;
+        float prev = -1.0f;
+        for (int i = 0; i <= 128; ++i) {
+            const float z = nearZ + (farZ - nearZ) * (static_cast<float>(i) / 128.0f);
+            const float w = froxel::IntegratedSampleWForDepth(z, slices, nearZ, farZ);
+            ok = ok && (w >= prev) && (w >= 0.0f) && (w < 1.0f);
+            prev = w;
+        }
+        TEST_CHECK(ok);
+    }
+    // ⑥ 積分パスの格納規約との往復。スライス z の奥端の深度を渡すと、
+    //    ちょうどテクセル z の中心を指す (半テクセル手前の -0.5 が効いている証明)
+    {
+        bool ok = true;
+        for (int z = 0; z < 8; ++z) {
+            const float depth =
+                froxel::SliceToViewDepth(static_cast<float>(z + 1), slices, nearZ, farZ);
+            const float w = froxel::IntegratedSampleWForDepth(depth, slices, nearZ, farZ);
+            ok = ok && std::fabs(w - (static_cast<float>(z) + 0.5f) / slices) < 1e-5f;
+        }
+        TEST_CHECK(ok);
+    }
+
+    // ⑦ 合成は透過率 1 / 内向き散乱 0 で**厳密に恒等**。
+    //    ここがビット恒等でないと「froxel を切れば直前コミットとビット一致」が崩れる
+    TEST_CHECK(froxel::CompositeFroxel(0.375f, 0.0f, 1.0f) == 0.375f);
+    // 透過率 0 なら内向き散乱だけが残る (完全に霧へ埋もれた遠景)
+    TEST_CHECK(froxel::CompositeFroxel(9.0f, 0.25f, 0.0f) == 0.25f);
+    TEST_CHECK(std::fabs(froxel::CompositeFroxel(1.0f, 0.2f, 0.5f) - 0.7f) < 1e-6f);
+
+    // ⑧ 受け持ちが重ならないこと (このサブの主張そのもの) を距離で確かめる。
+    //    カメラ→サーフェスの線分を [0, handoff] (= froxel) と [handoff, 1] (= 解析フォグ)
+    //    に割るので、2 区間の和はちょうど全長 = 1m も重複しない・欠けない
+    {
+        bool ok = true;
+        for (int i = 1; i <= 32; ++i) {
+            const float viewZ = farZ * 0.25f * static_cast<float>(i); // 16m 〜 512m
+            const float frac = froxel::FogHandoffFraction(viewZ, farZ);
+            const float froxelSpan = viewZ * frac; // froxel が持つ深度幅
+            const float analyticSpan = viewZ * (1.0f - frac);
+            ok = ok && std::fabs(froxelSpan + analyticSpan - viewZ) < 1e-3f;
+            if (viewZ > farZ) {
+                // グリッドを跨いだら froxel 側は必ず farZ ぴったりで止まる
+                ok = ok && std::fabs(froxelSpan - farZ) < 1e-3f;
+            }
+        }
+        TEST_CHECK(ok);
+    }
+}
+
 } // namespace
 
 bool RunRenderSelfTest()
@@ -988,6 +1086,7 @@ bool RunRenderSelfTest()
     TestFroxelGrid();       // M57a
     TestFroxelScattering(); // M57b
     TestFroxelIntegration(); // M57c
+    TestFroxelComposite();   // M57d
     if (g_failCount == 0) {
         MYE_LOG_INFO("[selftest] render: ALL PASS");
         return true;

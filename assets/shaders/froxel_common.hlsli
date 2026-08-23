@@ -67,4 +67,28 @@ float FroxelIntegratedSliceScatter(float sigmaT, float thickness)
     return (1.0f - exp(-s * d)) / s;
 }
 
+// ---- M57d: 最終画像への合成 (deferred_light.hlsl が呼ぶ) ----
+
+// view 深度 → 積分ボリュームの w 座標。格納規約はテクセル z = 「スライス z の**奥端**まで」
+// なので、テクセル中心 (z+0.5)/count が sliceCoord z+1 を表す → w = (s - 0.5)/count。
+// 奥は最終テクセルで止める (グリッドより奥の区間は解析フォグの残りが持つ。ここを
+// 外挿すると霧が二重に乗る)。手前は最初のテクセル中心で止める。
+// **C++ の froxel::IntegratedSampleWForDepth と同一式**
+float FroxelSampleW(float viewZ, float sliceCount, float nearZ, float farZ)
+{
+    const float s = clamp(FroxelDepthToSlice(viewZ, sliceCount, nearZ, farZ), 0.5f, sliceCount);
+    return (s - 0.5f) / sliceCount;
+}
+
+// 解析フォグ (common.hlsli::ApplyFog) の起点をどこまで押し出すかの割合 [0,1]。
+// ★フォグ三重計上を解く鍵。フロクセルが持つのは [nearZ, gridFarZ] だけなので、
+//   解析フォグの起点をグリッドの奥端まで押し出せば区間が 1m も重ならない。
+//   1.0 = サーフェスがグリッドの中 = 残り区間ゼロ = ApplyFog が厳密に恒等になる。
+// **C++ の froxel::FogHandoffFraction と同一式** (向こうにだけある gridFarZ<=0 のガードは
+// 注入が 1 度も走っていないフレーム用で、HLSL には gFroxelEnabled のゲートが先に効く)
+float FroxelFogHandoffFraction(float viewZ, float gridFarZ)
+{
+    return (viewZ > gridFarZ) ? (gridFarZ / viewZ) : 1.0f;
+}
+
 #endif // MYE_FROXEL_COMMON_HLSLI

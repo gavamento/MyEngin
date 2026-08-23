@@ -2,6 +2,8 @@
 // ライティング計算は Forward と同じ common.hlsli の関数を使う (見た目の一致)
 
 #include "common.hlsli"
+// M57d: フロクセルのグリッド幾何とサンプル座標の式 (register 宣言は持たないヘッダ)
+#include "froxel_common.hlsli"
 
 cbuffer LightPass : register(b0)
 {
@@ -57,6 +59,16 @@ cbuffer LightPass : register(b0)
     float    gShadowAtlasTexel; // 1/アトラス解像度
     float2   _atlasPad;
     ShadowTile gShadowTiles[MYE_MAX_SHADOW_TILES];
+    // ---- M57d: フロクセル・ボリュメトリック (末尾 append)。
+    //      0 = 従来と完全に同一の式 (ApplyFog をそのまま呼ぶ経路へ落ちる) ----
+    int      gFroxelEnabled;
+    float    gFroxelNearZ;   // グリッドの手前端 (カメラの near とは限らない)
+    float    gFroxelFarZ;    // グリッドの奥端。ここから先は解析フォグが持つ
+    float    gFroxelSlices;  // スライス数 (float で持つ = 全部の式が float 演算)
+    // dot(float4(posW,1), これ) = view 深度。view 行列の第 3 列そのもの。
+    // ★カメラ前方ベクトルを正規化して内積する式にしない — 非一様スケールの入った
+    //   ビュー行列で静かにずれる。列をそのまま渡せば定義どおりになる
+    float4   gFroxelViewZRow;
 };
 
 Texture2D gAlbedo    : register(t0);
@@ -72,6 +84,10 @@ Texture2D   gRtGi           : register(t9); // M46f (内部解像度、demodulat
 Texture2D   gRtShadow       : register(t10); // M46g (フル解像度 R8、太陽の可視率)
 Texture2D   gRtRefl         : register(t11); // M46h (内部解像度、反射方向の入射放射輝度)
 Texture2D   gShadowAtlas    : register(t12); // M54c (局所ライトの深度アトラス、R32_FLOAT)
+// t13 = SSR (M56d) / t14 = 反射プローブ (M56f) は統合契約 予約 2 の空席。
+// **M57 のブランチには実体が無いが番号は空けてある** — froxel を詰めて t13 に置くと
+// 統合時に M56 と無言で潰し合う (レジスタ番号の食い違いはコンパイルが通ってしまう)
+Texture3D   gFroxelVolume   : register(t15); // M57d (rgb=積算内向き散乱 / a=透過率)
 SamplerState gIblSampler : register(s0); // LINEAR/CLAMP (M38c、s0 は光パスで空きだった)
 SamplerComparisonState gShadowSampler : register(s1);
 
@@ -146,8 +162,34 @@ float4 PSMain(VSOut i) : SV_Target
     // 放射する分を足す。発光なしのマテリアルは b が厳密に 0 なので加算項もちょうど 0 になり、
     // M46i 以前の出力とビット単位で一致する
     color += albedo.rgb * DecodeEmissive(matG.b);
-    color = ApplyFog(color, gFogColor, gFogMode, gFogDensity, gFogStart, gFogEnd,
-                     gCameraPos, posW, gFogHeightFalloff, gFogBaseHeight, gSunDirection,
-                     gSunColor, gFogInscatterIntensity, gFogInscatterPower); // M29d+M43a
+    // ---- 大気散乱 (M29d + M43a の解析フォグ、M57d でフロクセルと分担) ----
+    // ★ここが「霧を 3 回足さない」ための唯一の分岐点。同じ大気散乱を表現する仕組みが
+    //   3 つある (解析フォグ / フロクセル / ゴッドレイ) ので、素直に全部足すと 3 倍になる。
+    //   受け持ちはこう決めた:
+    //     ・[near, gFroxelFarZ]  = フロクセル (局所ライトのビームと影を持てる)
+    //     ・gFroxelFarZ より奥   = 解析フォグ (起点を押し出して**残り区間だけ**)
+    //     ・ゴッドレイ           = フロクセル稼働中は RenderSystem が自動 off
+    //   グリッドの中のピクセルでは起点が posW と厳密に一致する = 距離 0 = ApplyFog は恒等
+    if (gFroxelEnabled != 0) {
+        const float viewZ = dot(float4(posW, 1.0f), gFroxelViewZRow);
+        float3 fogOrigin = posW; // グリッドの中 = 解析フォグの残りはゼロ
+        if (viewZ > gFroxelFarZ) {
+            fogOrigin = gCameraPos
+                + (posW - gCameraPos) * FroxelFogHandoffFraction(viewZ, gFroxelFarZ);
+        }
+        color = ApplyFog(color, gFogColor, gFogMode, gFogDensity, gFogStart, gFogEnd,
+                         fogOrigin, posW, gFogHeightFalloff, gFogBaseHeight, gSunDirection,
+                         gSunColor, gFogInscatterIntensity, gFogInscatterPower);
+        // 積分結果は「カメラからそのスライスの奥端まで」。s0 = LINEAR/CLAMP で引く
+        // (専用サンプラは作らない = 統合契約 予約 2「サンプラは増やさない」)
+        const float2 fuv = i.pos.xy / gScreenSize;
+        const float fw = FroxelSampleW(viewZ, gFroxelSlices, gFroxelNearZ, gFroxelFarZ);
+        const float4 vol = gFroxelVolume.SampleLevel(gIblSampler, float3(fuv, fw), 0);
+        color = color * vol.a + vol.rgb; // Lo = scene·T + inscatter
+    } else {
+        color = ApplyFog(color, gFogColor, gFogMode, gFogDensity, gFogStart, gFogEnd,
+                         gCameraPos, posW, gFogHeightFalloff, gFogBaseHeight, gSunDirection,
+                         gSunColor, gFogInscatterIntensity, gFogInscatterPower); // M29d+M43a
+    }
     return float4(color, 1.0f);
 }

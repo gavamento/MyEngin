@@ -22,6 +22,10 @@
 #                      TAA の近傍 min/max クランプは FXAA と同型のしきい値分岐で、しかも
 #                      履歴でフレーム間に蓄積する = 同じ増幅が起きうる。増幅率を実測する
 #                      までは CI に載せない (載せると「理由不明で赤い」1 枚が増えるだけ)
+#   MYE_SHOT_SKIP_FROXEL … スクショ 11 枚目 (フロクセルを通す 1 枚、M57d) を飛ばす。
+#                      テンポラル蓄積を含む = TAA と同じ「フレーム間に蓄積するしきい値
+#                      分岐」の系統で、さらに WARP の注入が実シーンで 60ms/フレーム
+#                      掛かる (M57b 実測)。増幅率を測るまで CI に載せない
 #
 # sim は CPU 専用なのでリプレイのワールドハッシュは WARP でも実 GPU でも同一 —
 # GPU 無し runner で replay_verify を回せる根拠がここ (計画の決定台帳 4)。
@@ -48,6 +52,7 @@ jobs:
       MYE_DOTNET_ARGS: /p:TreatWarningsAsErrors=true
       MYE_SHOT_SKIP_FXAA: 1
       MYE_SHOT_SKIP_TAA: 1
+      MYE_SHOT_SKIP_FROXEL: 1
     steps:
       - uses: actions/checkout@v4
 

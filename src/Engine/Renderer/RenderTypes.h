@@ -242,6 +242,19 @@ struct RenderView {
     //      **null / 空 = 地形なし = 従来と完全に同じ絵** — AssetPreviewCache の
     //      RenderSystem はここを埋めないので、サムネイルは地形を一切描かない ----
     const struct TerrainDrawList* terrain = nullptr;
+    // ---- M57d: フロクセルの積分結果 (末尾 append。null/0 = 従来と 1 ビットも変わらない) ----
+    //   froxelSRV = Texture3D (rgb = カメラからそこまでに積算した内向き散乱 /
+    //     a = そこまでの透過率)。FroxelPass::Render が返したものを RenderSystem が入れる。
+    //     ★null のままになる経路が 3 つある (Forward / AssetPreviewCache の RenderSystem /
+    //       froxel off)。**消費側は「null ならフラグ 0」のゲートを必ず置くこと** —
+    //       置かないとサムネイルだけが前フレームの残骸をサンプルする。
+    //   froxelNearZ/FarZ/Slices = 注入時に確定したグリッドの深度分割。**カメラの
+    //     near/far ではない** (FroxelSettings::maxDistance で手前に切ってある) ので、
+    //     ここを取り違えるとサンプル位置が丸ごとずれる
+    ID3D11ShaderResourceView* froxelSRV = nullptr;
+    float froxelNearZ = 0.0f;
+    float froxelFarZ = 0.0f;
+    int32_t froxelSlices = 0;
 };
 
 // M55c: 「**前フレームに実際に描いた** world 行列」の viewKey 別ストア (velocity の出所)。
@@ -546,6 +559,51 @@ inline float TemporalBlend(float cur, float hist, float feedback, bool histValid
     }
     const float f = (feedback > kMaxTemporalFeedback) ? kMaxTemporalFeedback : feedback;
     return cur + (hist - cur) * f; // HLSL の lerp(cur, hist, f) と同じ展開順
+}
+
+// ---- M57d: 最終画像への合成 (HLSL froxel_common.hlsli と同一式) ----
+
+// Deferred 光パスが積分結果を読む SRV スロット (統合契約 予約 2 の t15)。
+// **deferred_light.hlsl の register(t15) と食い違うと、霧が丸ごと 0 になるだけで
+// コンパイルも実行も通る** (張られていないスロットは 0 を返す) ので、
+// tools\check_rules.ps1 の規則 9 で機械照合している
+constexpr int kSrvSlot = 15;
+
+// view 深度 → 積分ボリュームの w 座標。
+// 奥はグリッドの最終テクセル (= グリッド全体ぶんの霧) で止める — 最遠スライスより
+// 奥の区間は「解析フォグの残り」が持つので、ここを外挿すると二重に霧が乗る。
+// 手前は最初のテクセル中心で止める (w<0 は CLAMP サンプラでも同じ値になるが、
+// 「意図して止めている」ことを式に残す。それが無いと 0.5 の由来が読めない)
+inline float IntegratedSampleWForDepth(float viewZ, int sliceCount, float nearZ, float farZ)
+{
+    const int count = (sliceCount > 0) ? sliceCount : 1;
+    const float hi = static_cast<float>(count);
+    float s = ViewDepthToSlice(viewZ, count, nearZ, farZ);
+    s = (s < 0.5f) ? 0.5f : ((s > hi) ? hi : s);
+    return IntegratedSampleW(s, count);
+}
+
+// M57d: 解析フォグ (common.hlsli::ApplyFog) の起点をどこまで押し出すかの割合 [0,1]
+// (カメラ → サーフェスの線分上のパラメータ)。
+//
+// ★**フォグ三重計上を解く鍵がこの 1 本**。フロクセルが持つのは [nearZ, gridFarZ] の
+//   区間だけなので、解析フォグの起点を「グリッドの奥端とレイの交点」まで押し出せば
+//   両者の受け持ちが 1m も重ならない。1.0 = サーフェスがグリッドの中 = 残り区間ゼロ =
+//   起点が posW と厳密に一致 = ApplyFog は距離 0 で恒等になる。
+//   グリッドの奥端は view 深度が gridFarZ の点なので、相似比は gridFarZ / viewZ
+inline float FogHandoffFraction(float viewZ, float gridFarZ)
+{
+    if (gridFarZ <= 0.0f || !(viewZ > gridFarZ)) {
+        return 1.0f; // グリッドの中 (NaN もここへ落ちる = 恒等側で安全に潰れる)
+    }
+    return gridFarZ / viewZ;
+}
+
+// M57d: 参加媒質の合成 (1 チャンネルぶん)。scene = 霧が無いときの色。
+// transmittance==1 && inscatter==0 は**厳密に恒等** (積が 1 倍・和が 0 なので IEEE でも)
+inline float CompositeFroxel(float scene, float inscatter, float transmittance)
+{
+    return scene * transmittance + inscatter;
 }
 
 } // namespace froxel

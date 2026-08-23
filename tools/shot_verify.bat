@@ -138,6 +138,20 @@ call :shot demo_render_taa --render-demo --deferred --taa
 set TOLNOW=%TOL%
 :skip_taa
 
+rem ---- 12 枚目 (統合契約の予約 3、M57d): フロクセル・ボリュメトリック。
+rem      FXAA / TAA と同じ理由でローカル限定 (tol=0 のビット一致)。CI は MYE_SHOT_SKIP_FROXEL=1 で飛ばす。
+rem      ★M57c ではこの枠を撮らなかった — 積分結果を読む者が 1 人も居ない段階で撮ると
+rem        demo_render_deferred と tol=0 でビット一致する「同じ絵の 2 枚目」にしかならず、
+rem        以後それが動いたときに原因が機能なのか撮影条件なのか切り分けられなくなるため。
+rem        絵が初めて変わる M57d がこの枠を撮る。
+rem      合成は Deferred 光パスの t15 なので --deferred が要る。撮影条件は --no-fxaa のまま =
+rem      demo_render_deferred との差が **フロクセルだけ** になる
+if defined MYE_SHOT_SKIP_FROXEL goto :skip_froxel
+set TOLNOW=0
+call :shot demo_render_froxel --render-demo --deferred --froxel
+set TOLNOW=%TOL%
+:skip_froxel
+
 echo.
 if %UPDATE%==1 (
     echo [shot_verify] golden updated in %GOLDEN% - review the images before committing
@@ -152,7 +166,7 @@ if not %FAILED%==0 (
 if defined MYE_SHOT_SKIP_FXAA (
     echo [PASS] screenshot regression ^(%SHOTS% shots, warp, no-fxaa, tol=%TOL%^)
 ) else (
-    echo [PASS] screenshot regression ^(%SHOTS% shots, warp, tol=%TOL% + fxaa/taa at tol=0^)
+    echo [PASS] screenshot regression ^(%SHOTS% shots, warp, tol=%TOL% + fxaa/taa/froxel at tol=0^)
 )
 exit /b 0
 
