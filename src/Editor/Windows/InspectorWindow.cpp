@@ -1158,6 +1158,9 @@ void InspectorWindow::DrawAssetInspector(EngineContext& ctx, Selection& selectio
         if (type == AssetType::Sound) {
             LoadSoundEdit(path); // M45c
         }
+        if (type == AssetType::PhysMat) {
+            LoadPhysMatEdit(path); // M59a1
+        }
         if ((type == AssetType::Actor || type == AssetType::Prefab) && ctx.prefabs) {
             // 選択が変わったときだけ登録を試す (エディタ起動後に外から置かれたファイルを拾う)。
             // 毎フレーム LoadFromFile すると不正ファイルで警告ログを撒き続ける
@@ -1196,6 +1199,11 @@ void InspectorWindow::DrawAssetInspector(EngineContext& ctx, Selection& selectio
 
     if (type == AssetType::Sound) {
         DrawSoundInspector(ctx, path); // M45c
+        return;
+    }
+
+    if (type == AssetType::PhysMat) {
+        DrawPhysMatInspector(path); // M59a1
         return;
     }
 
@@ -1670,6 +1678,79 @@ void InspectorWindow::DrawSoundInspector(EngineContext& ctx, const std::wstring&
     }
 }
 
+void InspectorWindow::LoadPhysMatEdit(const std::wstring& path)
+{
+    physMatEdit_ = PhysMat{};
+    physMatEditValid_ = false;
+    std::ifstream f(std::filesystem::path(path), std::ios::binary);
+    if (!f) {
+        return;
+    }
+    nlohmann::json root;
+    try {
+        f >> root;
+    } catch (const nlohmann::json::exception&) {
+        return;
+    }
+    physMatEditValid_ = PhysMatLibrary::FromJson(root, physMatEdit_); // 読み値は Sanitize 済み
+}
+
+void InspectorWindow::DrawPhysMatInspector(const std::wstring& path)
+{
+    namespace fs = std::filesystem;
+    if (!physMatEditValid_) {
+        ImGui::TextDisabled("%s", Tr(StrId::Insp_PhysMatFailed));
+        return;
+    }
+
+    // ドラッグの min/max は Sanitize と同じ檻 (直接入力のはみ出しは Save 時の Sanitize が
+    // 最終防波堤)。ここで編集した値が sim に効き始めるのは M59a2 の Collider 割り当てから
+    ImGui::SetNextItemWidth(160.0f);
+    ImGui::DragFloat(Tr(StrId::Insp_PmDensity), &physMatEdit_.density, 10.0f, 0.001f, 1.0e6f,
+                     "%.1f");
+    ImGui::SetNextItemWidth(160.0f);
+    ImGui::DragFloat(Tr(StrId::Insp_PmStaticFriction), &physMatEdit_.staticFriction, 0.01f, 0.0f,
+                     100.0f, "%.3f");
+    ImGui::SetNextItemWidth(160.0f);
+    ImGui::DragFloat(Tr(StrId::Insp_PmDynamicFriction), &physMatEdit_.dynamicFriction, 0.01f, 0.0f,
+                     100.0f, "%.3f");
+    ImGui::SetNextItemWidth(160.0f);
+    ImGui::DragFloat(Tr(StrId::Insp_PmRestitution), &physMatEdit_.restitution, 0.005f, 0.0f, 1.0f,
+                     "%.3f");
+    ImGui::SetNextItemWidth(160.0f);
+    ImGui::DragFloat(Tr(StrId::Insp_PmRollingResistance), &physMatEdit_.rollingResistance, 0.001f,
+                     0.0f, 10.0f, "%.4f");
+    ImGui::SetNextItemWidth(160.0f);
+    ImGui::DragFloat(Tr(StrId::Insp_PmDragCoefficient), &physMatEdit_.dragCoefficient, 0.01f, 0.0f,
+                     100.0f, "%.3f");
+    ImGui::TextDisabled("%s", Tr(StrId::Insp_PhysMatNote));
+
+    ImGui::Separator();
+    if (ImGui::Button(Tr(StrId::Common_Save), ImVec2(90, 0))) {
+        if (physMatEdit_.name.empty()) {
+            // "steel.physmat.json" → "steel" (stem を 2 回剥がす)
+            physMatEdit_.name = WideToUtf8(fs::path(path).stem().stem().wstring());
+        }
+        PhysMatLibrary::Sanitize(physMatEdit_); // 手入力の NaN/範囲外をファイルへ焼かない
+        std::ofstream out(fs::path(path), std::ios::binary);
+        if (out) {
+            out << PhysMatLibrary::ToJson(physMatEdit_).dump(2);
+            out.close();
+            // 即時反映: 同一 GUID のまま再ロード (参照側は GUID なので再解決不要)
+            if (PhysMatLibrary* pm = physmat::Library()) {
+                pm->LoadFromFile(path);
+            }
+            MYE_LOG_INFO("physmat saved: %s", WideToUtf8(path).c_str());
+        } else {
+            MYE_LOG_ERROR("could not write physmat: %s", WideToUtf8(path).c_str());
+        }
+    }
+    ImGui::SameLine();
+    if (ImGui::Button(Tr(StrId::Insp_Revert), ImVec2(90, 0))) {
+        LoadPhysMatEdit(path);
+    }
+}
+
 void InspectorWindow::DrawAssetRef(EngineContext& ctx, const FieldDesc& field, void* p,
                                    Selection& selection, UndoStack& undo,
                                    const std::vector<uint64_t>& fids,
@@ -1679,7 +1760,17 @@ void InspectorWindow::DrawAssetRef(EngineContext& ctx, const FieldDesc& field, v
     // フィールド名からライブラリを推定 (mesh / material / texture)
     const std::string fname = field.name;
     std::vector<AssetEntry> entries;
-    if (fname.find("mesh") != std::string::npos) {
+    if (fname.find("physMat") != std::string::npos || fname.find("physmat") != std::string::npos) {
+        // M59a1: 物理マテリアル (M59a2 の Collider.physMaterial 等)。
+        // ★"material"/"mat" 系より**先に**見る — 照合は大文字小文字を区別するので
+        //   "physMaterial".find("material") は npos になり、順序を誤ると既定の混合リストに
+        //   落ちて MaterialLibrary と取り違えたまま気付けない
+        if (PhysMatLibrary* pm = physmat::Library()) {
+            for (const PhysMatEntry& e : pm->Enumerate()) {
+                entries.push_back({ AssetID{ e.hash }, e.name });
+            }
+        }
+    } else if (fname.find("mesh") != std::string::npos) {
         entries = ctx.resources->meshes.Enumerate();
     } else if (fname.find("material") != std::string::npos) {
         entries = ctx.resources->materials.Enumerate();

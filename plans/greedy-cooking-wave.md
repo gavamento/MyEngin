@@ -59,7 +59,7 @@
 
 | サブ | 状態 | コミット | メモ |
 |---|---|---|---|
-| M59a1 PhysMat 資産基盤 | 未着手 | | |
+| M59a1 PhysMat 資産基盤 | 完了 | (本コミット) | 下記「M59a1 の申し送り」参照 |
 | M59a2 材料の消費 | 未着手 | | |
 | M59b PhysicsEnvironment + 等方空力 | 未着手 | | |
 | M59b2 浮力 | 未着手 | | |
@@ -76,6 +76,25 @@
 | M59k ABI v14 束ね | 未着手 | | |
 | M59l 仕上げ (golden physics.png) | 未着手 | | |
 | (別件) net_verify DllReloader フレーク修理 | 未着手 | | 物理と無関係の独立コミット |
+
+### M59a1 の申し送り (計画外の事実・罠)
+
+1. **プリセット参照は .meta コミットで checkout 非依存になる (計画の仮定より緩い)。**
+   HashForPath = 絶対パスハッシュだが、`assetkey::Resolve` は同伴 .meta の GUID を優先する
+   (M30c のリネーム耐性)。別チェックアウトは「パスが変わった移動」と等価なので、**.meta を
+   コミットした資産への AssetRef はシーン JSON に焼いてもコミット可**。プリセット 4 種の
+   .meta (type "physmat") は replay_verify 実走で生成させてコミット済み。ただしデモは
+   既存流儀どおり DemoContent 正本 (シーンファイルを置かない) で組む方針は維持。
+2. **Sanitize は「非有限 = 既定値 / 有限の範囲外 = クランプ」の二段。** +inf をクランプ上限に
+   落とすのは「ゴミを境界値という意味のある値に化けさせる」ので不採用 (selftest で固定)。
+   density の NaN を 0 に落とさないのも同じ理由 (M59a2 の 1/m がゼロ除算相当に化ける)。
+3. **既存の抜けを発見 (未修理・報告のみ)**: `SplitAssetName` の kCompound 表に
+   `.terrain.json` / `.component.schema.json` が無い — これらをリネームすると複合サフィックスが
+   剥がれて "y.json" (Unknown) になる。`.physmat.json` は追加済み。地形/スキーマの修理は別件。
+4. 計画外の追加: Inspector の資産編集パネル (`DrawPhysMatInspector`、Sound 範型)。
+   Save 時に Sanitize を通してから書く (手入力の NaN をファイルへ焼かない)。
+5. DrawAssetRef の physMat 分岐は **"mesh" より前** に置いた (計画は "material"/"mat" より前と
+   だけ言っていたが、既定の混合リスト落ちを避ける最安全は先頭)。照合は "physMat"/"physmat" 両方。
 
 ---
 ## 全体ロードマップ

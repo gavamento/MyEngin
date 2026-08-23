@@ -33,6 +33,7 @@
 #include "Engine/Engine/Audio/AudioSelfTest.h"
 #include "Engine/Engine/EngineLoop.h"
 #include "Engine/Engine/ParticleSelfTest.h"
+#include "Engine/Engine/Physics/PhysMatSelfTest.h"
 #include "Engine/Engine/PhysicsSelfTest.h"
 #include "Engine/Engine/RayTracing/RtSelfTest.h"
 #include "Engine/Engine/Project.h"
@@ -541,7 +542,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             && mye::RunDecalSelfTest()          // M56a
             && mye::RunHzbSelfTest()            // M56c
             && mye::RunSsrSelfTest()            // M56d
-            && mye::RunProbeBakerSelfTest();    // M56e
+            && mye::RunProbeBakerSelfTest()     // M56e
+            && mye::RunPhysMatSelfTest();       // M59a1
         return ok ? 0 : 1;
     }
 

@@ -1,0 +1,11 @@
+{
+  "engine": "MyEngine",
+  "physmat": 1,
+  "name": "steel",
+  "density": 7850.0,
+  "staticFriction": 0.74,
+  "dynamicFriction": 0.45,
+  "restitution": 0.6,
+  "rollingResistance": 0.001,
+  "dragCoefficient": 0.47
+}

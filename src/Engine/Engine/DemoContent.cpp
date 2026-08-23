@@ -22,6 +22,7 @@
 #include "Engine/Engine/FbxLoader.h"
 #include "Engine/Engine/GameObject.h"
 #include "Engine/Engine/ModelLoader.h"
+#include "Engine/Engine/Physics/PhysMatLibrary.h"
 #include "Engine/Engine/Prefab.h"
 #include "Engine/Engine/Scene.h"
 #include "Engine/Engine/SceneSerializer.h"
@@ -1289,6 +1290,12 @@ void RegisterAssetLibraries(EngineContext& ctx)
         } else if (p.size() >= 11 && p.compare(p.size() - 11, 11, L".mixer.json") == 0) {
             if (ctx.mixers) {
                 ctx.mixers->LoadFromFile(p); // M45d: ミキサー (適用は走査後にまとめて)
+            }
+        } else if (p.size() >= 13 && p.compare(p.size() - 13, 13, L".physmat.json") == 0) {
+            // M59a1: 物理マテリアル。所有は EngineLoop、ここへは physmat:: で注入済み
+            // (EngineContext を汚さない meshcol:: 流儀)
+            if (PhysMatLibrary* pm = physmat::Library()) {
+                pm->LoadFromFile(p);
             }
         } else {
             std::wstring ext = e.path().extension().wstring();

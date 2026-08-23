@@ -1,0 +1,11 @@
+{
+  "engine": "MyEngine",
+  "physmat": 1,
+  "name": "rubber",
+  "density": 1100.0,
+  "staticFriction": 1.0,
+  "dynamicFriction": 0.8,
+  "restitution": 0.8,
+  "rollingResistance": 0.02,
+  "dragCoefficient": 0.47
+}

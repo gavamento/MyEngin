@@ -857,3 +857,20 @@ MYE_STR(Terrain_SaveFail,     "Could not write the terrain edit sidecar: %s",
                               "地形の編集サイドカーを書き出せませんでした: %s")
 MYE_STR(Terrain_UndoStale,    "The terrain changed since this stroke was recorded - undo skipped: %s",
                               "記録時から地形が変わっています。この取り消しは適用できません: %s")
+
+// ---- 物理マテリアル (M59a1) ----
+MYE_STR(Asset_PhysMat,        "Physics Material",    "物理マテリアル")
+MYE_STR(Log_WritePhysMatFail, "could not write physics material: %s",
+                              "物理マテリアルを書き出せません: %s")
+MYE_STR(Log_CreatedPhysMat,   "created physics material: %s",
+                              "物理マテリアルを作成しました: %s")
+MYE_STR(Insp_PhysMatFailed,   "(physics material parse failed)",
+                              "(物理マテリアルの読み込みに失敗)")
+MYE_STR(Insp_PmDensity,       "Density (kg/m^3)",    "密度 (kg/m^3)")
+MYE_STR(Insp_PmStaticFriction, "Static Friction",    "静止摩擦")
+MYE_STR(Insp_PmDynamicFriction, "Dynamic Friction",  "動摩擦")
+MYE_STR(Insp_PmRestitution,   "Restitution",         "反発係数")
+MYE_STR(Insp_PmRollingResistance, "Rolling Resistance", "転がり抵抗")
+MYE_STR(Insp_PmDragCoefficient, "Drag Coefficient (Cd)", "抗力係数 (Cd)")
+MYE_STR(Insp_PhysMatNote,     "Applied when assigned to a collider.",
+                              "コライダーに割り当てると適用されます。")

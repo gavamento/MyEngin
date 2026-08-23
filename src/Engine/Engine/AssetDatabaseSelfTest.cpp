@@ -83,7 +83,7 @@ bool RunAssetDatabaseSelfTest()
               && AssetDatabase::ClassifyPath(L"x\\Health.json") == AssetType::Unknown,
           "component schema is a distinct asset type");
     for (AssetType t : { AssetType::Actor, AssetType::Prefab, AssetType::Sound, AssetType::Mixer,
-                         AssetType::Schema }) {
+                         AssetType::Schema, AssetType::PhysMat }) {
         check(AssetDatabase::ParseTypeName(AssetDatabase::TypeName(t)) == t,
               "asset type name round-trips through .meta");
     }

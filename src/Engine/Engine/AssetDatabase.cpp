@@ -76,6 +76,11 @@ AssetType AssetDatabase::ClassifyPath(const std::wstring& path)
     if (EndsWith(s, ".anim.json")) {
         return AssetType::Anim;
     }
+    // .physmat.json は .mat.json より先に見る (末尾 9 文字は "smat.json" vs ".mat.json" で
+    // 現状衝突しないが、最長サフィックス優先の規約に揃えて順序でも守る。M59a1)
+    if (EndsWith(s, ".physmat.json")) {
+        return AssetType::PhysMat;
+    }
     if (EndsWith(s, ".mat.json")) {
         return AssetType::Material;
     }
@@ -131,6 +136,7 @@ const char* AssetDatabase::TypeName(AssetType t)
     case AssetType::Mixer: return "mixer";
     case AssetType::Schema: return "schema";
     case AssetType::Terrain: return "terrain";
+    case AssetType::PhysMat: return "physmat";
     case AssetType::Unknown:
     default: return "unknown";
     }
@@ -153,6 +159,7 @@ AssetType AssetDatabase::ParseTypeName(const std::string& s)
     if (s == "mixer") return AssetType::Mixer;
     if (s == "schema") return AssetType::Schema;
     if (s == "terrain") return AssetType::Terrain;
+    if (s == "physmat") return AssetType::PhysMat;
     return AssetType::Unknown;
 }
 

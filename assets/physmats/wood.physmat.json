@@ -1,0 +1,11 @@
+{
+  "engine": "MyEngine",
+  "physmat": 1,
+  "name": "wood",
+  "density": 700.0,
+  "staticFriction": 0.5,
+  "dynamicFriction": 0.35,
+  "restitution": 0.35,
+  "rollingResistance": 0.01,
+  "dragCoefficient": 0.47
+}

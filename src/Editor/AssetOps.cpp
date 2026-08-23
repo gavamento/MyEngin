@@ -36,6 +36,7 @@
 #include "Engine/Engine/GameObject.h"
 #include "Engine/Engine/FbxLoader.h"
 #include "Engine/Engine/ModelLoader.h"
+#include "Engine/Engine/Physics/PhysMatLibrary.h" // M59a1: .physmat.json の生成/登録
 #include "Engine/Engine/Prefab.h"
 #include "Engine/Engine/RenderSystem.h" // M58f: 地形ブラシ Undo 後のチャンク再構築
 #include "Engine/Engine/Scene.h"
@@ -142,7 +143,7 @@ void SplitAssetName(const std::wstring& filename, std::wstring& stem, std::wstri
 {
     static const std::wstring kCompound[] = {L".scene.json", L".prefab.json", L".actor.json",
                                              L".anim.json",  L".mat.json",   L".controller.json",
-                                             L".sound.json", L".mixer.json"};
+                                             L".sound.json", L".mixer.json", L".physmat.json"};
     for (const std::wstring& c : kCompound) {
         if (filename.size() > c.size() &&
             filename.compare(filename.size() - c.size(), c.size(), c) == 0) {
@@ -425,6 +426,28 @@ std::wstring CreateMixerAsset(EngineContext& ctx, const std::wstring& dir, const
         ctx.mixers->LoadFromFile(path);
     }
     MYE_LOG_INFO(Tr(StrId::Log_CreatedMixer), WideToUtf8(path).c_str());
+    return path;
+}
+
+std::wstring CreatePhysMatAsset(EngineContext& ctx, const std::wstring& dir, const std::string& name)
+{
+    (void)ctx; // 署名は他の Create* と揃える (InstantiateAssetAtPath 経由の互換。AssetOps.h 注記)
+    const std::string safe = SanitizeFileName(name, "New PhysMat");
+    const std::wstring path = dir + L"\\" + Utf8ToWide(safe) + L".physmat.json";
+    PhysMat m;
+    m.name = safe;
+    std::ofstream f{ fs::path(path), std::ios::binary };
+    if (!f) {
+        MYE_LOG_ERROR(Tr(StrId::Log_WritePhysMatFail), WideToUtf8(path).c_str());
+        return {};
+    }
+    f << PhysMatLibrary::ToJson(m).dump(2);
+    f.close();
+    // 生成直後に登録 → 参照ピッカー (M59a2 の Collider.physMaterial) で即使える
+    if (PhysMatLibrary* pm = physmat::Library()) {
+        pm->LoadFromFile(path);
+    }
+    MYE_LOG_INFO(Tr(StrId::Log_CreatedPhysMat), WideToUtf8(path).c_str());
     return path;
 }
 

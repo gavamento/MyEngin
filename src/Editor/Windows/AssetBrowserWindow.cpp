@@ -50,7 +50,8 @@ enum CreateKind {
     kCreateMaterial,
     kCreateSound,
     kCreateMixer,
-    kCreateActor
+    kCreateActor,
+    kCreatePhysMat // M59a1
 };
 
 // 型フィルタのコンボ内容 (M51i)。先頭 = フィルタなし (Unknown を「すべて」に転用)
@@ -75,6 +76,7 @@ constexpr TypeFilterEntry kTypeFilters[] = {
     { AssetType::Shader, StrId::Type_Shader },
     { AssetType::Schema, StrId::Type_Schema },
     { AssetType::Terrain, StrId::Terrain_AssetType },
+    { AssetType::PhysMat, StrId::Asset_PhysMat }, // M59a1
 };
 
 const char* IconFor(const std::wstring& ext)
@@ -127,7 +129,7 @@ void InstantiateComposeAsset(EngineContext& ctx, Selection& selection, UndoStack
 // サムネイル未生成 (または対象外) のタイルに出す文字ラベル
 const char* TileLabel(const std::wstring& ext, const std::wstring& path, bool isCompose,
                       bool isActor, bool isAnim, bool isMat, bool isSound, bool isMixer,
-                      bool isSchema)
+                      bool isSchema, bool isPhysMat)
 {
     if (IsImageExt(ext)) {
         return "img"; // デコード完了までのプレースホルダ
@@ -140,6 +142,9 @@ const char* TileLabel(const std::wstring& ext, const std::wstring& path, bool is
     }
     if (isAnim) {
         return "anim";
+    }
+    if (isPhysMat) {
+        return "physmat"; // .physmat.json (M59a1)。isMat より先 (どちらも mat.json を含む)
     }
     if (isMat) {
         return "mat";
@@ -505,6 +510,10 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
             && nameU.compare(nameU.size() - 11, 11, ".sound.json") == 0;
         const bool isMixer = !isCompose && !isAnim && !isMat && !isScene && !isSound
             && nameU.size() >= 11 && nameU.compare(nameU.size() - 11, 11, ".mixer.json") == 0;
+        // M59a1: 物理マテリアル。".physmat.json" の末尾 9 文字は "smat.json" なので isMat には
+        // 落ちない (PhysMatSelfTest が固定) — ここは独立判定でよい
+        const bool isPhysMat = !isCompose
+            && nameU.size() >= 13 && nameU.compare(nameU.size() - 13, 13, ".physmat.json") == 0;
         // M48j: .component.schema.json は起動時に読まれる動的コンポーネント定義。
         // 他の複合サフィックスより長いので単独判定でよい (.json の一般判定より先に効く)
         const bool isSchema = nameU.size() >= 22
@@ -535,7 +544,7 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
                                                      : ImGui::GetStyleColorVec4(ImGuiCol_Button));
         ImGui::Button(thumb ? "##tile"
                             : TileLabel(ext, path, isCompose, isActor, isAnim, isMat, isSound,
-                                        isMixer, isSchema),
+                                        isMixer, isSchema, isPhysMat),
                       ImVec2(kCell, kCell));
         ImGui::PopStyleColor();
         if (thumb) {
@@ -736,6 +745,7 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
             if (ImGui::MenuItem(Tr(StrId::Asset_Actor))) { beginCreate(kCreateActor, "New Actor"); }
             if (ImGui::MenuItem(Tr(StrId::Asset_Sound))) { beginCreate(kCreateSound, "New Sound"); }
             if (ImGui::MenuItem(Tr(StrId::Asset_Mixer))) { beginCreate(kCreateMixer, "New Mixer"); }
+            if (ImGui::MenuItem(Tr(StrId::Asset_PhysMat))) { beginCreate(kCreatePhysMat, "New PhysMat"); }
             ImGui::EndMenu();
         }
         ImGui::Separator();
@@ -903,7 +913,7 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
 void AssetBrowserWindow::DoCreate(EngineContext& ctx, UndoStack& undo,
                                   const std::string& externalEditorCmd)
 {
-    // アセット系 7 種は Create Undo を記録する (M51i: undo = ごみ箱へ / redo = 書き戻し)
+    // アセット系 8 種は Create Undo を記録する (M51i: undo = ごみ箱へ / redo = 書き戻し)
     const std::string name = createName_;
     switch (pendingCreate_) {
     case kCreateFolder:
@@ -926,6 +936,9 @@ void AssetBrowserWindow::DoCreate(EngineContext& ctx, UndoStack& undo,
         break;
     case kCreateMixer:
         RecordAssetCreated(undo, CreateMixerAsset(ctx, current_, name));
+        break;
+    case kCreatePhysMat: // M59a1
+        RecordAssetCreated(undo, CreatePhysMatAsset(ctx, current_, name));
         break;
     case kCreateScript: {
         // スクリプトは Create Undo 対象外 — 既存ファイルなら「開くだけ」で返る経路と

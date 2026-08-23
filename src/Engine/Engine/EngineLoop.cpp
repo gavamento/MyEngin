@@ -23,6 +23,7 @@
 #include "Engine/Engine/Audio/SoundAsset.h"
 #include "Engine/Engine/Particles/ParticleSystem.h"
 #include "Engine/Engine/Physics/MeshColliderLibrary.h"
+#include "Engine/Engine/Physics/PhysMatLibrary.h"
 #include "Engine/Engine/Physics/PhysicsSystem.h"
 #include "Engine/Engine/Prefab.h"
 #include "Engine/Engine/ProbeBaker.h"
@@ -106,6 +107,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     CollisionSystem collisionSystem;
     PhysicsSystem physicsSystem; // 剛体積分 + 衝突解決 (M20、ステートレス)
     MeshColliderLibrary meshColliders; // 静的メッシュコライダーの BVH キャッシュ (M41)
+    PhysMatLibrary physMatLibrary;     // .physmat.json (M59a1)。sim の消費は M59a2 から
     std::vector<SolidContact> solidContacts; // 物理→衝突イベントの tick 内受け渡し (M28c)
     PrefabLibrary prefabLibrary;
     AnimationLibrary animLibrary;
@@ -205,6 +207,9 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // AssetID → BVH 付きコライダーデータを引けるように接続する
     meshColliders.Init(&resources);
     meshcol::Install(&meshColliders);
+    // M59a1: 物理マテリアル (.physmat.json)。起動走査 (RegisterAssetLibraries) と ReloadHub が
+    // physmat::Library() 経由で読み込むので、走査より前に注入しておくこと
+    physmat::Install(&physMatLibrary);
     if (!forwardPath.Init(device, shaderManager)) {
         return 1;
     }
@@ -1683,6 +1688,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     input.ApplyVibration(0.0f, 0.0f); // M51h: 終了後に振動を残さない
     app.OnShutdown(ctx);
     meshcol::Install(nullptr); // M41 (meshColliders 破棄前に必ず外す)
+    physmat::Install(nullptr); // M59a1 (physMatLibrary 破棄前に必ず外す)
     AssetDatabase::UninstallKeyResolver(); // M30c (assetDatabase 破棄前に必ず外す)
     vfxRenderer.Shutdown(); // M29c
     uiRenderer.Shutdown();  // M21

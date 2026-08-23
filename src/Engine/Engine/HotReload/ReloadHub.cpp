@@ -10,6 +10,7 @@
 #include "Engine/Engine/Audio/SoundAsset.h"
 #include "Engine/Engine/FbxLoader.h"
 #include "Engine/Engine/ModelLoader.h"
+#include "Engine/Engine/Physics/PhysMatLibrary.h"
 #include "Engine/Engine/Prefab.h"
 #include "Engine/Engine/Scene.h"
 #include "Engine/Engine/SceneSerializer.h"
@@ -227,6 +228,26 @@ void ReloadHub::HandleChange(const std::wstring& normPath)
                             }
                         }
                         MYE_LOG_INFO("[reload] mixer reloaded: %s", WideToUtf8(normPath).c_str());
+                        ++reloadCount_;
+                    } else {
+                        retryLater();
+                    }
+                }
+            }
+            return;
+        }
+        // .physmat.json: 登録済みなら再読込 (M59a1)。所有は EngineLoop = physmat:: 経由で引く。
+        // ★M59a2 で sim が消費し始めたら「ホットリロードが sim を変える既存資産クラス
+        //   (メッシュコライダーと同類)」に合流する — record/verify 中の挙動もそちらの規約に従う
+        const bool isPhysMat = normPath.size() >= 13
+            && normPath.compare(normPath.size() - 13, 13, L".physmat.json") == 0;
+        if (isPhysMat) {
+            if (PhysMatLibrary* pm = physmat::Library()) {
+                const uint64_t hash = PhysMatLibrary::HashForPath(normPath);
+                if (pm->Contains(hash)) {
+                    if (pm->LoadFromFile(normPath) != 0) {
+                        MYE_LOG_INFO("[reload] physmat reloaded: %s",
+                                     WideToUtf8(normPath).c_str());
                         ++reloadCount_;
                     } else {
                         retryLater();

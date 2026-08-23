@@ -27,6 +27,7 @@ enum class AssetType : int32_t {
     Actor,      // .actor.json (M48d — プレハブ 2.0。Prefab は部分集合として読込互換)
     Schema,     // .component.schema.json (M48j — 動的コンポーネント定義)
     Terrain,    // .terrain.json (M58a — ハイトマップ + スプラットマップ + レイヤ定義)
+    PhysMat,    // .physmat.json (M59a1 — 物理マテリアル。剛体ソルバ用の材料特性)
 };
 
 // アセット 1 件のサイドカー情報 (<asset>.meta に JSON で保存)。

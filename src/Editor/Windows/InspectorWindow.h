@@ -10,6 +10,7 @@
 #include "Engine/Core/ImportMetaResolver.h"
 #include "Engine/Engine/Audio/SoundAsset.h"
 #include "Engine/Engine/EngineLoop.h"
+#include "Engine/Engine/Physics/PhysMatLibrary.h"
 
 namespace mye {
 
@@ -86,6 +87,13 @@ private:
     bool soundEditValid_ = false;
     void LoadSoundEdit(const std::wstring& path);
     void DrawSoundInspector(EngineContext& ctx, const std::wstring& path);
+
+    // 物理マテリアルインスペクタの編集キャッシュ (M59a1)。.physmat.json のスキーマ固定編集。
+    // サウンドと同じく **アセット編集は UndoStack 対象外** (既存規約)
+    PhysMat physMatEdit_;
+    bool physMatEditValid_ = false;
+    void LoadPhysMatEdit(const std::wstring& path);
+    void DrawPhysMatInspector(const std::wstring& path);
 
     // 回転編集中のオイラー角キャッシュ (quat→euler→quat の往復ドリフト防止)
     DirectX::XMFLOAT3 eulerCache_ = { 0, 0, 0 };

@@ -1,0 +1,11 @@
+{
+  "engine": "MyEngine",
+  "physmat": 1,
+  "name": "ice",
+  "density": 917.0,
+  "staticFriction": 0.1,
+  "dynamicFriction": 0.03,
+  "restitution": 0.05,
+  "rollingResistance": 0.002,
+  "dragCoefficient": 0.47
+}

@@ -36,6 +36,8 @@ std::wstring CreateSoundAsset(EngineContext& ctx, const std::wstring& dir,
                               const std::string& name);                            // .sound.json
 std::wstring CreateMixerAsset(EngineContext& ctx, const std::wstring& dir,
                               const std::string& name);                            // .mixer.json
+std::wstring CreatePhysMatAsset(EngineContext& ctx, const std::wstring& dir,
+                                const std::string& name);                          // .physmat.json (M59a1)
 // .actor.json (M48d)。ルート 1 個だけの最小構成アセット。**新規作成は常に .actor.json** —
 // 既存 .prefab.json は読み書きとも据え置き (強制移行しない)
 std::wstring CreateActorAsset(EngineContext& ctx, const std::wstring& dir,
