@@ -168,7 +168,7 @@ struct EnumFieldLabels {
         return (ja != nullptr && CurrentLanguage() != Lang::En) ? ja : labels;
     }
 };
-constexpr const char* kColliderShapeLabels[] = { "Sphere", "Box", "Capsule", "Mesh" };
+constexpr const char* kColliderShapeLabels[] = { "Sphere", "Box", "Capsule", "Mesh", "Terrain" };
 constexpr const char* kLightTypeLabels[] = { "Directional", "Point", "Spot" };
 constexpr const char* kEmitterShapeLabels[] = { "Point", "Sphere", "Cone", "Box" };
 constexpr const char* kBlendModeLabels[] = { "Additive", "Alpha", "Distortion" }; // M42d
@@ -188,7 +188,8 @@ constexpr const char* kPartBoundsShapeLabels[] = { "Box", "Sphere" };
 constexpr const char* kUIFillModeLabels[] = { "Off", "Horizontal", "Vertical" };
 constexpr const char* kUISpaceLabels[] = { "Screen", "Parent Rect" };
 // M47c: 日本語表示。ACES / Reinhard / Exp2 のような固有名詞・数式名は英語のまま
-constexpr const char* kColliderShapeJa[] = { "スフィア", "ボックス", "カプセル", "メッシュ" };
+constexpr const char* kColliderShapeJa[] = { "スフィア", "ボックス", "カプセル", "メッシュ",
+                                             "地形" };
 constexpr const char* kLightTypeJa[] = { "平行光", "ポイント", "スポット" };
 constexpr const char* kEmitterShapeJa[] = { "点", "スフィア", "コーン", "ボックス" };
 constexpr const char* kBlendModeJa[] = { "加算", "アルファ", "歪み" };

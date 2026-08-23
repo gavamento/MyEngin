@@ -95,6 +95,7 @@
     <ClCompile Include="..\src\Engine\Engine\Physics\PhysMatLibrary.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Physics\PhysMatSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Physics\Shapes.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Physics\TerrainColliderLibrary.cpp" />
     <ClCompile Include="..\src\Engine\Engine\PhysicsSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\PlayerInputSystem.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Prefab.cpp" />
@@ -259,6 +260,7 @@
     <ClInclude Include="..\src\Engine\Engine\Physics\PhysMatLibrary.h" />
     <ClInclude Include="..\src\Engine\Engine\Physics\PhysMatSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Physics\Shapes.h" />
+    <ClInclude Include="..\src\Engine\Engine\Physics\TerrainColliderLibrary.h" />
     <ClInclude Include="..\src\Engine\Engine\PhysicsSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\PlayerInputSystem.h" />
     <ClInclude Include="..\src\Engine\Engine\Prefab.h" />

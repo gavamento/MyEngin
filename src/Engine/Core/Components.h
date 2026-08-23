@@ -157,7 +157,11 @@ constexpr uint32_t kPhysMatOverrideRolling = 1u << 2;
 // box はエンティティ回転を考慮する OBB (M28a)。無回転なら M20 の AABB 判定とビット同一。
 // 球はスケールの最大成分で拡大、capsule はローカル Y 軸・radius は max(sx,sz) スケール。
 struct ColliderComponent {
-    int32_t shape = 0; // 0=sphere 1=box(OBB) 2=capsule(ローカル Y 軸) 3=mesh (静的専用、M41)
+    // 0=sphere 1=box(OBB) 2=capsule(ローカル Y 軸) 3=mesh (静的専用、M41)
+    // 4=terrain heightfield (静的専用、M59i)。3 と 4 は meshAsset を共有する
+    // (3 = メッシュ資産 / 4 = `.terrain.json`)。**自然な使い方は TerrainComponent と
+    //  同じエンティティに置いて同じ地形を指すこと**
+    int32_t shape = 0;
     float radius = 0.5f; // sphere / capsule
     DirectX::XMFLOAT3 halfExtents = { 0.5f, 0.5f, 0.5f }; // box
     // M51 後続で int32→bool 化 + 既定をソリッドへ (旧データの 0/1 数値は FieldFromJson が受理)。
@@ -170,7 +174,8 @@ struct ColliderComponent {
     // ---- M36a 追加: 衝突レイヤー (hash 対象のフィールド追加 → golden 再記録済) ----
     int32_t layer = 0;          // 所属レイヤー 0..31 (名前は project_settings.json、sim は index のみ)
     uint32_t mask = 0xFFFFFFFFu; // 衝突相手レイヤーのビット集合。判定は双方向 (CanCollide)
-    AssetID meshAsset = {};     // M41 予約: 静的メッシュコライダー (空 = 従来形状。M36 では未使用)
+    // shape=3 なら静的メッシュ資産、shape=4 なら `.terrain.json` (M59i)。空 = 従来形状
+    AssetID meshAsset = {};
     // ---- M59a2 追加: 物理マテリアル (末尾 append = シーン/リプレイ互換維持) ----
     // 摩擦/反発の解決順は「overrideBits のビット → 既存フィールド / 材料割当あり → .physmat 値 /
     // 未割当 → 既存フィールド」(PhysicsSystem.h の SelectFriction/SelectRestitution が正本)。

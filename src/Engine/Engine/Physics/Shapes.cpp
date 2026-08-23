@@ -5,6 +5,7 @@
 
 #include "Engine/Core/Components.h"
 #include "Engine/Engine/Physics/MeshColliderLibrary.h"
+#include "Engine/Engine/Physics/TerrainColliderLibrary.h" // M59i: shape=4 の実体解決
 
 namespace mye {
 namespace shapes {
@@ -926,6 +927,11 @@ void ApplyScaledExtents(ShapePose& p, const ColliderComponent& col, float sx, fl
     p.sz = sz;
     if (col.shape == 3) {
         p.meshData = meshcol::Resolve(col.meshAsset);
+    } else if (col.shape == 4) {
+        // M59i: 同じスロットに地形データを載せる (判別は shape 値)。
+        // meshAsset が `.terrain.json` を指す — 自然な使い方は「TerrainComponent と
+        // 同じエンティティに shape=4 の Collider を置き、同じ地形を指す」
+        p.meshData = terraincol::Resolve(col.meshAsset);
     }
 }
 
@@ -1002,6 +1008,167 @@ int GatherTrisForShape(const ShapePose& mesh, const ShapePose& other, float marg
     WorldAabbToMeshLocal(mesh, wminX - margin, wminY - margin, wminZ - margin, wmaxX + margin,
                          wmaxY + margin, wmaxZ + margin, lminX, lminY, lminZ, lmaxX, lmaxY, lmaxZ);
     return MeshGatherTris(*md, lminX, lminY, lminZ, lmaxX, lmaxY, lmaxZ, buf, cap);
+}
+
+// ================================================================ 地形 (M59i)
+// ハイトフィールドは「三角形の集まり」という一点でメッシュと同じ扱いができる。
+// 違うのは 2 つだけ:
+//   (a) BVH が要らない — セル格子なので候補は AABB からの矩形走査で直接刻める
+//   (b) 三角形番号が座標そのもの — tri = (iz * tilesX + ix) * 2 + half
+// 巻き順・頂点位置は TerrainSystem::BuildChunkMesh (LOD 0) と**同じ式**にしてある。
+// ずらすと「見えている地面」と「当たる地面」が食い違う。
+const TerrainCollisionData* TerrainOf(const ShapePose& s)
+{
+    return static_cast<const TerrainCollisionData*>(s.meshData);
+}
+
+bool TerrainUsable(const TerrainCollisionData* t)
+{
+    return t && t->data.heightW >= 2 && t->data.heightH >= 2 && t->data.worldSizeX > 0.0f
+        && t->data.worldSizeZ > 0.0f;
+}
+
+// texel (tx, tz) の**地形ローカル**頂点。
+// ★HeightAtTexel を直接呼ばない — あちらの引数は uint32_t なので負値が 0xFFFFFFFF に
+//   化け、内部の std::min クランプで「反対側の端」に落ちる。符号付きで受けて自分で
+//   クランプするのが唯一の正しい入口 (TerrainSystem.cpp の HeightClamped と同じ罠)
+void TerrainLocalVert(const TerrainAsset::TerrainData& d, int32_t tx, int32_t tz, float& x,
+                      float& y, float& z)
+{
+    const int32_t maxX = static_cast<int32_t>(d.heightW) - 1;
+    const int32_t maxZ = static_cast<int32_t>(d.heightH) - 1;
+    const int32_t cx = (tx < 0) ? 0 : ((tx > maxX) ? maxX : tx);
+    const int32_t cz = (tz < 0) ? 0 : ((tz > maxZ) ? maxZ : tz);
+    const float u = static_cast<float>(cx) / static_cast<float>(maxX);
+    const float v = static_cast<float>(cz) / static_cast<float>(maxZ);
+    x = (u - 0.5f) * d.worldSizeX; // 中心原点 (BuildChunkMesh と同じ規約)
+    y = d.HeightAtTexel(static_cast<uint32_t>(cx), static_cast<uint32_t>(cz));
+    z = (v - 0.5f) * d.worldSizeZ;
+}
+
+void TerrainWorldTri(const ShapePose& s, const TerrainCollisionData& t, int32_t tri, float& ax,
+                     float& ay, float& az, float& bx, float& by, float& bz, float& cx, float& cy,
+                     float& cz)
+{
+    const TerrainAsset::TerrainData& d = t.data;
+    const int32_t tilesX = static_cast<int32_t>(d.heightW) - 1;
+    const int32_t cell = tri >> 1;
+    const int32_t half = tri & 1;
+    const int32_t ix = cell % tilesX;
+    const int32_t iz = cell / tilesX;
+    // BuildChunkMesh と同じ巻き順 (i00,i01,i11) / (i00,i11,i10) — 法線が +Y になる
+    int32_t vx[3], vz[3];
+    if (half == 0) {
+        vx[0] = ix;     vz[0] = iz;
+        vx[1] = ix;     vz[1] = iz + 1;
+        vx[2] = ix + 1; vz[2] = iz + 1;
+    } else {
+        vx[0] = ix;     vz[0] = iz;
+        vx[1] = ix + 1; vz[1] = iz + 1;
+        vx[2] = ix + 1; vz[2] = iz;
+    }
+    float out[3][3];
+    for (int k = 0; k < 3; ++k) {
+        float lx, ly, lz;
+        TerrainLocalVert(d, vx[k], vz[k], lx, ly, lz);
+        float wx, wy, wz;
+        LocalToWorld(s, lx * s.sx, ly * s.sy, lz * s.sz, wx, wy, wz);
+        out[k][0] = s.px + wx;
+        out[k][1] = s.py + wy;
+        out[k][2] = s.pz + wz;
+    }
+    ax = out[0][0]; ay = out[0][1]; az = out[0][2];
+    bx = out[1][0]; by = out[1][1]; bz = out[1][2];
+    cx = out[2][0]; cy = out[2][1]; cz = out[2][2];
+}
+
+// ローカル x/z 範囲 → セル範囲 (地形の外は空になる)。戻り値 = 範囲があるか
+bool TerrainCellRange(const TerrainAsset::TerrainData& d, float lminX, float lminZ, float lmaxX,
+                      float lmaxZ, int32_t& ix0, int32_t& iz0, int32_t& ix1, int32_t& iz1)
+{
+    const int32_t tilesX = static_cast<int32_t>(d.heightW) - 1;
+    const int32_t tilesZ = static_cast<int32_t>(d.heightH) - 1;
+    const float stepX = d.worldSizeX / static_cast<float>(tilesX);
+    const float stepZ = d.worldSizeZ / static_cast<float>(tilesZ);
+    ix0 = static_cast<int32_t>(std::floor((lminX + d.worldSizeX * 0.5f) / stepX));
+    ix1 = static_cast<int32_t>(std::floor((lmaxX + d.worldSizeX * 0.5f) / stepX));
+    iz0 = static_cast<int32_t>(std::floor((lminZ + d.worldSizeZ * 0.5f) / stepZ));
+    iz1 = static_cast<int32_t>(std::floor((lmaxZ + d.worldSizeZ * 0.5f) / stepZ));
+    if (ix0 < 0) { ix0 = 0; }
+    if (iz0 < 0) { iz0 = 0; }
+    if (ix1 > tilesX - 1) { ix1 = tilesX - 1; }
+    if (iz1 > tilesZ - 1) { iz1 = tilesZ - 1; }
+    return ix0 <= ix1 && iz0 <= iz1;
+}
+
+// 他形状のワールド AABB (+margin) と重なるセルの三角形番号を**昇順**で収集
+int TerrainGatherTris(const ShapePose& terr, const ShapePose& other, float margin, int32_t* buf,
+                      int cap)
+{
+    const TerrainCollisionData* t = TerrainOf(terr);
+    if (!TerrainUsable(t)) {
+        return 0;
+    }
+    float wminX, wminY, wminZ, wmaxX, wmaxY, wmaxZ;
+    ComputeAabb(other, wminX, wminY, wminZ, wmaxX, wmaxY, wmaxZ);
+    float lminX, lminY, lminZ, lmaxX, lmaxY, lmaxZ;
+    WorldAabbToMeshLocal(terr, wminX - margin, wminY - margin, wminZ - margin, wmaxX + margin,
+                         wmaxY + margin, wmaxZ + margin, lminX, lminY, lminZ, lmaxX, lmaxY, lmaxZ);
+    int32_t ix0, iz0, ix1, iz1;
+    if (!TerrainCellRange(t->data, lminX, lminZ, lmaxX, lmaxZ, ix0, iz0, ix1, iz1)) {
+        return 0;
+    }
+    const int32_t tilesX = static_cast<int32_t>(t->data.heightW) - 1;
+    int n = 0;
+    // iz 外・ix 内の順 = セル番号昇順 = 三角形番号昇順 (走査順非依存の決定論)
+    for (int32_t iz = iz0; iz <= iz1; ++iz) {
+        for (int32_t ix = ix0; ix <= ix1; ++ix) {
+            const int32_t cell = iz * tilesX + ix;
+            if (n + 2 > cap) {
+                return n; // メッシュ側と同じ「上限で打ち切る」規約 (保守的に取りこぼす)
+            }
+            buf[n++] = cell * 2;
+            buf[n++] = cell * 2 + 1;
+        }
+    }
+    return n;
+}
+
+// ---- 三角形スープの共通入口 (shape=3 / shape=4) ----
+// 「候補の集め方」と「番号 → ワールド三角形」だけ差し替えれば、衝突・マニフォールド・
+// 最近点の本体は 1 つで済む
+bool IsSoup(const ShapePose& s)
+{
+    return s.shape == 3 || s.shape == 4;
+}
+
+bool SoupUsable(const ShapePose& s)
+{
+    if (s.shape == 3) {
+        return MeshOf(s) != nullptr;
+    }
+    if (s.shape == 4) {
+        return TerrainUsable(TerrainOf(s));
+    }
+    return false;
+}
+
+int SoupGatherTris(const ShapePose& s, const ShapePose& other, float margin, int32_t* buf, int cap)
+{
+    if (s.shape == 4) {
+        return TerrainGatherTris(s, other, margin, buf, cap);
+    }
+    return GatherTrisForShape(s, other, margin, buf, cap);
+}
+
+void SoupWorldTri(const ShapePose& s, int32_t tri, float& ax, float& ay, float& az, float& bx,
+                  float& by, float& bz, float& cx, float& cy, float& cz)
+{
+    if (s.shape == 4) {
+        TerrainWorldTri(s, *TerrainOf(s), tri, ax, ay, az, bx, by, bz, cx, cy, cz);
+        return;
+    }
+    MeshWorldTri(s, *MeshOf(s), tri, ax, ay, az, bx, by, bz, cx, cy, cz);
 }
 
 // Ericson 5.1.5: 点 P の三角形 ABC 上の最近点 (scalar、分岐は入力のみに依存)
@@ -1380,6 +1547,49 @@ bool RayTri(float ox, float oy, float oz, float dx, float dy, float dz, float ax
     return true;
 }
 
+// 地形表面上の最近点 (M59i)。**その点の真下のセルとその周り 1 枚**だけを見る。
+// ハイトフィールドは高さ方向に一価なので、点の XZ を含むセル近傍に必ず最近点がある
+// (メッシュのように「裏側の面のほうが近い」が起きない)。地形の外の点は縁に丸まる
+float TerrainClosestPoint(const ShapePose& s, float px, float py, float pz, float& qx, float& qy,
+                          float& qz)
+{
+    const TerrainCollisionData* t = TerrainOf(s);
+    if (!TerrainUsable(t)) {
+        return 3.4e38f;
+    }
+    const TerrainAsset::TerrainData& d = t->data;
+    float lx, ly, lz;
+    WorldToLocal(s, px - s.px, py - s.py, pz - s.pz, lx, ly, lz);
+    lx /= std::max(s.sx, 1e-6f);
+    lz /= std::max(s.sz, 1e-6f);
+    const int32_t tilesX = static_cast<int32_t>(d.heightW) - 1;
+    const float stepX = d.worldSizeX / static_cast<float>(tilesX);
+    const float stepZ = d.worldSizeZ / static_cast<float>(static_cast<int32_t>(d.heightH) - 1);
+    int32_t ix0, iz0, ix1, iz1;
+    if (!TerrainCellRange(d, lx - stepX, lz - stepZ, lx + stepX, lz + stepZ, ix0, iz0, ix1, iz1)) {
+        return 3.4e38f;
+    }
+    float best = 3.4e38f;
+    for (int32_t iz = iz0; iz <= iz1; ++iz) {
+        for (int32_t ix = ix0; ix <= ix1; ++ix) {
+            for (int32_t half = 0; half < 2; ++half) {
+                const int32_t tri = (iz * tilesX + ix) * 2 + half;
+                float ax, ay, az, bx, by, bz, cx, cy, cz;
+                TerrainWorldTri(s, *t, tri, ax, ay, az, bx, by, bz, cx, cy, cz);
+                float tqx, tqy, tqz;
+                ClosestPtPointTri(px, py, pz, ax, ay, az, bx, by, bz, cx, cy, cz, tqx, tqy, tqz);
+                const float ddx = px - tqx, ddy = py - tqy, ddz = pz - tqz;
+                const float dist = std::sqrt(ddx * ddx + ddy * ddy + ddz * ddz);
+                if (dist < best) { // strict < = 同距離は小さい三角形番号が勝つ
+                    best = dist;
+                    qx = tqx; qy = tqy; qz = tqz;
+                }
+            }
+        }
+    }
+    return best;
+}
+
 // メッシュ表面上の最近点 (固定順 DFS + ノード AABB 下限で枝刈り)。
 // 戻り値 = ワールド距離 (メッシュ無し = 3.4e38f)。最小距離は走査順に依らず一意、
 // 等距離タイは固定走査順の先勝ち = 決定論
@@ -1439,16 +1649,15 @@ bool CollideMeshOther(const ShapePose& mesh, const ShapePose& other, float& nx, 
                       float& nz, float& depth)
 {
     int32_t tris[kMeshMaxCandidates];
-    const int n = GatherTrisForShape(mesh, other, 0.01f, tris, kMeshMaxCandidates);
-    const MeshColliderData* md = MeshOf(mesh);
-    if (n == 0 || !md) {
+    const int n = SoupGatherTris(mesh, other, 0.01f, tris, kMeshMaxCandidates);
+    if (n == 0 || !SoupUsable(mesh)) {
         return false;
     }
     bool hit = false;
     float bestDepth = -1.0f;
     for (int i = 0; i < n; ++i) {
         float ax, ay, az, bx, by, bz, cx, cy, cz;
-        MeshWorldTri(mesh, *md, tris[i], ax, ay, az, bx, by, bz, cx, cy, cz);
+        SoupWorldTri(mesh, tris[i], ax, ay, az, bx, by, bz, cx, cy, cz);
         float tnx = 0, tny = 1, tnz = 0, td = 0, qx = 0, qy = 0, qz = 0;
         bool triHit = false;
         if (other.shape == 0) {
@@ -1474,9 +1683,8 @@ bool CollideMeshOther(const ShapePose& mesh, const ShapePose& other, float& nx, 
 bool MeshOtherManifold(const ShapePose& mesh, const ShapePose& other, Manifold& out)
 {
     int32_t tris[kMeshMaxCandidates];
-    const int n = GatherTrisForShape(mesh, other, 0.01f, tris, kMeshMaxCandidates);
-    const MeshColliderData* md = MeshOf(mesh);
-    if (n == 0 || !md) {
+    const int n = SoupGatherTris(mesh, other, 0.01f, tris, kMeshMaxCandidates);
+    if (n == 0 || !SoupUsable(mesh)) {
         return false;
     }
     bool hit = false;
@@ -1484,7 +1692,7 @@ bool MeshOtherManifold(const ShapePose& mesh, const ShapePose& other, Manifold& 
     int32_t bestTri = -1;
     for (int i = 0; i < n; ++i) {
         float ax, ay, az, bx, by, bz, cx, cy, cz;
-        MeshWorldTri(mesh, *md, tris[i], ax, ay, az, bx, by, bz, cx, cy, cz);
+        SoupWorldTri(mesh, tris[i], ax, ay, az, bx, by, bz, cx, cy, cz);
         float tnx = 0, tny = 1, tnz = 0, td = 0, qx = 0, qy = 0, qz = 0;
         bool triHit = false;
         if (other.shape == 0) {
@@ -1506,7 +1714,7 @@ bool MeshOtherManifold(const ShapePose& mesh, const ShapePose& other, Manifold& 
         return false;
     }
     float ax, ay, az, bx, by, bz, cx, cy, cz;
-    MeshWorldTri(mesh, *md, bestTri, ax, ay, az, bx, by, bz, cx, cy, cz);
+    SoupWorldTri(mesh, bestTri, ax, ay, az, bx, by, bz, cx, cy, cz);
     if (other.shape == 1) {
         return BoxTriManifold(other, ax, ay, az, bx, by, bz, cx, cy, cz, out);
     }
@@ -1603,19 +1811,19 @@ ShapePose MakePoseFromMatrix(const ColliderComponent& col, const DirectX::XMFLOA
 bool Collide(const ShapePose& a, const ShapePose& b, float& nx, float& ny, float& nz, float& depth)
 {
     const int32_t sa = a.shape, sb = b.shape;
-    // ---- 静的メッシュ (M41): mesh vs sphere/box/capsule。mesh 同士は解かない ----
-    if (sa == 3 || sb == 3) {
-        if (sa == 3 && sb == 3) {
+    // ---- 三角形スープ (M41 メッシュ / M59i 地形) vs sphere/box/capsule。スープ同士は解かない ----
+    if (IsSoup(a) || IsSoup(b)) {
+        if (IsSoup(a) && IsSoup(b)) {
             return false;
         }
-        const ShapePose& m = (sa == 3) ? a : b;
-        const ShapePose& o = (sa == 3) ? b : a;
+        const ShapePose& m = IsSoup(a) ? a : b;
+        const ShapePose& o = IsSoup(a) ? b : a;
         float mnx, mny, mnz, md;
         if (!CollideMeshOther(m, o, mnx, mny, mnz, md)) {
             return false;
         }
-        // 規約: normal は b→a。CollideMeshOther は mesh→other を返す
-        if (sa == 3) {
+        // 規約: normal は b→a。CollideMeshOther は スープ→other を返す
+        if (IsSoup(a)) {
             nx = -mnx; ny = -mny; nz = -mnz;
         } else {
             nx = mnx; ny = mny; nz = mnz;
@@ -1686,16 +1894,16 @@ bool CollideManifold(const ShapePose& a, const ShapePose& b, Manifold& out)
     Contact c0;
 
     // ---- 静的メッシュ (M41)。normal 規約は Collide と同じ (b→a) ----
-    if (sa == 3 || sb == 3) {
-        if (sa == 3 && sb == 3) {
+    if (IsSoup(a) || IsSoup(b)) {
+        if (IsSoup(a) && IsSoup(b)) {
             return false;
         }
-        const ShapePose& m = (sa == 3) ? a : b;
-        const ShapePose& o = (sa == 3) ? b : a;
+        const ShapePose& m = IsSoup(a) ? a : b;
+        const ShapePose& o = IsSoup(a) ? b : a;
         if (!MeshOtherManifold(m, o, out)) {
             return false;
         }
-        if (sa == 3) { // MeshOtherManifold は mesh→other を返す
+        if (IsSoup(a)) { // MeshOtherManifold は スープ→other を返す
             out.nx = -out.nx;
             out.ny = -out.ny;
             out.nz = -out.nz;
@@ -1793,6 +2001,10 @@ float DistanceToShape(const ShapePose& s, float px, float py, float pz)
         float qx, qy, qz;
         return MeshClosestPoint(s, px, py, pz, qx, qy, qz);
     }
+    if (s.shape == 4) { // M59i: 地形も同じ意味 (表面までの距離)
+        float qx, qy, qz;
+        return TerrainClosestPoint(s, px, py, pz, qx, qy, qz);
+    }
     if (s.shape == 0) {
         const float dx = px - s.px, dy = py - s.py, dz = pz - s.pz;
         const float d = std::sqrt(dx * dx + dy * dy + dz * dz) - s.radius;
@@ -1822,10 +2034,12 @@ void ClosestPointOnShape(const ShapePose& s, float px, float py, float pz, float
                          float& qz)
 {
     // 静的メッシュ (M41): 三角形群上の最近点。メッシュ無しはその点自身
-    if (s.shape == 3) {
+    if (s.shape == 3 || s.shape == 4) {
         qx = px; qy = py; qz = pz;
         float mqx, mqy, mqz;
-        if (MeshClosestPoint(s, px, py, pz, mqx, mqy, mqz) < 3.4e38f) {
+        const float d = (s.shape == 3) ? MeshClosestPoint(s, px, py, pz, mqx, mqy, mqz)
+                                       : TerrainClosestPoint(s, px, py, pz, mqx, mqy, mqz);
+        if (d < 3.4e38f) {
             qx = mqx; qy = mqy; qz = mqz;
         }
         return;
@@ -1867,6 +2081,31 @@ void ClosestPointOnShape(const ShapePose& s, float px, float py, float pz, float
 void ComputeAabb(const ShapePose& s, float& minX, float& minY, float& minZ, float& maxX,
                  float& maxY, float& maxZ)
 {
+    // 地形 (M59i): ローカル AABB は「幅 x 高さ範囲 x 奥行」。高さ範囲はロード時に 1 回
+    // 測ってある (毎フレーム O(W*H) で走査し直さないための TerrainCollisionData)
+    if (s.shape == 4) {
+        const TerrainCollisionData* t = static_cast<const TerrainCollisionData*>(s.meshData);
+        if (!TerrainUsable(t)) {
+            minX = maxX = s.px;
+            minY = maxY = s.py;
+            minZ = maxZ = s.pz;
+            return;
+        }
+        const float lcy = (t->minHeight + t->maxHeight) * 0.5f * s.sy;
+        const float lex = t->data.worldSizeX * 0.5f * s.sx;
+        const float ley = (t->maxHeight - t->minHeight) * 0.5f * s.sy;
+        const float lez = t->data.worldSizeZ * 0.5f * s.sz;
+        const float wcx = s.px + s.by[0] * lcy;
+        const float wcy = s.py + s.by[1] * lcy;
+        const float wcz = s.pz + s.by[2] * lcy;
+        const float wex = std::fabs(s.bx[0]) * lex + std::fabs(s.by[0]) * ley + std::fabs(s.bz[0]) * lez;
+        const float wey = std::fabs(s.bx[1]) * lex + std::fabs(s.by[1]) * ley + std::fabs(s.bz[1]) * lez;
+        const float wez = std::fabs(s.bx[2]) * lex + std::fabs(s.by[2]) * ley + std::fabs(s.bz[2]) * lez;
+        minX = wcx - wex; maxX = wcx + wex;
+        minY = wcy - wey; maxY = wcy + wey;
+        minZ = wcz - wez; maxZ = wcz + wez;
+        return;
+    }
     // 静的メッシュ (M41): BVH ルートのローカル AABB をワールドへ (スケール → |基底| 変換)
     if (s.shape == 3) {
         const MeshColliderData* md = static_cast<const MeshColliderData*>(s.meshData);
@@ -1919,6 +2158,122 @@ void ComputeAabb(const ShapePose& s, float& minX, float& minY, float& minZ, floa
     maxZ = s.pz + ez;
 }
 
+// 地形へのレイキャスト (M59i)。**XZ 平面のセルを DDA で辿る** — AABB 一括収集にすると
+// 斜めに長いレイが矩形全体を候補にしてしまい、上限で静かに取りこぼす
+// (メッシュは BVH があるので同じ形でも困らない)。
+// ★方向ベクトルは正規化し直さない: ローカル変換は原点も方向も同じスケールで割るので
+//   パラメータ t (= ワールド距離) がそのまま通る
+bool RayTerrain(const ShapePose& s, float ox, float oy, float oz, float dx, float dy, float dz,
+                float maxDist, float& outT, float& nx, float& ny, float& nz)
+{
+    const TerrainCollisionData* t = TerrainOf(s);
+    if (!TerrainUsable(t)) {
+        return false;
+    }
+    const TerrainAsset::TerrainData& d = t->data;
+    const float isx = 1.0f / std::max(s.sx, 1e-6f);
+    const float isz = 1.0f / std::max(s.sz, 1e-6f);
+    float lox, loy, loz, ldx, ldy, ldz;
+    WorldToLocal(s, ox - s.px, oy - s.py, oz - s.pz, lox, loy, loz);
+    WorldToLocal(s, dx, dy, dz, ldx, ldy, ldz);
+    lox *= isx; loz *= isz;
+    ldx *= isx; ldz *= isz;
+    (void)loy;
+    (void)ldy;
+    const int32_t tilesX = static_cast<int32_t>(d.heightW) - 1;
+    const int32_t tilesZ = static_cast<int32_t>(d.heightH) - 1;
+    const float stepX = d.worldSizeX / static_cast<float>(tilesX);
+    const float stepZ = d.worldSizeZ / static_cast<float>(tilesZ);
+    // セル座標 (連続値)。cx in [0, tilesX] が地形の範囲
+    float cx = (lox + d.worldSizeX * 0.5f) / stepX;
+    float cz = (loz + d.worldSizeZ * 0.5f) / stepZ;
+    const float vx = ldx / stepX; // セル / 単位 t
+    const float vz = ldz / stepZ;
+    // 格子の外から入ってくるレイは入口まで t を進める (スラブ法、XZ の 2 軸だけ)
+    float tEnter = 0.0f, tExit = maxDist;
+    for (int axis = 0; axis < 2; ++axis) {
+        const float o0 = (axis == 0) ? cx : cz;
+        const float v0 = (axis == 0) ? vx : vz;
+        const float hi = static_cast<float>((axis == 0) ? tilesX : tilesZ);
+        if (std::fabs(v0) < 1e-12f) {
+            if (o0 < 0.0f || o0 > hi) {
+                return false; // 平行かつ外 = 交わらない
+            }
+            continue;
+        }
+        float t0 = (0.0f - o0) / v0;
+        float t1 = (hi - o0) / v0;
+        if (t0 > t1) {
+            const float tmp = t0;
+            t0 = t1;
+            t1 = tmp;
+        }
+        if (t0 > tEnter) { tEnter = t0; }
+        if (t1 < tExit) { tExit = t1; }
+    }
+    if (tEnter > tExit || tExit < 0.0f) {
+        return false;
+    }
+    if (tEnter < 0.0f) { tEnter = 0.0f; }
+    cx += vx * tEnter;
+    cz += vz * tEnter;
+    int32_t ix = static_cast<int32_t>(std::floor(cx));
+    int32_t iz = static_cast<int32_t>(std::floor(cz));
+    if (ix < 0) { ix = 0; } else if (ix > tilesX - 1) { ix = tilesX - 1; }
+    if (iz < 0) { iz = 0; } else if (iz > tilesZ - 1) { iz = tilesZ - 1; }
+    const int32_t stepIX = (vx > 0.0f) ? 1 : ((vx < 0.0f) ? -1 : 0);
+    const int32_t stepIZ = (vz > 0.0f) ? 1 : ((vz < 0.0f) ? -1 : 0);
+    const float kBig = 3.4e38f;
+    float tMaxX = kBig, tMaxZ = kBig, tDeltaX = kBig, tDeltaZ = kBig;
+    if (stepIX != 0) {
+        const float next = (stepIX > 0) ? static_cast<float>(ix + 1) : static_cast<float>(ix);
+        tMaxX = tEnter + (next - cx) / vx;
+        tDeltaX = std::fabs(1.0f / vx);
+    }
+    if (stepIZ != 0) {
+        const float next = (stepIZ > 0) ? static_cast<float>(iz + 1) : static_cast<float>(iz);
+        tMaxZ = tEnter + (next - cz) / vz;
+        tDeltaZ = std::fabs(1.0f / vz);
+    }
+    // 訪問セル数の上限 (暴走防止。地形 1 辺の 4 倍あれば対角も足りる)
+    const int32_t maxVisit = (tilesX + tilesZ) * 2 + 8;
+    bool hit = false;
+    for (int32_t visit = 0; visit < maxVisit; ++visit) {
+        for (int32_t half = 0; half < 2; ++half) {
+            const int32_t tri = (iz * tilesX + ix) * 2 + half;
+            float ax, ay, az, bx2, by2, bz2, cx2, cy2, cz2;
+            TerrainWorldTri(s, *t, tri, ax, ay, az, bx2, by2, bz2, cx2, cy2, cz2);
+            float th, tnx, tny, tnz;
+            if (RayTri(ox, oy, oz, dx, dy, dz, ax, ay, az, bx2, by2, bz2, cx2, cy2, cz2, maxDist,
+                       th, tnx, tny, tnz)) {
+                if (!hit || th < outT) { // strict < = 同距離は小さい三角形番号が勝つ
+                    outT = th;
+                    nx = tnx; ny = tny; nz = tnz;
+                    hit = true;
+                }
+            }
+        }
+        // ★見つかっても即 return しない — 三角形はセルの外まで伸びないが、隣接セルの
+        //   三角形がより手前で当たることがある (斜面を横切るレイ)。次のセルの入口 t が
+        //   すでに現ベストを超えていたら、そこで初めて打ち切ってよい
+        const float tNext = (tMaxX < tMaxZ) ? tMaxX : tMaxZ;
+        if (tNext > tExit || tNext > maxDist || (hit && tNext > outT)) {
+            break;
+        }
+        if (tMaxX < tMaxZ) {
+            ix += stepIX;
+            tMaxX += tDeltaX;
+        } else {
+            iz += stepIZ;
+            tMaxZ += tDeltaZ;
+        }
+        if (ix < 0 || ix > tilesX - 1 || iz < 0 || iz > tilesZ - 1) {
+            break;
+        }
+    }
+    return hit;
+}
+
 bool Raycast(const ShapePose& s, float ox, float oy, float oz, float dx, float dy, float dz,
              float maxDist, float& outT, float& nx, float& ny, float& nz)
 {
@@ -1931,6 +2286,9 @@ bool Raycast(const ShapePose& s, float ox, float oy, float oz, float dx, float d
     }
     if (s.shape == 2) {
         return RayCapsule(s, ox, oy, oz, dx, dy, dz, maxDist, outT, nx, ny, nz);
+    }
+    if (s.shape == 4) { // M59i: 地形は XZ セルの DDA
+        return RayTerrain(s, ox, oy, oz, dx, dy, dz, maxDist, outT, nx, ny, nz);
     }
     // 静的メッシュ (M41): 線分 AABB で BVH 候補収集 → 三角形番号昇順に MT 判定、最近 t を採用
     if (s.shape == 3) {

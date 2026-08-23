@@ -11,6 +11,7 @@
 #include "Engine/Engine/GameObject.h"
 #include "Engine/Engine/Physics/MeshColliderLibrary.h"
 #include "Engine/Engine/Physics/PhysMatLibrary.h" // M59a2: 材料解決の検証
+#include "Engine/Engine/Physics/TerrainColliderLibrary.h" // M59i: 地形コライダー
 #include "Engine/Engine/DebugDraw.h"
 #include "Engine/Engine/Physics/AeroSampling.h"
 #include "Engine/Engine/Physics/PhysicsDebugDraw.h"
@@ -3661,6 +3662,230 @@ bool RunPhysicsSelfTest()
             check(std::fabs(boxes[0].GetComponent<LocalTransform>()->position.x) > 0.01f,
                   "sleep: and the woken body actually moves again");
         }
+    }
+
+    // ================= M59i: 地形ハイトフィールドコライダー =================
+    // Collider.shape=4。**実体は sim 専用のライブラリ**から引く (描画側の TerrainSystem の
+    // キャッシュを読むと「絵を出したかどうか」で sim が変わる)。
+    // 三角形の集まりという一点で M41 の静的メッシュと同じ扱いにしてあり、
+    // 衝突・マニフォールド・最近点の本体は共有、候補の集め方だけ差し替えている。
+    {
+        TerrainColliderLibrary* prevTerrLib = terraincol::Library();
+        TerrainColliderLibrary terrLib;
+        terraincol::Install(&terrLib);
+
+        // 解析ハイトフィールドを組む。h(u,v) は正規化 [0,1] を返す純関数
+        auto makeTerrain = [&](uint32_t n, float sizeX, float sizeZ, float base, float scale,
+                               float (*h)(float, float)) {
+            TerrainAsset::TerrainData d;
+            d.heightW = n;
+            d.heightH = n;
+            d.splatW = 1;
+            d.splatH = 1;
+            d.worldSizeX = sizeX;
+            d.worldSizeZ = sizeZ;
+            d.heightBase = base;
+            d.heightScale = scale;
+            d.heights.resize(static_cast<size_t>(n) * n);
+            for (uint32_t z = 0; z < n; ++z) {
+                for (uint32_t x = 0; x < n; ++x) {
+                    const float u = static_cast<float>(x) / static_cast<float>(n - 1);
+                    const float v = static_cast<float>(z) / static_cast<float>(n - 1);
+                    float t = h(u, v);
+                    if (t < 0.0f) { t = 0.0f; }
+                    if (t > 1.0f) { t = 1.0f; }
+                    d.heights[static_cast<size_t>(z) * n + x] =
+                        static_cast<uint16_t>(t * 65535.0f + 0.5f);
+                }
+            }
+            d.splat.assign(4, 0);
+            d.splat[0] = 255;
+            return d;
+        };
+        // 地形エンティティ (静的コライダー only) をシーンへ足す
+        auto addTerrain = [&](Scene& s, const char* name, AssetID id, TerrainAsset::TerrainData d) {
+            terrLib.Register(id, std::move(d));
+            GameObject go = s.CreateGameObjectTracked(name);
+            go.SetLocalPosition(0, 0, 0);
+            auto* col = go.AddComponent<ColliderComponent>();
+            col->shape = 4;
+            col->meshAsset = id;
+            return go;
+        };
+
+        // -- 平坦な地形: 球が高さ h の面に静定する --
+        {
+            Scene s;
+            const AssetID tid{ 0x7e11a10001ull };
+            addTerrain(s, "Flat", tid,
+                       makeTerrain(9, 20.0f, 20.0f, 0.0f, 10.0f,
+                                   [](float, float) { return 0.25f; })); // 高さ 2.5m 一定
+            GameObject ball = MakeSphereBody(s, "Ball", 0.7f, 8.0f, -1.3f, 0.5f);
+            s.GetWorld().ApplyStructuralChanges();
+            const auto* lt = ball.GetComponent<LocalTransform>();
+            for (int i = 0; i < 300; ++i) {
+                phys.Update(s.GetWorld(), kDt);
+            }
+            MYE_LOG_INFO("  [phys] terrain flat: ball settled at y = %.4f (expect 3.0)",
+                         lt->position.y);
+            check(std::fabs(lt->position.y - 3.0f) < 0.02f,
+                  "terrain: a sphere settles on the flat heightfield surface");
+            check(std::fabs(lt->position.x - 0.7f) < 0.05f
+                      && std::fabs(lt->position.z + 1.3f) < 0.05f,
+                  "terrain: and does not drift sideways on a flat field");
+        }
+
+        // -- 斜面: 球が下り方向へ転がる --
+        // h = u (= +X 方向に上る) → 下りは -X
+        {
+            Scene s;
+            const AssetID tid{ 0x7e11a10002ull };
+            addTerrain(s, "Slope", tid,
+                       makeTerrain(17, 40.0f, 20.0f, 0.0f, 20.0f,
+                                   [](float u, float) { return u; }));
+            GameObject ball = MakeSphereBody(s, "Ball", 0.0f, 14.0f, 0.0f, 0.5f);
+            s.GetWorld().ApplyStructuralChanges();
+            const auto* lt = ball.GetComponent<LocalTransform>();
+            for (int i = 0; i < 300; ++i) {
+                phys.Update(s.GetWorld(), kDt);
+            }
+            MYE_LOG_INFO("  [phys] terrain slope: ball at (%.2f, %.2f)", lt->position.x,
+                         lt->position.y);
+            check(lt->position.x < -1.0f, "terrain: a sphere rolls downhill on a sloped field");
+            check(lt->position.y > -1.0f, "terrain: and never falls through the surface");
+        }
+
+        // -- 谷: 箱が底に落ち着く (対称な地形の中央へ寄る) --
+        {
+            Scene s;
+            const AssetID tid{ 0x7e11a10003ull };
+            addTerrain(s, "Valley", tid,
+                       makeTerrain(33, 40.0f, 40.0f, 0.0f, 20.0f, [](float u, float) {
+                           const float t = (u - 0.5f) * 2.0f;
+                           return t * t; // -X/+X 端が高い V 字
+                       }));
+            GameObject box = MakeBox(s, "Box", 8.0f, 14.0f, 0.0f, 0.5f, 0.5f, 0.5f);
+            s.GetWorld().ApplyStructuralChanges();
+            const auto* lt = box.GetComponent<LocalTransform>();
+            float minY = 1e9f;
+            for (int i = 0; i < 900; ++i) {
+                phys.Update(s.GetWorld(), kDt);
+                if (lt->position.y < minY) {
+                    minY = lt->position.y;
+                }
+            }
+            MYE_LOG_INFO("  [phys] terrain valley: box at x = %.2f y = %.2f (min y %.2f)",
+                         lt->position.x, lt->position.y, minY);
+            check(std::fabs(lt->position.x) < 7.0f, "terrain: a box slides toward the valley floor");
+            check(minY > -1.0f, "terrain: and never tunnels below the field");
+        }
+
+        // -- Raycast: 真下 / 斜め / 外れ --
+        {
+            Scene s;
+            const AssetID tid{ 0x7e11a10004ull };
+            addTerrain(s, "RayField", tid,
+                       makeTerrain(17, 40.0f, 40.0f, 0.0f, 20.0f,
+                                   [](float u, float) { return u; })); // +X へ 0..20m
+            s.GetWorld().ApplyStructuralChanges();
+            const auto* col = s.Find("RayField").GetComponent<ColliderComponent>();
+            const ShapePose tp = shapes::MakePose(*col, { 0, 0, 0 }, { 0, 0, 0, 1 }, { 1, 1, 1 });
+            // 中央 (u=0.5) の高さは 10m
+            float t = 0, nx = 0, ny = 0, nz = 0;
+            const bool down =
+                shapes::Raycast(tp, 0.0f, 30.0f, 0.0f, 0.0f, -1.0f, 0.0f, 100.0f, t, nx, ny, nz);
+            MYE_LOG_INFO("  [phys] terrain ray: straight down t = %.4f (expect 20), n.y = %.3f", t,
+                         ny);
+            check(down && std::fabs(t - 20.0f) < 0.05f,
+                  "terrain raycast: a vertical ray hits the surface at the right height");
+            check(ny > 0.5f, "terrain raycast: the normal points up");
+            // 斜めに長いレイ (DDA が効いていないと候補上限で静かに落ちる)
+            float t2 = 0, n2x = 0, n2y = 0, n2z = 0;
+            const bool diag = shapes::Raycast(tp, -19.0f, 25.0f, -19.0f, 0.6963f, -0.1741f,
+                                              0.6963f, 60.0f, t2, n2x, n2y, n2z);
+            MYE_LOG_INFO("  [phys] terrain ray: long diagonal hit = %d t = %.3f", diag ? 1 : 0, t2);
+            check(diag, "terrain raycast: a long diagonal ray still finds the surface (DDA)");
+            // 地形の外を通るレイは当たらない
+            float t3 = 0, n3x = 0, n3y = 0, n3z = 0;
+            check(!shapes::Raycast(tp, 100.0f, 30.0f, 0.0f, 0.0f, -1.0f, 0.0f, 100.0f, t3, n3x,
+                                   n3y, n3z),
+                  "terrain raycast: a ray outside the field misses");
+        }
+
+        // -- 縁のクランプ: 負のセル座標で反対側の端へ飛ばない (uint32 wrap の罠) --
+        // TerrainSystem.cpp の HeightClamped と同じ理由。高さを左右で大きく変えた地形で、
+        // 左端の外側を撃ったときに右端の高さを拾わないことを見る
+        {
+            Scene s;
+            const AssetID tid{ 0x7e11a10005ull };
+            addTerrain(s, "Edge", tid,
+                       makeTerrain(9, 16.0f, 16.0f, 0.0f, 100.0f,
+                                   [](float u, float) { return (u < 0.5f) ? 0.0f : 1.0f; }));
+            s.GetWorld().ApplyStructuralChanges();
+            const auto* col = s.Find("Edge").GetComponent<ColliderComponent>();
+            const ShapePose tp = shapes::MakePose(*col, { 0, 0, 0 }, { 0, 0, 0, 1 }, { 1, 1, 1 });
+            // 左半分 (x < 0) は高さ 0、右半分は 100。左端ぎりぎりを撃つ
+            float t = 0, nx = 0, ny = 0, nz = 0;
+            const bool hit =
+                shapes::Raycast(tp, -7.9f, 50.0f, 0.0f, 0.0f, -1.0f, 0.0f, 200.0f, t, nx, ny, nz);
+            MYE_LOG_INFO("  [phys] terrain edge: left-edge ray t = %.3f (expect 50)", t);
+            check(hit && std::fabs(t - 50.0f) < 0.5f,
+                  "terrain: the left edge keeps its own height (no uint32 wrap to the far side)");
+        }
+
+        // -- キャラクターコントローラが地形を歩ける --
+        {
+            Scene s;
+            const AssetID tid{ 0x7e11a10006ull };
+            addTerrain(s, "CCField", tid,
+                       makeTerrain(17, 40.0f, 40.0f, 0.0f, 10.0f,
+                                   [](float, float) { return 0.3f; })); // 高さ 3m 一定
+            GameObject go = s.CreateGameObjectTracked("Walker");
+            go.SetLocalPosition(0, 8.0f, 0);
+            auto* cc = go.AddComponent<CharacterControllerComponent>();
+            cc->radius = 0.3f;
+            cc->height = 1.8f;
+            s.GetWorld().ApplyStructuralChanges();
+            auto* ccp = go.GetComponent<CharacterControllerComponent>();
+            const auto* lt = go.GetComponent<LocalTransform>();
+            for (int i = 0; i < 300; ++i) {
+                ccp->moveInput = { 1.0f, 0.0f, 0.0f };
+                phys.Update(s.GetWorld(), kDt);
+            }
+            MYE_LOG_INFO("  [phys] terrain CC: walker at (%.2f, %.2f) grounded=%d",
+                         lt->position.x, lt->position.y, ccp->isGrounded ? 1 : 0);
+            check(ccp->isGrounded, "terrain: a character controller lands on the heightfield");
+            check(std::fabs(lt->position.y - (3.0f + 0.9f)) < 0.1f,
+                  "terrain: and stands at the surface height");
+            check(lt->position.x > 1.0f, "terrain: and can walk across it");
+        }
+
+        // -- 地形を持たないシーンは 1 ビットも変わらない (shape=4 は opt-in) --
+        {
+            const AssetID missing{ 0x7e11a10007ull };
+            Scene s;
+            GameObject go = s.CreateGameObjectTracked("Broken");
+            auto* col = go.AddComponent<ColliderComponent>();
+            col->shape = 4;
+            col->meshAsset = missing; // 未登録 = 実体 null
+            GameObject box = MakeBox(s, "Faller", 0, 5.0f, 0, 0.5f, 0.5f, 0.5f);
+            s.GetWorld().ApplyStructuralChanges();
+            const auto* lt = box.GetComponent<LocalTransform>();
+            for (int i = 0; i < 60; ++i) {
+                phys.Update(s.GetWorld(), kDt);
+            }
+            // 未解決の地形は「衝突なし」に落ちる = 自由落下そのまま。
+            // ★期待値は**半陰的 Euler の離散和** g*dt^2*n(n+1)/2 — 連続解 0.5*g*t^2 では
+            //   ずれる (実測 0.0133 vs 連続 0.0950)。積分器の形を試験に持ち込むこと
+            const float n60 = 60.0f;
+            const float freeFall = 5.0f - 9.81f * kDt * kDt * n60 * (n60 + 1.0f) * 0.5f;
+            MYE_LOG_INFO("  [phys] terrain unresolved: y = %.4f (free fall %.4f)", lt->position.y,
+                         freeFall);
+            check(std::fabs(lt->position.y - freeFall) < 0.05f,
+                  "terrain: an unresolved terrain asset falls back to no collision");
+        }
+
+        terraincol::Install(prevTerrLib);
     }
 
     if (failCount == 0) {

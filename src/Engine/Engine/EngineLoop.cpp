@@ -24,6 +24,7 @@
 #include "Engine/Engine/Particles/ParticleSystem.h"
 #include "Engine/Engine/Physics/MeshColliderLibrary.h"
 #include "Engine/Engine/Physics/PhysMatLibrary.h"
+#include "Engine/Engine/Physics/TerrainColliderLibrary.h"
 #include "Engine/Engine/Physics/PhysicsSystem.h"
 #include "Engine/Engine/Prefab.h"
 #include "Engine/Engine/ProbeBaker.h"
@@ -109,6 +110,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     PhysicsSystem physicsSystem; // 剛体積分 + 衝突解決 (M20、ステートレス)
     MeshColliderLibrary meshColliders; // 静的メッシュコライダーの BVH キャッシュ (M41)
     PhysMatLibrary physMatLibrary;     // .physmat.json (M59a1)。sim の消費は M59a2 から
+    TerrainColliderLibrary terrainColliders; // 地形コライダー (M59i)。**描画側とは別キャッシュ**
     std::vector<SolidContact> solidContacts; // 物理→衝突イベントの tick 内受け渡し (M28c)
     PrefabLibrary prefabLibrary;
     AnimationLibrary animLibrary;
@@ -211,6 +213,9 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // M59a1: 物理マテリアル (.physmat.json)。起動走査 (RegisterAssetLibraries) と ReloadHub が
     // physmat::Library() 経由で読み込むので、走査より前に注入しておくこと
     physmat::Install(&physMatLibrary);
+    // M59i: 地形コライダー (Collider.shape=4)。描画の TerrainSystem とは別に sim 用の
+    // 地形データを持つ — 描画のキャッシュを読むと「絵を出したかどうか」で sim が変わる
+    terraincol::Install(&terrainColliders);
     if (!forwardPath.Init(device, shaderManager)) {
         return 1;
     }
@@ -1697,6 +1702,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     app.OnShutdown(ctx);
     meshcol::Install(nullptr); // M41 (meshColliders 破棄前に必ず外す)
     physmat::Install(nullptr); // M59a1 (physMatLibrary 破棄前に必ず外す)
+    terraincol::Install(nullptr); // M59i (terrainColliders 破棄前に必ず外す)
     AssetDatabase::UninstallKeyResolver(); // M30c (assetDatabase 破棄前に必ず外す)
     vfxRenderer.Shutdown(); // M29c
     uiRenderer.Shutdown();  // M21

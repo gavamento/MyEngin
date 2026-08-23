@@ -18,7 +18,8 @@ struct ColliderComponent;
 // ワールド方向)。スケールは radius / half extents / halfSeg に折り込み済み。
 // 非一様スケール × 回転のシアーは無視する近似 (基底正規化 — M20 までの流儀を踏襲)。
 struct ShapePose {
-    int32_t shape = 0;        // 0=sphere 1=box(OBB) 2=capsule(ローカル Y 軸) 3=triangle mesh (M41)
+    int32_t shape = 0;        // 0=sphere 1=box(OBB) 2=capsule(ローカル Y 軸)
+                              // 3=triangle mesh (M41) 4=terrain heightfield (M59i)
     int32_t identityRot = 1;  // 基底が単位 (無回転) — M20 互換 fast-path 用
     float px = 0, py = 0, pz = 0;
     float bx[3] = { 1, 0, 0 };
@@ -30,8 +31,13 @@ struct ShapePose {
     // ---- 静的メッシュ (M41、shape=3。静的/kinematic 専用) ----
     // 実体は呼び出し側が meshcol::Resolve(col.meshAsset) で注入する (POD 維持のポインタ参照)。
     // null のままの shape=3 は全判定が「衝突なし」に落ちる (安全なフォールバック)
-    const void* meshData = nullptr; // MeshColliderData*
-    float sx = 1, sy = 1, sz = 1;   // メッシュのローカル→ワールドスケール (基底とは別持ち)
+    // ---- 地形ハイトフィールド (M59i、shape=4。静的/kinematic 専用) ----
+    // shape=3 と同じスロットを使う**タグ付き共用体** — 判別は shape 値。
+    // 実体は terraincol::Resolve(col.meshAsset) で注入する (TerrainCollisionData*)。
+    // 三角形の集まりという一点でメッシュと同じ扱いができるので、衝突・マニフォールド・
+    // 最近点の本体は共有し、「候補の集め方」と「番号→三角形」だけを差し替えてある
+    const void* meshData = nullptr; // shape=3: MeshColliderData* / shape=4: TerrainCollisionData*
+    float sx = 1, sy = 1, sz = 1;   // メッシュ/地形のローカル→ワールドスケール (基底とは別持ち)
 };
 
 namespace shapes {

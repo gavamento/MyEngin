@@ -854,6 +854,24 @@ the end of the component registration order, so existing scenes are untouched.
 | **No righting moment in v1** | The height-ratio approximation cannot see the horizontal shift of the centre of buoyancy, so a tilted raft keeps its tilt forever (only the angular water drag acts on it). The force is nonetheless applied *at the buoyancy centre* via `ApplyImpulse`, so the torque is provably zero today and starts working by itself once M59f1 adds a centre-of-mass offset. A true righting moment needs per-face pressure integration — that is M59c |
 | Buoyancy direction | Always **+Y**, magnitude scaled by `|gravity|`. The water surface is an axis-aligned Y plane in M59, so tilting the gravity vector while keeping a horizontal surface has no coherent reading |
 
+#### Terrain heightfield collider (M59i)
+
+`Collider.shape = 4` makes the terrain a solid surface. Rigid bodies rest, roll and slide on it, the
+character controller walks on it, and raycasts hit it.
+
+| Concept | Decision |
+|---|---|
+| A separate cache from the renderer | The physics lane loads its own `TerrainData` through `terraincol::`. Reading the render-side `TerrainSystem` cache would make the simulation depend on whether anything was drawn — headless self-tests, `--warp`, replays and a minimised window all have to agree. This is different from the mesh collider, which borrows CPU vertices because those are the asset's own content, not a rendering system's working set |
+| A triangle soup, not a new shape | Mesh and heightfield differ in only two places: how candidates are gathered, and how a triangle number turns into a world triangle. Those two are now dispatched on `shape`, and collision, manifold generation and closest-point are the same code as M41 |
+| Numbering | `tri = (iz·tilesX + ix)·2 + half`. No BVH: the candidate set is a rectangle of cells derived directly from the other shape's AABB, and scanning `iz` outer / `ix` inner yields ascending triangle numbers for free |
+| Vertices match the drawn mesh | Position, winding and the centre origin are the same formulas as `BuildChunkMesh` at LOD 0. Diverging would make "the ground you see" and "the ground you hit" different surfaces |
+| **Never call `HeightAtTexel` directly** | Its parameters are `uint32_t`, so a negative texel wraps to `0xFFFFFFFF` and the internal clamp lands on the **opposite edge** of the terrain. Every access goes through a signed clamp, the same rule `TerrainSystem.cpp` already follows. A test fires a ray just inside the left edge of a field whose right half is 100 m higher and asserts it hits at the left edge's own height |
+| Raycast walks cells | A DDA across the XZ grid rather than one AABB gather. A long diagonal ray covers a rectangle containing most of the terrain, and the candidate cap would silently drop the hit — the mesh path does not have this problem because it has a BVH to prune with |
+| Closest point looks at one cell | A heightfield is single-valued in Y, so the nearest point to a query is always in the cell under it or its immediate neighbours; there is no "the back face is closer" case a mesh can produce |
+| Height range is measured once | `TerrainCollisionData` stores min/max height at load, so `ComputeAabb` does not rescan `W·H` texels every broadphase pass |
+| Unresolved is not fatal | A `shape = 4` collider whose asset cannot be resolved collides with nothing, exactly like an unresolved mesh collider. A negative cache stops the loader retrying every tick |
+| Measured | A sphere settles at 2.9995 on a field of constant height 3.0, rolls to −12.6 m down a 20 m slope, and a box slides to the floor of a parabolic valley. A vertical ray reports `t = 19.9998` where 20 is exact; a character controller lands, reports grounded, and walks 5 m across |
+
 #### Sleep and islands (M59h)
 
 Bodies that have been quiet for a while stop being simulated. The thresholds live on
