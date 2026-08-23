@@ -871,6 +871,21 @@ expected to become its second caller by emitting its own elements.
 | **Symmetric bodies produce no torque** | Pressure on a flat face is uniform, so its resultant passes through the face centre, which lies on the normal axis (`r ∥ n ∥ F`). A symmetric convex body in uniform flow therefore has **exactly zero torque about its geometric centre at any angle of attack** — that is the correct physics, not a coarseness artefact. Real weathercock stability comes from the centre of pressure being offset from the centre of mass, which in this engine means M59d's wing panels on child entities or M59f1's centre-of-mass offset. The self test pins both the zero and the mechanism (a fin behind the reference point restores, the same fin in front destabilises) |
 | Stability | The surface force is explicit, so the per-tick Δv and Δω are clamped with the same deterministic guard the isotropic Magnus term uses |
 
+#### Wing panels (M59d)
+
+`AeroSurface` (TypeId 39) is a single lifting surface with a stall-aware CL curve. Force and torque
+go to the **nearest Rigidbody ancestor**, so the intended authoring is one panel per child entity —
+and that is the whole point: M59c established that a symmetric body has zero aerodynamic torque
+about its own centre, so the lever arm has to be authored, and `LocalTransform` is where it lives.
+
+| Concept | Decision |
+|---|---|
+| Angle of attack | Carried as `sin α = −(n·û)` rather than the angle itself. The lift slope is therefore `dCL/d(sin α)` — identical to `dCL/dα` at small angles, and it means **no inverse trigonometric function is ever called** |
+| CL curve | `CL = liftSlope · sin α` up to the stall angle, then blended over a window of half the stall angle into the bare flat-plate value `2 sin α cos α`. **The flat-plate branch must not be renormalised to be continuous at the stall point** — `2 sin α cos α` peaks at 45°, so renormalising makes CL *rise* to twice CLmax after the stall and inverts the meaning of stalling. The bare value is below CLmax at the stall point, and falling toward it is the lift collapse |
+| CD | `CD0 + k·CL² + stalledDrag·sin²α`, so drag rises to roughly a flat plate's as the panel turns broadside |
+| Lift direction | The component of the panel normal perpendicular to the relative wind. Because lift is perpendicular to the flow, a descending craft gets a **forward** component out of it — that is gliding, and it means forward speed can rise even with drag present. What cannot rise is the speed: lift does no work, so `F·v = −q·A·CD·|v| < 0` (asserted in the self test) |
+| Ownership | Walks self → ancestors for the first dynamic rigid body, so a panel nested any number of levels down still drives the craft. Panels are processed in `entity.index` order |
+
 #### Contact reporting and physics debug draw (M59e)
 
 `SolidContact` — the per-tick, stateless output of `PhysicsSystem::Update` — carries a

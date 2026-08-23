@@ -2436,6 +2436,175 @@ bool RunPhysicsSelfTest()
         }
     }
 
+    // ================= M59d: 翼面 =================
+    {
+        // 翼を 1 枚だけ持つ機体を作る小道具。panelZ が正 = 重心の前、負 = 後ろ。
+        // 姿勢を固定するかどうかを選べる (並進だけ見たいときと復元トルクを見たいときで使い分け)
+        struct Craft {
+            GameObject body;
+            GameObject panel;
+        };
+        auto makeCraft = [&](Scene& s, float panelZ, float area, bool freezeRot, float vy,
+                             float vz) {
+            GameObject body = s.CreateGameObjectTracked("Craft");
+            body.SetLocalPosition(0, 50.0f, 0);
+            auto* col = body.AddComponent<ColliderComponent>();
+            col->shape = 1;
+            col->isTrigger = false;
+            col->halfExtents = { 0.2f, 0.05f, 0.8f };
+            auto* rbc = body.AddComponent<RigidbodyComponent>();
+            rbc->mass = 0.5f;
+            rbc->gravityScale = 0.0f; // 揚力だけを見る (重力は別の試験で確認済み)
+            rbc->angularDamping = 0.0f;
+            rbc->freezeRotation = freezeRot;
+            GameObject panel = s.CreateGameObjectTracked("Panel");
+            panel.SetParent(body);
+            panel.SetLocalPosition(0.0f, 0.0f, panelZ);
+            auto* ps = panel.AddComponent<AeroSurfaceComponent>();
+            ps->normal = { 0.0f, 1.0f, 0.0f };
+            ps->area = area;
+            s.GetWorld().ApplyStructuralChanges();
+            auto* rb = body.GetComponent<RigidbodyComponent>();
+            rb->velocity = { 0.0f, vy, vz };
+            return Craft{ body, panel };
+        };
+
+        // -- 揚力: 正の迎角 (前進しながら降下) で上向きの速度を得る --
+        {
+            Scene s;
+            Craft c = makeCraft(s, 0.0f, 0.4f, true, -2.0f, 20.0f);
+            auto* rb = c.body.GetComponent<RigidbodyComponent>();
+            const float sp0 = std::sqrt(rb->velocity.y * rb->velocity.y
+                                        + rb->velocity.z * rb->velocity.z);
+            phys.Update(s.GetWorld(), kDt);
+            MYE_LOG_INFO("  [phys] wing lift: dvy = %.4f m/s in one tick", rb->velocity.y + 2.0f);
+            check(rb->velocity.y > -2.0f, "wing: a positive angle of attack lifts the craft");
+            // ★前進成分は**増えうる** — 揚力は流れに垂直なので、前下方から風を受けると
+            //   揚力の向きが前へ傾く。これが「降下しながら前へ伸びる」滑空そのもの。
+            //   代わりに正しい断言は「揚力は仕事をしない」= 速さは必ず減る
+            //   (F.v = q A (cl * 0 - cd |v|) < 0。この試験は重力を切ってある)
+            const float sp1 = std::sqrt(rb->velocity.y * rb->velocity.y
+                                        + rb->velocity.z * rb->velocity.z);
+            check(sp1 < sp0, "wing: lift does no work, so the speed can only drop (drag only)");
+        }
+
+        // -- 迎角が逆なら揚力も逆 --
+        {
+            Scene s;
+            Craft c = makeCraft(s, 0.0f, 0.4f, true, 2.0f, 20.0f);
+            auto* rb = c.body.GetComponent<RigidbodyComponent>();
+            phys.Update(s.GetWorld(), kDt);
+            check(rb->velocity.y < 2.0f, "wing: a negative angle of attack pushes the other way");
+        }
+
+        // -- 迎角 0 なら揚力 0 (抗力だけ) --
+        {
+            Scene s;
+            Craft c = makeCraft(s, 0.0f, 0.4f, true, 0.0f, 20.0f);
+            auto* rb = c.body.GetComponent<RigidbodyComponent>();
+            phys.Update(s.GetWorld(), kDt);
+            check(rb->velocity.y == 0.0f, "wing: zero angle of attack produces exactly zero lift");
+            check(rb->velocity.z < 20.0f, "wing: but still produces parasite drag");
+        }
+
+        // -- 失速: 失速角を超えると揚力が落ちる --
+        // 速度の大きさを 20 に揃え、sin(alpha) だけを 0.25 (失速前) と 0.40 (失速後) に振る
+        {
+            auto liftGain = [&](float sinA, float cosA) {
+                Scene s;
+                Craft c = makeCraft(s, 0.0f, 0.4f, true, -20.0f * sinA, 20.0f * cosA);
+                auto* rb = c.body.GetComponent<RigidbodyComponent>();
+                const float before = rb->velocity.y;
+                phys.Update(s.GetWorld(), kDt);
+                return rb->velocity.y - before;
+            };
+            const float under = liftGain(0.25f, 0.96824584f); // 約 14.5 度 (失速角 15 の手前)
+            const float past = liftGain(0.40f, 0.91651514f);  // 約 23.6 度 (失速後)
+            MYE_LOG_INFO("  [phys] wing stall: dvy under %.4f -> past %.4f", under, past);
+            check(under > 0.0f && past > 0.0f, "wing stall: both angles still lift");
+            check(past < under * 0.8f,
+                  "wing stall: lift collapses past the stall angle (not the other way around)");
+        }
+
+        // -- 風見安定: 尾翼 (重心の後ろ) は姿勢を流れへ戻す / 前翼は逆に振る --
+        {
+            auto pitchRate = [&](float panelZ) {
+                Scene s;
+                Craft c = makeCraft(s, panelZ, 0.3f, false, -2.0f, 20.0f);
+                auto* rb = c.body.GetComponent<RigidbodyComponent>();
+                phys.Update(s.GetWorld(), kDt);
+                return rb->angularVelocity.x;
+            };
+            const float tail = pitchRate(-1.0f);
+            const float nose = pitchRate(1.0f);
+            MYE_LOG_INFO("  [phys] wing weathercock: tail wx = %.5f / nose wx = %.5f", tail, nose);
+            // 機体は +Z へ進みつつ降下中。+X まわりの正回転が機首下げ = 流れへ揃う向き
+            check(tail > 0.0f, "wing: a tail panel pitches the craft toward the airflow");
+            check(nose < 0.0f, "wing: the same panel in front destabilises it");
+        }
+
+        // -- 翼は「最も近い Rigidbody 祖先」に効く (孫でも届く) --
+        {
+            Scene s;
+            GameObject body = s.CreateGameObjectTracked("Body");
+            body.SetLocalPosition(0, 50.0f, 0);
+            auto* col = body.AddComponent<ColliderComponent>();
+            col->shape = 1;
+            col->isTrigger = false;
+            col->halfExtents = { 0.2f, 0.05f, 0.8f };
+            auto* rbc = body.AddComponent<RigidbodyComponent>();
+            rbc->mass = 0.5f;
+            rbc->gravityScale = 0.0f;
+            rbc->freezeRotation = true;
+            GameObject mid = s.CreateGameObjectTracked("Pylon");
+            mid.SetParent(body);
+            GameObject panel = s.CreateGameObjectTracked("Panel");
+            panel.SetParent(mid);
+            auto* ps = panel.AddComponent<AeroSurfaceComponent>();
+            ps->normal = { 0.0f, 1.0f, 0.0f };
+            ps->area = 0.4f;
+            s.GetWorld().ApplyStructuralChanges();
+            auto* rb = body.GetComponent<RigidbodyComponent>();
+            rb->velocity = { 0.0f, -2.0f, 20.0f };
+            phys.Update(s.GetWorld(), kDt);
+            check(rb->velocity.y > -2.0f,
+                  "wing: a panel two levels down still drives the nearest rigidbody ancestor");
+        }
+
+        // -- 翼を持たないボディは 1 ビットも変わらない --
+        {
+            auto dumpOne = [](GameObject go, std::vector<uint8_t>& out) {
+                out.clear();
+                const auto* lt = go.GetComponent<LocalTransform>();
+                const auto* rb = go.GetComponent<RigidbodyComponent>();
+                const auto* p = reinterpret_cast<const uint8_t*>(&lt->position);
+                out.insert(out.end(), p, p + sizeof(lt->position));
+                const auto* v = reinterpret_cast<const uint8_t*>(&rb->velocity);
+                out.insert(out.end(), v, v + sizeof(rb->velocity));
+            };
+            Scene sa, sb;
+            MakeGround(sa, "G", 0, -0.5f, 0, 5.0f, 0.5f, 5.0f);
+            GameObject plainA = MakeBox(sa, "Plain", 0, 3.0f, 0, 0.5f, 0.5f, 0.5f, 0.3f);
+            sa.GetWorld().ApplyStructuralChanges();
+            MakeGround(sb, "G", 0, -0.5f, 0, 5.0f, 0.5f, 5.0f);
+            GameObject plainB = MakeBox(sb, "Plain", 0, 3.0f, 0, 0.5f, 0.5f, 0.5f, 0.3f);
+            makeCraft(sb, -1.0f, 0.3f, false, -2.0f, 20.0f); // 遠くない場所でも接触はしない高さ
+            bool same = true;
+            std::vector<uint8_t> da, db;
+            for (int i = 0; i < 240 && same; ++i) {
+                phys.Update(sa.GetWorld(), kDt);
+                phys.Update(sb.GetWorld(), kDt);
+                dumpOne(plainA, da);
+                dumpOne(plainB, db);
+                if (da.empty() || da != db) {
+                    same = false;
+                    MYE_LOG_ERROR("  wing mix diverged at tick %d", i);
+                }
+            }
+            check(same, "wing: bodies without AeroSurface keep their legacy trajectory bit-exactly");
+        }
+    }
+
     if (failCount == 0) {
         MYE_LOG_INFO("==== Physics self test: ALL PASS ====");
         return true;

@@ -117,6 +117,20 @@ void BuildRenderShowcaseScene(EngineContext& ctx);
 // 上のショーケースが参照するメッシュ/マテリアルの実体登録 (RegisterRtShowcaseContent と同じ役割)
 void RegisterRenderShowcaseContent(EngineContext& ctx);
 
+// M59d: 物理 (空力・浮力・材料) のショーケースシーン。--physics-demo で選ぶ。
+//
+// **replay_verify.bat の 5 ペア目**がこのシーン — M59 で足した数式 (重力ベクトル / 等方抗力 /
+// マグヌス / 面サンプリング / 翼面 / 浮力 / 材料と密度) が Debug と Release でビット一致する
+// ことを 600 tick ぶん機械照合するのが唯一の存在理由。絵として見せるのは副次的。
+//
+// ★builtin メッシュ + 名前キーのマテリアル + **名前で引いた .physmat** だけ = チェックアウト
+//   非依存。物理マテリアルの AssetID を絶対パスから組まないこと (M59a1 の申し送り 1)。
+// ★床は x = 4 で切ってある — その先は水面 (waterPlaneY = 0) で、浮きが浮かぶ場所。
+void BuildPhysicsShowcaseScene(EngineContext& ctx);
+
+// 上のショーケースが参照するメッシュ/マテリアルの実体登録
+void RegisterPhysicsShowcaseContent(EngineContext& ctx);
+
 // M58c: 地形のショーケースシーン。--terrain-demo で選ぶ (golden `demo_terrain_deferred`)。
 //
 // ★**--render-demo に地形を足さない**のがこの別シーンの唯一の存在理由。既存の golden

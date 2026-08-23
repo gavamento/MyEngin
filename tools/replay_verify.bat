@@ -135,9 +135,31 @@ bin\x64\Debug\Editor.exe --local-demo --replay-verify %REP4% %MYE_EXTRA_ARGS% ||
 echo === verify local multiplayer in Release ===
 bin\x64\Release\Editor.exe --local-demo --replay-verify %REP4% %MYE_EXTRA_ARGS% || (call :diagnose "%REP4%" "--local-demo" & echo [FAIL] Release mp verify & exit /b 1)
 
+rem ---- 5 本目: 物理 (空力・浮力・材料) (M59d) ----
+rem M59 で足した数式 — 重力ベクトル / 等方抗力 / マグヌス / 面サンプリング / 翼面 /
+rem 浮力 / 材料と密度 — が Debug と Release でビット一致することを 600 tick 実走で固定する。
+rem selftest は 1 項目ずつの小さな世界しか見ないので、「全部が同じ tick に同居したときの
+rem 加算順序」までは押さえられない。ここが唯一その検査になっている。
+rem シーンはコードから毎回組み直す (parts と同じ流儀) — .physmat の AssetID は同伴 .meta の
+rem GUID 優先で解決されるが、シーンファイルを版管理する理由が無いので cache\ へ置く
+set REP5=cache\golden_physics.rep
+set PHYS_SCENE=cache\physics_showcase.scene.json
+
+rem 保存済みシーンが残っていると読み込み経路に落ちてコード側の正解と食い違う
+if exist %PHYS_SCENE% del /q %PHYS_SCENE%
+
+echo === record golden replay: physics (Debug, %TICKS% ticks) ===
+bin\x64\Debug\Editor.exe --physics-demo --replay-record %REP5% --replay-ticks %TICKS% %MYE_EXTRA_ARGS% || exit /b 1
+
+echo === verify physics in Debug ===
+bin\x64\Debug\Editor.exe --physics-demo --replay-verify %REP5% %MYE_EXTRA_ARGS% || (call :diagnose "%REP5%" "--physics-demo" & echo [FAIL] Debug physics verify & exit /b 1)
+
+echo === verify physics in Release ===
+bin\x64\Release\Editor.exe --physics-demo --replay-verify %REP5% %MYE_EXTRA_ARGS% || (call :diagnose "%REP5%" "--physics-demo" & echo [FAIL] Release physics verify & exit /b 1)
+
 rem ---- 5 段目: スナップショット往復ストレス (M52d) ----
 rem 「撮って戻す」を 37 tick ごとに挟んでも 600 tick の期待ハッシュが全一致することを
-rem 4 ペアすべてで固定する。既存の .rep をそのまま使い回すので追加コストは verify 1 回分。
+rem 5 ペアすべてで固定する。既存の .rep をそのまま使い回すので追加コストは verify 1 回分。
 rem ここが赤い = 復元が非対称 (撮れているのに戻していない sim 状態がある) という意味で、
 rem タイムトラベル (M52e) / クラッシュ再現 (M52f) / ロールバック (M52i) の土台が崩れている。
 rem selftest の小さな世界では出ない取りこぼしは、この実データ 600 tick でしか捕まらない
@@ -146,6 +168,7 @@ bin\x64\Debug\Editor.exe --replay-verify %REP% --snapshot-stress 37 %MYE_EXTRA_A
 bin\x64\Debug\Editor.exe --parts-demo --replay-verify %REP2% --snapshot-stress 37 %MYE_EXTRA_ARGS% || (echo [FAIL] snapshot stress: parts & exit /b 1)
 bin\x64\Debug\Editor.exe --flow-demo --replay-verify %REP3% --snapshot-stress 37 %MYE_EXTRA_ARGS% || (echo [FAIL] snapshot stress: flow & exit /b 1)
 bin\x64\Debug\Editor.exe --local-demo --replay-verify %REP4% --snapshot-stress 37 %MYE_EXTRA_ARGS% || (echo [FAIL] snapshot stress: mp & exit /b 1)
+bin\x64\Debug\Editor.exe --physics-demo --replay-verify %REP5% --snapshot-stress 37 %MYE_EXTRA_ARGS% || (echo [FAIL] snapshot stress: physics & exit /b 1)
 
 rem ---- 6 段目: タイムトラベルの巻き戻し (M52e) ----
 rem 「T まで進める → T-K へ戻す → 記録入力で T まで再シム → 元の T とハッシュ一致」を
@@ -160,7 +183,7 @@ echo === static rule check ===
 pwsh -NoProfile -ExecutionPolicy Bypass -File tools\check_rules.ps1 || (echo [FAIL] rule check & exit /b 1)
 
 echo.
-echo [PASS] replay consistency (Debug/Release, 4 scenes: demo + parts + flow + mp) + snapshot round-trip + time travel + rule check
+echo [PASS] replay consistency (Debug/Release, 5 scenes: demo + parts + flow + mp + physics) + snapshot round-trip + time travel + rule check
 exit /b 0
 
 rem ---------------------------------------------------------------- :diagnose

@@ -822,6 +822,235 @@ void BuildLocalPlayersScene(EngineContext& ctx)
     }
 }
 
+void RegisterPhysicsShowcaseContent(EngineContext& ctx)
+{
+    RenderResources& res = *ctx.resources;
+    const AssetID white = res.textures.White();
+    const AssetID shader = AssetID{ HashStr("forward_lit") };
+    res.meshes.Cube();
+    res.meshes.Sphere();
+
+    auto makeMat = [&](const char* name, float r, float g, float b) {
+        Material m;
+        m.shader = shader;
+        m.texture = white;
+        m.baseColor = { r, g, b, 1.0f };
+        return res.materials.Register(name, m);
+    };
+    makeMat("pdemo_floor", 0.30f, 0.32f, 0.36f);
+    makeMat("pdemo_feather", 0.92f, 0.90f, 0.80f);
+    makeMat("pdemo_steel", 0.62f, 0.64f, 0.68f);
+    makeMat("pdemo_plane", 0.90f, 0.88f, 0.72f);
+    makeMat("pdemo_ball", 0.90f, 0.35f, 0.30f);
+    makeMat("pdemo_buoy", 0.95f, 0.72f, 0.20f);
+    makeMat("pdemo_rubber", 0.25f, 0.75f, 0.45f);
+}
+
+// 名前で .physmat を引く (プリセットは起動走査で登録済み)。
+// **絶対パスのハッシュを直接組まない** — チェックアウト先で値が変わるうえ、
+// 同伴 .meta の GUID が優先されるので一致しない (M59a1 の申し送り 1)
+AssetID FindPhysMat(const char* name)
+{
+    PhysMatLibrary* lib = physmat::Library();
+    if (!lib) {
+        return AssetID{};
+    }
+    for (const PhysMatEntry& e : lib->Enumerate()) { // 名前昇順 = 決定論
+        if (e.name == name) {
+            return AssetID{ e.hash };
+        }
+    }
+    return AssetID{}; // 未登録なら未割当 = 既存フィールドで動く (デモは壊れない)
+}
+
+void BuildPhysicsShowcaseScene(EngineContext& ctx)
+{
+    Scene& s = *ctx.scene;
+    RenderResources& res = *ctx.resources;
+    s.SetName("physics_showcase");
+    const AssetID cube = res.meshes.Cube();
+    const AssetID sphere = res.meshes.Sphere();
+    const AssetID matSteel = FindPhysMat("steel");
+    const AssetID matRubber = FindPhysMat("rubber");
+
+    GameObject camera = s.CreateGameObject("Main Camera");
+    camera.AddComponent<CameraComponent>();
+    camera.SetLocalPosition(0.0f, 8.0f, -22.0f);
+    camera.SetLocalRotationEuler(16.0f, 0.0f, 0.0f);
+
+    GameObject sun = s.CreateGameObject("Sun");
+    sun.AddComponent<LightComponent>();
+    sun.SetLocalRotationEuler(50.0f, -30.0f, 0.0f);
+
+    // ---- 物理環境 (シーンに 1 個。entity.index 最小の active なものが使われる) ----
+    // 風を入れておくと羽根が流れる = 風の経路もリプレイ被覆に載る
+    {
+        GameObject envGo = s.CreateGameObject("Environment");
+        auto* env = envGo.AddComponent<PhysicsEnvironmentComponent>();
+        env->gravity = { 0.0f, -9.81f, 0.0f };
+        env->airDensity = 1.225f;
+        env->windVelocity = { 1.5f, 0.0f, 0.0f };
+        env->waterPlaneY = 0.0f;
+        env->waterDensity = 1000.0f;
+    }
+
+    // ---- 床 (静的コライダー + メッシュ)。**x = 4 で切ってある** — その先が水面 ----
+    {
+        GameObject floor = s.CreateGameObject("Floor");
+        floor.SetLocalPosition(-4.0f, -0.5f, 0.0f);
+        floor.SetLocalScale(16.0f, 1.0f, 14.0f);
+        auto* mr = floor.AddComponent<MeshRendererComponent>();
+        mr->mesh = cube;
+        mr->material = AssetID{ HashStr("pdemo_floor") };
+        auto* col = floor.AddComponent<ColliderComponent>();
+        col->shape = 1;
+        col->isTrigger = false;
+        col->halfExtents = { 0.5f, 0.5f, 0.5f }; // ワールドスケールが効く
+        col->physMaterial = matSteel;            // 鋼の床 (e=0.6 を主張できるのが M59a2 の新能力)
+    }
+
+    // ---- 1. 羽根と鉄球: 空気があると同時に落ちない ----
+    {
+        GameObject feather = s.CreateGameObject("Feather");
+        feather.SetLocalPosition(-10.0f, 9.0f, -3.0f);
+        feather.SetLocalScale(0.9f, 0.03f, 0.9f);
+        auto* mr = feather.AddComponent<MeshRendererComponent>();
+        mr->mesh = cube;
+        mr->material = AssetID{ HashStr("pdemo_feather") };
+        auto* col = feather.AddComponent<ColliderComponent>();
+        col->shape = 1;
+        col->halfExtents = { 0.5f, 0.5f, 0.5f };
+        auto* rb = feather.AddComponent<RigidbodyComponent>();
+        rb->mass = 0.03f;
+        rb->angularDamping = 0.0f; // 空力に任せる
+        auto* aero = feather.AddComponent<AeroComponent>();
+        aero->surfaceModel = true; // 向きを見る = ひらひら落ちる
+    }
+    {
+        GameObject ball = s.CreateGameObject("SteelBall");
+        ball.SetLocalPosition(-7.5f, 9.0f, -3.0f);
+        ball.SetLocalScale(0.5f, 0.5f, 0.5f);
+        auto* mr = ball.AddComponent<MeshRendererComponent>();
+        mr->mesh = sphere;
+        mr->material = AssetID{ HashStr("pdemo_steel") };
+        auto* col = ball.AddComponent<ColliderComponent>();
+        col->shape = 0;
+        col->radius = 0.5f;
+        col->physMaterial = matSteel;
+        auto* rb = ball.AddComponent<RigidbodyComponent>();
+        rb->useDensity = true; // 質量 = 鋼の密度 x 体積 (約 32kg)
+        auto* aero = ball.AddComponent<AeroComponent>();
+        aero->enableMagnus = false; // 抗力だけ (重いのでほとんど効かない = 対比になる)
+    }
+
+    // ---- 2. 紙飛行機: 主翼 + 尾翼を**子エンティティ**に置いて風見安定を作る ----
+    {
+        GameObject plane = s.CreateGameObject("PaperPlane");
+        plane.SetLocalPosition(-3.0f, 6.0f, -9.0f);
+        plane.SetLocalScale(0.35f, 0.08f, 1.2f);
+        auto* mr = plane.AddComponent<MeshRendererComponent>();
+        mr->mesh = cube;
+        mr->material = AssetID{ HashStr("pdemo_plane") };
+        auto* col = plane.AddComponent<ColliderComponent>();
+        col->shape = 1;
+        col->halfExtents = { 0.5f, 0.5f, 0.5f };
+        auto* rb = plane.AddComponent<RigidbodyComponent>();
+        rb->mass = 0.08f;
+        rb->angularDamping = 0.02f;
+        rb->velocity = { 0.0f, 0.0f, 11.0f }; // +Z へ射出
+        // 主翼 (重心のわずかに前)
+        GameObject wing = s.CreateGameObject("Wing");
+        wing.SetParent(plane);
+        wing.SetLocalPosition(0.0f, 0.0f, 0.15f);
+        auto* ws = wing.AddComponent<AeroSurfaceComponent>();
+        ws->normal = { 0.0f, 1.0f, 0.0f };
+        ws->area = 0.30f;
+        ws->stallAngleDeg = 14.0f;
+        // 尾翼 (重心の後ろ = 復元モーメントの源)
+        GameObject tail = s.CreateGameObject("Tail");
+        tail.SetParent(plane);
+        tail.SetLocalPosition(0.0f, 0.0f, -0.9f);
+        auto* ts = tail.AddComponent<AeroSurfaceComponent>();
+        ts->normal = { 0.0f, 1.0f, 0.0f };
+        ts->area = 0.10f;
+        ts->stallAngleDeg = 14.0f;
+    }
+
+    // ---- 3. カーブボール: 回転する球がマグヌスで曲がる ----
+    {
+        GameObject ball = s.CreateGameObject("CurveBall");
+        ball.SetLocalPosition(2.0f, 5.0f, -9.0f);
+        ball.SetLocalScale(0.4f, 0.4f, 0.4f);
+        auto* mr = ball.AddComponent<MeshRendererComponent>();
+        mr->mesh = sphere;
+        mr->material = AssetID{ HashStr("pdemo_ball") };
+        auto* col = ball.AddComponent<ColliderComponent>();
+        col->shape = 0;
+        col->radius = 0.5f;
+        col->physMaterial = matRubber;
+        auto* rb = ball.AddComponent<RigidbodyComponent>();
+        rb->mass = 0.15f;
+        rb->angularDamping = 0.0f;
+        rb->velocity = { 0.0f, 1.0f, 16.0f };
+        rb->angularVelocity = { 0.0f, 40.0f, 0.0f }; // +Y 軸回転 → -X 側へ曲がる
+        auto* aero = ball.AddComponent<AeroComponent>();
+        aero->enableMagnus = true;
+        aero->magnusCoefficient = 3.0f; // 見て分かる曲がりに誇張
+    }
+
+    // ---- 4. 浮き: 床が切れた先 (x > 4) の水面に浮かぶ ----
+    {
+        GameObject buoy = s.CreateGameObject("Buoy");
+        buoy.SetLocalPosition(8.0f, 4.0f, 0.0f);
+        buoy.SetLocalScale(0.8f, 0.8f, 0.8f);
+        auto* mr = buoy.AddComponent<MeshRendererComponent>();
+        mr->mesh = sphere;
+        mr->material = AssetID{ HashStr("pdemo_buoy") };
+        auto* col = buoy.AddComponent<ColliderComponent>();
+        col->shape = 0;
+        col->radius = 0.5f;
+        auto* rb = buoy.AddComponent<RigidbodyComponent>();
+        // 半径 0.4 の球 = 0.268 m^3。その半分の水を押しのける重さ = 半没で釣り合う
+        rb->mass = 134.0f;
+        auto* b = buoy.AddComponent<BuoyancyComponent>();
+        b->linearDrag = 3.0f;
+    }
+
+    // ---- 5. 材料プリセット: ゴム球が鋼の床で弾む (静的側が e を主張する新能力) ----
+    {
+        GameObject ball = s.CreateGameObject("RubberBall");
+        ball.SetLocalPosition(-1.0f, 7.0f, 4.0f);
+        ball.SetLocalScale(0.6f, 0.6f, 0.6f);
+        auto* mr = ball.AddComponent<MeshRendererComponent>();
+        mr->mesh = sphere;
+        mr->material = AssetID{ HashStr("pdemo_rubber") };
+        auto* col = ball.AddComponent<ColliderComponent>();
+        col->shape = 0;
+        col->radius = 0.5f;
+        col->physMaterial = matRubber;
+        auto* rb = ball.AddComponent<RigidbodyComponent>();
+        rb->useDensity = true; // ゴムの密度から質量を導く
+    }
+
+    // ---- 6. 転がる箱の山: 既存ソルバ (接触・摩擦) もこのシーンで被覆する ----
+    for (int i = 0; i < 4; ++i) {
+        char name[32];
+        std::snprintf(name, sizeof(name), "Crate_%d", i);
+        GameObject go = s.CreateGameObject(name);
+        go.SetLocalPosition(-6.0f + 0.05f * static_cast<float>(i), 1.0f + 1.1f * static_cast<float>(i),
+                            5.0f);
+        auto* mr = go.AddComponent<MeshRendererComponent>();
+        mr->mesh = cube;
+        mr->material = AssetID{ HashStr("pdemo_floor") };
+        auto* col = go.AddComponent<ColliderComponent>();
+        col->shape = 1;
+        col->halfExtents = { 0.5f, 0.5f, 0.5f };
+        col->physMaterial = (i % 2 == 0) ? matSteel : matRubber;
+        auto* rb = go.AddComponent<RigidbodyComponent>();
+        rb->mass = 1.0f;
+    }
+}
+
 void RegisterRenderShowcaseContent(EngineContext& ctx)
 {
     RenderResources& res = *ctx.resources;

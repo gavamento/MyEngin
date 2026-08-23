@@ -572,6 +572,24 @@ void RegisterBuiltinComponents()
         MYE_JP("水中の回転抵抗",
                MYE_FIELD_RANGE(BuoyancyComponent, angularDrag, Float, 0.0f, 100.0f)),
     });
+
+    // M59d: 翼面。**hash 対象** — 親剛体の velocity / angularVelocity を駆動する。
+    // opt-in (TypeId 末尾 append =39)。子エンティティに置いて質量中心からずらすのが本来の
+    // 使い方 (Components.h の設計コメント参照)
+    RegisterComponent<AeroSurfaceComponent>("AeroSurface", {
+        MYE_JP("法線", MYE_FIELD_TIP(AeroSurfaceComponent, normal, Float3,
+                                     "local normal; positive angle of attack lifts this way")),
+        MYE_JP("翼面積", MYE_FIELD_RANGE(AeroSurfaceComponent, area, Float, 0.0f, 1000.0f)),
+        MYE_JP("揚力傾斜", MYE_FIELD_TIP(AeroSurfaceComponent, liftSlope, Float,
+                                         "dCL/d(sin alpha); 2*pi is thin-airfoil theory")),
+        MYE_JP("失速角 (度)",
+               MYE_FIELD_RANGE(AeroSurfaceComponent, stallAngleDeg, Float, 0.0f, 89.0f)),
+        MYE_JP("有害抗力 CD0",
+               MYE_FIELD_RANGE(AeroSurfaceComponent, dragCoefficient, Float, 0.0f, 10.0f)),
+        MYE_JP("誘導抗力", MYE_FIELD_RANGE(AeroSurfaceComponent, inducedDrag, Float, 0.0f, 10.0f)),
+        MYE_JP("失速時抗力",
+               MYE_FIELD_RANGE(AeroSurfaceComponent, stalledDrag, Float, 0.0f, 10.0f)),
+    });
 }
 
 } // namespace mye

@@ -745,6 +745,178 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
         }
     }
 
+    // ---- 翼面 (M59d): 子エンティティに置いた翼パネルが「最も近い Rigidbody 祖先」へ
+    //      力とトルクを入れる。**子に置くことでレバー腕が生まれる**のが設計の核心 —
+    //      M59c で確かめたとおり、対称形状の幾何中心まわりのトルクは原理的に 0 で、
+    //      風見安定は圧力中心と質量中心のずれからしか出てこない ----
+    {
+        struct Panel {
+            EntityID owner;
+            const AeroSurfaceComponent* surf = nullptr;
+            const LocalTransform* lt = nullptr;
+        };
+        std::vector<Panel> panels;
+        const ComponentTypeId asReq[] = { AeroSurfaceComponent::sTypeId, LocalTransform::sTypeId };
+        world.ForEachArchetype(asReq, [&](Archetype& arch) {
+            const int si = arch.FindTypeIndex(AeroSurfaceComponent::sTypeId);
+            const int li = arch.FindTypeIndex(LocalTransform::sTypeId);
+            for (uint32_t row = 0; row < arch.Count(); ++row) {
+                const EntityID e = arch.EntityAt(row);
+                if (!IsEntityActive(world, e)) {
+                    continue;
+                }
+                panels.push_back({ e,
+                                   static_cast<const AeroSurfaceComponent*>(arch.GetPtr(si, row)),
+                                   static_cast<const LocalTransform*>(arch.GetPtr(li, row)) });
+            }
+        });
+        if (!panels.empty()) {
+            std::sort(panels.begin(), panels.end(),
+                      [](const Panel& a, const Panel& b) { return a.owner.index < b.owner.index; });
+            // bodies は index 昇順ソート済 → 二分探索 (SpringJoint と同じ流儀)
+            auto findBody = [&bodies](EntityID e) -> Body* {
+                auto it = std::lower_bound(
+                    bodies.begin(), bodies.end(), e.index,
+                    [](const Body& b, uint32_t idx) { return b.entity.index < idx; });
+                if (it != bodies.end() && it->entity.index == e.index
+                    && it->entity.generation == e.generation) {
+                    return &(*it);
+                }
+                return nullptr;
+            };
+            const float rhoAir = env ? env->airDensity : kDefaultAirDensity;
+            const float wndX = env ? env->windVelocity.x : 0.0f;
+            const float wndY = env ? env->windVelocity.y : 0.0f;
+            const float wndZ = env ? env->windVelocity.z : 0.0f;
+            constexpr float kDeg2Rad = 3.14159265f / 180.0f;
+            for (const Panel& p : panels) {
+                if (p.surf->area <= 0.0f) {
+                    continue;
+                }
+                // 力の入り先 = 自分 → 祖先の順に最初に見つかった動的剛体
+                Body* body = nullptr;
+                for (EntityID cur = p.owner; !cur.IsNull(); cur = world.GetParent(cur)) {
+                    Body* b = findBody(cur);
+                    if (b && b->rb && b->invMass > 0.0f) {
+                        body = b;
+                        break;
+                    }
+                }
+                if (!body) {
+                    continue; // 静的 / kinematic 祖先しかいない = 翼は何も動かせない
+                }
+                // パネルのワールド姿勢 (剛体と同じ scalar 合成)
+                const WorldFrame pf = ComposeParentFrame(world, p.owner);
+                XMFLOAT3 wpos;
+                XMFLOAT4 wrot;
+                XMFLOAT3 wscale;
+                ApplyFrame(pf, *p.lt, wpos, wrot, wscale);
+                float nx, ny, nz;
+                QuatRotate(wrot.x, wrot.y, wrot.z, wrot.w, p.surf->normal.x, p.surf->normal.y,
+                           p.surf->normal.z, nx, ny, nz);
+                const float nlen2 = nx * nx + ny * ny + nz * nz;
+                if (nlen2 < 1e-12f) {
+                    continue; // 法線が定義できない (決定論的分岐)
+                }
+                const float ninv = 1.0f / std::sqrt(nlen2);
+                nx *= ninv;
+                ny *= ninv;
+                nz *= ninv;
+                // パネル点の速度 (親剛体の剛体運動) から見た相対風
+                const float rx = wpos.x - body->pose.px;
+                const float ry = wpos.y - body->pose.py;
+                const float rz = wpos.z - body->pose.pz;
+                float wr0, wr1, wr2;
+                Cross(body->wx, body->wy, body->wz, rx, ry, rz, wr0, wr1, wr2);
+                const float ux = body->vx + wr0 - wndX;
+                const float uy = body->vy + wr1 - wndY;
+                const float uz = body->vz + wr2 - wndZ;
+                const float sp2 = ux * ux + uy * uy + uz * uz;
+                if (sp2 < 1e-8f) {
+                    continue; // 流れが無い
+                }
+                const float sp = std::sqrt(sp2);
+                const float ihx = ux / sp, ihy = uy / sp, ihz = uz / sp;
+                const float ndotu = nx * ihx + ny * ihy + nz * ihz;
+                const float sinA = -ndotu; // 正 = 法線側から風を受ける = 正の迎角
+                // 揚力方向 = 流れに垂直な法線成分 (正の迎角で法線側を向く)
+                float lx = nx - ndotu * ihx;
+                float ly = ny - ndotu * ihy;
+                float lz = nz - ndotu * ihz;
+                const float l2 = lx * lx + ly * ly + lz * lz;
+                float cl = 0.0f;
+                if (l2 > 1e-12f) {
+                    const float linv = 1.0f / std::sqrt(l2);
+                    lx *= linv;
+                    ly *= linv;
+                    lz *= linv;
+                    // CL: 失速角までは薄翼理論の線形、超えたら平板 (2 sin cos) へ落ちる。
+                    // ★平板側を「失速点で連続」になるよう正規化しては**いけない** —
+                    //   2 sin cos は 45 度で最大なので、正規化すると失速後に CL が
+                    //   CLmax の 2 倍まで**増えて**しまい失速の意味が逆転する。
+                    //   素の平板値は失速点で CLmax より低いので、そこへ向かって落とすのが正しい
+                    //   (= 揚力の崩壊そのもの)。段差でびびらないよう失速角の 0.5 倍の幅で
+                    //   線形に混ぜる (三角関数を増やさず滑らかにするための最小の細工)
+                    const float sStall = std::sin(p.surf->stallAngleDeg * kDeg2Rad);
+                    const float aAbs = std::fabs(sinA);
+                    if (aAbs <= sStall) {
+                        cl = p.surf->liftSlope * sinA;
+                    } else {
+                        const float c2 = 1.0f - sinA * sinA;
+                        const float cosA = (c2 > 0.0f) ? std::sqrt(c2) : 0.0f;
+                        const float flat = 2.0f * aAbs * cosA;
+                        const float clMax = p.surf->liftSlope * sStall;
+                        const float wnd = sStall * 0.5f;
+                        float t = (wnd > 1e-8f) ? (aAbs - sStall) / wnd : 1.0f;
+                        if (t > 1.0f) {
+                            t = 1.0f;
+                        }
+                        const float sign = (sinA >= 0.0f) ? 1.0f : -1.0f;
+                        cl = sign * (clMax * (1.0f - t) + flat * t);
+                    }
+                } else {
+                    lx = 0.0f;
+                    ly = 0.0f;
+                    lz = 0.0f; // 流れが法線と平行 = 揚力の向きが定義できない
+                }
+                const float cd = p.surf->dragCoefficient + p.surf->inducedDrag * cl * cl
+                               + p.surf->stalledDrag * sinA * sinA;
+                const float q = 0.5f * rhoAir * sp2 * p.surf->area;
+                const float fx = q * (cl * lx - cd * ihx);
+                const float fy = q * (cl * ly - cd * ihy);
+                const float fz = q * (cl * lz - cd * ihz);
+                // 陽的な力なので Delta-v / Delta-omega に決定論的な頭打ちを掛ける
+                float dvx = fx * body->invMass * dt;
+                float dvy = fy * body->invMass * dt;
+                float dvz = fz * body->invMass * dt;
+                const float d2 = dvx * dvx + dvy * dvy + dvz * dvz;
+                if (d2 > kExplicitMaxDeltaV * kExplicitMaxDeltaV) {
+                    const float clampV = kExplicitMaxDeltaV / std::sqrt(d2);
+                    dvx *= clampV;
+                    dvy *= clampV;
+                    dvz *= clampV;
+                }
+                body->vx += dvx;
+                body->vy += dvy;
+                body->vz += dvz;
+                float tx, ty, tz;
+                Cross(rx, ry, rz, fx, fy, fz, tx, ty, tz);
+                float dwx, dwy, dwz;
+                MulInvI(body->invI, tx * dt, ty * dt, tz * dt, dwx, dwy, dwz);
+                const float w2 = dwx * dwx + dwy * dwy + dwz * dwz;
+                if (w2 > kExplicitMaxDeltaOmega * kExplicitMaxDeltaOmega) {
+                    const float clampW = kExplicitMaxDeltaOmega / std::sqrt(w2);
+                    dwx *= clampW;
+                    dwy *= clampW;
+                    dwz *= clampW;
+                }
+                body->wx += dwx;
+                body->wy += dwy;
+                body->wz += dwz;
+            }
+        }
+    }
+
     // ---- 浮力 (M59b2): 水面より下の排除体積ぶんの上向き力 + 水中抗力。空力の直後に
     //      置くのは、浮力 (陽的な復元力) で付いた速度をその tick のうちに水中抗力が
     //      減衰させるため。**非所持ボディはルックアップのみで fp 演算ゼロ** ----

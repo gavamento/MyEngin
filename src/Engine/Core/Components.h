@@ -821,6 +821,35 @@ struct BuoyancyComponent {
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
+// ---- 翼面 (M59d、TypeId 39) ----
+// 「1 枚の翼」= 揚力係数曲線を持つ面。**子エンティティに複数置く流儀** (Part と同じ) で、
+// 力とトルクは**最も近い Rigidbody 祖先** (自分が持っていれば自分) へ入る。
+//
+// ★子に置くことが本質。M59c で確かめたとおり、対称な形状に一様流を当てても幾何中心
+//   まわりのトルクは原理的に厳密 0 で、風見安定は「**圧力中心が質量中心からずれている**」
+//   ことからしか出てこない。翼を子エンティティに置く = そのずれを LocalTransform で
+//   authoring する、というのがこのコンポーネントの設計そのもの。
+//
+// 等方空力 (Aero) との違い: あちらは物体全体の抗力、こちらは 1 枚の面の揚力/抗力。
+// 併用してよい (紙飛行機 = 胴体に Aero、主翼と尾翼に AeroSurface が素直な組み方)。
+//
+// velocity / angularVelocity (hash 対象) を駆動するので **hash 対象**。
+// opt-in (TypeId 末尾 append) なので既存シーンは 1 バイトも変わらない。
+struct AeroSurfaceComponent {
+    // 翼面のローカル法線 (**正の迎角でこちら側へ揚力が出る**)。非単位でもよい (内部で正規化)
+    DirectX::XMFLOAT3 normal = { 0.0f, 1.0f, 0.0f };
+    float area = 0.5f;            // 翼面積 [m^2]。<= 0 で無効
+    // 揚力傾斜 dCL/d(sin alpha)。薄翼理論の 2*pi が既定。
+    // ★迎角そのものではなく **sin(alpha)** に対する傾斜として持つ — 小迎角では同値で、
+    //   逆三角関数を一度も呼ばずに済む (決定論の観点で安い)
+    float liftSlope = 6.2831853f;
+    float stallAngleDeg = 15.0f;   // これを超えると平板挙動へ落ちる (失速)
+    float dragCoefficient = 0.02f; // 有害抗力 CD0
+    float inducedDrag = 0.05f;     // 誘導抗力 k (CD += k * CL^2)
+    float stalledDrag = 1.2f;      // 90 度で流れに立ちはだかったときの CD
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
 class World;
 
 // エンティティが有効か (ActiveComponent が無ければ有効 / enabled==0 なら無効)
