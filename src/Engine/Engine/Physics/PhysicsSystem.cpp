@@ -167,6 +167,10 @@ struct Body {
     float comx = 0, comy = 0, comz = 0;
     float restitution = 0;
     float friction = 0.5f;         // クーロン摩擦係数 (Collider から。ペアは sqrt(μa·μb))
+    // M59f2: 静止摩擦と転がり抵抗。材料未割当なら frictionS == friction / roll == 0 で、
+    // ソルバの新しい分岐が全て従来側へ畳まれる
+    float frictionS = 0.5f;
+    float roll = 0.0f;
     int32_t layer = 0;             // 衝突レイヤー (M36a、Collider から複製)
     uint32_t mask = 0xFFFFFFFFu;   // 衝突マスク (既定 = 全レイヤー → 従来挙動)
     // 親のワールドフレーム (M28d)。収集時に合成し運動学的フレームとして固定。
@@ -515,6 +519,8 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                 b.solid = true;
                 b.col = col;
                 b.friction = SelectFriction(*col, mat);
+                b.frictionS = SelectStaticFriction(*col, mat);   // M59f2
+                b.roll = SelectRollingResistance(*col, mat);     // M59f2
                 b.layer = col->layer; // M36a
                 b.mask = col->mask;
             }
@@ -549,6 +555,8 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             // M59a2: 材料付き静的コライダーは e を主張できる (従来は構造的に 0 = 新規能力。
             // 未割当は mat=nullptr → SelectRestitution が従来どおり 0 を返す)
             b.restitution = SelectRestitution(col, nullptr, mat);
+            b.frictionS = SelectStaticFriction(*col, mat); // M59f2
+            b.roll = SelectRollingResistance(*col, mat);   // M59f2
             b.layer = col->layer; // M36a
             b.mask = col->mask;
             // M28d: 親付き静的コライダーもワールド姿勢で判定 (従来は lt 直読みのバグ)
@@ -1385,6 +1393,13 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             float t1[3] = { 1, 0, 0 };
             float t2[3] = { 0, 0, 1 };
             float mu = 0.0f;
+            // M59f2: 静止摩擦の上限と転がり抵抗。muS == mu / muRoll == 0 なら従来経路
+            float muS = 0.0f;
+            float muRoll = 0.0f;
+            float rollAxis[3] = { 0, 0, 0 }; // 生成時の相対角速度の向き (蓄積のため固定)
+            float rollRadius = 0.0f;
+            float massRoll = 0.0f;
+            float lambdaRoll = 0.0f;
             int count = 0;
             float cpx = 0, cpy = 0, cpz = 0; // 代表点 = マニフォールド重心 (M59e の出力)
             float raC[3] = { 0, 0, 0 };      // 重心の r (中央インパルスと摩擦の作用点)
@@ -1417,6 +1432,14 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             c.ny = m.ny;
             c.nz = m.nz;
             c.mu = std::sqrt(A.friction * B.friction);
+            // M59f2: μs も同じ結合則。材料未割当なら A.frictionS==A.friction なので
+            // muS と mu がビットまで一致し、下の静止/動の分岐が消える
+            c.muS = std::sqrt(A.frictionS * B.frictionS);
+            // ★転がり抵抗だけ **max** で結合する (摩擦の sqrt(積) ではない)。
+            //   転がり抵抗はどちらか一方の材料のヒステリシスで生まれるので、
+            //   「素の床に置いたゴム球が転がり続ける」ほうが物理として間違い。
+            //   sqrt(積) だと相手が 0 の瞬間に消えてしまう
+            c.muRoll = (A.roll > B.roll) ? A.roll : B.roll;
             c.count = m.count;
             // 法線から接線基底を決定論的に作る (分岐は入力だけに依存)。
             // 0.57735 = 1/sqrt(3) — 最も長い成分を避けて正規化の桁落ちを防ぐ古典手法。
@@ -1475,6 +1498,68 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                                 + EffectiveMassInv(B, c.rbC[0], c.rbC[1], c.rbC[2], c.t2[0], c.t2[1],
                                                    c.t2[2]);
                 c.massT2 = (kt2 > 0.0f) ? 1.0f / kt2 : 0.0f;
+            }
+            // ---- 転がり抵抗の軸と有効慣性 (M59f2) ----
+            // ★軸は**生成時の相対角速度の向きで固定**する。摩擦の接線を法線から作るのと
+            //   同じ理由 — 蓄積インパルスは回る軸を追いかけられない。
+            //   転がっていない (ω_rel ≈ 0) 接触は軸が定義できないので無効化する
+            if (c.muRoll > 0.0f) {
+                const float wrx = A.wx - B.wx;
+                const float wry = A.wy - B.wy;
+                const float wrz = A.wz - B.wz;
+                const float wl2 = wrx * wrx + wry * wry + wrz * wrz;
+                if (wl2 > 1e-12f) {
+                    const float winv = 1.0f / std::sqrt(wl2);
+                    c.rollAxis[0] = wrx * winv;
+                    c.rollAxis[1] = wry * winv;
+                    c.rollAxis[2] = wrz * winv;
+                    float iax, iay, iaz, ibx, iby, ibz;
+                    MulInvI(A.invI, c.rollAxis[0], c.rollAxis[1], c.rollAxis[2], iax, iay, iaz);
+                    MulInvI(B.invI, c.rollAxis[0], c.rollAxis[1], c.rollAxis[2], ibx, iby, ibz);
+                    const float kr = c.rollAxis[0] * (iax + ibx) + c.rollAxis[1] * (iay + iby)
+                                   + c.rollAxis[2] * (iaz + ibz);
+                    c.massRoll = (kr > 0.0f) ? 1.0f / kr : 0.0f;
+                    // 転がり半径 = 接触点までの腕の長い側。Crr N R が転がり抵抗トルクの
+                    // 教科書的な形なので、無次元の Crr を長さに変換するのに要る
+                    const float ra = std::sqrt(c.raC[0] * c.raC[0] + c.raC[1] * c.raC[1]
+                                               + c.raC[2] * c.raC[2]);
+                    const float rbl = std::sqrt(c.rbC[0] * c.rbC[0] + c.rbC[1] * c.rbC[1]
+                                                + c.rbC[2] * c.rbC[2]);
+                    c.rollRadius = (ra > rbl) ? ra : rbl;
+                } else {
+                    c.muRoll = 0.0f; // 回っていない = 転がり抵抗は定義できない
+                }
+            }
+            // ---- 転がり抵抗の軸と有効慣性 (M59f2) ----
+            // ★軸は**生成時の相対角速度の向きで固定**する。摩擦の接線を法線から作るのと
+            //   同じ理由 — 蓄積インパルスは回る軸を追いかけられない。
+            //   転がっていない (ω_rel ≈ 0) 接触は軸が定義できないので無効化する
+            if (c.muRoll > 0.0f) {
+                const float wrx = A.wx - B.wx;
+                const float wry = A.wy - B.wy;
+                const float wrz = A.wz - B.wz;
+                const float wl2 = wrx * wrx + wry * wry + wrz * wrz;
+                if (wl2 > 1e-12f) {
+                    const float winv = 1.0f / std::sqrt(wl2);
+                    c.rollAxis[0] = wrx * winv;
+                    c.rollAxis[1] = wry * winv;
+                    c.rollAxis[2] = wrz * winv;
+                    float iax, iay, iaz, ibx, iby, ibz;
+                    MulInvI(A.invI, c.rollAxis[0], c.rollAxis[1], c.rollAxis[2], iax, iay, iaz);
+                    MulInvI(B.invI, c.rollAxis[0], c.rollAxis[1], c.rollAxis[2], ibx, iby, ibz);
+                    const float kr = c.rollAxis[0] * (iax + ibx) + c.rollAxis[1] * (iay + iby)
+                                   + c.rollAxis[2] * (iaz + ibz);
+                    c.massRoll = (kr > 0.0f) ? 1.0f / kr : 0.0f;
+                    // 転がり半径 = 接触点までの腕の長い側。Crr N R が転がり抵抗トルクの
+                    // 教科書的な形なので、無次元の Crr を長さに変換するのに要る
+                    const float ra = std::sqrt(c.raC[0] * c.raC[0] + c.raC[1] * c.raC[1]
+                                               + c.raC[2] * c.raC[2]);
+                    const float rbl = std::sqrt(c.rbC[0] * c.rbC[0] + c.rbC[1] * c.rbC[1]
+                                                + c.rbC[2] * c.rbC[2]);
+                    c.rollRadius = (ra > rbl) ? ra : rbl;
+                } else {
+                    c.muRoll = 0.0f; // 回っていない = 転がり抵抗は定義できない
+                }
             }
             // 反発のバイアスは**生成時の接近速度から 1 回だけ**決める。反復ごとに測り直すと
             // 自分が入れたインパルスで接近速度が消えていくので、反発が二重に効いたり
@@ -1578,7 +1663,12 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                 }
                 // ---- 3. 重心でのクーロン摩擦 (固定接線 2 方向、蓄積してクランプ) ----
                 if (totalJn > 0.0f) {
+                    // ★静止/動摩擦の分離 (M59f2)。まず μs の枠で止められるかを見て、
+                    //   はみ出したら「滑っている」と判定して枠を μd へ落とす。
+                    //   μs == μd (材料未割当) なら 2 つの枠が同じ値なので、
+                    //   下の式は従来の 1 本のクランプにビットまで畳まれる
                     const float maxF = c.mu * totalJn;
+                    const float maxS = c.muS * totalJn;
                     for (int ti = 0; ti < 2; ++ti) {
                         const float* d = (ti == 0) ? c.t1 : c.t2;
                         const float mass = (ti == 0) ? c.massT1 : c.massT2;
@@ -1592,10 +1682,15 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                         float dl = -vt * mass;
                         const float old = acc;
                         float now = old + dl;
-                        if (now > maxF) {
-                            now = maxF;
-                        } else if (now < -maxF) {
-                            now = -maxF;
+                        // 枠は既定で μs。超えたら滑走に転じたので μd の枠を採る
+                        float lim = maxS;
+                        if (now > lim || now < -lim) {
+                            lim = maxF;
+                        }
+                        if (now > lim) {
+                            now = lim;
+                        } else if (now < -lim) {
+                            now = -lim;
                         }
                         dl = now - old;
                         acc = now;
@@ -1604,6 +1699,40 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                                          d[2] * dl, 1.0f);
                             ApplyImpulse(B, c.rbC[0], c.rbC[1], c.rbC[2], d[0] * dl, d[1] * dl,
                                          d[2] * dl, -1.0f);
+                        }
+                    }
+                    // ---- 4. 転がり抵抗 (M59f2): 固定軸まわりの**純粋な角インパルス** ----
+                    // 上限は Crr · ΣJn · R (教科書の τ = Crr N R を力積の形にしたもの)。
+                    // 並進には一切効かない = 転がる球が「押し戻される」ことはなく、
+                    // 回転だけが枯れて止まる。M59h のスリープが要求する「本当に静止する」を
+                    // 作るのがこの段の役目
+                    if (c.muRoll > 0.0f && c.massRoll > 0.0f) {
+                        const float wn = (A.wx - B.wx) * c.rollAxis[0]
+                                       + (A.wy - B.wy) * c.rollAxis[1]
+                                       + (A.wz - B.wz) * c.rollAxis[2];
+                        float dl = -wn * c.massRoll;
+                        const float old = c.lambdaRoll;
+                        float now = old + dl;
+                        const float lim = c.muRoll * totalJn * c.rollRadius;
+                        if (now > lim) {
+                            now = lim;
+                        } else if (now < -lim) {
+                            now = -lim;
+                        }
+                        dl = now - old;
+                        c.lambdaRoll = now;
+                        if (dl != 0.0f) {
+                            float ax, ay, az;
+                            MulInvI(A.invI, c.rollAxis[0] * dl, c.rollAxis[1] * dl,
+                                    c.rollAxis[2] * dl, ax, ay, az);
+                            A.wx += ax;
+                            A.wy += ay;
+                            A.wz += az;
+                            MulInvI(B.invI, c.rollAxis[0] * dl, c.rollAxis[1] * dl,
+                                    c.rollAxis[2] * dl, ax, ay, az);
+                            B.wx -= ax;
+                            B.wy -= ay;
+                            B.wz -= az;
                         }
                     }
                 }
@@ -1778,6 +1907,24 @@ float SelectFriction(const ColliderComponent& col, const PhysMat* mat)
         return col.friction;
     }
     return mat ? mat->dynamicFriction : col.friction;
+}
+
+float SelectStaticFriction(const ColliderComponent& col, const PhysMat* mat)
+{
+    if ((col.materialOverrideBits & kPhysMatOverrideFriction) != 0u) {
+        return col.friction;
+    }
+    // ★材料なしは **col.friction** — SelectFriction と同じ式・同じ入力なので μs と μd が
+    //   ビットまで一致し、ソルバの静止/動の分岐が従来の 1 本のクランプに畳まれる
+    return mat ? mat->staticFriction : col.friction;
+}
+
+float SelectRollingResistance(const ColliderComponent& col, const PhysMat* mat)
+{
+    if ((col.materialOverrideBits & kPhysMatOverrideRolling) != 0u) {
+        return 0.0f;
+    }
+    return mat ? mat->rollingResistance : 0.0f;
 }
 
 float SelectRestitution(const ColliderComponent* col, const RigidbodyComponent* rb,

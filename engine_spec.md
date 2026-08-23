@@ -854,6 +854,21 @@ the end of the component registration order, so existing scenes are untouched.
 | **No righting moment in v1** | The height-ratio approximation cannot see the horizontal shift of the centre of buoyancy, so a tilted raft keeps its tilt forever (only the angular water drag acts on it). The force is nonetheless applied *at the buoyancy centre* via `ApplyImpulse`, so the torque is provably zero today and starts working by itself once M59f1 adds a centre-of-mass offset. A true righting moment needs per-face pressure integration — that is M59c |
 | Buoyancy direction | Always **+Y**, magnitude scaled by `|gravity|`. The water surface is an axis-aligned Y plane in M59, so tilting the gravity vector while keeping a horizontal surface has no coherent reading |
 
+#### Static friction and rolling resistance (M59f2)
+
+The solver finally consumes the two `.physmat` fields that have been in the schema since M59a1.
+Both are reachable **only through a material**, which is what keeps material-less scenes bit-identical.
+
+| Concept | Decision |
+|---|---|
+| Fallback is the identity | Without a material, `SelectStaticFriction` returns the same `Collider.friction` that `SelectFriction` returns. The pair coefficients `μs = sqrt(μsa·μsb)` and `μd = sqrt(μda·μdb)` are then the same expression over the same inputs, so they agree bit for bit and the new branch folds back into the single clamp the solver has always had |
+| One override bit for two coefficients | `kPhysMatOverrideFriction` covers `μs` and `μd` together. The collider has one `friction` field to fall back to, so restoring only half of the pair has no meaning |
+| Hysteresis | The tangential bound starts at `μs·ΣJn`; if the accumulated impulse would exceed it the contact is deemed to be sliding and the bound drops to `μd·ΣJn`. Measured on a 26.6° slope (`tanθ = 0.5`) with `μs = 0.9, μd = 0.2`: a block with only the dynamic coefficient slides 1.19 m in one second, the same block with the material **holds at 1.8 mm**, and a push of 1 m/s makes it keep sliding for 2.09 m |
+| Rolling resistance combines with `max`, not `sqrt` | Rolling resistance comes from hysteresis in *either* surface, so a rubber ball on a plain floor should still slow down. `sqrt(μa·μb)` would zero it the moment one side is unauthored, which is the wrong default for the one property most likely to be set on a single body |
+| Rolling axis fixed at generation | Like the friction tangents, the axis is the relative angular velocity direction captured once when the manifold is built. An accumulated impulse cannot chase a rotating axis. Contacts that are not rotating have no axis and are skipped |
+| Pure angular impulse | The bound is `Crr · ΣJn · R`, with `R` the longer of the two contact arms, matching the textbook `τ = Crr·N·R`. Nothing is added to the linear velocity: rolling resistance drains `ω`, the resulting slip is picked up by friction, and the body decelerates through the contact rather than by a fictitious drag. Measured: a ball launched at 3 m/s with `Crr = 0.05` reaches **exactly zero** linear and angular velocity, where the same ball with `Crr = 0` still carries 2.14 m/s. This is the mechanism M59h's sleep needs — without it a rolling body never actually stops |
+| An override bit for rolling | `kPhysMatOverrideRolling` means "use 0", since there is no legacy field to return to. It lets a shared material stay attached while one collider opts out |
+
 #### Gyroscopic term and centre of mass (M59f1)
 
 Two opt-in fields on `Rigidbody`. With their defaults (`gyroscopic = false`, `centerOfMass =

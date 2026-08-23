@@ -66,6 +66,12 @@ public:
 // 結合則は従来のまま: μ = sqrt(μa·μb) / e = min(ea, eb)。材料付き静的コライダーが
 // e を主張できるのは新規能力 (従来は構造的に 0 — engine_spec 10.3)
 float SelectFriction(const ColliderComponent& col, const PhysMat* mat);
+// M59f2: 静止摩擦係数 μs。**材料が無ければ μd と同じ値**を返す — これが
+// 「材料を割り当てていないシーンはビット同一」の根拠 (μs == μd なら静止/動の分岐が
+// 従来の 1 本のクランプに畳まれる)。override ビットは μs/μd をまとめて覆う
+float SelectStaticFriction(const ColliderComponent& col, const PhysMat* mat);
+// M59f2: 転がり抵抗係数 (無次元)。既存フィールドが無いので材料が無ければ 0 = 従来値
+float SelectRollingResistance(const ColliderComponent& col, const PhysMat* mat);
 float SelectRestitution(const ColliderComponent* col, const RigidbodyComponent* rb,
                         const PhysMat* mat);
 

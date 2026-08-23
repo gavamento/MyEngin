@@ -148,6 +148,10 @@ struct ParticleEmitterComponent {
 // 既存ビットの再割当は不可
 constexpr uint32_t kPhysMatOverrideFriction = 1u << 0;    // 摩擦は Collider.friction を使う
 constexpr uint32_t kPhysMatOverrideRestitution = 1u << 1; // 反発は Rigidbody.restitution (静的は 0)
+// M59f2: 転がり抵抗だけ材料から切り離す。★摩擦のビットは **μs と μd の両方**を覆う —
+// Collider 側の格納庫が friction 1 本しかない以上、片方だけ既存フィールドへ戻す意味が無い。
+// 転がり抵抗には既存フィールドが無いので、このビットは「0 = 従来値を使う」を意味する
+constexpr uint32_t kPhysMatOverrideRolling = 1u << 2;
 
 // 衝突形状 (M7 トリガー / M20 ソリッド / M28a 形状拡張)。判定は Physics/Shapes.cpp に統合。
 // box はエンティティ回転を考慮する OBB (M28a)。無回転なら M20 の AABB 判定とビット同一。

@@ -3368,6 +3368,136 @@ bool RunPhysicsSelfTest()
         }
     }
 
+    // ================= M59f2: 静止/動摩擦の分離 + 転がり抵抗 =================
+    // どちらも **.physmat 経由でしか有効にならない**。材料未割当のコライダーは
+    // μs = μd = Collider.friction / Crr = 0 になり、新しい分岐が従来の 1 本の
+    // クランプへ畳まれる (実測でも既存 32 行の [phys] ログが 1 ビットも動かなかった)。
+    {
+        PhysMatLibrary* prevFricLib = physmat::Library();
+        PhysMatLibrary fricLib;
+
+        // -- 純関数の優先順位 (材料 → 既存フィールド → override ビット) --
+        {
+            ColliderComponent col;
+            col.friction = 0.3f;
+            PhysMat m;
+            m.staticFriction = 0.9f;
+            m.dynamicFriction = 0.2f;
+            m.rollingResistance = 0.05f;
+            check(SelectStaticFriction(col, &m) == 0.9f,
+                  "physmat: static friction comes from the material");
+            check(SelectRollingResistance(col, &m) == 0.05f,
+                  "physmat: rolling resistance comes from the material");
+            // ★材料が無ければ μs は **μd と同じ既存フィールド** — これが未割当シーンの
+            //   ビット同一の根拠 (μs == μd なら静止/動の分岐が消える)
+            check(SelectStaticFriction(col, nullptr) == SelectFriction(col, nullptr),
+                  "physmat: without a material the static and dynamic coefficients coincide");
+            check(SelectRollingResistance(col, nullptr) == 0.0f,
+                  "physmat: without a material there is no rolling resistance");
+            col.materialOverrideBits = kPhysMatOverrideFriction;
+            check(SelectStaticFriction(col, &m) == 0.3f && SelectFriction(col, &m) == 0.3f,
+                  "physmat: the friction override bit covers both coefficients");
+            col.materialOverrideBits = kPhysMatOverrideRolling;
+            check(SelectRollingResistance(col, &m) == 0.0f,
+                  "physmat: the rolling override bit turns it off without dropping the material");
+            check(SelectStaticFriction(col, &m) == 0.9f,
+                  "physmat: and leaves the friction coefficients alone");
+        }
+
+        physmat::Install(&fricLib);
+
+        // -- 斜面のヒステリシス: μd < tanθ < μs --
+        // θ = 26.565 度 (tanθ = 0.5)、材料は μs=0.9 / μd=0.2。
+        // **静止からは動かないが、いちど滑り出すと止まらない**帯に入る
+        {
+            PhysMat grip;
+            grip.staticFriction = 0.9f;
+            grip.dynamicFriction = 0.2f;
+            const uint64_t hGrip = fricLib.Register(L"x\\t_grip.physmat.json", grip);
+            // Z 軸まわり +26.565 度。斜面法線は (-0.44721, 0.89443, 0)、下りは -X
+            const DirectX::XMFLOAT4 q = { 0.0f, 0.0f, 0.22975292f, 0.97325428f };
+            auto slide = [&](bool withMaterial, float pushSpeed) {
+                Scene s;
+                GameObject slope =
+                    MakeStaticBoxRot(s, "Slope", 0, 0, 0, 5.0f, 0.5f, 5.0f, q);
+                GameObject blk = MakeBox(s, "Blk", -0.33987f, 0.67976f, 0, 0.25f, 0.25f, 0.25f);
+                blk.GetComponent<LocalTransform>()->rotation = q;
+                if (withMaterial) {
+                    slope.GetComponent<ColliderComponent>()->physMaterial = { hGrip };
+                    blk.GetComponent<ColliderComponent>()->physMaterial = { hGrip };
+                } else {
+                    // 対照区: **動摩擦だけ**を材料と同じ 0.2 にした従来経路
+                    slope.GetComponent<ColliderComponent>()->friction = 0.2f;
+                    blk.GetComponent<ColliderComponent>()->friction = 0.2f;
+                }
+                s.GetWorld().ApplyStructuralChanges();
+                auto* rb = blk.GetComponent<RigidbodyComponent>();
+                rb->freezeRotation = true; // 転倒を封じて「滑ったか」だけを見る
+                rb->velocity = { -0.89443f * pushSpeed, -0.44721f * pushSpeed, 0.0f };
+                const auto* lt = blk.GetComponent<LocalTransform>();
+                for (int i = 0; i < 60; ++i) {
+                    phys.Update(s.GetWorld(), kDt);
+                }
+                return lt->position.x - (-0.33987f); // 下り (-X) なら負
+            };
+            const float legacy = slide(false, 0.0f);
+            const float held = slide(true, 0.0f);
+            const float pushed = slide(true, 1.0f);
+            MYE_LOG_INFO("  [phys] slope dx after 60 ticks: legacy(mu=0.2) %.4f / "
+                         "material at rest %.4f / material pushed %.4f",
+                         legacy, held, pushed);
+            check(legacy < -0.3f, "friction: with only a dynamic coefficient the block slides");
+            check(std::fabs(held) < 0.02f,
+                  "friction: the static coefficient holds the same block at rest (mu_d < tan < mu_s)");
+            check(pushed < -0.5f, "friction: but once it is moving it keeps sliding (hysteresis)");
+        }
+
+        // -- 転がり抵抗: 球が完全に止まる (M59h のスリープが要求する前提) --
+        // 転がり抵抗は**純粋な角インパルス**なので、まず ω が枯れ、その滑りを摩擦が
+        // 受けて v も落ちる。角減衰は 0 にして「非物理の定率減衰」を排除してある
+        {
+            auto roll = [&](float crr, float& outSpeed, float& outSpin) {
+                Scene s;
+                MakeGround(s, "G", 0, -0.5f, 0, 30.0f, 0.5f, 5.0f);
+                GameObject ball = MakeSphereBody(s, "Roller", -10.0f, 0.5f, 0, 0.5f);
+                if (crr > 0.0f) {
+                    PhysMat m;
+                    m.rollingResistance = crr;
+                    char name[64];
+                    std::snprintf(name, sizeof(name), "t_roll_%d", static_cast<int>(crr * 1000.0f));
+                    wchar_t wname[64];
+                    for (int i = 0; i < 64; ++i) {
+                        wname[i] = static_cast<wchar_t>(name[i]);
+                        if (name[i] == 0) {
+                            break;
+                        }
+                    }
+                    ball.GetComponent<ColliderComponent>()->physMaterial = { fricLib.Register(
+                        wname, m) };
+                }
+                s.GetWorld().ApplyStructuralChanges();
+                auto* rb = ball.GetComponent<RigidbodyComponent>();
+                rb->angularDamping = 0.0f;
+                rb->velocity = { 3.0f, 0.0f, 0.0f };
+                for (int i = 0; i < 900; ++i) {
+                    phys.Update(s.GetWorld(), kDt);
+                }
+                outSpeed = std::fabs(rb->velocity.x);
+                outSpin = std::fabs(rb->angularVelocity.z);
+            };
+            float v0 = 0, w0 = 0, v1 = 0, w1 = 0;
+            roll(0.0f, v0, w0);
+            roll(0.05f, v1, w1);
+            MYE_LOG_INFO("  [phys] rolling @900: Crr=0 v %.4f w %.4f / Crr=0.05 v %.4f w %.4f",
+                         v0, w0, v1, w1);
+            check(v0 > 2.0f, "rolling: without resistance a rolling ball keeps its speed");
+            check(v1 < 0.05f && w1 < 0.05f,
+                  "rolling: resistance brings it to a complete stop (both v and omega)");
+        }
+
+        physmat::Install(prevFricLib);
+    }
+
     if (failCount == 0) {
         MYE_LOG_INFO("==== Physics self test: ALL PASS ====");
         return true;
