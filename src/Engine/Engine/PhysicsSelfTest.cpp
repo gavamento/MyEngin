@@ -3888,6 +3888,195 @@ bool RunPhysicsSelfTest()
         terraincol::Install(prevTerrLib);
     }
 
+    // ==== CCD (M59j) ====
+    // 掃引は「速いあいだだけ」効く保険。試験の柱は 3 本 —
+    //   (a) CCD 無しでは本当に抜けること (先に断言しないと機能が死んでも試験が緑になる)
+    //   (b) CCD 有りで止まること
+    //   (c) 起動しない条件では**ビットまで**従来と同じであること
+
+    // ---- (a)(b) 薄壁 + 高速弾 ----
+    {
+        // 壁は厚さ 0.1m (x=8)、弾は半径 0.1m の球を 200 m/s = 1 tick に 3.33m (壁厚の 33 倍)
+        auto build = [](Scene& s, bool ccd) {
+            MakeGround(s, "Wall", 8.0f, 0, 0, 0.05f, 2.0f, 2.0f);
+            GameObject b = MakeSphereBody(s, "Bullet", 0, 0, 0, 0.1f);
+            s.GetWorld().ApplyStructuralChanges();
+            auto* rb = b.GetComponent<RigidbodyComponent>();
+            rb->velocity = { 200.0f, 0.0f, 0.0f };
+            rb->gravityScale = 0.0f; // 重力を落として並進だけの問題にする
+            rb->ccd = ccd;
+            return b;
+        };
+        {
+            Scene s;
+            GameObject b = build(s, false);
+            for (int i = 0; i < 6; ++i) {
+                phys.Update(s.GetWorld(), kDt);
+            }
+            const auto* lt = b.GetComponent<LocalTransform>();
+            MYE_LOG_INFO("  [phys] ccd off: bullet x = %.3f (wall at 8.0)", lt->position.x);
+            check(lt->position.x > 8.5f,
+                  "ccd: without CCD a 200 m/s bullet tunnels through a 0.1 m wall");
+        }
+        {
+            Scene s;
+            GameObject b = build(s, true);
+            std::vector<SolidContact> contacts;
+            bool sawContact = false;
+            for (int i = 0; i < 6; ++i) {
+                phys.Update(s.GetWorld(), kDt, &contacts);
+                if (!contacts.empty()) {
+                    sawContact = true;
+                }
+            }
+            const auto* lt = b.GetComponent<LocalTransform>();
+            const auto* rb = b.GetComponent<RigidbodyComponent>();
+            MYE_LOG_INFO("  [phys] ccd on: bullet x = %.3f vx = %.3f", lt->position.x,
+                         rb->velocity.x);
+            check(lt->position.x < 8.0f, "ccd: with CCD the same bullet stops before the wall");
+            check(lt->position.x > 7.5f, "ccd: and it stops AT the wall, not short of it");
+            check(std::fabs(rb->velocity.x) < 1.0f,
+                  "ccd: the one-shot normal impulse kills the approach speed");
+            // ★反発で跳ね返る弾は貫通を作らないまま離れていく — CCD が接触を報告しないと
+            //   OnCollisionEnter が一度も飛ばない
+            check(sawContact, "ccd: the CCD hit is reported as a solid contact");
+        }
+    }
+
+    // ---- (c-1) 起動しきい値: 遅いあいだは軌跡がビット同一 ----
+    // CCD を on にしただけで挙動が動いたら「保険のつもりが物理を変えた」ことになる。
+    // 落下する箱の 1 tick の移動量は外接球半径の半分に遠く届かないので掃引は 1 度も起動しない
+    {
+        auto build = [](Scene& s, bool ccd) {
+            MakeGround(s, "G", 0, -0.5f, 0, 5.0f, 0.5f, 5.0f);
+            GameObject b = MakeBox(s, "B", 0.2f, 5.0f, 0.1f, 0.5f, 0.5f, 0.5f, 0.3f);
+            s.GetWorld().ApplyStructuralChanges();
+            b.GetComponent<RigidbodyComponent>()->ccd = ccd;
+            return b;
+        };
+        Scene sa, sb;
+        GameObject ba = build(sa, false);
+        GameObject bb = build(sb, true);
+        bool same = true;
+        for (int i = 0; i < 240 && same; ++i) {
+            phys.Update(sa.GetWorld(), kDt);
+            phys.Update(sb.GetWorld(), kDt);
+            const auto* la = ba.GetComponent<LocalTransform>();
+            const auto* lb = bb.GetComponent<LocalTransform>();
+            const auto* ra = ba.GetComponent<RigidbodyComponent>();
+            const auto* rbb = bb.GetComponent<RigidbodyComponent>();
+            if (std::memcmp(&la->position, &lb->position, sizeof(la->position)) != 0
+                || std::memcmp(&ra->velocity, &rbb->velocity, sizeof(ra->velocity)) != 0
+                || std::memcmp(&ra->angularVelocity, &rbb->angularVelocity,
+                               sizeof(ra->angularVelocity)) != 0) {
+                same = false;
+                MYE_LOG_ERROR("  ccd gate diverged at tick %d", i);
+            }
+        }
+        check(same, "ccd: a slow body with CCD on keeps a bit-identical trajectory");
+    }
+
+    // ---- (c-2) 進路に何も無ければ 1 ビットも削らない ----
+    {
+        auto build = [](Scene& s, bool ccd) {
+            GameObject b = MakeSphereBody(s, "Free", 0, 0, 0, 0.1f);
+            s.GetWorld().ApplyStructuralChanges();
+            auto* rb = b.GetComponent<RigidbodyComponent>();
+            rb->velocity = { 200.0f, 0.0f, 0.0f };
+            rb->gravityScale = 0.0f;
+            rb->ccd = ccd;
+            return b;
+        };
+        Scene sa, sb;
+        GameObject ba = build(sa, false);
+        GameObject bb = build(sb, true);
+        for (int i = 0; i < 30; ++i) {
+            phys.Update(sa.GetWorld(), kDt);
+            phys.Update(sb.GetWorld(), kDt);
+        }
+        const auto* la = ba.GetComponent<LocalTransform>();
+        const auto* lb = bb.GetComponent<LocalTransform>();
+        check(std::memcmp(&la->position, &lb->position, sizeof(la->position)) == 0,
+              "ccd: a bullet with a clear path lands on the exact same bits as without CCD");
+    }
+
+    // ---- (c-3) 接している面に沿って滑るボディは凍らない ----
+    // ★法線方向の進みを見る判定を外すと、面から僅かに浮いて沈み込んでいるだけのボディが
+    //   TOI≈0 を拾って接線方向の移動量ごと削られる。実装で最初に踏む罠なので回帰に固定する
+    {
+        Scene s;
+        GameObject g = MakeGround(s, "Floor", 0, -0.5f, 0, 200.0f, 0.5f, 200.0f);
+        GameObject b = MakeSphereBody(s, "Slider", 0, 0.1f, 0, 0.1f);
+        s.GetWorld().ApplyStructuralChanges();
+        g.GetComponent<ColliderComponent>()->friction = 0.0f;
+        b.GetComponent<ColliderComponent>()->friction = 0.0f;
+        auto* rb = b.GetComponent<RigidbodyComponent>();
+        rb->ccd = true;
+        rb->velocity = { 100.0f, 0.0f, 0.0f };
+        for (int i = 0; i < 60; ++i) {
+            phys.Update(s.GetWorld(), kDt);
+        }
+        const auto* lt = b.GetComponent<LocalTransform>();
+        MYE_LOG_INFO("  [phys] ccd slide: x = %.2f (free flight would be 100.0)",
+                     lt->position.x);
+        check(lt->position.x > 90.0f,
+              "ccd: a body sliding along a face it already touches is not frozen");
+    }
+
+    // ---- (c-4) 箱 (外接球で保守的に掃引) も抜けない ----
+    {
+        Scene s;
+        MakeGround(s, "Wall2", 8.0f, 0, 0, 0.05f, 3.0f, 3.0f);
+        GameObject b = MakeBox(s, "BoxBullet", 0, 0, 0, 0.2f, 0.2f, 0.2f);
+        s.GetWorld().ApplyStructuralChanges();
+        auto* rb = b.GetComponent<RigidbodyComponent>();
+        rb->velocity = { 200.0f, 0.0f, 0.0f };
+        rb->gravityScale = 0.0f;
+        rb->ccd = true;
+        for (int i = 0; i < 6; ++i) {
+            phys.Update(s.GetWorld(), kDt);
+        }
+        const auto* lt = b.GetComponent<LocalTransform>();
+        MYE_LOG_INFO("  [phys] ccd box: x = %.3f (wall at 8.0)", lt->position.x);
+        // 外接球 (半径 0.346) で掃うので真の接触より手前で止まる = 「貫通しない」側の誤差
+        check(lt->position.x < 8.0f, "ccd: a fast box is stopped by the thin wall too");
+    }
+
+    // ---- (c-5) 決定論: CCD 混在シーンの並走ハッシュ一致 ----
+    {
+        auto build = [](Scene& s) {
+            MakeGround(s, "G", 0, -0.5f, 0, 20.0f, 0.5f, 20.0f);
+            MakeGround(s, "Wall", 8.0f, 1.0f, 0, 0.05f, 2.0f, 2.0f);
+            MakeBox(s, "Plain", -1.0f, 3.0f, 0, 0.5f, 0.5f, 0.5f, 0.2f); // CCD 無し
+            GameObject bullet = MakeSphereBody(s, "Bullet", 0, 1.0f, 0, 0.1f);
+            GameObject slow = MakeSphereBody(s, "Slow", 2.0f, 4.0f, 1.0f, 0.3f);
+            s.GetWorld().ApplyStructuralChanges();
+            auto* rb = bullet.GetComponent<RigidbodyComponent>();
+            rb->velocity = { 150.0f, 0.0f, 0.0f };
+            rb->ccd = true;
+            slow.GetComponent<RigidbodyComponent>()->ccd = true; // 起動しない側も混ぜる
+        };
+        Scene sa, sb;
+        build(sa);
+        build(sb);
+        bool det = true;
+        uint64_t finalHash = 0;
+        for (int i = 0; i < 240 && det; ++i) {
+            phys.Update(sa.GetWorld(), kDt);
+            phys.Update(sb.GetWorld(), kDt);
+            const uint64_t ha = HashWorld(sa.GetWorld(), nullptr);
+            const uint64_t hb = HashWorld(sb.GetWorld(), nullptr);
+            if (ha != hb) {
+                det = false;
+                MYE_LOG_ERROR("  ccd determinism diverged at tick %d", i);
+            }
+            finalHash = ha;
+        }
+        check(det, "ccd: a mixed CCD scene hashes identically across two runs for 240 ticks");
+        MYE_LOG_INFO("  [phys] ccd scene hash @240 = %016llX",
+                     static_cast<unsigned long long>(finalHash));
+    }
+
     if (failCount == 0) {
         MYE_LOG_INFO("==== Physics self test: ALL PASS ====");
         return true;

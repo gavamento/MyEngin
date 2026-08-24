@@ -51,6 +51,20 @@ constexpr float kBroadphaseMargin = 0.1f;
 constexpr float kExplicitMaxDeltaV = 100.0f;
 // 面サンプリング (M59c) のトルク側の同じ防波堤 [rad/s]
 constexpr float kExplicitMaxDeltaOmega = 100.0f;
+// ---- CCD (M59j) ----
+// 掃引を起動するしきい値: 1 サブステップの移動量が「外接球半径 × これ」を超えたら掃引する。
+// ★このゲートは速度のためだけでなく**正しさのため**にある — 低速でも掃引してしまうと、
+//   壁際で静止した CCD ボディが毎サブステップ「触れる手前」で止められ、貫通が生まれず
+//   接触が作られず、通常ソルバに引き継げないまま壁の前で浮き続ける。速いあいだだけ
+//   CCD が持ち、止まったら離散ソルバへ返す、という受け渡しがこの値で決まっている
+constexpr float kCcdMotionRatio = 0.5f;
+// 保守的前進の固定反復数 (SphereCastWorld と同じ流儀。ヒット後も回数は消化する = 決定論)
+constexpr int kCcdAdvanceSteps = 32;
+// 保守的前進の停止距離 [m] (SphereCastWorld と同値)
+constexpr float kCcdTouchEps = 1e-4f;
+// TOI で止めるときに残す隙間 [m]。0 にすると次サブステップの掃引が距離 0 から始まり、
+// 「既に触れている」判定に落ちて掃引が無効化される
+constexpr float kCcdSkin = 0.001f;
 
 // ---- scalar クォータニオン演算 (親子合成用。XMVECTOR 禁止 = 決定論契約) ----
 
@@ -169,6 +183,11 @@ struct Body {
     bool sleeping = false;
     float awakeInvMass = 0.0f;
     bool awakeFreezeRot = true;
+    // M59j: CCD が「このサブステップの移動量」を差し替えたか。★スケール係数ではなく
+    // **移動量そのもの**を持つ — CCD は止めると同時に速度へインパルスを入れるので、
+    // 位置積分の時点の b.v* は掃引に使った速度と別物になっている
+    bool ccdClamped = false;
+    float ccdDx = 0, ccdDy = 0, ccdDz = 0;
     float comLx = 0, comLy = 0, comLz = 0;
     float comx = 0, comy = 0, comz = 0;
     float restitution = 0;
@@ -334,6 +353,92 @@ void MergeSubstepContacts(const std::vector<SolidContact>& sub, std::vector<Soli
         merged.push_back(sub[j++]);
     }
     acc.swap(merged);
+}
+
+// ---- CCD (M59j) ----
+
+// 移動体を掃引するときの**外接球半径**。box / capsule では真の掃引形状より大きいので
+// TOI は手前に出る = 「貫通しない」側へ倒れている (保守的で安全な向きの誤差)。
+// 手前で止まったぶんは、速度が落ちて起動しきい値を外れた次サブステップ以降に
+// 通常の離散ソルバが詰める
+float CcdBoundingRadius(const ShapePose& p)
+{
+    if (p.shape == 0) {
+        return p.radius;
+    }
+    if (p.shape == 1) {
+        return std::sqrt(p.hx * p.hx + p.hy * p.hy + p.hz * p.hz);
+    }
+    if (p.shape == 2) {
+        return p.halfSeg + p.radius;
+    }
+    return 0.0f; // mesh / terrain は動的ボディになれない (収集時に col が外れている)
+}
+
+// 外接球を (ox,oy,oz) から方向 (dx,dy,dz) へ maxDist まで掃引し、target に最初に触れる
+// 距離を返す。相手が sphere/capsule なら「半径を radius だけ膨らませた形状へのレイ」の
+// 解析解、box/mesh/terrain なら DistanceToShape の保守的前進 —
+// SphereCastWorld (PhysicsQueries.cpp) と同じ 2 本立て。
+// ★SphereCastWorld をそのまま呼べない: あちらは WorldMatrixComponent 基準で、
+//   TransformSystem がまだ走っていないこの時点では **1 tick 古い**。おまけにトリガーも
+//   拾うしスリープ/kinematic の区別も持たない。掃引の材料はソルバが握っている
+//   bodies[] の pose でなければならない
+bool CcdSweepTarget(const ShapePose& target, float ox, float oy, float oz, float dx, float dy,
+                    float dz, float radius, float maxDist, float& outT, float& onx, float& ony,
+                    float& onz, float& opx, float& opy, float& opz)
+{
+    // ★既に触れている相手は掃引しない。離散ソルバが解いている最中のペアで TOI=0 を
+    //   拾うと、壁沿いに高速で滑っているボディがその場に凍りつく
+    if (shapes::DistanceToShape(target, ox, oy, oz) - radius <= kCcdTouchEps) {
+        return false;
+    }
+    if (target.shape == 0 || target.shape == 2) {
+        ShapePose inflated = target;
+        inflated.radius += radius;
+        float t, nx, ny, nz;
+        if (!shapes::Raycast(inflated, ox, oy, oz, dx, dy, dz, maxDist, t, nx, ny, nz)) {
+            return false;
+        }
+        outT = t;
+        onx = nx; ony = ny; onz = nz;
+        // 掃引球の中心位置から元形状の表面点を復元 (SphereCastWorld と同じ復元式)
+        opx = ox + dx * t - nx * radius;
+        opy = oy + dy * t - ny * radius;
+        opz = oz + dz * t - nz * radius;
+        return true;
+    }
+    // box / mesh / terrain: 保守的前進 (固定回数、ヒット後も回数は消化する = 決定論)
+    float ct = 0.0f;
+    bool found = false;
+    float foundT = 0.0f;
+    for (int step = 0; step < kCcdAdvanceSteps; ++step) {
+        if (found || ct > maxDist) {
+            continue;
+        }
+        const float px = ox + dx * ct, py = oy + dy * ct, pz = oz + dz * ct;
+        const float d = shapes::DistanceToShape(target, px, py, pz) - radius;
+        if (d < kCcdTouchEps) {
+            found = true;
+            foundT = ct;
+        } else {
+            ct += d;
+        }
+    }
+    if (!found || foundT > maxDist) {
+        return false;
+    }
+    const float px = ox + dx * foundT, py = oy + dy * foundT, pz = oz + dz * foundT;
+    float qx, qy, qz;
+    shapes::ClosestPointOnShape(target, px, py, pz, qx, qy, qz);
+    const float vx = px - qx, vy = py - qy, vz = pz - qz;
+    const float vlen = std::sqrt(vx * vx + vy * vy + vz * vz);
+    if (vlen < 1e-6f) {
+        return false; // 縮退 (中心が形状内)。上の「既に触れている」判定で普通は届かない
+    }
+    outT = foundT;
+    onx = vx / vlen; ony = vy / vlen; onz = vz / vlen;
+    opx = qx; opy = qy; opz = qz;
+    return true;
 }
 
 // ---- キャラクターコントローラ (M29b) ----
@@ -639,6 +744,17 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
 
     // ---- 物理環境の解決 (M59b)。不在 (= 既存シーンの全部) なら以降は全て従来経路 ----
     const PhysicsEnvironmentComponent* env = ResolvePhysicsEnvironment(world);
+
+    // ---- CCD の有無 (M59j) ----
+    // 1 個も居なければ掃引パスごと通らない = 既存シーンは fp 演算が 1 回も増えない。
+    // Rigidbody.ccd は tick 中に変わらないので、サブステップの外で 1 回だけ見ればよい
+    bool anyCcd = false;
+    for (const Body& b : bodies) {
+        if (b.rb && b.rb->ccd && b.solid) {
+            anyCcd = true;
+            break;
+        }
+    }
 
     // ---- サブステップ (M59g2) ----
     // 1 tick を substeps 回に割って「積分 → 制約生成 → 解決 → 位置補正 → 前進」を繰り返す。
@@ -1861,6 +1977,150 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             }
         }
 
+        // ---- CCD (M59j): 位置積分の**直前**に掃引して、最初に触れる位置で止める ----
+        // 置き場は「位置補正の後・位置積分の前」= このサブステップの最終ポーズが確定し、
+        // まだ誰も前進していない唯一の地点。
+        // ★位置積分ループの中で 1 体ずつやってはいけない — 相手のポーズが「もう積分した/
+        //   まだの」で混ざり、ボディの走査順が結果に載る。掃引を全部先に済ませる。
+        // ★相手は**不動として扱う** (掃引でも応答でも)。掃引が相手を止めて見ている以上、
+        //   応答だけ 2 体拘束にしても筋が通らない。運動量保存はこの 1 発では成り立たないが、
+        //   止まった次のサブステップからは通常の離散ソルバが摩擦も反発も正しく解く。
+        // ★CCD は接触**イベント**も報告する — 反発で跳ね返った弾は貫通を作らないまま
+        //   離れていくので、ここで出さないと OnCollisionEnter が一度も飛ばない
+        std::vector<SolidContact> ccdContacts;
+        if (anyCcd) {
+            for (Body& b : bodies) {
+                b.ccdClamped = false;
+            }
+            const size_t bn = bodies.size();
+            for (size_t i = 0; i < bn; ++i) {
+                Body& A = bodies[i];
+                if (!A.rb || !A.rb->ccd || !A.solid || A.invMass == 0.0f || A.sleeping) {
+                    continue;
+                }
+                const float mvx = A.vx * h, mvy = A.vy * h, mvz = A.vz * h;
+                const float mv = std::sqrt(mvx * mvx + mvy * mvy + mvz * mvz);
+                const float R = CcdBoundingRadius(A.pose);
+                if (R <= 0.0f || mv <= kCcdMotionRatio * R) {
+                    continue; // 起動しきい値 (kCcdMotionRatio のコメントが根拠)
+                }
+                const float invMv = 1.0f / mv;
+                const float dx = mvx * invMv, dy = mvy * invMv, dz = mvz * invMv;
+                // 掃引した外接球が占める領域の AABB。相手 AABB と重ならなければ
+                // 当たり得ないので落としてよい (保守的 = 結果を変えない枝刈り)
+                const float ex = A.pose.px + mvx, ey = A.pose.py + mvy, ez = A.pose.pz + mvz;
+                const float sMinX = ((A.pose.px < ex) ? A.pose.px : ex) - R;
+                const float sMaxX = ((A.pose.px > ex) ? A.pose.px : ex) + R;
+                const float sMinY = ((A.pose.py < ey) ? A.pose.py : ey) - R;
+                const float sMaxY = ((A.pose.py > ey) ? A.pose.py : ey) + R;
+                const float sMinZ = ((A.pose.pz < ez) ? A.pose.pz : ez) - R;
+                const float sMaxZ = ((A.pose.pz > ez) ? A.pose.pz : ez) + R;
+                float bestT = mv;
+                bool hit = false;
+                size_t hitJ = 0;
+                float hnx = 0, hny = 0, hnz = 0, hpx = 0, hpy = 0, hpz = 0;
+                for (size_t j = 0; j < bn; ++j) {
+                    if (j == i) {
+                        continue;
+                    }
+                    const Body& B = bodies[j];
+                    if (!B.solid || !shapes::CanCollide(A.layer, A.mask, B.layer, B.mask)) {
+                        continue;
+                    }
+                    float tminX, tminY, tminZ, tmaxX, tmaxY, tmaxZ;
+                    shapes::ComputeAabb(B.pose, tminX, tminY, tminZ, tmaxX, tmaxY, tmaxZ);
+                    if (tmaxX < sMinX || tminX > sMaxX || tmaxY < sMinY || tminY > sMaxY
+                        || tmaxZ < sMinZ || tminZ > sMaxZ) {
+                        continue;
+                    }
+                    float t, nx, ny, nz, cpx, cpy, cpz;
+                    if (!CcdSweepTarget(B.pose, A.pose.px, A.pose.py, A.pose.pz, dx, dy, dz, R,
+                                        bestT, t, nx, ny, nz, cpx, cpy, cpz)) {
+                        continue;
+                    }
+                    if (t >= bestT) {
+                        continue; // 厳密 < = 同距離は低 index が勝つ (決定論)
+                    }
+                    bestT = t;
+                    hit = true;
+                    hitJ = j;
+                    hnx = nx; hny = ny; hnz = nz;
+                    hpx = cpx; hpy = cpy; hpz = cpz;
+                }
+                if (!hit) {
+                    continue;
+                }
+                const float ccx = A.pose.px + dx * bestT + A.comx;
+                const float ccy = A.pose.py + dy * bestT + A.comy;
+                const float ccz = A.pose.pz + dz * bestT + A.comz;
+                const float rx = hpx - ccx, ry = hpy - ccy, rz = hpz - ccz;
+                float pvx, pvy, pvz;
+                Cross(A.wx, A.wy, A.wz, rx, ry, rz, pvx, pvy, pvz);
+                pvx += A.vx; pvy += A.vy; pvz += A.vz;
+                const float vn = pvx * hnx + pvy * hny + pvz * hnz; // 法線は相手→A 向き
+                // ★掃引が当たっても、**法線方向の進みが小さいなら止めない**。
+                //   これが無いと「接している面に沿って高速で滑るボディが凍る」— 面から
+                //   1mm 浮いて僅かに沈み込んでいるだけで掃引は「触れる」を返すので、
+                //   TOI≈0 で接線方向の移動量ごと削られてしまう。貫通は法線方向の現象
+                //   なので、判定も法線方向の移動量で行うのが筋が通る (しきい値は
+                //   起動ゲートと同じ kCcdMotionRatio * R)
+                if (vn >= 0.0f || -vn * h <= kCcdMotionRatio * R) {
+                    continue; // 離れつつある / かすっているだけ = 離散ソルバの担当
+                }
+                // 1) このサブステップの移動量を TOI まで詰める (skin ぶん手前で止める)
+                float travel = bestT - kCcdSkin;
+                if (travel < 0.0f) {
+                    travel = 0.0f;
+                }
+                A.ccdClamped = true;
+                A.ccdDx = dx * travel;
+                A.ccdDy = dy * travel;
+                A.ccdDz = dz * travel;
+                // 2) 法線インパルスを 1 発。**止めるだけでは足りない** — 速度が残ったままだと
+                //    次サブステップも同じしきい値を超えて同じ TOI で止められ、貫通が
+                //    生まれず接触も作られず、壁の手前で永久に浮く
+                const Body& B = bodies[hitJ];
+                float rest = (A.restitution < B.restitution) ? A.restitution : B.restitution;
+                if (vn > -restitutionVelThreshold) {
+                    rest = 0.0f; // 通常ソルバと同じ micro-bounce 除去の規約
+                }
+                const float km = EffectiveMassInv(A, rx, ry, rz, hnx, hny, hnz);
+                if (km <= 0.0f) {
+                    continue;
+                }
+                const float jn = -(1.0f + rest) * vn / km;
+                ApplyImpulse(A, rx, ry, rz, hnx * jn, hny * jn, hnz * jn, 1.0f);
+                // 3) 接触イベント。法線の向きは SolidContact の規約
+                //    「大 index 側 → 小 index 側」に合わせる (bodies は index 昇順)
+                SolidContact sc;
+                const uint32_t ia = A.entity.index;
+                const uint32_t ib = B.entity.index;
+                if (i < hitJ) {
+                    sc.key = (static_cast<uint64_t>(ia) << 32) | ib;
+                    sc.nx = hnx; sc.ny = hny; sc.nz = hnz;
+                } else {
+                    sc.key = (static_cast<uint64_t>(ib) << 32) | ia;
+                    sc.nx = -hnx; sc.ny = -hny; sc.nz = -hnz;
+                }
+                sc.px = hpx; sc.py = hpy; sc.pz = hpz;
+                sc.impulse = jn;
+                ccdContacts.push_back(sc);
+            }
+            // 出力は key 昇順が契約。CCD ボディ同士の正面衝突では同じペアが両側から
+            // 報告されるので、ここで 1 本に畳む (インパルスは足す = MergeSubstepContacts と同規約)
+            std::sort(ccdContacts.begin(), ccdContacts.end(),
+                      [](const SolidContact& a, const SolidContact& b) { return a.key < b.key; });
+            size_t cw = 0;
+            for (size_t k = 0; k < ccdContacts.size(); ++k) {
+                if (cw > 0 && ccdContacts[cw - 1].key == ccdContacts[k].key) {
+                    ccdContacts[cw - 1].impulse += ccdContacts[k].impulse;
+                } else {
+                    ccdContacts[cw++] = ccdContacts[k];
+                }
+            }
+            ccdContacts.resize(cw);
+        }
+
         // ---- 接触ペアの出力 (M28c、M59e で代表点と法線インパルス、M59g2 でサブステップ合算) ----
         // 生成順 = 候補ペアの (小,大) 昇順なので key も自動的に昇順のまま
         // (CollisionSystem の二分探索 FindContactNormal の前提)。
@@ -1890,6 +2150,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             // 眠りペア (key 昇順) を先に合流させる。どちらも候補ペア昇順で作られて
             // いるのでキーが衝突することはなく、線形マージで昇順が保たれる
             MergeSubstepContacts(sleepContacts, subContacts);
+            MergeSubstepContacts(ccdContacts, subContacts); // M59j
             MergeSubstepContacts(subContacts, *outContacts);
             subContacts.clear();
         }
@@ -1907,15 +2168,25 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             //   あるときは「質量中心を v·h だけ前進 → 姿勢を積分 → 新しい姿勢で形状原点を
             //   逆算」の順に組む。オフセットが無いときは従来の 3 行をそのまま通す —
             //   `pose.p + 0.0f` が -0.0f を +0.0f に化けさせるので、共通化してはいけない
+            // M59j: CCD が掃引で確定した移動量があればそれを使う。**係数を掛けるのではなく
+            // 差し替える** — CCD は止めると同時にインパルスを入れるので、この時点の
+            // b.v* は掃引に使った速度と既に別物になっている。ccdClamped が false のあいだは
+            // 式が従来の `b.v* * h` そのままで、ビット同一が自明に立つ
+            float mvx, mvy, mvz;
+            if (b.ccdClamped) {
+                mvx = b.ccdDx; mvy = b.ccdDy; mvz = b.ccdDz;
+            } else {
+                mvx = b.vx * h; mvy = b.vy * h; mvz = b.vz * h;
+            }
             float comWx = 0.0f, comWy = 0.0f, comWz = 0.0f;
             if (b.hasCom) {
-                comWx = b.pose.px + b.comx + b.vx * h;
-                comWy = b.pose.py + b.comy + b.vy * h;
-                comWz = b.pose.pz + b.comz + b.vz * h;
+                comWx = b.pose.px + b.comx + mvx;
+                comWy = b.pose.py + b.comy + mvy;
+                comWz = b.pose.pz + b.comz + mvz;
             } else {
-                b.pose.px += b.vx * h;
-                b.pose.py += b.vy * h;
-                b.pose.pz += b.vz * h;
+                b.pose.px += mvx;
+                b.pose.py += mvy;
+                b.pose.pz += mvz;
             }
             if (!b.freezeRot) {
                 // q += 0.5·h·(ω_quat ⊗ q)、その後正規化 (全て scalar)

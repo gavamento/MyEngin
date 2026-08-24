@@ -293,6 +293,15 @@ struct RigidbodyComponent {
     //   「ハッシュが動かない」という上の性質そのものが壊れる
     int32_t sleepTicks = 0;
     bool isSleeping = false;
+    // ---- M59j 追加: 連続衝突判定 (CCD、末尾 append) ----
+    // true にしたボディだけが、1 サブステップの移動量が自分の外接球半径を超えるときに
+    // 掃引されて最初に触れる位置で止まる。**既定 off = 既存シーンとビット同一**
+    // (存在ゲートではなくフィールドゲートだが、off のあいだは掃引パスが
+    //  ボディ 1 個ぶんの bool 読みで抜けるので fp 演算がゼロという点は同じ)。
+    // ★これは「速いときだけ」効く保険であって、通常の接触解決を置き換えるものではない。
+    //   止まった直後は速度が落ちて掃引の起動しきい値を外れ、以降は通常の離散ソルバが
+    //   摩擦も反発もスタックも面倒を見る (PhysicsSystem.cpp の CCD 節が正本)
+    bool ccd = false;
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 

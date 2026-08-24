@@ -854,6 +854,25 @@ the end of the component registration order, so existing scenes are untouched.
 | **No righting moment in v1** | The height-ratio approximation cannot see the horizontal shift of the centre of buoyancy, so a tilted raft keeps its tilt forever (only the angular water drag acts on it). The force is nonetheless applied *at the buoyancy centre* via `ApplyImpulse`, so the torque is provably zero today and starts working by itself once M59f1 adds a centre-of-mass offset. A true righting moment needs per-face pressure integration — that is M59c |
 | Buoyancy direction | Always **+Y**, magnitude scaled by `|gravity|`. The water surface is an axis-aligned Y plane in M59, so tilting the gravity vector while keeping a horizontal surface has no coherent reading |
 
+#### Continuous collision detection (M59j)
+
+`Rigidbody.ccd` opts a single body into sweeping. It is off by default, and a scene where no body
+has it set does not execute one extra floating-point operation — the pass is skipped wholesale on a
+single boolean scan taken once per tick.
+
+CCD here is an **insurance policy that only holds while the body is fast**, not a replacement for
+the discrete solver. That handover is the whole design, and every threshold exists to make it work:
+
+| Concept | Decision |
+|---|---|
+| When it arms | Only when the displacement in one substep exceeds **half the body's bounding-sphere radius**, and again — after a hit is found — only when the *normal-direction* approach in that substep exceeds the same amount. The second gate is not an optimisation: a body sliding along a face it is already touching is a hair above the surface and sinking imperceptibly, so the sweep happily reports a touch at `TOI ≈ 0` and the clamp would delete its **tangential** motion. Tunnelling is a normal-direction phenomenon, so the test is too |
+| Stopping is not enough | On a hit the body is moved to the time of impact **and given a one-shot normal impulse** (pair restitution, same micro-bounce threshold as the solver). Clamping the position alone leaves the velocity intact, so the next substep arms again and stops at the same place; no penetration is ever produced, so no contact is ever generated, and the body **hovers in front of the wall forever**. With the impulse the speed drops below the arming threshold and the discrete solver takes over friction, stacking and contact persistence from there |
+| The target is immovable | In the sweep and in the response. The sweep already looks at frozen targets, so making only the response a two-body constraint would not be coherent. Two CCD bodies meeting head-on each stop themselves; momentum is not conserved in that one impulse, and the discrete solver resolves them correctly from the next substep |
+| Swept shape | The moving body's **bounding sphere**. For boxes and capsules that is larger than the true swept volume, so the time of impact comes out early — the error is on the "does not tunnel" side. Measured: a sphere bullet stops at the wall face minus its radius, a box of half-extent 0.2 stops one circumradius (0.346 m) short |
+| Sweep kernel | Sphere and capsule targets use the analytic radius-inflated ray; box, mesh and terrain targets use fixed-count conservative advancement — the same two-branch split as `SphereCastWorld`, but **re-implemented against the solver's `bodies[]` poses**. `SphereCastWorld` itself cannot be called: it reads `WorldMatrixComponent`, which is a tick stale at this point in the frame, and it has no notion of triggers, sleep or kinematic bodies |
+| Where it runs | After position correction and before position integration — the only point at which the substep's final pose is settled and nobody has advanced yet. Sweeping inside the integration loop would mix already-integrated and not-yet-integrated targets, putting the body scan order into the result |
+| Contact reporting | CCD hits are emitted as `SolidContact` like any other pair. A bullet that bounces off never produces penetration, so without this `OnCollisionEnter` would never fire for it |
+
 #### Terrain heightfield collider (M59i)
 
 `Collider.shape = 4` makes the terrain a solid surface. Rigid bodies rest, roll and slide on it, the

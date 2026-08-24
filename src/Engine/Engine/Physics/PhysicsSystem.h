@@ -41,12 +41,17 @@ struct SolidContact {
 // (isTrigger==0) が衝突面。RigidbodyComponent 非存在シーンでは完全 no-op = 既存リプレイ不変。
 // 形状判定 (sphere / OBB / capsule) は Physics/Shapes.cpp に統合 (M28a)。
 // 慣性テンソルは形状+質量から毎 tick 導出 (コンポーネントに持たない = ステートレス維持)。
-// freezeRotation で回転積分・角応答を無効化 (M28a 以前の並進のみ挙動)。スリープ機構は無し。
+// freezeRotation で回転積分・角応答を無効化 (M28a 以前の並進のみ挙動)。
+// スリープは M59h で追加 (PhysicsEnvironment の閾値が有効なときだけ働く)。
 // 親子階層対応 (M28d): 親チェーンを LocalTransform から scalar 合成してワールド姿勢で sim し、
 // 親フレームの逆変換でローカルに書き戻す。親は運動学的フレーム扱い (同 tick の親の積分結果は
 // 子に伝播しない)。velocity / angularVelocity は常にワールド系。ジョイント/複合コライダーは対象外。
 // ブロードフェーズ (M28d): 毎 tick 再構築の 1 軸 sort & sweep (Broadphase.cpp)。
 // 状態は全てコンポーネントに常駐 (velocity=Rigidbody, position=LocalTransform) → システムはステートレス。
+// CCD (M59j): Rigidbody.ccd を立てたボディだけ、1 サブステップの移動量が自分の外接球半径を
+// 超えるときに掃引され、最初に触れる位置で止まって法線インパルスを 1 発受ける。
+// 相手は不動として扱う近似で、止まった直後は起動しきい値を外れて通常の離散ソルバへ戻る
+// (摩擦・スタック・接触の継続はそちらの担当)。CCD が作った接触も outContacts に載る。
 class PhysicsSystem {
 public:
     // TransformSystem の直前に呼ぶ (Play / 検証時のみ)。dt は固定 tick (1/60)。

@@ -1071,6 +1071,41 @@ void BuildPhysicsShowcaseScene(EngineContext& ctx)
         auto* rb = go.AddComponent<RigidbodyComponent>();
         rb->mass = 1.0f;
     }
+
+    // ---- 7. CCD: 高速弾が厚さ 0.1m の壁で止まる (M59j) ----
+    // ★1 サブステップ (env の substeps=4 なので dt/4) の移動量が 0.5m = 壁厚の 5 倍。
+    //   CCD が無ければ確実に抜ける速度で、掃引経路が **必ず** replay 被覆に載るようにしてある
+    {
+        GameObject wall = s.CreateGameObject("ThinWall");
+        wall.SetLocalPosition(-8.0f, 1.5f, 2.0f);
+        wall.SetLocalScale(0.1f, 2.0f, 2.0f);
+        auto* mr = wall.AddComponent<MeshRendererComponent>();
+        mr->mesh = cube;
+        mr->material = AssetID{ HashStr("pdemo_steel") };
+        auto* col = wall.AddComponent<ColliderComponent>();
+        col->shape = 1;
+        col->halfExtents = { 0.5f, 0.5f, 0.5f }; // ワールドスケールが効く = 厚さ 0.1m
+        col->physMaterial = matSteel;
+    }
+    {
+        GameObject bullet = s.CreateGameObject("Bullet");
+        bullet.SetLocalPosition(-11.5f, 1.5f, 2.0f);
+        bullet.SetLocalScale(0.16f, 0.16f, 0.16f);
+        auto* mr = bullet.AddComponent<MeshRendererComponent>();
+        mr->mesh = sphere;
+        mr->material = AssetID{ HashStr("pdemo_ball") };
+        auto* col = bullet.AddComponent<ColliderComponent>();
+        col->shape = 0;
+        col->radius = 0.5f; // ワールド半径 0.08m
+        // ★材料を**割り当てない** = e は Rigidbody の 0。鋼 (e=0.6) を付けると
+        //   CCD の一発インパルスが 1.6 倍の跳ね返りを作り、弾が 72 m/s で後ろへ飛んで
+        //   床の端 (x=-12) を越え、以降 600 tick ずっと落下し続ける (実測)。
+        //   ショーケースとしても replay の被写体としても、壁に食い込んで止まる方が良い
+        auto* rb = bullet.AddComponent<RigidbodyComponent>();
+        rb->mass = 0.05f;
+        rb->velocity = { 120.0f, 0.0f, 0.0f };
+        rb->ccd = true;
+    }
 }
 
 void RegisterRenderShowcaseContent(EngineContext& ctx)
