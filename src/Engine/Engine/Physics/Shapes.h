@@ -20,6 +20,7 @@ struct ColliderComponent;
 struct ShapePose {
     int32_t shape = 0;        // 0=sphere 1=box(OBB) 2=capsule(ローカル Y 軸)
                               // 3=triangle mesh (M41) 4=terrain heightfield (M59i)
+                              // 5=convex hull (M60f、**動的剛体で使える唯一のメッシュ由来形状**)
     int32_t identityRot = 1;  // 基底が単位 (無回転) — M20 互換 fast-path 用
     float px = 0, py = 0, pz = 0;
     float bx[3] = { 1, 0, 0 };
@@ -36,7 +37,11 @@ struct ShapePose {
     // 実体は terraincol::Resolve(col.meshAsset) で注入する (TerrainCollisionData*)。
     // 三角形の集まりという一点でメッシュと同じ扱いができるので、衝突・マニフォールド・
     // 最近点の本体は共有し、「候補の集め方」と「番号→三角形」だけを差し替えてある
+    // ---- 凸包 (M60f、shape=5。動的剛体でも使える) ----
+    // ここも同じスロットの**タグ付き共用体**。実体は convexcol::Resolve(col.meshAsset)。
+    // メッシュ (3) と違って閉じた凸体なので SAT で貫通量が定義でき、動的剛体同士でも解ける
     const void* meshData = nullptr; // shape=3: MeshColliderData* / shape=4: TerrainCollisionData*
+                                    // shape=5: ConvexHullData*
     float sx = 1, sy = 1, sz = 1;   // メッシュ/地形のローカル→ワールドスケール (基底とは別持ち)
 };
 

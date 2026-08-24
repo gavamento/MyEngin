@@ -219,6 +219,12 @@ Mesh* MeshLibrary::Get(AssetID id)
     return (it != meshes_.end()) ? &it->second : nullptr;
 }
 
+const std::string* MeshLibrary::NameOf(AssetID id) const
+{
+    const auto it = names_.find(id.value);
+    return (it != names_.end()) ? &it->second : nullptr;
+}
+
 std::vector<AssetEntry> MeshLibrary::Enumerate() const
 {
     return EnumerateNames(names_);

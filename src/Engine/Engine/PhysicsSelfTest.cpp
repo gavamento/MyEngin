@@ -9,6 +9,8 @@
 #include "Engine/Core/World.h"
 #include "Engine/Engine/CollisionSystem.h"
 #include "Engine/Engine/GameObject.h"
+#include "Engine/Engine/Physics/ConvexColliderLibrary.h" // M60f: 凸包コライダー
+#include "Engine/Engine/Physics/ConvexHull.h"
 #include "Engine/Engine/Physics/MeshColliderLibrary.h"
 #include "Engine/Engine/Physics/PhysMatLibrary.h" // M59a2: 材料解決の検証
 #include "Engine/Engine/Physics/TerrainColliderLibrary.h" // M59i: 地形コライダー
@@ -5855,6 +5857,245 @@ bool RunPhysicsSelfTest()
             check(hy < -0.98f,
                   "compound: an explicit centre of mass still wins over the derived one");
         }
+    }
+
+
+    // ================= M60f: 凸包 (Collider.shape=5) =================
+    // メッシュ資産の頂点群から作った凸多面体を**動的剛体の形状**として使う。
+    // shape=3 (三角形スープ) が静的専用なのに対し、凸包は閉じた凸体なので SAT で貫通量が
+    // 定義でき、動的剛体同士でも解ける。
+    // ★慣性は一般に非対角なので、複合 (M60e) と同じフル 3x3 経路へ載せている。
+    // ★凸包を使わないシーンは **Collider にフィールドを 1 つも足していない**ので
+    //   ワールドハッシュのバイト列すら変わらない (存在ゲートとして最も強い形)。
+    {
+        ConvexColliderLibrary lib;
+        // 1x1x1 の立方体と 2x1x1 の直方体を「頂点群 → 凸包」で登録する。
+        // **箱コライダーと同じ形**を別経路 (SAT) で解いた結果を突き合わせるのが狙い
+        auto boxHull = [](float hx, float hy, float hz) {
+            ConvexHullData h;
+            BuildConvexHull({ { -hx, -hy, -hz },
+                              { hx, -hy, -hz },
+                              { hx, hy, -hz },
+                              { -hx, hy, -hz },
+                              { -hx, -hy, hz },
+                              { hx, -hy, hz },
+                              { hx, hy, hz },
+                              { -hx, hy, hz } },
+                            h);
+            return h;
+        };
+        const AssetID kCube{ 0x4D3630466Aull };  // 1x1x1
+        const AssetID kSlab{ 0x4D3630466Bull };  // 2x1x1
+        const AssetID kFloor{ 0x4D3630466Cull }; // 10x2x10
+        lib.Register(kCube, boxHull(0.5f, 0.5f, 0.5f));
+        lib.Register(kSlab, boxHull(1.0f, 0.5f, 0.5f));
+        lib.Register(kFloor, boxHull(5.0f, 1.0f, 5.0f));
+        convexcol::Install(&lib);
+
+        auto makeConvex = [](Scene& s, const char* name, AssetID hull, float x, float y, float z,
+                             bool dynamic) {
+            GameObject go = s.CreateGameObjectTracked(name);
+            go.SetLocalPosition(x, y, z);
+            auto* col = go.AddComponent<ColliderComponent>();
+            col->shape = 5;
+            col->isTrigger = false;
+            col->meshAsset = hull;
+            if (dynamic) {
+                auto* rb = go.AddComponent<RigidbodyComponent>();
+                rb->mass = 1.0f;
+                rb->gravityScale = 1.0f;
+            }
+            return go;
+        };
+
+        // -- (f-1) 凸包の立方体が箱の床に「箱コライダーと同じ高さ」で静止する --
+        // ★SAT + 参照面クリップが 4 点マニフォールドを作れているかがここに出る。
+        //   3 点しか出ないと箱が傾いて静止高さがずれる
+        {
+            auto drop = [&](bool convexShape) {
+                Scene s;
+                MakeGround(s, "G", 0.0f, -1.0f, 0.0f, 10.0f, 1.0f, 10.0f); // 上面 y=0
+                GameObject go;
+                if (convexShape) {
+                    go = makeConvex(s, "Hull", kCube, 0.0f, 3.0f, 0.0f, true);
+                } else {
+                    go = MakeBox(s, "Box", 0.0f, 3.0f, 0.0f, 0.5f, 0.5f, 0.5f);
+                }
+                s.GetWorld().ApplyStructuralChanges();
+                for (int i = 0; i < 180; ++i) {
+                    phys.Update(s.GetWorld(), kDt);
+                }
+                return go.GetComponent<LocalTransform>()->position.y;
+            };
+            const float yc = drop(true);
+            const float yb = drop(false);
+            MYE_LOG_INFO("  [phys] convex rest: hull y = %.5f / box collider y = %.5f",
+                         static_cast<double>(yc), static_cast<double>(yb));
+            check(yc > 0.45f && yc < 0.55f, "convex: a hull cube rests on the ground at y~=0.5");
+            check(std::fabs(yc - yb) < 0.01f,
+                  "convex: and settles at the same height as the equivalent box collider");
+        }
+
+        // -- (f-2) 慣性が等価な box と一致する (フル 3x3 経路に載っている証拠) --
+        {
+            auto spin = [&](bool convexShape) {
+                Scene s;
+                GameObject go;
+                if (convexShape) {
+                    go = makeConvex(s, "Hull", kSlab, 0.0f, 0.0f, 0.0f, true);
+                } else {
+                    go = MakeBox(s, "Single", 0.0f, 0.0f, 0.0f, 1.0f, 0.5f, 0.5f);
+                }
+                auto* cf = go.AddComponent<ConstantForceComponent>();
+                cf->torque = { 0.0f, 0.0f, 0.5f }; // N*m
+                s.GetWorld().ApplyStructuralChanges();
+                auto* rb = go.GetComponent<RigidbodyComponent>();
+                rb->gravityScale = 0.0f;
+                rb->angularDamping = 0.0f;
+                for (int i = 0; i < 60; ++i) {
+                    phys.Update(s.GetWorld(), kDt);
+                }
+                return rb->angularVelocity.z;
+            };
+            const float wc = spin(true);
+            const float ws = spin(false);
+            const float expect = 0.5f * 1.0f / (5.0f / 12.0f); // tau*t/I、I_zz = m/12 (4+1)
+            MYE_LOG_INFO("  [phys] convex inertia: w_z hull %.5f / box %.5f (analytic %.5f)",
+                         static_cast<double>(wc), static_cast<double>(ws),
+                         static_cast<double>(expect));
+            check(std::fabs(wc - expect) < expect * 0.01f,
+                  "convex: the tetrahedron-integrated inertia matches the analytic box");
+            check(std::fabs(wc - ws) < 1e-4f,
+                  "convex: and matches the box collider the solver would have built");
+        }
+
+        // -- (f-3) 凸 x 凸: 静的な凸包の床に動的な凸包が乗る --
+        // ★これが M60f の中核 (面軸 + 稜線軸 + 参照面クリップの全部を通る経路)
+        {
+            Scene s;
+            makeConvex(s, "HullFloor", kFloor, 0.0f, -1.0f, 0.0f, false); // 上面 y=0
+            GameObject go = makeConvex(s, "Hull", kCube, 0.0f, 3.0f, 0.0f, true);
+            s.GetWorld().ApplyStructuralChanges();
+            std::vector<SolidContact> contacts;
+            for (int i = 0; i < 180; ++i) {
+                phys.Update(s.GetWorld(), kDt, &contacts);
+            }
+            const float y = go.GetComponent<LocalTransform>()->position.y;
+            MYE_LOG_INFO("  [phys] convex-convex rest: y = %.5f / contacts = %zu",
+                         static_cast<double>(y), contacts.size());
+            check(y > 0.45f && y < 0.55f, "convex: hull rests on a hull floor at y~=0.5");
+            check(contacts.size() == 1, "convex: the pair reports exactly one contact entry");
+        }
+
+        // -- (f-4) 凸 x 球 / 凸 x カプセル (SAT ではなく最近点で解く経路) --
+        {
+            Scene s;
+            makeConvex(s, "HullFloor", kFloor, 0.0f, -1.0f, 0.0f, false);
+            GameObject ball = MakeSphereBody(s, "Ball", -2.0f, 3.0f, 0.0f, 0.5f);
+            GameObject cap = MakeCapsuleBody(s, "Cap", 2.0f, 3.0f, 0.0f, 0.5f, 2.0f);
+            s.GetWorld().ApplyStructuralChanges();
+            for (int i = 0; i < 240; ++i) {
+                phys.Update(s.GetWorld(), kDt);
+            }
+            const float by = ball.GetComponent<LocalTransform>()->position.y;
+            const float cy = cap.GetComponent<LocalTransform>()->position.y;
+            MYE_LOG_INFO("  [phys] convex vs round: sphere y = %.5f / capsule y = %.5f",
+                         static_cast<double>(by), static_cast<double>(cy));
+            check(by > 0.45f && by < 0.55f, "convex: a sphere rests on the hull floor at y~=0.5");
+            check(cy > 0.9f && cy < 1.1f, "convex: a capsule rests on the hull floor at y~=1.0");
+        }
+
+        // -- (f-5) 凸 x 三角形スープ (静的メッシュ床) --
+        // ★三角形を「表裏 2 面の潰れた凸体」として同じ SAT に通している経路
+        {
+            MeshColliderData quad;
+            BuildMeshColliderData({ { -5, 0, -5 }, { 5, 0, -5 }, { 5, 0, 5 }, { -5, 0, 5 } },
+                                  { 0, 1, 2, 0, 2, 3 }, quad);
+            MeshColliderLibrary mlib;
+            const AssetID meshId{ 0x4D3630466Dull };
+            mlib.Register(meshId, std::move(quad));
+            meshcol::Install(&mlib);
+            Scene s;
+            GameObject ground = s.CreateGameObjectTracked("MeshGround");
+            auto* gcol = ground.AddComponent<ColliderComponent>();
+            gcol->shape = 3;
+            gcol->isTrigger = false;
+            gcol->meshAsset = meshId;
+            GameObject go = makeConvex(s, "Hull", kCube, 0.0f, 3.0f, 0.0f, true);
+            s.GetWorld().ApplyStructuralChanges();
+            for (int i = 0; i < 240; ++i) {
+                phys.Update(s.GetWorld(), kDt);
+            }
+            const float y = go.GetComponent<LocalTransform>()->position.y;
+            MYE_LOG_INFO("  [phys] convex vs mesh soup: y = %.5f", static_cast<double>(y));
+            check(y > 0.45f && y < 0.60f, "convex: a hull lands on a static triangle mesh");
+            meshcol::Install(nullptr);
+        }
+
+        // -- (f-6) 並走ハッシュ (per-tick 一致) --
+        {
+            auto build = [&](Scene& s) {
+                makeConvex(s, "HullFloor", kFloor, 0.0f, -1.0f, 0.0f, false);
+                makeConvex(s, "A", kCube, 0.0f, 2.0f, 0.0f, true);
+                makeConvex(s, "B", kSlab, 0.2f, 4.0f, 0.1f, true);
+                s.GetWorld().ApplyStructuralChanges();
+            };
+            Scene s1, s2;
+            build(s1);
+            build(s2);
+            bool same = true;
+            for (int i = 0; i < 180; ++i) {
+                phys.Update(s1.GetWorld(), kDt);
+                phys.Update(s2.GetWorld(), kDt);
+                if (HashWorld(s1.GetWorld(), nullptr) != HashWorld(s2.GetWorld(), nullptr)) {
+                    same = false;
+                }
+            }
+            check(same, "convex: two identical scenes stay bit-identical per tick");
+        }
+
+        // -- (f-7) レイキャストと体積 --
+        {
+            Scene s;
+            makeConvex(s, "HullFloor", kFloor, 0.0f, -1.0f, 0.0f, false);
+            s.GetWorld().ApplyStructuralChanges();
+            TransformSystem xform;
+            xform.Update(s.GetWorld());
+            MyeRaycastHit hit = {};
+            const int rc
+                = RaycastWorld(s.GetWorld(), { 1.0f, 2.0f, -1.0f }, { 0, -1, 0 }, 10.0f, &hit);
+            MYE_LOG_INFO("  [phys] convex raycast: rc = %d dist = %.5f ny = %.5f", rc,
+                         static_cast<double>(hit.distance), static_cast<double>(hit.normal.y));
+            check(rc == 1 && std::fabs(hit.distance - 2.0f) < 0.01f && hit.normal.y > 0.99f,
+                  "convex: RaycastWorld hits the hull surface with the right distance/normal");
+
+            ColliderComponent col;
+            col.shape = 5;
+            col.meshAsset = kCube;
+            const float v1 = ShapeVolumeWorld(col, 1.0f, 1.0f, 1.0f);
+            const float v2 = ShapeVolumeWorld(col, 2.0f, 3.0f, 1.0f);
+            MYE_LOG_INFO("  [phys] convex volume: unit = %.5f / scaled(2,3,1) = %.5f",
+                         static_cast<double>(v1), static_cast<double>(v2));
+            check(std::fabs(v1 - 1.0f) < 1e-4f && std::fabs(v2 - 6.0f) < 1e-3f,
+                  "convex: ShapeVolumeWorld returns the hull volume scaled by the determinant");
+        }
+
+        // -- (f-8) 凸包が未解決なら「衝突なし」へ落ちる (すり抜けは安全側の既定) --
+        // ★shape=3 の null meshData と同じ扱い。ここを衝突ありに倒すと、資産が揃う前の
+        //   1 フレームだけ世界が別物になる
+        {
+            Scene s;
+            MakeGround(s, "G", 0.0f, -1.0f, 0.0f, 10.0f, 1.0f, 10.0f);
+            GameObject go = makeConvex(s, "NoHull", AssetID{}, 0.0f, 3.0f, 0.0f, true);
+            s.GetWorld().ApplyStructuralChanges();
+            for (int i = 0; i < 120; ++i) {
+                phys.Update(s.GetWorld(), kDt);
+            }
+            const float y = go.GetComponent<LocalTransform>()->position.y;
+            check(y < 0.0f, "convex: an unresolved hull collides with nothing (falls through)");
+        }
+
+        convexcol::Install(nullptr);
     }
 
     if (failCount == 0) {

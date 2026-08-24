@@ -22,6 +22,7 @@
 #include "Engine/Engine/Audio/AudioSystem.h"
 #include "Engine/Engine/Audio/SoundAsset.h"
 #include "Engine/Engine/Particles/ParticleSystem.h"
+#include "Engine/Engine/Physics/ConvexColliderLibrary.h"
 #include "Engine/Engine/Physics/MeshColliderLibrary.h"
 #include "Engine/Engine/Physics/PhysMatLibrary.h"
 #include "Engine/Engine/Physics/TerrainColliderLibrary.h"
@@ -109,6 +110,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     CollisionSystem collisionSystem;
     PhysicsSystem physicsSystem; // 剛体積分 + 衝突解決 (M20、ステートレス)
     MeshColliderLibrary meshColliders; // 静的メッシュコライダーの BVH キャッシュ (M41)
+    ConvexColliderLibrary convexColliders;   // 凸包コライダー + .mcvx クック (M60f)
     PhysMatLibrary physMatLibrary;     // .physmat.json (M59a1)。sim の消費は M59a2 から
     TerrainColliderLibrary terrainColliders; // 地形コライダー (M59i)。**描画側とは別キャッシュ**
     std::vector<SolidContact> solidContacts; // 物理→衝突イベントの tick 内受け渡し (M28c)
@@ -210,6 +212,10 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // AssetID → BVH 付きコライダーデータを引けるように接続する
     meshColliders.Init(&resources);
     meshcol::Install(&meshColliders);
+    // M60f: 凸包コライダー (Collider.shape=5)。meshcol と同じ AssetID→形状の解決だが
+    // クック (.mcvx) が乗るので CookedCache::Configure より後で使われること (Get は lazy)
+    convexColliders.Init(&resources);
+    convexcol::Install(&convexColliders);
     // M59a1: 物理マテリアル (.physmat.json)。起動走査 (RegisterAssetLibraries) と ReloadHub が
     // physmat::Library() 経由で読み込むので、走査より前に注入しておくこと
     physmat::Install(&physMatLibrary);
@@ -1701,6 +1707,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     input.ApplyVibration(0.0f, 0.0f); // M51h: 終了後に振動を残さない
     app.OnShutdown(ctx);
     meshcol::Install(nullptr); // M41 (meshColliders 破棄前に必ず外す)
+    convexcol::Install(nullptr); // M60f (convexColliders 破棄前に必ず外す)
     physmat::Install(nullptr); // M59a1 (physMatLibrary 破棄前に必ず外す)
     terraincol::Install(nullptr); // M59i (terrainColliders 破棄前に必ず外す)
     AssetDatabase::UninstallKeyResolver(); // M30c (assetDatabase 破棄前に必ず外す)

@@ -168,7 +168,8 @@ struct EnumFieldLabels {
         return (ja != nullptr && CurrentLanguage() != Lang::En) ? ja : labels;
     }
 };
-constexpr const char* kColliderShapeLabels[] = { "Sphere", "Box", "Capsule", "Mesh", "Terrain" };
+constexpr const char* kColliderShapeLabels[] = { "Sphere", "Box",  "Capsule",
+                                                 "Mesh",   "Terrain", "Convex" };
 constexpr const char* kLightTypeLabels[] = { "Directional", "Point", "Spot" };
 constexpr const char* kEmitterShapeLabels[] = { "Point", "Sphere", "Cone", "Box" };
 constexpr const char* kBlendModeLabels[] = { "Additive", "Alpha", "Distortion" }; // M42d
@@ -189,7 +190,7 @@ constexpr const char* kUIFillModeLabels[] = { "Off", "Horizontal", "Vertical" };
 constexpr const char* kUISpaceLabels[] = { "Screen", "Parent Rect" };
 // M47c: 日本語表示。ACES / Reinhard / Exp2 のような固有名詞・数式名は英語のまま
 constexpr const char* kColliderShapeJa[] = { "スフィア", "ボックス", "カプセル", "メッシュ",
-                                             "地形" };
+                                             "地形",     "凸包" };
 constexpr const char* kLightTypeJa[] = { "平行光", "ポイント", "スポット" };
 constexpr const char* kEmitterShapeJa[] = { "点", "スフィア", "コーン", "ボックス" };
 constexpr const char* kBlendModeJa[] = { "加算", "アルファ", "歪み" };
@@ -206,7 +207,10 @@ constexpr const char* kPartBoundsShapeJa[] = { "ボックス", "スフィア" };
 constexpr const char* kUIFillModeJa[] = { "オフ", "水平 (左→右)", "垂直 (下→上)" };
 constexpr const char* kUISpaceJa[] = { "スクリーン", "親の矩形" };
 constexpr EnumFieldLabels kEnumFields[] = {
-    { "Collider", "shape", kColliderShapeLabels, 3, kColliderShapeJa },
+    // M60f: 3 (Mesh) / 4 (Terrain) / 5 (Convex) までコンボに出す。これらは meshAsset を
+    // 併せて指す必要があるが、今まで**コンボが 3 件しか出さず "(invalid)" 表示になっていた**
+    // ので、シーン JSON を手で書く以外に選ぶ手段が無かった (エディタ表示のみの変更)
+    { "Collider", "shape", kColliderShapeLabels, 6, kColliderShapeJa },
     { "Light", "type", kLightTypeLabels, 3, kLightTypeJa },
     { "ParticleEmitter", "shape", kEmitterShapeLabels, 4, kEmitterShapeJa },
     { "ParticleEmitter", "blendMode", kBlendModeLabels, 3, kBlendModeJa },

@@ -5,6 +5,8 @@
 
 #include "Engine/Core/Components.h"
 #include "Engine/Engine/Physics/MeshColliderLibrary.h"
+#include "Engine/Engine/Physics/ConvexCollision.h"        // M60f: shape=5 の SAT
+#include "Engine/Engine/Physics/ConvexColliderLibrary.h"  // M60f: shape=5 の実体解決
 #include "Engine/Engine/Physics/TerrainColliderLibrary.h" // M59i: shape=4 の実体解決
 
 namespace mye {
@@ -927,6 +929,10 @@ void ApplyScaledExtents(ShapePose& p, const ColliderComponent& col, float sx, fl
     p.sz = sz;
     if (col.shape == 3) {
         p.meshData = meshcol::Resolve(col.meshAsset);
+    } else if (col.shape == 5) {
+        // M60f: 凸包。`meshAsset` は shape=3 と同じ「メッシュ資産」を指すが、
+        // 三角形スープではなく**その頂点群の凸包**として解決される
+        p.meshData = convexcol::Resolve(col.meshAsset);
     } else if (col.shape == 4) {
         // M59i: 同じスロットに地形データを載せる (判別は shape 値)。
         // meshAsset が `.terrain.json` を指す — 自然な使い方は「TerrainComponent と
@@ -1653,6 +1659,12 @@ bool CollideMeshOther(const ShapePose& mesh, const ShapePose& other, float& nx, 
     if (n == 0 || !SoupUsable(mesh)) {
         return false;
     }
+    // M60f: 候補三角形ごとに凸包のワールド頂点を組み直すと 256 回になるので 1 回だけ作る
+    convex::Body cvBody;
+    const bool cvOk = (other.shape == 5) && convex::BuildFromPose(other, cvBody);
+    if (other.shape == 5 && !cvOk) {
+        return false;
+    }
     bool hit = false;
     float bestDepth = -1.0f;
     for (int i = 0; i < n; ++i) {
@@ -1668,6 +1680,12 @@ bool CollideMeshOther(const ShapePose& mesh, const ShapePose& other, float& nx, 
         } else if (other.shape == 2) {
             triHit = CapsuleTriContact(other, ax, ay, az, bx, by, bz, cx, cy, cz, tnx, tny, tnz,
                                        td, qx, qy, qz);
+        } else if (cvOk) {
+            // M60f: 三角形を「表裏 2 面の潰れた凸体」にして同じ SAT へ通す。
+            // convex::Collide の normal は b→a = 三角形→凸包 = ここの規約と同じ
+            convex::Body tb;
+            convex::BuildFromTriangle(ax, ay, az, bx, by, bz, cx, cy, cz, tb);
+            triHit = convex::Collide(cvBody, tb, tnx, tny, tnz, td);
         }
         if (triHit && td > bestDepth) { // strict > = 同深度は小さい三角形番号が勝つ
             bestDepth = td;
@@ -1687,6 +1705,11 @@ bool MeshOtherManifold(const ShapePose& mesh, const ShapePose& other, Manifold& 
     if (n == 0 || !SoupUsable(mesh)) {
         return false;
     }
+    convex::Body cvBody;
+    const bool cvOk = (other.shape == 5) && convex::BuildFromPose(other, cvBody);
+    if (other.shape == 5 && !cvOk) {
+        return false;
+    }
     bool hit = false;
     float bestDepth = -1.0f;
     int32_t bestTri = -1;
@@ -1703,6 +1726,12 @@ bool MeshOtherManifold(const ShapePose& mesh, const ShapePose& other, Manifold& 
         } else if (other.shape == 2) {
             triHit = CapsuleTriContact(other, ax, ay, az, bx, by, bz, cx, cy, cz, tnx, tny, tnz,
                                        td, qx, qy, qz);
+        } else if (cvOk) {
+            // M60f: 三角形を「表裏 2 面の潰れた凸体」にして同じ SAT へ通す。
+            // convex::Collide の normal は b→a = 三角形→凸包 = ここの規約と同じ
+            convex::Body tb;
+            convex::BuildFromTriangle(ax, ay, az, bx, by, bz, cx, cy, cz, tb);
+            triHit = convex::Collide(cvBody, tb, tnx, tny, tnz, td);
         }
         if (triHit && td > bestDepth) {
             bestDepth = td;
@@ -1717,6 +1746,11 @@ bool MeshOtherManifold(const ShapePose& mesh, const ShapePose& other, Manifold& 
     SoupWorldTri(mesh, bestTri, ax, ay, az, bx, by, bz, cx, cy, cz);
     if (other.shape == 1) {
         return BoxTriManifold(other, ax, ay, az, bx, by, bz, cx, cy, cz, out);
+    }
+    if (cvOk) {
+        convex::Body tb;
+        convex::BuildFromTriangle(ax, ay, az, bx, by, bz, cx, cy, cz, tb);
+        return convex::CollideManifold(cvBody, tb, out); // normal は 三角形→凸包
     }
     float tnx = 0, tny = 1, tnz = 0, td = 0, qx = 0, qy = 0, qz = 0;
     bool triHit = false;
@@ -1733,6 +1767,80 @@ bool MeshOtherManifold(const ShapePose& mesh, const ShapePose& other, Manifold& 
     out.nx = tnx; out.ny = tny; out.nz = tnz;
     out.pts[0] = { qx, qy, qz, td };
     out.count = 1;
+    return true;
+}
+
+// ================================================================ 凸包 (M60f)
+// 凸包が絡むペアだけを ConvexCollision へ回す。球/箱/カプセル同士の既存経路は 1 行も
+// 通らないので、shape=5 を使わないシーンはビット同一のまま。
+// **normal の向きは「凸包 → 相手」**で統一する (呼び出し側が b→a へ揃える)。
+
+// 凸包 vs (凸包 / 箱 / 球 / カプセル)
+bool ConvexOtherManifold(const ShapePose& cv, const ShapePose& other, Manifold& out)
+{
+    convex::Body a;
+    if (!convex::BuildFromPose(cv, a)) {
+        return false; // 凸包が未生成 = 衝突なしに落とす (shape=3 の null と同じ安全側)
+    }
+    if (other.shape == 0) {
+        float nx, ny, nz, depth, qx, qy, qz;
+        if (!convex::SphereContact(a, other.px, other.py, other.pz, other.radius, nx, ny, nz,
+                                   depth, qx, qy, qz)) {
+            return false;
+        }
+        out.nx = nx;
+        out.ny = ny;
+        out.nz = nz;
+        out.pts[0] = { qx, qy, qz, depth };
+        out.count = 1;
+        return true;
+    }
+    if (other.shape == 2) {
+        return convex::CapsuleManifold(a, other, out);
+    }
+    convex::Body b;
+    if (other.shape == 1) {
+        convex::BuildFromBox(other, b);
+    } else if (!convex::BuildFromPose(other, b)) {
+        return false;
+    }
+    // convex::CollideManifold の normal は b→a (= 相手→凸包)。ここの規約は逆向き
+    if (!convex::CollideManifold(a, b, out)) {
+        return false;
+    }
+    out.nx = -out.nx;
+    out.ny = -out.ny;
+    out.nz = -out.nz;
+    return true;
+}
+
+bool ConvexOtherCollide(const ShapePose& cv, const ShapePose& other, float& nx, float& ny,
+                        float& nz, float& depth)
+{
+    convex::Body a;
+    if (!convex::BuildFromPose(cv, a)) {
+        return false;
+    }
+    if (other.shape == 0) {
+        float qx, qy, qz;
+        return convex::SphereContact(a, other.px, other.py, other.pz, other.radius, nx, ny, nz,
+                                     depth, qx, qy, qz);
+    }
+    if (other.shape == 2) {
+        return convex::CapsuleContact(a, other, nx, ny, nz, depth);
+    }
+    convex::Body b;
+    if (other.shape == 1) {
+        convex::BuildFromBox(other, b);
+    } else if (!convex::BuildFromPose(other, b)) {
+        return false;
+    }
+    if (!convex::Collide(a, b, nx, ny, nz, depth)) {
+        return false;
+    }
+    nx = -nx;
+    ny = -ny;
+    nz = -nz;
     return true;
 }
 
@@ -1831,6 +1939,19 @@ bool Collide(const ShapePose& a, const ShapePose& b, float& nx, float& ny, float
         depth = md;
         return true;
     }
+    // ---- 凸包 (M60f)。凸包が絡むペアだけ SAT へ回す ----
+    if (sa == 5 || sb == 5) {
+        if (sa == 5) { // ConvexOtherCollide は 凸(a)→b。規約は b→a なので反転する
+            if (!ConvexOtherCollide(a, b, nx, ny, nz, depth)) {
+                return false;
+            }
+            nx = -nx;
+            ny = -ny;
+            nz = -nz;
+            return true;
+        }
+        return ConvexOtherCollide(b, a, nx, ny, nz, depth); // 凸(b)→a = そのまま b→a
+    }
     if (sa == 0 && sb == 0) {
         return SpherePair(a.px, a.py, a.pz, b.px, b.py, b.pz, a.radius + b.radius, nx, ny, nz,
                           depth);
@@ -1911,6 +2032,19 @@ bool CollideManifold(const ShapePose& a, const ShapePose& b, Manifold& out)
         return true;
     }
 
+    // ---- 凸包 (M60f) ----
+    if (sa == 5 || sb == 5) {
+        if (sa == 5) {
+            if (!ConvexOtherManifold(a, b, out)) {
+                return false;
+            }
+            out.nx = -out.nx; // 凸(a)→b を b→a へ
+            out.ny = -out.ny;
+            out.nz = -out.nz;
+            return out.count > 0;
+        }
+        return ConvexOtherManifold(b, a, out) && out.count > 0; // 凸(b)→a = そのまま
+    }
     if (sa == 0 && sb == 0) {
         if (!SpherePairContact(a.px, a.py, a.pz, b.px, b.py, b.pz, a.radius, b.radius, nx, ny, nz,
                                c0)) {
@@ -2005,6 +2139,15 @@ float DistanceToShape(const ShapePose& s, float px, float py, float pz)
         float qx, qy, qz;
         return TerrainClosestPoint(s, px, py, pz, qx, qy, qz);
     }
+    if (s.shape == 5) { // M60f: 凸包。内部は 0 (他形状と同じ規約)
+        convex::Body b;
+        if (!convex::BuildFromPose(s, b)) {
+            return 3.4e38f;
+        }
+        float qx, qy, qz, onx, ony, onz;
+        const float d = convex::SignedDistance(b, px, py, pz, qx, qy, qz, onx, ony, onz);
+        return (d > 0.0f) ? d : 0.0f;
+    }
     if (s.shape == 0) {
         const float dx = px - s.px, dy = py - s.py, dz = pz - s.pz;
         const float d = std::sqrt(dx * dx + dy * dy + dz * dz) - s.radius;
@@ -2041,6 +2184,15 @@ void ClosestPointOnShape(const ShapePose& s, float px, float py, float pz, float
                                        : TerrainClosestPoint(s, px, py, pz, mqx, mqy, mqz);
         if (d < 3.4e38f) {
             qx = mqx; qy = mqy; qz = mqz;
+        }
+        return;
+    }
+    if (s.shape == 5) { // M60f: 凸包の表面最近点 (内部の点は最も浅い面へ射影される)
+        qx = px; qy = py; qz = pz;
+        convex::Body b;
+        if (convex::BuildFromPose(s, b)) {
+            float onx, ony, onz;
+            convex::SignedDistance(b, px, py, pz, qx, qy, qz, onx, ony, onz);
         }
         return;
     }
@@ -2101,6 +2253,37 @@ void ComputeAabb(const ShapePose& s, float& minX, float& minY, float& minZ, floa
         const float wex = std::fabs(s.bx[0]) * lex + std::fabs(s.by[0]) * ley + std::fabs(s.bz[0]) * lez;
         const float wey = std::fabs(s.bx[1]) * lex + std::fabs(s.by[1]) * ley + std::fabs(s.bz[1]) * lez;
         const float wez = std::fabs(s.bx[2]) * lex + std::fabs(s.by[2]) * ley + std::fabs(s.bz[2]) * lez;
+        minX = wcx - wex; maxX = wcx + wex;
+        minY = wcy - wey; maxY = wcy + wey;
+        minZ = wcz - wez; maxZ = wcz + wez;
+        return;
+    }
+    // 凸包 (M60f): 生成時に測ったローカル AABB をワールドへ (shape=3 と同じ変換)。
+    // 頂点を全部回して厳密な AABB を作ることもできるが、ブロードフェーズの契約は
+    // 「真の接触集合のスーパーセット」なので保守的で構わない (Broadphase.h)
+    if (s.shape == 5) {
+        const ConvexHullData* h = static_cast<const ConvexHullData*>(s.meshData);
+        if (!h || !h->Valid()) {
+            minX = maxX = s.px;
+            minY = maxY = s.py;
+            minZ = maxZ = s.pz;
+            return;
+        }
+        const float lcx = (h->aabbMin.x + h->aabbMax.x) * 0.5f * s.sx;
+        const float lcy = (h->aabbMin.y + h->aabbMax.y) * 0.5f * s.sy;
+        const float lcz = (h->aabbMin.z + h->aabbMax.z) * 0.5f * s.sz;
+        const float lex = (h->aabbMax.x - h->aabbMin.x) * 0.5f * std::fabs(s.sx);
+        const float ley = (h->aabbMax.y - h->aabbMin.y) * 0.5f * std::fabs(s.sy);
+        const float lez = (h->aabbMax.z - h->aabbMin.z) * 0.5f * std::fabs(s.sz);
+        const float wcx = s.px + s.bx[0] * lcx + s.by[0] * lcy + s.bz[0] * lcz;
+        const float wcy = s.py + s.bx[1] * lcx + s.by[1] * lcy + s.bz[1] * lcz;
+        const float wcz = s.pz + s.bx[2] * lcx + s.by[2] * lcy + s.bz[2] * lcz;
+        const float wex = std::fabs(s.bx[0]) * lex + std::fabs(s.by[0]) * ley
+                        + std::fabs(s.bz[0]) * lez;
+        const float wey = std::fabs(s.bx[1]) * lex + std::fabs(s.by[1]) * ley
+                        + std::fabs(s.bz[1]) * lez;
+        const float wez = std::fabs(s.bx[2]) * lex + std::fabs(s.by[2]) * ley
+                        + std::fabs(s.bz[2]) * lez;
         minX = wcx - wex; maxX = wcx + wex;
         minY = wcy - wey; maxY = wcy + wey;
         minZ = wcz - wez; maxZ = wcz + wez;
@@ -2286,6 +2469,13 @@ bool Raycast(const ShapePose& s, float ox, float oy, float oz, float dx, float d
     }
     if (s.shape == 2) {
         return RayCapsule(s, ox, oy, oz, dx, dy, dz, maxDist, outT, nx, ny, nz);
+    }
+    if (s.shape == 5) { // M60f: 凸包は全面の支持平面でスラブクリップ
+        convex::Body b;
+        if (!convex::BuildFromPose(s, b)) {
+            return false;
+        }
+        return convex::Raycast(b, ox, oy, oz, dx, dy, dz, maxDist, outT, nx, ny, nz);
     }
     if (s.shape == 4) { // M59i: 地形は XZ セルの DDA
         return RayTerrain(s, ox, oy, oz, dx, dy, dz, maxDist, outT, nx, ny, nz);

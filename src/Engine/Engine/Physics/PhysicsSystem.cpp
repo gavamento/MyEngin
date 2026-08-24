@@ -10,6 +10,8 @@
 #include "Engine/Core/World.h"
 #include "Engine/Engine/Physics/AeroSampling.h" // M59c: 面サンプリング
 #include "Engine/Engine/Physics/Broadphase.h"
+#include "Engine/Engine/Physics/ConvexColliderLibrary.h" // M60f: convexcol::Resolve
+#include "Engine/Engine/Physics/ConvexHull.h"            // M60f: 凸包の質量特性
 #include "Engine/Engine/Physics/PhysMatLibrary.h" // M59a2: physmat::Resolve (材料解決)
 #include "Engine/Engine/Physics/Shapes.h"
 
@@ -210,7 +212,10 @@ struct Body {
     bool ownShape = false;
     int32_t subFirst = 0;
     int32_t subCount = 0;
-    float invILocal[3][3] = {}; // 複合のみ: 剛体ローカルでの I⁻¹
+    // M60f: 慣性を 3x3 フルで持つか。**複合 (M60e) と凸包 (M60f) の 2 通りある**ので
+    // subCount では判別できない — 「非対角が出る形状か」を専用フラグで表す
+    bool fullInertia = false;
+    float invILocal[3][3] = {}; // フルテンソル時: 剛体ローカルでの I⁻¹
     int32_t layer = 0;             // 衝突レイヤー (M36a、Collider から複製)
     uint32_t mask = 0xFFFFFFFFu;   // 衝突マスク (既定 = 全レイヤー → 従来挙動)
     // 親のワールドフレーム (M28d)。収集時に合成し運動学的フレームとして固定。
@@ -228,6 +233,26 @@ void LocalInertiaDiag(const ColliderComponent* col, const ShapePose& pose, float
         const float i = 0.4f * m * r * r; // 2/5 m r²
         ix = iy = iz = i;
         return;
+    }
+    if (pose.shape == 5) {
+        // M60f: 凸包。ソルバ本体は下のフル 3x3 経路 (Body::invILocal) を通るので、
+        // ここへ来るのは ABI の AddTorque / AddForceAtPoint と、凸包が未生成で
+        // フル経路に載れなかったボディだけ。**非対角を捨てた対角近似**で答える —
+        // 厳密ではないが、既定のカプセル式に落ちるよりは遥かにまし
+        const ConvexHullData* h = static_cast<const ConvexHullData*>(pose.meshData);
+        if (h && h->Valid()) {
+            float vol = 0.0f;
+            DirectX::XMFLOAT3 com{};
+            float I[3][3];
+            ConvexMassProperties(*h, pose.sx, pose.sy, pose.sz, vol, com, I);
+            if (vol > 1e-12f) {
+                const float s = m / vol; // 密度 1 の積分値を実質量へ
+                ix = I[0][0] * s;
+                iy = I[1][1] * s;
+                iz = I[2][2] * s;
+                return;
+            }
+        }
     }
     if (pose.shape == 1) {
         // box (全辺 = 2h): I = m/12 (d1² + d2²) = m/3 (h1² + h2²)
@@ -790,6 +815,11 @@ float CcdBoundingRadius(const ShapePose& p)
     }
     if (p.shape == 2) {
         return p.halfSeg + p.radius;
+    }
+    if (p.shape == 5) { // M60f: 生成時に測った外接半径。スケールは最大成分で保守側へ
+        const ConvexHullData* h = static_cast<const ConvexHullData*>(p.meshData);
+        const float s = std::max(std::fabs(p.sx), std::max(std::fabs(p.sy), std::fabs(p.sz)));
+        return h ? h->boundRadius * s : 0.0f;
     }
     return 0.0f; // mesh / terrain は動的ボディになれない (収集時に col が外れている)
 }
@@ -1362,6 +1392,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                         }
                     }
                 }
+                body->fullInertia = true;
                 if (!Invert3x3(Isum, body->invILocal)) {
                     // 退化 (体積 0 の形状しかない等) は角応答なしで通す
                     for (int r = 0; r < 3; ++r) {
@@ -1372,6 +1403,61 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                 }
             }
             ci0 = ci1;
+        }
+    }
+
+    // ---- 凸包 (M60f) の質量中心と慣性 ----
+    // 単一形状だが**慣性は一般に非対角**なので、複合 (M60e) と同じフル 3x3 経路へ載せる。
+    // M59f1-5 の「形状から導いた対角慣性を移し替えない」は原点対称な box/球/カプセルの話で、
+    // 凸包は質量分布が実際に分かっているので複合と同じ扱いが正当 (意図的な非対称)。
+    // ★複合の子として集約された凸包はここへ来ない (subCount > 0 は上のブロックが済ませて
+    //   いる) — 二重に慣性を組むと後勝ちで静かに壊れる
+    for (Body& b : bodies) {
+        if (!b.rb || b.subCount > 0 || !b.ownShape || !b.col || b.col->shape != 5) {
+            continue;
+        }
+        if (b.invMass <= 0.0f || b.freezeRot) {
+            continue; // kinematic / 回転凍結は角応答なし = 慣性を組む意味がない
+        }
+        const ConvexHullData* h = static_cast<const ConvexHullData*>(b.pose.meshData);
+        if (!h || !h->Valid()) {
+            continue; // 凸包が未生成 = LocalInertiaDiag の対角近似へ落ちる
+        }
+        float vol = 0.0f;
+        XMFLOAT3 com{};
+        float I[3][3];
+        ConvexMassProperties(*h, b.scale.x, b.scale.y, b.scale.z, vol, com, I);
+        if (!(vol > 1e-12f)) {
+            continue;
+        }
+        // 重心は凸包の実体積重心。**明示指定の centerOfMass があればそちらが勝つ**
+        // (M60e と同じ既存規約)。0 の判定は分岐ゲートで書く (M59f1-4)
+        if (!b.hasCom && (com.x != 0.0f || com.y != 0.0f || com.z != 0.0f)) {
+            b.comLx = com.x;
+            b.comLy = com.y;
+            b.comLz = com.z;
+            b.hasCom = true;
+        }
+        const float mass = 1.0f / b.invMass;
+        const float s = mass / vol; // 密度 1 の積分値を実質量へ
+        // ConvexMassProperties が返すのは**凸包重心まわり**。ボディの重心が明示指定で
+        // ずれている場合だけ平行軸で移す (一致していれば dv = 0 で恒等)
+        const float dv[3] = { com.x - b.comLx, com.y - b.comLy, com.z - b.comLz };
+        const float d2 = dv[0] * dv[0] + dv[1] * dv[1] + dv[2] * dv[2];
+        float Isum[3][3];
+        for (int r = 0; r < 3; ++r) {
+            for (int c = 0; c < 3; ++c) {
+                const float delta = (r == c) ? 1.0f : 0.0f;
+                Isum[r][c] = I[r][c] * s + mass * (d2 * delta - dv[r] * dv[c]);
+            }
+        }
+        b.fullInertia = true;
+        if (!Invert3x3(Isum, b.invILocal)) {
+            for (int r = 0; r < 3; ++r) {
+                for (int c = 0; c < 3; ++c) {
+                    b.invILocal[r][c] = 0.0f;
+                }
+            }
         }
     }
 
@@ -1738,8 +1824,8 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                     { cqx, cqy, cqz, cqw }, { cs.sx, cs.sy, cs.sz });
             }
             if (!b.freezeRot && b.invMass > 0.0f) {
-                if (b.subCount > 0) {
-                    // 複合は局所の I⁻¹ (3x3 フル) を姿勢で回すだけ (M60e)。
+                if (b.fullInertia) {
+                    // 複合 (M60e) / 凸包 (M60f) は局所の I⁻¹ (3x3 フル) を姿勢で回すだけ。
                     // ★ジャイロ項 (M59f1) は**複合では効かない** — フルテンソルの ω×Iω が
                     //   要るので、対角だけで近似すると黙って間違う。効かないほうがデバッグできる
                     float bx[3], by[3], bz[3];
@@ -2472,8 +2558,8 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             b.freezeRot = b.awakeFreezeRot;
             // 眠っていたあいだ pose 確定で飛ばされていた慣性を組み直す
             if (!b.freezeRot && b.invMass > 0.0f) {
-                if (b.subCount > 0) {
-                    float bx[3], by[3], bz[3]; // M60e: 複合は局所テンソルを回すだけ
+                if (b.fullInertia) {
+                    float bx[3], by[3], bz[3]; // M60e/M60f: 局所テンソルを回すだけ
                     QuatBasis(b.qx, b.qy, b.qz, b.qw, bx, by, bz);
                     RotateTensor(bx, by, bz, b.invILocal, b.invI);
                 } else {
@@ -3963,6 +4049,18 @@ float MeanProjectedAreaWorld(const ColliderComponent* col, float sx, float sy, f
         const float hz = col->halfExtents.z * sz;
         return 2.0f * (hx * hy + hy * hz + hz * hx);
     }
+    case 5: { // M60f: 凸包は**外接 AABB の箱で代用**する。
+              // 厳密な表面積は非一様スケールで積分し直しになるうえ、向きを見る正しい
+              // 面積分は M59c/M59d の面サンプリングが担当なので、ここは代表値で足りる
+        const ConvexHullData* h = convexcol::Resolve(col->meshAsset);
+        if (!h || !h->Valid()) {
+            return XM_PI * 0.25f;
+        }
+        const float hx = (h->aabbMax.x - h->aabbMin.x) * 0.5f * sx;
+        const float hy = (h->aabbMax.y - h->aabbMin.y) * 0.5f * sy;
+        const float hz = (h->aabbMax.z - h->aabbMin.z) * 0.5f * sz;
+        return 2.0f * (hx * hy + hy * hz + hz * hx);
+    }
     default: { // capsule = 側面 2 pi r (2 halfSeg) + 両端の球面 4 pi r^2、の 1/4
         const float wr = col->radius * std::max(sx, sz);
         const float wh = col->height * 0.5f * sy;
@@ -4032,6 +4130,10 @@ float ShapeVolumeWorld(const ColliderComponent& col, float sx, float sy, float s
         const float wh = col.height * 0.5f * sy;
         const float halfSeg = (wh > wr) ? (wh - wr) : 0.0f;
         return XM_PI * wr * wr * (2.0f * halfSeg) + (4.0f / 3.0f) * XM_PI * wr * wr * wr;
+    }
+    case 5: { // M60f: 凸包。生成時に積分した体積 (密度 1) に線形写像の行列式を掛ける
+        const ConvexHullData* h = convexcol::Resolve(col.meshAsset);
+        return h ? h->volume * sx * sy * sz : 0.0f;
     }
     default: // mesh (shape=3) は体積を定義しない → 呼び出し側が mass へフォールバック
         return 0.0f;

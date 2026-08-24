@@ -21,6 +21,7 @@
 #include "Engine/Engine/Audio/SoundAsset.h"
 #include "Engine/Engine/GameObject.h"
 #include "Engine/Engine/Parts.h"
+#include "Engine/Engine/Physics/ConvexHull.h" // M60f: shape=5 のワイヤ表示
 #include "Engine/Engine/Physics/PhysicsDebugDraw.h"
 #include "Engine/Engine/Physics/Shapes.h"
 #include "Engine/Engine/RenderSystem.h"
@@ -406,6 +407,26 @@ void SceneViewWindow::BuildOverlays(EngineContext& ctx, Selection& selection)
                                           { pose.by[0], pose.by[1], pose.by[2] },
                                           { pose.bz[0], pose.bz[1], pose.bz[2] }, pose.radius,
                                           pose.halfSeg, kCollider);
+                } else if (col->shape == 5) {
+                    // M60f: 凸包は**実際の稜線**を描く。箱で代用すると「どこまでが当たり
+                    // 判定なのか」が分からず、凸包コライダーのデバッグが成立しない。
+                    // 実体は MakePoseFromMatrix が convexcol 経由で解決済み (未生成は null)
+                    const auto* hull = static_cast<const ConvexHullData*>(pose.meshData);
+                    if (hull != nullptr) {
+                        auto toWorld = [&](const XMFLOAT3& v) {
+                            const float lx = v.x * pose.sx, ly = v.y * pose.sy, lz = v.z * pose.sz;
+                            return XMFLOAT3{
+                                pose.px + pose.bx[0] * lx + pose.by[0] * ly + pose.bz[0] * lz,
+                                pose.py + pose.bx[1] * lx + pose.by[1] * ly + pose.bz[1] * lz,
+                                pose.pz + pose.bx[2] * lx + pose.by[2] * ly + pose.bz[2] * lz
+                            };
+                        };
+                        for (const ConvexEdge& e : hull->edges) {
+                            lines_.AddLine(toWorld(hull->verts[static_cast<size_t>(e.v0)]),
+                                           toWorld(hull->verts[static_cast<size_t>(e.v1)]),
+                                           kCollider);
+                        }
+                    }
                 } else {
                     // OBB: 基底 × スケール適用済み half extents を行列に組んで描画
                     XMFLOAT4X4 boxWorld = {

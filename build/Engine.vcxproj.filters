@@ -252,6 +252,18 @@
     <ClCompile Include="..\src\Engine\Engine\Physics\Broadphase.cpp">
       <Filter>Engine\Physics</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Physics\ConvexColliderLibrary.cpp">
+      <Filter>Engine\Physics</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Physics\ConvexCollision.cpp">
+      <Filter>Engine\Physics</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Physics\ConvexHull.cpp">
+      <Filter>Engine\Physics</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Physics\ConvexSelfTest.cpp">
+      <Filter>Engine\Physics</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Physics\MeshColliderLibrary.cpp">
       <Filter>Engine\Physics</Filter>
     </ClCompile>
@@ -748,6 +760,18 @@
       <Filter>Engine\Physics</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Physics\Broadphase.h">
+      <Filter>Engine\Physics</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Physics\ConvexColliderLibrary.h">
+      <Filter>Engine\Physics</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Physics\ConvexCollision.h">
+      <Filter>Engine\Physics</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Physics\ConvexHull.h">
+      <Filter>Engine\Physics</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Physics\ConvexSelfTest.h">
       <Filter>Engine\Physics</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Physics\MeshColliderLibrary.h">
