@@ -5645,6 +5645,218 @@ bool RunPhysicsSelfTest()
         }
     }
 
+    // ================= M60e: 複合コライダー =================
+    // `Rigidbody.compoundColliders` を立てると、**Rigidbody を持たない子孫の Collider が
+    // その剛体の形状として集約される**。既定 off のあいだ、それらは従来どおり独立した
+    // 静的コライダーとして収集される (= 挙動が変わるので既定 off は必須)。
+    // ★質量中心は体積加重、慣性は**平行軸で合成した 3x3 フルテンソル**。
+    //   M59f1 の「形状から導いた対角慣性を移し替えない」は単一形状の話で、複合では
+    //   質量分布が実際に分かっているので移し替えが正当 — 意図的な非対称。
+    // ★子形状は**二重に収集してはいけない** (剛体の一部と静止壁の二重人格になる)。
+    // ★接触の出力は 1 ボディペア 1 件のまま (子形状ごとに増やさない)。
+    {
+        // 親 (自分のコライダー無し) + 子ボックス n 個の複合を作る
+        struct Compound {
+            GameObject parent;
+            GameObject child0;
+        };
+        auto makeCompound = [](Scene& s, bool on, float px, float py, float pz,
+                               const DirectX::XMFLOAT3* offsets, const DirectX::XMFLOAT3* halfs,
+                               int n) {
+            GameObject parent = s.CreateGameObjectTracked("Compound");
+            parent.SetLocalPosition(px, py, pz);
+            auto* rb = parent.AddComponent<RigidbodyComponent>();
+            rb->mass = 1.0f;
+            rb->compoundColliders = on;
+            GameObject first;
+            for (int i = 0; i < n; ++i) {
+                GameObject c = s.CreateGameObjectTracked("Part");
+                c.SetParent(parent);
+                c.SetLocalPosition(offsets[i].x, offsets[i].y, offsets[i].z);
+                auto* col = c.AddComponent<ColliderComponent>();
+                col->shape = 1;
+                col->halfExtents = halfs[i];
+                if (i == 0) {
+                    first = c;
+                }
+            }
+            s.GetWorld().ApplyStructuralChanges();
+            return Compound{ parent, first };
+        };
+
+        // -- (e-1) 質量中心が体積加重で出る: 吊ると**重い側が下**を向く --
+        // ★単一 box では起きない挙動。片側だけ大きい L 字 (T 字) を親の原点で吊ると、
+        //   重心が原点から外れているぶんだけ回って釣り合う
+        {
+            Scene s;
+            const DirectX::XMFLOAT3 offs[2] = { { -0.5f, 0.0f, 0.0f }, { 0.5f, 0.0f, 0.0f } };
+            const DirectX::XMFLOAT3 halfs[2] = { { 0.5f, 0.3f, 0.3f }, { 0.5f, 0.1f, 0.1f } };
+            Compound c = makeCompound(s, true, 0.0f, 0.0f, 0.0f, offs, halfs, 2);
+            auto* j = c.parent.AddComponent<JointComponent>();
+            j->type = 0; // 親の原点をワールドへ吊る
+            s.GetWorld().ApplyStructuralChanges();
+            const auto* lt = c.parent.GetComponent<LocalTransform>();
+            for (int i = 0; i < 900; ++i) {
+                phys.Update(s.GetWorld(), kDt); // 既定の減衰で振り子が静定するまで
+            }
+            // 重い側 (ローカル -X) がワールドの真下を向いているか
+            const float qx = lt->rotation.x, qy = lt->rotation.y, qz = lt->rotation.z,
+                        qw = lt->rotation.w;
+            const DirectX::XMFLOAT3 v = { -1.0f, 0.0f, 0.0f };
+            const float tx = 2.0f * (qy * v.z - qz * v.y);
+            const float ty = 2.0f * (qz * v.x - qx * v.z);
+            const float tz = 2.0f * (qx * v.y - qy * v.x);
+            const float hy = v.y + qw * ty + (qz * tx - qx * tz);
+            MYE_LOG_INFO("  [phys] compound com: heavy side points y = %.4f (-1 = straight down)",
+                         static_cast<double>(hy));
+            check(hy < -0.98f,
+                  "compound: the volume-weighted centre of mass hangs the heavy side downward");
+        }
+
+        // -- (e-2) 慣性が「等価な単一 box」と一致する --
+        // ★1x1x1 の立方体 2 個を並べた複合は 2x1x1 の box と同じ質量分布。
+        //   既知トルクを掛けて ω を測れば、複合の合成が正しいかが数値で出る
+        {
+            auto spin = [&](bool compound) {
+                Scene s;
+                GameObject go;
+                if (compound) {
+                    const DirectX::XMFLOAT3 offs[2] = { { -0.5f, 0.0f, 0.0f },
+                                                        { 0.5f, 0.0f, 0.0f } };
+                    const DirectX::XMFLOAT3 halfs[2] = { { 0.5f, 0.5f, 0.5f },
+                                                         { 0.5f, 0.5f, 0.5f } };
+                    go = makeCompound(s, true, 0.0f, 0.0f, 0.0f, offs, halfs, 2).parent;
+                } else {
+                    go = MakeBox(s, "Single", 0.0f, 0.0f, 0.0f, 1.0f, 0.5f, 0.5f);
+                }
+                auto* cf = go.AddComponent<ConstantForceComponent>();
+                cf->torque = { 0.0f, 0.0f, 0.5f }; // N*m
+                s.GetWorld().ApplyStructuralChanges();
+                auto* rb = go.GetComponent<RigidbodyComponent>();
+                rb->gravityScale = 0.0f;
+                rb->angularDamping = 0.0f;
+                for (int i = 0; i < 60; ++i) {
+                    phys.Update(s.GetWorld(), kDt);
+                }
+                return rb->angularVelocity.z;
+            };
+            const float wc = spin(true);
+            const float ws = spin(false);
+            // I_zz = m/12 (w^2 + h^2) = 1/12 (4 + 1) = 0.41667 → w = tau*t/I = 0.5/0.41667
+            const float expect = 0.5f * 1.0f / (5.0f / 12.0f);
+            MYE_LOG_INFO("  [phys] compound inertia: w_z compound %.5f / single box %.5f "
+                         "(analytic %.5f)",
+                         static_cast<double>(wc), static_cast<double>(ws),
+                         static_cast<double>(expect));
+            check(std::fabs(wc - expect) < expect * 0.01f,
+                  "compound: two cubes compose the inertia of the equivalent single box");
+            check(std::fabs(wc - ws) < 1e-4f,
+                  "compound: and match the single box the solver would have built");
+        }
+
+        // -- (e-3/e-4) 子形状が二重に収集されない / off なら従来どおり静的のまま --
+        // ★on: 親が子形状で床に着地する。off: 親は自分の形状を持たないので**落ち続け**、
+        //   子コライダーだけが独立した静止壁として残る (= 従来の挙動そのまま)
+        {
+            auto drop = [&](bool on, float& parentY, size_t& contactCount) {
+                Scene s;
+                MakeGround(s, "G", 0.0f, -0.5f, 0.0f, 10.0f, 0.5f, 10.0f);
+                const DirectX::XMFLOAT3 offs[2] = { { -0.4f, 0.0f, 0.0f }, { 0.4f, 0.0f, 0.0f } };
+                const DirectX::XMFLOAT3 halfs[2] = { { 0.3f, 0.2f, 0.3f }, { 0.3f, 0.2f, 0.3f } };
+                Compound c = makeCompound(s, on, 0.0f, 3.0f, 0.0f, offs, halfs, 2);
+                std::vector<SolidContact> contacts;
+                for (int i = 0; i < 300; ++i) {
+                    phys.Update(s.GetWorld(), kDt, &contacts);
+                }
+                parentY = c.parent.GetComponent<LocalTransform>()->position.y;
+                contactCount = contacts.size();
+            };
+            float yOn = 0.0f, yOff = 0.0f;
+            size_t nOn = 0, nOff = 0;
+            drop(true, yOn, nOn);
+            drop(false, yOff, nOff);
+            MYE_LOG_INFO("  [phys] compound drop: on y %.4f (%zu contacts) / off y %.4f (%zu)",
+                         static_cast<double>(yOn), nOn, static_cast<double>(yOff), nOff);
+            // 子の半高 0.2 なので、親の原点は床 (y=0) の 0.2 上で止まる
+            check(yOn > 0.19f && yOn < 0.21f,
+                  "compound: the parent lands on the ground through its child shapes");
+            check(yOff < -10.0f,
+                  "compound: with the flag off the parent has no shape at all and keeps falling");
+            // -- (e-5) 接触の出力は 1 ボディペア 1 件のまま (子形状ごとに増やさない) --
+            check(nOn == 1,
+                  "compound: two child shapes touching the ground still report one contact pair");
+        }
+
+        // -- (e-6) 決定論: 複合を含むシーンの並走ハッシュ一致 --
+        {
+            auto build = [&makeCompound](Scene& s) {
+                GameObject envGo = s.CreateGameObjectTracked("Env");
+                envGo.AddComponent<PhysicsEnvironmentComponent>();
+                MakeGround(s, "G", 0.0f, -0.5f, 0.0f, 20.0f, 0.5f, 20.0f);
+                // L 字 (重心が原点から外れる)
+                const DirectX::XMFLOAT3 offs[3] = { { -0.5f, 0.0f, 0.0f },
+                                                    { 0.3f, 0.0f, 0.0f },
+                                                    { 0.3f, 0.5f, 0.0f } };
+                const DirectX::XMFLOAT3 halfs[3] = { { 0.5f, 0.2f, 0.4f },
+                                                     { 0.2f, 0.2f, 0.2f },
+                                                     { 0.2f, 0.3f, 0.2f } };
+                Compound c = makeCompound(s, true, 0.0f, 2.0f, 0.0f, offs, halfs, 3);
+                MakeBox(s, "Plain", 2.0f, 1.0f, 0.0f, 0.3f, 0.3f, 0.3f); // 非複合も混ぜる
+                s.GetWorld().ApplyStructuralChanges();
+                auto* rb = c.parent.GetComponent<RigidbodyComponent>();
+                rb->velocity = { 0.5f, 0.0f, 0.3f };
+                rb->angularVelocity = { 0.7f, -0.4f, 0.2f };
+            };
+            Scene sa, sb;
+            build(sa);
+            build(sb);
+            bool det = true;
+            uint64_t finalHash = 0;
+            for (int i = 0; i < 300 && det; ++i) {
+                phys.Update(sa.GetWorld(), kDt);
+                phys.Update(sb.GetWorld(), kDt);
+                const uint64_t ha = HashWorld(sa.GetWorld(), nullptr);
+                const uint64_t hb = HashWorld(sb.GetWorld(), nullptr);
+                if (ha != hb) {
+                    det = false;
+                    MYE_LOG_ERROR("  compound determinism diverged at tick %d", i);
+                }
+                finalHash = ha;
+            }
+            check(det, "compound: an L-shaped compound scene hashes identically twice");
+            MYE_LOG_INFO("  [phys] compound scene hash @300 = %016llX",
+                         static_cast<unsigned long long>(finalHash));
+        }
+
+        // -- (e-7) 明示指定の centerOfMass が体積加重より優先される (既存規約を壊さない) --
+        {
+            Scene s;
+            const DirectX::XMFLOAT3 offs[2] = { { -0.5f, 0.0f, 0.0f }, { 0.5f, 0.0f, 0.0f } };
+            const DirectX::XMFLOAT3 halfs[2] = { { 0.5f, 0.3f, 0.3f }, { 0.5f, 0.1f, 0.1f } };
+            Compound c = makeCompound(s, true, 0.0f, 0.0f, 0.0f, offs, halfs, 2);
+            auto* rb0 = c.parent.GetComponent<RigidbodyComponent>();
+            rb0->centerOfMass = { 0.5f, 0.0f, 0.0f }; // わざと**軽い側**を重心と宣言する
+            auto* j = c.parent.AddComponent<JointComponent>();
+            j->type = 0;
+            s.GetWorld().ApplyStructuralChanges();
+            const auto* lt = c.parent.GetComponent<LocalTransform>();
+            for (int i = 0; i < 900; ++i) {
+                phys.Update(s.GetWorld(), kDt);
+            }
+            const float qx = lt->rotation.x, qy = lt->rotation.y, qz = lt->rotation.z,
+                        qw = lt->rotation.w;
+            const DirectX::XMFLOAT3 v = { 1.0f, 0.0f, 0.0f }; // 宣言した重心の向き (+X)
+            const float tx = 2.0f * (qy * v.z - qz * v.y);
+            const float ty = 2.0f * (qz * v.x - qx * v.z);
+            const float tz = 2.0f * (qx * v.y - qy * v.x);
+            const float hy = v.y + qw * ty + (qz * tx - qx * tz);
+            MYE_LOG_INFO("  [phys] compound explicit com: declared side points y = %.4f",
+                         static_cast<double>(hy));
+            check(hy < -0.98f,
+                  "compound: an explicit centre of mass still wins over the derived one");
+        }
+    }
+
     if (failCount == 0) {
         MYE_LOG_INFO("==== Physics self test: ALL PASS ====");
         return true;

@@ -202,6 +202,15 @@ struct Body {
     float roll = 0.0f;
     // M60d: 粘着力 [N]。材料未割当なら 0 で、法線インパルスの下限が従来どおり 0 になる
     float adhesion = 0.0f;
+    // M60e: 複合コライダー。**subCount == 0 が非複合** = 形状 1 個 (b.pose) の従来経路。
+    // 複合だけ慣性を 3x3 フルで持つ (平行軸で合成すると非対角が出るため)
+    // ★`col` は**動的ボディにしか入っていない** (静的は pose だけ作って col を持たない) —
+    //   「自分自身の形状を持つか」は専用フラグで表す。これを col の有無で代用すると
+    //   静的コライダーが形状ゼロになって世界から床が消える
+    bool ownShape = false;
+    int32_t subFirst = 0;
+    int32_t subCount = 0;
+    float invILocal[3][3] = {}; // 複合のみ: 剛体ローカルでの I⁻¹
     int32_t layer = 0;             // 衝突レイヤー (M36a、Collider から複製)
     uint32_t mask = 0xFFFFFFFFu;   // 衝突マスク (既定 = 全レイヤー → 従来挙動)
     // 親のワールドフレーム (M28d)。収集時に合成し運動学的フレームとして固定。
@@ -254,6 +263,50 @@ void InvInertiaWorld(const ShapePose& pose, float ix, float iy, float iz, float 
         for (int c = 0; c < 3; ++c) {
             out[r][c] = inv[0] * B[0][r] * B[0][c] + inv[1] * B[1][r] * B[1][c]
                       + inv[2] * B[2][r] * B[2][c];
+        }
+    }
+}
+
+// 姿勢クォータニオンの正規直交基底 (回した X/Y/Z 軸) (M60e)。**複合コライダーは自分の
+// 形状を持たないことがある**ので、pose の基底に頼らず姿勢から直接作る
+void QuatBasis(float qx, float qy, float qz, float qw, float bx[3], float by[3], float bz[3])
+{
+    QuatRotate(qx, qy, qz, qw, 1.0f, 0.0f, 0.0f, bx[0], bx[1], bx[2]);
+    QuatRotate(qx, qy, qz, qw, 0.0f, 1.0f, 0.0f, by[0], by[1], by[2]);
+    QuatRotate(qx, qy, qz, qw, 0.0f, 0.0f, 1.0f, bz[0], bz[1], bz[2]);
+}
+
+// 主軸 b_k と主慣性 i_k から慣性テンソル Σ i_k (b_k ⊗ b_k) を組む (M60e)。
+// InvInertiaWorld と同じ形だが**逆にしない** — 複合では平行軸で足し合わせてから
+// 最後に 1 回だけ逆行列を作る (足す前に逆にすると意味を成さない)
+void TensorFromDiag(const float bx[3], const float by[3], const float bz[3], float ix, float iy,
+                    float iz, float out[3][3])
+{
+    const float d[3] = { ix, iy, iz };
+    const float* B[3] = { bx, by, bz };
+    for (int r = 0; r < 3; ++r) {
+        for (int c = 0; c < 3; ++c) {
+            out[r][c] = d[0] * B[0][r] * B[0][c] + d[1] * B[1][r] * B[1][c]
+                      + d[2] * B[2][r] * B[2][c];
+        }
+    }
+}
+
+// out = B · M · Bᵀ (B の列が bx/by/bz) (M60e)。局所の I⁻¹ を毎サブステップ世界へ回すのに使う。
+// ★対角しか持たない単一形状は InvInertiaWorld のままで、こちらを通るのは複合だけ
+void RotateTensor(const float bx[3], const float by[3], const float bz[3], const float m[3][3],
+                  float out[3][3])
+{
+    const float* B[3] = { bx, by, bz }; // B[i] = 列 i
+    float t[3][3];                      // t = M · Bᵀ
+    for (int i = 0; i < 3; ++i) {
+        for (int c = 0; c < 3; ++c) {
+            t[i][c] = m[i][0] * B[0][c] + m[i][1] * B[1][c] + m[i][2] * B[2][c];
+        }
+    }
+    for (int r = 0; r < 3; ++r) {
+        for (int c = 0; c < 3; ++c) {
+            out[r][c] = B[0][r] * t[0][c] + B[1][r] * t[1][c] + B[2][r] * t[2][c];
         }
     }
 }
@@ -932,6 +985,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
     }
     // ---- 収集 (動的: Rigidbody + LocalTransform) ----
     std::vector<Body> bodies;
+    bool anyCompound = false; // M60e: 複合コライダーを要求した剛体が 1 つでも居るか
     const ComponentTypeId dynReq[] = { RigidbodyComponent::sTypeId, LocalTransform::sTypeId };
     world.ForEachArchetype(dynReq, [&](Archetype& arch) {
         const int ri = arch.FindTypeIndex(RigidbodyComponent::sTypeId);
@@ -984,6 +1038,9 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             // M59f1: ジャイロ項と質量中心オフセット。**どちらも既定は無効**で、
             // 無効のあいだは以降の分岐が全て従来側へ落ちる (ビット同一)
             b.gyro = rb->gyroscopic;
+            if (rb->compoundColliders) {
+                anyCompound = true; // M60e: 1 個も無ければ子形状の探索ごと通らない
+            }
             // M59h: 眠っているボディは**不動として収集する**。ブロードフェーズには残る
             // (残さないと起きているボディがすり抜ける) が、重力・積分・書き戻しは
             // invMass==0 の既存分岐でそのまま外れる
@@ -1004,6 +1061,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             }
             if (col && !col->isTrigger) {
                 b.solid = true;
+                b.ownShape = true; // M60e
                 b.col = col;
                 b.friction = SelectFriction(*col, mat);
                 b.frictionS = SelectStaticFriction(*col, mat);   // M59f2
@@ -1015,6 +1073,22 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             bodies.push_back(b);
         }
     });
+
+    // ---- 複合コライダー (M60e) の材料 ----
+    // ★**存在ゲート**: `compoundColliders` を立てた剛体が 1 個も無ければ anyCompound が
+    //   false のままで、静的コライダーの祖先探索も合成もまるごと通らない
+    struct CompoundShape {
+        const ColliderComponent* col = nullptr;
+        EntityID owner;                           // 集約先の剛体 (並べ替えのキー)
+        EntityID child;                           // 子コライダー自身 (同上)
+        float wpx = 0, wpy = 0, wpz = 0;          // 収集時のワールド位置 (→ 局所へ畳む)
+        float wqx = 0, wqy = 0, wqz = 0, wqw = 1; // 同 ワールド回転
+        float lpx = 0, lpy = 0, lpz = 0;          // 剛体ローカルでの位置
+        float lqx = 0, lqy = 0, lqz = 0, lqw = 1; // 剛体ローカルでの回転
+        float sx = 1, sy = 1, sz = 1;             // 形状に掛けるワールドスケール
+        ShapePose pose;                   // サブステップごとに組み直す作業用
+    };
+    std::vector<CompoundShape> compoundShapes;
 
     // ---- 収集 (静的: Collider(isTrigger==0) + LocalTransform、Rigidbody 非所持) ----
     const ComponentTypeId colReq[] = { ColliderComponent::sTypeId, LocalTransform::sTypeId };
@@ -1034,10 +1108,51 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                 continue; // トリガーはソリッド衝突面でない (CollisionSystem がイベントを出す)
             }
             auto* lt = static_cast<const LocalTransform*>(arch.GetPtr(li, row));
+            // ---- 複合コライダーへの吸収 (M60e) ----
+            // ★**ここで拾った子は静的ボディにしない** — 両方で収集すると同じ形状が
+            //   「剛体の一部」と「独立した静止壁」の二重人格になり、自分自身と衝突する。
+            //   集約先は AeroSurface (M59d) と同じ「最も近い Rigidbody 祖先」。
+            //   その祖先が compoundColliders を立てていなければ従来どおり静的のまま
+            if (anyCompound) {
+                EntityID cowner = kNullEntity;
+                for (EntityID cur = world.GetParent(e); !cur.IsNull(); cur = world.GetParent(cur)) {
+                    const auto* prb = world.GetComponent<RigidbodyComponent>(cur);
+                    if (prb) {
+                        if (prb->compoundColliders) {
+                            cowner = cur;
+                        }
+                        break; // 最初に見つけた剛体で打ち切り (入れ子の剛体は境界)
+                    }
+                }
+                if (!cowner.IsNull()) {
+                    const WorldFrame cf = ComposeParentFrame(world, e);
+                    XMFLOAT3 cwpos;
+                    XMFLOAT4 cwrot;
+                    XMFLOAT3 cwscale;
+                    ApplyFrame(cf, *lt, cwpos, cwrot, cwscale);
+                    CompoundShape cs;
+                    cs.col = col;
+                    cs.owner = cowner;
+                    cs.child = e;
+                    cs.wpx = cwpos.x;
+                    cs.wpy = cwpos.y;
+                    cs.wpz = cwpos.z;
+                    cs.wqx = cwrot.x;
+                    cs.wqy = cwrot.y;
+                    cs.wqz = cwrot.z;
+                    cs.wqw = cwrot.w;
+                    cs.sx = cwscale.x;
+                    cs.sy = cwscale.y;
+                    cs.sz = cwscale.z;
+                    compoundShapes.push_back(cs); // 剛体ローカルへ畳むのは並べ替えのあと
+                    continue;
+                }
+            }
             Body b;
             b.entity = e;
             b.solid = true;
-            b.invMass = 0.0f; // 静的 = 不動
+            b.ownShape = true; // M60e
+            b.invMass = 0.0f;  // 静的 = 不動
             const PhysMat* mat = physmat::Resolve(col->physMaterial); // M59a2
             b.friction = SelectFriction(*col, mat);
             // M59a2: 材料付き静的コライダーは e を主張できる (従来は構造的に 0 = 新規能力。
@@ -1109,6 +1224,156 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
     }
     std::sort(bodies.begin(), bodies.end(),
               [](const Body& a, const Body& b) { return a.entity.index < b.entity.index; });
+
+    // ---- 複合コライダーの合成 (M60e) ----
+    // ★**bodies の並べ替えのあと**にやる — subFirst/subCount は並べ替え後の添字で持つ。
+    // ★子形状の順序は (親 index, 子 index) 昇順で明示的に固定する。慣性の足し算は fp なので
+    //   順序が結果のビットを決める (アーキタイプの走査順に依存させてはいけない)。
+    if (!compoundShapes.empty()) {
+        std::sort(compoundShapes.begin(), compoundShapes.end(),
+                  [](const CompoundShape& a, const CompoundShape& b) {
+                      if (a.owner.index != b.owner.index) {
+                          return a.owner.index < b.owner.index;
+                      }
+                      return a.child.index < b.child.index;
+                  });
+        auto findCompoundOwner = [&bodies](EntityID e) -> Body* {
+            auto it = std::lower_bound(
+                bodies.begin(), bodies.end(), e.index,
+                [](const Body& b, uint32_t idx) { return b.entity.index < idx; });
+            if (it != bodies.end() && it->entity.index == e.index
+                && it->entity.generation == e.generation) {
+                return &(*it);
+            }
+            return nullptr;
+        };
+        size_t ci0 = 0;
+        while (ci0 < compoundShapes.size()) {
+            const EntityID owner = compoundShapes[ci0].owner;
+            size_t ci1 = ci0;
+            while (ci1 < compoundShapes.size() && compoundShapes[ci1].owner.index == owner.index
+                   && compoundShapes[ci1].owner.generation == owner.generation) {
+                ++ci1;
+            }
+            Body* body = findCompoundOwner(owner);
+            if (!body) {
+                ci0 = ci1;
+                continue; // 親が非アクティブ等で収集されていない = 子形状ごと捨てる
+            }
+            body->subFirst = static_cast<int32_t>(ci0);
+            body->subCount = static_cast<int32_t>(ci1 - ci0);
+            body->solid = true; // 自分にコライダーが無くても複合は衝突面を持つ (ownShape は別)
+            // 子の配置を**剛体ローカル**へ畳む。以降はサブステップごとにここから組み直す
+            const float iqx = -body->qx, iqy = -body->qy, iqz = -body->qz, iqw = body->qw;
+            for (size_t k = ci0; k < ci1; ++k) {
+                CompoundShape& cs = compoundShapes[k];
+                const float dx = cs.wpx - body->pose.px;
+                const float dy = cs.wpy - body->pose.py;
+                const float dz = cs.wpz - body->pose.pz;
+                QuatRotate(iqx, iqy, iqz, iqw, dx, dy, dz, cs.lpx, cs.lpy, cs.lpz);
+                QuatMul(iqx, iqy, iqz, iqw, cs.wqx, cs.wqy, cs.wqz, cs.wqw, cs.lqx, cs.lqy, cs.lqz,
+                        cs.lqw);
+            }
+            // 材料 / レイヤーは **body 単位のまま** (v1)。親にコライダーが無ければ最初の子から採る
+            if (!body->ownShape) {
+                const ColliderComponent* fc = compoundShapes[ci0].col;
+                const PhysMat* fmat = physmat::Resolve(fc->physMaterial);
+                body->friction = SelectFriction(*fc, fmat);
+                body->frictionS = SelectStaticFriction(*fc, fmat);
+                body->roll = SelectRollingResistance(*fc, fmat);
+                body->adhesion = SelectAdhesion(fmat);
+                body->restitution = SelectRestitution(fc, body->rb, fmat);
+                body->layer = fc->layer;
+                body->mask = fc->mask;
+            }
+            // ---- 質量中心と慣性 ----
+            // ★M59f1 の「形状から導いた対角慣性を平行軸で移し替えない」は**単一形状の話**。
+            //   複合では質量分布が実際に分かっているので移し替えが正当 — 意図的な非対称。
+            // ★合成すると必ず非対角が出る (L 字がその典型) ので、対角しか持てない
+            //   InvInertiaWorld ではなく **3x3 フルテンソル**を局所で持ち、毎サブステップ
+            //   B·I⁻¹·Bᵀ でワールドへ回す。
+            // 形状の中心は pose の原点そのもの (box / 球 / カプセルはいずれも原点対称)
+            constexpr int kMaxCompoundShapes = 16;
+            float vol[kMaxCompoundShapes];
+            float cx[kMaxCompoundShapes], cy[kMaxCompoundShapes], cz[kMaxCompoundShapes];
+            ShapePose lp[kMaxCompoundShapes];
+            const ColliderComponent* cols[kMaxCompoundShapes];
+            int nshape = 0;
+            if (body->ownShape) {
+                lp[nshape] = shapes::MakePose(*body->col, { 0.0f, 0.0f, 0.0f },
+                                              { 0.0f, 0.0f, 0.0f, 1.0f }, body->scale);
+                cols[nshape] = body->col;
+                vol[nshape] =
+                    ShapeVolumeWorld(*body->col, body->scale.x, body->scale.y, body->scale.z);
+                cx[nshape] = 0.0f;
+                cy[nshape] = 0.0f;
+                cz[nshape] = 0.0f;
+                ++nshape;
+            }
+            for (size_t k = ci0; k < ci1 && nshape < kMaxCompoundShapes; ++k) {
+                const CompoundShape& cs = compoundShapes[k];
+                lp[nshape] =
+                    shapes::MakePose(*cs.col, { cs.lpx, cs.lpy, cs.lpz },
+                                     { cs.lqx, cs.lqy, cs.lqz, cs.lqw }, { cs.sx, cs.sy, cs.sz });
+                cols[nshape] = cs.col;
+                vol[nshape] = ShapeVolumeWorld(*cs.col, cs.sx, cs.sy, cs.sz);
+                cx[nshape] = cs.lpx;
+                cy[nshape] = cs.lpy;
+                cz[nshape] = cs.lpz;
+                ++nshape;
+            }
+            float vtot = 0.0f;
+            for (int k = 0; k < nshape; ++k) {
+                vtot += vol[k];
+            }
+            if (vtot > 1e-12f && body->invMass > 0.0f && !body->freezeRot) {
+                // 体積加重の重心。**明示指定の centerOfMass があればそちらが勝つ** (既存規約)
+                if (!body->hasCom) {
+                    float mx = 0.0f, my = 0.0f, mz = 0.0f;
+                    for (int k = 0; k < nshape; ++k) {
+                        const float w = vol[k] / vtot;
+                        mx += cx[k] * w;
+                        my += cy[k] * w;
+                        mz += cz[k] * w;
+                    }
+                    if (mx != 0.0f || my != 0.0f || mz != 0.0f) {
+                        body->comLx = mx;
+                        body->comLy = my;
+                        body->comLz = mz;
+                        body->hasCom = true;
+                    }
+                }
+                const float mass = 1.0f / body->invMass;
+                float Isum[3][3] = {};
+                for (int k = 0; k < nshape; ++k) {
+                    const float mk = mass * (vol[k] / vtot);
+                    float ix, iy, iz;
+                    LocalInertiaDiag(cols[k], lp[k], mk, ix, iy, iz);
+                    float Ik[3][3];
+                    TensorFromDiag(lp[k].bx, lp[k].by, lp[k].bz, ix, iy, iz, Ik);
+                    // 平行軸の定理: I += m (|d|² δ − d dᵀ)
+                    const float dv[3] = { cx[k] - body->comLx, cy[k] - body->comLy,
+                                          cz[k] - body->comLz };
+                    const float d2 = dv[0] * dv[0] + dv[1] * dv[1] + dv[2] * dv[2];
+                    for (int r = 0; r < 3; ++r) {
+                        for (int c = 0; c < 3; ++c) {
+                            const float delta = (r == c) ? 1.0f : 0.0f;
+                            Isum[r][c] += Ik[r][c] + mk * (d2 * delta - dv[r] * dv[c]);
+                        }
+                    }
+                }
+                if (!Invert3x3(Isum, body->invILocal)) {
+                    // 退化 (体積 0 の形状しかない等) は角応答なしで通す
+                    for (int r = 0; r < 3; ++r) {
+                        for (int c = 0; c < 3; ++c) {
+                            body->invILocal[r][c] = 0.0f;
+                        }
+                    }
+                }
+            }
+            ci0 = ci1;
+        }
+    }
 
     // ---- 物理環境の解決 (M59b)。不在 (= 既存シーンの全部) なら以降は全て従来経路 ----
     const PhysicsEnvironmentComponent* env = ResolvePhysicsEnvironment(world);
@@ -1354,6 +1619,26 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             ApplyPoseRotation(bodies[static_cast<size_t>(l.bi)], -ex * s, -ey * s, -ez * s);
         }
     };
+    // ---- ボディの形状を列挙する (M60e) ----
+    // ★**非複合は「自分の pose 1 個」= 従来の経路そのまま**。下のループは 1 回だけ回り、
+    //   渡す pose も従来と同じ b.pose なので、既存シーンの CollideManifold の呼び出し列は
+    //   1 つも変わらない (fp 演算も 1 つ増えない)。
+    // ★複合で自分のコライダーが無い剛体は b.pose が「形状としては空」なので、
+    //   **ownShape で判定する** — pose.shape を見ると球 (既定) として当たってしまう
+    auto forEachShape = [&compoundShapes](const Body& b, auto&& fn) {
+        if (b.ownShape) {
+            fn(b.pose);
+        }
+        for (int k = 0; k < b.subCount; ++k) {
+            fn(compoundShapes[static_cast<size_t>(b.subFirst + k)].pose);
+        }
+    };
+    // 形状ペアの総当たり。複合 × 複合でも「同じボディペア」として扱うのが要点 (決定台帳)
+    auto forEachShapePair = [&forEachShape](const Body& A, const Body& B, auto&& fn) {
+        forEachShape(A, [&](const ShapePose& pa) {
+            forEachShape(B, [&](const ShapePose& pb) { fn(pa, pb); });
+        });
+    };
     std::vector<ConstraintBlock> jointBlocks; // サブステップごとに作り直す (capacity は使い回す)
     // ---- 破断の集計 (M60d): 関節 1 個につき 線形 3 + 角 3 の**力積ベクトル** ----
     // ★**tick 全体**で溜める (サブステップをまたぐ) — こうすると「その tick に関節が
@@ -1440,13 +1725,37 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                 const XMFLOAT4 rot = { b.qx, b.qy, b.qz, b.qw };
                 b.pose = shapes::MakePose(*b.col, pos, rot, b.scale);
             }
+            // M60e: 子形状のワールド姿勢を親から組み直す (収集時に畳んだローカル配置から)
+            for (int k = 0; k < b.subCount; ++k) {
+                CompoundShape& cs = compoundShapes[static_cast<size_t>(b.subFirst + k)];
+                float ox, oy, oz;
+                QuatRotate(b.qx, b.qy, b.qz, b.qw, cs.lpx, cs.lpy, cs.lpz, ox, oy, oz);
+                float cqx, cqy, cqz, cqw;
+                QuatMul(b.qx, b.qy, b.qz, b.qw, cs.lqx, cs.lqy, cs.lqz, cs.lqw, cqx, cqy, cqz,
+                        cqw);
+                cs.pose = shapes::MakePose(
+                    *cs.col, { b.pose.px + ox, b.pose.py + oy, b.pose.pz + oz },
+                    { cqx, cqy, cqz, cqw }, { cs.sx, cs.sy, cs.sz });
+            }
             if (!b.freezeRot && b.invMass > 0.0f) {
-                float ix, iy, iz;
-                LocalInertiaDiag(b.col, b.pose, 1.0f / b.invMass, ix, iy, iz);
-                InvInertiaWorld(b.pose, ix, iy, iz, b.invI);
-                b.Ilx = ix; // M59f1: ジャイロ項は I 自身が要る
-                b.Ily = iy;
-                b.Ilz = iz;
+                if (b.subCount > 0) {
+                    // 複合は局所の I⁻¹ (3x3 フル) を姿勢で回すだけ (M60e)。
+                    // ★ジャイロ項 (M59f1) は**複合では効かない** — フルテンソルの ω×Iω が
+                    //   要るので、対角だけで近似すると黙って間違う。効かないほうがデバッグできる
+                    float bx[3], by[3], bz[3];
+                    QuatBasis(b.qx, b.qy, b.qz, b.qw, bx, by, bz);
+                    RotateTensor(bx, by, bz, b.invILocal, b.invI);
+                    b.Ilx = 0.0f;
+                    b.Ily = 0.0f;
+                    b.Ilz = 0.0f;
+                } else {
+                    float ix, iy, iz;
+                    LocalInertiaDiag(b.col, b.pose, 1.0f / b.invMass, ix, iy, iz);
+                    InvInertiaWorld(b.pose, ix, iy, iz, b.invI);
+                    b.Ilx = ix; // M59f1: ジャイロ項は I 自身が要る
+                    b.Ily = iy;
+                    b.Ilz = iz;
+                }
             } // freezeRot / kinematic は零行列のまま = 角応答なし
             if (b.hasCom) {
                 // 形状原点 → 質量中心のワールドオフセット。姿勢が変わるたび取り直す
@@ -1914,6 +2223,11 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             if (!b.rb || !b.gyro || b.freezeRot || b.invMass == 0.0f) {
                 continue;
             }
+            if (b.subCount > 0) {
+                // M60e: 複合はフルテンソルなので、主軸ローカルで解くこの実装が使えない。
+                // 対角だけで近似すると黙って間違うので**効かせない** (Ilx/Ily/Ilz も 0)
+                continue;
+            }
             const float* B[3] = { b.pose.bx, b.pose.by, b.pose.bz };
             const float I[3] = { b.Ilx, b.Ily, b.Ilz };
             // ワールド → 主軸ローカル (基底は正規直交なので転置が逆行列)
@@ -2083,7 +2397,30 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                 }
                 BroadphaseEntry e;
                 e.id = static_cast<uint32_t>(i);
-                shapes::ComputeAabb(bodies[i].pose, e.minX, e.minY, e.minZ, e.maxX, e.maxY, e.maxZ);
+                // M60e: 複合は**全子形状の和の AABB** を 1 エントリで出す。計画は子形状ごとに
+                // エントリを出す案だったが、ペアキーが body ベースのままなら SolidContact の
+                // 意味も統合処理も一切いじらずに済む。候補列は真の接触集合のスーパーセットで
+                // あればよい (Broadphase.h の契約) ので、和の AABB でも正しい。
+                // 非複合ではこのループが 1 回 = 従来と同じ ComputeAabb 呼び出し 1 回
+                {
+                    bool first = true;
+                    forEachShape(bodies[i], [&](const ShapePose& p) {
+                        float nx0, ny0, nz0, nx1, ny1, nz1;
+                        shapes::ComputeAabb(p, nx0, ny0, nz0, nx1, ny1, nz1);
+                        if (first) {
+                            e.minX = nx0; e.minY = ny0; e.minZ = nz0;
+                            e.maxX = nx1; e.maxY = ny1; e.maxZ = nz1;
+                            first = false;
+                            return;
+                        }
+                        if (nx0 < e.minX) { e.minX = nx0; }
+                        if (ny0 < e.minY) { e.minY = ny0; }
+                        if (nz0 < e.minZ) { e.minZ = nz0; }
+                        if (nx1 > e.maxX) { e.maxX = nx1; }
+                        if (ny1 > e.maxY) { e.maxY = ny1; }
+                        if (nz1 > e.maxZ) { e.maxZ = nz1; }
+                    });
+                }
                 const float mx = std::fabs(bodies[i].vx) * h + kBroadphaseMargin;
                 const float my = std::fabs(bodies[i].vy) * h + kBroadphaseMargin;
                 const float mz = std::fabs(bodies[i].vz) * h + kBroadphaseMargin;
@@ -2135,12 +2472,18 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             b.freezeRot = b.awakeFreezeRot;
             // 眠っていたあいだ pose 確定で飛ばされていた慣性を組み直す
             if (!b.freezeRot && b.invMass > 0.0f) {
-                float ix, iy, iz;
-                LocalInertiaDiag(b.col, b.pose, 1.0f / b.invMass, ix, iy, iz);
-                InvInertiaWorld(b.pose, ix, iy, iz, b.invI);
-                b.Ilx = ix;
-                b.Ily = iy;
-                b.Ilz = iz;
+                if (b.subCount > 0) {
+                    float bx[3], by[3], bz[3]; // M60e: 複合は局所テンソルを回すだけ
+                    QuatBasis(b.qx, b.qy, b.qz, b.qw, bx, by, bz);
+                    RotateTensor(bx, by, bz, b.invILocal, b.invI);
+                } else {
+                    float ix, iy, iz;
+                    LocalInertiaDiag(b.col, b.pose, 1.0f / b.invMass, ix, iy, iz);
+                    InvInertiaWorld(b.pose, ix, iy, iz, b.invI);
+                    b.Ilx = ix;
+                    b.Ily = iy;
+                    b.Ilz = iz;
+                }
             }
         };
         for (const uint64_t pairKey : candidates) {
@@ -2489,8 +2832,21 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                 //   こちらのほうが (a) 生存確認が要らない (b) 毎 tick 実際に重なりを
                 //   確かめるので嘘をつかない。コストは最後のサブステップの 1 回だけ
                 if ((A.sleeping || B.sleeping) && outContacts && sub == substeps - 1) {
+                    // M60e: 複合は**最初に当たった子形状**を代表にする (報告は 1 ペア 1 件)
                     shapes::Manifold sm;
-                    if (shapes::CollideManifold(A.pose, B.pose, sm) && sm.count > 0) {
+                    bool hit = false;
+                    forEachShapePair(A, B, [&](const ShapePose& pa,
+                                               const ShapePose& pb) {
+                        if (hit) {
+                            return;
+                        }
+                        shapes::Manifold t;
+                        if (shapes::CollideManifold(pa, pb, t) && t.count > 0) {
+                            sm = t;
+                            hit = true;
+                        }
+                    });
+                    if (hit) {
                         SolidContact sc;
                         sc.key = (static_cast<uint64_t>(A.entity.index) << 32) | B.entity.index;
                         sc.nx = sm.nx;
@@ -2512,9 +2868,13 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                 }
                 continue; // 両方不動 (静的 / kinematic 同士 / 睡眠)
             }
+            // M60e: **形状ペアごとに 1 本ずつ**制約を作る。法線が形状ごとに違うので
+            // 1 つのマニフォールドには畳めない (出力側で 1 ボディペア 1 件へ統合する)。
+            // 非複合ではこのラムダが 1 回だけ回り、従来と完全に同じ制約が 1 本できる
+            forEachShapePair(A, B, [&](const ShapePose& pa, const ShapePose& pb) {
             shapes::Manifold m;
-            if (!shapes::CollideManifold(A.pose, B.pose, m)) {
-                continue;
+            if (!shapes::CollideManifold(pa, pb, m)) {
+                return;
             }
             ContactConstraint c;
             c.ai = ai;
@@ -2683,6 +3043,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                 }
             }
             constraints.push_back(c);
+            });
         }
 
         // ---- 接触解決 (固定反復・生成順 = 候補ペアの (小,大) 昇順 = 決定論) ----
@@ -3031,9 +3392,13 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                 if (tim == 0.0f) {
                     continue;
                 }
+                // M60e: 複合は形状ペアごとに押し出す。位置補正はもともと反復なので、
+                // 同じペアを複数回押しても収束の向きは変わらない
+                forEachShapePair(A, B, [&](const ShapePose& pa,
+                                           const ShapePose& pb) {
                 shapes::Manifold m;
-                if (!shapes::CollideManifold(A.pose, B.pose, m)) {
-                    continue;
+                if (!shapes::CollideManifold(pa, pb, m)) {
+                    return;
                 }
                 float maxDepth = 0.0f;
                 for (int k = 0; k < m.count; ++k) {
@@ -3050,6 +3415,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                 B.pose.px -= m.nx * cj;
                 B.pose.py -= m.ny * cj;
                 B.pose.pz -= m.nz * cj;
+                });
             }
         }
 
@@ -3076,6 +3442,9 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                 }
                 const float mvx = A.vx * h, mvy = A.vy * h, mvz = A.vz * h;
                 const float mv = std::sqrt(mvx * mvx + mvy * mvy + mvz * mvz);
+                // ★M60e の複合コライダーでは**親自身の形状しか掃かない** (v1 の制限)。
+                //   親がコライダーを持たない複合は R==0 で下の分岐から自然に外れる —
+                //   掃引形状を持たないので「保守的に手前で止める」が成立しないため
                 const float R = CcdBoundingRadius(A.pose);
                 if (R <= 0.0f || mv <= kCcdMotionRatio * R) {
                     continue; // 起動しきい値 (kCcdMotionRatio のコメントが根拠)
@@ -3206,6 +3575,14 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
         // ★出力は各サブステップの**和集合**。1 度でも触れたペアは報告される — Enter/Exit の
         //   意味論として「この tick に接触したか」が欲しいのは CollisionSystem 側の要求
         if (outContacts) {
+            // M60e: 複合コライダーは同じボディペアに**子形状のぶんだけ制約が並ぶ**。
+            // 生成順が候補ペア昇順 → 形状ペアの入れ子なので同じ key は必ず隣り合う。
+            // ★**1 ボディペア 1 件へ畳む** — SolidContact の意味 (エンティティ対エンティティ)
+            //   を変えないための約束。インパルスは足し、幾何は**最も強く押した子形状**を
+            //   代表にする (CollisionSystem が読む法線が「一番効いた面」になる)
+            uint64_t lastKey = 0;
+            float lastRep = 0.0f;
+            bool hasLast = false;
             for (const ContactConstraint& c : constraints) {
                 SolidContact sc;
                 sc.key = (static_cast<uint64_t>(bodies[c.ai].entity.index) << 32)
@@ -3221,7 +3598,24 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                     total += c.pts[k].lambdaN;
                 }
                 sc.impulse = total;
+                if (hasLast && sc.key == lastKey) {
+                    SolidContact& back = subContacts.back();
+                    back.impulse += total;
+                    if (total > lastRep) {
+                        lastRep = total;
+                        back.nx = sc.nx;
+                        back.ny = sc.ny;
+                        back.nz = sc.nz;
+                        back.px = sc.px;
+                        back.py = sc.py;
+                        back.pz = sc.pz;
+                    }
+                    continue;
+                }
                 subContacts.push_back(sc);
+                lastKey = sc.key;
+                lastRep = total;
+                hasLast = true;
             }
             // 眠りペア (key 昇順) を先に合流させる。どちらも候補ペア昇順で作られて
             // いるのでキーが衝突することはなく、線形マージで昇順が保たれる

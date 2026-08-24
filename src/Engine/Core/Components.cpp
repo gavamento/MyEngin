@@ -208,6 +208,11 @@ void RegisterBuiltinComponents()
                MYE_FIELD_TIP(RigidbodyComponent, ccd, Bool,
                              "Sweep this body when it moves further than its own size in one "
                              "substep, so it stops at the first touch instead of tunnelling")),
+        // M60e: 複合コライダー (opt-in、末尾 append)
+        MYE_JP("複合コライダー",
+               MYE_FIELD_TIP(RigidbodyComponent, compoundColliders, Bool,
+                             "Absorb the colliders of descendants that have no rigidbody of "
+                             "their own, and derive the centre of mass and inertia from them")),
     });
 
     // M21: ゲーム内 UI。描画専用なので **kComponentNoHash** (既存シーンのハッシュ不変)。

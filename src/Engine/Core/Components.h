@@ -302,6 +302,19 @@ struct RigidbodyComponent {
     //   止まった直後は速度が落ちて掃引の起動しきい値を外れ、以降は通常の離散ソルバが
     //   摩擦も反発もスタックも面倒を見る (PhysicsSystem.cpp の CCD 節が正本)
     bool ccd = false;
+    // ---- M60e 追加: 複合コライダー (末尾 append) ----
+    // true にすると、**Rigidbody を持たない子孫の Collider を自分の形状として集約**する
+    // (既定 false のあいだ、それらは従来どおり独立した静的コライダーとして収集される —
+    //  挙動が変わるので既定 off は必須)。集約先は「最も近い Rigidbody 祖先」で、
+    // AeroSurface (M59d) の探索と同じ規約。
+    // ★質量中心と慣性は複合形状から導く (体積加重の重心 + 平行軸で合成した **3x3 フル
+    //   テンソル**)。M59f1 の「形状から導いた対角慣性を移し替えない」は**単一形状の話** —
+    //   複合では質量分布が実際に分かっているので移し替えが正当。意図的な非対称。
+    // ★`centerOfMass` を明示指定していればそちらが勝つ (既存規約を壊さない)。
+    // ★v1 の制限: 密度からの質量導出は**親自身の形状しか見ない** (複合の質量は
+    //   `mass` で与える)。材料・レイヤーも body 単位で、親の Collider が無ければ
+    //   最初の子から採る。ジャイロ項は複合では効かない (フルテンソルを要求するため)
+    bool compoundColliders = false;
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
