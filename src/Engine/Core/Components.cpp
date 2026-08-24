@@ -665,9 +665,11 @@ void RegisterBuiltinComponents()
         MYE_JP("モータ最大力", MYE_FIELD_TIP(JointComponent, motorMaxForce, Float,
                                              "0 or below leaves the motor row out entirely")),
         MYE_JP("破断力", MYE_FIELD_TIP(JointComponent, breakForce, Float,
+                                       "average reaction force over one tick, in newtons. "
                                        "0 or below never breaks")),
         MYE_JP("破断トルク", MYE_FIELD_TIP(JointComponent, breakTorque, Float,
-                                           "0 or below never breaks")),
+                                           "reaction torque only - a motor never breaks the "
+                                           "joint it drives. 0 or below never breaks")),
         MYE_JP("破断済み", MYE_FIELD_TIP(JointComponent, broken, Bool,
                                          "sim state: a broken joint stops constraining")),
         // M60b: 角度自由度の基準になる相対回転 (末尾 append)

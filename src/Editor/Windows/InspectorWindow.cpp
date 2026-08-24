@@ -331,6 +331,10 @@ bool JointFieldApplies(int32_t type, const char* name)
         || std::strcmp(name, "motorMaxForce") == 0) {
         return usesMotor;
     }
+    // M60d: Ball は角ブロックを 1 つも立てないので、破断トルクが働く余地が無い
+    if (std::strcmp(name, "breakTorque") == 0) {
+        return usesAngular;
+    }
     return true;
 }
 
@@ -1841,6 +1845,10 @@ void InspectorWindow::DrawPhysMatInspector(const std::wstring& path)
     ImGui::SetNextItemWidth(160.0f);
     ImGui::DragFloat(Tr(StrId::Insp_PmDragCoefficient), &physMatEdit_.dragCoefficient, 0.01f, 0.0f,
                      100.0f, "%.3f");
+    // M60d: 粘着力 [N]。接触が引っ張る側へ耐えられる上限で、結合則は min (弱いほうが勝つ)
+    ImGui::SetNextItemWidth(160.0f);
+    ImGui::DragFloat(Tr(StrId::Insp_PmAdhesion), &physMatEdit_.adhesion, 0.5f, 0.0f, 1.0e6f,
+                     "%.2f");
     ImGui::TextDisabled("%s", Tr(StrId::Insp_PhysMatNote));
 
     ImGui::Separator();

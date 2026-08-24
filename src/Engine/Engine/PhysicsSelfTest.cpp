@@ -5366,6 +5366,285 @@ bool RunPhysicsSelfTest()
         }
     }
 
+    // ================= M60d: 破断 + 粘着性 =================
+    // **破断**: その tick に関節が受け止めた**力積 ÷ dt** が閾値を超えたら `broken = true`。
+    //   コンポーネントは外さずフラグを立てる (構造変更をソルバ内から起こさない = 決定台帳 5)。
+    //   `broken` は hash 対象 = sim 状態なので snapshot 往復もリプレイも自動で追従する。
+    // ★数えるのは**反力だけ** — 等式行とリミット行は数え、**モータ行は数えない**
+    //   (駆動であって反力ではない。含めるとモータを強くしただけで自分の関節が折れる)。
+    // **粘着**: 接触の法線インパルスの下限を `-adhesion·h` まで開ける。結合則は min。
+    //   材料未割当なら下限 0 = 従来とビット同一。
+    {
+        // 真下に吊った 1kg の反力は **mg = 9.81 N でぴったり一定** (振らせないので遠心力なし)。
+        // 閾値を 9.7 / 9.9 で挟めば「壊れる/壊れない」が解析値の検算そのものになる
+        auto hang = [&](float breakForce, int ticks, bool& broken, float& y) {
+            Scene s;
+            GameObject bob = MakeSphereBody(s, "Bob", 0.0f, -2.0f, 0.0f, 0.1f);
+            auto* j = bob.AddComponent<JointComponent>();
+            j->type = 0; // Ball
+            j->anchor = { 0.0f, 2.0f, 0.0f };
+            j->connectedAnchor = { 0.0f, 0.0f, 0.0f };
+            j->breakForce = breakForce;
+            s.GetWorld().ApplyStructuralChanges();
+            auto* rb = bob.GetComponent<RigidbodyComponent>();
+            rb->angularDamping = 0.0f;
+            rb->linearDamping = 0.0f;
+            const auto* lt = bob.GetComponent<LocalTransform>();
+            for (int i = 0; i < ticks; ++i) {
+                phys.Update(s.GetWorld(), kDt);
+            }
+            broken = j->broken;
+            y = lt->position.y;
+        };
+
+        // -- (d-1/d-2) 破断力: 閾値直下で持ち、直上で折れて自由落下へ移る --
+        {
+            bool bHold = false, bBreak = false;
+            float yHold = 0.0f, yBreak = 0.0f;
+            hang(9.9f, 120, bHold, yHold);
+            hang(9.7f, 120, bBreak, yBreak);
+            MYE_LOG_INFO("  [phys] joint break: force 9.9 -> broken=%d y %.4f / "
+                         "force 9.7 -> broken=%d y %.4f (reaction mg = 9.81 N)",
+                         bHold ? 1 : 0, static_cast<double>(yHold), bBreak ? 1 : 0,
+                         static_cast<double>(yBreak));
+            check(!bHold, "break: a joint just above the reaction force holds");
+            check(std::fabs(yHold + 2.0f) < 0.001f, "break: and the body stays hung");
+            check(bBreak, "break: a joint just below it snaps");
+            // 折れたら行が立たない = ただの自由落下。120 tick でおよそ 19m 落ちる
+            check(yBreak < -15.0f, "break: and the body falls freely from that moment on");
+        }
+
+        // -- (d-3) 破断トルク: 溶接した腕は「anchor の反力 × 腕の長さ」で折れる --
+        // 腕は長さ 2m・質量 1kg を端で溶接。重心は anchor から 1m なので、
+        // 角ブロックが受け止めるトルクは mg·d = 9.81 N·m
+        {
+            auto weld = [&](float breakTorque, bool& broken, float& y) {
+                Scene s;
+                GameObject arm = MakeBox(s, "Arm", 1.0f, 0.0f, 0.0f, 1.0f, 0.1f, 0.1f);
+                auto* j = arm.AddComponent<JointComponent>();
+                j->type = 2; // Fixed
+                j->anchor = { -1.0f, 0.0f, 0.0f };
+                j->connectedAnchor = { 0.0f, 0.0f, 0.0f };
+                j->breakTorque = breakTorque; // breakForce は 0 = 無限 (トルクだけを見る)
+                s.GetWorld().ApplyStructuralChanges();
+                auto* rb = arm.GetComponent<RigidbodyComponent>();
+                rb->angularDamping = 0.0f;
+                rb->linearDamping = 0.0f;
+                const auto* lt = arm.GetComponent<LocalTransform>();
+                for (int i = 0; i < 120; ++i) {
+                    phys.Update(s.GetWorld(), kDt);
+                }
+                broken = j->broken;
+                y = lt->position.y;
+            };
+            bool bHold = false, bBreak = false;
+            float yHold = 0.0f, yBreak = 0.0f;
+            weld(9.9f, bHold, yHold);
+            weld(9.7f, bBreak, yBreak);
+            MYE_LOG_INFO("  [phys] joint break torque: 9.9 -> broken=%d y %.4f / "
+                         "9.7 -> broken=%d y %.4f (reaction mg*d = 9.81 N*m)",
+                         bHold ? 1 : 0, static_cast<double>(yHold), bBreak ? 1 : 0,
+                         static_cast<double>(yBreak));
+            check(!bHold && std::fabs(yHold) < 0.001f,
+                  "break: a welded arm holds just above its reaction torque");
+            check(bBreak && yBreak < -15.0f,
+                  "break: and snaps just below it (the torque row is what breaks, not the force)");
+        }
+
+        // -- (d-4) `broken` は hash 対象 = sim 状態 --
+        // これが「snapshot 往復と .rep をまたいで保つ」の機械的な根拠。フィールドが
+        // ハッシュに載っていれば SimSnapshot も ReplayFile も自動で追従する
+        {
+            auto build = [](Scene& s, bool broken) {
+                GameObject bob = MakeSphereBody(s, "Bob", 0.0f, -2.0f, 0.0f, 0.1f);
+                auto* j = bob.AddComponent<JointComponent>();
+                j->type = 0;
+                j->anchor = { 0.0f, 2.0f, 0.0f };
+                j->broken = broken;
+                s.GetWorld().ApplyStructuralChanges();
+            };
+            Scene s0, s1;
+            build(s0, false);
+            build(s1, true);
+            const uint64_t h0 = HashWorld(s0.GetWorld(), nullptr);
+            const uint64_t h1 = HashWorld(s1.GetWorld(), nullptr);
+            MYE_LOG_INFO("  [phys] joint broken hash: false %016llX / true %016llX",
+                         static_cast<unsigned long long>(h0),
+                         static_cast<unsigned long long>(h1));
+            check(h0 != h1, "break: the broken flag is sim state (it moves the world hash)");
+        }
+
+        // -- (d-5) モータのトルクは破断に数えない --
+        // ★軸を縦にして重力の負荷をゼロにすると、関節に掛かるトルクは**モータのぶんだけ**。
+        //   maxForce 30 N·m は breakTorque 5 の 6 倍だが、駆動は反力ではないので折れない。
+        //   「トルクで折れる仕組みが死んでいるだけ」ではないことは d-3 が示している
+        {
+            Scene s;
+            GameObject body = MakeBox(s, "Driven", 0.0f, 0.0f, 0.0f, 0.3f, 0.3f, 0.3f);
+            auto* j = body.AddComponent<JointComponent>();
+            j->type = 1; // Hinge
+            j->axis = { 0.0f, 1.0f, 0.0f };
+            j->motorTargetVelocity = 100.0f; // 到達不能 = 毎 tick 上限いっぱい
+            j->motorMaxForce = 30.0f;
+            j->breakTorque = 5.0f;
+            s.GetWorld().ApplyStructuralChanges();
+            auto* rb = body.GetComponent<RigidbodyComponent>();
+            rb->gravityScale = 0.0f;
+            rb->angularDamping = 0.0f;
+            for (int i = 0; i < 120; ++i) {
+                phys.Update(s.GetWorld(), kDt);
+            }
+            MYE_LOG_INFO("  [phys] joint break vs motor: broken=%d, w = %.3f rad/s "
+                         "(motor 30 N*m vs breakTorque 5)",
+                         j->broken ? 1 : 0, static_cast<double>(rb->angularVelocity.y));
+            check(!j->broken, "break: a motor's own torque never breaks the joint it drives");
+            check(rb->angularVelocity.y > 10.0f, "break: and the motor really was saturated");
+        }
+
+        // -- (d-6/d-7) 粘着: 天井にぶら下がり、質量を増やすと落ちる --
+        {
+            PhysMatLibrary* prevAdhLib = physmat::Library();
+            PhysMatLibrary adhLib;
+            physmat::Install(&adhLib);
+
+            // 天井にぶら下げる。粘着 30 N なので 1kg (9.81 N) は保ち 5kg (49 N) は落ちる
+            auto stick = [&](float adhesion, float mass, float& y) {
+                PhysMat pm;
+                pm.adhesion = adhesion;
+                wchar_t name[32] = L"t_adh_x";
+                name[6] = static_cast<wchar_t>(L'0' + static_cast<int>(mass));
+                const uint64_t id = adhLib.Register(name, pm);
+                Scene s;
+                // 天井: y ∈ [0.5, 1.5] の静的板
+                GameObject ceil = MakeGround(s, "Ceil", 0.0f, 1.0f, 0.0f, 5.0f, 0.5f, 5.0f);
+                ceil.GetComponent<ColliderComponent>()->physMaterial = { id };
+                // 箱: 上面 0.51 = 天井へ 10mm 食い込ませて接触を作る
+                GameObject box = MakeBox(s, "Sticky", 0.0f, 0.31f, 0.0f, 0.2f, 0.2f, 0.2f);
+                box.GetComponent<ColliderComponent>()->physMaterial = { id };
+                s.GetWorld().ApplyStructuralChanges();
+                auto* rb = box.GetComponent<RigidbodyComponent>();
+                rb->mass = mass;
+                const auto* lt = box.GetComponent<LocalTransform>();
+                for (int i = 0; i < 300; ++i) {
+                    phys.Update(s.GetWorld(), kDt);
+                }
+                y = lt->position.y;
+            };
+            float yLight = 0.0f, yHeavy = 0.0f, yNone = 0.0f;
+            stick(30.0f, 1.0f, yLight);
+            stick(30.0f, 5.0f, yHeavy);
+            stick(0.0f, 1.0f, yNone);
+            MYE_LOG_INFO("  [phys] adhesion @300: 30N/1kg y %.4f / 30N/5kg y %.4f / "
+                         "0N/1kg y %.4f",
+                         static_cast<double>(yLight), static_cast<double>(yHeavy),
+                         static_cast<double>(yNone));
+            check(yLight > 0.29f, "adhesion: a sticky ceiling holds a light box up");
+            check(yHeavy < -5.0f, "adhesion: but the same glue drops a box 5x heavier");
+            check(yNone < -5.0f, "adhesion: and without it the light box falls too");
+
+            // -- 粘着は「押している」接触を 1 ビットも変えない --
+            // ★下限が負に開くだけなので、床に載っている (= 押している) 接触では
+            //   クランプに一度も触らない。値ゲートで書いていたらここが割れる
+            auto rest = [&](float adhesion, DirectX::XMFLOAT3& pos, DirectX::XMFLOAT4& rot) {
+                PhysMat pm;
+                pm.adhesion = adhesion;
+                wchar_t name[32] = L"t_adhrest_x";
+                name[10] = (adhesion > 0.0f) ? L'1' : L'0';
+                const uint64_t id = adhLib.Register(name, pm);
+                Scene s;
+                GameObject g = MakeGround(s, "G", 0.0f, -0.5f, 0.0f, 5.0f, 0.5f, 5.0f);
+                g.GetComponent<ColliderComponent>()->physMaterial = { id };
+                GameObject box = MakeBox(s, "Box", 0.1f, 1.5f, -0.05f, 0.2f, 0.2f, 0.2f);
+                box.GetComponent<ColliderComponent>()->physMaterial = { id };
+                s.GetWorld().ApplyStructuralChanges();
+                box.GetComponent<RigidbodyComponent>()->velocity = { 0.7f, 0.0f, -0.3f };
+                for (int i = 0; i < 300; ++i) {
+                    phys.Update(s.GetWorld(), kDt);
+                }
+                const auto* lt = box.GetComponent<LocalTransform>();
+                pos = lt->position;
+                rot = lt->rotation;
+            };
+            DirectX::XMFLOAT3 p0, p1;
+            DirectX::XMFLOAT4 r0, r1;
+            rest(0.0f, p0, r0);
+            rest(500.0f, p1, r1);
+            const bool same = std::memcmp(&p0, &p1, sizeof(p0)) == 0
+                           && std::memcmp(&r0, &r1, sizeof(r0)) == 0;
+            MYE_LOG_INFO("  [phys] adhesion gate: rest pos (%.6f %.6f %.6f) vs (%.6f %.6f %.6f)",
+                         static_cast<double>(p0.x), static_cast<double>(p0.y),
+                         static_cast<double>(p0.z), static_cast<double>(p1.x),
+                         static_cast<double>(p1.y), static_cast<double>(p1.z));
+            check(same, "adhesion: a box that only ever pushes lands on the same bits");
+
+            physmat::Install(prevAdhLib);
+        }
+
+        // -- (d-8) 決定論: 破断 + 粘着混在シーンの並走ハッシュ一致 --
+        // ★`broken` の書き込みがソルバの中で起きるので、走査順が結果に載っていないことを
+        //   ここで押さえる (折れるタイミングが 1 tick ずれれば以降は全く別の世界になる)
+        {
+            PhysMatLibrary* prevMixLib = physmat::Library();
+            PhysMatLibrary mixLib;
+            physmat::Install(&mixLib);
+            PhysMat pm;
+            pm.adhesion = 12.0f;
+            const uint64_t sticky = mixLib.Register(L"t_mix_adh", pm);
+            auto build = [sticky](Scene& s) {
+                GameObject envGo = s.CreateGameObjectTracked("Env");
+                envGo.AddComponent<PhysicsEnvironmentComponent>();
+                MakeGround(s, "G", 0, -3.0f, 0, 20.0f, 0.5f, 20.0f);
+                // 折れる吊り (反力 mg より低い閾値)
+                GameObject bob = MakeSphereBody(s, "Bob", 0.0f, -1.0f, 0.0f, 0.2f);
+                auto* jb = bob.AddComponent<JointComponent>();
+                jb->type = 0;
+                jb->anchor = { 0.0f, 1.0f, 0.0f };
+                jb->breakForce = 6.0f;
+                // 折れない吊り
+                GameObject keep = MakeSphereBody(s, "Keep", 2.0f, -1.0f, 0.0f, 0.2f);
+                auto* jk = keep.AddComponent<JointComponent>();
+                jk->type = 0;
+                jk->anchor = { 0.0f, 1.0f, 0.0f };
+                jk->connectedAnchor = { 2.0f, 0.0f, 0.0f };
+                jk->breakForce = 40.0f;
+                // トルクで折れる溶接
+                GameObject arm = MakeBox(s, "Arm", -3.0f, 0.0f, 0.0f, 1.0f, 0.1f, 0.1f);
+                auto* ja = arm.AddComponent<JointComponent>();
+                ja->type = 2;
+                ja->anchor = { 1.0f, 0.0f, 0.0f };
+                ja->connectedAnchor = { -2.0f, 0.0f, 0.0f };
+                ja->breakTorque = 7.0f;
+                // 粘着する天井と箱
+                GameObject ceil = MakeGround(s, "Ceil", 5.0f, 1.0f, 0.0f, 2.0f, 0.5f, 2.0f);
+                ceil.GetComponent<ColliderComponent>()->physMaterial = { sticky };
+                GameObject box = MakeBox(s, "Sticky", 5.0f, 0.31f, 0.0f, 0.2f, 0.2f, 0.2f);
+                box.GetComponent<ColliderComponent>()->physMaterial = { sticky };
+                s.GetWorld().ApplyStructuralChanges();
+                bob.GetComponent<RigidbodyComponent>()->velocity = { 1.0f, 0.0f, 0.5f };
+            };
+            Scene sa, sb;
+            build(sa);
+            build(sb);
+            bool det = true;
+            uint64_t finalHash = 0;
+            for (int i = 0; i < 300 && det; ++i) {
+                phys.Update(sa.GetWorld(), kDt);
+                phys.Update(sb.GetWorld(), kDt);
+                const uint64_t ha = HashWorld(sa.GetWorld(), nullptr);
+                const uint64_t hb = HashWorld(sb.GetWorld(), nullptr);
+                if (ha != hb) {
+                    det = false;
+                    MYE_LOG_ERROR("  break/adhesion determinism diverged at tick %d", i);
+                }
+                finalHash = ha;
+            }
+            check(det, "break/adhesion: a mixed scene hashes identically twice");
+            MYE_LOG_INFO("  [phys] joint break/adhesion scene hash @300 = %016llX",
+                         static_cast<unsigned long long>(finalHash));
+            physmat::Install(prevMixLib);
+        }
+    }
+
     if (failCount == 0) {
         MYE_LOG_INFO("==== Physics self test: ALL PASS ====");
         return true;

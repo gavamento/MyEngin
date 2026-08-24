@@ -200,6 +200,8 @@ struct Body {
     // ソルバの新しい分岐が全て従来側へ畳まれる
     float frictionS = 0.5f;
     float roll = 0.0f;
+    // M60d: 粘着力 [N]。材料未割当なら 0 で、法線インパルスの下限が従来どおり 0 になる
+    float adhesion = 0.0f;
     int32_t layer = 0;             // 衝突レイヤー (M36a、Collider から複製)
     uint32_t mask = 0xFFFFFFFFu;   // 衝突マスク (既定 = 全レイヤー → 従来挙動)
     // 親のワールドフレーム (M28d)。収集時に合成し運動学的フレームとして固定。
@@ -379,6 +381,11 @@ struct ConstraintBlock {
     float lo[3] = { -kJointRowUnbounded, -kJointRowUnbounded, -kJointRowUnbounded };
     float hi[3] = { kJointRowUnbounded, kJointRowUnbounded, kJointRowUnbounded };
     float lambda[3] = {}; // 蓄積 (サブステップ内で閉じる)
+    // M60d: 破断の集計先 = jointLinks の添字。**-1 は集計しない**。
+    // ★モータ行だけが -1 — モータは**駆動であって反力ではない**ので、数えると
+    //   「モータを強くしただけで自分の関節が折れる」ことになる。等式行とリミット行
+    //   (= 関節が実際に受け止めている反力) だけを数える
+    int32_t breakJoint = -1;
 };
 
 // 有効質量行列を組んで逆を持たせる。false = 誰も動かせない拘束 (静的同士 / 睡眠中) で、
@@ -1001,6 +1008,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                 b.friction = SelectFriction(*col, mat);
                 b.frictionS = SelectStaticFriction(*col, mat);   // M59f2
                 b.roll = SelectRollingResistance(*col, mat);     // M59f2
+                b.adhesion = SelectAdhesion(mat);                 // M60d
                 b.layer = col->layer; // M36a
                 b.mask = col->mask;
             }
@@ -1037,6 +1045,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             b.restitution = SelectRestitution(col, nullptr, mat);
             b.frictionS = SelectStaticFriction(*col, mat); // M59f2
             b.roll = SelectRollingResistance(*col, mat);   // M59f2
+            b.adhesion = SelectAdhesion(mat);              // M60d
             b.layer = col->layer; // M36a
             b.mask = col->mask;
             // M28d: 親付き静的コライダーもワールド姿勢で判定 (従来は lt 直読みのバグ)
@@ -1121,7 +1130,9 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
     // 1 個も無ければ以降の関節帯は全て空ループ = 既存シーンは fp 演算が 1 回も増えない
     struct JointLink {
         EntityID owner;
-        const JointComponent* jc = nullptr;
+        // M60d: **書き込み可**。破断は `broken` フラグを立てるだけで、コンポーネントは
+        // 外さない (構造変更をソルバ内から起こさないのが家風。決定台帳 5)
+        JointComponent* jc = nullptr;
         int32_t ai = -1; // owner の bodies index (-1 = 不動アンカー)
         int32_t bi = -1; // 相手の bodies index (-1 = 不動アンカー)
         // bodies に居ない側の固定ワールドアンカー (相手 null / 変換だけのエンティティ)
@@ -1155,7 +1166,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                 if (!IsEntityActive(world, e)) {
                     continue;
                 }
-                const auto* jc = static_cast<const JointComponent*>(arch.GetPtr(ji, row));
+                auto* jc = static_cast<JointComponent*>(arch.GetPtr(ji, row));
                 if (jc->broken) {
                     continue; // 折れた関節は行を立てない (M60d が立てるフラグ、読みは a から)
                 }
@@ -1344,6 +1355,23 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
         }
     };
     std::vector<ConstraintBlock> jointBlocks; // サブステップごとに作り直す (capacity は使い回す)
+    // ---- 破断の集計 (M60d): 関節 1 個につき 線形 3 + 角 3 の**力積ベクトル** ----
+    // ★**tick 全体**で溜める (サブステップをまたぐ) — こうすると「その tick に関節が
+    //   受け止めた力積 ÷ dt = 平均反力」になり、**substeps を変えても閾値が動かない**。
+    // ★ベクトルで足すのが正 — ブロックごとに |λ| を足すと、押しと引きが打ち消し合う
+    //   場面で反力を過大評価する。ブロックの d は正規直交なので Σλ·d がそのまま力積
+    std::vector<float> breakImpulse;
+    bool anyBreakable = false;
+    for (const JointLink& l : jointLinks) {
+        // **分岐ゲート**: 破断を設定していない関節しか無いシーンでは集計を 1 回も回さない
+        if (l.jc->breakForce > 0.0f || l.jc->breakTorque > 0.0f) {
+            anyBreakable = true;
+            break;
+        }
+    }
+    if (anyBreakable) {
+        breakImpulse.assign(jointLinks.size() * 6, 0.0f);
+    }
 
     // ---- サブステップ (M59g2) ----
     // 1 tick を substeps 回に割って「積分 → 制約生成 → 解決 → 位置補正 → 前進」を繰り返す。
@@ -2157,7 +2185,10 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
         //     3 Slider 線形 2 (軸に直交)                / 角 3
         //     4 Cone   線形 3                           / 角 0 (M60c が swing/twist を足す)
         jointBlocks.clear();
-        for (const JointLink& l : jointLinks) {
+        for (size_t li = 0; li < jointLinks.size(); ++li) {
+            const JointLink& l = jointLinks[li];
+            // 破断の集計先。設定が無いシーンでは -1 のままで集計自体が走らない (M60d)
+            const int32_t breakJoint = anyBreakable ? static_cast<int32_t>(li) : -1;
             const int32_t type = l.jc->type;
             const Body& A = (l.ai >= 0) ? bodies[static_cast<size_t>(l.ai)] : worldAnchorBody;
             const Body& B = (l.bi >= 0) ? bodies[static_cast<size_t>(l.bi)] : worldAnchorBody;
@@ -2179,6 +2210,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                 ConstraintBlock blk;
                 blk.ai = l.ai;
                 blk.bi = l.bi;
+                blk.breakJoint = breakJoint; // M60d
                 // 腕は**質量中心から** (M59f1)。com* は hasCom が false なら +0.0f 固定なので
                 // 「x - (+0.0f) == x」でビットを崩さない
                 blk.ra[0] = pax - A.pose.px - A.comx;
@@ -2216,6 +2248,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                 ConstraintBlock blk;
                 blk.ai = l.ai;
                 blk.bi = l.bi;
+                blk.breakJoint = breakJoint; // M60d
                 blk.angular = true;
                 if (type == 1) {
                     if (!hasAxis) {
@@ -2308,6 +2341,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                             ConstraintBlock blk;
                             blk.ai = l.ai;
                             blk.bi = l.bi;
+                            blk.breakJoint = breakJoint; // M60d: リミットは反力なので数える
                             blk.count = 1;
                             blk.angular = true;
                             for (int k = 0; k < 3; ++k) {
@@ -2336,6 +2370,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                                 ConstraintBlock blk;
                                 blk.ai = l.ai;
                                 blk.bi = l.bi;
+                                blk.breakJoint = breakJoint; // M60d
                                 blk.count = 1;
                                 blk.angular = true;
                                 // B は n まわりに swing 角だけ余分に回っている →
@@ -2367,6 +2402,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                         ConstraintBlock blk;
                         blk.ai = l.ai;
                         blk.bi = l.bi;
+                        blk.breakJoint = breakJoint; // M60d
                         blk.count = 1;
                         blk.angular = false;
                         for (int k = 0; k < 3; ++k) {
@@ -2431,6 +2467,9 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             float massNc = 0.0f;             // 重心での法線有効質量
             float massT1 = 0.0f, massT2 = 0.0f;
             float biasC = 0.0f;              // 反発の目標法線速度 (閾値適用済み)
+            // M60d: 中央法線インパルスの**下限**。既定 0 = 「接触は押すだけ」で従来どおり。
+            // 粘着材料があるときだけ -adhesion·h まで開いて引っ張れるようにする
+            float lambdaNcMin = 0.0f;
             float lambdaNc = 0.0f;           // 蓄積: 中央法線
             float lambdaT1 = 0.0f, lambdaT2 = 0.0f; // 蓄積: 重心摩擦
             ContactPoint pts[4];
@@ -2511,6 +2550,20 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                 Cross(c.nx, c.ny, c.nz, c.t1[0], c.t1[1], c.t1[2], c.t2[0], c.t2[1], c.t2[2]);
             }
             const float e = std::min(A.restitution, B.restitution);
+            // ---- 粘着 (M60d): 法線インパルスの下限を負まで開ける ----
+            // ★結合則は **min** (弱いほうが勝つ = 反発と揃える)。両方 0 = 未割当なら
+            //   下限は 0 のままで、下のクランプは従来と同じ定数比較に畳まれる。
+            // ★**分岐ゲート**で書く — 常に -adh*h を代入すると adh==0 でも -0.0f が
+            //   生まれ、クランプ結果の符号ゼロが従来と変わりうる (M59f1-4)
+            const float adh = (A.adhesion < B.adhesion) ? A.adhesion : B.adhesion;
+            if (adh > 0.0f) {
+                // λ は力ではなく**力積**なので刻みを掛ける = 「adh N で引っ張り続けられる」。
+                // モータの maxForce·h と同じ換算 (M60c)。
+                // ★下限を開けるのは**中央法線インパルスだけ**。点ごとの行は回転の不均衡を
+                //   配るだけなので 0 のまま — 点ごとに負を許すと、粘着で吊った物体が
+                //   マニフォールドの点の取り方しだいで勝手に回り出す
+                c.lambdaNcMin = -adh * h;
+            }
             const float invCount = 1.0f / static_cast<float>(m.count);
             for (int k = 0; k < m.count; ++k) {
                 ContactPoint& p = c.pts[k];
@@ -2668,8 +2721,11 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                     float dl = -(vn - c.biasC) * c.massNc;
                     const float old = c.lambdaNc;
                     float now = old + dl;
-                    if (now < 0.0f) {
-                        now = 0.0f; // 接触は押すだけ (引っ張らない)
+                    if (now < c.lambdaNcMin) {
+                        // 接触は押すだけ (引っ張らない)。**粘着材料のときだけ下限が負**に
+                        // なり、そのぶんだけ引っ張れる (M60d)。既定 0 なので比較も代入も
+                        // 従来と同じ定数で、fp 演算は 1 つも増えていない
+                        now = c.lambdaNcMin;
                     }
                     dl = now - old;
                     c.lambdaNc = now;
@@ -2795,6 +2851,25 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                             B.wz -= az;
                         }
                     }
+                }
+            }
+        }
+
+        // ---- 破断の集計 (M60d): このサブステップで関節が受け止めた力積を足す ----
+        // ★反復ループの**外**で 1 回だけ読む。中で読むと反復の途中経過 (まだ収束前の λ)
+        //   まで足してしまう。λ はブロックごとの蓄積量なので、反復が終わった時点の値が
+        //   「このサブステップで実際に入った力積」そのもの
+        if (!breakImpulse.empty()) {
+            for (const ConstraintBlock& blk : jointBlocks) {
+                if (blk.breakJoint < 0) {
+                    continue; // モータ行 (駆動であって反力ではない)
+                }
+                const size_t base = static_cast<size_t>(blk.breakJoint) * 6
+                                  + (blk.angular ? 3u : 0u);
+                for (int i = 0; i < blk.count; ++i) {
+                    breakImpulse[base + 0] += blk.d[i][0] * blk.lambda[i];
+                    breakImpulse[base + 1] += blk.d[i][1] * blk.lambda[i];
+                    breakImpulse[base + 2] += blk.d[i][2] * blk.lambda[i];
                 }
             }
         }
@@ -3232,6 +3307,42 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
 
     }
 
+    // ---- 破断 (M60d): tick 全体の反力が閾値を超えた関節を折る ----
+    // ★**コンポーネントを外さずフラグを立てる** (決定台帳 5)。構造変更をソルバ内から
+    //   起こすと、tick 末のコマンドバッファ適用という家風が崩れてアーキタイプが動き、
+    //   同じ tick に取ったポインタが全部死ぬ。復帰は Inspector / スクリプトが
+    //   `broken` を false へ戻すだけで足りる。
+    // ★力積 ÷ **dt** (サブステップの h ではない) — 集計が tick 全体なので割る時間も
+    //   tick 全体。これで substeps を変えても閾値の意味が動かない。
+    // ★`broken` は hash 対象 = sim 状態なので、snapshot 往復もリプレイも自動で追従する。
+    // ★判定は tick の**末尾**。折れた関節はこの tick ぶんは働いており、行が消えるのは
+    //   次 tick から (途中で消すと同じ tick 内で解いた λ と辻褄が合わなくなる)
+    if (!breakImpulse.empty()) {
+        const float invDt = (dt > 0.0f) ? 1.0f / dt : 0.0f;
+        for (size_t li = 0; li < jointLinks.size(); ++li) {
+            JointComponent& jc = *jointLinks[li].jc;
+            const size_t base = li * 6;
+            if (jc.breakForce > 0.0f) {
+                const float fx = breakImpulse[base + 0];
+                const float fy = breakImpulse[base + 1];
+                const float fz = breakImpulse[base + 2];
+                const float f = std::sqrt(fx * fx + fy * fy + fz * fz) * invDt;
+                if (f > jc.breakForce) {
+                    jc.broken = true;
+                }
+            }
+            if (jc.breakTorque > 0.0f) {
+                const float tx = breakImpulse[base + 3];
+                const float ty = breakImpulse[base + 4];
+                const float tz = breakImpulse[base + 5];
+                const float t = std::sqrt(tx * tx + ty * ty + tz * tz) * invDt;
+                if (t > jc.breakTorque) {
+                    jc.broken = true;
+                }
+            }
+        }
+    }
+
     // ---- 入眠判定 (M59h): 島の全員が静かなときだけ眠らせる ----
     // ★**閾値は env の中** = 存在ゲート。env が無いシーンはここを 1 文字も通らない。
     // ★判定は int の tick カウンタ (秒の float 累積は加算順で割れるので禁止)。
@@ -3395,6 +3506,13 @@ float SelectRollingResistance(const ColliderComponent& col, const PhysMat* mat)
         return 0.0f;
     }
     return mat ? mat->rollingResistance : 0.0f;
+}
+
+// M60d: 粘着力 [N]。**Collider 側に旧フィールドが無い**ので上書きビットも取らない —
+// 「材料が無ければ 0」しか状態が無く、未割当シーンのビット同一が式の上で自明に立つ
+float SelectAdhesion(const PhysMat* mat)
+{
+    return mat ? mat->adhesion : 0.0f;
 }
 
 float SelectRestitution(const ColliderComponent* col, const RigidbodyComponent* rb,

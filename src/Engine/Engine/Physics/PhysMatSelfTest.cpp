@@ -60,8 +60,11 @@ bool RunPhysMatSelfTest()
         check(m.density == d.density && m.staticFriction == d.staticFriction
                   && m.dynamicFriction == d.dynamicFriction && m.restitution == d.restitution
                   && m.rollingResistance == d.rollingResistance
-                  && m.dragCoefficient == d.dragCoefficient,
+                  && m.dragCoefficient == d.dragCoefficient && m.adhesion == d.adhesion,
               "missing keys fall back to struct defaults (forward compat)");
+        // ★M60d で足した adhesion が **旧ファイルで 0** になることが「粘着 0 = 従来と
+        //   ビット同一」の入口。既定が 0 でなくなった瞬間に全既存資産の挙動が変わる
+        check(d.adhesion == 0.0f, "a physmat written before M60d has no adhesion at all");
     }
 
     // ---- Sanitize: NaN / 負値 / 範囲外の防波堤 ----
@@ -74,6 +77,7 @@ bool RunPhysMatSelfTest()
         m.restitution = 1.5f;
         m.rollingResistance = -0.25f;
         m.dragCoefficient = -std::numeric_limits<float>::infinity();
+        m.adhesion = -50.0f;
         PhysMatLibrary::Sanitize(m);
         check(m.density == d.density, "NaN density falls back to default (not 0)");
         check(m.staticFriction == 0.0f, "negative static friction clamps to 0");
@@ -82,6 +86,7 @@ bool RunPhysMatSelfTest()
         check(m.restitution == 1.0f, "restitution clamps to [0,1]");
         check(m.rollingResistance == 0.0f, "negative rolling resistance clamps to 0");
         check(m.dragCoefficient == d.dragCoefficient, "-inf drag falls back to default");
+        check(m.adhesion == 0.0f, "negative adhesion clamps to 0 (a contact never repels harder)");
         m.density = 0.0f;
         m.dynamicFriction = 250.0f; // 有限の範囲外はクランプ (非有限との扱いの差を固定)
         PhysMatLibrary::Sanitize(m);
@@ -99,6 +104,7 @@ bool RunPhysMatSelfTest()
         src.restitution = 0.6f;
         src.rollingResistance = 0.001f;
         src.dragCoefficient = 0.47f;
+        src.adhesion = 25.0f; // M60d
         PhysMat dst;
         check(PhysMatLibrary::FromJson(PhysMatLibrary::ToJson(src), dst),
               "ToJson output parses back");
@@ -107,7 +113,7 @@ bool RunPhysMatSelfTest()
                   && dst.dynamicFriction == src.dynamicFriction
                   && dst.restitution == src.restitution
                   && dst.rollingResistance == src.rollingResistance
-                  && dst.dragCoefficient == src.dragCoefficient,
+                  && dst.dragCoefficient == src.dragCoefficient && dst.adhesion == src.adhesion,
               "ToJson/FromJson round-trip is bit-identical");
     }
 

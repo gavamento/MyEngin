@@ -127,6 +127,7 @@ json PhysMatLibrary::ToJson(const PhysMat& m)
     j["restitution"] = m.restitution;
     j["rollingResistance"] = m.rollingResistance;
     j["dragCoefficient"] = m.dragCoefficient;
+    j["adhesion"] = m.adhesion; // M60d
     return j;
 }
 
@@ -145,6 +146,7 @@ bool PhysMatLibrary::FromJson(const json& j, PhysMat& out)
     out.restitution = ReadFloat(j, "restitution", def.restitution);
     out.rollingResistance = ReadFloat(j, "rollingResistance", def.rollingResistance);
     out.dragCoefficient = ReadFloat(j, "dragCoefficient", def.dragCoefficient);
+    out.adhesion = ReadFloat(j, "adhesion", def.adhesion); // M60d (旧ファイルは 0)
     Sanitize(out);
     return true;
 }
@@ -160,6 +162,8 @@ void PhysMatLibrary::Sanitize(PhysMat& m)
     m.restitution = SanitizeValue(m.restitution, def.restitution, 0.0f, 1.0f);
     m.rollingResistance = SanitizeValue(m.rollingResistance, def.rollingResistance, 0.0f, 10.0f);
     m.dragCoefficient = SanitizeValue(m.dragCoefficient, def.dragCoefficient, 0.0f, 100.0f);
+    // 粘着力は N。上限 1e6 は「1t の物体を 100G で保持できる」程度あれば表現上困らない
+    m.adhesion = SanitizeValue(m.adhesion, def.adhesion, 0.0f, 1.0e6f);
 }
 
 // ==== physmat:: モジュール注入 ====

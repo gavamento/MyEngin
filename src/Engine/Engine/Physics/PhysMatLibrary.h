@@ -41,6 +41,13 @@ struct PhysMat {
     float restitution = 0.0f;       // e (0..1)
     float rollingResistance = 0.0f; // 転がり抵抗係数 (M59f2)
     float dragCoefficient = 0.47f;  // Cd 既定 (M59b の Aero が上書き可能)
+    // ---- M60d 追加 (末尾 append。旧ファイルは contains 無し = 0 で従来どおり) ----
+    // 粘着力 [N]。接触の法線インパルス下限を負まで開いて「引っ張っても離れない」を作る。
+    // ★計画は「adhesion·面積」だったが **ソルバは接触面積を持っていない** (マニフォールドは
+    //   最大 4 点で面積が無い) — 単位を N に倒して「このペアが支えられる引っ張り力」を
+    //   直接オーサリングする形にした。結合則は **min** (弱いほうが勝つ = 反発と揃える)。
+    // ★0 なら下限は 0 = **従来とビット同一** (存在ゲート)
+    float adhesion = 0.0f;
 };
 
 // 列挙 1 件 (AssetRef ピッカー / Asset Browser 用。SoundEntry 範型)

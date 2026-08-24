@@ -952,6 +952,12 @@ struct JointComponent {
     float motorTargetVelocity = 0.0f; // Hinge: rad/s / Slider: m/s
     float motorMaxForce = 0.0f;
     // ---- 破断 (M60d)。<= 0 = 無限 (壊れない) ----
+    // ★判定量は「**その tick に関節が受け止めた力積 ÷ dt**」= 平均反力 [N] / [N·m]。
+    //   tick 全体で溜めてから割るので **substeps を変えても閾値の意味が動かない**。
+    // ★数えるのは等式行とリミット行 (= 反力) だけで、**モータ行は数えない** —
+    //   駆動であって反力ではないため (数えるとモータを強くしただけで自分の関節が折れる)。
+    // ★Ball は角ブロックを立てないので breakTorque が働く余地は無い。
+    // ★判定は tick の末尾。折れた関節はその tick ぶんは働き、行が消えるのは次 tick から
     float breakForce = 0.0f;
     float breakTorque = 0.0f;
     // true のあいだ行を一切立てない (= 自由になる)。**コンポーネントを外すのではなく
