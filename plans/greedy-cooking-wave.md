@@ -762,4 +762,8 @@ M62  熱・流体・光学・電気
 - 1 サブ = 1 コミット (`M59a1: ...` 形式の日本語件名) = 1 セッション + /clear。進捗の一次情報は git log。
 - 各サブ完了時: selftest 両構成 → check_rules → replay_verify → (該当時 shot_verify)。
 - ソースファイル追加時は `pwsh -File tools\gen_project_files.ps1`。bat は CRLF。
-- M60 以降の詳細計画は M59 完了時に本ファイルの予約事項を前提に策定。
+- **M60 (関節と機構、剛体トラック) の詳細計画は `plans\stalwart-linking-armature.md` に策定済み**
+  (11 サブ: a 拘束基盤+ボール → b ヒンジ/固定/スライダ → c リミット/モータ/コーン → d 破断/粘着 →
+  e 複合コライダー → f 凸包 → g ラグドール → h 車両 → i ショーケース → j ABI → k 仕上げ。
+  TypeId 40-43 を予約)。**着手は M59 の j → k → l を消化してから** (ユーザー決定)。
+  M60' (XPBD 変形体) と予約事項 1 の準備コミットは M60 完了時に別計画で詰める。
