@@ -948,6 +948,17 @@ struct JointComponent {
     // フラグで落とす** — 構造変更をソルバ内から起こさないのが家風 (決定台帳 5)。
     // 復帰は Inspector / スクリプトが false へ戻すだけ
     bool broken = false;
+    // ---- M60b 追加 (末尾 append) ----
+    // 「相対姿勢がこれのとき拘束が満たされている」という**基準の相対回転** =
+    // conj(qOwner) * qConnected (相手が null ならワールドなので conj(qOwner) そのもの)。
+    // Hinge / Fixed / Slider / Cone が角度自由度を持つには基準が要る — 速度だけを
+    // 拘束すると軸のずれが**積分誤差として累積する**ので、位置補正に基準が必要になる。
+    // ★既定は単位 = 「両者のローカル軸が揃っているのが rest」。自動採取 (Unity の
+    //   auto-configure 相当) はアンカーと同じ理由で入れない。両者が無回転で置かれている
+    //   ふつうの authoring では既定のまま正しい。
+    // ★M60a では切っていなかったフィールド。a の「c/d の分まで先に切る」は
+    //   **リミット/モータ/破断しか見ていなかった** (申し送り M60b-1)
+    DirectX::XMFLOAT4 restRotation = { 0.0f, 0.0f, 0.0f, 1.0f };
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 

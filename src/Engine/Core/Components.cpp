@@ -662,6 +662,11 @@ void RegisterBuiltinComponents()
                                            "0 or below never breaks")),
         MYE_JP("破断済み", MYE_FIELD_TIP(JointComponent, broken, Bool,
                                          "sim state: a broken joint stops constraining")),
+        // M60b: 角度自由度の基準になる相対回転 (末尾 append)
+        MYE_JP("基準の相対回転",
+               MYE_FIELD_TIP(JointComponent, restRotation, Quat,
+                             "relative rotation that counts as 'at rest'; identity means the "
+                             "two local frames line up")),
     });
 }
 

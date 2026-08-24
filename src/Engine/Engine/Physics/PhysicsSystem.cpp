@@ -492,6 +492,132 @@ void SolveConstraintBlock(ConstraintBlock& blk, Body& A, Body& B)
     }
 }
 
+// ---- 関節の幾何ヘルパ (M60b) ----
+
+// 単位ベクトル n に直交する 2 方向を決定論的に作る (接触の接線基底と同じ古典手法)
+void OrthoBasis(float nx, float ny, float nz, float t1[3], float t2[3])
+{
+    float ax, ay, az;
+    if (std::fabs(nx) >= 0.57735f) { // 1/sqrt(3): 最も長い成分を避けて桁落ちを防ぐ
+        ax = ny;
+        ay = -nx;
+        az = 0.0f;
+    } else {
+        ax = 0.0f;
+        ay = nz;
+        az = -ny;
+    }
+    const float al = std::sqrt(ax * ax + ay * ay + az * az);
+    if (al > 1e-8f) {
+        t1[0] = ax / al;
+        t1[1] = ay / al;
+        t1[2] = az / al;
+    } else {
+        t1[0] = 1.0f;
+        t1[1] = 0.0f;
+        t1[2] = 0.0f;
+    }
+    Cross(nx, ny, nz, t1[0], t1[1], t1[2], t2[0], t2[1], t2[2]);
+}
+
+// 関節の軸をワールドへ (owner の姿勢で回して正規化)。縮退軸なら false
+bool JointAxisWorld(const float q[4], const JointComponent& jc, float out[3])
+{
+    QuatRotate(q[0], q[1], q[2], q[3], jc.axis.x, jc.axis.y, jc.axis.z, out[0], out[1], out[2]);
+    const float l2 = out[0] * out[0] + out[1] * out[1] + out[2] * out[2];
+    if (l2 < 1e-12f) {
+        return false;
+    }
+    const float inv = 1.0f / std::sqrt(l2);
+    out[0] *= inv;
+    out[1] *= inv;
+    out[2] *= inv;
+    return true;
+}
+
+// 相対姿勢の誤差をワールドの回転ベクトルで返す (M60b)。
+// 「B があるべき姿勢」= qA ⊗ restRotation に対して、実際の qB がどれだけ余分に回っているか。
+// ★取り出しは **2·(x,y,z)** = 2·sin(θ/2)·軸 の近似で、acos を一度も通さない
+//   (決定論の観点でも速度の観点でも有利。位置補正は反復なので過小評価は収束が遅くなるだけ)。
+// ★w の符号を正へ揃えるのは、-q と q が同じ姿勢を表すため — 揃えないと 180 度側へ
+//   回そうとして関節が裏返る
+void JointOrientationError(const float qa[4], const float qb[4], const JointComponent& jc,
+                           float out[3])
+{
+    float tx, ty, tz, tw; // qBtarget = qA ⊗ qRest
+    QuatMul(qa[0], qa[1], qa[2], qa[3], jc.restRotation.x, jc.restRotation.y, jc.restRotation.z,
+            jc.restRotation.w, tx, ty, tz, tw);
+    // qE = qB ⊗ conj(qBtarget) (ワールド左作用の誤差回転)
+    float ex, ey, ez, ew;
+    QuatMul(qb[0], qb[1], qb[2], qb[3], -tx, -ty, -tz, tw, ex, ey, ez, ew);
+    if (ew < 0.0f) {
+        ex = -ex;
+        ey = -ey;
+        ez = -ez;
+    }
+    out[0] = 2.0f * ex;
+    out[1] = 2.0f * ey;
+    out[2] = 2.0f * ez;
+}
+
+// 位置補正パスから姿勢を回す (M60b)。**質量中心まわり**に回すのは位置積分と同じ規約。
+// 形状の基底は組み直す — 同じパスの接触判定がこの pose を読むため
+void ApplyPoseRotation(Body& b, float ex, float ey, float ez)
+{
+    float comWx = b.pose.px, comWy = b.pose.py, comWz = b.pose.pz;
+    if (b.hasCom) {
+        comWx += b.comx;
+        comWy += b.comy;
+        comWz += b.comz;
+    }
+    const float hx = ex * 0.5f, hy = ey * 0.5f, hz = ez * 0.5f;
+    const float dqw = -(hx * b.qx + hy * b.qy + hz * b.qz);
+    const float dqx = hx * b.qw + hy * b.qz - hz * b.qy;
+    const float dqy = hy * b.qw + hz * b.qx - hx * b.qz;
+    const float dqz = hz * b.qw + hx * b.qy - hy * b.qx;
+    b.qx += dqx;
+    b.qy += dqy;
+    b.qz += dqz;
+    b.qw += dqw;
+    const float len2 = b.qx * b.qx + b.qy * b.qy + b.qz * b.qz + b.qw * b.qw;
+    if (len2 > 1e-12f) {
+        const float inv = 1.0f / std::sqrt(len2);
+        b.qx *= inv;
+        b.qy *= inv;
+        b.qz *= inv;
+        b.qw *= inv;
+    } else {
+        b.qx = 0;
+        b.qy = 0;
+        b.qz = 0;
+        b.qw = 1;
+    }
+    if (b.hasCom) {
+        float ox, oy, oz;
+        QuatRotate(b.qx, b.qy, b.qz, b.qw, b.comLx, b.comLy, b.comLz, ox, oy, oz);
+        b.comx = ox;
+        b.comy = oy;
+        b.comz = oz;
+        b.pose.px = comWx - ox;
+        b.pose.py = comWy - oy;
+        b.pose.pz = comWz - oz;
+    }
+    if (b.col) {
+        const XMFLOAT3 pos = { b.pose.px, b.pose.py, b.pose.pz };
+        const XMFLOAT4 rot = { b.qx, b.qy, b.qz, b.qw };
+        b.pose = shapes::MakePose(*b.col, pos, rot, b.scale);
+    }
+}
+
+// 軸 n まわりに姿勢を回したときの「回しやすさ」 n·I⁻¹·n (位置補正の質量比に使う)
+float AngularCorrectionWeight(const Body& b, float nx, float ny, float nz)
+{
+    float ix, iy, iz;
+    MulInvI(b.invI, nx, ny, nz, ix, iy, iz);
+    const float k = nx * ix + ny * iy + nz * iz;
+    return (k > 0.0f) ? k : 0.0f;
+}
+
 // サブステップ 1 回ぶんの接触列 (key 昇順) を tick 全体の列へ合流させる (M59g2)。
 // 同じペアが複数のサブステップで出たら**インパルスを足し、幾何は後のもので上書き**する。
 // どちらも key 昇順なので線形マージで済む (順序が結果のビットを決めるので手順は固定)
@@ -942,6 +1068,10 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
         // bodies に居ない側の固定ワールドアンカー (相手 null / 変換だけのエンティティ)
         float wax = 0, way = 0, waz = 0;
         float wbx = 0, wby = 0, wbz = 0;
+        // 同じく固定側のワールド回転 (M60b の軸と相対姿勢の基準に要る)。
+        // body 側は Body の作業用姿勢が正なのでこちらは使わない
+        float waq[4] = { 0, 0, 0, 1 };
+        float wbq[4] = { 0, 0, 0, 1 };
     };
     std::vector<JointLink> jointLinks;
     // 不動アンカー用の番人ボディ。invMass 0 / invI 零行列なので、行の適用も有効質量も
@@ -984,7 +1114,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
         // bodies に居ないエンティティ (剛体もコライダーも無い) は変換から不動アンカーを作る。
         // 動かないので tick 頭に 1 回計算すれば足りる
         auto fixedAnchor = [&world](EntityID e, const XMFLOAT3& local, float& ox, float& oy,
-                                    float& oz) -> bool {
+                                    float& oz, float q[4]) -> bool {
             const auto* alt = world.GetComponent<LocalTransform>(e);
             if (!alt) {
                 return false;
@@ -1000,12 +1130,16 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             ox = wpos.x + rx;
             oy = wpos.y + ry;
             oz = wpos.z + rz;
+            q[0] = wrot.x;
+            q[1] = wrot.y;
+            q[2] = wrot.z;
+            q[3] = wrot.w;
             return true;
         };
         size_t w = 0;
         for (JointLink& l : jointLinks) {
             l.ai = findBodyIndex(l.owner);
-            if (l.ai < 0 && !fixedAnchor(l.owner, l.jc->anchor, l.wax, l.way, l.waz)) {
+            if (l.ai < 0 && !fixedAnchor(l.owner, l.jc->anchor, l.wax, l.way, l.waz, l.waq)) {
                 continue; // owner の位置すら決まらない = 何もできない
             }
             const EntityID other = l.jc->connectedEntity;
@@ -1020,7 +1154,8 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                 continue;
             } else {
                 l.bi = findBodyIndex(other);
-                if (l.bi < 0 && !fixedAnchor(other, l.jc->connectedAnchor, l.wbx, l.wby, l.wbz)) {
+                if (l.bi < 0
+                    && !fixedAnchor(other, l.jc->connectedAnchor, l.wbx, l.wby, l.wbz, l.wbq)) {
                     continue;
                 }
             }
@@ -1060,6 +1195,33 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             pbx = l.wbx;
             pby = l.wby;
             pbz = l.wbz;
+        }
+    };
+    // 関節の両側のワールド姿勢 (M60b)。body なら作業用姿勢、そうでなければ収集時の固定値
+    auto jointQuats = [&bodies](const JointLink& l, float qa[4], float qb[4]) {
+        if (l.ai >= 0) {
+            const Body& A = bodies[static_cast<size_t>(l.ai)];
+            qa[0] = A.qx;
+            qa[1] = A.qy;
+            qa[2] = A.qz;
+            qa[3] = A.qw;
+        } else {
+            qa[0] = l.waq[0];
+            qa[1] = l.waq[1];
+            qa[2] = l.waq[2];
+            qa[3] = l.waq[3];
+        }
+        if (l.bi >= 0) {
+            const Body& B = bodies[static_cast<size_t>(l.bi)];
+            qb[0] = B.qx;
+            qb[1] = B.qy;
+            qb[2] = B.qz;
+            qb[3] = B.qw;
+        } else {
+            qb[0] = l.wbq[0];
+            qb[1] = l.wbq[1];
+            qb[2] = l.wbq[2];
+            qb[3] = l.wbq[3];
         }
     };
     std::vector<ConstraintBlock> jointBlocks; // サブステップごとに作り直す (capacity は使い回す)
@@ -1869,38 +2031,90 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
         // λ の蓄積はサブステップ内で閉じる (接触の蓄積と同じ寿命。warm starting は M59h と
         // 同じ理由で入れない)。順序 = jointLinks の順 (owner の entity.index 昇順) →
         // 同一関節内はブロック番号昇順、で決定論的に固定する
+        // ★type は**どのブロックを立てるかのプリセット**であって別実装ではない (決定台帳 1):
+        //     0 Ball   線形 3 (アンカー一致)            / 角 0
+        //     1 Hinge  線形 3                           / 角 2 (軸に直交する 2 方向)
+        //     2 Fixed  線形 3                           / 角 3 (相対姿勢を丸ごと固定)
+        //     3 Slider 線形 2 (軸に直交)                / 角 3
+        //     4 Cone   線形 3                           / 角 0 (M60c が swing/twist を足す)
         jointBlocks.clear();
         for (const JointLink& l : jointLinks) {
-            if (l.jc->type != 0) {
-                continue; // M60a がブロックを立てるのは Ball だけ (残りは M60b/c が足す)
-            }
+            const int32_t type = l.jc->type;
             const Body& A = (l.ai >= 0) ? bodies[static_cast<size_t>(l.ai)] : worldAnchorBody;
             const Body& B = (l.bi >= 0) ? bodies[static_cast<size_t>(l.bi)] : worldAnchorBody;
-            float pax, pay, paz, pbx, pby, pbz;
-            jointAnchorsWorld(l, pax, pay, paz, pbx, pby, pbz);
-            ConstraintBlock blk;
-            blk.ai = l.ai;
-            blk.bi = l.bi;
-            // 腕は**質量中心から** (M59f1)。com* は hasCom が false なら +0.0f 固定なので
-            // 「x - (+0.0f) == x」でビットを崩さない
-            blk.ra[0] = pax - A.pose.px - A.comx;
-            blk.ra[1] = pay - A.pose.py - A.comy;
-            blk.ra[2] = paz - A.pose.pz - A.comz;
-            blk.rb[0] = pbx - B.pose.px - B.comx;
-            blk.rb[1] = pby - B.pose.py - B.comy;
-            blk.rb[2] = pbz - B.pose.pz - B.comz;
-            // Ball = アンカー 2 点を一致させる線形 3 自由度。方向はワールド軸に取る —
-            // **ブロックごと K⁻¹ で解くので基底の取り方は結果に効かない** (行を独立に
-            // 解いていた頃はここが悪条件の元凶だった)
-            blk.count = 3;
-            blk.angular = false;
-            blk.d[0][0] = 1.0f;
-            blk.d[1][1] = 1.0f;
-            blk.d[2][2] = 1.0f;
-            if (!FinalizeConstraintBlock(blk, A, B)) {
-                continue; // 誰も動かせない (静的同士 / 睡眠中)
+            float qa[4], qb[4];
+            jointQuats(l, qa, qb);
+            // 軸を使う型 (Hinge / Slider) は縮退軸なら**その型の拘束を諦めて Ball へ落とす**
+            // — 何も立てないと関節が黙って消えるので、線形だけは必ず残すほうが親切
+            float ax[3] = { 0.0f, 1.0f, 0.0f };
+            const bool hasAxis = JointAxisWorld(qa, *l.jc, ax);
+            float t1[3], t2[3];
+            OrthoBasis(ax[0], ax[1], ax[2], t1, t2);
+
+            // ---- 線形ブロック ----
+            {
+                float pax, pay, paz, pbx, pby, pbz;
+                jointAnchorsWorld(l, pax, pay, paz, pbx, pby, pbz);
+                ConstraintBlock blk;
+                blk.ai = l.ai;
+                blk.bi = l.bi;
+                // 腕は**質量中心から** (M59f1)。com* は hasCom が false なら +0.0f 固定なので
+                // 「x - (+0.0f) == x」でビットを崩さない
+                blk.ra[0] = pax - A.pose.px - A.comx;
+                blk.ra[1] = pay - A.pose.py - A.comy;
+                blk.ra[2] = paz - A.pose.pz - A.comz;
+                blk.rb[0] = pbx - B.pose.px - B.comx;
+                blk.rb[1] = pby - B.pose.py - B.comy;
+                blk.rb[2] = pbz - B.pose.pz - B.comz;
+                blk.angular = false;
+                if (type == 3 && hasAxis) {
+                    // Slider は軸方向に自由 → 軸に直交する 2 自由度だけ拘束する
+                    blk.count = 2;
+                    for (int k = 0; k < 3; ++k) {
+                        blk.d[0][k] = t1[k];
+                        blk.d[1][k] = t2[k];
+                    }
+                } else {
+                    // アンカー 2 点を一致させる線形 3 自由度。方向はワールド軸に取る —
+                    // **ブロックごと K⁻¹ で解くので基底の取り方は結果に効かない**
+                    // (行を独立に解いていた頃はここが悪条件の元凶だった)
+                    blk.count = 3;
+                    blk.d[0][0] = 1.0f;
+                    blk.d[1][1] = 1.0f;
+                    blk.d[2][2] = 1.0f;
+                }
+                if (FinalizeConstraintBlock(blk, A, B)) {
+                    jointBlocks.push_back(blk); // 失敗 = 誰も動かせない (静的同士 / 睡眠中)
+                }
             }
-            jointBlocks.push_back(blk);
+
+            // ---- 角ブロック (M60b) ----
+            // ★相対**角速度**だけを拘束する。姿勢のずれ (積分誤差で必ず溜まる) は
+            //   位置補正パスの担当 — 線形と同じ役割分担にしてある
+            if (type == 1 || type == 2 || type == 3) {
+                ConstraintBlock blk;
+                blk.ai = l.ai;
+                blk.bi = l.bi;
+                blk.angular = true;
+                if (type == 1) {
+                    if (!hasAxis) {
+                        continue; // 軸が縮退したヒンジ = 線形だけ (= Ball) で通す
+                    }
+                    blk.count = 2; // 軸まわりの回転だけを許す
+                    for (int k = 0; k < 3; ++k) {
+                        blk.d[0][k] = t1[k];
+                        blk.d[1][k] = t2[k];
+                    }
+                } else {
+                    blk.count = 3; // 相対姿勢を丸ごと固定 (Fixed / Slider)
+                    blk.d[0][0] = 1.0f;
+                    blk.d[1][1] = 1.0f;
+                    blk.d[2][2] = 1.0f;
+                }
+                if (FinalizeConstraintBlock(blk, A, B)) {
+                    jointBlocks.push_back(blk);
+                }
+            }
         }
 
         // 眠っているペアの接触 (M59h)。key 昇順で溜め、出力時に本線へマージする
@@ -2329,9 +2543,54 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             //   誤差はちょうど 0 になる。速度行に bias (Baumgarte) を一切入れず、
             //   ドリフトの始末をここへ全部寄せられるのはこの性質のおかげ (M59g1-2 の教訓)
             for (const JointLink& l : jointLinks) {
-                if (l.jc->type != 0) {
-                    continue; // M60a は Ball のみ
+                const int32_t type = l.jc->type;
+                float qa[4], qb[4];
+                jointQuats(l, qa, qb);
+                float ax[3] = { 0.0f, 1.0f, 0.0f };
+                const bool hasAxis = JointAxisWorld(qa, *l.jc, ax);
+                // ---- (1) 姿勢のずれ (M60b)。**並進より先に回す** ----
+                // 回すとアンカーが動くので、並進をあとに置いたほうが 1 パスで詰まる。
+                // ★角度自由度にはボールジョイントのような「並進だけで厳密に直る」性質が
+                //   無い — 速度拘束だけでは軸のずれが積分誤差として累積するので、
+                //   ここで姿勢そのものを回して基準へ戻す
+                if (type == 1 || type == 2 || type == 3) {
+                    float e[3];
+                    JointOrientationError(qa, qb, *l.jc, e);
+                    if (type == 1 && hasAxis) {
+                        // ヒンジは軸まわりの回転が自由 → 軸成分を落として直交成分だけ直す
+                        const float d = e[0] * ax[0] + e[1] * ax[1] + e[2] * ax[2];
+                        e[0] -= d * ax[0];
+                        e[1] -= d * ax[1];
+                        e[2] -= d * ax[2];
+                    }
+                    const float l2 = e[0] * e[0] + e[1] * e[1] + e[2] * e[2];
+                    if (l2 > 1e-14f) {
+                        const float len = std::sqrt(l2);
+                        const float nx = e[0] / len, ny = e[1] / len, nz = e[2] / len;
+                        const float kA = (l.ai >= 0) ? AngularCorrectionWeight(
+                                             bodies[static_cast<size_t>(l.ai)], nx, ny, nz)
+                                                     : 0.0f;
+                        const float kB = (l.bi >= 0) ? AngularCorrectionWeight(
+                                             bodies[static_cast<size_t>(l.bi)], nx, ny, nz)
+                                                     : 0.0f;
+                        const float ksum = kA + kB;
+                        if (ksum > 0.0f) {
+                            // A を +e 側へ、B を -e 側へ (誤差は「B があるべき姿勢から
+                            // どれだけ余分に回っているか」なので、両者を寄せると 0 になる)
+                            if (kA > 0.0f) {
+                                const float s = kA / ksum;
+                                ApplyPoseRotation(bodies[static_cast<size_t>(l.ai)], e[0] * s,
+                                                  e[1] * s, e[2] * s);
+                            }
+                            if (kB > 0.0f) {
+                                const float s = kB / ksum;
+                                ApplyPoseRotation(bodies[static_cast<size_t>(l.bi)], -e[0] * s,
+                                                  -e[1] * s, -e[2] * s);
+                            }
+                        }
+                    }
                 }
+                // ---- (2) アンカーのずれ (並進のみ) ----
                 const float invA = (l.ai >= 0) ? bodies[static_cast<size_t>(l.ai)].invMass : 0.0f;
                 const float invB = (l.bi >= 0) ? bodies[static_cast<size_t>(l.bi)].invMass : 0.0f;
                 const float tim = invA + invB;
@@ -2340,9 +2599,16 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                 }
                 float pax, pay, paz, pbx, pby, pbz;
                 jointAnchorsWorld(l, pax, pay, paz, pbx, pby, pbz);
-                const float ex = pbx - pax;
-                const float ey = pby - pay;
-                const float ez = pbz - paz;
+                float ex = pbx - pax;
+                float ey = pby - pay;
+                float ez = pbz - paz;
+                if (type == 3 && hasAxis) {
+                    // Slider は軸方向のずれを「ずれ」とみなさない (そこが可動域)
+                    const float d = ex * ax[0] + ey * ax[1] + ez * ax[2];
+                    ex -= d * ax[0];
+                    ey -= d * ax[1];
+                    ez -= d * ax[2];
+                }
                 if (invA > 0.0f) {
                     Body& A = bodies[static_cast<size_t>(l.ai)];
                     const float s = invA / tim;

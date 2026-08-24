@@ -305,6 +305,35 @@ void DrawManagedComponentFields(EngineContext& ctx, ComponentTypeId t, void* com
     }
 }
 
+// M60b: 関節の型ごとに Inspector へ出すフィールドを選ぶ
+// (0=Ball 1=Hinge 2=Fixed 3=Slider 4=Cone)。ソルバ側の type ディスパッチと**対**なので、
+// 型を足したらここも足すこと — 出ているのに効かない行があるのが最悪の状態
+bool JointFieldApplies(int32_t type, const char* name)
+{
+    const bool usesAxis = (type == 1 || type == 3 || type == 4);
+    const bool usesAngular = (type != 0); // Ball だけ相対姿勢を拘束しない
+    const bool usesLimit = (type == 1 || type == 3 || type == 4);
+    const bool usesMotor = (type == 1 || type == 3);
+    if (std::strcmp(name, "axis") == 0) {
+        return usesAxis;
+    }
+    if (std::strcmp(name, "restRotation") == 0) {
+        return usesAngular;
+    }
+    if (std::strcmp(name, "useLimit") == 0 || std::strcmp(name, "limitMin") == 0
+        || std::strcmp(name, "limitMax") == 0) {
+        return usesLimit;
+    }
+    if (std::strcmp(name, "swingLimitDeg") == 0) {
+        return type == 4;
+    }
+    if (std::strcmp(name, "motorTargetVelocity") == 0
+        || std::strcmp(name, "motorMaxForce") == 0) {
+        return usesMotor;
+    }
+    return true;
+}
+
 } // namespace
 
 void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStack& undo,
@@ -544,8 +573,27 @@ void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
                 continue;
             }
             if (comp) {
+                // M60b: 関節は type によって意味を持つフィールドが変わる。効かない行を
+                // 並べておくのは「軸を弄っても何も起きない」という無言の嘘になるので、
+                // その型に効くものだけ出す (Collider の shape 依存より粒度が細かいのは、
+                // 関節が 1 コンポーネントで 5 種類を兼ねているため = 決定台帳 1 の代償)
+                const bool isJoint = (std::strcmp(desc.name, "Joint") == 0);
+                int32_t jointType = 0;
+                if (isJoint) {
+                    for (const FieldDesc& tf : desc.fields) {
+                        if (std::strcmp(tf.name, "type") == 0) {
+                            std::memcpy(&jointType,
+                                        static_cast<const uint8_t*>(comp) + tf.offset,
+                                        sizeof(int32_t));
+                            break;
+                        }
+                    }
+                }
                 for (const FieldDesc& f : desc.fields) {
                     if (f.flags & kFieldHidden) {
+                        continue;
+                    }
+                    if (isJoint && !JointFieldApplies(jointType, f.name)) {
                         continue;
                     }
                     const bool changed =
@@ -774,8 +822,23 @@ bool InspectorWindow::DrawField(EngineContext& ctx, const char* componentName, v
         changed = ImGui::DragFloat(label, static_cast<float*>(p), speed, lo, hi);
         break;
     case FieldType::Int32:
-        // M36a: 物理レイヤーは project_settings.json の動的名前で Combo (sim は index のみ)
-        if (componentName && std::strcmp(componentName, "Collider") == 0
+        // M60b: 関節の種類は「どの拘束ブロックを立てるか」のプリセットなので、
+        // 生の整数ではなく名前で選ばせる。**並び順 = 値 0..4** で、順序を変えると
+        // 既存シーンの意味が変わる (登録順で TypeId が決まるのと同じ性質)
+        if (componentName && std::strcmp(componentName, "Joint") == 0
+            && std::strcmp(field.name, "type") == 0) {
+            const char* labels[5] = { Tr(StrId::Insp_JointBall), Tr(StrId::Insp_JointHinge),
+                                      Tr(StrId::Insp_JointFixed), Tr(StrId::Insp_JointSlider),
+                                      Tr(StrId::Insp_JointCone) };
+            int v = *static_cast<int*>(p);
+            if (v < 0 || v > 4) {
+                v = -1; // 未知の値は黙って 0 へ潰さない (別バージョンのシーンを開いたとき)
+            }
+            changed = ImGui::Combo(label, &v, labels, 5);
+            if (changed) {
+                *static_cast<int*>(p) = v;
+            }
+        } else if (componentName && std::strcmp(componentName, "Collider") == 0
             && std::strcmp(field.name, "layer") == 0) {
             PhysicsLayerNames& ln = PhysicsLayerNames::Get();
             ln.Load(ctx.assetsRoot);

@@ -4587,6 +4587,373 @@ bool RunPhysicsSelfTest()
         }
     }
 
+    // ================= M60b: ヒンジ / 固定 / スライダ =================
+    // 角度自由度は「相対角速度の拘束 (速度ブロック)」+「基準の相対回転へ戻す (位置補正で
+    // 姿勢を回す)」の 2 段。**ボールジョイントと違い並進だけでは直らない** — 速度だけを
+    // 拘束すると軸のずれが積分誤差として累積するので、基準 (restRotation) が要る。
+    {
+        auto qrot = [](const DirectX::XMFLOAT4& q, const DirectX::XMFLOAT3& v) {
+            const float tx = 2.0f * (q.y * v.z - q.z * v.y);
+            const float ty = 2.0f * (q.z * v.x - q.x * v.z);
+            const float tz = 2.0f * (q.x * v.y - q.y * v.x);
+            return DirectX::XMFLOAT3{ v.x + q.w * tx + (q.y * tz - q.z * ty),
+                                      v.y + q.w * ty + (q.z * tx - q.x * tz),
+                                      v.z + q.w * tz + (q.x * ty - q.y * tx) };
+        };
+
+        // -- (b-1) ヒンジ: 軸まわり以外の角速度が消え、軸まわりは残る --
+        {
+            Scene s;
+            // Y 軸まわりに対称な角柱にする (Ixx == Izz なので軸まわりの角速度が一定に保てる)
+            GameObject body = MakeBox(s, "Hinged", 0.0f, 0.0f, 0.0f, 0.3f, 0.5f, 0.3f);
+            auto* j = body.AddComponent<JointComponent>();
+            j->type = 1; // Hinge
+            j->axis = { 0.0f, 1.0f, 0.0f };
+            s.GetWorld().ApplyStructuralChanges();
+            auto* rb = body.GetComponent<RigidbodyComponent>();
+            rb->gravityScale = 0.0f;
+            rb->angularDamping = 0.0f;
+            rb->angularVelocity = { 1.0f, 2.0f, 3.0f };
+            for (int i = 0; i < 120; ++i) {
+                phys.Update(s.GetWorld(), kDt);
+            }
+            MYE_LOG_INFO("  [phys] joint hinge: w = (%.6f %.6f %.6f) after 120 ticks",
+                         static_cast<double>(rb->angularVelocity.x),
+                         static_cast<double>(rb->angularVelocity.y),
+                         static_cast<double>(rb->angularVelocity.z));
+            check(std::fabs(rb->angularVelocity.x) < 1e-4f
+                      && std::fabs(rb->angularVelocity.z) < 1e-4f,
+                  "hinge: angular velocity off the hinge axis is gone");
+            check(rb->angularVelocity.y > 1.9f && rb->angularVelocity.y < 2.1f,
+                  "hinge: and the spin about the axis is untouched");
+        }
+
+        // -- (b-2) ドア: 軸から外れない (アンカーも軸の向きもドリフトしない) --
+        {
+            Scene s;
+            // 蝶番は x=0 の辺。板は x∈[0,1]、蝶番は板ローカルの (-0.5, 0, 0)
+            GameObject door = MakeBox(s, "Door", 0.5f, 1.0f, 0.0f, 0.5f, 1.0f, 0.05f);
+            auto* j = door.AddComponent<JointComponent>();
+            j->type = 1;
+            j->axis = { 0.0f, 1.0f, 0.0f };
+            j->anchor = { -0.5f, 0.0f, 0.0f };
+            j->connectedAnchor = { 0.0f, 1.0f, 0.0f }; // ワールドの蝶番位置
+            s.GetWorld().ApplyStructuralChanges();
+            auto* rb = door.GetComponent<RigidbodyComponent>();
+            rb->angularDamping = 0.0f;
+            rb->linearDamping = 0.0f;
+            rb->angularVelocity = { 0.0f, 2.0f, 0.0f }; // 開く方向へ回す
+            const auto* lt = door.GetComponent<LocalTransform>();
+            float maxAnchor = 0.0f;
+            float maxAxis = 0.0f;
+            for (int i = 0; i < 900; ++i) {
+                phys.Update(s.GetWorld(), kDt);
+                const DirectX::XMFLOAT3 a = qrot(lt->rotation, j->anchor);
+                const float dx = lt->position.x + a.x - 0.0f;
+                const float dy = lt->position.y + a.y - 1.0f;
+                const float dz = lt->position.z + a.z - 0.0f;
+                const float e = std::sqrt(dx * dx + dy * dy + dz * dz);
+                if (e > maxAnchor) {
+                    maxAnchor = e;
+                }
+                const DirectX::XMFLOAT3 ax = qrot(lt->rotation, j->axis);
+                const float ae = std::sqrt(ax.x * ax.x + (ax.y - 1.0f) * (ax.y - 1.0f)
+                                           + ax.z * ax.z);
+                if (ae > maxAxis) {
+                    maxAxis = ae;
+                }
+            }
+            MYE_LOG_INFO("  [phys] joint door: anchor drift %.6f m / axis drift %.6f "
+                         "(900 ticks under gravity)",
+                         static_cast<double>(maxAnchor), static_cast<double>(maxAxis));
+            check(maxAnchor < 0.001f, "hinge: a swinging door never leaves its hinge point");
+            check(maxAxis < 0.001f, "hinge: and its axis never tilts away from the world axis");
+        }
+
+        // -- (b-3) 固定: 相対姿勢と位置がどちらも保たれる --
+        {
+            Scene s;
+            GameObject body = MakeBox(s, "Welded", 1.0f, 2.0f, 3.0f, 0.4f, 0.2f, 0.6f);
+            auto* j = body.AddComponent<JointComponent>();
+            j->type = 2; // Fixed
+            j->connectedAnchor = { 1.0f, 2.0f, 3.0f };
+            s.GetWorld().ApplyStructuralChanges();
+            auto* rb = body.GetComponent<RigidbodyComponent>();
+            rb->angularDamping = 0.0f;
+            rb->linearDamping = 0.0f;
+            rb->velocity = { 3.0f, 1.0f, -2.0f };        // 突き飛ばしてみる
+            rb->angularVelocity = { 4.0f, -3.0f, 2.0f }; // 回してみる
+            const auto* lt = body.GetComponent<LocalTransform>();
+            for (int i = 0; i < 600; ++i) {
+                phys.Update(s.GetWorld(), kDt);
+            }
+            const float dp = std::sqrt((lt->position.x - 1.0f) * (lt->position.x - 1.0f)
+                                       + (lt->position.y - 2.0f) * (lt->position.y - 2.0f)
+                                       + (lt->position.z - 3.0f) * (lt->position.z - 3.0f));
+            const float dq = std::sqrt(lt->rotation.x * lt->rotation.x
+                                       + lt->rotation.y * lt->rotation.y
+                                       + lt->rotation.z * lt->rotation.z);
+            MYE_LOG_INFO("  [phys] joint fixed: pos err %.6f m / rot err %.6f (600 ticks)",
+                         static_cast<double>(dp), static_cast<double>(dq));
+            check(dp < 0.001f, "fixed: a welded body keeps its position under load");
+            check(dq < 0.001f, "fixed: and keeps its orientation (all 3 angular DOF locked)");
+        }
+
+        // -- (b-4) スライダ: 軸上だけ動く (重力では落ちない) --
+        {
+            Scene s;
+            GameObject body = MakeBox(s, "Slid", 0.0f, 0.0f, 0.0f, 0.2f, 0.2f, 0.2f);
+            auto* j = body.AddComponent<JointComponent>();
+            j->type = 3; // Slider
+            j->axis = { 1.0f, 0.0f, 0.0f };
+            s.GetWorld().ApplyStructuralChanges();
+            auto* rb = body.GetComponent<RigidbodyComponent>();
+            rb->angularDamping = 0.0f;
+            rb->linearDamping = 0.0f;
+            const auto* lt = body.GetComponent<LocalTransform>();
+            for (int i = 0; i < 300; ++i) {
+                phys.Update(s.GetWorld(), kDt); // 重力だけ。5 秒
+            }
+            const float off = std::sqrt(lt->position.y * lt->position.y
+                                        + lt->position.z * lt->position.z);
+            MYE_LOG_INFO("  [phys] joint slider: off-axis %.6f m, x %.6f after 5s of gravity",
+                         static_cast<double>(off), static_cast<double>(lt->position.x));
+            check(off < 0.001f, "slider: gravity cannot push the body off its axis");
+            check(std::fabs(lt->position.x) < 1e-5f, "slider: and nothing moved it along the axis");
+            rb->velocity = { 2.0f, 0.0f, 0.0f };
+            for (int i = 0; i < 60; ++i) {
+                phys.Update(s.GetWorld(), kDt);
+            }
+            MYE_LOG_INFO("  [phys] joint slider: x = %.5f after 1s at 2 m/s",
+                         static_cast<double>(lt->position.x));
+            check(lt->position.x > 1.9f && lt->position.x < 2.1f,
+                  "slider: but it glides freely along the axis");
+            check(std::fabs(lt->rotation.x) < 1e-3f && std::fabs(lt->rotation.y) < 1e-3f
+                      && std::fabs(lt->rotation.z) < 1e-3f,
+                  "slider: and never rotates (all 3 angular DOF locked)");
+        }
+
+        // -- (b-4b) 軸非整列のスライダ: 斜め軸に沿ってだけ滑り、加速度が解析値に一致 --
+        // ★ワールド軸に揃った試験だけだと、四元数と直交基底の経路が「たまたま単位のまま」
+        //   通ってしまう。斜めの軸を 1 本入れて実際に回す
+        {
+            Scene s;
+            const float axx = 0.6f, axy = 0.8f; // 単位ベクトル (0.6, 0.8, 0)
+            GameObject body = MakeBox(s, "Diag", 0.0f, 0.0f, 0.0f, 0.2f, 0.2f, 0.2f);
+            auto* j = body.AddComponent<JointComponent>();
+            j->type = 3;
+            j->axis = { axx, axy, 0.0f };
+            s.GetWorld().ApplyStructuralChanges();
+            auto* rb = body.GetComponent<RigidbodyComponent>();
+            rb->angularDamping = 0.0f;
+            rb->linearDamping = 0.0f;
+            const auto* lt = body.GetComponent<LocalTransform>();
+            float maxOff = 0.0f;
+            const int ticks = 120;
+            for (int i = 0; i < ticks; ++i) {
+                phys.Update(s.GetWorld(), kDt);
+                // 原点を通る軸への垂線距離
+                const float t = lt->position.x * axx + lt->position.y * axy;
+                const float ox = lt->position.x - t * axx;
+                const float oy = lt->position.y - t * axy;
+                const float oz = lt->position.z;
+                const float e = std::sqrt(ox * ox + oy * oy + oz * oz);
+                if (e > maxOff) {
+                    maxOff = e;
+                }
+            }
+            // 軸方向の実効加速度 = g·(軸·下向き) = 9.81 * 0.8。半陰的 Euler なので
+            // 変位は (1/2)a t(t+h) になる (連続系の (1/2)a t^2 より半ステップぶん多い)
+            const float tsec = static_cast<float>(ticks) * kDt;
+            const float a = 9.81f * axy;
+            const float expect = -0.5f * a * tsec * (tsec + kDt);
+            const float along = lt->position.x * axx + lt->position.y * axy;
+            MYE_LOG_INFO("  [phys] joint slider(diag): along %.5f (analytic %.5f), "
+                         "off-axis max %.6f m",
+                         static_cast<double>(along), static_cast<double>(expect),
+                         static_cast<double>(maxOff));
+            check(maxOff < 0.001f, "slider: a diagonal axis still holds the body on its line");
+            check(std::fabs(along - expect) < 0.002f,
+                  "slider: and it accelerates by exactly the axial component of gravity");
+        }
+
+        // -- (b-3b) 固定: **傾いた rest 姿勢**を連続トルクの下で保つ --
+        // restRotation を単位のままにしていると「回転の基準」が本当に効いているか分からない。
+        // 初期姿勢を傾け、restRotation にその共役を入れて、そこへ留まることを見る
+        {
+            Scene s;
+            // 45 度 / 軸 (0,0,1) → q = (0, 0, sin22.5, cos22.5)
+            const float hs = 0.38268343f, hc = 0.92387953f;
+            GameObject body = MakeBox(s, "Tilted", 0.0f, 1.0f, 0.0f, 0.4f, 0.2f, 0.6f);
+            body.GetComponent<LocalTransform>()->rotation = { 0.0f, 0.0f, hs, hc };
+            auto* j = body.AddComponent<JointComponent>();
+            j->type = 2;
+            j->connectedAnchor = { 0.0f, 1.0f, 0.0f };
+            // restRotation = conj(qOwner) (相手がワールド = 単位姿勢なので)
+            j->restRotation = { 0.0f, 0.0f, -hs, hc };
+            auto* cf = body.AddComponent<ConstantForceComponent>();
+            cf->torque = { 2.0f, -3.0f, 1.5f }; // 毎 tick 効き続ける負荷
+            s.GetWorld().ApplyStructuralChanges();
+            auto* rb = body.GetComponent<RigidbodyComponent>();
+            rb->angularDamping = 0.0f;
+            rb->linearDamping = 0.0f;
+            const auto* lt = body.GetComponent<LocalTransform>();
+            float maxRot = 0.0f;
+            float maxPos = 0.0f;
+            for (int i = 0; i < 600; ++i) {
+                phys.Update(s.GetWorld(), kDt);
+                // 目標姿勢との差 (符号を揃えて内積で測る)
+                float dot = lt->rotation.z * hs + lt->rotation.w * hc + lt->rotation.x * 0.0f
+                          + lt->rotation.y * 0.0f;
+                if (dot < 0.0f) {
+                    dot = -dot;
+                }
+                const float ang = (dot < 1.0f) ? std::sqrt(1.0f - dot * dot) : 0.0f; // ~sin(θ/2)
+                if (ang > maxRot) {
+                    maxRot = ang;
+                }
+                const float dp = std::sqrt(lt->position.x * lt->position.x
+                                           + (lt->position.y - 1.0f) * (lt->position.y - 1.0f)
+                                           + lt->position.z * lt->position.z);
+                if (dp > maxPos) {
+                    maxPos = dp;
+                }
+            }
+            MYE_LOG_INFO("  [phys] joint fixed(tilted, loaded): rot err %.6f / pos err %.6f "
+                         "over 600 ticks",
+                         static_cast<double>(maxRot), static_cast<double>(maxPos));
+            check(maxRot < 0.002f,
+                  "fixed: a tilted rest rotation is held under a continuous torque");
+            check(maxPos < 0.001f, "fixed: and the anchor holds under it too");
+        }
+
+        // -- (b-2b) 斜めのヒンジ: 軸まわりだけ回り、軸の向きが動かない --
+        {
+            Scene s;
+            const float axx = 0.6f, axy = 0.8f;
+            GameObject flap = MakeBox(s, "Flap", 0.7f, 1.0f, 0.0f, 0.6f, 0.08f, 0.4f);
+            auto* j = flap.AddComponent<JointComponent>();
+            j->type = 1;
+            j->axis = { axx, axy, 0.0f };
+            j->anchor = { -0.6f, 0.0f, 0.0f };
+            j->connectedAnchor = { 0.1f, 1.0f, 0.0f };
+            s.GetWorld().ApplyStructuralChanges();
+            auto* rb = flap.GetComponent<RigidbodyComponent>();
+            rb->angularDamping = 0.0f;
+            rb->linearDamping = 0.0f;
+            const auto* lt = flap.GetComponent<LocalTransform>();
+            float maxAxis = 0.0f;
+            float maxAnchor = 0.0f;
+            for (int i = 0; i < 900; ++i) {
+                phys.Update(s.GetWorld(), kDt); // 重力だけで振らせる
+                const DirectX::XMFLOAT3 ax = qrot(lt->rotation, j->axis);
+                const float ae = std::sqrt((ax.x - axx) * (ax.x - axx)
+                                           + (ax.y - axy) * (ax.y - axy) + ax.z * ax.z);
+                if (ae > maxAxis) {
+                    maxAxis = ae;
+                }
+                const DirectX::XMFLOAT3 a = qrot(lt->rotation, j->anchor);
+                const float dx = lt->position.x + a.x - 0.1f;
+                const float dy = lt->position.y + a.y - 1.0f;
+                const float dz = lt->position.z + a.z;
+                const float e = std::sqrt(dx * dx + dy * dy + dz * dz);
+                if (e > maxAnchor) {
+                    maxAnchor = e;
+                }
+            }
+            MYE_LOG_INFO("  [phys] joint hinge(diag): axis drift %.6f / anchor drift %.6f "
+                         "over 900 ticks",
+                         static_cast<double>(maxAxis), static_cast<double>(maxAnchor));
+            check(maxAxis < 0.002f, "hinge: a diagonal hinge axis never tilts");
+            check(maxAnchor < 0.001f, "hinge: and the diagonal hinge holds its anchor");
+        }
+
+        // -- (b-5) type ごとに立つブロックが違う (Fixed は Ball と違って回らない) --
+        {
+            auto spin = [&](int32_t type) {
+                Scene s;
+                GameObject body = MakeBox(s, "T", 0.0f, 0.0f, 0.0f, 0.3f, 0.3f, 0.3f);
+                auto* j = body.AddComponent<JointComponent>();
+                j->type = type;
+                j->axis = { 0.0f, 1.0f, 0.0f };
+                s.GetWorld().ApplyStructuralChanges();
+                auto* rb = body.GetComponent<RigidbodyComponent>();
+                rb->gravityScale = 0.0f;
+                rb->angularDamping = 0.0f;
+                rb->angularVelocity = { 0.0f, 2.0f, 0.0f };
+                for (int i = 0; i < 60; ++i) {
+                    phys.Update(s.GetWorld(), kDt);
+                }
+                return std::fabs(body.GetComponent<RigidbodyComponent>()->angularVelocity.y);
+            };
+            const float ball = spin(0);
+            const float hinge = spin(1);
+            const float fixedJ = spin(2);
+            const float slider = spin(3);
+            MYE_LOG_INFO("  [phys] joint types: spin about Y kept = ball %.4f / hinge %.4f / "
+                         "fixed %.4f / slider %.4f",
+                         static_cast<double>(ball), static_cast<double>(hinge),
+                         static_cast<double>(fixedJ), static_cast<double>(slider));
+            check(ball > 1.9f && hinge > 1.9f,
+                  "joint types: ball and hinge both allow spin about the axis");
+            check(fixedJ < 1e-4f && slider < 1e-4f,
+                  "joint types: fixed and slider lock it (3 angular DOF)");
+        }
+
+        // -- (b-6) 決定論: ヒンジ/固定/スライダ混在シーンの並走ハッシュ一致 --
+        {
+            auto build = [](Scene& s) {
+                GameObject envGo = s.CreateGameObjectTracked("Env");
+                envGo.AddComponent<PhysicsEnvironmentComponent>();
+                MakeGround(s, "G", 0, -0.5f, 0, 10.0f, 0.5f, 10.0f);
+                GameObject door = MakeBox(s, "Door", 0.5f, 2.0f, 0.0f, 0.5f, 1.0f, 0.05f);
+                auto* jd = door.AddComponent<JointComponent>();
+                jd->type = 1;
+                jd->axis = { 0.0f, 1.0f, 0.0f };
+                jd->anchor = { -0.5f, 0.0f, 0.0f };
+                jd->connectedAnchor = { 0.0f, 2.0f, 0.0f };
+                GameObject arm = MakeBox(s, "Arm", -2.0f, 2.0f, 0.0f, 0.6f, 0.1f, 0.1f);
+                auto* ja = arm.AddComponent<JointComponent>();
+                ja->type = 2; // 固定で宙に溶接した腕
+                ja->connectedAnchor = { -2.0f, 2.0f, 0.0f };
+                GameObject rail = MakeBox(s, "Rail", 3.0f, 2.0f, 0.0f, 0.2f, 0.2f, 0.2f);
+                auto* jr = rail.AddComponent<JointComponent>();
+                jr->type = 3;
+                jr->axis = { 0.0f, 0.0f, 1.0f };
+                jr->connectedAnchor = { 3.0f, 2.0f, 0.0f };
+                GameObject hang = MakeSphereBody(s, "Hang", -2.0f, 1.2f, 0.0f, 0.2f);
+                auto* jh = hang.AddComponent<JointComponent>();
+                jh->type = 0; // 腕からボールでぶら下げる
+                jh->connectedEntity = arm.Id();
+                jh->anchor = { 0.0f, 0.8f, 0.0f };
+                jh->connectedAnchor = { 0.0f, 0.0f, 0.0f };
+                MakeBox(s, "Free", 6.0f, 2.0f, 0.0f, 0.4f, 0.4f, 0.4f); // 関節なしも混ぜる
+                s.GetWorld().ApplyStructuralChanges();
+                door.GetComponent<RigidbodyComponent>()->angularVelocity = { 0.0f, 1.5f, 0.0f };
+                rail.GetComponent<RigidbodyComponent>()->velocity = { 0.0f, 0.0f, 1.0f };
+            };
+            Scene sa, sb;
+            build(sa);
+            build(sb);
+            bool det = true;
+            uint64_t finalHash = 0;
+            for (int i = 0; i < 300 && det; ++i) {
+                phys.Update(sa.GetWorld(), kDt);
+                phys.Update(sb.GetWorld(), kDt);
+                const uint64_t ha = HashWorld(sa.GetWorld(), nullptr);
+                const uint64_t hb = HashWorld(sb.GetWorld(), nullptr);
+                if (ha != hb) {
+                    det = false;
+                    MYE_LOG_ERROR("  hinge/fixed/slider determinism diverged at tick %d", i);
+                }
+                finalHash = ha;
+            }
+            check(det, "joint types: a mixed hinge/fixed/slider scene hashes identically twice");
+            MYE_LOG_INFO("  [phys] joint mixed-type scene hash @300 = %016llX",
+                         static_cast<unsigned long long>(finalHash));
+        }
+    }
+
     if (failCount == 0) {
         MYE_LOG_INFO("==== Physics self test: ALL PASS ====");
         return true;
