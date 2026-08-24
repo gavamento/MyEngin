@@ -933,12 +933,22 @@ struct JointComponent {
     // 軸 (owner ローカル)。Hinge = 回転軸 / Slider = 滑る方向 / Cone = 円錐の中心軸。
     // Ball / Fixed は使わない。非単位でもよい (内部で正規化)
     DirectX::XMFLOAT3 axis = { 0.0f, 1.0f, 0.0f };
-    // ---- リミット (M60c で行が立つ) ----
+    // ---- リミット (M60c) ----
+    // ★**関節の値は「owner が connectedEntity に対して軸方向にどれだけ動いたか」**。
+    //   ドアを +30 度開いたら関節角も +30 度。相手が null (ワールド) なら owner 自身の
+    //   軸まわり回転そのもの。restRotation が rest = 0 の位置を決める
+    // ★useLimit=false なら**行を一切立てない** (Cone なら swing も twist も効かない = Ball)。
+    //   limitMin > limitMax の逆転も「満たしようが無い」ので行を立てない (自由になる)
+    // ★リミットは**片側不等式**なので、範囲外に出たときだけ行が立つ。行き過ぎは
+    //   「行が立つ前に 1 サブステップ進むぶん」= 速度×h で、substeps を増やすと減る
     bool useLimit = false;
     float limitMin = -45.0f;     // Hinge: 角度[度] / Slider: 変位[m] / Cone: twist 角[度]
     float limitMax = 45.0f;      // 同 上限
-    float swingLimitDeg = 45.0f; // Cone のみ: 軸まわりの円錐半頂角[度]
+    float swingLimitDeg = 45.0f; // Cone のみ: 軸の円錐半頂角[度]。useLimit で一緒に効く
     // ---- モータ (M60c)。**maxForce <= 0 なら行を立てない** (値ゲートではなく分岐ゲート) ----
+    // 目標速度の符号もリミットと同じ規約 (+ なら owner が +軸まわり / +軸方向へ動く)。
+    // maxForce は Hinge では**トルク** [N·m]、Slider では力 [N]。リミットとモータを
+    // 両方付けた場合は**リミットが勝つ** (各反復でリミットを後に解いている)
     float motorTargetVelocity = 0.0f; // Hinge: rad/s / Slider: m/s
     float motorMaxForce = 0.0f;
     // ---- 破断 (M60d)。<= 0 = 無限 (壊れない) ----

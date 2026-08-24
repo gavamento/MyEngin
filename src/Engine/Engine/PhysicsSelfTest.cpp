@@ -4954,6 +4954,418 @@ bool RunPhysicsSelfTest()
         }
     }
 
+    // ================= M60c: リミット + モータ + コーン =================
+    // 新しい行の種類は 2 つだけ:
+    //   **片側不等式** (リミット) = λ を [0,∞) にクランプし、**範囲外に出たときだけ立てる**
+    //   **駆動** (モータ)         = 目標速度を bias に持ち |λ| ≤ maxForce·h でクランプ
+    // どちらも 1 自由度なので M60a の ConstraintBlock (count==1 でクランプが効く) に
+    // そのまま収まる — ソルバ本体は 1 行も変えていない。
+    // ★向きの規約: **違反する向きの速度が cdot < 0 になるように d を取る**。
+    // ★関節角は「**owner が connected に対して軸まわりに回った量**」(qE の逆向き)。
+    //   ドアを +30° 開いたら関節角も +30°、モータ目標速度 + なら owner が +軸まわりに回る。
+    // ★リミットは**位置補正にも**足してある。速度行だけだと cdot=0 の静止状態で λ が
+    //   立たず、範囲外で止まった関節が永久に戻らない (c-2 がそれを固定している)
+    {
+        auto qrot = [](const DirectX::XMFLOAT4& q, const DirectX::XMFLOAT3& v) {
+            const float tx = 2.0f * (q.y * v.z - q.z * v.y);
+            const float ty = 2.0f * (q.z * v.x - q.x * v.z);
+            const float tz = 2.0f * (q.x * v.y - q.y * v.x);
+            return DirectX::XMFLOAT3{ v.x + q.w * tx + (q.y * tz - q.z * ty),
+                                      v.y + q.w * ty + (q.z * tx - q.x * tz),
+                                      v.z + q.w * tz + (q.x * ty - q.y * tx) };
+        };
+        // 関節角を度で測る。相手がワールド (rest 単位) なら owner 自身の軸まわり回転そのもの。
+        // **試験側は atan2 を使ってよい** — 決定論を要求されるのはソルバの中だけ
+        auto twistDeg = [](const DirectX::XMFLOAT4& q, float ax, float ay, float az) {
+            float s = q.x * ax + q.y * ay + q.z * az;
+            float c = q.w;
+            if (c < 0.0f) { // -q と q は同じ姿勢。半角の組として符号を揃える
+                s = -s;
+                c = -c;
+            }
+            return 2.0f * std::atan2(s, c) * (180.0f / 3.14159265f);
+        };
+        // 蝶番が Z 軸のアーム (重力で振り下がる = 関節角が負へ向かう)。
+        // 長さ 2m・質量 1kg の棒を端で吊るので、水平からの落下は目に見える速さになる
+        auto makeArm = [](Scene& s, bool withEnv, int substeps) {
+            if (withEnv) {
+                GameObject envGo = s.CreateGameObjectTracked("Env");
+                envGo.AddComponent<PhysicsEnvironmentComponent>()->substeps = substeps;
+            }
+            GameObject arm = MakeBox(s, "Arm", 1.0f, 0.0f, 0.0f, 1.0f, 0.1f, 0.1f);
+            auto* j = arm.AddComponent<JointComponent>();
+            j->type = 1; // Hinge
+            j->axis = { 0.0f, 0.0f, 1.0f };
+            j->anchor = { -1.0f, 0.0f, 0.0f };          // アームの根元
+            j->connectedAnchor = { 0.0f, 0.0f, 0.0f };  // ワールド原点
+            j->useLimit = true;
+            j->limitMin = -30.0f;
+            j->limitMax = 30.0f;
+            s.GetWorld().ApplyStructuralChanges();
+            auto* rb = arm.GetComponent<RigidbodyComponent>();
+            rb->angularDamping = 0.0f;
+            rb->linearDamping = 0.0f;
+            return arm;
+        };
+
+        // -- (c-1) ヒンジのリミット: 下限で止まり、越えた量は 1 tick ぶんに収まる --
+        // ★行き過ぎは「行を立てる前に 1 サブステップ進んでしまう」ぶん = ω·h。
+        //   だから**サブステップを増やすと比例して減る** (剛性はサブステップで買える。
+        //   M59g2-7 と同じ性質) — 下でそれを実測して固定する
+        {
+            auto run = [&](bool withEnv, int substeps, float& minDeg, float& endDeg) {
+                Scene s;
+                GameObject arm = makeArm(s, withEnv, substeps);
+                const auto* lt = arm.GetComponent<LocalTransform>();
+                minDeg = 0.0f;
+                for (int i = 0; i < 300; ++i) {
+                    phys.Update(s.GetWorld(), kDt);
+                    const float d = twistDeg(lt->rotation, 0.0f, 0.0f, 1.0f);
+                    if (d < minDeg) {
+                        minDeg = d;
+                    }
+                }
+                endDeg = twistDeg(lt->rotation, 0.0f, 0.0f, 1.0f);
+            };
+            float min1 = 0.0f, end1 = 0.0f, min4 = 0.0f, end4 = 0.0f;
+            run(false, 1, min1, end1); // env 無し = substeps 1
+            run(true, 4, min4, end4);
+            MYE_LOG_INFO("  [phys] joint hinge limit: substeps 1 -> min %.3f deg (rest %.3f) / "
+                         "substeps 4 -> min %.3f deg (rest %.3f), limit -30",
+                         static_cast<double>(min1), static_cast<double>(end1),
+                         static_cast<double>(min4), static_cast<double>(end4));
+            check(min1 > -34.0f, "hinge limit: a falling arm stops at the limit angle");
+            check(end1 < -29.0f && end1 > -30.5f,
+                  "hinge limit: and settles on the limit instead of drifting through it");
+            check(min4 > min1, "hinge limit: substeps buy the overshoot down (stiffer limit)");
+            check(end4 < -29.0f && end4 > -30.5f, "hinge limit: substeps land on the limit too");
+        }
+
+        // -- (c-2) 範囲外から範囲内へ復帰する --
+        // ★これが「リミットを位置補正にも足した」理由そのもの。静止していると相対角速度が
+        //   0 なので**速度行は何もしない** — 位置補正が無ければ永久に範囲外のまま
+        {
+            Scene s;
+            const float h45 = 0.38268343f, c45 = 0.92387953f; // -45 度 / Z 軸
+            GameObject arm = MakeBox(s, "Bent", 1.0f, 0.0f, 0.0f, 1.0f, 0.1f, 0.1f);
+            arm.GetComponent<LocalTransform>()->rotation = { 0.0f, 0.0f, -h45, c45 };
+            auto* j = arm.AddComponent<JointComponent>();
+            j->type = 1;
+            j->axis = { 0.0f, 0.0f, 1.0f };
+            j->anchor = { -1.0f, 0.0f, 0.0f };
+            j->connectedAnchor = { 0.0f, 0.0f, 0.0f };
+            j->useLimit = true;
+            j->limitMin = -10.0f;
+            j->limitMax = 10.0f;
+            s.GetWorld().ApplyStructuralChanges();
+            auto* rb = arm.GetComponent<RigidbodyComponent>();
+            rb->gravityScale = 0.0f; // 完全に静止した状態から始める (速度行が立たない条件)
+            rb->angularDamping = 0.0f;
+            const auto* lt = arm.GetComponent<LocalTransform>();
+            const float before = twistDeg(lt->rotation, 0.0f, 0.0f, 1.0f);
+            for (int i = 0; i < 60; ++i) {
+                phys.Update(s.GetWorld(), kDt);
+            }
+            const float after = twistDeg(lt->rotation, 0.0f, 0.0f, 1.0f);
+            MYE_LOG_INFO("  [phys] joint limit recovery: %.3f deg -> %.3f deg (limit -10..10)",
+                         static_cast<double>(before), static_cast<double>(after));
+            check(before < -40.0f, "limit recovery: it really starts outside the limit");
+            check(after > -10.5f && after < 0.5f,
+                  "limit recovery: a joint parked outside its limit walks back into range");
+        }
+
+        // -- (c-3) モータ: 無負荷なら目標速度へ収束し、符号は「owner が +軸まわり」 --
+        {
+            Scene s;
+            GameObject body = MakeBox(s, "Motor", 0.0f, 0.0f, 0.0f, 0.3f, 0.3f, 0.3f);
+            auto* j = body.AddComponent<JointComponent>();
+            j->type = 1;
+            j->axis = { 0.0f, 1.0f, 0.0f };
+            j->motorTargetVelocity = 3.0f;
+            j->motorMaxForce = 50.0f;
+            s.GetWorld().ApplyStructuralChanges();
+            auto* rb = body.GetComponent<RigidbodyComponent>();
+            rb->gravityScale = 0.0f;
+            rb->angularDamping = 0.0f;
+            const auto* lt = body.GetComponent<LocalTransform>();
+            for (int i = 0; i < 30; ++i) {
+                phys.Update(s.GetWorld(), kDt);
+            }
+            const float deg = twistDeg(lt->rotation, 0.0f, 1.0f, 0.0f);
+            MYE_LOG_INFO("  [phys] joint motor: w = %.6f rad/s (target 3.0), angle %.2f deg "
+                         "after 0.5s",
+                         static_cast<double>(rb->angularVelocity.y), static_cast<double>(deg));
+            check(std::fabs(rb->angularVelocity.y - 3.0f) < 1e-3f,
+                  "motor: an unloaded hinge motor holds its target velocity");
+            check(deg > 80.0f && deg < 92.0f,
+                  "motor: and a positive target really turns the owner about +axis");
+        }
+
+        // -- (c-4) モータ: maxForce で頭打ちになり、加速度が τ/I の解析値に一致する --
+        // 到達不能な目標速度を与えると毎ステップ上限いっぱいのインパルスが入る =
+        // 等加速度運動。**λ は力ではなく力積なので上限は maxForce·h** (そこを間違えると
+        // 刻みを変えたときにトルクが変わってしまう)
+        {
+            Scene s;
+            const float hx = 0.3f, hz = 0.3f;
+            GameObject body = MakeBox(s, "Capped", 0.0f, 0.0f, 0.0f, hx, 0.3f, hz);
+            auto* j = body.AddComponent<JointComponent>();
+            j->type = 1;
+            j->axis = { 0.0f, 1.0f, 0.0f };
+            j->motorTargetVelocity = 100.0f; // 到達不能
+            j->motorMaxForce = 0.6f;         // N·m
+            s.GetWorld().ApplyStructuralChanges();
+            auto* rb = body.GetComponent<RigidbodyComponent>();
+            rb->gravityScale = 0.0f;
+            rb->angularDamping = 0.0f;
+            for (int i = 0; i < 30; ++i) {
+                phys.Update(s.GetWorld(), kDt);
+            }
+            // 箱の Y 軸慣性 = m/3 * (hx^2 + hz^2)
+            const float I = (1.0f / 3.0f) * (hx * hx + hz * hz);
+            const float expect = 0.6f / I * (30.0f * kDt);
+            MYE_LOG_INFO("  [phys] joint motor cap: w = %.5f rad/s (analytic tau/I*t = %.5f)",
+                         static_cast<double>(rb->angularVelocity.y),
+                         static_cast<double>(expect));
+            check(std::fabs(rb->angularVelocity.y - expect) < expect * 0.02f,
+                  "motor: maxForce caps the impulse at exactly tau*h per substep");
+        }
+
+        // -- (c-5) スライダ: 変位リミットで止まり、線形モータが定速で押し戻す --
+        {
+            Scene s;
+            // ★開始位置を 0.05 ずらしてある: 0 から 2 m/s だと 30 tick でちょうど 1.0 へ
+            //   着地してしまい、「行き過ぎてから戻る」経路が一度も走らない
+            GameObject body = MakeBox(s, "Rail", 0.05f, 0.0f, 0.0f, 0.2f, 0.2f, 0.2f);
+            auto* j = body.AddComponent<JointComponent>();
+            j->type = 3; // Slider
+            j->axis = { 1.0f, 0.0f, 0.0f };
+            j->useLimit = true;
+            j->limitMin = -1.0f;
+            j->limitMax = 1.0f;
+            s.GetWorld().ApplyStructuralChanges();
+            auto* rb = body.GetComponent<RigidbodyComponent>();
+            rb->gravityScale = 0.0f;
+            rb->linearDamping = 0.0f;
+            rb->angularDamping = 0.0f;
+            rb->velocity = { 2.0f, 0.0f, 0.0f };
+            const auto* lt = body.GetComponent<LocalTransform>();
+            float maxX = 0.0f;
+            for (int i = 0; i < 120; ++i) {
+                phys.Update(s.GetWorld(), kDt);
+                if (lt->position.x > maxX) {
+                    maxX = lt->position.x;
+                }
+            }
+            MYE_LOG_INFO("  [phys] joint slider limit: max x %.5f, rest x %.5f (limit 1.0)",
+                         static_cast<double>(maxX), static_cast<double>(lt->position.x));
+            check(maxX < 1.04f, "slider limit: a sliding body stops at its travel limit");
+            check(lt->position.x > 0.99f && lt->position.x < 1.001f,
+                  "slider limit: and rests exactly on it");
+            // モータで逆方向へ。0.5 m/s で 5 秒 = 2.5m ぶん押すので下限に貼り付く
+            j->motorTargetVelocity = -0.5f;
+            j->motorMaxForce = 100.0f;
+            for (int i = 0; i < 300; ++i) {
+                phys.Update(s.GetWorld(), kDt);
+            }
+            MYE_LOG_INFO("  [phys] joint slider motor: x = %.5f (driven to the -1.0 limit)",
+                         static_cast<double>(lt->position.x));
+            check(lt->position.x < -0.99f && lt->position.x > -1.02f,
+                  "slider motor: a linear motor drives the body onto the far limit and holds it");
+        }
+
+        // -- (c-6) コーン: スイング角が円錐から出ない --
+        // ぶら下げた棒を横に蹴る。ボールなら 90 度まで振れるところを 20 度で止める
+        {
+            Scene s;
+            GameObject rod = MakeBox(s, "Rod", 0.0f, -0.5f, 0.0f, 0.1f, 0.5f, 0.1f);
+            auto* j = rod.AddComponent<JointComponent>();
+            j->type = 4; // Cone
+            j->axis = { 0.0f, 1.0f, 0.0f };
+            j->anchor = { 0.0f, 0.5f, 0.0f };          // 棒の上端
+            j->connectedAnchor = { 0.0f, 0.0f, 0.0f }; // ワールド原点で吊る
+            j->useLimit = true;
+            j->swingLimitDeg = 20.0f;
+            j->limitMin = -45.0f; // twist はここでは効かせない (別途 c-6b)
+            j->limitMax = 45.0f;
+            s.GetWorld().ApplyStructuralChanges();
+            auto* rb = rod.GetComponent<RigidbodyComponent>();
+            rb->angularDamping = 0.0f;
+            rb->linearDamping = 0.0f;
+            rb->velocity = { 3.0f, 0.0f, 0.0f }; // 横へ蹴る
+            const auto* lt = rod.GetComponent<LocalTransform>();
+            float maxSwing = 0.0f;
+            for (int i = 0; i < 300; ++i) {
+                phys.Update(s.GetWorld(), kDt);
+                const DirectX::XMFLOAT3 up = qrot(lt->rotation, { 0.0f, 1.0f, 0.0f });
+                float dot = up.y; // ワールド +Y との内積 (up は単位)
+                if (dot > 1.0f) {
+                    dot = 1.0f;
+                } else if (dot < -1.0f) {
+                    dot = -1.0f;
+                }
+                const float deg = std::acos(dot) * (180.0f / 3.14159265f);
+                if (deg > maxSwing) {
+                    maxSwing = deg;
+                }
+            }
+            MYE_LOG_INFO("  [phys] joint cone swing: max %.3f deg (limit 20)",
+                         static_cast<double>(maxSwing));
+            check(maxSwing > 19.0f, "cone: the rod really reaches its swing limit");
+            check(maxSwing < 23.0f, "cone: and the swing cone holds it there");
+        }
+
+        // -- (c-6b) コーン: ツイスト角が範囲から出ない --
+        {
+            Scene s;
+            GameObject rod = MakeBox(s, "Twist", 0.0f, -0.5f, 0.0f, 0.1f, 0.5f, 0.1f);
+            auto* j = rod.AddComponent<JointComponent>();
+            j->type = 4;
+            j->axis = { 0.0f, 1.0f, 0.0f };
+            j->anchor = { 0.0f, 0.5f, 0.0f };
+            j->connectedAnchor = { 0.0f, 0.0f, 0.0f };
+            j->useLimit = true;
+            j->swingLimitDeg = 60.0f; // スイングは余裕を持たせてツイストだけを見る
+            j->limitMin = -45.0f;
+            j->limitMax = 45.0f;
+            s.GetWorld().ApplyStructuralChanges();
+            auto* rb = rod.GetComponent<RigidbodyComponent>();
+            rb->gravityScale = 0.0f;
+            rb->angularDamping = 0.0f;
+            rb->angularVelocity = { 0.0f, 3.0f, 0.0f }; // 自分の軸まわりに回す = ツイスト
+            const auto* lt = rod.GetComponent<LocalTransform>();
+            float maxTwist = 0.0f;
+            for (int i = 0; i < 180; ++i) {
+                phys.Update(s.GetWorld(), kDt);
+                const float d = twistDeg(lt->rotation, 0.0f, 1.0f, 0.0f);
+                if (d > maxTwist) {
+                    maxTwist = d;
+                }
+            }
+            MYE_LOG_INFO("  [phys] joint cone twist: max %.3f deg (limit 45)",
+                         static_cast<double>(maxTwist));
+            check(maxTwist > 44.0f, "cone: the rod really reaches its twist limit");
+            check(maxTwist < 49.0f, "cone: and the twist range holds it there");
+        }
+
+        // -- (c-7) 存在ゲート: リミット off / モータ off は**行を立てない** --
+        // ★フィールドに値が入っていても useLimit=false と motorMaxForce<=0 なら
+        //   M60b と 1 ビットも変わらないこと。値ゲート (常に立てて 0 を掛ける) にすると
+        //   -0.0f の化けや K⁻¹ の往復でここが割れる
+        {
+            auto run = [&](bool armed, DirectX::XMFLOAT3& pos, DirectX::XMFLOAT4& rot) {
+                Scene s;
+                GameObject arm = MakeBox(s, "Gate", 1.0f, 0.0f, 0.0f, 1.0f, 0.1f, 0.1f);
+                auto* j = arm.AddComponent<JointComponent>();
+                j->type = 1;
+                j->axis = { 0.0f, 0.0f, 1.0f };
+                j->anchor = { -1.0f, 0.0f, 0.0f };
+                j->connectedAnchor = { 0.0f, 0.0f, 0.0f };
+                if (armed) {
+                    // 「効かないはずの値」を全部埋める
+                    j->useLimit = false;
+                    j->limitMin = -5.0f;
+                    j->limitMax = 5.0f;
+                    j->swingLimitDeg = 3.0f;
+                    j->motorTargetVelocity = -7.0f;
+                    j->motorMaxForce = 0.0f;
+                }
+                s.GetWorld().ApplyStructuralChanges();
+                auto* rb = arm.GetComponent<RigidbodyComponent>();
+                rb->angularDamping = 0.0f;
+                rb->linearDamping = 0.0f;
+                for (int i = 0; i < 200; ++i) {
+                    phys.Update(s.GetWorld(), kDt);
+                }
+                const auto* lt = arm.GetComponent<LocalTransform>();
+                pos = lt->position;
+                rot = lt->rotation;
+            };
+            DirectX::XMFLOAT3 p0, p1;
+            DirectX::XMFLOAT4 r0, r1;
+            run(false, p0, r0);
+            run(true, p1, r1);
+            const bool same = std::memcmp(&p0, &p1, sizeof(p0)) == 0
+                           && std::memcmp(&r0, &r1, sizeof(r0)) == 0;
+            MYE_LOG_INFO("  [phys] joint gate: y %.9f vs %.9f / qz %.9f vs %.9f",
+                         static_cast<double>(p0.y), static_cast<double>(p1.y),
+                         static_cast<double>(r0.z), static_cast<double>(r1.z));
+            check(same, "joint gate: limit/motor fields change nothing while their gates are off");
+        }
+
+        // -- (c-8) 決定論: リミット + モータ + コーン混在シーンの並走ハッシュ一致 --
+        {
+            auto build = [](Scene& s) {
+                GameObject envGo = s.CreateGameObjectTracked("Env");
+                envGo.AddComponent<PhysicsEnvironmentComponent>();
+                MakeGround(s, "G", 0, -3.0f, 0, 10.0f, 0.5f, 10.0f);
+                // 可動域つきのドア
+                GameObject door = MakeBox(s, "Door", 0.5f, 2.0f, 0.0f, 0.5f, 1.0f, 0.05f);
+                auto* jd = door.AddComponent<JointComponent>();
+                jd->type = 1;
+                jd->axis = { 0.0f, 1.0f, 0.0f };
+                jd->anchor = { -0.5f, 0.0f, 0.0f };
+                jd->connectedAnchor = { 0.0f, 2.0f, 0.0f };
+                jd->useLimit = true;
+                jd->limitMin = -80.0f;
+                jd->limitMax = 0.0f;
+                // モータで回り続けるヒンジ (斜め軸)
+                GameObject fan = MakeBox(s, "Fan", -2.0f, 2.0f, 0.0f, 0.6f, 0.1f, 0.1f);
+                auto* jf = fan.AddComponent<JointComponent>();
+                jf->type = 1;
+                jf->axis = { 0.6f, 0.8f, 0.0f };
+                jf->connectedAnchor = { -2.0f, 2.0f, 0.0f };
+                jf->motorTargetVelocity = 4.0f;
+                jf->motorMaxForce = 5.0f;
+                // 可動域つきのスライダ (線形モータで往復させはしない = 片道で貼り付く)
+                GameObject rail = MakeBox(s, "Rail", 3.0f, 2.0f, 0.0f, 0.2f, 0.2f, 0.2f);
+                auto* jr = rail.AddComponent<JointComponent>();
+                jr->type = 3;
+                jr->axis = { 0.0f, 0.0f, 1.0f };
+                jr->connectedAnchor = { 3.0f, 2.0f, 0.0f };
+                jr->useLimit = true;
+                jr->limitMin = -0.5f;
+                jr->limitMax = 0.5f;
+                jr->motorTargetVelocity = 1.0f;
+                jr->motorMaxForce = 20.0f;
+                // コーンで吊った棒 (swing / twist 両方に当てる)
+                GameObject rod = MakeBox(s, "Rod", 0.0f, -0.5f, 0.0f, 0.1f, 0.5f, 0.1f);
+                auto* jc = rod.AddComponent<JointComponent>();
+                jc->type = 4;
+                jc->axis = { 0.0f, 1.0f, 0.0f };
+                jc->anchor = { 0.0f, 0.5f, 0.0f };
+                jc->connectedAnchor = { 0.0f, 0.0f, 0.0f };
+                jc->useLimit = true;
+                jc->swingLimitDeg = 25.0f;
+                jc->limitMin = -30.0f;
+                jc->limitMax = 30.0f;
+                s.GetWorld().ApplyStructuralChanges();
+                door.GetComponent<RigidbodyComponent>()->angularVelocity = { 0.0f, -2.0f, 0.0f };
+                rod.GetComponent<RigidbodyComponent>()->velocity = { 3.0f, 0.0f, 1.0f };
+                rod.GetComponent<RigidbodyComponent>()->angularVelocity = { 0.0f, 5.0f, 0.0f };
+            };
+            Scene sa, sb;
+            build(sa);
+            build(sb);
+            bool det = true;
+            uint64_t finalHash = 0;
+            for (int i = 0; i < 300 && det; ++i) {
+                phys.Update(sa.GetWorld(), kDt);
+                phys.Update(sb.GetWorld(), kDt);
+                const uint64_t ha = HashWorld(sa.GetWorld(), nullptr);
+                const uint64_t hb = HashWorld(sb.GetWorld(), nullptr);
+                if (ha != hb) {
+                    det = false;
+                    MYE_LOG_ERROR("  limit/motor/cone determinism diverged at tick %d", i);
+                }
+                finalHash = ha;
+            }
+            check(det, "limit/motor/cone: a mixed scene hashes identically twice");
+            MYE_LOG_INFO("  [phys] joint limit/motor/cone scene hash @300 = %016llX",
+                         static_cast<unsigned long long>(finalHash));
+        }
+    }
+
     if (failCount == 0) {
         MYE_LOG_INFO("==== Physics self test: ALL PASS ====");
         return true;
