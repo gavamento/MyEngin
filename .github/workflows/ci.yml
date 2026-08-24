@@ -95,7 +95,7 @@ jobs:
       #    --warp --font-embedded --no-fxaa 固定 = ラスタライザ・フォント・
       #    機種差を増幅する 1 パスを開発機と揃える。
       #    replay_verify が先に Release をビルドしている前提 (bat はビルドしない)
-      - name: screenshot regression (8 shots, no-fxaa/taa/ssr/froxel)
+      - name: screenshot regression (9 shots, no-fxaa/taa/ssr/froxel)
         shell: cmd
         run: tools\shot_verify.bat
 

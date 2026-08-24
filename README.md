@@ -46,10 +46,11 @@ C++20 / DirectX 11 製の自作ゲームエンジン。**Unity 風の使いや�
 - **Debug/Release 一貫性** — 固定 60Hz tick、`/fp:precise`、PCG32、明示ソートキー。
   リプレイ (.rep) の tick 毎ワールドハッシュ比較で機械検証:
   `tools\replay_verify.bat` が両構成ビルド → Debug 記録 → Debug/Release 照合 → 静的規則検査。
-  **被覆は 4 シーン**: 既定デモ (物理 / パーティクル / スクリプト) / 部位ショーケース
+  **被覆は 5 シーン**: 既定デモ (物理 / パーティクル / スクリプト) / 部位ショーケース
   (スキンメッシュのボーン追従 = 骨駆動 LocalTransform の構成間ビット一致) /
   ゲームフロー統合デモ (シーン遷移・ポーズ・セーブ・アクションマップ) /
-  ローカル 2P デモ (プレイヤー別入力レーンの配線)。
+  ローカル 2P デモ (プレイヤー別入力レーンの配線) /
+  物理ショーケース (空力・浮力・マグヌス・ジャイロ・材料・CCD)。
   割れた tick は**どのエンティティのどのフィールドが**割れたかまで自動で出る (`--hash-diff`)
 - **クラッシュしたら「再現可能なバグ報告」が自動で残る** — 例外 (スタックオーバーフロー含む) /
   `std::terminate` / 純粋仮想呼び出し / CRT 不正パラメータを捕まえ、`crash\<日時>\` に
@@ -112,7 +113,8 @@ Runtime.exe --net-demo --net-join 127.0.0.1:7777 --net-delay 3
                                           # 同 (参加側)。--net-no-rollback で素のロックステップ
 Runtime.exe --net-poke-tick 60            # 片側だけ壊して desync 検出と診断チェーンを試す
 Runtime.exe --rep-diff a.rep b.rep        # 2 本の .rep がどの tick で割れたか
-tools\replay_verify.bat                   # 一貫性検証一式 (4 シーン被覆)
+tools\replay_verify.bat                   # 一貫性検証一式 (5 シーン被覆)
+tools\shot_verify.bat [--update]          # 決定的スクショ 13 枚を tests\golden と比較
 tools\crash_verify.bat                    # 5 経路で実際に落として .rep の再現性を検証
 tools\net_verify.bat                      # 2 プロセスのネット対戦 + desync 検出の実地検証
 tools\check_rules.ps1                     # コーディング規則の静的検査

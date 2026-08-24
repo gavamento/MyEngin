@@ -1099,15 +1099,17 @@ Eliminate cases in which the engine works in Debug but fails in Release, or vice
 - Introducing a fixed timestep, marked [TBD] in Section 5.3, is strongly recommended as a prerequisite
 - CPU particles are included in the hash. GPU particles are excluded because they are rendering output; their behavior is verified separately through comparison mode without readback
 - The test can run in CI through a command-line invocation such as `Editor.exe --replay-verify xxx.rep`
-- `tools\replay_verify.bat` runs **four scene pairs**, each rebuilt from code before recording:
+- `tools\replay_verify.bat` runs **five scene pairs**, each rebuilt from code before recording:
   the default demo (scripts, physics, particles, schema fields), the parts showcase
   (`--parts-demo`: skinned bones, part following, part raycasts), the game-flow showcase
   (`--flow-demo`, M51j: **LoadScene transitions across two scenes, TimeControl pause and
   50% time-scale windows, PersistStore carry-over, SaveGame writes and action-map evaluation**
   driven by a deterministic tick timeline in `FlowTitleDriver` / `FlowGameDriver`) and the
   local-multiplayer showcase (`--local-demo --local-players 2 --synth-input`, M52g: per-player
-  input lanes). The flow pair is the aggregate proof that the M51 gameplay-flow features are
-  replay-deterministic
+  input lanes) and the physics showcase (`--physics-demo`, M59d: aerodynamics, buoyancy, Magnus,
+  the gyroscopic term, materials and density-derived mass, CCD). The flow pair is the aggregate
+  proof that the M51 gameplay-flow features are replay-deterministic; the physics pair is the same
+  for every equation M59 added
 
 **Field-level divergence diagnosis (M52a).** Knowing *which tick* broke is not the same as
 knowing *what* broke. `HashWorld`, `HashWorldDetailed` and `HashWorldDump` are three exits of a
@@ -1155,10 +1157,10 @@ a GPU-less runner an acceptable place to prove determinism. Golden screenshots, 
 *are* driver-dependent and are therefore always captured with `--warp`.
 
 **Screenshot regression (M52c).** Hashes prove that the *simulation* is reproducible; they say
-nothing about what is drawn. `tools\shot_verify.bat` captures twelve deterministic screenshots with
+nothing about what is drawn. `tools\shot_verify.bat` captures thirteen deterministic screenshots with
 `Runtime.exe` (no ImGui, so neither `imgui.ini` nor the cursor position can leak in) and compares
 them against `tests\golden\*.png` pixel by pixel, writing a difference heat map next to any shot
-that moved. `--update` re-records the golden set. Eight of the twelve gate CI; the other four
+that moved. `--update` re-records the golden set. Nine of the thirteen gate CI; the other four
 exist only to cover FXAA, TAA, SSR and froxel volumetrics -- all four compared at `--tol 0` and
 all four skipped on the runner (`MYE_SHOT_SKIP_FXAA` / `_TAA` / `_SSR` / `_FROXEL`). Each is a
 pass that **branches discretely**, so a 1-ULP difference flips the branch and throws a few dozen
@@ -1167,7 +1169,7 @@ pixels (M56d). No tolerance can cover that shape -- a genuine regression looks t
 runner does not shoot them at all and only bit-identity on the dev machine is claimed. A ninth,
 `demo_terrain_deferred`, gates CI at `--tol 12` rather than 3: **anisotropic filtering is
 implementation-defined** and the two WARP builds disagree by up to 8 levels on terrain viewed at
-grazing angles (four splat layers x albedo+normal, amplified by the derivative-based TBN). Two of the eight
+grazing angles (four splat layers x albedo+normal, amplified by the derivative-based TBN). Two of the nine
 (`demo_render_forward` / `demo_render_deferred`, M54a) shoot the `--render-demo` showcase, which
 is the only golden scene carrying spot and point lights -- without it every feature added by the
 M54-M58 rendering roadmap would be pixel-invariant by default and land with zero coverage.
@@ -1175,6 +1177,18 @@ A further shot (`demo_terrain_deferred`, M58c) uses its own `--terrain-demo` sce
 extending `--render-demo`: terrain covers the whole frame, so folding it into the existing
 showcase would have re-recorded goldens shared with other in-flight branches, and
 `tests\golden\*.png` is binary and therefore unmergeable.
+
+The thirteenth shot (`physics`, M59l) is the only one **not** taken at frame 3. Every other shot is
+a near-initial pose, which is the right way to ask "is the renderer still drawing this scene
+correctly" but leaves physics untested: after three ticks nothing has visibly moved. `physics`
+shoots the M59 showcase at frame 120 (two seconds), where the fluttering feather, the landed steel
+ball, the gliding paper plane, the curving ball, the floating buoy and the crate stack all appear in
+the same frame. That also makes it **the only image that checks the simulation is machine-independent**
+rather than merely configuration-independent: two seconds of accumulated state cannot survive a
+one-bit difference in the runner's floating point, so this shot turns the scalar-float /
+`/fp:precise` contract into something a pixel comparison can falsify. If it ever reddens on the
+runner, the honest fallbacks are dropping it to frame 3 (renderer-only coverage) or moving it to
+the local-only `--tol 0` bucket -- not raising the tolerance.
 
 Determinism of a *frame* needs two guarantees that determinism of a *tick* does not:
 

@@ -47,6 +47,7 @@ public:
     bool netDemo = false;    // --net-demo (M52i: 2 人ネット対戦のデモ)
     bool renderShowcase = false; // --render-demo (M54a: 描画ロードマップのショーケース)
     bool terrainShowcase = false; // --terrain-demo (M58c: 地形のショーケース)
+    bool physicsShowcase = false; // --physics-demo (M59d: 物理のショーケース。M59l で golden 13 枚目)
     float terrainLodDistance = 0.0f; // --terrain-lod DIST (M58e: 0 = LOD 無効)
     float terrainSkirtDepth = 0.0f;  // --terrain-skirt D (M58e: 0 = 自動 / < 0 = 無し)
 
@@ -55,7 +56,10 @@ public:
         ctx.shaders->Load("forward_lit");
         mye::RegisterDemoContent(ctx);   // Editor と同じ実体登録 (AssetID 解決)
         mye::RegisterAssetLibraries(ctx); // .prefab / .anim を登録
-        if (scenePath.empty() && terrainShowcase) {
+        if (scenePath.empty() && physicsShowcase) {
+            // M59l: render/terrain と同じ理由でコードから毎回組む (bat が撮影前に消す)
+            scenePath = L"cache\\physics_showcase.scene.json";
+        } else if (scenePath.empty() && terrainShowcase) {
             // M58c: render-demo と同じ理由でコードから毎回組む (bat が撮影前に消す)
             scenePath = L"cache\\terrain_showcase.scene.json";
         } else if (scenePath.empty() && renderShowcase) {
@@ -92,11 +96,14 @@ public:
         mye::RegisterNetDuelContent(ctx);       // M52i: duel_* 材質 (同上)
         mye::RegisterRenderShowcaseContent(ctx); // M54a: rdemo_* 材質 (同上)
         mye::RegisterTerrainShowcaseContent(ctx); // M58c: tdemo_* 材質 (同上)
+        mye::RegisterPhysicsShowcaseContent(ctx); // M59d: pdemo_* 材質 (同上)
         if (std::filesystem::exists(scenePath)) {
             mye::SceneSerializer::LoadFromFile(*ctx.scene, scenePath);
             // Editor と同じ「ロード直後 1 回」(M48e)。ここを揃えないと Editor で録った .rep と
             // Runtime の verify で初期状態が食い違う
             mye::Prefab::RefreshNonOverridden(*ctx.scene, *ctx.prefabs);
+        } else if (physicsShowcase) {
+            mye::BuildPhysicsShowcaseScene(ctx); // M59d
         } else if (terrainShowcase) {
             mye::BuildTerrainShowcaseScene(ctx, terrainLodDistance, terrainSkirtDepth); // M58c/e
         } else if (renderShowcase) {
@@ -326,6 +333,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 app.renderShowcase = true; // M54a: 描画ショーケース (shot_verify の 6/7 枚目)
             } else if (arg == L"--terrain-demo") {
                 app.terrainShowcase = true; // M58c: 地形ショーケース (shot_verify の 8 枚目)
+            } else if (arg == L"--physics-demo") {
+                app.physicsShowcase = true; // M59d: 物理ショーケース (shot_verify の 13 枚目)
             } else if (arg == L"--terrain-lod" && i + 1 < argc) {
                 // M58e: 地形 LOD の切替距離。**golden は LOD 無しのまま**で、
                 // クラック A/B のときだけ点ける

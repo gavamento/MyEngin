@@ -105,8 +105,9 @@ if exist %TERRAIN_SCENE% del /q %TERRAIN_SCENE%
 set FAILED=0
 set SHOTS=0
 
-rem ---- 10 本。既定デモの 2 経路 (Forward / Deferred) + 生成シーン 2 本 + UI プローブ
-rem      + 描画ショーケースの 2 経路 (M54a) ----
+rem ---- 13 本。既定デモの 2 経路 (Forward / Deferred) + 生成シーン 2 本 + UI プローブ
+rem      + 描画ショーケースの 2 経路 (M54a) + 地形 (M58c) + 物理 (M59l)
+rem      + ローカル限定 4 本 (ssr / fxaa / taa / froxel) ----
 rem RT デモは WARP では重すぎるので CI 対象外 (ローカル任意)
 call :shot demo_forward
 call :shot demo_deferred --deferred
@@ -197,6 +198,26 @@ call :shot demo_render_froxel --render-demo --deferred --froxel
 set TOLNOW=%TOL%
 :skip_froxel
 
+rem ---- 13 枚目 (M59l): 物理ショーケース。**この 1 枚だけ frame 120 (2 秒) で撮る**。
+rem      他の 12 枚は frame 3 = ほぼ初期配置で、それは「描画が壊れていないか」を見る撮り方。
+rem      物理は 3 tick では 1 ミリも動いていないので、同じ撮り方をすると M59 で足した数式
+rem      (空力 / 浮力 / マグヌス / ジャイロ / 材料 / CCD) が 1 つも絵に出ない = 守るものが無い。
+rem      120 tick 回すと 羽根のひらひら / 鉄球の着地 / 紙飛行機の滑空 / カーブボールの曲がり /
+rem      浮きの喫水 / 箱の山 が全部同じフレームに乗る。
+rem
+rem ★これは**シミュレーションの機種独立性を絵で検査する唯一の 1 枚**でもある。既存 12 枚は
+rem   どれも tick 3 なので、sim が機種で割れても絵はほとんど変わらない。120 tick ぶん
+rem   積み上がった状態を照合するということは、ランナーの sim が開発機と 1 ビットでも
+rem   違えば必ず赤くなるということ (scalar float + /fp:precise の契約が守られていれば一致する)。
+rem   ★もしランナーで赤くなったら、**tol を上げて誤魔化さないこと** — 意味のある後退先は
+rem     「--shot-frame 3 に落として描画だけの検査に戻す」か「tol=0 のローカル限定枠へ移す」。
+rem   経路は既定の Forward (このシーンは平行光 1 本だけで deferred 固有の被写体が無い)
+set PHYS_SCENE=cache\physics_showcase.scene.json
+if exist %PHYS_SCENE% del /q %PHYS_SCENE%
+set SHOT=--warp --no-audio --font-embedded --width 960 --height 540 --frames 123 --shot-frame 120 --no-fxaa
+call :shot physics --physics-demo
+set SHOT=%SHOTBASE% --no-fxaa
+
 echo.
 if %UPDATE%==1 (
     echo [shot_verify] golden updated in %GOLDEN% - review the images before committing
@@ -209,9 +230,9 @@ if not %FAILED%==0 (
     exit /b 1
 )
 if defined MYE_SHOT_SKIP_FXAA (
-    echo [PASS] screenshot regression ^(%SHOTS% shots, warp, no-fxaa, tol=%TOL% + terrain at 12^)
+    echo [PASS] screenshot regression ^(%SHOTS% shots, warp, no-fxaa, tol=%TOL% + terrain at 12, physics at frame 120^)
 ) else (
-    echo [PASS] screenshot regression ^(%SHOTS% shots, warp, tol=%TOL% + terrain at 12 + fxaa/taa/ssr/froxel at tol=0^)
+    echo [PASS] screenshot regression ^(%SHOTS% shots, warp, tol=%TOL% + terrain at 12 + physics at frame 120 + fxaa/taa/ssr/froxel at tol=0^)
 )
 exit /b 0
 
