@@ -42,6 +42,10 @@ public:
     void RemoveComponentRaw(EntityID e, ComponentTypeId t);
     void* GetComponentRaw(EntityID e, ComponentTypeId t);
     bool HasComponent(EntityID e, ComponentTypeId t) const;
+    // 基本 4 コンポーネント (Name/LocalTransform/WorldMatrix/Hierarchy) か。
+    // RemoveComponent は Transform/Hierarchy の前提が壊れるのでこれらを黙って拒否する —
+    // 呼び側 (ABI の RemoveComponentByName 等) が「外せない」を戻り値で言えるように公開する
+    bool IsBaseComponent(ComponentTypeId t) const;
 
     template <typename T> T* AddComponent(EntityID e) { return static_cast<T*>(AddComponentRaw(e, T::sTypeId)); }
     template <typename T> T* GetComponent(EntityID e) { return static_cast<T*>(GetComponentRaw(e, T::sTypeId)); }

@@ -174,8 +174,8 @@ bool RunPartSelfTest()
         };
         const MyeEntityId root = toShared(enemy.Id());
 
-        check(api.version == MYE_API_VERSION && MYE_API_VERSION == 13u,
-              "abi: the table reports v13");
+        check(api.version == MYE_API_VERSION && MYE_API_VERSION == 14u,
+              "abi: the table reports v14");
         check(api.FindPart != nullptr && api.FindPartsByTag != nullptr,
               "abi: the v9 part slots are filled in");
         check(api.RaycastParts != nullptr, "abi: the v10 RaycastParts slot is filled in");
@@ -202,6 +202,64 @@ bool RunPartSelfTest()
                   && api.PersistGet != nullptr && api.SaveGame != nullptr
                   && api.LoadGame != nullptr && api.SetPadVibration != nullptr,
               "abi: the 14 v12 slots are filled in");
+        // v14 (M59k): 物理側の挙動は PhysicsSelfTest が見る。ここで見るのは
+        // 「組み立てた実物のテーブルに 8 本とも入っているか」
+        check(api.RemoveComponentByName != nullptr && api.HasComponentByName != nullptr
+                  && api.AddForceAtPosition != nullptr && api.GetContactInfo != nullptr
+                  && api.SampleWind != nullptr && api.SampleTerrainHeight != nullptr
+                  && api.WakeRigidbody != nullptr && api.IsSleeping != nullptr,
+              "abi: the 8 v14 slots are filled in");
+        // 付け外しは名前解決 → World への委譲だけ。イテレーション外なので即時適用される
+        check(api.HasComponentByName(&apiCtx, toShared(legL.Id()), "Part") == 1
+                  && api.HasComponentByName(&apiCtx, root, "Part") == 0
+                  && api.HasComponentByName(&apiCtx, root, "Rigidbody") == 0,
+              "abi: HasComponentByName reports what the entity actually carries");
+        check(api.HasComponentByName(&apiCtx, root, "NoSuchComponent") == 0
+                  && api.HasComponentByName(&apiCtx, root, nullptr) == 0
+                  && api.HasComponentByName(&apiCtx, MyeEntityId{}, "Part") == 0,
+              "abi: an unknown name, a null name and a dead entity all report 'no'");
+        check(api.AddComponentByName(&apiCtx, root, "Rigidbody") == 1
+                  && api.HasComponentByName(&apiCtx, root, "Rigidbody") == 1
+                  && api.RemoveComponentByName(&apiCtx, root, "Rigidbody") == 1
+                  && api.HasComponentByName(&apiCtx, root, "Rigidbody") == 0,
+              "abi: AddComponentByName / RemoveComponentByName round-trip outside iteration");
+        check(api.RemoveComponentByName(&apiCtx, root, "Rigidbody") == 0,
+              "abi: removing something the entity does not carry reports 0");
+        // ★スクリプト層は**アーキタイプのイテレーション中**に走るので、Add も Remove も
+        //   tick 末送りになる (ADR-005)。「付けた直後の Has が 0」という一番踏みやすい罠を
+        //   ここで固定しておく (M59k の C# プローブで実測して分かった挙動)
+        {
+            const ComponentTypeId req[] = { LocalTransform::sTypeId };
+            bool added = false, visibleNow = true, done = false;
+            w.ForEachArchetype(req, [&](Archetype&) {
+                if (done) { return; } // アーキタイプは複数あるので 1 回だけ
+                done = true;
+                added = api.AddComponentByName(&apiCtx, root, "Rigidbody") == 1;
+                visibleNow = api.HasComponentByName(&apiCtx, root, "Rigidbody") == 1;
+            });
+            check(added && !visibleNow,
+                  "abi: an add issued during iteration is queued - Has still shows tick-start state");
+            w.ApplyStructuralChanges();
+            check(api.HasComponentByName(&apiCtx, root, "Rigidbody") == 1,
+                  "abi: ... and becomes visible once the structural changes are applied");
+            bool removed = false, goneNow = false;
+            done = false;
+            w.ForEachArchetype(req, [&](Archetype&) {
+                if (done) { return; }
+                done = true;
+                removed = api.RemoveComponentByName(&apiCtx, root, "Rigidbody") == 1;
+                goneNow = api.HasComponentByName(&apiCtx, root, "Rigidbody") == 0;
+            });
+            check(removed && !goneNow, "abi: a remove issued during iteration is queued the same way");
+            w.ApplyStructuralChanges();
+            check(api.HasComponentByName(&apiCtx, root, "Rigidbody") == 0,
+                  "abi: ... and lands at the end of the tick");
+        }
+        // 基本 4 コンポーネントは構造的に外せない — ABI からも壊せないことを固定する
+        check(api.RemoveComponentByName(&apiCtx, root, "LocalTransform") == 0
+                  && api.RemoveComponentByName(&apiCtx, root, "Hierarchy") == 0
+                  && api.HasComponentByName(&apiCtx, root, "LocalTransform") == 1,
+              "abi: base components refuse to be removed and say so in the return value");
 
         // ★Shared/ScriptAPI.h は Engine/Core/Hash.h を include できず FNV 定数を再掲して
         //   いる。ここがズレると「同じタグ名なのに引けない」という静かな壊れ方をする

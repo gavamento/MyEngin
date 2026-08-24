@@ -1,5 +1,6 @@
 #include "Engine/Engine/Script/EngineApiTable.h"
 
+#include <algorithm> // v14 GetContactInfo (M59k): key 昇順列の二分探索
 #include <cstddef>
 #include <cstring>
 
@@ -913,6 +914,98 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
         const auto clamp01 = [](float f) { return f < 0.0f ? 0.0f : (f > 1.0f ? 1.0f : f); };
         v->left = clamp01(left);
         v->right = clamp01(right);
+    };
+
+    // ---- v14 (M59k): コンポーネントの付け外し ----
+    // 構造変更は World が「イテレーション中ならコマンドバッファ、外なら即時」を
+    // 自分で振り分ける (ADR-005) ので、ここは名前解決だけをして委譲する
+    out.RemoveComponentByName = [](void* engine, MyeEntityId id, const char* name) -> int {
+        if (!name) { return 0; }
+        const ComponentTypeId t = ComponentRegistry::Get().FindByName(name);
+        if (t == kInvalidComponentType) { return 0; }
+        World& world = Sc(engine)->GetWorld();
+        if (world.IsBaseComponent(t)) {
+            return 0; // Name/LocalTransform/WorldMatrix/Hierarchy は構造的に外せない
+        }
+        // 「持っていなかった」と「外した」を戻り値で区別する。**遅延適用なので
+        // 1 が返っても実際に消えるのは tick 末**でありうる (直後の Has はまだ 1)
+        if (!world.HasComponent(ToEngine(id), t)) { return 0; }
+        world.RemoveComponentRaw(ToEngine(id), t);
+        return 1;
+    };
+    out.HasComponentByName = [](void* engine, MyeEntityId id, const char* name) -> int {
+        if (!name) { return 0; }
+        const ComponentTypeId t = ComponentRegistry::Get().FindByName(name);
+        if (t == kInvalidComponentType) { return 0; }
+        return Sc(engine)->GetWorld().HasComponent(ToEngine(id), t) ? 1 : 0;
+    };
+
+    // ---- v14 (M59k): 作用点付きの力。実装本体は PhysicsSystem.cpp ----
+    out.AddForceAtPosition = [](void* engine, MyeEntityId id, MyeVec3 force,
+                                MyeVec3 worldPoint) -> int {
+        constexpr float kFixedDt = 1.0f / 60.0f; // AddForce / AddTorque と同じ 1 tick 規約
+        return ApplyForceAtWorldPoint(Sc(engine)->GetWorld(), ToEngine(id), force, worldPoint,
+                                      kFixedDt);
+    };
+
+    // ---- v14 (M59k): 接触の詳細 ----
+    // ★contacts が繋がっているのは**物理 Update の後**だけ (TickRunner が毎 tick
+    //   繋ぎ直す)。フェーズ 3 の Update から呼ぶと必ずここで 0 に落ちる —
+    //   前 tick の列を読ませると再シムでハッシュが割れるため (EngineAPI.h の注記)
+    out.GetContactInfo = [](void* engine, MyeEntityId self, MyeEntityId other,
+                            MyeContactInfo* out2) -> int {
+        const std::vector<SolidContact>* list = Ctx(engine)->contacts;
+        if (!list || !out2 || self.index == other.index) { return 0; }
+        // key = (小 index << 32) | 大 index。列は key 昇順なので二分探索
+        // (CollisionSystem::FindContactNormal と同じ前提)
+        const bool selfIsLow = self.index < other.index;
+        const uint32_t lo = selfIsLow ? self.index : other.index;
+        const uint32_t hi = selfIsLow ? other.index : self.index;
+        const uint64_t key = (static_cast<uint64_t>(lo) << 32) | static_cast<uint64_t>(hi);
+        auto it = std::lower_bound(list->begin(), list->end(), key,
+                                   [](const SolidContact& c, uint64_t k) { return c.key < k; });
+        if (it == list->end() || it->key != key) { return 0; }
+        out2->other = other;
+        out2->point = { it->px, it->py, it->pz };
+        // 法線は大 index→小 index。自分が大 index 側なら反転する
+        // (CollisionSystem の OnCollision 配信と同じ向きに揃える)
+        const float s = selfIsLow ? 1.0f : -1.0f;
+        out2->normal = { it->nx * s, it->ny * s, it->nz * s };
+        out2->impulse = it->impulse;
+        return 1;
+    };
+
+    // ---- v14 (M59k): 環境と地形のサンプリング ----
+    out.SampleWind = [](void* engine, MyeVec3 point, MyeVec3* outWind) -> int {
+        (void)point; // M59 は一様定常風。乱流を足すときのために引数だけ先に切ってある
+        const PhysicsEnvironmentComponent* env
+            = ResolvePhysicsEnvironment(Sc(engine)->GetWorld());
+        if (!env) {
+            if (outWind) { *outWind = { 0.0f, 0.0f, 0.0f }; }
+            return 0; // env 無し = 無風 (存在ゲート — 「風の設定が無い」を 0 で伝える)
+        }
+        if (outWind) {
+            *outWind = { env->windVelocity.x, env->windVelocity.y, env->windVelocity.z };
+        }
+        return 1;
+    };
+    out.SampleTerrainHeight = [](void* engine, float x, float z, float* outHeight,
+                                 MyeVec3* outNormal) -> int {
+        return SampleTerrainHeightWorld(Sc(engine)->GetWorld(), x, z, outHeight, outNormal);
+    };
+
+    // ---- v14 (M59k): スリープ (M59h) ----
+    out.WakeRigidbody = [](void* engine, MyeEntityId id) -> int {
+        auto* rb = Sc(engine)->GetWorld().GetComponent<RigidbodyComponent>(ToEngine(id));
+        if (!rb) { return 0; }
+        // velocity は触らない — 「起こす」と「動かす」は別の操作
+        rb->isSleeping = false;
+        rb->sleepTicks = 0;
+        return 1;
+    };
+    out.IsSleeping = [](void* engine, MyeEntityId id) -> int {
+        const auto* rb = Sc(engine)->GetWorld().GetComponent<RigidbodyComponent>(ToEngine(id));
+        return (rb && rb->isSleeping) ? 1 : 0;
     };
 }
 

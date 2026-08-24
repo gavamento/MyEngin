@@ -1037,6 +1037,33 @@ as well as the Scene View. `TickRunner` calls it after `TransformSystem` (the ve
 the current tick's world matrices) and suppresses it while re-simulating, so a time-travel seek does
 not pile every intermediate tick's lines into one frame.
 
+#### Script-facing physics API (ABI v14, M59k)
+
+The M59 physics work is bundled into the script ABI in one version bump, per the "one ABI bump per
+milestone" rule: v13 (94 slots) → **v14 (102 slots)**.
+
+| Slot | Contract |
+|---|---|
+| `RemoveComponentByName` / `HasComponentByName` | The structural half of the two-level on/off switch (ledger 10): every M59 feature is presence-gated on a component, so this is how a script turns one on or off. Base components (`Name` / `LocalTransform` / `WorldMatrix` / `Hierarchy`) return 0 — they are structurally unremovable (`World::IsBaseComponent`) |
+| `AddForceAtPosition` | `AddForce`'s one-tick convention plus `Δω = I⁻¹(r×F)dt`, with `r` measured from `Rigidbody.centerOfMass`. A dedicated slot rather than caller-side `AddForce` + `AddTorque` because mass and inertia must be resolved exactly once — the same reason the solver and the ABI share `EffectiveMassWorld` |
+| `GetContactInfo` | Looks the pair up in the key-ordered `SolidContact` list and returns the representative point, the normal oriented **other → self**, and the accumulated normal impulse |
+| `SampleWind` | The environment's uniform wind. The unused `point` argument is reserved for turbulence so that adding it later does not force another bump |
+| `SampleTerrainHeight` | Sweeps `shape=4` colliders in ascending index order and fires a downward ray from each one's AABB ceiling, so the answer is the surface **physics collides with** — unaffected by render LOD or skirts, and correct for rotated or scaled terrain |
+| `WakeRigidbody` / `IsSleeping` | The M59h sleep flag. Waking does not touch velocity; the force/velocity slots wake bodies on their own |
+
+Two constraints are worth stating because they are structural rather than stylistic:
+
+- **`GetContactInfo` only reads the contact list the current tick's physics produced.** `TickRunner`
+  detaches the pointer at the head of every tick and re-attaches it right after `PhysicsSystem::Update`,
+  so a call from `Update` (phase 3, before physics) always reports nothing, and only `LateUpdate` and
+  the `OnCollision*` callbacks see data. The list is a per-tick scratch buffer that is **not** covered
+  by `SimSnapshot`; letting a script read the previous tick's contacts would diverge on the first
+  time-travel restore or network rollback. The gate is the pointer's presence, not a tick-number
+  comparison, so a rollback that lands on a tick number physics already visited cannot alias.
+- **A script's `AddComponentByName` / `RemoveComponentByName` both land at the end of the tick.**
+  The script lane runs inside archetype iteration, so both go through the ADR-005 command buffer, and
+  `HasComponentByName` therefore always answers with the state as of the start of the tick.
+
 ---
 
 ## 11. Debug/Release Consistency Policy

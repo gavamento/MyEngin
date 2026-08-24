@@ -116,7 +116,7 @@ MyEngine — C++20 / DirectX 11 の自作ゲームエンジン (VS2022 / x64 / W
 **ABI スロットを足す** (`src\Shared\EngineAPI.h`) — `Interop.cs` は**位置ベースのミラーで実行時の
 版検証が無い**。順序・件数・名前・引数個数を揃え、`EngineApiTable.cpp` で全スロットを充填し、
 `MYE_API_VERSION` の bump と `check_rules.ps1` の `$apiVersionSlots` 表の更新を**同時に**行う
-(片方だけだと規則 11 で止まる)。現行は v13 = 94 スロット。C# レーンは replay 被覆の外なので、
+(片方だけだと規則 11 で止まる)。現行は v14 = 102 スロット。C# レーンは replay 被覆の外なので、
 実走確認は一時的な probe スクリプトで行う。
 **v13 の `Net*` 5 本は機種依存の値を返す** — スクリプトが sim 状態へ書き戻すと 2 台の
 ワールドハッシュが割れる。禁止する手段は無いので desync 検出が唯一の防波堤

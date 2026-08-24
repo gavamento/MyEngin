@@ -47,7 +47,22 @@
 //             ★レーン指定版は v12 の GetActionState/GetAxisValue と**同じ評価結果**を
 //               引くだけ (InputActions がレーン major で全 kMaxPlayers 本を持っている)。
 //               既存 2 本は「レーン 0」の別名として 1 文字も変えずに残す
-#define MYE_API_VERSION 13u
+// v14 (M59k): 超リアル物理 (M59) の入口 8 本を束ねて 1 回で開通 (「ABI は各マイルストーン
+//             末に 1 回」の運用)。コンポーネントの付け外し 2 本 (RemoveComponentByName /
+//             HasComponentByName)、作用点付きの力 (AddForceAtPosition)、接触の強さ
+//             (GetContactInfo)、環境と地形のサンプリング 2 本 (SampleWind /
+//             SampleTerrainHeight)、スリープ 2 本 (WakeRigidbody / IsSleeping)。
+//             ★GetContactInfo が読めるのは**今 tick の物理が書いた接触列だけ**。
+//               スクリプトの Update はフェーズ 3 = 物理より前なので常に 0 が返り、
+//               実データが返るのは LateUpdate と OnCollision* コールバックだけ。
+//               これは行儀の問題ではなく決定論の要請 — 接触列は毎 tick 使い回す
+//               バッファで SimSnapshot に入っていないため、前 tick の列を読ませると
+//               タイムトラベル復元 / ネットのロールバック後の再シムでハッシュが割れる。
+//             ★M59 の新機能はすべて「コンポーネントを付けたら効く」存在ゲートなので、
+//               ON/OFF の構造的な操作は AddComponentByName / RemoveComponentByName、
+//               フィールド粒度の ON/OFF は v11 の SetComponentField が担当する
+//               (専用スロットは足さない — 決定台帳 10)
+#define MYE_API_VERSION 14u
 
 // PersistSet の 1 エントリ最大バイト数 (v12)。PersistStore は WorldHash / セーブ出力に
 // 全量が載るため、無制限だと 1 キーでハッシュとセーブが肥大する
@@ -85,6 +100,18 @@ struct MyeRaycastHit {
     MyeVec3 point;
     MyeVec3 normal;
     float distance;
+};
+
+// ソリッド接触 1 ペアの詳細 (v14、M59k)。GetContactInfo の出力。
+// エンジン内部の SolidContact (M59e で拡張) を「自分から見た形」に直したもの
+struct MyeContactInfo {
+    MyeEntityId other;  // 相手のエンティティ
+    MyeVec3 point;      // 代表接触点 (ワールド) = マニフォールド最大 4 点の重心
+    MyeVec3 normal;     // **相手→自分**方向 (OnCollisionEnter に届く法線と同じ向き)
+    // その tick にこのペアへ入った法線インパルスの合計 [N*s]。静止して載っているだけの
+    // 接触では m*g*dt になる (= 「どれだけの重さが載っているか」)。衝突の瞬間は
+    // 運動量変化そのものなので、着地音の音量や破壊の閾値にそのまま使える
+    float impulse;
 };
 
 struct MyeEngineApi {
@@ -380,6 +407,69 @@ struct MyeEngineApi {
     // 黙って別プレイヤーの入力で動くのが一番たちの悪い壊れ方)
     uint32_t (*GetActionForPlayer)(void* engine, uint64_t nameHash, uint32_t player);
     float (*GetAxisForPlayer)(void* engine, uint64_t nameHash, uint32_t player);
+
+    // ---- v14 (M59k): コンポーネントの付け外し ----
+    // M59 の機能は全て「コンポーネントを付けたら効く」存在ゲートなので、ランタイムの
+    // ON/OFF はここが入口になる (Aero を付けて空気抵抗を出す / 外して真空に戻す 等)。
+    //
+    // ★構造変更なのでアーキタイプ移動が起きる。**毎 tick の付け外しは非推奨** —
+    //   常用する ON/OFF は「付けたまま bool フィールドを SetComponentField で倒す」ほうが
+    //   桁違いに安い (決定台帳 10)。
+    // ★**スクリプトから呼ぶ Add / Remove はどちらも tick 末に適用される** (ADR-005 の
+    //   コマンドバッファ — スクリプト層はアーキタイプのイテレーション中に走るため)。
+    //   したがって HasComponentByName が答えるのは常に「この tick の頭の状態」で、
+    //   付けた直後は 0、外した直後は 1 が返る。**同じ tick 内で結果を見に行かないこと** —
+    //   見えるようになるのは次の tick から。同 tick で初期値を書きたいときは
+    //   AddComponentByName ではなく、次 tick の Update で SetComponentField を使う
+    // RemoveComponentByName: 登録名で外す。名前が解決でき、かつ今その型を持っていたら 1。
+    //   基本 4 コンポーネント (Name/LocalTransform/WorldMatrix/Hierarchy) は Transform /
+    //   階層の前提が壊れるので**構造的に外せない** — 0 が返る
+    int (*RemoveComponentByName)(void* engine, MyeEntityId id, const char* componentName);
+    int (*HasComponentByName)(void* engine, MyeEntityId id, const char* componentName);
+
+    // ---- v14 (M59k): 作用点付きの力 ----
+    // AddForce と同じ「1 tick 分の力」規約 (dv = F/m · fixedDt)。違いは worldPoint で、
+    // 質量中心 (Rigidbody.centerOfMass) からのオフセット r に対して Δω = I⁻¹(r×F)dt が
+    // 同時に入る = 端を押せば回る。質量・慣性はソルバと同じ関数で解決するので、
+    // AddForce + AddTorque を自分で合成するより「質量が二義にならない」点で安全。
+    // Rigidbody 非所持 / kinematic は 0。freezeRotation のときは並進成分だけが入る
+    int (*AddForceAtPosition)(void* engine, MyeEntityId id, MyeVec3 force, MyeVec3 worldPoint);
+
+    // ---- v14 (M59k): 接触の詳細 ----
+    // self と other が**今 tick 接触しているか**を引き、代表接触点・法線・法線インパルス
+    // 合計を out に書く。接触していなければ 0 (out は触らない)。
+    //
+    // ★呼べる場所が決まっている: **OnCollisionEnter / Stay と LateUpdate だけ**。
+    //   Update (フェーズ 3) は物理より前なので常に 0 が返る。これは決定論の要請で、
+    //   接触列は毎 tick 使い回すバッファ = SimSnapshot 非被覆なので、前 tick の列を
+    //   読ませるとタイムトラベル / ネットのロールバック後の再シムで割れる。
+    // ★ソリッド接触だけ (トリガーは対象外)。両方不動のペアはソルバを通らないので出ない
+    int (*GetContactInfo)(void* engine, MyeEntityId self, MyeEntityId other, MyeContactInfo* out);
+
+    // ---- v14 (M59k): 環境と地形のサンプリング ----
+    // SampleWind: その点の風速 (m/s、ワールド) を out に書く。PhysicsEnvironment が
+    //   置かれていれば 1、無ければ 0 を書いて 0 を返す。
+    //   ★point は **M59 では読まれない** (一様定常風のみ)。それでも引数に取ってあるのは、
+    //     乱流 (tick とセル座標から PCG32 で導出する予定) を足すときに ABI を
+    //     もう一度 bump せずに済ませるため
+    int (*SampleWind)(void* engine, MyeVec3 point, MyeVec3* outWind);
+    // SampleTerrainHeight: ワールド XZ の地形表面の高さ (ワールド Y) と面法線を返す。
+    //   ヒットで 1、地形コライダー (Collider.shape = terrain) の範囲外は 0。
+    //   ★返すのは**当たる地面**であって描画の地面ではない — 物理が実際に衝突判定に
+    //     使っている三角形をそのまま引くので、LOD やスカートの影響を受けない。
+    //   複数の地形が重なっていたら最も高いヒット (同値は entity.index が小さい側)。
+    //   outHeight / outNormal は null 可
+    int (*SampleTerrainHeight)(void* engine, float x, float z, float* outHeight,
+                               MyeVec3* outNormal);
+
+    // ---- v14 (M59k): スリープ (M59h) ----
+    // WakeRigidbody: 眠っているボディを起こす (velocity は触らない)。Rigidbody 非所持は 0。
+    //   ★力・速度を触る既存スロット (AddForce/AddImpulse/AddTorque/SetVelocity/
+    //     AddForceAtPosition) は**自動で起こす**ので、通常これを呼ぶ必要は無い。
+    //     要るのは「近くで何かが起きたから念のため起こす」ような外部要因のとき
+    int (*WakeRigidbody)(void* engine, MyeEntityId id);
+    // IsSleeping: 眠っていれば 1。Rigidbody 非所持も 0 (「眠っていない」に寄せる)
+    int (*IsSleeping)(void* engine, MyeEntityId id);
 };
 
 // スクリプトの各コールバックに渡されるコンテキスト (POD)

@@ -51,6 +51,12 @@ public:
         apiCtx_.net = net; // v13 (M52i)。null = ネット非使用
     }
 
+    // v14 (M59k): 今 tick の接触列を繋ぐ / 外す。**毎 tick 呼ぶ** —
+    // TickRunner が tick 頭で nullptr、物理 Update の直後に実体を渡す。
+    // これで GetContactInfo が読めるのは「今 tick の物理が書いた列」だけになる
+    // (理由は EngineApiTable.h の contacts のコメント)
+    void SetTickContacts(const std::vector<SolidContact>* contacts) { apiCtx_.contacts = contacts; }
+
     // シーン遷移 (M19.4): Start 済み記録をクリアして新シーンのエンティティで Start を再実行させる
     void ClearStarted() { started_.clear(); }
     // sim スナップショット (M52d): Start 済み記録は sim 状態 (戻し忘れると復元後の

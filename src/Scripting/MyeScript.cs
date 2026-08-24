@@ -56,6 +56,25 @@ namespace MyeScripting
         public static MyeEntity Create(string name) => new MyeEntity(Engine.CreateGameObject(name));
         public static MyeEntity Find(string name) => new MyeEntity(Engine.FindByName(name));
 
+        // ---- コンポーネントの付け外し (v14、M59k) ----
+        // ★構造変更 = アーキタイプ移動なので毎 tick は非推奨 (常用する ON/OFF は
+        //   フィールドの bool を倒すほうが桁違いに安い)。
+        // ★**Add / Remove はどちらも tick 末に適用される** (ADR-005)。Has が答えるのは
+        //   常に「この tick の頭の状態」— 付けた直後は false、外した直後は true
+        public bool AddComponent(string name) => Engine.AddComponent(Id, name);
+        public bool RemoveComponent(string name) => Engine.RemoveComponent(Id, name);
+        public bool HasComponent(string name) => Engine.HasComponent(Id, name);
+
+        // 今 tick の接触の詳細 (v14、M59k)。★OnCollision* / LateUpdate 専用
+        public bool GetContactInfo(MyeEntity other, out MyeContactInfo info)
+            => Engine.GetContactInfo(Id, other.Id, out info);
+        // 作用点付きの力 (v14、M59k)
+        public bool AddForceAtPosition(MyeVec3 force, MyeVec3 worldPoint)
+            => Engine.AddForceAtPosition(Id, force, worldPoint);
+        // スリープ (v14、M59k)
+        public bool WakeRigidbody() => Engine.WakeRigidbody(Id);
+        public bool IsSleeping() => Engine.IsSleeping(Id);
+
         // ---- 汎用フィールドアクセス (v11、M50d) ----
         // スキーマ codegen (assets/scripts/Generated/Schema.gen.cs) の呼び先。通常は生成側の
         // 型付きアクセサ (HealthSchema.GetCurrent 等) を使う。comp/field は名前の FNV-1a
@@ -219,6 +238,38 @@ namespace MyeScripting
         protected bool AddTorque(MyeVec3 torque) => Engine.AddTorque(SelfId, torque);
         protected static bool Raycast(MyeVec3 origin, MyeVec3 dir, float maxDist, out MyeRaycastHit hit)
             => Engine.Raycast(origin, dir, maxDist, out hit);
+
+        // ---- 超リアル物理 (v14、M59k) ----
+        // 作用点付きの力 (1 tick 分)。端を押せば回る = 並進と回転が同時に入る
+        protected bool AddForceAtPosition(MyeVec3 force, MyeVec3 worldPoint)
+            => Engine.AddForceAtPosition(SelfId, force, worldPoint);
+        // 今 tick の接触の詳細 (代表点 / 法線 / 法線インパルス合計)。
+        // ★**OnCollisionEnter / OnCollisionStay / LateUpdate からしか実データが返らない** —
+        //   Update は物理より前のフェーズなので必ず false。決定論の要請 (EngineAPI.h の注記)
+        protected bool GetContactInfo(MyeEntity other, out MyeContactInfo info)
+            => Engine.GetContactInfo(SelfId, other.Id, out info);
+        // その点の風速 (m/s)。PhysicsEnvironment 未設置なら false + 無風
+        protected static bool SampleWind(MyeVec3 point, out MyeVec3 wind)
+            => Engine.SampleWind(point, out wind);
+        // ワールド XZ の地形表面 (**当たる地形**。描画の LOD やスカートの影響を受けない)
+        protected static bool SampleTerrainHeight(float x, float z, out float height,
+                                                  out MyeVec3 normal)
+            => Engine.SampleTerrainHeight(x, z, out height, out normal);
+        // スリープ (M59h)。力・速度を触る API は自動で起こすので明示呼びは稀
+        protected bool WakeUp() => Engine.WakeRigidbody(SelfId);
+        protected bool IsSleeping() => Engine.IsSleeping(SelfId);
+
+        // ---- コンポーネントの付け外し (v14、M59k) ----
+        // M59 の機能は「付けたら効く」存在ゲートなので、ランタイムの ON/OFF はここが入口。
+        // ★構造変更 = アーキタイプ移動なので**毎 tick の付け外しは非推奨** (常用する
+        //   ON/OFF は付けたまま bool フィールドを倒すほうが桁違いに安い)。
+        // ★**Add / Remove はどちらも tick 末に適用される** (ADR-005)。Has が答えるのは
+        //   常に「この tick の頭の状態」— 付けた直後は false、外した直後は true
+        // ★AddComponent は v2 からエンジン内部にあったが C# へ露出していなかった —
+        //   付けられるのに外せない/確かめられない状態だったので v14 でまとめて開ける
+        protected bool AddComponent(string name) => Engine.AddComponent(SelfId, name);
+        protected bool RemoveComponent(string name) => Engine.RemoveComponent(SelfId, name);
+        protected bool HasComponent(string name) => Engine.HasComponent(SelfId, name);
 
         // ---- オーディオ (v8、M45g)。**write-only** — 再生位置や再生中判定は取得できない ----
         // soundKey は .sound.json の名前 (無ければ .wav / .ogg のファイル名)。

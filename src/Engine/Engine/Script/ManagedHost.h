@@ -78,6 +78,9 @@ public:
         apiCtx_.net = net;
     }
 
+    // v14 (M59k): 今 tick の接触列を繋ぐ / 外す (ScriptHost と同じ規約)
+    void SetTickContacts(const std::vector<SolidContact>* contacts) { apiCtx_.contacts = contacts; }
+
     // シーン遷移 (M19.4): C# インスタンス handle をリセットして新シーンで再生成させる (非ハッシュ)
     void OnSceneReloaded()
     {

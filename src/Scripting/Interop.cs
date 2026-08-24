@@ -71,6 +71,16 @@ namespace MyeScripting
         public float Distance;
     }
 
+    // Shared/EngineAPI.h の MyeContactInfo と同一レイアウト (v14、M59k)
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MyeContactInfo
+    {
+        public MyeEntityId Other;
+        public MyeVec3 Point;   // 代表接触点 (ワールド)
+        public MyeVec3 Normal;  // 相手→自分
+        public float Impulse;   // その tick の法線インパルス合計 [N*s]
+    }
+
     // ---- ネイティブ C ABI テーブル (Shared/EngineAPI.h の MyeEngineApi と同一レイアウト) ----
     // フィールド順は EngineAPI.h と厳密に一致させること。
     [StructLayout(LayoutKind.Sequential)]
@@ -188,6 +198,16 @@ namespace MyeScripting
         public delegate* unmanaged<void*, ulong> NetRollbackCount;
         public delegate* unmanaged<void*, ulong, uint, uint> GetActionForPlayer;
         public delegate* unmanaged<void*, ulong, uint, float> GetAxisForPlayer;
+        // ---- v14 (M59k): 超リアル物理 (M59) の入口 8 本。宣言順 = ネイティブと一致 ----
+        public delegate* unmanaged<void*, MyeEntityId, byte*, int> RemoveComponentByName;
+        public delegate* unmanaged<void*, MyeEntityId, byte*, int> HasComponentByName;
+        public delegate* unmanaged<void*, MyeEntityId, MyeVec3, MyeVec3, int> AddForceAtPosition;
+        public delegate* unmanaged<void*, MyeEntityId, MyeEntityId, MyeContactInfo*, int>
+            GetContactInfo;
+        public delegate* unmanaged<void*, MyeVec3, MyeVec3*, int> SampleWind;
+        public delegate* unmanaged<void*, float, float, float*, MyeVec3*, int> SampleTerrainHeight;
+        public delegate* unmanaged<void*, MyeEntityId, int> WakeRigidbody;
+        public delegate* unmanaged<void*, MyeEntityId, int> IsSleeping;
     }
 
     // ネイティブ ManagedHost が保持する関数ポインタ表。Bootstrap がここに書き込む。
@@ -790,5 +810,71 @@ namespace MyeScripting
             => _api != null ? _api->GetActionForPlayer(_api->Engine, NameHash(name), player) : 0u;
         public static float GetAxisForPlayer(string name, uint player)
             => _api != null ? _api->GetAxisForPlayer(_api->Engine, NameHash(name), player) : 0.0f;
+
+        // ---- v14 (M59k): 超リアル物理 (M59) の入口 ----
+
+        // コンポーネントの付け外し。★構造変更 = アーキタイプ移動なので毎 tick は非推奨
+        // (常用する ON/OFF は SetComponentField で bool を倒すほうが桁違いに安い)。
+        // ★**スクリプトから呼ぶ Add / Remove はどちらも tick 末に適用される** (ADR-005)。
+        //   Has が答えるのは常に「この tick の頭の状態」— 付けた直後は false、外した直後は true
+        public static bool RemoveComponent(MyeEntityId id, string name)
+        {
+            if (_api == null) return false;
+            var b = Utf8(name);
+            fixed (byte* p = b) { return _api->RemoveComponentByName(_api->Engine, id, p) != 0; }
+        }
+
+        public static bool HasComponent(MyeEntityId id, string name)
+        {
+            if (_api == null) return false;
+            var b = Utf8(name);
+            fixed (byte* p = b) { return _api->HasComponentByName(_api->Engine, id, p) != 0; }
+        }
+
+        // 作用点付きの力 (1 tick 分)。端を押せば回る = 並進と回転が同時に入る
+        public static bool AddForceAtPosition(MyeEntityId id, MyeVec3 force, MyeVec3 worldPoint)
+            => _api != null && _api->AddForceAtPosition(_api->Engine, id, force, worldPoint) != 0;
+
+        // 今 tick の接触の詳細。★OnCollisionEnter / Stay と LateUpdate からしか
+        //   実データが返らない (Update は物理より前のフェーズ = 常に false)。
+        //   決定論の要請であって行儀の問題ではない — EngineAPI.h の v14 の注記を参照
+        public static bool GetContactInfo(MyeEntityId self, MyeEntityId other,
+                                          out MyeContactInfo info)
+        {
+            info = default;
+            if (_api == null) return false;
+            fixed (MyeContactInfo* p = &info)
+            {
+                return _api->GetContactInfo(_api->Engine, self, other, p) != 0;
+            }
+        }
+
+        // その点の風速 (m/s、ワールド)。PhysicsEnvironment 未設置なら false + 無風
+        public static bool SampleWind(MyeVec3 point, out MyeVec3 wind)
+        {
+            wind = MyeVec3.Zero;
+            if (_api == null) return false;
+            fixed (MyeVec3* p = &wind) { return _api->SampleWind(_api->Engine, point, p) != 0; }
+        }
+
+        // ワールド XZ の地形表面 (**当たる地形**。描画の LOD やスカートの影響を受けない)
+        public static bool SampleTerrainHeight(float x, float z, out float height,
+                                               out MyeVec3 normal)
+        {
+            height = 0.0f;
+            normal = MyeVec3.Up;
+            if (_api == null) return false;
+            fixed (float* hp = &height)
+            fixed (MyeVec3* np = &normal)
+            {
+                return _api->SampleTerrainHeight(_api->Engine, x, z, hp, np) != 0;
+            }
+        }
+
+        // スリープ (M59h)。力・速度を触るスロットは自動で起こすので明示呼びは稀
+        public static bool WakeRigidbody(MyeEntityId id)
+            => _api != null && _api->WakeRigidbody(_api->Engine, id) != 0;
+        public static bool IsSleeping(MyeEntityId id)
+            => _api != null && _api->IsSleeping(_api->Engine, id) != 0;
     }
 }

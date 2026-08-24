@@ -19,6 +19,7 @@
 #include "Engine/Engine/Physics/Shapes.h"
 #include "Engine/Engine/Replay/WorldHasher.h"
 #include "Engine/Engine/Scene.h"
+#include "Engine/Engine/Script/EngineApiTable.h" // M59k: ABI v14 のスロットを実物で叩く
 #include "Engine/Engine/TransformSystem.h"
 
 namespace mye {
@@ -4075,6 +4076,225 @@ bool RunPhysicsSelfTest()
         check(det, "ccd: a mixed CCD scene hashes identically across two runs for 240 ticks");
         MYE_LOG_INFO("  [phys] ccd scene hash @240 = %016llX",
                      static_cast<unsigned long long>(finalHash));
+    }
+
+    // ================= M59k: ABI v14 (スクリプトから見た物理) =================
+    // 見るのは「GameLogic.dll / C# が実際に呼ぶ経路」— テーブルのスロットが埋まって
+    // いるかは PartSelfTest が見るので、ここでは**返す値の物理的な意味**を固定する。
+    {
+        ScriptApiContext apiCtx;
+        MyeEngineApi api = {};
+        BuildEngineApi(api, &apiCtx);
+        const auto toShared = [](EntityID e) { return MyeEntityId{ e.index, e.generation }; };
+
+        // ---- (k-1) AddForceAtPosition: 重心を通る力は回さない / 端を押すと回る ----
+        // 解析値: F=(0,0,100) を r=(0.5,0,0) に掛けると τ = r×F = (0,-50,0)。
+        // 1 辺 1m の立方体 (m=1) の Iy = m(hx²+hz²)/3 = 1/6 なので Δωy = -50·(1/60)/(1/6) = -5
+        {
+            Scene s;
+            apiCtx.scene = &s;
+            GameObject box = MakeBox(s, "Box", 0, 5, 0, 0.5f, 0.5f, 0.5f);
+            s.GetWorld().ApplyStructuralChanges();
+            auto* rb = box.GetComponent<RigidbodyComponent>();
+            rb->gravityScale = 0.0f;
+            const MyeEntityId id = toShared(box.Id());
+
+            check(api.AddForceAtPosition(&apiCtx, id, { 0, 0, 100.0f }, { 0, 5.0f, 0 }) == 1,
+                  "abi14: AddForceAtPosition succeeds on a dynamic body");
+            check(std::fabs(rb->velocity.z - 100.0f / 60.0f) < 1e-4f
+                      && rb->angularVelocity.x == 0.0f && rb->angularVelocity.y == 0.0f
+                      && rb->angularVelocity.z == 0.0f,
+                  "abi14: a force through the center of mass adds no spin at all");
+            *rb = {}; // 速度・角速度を初期化して次の一撃だけを見る
+            rb->gravityScale = 0.0f;
+            api.AddForceAtPosition(&apiCtx, id, { 0, 0, 100.0f }, { 0.5f, 5.0f, 0 });
+            MYE_LOG_INFO("  [phys] abi14 off-center: vz = %.5f wy = %.5f (expect 1.66667 / -5)",
+                         rb->velocity.z, rb->angularVelocity.y);
+            check(std::fabs(rb->velocity.z - 100.0f / 60.0f) < 1e-4f
+                      && std::fabs(rb->angularVelocity.y + 5.0f) < 1e-3f,
+                  "abi14: pushing the edge adds the same dv plus the analytic spin");
+
+            // 質量中心をずらすと「端」が重心そのものになり、同じ一撃が回さなくなる (M59f1)
+            *rb = {};
+            rb->gravityScale = 0.0f;
+            rb->centerOfMass = { 0.5f, 0.0f, 0.0f };
+            api.AddForceAtPosition(&apiCtx, id, { 0, 0, 100.0f }, { 0.5f, 5.0f, 0 });
+            check(rb->angularVelocity.y == 0.0f && rb->angularVelocity.x == 0.0f
+                      && rb->angularVelocity.z == 0.0f,
+                  "abi14: with centerOfMass moved there, the same push stops spinning it");
+            *rb = {};
+            rb->gravityScale = 0.0f;
+            rb->freezeRotation = true;
+            api.AddForceAtPosition(&apiCtx, id, { 0, 0, 100.0f }, { 0.5f, 5.0f, 0 });
+            check(std::fabs(rb->velocity.z - 100.0f / 60.0f) < 1e-4f
+                      && rb->angularVelocity.y == 0.0f,
+                  "abi14: freezeRotation keeps the translation and drops the spin");
+            check(api.AddForceAtPosition(&apiCtx, MyeEntityId{}, { 0, 0, 1.0f }, {}) == 0,
+                  "abi14: a dead entity reports failure");
+        }
+
+        // ---- (k-2) GetContactInfo: 載っている重さ / 法線の向き / 読める場所 ----
+        {
+            Scene s;
+            apiCtx.scene = &s;
+            GameObject ground = MakeGround(s, "G", 0, -0.5f, 0, 10.0f, 0.5f, 10.0f);
+            GameObject box = MakeBox(s, "Box", 0, 0.5f, 0, 0.5f, 0.5f, 0.5f);
+            s.GetWorld().ApplyStructuralChanges();
+            std::vector<SolidContact> contacts;
+            for (int i = 0; i < 120; ++i) {
+                phys.Update(s.GetWorld(), kDt, &contacts);
+            }
+            const MyeEntityId gid = toShared(ground.Id());
+            const MyeEntityId bid = toShared(box.Id());
+
+            // ★物理より前 (フェーズ 3 の Update) は接触列が繋がっていない = 必ず 0。
+            //   前 tick の列を読ませると再シムでハッシュが割れるための構造的な制約
+            MyeContactInfo ci = {};
+            check(apiCtx.contacts == nullptr
+                      && api.GetContactInfo(&apiCtx, bid, gid, &ci) == 0,
+                  "abi14: before physics has run this tick, GetContactInfo reports nothing");
+
+            apiCtx.contacts = &contacts;
+            check(api.GetContactInfo(&apiCtx, bid, gid, &ci) == 1,
+                  "abi14: after physics, the resting pair is found");
+            // 静止した質量 m の接触に入る法線インパルスは m·g·dt (M59e の申し送り 1)
+            const float expect = 1.0f * 9.81f * kDt;
+            MYE_LOG_INFO("  [phys] abi14 contact: impulse = %.5f (expect %.5f) n = (%.2f, %.2f, %.2f)",
+                         ci.impulse, expect, ci.normal.x, ci.normal.y, ci.normal.z);
+            check(std::fabs(ci.impulse - expect) < expect * 0.1f,
+                  "abi14: the normal impulse of a resting body is m*g*dt (= the weight on it)");
+            check(ci.normal.y > 0.99f && ci.other.index == gid.index,
+                  "abi14: the normal points from the other body toward me (the floor pushes up)");
+            check(std::fabs(ci.point.y) < 0.05f,
+                  "abi14: the representative point sits on the contact plane");
+            // 相手側から引くと法線だけが反転する (OnCollision 配信と同じ規約)
+            MyeContactInfo cg = {};
+            check(api.GetContactInfo(&apiCtx, gid, bid, &cg) == 1 && cg.normal.y < -0.99f
+                      && cg.impulse == ci.impulse,
+                  "abi14: querying from the other side flips only the normal");
+            check(api.GetContactInfo(&apiCtx, bid, bid, &ci) == 0
+                      && api.GetContactInfo(&apiCtx, bid, MyeEntityId{ 999u, 0u }, &ci) == 0,
+                  "abi14: self-pairs and non-touching pairs report nothing");
+            apiCtx.contacts = nullptr;
+        }
+
+        // ---- (k-3) SampleWind: env の存在ゲートがそのまま戻り値になる ----
+        {
+            Scene s;
+            apiCtx.scene = &s;
+            MyeVec3 wind = { 9, 9, 9 };
+            check(api.SampleWind(&apiCtx, { 1, 2, 3 }, &wind) == 0 && wind.x == 0.0f
+                      && wind.y == 0.0f && wind.z == 0.0f,
+                  "abi14: without a PhysicsEnvironment the wind is zero and the call says so");
+            GameObject env = s.CreateGameObjectTracked("Env");
+            env.AddComponent<PhysicsEnvironmentComponent>()->windVelocity = { 3.0f, 0.0f, -4.0f };
+            s.GetWorld().ApplyStructuralChanges();
+            check(api.SampleWind(&apiCtx, { 1, 2, 3 }, &wind) == 1 && wind.x == 3.0f
+                      && wind.z == -4.0f,
+                  "abi14: with an environment the uniform wind comes back verbatim");
+        }
+
+        // ---- (k-4) SampleTerrainHeight: 当たる地形をそのまま引く ----
+        {
+            TerrainColliderLibrary* prevLib = terraincol::Library();
+            TerrainColliderLibrary lib;
+            terraincol::Install(&lib);
+            TerrainAsset::TerrainData d;
+            d.heightW = d.heightH = 9;
+            d.splatW = d.splatH = 1;
+            d.worldSizeX = d.worldSizeZ = 20.0f;
+            d.heightBase = 0.0f;
+            d.heightScale = 10.0f;
+            d.heights.assign(9 * 9, static_cast<uint16_t>(0.25f * 65535.0f + 0.5f)); // 一定 2.5m
+            d.splat.assign(4, 0);
+            d.splat[0] = 255;
+            const AssetID tid{ 0x7e11a1abcull };
+            lib.Register(tid, std::move(d));
+
+            Scene s;
+            apiCtx.scene = &s;
+            GameObject terr = s.CreateGameObjectTracked("Terrain");
+            auto* col = terr.AddComponent<ColliderComponent>();
+            col->shape = 4;
+            col->meshAsset = tid;
+            s.GetWorld().ApplyStructuralChanges();
+            TransformSystem ts;
+            ts.Update(s.GetWorld()); // WorldMatrix 起点のクエリなので先に確定させる
+
+            float h = -1.0f;
+            MyeVec3 n = {};
+            check(api.SampleTerrainHeight(&apiCtx, 0.7f, -1.3f, &h, &n) == 1
+                      && std::fabs(h - 2.5f) < 1e-3f && n.y > 0.99f,
+                  "abi14: SampleTerrainHeight returns the flat field height and an up normal");
+            check(api.SampleTerrainHeight(&apiCtx, 100.0f, 0.0f, &h, &n) == 0,
+                  "abi14: outside the terrain footprint it reports no hit");
+            check(api.SampleTerrainHeight(&apiCtx, 0.0f, 0.0f, nullptr, nullptr) == 1,
+                  "abi14: null outputs are allowed (hit test only)");
+            // 地形コライダーが 1 つも無いシーンでは黙って 0 (地形は opt-in)
+            Scene empty;
+            apiCtx.scene = &empty;
+            check(api.SampleTerrainHeight(&apiCtx, 0.0f, 0.0f, &h, &n) == 0,
+                  "abi14: a scene without terrain colliders reports no hit");
+            terraincol::Install(prevLib);
+        }
+
+        // ---- (k-5) Wake / IsSleeping: 「起こす」と「動かす」は別の操作 ----
+        {
+            Scene s;
+            apiCtx.scene = &s;
+            GameObject box = MakeBox(s, "Box", 0, 5, 0, 0.5f, 0.5f, 0.5f);
+            s.GetWorld().ApplyStructuralChanges();
+            auto* rb = box.GetComponent<RigidbodyComponent>();
+            const MyeEntityId id = toShared(box.Id());
+            check(api.IsSleeping(&apiCtx, id) == 0, "abi14: a fresh body is awake");
+            rb->isSleeping = true;
+            rb->sleepTicks = 60;
+            check(api.IsSleeping(&apiCtx, id) == 1, "abi14: IsSleeping sees the sleeping flag");
+            check(api.WakeRigidbody(&apiCtx, id) == 1 && !rb->isSleeping && rb->sleepTicks == 0
+                      && rb->velocity.x == 0.0f && rb->velocity.y == 0.0f
+                      && rb->velocity.z == 0.0f,
+                  "abi14: WakeRigidbody clears the flag without touching the velocity");
+            // 力を入れるスロットは起こす — 「書いたのに動かない」を作らないため (M59h)
+            rb->isSleeping = true;
+            rb->sleepTicks = 60;
+            api.AddForceAtPosition(&apiCtx, id, { 1.0f, 0, 0 }, { 0, 5.0f, 0 });
+            check(!rb->isSleeping && rb->sleepTicks == 0,
+                  "abi14: AddForceAtPosition wakes a sleeping body on its own");
+            check(api.WakeRigidbody(&apiCtx, MyeEntityId{}) == 0
+                      && api.IsSleeping(&apiCtx, MyeEntityId{}) == 0,
+                  "abi14: a body-less entity is neither wakeable nor asleep");
+        }
+
+        // ---- (k-6) 読み取り側のスロットはワールドを 1 バイトも変えない ----
+        // 決定論の観点でこれが崩れると「スクリプトが見ただけで sim が動く」ことになる
+        {
+            Scene s;
+            apiCtx.scene = &s;
+            MakeGround(s, "G", 0, -0.5f, 0, 10.0f, 0.5f, 10.0f);
+            GameObject box = MakeBox(s, "Box", 0, 0.5f, 0, 0.5f, 0.5f, 0.5f);
+            s.GetWorld().ApplyStructuralChanges();
+            std::vector<SolidContact> contacts;
+            for (int i = 0; i < 60; ++i) {
+                phys.Update(s.GetWorld(), kDt, &contacts);
+            }
+            TransformSystem ts;
+            ts.Update(s.GetWorld());
+            const uint64_t before = HashWorld(s.GetWorld(), nullptr);
+            apiCtx.contacts = &contacts;
+            MyeContactInfo ci = {};
+            MyeVec3 wind = {};
+            float h = 0.0f;
+            const MyeEntityId id = toShared(box.Id());
+            api.GetContactInfo(&apiCtx, id, id, &ci);
+            api.SampleWind(&apiCtx, { 0, 0, 0 }, &wind);
+            api.SampleTerrainHeight(&apiCtx, 0.0f, 0.0f, &h, nullptr);
+            api.IsSleeping(&apiCtx, id);
+            api.HasComponentByName(&apiCtx, id, "Rigidbody");
+            apiCtx.contacts = nullptr;
+            check(HashWorld(s.GetWorld(), nullptr) == before,
+                  "abi14: the read-only v14 slots leave the world hash untouched");
+        }
+        apiCtx.scene = nullptr;
     }
 
     if (failCount == 0) {

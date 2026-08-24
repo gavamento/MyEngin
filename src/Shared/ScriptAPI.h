@@ -644,3 +644,67 @@ inline float MyeAxisFor(const MyeUpdateContext& ctx, const char* name, uint32_t 
 {
     return ctx.api->GetAxisForPlayer(ctx.api->engine, MyeNameHash(name), player);
 }
+
+// ---- v14 (M59k): 超リアル物理 (M59) の入口 ----
+
+// コンポーネントの付け外し。M59 の機能は「付けたら効く」存在ゲートなので、
+// ランタイムの ON/OFF はここが入口 (Aero を付けて空気抵抗を出す 等)。
+// ★構造変更 = アーキタイプ移動なので**毎 tick の付け外しは非推奨**。常用する ON/OFF は
+//   「付けたまま bool フィールドを MyeSetComponentField で倒す」ほうが桁違いに安い。
+// ★**スクリプトから呼ぶ Add / Remove はどちらも tick 末に適用される** (ADR-005)。
+//   Has が答えるのは常に「この tick の頭の状態」— 付けた直後は false、外した直後は true。
+//   同じ tick 内で結果を見に行かないこと (見えるのは次の tick から)
+inline bool MyeRemoveComponent(const MyeUpdateContext& ctx, MyeEntityId id, const char* name)
+{
+    return ctx.api->RemoveComponentByName(ctx.api->engine, id, name) != 0;
+}
+inline bool MyeHasComponent(const MyeUpdateContext& ctx, MyeEntityId id, const char* name)
+{
+    return ctx.api->HasComponentByName(ctx.api->engine, id, name) != 0;
+}
+
+// 作用点付きの力 (1 tick 分)。端を押せば回る = 並進と回転が同時に入る。
+// MyeAddForce + MyeAddTorque を自分で合成するより安全 (質量と慣性が 1 回だけ解決される)
+inline bool MyeAddForceAtPosition(const MyeUpdateContext& ctx, MyeEntityId id, MyeVec3 force,
+                                  MyeVec3 worldPoint)
+{
+    return ctx.api->AddForceAtPosition(ctx.api->engine, id, force, worldPoint) != 0;
+}
+
+// 今 tick の接触の詳細 (代表点 / 法線 / 法線インパルス合計)。
+// ★**OnCollisionEnter / OnCollisionStay / LateUpdate からしか実データが返らない**。
+//   Update は物理より前のフェーズなので必ず false が返る (決定論の要請 —
+//   詳細は EngineAPI.h の v14 の注記)。
+//   典型的な使い方は OnCollisionEnter で impulse を見て着地音の音量を決める、など
+inline bool MyeGetContactInfo(const MyeUpdateContext& ctx, MyeEntityId self, MyeEntityId other,
+                              MyeContactInfo& out)
+{
+    return ctx.api->GetContactInfo(ctx.api->engine, self, other, &out) != 0;
+}
+
+// その点の風速 (m/s、ワールド)。PhysicsEnvironment を置いていなければ false + 無風。
+// point は M59 では読まれない (一様定常風) が、乱流を足すときに ABI を
+// もう一度上げずに済ませるため引数に取ってある
+inline bool MyeSampleWind(const MyeUpdateContext& ctx, MyeVec3 point, MyeVec3& outWind)
+{
+    return ctx.api->SampleWind(ctx.api->engine, point, &outWind) != 0;
+}
+
+// ワールド XZ の地形表面の高さ (ワールド Y) と面法線。**当たる地形**を引くので
+// 描画の LOD やスカートの影響を受けない。地形コライダーの範囲外は false
+inline bool MyeSampleTerrainHeight(const MyeUpdateContext& ctx, float x, float z, float& outHeight,
+                                   MyeVec3& outNormal)
+{
+    return ctx.api->SampleTerrainHeight(ctx.api->engine, x, z, &outHeight, &outNormal) != 0;
+}
+
+// スリープ (M59h)。力・速度を触るスロットは自動で起こすので、明示的に呼ぶのは
+// 「近くで何かが起きたから念のため起こす」ような外部要因のときだけ
+inline bool MyeWakeRigidbody(const MyeUpdateContext& ctx, MyeEntityId id)
+{
+    return ctx.api->WakeRigidbody(ctx.api->engine, id) != 0;
+}
+inline bool MyeIsSleeping(const MyeUpdateContext& ctx, MyeEntityId id)
+{
+    return ctx.api->IsSleeping(ctx.api->engine, id) != 0;
+}

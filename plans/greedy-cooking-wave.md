@@ -73,9 +73,55 @@
 | M59h スリープ + アイランド | 完了 | `3550e9e` | 下記「M59h の申し送り」参照 |
 | M59i 地形コライダー | 完了 | `4a3e2c9` | 下記「M59i の申し送り」参照 |
 | M59j CCD | 完了 | (本コミット) | 下記「M59j の申し送り」参照 |
-| M59k ABI v14 束ね | 未着手 | | |
+| M59k ABI v14 束ね | 完了 | (本コミット) | 下記「M59k の申し送り」参照 |
 | M59l 仕上げ (golden physics.png) | 未着手 | | |
 | (別件) net_verify DllReloader フレーク修理 | 未着手 | | 物理と無関係の独立コミット |
+
+### M59k の申し送り (計画外の事実・罠)
+
+1. ★**スクリプトから呼ぶ `AddComponentByName` は tick 末送りなので、直後の
+   `HasComponentByName` は 0 を返す。** 計画は Remove 側の遅延しか意識していなかったが、
+   スクリプト層は**アーキタイプのイテレーション中**に走るので Add も同じ経路 (ADR-005 の
+   コマンドバッファ) に乗る。Has が答えるのは常に「この tick の頭の状態」。
+   C# プローブの実走で初めて分かった (C++ の selftest はイテレーション外で叩いていて
+   即時適用に見えていた) ので、PartSelfTest に `ForEachArchetype` の中から叩く試験を足して
+   両方の挙動を固定した。EngineAPI.h / ScriptAPI.h / MyeScript.cs / engine_spec に明記。
+2. ★**`GetContactInfo` は「今 tick の物理が書いた列」しか読ませない設計にした** (計画は
+   「拡張 SolidContact を返す」としか言っていない)。接触列は毎 tick 使い回すバッファで
+   **SimSnapshot 非被覆**なので、フェーズ 3 の Update から前 tick の列が読める状態にすると
+   タイムトラベル復元 / ネットのロールバック後の再シムで割れる。
+   実装は `TickRunner` が tick 頭で `SetTickContacts(nullptr)`、物理 Update の直後に
+   実体を繋ぐ。**tick 番号の比較にしなかったのは意図的** — 「巻き戻し先の tick 番号が
+   たまたま最後に物理を回した tick と一致する」経路 (投機 tick T を回した直後に T へ
+   ロールバック) が理論上あり、ポインタの有無なら構造的に起こり得ない。
+   結果として実データが返るのは **LateUpdate と OnCollision\* だけ**。
+3. **計画の 8 本はそのまま採用。ただし `GetContactInfo` はペア引き 1 本**にした
+   (列挙 API 2 本ではなく)。OnCollisionEnter(other) の形にそのまま噛み合い、
+   既存の key 昇順二分探索をそのまま使える。列挙が要るのは M61 の破壊入力からで、
+   そちらは C++ 側で `SolidContact` を直接舐めればよい。
+4. **`SampleTerrainHeight` は「真下レイ」で実装した** (ローカル XZ の直接引きではない)。
+   ハイトフィールドの逆変換は回転した地形で定義できない (鉛直線が局所で鉛直にならない) が、
+   AABB の天井から真下へ既存のセル DDA を撃つ形なら回転・スケールに正しく、
+   **描画ではなく当たる地形**を返す点も自動的に保証される。天井の 1m 上から撃つのは、
+   ぴったり天井から始めると最高点の頂点をかすめるレイが誤差で外れるため。
+5. **`World::IsBaseComponent` を公開した** (新規 1 関数)。基本 4 コンポーネントの
+   remove は `RemoveComponentImmediate` が WARN を出して黙って無視する仕様だったので、
+   そのまま委譲すると ABI が「1 (外した) を返したのに残っている」と嘘をつく。
+   拒否判定を呼び側から見えるようにして戻り値を正直にした。
+6. **計画外の追補: C# の `AddComponent` 糖衣が無かった。** `Engine.AddComponent` は v2 から
+   internal で存在したのに `MyeScript` へ露出しておらず、**付けられるのに外せない/
+   確かめられない**状態だった。v14 で 3 本そろえて `MyeScript` (self) と `MyeEntity` (他者)
+   の両方へ出した。`GetContactInfo` / `AddForceAtPosition` / `WakeRigidbody` / `IsSleeping`
+   も `MyeEntity` 側に生やしてある。
+7. **実測 (Debug と Release でビット一致)**: 静止した m=1 の箱の法線インパルス
+   = 0.16350 (= m·g·dt)、着地の瞬間 = 7.03049。端 (r=0.5) を押した箱の
+   Δωy = -5.00000 (解析値どおり)。地形 (256x256, heightBase=-4/scale=36) の
+   x=1000,z=0 で h=7.032。
+8. C# 一時プローブは `assets\scripts\AbiProbe.cs` + scratchpad のシーン JSON で回した
+   (`Runtime.exe --scene ... --frames 200 --warp --no-audio`)。**Release の
+   MyeScripting.dll を焼き直し忘れると、プローブだけが古い DLL に対してコンパイルされて
+   CS0103 で落ちる** — replay_verify のログにだけ ERROR が出て本体は PASS するので
+   気づきにくい。ABI を触ったら両構成の build_managed を必ず先に回すこと。
 
 ### M59a1 の申し送り (計画外の事実・罠)
 

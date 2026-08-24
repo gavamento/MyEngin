@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "Engine/Engine/DebugDraw.h"
+#include "Engine/Engine/Physics/PhysicsSystem.h" // v14 (M59k): SolidContact
 #include "Engine/Platform/Input.h"
 #include "Shared/EngineAPI.h"
 
@@ -94,6 +95,15 @@ struct ScriptApiContext {
     // v13 (M52i): ネットセッションの状態 (EngineLoop が毎フレーム書く読み取り専用 POD)。
     // null = ネットを張っていない → Net* スロットは既定値を返す
     const NetRuntimeInfo* net = nullptr;
+    // v14 (M59k): **今 tick の**ソリッド接触列 (key 昇順)。GetContactInfo の引き先。
+    // ★他の共有バッファと違い SetSharedServices で 1 回配線するのではなく、
+    //   TickRunner が tick 頭で null に落とし、物理 Update の直後に繋ぎ直す。
+    //   接触列は毎 tick 使い回すバッファで SimSnapshot に入っていないので、
+    //   「物理より前 (フェーズ 3 の Update) から前 tick の列が読める」状態にすると
+    //   タイムトラベル復元 / ネットのロールバック後の再シムでハッシュが割れる。
+    //   tick 番号の比較ではなく**ポインタの有無**で表すのは、
+    //   「巻き戻し先の tick 番号がたまたま一致する」経路を構造的に消すため
+    const std::vector<SolidContact>* contacts = nullptr;
 };
 
 // out に MyeEngineApi (engine = ctx) を構築する。ctx の生存は呼び出し側が管理する。

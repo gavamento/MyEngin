@@ -258,6 +258,13 @@ void RunOneTick(TickServices& ts)
     // v7 DebugDrawLine (M37): 前 tick の線を捨てて今 tick 分を積み直す。
     // 0 tick フレームでは最後の tick の線が描かれ続ける (意図どおり)
     debugLines.clear();
+    // v14 GetContactInfo (M59k): 接触列は**今 tick の物理が書くまで読ませない**。
+    // ここで外しておくのが決定論の要 — 接触列は毎 tick 使い回すバッファで
+    // SimSnapshot に入っていないので、フェーズ 3 の Update から前 tick の列が
+    // 読める状態にすると、タイムトラベル復元 / ネットのロールバック後の再シムで
+    // 「巻き戻す前の接触」を読んでハッシュが割れる
+    scriptHost.SetTickContacts(nullptr);
+    managedHost.SetTickContacts(nullptr);
     if (ts.app != nullptr) {
         ts.app->OnTick(ctx); // エディタ更新 + simulateScripts の決定
     }
@@ -316,6 +323,10 @@ void RunOneTick(TickServices& ts)
         MYE_PROFILE_SCOPE("physics");
         // ソリッド接触ペアを受け取り CollisionSystem へ渡す (M28c OnCollision 配信)
         physicsSystem.Update(scene.GetWorld(), ctx.fixedDt, &solidContacts);
+        // v14 GetContactInfo (M59k): ここから先 (OnCollision* / LateUpdate) だけが読める。
+        // stepSim が false の tick は繋がないまま = ポーズ中は常に「接触なし」が返る
+        scriptHost.SetTickContacts(&solidContacts);
+        managedHost.SetTickContacts(&solidContacts);
     }
     // ---- フェーズ 4: システム層 ----
     // Transform を先に確定 (エミッタ/コライダのワールド位置は tick 決定論の一部)

@@ -131,6 +131,25 @@ float SubmergedFractionWorld(const ShapePose& pose, float planeY, float& outCent
 // Rigidbody 非所持 / kinematic / freezeRotation は 0 を返す。
 int ApplyTorqueWorld(World& world, EntityID e, MyeVec3 torque, float dt);
 
+// 作用点付きの力を 1 tick 分適用 (M59k、ABI AddForceAtPosition の実装本体)。
+// Δv = F/m·dt と Δω = I⁻¹(r×F)·dt を同時に入れる (r = worldPoint − 質量中心)。
+// **AddForce + AddTorque を呼び側で合成するのとは違い、質量と慣性が 1 回だけ解決される** —
+// 質量が二義にならないのが独立スロットにしてある理由 (M59a2 の申し送り 3 と同じ原則)。
+// freezeRotation のボディは並進のみ入れて 1 を返す (AddForce と同じ扱い。
+// ApplyTorqueWorld が 0 を返すのとは意図的に非対称)。Rigidbody 非所持 / kinematic は 0。
+// 姿勢の出所は LocalTransform (ApplyTorqueWorld と同じ規約 — 親付きのボディでは
+// ソルバの親合成と厳密には一致しない既知の割り切り)
+int ApplyForceAtWorldPoint(World& world, EntityID e, MyeVec3 force, MyeVec3 worldPoint, float dt);
+
+// ワールド XZ の地形表面をサンプルする (M59k、ABI SampleTerrainHeight の実装本体)。
+// **描画の地形ではなく当たる地形を引く** — shape=4 のコライダーを index 昇順に走査し、
+// 各々のワールド AABB の天井から真下へ既存の地形レイキャスト (セル DDA) を撃つ。
+// 回転・スケールした地形でも正しく、LOD やスカートの影響も受けない。
+// ヒットで 1 (outHeight = ワールド Y、outNormal = 面法線。どちらも null 可)。
+// 複数の地形が重なるときは最も高いヒット、同値は entity.index が小さい側 (決定論)
+int SampleTerrainHeightWorld(World& world, float x, float z, float* outHeight,
+                             MyeVec3* outNormal);
+
 // ワールドのコライダーに対するレイキャスト (M20、ABI Raycast の実装本体)。
 // origin/dir はワールド座標。dir は非正規化でよい (内部で正規化する)。
 // 最近ヒットを outHit に書いて 1 を返す。ヒット無しで 0。走査は entity.index 昇順 (決定論)。

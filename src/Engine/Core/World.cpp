@@ -139,6 +139,17 @@ bool World::HasComponent(EntityID e, ComponentTypeId t) const
     return records_[e.index].archetype->HasType(t);
 }
 
+bool World::IsBaseComponent(ComponentTypeId t) const
+{
+    // 4 個しかないので線形で十分 (RemoveComponentImmediate の拒否判定と同じ表を見る)
+    for (ComponentTypeId base : baseTypes_) {
+        if (t == base) {
+            return true;
+        }
+    }
+    return false;
+}
+
 // ---------------------------------------------------------------- hierarchy
 
 void World::SetParent(EntityID child, EntityID parent)
