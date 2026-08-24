@@ -631,6 +631,38 @@ void RegisterBuiltinComponents()
         MYE_JP("失速時抗力",
                MYE_FIELD_RANGE(AeroSurfaceComponent, stalledDrag, Float, 0.0f, 10.0f)),
     });
+
+    // M60a: 関節。**hash 対象** — broken が sim 状態で、拘束が velocity / angularVelocity /
+    // LocalTransform を駆動する。opt-in (TypeId 末尾 append =40)。type は「どの拘束行を
+    // 立てるか」のプリセットで、M60a が実際に立てるのは Ball の 3 本だけ (残りは M60b/c)
+    RegisterComponent<JointComponent>("Joint", {
+        MYE_JP("接続先", MYE_FIELD_TIP(JointComponent, connectedEntity, EntityRef,
+                                       "empty pins this body to a fixed point in the world")),
+        MYE_JP("種類", MYE_FIELD_TIP(JointComponent, type, Int32,
+                                     "0=Ball 1=Hinge 2=Fixed 3=Slider 4=Cone")),
+        MYE_JP("アンカー", MYE_FIELD_TIP(JointComponent, anchor, Float3,
+                                         "attach point in this entity's local space")),
+        MYE_JP("接続先アンカー",
+               MYE_FIELD_TIP(JointComponent, connectedAnchor, Float3,
+                             "attach point in the other entity's local space "
+                             "(world space when no entity is connected)")),
+        MYE_JP("軸", MYE_FIELD_TIP(JointComponent, axis, Float3,
+                                   "local axis: hinge spin / slider glide / cone center")),
+        MYE_JP("リミットを使う", MYE_FIELD(JointComponent, useLimit, Bool)),
+        MYE_JP("リミット下限", MYE_FIELD(JointComponent, limitMin, Float)),
+        MYE_JP("リミット上限", MYE_FIELD(JointComponent, limitMax, Float)),
+        MYE_JP("スイング角 (度)",
+               MYE_FIELD_RANGE(JointComponent, swingLimitDeg, Float, 0.0f, 179.0f)),
+        MYE_JP("モータ目標速度", MYE_FIELD(JointComponent, motorTargetVelocity, Float)),
+        MYE_JP("モータ最大力", MYE_FIELD_TIP(JointComponent, motorMaxForce, Float,
+                                             "0 or below leaves the motor row out entirely")),
+        MYE_JP("破断力", MYE_FIELD_TIP(JointComponent, breakForce, Float,
+                                       "0 or below never breaks")),
+        MYE_JP("破断トルク", MYE_FIELD_TIP(JointComponent, breakTorque, Float,
+                                           "0 or below never breaks")),
+        MYE_JP("破断済み", MYE_FIELD_TIP(JointComponent, broken, Bool,
+                                         "sim state: a broken joint stops constraining")),
+    });
 }
 
 } // namespace mye

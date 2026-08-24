@@ -907,6 +907,50 @@ struct AeroSurfaceComponent {
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
+// ---- 関節 (M60a) ----
+// 2 つの剛体 (または剛体とワールドの不動点) を拘束する。**無ければ物理は何も足さない**
+// (opt-in → 既存シーンのハッシュ/リプレイ不変)。
+//
+// ★内部表現は「1 自由度の拘束行 (Jacobian 1 行 + 蓄積λ) の集合」で、**`type` は
+//   どの行を立てるかのプリセットにすぎない** (M60 決定台帳 1)。型ごとに別コンポーネントを
+//   切らないのは、差が Inspector 上の見た目にしかならないから。将来の完全 D6 (軸ごとに
+//   free/limited/locked) も同じ箱に入る。
+// ★**関節は「子側」= 動かしたいほうのエンティティに付ける**。ECS のアーキタイプ SoA に
+//   従い 1 エンティティ 1 関節 (決定台帳 2)。複数要るなら中間エンティティを挟む —
+//   ラグドールの骨も車輪も自然に片側 1 個なので、実用上これで足りる。
+// ★フィールドは M60a の時点で c/d の分まで**先に**切ってある。後から足すとシーンの
+//   バイト列が動くため (M59a1 で確立した「スキーマを先に切る」流儀)。
+// broken は sim 状態 = **hash 対象** (ソルバが書き、snapshot と JSON が運ぶ)。
+struct JointComponent {
+    EntityID connectedEntity = kNullEntity; // null = ワールドの不動アンカーへ繋ぐ
+    // 0=Ball 1=Hinge 2=Fixed 3=Slider 4=Cone。**M60a が行を立てるのは Ball だけ**
+    int32_t type = 0;
+    // アンカー点。owner 側は**このエンティティのローカル**、相手側は**相手のローカル**。
+    // ★相手が null のときだけ connectedAnchor は**ワールド座標**として読む
+    //   (自動算出はしない — エディタ時ロジックが sim の契約の外に増えるため)
+    DirectX::XMFLOAT3 anchor = { 0.0f, 0.0f, 0.0f };
+    DirectX::XMFLOAT3 connectedAnchor = { 0.0f, 0.0f, 0.0f };
+    // 軸 (owner ローカル)。Hinge = 回転軸 / Slider = 滑る方向 / Cone = 円錐の中心軸。
+    // Ball / Fixed は使わない。非単位でもよい (内部で正規化)
+    DirectX::XMFLOAT3 axis = { 0.0f, 1.0f, 0.0f };
+    // ---- リミット (M60c で行が立つ) ----
+    bool useLimit = false;
+    float limitMin = -45.0f;     // Hinge: 角度[度] / Slider: 変位[m] / Cone: twist 角[度]
+    float limitMax = 45.0f;      // 同 上限
+    float swingLimitDeg = 45.0f; // Cone のみ: 軸まわりの円錐半頂角[度]
+    // ---- モータ (M60c)。**maxForce <= 0 なら行を立てない** (値ゲートではなく分岐ゲート) ----
+    float motorTargetVelocity = 0.0f; // Hinge: rad/s / Slider: m/s
+    float motorMaxForce = 0.0f;
+    // ---- 破断 (M60d)。<= 0 = 無限 (壊れない) ----
+    float breakForce = 0.0f;
+    float breakTorque = 0.0f;
+    // true のあいだ行を一切立てない (= 自由になる)。**コンポーネントを外すのではなく
+    // フラグで落とす** — 構造変更をソルバ内から起こさないのが家風 (決定台帳 5)。
+    // 復帰は Inspector / スクリプトが false へ戻すだけ
+    bool broken = false;
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
 class World;
 
 // エンティティが有効か (ActiveComponent が無ければ有効 / enabled==0 なら無効)

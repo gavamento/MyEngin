@@ -4297,6 +4297,296 @@ bool RunPhysicsSelfTest()
         apiCtx.scene = nullptr;
     }
 
+    // ================= M60a: 拘束ソルバ基盤 + ボールジョイント =================
+    // 内部表現は「1 自由度の拘束行 (Jacobian 1 行 + 蓄積λ)」で、type はどの行を立てるかの
+    // プリセット。**M60a が立てるのは Ball の線形 3 行だけ**。
+    // ★速度行に位置誤差 (Baumgarte) を入れず、ドリフトの始末は位置補正パスに寄せてある
+    //   (M59g1-2 の教訓)。ボールジョイントではこの分離が**厳密**に成立する —
+    //   アンカーのワールド位置は「形状原点 + 姿勢で回した局所オフセット」なので、
+    //   形状原点を誤差ぶん動かせば誤差はちょうど 0 になる。
+    {
+        // クォータニオンでローカル点を回す (ソルバの QuatRotate と同式)
+        auto qrot = [](const DirectX::XMFLOAT4& q, const DirectX::XMFLOAT3& v) {
+            const float tx = 2.0f * (q.y * v.z - q.z * v.y);
+            const float ty = 2.0f * (q.z * v.x - q.x * v.z);
+            const float tz = 2.0f * (q.x * v.y - q.y * v.x);
+            return DirectX::XMFLOAT3{ v.x + q.w * tx + (q.y * tz - q.z * ty),
+                                      v.y + q.w * ty + (q.z * tx - q.x * tz),
+                                      v.z + q.w * tz + (q.x * ty - q.y * tx) };
+        };
+        // owner の LocalTransform とアンカーからワールドのアンカー点を出す (ルート前提)
+        auto anchorWorld = [&qrot](GameObject& go, const DirectX::XMFLOAT3& local) {
+            const auto* lt = go.GetComponent<LocalTransform>();
+            const DirectX::XMFLOAT3 r = qrot(lt->rotation, local);
+            return DirectX::XMFLOAT3{ lt->position.x + r.x, lt->position.y + r.y,
+                                      lt->position.z + r.z };
+        };
+
+        // -- (a-1/a-2) 単振り子: 周期が 2*pi*sqrt(L/g) の窓に入り、アンカーがドリフトしない --
+        // ★支点は**ボブのローカル座標で**指す (anchor)。相手が null のときだけ
+        //   connectedAnchor がワールド座標として読まれる、というのが唯一の非対称
+        {
+            Scene s;
+            const float L = 2.0f;
+            const float ang = 0.17453293f; // 10 度 (小振幅 = 単振り子の式が使える範囲)
+            const float px = L * std::sin(ang);
+            const float py = -L * std::cos(ang);
+            GameObject bob = MakeSphereBody(s, "Bob", px, py, 0.0f, 0.1f);
+            auto* j = bob.AddComponent<JointComponent>();
+            j->type = 0;
+            j->anchor = { -px, -py, 0.0f }; // 支点 (ワールド原点) をボブのローカルで指す
+            j->connectedAnchor = { 0.0f, 0.0f, 0.0f };
+            s.GetWorld().ApplyStructuralChanges();
+            // ★ポインタは最後の構造変更のあとに取る (M59h で踏んだ罠)
+            auto* rb = bob.GetComponent<RigidbodyComponent>();
+            rb->angularDamping = 0.0f; // 既定 0.05 は「毎 tick 5%」= 振り子を目に見えて殺す
+            rb->linearDamping = 0.0f;
+            const auto* lt = bob.GetComponent<LocalTransform>();
+            int cross[3] = { -1, -1, -1 };
+            int ncross = 0;
+            float prev = lt->position.x;
+            float maxErr = 0.0f;
+            for (int i = 0; i < 900; ++i) {
+                phys.Update(s.GetWorld(), kDt);
+                const float now = lt->position.x;
+                if (ncross < 3 && ((prev > 0.0f) != (now > 0.0f))) {
+                    cross[ncross++] = i;
+                }
+                prev = now;
+                const DirectX::XMFLOAT3 a = anchorWorld(bob, j->anchor);
+                const float e = std::sqrt(a.x * a.x + a.y * a.y + a.z * a.z);
+                if (e > maxErr) {
+                    maxErr = e;
+                }
+            }
+            const float periodTicks =
+                (ncross == 3) ? static_cast<float>(cross[2] - cross[0]) : 0.0f;
+            const float expect = 2.0f * 3.14159265f * std::sqrt(L / 9.81f) * 60.0f;
+            MYE_LOG_INFO("  [phys] joint pendulum: period %.1f ticks (analytic %.1f) "
+                         "anchor drift max %.6f m",
+                         periodTicks, expect, maxErr);
+            check(periodTicks > expect * 0.95f && periodTicks < expect * 1.05f,
+                  "joint: a ball-joint pendulum swings at the analytic period");
+            // ★ドリフト 0 が「位置補正が効いている」唯一の機械的証明
+            check(maxErr < 0.001f, "joint: and its anchor never drifts past 1mm in 900 ticks");
+        }
+
+        // -- (a-3) 2 体を繋いだ系の運動量保存 --
+        // 行は A に +j / B に -j を入れるので線形運動量は**厳密に**保存する。
+        // 位置補正も質量比で分けるので質量中心が動かない
+        {
+            Scene s;
+            GameObject a = MakeSphereBody(s, "A", -0.5f, 0.0f, 0.0f, 0.2f);
+            GameObject b = MakeSphereBody(s, "B", 0.5f, 0.0f, 0.0f, 0.2f);
+            auto* j = a.AddComponent<JointComponent>();
+            j->type = 0;
+            j->connectedEntity = b.Id();
+            j->anchor = { 0.5f, 0.0f, 0.0f };           // A の右端
+            j->connectedAnchor = { -0.5f, 0.0f, 0.0f }; // B の左端 (同じ点で一致)
+            s.GetWorld().ApplyStructuralChanges();
+            auto* ra = a.GetComponent<RigidbodyComponent>();
+            auto* rb = b.GetComponent<RigidbodyComponent>();
+            ra->gravityScale = 0.0f;
+            rb->gravityScale = 0.0f;
+            ra->angularDamping = 0.0f;
+            rb->angularDamping = 0.0f;
+            ra->mass = 1.0f;
+            rb->mass = 3.0f;
+            ra->velocity = { 2.0f, 1.0f, -0.5f };
+            const float p0x = 2.0f, p0y = 1.0f, p0z = -0.5f;
+            for (int i = 0; i < 300; ++i) {
+                phys.Update(s.GetWorld(), kDt);
+            }
+            const float p1x = ra->velocity.x + 3.0f * rb->velocity.x;
+            const float p1y = ra->velocity.y + 3.0f * rb->velocity.y;
+            const float p1z = ra->velocity.z + 3.0f * rb->velocity.z;
+            MYE_LOG_INFO("  [phys] joint momentum: (%.5f %.5f %.5f) -> (%.5f %.5f %.5f)", p0x, p0y,
+                         p0z, p1x, p1y, p1z);
+            check(std::fabs(p1x - p0x) < 1e-3f && std::fabs(p1y - p0y) < 1e-3f
+                      && std::fabs(p1z - p0z) < 1e-3f,
+                  "joint: a two-body ball joint conserves linear momentum");
+            // アンカーの一致も保たれている
+            const DirectX::XMFLOAT3 pa = anchorWorld(a, j->anchor);
+            const DirectX::XMFLOAT3 pb = anchorWorld(b, j->connectedAnchor);
+            const float d = std::sqrt((pa.x - pb.x) * (pa.x - pb.x) + (pa.y - pb.y) * (pa.y - pb.y)
+                                      + (pa.z - pb.z) * (pa.z - pb.z));
+            MYE_LOG_INFO("  [phys] joint two-body anchor gap = %.6f m",
+                         static_cast<double>(d));
+            check(d < 0.001f, "joint: and keeps the two anchors within 1mm");
+        }
+
+        // -- (a-4) 10 連鎖のロープが伸びない --
+        // 連鎖は位置補正の伝播 (1 パス = 1 節) が律速なので、ここが基盤の実力測定になる
+        {
+            Scene s;
+            GameObject envGo = s.CreateGameObjectTracked("Env");
+            envGo.AddComponent<PhysicsEnvironmentComponent>(); // substeps 既定 4
+            const float d = 0.5f;
+            std::vector<GameObject> links;
+            for (int i = 0; i < 10; ++i) {
+                char name[16];
+                std::snprintf(name, sizeof(name), "L%d", i);
+                links.push_back(MakeSphereBody(s, name, 0.0f,
+                                               -d * 0.5f - d * static_cast<float>(i), 0.0f, 0.05f));
+            }
+            for (int i = 0; i < 10; ++i) {
+                auto* j = links[static_cast<size_t>(i)].AddComponent<JointComponent>();
+                j->type = 0;
+                j->anchor = { 0.0f, d * 0.5f, 0.0f }; // 自分の上端
+                if (i == 0) {
+                    j->connectedAnchor = { 0.0f, 0.0f, 0.0f }; // ワールド原点に吊る
+                } else {
+                    j->connectedEntity = links[static_cast<size_t>(i - 1)].Id();
+                    j->connectedAnchor = { 0.0f, -d * 0.5f, 0.0f }; // 一つ上の下端
+                }
+            }
+            s.GetWorld().ApplyStructuralChanges();
+            for (int i = 0; i < 600; ++i) {
+                phys.Update(s.GetWorld(), kDt);
+            }
+            const auto* tail = links[9].GetComponent<LocalTransform>();
+            const float nominal = -d * 10.0f + d * 0.5f; // 最後の節の中心の理論値 = -4.75
+            const float stretch = nominal - tail->position.y; // 正 = 伸びた
+            MYE_LOG_INFO("  [phys] joint rope(10): tail y = %.5f (nominal %.5f, stretch %.5f m)",
+                         static_cast<double>(tail->position.y), static_cast<double>(nominal),
+                         static_cast<double>(stretch));
+            check(std::fabs(stretch) < 0.01f, "joint: a 10-link rope hangs without stretching");
+        }
+
+        // -- (a-5) 島と起床の配線: 繋がった 2 体は揃って眠り、片方を起こせば揃って起きる --
+        // ★M59h の島は接触候補ペアからしか作られず、起床も接触の走査でしか伝播しない。
+        //   関節ペアを両方へ明示的に足していないと、ここが割れる
+        {
+            Scene s;
+            GameObject envGo = s.CreateGameObjectTracked("Env");
+            envGo.AddComponent<PhysicsEnvironmentComponent>()->sleepDelayTicks = 60;
+            MakeGround(s, "G", 0, -0.5f, 0, 8.0f, 0.5f, 8.0f);
+            // 地面に載る土台 (重い) と、その角から吊るした振り子 (減衰させて静止させる)
+            GameObject base = MakeBox(s, "Base", 0.0f, 0.5f, 0.0f, 0.5f, 0.5f, 0.5f);
+            GameObject bob = MakeSphereBody(s, "Bob", 0.886f, 0.540f, 0.0f, 0.15f);
+            auto* j = bob.AddComponent<JointComponent>();
+            j->type = 0;
+            j->connectedEntity = base.Id();
+            j->anchor = { -0.386f, 0.460f, 0.0f };     // ボブから見た支点
+            j->connectedAnchor = { 0.5f, 0.5f, 0.0f }; // 土台の右上の角
+            s.GetWorld().ApplyStructuralChanges();
+            auto* baseRb = base.GetComponent<RigidbodyComponent>();
+            auto* bobRb = bob.GetComponent<RigidbodyComponent>();
+            baseRb->mass = 40.0f; // 振り子に引きずられない土台
+            bobRb->linearDamping = 0.02f;
+            bobRb->angularDamping = 0.2f;
+            int sleepBase = -1, sleepBob = -1;
+            for (int i = 0; i < 1200; ++i) {
+                phys.Update(s.GetWorld(), kDt);
+                if (sleepBase < 0 && baseRb->isSleeping) {
+                    sleepBase = i;
+                }
+                if (sleepBob < 0 && bobRb->isSleeping) {
+                    sleepBob = i;
+                }
+            }
+            MYE_LOG_INFO("  [phys] joint island: base slept at %d, pendulum at %d", sleepBase,
+                         sleepBob);
+            check(sleepBase >= 0 && sleepBob >= 0, "joint: a jointed pair eventually falls asleep");
+            check(sleepBase == sleepBob, "joint: and the island goes down on the same tick");
+            // 片方を叩き起こす → 触れていないのに相手も起きる (関節経由の伝播)
+            baseRb->isSleeping = false;
+            baseRb->velocity = { 0.0f, 0.0f, 1.5f };
+            phys.Update(s.GetWorld(), kDt);
+            check(!bobRb->isSleeping, "joint: waking one end wakes the other through the joint");
+        }
+
+        // -- (a-6) broken = true の関節は行を立てない (M60d が立てるフラグ、読みは a から) --
+        {
+            Scene s;
+            GameObject bob = MakeSphereBody(s, "Bob", 0.0f, -2.0f, 0.0f, 0.1f);
+            auto* j = bob.AddComponent<JointComponent>();
+            j->type = 0;
+            j->anchor = { 0.0f, 2.0f, 0.0f };
+            j->broken = true;
+            s.GetWorld().ApplyStructuralChanges();
+            const auto* lt = bob.GetComponent<LocalTransform>();
+            for (int i = 0; i < 60; ++i) {
+                phys.Update(s.GetWorld(), kDt);
+            }
+            check(lt->position.y < -6.0f, "joint: a broken joint constrains nothing (free fall)");
+        }
+
+        // -- (a-7) 可視化トグルは sim を 1 ビットも動かさない (M59e と同じ主張) --
+        {
+            auto build = [](Scene& s) {
+                GameObject bob = MakeSphereBody(s, "Bob", 1.0f, -1.7f, 0.0f, 0.1f);
+                auto* j = bob.AddComponent<JointComponent>();
+                j->type = 0;
+                j->anchor = { -1.0f, 1.7f, 0.0f };
+                s.GetWorld().ApplyStructuralChanges();
+            };
+            Scene sa, sb;
+            build(sa);
+            build(sb);
+            std::vector<DebugLineCmd> lines;
+            std::vector<SolidContact> noContacts;
+            PhysicsDebugFlags on;
+            on.joints = true;
+            bool same = true;
+            TransformSystem ts;
+            for (int i = 0; i < 120 && same; ++i) {
+                phys.Update(sa.GetWorld(), kDt);
+                phys.Update(sb.GetWorld(), kDt);
+                ts.Update(sa.GetWorld());
+                lines.clear();
+                BuildPhysicsDebugLines(sa.GetWorld(), noContacts, on, lines);
+                if (HashWorld(sa.GetWorld(), nullptr) != HashWorld(sb.GetWorld(), nullptr)) {
+                    same = false;
+                }
+            }
+            check(same, "joint: the joint debug overlay leaves the world hash untouched");
+            check(!lines.empty(), "joint: (setup) the overlay actually emitted lines");
+        }
+
+        // -- (a-8) 決定論: 関節混在シーンの並走ハッシュ一致 --
+        {
+            auto build = [](Scene& s) {
+                GameObject envGo = s.CreateGameObjectTracked("Env");
+                envGo.AddComponent<PhysicsEnvironmentComponent>();
+                MakeGround(s, "G", 0, -0.5f, 0, 10.0f, 0.5f, 10.0f);
+                GameObject bob = MakeSphereBody(s, "Bob", 1.2f, 2.0f, 0.0f, 0.2f);
+                auto* jb = bob.AddComponent<JointComponent>();
+                jb->type = 0;
+                jb->anchor = { -1.2f, 1.0f, 0.0f }; // ワールド (0,3,0) に吊る
+                jb->connectedAnchor = { 0.0f, 3.0f, 0.0f };
+                GameObject a = MakeBox(s, "A", -2.0f, 1.5f, 0.0f, 0.3f, 0.3f, 0.3f);
+                GameObject b = MakeBox(s, "B", -2.0f, 0.9f, 0.0f, 0.3f, 0.3f, 0.3f);
+                auto* j2 = b.AddComponent<JointComponent>();
+                j2->type = 0;
+                j2->connectedEntity = a.Id();
+                j2->anchor = { 0.0f, 0.3f, 0.0f };
+                j2->connectedAnchor = { 0.0f, -0.3f, 0.0f };
+                MakeBox(s, "Free", 3.0f, 2.0f, 0.0f, 0.4f, 0.4f, 0.4f); // 関節なしも混ぜる
+                s.GetWorld().ApplyStructuralChanges();
+            };
+            Scene sa, sb;
+            build(sa);
+            build(sb);
+            bool det = true;
+            uint64_t finalHash = 0;
+            for (int i = 0; i < 300 && det; ++i) {
+                phys.Update(sa.GetWorld(), kDt);
+                phys.Update(sb.GetWorld(), kDt);
+                const uint64_t ha = HashWorld(sa.GetWorld(), nullptr);
+                const uint64_t hb = HashWorld(sb.GetWorld(), nullptr);
+                if (ha != hb) {
+                    det = false;
+                    MYE_LOG_ERROR("  joint determinism diverged at tick %d", i);
+                }
+                finalHash = ha;
+            }
+            check(det, "joint: a jointed scene hashes identically across two runs for 300 ticks");
+            MYE_LOG_INFO("  [phys] joint scene hash @300 = %016llX",
+                         static_cast<unsigned long long>(finalHash));
+        }
+    }
+
     if (failCount == 0) {
         MYE_LOG_INFO("==== Physics self test: ALL PASS ====");
         return true;

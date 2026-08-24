@@ -65,6 +65,10 @@ constexpr float kCcdTouchEps = 1e-4f;
 // TOI で止めるときに残す隙間 [m]。0 にすると次サブステップの掃引が距離 0 から始まり、
 // 「既に触れている」判定に落ちて掃引が無効化される
 constexpr float kCcdSkin = 0.001f;
+// ---- 関節 (M60a) ----
+// 等式行のクランプ幅 = 実質無限大。∞ を持ち回らないのは、inf 同士の引き算で NaN が
+// 生まれる経路をソルバの中に一切作らないため (これを超える λ は物理的に到達しない)
+constexpr float kJointRowUnbounded = 1e30f;
 
 // ---- scalar クォータニオン演算 (親子合成用。XMVECTOR 禁止 = 決定論契約) ----
 
@@ -276,6 +280,31 @@ bool Solve3x3(const float a[3][3], const float b[3], float out[3])
     return true;
 }
 
+// 3x3 の逆行列 (M60a)。Solve3x3 と同じ余因子を使うが、拘束ブロックは**同じ K で
+// 何度も解く**ので逆を 1 回だけ作って持つほうが安い。行列式がほぼ 0 (= 誰も動かせない
+// 拘束) なら false を返して呼び側が「ブロックごと捨てる」を選べるようにする
+bool Invert3x3(const float a[3][3], float out[3][3])
+{
+    const float c00 = a[1][1] * a[2][2] - a[1][2] * a[2][1];
+    const float c01 = a[1][2] * a[2][0] - a[1][0] * a[2][2];
+    const float c02 = a[1][0] * a[2][1] - a[1][1] * a[2][0];
+    const float det = a[0][0] * c00 + a[0][1] * c01 + a[0][2] * c02;
+    if (det > -1e-12f && det < 1e-12f) {
+        return false;
+    }
+    const float inv = 1.0f / det;
+    out[0][0] = c00 * inv;
+    out[1][0] = c01 * inv;
+    out[2][0] = c02 * inv;
+    out[0][1] = (a[0][2] * a[2][1] - a[0][1] * a[2][2]) * inv;
+    out[1][1] = (a[0][0] * a[2][2] - a[0][2] * a[2][0]) * inv;
+    out[2][1] = (a[0][1] * a[2][0] - a[0][0] * a[2][1]) * inv;
+    out[0][2] = (a[0][1] * a[1][2] - a[0][2] * a[1][1]) * inv;
+    out[1][2] = (a[0][2] * a[1][0] - a[0][0] * a[1][2]) * inv;
+    out[2][2] = (a[0][0] * a[1][1] - a[0][1] * a[1][0]) * inv;
+    return true;
+}
+
 void MulInvI(const float m[3][3], float x, float y, float z, float& ox, float& oy, float& oz)
 {
     ox = m[0][0] * x + m[0][1] * y + m[0][2] * z;
@@ -316,6 +345,151 @@ void ApplyImpulse(Body& b, float rx, float ry, float rz, float jx, float jy, flo
     b.wx += ix;
     b.wy += iy;
     b.wz += iz;
+}
+
+// ---- 拘束ブロック (M60a) ----
+// 関節を表す**1〜3 自由度の速度拘束**。線形ブロック (共通のアンカー点まわり、方向 d[i]) と
+// 角ブロック (軸 d[i]) があり、`angular` で分岐する。
+//
+// ★接触制約 (ContactConstraint) とは**別物**。共通化しないのは、接触が「マニフォールド
+//   4 点 + 中央法線 + 摩擦 + 転がり」という固有の 3 段構成で、M59g1 が測った安定性が
+//   その形に依っているため。
+// ★**自由度ごとの行を独立に (Gauss-Seidel で) 解いてはいけない**。アンカーが質量中心から
+//   離れていると有効質量行列 K が極端に悪条件になる — 半径 0.1 の球を 2m 離れた点で吊ると
+//   K の 2x2 小行列の GS 縮小率が 0.967 で、**8 反復しても誤差の 76% が残る**
+//   (実測: アンカーが 1 ステップで 37mm ずれた)。ブロックごと K⁻¹ を掛ければ 1 反復で厳密。
+//   接触が「1/count 緩和を外したら収束した」(M59g1-1) のと同じ話の、もう一段深いところ。
+// ★K⁻¹ は生成時に 1 回だけ作る (M59g1 の「有効質量は生成時に 1 回」と同じ)。
+//   count < 3 の余りは単位行列で埋めるので、解く側は常に 3x3 の積で書ける。
+// ★clamp (lo/hi) が意味を持つのは **count==1 のときだけ** — 不等式 (リミット) と駆動
+//   (モータ) はどちらも 1 自由度なので M60c もこの形に収まる。等式ブロックは
+//   ±kJointRowUnbounded のままで、クランプが結果に触れない。
+// ★`bias` に**位置誤差を入れない** — 位置補正は速度ソルバから分離した別パスの担当
+//   (M59g1-2 の教訓)。bias が入るのはモータの目標速度 (M60c) だけ。
+struct ConstraintBlock {
+    int32_t ai = -1; // bodies index (-1 = 不動アンカー = ワールド)
+    int32_t bi = -1;
+    int32_t count = 0;    // 自由度 1..3
+    bool angular = false; // true = 角ブロック (ra/rb を使わない)
+    float d[3][3] = {};   // 各自由度の方向 / 軸 (単位、互いに直交)
+    float ra[3] = {};     // A の質量中心 → アンカー (線形ブロックのみ)
+    float rb[3] = {};
+    float kinv[3][3] = {}; // 有効質量行列の逆 (余りは単位で埋める)
+    float bias[3] = {};
+    float lo[3] = { -kJointRowUnbounded, -kJointRowUnbounded, -kJointRowUnbounded };
+    float hi[3] = { kJointRowUnbounded, kJointRowUnbounded, kJointRowUnbounded };
+    float lambda[3] = {}; // 蓄積 (サブステップ内で閉じる)
+};
+
+// 有効質量行列を組んで逆を持たせる。false = 誰も動かせない拘束 (静的同士 / 睡眠中) で、
+// 呼び側はブロックごと捨てる
+bool FinalizeConstraintBlock(ConstraintBlock& blk, const Body& A, const Body& B)
+{
+    float K[3][3] = {};
+    if (blk.angular) {
+        // K_ij = d_i · ((Ia⁻¹ + Ib⁻¹) d_j)
+        for (int j = 0; j < blk.count; ++j) {
+            float ax, ay, az, bx, by, bz;
+            MulInvI(A.invI, blk.d[j][0], blk.d[j][1], blk.d[j][2], ax, ay, az);
+            MulInvI(B.invI, blk.d[j][0], blk.d[j][1], blk.d[j][2], bx, by, bz);
+            const float sx = ax + bx, sy = ay + by, sz = az + bz;
+            for (int i = 0; i < blk.count; ++i) {
+                K[i][j] = blk.d[i][0] * sx + blk.d[i][1] * sy + blk.d[i][2] * sz;
+            }
+        }
+    } else {
+        // K_ij = (1/ma + 1/mb)(d_i·d_j) + d_i · [(Ia⁻¹(ra×d_j))×ra + (Ib⁻¹(rb×d_j))×rb]
+        // (i==j なら EffectiveMassInv と同じ式。非対角がここで初めて出てくる)
+        const float invm = A.invMass + B.invMass;
+        for (int j = 0; j < blk.count; ++j) {
+            float cx, cy, cz, ix, iy, iz;
+            float oax, oay, oaz, obx, oby, obz;
+            Cross(blk.ra[0], blk.ra[1], blk.ra[2], blk.d[j][0], blk.d[j][1], blk.d[j][2], cx, cy,
+                  cz);
+            MulInvI(A.invI, cx, cy, cz, ix, iy, iz);
+            Cross(ix, iy, iz, blk.ra[0], blk.ra[1], blk.ra[2], oax, oay, oaz);
+            Cross(blk.rb[0], blk.rb[1], blk.rb[2], blk.d[j][0], blk.d[j][1], blk.d[j][2], cx, cy,
+                  cz);
+            MulInvI(B.invI, cx, cy, cz, ix, iy, iz);
+            Cross(ix, iy, iz, blk.rb[0], blk.rb[1], blk.rb[2], obx, oby, obz);
+            const float sx = oax + obx, sy = oay + oby, sz = oaz + obz;
+            for (int i = 0; i < blk.count; ++i) {
+                const float dot = blk.d[i][0] * blk.d[j][0] + blk.d[i][1] * blk.d[j][1]
+                                + blk.d[i][2] * blk.d[j][2];
+                K[i][j] = invm * dot + blk.d[i][0] * sx + blk.d[i][1] * sy + blk.d[i][2] * sz;
+            }
+        }
+    }
+    for (int i = blk.count; i < 3; ++i) {
+        K[i][i] = 1.0f; // 余りは単位 (K も K⁻¹ もブロック対角になり、余りの自由度が混ざらない)
+    }
+    return Invert3x3(K, blk.kinv);
+}
+
+// 拘束ブロックを 1 つ解く。接触の各段と同じ「Δλ を計算 → 累積してクランプ → 差分を適用」。
+// A / B は呼び側が解決済み (不動アンカーは invMass 0 / invI 零行列の番人ボディ)
+void SolveConstraintBlock(ConstraintBlock& blk, Body& A, Body& B)
+{
+    float cdot[3] = { 0.0f, 0.0f, 0.0f };
+    if (blk.angular) {
+        const float rwx = A.wx - B.wx, rwy = A.wy - B.wy, rwz = A.wz - B.wz;
+        for (int i = 0; i < blk.count; ++i) {
+            cdot[i] = rwx * blk.d[i][0] + rwy * blk.d[i][1] + rwz * blk.d[i][2];
+        }
+    } else {
+        float wax, way, waz, wbx, wby, wbz;
+        Cross(A.wx, A.wy, A.wz, blk.ra[0], blk.ra[1], blk.ra[2], wax, way, waz);
+        Cross(B.wx, B.wy, B.wz, blk.rb[0], blk.rb[1], blk.rb[2], wbx, wby, wbz);
+        const float rvx = (A.vx + wax) - (B.vx + wbx);
+        const float rvy = (A.vy + way) - (B.vy + wby);
+        const float rvz = (A.vz + waz) - (B.vz + wbz);
+        for (int i = 0; i < blk.count; ++i) {
+            cdot[i] = rvx * blk.d[i][0] + rvy * blk.d[i][1] + rvz * blk.d[i][2];
+        }
+    }
+    float rhs[3] = { 0.0f, 0.0f, 0.0f };
+    for (int i = 0; i < blk.count; ++i) {
+        rhs[i] = -(cdot[i] - blk.bias[i]);
+    }
+    // 余りは rhs 0 かつ K⁻¹ がブロック対角なので、そのまま 3x3 の積で書ける
+    float jx = 0.0f, jy = 0.0f, jz = 0.0f;
+    bool any = false;
+    for (int i = 0; i < blk.count; ++i) {
+        const float dl = blk.kinv[i][0] * rhs[0] + blk.kinv[i][1] * rhs[1] + blk.kinv[i][2] * rhs[2];
+        const float old = blk.lambda[i];
+        float now = old + dl;
+        if (now < blk.lo[i]) {
+            now = blk.lo[i];
+        } else if (now > blk.hi[i]) {
+            now = blk.hi[i];
+        }
+        const float step = now - old;
+        blk.lambda[i] = now;
+        if (step != 0.0f) {
+            any = true;
+            jx += blk.d[i][0] * step;
+            jy += blk.d[i][1] * step;
+            jz += blk.d[i][2] * step;
+        }
+    }
+    if (!any) {
+        return;
+    }
+    if (blk.angular) {
+        // 純粋な角インパルス (並進には効かない)。転がり抵抗 (M59f2) と同じ形
+        float ix, iy, iz;
+        MulInvI(A.invI, jx, jy, jz, ix, iy, iz);
+        A.wx += ix;
+        A.wy += iy;
+        A.wz += iz;
+        MulInvI(B.invI, jx, jy, jz, ix, iy, iz);
+        B.wx -= ix;
+        B.wy -= iy;
+        B.wz -= iz;
+    } else {
+        ApplyImpulse(A, blk.ra[0], blk.ra[1], blk.ra[2], jx, jy, jz, 1.0f);
+        ApplyImpulse(B, blk.rb[0], blk.rb[1], blk.rb[2], jx, jy, jz, -1.0f);
+    }
 }
 
 // サブステップ 1 回ぶんの接触列 (key 昇順) を tick 全体の列へ合流させる (M59g2)。
@@ -755,6 +929,140 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             break;
         }
     }
+
+    // ---- 関節の収集 (M60a) ----
+    // **1 tick に 1 回だけ**。「誰と誰を繋ぐか」はサブステップで変わらないし、島と起床の
+    // 配線にも同じ表を使い回す。行そのものは姿勢が動くのでサブステップごとに作り直す。
+    // 1 個も無ければ以降の関節帯は全て空ループ = 既存シーンは fp 演算が 1 回も増えない
+    struct JointLink {
+        EntityID owner;
+        const JointComponent* jc = nullptr;
+        int32_t ai = -1; // owner の bodies index (-1 = 不動アンカー)
+        int32_t bi = -1; // 相手の bodies index (-1 = 不動アンカー)
+        // bodies に居ない側の固定ワールドアンカー (相手 null / 変換だけのエンティティ)
+        float wax = 0, way = 0, waz = 0;
+        float wbx = 0, wby = 0, wbz = 0;
+    };
+    std::vector<JointLink> jointLinks;
+    // 不動アンカー用の番人ボディ。invMass 0 / invI 零行列なので、行の適用も有効質量も
+    // 「何も起きない」へ自然に落ちる (-1 の分岐をソルバの各段に撒かないための作り)
+    Body worldAnchorBody;
+    {
+        const ComponentTypeId jReq[] = { JointComponent::sTypeId, LocalTransform::sTypeId };
+        world.ForEachArchetype(jReq, [&](Archetype& arch) {
+            const int ji = arch.FindTypeIndex(JointComponent::sTypeId);
+            for (uint32_t row = 0; row < arch.Count(); ++row) {
+                const EntityID e = arch.EntityAt(row);
+                if (!IsEntityActive(world, e)) {
+                    continue;
+                }
+                const auto* jc = static_cast<const JointComponent*>(arch.GetPtr(ji, row));
+                if (jc->broken) {
+                    continue; // 折れた関節は行を立てない (M60d が立てるフラグ、読みは a から)
+                }
+                JointLink l;
+                l.owner = e;
+                l.jc = jc;
+                jointLinks.push_back(l);
+            }
+        });
+    }
+    if (!jointLinks.empty()) {
+        // 決定論の順序: owner の entity.index 昇順 (SpringJoint と同じ流儀)
+        std::sort(jointLinks.begin(), jointLinks.end(),
+                  [](const JointLink& a, const JointLink& b) { return a.owner.index < b.owner.index; });
+        // bodies は index 昇順ソート済 → 二分探索 (generation も一致確認)
+        auto findBodyIndex = [&bodies](EntityID e) -> int32_t {
+            auto it = std::lower_bound(bodies.begin(), bodies.end(), e.index,
+                                       [](const Body& b, uint32_t idx) { return b.entity.index < idx; });
+            if (it != bodies.end() && it->entity.index == e.index
+                && it->entity.generation == e.generation) {
+                return static_cast<int32_t>(it - bodies.begin());
+            }
+            return -1;
+        };
+        // bodies に居ないエンティティ (剛体もコライダーも無い) は変換から不動アンカーを作る。
+        // 動かないので tick 頭に 1 回計算すれば足りる
+        auto fixedAnchor = [&world](EntityID e, const XMFLOAT3& local, float& ox, float& oy,
+                                    float& oz) -> bool {
+            const auto* alt = world.GetComponent<LocalTransform>(e);
+            if (!alt) {
+                return false;
+            }
+            const WorldFrame f = ComposeParentFrame(world, e);
+            XMFLOAT3 wpos;
+            XMFLOAT4 wrot;
+            XMFLOAT3 wscale;
+            ApplyFrame(f, *alt, wpos, wrot, wscale);
+            float rx, ry, rz;
+            QuatRotate(wrot.x, wrot.y, wrot.z, wrot.w, local.x * wscale.x, local.y * wscale.y,
+                       local.z * wscale.z, rx, ry, rz);
+            ox = wpos.x + rx;
+            oy = wpos.y + ry;
+            oz = wpos.z + rz;
+            return true;
+        };
+        size_t w = 0;
+        for (JointLink& l : jointLinks) {
+            l.ai = findBodyIndex(l.owner);
+            if (l.ai < 0 && !fixedAnchor(l.owner, l.jc->anchor, l.wax, l.way, l.waz)) {
+                continue; // owner の位置すら決まらない = 何もできない
+            }
+            const EntityID other = l.jc->connectedEntity;
+            if (other.IsNull()) {
+                // ★相手が null のときだけ connectedAnchor は**ワールド座標**
+                l.wbx = l.jc->connectedAnchor.x;
+                l.wby = l.jc->connectedAnchor.y;
+                l.wbz = l.jc->connectedAnchor.z;
+            } else if (other.index == l.owner.index && other.generation == l.owner.generation) {
+                continue; // 自分自身への関節は成立しない
+            } else if (!world.IsAlive(other) || !IsEntityActive(world, other)) {
+                continue;
+            } else {
+                l.bi = findBodyIndex(other);
+                if (l.bi < 0 && !fixedAnchor(other, l.jc->connectedAnchor, l.wbx, l.wby, l.wbz)) {
+                    continue;
+                }
+            }
+            if (l.ai < 0 && l.bi < 0) {
+                continue; // 両側とも不動アンカー = 拘束する相手が居ない
+            }
+            jointLinks[w++] = l;
+        }
+        jointLinks.resize(w);
+    }
+    // 関節のアンカー 2 点をワールドで取り直す (姿勢が動くので毎回計算する)
+    auto jointAnchorsWorld = [&bodies](const JointLink& l, float& pax, float& pay, float& paz,
+                                       float& pbx, float& pby, float& pbz) {
+        if (l.ai >= 0) {
+            const Body& A = bodies[static_cast<size_t>(l.ai)];
+            float ox, oy, oz;
+            QuatRotate(A.qx, A.qy, A.qz, A.qw, l.jc->anchor.x * A.scale.x,
+                       l.jc->anchor.y * A.scale.y, l.jc->anchor.z * A.scale.z, ox, oy, oz);
+            pax = A.pose.px + ox;
+            pay = A.pose.py + oy;
+            paz = A.pose.pz + oz;
+        } else {
+            pax = l.wax;
+            pay = l.way;
+            paz = l.waz;
+        }
+        if (l.bi >= 0) {
+            const Body& B = bodies[static_cast<size_t>(l.bi)];
+            float ox, oy, oz;
+            QuatRotate(B.qx, B.qy, B.qz, B.qw, l.jc->connectedAnchor.x * B.scale.x,
+                       l.jc->connectedAnchor.y * B.scale.y, l.jc->connectedAnchor.z * B.scale.z,
+                       ox, oy, oz);
+            pbx = B.pose.px + ox;
+            pby = B.pose.py + oy;
+            pbz = B.pose.pz + oz;
+        } else {
+            pbx = l.wbx;
+            pby = l.wby;
+            pbz = l.wbz;
+        }
+    };
+    std::vector<ConstraintBlock> jointBlocks; // サブステップごとに作り直す (capacity は使い回す)
 
     // ---- サブステップ (M59g2) ----
     // 1 tick を substeps 回に割って「積分 → 制約生成 → 解決 → 位置補正 → 前進」を繰り返す。
@@ -1538,6 +1846,63 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             }
         }
 
+        // ---- 起床 (M60a): 関節で繋がった相手も起こす ----
+        // ★M59h の起床は**接触候補ペアの走査**でしか伝播しない。関節は触れていなくても
+        //   運動を伝えるので、ここへ明示的に足さないと「繋がった片方だけが眠る」。
+        //   眠った側は invMass 0 の不動として扱われるので、振り子なら支点が消えて落ち、
+        //   ロープなら途中の 1 節だけが空中に固定される
+        for (const JointLink& l : jointLinks) {
+            if (l.ai < 0 || l.bi < 0) {
+                continue; // 不動アンカー側には起こす相手が居ない
+            }
+            Body& A = bodies[static_cast<size_t>(l.ai)];
+            Body& B = bodies[static_cast<size_t>(l.bi)];
+            if (A.sleeping && B.invMass > 0.0f) {
+                wakeBody(A);
+            } else if (B.sleeping && A.invMass > 0.0f) {
+                wakeBody(B);
+            }
+        }
+
+        // ---- 関節の拘束ブロックを組む (M60a) ----
+        // **サブステップごとに作り直す** — 姿勢が変わればアンカーの腕も有効質量も変わる。
+        // λ の蓄積はサブステップ内で閉じる (接触の蓄積と同じ寿命。warm starting は M59h と
+        // 同じ理由で入れない)。順序 = jointLinks の順 (owner の entity.index 昇順) →
+        // 同一関節内はブロック番号昇順、で決定論的に固定する
+        jointBlocks.clear();
+        for (const JointLink& l : jointLinks) {
+            if (l.jc->type != 0) {
+                continue; // M60a がブロックを立てるのは Ball だけ (残りは M60b/c が足す)
+            }
+            const Body& A = (l.ai >= 0) ? bodies[static_cast<size_t>(l.ai)] : worldAnchorBody;
+            const Body& B = (l.bi >= 0) ? bodies[static_cast<size_t>(l.bi)] : worldAnchorBody;
+            float pax, pay, paz, pbx, pby, pbz;
+            jointAnchorsWorld(l, pax, pay, paz, pbx, pby, pbz);
+            ConstraintBlock blk;
+            blk.ai = l.ai;
+            blk.bi = l.bi;
+            // 腕は**質量中心から** (M59f1)。com* は hasCom が false なら +0.0f 固定なので
+            // 「x - (+0.0f) == x」でビットを崩さない
+            blk.ra[0] = pax - A.pose.px - A.comx;
+            blk.ra[1] = pay - A.pose.py - A.comy;
+            blk.ra[2] = paz - A.pose.pz - A.comz;
+            blk.rb[0] = pbx - B.pose.px - B.comx;
+            blk.rb[1] = pby - B.pose.py - B.comy;
+            blk.rb[2] = pbz - B.pose.pz - B.comz;
+            // Ball = アンカー 2 点を一致させる線形 3 自由度。方向はワールド軸に取る —
+            // **ブロックごと K⁻¹ で解くので基底の取り方は結果に効かない** (行を独立に
+            // 解いていた頃はここが悪条件の元凶だった)
+            blk.count = 3;
+            blk.angular = false;
+            blk.d[0][0] = 1.0f;
+            blk.d[1][1] = 1.0f;
+            blk.d[2][2] = 1.0f;
+            if (!FinalizeConstraintBlock(blk, A, B)) {
+                continue; // 誰も動かせない (静的同士 / 睡眠中)
+            }
+            jointBlocks.push_back(blk);
+        }
+
         // 眠っているペアの接触 (M59h)。key 昇順で溜め、出力時に本線へマージする
         std::vector<SolidContact> sleepContacts;
 
@@ -1790,6 +2155,14 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
         //   3. 重心でのクーロン摩擦 (固定接線 2 方向)。上限は**その時点の蓄積法線インパルス合計**
         //      — 旧実装の「その反復ぶんの法線インパルス」より正しい Coulomb 境界になっている
         for (int iter = 0; iter < kSolverIterations; ++iter) {
+            // ---- 関節 → 接触 の順 (M60 決定台帳 3) ----
+            // 各反復の**先頭**で関節を解く。貫通のほうが目に見えるので接触を最後に置く
+            // (関節が数 mm ずれるより、箱が床にめり込むほうが絵として壊れて見える)
+            for (ConstraintBlock& blk : jointBlocks) {
+                SolveConstraintBlock(
+                    blk, (blk.ai >= 0) ? bodies[static_cast<size_t>(blk.ai)] : worldAnchorBody,
+                    (blk.bi >= 0) ? bodies[static_cast<size_t>(blk.bi)] : worldAnchorBody);
+            }
             for (ContactConstraint& c : constraints) {
                 Body& A = bodies[c.ai];
                 Body& B = bodies[c.bi];
@@ -1948,6 +2321,43 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
         // 2.3 倍に膨らんだ)。押し出しだけは**その場の真の貫通量**が要るので、ここでだけ
         // CollideManifold を呼び直す。回転補正はしない (簡易ソルバの発散防止。M28b から不変)
         for (int pass = 0; pass < kPositionIterations; ++pass) {
+            // ---- 関節の位置補正 (M60a)。接触より先 (決定台帳 3 と同順) ----
+            // アンカーのずれを質量比で分けて**並進だけ**で詰める (接触と同じ流儀。
+            // 回転補正はしない = 簡易ソルバの発散防止)。
+            // ★ボールジョイントについてはこれで**厳密**: アンカーのワールド位置は
+            //   「形状原点 + 姿勢で回した局所オフセット」なので、形状原点を誤差ぶん動かせば
+            //   誤差はちょうど 0 になる。速度行に bias (Baumgarte) を一切入れず、
+            //   ドリフトの始末をここへ全部寄せられるのはこの性質のおかげ (M59g1-2 の教訓)
+            for (const JointLink& l : jointLinks) {
+                if (l.jc->type != 0) {
+                    continue; // M60a は Ball のみ
+                }
+                const float invA = (l.ai >= 0) ? bodies[static_cast<size_t>(l.ai)].invMass : 0.0f;
+                const float invB = (l.bi >= 0) ? bodies[static_cast<size_t>(l.bi)].invMass : 0.0f;
+                const float tim = invA + invB;
+                if (tim == 0.0f) {
+                    continue;
+                }
+                float pax, pay, paz, pbx, pby, pbz;
+                jointAnchorsWorld(l, pax, pay, paz, pbx, pby, pbz);
+                const float ex = pbx - pax;
+                const float ey = pby - pay;
+                const float ez = pbz - paz;
+                if (invA > 0.0f) {
+                    Body& A = bodies[static_cast<size_t>(l.ai)];
+                    const float s = invA / tim;
+                    A.pose.px += ex * s;
+                    A.pose.py += ey * s;
+                    A.pose.pz += ez * s;
+                }
+                if (invB > 0.0f) {
+                    Body& B = bodies[static_cast<size_t>(l.bi)];
+                    const float s = invB / tim;
+                    B.pose.px -= ex * s;
+                    B.pose.py -= ey * s;
+                    B.pose.pz -= ez * s;
+                }
+            }
             for (const uint64_t pairKey : candidates) {
                 Body& A = bodies[static_cast<size_t>(pairKey >> 32)];
                 Body& B = bodies[static_cast<size_t>(pairKey & 0xFFFFFFFFu)];
@@ -2157,6 +2567,20 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
 
         if (sub == substeps - 1) {
             islandPairs = candidates; // M59h: 入眠判定に使う (最後のステップのぶん)
+            // ★関節ペアも島に入れる (M60a)。接触が 1 つも無くても関節は運動を伝えるので、
+            //   ここを忘れると「繋がった 2 体が別々の島になり、片方だけ先に眠る」。
+            //   union-find の根は最小 index へ正規化されるので、追記の順序は結果に効かない
+            //   (それでも jointLinks は owner index 昇順なので走査自体も決定論的)
+            for (const JointLink& l : jointLinks) {
+                if (l.ai < 0 || l.bi < 0) {
+                    continue;
+                }
+                const uint32_t ja = static_cast<uint32_t>(l.ai);
+                const uint32_t jb = static_cast<uint32_t>(l.bi);
+                const uint64_t lo2 = (ja < jb) ? ja : jb;
+                const uint64_t hi2 = (ja < jb) ? jb : ja;
+                islandPairs.push_back((lo2 << 32) | hi2);
+            }
         }
 
         // ---- 位置・姿勢積分 (解決後の速度で前進) ----

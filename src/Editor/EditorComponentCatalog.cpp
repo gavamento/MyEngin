@@ -52,6 +52,8 @@ const std::unordered_map<std::string, ComponentUiInfo>& Table()
         { "Buoyancy", { ICON_FA_WATER, "Physics", "浮力" } },
         // M59d: 翼面 (子エンティティに置く)
         { "AeroSurface", { ICON_FA_PAPER_PLANE, "Physics", "翼面" } },
+        // M60a: 関節。**動かしたい側 (子側) に付ける** 1 エンティティ 1 個の規約
+        { "Joint", { ICON_FA_ARROWS_SPIN, "Physics", "ジョイント" } },
         // Animation
         { "Animator", { ICON_FA_FILM, "Animation", "アニメーター" } },
         { "AnimatorController", { ICON_FA_CIRCLE_NODES, "Animation", "アニメーターコントローラー" } },

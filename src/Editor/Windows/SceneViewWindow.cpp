@@ -496,6 +496,44 @@ void SceneViewWindow::BuildOverlays(EngineContext& ctx, Selection& selection)
             }
         });
 
+        // 関節 (M60a)。アンカー 2 点 (owner=緑 / 相手=黄) と、それを結ぶ「ずれ」の線。
+        // ★**編集中に見えること**がこのギズモの存在理由 — 走らせる前にアンカーの位置が
+        //   意図どおりかを確かめられないと関節の authoring は成立しない。Play 中の
+        //   ライブ表示は PhysicsDebugFlags.joints (両ビューに出る) が別に持っている
+        constexpr uint32_t kJointA = 0x40FF90FFu;
+        constexpr uint32_t kJointB = 0xFFD040FFu;
+        constexpr uint32_t kJointErr = 0xFF3030FFu;
+        const ComponentTypeId jtReq[] = { JointComponent::sTypeId, WorldMatrixComponent::sTypeId };
+        world.ForEachArchetype(jtReq, [&](Archetype& arch) {
+            const int ji = arch.FindTypeIndex(JointComponent::sTypeId);
+            const int wi = arch.FindTypeIndex(WorldMatrixComponent::sTypeId);
+            for (uint32_t row = 0; row < arch.Count(); ++row) {
+                const auto* jc = static_cast<const JointComponent*>(arch.GetPtr(ji, row));
+                const XMFLOAT4X4& wm =
+                    static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row))->value;
+                auto xform = [](const XMFLOAT4X4& m, const XMFLOAT3& v) {
+                    return XMFLOAT3{ v.x * m._11 + v.y * m._21 + v.z * m._31 + m._41,
+                                     v.x * m._12 + v.y * m._22 + v.z * m._32 + m._42,
+                                     v.x * m._13 + v.y * m._23 + v.z * m._33 + m._43 };
+                };
+                const XMFLOAT3 a = xform(wm, jc->anchor);
+                XMFLOAT3 b;
+                if (jc->connectedEntity.IsNull()) {
+                    b = jc->connectedAnchor; // 相手が居ないときだけワールド座標 (ソルバと同規約)
+                } else {
+                    const auto* owm =
+                        world.GetComponent<WorldMatrixComponent>(jc->connectedEntity);
+                    if (!owm) {
+                        continue;
+                    }
+                    b = xform(owm->value, jc->connectedAnchor);
+                }
+                lines_.AddWireSphere(a, 0.10f, kJointA);
+                lines_.AddWireSphere(b, 0.10f, kJointB);
+                lines_.AddLine(a, b, kJointErr);
+            }
+        });
+
         // 定常力 (力方向の矢印、M29a)。長さは正規化 + 固定 (大きさは Inspector で読む)
         constexpr uint32_t kForce = 0xF0A040FFu;
         const ComponentTypeId cfReq[] = { ConstantForceComponent::sTypeId,
@@ -813,7 +851,7 @@ void SceneViewWindow::DrawToolbar(EditorSettings& settings)
     // (編集中は物理が走らず接触も速度も無い)。有効中はボタンを着色して気付けるようにする
     {
         PhysicsDebugFlags& pd = GetPhysicsDebugFlags();
-        const bool anyOn = pd.contacts || pd.velocities;
+        const bool anyOn = pd.contacts || pd.velocities || pd.joints;
         if (anyOn) {
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.26f, 0.45f, 0.78f, 1.0f));
         }
@@ -827,6 +865,7 @@ void SceneViewWindow::DrawToolbar(EditorSettings& settings)
             ImGui::Checkbox(Tr(StrId::SceneView_PhysContact), &pd.contacts);
             ImGui::Checkbox(Tr(StrId::SceneView_PhysImpulse), &pd.impulses);
             ImGui::Checkbox(Tr(StrId::SceneView_PhysVel), &pd.velocities);
+            ImGui::Checkbox(Tr(StrId::SceneView_PhysJoint), &pd.joints); // M60a
             ImGui::EndPopup();
         }
     }
