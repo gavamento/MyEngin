@@ -16,6 +16,10 @@ namespace {
 
 constexpr uint64_t kPollIntervalMs = 500;
 
+// 起動時 1 発勝負 (LoadInitial) のためだけの保険。Update() の 500ms ポーリングとは別物 —
+// あちらはリロード検出の間引きで、こちらは「起動直後にまだ書き手が居る」窓を跨ぐ短い待機
+constexpr uint32_t kInitialDllWaitMs = 250;
+
 uint64_t GetWriteTime(const std::wstring& path)
 {
     WIN32_FILE_ATTRIBUTE_DATA data = {};
@@ -87,21 +91,44 @@ void DllReloader::Init(ScriptHost* host, const std::wstring& buildDllPath,
     std::filesystem::create_directories(cacheDir_, ec);
 }
 
-bool DllReloader::IsWritable(const std::wstring& path) const
+unsigned long DllReloader::ProbeWritable(const std::wstring& path)
 {
-    // 排他オープンが成功 = リンカ/コピー等の書き込みが完了している
-    const HANDLE h = CreateFileW(path.c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING,
-                                 FILE_ATTRIBUTE_NORMAL, nullptr);
+    // 書き手 (リンカ / コピー等) の不在確認。★share を 0 (完全排他) にしないこと —
+    //   Win32 の共有検査は双方向なので、GENERIC_READ + FILE_SHARE_READ のオープンは
+    //     ・書き手が居れば必ず失敗する (こちらが FILE_SHARE_WRITE を許さないので、
+    //       相手の share 設定に依存せず弾ける = リンカ検出はこれで足りる)
+    //     ・読み手 (もう片方のエンジンプロセスの同じプローブ / CopyFile のソース読み)
+    //       とは共存する
+    //   排他オープンだった頃は、ネットの 2 プロセス同時起動で互いのプローブが衝突し、
+    //   負けた側が「C++ スクリプト 0 本の世界」で開始 → 開始ワールドハッシュ照合で
+    //   接続拒否になっていた (net_verify case A/D のフレーク。コピー先は M52h の
+    //   p<pid> 分離で解決済みだったが、コピー元の排他読みがここに残っていた)。
+    //   FILE_SHARE_DELETE は足さない — DELETE を持つ相手 (差し替え直前) は弾くべき
+    const HANDLE h = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
+                                 OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (h == INVALID_HANDLE_VALUE) {
-        return false;
+        return GetLastError();
     }
     CloseHandle(h);
-    return true;
+    return 0;
+}
+
+unsigned long DllReloader::WaitUntilWritable(const std::wstring& path, uint32_t timeoutMs)
+{
+    // 共有違反 (32) = 「書き手が今書いている。待てば通る」のときだけ待つ。
+    // 不在 (2/3) 等は待っても結果が変わらないので即返す
+    const uint64_t deadline = GetTickCount64() + timeoutMs;
+    unsigned long err = ProbeWritable(path);
+    while (err == ERROR_SHARING_VIOLATION && GetTickCount64() < deadline) {
+        Sleep(1);
+        err = ProbeWritable(path);
+    }
+    return err;
 }
 
 bool DllReloader::TryCopyAndLoad()
 {
-    if (!IsWritable(dllPath_)) {
+    if (ProbeWritable(dllPath_) != 0) {
         return false; // リンカがまだ書いている — 次フレーム再試行
     }
     const bool hasPdb = GetWriteTime(pdbPath_) != 0;
@@ -140,6 +167,15 @@ bool DllReloader::LoadInitial()
     if (GetWriteTime(dllPath_) == 0) {
         MYE_LOG_WARN("[dll] GameLogic.dll not found: %s", WideToUtf8(dllPath_).c_str());
         return false;
+    }
+    // ここは 1 発勝負 (ネット起動では Update() の 500ms 再試行が開始ワールドハッシュ
+    // 照合に間に合わない) なので、書き手が居る間だけ短く待ってから 1 回だけ試す。
+    // TryCopyAndLoad 全体はリトライしない — LoadModule 失敗 (待っても直らない) を
+    // 巻き込み、counter_ も無駄に進むため
+    const unsigned long err = WaitUntilWritable(dllPath_, kInitialDllWaitMs);
+    if (err != 0) {
+        MYE_LOG_WARN("[dll] initial load: GameLogic.dll is still busy (err=%lu): %s",
+                     err, WideToUtf8(dllPath_).c_str());
     }
     return TryCopyAndLoad();
 }

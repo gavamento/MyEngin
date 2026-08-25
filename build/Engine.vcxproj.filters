@@ -210,6 +210,9 @@
     <ClCompile Include="..\src\Engine\Engine\HotReload\DllReloader.cpp">
       <Filter>Engine\HotReload</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\HotReload\DllReloaderSelfTest.cpp">
+      <Filter>Engine\HotReload</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\HotReload\ReloadHub.cpp">
       <Filter>Engine\HotReload</Filter>
     </ClCompile>
@@ -709,6 +712,9 @@
       <Filter>Engine</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\HotReload\DllReloader.h">
+      <Filter>Engine\HotReload</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\HotReload\DllReloaderSelfTest.h">
       <Filter>Engine\HotReload</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\HotReload\ReloadHub.h">

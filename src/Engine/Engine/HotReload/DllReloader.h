@@ -9,7 +9,8 @@ class ScriptHost;
 //
 // 手順:
 //   1. ビルド出力 (bin\x64\{cfg}\GameLogic.dll) のタイムスタンプをポーリング
-//   2. 排他オープンでリンカの書き込み完了を確認 (書き込み中なら次フレーム再試行)
+//   2. 共有読みオープン (FILE_SHARE_READ) でリンカの書き込み完了を確認 — 書き手が
+//      居れば失敗 = 次フレーム再試行。読み手 (もう片方のエンジンプロセス) とは共存
 //   3. DLL + PDB を cache\hot\v{N}\ に「元のファイル名のまま」コピー
 //      → /PDBALTPATH:GameLogic.pdb と組み合わせて、デバッガはコピー先の PDB を
 //        ロードする。ビルド出力はロックされず、ブレークポイントも維持される
@@ -26,9 +27,17 @@ public:
 
     uint32_t Version() const { return counter_; }
 
+    // 書き手 (リンカ / コピー) の不在確認。0 = 書き込み完了 / それ以外 = Win32 エラーコード。
+    // stateless な static にしてあるのはセルフテストから直接叩くため。
+    // 戻り値が unsigned long (= DWORD) なのはヘッダに Windows.h を入れないため
+    static unsigned long ProbeWritable(const std::wstring& path);
+
+    // ProbeWritable が共有違反 (32) を返す間だけ待つ有界版。最後のエラーコードを返す
+    // (不在 (2/3) 等は待っても無駄なので即返す)
+    static unsigned long WaitUntilWritable(const std::wstring& path, uint32_t timeoutMs);
+
 private:
     bool TryCopyAndLoad();
-    bool IsWritable(const std::wstring& path) const; // 排他オープン試行
 
     ScriptHost* host_ = nullptr;
     std::wstring dllPath_;

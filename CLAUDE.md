@@ -176,7 +176,12 @@ Editor → GameLogic → Engine → Renderer → Core → Platform   (上位は�
 - `Editor.exe` / `Runtime.exe` は **Windows サブシステム (GUI)** なので、PowerShell から
   `& Editor.exe` すると**待たずに戻り exit code も出力も取れない**。`cmd /c` を挟むこと
   (CI のステップが `shell: cmd` なのも同じ理由)。
-- `tools\*.bat` は **CRLF で書く** (LF だと cmd.exe が行を途中で切る)。強制する仕組みは無い。
+- `tools\*.bat` は **CRLF で書く** (LF だと cmd.exe が行を途中で切る — CP932 環境では
+  日本語 rem コメントの途中で割れて断片がコマンド実行される)。`.gitattributes` の
+  `*.bat text eol=crlf` が checkout 時に強制する (blob は LF のまま)。リポジトリの blob は
+  全て LF なので、`core.autocrlf=false` のチェックアウトでは bat 以外も含めディスクが LF に
+  なり、この罠を踏む + CRLF を書くツール (gen_project_files 等) の diff が全域ノイズ化する
+  — **このリポジトリは `core.autocrlf=true` 前提** (リポジトリローカルに設定済み)。
 - bat で終了コードを見るときは `if errorlevel 1` を使わない。SEH で落ちた exit code
   (`0xC0000005` 等) は符号付きだと負なので「1 以上か」の判定が**偽になる**。
   `if !ERRORLEVEL! NEQ 0` の数値比較で書くこと (M52f)。

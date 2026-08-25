@@ -2,3 +2,8 @@
 # 現状 git の自動判定でも binary 扱いになるが、判定に任せると 1 バイトの取り違えが
 # 「ピクセル回帰テストが理由不明で赤い」という最悪の形で出るので明示する。
 *.png binary
+
+# bat は cmd.exe の都合で**ディスク上 CRLF が必須** (LF だと行を途中で切られ、CP932 では
+# 日本語 rem コメントの断片がコマンド実行される — net_verify で実際に踏んだ)。
+# blob は LF のまま、checkout 時の変換だけを強制する。autocrlf の個人設定に依存させない。
+*.bat text eol=crlf

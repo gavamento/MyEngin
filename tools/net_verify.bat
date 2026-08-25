@@ -58,6 +58,12 @@ if !ERRORLEVEL! NEQ 0 (
     echo   [FAIL] the local reference recording failed - see cache\net_local.log
     exit /b 1
 )
+rem ★findstr は「見つかったら 0」なので EQU 0 = FAIL 側 (以降の同型検査も同じ)
+findstr /c:"NO C++ scripts are registered" cache\net_local.log >nul
+if !ERRORLEVEL! EQU 0 (
+    echo   [FAIL] the local reference ran without C++ scripts - see cache\net_local.log
+    exit /b 1
+)
 
 call :case A 7801 0  "--net-delay 3" "%DBG%\Runtime.exe" "%DBG%\Runtime.exe"
 call :case B 7802 20 "--net-delay 3" "%DBG%\Runtime.exe" "%REL%\Runtime.exe"
@@ -107,6 +113,18 @@ ping -n 2 127.0.0.1 >nul
 goto :waithost
 :hostdone
 set /p HEXIT=<"%HCODE%"
+
+rem ---- 0. どちらかが「C++ スクリプト 0 本の世界」で走っていないか ----
+rem     ★DllReloader のプローブ衝突 (M52h 追補で修理) の再発検出。exit code 判定より
+rem       前に置くのは、接続拒否で joiner が非 0 のとき根本原因を名指しするため。
+rem       両者が**同時に** 0 本になるとハッシュが偶然一致して下の 3 段判定は緑のまま
+rem       通ってしまう — この findstr が唯一の検出線
+findstr /c:"NO C++ scripts are registered" cache\net_%NAME%_host.log cache\net_%NAME%_join.log >nul
+if !ERRORLEVEL! EQU 0 (
+    echo   [FAIL] %NAME%: a peer started without C++ scripts ^(DLL shadow-copy race^) - see the logs
+    set /a FAILED+=1
+    goto :eof
+)
 
 if not "!JCODE!"=="0" (
     echo   [FAIL] %NAME%: the joiner exited with !JCODE! - see cache\net_%NAME%_join.log
@@ -192,6 +210,15 @@ ping -n 2 127.0.0.1 >nul
 goto :waitdesync
 :desyncdone
 set /p HEXIT=<"%HCODE%"
+
+rem スクリプト 0 本検査 (:case の 0. と同型)。ここで 0 本だと「desync を正しく検出した」
+rem ように見えて実は別の世界を壊しただけ、になり得る
+findstr /c:"NO C++ scripts are registered" cache\net_E_host.log cache\net_E_join.log >nul
+if !ERRORLEVEL! EQU 0 (
+    echo   [FAIL] E: a peer started without C++ scripts ^(DLL shadow-copy race^) - see the logs
+    set /a FAILED+=1
+    goto :eof
+)
 
 rem exit 4 = desync (1 = 通常の失敗 / 2 = 落とし損ね と区別してある)
 if not "!JCODE!"=="4" (
