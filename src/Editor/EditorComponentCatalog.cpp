@@ -8,6 +8,8 @@
 #include "Engine/Core/Localization.h"
 #include "Engine/Core/World.h"
 
+#include "imgui.h"
+
 #include "fontawesome/IconsFontAwesome6.h"
 
 namespace mye {
@@ -120,11 +122,36 @@ const char* ComponentCategoryLabel(const char* categoryKey)
     return categoryKey;
 }
 
-const char* EntityIconFor(World& world, EntityID e)
+const ImVec4& ComponentCategoryColor(const char* categoryKey)
+{
+    // 9 カテゴリを見分けるための等間隔な色相。帯はテーマの配色ルール 1 に従う
+    struct Row { const char* key; ImVec4 color; };
+    static const Row kRows[] = {
+        { "General", ImVec4(0.62f, 0.65f, 0.72f, 1.0f) },     // 灰 (無彩に寄せる)
+        { "Rendering", ImVec4(0.80f, 0.68f, 0.42f, 1.0f) },   // 金 (ライト/カメラの連想)
+        { "Physics", ImVec4(0.52f, 0.73f, 0.55f, 1.0f) },     // 緑
+        { "Animation", ImVec4(0.71f, 0.56f, 0.79f, 1.0f) },   // 紫
+        { "VFX", ImVec4(0.80f, 0.55f, 0.42f, 1.0f) },         // 炎
+        { "Audio", ImVec4(0.44f, 0.71f, 0.71f, 1.0f) },       // 青緑
+        { "Environment", ImVec4(0.68f, 0.71f, 0.44f, 1.0f) }, // 黄緑
+        { "UI", ImVec4(0.52f, 0.64f, 0.82f, 1.0f) },          // 青
+        { "Scripts", ImVec4(0.79f, 0.54f, 0.62f, 1.0f) },     // 桃
+    };
+    if (categoryKey != nullptr) {
+        for (const Row& r : kRows) {
+            if (std::strcmp(r.key, categoryKey) == 0) {
+                return r.color;
+            }
+        }
+    }
+    return kRows[0].color; // 未知キーは General 扱い
+}
+
+EntityIconInfo EntityIconInfoFor(World& world, EntityID e)
 {
     const Archetype* arch = world.GetArchetype(e);
     if (!arch) {
-        return ICON_FA_CIRCLE;
+        return { ICON_FA_CIRCLE, "General" };
     }
     const ComponentRegistry& reg = ComponentRegistry::Get();
     // TypeId 昇順 = ビルトインが先。最初に見つかった非 General の登録済みコンポーネントが代表
@@ -136,14 +163,14 @@ const char* EntityIconFor(World& world, EntityID e)
         const auto& table = Table();
         const auto it = table.find(desc.name);
         if (it == table.end()) {
-            return ICON_FA_CODE; // スクリプトコンポーネント
+            return { ICON_FA_CODE, "Scripts" }; // スクリプトコンポーネント
         }
         if (std::strcmp(it->second.category, "General") == 0) {
             continue;
         }
-        return it->second.icon;
+        return { it->second.icon, it->second.category };
     }
-    return ICON_FA_CIRCLE; // 空のグループノード
+    return { ICON_FA_CIRCLE, "General" }; // 空のグループノード
 }
 
 } // namespace mye

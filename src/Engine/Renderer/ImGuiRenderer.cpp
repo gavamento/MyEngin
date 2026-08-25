@@ -37,12 +37,19 @@ bool ImGuiRenderer::Init(Win32Window& window, GraphicsDevice& device, const ImGu
     }
 
     ImGui::StyleColorsDark();
-    ApplyEditorTheme(ImGui::GetStyle()); // M27a: UE5 風テーマ
+    ApplyEditorTheme(ImGui::GetStyle()); // テーマ第 3 世代 (M27a の UE5 風を置き換え)
     // M47a: 日本語グリフが無い環境 (英語版 Windows の最小構成など) で日本語 UI にすると
     // 画面全体が豆腐になるので、フォント側の実情に合わせて英語へ落とす
     if (!SetupEditorFonts() && CurrentLanguage() == Lang::Ja) {
         MYE_LOG_WARN("no Japanese font available - falling back to English UI");
         SetLanguage(Lang::En);
+    }
+    // 高 DPI (テーマ第 3 世代): PerMonitorV2 なので OS は拡大してくれない。スタイル寸法は
+    // ここで実寸へ、フォントは FontScaleDpi (1.92 の動的アトラスが実寸で再ラスタライズする
+    // = ビットマップ拡大のにじみは出ない)。★ScaleAllSizes はテーマ適用より後に呼ぶこと
+    if (opts.dpiScale > 1.0f) {
+        ImGui::GetStyle().ScaleAllSizes(opts.dpiScale);
+        ImGui::GetStyle().FontScaleDpi = opts.dpiScale;
     }
 
     if (!ImGui_ImplWin32_Init(window.Hwnd())) {

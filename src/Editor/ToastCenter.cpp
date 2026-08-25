@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cstdio>
 
+#include "Engine/Renderer/ImGuiTheme.h" // themeColor (意味色)
+
 #include "imgui.h"
 
 #include "fontawesome/IconsFontAwesome6.h"
@@ -27,8 +29,8 @@ const char* LevelIcon(LogLevel level)
 ImVec4 LevelColor(LogLevel level)
 {
     switch (level) {
-    case LogLevel::Warn: return ImVec4(0.95f, 0.75f, 0.20f, 1.0f);
-    case LogLevel::Error: return ImVec4(0.95f, 0.35f, 0.30f, 1.0f);
+    case LogLevel::Warn: return themeColor::Warning;
+    case LogLevel::Error: return themeColor::Error;
     default: return ImVec4(0.92f, 0.92f, 0.92f, 1.0f);
     }
 }

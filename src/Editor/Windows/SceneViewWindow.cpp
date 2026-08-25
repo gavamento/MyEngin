@@ -7,6 +7,7 @@
 #include "Editor/CameraPilot.h"
 #include "Editor/CreateMenu.h"
 #include "Editor/EditorSettings.h"
+#include "Editor/EditorWidgets.h"
 #include "Editor/Selection.h"
 #include "Editor/Undo/UndoStack.h"
 #include "Engine/Core/Components.h"
@@ -28,6 +29,7 @@
 #include "Engine/Engine/Scene.h"
 #include "Engine/Renderer/FrustumCull.h"
 #include "Engine/Renderer/GpuResources.h"
+#include "Engine/Renderer/ImGuiTheme.h" // themeColor (操縦バナーの PlayAccent)
 #include "Engine/Renderer/RenderPath.h"
 
 #include "fontawesome/IconsFontAwesome6.h"
@@ -831,56 +833,41 @@ void SceneViewWindow::BuildOverlays(EngineContext& ctx, Selection& selection)
 
 void SceneViewWindow::DrawToolbar(EditorSettings& settings)
 {
-    // ビューポート左上のオーバーレイツールバー (ギズモ操作 / 座標系 / 投影 / カメラ速度)
+    // ビューポート左上のオーバーレイツールバー (ギズモ操作 / 座標系 / 投影 / カメラ速度)。
+    // 面・余白・区切り・トグル ON 色は EditorWidgets の統一規格 — かつては高さ 30px 固定 +
+    // "|" テキスト区切り + ハードコード青だったが、テーマの余白変更で中身が縦にはみ出す
+    // 事故を起こしたので、サイズは規格側 (フレーム高) から導出する
     const ImVec2 p = ImGui::GetItemRectMin();
     ImGui::SetCursorScreenPos(ImVec2(p.x + 8.0f, p.y + 8.0f));
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.10f, 0.11f, 0.13f, 0.85f));
     // M47b: 幅は中身から自動決定する。訳文が長いと 830px 固定ではボタンが見切れるため
-    ImGui::BeginChild("##sv_toolbar", ImVec2(0.0f, 30.0f), ImGuiChildFlags_AutoResizeX,
-                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
-    auto opBtn = [&](const char* label, ImGuizmo::OPERATION op) {
-        const bool on = (gizmoOp_ == op);
-        if (on) {
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.26f, 0.45f, 0.78f, 1.0f));
-        }
-        if (ImGui::Button(label)) {
+    BeginToolbarOverlay("##sv_toolbar");
+    auto opBtn = [&](StrId id, ImGuizmo::OPERATION op) {
+        if (ToolbarToggle(Tr(id), gizmoOp_ == op)) {
             gizmoOp_ = op;
-        }
-        if (on) {
-            ImGui::PopStyleColor();
         }
         ImGui::SameLine();
     };
-    opBtn(Tr(StrId::SceneView_Move), ImGuizmo::TRANSLATE);
-    opBtn(Tr(StrId::SceneView_Rotate), ImGuizmo::ROTATE);
-    opBtn(Tr(StrId::SceneView_Scale), ImGuizmo::SCALE);
-    ImGui::TextUnformatted("|");
-    ImGui::SameLine();
+    opBtn(StrId::SceneView_Move, ImGuizmo::TRANSLATE);
+    opBtn(StrId::SceneView_Rotate, ImGuizmo::ROTATE);
+    opBtn(StrId::SceneView_Scale, ImGuizmo::SCALE);
+    ToolbarSeparator();
     if (ImGui::Button(Tr(gizmoMode_ == ImGuizmo::LOCAL ? StrId::Tool_SpaceLocal : StrId::Tool_SpaceWorld))) {
         gizmoMode_ = (gizmoMode_ == ImGuizmo::LOCAL) ? ImGuizmo::WORLD : ImGuizmo::LOCAL;
     }
     ImGui::SameLine();
     ImGui::Checkbox(Tr(StrId::SceneView_Ortho), &orthographic_);
-    ImGui::SameLine();
-    ImGui::TextUnformatted("|");
-    ImGui::SameLine();
+    ToolbarSeparator();
     ImGui::Checkbox(Tr(StrId::SceneView_Grid), &showGrid_);
     ImGui::SameLine();
     ImGui::Checkbox(Tr(StrId::SceneView_Gizmos), &showGizmos_);
     ImGui::SameLine();
     // 物理デバッグ可視化 (M59e)。**Play 中しか線は出ない** — 積むのは tick 側なので
-    // (編集中は物理が走らず接触も速度も無い)。有効中はボタンを着色して気付けるようにする
+    // (編集中は物理が走らず接触も速度も無い)。有効中はトグル色で気付けるようにする
     {
         PhysicsDebugFlags& pd = GetPhysicsDebugFlags();
         const bool anyOn = pd.contacts || pd.velocities || pd.joints;
-        if (anyOn) {
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.26f, 0.45f, 0.78f, 1.0f));
-        }
-        if (ImGui::Button(Tr(StrId::SceneView_PhysDebug))) {
+        if (ToolbarToggle(Tr(StrId::SceneView_PhysDebug), anyOn)) {
             ImGui::OpenPopup("##sv_physdbg_popup");
-        }
-        if (anyOn) {
-            ImGui::PopStyleColor();
         }
         if (ImGui::BeginPopup("##sv_physdbg_popup")) {
             ImGui::Checkbox(Tr(StrId::SceneView_PhysContact), &pd.contacts);
@@ -890,30 +877,20 @@ void SceneViewWindow::DrawToolbar(EditorSettings& settings)
             ImGui::EndPopup();
         }
     }
-    ImGui::SameLine();
-    ImGui::TextUnformatted("|");
-    ImGui::SameLine();
+    ToolbarSeparator();
     // 表示モード (M40b): Lit / Unlit / Wireframe。GameView は常に Lit
-    auto modeBtn = [&](const char* label, int mode) {
-        const bool on = (viewMode_ == mode);
-        if (on) {
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.26f, 0.45f, 0.78f, 1.0f));
-        }
-        if (ImGui::Button(label)) {
+    auto modeBtn = [&](StrId id, int mode) {
+        if (ToolbarToggle(Tr(id), viewMode_ == mode)) {
             viewMode_ = mode;
-        }
-        if (on) {
-            ImGui::PopStyleColor();
         }
         ImGui::SameLine();
     };
-    modeBtn(Tr(StrId::SceneView_Lit), 0);
-    modeBtn(Tr(StrId::SceneView_Unlit), 1);
-    modeBtn(Tr(StrId::SceneView_Wire), 2);
-    ImGui::TextUnformatted("|");
-    ImGui::SameLine();
+    modeBtn(StrId::SceneView_Lit, 0);
+    modeBtn(StrId::SceneView_Unlit, 1);
+    modeBtn(StrId::SceneView_Wire, 2);
+    ToolbarSeparator();
     // カメラ速度 (M27d)。RMB ホールド中のホイールでも変わる (HandleCamera)
-    ImGui::SetNextItemWidth(100.0f);
+    ImGui::SetNextItemWidth(110.0f);
     if (ImGui::SliderFloat("##camspeed", &settings.camMoveSpeed, 0.5f, 60.0f, Tr(StrId::SceneView_CamSpeed),
                            ImGuiSliderFlags_Logarithmic)) {
         camSpeedDirty_ = true; // 永続化は操作終了時 (HandleCamera 側の Save に相乗り)
@@ -922,33 +899,22 @@ void SceneViewWindow::DrawToolbar(EditorSettings& settings)
         camSpeedDirty_ = false;
         settings.Save();
     }
-    ImGui::SameLine();
-    ImGui::TextUnformatted("|");
-    ImGui::SameLine();
+    ToolbarSeparator();
     // 視錐台ワイヤの表示上の打ち切り距離。既定 farZ=1000 のカメラを素直に描くと
     // 視錐台が画面を埋めるので、ここで「どこまで描くか」を手元で決められるようにする。
     // ★シーンにも設定ファイルにも保存しない — 地形ブラシと同じで「いまの見え方」であって
     //   カメラの属性ではない (保存すると別プロジェクトへ持ち出したときに意味が変わる)
-    ImGui::SetNextItemWidth(110.0f);
+    ImGui::SetNextItemWidth(120.0f);
     ImGui::SliderFloat("##frustumfar", &frustumFar_, 2.0f, 500.0f,
                        Tr(StrId::SceneView_FrustumFar), ImGuiSliderFlags_Logarithmic);
-    ImGui::SameLine();
-    ImGui::TextUnformatted("|");
-    ImGui::SameLine();
-    // 地形ブラシ (M58f)。on の間はピッキングもギズモも止まる = 「別のツール」であることを
-    // 押しっぱなしの色で見せる
-    if (terrainBrush_) {
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.78f, 0.45f, 0.20f, 1.0f));
-    }
-    if (ImGui::Button(Tr(StrId::Terrain_Brush))) {
+    ToolbarSeparator();
+    // 地形ブラシ (M58f)。on の間はピッキングもギズモも止まる = 「別のツール」なので
+    // mode 系のトグル色 (PlayAccent) で見せる
+    if (ToolbarToggle(Tr(StrId::Terrain_Brush), terrainBrush_, nullptr, /*mode=*/true)) {
         terrainBrush_ = !terrainBrush_;
         terrainStroking_ = false;
     }
-    if (terrainBrush_) {
-        ImGui::PopStyleColor();
-    }
-    ImGui::EndChild();
-    ImGui::PopStyleColor();
+    EndToolbarOverlay();
 }
 
 void SceneViewWindow::DrawPilotBanner()
@@ -963,9 +929,11 @@ void SceneViewWindow::DrawPilotBanner()
     const ImVec2 tl = ImGui::GetItemRectMin();
     const float top = ImGui::GetItemRectMax().y;
     ImGui::SetCursorScreenPos(ImVec2(tl.x, top + 6.0f));
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.30f, 0.18f, 0.07f, 0.88f));
-    ImGui::BeginChild("##sv_pilot", ImVec2(0.0f, 52.0f), ImGuiChildFlags_AutoResizeX,
-                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    // 器はツールバーと同じ統一オーバーレイ。「別モード」なので PlayAccent を面へ混ぜる
+    const float h = ImGui::GetFrameHeight() + ImGui::GetTextLineHeightWithSpacing()
+        + ImGui::GetStyle().ItemSpacing.y + 12.0f;
+    BeginToolbarOverlay("##sv_pilot", h, &themeColor::PlayAccent);
+    ImGui::AlignTextToFramePadding(); // 隣がボタンの行 — 文字だけ上に浮かないように
     ImGui::Text(Tr(StrId::SceneView_PilotOn),
                 previewLabel_.empty() ? "?" : previewLabel_.c_str());
     ImGui::SameLine();
@@ -973,8 +941,7 @@ void SceneViewWindow::DrawPilotBanner()
         pilot.Stop();
     }
     ImGui::TextUnformatted(Tr(StrId::SceneView_PilotKeys));
-    ImGui::EndChild();
-    ImGui::PopStyleColor();
+    EndToolbarOverlay();
 }
 
 void SceneViewWindow::DrawCameraPreview(const ImVec2& imgPos, const ImVec2& size)

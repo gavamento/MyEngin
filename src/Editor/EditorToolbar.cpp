@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstring>
 
+#include "Editor/EditorWidgets.h"
 #include "Editor/LayoutManager.h"
 #include "Editor/Selection.h"
 #include "Editor/Undo/UndoStack.h"
@@ -20,26 +21,6 @@
 #include "fontawesome/IconsFontAwesome6.h"
 
 namespace mye {
-
-namespace {
-
-// アクティブ状態を持つアイコンボタン (ギズモ操作トグル用)
-bool ToggleIconButton(const char* icon, bool active, const char* tooltip)
-{
-    if (active) {
-        ImGui::PushStyleColor(ImGuiCol_Button, themeColor::Accent);
-    }
-    const bool pressed = ImGui::Button(icon);
-    if (active) {
-        ImGui::PopStyleColor();
-    }
-    if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("%s", tooltip);
-    }
-    return pressed;
-}
-
-} // namespace
 
 bool EditorToolbar::OnImGui(EngineContext& ctx, PlayModeController& playMode, Selection& selection,
                             UndoStack& undo, SceneViewWindow& sceneView, LayoutManager& layouts,
@@ -62,18 +43,18 @@ bool EditorToolbar::OnImGui(EngineContext& ctx, PlayModeController& playMode, Se
         ImGui::SetCursorPosY(4.0f);
 
         // ---- 左: ギズモ操作 (SceneView と状態共有。W/E/R ショートカットは SceneView 側) ----
-        if (ToggleIconButton(ICON_FA_ARROWS_UP_DOWN_LEFT_RIGHT,
-                             sceneView.GizmoOp() == ImGuizmo::TRANSLATE, Tr(StrId::Tool_TipMove))) {
+        if (ToolbarToggle(ICON_FA_ARROWS_UP_DOWN_LEFT_RIGHT,
+                          sceneView.GizmoOp() == ImGuizmo::TRANSLATE, Tr(StrId::Tool_TipMove))) {
             sceneView.GizmoOp() = ImGuizmo::TRANSLATE;
         }
         ImGui::SameLine();
-        if (ToggleIconButton(ICON_FA_ROTATE, sceneView.GizmoOp() == ImGuizmo::ROTATE,
-                             Tr(StrId::Tool_TipRotate))) {
+        if (ToolbarToggle(ICON_FA_ROTATE, sceneView.GizmoOp() == ImGuizmo::ROTATE,
+                          Tr(StrId::Tool_TipRotate))) {
             sceneView.GizmoOp() = ImGuizmo::ROTATE;
         }
         ImGui::SameLine();
-        if (ToggleIconButton(ICON_FA_MAXIMIZE, sceneView.GizmoOp() == ImGuizmo::SCALE,
-                             Tr(StrId::Tool_TipScale))) {
+        if (ToolbarToggle(ICON_FA_MAXIMIZE, sceneView.GizmoOp() == ImGuizmo::SCALE,
+                          Tr(StrId::Tool_TipScale))) {
             sceneView.GizmoOp() = ImGuizmo::SCALE;
         }
         ImGui::SameLine();
@@ -94,9 +75,7 @@ bool EditorToolbar::OnImGui(EngineContext& ctx, PlayModeController& playMode, Se
         // 「今どこを編集しているか」と戻り道を常に見せる。Unity の Prefab Mode と同じ役割
         const bool inActorEdit = (actorEdit != nullptr && actorEdit->name != nullptr);
         if (inActorEdit) {
-            ImGui::SameLine();
-            ImGui::TextUnformatted("|");
-            ImGui::SameLine();
+            ToolbarSeparator();
             if (ImGui::Button(ICON_FA_ARROW_LEFT)) {
                 actorEdit->exitRequested = true;
             }
@@ -104,6 +83,7 @@ bool EditorToolbar::OnImGui(EngineContext& ctx, PlayModeController& playMode, Se
                 ImGui::SetTooltip("%s", Tr(StrId::Tool_TipExitActorEdit));
             }
             ImGui::SameLine();
+            ImGui::AlignTextToFramePadding(); // 両隣がボタンの行 — 文字だけ浮かせない
             ImGui::Text(actorEdit->dirty ? "%s *" : "%s", actorEdit->name);
             ImGui::SameLine();
             if (ImGui::Button(ICON_FA_FLOPPY_DISK)) {

@@ -7,6 +7,8 @@
 #include "Engine/Core/Localization.h"
 #include "Engine/Engine/Audio/AudioSystem.h"
 
+#include "Engine/Renderer/ImGuiTheme.h" // themeColor (意味色)
+
 #include "imgui.h"
 
 namespace mye {
@@ -34,12 +36,12 @@ float MeterNorm(float linear)
 ImU32 MeterColor(float norm)
 {
     if (norm >= MeterNorm(1.0f)) { // 0 dBFS 到達 = クリップ
-        return IM_COL32(230, 80, 70, 255);
+        return ImGui::ColorConvertFloat4ToU32(themeColor::Error);
     }
     if (norm > 0.78f) { // -6 dB 付近
-        return IM_COL32(230, 200, 70, 255);
+        return ImGui::ColorConvertFloat4ToU32(themeColor::Warning);
     }
-    return IM_COL32(90, 200, 120, 255);
+    return IM_COL32(90, 200, 120, 255); // 通常レベルの緑 (配色ルールの帯内)
 }
 
 // 小さなトグルボタン (Mute / Solo)。押下中は色を変える
@@ -293,11 +295,13 @@ void AudioMixerWindow::DrawStrip(EngineContext& ctx, int bus)
 
     // ---- ミュート / ソロ ----
     const float halfW = (kStripWidth - 4.0f) * 0.5f;
-    if (ToggleButton("M", audio.BusMute(bus), IM_COL32(190, 70, 60, 255), ImVec2(halfW, 0.0f))) {
+    if (ToggleButton("M", audio.BusMute(bus), ImGui::ColorConvertFloat4ToU32(themeColor::Error),
+                     ImVec2(halfW, 0.0f))) {
         audio.SetBusMute(bus, !audio.BusMute(bus));
     }
     ImGui::SameLine(0.0f, 4.0f);
-    if (ToggleButton("S", audio.BusSolo(bus), IM_COL32(200, 170, 60, 255), ImVec2(halfW, 0.0f))) {
+    if (ToggleButton("S", audio.BusSolo(bus), ImGui::ColorConvertFloat4ToU32(themeColor::Warning),
+                     ImVec2(halfW, 0.0f))) {
         audio.SetBusSolo(bus, !audio.BusSolo(bus));
     }
 

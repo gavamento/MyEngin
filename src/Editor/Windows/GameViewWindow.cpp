@@ -12,6 +12,8 @@
 #include "Engine/Engine/UI/UIRenderer.h"
 #include "Engine/Renderer/RenderPath.h"
 
+#include "Engine/Renderer/ImGuiTheme.h" // themeColor (意味色)
+
 #include "imgui.h"
 
 namespace mye {
@@ -105,11 +107,13 @@ void GameViewWindow::OnImGui(EngineContext& ctx, const Selection& selection)
             snprintf(buf, sizeof(buf), "%.0f fps  %.2f ms\n%u entities  tick %llu", io.Framerate,
                      1000.0f / io.Framerate, ctx.scene->GetWorld().AliveCount(),
                      static_cast<unsigned long long>(ctx.tickIndex));
-            dl->AddText(ImVec2(imgPos.x + 8, imgPos.y + 6), IM_COL32(120, 255, 140, 255), buf);
+            dl->AddText(ImVec2(imgPos.x + 8, imgPos.y + 6),
+                        ImGui::ColorConvertFloat4ToU32(themeColor::Success), buf);
         }
         if (!hasCamera_) {
             dl->AddText(ImVec2(imgPos.x + imgSize.x * 0.5f - 60.0f, imgPos.y + imgSize.y * 0.5f),
-                        IM_COL32(255, 200, 80, 255), "No CameraComponent in scene");
+                        ImGui::ColorConvertFloat4ToU32(themeColor::Warning),
+                        "No CameraComponent in scene");
         }
 
         // ---- 選択 UI 要素の解決済み矩形アウトライン (M51f) ----

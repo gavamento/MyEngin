@@ -11,6 +11,7 @@
 #include "Editor/AssetOps.h"
 #include "Editor/CreateMenu.h"
 #include "Editor/EditorComponentCatalog.h"
+#include "Editor/EditorWidgets.h"
 #include "Editor/Undo/UndoStack.h"
 #include "Engine/Core/Components.h"
 #include "Engine/Core/Localization.h"
@@ -24,6 +25,7 @@
 #include "Engine/Engine/Scene.h"
 #include "Engine/Platform/PathUtil.h"
 #include "Engine/Renderer/GpuResources.h"
+#include "Engine/Renderer/ImGuiTheme.h" // themeColor::Prefab
 
 #include "imgui.h"
 
@@ -372,10 +374,14 @@ void HierarchyWindow::DrawEntityNode(EngineContext& ctx, World& world, EntityID 
     // プレハブインスタンスは青文字 (Unity 風)。メンバは全て PrefabLink を持つ
     const bool isPrefab = world.GetComponent<PrefabLinkComponent>(e) != nullptr;
     if (isPrefab) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.45f, 0.68f, 1.0f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, themeColor::Prefab);
     }
-    const bool nodeOpen =
-        ImGui::TreeNodeEx("##node", flags, "%s %s", EntityIconFor(world, e), world.GetName(e));
+    // アイコンはカテゴリ色 — ラベルを空にして DrawItemIconLabel が矩形へ直接描く
+    // (プレハブ青は名前側だけ。Pop より前に描くことで DrawItemIconLabel の文字色に乗る)
+    const EntityIconInfo icon = EntityIconInfoFor(world, e);
+    const bool nodeOpen = ImGui::TreeNodeEx("##node", flags);
+    DrawItemIconLabel(icon.icon, ComponentCategoryColor(icon.category), world.GetName(e),
+                      /*framed=*/false);
     if (isPrefab) {
         ImGui::PopStyleColor();
     }

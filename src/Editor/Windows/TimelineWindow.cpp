@@ -7,6 +7,8 @@
 #include "Engine/Engine/Replay/TimeTravel.h"
 
 #include "fontawesome/IconsFontAwesome6.h"
+#include "Engine/Renderer/ImGuiTheme.h" // themeColor (意味色)
+
 #include "imgui.h"
 
 namespace mye {
@@ -92,7 +94,7 @@ void TimelineWindow::OnImGui(EngineContext& ctx, PlayModeController& playMode)
     // ---- 分岐の明示 ----
     if (tt->Scrubbing()) {
         ImGui::Separator();
-        ImGui::TextColored(ImVec4(1.0f, 0.72f, 0.25f, 1.0f), "%s", Tr(StrId::TT_Scrubbing));
+        ImGui::TextColored(themeColor::PlayAccent, "%s", Tr(StrId::TT_Scrubbing));
         if (ImGui::Button(Tr(StrId::TT_Resume))) {
             tt->EndScrub();
             playMode.Resume();
@@ -112,11 +114,11 @@ void TimelineWindow::OnImGui(EngineContext& ctx, PlayModeController& playMode)
                         static_cast<unsigned long long>(s.resimTicks), s.ms);
             break;
         case SeekOutcome::HashMismatch:
-            ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.3f, 1.0f), Tr(StrId::TT_SeekMismatch),
+            ImGui::TextColored(themeColor::Error, Tr(StrId::TT_SeekMismatch),
                                static_cast<unsigned long long>(s.target));
             break;
         default:
-            ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.3f, 1.0f), "%s", Tr(StrId::TT_SeekFailed));
+            ImGui::TextColored(themeColor::Error, "%s", Tr(StrId::TT_SeekFailed));
             break;
         }
     }

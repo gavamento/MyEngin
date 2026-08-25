@@ -81,6 +81,16 @@ void Win32Window::Destroy()
     }
 }
 
+float Win32Window::DpiScale() const
+{
+    if (!hwnd_) {
+        return 1.0f;
+    }
+    // PerMonitorV2 なので生成時のモニタの実 DPI が返る (96 = 100%)。
+    // モニタ間移動 (WM_DPICHANGED) への追従は未対応 — 起動時の値で固定
+    return static_cast<float>(GetDpiForWindow(static_cast<HWND>(hwnd_))) / 96.0f;
+}
+
 void Win32Window::AddMsgHandler(MsgHandler handler)
 {
     handlers_.push_back(std::move(handler));
