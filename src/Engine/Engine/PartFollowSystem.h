@@ -2,6 +2,8 @@
 #include <cstdint>
 #include <unordered_set>
 
+#include <DirectXMath.h>
+
 namespace mye {
 
 class World;
@@ -38,5 +40,15 @@ public:
 private:
     std::unordered_set<uint64_t> warned_; // 警告済みキー (entity index | 理由) — ログ抑制のみ
 };
+
+// 行ベクトル規約の行列 (M = S * R * T) を TRS へ分解する (実装は PartFollowSystem.cpp)。
+// **hash 対象の LocalTransform を作る場所なので `XMMatrixDecompose` を使わない** —
+// あちらは内部が反復 (極分解) で構成間でビットが割れうる。詳細は実装側のコメント。
+//
+// M60g2 のラグドール生成器がこれを共有する: 生成器が骨の位置へ置く部位の LocalTransform は
+// 「PartFollowSystem がバインドポーズで書く値」とビット一致していなければならない
+// (ズレていると生成直後に部位がカクッと飛ぶ)。分解を 2 本持たないための公開。
+void DecomposeRowMajorTRS(const DirectX::XMMATRIX& m, DirectX::XMFLOAT3& outT,
+                          DirectX::XMFLOAT4& outR, DirectX::XMFLOAT3& outS);
 
 } // namespace mye

@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <string>
 
+#include "Editor/RagdollBuilder.h"
 #include "Editor/Selection.h"
 #include "Editor/Undo/UndoStack.h"
 #include "Engine/Core/Localization.h"
@@ -12,6 +13,7 @@
 #include "Engine/Engine/EntityNaming.h"
 #include "Engine/Engine/Scene.h"
 #include "Engine/Renderer/GpuResources.h"
+#include "Engine/Renderer/Skeleton.h"
 
 #include "imgui.h"
 
@@ -295,6 +297,36 @@ void DrawCreateMenuItems(EngineContext& ctx, Selection& selection, UndoStack& un
             }
             return obj;
         });
+    }
+
+    // ラグドール (M60g2)。右クリック対象の SkinnedMesh のスケルトンから階層を組む。
+    // 汎用 CreateItem に載せていない理由は 2 つ:
+    //   ① 生成物が **1 ルートに収まらない** (SkinnedMesh の直子が骨の数だけ横並びになる)
+    //      ので、RecordCreate の「1 ルートを CaptureAfter」では Undo に撮れない。
+    //      親のサブツリー差分 (CaptureBefore + CaptureAfter) で 1 回にまとめる
+    //   ② 親のスケルトンが解決できないなら項目自体を無効にする (部位の Inspector が
+    //      モデル未解決で自由入力へ落ちるのと同じ配慮 — 押せるのに何も出ないのが最悪)
+    {
+        World& world = ctx.scene->GetWorld();
+        const auto* sm =
+            parent.IsNull() ? nullptr : world.GetComponent<SkinnedMeshComponent>(parent);
+        const SkinnedModel* model =
+            (sm && ctx.resources) ? ctx.resources->skinnedModels.Get(sm->model) : nullptr;
+        const int bones = model ? ragdoll_build::CountParts(*model) : 0;
+        if (ImGui::MenuItem(Tr(StrId::Create_Ragdoll), nullptr, false, bones > 0) && model) {
+            const uint64_t fid = ctx.scene->EnsureFileId(parent);
+            undo.BeginRecord("Create Ragdoll", selection);
+            undo.CaptureBefore(*ctx.scene, fid);
+            ragdoll_build::Build(*ctx.scene, parent, *model);
+            // 生成物ではなく **SkinnedMesh 自身**を選ぶ。骨は横並びで「代表」が無いし、
+            // 直後に触りたいのは Ragdoll.active (= SkinnedMesh 側の札) だから
+            selection.SelectOnly(fid);
+            undo.CaptureAfter(*ctx.scene, fid);
+            undo.EndRecord(selection);
+        }
+        if (bones <= 0) {
+            ImGui::TextDisabled("%s", Tr(StrId::Create_RagdollNoSkin));
+        }
     }
 }
 

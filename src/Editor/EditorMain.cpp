@@ -10,6 +10,7 @@
 #include "Editor/EditorGlobalSettings.h"
 #include "Editor/GameFlowSelfTest.h"
 #include "Editor/PartSelfTest.h"
+#include "Editor/RagdollBuildSelfTest.h"
 #include "Engine/Engine/Asset/CookedCacheSelfTest.h"
 #include "Engine/Engine/SchemaSelfTest.h"
 #include "Editor/ProjectManager.h"
@@ -552,6 +553,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             && mye::RunPhysMatSelfTest()        // M59a1
             && mye::RunConvexSelfTest()         // M60f
             && mye::RunRagdollSelfTest()        // M60g1
+            && mye::RunRagdollBuildSelfTest()   // M60g2
             && mye::RunCameraPilotSelfTest();   // カメラ操縦 (視錐台 UI 追補)
         return ok ? 0 : 1;
     }

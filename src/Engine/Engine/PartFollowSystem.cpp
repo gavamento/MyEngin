@@ -25,7 +25,12 @@ uint64_t WarnKey(EntityID e, WarnKind k)
     return (static_cast<uint64_t>(e.index) << 8) | static_cast<uint64_t>(k);
 }
 
+} // namespace
+
 // 行ベクトル規約の行列 (M = S * R * T) を TRS へ分解する。
+// **M60g2 でエディタのラグドール生成器と共有する** — 生成器が置く部位の LocalTransform は
+// 「このシステムがバインドポーズで書く値」と 1 ビットも違ってはいけないので、
+// 分解を 2 本持つ (= 静かにズレる) 余地を残さない。
 //
 // ★`XMMatrixDecompose` を使わない: 内部が反復 (極分解) で、最適化とレジスタ割り当てに
 //   結果が左右されうる。ここは **hash 対象の LocalTransform を作る場所** なので、
@@ -86,8 +91,6 @@ void DecomposeRowMajorTRS(const XMMATRIX& m, XMFLOAT3& outT, XMFLOAT4& outR, XMF
     }
     outR = { qx, qy, qz, qw };
 }
-
-} // namespace
 
 void PartFollowSystem::Update(World& world, const RenderResources& resources)
 {
