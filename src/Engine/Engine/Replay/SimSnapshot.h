@@ -9,6 +9,7 @@ namespace mye {
 
 class Scene;
 class CpuParticleBackend;
+class XpbdBackend;
 class CollisionSystem;
 class ScriptHost;
 
@@ -20,7 +21,8 @@ class ScriptHost;
 // **対象は sim レーンだけ** = record/verify がハッシュを撮っている範囲と同一:
 //   World (全アーキタイプのカラム生バイト + レコード表 + freeIndices + ルート + RNG)
 //   Scene (TimeControl / PersistStore / nextFileId / sourcePath / override 表)
-//   CpuParticleBackend の池 / CollisionSystem の前 tick ペア / ScriptHost の Start 済み記録
+//   CpuParticleBackend の池 / XpbdBackend の池 (M60'b) /
+//   CollisionSystem の前 tick ペア / ScriptHost の Start 済み記録
 //   EngineLoop の prevTickInput (アクション評価の pressed/released 判定に効く) と
 //   audioHandleSeq (再生ハンドルの採番列)
 // **対象外**: C# (ManagedHost) レーン / GPU パーティクル / VfxRenderer トレイル /
@@ -36,6 +38,9 @@ class ScriptHost;
 struct SimRefs {
     Scene* scene = nullptr;            // 必須 (World の所有者)
     CpuParticleBackend* particles = nullptr;
+    // M60'b: XPBD 変形体の池。ハッシュ (WorldHasher の SimSources) と対で撮る —
+    // 片方だけだと「リプレイは通るのに巻き戻しで割れる」型のバグになる (3 点セット契約)
+    XpbdBackend* xpbd = nullptr;
     CollisionSystem* collision = nullptr;
     ScriptHost* scripts = nullptr;
     // M52g: **kMaxPlayers 本のレーン配列**の先頭を指す (1 本ではない)。
@@ -53,7 +58,8 @@ struct SimRefs {
 // blob のレイアウトを変えたらここだけを上げる。
 // v2 (M52e): LOP 節へ audioHandleSeq を追加
 // v3 (M52g): LOP 節の prevTickInput を kMaxPlayers 本のレーン配列へ (レーン数を節に明記)
-inline constexpr uint32_t kSimSnapshotVersion = 3;
+// v4 (M60'b): XPB 節 (XpbdBackend の池) を LOP 節の後・World 節の前に追加
+inline constexpr uint32_t kSimSnapshotVersion = 4;
 
 // 撮る: out を clear して blob を書く。成功で true。
 // 節ごとの参照が null なら「空の節」を書くのでレイアウトは常に同じ

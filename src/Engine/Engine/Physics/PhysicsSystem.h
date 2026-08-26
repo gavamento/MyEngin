@@ -7,6 +7,7 @@
 namespace mye {
 
 class World;
+class XpbdBackend;
 struct ColliderComponent;
 struct RigidbodyComponent;
 struct PhysMat;
@@ -57,7 +58,9 @@ public:
     // TransformSystem の直前に呼ぶ (Play / 検証時のみ)。dt は固定 tick (1/60)。
     // outContacts 非 null なら clear してソリッド接触ペアを key 昇順で書き込む (M28c)。
     // 両方不動 (静的/kinematic 同士) のペアはソルバ対象外なので出力されない。
-    void Update(World& world, float dt, std::vector<SolidContact>* outContacts = nullptr);
+    // xpbd (M60'b): 変形体の粒子池。先頭で Sync だけ呼ぶ (ソルバ統合は M60'c から)
+    void Update(World& world, float dt, std::vector<SolidContact>* outContacts = nullptr,
+                XpbdBackend* xpbd = nullptr);
 
     // 等価性テスト用 (PhysicsSelfTest): true でブロードフェーズを総当たり候補に切替。
     // 挙動はビット同一のはず — selftest がハッシュ比較で常時検証する

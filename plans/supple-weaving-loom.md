@@ -334,8 +334,8 @@ EngineLoop (所有)
 
 | サブ | 状態 | コミット | 備考 |
 |---|---|---|---|
-| M60'a 予約事項 1 (SimSources) | 完了 | (本コミット) | 下記「M60'a の申し送り」参照 |
-| M60'b XpbdBackend 骨格 | 未着手 | — | |
+| M60'a 予約事項 1 (SimSources) | 完了 | `05d9e2c` | 下記「M60'a の申し送り」参照 |
+| M60'b XpbdBackend 骨格 | 完了 | (本コミット) | 下記「M60'b の申し送り」参照 |
 | M60'c ソルバ核 + Rope | 未着手 | — | M60b 申し送り 8 (Joint Inspector 絵確認) をついで消化 |
 | M60'd アタッチ双方向 | 未着手 | — | |
 | M60'e 粒子 vs 世界 (片方向) | 未着手 | — | |
@@ -359,3 +359,18 @@ EngineLoop (所有)
    `HashWorld(w)` の機械置換に落ちた。
 3. 挙動不変の証明は selftest の `hash @` 行 14 本 (物理 9 + 関節系ほか) の置換前後
    ビット一致で取った。`[phys]` に限らず `hash @` で拾うと関節シーン (@300) も入る。
+
+### M60'b の申し送り (計画外の事実・罠)
+
+1. **WorldHasher の `EmitArray` は component 列が "Particles" 固定だった** — Xpbd 節が
+   ダンプで自分の列名を名乗れるよう component を引数化し、u32 配列の口 (ca/cb 用) を
+   足した。既存 Particles 行の出力バイトは不変。
+2. Sync の呼び出し位置は `PhysicsSystem::Update` の**先頭 (剛体の存在ゲートより前)**。
+   後ろに置くと「布だけのシーン (剛体ゼロ)」で池の同期が飛ぶ。
+3. Reset の配線は TickRunner の LoadScene 反映ブロック (`collisionSystem.Reset()` の隣)。
+   CpuParticleBackend は `particleSystem.ResetParticles()` がここに居る — 同じ場所。
+4. **blob レイアウト独立の契約を selftest に固定した**: 「refs.xpbd = null」と「空の
+   backend」が同一 blob を書くこと。これが崩れるとクラッシュ .rep が撮影時の構成に
+   縛られる。以後の節追加でも同じ検査を足すこと。
+5. 内容ゲートの証明は a と同じ 2 段階ビルド照合 (`hash @` 14 本の前後一致)。b 以降の
+   「既存シーン不変」主張はこの手法で機械化するのが最安。

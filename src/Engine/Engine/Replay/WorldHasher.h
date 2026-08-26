@@ -10,6 +10,7 @@ namespace mye {
 
 class World;
 class CpuParticleBackend;
+class XpbdBackend;
 struct TimeControl;
 class PersistStore;
 
@@ -31,6 +32,9 @@ struct SimSources {
     const CpuParticleBackend* particles = nullptr;
     const TimeControl* time = nullptr;
     const PersistStore* persist = nullptr;
+    // M60'b: XPBD 変形体の池。★畳み込みは内容ゲート (池が空なら節ごと畳まない) —
+    // CPU 粒子節と違い「配線しただけ」で既存シーンのハッシュを動かさないため
+    const XpbdBackend* xpbd = nullptr;
 };
 
 uint64_t HashWorld(World& world, const SimSources& src = {});

@@ -25,6 +25,7 @@
 #include "Engine/Engine/Physics/ConvexColliderLibrary.h"
 #include "Engine/Engine/Physics/MeshColliderLibrary.h"
 #include "Engine/Engine/Physics/PhysMatLibrary.h"
+#include "Engine/Engine/Physics/XpbdBackend.h" // M60'b: 変形体の粒子池
 #include "Engine/Engine/Physics/TerrainColliderLibrary.h"
 #include "Engine/Engine/Physics/PhysicsSystem.h"
 #include "Engine/Engine/Prefab.h"
@@ -113,6 +114,9 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     ConvexColliderLibrary convexColliders;   // 凸包コライダー + .mcvx クック (M60f)
     PhysMatLibrary physMatLibrary;     // .physmat.json (M59a1)。sim の消費は M59a2 から
     TerrainColliderLibrary terrainColliders; // 地形コライダー (M59i)。**描画側とは別キャッシュ**
+    // XPBD 変形体の粒子池 (M60'b)。ECS 外 sim 状態の 2 例目 — ハッシュ節 (SimSources) と
+    // snapshot 節 (SimRefs) の両方へ必ず配線する (3 点セット契約)
+    XpbdBackend xpbd;
     std::vector<SolidContact> solidContacts; // 物理→衝突イベントの tick 内受け渡し (M28c)
     PrefabLibrary prefabLibrary;
     AnimationLibrary animLibrary;
@@ -444,6 +448,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     SimRefs simRefs;
     simRefs.scene = &scene;
     simRefs.particles = &particleSystem.Cpu();
+    simRefs.xpbd = &xpbd; // M60'b: ハッシュ (SimSources) と対で撮る
     simRefs.collision = &collisionSystem;
     simRefs.scripts = &scriptHost;
     simRefs.prevTickInput = prevTickInput;
@@ -534,7 +539,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         // 開始点のワールドハッシュ。**tick 末にハッシュを撮るのと同じ点** (OnStart +
         // ApplyStructuralChanges の直後) で撮る = 「同じシーンから始めたか」の機械照合
         id.startWorldHash = HashWorld(scene.GetWorld(),
-                                      {&particleSystem.Cpu(), &scene.Time(), &scene.Persist()});
+                                      {&particleSystem.Cpu(), &scene.Time(), &scene.Persist(), &xpbd});
         const bool ok = !netFailed && net.Start(ncfg, id, ctx.tickIndex)
             && net.WaitUntilReady([&window] { return window.PumpMessages(); });
         if (!ok) {
@@ -686,6 +691,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     tickServices.partFollowSystem = &partFollowSystem;
     tickServices.effectSystem = &effectSystem;
     tickServices.physicsSystem = &physicsSystem;
+    tickServices.xpbd = &xpbd; // M60'b
     tickServices.transformSystem = &transformSystem;
     tickServices.collisionSystem = &collisionSystem;
     tickServices.particleSystem = &particleSystem;
@@ -807,7 +813,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             //   ビット一致しなければ、決定論の外 (C# レーン等) が混ざっている証拠
             rep.expectedHash = timeTravel.HashAtTick(target);
             rep.actualHash = HashWorld(scene.GetWorld(),
-                                       {&particleSystem.Cpu(), &scene.Time(), &scene.Persist()});
+                                       {&particleSystem.Cpu(), &scene.Time(), &scene.Persist(), &xpbd});
             rep.outcome = (rep.expectedHash == rep.actualHash) ? SeekOutcome::Ok
                                                               : SeekOutcome::HashMismatch;
         }
@@ -830,7 +836,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // ここで 1 本に畳んだ
     const auto TickEndHash = [&]() -> uint64_t {
         return HashWorld(scene.GetWorld(),
-                         {&particleSystem.Cpu(), &scene.Time(), &scene.Persist()});
+                         {&particleSystem.Cpu(), &scene.Time(), &scene.Persist(), &xpbd});
     };
 
     // ---- 予測ロールバック (M52i、決定台帳 2) ----
@@ -1047,7 +1053,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         report.role = config.netRole;
         HashDump dump;
         HashWorldDump(scene.GetWorld(),
-                      {&particleSystem.Cpu(), &scene.Time(), &scene.Persist()}, ctx.tickIndex, dump);
+                      {&particleSystem.Cpu(), &scene.Time(), &scene.Persist(), &xpbd}, ctx.tickIndex, dump);
         std::wstring dir;
         const std::wstring crashRoot =
             config.projectRoot.empty() ? GetExecutableDir() : config.projectRoot;

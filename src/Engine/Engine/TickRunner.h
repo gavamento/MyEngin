@@ -19,6 +19,7 @@ class SkinningSystem;
 class PartFollowSystem;
 class EffectSystem;
 class PhysicsSystem;
+class XpbdBackend;
 class TransformSystem;
 class CollisionSystem;
 class ParticleSystem;
@@ -74,6 +75,7 @@ struct TickServices {
     PartFollowSystem* partFollowSystem = nullptr;
     EffectSystem* effectSystem = nullptr;
     PhysicsSystem* physicsSystem = nullptr;
+    XpbdBackend* xpbd = nullptr; // M60'b: 変形体の粒子池 (PhysicsSystem::Update へ渡す)
     TransformSystem* transformSystem = nullptr;
     CollisionSystem* collisionSystem = nullptr;
     ParticleSystem* particleSystem = nullptr;

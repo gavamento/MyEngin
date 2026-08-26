@@ -37,6 +37,7 @@
 #include "Engine/Engine/ParticleSelfTest.h"
 #include "Engine/Engine/Physics/ConvexSelfTest.h"
 #include "Engine/Engine/Physics/RagdollSelfTest.h"
+#include "Engine/Engine/Physics/XpbdSelfTest.h"
 #include "Engine/Engine/Physics/PhysMatSelfTest.h"
 #include "Engine/Engine/PhysicsSelfTest.h"
 #include "Engine/Engine/RayTracing/RtSelfTest.h"
@@ -559,7 +560,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             && mye::RunRagdollSelfTest()        // M60g1
             && mye::RunRagdollBuildSelfTest()   // M60g2
             && mye::RunCameraPilotSelfTest()    // カメラ操縦 (視錐台 UI 追補)
-            && mye::RunDllReloaderSelfTest();   // DLL 書き込み完了プローブ (M52h 追補)
+            && mye::RunDllReloaderSelfTest()    // DLL 書き込み完了プローブ (M52h 追補)
+            && mye::RunXpbdSelfTest();          // M60'b
         return ok ? 0 : 1;
     }
 

@@ -12,6 +12,7 @@
 #include "Engine/Core/World.h"
 #include "Engine/Engine/GameFlow.h"
 #include "Engine/Engine/Particles/CpuParticleBackend.h"
+#include "Engine/Engine/Physics/XpbdBackend.h"
 #include "Engine/Platform/PathUtil.h"
 
 namespace mye {
@@ -122,9 +123,11 @@ void EmitBytes(DumpCtx* d, const char* component, const char* field, const void*
     Emit(d, component, field, v, fold);
 }
 
-// パーティクルの SoA 配列は要素数が数千になりうる。生 hex を出すとダンプが破裂するので
-// 「要素数 + 配列単体のサブハッシュ」に畳んで 1 行にする (割れたエミッタと配列までは特定できる)
-void EmitArray(DumpCtx* d, const char* field, const float* data, uint32_t count, uint64_t fold)
+// SoA 配列は要素数が数千になりうる。生 hex を出すとダンプが破裂するので
+// 「要素数 + 配列単体のサブハッシュ」に畳んで 1 行にする (割れた池と配列までは特定できる)。
+// M60'b: Xpbd 節も使うようになったので component を引数化し、u32 配列の口を足した
+void EmitArray(DumpCtx* d, const char* component, const char* field, const void* data,
+               size_t bytes, uint32_t count, uint64_t fold)
 {
     if (!d || !d->lines) {
         return;
@@ -134,8 +137,20 @@ void EmitArray(DumpCtx* d, const char* field, const float* data, uint32_t count,
     v += "n=";
     AppendDecU64(v, count);
     v.push_back('#');
-    AppendHexU64(v, HashBytes(data, count * sizeof(float)));
-    Emit(d, "Particles", field, v, fold);
+    AppendHexU64(v, HashBytes(data, bytes));
+    Emit(d, component, field, v, fold);
+}
+
+void EmitArray(DumpCtx* d, const char* component, const char* field, const float* data,
+               uint32_t count, uint64_t fold)
+{
+    EmitArray(d, component, field, data, count * sizeof(float), count, fold);
+}
+
+void EmitArray(DumpCtx* d, const char* component, const char* field, const uint32_t* data,
+               uint32_t count, uint64_t fold)
+{
+    EmitArray(d, component, field, data, count * sizeof(uint32_t), count, fold);
 }
 
 // 1 エンティティ分: 親リンク + シリアライズ対象コンポーネントの登録フィールド
@@ -212,23 +227,86 @@ uint64_t HashCpuParticles(const CpuParticleBackend& cpu, DumpCtx* d)
         const uint32_t n = pool.alive;
         if (n > 0) {
             h = HashBytes(pool.px.data(), n * sizeof(float), h);
-            EmitArray(d, "px", pool.px.data(), n, h);
+            EmitArray(d, "Particles", "px", pool.px.data(), n, h);
             h = HashBytes(pool.py.data(), n * sizeof(float), h);
-            EmitArray(d, "py", pool.py.data(), n, h);
+            EmitArray(d, "Particles", "py", pool.py.data(), n, h);
             h = HashBytes(pool.pz.data(), n * sizeof(float), h);
-            EmitArray(d, "pz", pool.pz.data(), n, h);
+            EmitArray(d, "Particles", "pz", pool.pz.data(), n, h);
             h = HashBytes(pool.vx.data(), n * sizeof(float), h);
-            EmitArray(d, "vx", pool.vx.data(), n, h);
+            EmitArray(d, "Particles", "vx", pool.vx.data(), n, h);
             h = HashBytes(pool.vy.data(), n * sizeof(float), h);
-            EmitArray(d, "vy", pool.vy.data(), n, h);
+            EmitArray(d, "Particles", "vy", pool.vy.data(), n, h);
             h = HashBytes(pool.vz.data(), n * sizeof(float), h);
-            EmitArray(d, "vz", pool.vz.data(), n, h);
+            EmitArray(d, "Particles", "vz", pool.vz.data(), n, h);
             h = HashBytes(pool.life.data(), n * sizeof(float), h);
-            EmitArray(d, "life", pool.life.data(), n, h);
+            EmitArray(d, "Particles", "life", pool.life.data(), n, h);
             h = HashBytes(pool.invLife.data(), n * sizeof(float), h);
-            EmitArray(d, "invLife", pool.invLife.data(), n, h);
+            EmitArray(d, "Particles", "invLife", pool.invLife.data(), n, h);
             h = HashBytes(pool.size0.data(), n * sizeof(float), h);
-            EmitArray(d, "size0", pool.size0.data(), n, h);
+            EmitArray(d, "Particles", "size0", pool.size0.data(), n, h);
+        }
+    }
+    if (d && d->lines) {
+        d->entityCol = "-";
+    }
+    return h;
+}
+
+// XPBD 変形体の池 (M60'b)。HashCpuParticles と同じ形 — 池ごとに owner と種別を畳み、
+// 粒子 SoA と距離拘束 (rest は塑性で変わる状態) を生バイトで畳む。
+// 要素数も明示的に畳む: 空配列の並びだけでは「粒子 0 + 拘束 1」と「粒子 1 + 拘束 0」の
+// 境界が曖昧になるため
+uint64_t HashXpbdPools(const XpbdBackend& xpbd, DumpCtx* d)
+{
+    uint64_t h = kFnvOffset;
+    for (const XpbdBackend::Pool& pool : xpbd.Pools()) { // owner.index 昇順
+        if (d && d->lines) {
+            d->entityCol.clear();
+            AppendDecU64(d->entityCol, pool.owner.index);
+            d->entityCol.push_back(':');
+            AppendDecU64(d->entityCol, pool.owner.generation);
+        }
+        h = HashCombine(h, pool.owner.index);
+        EmitU64(d, "Xpbd", "owner.index", pool.owner.index, h);
+        h = HashCombine(h, pool.owner.generation);
+        EmitU64(d, "Xpbd", "owner.generation", pool.owner.generation, h);
+        h = HashCombine(h, pool.kind);
+        EmitU64(d, "Xpbd", "kind", pool.kind, h);
+        const uint32_t n = static_cast<uint32_t>(pool.px.size());
+        const uint32_t m = static_cast<uint32_t>(pool.ca.size());
+        h = HashCombine(h, n);
+        EmitU64(d, "Xpbd", "particleCount", n, h);
+        h = HashCombine(h, m);
+        EmitU64(d, "Xpbd", "constraintCount", m, h);
+        if (n > 0) {
+            h = HashBytes(pool.px.data(), n * sizeof(float), h);
+            EmitArray(d, "Xpbd", "px", pool.px.data(), n, h);
+            h = HashBytes(pool.py.data(), n * sizeof(float), h);
+            EmitArray(d, "Xpbd", "py", pool.py.data(), n, h);
+            h = HashBytes(pool.pz.data(), n * sizeof(float), h);
+            EmitArray(d, "Xpbd", "pz", pool.pz.data(), n, h);
+            h = HashBytes(pool.vx.data(), n * sizeof(float), h);
+            EmitArray(d, "Xpbd", "vx", pool.vx.data(), n, h);
+            h = HashBytes(pool.vy.data(), n * sizeof(float), h);
+            EmitArray(d, "Xpbd", "vy", pool.vy.data(), n, h);
+            h = HashBytes(pool.vz.data(), n * sizeof(float), h);
+            EmitArray(d, "Xpbd", "vz", pool.vz.data(), n, h);
+            h = HashBytes(pool.prevX.data(), n * sizeof(float), h);
+            EmitArray(d, "Xpbd", "prevX", pool.prevX.data(), n, h);
+            h = HashBytes(pool.prevY.data(), n * sizeof(float), h);
+            EmitArray(d, "Xpbd", "prevY", pool.prevY.data(), n, h);
+            h = HashBytes(pool.prevZ.data(), n * sizeof(float), h);
+            EmitArray(d, "Xpbd", "prevZ", pool.prevZ.data(), n, h);
+            h = HashBytes(pool.invMass.data(), n * sizeof(float), h);
+            EmitArray(d, "Xpbd", "invMass", pool.invMass.data(), n, h);
+        }
+        if (m > 0) {
+            h = HashBytes(pool.ca.data(), m * sizeof(uint32_t), h);
+            EmitArray(d, "Xpbd", "ca", pool.ca.data(), m, h);
+            h = HashBytes(pool.cb.data(), m * sizeof(uint32_t), h);
+            EmitArray(d, "Xpbd", "cb", pool.cb.data(), m, h);
+            h = HashBytes(pool.rest.data(), m * sizeof(float), h);
+            EmitArray(d, "Xpbd", "rest", pool.rest.data(), m, h);
         }
     }
     if (d && d->lines) {
@@ -329,6 +407,14 @@ uint64_t HashWorldImpl(World& world, const SimSources& src,
         const uint64_t ph = HashCpuParticles(*src.particles, d);
         total = HashCombine(total, ph);
         EmitU64(d, "Particles", "#total", ph, total);
+    }
+    // XPBD 変形体の池 (M60'b)。★内容ゲート — 池が 1 つも無ければ節ごと畳まない。
+    //   CPU 粒子節は「ポインタ非 null なら空でも定数を 1 個畳む」形だが、それを真似ると
+    //   配線しただけで全既存シーンのハッシュが動き .rep 版 bump が要る (計画の決定台帳 4)
+    if (src.xpbd && !src.xpbd->Pools().empty()) {
+        const uint64_t xh = HashXpbdPools(*src.xpbd, d);
+        total = HashCombine(total, xh);
+        EmitU64(d, "Xpbd", "#total", xh, total);
     }
     return total;
 }

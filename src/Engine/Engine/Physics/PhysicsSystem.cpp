@@ -14,6 +14,7 @@
 #include "Engine/Engine/Physics/ConvexHull.h"            // M60f: 凸包の質量特性
 #include "Engine/Engine/Physics/PhysMatLibrary.h" // M59a2: physmat::Resolve (材料解決)
 #include "Engine/Engine/Physics/Shapes.h"
+#include "Engine/Engine/Physics/XpbdBackend.h" // M60'b: 変形体の粒子池 (Sync のみ)
 #include "Engine/Engine/Ragdoll.h" // M60g1: 休止中のラグドールは kinematic 扱い
 
 using namespace DirectX;
@@ -1020,10 +1021,16 @@ void SolveCharacters(std::vector<Body>& bodies, std::vector<CharBody>& chars, fl
 
 } // namespace
 
-void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* outContacts)
+void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* outContacts,
+                           XpbdBackend* xpbd)
 {
     if (outContacts) {
         outContacts->clear();
+    }
+    // M60'b: 変形体の池をコンポーネントの有無と同期する (M60'b 時点では空実装)。
+    // ★剛体の存在ゲートより前に置く — 布だけのシーン (剛体ゼロ) でも池は同期される必要がある
+    if (xpbd) {
+        xpbd->Sync(world);
     }
     // ---- 収集 (動的: Rigidbody + LocalTransform) ----
     std::vector<Body> bodies;

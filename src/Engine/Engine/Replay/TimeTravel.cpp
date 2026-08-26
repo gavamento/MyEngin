@@ -17,7 +17,7 @@ uint64_t TimeTravel::HashOf(const SimRefs& refs)
     // ★record/verify が撮っているのと**同じ 3 出口の同じ引数**で撮ること。
     //   ここだけ引数が欠けるとシークの自己検証が「割れていないのに割れた」と言い出す
     return HashWorld(refs.scene->GetWorld(),
-                     {refs.particles, &refs.scene->Time(), &refs.scene->Persist()});
+                     {refs.particles, &refs.scene->Time(), &refs.scene->Persist(), refs.xpbd});
 }
 
 void TimeTravel::SetEnabled(bool on)

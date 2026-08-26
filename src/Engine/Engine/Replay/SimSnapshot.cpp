@@ -12,6 +12,7 @@
 #include "Engine/Core/World.h"
 #include "Engine/Engine/CollisionSystem.h"
 #include "Engine/Engine/Particles/CpuParticleBackend.h"
+#include "Engine/Engine/Physics/XpbdBackend.h"
 #include "Engine/Engine/Scene.h"
 #include "Engine/Engine/Script/ScriptHost.h"
 
@@ -25,6 +26,7 @@ constexpr uint32_t kPtclMagic = 0x31435450u;  // 'PTC1'
 constexpr uint32_t kCollMagic = 0x314C4F43u;  // 'COL1'
 constexpr uint32_t kScrMagic = 0x31524353u;   // 'SCR1'
 constexpr uint32_t kLoopMagic = 0x31504F4Cu;  // 'LOP1'
+constexpr uint32_t kXpbdMagic = 0x31425058u;  // 'XPB1' (M60'b)
 
 constexpr size_t kHeaderBytes = 4 * sizeof(uint32_t) + sizeof(uint64_t);
 
@@ -204,6 +206,65 @@ void WriteScripts(ByteWriter& w, ScriptHost* scripts)
     w.PodVector(keys);
 }
 
+// ---- XPBD 変形体の池 (M60'b) ----
+// パーティクル節と同じ流儀: null なら空の節を書く = blob レイアウトは refs の構成に依らず
+// 常に同じ。SoA は PodVector で一括 (要素毎ループは撮影コストに直結する)
+void WriteXpbd(ByteWriter& w, const XpbdBackend* xpbd)
+{
+    w.U32(kXpbdMagic);
+    const std::vector<XpbdBackend::Pool> empty;
+    const std::vector<XpbdBackend::Pool>& pools = xpbd != nullptr ? xpbd->Pools() : empty;
+    w.Count(pools.size());
+    for (const XpbdBackend::Pool& p : pools) {
+        w.U32(p.owner.index);
+        w.U32(p.owner.generation);
+        w.U32(p.kind);
+        w.PodVector(p.px);
+        w.PodVector(p.py);
+        w.PodVector(p.pz);
+        w.PodVector(p.vx);
+        w.PodVector(p.vy);
+        w.PodVector(p.vz);
+        w.PodVector(p.prevX);
+        w.PodVector(p.prevY);
+        w.PodVector(p.prevZ);
+        w.PodVector(p.invMass);
+        w.PodVector(p.ca);
+        w.PodVector(p.cb);
+        w.PodVector(p.rest);
+    }
+}
+
+bool ReadXpbd(ByteReader& r, std::vector<XpbdBackend::Pool>& out)
+{
+    if (r.U32() != kXpbdMagic) {
+        MYE_LOG_ERROR("[snapshot] xpbd section magic mismatch");
+        return false;
+    }
+    const size_t count = r.Count(sizeof(uint32_t) * 3);
+    out.resize(count);
+    for (size_t i = 0; i < count && r.Ok(); ++i) {
+        XpbdBackend::Pool& p = out[i];
+        p.owner.index = r.U32();
+        p.owner.generation = r.U32();
+        p.kind = r.U32();
+        p.px = r.PodVector<float>();
+        p.py = r.PodVector<float>();
+        p.pz = r.PodVector<float>();
+        p.vx = r.PodVector<float>();
+        p.vy = r.PodVector<float>();
+        p.vz = r.PodVector<float>();
+        p.prevX = r.PodVector<float>();
+        p.prevY = r.PodVector<float>();
+        p.prevZ = r.PodVector<float>();
+        p.invMass = r.PodVector<float>();
+        p.ca = r.PodVector<uint32_t>();
+        p.cb = r.PodVector<uint32_t>();
+        p.rest = r.PodVector<float>();
+    }
+    return r.Ok();
+}
+
 // ---- EngineLoop の tick 間キャリー (M51d の前 tick 入力 + M52e の音ハンドル採番) ----
 void WriteLoop(ByteWriter& w, const InputSnapshot* prevTickInput, const uint64_t* audioHandleSeq)
 {
@@ -241,6 +302,7 @@ bool CaptureSimSnapshot(const SimRefs& refs, std::vector<std::byte>& out)
     WriteCollision(w, refs.collision);
     WriteScripts(w, refs.scripts);
     WriteLoop(w, refs.prevTickInput, refs.audioHandleSeq);
+    WriteXpbd(w, refs.xpbd); // M60'b (v4)
     // ★World は**最後**に置く。復元は「小さい節を全部一時領域へ読み切ってから
     //   World::SnapshotRead (それ自体が全読み後に一括差し替え) を呼ぶ」順で走るので、
     //   どこで失敗しても現世界に手が付いていない状態で戻れる
@@ -298,6 +360,10 @@ bool RestoreSimSnapshot(const SimRefs& refs, const std::byte* data, size_t size)
         r.Raw(&prevTickInput[p], sizeof(InputSnapshot));
     }
     const uint64_t audioHandleSeq = r.U64();
+    std::vector<XpbdBackend::Pool> xpbdPools;
+    if (!ReadXpbd(r, xpbdPools)) { // M60'b (v4)。refs.xpbd が無い構成では読み捨てる
+        return false;
+    }
     if (!r.Ok()) {
         MYE_LOG_ERROR("[snapshot] truncated blob");
         return false;
@@ -317,6 +383,9 @@ bool RestoreSimSnapshot(const SimRefs& refs, const std::byte* data, size_t size)
 
     if (refs.particles != nullptr) {
         refs.particles->PoolsForSnapshot() = std::move(pools);
+    }
+    if (refs.xpbd != nullptr) {
+        refs.xpbd->PoolsForSnapshot() = std::move(xpbdPools);
     }
     if (refs.collision != nullptr) {
         refs.collision->PrevPairsForSnapshot() = std::move(prevPairs);

@@ -26,6 +26,7 @@
 #include "Engine/Engine/Particles/ParticleSystem.h"
 #include "Engine/Engine/Physics/PhysicsDebugDraw.h"
 #include "Engine/Engine/Physics/PhysicsSystem.h"
+#include "Engine/Engine/Physics/XpbdBackend.h" // M60'b: シーン遷移時の Reset 用
 #include "Engine/Engine/Prefab.h"
 #include "Engine/Engine/RenderSystem.h"
 #include "Engine/Engine/Replay/Replay.h"
@@ -322,7 +323,7 @@ void RunOneTick(TickServices& ts)
     if (stepSim) {
         MYE_PROFILE_SCOPE("physics");
         // ソリッド接触ペアを受け取り CollisionSystem へ渡す (M28c OnCollision 配信)
-        physicsSystem.Update(scene.GetWorld(), ctx.fixedDt, &solidContacts);
+        physicsSystem.Update(scene.GetWorld(), ctx.fixedDt, &solidContacts, ts.xpbd);
         // v14 GetContactInfo (M59k): ここから先 (OnCollision* / LateUpdate) だけが読める。
         // stepSim が false の tick は繋がないまま = ポーズ中は常に「接触なし」が返る
         scriptHost.SetTickContacts(&solidContacts);
@@ -417,7 +418,7 @@ void RunOneTick(TickServices& ts)
         std::vector<EntityHash> order;
         uint64_t total = 0;
         HashWorldDetailed(scene.GetWorld(),
-                          {&particleSystem.Cpu(), &scene.Time(), &scene.Persist()}, order, total);
+                          {&particleSystem.Cpu(), &scene.Time(), &scene.Persist(), ts.xpbd}, order, total);
         for (const EntityHash& e : order) {
             if (auto* t = scene.GetWorld().GetComponent<LocalTransform>(e.entity)) {
                 t->position.x += 0.001f;
@@ -436,7 +437,7 @@ void RunOneTick(TickServices& ts)
         && ctx.tickIndex == static_cast<uint64_t>(config.hashDumpTick)) {
         HashDump dump;
         HashWorldDump(scene.GetWorld(),
-                      {&particleSystem.Cpu(), &scene.Time(), &scene.Persist()}, ctx.tickIndex, dump);
+                      {&particleSystem.Cpu(), &scene.Time(), &scene.Persist(), ts.xpbd}, ctx.tickIndex, dump);
         WriteHashDump(config.hashDumpPath, dump);
     }
 
@@ -444,14 +445,14 @@ void RunOneTick(TickServices& ts)
     if (Recording()) {
         ts.recorder->RecordTick(ctx.inputs, ctx.playerCount,
                                 HashWorld(scene.GetWorld(),
-                                          {&particleSystem.Cpu(), &scene.Time(), &scene.Persist()}));
+                                          {&particleSystem.Cpu(), &scene.Time(), &scene.Persist(), ts.xpbd}));
         if (ts.recorder->TickCount() >= static_cast<uint64_t>(config.replayTicks)) {
             ts.recorder->Finish();
             ctx.requestExit = true;
         }
     } else if (Verifying()) {
         const uint64_t actual = HashWorld(scene.GetWorld(),
-                                          {&particleSystem.Cpu(), &scene.Time(), &scene.Persist()});
+                                          {&particleSystem.Cpu(), &scene.Time(), &scene.Persist(), ts.xpbd});
         const uint64_t expected = ts.player->ExpectedHash(ctx.tickIndex);
         if (expected == 0) {
             // ★期待値なし = クラッシュ .rep の「走り切らなかった最後の tick」(M52f)。
@@ -474,7 +475,7 @@ void RunOneTick(TickServices& ts)
             std::vector<EntityHash> detail;
             uint64_t total = 0;
             HashWorldDetailed(scene.GetWorld(),
-                              {&particleSystem.Cpu(), &scene.Time(), &scene.Persist()}, detail, total);
+                              {&particleSystem.Cpu(), &scene.Time(), &scene.Persist(), ts.xpbd}, detail, total);
             MYE_LOG_ERROR("[replay]   entities=%zu rng=%016llX", detail.size(),
                           static_cast<unsigned long long>(scene.GetWorld().Rng().State()));
             for (size_t i = 0; i < detail.size() && i < 8; ++i) {
@@ -493,7 +494,7 @@ void RunOneTick(TickServices& ts)
                     config.replayVerifyPath + L".tick" + tickStr + L".actual.dump";
                 HashDump dump;
                 HashWorldDump(scene.GetWorld(),
-                              {&particleSystem.Cpu(), &scene.Time(), &scene.Persist()}, ctx.tickIndex, dump);
+                              {&particleSystem.Cpu(), &scene.Time(), &scene.Persist(), ts.xpbd}, ctx.tickIndex, dump);
                 WriteHashDump(dumpPath, dump);
                 std::ofstream mf(
                     std::filesystem::path(config.replayVerifyPath + L".mismatch.txt"));
@@ -594,6 +595,9 @@ void RunOneTick(TickServices& ts)
             scene.GetWorld().Rng().Seed(0x4D794531ull); // 決定論的再シード (World 既定値)
             collisionSystem.Reset();
             particleSystem.ResetParticles();
+            if (ts.xpbd) {
+                ts.xpbd->Reset(); // M60'b: 旧シーンの変形体の池を捨てる
+            }
             vfxRenderer.Reset(); // M29c: トレイル点列も新シーンでリセット
             partFollowSystem.Reset(); // M48g: 旧シーンの warn 抑制を捨てる
             scriptHost.ClearStarted();
