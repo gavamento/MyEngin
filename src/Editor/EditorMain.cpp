@@ -35,6 +35,7 @@
 #include "Engine/Engine/EngineLoop.h"
 #include "Engine/Engine/ParticleSelfTest.h"
 #include "Engine/Engine/Physics/ConvexSelfTest.h"
+#include "Engine/Engine/Physics/RagdollSelfTest.h"
 #include "Engine/Engine/Physics/PhysMatSelfTest.h"
 #include "Engine/Engine/PhysicsSelfTest.h"
 #include "Engine/Engine/RayTracing/RtSelfTest.h"
@@ -550,6 +551,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             && mye::RunProbeBakerSelfTest()     // M56e
             && mye::RunPhysMatSelfTest()        // M59a1
             && mye::RunConvexSelfTest()         // M60f
+            && mye::RunRagdollSelfTest()        // M60g1
             && mye::RunCameraPilotSelfTest();   // カメラ操縦 (視錐台 UI 追補)
         return ok ? 0 : 1;
     }

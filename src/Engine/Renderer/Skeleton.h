@@ -91,4 +91,21 @@ DirectX::XMMATRIX JointGlobalFromLocals(const SkinnedModel& model,
                                         const std::vector<DirectX::XMMATRIX>& locals,
                                         int32_t jointIndex);
 
+// ---- ラグドール用のパレット構築 (M60g1) ----
+// `hasOverride[j]` が非 0 のジョイントは **`overrides[j]` をそのまま jointGlobal として使う**
+// (剛体が骨の代わりに姿勢を決めている)。残りは locals から階層合成で埋める。
+//
+// ★合成は `JointGlobalFromLocals` と**同じ「親チェーンを上へ」の形**で書いてある。
+//   途中で override 済みの祖先に当たったらそこで打ち切ってその行列を掛ける。
+//   おかげで **joints 配列が親→子順に並んでいる必要が無い** (glTF / FBX のどちらでも
+//   前提を置かずに済む) し、override が 1 つも無いときは `ComputeBonePalette` と
+//   1 命令も違わない = ビット一致する。
+// ★配列長が joints.size() と食い違うときは override 無しとして扱う (壊れた入力から
+//   黙って別のポーズを作らない)。
+void ComputeBonePaletteWithOverrides(const SkinnedModel& model,
+                                     const std::vector<DirectX::XMMATRIX>& locals,
+                                     const std::vector<uint8_t>& hasOverride,
+                                     const std::vector<DirectX::XMMATRIX>& overrides,
+                                     std::vector<DirectX::XMFLOAT4X4>& out);
+
 } // namespace mye

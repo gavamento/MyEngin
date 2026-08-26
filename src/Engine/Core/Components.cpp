@@ -683,6 +683,15 @@ void RegisterBuiltinComponents()
                              "relative rotation that counts as 'at rest'; identity means the "
                              "two local frames line up")),
     });
+
+    // M60g1: ラグドール。**hash 対象** — active が「アニメが骨を駆動するか / 物理が駆動するか」
+    // を切り替え、物理の収集分岐 (部位を kinematic として扱うか) がこれを読む。
+    // SkinnedMesh 側に付く札で、骨の実体は Part を持つ直子エンティティ (TypeId 末尾 append =41)
+    RegisterComponent<RagdollComponent>("Ragdoll", {
+        MYE_JP("物理駆動", MYE_FIELD_TIP(RagdollComponent, active, Bool,
+                                         "on hands the bones to the rigid bodies; off lets the "
+                                         "animation drive them and holds the bodies kinematic")),
+    });
 }
 
 } // namespace mye

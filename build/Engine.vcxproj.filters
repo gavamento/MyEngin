@@ -282,6 +282,9 @@
     <ClCompile Include="..\src\Engine\Engine\Physics\PhysMatSelfTest.cpp">
       <Filter>Engine\Physics</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Physics\RagdollSelfTest.cpp">
+      <Filter>Engine\Physics</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Physics\Shapes.cpp">
       <Filter>Engine\Physics</Filter>
     </ClCompile>
@@ -301,6 +304,9 @@
       <Filter>Engine</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Project.cpp">
+      <Filter>Engine</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Ragdoll.cpp">
       <Filter>Engine</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\RayTracing\RtScene.cpp">
@@ -789,6 +795,9 @@
     <ClInclude Include="..\src\Engine\Engine\Physics\PhysMatSelfTest.h">
       <Filter>Engine\Physics</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Physics\RagdollSelfTest.h">
+      <Filter>Engine\Physics</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Physics\Shapes.h">
       <Filter>Engine\Physics</Filter>
     </ClInclude>
@@ -808,6 +817,9 @@
       <Filter>Engine</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Project.h">
+      <Filter>Engine</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Ragdoll.h">
       <Filter>Engine</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\RayTracing\RtScene.h">

@@ -8,7 +8,8 @@
 #include "Engine/Core/Components.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Core/World.h"
-#include "Engine/Engine/Parts.h" // ResolvePartSource (Inspector と共用)
+#include "Engine/Engine/Parts.h"   // ResolvePartSource (Inspector と共用)
+#include "Engine/Engine/Ragdoll.h" // M60g1: 駆動方向の判定 (物理・描画と共用)
 #include "Engine/Renderer/GpuResources.h"
 #include "Engine/Renderer/Skeleton.h"
 
@@ -134,6 +135,13 @@ void PartFollowSystem::Update(World& world, const RenderResources& resources)
                 MYE_LOG_WARN("[part] '%s': no SkinnedMesh source (set Part.source or put the part "
                              "under a skinned mesh)", world.GetName(job.part));
             }
+            continue;
+        }
+        // ---- M60g1: ラグドールが作動中なら骨を駆動するのは物理のほう ----
+        // ★ここで書くと同じ tick に「骨 → 部位」(この関数) と「物理 → 部位」(書き戻し) が
+        //   両方 LocalTransform (hash 対象) を書いて二重駆動になる。物理は TickRunner の
+        //   この直後に走るので、黙って上書きされて**アニメが勝ったり負けたりする**
+        if (ragdoll::IsSourceDriven(world, src)) {
             continue;
         }
         // ---- v1 規約: 部位は source の直子 ----

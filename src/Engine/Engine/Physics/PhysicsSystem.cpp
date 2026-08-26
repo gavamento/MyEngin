@@ -14,6 +14,7 @@
 #include "Engine/Engine/Physics/ConvexHull.h"            // M60f: 凸包の質量特性
 #include "Engine/Engine/Physics/PhysMatLibrary.h" // M59a2: physmat::Resolve (材料解決)
 #include "Engine/Engine/Physics/Shapes.h"
+#include "Engine/Engine/Ragdoll.h" // M60g1: 休止中のラグドールは kinematic 扱い
 
 using namespace DirectX;
 
@@ -216,6 +217,11 @@ struct Body {
     // subCount では判別できない — 「非対角が出る形状か」を専用フラグで表す
     bool fullInertia = false;
     float invILocal[3][3] = {}; // フルテンソル時: 剛体ローカルでの I⁻¹
+    // M60g1: kinematic として扱うか = `rb->isKinematic` **または**「休止中のラグドールに
+    // 属する部位」。後者は PartFollowSystem がアニメで LocalTransform を書いている最中なので、
+    // 物理が動かすと綱引きになる。★`rb->isKinematic` を書き換える案は採らない —
+    // Inspector の値を潰すし、ソルバがコンポーネントを書くのは家風でない (決定台帳 14)
+    bool kinematic = false;
     int32_t layer = 0;             // 衝突レイヤー (M36a、Collider から複製)
     uint32_t mask = 0xFFFFFFFFu;   // 衝突マスク (既定 = 全レイヤー → 従来挙動)
     // 親のワールドフレーム (M28d)。収集時に合成し運動学的フレームとして固定。
@@ -1016,6 +1022,9 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
     // ---- 収集 (動的: Rigidbody + LocalTransform) ----
     std::vector<Body> bodies;
     bool anyCompound = false; // M60e: 複合コライダーを要求した剛体が 1 つでも居るか
+    // M60g1: **存在ゲート**。RagdollComponent が 1 つも無ければ部位の探索ごと通らない
+    // (既存シーンは以降の分岐を 1 つも踏まない = ビット同一)
+    const bool anyRagdoll = ragdoll::AnyRagdoll(world);
     const ComponentTypeId dynReq[] = { RigidbodyComponent::sTypeId, LocalTransform::sTypeId };
     world.ForEachArchetype(dynReq, [&](Archetype& arch) {
         const int ri = arch.FindTypeIndex(RigidbodyComponent::sTypeId);
@@ -1027,8 +1036,15 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             }
             auto* rb = static_cast<RigidbodyComponent*>(arch.GetPtr(ri, row));
             auto* lt = static_cast<LocalTransform*>(arch.GetPtr(li, row));
+            // M60g1: 休止中のラグドールの骨は kinematic 扱い (アニメが LocalTransform を
+            // 握っている)。**分岐ゲート**で書く — 「係数 0 を掛ける」形にすると -0.0f 化けで
+            // ワールドハッシュが動く (M59f1-5)。ラグドール非所持シーンは
+            // anyRagdoll が false でルックアップごと飛ぶので fp 演算はゼロ
+            const bool held = anyRagdoll && ragdoll::IsPartHeld(world, e);
+            const bool kinematic = rb->isKinematic || held;
             Body b;
             b.entity = e;
+            b.kinematic = kinematic;
             b.lt = lt;
             b.rb = rb;
             // 親チェーンを合成しワールド姿勢で sim する (M28d。ルートは lt そのまま = 従来通り)
@@ -1051,20 +1067,33 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             b.wx = rb->angularVelocity.x;
             b.wy = rb->angularVelocity.y;
             b.wz = rb->angularVelocity.z;
+            if (held) {
+                // ★速度を 0 へ落とす。落とさないと「前回作動していたときの速度」が残った
+                //   まま kinematic として振る舞い、**アニメで固定されているはずの骨が
+                //   ぶつかった相手を突き飛ばす**。さらに active を true へ戻した瞬間に
+                //   その古い速度で弾け飛ぶ。
+                // ★rb 側にも書く — 休止中は書き戻しが走らない (invMass==0) ので、
+                //   作業コピーだけ 0 にしても古い値がコンポーネントに残り続ける。
+                //   代入であって演算ではないので -0.0f 化け (M59f1-5) は起きない
+                b.vx = 0.0f; b.vy = 0.0f; b.vz = 0.0f;
+                b.wx = 0.0f; b.wy = 0.0f; b.wz = 0.0f;
+                rb->velocity = { 0.0f, 0.0f, 0.0f };
+                rb->angularVelocity = { 0.0f, 0.0f, 0.0f };
+            }
             // コライダーがあり isTrigger==0 ならソリッド (衝突解決に参加)。
             // M41: メッシュ (shape=3) は静的/kinematic 専用 — 動的剛体では無視する
             // (慣性テンソルを定義しないため。kinematic は invMass=0 なので許可)
             // M59a2: 質量導出が形状体積を要るためコライダー取得を質量計算の前へ移動
             auto* col = world.GetComponent<ColliderComponent>(e);
-            if (col && col->shape == 3 && !rb->isKinematic) {
+            if (col && col->shape == 3 && !kinematic) {
                 col = nullptr;
             }
             const PhysMat* mat = col ? physmat::Resolve(col->physMaterial) : nullptr; // M59a2
             b.shapeCol = col; // M59b: 空力の基準面積も同じ「形状」の読みを共有する
             const float mass = ResolveBodyMass(*rb, col, mat, wscale.x, wscale.y, wscale.z);
-            b.invMass = rb->isKinematic ? 0.0f : (1.0f / mass);
+            b.invMass = kinematic ? 0.0f : (1.0f / mass);
             b.restitution = SelectRestitution(col, rb, mat);
-            b.freezeRot = rb->freezeRotation || rb->isKinematic;
+            b.freezeRot = rb->freezeRotation || kinematic;
             // M59f1: ジャイロ項と質量中心オフセット。**どちらも既定は無効**で、
             // 無効のあいだは以降の分岐が全て従来側へ落ちる (ビット同一)
             b.gyro = rb->gyroscopic;
@@ -1076,7 +1105,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             // invMass==0 の既存分岐でそのまま外れる
             b.awakeInvMass = b.invMass;
             b.awakeFreezeRot = b.freezeRot;
-            if (rb->isSleeping && !rb->isKinematic) {
+            if (rb->isSleeping && !kinematic) {
                 b.sleeping = true;
                 b.invMass = 0.0f;
                 b.freezeRot = true;
@@ -3844,7 +3873,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             }
         };
         // 静的/kinematic は繋がない — 繋ぐと床を介して世界中が 1 つの島になる
-        auto isDynamic = [&](const Body& b) { return b.rb && !b.rb->isKinematic; };
+        auto isDynamic = [&](const Body& b) { return b.rb && !b.kinematic; };
         for (const uint64_t pairKey : islandPairs) {
             const uint32_t ai = static_cast<uint32_t>(pairKey >> 32);
             const uint32_t bi = static_cast<uint32_t>(pairKey & 0xFFFFFFFFu);

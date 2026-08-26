@@ -991,6 +991,29 @@ struct JointComponent {
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
+// ---- ラグドール (M60g1) ----
+// **SkinnedMesh を持つエンティティ側に付く小さな札**。骨そのものは
+// `Part`(joint 名) + `Collider` + `Rigidbody` + `Joint` を持つ**直子エンティティ**で、
+// これは M48g のボーン追従部位とまったく同じ形 — ラグドールは新しい骨の表現を
+// 持ち込むのではなく、**既にある部位の駆動方向を反転させるだけ**の機能。
+//
+// ★`active` が「どちらが骨を駆動するか」の唯一のスイッチ:
+//   - false (既定) = **アニメ → 骨 → 部位**。`PartFollowSystem` が部位の LocalTransform を
+//     書き、物理は部位を kinematic として扱う (収集時に分岐 = Rigidbody は書き換えない)
+//   - true          = **物理 → 部位 → 骨**。`PartFollowSystem` は該当部位を skip し、
+//     描画側が部位の LocalTransform からボーンパレットを組み直す
+// ★切替の連続性がタダで手に入るのがこの設計の要点 — false→true の瞬間、部位の
+//   LocalTransform には**アニメが置いた骨姿勢そのもの**が入っているので、剛体の初期姿勢が
+//   飛ばない。ブレンド (物理とアニメの混ぜ合わせ) は v1 では約束しない。
+// ★**hash 対象** (sim 状態)。active が物理の収集を分岐させるので、snapshot と .rep が
+//   これを運ばないと巻き戻しで駆動方向が食い違う。
+// ★骨のポーズ自体は描画専用のまま (SkinnedMesh は kComponentNoHash)。ハッシュに載るのは
+//   部位の LocalTransform = 従来から載っていたものだけで、決定論の面積は広がらない
+struct RagdollComponent {
+    bool active = false;
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
 class World;
 
 // エンティティが有効か (ActiveComponent が無ければ有効 / enabled==0 なら無効)

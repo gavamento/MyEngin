@@ -11,6 +11,7 @@
 #include "Engine/Core/Profiler.h"
 #include "Engine/Core/World.h"
 #include "Engine/Engine/Particles/ParticleSystem.h"
+#include "Engine/Engine/Ragdoll.h" // M60g1: 剛体が骨を駆動しているときのパレット
 #include "Engine/Engine/Vfx/VfxRenderer.h"
 #include "Engine/Renderer/FrustumCull.h"
 #include "Engine/Renderer/GpuResources.h"
@@ -746,7 +747,15 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
                     skinPalettes_.emplace_back();
                     std::vector<XMFLOAT4X4>& palette = skinPalettes_.back();
                     const float timeSec = static_cast<float>(sm->timeTicks) / 60.0f;
-                    ComputeBonePalette(*model, sm->clip, timeSec, palette);
+                    // M60g1: ラグドールが作動中なら、骨の姿勢はアニメではなく**部位の
+                    // LocalTransform (= 剛体が置いた値)** から組む。入力が ECS 状態だけの
+                    // 純関数なので、ビュー毎に Render() が呼ばれても同じ絵になる
+                    if (const auto* rag = world.GetComponent<RagdollComponent>(c.e);
+                        rag && rag->active) {
+                        ragdoll::BuildBonePalette(world, c.e, *model, sm->clip, timeSec, palette);
+                    } else {
+                        ComputeBonePalette(*model, sm->clip, timeSec, palette);
+                    }
                     if (palette.size() > static_cast<size_t>(kMaxBones)) {
                         // 上限超過は切り捨て (シェーダの定数バッファが kMaxBones 固定のため)。
                         // 黙って切ると姿勢が壊れた原因が追えないので model 毎に 1 回だけ WARN

@@ -155,6 +155,41 @@ void ComputeBonePalette(const SkinnedModel& model, int clip, float timeSec,
     }
 }
 
+void ComputeBonePaletteWithOverrides(const SkinnedModel& model, const std::vector<XMMATRIX>& local,
+                                     const std::vector<uint8_t>& hasOverride,
+                                     const std::vector<XMMATRIX>& overrides,
+                                     std::vector<XMFLOAT4X4>& out)
+{
+    const size_t n = model.joints.size();
+    // 壊れた入力 (長さ違い) は override 無しとして扱う — 黙って別のポーズを作らない
+    const bool useOv = (hasOverride.size() == n && overrides.size() == n);
+
+    out.resize(n);
+    for (size_t j = 0; j < n; ++j) {
+        XMMATRIX global;
+        if (useOv && hasOverride[j] != 0) {
+            global = overrides[j];
+        } else {
+            // ★JointGlobalFromLocals と同じ「親チェーンを上へ」の積列。override 済みの
+            //   祖先に当たったらそこで打ち切る。useOv が false ならこのループは
+            //   JointGlobalFromLocals と 1 命令も変わらない (= ビット一致)
+            global = local[j];
+            int p = model.joints[j].parent;
+            while (p >= 0) {
+                const size_t pi = static_cast<size_t>(p);
+                if (useOv && hasOverride[pi] != 0) {
+                    global = XMMatrixMultiply(global, overrides[pi]);
+                    break;
+                }
+                global = XMMatrixMultiply(global, local[pi]);
+                p = model.joints[pi].parent;
+            }
+        }
+        const XMMATRIX ib = XMLoadFloat4x4(&model.joints[j].inverseBind);
+        XMStoreFloat4x4(&out[j], XMMatrixTranspose(XMMatrixMultiply(ib, global)));
+    }
+}
+
 XMMATRIX ComputeJointGlobal(const SkinnedModel& model, int clip, float timeSec, int32_t jointIndex)
 {
     if (jointIndex < 0 || static_cast<size_t>(jointIndex) >= model.joints.size()) {
