@@ -378,7 +378,7 @@ bool RunProbeBakerSelfTest()
         GameObject host = scene.CreateGameObjectTracked("ProbeHost");
         World& w = scene.GetWorld();
         w.ApplyStructuralChanges();
-        const uint64_t before = HashWorld(w, nullptr);
+        const uint64_t before = HashWorld(w);
         auto* rp = w.AddComponent<ReflectionProbeComponent>(host.Id());
         w.ApplyStructuralChanges();
         check(rp != nullptr, "ReflectionProbeComponent can be added to an entity");
@@ -388,7 +388,7 @@ bool RunProbeBakerSelfTest()
             rp->intensity = 0.5f;
             rp->boxProjection = false;
         }
-        check(before == HashWorld(w, nullptr),
+        check(before == HashWorld(w),
               "ReflectionProbeComponent is kComponentNoHash (the world hash never moves)");
     }
 

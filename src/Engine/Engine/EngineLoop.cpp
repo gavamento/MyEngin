@@ -533,8 +533,8 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             | (config.useCookCache ? kNetCfgCookCache : 0u);
         // 開始点のワールドハッシュ。**tick 末にハッシュを撮るのと同じ点** (OnStart +
         // ApplyStructuralChanges の直後) で撮る = 「同じシーンから始めたか」の機械照合
-        id.startWorldHash = HashWorld(scene.GetWorld(), &particleSystem.Cpu(), &scene.Time(),
-                                      &scene.Persist());
+        id.startWorldHash = HashWorld(scene.GetWorld(),
+                                      {&particleSystem.Cpu(), &scene.Time(), &scene.Persist()});
         const bool ok = !netFailed && net.Start(ncfg, id, ctx.tickIndex)
             && net.WaitUntilReady([&window] { return window.PumpMessages(); });
         if (!ok) {
@@ -806,8 +806,8 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             // ★シークは毎回**自己検証する**。戻して同じ入力で回した結果が記録と
             //   ビット一致しなければ、決定論の外 (C# レーン等) が混ざっている証拠
             rep.expectedHash = timeTravel.HashAtTick(target);
-            rep.actualHash = HashWorld(scene.GetWorld(), &particleSystem.Cpu(), &scene.Time(),
-                                       &scene.Persist());
+            rep.actualHash = HashWorld(scene.GetWorld(),
+                                       {&particleSystem.Cpu(), &scene.Time(), &scene.Persist()});
             rep.outcome = (rep.expectedHash == rep.actualHash) ? SeekOutcome::Ok
                                                               : SeekOutcome::HashMismatch;
         }
@@ -829,8 +829,8 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // (実測 約 0.2ms/回)。ロールバックが毎 tick ハッシュを要求するようになったので
     // ここで 1 本に畳んだ
     const auto TickEndHash = [&]() -> uint64_t {
-        return HashWorld(scene.GetWorld(), &particleSystem.Cpu(), &scene.Time(),
-                         &scene.Persist());
+        return HashWorld(scene.GetWorld(),
+                         {&particleSystem.Cpu(), &scene.Time(), &scene.Persist()});
     };
 
     // ---- 予測ロールバック (M52i、決定台帳 2) ----
@@ -1046,8 +1046,8 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         report.localPlayer = net.LocalPlayerIndex();
         report.role = config.netRole;
         HashDump dump;
-        HashWorldDump(scene.GetWorld(), &particleSystem.Cpu(), ctx.tickIndex, dump,
-                      &scene.Time(), &scene.Persist());
+        HashWorldDump(scene.GetWorld(),
+                      {&particleSystem.Cpu(), &scene.Time(), &scene.Persist()}, ctx.tickIndex, dump);
         std::wstring dir;
         const std::wstring crashRoot =
             config.projectRoot.empty() ? GetExecutableDir() : config.projectRoot;

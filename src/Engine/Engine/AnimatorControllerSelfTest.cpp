@@ -120,8 +120,8 @@ bool RunAnimatorControllerSelfTest()
             gb.GetComponent<AnimatorControllerComponent>()->params[0] = p;
             sys.Update(sa.GetWorld(), ctrlLib, animLib);
             sys.Update(sb.GetWorld(), ctrlLib, animLib);
-            const uint64_t ha = HashWorld(sa.GetWorld(), nullptr);
-            const uint64_t hb = HashWorld(sb.GetWorld(), nullptr);
+            const uint64_t ha = HashWorld(sa.GetWorld());
+            const uint64_t hb = HashWorld(sb.GetWorld());
             if (ha != hb) {
                 det = false;
             }

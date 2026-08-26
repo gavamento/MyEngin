@@ -180,8 +180,8 @@ bool RunPhysicsSelfTest()
         for (int i = 0; i < 240 && det; ++i) {
             phys.Update(sa.GetWorld(), kDt);
             phys.Update(sb.GetWorld(), kDt);
-            const uint64_t ha = HashWorld(sa.GetWorld(), nullptr);
-            const uint64_t hb = HashWorld(sb.GetWorld(), nullptr);
+            const uint64_t ha = HashWorld(sa.GetWorld());
+            const uint64_t hb = HashWorld(sb.GetWorld());
             if (ha != hb) {
                 det = false;
                 MYE_LOG_ERROR("  determinism diverged at tick %d: %016llX vs %016llX", i,
@@ -609,7 +609,7 @@ bool RunPhysicsSelfTest()
             PhysicsSystem::sDisableBroadphaseForTest = true;
             phys.Update(sb.GetWorld(), kDt);
             PhysicsSystem::sDisableBroadphaseForTest = false;
-            if (HashWorld(sa.GetWorld(), nullptr) != HashWorld(sb.GetWorld(), nullptr)) {
+            if (HashWorld(sa.GetWorld()) != HashWorld(sb.GetWorld())) {
                 same = false;
                 MYE_LOG_ERROR("  broadphase equivalence diverged at tick %d", i);
             }
@@ -687,8 +687,8 @@ bool RunPhysicsSelfTest()
         for (int i = 0; i < 240 && det; ++i) {
             phys.Update(sa.GetWorld(), kDt);
             phys.Update(sb.GetWorld(), kDt);
-            const uint64_t ha = HashWorld(sa.GetWorld(), nullptr);
-            const uint64_t hb = HashWorld(sb.GetWorld(), nullptr);
+            const uint64_t ha = HashWorld(sa.GetWorld());
+            const uint64_t hb = HashWorld(sb.GetWorld());
             if (ha != hb) {
                 det = false;
                 MYE_LOG_ERROR("  mixed-shape determinism diverged at tick %d: %016llX vs %016llX",
@@ -835,8 +835,8 @@ bool RunPhysicsSelfTest()
         for (int i = 0; i < 240 && det; ++i) {
             phys.Update(sa.GetWorld(), kDt);
             phys.Update(sb.GetWorld(), kDt);
-            const uint64_t ha = HashWorld(sa.GetWorld(), nullptr);
-            const uint64_t hb = HashWorld(sb.GetWorld(), nullptr);
+            const uint64_t ha = HashWorld(sa.GetWorld());
+            const uint64_t hb = HashWorld(sb.GetWorld());
             if (ha != hb) {
                 det = false;
                 MYE_LOG_ERROR("  spring/force determinism diverged at tick %d: %016llX vs %016llX",
@@ -1001,8 +1001,8 @@ bool RunPhysicsSelfTest()
         for (int i = 0; i < 240 && det; ++i) {
             phys.Update(sa.GetWorld(), kDt);
             phys.Update(sb.GetWorld(), kDt);
-            const uint64_t ha = HashWorld(sa.GetWorld(), nullptr);
-            const uint64_t hb = HashWorld(sb.GetWorld(), nullptr);
+            const uint64_t ha = HashWorld(sa.GetWorld());
+            const uint64_t hb = HashWorld(sb.GetWorld());
             if (ha != hb) {
                 det = false;
                 MYE_LOG_ERROR("  character determinism diverged at tick %d: %016llX vs %016llX",
@@ -1212,7 +1212,7 @@ bool RunPhysicsSelfTest()
         for (int i = 0; i < 180; ++i) {
             phys.Update(s1.GetWorld(), kDt);
             phys.Update(s2.GetWorld(), kDt);
-            if (HashWorld(s1.GetWorld(), nullptr) != HashWorld(s2.GetWorld(), nullptr)) {
+            if (HashWorld(s1.GetWorld()) != HashWorld(s2.GetWorld())) {
                 hashesMatch = false;
             }
         }
@@ -2079,7 +2079,7 @@ bool RunPhysicsSelfTest()
             for (int i = 0; i < 240 && same; ++i) {
                 phys.Update(sa.GetWorld(), kDt, &contacts); // 収集あり
                 phys.Update(sb.GetWorld(), kDt, nullptr);   // 収集なし
-                if (HashWorld(sa.GetWorld(), nullptr) != HashWorld(sb.GetWorld(), nullptr)) {
+                if (HashWorld(sa.GetWorld()) != HashWorld(sb.GetWorld())) {
                     same = false;
                     MYE_LOG_ERROR("  contact collection changed the sim at tick %d", i);
                 }
@@ -2103,7 +2103,7 @@ bool RunPhysicsSelfTest()
             }
             TransformSystem ts;
             ts.Update(s.GetWorld()); // 速度ベクトルの根元にワールド行列が要る
-            const uint64_t before = HashWorld(s.GetWorld(), nullptr);
+            const uint64_t before = HashWorld(s.GetWorld());
 
             std::vector<DebugLineCmd> lines;
             PhysicsDebugFlags off;
@@ -2125,7 +2125,7 @@ bool RunPhysicsSelfTest()
             check(lines.size() == 1,
                   "phys debug: only bodies above the speed threshold emit a velocity line");
 
-            check(HashWorld(s.GetWorld(), nullptr) == before,
+            check(HashWorld(s.GetWorld()) == before,
                   "phys debug: building the lines does not touch the world (hash unchanged)");
         }
 
@@ -3550,11 +3550,11 @@ bool RunPhysicsSelfTest()
                       && rb->angularVelocity.z == 0.0f,
                   "sleep: the velocities are written as exact zeros");
             // 眠っているあいだハッシュが 1 ビットも動かない (sleepTicks の据え置きも込み)
-            const uint64_t h0 = HashWorld(s.GetWorld(), nullptr);
+            const uint64_t h0 = HashWorld(s.GetWorld());
             bool frozen = true;
             for (int i = 0; i < 120; ++i) {
                 phys.Update(s.GetWorld(), kDt);
-                if (HashWorld(s.GetWorld(), nullptr) != h0) {
+                if (HashWorld(s.GetWorld()) != h0) {
                     frozen = false;
                 }
             }
@@ -4067,8 +4067,8 @@ bool RunPhysicsSelfTest()
         for (int i = 0; i < 240 && det; ++i) {
             phys.Update(sa.GetWorld(), kDt);
             phys.Update(sb.GetWorld(), kDt);
-            const uint64_t ha = HashWorld(sa.GetWorld(), nullptr);
-            const uint64_t hb = HashWorld(sb.GetWorld(), nullptr);
+            const uint64_t ha = HashWorld(sa.GetWorld());
+            const uint64_t hb = HashWorld(sb.GetWorld());
             if (ha != hb) {
                 det = false;
                 MYE_LOG_ERROR("  ccd determinism diverged at tick %d", i);
@@ -4281,7 +4281,7 @@ bool RunPhysicsSelfTest()
             }
             TransformSystem ts;
             ts.Update(s.GetWorld());
-            const uint64_t before = HashWorld(s.GetWorld(), nullptr);
+            const uint64_t before = HashWorld(s.GetWorld());
             apiCtx.contacts = &contacts;
             MyeContactInfo ci = {};
             MyeVec3 wind = {};
@@ -4293,7 +4293,7 @@ bool RunPhysicsSelfTest()
             api.IsSleeping(&apiCtx, id);
             api.HasComponentByName(&apiCtx, id, "Rigidbody");
             apiCtx.contacts = nullptr;
-            check(HashWorld(s.GetWorld(), nullptr) == before,
+            check(HashWorld(s.GetWorld()) == before,
                   "abi14: the read-only v14 slots leave the world hash untouched");
         }
         apiCtx.scene = nullptr;
@@ -4538,7 +4538,7 @@ bool RunPhysicsSelfTest()
                 ts.Update(sa.GetWorld());
                 lines.clear();
                 BuildPhysicsDebugLines(sa.GetWorld(), noContacts, on, lines);
-                if (HashWorld(sa.GetWorld(), nullptr) != HashWorld(sb.GetWorld(), nullptr)) {
+                if (HashWorld(sa.GetWorld()) != HashWorld(sb.GetWorld())) {
                     same = false;
                 }
             }
@@ -4575,8 +4575,8 @@ bool RunPhysicsSelfTest()
             for (int i = 0; i < 300 && det; ++i) {
                 phys.Update(sa.GetWorld(), kDt);
                 phys.Update(sb.GetWorld(), kDt);
-                const uint64_t ha = HashWorld(sa.GetWorld(), nullptr);
-                const uint64_t hb = HashWorld(sb.GetWorld(), nullptr);
+                const uint64_t ha = HashWorld(sa.GetWorld());
+                const uint64_t hb = HashWorld(sb.GetWorld());
                 if (ha != hb) {
                     det = false;
                     MYE_LOG_ERROR("  joint determinism diverged at tick %d", i);
@@ -4942,8 +4942,8 @@ bool RunPhysicsSelfTest()
             for (int i = 0; i < 300 && det; ++i) {
                 phys.Update(sa.GetWorld(), kDt);
                 phys.Update(sb.GetWorld(), kDt);
-                const uint64_t ha = HashWorld(sa.GetWorld(), nullptr);
-                const uint64_t hb = HashWorld(sb.GetWorld(), nullptr);
+                const uint64_t ha = HashWorld(sa.GetWorld());
+                const uint64_t hb = HashWorld(sb.GetWorld());
                 if (ha != hb) {
                     det = false;
                     MYE_LOG_ERROR("  hinge/fixed/slider determinism diverged at tick %d", i);
@@ -5354,8 +5354,8 @@ bool RunPhysicsSelfTest()
             for (int i = 0; i < 300 && det; ++i) {
                 phys.Update(sa.GetWorld(), kDt);
                 phys.Update(sb.GetWorld(), kDt);
-                const uint64_t ha = HashWorld(sa.GetWorld(), nullptr);
-                const uint64_t hb = HashWorld(sb.GetWorld(), nullptr);
+                const uint64_t ha = HashWorld(sa.GetWorld());
+                const uint64_t hb = HashWorld(sb.GetWorld());
                 if (ha != hb) {
                     det = false;
                     MYE_LOG_ERROR("  limit/motor/cone determinism diverged at tick %d", i);
@@ -5468,8 +5468,8 @@ bool RunPhysicsSelfTest()
             Scene s0, s1;
             build(s0, false);
             build(s1, true);
-            const uint64_t h0 = HashWorld(s0.GetWorld(), nullptr);
-            const uint64_t h1 = HashWorld(s1.GetWorld(), nullptr);
+            const uint64_t h0 = HashWorld(s0.GetWorld());
+            const uint64_t h1 = HashWorld(s1.GetWorld());
             MYE_LOG_INFO("  [phys] joint broken hash: false %016llX / true %016llX",
                          static_cast<unsigned long long>(h0),
                          static_cast<unsigned long long>(h1));
@@ -5632,8 +5632,8 @@ bool RunPhysicsSelfTest()
             for (int i = 0; i < 300 && det; ++i) {
                 phys.Update(sa.GetWorld(), kDt);
                 phys.Update(sb.GetWorld(), kDt);
-                const uint64_t ha = HashWorld(sa.GetWorld(), nullptr);
-                const uint64_t hb = HashWorld(sb.GetWorld(), nullptr);
+                const uint64_t ha = HashWorld(sa.GetWorld());
+                const uint64_t hb = HashWorld(sb.GetWorld());
                 if (ha != hb) {
                     det = false;
                     MYE_LOG_ERROR("  break/adhesion determinism diverged at tick %d", i);
@@ -5817,8 +5817,8 @@ bool RunPhysicsSelfTest()
             for (int i = 0; i < 300 && det; ++i) {
                 phys.Update(sa.GetWorld(), kDt);
                 phys.Update(sb.GetWorld(), kDt);
-                const uint64_t ha = HashWorld(sa.GetWorld(), nullptr);
-                const uint64_t hb = HashWorld(sb.GetWorld(), nullptr);
+                const uint64_t ha = HashWorld(sa.GetWorld());
+                const uint64_t hb = HashWorld(sb.GetWorld());
                 if (ha != hb) {
                     det = false;
                     MYE_LOG_ERROR("  compound determinism diverged at tick %d", i);
@@ -6047,7 +6047,7 @@ bool RunPhysicsSelfTest()
             for (int i = 0; i < 180; ++i) {
                 phys.Update(s1.GetWorld(), kDt);
                 phys.Update(s2.GetWorld(), kDt);
-                if (HashWorld(s1.GetWorld(), nullptr) != HashWorld(s2.GetWorld(), nullptr)) {
+                if (HashWorld(s1.GetWorld()) != HashWorld(s2.GetWorld())) {
                     same = false;
                 }
             }
@@ -6424,8 +6424,8 @@ bool RunPhysicsSelfTest()
             for (int i = 0; i < 240 && det; ++i) {
                 phys.Update(sa.GetWorld(), kDt);
                 phys.Update(sb.GetWorld(), kDt);
-                const uint64_t ha = HashWorld(sa.GetWorld(), nullptr);
-                const uint64_t hb = HashWorld(sb.GetWorld(), nullptr);
+                const uint64_t ha = HashWorld(sa.GetWorld());
+                const uint64_t hb = HashWorld(sb.GetWorld());
                 if (ha != hb) {
                     det = false;
                     MYE_LOG_ERROR("  wheel determinism diverged at tick %d", i);
@@ -6454,11 +6454,11 @@ bool RunPhysicsSelfTest()
             for (int i = 0; i < 900; ++i) {
                 phys.Update(s.GetWorld(), kDt);
             }
-            const uint64_t hSleep = HashWorld(s.GetWorld(), nullptr);
+            const uint64_t hSleep = HashWorld(s.GetWorld());
             for (int i = 0; i < 60; ++i) {
                 phys.Update(s.GetWorld(), kDt);
             }
-            const uint64_t hLater = HashWorld(s.GetWorld(), nullptr);
+            const uint64_t hLater = HashWorld(s.GetWorld());
             float avg, lo, hi;
             const int grounded = sampleWheels(car, avg, lo, hi);
             const auto* rb = car.body.GetComponent<RigidbodyComponent>();
@@ -6826,8 +6826,8 @@ bool RunPhysicsSelfTest()
             for (int i = 0; i < 240 && det; ++i) {
                 phys.Update(sa.GetWorld(), kDt);
                 phys.Update(sb.GetWorld(), kDt);
-                const uint64_t ha = HashWorld(sa.GetWorld(), nullptr);
-                const uint64_t hb = HashWorld(sb.GetWorld(), nullptr);
+                const uint64_t ha = HashWorld(sa.GetWorld());
+                const uint64_t hb = HashWorld(sb.GetWorld());
                 if (ha != hb) {
                     det = false;
                     MYE_LOG_ERROR("  vehicle determinism diverged at tick %d", i);
@@ -7076,8 +7076,8 @@ bool RunPhysicsSelfTest()
             for (int i = 0; i < 240 && det; ++i) {
                 phys.Update(sa.GetWorld(), kDt);
                 phys.Update(sb.GetWorld(), kDt);
-                const uint64_t ha = HashWorld(sa.GetWorld(), nullptr);
-                const uint64_t hb = HashWorld(sb.GetWorld(), nullptr);
+                const uint64_t ha = HashWorld(sa.GetWorld());
+                const uint64_t hb = HashWorld(sb.GetWorld());
                 if (ha != hb) {
                     det = false;
                     MYE_LOG_ERROR("  nocollide determinism diverged at tick %d", i);

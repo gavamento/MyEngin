@@ -108,7 +108,7 @@ bool RunSimSnapshotSelfTest()
     uint64_t tick = 4242;
     refs.tickIndex = &tick;
 
-    const uint64_t hash0 = HashWorld(w, nullptr, &scene.Time(), &scene.Persist());
+    const uint64_t hash0 = HashWorld(w, {nullptr, &scene.Time(), &scene.Persist()});
     const std::string shape0 = ArchetypeShape(w);
     const uint64_t rngState0 = w.Rng().State();
     const uint64_t nextFileId0 = scene.PeekNextFileId();
@@ -142,12 +142,12 @@ bool RunSimSnapshotSelfTest()
         prevInput[p] = {};
     }
     tick = 0;
-    check(HashWorld(w, nullptr, &scene.Time(), &scene.Persist()) != hash0,
+    check(HashWorld(w, {nullptr, &scene.Time(), &scene.Persist()}) != hash0,
           "the world really diverged before restore");
 
     // ---- 戻す ----
     check(RestoreSimSnapshot(refs, blob.data(), blob.size()), "restore succeeds");
-    check(HashWorld(w, nullptr, &scene.Time(), &scene.Persist()) == hash0,
+    check(HashWorld(w, {nullptr, &scene.Time(), &scene.Persist()}) == hash0,
           "world hash is bit-identical after restore");
     check(ArchetypeShape(w) == shape0, "archetype creation order and row counts are preserved");
     check(w.Rng().State() == rngState0, "world RNG state is restored");
@@ -183,11 +183,11 @@ bool RunSimSnapshotSelfTest()
     check(blob2 == blob, "re-captured blob is byte-identical");
 
     // ---- 壊れた blob は「何も書き換えずに」失敗すること ----
-    const uint64_t hashBefore = HashWorld(w, nullptr, &scene.Time(), &scene.Persist());
+    const uint64_t hashBefore = HashWorld(w, {nullptr, &scene.Time(), &scene.Persist()});
     std::vector<std::byte> truncated(blob.begin(), blob.begin() + blob.size() / 2);
     check(!RestoreSimSnapshot(refs, truncated.data(), truncated.size()),
           "truncated blob is rejected");
-    check(HashWorld(w, nullptr, &scene.Time(), &scene.Persist()) == hashBefore,
+    check(HashWorld(w, {nullptr, &scene.Time(), &scene.Persist()}) == hashBefore,
           "a rejected restore leaves the world untouched");
     std::vector<std::byte> garbage = blob;
     garbage[0] = static_cast<std::byte>(0x00);

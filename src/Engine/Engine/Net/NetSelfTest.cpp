@@ -303,7 +303,7 @@ bool RunNetSelfTest()
               "rollback: the confirmed frontier starts at the first tick");
         check(rb.SnapshotBefore(100) != nullptr, "rollback: the state before tick 100 is kept");
         check(rb.SnapshotBefore(101) == nullptr, "rollback: nothing is kept for a future tick");
-        const uint64_t hash100 = HashWorld(w, nullptr, &scene.Time(), &scene.Persist());
+        const uint64_t hash100 = HashWorld(w, {nullptr, &scene.Time(), &scene.Persist()});
 
         // tick 100 を「予測入力で走った」ことにして世界を動かす
         InputSnapshot lanes[kMaxPlayers] = {};
@@ -313,7 +313,7 @@ bool RunNetSelfTest()
             t->position.x = 5.0f;
         }
         tickIndex = 101;
-        const uint64_t hash101 = HashWorld(w, nullptr, &scene.Time(), &scene.Persist());
+        const uint64_t hash101 = HashWorld(w, {nullptr, &scene.Time(), &scene.Persist()});
         rb.OnTickEnd(refs, 100, lanes, 2, hash101, true, true);
         const NetSpecTick* e = rb.Entry(100);
         check(e != nullptr && e->predicted && e->hashAfter == hash101 && e->simulated,
@@ -333,7 +333,7 @@ bool RunNetSelfTest()
         check(blob != nullptr && RestoreSimSnapshot(refs, blob->data(), blob->size()),
               "rollback: the snapshot restores");
         check(tickIndex == 100, "rollback: restoring rewinds the tick index");
-        check(HashWorld(w, nullptr, &scene.Time(), &scene.Persist()) == hash100,
+        check(HashWorld(w, {nullptr, &scene.Time(), &scene.Persist()}) == hash100,
               "rollback: the restored world hashes to the pre-tick state");
 
         // 確定ハッシュのリング

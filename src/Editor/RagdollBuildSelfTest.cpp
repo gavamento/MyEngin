@@ -352,8 +352,8 @@ bool RunRagdollBuildSelfTest()
         GameObject sb = MakeSkin(b, model, -1, 0);
         ragdoll_build::Build(a, sa.Id(), *skel, KeepShortBones());
         ragdoll_build::Build(b, sb.Id(), *skel, KeepShortBones());
-        const uint64_t ha = HashWorld(a.GetWorld(), nullptr);
-        const uint64_t hb = HashWorld(b.GetWorld(), nullptr);
+        const uint64_t ha = HashWorld(a.GetWorld());
+        const uint64_t hb = HashWorld(b.GetWorld());
         MYE_LOG_INFO("  [build] world hash %016llX / %016llX", static_cast<unsigned long long>(ha),
                      static_cast<unsigned long long>(hb));
         check(ha == hb, "determinism: two runs over the same skeleton produce bit-identical "
@@ -477,7 +477,7 @@ bool RunRagdollBuildSelfTest()
         Selection sel;
         GameObject skin = MakeSkin(s, model, -1, 0);
         const uint64_t fid = s.EnsureFileId(skin.Id());
-        const uint64_t before = HashWorld(s.GetWorld(), nullptr);
+        const uint64_t before = HashWorld(s.GetWorld());
 
         undo.BeginRecord("Create Ragdoll", sel);
         undo.CaptureBefore(s, fid);
@@ -486,7 +486,7 @@ bool RunRagdollBuildSelfTest()
         sel.SelectOnly(fid);
         undo.CaptureAfter(s, fid);
         undo.EndRecord(sel);
-        const uint64_t after = HashWorld(s.GetWorld(), nullptr);
+        const uint64_t after = HashWorld(s.GetWorld());
         check(before != after, "undo: the generation actually changed the world (guard against a "
                                "vacuously passing round trip)");
         std::vector<PartFingerprint> fpAfter;
@@ -496,7 +496,7 @@ bool RunRagdollBuildSelfTest()
 
         undo.Undo(s, sel);
         s.GetWorld().ApplyStructuralChanges();
-        check(HashWorld(s.GetWorld(), nullptr) == before,
+        check(HashWorld(s.GetWorld()) == before,
               "undo: one Undo removes the whole ragdoll (the subtree diff of the SkinnedMesh "
               "catches every sibling the generator scattered)");
         undo.Redo(s, sel);
@@ -697,7 +697,7 @@ bool RunRagdollBuildSelfTest()
             pa.Update(a.GetWorld(), kDt);
             pfb.Update(b.GetWorld(), res);
             pb.Update(b.GetWorld(), kDt);
-            same = HashWorld(a.GetWorld(), nullptr) == HashWorld(b.GetWorld(), nullptr);
+            same = HashWorld(a.GetWorld()) == HashWorld(b.GetWorld());
         }
         check(same, "determinism: two generated ragdolls run bit-identical for 120 ticks");
     }

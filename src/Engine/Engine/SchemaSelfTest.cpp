@@ -187,10 +187,10 @@ bool RunSchemaSelfTest()
 
     // ---- ハッシュ被覆 + 保存往復 ----
     {
-        const uint64_t h0 = HashWorld(w, nullptr);
+        const uint64_t h0 = HashWorld(w);
         const float newHp = 42.5f;
         std::memcpy(static_cast<uint8_t*>(comp) + fHp->offset, &newHp, sizeof(newHp));
-        const uint64_t h1 = HashWorld(w, nullptr);
+        const uint64_t h1 = HashWorld(w);
         check(h0 != h1, "hash: schema fields are covered by the world hash");
 
         const nlohmann::json saved = SceneSerializer::SaveToJson(scene);
@@ -203,7 +203,7 @@ bool RunSchemaSelfTest()
               "serialize: schema values survive a save/load round trip");
         check(m2 && std::strcmp(static_cast<const char*>(m2) + fLabel->offset, "spawn") == 0,
               "serialize: schema strings survive the round trip");
-        check(HashWorld(w2, nullptr) == h1, "serialize: the round trip is hash-identical");
+        check(HashWorld(w2) == h1, "serialize: the round trip is hash-identical");
     }
 
     // ---- 冪等性 (= 2 回起動しても TypeId が同じことの検査可能な代理) ----
@@ -262,12 +262,12 @@ bool RunSchemaSelfTest()
                 static_cast<uint8_t*>(w.GetComponentRaw(e.Id(), markerId)) + fLabel->offset;
             std::memset(lbl, 0, 64);
             std::memcpy(lbl, "abc", 3);
-            const uint64_t cleanHash = HashWorld(w, nullptr);
+            const uint64_t cleanHash = HashWorld(w);
             lbl[10] = 'Z'; // 終端より後ろの残骸 (文字列としては同じ "abc")
-            check(HashWorld(w, nullptr) != cleanHash,
+            check(HashWorld(w) != cleanHash,
                   "abi: tail garbage is hash-visible (precondition for the next check)");
             check(api.SetComponentField(&apiCtx, se, markH, labelH, "abc", 4) == 1
-                      && HashWorld(w, nullptr) == cleanHash,
+                      && HashWorld(w) == cleanHash,
                   "abi: a short string set zeroes the tail (String64 trap closed at the boundary)");
             char sout[64] = {};
             int32_t st = -1;

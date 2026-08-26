@@ -83,17 +83,17 @@ bool RunGameFlowSelfTest()
         World w;
         TimeControl tc;
         PersistStore a;
-        const uint64_t clean = HashWorld(w, nullptr, &tc, &a);
+        const uint64_t clean = HashWorld(w, {nullptr, &tc, &a});
         tc.paused = true;
-        check(HashWorld(w, nullptr, &tc, &a) != clean, "paused is hash-covered");
+        check(HashWorld(w, {nullptr, &tc, &a}) != clean, "paused is hash-covered");
         tc = {};
         tc.accum = 1;
-        check(HashWorld(w, nullptr, &tc, &a) != clean, "accum is hash-covered");
+        check(HashWorld(w, {nullptr, &tc, &a}) != clean, "accum is hash-covered");
         tc = {};
         tc.scalePercent = 50;
-        check(HashWorld(w, nullptr, &tc, &a) != clean, "scalePercent is hash-covered");
+        check(HashWorld(w, {nullptr, &tc, &a}) != clean, "scalePercent is hash-covered");
         tc = {};
-        check(HashWorld(w, nullptr, &tc, &a) == clean, "default TimeControl restores the hash");
+        check(HashWorld(w, {nullptr, &tc, &a}) == clean, "default TimeControl restores the hash");
 
         const uint32_t v1 = 123;
         const uint32_t v2 = 456;
@@ -104,16 +104,16 @@ bool RunGameFlowSelfTest()
         b.Set(HashStr("flag"), nullptr, 0);
         b.Set(HashStr("stage"), &v2, sizeof(v2));
         b.Set(HashStr("score"), &v1, sizeof(v1));
-        check(HashWorld(w, nullptr, &tc, &a) == HashWorld(w, nullptr, &tc, &b),
+        check(HashWorld(w, {nullptr, &tc, &a}) == HashWorld(w, {nullptr, &tc, &b}),
               "persist hash is insertion-order independent");
-        check(HashWorld(w, nullptr, &tc, &a) != clean, "persist entries are hash-covered");
+        check(HashWorld(w, {nullptr, &tc, &a}) != clean, "persist entries are hash-covered");
         const uint32_t v3 = 124;
         b.Set(HashStr("score"), &v3, sizeof(v3));
-        check(HashWorld(w, nullptr, &tc, &a) != HashWorld(w, nullptr, &tc, &b),
+        check(HashWorld(w, {nullptr, &tc, &a}) != HashWorld(w, {nullptr, &tc, &b}),
               "persist value change is hash-covered");
         b.Set(HashStr("score"), &v1, sizeof(v1));
         b.Erase(HashStr("flag"));
-        check(HashWorld(w, nullptr, &tc, &a) != HashWorld(w, nullptr, &tc, &b),
+        check(HashWorld(w, {nullptr, &tc, &a}) != HashWorld(w, {nullptr, &tc, &b}),
               "persist key removal is hash-covered");
     }
 

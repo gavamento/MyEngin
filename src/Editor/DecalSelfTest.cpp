@@ -257,7 +257,7 @@ bool RunDecalSelfTest()
         GameObject host = scene.CreateGameObjectTracked("DecalHost");
         World& w = scene.GetWorld();
         w.ApplyStructuralChanges();
-        const uint64_t before = HashWorld(w, nullptr);
+        const uint64_t before = HashWorld(w);
 
         auto* d = w.AddComponent<DecalComponent>(host.Id());
         w.ApplyStructuralChanges();
@@ -271,7 +271,7 @@ bool RunDecalSelfTest()
             d->roughness = 0.2f;
             d->roughnessStrength = 0.8f;
         }
-        const uint64_t after = HashWorld(w, nullptr);
+        const uint64_t after = HashWorld(w);
         check(before == after,
               "DecalComponent is kComponentNoHash (the world hash never moves, M56b fields too)");
     }

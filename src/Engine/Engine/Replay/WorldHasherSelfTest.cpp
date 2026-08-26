@@ -88,12 +88,12 @@ bool RunWorldHasherSelfTest()
     // ---- 3 出口の total 一致 ----
     // 走査が 3 実装に分かれると、診断だけ古い規則で歩いて嘘の行を指すようになる。
     // 「同一実装の 3 出口」であることをここで毎回固定する
-    const uint64_t hPlain = HashWorld(w, nullptr, &time, &persist);
+    const uint64_t hPlain = HashWorld(w, {nullptr, &time, &persist});
     std::vector<EntityHash> ents;
     uint64_t hDetailed = 0;
-    HashWorldDetailed(w, nullptr, ents, hDetailed, &time, &persist);
+    HashWorldDetailed(w, {nullptr, &time, &persist}, ents, hDetailed);
     HashDump base;
-    HashWorldDump(w, nullptr, /*tick=*/42, base, &time, &persist);
+    HashWorldDump(w, {nullptr, &time, &persist}, /*tick=*/42, base);
     check(hPlain == hDetailed && hPlain == base.total,
           "3 exits (HashWorld / Detailed / Dump) agree on the total");
     check(!base.lines.empty() && LastFold(base) == base.total,
@@ -114,7 +114,7 @@ bool RunWorldHasherSelfTest()
             t->position.x += 1.0f;
         }
         HashDump moved;
-        HashWorldDump(w, nullptr, 42, moved, &time, &persist);
+        HashWorldDump(w, {nullptr, &time, &persist}, 42, moved);
         const HashDumpDiff d = DiffHashDumps(base, moved);
         const size_t posLine = FindLine(base, "\tLocalTransform\tposition\t", "\tBeta\t");
         check(d.valueDiffs == 1 && d.rollupDiffs == 1 && !d.structureDiffers && d.totalDiffers,
@@ -125,7 +125,7 @@ bool RunWorldHasherSelfTest()
             t->position.x -= 1.0f;
         }
         HashDump restored;
-        HashWorldDump(w, nullptr, 42, restored, &time, &persist);
+        HashWorldDump(w, {nullptr, &time, &persist}, 42, restored);
         check(DiffHashDumps(base, restored).Same(), "restoring the field makes the diff clean");
     }
 
@@ -140,7 +140,7 @@ bool RunWorldHasherSelfTest()
             nc->value[n + 1] = 'X'; // 文字列としては "Beta" のまま (名前列は変わらない)
         }
         HashDump dirty;
-        HashWorldDump(w, nullptr, 42, dirty, &time, &persist);
+        HashWorldDump(w, {nullptr, &time, &persist}, 42, dirty);
         const HashDumpDiff d = DiffHashDumps(base, dirty);
         check(nc && std::strlen(nc->value) == n && d.valueDiffs == 1 && d.rollupDiffs == 1
                   && !d.structureDiffers,
@@ -151,7 +151,7 @@ bool RunWorldHasherSelfTest()
             std::memset(nc->value + n + 1, 0, sizeof(nc->value) - n - 1);
         }
         HashDump clean;
-        HashWorldDump(w, nullptr, 42, clean, &time, &persist);
+        HashWorldDump(w, {nullptr, &time, &persist}, 42, clean);
         check(DiffHashDumps(base, clean).Same(), "zeroing the tail restores the dump");
     }
 
@@ -160,7 +160,7 @@ bool RunWorldHasherSelfTest()
         gold = 8;
         persist.Set(goldKey, &gold, sizeof(gold));
         HashDump rich;
-        HashWorldDump(w, nullptr, 42, rich, &time, &persist);
+        HashWorldDump(w, {nullptr, &time, &persist}, 42, rich);
         const HashDumpDiff d = DiffHashDumps(base, rich);
         check(d.valueDiffs == 1 && d.rollupDiffs == 0 && !d.structureDiffers
                   && d.firstFoldLine == FindLine(rich, "\tPersist\tblob\t", "\t-\t"),
@@ -191,7 +191,7 @@ bool RunWorldHasherSelfTest()
         (void)gamma;
         w.ApplyStructuralChanges();
         HashDump grown;
-        HashWorldDump(w, nullptr, 42, grown, &time, &persist);
+        HashWorldDump(w, {nullptr, &time, &persist}, 42, grown);
         const HashDumpDiff d = DiffHashDumps(base, grown);
         check(d.structureDiffers && d.totalDiffers,
               "adding an entity is reported as a structure difference");

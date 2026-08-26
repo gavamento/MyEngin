@@ -416,8 +416,8 @@ void RunOneTick(TickServices& ts)
         // HashWorldDetailed と同じ列を使うので、--hash-diff が指す行と必ず対応する
         std::vector<EntityHash> order;
         uint64_t total = 0;
-        HashWorldDetailed(scene.GetWorld(), &particleSystem.Cpu(), order, total, &scene.Time(),
-                          &scene.Persist());
+        HashWorldDetailed(scene.GetWorld(),
+                          {&particleSystem.Cpu(), &scene.Time(), &scene.Persist()}, order, total);
         for (const EntityHash& e : order) {
             if (auto* t = scene.GetWorld().GetComponent<LocalTransform>(e.entity)) {
                 t->position.x += 0.001f;
@@ -435,23 +435,23 @@ void RunOneTick(TickServices& ts)
     if (!config.hashDumpPath.empty()
         && ctx.tickIndex == static_cast<uint64_t>(config.hashDumpTick)) {
         HashDump dump;
-        HashWorldDump(scene.GetWorld(), &particleSystem.Cpu(), ctx.tickIndex, dump,
-                      &scene.Time(), &scene.Persist());
+        HashWorldDump(scene.GetWorld(),
+                      {&particleSystem.Cpu(), &scene.Time(), &scene.Persist()}, ctx.tickIndex, dump);
         WriteHashDump(config.hashDumpPath, dump);
     }
 
     // ---- リプレイ: tick 末の状態ハッシュ (spec 11.3) ----
     if (Recording()) {
         ts.recorder->RecordTick(ctx.inputs, ctx.playerCount,
-                                HashWorld(scene.GetWorld(), &particleSystem.Cpu(), &scene.Time(),
-                                          &scene.Persist()));
+                                HashWorld(scene.GetWorld(),
+                                          {&particleSystem.Cpu(), &scene.Time(), &scene.Persist()}));
         if (ts.recorder->TickCount() >= static_cast<uint64_t>(config.replayTicks)) {
             ts.recorder->Finish();
             ctx.requestExit = true;
         }
     } else if (Verifying()) {
-        const uint64_t actual = HashWorld(scene.GetWorld(), &particleSystem.Cpu(),
-                                          &scene.Time(), &scene.Persist());
+        const uint64_t actual = HashWorld(scene.GetWorld(),
+                                          {&particleSystem.Cpu(), &scene.Time(), &scene.Persist()});
         const uint64_t expected = ts.player->ExpectedHash(ctx.tickIndex);
         if (expected == 0) {
             // ★期待値なし = クラッシュ .rep の「走り切らなかった最後の tick」(M52f)。
@@ -473,8 +473,8 @@ void RunOneTick(TickServices& ts)
                           static_cast<unsigned long long>(actual));
             std::vector<EntityHash> detail;
             uint64_t total = 0;
-            HashWorldDetailed(scene.GetWorld(), &particleSystem.Cpu(), detail, total,
-                              &scene.Time(), &scene.Persist());
+            HashWorldDetailed(scene.GetWorld(),
+                              {&particleSystem.Cpu(), &scene.Time(), &scene.Persist()}, detail, total);
             MYE_LOG_ERROR("[replay]   entities=%zu rng=%016llX", detail.size(),
                           static_cast<unsigned long long>(scene.GetWorld().Rng().State()));
             for (size_t i = 0; i < detail.size() && i < 8; ++i) {
@@ -492,8 +492,8 @@ void RunOneTick(TickServices& ts)
                 const std::wstring dumpPath =
                     config.replayVerifyPath + L".tick" + tickStr + L".actual.dump";
                 HashDump dump;
-                HashWorldDump(scene.GetWorld(), &particleSystem.Cpu(), ctx.tickIndex, dump,
-                              &scene.Time(), &scene.Persist());
+                HashWorldDump(scene.GetWorld(),
+                              {&particleSystem.Cpu(), &scene.Time(), &scene.Persist()}, ctx.tickIndex, dump);
                 WriteHashDump(dumpPath, dump);
                 std::ofstream mf(
                     std::filesystem::path(config.replayVerifyPath + L".mismatch.txt"));

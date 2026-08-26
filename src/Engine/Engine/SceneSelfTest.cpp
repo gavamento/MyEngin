@@ -511,7 +511,7 @@ bool RunSceneSerializerSelfTest()
         SceneSerializer::LoadFromJson(sa, saved);
         Scene sbb;
         SceneSerializer::LoadFromJson(sbb, saved);
-        check(HashWorld(sa.GetWorld(), nullptr) == HashWorld(sbb.GetWorld(), nullptr),
+        check(HashWorld(sa.GetWorld()) == HashWorld(sbb.GetWorld()),
               "instantiate->save->load: WorldHash deterministic");
         // ロード後のインスタンスも青文字判定 (PrefabLink) を保持
         {
@@ -1847,7 +1847,7 @@ bool RunSceneSerializerSelfTest()
         for (int i = 0; i < 30 && det; ++i) {
             sys.Update(sx.GetWorld(), lib);
             sys.Update(sy.GetWorld(), lib);
-            if (HashWorld(sx.GetWorld(), nullptr) != HashWorld(sy.GetWorld(), nullptr)) {
+            if (HashWorld(sx.GetWorld()) != HashWorld(sy.GetWorld())) {
                 det = false;
             }
         }

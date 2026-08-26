@@ -286,8 +286,7 @@ void CollectEntitiesSorted(World& world, std::vector<EntityID>& out)
 
 // 3 出口 (HashWorld / HashWorldDetailed / HashWorldDump) の唯一の実装。
 // outEntities / dump は要らない出口では null — その場合は分岐 1 回分しか払わない
-uint64_t HashWorldImpl(World& world, const CpuParticleBackend* cpuParticles,
-                       const TimeControl* time, const PersistStore* persist,
+uint64_t HashWorldImpl(World& world, const SimSources& src,
                        std::vector<EntityHash>* outEntities, DumpCtx* d)
 {
     std::vector<EntityID> entities;
@@ -324,10 +323,10 @@ uint64_t HashWorldImpl(World& world, const CpuParticleBackend* cpuParticles,
     total = HashCombine(total, world.Rng().Inc());
     EmitU64(d, "World", "rngInc", world.Rng().Inc(), total);
     // ゲームフロー状態 (M51g: RNG の直後)
-    total = HashGameFlow(total, time, persist, d);
+    total = HashGameFlow(total, src.time, src.persist, d);
     // CPU パーティクル (spec 11.3: ハッシュ対象)
-    if (cpuParticles) {
-        const uint64_t ph = HashCpuParticles(*cpuParticles, d);
+    if (src.particles) {
+        const uint64_t ph = HashCpuParticles(*src.particles, d);
         total = HashCombine(total, ph);
         EmitU64(d, "Particles", "#total", ph, total);
     }
@@ -385,28 +384,25 @@ std::string Shorten(std::string_view v, size_t maxLen = 160)
 
 } // namespace
 
-void HashWorldDetailed(World& world, const CpuParticleBackend* cpuParticles,
-                       std::vector<EntityHash>& outEntities, uint64_t& outTotal,
-                       const TimeControl* time, const PersistStore* persist)
+void HashWorldDetailed(World& world, const SimSources& src, std::vector<EntityHash>& outEntities,
+                       uint64_t& outTotal)
 {
-    outTotal = HashWorldImpl(world, cpuParticles, time, persist, &outEntities, nullptr);
+    outTotal = HashWorldImpl(world, src, &outEntities, nullptr);
 }
 
-uint64_t HashWorld(World& world, const CpuParticleBackend* cpuParticles, const TimeControl* time,
-                   const PersistStore* persist)
+uint64_t HashWorld(World& world, const SimSources& src)
 {
-    return HashWorldImpl(world, cpuParticles, time, persist, nullptr, nullptr);
+    return HashWorldImpl(world, src, nullptr, nullptr);
 }
 
-void HashWorldDump(World& world, const CpuParticleBackend* cpuParticles, uint64_t tick,
-                   HashDump& out, const TimeControl* time, const PersistStore* persist)
+void HashWorldDump(World& world, const SimSources& src, uint64_t tick, HashDump& out)
 {
     out.tick = tick;
     out.lines.clear();
     DumpCtx d;
     d.lines = &out.lines;
     d.tick = tick;
-    out.total = HashWorldImpl(world, cpuParticles, time, persist, nullptr, &d);
+    out.total = HashWorldImpl(world, src, nullptr, &d);
 }
 
 bool WriteHashDump(const std::wstring& path, const HashDump& dump)

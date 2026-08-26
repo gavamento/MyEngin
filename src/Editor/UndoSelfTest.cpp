@@ -66,7 +66,7 @@ bool RunUndoSelfTest()
         const uint64_t aFid = FidOf(scene, a.Id());
         const uint64_t bFid = FidOf(scene, b.Id());
         const uint64_t cFid = FidOf(scene, c.Id());
-        const uint64_t initialHash = HashWorld(world, nullptr);
+        const uint64_t initialHash = HashWorld(world);
 
         // op1: A の位置を変更
         RecordModify(undo, scene, sel, "move A", aFid, [&] {
@@ -87,7 +87,7 @@ bool RunUndoSelfTest()
             cam->fovYDeg = 33.0f;
         });
 
-        const uint64_t editedHash = HashWorld(world, nullptr);
+        const uint64_t editedHash = HashWorld(world);
         check(editedHash != initialHash, "edits changed the world hash");
 
         int undoCount = 0;
@@ -96,7 +96,7 @@ bool RunUndoSelfTest()
             ++undoCount;
         }
         check(undoCount == 4, "4 ops undone");
-        check(HashWorld(world, nullptr) == initialHash, "undo-all restores initial world hash");
+        check(HashWorld(world) == initialHash, "undo-all restores initial world hash");
 
         int redoCount = 0;
         while (undo.CanRedo()) {
@@ -104,7 +104,7 @@ bool RunUndoSelfTest()
             ++redoCount;
         }
         check(redoCount == 4, "4 ops redone");
-        check(HashWorld(world, nullptr) == editedHash, "redo-all restores edited world hash");
+        check(HashWorld(world) == editedHash, "redo-all restores edited world hash");
     }
 
     // ============ Phase 2: 生成 / 破棄の undo/redo (構造・値で検証) ============
@@ -216,7 +216,7 @@ bool RunUndoSelfTest()
         world.ApplyStructuralChanges();
         const uint64_t aFid = FidOf(scene, a.Id());
         const uint64_t bFid = FidOf(scene, b.Id());
-        const uint64_t initialHash = HashWorld(world, nullptr);
+        const uint64_t initialHash = HashWorld(world);
 
         // Inspector のバッチ編集と同じ手順: 全対象 CaptureBefore → 編集 → 全対象 CaptureAfter
         undo.BeginRecord("Batch Modify", sel);
@@ -227,16 +227,16 @@ bool RunUndoSelfTest()
         undo.CaptureAfter(scene, aFid);
         undo.CaptureAfter(scene, bFid);
         undo.EndRecord(sel);
-        const uint64_t editedHash = HashWorld(world, nullptr);
+        const uint64_t editedHash = HashWorld(world);
         check(editedHash != initialHash, "batch: edits changed the world hash");
 
         undo.Undo(scene, sel);
-        check(HashWorld(world, nullptr) == initialHash,
+        check(HashWorld(world) == initialHash,
               "batch: single undo restores BOTH entities (one entry)");
         check(!undo.CanUndo(), "batch: exactly one undo entry was recorded");
 
         undo.Redo(scene, sel);
-        check(HashWorld(world, nullptr) == editedHash, "batch: redo re-applies both");
+        check(HashWorld(world) == editedHash, "batch: redo re-applies both");
         check(scene.FindByFileId(aFid).GetComponent<LocalTransform>()->position.y == 5.0f
                   && scene.FindByFileId(bFid).GetComponent<LocalTransform>()->position.y == 5.0f,
               "batch: redo values on both entities");

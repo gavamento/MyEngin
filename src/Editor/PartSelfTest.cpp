@@ -131,12 +131,12 @@ bool RunPartSelfTest()
     {
         auto* hp = w.GetComponent<PartComponent>(head.Id());
         const size_t n = std::strlen(hp->joint);
-        const uint64_t clean = HashWorld(w, nullptr);
+        const uint64_t clean = HashWorld(w);
         hp->joint[n + 1] = 'X'; // 終端の 1 つ後ろに残骸を置く (文字列としては同じ)
-        check(std::strlen(hp->joint) == n && HashWorld(w, nullptr) != clean,
+        check(std::strlen(hp->joint) == n && HashWorld(w) != clean,
               "string64: bytes past the terminator are hashed (editors must zero the tail)");
         std::memset(hp->joint + n + 1, 0, sizeof(hp->joint) - n - 1);
-        check(HashWorld(w, nullptr) == clean, "string64: zeroing the tail restores the hash");
+        check(HashWorld(w) == clean, "string64: zeroing the tail restores the hash");
     }
 
     // ---- 兄弟名の一意化との整合 (M48b) ----
@@ -340,7 +340,7 @@ bool RunPartSelfTest()
     // ---- シリアライズ往復 + ハッシュ被覆 ----
     {
         const nlohmann::json saved = SceneSerializer::SaveToJson(scene);
-        const uint64_t hashBefore = HashWorld(w, nullptr);
+        const uint64_t hashBefore = HashWorld(w);
         Scene s2;
         SceneSerializer::LoadFromJson(s2, saved);
         World& w2 = s2.GetWorld();
@@ -348,11 +348,11 @@ bool RunPartSelfTest()
         auto* p2 = head2.IsNull() ? nullptr : w2.GetComponent<PartComponent>(head2);
         check(p2 && p2->tag == kHead && std::string(p2->joint) == "head_bone",
               "serialize: Part survives a save/load round trip");
-        check(HashWorld(w2, nullptr) == hashBefore, "serialize: the round trip is hash-identical");
+        check(HashWorld(w2) == hashBefore, "serialize: the round trip is hash-identical");
 
         // tag は hash 対象 (M48g の PartFollowSystem が sim 入力にする) — 変えたら hash も動く
         w2.GetComponent<PartComponent>(head2)->tag = Parts::TagOf("Other");
-        check(HashWorld(w2, nullptr) != hashBefore, "serialize: Part.tag is covered by the world hash");
+        check(HashWorld(w2) != hashBefore, "serialize: Part.tag is covered by the world hash");
     }
 
     // ---- 構造ロック: 「プレハブメンバ かつ 部位」だけ ----
@@ -736,10 +736,10 @@ bool RunPartSelfTest()
         hs.GetWorld().ApplyStructuralChanges();
 
         const nlohmann::json saved = SceneSerializer::SaveToJson(hs);
-        const uint64_t h0 = HashWorld(hs.GetWorld(), nullptr);
+        const uint64_t h0 = HashWorld(hs.GetWorld());
         Scene hs2;
         SceneSerializer::LoadFromJson(hs2, saved);
-        check(HashWorld(hs2.GetWorld(), nullptr) == h0,
+        check(HashWorld(hs2.GetWorld()) == h0,
               "bounds: the serialize round trip is hash-identical");
         auto* pb2 = hs2.GetWorld().GetComponent<PartBoundsComponent>(hs2.Find("Bounded").Id());
         check(pb2 && pb2->shape == 1 && std::fabs(pb2->center.y - 0.2f) < 1e-6f
@@ -747,7 +747,7 @@ bool RunPartSelfTest()
               "bounds: PartBounds fields survive a save/load round trip");
         // hash 対象であること (kComponentNoHash の付け忘れ/付けすぎ検出)
         pb2->halfExtents.y = 9.0f;
-        check(HashWorld(hs2.GetWorld(), nullptr) != h0,
+        check(HashWorld(hs2.GetWorld()) != h0,
               "bounds: halfExtents is covered by the world hash");
     }
 

@@ -383,11 +383,11 @@ bool RunRagdollSelfTest()
     {
         Scene s;
         Rig r = BuildRig(s, model, true, /*active*/ false, /*withBodies*/ true);
-        const uint64_t h0 = HashWorld(s.GetWorld(), nullptr);
+        const uint64_t h0 = HashWorld(s.GetWorld());
         r.skin.GetComponent<RagdollComponent>()->active = true;
-        const uint64_t h1 = HashWorld(s.GetWorld(), nullptr);
+        const uint64_t h1 = HashWorld(s.GetWorld());
         r.skin.GetComponent<RagdollComponent>()->active = false;
-        const uint64_t h2 = HashWorld(s.GetWorld(), nullptr);
+        const uint64_t h2 = HashWorld(s.GetWorld());
         check(h0 != h1 && h0 == h2, "hash: Ragdoll.active is sim state (snapshots and replays "
                                     "carry it without a dedicated path)");
     }
@@ -405,7 +405,7 @@ bool RunRagdollSelfTest()
             pa.Update(a.GetWorld(), kDt);
             pfb.Update(b.GetWorld(), res);
             pb.Update(b.GetWorld(), kDt);
-            same = HashWorld(a.GetWorld(), nullptr) == HashWorld(b.GetWorld(), nullptr);
+            same = HashWorld(a.GetWorld()) == HashWorld(b.GetWorld());
         }
         check(same, "determinism: two identical driven ragdolls agree on the world hash every "
                     "tick for 120 ticks");
