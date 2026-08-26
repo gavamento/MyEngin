@@ -297,8 +297,18 @@ bool RunParticleSelfTest()
         fx->autoDestroy = 1;
         GameObject child = s.CreateGameObjectTracked("Emitter");
         child.AddComponent<ParticleEmitterComponent>();
+        // 非ループ Animator の子: ループ 1 周中に自然終了した状態を作っておく
+        // (AnimationSystem は回さないので終了状態は手で再現する)
+        GameObject anim = s.CreateGameObjectTracked("Anim");
+        {
+            auto* an = anim.AddComponent<AnimatorComponent>();
+            an->loop = 0;
+            an->playing = 0; // = Animation.cpp AdvanceTime が末尾で止めた状態
+            an->timeTicks = 7;
+        }
         World& w = s.GetWorld();
         w.SetParent(child.Id(), root.Id());
+        w.SetParent(anim.Id(), root.Id());
         w.ApplyStructuralChanges();
 
         EffectSystem fxsys;
@@ -308,8 +318,11 @@ bool RunParticleSelfTest()
         }
         auto* efx = w.GetComponent<EffectComponent>(root.Id());
         auto* em = w.GetComponent<ParticleEmitterComponent>(child.Id());
+        auto* an = w.GetComponent<AnimatorComponent>(anim.Id());
         check(efx && efx->elapsedTicks == 0, "effect: looping rewinds elapsed");
         check(em && em->playing == 1, "effect: looping keeps child emitting");
+        check(an && an->timeTicks == 0 && an->playing == 1,
+              "effect: looping restarts finished non-loop animator");
         check(w.IsAlive(root.Id()), "effect: looping never auto-destroys");
     }
 
@@ -340,6 +353,33 @@ bool RunParticleSelfTest()
         auto* em = w.GetComponent<ParticleEmitterComponent>(child.Id());
         check(efx->elapsedTicks == 0 && efx->playing == 1 && em->playing == 1,
               "effect: RestartEffect rewinds + re-enables child emission");
+    }
+
+    // ---- (H) RestartEffect: 自然終了した非ループ Animator を再開する ----
+    // timeTicks の巻き戻しだけでは AnimationSystem が !playing で continue し続けて
+    // 二度と動かない (エフェクトのループ再生で片道アニメが 1 周目しか出ないバグの再現)
+    {
+        Scene s;
+        GameObject root = s.CreateGameObjectTracked("FXAnim");
+        auto* fx = root.AddComponent<EffectComponent>();
+        fx->durationTicks = 3;
+        fx->looping = 0;
+        fx->autoDestroy = 0;
+        GameObject anim = s.CreateGameObjectTracked("Anim");
+        {
+            auto* an = anim.AddComponent<AnimatorComponent>();
+            an->loop = 0;
+            an->playing = 0; // = Animation.cpp AdvanceTime が末尾で止めた状態
+            an->timeTicks = 7;
+        }
+        World& w = s.GetWorld();
+        w.SetParent(anim.Id(), root.Id());
+        w.ApplyStructuralChanges();
+
+        EffectSystem::RestartEffect(w, root.Id());
+        auto* an = w.GetComponent<AnimatorComponent>(anim.Id());
+        check(an && an->timeTicks == 0 && an->playing == 1,
+              "effect: RestartEffect restarts finished non-loop animator");
     }
 
     if (failCount == 0) {

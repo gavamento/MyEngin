@@ -33,12 +33,17 @@ void SetSubtreeEmission(World& world, EntityID root, bool on)
     visit(root);
 }
 
-// root サブツリーの Animator を先頭へ巻き戻す (ループ再生用)
+// root サブツリーの Animator を先頭へ巻き戻して再開する (ループ再生 / RestartEffect 用)。
+// playing も 1 に戻すこと — 非ループ Animator は末尾到達時に自ら playing=0 になる
+// (Animation.cpp AdvanceTime) ため、timeTicks だけ戻しても AnimationSystem が
+// !playing で continue し続けて二度と動かない。子エミッタを無条件 on に戻す
+// SetSubtreeEmission と同じ規約 (「頭から再生し直す」= サブツリー全体を再生状態へ)。
 void RestartSubtreeAnimators(World& world, EntityID root)
 {
     std::function<void(EntityID)> visit = [&](EntityID e) {
         if (auto* an = world.GetComponent<AnimatorComponent>(e)) {
             an->timeTicks = 0;
+            an->playing = 1;
         }
         auto* h = world.GetComponent<HierarchyComponent>(e);
         EntityID c = h ? h->firstChild : kNullEntity;

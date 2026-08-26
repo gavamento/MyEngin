@@ -13,6 +13,7 @@
 #include "Engine/Core/Profiler.h"
 #include "Engine/Core/World.h"
 #include "Engine/Engine/Animation.h"
+#include "Engine/Engine/EffectSystem.h"
 #include "Engine/Engine/EntityNaming.h"
 #include "Engine/Engine/GameObject.h"
 #include "Engine/Engine/Parts.h"
@@ -1856,6 +1857,42 @@ bool RunSceneSerializerSelfTest()
         GameObject animGo = sx.Find("Animated");
         check(animGo && animGo.GetComponent<LocalTransform>()->position.x != 0.0f,
               "animator advanced the transform");
+
+        // (d) RestartEffect が自然終了した非ループ Animator を再開する (E2E)。
+        // AnimationSystem は !playing で continue するため、timeTicks の巻き戻しだけでは
+        // ポーズが停止時のまま凍結して二度と動かない — その回帰を故障点そのもので固定する
+        {
+            Scene sz;
+            GameObject fxRoot = sz.CreateGameObjectTracked("FXRoot");
+            auto* fx = fxRoot.AddComponent<EffectComponent>();
+            fx->durationTicks = 0; // 手動制御 (Update での自動再起動はここでは不要)
+            GameObject animChild = sz.CreateGameObjectTracked("AnimChild");
+            {
+                auto* an = animChild.AddComponent<AnimatorComponent>();
+                an->clip = AssetID{ chash };
+                an->loop = 0;
+                an->playing = 1;
+            }
+            World& wz = sz.GetWorld();
+            wz.SetParent(animChild.Id(), fxRoot.Id());
+            wz.ApplyStructuralChanges();
+
+            for (int i = 0; i < 15; ++i) { // クリップ長 10 tick を越えて自然終了させる
+                sys.Update(wz, lib);
+            }
+            auto* an = wz.GetComponent<AnimatorComponent>(animChild.Id());
+            auto* animLt = wz.GetComponent<LocalTransform>(animChild.Id());
+            check(an && an->playing == 0, "non-loop animator stops at clip end");
+            check(animLt->position.x != 0.0f, "pose frozen at stop is non-zero");
+
+            EffectSystem::RestartEffect(wz, fxRoot.Id());
+            check(an->playing == 1 && an->timeTicks == 0,
+                  "RestartEffect resumes finished animator");
+            sys.Update(wz, lib); // 1 tick 目: t=0 のポーズを適用 → 先頭へ戻る
+            check(animLt->position.x == 0.0f, "restarted animator re-applies pose from t=0");
+            sys.Update(wz, lib); // 2 tick 目: t=1 のポーズ → 再び前進している
+            check(animLt->position.x == 1.0f, "restarted animator advances again");
+        }
     }
 
     // ---- ミニシーン編集モード (M48k) ----
