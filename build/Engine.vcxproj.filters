@@ -309,6 +309,9 @@
     <ClCompile Include="..\src\Engine\Engine\Ragdoll.cpp">
       <Filter>Engine</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\RagdollBuilder.cpp">
+      <Filter>Engine</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\RayTracing\RtScene.cpp">
       <Filter>Engine\RayTracing</Filter>
     </ClCompile>
@@ -820,6 +823,9 @@
       <Filter>Engine</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Ragdoll.h">
+      <Filter>Engine</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\RagdollBuilder.h">
       <Filter>Engine</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\RayTracing\RtScene.h">

@@ -12,6 +12,12 @@ struct SkinnedModel;
 // **sim には 1 バイトも足さない**。エディタ時に 1 回きり、スケルトンの形から
 // 「M60g1 が駆動できる階層」を組み立てるだけの器。
 //
+// ★M60i で `src\Editor\` から Engine 層へ移した。ショーケース (`--joint-demo`) の
+//   ラグドールを `DemoContent` が組むため — Editor 層に置いたままだと **Runtime.exe が
+//   同じシーンを組めない** (golden スクショは Runtime で撮る)。中身は元から Engine 層の
+//   型しか触っていなかったので、移動は include の付け替えだけで済んでいる。
+//   これで「生成器が吐く階層」そのものが replay 6 ペア目の被写体になった。
+//
 //   Skin (SkinnedMesh + Ragdoll(active=false))
 //    ├ <骨名>            Part(joint) / PartBounds / Rigidbody(compoundColliders) / Joint(Cone)
 //    │  └ <骨名>_Shape   Collider(capsule)

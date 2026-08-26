@@ -3,7 +3,6 @@
 #include <cstdio>
 #include <string>
 
-#include "Editor/RagdollBuilder.h"
 #include "Editor/Selection.h"
 #include "Editor/Undo/UndoStack.h"
 #include "Engine/Core/Localization.h"
@@ -11,6 +10,7 @@
 #include "Engine/Core/World.h"
 #include "Engine/Engine/EngineLoop.h"
 #include "Engine/Engine/EntityNaming.h"
+#include "Engine/Engine/RagdollBuilder.h"
 #include "Engine/Engine/Scene.h"
 #include "Engine/Renderer/GpuResources.h"
 #include "Engine/Renderer/Skeleton.h"

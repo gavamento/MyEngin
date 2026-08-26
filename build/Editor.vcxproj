@@ -61,7 +61,6 @@
     <ClCompile Include="..\src\Editor\ProjectManager.cpp" />
     <ClCompile Include="..\src\Editor\ProjectRegistry.cpp" />
     <ClCompile Include="..\src\Editor\ProjectTemplates.cpp" />
-    <ClCompile Include="..\src\Editor\RagdollBuilder.cpp" />
     <ClCompile Include="..\src\Editor\RagdollBuildSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\SsrSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\StatusBar.cpp" />
@@ -111,7 +110,6 @@
     <ClInclude Include="..\src\Editor\ProjectManager.h" />
     <ClInclude Include="..\src\Editor\ProjectRegistry.h" />
     <ClInclude Include="..\src\Editor\ProjectTemplates.h" />
-    <ClInclude Include="..\src\Editor\RagdollBuilder.h" />
     <ClInclude Include="..\src\Editor\RagdollBuildSelfTest.h" />
     <ClInclude Include="..\src\Editor\Selection.h" />
     <ClInclude Include="..\src\Editor\ShortcutHub.h" />

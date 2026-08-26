@@ -52,6 +52,27 @@ XMFLOAT4X4 LerpWorld(const XMFLOAT4X4& a, const XMFLOAT4X4& b, float t)
     return o;
 }
 
+// 車輪の見た目 (M60i)。**描画専用の合成で、ワールドハッシュは 1 バイトも増えない**。
+// ソルバは車輪の LocalTransform を書かない (書くとハッシュ対象が増える) ので、
+// 転がり・切れ角・サスの伸縮は出力フィールドを読んでここで絵にするしかない
+// — ラグドールのボーンパレット (M60g1) とまったく同じ「決定論の面積を広げない」判断。
+//
+// エンティティの**ローカル空間**で ①車軸 (ローカル X) まわりに転がし ②切れ角ぶん
+// ローカル Y まわりに回し ③サスの伸びぶんローカル -Y へ下げる、の順に掛ける。
+// 車輪の取り付け点は「サスの上端」なので、③が無いと車輪が宙に浮いて見える。
+//
+// ★ローカル空間 = **スケールが掛かる前**。したがって非一様スケールの車輪は回すと歪む
+//   (v1 の制限。車輪の寸法は Wheel の radius が正本なので、メッシュ側に焼くのが本筋)。
+// ★**子エンティティへは伝播しない** — 車輪メッシュは車輪エンティティ自身に置くこと。
+XMFLOAT4X4 ApplyWheelVisual(const XMFLOAT4X4& world, const WheelComponent& wc)
+{
+    const XMMATRIX m = XMMatrixRotationX(wc.rotationAngle) * XMMatrixRotationY(wc.steerAngle)
+                       * XMMatrixTranslation(0.0f, wc.compression - wc.restLength, 0.0f);
+    XMFLOAT4X4 out;
+    XMStoreFloat4x4(&out, XMMatrixMultiply(m, XMLoadFloat4x4(&world)));
+    return out;
+}
+
 // 平行光の view-proj (行ベクトル規約 world*view*proj)。シーン AABB にフィットした正射影。
 // 戻り値は非転置 (ShadowPass が world と合成、RenderView 用に別途転置する)。
 XMFLOAT4X4 ComputeDirectionalLightVP(const XMFLOAT3& lightDir, const XMFLOAT3& sceneMin,
@@ -669,6 +690,9 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
         world.ForEachArchetype(req, [&](Archetype& arch) {
             const int mi = arch.FindTypeIndex(MeshRendererComponent::sTypeId);
             const int wi = arch.FindTypeIndex(WorldMatrixComponent::sTypeId);
+            // M60i: 車輪の見た目回転。**アーキタイプごとに 1 回引くだけ**なので、
+            // 車輪を持たないシーンは 1 命令も余計に走らない (存在ゲートと同じ効き)
+            const int whi = arch.FindTypeIndex(WheelComponent::sTypeId);
             for (uint32_t row = 0; row < arch.Count(); ++row) {
                 const EntityID e = arch.EntityAt(row);
                 if (!IsEntityActive(world, e)) {
@@ -685,6 +709,12 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
                     if (const XMFLOAT4X4* pw = prevWorld->Get(e)) {
                         worldMat = LerpWorld(*pw, wm->value, interpAlpha);
                     }
+                }
+                if (whi >= 0) {
+                    // 補間**後**に掛ける。補間の対象は sim が書いたワールド行列だけで、
+                    // 出力フィールドから作る見た目はその上に載る
+                    worldMat = ApplyWheelVisual(
+                        worldMat, *static_cast<const WheelComponent*>(arch.GetPtr(whi, row)));
                 }
                 cullCands.push_back({ e, mr->mesh, mr->material, worldMat,
                                        resources.meshes.Get(mr->mesh), 0.0f, 1 });

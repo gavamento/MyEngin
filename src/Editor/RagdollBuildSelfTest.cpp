@@ -7,7 +7,6 @@
 
 #include <DirectXMath.h>
 
-#include "Editor/RagdollBuilder.h"
 #include "Editor/Selection.h"
 #include "Editor/Undo/UndoStack.h"
 #include "Engine/Core/Components.h"
@@ -16,6 +15,7 @@
 #include "Engine/Engine/GameObject.h"
 #include "Engine/Engine/DebugDraw.h"
 #include "Engine/Engine/PartFollowSystem.h"
+#include "Engine/Engine/RagdollBuilder.h"
 #include "Engine/Engine/Physics/PhysicsDebugDraw.h"
 #include "Engine/Engine/Physics/PhysicsSystem.h"
 #include "Engine/Engine/Replay/WorldHasher.h"

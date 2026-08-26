@@ -2,12 +2,15 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cwctype>
 #include <filesystem>
+#include <functional>
 #include <iterator>
 #include <string>
 #include <system_error>
+#include <vector>
 
 #include "Engine/Core/ComponentRegistry.h"
 #include "Engine/Core/Components.h"
@@ -24,6 +27,7 @@
 #include "Engine/Engine/ModelLoader.h"
 #include "Engine/Engine/Physics/PhysMatLibrary.h"
 #include "Engine/Engine/Prefab.h"
+#include "Engine/Engine/RagdollBuilder.h"
 #include "Engine/Engine/Scene.h"
 #include "Engine/Engine/SceneSerializer.h"
 #include "Engine/Platform/PathUtil.h"
@@ -1537,6 +1541,560 @@ void BuildTerrainShowcaseScene(EngineContext& ctx, float lodDistance, float skir
     }
 
     s.GetWorld().ApplyStructuralChanges();
+}
+
+// ---- M60i: 関節と機構 (M60) のショーケース ----
+
+// 車輪メッシュ (M60i): **軸が X 向き**の多角柱。builtin の Cylinder は軸が Y なので
+// そのままでは使えず、車輪エンティティを回して寝かせることも**できない** —
+// 回すとサスのレイ方向 (ローカル -Y) と前方向 (ローカル +Z) まで一緒に回ってしまう
+// (`PhysicsSystem.cpp` の車輪の配線が正本)。
+// ★半径と幅をメッシュへ焼き込んであるのは **エンティティのスケールを 1 に保つため**。
+//   描画側の回転 (RenderSystem) は「エンティティのローカル空間 = スケールが掛かる前」に
+//   効くので、非一様スケールの車輪は回すと歪む。
+// ★側面は分割ごとにフラット法線。丸く均すと軸対称になり、**転がっていることが絵から
+//   消える** (回転角を読んでいるかどうかが目で確かめられなくなる)
+AssetID RegisterWheelMesh(RenderResources& res, const char* name, float radius, float halfWidth)
+{
+    constexpr int kSeg = 16;
+    constexpr float kTwoPi = 6.28318530718f;
+    std::vector<MeshVertex> verts;
+    std::vector<uint32_t> indices;
+    verts.reserve(static_cast<size_t>(kSeg) * 10);
+    indices.reserve(static_cast<size_t>(kSeg) * 12);
+
+    for (int i = 0; i < kSeg; ++i) {
+        const float a0 = kTwoPi * static_cast<float>(i) / static_cast<float>(kSeg);
+        const float a1 = kTwoPi * static_cast<float>(i + 1) / static_cast<float>(kSeg);
+        const float am = 0.5f * (a0 + a1);
+        const float c0 = std::cos(a0), s0 = std::sin(a0);
+        const float c1 = std::cos(a1), s1 = std::sin(a1);
+        const float y0 = radius * c0, z0 = radius * s0;
+        const float y1 = radius * c1, z1 = radius * s1;
+        const float u0 = static_cast<float>(i) / static_cast<float>(kSeg);
+        const float u1 = static_cast<float>(i + 1) / static_cast<float>(kSeg);
+        // 接地面 (側面)。巻き順の規約は builtin と同じ = cross(v1-v0, v2-v0) が外向き
+        const DirectX::XMFLOAT3 nSide{ 0.0f, std::cos(am), std::sin(am) };
+        const uint32_t b = static_cast<uint32_t>(verts.size());
+        verts.push_back({ { -halfWidth, y0, z0 }, nSide, { u0, 1.0f } });
+        verts.push_back({ { halfWidth, y0, z0 }, nSide, { u0, 0.0f } });
+        verts.push_back({ { halfWidth, y1, z1 }, nSide, { u1, 0.0f } });
+        verts.push_back({ { -halfWidth, y1, z1 }, nSide, { u1, 1.0f } });
+        indices.insert(indices.end(), { b, b + 3, b + 2, b, b + 2, b + 1 });
+        // 側板 (+X)
+        const uint32_t cp = static_cast<uint32_t>(verts.size());
+        const DirectX::XMFLOAT3 nPos{ 1.0f, 0.0f, 0.0f };
+        verts.push_back({ { halfWidth, 0.0f, 0.0f }, nPos, { 0.5f, 0.5f } });
+        verts.push_back({ { halfWidth, y0, z0 }, nPos, { 0.5f + 0.5f * c0, 0.5f + 0.5f * s0 } });
+        verts.push_back({ { halfWidth, y1, z1 }, nPos, { 0.5f + 0.5f * c1, 0.5f + 0.5f * s1 } });
+        indices.insert(indices.end(), { cp, cp + 1, cp + 2 });
+        // 側板 (-X)。法線が逆なので頂点順も逆に回す
+        const uint32_t cm = static_cast<uint32_t>(verts.size());
+        const DirectX::XMFLOAT3 nNeg{ -1.0f, 0.0f, 0.0f };
+        verts.push_back({ { -halfWidth, 0.0f, 0.0f }, nNeg, { 0.5f, 0.5f } });
+        verts.push_back({ { -halfWidth, y1, z1 }, nNeg, { 0.5f + 0.5f * c1, 0.5f + 0.5f * s1 } });
+        verts.push_back({ { -halfWidth, y0, z0 }, nNeg, { 0.5f + 0.5f * c0, 0.5f + 0.5f * s0 } });
+        indices.insert(indices.end(), { cm, cm + 1, cm + 2 });
+    }
+    return res.meshes.Register(name, verts, indices);
+}
+
+void RegisterJointShowcaseContent(EngineContext& ctx)
+{
+    RenderResources& res = *ctx.resources;
+    const AssetID white = res.textures.White();
+    const AssetID shader = AssetID{ HashStr("forward_lit") };
+    res.meshes.Cube();
+    res.meshes.Sphere();
+
+    auto makeMat = [&](const char* name, float r, float g, float b) {
+        Material m;
+        m.shader = shader;
+        m.texture = white;
+        m.baseColor = { r, g, b, 1.0f };
+        return res.materials.Register(name, m);
+    };
+    // 接頭辞は **jdemo_**。材質は全ショーケース分が無条件登録されるので、他と名前が
+    // 被ると先に登録したほうが黙って上書きされる (M54a の申し送りと同じ配慮)
+    makeMat("jdemo_ground", 0.28f, 0.30f, 0.33f);
+    makeMat("jdemo_frame", 0.45f, 0.46f, 0.50f); // 柱・塔 (静的な受け手)
+    makeMat("jdemo_swing", 0.85f, 0.72f, 0.25f); // 振り子・ロープ
+    makeMat("jdemo_door", 0.72f, 0.36f, 0.28f);  // ドア
+    makeMat("jdemo_motor", 0.30f, 0.62f, 0.78f); // モータで駆動されるもの
+    makeMat("jdemo_weld", 0.55f, 0.55f, 0.62f);  // 固定関節
+    makeMat("jdemo_plank", 0.66f, 0.50f, 0.32f); // 桟橋の甲板
+    makeMat("jdemo_crate", 0.78f, 0.30f, 0.30f); // 落とす荷物
+    makeMat("jdemo_hull", 0.40f, 0.70f, 0.45f);  // 凸包
+    makeMat("jdemo_car", 0.24f, 0.34f, 0.68f);   // 車体
+    // ★真っ黒にしない。面ごとのフラット法線が拾う陰影が潰れて、**転がっているか
+    //   どうかが絵から消える** (回転角を描画側が読んでいることの目視確認ができなくなる)
+    makeMat("jdemo_tire", 0.26f, 0.26f, 0.29f); // タイヤ
+    // 車輪は Wheel コンポーネントの既定寸法 (半径 0.35 / 幅 0.25) に合わせて焼く
+    RegisterWheelMesh(res, "jdemo_wheel", 0.35f, 0.125f);
+}
+
+void BuildJointShowcaseScene(EngineContext& ctx)
+{
+    Scene& s = *ctx.scene;
+    World& w = s.GetWorld();
+    RenderResources& res = *ctx.resources;
+    s.SetName("joint_showcase");
+    const AssetID cube = res.meshes.Cube();
+    const AssetID sphere = res.meshes.Sphere();
+    const AssetID wheelMesh = AssetID{ HashStr("jdemo_wheel") };
+    const AssetID matSteel = FindPhysMat("steel");
+    const AssetID matWood = FindPhysMat("wood");
+
+    // 部品を組む定型。**halfExtents は 0.5 固定でワールドスケールに効かせる** —
+    // 物理ショーケース (M59d) と同じ流儀
+    auto makeBox = [&](const char* name, float x, float y, float z, float sx, float sy, float sz,
+                       const char* mat) {
+        GameObject go = s.CreateGameObject(name);
+        go.SetLocalPosition(x, y, z);
+        go.SetLocalScale(sx, sy, sz);
+        auto* mr = go.AddComponent<MeshRendererComponent>();
+        mr->mesh = cube;
+        mr->material = AssetID{ HashStr(mat) };
+        return go;
+    };
+    auto addBoxCollider = [&](GameObject go, float hx, float hy, float hz, AssetID physMat) {
+        auto* col = go.AddComponent<ColliderComponent>();
+        col->shape = 1;
+        col->isTrigger = false;
+        col->halfExtents = { hx, hy, hz };
+        col->physMaterial = physMat;
+        return col;
+    };
+    auto addSphere = [&](const char* name, float x, float y, float z, float sc, const char* mat) {
+        GameObject go = s.CreateGameObject(name);
+        go.SetLocalPosition(x, y, z);
+        go.SetLocalScale(sc, sc, sc);
+        auto* mr = go.AddComponent<MeshRendererComponent>();
+        mr->mesh = sphere;
+        mr->material = AssetID{ HashStr(mat) };
+        auto* col = go.AddComponent<ColliderComponent>();
+        col->shape = 0;
+        col->isTrigger = false;
+        col->radius = 0.5f;
+        col->physMaterial = matSteel;
+        return go;
+    };
+    auto addBody = [&](GameObject go, float mass) {
+        auto* rb = go.AddComponent<RigidbodyComponent>();
+        rb->mass = mass;
+        return rb;
+    };
+    auto addJoint = [&](GameObject go, int32_t type, EntityID other) {
+        auto* j = go.AddComponent<JointComponent>();
+        j->type = type;
+        j->connectedEntity = other;
+        return j;
+    };
+
+    GameObject camera = s.CreateGameObject("Main Camera");
+    camera.AddComponent<CameraComponent>();
+    // 展示 10 種 (x = -24〜22) と車のレーン (z = -13) が 1 枚に入る画角。
+    // fovY 60 度 / 16:9 なら水平画角は約 91 度 = 距離 30m で幅 61m
+    camera.SetLocalPosition(0.0f, 9.5f, -30.0f);
+    camera.SetLocalRotationEuler(11.0f, 0.0f, 0.0f);
+
+    GameObject sun = s.CreateGameObject("Sun");
+    sun.AddComponent<LightComponent>();
+    sun.SetLocalRotationEuler(52.0f, -28.0f, 0.0f);
+
+    // ---- 物理環境 ----
+    // ★**substeps は 16 (上限)**。ラグドールが要求する — 4 でも 8 でも「床に触れながら
+    //   関節に吊られている」骨が微振動を続け、島は全員が静まるまで誰も眠らないので
+    //   ラグドール全体が一生眠らない (M60g2 の申し送り 2 の実測)。車両が推奨する 8 も
+    //   これで満たす。「剛性はサブステップで買える」(M59g2-7) の一番大きな請求書
+    {
+        GameObject envGo = s.CreateGameObject("Environment");
+        auto* env = envGo.AddComponent<PhysicsEnvironmentComponent>();
+        env->gravity = { 0.0f, -9.81f, 0.0f };
+        env->substeps = 16;
+    }
+
+    // ---- 地面 ----
+    // 車が 10 秒走っても場外へ出ない広さ (M60h2 の申し送り 7: 80m 角では全開加速で
+    // 端から落ちた)。摩擦は乾いた舗装を明示する — 既定 0.5 のままだとタイヤが滑る
+    {
+        GameObject ground =
+            makeBox("Ground", 0.0f, -0.5f, 0.0f, 220.0f, 1.0f, 220.0f, "jdemo_ground");
+        addBoxCollider(ground, 0.5f, 0.5f, 0.5f, AssetID{})->friction = 1.0f;
+    }
+
+    // ---- 1. 二重振り子 (Ball × 2) ----
+    // 関節が「点で繋ぐ」ことだけを主張する被写体。★軌道が初期値に鋭敏なので、
+    // **Debug と Release が 600 tick ビット一致することの主張が一番強く出る**
+    {
+        makeBox("PendulumPost", -24.0f, 4.0f, 0.0f, 0.3f, 8.0f, 0.3f, "jdemo_frame");
+        GameObject rod =
+            makeBox("PendulumRod", -24.0f, 6.5f, 0.0f, 0.16f, 3.0f, 0.16f, "jdemo_swing");
+        addBoxCollider(rod, 0.5f, 0.5f, 0.5f, matSteel);
+        auto* rrb = addBody(rod, 2.0f);
+        rrb->velocity = { 3.0f, 0.0f, 0.0f }; // 吊った直後に横へ蹴る
+        rrb->angularDamping = 0.0f;
+        auto* rj = addJoint(rod, 0, kNullEntity);
+        rj->anchor = { 0.0f, 0.5f, 0.0f };            // ローカル → スケールが掛かって +1.5m
+        rj->connectedAnchor = { -24.0f, 8.0f, 0.0f }; // 相手が null のときだけワールド
+
+        GameObject bob = addSphere("PendulumBob", -24.0f, 4.4f, 0.0f, 0.8f, "jdemo_swing");
+        auto* brb = addBody(bob, 6.0f);
+        brb->velocity = { 3.0f, 0.0f, 0.0f };
+        brb->angularDamping = 0.0f;
+        auto* bj = addJoint(bob, 0, rod.Id());
+        bj->anchor = { 0.0f, 0.75f, 0.0f };          // +0.6m (球の外 = 吊り点)
+        bj->connectedAnchor = { 0.0f, -0.5f, 0.0f }; // 棒の下端 (相手のローカル)
+    }
+
+    // ---- 2. ロープ (Ball 10 連鎖 + 錘) ----
+    // ★**コライダーを見た目より縮めてある** (halfExtents 0.4)。関節で繋がった相手との
+    //   衝突を切る仕組みが v1 のソルバに無いので、端まで張ると隣同士が必ず食い込んで
+    //   永久に押し合う (M60g2 の申し送り 4 と同じ「幾何で離す」逃げ)
+    {
+        constexpr int kLinks = 10;
+        makeBox("RopePost", -19.0f, 4.0f, 0.0f, 0.3f, 8.0f, 0.3f, "jdemo_frame");
+        EntityID prev = kNullEntity;
+        for (int i = 0; i < kLinks; ++i) {
+            char name[32];
+            std::snprintf(name, sizeof(name), "RopeLink_%d", i);
+            const float y = 7.75f - 0.5f * static_cast<float>(i);
+            GameObject link = makeBox(name, -19.0f, y, 0.0f, 0.18f, 0.5f, 0.18f, "jdemo_swing");
+            addBoxCollider(link, 0.5f, 0.4f, 0.5f, matWood);
+            auto* rb = addBody(link, 0.5f);
+            rb->velocity = { 2.5f, 0.0f, 0.0f }; // 鎖ごと横へ振り出す
+            auto* j = addJoint(link, 0, prev);
+            j->anchor = { 0.0f, 0.5f, 0.0f };
+            if (prev.IsNull()) {
+                j->connectedAnchor = { -19.0f, 8.0f, 0.0f }; // 天井へ
+            } else {
+                j->connectedAnchor = { 0.0f, -0.5f, 0.0f }; // 1 つ上の鎖の下端
+            }
+            prev = link.Id();
+        }
+        GameObject weight = addSphere("RopeWeight", -19.0f, 2.4f, 0.0f, 0.9f, "jdemo_crate");
+        auto* rb = addBody(weight, 12.0f); // 鎖を張らせる錘 (張力が関節に効く)
+        rb->velocity = { 2.5f, 0.0f, 0.0f };
+        auto* j = addJoint(weight, 0, prev);
+        j->anchor = { 0.0f, 0.6667f, 0.0f };
+        j->connectedAnchor = { 0.0f, -0.5f, 0.0f };
+    }
+
+    // ---- 3. ドア (Hinge + 角度リミット) ----
+    // 蝶番は板の -X 辺。開く向きへ蹴り出し、-100 度で止まって戻る =
+    // **リミットが片側不等式であること**が絵にも .rep にも出る
+    {
+        makeBox("DoorPost", -15.0f, 1.7f, 0.0f, 0.25f, 3.4f, 0.25f, "jdemo_frame");
+        GameObject door = makeBox("Door", -14.0f, 1.7f, 0.0f, 2.0f, 3.0f, 0.16f, "jdemo_door");
+        addBoxCollider(door, 0.5f, 0.5f, 0.5f, matWood);
+        addBody(door, 12.0f)->angularVelocity = { 0.0f, -3.0f, 0.0f };
+        auto* j = addJoint(door, 1, kNullEntity);
+        j->axis = { 0.0f, 1.0f, 0.0f };
+        j->anchor = { -0.5f, 0.0f, 0.0f }; // 板の -X 辺 (スケールが掛かって -1.0m)
+        j->connectedAnchor = { -15.0f, 1.7f, 0.0f };
+        j->useLimit = true;
+        j->limitMin = -100.0f;
+        j->limitMax = 4.0f;
+    }
+
+    // ---- 4. モータ駆動のクランク (Hinge + モータ) ----
+    // 端で吊った腕を回し続ける。**重力が 1 周ごとに符号を変える負荷**なので、
+    // モータの上限が「力ではなく力積 (maxForce·h)」として効いているかが挙動に出る
+    {
+        makeBox("CrankPost", -9.2f, 1.6f, 0.0f, 0.3f, 3.2f, 0.3f, "jdemo_frame");
+        GameObject arm = makeBox("CrankArm", -8.0f, 3.2f, 0.0f, 2.4f, 0.25f, 0.25f, "jdemo_motor");
+        addBoxCollider(arm, 0.5f, 0.5f, 0.5f, matSteel);
+        addBody(arm, 3.0f)->angularDamping = 0.0f;
+        auto* j = addJoint(arm, 1, kNullEntity);
+        j->axis = { 0.0f, 0.0f, 1.0f }; // XY 平面で回る = カメラから回転が見える
+        j->anchor = { -0.5f, 0.0f, 0.0f };
+        j->connectedAnchor = { -9.2f, 3.2f, 0.0f };
+        j->motorTargetVelocity = 2.5f; // rad/s
+        j->motorMaxForce = 250.0f;     // N·m (自重の 35 N·m を十分に超える)
+    }
+
+    // ---- 5. エレベータ (Slider + 変位リミット + 線形モータ) ----
+    // 荷物を載せた台がレールを上がり、上限に貼り付いて保持する
+    {
+        makeBox("ElevatorRailL", -5.1f, 2.5f, 0.0f, 0.15f, 5.0f, 0.15f, "jdemo_frame");
+        makeBox("ElevatorRailR", -2.9f, 2.5f, 0.0f, 0.15f, 5.0f, 0.15f, "jdemo_frame");
+        GameObject plat =
+            makeBox("ElevatorPlate", -4.0f, 1.0f, 0.0f, 1.8f, 0.25f, 1.8f, "jdemo_motor");
+        addBoxCollider(plat, 0.5f, 0.5f, 0.5f, matSteel);
+        addBody(plat, 20.0f);
+        auto* j = addJoint(plat, 3, kNullEntity);
+        j->axis = { 0.0f, 1.0f, 0.0f };
+        j->connectedAnchor = { -4.0f, 1.0f, 0.0f }; // ここが変位 0
+        j->useLimit = true;
+        j->limitMin = 0.0f;
+        j->limitMax = 4.0f;
+        j->motorTargetVelocity = 1.2f; // m/s
+        j->motorMaxForce = 4000.0f;    // N (台 + 荷物の 255 N を持ち上げる)
+
+        GameObject cargo =
+            makeBox("ElevatorCargo", -4.0f, 1.65f, 0.0f, 0.9f, 0.9f, 0.9f, "jdemo_crate");
+        addBoxCollider(cargo, 0.5f, 0.5f, 0.5f, matWood);
+        addBody(cargo, 6.0f); // 拘束されていない = 摩擦だけで乗っている
+    }
+
+    // ---- 6. 固定 (Fixed) の片持ち ----
+    // ワールドへ溶接したブラケット + そこへ溶接した腕 + 腕の先に吊った錘。
+    // **固定関節が曲げモーメントを受け止めていること**が「腕が垂れない」で分かる
+    {
+        GameObject bracket =
+            makeBox("WeldBracket", 0.0f, 3.2f, 0.0f, 0.6f, 0.6f, 0.6f, "jdemo_weld");
+        addBoxCollider(bracket, 0.5f, 0.5f, 0.5f, matSteel);
+        addBody(bracket, 2.0f);
+        addJoint(bracket, 2, kNullEntity)->connectedAnchor = { 0.0f, 3.2f, 0.0f };
+
+        GameObject arm = makeBox("WeldArm", 1.2f, 3.2f, 0.0f, 1.8f, 0.3f, 0.3f, "jdemo_weld");
+        // ★コライダーを見た目より縮める。溶接で密着している相手と食い込むと、接触
+        //   ソルバが毎 tick 押し返して静止しない (ロープの鎖と同じ理由)
+        addBoxCollider(arm, 0.45f, 0.5f, 0.5f, matSteel);
+        addBody(arm, 3.0f);
+        auto* aj = addJoint(arm, 2, bracket.Id());
+        aj->anchor = { -0.5f, 0.0f, 0.0f };         // 腕の -X 端 (-0.9m)
+        aj->connectedAnchor = { 0.5f, 0.0f, 0.0f }; // ブラケットの +X 面 (+0.3m)
+
+        GameObject weight = addSphere("WeldWeight", 1.92f, 2.41f, 0.0f, 0.8f, "jdemo_crate");
+        addBody(weight, 15.0f);
+        auto* wj = addJoint(weight, 0, arm.Id());
+        wj->anchor = { 0.0f, 0.8f, 0.0f };
+        wj->connectedAnchor = { 0.4f, -0.5f, 0.0f };
+    }
+
+    // ---- 7. 破断する桟橋 (Hinge + ほぼ剛のリミット + breakTorque) ----
+    // 塔から片持ちで張り出した甲板を、狭いリミットで水平に保つ。そこへ荷物を落とすと
+    // 蝶番が受け止める反力が閾値を超えて**関節が折れ、甲板ごと落ちる**。
+    // ★数えるのは等式行とリミット行 (= 反力) だけで、モータ行は数えない (M60d-3)
+    {
+        GameObject tower = makeBox("PierTower", 5.0f, 1.6f, 0.0f, 0.9f, 3.2f, 2.4f, "jdemo_frame");
+        addBoxCollider(tower, 0.5f, 0.5f, 0.5f, matSteel);
+
+        GameObject deck = makeBox("PierDeck", 8.0f, 3.4f, 0.0f, 5.0f, 0.3f, 2.2f, "jdemo_plank");
+        addBoxCollider(deck, 0.5f, 0.5f, 0.5f, matWood);
+        addBody(deck, 25.0f);
+        auto* j = addJoint(deck, 1, kNullEntity);
+        j->axis = { 0.0f, 0.0f, 1.0f };
+        j->anchor = { -0.5f, 0.0f, 0.0f }; // 甲板の -X 端 (-2.5m) = 塔の側
+        j->connectedAnchor = { 5.5f, 3.4f, 0.0f };
+        j->useLimit = true;
+        j->limitMin = -1.5f; // ほぼ剛。自重の 613 N·m はこのリミット行が受ける
+        j->limitMax = 1.5f;
+        j->breakForce = 1500.0f;  // N   (自重 245 N)
+        j->breakTorque = 1000.0f; // N·m (自重 613 N·m / 荷物が乗ると 2800 N·m)
+
+        GameObject crate = makeBox("PierCrate", 9.6f, 9.0f, 0.0f, 1.3f, 1.3f, 1.3f, "jdemo_crate");
+        addBoxCollider(crate, 0.5f, 0.5f, 0.5f, matSteel);
+        addBody(crate, 70.0f);
+    }
+
+    // ---- 8. 複合コライダー (L 字) ----
+    // 親は形状を持たず、**子形状だけで形になっているボディ** (M60e で `ownShape` を切る
+    // 原因になった経路)。慣性が 3x3 フルテンソルで合成されるので、非対称な L 字を
+    // 放り投げると軸が寝る (対角近似では出ない挙動)
+    {
+        GameObject root = s.CreateGameObject("CompoundL");
+        root.SetLocalPosition(13.0f, 4.5f, 0.0f);
+        auto* rb = root.AddComponent<RigidbodyComponent>();
+        rb->mass = 8.0f;
+        rb->compoundColliders = true;
+        rb->angularVelocity = { 1.5f, 0.0f, 2.0f };
+        rb->angularDamping = 0.0f;
+        GameObject a = makeBox("CompoundL_A", 0.0f, 0.0f, 0.0f, 2.0f, 0.4f, 0.8f, "jdemo_weld");
+        a.SetParent(root);
+        a.SetLocalPosition(0.0f, 0.0f, 0.0f);
+        addBoxCollider(a, 0.5f, 0.5f, 0.5f, matSteel);
+        GameObject b = makeBox("CompoundL_B", 0.0f, 0.0f, 0.0f, 0.4f, 2.0f, 0.8f, "jdemo_weld");
+        b.SetParent(root);
+        b.SetLocalPosition(0.8f, 0.8f, 0.0f);
+        addBoxCollider(b, 0.5f, 0.5f, 0.5f, matSteel);
+    }
+
+    // ---- 9. 凸多面体の山 (Collider.shape = 5) ----
+    // ★**見た目のメッシュと凸包の元メッシュを同じ AssetID にしてある** — 絵と当たりが
+    //   ずれないので「凸包が壊れた」が目で分かる。
+    // ★1 個だけモデル由来 (.glb) を混ぜてあるのは **`.mcvx` クックを replay に載せるため**。
+    //   builtin メッシュは登録名に '#' を持たないのでその場生成になり、クック経路が一度も
+    //   踏まれない。モデル由来なら「1 回目で焼いて 2 回目以降は読む」が 600 tick の
+    //   ハッシュ照合そのものになる (= キャッシュの有無でワールドハッシュが変わらない証明。
+    //   Debug と Release は cooked ディレクトリが別なので、両者が独立に焼いて一致する)
+    {
+        auto makeHull = [&](const char* name, AssetID mesh, float x, float y, float z, float sc,
+                            float mass) {
+            GameObject go = s.CreateGameObject(name);
+            go.SetLocalPosition(x, y, z);
+            go.SetLocalScale(sc, sc, sc);
+            auto* mr = go.AddComponent<MeshRendererComponent>();
+            mr->mesh = mesh;
+            mr->material = AssetID{ HashStr("jdemo_hull") };
+            auto* col = go.AddComponent<ColliderComponent>();
+            col->shape = 5;
+            col->isTrigger = false;
+            col->meshAsset = mesh; // 凸包の素材 = 見た目と同じメッシュ
+            col->physMaterial = matWood;
+            addBody(go, mass);
+            return go;
+        };
+        makeHull("Hull_Cube0", cube, 17.0f, 1.2f, -0.6f, 0.9f, 3.0f);
+        makeHull("Hull_Cube1", cube, 18.4f, 1.2f, 0.4f, 0.9f, 3.0f);
+        makeHull("Hull_Cube2", cube, 17.6f, 2.6f, -0.1f, 0.9f, 3.0f);
+        makeHull("Hull_Ball0", sphere, 19.2f, 1.4f, -0.8f, 1.0f, 2.0f);
+        makeHull("Hull_Ball1", sphere, 18.0f, 4.0f, 0.6f, 1.0f, 2.0f);
+        // モデル由来 (クック経路)。ロードに失敗したらこの 1 個が欠けるだけ
+        GameObject model =
+            ModelLoader::Load(s, res, *ctx.shaders, ctx.assetsRoot + L"\\models\\BoxTextured.glb");
+        if (model) {
+            w.ApplyStructuralChanges();
+            EntityID meshEntity = kNullEntity;
+            AssetID meshId{};
+            std::function<void(EntityID)> visit = [&](EntityID e) {
+                if (!meshEntity.IsNull()) {
+                    return;
+                }
+                if (auto* mr = w.GetComponent<MeshRendererComponent>(e)) {
+                    meshEntity = e;
+                    meshId = mr->mesh;
+                    return;
+                }
+                auto* h = w.GetComponent<HierarchyComponent>(e);
+                for (EntityID c = h ? h->firstChild : kNullEntity;;) {
+                    if (c.IsNull()) {
+                        break;
+                    }
+                    auto* ch = w.GetComponent<HierarchyComponent>(c);
+                    const EntityID next = ch ? ch->nextSibling : kNullEntity;
+                    visit(c);
+                    c = next;
+                }
+            };
+            visit(model.Id());
+            if (!meshEntity.IsNull() && !meshId.IsNull()) {
+                model.SetLocalPosition(16.6f, 5.6f, 0.2f);
+                GameObject body(&w, meshEntity);
+                auto* col = body.AddComponent<ColliderComponent>();
+                col->shape = 5;
+                col->isTrigger = false;
+                col->meshAsset = meshId;
+                col->physMaterial = matWood;
+                addBody(body, 4.0f);
+            } else {
+                MYE_LOG_WARN("[jdemo] BoxTextured.glb has no MeshRenderer - the cooked convex "
+                             "hull path is not covered by this scene");
+            }
+        }
+    }
+
+    // ---- 10. ラグドール (M60g1 の逆駆動 + M60g2 の生成器) ----
+    // ★**生成器をそのまま呼ぶ** — 手で組むと g2 が積み上げた寸法の決め方 (2 段カプセル /
+    //   restRotation / 短すぎる骨の足切り) が 2 箇所に散る。生成器を Engine 層へ移したのは
+    //   このため (M60i で `src\Editor\` から移動。Runtime も同じシーンを組めるようになる)
+    {
+        GameObject actor =
+            ModelLoader::Load(s, res, *ctx.shaders, ctx.assetsRoot + L"\\models\\CesiumMan.glb");
+        if (!actor) {
+            MYE_LOG_ERROR("[jdemo] CesiumMan.glb could not be loaded - no ragdoll in the scene");
+        } else {
+            actor.SetLocalPosition(22.0f, 1.4f, 0.0f);
+            actor.SetLocalRotationEuler(0.0f, 0.0f, 25.0f); // 傾けて置く = 落ちて転ぶ
+            w.ApplyStructuralChanges();
+            EntityID skinned = kNullEntity;
+            std::function<void(EntityID)> visit = [&](EntityID e) {
+                if (!skinned.IsNull()) {
+                    return;
+                }
+                if (w.GetComponent<SkinnedMeshComponent>(e)) {
+                    skinned = e;
+                    return;
+                }
+                auto* h = w.GetComponent<HierarchyComponent>(e);
+                for (EntityID c = h ? h->firstChild : kNullEntity;;) {
+                    if (c.IsNull()) {
+                        break;
+                    }
+                    auto* ch = w.GetComponent<HierarchyComponent>(c);
+                    const EntityID next = ch ? ch->nextSibling : kNullEntity;
+                    visit(c);
+                    c = next;
+                }
+            };
+            visit(actor.Id());
+            const SkinnedMeshComponent* sm =
+                skinned.IsNull() ? nullptr : w.GetComponent<SkinnedMeshComponent>(skinned);
+            const SkinnedModel* model = sm ? res.skinnedModels.Get(sm->model) : nullptr;
+            if (!model || ragdoll_build::Build(s, skinned, *model) <= 0) {
+                MYE_LOG_ERROR("[jdemo] ragdoll could not be built from CesiumMan.glb");
+            } else {
+                w.ApplyStructuralChanges();
+                if (auto* rag = w.GetComponent<RagdollComponent>(skinned)) {
+                    rag->active = true; // 最初から物理駆動 (アニメは骨を触らない)
+                }
+            }
+        }
+    }
+
+    // ---- 11. 車 (Vehicle + Wheel 4 本 + C++ スクリプトの運転入力) ----
+    // ★**車体は無スケール**。子の LocalPosition には親のスケールが掛かるので、車体に
+    //   見た目のスケールを入れると車輪の取り付け位置まで伸びる。見た目は子の箱に持たせる。
+    // ★車輪エンティティも**無回転・スケール 1** — サスのレイ方向 (ローカル -Y) と
+    //   前方向 (ローカル +Z) がそのまま姿勢から読まれるため。回転角・切れ角・サスの
+    //   伸縮の見た目は描画側 (RenderSystem) が出力フィールドから作る =
+    //   **ハッシュ対象を 1 バイトも増やさない**
+    {
+        constexpr float kHalfY = 0.25f;
+        constexpr float kRadius = 0.35f;
+        constexpr float kRest = 0.4f;
+        GameObject chassis = s.CreateGameObject("Car");
+        // ★手前のレーン (z = -16) を左から右へ走らせる。S 字の第 1 旋回は +Z 側へ
+        //   膨らむので (実測)、展示の列 (z = 0) との間に 8m の余裕を取ってある
+        chassis.SetLocalPosition(-14.0f, kRadius + kRest + kHalfY, -16.0f);
+        chassis.SetLocalRotationEuler(0.0f, 90.0f, 0.0f); // 前 (+Z) を +X へ向ける
+        auto* ccol = chassis.AddComponent<ColliderComponent>();
+        ccol->shape = 1;
+        ccol->isTrigger = false;
+        ccol->halfExtents = { 0.9f, kHalfY, 1.8f };
+        ccol->friction = 1.0f;
+        // 重心を床側へ下げる。レイキャストサスは横転を止める仕組みを持たないので、
+        // 舵を切ったまま加速すると素の箱では簡単にひっくり返る
+        addBody(chassis, 1200.0f)->centerOfMass = { 0.0f, -0.15f, 0.0f };
+        auto* veh = chassis.AddComponent<VehicleComponent>();
+        veh->motorForce = 3000.0f;
+        veh->brakeForce = 6000.0f;
+        veh->maxSteerAngleDeg = 30.0f;
+        // 運転入力は sim 状態フィールド。スクリプトが SetComponentField で書く
+        // (**車両のために ABI スロットを 1 本も足していない** = M60j を廃止した根拠)
+        AttachScriptIfRegistered(w, chassis.Id(), "VehicleDemoDriver");
+
+        GameObject shell = makeBox("CarBody", 0.0f, 0.0f, 0.0f, 1.8f, 0.5f, 3.6f, "jdemo_car");
+        shell.SetParent(chassis);
+        shell.SetLocalPosition(0.0f, 0.0f, 0.0f);
+        GameObject cabin = makeBox("CarCabin", 0.0f, 0.0f, 0.0f, 1.5f, 0.6f, 1.6f, "jdemo_car");
+        cabin.SetParent(chassis);
+        cabin.SetLocalPosition(0.0f, 0.5f, -0.2f);
+
+        static const float kWx[4] = { -0.8f, 0.8f, -0.8f, 0.8f };
+        static const float kWz[4] = { 1.4f, 1.4f, -1.4f, -1.4f }; // 前 2 / 後 2
+        for (int i = 0; i < 4; ++i) {
+            char name[32];
+            std::snprintf(name, sizeof(name), "CarWheel_%d", i);
+            GameObject wheel = s.CreateGameObject(name);
+            wheel.SetParent(chassis);
+            wheel.SetLocalPosition(kWx[i], -kHalfY, kWz[i]);
+            auto* mr = wheel.AddComponent<MeshRendererComponent>();
+            mr->mesh = wheelMesh;
+            mr->material = AssetID{ HashStr("jdemo_tire") };
+            auto* wc = wheel.AddComponent<WheelComponent>();
+            wc->restLength = kRest;
+            wc->radius = kRadius;
+            wc->stiffness = 60000.0f; // 1 輪 300kg → 沈み込み 0.049m
+            wc->damping = 8000.0f;
+            wc->steerFactor = (kWz[i] > 0.0f) ? 1.0f : 0.0f; // 前輪操舵
+            wc->driveFactor = (kWz[i] > 0.0f) ? 0.0f : 1.0f; // 後輪駆動
+            wc->brakeFactor = 1.0f;
+        }
+    }
+
+    w.ApplyStructuralChanges();
 }
 
 void RegisterAssetLibraries(EngineContext& ctx)

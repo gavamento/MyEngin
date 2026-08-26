@@ -56,6 +56,7 @@
     <ClCompile Include="..\src\GameLogic\Scripts\SchemaHealthDemo.cpp" />
     <ClCompile Include="..\src\GameLogic\Scripts\Spawner.cpp" />
     <ClCompile Include="..\src\GameLogic\Scripts\UIButtonDemo.cpp" />
+    <ClCompile Include="..\src\GameLogic\Scripts\VehicleDemoDriver.cpp" />
     <ClCompile Include="..\src\GameLogic\Scripts\WalkerDemo.cpp" />
     <ClInclude Include="..\src\Shared\EngineAPI.h" />
     <ClInclude Include="..\src\Shared\MathPod.h" />

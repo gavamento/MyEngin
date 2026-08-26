@@ -107,6 +107,7 @@
     <ClCompile Include="..\src\Engine\Engine\ProbeBaker.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Project.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Ragdoll.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\RagdollBuilder.cpp" />
     <ClCompile Include="..\src\Engine\Engine\RayTracing\RtScene.cpp" />
     <ClCompile Include="..\src\Engine\Engine\RayTracing\RtSceneBuild.cpp" />
     <ClCompile Include="..\src\Engine\Engine\RayTracing\RtSelfTest.cpp" />
@@ -278,6 +279,7 @@
     <ClInclude Include="..\src\Engine\Engine\ProbeBaker.h" />
     <ClInclude Include="..\src\Engine\Engine\Project.h" />
     <ClInclude Include="..\src\Engine\Engine\Ragdoll.h" />
+    <ClInclude Include="..\src\Engine\Engine\RagdollBuilder.h" />
     <ClInclude Include="..\src\Engine\Engine\RayTracing\RtScene.h" />
     <ClInclude Include="..\src\Engine\Engine\RayTracing\RtSceneBuild.h" />
     <ClInclude Include="..\src\Engine\Engine\RayTracing\RtSelfTest.h" />

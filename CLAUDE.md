@@ -61,6 +61,7 @@ MyEngine — C++20 / DirectX 11 の自作ゲームエンジン (VS2022 / x64 / W
   `--render-demo` (M54a: 描画ショーケース。スクショ回帰 6/7 枚目) /
   `--terrain-demo` (M58c: 地形ショーケース。8 枚目) / `--terrain-lod N` / `--terrain-skirt N` /
   `--physics-demo` (M59d: 空力/浮力/材料のショーケース。replay 5 ペア目 + スクショ 13 枚目) /
+  `--joint-demo` (M60i: 関節/機構/ラグドール/車のショーケース。replay 6 ペア目。substeps 16) /
   `--taa` (M55d) / `--ssr` (M56d) / `--froxel` (M57) / `--hzb-debug N` (M56c) /
   `--velocity-debug` (M55c) / `--froxel-dump N` / `--froxel-no-temporal` (M57) /
   `--package DIR` / `--img-diff A B [--tol N]`。

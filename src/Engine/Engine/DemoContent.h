@@ -149,6 +149,28 @@ void BuildTerrainShowcaseScene(EngineContext& ctx, float lodDistance = 0.0f,
 // 上のショーケースが参照するマテリアルの実体登録
 void RegisterTerrainShowcaseContent(EngineContext& ctx);
 
+// M60i: 関節と機構 (M60) のショーケースシーン。--joint-demo で選ぶ。
+//
+// **replay_verify.bat の 6 ペア目**がこのシーン — M60 で足した層 (拘束ブロック / ヒンジ /
+// 固定 / スライダ / リミット / モータ / 破断 / 複合コライダー / 凸包 / ラグドールの逆駆動 /
+// 車両) が Debug と Release でビット一致することを 600 tick ぶん機械照合するのが存在理由。
+//
+// ★被写体は「その機能が replay に**必ず**載る」ように誇張して置いてある。二重振り子は
+//   軌道が初期値に鋭敏なので、機種差があれば 600 tick で必ず割れる。
+// ★**substeps = 16** (env の上限)。ラグドールが要求する — 4 でも 8 でも「床に触れながら
+//   関節に吊られている」骨が微振動を続け、島の全員が静まるまで誰も眠らないので
+//   ラグドール全体が一生眠らない (M60g2 の実測)。車両が推奨する 8 も同時に満たす。
+// ★builtin メッシュ + 名前キーのマテリアル + 名前引きの .physmat が基本だが、
+//   **凸包 1 個とラグドールだけはモデル (.glb) 由来**なので、保存したシーン JSON は
+//   チェックアウト先に依存する = コミットできない (parts と同じ。cache\ へ置いて毎回組む)。
+//   凸包にモデル由来を 1 個混ぜてあるのは `.mcvx` クックを replay 被覆へ入れるため。
+void BuildJointShowcaseScene(EngineContext& ctx);
+
+// 上のショーケースが参照するメッシュ/マテリアルの実体登録 (RegisterRtShowcaseContent と同じ役割)。
+// 車輪メッシュ (**軸が X 向き**の多角柱) もここで手続き生成する — builtin の Cylinder は
+// 軸が Y で、車輪エンティティは回せない (回すとサスのレイ方向まで回る)
+void RegisterJointShowcaseContent(EngineContext& ctx);
+
 // assets\ 以下の .prefab.json / .anim.json を各ライブラリへ登録する (Editor / Runtime 共用)。
 // M48g からは .glb / .gltf / .fbx のスケルトンもここで (エンティティを作らずに) 登録する
 void RegisterAssetLibraries(EngineContext& ctx);
