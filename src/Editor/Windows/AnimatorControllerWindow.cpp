@@ -13,6 +13,8 @@
 #include "Engine/Engine/GameObject.h"
 #include "Engine/Engine/Scene.h"
 
+#include "Engine/Renderer/ImGuiTheme.h" // themeColor (選択 = Accent)
+
 #include "imgui.h"
 
 namespace mye {
@@ -201,7 +203,7 @@ void AnimatorControllerWindow::OnImGui(EngineContext& ctx, Selection& selection)
         }
         const bool active = comp->transitionTo == t.to && comp->currentState == t.from;
         const ImU32 col = active ? IM_COL32(90, 220, 120, 255)
-                                 : (selectedTransition_ == ti ? IM_COL32(230, 200, 90, 255)
+                                 : (selectedTransition_ == ti ? ImGui::ColorConvertFloat4ToU32(themeColor::Accent)
                                                               : IM_COL32(150, 150, 160, 200));
         DrawArrow(dl, center(t.from), center(t.to), col, active ? 3.0f : 1.5f);
     }
@@ -218,7 +220,7 @@ void AnimatorControllerWindow::OnImGui(EngineContext& ctx, Selection& selection)
             fill = IM_COL32(90, 90, 50, 245); // 遷移先=黄
         }
         dl->AddRectFilled(p, pmax, fill, 5.0f);
-        dl->AddRect(p, pmax, selectedState_ == i ? IM_COL32(230, 200, 90, 255)
+        dl->AddRect(p, pmax, selectedState_ == i ? ImGui::ColorConvertFloat4ToU32(themeColor::Accent)
                                                  : IM_COL32(20, 20, 24, 255),
                     5.0f, selectedState_ == i ? 2.5f : 1.0f);
         dl->AddText(ImVec2(p.x + 8, p.y + 6), IM_COL32(235, 235, 240, 255), ctrl->states[i].name.c_str());

@@ -3,6 +3,8 @@
 #include "Engine/Core/Localization.h"
 #include "Engine/Engine/Net/NetRuntime.h"
 
+#include "Engine/Renderer/ImGuiTheme.h" // themeColor (意味色)
+
 #include "imgui.h"
 
 namespace mye {
@@ -52,7 +54,7 @@ void NetWindow::OnImGui(EngineContext& ctx)
     if (n->desync) {
         // ★ここへ来た時点でセッションは既に止まっている (--net-no-halt-on-desync
         //   でない限り)。窓は事後の報告先であって、判断はエンジン側で済んでいる
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.35f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, themeColor::Error);
         ImGui::Text(Tr(StrId::Net_Desync), static_cast<unsigned long long>(n->desyncTick));
         ImGui::PopStyleColor();
     }

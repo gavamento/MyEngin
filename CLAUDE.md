@@ -30,7 +30,7 @@ MyEngine — C++20 / DirectX 11 の自作ゲームエンジン (VS2022 / x64 / W
 
 | コマンド | 担保するもの |
 |---|---|
-| `bin\x64\Debug\Editor.exe --selftest` | ヘッドレス回帰 35 スイート (D3D もウィンドウも作らない) |
+| `bin\x64\Debug\Editor.exe --selftest` | ヘッドレス回帰 40 スイート (D3D もウィンドウも作らない) |
 | `tools\replay_verify.bat [ticks]` | 8 ビルド → 6 シーンペアのリプレイ照合 → snapshot 往復 → タイムトラベル巻き戻し → 規則検査 |
 | `tools\shot_verify.bat [--update]` | 決定的スクショ 14 枚を `tests\golden\*.png` と比較 (CI 判定は 10 枚 — FXAA / TAA / SSR / froxel の 4 枚は分岐反転で機種差が増幅するので tol=0 のローカル限定。地形の 1 枚だけ異方性フィルタの実装依存で tol=12。**物理と関節の 2 枚だけ frame 120 で撮る** — 他は frame 3 = ほぼ初期配置なので物理が絵に出ない。**先に Release ビルドが必要**) |
 | `pwsh -File tools\check_rules.ps1` | 規則 1/2/4/7/8/9/10/11 の静的検査 |
@@ -178,7 +178,12 @@ Editor → GameLogic → Engine → Renderer → Core → Platform   (上位は�
 - `Editor.exe` / `Runtime.exe` は **Windows サブシステム (GUI)** なので、PowerShell から
   `& Editor.exe` すると**待たずに戻り exit code も出力も取れない**。`cmd /c` を挟むこと
   (CI のステップが `shell: cmd` なのも同じ理由)。
-- `tools\*.bat` は **CRLF で書く** (LF だと cmd.exe が行を途中で切る)。強制する仕組みは無い。
+- `tools\*.bat` は **CRLF で書く** (LF だと cmd.exe が行を途中で切る — CP932 環境では
+  日本語 rem コメントの途中で割れて断片がコマンド実行される)。`.gitattributes` の
+  `*.bat text eol=crlf` が checkout 時に強制する (blob は LF のまま)。リポジトリの blob は
+  全て LF なので、`core.autocrlf=false` のチェックアウトでは bat 以外も含めディスクが LF に
+  なり、この罠を踏む + CRLF を書くツール (gen_project_files 等) の diff が全域ノイズ化する
+  — **このリポジトリは `core.autocrlf=true` 前提** (リポジトリローカルに設定済み)。
 - bat で終了コードを見るときは `if errorlevel 1` を使わない。SEH で落ちた exit code
   (`0xC0000005` 等) は符号付きだと負なので「1 以上か」の判定が**偽になる**。
   `if !ERRORLEVEL! NEQ 0` の数値比較で書くこと (M52f)。

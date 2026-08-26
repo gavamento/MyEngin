@@ -24,6 +24,8 @@
 #include "Engine/Platform/PathUtil.h"
 #include "Engine/Renderer/TextureCook.h"
 
+#include "Engine/Renderer/ImGuiTheme.h" // themeColor (意味色)
+
 #include "imgui.h"
 
 namespace fs = std::filesystem;
@@ -595,7 +597,7 @@ void BuildSettingsWindow::OnImGui(EngineContext& ctx)
             } else if (r.ok) {
                 ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.50f, 1.0f), "OK  %s", Tr(r.name));
             } else {
-                ImGui::TextColored(ImVec4(0.95f, 0.40f, 0.35f, 1.0f), "NG  %s", Tr(r.name));
+                ImGui::TextColored(themeColor::Error, "NG  %s", Tr(r.name));
             }
             if (!r.detail.empty()) {
                 ImGui::SameLine();

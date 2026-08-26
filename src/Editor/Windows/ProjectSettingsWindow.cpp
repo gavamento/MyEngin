@@ -12,6 +12,8 @@
 #include "Engine/Platform/InputActions.h"
 #include "Engine/Renderer/RenderPath.h"
 
+#include "Engine/Renderer/ImGuiTheme.h" // themeColor (意味色)
+
 #include "imgui.h"
 
 namespace mye {
@@ -178,7 +180,7 @@ void ProjectSettingsWindow::DrawInputSection(EngineContext& ctx)
     ImGui::TextWrapped("%s", Tr(StrId::PrjSet_InputHint));
     ImGui::TextDisabled("%s", Tr(StrId::PrjSet_LiveLegend));
     if (captureKind_ != 0) {
-        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "%s", Tr(StrId::PrjSet_CaptureWait));
+        ImGui::TextColored(themeColor::Warning, "%s", Tr(StrId::PrjSet_CaptureWait));
     }
     const ImVec4 colOn(0.3f, 1.0f, 0.3f, 1.0f);
     const ImVec4 colOff(0.4f, 0.4f, 0.4f, 1.0f);

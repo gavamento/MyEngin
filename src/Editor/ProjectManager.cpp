@@ -18,6 +18,7 @@
 #include "Engine/Platform/Win32Window.h"
 #include "Engine/Renderer/GraphicsDevice.h"
 #include "Engine/Renderer/ImGuiRenderer.h"
+#include "Engine/Renderer/ImGuiTheme.h" // themeColor (意味色)
 #include "Engine/Renderer/SwapChain.h"
 
 #include "imgui.h"
@@ -202,7 +203,7 @@ bool DrawHubUi(HubState& st, void* hwnd, ProjectManagerOutcome& outcome)
             const char* ver = EntryEngineVersion(st, e);
             if (ver[0] != '\0' && std::strcmp(ver, kEngineVersion) != 0) {
                 ImGui::SameLine();
-                ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.2f, 1.0f), "[engine %s]", ver);
+                ImGui::TextColored(themeColor::Warning, "[engine %s]", ver);
                 if (ImGui::IsItemHovered()) {
                     ImGui::SetTooltip(Tr(StrId::Hub_TipEngineVer), ver, kEngineVersion);
                 }
@@ -390,6 +391,8 @@ ProjectManagerOutcome RunProjectManager(int testFrames, const std::wstring& shot
     }
     ImGuiInitOptions imguiOpts;
     imguiOpts.disableIni = true; // Hub のレイアウトは毎回固定 (保存しない)
+    // 高 DPI 対応は本体 (EngineLoop) と同じ規約: 撮影中はスケールしない
+    imguiOpts.dpiScale = shotPath.empty() ? window.DpiScale() : 1.0f;
     if (!imgui.Init(window, device, imguiOpts)) {
         return outcome;
     }

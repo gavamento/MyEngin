@@ -440,7 +440,8 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
             const ImVec2 ts = ImGui::CalcTextSize(ICON_FA_FOLDER);
             ImGui::GetWindowDrawList()->AddText(
                 ImVec2(mn.x + (kCell - ts.x) * 0.5f, mn.y + (kCell - ts.y) * 0.5f),
-                folderHovered ? IM_COL32(255, 214, 90, 255) : IM_COL32(232, 196, 80, 255),
+                // 配色ルール (ImGuiTheme.h) の帯に収めた金 — 原色寄りの黄 (232,196,80) は目に刺さる
+                folderHovered ? IM_COL32(219, 194, 134, 255) : IM_COL32(199, 173, 112, 255),
                 ICON_FA_FOLDER);
             ImGui::PopFont();
         }

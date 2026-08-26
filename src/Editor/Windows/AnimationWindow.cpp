@@ -356,7 +356,8 @@ void AnimationWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
         dl->AddLine(ImVec2(p0.x, midY), ImVec2(p0.x + barW, midY), IM_COL32(100, 100, 100, 255));
         for (const AnimKey& k : tr.keys) {
             const float fx = p0.x + barW * (static_cast<float>(k.tick) / static_cast<float>(len));
-            dl->AddCircleFilled(ImVec2(fx, midY), 4.0f, IM_COL32(255, 200, 60, 255));
+            // キーフレーム点。配色ルール (ImGuiTheme.h) の帯内の金 — 原色の黄は使わない
+        dl->AddCircleFilled(ImVec2(fx, midY), 4.0f, IM_COL32(212, 181, 110, 255));
         }
         const float cx = p0.x + barW * (static_cast<float>(previewTick_) / static_cast<float>(len));
         dl->AddLine(ImVec2(cx, p0.y), ImVec2(cx, p0.y + rowH), IM_COL32(255, 255, 255, 200), 1.5f);

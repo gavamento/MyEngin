@@ -52,6 +52,7 @@
 #include "Engine/Engine/UI/UISelfTest.h"
 #include "Engine/Engine/VfxSelfTest.h"
 #include "Engine/Engine/Net/NetSelfTest.h"
+#include "Engine/Engine/HotReload/DllReloaderSelfTest.h"
 #include "Engine/Engine/Replay/CrashRingSelfTest.h"
 #include "Engine/Platform/CrashHandler.h"
 #include "Engine/Platform/InputActionsSelfTest.h"
@@ -557,7 +558,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             && mye::RunConvexSelfTest()         // M60f
             && mye::RunRagdollSelfTest()        // M60g1
             && mye::RunRagdollBuildSelfTest()   // M60g2
-            && mye::RunCameraPilotSelfTest();   // カメラ操縦 (視錐台 UI 追補)
+            && mye::RunCameraPilotSelfTest()    // カメラ操縦 (視錐台 UI 追補)
+            && mye::RunDllReloaderSelfTest();   // DLL 書き込み完了プローブ (M52h 追補)
         return ok ? 0 : 1;
     }
 

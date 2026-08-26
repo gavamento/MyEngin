@@ -10,6 +10,10 @@ class Win32Window;
 struct ImGuiInitOptions {
     std::wstring iniPath;    // 空 = ImGui 既定 (CWD 相対の imgui.ini)。非空 = 絶対パスに固定
     bool disableIni = false; // true = レイアウト永続化なし (プロジェクトマネージャ画面用)
+    // モニタ DPI 倍率 (テーマ第 3 世代)。1.0 超でフォントとスタイル寸法を実寸へ拡大する。
+    // ★--screenshot 中は呼び出し側が 1.0 に固定すること — 撮影サイズは論理ピクセルで
+    //   固定されており、撮った機械の DPI で絵が変わると決定的スクショにならない
+    float dpiScale = 1.0f;
 };
 
 // Dear ImGui の Win32/DX11 バックエンドをラップする。

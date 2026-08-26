@@ -22,8 +22,8 @@ namespace {
 ImVec4 LevelColor(LogLevel level)
 {
     switch (level) {
-    case LogLevel::Warn: return ImVec4(0.95f, 0.75f, 0.20f, 1.0f);
-    case LogLevel::Error: return ImVec4(0.95f, 0.35f, 0.30f, 1.0f);
+    case LogLevel::Warn: return themeColor::Warning;
+    case LogLevel::Error: return themeColor::Error;
     default: return ImGui::GetStyle().Colors[ImGuiCol_TextDisabled];
     }
 }

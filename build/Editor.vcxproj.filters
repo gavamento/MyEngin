@@ -23,6 +23,7 @@
     <ClCompile Include="..\src\Editor\EditorMain.cpp" />
     <ClCompile Include="..\src\Editor\EditorSettings.cpp" />
     <ClCompile Include="..\src\Editor\EditorToolbar.cpp" />
+    <ClCompile Include="..\src\Editor\EditorWidgets.cpp" />
     <ClCompile Include="..\src\Editor\GameFlowSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\HzbSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\LayoutManager.cpp" />
@@ -108,6 +109,7 @@
     <ClInclude Include="..\src\Editor\EditorGlobalSettings.h" />
     <ClInclude Include="..\src\Editor\EditorSettings.h" />
     <ClInclude Include="..\src\Editor\EditorToolbar.h" />
+    <ClInclude Include="..\src\Editor\EditorWidgets.h" />
     <ClInclude Include="..\src\Editor\GameFlowSelfTest.h" />
     <ClInclude Include="..\src\Editor\HzbSelfTest.h" />
     <ClInclude Include="..\src\Editor\LayoutManager.h" />

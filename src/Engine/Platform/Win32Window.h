@@ -31,6 +31,8 @@ public:
     int Width() const { return width_; }
     int Height() const { return height_; }
     bool IsMinimized() const { return minimized_; }
+    // モニタ DPI 倍率 (1.0 = 96dpi)。UI スケール用 — sim から読んではいけない (機種依存値)
+    float DpiScale() const;
     // 自分がフォアグラウンドウィンドウか (M51h: パッド振動を裏で鳴らさないためのゲート。
     // 出力レーン専用 — sim からこの値を読んではいけない。決定論の対象外)
     bool HasFocus() const;

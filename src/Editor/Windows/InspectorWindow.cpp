@@ -13,6 +13,7 @@
 #include "Editor/AssetOps.h"
 #include "Editor/CameraPilot.h"
 #include "Editor/ComponentClipboard.h"
+#include "Editor/EditorWidgets.h"
 #include "Engine/Core/AssetGuidResolver.h"
 #include "Editor/EditorComponentCatalog.h"
 #include "Editor/PartTagNames.h"
@@ -35,6 +36,7 @@
 #include "Engine/Engine/Script/ManagedHost.h"
 #include "Engine/Platform/PathUtil.h"
 #include "Engine/Renderer/GpuResources.h"
+#include "Engine/Renderer/ImGuiTheme.h"  // 見出しフォント (テーマ第 3 世代)
 #include "Engine/Renderer/RenderTypes.h" // kEmissiveMaxIntensity (M46i)
 #include "Engine/Renderer/Skeleton.h"    // SkinnedModel のジョイント名 (M48i)
 
@@ -393,7 +395,7 @@ void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
     // ---- プレハブ所属判定 (青文字 / オーバーライド表示 / Revert・Apply に使う) ----
     const EntityID prefabRoot = Prefab::FindInstanceRoot(world, e);
     const bool isPrefabMember = !prefabRoot.IsNull();
-    const ImVec4 kPrefabBlue(0.45f, 0.68f, 1.0f, 1.0f);
+    const ImVec4& kPrefabBlue = themeColor::Prefab; // 名前は歴史的経緯 (意味は「プレハブ由来」)
 
     // ---- 名前 ----
     if (auto* nc = world.GetComponent<NameComponent>(e)) {
@@ -501,10 +503,17 @@ void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
             : Prefab::CompOverride::None;
 
         ImGui::PushID(static_cast<int>(t));
-        const std::string headerLabel =
-            std::string(ComponentUiFor(desc.name).icon) + " " + ComponentDisplayName(desc.name) + "###" + desc.name;
-        const bool openHeader =
-            ImGui::CollapsingHeader(headerLabel.c_str(), ImGuiTreeNodeFlags_DefaultOpen);
+        const ComponentUiInfo& ui = ComponentUiFor(desc.name);
+        // コンポーネント見出しは Semibold + 8% 増し (テーマ第 3 世代)。フィールド行と
+        // 同じ書体・同じサイズだと「どこからが次のコンポーネントか」を色だけで探すことになる。
+        // アイコンはカテゴリ色 — ImGui はラベルの部分着色ができないので、可視ラベルを
+        // 空にして DrawItemIconLabel が矩形へ直接描く (PopFont より前に呼ぶこと)
+        ImGui::PushFont(EditorHeadingFont(), ImGui::GetStyle().FontSizeBase * 1.08f);
+        const bool openHeader = ImGui::CollapsingHeader((std::string("###") + desc.name).c_str(),
+                                                        ImGuiTreeNodeFlags_DefaultOpen);
+        DrawItemIconLabel(ui.icon, ComponentCategoryColor(ui.category),
+                          ComponentDisplayName(desc.name), /*framed=*/true);
+        ImGui::PopFont();
         if (compState == Prefab::CompOverride::Added) {
             // ヘッダ右端に「+」バッジ (M50c)。ヘッダは全幅アイテムなので SameLine では
             // 右端に置けない — アイテム矩形へ直接描く (折りたたみ中でも見える)
@@ -678,14 +687,10 @@ void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
             if (std::strcmp(desc.name, "Camera") == 0 && !multi) {
                 CameraPilotState& pilot = GetCameraPilot();
                 const bool on = (pilot.fileId == fid);
-                if (on) {
-                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.78f, 0.45f, 0.20f, 1.0f));
-                }
-                if (ImGui::Button(Tr(on ? StrId::Insp_PilotStop : StrId::Insp_PilotCamera))) {
+                // 「別モード」トグルなので地形ブラシと同じ mode 色 (統一規格)
+                if (ToolbarToggle(Tr(on ? StrId::Insp_PilotStop : StrId::Insp_PilotCamera), on,
+                                  nullptr, /*mode=*/true)) {
                     pilot.fileId = on ? 0 : fid;
-                }
-                if (on) {
-                    ImGui::PopStyleColor();
                 }
                 ImGui::SameLine();
                 ImGui::TextDisabled("%s", Tr(StrId::Insp_PilotHint));
@@ -758,8 +763,13 @@ void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
                     ImGui::SeparatorText(ComponentCategoryLabel(cat));
                     headerShown = true;
                 }
-                const std::string label = std::string(info.icon) + " " + ComponentDisplayName(desc.name);
-                if (ImGui::MenuItem(label.c_str())) {
+                // アイコンはカテゴリ色の独立アイテムで描く (MenuItem ラベルは部分着色不可)。
+                // FA は GlyphMinAdvanceX で等幅化済みなので列が揃う
+                ImGui::PushStyleColor(ImGuiCol_Text, ComponentCategoryColor(info.category));
+                ImGui::TextUnformatted(info.icon);
+                ImGui::PopStyleColor();
+                ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
+                if (ImGui::MenuItem(ComponentDisplayName(desc.name))) {
                     // マルチ選択: まだ持っていない全対象へ追加 (1 Undo エントリ、M40a)
                     undo.BeginRecord("Add Component", selection);
                     for (size_t i = 0; i < targetEnts.size(); ++i) {

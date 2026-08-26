@@ -8,6 +8,8 @@
 #include <shellapi.h>
 
 #include "Engine/Core/Localization.h"
+#include "Engine/Renderer/ImGuiTheme.h" // themeColor (意味色)
+
 #include "imgui.h"
 
 namespace mye {
@@ -93,9 +95,9 @@ void ConsoleWindow::OnImGui(const std::string& externalEditorCmd)
     ImGui::SameLine();
     ImGui::Checkbox(Tr(StrId::Console_AutoScroll), &autoScroll_);
     ImGui::SameLine();
-    ImGui::TextColored(ImVec4(0.95f, 0.85f, 0.3f, 1.0f), "%d", warnCount);
+    ImGui::TextColored(themeColor::Warning, "%d", warnCount);
     ImGui::SameLine();
-    ImGui::TextColored(ImVec4(0.95f, 0.4f, 0.35f, 1.0f), "%d", errCount);
+    ImGui::TextColored(themeColor::Error, "%d", errCount);
 
     ImGui::SetNextItemWidth(-1);
     ImGui::InputTextWithHint("##search", "Filter... (double-click a line to open source)", searchBuf_,

@@ -187,6 +187,9 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     if (!config.projectRoot.empty()) {
         imguiOpts.iniPath = imguiIniPath; // 空 = ImGui 既定 (CWD の imgui.ini)
     }
+    // 高 DPI で UI を実寸へ (テーマ第 3 世代)。--screenshot 中は 1.0 固定 — 撮影サイズは
+    // 論理ピクセル指定なので、撮った機械の DPI で golden が変わってはならない
+    imguiOpts.dpiScale = config.screenshotPath.empty() ? window.DpiScale() : 1.0f;
     if (config.enableImGui && !imgui.Init(window, device, imguiOpts)) {
         return 1;
     }

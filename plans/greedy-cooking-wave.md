@@ -75,7 +75,7 @@
 | M59j CCD | 完了 | (本コミット) | 下記「M59j の申し送り」参照 |
 | M59k ABI v14 束ね | 完了 | (本コミット) | 下記「M59k の申し送り」参照 |
 | M59l 仕上げ (golden physics.png) | 完了 | (本コミット) | 下記「M59l の申し送り」参照 |
-| (別件) net_verify DllReloader フレーク修理 | 未着手 | | 物理と無関係の独立コミット |
+| (別件) net_verify DllReloader フレーク修理 | 完了 | (本コミット) | プローブを共有読み (FILE_SHARE_READ) 化 + 起動時有界待機 + selftest + bat 検出。詳細は radiant-shimmering-lumen.md の申し送り |
 
 ### M59k の申し送り (計画外の事実・罠)
 

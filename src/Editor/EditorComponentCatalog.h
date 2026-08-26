@@ -3,6 +3,8 @@
 
 #include "Engine/Core/EntityID.h"
 
+struct ImVec4;
+
 namespace mye {
 
 class World;
@@ -27,8 +29,16 @@ const std::vector<const char*>& ComponentUiCategories();
 // カテゴリキー -> 表示名 (M47c)。キーは英語のまま、見出しだけ訳す
 const char* ComponentCategoryLabel(const char* categoryKey);
 
-// Hierarchy 行用: エンティティを代表するコンポーネントのアイコン。
+// カテゴリキー -> アイコン色 (テーマ第 3 世代)。値は ImGuiTheme.h の配色ルール 1 と
+// 同じ帯 (彩度 0.35〜0.60 / 明度 0.65〜0.85) から。未知キーは General の灰
+const ImVec4& ComponentCategoryColor(const char* categoryKey);
+
+// Hierarchy 行用: エンティティを代表するコンポーネントの {アイコン, カテゴリ}。
 // General 系 (Name/LocalTransform/Active) は代表にせず、該当なしは空グループ用の丸を返す
-const char* EntityIconFor(World& world, EntityID e);
+struct EntityIconInfo {
+    const char* icon;
+    const char* category; // ComponentCategoryColor へそのまま渡せるキー
+};
+EntityIconInfo EntityIconInfoFor(World& world, EntityID e);
 
 } // namespace mye
