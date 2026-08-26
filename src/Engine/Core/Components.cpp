@@ -712,6 +712,44 @@ void RegisterBuiltinComponents()
         MYE_JP("接地している",
                MYE_FIELD_FLAGS(WheelComponent, isGrounded, Int32, kFieldReadOnly)),
         MYE_JP("圧縮量", MYE_FIELD_FLAGS(WheelComponent, compression, Float, kFieldReadOnly)),
+        // M60h2: タイヤ (末尾 append)。効くのは車体に Vehicle があるときだけ
+        MYE_JP("ステア追従率", MYE_FIELD_TIP(WheelComponent, steerFactor, Float,
+                                             "how much of the vehicle steer input this wheel "
+                                             "follows: 1 for the front axle, 0 for the rear")),
+        MYE_JP("駆動配分", MYE_FIELD_RANGE(WheelComponent, driveFactor, Float, -1.0f, 1.0f)),
+        MYE_JP("制動配分", MYE_FIELD_RANGE(WheelComponent, brakeFactor, Float, 0.0f, 1.0f)),
+        MYE_JP("コーナリングパワー",
+               MYE_FIELD_TIP(WheelComponent, corneringStiffness, Float,
+                             "lateral force per radian of slip, in N/rad, saturated at mu*N")),
+        MYE_JP("タイヤ摩擦", MYE_FIELD_TIP(WheelComponent, friction, Float,
+                                           "combined with the ground material as sqrt(a*b), "
+                                           "same rule as a contact")),
+        MYE_JP("転がり抵抗", MYE_FIELD_TIP(WheelComponent, rollingResistance, Float,
+                                           "combined with the ground material as max(a, b)")),
+        MYE_JP("切れ角 (rad)",
+               MYE_FIELD_FLAGS(WheelComponent, steerAngle, Float, kFieldReadOnly)),
+        MYE_JP("回転角 (rad)",
+               MYE_FIELD_FLAGS(WheelComponent, rotationAngle, Float, kFieldReadOnly)),
+    });
+
+    // M60h2: 車両。**hash 対象** — steer / throttle / brake が sim 状態の運転入力で、
+    // タイヤ力が velocity / angularVelocity を駆動する。opt-in (TypeId 末尾 append =43)。
+    // ★入力を ABI ではなくフィールドに置いたので **ABI 追加ゼロ** (スクリプトは既存の
+    //   SetComponentField で書く)。同時に「この車体の車輪はタイヤ摩擦を持つ」の宣言も
+    //   兼ねていて、Vehicle が無ければ車輪は M60h1 のサスだけ = ビット同一の経路を通る
+    RegisterComponent<VehicleComponent>("Vehicle", {
+        MYE_JP("ステア入力", MYE_FIELD_TIP(VehicleComponent, steer, Float,
+                                           "-1..1, positive steers right. sim state: scripts "
+                                           "write it with SetComponentField")),
+        MYE_JP("スロットル", MYE_FIELD_TIP(VehicleComponent, throttle, Float,
+                                           "-1..1, negative drives in reverse")),
+        MYE_JP("ブレーキ", MYE_FIELD_RANGE(VehicleComponent, brake, Float, 0.0f, 1.0f)),
+        MYE_JP("最大切れ角 (度)",
+               MYE_FIELD_RANGE(VehicleComponent, maxSteerAngleDeg, Float, 0.0f, 89.0f)),
+        MYE_JP("駆動力", MYE_FIELD_TIP(VehicleComponent, motorForce, Float,
+                                       "newtons per driven wheel at full throttle")),
+        MYE_JP("制動力", MYE_FIELD_TIP(VehicleComponent, brakeForce, Float,
+                                       "newtons per braked wheel at full brake")),
     });
 }
 

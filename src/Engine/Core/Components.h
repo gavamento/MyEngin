@@ -1051,6 +1051,57 @@ struct WheelComponent {
     // 範型は CharacterController の moveInput(入力) / isGrounded(出力) の書き分け
     int32_t isGrounded = 0;   // レイが車輪の接地面まで届いたか
     float compression = 0.0f; // 今の圧縮量 [m] (maxCompression でクランプ済み)
+    // ---- M60h2 追加: タイヤ (末尾 append) ----
+    // ★**タイヤの摩擦が効くのは車体に `Vehicle` が付いているときだけ**。Wheel 単体は
+    //   「サス = 縦の支え」しか持たない (= M60h1 とビット同一の経路)。分岐ゲートを
+    //   コンポーネントの有無に置いたので、h1 のシーンは 1 ビットも動かない。
+    float steerFactor = 0.0f;   // ステア入力への追従率 (前輪 1 / 後輪 0 / 逆位相なら -1)
+    float driveFactor = 0.0f;   // 駆動力の配分 (FF なら前 1 / 後 0)
+    float brakeFactor = 1.0f;   // 制動力の配分 (サイドブレーキを作るなら後輪だけ 1)
+    // 横力の傾き [N/rad]。**スリップ角に比例し μN で頭打ち**という v1 のモデル
+    // (Pacejka の魔法の公式は入れない — 係数の意味が測定値と結びつかないと調整できない)。
+    // 乗用車のタイヤ 1 本で 3 万 N/rad 前後が実測の目安
+    float corneringStiffness = 30000.0f;
+    // タイヤの μ。接地面の材料と **sqrt(積)** で結合する (接触ソルバと同じ結合則)。
+    // ゴム-乾燥路面 ~1.0 が目安 (PhysMatLibrary.h の換算表)
+    float friction = 1.0f;
+    // 転がり抵抗。接地面の材料と **max** で結合する (これも接触ソルバと同じ —
+    // sqrt(積) だと相手が 0 の瞬間に消える)。タイヤ-舗装 0.02 が目安
+    float rollingResistance = 0.02f;
+    // ---- 出力 (kFieldReadOnly。ソルバが毎 tick 書く = sim 状態) ----
+    // ★**見た目 (LocalTransform) は書かない**。書くとハッシュ対象が増えるので、
+    //   描画側がこの 2 つを読んで車輪メッシュを回す (ラグドールのパレットと同じ
+    //   「決定論の面積を広げない」判断)。回すのは M60i の描画配線。
+    float steerAngle = 0.0f;    // 今の切れ角 [rad] (steer * steerFactor * maxSteerAngleDeg)
+    float rotationAngle = 0.0f; // 転がりの回転角 [rad]。[-pi, pi] に折り返す
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
+// ---- 車両 (M60h2、TypeId 43) ----
+// **車輪が力を入れる剛体と同じエンティティ (= 車体) に付ける**。役割は 2 つだけ:
+// ①運転入力の置き場 ②「この剛体の車輪はタイヤの摩擦を持つ」という宣言。
+//
+// ★**入力を ABI ではなく sim 状態フィールドに置く**のが設計の核心。スクリプトは既存の
+//   `SetComponentField` で書けるので、**車両のために ABI スロットを 1 本も足していない**
+//   (前例は `CharacterControllerComponent.moveInput`)。おまけに入力が sim 状態なので
+//   snapshot / .rep / タイムトラベルが**何もしなくても**運転操作を運ぶ。
+// ★Vehicle が無ければ車輪はサス (縦の支え) しか出さない = M60h1 とビット同一。
+//   タイヤの摩擦をコンポーネントの有無で分岐ゲートしてあるので、既存シーンも
+//   「Wheel だけ付けたシーン」も 1 ビットも動かない。
+// ★v1 に**駆動系のモデルは無い** — エンジン回転もギアもデフも持たず、throttle に比例した
+//   力を駆動輪へ直接入れる。トルク曲線を入れるなら「回転角を sim 状態に持っている」
+//   ここから素直に伸ばせる (v1 の回転角は転がりから逆算した見た目用)。
+//
+// velocity / angularVelocity を駆動するので **hash 対象**。opt-in (TypeId 末尾 append)。
+struct VehicleComponent {
+    // ---- 運転入力 (スクリプトが毎 tick 書く。**hash 対象 = sim 状態**) ----
+    float steer = 0.0f;    // -1..1 (+ で右へ切る)。範囲外はクランプされる
+    float throttle = 0.0f; // -1..1 (- で後退)。範囲外はクランプされる
+    float brake = 0.0f;    // 0..1
+    // ---- 諸元 ----
+    float maxSteerAngleDeg = 30.0f; // steer=1 のときの切れ角
+    float motorForce = 4000.0f;     // 駆動輪 1 本あたりの最大駆動力 [N]
+    float brakeForce = 6000.0f;     // 制動輪 1 本あたりの最大制動力 [N]
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 

@@ -72,6 +72,12 @@ constexpr float kCcdSkin = 0.001f;
 // 等式行のクランプ幅 = 実質無限大。∞ を持ち回らないのは、inf 同士の引き算で NaN が
 // 生まれる経路をソルバの中に一切作らないため (これを超える λ は物理的に到達しない)
 constexpr float kJointRowUnbounded = 1e30f;
+// ---- タイヤ (M60h2) ----
+// スリップ角を出すときに前進速度へ噛ませる下限 [m/s]。**0 割りを避けるためだけの値では
+// ない** — 停止寸前でスリップ角が 90 度に張り付くと、横力が μN に飽和したまま向きだけ
+// 暴れて車がその場で震える。「この速度までは角ではなく横滑り速度に比例する」という
+// 素直な意味を持たせてあり、実車の低速域 (据え切り) の感触にも近い
+constexpr float kTireSlipRefSpeed = 2.0f;
 
 // ---- scalar クォータニオン演算 (親子合成用。XMVECTOR 禁止 = 決定論契約) ----
 
@@ -1794,6 +1800,14 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
         float impulse = 0.0f;
         float rx = 0, ry = 0, rz = 0;
         float ux = 0, uy = 0, uz = 0;
+        // ---- タイヤ (M60h2)。**veh == nullptr なら以下は 1 つも触らない** ----
+        VehicleComponent* veh = nullptr;   // 車体に付いた運転入力 (無ければタイヤ力なし)
+        float lfx = 0, lfy = 0, lfz = 1;   // 車輪の前方向 (剛体ローカル、単位)
+        float steerAngle = 0.0f;           // 今 tick の切れ角 [rad] (tick 中は不変)
+        float steerSin = 0.0f, steerCos = 1.0f; // その sin/cos (サブステップで三角関数を呼ばない)
+        bool hasTangent = false;           // 接線方向の力積を出したか (**分岐ゲート**)
+        float tjx = 0, tjy = 0, tjz = 0;   // 接線方向の力積 (駆動 / 制動 / 横力の合成)
+        float spin = 0.0f;                 // この tick に転がった角度 [rad] (サブステップで累積)
     };
     std::vector<WheelLink> wheelLinks;
     {
@@ -1872,6 +1886,35 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             // そのまま書き戻すことで「眠った瞬間の接地状態」が凍る (下の invMass 分岐)
             l.grounded = (l.wc->isGrounded != 0);
             l.compression = l.wc->compression;
+            // ---- タイヤ (M60h2): **車体に Vehicle が付いているときだけ** ----
+            // ★探すのは「力を入れる剛体と同じエンティティ」1 箇所だけ。祖先を辿らないのは、
+            //   車体が決まった時点で車両も決まるべきだから (辿ると中間に置いた Vehicle が
+            //   別の剛体の車輪を動かすという読めない配線が作れてしまう)
+            l.veh = world.GetComponent<VehicleComponent>(A.entity);
+            if (l.veh) {
+                // 前方向 = 車輪エンティティのローカル +Z (ワールド → 剛体ローカルへ畳む)
+                float fwx, fwy, fwz;
+                QuatRotate(wrot.x, wrot.y, wrot.z, wrot.w, 0.0f, 0.0f, 1.0f, fwx, fwy, fwz);
+                QuatRotate(iqx, iqy, iqz, iqw, fwx, fwy, fwz, l.lfx, l.lfy, l.lfz);
+                const float fl2 = l.lfx * l.lfx + l.lfy * l.lfy + l.lfz * l.lfz;
+                if (fl2 < 1e-12f) {
+                    l.veh = nullptr; // 前方向が定義できない = タイヤ力を出さない
+                } else {
+                    const float finv = 1.0f / std::sqrt(fl2);
+                    l.lfx *= finv;
+                    l.lfy *= finv;
+                    l.lfz *= finv;
+                    // 切れ角は **tick 中に変わらない**ので sin/cos をここで 1 回だけ作る
+                    // (M60c のリミット角と同じ流儀 — サブステップの中で三角関数を呼ばない)
+                    constexpr float kDeg2Rad = 3.14159265f / 180.0f;
+                    float st = l.veh->steer;
+                    if (st > 1.0f) { st = 1.0f; } else if (st < -1.0f) { st = -1.0f; }
+                    l.steerAngle = st * l.wc->steerFactor * l.veh->maxSteerAngleDeg * kDeg2Rad;
+                    l.steerSin = std::sin(l.steerAngle);
+                    l.steerCos = std::cos(l.steerAngle);
+                }
+            }
+            l.spin = 0.0f;
             wheelLinks[w++] = l;
         }
         wheelLinks.resize(w);
@@ -2617,7 +2660,8 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
         //   接触は拘束なので逐次が正しいが、サスは**力**なので同時に測るのが正しい。
         for (WheelLink& l : wheelLinks) {
             Body& A = bodies[static_cast<size_t>(l.bi)];
-            l.impulse = 0.0f; // ★必ず先に落とす — 2 パス目が前サブステップの力積を撃たないため
+            l.impulse = 0.0f;      // ★必ず先に落とす — 2 パス目が前サブステップの力積を撃たないため
+            l.hasTangent = false;  // 同上 (タイヤ力の分岐ゲート)
             if (A.invMass <= 0.0f) {
                 // 眠っている / kinematic な車体は押しても動かない。★出力は**前の値のまま**
                 //   凍らせる (潰さない) — 眠った瞬間の接地状態が残るほうが読み手に自然で、
@@ -2643,6 +2687,8 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             const float rMinZ = (pz < ez) ? pz : ez, rMaxZ = (pz > ez) ? pz : ez;
             float bestT = maxDist;
             bool hit = false;
+            size_t hitBody = 0;              // M60h2: 接地面の材料を引く相手
+            float hnx = 0, hny = 1, hnz = 0; // M60h2: 接地面の法線 (坂でタイヤ力を寝かせる)
             const size_t wn = bodies.size();
             for (size_t j = 0; j < wn; ++j) {
                 if (j == static_cast<size_t>(l.bi)) {
@@ -2672,6 +2718,10 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                     }
                     bestT = t;
                     hit = true;
+                    hitBody = j;
+                    hnx = nx;
+                    hny = ny;
+                    hnz = nz;
                 });
             }
             if (!hit) {
@@ -2725,6 +2775,127 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             l.ux = ux;
             l.uy = uy;
             l.uz = uz;
+            // ---- タイヤ力 (M60h2): 駆動 / 制動 / 転がり抵抗 / 横力 ----
+            // ★**Vehicle が無ければ 1 行も通らない**。分岐ゲートをコンポーネントの有無に
+            //   置いたので、M60h1 のシーン (Wheel だけ) はサスの式が 1 命令も変わらない。
+            if (!l.veh) {
+                continue;
+            }
+            const float loadN = impulse / h; // このサブステップの接地荷重 [N]
+            // 接地面の法線。**サスの up ではなく実際に当たった面**を使う (坂で効く)。
+            // 裏向き / 真横は面として使えないので up へ倒す (決定論的分岐)
+            float nx = hnx, ny = hny, nz = hnz;
+            if (nx * ux + ny * uy + nz * uz <= 0.0f) {
+                nx = ux;
+                ny = uy;
+                nz = uz;
+            }
+            // 前方向 = 剛体ローカルの車輪 +Z → ワールド → 切れ角ぶん**サス軸まわり**に回す
+            float fx, fy, fz;
+            QuatRotate(A.qx, A.qy, A.qz, A.qw, l.lfx, l.lfy, l.lfz, fx, fy, fz);
+            if (l.steerSin != 0.0f) {
+                // ロドリゲス回転 (軸 = サス軸 u)。u と f はふつう直交なので第 3 項はほぼ 0 だが、
+                // キャンバー/キャスターを付けた車輪では効くので落とさない。
+                // ★sin/cos は tick 頭で 1 回作ってある (サブステップで三角関数を呼ばない)
+                float cux, cuy, cuz;
+                Cross(ux, uy, uz, fx, fy, fz, cux, cuy, cuz);
+                const float dotUF = ux * fx + uy * fy + uz * fz;
+                const float k1 = 1.0f - l.steerCos;
+                fx = fx * l.steerCos + cux * l.steerSin + ux * dotUF * k1;
+                fy = fy * l.steerCos + cuy * l.steerSin + uy * dotUF * k1;
+                fz = fz * l.steerCos + cuz * l.steerSin + uz * dotUF * k1;
+            }
+            // 接地面へ射影 = 坂では前後方向も面に寝る
+            const float fdn = fx * nx + fy * ny + fz * nz;
+            fx -= nx * fdn;
+            fy -= ny * fdn;
+            fz -= nz * fdn;
+            const float fl2 = fx * fx + fy * fy + fz * fz;
+            if (fl2 < 1e-8f) {
+                continue; // 車輪が接地面を正面から向いている = 前後が定義できない
+            }
+            const float finv = 1.0f / std::sqrt(fl2);
+            fx *= finv;
+            fy *= finv;
+            fz *= finv;
+            // 右方向 = n × f (左手系の +X。n ⊥ f なので単位のまま)
+            float rgx, rgy, rgz;
+            Cross(nx, ny, nz, fx, fy, fz, rgx, rgy, rgz);
+            // 接地点の速度はサスと同じ vp = v + ω×r
+            const float vpx = A.vx + wr0, vpy = A.vy + wr1, vpz = A.vz + wr2;
+            const float vLong = vpx * fx + vpy * fy + vpz * fz;
+            const float vLat = vpx * rgx + vpy * rgy + vpz * rgz;
+            if (l.wc->radius > 0.0f) {
+                // 見た目の回転角。**滑りは見ていない** (v1 は転がり前提) ので、ロックした
+                // 車輪も路面速度で回って見える。トルク側から積むなら Vehicle の駆動系を
+                // モデル化する話になるので v1 では踏み込まない
+                l.spin += (vLong / l.wc->radius) * h;
+            }
+            // 材料の結合則は**接触と同じ** — μ は sqrt(積)、転がり抵抗は max
+            // (相手が 0 の瞬間に消えないため。:3246 のコメントが正本)
+            const Body& G = bodies[hitBody];
+            const float mu = std::sqrt(l.wc->friction * G.friction);
+            const float roll
+                = (l.wc->rollingResistance > G.roll) ? l.wc->rollingResistance : G.roll;
+            const float kEffF = EffectiveMassInv(A, rx, ry, rz, fx, fy, fz);
+            const float kEffR = EffectiveMassInv(A, rx, ry, rz, rgx, rgy, rgz);
+            float thr = l.veh->throttle;
+            if (thr > 1.0f) {
+                thr = 1.0f;
+            } else if (thr < -1.0f) {
+                thr = -1.0f;
+            }
+            float br = l.veh->brake;
+            if (br < 0.0f) {
+                br = 0.0f;
+            } else if (br > 1.0f) {
+                br = 1.0f;
+            }
+            // ---- 縦力: 駆動 − (制動 + 転がり抵抗) ----
+            float jLong = l.veh->motorForce * thr * l.wc->driveFactor * h;
+            const float resist = (l.veh->brakeForce * br * l.wc->brakeFactor + roll * loadN) * h;
+            if (resist > 0.0f && vLong != 0.0f && kEffF > 0.0f) {
+                // ★**速度を反転させない**。止める力は「ちょうど止める」までが上限で、
+                //   これが無いと停車中の車がブレーキで後ろへ走り出す
+                float jr = resist;
+                const float cancel = ((vLong > 0.0f) ? vLong : -vLong) / kEffF;
+                if (jr > cancel) {
+                    jr = cancel;
+                }
+                jLong -= (vLong > 0.0f) ? jr : -jr;
+            }
+            // ---- 横力: スリップ角の線形飽和 (Pacejka は入れない) ----
+            float jLat = 0.0f;
+            if (vLat != 0.0f && kEffR > 0.0f) {
+                const float aLong = (vLong > 0.0f) ? vLong : -vLong;
+                const float vRef = (aLong > kTireSlipRefSpeed) ? aLong : kTireSlipRefSpeed;
+                // スリップ角の小角近似 (atan を呼ばない)。横滑りと逆向きへ効く
+                jLat = -l.wc->corneringStiffness * (vLat / vRef) * h;
+                // 縦と同じ理由の上限 — 横滑りを跳ね返して振動する経路を塞ぐ
+                const float cancel = ((vLat > 0.0f) ? vLat : -vLat) / kEffR;
+                if (jLat > cancel) {
+                    jLat = cancel;
+                } else if (jLat < -cancel) {
+                    jLat = -cancel;
+                }
+            }
+            // ---- 摩擦円: 縦横**あわせて** μN を超えない ----
+            // ★軸ごとに独立にクランプする (摩擦の「箱」) と、限界でブレーキと旋回が
+            //   同時に満額出て √2 倍のグリップが生まれる。円にしておくと
+            //   「曲がりながらは止まれない」が自然に出る
+            const float mag2 = jLong * jLong + jLat * jLat;
+            const float maxTan = mu * loadN * h;
+            if (mag2 > maxTan * maxTan) {
+                const float sc = maxTan / std::sqrt(mag2);
+                jLong *= sc;
+                jLat *= sc;
+            }
+            if (jLong != 0.0f || jLat != 0.0f) {
+                l.hasTangent = true;
+                l.tjx = fx * jLong + rgx * jLat;
+                l.tjy = fy * jLong + rgy * jLat;
+                l.tjz = fz * jLong + rgz * jLat;
+            }
         }
         // 2 パス目: 測った力積をまとめて入れる。**対称な 4 輪なら左右のトルクが
         // ビット単位で打ち消し合う** (同じ大きさ・逆符号の加算は fp でも厳密に 0)
@@ -2734,6 +2905,13 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             }
             ApplyImpulse(bodies[static_cast<size_t>(l.bi)], l.rx, l.ry, l.rz, l.ux * l.impulse,
                          l.uy * l.impulse, l.uz * l.impulse, 1.0f);
+            // ★タイヤ力は**別の呼び出しで足す** (合成したベクトルを 1 回で入れない) —
+            //   こうしておくと Vehicle 無しのシーンでサスの式が 1 命令も変わらず、
+            //   M60h1 とのビット同一が構造の上で立つ
+            if (l.hasTangent) {
+                ApplyImpulse(bodies[static_cast<size_t>(l.bi)], l.rx, l.ry, l.rz, l.tjx, l.tjy,
+                             l.tjz, 1.0f);
+            }
         }
 
         // ---- ブロードフェーズ (M28d): 候補ペア列挙 (1 軸 sort & sweep、margin 込み) ----
@@ -4031,6 +4209,17 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
     for (const WheelLink& l : wheelLinks) {
         l.wc->isGrounded = l.grounded ? 1 : 0;
         l.wc->compression = l.compression;
+        if (l.veh) {
+            l.wc->steerAngle = l.steerAngle;
+            // 転がり角は [-pi, pi] へ折り返す。**際限なく増やすと float の分解能が落ちて
+            // 「同じ tick なのに絵が構成で違う」に化ける** (この値も hash 対象)。
+            // ★while で引かないのは、半径を極端に小さくされたときに**止まらなくなる**から。
+            //   回転数を数えて 1 回で引けば、入力が何であっても命令数が変わらない
+            constexpr float kTwoPi = 6.2831853f;
+            constexpr float kInvTwoPi = 1.0f / 6.2831853f;
+            const float a = l.wc->rotationAngle + l.spin;
+            l.wc->rotationAngle = a - std::floor(a * kInvTwoPi + 0.5f) * kTwoPi;
+        }
     }
 
     // ---- 破断 (M60d): tick 全体の反力が閾値を超えた関節を折る ----

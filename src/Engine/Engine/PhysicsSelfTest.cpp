@@ -6471,6 +6471,375 @@ bool RunPhysicsSelfTest()
         }
     }
 
+    // ================= M60h2: タイヤ力 + 車両入力 =================
+    // 車体に `Vehicle` を付けると車輪がタイヤの摩擦を持つ。運転入力は **sim 状態
+    // フィールド** (steer / throttle / brake) なので、スクリプトは既存の
+    // `SetComponentField` で書ける = **ABI 追加ゼロ** (h2-7 がそれを実走で示す)。
+    {
+        constexpr float kRest = 0.4f;
+        constexpr float kRadius = 0.35f;
+        constexpr float kHalfY = 0.25f;
+        constexpr float kFloatY = kRadius + kRest + kHalfY; // 無負荷で浮く高さ = 1.0
+        constexpr float kCarMass = 1200.0f;
+        constexpr float kK = 60000.0f; // 1 輪 300kg を支えるばね (沈み込み 0.049m)
+        constexpr float kC = 8000.0f;
+        const float kWx[4] = { -0.8f, 0.8f, -0.8f, 0.8f };
+        const float kWz[4] = { 1.4f, 1.4f, -1.4f, -1.4f }; // 前 2 / 後 2 (ホイールベース 2.8m)
+        struct Car {
+            GameObject body;
+            GameObject wheels[4];
+            VehicleComponent* veh = nullptr;
+        };
+        // 後輪駆動・前輪操舵の 4 輪車。withVehicle=false なら M60h1 の「サスだけ」の車
+        auto makeCar = [&](Scene& s, float x, float y, float z, bool withVehicle) {
+            Car car;
+            car.body = s.CreateGameObjectTracked("Chassis");
+            car.body.SetLocalPosition(x, y, z);
+            auto* col = car.body.AddComponent<ColliderComponent>();
+            col->shape = 1;
+            col->isTrigger = false;
+            col->halfExtents = { 0.9f, kHalfY, 1.8f };
+            auto* rb = car.body.AddComponent<RigidbodyComponent>();
+            rb->mass = kCarMass;
+            rb->gravityScale = 1.0f;
+            if (withVehicle) {
+                car.veh = car.body.AddComponent<VehicleComponent>();
+                car.veh->motorForce = 3000.0f;
+                car.veh->brakeForce = 6000.0f;
+                car.veh->maxSteerAngleDeg = 30.0f;
+            }
+            for (int i = 0; i < 4; ++i) {
+                GameObject w = s.CreateGameObjectTracked("Wheel");
+                w.SetParent(car.body);
+                w.SetLocalPosition(kWx[i], -kHalfY, kWz[i]);
+                auto* wc = w.AddComponent<WheelComponent>();
+                wc->restLength = kRest;
+                wc->radius = kRadius;
+                wc->stiffness = kK;
+                wc->damping = kC;
+                wc->steerFactor = (kWz[i] > 0.0f) ? 1.0f : 0.0f; // 前輪操舵
+                wc->driveFactor = (kWz[i] > 0.0f) ? 0.0f : 1.0f; // 後輪駆動
+                car.wheels[i] = w;
+            }
+            return car;
+        };
+        auto addEnv = [&](Scene& s, int substeps) {
+            GameObject e = s.CreateGameObjectTracked("Env");
+            auto* pe = e.AddComponent<PhysicsEnvironmentComponent>();
+            pe->substeps = substeps;
+            pe->sleepDelayTicks = 0; // 走行中の判定を睡眠で濁らせない
+            return e;
+        };
+        // 乾いた舗装 (μ = sqrt(1.0 * 1.0) = 1.0)。既定の床は 0.5 なので明示する
+        auto addRoad = [&](Scene& s, float friction) {
+            GameObject g = MakeGround(s, "Road", 0.0f, -1.0f, 0.0f, 60.0f, 1.0f, 60.0f);
+            g.GetComponent<ColliderComponent>()->friction = friction;
+            return g;
+        };
+        // ヨー角 [rad] (Y 軸まわり)。車体は Y 以外ほぼ回らないので 2*atan2 で足りる
+        auto yawOf = [](GameObject go) {
+            const auto* lt = go.GetComponent<LocalTransform>();
+            return 2.0f * std::atan2(lt->rotation.y, lt->rotation.w);
+        };
+
+        // -- (h2-4) Vehicle が無ければ M60h1 と**ビット同一** --
+        // ★分岐ゲートをコンポーネントの有無に置いたことの証明。入力ゼロで走らせても
+        //   同じであること (縦横の滑りが厳密に 0 なので接線の力積を 1 回も撃たない) まで
+        //   見るので、「値が 0 だから同じ」ではなく「経路を通っていない」が固定される
+        {
+            struct Rest {
+                float y = 0.0f, z = 0.0f, qx = 0.0f, vy = 0.0f;
+            };
+            auto drop = [&](bool withVehicle) {
+                Scene s;
+                addRoad(s, 1.0f);
+                addEnv(s, 8);
+                Car car = makeCar(s, 0.0f, 1.4f, 0.0f, withVehicle);
+                s.GetWorld().ApplyStructuralChanges();
+                for (int i = 0; i < 300; ++i) {
+                    phys.Update(s.GetWorld(), kDt);
+                }
+                Rest r;
+                const auto* lt = car.body.GetComponent<LocalTransform>();
+                r.y = lt->position.y;
+                r.z = lt->position.z;
+                r.qx = lt->rotation.x;
+                r.vy = car.body.GetComponent<RigidbodyComponent>()->velocity.y;
+                return r;
+            };
+            const Rest a = drop(false);
+            const Rest b = drop(true);
+            MYE_LOG_INFO("  [phys] vehicle idle: y %.7f vs %.7f / z %.7f vs %.7f",
+                         static_cast<double>(a.y), static_cast<double>(b.y),
+                         static_cast<double>(a.z), static_cast<double>(b.z));
+            check(a.y == b.y && a.z == b.z && a.qx == b.qx && a.vy == b.vy,
+                  "vehicle: a car at zero input is bit-identical to the same car with no "
+                  "Vehicle component (M60h1 path untouched)");
+        }
+
+        // -- (h2-1) 直進で真っ直ぐ走る --
+        {
+            Scene s;
+            addRoad(s, 1.0f);
+            addEnv(s, 8);
+            Car car = makeCar(s, 0.0f, 1.1f, 0.0f, true);
+            s.GetWorld().ApplyStructuralChanges();
+            for (int i = 0; i < 60; ++i) {
+                phys.Update(s.GetWorld(), kDt); // 先に静定させる
+            }
+            car.veh->throttle = 1.0f;
+            for (int i = 0; i < 300; ++i) {
+                phys.Update(s.GetWorld(), kDt);
+            }
+            const auto* lt = car.body.GetComponent<LocalTransform>();
+            const auto* rb = car.body.GetComponent<RigidbodyComponent>();
+            const float spin = car.wheels[0].GetComponent<WheelComponent>()->rotationAngle;
+            MYE_LOG_INFO("  [phys] vehicle straight: pos (%.6f, %.4f) v = %.3f m/s spin = %.4f",
+                         static_cast<double>(lt->position.x), static_cast<double>(lt->position.z),
+                         static_cast<double>(rb->velocity.z), static_cast<double>(spin));
+            check(lt->position.z > 5.0f, "vehicle: full throttle drives the car forward");
+            check(std::fabs(lt->position.x) < 1e-4f,
+                  "vehicle: and it stays on the line (no lateral drift)");
+            check(std::fabs(yawOf(car.body)) < 1e-4f, "vehicle: and never yaws on its own");
+            check(spin != 0.0f, "vehicle: the wheels report a rolling angle");
+        }
+
+        // -- (h2-2) ステア入力に対して旋回半径が単調 --
+        {
+            struct Turn {
+                float w = 0.0f; // ヨー角速度 [rad/s]
+                float r = 0.0f; // 旋回半径 [m]
+            };
+            auto turn = [&](float steer) {
+                Scene s;
+                addRoad(s, 1.0f);
+                addEnv(s, 8);
+                Car car = makeCar(s, 0.0f, 1.1f, 0.0f, true);
+                s.GetWorld().ApplyStructuralChanges();
+                car.veh->throttle = 0.35f;
+                for (int i = 0; i < 180; ++i) {
+                    phys.Update(s.GetWorld(), kDt); // 直進で速度をつける
+                }
+                car.veh->steer = steer;
+                for (int i = 0; i < 240; ++i) {
+                    phys.Update(s.GetWorld(), kDt);
+                }
+                const auto* rb = car.body.GetComponent<RigidbodyComponent>();
+                const float sp = std::sqrt(rb->velocity.x * rb->velocity.x
+                                           + rb->velocity.z * rb->velocity.z);
+                const float w = rb->angularVelocity.y;
+                // 旋回半径 = v / ω (ω が 0 なら実質無限大)
+                const float r = (std::fabs(w) > 1e-4f) ? sp / std::fabs(w) : 1e9f;
+                return Turn{ w, r };
+            };
+            const auto t0 = turn(0.0f);
+            const auto t1 = turn(0.25f);
+            const auto t2 = turn(0.5f);
+            const auto t3 = turn(1.0f);
+            MYE_LOG_INFO("  [phys] vehicle turn: w = %.4f / %.4f / %.4f / %.4f rad/s",
+                         static_cast<double>(t0.w), static_cast<double>(t1.w),
+                         static_cast<double>(t2.w), static_cast<double>(t3.w));
+            MYE_LOG_INFO("  [phys] vehicle turn: radius = %.2f / %.2f / %.2f m (steer .25/.5/1)",
+                         static_cast<double>(t1.r), static_cast<double>(t2.r),
+                         static_cast<double>(t3.r));
+            check(std::fabs(t0.w) < 1e-4f, "vehicle: zero steer does not turn at all");
+            check(t1.w > 0.0f && t2.w > 0.0f && t3.w > 0.0f,
+                  "vehicle: positive steer turns to the right (+Y yaw)");
+            check(t1.r > t2.r && t2.r > t3.r,
+                  "vehicle: the turn radius shrinks monotonically with the steer input");
+        }
+
+        // -- (h2-3a) 転がり抵抗が坂を保持する / 傾きが勝てば転がり出す --
+        // ★重力を傾けて坂の代わりにする。**しきい値が tan(theta) vs 転がり抵抗**という
+        //   解析的な形で出るので、保持と転動の境目を数字で挟める
+        {
+            auto rollAway = [&](float tanTheta) {
+                Scene s;
+                addRoad(s, 1.0f);
+                GameObject e = s.CreateGameObjectTracked("Env");
+                auto* pe = e.AddComponent<PhysicsEnvironmentComponent>();
+                pe->substeps = 8;
+                pe->sleepDelayTicks = 0;
+                // 重力を +Z 側へ倒す (= +Z が下り坂)。大きさは 9.81 のまま
+                const float c = 1.0f / std::sqrt(1.0f + tanTheta * tanTheta);
+                pe->gravity = { 0.0f, -9.81f * c, 9.81f * c * tanTheta };
+                Car car = makeCar(s, 0.0f, 1.1f, 0.0f, true);
+                s.GetWorld().ApplyStructuralChanges();
+                for (int i = 0; i < 300; ++i) {
+                    phys.Update(s.GetWorld(), kDt); // 静定させる
+                }
+                const float z0 = car.body.GetComponent<LocalTransform>()->position.z;
+                for (int i = 0; i < 600; ++i) {
+                    phys.Update(s.GetWorld(), kDt);
+                }
+                return car.body.GetComponent<LocalTransform>()->position.z - z0;
+            };
+            const float hold = rollAway(0.01f); // 転がり抵抗 0.02 未満 = 止まる
+            const float roll = rollAway(0.05f); // 0.02 超え = 転がり出す
+            MYE_LOG_INFO("  [phys] vehicle slope: dz = %.5f (tan 0.01) / %.4f (tan 0.05)",
+                         static_cast<double>(hold), static_cast<double>(roll));
+            check(std::fabs(hold) < 0.02f,
+                  "vehicle: rolling resistance holds the car on a gentle slope");
+            check(roll > 1.0f, "vehicle: and lets go once the slope beats it");
+        }
+
+        // -- (h2-3b) 実際の坂: ブレーキで止まる / 氷なら滑る --
+        // ★接地面の**法線を実際に当たった面から採っている**ことがここで効く
+        //   (サスの軸で代用すると、車体が傾いたときにタイヤ力が面から浮く)
+        {
+            constexpr float kDeg2Rad = 3.14159265f / 180.0f;
+            const float th = 15.0f * kDeg2Rad;
+            const float cs = std::cos(th), sn = std::sin(th);
+            auto slide = [&](float groundFriction) {
+                Scene s;
+                const DirectX::XMFLOAT4 rot = { std::sin(th * 0.5f), 0.0f, 0.0f,
+                                                std::cos(th * 0.5f) };
+                GameObject g = MakeStaticBoxRot(s, "Slope", 0.0f, -1.0f, 0.0f, 40.0f, 1.0f, 40.0f,
+                                                rot);
+                g.GetComponent<ColliderComponent>()->friction = groundFriction;
+                addEnv(s, 8);
+                // 上面中心 (0, -1+cs, sn) から法線 (0, cs, sn) 方向へ浮かせて置く
+                const float lift = kFloatY + 0.05f;
+                Car car = makeCar(s, 0.0f, (-1.0f + cs) + cs * lift, sn + sn * lift, true);
+                car.body.GetComponent<LocalTransform>()->rotation = rot; // 坂と同じ姿勢
+                car.veh->brake = 1.0f;
+                s.GetWorld().ApplyStructuralChanges();
+                for (int i = 0; i < 300; ++i) {
+                    phys.Update(s.GetWorld(), kDt);
+                }
+                const auto* lt = car.body.GetComponent<LocalTransform>();
+                const float y0 = lt->position.y, z0 = lt->position.z;
+                for (int i = 0; i < 600; ++i) {
+                    phys.Update(s.GetWorld(), kDt);
+                }
+                const float dy = lt->position.y - y0, dz = lt->position.z - z0;
+                return std::sqrt(dy * dy + dz * dz);
+            };
+            const float dry = slide(1.0f);   // mu = 1.0 > tan15 = 0.268 → 止まる
+            const float ice = slide(0.02f);  // mu = 0.141 < 0.268 → 滑り落ちる
+            MYE_LOG_INFO("  [phys] vehicle brake on 15deg: dry = %.5f m / ice = %.3f m",
+                         static_cast<double>(dry), static_cast<double>(ice));
+            check(dry < 0.05f, "vehicle: the brakes hold the car on a 15 degree slope");
+            check(ice > 1.0f, "vehicle: and the same car slides down an icy one (mu < tan)");
+        }
+
+        // -- (h2-5) 地形 (M59i) の上を走れる --
+        {
+            TerrainColliderLibrary* prevLib = terraincol::Library();
+            TerrainColliderLibrary lib;
+            terraincol::Install(&lib);
+            TerrainAsset::TerrainData d;
+            d.heightW = d.heightH = 9;
+            d.splatW = d.splatH = 1;
+            // ★地形は**エンティティ中心に ±worldSize/2** (Shapes.cpp:1050 の規約)。
+            //   狭くすると全開加速の 5 秒で端から落ちる — 実際 80m 角では z=57 で場外へ出た
+            d.worldSizeX = d.worldSizeZ = 400.0f;
+            d.heightBase = 0.0f;
+            d.heightScale = 10.0f;
+            d.heights.assign(9 * 9, static_cast<uint16_t>(0.25f * 65535.0f + 0.5f)); // 一定 2.5m
+            d.splat.assign(4, 0);
+            d.splat[0] = 255;
+            const AssetID tid{ 0x7e11a10061ull };
+            lib.Register(tid, std::move(d));
+            Scene s;
+            GameObject terr = s.CreateGameObjectTracked("Terrain");
+            auto* col = terr.AddComponent<ColliderComponent>();
+            col->shape = 4;
+            col->meshAsset = tid;
+            col->friction = 1.0f;
+            addEnv(s, 8);
+            Car car = makeCar(s, 0.0f, 2.5f + 1.1f, 0.0f, true);
+            s.GetWorld().ApplyStructuralChanges();
+            for (int i = 0; i < 60; ++i) {
+                phys.Update(s.GetWorld(), kDt);
+            }
+            car.veh->throttle = 1.0f;
+            for (int i = 0; i < 300; ++i) {
+                phys.Update(s.GetWorld(), kDt);
+            }
+            const auto* lt = car.body.GetComponent<LocalTransform>();
+            int grounded = 0;
+            for (int i = 0; i < 4; ++i) {
+                grounded += car.wheels[i].GetComponent<WheelComponent>()->isGrounded;
+            }
+            MYE_LOG_INFO("  [phys] vehicle on terrain: z = %.4f y = %.4f grounded = %d",
+                         static_cast<double>(lt->position.z), static_cast<double>(lt->position.y),
+                         grounded);
+            check(lt->position.z > 5.0f && grounded == 4,
+                  "vehicle: the car drives across a heightfield without losing the ground");
+            check(std::fabs(lt->position.y - (2.5f + kFloatY)) < 0.1f,
+                  "vehicle: and stays at ride height while it does");
+            terraincol::Install(prevLib);
+        }
+
+        // -- (h2-7) 運転入力はスクリプトから既存 ABI で書ける (= ABI 追加ゼロ) --
+        // ★M60j (ABI v15 束ね) を廃止した根拠を実走で固定する。ここが通る限り、
+        //   車両のためにスロットを足す理由は無い
+        {
+            ScriptApiContext apiCtx;
+            MyeEngineApi api = {};
+            BuildEngineApi(api, &apiCtx);
+            Scene s;
+            apiCtx.scene = &s;
+            addRoad(s, 1.0f);
+            addEnv(s, 8);
+            Car car = makeCar(s, 0.0f, 1.1f, 0.0f, true);
+            s.GetWorld().ApplyStructuralChanges();
+            for (int i = 0; i < 60; ++i) {
+                phys.Update(s.GetWorld(), kDt);
+            }
+            const MyeEntityId ve = { car.body.Id().index, car.body.Id().generation };
+            const uint64_t compH = HashStr("Vehicle");
+            const float one = 1.0f;
+            const int wrote = api.SetComponentField(&apiCtx, ve, compH, HashStr("throttle"), &one,
+                                                    4);
+            for (int i = 0; i < 120; ++i) {
+                phys.Update(s.GetWorld(), kDt);
+            }
+            const float z = car.body.GetComponent<LocalTransform>()->position.z;
+            float back = 0.0f;
+            const int read = api.GetComponentField(&apiCtx, ve, compH, HashStr("throttle"), &back,
+                                                   4, nullptr);
+            MYE_LOG_INFO("  [phys] vehicle abi: set = %d read = %d (%.2f) z = %.4f", wrote, read,
+                         static_cast<double>(back), static_cast<double>(z));
+            check(wrote == 1 && read == 4 && back == 1.0f,
+                  "vehicle: SetComponentField writes the driving input (no new ABI slot needed)");
+            check(z > 0.5f, "vehicle: and the solver acts on what the script wrote");
+        }
+
+        // -- (h2-6) 決定論: 運転中のシーンの 240 tick 並走ハッシュ一致 --
+        {
+            auto build = [&](Scene& s, Car& car) {
+                addRoad(s, 1.0f);
+                addEnv(s, 8);
+                car = makeCar(s, 0.0f, 1.1f, 0.0f, true);
+                s.GetWorld().ApplyStructuralChanges();
+                car.veh->throttle = 0.8f;
+                car.veh->steer = 0.4f;
+            };
+            Scene sa, sb;
+            Car ca, cb;
+            build(sa, ca);
+            build(sb, cb);
+            bool det = true;
+            uint64_t finalHash = 0;
+            for (int i = 0; i < 240 && det; ++i) {
+                phys.Update(sa.GetWorld(), kDt);
+                phys.Update(sb.GetWorld(), kDt);
+                const uint64_t ha = HashWorld(sa.GetWorld(), nullptr);
+                const uint64_t hb = HashWorld(sb.GetWorld(), nullptr);
+                if (ha != hb) {
+                    det = false;
+                    MYE_LOG_ERROR("  vehicle determinism diverged at tick %d", i);
+                }
+                finalHash = ha;
+            }
+            check(det, "vehicle: two identical driving scenes hash-identical for 240 ticks");
+            MYE_LOG_INFO("  [phys] vehicle scene hash @240 = %016llX",
+                         static_cast<unsigned long long>(finalHash));
+        }
+    }
+
     if (failCount == 0) {
         MYE_LOG_INFO("==== Physics self test: ALL PASS ====");
         return true;
