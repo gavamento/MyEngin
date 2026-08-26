@@ -86,7 +86,11 @@ M60  関節と機構 (剛体トラック)
 
 ## 全体像と順序
 
-**列: a → b → c → d → e → f → g → h → i → j → k** (1 サブ = 1 コミット = 1 セッション + /clear)
+**列: a → b → c → d → e → f → g0 → g1 → g2 → h1 → h2 → i → k**
+(1 サブ = 1 コミット = 1 セッション + /clear)
+
+★後半は a〜f の実測を受けて再編した。**旧 g/h は各 2 分割、旧 j は廃止** (追加ゼロが確定した)。
+根拠と詳細は下記「M60 後半の再計画」。
 
 | サブ | 内容 | TypeId / ABI |
 |---|---|---|
@@ -96,11 +100,13 @@ M60  関節と機構 (剛体トラック)
 | M60d | 破断 + 粘着性 (材料との接続) | — |
 | M60e | 複合コライダー (子コライダーの親剛体への集約) | — (Rigidbody 末尾 append) |
 | M60f | 凸包クック + 凸形状の衝突 (shape=5) | — |
-| M60g | ラグドール (Parts / Skeleton 接続) | **41 = Ragdoll** |
-| M60h | 車両 (レイキャストサス + タイヤ) | **42 = Vehicle / 43 = Wheel** |
-| M60i | ショーケース + replay 6 ペア目 | — |
-| M60j | ABI v15 束ね (**必要になったスロットがゼロなら bump しない**) | v14→v15 |
-| M60k | 仕上げ (golden 追加 / engine_spec / README / 全量検証) | — |
+| M60g0 | 重複していた転がり抵抗ブロックの削除 (M60d-11 の申し送り) | — |
+| M60g1 | ラグドール駆動 (剛体 → 骨。Part 再利用) | **41 = Ragdoll** |
+| M60g2 | ラグドール生成器 (エディタ時のみ。sim に足さない) | — |
+| M60h1 | 車輪 + レイキャストサス | **42 = Wheel** |
+| M60h2 | タイヤ力 + 車両入力 | **43 = Vehicle** |
+| M60i | ショーケース (`--joint-demo`) + replay 6 ペア目 | — |
+| M60k | 仕上げ (golden 14 枚目 / engine_spec §10.5 / README / 全量検証) | **ABI 追加ゼロ** |
 
 **順序の根拠**
 - **可視化を a に同梱する** — M59 は可視化 (e) を面空力より前に置いて正解だった。関節は
@@ -109,6 +115,10 @@ M60  関節と機構 (剛体トラック)
   形状 (e/f) と応用 (g/h) へ移る。応用サブが基盤に手戻りを起こさない順序。
 - **複合コライダー (e) をラグドール (g)・車両 (h) より前に** — 胴体や車体は複数形状で作る。
 - **凸包 (f) は e の後・g の前**。溢れたら f を i の後ろへ送ってよい (下記「逃げ道」)。
+- **g1 (駆動) を g2 (生成器) より前に** — 生成器は「正しい形」を知らないと書けない。
+  手で組んだ 3 骨のラグドールが動いてから、その形を自動で吐く器を書く。
+- **h1 (サス) を h2 (タイヤ) より前に** — サスは `mg/k` という解析解を持つので、
+  タイヤ力という「解析解の無い層」を積む前に土台を数字で固定できる。
 - **golden は挙動が固まる最後 (k) に 1 回だけ**。
 
 ---
@@ -124,12 +134,15 @@ M60  関節と機構 (剛体トラック)
 | M60b ヒンジ / 固定 / スライダ | 完了 | `c3d0a6a` | 下記「M60b の申し送り」参照 |
 | M60c リミット + モータ + コーン | 完了 | `38bcba0` | 下記「M60c の申し送り」参照 |
 | M60d 破断 + 粘着性 | 完了 | `2a08678` | 下記「M60d の申し送り」参照 |
-| M60e 複合コライダー | 完了 | (本コミット) | 下記「M60e の申し送り」参照 |
-| M60f 凸包クック + 凸衝突 | 完了 | (本コミット) | 下記「M60f の申し送り」参照 |
-| M60g ラグドール | 未着手 | | |
-| M60h 車両 | 未着手 | | |
+| M60e 複合コライダー | 完了 | `fc83831` | 下記「M60e の申し送り」参照 |
+| M60f 凸包クック + 凸衝突 | 完了 | `40d117c` | 下記「M60f の申し送り」参照 |
+| M60g0 重複ブロック削除 | 未着手 | | g1 のセッション冒頭に独立コミットで |
+| M60g1 ラグドール駆動 | 未着手 | | |
+| M60g2 ラグドール生成器 | 未着手 | | |
+| M60h1 車輪 + サス | 未着手 | | |
+| M60h2 タイヤ力 + 車両入力 | 未着手 | | |
 | M60i ショーケース + replay 6 ペア目 | 未着手 | | |
-| M60j ABI v15 束ね (要否判断つき) | 未着手 | | |
+| ~~M60j ABI v15 束ね~~ | **廃止** | — | 追加ゼロで確定。要否の最終判断は h2 末尾、記載は k |
 | M60k 仕上げ | 未着手 | | |
 
 ### M60a の申し送り (計画外の事実・罠)
@@ -492,70 +505,316 @@ M60  関節と機構 (剛体トラック)
 
 ---
 
-### M60g: ラグドール (Parts / Skeleton 接続)
+### M60 後半の再計画 (a〜f 完了時点の実測を反映)
 
-- **生成器** (エディタメニュー「ラグドール生成」): `SkinnedMesh` を持つエンティティの
-  スケルトンから、骨ごとに `Part` + カプセル `Collider` + `Rigidbody` + `Joint(Cone)` を
-  持つ子エンティティ列を作る。バインドポーズの `jointGlobal` からカプセルの半径と長さを
-  導く (M48a の `socketWorld = jointGlobal * entityWorld` が正本)。
-  **生成はエディタ時の 1 回きり** — sim は普通の剛体+関節しか見ない (決定論の観点で最も安い)。
-- **`RagdollComponent` (TypeId 41)** はスキンメッシュ側に付く小さな札:
-  `active` (bool = アニメ駆動 ⇔ 物理駆動の切替) + 骨↔剛体の対応の起点。
-- **骨の駆動方向が逆になる** — `PartFollowSystem` は「骨 → 部位」。ラグドールは
-  「剛体 → 骨」。**ボーンパレットは描画専用 (`kComponentNoHash`)** なので、
-  剛体のワールド姿勢からパレットを組む経路を**描画側に**足すのが正解
-  (ハッシュ対象は剛体の LocalTransform のままで、決定論の面積が increase しない)。
-  `JointGlobalFromLocals` (Skeleton.h) の逆算をここで使う。
-- `active=false` の間は剛体を kinematic にしてアニメへ従わせる (ブレンドは v1 では約束しない)。
-- **検証**: 生成が同じスケルトンから毎回ビット同一の階層を作る / ラグドールが崩れて静止し
-  眠る / `active` 切替で骨のポーズが飛ばない (連続性) / `--selftest` はヘッドレスで
-  スケルトン登録済み (M48g の前例) / 並走ハッシュ。
+★**計画時の前提が 2 つ壊れていた**ので、後半 5 サブ (g/h/i/j/k) は下記へ差し替える。
 
-### M60h: 車両 (レイキャストサス + タイヤ)
+| 旧 | 新 | 変更点 |
+|---|---|---|
+| — | **M60g0** 重複コード削除 | M60d-11 の申し送り。31 行の死にコードを独立コミットで消す |
+| M60g | **M60g1** ラグドール駆動 / **M60g2** ラグドール生成器 | 描画層・Part 層・物理層の 3 層に跨るので分割 |
+| M60h | **M60h1** 車輪 + サス / **M60h2** タイヤ力 + 車両入力 | TypeId を **42=Wheel / 43=Vehicle** へ入れ替え (登録順 = 実装順) |
+| M60i | M60i (変更なし) | ショーケース + replay 6 ペア目 |
+| M60j | **廃止 → k へ吸収** | 調査の結果**追加ゼロで確定**。下記「M60j を廃止する根拠」 |
+| M60k | M60k (範囲を拡大) | 既存ドキュメントのドリフト修正を含める |
 
-- **拘束ではなく力で作る** (定石)。`VehicleComponent` (TypeId 42、車体に付く) +
-  `WheelComponent` (TypeId 43、車輪エンティティに付く)。
-- サスは `RaycastWorld` (既存、PhysicsSystem.h:134) を車輪位置から下向きに撃ち、
-  圧縮量からバネ力とダンパ力を接地点に `ApplyImpulse` する。
-- タイヤ横力は**スリップ角の線形飽和モデル** (Pacejka は v1 では入れない)。
-  縦力はスロットル/ブレーキ + 転がり抵抗 (M59f2 の材料値をそのまま使う)。
-- **substeps は 8 を推奨** (予約事項 4 のとおり `PhysicsEnvironment` のフィールドなので
-  シーン側で設定できる。定数にしない)。
-- 入力は `moveInput` と同じ流儀で sim 状態フィールド (`steer` / `throttle` / `brake`) に置き、
-  スクリプトが ABI の `SetComponentField` で書く (**ABI 追加ゼロ**)。
-- **検証**: 静止時の沈み込みが `mg/k` の解析値と一致 / 直進で真っ直ぐ走る (左右対称性) /
-  ステア入力で旋回半径が単調 / 坂で止まる (転がり抵抗) / 車輪が地形 (M59i) を追える /
-  並走ハッシュ。
+#### 壊れていた前提 1: **`RaycastWorld` はソルバの中から呼べない**
+
+計画 (旧 M60h) は「サスは `RaycastWorld` (既存) を車輪位置から下向きに撃つ」と書いていたが、
+`RaycastWorld` は **`WorldMatrixComponent` 基準**で、`TransformSystem` は物理の**後**に走る
+(`TickRunner.cpp:325` → `:335`) ので、ソルバ実行中のワールド行列は**1 tick 古い**。
+おまけにトリガーも拾い、スリープ / kinematic の区別も持たない。
+
+M59j (CCD) が同じ罠を踏んで明記済み — `PhysicsSystem.cpp:830-834` のコメントが正本:
+「掃引の材料はソルバが握っている `bodies[]` の pose でなければならない」。
+
+→ **サスのレイは `bodies[].pose` / `compoundShapes[].pose` に対して `shapes::Raycast` を
+直接撃つ自前ループで書く**。範型は `CcdSweepTarget` (`PhysicsSystem.cpp:835`) と
+その走査ループ (`:3553-3580`)、および `SampleTerrainHeightWorld` (`:4285`)。
+AABB 枝刈り + `shapes::CanCollide` + 厳密 `<` 更新 + 低 index 優先までそのまま流用できる。
+複合の子形状を含めるなら `forEachShape` ラムダ (`:1708-1727`)。
+`shapes::Raycast` は **shape 0/1/2/3/4/5 の全部に対応済み** (`Shapes.cpp:2460-2516`) なので、
+車輪は地形の上でも凸包の上でも動く。
+
+#### 壊れていた前提 2: **骨は ECS に存在しない / パレットはビュー毎に組み直される**
+
+- `SkeletonJoint` は `std::string` を持つ**純 CPU 構造体** (`Skeleton.h:17-28`) で、
+  POD 制約のある ECS には載らない。骨のローカル姿勢を保持する ECS 上の場所は**どこにも無い**
+  (スケルタルアニメの状態は `SkinnedMeshComponent.timeTicks` の int 1 個だけ)。
+- ボーンパレットの構築元は **`RenderSystem::Render()` の 1 箇所だけ** (`RenderSystem.cpp:742-766`)。
+  そして `Render()` は**ビュー毎に呼ばれる** (EngineLoop / SceneView ×2 / GameView /
+  AssetPreviewCache / ProbeBaker)。
+  → ★**ラグドールのパレットが ECS 状態の純関数でないと、SceneView と GameView で絵が割れる**。
+    キャッシュや「前フレームの値」を混ぜてはいけない。
+
+---
+
+### M60g0: 重複していた転がり抵抗ブロックの削除 (小)
+
+M60d の申し送り 11 で見つけた死にコード。**HEAD にまだ残っている**ことを確認済み:
+`PhysicsSystem.cpp:3053-3083` と `:3084-3114` が **31 行バイト完全一致**。
+2 回目は 1 回目と同じ入力から同じ値を書くだけの冪等な死にコードなので挙動には出ない。
+
+- 2 つ目のブロックを消すだけ。**`[phys]` ログ全行が前後で一致すること**を機械確認する
+  (冪等の主張がそのまま検証条件になる)。
+- g1 のセッション冒頭に**独立コミット**として切る (1 サブ 1 コミットの家風)。
+
+---
+
+### M60g1: ラグドール駆動 (剛体 → 骨)
+
+**TypeId 41 = Ragdoll。生成器は g2、ここは「手で組んだラグドールが動く」ところまで。**
+
+#### 骨 ↔ 剛体の結び方 — `PartComponent` を再利用する (決定台帳 12)
+
+ラグドール部位 = **`Part`(joint 名) + `Collider`(カプセル) + `Rigidbody` + `Joint`(Cone)** を
+持つ、SkinnedMesh の**直子**エンティティ。新規 TypeId は `Ragdoll` の 1 個だけ。
+
+- 骨名解決 (`SkinnedModel::FindJointByName`)・source 解決 (`Parts::ResolvePartSource`)・
+  Inspector のジョイントコンボ (`InspectorWindow.cpp:1156-1216`) が**全部そのまま使える**。
+- ★**逆行列を 1 つも書かずに済む**のが最大の利点。`PartFollowSystem` の v1 規約
+  (部位は source の直子 = `partLocal == jointGlobal`、`PartFollowSystem.h:22-28`) を
+  そのまま逆に読めばよい。`XMMatrixDecompose` を避けている理由 (構成間でビットが割れる) にも
+  触らずに済む。
+- 代償は「骨の親子関係をエンティティ階層で表せない」こと。だが**親子は `Joint` が作る**ので
+  物理的には不足しない。むしろ平坦なほうが `LocalTransform == jointGlobal` が保てる。
+
+#### `RagdollComponent` (TypeId 41) — SkinnedMesh 側に付く札
+
+- `bool active` (**hash 対象** = sim 状態)。アニメ駆動 ⇔ 物理駆動の切替。
+- v1 ではこれ 1 本。**予備フィールドは切らない** — M60a の「c/d の分まで先に切る」は
+  M60b が基準姿勢を見落として結局 append した前科があるので、
+  **見えていないものは切らない**方針へ倒す。
+- `Components.cpp:685` の `});` の直後 = `RegisterBuiltinComponents()` の末尾へ append。
+
+#### 3 つの経路を足す
+
+1. **物理側 (収集)**: `active == false` のラグドール部位は **kinematic として扱う**。
+   ★`RigidbodyComponent.isKinematic` を**書き換えない** — Inspector の値を潰すし、
+   ソルバがコンポーネントを書くのは家風でない。収集時 (`PhysicsSystem.cpp:1016-1105`) に
+   「Part → source → Ragdoll.active」の 2 段引きで分岐する。
+   ★**分岐ゲートで書く** (M59f1-5 / M60e-1) — 「係数 0 を掛ける」形にすると `-0.0f` 化けで
+   ワールドハッシュが動く。Ragdoll 非所持シーンは**ルックアップのみで fp 演算ゼロ**。
+2. **Part 側 (抑止)**: `PartFollowSystem::Update` (`PartFollowSystem.cpp:188-194`) で、
+   source に active な Ragdoll があれば**その部位を skip** する。
+   skip しないと同 tick で「骨 → 部位」(`:192`) と「物理 → 部位」(`:3917-3955`) が
+   両方 `LocalTransform` (hash 対象) を書き、部位が二重駆動される。
+3. **描画側 (パレットの第 2 経路)**: `RenderSystem.cpp:744-765` に分岐を足す。
+   source に active な Ragdoll があれば:
+   - 子を走査して `Part.joint` → jointIndex の対応を作り、`global[j] = 部位の LocalTransform`
+     (行ベクトル TRS を組む。`PartFollowSystem.cpp:36-87` の `DecomposeRowMajorTRS` の逆)
+   - **部位を持たない骨**は `global[j] = local[j] * global[parent[j]]` で埋める
+     (`local` はアニメの `ComputeJointLocals`)。★親が自分より先に確定している必要がある —
+     **joints 配列が親→子順に並んでいることを最初に検査**し、並んでいなければ
+     `JointGlobalFromLocals` (`Skeleton.cpp:113`) と同じ「親チェーンを上へ」の形へ落とす
+   - `palette[j] = transpose(inverseBind[j] * global[j])`
+   → **入力は ECS 状態 (Part の LocalTransform) だけ = 純関数**なので、ビュー毎に組み直しても
+     同じ絵になる。`skinPalettes_` のフレーム毎クリア (`RenderSystem.cpp:570`) とも整合。
+
+#### `active` 切替の連続性
+
+`active` を false→true にした瞬間、部位の `LocalTransform` は**アニメが置いた骨姿勢そのもの**
+なので剛体の初期姿勢が飛ばない (これが Part 再利用のもう 1 つの利点)。速度は 0 から始まる。
+true→false は kinematic へ戻って `PartFollowSystem` が再び駆動する。**ブレンドは v1 では
+約束しない** (計画どおり)。`SkinningSystem` は `sm->playing = 0` で止められる (非ハッシュ)。
+
+#### 検証 (新規 `src\Engine\Engine\Physics\RagdollSelfTest.cpp`)
+
+★**`PhysicsSelfTest.cpp` は 6109 行で限界**。M60f が `ConvexSelfTest.cpp` を分けた前例に
+倣い、ラグドールは新規ファイルへ。`ModelLoader` は Engine 層なので骨ロードは可能
+(`ModelLoader::RegisterSkinnedModels` / `FbxLoader::RegisterSkinnedModels`、
+ヘッドレスの範型は `PartSelfTest.cpp:449-463`。パス解決は `FindAssetsRoot()` を使う)。
+連鎖は `EditorMain.cpp:552` (`RunConvexSelfTest`) の直後・`RunCameraPilotSelfTest` の手前へ。
+
+- (g1-1) **存在ゲート**: Ragdoll 非所持シーンの 2 段階ビルドで `[phys]` 全行一致
+- (g1-2) `active=false` で骨のポーズがアニメと**ビット一致** (= 既存 PartFollow 経路が無傷)
+- (g1-3) `active=true` でラグドールが崩れて静止し、**全部位が同じ tick に揃って眠る**
+  (M60a-7 の島配線が Cone でも効くこと)
+- (g1-4) パレットが ECS 状態の純関数 — **同じ world から 2 回組んで `memcmp` 一致**
+  (ビュー毎再構築で絵が割れないことの機械証明)
+- (g1-5) `active` を false↔true に切り替えても骨のポーズが飛ばない (連続性の窓)
+- (g1-6) 部位を持たない骨がバインド/アニメの階層合成で正しく埋まる
+- (g1-7) 並走ハッシュ / snapshot 往復 (`active` が hash 対象であることの確認)
+
+---
+
+### M60g2: ラグドール生成器 (エディタ)
+
+**sim には 1 バイトも足さない。エディタ時の 1 回きりの階層生成のみ。**
+
+- 場所: `CreateMenu.cpp` の「作成」メニュー。**範型は `:268-298` の「部位 (範囲付き)」** —
+  汎用 `CreateItem` を使わず `RecordCreate` を直に呼び、**右クリック対象 (`parent`) の
+  コンポーネントを読んで初期値を決める**という構造がそっくり。
+  UI 文字列は `LocalizationTable.inl` に `Create_Ragdoll` を en/ja 両方 (規則 10)。
+- 入力: 右クリック対象の `SkinnedMeshComponent` → `resources->skinnedModels.Get(sm->model)`。
+  無ければメニュー項目を disable にする (`InspectorWindow.cpp:1169-1174` のフォールバック流儀)。
+- カプセル寸法の導出: バインドポーズの `jointGlobal` (`ComputeJointGlobal`、clip<0) から
+  「親ジョイント → 子ジョイントの距離」を長さ、その一定比を半径にする。
+  子が複数/ゼロの骨の扱いを**決め打ちで固定**する (末端骨は親からの距離を流用)。
+  ★**同じスケルトンから毎回ビット同一の階層が出ること**が検証条件なので、
+  骨の走査順は joints 配列の index 昇順で固定し、浮動小数の演算順も固定する。
+- 生成物: SkinnedMesh の直子として骨ごとに 1 エンティティ
+  (`Part` + `PartBounds` + `Collider(capsule)` + `Rigidbody` + `Joint(Cone)`) と、
+  SkinnedMesh 自身への `Ragdoll(active=false)`。
+- **Undo**: ラグドールは 1 ルートに収まらない (SkinnedMesh の直子が横並び) ので
+  `RecordCreate` の「1 ルートを `CaptureAfter`」では撮れない。
+  **`CaptureBefore(SkinnedMesh の fileId)` + `CaptureAfter(同)` で親のサブツリー差分**として撮る
+  (`UndoStack::CaptureAfter` はサブツリー丸ごと = `UndoStack.h:75`)。
+  複数 fileId をループする案 (`EditorApp.cpp:1074-1081`) より 1 回で閉じる。
+- **可視化**: M60c-9 で送った「可動域の円弧 / コーン」をここで足す
+  (`PhysicsDebugFlags::joints` の内側。ラグドールは「どこまで曲がるか」が見えないと辛い)。
+- ★**`Part` はプレハブメンバだと構造ロックされる** (`Parts::IsStructureLocked`)。
+  生成したラグドールをプレハブ化すると後からリネーム/削除/再親化が塞がる —
+  engine_spec に既知の制限として明記する。
+
+#### 検証
+- (g2-1) 同じスケルトンから 2 回生成して**階層と全フィールドがビット同一**
+- (g2-2) 生成直後のシーンが `active=false` で従来どおりアニメ再生する
+- (g2-3) Undo 1 回で生成前へ完全に戻る / Redo で同一物が出る
+- (g2-4) 生成 → `active=true` → 崩れて眠る (g1 の試験を生成器の出力で再走)
+- (g2-5) 並走ハッシュ
+
+---
+
+### M60h1: 車輪 + レイキャストサスペンション
+
+**TypeId 42 = Wheel** (計画の 42=Vehicle / 43=Wheel から**入れ替え**。登録順 = 実装順を守るため)。
+
+- `WheelComponent` は**車輪エンティティ (車体の子) に付く**。力の入れ先は
+  **「最も近い Rigidbody 祖先」** — `AeroSurface` の探索 (`PhysicsSystem.cpp:2100-2111`) を流用。
+- フィールド: サスの静止長 / バネ定数 k / ダンパ c / 半径 / 最大圧縮、
+  出力側 (`kFieldReadOnly`) に接地フラグ・圧縮量。
+  範型は `CharacterControllerComponent` の `moveInput`(入力) と `isGrounded`(出力) の
+  書き分け (`Components.cpp:302-312`)。
+- **差し込み位置は `SpringJoint` の直後・ブロードフェーズの直前** (`PhysicsSystem.cpp:2470`)。
+  根拠は `:2360-2361` のコメント「broadphase の前に置く = ばねで変わった速度が候補 AABB の
+  margin に反映される」。この時点でポーズは `:1804` 帯で確定済み = レイを撃つ相手の
+  `bodies[].pose` が「今のサブステップの正」。重力・ConstantForce・空力も既に速度へ入っている。
+- レイは**自前ループ** (前提 1 のとおり)。自分自身の車体 (と同じ剛体に属する複合の子形状) を
+  除外すること。
+- 力の適用は接地点へ `ApplyImpulse(A, rx, ry, rz, jx, jy, jz, 1.0f)`。
+  腕は `r = 接地点 - body->pose.p - body->com` (`:2132-2134` が正本の書き方)。
+- ★**バネ/ダンパは「力」なので刻み `h` を掛ける。率 (damping) ではないので `sub==0` ゲートに
+  乗せない** (M59g2-3 との違い。`:1790-1792` が率側の正本)。
+- ★**剛性はサブステップで買える** (M59g2-7)。`PhysicsEnvironment.substeps` は既定 4 /
+  env 無しは 1 / 上限 16 (`Components.h:821`, `PhysicsSystem.cpp:1747-1765`)。
+  **車両は 8 を推奨**するが定数にしない (予約事項 4)。
+
+#### 検証
+- (h1-1) **存在ゲート**: Wheel 非所持シーンの 2 段階ビルドで `[phys]` 全行一致
+- (h1-2) 静止時の沈み込みが **`mg/k` の解析値**と一致 (substeps を上げて収束すること)
+- (h1-3) 4 輪対称の車体が傾かない (左右前後の対称性)
+- (h1-4) 車輪レイが **地形 (shape=4) と凸包 (shape=5)** を拾う
+- (h1-5) 空中では力が 0 (接地フラグが落ちる) / 落下しても暴れない
+- (h1-6) 並走ハッシュ / Debug ⇔ Release
+
+---
+
+### M60h2: タイヤ力 + 車両入力
+
+**TypeId 43 = Vehicle** (車体に付く)。
+
+- 入力は **sim 状態フィールド** `steer` / `throttle` / `brake` に置き、スクリプトは
+  既存 ABI の `SetComponentField` で書く = **ABI 追加ゼロ**。
+  前例は `CharacterControllerComponent.moveInput` (`Components.h:416`、
+  書き手は `EngineApiTable.cpp:278-284` / 読み手は `PhysicsSystem.cpp:924-932`)。
+- 横力 = **スリップ角の線形飽和モデル** (Pacejka は v1 では入れない)。
+  縦力 = スロットル / ブレーキ + 転がり抵抗。
+- **接地面の材料**: レイが当たった相手は `bodies[]` の要素なので
+  `Body.friction / frictionS / roll` が**収集時に解決済み** = 再解決不要
+  (`PhysicsSystem.cpp:1062, 1096-1099`)。結合則は接触と揃える —
+  μ は `sqrt(積)`、転がり抵抗は **`max`** (`:2970-2979`)。
+  `PhysMatLibrary.h:28` にタイヤの実測目安 (転がり抵抗 0.02 / μs~1.0 / μd 0.8) が既にある。
+- 車輪の回転角は sim 状態フィールドとして持ち、見た目 (`LocalTransform`) は**書かない側に倒す**
+  — 書くとハッシュ対象が増える。描画は Wheel の角度フィールドを読む側で回す
+  (ラグドールのパレットと同じ「決定論の面積を広げない」判断)。
+
+#### 検証
+- (h2-1) 直進で真っ直ぐ走る (左右対称性、N tick 後の横ずれが窓内)
+- (h2-2) ステア入力に対して旋回半径が**単調**
+- (h2-3) 坂で止まる (転がり抵抗) / 材料を氷にすると滑る
+- (h2-4) `throttle=brake=steer=0` のシーンが h1 と**ビット同一** (分岐ゲートの証明)
+- (h2-5) 車輪が地形 (M59i) を追える
+- (h2-6) 並走ハッシュ / Debug ⇔ Release
+- (h2-7) **ABI 要否の最終判断をここで下す** (下記「M60j を廃止する根拠」)
+
+---
 
 ### M60i: ショーケース + replay 6 ペア目
 
-- `--joint-demo` (仮): 振り子 / ドア (ヒンジ+リミット) / モータ駆動のクランク /
+- **`--joint-demo`**: 振り子 / ドア (ヒンジ + リミット) / モータ駆動のクランク /
   ロープ (10 連鎖) / 破断する吊り橋 / 複合 L 字 / 凸多面体の山 / ラグドール 1 体 / 車 1 台。
-  **DemoContent 正本方式** (`BuildPhysicsShowcaseScene` :866 が範型。生成物は gitignore)。
-- **`replay_verify.bat` に 6 ペア目** (600 tick)。bat は **CRLF 維持** +
-  `if !ERRORLEVEL! NEQ 0` 流儀 (CLAUDE.md 環境の罠)。
-- 検証: 6 ペア目の Debug ⇔ Release ビット一致が本丸。snapshot 往復も 1 本足す。
+- 正本は `DemoContent.cpp:866` の `BuildPhysicsShowcaseScene` (生成物は gitignore)。
+  作法: builtin メッシュ + **名前キー**のマテリアル (`AssetID{HashStr("jdemo_...")}`) +
+  **名前引きの `.physmat`** (`FindPhysMat("steel")`)。**絶対パスハッシュ禁止**
+  (`DemoContent.h:120-129` の契約)。接頭辞は `jdemo_` で衝突回避。
+  `PhysicsEnvironment` を 1 個置き、**`substeps = 8`** にする (車が要求する)。
+  ★各被写体は「その機能が replay に**必ず**載る」ように誇張して置く。
+- ★**ラグドールはコードから組む** — スケルトンのロードが要るので `--parts-demo`
+  (`DemoContent.cpp:345-400`) の DFS で SkinnedMesh を拾う手順を流用する。
+- CLI 配線は **4 ファイル**: `EditorMain.cpp` (宣言 + 解析)、`EditorApp.h:69`、
+  `EditorApp.cpp` (シーン選択)、`RuntimeMain.cpp` (宣言 + 解析 + シーン選択)。
+  ★Editor と Runtime で if-else の順序が逆なので**両方**確認する。
+- **`replay_verify.bat` に 6 ペア目** (600 tick): `:158` の直後に 5 ペア目と同型のブロック
+  (`REP6=cache\golden_joints.rep`)、`:171` の直後に snapshot ストレス 1 行、
+  `:186` の PASS 文言、`:191` の `:diagnose` コメント。
+  **CRLF 維持** + `if !ERRORLEVEL! NEQ 0` (CLAUDE.md 環境の罠)。
+- 検証: 6 ペア目の **Debug ⇔ Release ビット一致**が本丸。
 
-### M60j: ABI v15 束ね (必要なら)
+---
 
-- **まず「本当に要るか」を確認する**。M59k で `RemoveComponentByName` / `HasComponentByName` /
-  `GetContactInfo` が入っている前提なので、Joint の付け外しもフィールド書き換えも
-  既存スロットで足りる可能性が高い。**追加ゼロなら MYE_API_VERSION は bump しない**
-  (予約事項 7 の「マイルストーン末に 1 回束ねる」は「必ず 1 回足す」ではない)。
-- 追加するなら候補: `SetJointBroken` / `IsJointBroken` / `GetWheelState` (接地・スリップ) /
-  `SetRagdollActive`。
-- 足す場合は `EngineAPI.h` + `EngineApiTable.cpp` 全充填 + `Interop.cs` 位置ミラー +
-  `MYE_API_VERSION` + `check_rules.ps1` の `$apiVersionSlots` 表を**同時に** (規則 11)。
-  `tools\build_managed.bat` は Debug/Release 両構成。C# 一時 probe で新スロット全数実走
-  (C# レーンは replay 被覆外)。
+### M60j を廃止する根拠 (調査済み)
+
+**ABI 追加はゼロ。`MYE_API_VERSION` は 14 のまま bump しない。**
+
+M60 で足したいと想定していた 4 本は全部既存スロットで届く:
+
+| 想定 | 既存の代替 |
+|---|---|
+| `SetJointBroken` / `IsJointBroken` | `SetComponentField` / `GetComponentField` (`EngineAPI.h:327-334`) |
+| `SetRagdollActive` | 同上 |
+| Joint の付け外し | `AddComponentByName` (`:150`) / `RemoveComponentByName` (`:427`) / `HasComponentByName` (`:428`) |
+| `GetWheelState` (接地・スリップ) | `GetComponentField` (`kFieldReadOnly` の出力フィールドを読む) |
+
+`EngineAPI.h:61-64` が**ヘッダ自身で**「専用スロットは足さない (決定台帳 10)」と宣言しており、
+予約事項 7 の「マイルストーン末に 1 回束ねる」は「**必ず 1 回足す**」ではない。
+→ M60j は**コミットを切らない**。要否の最終判断は h2 の末尾で下し、結果を k で spec に記す。
+
+(h2 で「どうしても専用スロットが要る」となった場合のみ j を復活させる。そのときの手数は
+`EngineAPI.h` + `EngineApiTable.cpp` 全充填 + `Interop.cs` の struct 末尾 + `Engine` クラス末尾
++ `MyeScript.cs` の糖衣 + `check_rules.ps1:408` の `$apiVersionSlots` に `15 = <新数>`、
+そして `tools\build_managed.bat` を Debug/Release 両構成。)
+
+---
 
 ### M60k: 仕上げ
 
-- golden に `joints.png` を 1 枚追加 (M59l の 13 枚 → 14 枚。tol は parts.png 前例 = 3、
-  `shot_verify.bat` と CI 判定数を同時更新)。追加前に golden-diff-triage の 4 点計測。
-- `engine_spec.md` に §10.x として「関節と拘束ソルバ」節 (行の表現・順序・結合則・
-  SpringJoint が旧式である旨・複合コライダーの opt-in・凸包の対象外事項)。
-- README (日本語の機能概要) / CLAUDE.md の検証表 (replay 5→6 ペア、golden 枚数)。
+- **golden に `joints.png` を 1 枚追加** (13 → 14 枚、CI 判定 9 → 10 枚)。
+  `shot_verify.bat:219` の直後に `call :shot joints --joint-demo`。
+  ★**物理と同じく frame 3 では絵に出ない** — `:215-219` の physics と同型で
+  `--frames 123 --shot-frame 120` を自前で挟む。tol は parts.png 前例 = 3。
+  追加前に golden-diff-triage の 4 点計測。
+- **文言の更新 (枚数・ペア数)**: `shot_verify.bat:108-111` / `:232-236`、
+  `.github\workflows\ci.yml:98`、`engine_spec.md:1160/:1163/:1181`、
+  `CLAUDE.md:34-35`、`README.md:116-117`。
+- ★**既存のドリフトもここで直す** (M60 とは無関係だが、同じ行を触るので):
+  `ci.yml:77` 「3 ペア」→ 6 / `ci.yml:80` 「4 scene pairs」→ 6 /
+  `README.md:74` 「4 ペア」→ 6 / `engine_spec.md:1137` 「four replay pairs」→ six /
+  `engine_spec.md:1102` 「five scene pairs」→ six /
+  `ci.yml:15/:21/:25/:31` の **FXAA と SSR が両方「9 枚目」を名乗って衝突**している番号 /
+  `README.md:125` 「環境変数 3 本」→ 4 本。
+- **`engine_spec.md` に `### 10.5 Joints and constraint solver (M60)` を新設**
+  (`:1066` の `---` の直前)。物理は独立章ではなく §10.4 (Asset Pipeline 配下) に
+  `####` を時系列で積む構造になっているが、関節は別トラックなので節を分ける。
+  書く内容: 拘束ブロックの表現 (行ではなく 1〜3 自由度ブロック + K⁻¹) / 解く順序
+  (関節 → 接触、位置補正も同順) / 結合則 / **SpringJoint は互換維持の旧式** /
+  複合コライダーの opt-in / 凸包の対象外事項 (凸×メッシュ、ジャイロ項が効かないこと) /
+  ラグドールの既知の制限 (ブレンドなし、プレハブ化で構造ロック) /
+  車両の v1 モデル (線形飽和、substeps 8 推奨) / **ABI は追加ゼロ**である旨。
+  §6.5 Deliberate Non-Goals (`:365-375`) と同型の「非目標」表も添える。
+- **`README.md` に物理の項を新設** — 現状 README の「主要機能」11 項目に**物理が 1 つも無い**
+  (M59 も載っていない)。M59 + M60 をまとめて 1 項目にする。
+  CLI ブロック (`:88-122`) に `--physics-demo` と `--joint-demo` の 2 行を補う。
 - **全量検証**: フルリビルド警告 0 (Debug/Release) → `--selftest` → `check_rules.ps1` →
   `shot_verify.bat` → `replay_verify.bat` (6 ペア) → `crash_verify.bat`。
 
@@ -573,19 +832,28 @@ M60  関節と機構 (剛体トラック)
 | 6 | 複合コライダーの opt-in | **`Rigidbody.compoundColliders` (bool、既定 false)**。子側にマーカーを置く案より TypeId を消費せず、ゲートが 1 箇所に閉じる |
 | 7 | 複合の慣性 | 平行軸で合成する (単一形状では移し替えない M59f1-5 との**意図的な非対称**。複合では質量分布が実際に分かっている) |
 | 8 | ラグドールの骨駆動 | **描画側でボーンパレットを組む**。ハッシュ対象は剛体の LocalTransform のまま = 決定論の面積を広げない |
-| 9 | 車両の実装 | 拘束ではなく**レイキャストサス + 力**。既存 `RaycastWorld` を使う。入力はフィールド = ABI 追加ゼロ |
+| 9 | 車両の実装 | 拘束ではなく**レイキャストサス + 力**。~~既存 `RaycastWorld` を使う~~ → **13 で撤回**。入力はフィールド = ABI 追加ゼロ |
 | 10 | 挙動バージョニング | しない (M59 決定台帳 8 の継続)。ただし M60 は**全機能が存在ゲートの内側**なので、既存シーンのビットは a〜k を通して 1 つも動かない見込み |
 | 11 | リミットの三角関数 | 生成時に cos 閾値へ 1 回だけ変換。毎 tick の `acos` を通さない |
+| 12 | ラグドールの骨結合 | **`PartComponent` を再利用する** (ユーザー決定)。ラグドール部位 = Part(joint 名) + Collider + Rigidbody + Joint。骨名解決・source 解決・Inspector コンボが既存のまま使え、`partLocal == jointGlobal` の v1 規約を逆に読むだけなので**逆行列を 1 つも書かない**。新規 TypeId は Ragdoll(41) の 1 個 |
+| 13 | サスのレイの撃ち方 | ★**`RaycastWorld` を使わない** (決定台帳 9 の撤回)。あちらは `WorldMatrix` 基準で、ソルバ実行中は 1 tick 古い (M59j が同じ罠を明記済み)。`bodies[].pose` へ `shapes::Raycast` を直接撃つ自前ループで書く |
+| 14 | ラグドールの kinematic | `RigidbodyComponent.isKinematic` を**書き換えない**。収集時に「Part → source → Ragdoll.active」の 2 段引きで分岐する。ソルバがコンポーネントを書くのは家風でないし Inspector の値を潰す |
+| 15 | 車輪の見た目の回転 | 回転角は sim 状態フィールドに持ち、`LocalTransform` は**書かない**。描画側がフィールドを読んで回す (決定論の面積を広げない = 決定台帳 8 と同じ判断) |
+| 16 | サブの分割 | 旧 g/h は**各 2 分割** (ユーザー決定)。g は描画層・Part 層・物理層の 3 層に跨り、h はサスとタイヤで検証の種類が違う。TypeId は登録順 = 実装順を守って **42=Wheel / 43=Vehicle** へ入れ替え |
+| 17 | ABI v15 | **切らない**。M59k の汎用スロット (`Add/Remove/HasComponentByName`, `Get/SetComponentField`) で M60 の需要は全部届く。`EngineAPI.h:61-64` がヘッダ自身で「専用スロットは足さない」と宣言している |
 
 ## 壊れるもの台帳
 
 | 対象 | いつ | 内容 |
 |---|---|---|
-| TypeId | a, g, h | 40=Joint / 41=Ragdoll / 42=Vehicle / 43=Wheel を末尾 append |
+| TypeId | a, g1, h1, h2 | 40=Joint / 41=Ragdoll / **42=Wheel / 43=Vehicle** を末尾 append (計画の 42/43 から入れ替え) |
 | Rigidbody のフィールド | e | `compoundColliders` を末尾 append (ハッシュのバイト列は変わるが**挙動は不変** — 証明は 2 段階ビルド) |
 | `.physmat.json` スキーマ | d | `adhesion` キー追加 (未指定は 0 = 従来) |
 | Collider のフィールド | f | **追加なし** (`meshAsset` を shape=5 の第 3 のタグ付き共用体として共有) |
-| ABI | j のみ | **追加ゼロなら bump しない** |
+| ABI | — | **追加ゼロで確定 = v14 のまま** (決定台帳 17。旧 M60j は廃止) |
+| `PartFollowSystem` の挙動 | g1 | active な Ragdoll に属する部位を skip (Ragdoll 非所持シーンは無傷) |
+| `RenderSystem` のパレット構築 | g1 | 第 2 経路を追加 (**描画のみ = 非ハッシュ**) |
+| 新規セルフテスト | g1 | `RagdollSelfTest.cpp` を連鎖へ append (`PhysicsSelfTest.cpp` が 6109 行で限界) |
 | ReplayFile / SimSnapshot 版 | **bump なし見込み** | 状態は全てコンポーネント常駐 (M59h と同じ理由) |
 | PhysicsSelfTest 期待値 | **無し見込み** | 存在ゲートなので既存項目に触れない。触れたら設計を疑うこと |
 | golden | k のみ | `joints.png` を 1 枚追加 (既存は動かない見込み) |
@@ -596,8 +864,11 @@ M60  関節と機構 (剛体トラック)
 1. **存在ゲートのビット同一** (全サブ): 2 段階ビルド (フィールドのみ ⇔ 配線後) で
    `[phys]` ログ全行照合。**ハッシュ値そのものを前コミットと比べても意味が無い**
    (フィールド追加で必ず動く) — M59f1-9 の手順が正本。
-2. **解析解との一致** (a, c, e, h): 単振り子の周期 / モータの定常速度 / 複合の慣性 /
+2. **解析解との一致** (a, c, e, h1): 単振り子の周期 / モータの定常速度 / 複合の慣性 /
    サスの沈み込み `mg/k`。
+2'. **パレットが ECS 状態の純関数** (g1): 同じ world から 2 回組んで `memcmp` 一致。
+   `RenderSystem::Render()` はビュー毎に呼ばれるので、これが崩れると
+   **SceneView と GameView で絵が割れる** (決定論ではなく描画の一貫性の柱)。
 3. **拘束誤差のドリフトゼロ** (a〜d): アンカー距離誤差が長時間 tick で増えないこと。
    これが「位置補正が効いている」唯一の機械的証明。
 4. **島と起床の配線** (a): 関節で繋がった系が**揃って眠り、片方を叩けば揃って起きる**。
@@ -614,20 +885,31 @@ M60  関節と機構 (剛体トラック)
 - **f 冒頭**: `CookedCache` に第 3 の種を足す手数 (magic / version / 封印 `.sealed` の
   検証経路) を数える。想定より重ければ「凸包はランタイム生成 + メモリキャッシュ
   (`MeshColliderLibrary` の lazy 構築と同じ)」へ退避する。
-- **g 冒頭**: ヘッドレス (`--selftest`) でスケルトンが登録される経路 (M48g の前例) を確認。
-- **j 冒頭**: M59k で入ったスロットの実際の顔ぶれを見てから、M60 で足すものを決める。
+- ~~**g 冒頭**: ヘッドレスでスケルトンが登録される経路 (M48g の前例) を確認~~ →
+  **調査済み**: `ModelLoader::RegisterSkinnedModels` / `FbxLoader::RegisterSkinnedModels` を
+  `RenderResources`(未 Init) に対して呼ぶ。範型は `PartSelfTest.cpp:449-463`。
+  資産は `assets\models\CesiumMan.glb` (glTF・クリップ付き) と `skinned_beam.fbx`。
+- ~~**j 冒頭**: M59k で入ったスロットの顔ぶれを見てから決める~~ → **調査済み・追加ゼロで確定**
+  (決定台帳 17)。
+- **g1 冒頭**: `SkinnedModel::joints` が**親→子順に並んでいるか**を実資産 2 種で検査する。
+  並んでいればパレットの第 2 経路は 1 パスで書ける。並んでいなければ
+  `JointGlobalFromLocals` と同じ「親チェーンを上へ」の形へ落とす (`Skeleton.cpp:113`)。
+- **h1 冒頭**: サスのレイを撃つ自前ループが「自分自身の車体 (と同じ剛体の複合子形状) を
+  除外できているか」を最初に固定する。CCD の走査ループ (`PhysicsSystem.cpp:3553-3580`) が
+  同じ除外を既にやっているので、そこを読んでから書く。
+- **i 冒頭**: `--joint-demo` のシーンに `PhysicsEnvironment.substeps = 8` を置いたとき、
+  600 tick の replay が現実的な時間で回るかを 1 回測る (溢れるなら被写体を減らす)。
 
 ## 実装の進め方
 
-1. **M59 の残り (j → k → l) を先に消化する** — 正本は `plans\greedy-cooking-wave.md`。
-2. 本計画をリポジトリ `plans\stalwart-linking-armature.md` へコピーしてコミット
-   (マイルストーン運用の定型)。冒頭に「M59 からの引き継ぎ」節があるので自己完結する。
-3. 1 サブ = 1 コミット (`M60a: ...` 形式の日本語件名) = 1 セッション + /clear。
+1. ~~M59 の残り (j → k → l) を先に消化する~~ → **完了済み** (`7f0479f` = M59l)。
+2. ~~本計画をリポジトリへコピーしてコミット~~ → **完了済み** (`89df460`)。
+3. 1 サブ = 1 コミット (`M60g1: ...` 形式の日本語件名) = 1 セッション + /clear。
    進捗の一次情報は git log、計画ファイルの進捗表には**計画外の事実・罠・申し送りのみ**書く。
 4. 各サブ共通検証: Debug/Release ビルド 0 警告 → `Editor.exe --selftest` 全 PASS →
    `tools\replay_verify.bat` PASS → `pwsh -File tools\check_rules.ps1` 0 error。
-   ソース追加時は `pwsh -File tools\gen_project_files.ps1`。k は `shot_verify.bat`、
-   j は `tools\build_managed.bat` 両構成も。
+   ソース追加時は `pwsh -File tools\gen_project_files.ps1`。k は `shot_verify.bat` も。
+   **ABI を触らないので `tools\build_managed.bat` は不要** (決定台帳 17)。
 5. 新規 UI 文字列は `LocalizationTable.inl` に en/ja 両方 (規則 10)。コメントは日本語で
    「なぜそうなっているか・踏んだ罠」を書く。
 6. M60' (XPBD 変形体) と予約事項 1 の準備コミットは**本計画の外**。M60 完了時に別計画で策定する。
