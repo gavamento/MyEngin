@@ -6098,6 +6098,379 @@ bool RunPhysicsSelfTest()
         convexcol::Install(nullptr);
     }
 
+    // ================= M60h1: 車輪 + レイキャストサスペンション =================
+    // 車輪エンティティ (車体の子) から下向きにレイを撃ち、沈み込みぶんのばね力を
+    // **接地点へ**入れる。車輪は剛体でもコライダーでもないので bodies に居らず、
+    // レイが外すのは「車体のボディ 1 つ」だけで済む (複合の子形状も同じボディに属する)。
+    {
+        constexpr float kRest = 0.4f;   // サスの静止長
+        constexpr float kRadius = 0.3f; // 車輪半径
+        constexpr float kHalfY = 0.25f; // 車体の半高 (取り付け点は車体の底面)
+        // 無負荷で浮く高さ = 接地面 + 車輪半径 + 静止長 + 車体の半高。
+        // 実際の静止高さはここから沈み込み (mg/k) だけ下がる
+        constexpr float kFloatY = kRadius + kRest + kHalfY; // 0.95
+        constexpr float kCarMass = 100.0f;
+        // 車輪の取り付け位置 (車体ローカル)。左右前後の対称性が h1-3 の主張そのもの
+        const float kWx[4] = { -0.7f, 0.7f, -0.7f, 0.7f };
+        const float kWz[4] = { 1.4f, 1.4f, -1.4f, -1.4f };
+        struct Car {
+            GameObject body;
+            GameObject wheels[4];
+            int count = 0;
+        };
+
+        auto addWheel = [&](Scene& s, GameObject body, float x, float z, float k, float c) {
+            GameObject w = s.CreateGameObjectTracked("Wheel");
+            w.SetParent(body);
+            w.SetLocalPosition(x, -kHalfY, z);
+            auto* wc = w.AddComponent<WheelComponent>();
+            wc->restLength = kRest;
+            wc->radius = kRadius;
+            wc->stiffness = k;
+            wc->damping = c;
+            return w;
+        };
+        // 車体 (箱 + Rigidbody) と車輪 wheelCount 個。車輪はコライダーを持たないので
+        // 複合 (M60e) にも巻き込まれない = 「車体 1 ボディ + 子の Wheel」だけの世界
+        auto makeCar = [&](Scene& s, float y, float k, float c, int wheelCount) {
+            Car car;
+            car.body = s.CreateGameObjectTracked("Chassis");
+            car.body.SetLocalPosition(0.0f, y, 0.0f);
+            auto* col = car.body.AddComponent<ColliderComponent>();
+            col->shape = 1;
+            col->isTrigger = false;
+            col->halfExtents = { 0.9f, kHalfY, 1.8f };
+            auto* rb = car.body.AddComponent<RigidbodyComponent>();
+            rb->mass = kCarMass;
+            rb->gravityScale = 1.0f;
+            for (int i = 0; i < wheelCount; ++i) {
+                car.wheels[i] = addWheel(s, car.body, kWx[i], kWz[i], k, c);
+            }
+            car.count = wheelCount;
+            return car;
+        };
+        auto addEnv = [&](Scene& s, int substeps) {
+            GameObject e = s.CreateGameObjectTracked("Env");
+            auto* pe = e.AddComponent<PhysicsEnvironmentComponent>();
+            pe->substeps = substeps;
+            // ★スリープを切る。過減衰で平衡へ寄る途中は速度が閾値を下回るので、既定
+            //   (60 tick) のままだと**平衡に着く前に眠って**沈み込みが数 mm ずれる。
+            //   眠るシーンの試験は M59h 側が持っている
+            pe->sleepDelayTicks = 0;
+            return e;
+        };
+        // 接地している車輪の数と、圧縮量の平均 / 最小 / 最大
+        auto sampleWheels = [](Car& car, float& avg, float& lo, float& hi) {
+            int grounded = 0;
+            avg = 0.0f;
+            lo = 1e9f;
+            hi = -1e9f;
+            for (int i = 0; i < car.count; ++i) {
+                const auto* wc = car.wheels[i].GetComponent<WheelComponent>();
+                grounded += wc->isGrounded;
+                avg += wc->compression / static_cast<float>(car.count);
+                lo = (wc->compression < lo) ? wc->compression : lo;
+                hi = (wc->compression > hi) ? wc->compression : hi;
+            }
+            return grounded;
+        };
+
+        // -- (h1-2) 静止時の沈み込みが解析値 mg/(N*k) と一致する --
+        // ★これが h1 を h2 より先に置いた理由そのもの — タイヤ力という「解析解の無い層」を
+        //   積む前に、サスだけを数字で固定できる
+        {
+            struct Sag {
+                float y = 0.0f;
+                float comp = 0.0f;
+                int grounded = 0;
+            };
+            auto settle = [&](int substeps, float k, int ticks) {
+                Scene s;
+                MakeGround(s, "G", 0.0f, -1.0f, 0.0f, 10.0f, 1.0f, 10.0f); // 上面 y=0
+                addEnv(s, substeps);
+                Car car = makeCar(s, 1.2f, k, 2000.0f, 4);
+                s.GetWorld().ApplyStructuralChanges();
+                for (int i = 0; i < ticks; ++i) {
+                    phys.Update(s.GetWorld(), kDt);
+                }
+                Sag r;
+                float lo, hi;
+                r.grounded = sampleWheels(car, r.comp, lo, hi);
+                r.y = car.body.GetComponent<LocalTransform>()->position.y;
+                return r;
+            };
+            const float k = 20000.0f;
+            const float expect = kCarMass * 9.81f / (4.0f * k); // 1 輪あたり mg/4 を受ける
+            const Sag s1 = settle(1, k, 900);
+            const Sag s4 = settle(4, k, 900);
+            const Sag s8 = settle(8, k, 900);
+            const Sag s16 = settle(16, k, 900);
+            const float e1 = std::fabs(s1.comp - expect);
+            const float e4 = std::fabs(s4.comp - expect);
+            const float e8 = std::fabs(s8.comp - expect);
+            const float e16 = std::fabs(s16.comp - expect);
+            MYE_LOG_INFO("  [phys] wheel sag: expect %.6f / substeps 1 = %.6f 4 = %.6f 8 = %.6f "
+                         "16 = %.6f",
+                         static_cast<double>(expect), static_cast<double>(s1.comp),
+                         static_cast<double>(s4.comp), static_cast<double>(s8.comp),
+                         static_cast<double>(s16.comp));
+            MYE_LOG_INFO("  [phys] wheel sag: chassis y = %.6f (expect %.6f) / error %.2f%% -> "
+                         "%.2f%% -> %.2f%% -> %.2f%%",
+                         static_cast<double>(s8.y), static_cast<double>(kFloatY - expect),
+                         static_cast<double>(100.0f * e1 / expect),
+                         static_cast<double>(100.0f * e4 / expect),
+                         static_cast<double>(100.0f * e8 / expect),
+                         static_cast<double>(100.0f * e16 / expect));
+            check(s8.grounded == 4, "wheel: all four wheels report grounded once settled");
+            check(e16 < expect * 0.012f,
+                  "wheel: the resting compression converges to the analytic mg/k");
+            check(std::fabs(s8.y - (kFloatY - expect)) < 0.001f,
+                  "wheel: and the chassis floats exactly one suspension length above the ground");
+            // ★残差は**刻み h に比例する** (陰的ダンパの有効質量 EffectiveMassInv が
+            //   「4 輪で分け合った m/4」と厳密には一致しないぶん)。h を半分にすると
+            //   誤差も半分 — これが「サブステップで買える」ことの機械的な証明で、
+            //   単に閾値を緩めた試験と違って**収束の次数まで固定できる**
+            check(e1 > e4 && e4 > e8 && e8 > e16,
+                  "wheel: the error falls monotonically with the substep count");
+            check(std::fabs(e8 * 2.0f - e4) < e4 * 0.15f
+                      && std::fabs(e16 * 2.0f - e8) < e8 * 0.15f,
+                  "wheel: and it is first order in the step (halving h halves it)");
+        }
+
+        // -- (h1-3) 4 輪対称なら傾かない / 横へ流れない --
+        {
+            Scene s;
+            MakeGround(s, "G", 0.0f, -1.0f, 0.0f, 10.0f, 1.0f, 10.0f);
+            addEnv(s, 8);
+            Car car = makeCar(s, 1.2f, 20000.0f, 2000.0f, 4);
+            s.GetWorld().ApplyStructuralChanges();
+            for (int i = 0; i < 600; ++i) {
+                phys.Update(s.GetWorld(), kDt);
+            }
+            const auto* lt = car.body.GetComponent<LocalTransform>();
+            float avg, lo, hi;
+            sampleWheels(car, avg, lo, hi);
+            MYE_LOG_INFO("  [phys] wheel symmetry: pos (%.6f, %.6f) rot (%.6f, %.6f, %.6f) "
+                         "load spread %.8f",
+                         static_cast<double>(lt->position.x), static_cast<double>(lt->position.z),
+                         static_cast<double>(lt->rotation.x), static_cast<double>(lt->rotation.y),
+                         static_cast<double>(lt->rotation.z), static_cast<double>(hi - lo));
+            check(std::fabs(lt->position.x) < 1e-4f && std::fabs(lt->position.z) < 1e-4f,
+                  "wheel: a symmetric four-wheeler does not drift sideways");
+            check(std::fabs(lt->rotation.x) < 1e-4f && std::fabs(lt->rotation.y) < 1e-4f
+                      && std::fabs(lt->rotation.z) < 1e-4f,
+                  "wheel: and never leans (left/right and front/rear stay balanced)");
+            check(hi - lo < 1e-5f, "wheel: the four wheels carry the same load");
+        }
+
+        // -- (h1-3b) 力は**接地点**へ入る = レバー腕が生まれる --
+        // ★これが「質量中心へ入れる」実装と分かれる唯一の観測点。1 輪だけ +X 側に付けた
+        //   車体は、その輪が押し返した瞬間に +Z まわりへ回り始める (tau = r x F の z 成分)。
+        //   重心へ入れていたらトルクは恒等的に 0 なので、符号が出ること自体が証明になる
+        {
+            Scene s;
+            MakeGround(s, "G", 0.0f, -1.0f, 0.0f, 10.0f, 1.0f, 10.0f);
+            addEnv(s, 8);
+            Car car = makeCar(s, kFloatY - 0.05f, 20000.0f, 2000.0f, 0); // 5cm 圧縮した状態から
+            addWheel(s, car.body, 0.8f, 0.0f, 20000.0f, 2000.0f);
+            s.GetWorld().ApplyStructuralChanges();
+            for (int i = 0; i < 10; ++i) {
+                phys.Update(s.GetWorld(), kDt);
+            }
+            const auto* rb = car.body.GetComponent<RigidbodyComponent>();
+            MYE_LOG_INFO("  [phys] wheel leverage: w = (%.4f, %.4f, %.4f)",
+                         static_cast<double>(rb->angularVelocity.x),
+                         static_cast<double>(rb->angularVelocity.y),
+                         static_cast<double>(rb->angularVelocity.z));
+            check(rb->angularVelocity.z > 0.05f,
+                  "wheel: a single wheel on +X rolls the chassis about +Z (the force lands at "
+                  "the contact point, not at the centre of mass)");
+            check(std::fabs(rb->angularVelocity.x) < 1e-3f,
+                  "wheel: and produces no pitch (that wheel sits on the z=0 line)");
+        }
+
+        // -- (h1-4) レイが地形 (shape=4) と凸包 (shape=5) を拾う --
+        // ★`shapes::Raycast` は 0..5 の全形状に対応済みなので、車輪は地形の上でも
+        //   凸包の上でも走る。ここで拾えないと M60i のショーケースが組めない
+        {
+            const float k = 20000.0f;
+            const float expect = kCarMass * 9.81f / (4.0f * k);
+            // 地形: 平坦な高さ 2.5m
+            {
+                TerrainColliderLibrary* prevLib = terraincol::Library();
+                TerrainColliderLibrary lib;
+                terraincol::Install(&lib);
+                TerrainAsset::TerrainData d;
+                d.heightW = d.heightH = 9;
+                d.splatW = d.splatH = 1;
+                d.worldSizeX = d.worldSizeZ = 40.0f;
+                d.heightBase = 0.0f;
+                d.heightScale = 10.0f;
+                d.heights.assign(9 * 9, static_cast<uint16_t>(0.25f * 65535.0f + 0.5f));
+                d.splat.assign(4, 0);
+                d.splat[0] = 255;
+                const AssetID tid{ 0x7e11a10060ull };
+                lib.Register(tid, std::move(d));
+                Scene s;
+                GameObject terr = s.CreateGameObjectTracked("Terrain");
+                auto* col = terr.AddComponent<ColliderComponent>();
+                col->shape = 4;
+                col->meshAsset = tid;
+                addEnv(s, 8);
+                Car car = makeCar(s, 2.5f + 1.2f, k, 2000.0f, 4);
+                s.GetWorld().ApplyStructuralChanges();
+                for (int i = 0; i < 900; ++i) {
+                    phys.Update(s.GetWorld(), kDt);
+                }
+                float avg, lo, hi;
+                const int grounded = sampleWheels(car, avg, lo, hi);
+                const float y = car.body.GetComponent<LocalTransform>()->position.y;
+                MYE_LOG_INFO("  [phys] wheel on terrain: y = %.5f (expect %.5f) grounded = %d",
+                             static_cast<double>(y),
+                             static_cast<double>(2.5f + kFloatY - expect), grounded);
+                check(grounded == 4 && std::fabs(y - (2.5f + kFloatY - expect)) < 0.002f,
+                      "wheel: the suspension ray finds a heightfield (shape=4)");
+                terraincol::Install(prevLib);
+            }
+            // 凸包: 10x2x10 の床を頂点群から作る
+            {
+                ConvexColliderLibrary lib;
+                ConvexHullData hull;
+                BuildConvexHull({ { -5.0f, -1.0f, -5.0f },
+                                  { 5.0f, -1.0f, -5.0f },
+                                  { 5.0f, 1.0f, -5.0f },
+                                  { -5.0f, 1.0f, -5.0f },
+                                  { -5.0f, -1.0f, 5.0f },
+                                  { 5.0f, -1.0f, 5.0f },
+                                  { 5.0f, 1.0f, 5.0f },
+                                  { -5.0f, 1.0f, 5.0f } },
+                                hull);
+                const AssetID hid{ 0x4D36306831ull };
+                lib.Register(hid, std::move(hull));
+                convexcol::Install(&lib);
+                Scene s;
+                GameObject floorGo = s.CreateGameObjectTracked("HullFloor");
+                floorGo.SetLocalPosition(0.0f, -1.0f, 0.0f); // 上面 y=0
+                auto* col = floorGo.AddComponent<ColliderComponent>();
+                col->shape = 5;
+                col->isTrigger = false;
+                col->meshAsset = hid;
+                addEnv(s, 8);
+                Car car = makeCar(s, 1.2f, k, 2000.0f, 4);
+                s.GetWorld().ApplyStructuralChanges();
+                for (int i = 0; i < 900; ++i) {
+                    phys.Update(s.GetWorld(), kDt);
+                }
+                float avg, lo, hi;
+                const int grounded = sampleWheels(car, avg, lo, hi);
+                const float y = car.body.GetComponent<LocalTransform>()->position.y;
+                MYE_LOG_INFO("  [phys] wheel on hull: y = %.5f (expect %.5f) grounded = %d",
+                             static_cast<double>(y), static_cast<double>(kFloatY - expect),
+                             grounded);
+                check(grounded == 4 && std::fabs(y - (kFloatY - expect)) < 0.002f,
+                      "wheel: and a convex hull (shape=5)");
+                convexcol::Install(nullptr);
+            }
+        }
+
+        // -- (h1-5) 空中では力が 0 = 車輪を外したシーンと**ビット同一**に落ちる --
+        // ★接地しないうちは fp 演算が 1 つも足されないことの証明。値ゲート (力が 0) では
+        //   なく分岐ゲート (レイが当たらなければ何も足さない) で書いてあることが効く
+        {
+            struct Fall {
+                float y = 0.0f;
+                float vy = 0.0f;
+                int grounded = 0;
+            };
+            auto fall = [&](bool withWheels) {
+                Scene s;
+                MakeGround(s, "G", 0.0f, -6.0f, 0.0f, 10.0f, 1.0f, 10.0f); // 上面 y=-5
+                addEnv(s, 8);
+                Car car = makeCar(s, 3.0f, 20000.0f, 2000.0f, withWheels ? 4 : 0);
+                s.GetWorld().ApplyStructuralChanges();
+                for (int i = 0; i < 60; ++i) {
+                    phys.Update(s.GetWorld(), kDt);
+                }
+                Fall r;
+                float avg, lo, hi;
+                r.grounded = sampleWheels(car, avg, lo, hi);
+                r.y = car.body.GetComponent<LocalTransform>()->position.y;
+                r.vy = car.body.GetComponent<RigidbodyComponent>()->velocity.y;
+                return r;
+            };
+            const Fall a = fall(true);
+            const Fall b = fall(false);
+            MYE_LOG_INFO("  [phys] wheel airborne: y %.7f vs %.7f / vy %.7f vs %.7f",
+                         static_cast<double>(a.y), static_cast<double>(b.y),
+                         static_cast<double>(a.vy), static_cast<double>(b.vy));
+            check(a.grounded == 0, "wheel: a wheel out of reach of the ground is not grounded");
+            check(a.y == b.y && a.vy == b.vy,
+                  "wheel: and the fall is bit-identical to the same scene without wheels");
+        }
+
+        // -- (h1-6) 決定論: 車輪シーンの 240 tick 並走ハッシュ一致 --
+        {
+            auto build = [&](Scene& s) {
+                MakeGround(s, "G", 0.0f, -1.0f, 0.0f, 10.0f, 1.0f, 10.0f);
+                addEnv(s, 8);
+                makeCar(s, 1.6f, 20000.0f, 2000.0f, 4);
+                s.GetWorld().ApplyStructuralChanges();
+            };
+            Scene sa, sb;
+            build(sa);
+            build(sb);
+            bool det = true;
+            uint64_t finalHash = 0;
+            for (int i = 0; i < 240 && det; ++i) {
+                phys.Update(sa.GetWorld(), kDt);
+                phys.Update(sb.GetWorld(), kDt);
+                const uint64_t ha = HashWorld(sa.GetWorld(), nullptr);
+                const uint64_t hb = HashWorld(sb.GetWorld(), nullptr);
+                if (ha != hb) {
+                    det = false;
+                    MYE_LOG_ERROR("  wheel determinism diverged at tick %d", i);
+                }
+                finalHash = ha;
+            }
+            check(det, "wheel: two identical car scenes hash-identical for 240 ticks");
+            MYE_LOG_INFO("  [phys] wheel scene hash @240 = %016llX",
+                         static_cast<unsigned long long>(finalHash));
+        }
+
+        // -- (h1-7) 眠った車は「接地したまま」止まる --
+        // ★サスは接触ではないので、サスだけで浮いている車は**接触を 1 つも持たない**島。
+        //   眠ると invMass が 0 に倒れてサスは何も測らなくなるので、出力を毎 tick 潰す
+        //   実装だと isGrounded が眠った瞬間に false へ落ちる。前の値を凍らせるのが正しい。
+        // ★ついでに「眠っているあいだワールドハッシュが 1 ビットも動かない」(M59h の柱) が
+        //   車輪を足しても保たれていることを固定する
+        {
+            Scene s;
+            MakeGround(s, "G", 0.0f, -1.0f, 0.0f, 10.0f, 1.0f, 10.0f);
+            GameObject e = s.CreateGameObjectTracked("Env");
+            auto* pe = e.AddComponent<PhysicsEnvironmentComponent>();
+            pe->substeps = 8; // sleepDelayTicks は既定 (60) のまま = 眠るシーン
+            Car car = makeCar(s, 1.2f, 20000.0f, 2000.0f, 4);
+            s.GetWorld().ApplyStructuralChanges();
+            for (int i = 0; i < 900; ++i) {
+                phys.Update(s.GetWorld(), kDt);
+            }
+            const uint64_t hSleep = HashWorld(s.GetWorld(), nullptr);
+            for (int i = 0; i < 60; ++i) {
+                phys.Update(s.GetWorld(), kDt);
+            }
+            const uint64_t hLater = HashWorld(s.GetWorld(), nullptr);
+            float avg, lo, hi;
+            const int grounded = sampleWheels(car, avg, lo, hi);
+            const auto* rb = car.body.GetComponent<RigidbodyComponent>();
+            MYE_LOG_INFO("  [phys] wheel sleep: sleeping = %d grounded = %d compression = %.6f",
+                         rb->isSleeping ? 1 : 0, grounded, static_cast<double>(avg));
+            check(rb->isSleeping, "wheel: a settled car falls asleep on its suspension");
+            check(grounded == 4, "wheel: and keeps reporting grounded while it sleeps");
+            check(hSleep == hLater,
+                  "wheel: a sleeping car does not move the world hash by a single bit");
+        }
+    }
+
     if (failCount == 0) {
         MYE_LOG_INFO("==== Physics self test: ALL PASS ====");
         return true;

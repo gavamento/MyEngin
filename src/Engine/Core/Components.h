@@ -1014,6 +1014,46 @@ struct RagdollComponent {
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
+// ---- 車輪 + レイキャストサスペンション (M60h1、TypeId 42) ----
+// **車輪エンティティ (車体の子) に付ける**。力の入れ先は AeroSurface (M59d) と同じ
+// 「最も近い Rigidbody 祖先」で、車輪自身は剛体でなくてよい。
+//
+// ★車輪を剛体にしてヒンジで吊るほうが物理的には素直だが、実用の車両が例外なく
+//   レイキャストサスを採るのは安定性がまるで違うため — タイヤの接地を 1 本のレイで
+//   代表すると、接触の解像度 (法線の跳び・マニフォールドの点数) に車体の挙動が
+//   引きずられなくなる。
+// ★レイは **PhysicsSystem が `bodies[].pose` へ直接撃つ**。`RaycastWorld` は
+//   `WorldMatrixComponent` 基準で、`TransformSystem` は物理の**後**に走る以上
+//   ソルバ実行中は 1 tick 古い (M59j の CCD が同じ罠を明記している)。
+// ★レイの向きは**車輪エンティティのローカル -Y** = 「車輪から見た下」。車体が傾けば
+//   サスも一緒に傾くし、キャンバー/キャスターを LocalTransform で authoring できる。
+// ★サスは**押すだけで引かない**。伸び側でダンパが勝った瞬間に負の力を出すと、
+//   接地したまま車体を地面へ吸い付けてしまう (レイキャストサスの定番の壊れ方)。
+// ★v1 の制限: 反作用を**当たった相手へ返さない** (片側のみ)。動く板の上を走らせても
+//   板は沈まない。返すには相手の島・起床の配線も要るので h2 以降の判断に回す。
+//
+// velocity / angularVelocity を駆動し、出力フィールドも sim 状態なので **hash 対象**。
+// opt-in (TypeId 末尾 append) なので既存シーンは 1 バイトも変わらない。
+struct WheelComponent {
+    // サスの静止長 [m] = 無負荷のときの「取り付け点 → 車輪中心」の距離。
+    // レイの長さは restLength + radius (= 完全に伸びきった車輪の接地点まで)
+    float restLength = 0.4f;
+    // ばね定数 [N/m]。静止時の沈み込みは解析的に **mg/k** (h1 の試験がこれを固定する)。
+    // ★硬さはサブステップで買える (M59g2-7) — 車両が substeps 8 を要求しがちなのはこれ
+    float stiffness = 20000.0f;
+    float damping = 2000.0f; // ダンパ [N・s/m]。縮み側・伸び側とも同じ係数 (v1)
+    float radius = 0.35f;    // 車輪半径 [m]
+    // 圧縮の上限 [m] (**<= 0 で無制限**)。底付きの表現で、これを超える沈み込みはばねに
+    // 乗らない。バンプストップのような「底付きで急に硬くなる」挙動は入れていない —
+    // それ以上沈むのを止めるのは車体自身のコライダーの仕事
+    float maxCompression = 0.3f;
+    // ---- 出力 (kFieldReadOnly。ソルバが毎 tick 書く = **sim 状態**) ----
+    // 範型は CharacterController の moveInput(入力) / isGrounded(出力) の書き分け
+    int32_t isGrounded = 0;   // レイが車輪の接地面まで届いたか
+    float compression = 0.0f; // 今の圧縮量 [m] (maxCompression でクランプ済み)
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
 class World;
 
 // エンティティが有効か (ActiveComponent が無ければ有効 / enabled==0 なら無効)

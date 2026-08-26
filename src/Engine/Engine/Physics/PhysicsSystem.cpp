@@ -1773,6 +1773,110 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
         breakImpulse.assign(jointLinks.size() * 6, 0.0f);
     }
 
+    // ---- 車輪の配線 (M60h1): レイキャストサスペンション ----
+    // **1 tick に 1 回**。取り付け点とサスの向きは「車体から見れば動かない」ので、ここで
+    // **剛体ローカルへ畳んで**おき、サブステップごとに今の姿勢から組み直す
+    // (M60e の複合子形状とまったく同じ流儀)。
+    // ★畳む材料に LocalTransform を使えるのはこの位置だけ — サブステップが 1 回でも
+    //   回れば bodies[].pose が動いてしまい、LocalTransform (tick 頭のまま) と食い違う。
+    // ★力の入れ先は「最も近い Rigidbody 祖先」だが、**構造だけで決める** (rb の有無)。
+    //   AeroSurface (M59d) は invMass > 0 まで条件に入れて上へ探し続けるが、それを真似ると
+    //   車体が眠っているあいだだけ**祖父の剛体へ力が飛ぶ**。動的かどうかはサブステップ側で見る
+    struct WheelLink {
+        EntityID owner;
+        WheelComponent* wc = nullptr;
+        int32_t bi = -1;                  // 力の入れ先 = bodies の添字
+        float lpx = 0, lpy = 0, lpz = 0;  // 取り付け点 (剛体ローカル、pose 原点から)
+        float ldx = 0, ldy = -1, ldz = 0; // サスの向き (剛体ローカル、単位)
+        bool grounded = false;            // 出力 (最後のサブステップの値を tick 末に書く)
+        float compression = 0.0f;
+        // サブステップ内のスクラッチ: 1 パス目で測った力積と、その作用点 / 向き
+        float impulse = 0.0f;
+        float rx = 0, ry = 0, rz = 0;
+        float ux = 0, uy = 0, uz = 0;
+    };
+    std::vector<WheelLink> wheelLinks;
+    {
+        const ComponentTypeId wReq[] = { WheelComponent::sTypeId, LocalTransform::sTypeId };
+        world.ForEachArchetype(wReq, [&](Archetype& arch) {
+            const int wi = arch.FindTypeIndex(WheelComponent::sTypeId);
+            for (uint32_t row = 0; row < arch.Count(); ++row) {
+                const EntityID e = arch.EntityAt(row);
+                if (!IsEntityActive(world, e)) {
+                    continue;
+                }
+                WheelLink l;
+                l.owner = e;
+                l.wc = static_cast<WheelComponent*>(arch.GetPtr(wi, row));
+                wheelLinks.push_back(l);
+            }
+        });
+    }
+    if (!wheelLinks.empty()) {
+        // 決定論の順序: owner の entity.index 昇順 (SpringJoint / Joint と同じ流儀)
+        std::sort(wheelLinks.begin(), wheelLinks.end(),
+                  [](const WheelLink& a, const WheelLink& b) { return a.owner.index < b.owner.index; });
+        auto findBodyIndex = [&bodies](EntityID e) -> int32_t {
+            auto it = std::lower_bound(bodies.begin(), bodies.end(), e.index,
+                                       [](const Body& b, uint32_t idx) { return b.entity.index < idx; });
+            if (it != bodies.end() && it->entity.index == e.index
+                && it->entity.generation == e.generation) {
+                return static_cast<int32_t>(it - bodies.begin());
+            }
+            return -1;
+        };
+        size_t w = 0;
+        for (WheelLink& l : wheelLinks) {
+            // 力の入れ先 = 自分 → 祖先の順に最初に見つかった Rigidbody
+            for (EntityID cur = l.owner; !cur.IsNull(); cur = world.GetParent(cur)) {
+                const int32_t bi = findBodyIndex(cur);
+                if (bi >= 0 && bodies[static_cast<size_t>(bi)].rb) {
+                    l.bi = bi;
+                    break;
+                }
+            }
+            const auto* wlt = (l.bi >= 0) ? world.GetComponent<LocalTransform>(l.owner) : nullptr;
+            if (!wlt) {
+                // 行き先が無い車輪 = 何もしないが、**出力は倒しておく**。前 tick の
+                // 「接地していた」が残ると、車体を消しただけで isGrounded が凍る
+                l.wc->isGrounded = 0;
+                l.wc->compression = 0.0f;
+                continue;
+            }
+            const WorldFrame wf = ComposeParentFrame(world, l.owner);
+            XMFLOAT3 wpos;
+            XMFLOAT4 wrot;
+            XMFLOAT3 wscale;
+            ApplyFrame(wf, *wlt, wpos, wrot, wscale);
+            // サスの向き = 車輪エンティティのローカル -Y をワールドへ
+            float dwx, dwy, dwz;
+            QuatRotate(wrot.x, wrot.y, wrot.z, wrot.w, 0.0f, -1.0f, 0.0f, dwx, dwy, dwz);
+            const Body& A = bodies[static_cast<size_t>(l.bi)];
+            const float iqx = -A.qx, iqy = -A.qy, iqz = -A.qz, iqw = A.qw; // 共役 = 逆 (単位)
+            QuatRotate(iqx, iqy, iqz, iqw, wpos.x - A.pose.px, wpos.y - A.pose.py,
+                       wpos.z - A.pose.pz, l.lpx, l.lpy, l.lpz);
+            QuatRotate(iqx, iqy, iqz, iqw, dwx, dwy, dwz, l.ldx, l.ldy, l.ldz);
+            // 正規化。レイの t を**距離として**読む以上、合成の丸めで 1 からずれた長さは
+            // そのまま沈み込みの誤差になる
+            const float dl2 = l.ldx * l.ldx + l.ldy * l.ldy + l.ldz * l.ldz;
+            if (dl2 < 1e-12f) {
+                l.wc->isGrounded = 0;
+                l.wc->compression = 0.0f;
+                continue; // 向きが定義できない (決定論的分岐)
+            }
+            const float dinv = 1.0f / std::sqrt(dl2);
+            l.ldx *= dinv;
+            l.ldy *= dinv;
+            l.ldz *= dinv;
+            // 出力の初期値は**前 tick の値**。車体が眠っているあいだサスは何も測らないので、
+            // そのまま書き戻すことで「眠った瞬間の接地状態」が凍る (下の invMass 分岐)
+            l.grounded = (l.wc->isGrounded != 0);
+            l.compression = l.wc->compression;
+            wheelLinks[w++] = l;
+        }
+        wheelLinks.resize(w);
+    }
+
     // ---- サブステップ (M59g2) ----
     // 1 tick を substeps 回に割って「積分 → 制約生成 → 解決 → 位置補正 → 前進」を繰り返す。
     // 反復回数を増やすより効く — 接触が生まれてから解かれるまでの時間が短くなるので、
@@ -2496,6 +2600,140 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                     }
                 }
             }
+        }
+
+        // ---- 車輪 + レイキャストサスペンション (M60h1) ----
+        // 取り付け点から車輪の下向きへレイを撃ち、沈み込みぶんのばね力を**接地点へ**入れる。
+        // ★置き場が SpringJoint の直後・ブロードフェーズの直前なのは同じ理由 — ばねで
+        //   変わった速度が候補 AABB の margin に反映される。加えてこの時点でポーズは
+        //   確定済み = レイを撃つ相手の pose が「今のサブステップの正」で、重力も
+        //   ConstantForce も空力も既に速度へ入っている。
+        // ★レイは**自前ループ**。RaycastWorld は WorldMatrix 基準 = ソルバ実行中は 1 tick
+        //   古く、トリガーも拾い、スリープ / kinematic の区別も持たない (M59j と同じ罠)。
+        // ★★**2 パスに割ってある (Jacobi)**。1 パス目で全車輪の力を「このサブステップの
+        //   同じ速度」から測り、2 パス目でまとめて入れる。逐次に入れる (Gauss-Seidel) と
+        //   先の車輪が速度を動かしてしまい、後の車輪が「もう縮んでいない」と読む —
+        //   **4 輪対称の車体が傾く**。実測で荷重が 13% ばらつき、10 秒で 0.2m 横へ流れた。
+        //   接触は拘束なので逐次が正しいが、サスは**力**なので同時に測るのが正しい。
+        for (WheelLink& l : wheelLinks) {
+            Body& A = bodies[static_cast<size_t>(l.bi)];
+            l.impulse = 0.0f; // ★必ず先に落とす — 2 パス目が前サブステップの力積を撃たないため
+            if (A.invMass <= 0.0f) {
+                // 眠っている / kinematic な車体は押しても動かない。★出力は**前の値のまま**
+                //   凍らせる (潰さない) — 眠った瞬間の接地状態が残るほうが読み手に自然で、
+                //   「眠っているあいだワールドハッシュが 1 ビットも動かない」(M59h) も保たれる
+                continue;
+            }
+            l.grounded = false;
+            l.compression = 0.0f;
+            const float maxDist = l.wc->restLength + l.wc->radius;
+            if (maxDist <= 0.0f) {
+                continue; // 長さゼロのサスは接地を定義できない (**分岐ゲート**)
+            }
+            // 取り付け点と向きを今の姿勢から組み直す (収集時に畳んだ剛体ローカルから)
+            float ox, oy, oz;
+            QuatRotate(A.qx, A.qy, A.qz, A.qw, l.lpx, l.lpy, l.lpz, ox, oy, oz);
+            const float px = A.pose.px + ox, py = A.pose.py + oy, pz = A.pose.pz + oz;
+            float dx, dy, dz;
+            QuatRotate(A.qx, A.qy, A.qz, A.qw, l.ldx, l.ldy, l.ldz, dx, dy, dz);
+            // レイ区間の AABB (枝刈り用。保守的なので結果は変わらない)
+            const float ex = px + dx * maxDist, ey = py + dy * maxDist, ez = pz + dz * maxDist;
+            const float rMinX = (px < ex) ? px : ex, rMaxX = (px > ex) ? px : ex;
+            const float rMinY = (py < ey) ? py : ey, rMaxY = (py > ey) ? py : ey;
+            const float rMinZ = (pz < ez) ? pz : ez, rMaxZ = (pz > ez) ? pz : ez;
+            float bestT = maxDist;
+            bool hit = false;
+            const size_t wn = bodies.size();
+            for (size_t j = 0; j < wn; ++j) {
+                if (j == static_cast<size_t>(l.bi)) {
+                    // ★自分の車体を外す。**複合の子形状も同じ Body に属する**ので、
+                    //   ボディ添字ひとつで「車体の形状すべて」が落ちる (M60e の設計の配当)
+                    continue;
+                }
+                const Body& B = bodies[j];
+                // レイヤーは**車体のもの**で判定する — 車輪はコライダーを持たないことが
+                // 普通なので自分のレイヤーを持っていない。車輪は車体の一部という扱い
+                if (!B.solid || !shapes::CanCollide(A.layer, A.mask, B.layer, B.mask)) {
+                    continue; // トリガーは接地面にならない (RaycastWorld と違う点)
+                }
+                forEachShape(B, [&](const ShapePose& sp) {
+                    float tminX, tminY, tminZ, tmaxX, tmaxY, tmaxZ;
+                    shapes::ComputeAabb(sp, tminX, tminY, tminZ, tmaxX, tmaxY, tmaxZ);
+                    if (tmaxX < rMinX || tminX > rMaxX || tmaxY < rMinY || tminY > rMaxY
+                        || tmaxZ < rMinZ || tminZ > rMaxZ) {
+                        return;
+                    }
+                    float t, nx, ny, nz;
+                    if (!shapes::Raycast(sp, px, py, pz, dx, dy, dz, bestT, t, nx, ny, nz)) {
+                        return;
+                    }
+                    if (t >= bestT) {
+                        return; // 厳密 < = 同距離は低 index が勝つ (決定論)
+                    }
+                    bestT = t;
+                    hit = true;
+                });
+            }
+            if (!hit) {
+                continue; // 宙に浮いている = サスは力を出さない (接地フラグも落ちたまま)
+            }
+            l.grounded = true;
+            float comp = l.wc->restLength - (bestT - l.wc->radius);
+            if (comp <= 0.0f) {
+                continue; // レイは届いたが車輪はまだ触れていない (丸めの境目)
+            }
+            if (l.wc->maxCompression > 0.0f && comp > l.wc->maxCompression) {
+                comp = l.wc->maxCompression; // 底付き (**値ゲートではなく分岐ゲート**)
+            }
+            l.compression = comp;
+            // 接地点と、そこまでの腕 (M59f1: 腕は**質量中心から**測る)
+            const float cx = px + dx * bestT, cy = py + dy * bestT, cz = pz + dz * bestT;
+            const float rx = cx - A.pose.px - A.comx;
+            const float ry = cy - A.pose.py - A.comy;
+            const float rz = cz - A.pose.pz - A.comz;
+            float wr0, wr1, wr2;
+            Cross(A.wx, A.wy, A.wz, rx, ry, rz, wr0, wr1, wr2);
+            // 力の向き = サスが伸びる向き = レイの逆
+            const float ux = -dx, uy = -dy, uz = -dz;
+            const float vUp = (A.vx + wr0) * ux + (A.vy + wr1) * uy + (A.vz + wr2) * uz;
+            // ★ばね/ダンパは「力」なので刻み h を掛ける。率 (damping) ではないので
+            //   sub==0 ゲートには乗せない (M59g2-3 の減衰率とはここが違う)。
+            // ★★ダンパは**陰的に**入れる (分母の 1 + c·h·kEff。SpringJoint と同じ形)。
+            //   陽に入れると、重力がこのサブステップで既に与えた下向き速度 g·h を
+            //   ダンパが「縮んでいる」と読み、静止しているのに c·|g|·h ぶん余計に
+            //   押し返す = **沈み込みが mg/k より浅くなる** (実測 substeps 8 で 18% 浅く、
+            //   substeps 1 では 97% 浅い = ほとんど沈まない)。分母を入れると釣り合い点が
+            //   「速度が 0 になる点」へ移り、刻みに依らず mg/k へ寄る。
+            //   有効質量は**接地点を up 方向に押したときの応答** = EffectiveMassInv。
+            //   4 輪車ならこれがちょうど m/4 付近になるので残差は O(h) で消える
+            const float kEff = EffectiveMassInv(A, rx, ry, rz, ux, uy, uz);
+            float impulse = (l.wc->stiffness * comp - l.wc->damping * vUp) * h
+                          / (1.0f + l.wc->damping * h * kEff);
+            if (impulse <= 0.0f) {
+                continue; // ★サスは押すだけ = 引かない。負の力を出すと車体を地面へ吸い付ける
+            }
+            // 極端な設定でも 1 サブステップの Δv を 100 m/s に制限する防波堤
+            // (SpringJoint と同じ理屈・同じ値。invMass > 0 はこのすぐ上で確かめてある)
+            const float maxJ = 100.0f / A.invMass;
+            if (impulse > maxJ) {
+                impulse = maxJ;
+            }
+            l.impulse = impulse;
+            l.rx = rx;
+            l.ry = ry;
+            l.rz = rz;
+            l.ux = ux;
+            l.uy = uy;
+            l.uz = uz;
+        }
+        // 2 パス目: 測った力積をまとめて入れる。**対称な 4 輪なら左右のトルクが
+        // ビット単位で打ち消し合う** (同じ大きさ・逆符号の加算は fp でも厳密に 0)
+        for (const WheelLink& l : wheelLinks) {
+            if (l.impulse <= 0.0f) {
+                continue;
+            }
+            ApplyImpulse(bodies[static_cast<size_t>(l.bi)], l.rx, l.ry, l.rz, l.ux * l.impulse,
+                         l.uy * l.impulse, l.uz * l.impulse, 1.0f);
         }
 
         // ---- ブロードフェーズ (M28d): 候補ペア列挙 (1 軸 sort & sweep、margin 込み) ----
@@ -3783,6 +4021,16 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             }
         }
 
+    }
+
+    // ---- 車輪の出力フィールド (M60h1) ----
+    // ★書くのは **tick の末尾に 1 回**。サブステップごとに書いても最後が勝つだけで値は
+    //   同じだが、「コンポーネントを書くのは tick 境界」という家風に合わせてある
+    //   (M60d の破断フラグと同じ棚)。読み手 (スクリプト / Inspector / h2 のタイヤ) から
+    //   見ても「その tick の最終状態」で揃う。
+    for (const WheelLink& l : wheelLinks) {
+        l.wc->isGrounded = l.grounded ? 1 : 0;
+        l.wc->compression = l.compression;
     }
 
     // ---- 破断 (M60d): tick 全体の反力が閾値を超えた関節を折る ----

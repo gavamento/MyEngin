@@ -692,6 +692,27 @@ void RegisterBuiltinComponents()
                                          "on hands the bones to the rigid bodies; off lets the "
                                          "animation drive them and holds the bodies kinematic")),
     });
+
+    // M60h1: 車輪 (レイキャストサスペンション)。**hash 対象** — 親剛体の velocity /
+    // angularVelocity を駆動し、出力 2 本もソルバが毎 tick 書く sim 状態。
+    // opt-in (TypeId 末尾 append =42)。車体の**子**に置いて質量中心からずらすのが本来の
+    // 使い方 (AeroSurface と同じ「子に置くとレバー腕が生まれる」設計)
+    RegisterComponent<WheelComponent>("Wheel", {
+        MYE_JP("サス静止長", MYE_FIELD_TIP(WheelComponent, restLength, Float,
+                                           "unloaded distance from the mount point down to the "
+                                           "wheel centre; the ray is this plus the radius")),
+        MYE_JP("ばね定数", MYE_FIELD_TIP(WheelComponent, stiffness, Float,
+                                         "N/m. the resting sag is mg/k - raise the substeps "
+                                         "before raising this")),
+        MYE_JP("ダンパ", MYE_FIELD_RANGE(WheelComponent, damping, Float, 0.0f, 1000000.0f)),
+        MYE_JP("車輪半径", MYE_FIELD_RANGE(WheelComponent, radius, Float, 0.0f, 100.0f)),
+        MYE_JP("最大圧縮", MYE_FIELD_TIP(WheelComponent, maxCompression, Float,
+                                         "bottoming out, in metres. 0 or below leaves the "
+                                         "travel unlimited")),
+        MYE_JP("接地している",
+               MYE_FIELD_FLAGS(WheelComponent, isGrounded, Int32, kFieldReadOnly)),
+        MYE_JP("圧縮量", MYE_FIELD_FLAGS(WheelComponent, compression, Float, kFieldReadOnly)),
+    });
 }
 
 } // namespace mye
