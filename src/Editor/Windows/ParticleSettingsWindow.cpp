@@ -47,7 +47,7 @@ void ParticleSettingsWindow::OnImGui(EngineContext& ctx)
         const ParticleStats cpu = ps.Cpu().Stats();
         const ParticleStats gpu = ps.Gpu().Stats();
         ImGui::Text("CPU: %7u alive  %6.3f ms", cpu.aliveTotal, cpu.updateMs);
-        ImGui::Text("GPU: (cap %6u)  %6.3f ms", gpu.aliveTotal, gpu.updateMs);
+        ImGui::Text("GPU: %7u alive  %6.3f ms", gpu.aliveTotal, gpu.updateMs);
         if (cpu.updateMs > 0.0001f && gpu.updateMs > 0.0001f) {
             ImGui::Text(Tr(StrId::Particle_Speedup), cpu.updateMs / gpu.updateMs);
         }

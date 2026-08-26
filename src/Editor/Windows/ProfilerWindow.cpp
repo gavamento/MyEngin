@@ -42,7 +42,7 @@ void ProfilerWindow::OnImGui(EngineContext& ctx)
     const ParticleStats cpu = ctx.particles->Cpu().Stats();
     const ParticleStats gpu = ctx.particles->Gpu().Stats();
     ImGui::Text("  CPU: %7u alive %7.3f ms", cpu.aliveTotal, cpu.updateMs);
-    ImGui::Text("  GPU: (cap %6u) %7.3f ms (GpuTimer)", gpu.aliveTotal, gpu.updateMs);
+    ImGui::Text("  GPU: %7u alive %7.3f ms (GpuTimer)", gpu.aliveTotal, gpu.updateMs);
     // M44d: ポストプロセス解決の GPU 時間 (複数ビューでは最後に完了した Resolve)
     if (ctx.renderSystem) {
         ImGui::Text("  postfx: %6.3f ms (GpuTimer)", ctx.renderSystem->PostFxGpuMs());

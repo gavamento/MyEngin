@@ -762,6 +762,9 @@
     <ClInclude Include="..\src\Engine\Engine\Particles\CpuParticleBackend.h">
       <Filter>Engine\Particles</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Particles\GpuAliveEstimator.h">
+      <Filter>Engine\Particles</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Particles\GpuParticleBackend.h">
       <Filter>Engine\Particles</Filter>
     </ClInclude>

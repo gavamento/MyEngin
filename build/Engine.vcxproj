@@ -258,6 +258,7 @@
     <ClInclude Include="..\src\Engine\Engine\Net\NetSession.h" />
     <ClInclude Include="..\src\Engine\Engine\PartFollowSystem.h" />
     <ClInclude Include="..\src\Engine\Engine\Particles\CpuParticleBackend.h" />
+    <ClInclude Include="..\src\Engine\Engine\Particles\GpuAliveEstimator.h" />
     <ClInclude Include="..\src\Engine\Engine\Particles\GpuParticleBackend.h" />
     <ClInclude Include="..\src\Engine\Engine\Particles\IParticleBackend.h" />
     <ClInclude Include="..\src\Engine\Engine\Particles\ParticleCurves.h" />

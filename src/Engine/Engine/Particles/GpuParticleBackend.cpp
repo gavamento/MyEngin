@@ -313,6 +313,7 @@ void GpuParticleBackend::Update(World& world, float dt)
             const float speed = em.rng.Range(desc->speedMin, desc->speedMax);
             const float lifetime = std::max(0.01f, em.rng.Range(desc->lifetimeMin, desc->lifetimeMax));
             const float size = em.rng.Range(desc->sizeMin, desc->sizeMax);
+            em.aliveEst.OnEmit(lifetime, dt); // 寿命は CPU 生成なので死亡 tick を記帳できる
             emitData[static_cast<size_t>(n)] = { { posX, posY, posZ }, lifetime,
                                                  { dirX * speed, dirY * speed, dirZ * speed }, size };
         }
@@ -415,7 +416,10 @@ void GpuParticleBackend::Update(World& world, float dt)
         dc->CopyStructureCount(em.indirectArgs.Get(), 4, em.aliveUAV[aliveOut].Get());
         em.aliveCurrent = aliveOut;
 
-        aliveEstimate += em.capacity; // 概算 (正確な alive は GPU 上にのみ存在)
+        // 生存数は寿命スケジュールの CPU 側推定 (正確な alive は GPU 上にのみ存在するが、
+        // 死因は寿命だけなので readback なしでほぼ一致する。飽和時のみ capacity で頭打ち)
+        em.aliveEst.EndTick();
+        aliveEstimate += em.aliveEst.Alive(em.capacity);
     }
 
     dc->CSSetShader(nullptr, nullptr, 0);

@@ -5,6 +5,7 @@
 
 #include "Engine/Core/Components.h"
 #include "Engine/Core/Random.h"
+#include "Engine/Engine/Particles/GpuAliveEstimator.h"
 #include "Engine/Engine/Particles/IParticleBackend.h"
 #include "Engine/Renderer/GpuTimer.h"
 
@@ -45,6 +46,7 @@ private:
         uint32_t capacity = 0;
         float emitAccum = 0.0f;
         int32_t ageTicks = 0; // M32a: 放出ウィンドウ経過 tick (CPU 側で管理、表示用)
+        GpuAliveEstimator aliveEst; // 生存数の CPU 側推定 (表示用。readback しない)
         Pcg32 rng;
         ParticleEmitterComponent descCache;
         bool firstDispatch = true; // 初回のみ dead list カウンタを capacity で初期化

@@ -9,6 +9,7 @@
 #include "Engine/Engine/EffectSystem.h"
 #include "Engine/Engine/GameObject.h"
 #include "Engine/Engine/Particles/CpuParticleBackend.h"
+#include "Engine/Engine/Particles/GpuAliveEstimator.h"
 #include "Engine/Engine/Particles/ParticleCurves.h"
 #include "Engine/Engine/Scene.h"
 
@@ -380,6 +381,42 @@ bool RunParticleSelfTest()
         auto* an = w.GetComponent<AnimatorComponent>(anim.Id());
         check(an && an->timeTicks == 0 && an->playing == 1,
               "effect: RestartEffect restarts finished non-loop animator");
+    }
+
+    // ---- (I) GpuAliveEstimator: GPU 生存数の CPU 側推定 (readback なし) ----
+    {
+        // 定常状態: 毎 tick 8 粒 × 寿命 30 tick 分。放出 tick に sim も走り life が
+        // dt 減るため、1 粒が描画される tick 数は 30 ではなく 29 (放出 tick 分を消費)
+        GpuAliveEstimator est;
+        for (int t = 0; t < 120; ++t) {
+            for (int n = 0; n < 8; ++n) {
+                est.OnEmit(0.5f, kDt); // 0.5s = 30 tick
+            }
+            est.EndTick();
+        }
+        check(est.Alive(100000) == 8 * 29, "alive estimator converges to rate*(life-1)");
+
+        // 放出停止後: 寿命分の tick で 0 に戻る (容量合計を返す旧実装との違いの核)
+        for (int t = 0; t < 30; ++t) {
+            est.EndTick();
+        }
+        check(est.Alive(100000) == 0, "alive estimator drains to zero after emission stops");
+
+        // 容量飽和: GPU 側は dead list 枯渇で放出が落ちるため、推定は capacity で頭打ち
+        GpuAliveEstimator sat;
+        for (int t = 0; t < 10; ++t) {
+            for (int n = 0; n < 100; ++n) {
+                sat.OnEmit(10.0f, kDt);
+            }
+            sat.EndTick();
+        }
+        check(sat.Alive(256) == 256, "alive estimator clamps at capacity");
+
+        // 寿命 <= dt の粒は放出と同 tick で死亡 (aliveOut に入らず描画もされない)
+        GpuAliveEstimator tiny;
+        tiny.OnEmit(0.01f, kDt);
+        tiny.EndTick();
+        check(tiny.Alive(100) == 0, "life <= dt dies in the emit tick");
     }
 
     if (failCount == 0) {

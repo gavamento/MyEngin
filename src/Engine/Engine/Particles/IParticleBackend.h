@@ -11,7 +11,7 @@ class ShaderManager;
 struct RenderResources;
 
 struct ParticleStats {
-    uint32_t aliveTotal = 0; // CPU は正確、GPU は放出累計ベースの推定
+    uint32_t aliveTotal = 0; // CPU は正確、GPU は寿命スケジュールの推定 (飽和時は容量で頭打ち)
     float updateMs = 0.0f;   // CPU: CPU 時間 / GPU: GpuTimer 計測
 };
 
