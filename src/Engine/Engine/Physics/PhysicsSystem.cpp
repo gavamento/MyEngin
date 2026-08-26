@@ -3081,37 +3081,6 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                     c.muRoll = 0.0f; // 回っていない = 転がり抵抗は定義できない
                 }
             }
-            // ---- 転がり抵抗の軸と有効慣性 (M59f2) ----
-            // ★軸は**生成時の相対角速度の向きで固定**する。摩擦の接線を法線から作るのと
-            //   同じ理由 — 蓄積インパルスは回る軸を追いかけられない。
-            //   転がっていない (ω_rel ≈ 0) 接触は軸が定義できないので無効化する
-            if (c.muRoll > 0.0f) {
-                const float wrx = A.wx - B.wx;
-                const float wry = A.wy - B.wy;
-                const float wrz = A.wz - B.wz;
-                const float wl2 = wrx * wrx + wry * wry + wrz * wrz;
-                if (wl2 > 1e-12f) {
-                    const float winv = 1.0f / std::sqrt(wl2);
-                    c.rollAxis[0] = wrx * winv;
-                    c.rollAxis[1] = wry * winv;
-                    c.rollAxis[2] = wrz * winv;
-                    float iax, iay, iaz, ibx, iby, ibz;
-                    MulInvI(A.invI, c.rollAxis[0], c.rollAxis[1], c.rollAxis[2], iax, iay, iaz);
-                    MulInvI(B.invI, c.rollAxis[0], c.rollAxis[1], c.rollAxis[2], ibx, iby, ibz);
-                    const float kr = c.rollAxis[0] * (iax + ibx) + c.rollAxis[1] * (iay + iby)
-                                   + c.rollAxis[2] * (iaz + ibz);
-                    c.massRoll = (kr > 0.0f) ? 1.0f / kr : 0.0f;
-                    // 転がり半径 = 接触点までの腕の長い側。Crr N R が転がり抵抗トルクの
-                    // 教科書的な形なので、無次元の Crr を長さに変換するのに要る
-                    const float ra = std::sqrt(c.raC[0] * c.raC[0] + c.raC[1] * c.raC[1]
-                                               + c.raC[2] * c.raC[2]);
-                    const float rbl = std::sqrt(c.rbC[0] * c.rbC[0] + c.rbC[1] * c.rbC[1]
-                                                + c.rbC[2] * c.rbC[2]);
-                    c.rollRadius = (ra > rbl) ? ra : rbl;
-                } else {
-                    c.muRoll = 0.0f; // 回っていない = 転がり抵抗は定義できない
-                }
-            }
             // 反発のバイアスは**生成時の接近速度から 1 回だけ**決める。反復ごとに測り直すと
             // 自分が入れたインパルスで接近速度が消えていくので、反発が二重に効いたり
             // 消えたりする (蓄積インパルスで反発を扱うときの定石)
