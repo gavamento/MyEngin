@@ -37,6 +37,16 @@ C++20 / DirectX 11 製の自作ゲームエンジン。**Unity 風の使いや�
   Feature Level 11_0 縛りで DXR が使えないため `cs_5_0` のコンピュートシェーダで実装し、
   SVGF (テンポラル蓄積 → 分散推定 → A-Trous) でデノイズする。発光マテリアルはそのまま
   GI の面光源になる。詳細は [ADR-009](docs/adr/ADR-009-hybrid-path-tracing.md)
+- **剛体物理 (自作ソルバ)** — 蓄積インパルス + サブステップの接触ソルバに、空力 (等方抗力 /
+  翼面 / マグヌス) / 浮力 / ジャイロ項 / 静動摩擦 / 転がり抵抗 / 材料資産 (`.physmat.json`) /
+  スリープとアイランド / CCD / 地形ハイトフィールドを積んである。その上に**関節と機構**が
+  重なる: ボール / ヒンジ / 固定 / スライダ / コーンの 5 種を単一 `Joint` の `type` で選び、
+  角度・変位リミット / モータ / 破断 (breakForce・breakTorque) / 粘着 / 複合コライダー /
+  凸包 (クック時生成) / **ラグドール** (スケルトンから自動生成 + 剛体 → 骨の逆駆動) /
+  **車両** (レイキャストサス + タイヤ力) まで、Inspector でコンポーネントを足すだけで組める。
+  **既存シーンは 1 ビットも変わらない** — 全部が「そのコンポーネントが在るときだけ効く」
+  存在ゲートの内側にあり、`--physics-demo` / `--joint-demo` の 2 ペアが Debug ⇔ Release の
+  ハッシュ一致でそれを守っている
 - **エディタの日本語化** — UI 言語は**日本語が既定**で、View > 言語 から実行時に英語へ切替。
   文字列は X マクロ 1 ファイルに集約し、訳の書き忘れを**コンパイルエラー**にする。
   ウィンドウ名は `"表示名###英語ID"` 形式なので、切り替えても ImGui の ID —
@@ -46,11 +56,12 @@ C++20 / DirectX 11 製の自作ゲームエンジン。**Unity 風の使いや�
 - **Debug/Release 一貫性** — 固定 60Hz tick、`/fp:precise`、PCG32、明示ソートキー。
   リプレイ (.rep) の tick 毎ワールドハッシュ比較で機械検証:
   `tools\replay_verify.bat` が両構成ビルド → Debug 記録 → Debug/Release 照合 → 静的規則検査。
-  **被覆は 5 シーン**: 既定デモ (物理 / パーティクル / スクリプト) / 部位ショーケース
+  **被覆は 6 シーン**: 既定デモ (物理 / パーティクル / スクリプト) / 部位ショーケース
   (スキンメッシュのボーン追従 = 骨駆動 LocalTransform の構成間ビット一致) /
   ゲームフロー統合デモ (シーン遷移・ポーズ・セーブ・アクションマップ) /
   ローカル 2P デモ (プレイヤー別入力レーンの配線) /
-  物理ショーケース (空力・浮力・マグヌス・ジャイロ・材料・CCD)。
+  物理ショーケース (空力・浮力・マグヌス・ジャイロ・材料・CCD) /
+  関節ショーケース (拘束ソルバ・リミット・モータ・破断・複合・凸包・ラグドール・車両)。
   割れた tick は**どのエンティティのどのフィールドが**割れたかまで自動で出る (`--hash-diff`)
 - **クラッシュしたら「再現可能なバグ報告」が自動で残る** — 例外 (スタックオーバーフロー含む) /
   `std::terminate` / 純粋仮想呼び出し / CRT 不正パラメータを捕まえ、`crash\<日時>\` に
@@ -71,7 +82,7 @@ C++20 / DirectX 11 製の自作ゲームエンジン。**Unity 風の使いや�
   確定ハッシュを交換し、割れたら `crash\desync_<tick>_p<lane>\` に再現可能なバンドルを吐いて停止する。
   詳細は [ADR-013](docs/adr/ADR-013-predictive-rollback-netcode.md)
 - **CI (GitHub Actions)** — push ごとに 8 ビルド (4 プロジェクト × Debug/Release、警告 0 を強制) +
-  リプレイ照合 4 ペア + 静的規則検査 + セルフテスト両構成 + 配布パッケージのスモークが回る。
+  リプレイ照合 6 ペア + 静的規則検査 + セルフテスト両構成 + 配布パッケージのスモークが回る。
   **GPU の無い runner でも回る**のは sim が CPU 専用だから — 描画は WARP
   (ソフトウェアラスタライザ) へ自動フォールバックし、ワールドハッシュはドライバに依らず一致する
   (WARP で録った .rep が RTX 3060 でそのまま照合できることを実測)
@@ -95,6 +106,10 @@ Editor.exe --autoplay --deferred --frames 600 --screenshot shot.png
 Runtime.exe --deferred --rt-demo --rt-gi --rt-shadow --rt-refl --rt-anim-seed
                                           # レイトレのショーケース (コーネル箱)
 Editor.exe --parts-demo                   # 部位 (ソケット) のボーン追従シーン
+Editor.exe --physics-demo                 # 物理ショーケース (空力/浮力/マグヌス/材料/CCD)
+                                          #   = replay 5 ペア目 + スクショ 13 枚目
+Editor.exe --joint-demo                   # 関節ショーケース (関節/機構/ラグドール/車)
+                                          #   = replay 6 ペア目 + スクショ 14 枚目
 Runtime.exe --render-demo [--deferred]    # 描画ショーケース (スポット/点光源/反射床/フォグ/遠景)
                                           #   = スクショ回帰 6/7 枚目の被写体
 Runtime.exe --render-demo --deferred --froxel
@@ -113,8 +128,8 @@ Runtime.exe --net-demo --net-join 127.0.0.1:7777 --net-delay 3
                                           # 同 (参加側)。--net-no-rollback で素のロックステップ
 Runtime.exe --net-poke-tick 60            # 片側だけ壊して desync 検出と診断チェーンを試す
 Runtime.exe --rep-diff a.rep b.rep        # 2 本の .rep がどの tick で割れたか
-tools\replay_verify.bat                   # 一貫性検証一式 (5 シーン被覆)
-tools\shot_verify.bat [--update]          # 決定的スクショ 13 枚を tests\golden と比較
+tools\replay_verify.bat                   # 一貫性検証一式 (6 シーン被覆)
+tools\shot_verify.bat [--update]          # 決定的スクショ 14 枚を tests\golden と比較
 tools\crash_verify.bat                    # 5 経路で実際に落として .rep の再現性を検証
 tools\net_verify.bat                      # 2 プロセスのネット対戦 + desync 検出の実地検証
 tools\check_rules.ps1                     # コーディング規則の静的検査
@@ -122,13 +137,14 @@ tools\gen_project_files.ps1               # ソース一覧を vcxproj に反映
 ```
 
 CI (`.github\workflows\ci.yml`) は**この bat をそのまま呼ぶ** — CI 専用の検証ロジックは
-書かない。CI 固有の事情は環境変数 3 本だけで注入する:
+書かない。CI 固有の事情は環境変数 4 種だけで注入する:
 
 | 変数 | CI での値 | 用途 |
 |---|---|---|
 | `MYE_EXTRA_ARGS` | `--warp --no-audio` | 全 `Editor.exe` 実行へ後置 (GPU / 音源の無い runner 用) |
 | `MYE_MSBUILD_ARGS` | `/p:MyeWarnAsError=true` | 警告 0 を強制 (既定 off。ローカル開発は止めない) |
 | `MYE_DOTNET_ARGS` | `/p:TreatWarningsAsErrors=true` | 同上 (C# 側。綴りが違う) |
+| `MYE_SHOT_SKIP_FXAA` / `_TAA` / `_SSR` / `_FROXEL` | `1` | 機種差が増幅する 4 枚をランナーでは撮らない (tol=0 のローカル限定枠) |
 
 ## 計測 (RTX 3060 / 1600x900 / Release)
 

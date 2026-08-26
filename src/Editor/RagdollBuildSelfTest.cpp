@@ -305,6 +305,44 @@ bool RunRagdollBuildSelfTest()
         const EntityID root = FindChild(w, skin.Id(), "root");
         check(!root.IsNull() && w.GetComponent<JointComponent>(root) == nullptr,
               "joints: the ragdoll root carries no Joint (it is free to fly)");
+
+        // (M60k) 生成された関節は隣り合う骨どうしの接触を切る。切れるのは直接繋がった
+        // 1 ペアだけなので、1 つ飛ばし (肩と前腕など) の当たりは残る — 「自己衝突を丸ごと
+        // 切ると却って暴れる」(M60g2-4 の実測) に踏み込まない範囲を既定にしている
+        bool allNoCollide = true;
+        int jointCount = 0;
+        for (EntityID c = w.GetComponent<HierarchyComponent>(skin.Id())->firstChild; !c.IsNull();) {
+            if (const auto* jc = w.GetComponent<JointComponent>(c)) {
+                ++jointCount;
+                allNoCollide = allNoCollide && jc->disableCollision;
+            }
+            const auto* ch = w.GetComponent<HierarchyComponent>(c);
+            c = ch ? ch->nextSibling : kNullEntity;
+        }
+        check(jointCount > 0 && allNoCollide,
+              "joints: every generated Cone joint disables the contact with the bone it hangs "
+              "from (M60j), which is what brings the ragdoll to sleep sooner");
+
+        // 既定を切れば従来どおり当たる (オーサリング側の逃げ道が塞がっていないこと)
+        {
+            Scene s2;
+            GameObject skin2 = MakeSkin(s2, model, -1, 0);
+            ragdoll_build::Options keep = KeepShortBones();
+            keep.disableCollision = false;
+            ragdoll_build::Build(s2, skin2.Id(), *skel, keep);
+            World& w2 = s2.GetWorld();
+            bool anyCollide = false;
+            for (EntityID c = w2.GetComponent<HierarchyComponent>(skin2.Id())->firstChild;
+                 !c.IsNull();) {
+                if (const auto* jc = w2.GetComponent<JointComponent>(c)) {
+                    anyCollide = anyCollide || !jc->disableCollision;
+                }
+                const auto* ch = w2.GetComponent<HierarchyComponent>(c);
+                c = ch ? ch->nextSibling : kNullEntity;
+            }
+            check(anyCollide, "joints: Options::disableCollision=false still authors joints that "
+                              "collide with their parent bone");
+        }
     }
 
     // ---- (g2-1) 同じスケルトンから 2 回生成 → 全フィールドがビット同一 ----

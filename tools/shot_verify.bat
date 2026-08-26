@@ -30,7 +30,7 @@ rem   その 1 レベルを FXAA が一桁に増幅する — 近傍輝度のし
 rem   ULP 差が分岐を反転させるとブレンド係数ごと変わるため (差はエッジと路面ラインに乗る)。
 rem   つまり「tol を 35 まで緩める」のは FXAA 1 パスのために画面全体の検出力を捨てる取引で、
 rem   撮影から FXAA を外せば tol=3 の厳格運用がランナー上でも成立する。
-rem   代わりに FXAA 自体の被覆は **ローカル限定の 6 枚目** (demo_forward_fxaa、tol=0 の
+rem   代わりに FXAA 自体の被覆は **ローカル限定の 10 枚目** (demo_forward_fxaa、tol=0 の
 rem   ビット一致検査) で確保する。CI は MYE_SHOT_SKIP_FXAA=1 でこの 1 枚を飛ばす。
 rem
 rem ★TAA (M55d) も同じ扱い。近傍 min/max のクランプは FXAA と同型の「しきい値で分岐する」
@@ -105,8 +105,8 @@ if exist %TERRAIN_SCENE% del /q %TERRAIN_SCENE%
 set FAILED=0
 set SHOTS=0
 
-rem ---- 13 本。既定デモの 2 経路 (Forward / Deferred) + 生成シーン 2 本 + UI プローブ
-rem      + 描画ショーケースの 2 経路 (M54a) + 地形 (M58c) + 物理 (M59l)
+rem ---- 14 本。既定デモの 2 経路 (Forward / Deferred) + 生成シーン 2 本 + UI プローブ
+rem      + 描画ショーケースの 2 経路 (M54a) + 地形 (M58c) + 物理 (M59l) + 関節 (M60k)
 rem      + ローカル限定 4 本 (ssr / fxaa / taa / froxel) ----
 rem RT デモは WARP では重すぎるので CI 対象外 (ローカル任意)
 call :shot demo_forward
@@ -198,15 +198,17 @@ call :shot demo_render_froxel --render-demo --deferred --froxel
 set TOLNOW=%TOL%
 :skip_froxel
 
-rem ---- 13 枚目 (M59l): 物理ショーケース。**この 1 枚だけ frame 120 (2 秒) で撮る**。
-rem      他の 12 枚は frame 3 = ほぼ初期配置で、それは「描画が壊れていないか」を見る撮り方。
+rem ---- 13 枚目 (M59l): 物理ショーケース。**frame 120 (2 秒) で撮る 2 枚のうちの 1 枚目**
+rem      (もう 1 枚は 14 枚目の joints)。他の 12 枚は frame 3 = ほぼ初期配置で、それは
+rem      「描画が壊れていないか」を見る撮り方。
 rem      物理は 3 tick では 1 ミリも動いていないので、同じ撮り方をすると M59 で足した数式
 rem      (空力 / 浮力 / マグヌス / ジャイロ / 材料 / CCD) が 1 つも絵に出ない = 守るものが無い。
 rem      120 tick 回すと 羽根のひらひら / 鉄球の着地 / 紙飛行機の滑空 / カーブボールの曲がり /
 rem      浮きの喫水 / 箱の山 が全部同じフレームに乗る。
 rem
-rem ★これは**シミュレーションの機種独立性を絵で検査する唯一の 1 枚**でもある。既存 12 枚は
-rem   どれも tick 3 なので、sim が機種で割れても絵はほとんど変わらない。120 tick ぶん
+rem ★これは**シミュレーションの機種独立性を絵で検査する 1 枚**でもある (14 枚目の joints と
+rem   合わせて 2 枚)。他の 12 枚はどれも tick 3 なので、sim が機種で割れても絵はほとんど
+rem   変わらない。120 tick ぶん
 rem   積み上がった状態を照合するということは、ランナーの sim が開発機と 1 ビットでも
 rem   違えば必ず赤くなるということ (scalar float + /fp:precise の契約が守られていれば一致する)。
 rem   ★もしランナーで赤くなったら、**tol を上げて誤魔化さないこと** — 意味のある後退先は
@@ -216,6 +218,26 @@ set PHYS_SCENE=cache\physics_showcase.scene.json
 if exist %PHYS_SCENE% del /q %PHYS_SCENE%
 set SHOT=--warp --no-audio --font-embedded --width 960 --height 540 --frames 123 --shot-frame 120 --no-fxaa
 call :shot physics --physics-demo
+set SHOT=%SHOTBASE% --no-fxaa
+
+rem ---- 14 枚目 (M60k): 関節ショーケース。**physics と同じく frame 120 で撮る 2 枚目**。
+rem      M60 が足したものは「複数の剛体を繋ぐ層」なので、frame 3 = ほぼ初期配置では
+rem      拘束が 1 行も仕事をしていない絵にしかならない。120 tick 回すと
+rem      二重振り子の軌道 / ロープの張り / ドアのリミット / モータのクランク /
+rem      スライダのエレベータ / 固定の片持ち / 破断した桟橋 / 複合 L 字 / 凸包の山 /
+rem      倒れたラグドール / 走る車 が全部同じフレームに乗る。
+rem
+rem ★physics.png と同じく**シミュレーションの機種独立性を絵で検査する 1 枚**。
+rem   このシーンは substeps 16 なので 120 tick = 1920 サブステップぶん積み上がっており、
+rem   1 ビットの差でも必ず絵に出る。赤くなったときの後退先も physics と同じ
+rem   (frame 3 へ落とすか tol=0 のローカル限定枠へ移す。**tol は上げない**)。
+rem ★車の運転入力は C++ スクリプト (VehicleDemoDriver) が書くので、GameLogic.dll が
+rem   焼けていないと車だけ止まった絵になる = golden が静かに変わる。
+rem   replay_verify が先にビルドしている前提なのは physics と同じ
+set JOINT_SCENE=cache\joint_showcase.scene.json
+if exist %JOINT_SCENE% del /q %JOINT_SCENE%
+set SHOT=--warp --no-audio --font-embedded --width 960 --height 540 --frames 123 --shot-frame 120 --no-fxaa
+call :shot joints --joint-demo
 set SHOT=%SHOTBASE% --no-fxaa
 
 echo.
@@ -230,9 +252,9 @@ if not %FAILED%==0 (
     exit /b 1
 )
 if defined MYE_SHOT_SKIP_FXAA (
-    echo [PASS] screenshot regression ^(%SHOTS% shots, warp, no-fxaa, tol=%TOL% + terrain at 12, physics at frame 120^)
+    echo [PASS] screenshot regression ^(%SHOTS% shots, warp, no-fxaa, tol=%TOL% + terrain at 12, physics/joints at frame 120^)
 ) else (
-    echo [PASS] screenshot regression ^(%SHOTS% shots, warp, tol=%TOL% + terrain at 12 + physics at frame 120 + fxaa/taa/ssr/froxel at tol=0^)
+    echo [PASS] screenshot regression ^(%SHOTS% shots, warp, tol=%TOL% + terrain at 12 + physics/joints at frame 120 + fxaa/taa/ssr/froxel at tol=0^)
 )
 exit /b 0
 

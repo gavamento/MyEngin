@@ -370,6 +370,9 @@ int Build(Scene& scene, EntityID skin, const SkinnedModel& model, const Options&
         jc->limitMax = opt.twistLimitDeg;
         jc->swingLimitDeg = opt.swingLimitDeg;
         jc->restRotation = bp.restRot;
+        // M60k: 親子の骨どうしの接触を切る (Options::disableCollision が正本)。
+        // 切れるのはこの 1 ペアだけで伝播しない = 1 つ飛ばしの当たりは残る
+        jc->disableCollision = opt.disableCollision;
     }
 
     // ---- 3) SkinnedMesh 側の札 ----

@@ -145,7 +145,7 @@ M60  関節と機構 (剛体トラック)
 | M60i ショーケース + replay 6 ペア目 | 完了 | (本コミット) | 下記「M60i の申し送り」参照 |
 | ~~M60j ABI v15 束ね~~ | **廃止** | — | 追加ゼロで確定。要否の最終判断は h2 末尾、記載は k |
 | M60j 関節ペアの衝突除外 | 完了 | (本コミット) | 廃止した j の枠を再利用 (ユーザー決定)。下記「M60j の申し送り」参照 |
-| M60k 仕上げ | 未着手 | | |
+| M60k 仕上げ | 完了 | (本コミット) | 下記「M60k の申し送り」参照 |
 
 ### M60a の申し送り (計画外の事実・罠)
 
@@ -1156,8 +1156,10 @@ sim フィールドの追加を混ぜないため、**別コミットに切る**
   `shot_verify.bat` → `replay_verify.bat` (6 ペア) → `crash_verify.bat`。
 - ★**M60i からの申し送り** (詳細は「M60i の申し送り」):
   ①~~`JointComponent.disableCollision` の要否判断 (g2-4 / i-8)~~ → **M60j で実装済み**
-  (ユーザー決定)。k に残るのは spec §10.5 への記載と、**`RagdollBuilder` / ショーケースが
-  これを立てるかどうかの判断**だけ (M60j-6 の実測を根拠に使うこと。substeps は下がらない)。
+  (ユーザー決定)。~~k に残るのは spec §10.5 への記載と、`RagdollBuilder` / ショーケースが
+  これを立てるかどうかの判断~~ → **どちらも立てる** (ユーザー決定)。生成器の既定を true に、
+  ショーケースは幾何の逃げ (0.4 / 0.45) をやめて見た目どおりの 0.5 + 除外へ移した。
+  substeps は下がらないので `lengthRatio` 0.8 は据え置き (M60k の申し送り 6/7)。
   ②粘着 (adhesion) を replay/golden 被覆へ載せる — **載せる方針で決定** (ユーザー決定)。
   `assets\physmats\` に粘着プリセットを 1 種 (+ 同伴 `.meta`) 追加し、`--joint-demo` へ
   「引っ張っても離れない」被写体を 1 つ置く。**手続き登録は不可** — `PhysMatLibrary::Register`
@@ -1165,6 +1167,65 @@ sim フィールドの追加を混ぜないため、**別コミットに切る**
   契約に反する。★**golden `joints.png` を撮る前に入れること** (後から足すと撮り直しになる)。
   ③車輪の見た目 v1 の制限 (非一様スケールで歪む / 子へ伝播しない) を spec の非目標表へ
   ④`--joint-demo` は既に `CLAUDE.md` の CLI 一覧へ追記済み。
+
+---
+
+### M60k の申し送り (計画外の事実・罠)
+
+1. ★**枚数の番号が衝突していたのは `ci.yml` のコメントだけだった。** `shot_verify.bat` の
+   呼び出し順は最初から正しい (9=SSR / 10=FXAA / 11=TAA / 12=froxel / 13=physics) のに、
+   ci.yml が FXAA を「9 枚目」、TAA を「10 枚目」と書いていたため SSR と衝突していた。
+   ついでに `shot_verify.bat:33` が FXAA を「ローカル限定の **6 枚目**」と呼んでいたのも
+   直した (10 枚目)。**番号を書くコメントは 3 箇所に散っている** — 枚を足すときは
+   bat の呼び出し / bat 冒頭の解説 / ci.yml の 3 つを同時に見ること。
+2. ★**ドリフトは計画が挙げた 6 箇所より多かった。** 追加で直したのは
+   `engine_spec.md` の「three environment variables」「thirteen deterministic screenshots」
+   「Nine of the thirteen」「A ninth,」「Two of the nine」「The thirteenth shot ... the only one」、
+   `CLAUDE.md` の「5 シーンペア」「5 ペア照合」「環境変数 3 本」、
+   `README.md` の「一貫性検証一式 (5 シーン被覆)」。
+   ★**数え方そのものも割れていた**: ci.yml は `MYE_SHOT_SKIP_*` の 4 本を 1 つと数えて
+   「環境変数 4 本」、README と CLAUDE.md は SKIP 群を数えず「3 本」。**「4 種」で揃え**、
+   README と engine_spec の表には SKIP 群の行を 1 行足して数と表を一致させた。
+3. ★**粘着の被写体は展示列の「隙間」ではなく右端 (x = 25〜28) に置いた。** 空いて見える
+   隙間 (溶接 x=2.3 と桟橋 x=4.55 の間など) は**破断した桟橋が倒れ込む先**なので、
+   golden を 120 tick で撮る以上そこへ置くと「絵が偶然当たるか外れるか」に依存する。
+   framing の実測: カメラ (0, 9.5, -30) / fovY 60 / 16:9 で **z=0 の 1m = 約 15.3 px**、
+   x=0 が pixel 478、画面右端が x ≒ 31.5。x=28 でも端から 1 割内側に収まる。
+   ★**置き場は絵で決めた** — `--screenshot` の一時プローブを 1 枚撮ってから座標を決め、
+   被写体が小さすぎたので箱を 0.6/0.9 → 0.8/1.0 へ広げて撮り直している。
+4. ★**粘着の被写体は箱を天井へ食い込ませて置かないと成立しない。** 粘着は「接触が在るとき
+   法線インパルスの下限を負へ開く」だけで、接触を作る力ではない — 隙間を空けて置くと
+   接触が生まれずただ落ちる。PhysicsSelfTest の d-6 と同じ 10mm 食い込ませる手を使った。
+   ★**天井と箱の両方に糊を割り当てる** (結合則が min なので片方が未割当だとペアの粘着は 0)。
+5. ★**`.physmat` の AssetID は同伴 `.meta` の GUID** (`PhysMatLibrary::HashForPath` →
+   `assetkey::Resolve`)。つまり **`.meta` をコミットすればチェックアウト先に依らない** —
+   既存 4 種が `.meta` ごと版管理されているのはこのため。`glue.physmat.json.meta` は
+   起動走査でエンジンに採番させ (`[assetdb] scanned 104 assets (1 new .meta)`)、
+   そのままコミットした。手で GUID を書くより既存 4 種と同じ手順になる。
+6. **生成器の既定を `disableCollision = true` にした** (ユーザー決定)。M60j-6 が rig で
+   測った「入眠 tick 395 → 241」が**生成器の既定でもそのまま再現**した
+   (`RagdollBuildSelfTest` の `[build] slept at tick 241`。M60g2 時点は 395)。
+   **substeps 16 の要求は変わらない**ので `lengthRatio` 0.8 は据え置き — 幾何の隙間と
+   ペア除外は**別の問題に効く別の道具**であることが数字で確定した。
+7. **ショーケースの幾何の逃げ (M60i-8) をやめた。** ロープの鎖 0.4 と溶接腕 0.45 を
+   見た目どおりの 0.5 に戻し、代わりに `disableCollision` を立てた。これで
+   `JointComponent.disableCollision` が **selftest だけでなく replay 6 ペア目と
+   golden `joints.png` の被覆に入った** (M60j 時点はハッシュのバイト列に載っているだけだった)。
+8. **golden を足す前に既存 13 枚が全部 `maxDiff=0` であることを確認してから `--update` した**
+   (golden-diff-triage の手順)。`--update` 後の `git status tests/golden` も
+   `?? tests/golden/joints.png` の 1 行だけ = 既存 golden は 1 バイトも動いていない。
+9. **計画の「凸包の対象外事項 (凸×メッシュ)」は誤りだった。** M60f は凸×球 / 凸×カプセル /
+   凸×箱 / 凸×凸 / 凸×三角形スープ (= 静的メッシュと**地形**。地形も `IsSoup` 経由で同じ
+   経路) をすべて解く。spec §10.5 にはこれを対象外として書いていない — 実際に効かない
+   非目標はジャイロ項のほうなので、そちらを書いた。
+10. **`kEngineVersion` は 0.66 のまま**。M52〜M60 のどれも上げておらず、上げるとプロジェクト
+    マネージャが既存プロジェクトに版違いの注意を出すので、計画にない変更は入れていない。
+11. 実測値: `--selftest` 35 スイート PASS (Debug / Release 両方、警告 0 ビルド) /
+    `check_rules.ps1` 0 error 0 warning / **shot_verify 14 枚 PASS** (追加前の 13 枚は
+    すべて maxDiff=0) / **replay_verify 6 ペア PASS** + snapshot 往復 (37 tick 刻み) +
+    タイムトラベル 5 帯 + 規則検査 / **crash_verify 5 経路 PASS** /
+    粘着の tick 120 実測 = `GlueBoxLight` y **4.1005** (初期 4.11 のまま吊られている) /
+    `GlueBoxHeavy` y **0.4995** (半径 0.5 の箱が着地) / ラグドール入眠 tick **241**。
 
 ---
 
@@ -1197,7 +1258,7 @@ sim フィールドの追加を混ぜないため、**別コミットに切る**
 |---|---|---|
 | TypeId | a, g1, h1, h2 | 40=Joint / 41=Ragdoll / **42=Wheel / 43=Vehicle** を末尾 append (計画の 42/43 から入れ替え) |
 | Rigidbody のフィールド | e | `compoundColliders` を末尾 append (ハッシュのバイト列は変わるが**挙動は不変** — 証明は 2 段階ビルド) |
-| `.physmat.json` スキーマ | d | `adhesion` キー追加 (未指定は 0 = 従来) |
+| `.physmat.json` スキーマ | d | `adhesion` キー追加 (未指定は 0 = 従来)。**k で 5 種目 `glue` (adhesion 60N) を版管理へ追加** — `.meta` ごとコミットして AssetID を機種非依存にする |
 | Collider のフィールド | f | **追加なし** (`meshAsset` を shape=5 の第 3 のタグ付き共用体として共有) |
 | Joint のフィールド | j | `disableCollision` を末尾 append (ハッシュのバイト列は変わるが**挙動は不変** — 証明は 2 段階ビルドの `[phys]` 121 行照合) |
 | ABI | — | **追加ゼロで確定 = v14 のまま** (決定台帳 17。旧 M60j は廃止) |
@@ -1208,7 +1269,7 @@ sim フィールドの追加を混ぜないため、**別コミットに切る**
 | `PartFollowSystem` の公開面 | g2 | `DecomposeRowMajorTRS` を無名 namespace からヘッダへ公開 (**挙動は 1 ビットも変わらない**。生成器が同じ分解を通るための共有) |
 | ReplayFile / SimSnapshot 版 | **bump なし見込み** | 状態は全てコンポーネント常駐 (M59h と同じ理由) |
 | PhysicsSelfTest 期待値 | **無し見込み** | 存在ゲートなので既存項目に触れない。触れたら設計を疑うこと |
-| golden | k のみ | `joints.png` を 1 枚追加 (既存は動かない見込み) |
+| golden | k のみ | `joints.png` を 1 枚追加。**既存 13 枚は追加前の照合で全部 maxDiff=0** (実測) |
 | replay_verify | i | 5 → 6 ペア |
 
 ## 検証の柱

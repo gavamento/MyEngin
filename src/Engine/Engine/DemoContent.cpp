@@ -1626,6 +1626,7 @@ void RegisterJointShowcaseContent(EngineContext& ctx)
     makeMat("jdemo_crate", 0.78f, 0.30f, 0.30f); // 落とす荷物
     makeMat("jdemo_hull", 0.40f, 0.70f, 0.45f);  // 凸包
     makeMat("jdemo_car", 0.24f, 0.34f, 0.68f);   // 車体
+    makeMat("jdemo_glue", 0.86f, 0.66f, 0.20f);  // 粘着 (糊) の天井
     // ★真っ黒にしない。面ごとのフラット法線が拾う陰影が潰れて、**転がっているか
     //   どうかが絵から消える** (回転角を描画側が読んでいることの目視確認ができなくなる)
     makeMat("jdemo_tire", 0.26f, 0.26f, 0.29f); // タイヤ
@@ -1693,8 +1694,10 @@ void BuildJointShowcaseScene(EngineContext& ctx)
 
     GameObject camera = s.CreateGameObject("Main Camera");
     camera.AddComponent<CameraComponent>();
-    // 展示 10 種 (x = -24〜22) と車のレーン (z = -13) が 1 枚に入る画角。
-    // fovY 60 度 / 16:9 なら水平画角は約 91 度 = 距離 30m で幅 61m
+    // 展示 11 種 (x = -24〜28) と車のレーン (z = -16) が 1 枚に入る画角。
+    // fovY 60 度 / 16:9 なら水平画角は約 91 度 = 距離 30m で幅 61m。
+    // ★右端の粘着展示 (x = 28) は画面端から 1 割ほど内側に収まる — golden スクショの
+    //   被写体なので、これ以上右へ展示を足すときは撮り直して framing を確かめること
     camera.SetLocalPosition(0.0f, 9.5f, -30.0f);
     camera.SetLocalRotationEuler(11.0f, 0.0f, 0.0f);
 
@@ -1748,9 +1751,12 @@ void BuildJointShowcaseScene(EngineContext& ctx)
     }
 
     // ---- 2. ロープ (Ball 10 連鎖 + 錘) ----
-    // ★**コライダーを見た目より縮めてある** (halfExtents 0.4)。関節で繋がった相手との
-    //   衝突を切る仕組みが v1 のソルバに無いので、端まで張ると隣同士が必ず食い込んで
-    //   永久に押し合う (M60g2 の申し送り 4 と同じ「幾何で離す」逃げ)
+    // ★**コライダーは見た目どおり** (halfExtents 0.5)。M60i では「関節で繋がった相手と
+    //   食い込むと永久に押し合う」のを 0.4 へ縮めて幾何で逃げていたが、M60j の
+    //   `Joint.disableCollision` が入ったので**繋がったペアだけ候補から落とす**形へ移した。
+    //   ★これが `disableCollision` の replay / golden 被覆でもある (M60k まで selftest しか
+    //     踏んでいなかった)。切れるのは直接繋がった 1 ペアだけなので、1 つ飛ばしの鎖どうしは
+    //     当たったまま = 「伝播しない」ことも 600 tick のハッシュに載る
     {
         constexpr int kLinks = 10;
         makeBox("RopePost", -19.0f, 4.0f, 0.0f, 0.3f, 8.0f, 0.3f, "jdemo_frame");
@@ -1760,10 +1766,11 @@ void BuildJointShowcaseScene(EngineContext& ctx)
             std::snprintf(name, sizeof(name), "RopeLink_%d", i);
             const float y = 7.75f - 0.5f * static_cast<float>(i);
             GameObject link = makeBox(name, -19.0f, y, 0.0f, 0.18f, 0.5f, 0.18f, "jdemo_swing");
-            addBoxCollider(link, 0.5f, 0.4f, 0.5f, matWood);
+            addBoxCollider(link, 0.5f, 0.5f, 0.5f, matWood);
             auto* rb = addBody(link, 0.5f);
             rb->velocity = { 2.5f, 0.0f, 0.0f }; // 鎖ごと横へ振り出す
             auto* j = addJoint(link, 0, prev);
+            j->disableCollision = true; // 1 つ上の鎖 (先頭は天井) との接触を切る (M60j)
             j->anchor = { 0.0f, 0.5f, 0.0f };
             if (prev.IsNull()) {
                 j->connectedAnchor = { -19.0f, 8.0f, 0.0f }; // 天井へ
@@ -1776,6 +1783,7 @@ void BuildJointShowcaseScene(EngineContext& ctx)
         auto* rb = addBody(weight, 12.0f); // 鎖を張らせる錘 (張力が関節に効く)
         rb->velocity = { 2.5f, 0.0f, 0.0f };
         auto* j = addJoint(weight, 0, prev);
+        j->disableCollision = true; // 錘と最下段の鎖 (M60j)
         j->anchor = { 0.0f, 0.6667f, 0.0f };
         j->connectedAnchor = { 0.0f, -0.5f, 0.0f };
     }
@@ -1848,17 +1856,20 @@ void BuildJointShowcaseScene(EngineContext& ctx)
         addJoint(bracket, 2, kNullEntity)->connectedAnchor = { 0.0f, 3.2f, 0.0f };
 
         GameObject arm = makeBox("WeldArm", 1.2f, 3.2f, 0.0f, 1.8f, 0.3f, 0.3f, "jdemo_weld");
-        // ★コライダーを見た目より縮める。溶接で密着している相手と食い込むと、接触
-        //   ソルバが毎 tick 押し返して静止しない (ロープの鎖と同じ理由)
-        addBoxCollider(arm, 0.45f, 0.5f, 0.5f, matSteel);
+        // ★M60i では 0.45 へ縮めて幾何で逃げていた (溶接で密着している相手と食い込むと
+        //   接触ソルバが毎 tick 押し返して静止しない)。M60j 以降は見た目どおりの 0.5 で
+        //   置き、繋がったペアだけ `disableCollision` で落とす
+        addBoxCollider(arm, 0.5f, 0.5f, 0.5f, matSteel);
         addBody(arm, 3.0f);
         auto* aj = addJoint(arm, 2, bracket.Id());
+        aj->disableCollision = true; // ブラケットと腕 (M60j)
         aj->anchor = { -0.5f, 0.0f, 0.0f };         // 腕の -X 端 (-0.9m)
         aj->connectedAnchor = { 0.5f, 0.0f, 0.0f }; // ブラケットの +X 面 (+0.3m)
 
         GameObject weight = addSphere("WeldWeight", 1.92f, 2.41f, 0.0f, 0.8f, "jdemo_crate");
         addBody(weight, 15.0f);
         auto* wj = addJoint(weight, 0, arm.Id());
+        wj->disableCollision = true; // 腕と錘 (M60j)
         wj->anchor = { 0.0f, 0.8f, 0.0f };
         wj->connectedAnchor = { 0.4f, -0.5f, 0.0f };
     }
@@ -2033,7 +2044,38 @@ void BuildJointShowcaseScene(EngineContext& ctx)
         }
     }
 
-    // ---- 11. 車 (Vehicle + Wheel 4 本 + C++ スクリプトの運転入力) ----
+    // ---- 11. 粘着 (M60d の adhesion) ----
+    // ★**同じ糊の天井から、軽い箱はぶら下がったまま / 重い箱は落ちる**。粘着は
+    //   「このペアが支えられる引っ張り力 [N]」なので (面積ではなく力)、質量を変えるだけで
+    //   保持と落下が分かれる — それが絵に出るように 2 個並べてある。
+    //   glue.physmat.json は adhesion 60 N。4kg = 39.2 N は保ち、14kg = 137.3 N は落ちる。
+    // ★**天井と箱の両方に糊を割り当てる**。結合則は min なので、片方が未割当 (= 0) だと
+    //   ペアの粘着は 0 になる。
+    // ★箱は天井へ 10mm 食い込ませて置く — 粘着は「接触があるとき法線インパルスの下限を
+    //   負へ開く」だけなので、離れて置くと接触が生まれず、ただ落ちる。
+    // ★これが `.physmat` の adhesion の replay / golden 被覆でもある (M60k まで selftest しか
+    //   踏んでいなかった。版管理された .physmat を 1 種足したのはこのため)
+    {
+        const AssetID matGlue = FindPhysMat("glue");
+        makeBox("GluePost", 24.9f, 2.4f, 0.0f, 0.3f, 4.8f, 0.3f, "jdemo_frame");
+        GameObject ceiling =
+            makeBox("GlueCeiling", 26.4f, 4.65f, 0.0f, 3.2f, 0.3f, 1.4f, "jdemo_glue");
+        addBoxCollider(ceiling, 0.5f, 0.5f, 0.5f, matGlue); // 静的 (Rigidbody を付けない)
+
+        // 天井の下面は y = 4.5。箱の上面をそこから 10mm 食い込ませる
+        auto glued = [&](const char* name, float x, float size, float mass) {
+            const float half = 0.5f * size;
+            GameObject go = makeBox(name, x, 4.5f - half + 0.01f, 0.0f, size, size, size,
+                                    "jdemo_crate");
+            addBoxCollider(go, 0.5f, 0.5f, 0.5f, matGlue);
+            addBody(go, mass);
+            return go;
+        };
+        glued("GlueBoxLight", 25.6f, 0.8f, 4.0f);  //  39.2 N < 60 N → ぶら下がったまま
+        glued("GlueBoxHeavy", 27.4f, 1.0f, 14.0f); // 137.3 N > 60 N → 剥がれて落ちる
+    }
+
+    // ---- 12. 車 (Vehicle + Wheel 4 本 + C++ スクリプトの運転入力) ----
     // ★**車体は無スケール**。子の LocalPosition には親のスケールが掛かるので、車体に
     //   見た目のスケールを入れると車輪の取り付け位置まで伸びる。見た目は子の箱に持たせる。
     // ★車輪エンティティも**無回転・スケール 1** — サスのレイ方向 (ローカル -Y) と

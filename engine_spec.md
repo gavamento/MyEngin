@@ -819,8 +819,9 @@ persists the parse results so warm starts skip the parsers entirely.
 Material properties for the rigid-body solver, stored as assets (`PhysMatLibrary`, SI units).
 Schema: `density` / `staticFriction` / `dynamicFriction` / `restitution` / `rollingResistance` /
 `dragCoefficient` (static friction, rolling resistance and Cd are parsed and stored but not
-consumed until M59f2/M59b). Values are sanitized on load (non-finite → default, finite but out of
-range → clamp) so NaN can never reach the pair-combination rules. Material values are **not**
+consumed until M59f2/M59b), plus `adhesion` appended in M60d. Values are sanitized on load
+(non-finite → default, finite but out of range → clamp) so NaN can never reach the
+pair-combination rules. Material values are **not**
 world-hashed (same class as mesh collider data: replay assumes the same assets are present).
 
 | Concept | Decision |
@@ -1066,6 +1067,164 @@ Two constraints are worth stating because they are structural rather than stylis
 
 ---
 
+### 10.5 Joints and constraint solver (M60)
+
+M59 made a *single* rigid body believable. M60 adds the layer that ties several of them together: a
+general constraint solver, five joint presets carried on one component, compound and convex shapes
+to build bodies out of, and two authored mechanisms — ragdolls and vehicles — that exercise the
+whole stack. It is a separate track from §10.4 rather than another `####` under it because nothing
+here is an equation applied to one body.
+
+Everything in this section sits behind an **existence gate**: a scene carrying none of the new
+components simulates bit-identically to the way it did before M60. Three things keep that honest —
+the `--joint-demo` replay pair (Debug against Release over 600 ticks), the `joints` golden
+screenshot at frame 120, and a two-stage build per sub-milestone comparing the whole `[phys]` log
+between "fields present but unwired" and "wired". Comparing a hash against the previous commit
+proves nothing: adding a field always moves the byte string. The behaviour lines are what must not
+move.
+
+**No ABI slots were added — `MYE_API_VERSION` stays at 14.** Everything a script needs is already
+reachable through the generic `Add`/`Remove`/`HasComponentByName` and `Get`/`SetComponentField`
+slots M59k introduced, and `EngineAPI.h` states in its own header comment that per-feature slots are
+not to be added. `SetComponentField(Vehicle.throttle)` driving the showcase car is the working
+proof rather than an argument.
+
+#### Constraint blocks, not constraint rows (M60a)
+
+The obvious internal representation — one Jacobian row per degree of freedom, each with its own
+accumulated λ, solved Gauss-Seidel — **does not work**. When the anchor is far from the centre of
+mass the 3×3 effective-mass matrix `K` becomes ill-conditioned and solving its rows independently
+barely converges: measured on a 1 kg sphere hung 2 m from its own centre, the Gauss-Seidel
+contraction factor of `K`'s 2×2 minor was **0.967**, so eight iterations left 76 % of the error and
+the pendulum anchor slipped **37 mm** in a single step. The solver therefore works in
+`ConstraintBlock`s of one to three degrees of freedom and applies `K⁻¹` to the whole block at once.
+The same scene then drifts **42 µm**, and the pendulum period lands on 170.0 ticks against an
+analytic 170.2.
+
+| Concept | Decision |
+|---|---|
+| Block, not row | 1–3 DOF per block with a precomputed `K⁻¹` (`Invert3x3`, next to M59f1's `Solve3x3`). Equality blocks carry effectively infinite bounds so the clamp never touches the result; **the `lo`/`hi` clamp is only meaningful at `count == 1`**, which is exactly the shape a limit (one-sided inequality) or a motor (one driven axis) needs. Limits and motors therefore reuse the same box with no new machinery |
+| Solve order | **Joints first, contacts second, inside every one of the eight velocity iterations**, and the same order again in the position-correction pass. Penetration is the more visible failure — a joint a few millimetres off reads as nothing, a box sinking into the floor reads as broken |
+| Position correction | Kept in its own pass after the velocity solve, as M59g1 established for contacts. For a ball joint it is **exact**: the anchor's world position is "shape origin plus local offset rotated by the pose", so moving the shape origin by the error zeroes it. That is why no Baumgarte bias appears in any velocity row. Angular degrees of freedom have no such property, so M60b added a rotation stage that runs **before** the translation stage — rotating moves the anchors, so translating afterwards settles in one pass |
+| Immovable anchors | A single **guardian body** with `invMass = 0` and a zero inverse inertia tensor stands in whenever `ai`/`bi` is −1. Effective mass and impulse application both degrade to "nothing happens" on their own, so the −1 case never has to be branched on inside the solver stages |
+| Anchor convention | `anchor` is in the owner's local space, `connectedAnchor` in the connected body's local space. The one asymmetry: **when `connectedEntity` is null, `connectedAnchor` is world space**. There is no auto-configure — that would put editor-time logic outside the simulation contract |
+| Islands and waking | Joints are added to `islandPairs` and to the wake sweep explicitly, in two places. A jointed system therefore falls asleep together and wakes together, and waking propagates through a joint in one tick even to a body it is not touching |
+| Visualisation | One bit in `PhysicsDebugFlags`. Anchor A green, anchor B yellow, and **a red line between them that is the constraint error itself**. `DebugLineCmd` carries no text, so there are no labels; the Scene View also draws an authoring-time gizmo, since no ticks run before Play and the debug lines would otherwise be empty |
+
+#### One `JointComponent`, five types (M60b, M60c)
+
+A joint is a single component with a `type` field (Ball / Hinge / Fixed / Slider / Cone), not five
+component types. The internal representation is the same set of blocks in every case, so separate
+types would differ only in what the Inspector draws. Because the ECS stores one component of a type
+per entity, the authoring rule is **the joint lives on the child side**; a case needing two goes
+through an intermediate entity.
+
+| Concept | Decision |
+|---|---|
+| `restRotation` | Angular degrees of freedom need a **reference relative pose**, which M60a's schema did not have. `restRotation` is defined as `conj(qOwner) ⊗ qConnected` ("this is rest"), identity by default — so two bodies authored unrotated are already correct. One field covers Hinge, Fixed, Slider and Cone: the hinge axis in the connected body's frame is derivable as `conj(restRotation) ⊗ axis`, so no second axis is stored |
+| Sign convention | The joint angle is "how far the **owner** turned relative to the connected body". The raw error quaternion `qE = qB ⊗ conj(qA ⊗ qRest)` measures how far *B* is ahead, which with a null connected body would report a door opened +30° as −30°. The vector part is negated to land on the owner's frame, and motor target velocity, limit bounds and slider displacement all follow that convention |
+| No inverse trigonometry | Neither `acos` nor `atan2` is called anywhere in the joint code. Comparing θ is equivalent to comparing θ/2 once `w` is forced positive, so thresholds are converted to a half-angle sin/cos pair **once at tick head** and the comparison becomes `s·cosHi − c·sinHi > 0` — multiplies and a subtraction. The position correction pushes back by `2·sin(overshoot/2)`, which is always an **under**-estimate and therefore cannot overshoot |
+| Limits need the position pass too | A velocity row alone cannot recover: a joint sitting outside its range at rest has `ċ == 0`, no λ is generated, and it stays outside forever. Overshoot before the row engages is `velocity × h` and is structural to the branch gate — a hinge limited at −30° reached −31.85° at `substeps = 1` and −30.00° at 4. **Stiffness is bought with substeps** (M59g2), and that applies to limits as much as to springs |
+| Motor before limit | Gauss-Seidel gives the last row the final say, so blocks are pushed in **motor → limit** order. Reversed, the motor's target velocity survives and drives straight through the range of motion |
+| `maxForce` is an impulse bound | λ is an impulse, so the clamp is `maxForce · h` with `h` the **substep** length. Only then does the authored number mean "at most N" (or N·m) |
+| Degenerate axes | A hinge or slider authored with `axis = (0,0,0)` falls back to Ball, keeping the linear rows. Silently dropping the joint would let the body fly away with no visible cause |
+| Known limit | Angles are recovered from a quaternion, so θ folds into [−180°, 180°] and **revolutions are not counted**. A freely spinning motor combined with a limit is out of scope (crossing the fold needs roughly 140 rad/s) |
+| `SpringJoint` | **Left alone as the legacy form.** It is a stateless single impulse at velocity level from M29a. Migrating it onto the constraint solver would move every existing scene that uses one, and bit-identity of existing scenes outranks tidiness |
+
+#### Breaking and adhesion (M60d)
+
+| Concept | Decision |
+|---|---|
+| What counts toward breaking | **Reaction only.** Equality rows and limit rows are the joint holding something up; a motor row is drive. Counting the motor would mean *strengthening a motor breaks its own joint*, so motor blocks are excluded from the sum |
+| The measured quantity | Impulse accumulated over the **whole tick, divided by `dt`** — a mean reaction force. Dividing by the substep `h` would silently change what a threshold means the moment `substeps` changed. Impulse **vectors** are summed, not magnitudes: `Σλ·d` over an orthonormal block is the impulse, whereas summing `|λ|` overestimates whenever a push and a pull cancel |
+| When | λ is read **once, outside the iteration loop**, and the verdict is taken at the **end of the tick**. A joint that breaks still did its work that tick; its rows disappear from the next one. Removing it mid-tick would contradict the λ already solved |
+| Representation | A hashed `broken` flag, not a component removal — structural changes belong in the tick-end command buffer (§4.5). Because the flag is hashed, `SimSnapshot` and the replay file follow it with no bespoke save path at all |
+| Adhesion units | The plan called for `adhesion · area`, but **the solver has no contact area** — a manifold is at most four points. `adhesion` is therefore a force in newtons, "how hard this pair can be pulled before it lets go", and the normal impulse's lower bound opens to `−adhesion · h`. The combination rule is **min** (the weaker surface wins), matching restitution |
+| Only the central impulse | The lower bound opens for the manifold-centroid normal impulse alone. The per-point rows only distribute rotational imbalance; letting them go negative would make a hanging object spin according to how the manifold happened to be sampled. A side effect is that **friction is inactive while an object hangs by adhesion alone**, since the friction budget is gated on `totalJn > 0` |
+| Coverage | `assets\physmats\glue.physmat.json` (adhesion 60 N) is the one versioned preset that uses it, and `--joint-demo` hangs a 4 kg and a 14 kg box from the same glued ceiling. The light one stays, the heavy one falls — so the feature is covered by the replay pair and the golden shot, not only by the self test |
+
+#### Compound colliders and convex hulls (M60e, M60f)
+
+| Concept | Decision |
+|---|---|
+| Compound is opt-in | `Rigidbody.compoundColliders` (default false). Putting the marker on the parent keeps the gate in one place and consumes no TypeId |
+| Broad phase | One **union AABB per body**, not one entry per child shape, so the pair key stays body-based and `SolidContact` and every consumer of it are untouched. The candidate list only has to be a superset of the true contact set |
+| Narrow phase | One `ContactConstraint` per shape pair — normals differ per shape, so they cannot be folded into a single manifold. Adjacent identical keys are merged **on output**: impulses add, and the geometry of the child that pushed hardest represents the pair |
+| Inertia | Composed with the parallel-axis theorem into a **full 3×3 tensor**, deliberately asymmetric against M59f1's decision not to shift inertia for a single shape: in a compound the mass distribution is actually known. An L-shape has off-diagonal terms, so the diagonal-only `InvInertiaWorld` cannot express it; `invILocal` is inverted once and rotated per substep as `B·I⁻¹·Bᵀ` |
+| Child order | Fixed at (parent index, child index) ascending. Floating-point summation is order-dependent, so this must never be left to archetype traversal order |
+| Convex hulls carry no new field | `Collider.shape = 5` reuses `meshAsset` as a third tagged variant alongside mesh and terrain. **Existing scenes therefore do not even change their hash byte string** — a stronger form of existence gate than M60e's "bytes move, behaviour does not" |
+| Hull generation | Incremental insertion, not QuickHull: QuickHull's face adjacency is hard to repair when the horizon degenerates, and it fails by returning a quietly wrong hull. Incremental insertion recounts visible faces and the horizon each time, so a bad point can simply be dropped. Coplanar triangles **must** be merged into polygonal faces — without that a box's hull stays 12 triangles and reference-face clipping tops out at three contact points instead of four. `−0.0` is folded to `+0.0` on input through a branch gate, so deduplication cannot depend on input order |
+| Edge-edge separation | Measured with **projected intervals**, not the textbook `dot(axis, p2 − p1)`. That formula assumes the axis is a face normal of the Minkowski difference; a triangle is a degenerate two-sided solid whose adjacent normals are opposite, `cross(n1, n0)` vanishes, and the Gauss-map cull cannot decide. Dropping the cull (the safe direction) then fed invalid axes to the specialised formula, which answered "separated" at the moment of contact and let hulls **fall through a triangle floor** |
+| Spheres and capsules are not on SAT | A round shape's separating axis can pass through a vertex, which enumerating face normals and edge cross products misses. They are solved as a signed distance to the hull plus the closest surface point; capsules use a fixed 32-step golden-section search along the spine, the same device capsule-box already used |
+| Cooking | `.mcvx` sits beside `.mmdl` and `.mpcm` in `CookedCache`, keyed by walking `MeshLibrary`'s registered name back to the source path (`"<normalised absolute path>#mesh0#prim0"`). Procedural meshes have no `#`, so the cache's `stat` fails and they build at runtime with **no special-case code**. Sealed caches are never appended to |
+| Shared consequence | Both compounds and convex hulls need the full inertia tensor (`Body::fullInertia`), and **the M59f1 gyroscopic term does not apply to either** — it is solved in principal-axis local space and cannot take a full tensor. Approximating with the diagonal would be quietly wrong, so it is switched off instead |
+
+#### Ragdolls (M60g)
+
+A ragdoll is not a new subsystem: it is `PartComponent` (already able to name a bone, resolve a
+source and offer an Inspector combo) plus a collider, a rigid body and a Cone joint, with one new
+`RagdollComponent` tag on the `SkinnedMesh` entity. The v1 part rule `partLocal == jointGlobal` is
+simply read in the other direction, so **not one inverse matrix was written**.
+
+| Concept | Decision |
+|---|---|
+| Which way the data flows | While `active`, the bones are driven by the bodies and the **bone palette is rebuilt on the render side**. The hashed state stays the parts' `LocalTransform`, so the deterministic surface does not grow. The override palette walks the parent chain and stops at an overridden ancestor, so with no overrides present it is bit-identical to `ComputeBonePalette` |
+| Held mode | `active = false` freezes the bones and the parts follow the animation exactly as before — and the switch to `true` needs **no initialisation code**, because the part's `LocalTransform` already holds the animated pose. The measured jump at the switch is 2.725 mm, exactly one tick of free fall |
+| Held bones | A held part is treated as kinematic, but `Rigidbody.isKinematic` is **never written** — that would clobber an Inspector value, and the solver writing components is not the house style. `rb->velocity` itself must be zeroed while held: a kinematic body skips write-back, so a stale velocity would otherwise shove whatever it touched and fling the ragdoll the moment it was reactivated |
+| Capsules are two entities deep | `ColliderComponent` has neither a centre nor a rotation — the shape is always centred on the entity origin along local Y — and the part's own `LocalTransform` belongs to `PartFollowSystem`. So the part carries `Rigidbody(compoundColliders = true)` and a `_Shape` child holds "translate to the bone midpoint, rotate Y onto the bone". This is the first place M60e's compound colliders became load-bearing |
+| The generator drops short bones | `minBoneRatio` (0.25 of the rig's longest bone) and `minRadiusRatio` are **not** cosmetic. A very short, very light bone caught between a contact and a joint vibrates forever, and since an island sleeps only when every member is quiet, one such bone keeps the **whole ragdoll awake permanently**. Removing either the joint or the contact stops it, so it appears only when the two interact. The result matches Unity's ragdoll wizard skipping hands and fingers, arrived at from sleep behaviour rather than from looks |
+| It needs `substeps = 16` | Measured on a generated rig: at 4 and 8 substeps the parts touching the floor while hanging from joints never settle. 16 is the environment maximum and the showcase uses it. Disabling adjacent-bone contacts (below) brings the settle from tick 395 to 241 but **does not lower the substep tier** — the cause is "touching the floor while suspended", not bones intersecting |
+| Bone direction | Extends to the **first child with non-zero length in index order**. Taking simply the lowest-index child lets a zero-length helper joint (an IK target or an orientation nub) delete the parent bone entirely |
+| v1 limits | Parts must be **direct children** of the `SkinnedMesh`; two parts naming the same bone resolve **first wins** (sibling order is not hashed, so last-wins could produce "same hash, different picture"); and **no blending between physics and animation is promised**. Turning a generated ragdoll into a prefab locks the structure — `Parts::IsStructureLocked` then blocks renaming, deleting or reparenting the parts |
+
+#### Vehicles (M60h)
+
+A vehicle is not a constraint. `WheelComponent` raycasts, applies a suspension force and a tyre
+force; `VehicleComponent` holds throttle, brake and steer as ordinary hashed fields — which is why
+driving one from a script needed no new ABI.
+
+| Concept | Decision |
+|---|---|
+| Jacobi, not Gauss-Seidel | Wheel forces are measured for **all** wheels against the same substep velocity in pass one and applied together in pass two. Applied sequentially, later wheels read a chassis that earlier wheels already moved: measured 13 % load spread and 0.2 m of lateral drift over ten seconds on a symmetric car. Applied together, left and right torques cancel **bit-exactly** (equal and opposite floating-point addends) and the drift is 0.000000. **Contacts are constraints and belong sequential; suspension is a force and belongs simultaneous** — the two conventions coexist inside the same solver on purpose |
+| Implicit damper | An explicit damper does not settle at `mg/k`. Gravity enters velocity before suspension does, so at rest the damper still reads `g·h` of compression and pushes back by `c·|g|·h`: measured 18 % shallow at 8 substeps and 97 % shallow at 1. The implicit form (denominator `1 + c·h·kEff`, as `SpringJoint` already used) moves the equilibrium to where velocity is zero, and the error then falls **in proportion to the step** — 15.51 / 3.88 / 1.95 / 0.99 % at 1 / 4 / 8 / 16 substeps. The self test fixes the *order of convergence*, not a threshold |
+| Its own raycast loop | Not `RaycastWorld`: that works from `WorldMatrix`, which is one tick stale while the solver runs (the same trap M59j documents). The wheel fires `shapes::Raycast` straight at `bodies[].pose`, excluding its own chassis body — one `j == i` line, which also excludes every child shape of a compound chassis because they share the body |
+| Output fields freeze when asleep | A car floating on suspension alone touches nothing, so it sleeps as an island with zero contacts. Because a sleeping body has `invMass = 0` the suspension measures nothing, so the outputs are carried over rather than cleared and `isGrounded` does not flip to false the instant the car falls asleep. This is also what preserves M59h's "a sleeping world hashes identically" |
+| Saturating limits | Braking, rolling resistance and lateral force all need a cap of `|v| / kEff` — the impulse that brings that component of velocity to exactly zero. Without it, **a stationary car drives backwards under braking** |
+| Friction circle | Longitudinal and lateral force are clamped together to `μN`. Clamping each axis separately (a friction *box*) lets full braking and full cornering coexist at the limit, inventing √2 of grip. The circle gives "you cannot brake and turn at the same time" for free |
+| Slip angle floor | `kTireSlipRefSpeed = 2 m/s` is not merely a divide-by-zero guard. Near standstill the slip angle pins to 90°, lateral force saturates at `μN` and only its direction thrashes, which makes **the car shiver in place**. Below that speed the model is proportional to lateral velocity rather than to the angle |
+| Contact normal | Taken from the surface actually hit, not from the suspension axis. That is why braking works on a 15° slope; substituting the axis lets tyre forces lift off the surface as the chassis rolls |
+| Wheel visuals | Roll angle and steer angle are hashed fields; `LocalTransform` is **not** written. The renderer reads the fields and pre-multiplies roll (X) → steer (Y) → suspension extension (−Y) into the world matrix. Pre-multiplying means it acts *before* scale, so a non-uniformly scaled wheel is distorted, and it **does not propagate to child entities** (that would need the parent's inverse world matrix). Both are v1 limits — author wheels unrotated and unscaled |
+| v1 model | Force is proportional to throttle: no engine speed, no gearbox, no differential. Suspension **pushes and never pulls**, does not return reaction to whatever it stands on, and bottoming out only caps the spring force rather than hardening like a bump stop. Roll angle is back-computed from rolling, so a locked wheel still appears to spin at road speed and an airborne wheel stops turning. `substeps = 8` is the recommended floor |
+
+#### Joint-pair collision filtering (M60j)
+
+`JointComponent.disableCollision` (default false) drops the contact between the two bodies a joint
+connects. **Where the filter sits is the specification**, not an implementation detail:
+
+| Concept | Decision |
+|---|---|
+| Right after the layer filter | The exclusion applies to the **broad-phase candidate list only**. Filtering with the layer `mask` instead would take effect earlier and would also cut `islandPairs` and the wake sweep — two jointed bodies would then fall asleep separately, and a half-stopped mechanism is broken. Islands and waking stay on the joint pairs M60a added explicitly |
+| It does not propagate | Only the directly connected pair is dropped; in an A–B–C chain, A and C still collide. This matters: cutting self-collision *wholesale* on a ragdoll made it **worse** (angular velocity 3–5×), because contact is a damping source as well as a cause of thrashing. Keeping the cut minimal is the point |
+| CCD reads the same table | Excluding only in the broad phase would leave "a fast bone kicks its neighbour, but only through CCD" — behaviour with no explanation. The continuous sweep consults the same sorted table |
+| `broken` removes both at once | The collection loop skips broken joints, so a broken joint loses its rows and its exclusion together. A snapped arm should not pass through things |
+| Static bodies are included | Static colliders live in `bodies` too, so "a deck hinged to a tower" can stop intersecting the tower |
+| Who turns it on | The **ragdoll generator turns it on by default** (adjacent bones share their joint point, so their capsules must intersect at some poses), and the showcase's rope links and welded arm use it instead of the geometric dodge of shrinking colliders below their visible size. `Options::lengthRatio` stays at 0.8 regardless — the gap and the exclusion fix different problems |
+
+#### Deliberate non-goals of the joint track (M60)
+
+| Non-goal | Why it is out |
+|---|---|
+| **A full D6 joint (per-axis free / limited / locked)** | The five presets cover every mechanism the showcase needs, and the internal representation is already a set of blocks, so a D6 would fit the same component with no solver change. Shipping it now would double the Inspector surface for authoring cases nobody has |
+| **Migrating `SpringJoint` onto the constraint solver** | Existing scenes stay bit-identical. Two spring implementations is the price, and the spec names the old one as legacy so nobody mistakes it for the recommended path |
+| **Soft constraints / compliance (XPBD)** | Deferred to M60′. Young's modulus at float precision diverges when fed straight to an impulse solver, which is the same reason §10.3 keeps GPa-scale stiffness out of `.physmat.json` |
+| **Gyroscopic torque on compound and convex bodies** | The M59f1 implementation solves in principal-axis space and cannot accept a full 3×3 tensor. Approximating with the diagonal would be wrong without being visibly wrong, so it is disabled for those bodies instead |
+| **Physics/animation blending on ragdolls** | v1 is a binary `active` switch. Blending needs a per-bone weight and a rule for whose pose wins during the crossfade, which is a feature in its own right, not a parameter |
+| **A drivetrain model for vehicles** | No engine curve, gearbox or differential; force is proportional to throttle with a friction-circle saturation. That is enough for a vehicle that drives, steers and brakes deterministically, which is what the replay pair exists to prove |
+| **Suspension reaction on the surface it stands on** | The wheel raycast is one-directional. Returning the reaction would need the hit body resolved back to a solver index and would make suspension a two-body constraint — at which point it should be a constraint, not a force |
+| **Wheel visuals that survive non-uniform scale or reach child entities** | Roll, steer and suspension travel are pre-multiplied into the wheel's world matrix, which is what keeps them out of the hashed state. Pre-multiplication acts before scale, so a non-uniformly scaled wheel shears, and propagating to children would require the parent's inverse world matrix — a per-entity inverse in the collection stage, for a case the authoring rule ("wheels are unrotated, unscaled, childless") already avoids |
+
+---
+
 ## 11. Debug/Release Consistency Policy
 
 ### 11.1 Purpose
@@ -1099,7 +1258,7 @@ Eliminate cases in which the engine works in Debug but fails in Release, or vice
 - Introducing a fixed timestep, marked [TBD] in Section 5.3, is strongly recommended as a prerequisite
 - CPU particles are included in the hash. GPU particles are excluded because they are rendering output; their behavior is verified separately through comparison mode without readback
 - The test can run in CI through a command-line invocation such as `Editor.exe --replay-verify xxx.rep`
-- `tools\replay_verify.bat` runs **five scene pairs**, each rebuilt from code before recording:
+- `tools\replay_verify.bat` runs **six scene pairs**, each rebuilt from code before recording:
   the default demo (scripts, physics, particles, schema fields), the parts showcase
   (`--parts-demo`: skinned bones, part following, part raycasts), the game-flow showcase
   (`--flow-demo`, M51j: **LoadScene transitions across two scenes, TimeControl pause and
@@ -1107,9 +1266,13 @@ Eliminate cases in which the engine works in Debug but fails in Release, or vice
   driven by a deterministic tick timeline in `FlowTitleDriver` / `FlowGameDriver`) and the
   local-multiplayer showcase (`--local-demo --local-players 2 --synth-input`, M52g: per-player
   input lanes) and the physics showcase (`--physics-demo`, M59d: aerodynamics, buoyancy, Magnus,
-  the gyroscopic term, materials and density-derived mass, CCD). The flow pair is the aggregate
-  proof that the M51 gameplay-flow features are replay-deterministic; the physics pair is the same
-  for every equation M59 added
+  the gyroscopic term, materials and density-derived mass, CCD) and the joint showcase
+  (`--joint-demo`, M60i: the constraint solver, all five joint types, limits, motors, breaking,
+  adhesion, compound colliders, cooked convex hulls, a generated ragdoll and a driven vehicle,
+  at `substeps = 16`). The flow pair is the aggregate proof that the M51 gameplay-flow features
+  are replay-deterministic; the physics and joint pairs are the same for every equation M59 and
+  M60 added. The joint pair also covers the `.mcvx` convex-hull cook: Debug and Release bake it
+  independently into separate cooked directories and still agree bit for bit
 
 **Field-level divergence diagnosis (M52a).** Knowing *which tick* broke is not the same as
 knowing *what* broke. `HashWorld`, `HashWorldDetailed` and `HashWorldDump` are three exits of a
@@ -1134,19 +1297,20 @@ the terminator stays visible instead of being hidden by string semantics.
 **Continuous integration (M52b).** `.github\workflows\ci.yml` is a single Windows job that calls
 the *same* scripts a developer runs locally — no CI-only verification logic, so there is nothing
 to keep in sync twice. It builds the managed host for both configurations, runs
-`tools\replay_verify.bat` (eight project builds, four replay pairs, `check_rules.ps1`),
+`tools\replay_verify.bat` (eight project builds, six replay pairs, `check_rules.ps1`),
 runs `--selftest` in both configurations, and finishes with a `--package` smoke test whose
 success is reported through the process exit code. On failure the replay files and field dumps
 are uploaded as artifacts, so a divergence found in CI can be diffed locally with `--hash-diff`.
 
-CI-specific concerns are injected through three environment variables that the scripts append
-verbatim, which is why the script bodies are identical locally and in CI:
+CI-specific concerns are injected through four kinds of environment variable that the scripts
+append verbatim, which is why the script bodies are identical locally and in CI:
 
 | Variable | Value in CI | Purpose |
 |---|---|---|
 | `MYE_EXTRA_ARGS` | `--warp --no-audio` | appended to every `Editor.exe` invocation |
 | `MYE_MSBUILD_ARGS` | `/p:MyeWarnAsError=true` | opt-in warnings-as-errors (off by default) |
 | `MYE_DOTNET_ARGS` | `/p:TreatWarningsAsErrors=true` | the same for the C# host |
+| `MYE_SHOT_SKIP_FXAA` / `_TAA` / `_SSR` / `_FROXEL` | `1` | skip the four shots whose discrete branches amplify machine differences |
 
 `GraphicsDevice::Init` tries `D3D_DRIVER_TYPE_HARDWARE` first and falls back to
 `D3D_DRIVER_TYPE_WARP`, logging the adapter it actually adopted; `--warp` skips straight to WARP.
@@ -1157,19 +1321,19 @@ a GPU-less runner an acceptable place to prove determinism. Golden screenshots, 
 *are* driver-dependent and are therefore always captured with `--warp`.
 
 **Screenshot regression (M52c).** Hashes prove that the *simulation* is reproducible; they say
-nothing about what is drawn. `tools\shot_verify.bat` captures thirteen deterministic screenshots with
+nothing about what is drawn. `tools\shot_verify.bat` captures fourteen deterministic screenshots with
 `Runtime.exe` (no ImGui, so neither `imgui.ini` nor the cursor position can leak in) and compares
 them against `tests\golden\*.png` pixel by pixel, writing a difference heat map next to any shot
-that moved. `--update` re-records the golden set. Nine of the thirteen gate CI; the other four
+that moved. `--update` re-records the golden set. Ten of the fourteen gate CI; the other four
 exist only to cover FXAA, TAA, SSR and froxel volumetrics -- all four compared at `--tol 0` and
 all four skipped on the runner (`MYE_SHOT_SKIP_FXAA` / `_TAA` / `_SSR` / `_FROXEL`). Each is a
 pass that **branches discretely**, so a 1-ULP difference flips the branch and throws a few dozen
 pixels a long way: FXAA was measured at maxDiff 35 (M52c) and SSR at maxDiff 95 over just 30
 pixels (M56d). No tolerance can cover that shape -- a genuine regression looks the same -- so the
-runner does not shoot them at all and only bit-identity on the dev machine is claimed. A ninth,
-`demo_terrain_deferred`, gates CI at `--tol 12` rather than 3: **anisotropic filtering is
+runner does not shoot them at all and only bit-identity on the dev machine is claimed. One of the
+ten, `demo_terrain_deferred`, gates CI at `--tol 12` rather than 3: **anisotropic filtering is
 implementation-defined** and the two WARP builds disagree by up to 8 levels on terrain viewed at
-grazing angles (four splat layers x albedo+normal, amplified by the derivative-based TBN). Two of the nine
+grazing angles (four splat layers x albedo+normal, amplified by the derivative-based TBN). Two of the ten
 (`demo_render_forward` / `demo_render_deferred`, M54a) shoot the `--render-demo` showcase, which
 is the only golden scene carrying spot and point lights -- without it every feature added by the
 M54-M58 rendering roadmap would be pixel-invariant by default and land with zero coverage.
@@ -1178,15 +1342,20 @@ extending `--render-demo`: terrain covers the whole frame, so folding it into th
 showcase would have re-recorded goldens shared with other in-flight branches, and
 `tests\golden\*.png` is binary and therefore unmergeable.
 
-The thirteenth shot (`physics`, M59l) is the only one **not** taken at frame 3. Every other shot is
-a near-initial pose, which is the right way to ask "is the renderer still drawing this scene
-correctly" but leaves physics untested: after three ticks nothing has visibly moved. `physics`
-shoots the M59 showcase at frame 120 (two seconds), where the fluttering feather, the landed steel
-ball, the gliding paper plane, the curving ball, the floating buoy and the crate stack all appear in
-the same frame. That also makes it **the only image that checks the simulation is machine-independent**
-rather than merely configuration-independent: two seconds of accumulated state cannot survive a
-one-bit difference in the runner's floating point, so this shot turns the scalar-float /
-`/fp:precise` contract into something a pixel comparison can falsify. If it ever reddens on the
+Two shots -- `physics` (M59l) and `joints` (M60k) -- are the only ones **not** taken at frame 3.
+Every other shot is a near-initial pose, which is the right way to ask "is the renderer still
+drawing this scene correctly" but leaves physics untested: after three ticks nothing has visibly
+moved. `physics` shoots the M59 showcase at frame 120 (two seconds), where the fluttering feather,
+the landed steel ball, the gliding paper plane, the curving ball, the floating buoy and the crate
+stack all appear in the same frame; `joints` shoots the M60 showcase at the same frame, where the
+double pendulum's trajectory, the swinging rope, the door against its limit, the motored crank, the
+elevator on its slider, the cantilevered weld, the pier that snapped under a dropped crate, the
+tumbling L-shape and hull pile, the collapsed ragdoll, the two glued boxes and the driving car are
+all in one frame. Those two are also **the only images that check the simulation is
+machine-independent** rather than merely configuration-independent: two seconds of accumulated
+state cannot survive a one-bit difference in the runner's floating point (and `joints` runs at
+`substeps = 16`, so it is 1920 substeps of accumulation), which turns the scalar-float /
+`/fp:precise` contract into something a pixel comparison can falsify. If either ever reddens on the
 runner, the honest fallbacks are dropping it to frame 3 (renderer-only coverage) or moving it to
 the local-only `--tol 0` bucket -- not raising the tolerance.
 

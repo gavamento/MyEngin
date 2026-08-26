@@ -31,15 +31,16 @@ MyEngine — C++20 / DirectX 11 の自作ゲームエンジン (VS2022 / x64 / W
 | コマンド | 担保するもの |
 |---|---|
 | `bin\x64\Debug\Editor.exe --selftest` | ヘッドレス回帰 35 スイート (D3D もウィンドウも作らない) |
-| `tools\replay_verify.bat [ticks]` | 8 ビルド → 5 シーンペアのリプレイ照合 → snapshot 往復 → タイムトラベル巻き戻し → 規則検査 |
-| `tools\shot_verify.bat [--update]` | 決定的スクショ 13 枚を `tests\golden\*.png` と比較 (CI 判定は 9 枚 — FXAA / TAA / SSR / froxel の 4 枚は分岐反転で機種差が増幅するので tol=0 のローカル限定。地形の 1 枚だけ異方性フィルタの実装依存で tol=12。**物理の 1 枚だけ frame 120 で撮る** — 他は frame 3 = ほぼ初期配置なので物理が絵に出ない。**先に Release ビルドが必要**) |
+| `tools\replay_verify.bat [ticks]` | 8 ビルド → 6 シーンペアのリプレイ照合 → snapshot 往復 → タイムトラベル巻き戻し → 規則検査 |
+| `tools\shot_verify.bat [--update]` | 決定的スクショ 14 枚を `tests\golden\*.png` と比較 (CI 判定は 10 枚 — FXAA / TAA / SSR / froxel の 4 枚は分岐反転で機種差が増幅するので tol=0 のローカル限定。地形の 1 枚だけ異方性フィルタの実装依存で tol=12。**物理と関節の 2 枚だけ frame 120 で撮る** — 他は frame 3 = ほぼ初期配置なので物理が絵に出ない。**先に Release ビルドが必要**) |
 | `pwsh -File tools\check_rules.ps1` | 規則 1/2/4/7/8/9/10/11 の静的検査 |
 | `tools\crash_verify.bat [Debug\|Release]` | 5 経路で実際に落として crash バンドル → .rep が再生・再現すること (**CI 対象外**) |
 | `tools\net_verify.bat [ticks]` | host/join 2 プロセスの .rep が一致 + ローカル 2P 参照とも一致 + ロールバック 3 帯 + desync 注入の検出 (**CI 対象外**) |
 
 - **CI (`.github\workflows\ci.yml`) はこの bat をそのまま呼ぶ。CI 専用の検証ロジックを書かない。**
-  CI 固有の事情は環境変数 3 本だけで注入する: `MYE_EXTRA_ARGS` (`--warp --no-audio`)、
-  `MYE_MSBUILD_ARGS` (`/p:MyeWarnAsError=true`)、`MYE_DOTNET_ARGS` (`/p:TreatWarningsAsErrors=true`)。
+  CI 固有の事情は環境変数 4 種だけで注入する: `MYE_EXTRA_ARGS` (`--warp --no-audio`)、
+  `MYE_MSBUILD_ARGS` (`/p:MyeWarnAsError=true`)、`MYE_DOTNET_ARGS` (`/p:TreatWarningsAsErrors=true`)、
+  `MYE_SHOT_SKIP_FXAA` / `_TAA` / `_SSR` / `_FROXEL` (機種差が増幅する 4 枚をランナーでは撮らない)。
   ※ C++ の警告 0 は `/p:TreatWarningAsError=true` では**効かない** (ClCompile の項目メタデータなので
   グローバルプロパティは誰にも読まれない)。`Common.props` の `MyeWarnAsError` 橋渡しを使う。
 - **セルフテストに絞り込みフラグは無い**。1 本だけ回したいときは `src\Editor\EditorMain.cpp` の
@@ -61,7 +62,7 @@ MyEngine — C++20 / DirectX 11 の自作ゲームエンジン (VS2022 / x64 / W
   `--render-demo` (M54a: 描画ショーケース。スクショ回帰 6/7 枚目) /
   `--terrain-demo` (M58c: 地形ショーケース。8 枚目) / `--terrain-lod N` / `--terrain-skirt N` /
   `--physics-demo` (M59d: 空力/浮力/材料のショーケース。replay 5 ペア目 + スクショ 13 枚目) /
-  `--joint-demo` (M60i: 関節/機構/ラグドール/車のショーケース。replay 6 ペア目。substeps 16) /
+  `--joint-demo` (M60i: 関節/機構/ラグドール/車のショーケース。replay 6 ペア目 + スクショ 14 枚目。substeps 16) /
   `--taa` (M55d) / `--ssr` (M56d) / `--froxel` (M57) / `--hzb-debug N` (M56c) /
   `--velocity-debug` (M55c) / `--froxel-dump N` / `--froxel-no-temporal` (M57) /
   `--package DIR` / `--img-diff A B [--tol N]`。
@@ -76,7 +77,7 @@ MyEngine — C++20 / DirectX 11 の自作ゲームエンジン (VS2022 / x64 / W
   乱数はエンジンの PCG32 のみ。ソートは明示的な決定論キーで。
   unordered を舐めてバイト列を作るときは昇順に整列してから (SimSnapshot の override 表が実例)。
 - `check_rules.ps1` が拾うのは静的に見える違反だけ。**時計依存・順序依存は拾えない** —
-  そこは `replay_verify.bat` の 5 ペア照合が唯一の検出手段。
+  そこは `replay_verify.bat` の 6 ペア照合が唯一の検出手段。
 - **入力レーン (M52g)**: sim は `EngineContext::inputs[kMaxPlayers=4]` を消費する
   (`Input()` = レーン 0 = 従来の単一入力の別名)。レーン 0 だけがキーボード/マウスを持ち、
   レーン n は XInput スロット n。`.rep` の `playerCount` がレーン数で、**検証時は .rep が
