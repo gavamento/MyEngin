@@ -107,13 +107,16 @@ float4 PSMain(VSOut i) : SV_Target
     if (gAutoExposure != 0) {
         exposure *= gExposureBuf[0];
     }
-    float3 c = hdr * exposure;
+    float3 c = hdr;
     if (gBloomIntensity > 0.0f) {
         c += gBloom.Sample(gLinear, i.uv).rgb * gBloomIntensity; // ブルーム加算
     }
     if (gGodrayEnabled != 0) {
         c += gGodray.Sample(gLinear, i.uv).rgb; // M43b: 強度はマスク側で焼き込み済み
     }
+    // 露出は加算合成の後に一括で掛ける — シーンだけに掛けるとブルーム/ゴッドレイが
+    // 露出と非連動になり、明所で過剰・暗所で過少に光る。exposure==1 では従来とビット同一
+    c *= exposure;
     if (gTonemap == 2) {
         c = c / (1.0f + c); // Reinhard
     } else {

@@ -116,9 +116,11 @@ public:
 
 private:
     // sceneSRV から bright-pass → 分離ガウスブラーを行い、結果を t.bloomA (半解像度) に残す。
-    // sceneSRV は t.scene または DoF 実行後の t.sceneB (M44c)
+    // sceneSRV は t.scene または DoF 実行後の t.sceneB (M44c)。
+    // aeActive = RunAutoExposure が今フレーム実行済み (bright-pass のしきい値判定が
+    // t.exposureSRV を読むため、呼び出しは必ず RunAutoExposure の後にすること)
     void RunBloom(GraphicsDevice& device, ShaderManager& shaders, Target& t, const Settings& s,
-                  ID3D11ShaderResourceView* sceneSRV);
+                  ID3D11ShaderResourceView* sceneSRV, bool aeActive);
     // M44c: プリフィルタ → 円盤ギャザー → 合成で t.sceneB を作る。
     // 実行しなかった (radius 0 / depthSRV 無し / シェーダ未コンパイル) 場合は false。
     // M55d: 入力は t.scene 固定ではなく sceneSRV (TAA が走ったらその出力になる)

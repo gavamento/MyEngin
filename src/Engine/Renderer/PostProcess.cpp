@@ -71,8 +71,10 @@ struct PostFxCB {
 
 // postfx_bright.hlsl の Bright cbuffer (16 バイト)
 struct BrightCB {
-    float threshold;
-    float pad0, pad1, pad2;
+    float threshold;      // 露出後空間のしきい値
+    float exposure;       // 手動露出 (PostFxCB.exposure と同値)
+    int32_t autoExposure; // 1 = t1 の露出倍率を乗算 (M44b)
+    float pad2;
 };
 
 // postfx_blur.hlsl の Blur cbuffer (16 バイト)
@@ -429,7 +431,7 @@ bool PostProcess::RunMotionBlur(GraphicsDevice& device, ShaderManager& shaders,
 }
 
 void PostProcess::RunBloom(GraphicsDevice& device, ShaderManager& shaders, Target& t,
-                           const Settings& s, ID3D11ShaderResourceView* sceneSRV)
+                           const Settings& s, ID3D11ShaderResourceView* sceneSRV, bool aeActive)
 {
     ShaderProgram* bright = shaders.Get(brightShader_);
     ShaderProgram* blur = shaders.Get(blurShader_);
@@ -459,17 +461,23 @@ void PostProcess::RunBloom(GraphicsDevice& device, ShaderManager& shaders, Targe
     {
         BrightCB cb = {};
         cb.threshold = s.bloomThreshold;
+        cb.exposure = s.exposure;
+        cb.autoExposure = aeActive ? 1 : 0;
         UploadCB(dc, brightCB_.Get(), cb);
         ID3D11Buffer* cbs[1] = { brightCB_.Get() };
         dc->PSSetConstantBuffers(0, 1, cbs);
         ID3D11RenderTargetView* rtv = t.bloomA.RTV();
         dc->OMSetRenderTargets(1, &rtv, nullptr);
-        ID3D11ShaderResourceView* srv[1] = { sceneSRV }; // M44c: DoF 後は sceneB
-        dc->PSSetShaderResources(0, 1, srv);
+        // t0 = シーン (M44c: DoF 後は sceneB)、t1 = 自動露出の倍率 (しきい値判定用)
+        ID3D11ShaderResourceView* srv[2] = { sceneSRV,
+                                             aeActive ? t.exposureSRV.Get() : nullptr };
+        dc->PSSetShaderResources(0, 2, srv);
         dc->VSSetShader(bright->vs.Get(), nullptr, 0);
         dc->PSSetShader(bright->ps.Get(), nullptr, 0);
         dc->Draw(3, 0);
-        dc->PSSetShaderResources(0, 1, nullSrv);
+        // t1 (exposureBuf) は次フレーム冒頭で CS の UAV に戻るため必ず解除する
+        ID3D11ShaderResourceView* nullSrv2[2] = { nullptr, nullptr };
+        dc->PSSetShaderResources(0, 2, nullSrv2);
     }
 
     // 2) 分離ガウスブラー (H, V) を 2 回 (グロー幅を確保)
@@ -699,10 +707,15 @@ void PostProcess::Resolve(GraphicsDevice& device, ShaderManager& shaders, Target
         sceneSRV = mbDst->SRV();
     }
 
+    // M44b: 自動露出 (結果 = t.exposureBuf[0])。off/不成立時は t5 に null = 従来とビット同一。
+    // bright-pass がしきい値判定で今フレームの露出を読むため、必ず RunBloom より前に回す
+    // (後だと 1 フレーム遅れの露出を掴む)
+    const bool aeActive = RunAutoExposure(device, shaders, t, s, sceneSRV);
+
     ID3D11ShaderResourceView* bloomSRV = sceneSRV; // プレースホルダ (intensity 0 で不参照)
     float bloomIntensity = 0.0f;
     if (s.bloom) {
-        RunBloom(device, shaders, t, s, sceneSRV);
+        RunBloom(device, shaders, t, s, sceneSRV, aeActive);
         ShaderProgram* bright = shaders.Get(brightShader_);
         ShaderProgram* blur = shaders.Get(blurShader_);
         if (bright && bright->valid && blur && blur->valid) {
@@ -713,9 +726,6 @@ void PostProcess::Resolve(GraphicsDevice& device, ShaderManager& shaders, Target
 
     // M43b: ゴッドレイ (結果 = t.godA)。off/不成立時は t3 に null = 従来とビット同一
     const bool godrayActive = RunGodray(device, shaders, t, s, view);
-
-    // M44b: 自動露出 (結果 = t.exposureBuf[0])。off/不成立時は t5 に null = 従来とビット同一
-    const bool aeActive = RunAutoExposure(device, shaders, t, s, sceneSRV);
 
     // FXAA 有効時はトーンマップを LDR 中間 (t.ldr) に描き、その後 FXAA で dst へ。
     ShaderProgram* fxaa = shaders.Get(fxaaShader_);
