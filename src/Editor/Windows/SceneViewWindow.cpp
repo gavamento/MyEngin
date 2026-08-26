@@ -838,9 +838,15 @@ void SceneViewWindow::DrawToolbar(EditorSettings& settings)
     // "|" テキスト区切り + ハードコード青だったが、テーマの余白変更で中身が縦にはみ出す
     // 事故を起こしたので、サイズは規格側 (フレーム高) から導出する
     const ImVec2 p = ImGui::GetItemRectMin();
+    const float panelWidth = ImGui::GetItemRectMax().x - p.x; // ビューポート画像の幅
     ImGui::SetCursorScreenPos(ImVec2(p.x + 8.0f, p.y + 8.0f));
-    // M47b: 幅は中身から自動決定する。訳文が長いと 830px 固定ではボタンが見切れるため
-    BeginToolbarOverlay("##sv_toolbar");
+    // M47b: 幅は中身から自動決定する。訳文が長いと 830px 固定ではボタンが見切れるため。
+    // M47b追補: それは「中身 vs 器」の解決で、パネルが器より狭いと右端が親にクリップ
+    // されて操作不能のまま — 区切り単位で折り返して「器 vs パネル」もここで受ける。
+    // 限界 = パネル幅 − 左オフセット 8px − 器の左右 padding 16px
+    const int toolbarRows = toolbarFlow_.BeginFrame(panelWidth - 24.0f);
+    BeginToolbarOverlay("##sv_toolbar", ToolbarFlow::OverlayHeight(toolbarRows));
+    toolbarFlow_.FirstGroup();
     auto opBtn = [&](StrId id, ImGuizmo::OPERATION op) {
         if (ToolbarToggle(Tr(id), gizmoOp_ == op)) {
             gizmoOp_ = op;
@@ -850,13 +856,13 @@ void SceneViewWindow::DrawToolbar(EditorSettings& settings)
     opBtn(StrId::SceneView_Move, ImGuizmo::TRANSLATE);
     opBtn(StrId::SceneView_Rotate, ImGuizmo::ROTATE);
     opBtn(StrId::SceneView_Scale, ImGuizmo::SCALE);
-    ToolbarSeparator();
+    toolbarFlow_.Separator();
     if (ImGui::Button(Tr(gizmoMode_ == ImGuizmo::LOCAL ? StrId::Tool_SpaceLocal : StrId::Tool_SpaceWorld))) {
         gizmoMode_ = (gizmoMode_ == ImGuizmo::LOCAL) ? ImGuizmo::WORLD : ImGuizmo::LOCAL;
     }
     ImGui::SameLine();
     ImGui::Checkbox(Tr(StrId::SceneView_Ortho), &orthographic_);
-    ToolbarSeparator();
+    toolbarFlow_.Separator();
     ImGui::Checkbox(Tr(StrId::SceneView_Grid), &showGrid_);
     ImGui::SameLine();
     ImGui::Checkbox(Tr(StrId::SceneView_Gizmos), &showGizmos_);
@@ -869,16 +875,12 @@ void SceneViewWindow::DrawToolbar(EditorSettings& settings)
         if (ToolbarToggle(Tr(StrId::SceneView_PhysDebug), anyOn)) {
             ImGui::OpenPopup("##sv_physdbg_popup");
         }
-        if (ImGui::BeginPopup("##sv_physdbg_popup")) {
-            ImGui::Checkbox(Tr(StrId::SceneView_PhysContact), &pd.contacts);
-            ImGui::Checkbox(Tr(StrId::SceneView_PhysImpulse), &pd.impulses);
-            ImGui::Checkbox(Tr(StrId::SceneView_PhysVel), &pd.velocities);
-            ImGui::Checkbox(Tr(StrId::SceneView_PhysJoint), &pd.joints); // M60a
-            ImGui::Checkbox(Tr(StrId::SceneView_PhysDeform), &pd.deform); // M60'c
-            ImGui::EndPopup();
-        }
+        // ★popup の描画本体はツールバー末尾 (EndFrame の後) にある — BeginPopup が
+        //   開いている間は「最後のアイテム」が popup 側を指し、ToolbarFlow の
+        //   グループ幅測定が化けるため。OpenPopup と Begin は同一ウィンドウ内なら
+        //   離れていてよい (挙動は不変)
     }
-    ToolbarSeparator();
+    toolbarFlow_.Separator();
     // 表示モード (M40b): Lit / Unlit / Wireframe。GameView は常に Lit
     auto modeBtn = [&](StrId id, int mode) {
         if (ToolbarToggle(Tr(id), viewMode_ == mode)) {
@@ -889,7 +891,7 @@ void SceneViewWindow::DrawToolbar(EditorSettings& settings)
     modeBtn(StrId::SceneView_Lit, 0);
     modeBtn(StrId::SceneView_Unlit, 1);
     modeBtn(StrId::SceneView_Wire, 2);
-    ToolbarSeparator();
+    toolbarFlow_.Separator();
     // カメラ速度 (M27d)。RMB ホールド中のホイールでも変わる (HandleCamera)
     ImGui::SetNextItemWidth(110.0f);
     if (ImGui::SliderFloat("##camspeed", &settings.camMoveSpeed, 0.5f, 60.0f, Tr(StrId::SceneView_CamSpeed),
@@ -900,7 +902,7 @@ void SceneViewWindow::DrawToolbar(EditorSettings& settings)
         camSpeedDirty_ = false;
         settings.Save();
     }
-    ToolbarSeparator();
+    toolbarFlow_.Separator();
     // 視錐台ワイヤの表示上の打ち切り距離。既定 farZ=1000 のカメラを素直に描くと
     // 視錐台が画面を埋めるので、ここで「どこまで描くか」を手元で決められるようにする。
     // ★シーンにも設定ファイルにも保存しない — 地形ブラシと同じで「いまの見え方」であって
@@ -908,12 +910,25 @@ void SceneViewWindow::DrawToolbar(EditorSettings& settings)
     ImGui::SetNextItemWidth(120.0f);
     ImGui::SliderFloat("##frustumfar", &frustumFar_, 2.0f, 500.0f,
                        Tr(StrId::SceneView_FrustumFar), ImGuiSliderFlags_Logarithmic);
-    ToolbarSeparator();
+    toolbarFlow_.Separator();
     // 地形ブラシ (M58f)。on の間はピッキングもギズモも止まる = 「別のツール」なので
     // mode 系のトグル色 (PlayAccent) で見せる
     if (ToolbarToggle(Tr(StrId::Terrain_Brush), terrainBrush_, nullptr, /*mode=*/true)) {
         terrainBrush_ = !terrainBrush_;
         terrainStroking_ = false;
+    }
+    toolbarFlow_.EndFrame();
+    // 物理デバッグ popup の本体 (トグル側のコメント参照 — 幅測定の外に置く)
+    {
+        PhysicsDebugFlags& pd = GetPhysicsDebugFlags();
+        if (ImGui::BeginPopup("##sv_physdbg_popup")) {
+            ImGui::Checkbox(Tr(StrId::SceneView_PhysContact), &pd.contacts);
+            ImGui::Checkbox(Tr(StrId::SceneView_PhysImpulse), &pd.impulses);
+            ImGui::Checkbox(Tr(StrId::SceneView_PhysVel), &pd.velocities);
+            ImGui::Checkbox(Tr(StrId::SceneView_PhysJoint), &pd.joints); // M60a
+            ImGui::Checkbox(Tr(StrId::SceneView_PhysDeform), &pd.deform); // M60'c
+            ImGui::EndPopup();
+        }
     }
     EndToolbarOverlay();
 }

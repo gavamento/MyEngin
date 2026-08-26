@@ -76,6 +76,69 @@ void EndToolbarOverlay()
     ImGui::PopStyleColor();
 }
 
+// ---- ToolbarFlow (M47b追補) ----
+
+int ToolbarFlow::BeginFrame(float limitWidth)
+{
+    int rows = 1;
+    float x = 0.0f;
+    for (int i = 0; i < groupCount_ && i < kMaxGroups; ++i) {
+        const float need = widths_[i] + (i > 0 ? sepWidth_ : 0.0f);
+        if (i > 0 && x + need > limitWidth) {
+            breakBefore_[i] = true;
+            x = widths_[i];
+            ++rows;
+        } else {
+            breakBefore_[i] = false;
+            x += need;
+        }
+    }
+    return rows;
+}
+
+void ToolbarFlow::FirstGroup()
+{
+    group_ = 0;
+    groupStartX_ = ImGui::GetCursorScreenPos().x;
+}
+
+void ToolbarFlow::Separator()
+{
+    // ★カーソル X ではなく「最後のアイテムの右端 (スクリーン座標)」で幅を測る —
+    //   スライダのように SameLine で終わらないグループはカーソルが既に次行へ
+    //   落ちていて、カーソル基準だと幅がゼロや負に化けるため
+    if (group_ < kMaxGroups) {
+        widths_[group_] =
+            ImGui::GetItemRectMax().x - groupStartX_ + ImGui::GetStyle().ItemSpacing.x;
+    }
+    ImGui::SameLine(); // SameLine で終わっていないグループも行内へ戻して起点を揃える
+    ++group_;
+    if (group_ < kMaxGroups && breakBefore_[group_]) {
+        ImGui::NewLine(); // 直前の SameLine を打ち消して次の行頭へ (ImGui の規約)
+    } else {
+        const float before = ImGui::GetCursorScreenPos().x;
+        ToolbarSeparator();
+        sepWidth_ = ImGui::GetCursorScreenPos().x - before; // テーマ余白依存なので実測で追随
+    }
+    groupStartX_ = ImGui::GetCursorScreenPos().x;
+}
+
+void ToolbarFlow::EndFrame()
+{
+    if (group_ < kMaxGroups) {
+        widths_[group_] =
+            ImGui::GetItemRectMax().x - groupStartX_ + ImGui::GetStyle().ItemSpacing.x;
+    }
+    groupCount_ = group_ + 1;
+}
+
+float ToolbarFlow::OverlayHeight(int rows)
+{
+    // BeginToolbarOverlay の既定 (フレーム高 + 上下 padding 6px) の行数拡張
+    return ImGui::GetFrameHeight() * static_cast<float>(rows)
+        + ImGui::GetStyle().ItemSpacing.y * static_cast<float>(rows - 1) + 12.0f;
+}
+
 void DrawItemIconLabel(const char* icon, const ImVec4& iconColor, const char* label, bool framed)
 {
     // TreeNodeBehavior のラベル開始位置を再現する (imgui 1.92:

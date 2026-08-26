@@ -6,6 +6,7 @@
 #include "imgui.h"
 #include "ImGuizmo/ImGuizmo.h"
 
+#include "Editor/EditorWidgets.h" // M47b追補: ToolbarFlow (ツールバー折り返し)
 #include "Engine/Engine/Asset/TerrainEdit.h" // M58f: 地形ブラシ
 #include "Engine/Engine/EngineLoop.h"
 #include "Engine/Renderer/EditorLinePass.h"
@@ -125,6 +126,7 @@ private:
     //   描画時にレンダーターゲットの実寸で決まる値なので、ここで 16:9 に固定している
     uint64_t camTargetFid_ = 0;   // ワイヤ/プレビューの対象 (0 = 無し)
     float frustumFar_ = 25.0f;    // 視錐台の**表示上の**打ち切り距離 (実 farZ が小さければそちら)
+    ToolbarFlow toolbarFlow_;     // M47b追補: パネルが狭いときのツールバー折り返し
     RenderTexture previewRt_;
     bool previewValid_ = false;   // 直近の OnRenderViews でプレビューを描けたか
     std::string previewLabel_;    // プレビュー窓とバナーに出す対象カメラの名前
