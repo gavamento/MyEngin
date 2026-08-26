@@ -383,6 +383,9 @@ MYE_STR(SceneView_PhysVel,    "Velocities###sv_phys_vel", "速度ベクトル###
 // M60a: 関節のアンカー 2 点 + ずれの線 + 軸
 MYE_STR(SceneView_PhysJoint,  "Joint anchors###sv_phys_joint",
                               "関節のアンカー###sv_phys_joint")
+// M60'c: 変形体 (ロープ等) の拘束線 + ピン
+MYE_STR(SceneView_PhysDeform, "Deformables###sv_phys_deform",
+                              "変形体###sv_phys_deform")
 // ---- 関節の種類 (M60b)。Inspector の type コンボの選択肢 ----
 // 表示順 = JointComponent.type の値順 (0..4)。値の意味を変えると既存シーンが壊れる
 MYE_STR(Insp_JointBall,       "Ball (3 linear)",        "ボール (線形 3)")

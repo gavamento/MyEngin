@@ -4,6 +4,7 @@
 namespace mye {
 
 class World;
+class XpbdBackend;
 struct SolidContact;
 struct DebugLineCmd;
 
@@ -26,7 +27,10 @@ struct PhysicsDebugFlags {
     // ★これも他の 2 つと同じで**線が積まれるのは Play 中だけ** (積むのは tick 側なので)。
     //   編集中の authoring 用には SceneViewWindow のギズモ (SpringJoint と同じ棚) が別にある
     bool joints = false;
-    bool Any() const { return contacts || velocities || joints; }
+    // M60'c: 変形体 (ロープ等)。粒子を結ぶ拘束の線 + ピン留め粒子の十字。
+    // 粒子は WorldMatrix を持たないので池 (XpbdBackend) を直接読む — これも読むだけ
+    bool deform = false;
+    bool Any() const { return contacts || velocities || joints || deform; }
 };
 
 PhysicsDebugFlags& GetPhysicsDebugFlags();
@@ -35,7 +39,9 @@ PhysicsDebugFlags& GetPhysicsDebugFlags();
 // (TickRunner が tick 頭で 1 回)。World は読むだけ。
 // 呼ぶ場所は TransformSystem の後 — 速度ベクトルの根元に当 tick のワールド位置が要るため
 // (接触点は SolidContact 自身がワールド座標を持っているのでどちらでもよい)。
+// xpbd (M60'c): deform フラグの線源。null なら変形体は描かない
 void BuildPhysicsDebugLines(World& world, const std::vector<SolidContact>& contacts,
-                            const PhysicsDebugFlags& flags, std::vector<DebugLineCmd>& out);
+                            const PhysicsDebugFlags& flags, std::vector<DebugLineCmd>& out,
+                            const XpbdBackend* xpbd = nullptr);
 
 } // namespace mye

@@ -865,7 +865,7 @@ void SceneViewWindow::DrawToolbar(EditorSettings& settings)
     // (編集中は物理が走らず接触も速度も無い)。有効中はトグル色で気付けるようにする
     {
         PhysicsDebugFlags& pd = GetPhysicsDebugFlags();
-        const bool anyOn = pd.contacts || pd.velocities || pd.joints;
+        const bool anyOn = pd.contacts || pd.velocities || pd.joints || pd.deform;
         if (ToolbarToggle(Tr(StrId::SceneView_PhysDebug), anyOn)) {
             ImGui::OpenPopup("##sv_physdbg_popup");
         }
@@ -874,6 +874,7 @@ void SceneViewWindow::DrawToolbar(EditorSettings& settings)
             ImGui::Checkbox(Tr(StrId::SceneView_PhysImpulse), &pd.impulses);
             ImGui::Checkbox(Tr(StrId::SceneView_PhysVel), &pd.velocities);
             ImGui::Checkbox(Tr(StrId::SceneView_PhysJoint), &pd.joints); // M60a
+            ImGui::Checkbox(Tr(StrId::SceneView_PhysDeform), &pd.deform); // M60'c
             ImGui::EndPopup();
         }
     }

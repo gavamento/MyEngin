@@ -46,16 +46,19 @@ public:
     };
 
     // コンポーネントの有無から池を生成/破棄する (owner.index 昇順を維持)。
-    // CpuParticleBackend::SyncEmitters と同じ立ち位置。M60'b 時点では対象
-    // コンポーネントが存在しないので何もしない (M60'c の Rope から実装)
+    // CpuParticleBackend::SyncEmitters と同じ立ち位置で、PhysicsSystem::Update の
+    // 先頭から毎 tick 呼ばれる。M60'c: Rope の生成/破棄/組み直し + 始端ピンの追従。
+    // ★組み直し条件は「粒子数の不一致」だけ — snapshot 復元直後の Sync が復元された
+    //   池を壊さないための規約 (.cpp の実装コメント参照)
     void Sync(World& world);
 
     // シーン遷移時の全消し (TickRunner の LoadScene 反映ブロックから呼ばれる)
     void Reset() { pools_.clear(); }
 
     const std::vector<Pool>& Pools() const { return pools_; }
-    // sim スナップショット / セルフテスト用の可変アクセス。**SimSnapshot と selftest
-    // 以外から書き換えないこと** (CpuParticleBackend::PoolsForSnapshot と同じ契約)
+    // 可変アクセス。書き換えてよいのは **SimSnapshot / セルフテスト / 物理ソルバ
+    // (PhysicsSystem のサブステップが xpbd::Predict/Solve を通す) の 3 者だけ**
+    // (CpuParticleBackend::PoolsForSnapshot と同じ契約の M60'c 拡張)
     std::vector<Pool>& PoolsForSnapshot() { return pools_; }
 
 private:

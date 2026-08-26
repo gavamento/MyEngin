@@ -756,6 +756,35 @@ void RegisterBuiltinComponents()
         MYE_JP("制動力", MYE_FIELD_TIP(VehicleComponent, brakeForce, Float,
                                        "newtons per braked wheel at full brake")),
     });
+
+    // M60'c: ロープ (XPBD 変形体第 1 号)。状態は XpbdBackend の池 (ECS 外 sim 状態) に
+    // 住み、ここはオーサリングのみ。フィールドは **hash 対象** (opt-in、TypeId 末尾
+    // append =44)。池の組み直し条件は「粒子数 (segmentCount+1) の不一致」だけ —
+    // snapshot 復元後の Sync が池を壊さないための規約 (XpbdBackend::Sync 参照)
+    RegisterComponent<RopeComponent>("Rope", {
+        MYE_JP("分割数", MYE_FIELD_RANGE(RopeComponent, segmentCount, Int32, 1.0f, 256.0f)),
+        MYE_JP("全長", MYE_FIELD_TIP(RopeComponent, length, Float,
+                                     "metres, split evenly into rest lengths at build time; "
+                                     "editing it later takes effect on the next rebuild")),
+        MYE_JP("半径", MYE_FIELD_RANGE(RopeComponent, radius, Float, 0.001f, 10.0f)),
+        MYE_JP("質量", MYE_FIELD_TIP(RopeComponent, mass, Float,
+                                     "total mass in kg, spread evenly over the particles at "
+                                     "build time")),
+        MYE_JP("コンプライアンス",
+               MYE_FIELD_TIP(RopeComponent, compliance, Float,
+                             "1/stiffness in m/N, read live every tick; 0 keeps the rope "
+                             "inextensible")),
+        MYE_JP("減衰", MYE_FIELD_RANGE(RopeComponent, damping, Float, 0.0f, 1.0f)),
+        MYE_JP("始端をピン", MYE_FIELD_TIP(RopeComponent, attachStart, Bool,
+                                           "pins the first particle to this entity and follows "
+                                           "it every tick. baked at build time")),
+        MYE_JP("終端をピン", MYE_FIELD_TIP(RopeComponent, attachEnd, Bool,
+                                           "pins the last particle at its build-time world "
+                                           "position. baked at build time")),
+        MYE_JP("終端の接続先",
+               MYE_FIELD_TIP(RopeComponent, connectedEntity, EntityRef,
+                             "reserved: the far end will attach to this body (not yet wired)")),
+    });
 }
 
 } // namespace mye

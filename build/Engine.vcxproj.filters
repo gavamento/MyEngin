@@ -300,6 +300,9 @@
     <ClCompile Include="..\src\Engine\Engine\Physics\XpbdSelfTest.cpp">
       <Filter>Engine\Physics</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Physics\XpbdSolver.cpp">
+      <Filter>Engine\Physics</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\PhysicsSelfTest.cpp">
       <Filter>Engine</Filter>
     </ClCompile>
@@ -823,6 +826,9 @@
       <Filter>Engine\Physics</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Physics\XpbdSelfTest.h">
+      <Filter>Engine\Physics</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Physics\XpbdSolver.h">
       <Filter>Engine\Physics</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\PhysicsSelfTest.h">

@@ -356,7 +356,8 @@ void RunOneTick(TickServices& ts)
         if (!ts.resim) {
             const PhysicsDebugFlags& physDebug = GetPhysicsDebugFlags();
             if (physDebug.Any()) {
-                BuildPhysicsDebugLines(scene.GetWorld(), solidContacts, physDebug, debugLines);
+                BuildPhysicsDebugLines(scene.GetWorld(), solidContacts, physDebug, debugLines,
+                                       ts.xpbd);
             }
         }
     }

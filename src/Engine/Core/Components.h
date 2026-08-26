@@ -1116,6 +1116,30 @@ struct VehicleComponent {
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
+// ---- ロープ (M60'c、TypeId 44) ----
+// XPBD 変形体の第 1 号。**状態 (粒子・拘束) は XpbdBackend の池に住む** — 粒子数が
+// オーサリング依存で可変なので ECS カラムに置けない (計画 supple-weaving-loom 決定台帳 3)。
+// このコンポーネントはオーサリングだけを持ち、フィールドはシリアライズ対象 = hash 対象。
+// ★**segmentCount を変えると池が組み直される** (粒子状態は捨てて初期配置へ戻る)。
+//   length / mass / ピンは生成時に焼き込まれる値。ライブ編集が効くのは
+//   compliance / damping (毎 tick コンポーネントから読む導出値) だけ。
+// ★初期配置は「エンティティのワールド姿勢のローカル -Y へ直線に垂らす」。
+struct RopeComponent {
+    int32_t segmentCount = 16; // 距離拘束の本数。粒子は +1 本。変更 = 池の組み直し
+    float length = 4.0f;       // 全長 [m]。生成時に均等割りして rest 長へ焼き込む
+    float radius = 0.05f;      // 粒子の衝突/描画半径 [m] (衝突は M60'e から)
+    float mass = 1.0f;         // 全質量 [kg]。粒子へ均等割り (生成時)
+    float compliance = 0.0f;   // XPBD compliance = 1/k [m/N]。0 = 伸びない
+    float damping = 0.0f;      // 毎 tick の速度減衰率 (Rigidbody.linearDamping と同じ規約)
+    // 先頭粒子をこのエンティティのワールド位置へピンし、**毎 tick 追従**させる (生成時に確定)
+    bool attachStart = true;
+    // 末尾粒子を**生成時のワールド位置**へピンする (動かない点。生成時に確定)
+    bool attachEnd = false;
+    // 末尾の接続先 (M60'd から使用。c では読まれない)
+    EntityID connectedEntity = kNullEntity;
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
 class World;
 
 // エンティティが有効か (ActiveComponent が無ければ有効 / enabled==0 なら無効)

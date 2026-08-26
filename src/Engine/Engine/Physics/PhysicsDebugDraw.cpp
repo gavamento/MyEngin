@@ -6,6 +6,7 @@
 #include "Engine/Core/World.h"
 #include "Engine/Engine/DebugDraw.h"
 #include "Engine/Engine/Physics/PhysicsSystem.h"
+#include "Engine/Engine/Physics/XpbdBackend.h" // M60'c: 変形体の線源
 
 namespace mye {
 namespace {
@@ -38,6 +39,11 @@ constexpr float kJointAxisLen = 0.50f;  // 軸の描画長 [m]
 //   曲げる被写体がヒンジ 1 本だったので後回しにしていた。
 constexpr uint32_t kJointLimitColor = 0xC080FFFFu; // 可動域の円錐 / 円弧 (紫)
 constexpr float kJointLimitLen = 0.40f;            // 円錐の母線 / 円弧の半径 [m]
+
+// ---- 変形体 (M60'c) ----
+constexpr uint32_t kDeformLineColor = 0x30E0C0FFu; // 拘束の線 (青緑)
+constexpr uint32_t kDeformPinColor = 0xFFD040FFu;  // ピン留め粒子 (黄。関節の相手側と同系)
+constexpr float kDeformPinArm = 0.08f;             // ピンの十字の腕 [m]
 constexpr float kJointTwistRatio = 0.45f;          // ツイスト円弧の半径 (母線に対する比)
 constexpr int kJointConeSpokes = 8;                // 円錐の母線の本数
 constexpr int kJointArcSegs = 16;                  // 円弧・リムの分割数
@@ -164,8 +170,28 @@ PhysicsDebugFlags& GetPhysicsDebugFlags()
 }
 
 void BuildPhysicsDebugLines(World& world, const std::vector<SolidContact>& contacts,
-                            const PhysicsDebugFlags& flags, std::vector<DebugLineCmd>& out)
+                            const PhysicsDebugFlags& flags, std::vector<DebugLineCmd>& out,
+                            const XpbdBackend* xpbd)
 {
+    // ---- 変形体 (M60'c): 拘束の線 + ピン留め粒子の十字 ----
+    // 粒子は WorldMatrix を持たないので池を直接読む。これも読むだけの出力レーン
+    if (flags.deform && xpbd) {
+        for (const XpbdBackend::Pool& p : xpbd->Pools()) {
+            for (size_t c = 0; c < p.ca.size(); ++c) {
+                const size_t a = p.ca[c];
+                const size_t b = p.cb[c];
+                if (a < p.px.size() && b < p.px.size()) {
+                    PushLine(out, p.px[a], p.py[a], p.pz[a], p.px[b], p.py[b], p.pz[b],
+                             kDeformLineColor);
+                }
+            }
+            for (size_t i = 0; i < p.invMass.size(); ++i) {
+                if (p.invMass[i] == 0.0f) {
+                    PushCross(out, p.px[i], p.py[i], p.pz[i], kDeformPinArm, kDeformPinColor);
+                }
+            }
+        }
+    }
     if (flags.contacts) {
         // contacts は key 昇順 (PhysicsSystem の出力規約) なので、そのまま舐めれば固定順
         for (const SolidContact& c : contacts) {

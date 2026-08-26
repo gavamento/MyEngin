@@ -34,6 +34,14 @@ struct SolidContact {
     float impulse = 0.0f;
 };
 
+// M60'c: 親チェーンを LocalTransform から scalar 合成したワールド位置/回転。
+// 物理フェーズ (3.6) は WorldMatrix を読めない (1 tick 古い) ための公開口で、
+// 剛体収集の ComposeParentFrame/ApplyFrame と**同じ式**を通る (挙動は 1 ビットも変えない)。
+// XpbdBackend::Sync が池の初期配置とピン追従にこれを使う。scale は畳み込み済みの
+// 位置にだけ効き、回転は正規化前提 (剛体と同じ近似)
+void ComposeEntityWorldPose(World& world, EntityID e, float& px, float& py, float& pz, float& qx,
+                            float& qy, float& qz, float& qw);
+
 // 剛体物理 (M20、形状拡張 M28a、回転剛体 M28b)。決定論契約に従う簡易逐次インパルスソルバ:
 //   収集 (entity.index 昇順) → 積分 (重力 / 減衰 / 速度 / 角速度 / クォータニオン) →
 //   接触マニフォールド生成 (index 順、最大 4 点) → 固定反復・固定順ソルバ

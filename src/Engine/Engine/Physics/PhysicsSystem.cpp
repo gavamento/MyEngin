@@ -14,7 +14,8 @@
 #include "Engine/Engine/Physics/ConvexHull.h"            // M60f: 凸包の質量特性
 #include "Engine/Engine/Physics/PhysMatLibrary.h" // M59a2: physmat::Resolve (材料解決)
 #include "Engine/Engine/Physics/Shapes.h"
-#include "Engine/Engine/Physics/XpbdBackend.h" // M60'b: 変形体の粒子池 (Sync のみ)
+#include "Engine/Engine/Physics/XpbdBackend.h" // M60'b: 変形体の粒子池
+#include "Engine/Engine/Physics/XpbdSolver.h"  // M60'c: XPBD 距離拘束の射影
 #include "Engine/Engine/Ragdoll.h" // M60g1: 休止中のラグドールは kinematic 扱い
 
 using namespace DirectX;
@@ -1021,16 +1022,45 @@ void SolveCharacters(std::vector<Body>& bodies, std::vector<CharBody>& chars, fl
 
 } // namespace
 
+// M60'c: 剛体収集と同じ親フレーム合成でワールド姿勢を返す公開口 (PhysicsSystem.h 参照)
+void ComposeEntityWorldPose(World& world, EntityID e, float& px, float& py, float& pz, float& qx,
+                            float& qy, float& qz, float& qw)
+{
+    px = 0.0f; py = 0.0f; pz = 0.0f;
+    qx = 0.0f; qy = 0.0f; qz = 0.0f; qw = 1.0f;
+    const auto* lt = world.GetComponent<LocalTransform>(e);
+    if (!lt) {
+        return;
+    }
+    const WorldFrame f = ComposeParentFrame(world, e);
+    XMFLOAT3 wpos;
+    XMFLOAT4 wrot;
+    XMFLOAT3 wscale;
+    ApplyFrame(f, *lt, wpos, wrot, wscale);
+    px = wpos.x; py = wpos.y; pz = wpos.z;
+    qx = wrot.x; qy = wrot.y; qz = wrot.z; qw = wrot.w;
+}
+
 void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* outContacts,
                            XpbdBackend* xpbd)
 {
     if (outContacts) {
         outContacts->clear();
     }
-    // M60'b: 変形体の池をコンポーネントの有無と同期する (M60'b 時点では空実装)。
+    // M60'b: 変形体の池をコンポーネントの有無と同期する。
     // ★剛体の存在ゲートより前に置く — 布だけのシーン (剛体ゼロ) でも池は同期される必要がある
     if (xpbd) {
         xpbd->Sync(world);
+    }
+    // M60'c: 池ごとの導出パラメータ (compliance / damping) の引き先。Sync 直後なので
+    // owner は必ず生きている。**池に値をキャッシュしない** — 正本はコンポーネント 1 つで、
+    // 毎 tick 読むから snapshot 復元後も何もしなくて済む
+    std::vector<const RopeComponent*> xpbdParams;
+    if (xpbd && !xpbd->Pools().empty()) {
+        xpbdParams.reserve(xpbd->Pools().size());
+        for (const XpbdBackend::Pool& p : xpbd->Pools()) {
+            xpbdParams.push_back(world.GetComponent<RopeComponent>(p.owner));
+        }
     }
     // ---- 収集 (動的: Rigidbody + LocalTransform) ----
     std::vector<Body> bodies;
@@ -1290,8 +1320,10 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
         }
     });
 
-    // chars が空なら従来の分岐と同一 = 既存シーンはビット同一パス
-    if (bodies.empty() && chars.empty()) {
+    // chars が空なら従来の分岐と同一 = 既存シーンはビット同一パス。
+    // M60'c: 変形体の池が生きていれば剛体ゼロでも substep を回す (ロープだけのシーン) —
+    // ここで帰ると Sync だけ走って粒子が永遠に落ちない。池が空なら条件は従来と同値
+    if (bodies.empty() && chars.empty() && (xpbd == nullptr || xpbd->Pools().empty())) {
         return;
     }
     std::sort(bodies.begin(), bodies.end(),
@@ -1972,6 +2004,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
     // サブステップを増やすほど跳ねなくなるという逆転が起きる
     const float restitutionVelThreshold = kRestitutionVelThreshold * (h / dt);
     std::vector<SolidContact> subContacts; // サブステップ 1 回ぶんの接触 (合算前)
+    std::vector<float> xpbdLambda; // M60'c: XPBD の λ スクラッチ (sim 状態ではない)
     // M59h: 島 (union-find) の材料。最後のサブステップの候補ペアを使う — サブステップ
     // ごとに作り直されるが、入眠判定は tick 末の速度で行うので最後のものが正しい
     std::vector<uint64_t> islandPairs;
@@ -2006,6 +2039,20 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                     if (adamp < 0.0f) { adamp = 0.0f; }
                     b.wx *= adamp; b.wy *= adamp; b.wz *= adamp;
                 }
+            }
+        }
+
+        // ---- XPBD 変形体: 重力 → 減衰 → 位置予測 (M60'c)。剛体の速度積分と同じ段 ----
+        // 池が無ければ 1 分岐で抜ける = 既存シーンはビット同一 (存在ゲート)
+        if (xpbd && !xpbd->Pools().empty()) {
+            const float gx = env ? env->gravity.x : 0.0f;
+            const float gy = env ? env->gravity.y : kGravity;
+            const float gz = env ? env->gravity.z : 0.0f;
+            std::vector<XpbdBackend::Pool>& pools = xpbd->PoolsForSnapshot();
+            for (size_t k = 0; k < pools.size(); ++k) {
+                const RopeComponent* rope = xpbdParams[k];
+                xpbd::Predict(pools[k], gx, gy, gz, h, sub == 0,
+                              rope ? rope->damping : 0.0f);
             }
         }
 
@@ -3965,6 +4012,17 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                 B.pose.py -= m.ny * cj;
                 B.pose.pz -= m.nz * cj;
                 });
+            }
+        }
+
+        // ---- XPBD 変形体: 拘束射影 → 速度確定 (M60'c)。剛体ソルバ/位置補正の後 ----
+        // c の時点で剛体との連成は無い (単に同じサブステップで進むだけ)。
+        // d (アタッチ) / f (接触) がここへ剛体との連成行を混ぜる予定地
+        if (xpbd && !xpbd->Pools().empty()) {
+            std::vector<XpbdBackend::Pool>& pools = xpbd->PoolsForSnapshot();
+            for (size_t k = 0; k < pools.size(); ++k) {
+                const RopeComponent* rope = xpbdParams[k];
+                xpbd::Solve(pools[k], rope ? rope->compliance : 0.0f, h, xpbdLambda);
             }
         }
 

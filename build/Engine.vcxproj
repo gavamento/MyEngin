@@ -104,6 +104,7 @@
     <ClCompile Include="..\src\Engine\Engine\Physics\TerrainColliderLibrary.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Physics\XpbdBackend.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Physics\XpbdSelfTest.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Physics\XpbdSolver.cpp" />
     <ClCompile Include="..\src\Engine\Engine\PhysicsSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\PlayerInputSystem.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Prefab.cpp" />
@@ -279,6 +280,7 @@
     <ClInclude Include="..\src\Engine\Engine\Physics\TerrainColliderLibrary.h" />
     <ClInclude Include="..\src\Engine\Engine\Physics\XpbdBackend.h" />
     <ClInclude Include="..\src\Engine\Engine\Physics\XpbdSelfTest.h" />
+    <ClInclude Include="..\src\Engine\Engine\Physics\XpbdSolver.h" />
     <ClInclude Include="..\src\Engine\Engine\PhysicsSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\PlayerInputSystem.h" />
     <ClInclude Include="..\src\Engine\Engine\Prefab.h" />
