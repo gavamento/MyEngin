@@ -1540,6 +1540,10 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
         float sinSwing = 0.0f, cosSwing = 1.0f;   // swingLimitDeg (Cone のみ)
     };
     std::vector<JointLink> jointLinks;
+    // M60j: 接触を作らないボディ対の表 ((小 index << 32) | 大 index、昇順・重複なし)。
+    // ブロードフェーズの候補キーと**同じ組み方**なので、そのまま二分探索で引ける。
+    // 空のあいだはフィルタ帯ごと素通り = disableCollision を使わないシーンは無コスト
+    std::vector<uint64_t> jointNoCollide;
     // 不動アンカー用の番人ボディ。invMass 0 / invI 零行列なので、行の適用も有効質量も
     // 「何も起きない」へ自然に落ちる (-1 の分岐をソルバの各段に撒かないための作り)
     Body worldAnchorBody;
@@ -1652,6 +1656,27 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             jointLinks[w++] = l;
         }
         jointLinks.resize(w);
+        // ---- 接触を外すペアの表を作る (M60j) ----
+        // ★**ここで作る** (サブステップの中ではない) — 「誰と誰が繋がっているか」は
+        //   1 tick のあいだ変わらないし、body index も tick 頭に確定しているため。
+        // ★不動アンカー側 (ai < 0 / bi < 0) は相手のボディが居ないので何も外せない。
+        //   逆に**静的コライダーは bodies に居る**ので、塔にヒンジで留めた桟橋のように
+        //   「動かない相手との食い込み」もここで外れる (M60i の桟橋がまさにこの形)
+        for (const JointLink& l : jointLinks) {
+            if (!l.jc->disableCollision || l.ai < 0 || l.bi < 0) {
+                continue;
+            }
+            const uint64_t ja = static_cast<uint64_t>(l.ai);
+            const uint64_t jb = static_cast<uint64_t>(l.bi);
+            jointNoCollide.push_back((ja < jb) ? ((ja << 32) | jb) : ((jb << 32) | ja));
+        }
+        if (!jointNoCollide.empty()) {
+            // 二分探索の前提を作る。同じ 2 体を複数の関節が繋ぐことは (1 エンティティ 1
+            // 関節でも中間体を挟めば) 起こりうるので unique も掛ける
+            std::sort(jointNoCollide.begin(), jointNoCollide.end());
+            jointNoCollide.erase(std::unique(jointNoCollide.begin(), jointNoCollide.end()),
+                                 jointNoCollide.end());
+        }
     }
     // 関節のアンカー 2 点をワールドで取り直す (姿勢が動くので毎回計算する)
     auto jointAnchorsWorld = [&bodies](const JointLink& l, float& pax, float& pay, float& paz,
@@ -2987,6 +3012,23 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             candidates.resize(w);
         }
 
+        // ---- 関節ペアの除外 (M60j): disableCollision な関節が繋ぐ 2 体を候補から落とす ----
+        // ★**島 (islandPairs) と起床には効かない**のがこの置き場の要点。どちらも
+        //   関節ペアを別途明示的に足してある (M60a) ので、接触候補から消えても
+        //   「繋がった 2 体が揃って眠り、揃って起きる」は保たれる。逆にレイヤーで
+        //   切ると島も起床も一緒に切れてしまう — そこが `mask` との決定的な違い。
+        // ★CCD の掃引でも同じ表を引く (下の M59j 帯)。片方だけ外すと、速い骨が
+        //   隣の骨を CCD 経由でだけ蹴るという説明のつかない挙動になる
+        if (!jointNoCollide.empty()) {
+            size_t w = 0;
+            for (const uint64_t key : candidates) {
+                if (!std::binary_search(jointNoCollide.begin(), jointNoCollide.end(), key)) {
+                    candidates[w++] = key;
+                }
+            }
+            candidates.resize(w);
+        }
+
         // ---- 起床 (M59h): 覚醒中のボディに触られたら起きる ----
         // 候補ペア (小,大) 昇順の **1 パス**。A→B→C と伝播する連鎖は 1 パスでは届かない
         // ことがあるが、届かなかったぶんは次 tick へ持ち越される (決定論的で、
@@ -3971,6 +4013,15 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                     const Body& B = bodies[j];
                     if (!B.solid || !shapes::CanCollide(A.layer, A.mask, B.layer, B.mask)) {
                         continue;
+                    }
+                    // M60j: ブロードフェーズで外したペアは掃引でも外す (同じ表を引く)
+                    if (!jointNoCollide.empty()) {
+                        const uint64_t lo = (i < j) ? i : j;
+                        const uint64_t hi = (i < j) ? j : i;
+                        if (std::binary_search(jointNoCollide.begin(), jointNoCollide.end(),
+                                               (lo << 32) | hi)) {
+                            continue;
+                        }
                     }
                     float tminX, tminY, tminZ, tmaxX, tmaxY, tmaxZ;
                     shapes::ComputeAabb(B.pose, tminX, tminY, tminZ, tmaxX, tmaxY, tmaxZ);

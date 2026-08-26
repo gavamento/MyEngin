@@ -682,6 +682,11 @@ void RegisterBuiltinComponents()
                MYE_FIELD_TIP(JointComponent, restRotation, Quat,
                              "relative rotation that counts as 'at rest'; identity means the "
                              "two local frames line up")),
+        // M60j: 繋がったペアの接触を外す (末尾 append)
+        MYE_JP("接続先と衝突しない",
+               MYE_FIELD_TIP(JointComponent, disableCollision, Bool,
+                             "drops just this one pair from the broad phase; neighbours two "
+                             "links away still collide, and a broken joint collides again")),
     });
 
     // M60g1: ラグドール。**hash 対象** — active が「アニメが骨を駆動するか / 物理が駆動するか」

@@ -6840,6 +6840,256 @@ bool RunPhysicsSelfTest()
         }
     }
 
+    // ================= M60j: 関節ペアの衝突除外 =================
+    // `JointComponent.disableCollision` = Unity の Joint.enableCollision の裏返し。
+    // ★**レイヤーマスクで切るのとは別物**。mask はブロードフェーズより手前で効くので
+    //   島 (islandPairs) と起床の伝播まで一緒に切ってしまい、繋がった 2 体が別々に眠る。
+    //   こちらは候補ペア列からだけ落とし、島と起床は M60a が足した関節ペアで保たれる。
+    // ★M60g2-4 の実測「自己衝突を丸ごと切ると却って暴れる」への答えでもある。接触は
+    //   暴れの原因であると同時に減衰源なので、外すのは**隣接 1 ペアだけ**にする。
+    {
+        // 重なった 2 体をボールジョイントで繋ぐ。halfExtents 0.5 に対して中心間 0.8 =
+        // 0.2 だけ食い込んだ配置で、アンカーは接触面の中央で一致している (= 拘束は充足)
+        struct Pair {
+            GameObject a, b;
+            JointComponent* j = nullptr;
+            const LocalTransform* lta = nullptr;
+            const LocalTransform* ltb = nullptr;
+        };
+        auto buildOverlap = [&](Scene& s, bool disable) {
+            Pair p;
+            p.a = MakeBox(s, "A", -0.4f, 0.0f, 0.0f, 0.5f, 0.5f, 0.5f);
+            p.b = MakeBox(s, "B", 0.4f, 0.0f, 0.0f, 0.5f, 0.5f, 0.5f);
+            auto* jc = p.a.AddComponent<JointComponent>();
+            jc->type = 0;
+            jc->connectedEntity = p.b.Id();
+            jc->anchor = { 0.4f, 0.0f, 0.0f };
+            jc->connectedAnchor = { -0.4f, 0.0f, 0.0f };
+            jc->disableCollision = disable;
+            s.GetWorld().ApplyStructuralChanges();
+            // ★ポインタは最後の構造変更のあとに取り直す (M59h で踏んだ罠)
+            p.j = p.a.GetComponent<JointComponent>();
+            p.lta = p.a.GetComponent<LocalTransform>();
+            p.ltb = p.b.GetComponent<LocalTransform>();
+            p.a.GetComponent<RigidbodyComponent>()->gravityScale = 0.0f;
+            p.b.GetComponent<RigidbodyComponent>()->gravityScale = 0.0f;
+            return p;
+        };
+        auto gap = [](const Pair& p) { return p.ltb->position.x - p.lta->position.x; };
+
+        // -- (j-1) 基準: 切らなければ食い込みが接触として出て、関節と押し合いになる --
+        {
+            Scene s;
+            Pair p = buildOverlap(s, false);
+            std::vector<SolidContact> contacts;
+            size_t firstCount = 0;
+            for (int i = 0; i < 240; ++i) {
+                phys.Update(s.GetWorld(), kDt, &contacts);
+                if (i == 0) {
+                    firstCount = contacts.size();
+                }
+            }
+            const float g = gap(p);
+            MYE_LOG_INFO("  [phys] joint nocollide off: pairs = %d, centre gap = %.4f m "
+                         "(placed at 0.8)",
+                         static_cast<int>(firstCount), static_cast<double>(g));
+            check(firstCount == 1, "nocollide: a jointed overlapping pair does collide by default");
+            check(g > 0.85f, "nocollide: and the contact shoves it apart against the joint");
+        }
+
+        // -- (j-2) 切ると接触が 1 組も出ず、食い込んだまま置いた位置に留まる --
+        {
+            Scene s;
+            Pair p = buildOverlap(s, true);
+            std::vector<SolidContact> contacts;
+            bool anyContact = false;
+            for (int i = 0; i < 240; ++i) {
+                phys.Update(s.GetWorld(), kDt, &contacts);
+                if (!contacts.empty()) {
+                    anyContact = true;
+                }
+            }
+            const float g = gap(p);
+            MYE_LOG_INFO("  [phys] joint nocollide on: any contact = %d, centre gap = %.6f m",
+                         anyContact ? 1 : 0, static_cast<double>(g));
+            check(!anyContact, "nocollide: disableCollision drops the pair from the broad phase");
+            check(std::fabs(g - 0.8f) < 1e-4f,
+                  "nocollide: and the two stay exactly where they were placed");
+        }
+
+        // -- (j-3) 外すのは**その 1 ペアだけ** — 第三者とは今までどおり当たる --
+        {
+            Scene s;
+            Pair p = buildOverlap(s, true);
+            // A にだけ重ねた箱 (関節なし)。A-B は外れていても A-C は残るはず。
+            // ★x = -0.7 は「A とは重なるが B とは重ならない」ぎりぎりの位置 —
+            //   -0.4 に置くと B とも重なって接触が 2 組になり、何を測ったのか分からなくなる
+            MakeBox(s, "C", -0.7f, 0.6f, 0.0f, 0.5f, 0.5f, 0.5f);
+            s.GetWorld().ApplyStructuralChanges();
+            std::vector<SolidContact> contacts;
+            phys.Update(s.GetWorld(), kDt, &contacts);
+            MYE_LOG_INFO("  [phys] joint nocollide third party: pairs = %d",
+                         static_cast<int>(contacts.size()));
+            check(contacts.size() == 1,
+                  "nocollide: an unjointed neighbour still collides with the same body");
+        }
+
+        // -- (j-4) 伝播しない: A-B と C-B を外しても、2 つ離れた A-C は当たる --
+        // ★ラグドールで「隣の骨とは重なってよいが、手と頭は当たってほしい」が成立する根拠。
+        //   関節が充足する位置に置いてあるので、拘束が形を崩さないまま接触だけを観測できる
+        {
+            Scene s;
+            GameObject a = MakeBox(s, "A", 0.0f, 0.0f, 0.0f, 0.5f, 0.5f, 0.5f);
+            GameObject b = MakeBox(s, "B", 2.0f, 0.0f, 0.0f, 0.5f, 0.5f, 0.5f);
+            GameObject c = MakeBox(s, "C", 0.6f, 0.0f, 0.0f, 0.5f, 0.5f, 0.5f);
+            auto* ja = a.AddComponent<JointComponent>();
+            ja->type = 0;
+            ja->connectedEntity = b.Id();
+            ja->anchor = { 2.0f, 0.0f, 0.0f }; // A から見た B の中心
+            ja->connectedAnchor = { 0.0f, 0.0f, 0.0f };
+            ja->disableCollision = true;
+            auto* jc = c.AddComponent<JointComponent>();
+            jc->type = 0;
+            jc->connectedEntity = b.Id();
+            jc->anchor = { 1.4f, 0.0f, 0.0f }; // C から見た B の中心
+            jc->connectedAnchor = { 0.0f, 0.0f, 0.0f };
+            jc->disableCollision = true;
+            s.GetWorld().ApplyStructuralChanges();
+            a.GetComponent<RigidbodyComponent>()->gravityScale = 0.0f;
+            b.GetComponent<RigidbodyComponent>()->gravityScale = 0.0f;
+            c.GetComponent<RigidbodyComponent>()->gravityScale = 0.0f;
+            std::vector<SolidContact> contacts;
+            phys.Update(s.GetWorld(), kDt, &contacts);
+            MYE_LOG_INFO("  [phys] joint nocollide chain A-B-C: pairs = %d",
+                         static_cast<int>(contacts.size()));
+            check(contacts.size() == 1,
+                  "nocollide: exclusion does not propagate (two links apart still collide)");
+        }
+
+        // -- (j-5) 折れた関節は普通にぶつかる (行も除外も収集の時点で消える) --
+        {
+            Scene s;
+            Pair p = buildOverlap(s, true);
+            p.j->broken = true;
+            std::vector<SolidContact> contacts;
+            phys.Update(s.GetWorld(), kDt, &contacts);
+            MYE_LOG_INFO("  [phys] joint nocollide broken: pairs = %d",
+                         static_cast<int>(contacts.size()));
+            check(contacts.size() == 1,
+                  "nocollide: a broken joint stops excluding the pair as well");
+        }
+
+        // -- (j-6) 島と起床は壊れない: 接触が 1 組も無くても揃って眠り、揃って起きる --
+        // ★これが「mask で切る」との差そのもの。除外はブロードフェーズの候補列だけに効き、
+        //   islandPairs と起床には M60a が足した関節ペアが残っている
+        {
+            Scene s;
+            GameObject envGo = s.CreateGameObjectTracked("Env");
+            envGo.AddComponent<PhysicsEnvironmentComponent>()->sleepDelayTicks = 60;
+            MakeGround(s, "G", 0, -0.5f, 0, 8.0f, 0.5f, 8.0f);
+            GameObject a = MakeBox(s, "A", -0.4f, 0.5f, 0.0f, 0.5f, 0.5f, 0.5f);
+            GameObject b = MakeBox(s, "B", 0.4f, 0.5f, 0.0f, 0.5f, 0.5f, 0.5f);
+            auto* jc = a.AddComponent<JointComponent>();
+            jc->type = 0;
+            jc->connectedEntity = b.Id();
+            jc->anchor = { 0.8f, 0.0f, 0.0f };
+            jc->connectedAnchor = { 0.0f, 0.0f, 0.0f };
+            jc->disableCollision = true;
+            s.GetWorld().ApplyStructuralChanges();
+            auto* ra = a.GetComponent<RigidbodyComponent>();
+            auto* rb = b.GetComponent<RigidbodyComponent>();
+            int sleepA = -1, sleepB = -1;
+            for (int i = 0; i < 600; ++i) {
+                phys.Update(s.GetWorld(), kDt);
+                if (sleepA < 0 && ra->isSleeping) {
+                    sleepA = i;
+                }
+                if (sleepB < 0 && rb->isSleeping) {
+                    sleepB = i;
+                }
+            }
+            MYE_LOG_INFO("  [phys] joint nocollide island: A slept at %d, B at %d", sleepA,
+                         sleepB);
+            check(sleepA >= 0 && sleepA == sleepB,
+                  "nocollide: an excluded pair still sleeps as one island");
+            ra->isSleeping = false;
+            ra->velocity = { 0.0f, 0.0f, 1.5f };
+            phys.Update(s.GetWorld(), kDt);
+            check(!rb->isSleeping, "nocollide: and waking one end still wakes the other");
+        }
+
+        // -- (j-7) CCD の掃引でも同じ表を引く --
+        // ★片方だけ外すと「速い骨が隣の骨を CCD 経由でだけ蹴る」という説明のつかない
+        //   挙動になる。スライダで軸上を自由にしておき、壁 (= 繋がった相手) を撃つ
+        {
+            auto shoot = [&](bool disable) {
+                Scene s;
+                GameObject wall = MakeGround(s, "Wall", 8.0f, 0, 0, 0.05f, 3.0f, 3.0f);
+                GameObject bullet = MakeSphereBody(s, "Bullet", 0.0f, 0.0f, 0.0f, 0.2f);
+                auto* jc = bullet.AddComponent<JointComponent>();
+                jc->type = 3; // Slider: 軸方向は自由 = 弾は壁へ向かって進める
+                jc->connectedEntity = wall.Id();
+                jc->axis = { 1.0f, 0.0f, 0.0f };
+                jc->anchor = { 0.0f, 0.0f, 0.0f };
+                jc->connectedAnchor = { 0.0f, 0.0f, 0.0f };
+                jc->disableCollision = disable;
+                s.GetWorld().ApplyStructuralChanges();
+                auto* rb = bullet.GetComponent<RigidbodyComponent>();
+                rb->ccd = true;
+                rb->gravityScale = 0.0f;
+                rb->velocity = { 200.0f, 0.0f, 0.0f };
+                const auto* lt = bullet.GetComponent<LocalTransform>();
+                for (int i = 0; i < 6; ++i) {
+                    phys.Update(s.GetWorld(), kDt);
+                }
+                return lt->position.x;
+            };
+            const float stopped = shoot(false);
+            const float passed = shoot(true);
+            MYE_LOG_INFO("  [phys] joint nocollide ccd: x = %.3f (off) / %.3f (on), wall at 8.0",
+                         static_cast<double>(stopped), static_cast<double>(passed));
+            check(stopped < 8.0f, "nocollide: the ccd sweep stops a fast body by default");
+            check(passed > 8.0f, "nocollide: and lets it through once the pair is excluded");
+        }
+
+        // -- (j-8) 決定論: 除外ありのシーンの 240 tick 並走ハッシュ一致 --
+        {
+            auto build = [&](Scene& s) {
+                MakeGround(s, "G", 0, -0.5f, 0, 8.0f, 0.5f, 8.0f);
+                GameObject a = MakeBox(s, "A", -0.4f, 1.2f, 0.0f, 0.5f, 0.5f, 0.5f);
+                GameObject b = MakeBox(s, "B", 0.4f, 1.2f, 0.0f, 0.5f, 0.5f, 0.5f);
+                auto* jc = a.AddComponent<JointComponent>();
+                jc->type = 0;
+                jc->connectedEntity = b.Id();
+                jc->anchor = { 0.4f, 0.0f, 0.0f };
+                jc->connectedAnchor = { -0.4f, 0.0f, 0.0f };
+                jc->disableCollision = true;
+                // 除外していないボディも混ぜる (フィルタが候補列の順序を壊さないことの検査)
+                MakeBox(s, "Free", 2.0f, 1.6f, 0.0f, 0.4f, 0.4f, 0.4f);
+                s.GetWorld().ApplyStructuralChanges();
+            };
+            Scene sa, sb;
+            build(sa);
+            build(sb);
+            bool det = true;
+            uint64_t finalHash = 0;
+            for (int i = 0; i < 240 && det; ++i) {
+                phys.Update(sa.GetWorld(), kDt);
+                phys.Update(sb.GetWorld(), kDt);
+                const uint64_t ha = HashWorld(sa.GetWorld(), nullptr);
+                const uint64_t hb = HashWorld(sb.GetWorld(), nullptr);
+                if (ha != hb) {
+                    det = false;
+                    MYE_LOG_ERROR("  nocollide determinism diverged at tick %d", i);
+                }
+                finalHash = ha;
+            }
+            check(det, "nocollide: two identical excluded scenes hash-identical for 240 ticks");
+            MYE_LOG_INFO("  [phys] joint nocollide scene hash @240 = %016llX",
+                         static_cast<unsigned long long>(finalHash));
+        }
+    }
+
     if (failCount == 0) {
         MYE_LOG_INFO("==== Physics self test: ALL PASS ====");
         return true;
