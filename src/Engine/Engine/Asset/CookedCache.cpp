@@ -4,6 +4,8 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <process.h> // _getpid (並列クック時のテンポラリ名の一意化)
+#include <string>
 
 #include "Engine/Core/AssetKeyResolver.h"
 #include "Engine/Core/Hash.h"
@@ -262,8 +264,12 @@ bool Write(const std::wstring& srcPath, const wchar_t* ext, const void* payload,
 
     std::error_code ec;
     std::filesystem::create_directories(g_dir, ec);
-    // 書きかけのファイルを次回起動が有効ヘッダと誤認しないよう、テンポラリ → rename にする
-    const std::wstring tmpPath = cookPath + L".tmp";
+    // 書きかけのファイルを次回起動が有効ヘッダと誤認しないよう、テンポラリ → rename にする。
+    // ★テンポラリ名には PID を混ぜる — replay_verify.bat の並列化で複数プロセスが同一
+    //   アセットを同時にクックしうる。固定名だと 2 者が同じ .tmp へ交互に書いて混線し、
+    //   rename に勝った側が壊れたファイルを残す (rename 自体はアトミックなので名前さえ
+    //   分ければ「どちらかの完全な内容」しか見えない)
+    const std::wstring tmpPath = cookPath + L"." + std::to_wstring(_getpid()) + L".tmp";
     {
         std::ofstream f(std::filesystem::path{ tmpPath }, std::ios::binary | std::ios::trunc);
         if (!f) {

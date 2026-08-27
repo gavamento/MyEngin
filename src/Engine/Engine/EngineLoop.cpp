@@ -1139,6 +1139,11 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         accumulator += dt;
         int ticks = 0;
         const bool verifying = player.IsActive();
+        // --replay-fast (バッチ記録の早回し): verify と同じく実時間と切り離して回す。
+        // ★replayTicks > 0 を条件に含める — 無いと「終わりの無い記録」が全速で回り続ける。
+        //   ネットは対象外 (相手の実時間と歩調を合わせる必要があり、早回しの意味が無い)
+        const bool fastRecording = config.replayFast && recorder.IsActive() && !netEnabled
+            && config.replayTicks > 0;
         // ---- オーディオのゲート (M45): 記録/検証中はサスペンドする。
         // drain だけでなく **オーディオ更新フレーム全体** を止めるのが要点 — 検証中は
         // 1 フレームで最大 64 tick 回るので、ゲートが drain だけだと 3D 計算 (M45e) や
@@ -1183,8 +1188,8 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         if (scrubbing) {
             accumulator = 0.0; // 再開時に溜まった分が一気に流れないように
         }
-        // 検証モードは実時間と切り離して最速で回す (spec 11.3 の CLI 実行)
-        const int maxTicksThisFrame = verifying ? 64 : kMaxTicksPerFrame;
+        // 検証モード (と --replay-fast の記録) は実時間と切り離して最速で回す (spec 11.3)
+        const int maxTicksThisFrame = (verifying || fastRecording) ? 64 : kMaxTicksPerFrame;
         // ---- 遅延ロックステップのゲート (M52h) ----
         // ★全 peer の tick 入力がそろうまで **1 tick も進めない**。ここが「揃った入力で
         //   回る」の全部で、これ以上の同期機構は要らない (予測して先へ進むのは M52i)。
@@ -1220,7 +1225,8 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         NetCheckDesync();
         while (!scrubbing && ticks < maxTicksThisFrame
                && (verifying ? player.HasTick(ctx.tickIndex)
-                             : (accumulator >= kFixedDt && NetReady(ctx.tickIndex)))) {
+                             : ((fastRecording || accumulator >= kFixedDt)
+                                && NetReady(ctx.tickIndex)))) {
             // M52i: この tick が未確定レーンを予測で埋めて走ったか (tick 末の投機記録へ)
             bool netTickPredicted = false;
             if (verifying) {
@@ -1353,14 +1359,14 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                 stressRestoreMs += (tEnd - tRes) * 1000.0;
             }
             ++ticks;
-            if (!verifying) {
+            if (!verifying && !fastRecording) {
                 accumulator -= kFixedDt;
             }
             if (ctx.requestExit) {
                 break;
             }
         }
-        if (!verifying && ticks == kMaxTicksPerFrame && accumulator > kFixedDt) {
+        if (!verifying && !fastRecording && ticks == kMaxTicksPerFrame && accumulator > kFixedDt) {
             // 追いつけない分は捨てる (スローモーション化を許容し、tick 爆発を防ぐ)
             accumulator = kFixedDt;
         }

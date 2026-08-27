@@ -174,6 +174,10 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 config.vsync = false;
             } else if (arg == L"--replay-ticks" && i + 1 < argc) {
                 config.replayTicks = _wtoi64(argv[++i]);
+            } else if (arg == L"--replay-fast") {
+                // バッチ記録の早回し (replay_verify.bat 用)。手動記録には渡さないこと —
+                // ライブ入力は 1 フレーム 1 回しか採らないので複数 tick が同じ値を食う
+                config.replayFast = true;
             } else if (arg == L"--rep-snapshot") {
                 // M52d: .rep へ記録開始時点の sim 状態を埋め込む (シーン非依存の再生)
                 config.replayEmbedSnapshot = true;

@@ -31,7 +31,7 @@ MyEngine — C++20 / DirectX 11 の自作ゲームエンジン (VS2022 / x64 / W
 | コマンド | 担保するもの |
 |---|---|
 | `bin\x64\Debug\Editor.exe --selftest` | ヘッドレス回帰 40 スイート (D3D もウィンドウも作らない) |
-| `tools\replay_verify.bat [ticks]` | 8 ビルド → 6 シーンペアのリプレイ照合 → snapshot 往復 → タイムトラベル巻き戻し → 規則検査 |
+| `tools\replay_verify.bat [ticks]` | 8 ビルド → 並列 9 ジョブ (6 シーンチェーン = 記録 `--replay-fast` + snapshot 往復付き照合 + Release 照合 / タイムトラベル ×2 / 規則検査)。1 本だけ回すなら `--job <名前>` 再入 (ビルド済み前提)、並列度は `MYE_REPLAY_JOBS` |
 | `tools\shot_verify.bat [--update]` | 決定的スクショ 14 枚を `tests\golden\*.png` と比較 (CI 判定は 10 枚 — FXAA / TAA / SSR / froxel の 4 枚は分岐反転で機種差が増幅するので tol=0 のローカル限定。地形の 1 枚だけ異方性フィルタの実装依存で tol=12。**物理と関節の 2 枚だけ frame 120 で撮る** — 他は frame 3 = ほぼ初期配置なので物理が絵に出ない。**先に Release ビルドが必要**) |
 | `pwsh -File tools\check_rules.ps1` | 規則 1/2/4/7/8/9/10/11 の静的検査 |
 | `tools\crash_verify.bat [Debug\|Release]` | 5 経路で実際に落として crash バンドル → .rep が再生・再現すること (**CI 対象外**) |

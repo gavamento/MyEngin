@@ -170,6 +170,13 @@ struct EngineConfig {
     // 埋め込みがあれば検証側は**シーンの中身に依存せず**その状態から再生できる
     // (配布ビルドのクラッシュ .rep が本命 = M52f)。既定 off なので .rep のサイズは従来どおり
     bool replayEmbedSnapshot = false;
+    // --replay-fast: 記録も verify と同じく実時間と切り離して最速で回す (64 tick/frame)。
+    // sim は実時間を一切読まない (規則 3) ので .rep はバイト一致する — replay_verify.bat の
+    // 記録 6 本が「600 tick = 実時間 10 秒」の壁時計を払っていたのを潰すのが目的。
+    // ★効くのは記録モード + replayTicks > 0 + 非ネットのときだけ。ライブ入力は 1 フレーム
+    //   1 回しか採らないので、人間が録るときにこれを立てると複数 tick が同じ入力を食う
+    //   (= バッチ専用フラグ。手動記録には渡さないこと)
+    bool replayFast = false;
 
     // ---- ハッシュ差分診断 (M52a) ----
     // 空でなければ hashDumpTick の tick 末 (= ハッシュを撮るのと同じ点) で
