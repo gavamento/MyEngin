@@ -49,6 +49,10 @@ private:
         GpuAliveEstimator aliveEst; // 生存数の CPU 側推定 (表示用。readback しない)
         int32_t idleTicks = 0; // 「放出0 + 推定生存0」の連続 tick (空 Dispatch 回避の猶予計数)
         bool gpuIdle = false;  // true = 今 tick は GPU 作業を丸ごと省いた (Render もスキップ)
+        // M61c: 原点履歴 (CPU 側 EmitterPool の prevOrigin ミラー)。GPU バックエンドは
+        // 表示用ベストエフォート = ハッシュ/スナップショット非対象なのでここに置くだけでよい
+        DirectX::XMFLOAT3 prevOrigin = {};
+        uint32_t prevOriginValid = 0;
         Pcg32 rng;
         ParticleEmitterComponent descCache;
         bool firstDispatch = true; // 初回のみ dead list カウンタを capacity で初期化

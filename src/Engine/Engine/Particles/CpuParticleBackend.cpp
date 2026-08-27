@@ -204,6 +204,18 @@ void CpuParticleBackend::EmitParticles(EmitterPool& pool, const ParticleEmitterC
         pool.life.resize(newSize); pool.invLife.resize(newSize); pool.size0.resize(newSize);
     }
 
+    // M61c: エミッタ速度 (prevOrigin 履歴から。プール誕生 tick は履歴なし = 0)。
+    // 消費するのは速度継承 (velocityInheritance != 0) とサブフレーム補間だけ —
+    // 既定 (係数 0 / subframe 0) では値を読みもしないため従来とビット同一
+    const bool subframe = (desc.subframeEmission != 0);
+    XMFLOAT3 emitterVel = { 0.0f, 0.0f, 0.0f };
+    if (pool.prevOriginValid != 0 && dt > 0.0f) {
+        const float invDt = 1.0f / dt;
+        emitterVel = { (origin.x - pool.prevOrigin.x) * invDt,
+                       (origin.y - pool.prevOrigin.y) * invDt,
+                       (origin.z - pool.prevOrigin.z) * invDt };
+    }
+
     for (int n = 0; n < emit; ++n) {
         const uint32_t i = pool.alive++;
         // 乱数の消費順は固定 (決定論): 方向 → 位置 → 速度 → 寿命 → サイズ。
@@ -223,7 +235,29 @@ void CpuParticleBackend::EmitParticles(EmitterPool& pool, const ParticleEmitterC
             }
         }
 
+        float velX = smp.dirX * speed;
+        float velY = smp.dirY * speed;
+        float velZ = smp.dirZ * speed;
+        if (desc.velocityInheritance != 0.0f) {
+            // M61c ③: エミッタ速度の継承。係数 0.0f では演算自体をしない —
+            // +0.0f の加算でも -0.0 が +0.0 に化けるため (ビット保存の契約)
+            velX += emitterVel.x * desc.velocityInheritance;
+            velY += emitterVel.y * desc.velocityInheritance;
+            velZ += emitterVel.z * desc.velocityInheritance;
+        }
+
         float posX = origin.x, posY = origin.y, posZ = origin.z;
+        float f = 0.0f;
+        if (subframe) {
+            // M61c ②: 誕生フラクション f=(n+0.5)/N で tick 区間へ等分散。放出基準点は
+            // prevOrigin→origin の補間 (履歴なし = プール誕生 tick は origin のまま)
+            f = ParticleSubframeFraction(n, emit);
+            if (pool.prevOriginValid != 0) {
+                posX = pool.prevOrigin.x + (origin.x - pool.prevOrigin.x) * f;
+                posY = pool.prevOrigin.y + (origin.y - pool.prevOrigin.y) * f;
+                posZ = pool.prevOrigin.z + (origin.z - pool.prevOrigin.z) * f;
+            }
+        }
         if (smp.hasOffset) {
             // hasOffset=false のときは加算自体をしない (origin.x + 0.0f は -0.0 を +0.0 に
             // 変えるので、point/cone(apex) の従来経路はここを通らないことがビット保存の条件)
@@ -231,14 +265,28 @@ void CpuParticleBackend::EmitParticles(EmitterPool& pool, const ParticleEmitterC
             posY += smp.offY;
             posZ += smp.offZ;
         }
+        float lifeInit = lifetime;
+        if (subframe) {
+            // M61c ②: 同 tick の Simulate は全量 dt を積分する — 初期値側で辻褄を合わせる。
+            //   誕生後の運動を (1-f)*dt 分にしたい → pos から vel*f*dt を前倒しで引く
+            //   寿命消費も (1-f)*dt 分にしたい → life に f*dt を前倒しで足す
+            // Simulate 後: pos ≈ 誕生位置 + vel*(1-f)dt (加速度分 O(a*dt^2) は許容)、
+            // life = lifetime - (1-f)dt。invLife は本来の lifetime 基準のまま —
+            // age 曲線の勾配は変えない (誕生直後の age が僅かに負になるのは描画 clamp が吸収)
+            const float fdt = f * dt;
+            posX -= velX * fdt;
+            posY -= velY * fdt;
+            posZ -= velZ * fdt;
+            lifeInit = lifetime + fdt;
+        }
 
         pool.px[i] = posX;
         pool.py[i] = posY;
         pool.pz[i] = posZ;
-        pool.vx[i] = smp.dirX * speed;
-        pool.vy[i] = smp.dirY * speed;
-        pool.vz[i] = smp.dirZ * speed;
-        pool.life[i] = lifetime;
+        pool.vx[i] = velX;
+        pool.vy[i] = velY;
+        pool.vz[i] = velZ;
+        pool.life[i] = lifeInit;
         pool.invLife[i] = 1.0f / lifetime;
         pool.size0[i] = size;
     }

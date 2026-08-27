@@ -274,6 +274,21 @@ void GpuParticleBackend::Update(World& world, float dt)
         // だが放出コードは CPU 側と共有 = 見た目パリティを構造で保つ
         const ParticleEmitBasis basis = MakeParticleEmitBasis(wm->value);
 
+        // M61c: エミッタ速度 (CPU 側 EmitParticles と同式)。履歴の更新は gpuIdle の
+        // continue より前に置く — idle 中に止めると起床 tick に古い prevOrigin との差が
+        // 巨大な速度スパイクとして出る
+        XMFLOAT3 emitterVel = { 0.0f, 0.0f, 0.0f };
+        if (em.prevOriginValid != 0 && dt > 0.0f) {
+            const float invDt = 1.0f / dt;
+            emitterVel = { (origin.x - em.prevOrigin.x) * invDt,
+                           (origin.y - em.prevOrigin.y) * invDt,
+                           (origin.z - em.prevOrigin.z) * invDt };
+        }
+        const XMFLOAT3 prevOrigin = em.prevOrigin;          // 今 tick の補間用 (上書き前に退避)
+        const uint32_t prevOriginValid = em.prevOriginValid;
+        em.prevOrigin = origin;
+        em.prevOriginValid = 1;
+
         // ---- CPU 側で放出データを生成 (決定論 RNG。GPU では乱数を作らない) ----
         // 放出計画は CPU バックエンドと共有 (M32a: playing/duration/loop/burst)。表示用ベストエフォート。
         int emitCount = PlanParticleEmission(*desc, em.ageTicks, em.emitAccum, dt);
@@ -294,6 +309,11 @@ void GpuParticleBackend::Update(World& world, float dt)
 
         // M61b: 形状サンプリングは CPU バックエンドと共有 (SampleParticleShape。
         // 旧: ここに CpuParticleBackend::EmitParticles の手写しコピーが重複していた)
+        // M61c: 速度継承とサブフレーム補間も CPU 側 EmitParticles と同式のミラー。
+        // 唯一の差分: GPU 粒子の invLife は emit CS が 1/life から作るため、subframe の
+        // 寿命前倒し (life = lifetime + f*dt) の分だけ age 曲線が最大 1 tick 分ずれる —
+        // 表示専用の許容誤差 (EmitData に invLife は載せない)
+        const bool subframe = (desc->subframeEmission != 0);
         std::vector<EmitData> emitData(static_cast<size_t>(std::max(emitCount, 0)));
         for (int n = 0; n < emitCount; ++n) {
             ParticleShapeSample smp = SampleParticleShape(*desc, em.rng);
@@ -306,16 +326,40 @@ void GpuParticleBackend::Update(World& world, float dt)
                     ParticleBasisTransformOffset(basis, smp.offX, smp.offY, smp.offZ);
                 }
             }
+            float velX = smp.dirX * speed;
+            float velY = smp.dirY * speed;
+            float velZ = smp.dirZ * speed;
+            if (desc->velocityInheritance != 0.0f) {
+                velX += emitterVel.x * desc->velocityInheritance;
+                velY += emitterVel.y * desc->velocityInheritance;
+                velZ += emitterVel.z * desc->velocityInheritance;
+            }
             float posX = origin.x, posY = origin.y, posZ = origin.z;
+            float f = 0.0f;
+            if (subframe) {
+                f = ParticleSubframeFraction(n, emitCount);
+                if (prevOriginValid != 0) {
+                    posX = prevOrigin.x + (origin.x - prevOrigin.x) * f;
+                    posY = prevOrigin.y + (origin.y - prevOrigin.y) * f;
+                    posZ = prevOrigin.z + (origin.z - prevOrigin.z) * f;
+                }
+            }
             if (smp.hasOffset) {
                 posX += smp.offX;
                 posY += smp.offY;
                 posZ += smp.offZ;
             }
-            em.aliveEst.OnEmit(lifetime, dt); // 寿命は CPU 生成なので死亡 tick を記帳できる
-            emitData[static_cast<size_t>(n)] = { { posX, posY, posZ }, lifetime,
-                                                 { smp.dirX * speed, smp.dirY * speed,
-                                                   smp.dirZ * speed }, size };
+            float lifeInit = lifetime;
+            if (subframe) {
+                const float fdt = f * dt;
+                posX -= velX * fdt;
+                posY -= velY * fdt;
+                posZ -= velZ * fdt;
+                lifeInit = lifetime + fdt;
+            }
+            em.aliveEst.OnEmit(lifeInit, dt); // 寿命は CPU 生成なので死亡 tick を記帳できる
+            emitData[static_cast<size_t>(n)] = { { posX, posY, posZ }, lifeInit,
+                                                 { velX, velY, velZ }, size };
         }
 
         // 放出バッファ (動的) を確保・充填

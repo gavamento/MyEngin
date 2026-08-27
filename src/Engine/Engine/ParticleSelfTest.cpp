@@ -907,6 +907,190 @@ bool RunParticleSelfTest()
 
     // ==== M61c: サブフレーム補間 + 速度継承の検証節はこの下へ ====
 
+    // ---- (M61c-1) 既定 (係数 0 / subframe 0) は移動エミッタでも従来とビット同一 ----
+    // A=移動 / B=静止 / C=速度継承 on / D=subframe on を同一シードで並走させ、
+    // 「既定は履歴 (prevOrigin) をどこにも効かせない」「on は実際に変わる」を同時に見る
+    {
+        auto build = [&](Scene& s, float vi, int32_t sub) {
+            GameObject go = s.CreateGameObjectTracked("Emitter");
+            auto* em = go.AddComponent<ParticleEmitterComponent>();
+            em->rate = 60.0f; // 1 粒/tick
+            em->seed = 99u;
+            em->shape = 2; // cone (既定角。従来式の手計算対象)
+            em->velocityInheritance = vi;
+            em->subframeEmission = sub;
+            s.GetWorld().ApplyStructuralChanges();
+            return go.Id();
+        };
+        Scene sa, sb, sc, sd;
+        const EntityID ia = build(sa, 0.0f, 0);
+        const EntityID ib = build(sb, 0.0f, 0);
+        const EntityID ic = build(sc, 1.0f, 0);
+        const EntityID idd = build(sd, 0.0f, 1);
+        CpuParticleBackend a, b, c, d;
+        // tick1: 全員 (0,0,0)
+        a.Update(sa.GetWorld(), kDt);
+        b.Update(sb.GetWorld(), kDt);
+        c.Update(sc.GetWorld(), kDt);
+        d.Update(sd.GetWorld(), kDt);
+        // tick2: B 以外は (0.5,0,0) へ移動してから更新
+        SetWorldPos(sa.GetWorld(), ia, 0.5f, 0.0f, 0.0f);
+        SetWorldPos(sc.GetWorld(), ic, 0.5f, 0.0f, 0.0f);
+        SetWorldPos(sd.GetWorld(), idd, 0.5f, 0.0f, 0.0f);
+        a.Update(sa.GetWorld(), kDt);
+        b.Update(sb.GetWorld(), kDt);
+        c.Update(sc.GetWorld(), kDt);
+        d.Update(sd.GetWorld(), kDt);
+
+        const auto& pa = a.Pools()[0];
+        const auto& pb = b.Pools()[0];
+        check(pa.alive == 2 && pb.alive == 2, "m61c: both emitters made one particle per tick");
+        bool sameAsStatic = true;
+        for (uint32_t i = 0; i < 2; ++i) {
+            // 速度・寿命・(移動していない軸の) 位置がビット一致 = 履歴はどこにも効いていない。
+            // x 位置だけが誕生時 origin の平行移動差
+            sameAsStatic = sameAsStatic && pa.vx[i] == pb.vx[i] && pa.vy[i] == pb.vy[i]
+                           && pa.vz[i] == pb.vz[i] && pa.life[i] == pb.life[i]
+                           && pa.size0[i] == pb.size0[i] && pa.py[i] == pb.py[i]
+                           && pa.pz[i] == pb.pz[i];
+        }
+        check(sameAsStatic, "m61c: defaults ignore emitter motion (bit-identical to static)");
+
+        // 従来式の手計算: tick2 に生まれた粒 (index 1) を旧コードの式で逐語再現
+        {
+            Pcg32 r;
+            r.Seed(99u, static_cast<uint64_t>(ia.index) * 2u + 1u);
+            // p0 (tick1) 分の RNG 消費だけ合わせる (cone 2 回 + speed/寿命/サイズ 3 回)
+            (void)r.NextFloat01();
+            (void)r.NextFloat01();
+            (void)r.Range(2.0f, 3.5f);
+            (void)r.Range(1.2f, 2.2f);
+            (void)r.Range(0.10f, 0.22f);
+            const float pi = 3.14159265358979323846f;
+            const float cosMax = cosf(20.0f * pi / 180.0f);
+            const float cosT = 1.0f - r.NextFloat01() * (1.0f - cosMax);
+            const float sinT = sqrtf(std::max(0.0f, 1.0f - cosT * cosT));
+            const float phi = r.NextFloat01() * 2.0f * pi;
+            const float dirX = sinT * cosf(phi);
+            const float dirY = cosT;
+            const float dirZ = sinT * sinf(phi);
+            const float speed = r.Range(2.0f, 3.5f);
+            const float lifetime = std::max(0.01f, r.Range(1.2f, 2.2f));
+            float vx = dirX * speed, vy = dirY * speed, vz = dirZ * speed;
+            float px = 0.5f, py = 0.0f, pz = 0.0f; // tick2 の origin (移動後)
+            const float ax = (0.0f + 0.0f) + 0.0f * (-vz);
+            const float ay = 1.5f + 0.0f; // gravity 既定 {0,1.5,0} + wind 0
+            const float az = (0.0f + 0.0f) + 0.0f * vx;
+            vx += ax * kDt;
+            vy += ay * kDt;
+            vz += az * kDt;
+            px += vx * kDt;
+            py += vy * kDt;
+            pz += vz * kDt;
+            check(pa.px[1] == px && pa.py[1] == py && pa.pz[1] == pz && pa.vx[1] == vx
+                      && pa.vy[1] == vy && pa.vz[1] == vz && pa.life[1] == lifetime - kDt,
+                  "m61c: moving emitter with defaults matches the legacy formula bit-exact");
+        }
+
+        // on 側は実際に変わる (継承は初速へ、subframe は誕生位置へ)
+        check(c.Pools()[0].vx[1] != pa.vx[1], "m61c: velocityInheritance=1 changes the initial velocity");
+        check(std::fabs(d.Pools()[0].px[1] - pa.px[1]) > 0.1f,
+              "m61c: subframeEmission=1 moves the birth position onto the trajectory");
+    }
+
+    // ---- (M61c-2) 速度継承の値検証 (静止 → 急移動) ----
+    {
+        Scene s;
+        GameObject go = s.CreateGameObjectTracked("Emitter");
+        auto* em = go.AddComponent<ParticleEmitterComponent>();
+        em->rate = 60.0f;
+        em->seed = 5u;
+        em->shape = 2;
+        em->coneAngleDeg = 0.0f; // dir = (±0,1,±0) — 継承分だけが vx に出る
+        em->speedMin = 2.0f;
+        em->speedMax = 2.0f;
+        em->gravity = { 0.0f, 0.0f, 0.0f };
+        em->velocityInheritance = 0.5f;
+        s.GetWorld().ApplyStructuralChanges();
+        World& w = s.GetWorld();
+        SetWorldPos(w, go.Id(), 0.0f, 0.0f, 0.0f);
+
+        CpuParticleBackend cpu;
+        cpu.Update(w, kDt); // tick1: 静止 (プール誕生 tick は履歴なし = 継承 0)
+        check(cpu.Pools()[0].alive == 1 && cpu.Pools()[0].vx[0] == 0.0f,
+              "m61c: stationary emitter inherits nothing");
+
+        SetWorldPos(w, go.Id(), 3.0f, 0.0f, 0.0f); // 急移動 (+3 を 1 tick で)
+        cpu.Update(w, kDt);
+        // EmitParticles と同一の演算列: ((origin-prev) * (1/dt)) * 係数
+        const float expected = ((3.0f - 0.0f) * (1.0f / kDt)) * 0.5f;
+        const auto& pool = cpu.Pools()[0];
+        check(pool.alive == 2 && pool.vx[1] == expected && pool.vy[1] == 2.0f,
+              "m61c: sudden move adds emitterVel * coefficient to the initial velocity");
+    }
+
+    // ---- (M61c-3) サブフレーム放出: 等分散・寿命の前倒し・軌跡上の分布 ----
+    {
+        auto build = [&](Scene& s, int32_t sub) {
+            GameObject go = s.CreateGameObjectTracked("Emitter");
+            auto* em = go.AddComponent<ParticleEmitterComponent>();
+            em->rate = 600.0f; // 10 粒/tick
+            em->seed = 21u;
+            em->shape = 0; // point (オフセット 0 = 誕生位置が補間点そのもの)
+            em->speedMin = 0.0f;
+            em->speedMax = 0.0f;
+            em->gravity = { 0.0f, 0.0f, 0.0f };
+            em->lifetimeMin = 1.0f;
+            em->lifetimeMax = 1.0f; // 寿命 1.0s ちょうど (前倒し量の検証用)
+            em->subframeEmission = sub;
+            s.GetWorld().ApplyStructuralChanges();
+            return go.Id();
+        };
+        Scene sa, sb;
+        const EntityID ia = build(sa, 1);
+        const EntityID ib = build(sb, 0);
+        CpuParticleBackend on, off;
+        on.Update(sa.GetWorld(), kDt); // tick1: 原点で誕生
+        off.Update(sb.GetWorld(), kDt);
+        {
+            // 寿命の前倒し: life = (lifetime + f*dt) - dt (invLife は本来の lifetime 基準)
+            const auto& pool = on.Pools()[0];
+            bool lifeStaggered = (pool.alive == 10);
+            for (uint32_t n = 0; n < pool.alive && lifeStaggered; ++n) {
+                const float expected =
+                    (1.0f + ParticleSubframeFraction(static_cast<int>(n), 10) * kDt) - kDt;
+                lifeStaggered = pool.life[n] == expected && pool.invLife[n] == 1.0f;
+            }
+            check(lifeStaggered, "m61c: subframe pre-consumes lifetime by birth fraction");
+        }
+        // tick2-4: 等速移動 (0.6/tick)。誕生位置が prevOrigin→origin の補間点に散る
+        for (int t = 1; t <= 3; ++t) {
+            SetWorldPos(sa.GetWorld(), ia, 0.6f * t, 0.0f, 0.0f);
+            SetWorldPos(sb.GetWorld(), ib, 0.6f * t, 0.0f, 0.0f);
+            on.Update(sa.GetWorld(), kDt);
+            off.Update(sb.GetWorld(), kDt);
+        }
+        auto maxGap = [](const CpuParticleBackend& cpu) {
+            std::vector<float> xs;
+            const auto& pool = cpu.Pools()[0];
+            for (uint32_t i = 0; i < pool.alive; ++i) {
+                xs.push_back(pool.px[i]);
+            }
+            std::sort(xs.begin(), xs.end());
+            float gap = 0.0f;
+            for (size_t i = 1; i < xs.size(); ++i) {
+                gap = std::max(gap, xs[i] - xs[i - 1]);
+            }
+            return gap;
+        };
+        const float gapOn = maxGap(on);
+        const float gapOff = maxGap(off);
+        check(on.Pools()[0].alive == 40 && gapOn < 0.1f,
+              "m61c: subframe spreads births along the trajectory (gap << 1 tick of motion)");
+        check(gapOff > 0.5f && gapOn < gapOff,
+              "m61c: without subframe the same motion leaves 1-tick clumps");
+    }
+
     // ==== M61d: 乱流ノイズの検証節はこの下へ ====
 
     // ==== M61e: プリウォーム + 非アクティブ凍結の検証節はこの下へ ====

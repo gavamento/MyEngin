@@ -351,6 +351,15 @@ inline ParticleShapeSample SampleParticleShape(const ParticleEmitterComponent& d
     return s;
 }
 
+// ---- M61c: サブフレーム放出の誕生フラクション ----
+// この tick に生まれる total 個のうち n 番目 (0 始まり) の誕生時刻 (tick 区間 [0,1] 内)。
+// RNG を消費しない決定論的な固定式。+0.5 のオフセットで区間の両端 (0 と 1 ちょうど) を
+// 避ける — f=0 は前 tick の放出末尾と重なり、f=1 は「この tick では 1 度も動かない」粒になる
+inline float ParticleSubframeFraction(int n, int total)
+{
+    return (static_cast<float>(n) + 0.5f) / static_cast<float>(total);
+}
+
 // ==== M61d: 乱流ノイズ (カールノイズ純関数 + HLSL ミラー) はこの下へ ====
 
 } // namespace mye
