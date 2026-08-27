@@ -75,6 +75,13 @@ private:
     std::vector<EmitterPool> pools_; // owner.index 昇順 (決定論)
     bool simd_ = true;
     float turb_ = 0.0f; // Simulate 中の乱流係数 (SIMD/スカラー共有)
+    // M61d: カールノイズ乱流のパラメータ (turb_ と同じ「Simulate が設定し SimulateScalar が
+    // 読む」メンバ渡しパターン)。noiseTime_ は pool.ageTicks * dt — sim 状態のみ由来で、
+    // 実時間は絶対に混ぜない (決定論)
+    int32_t turbMode_ = 0;   // 0=渦 (従来) 1=カールノイズ
+    float noiseFreq_ = 1.0f;
+    float noiseSpeed_ = 0.5f;
+    float noiseTime_ = 0.0f;
     ParticleStats stats_;
     std::vector<uint32_t> orderScratch_; // アルファソート用 (描画専用)
     std::vector<uint8_t> visScratch_;    // プール毎の可視フラグ (Render 内のみ有効、描画専用)

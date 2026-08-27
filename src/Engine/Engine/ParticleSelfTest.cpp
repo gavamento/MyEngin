@@ -1093,6 +1093,169 @@ bool RunParticleSelfTest()
 
     // ==== M61d: 乱流ノイズの検証節はこの下へ ====
 
+    // ---- (M) M61d: カールノイズ乱流 (turbulenceMode=1) ----
+    // (M1) EvalCurlNoise は同一入力で決定論的 (隠れ状態も RNG も持たない純関数の確認)
+    {
+        const XMFLOAT3 a = EvalCurlNoise({ 1.234f, -5.678f, 9.1011f }, 12.13f);
+        const XMFLOAT3 b = EvalCurlNoise({ 1.234f, -5.678f, 9.1011f }, 12.13f);
+        check(a.x == b.x && a.y == b.y && a.z == b.z,
+              "curl: same input twice -> bit-identical output");
+        check(std::isfinite(a.x) && std::isfinite(a.y) && std::isfinite(a.z),
+              "curl: output is finite");
+    }
+
+    // (M2) 数値発散がほぼ 0 (カール場の性質)。差分刻みを内部の kCurlNoiseEps と揃えると
+    // 混合中心差分が厳密に可換 (同一 4 点の同一係数和) になり、残るのは丸め誤差だけ。
+    // 刻みを変えると O(h^2) の打ち切り残差が出て閾値の意味が変わるので揃えること
+    {
+        const XMFLOAT3 samples[5] = { { 0.3f, 0.7f, -1.2f },
+                                      { 5.5f, -2.25f, 3.75f },
+                                      { -8.1f, 4.4f, 0.6f },
+                                      { 12.0f, -6.5f, -9.25f },
+                                      { 0.5f, 0.5f, 0.5f } };
+        const float times[5] = { 0.0f, 1.7f, 0.33f, 2.6f, 0.05f };
+        const float h = kCurlNoiseEps;
+        float maxDiv = 0.0f;
+        float maxMag = 0.0f;
+        for (int i = 0; i < 5; ++i) {
+            const XMFLOAT3& p = samples[i];
+            const float t = times[i];
+            const XMFLOAT3 xp = EvalCurlNoise({ p.x + h, p.y, p.z }, t);
+            const XMFLOAT3 xm = EvalCurlNoise({ p.x - h, p.y, p.z }, t);
+            const XMFLOAT3 yp = EvalCurlNoise({ p.x, p.y + h, p.z }, t);
+            const XMFLOAT3 ym = EvalCurlNoise({ p.x, p.y - h, p.z }, t);
+            const XMFLOAT3 zp = EvalCurlNoise({ p.x, p.y, p.z + h }, t);
+            const XMFLOAT3 zm = EvalCurlNoise({ p.x, p.y, p.z - h }, t);
+            const float div = (xp.x - xm.x + yp.y - ym.y + zp.z - zm.z) / (2.0f * h);
+            maxDiv = std::max(maxDiv, std::fabs(div));
+            const XMFLOAT3 c = EvalCurlNoise(p, t);
+            maxMag = std::max(maxMag, std::fabs(c.x) + std::fabs(c.y) + std::fabs(c.z));
+        }
+        check(maxDiv < 1e-3f, "curl: numerical divergence ~ 0 (divergence-free field)");
+        check(maxMag > 0.02f, "curl: field is non-trivial (not a zero field)");
+    }
+
+    // (M3) mode=0 (既定) は従来の渦式のまま — 1 tick を渦式の手計算と突き合わせてビット一致。
+    // 改変前バイナリとの直接比較はできないので、SimulateScalar の mode=0 ループと同一の
+    // 演算列 (mul→add の順) をここへ書き写して同値性を検証する
+    {
+        Scene s;
+        GameObject go = s.CreateGameObjectTracked("VortexEmitter");
+        auto* em = go.AddComponent<ParticleEmitterComponent>();
+        em->rate = 60.0f; // 1 粒/tick
+        em->seed = 777u;
+        em->turbulence = 0.7f;
+        em->gravity = { 0.3f, 1.5f, -0.2f };
+        em->wind = { 0.1f, 0.0f, 0.05f };
+        s.GetWorld().ApplyStructuralChanges();
+        World& w = s.GetWorld();
+        SetWorldPos(w, go.Id(), 2.0f, 0.5f, -1.0f);
+
+        CpuParticleBackend backend;
+        backend.Update(w, kDt); // tick1: 粒子 0 が生まれ渦式で 1 回積分済み
+        check(!backend.Pools().empty() && backend.Pools()[0].alive == 1,
+              "vortex: one particle after first tick");
+        float evx = 0.0f, evy = 0.0f, evz = 0.0f;
+        float epx = 0.0f, epy = 0.0f, epz = 0.0f;
+        float elife = 0.0f;
+        {
+            const CpuParticleBackend::EmitterPool& pool = backend.Pools()[0];
+            const float accelX = em->gravity.x + em->wind.x;
+            const float accelY = em->gravity.y + em->wind.y;
+            const float accelZ = em->gravity.z + em->wind.z;
+            const float turb = em->turbulence;
+            evx = pool.vx[0];
+            evy = pool.vy[0];
+            evz = pool.vz[0];
+            epx = pool.px[0];
+            epy = pool.py[0];
+            epz = pool.pz[0];
+            elife = pool.life[0];
+            const float ax = accelX + turb * (-evz);
+            const float ay = accelY;
+            const float az = accelZ + turb * evx;
+            evx += ax * kDt;
+            evy += ay * kDt;
+            evz += az * kDt;
+            epx += evx * kDt;
+            epy += evy * kDt;
+            epz += evz * kDt;
+            elife -= kDt;
+        }
+        backend.Update(w, kDt); // tick2 (粒子 1 が増えるが粒子 0 の index は不変)
+        const CpuParticleBackend::EmitterPool& pool2 = backend.Pools()[0];
+        check(pool2.vx[0] == evx && pool2.vy[0] == evy && pool2.vz[0] == evz
+                  && pool2.px[0] == epx && pool2.py[0] == epy && pool2.pz[0] == epz
+                  && pool2.life[0] == elife,
+              "vortex (mode=0): tick2 matches hand-computed vortex step bit-exact");
+    }
+
+    // (M4) mode=1 は SIMD 設定 on/off でビット一致 ((C) 節方式)。mode=1 のプールは Simulate が
+    // 常にスカラーへ落とすので、強制が壊れると simd 側だけ渦式 (SIMD 本体) が走って割れる
+    {
+        Scene s;
+        GameObject go = s.CreateGameObjectTracked("CurlEmitter");
+        auto* em = go.AddComponent<ParticleEmitterComponent>();
+        em->rate = 300.0f;
+        em->seed = 4242u;
+        em->shape = 1; // sphere — 全軸に初速が散る
+        em->turbulence = 0.8f;
+        em->turbulenceMode = 1;
+        em->noiseFrequency = 1.7f;
+        em->noiseSpeed = 0.9f;
+        em->gravity = { 0.0f, 0.6f, 0.0f };
+        s.GetWorld().ApplyStructuralChanges();
+        World& w = s.GetWorld();
+        SetWorldPos(w, go.Id(), 0.5f, 1.0f, -0.75f);
+
+        CpuParticleBackend simd, scalar;
+        simd.SetSimdEnabled(true);
+        scalar.SetSimdEnabled(false);
+        bool matched = true;
+        for (int t = 0; t < 120 && matched; ++t) {
+            simd.Update(w, kDt);
+            scalar.Update(w, kDt);
+            matched = (HashSimState(simd) == HashSimState(scalar));
+        }
+        check(matched, "curl (mode=1): simd on/off bit-identical (scalar path forced)");
+        check(!simd.Pools().empty() && simd.Pools()[0].alive >= 8,
+              "curl: pool grew past the simd threshold (forcing actually exercised)");
+    }
+
+    // (M5) mode=1 は mode=0 と挙動が変わる (実際に場が効いている) が、RNG ストリームは
+    // 消費しない — 放出列が同一なので rng 状態と alive は両モードで完全一致するはず
+    {
+        auto makeScene = [](Scene& s, int32_t mode) -> GameObject {
+            GameObject go = s.CreateGameObjectTracked("TurbEmitter");
+            auto* em = go.AddComponent<ParticleEmitterComponent>();
+            em->rate = 180.0f;
+            em->seed = 1313u;
+            em->shape = 1;
+            em->turbulence = 0.9f;
+            em->turbulenceMode = mode;
+            s.GetWorld().ApplyStructuralChanges();
+            return go;
+        };
+        Scene s0, s1;
+        GameObject g0 = makeScene(s0, 0);
+        GameObject g1 = makeScene(s1, 1);
+        SetWorldPos(s0.GetWorld(), g0.Id(), 1.0f, 2.0f, 3.0f);
+        SetWorldPos(s1.GetWorld(), g1.Id(), 1.0f, 2.0f, 3.0f);
+
+        CpuParticleBackend vortex, curl;
+        for (int t = 0; t < 20; ++t) {
+            vortex.Update(s0.GetWorld(), kDt);
+            curl.Update(s1.GetWorld(), kDt);
+        }
+        check(HashSimState(vortex) != HashSimState(curl),
+              "curl vs vortex: mode=1 actually changes the trajectories");
+        const CpuParticleBackend::EmitterPool& pv = vortex.Pools()[0];
+        const CpuParticleBackend::EmitterPool& pc = curl.Pools()[0];
+        check(pv.rng.State() == pc.rng.State() && pv.rng.Inc() == pc.rng.Inc()
+                  && pv.alive == pc.alive,
+              "curl: noise consumes no rng (emission stream identical across modes)");
+    }
+
     // ==== M61e: プリウォーム + 非アクティブ凍結の検証節はこの下へ ====
 
     // ==== M61f: GPU 容量再作成 + バースト上限の検証節はこの下へ ====

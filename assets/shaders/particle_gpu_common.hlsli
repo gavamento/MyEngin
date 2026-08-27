@@ -30,4 +30,8 @@ cbuffer GpuParticleCB : register(b0)
     float4x4 gCollInvViewProj; // transpose 済み
     float4 gCollParams;        // x = enabled, y = restitution, z = 追加 thickness, w = 予約
     float4 gCollScreen;        // xy = 画面サイズ (px), z = nearZ, w = farZ
+    // ---- M61d: カールノイズ乱流 (sim CS のみ参照。C++ 側 GpuParticleBackend.cpp の
+    //      GpuParticleCB::params4 と一致 — 末尾 append なので既存フィールドのオフセット不変) ----
+    float4 gParams4;           // x = turbulenceMode, y = noiseFrequency, z = noiseSpeed,
+                               // w = noiseTime (ageTicks * dt — 実時間ではない)
 };

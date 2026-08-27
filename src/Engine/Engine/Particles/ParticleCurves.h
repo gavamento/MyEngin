@@ -362,4 +362,106 @@ inline float ParticleSubframeFraction(int n, int total)
 
 // ==== M61d: 乱流ノイズ (カールノイズ純関数 + HLSL ミラー) はこの下へ ====
 
+// ---- M61d: カールノイズ乱流場 (turbulenceMode=1) ----
+// particle_sim.cs.hlsl の同名関数群とコメント同期のミラー (機械照合なし — 変更は必ず両方同時に)。
+// ★決定論の要: pool.rng は 1 回も消費しない — 位置と時間だけの純関数。時間は呼び出し側が
+//   sim 状態 (pool.ageTicks * dt) から与える (実時間は絶対に混ぜない)。
+// 実装は「整数格子ハッシュ + quintic 補間のバリューノイズ」を 3 相 (オフセット違い) で
+// ポテンシャル場 F とし、curl = ∇×F を中心差分で近似する。div(∇×F)=0 の性質は、差分演算子が
+// 厳密に可換 (同一 4 点の同一係数和) なため「同じ刻みで測った数値発散」でも丸め誤差レベルで
+// 成り立つ — selftest はこれを検証する。
+
+// 中心差分の刻み。格子間隔 1.0 に対して十分小さく、かつ float の桁落ちが出ない値。
+// selftest の数値発散検査はこの同じ刻みを使う (刻みが違うと相殺が崩れて O(h^2) 残差が出る)
+inline constexpr float kCurlNoiseEps = 0.25f;
+
+// 整数格子ハッシュ (32bit finalizer)。int→uint は 2 の補数 wrap で C++/HLSL 同一。
+// 乗算オーバーフローも両言語とも wrap = 同値
+inline uint32_t CurlNoiseHash(int32_t ix, int32_t iy, int32_t iz)
+{
+    uint32_t h = static_cast<uint32_t>(ix) * 0x8da6b343u
+               + static_cast<uint32_t>(iy) * 0xd8163841u
+               + static_cast<uint32_t>(iz) * 0xcb1ab31fu;
+    h ^= h >> 13;
+    h *= 0x7feb352du;
+    h ^= h >> 16;
+    return h;
+}
+
+// 格子点の値 [-1, 1)。上位 24bit → [0,1) の量子化は Pcg32::NextFloat01 と同じ手筋
+// (float で正確に表現できる範囲に落としてから写像する)
+inline float CurlNoiseLattice(int32_t ix, int32_t iy, int32_t iz)
+{
+    return static_cast<float>(CurlNoiseHash(ix, iy, iz) >> 8) * (2.0f / 16777216.0f) - 1.0f;
+}
+
+// 3D バリューノイズ (トリリニア + quintic フェード)。値域はほぼ [-1, 1]。
+// quintic (C2 連続) なのは中心差分で curl を取るため — smoothstep (C1) だと格子境界で
+// 2 階微分が跳ね、カール場が縞状のアーティファクトを持つ。
+// 座標が float→int32 の変換域を超えるほど飛んだ場合 (|x| > 2^31) は cvttss2si の飽和値に
+// 落ちるが、x64 では全ビルド同一命令 = 決定論は保たれる (粒子は寿命で死ぬので実害なし)
+inline float CurlValueNoise(float x, float y, float z)
+{
+    const float fx = floorf(x);
+    const float fy = floorf(y);
+    const float fz = floorf(z);
+    const int32_t ix = static_cast<int32_t>(fx);
+    const int32_t iy = static_cast<int32_t>(fy);
+    const int32_t iz = static_cast<int32_t>(fz);
+    float tx = x - fx;
+    float ty = y - fy;
+    float tz = z - fz;
+    tx = tx * tx * tx * (tx * (tx * 6.0f - 15.0f) + 10.0f);
+    ty = ty * ty * ty * (ty * (ty * 6.0f - 15.0f) + 10.0f);
+    tz = tz * tz * tz * (tz * (tz * 6.0f - 15.0f) + 10.0f);
+    const float v000 = CurlNoiseLattice(ix, iy, iz);
+    const float v100 = CurlNoiseLattice(ix + 1, iy, iz);
+    const float v010 = CurlNoiseLattice(ix, iy + 1, iz);
+    const float v110 = CurlNoiseLattice(ix + 1, iy + 1, iz);
+    const float v001 = CurlNoiseLattice(ix, iy, iz + 1);
+    const float v101 = CurlNoiseLattice(ix + 1, iy, iz + 1);
+    const float v011 = CurlNoiseLattice(ix, iy + 1, iz + 1);
+    const float v111 = CurlNoiseLattice(ix + 1, iy + 1, iz + 1);
+    const float x00 = v000 + (v100 - v000) * tx;
+    const float x10 = v010 + (v110 - v010) * tx;
+    const float x01 = v001 + (v101 - v001) * tx;
+    const float x11 = v011 + (v111 - v011) * tx;
+    const float y0 = x00 + (x10 - x00) * ty;
+    const float y1 = x01 + (x11 - x01) * ty;
+    return y0 + (y1 - y0) * tz;
+}
+
+// ポテンシャル場の 3 相。同一ノイズのオフセット違い (格子周期と無縁な端数オフセットで
+// 相関を切る)。相ごとに別ハッシュ定数を持つより、ミラー時の写し間違いが起きにくい
+inline float CurlPotX(float x, float y, float z) { return CurlValueNoise(x, y, z); }
+inline float CurlPotY(float x, float y, float z)
+{
+    return CurlValueNoise(x + 31.416f, y + 17.923f, z + 43.651f);
+}
+inline float CurlPotZ(float x, float y, float z)
+{
+    return CurlValueNoise(x - 47.317f, y + 61.139f, z - 21.744f);
+}
+
+// カールノイズ場の評価。p は「粒子位置 × noiseFrequency」、t は「ageTicks*dt × noiseSpeed」を
+// 呼び出し側が渡す。返り値は加速度の向き場 (呼び出し側が turbulence を掛ける)。
+// 時間は斜めドリフト (場全体の平行移動) として注入する — 4D ノイズより安価で、軸沿いだと
+// 格子の縞が流れて見えるため非軸整列の方向を使う
+inline DirectX::XMFLOAT3 EvalCurlNoise(const DirectX::XMFLOAT3& p, float t)
+{
+    const float qx = p.x + t * 1.0f;
+    const float qy = p.y + t * 0.35f;
+    const float qz = p.z + t * 0.71f;
+    const float e = kCurlNoiseEps;
+    const float inv2e = 1.0f / (2.0f * e);
+    // curl = ∇×F に必要な偏微分 6 個 (各 2 点評価 = ノイズ 12 回)
+    const float dFzDy = (CurlPotZ(qx, qy + e, qz) - CurlPotZ(qx, qy - e, qz)) * inv2e;
+    const float dFyDz = (CurlPotY(qx, qy, qz + e) - CurlPotY(qx, qy, qz - e)) * inv2e;
+    const float dFxDz = (CurlPotX(qx, qy, qz + e) - CurlPotX(qx, qy, qz - e)) * inv2e;
+    const float dFzDx = (CurlPotZ(qx + e, qy, qz) - CurlPotZ(qx - e, qy, qz)) * inv2e;
+    const float dFyDx = (CurlPotY(qx + e, qy, qz) - CurlPotY(qx - e, qy, qz)) * inv2e;
+    const float dFxDy = (CurlPotX(qx, qy + e, qz) - CurlPotX(qx, qy - e, qz)) * inv2e;
+    return { dFzDy - dFyDz, dFxDz - dFzDx, dFyDx - dFxDy };
+}
+
 } // namespace mye

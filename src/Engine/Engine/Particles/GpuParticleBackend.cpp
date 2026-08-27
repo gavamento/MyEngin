@@ -31,6 +31,7 @@ struct GpuParticleCB { // particle_gpu_common.hlsli と一致
     XMFLOAT4X4 collInvViewProj; // M42e: transpose 済み
     XMFLOAT4 collParams;        // M42e: enabled, restitution, thickness, 予約
     XMFLOAT4 collScreen;        // M42e: 画面 w/h, nearZ, farZ
+    XMFLOAT4 params4;           // M61d: turbulenceMode, noiseFrequency, noiseSpeed, noiseTime
 };
 
 struct GpuRenderCB {
@@ -407,6 +408,10 @@ void GpuParticleBackend::Update(World& world, float dt)
         cb.collInvViewProj = collInvViewProj_;
         cb.collParams = { collide ? 1.0f : 0.0f, desc->collisionBounce, 0.0f, 0.0f };
         cb.collScreen = { collScreen_[0], collScreen_[1], collScreen_[2], collScreen_[3] };
+        // M61d: カールノイズ乱流。時間は em.ageTicks (PlanParticleEmission が進めた後の値) 由来
+        // — CPU 側 Simulate が見る pool.ageTicks と同じ位相 = パリティ一致。実時間は使わない
+        cb.params4 = { static_cast<float>(desc->turbulenceMode), desc->noiseFrequency,
+                       desc->noiseSpeed, static_cast<float>(em.ageTicks) * dt };
         UploadCB(dc, simCB_.Get(), cb);
         ID3D11Buffer* cbs[1] = { simCB_.Get() };
         dc->CSSetConstantBuffers(0, 1, cbs);

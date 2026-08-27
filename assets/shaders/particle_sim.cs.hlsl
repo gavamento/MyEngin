@@ -18,6 +18,72 @@ float3 CollReconstructWorld(int2 pix, float d)
     return w.xyz / max(abs(w.w), 1e-6f) * sign(w.w);
 }
 
+// ---- M61d: カールノイズ乱流場 (turbulenceMode=1) ----
+// C++ ミラー: ParticleCurves.h の CurlNoiseHash / CurlValueNoise / CurlPot* / EvalCurlNoise。
+// コメント同期のみの一致 — 変更は必ず両方同時に。乱数は使わない (位置と時間の純関数)。
+// 中心差分の刻みは C++ 側 kCurlNoiseEps = 0.25 と同値
+
+// 整数格子ハッシュ (32bit finalizer)。int→uint と乗算オーバーフローは wrap で C++ と同値
+uint CurlNoiseHash(int3 c)
+{
+    uint h = (uint)c.x * 0x8da6b343u + (uint)c.y * 0xd8163841u + (uint)c.z * 0xcb1ab31fu;
+    h ^= h >> 13;
+    h *= 0x7feb352du;
+    h ^= h >> 16;
+    return h;
+}
+
+// 格子点の値 [-1, 1) (上位 24bit → [0,1) → [-1,1) は Pcg32::NextFloat01 と同じ量子化)
+float CurlNoiseLattice(int3 c)
+{
+    return (float)(CurlNoiseHash(c) >> 8) * (2.0f / 16777216.0f) - 1.0f;
+}
+
+// 3D バリューノイズ (トリリニア + quintic フェード = C2 連続。中心差分カール用)
+float CurlValueNoise(float3 p)
+{
+    const float3 f = floor(p);
+    const int3 c = int3(f);
+    float3 t = p - f;
+    t = t * t * t * (t * (t * 6.0f - 15.0f) + 10.0f);
+    const float v000 = CurlNoiseLattice(c + int3(0, 0, 0));
+    const float v100 = CurlNoiseLattice(c + int3(1, 0, 0));
+    const float v010 = CurlNoiseLattice(c + int3(0, 1, 0));
+    const float v110 = CurlNoiseLattice(c + int3(1, 1, 0));
+    const float v001 = CurlNoiseLattice(c + int3(0, 0, 1));
+    const float v101 = CurlNoiseLattice(c + int3(1, 0, 1));
+    const float v011 = CurlNoiseLattice(c + int3(0, 1, 1));
+    const float v111 = CurlNoiseLattice(c + int3(1, 1, 1));
+    const float x00 = v000 + (v100 - v000) * t.x;
+    const float x10 = v010 + (v110 - v010) * t.x;
+    const float x01 = v001 + (v101 - v001) * t.x;
+    const float x11 = v011 + (v111 - v011) * t.x;
+    const float y0 = x00 + (x10 - x00) * t.y;
+    const float y1 = x01 + (x11 - x01) * t.y;
+    return y0 + (y1 - y0) * t.z;
+}
+
+// ポテンシャル場の 3 相 (オフセット違いで相関を切る。定数は C++ 側と一致)
+float CurlPotX(float3 p) { return CurlValueNoise(p); }
+float CurlPotY(float3 p) { return CurlValueNoise(p + float3(31.416f, 17.923f, 43.651f)); }
+float CurlPotZ(float3 p) { return CurlValueNoise(p + float3(-47.317f, 61.139f, -21.744f)); }
+
+// カールノイズ場。p = 粒子位置 × noiseFrequency、t = noiseTime × noiseSpeed。
+// 時間は斜めドリフト (場全体の平行移動) として注入 — 軸沿いだと格子の縞が流れて見える
+float3 EvalCurlNoise(float3 p, float t)
+{
+    const float3 q = p + t * float3(1.0f, 0.35f, 0.71f);
+    const float e = 0.25f; // kCurlNoiseEps
+    const float inv2e = 1.0f / (2.0f * e);
+    const float dFzDy = (CurlPotZ(q + float3(0, e, 0)) - CurlPotZ(q - float3(0, e, 0))) * inv2e;
+    const float dFyDz = (CurlPotY(q + float3(0, 0, e)) - CurlPotY(q - float3(0, 0, e))) * inv2e;
+    const float dFxDz = (CurlPotX(q + float3(0, 0, e)) - CurlPotX(q - float3(0, 0, e))) * inv2e;
+    const float dFzDx = (CurlPotZ(q + float3(e, 0, 0)) - CurlPotZ(q - float3(e, 0, 0))) * inv2e;
+    const float dFyDx = (CurlPotY(q + float3(e, 0, 0)) - CurlPotY(q - float3(e, 0, 0))) * inv2e;
+    const float dFxDy = (CurlPotX(q + float3(0, e, 0)) - CurlPotX(q - float3(0, e, 0))) * inv2e;
+    return float3(dFzDy - dFyDz, dFxDz - dFzDx, dFyDx - dFxDy);
+}
+
 [numthreads(256, 1, 1)]
 void CSMain(uint3 tid : SV_DispatchThreadID)
 {
@@ -30,8 +96,15 @@ void CSMain(uint3 tid : SV_DispatchThreadID)
 
     const float dt = gGravityWind.w;
     const float turb = gParams.y;
-    // CPU 実装 (CpuParticleBackend::SimulateScalar) と同じ演算列
-    float3 accel = gGravityWind.xyz + turb * float3(-p.vel.z, 0.0f, p.vel.x);
+    // CPU 実装 (CpuParticleBackend::SimulateScalar) と同じ演算列。
+    // M61d: turbulenceMode=1 は渦の代わりに位置ベースのカールノイズ場 (CPU 側と同式)
+    float3 accel;
+    if (gParams4.x > 0.5f) {
+        accel = gGravityWind.xyz
+              + turb * EvalCurlNoise(p.pos * gParams4.y, gParams4.w * gParams4.z);
+    } else {
+        accel = gGravityWind.xyz + turb * float3(-p.vel.z, 0.0f, p.vel.x);
+    }
     p.vel += accel * dt;
     p.pos += p.vel * dt;
     p.life -= dt;

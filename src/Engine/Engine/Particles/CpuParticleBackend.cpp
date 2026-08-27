@@ -297,6 +297,29 @@ void CpuParticleBackend::SimulateScalar(EmitterPool& pool, const XMFLOAT3& accel
 {
     // SIMD 本体とレーン毎に同一の演算列 (mul→add の順) — 結果はビット一致する
     const float turb = turb_;
+    // M61d: turbulenceMode=1 は位置ベースのカールノイズ場を加速度に使う。専用ループに分離し、
+    // mode=0 の既存ループは 1 命令も変えない (既定エミッタのビット保存)。ノイズは位置と時間の
+    // 純関数で pool.rng を消費しない — RNG 消費列は放出経路のまま不変。
+    // このモードのプールは Simulate が常にスカラー経路へ落とすので SIMD 側の対応は不要
+    if (turbMode_ == 1) {
+        const float freq = noiseFreq_;
+        const float t = noiseTime_ * noiseSpeed_;
+        for (uint32_t i = begin; i < end; ++i) {
+            const DirectX::XMFLOAT3 curl = EvalCurlNoise(
+                { pool.px[i] * freq, pool.py[i] * freq, pool.pz[i] * freq }, t);
+            const float ax = accel.x + turb * curl.x;
+            const float ay = accel.y + turb * curl.y;
+            const float az = accel.z + turb * curl.z;
+            pool.vx[i] += ax * dt;
+            pool.vy[i] += ay * dt;
+            pool.vz[i] += az * dt;
+            pool.px[i] += pool.vx[i] * dt;
+            pool.py[i] += pool.vy[i] * dt;
+            pool.pz[i] += pool.vz[i] * dt;
+            pool.life[i] -= dt;
+        }
+        return;
+    }
     for (uint32_t i = begin; i < end; ++i) {
         const float ax = accel.x + turb * (-pool.vz[i]);
         const float ay = accel.y;
@@ -316,8 +339,19 @@ void CpuParticleBackend::Simulate(EmitterPool& pool, const ParticleEmitterCompon
     const XMFLOAT3 accel = { desc.gravity.x + desc.wind.x, desc.gravity.y + desc.wind.y,
                              desc.gravity.z + desc.wind.z };
     turb_ = desc.turbulence;
+    // M61d: カールノイズ乱流のパラメータ (SimulateScalar が読む)。時間は pool.ageTicks 由来 —
+    // EmitParticles の PlanParticleEmission が進めた後の値で、GPU 側 (Update の CB 充填) も
+    // 同じ「Plan 後の ageTicks」を見る = パリティ一致。looping でウィンドウが巻き戻ると
+    // ノイズ時間も巻き戻るが、sim 状態のみ由来なので決定論は保たれる
+    turbMode_ = desc.turbulenceMode;
+    noiseFreq_ = desc.noiseFrequency;
+    noiseSpeed_ = desc.noiseSpeed;
+    noiseTime_ = static_cast<float>(pool.ageTicks) * dt;
 
-    if (!simd_ || pool.alive < 8) {
+    // M61d: mode=1 はノイズ評価が粒子ごとの散在格子参照になり 4-wide 化しないため、プール単位で
+    // スカラー経路へ落とす。desc 由来の分岐 = 全ビルド/全機種で同一判定 = 決定論 OK。
+    // mode=0 は従来どおり SIMD (ビット不変)
+    if (!simd_ || pool.alive < 8 || desc.turbulenceMode == 1) {
         SimulateScalar(pool, accel, dt, 0, pool.alive);
         return;
     }
