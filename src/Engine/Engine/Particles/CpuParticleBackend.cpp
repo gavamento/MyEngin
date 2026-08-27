@@ -135,30 +135,34 @@ void CpuParticleBackend::Reset()
 
 void CpuParticleBackend::SyncEmitters(World& world)
 {
-    // 現存エミッタを index 昇順で収集 (決定論)
-    struct Found {
-        EntityID id;
-    };
-    std::vector<EntityID> current;
+    // 現存エミッタを index 昇順で収集 (決定論)。
+    // M61e: 「存在」と「アクティブ」を分けて集める — 非アクティブ化はプール破棄ではなく
+    // 凍結保持 (Update 側で完全に時を止め、再アクティブ化で再シードせず続きから動く)。
+    // 破棄はエンティティ/コンポーネントの存在自体が消えたときだけ。プールの新規作成は
+    // 従来どおりアクティブ時のみ = 「誕生時から無効のエミッタはプールを持たない」という
+    // M10 の意味論は保存する
+    std::vector<EntityID> existing; // 両コンポーネントを持つ全エンティティ (凍結中も含む)
+    std::vector<EntityID> active;   // うちアクティブなもの (プール新規作成の対象)
     const ComponentTypeId req[] = { ParticleEmitterComponent::sTypeId,
                                     WorldMatrixComponent::sTypeId };
     world.ForEachArchetype(req, [&](Archetype& arch) {
         for (uint32_t row = 0; row < arch.Count(); ++row) {
-            if (!IsEntityActive(world, arch.EntityAt(row))) {
-                continue; // 無効エミッタはプールを持たない (M10)
+            const EntityID e = arch.EntityAt(row);
+            existing.push_back(e);
+            if (IsEntityActive(world, e)) {
+                active.push_back(e);
             }
-            current.push_back(arch.EntityAt(row));
         }
     });
-    std::sort(current.begin(), current.end(),
+    std::sort(active.begin(), active.end(),
               [](EntityID a, EntityID b) { return a.index < b.index; });
 
-    // 消えたエミッタのプールを除去
+    // 消えたエミッタのプールを除去 (M61e: 非アクティブでは消さない — 凍結して保持)
     std::erase_if(pools_, [&](const EmitterPool& p) {
-        return std::find(current.begin(), current.end(), p.owner) == current.end();
+        return std::find(existing.begin(), existing.end(), p.owner) == existing.end();
     });
     // 新規エミッタのプールを作成 (シードはコンポーネント指定 — spec 7.3)
-    for (EntityID e : current) {
+    for (EntityID e : active) {
         bool exists = false;
         for (const EmitterPool& p : pools_) {
             if (p.owner == e) {
@@ -432,11 +436,43 @@ void CpuParticleBackend::Update(World& world, float dt)
         if (!desc || !wm) {
             continue;
         }
+
+        // M61e: 凍結 (存在するが非アクティブ)。プールは破棄せず完全に時を止める —
+        // Emit/Simulate/KillDead/バウンズ/prevOrigin 履歴のどれも進めない (rng も ageTicks も
+        // 不変 = ワールドハッシュも不変)。descCache も更新しない (凍結中は描かないので
+        // 古いままで害がない)。再アクティブ化はこの分岐を抜けるだけ — 再シードもリセットも
+        // 無しで、凍結前の続きからビット同一に動き出す
+        const bool frozen = !IsEntityActive(world, pool.owner);
+        pool.renderSkip = frozen; // 描画専用フラグ (ハッシュ/スナップショット非対象)
+        if (frozen) {
+            aliveTotal += pool.alive; // 粒子は保持されたまま止まっている (統計は表示専用)
+            continue;
+        }
+
         pool.descCache = *desc; // 描画時に World を引かないためのコピー
         const XMFLOAT3 origin = { wm->value._41, wm->value._42, wm->value._43 };
         // M61b: 上 3x3 (回転*スケール) を放出に適用する。9 成分が厳密に恒等なら
         // EmitParticles 内で従来経路に縮退 = 既存コンテンツのビット保存
         const ParticleEmitBasis basis = MakeParticleEmitBasis(wm->value);
+
+        // M61e: プリウォーム — プール誕生 tick (prewarmed==0 はここでしか真にならない) に、
+        // prewarmTime 秒ぶんの {放出→積分→消滅} を通常処理の前へ同一 tick 内で先回しする。
+        // origin は現在値固定 (prevOriginValid==0 のままなので M61c の補間・速度継承も
+        // 自然に無効 = 速度 0 扱い)。rng/ageTicks/emitAccum は普通に進む = sim 状態として
+        // ハッシュに乗り、どのビルドでも同じ回数だけ回るので決定論は保たれる。上限 600 tick
+        // (10 秒 @60Hz) は誤設定の巨大値が 1 tick を丸ごと食い潰す暴走ガード。snapshot 復元後は
+        // prewarmed==1 ごと復元されるため再トリガしない (selftest M61e 節で確認)。
+        // GPU バックエンドはプリウォームしない (spec 7.5 の等価規約の例外 —
+        // GpuParticleBackend::Update のコメント参照)
+        if (pool.prewarmed == 0 && desc->prewarmTime > 0.0f && desc->playing != 0) {
+            const int prewarmTicks = std::min(600, static_cast<int>(desc->prewarmTime / dt));
+            for (int step = 0; step < prewarmTicks; ++step) {
+                EmitParticles(pool, *desc, origin, basis, dt);
+                Simulate(pool, *desc, dt);
+                KillDead(pool);
+            }
+        }
+
         EmitParticles(pool, *desc, origin, basis, dt);
         Simulate(pool, *desc, dt);
         KillDead(pool);
@@ -496,7 +532,8 @@ void CpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
     uint32_t total = 0;
     for (size_t pi = 0; pi < pools_.size(); ++pi) {
         const EmitterPool& pool = pools_[pi];
-        if (pool.alive == 0
+        // M61e: renderSkip = 凍結中 (owner 非アクティブ)。粒子は保持されたままだが描かない
+        if (pool.renderSkip || pool.alive == 0
             || (pool.boundsValid
                 && !ParticlePoolVisible(frustum, pool.boundsMin, pool.boundsMax,
                                         ParticleBillboardExpand(pool.descCache, pool.maxSize0),
@@ -559,7 +596,7 @@ void CpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
     uint32_t cursor = 0;
     for (size_t pi = 0; pi < pools_.size(); ++pi) {
         EmitterPool& pool = pools_[pi];
-        if (!visScratch_[pi]) { // 空プール or フラスタム外 (上でまとめて判定済み)
+        if (!visScratch_[pi]) { // 凍結 or 空プール or フラスタム外 (上でまとめて判定済み)
             continue;
         }
         const ParticleEmitterComponent& d = pool.descCache;

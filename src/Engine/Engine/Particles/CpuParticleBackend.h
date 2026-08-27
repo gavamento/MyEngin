@@ -56,6 +56,10 @@ public:
         DirectX::XMFLOAT3 boundsMax = {};
         float maxSize0 = 0.0f; // 生存粒子の初期サイズ最大 (ビルボード張り出しの拡張量用)
         bool boundsValid = false;
+        // M61e: 凍結中 (owner 非アクティブ) は描かないフラグ。スナップショット復元直後は
+        // false = 「描く」側へ倒れるが、Render の前に必ず Update が凍結を再判定して
+        // 立て直すので実害はない (boundsValid と同じ理屈の描画専用フィールド)
+        bool renderSkip = false;
     };
     const std::vector<EmitterPool>& Pools() const { return pools_; }
     // sim スナップショット (M52d): エミッタ池は WorldHash 対象の sim 状態なので

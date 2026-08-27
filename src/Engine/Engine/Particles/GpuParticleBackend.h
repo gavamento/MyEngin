@@ -53,6 +53,9 @@ private:
         // 表示用ベストエフォート = ハッシュ/スナップショット非対象なのでここに置くだけでよい
         DirectX::XMFLOAT3 prevOrigin = {};
         uint32_t prevOriginValid = 0;
+        // M61e: owner 非アクティブによる凍結。gpuIdle が「D3D 作業だけ省いて放出計画と
+        // 推定器の記帳は続ける」のに対し、凍結は「時が止まる」— 記帳ごと全部止める
+        bool frozen = false;
         Pcg32 rng;
         ParticleEmitterComponent descCache;
         bool firstDispatch = true; // 初回のみ dead list カウンタを capacity で初期化

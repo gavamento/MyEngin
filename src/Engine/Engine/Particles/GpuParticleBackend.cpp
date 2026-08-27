@@ -201,24 +201,30 @@ bool GpuParticleBackend::CreateEmitterResources(GraphicsDevice& device, GpuEmitt
 
 void GpuParticleBackend::SyncEmitters(World& world, GraphicsDevice& device)
 {
-    std::vector<EntityID> current;
+    // M61e: CPU 側 (CpuParticleBackend::SyncEmitters) と同じ意味論 — 非アクティブ化は
+    // リソース破棄ではなく凍結保持。破棄は存在自体が消えたときだけで、新規作成は従来
+    // どおりアクティブ時のみ。erase してしまうと再アクティブ化で RNG 再シード + 全粒子
+    // 消失になり、CPU 側の「続きから動く」と食い違う
+    std::vector<EntityID> existing; // 両コンポーネントを持つ全エンティティ (凍結中も含む)
+    std::vector<EntityID> active;   // うちアクティブなもの (リソース新規作成の対象)
     const ComponentTypeId req[] = { ParticleEmitterComponent::sTypeId,
                                     WorldMatrixComponent::sTypeId };
     world.ForEachArchetype(req, [&](Archetype& arch) {
         for (uint32_t row = 0; row < arch.Count(); ++row) {
-            if (!IsEntityActive(world, arch.EntityAt(row))) {
-                continue; // 無効エミッタは描画しない (M10)
+            const EntityID e = arch.EntityAt(row);
+            existing.push_back(e);
+            if (IsEntityActive(world, e)) {
+                active.push_back(e);
             }
-            current.push_back(arch.EntityAt(row));
         }
     });
-    std::sort(current.begin(), current.end(),
+    std::sort(active.begin(), active.end(),
               [](EntityID a, EntityID b) { return a.index < b.index; });
 
     std::erase_if(emitters_, [&](const GpuEmitter& em) {
-        return std::find(current.begin(), current.end(), em.owner) == current.end();
+        return std::find(existing.begin(), existing.end(), em.owner) == existing.end();
     });
-    for (EntityID e : current) {
+    for (EntityID e : active) {
         bool exists = false;
         for (const GpuEmitter& em : emitters_) {
             if (em.owner == e) {
@@ -269,6 +275,18 @@ void GpuParticleBackend::Update(World& world, float dt)
         if (!desc || !wm) {
             continue;
         }
+
+        // M61e: 凍結 (存在するが非アクティブ)。CPU 側の凍結と同じ「時が止まる」意味論 —
+        // gpuIdle が「D3D 作業だけ省いて放出計画 (PlanParticleEmission) と推定器の記帳は
+        // 続ける」のと違い、凍結中はその両方も止める。進めてしまうと解凍時に放出
+        // スケジュールと寿命満期が凍結時間ぶん先へ飛び、CPU バックエンドの凍結挙動と
+        // 食い違う。GPU リソースは保持したまま = 解凍でそのまま続きから動く (再シード無し)
+        em.frozen = !IsEntityActive(world, em.owner);
+        if (em.frozen) {
+            aliveEstimate += em.aliveEst.Alive(em.capacity); // 粒子は保持されたまま (表示専用)
+            continue;
+        }
+
         em.descCache = *desc;
         const XMFLOAT3 origin = { wm->value._41, wm->value._42, wm->value._43 };
         // M61b: CPU バックエンドと同じ基底 (恒等なら適用スキップ)。表示用ベストエフォート
@@ -292,6 +310,9 @@ void GpuParticleBackend::Update(World& world, float dt)
 
         // ---- CPU 側で放出データを生成 (決定論 RNG。GPU では乱数を作らない) ----
         // 放出計画は CPU バックエンドと共有 (M32a: playing/duration/loop/burst)。表示用ベストエフォート。
+        // M61e: プリウォームは GPU では行わない (spec 7.5 の等価規約に対する明示的な例外)。
+        // GPU はハッシュ非対象の表示用ベストエフォートで、数百 tick ぶんの EmitData 生成 +
+        // Dispatch を誕生 tick に畳み込む価値がない — 誕生直後の見た目差のみ許容する
         int emitCount = PlanParticleEmission(*desc, em.ageTicks, em.emitAccum, dt);
         emitCount = std::min(emitCount, static_cast<int>(em.capacity / 4)); // 1tick 暴発ガード
         emitCount = std::max(emitCount, 0);
@@ -533,6 +554,9 @@ void GpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
     }
 
     for (GpuEmitter& em : emitters_) {
+        if (em.frozen) {
+            continue; // M61e: 凍結中は描かない (CPU 側の renderSkip と同じ意味論)
+        }
         if (em.gpuIdle) {
             continue; // 空 Dispatch 回避中 (最後の実 Dispatch が InstanceCount=0 を確定済み)
         }

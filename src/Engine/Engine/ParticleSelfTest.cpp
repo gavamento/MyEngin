@@ -1258,6 +1258,135 @@ bool RunParticleSelfTest()
 
     // ==== M61e: プリウォーム + 非アクティブ凍結の検証節はこの下へ ====
 
+    // ---- (M1) M61e: 非アクティブ化はプール破棄でなく凍結 (再シードしない) ----
+    // 対照実験: エンティティ index まで揃えた 2 ワールドで「30 tick → 凍結 10 tick →
+    // 解凍 5 tick」と「素の 35 tick」がビット一致することを見る = 凍結が rng/ageTicks/
+    // emitAccum/SoA を 1 ビットも進めない (完全に時が止まる) ことの証明
+    {
+        // 凍結側: ActiveComponent つき + 誕生時から無効の 2 本目 (こちらはプールを持たない)
+        Scene s1;
+        GameObject g1 = s1.CreateGameObjectTracked("Emitter");
+        auto* em1 = g1.AddComponent<ParticleEmitterComponent>();
+        em1->seed = 4242u;
+        g1.AddComponent<ActiveComponent>(); // enabled=1 (既定)
+        GameObject gOff = s1.CreateGameObjectTracked("BornInactive");
+        gOff.AddComponent<ParticleEmitterComponent>();
+        auto* aOff = gOff.AddComponent<ActiveComponent>();
+        aOff->enabled = 0;
+        s1.GetWorld().ApplyStructuralChanges();
+        World& w1 = s1.GetWorld();
+        SetWorldPos(w1, g1.Id(), 1.0f, 0.0f, 0.0f);
+
+        // 対照側: ActiveComponent 無し。g1 と同じ生成順 = 同じ entity index = 同じ rng
+        // ストリーム (シードのストリーム値は e.index 由来なので index 一致が前提)
+        Scene s2;
+        GameObject g2 = s2.CreateGameObjectTracked("Emitter");
+        auto* em2 = g2.AddComponent<ParticleEmitterComponent>();
+        em2->seed = 4242u;
+        s2.GetWorld().ApplyStructuralChanges();
+        World& w2 = s2.GetWorld();
+        SetWorldPos(w2, g2.Id(), 1.0f, 0.0f, 0.0f);
+        check(g1.Id().index == g2.Id().index, "freeze: control world reuses the same entity index");
+
+        CpuParticleBackend frozenSide, control;
+        for (int t = 0; t < 30; ++t) {
+            frozenSide.Update(w1, kDt);
+        }
+        check(frozenSide.Pools().size() == 1,
+              "freeze: a born-inactive emitter never gets a pool (M10 semantics kept)");
+        const uint32_t aliveBefore = frozenSide.Pools()[0].alive;
+        const uint64_t rngStateBefore = frozenSide.Pools()[0].rng.State();
+        const int32_t ageBefore = frozenSide.Pools()[0].ageTicks;
+        const uint64_t hashBefore = HashSimState(frozenSide);
+        check(aliveBefore > 0, "freeze: emitter produced particles before deactivation");
+
+        // 凍結: 10 tick の間プールが破棄されず、1 ビットも動かない
+        w1.GetComponent<ActiveComponent>(g1.Id())->enabled = 0;
+        bool still = true;
+        for (int t = 0; t < 10; ++t) {
+            frozenSide.Update(w1, kDt);
+            still = still && frozenSide.Pools().size() == 1
+                && frozenSide.Pools()[0].alive == aliveBefore
+                && frozenSide.Pools()[0].rng.State() == rngStateBefore
+                && frozenSide.Pools()[0].ageTicks == ageBefore
+                && HashSimState(frozenSide) == hashBefore;
+        }
+        check(still, "freeze: deactivation keeps the pool completely frozen (alive/rng/age/SoA)");
+        check(frozenSide.Pools()[0].renderSkip, "freeze: frozen pool raises renderSkip");
+
+        // 解凍: 続きから放出 (再シード・リセット無し)。renderSkip も降りる
+        w1.GetComponent<ActiveComponent>(g1.Id())->enabled = 1;
+        for (int t = 0; t < 5; ++t) {
+            frozenSide.Update(w1, kDt);
+        }
+        check(frozenSide.Pools()[0].alive > aliveBefore && !frozenSide.Pools()[0].renderSkip,
+              "freeze: reactivation resumes emission and clears renderSkip");
+
+        // 対照: 素の 35 tick とビット一致 = 凍結中に時間が 1 tick も流れていない
+        for (int t = 0; t < 35; ++t) {
+            control.Update(w2, kDt);
+        }
+        check(HashSimState(frozenSide) == HashSimState(control)
+                  && frozenSide.Pools()[0].rng.State() == control.Pools()[0].rng.State()
+                  && frozenSide.Pools()[0].ageTicks == control.Pools()[0].ageTicks
+                  && frozenSide.Pools()[0].emitAccum == control.Pools()[0].emitAccum,
+              "freeze: freeze+resume is bit-identical to an uninterrupted run (no reseed)");
+
+        // 破棄経路は従来どおり: コンポーネント削除 (存在自体の消滅) でプール消滅
+        g1.RemoveComponent<ParticleEmitterComponent>();
+        w1.ApplyStructuralChanges();
+        frozenSide.Update(w1, kDt);
+        check(frozenSide.Pools().empty(),
+              "freeze: removing the component still destroys the pool");
+    }
+
+    // ---- (M2) M61e: プリウォーム — 誕生 tick に prewarmTime ぶんを先回し ----
+    {
+        Scene s;
+        GameObject go = s.CreateGameObjectTracked("Prewarmed");
+        auto* em = go.AddComponent<ParticleEmitterComponent>();
+        em->seed = 777u;
+        em->prewarmTime = 1.0f; // ≒60 tick ぶん
+        s.GetWorld().ApplyStructuralChanges();
+        World& w = s.GetWorld();
+        SetWorldPos(w, go.Id(), 0.0f, 0.0f, 0.0f);
+
+        CpuParticleBackend cpu;
+        cpu.Update(w, kDt);
+        // 既定 rate=200/s → 約 60 (prewarm) + 1 (通常) tick で ~200 粒。寿命 min=1.2s なので
+        // まだ 1 粒も死なない = 放出総数がそのまま alive (float 丸めで ±数粒の幅を持たせる)
+        const uint32_t alive1 = cpu.Pools()[0].alive;
+        check(alive1 >= 190 && alive1 <= 215,
+              "prewarm: first update reaches the prewarmed population (~rate*prewarmTime)");
+        check(cpu.Pools()[0].prewarmed == 1, "prewarm: one-shot flag raised after first update");
+
+        cpu.Update(w, kDt);
+        const uint32_t alive2 = cpu.Pools()[0].alive;
+        check(alive2 >= alive1 + 1 && alive2 <= alive1 + 8,
+              "prewarm: second update emits only the normal per-tick amount (no retrigger)");
+
+        // snapshot 復元の等価物: プールを丸ごと写した別バックエンドでも再トリガしない
+        // (prewarmed==1 が sim 状態としてプールごと写るため)
+        CpuParticleBackend restored;
+        restored.PoolsForSnapshot() = cpu.PoolsForSnapshot();
+        restored.Update(w, kDt);
+        check(restored.Pools()[0].alive >= alive2 + 1 && restored.Pools()[0].alive <= alive2 + 8,
+              "prewarm: a restored pool does not prewarm again");
+
+        // playing=0 では発火しない (トリガは prewarmed==0 && prewarmTime>0 && playing)
+        Scene sp;
+        GameObject gp = sp.CreateGameObjectTracked("Paused");
+        auto* emp = gp.AddComponent<ParticleEmitterComponent>();
+        emp->prewarmTime = 1.0f;
+        emp->playing = 0;
+        sp.GetWorld().ApplyStructuralChanges();
+        SetWorldPos(sp.GetWorld(), gp.Id(), 0.0f, 0.0f, 0.0f);
+        CpuParticleBackend paused;
+        paused.Update(sp.GetWorld(), kDt);
+        check(!paused.Pools().empty() && paused.Pools()[0].alive == 0,
+              "prewarm: playing=0 suppresses the prewarm burst");
+    }
+
     // ==== M61f: GPU 容量再作成 + バースト上限の検証節はこの下へ ====
 
     if (failCount == 0) {
