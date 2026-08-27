@@ -111,6 +111,16 @@ void RegisterBuiltinComponents()
         // M42e: GPU 深度衝突 (末尾 append。hash 対象フィールド追加 → golden 再記録 = M42e で実施)
         MYE_JP("深度バッファ衝突", MYE_FIELD(ParticleEmitterComponent, depthCollision, Int32)),
         MYE_JP("衝突時の反発", MYE_FIELD_RANGE(ParticleEmitterComponent, collisionBounce, Float, 0.0f, 1.0f)),
+        // M61a: A群拡張 (末尾 append)。既定値 = 従来挙動とビット同一。hash 対象の追加なので
+        // 既存 .rep のハッシュ値は変わる (.rep は毎回録り直しの使い捨て、M59a2 と同じ扱い)
+        MYE_JP("速度の継承", MYE_FIELD(ParticleEmitterComponent, velocityInheritance, Float)),
+        MYE_JP("シミュレーション空間", MYE_FIELD(ParticleEmitterComponent, simulationSpace, Int32)),
+        MYE_JP("プリウォーム (秒)", MYE_FIELD(ParticleEmitterComponent, prewarmTime, Float)),
+        MYE_JP("サブフレーム放出", MYE_FIELD(ParticleEmitterComponent, subframeEmission, Int32)),
+        MYE_JP("乱流モード", MYE_FIELD(ParticleEmitterComponent, turbulenceMode, Int32)),
+        MYE_JP("ノイズ周波数", MYE_FIELD(ParticleEmitterComponent, noiseFrequency, Float)),
+        MYE_JP("ノイズ速度", MYE_FIELD(ParticleEmitterComponent, noiseSpeed, Float)),
+        MYE_JP("放出元", MYE_FIELD(ParticleEmitterComponent, emitFrom, Int32)),
     });
 
     // M28a: height / friction、M36a: layer / mask / meshAsset を末尾 append

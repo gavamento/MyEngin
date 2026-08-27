@@ -137,6 +137,17 @@ struct ParticleEmitterComponent {
     // 深度は前フレームの描画結果 = 1 フレーム遅延 / 画面外・空ピクセルとは衝突しない
     int32_t depthCollision = 0;   // 1 で GPU sim がシーン深度と衝突
     float collisionBounce = 0.4f; // 反発係数 (0..1)
+    // ---- M61a: A群拡張の共有フィールド (末尾 append。既定 = 従来挙動とビット同一) ----
+    // hash 対象フィールドの追加 = 既存 .rep のハッシュ値は変わる (毎回録り直しなので bump 無し、
+    // M59a2 と同じ扱い)。sizeof が変わるので snapshot 版は v5 へ (descCache の Raw 書きが伸びる)
+    float velocityInheritance = 0.0f; // ③ エミッタ移動速度を初速へ加算する係数 (0=off)
+    int32_t simulationSpace = 0;      // ④ 0=ワールド 1=ローカル (実装は M61g)
+    float prewarmTime = 0.0f;         // ⑤ >0 で開始時に事前シムする秒数 (CPU のみ。GPU は skip)
+    int32_t subframeEmission = 0;     // ② 1=放出を tick 内で等分散 (0=従来: tick 先頭一括)
+    int32_t turbulenceMode = 0;       // ⑧ 0=渦 (従来) 1=カールノイズ (実装は M61d)
+    float noiseFrequency = 1.0f;      // ⑧ ノイズ空間周波数 (turbulenceMode=1 のみ)
+    float noiseSpeed = 0.5f;          // ⑧ ノイズ時間スクロール (turbulenceMode=1 のみ)
+    int32_t emitFrom = 0;             // ⑦ 0=形状ごとの既定 1=体積 2=表面 (実装は M61b)
     // ---- 実行時 (非登録=非ハッシュ・非シリアライズ。スクリプト/エディタが即時バーストを積む) ----
     int32_t pendingBurst = 0; // 次の Update で消費され 0 に戻る (常に tick 末ハッシュ前に 0)
     static inline ComponentTypeId sTypeId = kInvalidComponentType;

@@ -194,4 +194,8 @@ inline bool StepGpuIdleSkip(int emitCount, uint32_t aliveEstimate, int32_t grace
     return true;
 }
 
+// ==== M61b/M61c: 放出系ヘルパ (回転 / 形状サンプリング / サブフレーム補間 / 速度継承) はこの下へ ====
+
+// ==== M61d: 乱流ノイズ (カールノイズ純関数 + HLSL ミラー) はこの下へ ====
+
 } // namespace mye

@@ -390,6 +390,12 @@ void CpuParticleBackend::Update(World& world, float dt)
             pool.maxSize0 = msz;
         }
         aliveTotal += pool.alive;
+
+        // M61a: 次 tick のための原点履歴 (消費は M61b/c: サブフレーム補間と速度継承)。
+        // prewarmed はプール誕生 tick の検出用 — ここで立てる前 (= 初回 Update の冒頭) だけ 0
+        pool.prevOrigin = origin;
+        pool.prevOriginValid = 1;
+        pool.prewarmed = 1;
     }
 
     stats_.aliveTotal = aliveTotal;

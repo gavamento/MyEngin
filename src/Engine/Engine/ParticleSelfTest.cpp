@@ -2,7 +2,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
+#include <cstring>
+#include <vector>
 
 #include "Engine/Core/Components.h"
 #include "Engine/Core/Log.h"
@@ -12,6 +15,8 @@
 #include "Engine/Engine/Particles/CpuParticleBackend.h"
 #include "Engine/Engine/Particles/GpuAliveEstimator.h"
 #include "Engine/Engine/Particles/ParticleCurves.h"
+#include "Engine/Engine/Replay/SimSnapshot.h"
+#include "Engine/Engine/Replay/WorldHasher.h"
 #include "Engine/Engine/Scene.h"
 
 using namespace DirectX;
@@ -499,6 +504,151 @@ bool RunParticleSelfTest()
         // 放出再開で即復帰
         check(!StepGpuIdleSkip(1, 0, kGrace, idle) && idle == 0, "idle: wakes on new emission");
     }
+
+    // ---- (L) M61a: 原点履歴とスナップショット往復 ----
+    // (L1) Update が prevOrigin/prevOriginValid/prewarmed を毎 tick 進めること
+    {
+        // プール生成は Update 内 (SyncEmitters) なので「生成直後・初回 Update 前」は外から
+        // 観測できない — 生成コード (EmitterPool pool; pool.owner=e; ...) は既定構築の値を
+        // そのまま使うため、既定構築のプールで「誕生時は 0」を代弁させる
+        CpuParticleBackend::EmitterPool fresh;
+        check(fresh.prewarmed == 0 && fresh.prevOriginValid == 0,
+              "history: a fresh pool starts with prewarmed=0 and no origin history");
+
+        Scene s;
+        GameObject go = s.CreateGameObjectTracked("Emitter");
+        go.AddComponent<ParticleEmitterComponent>();
+        s.GetWorld().ApplyStructuralChanges();
+        World& w = s.GetWorld();
+        SetWorldPos(w, go.Id(), 1.0f, 2.0f, 3.0f);
+
+        CpuParticleBackend cpu;
+        cpu.Update(w, kDt);
+        {
+            const CpuParticleBackend::EmitterPool& pool = cpu.Pools()[0];
+            check(pool.prevOrigin.x == 1.0f && pool.prevOrigin.y == 2.0f
+                      && pool.prevOrigin.z == 3.0f && pool.prevOriginValid == 1
+                      && pool.prewarmed == 1,
+                  "history: first update records the origin and raises both flags");
+        }
+        SetWorldPos(w, go.Id(), 4.0f, 5.0f, 6.0f);
+        cpu.Update(w, kDt);
+        check(cpu.Pools()[0].prevOrigin.x == 4.0f && cpu.Pools()[0].prevOrigin.y == 5.0f
+                  && cpu.Pools()[0].prevOrigin.z == 6.0f,
+              "history: origin history follows the emitter every tick");
+    }
+
+    // (L2) スナップショット往復のビット保存 + ハッシュ感度 (XpbdSelfTest のプローブ池パターン)
+    {
+        Scene s;
+        GameObject owner = s.CreateGameObjectTracked("PoolOwner");
+        World& w = s.GetWorld();
+        w.ApplyStructuralChanges();
+
+        // 手で組んだプローブ池。M61a の新フィールドは全て非デフォルト値にする —
+        // デフォルトのままだと Write/Read の書き忘れがあっても一致してしまい検出できない
+        CpuParticleBackend backend;
+        {
+            CpuParticleBackend::EmitterPool probe;
+            probe.owner = owner.Id();
+            probe.alive = 2;
+            probe.emitAccum = 0.625f;
+            probe.ageTicks = 42;
+            probe.rng.Seed(777u, 5u);
+            probe.px = { 0.5f, 1.5f };
+            probe.py = { 2.5f, 3.5f };
+            probe.pz = { -0.25f, 0.25f };
+            probe.vx = { 0.125f, -0.125f };
+            probe.vy = { 4.0f, 5.0f };
+            probe.vz = { -6.0f, 7.0f };
+            probe.life = { 1.0f, 0.5f };
+            probe.invLife = { 1.0f, 2.0f };
+            probe.size0 = { 0.1f, 0.2f };
+            probe.prevOrigin = { 1.25f, -2.5f, 3.75f };
+            probe.prevOriginValid = 1;
+            probe.prewarmed = 1;
+            probe.descCache.velocityInheritance = 0.5f;
+            probe.descCache.simulationSpace = 1;
+            probe.descCache.prewarmTime = 0.75f;
+            probe.descCache.subframeEmission = 1;
+            probe.descCache.turbulenceMode = 1;
+            probe.descCache.noiseFrequency = 2.0f;
+            probe.descCache.noiseSpeed = 0.25f;
+            probe.descCache.emitFrom = 2;
+            backend.PoolsForSnapshot().push_back(std::move(probe));
+        }
+
+        SimSources src;
+        src.particles = &backend;
+        const uint64_t hashPool = HashWorld(w, src);
+
+        SimRefs refs;
+        refs.scene = &s;
+        refs.particles = &backend;
+        uint64_t tick = 60;
+        refs.tickIndex = &tick;
+
+        std::vector<std::byte> blob;
+        check(CaptureSimSnapshot(refs, blob), "snapshot: capture succeeds with a probe pool");
+
+        // 徹底的に変異させてから戻す。descCache はハッシュ非対象なので、ハッシュ復帰の
+        // 確認だけでは往復被覆にならない — 復元後に直接ビット比較する
+        {
+            CpuParticleBackend::EmitterPool& pool = backend.PoolsForSnapshot()[0];
+            pool.prevOrigin = { 9.0f, 9.0f, 9.0f };
+            pool.prevOriginValid = 0;
+            pool.prewarmed = 0;
+            pool.descCache.velocityInheritance = 9.0f;
+            pool.descCache.emitFrom = 0;
+        }
+        check(HashWorld(w, src) != hashPool, "snapshot: the pool really diverged before restore");
+
+        check(RestoreSimSnapshot(refs, blob.data(), blob.size()), "snapshot: restore succeeds");
+        check(HashWorld(w, src) == hashPool, "snapshot: restore returns the captured hash");
+        const CpuParticleBackend::EmitterPool& rp = backend.Pools()[0];
+        check(rp.prevOrigin.x == 1.25f && rp.prevOrigin.y == -2.5f && rp.prevOrigin.z == 3.75f
+                  && rp.prevOriginValid == 1 && rp.prewarmed == 1,
+              "snapshot: M61a pool fields survive the round trip bit-exact");
+        check(rp.descCache.velocityInheritance == 0.5f && rp.descCache.simulationSpace == 1
+                  && rp.descCache.prewarmTime == 0.75f && rp.descCache.subframeEmission == 1
+                  && rp.descCache.turbulenceMode == 1 && rp.descCache.noiseFrequency == 2.0f
+                  && rp.descCache.noiseSpeed == 0.25f && rp.descCache.emitFrom == 2,
+              "snapshot: descCache A-group fields survive the round trip");
+
+        // ハッシュ被覆: 変異 → 割れる → 復元 → 戻る、を 1 か所で回す (XpbdSelfTest と同形)
+        auto mutateCheck = [&](const char* what, auto&& mutate, auto&& restore) {
+            mutate();
+            const bool moved = HashWorld(w, src) != hashPool;
+            restore();
+            const bool restored = HashWorld(w, src) == hashPool;
+            check(moved && restored, what);
+        };
+        // prevOrigin.x は「1 bit だけ」動かす — HashBytes のビットパターン畳み込みが
+        // 仮数最下位まで効いていることの確認 (float 比較経由だと丸めで消えうる差)
+        auto flipBit = [](float& f) {
+            uint32_t u = 0;
+            std::memcpy(&u, &f, sizeof(u));
+            u ^= 1u;
+            std::memcpy(&f, &u, sizeof(f));
+        };
+        CpuParticleBackend::EmitterPool& lp = backend.PoolsForSnapshot()[0];
+        mutateCheck("hash: prevOrigin.x is covered (1-bit sensitivity)",
+                    [&] { flipBit(lp.prevOrigin.x); }, [&] { flipBit(lp.prevOrigin.x); });
+        mutateCheck("hash: prevOriginValid is covered", [&] { lp.prevOriginValid = 0; },
+                    [&] { lp.prevOriginValid = 1; });
+        mutateCheck("hash: prewarmed is covered", [&] { lp.prewarmed = 0; },
+                    [&] { lp.prewarmed = 1; });
+    }
+
+    // ==== M61b: 回転 + 形状サンプリングの検証節はこの下へ ====
+
+    // ==== M61c: サブフレーム補間 + 速度継承の検証節はこの下へ ====
+
+    // ==== M61d: 乱流ノイズの検証節はこの下へ ====
+
+    // ==== M61e: プリウォーム + 非アクティブ凍結の検証節はこの下へ ====
+
+    // ==== M61f: GPU 容量再作成 + バースト上限の検証節はこの下へ ====
 
     if (failCount == 0) {
         MYE_LOG_INFO("==== Particle self test: ALL PASS ====");

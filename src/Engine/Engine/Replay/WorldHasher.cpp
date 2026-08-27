@@ -224,6 +224,13 @@ uint64_t HashCpuParticles(const CpuParticleBackend& cpu, DumpCtx* d)
         EmitU64(d, "Particles", "rngState", rngState, h);
         h = HashCombine(h, rngInc);
         EmitU64(d, "Particles", "rngInc", rngInc, h);
+        // M61a: 放出系拡張の sim 状態 (snapshot v5 と対)
+        h = HashBytes(&pool.prevOrigin, sizeof(pool.prevOrigin), h);
+        EmitBytes(d, "Particles", "prevOrigin", &pool.prevOrigin, sizeof(pool.prevOrigin), h);
+        h = HashCombine(h, pool.prevOriginValid);
+        EmitU64(d, "Particles", "prevOriginValid", pool.prevOriginValid, h);
+        h = HashCombine(h, pool.prewarmed);
+        EmitU64(d, "Particles", "prewarmed", pool.prewarmed, h);
         const uint32_t n = pool.alive;
         if (n > 0) {
             h = HashBytes(pool.px.data(), n * sizeof(float), h);

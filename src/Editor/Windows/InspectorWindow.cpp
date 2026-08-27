@@ -175,6 +175,12 @@ constexpr const char* kColliderShapeLabels[] = { "Sphere", "Box",  "Capsule",
 constexpr const char* kLightTypeLabels[] = { "Directional", "Point", "Spot" };
 constexpr const char* kEmitterShapeLabels[] = { "Point", "Sphere", "Cone", "Box" };
 constexpr const char* kBlendModeLabels[] = { "Additive", "Alpha", "Distortion" }; // M42d
+// M61a: A群拡張の enum 3 種 (消費実装は M61b/M61d/M61g — 表示の予約のみ)。
+// simulationSpace は kForceSpaceLabels と同文だが、ConstantForce の並びと結合させない
+// (片方の値域拡張がもう片方の表示を静かに変える事故を避ける) ため専用配列にする
+constexpr const char* kPtclSimSpaceLabels[] = { "World", "Local" };
+constexpr const char* kPtclTurbModeLabels[] = { "Vortex", "Noise" };
+constexpr const char* kPtclEmitFromLabels[] = { "Default", "Volume", "Surface" };
 constexpr const char* kUIKindLabels[] = { "Panel", "Text", "Button" };
 constexpr const char* kUIAnchorLabels[] = { "TopLeft",    "TopCenter",    "TopRight",
                                             "MiddleLeft", "Center",       "MiddleRight",
@@ -196,6 +202,9 @@ constexpr const char* kColliderShapeJa[] = { "スフィア", "ボックス", "�
 constexpr const char* kLightTypeJa[] = { "平行光", "ポイント", "スポット" };
 constexpr const char* kEmitterShapeJa[] = { "点", "スフィア", "コーン", "ボックス" };
 constexpr const char* kBlendModeJa[] = { "加算", "アルファ", "歪み" };
+constexpr const char* kPtclSimSpaceJa[] = { "ワールド", "ローカル" }; // M61a
+constexpr const char* kPtclTurbModeJa[] = { "渦", "ノイズ" };
+constexpr const char* kPtclEmitFromJa[] = { "既定", "体積", "表面" };
 constexpr const char* kUIKindJa[] = { "パネル", "テキスト", "ボタン" };
 constexpr const char* kUIAnchorJa[] = { "左上", "上中央", "右上", "左中央", "中央",
                                         "右中央", "左下", "下中央", "右下" };
@@ -216,6 +225,10 @@ constexpr EnumFieldLabels kEnumFields[] = {
     { "Light", "type", kLightTypeLabels, 3, kLightTypeJa },
     { "ParticleEmitter", "shape", kEmitterShapeLabels, 4, kEmitterShapeJa },
     { "ParticleEmitter", "blendMode", kBlendModeLabels, 3, kBlendModeJa },
+    // M61a: A群拡張 (subframeEmission は playing/looping と同じく素の DragInt のまま)
+    { "ParticleEmitter", "simulationSpace", kPtclSimSpaceLabels, 2, kPtclSimSpaceJa },
+    { "ParticleEmitter", "turbulenceMode", kPtclTurbModeLabels, 2, kPtclTurbModeJa },
+    { "ParticleEmitter", "emitFrom", kPtclEmitFromLabels, 3, kPtclEmitFromJa },
     { "UIElement", "kind", kUIKindLabels, 3, kUIKindJa },
     // M51f: anchor はコンボではなく 9-grid ピッカー (DrawField の特例) — 行はここに置かない
     { "UIElement", "align", kUIAnchorLabels, 9, kUIAnchorJa },

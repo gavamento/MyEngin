@@ -132,6 +132,11 @@ void WriteParticles(ByteWriter& w, const CpuParticleBackend* particles)
         w.I32(p.ageTicks);
         w.U64(p.rng.State());
         w.U64(p.rng.Inc());
+        w.F32(p.prevOrigin.x); // M61a (v5)
+        w.F32(p.prevOrigin.y);
+        w.F32(p.prevOrigin.z);
+        w.U32(p.prevOriginValid);
+        w.U32(p.prewarmed);
         w.Raw(&p.descCache, sizeof(ParticleEmitterComponent));
         w.PodVector(p.px);
         w.PodVector(p.py);
@@ -169,6 +174,11 @@ bool ReadParticles(ByteReader& r, std::vector<CpuParticleBackend::EmitterPool>& 
         const uint64_t state = r.U64();
         const uint64_t inc = r.U64();
         p.rng.Restore(state, inc);
+        p.prevOrigin.x = r.F32(); // M61a (v5)
+        p.prevOrigin.y = r.F32();
+        p.prevOrigin.z = r.F32();
+        p.prevOriginValid = r.U32();
+        p.prewarmed = r.U32();
         r.Raw(&p.descCache, sizeof(ParticleEmitterComponent));
         p.px = r.PodVector<float>();
         p.py = r.PodVector<float>();

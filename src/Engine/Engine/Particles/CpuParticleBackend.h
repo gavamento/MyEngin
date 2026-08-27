@@ -35,6 +35,10 @@ public:
         float emitAccum = 0.0f;
         int32_t ageTicks = 0; // 放出ウィンドウ内の経過 tick (M32a: burst/duration/loop 用、ハッシュ対象)
         Pcg32 rng;
+        // ---- M61a: 放出系拡張の sim 状態 (ハッシュ + スナップショット対象。snapshot v5) ----
+        DirectX::XMFLOAT3 prevOrigin = {}; // 前 tick のエミッタ原点 (② サブフレーム補間 / ③ 速度継承の材料)
+        uint32_t prevOriginValid = 0;      // 0 = 履歴なし (初回 tick は速度 0 として扱う)
+        uint32_t prewarmed = 0;            // 初回 Update 済みフラグ (⑤ プリウォームの一度きりトリガ判定)
         ParticleEmitterComponent descCache; // Update 時のコピー (描画属性用)
         // SoA (SSE 4-wide でアクセス)
         std::vector<float> px, py, pz;
