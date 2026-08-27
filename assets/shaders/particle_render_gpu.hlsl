@@ -12,6 +12,9 @@ cbuffer GpuRenderCB : register(b1)
     float    _q1;
     float    gOffsetX; // 比較モードの横オフセット
     float3   _q2;
+    // ---- M61g: ローカルシミュレーション空間 (末尾 append。C++ 側 GpuRenderCB と一致) ----
+    float4x4 gEmitterWorld; // transpose 済み (mul(float4, M) 規約は gViewProj と同じ)
+    float4   gSpaceParams;  // x = simulationSpace (1 = pos を gEmitterWorld で変換), yzw = 予約
 };
 
 StructuredBuffer<GpuParticle> gPoolSRV : register(t0);
@@ -37,7 +40,15 @@ VSOut VSMain(uint vid : SV_VertexID, uint iid : SV_InstanceID)
     const float4 color = lerp(gColorBegin, gColorEnd, age);
 
     const float2 corner = float2((vid & 1) ? 1.0f : -1.0f, (vid & 2) ? -1.0f : 1.0f);
-    const float3 world = p.pos + float3(gOffsetX, 0, 0)
+    // M61g: ローカル空間 (simulationSpace=1) はプールの pos がエミッタローカル座標 —
+    // ここでワールドへ変換する (CPU バックエンドの renderWorld 変換と同じ意味論)。
+    // ビルボードサイズにはスケールを適用しない (v1 制限 — 張り出しは変換後の位置へ素のまま)
+    float3 basePos = p.pos;
+    if (gSpaceParams.x != 0.0f)
+    {
+        basePos = mul(float4(p.pos, 1.0f), gEmitterWorld).xyz;
+    }
+    const float3 world = basePos + float3(gOffsetX, 0, 0)
         + (gCamRight * corner.x + gCamUp * corner.y) * size;
 
     VSOut o;

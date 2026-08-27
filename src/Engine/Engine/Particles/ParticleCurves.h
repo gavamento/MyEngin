@@ -495,4 +495,36 @@ inline DirectX::XMFLOAT3 EvalCurlNoise(const DirectX::XMFLOAT3& p, float t)
     return { dFzDy - dFyDz, dFxDz - dFzDx, dFyDx - dFxDy };
 }
 
+// ---- M61g: ローカルシミュレーション空間 (simulationSpace=1) の描画用 AABB 変換 ----
+// ローカル AABB をエミッタのワールド行列 (アフィン、行ベクトル規約 v' = v * M) で変換し、
+// 8 頂点を包む保守的なワールド AABB を返す。回転で体積は膨らむが包含は必ず保存される —
+// フラスタムカリング (ParticlePoolVisible) の入力用で描画専用 (ハッシュ非関与)。
+// 恒等行列なら入力がそのまま素通しになる (x*1 + y*0 + z*0 + 0 は厳密に x)。
+// out と入力は同一オブジェクトでもよい (ローカルへ計算し切ってから書き戻す)
+inline void TransformAabbToWorld(const DirectX::XMFLOAT4X4& m, const DirectX::XMFLOAT3& bmin,
+                                 const DirectX::XMFLOAT3& bmax, DirectX::XMFLOAT3& outMin,
+                                 DirectX::XMFLOAT3& outMax)
+{
+    DirectX::XMFLOAT3 mn = {};
+    DirectX::XMFLOAT3 mx = {};
+    for (int c = 0; c < 8; ++c) {
+        const float x = (c & 1) ? bmax.x : bmin.x;
+        const float y = (c & 2) ? bmax.y : bmin.y;
+        const float z = (c & 4) ? bmax.z : bmin.z;
+        const float wx = x * m._11 + y * m._21 + z * m._31 + m._41;
+        const float wy = x * m._12 + y * m._22 + z * m._32 + m._42;
+        const float wz = x * m._13 + y * m._23 + z * m._33 + m._43;
+        if (c == 0) {
+            mn = { wx, wy, wz };
+            mx = { wx, wy, wz };
+        } else {
+            mn.x = std::min(mn.x, wx); mx.x = std::max(mx.x, wx);
+            mn.y = std::min(mn.y, wy); mx.y = std::max(mx.y, wy);
+            mn.z = std::min(mn.z, wz); mx.z = std::max(mx.z, wz);
+        }
+    }
+    outMin = mn;
+    outMax = mx;
+}
+
 } // namespace mye

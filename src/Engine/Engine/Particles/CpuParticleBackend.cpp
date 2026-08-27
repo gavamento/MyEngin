@@ -208,9 +208,15 @@ void CpuParticleBackend::EmitParticles(EmitterPool& pool, const ParticleEmitterC
         pool.life.resize(newSize); pool.invLife.resize(newSize); pool.size0.resize(newSize);
     }
 
+    // M61g: ローカルシミュレーション空間 (simulationSpace=1)。呼び出し側 (Update) が
+    // origin=(0,0,0) を渡してくるので、ここでは「基底適用のスキップ (ローカル系では恒等)」と
+    // 「速度継承の無効化」だけを担う。ガードは全て localSpace 側の分岐 —
+    // 既定 (0=ワールド) の演算列は 1 ビットも変えない
+    const bool localSpace = (desc.simulationSpace == 1);
     // M61c: エミッタ速度 (prevOrigin 履歴から。プール誕生 tick は履歴なし = 0)。
     // 消費するのは速度継承 (velocityInheritance != 0) とサブフレーム補間だけ —
-    // 既定 (係数 0 / subframe 0) では値を読みもしないため従来とビット同一
+    // 既定 (係数 0 / subframe 0) では値を読みもしないため従来とビット同一。
+    // ローカル空間では prevOrigin も origin も (0,0,0) なので定常的に 0 になる
     const bool subframe = (desc.subframeEmission != 0);
     XMFLOAT3 emitterVel = { 0.0f, 0.0f, 0.0f };
     if (pool.prevOriginValid != 0 && dt > 0.0f) {
@@ -231,8 +237,10 @@ void CpuParticleBackend::EmitParticles(EmitterPool& pool, const ParticleEmitterC
         const float size = pool.rng.Range(desc.sizeMin, desc.sizeMax);
 
         // M61b: 非恒等の基底 (回転*スケール) だけ方向とオフセットへ適用する。恒等はこの
-        // ブロックを丸ごと飛ばす = 従来とビット同一 (基底適用は RNG を消費しない)
-        if (!basis.identity) {
+        // ブロックを丸ごと飛ばす = 従来とビット同一 (基底適用は RNG を消費しない)。
+        // M61g: ローカル空間もスキップ — SoA はエミッタ座標系なので放出基底は恒等。
+        // エミッタの回転は描画時の renderWorld 変換で全生存粒子へ一括で掛かる
+        if (!basis.identity && !localSpace) {
             ParticleBasisRotateDir(basis, smp.dirX, smp.dirY, smp.dirZ);
             if (smp.hasOffset) {
                 ParticleBasisTransformOffset(basis, smp.offX, smp.offY, smp.offZ);
@@ -242,9 +250,12 @@ void CpuParticleBackend::EmitParticles(EmitterPool& pool, const ParticleEmitterC
         float velX = smp.dirX * speed;
         float velY = smp.dirY * speed;
         float velZ = smp.dirZ * speed;
-        if (desc.velocityInheritance != 0.0f) {
+        if (desc.velocityInheritance != 0.0f && !localSpace) {
             // M61c ③: エミッタ速度の継承。係数 0.0f では演算自体をしない —
-            // +0.0f の加算でも -0.0 が +0.0 に化けるため (ビット保存の契約)
+            // +0.0f の加算でも -0.0 が +0.0 に化けるため (ビット保存の契約)。
+            // M61g: ローカル空間では明示的に無効 — 粒子はエミッタと一緒に動くので
+            // 「置いていかれた速度」の概念が成立しない。emitterVel は定常的に 0 だが、
+            // +0.0f 加算のビット化けを避ける意味でも係数 on の分岐ごとスキップする
             velX += emitterVel.x * desc.velocityInheritance;
             velY += emitterVel.y * desc.velocityInheritance;
             velZ += emitterVel.z * desc.velocityInheritance;
@@ -340,6 +351,10 @@ void CpuParticleBackend::SimulateScalar(EmitterPool& pool, const XMFLOAT3& accel
 
 void CpuParticleBackend::Simulate(EmitterPool& pool, const ParticleEmitterComponent& desc, float dt)
 {
+    // M61g: simulationSpace=1 (ローカル) でも力場は一切変換しない — gravity/wind も
+    // 渦/カールノイズも**ローカル系のベクトル/場として解釈する** (v1 仕様。エミッタが
+    // 回転すると重力の見た目の向きも一緒に回る)。式が両空間で同一なので分岐自体が不要 =
+    // ワールド空間 (既定) の演算列はビット不変
     const XMFLOAT3 accel = { desc.gravity.x + desc.wind.x, desc.gravity.y + desc.wind.y,
                              desc.gravity.z + desc.wind.z };
     turb_ = desc.turbulence;
@@ -450,9 +465,24 @@ void CpuParticleBackend::Update(World& world, float dt)
         }
 
         pool.descCache = *desc; // 描画時に World を引かないためのコピー
-        const XMFLOAT3 origin = { wm->value._41, wm->value._42, wm->value._43 };
+        // M61g: renderWorld は descCache と同じ「Render で World を引かないためのキャッシュ」
+        // (ハッシュ/スナップショット非対象)。simulationSpace=1 のプールだけが描画変換に使うが、
+        // 実行中の空間切り替えで即座に有効になるよう常時コピーする
+        pool.renderWorld = wm->value;
+        // M61g: ローカルシミュレーション空間 (simulationSpace=1) は SoA (px..vz) を
+        // エミッタのローカル系で保持する — 放出原点は常に (0,0,0) で、エミッタの移動・回転は
+        // sim に一切入らず、描画時の renderWorld 変換で全生存粒子が剛体追従する。
+        // prevOrigin 履歴もローカル原点で更新される (下の履歴更新は同じ origin 変数を使う) ため、
+        // サブフレーム補間の位置補間は自然に消え、部分 tick 前進だけがローカル座標で効く。
+        // ★実行中に simulationSpace を切り替えると生存粒子の座標解釈が変わって絵が跳ぶ — 仕様
+        //   (移行処理は書かない。切り替え直後の 1 tick は prevOrigin も旧空間の値のまま)
+        const bool localSpace = (desc->simulationSpace == 1);
+        const XMFLOAT3 origin = localSpace
+                                    ? XMFLOAT3{ 0.0f, 0.0f, 0.0f }
+                                    : XMFLOAT3{ wm->value._41, wm->value._42, wm->value._43 };
         // M61b: 上 3x3 (回転*スケール) を放出に適用する。9 成分が厳密に恒等なら
         // EmitParticles 内で従来経路に縮退 = 既存コンテンツのビット保存
+        // (M61g: ローカル空間は非恒等でも EmitParticles 内でスキップされる)
         const ParticleEmitBasis basis = MakeParticleEmitBasis(wm->value);
 
         // M61e: プリウォーム — プール誕生 tick (prewarmed==0 はここでしか真にならない) に、
@@ -533,13 +563,25 @@ void CpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
     for (size_t pi = 0; pi < pools_.size(); ++pi) {
         const EmitterPool& pool = pools_[pi];
         // M61e: renderSkip = 凍結中 (owner 非アクティブ)。粒子は保持されたままだが描かない
-        if (pool.renderSkip || pool.alive == 0
-            || (pool.boundsValid
-                && !ParticlePoolVisible(frustum, pool.boundsMin, pool.boundsMax,
-                                        ParticleBillboardExpand(pool.descCache, pool.maxSize0),
-                                        renderOffsetX))) {
+        if (pool.renderSkip || pool.alive == 0) {
             visScratch_[pi] = 0;
             continue;
+        }
+        if (pool.boundsValid) {
+            // M61g: ローカル空間プールのバウンズはローカル AABB — renderWorld の 8 頂点変換で
+            // 保守的なワールド AABB にしてから既存の判定に掛ける (回転で膨らむが包含は保存)。
+            // ワールド空間 (既定) はコピーを渡すだけで判定値は従来と同一
+            XMFLOAT3 bmin = pool.boundsMin;
+            XMFLOAT3 bmax = pool.boundsMax;
+            if (pool.descCache.simulationSpace == 1) {
+                TransformAabbToWorld(pool.renderWorld, pool.boundsMin, pool.boundsMax, bmin, bmax);
+            }
+            if (!ParticlePoolVisible(frustum, bmin, bmax,
+                                     ParticleBillboardExpand(pool.descCache, pool.maxSize0),
+                                     renderOffsetX)) {
+                visScratch_[pi] = 0;
+                continue;
+            }
         }
         total += pool.alive;
     }
@@ -602,6 +644,29 @@ void CpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
         const ParticleEmitterComponent& d = pool.descCache;
         const uint32_t base = cursor;
 
+        // M61g: ローカル空間プールは位置を renderWorld でワールドへ変換してから詰める
+        // (renderOffsetX はその後に加算)。alpha ソートの viewZ も変換後の位置で計る。
+        // ワールド空間 (既定) はベースポインタの差し替えだけ = 従来と同一の値・同一の演算列。
+        // ビルボードサイズにはスケールを適用しない (v1 制限 — renderWorld は位置にだけ効く)
+        const float* sx = pool.px.data();
+        const float* sy = pool.py.data();
+        const float* sz = pool.pz.data();
+        if (d.simulationSpace == 1) {
+            wxScratch_.resize(pool.alive);
+            wyScratch_.resize(pool.alive);
+            wzScratch_.resize(pool.alive);
+            const XMFLOAT4X4& m = pool.renderWorld;
+            for (uint32_t i = 0; i < pool.alive; ++i) {
+                const float lx = pool.px[i], ly = pool.py[i], lz = pool.pz[i];
+                wxScratch_[i] = lx * m._11 + ly * m._21 + lz * m._31 + m._41;
+                wyScratch_[i] = lx * m._12 + ly * m._22 + lz * m._32 + m._42;
+                wzScratch_[i] = lx * m._13 + ly * m._23 + lz * m._33 + m._43;
+            }
+            sx = wxScratch_.data();
+            sy = wyScratch_.data();
+            sz = wzScratch_.data();
+        }
+
         orderScratch_.resize(pool.alive);
         for (uint32_t i = 0; i < pool.alive; ++i) {
             orderScratch_[i] = i;
@@ -609,8 +674,8 @@ void CpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
         if (d.blendMode == 1) {
             // back-to-front (明示キー: viewZ 降順 → index 昇順。spec 11.2 規則 7)
             std::sort(orderScratch_.begin(), orderScratch_.end(), [&](uint32_t a, uint32_t b) {
-                const float za = pool.px[a] * vm._13 + pool.py[a] * vm._23 + pool.pz[a] * vm._33;
-                const float zb = pool.px[b] * vm._13 + pool.py[b] * vm._23 + pool.pz[b] * vm._33;
+                const float za = sx[a] * vm._13 + sy[a] * vm._23 + sz[a] * vm._33;
+                const float zb = sx[b] * vm._13 + sy[b] * vm._23 + sz[b] * vm._33;
                 if (za != zb) {
                     return za > zb;
                 }
@@ -623,7 +688,7 @@ void CpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
             float age = 1.0f - pool.life[i] * pool.invLife[i];
             age = std::clamp(age, 0.0f, 1.0f);
             ParticleInstance& inst = out[cursor++];
-            inst.pos = { pool.px[i] + renderOffsetX, pool.py[i], pool.pz[i] };
+            inst.pos = { sx[i] + renderOffsetX, sy[i], sz[i] };
             // 多点グラデーション (中間キー未使用なら従来の 2 点線形と同値)
             inst.size = pool.size0[i] * EvalParticleSizeScale(d, age);
             inst.color = EvalParticleColor(d, age);

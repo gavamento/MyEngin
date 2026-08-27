@@ -60,6 +60,14 @@ public:
         // false = 「描く」側へ倒れるが、Render の前に必ず Update が凍結を再判定して
         // 立て直すので実害はない (boundsValid と同じ理屈の描画専用フィールド)
         bool renderSkip = false;
+        // M61g: エミッタのワールド行列のキャッシュ (descCache と同じ「Render で World を
+        // 引かないためのコピー」— ハッシュ/スナップショット非対象)。simulationSpace=1 の
+        // プールは SoA がローカル座標なので、Render がこれで位置をワールドへ変換する。
+        // 復元直後は恒等へ戻る = ローカル座標を素のまま描く保守側 (次の Update で立て直る)
+        DirectX::XMFLOAT4X4 renderWorld = { 1.0f, 0.0f, 0.0f, 0.0f,
+                                            0.0f, 1.0f, 0.0f, 0.0f,
+                                            0.0f, 0.0f, 1.0f, 0.0f,
+                                            0.0f, 0.0f, 0.0f, 1.0f };
     };
     const std::vector<EmitterPool>& Pools() const { return pools_; }
     // sim スナップショット (M52d): エミッタ池は WorldHash 対象の sim 状態なので
@@ -89,6 +97,10 @@ private:
     ParticleStats stats_;
     std::vector<uint32_t> orderScratch_; // アルファソート用 (描画専用)
     std::vector<uint8_t> visScratch_;    // プール毎の可視フラグ (Render 内のみ有効、描画専用)
+    // M61g: ローカル空間プールのワールド変換済み位置 (Render 内のみ有効、描画専用)。
+    // SoA と同じ並びの 3 本にするのは、ソート比較とインスタンス詰めが「ベースポインタの
+    // 差し替え」だけでワールド/ローカル両空間を同一コードで通れるようにするため
+    std::vector<float> wxScratch_, wyScratch_, wzScratch_;
 
     // 描画リソース (全エミッタ共有の動的 structured buffer)
     Microsoft::WRL::ComPtr<ID3D11Buffer> instanceBuffer_;

@@ -34,7 +34,7 @@ struct GpuParticleCB { // particle_gpu_common.hlsli と一致
     XMFLOAT4 params4;           // M61d: turbulenceMode, noiseFrequency, noiseSpeed, noiseTime
 };
 
-struct GpuRenderCB {
+struct GpuRenderCB { // particle_render_gpu.hlsl の GpuRenderCB と一致
     XMFLOAT4X4 viewProj;
     XMFLOAT3 camRight;
     float pad0;
@@ -42,6 +42,9 @@ struct GpuRenderCB {
     float pad1;
     float offsetX;
     float pad2[3];
+    // ---- M61g: ローカルシミュレーション空間 (末尾 append。HLSL 側と両方同時に変更する) ----
+    XMFLOAT4X4 emitterWorld; // transpose 済み (mul(float4, M) 規約は viewProj と同じ)
+    XMFLOAT4 spaceParams;    // x = simulationSpace (1 = pos を emitterWorld で変換), yzw = 予約
 };
 
 struct GpuParticleData { // 48 bytes (シェーダの GpuParticle と一致)
@@ -288,6 +291,9 @@ void GpuParticleBackend::Update(World& world, float dt)
         }
 
         em.descCache = *desc;
+        // M61g: Render 用ワールド行列キャッシュ (descCache と同じ扱い。CPU 側 renderWorld の
+        // ミラー)。ローカル空間の VS 変換に使う — 常時コピーで空間切り替えに即応する
+        em.renderWorld = wm->value;
 
         // ---- M61f: maxParticles の変更追従 (容量が違えばリソース一式を作り直す) ----
         // 作り直しは一時オブジェクトで行い、成功時のみ move で差し替える — 失敗時 (VRAM 不足等)
@@ -324,7 +330,12 @@ void GpuParticleBackend::Update(World& world, float dt)
             }
         }
 
-        const XMFLOAT3 origin = { wm->value._41, wm->value._42, wm->value._43 };
+        // M61g: ローカルシミュレーション空間 (CPU 側 Update と同じ判定・同じ原点規約 —
+        // 放出原点は (0,0,0)、prevOrigin 履歴もローカル原点で回る)
+        const bool localSpace = (desc->simulationSpace == 1);
+        const XMFLOAT3 origin = localSpace
+                                    ? XMFLOAT3{ 0.0f, 0.0f, 0.0f }
+                                    : XMFLOAT3{ wm->value._41, wm->value._42, wm->value._43 };
         // M61b: CPU バックエンドと同じ基底 (恒等なら適用スキップ)。表示用ベストエフォート
         // だが放出コードは CPU 側と共有 = 見た目パリティを構造で保つ
         const ParticleEmitBasis basis = MakeParticleEmitBasis(wm->value);
@@ -379,7 +390,9 @@ void GpuParticleBackend::Update(World& world, float dt)
             const float speed = em.rng.Range(desc->speedMin, desc->speedMax);
             const float lifetime = std::max(0.01f, em.rng.Range(desc->lifetimeMin, desc->lifetimeMax));
             const float size = em.rng.Range(desc->sizeMin, desc->sizeMax);
-            if (!basis.identity) {
+            // M61g: ローカル空間は基底適用をスキップ (ローカル系では恒等。エミッタの回転は
+            // 描画時の gEmitterWorld 変換で掛かる) — CPU 側 EmitParticles と同じガード
+            if (!basis.identity && !localSpace) {
                 ParticleBasisRotateDir(basis, smp.dirX, smp.dirY, smp.dirZ);
                 if (smp.hasOffset) {
                     ParticleBasisTransformOffset(basis, smp.offX, smp.offY, smp.offZ);
@@ -388,7 +401,9 @@ void GpuParticleBackend::Update(World& world, float dt)
             float velX = smp.dirX * speed;
             float velY = smp.dirY * speed;
             float velZ = smp.dirZ * speed;
-            if (desc->velocityInheritance != 0.0f) {
+            // M61g: 速度継承はローカル空間では無効 (粒子はエミッタと一緒に動くので
+            // 「置いていかれた速度」が成立しない) — CPU 側と同じガード
+            if (desc->velocityInheritance != 0.0f && !localSpace) {
                 velX += emitterVel.x * desc->velocityInheritance;
                 velY += emitterVel.y * desc->velocityInheritance;
                 velZ += emitterVel.z * desc->velocityInheritance;
@@ -460,8 +475,12 @@ void GpuParticleBackend::Update(World& world, float dt)
                       static_cast<float>(em.capacity) };
         cb.colorBegin = desc->colorBegin;
         cb.colorEnd = desc->colorEnd;
-        // M42e: 深度衝突 (エミッタ側 depthCollision かつ深度供給済みのときのみ有効)
-        const bool collide = (desc->depthCollision != 0) && collValid_ && collDepthSRV_;
+        // M42e: 深度衝突 (エミッタ側 depthCollision かつ深度供給済みのときのみ有効)。
+        // M61g: ローカル空間 (simulationSpace=1) では無効 — 衝突判定はワールド座標前提
+        // (粒子位置を深度バッファへ投影する) で、ローカル座標をそのまま投影すると無関係な
+        // 面と衝突する。sim CS へ渡す collParams.enabled を 0 に落とす (spec 7.5 例外の並び)
+        const bool collide = (desc->depthCollision != 0) && (desc->simulationSpace != 1)
+                             && collValid_ && collDepthSRV_;
         cb.collViewProj = collViewProj_;
         cb.collInvViewProj = collInvViewProj_;
         cb.collParams = { collide ? 1.0f : 0.0f, desc->collisionBounce, 0.0f, 0.0f };
@@ -576,7 +595,8 @@ void GpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
     cb.camRight = { view.view._11, view.view._21, view.view._31 };
     cb.camUp = { view.view._12, view.view._22, view.view._32 };
     cb.offsetX = renderOffsetX;
-    UploadCB(dc, renderCB_.Get(), cb);
+    // M61g: emitterWorld / spaceParams がエミッタ毎に変わるため、アップロードはエミッタ
+    // ループ内で毎回行う (共通部は同じ値を書き直すだけ — 描画結果は従来と同一)
 
     dc->IASetInputLayout(nullptr);
     dc->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
@@ -621,6 +641,11 @@ void GpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
                           static_cast<float>(std::max(1, em.descCache.flipTilesY)),
                           em.descCache.flipCycles };
         UploadCB(dc, simCB_.Get(), simCb);
+        // M61g: ローカル空間はエミッタのワールド行列で VS が pos を変換する (transpose は
+        // gViewProj と同じ規約)。ワールド空間 (既定) は flag=0 — 行列は VS が読まない
+        XMStoreFloat4x4(&cb.emitterWorld, XMMatrixTranspose(XMLoadFloat4x4(&em.renderWorld)));
+        cb.spaceParams = { (em.descCache.simulationSpace == 1) ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f };
+        UploadCB(dc, renderCB_.Get(), cb);
         ID3D11Buffer* cbs[2] = { simCB_.Get(), renderCB_.Get() };
         dc->VSSetConstantBuffers(0, 2, cbs);
         dc->PSSetConstantBuffers(0, 2, cbs); // M42b: PS もソフトフェードで b0 を参照

@@ -1427,6 +1427,152 @@ bool RunParticleSelfTest()
               "gpu burst: planned burst passes the old 25% boundary intact");
     }
 
+    // ==== M61g: ローカルシミュレーション空間 (simulationSpace=1) の検証節 ====
+
+    // ---- (M61g-1) ローカル空間: エミッタの移動・回転が sim 状態へ 1 ビットも漏れない ----
+    // A=毎 tick 大きく移動 + 90° 回転 / B=原点で静止。同一シードの 2 プールの SoA/rng が
+    // 全 tick 完全ビット一致 = 「sim はエミッタ座標系で閉じている」の直接証明
+    {
+        auto build = [&](Scene& s, int32_t space) {
+            GameObject go = s.CreateGameObjectTracked("Emitter");
+            auto* em = go.AddComponent<ParticleEmitterComponent>();
+            em->rate = 300.0f; // 5 粒/tick
+            em->seed = 77u;
+            em->shape = 1; // sphere (オフセットつき形状で位置経路も通す)
+            em->simulationSpace = space;
+            s.GetWorld().ApplyStructuralChanges();
+            return go.Id();
+        };
+        Scene sa, sb;
+        const EntityID ia = build(sa, 1);
+        (void)build(sb, 1);
+        {
+            // A には非恒等の基底も与える (90° Y 回転、行ベクトル規約: X→-Z, Z→X) —
+            // ローカル空間では M61b の基底適用がスキップされるので放出に効かないはず
+            auto* wmA = sa.GetWorld().GetComponent<WorldMatrixComponent>(ia);
+            wmA->value._11 = 0.0f; wmA->value._13 = -1.0f;
+            wmA->value._31 = 1.0f; wmA->value._33 = 0.0f;
+        }
+        CpuParticleBackend a, b;
+        bool identical = true;
+        for (int t = 0; t < 8; ++t) {
+            SetWorldPos(sa.GetWorld(), ia, 100.0f + 7.0f * t, 3.0f * t, -5.0f * t);
+            a.Update(sa.GetWorld(), kDt);
+            b.Update(sb.GetWorld(), kDt);
+            identical = identical && (HashSimState(a) == HashSimState(b));
+        }
+        const auto& pa = a.Pools()[0];
+        const auto& pb = b.Pools()[0];
+        identical = identical && pa.rng.State() == pb.rng.State() && pa.rng.Inc() == pb.rng.Inc()
+                    && pa.emitAccum == pb.emitAccum && pa.ageTicks == pb.ageTicks;
+        check(identical,
+              "m61g: local-space pools are bit-identical regardless of emitter motion/rotation");
+        // 粒子はエミッタ座標系に居る (ワールド位置 100+ が座標へ混入していない)
+        bool nearOrigin = pa.alive > 0;
+        for (uint32_t i = 0; i < pa.alive; ++i) {
+            nearOrigin = nearOrigin && std::fabs(pa.px[i]) < 10.0f;
+        }
+        check(nearOrigin, "m61g: local-space particles live in the emitter frame (near origin)");
+
+        // 対照実験: ワールド空間 (既定) は従来どおり移動が位置に出る
+        Scene sc, sd;
+        const EntityID ic = build(sc, 0);
+        (void)build(sd, 0);
+        CpuParticleBackend c, d;
+        c.Update(sc.GetWorld(), kDt);
+        d.Update(sd.GetWorld(), kDt);
+        SetWorldPos(sc.GetWorld(), ic, 50.0f, 0.0f, 0.0f);
+        c.Update(sc.GetWorld(), kDt);
+        d.Update(sd.GetWorld(), kDt);
+        check(HashSimState(c) != HashSimState(d),
+              "m61g: world-space control still reacts to emitter motion");
+    }
+
+    // ---- (M61g-2) TransformAabbToWorld: 恒等で素通し / 回転 + 平行移動で 8 頂点包含 ----
+    {
+        const XMFLOAT4X4 ident = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
+        const XMFLOAT3 bmin = { -1.0f, -2.0f, -3.0f };
+        const XMFLOAT3 bmax = { 4.0f, 5.0f, 6.0f };
+        XMFLOAT3 omin = {}, omax = {};
+        TransformAabbToWorld(ident, bmin, bmax, omin, omax);
+        check(omin.x == bmin.x && omin.y == bmin.y && omin.z == bmin.z && omax.x == bmax.x
+                  && omax.y == bmax.y && omax.z == bmax.z,
+              "m61g: aabb transform passes identity through bit-exact");
+
+        // 90° Y 回転 + 平行移動 (行ベクトル規約: X→-Z, Z→X)。関数と同じ式で 8 頂点を
+        // 変換し、全てが結果 AABB に包含されること (= 保守性) を確認する
+        XMFLOAT4X4 rot = {};
+        rot._13 = -1.0f;
+        rot._22 = 1.0f;
+        rot._31 = 1.0f;
+        rot._41 = 10.0f; rot._42 = -5.0f; rot._43 = 2.5f;
+        rot._44 = 1.0f;
+        XMFLOAT3 rmin = {}, rmax = {};
+        TransformAabbToWorld(rot, bmin, bmax, rmin, rmax);
+        bool contained = true;
+        for (int c8 = 0; c8 < 8; ++c8) {
+            const float x = (c8 & 1) ? bmax.x : bmin.x;
+            const float y = (c8 & 2) ? bmax.y : bmin.y;
+            const float z = (c8 & 4) ? bmax.z : bmin.z;
+            const float wx = x * rot._11 + y * rot._21 + z * rot._31 + rot._41;
+            const float wy = x * rot._12 + y * rot._22 + z * rot._32 + rot._42;
+            const float wz = x * rot._13 + y * rot._23 + z * rot._33 + rot._43;
+            contained = contained && wx >= rmin.x && wx <= rmax.x && wy >= rmin.y && wy <= rmax.y
+                        && wz >= rmin.z && wz <= rmax.z;
+        }
+        check(contained, "m61g: rotated+translated aabb contains all 8 transformed corners");
+    }
+
+    // ---- (M61g-3) 速度継承はローカルでは効かない (係数を立てても静止プールとビット一致) ----
+    {
+        auto build = [&](Scene& s, float vi) {
+            GameObject go = s.CreateGameObjectTracked("Emitter");
+            auto* em = go.AddComponent<ParticleEmitterComponent>();
+            em->rate = 120.0f;
+            em->seed = 13u;
+            em->simulationSpace = 1;
+            em->velocityInheritance = vi;
+            s.GetWorld().ApplyStructuralChanges();
+            return go.Id();
+        };
+        Scene sa, sb;
+        const EntityID ia = build(sa, 1.0f); // 係数 on + 毎 tick 急移動
+        (void)build(sb, 0.0f);               // 係数 off + 静止
+        CpuParticleBackend a, b;
+        bool identical = true;
+        for (int t = 0; t < 6; ++t) {
+            SetWorldPos(sa.GetWorld(), ia, 20.0f * static_cast<float>(t), 0.0f, 0.0f);
+            a.Update(sa.GetWorld(), kDt);
+            b.Update(sb.GetWorld(), kDt);
+            identical = identical && (HashSimState(a) == HashSimState(b));
+        }
+        identical = identical && a.Pools()[0].rng.State() == b.Pools()[0].rng.State();
+        check(identical, "m61g: velocityInheritance has no effect in local space (bit-identical)");
+    }
+
+    // ---- (M61g-4) プリウォームはローカルでもそのまま動く (origin=(0,0,0) 固定) ----
+    {
+        auto build = [&](Scene& s) {
+            GameObject go = s.CreateGameObjectTracked("Emitter");
+            auto* em = go.AddComponent<ParticleEmitterComponent>();
+            em->rate = 600.0f; // 10 粒/tick
+            em->seed = 21u;
+            em->simulationSpace = 1;
+            em->prewarmTime = 0.5f; // 30 tick ぶんの先回し
+            s.GetWorld().ApplyStructuralChanges();
+            return go.Id();
+        };
+        Scene sa, sb;
+        const EntityID ia = build(sa);
+        (void)build(sb);
+        SetWorldPos(sa.GetWorld(), ia, 50.0f, -20.0f, 30.0f); // ワールド位置は sim に無関係のはず
+        CpuParticleBackend a, b;
+        a.Update(sa.GetWorld(), kDt);
+        b.Update(sb.GetWorld(), kDt);
+        check(a.Pools()[0].alive > 100 && HashSimState(a) == HashSimState(b),
+              "m61g: prewarm runs in the local frame independent of the world origin");
+    }
+
     if (failCount == 0) {
         MYE_LOG_INFO("==== Particle self test: ALL PASS ====");
         return true;

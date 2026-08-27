@@ -56,6 +56,12 @@ private:
         // M61e: owner 非アクティブによる凍結。gpuIdle が「D3D 作業だけ省いて放出計画と
         // 推定器の記帳は続ける」のに対し、凍結は「時が止まる」— 記帳ごと全部止める
         bool frozen = false;
+        // M61g: エミッタのワールド行列のキャッシュ (CPU 側 EmitterPool.renderWorld のミラー)。
+        // simulationSpace=1 のとき Render がこれを GpuRenderCB へ載せ、VS が pos を変換する
+        DirectX::XMFLOAT4X4 renderWorld = { 1.0f, 0.0f, 0.0f, 0.0f,
+                                            0.0f, 1.0f, 0.0f, 0.0f,
+                                            0.0f, 0.0f, 1.0f, 0.0f,
+                                            0.0f, 0.0f, 0.0f, 1.0f };
         Pcg32 rng;
         ParticleEmitterComponent descCache;
         bool firstDispatch = true; // 初回のみ dead list カウンタを capacity で初期化
