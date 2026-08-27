@@ -42,6 +42,14 @@ public:
         std::vector<float> life;    // 残り秒
         std::vector<float> invLife; // 1/寿命
         std::vector<float> size0;   // 初期サイズ
+        // ---- 描画専用バウンズ (Update が毎 tick 再計算。Render のフラスタムカリング用) ----
+        // WorldHasher にも SimSnapshot にも**載せない** (両者ともフィールド明示列挙なので
+        // ここへの追加はハッシュ/スナップショット版に影響しない)。復元直後は invalid に
+        // 戻り「カリングしない」側へ倒れる — 保守方向にしか壊れない設計
+        DirectX::XMFLOAT3 boundsMin = {};
+        DirectX::XMFLOAT3 boundsMax = {};
+        float maxSize0 = 0.0f; // 生存粒子の初期サイズ最大 (ビルボード張り出しの拡張量用)
+        bool boundsValid = false;
     };
     const std::vector<EmitterPool>& Pools() const { return pools_; }
     // sim スナップショット (M52d): エミッタ池は WorldHash 対象の sim 状態なので
@@ -62,6 +70,7 @@ private:
     float turb_ = 0.0f; // Simulate 中の乱流係数 (SIMD/スカラー共有)
     ParticleStats stats_;
     std::vector<uint32_t> orderScratch_; // アルファソート用 (描画専用)
+    std::vector<uint8_t> visScratch_;    // プール毎の可視フラグ (Render 内のみ有効、描画専用)
 
     // 描画リソース (全エミッタ共有の動的 structured buffer)
     Microsoft::WRL::ComPtr<ID3D11Buffer> instanceBuffer_;

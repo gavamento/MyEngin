@@ -369,6 +369,26 @@ void CpuParticleBackend::Update(World& world, float dt)
         EmitParticles(pool, *desc, origin, dt);
         Simulate(pool, *desc, dt);
         KillDead(pool);
+
+        // 描画専用バウンズ (ハッシュ非対象)。シム更新自体は可視性でスキップしない —
+        // プールはワールドハッシュ対象なので、更新カリングは即決定論違反になる
+        // (ParticlePoolVisible のコメント参照)。O(alive) の min/max 走査のみで分岐なし
+        pool.boundsValid = (pool.alive > 0);
+        if (pool.boundsValid) {
+            float mnx = pool.px[0], mxx = pool.px[0];
+            float mny = pool.py[0], mxy = pool.py[0];
+            float mnz = pool.pz[0], mxz = pool.pz[0];
+            float msz = pool.size0[0];
+            for (uint32_t i = 1; i < pool.alive; ++i) {
+                mnx = std::min(mnx, pool.px[i]); mxx = std::max(mxx, pool.px[i]);
+                mny = std::min(mny, pool.py[i]); mxy = std::max(mxy, pool.py[i]);
+                mnz = std::min(mnz, pool.pz[i]); mxz = std::max(mxz, pool.pz[i]);
+                msz = std::max(msz, pool.size0[i]);
+            }
+            pool.boundsMin = { mnx, mny, mnz };
+            pool.boundsMax = { mxx, mxy, mxz };
+            pool.maxSize0 = msz;
+        }
         aliveTotal += pool.alive;
     }
 
@@ -384,8 +404,29 @@ void CpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
     if (!prog || !prog->valid) {
         return;
     }
+
+    // プール単位フラスタムカリング (描画専用)。AABB は Update が撮ったもの — Render は
+    // sim を進めないので同 tick 内では正確。invalid (スナップショット復元直後など) は
+    // 「描画する」側へ倒す。判定はビュー毎 (SceneView / Game / プレビューで各々正しく落ちる)
+    DirectX::XMFLOAT4X4 viewProjRaw;
+    {
+        const XMMATRIX xv = XMLoadFloat4x4(&view.view);
+        const XMMATRIX xp = XMLoadFloat4x4(&view.proj);
+        XMStoreFloat4x4(&viewProjRaw, XMMatrixMultiply(xv, xp));
+    }
+    const Frustum frustum = BuildFrustum(viewProjRaw);
+    visScratch_.assign(pools_.size(), 1u);
     uint32_t total = 0;
-    for (const EmitterPool& pool : pools_) {
+    for (size_t pi = 0; pi < pools_.size(); ++pi) {
+        const EmitterPool& pool = pools_[pi];
+        if (pool.alive == 0
+            || (pool.boundsValid
+                && !ParticlePoolVisible(frustum, pool.boundsMin, pool.boundsMax,
+                                        ParticleBillboardExpand(pool.descCache, pool.maxSize0),
+                                        renderOffsetX))) {
+            visScratch_[pi] = 0;
+            continue;
+        }
         total += pool.alive;
     }
     if (total == 0) {
@@ -439,8 +480,9 @@ void CpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
     }
     auto* out = static_cast<ParticleInstance*>(mapped.pData);
     uint32_t cursor = 0;
-    for (EmitterPool& pool : pools_) {
-        if (pool.alive == 0) {
+    for (size_t pi = 0; pi < pools_.size(); ++pi) {
+        EmitterPool& pool = pools_[pi];
+        if (!visScratch_[pi]) { // 空プール or フラスタム外 (上でまとめて判定済み)
             continue;
         }
         const ParticleEmitterComponent& d = pool.descCache;
@@ -499,9 +541,8 @@ void CpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
 
     using namespace DirectX;
     ParticleCB cbData = {};
-    const XMMATRIX xv = XMLoadFloat4x4(&view.view);
-    const XMMATRIX xp = XMLoadFloat4x4(&view.proj);
-    XMStoreFloat4x4(&cbData.viewProj, XMMatrixTranspose(XMMatrixMultiply(xv, xp)));
+    // viewProj はカリングで計算済みのものを転置して使う (二重計算を避ける)
+    XMStoreFloat4x4(&cbData.viewProj, XMMatrixTranspose(XMLoadFloat4x4(&viewProjRaw)));
     cbData.camRight = { vm._11, vm._21, vm._31 };
     cbData.camUp = { vm._12, vm._22, vm._32 };
     // フォグ (M32c): RenderView が CollectEnvironment から埋めた値を粒子にも適用する

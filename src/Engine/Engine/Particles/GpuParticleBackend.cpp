@@ -18,6 +18,10 @@ namespace {
 
 constexpr float kPi = 3.14159265358979323846f;
 
+// 空 Dispatch 回避の猶予 tick 数。GpuAliveEstimator の丸め差は境界値で ±1 tick なので
+// 8 は十分に保守側 (猶予中の Dispatch は従来コストのまま = 早すぎる skip だけが害になる)
+constexpr int32_t kGpuIdleGraceTicks = 8;
+
 struct GpuParticleCB { // particle_gpu_common.hlsli と一致
     XMFLOAT4 gravityWind; // xyz + dt
     XMFLOAT4 params;      // emitCount, turbulence, sizeEndScale, capacity
@@ -275,6 +279,18 @@ void GpuParticleBackend::Update(World& world, float dt)
         emitCount = std::min(emitCount, static_cast<int>(em.capacity / 4)); // 1tick 暴発ガード
         emitCount = std::max(emitCount, 0);
 
+        // 空 Dispatch 回避: 放出も推定生存も無いエミッタは GPU 作業 (CopyStructureCount×3 +
+        // Dispatch + IndirectArgs 更新) を丸ごと省く。sim CS はスレッドが aliveCount で
+        // 即 return するとはいえ、群起動だけで 1M 容量 ≒ 3907 グループ/tick かかっていた。
+        // 放出計画 (PlanParticleEmission) と推定器の tick は継続する — 凍結すると復帰後の
+        // 放出スケジュールと満期処理が狂う。描画専用の最適化 — sim 状態には一切触れない
+        em.gpuIdle = StepGpuIdleSkip(emitCount, em.aliveEst.Alive(em.capacity),
+                                     kGpuIdleGraceTicks, em.idleTicks);
+        if (em.gpuIdle) {
+            em.aliveEst.EndTick();
+            continue;
+        }
+
         std::vector<EmitData> emitData(static_cast<size_t>(std::max(emitCount, 0)));
         for (int n = 0; n < emitCount; ++n) {
             float dirX = 0.0f, dirY = 1.0f, dirZ = 0.0f;
@@ -484,6 +500,9 @@ void GpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
     }
 
     for (GpuEmitter& em : emitters_) {
+        if (em.gpuIdle) {
+            continue; // 空 Dispatch 回避中 (最後の実 Dispatch が InstanceCount=0 を確定済み)
+        }
         if (em.descCache.blendMode == 2) {
             continue; // M42d: 歪みは CPU バックエンド限定 (v1 制限。GPU は描画スキップ)
         }

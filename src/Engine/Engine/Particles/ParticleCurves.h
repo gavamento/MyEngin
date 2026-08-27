@@ -1,12 +1,14 @@
 #pragma once
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <utility>
 
 #include <DirectXMath.h>
 
 #include "Engine/Core/Components.h"
-#include "Engine/Renderer/PostFxMath.h" // M55a: LinearizeDepth (CPU ミラーの正本)
+#include "Engine/Renderer/FrustumCull.h" // プール単位カリング (描画専用 — ハッシュ非関与)
+#include "Engine/Renderer/PostFxMath.h"  // M55a: LinearizeDepth (CPU ミラーの正本)
 
 // パーティクルの放出計画 (burst/duration/loop/playing) と多点グラデーション評価を
 // CPU/GPU 両バックエンドと selftest で共有する純関数群 (D3D 非依存)。
@@ -145,6 +147,51 @@ inline float EvalParticleSizeScale(const ParticleEmitterComponent& d, float age)
         return d.sizeMidScale + (d.sizeEndScale - d.sizeMidScale) * f;
     }
     return 1.0f + (d.sizeEndScale - 1.0f) * age;
+}
+
+// ---- プール単位フラスタムカリング (描画専用) ----
+// シム更新のカリングは**やらない** — CPU プールはワールドハッシュ対象なので、可視性で
+// 更新を止めた瞬間に「カメラの向きがシム結果を変える」= 決定論違反になる。合法なのは
+// 描画スキップだけ (FrustumCull.h 冒頭と同じ理屈)。
+// AABB はビルボードの張り出し (expand) と 2P 描画オフセットで広げてから p-vertex 保守
+// テストへ渡す。跨ぎ/内側は必ず true = 可視な粒子を決して落とさない (落とすと golden が割れる)。
+inline bool ParticlePoolVisible(const Frustum& f, const DirectX::XMFLOAT3& bmin,
+                                const DirectX::XMFLOAT3& bmax, float expand, float renderOffsetX)
+{
+    const DirectX::XMFLOAT3 wmin = { bmin.x - expand + renderOffsetX, bmin.y - expand,
+                                     bmin.z - expand };
+    const DirectX::XMFLOAT3 wmax = { bmax.x + expand + renderOffsetX, bmax.y + expand,
+                                     bmax.z + expand };
+    return WorldAabbInFrustum(f, wmin, wmax);
+}
+
+// ビルボードの AABB 拡張量。size はビルボード半幅 (particle_render.hlsl: corner*size) で
+// 対角方向は √2 倍まで届く。サイズカーブは中間/終端キーで初期値を超えうるので最大倍率を
+// 掛ける (sizeMidT が無効でも max に含める = 保守側で単純)。1.5 は √2 の保守的丸め。
+inline float ParticleBillboardExpand(const ParticleEmitterComponent& d, float maxSize0)
+{
+    const float maxScale =
+        std::max({ 1.0f, std::fabs(d.sizeMidScale), std::fabs(d.sizeEndScale) });
+    return maxSize0 * maxScale * 1.5f;
+}
+
+// ---- GPU 空 Dispatch 回避の遅延判定 ----
+// 「放出 0 かつ推定生存 0」が graceTicks 連続したら true (= その tick の GPU 作業を丸ごと
+// 省いてよい)。推定は境界値で ±1 tick ずれる (GpuAliveEstimator 冒頭) ため、猶予中は
+// Dispatch を続けて GPU 側の残存粒子を死なせ切る — 最後の実 Dispatch が InstanceCount=0 を
+// 確定させてから眠るのが不変量。表示専用の判定 — sim 状態には決して使わないこと。
+inline bool StepGpuIdleSkip(int emitCount, uint32_t aliveEstimate, int32_t graceTicks,
+                            int32_t& idleTicks)
+{
+    if (emitCount > 0 || aliveEstimate > 0) {
+        idleTicks = 0;
+        return false;
+    }
+    if (idleTicks < graceTicks) {
+        ++idleTicks;
+        return false;
+    }
+    return true;
 }
 
 } // namespace mye

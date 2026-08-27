@@ -1,5 +1,6 @@
 #include "Engine/Engine/ParticleSelfTest.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 
@@ -417,6 +418,86 @@ bool RunParticleSelfTest()
         tiny.OnEmit(0.01f, kDt);
         tiny.EndTick();
         check(tiny.Alive(100) == 0, "life <= dt dies in the emit tick");
+    }
+
+    // ---- (J) 描画専用バウンズ + フラスタムカリング判定 ----
+    // シム更新はカリングしない (プールはハッシュ対象) — テストするのは
+    // 「Update が撮る AABB が全生存粒子を包む」ことと、純関数の可視判定のみ
+    {
+        Scene s;
+        GameObject go = s.CreateGameObjectTracked("Emitter");
+        auto* em = go.AddComponent<ParticleEmitterComponent>();
+        em->rate = 300.0f;
+        em->seed = 42u;
+        em->shape = 1; // sphere (全方向に散る = AABB が退化しない)
+        s.GetWorld().ApplyStructuralChanges();
+        World& w = s.GetWorld();
+        SetWorldPos(w, go.Id(), 5.0f, -2.0f, 8.0f);
+
+        CpuParticleBackend cpu;
+        for (int t = 0; t < 30; ++t) {
+            cpu.Update(w, kDt);
+        }
+        {
+            const CpuParticleBackend::EmitterPool& pool = cpu.Pools()[0];
+            check(pool.boundsValid && pool.alive > 0, "bounds: valid after update with live particles");
+            bool inside = true;
+            float maxSize = 0.0f;
+            for (uint32_t i = 0; i < pool.alive; ++i) {
+                inside = inside && pool.px[i] >= pool.boundsMin.x && pool.px[i] <= pool.boundsMax.x
+                         && pool.py[i] >= pool.boundsMin.y && pool.py[i] <= pool.boundsMax.y
+                         && pool.pz[i] >= pool.boundsMin.z && pool.pz[i] <= pool.boundsMax.z;
+                maxSize = std::max(maxSize, pool.size0[i]);
+            }
+            check(inside, "bounds: AABB contains every live particle");
+            check(NearF(pool.maxSize0, maxSize), "bounds: max size tracks live particles");
+        }
+
+        // 放出停止 + 寿命切れで空になったら invalid (= カリングしない側へ倒れる)
+        w.GetComponent<ParticleEmitterComponent>(go.Id())->playing = 0;
+        for (int t = 0; t < 240; ++t) { // lifetimeMax 2.2s = 132 tick を掃き切る
+            cpu.Update(w, kDt);
+        }
+        check(cpu.Pools()[0].alive == 0 && !cpu.Pools()[0].boundsValid,
+              "bounds: empty pool invalidates bounds");
+
+        // フラスタム判定 (純関数): view=単位行列 + 90° 透視 → z=10 で半幅 10 の錐台
+        XMFLOAT4X4 vp;
+        XMStoreFloat4x4(&vp, XMMatrixPerspectiveFovLH(XM_PIDIV2, 1.0f, 0.1f, 100.0f));
+        const Frustum fr = BuildFrustum(vp);
+        check(ParticlePoolVisible(fr, { -1, -1, 9 }, { 1, 1, 11 }, 0.5f, 0.0f),
+              "cull: box ahead of camera is visible");
+        check(!ParticlePoolVisible(fr, { 50, -1, 9 }, { 52, 1, 11 }, 0.5f, 0.0f),
+              "cull: box far off to the side is culled");
+        check(ParticlePoolVisible(fr, { 50, -1, 9 }, { 52, 1, 11 }, 0.5f, -50.0f),
+              "cull: render offset shifts the box back into view");
+        check(!ParticlePoolVisible(fr, { -1, -1, -11 }, { 1, 1, -9 }, 0.5f, 0.0f),
+              "cull: box behind camera is culled");
+
+        // 拡張量: 半幅 × サイズカーブ最大倍率 × 1.5 (ビルボード対角 √2 の保守値)
+        ParticleEmitterComponent bd;
+        bd.sizeMidScale = 1.0f;
+        bd.sizeEndScale = 3.0f;
+        check(NearF(ParticleBillboardExpand(bd, 2.0f), 2.0f * 3.0f * 1.5f),
+              "cull: billboard expand uses max curve scale");
+    }
+
+    // ---- (K) GPU 空 Dispatch 回避の遅延判定 (純関数) ----
+    {
+        constexpr int32_t kGrace = 8;
+        int32_t idle = 0;
+        // 推定生存 >0 / 放出あり の間はスキップしない (+ 計数リセット)
+        check(!StepGpuIdleSkip(0, 5, kGrace, idle) && idle == 0, "idle: alive estimate keeps gpu on");
+        check(!StepGpuIdleSkip(3, 0, kGrace, idle) && idle == 0, "idle: emission keeps gpu on");
+        // 空 tick が grace 回続くまでは Dispatch を続ける (GPU 側の残存粒子を死なせ切る猶予)
+        bool skippedEarly = false;
+        for (int t = 0; t < kGrace; ++t) {
+            skippedEarly = skippedEarly || StepGpuIdleSkip(0, 0, kGrace, idle);
+        }
+        check(!skippedEarly, "idle: grace ticks keep dispatching");
+        check(StepGpuIdleSkip(0, 0, kGrace, idle), "idle: skips after grace");
+        // 放出再開で即復帰
+        check(!StepGpuIdleSkip(1, 0, kGrace, idle) && idle == 0, "idle: wakes on new emission");
     }
 
     if (failCount == 0) {

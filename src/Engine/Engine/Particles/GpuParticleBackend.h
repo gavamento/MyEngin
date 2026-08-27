@@ -47,6 +47,8 @@ private:
         float emitAccum = 0.0f;
         int32_t ageTicks = 0; // M32a: 放出ウィンドウ経過 tick (CPU 側で管理、表示用)
         GpuAliveEstimator aliveEst; // 生存数の CPU 側推定 (表示用。readback しない)
+        int32_t idleTicks = 0; // 「放出0 + 推定生存0」の連続 tick (空 Dispatch 回避の猶予計数)
+        bool gpuIdle = false;  // true = 今 tick は GPU 作業を丸ごと省いた (Render もスキップ)
         Pcg32 rng;
         ParticleEmitterComponent descCache;
         bool firstDispatch = true; // 初回のみ dead list カウンタを capacity で初期化
