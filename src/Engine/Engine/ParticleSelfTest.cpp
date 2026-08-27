@@ -642,6 +642,269 @@ bool RunParticleSelfTest()
 
     // ==== M61b: 回転 + 形状サンプリングの検証節はこの下へ ====
 
+    // ---- (M61b-1) 基底の純関数: 恒等判定 (9 成分の完全一致) と行ベクトル規約の適用 ----
+    {
+        XMFLOAT4X4 m;
+        XMStoreFloat4x4(&m, XMMatrixIdentity());
+        m._41 = 5.0f; // 平行移動は上 3x3 の恒等判定に影響しない
+        m._42 = -3.0f;
+        m._43 = 2.0f;
+        check(MakeParticleEmitBasis(m).identity, "m61b: translation-only matrix is identity");
+
+        // Z 軸まわり -90° (行ベクトル規約: +Y → +X)
+        XMFLOAT4X4 r = m;
+        r._11 = 0.0f; r._12 = -1.0f;
+        r._21 = 1.0f; r._22 = 0.0f;
+        const ParticleEmitBasis rb = MakeParticleEmitBasis(r);
+        check(!rb.identity, "m61b: rotation matrix is not identity");
+        float dx = 0.0f, dy = 1.0f, dz = 0.0f;
+        ParticleBasisRotateDir(rb, dx, dy, dz);
+        check(NearF(dx, 1.0f) && NearF(dy, 0.0f) && NearF(dz, 0.0f),
+              "m61b: +Y rotates to +X (row-vector convention)");
+
+        // スケールは非恒等。方向は正規化されるがオフセットはスケールを保つ
+        XMFLOAT4X4 sc = m;
+        sc._11 = 2.0f;
+        const ParticleEmitBasis sb = MakeParticleEmitBasis(sc);
+        check(!sb.identity, "m61b: scale matrix is not identity");
+        float sx = 1.0f, sy = 0.0f, sz = 0.0f;
+        ParticleBasisRotateDir(sb, sx, sy, sz);
+        check(NearF(sx, 1.0f) && NearF(sy, 0.0f) && NearF(sz, 0.0f),
+              "m61b: scaled direction is renormalized");
+        float ox = 1.0f, oy = 1.0f, oz = 1.0f;
+        ParticleBasisTransformOffset(sb, ox, oy, oz);
+        check(NearF(ox, 2.0f) && NearF(oy, 1.0f) && NearF(oz, 1.0f),
+              "m61b: offset keeps scale (no normalize)");
+
+        // 退化した方向 (長さ ~0) は (0,1,0) フォールバック
+        float zx = 0.0f, zy = 0.0f, zz = 0.0f;
+        ParticleBasisRotateDir(rb, zx, zy, zz);
+        check(zx == 0.0f && zy == 1.0f && zz == 0.0f,
+              "m61b: degenerate direction falls back to +Y");
+    }
+
+    // ---- (M61b-2) 恒等基底 + emitFrom=0 は従来式の手計算とビット一致 ----
+    // (改変前の EmitParticles + SimulateScalar 1 step の逐語再現と比較する —
+    //  「恒等パスで旧経路が温存されている」ことの直接検証)
+    {
+        Scene s;
+        GameObject go = s.CreateGameObjectTracked("Emitter");
+        auto* em = go.AddComponent<ParticleEmitterComponent>();
+        em->rate = 60.0f; // ちょうど 1 粒/tick
+        em->seed = 4242u;
+        em->shape = 2; // cone (既定角 20°)
+        s.GetWorld().ApplyStructuralChanges();
+        World& w = s.GetWorld();
+        SetWorldPos(w, go.Id(), 2.0f, 1.0f, -3.0f);
+
+        CpuParticleBackend cpu;
+        cpu.Update(w, kDt);
+
+        // 手計算: 旧コードと同じ式・同じ順で 1 粒を再現 (シードはプール生成と同じ規則)
+        Pcg32 r;
+        r.Seed(4242u, static_cast<uint64_t>(go.Id().index) * 2u + 1u);
+        const float pi = 3.14159265358979323846f; // 旧 kPi と同値
+        const float cosMax = cosf(20.0f * pi / 180.0f);
+        const float cosT = 1.0f - r.NextFloat01() * (1.0f - cosMax);
+        const float sinT = sqrtf(std::max(0.0f, 1.0f - cosT * cosT));
+        const float phi = r.NextFloat01() * 2.0f * pi;
+        const float dirX = sinT * cosf(phi);
+        const float dirY = cosT;
+        const float dirZ = sinT * sinf(phi);
+        const float speed = r.Range(2.0f, 3.5f);                     // speedMin/Max 既定
+        const float lifetime = std::max(0.01f, r.Range(1.2f, 2.2f)); // lifetime 既定
+        const float size = r.Range(0.10f, 0.22f);                    // size 既定
+        float px = 2.0f, py = 1.0f, pz = -3.0f;
+        float vx = dirX * speed, vy = dirY * speed, vz = dirZ * speed;
+        // SimulateScalar 1 step (accel = gravity 既定 {0,1.5,0} + wind 0、turb 0)
+        const float ax = (0.0f + 0.0f) + 0.0f * (-vz);
+        const float ay = 1.5f + 0.0f;
+        const float az = (0.0f + 0.0f) + 0.0f * vx;
+        vx += ax * kDt;
+        vy += ay * kDt;
+        vz += az * kDt;
+        px += vx * kDt;
+        py += vy * kDt;
+        pz += vz * kDt;
+
+        const CpuParticleBackend::EmitterPool& pool = cpu.Pools()[0];
+        check(pool.alive == 1, "m61b: identity emitter emitted exactly one particle");
+        check(pool.px[0] == px && pool.py[0] == py && pool.pz[0] == pz && pool.vx[0] == vx
+                  && pool.vy[0] == vy && pool.vz[0] == vz && pool.life[0] == lifetime - kDt
+                  && pool.size0[0] == size,
+              "m61b: identity path is bit-identical to the legacy formula");
+    }
+
+    // ---- (M61b-3) 90° 回転で cone 軸が +Y → +X に回る ----
+    {
+        Scene s;
+        GameObject go = s.CreateGameObjectTracked("Emitter");
+        auto* em = go.AddComponent<ParticleEmitterComponent>();
+        em->rate = 300.0f;
+        em->seed = 7u;
+        em->shape = 2;
+        em->coneAngleDeg = 0.0f; // 軸ぴったり (dir = (±0,1,±0) が厳密に出る)
+        em->speedMin = 3.0f;     // レンジ退化で speed = 3.0 ちょうど
+        em->speedMax = 3.0f;
+        em->gravity = { 0.0f, 0.0f, 0.0f };
+        s.GetWorld().ApplyStructuralChanges();
+        World& w = s.GetWorld();
+        auto* wm = w.GetComponent<WorldMatrixComponent>(go.Id());
+        wm->value._11 = 0.0f; wm->value._12 = -1.0f; // Z 軸まわり -90°: コーン軸 +Y → +X
+        wm->value._21 = 1.0f; wm->value._22 = 0.0f;
+
+        CpuParticleBackend cpu;
+        cpu.Update(w, kDt);
+        const CpuParticleBackend::EmitterPool& pool = cpu.Pools()[0];
+        bool axisRotated = pool.alive > 0;
+        for (uint32_t i = 0; i < pool.alive; ++i) {
+            axisRotated = axisRotated && pool.vx[i] == 3.0f && pool.vy[i] == 0.0f
+                          && pool.vz[i] == 0.0f;
+        }
+        check(axisRotated, "m61b: 90-degree rotation turns the cone axis from +Y to +X");
+    }
+
+    // ---- (M61b-4) emitFrom の幾何レンジ (speed=0 で位置分布だけを観察する) ----
+    {
+        auto makeEmitter = [&](Scene& s, int32_t shape, int32_t emitFrom) {
+            GameObject go = s.CreateGameObjectTracked("Emitter");
+            auto* em = go.AddComponent<ParticleEmitterComponent>();
+            em->rate = 0.0f;
+            em->burstCount = 64;
+            em->seed = 11u;
+            em->shape = shape;
+            em->emitFrom = emitFrom;
+            em->shapeRadius = 1.0f;
+            em->boxExtents = { 1.0f, 2.0f, 3.0f };
+            em->speedMin = 0.0f;
+            em->speedMax = 0.0f;
+            em->gravity = { 0.0f, 0.0f, 0.0f };
+            s.GetWorld().ApplyStructuralChanges();
+            return go.Id();
+        };
+
+        // sphere 体積: 半径内に収まり、内部にもサンプルが出る (表面限定ではない)
+        {
+            Scene s;
+            makeEmitter(s, 1, 1);
+            CpuParticleBackend cpu;
+            cpu.Update(s.GetWorld(), kDt);
+            const auto& pool = cpu.Pools()[0];
+            bool inRange = (pool.alive == 64);
+            float minR = 1e9f;
+            for (uint32_t i = 0; i < pool.alive; ++i) {
+                const float r2 = pool.px[i] * pool.px[i] + pool.py[i] * pool.py[i]
+                                 + pool.pz[i] * pool.pz[i];
+                inRange = inRange && r2 <= 1.0f + 1e-4f;
+                minR = std::min(minR, sqrtf(r2));
+            }
+            check(inRange, "m61b: sphere volume stays inside the radius");
+            check(minR < 0.9f, "m61b: sphere volume has interior samples");
+        }
+
+        // sphere 表面 (emitFrom=2) = 従来 (0) とビット同一 (消費列も同一の契約)
+        {
+            Scene sa, sb;
+            makeEmitter(sa, 1, 0);
+            makeEmitter(sb, 1, 2);
+            CpuParticleBackend a, b;
+            bool same = true;
+            for (int t = 0; t < 30 && same; ++t) {
+                a.Update(sa.GetWorld(), kDt);
+                b.Update(sb.GetWorld(), kDt);
+                same = (HashSimState(a) == HashSimState(b));
+            }
+            check(same, "m61b: sphere emitFrom=2 (surface) is bit-identical to legacy");
+        }
+
+        // box 体積 (emitFrom=1) = 従来 (0) とビット同一 (消費列も同一の契約)
+        {
+            Scene sa, sb;
+            makeEmitter(sa, 3, 0);
+            makeEmitter(sb, 3, 1);
+            CpuParticleBackend a, b;
+            bool same = true;
+            for (int t = 0; t < 30 && same; ++t) {
+                a.Update(sa.GetWorld(), kDt);
+                b.Update(sb.GetWorld(), kDt);
+                same = (HashSimState(a) == HashSimState(b));
+            }
+            check(same, "m61b: box emitFrom=1 (volume) is bit-identical to legacy");
+        }
+
+        // box 表面: どれか 1 軸が ±extent に張り付き、全軸が extent 内
+        {
+            Scene s;
+            makeEmitter(s, 3, 2);
+            CpuParticleBackend cpu;
+            cpu.Update(s.GetWorld(), kDt);
+            const auto& pool = cpu.Pools()[0];
+            bool onSurface = (pool.alive == 64);
+            for (uint32_t i = 0; i < pool.alive; ++i) {
+                const float axf = std::fabs(pool.px[i]);
+                const float ayf = std::fabs(pool.py[i]);
+                const float azf = std::fabs(pool.pz[i]);
+                const bool inBox = axf <= 1.0f + 1e-4f && ayf <= 2.0f + 1e-4f
+                                   && azf <= 3.0f + 1e-4f;
+                const bool pinned = std::fabs(axf - 1.0f) < 1e-5f
+                                    || std::fabs(ayf - 2.0f) < 1e-5f
+                                    || std::fabs(azf - 3.0f) < 1e-5f;
+                onSurface = onSurface && inBox && pinned;
+            }
+            check(onSurface, "m61b: box emitFrom=2 pins one axis to a face");
+        }
+
+        // cone 円盤 (emitFrom=1): y=0 の底円盤 (半径 shapeRadius) 内に散る
+        {
+            Scene s;
+            const EntityID id = makeEmitter(s, 2, 1);
+            s.GetWorld().GetComponent<ParticleEmitterComponent>(id)->coneAngleDeg = 0.0f;
+            CpuParticleBackend cpu;
+            cpu.Update(s.GetWorld(), kDt);
+            const auto& pool = cpu.Pools()[0];
+            bool onDisk = (pool.alive == 64);
+            float maxR = 0.0f;
+            for (uint32_t i = 0; i < pool.alive; ++i) {
+                const float rr = sqrtf(pool.px[i] * pool.px[i] + pool.pz[i] * pool.pz[i]);
+                onDisk = onDisk && pool.py[i] == 0.0f && rr <= 1.0f + 1e-4f;
+                maxR = std::max(maxR, rr);
+            }
+            check(onDisk, "m61b: cone emitFrom=1 emits from the base disk (y=0)");
+            check(maxR > 0.2f, "m61b: cone disk emission has radial spread");
+        }
+    }
+
+    // ---- (M61b-5) 回転 + emitFrom つきでも SIMD/scalar がビット一致 ((C) 節の回転版) ----
+    {
+        Scene s;
+        GameObject go = s.CreateGameObjectTracked("Emitter");
+        auto* em = go.AddComponent<ParticleEmitterComponent>();
+        em->rate = 300.0f;
+        em->seed = 999u;
+        em->shape = 1;
+        em->emitFrom = 1;
+        em->turbulence = 0.7f;
+        em->gravity = { 0.0f, 2.0f, 0.0f };
+        s.GetWorld().ApplyStructuralChanges();
+        World& w = s.GetWorld();
+        SetWorldPos(w, go.Id(), 1.0f, 2.0f, 3.0f);
+        auto* wm = w.GetComponent<WorldMatrixComponent>(go.Id());
+        wm->value._11 = 0.0f; wm->value._12 = -2.0f; // 回転 + スケール 2 (非恒等経路)
+        wm->value._21 = 2.0f; wm->value._22 = 0.0f;
+        wm->value._33 = 2.0f;
+
+        CpuParticleBackend simd, scalar;
+        simd.SetSimdEnabled(true);
+        scalar.SetSimdEnabled(false);
+        bool matched = true;
+        for (int t = 0; t < 60 && matched; ++t) {
+            simd.Update(w, kDt);
+            scalar.Update(w, kDt);
+            matched = (HashSimState(simd) == HashSimState(scalar));
+        }
+        check(matched, "m61b: SIMD and scalar stay bit-identical with rotation + emitFrom");
+    }
+
     // ==== M61c: サブフレーム補間 + 速度継承の検証節はこの下へ ====
 
     // ==== M61d: 乱流ノイズの検証節はこの下へ ====

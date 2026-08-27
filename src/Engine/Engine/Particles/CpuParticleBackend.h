@@ -9,6 +9,8 @@
 
 namespace mye {
 
+struct ParticleEmitBasis; // M61b: エミッタの上 3x3 基底 (ParticleCurves.h)
+
 // CPU パーティクル (engine_spec.md 7.3)。
 // - SoA レイアウト + SSE 4-wide 更新 (スカラー参照実装を常備 — 端数レーンと検証用)
 // - エミッタ別の決定論 RNG ストリーム (ワールドハッシュ対象)
@@ -62,8 +64,9 @@ public:
 
 private:
     void SyncEmitters(World& world);
+    // M61b: basis = ワールド行列の上 3x3 (回転*スケール)。恒等なら従来経路とビット同一
     void EmitParticles(EmitterPool& pool, const ParticleEmitterComponent& desc,
-                       const DirectX::XMFLOAT3& origin, float dt);
+                       const DirectX::XMFLOAT3& origin, const ParticleEmitBasis& basis, float dt);
     void Simulate(EmitterPool& pool, const ParticleEmitterComponent& desc, float dt);
     void SimulateScalar(EmitterPool& pool, const DirectX::XMFLOAT3& accel, float dt,
                         uint32_t begin, uint32_t end);

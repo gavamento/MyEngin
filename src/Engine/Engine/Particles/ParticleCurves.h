@@ -7,6 +7,7 @@
 #include <DirectXMath.h>
 
 #include "Engine/Core/Components.h"
+#include "Engine/Core/Random.h"          // M61b: 形状サンプリング (Pcg32 消費列の正本)
 #include "Engine/Renderer/FrustumCull.h" // プール単位カリング (描画専用 — ハッシュ非関与)
 #include "Engine/Renderer/PostFxMath.h"  // M55a: LinearizeDepth (CPU ミラーの正本)
 
@@ -195,6 +196,160 @@ inline bool StepGpuIdleSkip(int emitCount, uint32_t aliveEstimate, int32_t grace
 }
 
 // ==== M61b/M61c: 放出系ヘルパ (回転 / 形状サンプリング / サブフレーム補間 / 速度継承) はこの下へ ====
+
+// 放出式で使う π (CpuParticleBackend.cpp の旧 kPi と同じ float 値)。
+// ★「u * 2.0f * kParticleEmitPi」のように旧コードと同じ演算列で使うこと — 2π を
+//   事前に畳んだ定数へ変えると丸めが 1 ulp 変わり、既存 .rep/golden のビット保存が崩れる
+inline constexpr float kParticleEmitPi = 3.14159265358979323846f;
+
+// ---- M61b: エミッタ基底 (ワールド行列の上 3x3 = 回転*スケール) ----
+// identity は 9 成分の float 完全一致判定 (完全一致比較は決定論的に安全)。恒等のとき
+// 呼び出し側は基底適用を丸ごと飛ばす = 演算列が従来とビット同一 — 既存コンテンツ
+// (デモの Fire 含む) のビット保存はこの高速パスで担保する。判定は毎 tick・プール毎で軽量
+struct ParticleEmitBasis {
+    float m[3][3]; // 行ベクトル規約: v' = v * M (XMVector3TransformNormal と同順)
+    bool identity;
+};
+
+inline ParticleEmitBasis MakeParticleEmitBasis(const DirectX::XMFLOAT4X4& w)
+{
+    ParticleEmitBasis b;
+    b.m[0][0] = w._11; b.m[0][1] = w._12; b.m[0][2] = w._13;
+    b.m[1][0] = w._21; b.m[1][1] = w._22; b.m[1][2] = w._23;
+    b.m[2][0] = w._31; b.m[2][1] = w._32; b.m[2][2] = w._33;
+    b.identity = (w._11 == 1.0f && w._12 == 0.0f && w._13 == 0.0f
+                  && w._21 == 0.0f && w._22 == 1.0f && w._23 == 0.0f
+                  && w._31 == 0.0f && w._32 == 0.0f && w._33 == 1.0f);
+    return b;
+}
+
+// 放出方向へ基底を適用して正規化する。スケール混入で長さが変わるため正規化必須。
+// 長さがほぼ 0 (退化基底) は (0,1,0) へフォールバック — RNG は消費しない (決定論)
+inline void ParticleBasisRotateDir(const ParticleEmitBasis& b, float& x, float& y, float& z)
+{
+    const float tx = x * b.m[0][0] + y * b.m[1][0] + z * b.m[2][0];
+    const float ty = x * b.m[0][1] + y * b.m[1][1] + z * b.m[2][1];
+    const float tz = x * b.m[0][2] + y * b.m[1][2] + z * b.m[2][2];
+    const float len = sqrtf(tx * tx + ty * ty + tz * tz);
+    if (len > 1e-6f) {
+        x = tx / len;
+        y = ty / len;
+        z = tz / len;
+    } else {
+        x = 0.0f;
+        y = 1.0f;
+        z = 0.0f;
+    }
+}
+
+// origin からの局所オフセットへ基底を適用する (スケール込みの張り出し — 正規化しない)
+inline void ParticleBasisTransformOffset(const ParticleEmitBasis& b, float& x, float& y, float& z)
+{
+    const float tx = x * b.m[0][0] + y * b.m[1][0] + z * b.m[2][0];
+    const float ty = x * b.m[0][1] + y * b.m[1][1] + z * b.m[2][1];
+    const float tz = x * b.m[0][2] + y * b.m[1][2] + z * b.m[2][2];
+    x = tx;
+    y = ty;
+    z = tz;
+}
+
+// ---- M61b: 形状サンプリング (emitFrom = 0:従来 / 1:体積 / 2:表面) ----
+// CPU/GPU 両バックエンドの放出ループが共有する (旧: 両者に手写しの switch が重複していた)。
+// RNG 消費数の契約 ((shape, emitFrom) の組ごとに個数と順序が固定 — 決定論。変更禁止):
+//   point(0):  0 回 (emitFrom 無視)
+//   sphere(1): emitFrom=1 (体積) は 3 回 (z, phi, u)。それ以外は 2 回 (z, phi) —
+//              表面 (2) は従来 (0) と同一挙動・同一消費 (球の既定が元々表面放出のため)
+//   cone(2):   emitFrom=0 は 2 回 (cosT, phi — 従来の apex 点放出)。
+//              1/2 は 4 回 (cosT, phi, u, v — 底半径 shapeRadius の円盤からの放出)
+//   box(3):    emitFrom=2 (表面) は 3 回 (face, a, b)。それ以外は 3 回 (x, y, z) —
+//              体積 (1) は従来 (0) と同一挙動・同一消費 (箱の既定が元々体積放出のため)
+// 未知の emitFrom 値は従来 (0) へ倒す = 消費列が既定と一致する安全側。
+// hasOffset=false のとき呼び出し側は加算演算そのものを行わないこと —
+// origin.x + 0.0f でも -0.0 が +0.0 に化ける (ビット保存の契約)
+struct ParticleShapeSample {
+    float dirX, dirY, dirZ; // 正規化済みの放出方向 (基底適用前)
+    float offX, offY, offZ; // origin からの局所オフセット (基底適用前)
+    bool hasOffset;         // false = オフセットなし (呼び出し側は加算しない)
+};
+
+inline ParticleShapeSample SampleParticleShape(const ParticleEmitterComponent& d, Pcg32& rng)
+{
+    ParticleShapeSample s = { 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, false };
+    switch (d.shape) {
+    case 1: { // sphere (外向き。emitFrom=1 で半径方向を体積分布に)
+        const float z = 1.0f - 2.0f * rng.NextFloat01();
+        const float phi = rng.NextFloat01() * 2.0f * kParticleEmitPi;
+        const float sn = sqrtf(std::max(0.0f, 1.0f - z * z));
+        s.dirX = sn * cosf(phi);
+        s.dirY = z;
+        s.dirZ = sn * sinf(phi);
+        float r = d.shapeRadius;
+        if (d.emitFrom == 1) {
+            // 体積一様は r ∝ cbrt(u) (半径 r 内の体積が r^3 に比例するため)。u を 1 回追加消費
+            r = d.shapeRadius * cbrtf(rng.NextFloat01());
+        }
+        s.offX = s.dirX * r;
+        s.offY = s.dirY * r;
+        s.offZ = s.dirZ * r;
+        s.hasOffset = true;
+        break;
+    }
+    case 2: { // cone (+Y 中心。emitFrom=1/2 で底円盤から放出)
+        const float cosMax = cosf(d.coneAngleDeg * kParticleEmitPi / 180.0f);
+        const float cosT = 1.0f - rng.NextFloat01() * (1.0f - cosMax);
+        const float sinT = sqrtf(std::max(0.0f, 1.0f - cosT * cosT));
+        const float phi = rng.NextFloat01() * 2.0f * kParticleEmitPi;
+        s.dirX = sinT * cosf(phi);
+        s.dirY = cosT;
+        s.dirZ = sinT * sinf(phi);
+        if (d.emitFrom == 1 || d.emitFrom == 2) {
+            // 半径 shapeRadius の円盤 (y=0 面)。面一様は r ∝ sqrt(u)。u, v を追加消費。
+            // 円盤に「体積/表面」の区別は無いので 1/2 は同義 (どちらも同じ消費列)
+            const float rd = d.shapeRadius * sqrtf(rng.NextFloat01());
+            const float theta = rng.NextFloat01() * 2.0f * kParticleEmitPi;
+            s.offX = rd * cosf(theta);
+            s.offZ = rd * sinf(theta);
+            s.hasOffset = true;
+        }
+        break;
+    }
+    case 3: { // box (上向き固定。emitFrom=2 で表面 6 面から放出)
+        if (d.emitFrom == 2) {
+            // 表面: 面選択 1 回 + 面内 2 軸 2 回。固定軸は ±extent に張り付ける。
+            // NextFloat01 は [0,1) なので fu*6 < 6 だが、丸めの保険で 5 に clamp
+            const float fu = rng.NextFloat01();
+            const int face = std::min(static_cast<int>(fu * 6.0f), 5);
+            const float a = rng.NextFloat01() * 2.0f - 1.0f;
+            const float b = rng.NextFloat01() * 2.0f - 1.0f;
+            const int axis = face / 2;                      // 0=x 1=y 2=z
+            const float sign = (face & 1) ? -1.0f : 1.0f;
+            if (axis == 0) {
+                s.offX = sign * d.boxExtents.x;
+                s.offY = a * d.boxExtents.y;
+                s.offZ = b * d.boxExtents.z;
+            } else if (axis == 1) {
+                s.offX = a * d.boxExtents.x;
+                s.offY = sign * d.boxExtents.y;
+                s.offZ = b * d.boxExtents.z;
+            } else {
+                s.offX = a * d.boxExtents.x;
+                s.offY = b * d.boxExtents.y;
+                s.offZ = sign * d.boxExtents.z;
+            }
+        } else {
+            // 体積 (0/1 とも従来と同一挙動・同一消費): 各軸独立の一様
+            s.offX = (rng.NextFloat01() * 2.0f - 1.0f) * d.boxExtents.x;
+            s.offY = (rng.NextFloat01() * 2.0f - 1.0f) * d.boxExtents.y;
+            s.offZ = (rng.NextFloat01() * 2.0f - 1.0f) * d.boxExtents.z;
+        }
+        s.hasOffset = true;
+        break;
+    }
+    default: // point (emitFrom 無視。オフセットも乱数消費も無し)
+        break;
+    }
+    return s;
+}
 
 // ==== M61d: 乱流ノイズ (カールノイズ純関数 + HLSL ミラー) はこの下へ ====
 

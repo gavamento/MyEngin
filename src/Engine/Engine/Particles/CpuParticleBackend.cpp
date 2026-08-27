@@ -18,8 +18,6 @@ using namespace DirectX;
 namespace mye {
 namespace {
 
-constexpr float kPi = 3.14159265358979323846f;
-
 struct ParticleInstance {
     XMFLOAT3 pos;
     float size;
@@ -181,7 +179,8 @@ void CpuParticleBackend::SyncEmitters(World& world)
 }
 
 void CpuParticleBackend::EmitParticles(EmitterPool& pool, const ParticleEmitterComponent& desc,
-                                       const XMFLOAT3& origin, float dt)
+                                       const XMFLOAT3& origin, const ParticleEmitBasis& basis,
+                                       float dt)
 {
     // 放出計画 (playing/duration/loop/burst)。ageTicks/emitAccum を進める。
     // 既定エミッタ (duration=0, burst=0) では従来の emitAccum ロジックとビット同一に縮退する。
@@ -207,51 +206,38 @@ void CpuParticleBackend::EmitParticles(EmitterPool& pool, const ParticleEmitterC
 
     for (int n = 0; n < emit; ++n) {
         const uint32_t i = pool.alive++;
-        // 乱数の消費順は固定 (決定論): 方向 → 位置 → 速度 → 寿命 → サイズ
-        float dirX = 0.0f, dirY = 1.0f, dirZ = 0.0f;
-        float posX = origin.x, posY = origin.y, posZ = origin.z;
-        switch (desc.shape) {
-        case 1: { // sphere (表面から外向き)
-            const float z = 1.0f - 2.0f * pool.rng.NextFloat01();
-            const float phi = pool.rng.NextFloat01() * 2.0f * kPi;
-            const float s = sqrtf(std::max(0.0f, 1.0f - z * z));
-            dirX = s * cosf(phi);
-            dirY = z;
-            dirZ = s * sinf(phi);
-            posX += dirX * desc.shapeRadius;
-            posY += dirY * desc.shapeRadius;
-            posZ += dirZ * desc.shapeRadius;
-            break;
-        }
-        case 2: { // cone (+Y 中心)
-            const float cosMax = cosf(desc.coneAngleDeg * kPi / 180.0f);
-            const float cosT = 1.0f - pool.rng.NextFloat01() * (1.0f - cosMax);
-            const float sinT = sqrtf(std::max(0.0f, 1.0f - cosT * cosT));
-            const float phi = pool.rng.NextFloat01() * 2.0f * kPi;
-            dirX = sinT * cosf(phi);
-            dirY = cosT;
-            dirZ = sinT * sinf(phi);
-            break;
-        }
-        case 3: { // box (内部からランダム、上向き)
-            posX += (pool.rng.NextFloat01() * 2.0f - 1.0f) * desc.boxExtents.x;
-            posY += (pool.rng.NextFloat01() * 2.0f - 1.0f) * desc.boxExtents.y;
-            posZ += (pool.rng.NextFloat01() * 2.0f - 1.0f) * desc.boxExtents.z;
-            break;
-        }
-        default: // point
-            break;
-        }
+        // 乱数の消費順は固定 (決定論): 方向 → 位置 → 速度 → 寿命 → サイズ。
+        // (shape, emitFrom) ごとの消費数は SampleParticleShape の表が契約 (M61b で共通化 —
+        // emitFrom=0 は旧 switch と同一の演算列・同一の消費列に縮退する)
+        ParticleShapeSample smp = SampleParticleShape(desc, pool.rng);
         const float speed = pool.rng.Range(desc.speedMin, desc.speedMax);
         const float lifetime = std::max(0.01f, pool.rng.Range(desc.lifetimeMin, desc.lifetimeMax));
         const float size = pool.rng.Range(desc.sizeMin, desc.sizeMax);
 
+        // M61b: 非恒等の基底 (回転*スケール) だけ方向とオフセットへ適用する。恒等はこの
+        // ブロックを丸ごと飛ばす = 従来とビット同一 (基底適用は RNG を消費しない)
+        if (!basis.identity) {
+            ParticleBasisRotateDir(basis, smp.dirX, smp.dirY, smp.dirZ);
+            if (smp.hasOffset) {
+                ParticleBasisTransformOffset(basis, smp.offX, smp.offY, smp.offZ);
+            }
+        }
+
+        float posX = origin.x, posY = origin.y, posZ = origin.z;
+        if (smp.hasOffset) {
+            // hasOffset=false のときは加算自体をしない (origin.x + 0.0f は -0.0 を +0.0 に
+            // 変えるので、point/cone(apex) の従来経路はここを通らないことがビット保存の条件)
+            posX += smp.offX;
+            posY += smp.offY;
+            posZ += smp.offZ;
+        }
+
         pool.px[i] = posX;
         pool.py[i] = posY;
         pool.pz[i] = posZ;
-        pool.vx[i] = dirX * speed;
-        pool.vy[i] = dirY * speed;
-        pool.vz[i] = dirZ * speed;
+        pool.vx[i] = smp.dirX * speed;
+        pool.vy[i] = smp.dirY * speed;
+        pool.vz[i] = smp.dirZ * speed;
         pool.life[i] = lifetime;
         pool.invLife[i] = 1.0f / lifetime;
         pool.size0[i] = size;
@@ -366,7 +352,10 @@ void CpuParticleBackend::Update(World& world, float dt)
         }
         pool.descCache = *desc; // 描画時に World を引かないためのコピー
         const XMFLOAT3 origin = { wm->value._41, wm->value._42, wm->value._43 };
-        EmitParticles(pool, *desc, origin, dt);
+        // M61b: 上 3x3 (回転*スケール) を放出に適用する。9 成分が厳密に恒等なら
+        // EmitParticles 内で従来経路に縮退 = 既存コンテンツのビット保存
+        const ParticleEmitBasis basis = MakeParticleEmitBasis(wm->value);
+        EmitParticles(pool, *desc, origin, basis, dt);
         Simulate(pool, *desc, dt);
         KillDead(pool);
 

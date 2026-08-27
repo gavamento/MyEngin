@@ -16,8 +16,6 @@ using namespace DirectX;
 namespace mye {
 namespace {
 
-constexpr float kPi = 3.14159265358979323846f;
-
 // 空 Dispatch 回避の猶予 tick 数。GpuAliveEstimator の丸め差は境界値で ±1 tick なので
 // 8 は十分に保守側 (猶予中の Dispatch は従来コストのまま = 早すぎる skip だけが害になる)
 constexpr int32_t kGpuIdleGraceTicks = 8;
@@ -272,6 +270,9 @@ void GpuParticleBackend::Update(World& world, float dt)
         }
         em.descCache = *desc;
         const XMFLOAT3 origin = { wm->value._41, wm->value._42, wm->value._43 };
+        // M61b: CPU バックエンドと同じ基底 (恒等なら適用スキップ)。表示用ベストエフォート
+        // だが放出コードは CPU 側と共有 = 見た目パリティを構造で保つ
+        const ParticleEmitBasis basis = MakeParticleEmitBasis(wm->value);
 
         // ---- CPU 側で放出データを生成 (決定論 RNG。GPU では乱数を作らない) ----
         // 放出計画は CPU バックエンドと共有 (M32a: playing/duration/loop/burst)。表示用ベストエフォート。
@@ -291,47 +292,30 @@ void GpuParticleBackend::Update(World& world, float dt)
             continue;
         }
 
+        // M61b: 形状サンプリングは CPU バックエンドと共有 (SampleParticleShape。
+        // 旧: ここに CpuParticleBackend::EmitParticles の手写しコピーが重複していた)
         std::vector<EmitData> emitData(static_cast<size_t>(std::max(emitCount, 0)));
         for (int n = 0; n < emitCount; ++n) {
-            float dirX = 0.0f, dirY = 1.0f, dirZ = 0.0f;
-            float posX = origin.x, posY = origin.y, posZ = origin.z;
-            switch (desc->shape) {
-            case 1: {
-                const float z = 1.0f - 2.0f * em.rng.NextFloat01();
-                const float phi = em.rng.NextFloat01() * 2.0f * kPi;
-                const float s = sqrtf(std::max(0.0f, 1.0f - z * z));
-                dirX = s * cosf(phi);
-                dirY = z;
-                dirZ = s * sinf(phi);
-                posX += dirX * desc->shapeRadius;
-                posY += dirY * desc->shapeRadius;
-                posZ += dirZ * desc->shapeRadius;
-                break;
-            }
-            case 2: {
-                const float cosMax = cosf(desc->coneAngleDeg * kPi / 180.0f);
-                const float cosT = 1.0f - em.rng.NextFloat01() * (1.0f - cosMax);
-                const float sinT = sqrtf(std::max(0.0f, 1.0f - cosT * cosT));
-                const float phi = em.rng.NextFloat01() * 2.0f * kPi;
-                dirX = sinT * cosf(phi);
-                dirY = cosT;
-                dirZ = sinT * sinf(phi);
-                break;
-            }
-            case 3:
-                posX += (em.rng.NextFloat01() * 2.0f - 1.0f) * desc->boxExtents.x;
-                posY += (em.rng.NextFloat01() * 2.0f - 1.0f) * desc->boxExtents.y;
-                posZ += (em.rng.NextFloat01() * 2.0f - 1.0f) * desc->boxExtents.z;
-                break;
-            default:
-                break;
-            }
+            ParticleShapeSample smp = SampleParticleShape(*desc, em.rng);
             const float speed = em.rng.Range(desc->speedMin, desc->speedMax);
             const float lifetime = std::max(0.01f, em.rng.Range(desc->lifetimeMin, desc->lifetimeMax));
             const float size = em.rng.Range(desc->sizeMin, desc->sizeMax);
+            if (!basis.identity) {
+                ParticleBasisRotateDir(basis, smp.dirX, smp.dirY, smp.dirZ);
+                if (smp.hasOffset) {
+                    ParticleBasisTransformOffset(basis, smp.offX, smp.offY, smp.offZ);
+                }
+            }
+            float posX = origin.x, posY = origin.y, posZ = origin.z;
+            if (smp.hasOffset) {
+                posX += smp.offX;
+                posY += smp.offY;
+                posZ += smp.offZ;
+            }
             em.aliveEst.OnEmit(lifetime, dt); // 寿命は CPU 生成なので死亡 tick を記帳できる
             emitData[static_cast<size_t>(n)] = { { posX, posY, posZ }, lifetime,
-                                                 { dirX * speed, dirY * speed, dirZ * speed }, size };
+                                                 { smp.dirX * speed, smp.dirY * speed,
+                                                   smp.dirZ * speed }, size };
         }
 
         // 放出バッファ (動的) を確保・充填
