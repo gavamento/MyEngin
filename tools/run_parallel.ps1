@@ -26,6 +26,10 @@ param(
     [Parameter(Mandatory = $true)][string]$Jobs
 )
 $ErrorActionPreference = 'Stop'
+# ★本体を try/finally で包み、途中の exit や例外を経由しても finally が必ず走るようにする
+#   (PowerShell の exit は try 内で呼ばれても finally をスキップしない)。これが無いと
+#   ジョブが 1 本も走らない引数エラーの早期 exit 1 でも chcp が戻らないまま抜けてしまう
+try {
 if ([IO.Path]::IsPathRooted($Entry) -or $Entry.Contains(' ') -or -not (Test-Path $Entry)) {
     Write-Host "[parallel] Entry must be an existing relative path without spaces: $Entry"
     exit 1
@@ -102,3 +106,13 @@ if ($failed.Count -gt 0) {
 }
 Write-Host "[parallel] all $($names.Count) jobs passed in $(& $stamp)"
 exit 0
+}
+finally {
+    # ★ジョブの子 cmd が chcp 437 (単バイト CP) で起動している (冒頭コメント参照)。
+    #   chcp は**プロセスではなくコンソールの状態**を変えるので、-NoNewWindow で親と
+    #   コンソールを共有するこの runner を経由すると、戻し忘れた分は呼び出し元シェルの
+    #   コードページごと変わったまま残る (Claude Code の TUI 表示も同じコンソールを
+    #   共有していれば道連れで文字化けする — 2026-08-27 に実際に発生し、手動で
+    #   `chcp 65001` して復旧した)。normal 終了・異常終了どちらでも必ず戻す
+    chcp 65001 | Out-Null
+}
