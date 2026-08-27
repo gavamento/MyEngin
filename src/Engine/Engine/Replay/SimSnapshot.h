@@ -61,7 +61,8 @@ struct SimRefs {
 // v4 (M60'b): XPB 節 (XpbdBackend の池) を LOP 節の後・World 節の前に追加
 // v5 (M61a): PTC 節へ prevOrigin/prevOriginValid/prewarmed を追加。
 //            ParticleEmitterComponent の A群拡張で descCache の Raw サイズも変化
-inline constexpr uint32_t kSimSnapshotVersion = 5;
+// v6 (M60'd): XPB 節へ attachValid/attachLx/Ly/Lz (終端アタッチの焼き込み) を追加
+inline constexpr uint32_t kSimSnapshotVersion = 6;
 
 // 撮る: out を clear して blob を書く。成功で true。
 // 節ごとの参照が null なら「空の節」を書くのでレイアウトは常に同じ

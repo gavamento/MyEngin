@@ -74,6 +74,14 @@ constexpr float kCcdSkin = 0.001f;
 // 等式行のクランプ幅 = 実質無限大。∞ を持ち回らないのは、inf 同士の引き算で NaN が
 // 生まれる経路をソルバの中に一切作らないため (これを超える λ は物理的に到達しない)
 constexpr float kJointRowUnbounded = 1e30f;
+// ---- XPBD 終端アタッチ (M60'd) ----
+// 眠った剛体を「ロープに引かれた」とみなして起こすしきい値 [m]。判定はアタッチ行が
+// このサブステップで粒子側へ実際に適用した補正の総和 Σ(w_p·|dλ|)
+// (AttachContext::outAbsCorr のコメントが「なぜ違反量では駄目か」の本文)。
+// 下限の根拠: substeps=1 (env 無し) の吊り下げ静止でも末尾粒子は毎サブステップ
+// g·h² ≈ 2.7mm だけ自由落下予測でずれ、その分の補正が毎回入る。これより小さくすると
+// 「吊るしただけで毎 tick 起きる」= 眠りと起床の往復が止まらなくなる
+constexpr float kXpbdAttachWakeSlop = 0.005f;
 // ---- タイヤ (M60h2) ----
 // スリップ角を出すときに前進速度へ噛ませる下限 [m/s]。**0 割りを避けるためだけの値では
 // ない** — 停止寸前でスリップ角が 90 度に張り付くと、横力が μN に飽和したまま向きだけ
@@ -2005,6 +2013,51 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
     const float restitutionVelThreshold = kRestitutionVelThreshold * (h / dt);
     std::vector<SolidContact> subContacts; // サブステップ 1 回ぶんの接触 (合算前)
     std::vector<float> xpbdLambda; // M60'c: XPBD の λ スクラッチ (sim 状態ではない)
+    // ---- XPBD 終端アタッチの解決と焼き込み (M60'd) ----
+    // connectedEntity → bodies の添字を tick 頭に 1 回引く (bodies は index 昇順ソート済 =
+    // 関節/車輪の findBodyIndex と同じ二分探索)。**初回解決の tick** に末尾粒子の現在位置を
+    // 剛体の質量中心系ローカルへ焼く — 焼き込みは sim 状態 (Pool 側、XpbdBackend.h 参照)。
+    // 相手が消えた/死んだ/剛体でなくなったら attachValid=0 へ戻す = 「外すと自由落下」で、
+    // 後で繋ぎ直せばその時点の位置関係で焼き直される
+    std::vector<int32_t> xpbdAttachBody; // pools と同じ並び。-1 = アタッチ無し (tick 内のみ)
+    if (xpbd && !xpbd->Pools().empty()) {
+        std::vector<XpbdBackend::Pool>& pools = xpbd->PoolsForSnapshot();
+        xpbdAttachBody.assign(pools.size(), -1);
+        for (size_t k = 0; k < pools.size(); ++k) {
+            const RopeComponent* rope = xpbdParams[k];
+            XpbdBackend::Pool& pool = pools[k];
+            const EntityID other = rope != nullptr ? rope->connectedEntity : kNullEntity;
+            if (other.IsNull() || pool.px.empty() || !world.IsAlive(other)
+                || !IsEntityActive(world, other)) {
+                pool.attachValid = 0;
+                continue;
+            }
+            auto it = std::lower_bound(
+                bodies.begin(), bodies.end(), other.index,
+                [](const Body& b, uint32_t idx) { return b.entity.index < idx; });
+            if (it == bodies.end() || it->entity.index != other.index
+                || it->entity.generation != other.generation) {
+                pool.attachValid = 0; // 剛体でもコライダーでもない相手には繋げない
+                continue;
+            }
+            if (pool.attachValid == 0) {
+                // COM 系ローカルへ焼く: L = R⁻¹·(p_end − com)。逆回転は共役クォータニオン
+                const Body& b = *it;
+                const size_t last = pool.px.size() - 1;
+                float comX = b.pose.px, comY = b.pose.py, comZ = b.pose.pz;
+                if (b.hasCom) {
+                    comX += b.comx;
+                    comY += b.comy;
+                    comZ += b.comz;
+                }
+                QuatRotate(-b.qx, -b.qy, -b.qz, b.qw, pool.px[last] - comX,
+                           pool.py[last] - comY, pool.pz[last] - comZ, pool.attachLx,
+                           pool.attachLy, pool.attachLz);
+                pool.attachValid = 1;
+            }
+            xpbdAttachBody[k] = static_cast<int32_t>(it - bodies.begin());
+        }
+    }
     // M59h: 島 (union-find) の材料。最後のサブステップの候補ペアを使う — サブステップ
     // ごとに作り直されるが、入眠判定は tick 末の速度で行うので最後のものが正しい
     std::vector<uint64_t> islandPairs;
@@ -4016,13 +4069,102 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
         }
 
         // ---- XPBD 変形体: 拘束射影 → 速度確定 (M60'c)。剛体ソルバ/位置補正の後 ----
-        // c の時点で剛体との連成は無い (単に同じサブステップで進むだけ)。
-        // d (アタッチ) / f (接触) がここへ剛体との連成行を混ぜる予定地
+        // M60'd: アタッチの連成行をここで混ぜる (f (接触) も同じ場所の予定)。
+        // ★アンカーは**このサブステップの位置積分後**を先取りした予測姿勢で組む —
+        //   剛体の位置積分は XPBD の後段にあるので、現在姿勢で組むと連成が 1 サブステップ
+        //   遅れて定常でも余計な伸びが残る。予測式は位置積分とミラー (CCD の差し替えだけは
+        //   見ない — 掃引は XPBD の後で、ロープに引かれた分も含めて改めて掃く)。
+        // ★補正は速度へだけ返す (v += Δ/h、ω += Δθ/h)。姿勢へ直接書くと後段の位置積分が
+        //   補正済み速度でもう一度動かして二重適用になる (XpbdSolver.h の契約)
         if (xpbd && !xpbd->Pools().empty()) {
             std::vector<XpbdBackend::Pool>& pools = xpbd->PoolsForSnapshot();
             for (size_t k = 0; k < pools.size(); ++k) {
                 const RopeComponent* rope = xpbdParams[k];
-                xpbd::Solve(pools[k], rope ? rope->compliance : 0.0f, h, xpbdLambda);
+                const float compliance = rope != nullptr ? rope->compliance : 0.0f;
+                const int32_t bi = xpbdAttachBody.empty() ? -1 : xpbdAttachBody[k];
+                if (bi < 0 || pools[k].attachValid == 0) {
+                    xpbd::Solve(pools[k], compliance, h, xpbdLambda);
+                    continue;
+                }
+                XpbdBackend::Pool& pool = pools[k];
+                Body& b = bodies[static_cast<size_t>(bi)];
+                const size_t last = pool.px.size() - 1;
+                // 予測 COM と予測姿勢 (不動 = invMass 0 は現在姿勢のまま。眠りもここに落ちる)
+                float comX = b.pose.px, comY = b.pose.py, comZ = b.pose.pz;
+                if (b.hasCom) {
+                    comX += b.comx;
+                    comY += b.comy;
+                    comZ += b.comz;
+                }
+                float qx = b.qx, qy = b.qy, qz = b.qz, qw = b.qw;
+                if (b.invMass > 0.0f) {
+                    comX += b.vx * h;
+                    comY += b.vy * h;
+                    comZ += b.vz * h;
+                    if (!b.freezeRot) {
+                        // q += 0.5·h·(ω_quat ⊗ q) → 正規化 (位置積分と同式の先取り)
+                        const float hx = b.wx * 0.5f * h;
+                        const float hy = b.wy * 0.5f * h;
+                        const float hz = b.wz * 0.5f * h;
+                        const float dqw = -(hx * qx + hy * qy + hz * qz);
+                        const float dqx = hx * qw + hy * qz - hz * qy;
+                        const float dqy = hy * qw + hz * qx - hx * qz;
+                        const float dqz = hz * qw + hx * qy - hy * qx;
+                        qx += dqx;
+                        qy += dqy;
+                        qz += dqz;
+                        qw += dqw;
+                        const float len2 = qx * qx + qy * qy + qz * qz + qw * qw;
+                        if (len2 > 1e-12f) {
+                            const float inv = 1.0f / std::sqrt(len2);
+                            qx *= inv;
+                            qy *= inv;
+                            qz *= inv;
+                            qw *= inv;
+                        } else {
+                            qx = 0.0f;
+                            qy = 0.0f;
+                            qz = 0.0f;
+                            qw = 1.0f;
+                        }
+                    }
+                }
+                xpbd::AttachContext ctx;
+                ctx.particle = static_cast<uint32_t>(last);
+                QuatRotate(qx, qy, qz, qw, pool.attachLx, pool.attachLy, pool.attachLz, ctx.rx,
+                           ctx.ry, ctx.rz);
+                ctx.ax = comX + ctx.rx;
+                ctx.ay = comY + ctx.ry;
+                ctx.az = comZ + ctx.rz;
+                // 眠り中は invMass 0 (+ invI は下でゲート) = アタッチは静的ピンとして安定。
+                // ★invI は眠り中に古い値が残っている可能性があるので invMass でゲートする
+                ctx.invMass = b.invMass;
+                if (b.invMass > 0.0f && !b.freezeRot) {
+                    for (int row = 0; row < 3; ++row) {
+                        for (int col = 0; col < 3; ++col) {
+                            ctx.invI[row][col] = b.invI[row][col];
+                        }
+                    }
+                }
+                xpbd::Solve(pool, compliance, h, xpbdLambda, &ctx);
+                // ---- 起床 (M60'd): 眠った剛体はロープに引かれたら起こす ----
+                // 信号はアタッチ行が実際に適用した補正の総和 (kXpbdAttachWakeSlop 参照)。
+                // 効くのは次のサブステップから = M59h の「1 パスで届かない分は次へ」と
+                // 同じ許容。この場では outD/outT が 0 (重み 0 で組んだ) なので蹴りも出ない
+                if (b.sleeping && ctx.outAbsCorr > kXpbdAttachWakeSlop) {
+                    wakeBody(b);
+                }
+                if (b.invMass > 0.0f && b.rb != nullptr) {
+                    const float invH = 1.0f / h;
+                    b.vx += ctx.outDx * invH;
+                    b.vy += ctx.outDy * invH;
+                    b.vz += ctx.outDz * invH;
+                    if (!b.freezeRot) {
+                        b.wx += ctx.outTx * invH;
+                        b.wy += ctx.outTy * invH;
+                        b.wz += ctx.outTz * invH;
+                    }
+                }
             }
         }
 

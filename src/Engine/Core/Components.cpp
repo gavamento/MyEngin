@@ -793,7 +793,9 @@ void RegisterBuiltinComponents()
                                            "position. baked at build time")),
         MYE_JP("終端の接続先",
                MYE_FIELD_TIP(RopeComponent, connectedEntity, EntityRef,
-                             "reserved: the far end will attach to this body (not yet wired)")),
+                             "attaches the far end to this rigid body both ways (the rope "
+                             "carries the body, the body loads the rope). anchored where the "
+                             "rope end sits when first resolved; clearing it drops the body")),
     });
 }
 

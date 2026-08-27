@@ -315,6 +315,15 @@ uint64_t HashXpbdPools(const XpbdBackend& xpbd, DumpCtx* d)
             h = HashBytes(pool.rest.data(), m * sizeof(float), h);
             EmitArray(d, "Xpbd", "rest", pool.rest.data(), m, h);
         }
+        // M60'd: 終端アタッチの焼き込み (snapshot v6 と対)
+        h = HashCombine(h, pool.attachValid);
+        EmitU64(d, "Xpbd", "attachValid", pool.attachValid, h);
+        h = HashBytes(&pool.attachLx, sizeof(float), h);
+        EmitBytes(d, "Xpbd", "attachLx", &pool.attachLx, sizeof(float), h);
+        h = HashBytes(&pool.attachLy, sizeof(float), h);
+        EmitBytes(d, "Xpbd", "attachLy", &pool.attachLy, sizeof(float), h);
+        h = HashBytes(&pool.attachLz, sizeof(float), h);
+        EmitBytes(d, "Xpbd", "attachLz", &pool.attachLz, sizeof(float), h);
     }
     if (d && d->lines) {
         d->entityCol = "-";

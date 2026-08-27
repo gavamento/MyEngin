@@ -42,10 +42,11 @@ void Predict(XpbdBackend::Pool& pool, float gx, float gy, float gz, float h, boo
     }
 }
 
-void Solve(XpbdBackend::Pool& pool, float compliance, float h, std::vector<float>& lambdaScratch)
+void Solve(XpbdBackend::Pool& pool, float compliance, float h, std::vector<float>& lambdaScratch,
+           AttachContext* attach)
 {
     const size_t m = pool.ca.size();
-    if (m == 0) {
+    if (m == 0 && attach == nullptr) {
         return;
     }
     // λ はサブステップ内でのみ蓄積する (XPBD の標準形。substep を跨いで持ち越さない)
@@ -82,6 +83,58 @@ void Solve(XpbdBackend::Pool& pool, float compliance, float h, std::vector<float
             pool.px[b] -= nx * (wb * dLambda);
             pool.py[b] -= ny * (wb * dLambda);
             pool.pz[b] -= nz * (wb * dLambda);
+        }
+        // ---- 終端アタッチ (M60'd)。鎖の全行の後 = 固定順の末尾行 ----
+        // 距離 0 拘束なので「一致していれば len<1e-9 で何もしない」が特異点処理を兼ねる
+        // (完全重合 = 収束そのもの。距離拘束の重合スキップとは意味が違う)
+        if (attach != nullptr) {
+            const size_t pi = attach->particle;
+            // 蓄積補正ぶんアンカーを追従させる (r 固定の線形化 — ヘッダのコメント参照)
+            const float axNow = attach->ax + attach->outDx
+                              + (attach->outTy * attach->rz - attach->outTz * attach->ry);
+            const float ayNow = attach->ay + attach->outDy
+                              + (attach->outTz * attach->rx - attach->outTx * attach->rz);
+            const float azNow = attach->az + attach->outDz
+                              + (attach->outTx * attach->ry - attach->outTy * attach->rx);
+            const float dx = pool.px[pi] - axNow;
+            const float dy = pool.py[pi] - ayNow;
+            const float dz = pool.pz[pi] - azNow;
+            const float len = std::sqrt(dx * dx + dy * dy + dz * dz);
+            if (len >= 1e-9f) {
+                const float nx = dx / len;
+                const float ny = dy / len;
+                const float nz = dz / len;
+                // w_b = invM + (r×n)·I⁻¹(r×n) (FinalizeConstraintBlock の対角項と同式)
+                const float cx = attach->ry * nz - attach->rz * ny;
+                const float cy = attach->rz * nx - attach->rx * nz;
+                const float cz = attach->rx * ny - attach->ry * nx;
+                const float ix = attach->invI[0][0] * cx + attach->invI[0][1] * cy
+                               + attach->invI[0][2] * cz;
+                const float iy = attach->invI[1][0] * cx + attach->invI[1][1] * cy
+                               + attach->invI[1][2] * cz;
+                const float iz = attach->invI[2][0] * cx + attach->invI[2][1] * cy
+                               + attach->invI[2][2] * cz;
+                const float wp = pool.invMass[pi];
+                const float wb = attach->invMass + cx * ix + cy * iy + cz * iz;
+                const float wSum = wp + wb;
+                if (wSum > 0.0f) {
+                    // rest=0・α̃=0 (剛結合)。λ を持たないのは α̃=0 では蓄積項が消えるため
+                    const float dLambda = -len / wSum;
+                    pool.px[pi] += nx * (wp * dLambda);
+                    pool.py[pi] += ny * (wp * dLambda);
+                    pool.pz[pi] += nz * (wp * dLambda);
+                    attach->outAbsCorr -= wp * dLambda; // dλ ≤ 0 → 総和は正で単調
+
+                    // 剛体側 (b 側): アンカーへの位置力積 p = -n·dλ を
+                    // ΔCOM = invM·p / Δθ = I⁻¹(r×p) に分解して蓄積 (適用は呼び側)
+                    attach->outDx -= nx * (attach->invMass * dLambda);
+                    attach->outDy -= ny * (attach->invMass * dLambda);
+                    attach->outDz -= nz * (attach->invMass * dLambda);
+                    attach->outTx -= ix * dLambda;
+                    attach->outTy -= iy * dLambda;
+                    attach->outTz -= iz * dLambda;
+                }
+            }
         }
     }
     // 位置差から速度を確定する (XPBD の速度更新)。ピンは x==prev なので自然に 0

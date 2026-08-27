@@ -242,6 +242,10 @@ void WriteXpbd(ByteWriter& w, const XpbdBackend* xpbd)
         w.PodVector(p.ca);
         w.PodVector(p.cb);
         w.PodVector(p.rest);
+        w.U32(p.attachValid); // M60'd (v6)
+        w.F32(p.attachLx);
+        w.F32(p.attachLy);
+        w.F32(p.attachLz);
     }
 }
 
@@ -271,6 +275,10 @@ bool ReadXpbd(ByteReader& r, std::vector<XpbdBackend::Pool>& out)
         p.ca = r.PodVector<uint32_t>();
         p.cb = r.PodVector<uint32_t>();
         p.rest = r.PodVector<float>();
+        p.attachValid = r.U32(); // M60'd (v6)
+        p.attachLx = r.F32();
+        p.attachLy = r.F32();
+        p.attachLz = r.F32();
     }
     return r.Ok();
 }

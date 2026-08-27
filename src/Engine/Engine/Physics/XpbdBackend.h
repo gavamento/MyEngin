@@ -43,6 +43,14 @@ public:
         // 距離拘束 (M60'c から使用)。rest は塑性 (M60'l) が書き換えるので導出値ではなく状態
         std::vector<uint32_t> ca, cb; // 粒子 index のペア
         std::vector<float> rest;      // 自然長
+        // ---- 終端アタッチ (M60'd) ----
+        // connectedEntity が剛体に**初めて**解決された tick に、その時点の末尾粒子位置を
+        // 剛体の質量中心系ローカルへ焼く (attachL* は「COM → アンカー」のローカルベクトル)。
+        // ★導出値ではなく状態 — 毎 tick 現在位置から引き直すとドリフトが蓄積し、
+        //   snapshot 復元後の再シムも「いつ焼いたか」に依存して割れる。
+        //   connectedEntity が消える/死ぬと attachValid=0 へ戻り、再解決で焼き直す
+        uint32_t attachValid = 0;
+        float attachLx = 0.0f, attachLy = 0.0f, attachLz = 0.0f;
     };
 
     // コンポーネントの有無から池を生成/破棄する (owner.index 昇順を維持)。
