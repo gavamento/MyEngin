@@ -195,6 +195,37 @@ inline bool StepGpuIdleSkip(int emitCount, uint32_t aliveEstimate, int32_t grace
     return true;
 }
 
+// ---- M61f: GPU 容量/バースト判定 ----
+// GPU エミッタの容量追従とバースト上限の「判定」だけを純関数に分離する (StepGpuIdleSkip と
+// 同じ理由 — D3D 実機は selftest で回せないので、判定ロジックをここで検証する)。
+// GPU プールは表示用ベストエフォート (ハッシュ非対象) — sim 状態には決して使わないこと。
+
+// desc.maxParticles から GPU プール容量を決める。下限 1024 は極小 APPEND/COUNTER バッファを
+// 作らない保険、上限 1M は VRAM 暴走ガード (48B/粒 ≒ 48MB)。SyncEmitters (新規作成) と
+// Update (容量追従) の両方がこの 1 本を通る = クランプ基準の一本化。
+inline uint32_t GpuEmitterCapacityFor(int32_t maxParticles)
+{
+    return static_cast<uint32_t>(std::clamp(maxParticles, 1024, 1000000));
+}
+
+// 容量追従の要否。クランプ後の希望容量と現容量の単純比較 — 増減どちらでも作り直す
+// (縮小に追従しないと「一度 1M にすると戻せない」形で VRAM を占有し続ける)。
+// maxParticles がクランプ域の外で動いてもクランプ後が同値なら false = 無駄な再作成をしない
+inline bool GpuCapacityNeedsRecreate(uint32_t currentCapacity, uint32_t desiredCapacity)
+{
+    return currentCapacity != desiredCapacity;
+}
+
+// 1 tick の GPU 放出数クランプ。旧実装は capacity/4 の静黙クランプ (1tick 暴発ガード) で、
+// 「maxParticles まで積んだはずのバーストが 25% で切られる」罠だったので容量全量まで緩和。
+// dead list 枯渇分は particle_emit.cs.hlsl の deadCount ガードが既に安全に捨てる。
+// EmitData ステージングが最大 capacity*32B (1M で 32MB) になりうるが、burst した tick
+// だけの一過性 (動的バッファは以降の小さい tick でもそのまま再利用されるだけ) と判断
+inline int ClampGpuEmitCount(int emitCount, uint32_t capacity)
+{
+    return std::clamp(emitCount, 0, static_cast<int>(capacity));
+}
+
 // ==== M61b/M61c: 放出系ヘルパ (回転 / 形状サンプリング / サブフレーム補間 / 速度継承) はこの下へ ====
 
 // 放出式で使う π (CpuParticleBackend.cpp の旧 kPi と同じ float 値)。

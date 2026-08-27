@@ -236,8 +236,8 @@ void GpuParticleBackend::SyncEmitters(World& world, GraphicsDevice& device)
             GpuEmitter em;
             em.owner = e;
             const auto* desc = world.GetComponent<ParticleEmitterComponent>(e);
-            const uint32_t cap = static_cast<uint32_t>(
-                std::clamp(desc ? desc->maxParticles : 100000, 1024, 1000000));
+            // M61f: クランプは Update の容量追従と共通の純関数 (基準がずれると毎 tick 再作成)
+            const uint32_t cap = GpuEmitterCapacityFor(desc ? desc->maxParticles : 100000);
             em.rng.Seed(desc ? desc->seed : 1u, static_cast<uint64_t>(e.index) * 2u + 1u);
             if (CreateEmitterResources(device, em, cap)) {
                 emitters_.push_back(std::move(em));
@@ -288,6 +288,42 @@ void GpuParticleBackend::Update(World& world, float dt)
         }
 
         em.descCache = *desc;
+
+        // ---- M61f: maxParticles の変更追従 (容量が違えばリソース一式を作り直す) ----
+        // 作り直しは一時オブジェクトで行い、成功時のみ move で差し替える — 失敗時 (VRAM 不足等)
+        // は旧容量のまま動き続ける (ログのみ。旧リソースは 1 バイトも壊さない)。
+        // em.rng は保持する — GPU プールは表示用ベストエフォート (ハッシュ非対象) なので
+        // 再シードの義務はなく、放出計画 (ageTicks/emitAccum) との連続性を保つ方を選んだ。
+        // 既存粒子は消える (プール/dead list が新品になる容量変更の代償。仕様)
+        const uint32_t desiredCap = GpuEmitterCapacityFor(desc->maxParticles);
+        if (GpuCapacityNeedsRecreate(em.capacity, desiredCap)) {
+            GpuEmitter fresh;
+            if (CreateEmitterResources(*device_, fresh, desiredCap)) {
+                em.capacity = fresh.capacity;
+                em.pool = std::move(fresh.pool);
+                em.poolUAV = std::move(fresh.poolUAV);
+                em.poolSRV = std::move(fresh.poolSRV);
+                em.deadList = std::move(fresh.deadList);
+                em.deadUAV = std::move(fresh.deadUAV);
+                for (int i = 0; i < 2; ++i) {
+                    em.alive[i] = std::move(fresh.alive[i]);
+                    em.aliveUAV[i] = std::move(fresh.aliveUAV[i]);
+                    em.aliveSRV[i] = std::move(fresh.aliveSRV[i]);
+                }
+                em.counts = std::move(fresh.counts);
+                em.countsSRV = std::move(fresh.countsSRV);
+                em.indirectArgs = std::move(fresh.indirectArgs); // InstanceCount=0 で再初期化済み
+                // 生存推定と idle 状態は新プール基準へ (旧粒子は消えたので推定 0 から数え直し)
+                em.aliveEst = {};
+                em.idleTicks = 0;
+                em.gpuIdle = false;
+                em.aliveCurrent = 0;
+            } else {
+                MYE_LOG_ERROR("[gpu particles] capacity change failed (cap=%u -> %u), keeping old pool",
+                              em.capacity, desiredCap);
+            }
+        }
+
         const XMFLOAT3 origin = { wm->value._41, wm->value._42, wm->value._43 };
         // M61b: CPU バックエンドと同じ基底 (恒等なら適用スキップ)。表示用ベストエフォート
         // だが放出コードは CPU 側と共有 = 見た目パリティを構造で保つ
@@ -314,8 +350,9 @@ void GpuParticleBackend::Update(World& world, float dt)
         // GPU はハッシュ非対象の表示用ベストエフォートで、数百 tick ぶんの EmitData 生成 +
         // Dispatch を誕生 tick に畳み込む価値がない — 誕生直後の見た目差のみ許容する
         int emitCount = PlanParticleEmission(*desc, em.ageTicks, em.emitAccum, dt);
-        emitCount = std::min(emitCount, static_cast<int>(em.capacity / 4)); // 1tick 暴発ガード
-        emitCount = std::max(emitCount, 0);
+        // M61f: 旧「capacity/4」の 25% 静黙クランプを撤廃し容量全量まで許可。枯渇分は
+        // emit CS の deadCount ガードが捨てる (判断の詳細は ParticleCurves.h::ClampGpuEmitCount)
+        emitCount = ClampGpuEmitCount(emitCount, em.capacity);
 
         // 空 Dispatch 回避: 放出も推定生存も無いエミッタは GPU 作業 (CopyStructureCount×3 +
         // Dispatch + IndirectArgs 更新) を丸ごと省く。sim CS はスレッドが aliveCount で

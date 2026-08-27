@@ -1389,6 +1389,44 @@ bool RunParticleSelfTest()
 
     // ==== M61f: GPU 容量再作成 + バースト上限の検証節はこの下へ ====
 
+    // ---- (M61f) GPU 容量追従 + バースト上限 (純関数のみ — D3D 実機は selftest で回せない) ----
+    {
+        // 容量クランプの境界値 (下限 1024 / 上限 1M / 域内は素通し)
+        check(GpuEmitterCapacityFor(0) == 1024u && GpuEmitterCapacityFor(1023) == 1024u,
+              "gpu cap: below minimum clamps to 1024");
+        check(GpuEmitterCapacityFor(4096) == 4096u, "gpu cap: in-range passes through");
+        check(GpuEmitterCapacityFor(2000000) == 1000000u, "gpu cap: above maximum clamps to 1M");
+
+        // 再作成判定: 同値 = 何もしない / 変更は増減どちらも作り直す
+        check(!GpuCapacityNeedsRecreate(4096u, GpuEmitterCapacityFor(4096)),
+              "gpu cap: unchanged capacity does not recreate");
+        check(GpuCapacityNeedsRecreate(4096u, GpuEmitterCapacityFor(8192)),
+              "gpu cap: grow triggers recreate");
+        check(GpuCapacityNeedsRecreate(8192u, GpuEmitterCapacityFor(4096)),
+              "gpu cap: shrink triggers recreate");
+        // maxParticles がクランプ域の外で動いても実容量が同じなら再作成しない (毎 tick 再作成の罠)
+        check(!GpuCapacityNeedsRecreate(1024u, GpuEmitterCapacityFor(512)),
+              "gpu cap: clamped-equal change (512 -> min) does not recreate");
+
+        // バースト上限: 旧 25% クランプの撤廃 — capacity 全量まで通り、超過分だけ切られる
+        check(ClampGpuEmitCount(-5, 4096u) == 0, "gpu burst: negative clamps to 0");
+        check(ClampGpuEmitCount(4096, 4096u) == 4096,
+              "gpu burst: full capacity passes (25% clamp removed)");
+        check(ClampGpuEmitCount(5000, 4096u) == 4096,
+              "gpu burst: over-capacity clamps to capacity");
+
+        // 放出計画 → クランプの実経路: burstCount=3000 は capacity=4096 でも丸ごと通る
+        // (旧クランプなら 4096/4 = 1024 で切られていた値)
+        ParticleEmitterComponent d;
+        d.rate = 0.0f;
+        d.burstCount = 3000;
+        int32_t age = 0;
+        float acc = 0.0f;
+        const int plan = PlanParticleEmission(d, age, acc, kDt);
+        check(plan == 3000 && ClampGpuEmitCount(plan, 4096u) == 3000,
+              "gpu burst: planned burst passes the old 25% boundary intact");
+    }
+
     if (failCount == 0) {
         MYE_LOG_INFO("==== Particle self test: ALL PASS ====");
         return true;
