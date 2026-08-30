@@ -35,8 +35,9 @@ cbuffer GpuRenderCB : register(b1)
     float4   gCameraPosParam; // xyz=カメラ位置 (VS の dist 用), w=予約
     float4   gFroxelParams;   // x=enabled, y=nearZ, z=farZ, w=sliceCount
     float4   gFroxelScreen;   // xy=画面サイズ (px。SV_Position → uv), zw=予約
-    // ---- M63a: ビルボード変換 (末尾 append。C++ 側 GpuRenderCB と一致) ----
-    // x=billboardMode (0=corner 素通し / 1=回転・ストレッチ), yzw=予約 (M63b がストレッチ係数を使う)
+    // ---- M63a/M63b: ビルボード変換 (末尾 append。C++ 側 GpuRenderCB と一致) ----
+    // x=billboardMode (0=corner 素通し / 1=回転・ストレッチ), y=stretchScale (0=off),
+    // z=stretchMax, w=useRotation (x とは別物 — CPU の分岐を GPU でも同じ形で通すため)
     float4   gBillboardParams;
 };
 
@@ -164,9 +165,29 @@ VSOut VSMain(uint vid : SV_VertexID, uint iid : SV_InstanceID)
     // ★off の分岐を外してはいけない (rot=0 でも sincos 乗算でビットが動きうる)
     float2 c = corner;
     if (gBillboardParams.x != 0.0f) {
-        const float rot = ParticleRotationAt(p.rot0, p.rotVel,
-                                             ParticleElapsedFromLife(p.life, p.invLife));
-        c = ParticleBillboardCorner(corner, rot, 1.0f);
+        // ★w (回転を使うか) は x (変換を通すか) と別物。CPU 充填ループの
+        //   `useRotation ? ParticleRotationAt(...) : 0.0f` と同じ分岐をここでも通す
+        float rot = 0.0f;
+        if (gBillboardParams.w != 0.0f) {
+            rot = ParticleRotationAt(p.rot0, p.rotVel,
+                                     ParticleElapsedFromLife(p.life, p.invLife));
+        }
+        // M63b: 速度ストレッチ。CPU は充填ループで畳んで rot/stretch を送ってくるので、
+        // GPU は**ここが唯一の実装点**になる (プールの vel を VS が初めて読む)。
+        float stretch = 1.0f;
+        if (gBillboardParams.y != 0.0f) {
+            // M61g: ローカル空間では pos と同じ行列で速度も回す (w=0 で平行移動を落とす)。
+            // 回さないとエミッタを回転させたときだけ伸びの向きがズレる
+            float3 vel = p.vel;
+            if (gSpaceParams.x != 0.0f) {
+                vel = mul(float4(p.vel, 0.0f), gEmitterWorld).xyz;
+            }
+            float angle = 0.0f;
+            EvalParticleStretch(vel, gCamRight, gCamUp, gBillboardParams.y, gBillboardParams.z,
+                                angle, stretch);
+            rot += angle;
+        }
+        c = ParticleBillboardCorner(corner, rot, stretch);
     }
     const float3 world = basePos + float3(gOffsetX, 0, 0)
         + (gCamRight * c.x + gCamUp * c.y) * size;

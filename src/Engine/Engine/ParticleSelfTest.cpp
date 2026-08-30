@@ -2137,6 +2137,100 @@ bool RunParticleSelfTest()
               "m63a: the new arrays follow the same permutation as size0");
     }
 
+    // ---- (M63b-1) ビルボード変換のゲート ----
+    // ★ゲートは「既存シーンの絵がビット保存される」ことの根拠そのもの。3 本の関係
+    //   (Billboard = Rotation || Stretch) が崩れると、片方だけ立てたエミッタで
+    //   CPU が変換を通さないのに GPU が通す (逆も) 形で静かに割れる
+    {
+        ParticleEmitterComponent d = {};
+        check(!ParticleUsesRotation(d) && !ParticleUsesStretch(d) && !ParticleUsesBillboard(d),
+              "m63b: a default emitter opens none of the billboard gates");
+
+        // stretchMax は既定 4.0 = 非ゼロ。**単独ではゲートを開けない**こと
+        d.stretchMax = 9.0f;
+        check(!ParticleUsesStretch(d), "m63b: stretchMax alone never opens the stretch gate");
+
+        d.stretchScale = 0.25f;
+        check(ParticleUsesStretch(d) && !ParticleUsesRotation(d) && ParticleUsesBillboard(d),
+              "m63b: stretch alone opens the billboard gate without rotation");
+
+        d = {};
+        d.rotationSpeedMax = 2.0f;
+        check(ParticleUsesRotation(d) && !ParticleUsesStretch(d) && ParticleUsesBillboard(d),
+              "m63b: rotation alone opens the billboard gate without stretch");
+    }
+
+    // ---- (M63b-2) 速度ストレッチの角度と長軸倍率 ----
+    // 画面基底は右 = +X / 上 = +Y に固定して、返る角度を直接読む
+    {
+        const DirectX::XMFLOAT3 right = { 1.0f, 0.0f, 0.0f };
+        const DirectX::XMFLOAT3 up = { 0.0f, 1.0f, 0.0f };
+        float a = 0.0f, sScale = 0.0f;
+
+        // (a) 画面右へ飛ぶ = 角度 0 / 倍率 1 + 速さ*係数
+        EvalParticleStretchCpu(2.0f, 0.0f, 0.0f, right, up, 0.5f, 4.0f, a, sScale);
+        check(a == 0.0f && NearF(sScale, 2.0f),
+              "m63b: velocity along screen right yields angle 0 and 1+speed*scale");
+
+        // (b) 画面上へ飛ぶ = +90°。**ParticleBillboardCornerCpu の符号規約 (反時計回り) と
+        //     同じ向き**でないと、伸びが速度と直交する形で golden が割れる
+        EvalParticleStretchCpu(0.0f, 2.0f, 0.0f, right, up, 0.5f, 4.0f, a, sScale);
+        check(NearF(a, 1.57079633f), "m63b: velocity along screen up yields +90 degrees");
+
+        // (c) 上限クランプ。速すぎる粒子が画面いっぱいの線にならないこと
+        EvalParticleStretchCpu(100.0f, 0.0f, 0.0f, right, up, 0.5f, 4.0f, a, sScale);
+        check(sScale == 4.0f, "m63b: the long axis is clamped to stretchMax");
+
+        // (d) ★視線方向へ飛ぶ粒子 — **本節の要**。射影成分が ~0 なので、3D 速度の長さで
+        //     測っていると「速いから長く伸びる」のに向きは atan2(0,0) 由来の暴れ値になり、
+        //     長い線がランダムな向きへ回る。射影長で測ると 1.0f へ**ビット一致で**落ちる
+        EvalParticleStretchCpu(0.0f, 0.0f, 50.0f, right, up, 0.5f, 4.0f, a, sScale);
+        check(a == 0.0f && sScale == 1.0f,
+              "m63b: motion along the view axis degenerates to the identity bit-exactly");
+
+        // (e) stretchMax < 1 (Inspector で入れられる) が clamp の lo > hi にならないこと。
+        //     素の std::clamp なら未定義動作 = 構成によって別の絵が出る
+        EvalParticleStretchCpu(2.0f, 0.0f, 0.0f, right, up, 0.5f, 0.5f, a, sScale);
+        check(sScale == 1.0f, "m63b: stretchMax below 1 clamps to the identity, not to itself");
+
+        // (f) 係数 0 は倍率 1 ちょうど (ゲートが漏れても絵が伸びないこと)
+        EvalParticleStretchCpu(3.0f, 4.0f, 0.0f, right, up, 0.0f, 4.0f, a, sScale);
+        check(sScale == 1.0f, "m63b: zero stretchScale yields exactly 1.0");
+
+        // (g) 恒等の合成: 返り値をそのまま四隅へ通しても corner がビット一致すること
+        //     (M63a-4(a) の不変量が M63b の経路でも保たれる)
+        EvalParticleStretchCpu(0.0f, 0.0f, 0.0f, right, up, 0.5f, 4.0f, a, sScale);
+        float ox = 0.0f, oy = 0.0f;
+        ParticleBillboardCornerCpu(1.0f, -1.0f, 0.0f + a, sScale, ox, oy);
+        check(ox == 1.0f && oy == -1.0f,
+              "m63b: a motionless particle reproduces its corner bit-exactly");
+    }
+
+    // ---- (M63b-3) カリング拡張量がストレッチを含むこと ----
+    // ★落とすと「伸びた粒子が画面端でプールごと消える」— プール単位カリングなので
+    //   1 粒ではなく塊で消える形になる
+    {
+        ParticleEmitterComponent d = {};
+        d.sizeMidScale = 1.0f;
+        d.sizeEndScale = 1.0f;
+        const float base = ParticleBillboardExpand(d, 2.0f);
+        check(NearF(base, 2.0f * 1.5f), "m63b: expand without stretch is unchanged");
+
+        // 既定の stretchMax(4.0) を無条件に掛けていないこと = 既存 golden の保存条件
+        d.stretchMax = 4.0f;
+        check(ParticleBillboardExpand(d, 2.0f) == base,
+              "m63b: stretchMax alone does not widen the culling bounds");
+
+        d.stretchScale = 0.1f;
+        check(NearF(ParticleBillboardExpand(d, 2.0f), base * 4.0f),
+              "m63b: expand grows by stretchMax once stretching is on");
+
+        // 上限 < 1 で拡張が**縮まない**こと (縮むと可視な粒子を落とす = golden が割れる)
+        d.stretchMax = 0.25f;
+        check(ParticleBillboardExpand(d, 2.0f) == base,
+              "m63b: a stretchMax below 1 never shrinks the culling bounds");
+    }
+
     if (failCount == 0) {
         MYE_LOG_INFO("==== Particle self test: ALL PASS ====");
         return true;

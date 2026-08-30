@@ -730,6 +730,25 @@ IParticleBackend (switchable interface)
   comment-synchronised HLSL mirror of both — the mirror is **not** machine-checked, so change the two
   together. With every key disabled (`T` outside `(0,1)`) the mirror degrades bit-for-bit to the old
   two-point lerp, which is what keeps existing content byte-identical
+- **Billboard transform (M63a / M63b)**: per-particle rotation and velocity stretch are applied by a
+  single shared helper, `assets/shaders/particle_billboard.hlsli`, which both draw paths call
+  (`particle_render.hlsl` for the CPU instances, `particle_render_gpu.hlsl` for the GPU pool), with
+  `ParticleCurves.h` carrying the C++ mirror. The rotation angle is **derived in closed form**
+  (`rot0 + rotVel * elapsed`) instead of being integrated, so neither the CPU SIMD path nor
+  `particle_sim.cs.hlsl` is touched by it. Velocity stretch scales the billboard's **local X axis**
+  and aims it by *adding* the velocity's screen-space angle to that same rotation, which is why one
+  angle slot is enough: the CPU folds the three velocity components into the two scalars
+  (`rot`, `stretch`) it already sends, so `ParticleInstance` stays 48 bytes. The stretch factor comes
+  from the **screen-projected** speed, not the 3-D speed — a particle flying straight at the camera
+  would otherwise get a long streak whose direction comes from `atan2` of two near-zero components
+  and spins randomly every frame. In local simulation space both back ends rotate the velocity by the
+  emitter's world matrix first, exactly as they already do for the position. Both transforms are
+  gated, and with rotation and stretch off the vertex shader passes the corner through untouched —
+  that gate is what keeps existing content bit-identical, since `rot = 0, stretch = 1` would still
+  round through `x * 1` and `cos(0)`. Pool-level frustum culling widens its bounds by `stretchMax`
+  **only** once stretching is on; applying the 4.0 default unconditionally would pull previously
+  culled pools back into view. Distortion particles (`blendMode == 2`) take no part in either
+  transform — see the M42d exception below
 - **Known divergence (emission cap under saturation)**: the CPU backend clamps a tick's emission with
   `min(emit, maxParticles - alive)`, while the GPU backend clamps with `ClampGpuEmitCount(emit, capacity)`
   because it never reads the alive count back (see ADR-008). Once a pool saturates, the CPU stops

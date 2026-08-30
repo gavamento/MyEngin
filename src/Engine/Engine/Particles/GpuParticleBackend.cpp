@@ -59,9 +59,9 @@ struct GpuRenderCB { // particle_render_gpu.hlsl の GpuRenderCB と一致
     XMFLOAT4 cameraPosParam; // xyz=カメラ位置 (VS の dist 用), w=予約
     XMFLOAT4 froxelParams;   // x=enabled, y=nearZ, z=farZ, w=slices
     XMFLOAT4 froxelScreen;   // xy=画面サイズ, zw=予約
-    // ---- M63a: ビルボード変換 (末尾 append。HLSL 側と両方同時に変更する) ----
-    // 既定 (billboardMode=0) は従来と 1 ビットも変わらない。yzw は M63b のストレッチ用の予約
-    XMFLOAT4 billboardParams; // x=billboardMode, yzw=予約
+    // ---- M63a/M63b: ビルボード変換 (末尾 append。HLSL 側と両方同時に変更する) ----
+    // 既定 (billboardMode=0) は従来と 1 ビットも変わらない
+    XMFLOAT4 billboardParams; // x=billboardMode, y=stretchScale(0=off), z=stretchMax, w=useRotation
 };
 
 struct ParticleSortCB { // particle_sort_common.hlsli の ParticleSortCB と一致 (b1)
@@ -944,15 +944,18 @@ void GpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
         // 判定は CPU バックエンドと同じ ParticleBlendIsAdditive 1 本 — blendMode の意味
         // (0=additive / 1=alpha / 2=歪み) を片方だけ直したときに静かに割れるのを防ぐ
         cb.fogColorBlend.w = ParticleBlendIsAdditive(em.descCache.blendMode) ? 1.0f : 0.0f;
-        // M63a: 回転を使うエミッタだけ VS のビルボード変換を通す。判定式は CPU バックエンドの
-        // useRotation と同一 — ここを片方だけ緩めると「同じシーンで CPU だけ回る」が起きる。
+        // M63a: 回転/ストレッチを使うエミッタだけ VS のビルボード変換を通す。判定は
+        // ParticleCurves.h の共有ゲート — CPU バックエンドと同じ 1 本を呼ぶ (M63b で寄せた)。
         // ★「回転 0 なら通しても同じ」ではないので、常時 1 にはしないこと (ビット保存の根拠)
+        // ★x (通すか) と w (回転を評価するか) を分けているのは、CPU の
+        //   `useRotation ? ParticleRotationAt(...) : 0.0f` と**同じ分岐**を GPU にも通すため。
+        //   まとめると「ストレッチだけ ON」のとき GPU だけ rot0 + rotVel*elapsed を評価し、
+        //   CPU はリテラル 0.0f を書く形になって演算列が食い違う
         {
             const ParticleEmitterComponent& d = em.descCache;
-            const bool useRotation =
-                (d.rotationMin != 0.0f || d.rotationMax != 0.0f || d.rotationSpeedMin != 0.0f
-                 || d.rotationSpeedMax != 0.0f);
-            cb.billboardParams = { useRotation ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f };
+            cb.billboardParams = { ParticleUsesBillboard(d) ? 1.0f : 0.0f,
+                                   ParticleUsesStretch(d) ? d.stretchScale : 0.0f, d.stretchMax,
+                                   ParticleUsesRotation(d) ? 1.0f : 0.0f };
         }
         UploadCB(dc, renderCB_.Get(), cb);
         ID3D11Buffer* cbs[2] = { simCB_.Get(), renderCB_.Get() };

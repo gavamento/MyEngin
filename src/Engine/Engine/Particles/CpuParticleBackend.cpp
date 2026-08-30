@@ -661,6 +661,10 @@ void CpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
     // インスタンスデータ充填 (エミッタ順。アルファは back-to-front ソート — 描画専用処理で
     // シミュレーション状態 (ハッシュ対象) には触れない)
     const XMFLOAT4X4& vm = view.view;
+    // M63b: 速度ストレッチの射影基底。CB へ入れるものと同じ値だが、充填ループの中で
+    // 先に要るのでここで作る (ビュー行列の 1・2 列 = カメラの右/上ベクトル)。
+    const XMFLOAT3 camRightW = { vm._11, vm._21, vm._31 };
+    const XMFLOAT3 camUpW = { vm._12, vm._22, vm._32 };
     struct DrawRange {
         uint32_t base;
         uint32_t count;
@@ -742,9 +746,16 @@ void CpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
         // ★off のときは rot/stretch へ 0/1 を書くだけで sin/cos も乗算も通らない。
         //   絵のビット保存は CB の billboardMode と VS の分岐が担うが、CPU 側もここで
         //   「使わないなら計算しない」を守っておくと、フラグと実データが食い違わない
-        const bool useRotation =
-            (d.rotationMin != 0.0f || d.rotationMax != 0.0f || d.rotationSpeedMin != 0.0f
-             || d.rotationSpeedMax != 0.0f);
+        // M63b: 判定式は ParticleCurves.h へ寄せた (GPU バックエンドと共有。手写しだと
+        // 片方だけ緩めたときに「同じシーンで CPU だけ回る」が静かに起きる)
+        const bool useRotation = ParticleUsesRotation(d);
+        const bool useStretch = ParticleUsesStretch(d);
+        // M63b: ローカル空間プール (simulationSpace=1) の速度はエミッタ座標系のまま入っている。
+        // 位置と同じ 3x3 を掛けてから画面基底へ射影する — 掛けないと「右へ飛ぶ粒子が
+        // 上向きに伸びる」形でエミッタの回転ぶんズレる。平行移動は速度に効かないので
+        // _41.._43 は読まない (スケールは意図的に通す = 画面上の見た目速度と伸びが整合する)
+        const XMFLOAT4X4& velWorld = pool.renderWorld;
+        const bool localVel = useStretch && d.simulationSpace == 1;
         for (uint32_t k = 0; k < pool.alive; ++k) {
             const uint32_t i = orderScratch_[k];
             float age = 1.0f - pool.life[i] * pool.invLife[i];
@@ -756,17 +767,38 @@ void CpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
             inst.color = EvalParticleColor(d, age);
             inst.age = age;
             // M63a: 回転は閉形式 (rot0 + rotVel*elapsed) で導出する — sim では積分しない。
-            // M63b がここへ速度ストレッチの画面角を足し込み、M63c が flipFrame を埋める
-            inst.rot = useRotation
+            // M63c がここへ flipFrame を埋める
+            float rot = useRotation
                 ? ParticleRotationAt(pool.rot0[i], pool.rotVel[i],
                                      ParticleElapsedFromLife(pool.life[i], pool.invLife[i]))
                 : 0.0f;
-            inst.stretch = 1.0f;
+            float stretch = 1.0f;
+            // M63b: 速度ストレッチ。CPU は充填ループでビュー行列を持っているので、速度 3 成分を
+            // 「画面角 + 長軸倍率」の 2 スカラへ畳んで送れる (ParticleInstance は 48B 据え置き)。
+            // ★off のときは加算そのものをしない — `rot + 0.0f` は -0.0 を +0.0 へ化けさせる
+            //   (velocityInheritance と同じ作法)。
+            if (useStretch) {
+                float vx = pool.vx[i];
+                float vy = pool.vy[i];
+                float vz = pool.vz[i];
+                if (localVel) {
+                    const float lx = vx, ly = vy, lz = vz;
+                    vx = lx * velWorld._11 + ly * velWorld._21 + lz * velWorld._31;
+                    vy = lx * velWorld._12 + ly * velWorld._22 + lz * velWorld._32;
+                    vz = lx * velWorld._13 + ly * velWorld._23 + lz * velWorld._33;
+                }
+                float angle = 0.0f;
+                EvalParticleStretchCpu(vx, vy, vz, camRightW, camUpW, d.stretchScale,
+                                       d.stretchMax, angle, stretch);
+                rot += angle;
+            }
+            inst.rot = rot;
+            inst.stretch = stretch;
             inst.flipFrame = 0.0f;
         }
         ranges.push_back({ base, pool.alive, d.blendMode, d.texture,
                            std::max(1, d.flipTilesX), std::max(1, d.flipTilesY), d.flipCycles,
-                           d.softFadeDistance, useRotation ? 1 : 0 });
+                           d.softFadeDistance, ParticleUsesBillboard(d) ? 1 : 0 });
     }
     dc->Unmap(instanceBuffer_.Get(), 0);
 

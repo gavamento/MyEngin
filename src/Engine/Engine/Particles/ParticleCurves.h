@@ -206,6 +206,9 @@ inline bool ParticlePoolVisible(const Frustum& f, const DirectX::XMFLOAT3& bmin,
     return WorldAabbInFrustum(f, wmin, wmax);
 }
 
+// M63b: 定義は末尾の B 群ブロック。ゲートの正本を 1 本に保つため、ここで式を手写ししない。
+inline bool ParticleUsesStretch(const ParticleEmitterComponent& d);
+
 // ビルボードの AABB 拡張量。size はビルボード半幅 (particle_render.hlsl: corner*size) で
 // 対角方向は √2 倍まで届く。サイズカーブは中間/終端キーで初期値を超えうるので最大倍率を
 // 掛ける (sizeMidT が無効でも max に含める = 保守側で単純)。1.5 は √2 の保守的丸め。
@@ -213,7 +216,15 @@ inline float ParticleBillboardExpand(const ParticleEmitterComponent& d, float ma
 {
     const float maxScale =
         std::max({ 1.0f, std::fabs(d.sizeMidScale), std::fabs(d.sizeEndScale) });
-    return maxSize0 * maxScale * 1.5f;
+    const float base = maxSize0 * maxScale * 1.5f;
+    // M63b: 速度ストレッチは長軸を最大 stretchMax 倍まで伸ばす。掛け忘れると
+    // 「伸びた粒子が画面端でプールごと消える」が起きる (カリングはプール単位)。
+    // ★stretchScale == 0 では掛けない — 既定 stretchMax は 4.0 なので無条件に掛けると
+    //   従来カリングされていたプールが可視へ転じ、既存のスクショ golden が「絵が増える」形で割れる。
+    if (ParticleUsesStretch(d)) {
+        return base * std::max(1.0f, d.stretchMax);
+    }
+    return base;
 }
 
 // ---- GPU 空 Dispatch 回避の遅延判定 ----
@@ -815,6 +826,60 @@ inline void ParticleBillboardCornerCpu(float cornerX, float cornerY, float rot, 
     const float c = std::cos(rot);
     outX = cx * c - cornerY * s;
     outY = cx * s + cornerY * c;
+}
+
+// ---- M63b: ビルボード変換のゲート (CPU/GPU が呼ぶ唯一の正本) ----
+// M63a では CPU バックエンドと GPU バックエンドが同じ 4 項の式を**手写し**していた。
+// M63b でストレッチが枠に加わり判定が 2 種類になったので、片方だけ緩める事故
+// (「同じシーンで CPU だけ回る / GPU だけ伸びる」) が起きる前にここへ寄せる。
+// ★判定の内容は M63a から 1 ビットも変えていない (回転の分は同じ式のまま移設)。
+
+inline bool ParticleUsesRotation(const ParticleEmitterComponent& d)
+{
+    return d.rotationMin != 0.0f || d.rotationMax != 0.0f || d.rotationSpeedMin != 0.0f
+        || d.rotationSpeedMax != 0.0f;
+}
+
+// ★off の根拠は stretchScale == 0 **のみ**。stretchMax は既定が 4.0 なので、
+//   「非既定なら on」の類の判定に混ぜると既定エミッタが全部ストレッチ扱いになる。
+inline bool ParticleUsesStretch(const ParticleEmitterComponent& d)
+{
+    return d.stretchScale != 0.0f;
+}
+
+// 四隅の sincos + 長軸倍率を通すか。off なら VS は corner を素通し = 従来とビット同一。
+// 回転とストレッチは rot 1 本を共有する (角度を加算する) ので、どちらか一方でも立てば通す。
+inline bool ParticleUsesBillboard(const ParticleEmitterComponent& d)
+{
+    return ParticleUsesRotation(d) || ParticleUsesStretch(d);
+}
+
+// 速度ストレッチ: 速度を画面基底へ射影し、「長軸を向ける角度」と「長軸倍率」の 2 スカラへ畳む。
+// HLSL ミラー: particle_billboard.hlsli::EvalParticleStretch。
+//
+// ★倍率の元は **3D 速度の長さではなく射影後の長さ**。3D 長で測ると、カメラへ真っ直ぐ
+//   飛ぶ粒子が「速いので長く伸びる」のに射影成分は ~0 = atan2 の向きが毎フレーム暴れて、
+//   長い線がランダムな向きへ回る。射影長なら同じ状況が閾値に落ちて stretch=1 になる。
+// ★返す角度は rot へ**加算**される (軸を増やさず M63a の枠を共有する規約)。
+// ★静止 (射影長 < 1e-4f) では 0.0f / 1.0f を**リテラルで**返す。式を通すと -0.0 や
+//   1.0±ulp が混ざり、恒等のはずの粒子が微妙に回る。
+// ★clamp の上限は max(1, stretchMax) — stretchMax < 1 を Inspector で入れられるので、
+//   素の std::clamp(v, 1.0f, stretchMax) は lo > hi = 未定義動作になる。
+inline void EvalParticleStretchCpu(float vx, float vy, float vz,
+                                   const DirectX::XMFLOAT3& camRight,
+                                   const DirectX::XMFLOAT3& camUp, float stretchScale,
+                                   float stretchMax, float& outAngle, float& outStretch)
+{
+    const float dr = vx * camRight.x + vy * camRight.y + vz * camRight.z;
+    const float du = vx * camUp.x + vy * camUp.y + vz * camUp.z;
+    const float speed = std::sqrt(dr * dr + du * du);
+    if (speed < 1e-4f) {
+        outAngle = 0.0f;
+        outStretch = 1.0f;
+        return;
+    }
+    outAngle = std::atan2(du, dr);
+    outStretch = std::clamp(1.0f + speed * stretchScale, 1.0f, std::max(1.0f, stretchMax));
 }
 
 } // namespace mye

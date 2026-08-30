@@ -49,4 +49,31 @@ float ParticleRotationAt(float rot0, float rotVel, float elapsed)
     return rot0 + rotVel * elapsed;
 }
 
+// M63b: 速度ストレッチ。速度を画面基底へ射影して「長軸を向ける角度」と「長軸倍率」へ畳む。
+// C++ ミラー: EvalParticleStretchCpu。
+//
+// ★倍率の元は **3D 速度の長さではなく射影後の長さ**。3D 長で測るとカメラへ真っ直ぐ飛ぶ
+//   粒子が「速いので長く伸びる」のに射影成分は ~0 = atan2 の向きが毎フレーム暴れ、
+//   長い線がランダムな向きへ回る。射影長ならその状況が閾値に落ちて stretch=1 になる。
+// ★角度は rot へ**加算**する (軸を増やさない M63a の枠の共有)。
+// ★CPU 側とのビット一致は**保証しない** — atan2 / sqrt の実装が libm と GPU で違う。
+//   突き合わせるのは「向きと伸び方が同じか」であって画素の完全一致ではない
+//   (particle_cpu / particle_gpu の golden が別々に版管理されているのはこのため)。
+//   実測 (WARP, M63b 時点) では伸びの領域は画素一致し、golden 間の差 217→221 画素は
+//   M63a から在る回転部の差のまま — つまり**この関数は現状ずれを増やしていない**。
+void EvalParticleStretch(float3 v, float3 camRight, float3 camUp, float stretchScale,
+                         float stretchMax, out float angle, out float stretch)
+{
+    const float dr = dot(v, camRight);
+    const float du = dot(v, camUp);
+    const float speed = sqrt(dr * dr + du * du);
+    if (speed < 1e-4f) {
+        angle = 0.0f;
+        stretch = 1.0f;
+        return;
+    }
+    angle = atan2(du, dr);
+    stretch = clamp(1.0f + speed * stretchScale, 1.0f, max(1.0f, stretchMax));
+}
+
 #endif // MYE_PARTICLE_BILLBOARD_HLSLI
