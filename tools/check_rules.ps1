@@ -302,6 +302,16 @@ $constGroups = @(
             'src\Engine\Renderer\RenderTypes.h'        = 'constexpr\s+int\s+kGpuParticleSrvSlot\s*=\s*(\d+)'
             'assets\shaders\particle_render_gpu.hlsl'  = 'Texture3D\s+gFroxelVolume\s*:\s*register\(t(\d+)\)'
         }
+    },
+    @{
+        # M57追補: VFX (Sprite / Trail / TextMesh) PS のフロクセルスロット。
+        # vfx_sprite.hlsl は t0 (自前テクスチャ) しか使わないので t1。食い違うと
+        # **VFX だけ霧が 0** になるが、コンパイルも実行も通る
+        label = 'froxel::kVfxSrvSlot / vfx_sprite register(t1)'
+        sites = @{
+            'src\Engine\Renderer\RenderTypes.h' = 'constexpr\s+int\s+kVfxSrvSlot\s*=\s*(\d+)'
+            'assets\shaders\vfx_sprite.hlsl'    = 'Texture3D\s+gFroxelVolume\s*:\s*register\(t(\d+)\)'
+        }
     }
 )
 foreach ($g in $constGroups) {

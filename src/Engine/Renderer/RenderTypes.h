@@ -893,6 +893,13 @@ constexpr int kParticleSrvSlot = 3;
 //   エントリまで巻き込むことになる。両者は別シェーダでバインド空間を共有しないので、
 //   番号が違っていても実害は無い (規則は「自分が使っている最後の t の次」で 3 者共通)
 constexpr int kGpuParticleSrvSlot = 4;
+// M57追補: VFX (Sprite / Trail / TextMesh) PS のスロット。vfx_sprite.hlsl は
+// t0 (自前テクスチャ = スプライト画像 / 白 / フォントアトラス) しか使わないので t1 が最初の空き。
+// ForwardPath / DeferredPath が Render 末尾で t1..t7 を null 化するので、VfxRenderer が
+// 走る時点で t1 は必ず空いている。
+// ★サンプラは **s1** に LINEAR/CLAMP を別途張る (s0 は 8x8 フォントのバッチで POINT に
+//   化けるため)。フロクセルを POINT で引くと 3D テクスチャがブロックノイズになる
+constexpr int kVfxSrvSlot = 1;
 
 // スカイ / 背景 (= 深度が無いピクセル) 用のサンプル w。**グリッド全体ぶんの積分**を指す。
 // ★ここは必ず IntegratedSampleWForDepth(viewZ >= farZ) と**同じ値**でなければならない —

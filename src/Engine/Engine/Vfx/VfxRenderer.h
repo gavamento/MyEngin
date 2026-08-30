@@ -42,6 +42,33 @@ private:
     std::vector<Buffer> buffers_; // owner.index 昇順
 };
 
+// M57追補: VfxCB のフォグ / フロクセル部分の素材。**D3D デバイス非依存**にしてあるのは
+// VfxSelfTest がヘッドレスで検査できるようにするため (描画そのものの担保は golden の担当)。
+// ★存在理由は「VFX が forward_lit とまったく同じ RenderView フィールドを読んでいる」ことを
+//   機械検査できるようにすること。M32c の手書きフォグは M29d の 5 本しか読んでおらず、
+//   **M43a の 6 本 (ハイトフォグ + 太陽インスキャッタ) を落としていた** — 同じシーンで
+//   メッシュと VFX の霧の濃さが食い違っていて、それに気づく仕掛けがどこにも無かった
+struct VfxFogParams {
+    int32_t fogMode = -1;
+    DirectX::XMFLOAT3 fogColor = {};
+    float fogDensity = 0.0f;
+    float fogStart = 0.0f;
+    float fogEnd = 0.0f;
+    float heightFalloff = 0.0f;
+    float baseHeight = 0.0f;
+    float inscatterIntensity = 0.0f;
+    float inscatterPower = 8.0f;
+    DirectX::XMFLOAT3 sunDirection = {};
+    DirectX::XMFLOAT3 sunColor = {};
+    int32_t froxelEnabled = 0; // **FroxelIsBound 1 本**で決める (自作ゲート禁止)
+    float froxelNearZ = 0.0f;
+    float froxelFarZ = 0.0f;
+    float froxelSlices = 0.0f;
+    float screenW = 0.0f;
+    float screenH = 0.0f;
+};
+VfxFogParams BuildVfxFogParams(const RenderView& view);
+
 // Sprite / Trail / TextMesh のワールド空間 VFX 描画 (M29c)。
 // RenderSystem が path.Render (不透明+透明メッシュ) の後・パーティクルの前に呼ぶ —
 // HDR 中間に描かれ postfx を通る。RT/ビューポートはパスがバインド済み前提 (particles と同じ)。

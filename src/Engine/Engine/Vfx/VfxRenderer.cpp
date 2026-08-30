@@ -27,6 +27,25 @@ struct VfxCB {
     float fogStart;
     float fogEnd;
     float pad[2];
+    // ---- M57追補: M43a のハイトフォグ + 太陽インスキャッタ (末尾 append) ----
+    // ★ここが空だったせいで、**同じシーンでメッシュと VFX の霧の濃さが食い違っていた** —
+    //   PS が ApplyFog を呼ばず M32c の距離フォグを手書きコピーしていたため。
+    //   0/0 なら ApplyFog は M29d の距離フォグと同じ式に潰れる (= 従来の意味論)
+    float heightFalloff;
+    float baseHeight;
+    float inscatterIntensity;
+    float inscatterPower;
+    XMFLOAT3 sunDirection; // 光の進行方向 (正規化)
+    float pad1;
+    XMFLOAT3 sunColor; // リニア・強度込み
+    float pad2;
+    // ---- M57追補: フロクセル (0 = 従来経路へ厳密に落ちる分岐を持つ) ----
+    int32_t froxelEnabled;
+    float froxelNearZ;
+    float froxelFarZ;
+    float froxelSlices; // float で持つ = 式が全部 float 演算 (forward_lit と同じ流儀)
+    float froxelScreen[2]; // SV_Position → uv
+    float pad3[2];
 };
 
 } // namespace
@@ -401,11 +420,26 @@ void VfxRenderer::Render(World& world, GraphicsDevice& device, ShaderManager& sh
                     XMMatrixTranspose(XMMatrixMultiply(XMLoadFloat4x4(&view.view),
                                                        XMLoadFloat4x4(&view.proj))));
     cbData.cameraPos = view.cameraPos; // フォグ距離用 (M32c)
-    cbData.fogMode = view.fogMode;
-    cbData.fogColor = view.fogColor;
-    cbData.fogDensity = view.fogDensity;
-    cbData.fogStart = view.fogStart;
-    cbData.fogEnd = view.fogEnd;
+    // M57追補: フォグの素材は純関数へ寄せた (VfxSelfTest がヘッドレスで検査する)。
+    // **メッシュ (forward_lit) とまったく同じ RenderView フィールドを読む**のがこの追補の主張
+    const VfxFogParams fog = BuildVfxFogParams(view);
+    cbData.fogMode = fog.fogMode;
+    cbData.fogColor = fog.fogColor;
+    cbData.fogDensity = fog.fogDensity;
+    cbData.fogStart = fog.fogStart;
+    cbData.fogEnd = fog.fogEnd;
+    cbData.heightFalloff = fog.heightFalloff;
+    cbData.baseHeight = fog.baseHeight;
+    cbData.inscatterIntensity = fog.inscatterIntensity;
+    cbData.inscatterPower = fog.inscatterPower;
+    cbData.sunDirection = fog.sunDirection;
+    cbData.sunColor = fog.sunColor;
+    cbData.froxelEnabled = fog.froxelEnabled;
+    cbData.froxelNearZ = fog.froxelNearZ;
+    cbData.froxelFarZ = fog.froxelFarZ;
+    cbData.froxelSlices = fog.froxelSlices;
+    cbData.froxelScreen[0] = fog.screenW;
+    cbData.froxelScreen[1] = fog.screenH;
     if (SUCCEEDED(dc->Map(cb_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
         memcpy(mapped.pData, &cbData, sizeof(cbData));
         dc->Unmap(cb_.Get(), 0);
@@ -426,16 +460,65 @@ void VfxRenderer::Render(World& world, GraphicsDevice& device, ShaderManager& sh
     dc->OMSetBlendState(blend_.Get(), nullptr, 0xFFFFFFFFu);
     dc->OMSetDepthStencilState(depthReadOnly_.Get(), 0);
     dc->RSSetState(raster_.Get());
+    // M57追補: フロクセルの積分結果を t1 へ (t0 は自前テクスチャ)。
+    // **無効でも明示的に nullptr を張る** — 張らないと前のビューの SRV が残る
+    {
+        ID3D11ShaderResourceView* froxelSrv[1] = { fog.froxelEnabled ? view.froxelSRV : nullptr };
+        static_assert(froxel::kVfxSrvSlot == 1, "VFX のフロクセル SRV は t1 (t0 は自前テクスチャ)");
+        dc->PSSetShaderResources(froxel::kVfxSrvSlot, 1, froxelSrv);
+    }
 
     for (const Batch& b : batches_) {
-        ID3D11SamplerState* samps[1] = { b.pointSample ? samplerPoint_.Get()
-                                                       : samplerLinear_.Get() };
-        dc->PSSetSamplers(0, 1, samps);
+        // ★s1 には**常に LINEAR/CLAMP** を張る。s0 は内蔵 8x8 ビットマップフォントの
+        //   バッチで POINT に化けるので (下の pointSample)、フロクセルを s0 で引くと
+        //   **そのバッチだけ**ボリュームが最近傍サンプルになりブロックノイズが出る
+        //   (3D テクスチャなのでスライス境界とタイル境界が縞になって出る)。
+        //   統合契約 予約 2「サンプラは 1 つも増やさない」とは矛盾しない — あれが禁じて
+        //   いるのは**サンプラオブジェクトの新設**であって、既に持っているものを 2 つ目の
+        //   スロットへ張ることではない (skybox がホストの s2 に相乗りしているのと同じ発想)
+        ID3D11SamplerState* samps[2] = { b.pointSample ? samplerPoint_.Get()
+                                                       : samplerLinear_.Get(),
+                                         samplerLinear_.Get() };
+        dc->PSSetSamplers(0, 2, samps);
         ID3D11ShaderResourceView* srvs[1] = { b.srv };
         dc->PSSetShaderResources(0, 1, srvs);
         dc->Draw(b.count, b.start);
     }
-    // ブレンド/深度は次段 (particles / postfx) が自前で設定するので復元不要
+    // ブレンド/深度は次段 (particles / postfx) が自前で設定するので復元不要。
+    // ★**SRV だけは自分で剥がす。** ここまでは「次段が自前で設定する」で通してきたが、
+    //   フロクセルの t1 を残すと**次フレームの積分パスが同じテクスチャを UAV に取った瞬間に
+    //   D3D が片方を黙って外す** (M57d/M57e が t15 / t7 / t3 で 3 度踏んだ罠)。
+    //   t0 も一緒に外して「張ったものは剥がす」を例外なしにする (早期 return は全て
+    //   バインドより前なので漏れる経路は無い)
+    ID3D11ShaderResourceView* nullSrvs[2] = { nullptr, nullptr };
+    dc->PSSetShaderResources(0, 2, nullSrvs);
+}
+
+VfxFogParams BuildVfxFogParams(const RenderView& view)
+{
+    VfxFogParams p;
+    p.fogMode = view.fogMode;
+    p.fogColor = view.fogColor;
+    p.fogDensity = view.fogDensity;
+    p.fogStart = view.fogStart;
+    p.fogEnd = view.fogEnd;
+    // M43a: ここが M32c 以来ずっと欠けていた 6 本。forward_lit が読むのと同じフィールド
+    p.heightFalloff = view.fogHeightFalloff;
+    p.baseHeight = view.fogBaseHeight;
+    p.inscatterIntensity = view.fogInscatterIntensity;
+    p.inscatterPower = view.fogInscatterPower;
+    p.sunDirection = view.sunDirection;
+    p.sunColor = view.sunColor;
+    // M57: 合成可否は **FroxelIsBound 1 本**。自作ゲートを書くと「サムネイル
+    // (AssetPreviewCache の別 RenderSystem) だけが前フレームの残骸を読む」を潰せなくなる
+    const bool bound = FroxelIsBound(view);
+    p.froxelEnabled = bound ? 1 : 0;
+    p.froxelNearZ = view.froxelNearZ;
+    p.froxelFarZ = view.froxelFarZ;
+    p.froxelSlices = static_cast<float>(view.froxelSlices);
+    p.screenW = static_cast<float>(view.width);
+    p.screenH = static_cast<float>(view.height);
+    return p;
 }
 
 } // namespace mye

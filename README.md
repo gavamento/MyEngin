@@ -117,7 +117,8 @@ Runtime.exe --render-demo --deferred --froxel
                                           #   距離フォグはグリッドの外側だけを持ち、
                                           #   ゴッドレイは自動 off になる (三重計上の解消)。
                                           #   Forward / Deferred どちらでも効き、不透明・半透明・
-                                          #   地形・空・パーティクル (CPU/GPU 両方) に載る。
+                                          #   地形・空・パーティクル (CPU/GPU 両方)・
+                                          #   VFX (Sprite/Trail/TextMesh) に載る。
                                           #   UI は表示 > レンダリング > ボリュメトリックフォグ
 Runtime.exe --fog-demo --froxel --particle-backend gpu
                                           # 霧のショーケース (M57追補) = スクショ 15 枚目。

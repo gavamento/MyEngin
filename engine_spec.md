@@ -271,8 +271,11 @@ light casts a shadowed shaft. A second pass integrates each Z column front-to-ba
 `(accumulated in-scatter, transmittance)` and every surface that has a depth composites it as
 `scene * T + inScatter`: the Deferred light pass (opaque, `t15`), the Forward family
 (`forward_lit` / `_instanced` / `_skinned` / `_terrain`, `t7` — which is also what the Deferred
-transparent tail runs), the skybox, CPU particles (`t3`) and GPU particles (`t4` — a different
-slot only because the GPU billboard shader already occupies `t3` with the flipbook texture).
+transparent tail runs), the skybox, CPU particles (`t3`), GPU particles (`t4` — a different
+slot only because the GPU billboard shader already occupies `t3` with the flipbook texture) and
+the world-space VFX quads (Sprite / Trail / TextMesh, `t1`). The slot rule is the same for all
+three particle-like shaders: take the one after the last texture the shader already binds; the
+numbers need not agree because none of them share a bind space.
 Additive particles get the
 transmittance **only**: the surface behind them already added the in-scatter once, so adding it
 again would scale the fog with the number of overlapping billboards. Pixels with no depth at all
@@ -302,6 +305,21 @@ composite (`froxel_common.hlsli::FroxelCompositeParticle`, which keeps the addit
 one place so the "additive gets transmittance only" rule cannot be copied wrong). The GPU vertex
 shader carries a real camera distance rather than reusing view depth, because view depth is off by
 about 15% at the edge of a 60° frustum and the compare mode puts the two backends side by side.
+
+**`VfxRenderer` moved off its private copy of the fog (M57追補).** Sprite, Trail and TextMesh all
+run through one shader, and since M32c that shader carried a **hand-written copy of the distance
+fog that never gained the M43a terms** -- no height falloff, no sun in-scatter. A sprite and a mesh
+at the same distance in the same scene therefore hazed by different amounts, and nothing in the
+repository would have noticed. A VFX quad is a depth-carrying alpha-blended surface, which is
+exactly what a transparent mesh is, so the shader now makes the same `ApplyFog` call as
+`forward_lit` -- argument for argument, including `FroxelFogOrigin` in the camera-position slot --
+and composites the volume with the alpha-side helper (there is no additive path here: one blend
+state serves all three kinds). Two details are specific to this renderer. Its `VSOut` had only a
+VS-computed `dist`, replaced by `posW` + `viewZ` so the distance is evaluated per pixel like every
+other surface, which is visible on a large billboard. And it binds the volume's sampler to **`s1`**
+rather than reusing `s0`: `s0` is swapped to POINT for the built-in 8x8 bitmap font's batch, and a
+3D volume read with a point sampler bands along the slice boundaries. No new sampler object is
+created -- the existing linear one is bound twice.
 
 **Not covered in v1**: an orthographic view skips the grid entirely, because the froxel depth
 slices assume a perspective frustum; the analytic fog beyond the grid is *not* applied to the sky (it never was before

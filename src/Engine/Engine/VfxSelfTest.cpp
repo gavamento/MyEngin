@@ -220,6 +220,69 @@ bool RunVfxSelfTest()
               "environment: M43a fields default to identity (bit-identical legacy fog)");
     }
 
+    // ---- (3.7) BuildVfxFogParams (M57追補): VFX がメッシュと同じ霧を読んでいるか ----
+    // ★これがこのサブの主張そのもの。M32c の手書きフォグは M29d の 5 本しか読んでおらず、
+    //   **M43a の 6 本を落としていた** = 同じシーンでメッシュと VFX の霧の濃さが食い違って
+    //   いたのに、それに気づく仕掛けがどこにも無かった。落としたら赤くなる場所を作る。
+    {
+        RenderView v;
+        v.fogMode = 2;
+        v.fogColor = { 0.1f, 0.2f, 0.3f };
+        v.fogDensity = 0.02f;
+        v.fogStart = 5.0f;
+        v.fogEnd = 90.0f;
+        v.fogHeightFalloff = 0.035f;
+        v.fogBaseHeight = 1.5f;
+        v.fogInscatterIntensity = 0.30f;
+        v.fogInscatterPower = 10.0f;
+        v.sunDirection = { 0.0f, -0.7f, 0.7f };
+        v.sunColor = { 1.0f, 0.9f, 0.8f };
+        v.width = 960;
+        v.height = 540;
+
+        const VfxFogParams p = BuildVfxFogParams(v);
+        check(p.fogMode == 2 && p.fogColor.x == 0.1f && p.fogDensity == 0.02f
+                  && p.fogStart == 5.0f && p.fogEnd == 90.0f,
+              "vfx fog: the M29d distance-fog fields are copied from the view");
+        check(p.heightFalloff == 0.035f && p.baseHeight == 1.5f && p.inscatterIntensity == 0.30f
+                  && p.inscatterPower == 10.0f && p.sunDirection.z == 0.7f
+                  && p.sunColor.y == 0.9f,
+              "vfx fog: the M43a height/in-scatter fields are copied too (mesh parity)");
+        check(p.screenW == 960.0f && p.screenH == 540.0f,
+              "vfx fog: screen size comes from the view (SV_Position -> uv denominator)");
+
+        // ★フロクセルのゲートは **FroxelIsBound と厳密に一致**すること。自作ゲートを書くと
+        //   「サムネイル (AssetPreviewCache の別 RenderSystem) だけが前フレームの残骸を
+        //   サンプルする」を構造的に潰せなくなる。否定側 4 通りを全部見る。
+        //   FroxelIsBound は null 判定しかせず**逆参照しない**のでダミーポインタで足りる
+        int dummy = 0;
+        auto* fake = reinterpret_cast<ID3D11ShaderResourceView*>(&dummy);
+        RenderView g = v;
+        g.froxelSRV = fake;
+        g.froxelSlices = 64;
+        g.froxelNearZ = 0.1f;
+        g.froxelFarZ = 64.0f;
+        check(BuildVfxFogParams(g).froxelEnabled == 1
+                  && BuildVfxFogParams(g).froxelFarZ == 64.0f
+                  && BuildVfxFogParams(g).froxelSlices == 64.0f,
+              "vfx fog: froxel is enabled when the view has a bound volume");
+        RenderView n1 = g; n1.froxelSRV = nullptr;
+        RenderView n2 = g; n2.froxelSlices = 0;
+        RenderView n3 = g; n3.froxelFarZ = 0.0f;
+        RenderView n4 = g; n4.debugViewMode = 1;
+        check(BuildVfxFogParams(n1).froxelEnabled == 0 && BuildVfxFogParams(n2).froxelEnabled == 0
+                  && BuildVfxFogParams(n3).froxelEnabled == 0
+                  && BuildVfxFogParams(n4).froxelEnabled == 0,
+              "vfx fog: froxel gate matches FroxelIsBound on all four negative cases");
+
+        // 既定構築のビュー = 従来の意味論 (ApplyFog が M29d の距離フォグへ潰れる)
+        RenderView def;
+        const VfxFogParams d = BuildVfxFogParams(def);
+        check(d.froxelEnabled == 0 && d.heightFalloff == 0.0f && d.inscatterIntensity == 0.0f
+                  && d.fogMode == -1,
+              "vfx fog: a default view keeps the legacy meaning (no froxel, no M43a)");
+    }
+
     // ---- (3.6) MergeCameraPostFx (M29e): 上書きマージと applyGamma 維持 ----
     {
         PostProcess::Settings base;
