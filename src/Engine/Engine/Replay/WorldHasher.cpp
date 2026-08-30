@@ -251,6 +251,14 @@ uint64_t HashCpuParticles(const CpuParticleBackend& cpu, DumpCtx* d)
             EmitArray(d, "Particles", "invLife", pool.invLife.data(), n, h);
             h = HashBytes(pool.size0.data(), n * sizeof(float), h);
             EmitArray(d, "Particles", "size0", pool.size0.data(), n, h);
+            // M63a: per-particle の不変属性 (snapshot v7 と対)。sim では動かないが、
+            // 放出時に RNG から決まる = 復元後も同じ絵になることを保証する必要があるので畳む
+            h = HashBytes(pool.rot0.data(), n * sizeof(float), h);
+            EmitArray(d, "Particles", "rot0", pool.rot0.data(), n, h);
+            h = HashBytes(pool.rotVel.data(), n * sizeof(float), h);
+            EmitArray(d, "Particles", "rotVel", pool.rotVel.data(), n, h);
+            h = HashBytes(pool.flipU.data(), n * sizeof(float), h);
+            EmitArray(d, "Particles", "flipU", pool.flipU.data(), n, h);
         }
     }
     if (d && d->lines) {

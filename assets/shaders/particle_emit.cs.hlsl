@@ -12,7 +12,11 @@ struct EmitData
     // M42追補: CPU 側 pool.invLife[i] と同じ値 (= 1/lifetime)。
     // C++ 側 GpuParticleBackend::EmitData と一致 (48B)
     float  invLife;
-    float3 _pad;
+    // M63a: 旧 _pad の 12B。**乱数は GPU で作らない**契約 (ファイル冒頭) の通り、
+    // CPU の Pcg32 が決定論的に引いた値をそのまま受け取る (CPU バックエンドと同じ消費順)
+    float  rot0;
+    float  rotVel;
+    float  flipU;
 };
 
 RWStructuredBuffer<GpuParticle> gPool : register(u0);
@@ -41,7 +45,11 @@ void CSMain(uint3 tid : SV_DispatchThreadID)
     // 食い違う**。CPU が持っている 1/lifetime をそのまま受け取る
     p.invLife = e.invLife;
     p.size0 = e.size;
-    p._pad = float3(0, 0, 0);
+    // M63a: 不変属性を転記する。ゲート (ParticleUsesSpawnAttribs) が false のとき CPU 側が
+    // 0 を詰めてくるので、ここで分岐する必要はない
+    p.rot0 = e.rot0;
+    p.rotVel = e.rotVel;
+    p.flipU = e.flipU;
     gPool[slot] = p;
 
     const uint outIndex = gAliveOut.IncrementCounter();

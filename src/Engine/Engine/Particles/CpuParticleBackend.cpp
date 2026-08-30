@@ -23,7 +23,14 @@ struct ParticleInstance {
     float size;
     XMFLOAT4 color;
     float age; // [0,1] 寿命係数 (M32b フリップブック用)
-    float pad[3];
+    // ---- M63a: 旧 pad[3] を意味づけし直した (48B のまま = StructureByteStride も SRV も不変) ----
+    // ★**CPU は速度 3 成分を送らない。** 充填ループは view 行列を持っている (vm) ので、
+    //   速度ストレッチを「画面基底へ射影した角度 + 長軸倍率」の 2 スカラへ畳める。
+    //   回転角と速度角は同じ θ なので rot 1 本を共有し、加算する (M63b)。
+    //   3 float に収める代わりに 64B へ広げると 100k 粒子で +1.6MB/frame のアップロードになる。
+    float rot;       // 最終的な回転角 [rad] (= 初期回転 + 角速度*経過 + 速度の画面角)
+    float stretch;   // 長軸倍率 (1.0 = 伸ばさない)
+    float flipFrame; // フリップブックの連続コマ位置 (M63c。未使用時は 0)
 };
 
 struct ParticleCB {
@@ -58,6 +65,12 @@ struct ParticleCB {
     float froxelSlices;
     float froxelScreenSize[2]; // SV_Position → uv
     float froxelPad[2];
+    // ---- M63a: ビルボード変換 (末尾 append。0 = 従来と 1 ビットも変わらない) ----
+    // ★billboardMode が 0 のとき VS は corner をそのまま使う = `* 1.0f` も `cos(0)` 乗算も
+    //   通らない。**恒等のビット保存はこのフラグ 1 本が担っている**ので、
+    //   「どうせ回転 0 なら同じ」と分岐を外してはいけない。
+    int32_t billboardMode; // 0=従来 (corner 素通し) / 1=回転・ストレッチを適用
+    float billboardPad[3];
 };
 
 } // namespace
@@ -206,6 +219,8 @@ void CpuParticleBackend::EmitParticles(EmitterPool& pool, const ParticleEmitterC
         pool.px.resize(newSize); pool.py.resize(newSize); pool.pz.resize(newSize);
         pool.vx.resize(newSize); pool.vy.resize(newSize); pool.vz.resize(newSize);
         pool.life.resize(newSize); pool.invLife.resize(newSize); pool.size0.resize(newSize);
+        // M63a: 不変属性も同じ長さで伸ばす (SoA の本数だけが増えた — 意味論は size0 と同じ)
+        pool.rot0.resize(newSize); pool.rotVel.resize(newSize); pool.flipU.resize(newSize);
     }
 
     // M61g: ローカルシミュレーション空間 (simulationSpace=1)。呼び出し側 (Update) が
@@ -218,6 +233,11 @@ void CpuParticleBackend::EmitParticles(EmitterPool& pool, const ParticleEmitterC
     // 既定 (係数 0 / subframe 0) では値を読みもしないため従来とビット同一。
     // ローカル空間では prevOrigin も origin も (0,0,0) なので定常的に 0 になる
     const bool subframe = (desc.subframeEmission != 0);
+    // M63a: per-particle の不変属性 (初期回転角 / 角速度 / フリップ開始位相) を引くか。
+    // ★false のとき **1 draw も引かない**。ここで無条件に 3 draw すると、以降の全粒子の
+    //   方向/位置/速度/寿命/サイズが後ろへずれて既存 golden 15 枚が全部動く。
+    //   「既定は 0 なんだから引いても同じ値」ではない — 引いた回数だけ RNG が進む。
+    const bool spawnAttribs = ParticleUsesSpawnAttribs(desc);
     XMFLOAT3 emitterVel = { 0.0f, 0.0f, 0.0f };
     if (pool.prevOriginValid != 0 && dt > 0.0f) {
         const float invDt = 1.0f / dt;
@@ -235,6 +255,17 @@ void CpuParticleBackend::EmitParticles(EmitterPool& pool, const ParticleEmitterC
         const float speed = pool.rng.Range(desc.speedMin, desc.speedMax);
         const float lifetime = std::max(0.01f, pool.rng.Range(desc.lifetimeMin, desc.lifetimeMax));
         const float size = pool.rng.Range(desc.sizeMin, desc.sizeMax);
+        // M63a: 消費列の**末尾**。順序 (rot0 → rotVel → flipU) は決定論の契約 — 変更禁止。
+        // GPU バックエンドの放出ループ (GpuParticleBackend::Update) が同じゲート・同じ順序で
+        // ミラーしている。片方だけ直すと 2 バックエンドの粒子が別物になる
+        float rot0 = 0.0f;
+        float rotVel = 0.0f;
+        float flipU = 0.0f;
+        if (spawnAttribs) {
+            rot0 = pool.rng.Range(desc.rotationMin, desc.rotationMax);
+            rotVel = pool.rng.Range(desc.rotationSpeedMin, desc.rotationSpeedMax);
+            flipU = pool.rng.NextFloat01();
+        }
 
         // M61b: 非恒等の基底 (回転*スケール) だけ方向とオフセットへ適用する。恒等はこの
         // ブロックを丸ごと飛ばす = 従来とビット同一 (基底適用は RNG を消費しない)。
@@ -304,6 +335,11 @@ void CpuParticleBackend::EmitParticles(EmitterPool& pool, const ParticleEmitterC
         pool.life[i] = lifeInit;
         pool.invLife[i] = 1.0f / lifetime;
         pool.size0[i] = size;
+        // M63a: ゲート off でも**必ず書く** — 書かないと死んだ粒子が残した値がスロットに
+        // 居座り、ハッシュがプールの再利用履歴に依存する (再現はするが人間が追えない)
+        pool.rot0[i] = rot0;
+        pool.rotVel[i] = rotVel;
+        pool.flipU[i] = flipU;
     }
 }
 
@@ -430,6 +466,12 @@ void CpuParticleBackend::KillDead(EmitterPool& pool)
             pool.life[i] = pool.life[last];
             pool.invLife[i] = pool.invLife[last];
             pool.size0[i] = pool.size0[last];
+            // ★M63a: 不変属性も必ず一緒に運ぶ。ここを落とすと粒子が 1 つ死ぬたびに
+            //   隣の粒子へ他人の回転とコマ位置が飛び移る — 絵は普通に出るのに合わない、
+            //   という最も気づきにくい壊れ方をする (SoA を増やすとき毎回踏む定番の穴)
+            pool.rot0[i] = pool.rot0[last];
+            pool.rotVel[i] = pool.rotVel[last];
+            pool.flipU[i] = pool.flipU[last];
             // 入れ替えた要素を再判定するため i は進めない
         } else {
             ++i;
@@ -628,6 +670,7 @@ void CpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
         int32_t flipTilesY;
         float flipCycles;
         float softFade; // M42b: エミッタ毎の深度フェード距離
+        int32_t billboardMode; // M63a: 0=corner 素通し (従来とビット同一) / 1=回転・ストレッチ
     };
     std::vector<DrawRange> ranges;
 
@@ -695,6 +738,13 @@ void CpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
             });
         }
 
+        // M63a: 回転を使うか (= VS がビルボード変換を通るか)。プール単位で 1 回だけ判定する。
+        // ★off のときは rot/stretch へ 0/1 を書くだけで sin/cos も乗算も通らない。
+        //   絵のビット保存は CB の billboardMode と VS の分岐が担うが、CPU 側もここで
+        //   「使わないなら計算しない」を守っておくと、フラグと実データが食い違わない
+        const bool useRotation =
+            (d.rotationMin != 0.0f || d.rotationMax != 0.0f || d.rotationSpeedMin != 0.0f
+             || d.rotationSpeedMax != 0.0f);
         for (uint32_t k = 0; k < pool.alive; ++k) {
             const uint32_t i = orderScratch_[k];
             float age = 1.0f - pool.life[i] * pool.invLife[i];
@@ -705,10 +755,18 @@ void CpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
             inst.size = pool.size0[i] * EvalParticleSizeScale(d, age);
             inst.color = EvalParticleColor(d, age);
             inst.age = age;
+            // M63a: 回転は閉形式 (rot0 + rotVel*elapsed) で導出する — sim では積分しない。
+            // M63b がここへ速度ストレッチの画面角を足し込み、M63c が flipFrame を埋める
+            inst.rot = useRotation
+                ? ParticleRotationAt(pool.rot0[i], pool.rotVel[i],
+                                     ParticleElapsedFromLife(pool.life[i], pool.invLife[i]))
+                : 0.0f;
+            inst.stretch = 1.0f;
+            inst.flipFrame = 0.0f;
         }
         ranges.push_back({ base, pool.alive, d.blendMode, d.texture,
                            std::max(1, d.flipTilesX), std::max(1, d.flipTilesY), d.flipCycles,
-                           d.softFadeDistance });
+                           d.softFadeDistance, useRotation ? 1 : 0 });
     }
     dc->Unmap(instanceBuffer_.Get(), 0);
 
@@ -790,6 +848,7 @@ void CpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
         cbData.flipTilesY = range.flipTilesY;
         cbData.flipCycles = range.flipCycles;
         cbData.softFade = (view.depthSRV != nullptr) ? range.softFade : 0.0f; // M42b
+        cbData.billboardMode = range.billboardMode; // M63a
         D3D11_MAPPED_SUBRESOURCE cbMapped = {};
         if (SUCCEEDED(dc->Map(renderCB_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &cbMapped))) {
             memcpy(cbMapped.pData, &cbData, sizeof(cbData));
@@ -819,6 +878,10 @@ void CpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
                 }
                 cbData.baseIndex = range.base;
                 cbData.softFade = 0.0f;
+                // M63a: 歪みは v1 では回さない。particle_distort.hlsl は ParticleCB を
+                // **手前で切り詰めて**宣言していて billboardMode を読まないので、
+                // 書いても no-op だが「回らないのは意図」を残すために明示 0 を入れる
+                cbData.billboardMode = 0;
                 D3D11_MAPPED_SUBRESOURCE cbMapped = {};
                 if (SUCCEEDED(
                         dc->Map(renderCB_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &cbMapped))) {

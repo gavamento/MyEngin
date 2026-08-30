@@ -14,7 +14,14 @@ struct GpuParticle
     float3 vel;
     float  invLife;  // 1/寿命
     float  size0;
-    float3 _pad;
+    // ---- M63a: 旧 _pad の 12B を意味づけし直した (48B のまま = StructureByteStride 不変) ----
+    // **すべて放出時に決まる不変データ**。sim CS は 1 度も触らない (回転は描画 VS が
+    // rot0 + rotVel*elapsed の閉形式で導出する) ので particle_sim.cs.hlsl は無改造。
+    // ★CPU バックエンドと違い、GPU 側は速度 (vel) を VS から直接読めるので、
+    //   ストレッチ用に別枠を持つ必要がない — だから 3 float でちょうど収まる
+    float  rot0;   // 初期回転角 [rad]
+    float  rotVel; // 角速度 [rad/s]
+    float  flipU;  // フリップブック開始位相 [0,1) (M63c)
 };
 
 cbuffer GpuParticleCB : register(b0)

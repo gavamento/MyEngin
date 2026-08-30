@@ -148,6 +148,32 @@ struct ParticleEmitterComponent {
     float noiseFrequency = 1.0f;      // ⑧ ノイズ空間周波数 (turbulenceMode=1 のみ)
     float noiseSpeed = 0.5f;          // ⑧ ノイズ時間スクロール (turbulenceMode=1 のみ)
     int32_t emitFrom = 0;             // ⑦ 0=形状ごとの既定 1=体積 2=表面 (実装は M61b)
+    // ---- M63a: B群 (描画表現力) の共有フィールド (末尾 append。既定 = 従来挙動とビット同一) ----
+    // hash 対象フィールドの追加 = 既存 .rep のハッシュ値は変わる (毎回録り直しなので bump 無し、
+    // M61a と同じ扱い)。sizeof が変わるので snapshot 版は v7 へ (descCache の Raw 書きが伸びる)。
+    // ★M63b〜e が消費するフィールドもここで**まとめて**確保する — 5 サブに分けて足すと
+    //   sizeof が 5 回変わり、snapshot 版 bump と golden .rep 再記録が 5 回要る。
+    // ★既定値でビット同一になる根拠は 2 段構え: ①回転/コマは Pcg32::Range(0,0) が厳密に +0.0f を
+    //   返す ②そもそも ParticleUsesSpawnAttribs() が false のとき **1 draw も引かない**
+    //   (引いてしまうと後続粒子の方向/位置/速度/寿命/サイズが全部ずれて golden が全部動く)
+    float rotationMin = 0.0f;         // C1 初期回転角の範囲 [rad]
+    float rotationMax = 0.0f;
+    float rotationSpeedMin = 0.0f;    // C1 角速度の範囲 [rad/s]。rot = rot0 + rotVel * elapsed の閉形式
+    float rotationSpeedMax = 0.0f;
+    float stretchScale = 0.0f;        // C2 0=off。速度 1 あたり長軸を何倍伸ばすか (実装は M63b)
+    float stretchMax = 4.0f;          // C2 長軸倍率の上限 (カリング拡張量もこれで決まる)
+    float flipFps = 0.0f;             // C3 0=従来の flipCycles 送り / >0 で寿命に依らない固定 fps
+    int32_t flipBlend = 0;            // C3 1=隣り合うコマを frac で補間 (PS のサンプルが 2 回になる)
+    int32_t flipRandomStart = 0;      // C3 1=粒子ごとに開始コマをずらす (同 tick 湧きの同コマ解消)
+    int32_t lightingMode = 0;         // C4 0=unlit (従来) 1=粒子単位 2=画素単位 (球面法線)
+    float lightWrap = 0.5f;           // C4 ラップ拡散の回り込み量。0 で素の Lambert へ縮退
+    float lightIntensity = 1.0f;      // C4 受光の倍率 (煙を白飛びさせずに馴染ませる調整代)
+    int32_t lightReceiveShadow = 1;   // C4 1=太陽の CSM 影を受ける (lightingMode=0 なら無視)
+    float collisionThickness = 0.0f;  // C5 深度サーフェスの想定厚み。貫通判定 pen < size0 + これ
+    float collisionFriction = 0.0f;   // C5 接線成分の減衰 (0=従来のビット同一な純反射)
+    float collisionLifeLoss = 0.0f;   // C5 1 回の衝突で失う寿命の割合。1.0 = kill-on-collide
+    int32_t collisionFloor = 0;       // C5 1=解析床とも衝突する (画面外でも効く proxy。任意形状は不可)
+    float collisionFloorY = 0.0f;     // C5 解析床の高さ
     // ---- 実行時 (非登録=非ハッシュ・非シリアライズ。スクリプト/エディタが即時バーストを積む) ----
     int32_t pendingBurst = 0; // 次の Update で消費され 0 に戻る (常に tick 末ハッシュ前に 0)
     static inline ComponentTypeId sTypeId = kInvalidComponentType;

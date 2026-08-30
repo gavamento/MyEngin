@@ -266,6 +266,34 @@ set TOLNOW=%TOL%
 set SHOT=%SHOTBASE% --no-fxaa
 :skip_fog
 
+rem ---- 16/17 枚目 (M63a): パーティクル表現ショーケース。
+rem      **CPU バックエンドと GPU バックエンドを同じ被写体で突き合わせる唯一の golden**。
+rem      M63 の 5 機能 (回転 / 速度ストレッチ / フリップブック / ライティング / 深度衝突) は
+rem      全部既定 off なので、この 2 枚が無いと回帰検出がゼロになる。
+rem
+rem ★2 枚撮るのが要点。C1〜C3 は「CPU が畳んでインスタンスへ送る」経路と「GPU が VS で
+rem   作る」経路の 2 実装を持ち、共有しているのは particle_billboard.hlsli の式だけ。
+rem   1 枚だけだと**片方の実装が壊れても緑のまま通る** (M57追補 で GPU 描画経路が
+rem   14 枚のどれにも写っていなかったのと同じ穴を、最初から開けないための 2 枚)。
+rem ★2 枚は**意図的に食い違う** — 5 本目のエミッタ (depthCollision=1) は GPU 限定の
+rem   見た目効果 (spec 7.5 の例外) なので、CPU 側では衝突しない。M63a 時点の実測で
+rem   「深度衝突を切ると 2 枚は maxDiff=0 でビット一致」を確認済み = 食い違いは
+rem   **この 1 エミッタだけ**に閉じている。差が P5 の外へ広がったら回転かフリップの
+rem   ミラーが割れた証拠。
+rem ★frame 120 で撮る (physics / joints / fog と同じ理由)。frame 3 では粒子が数個しか
+rem   湧いておらず、回転もコマ送りも絵に出ない。
+rem ★tol=0 のローカル限定。GPU 側は sim が WARP 上の float 演算なので粒子位置が機種で
+rem   動きうる (fog 15 枚目と同じ理由 (b))。CPU 側も対で外す — 片方だけ CI に載せると
+rem   「2 枚を突き合わせる」という存在理由が崩れる
+if defined MYE_SHOT_SKIP_PARTICLE goto :skip_particle
+set SHOT=--warp --no-audio --font-embedded --width 960 --height 540 --frames 123 --shot-frame 120 --no-fxaa
+set TOLNOW=0
+call :shot particle_cpu --particle-demo --particle-backend cpu
+call :shot particle_gpu --particle-demo --particle-backend gpu
+set TOLNOW=%TOL%
+set SHOT=%SHOTBASE% --no-fxaa
+:skip_particle
+
 echo.
 if %UPDATE%==1 (
     echo [shot_verify] golden updated in %GOLDEN% - review the images before committing
@@ -278,9 +306,9 @@ if not %FAILED%==0 (
     exit /b 1
 )
 if defined MYE_SHOT_SKIP_FXAA (
-    echo [PASS] screenshot regression ^(%SHOTS% shots, warp, no-fxaa, tol=%TOL% + terrain at 12, physics/joints/fog at frame 120^)
+    echo [PASS] screenshot regression ^(%SHOTS% shots, warp, no-fxaa, tol=%TOL% + terrain at 12, physics/joints/fog/particle at frame 120^)
 ) else (
-    echo [PASS] screenshot regression ^(%SHOTS% shots, warp, tol=%TOL% + terrain at 12 + physics/joints/fog at frame 120 + fxaa/taa/ssr/froxel/fog at tol=0^)
+    echo [PASS] screenshot regression ^(%SHOTS% shots, warp, tol=%TOL% + terrain at 12 + physics/joints/fog/particle at frame 120 + fxaa/taa/ssr/froxel/fog/particle at tol=0^)
 )
 exit /b 0
 

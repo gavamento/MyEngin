@@ -587,6 +587,12 @@ bool RunParticleSelfTest()
             probe.life = { 1.0f, 0.5f };
             probe.invLife = { 1.0f, 2.0f };
             probe.size0 = { 0.1f, 0.2f };
+            // ★M63a: SoA を増やしたら **alive と同じ長さで必ず埋めること**。
+            //   HashCpuParticles は alive 件を生バイトで畳むので、短いまま放置すると
+            //   ヌル/範囲外読みで落ちる (この節が実際にアクセス違反で落ちて気づいた)
+            probe.rot0 = { 0.75f, -1.25f };
+            probe.rotVel = { 2.5f, -3.5f };
+            probe.flipU = { 0.375f, 0.875f };
             probe.prevOrigin = { 1.25f, -2.5f, 3.75f };
             probe.prevOriginValid = 1;
             probe.prewarmed = 1;
@@ -598,6 +604,13 @@ bool RunParticleSelfTest()
             probe.descCache.noiseFrequency = 2.0f;
             probe.descCache.noiseSpeed = 0.25f;
             probe.descCache.emitFrom = 2;
+            // M63a: B群も非デフォルトにしておく — descCache は sizeof ぶんの Raw 書きなので、
+            // 末尾に足したフィールドが欠けても「サイズは合うが中身が 0」で通ってしまいうる
+            probe.descCache.rotationSpeedMax = 3.0f;
+            probe.descCache.stretchScale = 0.5f;
+            probe.descCache.flipFps = 12.0f;
+            probe.descCache.lightingMode = 2;
+            probe.descCache.collisionFriction = 0.25f;
             backend.PoolsForSnapshot().push_back(std::move(probe));
         }
 
@@ -623,6 +636,14 @@ bool RunParticleSelfTest()
             pool.prewarmed = 0;
             pool.descCache.velocityInheritance = 9.0f;
             pool.descCache.emitFrom = 0;
+            pool.rot0 = { 0.0f, 0.0f }; // M63a
+            pool.rotVel = { 0.0f, 0.0f };
+            pool.flipU = { 0.0f, 0.0f };
+            pool.descCache.rotationSpeedMax = 0.0f;
+            pool.descCache.stretchScale = 0.0f;
+            pool.descCache.flipFps = 0.0f;
+            pool.descCache.lightingMode = 0;
+            pool.descCache.collisionFriction = 0.0f;
         }
         check(HashWorld(w, src) != hashPool, "snapshot: the pool really diverged before restore");
 
@@ -637,6 +658,13 @@ bool RunParticleSelfTest()
                   && rp.descCache.turbulenceMode == 1 && rp.descCache.noiseFrequency == 2.0f
                   && rp.descCache.noiseSpeed == 0.25f && rp.descCache.emitFrom == 2,
               "snapshot: descCache A-group fields survive the round trip");
+        check(rp.rot0[0] == 0.75f && rp.rot0[1] == -1.25f && rp.rotVel[0] == 2.5f
+                  && rp.rotVel[1] == -3.5f && rp.flipU[0] == 0.375f && rp.flipU[1] == 0.875f,
+              "snapshot: M63a spawn attributes survive the round trip bit-exact");
+        check(rp.descCache.rotationSpeedMax == 3.0f && rp.descCache.stretchScale == 0.5f
+                  && rp.descCache.flipFps == 12.0f && rp.descCache.lightingMode == 2
+                  && rp.descCache.collisionFriction == 0.25f,
+              "snapshot: descCache B-group fields survive the round trip");
 
         // ハッシュ被覆: 変異 → 割れる → 復元 → 戻る、を 1 か所で回す (XpbdSelfTest と同形)
         auto mutateCheck = [&](const char* what, auto&& mutate, auto&& restore) {
@@ -661,6 +689,14 @@ bool RunParticleSelfTest()
                     [&] { lp.prevOriginValid = 1; });
         mutateCheck("hash: prewarmed is covered", [&] { lp.prewarmed = 0; },
                     [&] { lp.prewarmed = 1; });
+        // M63a: 不変属性の 3 本もハッシュ被覆下にあること。**ここが抜けると
+        // 「復元後に回転だけ別物」を replay_verify が検出できなくなる**
+        mutateCheck("hash: rot0 is covered (1-bit sensitivity)", [&] { flipBit(lp.rot0[0]); },
+                    [&] { flipBit(lp.rot0[0]); });
+        mutateCheck("hash: rotVel is covered", [&] { flipBit(lp.rotVel[1]); },
+                    [&] { flipBit(lp.rotVel[1]); });
+        mutateCheck("hash: flipU is covered", [&] { flipBit(lp.flipU[0]); },
+                    [&] { flipBit(lp.flipU[0]); });
     }
 
     // ==== M61b: 回転 + 形状サンプリングの検証節はこの下へ ====
@@ -1866,6 +1902,239 @@ bool RunParticleSelfTest()
             check(passCount == 28 && working == 1,
                   "sort: a small alpha emitter costs exactly one working dispatch of 28 issued");
         }
+    }
+
+    // ==== M63a: B群 (描画表現力) — 回転 + 共有契約 ====
+    // ★HLSL (particle_billboard.hlsli) との一致は**機械照合できない**。ここが守るのは
+    //   「C++ ミラーが自分の契約を守っていること」と「既定エミッタが 1 draw も余計に
+    //   RNG を回さないこと」の 2 点で、絵の担保は golden (particle_cpu/gpu.png) が持つ。
+
+    // ---- (M63a-1) RNG 消費ゲート: 既定エミッタは 1 draw も増えない ----
+    // **既存 golden 15 枚をビット保存している唯一の根拠**。無条件に 3 draw すると
+    // 以降の全粒子の方向/位置/速度/寿命/サイズが後ろへずれる
+    {
+        ParticleEmitterComponent d;
+        check(!ParticleUsesSpawnAttribs(d), "m63a: a default emitter draws no spawn attributes");
+
+        // 5 本のうちどれか 1 本でも立てば true (3 draw まとめて 1 ゲート)
+        const auto oneOf = [](auto&& setter) {
+            ParticleEmitterComponent e;
+            setter(e);
+            return ParticleUsesSpawnAttribs(e);
+        };
+        check(oneOf([](ParticleEmitterComponent& e) { e.rotationMin = -0.5f; })
+                  && oneOf([](ParticleEmitterComponent& e) { e.rotationMax = 0.5f; })
+                  && oneOf([](ParticleEmitterComponent& e) { e.rotationSpeedMin = -1.0f; })
+                  && oneOf([](ParticleEmitterComponent& e) { e.rotationSpeedMax = 1.0f; })
+                  && oneOf([](ParticleEmitterComponent& e) { e.flipRandomStart = 1; }),
+              "m63a: any one of the five fields opens the same single gate");
+
+        // 実際の消費数を Pcg32 の状態で測る。既定 = 従来と同一、ゲート on = ちょうど 3 進む。
+        // ★Range/NextFloat01 はどちらも NextU32 を 1 回だけ引く (Random.h) ので、
+        //   同じシードから n 回進めた状態と突き合わせれば消費数がそのまま出る
+        const auto advance = [](uint32_t n) {
+            Pcg32 r;
+            r.Seed(4242u, 7u);
+            for (uint32_t i = 0; i < n; ++i) {
+                (void)r.NextU32();
+            }
+            return r.State();
+        };
+        const auto drawFor = [](const ParticleEmitterComponent& e) {
+            Pcg32 r;
+            r.Seed(4242u, 7u);
+            if (ParticleUsesSpawnAttribs(e)) {
+                (void)r.Range(e.rotationMin, e.rotationMax);
+                (void)r.Range(e.rotationSpeedMin, e.rotationSpeedMax);
+                (void)r.NextFloat01();
+            }
+            return r.State();
+        };
+        ParticleEmitterComponent on;
+        on.rotationSpeedMax = 2.0f;
+        check(drawFor(d) == advance(0), "m63a: gate off consumes exactly zero draws");
+        check(drawFor(on) == advance(3), "m63a: gate on consumes exactly three draws");
+    }
+
+    // ---- (M63a-2) 既定値のビット保存の土台: Range(0,0) が厳密に +0.0f ----
+    // 「既定でも引いてよい」に見せかける最後の一歩を潰しておく。値が 0 でも
+    // **引けば RNG が進む**ので (M63a-1)、この検査は値の側だけの主張
+    {
+        Pcg32 r;
+        r.Seed(1u, 1u);
+        bool allZero = true;
+        for (int i = 0; i < 64; ++i) {
+            const float v = r.Range(0.0f, 0.0f);
+            allZero = allZero && (v == 0.0f) && !std::signbit(v);
+        }
+        check(allZero, "m63a: Range(0,0) is exactly +0.0f for every draw");
+    }
+
+    // ---- (M63a-3) 経過秒と回転の閉形式 ----
+    {
+        // 生まれた瞬間 (life == lifetime) は経過 0
+        check(ParticleElapsedFromLife(2.0f, 1.0f / 2.0f) == 0.0f,
+              "m63a: elapsed is exactly 0 at birth");
+        check(std::fabs(ParticleElapsedFromLife(0.5f, 1.0f / 2.0f) - 1.5f) < 1e-6f,
+              "m63a: elapsed is lifetime minus remaining life");
+        // 閉形式。t=0 で rot0 そのもの (積分版と違って誤差が積まれない)
+        check(ParticleRotationAt(0.25f, 3.0f, 0.0f) == 0.25f,
+              "m63a: rotation at t=0 is exactly the initial angle");
+        check(std::fabs(ParticleRotationAt(0.25f, 3.0f, 2.0f) - 6.25f) < 1e-6f,
+              "m63a: rotation is rot0 + rotVel*elapsed");
+        // 角速度 0 なら経過に依らず一定 (静止する粒子が勝手に回らないこと)
+        check(ParticleRotationAt(1.5f, 0.0f, 123.0f) == 1.5f,
+              "m63a: zero angular velocity never drifts");
+    }
+
+    // ---- (M63a-4) ビルボード四隅の変換 ----
+    // ★(a) が本節の要。**恒等がビット同一**でないと、フラグ分岐を外した瞬間に
+    //   既定エミッタの絵が動く — float の等値比較で見る (近似比較では守れない)
+    {
+        const float cx[4] = { -1.0f, 1.0f, -1.0f, 1.0f };
+        const float cy[4] = { 1.0f, 1.0f, -1.0f, -1.0f };
+        bool identity = true;
+        for (int i = 0; i < 4; ++i) {
+            float ox = 0.0f, oy = 0.0f;
+            ParticleBillboardCornerCpu(cx[i], cy[i], 0.0f, 1.0f, ox, oy);
+            identity = identity && (ox == cx[i]) && (oy == cy[i]);
+        }
+        check(identity, "m63a: rot=0/stretch=1 reproduces the corner bit-exactly");
+
+        // (b) 符号規約: +90° で (1,1) -> (-1,1) (反時計回り)。ここが逆だと CPU/GPU の
+        //     どちらかを直したときに「回る向きが違う」形で golden が割れる
+        {
+            float ox = 0.0f, oy = 0.0f;
+            ParticleBillboardCornerCpu(1.0f, 1.0f, 1.57079633f, 1.0f, ox, oy);
+            check(std::fabs(ox + 1.0f) < 1e-5f && std::fabs(oy - 1.0f) < 1e-5f,
+                  "m63a: +90 degrees maps (1,1) to (-1,1) (counter-clockwise)");
+        }
+
+        // (c) 一周して戻ること (角度の連続性 — 閉形式で角度が増え続けても絵は回り続ける)
+        {
+            float ox = 0.0f, oy = 0.0f;
+            ParticleBillboardCornerCpu(1.0f, -1.0f, 6.28318531f, 1.0f, ox, oy);
+            check(std::fabs(ox - 1.0f) < 1e-5f && std::fabs(oy + 1.0f) < 1e-5f,
+                  "m63a: a full turn returns to the original corner");
+        }
+
+        // (d) ストレッチは **X 軸 (ローカル長軸)** に掛かる。M63b が速度の画面角を rot へ
+        //     足して長軸を速度方向へ向けるので、この軸の取り決めが規約そのもの
+        {
+            float ox = 0.0f, oy = 0.0f;
+            ParticleBillboardCornerCpu(1.0f, 1.0f, 0.0f, 3.0f, ox, oy);
+            check(ox == 3.0f && oy == 1.0f, "m63a: stretch scales the local X axis only");
+        }
+
+        // (e) 回転 + ストレッチの合成: 長軸が θ 方向を向くこと。
+        //     90° 回転すると「横長」が「縦長」になる
+        {
+            float ox = 0.0f, oy = 0.0f;
+            ParticleBillboardCornerCpu(1.0f, 0.0f, 1.57079633f, 4.0f, ox, oy);
+            check(std::fabs(ox) < 1e-5f && std::fabs(oy - 4.0f) < 1e-5f,
+                  "m63a: the stretched long axis follows the rotation angle");
+        }
+    }
+
+    // ---- (M63a-5) 放出→死亡で不変属性が入れ替わらないこと ----
+    // ★**KillDead の swap-and-pop 漏れを検出する唯一の自動テスト。** SoA を増やしたときの
+    //   定番の穴で、漏らすと「粒子が死ぬたびに隣へ他人の回転が飛び移る」— 絵は普通に
+    //   出るのに合わないだけ、という最も気づきにくい壊れ方をする。
+    //   不変量: 生存粒子の (rot0, rotVel, flipU) は寿命ベースの分布からずれない。
+    //   ここでは「rotVel と flipU が放出時のペアのまま」を検査する (両者は独立に引かれる
+    //   ので、swap が片方だけ漏れるとペアが崩れる)
+    {
+        Scene s;
+        GameObject go = s.CreateGameObjectTracked("Spinner");
+        auto* e = go.AddComponent<ParticleEmitterComponent>();
+        e->rate = 240.0f;              // 毎 tick 死ぬ粒子が出るだけ湧かせる
+        e->lifetimeMin = 0.05f;        // 3 tick 程度で死ぬ = swap が頻繁に起きる
+        e->lifetimeMax = 0.30f;
+        e->rotationSpeedMin = 1.0f;    // ゲートを開く
+        e->rotationSpeedMax = 8.0f;
+        e->flipRandomStart = 1;
+        s.GetWorld().ApplyStructuralChanges();
+        World& w = s.GetWorld();
+
+        CpuParticleBackend cpu;
+        bool sane = true;
+        bool sawDeath = false;
+        uint32_t prevAlive = 0;
+        for (int t = 0; t < 40; ++t) {
+            cpu.Update(w, kDt);
+            const CpuParticleBackend::EmitterPool& p = cpu.Pools()[0];
+            if (t > 0 && p.alive < prevAlive + 1) {
+                sawDeath = true; // 湧いた数より減った = KillDead が swap を回した
+            }
+            prevAlive = p.alive;
+            // 配列長が alive を必ず覆っていること (ハッシュが範囲外を読まない前提)
+            sane = sane && p.rot0.size() >= p.alive && p.rotVel.size() >= p.alive
+                && p.flipU.size() >= p.alive;
+            for (uint32_t i = 0; i < p.alive; ++i) {
+                // 引いた範囲の中に必ず居ること。swap 漏れは「別スロットの値が居座る」形で
+                // 出るが、値域が同じだとこれだけでは捕まらない — 下の相関検査が本命
+                sane = sane && p.rotVel[i] >= 1.0f && p.rotVel[i] <= 8.0f;
+                sane = sane && p.flipU[i] >= 0.0f && p.flipU[i] < 1.0f;
+            }
+        }
+        check(sawDeath, "m63a: the probe emitter actually recycled slots (swap-and-pop ran)");
+        check(sane, "m63a: spawn attributes stay in range and cover alive after recycling");
+
+    }
+
+    // ---- (M63a-6) KillDead の swap-and-pop が 3 本を**一緒に**運ぶこと ----
+    // ★M63a-5 の値域検査ではこの穴は塞げない — swap を 1 本落としても、居座るのは
+    //   「同じ配列の別スロットの値」なので値域は破れない。**どの粒子の値かが入れ替わる**
+    //   のが症状なので、粒子を一意に識別できる値を仕込んで直接見るしかない。
+    // playing=0 で放出を止め、手で 4 粒子を置いて 2 個だけ寿命切れにする。
+    // 期待する swap の軌跡 (KillDead は末尾を詰めて i を進めない):
+    //   [A B C D] 死=A,C → i=0 で D を 0 へ (alive=3) → i=2 が C のまま死 → 自己コピー (alive=2)
+    //   → 生存は [D, B]
+    {
+        Scene s;
+        GameObject go = s.CreateGameObjectTracked("Recycler");
+        auto* e = go.AddComponent<ParticleEmitterComponent>();
+        e->playing = 0;              // 放出を止める (生存粒子だけが動く)
+        e->gravity = { 0.0f, 0.0f, 0.0f }; // 位置を動かさない (寿命だけを見たい)
+        e->turbulence = 0.0f;
+        s.GetWorld().ApplyStructuralChanges();
+        World& w = s.GetWorld();
+
+        CpuParticleBackend cpu;
+        cpu.Update(w, kDt); // プールを作らせる (playing=0 なので 0 粒子)
+
+        {
+            CpuParticleBackend::EmitterPool& p = cpu.PoolsForSnapshot()[0];
+            p.alive = 4;
+            p.px = { 0.0f, 1.0f, 2.0f, 3.0f };
+            p.py = { 0.0f, 0.0f, 0.0f, 0.0f };
+            p.pz = { 0.0f, 0.0f, 0.0f, 0.0f };
+            p.vx = { 0.0f, 0.0f, 0.0f, 0.0f };
+            p.vy = { 0.0f, 0.0f, 0.0f, 0.0f };
+            p.vz = { 0.0f, 0.0f, 0.0f, 0.0f };
+            p.life = { 0.010f, 1.0f, 0.005f, 1.0f }; // 添字 0 と 2 が dt(≈0.0167) で尽きる
+            p.invLife = { 1.0f, 1.0f, 1.0f, 1.0f };
+            p.size0 = { 0.1f, 0.2f, 0.3f, 0.4f };
+            // 粒子を一意に識別できる値 (A=1x / B=2x / C=3x / D=4x)
+            p.rot0 = { 1.0f, 2.0f, 3.0f, 4.0f };
+            p.rotVel = { 10.0f, 20.0f, 30.0f, 40.0f };
+            p.flipU = { 0.1f, 0.2f, 0.3f, 0.4f };
+        }
+
+        cpu.Update(w, kDt);
+
+        const CpuParticleBackend::EmitterPool& p = cpu.Pools()[0];
+        check(p.alive == 2, "m63a: two of the four particles expired");
+        // 生存は [D, B]。**3 本すべてが同じ添字の組で運ばれていること**を見る —
+        // 1 本でも swap を落とすと、その配列だけ [A, B] のまま残って組が崩れる
+        const bool survivorsIntact = (p.alive == 2)
+            && p.rot0[0] == 4.0f && p.rotVel[0] == 40.0f && p.flipU[0] == 0.4f
+            && p.rot0[1] == 2.0f && p.rotVel[1] == 20.0f && p.flipU[1] == 0.2f;
+        check(survivorsIntact,
+              "m63a: KillDead moves rot0/rotVel/flipU together with the survivor");
+        // 既存 SoA との整合も同時に見る (size0 は M63a 以前からある = 対照群)
+        check(p.size0[0] == 0.4f && p.size0[1] == 0.2f,
+              "m63a: the new arrays follow the same permutation as size0");
     }
 
     if (failCount == 0) {

@@ -147,6 +147,9 @@ void WriteParticles(ByteWriter& w, const CpuParticleBackend* particles)
         w.PodVector(p.life);
         w.PodVector(p.invLife);
         w.PodVector(p.size0);
+        w.PodVector(p.rot0);   // M63a (v7)
+        w.PodVector(p.rotVel);
+        w.PodVector(p.flipU);
     }
 }
 
@@ -189,6 +192,9 @@ bool ReadParticles(ByteReader& r, std::vector<CpuParticleBackend::EmitterPool>& 
         p.life = r.PodVector<float>();
         p.invLife = r.PodVector<float>();
         p.size0 = r.PodVector<float>();
+        p.rot0 = r.PodVector<float>();   // M63a (v7)
+        p.rotVel = r.PodVector<float>();
+        p.flipU = r.PodVector<float>();
     }
     return r.Ok();
 }

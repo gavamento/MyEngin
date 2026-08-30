@@ -121,6 +121,27 @@ void RegisterBuiltinComponents()
         MYE_JP("ノイズ周波数", MYE_FIELD(ParticleEmitterComponent, noiseFrequency, Float)),
         MYE_JP("ノイズ速度", MYE_FIELD(ParticleEmitterComponent, noiseSpeed, Float)),
         MYE_JP("放出元", MYE_FIELD(ParticleEmitterComponent, emitFrom, Int32)),
+        // M63a: B群 = 描画表現力 (末尾 append)。既定値 = 従来挙動とビット同一。hash 対象の追加なので
+        // 既存 .rep のハッシュ値は変わる (.rep は毎回録り直しの使い捨て、M61a と同じ扱い)。
+        // M63b〜e が消費するぶんもここで確保済み — 分割して足すと snapshot 版 bump が 5 回要る
+        MYE_JP("回転 (最小)", MYE_FIELD(ParticleEmitterComponent, rotationMin, Float)),
+        MYE_JP("回転 (最大)", MYE_FIELD(ParticleEmitterComponent, rotationMax, Float)),
+        MYE_JP("角速度 (最小)", MYE_FIELD(ParticleEmitterComponent, rotationSpeedMin, Float)),
+        MYE_JP("角速度 (最大)", MYE_FIELD(ParticleEmitterComponent, rotationSpeedMax, Float)),
+        MYE_JP("速度ストレッチ", MYE_FIELD(ParticleEmitterComponent, stretchScale, Float)),
+        MYE_JP("ストレッチ上限", MYE_FIELD(ParticleEmitterComponent, stretchMax, Float)),
+        MYE_JP("フリップ FPS", MYE_FIELD(ParticleEmitterComponent, flipFps, Float)),
+        MYE_JP("フリップ補間", MYE_FIELD(ParticleEmitterComponent, flipBlend, Int32)),
+        MYE_JP("フリップ開始をランダム化", MYE_FIELD(ParticleEmitterComponent, flipRandomStart, Int32)),
+        MYE_JP("ライティング", MYE_FIELD(ParticleEmitterComponent, lightingMode, Int32)),
+        MYE_JP("ラップ拡散", MYE_FIELD_RANGE(ParticleEmitterComponent, lightWrap, Float, 0.0f, 1.0f)),
+        MYE_JP("受光の強さ", MYE_FIELD(ParticleEmitterComponent, lightIntensity, Float)),
+        MYE_JP("影を受ける", MYE_FIELD(ParticleEmitterComponent, lightReceiveShadow, Int32)),
+        MYE_JP("衝突の厚み", MYE_FIELD(ParticleEmitterComponent, collisionThickness, Float)),
+        MYE_JP("衝突時の摩擦", MYE_FIELD_RANGE(ParticleEmitterComponent, collisionFriction, Float, 0.0f, 1.0f)),
+        MYE_JP("衝突時の寿命損失", MYE_FIELD_RANGE(ParticleEmitterComponent, collisionLifeLoss, Float, 0.0f, 1.0f)),
+        MYE_JP("解析床と衝突", MYE_FIELD(ParticleEmitterComponent, collisionFloor, Int32)),
+        MYE_JP("解析床の高さ", MYE_FIELD(ParticleEmitterComponent, collisionFloorY, Float)),
     });
 
     // M28a: height / friction、M36a: layer / mask / meshAsset を末尾 append

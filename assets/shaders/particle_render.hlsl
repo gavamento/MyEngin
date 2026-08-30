@@ -3,6 +3,7 @@
 
 #include "common.hlsli" // LinearizeDepth (M55a で共有化)。register 宣言は含まないので衝突しない
 #include "froxel_common.hlsli" // M57e: フロクセルのサンプル座標と受け持ちの分け方 (同上)
+#include "particle_billboard.hlsli" // M63a: 四隅の回転/ストレッチ (GPU バックエンドと共有する唯一の式)
 
 cbuffer ParticleCB : register(b0)
 {
@@ -37,6 +38,9 @@ cbuffer ParticleCB : register(b0)
     float    gFroxelSlices;
     float2   gFroxelScreenSize; // SV_Position → uv
     float2   _froxelPad;
+    // ---- M63a: ビルボード変換 (末尾 append。0 = 従来と 1 ビットも変わらない) ----
+    int      gBillboardMode; // 0=corner 素通し / 1=回転・ストレッチを適用
+    float3   _billboardPad;
 };
 
 struct ParticleInstance
@@ -45,7 +49,12 @@ struct ParticleInstance
     float  size;
     float4 color;
     float  age;   // [0,1] 寿命係数
-    float3 _pad;
+    // ---- M63a: 旧 _pad の 12B を意味づけし直した (48B のまま) ----
+    // CPU 側 (CpuParticleBackend.cpp の ParticleInstance) が畳んで送る 3 スカラ。
+    // ★速度は送られてこない — ストレッチは CPU が「画面角 + 長軸倍率」へ落としてある
+    float  rot;       // 回転角 [rad] (初期回転 + 角速度*経過 + 速度の画面角)
+    float  stretch;   // 長軸倍率 (1.0 = 伸ばさない)
+    float  flipFrame; // フリップブックの連続コマ位置 (M63c)
 };
 StructuredBuffer<ParticleInstance> gParticles : register(t0);
 
@@ -68,7 +77,14 @@ VSOut VSMain(uint vid : SV_VertexID, uint iid : SV_InstanceID)
 {
     const ParticleInstance p = gParticles[gBaseIndex + iid];
     const float2 corner = float2((vid & 1) ? 1.0f : -1.0f, (vid & 2) ? -1.0f : 1.0f);
-    const float3 world = p.pos + (gCamRight * corner.x + gCamUp * corner.y) * p.size;
+    // M63a: **この分岐が既定エミッタの絵をビット保存している唯一の仕掛け。**
+    // 「rot=0 / stretch=1 なら同じ値」ではない — 通せば `x*1.0` と `cos(0)` 乗算が入り、
+    // 最下位ビットが動きうる。分岐を外すとスクショ golden が全部赤くなる
+    float2 c = corner;
+    if (gBillboardMode != 0) {
+        c = ParticleBillboardCorner(corner, p.rot, p.stretch);
+    }
+    const float3 world = p.pos + (gCamRight * c.x + gCamUp * c.y) * p.size;
 
     VSOut o;
     o.pos = mul(float4(world, 1.0f), gViewProj);

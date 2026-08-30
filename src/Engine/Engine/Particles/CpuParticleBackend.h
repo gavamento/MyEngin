@@ -48,6 +48,15 @@ public:
         std::vector<float> life;    // 残り秒
         std::vector<float> invLife; // 1/寿命
         std::vector<float> size0;   // 初期サイズ
+        // ---- M63a: per-particle の不変属性 (ハッシュ + スナップショット対象。snapshot v7) ----
+        // ★不変データなので Simulate / SimulateScalar は 1 命令も触らない (SIMD 経路も無風)。
+        //   回転は rot0 + rotVel*elapsed の**閉形式**で描画時に導出する。
+        // ★**KillDead の swap-and-pop に必ず 3 行足すこと。** 忘れると粒子が 1 つ死ぬたびに
+        //   隣の粒子の回転とコマ位置が飛び移る — 絵は普通に出るのに合わないだけ、という
+        //   最も気づきにくい壊れ方をする (selftest では検出できず golden が唯一の検出器)。
+        std::vector<float> rot0;   // 初期回転角 [rad]
+        std::vector<float> rotVel; // 角速度 [rad/s]
+        std::vector<float> flipU;  // フリップブック開始位相 [0,1)
         // ---- 描画専用バウンズ (Update が毎 tick 再計算。Render のフラスタムカリング用) ----
         // WorldHasher にも SimSnapshot にも**載せない** (両者ともフィールド明示列挙なので
         // ここへの追加はハッシュ/スナップショット版に影響しない)。復元直後は invalid に

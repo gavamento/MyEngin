@@ -6,6 +6,9 @@
 // なので衝突しない。**particle_gpu_common.hlsli 側には入れない** — あちらは emit/sim CS も
 // 読むので、描画専用のものを持ち込まない
 #include "froxel_common.hlsli"
+// M63a: 四隅の回転/ストレッチ。**CPU バックエンド (particle_render.hlsl) と同じ 1 本**を
+// 呼ぶことが「2 実装が同じ絵を出す」(spec 7.5) の担保。register 宣言を持たないので衝突しない
+#include "particle_billboard.hlsli"
 
 cbuffer GpuRenderCB : register(b1)
 {
@@ -32,6 +35,9 @@ cbuffer GpuRenderCB : register(b1)
     float4   gCameraPosParam; // xyz=カメラ位置 (VS の dist 用), w=予約
     float4   gFroxelParams;   // x=enabled, y=nearZ, z=farZ, w=sliceCount
     float4   gFroxelScreen;   // xy=画面サイズ (px。SV_Position → uv), zw=予約
+    // ---- M63a: ビルボード変換 (末尾 append。C++ 側 GpuRenderCB と一致) ----
+    // x=billboardMode (0=corner 素通し / 1=回転・ストレッチ), yzw=予約 (M63b がストレッチ係数を使う)
+    float4   gBillboardParams;
 };
 
 StructuredBuffer<GpuParticle> gPoolSRV : register(t0);
@@ -153,8 +159,17 @@ VSOut VSMain(uint vid : SV_VertexID, uint iid : SV_InstanceID)
     {
         basePos = mul(float4(p.pos, 1.0f), gEmitterWorld).xyz;
     }
+    // M63a: 回転。**CPU 側 particle_render.hlsl と同一の分岐・同一の関数**を通る。
+    // 角度は閉形式 rot0 + rotVel*elapsed — sim CS が積分していないのはこのため。
+    // ★off の分岐を外してはいけない (rot=0 でも sincos 乗算でビットが動きうる)
+    float2 c = corner;
+    if (gBillboardParams.x != 0.0f) {
+        const float rot = ParticleRotationAt(p.rot0, p.rotVel,
+                                             ParticleElapsedFromLife(p.life, p.invLife));
+        c = ParticleBillboardCorner(corner, rot, 1.0f);
+    }
     const float3 world = basePos + float3(gOffsetX, 0, 0)
-        + (gCamRight * corner.x + gCamUp * corner.y) * size;
+        + (gCamRight * c.x + gCamUp * c.y) * size;
 
     VSOut o;
     o.pos = mul(float4(world, 1.0f), gViewProj);

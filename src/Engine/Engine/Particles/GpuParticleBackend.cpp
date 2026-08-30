@@ -59,6 +59,9 @@ struct GpuRenderCB { // particle_render_gpu.hlsl の GpuRenderCB と一致
     XMFLOAT4 cameraPosParam; // xyz=カメラ位置 (VS の dist 用), w=予約
     XMFLOAT4 froxelParams;   // x=enabled, y=nearZ, z=farZ, w=slices
     XMFLOAT4 froxelScreen;   // xy=画面サイズ, zw=予約
+    // ---- M63a: ビルボード変換 (末尾 append。HLSL 側と両方同時に変更する) ----
+    // 既定 (billboardMode=0) は従来と 1 ビットも変わらない。yzw は M63b のストレッチ用の予約
+    XMFLOAT4 billboardParams; // x=billboardMode, yzw=予約
 };
 
 struct ParticleSortCB { // particle_sort_common.hlsli の ParticleSortCB と一致 (b1)
@@ -75,7 +78,11 @@ struct GpuParticleData { // 48 bytes (シェーダの GpuParticle と一致)
     XMFLOAT3 vel;
     float invLife;
     float size0;
-    XMFLOAT3 pad;
+    // M63a: 旧 pad の 12B (particle_gpu_common.hlsli の GpuParticle と一致)。
+    // 放出時に決まる不変データなので sim CS は触らない
+    float rot0;
+    float rotVel;
+    float flipU;
 };
 
 // M46a: CreateStructured / CreateConstant / UploadCB は GpuBufferUtil.h へ集約 (定義は同一)
@@ -434,12 +441,24 @@ void GpuParticleBackend::Update(World& world, float dt)
             // subframe のとき age 曲線が最大 1 tick ずれる」という許容誤差は解消済み —
             // EmitData に invLife を載せて CPU の 1/lifetime をそのまま渡している
             const bool subframe = (desc->subframeEmission != 0);
+            // M63a: per-particle 不変属性のゲート。**CPU バックエンドと同じ 1 本**を呼ぶ
+            // (片方だけ条件を書き換えると 2 バックエンドの RNG が別の進み方をして粒子が別物になる)
+            const bool spawnAttribs = ParticleUsesSpawnAttribs(*desc);
             std::vector<EmitData> emitData(static_cast<size_t>(std::max(emitCount, 0)));
             for (int n = 0; n < emitCount; ++n) {
                 ParticleShapeSample smp = SampleParticleShape(*desc, em.rng);
                 const float speed = em.rng.Range(desc->speedMin, desc->speedMax);
                 const float lifetime = std::max(0.01f, em.rng.Range(desc->lifetimeMin, desc->lifetimeMax));
                 const float size = em.rng.Range(desc->sizeMin, desc->sizeMax);
+                // M63a: 消費列の**末尾**。順序は CPU 側 EmitParticles と 1 draw もずらさない
+                float rot0 = 0.0f;
+                float rotVel = 0.0f;
+                float flipU = 0.0f;
+                if (spawnAttribs) {
+                    rot0 = em.rng.Range(desc->rotationMin, desc->rotationMax);
+                    rotVel = em.rng.Range(desc->rotationSpeedMin, desc->rotationSpeedMax);
+                    flipU = em.rng.NextFloat01();
+                }
                 // M61g: ローカル空間は基底適用をスキップ (ローカル系では恒等。エミッタの回転は
                 // 描画時の gEmitterWorld 変換で掛かる) — CPU 側 EmitParticles と同じガード
                 if (!basis.identity && !localSpace) {
@@ -484,9 +503,10 @@ void GpuParticleBackend::Update(World& world, float dt)
                 em.aliveEst.OnEmit(lifeInit, dt); // 寿命は CPU 生成なので死亡 tick を記帳できる
                 // M42追補: invLife も CPU で作って渡す (CPU 側 pool.invLife[i] と同じ 1/lifetime)。
                 // emit CS が 1/life から作り直すと subframe の前倒し分だけ age がずれる
-                emitData[static_cast<size_t>(n)] = { { posX, posY, posZ },  lifeInit,
-                                                     { velX, velY, velZ },  size,
-                                                     1.0f / lifetime,       { 0.0f, 0.0f, 0.0f } };
+                emitData[static_cast<size_t>(n)] = { { posX, posY, posZ }, lifeInit,
+                                                     { velX, velY, velZ }, size,
+                                                     1.0f / lifetime,      rot0,
+                                                     rotVel,               flipU };
             }
 
             // 放出バッファ (動的) を確保・充填
@@ -924,6 +944,16 @@ void GpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
         // 判定は CPU バックエンドと同じ ParticleBlendIsAdditive 1 本 — blendMode の意味
         // (0=additive / 1=alpha / 2=歪み) を片方だけ直したときに静かに割れるのを防ぐ
         cb.fogColorBlend.w = ParticleBlendIsAdditive(em.descCache.blendMode) ? 1.0f : 0.0f;
+        // M63a: 回転を使うエミッタだけ VS のビルボード変換を通す。判定式は CPU バックエンドの
+        // useRotation と同一 — ここを片方だけ緩めると「同じシーンで CPU だけ回る」が起きる。
+        // ★「回転 0 なら通しても同じ」ではないので、常時 1 にはしないこと (ビット保存の根拠)
+        {
+            const ParticleEmitterComponent& d = em.descCache;
+            const bool useRotation =
+                (d.rotationMin != 0.0f || d.rotationMax != 0.0f || d.rotationSpeedMin != 0.0f
+                 || d.rotationSpeedMax != 0.0f);
+            cb.billboardParams = { useRotation ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f };
+        }
         UploadCB(dc, renderCB_.Get(), cb);
         ID3D11Buffer* cbs[2] = { simCB_.Get(), renderCB_.Get() };
         dc->VSSetConstantBuffers(0, 2, cbs);

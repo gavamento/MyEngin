@@ -189,6 +189,21 @@ void BuildFogShowcaseScene(EngineContext& ctx);
 // 上のショーケースが参照するマテリアルの実体登録 (fdemo_ 接頭辞)
 void RegisterFogShowcaseContent(EngineContext& ctx);
 
+// M63a: パーティクル表現ショーケース (--particle-demo)。golden 16/17 枚目の被写体で、
+// **CPU バックエンドと GPU バックエンドを同じ被写体で突き合わせる唯一の golden**。
+//
+// ★存在理由は被覆の穴埋め。M63 の 5 機能 (回転 / 速度ストレッチ / フリップブック /
+//   ライティング / 深度衝突) は全部既定 off なので、専用シーンが無いと回帰検出がゼロになる。
+//   既定デモ (= CI 対象の demo_forward/deferred) にも --fog-demo にも足せない理由は
+//   DemoContent.cpp の実装側コメントに書いてある。
+// ★エミッタ 5 本は左から C1..C5 の順に並んでいる。**5 本目 (深度衝突) だけは
+//   GPU 限定** (spec 7.5 の例外) なので、CPU と GPU の 2 枚は意図的に食い違う。
+void BuildParticleShowcaseScene(EngineContext& ctx);
+
+// 上のショーケースが参照する材質 + **手続き生成テクスチャ 2 枚** (pdemo_ 接頭辞)。
+// テクスチャが要るのは、既定の procedural ソフト円が点対称で**回しても絵が変わらない**ため
+void RegisterParticleShowcaseContent(EngineContext& ctx);
+
 // assets\ 以下の .prefab.json / .anim.json を各ライブラリへ登録する (Editor / Runtime 共用)。
 // M48g からは .glb / .gltf / .fbx のスケルトンもここで (エンティティを作らずに) 登録する
 void RegisterAssetLibraries(EngineContext& ctx);

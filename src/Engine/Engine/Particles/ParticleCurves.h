@@ -767,4 +767,54 @@ inline void TransformAabbToWorld(const DirectX::XMFLOAT4X4& m, const DirectX::XM
     outMax = mx;
 }
 
+// ---- M63a: B群 (描画表現力) の共有純関数 ----
+// HLSL ミラーは assets\shaders\particle_billboard.hlsli。**機械照合は無い**ので必ず両方同時に
+// 変更すること (カーブ / カールノイズと同じ扱い — engine_spec.md 7.5)。
+
+// 放出時に per-particle 属性 (初期回転角 / 角速度 / フリップ開始位相) を RNG から引くか。
+// ★false = 従来と 1 draw も違わない消費列。**これが既定エミッタの絵をビット保存する
+//   唯一の根拠**で、無条件に引くと後続粒子の方向/位置/速度/寿命/サイズが全部ずれて
+//   スクショ golden が全部動く (SampleParticleShape の emitFrom=0 縮退と同じ設計)。
+// ★3 本まとめて 1 つのゲートで消費する — 「回転だけ立っている」「開始コマだけ立っている」で
+//   消費数が変わる 4 系統を作ると、組み合わせごとに .rep が別物になり誰も検証できなくなる。
+// 消費順の契約 (変更禁止。SampleParticleShape 以降の列の**末尾**に付く):
+//   rot0 = Range(rotationMin, rotationMax) → rotVel = Range(rotationSpeedMin, rotationSpeedMax)
+//   → flipU = NextFloat01()
+inline bool ParticleUsesSpawnAttribs(const ParticleEmitterComponent& d)
+{
+    return d.rotationMin != 0.0f || d.rotationMax != 0.0f || d.rotationSpeedMin != 0.0f
+        || d.rotationSpeedMax != 0.0f || d.flipRandomStart != 0;
+}
+
+// 粒子が生まれてからの経過秒。life は残り秒、invLife は 1/寿命 なので 1/invLife が寿命。
+// ★subframeEmission で life が lifetime + f*dt へ前倒しされている粒子は僅かに負を返すが、
+//   角度にもコマ位置にも連続に効くだけで無害 (clamp すると逆に湧いた瞬間だけ段差が出る)。
+inline float ParticleElapsedFromLife(float life, float invLife)
+{
+    return 1.0f / invLife - life;
+}
+
+// 回転角の閉形式。**sim 状態として毎 tick 積分しない** — 定数角速度なら積分結果がこの式と
+// 厳密に一致するので、SoA を増やして SIMD レーンを足し GPU sim CS も直す価値が無い。
+// ★角速度に減衰を入れる日が来たらこの閉形式は壊れる。そのときは sim 状態へ移すこと。
+inline float ParticleRotationAt(float rot0, float rotVel, float elapsed)
+{
+    return rot0 + rotVel * elapsed;
+}
+
+// ビルボード四隅の変換 (長軸ストレッチ → 回転)。HLSL の ParticleBillboardCorner と同一式。
+// ★stretch は **X 軸 (ローカル長軸)** に掛ける。速度ストレッチ (M63b) は「速度の画面角」を
+//   rot に足し込むことで長軸を速度方向へ向ける — 軸を増やさずに回転と枠を共有できる。
+// ★rot=0 / stretch=1 でも呼べば `x*1` と `cos(0)` 乗算を通るので**ビット同一ではない**。
+//   恒等をビット保存するのは呼び出し側のフラグ分岐の責務 (シェーダ側 gBillboardMode)。
+inline void ParticleBillboardCornerCpu(float cornerX, float cornerY, float rot, float stretch,
+                                       float& outX, float& outY)
+{
+    const float cx = cornerX * stretch;
+    const float s = std::sin(rot);
+    const float c = std::cos(rot);
+    outX = cx * c - cornerY * s;
+    outY = cx * s + cornerY * c;
+}
+
 } // namespace mye

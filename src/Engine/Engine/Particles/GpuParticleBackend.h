@@ -48,7 +48,13 @@ private:
         // ステージングは 32B -> 48B になる (1M バーストで 32MB -> 48MB。ClampGpuEmitCount の
         // コメント参照 — burst した tick だけの一過性)
         float invLife;
-        DirectX::XMFLOAT3 _pad; // StructureByteStride を 16 の倍数に保つ
+        // M63a: 旧 _pad の 12B を意味づけし直した (48B のまま)。CPU バックエンドと**同じゲート・
+        // 同じ消費順** (rot0 → rotVel → flipU) で Pcg32 から引いた値を GPU へ運ぶ。
+        // 乱数を GPU で作らない契約 (particle_emit.cs.hlsl 冒頭) の下では、per-particle の
+        // ランダム属性を渡す口はここしかない
+        float rot0;
+        float rotVel;
+        float flipU;
     };
     struct GpuEmitter {
         EntityID owner = kNullEntity;

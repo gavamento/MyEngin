@@ -181,6 +181,10 @@ constexpr const char* kBlendModeLabels[] = { "Additive", "Alpha", "Distortion" }
 constexpr const char* kPtclSimSpaceLabels[] = { "World", "Local" };
 constexpr const char* kPtclTurbModeLabels[] = { "Vortex", "Noise" };
 constexpr const char* kPtclEmitFromLabels[] = { "Default", "Volume", "Surface" };
+// M63a: B群の enum は lightingMode の 1 種だけ。flipBlend / flipRandomStart /
+// lightReceiveShadow / collisionFloor は 0/1 の素の DragInt のままにする
+// (kOffOnLabels へ寄せると「オン/オフ」以上の意味を持つ日が来たとき値域を広げられない)
+constexpr const char* kPtclLightModeLabels[] = { "Unlit", "Per Particle", "Per Pixel" };
 constexpr const char* kUIKindLabels[] = { "Panel", "Text", "Button" };
 constexpr const char* kUIAnchorLabels[] = { "TopLeft",    "TopCenter",    "TopRight",
                                             "MiddleLeft", "Center",       "MiddleRight",
@@ -205,6 +209,7 @@ constexpr const char* kBlendModeJa[] = { "加算", "アルファ", "歪み" };
 constexpr const char* kPtclSimSpaceJa[] = { "ワールド", "ローカル" }; // M61a
 constexpr const char* kPtclTurbModeJa[] = { "渦", "ノイズ" };
 constexpr const char* kPtclEmitFromJa[] = { "既定", "体積", "表面" };
+constexpr const char* kPtclLightModeJa[] = { "なし", "粒子単位", "画素単位" }; // M63a
 constexpr const char* kUIKindJa[] = { "パネル", "テキスト", "ボタン" };
 constexpr const char* kUIAnchorJa[] = { "左上", "上中央", "右上", "左中央", "中央",
                                         "右中央", "左下", "下中央", "右下" };
@@ -229,6 +234,8 @@ constexpr EnumFieldLabels kEnumFields[] = {
     { "ParticleEmitter", "simulationSpace", kPtclSimSpaceLabels, 2, kPtclSimSpaceJa },
     { "ParticleEmitter", "turbulenceMode", kPtclTurbModeLabels, 2, kPtclTurbModeJa },
     { "ParticleEmitter", "emitFrom", kPtclEmitFromLabels, 3, kPtclEmitFromJa },
+    // M63a: B群 = 描画表現力
+    { "ParticleEmitter", "lightingMode", kPtclLightModeLabels, 3, kPtclLightModeJa },
     { "UIElement", "kind", kUIKindLabels, 3, kUIKindJa },
     // M51f: anchor はコンボではなく 9-grid ピッカー (DrawField の特例) — 行はここに置かない
     { "UIElement", "align", kUIAnchorLabels, 9, kUIAnchorJa },

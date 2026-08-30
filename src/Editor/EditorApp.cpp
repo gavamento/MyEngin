@@ -136,6 +136,7 @@ void EditorApp::OnStart(EngineContext& ctx)
     RegisterPhysicsShowcaseContent(ctx); // M59d (pdemo_* 材質。同上)
     RegisterJointShowcaseContent(ctx);   // M60i (jdemo_* 材質 + 車輪メッシュ。同上)
     RegisterFogShowcaseContent(ctx);     // M57追補 (fdemo_* 材質。同上)
+    RegisterParticleShowcaseContent(ctx); // M63a (vdemo_* 材質 + 手続きテクスチャ。同上)
     if (flowShowcase) {
         // 両シーンファイルを確保してからタイトルを普通のロード経路で開く。
         // ここで組む = GameLogic.dll / C# コンパイル済み (EngineLoop が OnStart 前に実施)
@@ -165,6 +166,8 @@ void EditorApp::OnStart(EngineContext& ctx)
         BuildJointShowcaseScene(ctx); // M60i
     } else if (fogShowcase) {
         BuildFogShowcaseScene(ctx); // M57追補
+    } else if (particleShowcase) {
+        BuildParticleShowcaseScene(ctx); // M63a
     } else {
         BuildDemoScene(ctx, perfRate, perfMax);
     }
