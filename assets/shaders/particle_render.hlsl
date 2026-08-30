@@ -41,6 +41,13 @@ cbuffer ParticleCB : register(b0)
     // ---- M63a: ビルボード変換 (末尾 append。0 = 従来と 1 ビットも変わらない) ----
     int      gBillboardMode; // 0=corner 素通し / 1=回転・ストレッチを適用
     float3   _billboardPad;
+    // ---- M63c: フリップブック (末尾 append。0 = 従来と 1 ビットも変わらない) ----
+    // ★gFlipMode が 0 のとき PS は **VS が送ってきた flip を読まない** — その場で age から
+    //   作る従来の式を通る。「fps=0 なら値は同じ」ではない: CPU 充填ループが作った値は
+    //   ラスタライザ補間を通っていない別の道の値で、最下位ビットが動きうる
+    int      gFlipMode;  // 0=従来 (PS が age から作る) / 1=VS 経由の連続コマ位置を使う
+    int      gFlipBlend; // 1=隣のコマと frac で補間 (PS の Sample が 2 回になる)
+    float2   _flipPad;
 };
 
 struct ParticleInstance
@@ -71,6 +78,7 @@ struct VSOut
     float  age   : TEXCOORD1;
     float  dist  : TEXCOORD2; // カメラからのワールド距離 (フォグ用)
     float  viewZ : TEXCOORD3; // ビュー空間深度 (M42b ソフトフェード用、= clip.w)
+    float  flip  : TEXCOORD4; // M63c: 連続コマ位置 (CPU が充填ループで畳んだもの)
 };
 
 VSOut VSMain(uint vid : SV_VertexID, uint iid : SV_InstanceID)
@@ -93,6 +101,9 @@ VSOut VSMain(uint vid : SV_VertexID, uint iid : SV_InstanceID)
     o.age = p.age;
     o.dist = length(world - gCameraPos);
     o.viewZ = o.pos.w; // 透視投影では clip.w = ビュー空間 z
+    // M63c: フリップブックの連続コマ位置。**CPU が畳んで送ってくる**ので VS は素通し。
+    // (GPU バックエンドはプールの flipU を VS が読めるので、あちらは VS で作る)
+    o.flip = p.flipFrame;
     return o;
 }
 
@@ -111,16 +122,17 @@ float4 PSMain(VSOut i) : SV_Target
     float4 col;
     if (gUseTexture != 0)
     {
-        // フリップブック: age を進めてタイルを選ぶ (tilesX*tilesY コマ、flipCycles 周)
+        // フリップブック: 連続コマ位置でタイルを選ぶ (tilesX*tilesY コマ)。
+        // M63c: タイル分割と 2 コマ補間は particle_billboard.hlsli の SampleFlipTile へ
+        // 寄せた — GPU バックエンドの PS が同じ 1 本を呼ぶ (M42c 以来ここは手写しだった)。
+        // ★gFlipMode==0 の枝は M42c の式そのまま。`i.age * gFlipCycles * (float)tiles` を
+        //   **この場で**評価するのが既存 golden のビット保存条件で、VS 経由の値へ
+        //   置き換えてはいけない
         const uint tx = (uint)max(1, gFlipTilesX);
         const uint ty = (uint)max(1, gFlipTilesY);
         const uint tiles = tx * ty;
-        uint frame = (uint)max(0, (int)floor(i.age * gFlipCycles * (float)tiles));
-        frame = frame % tiles;
-        const uint cx = frame % tx;
-        const uint cy = frame / tx;
-        const float2 uv = (i.uv + float2(cx, cy)) / float2(tx, ty);
-        const float4 tex = gTex.Sample(gSamp, uv);
+        const float frame = (gFlipMode != 0) ? i.flip : (i.age * gFlipCycles * (float)tiles);
+        const float4 tex = SampleFlipTile(gTex, gSamp, i.uv, frame, tx, ty, gFlipBlend != 0);
         col = float4(i.color.rgb * tex.rgb, i.color.a * tex.a);
     }
     else

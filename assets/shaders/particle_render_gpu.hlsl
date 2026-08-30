@@ -141,6 +141,10 @@ struct VSOut
     //   60° FOV の画面端で ~15% ずれる。代用すると「同じシーンで CPU 粒子と GPU 粒子の
     //   霧の濃さが画面端だけ違う」= 比較モードで真っ先に目に付く食い違いを新たに作る
     float  dist  : TEXCOORD3;
+    // M63c: フリップブックの連続コマ位置。**CPU バックエンドは充填ループで畳んで
+    // ParticleInstance.flipFrame に載せてくる**ので、GPU 側の VS がここを作るのが
+    // 唯一の実装点になる (プールの flipU を読めるのは VS だけ)
+    float  flip  : TEXCOORD4;
 };
 
 VSOut VSMain(uint vid : SV_VertexID, uint iid : SV_InstanceID)
@@ -192,6 +196,17 @@ VSOut VSMain(uint vid : SV_VertexID, uint iid : SV_InstanceID)
     const float3 world = basePos + float3(gOffsetX, 0, 0)
         + (gCamRight * c.x + gCamUp * c.y) * size;
 
+    // M63c: フリップブックの連続コマ位置。off なら 0 のまま = PS が従来経路を通る。
+    // ★コマ数は PS の従来経路と同じ「max(1,tilesX) * max(1,tilesY)」— タイル数を
+    //   片方だけ 1 未満に落とすと剰余が 0 除算になる
+    float flipFrame = 0.0f;
+    if (gParams6.x != 0.0f) {
+        const float tiles = max(1.0f, gParams3.y) * max(1.0f, gParams3.z);
+        flipFrame = ParticleFlipFrameAt(age, ParticleElapsedFromLife(p.life, p.invLife),
+                                        gParams3.w, gParams6.y, p.flipU, tiles,
+                                        gParams6.z != 0.0f);
+    }
+
     VSOut o;
     o.pos = mul(float4(world, 1.0f), gViewProj);
     o.uv = corner * 0.5f + 0.5f;
@@ -201,6 +216,7 @@ VSOut VSMain(uint vid : SV_VertexID, uint iid : SV_InstanceID)
     // M57追補: CPU 版 particle_render.hlsl と**同一式**。world には gOffsetX が既に
     // 入っているので、CPU 側が inst.pos に renderOffsetX を足してから測るのと結合順まで一致する
     o.dist = length(world - gCameraPosParam.xyz);
+    o.flip = flipFrame; // M63c
     return o;
 }
 
@@ -209,16 +225,18 @@ float4 PSMain(VSOut i) : SV_Target
     float4 col;
     if (gParams3.x != 0.0f)
     {
-        // フリップブック (M42c): particle_render.hlsl PSMain のフリップブック分岐を移植 (同一式)
+        // フリップブック (M42c): particle_render.hlsl PSMain と**同一式**。
+        // M63c: タイル分割と 2 コマ補間は particle_billboard.hlsli の SampleFlipTile へ
+        // 寄せて、両バックエンドの PS が同じ 1 本を呼ぶようにした (M42c 以来ここは手写し)。
+        // ★gParams6.x==0 の枝は M42c の式そのまま。この場で age から作るのが既存 golden の
+        //   ビット保存条件で、VS 経由の値へ置き換えてはいけない
         const uint tx = (uint)max(1.0f, gParams3.y);
         const uint ty = (uint)max(1.0f, gParams3.z);
         const uint tiles = tx * ty;
-        uint frame = (uint)max(0, (int)floor(i.age * gParams3.w * (float)tiles));
-        frame = frame % tiles;
-        const uint cx = frame % tx;
-        const uint cy = frame / tx;
-        const float2 uv = (i.uv + float2(cx, cy)) / float2(tx, ty);
-        const float4 tex = gTex.Sample(gSamp, uv);
+        const float frame =
+            (gParams6.x != 0.0f) ? i.flip : (i.age * gParams3.w * (float)tiles);
+        const float4 tex =
+            SampleFlipTile(gTex, gSamp, i.uv, frame, tx, ty, gParams6.w != 0.0f);
         col = float4(i.color.rgb * tex.rgb, i.color.a * tex.a);
     }
     else

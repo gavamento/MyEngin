@@ -882,4 +882,68 @@ inline void EvalParticleStretchCpu(float vx, float vy, float vz,
     outStretch = std::clamp(1.0f + speed * stretchScale, 1.0f, std::max(1.0f, stretchMax));
 }
 
+// ---- M63c: フリップブック (固定 fps / コマ間補間 / ランダム開始) ----
+// HLSL ミラー: particle_billboard.hlsli の ParticleFlipFrameAt / ParticleFlipTilePos /
+// ParticleFlipTileUV / SampleFlipTile。**機械照合は無い**ので必ず両方同時に変更すること。
+
+// 新しい 3 本 (flipFps / flipBlend / flipRandomStart) のどれかを使うか。
+// ★off なら PS は従来どおり「その場で age から作る」経路を通る。**「fps=0 なら値が
+//   同じだから分岐は要らない」ではない** — CPU 充填ループ (または GPU の VS) で作った
+//   コマ位置はラスタライザ補間を通っていない別の道の値で、最下位ビットが動きうる。
+//   既存 golden 15 枚のビット保存はこのゲートが担っている。
+// ★flipFps < 0 はゲートを開けない。述語を「> 0 で固定 fps」の 1 本だけにして、
+//   「ゲートは開くが fps は効かない」という第 3 の状態を作らない
+//   (ParticleFlipFrameAt の分岐と同じ式であることが契約)。
+// ★flipTilesX/Y と flipCycles は**開けない** — あれは M42c から在る既存フィールドで、
+//   使っているシーン (fog ショーケース) の絵が動いてしまう。
+inline bool ParticleUsesFlipbook(const ParticleEmitterComponent& d)
+{
+    return d.flipFps > 0.0f || d.flipBlend != 0 || d.flipRandomStart != 0;
+}
+
+// 連続コマ位置 (整数部 = 表示するコマ、小数部 = 次のコマへの補間係数)。
+// ★flipFps <= 0 && !randomStart では `age * flipCycles * tiles` へ**演算列ごと**縮退する
+//   — M42c から PS に手写しされている式そのもの。ここが崩れると既存のフリップブックが動く。
+// ★randomStart のずらし量は「コマ数」単位 (flipU ∈ [0,1) × tiles)。位相であって速さでは
+//   ないので、同 tick に湧いた粒子が同じコマを踏む問題だけを消し、送り速度は変えない。
+inline float ParticleFlipFrameAt(float age, float elapsed, float flipCycles, float flipFps,
+                                 float flipU, float tiles, bool randomStart)
+{
+    float f = (flipFps > 0.0f) ? (elapsed * flipFps) : (age * flipCycles * tiles);
+    if (randomStart) {
+        f += flipU * tiles;
+    }
+    return f;
+}
+
+// 連続コマ位置 → 表示コマ / ブレンド先 / 補間係数。
+// ★負 (subframeEmission で life が前倒しされた粒子) は 0 へ丸める — 従来の
+//   `(uint)max(0, (int)floor(...))` と同じ扱いで、湧いた瞬間に最終コマが 1 フレーム
+//   出る形 (剰余で巻き戻ると起きる) を避ける。
+// ★ブレンド先は **(idx+1) % tiles = 先頭コマへ循環** (ユーザー決定 2026-08-31)。
+//   非ブレンド経路の `frame % tiles` と同じ規約なので、flipBlend を切っても絵の
+//   繋がり方が変わらない。ホールドにすると補間の有無で挙動が割れる。
+// ★整数化は uint32 へのキャスト — `age * flipCycles * tiles` が 2^32 を超えるような
+//   設定 (flipCycles が天文学的) では未定義。従来の (int) キャストと同じ制限。
+inline void ParticleFlipTilePos(float frame, uint32_t tiles, uint32_t& outIndex,
+                                uint32_t& outNext, float& outBlend)
+{
+    const float f = std::max(frame, 0.0f);
+    const float fl = std::floor(f);
+    const uint32_t idx = static_cast<uint32_t>(fl) % tiles;
+    outIndex = idx;
+    outNext = (idx + 1u) % tiles;
+    outBlend = f - fl;
+}
+
+// コマ番号 → アトラス内の UV。**検査用の C++ ミラー** (実際にサンプルするのは PS 側)。
+inline void ParticleFlipTileUvCpu(float u, float v, uint32_t frame, uint32_t tx, uint32_t ty,
+                                  float& outU, float& outV)
+{
+    const uint32_t cx = frame % tx;
+    const uint32_t cy = frame / tx;
+    outU = (u + static_cast<float>(cx)) / static_cast<float>(tx);
+    outV = (v + static_cast<float>(cy)) / static_cast<float>(ty);
+}
+
 } // namespace mye

@@ -37,8 +37,12 @@ struct GpuParticleCB { // particle_gpu_common.hlsli と一致
     XMFLOAT4 colorMid1;
     XMFLOAT4 colorMid2;
     XMFLOAT4 params5; // colorMidT1, colorMidT2, sizeMidScale, sizeMidT
+    // ---- M63c: フリップブック (末尾 append。HLSL 側と両方同時に変更する) ----
+    // 描画の VS (flipMode/flipFps/flipRandomStart) と PS (flipMode/flipBlend) だけが読む。
+    // 既定 (flipMode=0) は従来と 1 ビットも変わらない
+    XMFLOAT4 params6; // flipMode, flipFps, flipRandomStart, flipBlend
 };
-static_assert(sizeof(GpuParticleCB) == 320,
+static_assert(sizeof(GpuParticleCB) == 336,
               "GpuParticleCB は particle_gpu_common.hlsli の cbuffer と 1 バイトも違ってはいけない");
 
 struct GpuRenderCB { // particle_render_gpu.hlsl の GpuRenderCB と一致
@@ -935,6 +939,17 @@ void GpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
                           static_cast<float>(std::max(1, em.descCache.flipTilesX)),
                           static_cast<float>(std::max(1, em.descCache.flipTilesY)),
                           em.descCache.flipCycles };
+        // M63c: フリップブックの新 3 本。判定は CPU バックエンドと同じ共有ゲート
+        // (ParticleCurves.h::ParticleUsesFlipbook) — 手写しにすると「同じシーンで
+        // GPU だけコマがずれる」形で静かに割れる。
+        // ★w (2 コマ補間) と z (ランダム開始) は **useFlip で必ず包む**。ゲートが閉じた
+        //   まま補間だけ走ると、従来経路 (PS が age から作る枝) で 2 コマ目が混ざる
+        {
+            const bool useFlip = ParticleUsesFlipbook(em.descCache);
+            simCb.params6 = { useFlip ? 1.0f : 0.0f, em.descCache.flipFps,
+                              (useFlip && em.descCache.flipRandomStart != 0) ? 1.0f : 0.0f,
+                              (useFlip && em.descCache.flipBlend != 0) ? 1.0f : 0.0f };
+        }
         UploadCB(dc, simCB_.Get(), simCb);
         // M61g: ローカル空間はエミッタのワールド行列で VS が pos を変換する (transpose は
         // gViewProj と同じ規約)。ワールド空間 (既定) は flag=0 — 行列は VS が読まない

@@ -71,6 +71,15 @@ struct ParticleCB {
     //   「どうせ回転 0 なら同じ」と分岐を外してはいけない。
     int32_t billboardMode; // 0=従来 (corner 素通し) / 1=回転・ストレッチを適用
     float billboardPad[3];
+    // ---- M63c: フリップブック (末尾 append。0 = 従来と 1 ビットも変わらない) ----
+    // ★flipMode が 0 のとき PS は充填ループの flipFrame を**読まない** — その場で age から
+    //   作る従来の式を通る。ラスタライザ補間を通った age と CPU が持つ age は別の道の値
+    //   なので、「fps=0 なら同じだから分岐は要らない」は成り立たない。
+    // ★flipBlend は flipMode が 0 のとき必ず 0 (下の充填で useFlip ゲートを通す)。
+    //   従来経路で 2 コマ補間が走ると既存のフリップブックの絵が動く
+    int32_t flipMode;  // 0=従来 (PS が age から作る) / 1=充填ループの連続コマ位置を使う
+    int32_t flipBlend; // 1=隣のコマと frac で補間
+    float flipPad[2];
 };
 
 } // namespace
@@ -675,6 +684,8 @@ void CpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
         float flipCycles;
         float softFade; // M42b: エミッタ毎の深度フェード距離
         int32_t billboardMode; // M63a: 0=corner 素通し (従来とビット同一) / 1=回転・ストレッチ
+        int32_t flipMode;      // M63c: 0=従来 (PS が age から作る) / 1=flipFrame を使う
+        int32_t flipBlend;     // M63c: 1=隣のコマと frac で補間 (flipMode=0 なら必ず 0)
     };
     std::vector<DrawRange> ranges;
 
@@ -750,6 +761,13 @@ void CpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
         // 片方だけ緩めたときに「同じシーンで CPU だけ回る」が静かに起きる)
         const bool useRotation = ParticleUsesRotation(d);
         const bool useStretch = ParticleUsesStretch(d);
+        // M63c: フリップブックの新 3 本 (固定 fps / 補間 / ランダム開始) を使うか。
+        // ★off なら flipFrame へ 0 を書くだけ = PS が従来の式をその場で通る。
+        //   コマ数は GPU の VS と同じ「max(1,tx) を float にしてから掛ける」形に揃える
+        const bool useFlip = ParticleUsesFlipbook(d);
+        const float flipTiles = static_cast<float>(std::max(1, d.flipTilesX))
+            * static_cast<float>(std::max(1, d.flipTilesY));
+        const bool flipRandomStart = d.flipRandomStart != 0;
         // M63b: ローカル空間プール (simulationSpace=1) の速度はエミッタ座標系のまま入っている。
         // 位置と同じ 3x3 を掛けてから画面基底へ射影する — 掛けないと「右へ飛ぶ粒子が
         // 上向きに伸びる」形でエミッタの回転ぶんズレる。平行移動は速度に効かないので
@@ -794,11 +812,20 @@ void CpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
             }
             inst.rot = rot;
             inst.stretch = stretch;
-            inst.flipFrame = 0.0f;
+            // M63c: 連続コマ位置。**CPU はここで畳んで送る** — PS はタイルを選ぶだけになる
+            // (GPU バックエンドはプールの flipU を VS が読めるので、あちらは VS で作る)
+            inst.flipFrame =
+                useFlip ? ParticleFlipFrameAt(age,
+                                              ParticleElapsedFromLife(pool.life[i],
+                                                                      pool.invLife[i]),
+                                              d.flipCycles, d.flipFps, pool.flipU[i], flipTiles,
+                                              flipRandomStart)
+                        : 0.0f;
         }
         ranges.push_back({ base, pool.alive, d.blendMode, d.texture,
                            std::max(1, d.flipTilesX), std::max(1, d.flipTilesY), d.flipCycles,
-                           d.softFadeDistance, ParticleUsesBillboard(d) ? 1 : 0 });
+                           d.softFadeDistance, ParticleUsesBillboard(d) ? 1 : 0,
+                           useFlip ? 1 : 0, (useFlip && d.flipBlend != 0) ? 1 : 0 });
     }
     dc->Unmap(instanceBuffer_.Get(), 0);
 
@@ -881,6 +908,8 @@ void CpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
         cbData.flipCycles = range.flipCycles;
         cbData.softFade = (view.depthSRV != nullptr) ? range.softFade : 0.0f; // M42b
         cbData.billboardMode = range.billboardMode; // M63a
+        cbData.flipMode = range.flipMode; // M63c
+        cbData.flipBlend = range.flipBlend;
         D3D11_MAPPED_SUBRESOURCE cbMapped = {};
         if (SUCCEEDED(dc->Map(renderCB_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &cbMapped))) {
             memcpy(cbMapped.pData, &cbData, sizeof(cbData));

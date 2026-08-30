@@ -749,6 +749,24 @@ IParticleBackend (switchable interface)
   **only** once stretching is on; applying the 4.0 default unconditionally would pull previously
   culled pools back into view. Distortion particles (`blendMode == 2`) take no part in either
   transform — see the M42d exception below
+- **Flipbook playback (M63c)**: the atlas frame is a **continuous position** (integer part selects
+  the tile, fraction blends into the next one) produced by `ParticleFlipFrameAt`, whose HLSL mirror
+  lives beside the billboard helpers in `particle_billboard.hlsli` together with the tile-UV split
+  (`ParticleFlipTileUV` / `SampleFlipTile`) that both pixel shaders had been carrying by hand since
+  M42c. Three fields drive it: `flipFps` (> 0 advances at a fixed rate, so two particles with
+  different lifetimes show the same frame at the same elapsed time — the old `age * flipCycles *
+  tiles` form could not), `flipRandomStart` (adds `flipU * tiles`, a **phase** and not a rate, which
+  is what stops every particle spawned on the same tick from showing the same frame), and `flipBlend`
+  (samples the neighbouring tile and lerps by the fraction). The blend target **wraps to the first
+  tile**, the same rule the non-blended path already had through `frame % tiles`, so turning
+  interpolation on or off never changes which frames are shown. Where the position is computed is the
+  one asymmetry between the back ends: the CPU folds it into `ParticleInstance.flipFrame` in the
+  fill loop (it has no room for a per-particle phase otherwise), while the GPU vertex shader builds
+  it from the pool's `flipU`. With all three fields off the pixel shader ignores that value entirely
+  and re-evaluates the legacy expression itself — **the gate, not the arithmetic, is what keeps
+  existing content bit-identical**, because a value that came through the rasterizer's interpolation
+  is not the same value the CPU held. Measured: the showcase's CPU and GPU shots differ by the same
+  221 pixels as before this feature, all of them in M63a's rotation region
 - **Known divergence (emission cap under saturation)**: the CPU backend clamps a tick's emission with
   `min(emit, maxParticles - alive)`, while the GPU backend clamps with `ClampGpuEmitCount(emit, capacity)`
   because it never reads the alive count back (see ADR-008). Once a pool saturates, the CPU stops

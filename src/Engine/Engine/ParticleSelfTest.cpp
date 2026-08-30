@@ -2231,6 +2231,137 @@ bool RunParticleSelfTest()
               "m63b: a stretchMax below 1 never shrinks the culling bounds");
     }
 
+    // ---- (M63c-1) フリップブックのゲート ----
+    // ★既存フィールド (flipTilesX/Y / flipCycles) は**開けない**こと。M42c から在るこの
+    //   3 本で開くと、フリップブックを既に使っているシーン (fog ショーケース) の PS が
+    //   従来経路から外れて絵が動く = 既存 golden が赤くなる
+    {
+        ParticleEmitterComponent d = {};
+        check(!ParticleUsesFlipbook(d), "m63c: a default emitter keeps the legacy flipbook path");
+
+        d.flipTilesX = 4;
+        d.flipTilesY = 4;
+        d.flipCycles = 3.0f;
+        check(!ParticleUsesFlipbook(d), "m63c: the M42c fields alone never open the gate");
+
+        const auto oneOf = [](auto&& setter) {
+            ParticleEmitterComponent e;
+            setter(e);
+            return ParticleUsesFlipbook(e);
+        };
+        check(oneOf([](ParticleEmitterComponent& e) { e.flipFps = 12.0f; })
+                  && oneOf([](ParticleEmitterComponent& e) { e.flipBlend = 1; })
+                  && oneOf([](ParticleEmitterComponent& e) { e.flipRandomStart = 1; }),
+              "m63c: any one of the three new fields opens the gate");
+
+        // 負の fps はゲートを開けない — 「開くが効かない」第 3 の状態を作らないこと
+        // (ゲートの述語と ParticleFlipFrameAt の分岐は同じ `> 0` でなければならない)
+        ParticleEmitterComponent neg = {};
+        neg.flipFps = -12.0f;
+        check(!ParticleUsesFlipbook(neg), "m63c: a negative flipFps does not open the gate");
+    }
+
+    // ---- (M63c-2) 縮退: 新 3 本が off なら従来の式と**ビット同一** ----
+    // ★これが崩れると、フリップブックを使っている既存シーンのコマ位置が動く。
+    //   NearF ではなく `==` で見るのが要点 (1 ulp のずれでもコマ境界で 1 コマずれる)
+    {
+        const float tiles = 16.0f;
+        bool exact = true;
+        for (int i = 0; i <= 32; ++i) {
+            const float age = static_cast<float>(i) / 32.0f;
+            for (const float cycles : { 1.0f, 2.5f, 0.3f }) {
+                const float f = ParticleFlipFrameAt(age, 1.234f, cycles, 0.0f, 0.75f, tiles,
+                                                    false);
+                exact = exact && (f == age * cycles * tiles);
+            }
+        }
+        check(exact, "m63c: with fps off and no random start the frame is the legacy expression");
+
+        // 負の fps も同じ枝へ落ちること (ゲートが漏れても絵が変わらない側へ倒れる)
+        check(ParticleFlipFrameAt(0.5f, 1.0f, 2.0f, -30.0f, 0.0f, 16.0f, false)
+                  == 0.5f * 2.0f * 16.0f,
+              "m63c: a negative flipFps falls back to the lifetime-driven expression");
+    }
+
+    // ---- (M63c-3) 固定 fps は**寿命に依らない** ----
+    // ★C3 の主張そのもの。従来は age (= 経過/寿命) 駆動なので、寿命の違う 2 粒子が
+    //   同じ経過秒で違うコマを踏んでいた
+    {
+        // 経過 0.5s / 12fps = 6 コマ目。age (寿命) を変えても動かないこと
+        const float a = ParticleFlipFrameAt(0.25f, 0.5f, 1.0f, 12.0f, 0.0f, 16.0f, false);
+        const float b = ParticleFlipFrameAt(0.90f, 0.5f, 1.0f, 12.0f, 0.0f, 16.0f, false);
+        check(a == b && NearF(a, 6.0f), "m63c: a fixed fps ignores the particle lifetime");
+
+        // 経過が 2 倍ならコマも 2 倍 (線形)
+        check(NearF(ParticleFlipFrameAt(0.5f, 1.0f, 1.0f, 12.0f, 0.0f, 16.0f, false), 12.0f),
+              "m63c: the fixed fps advances linearly with elapsed time");
+    }
+
+    // ---- (M63c-4) ランダム開始は「コマ数」単位の**位相**であること ----
+    // ★速さを変えてはいけない (2 粒子の差が経過によらず一定であること)。
+    //   ずらし量を秒や age へ掛けると、粒子ごとに送り速度が違う = コマ送りが揺れる
+    {
+        const float tiles = 16.0f;
+        const float e0 = ParticleFlipFrameAt(0.25f, 0.5f, 1.0f, 12.0f, 0.25f, tiles, true);
+        const float b0 = ParticleFlipFrameAt(0.25f, 0.5f, 1.0f, 12.0f, 0.0f, tiles, true);
+        check(NearF(e0 - b0, 0.25f * tiles), "m63c: random start offsets by flipU * tiles");
+
+        const float e1 = ParticleFlipFrameAt(0.75f, 2.5f, 1.0f, 12.0f, 0.25f, tiles, true);
+        const float b1 = ParticleFlipFrameAt(0.75f, 2.5f, 1.0f, 12.0f, 0.0f, tiles, true);
+        check(NearF(e1 - b1, e0 - b0), "m63c: the random start is a phase, not a rate");
+
+        // flipU=0 の粒子は off とビット同一 (RNG が 0 を引いたときに絵が飛ばないこと)
+        check(ParticleFlipFrameAt(0.5f, 1.0f, 2.0f, 0.0f, 0.0f, tiles, true)
+                  == ParticleFlipFrameAt(0.5f, 1.0f, 2.0f, 0.0f, 0.0f, tiles, false),
+              "m63c: a zero flipU reproduces the un-offset frame bit-exactly");
+    }
+
+    // ---- (M63c-5) 連続コマ位置 → 表示コマ / ブレンド先 / 補間係数 ----
+    {
+        uint32_t idx = 99, next = 99;
+        float blend = -1.0f;
+
+        ParticleFlipTilePos(3.25f, 16u, idx, next, blend);
+        check(idx == 3u && next == 4u && blend == 0.25f,
+              "m63c: the integer part selects the tile and the fraction drives the blend");
+
+        // ★末尾コマのブレンド先は**先頭へ循環** (ユーザー決定)。非ブレンド経路の
+        //   `frame % tiles` と同じ規約 — ホールドにすると補間の有無で挙動が割れる
+        ParticleFlipTilePos(15.5f, 16u, idx, next, blend);
+        check(idx == 15u && next == 0u, "m63c: the last tile blends back into the first");
+
+        // コマ数を超えたら巻き戻る (固定 fps で寿命が長いと必ず起きる)
+        ParticleFlipTilePos(17.0f, 16u, idx, next, blend);
+        check(idx == 1u && next == 2u && blend == 0.0f,
+              "m63c: the continuous frame wraps by the tile count");
+
+        // 負 (subframeEmission で life が前倒しされた粒子) は 0 へ丸める。
+        // 剰余で巻き戻すと**湧いた瞬間に最終コマが 1 フレームだけ出る**
+        ParticleFlipTilePos(-0.75f, 16u, idx, next, blend);
+        check(idx == 0u && next == 1u && blend == 0.0f,
+              "m63c: a negative frame clamps to the first tile, it does not wrap backwards");
+
+        // 1 コマだけのアトラス (既定) で剰余が 0 除算にならず、補間先も自分自身
+        ParticleFlipTilePos(4.5f, 1u, idx, next, blend);
+        check(idx == 0u && next == 0u, "m63c: a single-tile atlas blends into itself");
+    }
+
+    // ---- (M63c-6) コマ番号 → アトラス UV ----
+    // ★HLSL の ParticleFlipTileUV と同一式。行優先 (cx = frame % tx) の向きが逆だと
+    //   コマ送りがアトラスを縦に舐める形で割れる
+    {
+        float u = 0.0f, v = 0.0f;
+        ParticleFlipTileUvCpu(0.5f, 0.5f, 5u, 4u, 4u, u, v); // コマ 5 = (cx,cy)=(1,1)
+        check(NearF(u, (0.5f + 1.0f) / 4.0f) && NearF(v, (0.5f + 1.0f) / 4.0f),
+              "m63c: tile 5 of a 4x4 atlas maps to column 1, row 1");
+
+        // 端の粒子 UV (0/1) がタイル境界をはみ出さないこと = 隣のコマが滲まない条件
+        ParticleFlipTileUvCpu(0.0f, 0.0f, 6u, 4u, 4u, u, v);
+        check(NearF(u, 0.5f) && NearF(v, 0.25f), "m63c: the tile origin lands on its own corner");
+        ParticleFlipTileUvCpu(1.0f, 1.0f, 6u, 4u, 4u, u, v);
+        check(NearF(u, 0.75f) && NearF(v, 0.5f), "m63c: the tile never spills into its neighbour");
+    }
+
     if (failCount == 0) {
         MYE_LOG_INFO("==== Particle self test: ALL PASS ====");
         return true;

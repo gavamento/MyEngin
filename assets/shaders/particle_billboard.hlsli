@@ -76,4 +76,65 @@ void EvalParticleStretch(float3 v, float3 camRight, float3 camUp, float stretchS
     stretch = clamp(1.0f + speed * stretchScale, 1.0f, max(1.0f, stretchMax));
 }
 
+// ---- M63c: フリップブック (固定 fps / コマ間補間 / ランダム開始) ----
+// C++ ミラー: ParticleCurves.h の ParticleFlipFrameAt / ParticleFlipTilePos /
+// ParticleFlipTileUvCpu (UV は検査用ミラー — 実際にサンプルするのは下の SampleFlipTile)。
+//
+// ★タイル UV の式は M42c から **CPU 経路と GPU 経路の PS へ手写し**されていた。
+//   コマ間補間で「2 コマ目の UV」を作る必要が出た時点で写しが 4 箇所になるので、
+//   ここへ寄せて 1 本にする (回転で particle_billboard.hlsli を作ったのと同じ理由)。
+
+// 連続コマ位置。C++ ミラー: ParticleFlipFrameAt。
+// ★flipFps <= 0 && !randomStart では `age * flipCycles * tiles` へ**演算列ごと**縮退する
+//   — 従来 PS に書かれている式そのもの。ここが崩れると既存のフリップブックが動く。
+float ParticleFlipFrameAt(float age, float elapsed, float flipCycles, float flipFps,
+                          float flipU, float tiles, bool randomStart)
+{
+    float f = (flipFps > 0.0f) ? (elapsed * flipFps) : (age * flipCycles * tiles);
+    if (randomStart) {
+        f += flipU * tiles; // ずらし量は「コマ数」単位 = 位相であって送り速度ではない
+    }
+    return f;
+}
+
+// 連続コマ位置 → 表示コマ / ブレンド先 / 補間係数。C++ ミラー: ParticleFlipTilePos。
+// ★負 (subframeEmission で life が前倒しされた粒子) は 0 へ丸める = 従来の
+//   `(uint)max(0, (int)floor(...))` と同じ扱い。
+// ★ブレンド先は **先頭コマへ循環** — 非ブレンド経路の `frame % tiles` と同じ規約。
+void ParticleFlipTilePos(float frame, uint tiles, out uint idx, out uint next, out float blend)
+{
+    const float f = max(frame, 0.0f);
+    const float fl = floor(f);
+    idx = (uint)fl % tiles;
+    next = (idx + 1u) % tiles;
+    blend = f - fl;
+}
+
+// コマ番号 → アトラス内の UV。C++ ミラー: ParticleFlipTileUvCpu。
+float2 ParticleFlipTileUV(float2 uv, uint frame, uint tx, uint ty)
+{
+    const uint cx = frame % tx;
+    const uint cy = frame / tx;
+    return (uv + float2(cx, cy)) / float2(tx, ty);
+}
+
+// アトラスから 1 コマを取る。blendFrames で隣のコマとの 2 サンプル補間。
+// ★blendFrames が false のときは **Sample 1 回だけ / lerp を通らない**。従来経路
+//   (M42c) と演算列が 1 つも変わらないのが、既存 golden をビット保存する条件。
+// ★mip は張らない前提 (アトラスはタイル境界を跨ぐ mip でコマ同士が混ざる)。
+//   DemoContent の vdemo_flipbook が mips=false で作っているのはこのため。
+float4 SampleFlipTile(Texture2D tex, SamplerState samp, float2 uv, float frame,
+                      uint tx, uint ty, bool blendFrames)
+{
+    uint idx, next;
+    float blend;
+    ParticleFlipTilePos(frame, tx * ty, idx, next, blend);
+    const float4 c0 = tex.Sample(samp, ParticleFlipTileUV(uv, idx, tx, ty));
+    if (!blendFrames) {
+        return c0;
+    }
+    const float4 c1 = tex.Sample(samp, ParticleFlipTileUV(uv, next, tx, ty));
+    return lerp(c0, c1, blend);
+}
+
 #endif // MYE_PARTICLE_BILLBOARD_HLSLI

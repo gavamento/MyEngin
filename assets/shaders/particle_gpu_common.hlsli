@@ -49,4 +49,10 @@ cbuffer GpuParticleCB : register(b0)
     float4 gColorMid1;
     float4 gColorMid2;
     float4 gParams5;           // x = colorMidT1, y = colorMidT2, z = sizeMidScale, w = sizeMidT
+    // ---- M63c: フリップブック (末尾 append。C++ 側 GpuParticleCB と一致。
+    //      既存フィールドのオフセット不変。描画 VS (x/y/z) と PS (x/w) だけが読む) ----
+    // ★x が 0 のとき PS は VS の flip を読まず、その場で age から作る従来の式を通る。
+    //   「fps=0 なら値は同じ」ではない (VS で作った値はラスタライザ補間を通っていない)。
+    // ★w (2 コマ補間) は **x が 0 のとき必ず 0** — C++ 側が useFlip でゲートしている。
+    float4 gParams6;           // x = flipMode, y = flipFps, z = flipRandomStart, w = flipBlend
 };
