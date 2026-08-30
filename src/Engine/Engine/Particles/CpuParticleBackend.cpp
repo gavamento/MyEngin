@@ -764,7 +764,8 @@ void CpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
             continue;
         }
         cbData.baseIndex = range.base;
-        cbData.blendAdditive = (range.blendMode == 1) ? 0 : 1; // blendMode: 0=additive 1=alpha
+        // M57追補: 規則を ParticleCurves.h へ寄せた (GPU バックエンドと共有。値は同一)
+        cbData.blendAdditive = ParticleBlendIsAdditive(range.blendMode) ? 1 : 0;
         // テクスチャ解決 (空なら procedural 円へフォールバック)
         ID3D11ShaderResourceView* texSrv = nullptr;
         if (range.texture.value != 0) {

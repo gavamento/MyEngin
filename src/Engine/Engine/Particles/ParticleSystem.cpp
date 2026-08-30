@@ -13,7 +13,8 @@
 namespace mye {
 
 bool ParticleSystem::Init(GraphicsDevice& device, ShaderManager& shaders,
-                          const std::wstring& assetsRoot)
+                          const std::wstring& assetsRoot, int backendOverride,
+                          int compareOverride)
 {
     settingsPath_ = assetsRoot + L"\\project_settings.json";
     const bool cpuOk = cpu_.Init(device, shaders);
@@ -22,6 +23,18 @@ bool ParticleSystem::Init(GraphicsDevice& device, ShaderManager& shaders,
         MYE_LOG_ERROR("ParticleSystem: backend init failed (cpu=%d gpu=%d)", cpuOk, gpuOk);
     }
     LoadSettings();
+    // M57追補: CLI (--particle-backend / --particle-compare) は設定ファイルより優先する。
+    // ★SetActiveKind() / SetCompareMode() を**呼んではいけない** — あちらは SaveSettings() を
+    //   呼ぶので、スクショ 1 枚のために開発者の project_settings.json が書き換わる。
+    //   ここは LoadSettings() の直後なので、直接代入で「読んだ値を上書きする」だけで足りる。
+    // ※ 上書き中に GUI (ParticleSettingsWindow) でバックエンドを触ると保存されるが、それは
+    //    明示的なユーザー操作の結果なので許容する (ヘッドレス撮影では GUI が無いので起きない)
+    if (backendOverride >= 0) {
+        active_ = (backendOverride == 1) ? ParticleBackendKind::Gpu : ParticleBackendKind::Cpu;
+    }
+    if (compareOverride >= 0) {
+        compareMode_ = (compareOverride != 0);
+    }
     MYE_LOG_INFO("ParticleSystem: active backend = %s%s", Active().Name(),
                  compareMode_ ? " (+compare)" : "");
     return cpuOk && gpuOk;

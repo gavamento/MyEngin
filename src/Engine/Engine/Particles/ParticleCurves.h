@@ -112,6 +112,35 @@ inline float SoftFadeFactor(float sceneLinZ, float particleLinZ, float fadeDist)
     return std::clamp((sceneLinZ - particleLinZ) / std::max(fadeDist, 1e-4f), 0.0f, 1.0f);
 }
 
+// M57追補: 距離フォグ係数の C++ ミラー。**HLSL の common.hlsli::FogFactor と同一式**。
+// CPU バックエンドと GPU バックエンドが同じ 1 本を呼ぶようにしてあるが、HLSL と C++ の
+// 一致だけは機械照合できない — 片方だけ直すと「同じシーンで CPU 粒子と GPU 粒子の霧の
+// 濃さが違う」という、絵でしか気づけない形で割れる。ParticleSelfTest がこちらを検証する
+// (GPU 描画経路そのものは D3D が要るので golden の担当)。
+// fogMode: -1=off / 0=linear (start..end) / 1=exp / 2=exp2
+inline float ParticleFogFactor(int fogMode, float density, float fogStart, float fogEnd,
+                               float dist)
+{
+    if (fogMode < 0) {
+        return 0.0f; // 厳密に 0 = 加算の (1-f) 倍も alpha の lerp も恒等 (IEEE でも)
+    }
+    if (fogMode == 0) {
+        const float t = (dist - fogStart) / std::max(fogEnd - fogStart, 0.001f);
+        return std::clamp(t, 0.0f, 1.0f); // HLSL の saturate と同じ
+    }
+    if (fogMode == 1) {
+        return 1.0f - std::exp(-density * dist);
+    }
+    const float e = density * dist;
+    return 1.0f - std::exp(-e * e);
+}
+
+// M57追補: blendMode → 「加算合成か」。**両バックエンドがこの 1 本を呼ぶ** —
+// CPU 側の ParticleCB::blendAdditive と GPU 側の GpuRenderCB::fogColorBlend.w が同じ規則で
+// 決まることの唯一の機械保証。blendMode: 0=additive / 1=alpha / 2=歪み (歪みは色を出さない
+// ので霧の対象外だが、GPU では描画自体をスキップするため値は問われない)
+inline bool ParticleBlendIsAdditive(int blendMode) { return blendMode != 1; }
+
 // M42e: GPU 深度衝突の座標変換/反射。particle_sim.cs.hlsl とコメント同期のミラー —
 // selftest はこちらを検証する。GPU バックエンド限定の見た目効果 (spec 7.5 例外)。
 // クリップ座標 -> スクリーン UV。背面 (w<=0) は false (衝突判定しない)

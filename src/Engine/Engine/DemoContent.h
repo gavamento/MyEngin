@@ -171,6 +171,24 @@ void BuildJointShowcaseScene(EngineContext& ctx);
 // 軸が Y で、車輪エンティティは回せない (回すとサスのレイ方向まで回る)
 void RegisterJointShowcaseContent(EngineContext& ctx);
 
+// M57追補: 霧のショーケース (--fog-demo)。**リポジトリで唯一「霧と粒子と VFX が同居する」
+// シーン**で、golden 15 枚目の被写体。
+//
+// ★存在理由は被覆の穴埋め。M57e まで、GPU パーティクル描画経路と VfxRenderer
+//   (Sprite / Trail / TextMesh) は **どちらも golden に 1 枚も写っていなかった** — 壊れても
+//   14 枚が全部緑のまま通る状態だった。既存デモに足すのでは駄目で、FogComponent を持つ
+//   --render-demo に粒子を足すと demo_render_* 5 枚が、粒子を持つ既定デモに Fog を足すと
+//   demo_* 3 枚が動く (統合契約 予約 3「既存 golden には 1 バイトも触らない」に反する)。
+// ★被写体は「霧の量が距離の関数として読める」ように置いてある: 同じ柱を 10/25/45/70m に
+//   並べ、**フロクセルのグリッド端 (既定 64m) を画の中に入れて**受け持ちの切り替わりを
+//   絵に出す。粒子は加算と alpha を両方置く (フロクセル合成の 2 分岐の被覆)。
+// ★Trail は Rotator (GameLogic.dll) で親を回して初めてリボンになる — DLL が焼けて
+//   いないとリボンが消えて golden が静かに変わる (joints の VehicleDemoDriver と同じ依存)。
+void BuildFogShowcaseScene(EngineContext& ctx);
+
+// 上のショーケースが参照するマテリアルの実体登録 (fdemo_ 接頭辞)
+void RegisterFogShowcaseContent(EngineContext& ctx);
+
 // assets\ 以下の .prefab.json / .anim.json を各ライブラリへ登録する (Editor / Runtime 共用)。
 // M48g からは .glb / .gltf / .fbx のスケルトンもここで (エンティティを作らずに) 登録する
 void RegisterAssetLibraries(EngineContext& ctx);

@@ -49,6 +49,7 @@ public:
     bool terrainShowcase = false; // --terrain-demo (M58c: 地形のショーケース)
     bool physicsShowcase = false; // --physics-demo (M59d: 物理のショーケース。M59l で golden 13 枚目)
     bool jointShowcase = false;   // --joint-demo (M60i: 関節と機構のショーケース)
+    bool fogShowcase = false;     // --fog-demo (M57追補: 霧 + GPU 粒子 + VFX。golden 15 枚目)
     float terrainLodDistance = 0.0f; // --terrain-lod DIST (M58e: 0 = LOD 無効)
     float terrainSkirtDepth = 0.0f;  // --terrain-skirt D (M58e: 0 = 自動 / < 0 = 無し)
 
@@ -57,7 +58,10 @@ public:
         ctx.shaders->Load("forward_lit");
         mye::RegisterDemoContent(ctx);   // Editor と同じ実体登録 (AssetID 解決)
         mye::RegisterAssetLibraries(ctx); // .prefab / .anim を登録
-        if (scenePath.empty() && jointShowcase) {
+        if (scenePath.empty() && fogShowcase) {
+            // M57追補: joint / physics と同じ理由でコードから毎回組む (bat が撮影前に消す)
+            scenePath = L"cache\\fog_showcase.scene.json";
+        } else if (scenePath.empty() && jointShowcase) {
             // M60i: physics と同じ理由でコードから毎回組む (bat が撮影前に消す)
             scenePath = L"cache\\joint_showcase.scene.json";
         } else if (scenePath.empty() && physicsShowcase) {
@@ -102,6 +106,7 @@ public:
         mye::RegisterTerrainShowcaseContent(ctx); // M58c: tdemo_* 材質 (同上)
         mye::RegisterPhysicsShowcaseContent(ctx); // M59d: pdemo_* 材質 (同上)
         mye::RegisterJointShowcaseContent(ctx);   // M60i: jdemo_* 材質 + 車輪メッシュ (同上)
+        mye::RegisterFogShowcaseContent(ctx);     // M57追補: fdemo_* 材質 (同上)
         if (std::filesystem::exists(scenePath)) {
             mye::SceneSerializer::LoadFromFile(*ctx.scene, scenePath);
             // Editor と同じ「ロード直後 1 回」(M48e)。ここを揃えないと Editor で録った .rep と
@@ -109,6 +114,8 @@ public:
             mye::Prefab::RefreshNonOverridden(*ctx.scene, *ctx.prefabs);
         } else if (jointShowcase) {
             mye::BuildJointShowcaseScene(ctx); // M60i
+        } else if (fogShowcase) {
+            mye::BuildFogShowcaseScene(ctx); // M57追補
         } else if (physicsShowcase) {
             mye::BuildPhysicsShowcaseScene(ctx); // M59d
         } else if (terrainShowcase) {
@@ -334,6 +341,22 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             } else if (arg == L"--froxel-dump" && i + 1 < argc) {
                 config.froxelDumpFrame = _wtoi(argv[++i]); // M57b/M57c: 読み戻して検査
                 config.froxel = true;
+            } else if (arg == L"--particle-backend" && i + 1 < argc) {
+                // M57追補: バックエンドの CLI 固定。**shot_verify は Runtime.exe で撮る**ので
+                // Editor 側だけに足しても golden は撮れない (両方に要る)
+                const std::wstring backend = argv[++i];
+                if (backend == L"gpu") {
+                    config.particleBackendOverride = 1;
+                } else if (backend == L"cpu") {
+                    config.particleBackendOverride = 0;
+                } else {
+                    // ★綴り違いを黙って無視しない — 黙って cpu で撮ると
+                    //   「GPU の絵のつもりの golden」が CPU の絵になり、以後ずっと嘘をつく
+                    std::fwprintf(stderr, L"unknown --particle-backend value (expected cpu|gpu)\n");
+                    return 1;
+                }
+            } else if (arg == L"--particle-compare") {
+                config.particleCompareOverride = 1; // CPU/GPU を横に並べて描く (spec 7.4)
             } else if (arg == L"--rt-demo") {
                 app.rtShowcase = true; // M46i: コーネル箱のショーケースシーンを構築
             } else if (arg == L"--local-demo") {
@@ -348,6 +371,9 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 app.physicsShowcase = true; // M59d: 物理ショーケース (shot_verify の 13 枚目)
             } else if (arg == L"--joint-demo") {
                 app.jointShowcase = true; // M60i: 関節ショーケース (M60k で 14 枚目)
+            } else if (arg == L"--fog-demo") {
+                // M57追補: 霧 + GPU 粒子 + VFX のショーケース (golden 15 枚目の被写体)
+                app.fogShowcase = true;
             } else if (arg == L"--terrain-lod" && i + 1 < argc) {
                 // M58e: 地形 LOD の切替距離。**golden は LOD 無しのまま**で、
                 // クラック A/B のときだけ点ける

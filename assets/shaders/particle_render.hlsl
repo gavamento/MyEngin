@@ -80,16 +80,14 @@ VSOut VSMain(uint vid : SV_VertexID, uint iid : SV_InstanceID)
     return o;
 }
 
-// 距離フォグ係数 (common.hlsli::ApplyFog の f と同一式)。
-// M55a で common.hlsli を include したが ApplyFog へは寄せない — 粒子は additive なら
-// 「減光」、alpha なら「フォグ色へ補間」と合成の仕方が分かれるので、色ではなく係数が要る
+// 距離フォグ係数。ApplyFog へは寄せない — 粒子は additive なら「減光」、alpha なら
+// 「フォグ色へ補間」と合成の仕方が分かれるので、色ではなく係数が要る。
+// M57追補: 式そのものは common.hlsli::FogFactor へ移して GPU バックエンドと共有した。
+// ここに残るのは CB フィールドを束ねるだけの名前 — .hlsli は register / CB 名を持たない
+// 契約なので、「CB を読む部分」はシェーダ側に残す必要がある
 float ParticleFogFactor(float dist)
 {
-    if (gFogMode < 0) { return 0.0f; }
-    if (gFogMode == 0) { return saturate((dist - gFogStart) / max(gFogEnd - gFogStart, 0.001f)); }
-    if (gFogMode == 1) { return 1.0f - exp(-gFogDensity * dist); }
-    const float e = gFogDensity * dist;
-    return 1.0f - exp(-e * e);
+    return FogFactor(gFogMode, gFogDensity, gFogStart, gFogEnd, dist);
 }
 
 float4 PSMain(VSOut i) : SV_Target
@@ -135,13 +133,12 @@ float4 PSMain(VSOut i) : SV_Target
     // M57e: フロクセルの合成。**加算合成には内向き散乱を足さない** — 背後のサーフェス
     // (またはスカイ) が既に 1 回足しているので、加算で重ねるたびに足すと粒子の枚数ぶん
     // 霧が濃くなる。加算の粒子が受け取るのは「自分からカメラまでの減衰」だけ。
-    // alpha 側は src.rgb がそのまま「その場の放射輝度」なので scene·T + inscatter を作る
-    // (ブレンドの SRC_ALPHA が後で a を掛ける = 上の lerp とまったく同じ形)
+    // M57追補: 2 分岐を froxel_common.hlsli::FroxelCompositeParticle へ移して GPU
+    // バックエンドと共有した (式は 1 ビットも変えていない)
     if (gFroxelEnabled != 0) {
-        const float fw = FroxelSampleW(i.viewZ, gFroxelSlices, gFroxelNearZ, gFroxelFarZ);
-        const float4 vol =
-            gFroxelVolume.SampleLevel(gSamp, float3(i.pos.xy / gFroxelScreenSize, fw), 0);
-        col.rgb = (gBlendAdditive != 0) ? (col.rgb * vol.a) : (col.rgb * vol.a + vol.rgb);
+        col.rgb = FroxelCompositeParticle(gFroxelVolume, gSamp, i.pos.xy, gFroxelScreenSize,
+                                          i.viewZ, gFroxelSlices, gFroxelNearZ, gFroxelFarZ,
+                                          col.rgb, gBlendAdditive != 0);
     }
 
     // ソフトパーティクル (M42b): シーン深度との差でフェード。0=off (従来とビット同一)。

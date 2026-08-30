@@ -2,7 +2,7 @@
 #
 # 方針: CI 専用の検証ロジックは書かない (二重メンテを作らない)。
 # CI 固有の事情は環境変数 4 種だけで注入し、bat 本体はローカルと 1 文字も変えない
-# (4 つ目の MYE_SHOT_SKIP_* は同じ役目の 4 本 = FXAA / TAA / SSR / FROXEL):
+# (4 つ目の MYE_SHOT_SKIP_* は同じ役目の 5 本 = FXAA / TAA / SSR / FROXEL / FOG):
 #   MYE_EXTRA_ARGS   … 全 Editor.exe 実行へ後置する引数
 #                      --warp    = GPU の無い runner でも D3D11 デバイスを作る (WARP)
 #                      --no-audio = 音声デバイスが無いので XAudio2 を初期化しない
@@ -33,6 +33,10 @@
 #                      テンポラル蓄積を含む = TAA と同じ「フレーム間に蓄積するしきい値
 #                      分岐」の系統で、さらに WARP の注入が実シーンで 60ms/フレーム
 #                      掛かる (M57b 実測)。増幅率を測るまで CI に載せない
+#   MYE_SHOT_SKIP_FOG … スクショ 15 枚目 (霧のショーケース、M57追補) を飛ばす。
+#                      froxel を通すうえに **GPU パーティクルの sim 自体が WARP 上の
+#                      float 演算**なので、粒子位置が WARP のバージョンで動きうる
+#                      (CPU バックエンドと違い sim が GPU に載っている 1 枚)
 #
 # sim は CPU 専用なのでリプレイのワールドハッシュは WARP でも実 GPU でも同一 —
 # GPU 無し runner で replay_verify を回せる根拠がここ (計画の決定台帳 4)。
@@ -61,6 +65,7 @@ jobs:
       MYE_SHOT_SKIP_TAA: 1
       MYE_SHOT_SKIP_FROXEL: 1
       MYE_SHOT_SKIP_SSR: 1
+      MYE_SHOT_SKIP_FOG: 1
     steps:
       - uses: actions/checkout@v4
 
@@ -97,7 +102,7 @@ jobs:
       #    --warp --font-embedded --no-fxaa 固定 = ラスタライザ・フォント・
       #    機種差を増幅する 1 パスを開発機と揃える。
       #    replay_verify が先に Release をビルドしている前提 (bat はビルドしない)
-      - name: screenshot regression (10 shots, no-fxaa/taa/ssr/froxel)
+      - name: screenshot regression (10 shots, no-fxaa/taa/ssr/froxel/fog)
         shell: cmd
         run: tools\shot_verify.bat
 

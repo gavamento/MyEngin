@@ -271,7 +271,9 @@ light casts a shadowed shaft. A second pass integrates each Z column front-to-ba
 `(accumulated in-scatter, transmittance)` and every surface that has a depth composites it as
 `scene * T + inScatter`: the Deferred light pass (opaque, `t15`), the Forward family
 (`forward_lit` / `_instanced` / `_skinned` / `_terrain`, `t7` — which is also what the Deferred
-transparent tail runs), the skybox, and CPU particles (`t3`). Additive particles get the
+transparent tail runs), the skybox, CPU particles (`t3`) and GPU particles (`t4` — a different
+slot only because the GPU billboard shader already occupies `t3` with the flipbook texture).
+Additive particles get the
 transmittance **only**: the surface behind them already added the in-scatter once, so adding it
 again would scale the fog with the number of overlapping billboards. Pixels with no depth at all
 (the skybox, and the clear-colour background of a scene without one) sample the far end of the
@@ -290,9 +292,19 @@ The hand-off fraction is a pure function shared by the C++ mirror and the HLSL, 
 `RenderSelfTest` asserts that the two ranges add up to the whole ray with neither a gap nor an
 overlap; a golden screenshot (`demo_render_froxel`, local-only at tol=0, the same treatment
 FXAA and TAA get) pins the composited image.
+
+**The GPU particle backend joined the analytic fog and the volume together (M57追補).** Until
+then it applied *no* fog at all — switching the backend to GPU made the particles stop hazing
+while everything around them still did, which additive blending makes worse because a billboard
+that never dims stays crisp as its surroundings sink into the fog. Both backends now share the
+factor (`common.hlsli::FogFactor`, mirrored in `ParticleCurves.h` for the self test) and the
+composite (`froxel_common.hlsli::FroxelCompositeParticle`, which keeps the additive/alpha pair in
+one place so the "additive gets transmittance only" rule cannot be copied wrong). The GPU vertex
+shader carries a real camera distance rather than reusing view depth, because view depth is off by
+about 15% at the edge of a 60° frustum and the compare mode puts the two backends side by side.
+
 **Not covered in v1**: an orthographic view skips the grid entirely, because the froxel depth
-slices assume a perspective frustum; the GPU particle backend has never applied any fog and is
-left alone; the analytic fog beyond the grid is *not* applied to the sky (it never was before
+slices assume a perspective frustum; the analytic fog beyond the grid is *not* applied to the sky (it never was before
 M57, and adding it would sink a skybox into flat fog colour as soon as the density rises); and
 distortion particles (`blendMode=2`) write UV offsets rather than colour, so there is nothing to
 attenuate.
@@ -666,6 +678,7 @@ IParticleBackend (switchable interface)
 ### 7.4 Switching Behavior
 
 - Select the backend using radio buttons in the editor’s Particle Settings window. The selection is saved as a project setting
+- `--particle-backend <cpu|gpu>` and `--particle-compare` (M57追補) force the choice from the command line for a single run. They take precedence over the project setting and are **deliberately not written back**, so a screenshot run cannot silently change what the editor opens with next time. An unrecognised value is rejected rather than defaulting, because a silent fallback to CPU would quietly turn a "GPU" golden into a CPU one. Before these existed the GPU backend was reachable only from the editor GUI, which is why its draw path had no pixel coverage at all
 - On switching, **discard all living particles and restart the emitter** in the initial implementation
   - [TBD] Whether to support preservation of living particles through GPU-to-CPU and CPU-to-GPU buffer transfer in a later milestone
 - Provide a comparison mode that runs the same emitter on both backends in parallel, displays them side by side, and shows update time in milliseconds. This will serve as a portfolio showcase feature
@@ -1321,12 +1334,13 @@ a GPU-less runner an acceptable place to prove determinism. Golden screenshots, 
 *are* driver-dependent and are therefore always captured with `--warp`.
 
 **Screenshot regression (M52c).** Hashes prove that the *simulation* is reproducible; they say
-nothing about what is drawn. `tools\shot_verify.bat` captures fourteen deterministic screenshots with
+nothing about what is drawn. `tools\shot_verify.bat` captures fifteen deterministic screenshots with
 `Runtime.exe` (no ImGui, so neither `imgui.ini` nor the cursor position can leak in) and compares
 them against `tests\golden\*.png` pixel by pixel, writing a difference heat map next to any shot
-that moved. `--update` re-records the golden set. Ten of the fourteen gate CI; the other four
-exist only to cover FXAA, TAA, SSR and froxel volumetrics -- all four compared at `--tol 0` and
-all four skipped on the runner (`MYE_SHOT_SKIP_FXAA` / `_TAA` / `_SSR` / `_FROXEL`). Each is a
+that moved. `--update` re-records the golden set. Ten of the fifteen gate CI; the other five
+exist only to cover FXAA, TAA, SSR, froxel volumetrics and the fog showcase -- all five compared
+at `--tol 0` and all five skipped on the runner (`MYE_SHOT_SKIP_FXAA` / `_TAA` / `_SSR` /
+`_FROXEL` / `_FOG`). Each is a
 pass that **branches discretely**, so a 1-ULP difference flips the branch and throws a few dozen
 pixels a long way: FXAA was measured at maxDiff 35 (M52c) and SSR at maxDiff 95 over just 30
 pixels (M56d). No tolerance can cover that shape -- a genuine regression looks the same -- so the
@@ -1342,7 +1356,7 @@ extending `--render-demo`: terrain covers the whole frame, so folding it into th
 showcase would have re-recorded goldens shared with other in-flight branches, and
 `tests\golden\*.png` is binary and therefore unmergeable.
 
-Two shots -- `physics` (M59l) and `joints` (M60k) -- are the only ones **not** taken at frame 3.
+Three shots -- `physics` (M59l), `joints` (M60k) and `fog` (M57追補) -- are the only ones **not** taken at frame 3.
 Every other shot is a near-initial pose, which is the right way to ask "is the renderer still
 drawing this scene correctly" but leaves physics untested: after three ticks nothing has visibly
 moved. `physics` shoots the M59 showcase at frame 120 (two seconds), where the fluttering feather,
@@ -1358,6 +1372,22 @@ state cannot survive a one-bit difference in the runner's floating point (and `j
 `/fp:precise` contract into something a pixel comparison can falsify. If either ever reddens on the
 runner, the honest fallbacks are dropping it to frame 3 (renderer-only coverage) or moving it to
 the local-only `--tol 0` bucket -- not raising the tolerance.
+
+`fog` (M57追補) is the third frame-120 shot and the newest scene, `--fog-demo`. It exists because
+two draw paths had **no pixel coverage whatsoever**: the GPU particle backend (unreachable from
+the command line until `--particle-backend` existed) and `VfxRenderer`'s Sprite / Trail / TextMesh
+(not present in any demo scene or committed scene file -- the text in `flow_title` and `ui_probe`
+is screen-space `UIElement`, a different renderer). Either could break and all fourteen other
+shots would stay green. Folding the subjects into an existing scene was not an option: only
+`--render-demo` carries a `FogComponent` and it has no emitter, only the default demo has an
+emitter and it has no fog, so extending either would have re-recorded goldens shared with other
+branches. The scene puts the same pillar at 10/25/45/70 m so the hand-off at the grid's 64 m edge
+is visible, runs an additive and an alpha emitter so both composite branches appear, and places
+two identical sprites scaled by their distance ratio -- they land at the same on-screen size, so
+**the difference between them is the fog and nothing else**. It is `--tol 0` and local-only for
+two reasons at once: it enables the froxel volume, and the GPU particle simulation itself runs on
+WARP, so particle positions can move with the runner's WARP build. Its trail needs `Rotator` from
+`GameLogic.dll` to be built, the same dependency `joints` has on `VehicleDemoDriver`.
 
 Determinism of a *frame* needs two guarantees that determinism of a *tick* does not:
 

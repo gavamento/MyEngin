@@ -2,6 +2,10 @@
 // DrawInstancedIndirect (InstanceCount は CopyStructureCount で GPU 上のみで確定)
 
 #include "particle_gpu_common.hlsli"
+// M57追補: フロクセルの受け持ちの分け方と合成。register 宣言を 1 つも持たない純関数の束
+// なので衝突しない。**particle_gpu_common.hlsli 側には入れない** — あちらは emit/sim CS も
+// 読むので、描画専用のものを持ち込まない
+#include "froxel_common.hlsli"
 
 cbuffer GpuRenderCB : register(b1)
 {
@@ -15,13 +19,30 @@ cbuffer GpuRenderCB : register(b1)
     // ---- M61g: ローカルシミュレーション空間 (末尾 append。C++ 側 GpuRenderCB と一致) ----
     float4x4 gEmitterWorld; // transpose 済み (mul(float4, M) 規約は gViewProj と同じ)
     float4   gSpaceParams;  // x = simulationSpace (1 = pos を gEmitterWorld で変換), yzw = 予約
+    // ---- M57追補: 解析フォグ + フロクセル (末尾 append。C++ 側 GpuRenderCB と一致) ----
+    // ★ここが 1 行も無かったのが M57e のやり残し。加算合成は背景の減衰を受けないので、
+    //   周囲が霞むほど GPU 粒子だけが不自然にくっきり残っていた。
+    // ★**gSpaceParams.yzw の予約枠は使わない** — あれは M61g「シミュレーション空間」の
+    //   ブロックで、フォグとは無関係。混ぜると名前が嘘になり、次にローカル空間を拡張する
+    //   人が .y を空きだと思って踏む。節約できるのも 16 バイトだけ (必要なスカラは 17 本)。
+    // ★フラグを int でなく float で持つのは GpuParticleCB の家の流儀に合わせたもの
+    float4   gFogParams;      // x=fogMode (-1=off/0=linear/1=exp/2=exp2) y=density z=start w=end
+    float4   gFogColorBlend;  // xyz=フォグ色, w=blendAdditive (1=加算 / 0=alpha)。
+                              // **必ず一緒に読む 2 つ**なので同じ float4 に置いている
+    float4   gCameraPosParam; // xyz=カメラ位置 (VS の dist 用), w=予約
+    float4   gFroxelParams;   // x=enabled, y=nearZ, z=farZ, w=sliceCount
+    float4   gFroxelScreen;   // xy=画面サイズ (px。SV_Position → uv), zw=予約
 };
 
 StructuredBuffer<GpuParticle> gPoolSRV : register(t0);
 StructuredBuffer<uint> gAliveList : register(t1);
 Texture2D gDepth : register(t2); // M42b: シーン深度 (PS のみ。read-only DSV とセット)
 Texture2D gTex   : register(t3); // M42c: フリップブックテクスチャ (未使用時は白)
-SamplerState gSamp : register(s0);
+// M57追補: フロクセル (rgb=積算内向き散乱 / a=透過率)。
+// ★CPU 版は t3 だが、こちらは t3 をフリップブックが占有しているので **t4**
+//   (froxel::kGpuParticleSrvSlot。check_rules.ps1 の規則 9 が機械照合する)
+Texture3D gFroxelVolume : register(t4);
+SamplerState gSamp : register(s0); // LINEAR/CLAMP — froxel もこれを流用する
 
 struct VSOut
 {
@@ -30,6 +51,11 @@ struct VSOut
     float4 color : COLOR0;
     float  viewZ : TEXCOORD1; // M42b: ビュー空間深度 (= clip.w)
     float  age   : TEXCOORD2; // M42c: [0,1] 寿命係数 (フリップブック用)
+    // M57追補: カメラからのワールド距離 (解析フォグ用)。
+    // ★viewZ で代用してはいけない — あれはビュー空間深度で放射距離ではなく、
+    //   60° FOV の画面端で ~15% ずれる。代用すると「同じシーンで CPU 粒子と GPU 粒子の
+    //   霧の濃さが画面端だけ違う」= 比較モードで真っ先に目に付く食い違いを新たに作る
+    float  dist  : TEXCOORD3;
 };
 
 VSOut VSMain(uint vid : SV_VertexID, uint iid : SV_InstanceID)
@@ -57,6 +83,9 @@ VSOut VSMain(uint vid : SV_VertexID, uint iid : SV_InstanceID)
     o.color = color;
     o.viewZ = o.pos.w; // 透視投影では clip.w = ビュー空間 z
     o.age = age;       // M42c: フリップブック用
+    // M57追補: CPU 版 particle_render.hlsl と**同一式**。world には gOffsetX が既に
+    // 入っているので、CPU 側が inst.pos に renderOffsetX を足してから測るのと結合順まで一致する
+    o.dist = length(world - gCameraPosParam.xyz);
     return o;
 }
 
@@ -84,6 +113,30 @@ float4 PSMain(VSOut i) : SV_Target
         float m = saturate(1.0f - dot(d, d));
         m *= m;
         col = float4(i.color.rgb * m, i.color.a * m);
+    }
+
+    // ---- M57追補: フォグ (M32c) + フロクセル (M57e) ----
+    // **CPU バックエンド (particle_render.hlsl PSMain) と同一の意味論・同一の順序**
+    // (フォグ → フロクセル → ソフトフェード)。ここが 1 行も無かったせいで、GPU に
+    // 切り替えると粒子だけ霧が抜けていた。
+    // 解析フォグが担うのは「視線がグリッドを出てから粒子まで」の残り区間だけ —
+    // グリッドの中の粒子は残り 0m = f が厳密に 0 になり、フロクセル側だけが効く
+    // (deferred_light の起点押し出しと同じ規約を距離側で書いたもの = 三重計上の回避)
+    float fogDist = i.dist;
+    if (gFroxelParams.x != 0.0f) {
+        fogDist = i.dist * (1.0f - FroxelFogHandoffFraction(i.viewZ, gFroxelParams.z));
+    }
+    const float f = FogFactor((int)gFogParams.x, gFogParams.y, gFogParams.z, gFogParams.w, fogDist);
+    const bool blendAdditive = (gFogColorBlend.w != 0.0f);
+    if (blendAdditive) {
+        col.rgb *= (1.0f - f); // 加算は減光
+    } else {
+        col.rgb = lerp(col.rgb, gFogColorBlend.rgb, f); // alpha はフォグ色へ補間
+    }
+    if (gFroxelParams.x != 0.0f) {
+        col.rgb = FroxelCompositeParticle(gFroxelVolume, gSamp, i.pos.xy, gFroxelScreen.xy,
+                                          i.viewZ, gFroxelParams.w, gFroxelParams.y,
+                                          gFroxelParams.z, col.rgb, blendAdditive);
     }
 
     // ソフトパーティクル (M42b): 0=off (従来とビット同一)。CPU 版 particle_render.hlsl と同一式

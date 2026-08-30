@@ -45,6 +45,13 @@ struct GpuRenderCB { // particle_render_gpu.hlsl の GpuRenderCB と一致
     // ---- M61g: ローカルシミュレーション空間 (末尾 append。HLSL 側と両方同時に変更する) ----
     XMFLOAT4X4 emitterWorld; // transpose 済み (mul(float4, M) 規約は viewProj と同じ)
     XMFLOAT4 spaceParams;    // x = simulationSpace (1 = pos を emitterWorld で変換), yzw = 予約
+    // ---- M57追補: 解析フォグ + フロクセル (末尾 append。HLSL 側と両方同時に変更する) ----
+    // 既定 (fogMode=-1 / froxelEnabled=0) は従来と 1 ビットも変わらない
+    XMFLOAT4 fogParams;      // x=fogMode, y=density, z=start, w=end
+    XMFLOAT4 fogColorBlend;  // xyz=フォグ色, w=blendAdditive (エミッタごとに変わる)
+    XMFLOAT4 cameraPosParam; // xyz=カメラ位置 (VS の dist 用), w=予約
+    XMFLOAT4 froxelParams;   // x=enabled, y=nearZ, z=farZ, w=slices
+    XMFLOAT4 froxelScreen;   // xy=画面サイズ, zw=予約
 };
 
 struct GpuParticleData { // 48 bytes (シェーダの GpuParticle と一致)
@@ -595,6 +602,23 @@ void GpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
     cb.camRight = { view.view._11, view.view._21, view.view._31 };
     cb.camUp = { view.view._12, view.view._22, view.view._32 };
     cb.offsetX = renderOffsetX;
+    // M57追補: フォグ (M32c)。RenderView が CollectEnvironment から埋めた値を GPU 粒子にも
+    // 適用する — **CPU バックエンド (CpuParticleBackend::Render) と同じフィールドを同じ意味で
+    // 読む**のがこの追補の主張そのもの。fogMode=-1 (Fog コンポーネント無し) なら
+    // FogFactor が厳密に 0 を返すので従来とビット同一
+    cb.fogParams = { static_cast<float>(view.fogMode), view.fogDensity, view.fogStart,
+                     view.fogEnd };
+    cb.fogColorBlend = { view.fogColor.x, view.fogColor.y, view.fogColor.z,
+                         0.0f }; // w はエミッタごとにループ内で決める
+    cb.cameraPosParam = { view.cameraPos.x, view.cameraPos.y, view.cameraPos.z, 0.0f };
+    // M57追補: フロクセル。判定は **FroxelIsBound 1 本** (Deferred / Forward / スカイ /
+    // CPU 粒子と共有) — 自作ゲートを書くと「サムネイル (AssetPreviewCache の別 RenderSystem)
+    // だけが前フレームの残骸を読む」を構造的に潰せなくなる
+    const bool froxelBound = FroxelIsBound(view);
+    cb.froxelParams = { froxelBound ? 1.0f : 0.0f, view.froxelNearZ, view.froxelFarZ,
+                        static_cast<float>(view.froxelSlices) };
+    cb.froxelScreen = { static_cast<float>(view.width), static_cast<float>(view.height), 0.0f,
+                        0.0f };
     // M61g: emitterWorld / spaceParams がエミッタ毎に変わるため、アップロードはエミッタ
     // ループ内で毎回行う (共通部は同じ値を書き直すだけ — 描画結果は従来と同一)
 
@@ -608,6 +632,14 @@ void GpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
     // depthSRV が無いビューでは softFade=0 に強制されるのでバインド不要
     if (view.depthSRV != nullptr) {
         dc->PSSetShaderResources(2, 1, &view.depthSRV);
+    }
+    // M57追補: フロクセルの積分結果を t4 へ。**無効でも明示的に nullptr を張る** —
+    // 張らないと前のビュー / 前フレームの SRV がそのまま残る (CPU バックエンドと同じ流儀)
+    {
+        ID3D11ShaderResourceView* froxelSrv[1] = { froxelBound ? view.froxelSRV : nullptr };
+        static_assert(froxel::kGpuParticleSrvSlot == 4,
+                      "GPU パーティクルのフロクセル SRV は t4 (t3 はフリップブックが占有)");
+        dc->PSSetShaderResources(froxel::kGpuParticleSrvSlot, 1, froxelSrv);
     }
 
     for (GpuEmitter& em : emitters_) {
@@ -645,6 +677,10 @@ void GpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
         // gViewProj と同じ規約)。ワールド空間 (既定) は flag=0 — 行列は VS が読まない
         XMStoreFloat4x4(&cb.emitterWorld, XMMatrixTranspose(XMLoadFloat4x4(&em.renderWorld)));
         cb.spaceParams = { (em.descCache.simulationSpace == 1) ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f };
+        // M57追補: 合成の種類でフォグの効き方が変わる (加算=減光 / alpha=フォグ色へ補間)。
+        // 判定は CPU バックエンドと同じ ParticleBlendIsAdditive 1 本 — blendMode の意味
+        // (0=additive / 1=alpha / 2=歪み) を片方だけ直したときに静かに割れるのを防ぐ
+        cb.fogColorBlend.w = ParticleBlendIsAdditive(em.descCache.blendMode) ? 1.0f : 0.0f;
         UploadCB(dc, renderCB_.Get(), cb);
         ID3D11Buffer* cbs[2] = { simCB_.Get(), renderCB_.Get() };
         dc->VSSetConstantBuffers(0, 2, cbs);
@@ -664,7 +700,9 @@ void GpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
 
     ID3D11ShaderResourceView* nullSrvs[3] = { nullptr, nullptr, nullptr };
     dc->VSSetShaderResources(0, 2, nullSrvs);
-    dc->PSSetShaderResources(2, 2, nullSrvs); // M42b/c: t2=深度, t3=テクスチャを解除
+    // M57追補: t4 (フロクセル) まで剥がす。**残すと次フレームの積分パスが同じテクスチャを
+    // UAV に取った瞬間に D3D が片方を黙って外す** (M57d/M57e が t15 / t7 / t3 で 3 度踏んだ罠)
+    dc->PSSetShaderResources(2, 3, nullSrvs); // M42b/c: t2=深度, t3=テクスチャ, t4=フロクセル
     dc->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFFu);
     dc->OMSetDepthStencilState(nullptr, 0);
 }

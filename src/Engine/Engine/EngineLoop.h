@@ -144,6 +144,18 @@ struct EngineConfig {
     // (負値 = 何もしない)。--froxel も一緒に立てる
     int froxelDumpFrame = -1;
 
+    // ---- パーティクルバックエンドの CLI 上書き (M57追補) ----
+    // -1 = 未指定 (project_settings.json に従う) / 0 = CPU / 1 = GPU。
+    // ★これが無いと GPU バックエンドはエディタ GUI と設定ファイルからしか選べず、
+    //   --screenshot で GPU 粒子の絵を撮る手段が 1 つも無かった。それが
+    //   「GPU 描画経路のピクセル被覆がゼロ」= 壊れても golden が全部緑、の原因だった。
+    // ★上書きは**設定ファイルへ書き戻さない** — 撮影 1 回のために開発者の永続設定を
+    //   書き換えると、次に GUI を開いたときバックエンドが変わっている
+    int particleBackendOverride = -1;
+    // --particle-compare: CPU/GPU を並走させ GPU 側を横にオフセットして並べる (spec 7.4)。
+    // 同上、永続化しない
+    int particleCompareOverride = -1;
+
     // ---- グラフィックスドライバ (M52b) ----
     // true (--warp) で D3D_DRIVER_TYPE_WARP (ソフトウェアラスタライザ) を直接使う。
     // false でも HARDWARE の生成に失敗すれば WARP へ自動フォールバックするので、

@@ -555,6 +555,24 @@ float3 ApplyLightingHybrid(float3 albedo, float3 normal, float3 posW, float3 cam
 }
 
 
+// ---- 距離フォグの係数だけを返す版 (M57追補) ----
+// **ApplyFog は色を返すので粒子には使えない** — 粒子は additive なら「減光 (1-f 倍)」、
+// alpha なら「フォグ色へ lerp」と合成の仕方が分かれるので、必要なのは色ではなく係数 f。
+// CPU バックエンド (particle_render.hlsl) と GPU バックエンド (particle_render_gpu.hlsl) が
+// **この 1 本を共有する** — 片方だけ直すと「同じシーンで CPU 粒子と GPU 粒子の霧が違う」
+// という、絵でしか気づけない形で割れる。
+// ★下の ApplyFog は**この追補では 1 文字も変えない** — 全 lit シェーダが通る関数で、
+//   1 ULP でも動くと golden 14 枚が全部動く。式の一本化はここの宿題ではない。
+// **C++ ミラー: ParticleCurves.h::ParticleFogFactor** (変更時は両方更新)
+float FogFactor(int fogMode, float density, float fogStart, float fogEnd, float dist)
+{
+    if (fogMode < 0) { return 0.0f; }
+    if (fogMode == 0) { return saturate((dist - fogStart) / max(fogEnd - fogStart, 0.001f)); }
+    if (fogMode == 1) { return 1.0f - exp(-density * dist); }
+    const float e = density * dist;
+    return 1.0f - exp(-e * e);
+}
+
 // ---- 距離フォグ (M29d) + ハイトフォグ/太陽インスキャッタ (M43a) ----
 // mode: -1=無効 / 0=linear (start..end) / 1=exp (1-e^-ρd) / 2=exp2 (1-e^-(ρd)²)。
 // lit 済みの色をフォグ色へ補間する。

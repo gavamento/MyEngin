@@ -105,6 +105,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     bool terrainShowcase = false; // --terrain-demo (M58c: 地形のショーケース)
     bool physicsShowcase = false; // --physics-demo (M59d: 物理のリプレイ被覆シーン)
     bool jointShowcase = false;   // --joint-demo (M60i: 関節と機構のリプレイ被覆シーン)
+    bool fogShowcase = false;     // --fog-demo (M57追補: 霧のショーケース)
     float terrainLodDistance = 0.0f; // --terrain-lod DIST (M58e: 0 = LOD 無効)
     float terrainSkirtDepth = 0.0f;  // --terrain-skirt D (M58e: 0 = 自動 / < 0 = 無し)
     std::wstring editActorPath;  // --edit-actor PATH (M48k)
@@ -353,6 +354,22 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 // (--froxel も立てる)
                 config.froxelDumpFrame = _wtoi(argv[++i]);
                 config.froxel = true;
+            } else if (arg == L"--particle-backend" && i + 1 < argc) {
+                // M57追補: バックエンドを CLI から固定する (project_settings.json より優先。
+                // ただし書き戻さない)。GPU 粒子を --screenshot で撮る唯一の口
+                const std::wstring backend = argv[++i];
+                if (backend == L"gpu") {
+                    config.particleBackendOverride = 1;
+                } else if (backend == L"cpu") {
+                    config.particleBackendOverride = 0;
+                } else {
+                    // ★綴り違いを黙って無視しない — 黙って cpu で撮ると
+                    //   「GPU の絵のつもりの golden」が CPU の絵になり、以後ずっと嘘をつく
+                    std::fwprintf(stderr, L"unknown --particle-backend value (expected cpu|gpu)\n");
+                    return 1;
+                }
+            } else if (arg == L"--particle-compare") {
+                config.particleCompareOverride = 1; // CPU/GPU を横に並べて描く (spec 7.4)
             } else if (arg == L"--rt-demo") {
                 rtShowcase = true; // M46i: コーネル箱のショーケースシーンを構築
             } else if (arg == L"--parts-demo") {
@@ -369,6 +386,9 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 physicsShowcase = true; // M59d: 空力/浮力/材料のリプレイ被覆シーン
             } else if (arg == L"--joint-demo") {
                 jointShowcase = true; // M60i: 関節/機構/ラグドール/車のリプレイ被覆シーン
+            } else if (arg == L"--fog-demo") {
+                // M57追補: 霧 + GPU 粒子 + VFX のショーケース (golden 15 枚目の被写体)
+                fogShowcase = true;
             } else if (arg == L"--terrain-demo") {
                 terrainShowcase = true; // M58c: 地形ショーケース (golden demo_terrain_deferred)
             } else if (arg == L"--terrain-lod" && i + 1 < argc) {
@@ -609,6 +629,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     app.terrainShowcase = terrainShowcase; // M58c
     app.physicsShowcase = physicsShowcase; // M59d
     app.jointShowcase = jointShowcase;     // M60i
+    app.fogShowcase = fogShowcase;         // M57追補
     app.terrainLodDistance = terrainLodDistance; // M58e
     app.terrainSkirtDepth = terrainSkirtDepth;   // M58e
     app.editActorPath = editActorPath;

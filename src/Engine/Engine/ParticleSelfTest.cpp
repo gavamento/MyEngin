@@ -18,6 +18,7 @@
 #include "Engine/Engine/Replay/SimSnapshot.h"
 #include "Engine/Engine/Replay/WorldHasher.h"
 #include "Engine/Engine/Scene.h"
+#include "Engine/Renderer/RenderTypes.h" // M57追補: froxel::FogHandoffFraction (受け持ち分け)
 
 using namespace DirectX;
 
@@ -1571,6 +1572,84 @@ bool RunParticleSelfTest()
         b.Update(sb.GetWorld(), kDt);
         check(a.Pools()[0].alive > 100 && HashSimState(a) == HashSimState(b),
               "m61g: prewarm runs in the local frame independent of the world origin");
+    }
+
+    // ---- (M57追補) 霧の係数と合成規則 ----
+    // ★検査対象は **C++ ミラー** (ParticleCurves.h)。GPU 描画経路そのものは D3D が要るので
+    //   ここでは触れない — 絵の担保は golden (tests\golden\fog.png) が持つ。
+    //   ここが守るのは「CPU バックエンドと GPU バックエンドが同じ規則を使う」という一点で、
+    //   HLSL (common.hlsli::FogFactor) との一致だけは機械照合できないので式を並べて置く
+    {
+        // ① off は厳密に 0。加算の (1-f) 倍も alpha の lerp も恒等になる根拠なので、
+        //    近似比較ではなく == で見る (1 ULP でも残ると「霧が無いのに絵が動く」)
+        check(ParticleFogFactor(-1, 0.5f, 1.0f, 100.0f, 50.0f) == 0.0f,
+              "fog: mode<0 returns exactly 0 (identity for both blend modes)");
+
+        // ② 3 モードの定義値。exp / exp2 は dist=0 で厳密に 0
+        check(std::fabs(ParticleFogFactor(0, 0.0f, 10.0f, 30.0f, 20.0f) - 0.5f) < 1e-6f,
+              "fog: linear is (dist-start)/(end-start)");
+        check(std::fabs(ParticleFogFactor(1, 0.05f, 0.0f, 0.0f, 20.0f)
+                        - (1.0f - std::exp(-1.0f))) < 1e-6f,
+              "fog: exp is 1-e^(-rho*d)");
+        check(std::fabs(ParticleFogFactor(2, 0.05f, 0.0f, 0.0f, 20.0f)
+                        - (1.0f - std::exp(-1.0f))) < 1e-6f,
+              "fog: exp2 is 1-e^(-(rho*d)^2)");
+        check(ParticleFogFactor(1, 0.05f, 0.0f, 0.0f, 0.0f) == 0.0f
+                  && ParticleFogFactor(2, 0.05f, 0.0f, 0.0f, 0.0f) == 0.0f,
+              "fog: exp/exp2 are exactly 0 at dist 0");
+
+        // ③ linear の saturate と退化ガード (start==end で 0 除算しない)
+        check(ParticleFogFactor(0, 0.0f, 10.0f, 30.0f, 5.0f) == 0.0f
+                  && ParticleFogFactor(0, 0.0f, 10.0f, 30.0f, 99.0f) == 1.0f,
+              "fog: linear saturates to [0,1]");
+        {
+            const float f = ParticleFogFactor(0, 0.0f, 10.0f, 10.0f, 12.0f);
+            check(f >= 0.0f && f <= 1.0f, "fog: linear with start==end stays finite in [0,1]");
+        }
+
+        // ④ dist について単調非減少 (全モード)
+        {
+            bool mono = true;
+            for (int mode = 0; mode <= 2; ++mode) {
+                float prev = -1.0f;
+                for (int i = 0; i <= 64; ++i) {
+                    const float d = 200.0f * static_cast<float>(i) / 64.0f;
+                    const float f = ParticleFogFactor(mode, 0.02f, 0.0f, 150.0f, d);
+                    mono = mono && (f >= prev - 1e-7f);
+                    prev = f;
+                }
+            }
+            check(mono, "fog: factor is monotonic non-decreasing in distance");
+        }
+
+        // ⑤ ★フロクセルとの受け持ち分け。グリッドの中の粒子には解析フォグが 1 ミリも
+        //    乗らないこと = 三重計上を避けている主張そのもの。残り区間は乗算で作るので
+        //    IEEE でも厳密に 0 になり、そこから先は全モードで f が厳密に 0 になる
+        //    (linear は start>=0 のときに限る — forward_lit も同じ性質なので仕様)
+        {
+            const float farZ = 64.0f;
+            bool ok = true;
+            for (int i = 1; i <= 32; ++i) {
+                const float viewZ = farZ * 0.25f * static_cast<float>(i);
+                const float dist = viewZ * 1.3f; // 画面端は斜めなのでワールド距離のほうが長い
+                const float remain = dist * (1.0f - froxel::FogHandoffFraction(viewZ, farZ));
+                if (viewZ <= farZ) {
+                    ok = ok && (remain == 0.0f);
+                    for (int mode = 0; mode <= 2; ++mode) {
+                        ok = ok && (ParticleFogFactor(mode, 0.02f, 0.0f, 150.0f, remain) == 0.0f);
+                    }
+                } else {
+                    ok = ok && std::fabs(remain / dist - (1.0f - farZ / viewZ)) < 1e-5f;
+                }
+            }
+            check(ok, "fog: inside the froxel grid the analytic fog contributes exactly nothing");
+        }
+
+        // ⑥ blendMode → 加算合成か。**CPU 側 CB (blendAdditive) と GPU 側 CB
+        //    (fogColorBlend.w) が同じ値を得ることの唯一の機械保証**
+        check(ParticleBlendIsAdditive(0) && !ParticleBlendIsAdditive(1)
+                  && ParticleBlendIsAdditive(2),
+              "fog: blendMode 0/2 are additive, 1 is alpha (shared by both backends)");
     }
 
     if (failCount == 0) {

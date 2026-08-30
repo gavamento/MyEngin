@@ -2139,6 +2139,177 @@ void BuildJointShowcaseScene(EngineContext& ctx)
     w.ApplyStructuralChanges();
 }
 
+void RegisterFogShowcaseContent(EngineContext& ctx)
+{
+    RenderResources& res = *ctx.resources;
+    const AssetID white = res.textures.White();
+    const AssetID shader = AssetID{ HashStr("forward_lit") };
+    res.meshes.Cube();
+
+    auto makeMat = [&](const char* name, float r, float g, float b) {
+        Material m;
+        m.shader = shader;
+        m.texture = white;
+        m.baseColor = { r, g, b, 1.0f };
+        return res.materials.Register(name, m);
+    };
+    // 接頭辞は **fdemo_**。材質は全ショーケース分が無条件登録されるので、他と名前が
+    // 被ると先に登録したほうが黙って上書きされる (M54a の申し送りと同じ配慮)
+    // ★明るめに焼いてある。霧は「元の色をフォグ色へ寄せる」効果なので、素の色が暗いと
+    //   掛かっているのかどうかが絵から読めない (最初に暗い材質で組んで失敗した)
+    makeMat("fdemo_ground", 0.42f, 0.46f, 0.40f);
+    makeMat("fdemo_pillar", 0.78f, 0.79f, 0.82f); // 距離帯の物差し (奥ほど霧に沈む)
+}
+
+void BuildFogShowcaseScene(EngineContext& ctx)
+{
+    Scene& s = *ctx.scene;
+    World& w = s.GetWorld();
+    RenderResources& res = *ctx.resources;
+    s.SetName("fog_showcase");
+    const AssetID cube = res.meshes.Cube();
+
+    auto box = [&](const char* name, float x, float y, float z, float sx, float sy, float sz,
+                   const char* mat) {
+        GameObject go = s.CreateGameObject(name);
+        go.SetLocalPosition(x, y, z);
+        go.SetLocalScale(sx, sy, sz);
+        auto* mr = go.AddComponent<MeshRendererComponent>();
+        mr->mesh = cube;
+        mr->material = AssetID{ HashStr(mat) };
+        return go;
+    };
+
+    GameObject camera = s.CreateGameObject("Main Camera");
+    camera.AddComponent<CameraComponent>();
+    // 手前 8m から奥 70m までを 1 枚に収める画角。**フロクセルのグリッド端 (既定 64m) が
+    // 画の中に入っていること**が要点 — 受け持ちの切り替わりが絵に出ていないと、
+    // 「解析フォグとフロクセルの分担」が壊れても golden が気づけない
+    camera.SetLocalPosition(0.0f, 4.0f, -16.0f);
+    camera.SetLocalRotationEuler(5.0f, 0.0f, 0.0f);
+
+    GameObject sun = s.CreateGameObject("Sun");
+    sun.AddComponent<LightComponent>();
+    // ★太陽をカメラの正面側 (奥) へ振る — 太陽インスキャッタ (M43a) は「視線が太陽へ
+    //   向くほどフォグ色が太陽色へ寄る」効果なので、背後から照らすと絵に 1 画素も出ない。
+    //   VFX が ApplyFog へ寄ったこと (コミット②) を絵で見るための配置。
+    //   仰角は地面が読める程度に上げてある (寝かせると全部逆光のシルエットになる)
+    sun.SetLocalRotationEuler(42.0f, 6.0f, 0.0f);
+
+    box("Ground", 0.0f, -0.5f, 25.0f, 120.0f, 1.0f, 200.0f, "fdemo_ground");
+
+    // ---- 距離帯の物差し (グリッドの内と外を跨ぐ) ----
+    // 10 / 25 / 45 はフロクセルのグリッド内、70 は外。**同じ形・同じ材質**を並べるので、
+    // 霧の掛かり方の違いがそのまま距離の関数として読める
+    const float pillarZ[] = { 10.0f, 25.0f, 45.0f, 70.0f };
+    for (int i = 0; i < 4; ++i) {
+        char name[32];
+        std::snprintf(name, sizeof(name), "Pillar_%d", i);
+        const float x = (i % 2 == 0) ? -6.0f : 6.0f;
+        box(name, x, 3.0f, pillarZ[i], 1.6f, 7.0f, 1.6f, "fdemo_pillar");
+    }
+
+    // ---- 霧 (--render-demo と同じ値) ----
+    // 同じ設定にしてあるのは、あちらで確認済みの「メッシュがどう霧むか」を基準として
+    // 使うため。粒子と VFX がこれと食い違っていないかが本ショーケースの見どころ
+    {
+        GameObject fog = s.CreateGameObject("Fog");
+        auto* f = fog.AddComponent<FogComponent>();
+        f->mode = 2; // Exp2
+        f->color = { 0.11f, 0.13f, 0.17f, 1.0f };
+        // ★density は --render-demo (0.011) より濃い 0.020。あちらは被写体が 44〜88m に
+        //   あるが、こちらは粒子と VFX が 28〜38m の近距離に居るので、同じ濃度だと
+        //   f が 0.12 程度にしかならず「霧が適用されているか」が絵から読めない。
+        //   0.020 なら 32m で f≈0.34 / 61m で f≈0.78 / 86m で f≈0.95 と広い範囲に散る
+        f->density = 0.020f;
+        f->heightFalloff = 0.035f;
+        f->baseHeight = 0.0f;
+        f->inscatterIntensity = 0.30f;
+        f->inscatterPower = 10.0f;
+    }
+
+    // ---- パーティクル: 加算と alpha を両方置く ----
+    // ★フロクセル合成の 2 分岐 (加算は透過率だけ / alpha は scene·T + inscatter) を
+    //   **両方とも絵に出す**のが目的。片方だけだと、取り違えても golden が気づけない
+    {
+        GameObject fire = s.CreateGameObject("Fire_Additive");
+        fire.SetLocalPosition(-3.0f, 0.2f, 16.0f);
+        auto* e = fire.AddComponent<ParticleEmitterComponent>();
+        e->blendMode = 0; // additive
+        e->rate = 120.0f;
+        e->seed = 20250830u;
+    }
+    {
+        GameObject smoke = s.CreateGameObject("Smoke_Alpha");
+        smoke.SetLocalPosition(3.0f, 0.2f, 16.0f);
+        auto* e = smoke.AddComponent<ParticleEmitterComponent>();
+        e->blendMode = 1; // alpha
+        e->rate = 90.0f;
+        e->seed = 777u;
+        e->colorBegin = { 0.75f, 0.78f, 0.82f, 0.85f };
+        e->colorEnd = { 0.55f, 0.58f, 0.62f, 0.0f };
+        e->sizeMin = 0.35f;
+        e->sizeMax = 0.60f;
+        e->speedMin = 1.0f;
+        e->speedMax = 1.8f;
+    }
+
+    // ---- VFX (Sprite / Trail / TextMesh) ----
+    // ★**リポジトリで唯一この 3 種が写る被写体**。M57e まで golden に 1 枚も無かったので、
+    //   VfxRenderer は壊れても 14 枚が全部緑のままだった
+    // ★スプライト 2 枚は **「霧の量だけが違う 2 枚」になるように配置してある**:
+    //   どちらもカメラの目線高さ (y=4) に置き、遠いほうは距離比 (68/28) だけ大きく焼く。
+    //   こうすると 2 枚は画面上で同じ大きさ・左右対称の同じ高さに出るので、
+    //   **見え方の差が霧の量そのもの**になる。片方だけ霧が抜けたら一目で分かる。
+    //   ★寸法や z を動かすときは必ずこの比 (size ∝ 距離) を保つこと — 崩すと
+    //     「大きさが違うから暗いのか、霧で暗いのか」が絵から切り分けられなくなる
+    {
+        GameObject spriteNear = s.CreateGameObject("Sprite_Near");
+        spriteNear.SetLocalPosition(-10.0f, 4.0f, 12.0f); // カメラから 28m
+        auto* sp = spriteNear.AddComponent<SpriteRendererComponent>();
+        sp->color = { 1.0f, 0.55f, 0.25f, 1.0f };
+        sp->size = { 2.0f, 2.0f };
+    }
+    {
+        GameObject spriteFar = s.CreateGameObject("Sprite_Far");
+        spriteFar.SetLocalPosition(24.29f, 4.0f, 52.0f); // カメラから 68m (28m の 2.43 倍)
+        auto* sp = spriteFar.AddComponent<SpriteRendererComponent>();
+        sp->color = { 1.0f, 0.55f, 0.25f, 1.0f };
+        sp->size = { 4.857f, 4.857f }; // 2.0 * 2.43 = 画面上では近い板と同じ大きさ
+    }
+    {
+        // ★Trail は「点が 2 つ以上溜まって初めて」リボンになる (TrailStore)。静止した
+        //   エンティティでは 1 本も出ないので、Rotator (GameLogic.dll) で親を Y 軸回転させて
+        //   子のワールド位置を動かす。**DLL が焼けていないとリボンが消えて golden が
+        //   静かに変わる** (joints の VehicleDemoDriver と同じ依存)。
+        //   Rotator は 30 deg/s なので、frame 120 (2.0 秒) までに 60 度ぶんの弧が溜まる
+        GameObject spinner = s.CreateGameObject("Spinner");
+        spinner.SetLocalPosition(0.0f, 3.2f, 20.0f);
+        AttachScriptIfRegistered(w, spinner.Id(), "Rotator");
+        GameObject tip = s.CreateGameObject("TrailTip");
+        tip.SetParent(spinner);
+        tip.SetLocalPosition(4.5f, 0.0f, 0.0f);
+        auto* tr = tip.AddComponent<TrailRendererComponent>();
+        tr->duration = 2.0f; // 撮影 frame (120 = 2.0 秒) と揃える = 弧が最長になる
+        tr->width = 0.55f;
+        tr->colorBegin = { 0.35f, 0.85f, 1.0f, 1.0f };
+        tr->colorEnd = { 0.10f, 0.35f, 0.65f, 0.0f };
+        tr->minVertexDistance = 0.05f;
+    }
+    {
+        GameObject label = s.CreateGameObject("Label");
+        label.SetLocalPosition(0.0f, 5.2f, 30.0f);
+        auto* tm = label.AddComponent<TextMeshComponent>();
+        std::snprintf(tm->text, sizeof(tm->text), "FOG");
+        // fontScale 1.0 で行高 ≈ 0.3 ワールド単位。30m 先で読める大きさに留める —
+        // 大きくしすぎると板が画面を覆って、奥の柱 (霧の物差し) が隠れる
+        tm->fontScale = 6.0f;
+        tm->color = { 0.95f, 0.95f, 0.80f, 1.0f };
+    }
+
+    w.ApplyStructuralChanges();
+}
+
 void RegisterAssetLibraries(EngineContext& ctx)
 {
     std::error_code ec;

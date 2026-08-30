@@ -290,6 +290,18 @@ $constGroups = @(
             'src\Engine\Renderer\RenderTypes.h'      = 'constexpr\s+int\s+kParticleSrvSlot\s*=\s*(\d+)'
             'assets\shaders\particle_render.hlsl'    = 'Texture3D\s+gFroxelVolume\s*:\s*register\(t(\d+)\)'
         }
+    },
+    @{
+        # M57追補: **GPU** パーティクル PS のフロクセルスロット。CPU 版 (t3) と番号が違う —
+        # GPU 版は t3 をフリップブックテクスチャが占有しているので t4。
+        # 食い違うと **GPU 粒子だけ霧が 0** になるが、コンパイルも実行も通る
+        # (張られていないスロットは 0 を返す)。CPU 版と揃っていないのは意図的なので、
+        # 「番号が違う = バグ」と早合点して片方を書き換えないこと
+        label = 'froxel::kGpuParticleSrvSlot / particle_render_gpu register(t4)'
+        sites = @{
+            'src\Engine\Renderer\RenderTypes.h'        = 'constexpr\s+int\s+kGpuParticleSrvSlot\s*=\s*(\d+)'
+            'assets\shaders\particle_render_gpu.hlsl'  = 'Texture3D\s+gFroxelVolume\s*:\s*register\(t(\d+)\)'
+        }
     }
 )
 foreach ($g in $constGroups) {

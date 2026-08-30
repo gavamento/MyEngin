@@ -240,7 +240,8 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     vfxRenderer.Init(device, shaderManager, &uiRenderer); // M29c: 同上 (VFX が出ないだけ)
     reloadHub.Init(&shaderManager, &resources, &scene, &prefabLibrary, &animLibrary, &soundLibrary,
                    &mixerLibrary, &audioSystem, assetsRoot);
-    particleSystem.Init(device, shaderManager, assetsRoot);
+    particleSystem.Init(device, shaderManager, assetsRoot, config.particleBackendOverride,
+                        config.particleCompareOverride); // M57追補: CLI 上書き (永続化しない)
 
     // ポストプロセス設定を config から反映 (M16)。全ビューポート共通の renderSystem に載る
     renderSystem.assetsRoot = assetsRoot; // M58c: TerrainComponent.source の解決基点

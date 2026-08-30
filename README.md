@@ -117,8 +117,16 @@ Runtime.exe --render-demo --deferred --froxel
                                           #   距離フォグはグリッドの外側だけを持ち、
                                           #   ゴッドレイは自動 off になる (三重計上の解消)。
                                           #   Forward / Deferred どちらでも効き、不透明・半透明・
-                                          #   地形・空・CPU パーティクルに載る。UI は
-                                          #   表示 > レンダリング > ボリュメトリックフォグ
+                                          #   地形・空・パーティクル (CPU/GPU 両方) に載る。
+                                          #   UI は表示 > レンダリング > ボリュメトリックフォグ
+Runtime.exe --fog-demo --froxel --particle-backend gpu
+                                          # 霧のショーケース (M57追補) = スクショ 15 枚目。
+                                          #   GPU パーティクルと Sprite/Trail/TextMesh の
+                                          #   唯一のピクセル被覆 (それまでどちらも golden に
+                                          #   1 枚も写っていなかった)。柱を 10/25/45/70m に
+                                          #   並べてグリッド端 (64m) の受け持ち交代を絵に出し、
+                                          #   画面上で同じ大きさの板 2 枚で霧の量だけを比べる
+Runtime.exe --particle-compare            # CPU/GPU を横に並べて描く (設定は書き戻さない)
 Editor.exe --warp                         # WARP (ソフトウェアラスタライザ) 固定で起動
 Editor.exe --package dist                 # 配布パッケージを CLI で作成 (exit code で成否)
 Runtime.exe --crash-test av --crash-at-tick 60
@@ -129,7 +137,7 @@ Runtime.exe --net-demo --net-join 127.0.0.1:7777 --net-delay 3
 Runtime.exe --net-poke-tick 60            # 片側だけ壊して desync 検出と診断チェーンを試す
 Runtime.exe --rep-diff a.rep b.rep        # 2 本の .rep がどの tick で割れたか
 tools\replay_verify.bat                   # 一貫性検証一式 (6 シーン被覆)
-tools\shot_verify.bat [--update]          # 決定的スクショ 14 枚を tests\golden と比較
+tools\shot_verify.bat [--update]          # 決定的スクショ 15 枚を tests\golden と比較
 tools\crash_verify.bat                    # 5 経路で実際に落として .rep の再現性を検証
 tools\net_verify.bat                      # 2 プロセスのネット対戦 + desync 検出の実地検証
 tools\check_rules.ps1                     # コーディング規則の静的検査

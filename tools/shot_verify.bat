@@ -61,7 +61,7 @@ rem ★tol は 3 種類ある。**どれも実測値から決めていて、赤�
 rem   tol=3  … 既定。ラスタ + ライティング + トーンマップの丸め (実測 maxDiff 1〜3)
 rem   tol=12 … demo_terrain_deferred の 1 枚だけ。**異方性フィルタは実装依存**で
 rem            WARP のビルド違いで一致しない (実測 maxDiff=8)。詳細は該当 call の直前
-rem   tol=0  … ローカル限定の 4 枚 (fxaa / taa / ssr / froxel)。どれも**離散的に分岐する**
+rem   tol=0  … ローカル限定の 5 枚 (fxaa / taa / ssr / froxel / fog)。どれも**離散的に分岐する**
 rem            演算で、1 ULP の差が分岐を反転させると数十画素が丸ごと飛ぶ。この形は
 rem            tol をいくつにしても守れない (上げると本物の回帰も一緒に見逃す) ので、
 rem            ランナーでは撮らず、開発機でのビット一致だけを主張する
@@ -240,6 +240,32 @@ set SHOT=--warp --no-audio --font-embedded --width 960 --height 540 --frames 123
 call :shot joints --joint-demo
 set SHOT=%SHOTBASE% --no-fxaa
 
+rem ---- 15 枚目 (M57追補): 霧のショーケース。**GPU パーティクル描画経路と VfxRenderer
+rem      (Sprite / Trail / TextMesh) の唯一のピクセル被覆**。
+rem      それまで GPU バックエンドは --screenshot で撮る手段が無く (エディタ GUI からしか
+rem      選べなかった)、VFX 3 種は 14 枚のどれにも写っていなかったので、**どちらも壊れても
+rem      全部緑のまま通る**状態だった。
+rem
+rem ★frame 120 で撮る (physics / joints と同じ理由)。frame 3 だとトレイルの点が 3 つしか
+rem   無く粒子も数個で、守るものが絵に出ない。Rotator (GameLogic.dll) が 30 deg/s なので
+rem   120 tick = 2 秒 = 60 度ぶんの弧が溜まる。**DLL が焼けていないとリボンが消える**
+rem ★tol=0 のローカル限定。理由が 2 つ重なっている:
+rem     (a) froxel の注入/積分は exp/pow を含む CS で、開発機とランナーの WARP の
+rem         バージョンが違う (demo_render_froxel を tol=0 にした先例そのもの)
+rem     (b) **GPU パーティクルの sim 自体が WARP 上の float 演算**なので、粒子位置が
+rem         機種で動きうる (CPU バックエンドと違い sim が GPU に載っている)
+rem   ★赤くなったから tol を上げる、はやらないこと。後退先は「--particle-backend を外して
+rem     CPU 粒子で撮る」か「--froxel を外す」で、どちらも被覆を 1 段落とすだけで済む
+if defined MYE_SHOT_SKIP_FOG goto :skip_fog
+set FOG_SCENE=cacheog_showcase.scene.json
+if exist %FOG_SCENE% del /q %FOG_SCENE%
+set SHOT=--warp --no-audio --font-embedded --width 960 --height 540 --frames 123 --shot-frame 120 --no-fxaa
+set TOLNOW=0
+call :shot fog --fog-demo --froxel --particle-backend gpu
+set TOLNOW=%TOL%
+set SHOT=%SHOTBASE% --no-fxaa
+:skip_fog
+
 echo.
 if %UPDATE%==1 (
     echo [shot_verify] golden updated in %GOLDEN% - review the images before committing
@@ -252,9 +278,9 @@ if not %FAILED%==0 (
     exit /b 1
 )
 if defined MYE_SHOT_SKIP_FXAA (
-    echo [PASS] screenshot regression ^(%SHOTS% shots, warp, no-fxaa, tol=%TOL% + terrain at 12, physics/joints at frame 120^)
+    echo [PASS] screenshot regression ^(%SHOTS% shots, warp, no-fxaa, tol=%TOL% + terrain at 12, physics/joints/fog at frame 120^)
 ) else (
-    echo [PASS] screenshot regression ^(%SHOTS% shots, warp, tol=%TOL% + terrain at 12 + physics/joints at frame 120 + fxaa/taa/ssr/froxel at tol=0^)
+    echo [PASS] screenshot regression ^(%SHOTS% shots, warp, tol=%TOL% + terrain at 12 + physics/joints/fog at frame 120 + fxaa/taa/ssr/froxel/fog at tol=0^)
 )
 exit /b 0
 
@@ -264,7 +290,9 @@ rem 撮影条件は %SHOT%、判定の許容は %TOLNOW% を見る (呼ぶ側が
 :shot
 set NAME=%1
 shift
-set EXTRA=%1 %2 %3
+rem M57追補: 4 トークンへ広げた (--fog-demo --froxel --particle-backend gpu で
+rem   3 つでは足りず、末尾の "gpu" が黙って落ちて CPU の絵が撮れてしまう)
+set EXTRA=%1 %2 %3 %4
 set OUT=%ACTUAL%\%NAME%.png
 if %UPDATE%==1 set OUT=%GOLDEN%\%NAME%.png
 if exist "%OUT%" del /q "%OUT%"

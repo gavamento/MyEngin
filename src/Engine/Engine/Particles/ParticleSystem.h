@@ -17,7 +17,14 @@ enum class ParticleBackendKind { Cpu = 0, Gpu = 1 };
 // - 選択状態は project_settings.json に永続化
 class ParticleSystem {
 public:
-    bool Init(GraphicsDevice& device, ShaderManager& shaders, const std::wstring& assetsRoot);
+    // backendOverride / compareOverride: -1 = 未指定 (project_settings.json に従う) /
+    // 0 = CPU / 1 = GPU (compare は 0 = off / 1 = on)。CLI (--particle-backend /
+    // --particle-compare) 用の M57追補。
+    // ★適用は **LoadSettings() の直後に active_ / compareMode_ へ直接代入**する。
+    //   SetActiveKind() 経由にするとあちらが SaveSettings() を呼ぶので、撮影 1 回で
+    //   開発者の project_settings.json が書き換わる
+    bool Init(GraphicsDevice& device, ShaderManager& shaders, const std::wstring& assetsRoot,
+              int backendOverride = -1, int compareOverride = -1);
     void Shutdown();
 
     void Update(World& world, float dt);                       // tick フェーズ 4

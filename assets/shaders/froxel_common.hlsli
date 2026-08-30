@@ -125,4 +125,24 @@ float3 FroxelComposite(Texture3D vol, SamplerState smp, float2 screenPos, float2
     return color * v.a + v.rgb;
 }
 
+// ---- M57追補: 粒子 (CPU / GPU 両バックエンド) への合成 ----
+// **additive 版だけを切り出さず 2 分岐を丸ごと関数化する。** 守るべき不変量は
+// 「加算のときだけ内向き散乱を足さない」という**対**であって片側ではない —
+// 片方だけをヘルパにすると、次の消費者が alpha 側を手書きして inscatter を足し忘れる
+// (または二重に足す) 余地がそのまま残る。
+//   ・blendAdditive : Lo = src·T。**inscatter を足さない** — 背後のサーフェス (またはスカイ)
+//     が既に 1 回足しているので、加算で重ねるたびに足すと粒子の枚数ぶん霧が濃くなる。
+//     C++ の froxel::CompositeFroxelAdditive (RenderTypes.h) と同一式
+//   ・それ以外 : Lo = src·T + inscatter。ブレンドの SRC_ALPHA が後で a を掛けるので、
+//     M32c の「フォグ色へ lerp」とまったく同じ形になる。C++ の froxel::CompositeFroxel と同一式
+// サンプラは各パスが既に持っている LINEAR/CLAMP を渡す (上の FroxelComposite と同じ契約)
+float3 FroxelCompositeParticle(Texture3D vol, SamplerState smp, float2 screenPos, float2 screenSize,
+                               float viewZ, float sliceCount, float nearZ, float farZ, float3 color,
+                               bool blendAdditive)
+{
+    const float w = FroxelSampleW(viewZ, sliceCount, nearZ, farZ);
+    const float4 v = vol.SampleLevel(smp, float3(screenPos / screenSize, w), 0);
+    return blendAdditive ? (color * v.a) : (color * v.a + v.rgb);
+}
+
 #endif // MYE_FROXEL_COMMON_HLSLI

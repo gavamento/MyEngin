@@ -885,6 +885,14 @@ constexpr int kForwardSrvSlot = 7;
 // パーティクル PS のスロット (t0 = インスタンス / t1 = テクスチャ / t2 = 深度 の次)。
 // パーティクルは独立したシェーダで、上の 4 本とはバインド空間を共有しない
 constexpr int kParticleSrvSlot = 3;
+// M57追補: **GPU** パーティクル PS のスロット。
+// ★上の kParticleSrvSlot (=3) は**流用できない** — GPU バックエンドは
+//   t0 = プール / t1 = alive list (どちらも VS 専用) / t2 = シーン深度 / t3 = フリップブック
+//   で t3 が既に埋まっている (particle_render_gpu.hlsl)。t4 が最初の空き。
+//   番号を揃えようとして CPU 側を動かすと、あちらの t3 剥がしと check_rules の既存
+//   エントリまで巻き込むことになる。両者は別シェーダでバインド空間を共有しないので、
+//   番号が違っていても実害は無い (規則は「自分が使っている最後の t の次」で 3 者共通)
+constexpr int kGpuParticleSrvSlot = 4;
 
 // スカイ / 背景 (= 深度が無いピクセル) 用のサンプル w。**グリッド全体ぶんの積分**を指す。
 // ★ここは必ず IntegratedSampleWForDepth(viewZ >= farZ) と**同じ値**でなければならない —

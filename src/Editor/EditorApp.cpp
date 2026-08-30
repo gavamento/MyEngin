@@ -106,6 +106,8 @@ void EditorApp::OnStart(EngineContext& ctx)
         scenePath_ = L"cache\\physics_showcase.scene.json"; // M59d (同上)
     } else if (jointShowcase) {
         scenePath_ = L"cache\\joint_showcase.scene.json"; // M60i (同上)
+    } else if (fogShowcase) {
+        scenePath_ = L"cache\\fog_showcase.scene.json"; // M57追補 (同上)
     } else {
         scenePath_ = ctx.assetsRoot + L"\\scenes\\main.scene.json";
         ProjectManifest manifest; // ブートシーンはマニフェスト優先 (M26)
@@ -133,6 +135,7 @@ void EditorApp::OnStart(EngineContext& ctx)
     RegisterTerrainShowcaseContent(ctx); // M58c (tdemo_* 材質。同上)
     RegisterPhysicsShowcaseContent(ctx); // M59d (pdemo_* 材質。同上)
     RegisterJointShowcaseContent(ctx);   // M60i (jdemo_* 材質 + 車輪メッシュ。同上)
+    RegisterFogShowcaseContent(ctx);     // M57追補 (fdemo_* 材質。同上)
     if (flowShowcase) {
         // 両シーンファイルを確保してからタイトルを普通のロード経路で開く。
         // ここで組む = GameLogic.dll / C# コンパイル済み (EngineLoop が OnStart 前に実施)
@@ -160,6 +163,8 @@ void EditorApp::OnStart(EngineContext& ctx)
         BuildPhysicsShowcaseScene(ctx); // M59d
     } else if (jointShowcase) {
         BuildJointShowcaseScene(ctx); // M60i
+    } else if (fogShowcase) {
+        BuildFogShowcaseScene(ctx); // M57追補
     } else {
         BuildDemoScene(ctx, perfRate, perfMax);
     }
