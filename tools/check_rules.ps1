@@ -312,6 +312,32 @@ $constGroups = @(
             'src\Engine\Renderer\RenderTypes.h' = 'constexpr\s+int\s+kVfxSrvSlot\s*=\s*(\d+)'
             'assets\shaders\vfx_sprite.hlsl'    = 'Texture3D\s+gFroxelVolume\s*:\s*register\(t(\d+)\)'
         }
+    },
+    # M42追補: GPU alpha ソートのブロック長とスレッド数。C++ 側はパス表 (どのパスを何グループ
+    # 起動するか) の計算に、HLSL 側は groupshared 配列長と numthreads に同じ値を使う。
+    # 食い違うと **ソートが途中までしか効かない** — 絵が微妙に乱れるだけでコンパイルも実行も
+    # 通ってしまうので、機械照合が唯一の防波堤。
+    # ★ブロック長は LDS 消費に直結する (uint 2 本 x 2048 = 16KB)。cs_5_0 の上限は 32KB
+    @{
+        label = 'kParticleSortBlock / MYE_PARTICLE_SORT_BLOCK'
+        sites = @{
+            'src\Engine\Engine\Particles\ParticleCurves.h' = 'kParticleSortBlock\s*=\s*(\d+)'
+            'assets\shaders\particle_sort_common.hlsli'    = '#\s*define\s+MYE_PARTICLE_SORT_BLOCK\s+(\d+)'
+        }
+    },
+    @{
+        label = 'kParticleSortThreads / MYE_PARTICLE_SORT_THREADS'
+        sites = @{
+            'src\Engine\Engine\Particles\ParticleCurves.h' = 'kParticleSortThreads\s*=\s*(\d+)'
+            'assets\shaders\particle_sort_common.hlsli'    = '#\s*define\s+MYE_PARTICLE_SORT_THREADS\s+(\d+)'
+        }
+    },
+    @{
+        label = 'kParticleSortMergeThreads / MYE_PARTICLE_SORT_MERGE_THREADS'
+        sites = @{
+            'src\Engine\Engine\Particles\ParticleCurves.h' = 'kParticleSortMergeThreads\s*=\s*(\d+)'
+            'assets\shaders\particle_sort_common.hlsli'    = '#\s*define\s+MYE_PARTICLE_SORT_MERGE_THREADS\s+(\d+)'
+        }
     }
 )
 foreach ($g in $constGroups) {

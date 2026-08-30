@@ -673,9 +673,13 @@ void CpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
         }
         if (d.blendMode == 1) {
             // back-to-front (明示キー: viewZ 降順 → index 昇順。spec 11.2 規則 7)
+            // M42追補: キーの式は ParticleCurves.h::ParticleAlphaSortViewZ へ切り出した —
+            // GPU バックエンドのソート CS が同じ 1 本を写すため (式が 2 箇所に散ると、
+            // 片方だけ直したときに「同じシーンで CPU と GPU の重なり順が違う」形で静かに割れる)。
+            // 演算列は 1 ビットも変えていない (関数名の後ろへ移しただけ)
             std::sort(orderScratch_.begin(), orderScratch_.end(), [&](uint32_t a, uint32_t b) {
-                const float za = sx[a] * vm._13 + sy[a] * vm._23 + sz[a] * vm._33;
-                const float zb = sx[b] * vm._13 + sy[b] * vm._23 + sz[b] * vm._33;
+                const float za = ParticleAlphaSortViewZ(sx[a], sy[a], sz[a], vm);
+                const float zb = ParticleAlphaSortViewZ(sx[b], sy[b], sz[b], vm);
                 if (za != zb) {
                     return za > zb;
                 }

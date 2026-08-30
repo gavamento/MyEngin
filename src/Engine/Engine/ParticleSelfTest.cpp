@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <iterator> // M42追補: std::size (ソート網の入力表)
 #include <vector>
 
 #include "Engine/Core/Components.h"
@@ -1650,6 +1651,192 @@ bool RunParticleSelfTest()
         check(ParticleBlendIsAdditive(0) && !ParticleBlendIsAdditive(1)
                   && ParticleBlendIsAdditive(2),
               "fog: blendMode 0/2 are additive, 1 is alpha (shared by both backends)");
+    }
+
+    // ---- (N) M42追補: GPU alpha ソートのビットニックネットワーク ----
+    // **ここが本追補の要**。GPU 上のソートは D3D 実機が要るので selftest では回せないが、
+    // 「どのパスを何本、どの添字どうしを、どの向きで比べるか」という**ネットワークの正しさ**は
+    // 純関数だけで完全に証明できる (ParticleCurves.h の ParticleSort* が 3 本の CS の正本)。
+    // ソーティングネットワークは「全ての入力で必ず整列する」ことが要件なので、
+    // ランダム入力を流して std::sort と突き合わせれば嘘がつけない。
+    {
+        // (1a) キー写像の単調性: float の大小がそのまま uint の大小になること。
+        //      ここが壊れると整数比較が float の順序と食い違い、絵だけが静かに乱れる
+        {
+            const float zs[] = { -1e9f, -1000.0f, -1.5f, -1e-30f, -0.0f, 0.0f,
+                                 1e-30f, 1.5f,    1000.0f, 1e9f };
+            bool mono = true;
+            for (size_t i = 0; i + 1 < std::size(zs); ++i) {
+                const uint32_t a = ParticleSortKeyFromViewZ(zs[i]);
+                const uint32_t b = ParticleSortKeyFromViewZ(zs[i + 1]);
+                mono = mono && (a <= b);
+                if (zs[i] < zs[i + 1]) {
+                    mono = mono && (a < b);
+                }
+            }
+            check(mono, "sort: viewZ -> uint key preserves float ordering (incl. -0.0/+0.0)");
+        }
+
+        // (1b) キー軸が CPU バックエンドの比較子と同式であること (切り出しの回帰)。
+        //      旧式 `x*_13 + y*_23 + z*_33` とのビット一致を要求する
+        {
+            XMFLOAT4X4 vm;
+            XMStoreFloat4x4(&vm, XMMatrixRotationRollPitchYaw(0.3f, -1.1f, 0.7f)
+                                     * XMMatrixTranslation(3.0f, -2.0f, 11.0f));
+            bool same = true;
+            Pcg32 rng;
+            rng.Seed(4242u);
+            for (int i = 0; i < 64; ++i) {
+                const float x = rng.Range(-50.0f, 50.0f);
+                const float y = rng.Range(-50.0f, 50.0f);
+                const float z = rng.Range(-50.0f, 50.0f);
+                const float legacy = x * vm._13 + y * vm._23 + z * vm._33;
+                same = same && (ParticleAlphaSortViewZ(x, y, z, vm) == legacy);
+            }
+            check(same, "sort: ParticleAlphaSortViewZ is bit-identical to the legacy comparator");
+        }
+
+        // (2) パス表の本数と並び。setup CS が同じ規則で間接引数を書くので、
+        //     ここがずれると「途中から別のネットワーク」になる
+        {
+            ParticleSortPass passes[kParticleSortMaxPasses];
+            const uint32_t n1 =
+                ParticleSortBuildPasses(kParticleSortBlock, passes, kParticleSortMaxPasses);
+            check(n1 == 1 && passes[0].kind == ParticleSortPassKind::BlockSort,
+                  "sort: one block needs exactly one LDS pass (the cheap hybrid path)");
+            const uint32_t n2 =
+                ParticleSortBuildPasses(kParticleSortBlock * 8, passes, kParticleSortMaxPasses);
+            // k = 2B(1 merge + 1 blockmerge) / 4B(2+1) / 8B(3+1) = 9、+ 先頭のブロックソート
+            check(n2 == 10, "sort: pass count follows the block-merge schedule");
+            const uint32_t nMax =
+                ParticleSortBuildPasses(1u << 20, passes, kParticleSortMaxPasses);
+            check(nMax <= kParticleSortMaxPasses,
+                  "sort: the 1M capacity ceiling stays inside the pass table");
+        }
+
+        // (3) **本命**: ネットワークを実際に回した結果が std::sort と完全一致すること。
+        //     番兵で 2 冪へ詰め、先頭 pad 件が back-to-front に並ぶことを見る。
+        //     2047/2048/2049 は「1 ブロックに収まる/全域マージが起動する」の境界
+        {
+            const uint32_t aliveCases[] = { 0, 1, 2, 3, 100, 2047, 2048, 2049, 5000, 9000 };
+            bool allSorted = true;
+            bool anyGlobal = false;
+            for (uint32_t alive : aliveCases) {
+                const uint32_t sortCapacity = ParticleSortCapacityFor(16384);
+                const uint32_t pad = ParticleSortPadFor(alive, sortCapacity);
+                std::vector<uint32_t> keys(sortCapacity, 0u);
+                std::vector<uint32_t> idx(sortCapacity, 0xFFFFFFFFu);
+                Pcg32 rng;
+                rng.Seed(90210u + alive);
+                for (uint32_t i = 0; i < alive; ++i) { // setup CS と同じ充填
+                    keys[i] = ParticleSortKeyFromViewZ(rng.Range(-40.0f, 40.0f));
+                    idx[i] = i * 7u + 3u; // スロット番号は連番でない (dead list 由来)
+                }
+                std::vector<uint32_t> expectK(keys.begin(), keys.begin() + pad);
+                std::vector<uint32_t> expectI(idx.begin(), idx.begin() + pad);
+                std::vector<uint32_t> order(pad);
+                for (uint32_t i = 0; i < pad; ++i) {
+                    order[i] = i;
+                }
+                std::sort(order.begin(), order.end(), [&](uint32_t a, uint32_t b) {
+                    return ParticleSortBefore(expectK[a], expectI[a], expectK[b], expectI[b]);
+                });
+                std::vector<uint32_t> refK(pad), refI(pad);
+                for (uint32_t i = 0; i < pad; ++i) {
+                    refK[i] = expectK[order[i]];
+                    refI[i] = expectI[order[i]];
+                }
+                ParticleSortPass passes[kParticleSortMaxPasses];
+                const uint32_t passCount =
+                    ParticleSortBuildPasses(sortCapacity, passes, kParticleSortMaxPasses);
+                for (uint32_t p = 0; p < passCount; ++p) {
+                    if (passes[p].kind != ParticleSortPassKind::BlockSort
+                        && ParticleSortGroupsFor(passes[p], pad) > 0) {
+                        anyGlobal = true;
+                    }
+                    ParticleSortApplyPass(passes[p], pad, keys.data(), idx.data());
+                }
+                for (uint32_t i = 0; i < pad; ++i) {
+                    allSorted = allSorted && keys[i] == refK[i] && idx[i] == refI[i];
+                }
+            }
+            check(allSorted, "sort: the bitonic network matches std::sort for every alive count");
+            check(anyGlobal, "sort: alive beyond one block actually engages the global merge");
+        }
+
+        // (4) 同値キーだけの入力 = tie-break が添字昇順に落ちること。
+        //     CPU 側 `return a < b;` と同じ規則でないと、同深度で重なった粒子の絵が食い違う
+        {
+            const uint32_t sortCapacity = ParticleSortCapacityFor(4096);
+            const uint32_t alive = 3000;
+            const uint32_t pad = ParticleSortPadFor(alive, sortCapacity);
+            std::vector<uint32_t> keys(sortCapacity, 0u);
+            std::vector<uint32_t> idx(sortCapacity, 0xFFFFFFFFu);
+            const uint32_t flat = ParticleSortKeyFromViewZ(-12.5f);
+            for (uint32_t i = 0; i < alive; ++i) {
+                keys[i] = flat;
+                idx[i] = alive - 1 - i; // わざと降順に入れる
+            }
+            ParticleSortPass passes[kParticleSortMaxPasses];
+            const uint32_t passCount =
+                ParticleSortBuildPasses(sortCapacity, passes, kParticleSortMaxPasses);
+            for (uint32_t p = 0; p < passCount; ++p) {
+                ParticleSortApplyPass(passes[p], pad, keys.data(), idx.data());
+            }
+            bool ascending = true;
+            for (uint32_t i = 0; i < alive; ++i) {
+                ascending = ascending && (keys[i] == flat) && (idx[i] == i);
+            }
+            check(ascending, "sort: equal depths fall back to ascending index (CPU tie-break)");
+        }
+
+        // (5) 番兵は必ず最後尾へ落ちること = 生存数ぶんだけ描けば正しい粒子が出る。
+        //     崩れると「描画数は合っているのに死んだスロットが混ざる」形で壊れる
+        {
+            const uint32_t sortCapacity = ParticleSortCapacityFor(8192);
+            const uint32_t alive = 1500;
+            const uint32_t pad = ParticleSortPadFor(alive, sortCapacity);
+            std::vector<uint32_t> keys(sortCapacity, 0u);
+            std::vector<uint32_t> idx(sortCapacity, 0xFFFFFFFFu);
+            Pcg32 rng;
+            rng.Seed(5150u);
+            for (uint32_t i = 0; i < alive; ++i) {
+                keys[i] = ParticleSortKeyFromViewZ(rng.Range(1.0f, 90.0f)); // 番兵 (0) より必ず大
+                idx[i] = i;
+            }
+            ParticleSortPass passes[kParticleSortMaxPasses];
+            const uint32_t passCount =
+                ParticleSortBuildPasses(sortCapacity, passes, kParticleSortMaxPasses);
+            for (uint32_t p = 0; p < passCount; ++p) {
+                ParticleSortApplyPass(passes[p], pad, keys.data(), idx.data());
+            }
+            bool ok = true;
+            for (uint32_t i = 0; i < alive; ++i) {
+                ok = ok && (idx[i] < alive); // 先頭 alive 件はすべて実スロット
+            }
+            for (uint32_t i = alive; i < pad; ++i) {
+                ok = ok && (keys[i] == 0u) && (idx[i] == 0xFFFFFFFFu);
+            }
+            check(ok, "sort: sentinels always land behind every live particle");
+        }
+
+        // (6) 間接引数が「alive が 1 ブロックに収まる限り実働 1 本」を守ること。
+        //     ハイブリッドの主張そのもの — ここが 0 に落ちないと WARP のスクショが重くなる
+        {
+            ParticleSortPass passes[kParticleSortMaxPasses];
+            const uint32_t sortCapacity = ParticleSortCapacityFor(100000); // fog demo の既定容量
+            const uint32_t passCount =
+                ParticleSortBuildPasses(sortCapacity, passes, kParticleSortMaxPasses);
+            const uint32_t pad = ParticleSortPadFor(150, sortCapacity); // 煙の実測生存数くらい
+            uint32_t working = 0;
+            for (uint32_t p = 0; p < passCount; ++p) {
+                if (ParticleSortGroupsFor(passes[p], pad) > 0) {
+                    ++working;
+                }
+            }
+            check(passCount == 28 && working == 1,
+                  "sort: a small alpha emitter costs exactly one working dispatch of 28 issued");
+        }
     }
 
     if (failCount == 0) {

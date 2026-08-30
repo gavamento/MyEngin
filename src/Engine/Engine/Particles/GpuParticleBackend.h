@@ -15,7 +15,9 @@ namespace mye {
 // - プール + dead list (append/consume) + alive list A/B ピンポン (圧縮)
 // - InstanceCount は CopyStructureCount → DrawInstancedIndirect (CPU リードバックなし)
 // - 乱数は CPU 側 (エンジンの決定論 RNG) が生成した放出バッファを消費 (spec 7.3)
-// - アルファソートなし (additive 前提。Bitonic Sort はストレッチ)
+// - M42追補: alpha (blendMode==1) はビットニックソートで back-to-front に並べ替える。
+//   CPU バックエンドの std::sort と同じ比較規則 (viewZ 降順 → 添字昇順) を GPU 上で写す —
+//   ここが無かった間、加算はビット一致するのに alpha だけ 610 画素割れていた (M57追補の申し送り)
 class GpuParticleBackend : public IParticleBackend {
 public:
     const char* Name() const override { return "GPU (Compute)"; }
@@ -80,10 +82,27 @@ private:
         Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> emitSRV;
         uint32_t emitCapacity = 0;
         Microsoft::WRL::ComPtr<ID3D11Buffer> indirectArgs; // DrawInstancedIndirect
+        // ---- M42追補: alpha ソート (blendMode==1 のエミッタだけが持つ。遅延確保) ----
+        // 0 = 未確保。プール容量が変わったら作り直す (M61f の容量追従と対で動く)
+        uint32_t sortCapacity = 0;
+        bool sortValid = false; // この Render でソート済み (false = 従来どおり alive list を描く)
+        Microsoft::WRL::ComPtr<ID3D11Buffer> sortKeys;
+        Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> sortKeysUAV;
+        Microsoft::WRL::ComPtr<ID3D11Buffer> sortIdx;
+        Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> sortIdxUAV;
+        // ★これが描画へ渡る成果物。型も意味も alive list と同じ StructuredBuffer<uint> なので、
+        //   particle_render_gpu.hlsl は 1 行も変えずに t1 の中身だけが差し替わる
+        Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> sortIdxSRV;
+        Microsoft::WRL::ComPtr<ID3D11Buffer> sortArgs; // DispatchIndirect 引数 (16B × パス数)
+        Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> sortArgsUAV; // RAW
     };
 
     bool CreateEmitterResources(GraphicsDevice& device, GpuEmitter& em, uint32_t capacity);
     void SyncEmitters(World& world, GraphicsDevice& device);
+    // M42追補: alpha ソート。資源は blendMode==1 になった初回にだけ作る
+    // (加算しか使わないシーンは 1 バイトも余分に確保しない)
+    bool EnsureSortResources(GraphicsDevice& device, GpuEmitter& em);
+    void SortAlphaEmitters(GraphicsDevice& device, const RenderView& view);
 
     std::vector<GpuEmitter> emitters_; // owner.index 昇順
     GraphicsDevice* device_ = nullptr;
@@ -94,8 +113,13 @@ private:
     AssetID emitCS_ = {};
     AssetID simCS_ = {};
     AssetID renderShader_ = {};
+    // M42追補: alpha ソートの 3 パス (キー生成 / ブロック内 LDS / 全域マージ)
+    AssetID sortSetupCS_ = {};
+    AssetID sortLdsCS_ = {};
+    AssetID sortMergeCS_ = {};
     Microsoft::WRL::ComPtr<ID3D11Buffer> simCB_;    // GpuParticleCB (b0)
     Microsoft::WRL::ComPtr<ID3D11Buffer> renderCB_; // GpuRenderCB (b1)
+    Microsoft::WRL::ComPtr<ID3D11Buffer> sortCB_;   // ParticleSortCB (b1、ソートパス専用)
     Microsoft::WRL::ComPtr<ID3D11BlendState> blendAdditive_;
     Microsoft::WRL::ComPtr<ID3D11BlendState> blendAlpha_;
     Microsoft::WRL::ComPtr<ID3D11DepthStencilState> depthNoWrite_;

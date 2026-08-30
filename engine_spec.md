@@ -691,7 +691,7 @@ IParticleBackend (switchable interface)
 | Random numbers | Engine-provided deterministic RNG, as defined in Chapter 11 | Pre-generate a seed array and supply it through a buffer. Do not generate random numbers on the GPU, to preserve determinism |
 | Alive-particle management | swap-and-pop | Free list or compaction [TBD] |
 | Initial maximum count | 100,000 per emitter [TBD] | 1,000,000 per emitter [TBD] |
-| Sorting for alpha blending | CPU sorting | Bitonic Sort [TBD: whether to include in the initial scope] |
+| Sorting for alpha blending | CPU sorting (`std::sort`) | Bitonic sort on the GPU (M42追補). Both back ends use the same key: view-space z descending, ties by ascending index |
 
 ### 7.4 Switching Behavior
 
@@ -704,7 +704,17 @@ IParticleBackend (switchable interface)
 ### 7.5 Consistency
 
 - Both backends should produce **logically equivalent results** from the same seed and input. Floating-point rounding differences are acceptable within a formally defined tolerance
+- **Draw order for alpha blending (M42追補)**: emitters with `blendMode == 1` are drawn
+  back-to-front, ordered by **view-space z descending with ties broken by ascending index**.
+  The CPU backend sorts its SoA order with `std::sort`; the GPU backend runs a bitonic sorting
+  network over the alive list (`particle_sort_*.cs.hlsl`, mirrored by `ParticleCurves.h`).
+  Before this existed the GPU order came from the compaction pass' `IncrementCounter()`, which is
+  neither view-dependent nor reproducible — additive emitters matched bit-for-bit while alpha
+  emitters differed by 604 pixels on the fog showcase. **The residual tie-break domain differs**:
+  the CPU breaks ties on the SoA index, the GPU on the pool slot. Two particles at exactly the
+  same view-space depth may therefore still swap; every other ordering is identical.
 - **Exception (M42e)**: depth-buffer collision (`ParticleEmitter.depthCollision`) is a **GPU-backend-only visual effect**; the CPU backend does not implement it and particles pass through geometry. This does not violate determinism: the GPU particle pool is not part of the world hash and is never read back to the CPU
+- **Exception (M42d)**: distortion particles (`blendMode == 2`) are **CPU-backend-only**; the GPU backend skips drawing them entirely. They emit no colour, so they are outside the alpha-parity contract
 
 ---
 

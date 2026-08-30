@@ -54,6 +54,14 @@ struct GpuRenderCB { // particle_render_gpu.hlsl の GpuRenderCB と一致
     XMFLOAT4 froxelScreen;   // xy=画面サイズ, zw=予約
 };
 
+struct ParticleSortCB { // particle_sort_common.hlsli の ParticleSortCB と一致 (b1)
+    XMFLOAT4 viewZAxis;      // xyz = view 行列の第 3 列。CPU 比較子と同じキー軸
+    uint32_t dims[4];        // x = sortCapacity
+    uint32_t pass[4];        // x = k (0 = ブロックソート), y = j
+    XMFLOAT4X4 emitterWorld; // transpose 済み
+    XMFLOAT4 space;          // x = simulationSpace
+};
+
 struct GpuParticleData { // 48 bytes (シェーダの GpuParticle と一致)
     XMFLOAT3 pos;
     float life;
@@ -75,10 +83,16 @@ bool GpuParticleBackend::Init(GraphicsDevice& device, ShaderManager& shaders)
     emitCS_ = shaders.LoadCompute("particle_emit.cs");
     simCS_ = shaders.LoadCompute("particle_sim.cs");
     renderShader_ = shaders.Load("particle_render_gpu");
+    // M42追補: alpha ソートの 3 パス。加算しか使わないシーンでは 1 度も走らないが、
+    // ロードは常に行う (実行時に blendMode を切り替えても即座に効くように)
+    sortSetupCS_ = shaders.LoadCompute("particle_sort_setup.cs");
+    sortLdsCS_ = shaders.LoadCompute("particle_sort_lds.cs");
+    sortMergeCS_ = shaders.LoadCompute("particle_sort_merge.cs");
 
     ID3D11Device* dev = device.Device();
     if (!CreateConstant(dev, sizeof(GpuParticleCB), simCB_)
-        || !CreateConstant(dev, sizeof(GpuRenderCB), renderCB_)) {
+        || !CreateConstant(dev, sizeof(GpuRenderCB), renderCB_)
+        || !CreateConstant(dev, sizeof(ParticleSortCB), sortCB_)) {
         return false;
     }
 
@@ -127,6 +141,7 @@ void GpuParticleBackend::Shutdown()
     emitters_.clear();
     simCB_.Reset();
     renderCB_.Reset();
+    sortCB_.Reset();
     blendAdditive_.Reset();
     blendAlpha_.Reset();
     depthNoWrite_.Reset();
@@ -326,6 +341,17 @@ void GpuParticleBackend::Update(World& world, float dt)
                 em.counts = std::move(fresh.counts);
                 em.countsSRV = std::move(fresh.countsSRV);
                 em.indirectArgs = std::move(fresh.indirectArgs); // InstanceCount=0 で再初期化済み
+                // M42追補: ソート配列長は容量から決まるので道連れで捨てる
+                // (sortCapacity=0 にすれば次の Render が EnsureSortResources で作り直す)
+                em.sortCapacity = 0;
+                em.sortValid = false;
+                em.sortKeys.Reset();
+                em.sortKeysUAV.Reset();
+                em.sortIdx.Reset();
+                em.sortIdxUAV.Reset();
+                em.sortIdxSRV.Reset();
+                em.sortArgs.Reset();
+                em.sortArgsUAV.Reset();
                 // 生存推定と idle 状態は新プール基準へ (旧粒子は消えたので推定 0 から数え直し)
                 em.aliveEst = {};
                 em.idleTicks = 0;
@@ -547,6 +573,9 @@ void GpuParticleBackend::Update(World& world, float dt)
         dc->CSSetShaderResources(0, 3, nullSrvs); // M42e: t2 (深度) も解除
         dc->CSSetUnorderedAccessViews(0, 3, nullUavs, nullptr);
         dc->CopyStructureCount(em.indirectArgs.Get(), 4, em.aliveUAV[aliveOut].Get());
+        // M42追補: 同じ値を counts[2] へも落とす。alpha ソートの setup CS が
+        // 「どれだけ働くか」をここから決める (CPU は生存数をリードバックしない — ADR-008)
+        dc->CopyStructureCount(em.counts.Get(), 8, em.aliveUAV[aliveOut].Get());
         em.aliveCurrent = aliveOut;
 
         // 生存数は寿命スケジュールの CPU 側推定 (正確な alive は GPU 上にのみ存在するが、
@@ -581,6 +610,157 @@ void GpuParticleBackend::SetSceneDepth(ID3D11ShaderResourceView* depthSRV,
     collScreen_[3] = farZ;
 }
 
+// ---- M42追補: alpha ソートの資源 (blendMode==1 のエミッタだけが持つ) ----
+// 失敗しても致命ではない — 呼び出し側は false でソートを諦め、従来どおり alive list を描く
+// (絵は出る。順序が CPU と揃わないだけ)。M61f の容量追従と同じ「壊さない再作成」の流儀
+bool GpuParticleBackend::EnsureSortResources(GraphicsDevice& device, GpuEmitter& em)
+{
+    const uint32_t want = ParticleSortCapacityFor(em.capacity);
+    if (em.sortCapacity == want && em.sortIdxSRV && em.sortArgsUAV) {
+        return true;
+    }
+    ParticleSortPass passes[kParticleSortMaxPasses];
+    const uint32_t passCount = ParticleSortBuildPasses(want, passes, kParticleSortMaxPasses);
+    if (passCount > kParticleSortMaxPasses) {
+        // 容量上限 1M (= sortCapacity 2^20) では 55 本なので構造的に起きない。
+        // 起きたらネットワークが途中で切れて絵が乱れるだけなので、諦めて未ソートへ倒す
+        MYE_LOG_ERROR("[gpu particles] alpha sort pass table overflow (%u > %u)", passCount,
+                      kParticleSortMaxPasses);
+        return false;
+    }
+
+    ID3D11Device* dev = device.Device();
+    Microsoft::WRL::ComPtr<ID3D11Buffer> keys, idx, args;
+    Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> keysUav, idxUav, argsUav;
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> idxSrv;
+    if (!CreateStructured(dev, 4, want, nullptr, 0, keys, &keysUav, nullptr)
+        || !CreateStructured(dev, 4, want, nullptr, 0, idx, &idxUav, &idxSrv)) {
+        MYE_LOG_ERROR("[gpu particles] alpha sort buffers failed (sortCapacity=%u)", want);
+        return false;
+    }
+
+    D3D11_BUFFER_DESC ad = {};
+    ad.ByteWidth = passCount * 16; // 1 パス = uint3 + 詰め物 (DispatchIndirect の引数)
+    ad.Usage = D3D11_USAGE_DEFAULT;
+    ad.BindFlags = D3D11_BIND_UNORDERED_ACCESS;
+    // ★DRAWINDIRECT_ARGS と ALLOW_RAW_VIEWS は**両方**要る。後者を落とすと
+    //   CreateUnorderedAccessView が E_INVALIDARG で落ちる (WARP で実測して確認済み)。
+    //   CreateBuffer 自体は通ってしまうので、UAV の生成失敗としてしか現れない
+    ad.MiscFlags =
+        D3D11_RESOURCE_MISC_DRAWINDIRECT_ARGS | D3D11_RESOURCE_MISC_BUFFER_ALLOW_RAW_VIEWS;
+    if (FAILED(dev->CreateBuffer(&ad, nullptr, args.GetAddressOf()))) {
+        MYE_LOG_ERROR("[gpu particles] alpha sort args buffer failed (%u passes)", passCount);
+        return false;
+    }
+    D3D11_UNORDERED_ACCESS_VIEW_DESC ud = {};
+    ud.Format = DXGI_FORMAT_R32_TYPELESS;
+    ud.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
+    ud.Buffer.NumElements = passCount * 4;
+    ud.Buffer.Flags = D3D11_BUFFER_UAV_FLAG_RAW;
+    if (FAILED(dev->CreateUnorderedAccessView(args.Get(), &ud, argsUav.GetAddressOf()))) {
+        MYE_LOG_ERROR("[gpu particles] alpha sort args UAV failed");
+        return false;
+    }
+
+    em.sortKeys = std::move(keys);
+    em.sortKeysUAV = std::move(keysUav);
+    em.sortIdx = std::move(idx);
+    em.sortIdxUAV = std::move(idxUav);
+    em.sortIdxSRV = std::move(idxSrv);
+    em.sortArgs = std::move(args);
+    em.sortArgsUAV = std::move(argsUav);
+    em.sortCapacity = want;
+    return true;
+}
+
+// ---- M42追補: alpha エミッタを back-to-front に並べ替える (Render の前段) ----
+// **Update ではなく Render でやる**。キーが view 依存だから — Update 側 (前フレームの
+// カメラ) でやると 1 フレーム遅れ、「CPU とピクセル一致」という目的そのものが崩れる
+// (M42e の深度衝突が 1 フレーム遅延を許容できるのは、あちらが GPU 限定の見た目効果だからで、
+//  こちらは CPU バックエンドとの一致が主張の中身)。
+// 描画ループより前にまとめて済ませる — CS の UAV と描画の SRV を交互に張り替えない
+void GpuParticleBackend::SortAlphaEmitters(GraphicsDevice& device, const RenderView& view)
+{
+    ShaderProgram* setup = shaders_ ? shaders_->Get(sortSetupCS_) : nullptr;
+    ShaderProgram* lds = shaders_ ? shaders_->Get(sortLdsCS_) : nullptr;
+    ShaderProgram* merge = shaders_ ? shaders_->Get(sortMergeCS_) : nullptr;
+    const bool ready = setup && setup->valid && lds && lds->valid && merge && merge->valid;
+
+    ID3D11DeviceContext* dc = device.Context();
+    ID3D11UnorderedAccessView* nullUavs[3] = { nullptr, nullptr, nullptr };
+    ID3D11ShaderResourceView* nullSrvs[3] = { nullptr, nullptr, nullptr };
+    bool touched = false;
+
+    for (GpuEmitter& em : emitters_) {
+        em.sortValid = false;
+        // 凍結 (M61e) と空 Dispatch 回避 (gpuIdle) は描画自体をスキップするので並べる意味が無い。
+        // 歪み (blendMode==2) は GPU では描かない。加算 (0) は合成が順序非依存なので不要 —
+        // **加算しか無いシーンはここで 1 つも仕事をしない**
+        if (!ready || em.frozen || em.gpuIdle || em.descCache.blendMode != 1) {
+            continue;
+        }
+        if (!EnsureSortResources(device, em)) {
+            continue;
+        }
+        ParticleSortPass passes[kParticleSortMaxPasses];
+        const uint32_t passCount =
+            ParticleSortBuildPasses(em.sortCapacity, passes, kParticleSortMaxPasses);
+
+        ParticleSortCB cb = {};
+        // キー軸は view 行列の第 3 列 = CpuParticleBackend の比較子と同じ
+        cb.viewZAxis = { view.view._13, view.view._23, view.view._33, 0.0f };
+        cb.dims[0] = em.sortCapacity;
+        XMStoreFloat4x4(&cb.emitterWorld, XMMatrixTranspose(XMLoadFloat4x4(&em.renderWorld)));
+        cb.space = { (em.descCache.simulationSpace == 1) ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f };
+        ID3D11Buffer* cbs[1] = { sortCB_.Get() };
+
+        // ---- 1. キー生成 + 間接引数の書き出し ----
+        UploadCB(dc, sortCB_.Get(), cb);
+        dc->CSSetConstantBuffers(1, 1, cbs); // Map(DISCARD) のたびに張り直す (D3D11.0 の作法)
+        {
+            ID3D11UnorderedAccessView* uavs[3] = { em.sortKeysUAV.Get(), em.sortIdxUAV.Get(),
+                                                   em.sortArgsUAV.Get() };
+            dc->CSSetUnorderedAccessViews(0, 3, uavs, nullptr);
+            ID3D11ShaderResourceView* srvs[3] = { em.poolSRV.Get(),
+                                                  em.aliveSRV[em.aliveCurrent].Get(),
+                                                  em.countsSRV.Get() };
+            dc->CSSetShaderResources(0, 3, srvs);
+            dc->CSSetShader(setup->cs.Get(), nullptr, 0);
+            dc->Dispatch((em.sortCapacity + 255) / 256, 1, 1);
+        }
+
+        // ---- 2. ネットワーク ----
+        // ★引数バッファを UAV に張ったまま DispatchIndirect すると読めない。必ず外す
+        dc->CSSetShaderResources(0, 3, nullSrvs);
+        {
+            ID3D11ShaderResourceView* srvs[1] = { em.countsSRV.Get() }; // merge は t0 で生存数を読む
+            dc->CSSetShaderResources(0, 1, srvs);
+            ID3D11UnorderedAccessView* uavs[3] = { em.sortKeysUAV.Get(), em.sortIdxUAV.Get(),
+                                                   nullptr };
+            dc->CSSetUnorderedAccessViews(0, 3, uavs, nullptr);
+        }
+        for (uint32_t p = 0; p < passCount; ++p) {
+            const bool isMerge = (passes[p].kind == ParticleSortPassKind::Merge);
+            cb.pass[0] = (passes[p].kind == ParticleSortPassKind::BlockSort) ? 0u : passes[p].k;
+            cb.pass[1] = passes[p].j;
+            UploadCB(dc, sortCB_.Get(), cb);
+            dc->CSSetConstantBuffers(1, 1, cbs);
+            dc->CSSetShader(isMerge ? merge->cs.Get() : lds->cs.Get(), nullptr, 0);
+            // グループ数は setup CS が生存数から決めている。alive が 1 ブロック (2048) に
+            // 収まる限り、ここは最初の 1 本以外すべて 0 グループで即帰る = 実質 1 Dispatch
+            dc->DispatchIndirect(em.sortArgs.Get(), p * 16);
+        }
+        em.sortValid = true;
+        touched = true;
+    }
+
+    if (touched) {
+        dc->CSSetShader(nullptr, nullptr, 0);
+        dc->CSSetUnorderedAccessViews(0, 3, nullUavs, nullptr);
+        dc->CSSetShaderResources(0, 3, nullSrvs);
+    }
+}
+
 void GpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
                                 ShaderManager& shaders, RenderResources& resources,
                                 float renderOffsetX)
@@ -590,6 +770,9 @@ void GpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
         return;
     }
     ID3D11DeviceContext* dc = device.Context();
+
+    // M42追補: alpha エミッタの並べ替え。描画ループより**前**に全部済ませる
+    SortAlphaEmitters(device, view);
 
     // M42c: フリップブックテクスチャの白フォールバック (CPU バックエンドと同じ)
     Texture* whiteTex = resources.textures.Get(resources.textures.White());
@@ -686,8 +869,11 @@ void GpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
         dc->VSSetConstantBuffers(0, 2, cbs);
         dc->PSSetConstantBuffers(0, 2, cbs); // M42b: PS もソフトフェードで b0 を参照
 
-        ID3D11ShaderResourceView* srvs[2] = { em.poolSRV.Get(),
-                                              em.aliveSRV[em.aliveCurrent].Get() };
+        // M42追補: alpha は並べ替え済みの添字列を t1 へ。中身が違うだけで型も意味も
+        // alive list と同じ StructuredBuffer<uint> なので、VS は 1 行も変わっていない
+        ID3D11ShaderResourceView* aliveOrSorted =
+            em.sortValid ? em.sortIdxSRV.Get() : em.aliveSRV[em.aliveCurrent].Get();
+        ID3D11ShaderResourceView* srvs[2] = { em.poolSRV.Get(), aliveOrSorted };
         dc->VSSetShaderResources(0, 2, srvs);
         ID3D11ShaderResourceView* psTex = texSrv ? texSrv : whiteSrv;
         dc->PSSetShaderResources(3, 1, &psTex); // M42c: t3

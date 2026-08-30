@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <utility>
 
 #include <DirectXMath.h>
@@ -253,6 +254,200 @@ inline bool GpuCapacityNeedsRecreate(uint32_t currentCapacity, uint32_t desiredC
 inline int ClampGpuEmitCount(int emitCount, uint32_t capacity)
 {
     return std::clamp(emitCount, 0, static_cast<int>(capacity));
+}
+
+// ==== M42追補: GPU alpha ソート (ビットニックネットワークの正本) ====
+// CPU バックエンドは blendMode==1 のプールを毎フレーム back-to-front に std::sort するが、
+// GPU バックエンドには順序の概念が無く、particle_sim.cs.hlsl の gAliveOut.IncrementCounter()
+// が返す圧縮順のまま描いていた = **view と無関係かつ非決定**。加算は順序非依存なので
+// ビット一致していたのに alpha だけ 610 画素割れていたのはこれが理由 (M57追補の申し送り)。
+//
+// ここに置くのは「どのパスをどの順で回すか」と「どの要素とどの要素を比べるか」の**添字演算**
+// だけ。3 本の CS (particle_sort_setup / _lds / _merge) はこれと同じ規則を HLSL で書いた
+// コメント同期ミラーで、**この C++ 側は selftest がソーティングネットワークとして
+// 正しいことを std::sort と突き合わせて証明する** (D3D 実機を要さない = カールノイズと同じ手)。
+
+// LDS 1 ブロックの要素数。uint 2 本 × 2048 = 16KB で cs_5_0 の上限 32KB に収まる
+// (実測: fxc /T cs_5_0 で通ることを着手前に確認済み)。
+// ★HLSL 側 MYE_PARTICLE_SORT_BLOCK と一致必須 — check_rules.ps1 規則 9 が機械照合する
+inline constexpr uint32_t kParticleSortBlock = 2048;
+// ブロック内 CS のスレッド数 (1 スレッドが 2 要素を担当)。D3D11 の上限ちょうど
+inline constexpr uint32_t kParticleSortThreads = 1024;
+// 全域マージ CS のスレッド数 (1 スレッドが 1 ペア)
+inline constexpr uint32_t kParticleSortMergeThreads = 256;
+// パス表の上限。sortCapacity = 2^20 (容量上限 1M) のとき 55 本が最大
+inline constexpr uint32_t kParticleSortMaxPasses = 64;
+
+enum class ParticleSortPassKind {
+    BlockSort,  // k = 2..block を LDS 内で回し切る (ネットワークの前半すべて)
+    Merge,      // j >= block の全域比較交換 (LDS に収まらない距離)
+    BlockMerge, // j = block/2..1 を LDS 内で回し切る (k はブロック内で一定)
+};
+
+struct ParticleSortPass {
+    ParticleSortPassKind kind;
+    uint32_t k; // BlockSort では未使用 (0)
+    uint32_t j; // Merge のみ有効 (0 = 未使用)
+};
+
+// v 以上の最小の 2 冪 (v=0 は 1)。32bit の飽和は起きない (呼び出し側の上限は 1M)
+inline uint32_t ParticleSortNextPow2(uint32_t v)
+{
+    uint32_t p = 1;
+    while (p < v) {
+        p <<= 1;
+    }
+    return p;
+}
+
+// プール容量 → ソート配列長。ブロック未満でも 1 ブロックは確保する
+// (ブロックソート CS が常に丸ごと 1 ブロックを読む前提を崩さないため)
+inline uint32_t ParticleSortCapacityFor(uint32_t capacity)
+{
+    const uint32_t p = ParticleSortNextPow2(capacity);
+    return (p < kParticleSortBlock) ? kParticleSortBlock : p;
+}
+
+// 生存数 → 実際に回す範囲 (2 冪)。ここが「実仕事量を GPU 側が決める」の正体で、
+// setup CS がこの値を計算して k > pad のパスへ**グループ数 0** の間接引数を書く。
+// alive が 2048 以下なら pad == block = ブロックソート 1 本だけが働く
+inline uint32_t ParticleSortPadFor(uint32_t alive, uint32_t sortCapacity)
+{
+    uint32_t pad = ParticleSortNextPow2(alive);
+    if (pad < kParticleSortBlock) {
+        pad = kParticleSortBlock;
+    }
+    return (pad > sortCapacity) ? sortCapacity : pad;
+}
+
+// パス表を組む。返り値は本数。並びは
+//   [BlockSort] → k = block*2 .. sortCapacity ごとに [Merge(j=k/2..block)] → [BlockMerge]
+// ★CPU (発行側) と GPU (間接引数を書く側) が同じ表を見るための唯一の生成点
+inline uint32_t ParticleSortBuildPasses(uint32_t sortCapacity, ParticleSortPass* out,
+                                        uint32_t outCap)
+{
+    uint32_t n = 0;
+    auto push = [&](ParticleSortPassKind kind, uint32_t k, uint32_t j) {
+        if (n < outCap) {
+            out[n] = { kind, k, j };
+        }
+        ++n;
+    };
+    push(ParticleSortPassKind::BlockSort, 0, 0);
+    for (uint32_t k = kParticleSortBlock * 2; k <= sortCapacity; k <<= 1) {
+        for (uint32_t j = k >> 1; j >= kParticleSortBlock; j >>= 1) {
+            push(ParticleSortPassKind::Merge, k, j);
+        }
+        push(ParticleSortPassKind::BlockMerge, k, 0);
+    }
+    return n;
+}
+
+// 1 パスの起動グループ数 (= 間接引数)。k > pad のパスは 0 グループ = 即帰る
+inline uint32_t ParticleSortGroupsFor(const ParticleSortPass& p, uint32_t pad)
+{
+    if (p.kind == ParticleSortPassKind::BlockSort) {
+        return pad / kParticleSortBlock;
+    }
+    if (p.k > pad) {
+        return 0;
+    }
+    if (p.kind == ParticleSortPassKind::BlockMerge) {
+        return pad / kParticleSortBlock;
+    }
+    const uint32_t pairs = pad >> 1;
+    return (pairs + kParticleSortMergeThreads - 1) / kParticleSortMergeThreads;
+}
+
+// 圧縮スレッド添字 t (0..pairs-1) → 比較ペアの手前側 i。相手は i | j。
+// j は 2 冪。下位 (j-1) ビットはそのまま、それより上を 1 ビット押し上げて j のビットを空ける
+// = 「全スレッドがちょうど 1 ペアを担当する」標準の写像 (半分が遊ぶ i^j 方式より速い)
+inline uint32_t ParticleSortPairIndex(uint32_t t, uint32_t j)
+{
+    const uint32_t low = t & (j - 1);
+    return low | ((t & ~(j - 1)) << 1);
+}
+
+// 描画順のキー。**CpuParticleBackend の比較子と同式** (view 行列の第 3 列との内積)。
+// 平行移動項を含まないのも同じ — 順序にしか使わないので全粒子共通の定数オフセットは無害
+inline float ParticleAlphaSortViewZ(float x, float y, float z, const DirectX::XMFLOAT4X4& view)
+{
+    return x * view._13 + y * view._23 + z * view._33;
+}
+
+// float を順序保存 uint へ写す (整数比較で float の大小がそのまま出る形)。
+// IEEE754 は正値のビット列が単調増加・負値が逆順なので、符号で場合分けする定番の変換。
+// 粒子位置は有限なので NaN は入らない。-0.0 と +0.0 は別のキーになるが、
+// 変換後も -0.0 < +0.0 の順序は保たれる (float の比較では等しいので tie-break が
+// 添字順に落ちるのに対し、こちらは -0.0 が後ろへ回る) — 実害の無い唯一の乖離として明記する
+inline uint32_t ParticleSortKeyFromViewZ(float z)
+{
+    uint32_t b = 0;
+    std::memcpy(&b, &z, sizeof(b));
+    return (b & 0x80000000u) ? ~b : (b | 0x80000000u);
+}
+
+// 「a が b より手前 (先に描かれる)」= viewZ 降順 → 同値は添字昇順。
+// CpuParticleBackend.cpp の `za != zb ? za > zb : a < b` と同じ規則
+inline bool ParticleSortBefore(uint32_t keyA, uint32_t idxA, uint32_t keyB, uint32_t idxB)
+{
+    return (keyA != keyB) ? (keyA > keyB) : (idxA < idxB);
+}
+
+// 比較交換 1 回。dir=true のとき「i が先」が正しい向き
+inline void ParticleSortCompareExchange(uint32_t* keys, uint32_t* idx, uint32_t i, uint32_t p,
+                                        bool dir)
+{
+    const bool inOrder = ParticleSortBefore(keys[i], idx[i], keys[p], idx[p]);
+    if (inOrder != dir) {
+        std::swap(keys[i], keys[p]);
+        std::swap(idx[i], idx[p]);
+    }
+}
+
+// 1 パスを配列へ適用する CPU 参照実装。**3 本の CS が行う添字演算と 1 対 1**で、
+// selftest はこれを全パス回した結果が std::sort と一致することを確認する。
+// ★向き (dir) は必ず**グローバル添字**から決める — ブロックローカル添字で決めると
+//   k == block のとき隣り合うブロックが同じ向きに揃い、後段のマージが成立しない
+inline void ParticleSortApplyPass(const ParticleSortPass& pass, uint32_t pad, uint32_t* keys,
+                                  uint32_t* idx)
+{
+    const uint32_t groups = ParticleSortGroupsFor(pass, pad);
+    if (groups == 0) {
+        return;
+    }
+    if (pass.kind == ParticleSortPassKind::Merge) {
+        const uint32_t pairs = pad >> 1;
+        for (uint32_t t = 0; t < pairs; ++t) {
+            const uint32_t i = ParticleSortPairIndex(t, pass.j);
+            ParticleSortCompareExchange(keys, idx, i, i | pass.j, (i & pass.k) == 0);
+        }
+        return;
+    }
+    const uint32_t blocks = pad / kParticleSortBlock;
+    const uint32_t pairs = kParticleSortBlock >> 1;
+    for (uint32_t g = 0; g < blocks; ++g) {
+        const uint32_t base = g * kParticleSortBlock;
+        if (pass.kind == ParticleSortPassKind::BlockSort) {
+            for (uint32_t k = 2; k <= kParticleSortBlock; k <<= 1) {
+                for (uint32_t j = k >> 1; j > 0; j >>= 1) {
+                    for (uint32_t t = 0; t < pairs; ++t) {
+                        const uint32_t i = ParticleSortPairIndex(t, j);
+                        ParticleSortCompareExchange(keys, idx, base + i, base + (i | j),
+                                                    ((base + i) & k) == 0);
+                    }
+                }
+            }
+        } else { // BlockMerge: j = block/2 .. 1 をブロック内で回し切る
+            for (uint32_t j = kParticleSortBlock >> 1; j > 0; j >>= 1) {
+                for (uint32_t t = 0; t < pairs; ++t) {
+                    const uint32_t i = ParticleSortPairIndex(t, j);
+                    ParticleSortCompareExchange(keys, idx, base + i, base + (i | j),
+                                                ((base + i) & pass.k) == 0);
+                }
+            }
+        }
+    }
 }
 
 // ==== M61b/M61c: 放出系ヘルパ (回転 / 形状サンプリング / サブフレーム補間 / 速度継承) はこの下へ ====
