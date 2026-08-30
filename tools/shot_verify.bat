@@ -257,7 +257,7 @@ rem         機種で動きうる (CPU バックエンドと違い sim が GPU �
 rem   ★赤くなったから tol を上げる、はやらないこと。後退先は「--particle-backend を外して
 rem     CPU 粒子で撮る」か「--froxel を外す」で、どちらも被覆を 1 段落とすだけで済む
 if defined MYE_SHOT_SKIP_FOG goto :skip_fog
-set FOG_SCENE=cacheog_showcase.scene.json
+set FOG_SCENE=cache\fog_showcase.scene.json
 if exist %FOG_SCENE% del /q %FOG_SCENE%
 set SHOT=--warp --no-audio --font-embedded --width 960 --height 540 --frames 123 --shot-frame 120 --no-fxaa
 set TOLNOW=0

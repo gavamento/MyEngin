@@ -34,4 +34,12 @@ cbuffer GpuParticleCB : register(b0)
     //      GpuParticleCB::params4 と一致 — 末尾 append なので既存フィールドのオフセット不変) ----
     float4 gParams4;           // x = turbulenceMode, y = noiseFrequency, z = noiseSpeed,
                                // w = noiseTime (ageTicks * dt — 実時間ではない)
+    // ---- M42追補: 多点グラデーション (末尾 append。C++ 側 GpuParticleCB と一致。
+    //      既存フィールドのオフセット不変。描画 VS だけが読む) ----
+    // ★ここが 1 枠も無かったので GPU バックエンドは中間キーを**丸ごと無視**し、
+    //   begin→end の 2 点線形だけで色を作っていた。colorMid* は alpha (w) も持つので、
+    //   中間キーを設定した瞬間に煙のフェードが CPU と別物になる
+    float4 gColorMid1;
+    float4 gColorMid2;
+    float4 gParams5;           // x = colorMidT1, y = colorMidT2, z = sizeMidScale, w = sizeMidT
 };

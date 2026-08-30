@@ -691,7 +691,7 @@ IParticleBackend (switchable interface)
 | Random numbers | Engine-provided deterministic RNG, as defined in Chapter 11 | Pre-generate a seed array and supply it through a buffer. Do not generate random numbers on the GPU, to preserve determinism |
 | Alive-particle management | swap-and-pop | Free list or compaction [TBD] |
 | Initial maximum count | 100,000 per emitter [TBD] | 1,000,000 per emitter [TBD] |
-| Sorting for alpha blending | CPU sorting (`std::sort`) | Bitonic sort on the GPU (M42追補). Both back ends use the same key: view-space z descending, ties by ascending index |
+| Sorting for blended draw order | CPU sorting (`std::sort`) | Bitonic sort on the GPU (M42追補). Both back ends use the same key on every emitter except distortion: view-space z descending, ties by ascending index |
 
 ### 7.4 Switching Behavior
 
@@ -704,15 +704,39 @@ IParticleBackend (switchable interface)
 ### 7.5 Consistency
 
 - Both backends should produce **logically equivalent results** from the same seed and input. Floating-point rounding differences are acceptable within a formally defined tolerance
-- **Draw order for alpha blending (M42追補)**: emitters with `blendMode == 1` are drawn
+- **Draw order (M42追補)**: every emitter except distortion (`blendMode == 2`) is drawn
   back-to-front, ordered by **view-space z descending with ties broken by ascending index**.
   The CPU backend sorts its SoA order with `std::sort`; the GPU backend runs a bitonic sorting
   network over the alive list (`particle_sort_*.cs.hlsl`, mirrored by `ParticleCurves.h`).
   Before this existed the GPU order came from the compaction pass' `IncrementCounter()`, which is
-  neither view-dependent nor reproducible — additive emitters matched bit-for-bit while alpha
-  emitters differed by 604 pixels on the fog showcase. **The residual tie-break domain differs**:
-  the CPU breaks ties on the SoA index, the GPU on the pool slot. Two particles at exactly the
-  same view-space depth may therefore still swap; every other ordering is identical.
+  neither view-dependent nor reproducible, and alpha emitters differed by 604 pixels on the fog
+  showcase. **Additive emitters are sorted too, and this is not redundant**: additive blending is
+  order-independent in exact arithmetic, but the blend unit rounds to the render target's precision
+  once per quad, so the accumulated result *is* order-dependent at the bit level. Leaving additive
+  unsorted left 8 pixels at `maxDiff=1` on the fog showcase's fire; sorting both back ends with the
+  same key takes the whole showcase to a **0-pixel** difference. Distortion is excluded because the
+  GPU backend does not draw it at all, so there is no order to agree with.
+  **The residual tie-break domain differs**: the CPU breaks ties on the SoA index, the GPU on the
+  pool slot. Two particles at exactly the same view-space depth may therefore still swap; every
+  other ordering is identical.
+- **Over-lifetime curves and prewarm (M42追補)**: colour/size **mid keys**, the `1/lifetime` that
+  normalises `age`, and emitter **prewarm** are mirrored on the GPU backend, so none of them is an
+  exception any more. Before this the GPU constant buffer had no slots for the mid keys at all and
+  silently collapsed every gradient to a two-point `begin → end` lerp — including its alpha channel;
+  the emit compute shader rebuilt `invLife` from the already-advanced `life`, shifting the age curve
+  by up to one tick whenever `subframeEmission` was on; and prewarm was skipped entirely, so a
+  prewarmed emitter was born empty on the GPU. `ParticleCurves.h`'s `EvalParticleColor` /
+  `EvalParticleSizeScale` are the source of truth and `particle_render_gpu.hlsl` carries a
+  comment-synchronised HLSL mirror of both — the mirror is **not** machine-checked, so change the two
+  together. With every key disabled (`T` outside `(0,1)`) the mirror degrades bit-for-bit to the old
+  two-point lerp, which is what keeps existing content byte-identical
+- **Known divergence (emission cap under saturation)**: the CPU backend clamps a tick's emission with
+  `min(emit, maxParticles - alive)`, while the GPU backend clamps with `ClampGpuEmitCount(emit, capacity)`
+  because it never reads the alive count back (see ADR-008). Once a pool saturates, the CPU stops
+  drawing from its PCG32 stream while the GPU keeps drawing and discards the surplus in the emit
+  shader's dead-list guard, so the two streams — and therefore the two particle sets — diverge
+  permanently from that tick on. Closing this would require a GPU→CPU readback, which the
+  determinism design forbids. It cannot affect the world hash (the GPU pool is excluded), only the picture
 - **Exception (M42e)**: depth-buffer collision (`ParticleEmitter.depthCollision`) is a **GPU-backend-only visual effect**; the CPU backend does not implement it and particles pass through geometry. This does not violate determinism: the GPU particle pool is not part of the world hash and is never read back to the CPU
 - **Exception (M42d)**: distortion particles (`blendMode == 2`) are **CPU-backend-only**; the GPU backend skips drawing them entirely. They emit no colour, so they are outside the alpha-parity contract
 

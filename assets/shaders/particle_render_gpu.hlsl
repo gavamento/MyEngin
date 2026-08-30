@@ -44,6 +44,84 @@ Texture2D gTex   : register(t3); // M42c: フリップブックテクスチャ (
 Texture3D gFroxelVolume : register(t4);
 SamplerState gSamp : register(s0); // LINEAR/CLAMP — froxel もこれを流用する
 
+// ---- M42追補: カーブ評価の HLSL ミラー (正本は ParticleCurves.h) ----
+// ★**particle_gpu_common.hlsli には入れない** — あちらは emit/sim CS も読むので、描画専用の
+//   ものを持ち込まない (M57追補が FroxelCompositeParticle で立てたのと同じ線引き)。
+// ★lerp を使わず `a + (b - a) * f` と明示展開する — C++ 側 EvalParticleColor と同じ演算列に
+//   揃えるため。ここを lerp にすると mad へ畳まれて最下位ビットが動きうる。
+// ★中間キーが無効 (T が (0,1) の外) なら begin→end の 2 点線形へ縮退し、
+//   従来の絵とビット同一になる (既存コンテンツのビット保存はこの縮退が担保する)。
+
+// 寿命係数 age∈[0,1] での色。キー: begin(0) / [colorMid1@T1] / [colorMid2@T2] / end(1)
+float4 EvalParticleColorGpu(float age)
+{
+    age = saturate(age);
+    float t[4];
+    float4 c[4];
+    int n = 0;
+    t[0] = 0.0f;
+    c[0] = gColorBegin;
+    n = 1;
+    if (gParams5.x > 0.0f && gParams5.x < 1.0f)
+    {
+        t[n] = gParams5.x;
+        c[n] = gColorMid1;
+        ++n;
+    }
+    if (gParams5.y > 0.0f && gParams5.y < 1.0f)
+    {
+        t[n] = gParams5.y;
+        c[n] = gColorMid2;
+        ++n;
+    }
+    t[n] = 1.0f;
+    c[n] = gColorEnd;
+    ++n;
+
+    // T 昇順に挿入ソート (n<=4、安定) — C++ 側と同じ
+    for (int i = 1; i < n; ++i)
+    {
+        for (int j = i; j > 0 && t[j] < t[j - 1]; --j)
+        {
+            const float tswap = t[j];
+            t[j] = t[j - 1];
+            t[j - 1] = tswap;
+            const float4 cswap = c[j];
+            c[j] = c[j - 1];
+            c[j - 1] = cswap;
+        }
+    }
+    for (int k = 0; k + 1 < n; ++k)
+    {
+        if (age <= t[k + 1])
+        {
+            const float span = t[k + 1] - t[k];
+            const float f = (span > 1e-6f) ? (age - t[k]) / span : 0.0f;
+            return c[k] + (c[k + 1] - c[k]) * f;
+        }
+    }
+    return c[n - 1];
+}
+
+// 寿命係数 age∈[0,1] でのサイズ倍率。キー: 1.0(0) / [sizeMidScale@sizeMidT] / sizeEndScale(1)
+float EvalParticleSizeScaleGpu(float age)
+{
+    age = saturate(age);
+    const float midT = gParams5.w;
+    const float midScale = gParams5.z;
+    const float endScale = gParams.z;
+    if (midT > 0.0f && midT < 1.0f)
+    {
+        if (age <= midT)
+        {
+            return 1.0f + (midScale - 1.0f) * (age / midT);
+        }
+        const float f = (age - midT) / (1.0f - midT);
+        return midScale + (endScale - midScale) * f;
+    }
+    return 1.0f + (endScale - 1.0f) * age;
+}
+
 struct VSOut
 {
     float4 pos   : SV_Position;
@@ -62,8 +140,9 @@ VSOut VSMain(uint vid : SV_VertexID, uint iid : SV_InstanceID)
 {
     const GpuParticle p = gPoolSRV[gAliveList[iid]];
     const float age = saturate(1.0f - p.life * p.invLife);
-    const float size = p.size0 * (1.0f + (gParams.z - 1.0f) * age);
-    const float4 color = lerp(gColorBegin, gColorEnd, age);
+    // M42追補: 多点グラデーション。中間キーが無効なら従来の 2 点線形へビット同一に縮退する
+    const float size = p.size0 * EvalParticleSizeScaleGpu(age);
+    const float4 color = EvalParticleColorGpu(age);
 
     const float2 corner = float2((vid & 1) ? 1.0f : -1.0f, (vid & 2) ? -1.0f : 1.0f);
     // M61g: ローカル空間 (simulationSpace=1) はプールの pos がエミッタローカル座標 —

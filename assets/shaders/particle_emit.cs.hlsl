@@ -9,6 +9,10 @@ struct EmitData
     float  life;
     float3 vel;
     float  size;
+    // M42追補: CPU 側 pool.invLife[i] と同じ値 (= 1/lifetime)。
+    // C++ 側 GpuParticleBackend::EmitData と一致 (48B)
+    float  invLife;
+    float3 _pad;
 };
 
 RWStructuredBuffer<GpuParticle> gPool : register(u0);
@@ -32,7 +36,10 @@ void CSMain(uint3 tid : SV_DispatchThreadID)
     p.pos = e.pos;
     p.life = e.life;
     p.vel = e.vel;
-    p.invLife = 1.0f / max(e.life, 0.0001f);
+    // M42追補: 1/life から作り直さない。life は subframe で lifetime + f*dt へ前倒しされて
+    // いるので、ここで割ると age 曲線が最大 1 tick 分ずれて **alpha のフェードが CPU と
+    // 食い違う**。CPU が持っている 1/lifetime をそのまま受け取る
+    p.invLife = e.invLife;
     p.size0 = e.size;
     p._pad = float3(0, 0, 0);
     gPool[slot] = p;

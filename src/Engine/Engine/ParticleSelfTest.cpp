@@ -157,6 +157,27 @@ bool RunParticleSelfTest()
         check(NearF(cm.x, 0.0f) && NearF(cm.y, 1.0f) && NearF(cm.z, 0.0f),
               "gradient: mid key hit exactly at its T");
 
+        // M42追補: **中間キーのケースで alpha (.w) も検査する**。ここが RGB しか見て
+        // いなかったので、「GPU が中間キーを丸ごと無視して alpha のフェード曲線が別物」を
+        // C++ 側からは誰も指摘できなかった (GPU 側の被覆は golden の fog.png が持つ)
+        check(NearF(cm.w, 1.0f), "gradient: mid key carries alpha too (not just RGB)");
+        // 中間キーの手前/奥それぞれの区間が、そのキーを端点にした線形になっていること。
+        // begin(t=0, a=1) → mid1(t=0.5, a=1) → end(t=1, a=0)
+        check(NearF(EvalParticleColor(d, 0.25f).w, 1.0f)
+                  && NearF(EvalParticleColor(d, 0.75f).w, 0.5f),
+              "gradient: alpha is piecewise linear across the mid key");
+        // 2 本目の中間キーと「T が昇順でない」入力 (挿入ソートの実証)
+        d.colorMid2 = { 1, 1, 1, 0.25f };
+        d.colorMidT2 = 0.25f; // T1(0.5) より手前 = 表は昇順に並べ替えられる必要がある
+        check(NearF(EvalParticleColor(d, 0.25f).w, 0.25f),
+              "gradient: out-of-order mid keys are sorted by T before evaluation");
+        // T が (0,1) の外なら無効 = 2 点線形へ縮退する (既存コンテンツのビット保存の根拠)
+        d.colorMidT1 = 0.0f;
+        d.colorMidT2 = 1.0f;
+        const XMFLOAT4 cd = EvalParticleColor(d, 0.5f);
+        check(NearF(cd.x, 0.5f) && NearF(cd.y, 0.0f) && NearF(cd.z, 0.5f) && NearF(cd.w, 0.5f),
+              "gradient: mid keys outside (0,1) degrade to the 2-point lerp");
+
         ParticleEmitterComponent s;
         s.sizeEndScale = 0.0f;
         s.sizeMidT = 0.0f;
@@ -1651,6 +1672,14 @@ bool RunParticleSelfTest()
         check(ParticleBlendIsAdditive(0) && !ParticleBlendIsAdditive(1)
                   && ParticleBlendIsAdditive(2),
               "fog: blendMode 0/2 are additive, 1 is alpha (shared by both backends)");
+
+        // M42追補: blendMode → 描画順を並べ替えるか。**CPU の std::sort と GPU の
+        // SortEmittersForDraw が同じ集合を並べることの唯一の機械保証**。
+        // ★加算 (0) が true であることが本追補の肝 — ここを false に戻すと、加算合成の
+        //   丸めが順序依存であるせいで fog の炎に 8 画素 / maxDiff=1 が戻る
+        check(ParticleNeedsDrawSort(0) && ParticleNeedsDrawSort(1)
+                  && !ParticleNeedsDrawSort(2),
+              "sort: additive and alpha are both ordered, distortion is not (GPU never draws it)");
     }
 
     // ---- (N) M42追補: GPU alpha ソートのビットニックネットワーク ----

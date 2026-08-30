@@ -492,8 +492,9 @@ void CpuParticleBackend::Update(World& world, float dt)
         // ハッシュに乗り、どのビルドでも同じ回数だけ回るので決定論は保たれる。上限 600 tick
         // (10 秒 @60Hz) は誤設定の巨大値が 1 tick を丸ごと食い潰す暴走ガード。snapshot 復元後は
         // prewarmed==1 ごと復元されるため再トリガしない (selftest M61e 節で確認)。
-        // GPU バックエンドはプリウォームしない (spec 7.5 の等価規約の例外 —
-        // GpuParticleBackend::Update のコメント参照)
+        // M42追補: GPU バックエンドも同じ上限・同じ順序で先回しするようになった
+        // (GpuParticleBackend::Update の runOneTick ラムダ)。かつてここに書いてあった
+        // 「GPU はプリウォームしない = spec 7.5 の例外」は解消済み
         if (pool.prewarmed == 0 && desc->prewarmTime > 0.0f && desc->playing != 0) {
             const int prewarmTicks = std::min(600, static_cast<int>(desc->prewarmTime / dt));
             for (int step = 0; step < prewarmTicks; ++step) {
@@ -671,7 +672,14 @@ void CpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
         for (uint32_t i = 0; i < pool.alive; ++i) {
             orderScratch_[i] = i;
         }
-        if (d.blendMode == 1) {
+        // ★M42追補: **加算 (blendMode==0) も並べる**。加算合成は数学的には順序非依存だが、
+        //   ブレンドはクォッド 1 枚ごとにレンダターゲットの精度へ丸めながら積むので、
+        //   **ビットレベルでは順序依存**になる。CPU が SoA 順・GPU が圧縮順で描いていたせいで、
+        //   fog ショーケースの炎に 8 画素 / maxDiff=1 が残り続けていた (コミット① が
+        //   「評価場所の差」と誤診していた 8 画素の正体がこれ)。両バックエンドが同じキーで
+        //   並べた瞬間に 0 画素になる。歪み (blendMode==2) は GPU が描かない = 突き合わせる
+        //   相手が居ないので、並べる意味が無い分だけ従来どおり素通しにする
+        if (ParticleNeedsDrawSort(d.blendMode)) {
             // back-to-front (明示キー: viewZ 降順 → index 昇順。spec 11.2 規則 7)
             // M42追補: キーの式は ParticleCurves.h::ParticleAlphaSortViewZ へ切り出した —
             // GPU バックエンドのソート CS が同じ 1 本を写すため (式が 2 箇所に散ると、

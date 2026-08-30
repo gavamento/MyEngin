@@ -32,7 +32,14 @@ struct GpuParticleCB { // particle_gpu_common.hlsli と一致
     XMFLOAT4 collParams;        // M42e: enabled, restitution, thickness, 予約
     XMFLOAT4 collScreen;        // M42e: 画面 w/h, nearZ, farZ
     XMFLOAT4 params4;           // M61d: turbulenceMode, noiseFrequency, noiseSpeed, noiseTime
+    // ---- M42追補: 多点グラデーション (末尾 append。HLSL 側と両方同時に変更する) ----
+    // 描画 VS だけが読む。中間キー無効 (T=0) なら begin→end の 2 点線形へビット同一に縮退
+    XMFLOAT4 colorMid1;
+    XMFLOAT4 colorMid2;
+    XMFLOAT4 params5; // colorMidT1, colorMidT2, sizeMidScale, sizeMidT
 };
+static_assert(sizeof(GpuParticleCB) == 320,
+              "GpuParticleCB は particle_gpu_common.hlsli の cbuffer と 1 バイトも違ってはいけない");
 
 struct GpuRenderCB { // particle_render_gpu.hlsl の GpuRenderCB と一致
     XMFLOAT4X4 viewProj;
@@ -390,197 +397,241 @@ void GpuParticleBackend::Update(World& world, float dt)
 
         // ---- CPU 側で放出データを生成 (決定論 RNG。GPU では乱数を作らない) ----
         // 放出計画は CPU バックエンドと共有 (M32a: playing/duration/loop/burst)。表示用ベストエフォート。
-        // M61e: プリウォームは GPU では行わない (spec 7.5 の等価規約に対する明示的な例外)。
-        // GPU はハッシュ非対象の表示用ベストエフォートで、数百 tick ぶんの EmitData 生成 +
-        // Dispatch を誕生 tick に畳み込む価値がない — 誕生直後の見た目差のみ許容する
-        int emitCount = PlanParticleEmission(*desc, em.ageTicks, em.emitAccum, dt);
-        // M61f: 旧「capacity/4」の 25% 静黙クランプを撤廃し容量全量まで許可。枯渇分は
-        // emit CS の deadCount ガードが捨てる (判断の詳細は ParticleCurves.h::ClampGpuEmitCount)
-        emitCount = ClampGpuEmitCount(emitCount, em.capacity);
+        // M42追補: プリウォームは GPU でも行う (M61e の「GPU では行わない」例外は解消)。
+        // 誕生直後だけ GPU 側の粒子が age≒0 に揃って CPU と別の絵になっていたため
+        // M42追補: {放出計画 → EmitData 生成 → emit Dispatch → sim Dispatch → 記帳} を
+        // ラムダへ束ねた。**CPU 側 {EmitParticles → Simulate → KillDead} の 1 回分**に
+        // ちょうど対応する単位で、プリウォームがこれを誕生 tick に k 回先回しで呼ぶ。
+        // allowIdleSkip=false (プリウォーム中) は空 Dispatch 回避を効かせない —
+        // 意図して働く場面なので、生存 0 を理由に省かれると先回しが空振りする。
+        // 戻り値 false = この tick は GPU 作業をしなかった (呼び出し側は統計に足さない)
+        auto runOneTick = [&](bool allowIdleSkip) -> bool {
+            int emitCount = PlanParticleEmission(*desc, em.ageTicks, em.emitAccum, dt);
+            // M61f: 旧「capacity/4」の 25% 静黙クランプを撤廃し容量全量まで許可。枯渇分は
+            // emit CS の deadCount ガードが捨てる (判断の詳細は ParticleCurves.h::ClampGpuEmitCount)
+            emitCount = ClampGpuEmitCount(emitCount, em.capacity);
 
-        // 空 Dispatch 回避: 放出も推定生存も無いエミッタは GPU 作業 (CopyStructureCount×3 +
-        // Dispatch + IndirectArgs 更新) を丸ごと省く。sim CS はスレッドが aliveCount で
-        // 即 return するとはいえ、群起動だけで 1M 容量 ≒ 3907 グループ/tick かかっていた。
-        // 放出計画 (PlanParticleEmission) と推定器の tick は継続する — 凍結すると復帰後の
-        // 放出スケジュールと満期処理が狂う。描画専用の最適化 — sim 状態には一切触れない
-        em.gpuIdle = StepGpuIdleSkip(emitCount, em.aliveEst.Alive(em.capacity),
-                                     kGpuIdleGraceTicks, em.idleTicks);
-        if (em.gpuIdle) {
-            em.aliveEst.EndTick();
-            continue;
-        }
+            // 空 Dispatch 回避: 放出も推定生存も無いエミッタは GPU 作業 (CopyStructureCount×3 +
+            // Dispatch + IndirectArgs 更新) を丸ごと省く。sim CS はスレッドが aliveCount で
+            // 即 return するとはいえ、群起動だけで 1M 容量 ≒ 3907 グループ/tick かかっていた。
+            // 放出計画 (PlanParticleEmission) と推定器の tick は継続する — 凍結すると復帰後の
+            // 放出スケジュールと満期処理が狂う。描画専用の最適化 — sim 状態には一切触れない
+            // M42追補: プリウォーム中は判定ごと飛ばす (idleTicks も進めない) —
+            // 先回しは「意図して働く場面」なので、生存 0 を理由に省かれると空振りする
+            if (allowIdleSkip) {
+                em.gpuIdle = StepGpuIdleSkip(emitCount, em.aliveEst.Alive(em.capacity),
+                                             kGpuIdleGraceTicks, em.idleTicks);
+                if (em.gpuIdle) {
+                    em.aliveEst.EndTick();
+                    return false; // この tick は GPU 作業をしなかった
+                }
+            }
 
-        // M61b: 形状サンプリングは CPU バックエンドと共有 (SampleParticleShape。
-        // 旧: ここに CpuParticleBackend::EmitParticles の手写しコピーが重複していた)
-        // M61c: 速度継承とサブフレーム補間も CPU 側 EmitParticles と同式のミラー。
-        // 唯一の差分: GPU 粒子の invLife は emit CS が 1/life から作るため、subframe の
-        // 寿命前倒し (life = lifetime + f*dt) の分だけ age 曲線が最大 1 tick 分ずれる —
-        // 表示専用の許容誤差 (EmitData に invLife は載せない)
-        const bool subframe = (desc->subframeEmission != 0);
-        std::vector<EmitData> emitData(static_cast<size_t>(std::max(emitCount, 0)));
-        for (int n = 0; n < emitCount; ++n) {
-            ParticleShapeSample smp = SampleParticleShape(*desc, em.rng);
-            const float speed = em.rng.Range(desc->speedMin, desc->speedMax);
-            const float lifetime = std::max(0.01f, em.rng.Range(desc->lifetimeMin, desc->lifetimeMax));
-            const float size = em.rng.Range(desc->sizeMin, desc->sizeMax);
-            // M61g: ローカル空間は基底適用をスキップ (ローカル系では恒等。エミッタの回転は
-            // 描画時の gEmitterWorld 変換で掛かる) — CPU 側 EmitParticles と同じガード
-            if (!basis.identity && !localSpace) {
-                ParticleBasisRotateDir(basis, smp.dirX, smp.dirY, smp.dirZ);
+            // M61b: 形状サンプリングは CPU バックエンドと共有 (SampleParticleShape。
+            // 旧: ここに CpuParticleBackend::EmitParticles の手写しコピーが重複していた)
+            // M61c: 速度継承とサブフレーム補間も CPU 側 EmitParticles と同式のミラー。
+            // M42追補: かつてここにあった「invLife だけは emit CS が 1/life から作り直すので
+            // subframe のとき age 曲線が最大 1 tick ずれる」という許容誤差は解消済み —
+            // EmitData に invLife を載せて CPU の 1/lifetime をそのまま渡している
+            const bool subframe = (desc->subframeEmission != 0);
+            std::vector<EmitData> emitData(static_cast<size_t>(std::max(emitCount, 0)));
+            for (int n = 0; n < emitCount; ++n) {
+                ParticleShapeSample smp = SampleParticleShape(*desc, em.rng);
+                const float speed = em.rng.Range(desc->speedMin, desc->speedMax);
+                const float lifetime = std::max(0.01f, em.rng.Range(desc->lifetimeMin, desc->lifetimeMax));
+                const float size = em.rng.Range(desc->sizeMin, desc->sizeMax);
+                // M61g: ローカル空間は基底適用をスキップ (ローカル系では恒等。エミッタの回転は
+                // 描画時の gEmitterWorld 変換で掛かる) — CPU 側 EmitParticles と同じガード
+                if (!basis.identity && !localSpace) {
+                    ParticleBasisRotateDir(basis, smp.dirX, smp.dirY, smp.dirZ);
+                    if (smp.hasOffset) {
+                        ParticleBasisTransformOffset(basis, smp.offX, smp.offY, smp.offZ);
+                    }
+                }
+                float velX = smp.dirX * speed;
+                float velY = smp.dirY * speed;
+                float velZ = smp.dirZ * speed;
+                // M61g: 速度継承はローカル空間では無効 (粒子はエミッタと一緒に動くので
+                // 「置いていかれた速度」が成立しない) — CPU 側と同じガード
+                if (desc->velocityInheritance != 0.0f && !localSpace) {
+                    velX += emitterVel.x * desc->velocityInheritance;
+                    velY += emitterVel.y * desc->velocityInheritance;
+                    velZ += emitterVel.z * desc->velocityInheritance;
+                }
+                float posX = origin.x, posY = origin.y, posZ = origin.z;
+                float f = 0.0f;
+                if (subframe) {
+                    f = ParticleSubframeFraction(n, emitCount);
+                    if (prevOriginValid != 0) {
+                        posX = prevOrigin.x + (origin.x - prevOrigin.x) * f;
+                        posY = prevOrigin.y + (origin.y - prevOrigin.y) * f;
+                        posZ = prevOrigin.z + (origin.z - prevOrigin.z) * f;
+                    }
+                }
                 if (smp.hasOffset) {
-                    ParticleBasisTransformOffset(basis, smp.offX, smp.offY, smp.offZ);
+                    posX += smp.offX;
+                    posY += smp.offY;
+                    posZ += smp.offZ;
+                }
+                float lifeInit = lifetime;
+                if (subframe) {
+                    const float fdt = f * dt;
+                    posX -= velX * fdt;
+                    posY -= velY * fdt;
+                    posZ -= velZ * fdt;
+                    lifeInit = lifetime + fdt;
+                }
+                em.aliveEst.OnEmit(lifeInit, dt); // 寿命は CPU 生成なので死亡 tick を記帳できる
+                // M42追補: invLife も CPU で作って渡す (CPU 側 pool.invLife[i] と同じ 1/lifetime)。
+                // emit CS が 1/life から作り直すと subframe の前倒し分だけ age がずれる
+                emitData[static_cast<size_t>(n)] = { { posX, posY, posZ },  lifeInit,
+                                                     { velX, velY, velZ },  size,
+                                                     1.0f / lifetime,       { 0.0f, 0.0f, 0.0f } };
+            }
+
+            // 放出バッファ (動的) を確保・充填
+            if (emitCount > 0) {
+                if (em.emitCapacity < static_cast<uint32_t>(emitCount)) {
+                    em.emitCapacity = std::max<uint32_t>(static_cast<uint32_t>(emitCount) * 2, 256);
+                    D3D11_BUFFER_DESC bd = {};
+                    bd.ByteWidth = em.emitCapacity * sizeof(EmitData);
+                    bd.Usage = D3D11_USAGE_DYNAMIC;
+                    bd.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+                    bd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+                    bd.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+                    bd.StructureByteStride = sizeof(EmitData);
+                    if (FAILED(device_->Device()->CreateBuffer(&bd, nullptr,
+                                                               em.emitBuffer.ReleaseAndGetAddressOf()))) {
+                        return false; // この tick は GPU 作業をしなかった
+                    }
+                    D3D11_SHADER_RESOURCE_VIEW_DESC sd = {};
+                    sd.Format = DXGI_FORMAT_UNKNOWN;
+                    sd.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
+                    sd.Buffer.NumElements = em.emitCapacity;
+                    device_->Device()->CreateShaderResourceView(em.emitBuffer.Get(), &sd,
+                                                                em.emitSRV.ReleaseAndGetAddressOf());
+                }
+                D3D11_MAPPED_SUBRESOURCE mapped = {};
+                if (SUCCEEDED(dc->Map(em.emitBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
+                    memcpy(mapped.pData, emitData.data(), emitData.size() * sizeof(EmitData));
+                    dc->Unmap(em.emitBuffer.Get(), 0);
                 }
             }
-            float velX = smp.dirX * speed;
-            float velY = smp.dirY * speed;
-            float velZ = smp.dirZ * speed;
-            // M61g: 速度継承はローカル空間では無効 (粒子はエミッタと一緒に動くので
-            // 「置いていかれた速度」が成立しない) — CPU 側と同じガード
-            if (desc->velocityInheritance != 0.0f && !localSpace) {
-                velX += emitterVel.x * desc->velocityInheritance;
-                velY += emitterVel.y * desc->velocityInheritance;
-                velZ += emitterVel.z * desc->velocityInheritance;
+
+            const int aliveIn = em.aliveCurrent;
+            const int aliveOut = 1 - aliveIn;
+
+            GpuParticleCB cb = {};
+            cb.gravityWind = { desc->gravity.x + desc->wind.x, desc->gravity.y + desc->wind.y,
+                               desc->gravity.z + desc->wind.z, dt };
+            cb.params = { static_cast<float>(emitCount), desc->turbulence, desc->sizeEndScale,
+                          static_cast<float>(em.capacity) };
+            cb.colorBegin = desc->colorBegin;
+            cb.colorEnd = desc->colorEnd;
+            // M42追補: 中間キー。sim CS は読まないが、CB は 1 本なのでここでも埋める
+            cb.colorMid1 = desc->colorMid1;
+            cb.colorMid2 = desc->colorMid2;
+            cb.params5 = { desc->colorMidT1, desc->colorMidT2, desc->sizeMidScale, desc->sizeMidT };
+            // M42e: 深度衝突 (エミッタ側 depthCollision かつ深度供給済みのときのみ有効)。
+            // M61g: ローカル空間 (simulationSpace=1) では無効 — 衝突判定はワールド座標前提
+            // (粒子位置を深度バッファへ投影する) で、ローカル座標をそのまま投影すると無関係な
+            // 面と衝突する。sim CS へ渡す collParams.enabled を 0 に落とす (spec 7.5 例外の並び)
+            const bool collide = (desc->depthCollision != 0) && (desc->simulationSpace != 1)
+                                 && collValid_ && collDepthSRV_;
+            cb.collViewProj = collViewProj_;
+            cb.collInvViewProj = collInvViewProj_;
+            cb.collParams = { collide ? 1.0f : 0.0f, desc->collisionBounce, 0.0f, 0.0f };
+            cb.collScreen = { collScreen_[0], collScreen_[1], collScreen_[2], collScreen_[3] };
+            // M61d: カールノイズ乱流。時間は em.ageTicks (PlanParticleEmission が進めた後の値) 由来
+            // — CPU 側 Simulate が見る pool.ageTicks と同じ位相 = パリティ一致。実時間は使わない
+            // M42追補: mode は「== 1 のときだけカールノイズ」へ正規化してから渡す。
+            // HLSL 側は gParams4.x > 0.5f の閾値比較なので、生値を渡すと 2 以上の不正値で
+            // CPU (== 1 の等値比較) は渦・GPU はカール、と分岐が割れる
+            cb.params4 = { (desc->turbulenceMode == 1) ? 1.0f : 0.0f, desc->noiseFrequency,
+                           desc->noiseSpeed, static_cast<float>(em.ageTicks) * dt };
+            UploadCB(dc, simCB_.Get(), cb);
+            ID3D11Buffer* cbs[1] = { simCB_.Get() };
+            dc->CSSetConstantBuffers(0, 1, cbs);
+
+            ID3D11UnorderedAccessView* nullUavs[3] = { nullptr, nullptr, nullptr };
+            ID3D11ShaderResourceView* nullSrvs[3] = { nullptr, nullptr, nullptr };
+            // M42e: t2 = 前フレーム深度 (sim のみ参照。emit は t2 未使用)
+            if (collide) {
+                ID3D11ShaderResourceView* dsrv = collDepthSRV_.Get();
+                dc->CSSetShaderResources(2, 1, &dsrv);
             }
-            float posX = origin.x, posY = origin.y, posZ = origin.z;
-            float f = 0.0f;
-            if (subframe) {
-                f = ParticleSubframeFraction(n, emitCount);
-                if (prevOriginValid != 0) {
-                    posX = prevOrigin.x + (origin.x - prevOrigin.x) * f;
-                    posY = prevOrigin.y + (origin.y - prevOrigin.y) * f;
-                    posZ = prevOrigin.z + (origin.z - prevOrigin.z) * f;
-                }
-            }
-            if (smp.hasOffset) {
-                posX += smp.offX;
-                posY += smp.offY;
-                posZ += smp.offZ;
-            }
-            float lifeInit = lifetime;
-            if (subframe) {
-                const float fdt = f * dt;
-                posX -= velX * fdt;
-                posY -= velY * fdt;
-                posZ -= velZ * fdt;
-                lifeInit = lifetime + fdt;
-            }
-            em.aliveEst.OnEmit(lifeInit, dt); // 寿命は CPU 生成なので死亡 tick を記帳できる
-            emitData[static_cast<size_t>(n)] = { { posX, posY, posZ }, lifeInit,
-                                                 { velX, velY, velZ }, size };
-        }
 
-        // 放出バッファ (動的) を確保・充填
-        if (emitCount > 0) {
-            if (em.emitCapacity < static_cast<uint32_t>(emitCount)) {
-                em.emitCapacity = std::max<uint32_t>(static_cast<uint32_t>(emitCount) * 2, 256);
-                D3D11_BUFFER_DESC bd = {};
-                bd.ByteWidth = em.emitCapacity * sizeof(EmitData);
-                bd.Usage = D3D11_USAGE_DYNAMIC;
-                bd.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-                bd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-                bd.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
-                bd.StructureByteStride = sizeof(EmitData);
-                if (FAILED(device_->Device()->CreateBuffer(&bd, nullptr,
-                                                           em.emitBuffer.ReleaseAndGetAddressOf()))) {
-                    continue;
-                }
-                D3D11_SHADER_RESOURCE_VIEW_DESC sd = {};
-                sd.Format = DXGI_FORMAT_UNKNOWN;
-                sd.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
-                sd.Buffer.NumElements = em.emitCapacity;
-                device_->Device()->CreateShaderResourceView(em.emitBuffer.Get(), &sd,
-                                                            em.emitSRV.ReleaseAndGetAddressOf());
-            }
-            D3D11_MAPPED_SUBRESOURCE mapped = {};
-            if (SUCCEEDED(dc->Map(em.emitBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
-                memcpy(mapped.pData, emitData.data(), emitData.size() * sizeof(EmitData));
-                dc->Unmap(em.emitBuffer.Get(), 0);
-            }
-        }
-
-        const int aliveIn = em.aliveCurrent;
-        const int aliveOut = 1 - aliveIn;
-
-        GpuParticleCB cb = {};
-        cb.gravityWind = { desc->gravity.x + desc->wind.x, desc->gravity.y + desc->wind.y,
-                           desc->gravity.z + desc->wind.z, dt };
-        cb.params = { static_cast<float>(emitCount), desc->turbulence, desc->sizeEndScale,
-                      static_cast<float>(em.capacity) };
-        cb.colorBegin = desc->colorBegin;
-        cb.colorEnd = desc->colorEnd;
-        // M42e: 深度衝突 (エミッタ側 depthCollision かつ深度供給済みのときのみ有効)。
-        // M61g: ローカル空間 (simulationSpace=1) では無効 — 衝突判定はワールド座標前提
-        // (粒子位置を深度バッファへ投影する) で、ローカル座標をそのまま投影すると無関係な
-        // 面と衝突する。sim CS へ渡す collParams.enabled を 0 に落とす (spec 7.5 例外の並び)
-        const bool collide = (desc->depthCollision != 0) && (desc->simulationSpace != 1)
-                             && collValid_ && collDepthSRV_;
-        cb.collViewProj = collViewProj_;
-        cb.collInvViewProj = collInvViewProj_;
-        cb.collParams = { collide ? 1.0f : 0.0f, desc->collisionBounce, 0.0f, 0.0f };
-        cb.collScreen = { collScreen_[0], collScreen_[1], collScreen_[2], collScreen_[3] };
-        // M61d: カールノイズ乱流。時間は em.ageTicks (PlanParticleEmission が進めた後の値) 由来
-        // — CPU 側 Simulate が見る pool.ageTicks と同じ位相 = パリティ一致。実時間は使わない
-        cb.params4 = { static_cast<float>(desc->turbulenceMode), desc->noiseFrequency,
-                       desc->noiseSpeed, static_cast<float>(em.ageTicks) * dt };
-        UploadCB(dc, simCB_.Get(), cb);
-        ID3D11Buffer* cbs[1] = { simCB_.Get() };
-        dc->CSSetConstantBuffers(0, 1, cbs);
-
-        ID3D11UnorderedAccessView* nullUavs[3] = { nullptr, nullptr, nullptr };
-        ID3D11ShaderResourceView* nullSrvs[3] = { nullptr, nullptr, nullptr };
-        // M42e: t2 = 前フレーム深度 (sim のみ参照。emit は t2 未使用)
-        if (collide) {
-            ID3D11ShaderResourceView* dsrv = collDepthSRV_.Get();
-            dc->CSSetShaderResources(2, 1, &dsrv);
-        }
-
-        // カウントバッファ更新: [0]=deadCount, [1]=aliveInCount。
-        // 重要: counts が CS の SRV にバインドされたままコピーしない (ハザードで落ちる)
-        dc->CSSetShaderResources(0, 2, nullSrvs);
-        dc->CopyStructureCount(em.counts.Get(), 0, em.deadUAV.Get());
-        dc->CopyStructureCount(em.counts.Get(), 4, em.aliveUAV[aliveIn].Get());
-
-        // ---- 放出パス: aliveIn に追記 (カウンタ保持 = -1) ----
-        if (emitCount > 0) {
-            ID3D11UnorderedAccessView* uavs[3] = { em.poolUAV.Get(), em.deadUAV.Get(),
-                                                   em.aliveUAV[aliveIn].Get() };
-            const UINT inits[3] = { 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu };
-            dc->CSSetUnorderedAccessViews(0, 3, uavs, inits);
-            ID3D11ShaderResourceView* srvs[2] = { em.emitSRV.Get(), em.countsSRV.Get() };
-            dc->CSSetShaderResources(0, 2, srvs);
-            dc->CSSetShader(emitShader, nullptr, 0);
-            dc->Dispatch((static_cast<UINT>(emitCount) + 63) / 64, 1, 1);
-
-            // 放出後の aliveIn カウントを再取得 (SRV/UAV を外してから)
+            // カウントバッファ更新: [0]=deadCount, [1]=aliveInCount。
+            // 重要: counts が CS の SRV にバインドされたままコピーしない (ハザードで落ちる)
             dc->CSSetShaderResources(0, 2, nullSrvs);
-            dc->CSSetUnorderedAccessViews(0, 3, nullUavs, nullptr);
+            dc->CopyStructureCount(em.counts.Get(), 0, em.deadUAV.Get());
             dc->CopyStructureCount(em.counts.Get(), 4, em.aliveUAV[aliveIn].Get());
+
+            // ---- 放出パス: aliveIn に追記 (カウンタ保持 = -1) ----
+            if (emitCount > 0) {
+                ID3D11UnorderedAccessView* uavs[3] = { em.poolUAV.Get(), em.deadUAV.Get(),
+                                                       em.aliveUAV[aliveIn].Get() };
+                const UINT inits[3] = { 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu };
+                dc->CSSetUnorderedAccessViews(0, 3, uavs, inits);
+                ID3D11ShaderResourceView* srvs[2] = { em.emitSRV.Get(), em.countsSRV.Get() };
+                dc->CSSetShaderResources(0, 2, srvs);
+                dc->CSSetShader(emitShader, nullptr, 0);
+                dc->Dispatch((static_cast<UINT>(emitCount) + 63) / 64, 1, 1);
+
+                // 放出後の aliveIn カウントを再取得 (SRV/UAV を外してから)
+                dc->CSSetShaderResources(0, 2, nullSrvs);
+                dc->CSSetUnorderedAccessViews(0, 3, nullUavs, nullptr);
+                dc->CopyStructureCount(em.counts.Get(), 4, em.aliveUAV[aliveIn].Get());
+            }
+
+            // ---- 更新パス: aliveIn → aliveOut (圧縮)。aliveOut カウンタは 0 リセット ----
+            {
+                ID3D11UnorderedAccessView* uavs[3] = { em.poolUAV.Get(), em.deadUAV.Get(),
+                                                       em.aliveUAV[aliveOut].Get() };
+                const UINT inits[3] = { 0xFFFFFFFFu, 0xFFFFFFFFu, 0 };
+                dc->CSSetUnorderedAccessViews(0, 3, uavs, inits);
+                ID3D11ShaderResourceView* srvs[2] = { em.aliveSRV[aliveIn].Get(), em.countsSRV.Get() };
+                dc->CSSetShaderResources(0, 2, srvs);
+                dc->CSSetShader(simShader, nullptr, 0);
+                dc->Dispatch((em.capacity + 255) / 256, 1, 1);
+            }
+
+            // ---- 描画用: InstanceCount を GPU 上で確定 (リードバックなし) ----
+            dc->CSSetShaderResources(0, 3, nullSrvs); // M42e: t2 (深度) も解除
+            dc->CSSetUnorderedAccessViews(0, 3, nullUavs, nullptr);
+            dc->CopyStructureCount(em.indirectArgs.Get(), 4, em.aliveUAV[aliveOut].Get());
+            // M42追補: 同じ値を counts[2] へも落とす。alpha ソートの setup CS が
+            // 「どれだけ働くか」をここから決める (CPU は生存数をリードバックしない — ADR-008)
+            dc->CopyStructureCount(em.counts.Get(), 8, em.aliveUAV[aliveOut].Get());
+            em.aliveCurrent = aliveOut;
+
+            // 生存数は寿命スケジュールの CPU 側推定 (正確な alive は GPU 上にのみ存在するが、
+            // 死因は寿命だけなので readback なしでほぼ一致する。飽和時のみ capacity で頭打ち)
+            em.aliveEst.EndTick();
+            return true;
+        };
+
+        // M42追補: プリウォーム — プール誕生 tick に prewarmTime 秒ぶんを先回しする。
+        // CPU 側 (CpuParticleBackend::Update) と**同じ上限・同じ順序・同じ RNG 消費列**。
+        // em.rng は CPU 側 pool.rng のミラーなので、消費列が一致すれば粒子集合も一致する。
+        // ★prewarmed は playing の有無に関わらず誕生 tick で立てる — CPU も末尾で無条件に
+        //   立てており、「後から playing を立てたら今さらプリウォームが走る」を防ぐ挙動。
+        // ★コストは 1 秒プリウォームで 60 ステップ = 120 Dispatch を 1 tick に畳む
+        //   (上限 600 で最悪 1200)。誕生 tick 限りの一過性
+        // ★em.prewarmed を立てるのは runOneTick(true) の**前**でなければならない。
+        //   CPU 側は Update のループ本体末尾で立てるが、ここで同じ位置に置くと直下の
+        //   「空 Dispatch 回避で continue」に食われ、idle tick のたびに先回しが再発火する
+        if (em.prewarmed == 0 && desc->prewarmTime > 0.0f && desc->playing != 0) {
+            const int prewarmTicks = std::min(600, static_cast<int>(desc->prewarmTime / dt));
+            for (int step = 0; step < prewarmTicks; ++step) {
+                runOneTick(false);
+            }
         }
+        em.prewarmed = 1;
 
-        // ---- 更新パス: aliveIn → aliveOut (圧縮)。aliveOut カウンタは 0 リセット ----
-        {
-            ID3D11UnorderedAccessView* uavs[3] = { em.poolUAV.Get(), em.deadUAV.Get(),
-                                                   em.aliveUAV[aliveOut].Get() };
-            const UINT inits[3] = { 0xFFFFFFFFu, 0xFFFFFFFFu, 0 };
-            dc->CSSetUnorderedAccessViews(0, 3, uavs, inits);
-            ID3D11ShaderResourceView* srvs[2] = { em.aliveSRV[aliveIn].Get(), em.countsSRV.Get() };
-            dc->CSSetShaderResources(0, 2, srvs);
-            dc->CSSetShader(simShader, nullptr, 0);
-            dc->Dispatch((em.capacity + 255) / 256, 1, 1);
+        if (!runOneTick(true)) {
+            continue; // 従来どおり aliveEstimate にも足さない
         }
-
-        // ---- 描画用: InstanceCount を GPU 上で確定 (リードバックなし) ----
-        dc->CSSetShaderResources(0, 3, nullSrvs); // M42e: t2 (深度) も解除
-        dc->CSSetUnorderedAccessViews(0, 3, nullUavs, nullptr);
-        dc->CopyStructureCount(em.indirectArgs.Get(), 4, em.aliveUAV[aliveOut].Get());
-        // M42追補: 同じ値を counts[2] へも落とす。alpha ソートの setup CS が
-        // 「どれだけ働くか」をここから決める (CPU は生存数をリードバックしない — ADR-008)
-        dc->CopyStructureCount(em.counts.Get(), 8, em.aliveUAV[aliveOut].Get());
-        em.aliveCurrent = aliveOut;
-
-        // 生存数は寿命スケジュールの CPU 側推定 (正確な alive は GPU 上にのみ存在するが、
-        // 死因は寿命だけなので readback なしでほぼ一致する。飽和時のみ capacity で頭打ち)
-        em.aliveEst.EndTick();
         aliveEstimate += em.aliveEst.Alive(em.capacity);
     }
 
@@ -610,7 +661,7 @@ void GpuParticleBackend::SetSceneDepth(ID3D11ShaderResourceView* depthSRV,
     collScreen_[3] = farZ;
 }
 
-// ---- M42追補: alpha ソートの資源 (blendMode==1 のエミッタだけが持つ) ----
+// ---- M42追補: 描画順ソートの資源 (歪み以外のエミッタが描画時に持つ) ----
 // 失敗しても致命ではない — 呼び出し側は false でソートを諦め、従来どおり alive list を描く
 // (絵は出る。順序が CPU と揃わないだけ)。M61f の容量追従と同じ「壊さない再作成」の流儀
 bool GpuParticleBackend::EnsureSortResources(GraphicsDevice& device, GpuEmitter& em)
@@ -679,7 +730,7 @@ bool GpuParticleBackend::EnsureSortResources(GraphicsDevice& device, GpuEmitter&
 // (M42e の深度衝突が 1 フレーム遅延を許容できるのは、あちらが GPU 限定の見た目効果だからで、
 //  こちらは CPU バックエンドとの一致が主張の中身)。
 // 描画ループより前にまとめて済ませる — CS の UAV と描画の SRV を交互に張り替えない
-void GpuParticleBackend::SortAlphaEmitters(GraphicsDevice& device, const RenderView& view)
+void GpuParticleBackend::SortEmittersForDraw(GraphicsDevice& device, const RenderView& view)
 {
     ShaderProgram* setup = shaders_ ? shaders_->Get(sortSetupCS_) : nullptr;
     ShaderProgram* lds = shaders_ ? shaders_->Get(sortLdsCS_) : nullptr;
@@ -694,9 +745,12 @@ void GpuParticleBackend::SortAlphaEmitters(GraphicsDevice& device, const RenderV
     for (GpuEmitter& em : emitters_) {
         em.sortValid = false;
         // 凍結 (M61e) と空 Dispatch 回避 (gpuIdle) は描画自体をスキップするので並べる意味が無い。
-        // 歪み (blendMode==2) は GPU では描かない。加算 (0) は合成が順序非依存なので不要 —
-        // **加算しか無いシーンはここで 1 つも仕事をしない**
-        if (!ready || em.frozen || em.gpuIdle || em.descCache.blendMode != 1) {
+        // 歪み (blendMode==2) は GPU では描かないので、並べる相手が居ない。
+        // ★M42追補: **加算 (0) も並べる**。「加算は順序非依存だから不要」は数学の話で、
+        //   ブレンドはクォッド 1 枚ごとに RT の精度へ丸めながら積むのでビットレベルでは
+        //   順序依存 — ここを外していたせいで炎に 8 画素 / maxDiff=1 が残っていた。
+        //   CPU 側 (CpuParticleBackend::BuildInstances) の同じ規則と対になっている
+        if (!ready || em.frozen || em.gpuIdle || !ParticleNeedsDrawSort(em.descCache.blendMode)) {
             continue;
         }
         if (!EnsureSortResources(device, em)) {
@@ -772,7 +826,7 @@ void GpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
     ID3D11DeviceContext* dc = device.Context();
 
     // M42追補: alpha エミッタの並べ替え。描画ループより**前**に全部済ませる
-    SortAlphaEmitters(device, view);
+    SortEmittersForDraw(device, view);
 
     // M42c: フリップブックテクスチャの白フォールバック (CPU バックエンドと同じ)
     Texture* whiteTex = resources.textures.Get(resources.textures.White());
@@ -841,6 +895,12 @@ void GpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
                          static_cast<float>(em.capacity) };
         simCb.colorBegin = em.descCache.colorBegin;
         simCb.colorEnd = em.descCache.colorEnd;
+        // M42追補: 中間キー。**描画で実際に効くのはこちら** (VS が b0 を読む)。
+        // Update 側と 2 箇所あるので、片方だけ直すと「動いている間だけ色が違う」形で割れる
+        simCb.colorMid1 = em.descCache.colorMid1;
+        simCb.colorMid2 = em.descCache.colorMid2;
+        simCb.params5 = { em.descCache.colorMidT1, em.descCache.colorMidT2,
+                          em.descCache.sizeMidScale, em.descCache.sizeMidT };
         // M42b: ソフトフェード (深度が読めるビューのみ有効)
         simCb.params2 = { (view.depthSRV != nullptr) ? em.descCache.softFadeDistance : 0.0f,
                           view.nearZ, view.farZ, 0.0f };

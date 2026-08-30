@@ -42,6 +42,13 @@ private:
         float life;
         DirectX::XMFLOAT3 vel;
         float size;
+        // M42追補: CPU が作った 1/lifetime をそのまま渡す。emit CS が 1/life から作り直すと
+        // subframe の寿命前倒し (life = lifetime + f*dt) の分だけ age 曲線が前へずれ、
+        // **alpha のフェードが CPU と食い違う** (差は最大 1 tick だが色は毎フレーム効く)。
+        // ステージングは 32B -> 48B になる (1M バーストで 32MB -> 48MB。ClampGpuEmitCount の
+        // コメント参照 — burst した tick だけの一過性)
+        float invLife;
+        DirectX::XMFLOAT3 _pad; // StructureByteStride を 16 の倍数に保つ
     };
     struct GpuEmitter {
         EntityID owner = kNullEntity;
@@ -58,6 +65,9 @@ private:
         // M61e: owner 非アクティブによる凍結。gpuIdle が「D3D 作業だけ省いて放出計画と
         // 推定器の記帳は続ける」のに対し、凍結は「時が止まる」— 記帳ごと全部止める
         bool frozen = false;
+        // M42追補: プリウォーム済みフラグ (CPU 側 EmitterPool.prewarmed のミラー)。
+        // GPU はハッシュ/スナップショット非対象なので、ここに置くだけでよい
+        uint32_t prewarmed = 0;
         // M61g: エミッタのワールド行列のキャッシュ (CPU 側 EmitterPool.renderWorld のミラー)。
         // simulationSpace=1 のとき Render がこれを GpuRenderCB へ載せ、VS が pos を変換する
         DirectX::XMFLOAT4X4 renderWorld = { 1.0f, 0.0f, 0.0f, 0.0f,
@@ -76,7 +86,9 @@ private:
         Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> aliveUAV[2]; // COUNTER flag
         Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> aliveSRV[2];
         int aliveCurrent = 0; // 描画に使う側 (= 直近 sim の出力)
-        Microsoft::WRL::ComPtr<ID3D11Buffer> counts;   // [0]=deadCount [1]=aliveInCount
+        // [0]=deadCount [1]=aliveInCount [2]=aliveOutCount (M42追補: alpha ソートの
+        // setup CS が「どれだけ働くか」をここから決める。CPU は生存数を readback しない)
+        Microsoft::WRL::ComPtr<ID3D11Buffer> counts;
         Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> countsSRV;
         Microsoft::WRL::ComPtr<ID3D11Buffer> emitBuffer; // 動的 (CPU 生成の初期値)
         Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> emitSRV;
@@ -99,10 +111,10 @@ private:
 
     bool CreateEmitterResources(GraphicsDevice& device, GpuEmitter& em, uint32_t capacity);
     void SyncEmitters(World& world, GraphicsDevice& device);
-    // M42追補: alpha ソート。資源は blendMode==1 になった初回にだけ作る
-    // (加算しか使わないシーンは 1 バイトも余分に確保しない)
+    // M42追補: 描画順ソート。資源は初めて並べる必要が出た tick に遅延確保する
+    // (歪み専用のエミッタは 1 バイトも余分に確保しない)
     bool EnsureSortResources(GraphicsDevice& device, GpuEmitter& em);
-    void SortAlphaEmitters(GraphicsDevice& device, const RenderView& view);
+    void SortEmittersForDraw(GraphicsDevice& device, const RenderView& view);
 
     std::vector<GpuEmitter> emitters_; // owner.index 昇順
     GraphicsDevice* device_ = nullptr;

@@ -142,6 +142,16 @@ inline float ParticleFogFactor(int fogMode, float density, float fogStart, float
 // ので霧の対象外だが、GPU では描画自体をスキップするため値は問われない)
 inline bool ParticleBlendIsAdditive(int blendMode) { return blendMode != 1; }
 
+// M42追補: blendMode → 「描画順を並べ替えるか」。**両バックエンドがこの 1 本を呼ぶ** —
+// CPU 側の std::sort と GPU 側の SortEmittersForDraw が同じ集合を並べることの唯一の機械保証。
+// ★alpha だけでなく加算 (0) も並べる。加算合成が順序非依存なのは厳密演算の話で、ブレンドは
+//   クォッド 1 枚ごとに RT の精度へ丸めながら積むため**ビットレベルでは順序依存** —
+//   ここを alpha だけにしていたせいで、fog ショーケースの炎に 8 画素 / maxDiff=1 が
+//   最後まで残っていた (両方を同じキーで並べた瞬間に 0 画素になる)。
+// ★歪み (2) だけ外すのは「GPU が描かない = 突き合わせる相手が居ない」から。並べても
+//   誰も得をしないぶん、CPU の std::sort を 1 回節約する
+inline bool ParticleNeedsDrawSort(int blendMode) { return blendMode != 2; }
+
 // M42e: GPU 深度衝突の座標変換/反射。particle_sim.cs.hlsl とコメント同期のミラー —
 // selftest はこちらを検証する。GPU バックエンド限定の見た目効果 (spec 7.5 例外)。
 // クリップ座標 -> スクリーン UV。背面 (w<=0) は false (衝突判定しない)
@@ -249,18 +259,24 @@ inline bool GpuCapacityNeedsRecreate(uint32_t currentCapacity, uint32_t desiredC
 // 1 tick の GPU 放出数クランプ。旧実装は capacity/4 の静黙クランプ (1tick 暴発ガード) で、
 // 「maxParticles まで積んだはずのバーストが 25% で切られる」罠だったので容量全量まで緩和。
 // dead list 枯渇分は particle_emit.cs.hlsl の deadCount ガードが既に安全に捨てる。
-// EmitData ステージングが最大 capacity*32B (1M で 32MB) になりうるが、burst した tick
-// だけの一過性 (動的バッファは以降の小さい tick でもそのまま再利用されるだけ) と判断
+// EmitData ステージングが最大 capacity*48B (1M で 48MB) になりうるが、burst した tick
+// だけの一過性 (動的バッファは以降の小さい tick でもそのまま再利用されるだけ) と判断。
+// M42追補: 32B -> 48B に増えたのは invLife を CPU から渡すようにしたため — emit CS が
+// 1/life から作り直すと subframe の寿命前倒しぶん age 曲線がずれ、alpha が CPU と食い違う
 inline int ClampGpuEmitCount(int emitCount, uint32_t capacity)
 {
     return std::clamp(emitCount, 0, static_cast<int>(capacity));
 }
 
-// ==== M42追補: GPU alpha ソート (ビットニックネットワークの正本) ====
-// CPU バックエンドは blendMode==1 のプールを毎フレーム back-to-front に std::sort するが、
-// GPU バックエンドには順序の概念が無く、particle_sim.cs.hlsl の gAliveOut.IncrementCounter()
-// が返す圧縮順のまま描いていた = **view と無関係かつ非決定**。加算は順序非依存なので
-// ビット一致していたのに alpha だけ 610 画素割れていたのはこれが理由 (M57追補の申し送り)。
+// ==== M42追補: GPU 描画順ソート (ビットニックネットワークの正本) ====
+// CPU バックエンドはプールを毎フレーム back-to-front に std::sort するが、GPU バックエンドには
+// 順序の概念が無く、particle_sim.cs.hlsl の gAliveOut.IncrementCounter() が返す圧縮順のまま
+// 描いていた = **view と無関係かつ非決定**。alpha が 610 画素割れていたのはこれが理由
+// (M57追補の申し送り)。
+// ★対象は alpha だけではない。「加算は順序非依存」は数学の話で、ブレンドはクォッド 1 枚ごとに
+//   RT の精度へ丸めながら積むので**ビットレベルでは順序依存**。加算の炎に最後まで残っていた
+//   8 画素 / maxDiff=1 がその実体で、両バックエンドを同じキーで並べた瞬間に 0 になった。
+//   並べないのは歪み (blendMode==2) だけ — GPU が描かない = 突き合わせる相手が居ないため。
 //
 // ここに置くのは「どのパスをどの順で回すか」と「どの要素とどの要素を比べるか」の**添字演算**
 // だけ。3 本の CS (particle_sort_setup / _lds / _merge) はこれと同じ規則を HLSL で書いた

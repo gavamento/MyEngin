@@ -142,7 +142,7 @@ struct ParticleEmitterComponent {
     // M59a2 と同じ扱い)。sizeof が変わるので snapshot 版は v5 へ (descCache の Raw 書きが伸びる)
     float velocityInheritance = 0.0f; // ③ エミッタ移動速度を初速へ加算する係数 (0=off)
     int32_t simulationSpace = 0;      // ④ 0=ワールド 1=ローカル (実装は M61g)
-    float prewarmTime = 0.0f;         // ⑤ >0 で開始時に事前シムする秒数 (CPU のみ。GPU は skip)
+    float prewarmTime = 0.0f;         // ⑤ >0 で開始時に事前シムする秒数 (M42追補 で GPU も先回しする)
     int32_t subframeEmission = 0;     // ② 1=放出を tick 内で等分散 (0=従来: tick 先頭一括)
     int32_t turbulenceMode = 0;       // ⑧ 0=渦 (従来) 1=カールノイズ (実装は M61d)
     float noiseFrequency = 1.0f;      // ⑧ ノイズ空間周波数 (turbulenceMode=1 のみ)
