@@ -66,7 +66,13 @@ struct SimRefs {
 //            ParticleEmitterComponent の B群拡張 18 本で descCache の Raw サイズも変化。
 //            ★M63b〜e が消費するフィールドも M63a でまとめて確保してあるので、
 //              B群で版が上がるのはこの 1 回だけ (分割して足すと 5 回上がる)
-inline constexpr uint32_t kSimSnapshotVersion = 7;
+// v8 (M64a): InputSnapshot が 64 -> 72 バイト。LOP 節の prevTickInput が
+//            レーン数ぶんそのまま太るので blob レイアウトが変わる
+// v9 (M64b): SCR 節の Start 済み記録が (エンティティ) 1 語から
+//            (エンティティ, スクリプト型) の 2 語へ。**同じエンティティに 2 つ以上
+//            スクリプトを付けると 2 つ目以降の Start() が呼ばれない**バグの修正で、
+//            キーの語数がそのまま blob の語数になる
+inline constexpr uint32_t kSimSnapshotVersion = 9;
 
 // 撮る: out を clear して blob を書く。成功で true。
 // 節ごとの参照が null なら「空の節」を書くのでレイアウトは常に同じ

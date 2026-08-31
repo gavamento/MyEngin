@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <unordered_set>
 #include <vector>
 
 #include <Windows.h>
@@ -37,9 +38,15 @@ FieldType ToFieldType(int32_t t)
     return FieldType::Float;
 }
 
-uint64_t StartedKey(EntityID e)
+// Start 済み記録のキー。**スクリプト型まで含める** — エンティティだけで引くと、
+// 同じエンティティの 2 つ目のスクリプトが「もう Start 済み」と判定されて
+// 一度も初期化されない (M64b で修正。詳細は ScriptStartedKey のコメント)
+ScriptStartedKey StartedKey(EntityID e, ComponentTypeId script)
 {
-    return (static_cast<uint64_t>(e.index) << 32) | e.generation;
+    ScriptStartedKey k;
+    k.entity = (static_cast<uint64_t>(e.index) << 32) | e.generation;
+    k.script = static_cast<uint64_t>(script);
+    return k;
 }
 
 } // namespace
@@ -286,7 +293,7 @@ void ScriptHost::RunPhase(Phase phase)
                 ctx.api = &api_;
                 void* state = arch.GetPtr(ci, row);
                 if (wantStart) {
-                    const uint64_t key = StartedKey(arch.EntityAt(row));
+                    const ScriptStartedKey key = StartedKey(arch.EntityAt(row), type.componentId);
                     if (!started_.contains(key)) {
                         started_.insert(key);
                         type.start(state, &ctx);

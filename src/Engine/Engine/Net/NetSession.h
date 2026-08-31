@@ -29,7 +29,10 @@ namespace mye {
 
 // v2 (M52i): ヘッダへ「確定済み tick とそのワールドハッシュ」を 1 組ピギーバックした。
 // desync 検出のためで、入力交換の意味論は 1 バイトも変えていない
-inline constexpr uint32_t kNetProtoVersion = 2;
+// v3 (M64a): InputSnapshot が 64 -> 72 バイトになり、1 パケットの本体長が変わった
+//            (kNetMaxPacket は sizeof から導出しているので式は不変)。
+//            意味論は変えていないが、**旧版と繋ぐと入力が丸ごとずれる**ので版を上げる
+inline constexpr uint32_t kNetProtoVersion = 3;
 inline constexpr uint32_t kNetMagic = 0x4E45594Du; // 'MYEN'
 inline constexpr uint32_t kNetRedundancy = 8;  // 1 パケットに載せる直近 tick 数
 inline constexpr uint32_t kNetRingTicks = 512; // 入力リングの深さ (tick)

@@ -20,6 +20,15 @@ struct InputSnapshot {
     uint8_t keys[32];      // VK コード 256bit ビットセット
     int32_t mouseX;        // クライアント座標 px
     int32_t mouseY;
+    // 生マウスデルタ (M64a)。**WM_INPUT (Raw Input) の生カウント**であって
+    // mouseX/mouseY の差分ではない。差分にしないのは、カーソルロック中は絶対座標が
+    // 動かない (クライアント矩形の端や中央に張り付く) ため — 一人称の視点は
+    // ロック中こそ回り続けなければならない。1 tick 分を CaptureSnapshot が消費して
+    // 0 に戻す (wheelDelta と同じ規約)。
+    // ★ポインタ加速の掛からない生カウントなので OS のマウス設定には依存しないが、
+    //   **DPI は機種依存**。感度は必ずプロジェクト側の調整値で割ること
+    int32_t mouseDeltaX;
+    int32_t mouseDeltaY;
     int32_t wheelDelta;    // このフレームに累積した生値 (WHEEL_DELTA=120 単位)
     uint8_t mouseButtons;  // bit0:L bit1:R bit2:M bit3:X1 bit4:X2
     uint8_t pad[3];        // 明示パディング (未初期化バイト混入防止, spec 11.2-3)
@@ -38,7 +47,9 @@ struct InputSnapshot {
     bool MouseDown(int button) const { return ((mouseButtons >> button) & 1) != 0; }
     bool PadButton(uint16_t mask) const { return (padButtons & mask) != 0; }
 };
-static_assert(sizeof(InputSnapshot) == 64, "InputSnapshot layout is part of the replay format");
+// M64a で 64 -> 72。レイアウトが変わったので kReplayFileVersion / kSimSnapshotVersion /
+// kNetProtoVersion を同時に上げてある (この 3 つがこのビット列をそのまま持ち回る)
+static_assert(sizeof(InputSnapshot) == 72, "InputSnapshot layout is part of the replay format");
 
 // Win32 メッセージを蓄積し、フレーム頭でスナップショットを確定する。
 class Input {
@@ -62,6 +73,18 @@ public:
     // 量子化後の値が前回から変わったときだけ発行する (毎フレーム呼んで良い)
     void ApplyVibration(float left, float right);
 
+    // 生マウスデルタの受け口を hwnd へ登録する (M64a)。ウィンドウ生成後に 1 回呼ぶ。
+    // ★**RIDEV_NOLEGACY は付けない** — 従来の WM_MOUSEMOVE / ボタンメッセージを止めると
+    //   ImGui と mouseX/mouseY (エディタのヒットテスト) が同時に死ぬ。生デルタは
+    //   WM_INPUT で**追加で**受け取るだけにしてある
+    void AttachRawInput(void* hwnd);
+
+    // カーソルをクライアント矩形へ閉じ込めて隠す / 解除する (M64a)。
+    // **出力レーン専用** — ApplyVibration と同じ扱いで、sim から状態を読み返す口は作らない。
+    // record/verify 中・フォーカス喪失中は呼び出し側が false を渡す (ゲートは EngineLoop)。
+    // ロック中は毎フレーム呼んでよい (ウィンドウ移動に追従するため矩形を打ち直している)
+    void ApplyCursorLock(void* hwnd, bool locked);
+
 private:
     void SetKey(uint8_t vk, bool down);
 
@@ -69,6 +92,12 @@ private:
     int32_t mouseX_ = 0;
     int32_t mouseY_ = 0;
     int32_t wheelAccum_ = 0;
+    int32_t mouseDeltaX_ = 0;   // M64a: WM_INPUT で積む生デルタ (CaptureSnapshot が消費)
+    int32_t mouseDeltaY_ = 0;
+    int32_t rawAbsX_ = 0;       // MOUSE_MOVE_ABSOLUTE 機 (RDP/タブレット) の前回絶対値
+    int32_t rawAbsY_ = 0;
+    bool rawAbsValid_ = false;  // 上の基準が有効か (初回とフォーカス喪失で落とす)
+    bool cursorLocked_ = false; // ShowCursor の内部カウンタを二重に進めないための現状態
     uint8_t buttons_ = 0;
     uint16_t lastVibLeft_ = 0;  // 最後に XInput へ送った量子化値 (重複送信の抑止)
     uint16_t lastVibRight_ = 0;

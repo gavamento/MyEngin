@@ -61,7 +61,8 @@ public:
                            const InputActions* inputActions = nullptr,
                            int* pendingSaveSlot = nullptr, int* pendingLoadSlot = nullptr,
                            PadVibrationState* padVibration = nullptr,
-                           const NetRuntimeInfo* net = nullptr)
+                           const NetRuntimeInfo* net = nullptr,
+                           CursorLockState* cursorLock = nullptr)
     {
         apiCtx_.audioQueue = audioQueue;
         apiCtx_.pendingScene = pendingScene;
@@ -76,6 +77,7 @@ public:
         //   ここが読まれるのは非ネット時だけ。それでも配線しておくのは、Interop.cs が
         //   位置ミラーで全スロットを写す以上「片方だけ null」という状態を作らないため
         apiCtx_.net = net;
+        apiCtx_.cursorLock = cursorLock; // v15 (M64a)。null = 該当スロットが no-op
     }
 
     // v14 (M59k): 今 tick の接触列を繋ぐ / 外す (ScriptHost と同じ規約)

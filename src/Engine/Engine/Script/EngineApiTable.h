@@ -21,6 +21,17 @@ struct PadVibrationState {
     float right = 0.0f; // 高周波モーター 0..1
 };
 
+// カーソルロックの要求値 (v15、M64a)。PadVibrationState と全く同じ「書くだけ」の
+// 出力レーンで、実際の ClipCursor/ShowCursor は EngineLoop がフレーム末に適用する。
+// ★escapeReleased は**エンジンが立てる**フラグ。Escape でロックを手放したことを
+//   覚えておき、スクリプトが mode 0 を出し直すまで再ロックしない。これが無いと
+//   「毎 tick SetCursorMode(1) を書くゲーム」が Escape を握り潰して、エディタで
+//   Play 中にマウスを取り返せなくなる
+struct CursorLockState {
+    int32_t mode = 0;            // スクリプトの要求 0 = 通常 / 1 = ロック
+    bool escapeReleased = false; // Escape で手放し済み (mode 0 の要求で解除)
+};
+
 // スクリプトが tick 内で積むオーディオ操作 (M19 の再生イベントを v8 でタグ付きに拡張)。
 // ハッシュ後に EngineLoop が drain して AudioSystem へ流す。
 // **POD で持つ** — 毎 tick clear() されるので std::string を含めるとヒープが暴れる。
@@ -92,6 +103,8 @@ struct ScriptApiContext {
     int* pendingLoadSlot = nullptr;
     // v12 (M51h): パッド振動の目標値の書き先。適用は EngineLoop (出力レーン)
     PadVibrationState* padVibration = nullptr;
+    // v15 (M64a): カーソルロックの要求値の書き先。適用は EngineLoop (出力レーン)
+    CursorLockState* cursorLock = nullptr;
     // v13 (M52i): ネットセッションの状態 (EngineLoop が毎フレーム書く読み取り専用 POD)。
     // null = ネットを張っていない → Net* スロットは既定値を返す
     const NetRuntimeInfo* net = nullptr;

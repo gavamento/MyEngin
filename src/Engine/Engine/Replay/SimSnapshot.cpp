@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <map>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -209,15 +210,22 @@ void WriteCollision(ByteWriter& w, CollisionSystem* collision)
 }
 
 // ---- ScriptHost の Start 済み記録 ----
-// unordered_set なので昇順へ整列してから書く (override 表と同じ理由)
+// キーは (エンティティ, スクリプト型) の 2 語 (M64b、v9)。**1 語 = エンティティだけ**
+// だった v8 までは、同じエンティティの 2 つ目のスクリプトが Start されないバグと
+// 表裏だったので、blob も 2 語へ広げてある。
+// ★整列は要らない — `std::set` なので走査順そのものが昇順で決定論
+//   (v8 までは unordered_set だったので、ここで sort するのが約束だった)
 void WriteScripts(ByteWriter& w, ScriptHost* scripts)
 {
     w.U32(kScrMagic);
-    std::vector<uint64_t> keys;
+    std::vector<uint64_t> keys; // (entity, script) を交互に詰めた平坦な列
     if (scripts != nullptr) {
-        const std::unordered_set<uint64_t>& started = scripts->StartedForSnapshot();
-        keys.assign(started.begin(), started.end());
-        std::sort(keys.begin(), keys.end());
+        const std::set<ScriptStartedKey>& started = scripts->StartedForSnapshot();
+        keys.reserve(started.size() * 2);
+        for (const ScriptStartedKey& k : started) {
+            keys.push_back(k.entity);
+            keys.push_back(k.script);
+        }
     }
     w.PodVector(keys);
 }
@@ -369,7 +377,12 @@ bool RestoreSimSnapshot(const SimRefs& refs, const std::byte* data, size_t size)
         MYE_LOG_ERROR("[snapshot] script section magic mismatch");
         return false;
     }
+    // (entity, script) の 2 語ずつ (M64b、v9)。奇数長は blob が壊れている
     std::vector<uint64_t> started = r.PodVector<uint64_t>();
+    if ((started.size() % 2) != 0) {
+        MYE_LOG_ERROR("[snapshot] script started list has an odd length (%zu)", started.size());
+        return false;
+    }
     if (r.U32() != kLoopMagic) {
         MYE_LOG_ERROR("[snapshot] loop section magic mismatch");
         return false;
@@ -416,9 +429,11 @@ bool RestoreSimSnapshot(const SimRefs& refs, const std::byte* data, size_t size)
         refs.collision->PrevSolidPairsForSnapshot() = std::move(prevSolidPairs);
     }
     if (refs.scripts != nullptr) {
-        std::unordered_set<uint64_t>& dst = refs.scripts->StartedForSnapshot();
+        std::set<ScriptStartedKey>& dst = refs.scripts->StartedForSnapshot();
         dst.clear();
-        dst.insert(started.begin(), started.end());
+        for (size_t i = 0; i + 1 < started.size(); i += 2) {
+            dst.insert(ScriptStartedKey{ started[i], started[i + 1] });
+        }
     }
     if (refs.prevTickInput != nullptr) {
         for (uint32_t p = 0; p < kMaxPlayers; ++p) {

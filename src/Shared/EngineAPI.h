@@ -62,7 +62,16 @@
 //               ON/OFF の構造的な操作は AddComponentByName / RemoveComponentByName、
 //               フィールド粒度の ON/OFF は v11 の SetComponentField が担当する
 //               (専用スロットは足さない — 決定台帳 10)
-#define MYE_API_VERSION 14u
+// v15 (M64a): マウスルック 2 本。GameEngin_Demo のドッグフーディングで
+//             「一人称の視点をマウスで回せない」ことが分かって足した穴埋め:
+//             InputSnapshot は絶対座標しか持たず、カーソルを画面内へ留める手段も
+//             無かったので、窓の端で視点が止まっていた。
+//             GetMouseDelta (決定論レーン = InputSnapshot 由来) と
+//             SetCursorMode (出力レーン = SetPadVibration と同格) の対で開通する。
+//             ★この 2 本は**非対称**であることに意味がある。デルタは .rep に載る
+//               sim 入力、カーソルの掴みは載せてはいけない機種依存の副作用で、
+//               後者を sim から読み返す口は今後も作らない
+#define MYE_API_VERSION 15u
 
 // PersistSet の 1 エントリ最大バイト数 (v12)。PersistStore は WorldHash / セーブ出力に
 // 全量が載るため、無制限だと 1 キーでハッシュとセーブが肥大する
@@ -470,6 +479,31 @@ struct MyeEngineApi {
     int (*WakeRigidbody)(void* engine, MyeEntityId id);
     // IsSleeping: 眠っていれば 1。Rigidbody 非所持も 0 (「眠っていない」に寄せる)
     int (*IsSleeping)(void* engine, MyeEntityId id);
+
+    // ---- v15 (M64a): マウスルック ----
+    // GetMouseDelta: この tick に積まれた**生マウスデルタ** (Raw Input のカウント)。
+    //   InputSnapshot 由来なので GetMouseWheel と同じく record/verify では記録値が返る
+    //   = 決定論レーン。outDx / outDy は null 可。
+    //   ★MousePos の差分ではない。カーソルロック中は絶対座標が動かない (矩形に貼り付く)
+    //     ので、差分方式では一人称の視点がロックした瞬間に止まる。
+    //   ★**単位は生のマウスカウントで、DPI は機種依存**。感度をコードに直書きすると
+    //     マウスを替えただけで別のゲームになる — 必ず調整値 (スキーマコンポーネント等)
+    //     を通して割ること。上下は「下向きが正」(画面座標と同じ向き)
+    void (*GetMouseDelta)(void* engine, int32_t* outDx, int32_t* outDy);
+
+    // SetCursorMode: 0 = 通常 / 1 = ロック (クライアント矩形へ閉じ込めて非表示)。
+    //   **出力レーン** — SetPadVibration と同格で、要求を書くだけ。実際の
+    //   ClipCursor/ShowCursor はフレーム末にエンジンが適用し、record/verify 中・
+    //   フォーカス喪失中・タイムトラベルのスクラブ中は強制的に解除される。
+    //   現在のモードを読み返す口は無い (状態は呼び出し側が持つ)。
+    //
+    // ★**Escape でエンジンがロックを手放す**。エディタで Play 中にロックしたまま
+    //   Stop ボタンを押せなくなるのを防ぐための最後の逃げ道で、解除は出力レーン
+    //   だけの判断なので sim には一切見えない (ハッシュは 1 bit も動かない)。
+    //   一度手放したら、**ゲーム側が mode 0 を出し直すまで再ロックしない** —
+    //   毎 tick 1 を書き続ける実装が Escape を握り潰すのを構造的に防ぐため。
+    //   つまり作法は「Escape (= Pause) を見たら 0、再開の意思表示で 1」。
+    void (*SetCursorMode)(void* engine, int mode);
 };
 
 // スクリプトの各コールバックに渡されるコンテキスト (POD)

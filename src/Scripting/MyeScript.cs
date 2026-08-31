@@ -162,6 +162,20 @@ namespace MyeScripting
         // このフレームに累積したホイール生値 (WHEEL_DELTA=120 単位)
         protected static int MouseWheel() => Engine.GetMouseWheel();
 
+        // ---- マウスルック (v15、M64a) ----
+        // この tick の生マウスデルタ (Raw Input のカウント)。MousePos の差分ではないので
+        // カーソルロック中も回り続ける。**DPI は機種依存**なので感度は必ず調整値で割ること
+        protected static MyeVec2 MouseDelta()
+        {
+            Engine.MouseDelta(out int dx, out int dy);
+            return new MyeVec2(dx, dy);
+        }
+
+        // カーソルのロック (0 = 通常 / 1 = クライアント矩形へ閉じ込めて非表示)。**出力レーン**。
+        // record/verify 中・フォーカス喪失中はエンジンが強制解除する。
+        // ★Escape でもエンジンが手放す。再ロックには「0 を出し直してから 1」が要る
+        protected static void SetCursorMode(int mode) => Engine.SetCursorMode(mode);
+
         // ---- ネット対戦の状態 (v13、M52i) ----
         // ★返る値は**機種依存** (自分がどちら側か / 実時間 / 巻き戻し回数)。
         //   sim 状態へ書き戻すとリプレイもネットも壊れる — 表示・カメラ・UI の判断だけに使う。

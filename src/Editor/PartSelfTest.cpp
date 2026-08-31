@@ -174,8 +174,8 @@ bool RunPartSelfTest()
         };
         const MyeEntityId root = toShared(enemy.Id());
 
-        check(api.version == MYE_API_VERSION && MYE_API_VERSION == 14u,
-              "abi: the table reports v14");
+        check(api.version == MYE_API_VERSION && MYE_API_VERSION == 15u,
+              "abi: the table reports v15");
         check(api.FindPart != nullptr && api.FindPartsByTag != nullptr,
               "abi: the v9 part slots are filled in");
         check(api.RaycastParts != nullptr, "abi: the v10 RaycastParts slot is filled in");
@@ -194,6 +194,23 @@ bool RunPartSelfTest()
               "abi: without a session the net slots report 'local, one lane'");
         check(api.GetComponentField != nullptr && api.SetComponentField != nullptr,
               "abi: the v11 generic field slots are filled in");
+        // v15 (M64a): マウスルック。GetMouseDelta は InputSnapshot 由来なので、
+        // 入力が空のこの試験では 0 が返るのが正しい (out 引数を書き忘れると 0 にならない)
+        check(api.GetMouseDelta != nullptr && api.SetCursorMode != nullptr,
+              "abi: the v15 mouse-look slots are filled in");
+        {
+            int32_t dx = 12345;
+            int32_t dy = -12345;
+            api.GetMouseDelta(api.engine, &dx, &dy);
+            check(dx == 0 && dy == 0, "abi: GetMouseDelta writes both outputs (empty input = 0)");
+            // null 出力で落ちないこと (片方だけ欲しい呼び方を許す契約)
+            api.GetMouseDelta(api.engine, nullptr, nullptr);
+            // 出力レーンなので戻り値も観測点も無い。**落ちないこと**だけを見る
+            // (cursorLock 未配線 = null のときに no-op で済むかの確認でもある)
+            api.SetCursorMode(api.engine, 1);
+            api.SetCursorMode(api.engine, 0);
+            check(true, "abi: SetCursorMode is a no-op without a wired cursor-lock state");
+        }
         check(api.GetMouseWheel != nullptr && api.SetUIRect != nullptr
                   && api.SetUILayout != nullptr && api.SetUITexture != nullptr
                   && api.UIHitTest != nullptr && api.GetActionState != nullptr

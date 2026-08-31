@@ -6,10 +6,27 @@
 
 namespace mye {
 
+// 自分と**祖先すべて**を見る (M64b)。1 つでも無効なら無効。
+//
+// ★M64a まで自エンティティしか見ていなかった。sim (スクリプト/衝突/物理/パーティクル) は
+//   親を無効にすれば止まるのに、**子の MeshRenderer だけは描かれ続ける**ので、
+//   「親を消したのに見た目が残る」という形で必ず踏む (ドッグフーディングで実際に踏んだ:
+//   車に乗っているあいだプレイヤーを親ごと止めたのに、体の箱が地面に立ったままだった)。
+// ★親子の循環は `World::ApplySetParent` が拒否するので、この走査は必ず終わる。
+//   祖先を辿る形はエンジン内で既に何度も使っている
+//   (`PhysicsSystem` の車輪→剛体探索、`Parts::RaycastParts` の root 判定)。
+// ★コストは「自分の Active 引き + 親の Hierarchy 引き」× 階層の深さ。全エンティティが
+//   HierarchyComponent を必ず持つ (World の基本アーキタイプ) ので親引きは常にヒットし、
+//   ルート 1 段なら従来 + 1 回の FindTypeIndex で済む。
 bool IsEntityActive(World& world, EntityID e)
 {
-    const auto* a = world.GetComponent<ActiveComponent>(e);
-    return !a || a->enabled != 0;
+    for (EntityID cur = e; !cur.IsNull(); cur = world.GetParent(cur)) {
+        const auto* a = world.GetComponent<ActiveComponent>(cur);
+        if (a != nullptr && a->enabled == 0) {
+            return false;
+        }
+    }
+    return true;
 }
 
 void RegisterBuiltinComponents()

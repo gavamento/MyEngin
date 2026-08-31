@@ -1709,6 +1709,29 @@ running it with `--local-players 2` also pins "lanes beyond `playerCount` stay z
 hash chain. Forcing every entity to read lane 0 makes the pair fail at tick 0, and `--hash-diff`
 names the offending `PlayerInput.axes` / `heldBits` / `pressedBits` fields directly.
 
+**Raw mouse delta and cursor lock (M64a).** `InputSnapshot` grew two `int32` fields,
+`mouseDeltaX` / `mouseDeltaY`, taking it from 64 to 72 bytes and bumping the `.rep`, snapshot-blob
+and net-protocol versions together. The values are **raw counts from `WM_INPUT`**, not the
+difference of the absolute `mouseX` / `mouseY` the struct already carried, and that distinction is
+the whole point: once the cursor is clipped to the client rect its absolute position stops moving,
+so a difference-based first-person look freezes exactly when it is needed. Raw counts are also
+free of pointer acceleration, which removes the OS mouse settings from the simulation — the mouse
+**DPI** remains machine-dependent, so sensitivity belongs in project tuning data, never in code.
+Registration uses `dwFlags = 0`; `RIDEV_NOLEGACY` would stop `WM_MOUSEMOVE` and every button
+message, killing ImGui and editor hit-testing at once, so the deltas are received *in addition to*
+the legacy stream. `SynthLaneInput` drives the deltas (but still leaves the mouse *position*
+untouched, which would misfire the GameView hit test) so the new bytes are covered by the `.rep`
+and snapshot round trips.
+
+The paired ABI slot `SetCursorMode` is an **output lane** in the same sense as `SetPadVibration`:
+scripts write a request, the frame tail applies `ClipCursor` / `ShowCursor`, and nothing reads the
+state back into the simulation. Suppression covers recording, verification, time-travel scrubbing
+and lost focus — plus, new here, **batch runs** (`--frames` / `--screenshot`), because those never
+pass through record or verify and would otherwise let CI and screenshot verification steal the
+desktop cursor. `Escape` releases the lock from inside the engine, since a locked cursor during
+Play would otherwise leave the editor's Stop button unreachable; the release latches until the
+game issues `SetCursorMode(0)` again, so a script that writes `1` every tick cannot swallow it.
+
 ### 11.4 Networked Determinism (2-player P2P, delay lockstep + predictive rollback)
 
 M52h/M52i turn the replay determinism this chapter guarantees into a netcode. The claim being

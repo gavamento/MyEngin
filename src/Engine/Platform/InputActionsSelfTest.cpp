@@ -313,6 +313,54 @@ bool RunInputActionsSelfTest()
         fs::remove_all(root, ec);
     }
 
+    // ---- 生マウスデルタ (M64a) ----
+    // SynthLaneInput は (tick, lane) の純関数という契約なので、新フィールドも
+    // その契約に従っていること + 恒常ゼロでない (= .rep の被覆として意味がある) ことを見る
+    {
+        const InputSnapshot a = SynthLaneInput(37, 1);
+        const InputSnapshot b = SynthLaneInput(37, 1);
+        check(a.mouseDeltaX == b.mouseDeltaX && a.mouseDeltaY == b.mouseDeltaY,
+              "synth: mouse delta is a pure function of (tick, lane)");
+
+        bool nonZero = false;
+        bool laneDiffers = false;
+        for (uint64_t t = 0; t < 256 && !(nonZero && laneDiffers); ++t) {
+            const InputSnapshot s0 = SynthLaneInput(t, 0);
+            const InputSnapshot s1 = SynthLaneInput(t, 1);
+            nonZero = nonZero || s0.mouseDeltaX != 0 || s0.mouseDeltaY != 0;
+            laneDiffers = laneDiffers
+                || s0.mouseDeltaX != s1.mouseDeltaX || s0.mouseDeltaY != s1.mouseDeltaY;
+        }
+        check(nonZero, "synth: mouse delta is actually driven (not always 0)");
+        check(laneDiffers, "synth: lanes get different mouse deltas");
+
+        // ★直流バイアスが無いこと。バイアスが残ると、デルタを積分する側 (一人称の視点角)
+        //   が必ずクランプへ張り付き、合成入力の実行が「ずっと真下を向いて歩く」になる
+        {
+            // 判定は平均 |0.15| カウント未満。厳密な 0 は要求しない — 合成入力は
+            // **ブロック単位で量子化**されている (レーン 0 なら 11 tick に 1 個の
+            // 独立サンプル) ので、有限区間の平均には必ず端数が残る。
+            // ★不合格だった旧実装は平均が**ちょうど +0.5** だった (`(h & 15) - 7` の
+            //   非対称な範囲)。実害の閾値との差は一桁あるので、この幅で十分に効く
+            const int64_t n = 65536;
+            for (uint32_t lane = 0; lane < 2; ++lane) {
+                int64_t sumX = 0;
+                int64_t sumY = 0;
+                for (int64_t t = 0; t < n; ++t) {
+                    const InputSnapshot s = SynthLaneInput(static_cast<uint64_t>(t), lane);
+                    sumX += s.mouseDeltaX;
+                    sumY += s.mouseDeltaY;
+                }
+                const auto small = [n](int64_t sum) { return sum * 20 < n * 3 && -sum * 20 < n * 3; };
+                check(small(sumX) && small(sumY),
+                      "synth: mouse delta has no DC bias (integrating it must not pin to a clamp)");
+            }
+        }
+        // ★位置は今も動かさない。合成入力で UI ヒットテストが誤爆しないことの回帰
+        check(SynthLaneInput(37, 0).mouseX == 0 && SynthLaneInput(37, 0).mouseY == 0,
+              "synth: mouse position stays untouched (UI hit-test must not fire)");
+    }
+
     if (failCount == 0) {
         MYE_LOG_INFO("==== InputActions self test: ALL PASS ====");
         return true;

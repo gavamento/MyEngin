@@ -1003,6 +1003,29 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
         rb->sleepTicks = 0;
         return 1;
     };
+    // ---- v15 (M64a): マウスルック ----
+    // 生デルタは InputSnapshot 由来 = GetMouseWheel と同じ決定論レーン
+    // (verify では記録値が返り、ライブのマウスは 1 カウントも混ざらない)
+    out.GetMouseDelta = [](void* engine, int32_t* outDx, int32_t* outDy) {
+        const InputSnapshot& in = Ctx(engine)->input;
+        if (outDx) { *outDx = in.mouseDeltaX; }
+        if (outDy) { *outDy = in.mouseDeltaY; }
+    };
+    // カーソルロック (出力レーン)。要求を書くだけ — 適用/ゲート/Escape の逃げ道は
+    // EngineLoop (フレーム末) が持つ。SetPadVibration と 1 対 1 で同じ形
+    out.SetCursorMode = [](void* engine, int mode) {
+        CursorLockState* c = Ctx(engine)->cursorLock;
+        if (!c) {
+            return;
+        }
+        c->mode = (mode != 0) ? 1 : 0;
+        if (c->mode == 0) {
+            // ★「手放した状態」の解除はここでしか起きない。ゲームが 0 を出し直して
+            //   初めて再ロックできる = 毎 tick 1 を書く実装が Escape を握り潰せない
+            c->escapeReleased = false;
+        }
+    };
+
     out.IsSleeping = [](void* engine, MyeEntityId id) -> int {
         const auto* rb = Sc(engine)->GetWorld().GetComponent<RigidbodyComponent>(ToEngine(id));
         return (rb && rb->isSleeping) ? 1 : 0;

@@ -150,6 +150,9 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // M51h: SetPadVibration の目標値。スロットは書くだけで、適用はフレーム末の出力レーン
     // (record/verify 中とフォーカス喪失中は 0 に落とし、終了時も 0 リセット)
     PadVibrationState padVibration;
+    // M64a: SetCursorMode の要求値。padVibration と全く同じ出力レーンで、適用は
+    // フレーム末 (record/verify 中・フォーカス喪失中・スクラブ中は強制解除、終了時も解除)
+    CursorLockState cursorLock;
     std::vector<EffectSpawnRequest> effectQueue; // PlayEffect の spawn 要求 (tick 末に消費、M32f)
     std::vector<DebugLineCmd> debugLines; // DebugDrawLine (v7)。tick 頭クリア → 描画で消費
     IRenderPath* activePath = &forwardPath;
@@ -201,6 +204,9 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     window.AddMsgHandler([&input](void* hwnd, uint32_t msg, uint64_t wp, int64_t lp, int64_t& result) {
         return input.HandleMessage(hwnd, msg, wp, lp, result);
     });
+    // M64a: 生マウスデルタ (WM_INPUT) の受け口。**ハンドラ登録の後**に呼ぶ —
+    // 登録前だと最初の WM_INPUT を誰も受け取らない
+    input.AttachRawInput(window.Hwnd());
 
     // シェーダは 2 ルート解決: <assets>\shaders を先に見て、無ければエンジン組込みへ落ちる。
     // プロジェクトに同名を置けば上書きできる。レガシー起動では両者が同一なので 1 本に畳む。
@@ -331,10 +337,10 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     NetRuntimeInfo netInfo;
     scriptHost.SetSharedServices(&audioQueue, &pendingScene, &effectQueue, &debugLines,
                                  &audioHandleSeq, &inputActions, &pendingSaveSlot,
-                                 &pendingLoadSlot, &padVibration, &netInfo);
+                                 &pendingLoadSlot, &padVibration, &netInfo, &cursorLock);
     managedHost.SetSharedServices(&audioQueue, &pendingScene, &effectQueue, &debugLines,
                                   &audioHandleSeq, &inputActions, &pendingSaveSlot,
-                                  &pendingLoadSlot, &padVibration, &netInfo);
+                                  &pendingLoadSlot, &padVibration, &netInfo, &cursorLock);
 
     clock.Init();
 
@@ -1521,6 +1527,27 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                 || !window.HasFocus() || timeTravel.Scrubbing();
             input.ApplyVibration(vibSuspend ? 0.0f : padVibration.left,
                                  vibSuspend ? 0.0f : padVibration.right);
+
+            // ---- カーソルロックの適用 (M64a、出力レーン)。抑止条件は振動と同一 ----
+            // ★Escape は**エンジンが最後の逃げ道として横取りする**。エディタで Play 中に
+            //   ロックしたままだと Stop ボタンも押せなくなるため。手放した事実は
+            //   cursorLock.escapeReleased に残り、ゲームが SetCursorMode(0) を出し直す
+            //   まで再ロックしない (毎 tick 1 を書く実装に Escape を握り潰させない)。
+            // ★ここで読む入力は**表示側の判断にしか使わない** — ワールドハッシュには
+            //   1 bit も入らないので決定論の対象外で良い (HasFocus と同じ扱い)
+            if (ctx.inputs[0].KeyDown(VK_ESCAPE) && cursorLock.mode != 0
+                && !cursorLock.escapeReleased) {
+                cursorLock.escapeReleased = true;
+                MYE_LOG_INFO("[input] cursor lock released by Escape "
+                             "(call SetCursorMode(0) then (1) to re-acquire)");
+            }
+            // ★バッチ実行 (--frames / --screenshot) でも掴まない。**人が座っていない
+            //   実行でデスクトップのカーソルを奪うのは事故** — CI とスクショ検証は
+            //   record/verify を通らない経路なので、この 1 条件が無いと素通りする
+            const bool batchRun = config.maxFrames > 0 || !config.screenshotPath.empty();
+            input.ApplyCursorLock(window.Hwnd(),
+                                  cursorLock.mode != 0 && !vibSuspend && !batchRun
+                                      && !cursorLock.escapeReleased);
         }
         const double tRender = clock.Now();
 
@@ -1721,6 +1748,10 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
 
     // ---- 終了 (起動の逆順) ----
     input.ApplyVibration(0.0f, 0.0f); // M51h: 終了後に振動を残さない
+    // M64a: 終了後にカーソルを掴んだまま / 隠したままにしない。
+    // ★ShowCursor は内部カウンタなので、ここを飛ばすと**デスクトップ全体で**
+    //   カーソルが消えたままになる (プロセスが死んでも OS は数え直さない)
+    input.ApplyCursorLock(window.Hwnd(), false);
     app.OnShutdown(ctx);
     meshcol::Install(nullptr); // M41 (meshColliders 破棄前に必ず外す)
     convexcol::Install(nullptr); // M60f (convexColliders 破棄前に必ず外す)

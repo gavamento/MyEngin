@@ -411,6 +411,50 @@ bool RunSceneSerializerSelfTest()
               "ActiveComponent (enabled=0) survives save/load");
     }
 
+    // ---- ActiveComponent の階層伝播 (M64b) ----
+    // ★M64a まで自エンティティのみの判定で、**親を止めても子の描画だけが残った**。
+    //   sim は親で止まるのに絵が残るので「消えたはずのものが映っている」で必ず踏む
+    {
+        Scene s6;
+        GameObject root = s6.CreateGameObjectTracked("ActRoot");
+        GameObject mid = s6.CreateGameObjectTracked("ActMid");
+        GameObject leaf = s6.CreateGameObjectTracked("ActLeaf");
+        GameObject other = s6.CreateGameObjectTracked("ActOther"); // 無関係なルート
+        mid.SetParent(root);
+        leaf.SetParent(mid);
+        World& w6 = s6.GetWorld();
+        w6.ApplyStructuralChanges();
+        check(IsEntityActive(w6, leaf.Id()), "hierarchy: all active by default");
+
+        // ★フラグは**毎回引き直す**。ActiveComponent の追加はアーキタイプ移動なので、
+        //   先に取ったポインタは他エンティティの追加で無効になりうる
+        const auto setActive = [&](GameObject& g, int32_t v) {
+            if (auto* a = w6.GetComponent<ActiveComponent>(g.Id())) {
+                a->enabled = v;
+            } else {
+                g.AddComponent<ActiveComponent>()->enabled = v;
+            }
+        };
+
+        setActive(root, 0);
+        check(!IsEntityActive(w6, root.Id()) && !IsEntityActive(w6, mid.Id())
+                  && !IsEntityActive(w6, leaf.Id()),
+              "hierarchy: disabling an ancestor disables the whole subtree");
+        // **兄弟には漏れない**。祖先を辿るだけで、木全体を舐めているわけではない
+        check(IsEntityActive(w6, other.Id()), "hierarchy: unrelated roots are untouched");
+
+        // 子が明示的に有効でも、祖先が無効なら無効 (Unity と同じ規約)
+        setActive(leaf, 1);
+        check(!IsEntityActive(w6, leaf.Id()),
+              "hierarchy: a child cannot re-enable itself under a disabled ancestor");
+
+        setActive(root, 1);
+        check(IsEntityActive(w6, leaf.Id()), "hierarchy: re-enabling the ancestor restores it");
+        setActive(leaf, 0);
+        check(IsEntityActive(w6, mid.Id()) && !IsEntityActive(w6, leaf.Id()),
+              "hierarchy: disabling a leaf does not touch its ancestors");
+    }
+
     // ---- メモリフック: new/delete カウンタ (M12) ----
     {
         const prof::MemStats before = prof::GetMemoryStats();

@@ -223,9 +223,11 @@ struct ColliderComponent {
 };
 
 // 有効/無効フラグ (M10)。**このコンポーネントが無ければ有効**。
-// enabled==0 で自身を sim (スクリプト/衝突/パーティクル) と描画から外す。
+// enabled==0 で自身**と子孫すべて**を sim (スクリプト/衝突/物理/パーティクル) と描画から外す。
 // 既存シーンは ActiveComponent を持たない → 挙動もワールドハッシュも不変 (ReplayFile bump 不要)。
-// 注: 現状は自エンティティのみ判定 (階層伝播は将来拡張)
+// ★**階層に伝播する** (M64b)。M64a まで自エンティティのみの判定で、親を止めても子の
+//   MeshRenderer だけが描かれ続けた — 「親を消したのに見た目が残る」で必ず踏む。
+//   判定の実体は IsEntityActive (Components.cpp)。
 struct ActiveComponent {
     int32_t enabled = 1;
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
@@ -1179,7 +1181,8 @@ struct RopeComponent {
 
 class World;
 
-// エンティティが有効か (ActiveComponent が無ければ有効 / enabled==0 なら無効)
+// エンティティが有効か。ActiveComponent が無ければ有効 / enabled==0 なら無効。
+// **自分と祖先すべてを見る** (M64b) — 親が無効なら子も無効
 bool IsEntityActive(World& world, EntityID e);
 
 // 固定順で登録する (TypeId の決定論)。多重呼び出しは無害

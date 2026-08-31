@@ -208,6 +208,9 @@ namespace MyeScripting
         public delegate* unmanaged<void*, float, float, float*, MyeVec3*, int> SampleTerrainHeight;
         public delegate* unmanaged<void*, MyeEntityId, int> WakeRigidbody;
         public delegate* unmanaged<void*, MyeEntityId, int> IsSleeping;
+        // ---- v15 (M64a): マウスルック 2 本。宣言順 = ネイティブと一致 ----
+        public delegate* unmanaged<void*, int*, int*, void> GetMouseDelta;
+        public delegate* unmanaged<void*, int, void> SetCursorMode;
     }
 
     // ネイティブ ManagedHost が保持する関数ポインタ表。Bootstrap がここに書き込む。
@@ -876,5 +879,18 @@ namespace MyeScripting
             => _api != null && _api->WakeRigidbody(_api->Engine, id) != 0;
         public static bool IsSleeping(MyeEntityId id)
             => _api != null && _api->IsSleeping(_api->Engine, id) != 0;
+
+        // ---- v15 (M64a): マウスルック ----
+        public static void MouseDelta(out int dx, out int dy)
+        {
+            dx = 0; dy = 0;
+            if (_api == null) return;
+            fixed (int* px = &dx) fixed (int* py = &dy) { _api->GetMouseDelta(_api->Engine, px, py); }
+        }
+
+        public static void SetCursorMode(int mode)
+        {
+            if (_api != null) _api->SetCursorMode(_api->Engine, mode);
+        }
     }
 }

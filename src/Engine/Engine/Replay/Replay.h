@@ -30,9 +30,15 @@ namespace mye {
 //     「その 1 tick が未照合になる」だけで誤検出にはならない (安全側に倒れる)。
 //   この予約は v4 のレイアウトを一切変えない = 版は上げない (決定台帳 3)。
 
+// v5 (M64a): InputSnapshot に生マウスデルタ (mouseDeltaX/Y) が入り 64 -> 72 バイトに
+// なった。ヘッダの inputSize でも弾けるが、**レイアウト変更は版で表すのが規約**
+// (inputSize は同サイズの別レイアウトを検出できない)。
+// ★過去の .rep は読めなくなるが、このリポジトリは golden .rep をコミットしておらず
+//   (replay_verify.bat が毎回録り直す)、失うものは無い
+
 // .rep のフォーマット版。ネットのハンドシェイク (M52h) でも照合するので、
 // Replay.cpp の中に閉じずにここへ出してある
-inline constexpr uint32_t kReplayFileVersion = 4;
+inline constexpr uint32_t kReplayFileVersion = 5;
 
 struct MyeReplayHeader {
     uint32_t magic = 0x5045524Du; // 'MREP'

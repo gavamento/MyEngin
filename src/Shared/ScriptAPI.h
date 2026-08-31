@@ -597,6 +597,29 @@ inline void MyeSetPadVibration(const MyeUpdateContext& ctx, float left, float ri
     ctx.api->SetPadVibration(ctx.api->engine, left, right);
 }
 
+// ---- v15 (M64a): マウスルック ----
+
+// この tick に積まれた生マウスデルタ (Raw Input のカウント、下向きが正)。
+// InputSnapshot 由来なので record/verify では記録値が返る = 決定論レーン。
+// ★**単位は生カウントで DPI は機種依存**。感度をコードへ直書きすると
+//   マウスを替えただけで別のゲームになる — 調整値を通して割ること
+inline void MyeMouseDelta(const MyeUpdateContext& ctx, int32_t& dx, int32_t& dy)
+{
+    dx = 0;
+    dy = 0;
+    ctx.api->GetMouseDelta(ctx.api->engine, &dx, &dy);
+}
+
+// カーソルのロック (0 = 通常 / 1 = クライアント矩形へ閉じ込めて非表示)。**出力レーン** —
+// 要求を書くだけで、record/verify 中・フォーカス喪失中・スクラブ中はエンジンが解除する。
+// ★Escape でもエンジンが手放す (エディタで Play 中に Stop を押せなくなるのを防ぐ最後の
+//   逃げ道)。**再ロックには「0 を出し直してから 1」が要る** — 毎 tick 1 を書くだけの
+//   実装が Escape を握り潰さないようにこうしてある。作法は「ポーズしたら 0、再開で 1」
+inline void MyeSetCursorMode(const MyeUpdateContext& ctx, int mode)
+{
+    ctx.api->SetCursorMode(ctx.api->engine, mode);
+}
+
 // ---- v13 (M52i): ネット対戦の状態 + 入力アクションのレーン指定版 ----
 
 // ★Net* が返すのは**機種依存の値** (自分がどちら側か / 実時間 / 巻き戻し回数)。

@@ -110,9 +110,10 @@ bool RunNetSelfTest()
     // proto v2 (M52i) でヘッダへ確定 (tick, hash) の 16 バイトが増えた
     check(sizeof(NetPacketHeader) == 64, "packet header is 64 bytes");
     check(sizeof(NetHandshakePayload) == 48, "handshake payload is 48 bytes");
-    check(sizeof(InputSnapshot) == 64, "input snapshot is 64 bytes");
-    check(kNetMaxPacket == 64 + 8 * 64, "max packet = header + 8 inputs");
-    check(kNetProtoVersion == 2, "protocol version is 2 (M52i hash piggyback)");
+    // M64a: 生マウスデルタ (int32 x2) が入って 64 -> 72
+    check(sizeof(InputSnapshot) == 72, "input snapshot is 72 bytes");
+    check(kNetMaxPacket == 64 + 8 * 72, "max packet = header + 8 inputs");
+    check(kNetProtoVersion == 3, "protocol version is 3 (M64a input layout)");
 
     // ---- 2. 指紋の照合はフィールドごとに理由を返す ----
     {

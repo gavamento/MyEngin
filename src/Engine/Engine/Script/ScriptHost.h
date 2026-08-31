@@ -1,7 +1,8 @@
 #pragma once
+#include <cstdint>
 #include <deque>
+#include <set>
 #include <string>
-#include <unordered_set>
 
 #include "Engine/Core/EntityID.h"
 #include "Engine/Engine/Script/EngineApiTable.h"
@@ -11,6 +12,27 @@
 namespace mye {
 
 class Scene;
+
+// Start 済みインスタンスの識別子 (M64b)。
+// ★**エンティティ ID だけでは足りない**。同じエンティティに 2 つ目のスクリプトを
+//   付けると、1 つ目が入れたキーで弾かれて 2 つ目の `Start()` が一度も呼ばれない、
+//   という穴が M64a まで開いていた。`Update` / `LateUpdate` は無条件に回るので
+//   「初期化だけ静かに効かない」という一番追いにくい形で出る。
+// ★エンティティ側は index<<32|generation で 64bit を使い切っているので、
+//   スクリプト型を同じ語に詰めることはできない。2 語持つ。
+struct ScriptStartedKey {
+    uint64_t entity = 0; // index<<32 | generation
+    uint64_t script = 0; // そのスクリプト型の ComponentTypeId
+
+    friend bool operator<(const ScriptStartedKey& a, const ScriptStartedKey& b)
+    {
+        return (a.entity != b.entity) ? (a.entity < b.entity) : (a.script < b.script);
+    }
+    friend bool operator==(const ScriptStartedKey& a, const ScriptStartedKey& b)
+    {
+        return a.entity == b.entity && a.script == b.script;
+    }
+};
 
 // GameLogic.dll のホスト (engine_spec.md 5.2 / 8.4)。
 // - スクリプト型ごとに動的 ECS コンポーネントを登録する
@@ -37,7 +59,8 @@ public:
                            const InputActions* inputActions = nullptr,
                            int* pendingSaveSlot = nullptr, int* pendingLoadSlot = nullptr,
                            PadVibrationState* padVibration = nullptr,
-                           const NetRuntimeInfo* net = nullptr)
+                           const NetRuntimeInfo* net = nullptr,
+                           CursorLockState* cursorLock = nullptr)
     {
         apiCtx_.audioQueue = audioQueue;
         apiCtx_.pendingScene = pendingScene;
@@ -49,6 +72,7 @@ public:
         apiCtx_.pendingLoadSlot = pendingLoadSlot;
         apiCtx_.padVibration = padVibration;
         apiCtx_.net = net; // v13 (M52i)。null = ネット非使用
+        apiCtx_.cursorLock = cursorLock; // v15 (M64a)。null = 該当スロットが no-op
     }
 
     // v14 (M59k): 今 tick の接触列を繋ぐ / 外す。**毎 tick 呼ぶ** —
@@ -61,8 +85,9 @@ public:
     void ClearStarted() { started_.clear(); }
     // sim スナップショット (M52d): Start 済み記録は sim 状態 (戻し忘れると復元後の
     // エンティティで Start が再実行される / されない が食い違う)。**SimSnapshot 専用**。
-    // 書き出しはキー昇順に整列すること — unordered_set の走査順は決定論ではない
-    std::unordered_set<uint64_t>& StartedForSnapshot() { return started_; }
+    // ★M64b で `std::set` に変えたので**走査順そのものが決定論**になった
+    //   (unordered_set のときは書き出し側で昇順に整列する約束だった)
+    std::set<ScriptStartedKey>& StartedForSnapshot() { return started_; }
 
     // 毎 tick、フェーズ 3/5 で呼ぶ (Play 中のみ)
     void SetTickContext(const InputSnapshot& input, uint64_t tickIndex, float dt);
@@ -101,7 +126,9 @@ private:
     ScriptApiContext apiCtx_ = {}; // api_ の engine が指すコンテキスト (安定アドレス)
     MyeEngineApi api_ = {};
     std::deque<ScriptType> types_; // deque: name の c_str() 安定性のため
-    std::unordered_set<uint64_t> started_; // (index<<32|generation) — Start 済みインスタンス
+    // Start 済みインスタンス。キーは (エンティティ, スクリプト型) の組 (M64b)。
+    // std::set = 走査順が決定論 (SimSnapshot がそのまま書ける)
+    std::set<ScriptStartedKey> started_;
 
     // tick コンテキスト
     InputSnapshot input_ = {};
