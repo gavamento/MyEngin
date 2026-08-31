@@ -338,6 +338,64 @@ $constGroups = @(
             'src\Engine\Engine\Particles\ParticleCurves.h' = 'kParticleSortMergeThreads\s*=\s*(\d+)'
             'assets\shaders\particle_sort_common.hlsli'    = '#\s*define\s+MYE_PARTICLE_SORT_MERGE_THREADS\s+(\d+)'
         }
+    },
+    # ---- M63d: パーティクルのライティングのスロット ----
+    # particle_light.hlsli は **register 宣言を持つ .hlsli** で、番号は include する側が
+    # マクロで渡す (CPU 版と GPU 版で空きが違うため)。C++ 側は張る場所として同じ番号を
+    # 使うので、食い違うと「CB が全 0 のまま = 粒子が真っ黒」「CSM が別のテクスチャ =
+    # 影が出鱈目な位置」になる。**どちらもコンパイルも実行も通る**ので機械照合が唯一の防波堤。
+    # ★1 グループ = 1 整数なので、CPU 版と GPU 版は別グループに分けてある
+    #   (両者は別シェーダでバインド空間を共有せず、番号が違うのが正しい)。
+    @{
+        label = 'particlelight::kCpuLightCbSlot / MYE_PARTICLE_LIGHT_SLOT_CB (CPU)'
+        sites = @{
+            'src\Engine\Renderer\RenderTypes.h'      = 'constexpr\s+int\s+kCpuLightCbSlot\s*=\s*(\d+)'
+            'assets\shaders\particle_render.hlsl'    = '#\s*define\s+MYE_PARTICLE_LIGHT_SLOT_CB\s+b(\d+)'
+        }
+    },
+    @{
+        label = 'particlelight::kGpuLightCbSlot / MYE_PARTICLE_LIGHT_SLOT_CB (GPU)'
+        sites = @{
+            'src\Engine\Renderer\RenderTypes.h'        = 'constexpr\s+int\s+kGpuLightCbSlot\s*=\s*(\d+)'
+            'assets\shaders\particle_render_gpu.hlsl'  = '#\s*define\s+MYE_PARTICLE_LIGHT_SLOT_CB\s+b(\d+)'
+        }
+    },
+    @{
+        label = 'particlelight::kCpuShadowSrvSlot / MYE_PARTICLE_LIGHT_SLOT_CSM (CPU)'
+        sites = @{
+            'src\Engine\Renderer\RenderTypes.h'      = 'constexpr\s+int\s+kCpuShadowSrvSlot\s*=\s*(\d+)'
+            'assets\shaders\particle_render.hlsl'    = '#\s*define\s+MYE_PARTICLE_LIGHT_SLOT_CSM\s+t(\d+)'
+        }
+    },
+    @{
+        label = 'particlelight::kGpuShadowSrvSlot / MYE_PARTICLE_LIGHT_SLOT_CSM (GPU)'
+        sites = @{
+            'src\Engine\Renderer\RenderTypes.h'        = 'constexpr\s+int\s+kGpuShadowSrvSlot\s*=\s*(\d+)'
+            'assets\shaders\particle_render_gpu.hlsl'  = '#\s*define\s+MYE_PARTICLE_LIGHT_SLOT_CSM\s+t(\d+)'
+        }
+    },
+    @{
+        label = 'particlelight::kCpuIrradianceSrvSlot / MYE_PARTICLE_LIGHT_SLOT_IRR (CPU)'
+        sites = @{
+            'src\Engine\Renderer\RenderTypes.h'      = 'constexpr\s+int\s+kCpuIrradianceSrvSlot\s*=\s*(\d+)'
+            'assets\shaders\particle_render.hlsl'    = '#\s*define\s+MYE_PARTICLE_LIGHT_SLOT_IRR\s+t(\d+)'
+        }
+    },
+    @{
+        label = 'particlelight::kGpuIrradianceSrvSlot / MYE_PARTICLE_LIGHT_SLOT_IRR (GPU)'
+        sites = @{
+            'src\Engine\Renderer\RenderTypes.h'        = 'constexpr\s+int\s+kGpuIrradianceSrvSlot\s*=\s*(\d+)'
+            'assets\shaders\particle_render_gpu.hlsl'  = '#\s*define\s+MYE_PARTICLE_LIGHT_SLOT_IRR\s+t(\d+)'
+        }
+    },
+    @{
+        # 比較サンプラだけは CPU / GPU とも s1 = 3 サイトを 1 グループで見られる
+        label = 'particlelight::kShadowSamplerSlot / MYE_PARTICLE_LIGHT_SLOT_SAMP'
+        sites = @{
+            'src\Engine\Renderer\RenderTypes.h'        = 'constexpr\s+int\s+kShadowSamplerSlot\s*=\s*(\d+)'
+            'assets\shaders\particle_render.hlsl'      = '#\s*define\s+MYE_PARTICLE_LIGHT_SLOT_SAMP\s+s(\d+)'
+            'assets\shaders\particle_render_gpu.hlsl'  = '#\s*define\s+MYE_PARTICLE_LIGHT_SLOT_SAMP\s+s(\d+)'
+        }
     }
 )
 foreach ($g in $constGroups) {

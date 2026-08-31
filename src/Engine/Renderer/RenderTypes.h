@@ -373,6 +373,14 @@ struct RenderView {
     float froxelNearZ = 0.0f;
     float froxelFarZ = 0.0f;
     int32_t froxelSlices = 0;
+    // ---- M63d: パーティクルのライティング (末尾 append。**null = 従来と 1 ビットも同じ**) ----
+    //      RenderSystem が光パスへ渡すのと同じ SceneLightData を指すだけの非所有ポインタ
+    //      (terrain / decals / probes と同じ流儀)。**メッシュのライティングは今までどおり
+    //      パスが自前で受け取る** — ここはパスの外で走るパーティクル (RenderSystem が
+    //      forward 後段で呼ぶ) が同じライトを読むための唯一の口。
+    //      ★null のままになる経路がある (AssetPreviewCache の別 RenderSystem / selftest の
+    //        手組み RenderView)。**消費側は「null ならライティング無効」のゲートを必ず置く**
+    const struct SceneLightData* lights = nullptr;
 };
 
 // ---- デカール (M56a) ----
@@ -922,5 +930,105 @@ inline float CompositeFroxelAdditive(float src, float transmittance)
 }
 
 } // namespace froxel
+
+// ---- M63d: パーティクルのライティング ----
+//
+// パーティクルは **RenderPath の外** (RenderSystem が forward 後段で呼ぶ) で描かれるので、
+// forward_lit / deferred_light が使っているライト CB にはどうやっても相乗りできない。
+// かといって CPU/GPU の 2 バックエンドがそれぞれ CB を組むと「片方だけ影が付かない」が
+// 起きる (M63b で billboardParams の手写しが実際にそうなりかけた) ので、**CB の形と
+// 詰め方をここに 1 本だけ**置いて両者が呼ぶ (MakeFroxelForwardCB と同じ形)。
+//
+// ★**GpuParticleCB には絶対に入れない。** あちらは「エミッタごと・tick ごと」に上がる CB で、
+//   そこへ 1KB のライト配列を積むと 100 エミッタのシーンで毎フレーム 100KB の転送が増える。
+//   ライトはビューにつき 1 回しか変わらないので、アップロードもエミッタループの外で 1 回。
+namespace particlelight {
+
+// ---- スロット (check_rules.ps1 の規則 9 が HLSL の register() と機械照合する) ----
+// CPU 版 (particle_render.hlsl) は b0/t0-t3/s0 まで、GPU 版 (particle_render_gpu.hlsl) は
+// b0-b1/t0-t4/s0 まで既に埋まっている。**番号を揃えようとして既存を動かさない** —
+// 2 本は別シェーダでバインド空間を共有しないので、違っていても実害は無い
+// (froxel::kParticleSrvSlot と kGpuParticleSrvSlot が 3 と 4 で食い違っているのと同じ理由)。
+constexpr int kCpuLightCbSlot = 1;        // particle_render.hlsl     : ParticleLightCB
+constexpr int kCpuShadowSrvSlot = 4;      //                          : CSM (Texture2DArray)
+constexpr int kCpuIrradianceSrvSlot = 5;  //                          : IBL irradiance (Cube)
+constexpr int kGpuLightCbSlot = 2;        // particle_render_gpu.hlsl : ParticleLightCB
+constexpr int kGpuShadowSrvSlot = 5;      //                          : CSM (Texture2DArray)
+constexpr int kGpuIrradianceSrvSlot = 6;  //                          : IBL irradiance (Cube)
+// 比較サンプラだけは 2 本とも s1 (s0 は LINEAR/CLAMP が既に居る)。forward_lit の
+// gShadowSampler と同じ番号にしてあるのは、読み手が別物だと思わないようにするため
+constexpr int kShadowSamplerSlot = 1;
+
+// このビューでパーティクルにライティングを掛けられるか。
+// ★**エミッタ側の lightingMode が本当のゲート**で、ここは「掛けようがない」経路を潰すだけ。
+//   null になるのは AssetPreviewCache の別 RenderSystem と selftest の手組み RenderView。
+// ★debugViewMode を外すのは FroxelIsBound と同じ理由 — Unlit / Wireframe は
+//   メッシュ側を白ライトへ潰してある表示モードで、そこに粒子だけ陰影を載せる筋が無い。
+inline bool IsBound(const RenderView& view)
+{
+    return view.debugViewMode == 0 && view.lights != nullptr;
+}
+
+// CSM を実際に張れるか (IsBound の中でさらに絞る)。
+// ★shadowSRV は**次フレームのシャドウパスで DSV になる**。張ったら必ず剥がすこと
+//   (M57d/e が t15/t7/t3 で 3 度踏んだ罠と同型)。
+inline bool ShadowIsBound(const RenderView& view)
+{
+    return IsBound(view) && view.shadowSRV != nullptr && view.cascadeCount > 0;
+}
+
+// ライト一式 + CSM + アンビエント + カメラ前方の CB (b1 / b2)。
+// HLSL 側 particle_light.hlsli の cbuffer 宣言と 1 バイトも違ってはいけない。
+struct ParticleLightCB {
+    // CSM 各カスケードの transpose(lightView*lightProj)。RenderView::lightViewProj を
+    // **そのまま**写す (あちらが既に転置済み — SampleShadowCSM の mul(float4, M) 規約)。
+    // ★配列長 3 は ShadowPass::kCascades / common.hlsli の vps[3] と同じ数。カスケードを
+    //   増やす日が来たら**ここも** (HLSL の gPlCascadeVP[3] と ParticleLightAt の引数も)
+    //   直すこと — check_rules の規則 9 は「1 ファイル 1 整数」しか見られないので拾えない
+    DirectX::XMFLOAT4X4 cascadeVP[3] = {};
+    DirectX::XMFLOAT4 ambient = {}; // xyz = アンビエント, w = iblEnabled (1 = irradiance を引く)
+    // x = lightCount, y = cascadeCount (0 = 影なし), z = shadowTexel, w = 予約
+    DirectX::XMFLOAT4 params = {};
+    // xyz = カメラ前方 (ワールド)。球面法線 (ParticleSphericalNormal) の Z 軸で、
+    // camRight / camUp と直交する 3 本目。**各バックエンドの描画 CB には無い**ので
+    // ここが唯一の供給元
+    DirectX::XMFLOAT4 camFwd = {};
+    GpuLight lights[kMaxLights] = {}; // 末尾に置く (16B 境界と HLSL の配列パッキング)
+};
+static_assert(sizeof(ParticleLightCB) == 1264,
+              "ParticleLightCB は particle_light.hlsli の cbuffer と 1 バイトも違ってはいけない");
+
+inline ParticleLightCB MakeParticleLightCB(const RenderView& view, bool shadowBound)
+{
+    ParticleLightCB out;
+    const SceneLightData* src = view.lights;
+    if (src == nullptr) {
+        return out; // 全 0 = lightCount 0 = シェーダ側で環境項だけ (呼び出し側は張らない)
+    }
+    for (int c = 0; c < 3; ++c) {
+        out.cascadeVP[c] = view.lightViewProj[c];
+    }
+    // IBL は irradiance (拡散) だけ。ビルボードに roughness も F0 も無いので鏡面 IBL は
+    // 物理的に無意味 — prefiltered / BRDF LUT は張らない (M63d の明示的な除外)
+    out.ambient = { src->ambient.x, src->ambient.y, src->ambient.z,
+                    (view.iblIrradiance != nullptr) ? 1.0f : 0.0f };
+    // ★count は必ず潰す。SceneLightData::count は収集側の値で、配列長を超えると
+    //   CB の外を読んだ形になる (メッシュ側は ApplyLighting のループが同じ配列で
+    //   止まるので露見しない)
+    int count = src->count;
+    count = (count < 0) ? 0 : ((count > kMaxLights) ? kMaxLights : count);
+    out.params = { static_cast<float>(count),
+                   shadowBound ? static_cast<float>(view.cascadeCount) : 0.0f,
+                   view.shadowTexelSize, 0.0f };
+    // view 行列の第 3 列 = カメラ前方。camRight = 第 1 列 / camUp = 第 2 列 と同じ取り方
+    // (froxel の viewZRow が同じ列を「深度の行」として使っているのと同一の値)
+    out.camFwd = { view.view._13, view.view._23, view.view._33, 0.0f };
+    for (int i = 0; i < count; ++i) {
+        out.lights[i] = src->lights[i];
+    }
+    return out;
+}
+
+} // namespace particlelight
 
 } // namespace mye

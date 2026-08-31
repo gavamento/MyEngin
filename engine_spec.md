@@ -676,7 +676,7 @@ ParticleEmitterComponent (data stored in ECS)
        ├─ Initial values: lifetime, velocity, size, color, rotation (all specified as ranges)
        ├─ Over-lifetime changes: size/color/velocity curves (keyframe arrays)
        ├─ Forces: gravity, constant wind, simple turbulence
-       └─ Rendering: texture, blend mode, soft-particle option
+       └─ Rendering: texture, blend mode, soft-particle option, lighting mode (M63d)
 
 IParticleBackend (switchable interface)
   ├─ CpuParticleBackend: SoA batch update using SIMD (SSE/AVX) → dynamic vertex buffer
@@ -767,6 +767,42 @@ IParticleBackend (switchable interface)
   existing content bit-identical**, because a value that came through the rasterizer's interpolation
   is not the same value the CPU held. Measured: the showcase's CPU and GPU shots differ by the same
   221 pixels as before this feature, all of them in M63a's rotation region
+- **Lighting (M63d)**: particles were completely unlit through M63c — no particle shader referenced
+  a light, a shadow map or an IBL probe, so a smoke plume looked identical standing next to a lamp
+  and standing inside a box's shadow. `lightingMode` opens two paths that share one helper,
+  `assets/shaders/particle_light.hlsli`: **1 = per particle**, where the vertex shader evaluates the
+  lighting once at the particle's centre with the billboard's camera-facing normal and folds the
+  result into the interpolated colour, and **2 = per pixel**, where the pixel shader builds a
+  *spherical* normal from the quad's UV (treating the billboard as a camera-facing sphere) and
+  shades every pixel. Diffuse only, with a **wrap** term (`(n·l + wrap) / (1 + wrap)`, degrading
+  to plain Lambert at `wrap = 0`) because smoke and dust transmit light and a hard terminator makes
+  a billboard read as a flat card. The direct term reuses `common.hlsli`'s `LightSample` — extracted
+  from `ApplyLighting`'s loop in this milestone and **verified bit-identical across all 17 golden
+  shots** — so distance falloff and the squared spot cone cannot drift between meshes and particles.
+  The sun's CSM shadow goes through the same `SampleShadowCSM` the surfaces use, which is what makes
+  the shadow boundary line up between the ground and the smoke crossing it.
+  Deliberately excluded: **specular and prefiltered IBL** (a billboard has neither roughness nor F0,
+  so Cook-Torrance would be arithmetic without meaning — only the diffuse irradiance cube is
+  sampled) and the **local-light shadow atlas** (a local light's shaft is already the froxel volume's
+  job; the +1.5 KB of constant buffer buys hard local shadows on a smoke blob).
+  There is **no double counting** with the fog: `ApplyFog` and the froxel volume carry the scattering
+  and transmittance of the medium *between the camera and the particle*, while this is the particle's
+  own albedo times its incident irradiance — a different quantity in a different place, which is why
+  the insertion point is immediately after the colour is resolved and **before** the existing
+  `fog → froxel → soft fade` chain, and why `FroxelCompositeParticle`'s "never add in-scatter to an
+  additive blend" rule is untouched. The one side effect is that god rays are screen-space, so a
+  brighter particle also makes a stronger shaft — amplification, not double counting.
+  The light array lives in its own per-view constant buffer (`particlelight::ParticleLightCB`,
+  1264 B, uploaded **once outside the emitter loop**) and deliberately *not* in `GpuParticleCB`,
+  which is re-uploaded per emitter per tick. `particle_light.hlsli` is the one particle `.hlsli` that
+  **does** declare registers — the CB and light-array layout would otherwise be hand-copied into two
+  shaders — and the slot numbers differ between the two back ends (CPU `b1/t4/t5/s1`, GPU
+  `b2/t5/t6/s1`, since the GPU shader has already spent `t3` and `t4`), so the includer passes them
+  in as macros with no defaults; `check_rules.ps1` machine-checks all seven against the C++ constants.
+  Measured on the showcase, which carries **both** modes under mirrored lamps and shadow casters so
+  the two are an A/B of the mode alone: the lit regions are **pixel-identical between the two back
+  ends**, and the whole-frame CPU/GPU difference stays confined to M63a's rotation region and M42e's
+  collision region
 - **Known divergence (emission cap under saturation)**: the CPU backend clamps a tick's emission with
   `min(emit, maxParticles - alive)`, while the GPU backend clamps with `ClampGpuEmitCount(emit, capacity)`
   because it never reads the alive count back (see ADR-008). Once a pool saturates, the CPU stops

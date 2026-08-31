@@ -281,6 +281,41 @@ float GeometrySmith(float ndv, float ndl, float rough)
     return GeometrySchlickGGX(ndv, rough) * GeometrySchlickGGX(ndl, rough);
 }
 
+// ライト 1 個の「表面 → 光源の向き」と「影を除いた減衰」(M63d)。
+//
+// **正本はここ 1 本。** 元は ApplyLighting のループに直書きされていて、パーティクルの
+// ライティング (M63d) が同じ式を手写しする形になっていた — 距離減衰の分母やスポットの
+// 二乗フォールオフを片方だけ直すと「メッシュと粒子で光の届き方が違う」が静かに起きる。
+//
+// ★**影を含めない**のが分割線。平行光は dirShadow を**代入**、局所光は localShadow[i] を
+//   **乗算**するという非対称は ApplyLighting の既存の演算列そのもので、ここへ畳むと
+//   平行光に `1.0f *` が 1 つ増えて最下位ビットが動きうる (= golden 15 枚が全部動く)。
+//   影の解決手段 (CSM / アトラス / レイトレ) が呼び出し側でばらばらなのとも整合する。
+// ★戻り値ではなく out 引数 2 本なのは、抽出前の代入順序をそのまま保つため。
+void LightSample(Light L, float3 posW, out float3 toLightDir, out float atten)
+{
+    if (L.type == 0) // Directional
+    {
+        toLightDir = -L.direction;
+        atten = 1.0f;
+    }
+    else // Point / Spot
+    {
+        const float3 toLight = L.position - posW;
+        const float dist = length(toLight);
+        toLightDir = toLight / max(dist, 1e-4f);
+        const float d = saturate(1.0f - dist / max(L.range, 1e-4f));
+        atten = d * d;
+        if (L.type == 2) // Spot
+        {
+            const float cosA = dot(-toLightDir, L.direction);
+            const float spot =
+                saturate((cosA - L.cosOuter) / max(L.cosInner - L.cosOuter, 1e-4f));
+            atten *= spot * spot;
+        }
+    }
+}
+
 // 全ライトを Cook-Torrance で積算して最終色を返す (Forward / Deferred 共通)。
 // posW はワールド座標、cameraPos は視点。dirShadow は平行光 (type 0) のシャドウ係数 (1=影なし)。
 // M38c: 環境項は iblEnabled != 0 なら split-sum IBL (irradiance + prefiltered + BRDF LUT)、
@@ -308,26 +343,17 @@ float3 ApplyLighting(float3 albedo, float3 normal, float3 posW, float3 cameraPos
     {
         const Light L = lights[i];
         float3 toLightDir; // 表面 → 光源
-        float atten = 1.0f;
-        if (L.type == 0) // Directional
+        float atten;       // ★どちらも LightSample が out で埋める (初期値は持たせない)
+        LightSample(L, posW, toLightDir, atten);
+        // 影は LightSample の外。**平行光は代入・局所光は乗算**という非対称をここに残すのが
+        // ビット保存の条件で、`atten *= (type==0 ? dirShadow : localShadow[i])` の 1 本に
+        // まとめると平行光が `1.0f * dirShadow` になり最下位ビットが動きうる
+        if (L.type == 0)
         {
-            toLightDir = -L.direction;
             atten = dirShadow;
         }
-        else // Point / Spot
+        else
         {
-            const float3 toLight = L.position - posW;
-            const float dist = length(toLight);
-            toLightDir = toLight / max(dist, 1e-4f);
-            const float d = saturate(1.0f - dist / max(L.range, 1e-4f));
-            atten = d * d;
-            if (L.type == 2) // Spot
-            {
-                const float cosA = dot(-toLightDir, L.direction);
-                const float spot =
-                    saturate((cosA - L.cosOuter) / max(L.cosInner - L.cosOuter, 1e-4f));
-                atten *= spot * spot;
-            }
             atten *= localShadow[i]; // M54c: シャドウアトラス (未割当のライトは厳密に 1.0)
         }
         const float3 Ldir = toLightDir;

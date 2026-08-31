@@ -9,6 +9,18 @@
 // M63a: 四隅の回転/ストレッチ。**CPU バックエンド (particle_render.hlsl) と同じ 1 本**を
 // 呼ぶことが「2 実装が同じ絵を出す」(spec 7.5) の担保。register 宣言を持たないので衝突しない
 #include "particle_billboard.hlsli"
+// M63d: パーティクルのライティング。**このファイルは register 宣言を持つ**ので、
+// 空きスロットを include の前に指定する。★CPU 版 (particle_render.hlsl) とは番号が違う —
+// こちらは b1 を GpuRenderCB が、t3 をフリップブックが、t4 をフロクセルが既に占有している。
+// 揃えようとして CPU 側を動かすと、あちらの t3 剥がしまで巻き込むことになる
+// (froxel::kParticleSrvSlot と kGpuParticleSrvSlot が 3 と 4 で食い違うのと同じ理由)。
+// ★C++ 側の正本は RenderTypes.h の mye::particlelight:: の 4 定数で、
+//   check_rules.ps1 の規則 9 が下の #define と機械照合する
+#define MYE_PARTICLE_LIGHT_SLOT_CB   b2
+#define MYE_PARTICLE_LIGHT_SLOT_CSM  t5
+#define MYE_PARTICLE_LIGHT_SLOT_IRR  t6
+#define MYE_PARTICLE_LIGHT_SLOT_SAMP s1
+#include "particle_light.hlsli"
 
 cbuffer GpuRenderCB : register(b1)
 {
@@ -145,6 +157,10 @@ struct VSOut
     // ParticleInstance.flipFrame に載せてくる**ので、GPU 側の VS がここを作るのが
     // 唯一の実装点になる (プールの flipU を読めるのは VS だけ)
     float  flip  : TEXCOORD4;
+    // M63d: ワールド座標。画素単位ライティング (gParams7.x==2) の CSM と点光源距離が
+    // これを必要とする。CPU 版 particle_render.hlsl の VSOut::posW と**同じ意味**
+    // (どちらも gOffsetX / renderOffsetX を足した後の「描かれる場所」)
+    float3 posW  : TEXCOORD5;
 };
 
 VSOut VSMain(uint vid : SV_VertexID, uint iid : SV_InstanceID)
@@ -217,6 +233,14 @@ VSOut VSMain(uint vid : SV_VertexID, uint iid : SV_InstanceID)
     // 入っているので、CPU 側が inst.pos に renderOffsetX を足してから測るのと結合順まで一致する
     o.dist = length(world - gCameraPosParam.xyz);
     o.flip = flipFrame; // M63c
+    o.posW = world;     // M63d (mode 0/1 では PS が読まない)
+    // M63d: 粒子単位ライティング。CPU 版 particle_render.hlsl VSMain と**同一の意味論** —
+    // 法線は -camFwd 固定、位置は四隅ではなく**粒子の中心**、受光は色へ畳む。
+    // ★中心にも gOffsetX を足す (比較モードで描かれる場所と光を受ける場所を一致させる)
+    if (gParams7.x == 1.0f) {
+        o.color.rgb *= ParticleLightAt(-gPlCamFwd.xyz, basePos + float3(gOffsetX, 0, 0),
+                                       gParams7.y, gParams7.z, (int)gParams7.w, gSamp);
+    }
     return o;
 }
 
@@ -246,6 +270,16 @@ float4 PSMain(VSOut i) : SV_Target
         float m = saturate(1.0f - dot(d, d));
         m *= m;
         col = float4(i.color.rgb * m, i.color.a * m);
+    }
+
+    // ---- M63d: ライティング。**col が確定した直後・フォグの前** ----
+    // CPU 版 particle_render.hlsl PSMain と同一の位置・同一の関数。二重計上が起きない
+    // 論証と挿入位置の理由はあちらのコメントに書いてある (正本はどちらでもなく
+    // particle_light.hlsli の頭)
+    if (gParams7.x == 2.0f) {
+        const float3 n = ParticleSphericalNormal(i.uv * 2.0f - 1.0f, gCamRight, gCamUp,
+                                                 gPlCamFwd.xyz);
+        col.rgb *= ParticleLightAt(n, i.posW, gParams7.y, gParams7.z, (int)gParams7.w, gSamp);
     }
 
     // ---- M57追補: フォグ (M32c) + フロクセル (M57e) ----

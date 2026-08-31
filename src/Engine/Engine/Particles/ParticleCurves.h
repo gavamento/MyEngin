@@ -901,6 +901,21 @@ inline bool ParticleUsesFlipbook(const ParticleEmitterComponent& d)
     return d.flipFps > 0.0f || d.flipBlend != 0 || d.flipRandomStart != 0;
 }
 
+// ---- M63d: ライティングのゲート (CPU/GPU が呼ぶ唯一の正本) ----
+// 0 = unlit (従来と 1 ビットも変わらない) / 1 = 粒子単位 (VS で色へ畳む) /
+// 2 = 画素単位 (球面法線)。
+// ★**未知の値をここで 0 へ潰す**のが仕事。lightingMode は Inspector・スクリプト・
+//   手書きシーン JSON のどこからでも任意の int が入る枠で、3 を素通しすると VS も PS も
+//   どの分岐にも入らず「設定したのに何も起きない」になる (負値も同じ)。
+// ★**「ライトが 0 本なら 0 へ落とす」はしない。** アンビエントだけのシーンでも
+//   lightingMode を立てた粒子は環境項を受けるべきで、ライトの本数で絵が切り替わると
+//   「1 本消したら粒子だけ明るさが飛ぶ」になる。ライトが張れない (ビューが lights を
+//   持たない) 場合に 0 へ潰すのは**バックエンド側の責務**で、意味が別。
+inline int32_t ParticleLightingMode(const ParticleEmitterComponent& d)
+{
+    return (d.lightingMode == 1 || d.lightingMode == 2) ? d.lightingMode : 0;
+}
+
 // 連続コマ位置 (整数部 = 表示するコマ、小数部 = 次のコマへの補間係数)。
 // ★flipFps <= 0 && !randomStart では `age * flipCycles * tiles` へ**演算列ごと**縮退する
 //   — M42c から PS に手写しされている式そのもの。ここが崩れると既存のフリップブックが動く。

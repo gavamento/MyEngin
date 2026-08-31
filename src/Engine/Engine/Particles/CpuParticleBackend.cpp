@@ -80,6 +80,13 @@ struct ParticleCB {
     int32_t flipMode;  // 0=従来 (PS が age から作る) / 1=充填ループの連続コマ位置を使う
     int32_t flipBlend; // 1=隣のコマと frac で補間
     float flipPad[2];
+    // ---- M63d: ライティング (末尾 append。0 = 従来と 1 ビットも変わらない) ----
+    // ★lightingMode が 0 のとき VS も PS も ParticleLightAt を 1 度も呼ばない。
+    //   「ライト 0 本なら受光係数 1.0」ではない — アンビエントが乗って色が動く
+    int32_t lightingMode;       // 0=unlit (従来) / 1=粒子単位 (VS) / 2=画素単位 (球面法線)
+    float lightWrap;
+    float lightIntensity;
+    int32_t lightReceiveShadow; // 平行光の CSM 影を受けるか
 };
 
 } // namespace
@@ -134,6 +141,27 @@ bool CpuParticleBackend::Init(GraphicsDevice& device, ShaderManager& shaders)
     if (FAILED(device.Device()->CreateSamplerState(&sd, sampler_.GetAddressOf()))) {
         return false;
     }
+
+    // ---- M63d: ライティング ----
+    // ライト CB (b1)。**エミッタごとではなくビューにつき 1 回**上げる (1264B)
+    D3D11_BUFFER_DESC lcbd = {};
+    lcbd.ByteWidth = sizeof(particlelight::ParticleLightCB);
+    lcbd.Usage = D3D11_USAGE_DYNAMIC;
+    lcbd.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+    lcbd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+    if (FAILED(device.Device()->CreateBuffer(&lcbd, nullptr, lightCB_.GetAddressOf()))) {
+        return false;
+    }
+    // CSM の PCF 比較サンプラ (s1)。ForwardPath / DeferredPath と**同じ設定**でなければ
+    // 影の境界が地面と粒子でずれる
+    D3D11_SAMPLER_DESC cs = {};
+    cs.Filter = D3D11_FILTER_COMPARISON_MIN_MAG_LINEAR_MIP_POINT;
+    cs.AddressU = cs.AddressV = cs.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+    cs.ComparisonFunc = D3D11_COMPARISON_LESS_EQUAL;
+    cs.MaxLOD = D3D11_FLOAT32_MAX;
+    if (FAILED(device.Device()->CreateSamplerState(&cs, shadowSampler_.GetAddressOf()))) {
+        return false;
+    }
     return true;
 }
 
@@ -147,6 +175,8 @@ void CpuParticleBackend::Shutdown()
     blendAlpha_.Reset();
     depthNoWrite_.Reset();
     sampler_.Reset();
+    lightCB_.Reset();       // M63d
+    shadowSampler_.Reset(); // M63d
 }
 
 void CpuParticleBackend::Reset()
@@ -674,6 +704,11 @@ void CpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
     // 先に要るのでここで作る (ビュー行列の 1・2 列 = カメラの右/上ベクトル)。
     const XMFLOAT3 camRightW = { vm._11, vm._21, vm._31 };
     const XMFLOAT3 camUpW = { vm._12, vm._22, vm._32 };
+    // M63d: このビューでライティングを掛けられるか。**エミッタの lightingMode が本当の
+    // ゲート**で、ここは「掛けようがない」経路 (AssetPreviewCache の別 RenderSystem /
+    // selftest の手組み RenderView / Unlit 表示) を潰すだけ
+    const bool lightBound = particlelight::IsBound(view);
+    const bool shadowBound = particlelight::ShadowIsBound(view);
     struct DrawRange {
         uint32_t base;
         uint32_t count;
@@ -686,6 +721,12 @@ void CpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
         int32_t billboardMode; // M63a: 0=corner 素通し (従来とビット同一) / 1=回転・ストレッチ
         int32_t flipMode;      // M63c: 0=従来 (PS が age から作る) / 1=flipFrame を使う
         int32_t flipBlend;     // M63c: 1=隣のコマと frac で補間 (flipMode=0 なら必ず 0)
+        // M63d: ライティング。ビューが lights を持たない (= AssetPreview / selftest) ときは
+        // 収集の時点で 0 へ潰す — シェーダ側に「CB が張られていない」を判る手段が無い
+        int32_t lightingMode;
+        float lightWrap;
+        float lightIntensity;
+        int32_t lightReceiveShadow;
     };
     std::vector<DrawRange> ranges;
 
@@ -822,10 +863,16 @@ void CpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
                                               flipRandomStart)
                         : 0.0f;
         }
+        // M63d: ライティング。**lightBound が false なら必ず 0** — ライト CB も CSM も
+        // 張られていない状態でシェーダが ParticleLightAt を呼ぶと、前フレームの残骸か
+        // 全 0 の CB を読んで「サムネイルだけ粒子が真っ黒」になる
+        const int32_t lightMode = lightBound ? ParticleLightingMode(d) : 0;
         ranges.push_back({ base, pool.alive, d.blendMode, d.texture,
                            std::max(1, d.flipTilesX), std::max(1, d.flipTilesY), d.flipCycles,
                            d.softFadeDistance, ParticleUsesBillboard(d) ? 1 : 0,
-                           useFlip ? 1 : 0, (useFlip && d.flipBlend != 0) ? 1 : 0 });
+                           useFlip ? 1 : 0, (useFlip && d.flipBlend != 0) ? 1 : 0,
+                           lightMode, d.lightWrap, d.lightIntensity,
+                           (lightMode != 0 && d.lightReceiveShadow != 0 && shadowBound) ? 1 : 0 });
     }
     dc->Unmap(instanceBuffer_.Get(), 0);
 
@@ -842,6 +889,35 @@ void CpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
     dc->PSSetConstantBuffers(0, 1, &cb); // フリップブック分岐を PS でも参照
     ID3D11SamplerState* samp = sampler_.Get();
     dc->PSSetSamplers(0, 1, &samp);
+
+    // ---- M63d: ライティングの配線。**エミッタループの外で 1 回だけ** ----
+    // ★VS にも張る — lightingMode==1 (粒子単位) は VS で受光を色へ畳むので、CB も CSM も
+    //   irradiance も比較サンプラも VS ステージが要る。s0 (LINEAR/CLAMP) は
+    //   irradiance キューブのサンプラを兼ねるので VS 側にも張る
+    if (lightBound) {
+        const particlelight::ParticleLightCB lightData =
+            particlelight::MakeParticleLightCB(view, shadowBound);
+        D3D11_MAPPED_SUBRESOURCE lm = {};
+        if (SUCCEEDED(dc->Map(lightCB_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &lm))) {
+            memcpy(lm.pData, &lightData, sizeof(lightData));
+            dc->Unmap(lightCB_.Get(), 0);
+        }
+        ID3D11Buffer* lcb = lightCB_.Get();
+        dc->VSSetConstantBuffers(particlelight::kCpuLightCbSlot, 1, &lcb);
+        dc->PSSetConstantBuffers(particlelight::kCpuLightCbSlot, 1, &lcb);
+        ID3D11SamplerState* shadowSamp = shadowSampler_.Get();
+        dc->VSSetSamplers(particlelight::kShadowSamplerSlot, 1, &shadowSamp);
+        dc->PSSetSamplers(particlelight::kShadowSamplerSlot, 1, &shadowSamp);
+        dc->VSSetSamplers(0, 1, &samp);
+        // ★シャドウマップは**次フレームのシャドウパスで DSV になる**。null でも必ず
+        //   Set しておく (前フレームの残骸が t4 に居座るのを防ぐ) — 剥がすのは末尾で
+        ID3D11ShaderResourceView* csm[1] = { shadowBound ? view.shadowSRV : nullptr };
+        dc->VSSetShaderResources(particlelight::kCpuShadowSrvSlot, 1, csm);
+        dc->PSSetShaderResources(particlelight::kCpuShadowSrvSlot, 1, csm);
+        ID3D11ShaderResourceView* irr[1] = { view.iblIrradiance };
+        dc->VSSetShaderResources(particlelight::kCpuIrradianceSrvSlot, 1, irr);
+        dc->PSSetShaderResources(particlelight::kCpuIrradianceSrvSlot, 1, irr);
+    }
 
     // フリップブックテクスチャの白フォールバック
     Texture* whiteTex = resources.textures.Get(resources.textures.White());
@@ -910,6 +986,10 @@ void CpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
         cbData.billboardMode = range.billboardMode; // M63a
         cbData.flipMode = range.flipMode; // M63c
         cbData.flipBlend = range.flipBlend;
+        cbData.lightingMode = range.lightingMode; // M63d
+        cbData.lightWrap = range.lightWrap;
+        cbData.lightIntensity = range.lightIntensity;
+        cbData.lightReceiveShadow = range.lightReceiveShadow;
         D3D11_MAPPED_SUBRESOURCE cbMapped = {};
         if (SUCCEEDED(dc->Map(renderCB_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &cbMapped))) {
             memcpy(cbMapped.pData, &cbData, sizeof(cbData));
@@ -943,6 +1023,7 @@ void CpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
                 // **手前で切り詰めて**宣言していて billboardMode を読まないので、
                 // 書いても no-op だが「回らないのは意図」を残すために明示 0 を入れる
                 cbData.billboardMode = 0;
+                cbData.lightingMode = 0; // M63d: 歪みは色を出さない (同上、明示 0)
                 D3D11_MAPPED_SUBRESOURCE cbMapped = {};
                 if (SUCCEEDED(
                         dc->Map(renderCB_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &cbMapped))) {
@@ -965,6 +1046,15 @@ void CpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
     dc->PSSetShaderResources(1, 1, &nullSrv);
     dc->PSSetShaderResources(2, 1, &nullSrv);
     dc->PSSetShaderResources(3, 1, &nullSrv);
+    // M63d: CSM (t4) と irradiance (t5) も必ず剥がす。**シャドウマップは次フレームの
+    // シャドウパスで DSV になる**ので、SRV に残っていると D3D が片方を黙って外す
+    // (M57d/e が t15/t7/t3 で 3 度踏んだ罠と同型)。VS 側も張ったので両ステージ剥がす
+    if (lightBound) {
+        dc->VSSetShaderResources(particlelight::kCpuShadowSrvSlot, 1, &nullSrv);
+        dc->PSSetShaderResources(particlelight::kCpuShadowSrvSlot, 1, &nullSrv);
+        dc->VSSetShaderResources(particlelight::kCpuIrradianceSrvSlot, 1, &nullSrv);
+        dc->PSSetShaderResources(particlelight::kCpuIrradianceSrvSlot, 1, &nullSrv);
+    }
     dc->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFFu);
     dc->OMSetDepthStencilState(nullptr, 0);
 }

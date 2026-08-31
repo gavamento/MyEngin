@@ -142,6 +142,10 @@ private:
     Microsoft::WRL::ComPtr<ID3D11BlendState> blendAlpha_;
     Microsoft::WRL::ComPtr<ID3D11DepthStencilState> depthNoWrite_;
     Microsoft::WRL::ComPtr<ID3D11SamplerState> sampler_; // M42c: フリップブック (linear clamp)
+    // ---- M63d: ライティング (b2 / s1)。lights が null のビューでは 1 度も張られない ----
+    // ★CB は**ビューにつき 1 回**しか上げない (エミッタループの外)
+    Microsoft::WRL::ComPtr<ID3D11Buffer> lightCB_;
+    Microsoft::WRL::ComPtr<ID3D11SamplerState> shadowSampler_; // CSM の PCF 比較サンプラ
 
     // M42e: 深度衝突の入力 (SetSceneDepth で更新。valid=false なら衝突無効)
     Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> collDepthSRV_;

@@ -55,4 +55,14 @@ cbuffer GpuParticleCB : register(b0)
     //   「fps=0 なら値は同じ」ではない (VS で作った値はラスタライザ補間を通っていない)。
     // ★w (2 コマ補間) は **x が 0 のとき必ず 0** — C++ 側が useFlip でゲートしている。
     float4 gParams6;           // x = flipMode, y = flipFps, z = flipRandomStart, w = flipBlend
+    // ---- M63d: ライティング (末尾 append。C++ 側 GpuParticleCB と一致。
+    //      既存フィールドのオフセット不変。描画の VS (x が 1) と PS (x が 2) だけが読む) ----
+    // ★x が 0 のとき VS も PS も ParticleLightAt を 1 度も呼ばない。「ライトが 0 本なら
+    //   受光係数 1.0 だから分岐は要らない」ではない — アンビエントが 0 でないシーンでは
+    //   env が乗って色が動く。
+    // ★ライト配列そのものは**この CB に入れない** — ここはエミッタごと tick ごとに上がる
+    //   CB で、1KB のライト配列を積むと 100 エミッタで毎フレーム 100KB 増える。
+    //   ライトはビュー単位なので b2 (ParticleLightCB) 側に置いて 1 回だけ上げる
+    float4 gParams7;           // x = lightingMode, y = lightWrap, z = lightIntensity,
+                               // w = lightReceiveShadow
 };

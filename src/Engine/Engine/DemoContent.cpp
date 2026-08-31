@@ -2299,7 +2299,10 @@ void BuildParticleShowcaseScene(EngineContext& ctx)
 
     GameObject camera = s.CreateGameObject("Main Camera");
     camera.AddComponent<CameraComponent>();
-    // 5 本のエミッタ (x = -8..+8) を 1 枚に収める。少し見下ろして床との衝突が読めるように
+    // 6 本のエミッタ (x = -16..+10) を 1 枚に収める。少し見下ろして床との衝突が読めるように。
+    // M63d で左端に mode=1 のライティングエミッタが増えたが、**既存 5 本は 1 つも動かして
+    // いない** (元から x_px 230 より左は空白だった) — 動かすと C1〜C3/C5 の被覆が
+    // 「位置が変わっただけ」で全部赤くなり、レビューで本物の回帰が埋もれる
     camera.SetLocalPosition(0.5f, 3.6f, -15.0f);
     camera.SetLocalRotationEuler(8.0f, 0.0f, 0.0f);
 
@@ -2316,6 +2319,11 @@ void BuildParticleShowcaseScene(EngineContext& ctx)
     box("Ground", 0.0f, -0.5f, 8.0f, 60.0f, 1.0f, 60.0f, "vdemo_ground");
     // C4 の影を作る箱。ライティングエミッタ (x=+4) の手前に置いて影を跨がせる
     box("ShadowCaster", 6.6f, 1.5f, 3.2f, 0.9f, 3.0f, 0.9f, "vdemo_block");
+    // M63d: mode=1 側 (x=-16) にも**同じ相対位置**で箱を置く。emitter との差 (+2.0, z=3.2)
+    // まで揃えてあるのは、2 つのライティングモードを**同じ幾何条件で並べる**ため —
+    // 「粒子単位は粒子まるごと影に入る/出るのでパッと切り替わる」「画素単位は煙の中を
+    // 影の角柱が通る」という違いだけが絵に残る
+    box("ShadowCaster2", -14.0f, 1.5f, 3.2f, 0.9f, 3.0f, 0.9f, "vdemo_block");
 
     // 点光源 (C4)。**局所ライトが煙を照らす**のが「完全 unlit」を直したことの主張なので、
     // 平行光だけでは足りない。範囲は隣のエミッタへ漏れない程度に絞る
@@ -2327,6 +2335,19 @@ void BuildParticleShowcaseScene(EngineContext& ctx)
         l->intensity = 6.0f;
         l->range = 5.0f;
         lamp.SetLocalPosition(4.6f, 1.3f, 5.0f);
+    }
+
+    // M63d: mode=1 側の点光源。**色も強度も範囲も Lamp と同一**にして、
+    // 2 つのライティングモードの A/B が光源の違いに汚されないようにする
+    // (エミッタとの相対位置 (同 x, +1.0 上, 1.0 手前) も揃えてある)
+    GameObject lamp2 = s.CreateGameObject("Lamp2");
+    {
+        auto* l = lamp2.AddComponent<LightComponent>();
+        l->type = 1; // Point
+        l->color = { 1.0f, 0.62f, 0.28f };
+        l->intensity = 6.0f;
+        l->range = 5.0f;
+        lamp2.SetLocalPosition(-16.0f, 1.3f, 5.0f);
     }
 
     // ---- (1) C1 回転: 矢羽根が粒子ごとに違う速さで回る ----
@@ -2433,6 +2454,38 @@ void BuildParticleShowcaseScene(EngineContext& ctx)
         e->colorEnd = { 0.60f, 0.62f, 0.66f, 0.0f };
         e->sizeEndScale = 1.8f;
         e->lightingMode = 2; // 画素単位 (球面法線)
+        e->lightWrap = 0.55f;
+        e->lightIntensity = 1.0f;
+        e->lightReceiveShadow = 1;
+    }
+
+    // ---- (4b) C4 ライティング mode=1: **粒子単位** (受光を VS で色へ畳む) ----
+    // ★P4_Lit と **lightingMode 以外は 1 フィールドも違わない**。光源も箱も相対位置まで
+    //   ミラーしてあるので、2 枚の絵の違いは「粒子単位か画素単位か」だけになる。
+    // ★これが golden における mode=1 の**唯一の被覆**。VS ステージへの CB / CSM /
+    //   比較サンプラのバインドを 1 本でも落とすと、CSM が未バインド SRV から 0 を返して
+    //   dirShadow=0 になり**この 1 本だけ暗く沈む** — mode=2 側は無傷なので、
+    //   並べてあることが検出そのものになっている
+    {
+        GameObject go = s.CreateGameObject("P4b_LitVertex");
+        go.SetLocalPosition(-16.0f, 0.3f, 6.0f);
+        auto* e = go.AddComponent<ParticleEmitterComponent>();
+        e->seed = 63006u;
+        e->blendMode = 1;
+        e->rate = 26.0f;
+        e->shape = 1;
+        e->shapeRadius = 0.45f;
+        e->speedMin = 0.5f;
+        e->speedMax = 1.1f;
+        e->lifetimeMin = 2.2f;
+        e->lifetimeMax = 3.0f;
+        e->sizeMin = 0.55f;
+        e->sizeMax = 0.85f;
+        e->gravity = { -0.15f, 0.75f, 0.0f };
+        e->colorBegin = { 0.82f, 0.84f, 0.86f, 0.60f };
+        e->colorEnd = { 0.60f, 0.62f, 0.66f, 0.0f };
+        e->sizeEndScale = 1.8f;
+        e->lightingMode = 1; // 粒子単位 (VS で畳む) ← ここだけが P4_Lit との差
         e->lightWrap = 0.55f;
         e->lightIntensity = 1.0f;
         e->lightReceiveShadow = 1;

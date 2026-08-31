@@ -119,6 +119,11 @@ private:
     Microsoft::WRL::ComPtr<ID3D11BlendState> blendAlpha_;
     Microsoft::WRL::ComPtr<ID3D11DepthStencilState> depthNoWrite_;
     Microsoft::WRL::ComPtr<ID3D11SamplerState> sampler_; // フリップブックテクスチャ用 (linear clamp)
+    // ---- M63d: ライティング (b1 / s1)。lights が null のビューでは 1 度も張られない ----
+    // ★CB は**ビューにつき 1 回**しか上げない (エミッタループの外)。ライトはエミッタごとに
+    //   変わらないのに、1264B をエミッタ数ぶん転送するのは無駄でしかない
+    Microsoft::WRL::ComPtr<ID3D11Buffer> lightCB_;
+    Microsoft::WRL::ComPtr<ID3D11SamplerState> shadowSampler_; // CSM の PCF 比較サンプラ
     uint32_t instanceCapacity_ = 0;
     AssetID shaderId_ = {};
     AssetID distortShaderId_ = {}; // M42d: blendMode=2 用 (particle_distort.hlsl)

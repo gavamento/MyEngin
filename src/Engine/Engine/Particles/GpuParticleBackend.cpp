@@ -41,8 +41,15 @@ struct GpuParticleCB { // particle_gpu_common.hlsli と一致
     // 描画の VS (flipMode/flipFps/flipRandomStart) と PS (flipMode/flipBlend) だけが読む。
     // 既定 (flipMode=0) は従来と 1 ビットも変わらない
     XMFLOAT4 params6; // flipMode, flipFps, flipRandomStart, flipBlend
+    // ---- M63d: ライティング (末尾 append。HLSL 側と両方同時に変更する) ----
+    // 描画の VS (x==1 = 粒子単位) と PS (x==2 = 画素単位) だけが読む。既定 (x=0) は
+    // 従来と 1 ビットも変わらない。
+    // ★**ライト配列そのものはここに入れない** — この CB はエミッタごと tick ごとに
+    //   上がるので、1KB のライト配列を積むと 100 エミッタで毎フレーム 100KB 増える。
+    //   ライトはビュー単位なので b2 (particlelight::ParticleLightCB) 側へ置く
+    XMFLOAT4 params7; // lightingMode, lightWrap, lightIntensity, lightReceiveShadow
 };
-static_assert(sizeof(GpuParticleCB) == 336,
+static_assert(sizeof(GpuParticleCB) == 352,
               "GpuParticleCB は particle_gpu_common.hlsli の cbuffer と 1 バイトも違ってはいけない");
 
 struct GpuRenderCB { // particle_render_gpu.hlsl の GpuRenderCB と一致
@@ -151,6 +158,21 @@ bool GpuParticleBackend::Init(GraphicsDevice& device, ShaderManager& shaders)
     if (FAILED(dev->CreateSamplerState(&sd, sampler_.GetAddressOf()))) {
         return false;
     }
+
+    // ---- M63d: ライティング ----
+    if (!CreateConstant(dev, sizeof(particlelight::ParticleLightCB), lightCB_)) {
+        return false;
+    }
+    // CSM の PCF 比較サンプラ (s1)。ForwardPath / DeferredPath / CPU バックエンドと
+    // **同じ設定**でなければ影の境界がメッシュと粒子でずれる
+    D3D11_SAMPLER_DESC cs = {};
+    cs.Filter = D3D11_FILTER_COMPARISON_MIN_MAG_LINEAR_MIP_POINT;
+    cs.AddressU = cs.AddressV = cs.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+    cs.ComparisonFunc = D3D11_COMPARISON_LESS_EQUAL;
+    cs.MaxLOD = D3D11_FLOAT32_MAX;
+    if (FAILED(dev->CreateSamplerState(&cs, shadowSampler_.GetAddressOf()))) {
+        return false;
+    }
     return timer_.Init(device);
 }
 
@@ -163,6 +185,8 @@ void GpuParticleBackend::Shutdown()
     blendAdditive_.Reset();
     blendAlpha_.Reset();
     depthNoWrite_.Reset();
+    lightCB_.Reset();       // M63d
+    shadowSampler_.Reset(); // M63d
 }
 
 void GpuParticleBackend::Reset()
@@ -903,6 +927,32 @@ void GpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
         dc->PSSetShaderResources(froxel::kGpuParticleSrvSlot, 1, froxelSrv);
     }
 
+    // ---- M63d: ライティングの配線。**エミッタループの外で 1 回だけ** ----
+    // CPU バックエンド (CpuParticleBackend::Render) と同じ意味論・同じ関数を通す。
+    // ★VS にも張る — lightingMode==1 (粒子単位) は VS で受光を色へ畳むので、CB も CSM も
+    //   irradiance も比較サンプラも VS ステージが要る
+    const bool lightBound = particlelight::IsBound(view);
+    const bool shadowBound = particlelight::ShadowIsBound(view);
+    if (lightBound) {
+        const particlelight::ParticleLightCB lightData =
+            particlelight::MakeParticleLightCB(view, shadowBound);
+        UploadCB(dc, lightCB_.Get(), lightData);
+        ID3D11Buffer* lcb = lightCB_.Get();
+        dc->VSSetConstantBuffers(particlelight::kGpuLightCbSlot, 1, &lcb);
+        dc->PSSetConstantBuffers(particlelight::kGpuLightCbSlot, 1, &lcb);
+        ID3D11SamplerState* shadowSamp = shadowSampler_.Get();
+        dc->VSSetSamplers(particlelight::kShadowSamplerSlot, 1, &shadowSamp);
+        dc->PSSetSamplers(particlelight::kShadowSamplerSlot, 1, &shadowSamp);
+        ID3D11SamplerState* linSamp = sampler_.Get();
+        dc->VSSetSamplers(0, 1, &linSamp); // irradiance キューブ用 (PS はループ内で張る)
+        ID3D11ShaderResourceView* csm[1] = { shadowBound ? view.shadowSRV : nullptr };
+        dc->VSSetShaderResources(particlelight::kGpuShadowSrvSlot, 1, csm);
+        dc->PSSetShaderResources(particlelight::kGpuShadowSrvSlot, 1, csm);
+        ID3D11ShaderResourceView* irr[1] = { view.iblIrradiance };
+        dc->VSSetShaderResources(particlelight::kGpuIrradianceSrvSlot, 1, irr);
+        dc->PSSetShaderResources(particlelight::kGpuIrradianceSrvSlot, 1, irr);
+    }
+
     for (GpuEmitter& em : emitters_) {
         if (em.frozen) {
             continue; // M61e: 凍結中は描かない (CPU 側の renderSkip と同じ意味論)
@@ -949,6 +999,20 @@ void GpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
             simCb.params6 = { useFlip ? 1.0f : 0.0f, em.descCache.flipFps,
                               (useFlip && em.descCache.flipRandomStart != 0) ? 1.0f : 0.0f,
                               (useFlip && em.descCache.flipBlend != 0) ? 1.0f : 0.0f };
+        }
+        // M63d: ライティング。判定は CPU バックエンドと同じ共有ゲート
+        // (ParticleCurves.h::ParticleLightingMode)。
+        // ★lightBound が false なら必ず 0 — ライト CB も CSM も張られていない状態で
+        //   ParticleLightAt を呼ぶと、全 0 の CB を読んで粒子が真っ黒になる
+        {
+            const int32_t lightMode =
+                lightBound ? ParticleLightingMode(em.descCache) : 0;
+            simCb.params7 = { static_cast<float>(lightMode), em.descCache.lightWrap,
+                              em.descCache.lightIntensity,
+                              (lightMode != 0 && em.descCache.lightReceiveShadow != 0
+                               && shadowBound)
+                                  ? 1.0f
+                                  : 0.0f };
         }
         UploadCB(dc, simCB_.Get(), simCb);
         // M61g: ローカル空間はエミッタのワールド行列で VS が pos を変換する (transpose は
@@ -997,6 +1061,13 @@ void GpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
     // M57追補: t4 (フロクセル) まで剥がす。**残すと次フレームの積分パスが同じテクスチャを
     // UAV に取った瞬間に D3D が片方を黙って外す** (M57d/M57e が t15 / t7 / t3 で 3 度踏んだ罠)
     dc->PSSetShaderResources(2, 3, nullSrvs); // M42b/c: t2=深度, t3=テクスチャ, t4=フロクセル
+    // M63d: CSM (t5) と irradiance (t6) も必ず剥がす。**シャドウマップは次フレームの
+    // シャドウパスで DSV になる**ので、SRV に残っていると D3D が片方を黙って外す。
+    // VS 側も張ったので両ステージ剥がす
+    if (lightBound) {
+        dc->VSSetShaderResources(particlelight::kGpuShadowSrvSlot, 2, nullSrvs);
+        dc->PSSetShaderResources(particlelight::kGpuShadowSrvSlot, 2, nullSrvs);
+    }
     dc->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFFu);
     dc->OMSetDepthStencilState(nullptr, 0);
 }

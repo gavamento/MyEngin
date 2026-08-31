@@ -1122,6 +1122,12 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
         vfx->Render(world, device, shaders, resources, view);
     }
 
+    // M63d: パーティクルへライトを渡す。**パスの外で描かれる**ので forward_lit /
+    // deferred_light が使う CB には相乗りできず、RenderView 経由が唯一の口になる。
+    // ★ここで初めて配線するのは、パーティクル (と VFX) より前を 1 行も変えないため。
+    //   非所有ポインタなので lights の寿命 (この関数のローカル) より長生きしない
+    view.lights = &lights;
+
     // パーティクルは常に Forward 後段 (どのレンダリングパスでも共通)。HDR 中間へ加算される
     bool distortionActive = false; // M42d: このフレーム歪みバッファを使ったか
     if (particles) {

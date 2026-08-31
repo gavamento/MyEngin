@@ -4,6 +4,15 @@
 #include "common.hlsli" // LinearizeDepth (M55a で共有化)。register 宣言は含まないので衝突しない
 #include "froxel_common.hlsli" // M57e: フロクセルのサンプル座標と受け持ちの分け方 (同上)
 #include "particle_billboard.hlsli" // M63a: 四隅の回転/ストレッチ (GPU バックエンドと共有する唯一の式)
+// M63d: パーティクルのライティング。**このファイルは register 宣言を持つ**ので、
+// 空きスロットを include の前に指定する (CPU 版は b0/t0-t3/s0 まで使用済み)。
+// ★C++ 側の正本は RenderTypes.h の mye::particlelight:: の 4 定数で、
+//   check_rules.ps1 の規則 9 が下の #define と機械照合する
+#define MYE_PARTICLE_LIGHT_SLOT_CB   b1
+#define MYE_PARTICLE_LIGHT_SLOT_CSM  t4
+#define MYE_PARTICLE_LIGHT_SLOT_IRR  t5
+#define MYE_PARTICLE_LIGHT_SLOT_SAMP s1
+#include "particle_light.hlsli"
 
 cbuffer ParticleCB : register(b0)
 {
@@ -48,6 +57,14 @@ cbuffer ParticleCB : register(b0)
     int      gFlipMode;  // 0=従来 (PS が age から作る) / 1=VS 経由の連続コマ位置を使う
     int      gFlipBlend; // 1=隣のコマと frac で補間 (PS の Sample が 2 回になる)
     float2   _flipPad;
+    // ---- M63d: ライティング (末尾 append。0 = 従来と 1 ビットも変わらない) ----
+    // ★gLightingMode が 0 のとき VS も PS も ParticleLightAt を 1 度も呼ばない。
+    //   「ライトが 0 本なら受光係数は 1.0 だから分岐は要らない」ではない —
+    //   アンビエントが 0 でないシーンでは env が乗って色が動く
+    int      gLightingMode;       // 0=unlit (従来) / 1=粒子単位 (VS) / 2=画素単位 (球面法線)
+    float    gLightWrap;
+    float    gLightIntensity;
+    int      gLightReceiveShadow; // 平行光の CSM 影を受けるか
 };
 
 struct ParticleInstance
@@ -79,6 +96,10 @@ struct VSOut
     float  dist  : TEXCOORD2; // カメラからのワールド距離 (フォグ用)
     float  viewZ : TEXCOORD3; // ビュー空間深度 (M42b ソフトフェード用、= clip.w)
     float  flip  : TEXCOORD4; // M63c: 連続コマ位置 (CPU が充填ループで畳んだもの)
+    // M63d: ワールド座標。**画素単位ライティング (gLightingMode==2) の CSM と点光源距離が
+    // これを必要とする**。粒子単位 (==1) は VS で色へ畳んでしまうのでこれを読まない。
+    // ★補間子を 1 本増やすが、o.color へ畳む粒子単位側と合わせて追加はこの 1 本だけ
+    float3 posW  : TEXCOORD5;
 };
 
 VSOut VSMain(uint vid : SV_VertexID, uint iid : SV_InstanceID)
@@ -104,6 +125,17 @@ VSOut VSMain(uint vid : SV_VertexID, uint iid : SV_InstanceID)
     // M63c: フリップブックの連続コマ位置。**CPU が畳んで送ってくる**ので VS は素通し。
     // (GPU バックエンドはプールの flipU を VS が読めるので、あちらは VS で作る)
     o.flip = p.flipFrame;
+    o.posW = world; // M63d: 画素単位ライティング用 (mode 0/1 では PS が読まない)
+    // M63d: 粒子単位ライティング。**受光を色へ畳んでしまう**ので補間子は増えない。
+    // ★法線は -gPlCamFwd (カメラを向いた板) 固定 = 4 隅で同じ値。位置も四隅ではなく
+    //   **粒子の中心 (p.pos)** を使う — 四隅で測ると板の上に光のグラデーションが乗って
+    //   「粒子単位」ではなくなる (点光源に近づくほど顕著に出る)。
+    // ★p.pos には比較モードの横オフセットが既に入っている (充填ループが足す) ので、
+    //   描かれる場所と光を受ける場所が一致する
+    if (gLightingMode == 1) {
+        o.color.rgb *= ParticleLightAt(-gPlCamFwd.xyz, p.pos, gLightWrap, gLightIntensity,
+                                       gLightReceiveShadow, gSamp);
+    }
     return o;
 }
 
@@ -142,6 +174,26 @@ float4 PSMain(VSOut i) : SV_Target
         float m = saturate(1.0f - dot(d, d));
         m *= m;
         col = float4(i.color.rgb * m, i.color.a * m);
+    }
+
+    // ---- M63d: ライティング。**col が確定した直後・フォグの前**に挿す ----
+    // 既存チェーン (色 → フォグ → フロクセル → ソフトフェード) は 1 文字も動かしていない。
+    // ★フォグより前でなければならない: 受光はアルベド側の量で、フォグはその結果が
+    //   カメラへ届くまでの媒質。順序を入れ替えると「霧の中の粒子だけ影が濃くなる」。
+    // ★フロクセル / ApplyFog との**二重計上は起きない** — あちらが担うのはカメラと粒子の
+    //   間の媒質の散乱と透過率で、こちらは粒子自身のアルベド × 入射放射照度。物理量も
+    //   場所も別物。FroxelCompositeParticle の「加算に inscatter を足さない」守りは
+    //   重なった枚数ぶん霧が濃くなるのを防ぐためのもので、粒子の陰影とは無関係
+    //   (だから 1 行も触っていない)。
+    // ★唯一の副作用: godray は screen-space なので、粒子が明るくなればシャフトも強くなる。
+    //   これは増幅であって二重計上ではない。
+    if (gLightingMode == 2) {
+        // 球面法線は**回転・ストレッチを通す前**の corner から作る (uv がそれ)。
+        // 変換後の c から作ると回る粒子の陰影が一緒に回ってしまう
+        const float3 n = ParticleSphericalNormal(i.uv * 2.0f - 1.0f, gCamRight, gCamUp,
+                                                 gPlCamFwd.xyz);
+        col.rgb *= ParticleLightAt(n, i.posW, gLightWrap, gLightIntensity,
+                                   gLightReceiveShadow, gSamp);
     }
 
     // フォグ (M32c): additive は減光、alpha はフォグ色へ補間。
