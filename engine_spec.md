@@ -810,7 +810,38 @@ IParticleBackend (switchable interface)
   shader's dead-list guard, so the two streams — and therefore the two particle sets — diverge
   permanently from that tick on. Closing this would require a GPU→CPU readback, which the
   determinism design forbids. It cannot affect the world hash (the GPU pool is excluded), only the picture
-- **Exception (M42e)**: depth-buffer collision (`ParticleEmitter.depthCollision`) is a **GPU-backend-only visual effect**; the CPU backend does not implement it and particles pass through geometry. This does not violate determinism: the GPU particle pool is not part of the world hash and is never read back to the CPU
+- **Exception (M42e / M63e)**: depth-buffer collision (`ParticleEmitter.depthCollision`) is a
+  **GPU-backend-only visual effect**; the CPU backend does not implement it and particles pass
+  through geometry. This does not violate determinism: the GPU particle pool is not part of the
+  world hash and is never read back to the CPU. M63e made the contact itself usable rather than
+  merely detectable: the surface normal is rebuilt from **five taps**, choosing per axis the
+  neighbour with the smaller depth delta, because the old fixed `+1/+1` pair straddles a silhouette
+  and returns a normal tilted along the view direction. That choice is the one rule here a golden
+  shot cannot guard, and it is mirrored as a pure function (`ParticlePickPlusTap`) covered by the
+  self-test instead: measured, reverting the shader to two taps moved **43 pixels** with one
+  silhouette block in the showcase's landing zone and **zero** with a slightly smaller one, because
+  it only shows when a particle happens to sit on the boundary pixel at the captured frame.
+  `collisionFriction` damps the tangential
+  component (`ReflectWithFriction`, mirrored in `ParticleCurves.h`, which **early-returns into the
+  plain reflection at `friction <= 0`** — algebraically the same expression, but not the same
+  sequence of float operations, and the golden shot is what pays for the difference); and
+  `collisionLifeLoss` subtracts a fraction of the original lifetime per contact, with `1.0` meaning
+  kill-on-collide, collected by the dead-list branch that was already a few lines below.
+  `collisionFloor` adds an **analytic ground plane** evaluated after the depth block and gated
+  independently of it: it is the only contact that still works off-screen, behind the camera and
+  against sky pixels — and it is a **proxy, not a substitute**, since a horizontal plane cannot
+  stand in for arbitrary geometry. Like depth collision it is disabled in local simulation space,
+  where comparing a local-space Y against a world floor height is meaningless. The `GpuAliveEstimator`
+  now over-estimates when particles die early on contact; that is the safe direction, because an
+  over-estimate only *delays* `StepGpuIdleSkip` (an early skip is the one failure that matters) and
+  the death buckets still mature on their scheduled tick, so nothing leaks
+- **Not implemented — collision events for scripts**: reporting a GPU-side particle collision back to
+  gameplay would require a GPU→CPU readback, which ADR-008 forbids outright. Even if it were allowed,
+  the signal would arrive one to three frames late and a script callback **writes world state, which
+  is hashed** — a GPU-produced, latency-variable, driver-dependent value would flow into the world
+  hash, replays would stop reproducing, and merely switching back ends would split the world. That is
+  strictly worse than today's silence. The coherent version of this feature is a different one:
+  testing *gameplay* particles against the CPU physics broadphase, on the CPU, inside the tick
 - **Exception (M42d)**: distortion particles (`blendMode == 2`) are **CPU-backend-only**; the GPU backend skips drawing them entirely. They emit no colour, so they are outside the alpha-parity contract
 
 ---

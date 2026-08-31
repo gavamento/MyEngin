@@ -152,8 +152,11 @@ inline bool ParticleBlendIsAdditive(int blendMode) { return blendMode != 1; }
 //   誰も得をしないぶん、CPU の std::sort を 1 回節約する
 inline bool ParticleNeedsDrawSort(int blendMode) { return blendMode != 2; }
 
-// M42e: GPU 深度衝突の座標変換/反射。particle_sim.cs.hlsl とコメント同期のミラー —
-// selftest はこちらを検証する。GPU バックエンド限定の見た目効果 (spec 7.5 例外)。
+// M42e: GPU 深度衝突の座標変換/反射。HLSL 側の正本は particle_gpu_common.hlsli で、
+// ここはコメント同期のミラー — selftest はこちらを検証する。
+// GPU バックエンド限定の見た目効果 (spec 7.5 例外)。
+// ★M63e まで sim CS は式を**手写ししていた** (共有点が無かった)。今は sim CS が
+//   particle_gpu_common.hlsli の同名関数を呼ぶので、突き合わせる相手は 1 本だけ。
 // クリップ座標 -> スクリーン UV。背面 (w<=0) は false (衝突判定しない)
 inline bool ParticleClipToUv(float clipX, float clipY, float clipW, float& u, float& v)
 {
@@ -165,6 +168,24 @@ inline bool ParticleClipToUv(float clipX, float clipY, float clipW, float& u, fl
     return true;
 }
 
+// M63e: 深度法線の 5 タップ選択。軸ごとに「-1 側と +1 側のどちらが d0 と近いか」を
+// 返す (true = +1 側)。**これが 5 タップ化の判断そのもの**で、外積を取る前に
+// 「同じ面に載っている側」を選ぶことでシルエット境界の破綻を潰す。
+// ★ここを純関数へ切り出して selftest へ乗せてあるのは、**この規則はスクショ回帰では
+//   守れない**から — 実測した: シルエットを作る箱をデモの落下域へ置いてみると、
+//   1.3x0.9x1.3 の段差では 2 タップへ戻す変異が 43 画素動くのに、ひと回り小さい
+//   0.9x0.6x1.3 だと **0 画素**になった。frame 120 のその瞬間に際の 1 画素へ
+//   粒子が居るかどうかだけの運で決まる = 回帰検出の道具にならない。
+//   式の正しさはここで、絶対値の小さい側を選ぶという判断だけを機械照合する。
+// ★タイは +1 側 (<=) — HLSL の `abs(dxp-d0) <= abs(dxm-d0)` と同じ向き。
+//   ここを < にすると平らな面 (差が両側 0) で -1 側へ倒れ、M42e 時代の絵と外積の
+//   巻きが反転する (符号は後で揃えるので絵は変わらないが、無駄にビットが動く)
+// HLSL ミラー: particle_sim.cs.hlsl の useXp / useYp
+inline bool ParticlePickPlusTap(float dCenter, float dMinus, float dPlus)
+{
+    return std::fabs(dPlus - dCenter) <= std::fabs(dMinus - dCenter);
+}
+
 // 反射 + 反発係数: v' = (v - 2(v·n)n) * restitution
 inline DirectX::XMFLOAT3 ReflectWithRestitution(const DirectX::XMFLOAT3& vel,
                                                 const DirectX::XMFLOAT3& n, float restitution)
@@ -172,6 +193,31 @@ inline DirectX::XMFLOAT3 ReflectWithRestitution(const DirectX::XMFLOAT3& vel,
     const float d = vel.x * n.x + vel.y * n.y + vel.z * n.z;
     return { (vel.x - 2.0f * d * n.x) * restitution, (vel.y - 2.0f * d * n.y) * restitution,
              (vel.z - 2.0f * d * n.z) * restitution };
+}
+
+// M63e: 反射 + 反発 + 接線摩擦。法線成分は restitution、接線成分は restitution*(1-friction)。
+// ★`friction <= 0` は**早期 return で ReflectWithRestitution を呼ぶ**。t = restitution*(1-0)
+//   なので代数的には上の式そのものだが、`(v - vn)*t - vn*r` と `(v - 2vn)*r` は演算列が
+//   違うので float ではビットが揃わない — M42e からの絵 (particle_gpu golden) を 1 ビットも
+//   動かさない条件がこの早期 return であって、式の一致ではない。
+//   ★上の分解が `restitution` を接線側にも掛けているのは、既存の純反射が
+//     (v - 2vn)*r = r*vt - r*vn と**接線にも反発を掛けていた**から。ここを
+//     「接線は (1-friction) だけ」にすると friction=0 が既存と一致しなくなる。
+// friction > 1 は min で潰す (Inspector は 0..1 だが JSON / スクリプトは何でも入れられる)。
+// HLSL ミラー: particle_gpu_common.hlsli の ReflectWithFriction
+inline DirectX::XMFLOAT3 ReflectWithFriction(const DirectX::XMFLOAT3& vel,
+                                             const DirectX::XMFLOAT3& n, float restitution,
+                                             float friction)
+{
+    if (friction <= 0.0f) {
+        return ReflectWithRestitution(vel, n, restitution);
+    }
+    const float d = vel.x * n.x + vel.y * n.y + vel.z * n.z;
+    const DirectX::XMFLOAT3 vn = { d * n.x, d * n.y, d * n.z };
+    const float t = restitution * (1.0f - std::min(friction, 1.0f));
+    return { (vel.x - vn.x) * t - vn.x * restitution,
+             (vel.y - vn.y) * t - vn.y * restitution,
+             (vel.z - vn.z) * t - vn.z * restitution };
 }
 
 // 寿命係数 age∈[0,1] でのサイズ倍率。キー: 1.0(0) / [sizeMidScale@sizeMidT] / sizeEndScale(1)。

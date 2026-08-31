@@ -29,7 +29,8 @@ struct GpuParticleCB { // particle_gpu_common.hlsli と一致
     XMFLOAT4 params3;     // M42c: useTexture, flipTilesX, flipTilesY, flipCycles
     XMFLOAT4X4 collViewProj;    // M42e: transpose 済み
     XMFLOAT4X4 collInvViewProj; // M42e: transpose 済み
-    XMFLOAT4 collParams;        // M42e: enabled, restitution, thickness, 予約
+    // M63e: thickness の 0.0f 固定を撤廃し、予約だった w を摩擦へ回した
+    XMFLOAT4 collParams;        // M42e: enabled, restitution, thickness, friction
     XMFLOAT4 collScreen;        // M42e: 画面 w/h, nearZ, farZ
     XMFLOAT4 params4;           // M61d: turbulenceMode, noiseFrequency, noiseSpeed, noiseTime
     // ---- M42追補: 多点グラデーション (末尾 append。HLSL 側と両方同時に変更する) ----
@@ -48,8 +49,12 @@ struct GpuParticleCB { // particle_gpu_common.hlsli と一致
     //   上がるので、1KB のライト配列を積むと 100 エミッタで毎フレーム 100KB 増える。
     //   ライトはビュー単位なので b2 (particlelight::ParticleLightCB) 側へ置く
     XMFLOAT4 params7; // lightingMode, lightWrap, lightIntensity, lightReceiveShadow
+    // ---- M63e: 深度衝突の拡張 (末尾 append。HLSL 側と両方同時に変更する) ----
+    // sim CS だけが読む。既定 (lifeLoss=0 / floorEnabled=0 かつ collParams.w=0) は
+    // M42e から 1 ビットも変わらない (ReflectWithFriction の早期 return が効く)
+    XMFLOAT4 collParams2; // collisionLifeLoss, 予約, floorEnabled, floorY
 };
-static_assert(sizeof(GpuParticleCB) == 352,
+static_assert(sizeof(GpuParticleCB) == 368,
               "GpuParticleCB は particle_gpu_common.hlsli の cbuffer と 1 バイトも違ってはいけない");
 
 struct GpuRenderCB { // particle_render_gpu.hlsl の GpuRenderCB と一致
@@ -588,8 +593,17 @@ void GpuParticleBackend::Update(World& world, float dt)
                                  && collValid_ && collDepthSRV_;
             cb.collViewProj = collViewProj_;
             cb.collInvViewProj = collInvViewProj_;
-            cb.collParams = { collide ? 1.0f : 0.0f, desc->collisionBounce, 0.0f, 0.0f };
+            // M63e: thickness / friction / 寿命損失 / 解析床。**解析床は深度衝突とは
+            // 独立したゲート**にする — 深度衝突は画面外・背面・空ピクセルで必ずすり抜ける
+            // ので、「床だけ塞ぐ」が単独で成立する使い方になる。
+            // ★ローカル空間 (simulationSpace=1) では床も無効。粒子位置がローカル座標な以上、
+            //   ワールドの床面 Y と比べても意味がない (深度衝突を切るのと同じ理由)
+            const bool floorCollide = (desc->collisionFloor != 0) && (desc->simulationSpace != 1);
+            cb.collParams = { collide ? 1.0f : 0.0f, desc->collisionBounce,
+                              desc->collisionThickness, desc->collisionFriction };
             cb.collScreen = { collScreen_[0], collScreen_[1], collScreen_[2], collScreen_[3] };
+            cb.collParams2 = { desc->collisionLifeLoss, 0.0f, floorCollide ? 1.0f : 0.0f,
+                               desc->collisionFloorY };
             // M61d: カールノイズ乱流。時間は em.ageTicks (PlanParticleEmission が進めた後の値) 由来
             // — CPU 側 Simulate が見る pool.ageTicks と同じ位相 = パリティ一致。実時間は使わない
             // M42追補: mode は「== 1 のときだけカールノイズ」へ正規化してから渡す。

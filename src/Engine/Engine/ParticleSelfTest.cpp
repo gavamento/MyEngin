@@ -230,6 +230,60 @@ bool RunParticleSelfTest()
               "collision: oblique reflect preserves tangent");
     }
 
+    // ---- (B4) M63e: 5 タップ法線のタップ選択 + 接線摩擦つき反射
+    //      (どちらも particle_sim.cs.hlsl のミラー) ----
+    {
+        // ★スクショ回帰ではこの規則を守れない (ParticleCurves.h のコメントに実測値)。
+        //   ここが 5 タップ化の唯一の機械的な防波堤。
+        // 平らな面: 両側とも差 0 -> タイは +1 側 (HLSL の <= と同じ向き)
+        check(ParticlePickPlusTap(0.5f, 0.5f, 0.5f), "tap: flat surface ties to the plus side");
+        // 右がシルエットの外 (奥へ飛ぶ) -> -1 側を選ぶ
+        check(!ParticlePickPlusTap(0.5f, 0.5008f, 1.0f), "tap: silhouette on the plus side picks minus");
+        // 左がシルエットの外 -> +1 側を選ぶ
+        check(ParticlePickPlusTap(0.5f, 1.0f, 0.5008f), "tap: silhouette on the minus side picks plus");
+        // 空 (depth=1) が隣にいても同じ規則で逃げられる — 2 タップ時代はここで必ず破綻した
+        check(!ParticlePickPlusTap(0.9f, 0.9f, 1.0f), "tap: a sky neighbour is never chosen");
+        // 傾いた面 (両側とも同符号の勾配) では近い側 = 勾配の緩い側
+        check(ParticlePickPlusTap(0.5f, 0.48f, 0.505f), "tap: on a slope the gentler side wins");
+    }
+
+    {
+        const XMFLOAT3 up = { 0.0f, 1.0f, 0.0f };
+        const XMFLOAT3 v = { 1.0f, -1.0f, 0.5f };
+        // ★これが M63e の中心的な主張: friction=0 は既存の純反射と **ビット一致** で
+        //   なければならない (>= ではなく ==)。代数的な一致では particle_gpu golden が
+        //   maxDiff=1 で割れる — 早期 return が入っているかどうかを直接見ている
+        for (const float rest : { 0.0f, 0.35f, 1.0f }) {
+            const XMFLOAT3 a = ReflectWithFriction(v, up, rest, 0.0f);
+            const XMFLOAT3 b = ReflectWithRestitution(v, up, rest);
+            check(a.x == b.x && a.y == b.y && a.z == b.z,
+                  "collision: friction=0 is bit-identical to plain reflect");
+        }
+        // 負の摩擦もゲートを開けない (述語は <= 0 の 1 本 — 「開くが効かない」状態を作らない)
+        const XMFLOAT3 neg = ReflectWithFriction(v, up, 0.5f, -0.25f);
+        const XMFLOAT3 base = ReflectWithRestitution(v, up, 0.5f);
+        check(neg.x == base.x && neg.y == base.y && neg.z == base.z,
+              "collision: negative friction falls back to plain reflect");
+
+        // friction=1: 接線成分が消え、法線成分だけが反発して返る
+        const XMFLOAT3 f1 = ReflectWithFriction(v, up, 0.5f, 1.0f);
+        check(NearF(f1.x, 0.0f) && NearF(f1.y, 0.5f) && NearF(f1.z, 0.0f),
+              "collision: friction=1 kills the tangent, keeps the bounce");
+        // 範囲外 (>1) は min で 1 へ潰す — JSON / スクリプトは Inspector の 0..1 を通らない
+        const XMFLOAT3 f2 = ReflectWithFriction(v, up, 0.5f, 4.0f);
+        check(f2.x == f1.x && f2.y == f1.y && f2.z == f1.z,
+              "collision: friction above 1 clamps instead of reversing the tangent");
+        // 中間値: 接線は restitution*(1-friction)、法線は restitution のまま
+        const XMFLOAT3 f3 = ReflectWithFriction(v, up, 0.5f, 0.4f);
+        check(NearF(f3.x, 1.0f * 0.5f * 0.6f) && NearF(f3.y, 0.5f)
+                  && NearF(f3.z, 0.5f * 0.5f * 0.6f),
+              "collision: partial friction damps only the tangent");
+        // 法線成分だけの入射は摩擦の影響を受けない (接線が 0 なので係数が何でも同じ)
+        const XMFLOAT3 f4 = ReflectWithFriction({ 0.0f, -4.0f, 0.0f }, up, 0.5f, 0.9f);
+        check(NearF(f4.x, 0.0f) && NearF(f4.y, 2.0f) && NearF(f4.z, 0.0f),
+              "collision: head-on impact is unaffected by friction");
+    }
+
     // ---- (C) SIMD と スカラーの Simulate がビット一致 (120 tick) ----
     {
         Scene s;

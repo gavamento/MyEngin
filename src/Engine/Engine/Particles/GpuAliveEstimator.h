@@ -12,12 +12,18 @@ namespace mye {
 
 // GPU パーティクルの生存数を CPU 側で推定する (リードバック禁止 — ADR-008)。
 // 放出時に「死亡予定 tick → 個数」のバケットへ積み、tick 境界で満期分を減算する。
-// GPU 側の死因は寿命のみ (particle_sim.cs.hlsl: life -= dt; life <= 0 で dead list へ。
-// 深度衝突 M42e は反射するだけで殺さない) なので、寿命は CPU の決定論 RNG が生成済み
-// という前提と合わせて readback なしにほぼ正確な生存数が出せる。
-// ずれる要因は 2 つだけ:
+// 死因の主役は寿命 (particle_sim.cs.hlsl: life -= dt; life <= 0 で dead list へ) なので、
+// 寿命は CPU の決定論 RNG が生成済みという前提と合わせて readback なしにほぼ正確な
+// 生存数が出せる。
+// ずれる要因は 3 つ:
 // - dead list 枯渇 (容量飽和) で GPU 側の放出が落ちたとき → Alive() の上限クランプで吸収
 // - GPU の逐次減算 (life - dt を k 回) と ceil(life/dt) の丸め差 → 境界値で ±1 tick
+// - **M63e: collisionLifeLoss > 0 の早死に**。衝突は GPU 上でしか起きないので記帳できず、
+//   予定より早く死んだぶんだけ**過大推定**になる (M42e の反射だけなら死因にならなかった)。
+//   ★これは安全側 — 過大推定は StepGpuIdleSkip の skip を**遅らせる**だけで、
+//     ParticleCurves.h:「早すぎる skip だけが害」の不変量を破らない。バケットは予定 tick に
+//     必ず満期するので恒久リークもしない (実際より遅く 0 へ戻るだけ)。Alive() は
+//     エディタ表示専用でハッシュに載らないので、絵にも .rep にも影響しない。
 // 表示専用の概算 — sim 状態やワールドハッシュには決して載せないこと。
 struct GpuAliveEstimator {
     // 今 tick 放出した 1 粒を記帳する。lifeSeconds は放出時の寿命、dt は固定 tick 長。

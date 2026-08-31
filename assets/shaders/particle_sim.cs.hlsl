@@ -109,37 +109,79 @@ void CSMain(uint3 tid : SV_DispatchThreadID)
     p.pos += p.vel * dt;
     p.life -= dt;
 
-    // ---- 深度バッファ衝突 (M42e、GPU 限定の見た目効果) ----
+    // ---- 深度バッファ衝突 (M42e / M63e、GPU 限定の見た目効果) ----
     // 前フレーム深度に投影して貫通していたら反射。画面外/空 (depth=1) は素通し。
-    // C++ ミラー: ParticleCurves.h の ParticleClipToUv / ReflectWithRestitution (selftest 対象)
+    // C++ ミラー: particle_gpu_common.hlsli の ParticleClipToUv / ReflectWithFriction
+    // (正本は ParticleCurves.h。M42e 以来ここが式を手写ししていたのを M63e で共有点へ寄せた)
     if (gCollParams.x > 0.5f) {
         const float4 clip = mul(float4(p.pos, 1.0f), gCollViewProj);
-        if (clip.w > 0.0f) {
-            const float2 ndc = clip.xy / clip.w;
-            const float2 uv = float2(ndc.x * 0.5f + 0.5f, 0.5f - ndc.y * 0.5f);
-            if (all(uv >= 0.0f) && all(uv <= 1.0f)) {
+        float2 collUv = float2(0.0f, 0.0f);
+        if (ParticleClipToUv(clip, collUv)) {
+            if (all(collUv >= 0.0f) && all(collUv <= 1.0f)) {
+                // ★下限を int2(1,1) にする (M63e)。5 タップ法線は pix±1 を読むので、
+                //   0 のままだと画面の左端・上端で -1 を Load する = 常に 0 が返り、
+                //   端の 1 列だけ法線が別物になる (Load は範囲外で 0)
                 const int2 maxPix = int2(gCollScreen.xy) - 2;
-                const int2 pix = clamp(int2(uv * gCollScreen.xy), int2(0, 0), maxPix);
+                const int2 pix = clamp(int2(collUv * gCollScreen.xy), int2(1, 1), maxPix);
                 const float d0 = gDepth.Load(int3(pix, 0));
                 if (d0 < 1.0f) {
                     const float sceneZ = LinearizeDepth(d0, gCollScreen.z, gCollScreen.w);
                     const float pen = clip.w - sceneZ; // >0 = 表面より奥
                     // 貫通が (0, 粒子サイズ + thickness) 内のときだけ反射 (奥の遠景は素通し)
                     if (pen > 0.0f && pen < p.size0 + gCollParams.z) {
+                        // M63e: 5 タップ法線。軸ごとに |Δdepth| の小さい側を採ってから外積する。
+                        // ★2 タップ (+1/+1) 固定だと、シルエットの右側/下側に居る粒子が
+                        //   「手前の面 + 奥の背景」で三角形を張ってしまい、法線が視線方向へ
+                        //   倒れて反射が明後日を向く。同じ面に載っている側を選べば消える
+                        const float dxm = gDepth.Load(int3(pix + int2(-1, 0), 0));
+                        const float dxp = gDepth.Load(int3(pix + int2(1, 0), 0));
+                        const float dym = gDepth.Load(int3(pix + int2(0, -1), 0));
+                        const float dyp = gDepth.Load(int3(pix + int2(0, 1), 0));
+                        // C++ ミラー: ParticleCurves.h の ParticlePickPlusTap
+                        // (この選択規則だけは selftest が正本 — 詳しい理由は向こうのコメント)
+                        const bool useXp = abs(dxp - d0) <= abs(dxm - d0);
+                        const bool useYp = abs(dyp - d0) <= abs(dym - d0);
                         const float3 p0 = CollReconstructWorld(pix, d0);
-                        const float3 px1 = CollReconstructWorld(
-                            pix + int2(1, 0), gDepth.Load(int3(pix + int2(1, 0), 0)));
-                        const float3 py1 = CollReconstructWorld(
-                            pix + int2(0, 1), gDepth.Load(int3(pix + int2(0, 1), 0)));
-                        float3 n = normalize(cross(py1 - p0, px1 - p0));
-                        // 巻き方に依存せず「速度と逆向き」に揃える (3 タップ法線の符号安定化)
+                        const float3 pX = CollReconstructWorld(pix + int2(useXp ? 1 : -1, 0),
+                                                               useXp ? dxp : dxm);
+                        const float3 pY = CollReconstructWorld(pix + int2(0, useYp ? 1 : -1),
+                                                               useYp ? dyp : dym);
+                        // 採った側で外積の巻きは反転しうるが、直後に「速度と逆向き」へ
+                        // 揃えるので符号は問われない (M42e の 3 タップ時代と同じ理屈)
+                        float3 n = normalize(cross(pY - p0, pX - p0));
                         if (dot(n, p.vel) > 0.0f) {
                             n = -n;
                         }
-                        p.vel = reflect(p.vel, n) * gCollParams.y;
+                        p.vel = ReflectWithFriction(p.vel, n, gCollParams.y, gCollParams.w);
                         p.pos += n * pen; // 表面外へ押し戻し
+                        // M63e: 寿命損失。invLife = 1/lifetime なので割り戻すと「元の寿命の
+                        // 何割を失うか」になる。1.0 = kill-on-collide (life <= lifetime なので
+                        // 必ず 0 以下へ落ちる)。数行下の既存 dead-list 分岐がそのまま回収する
+                        if (gCollParams2.x > 0.0f) {
+                            p.life -= gCollParams2.x / p.invLife;
+                        }
                     }
                 }
+            }
+        }
+    }
+
+    // ---- M63e: 解析床 (collisionFloor) ----
+    // ★これは**任意形状には効かない proxy** であって深度衝突の代替ではない。
+    //   スクリーンスペース法は画面外・背面・空ピクセルで必ずすり抜けるので、
+    //   「粒子が床下へ落ちていく」という一番目立つ破綻だけを水平 1 平面で塞ぐ。
+    //   壁や斜面が要るなら深度衝突 (= 画面に映っている間だけ) しか手が無い。
+    // ★深度ブロックとは独立したゲート。同 tick に両方効くと寿命損失が 2 回引かれるが、
+    //   床の手前に面が映っているのだから 2 回ぶつかったのは事実 (意図した挙動)
+    if (gCollParams2.z > 0.5f) {
+        const float floorY = gCollParams2.w;
+        // 下向きに動いているときだけ弾く — 床下で上向きなら通す (でないと復帰できない)
+        if (p.pos.y < floorY && p.vel.y < 0.0f) {
+            p.vel = ReflectWithFriction(p.vel, float3(0.0f, 1.0f, 0.0f), gCollParams.y,
+                                        gCollParams.w);
+            p.pos.y = floorY;
+            if (gCollParams2.x > 0.0f) {
+                p.life -= gCollParams2.x / p.invLife;
             }
         }
     }

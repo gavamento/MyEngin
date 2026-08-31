@@ -35,7 +35,8 @@ cbuffer GpuParticleCB : register(b0)
     // ---- M42e: 深度バッファ衝突 (GPU バックエンド限定の見た目効果。sim CS のみ参照) ----
     float4x4 gCollViewProj;    // transpose 済み (mul(float4, M) 規約は gViewProj と同じ)
     float4x4 gCollInvViewProj; // transpose 済み
-    float4 gCollParams;        // x = enabled, y = restitution, z = 追加 thickness, w = 予約
+    // M63e: z (thickness) の 0.0f 固定を撤廃し、w の予約枠を摩擦へ回した
+    float4 gCollParams;        // x = enabled, y = restitution, z = 追加 thickness, w = friction
     float4 gCollScreen;        // xy = 画面サイズ (px), z = nearZ, w = farZ
     // ---- M61d: カールノイズ乱流 (sim CS のみ参照。C++ 側 GpuParticleBackend.cpp の
     //      GpuParticleCB::params4 と一致 — 末尾 append なので既存フィールドのオフセット不変) ----
@@ -65,4 +66,42 @@ cbuffer GpuParticleCB : register(b0)
     //   ライトはビュー単位なので b2 (ParticleLightCB) 側に置いて 1 回だけ上げる
     float4 gParams7;           // x = lightingMode, y = lightWrap, z = lightIntensity,
                                // w = lightReceiveShadow
+    // ---- M63e: 深度衝突の拡張 (末尾 append。C++ 側 GpuParticleCB と一致。
+    //      既存フィールドのオフセット不変。sim CS だけが読む) ----
+    // ★M42e の gCollParams.w は「予約」だったので、摩擦はそちらへ入れて反射の 4 引数
+    //   (enabled / restitution / thickness / friction) を 1 レジスタに揃えてある。
+    //   こちらは「反射しない側」= 寿命損失と解析床。
+    // ★z (解析床) は gCollParams.x (深度衝突) と**独立したゲート**。深度衝突は画面外・空・
+    //   背面ですり抜けるので、床だけを塞ぎたいという使い方が成立する
+    float4 gCollParams2;       // x = collisionLifeLoss, y = 予約,
+                               // z = floorEnabled, w = floorY
 };
+
+// ---- M63e: sim CS が M42e 以来**手写ししていた**式の共有点 ----
+// C++ ミラー: ParticleCurves.h の ParticleClipToUv / ReflectWithFriction (selftest 対象)。
+// コメント同期のみの一致 — 変更は必ず両方同時に。
+
+// クリップ座標 -> スクリーン UV。背面 (w<=0) は false = 衝突判定しない
+bool ParticleClipToUv(float4 clip, out float2 uv)
+{
+    uv = float2(0.0f, 0.0f);
+    if (clip.w <= 0.0f) {
+        return false;
+    }
+    uv = float2((clip.x / clip.w) * 0.5f + 0.5f, 0.5f - (clip.y / clip.w) * 0.5f);
+    return true;
+}
+
+// 反射 + 反発 + 接線摩擦。friction=0 は**早期 return で純反射へ落とす** —
+// t = restitution * (1-0) = restitution なので代数的には一致するが、
+// (v - vn)*t - vn*r と (v - 2vn)*r は演算列が違うので float ではビットが揃わない。
+// M42e からの絵を 1 ビットも動かさない条件がこの早期 return
+float3 ReflectWithFriction(float3 vel, float3 n, float restitution, float friction)
+{
+    if (friction <= 0.0f) {
+        return reflect(vel, n) * restitution;
+    }
+    const float3 vn = dot(vel, n) * n;               // 法線成分
+    const float t = restitution * (1.0f - min(friction, 1.0f)); // 接線成分の係数
+    return (vel - vn) * t - vn * restitution;
+}
