@@ -241,6 +241,32 @@ $constGroups = @(
         }
     },
     @{
+        # M65e: 音響の残光ボリュームの SRV スロット (Deferred 光パス)。
+        # ★レジスタ番号の食い違いは**コンパイルも実行も通る** — 別のテクスチャを読んで
+        #   絵が変わるだけなので、ビルドでもテストでも捕まらない。統合契約 予約 2 が
+        #   t13 を「空席。詰めないこと」と書いていた席を M65e が取ったので、
+        #   ここから先は機械照合でしか守れない。
+        # ★HLSL 側は register(t13) を直書きせず #define 1 個から連結で組む
+        #   (MYE_ACOUSTIC_REG)。同じファイルの中で define と register が食い違う
+        #   余地を消してあるので、照合先は define だけでよい
+        label = 'acoustic::kGlowSrvSlot / MYE_ACOUSTIC_SRV_SLOT'
+        sites = @{
+            'src\Engine\Renderer\RenderTypes.h'      = 'constexpr\s+int\s+kGlowSrvSlot\s*=\s*(\d+)'
+            'assets\shaders\acoustic_common.hlsli' = '#\s*define\s+MYE_ACOUSTIC_SRV_SLOT\s+(\d+)'
+        }
+    },
+    @{
+        # M65e: 同じく Forward 系の SRV スロット。★こちらは**本数が 7 -> 8 に増える**ぶん
+        # 危険で、張る側と剥がす側の 4 箇所 (ForwardPath x2 / DeferredPath の透明後段 x2) を
+        # 揃え損ねると「透明メッシュだけ残光が残る」形で次フレームまで生き残る
+        # (M57e が t7 で 3 回踏んだ罠と同型)
+        label = 'acoustic::kGlowForwardSrvSlot / MYE_ACOUSTIC_FWD_SRV_SLOT'
+        sites = @{
+            'src\Engine\Renderer\RenderTypes.h'      = 'constexpr\s+int\s+kGlowForwardSrvSlot\s*=\s*(\d+)'
+            'assets\shaders\acoustic_common.hlsli' = '#\s*define\s+MYE_ACOUSTIC_FWD_SRV_SLOT\s+(\d+)'
+        }
+    },
+    @{
         # M57c: フロクセルのジッタ列の周期。C++ が実際にジッタ値を計算して CB へ載せるので
         # HLSL 側には出てこないが、**カメラジッタ (TAA) の周期と同じ長さ**でなければ
         # 「1 巡」が最小公倍数まで伸びて、決定的撮影で撮った 2 枚がどちらも収束前の

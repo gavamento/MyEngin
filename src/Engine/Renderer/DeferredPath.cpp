@@ -64,6 +64,9 @@ struct PerFrameCB {
     //      形は RenderTypes.h の FroxelForwardCB 1 本きりで ForwardPath.cpp と共有する
     //      (M54e の「2 つのミラーを手で揃える」を型で潰した) ----
     FroxelForwardCB froxel;
+    // ---- M65e: 音響の残光 (末尾 append)。同上 — 形は AcousticCB 1 本きりで
+    //      ForwardPath.cpp と共有する ----
+    AcousticCB acoustic;
 };
 
 struct PerObjectCB {
@@ -149,6 +152,8 @@ struct LightPassCB {
     float froxelFarZ;
     float froxelSlices;
     XMFLOAT4 froxelViewZRow; // dot(float4(posW,1), これ) = view 深度
+    // ---- M65e: 音響の残光 (末尾 append。params.w = 0 で従来と完全に同一の式) ----
+    AcousticCB acoustic;
 };
 
 // ssao.hlsl の SsaoCB と同一レイアウト
@@ -760,6 +765,10 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
     // 不透明と透明で霧の有無が食い違うと、ガラス越しの絵だけ霧が抜ける
     const bool froxelBound = FroxelIsBound(view);
     pf.froxel = MakeFroxelForwardCB(view, froxelBound);
+    // M65e: 残光も同じ理屈で、判定は光パスと**同じ AcousticIsBound**。
+    // 不透明と透明で残光の有無が食い違うと、ガラス越しの壁だけ音の光が消える
+    const bool acousticBound = AcousticIsBound(view);
+    pf.acoustic = MakeAcousticCB(view, acousticBound);
     UploadCB(dc, perFrameCB_.Get(), pf);
 
     ID3D11Buffer* cbs[2] = { perFrameCB_.Get(), perObjectCB_.Get() };
@@ -1188,6 +1197,11 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
     // view 行列の第 3 列 = 「ワールド点 → view 深度」の線形形式そのもの。
     // カメラ前方ベクトルの内積で書くと非一様スケールのビューで静かにずれる
     lp.froxelViewZRow = { view.view._13, view.view._23, view.view._33, view.view._43 };
+    // M65e: 音響の残光。**SRV が null なら params が全部 0 = w も 0** でシェーダは
+    // 分岐に一度も入らない (ボリュームの無いシーン / 一度も音が鳴っていない /
+    // AssetPreviewCache の別 RenderSystem の 3 経路がここを通る)。
+    // ★判定式は透明後段 (pf.acoustic) と**同じ変数**にしてある
+    lp.acoustic = MakeAcousticCB(view, acousticBound);
     UploadCB(dc, lightCB_.Get(), lp);
     ID3D11Buffer* lightCbs[1] = { lightCB_.Get() };
     dc->PSSetConstantBuffers(0, 1, lightCbs);
@@ -1214,11 +1228,13 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
                                              rtShadowBound ? rtShadowSrv : nullptr,
                                              rtReflBound ? rtRefl.filtered : nullptr,
                                              view.shadowAtlasSRV,
-                                             nullptr, // t13: SSR は光パスの出力を読む別パスになったので空席
+                                             // t13: 旧 SSR の空席。M65e で音響の残光が入った
+                                             acousticBound ? view.acousticSRV : nullptr,
                                              (probeSet != nullptr) ? probeSet->cubeArray
                                                                    : nullptr, // t14: M56f
                                              froxelBound ? view.froxelSRV : nullptr };
     static_assert(froxel::kSrvSlot == 15, "froxel の SRV スロットは統合契約 予約 2 の t15");
+    static_assert(acoustic::kGlowSrvSlot == 13, "音響の SRV スロットは統合契約 予約 2 の t13");
     dc->PSSetShaderResources(0, 16, gbSrvs);
     dc->IASetInputLayout(nullptr);
     dc->OMSetBlendState(blendOpaque_.Get(), nullptr, 0xFFFFFFFFu);
@@ -1285,12 +1301,14 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
         // フレーム頭で bind 済み。
         // ★t6/t7 を足したら**本数も増やすこと** (増やし忘れると透明メッシュだけが
         //   前段の光パスが残したもの、または null を読む = 影が出ない/霧が抜ける)
-        ID3D11ShaderResourceView* fwdSrvs[7] = { view.shadowSRV,      nullptr,
+        ID3D11ShaderResourceView* fwdSrvs[8] = { view.shadowSRV,      nullptr,
                                                  view.iblIrradiance,  view.iblPrefiltered,
                                                  view.iblBrdfLut,     view.shadowAtlasSRV,
-                                                 froxelBound ? view.froxelSRV : nullptr };
+                                                 froxelBound ? view.froxelSRV : nullptr,
+                                                 acousticBound ? view.acousticSRV : nullptr };
         static_assert(froxel::kForwardSrvSlot == 7, "froxel の Forward SRV は統合契約 予約 2 の t7");
-        dc->PSSetShaderResources(1, 7, fwdSrvs);
+        static_assert(acoustic::kGlowForwardSrvSlot == 8, "音響の Forward SRV は t8 (M65e で 7->8)");
+        dc->PSSetShaderResources(1, 8, fwdSrvs);
         ID3D11SamplerState* matSampler[1] = { sampler_.Get() };
         dc->PSSetSamplers(0, 1, matSampler);
         dc->VSSetConstantBuffers(0, 2, cbs);
@@ -1459,8 +1477,10 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
     // 光パスの nullSrvs[16] より後にスカイと透明後段が t7 を張り直しているので、
     // ここで剥がさないと次フレームの積分パスが同じテクスチャを UAV に取った瞬間に
     // D3D が片方を黙って外す (M57d が t15 で踏んだのと同じ罠。今度は Render の末尾)
-    ID3D11ShaderResourceView* fwdNull[7] = {};
-    dc->PSSetShaderResources(1, 7, fwdNull);
+    // ★M65e: **本数も 8 にすること**。7 のままだと t8 (残光) が張られたまま次フレームへ
+    //   生き残る = 張り忘れではなく剥がし忘れが実害を出す (M57e が踏んだ罠と同型)
+    ID3D11ShaderResourceView* fwdNull[8] = {};
+    dc->PSSetShaderResources(1, 8, fwdNull);
 }
 
 } // namespace mye

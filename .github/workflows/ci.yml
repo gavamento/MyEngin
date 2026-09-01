@@ -2,7 +2,7 @@
 #
 # 方針: CI 専用の検証ロジックは書かない (二重メンテを作らない)。
 # CI 固有の事情は環境変数 4 種だけで注入し、bat 本体はローカルと 1 文字も変えない
-# (4 つ目の MYE_SHOT_SKIP_* は同じ役目の 5 本 = FXAA / TAA / SSR / FROXEL / FOG):
+# (4 つ目の MYE_SHOT_SKIP_* は同じ役目の 6 本 = FXAA / TAA / SSR / FROXEL / FOG / PARTICLE):
 #   MYE_EXTRA_ARGS   … 全 Editor.exe 実行へ後置する引数
 #                      --warp    = GPU の無い runner でも D3D11 デバイスを作る (WARP)
 #                      --no-audio = 音声デバイスが無いので XAudio2 を初期化しない
@@ -37,6 +37,19 @@
 #                      froxel を通すうえに **GPU パーティクルの sim 自体が WARP 上の
 #                      float 演算**なので、粒子位置が WARP のバージョンで動きうる
 #                      (CPU バックエンドと違い sim が GPU に載っている 1 枚)
+#   MYE_SHOT_SKIP_PARTICLE … スクショ 16/17 枚目 (パーティクル 2 経路、M63a) を飛ばす。
+#                      GPU 側は sim そのものが WARP 上の float 演算なので粒子位置が
+#                      WARP のバージョンで動きうる (FOG と同じ理由)。CPU 側も対で外す —
+#                      片方だけ CI に載せると「2 枚を突き合わせる」存在理由が崩れる。
+#                      ★M63a が shot_verify.bat に囲いを作りながら**ここへの登録を
+#                        忘れていた** (M65e で発見・追加)。CI は M63 以降まだ一度も
+#                        回っていないので実害は出ていない
+#
+# ★MYE_SHOT_SKIP_ACOUSTIC (スクショ 18/19 枚目、M65e) は**わざと立てていない**。
+#   波面は整数チャンファ距離 = 機種非依存、残光の符号化は sqrt (IEEE-754 で正しく
+#   丸められる)、合成は lerp と乗算だけで**しきい値分岐もテンポラル蓄積も無い** —
+#   上の 6 本を降格させた「1 ULP が増幅する」機構がどこにも無いので tol=3 で判定できる。
+#   ランナーで赤くなったら **tol を上げずに** ここへ 1 行足すこと (囲いは bat 側にある)。
 #
 # sim は CPU 専用なのでリプレイのワールドハッシュは WARP でも実 GPU でも同一 —
 # GPU 無し runner で replay_verify を回せる根拠がここ (計画の決定台帳 4)。
@@ -66,6 +79,7 @@ jobs:
       MYE_SHOT_SKIP_FROXEL: 1
       MYE_SHOT_SKIP_SSR: 1
       MYE_SHOT_SKIP_FOG: 1
+      MYE_SHOT_SKIP_PARTICLE: 1
     steps:
       - uses: actions/checkout@v4
 
@@ -80,11 +94,11 @@ jobs:
         run: tools\build_managed.bat Release
 
       # ② ローカルで打つのと同じ 1 行。この中で
-      #    8 ビルド (4 プロジェクト x Debug/Release) → 6 ペアのリプレイ照合
-      #    (既定デモ / 部位ショーケース / ゲームフロー / ローカル 2P / 物理 / 関節)
+      #    8 ビルド (4 プロジェクト x Debug/Release) → 7 ペアのリプレイ照合
+      #    (既定デモ / 部位ショーケース / ゲームフロー / ローカル 2P / 物理 / 関節 / 音響)
       #    → snapshot 往復 → タイムトラベル巻き戻し → check_rules.ps1 まで回る。
       #    照合が割れたときは bat 自身がフィールド単位の差分を出す (M52a)
-      - name: replay determinism (build x8 + 6 scene pairs + rule check)
+      - name: replay determinism (build x8 + 7 scene pairs + rule check)
         shell: cmd
         run: tools\replay_verify.bat
 
@@ -102,7 +116,7 @@ jobs:
       #    --warp --font-embedded --no-fxaa 固定 = ラスタライザ・フォント・
       #    機種差を増幅する 1 パスを開発機と揃える。
       #    replay_verify が先に Release をビルドしている前提 (bat はビルドしない)
-      - name: screenshot regression (10 shots, no-fxaa/taa/ssr/froxel/fog)
+      - name: screenshot regression (12 shots, no-fxaa/taa/ssr/froxel/fog/particle)
         shell: cmd
         run: tools\shot_verify.bat
 

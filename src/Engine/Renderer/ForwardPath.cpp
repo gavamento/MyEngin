@@ -61,6 +61,9 @@ struct PerFrameCB {
     //      形は RenderTypes.h の FroxelForwardCB 1 本きりで DeferredPath.cpp と共有する
     //      (上の M54e の轍 = 「片方だけ足す」を型で潰した) ----
     FroxelForwardCB froxel;
+    // ---- M65e: 音響の残光 (末尾 append)。同上 — 形は RenderTypes.h の AcousticCB
+    //      1 本きりで DeferredPath.cpp と共有する ----
+    AcousticCB acoustic;
 };
 
 struct PerObjectCB {
@@ -285,6 +288,10 @@ void ForwardPath::Render(GraphicsDevice& device, const RenderView& view, const R
     // SRV が null なら 0 = 従来の ApplyFog へ落ちる = 1 ビットも変わらない
     const bool froxelBound = FroxelIsBound(view);
     pf.froxel = MakeFroxelForwardCB(view, froxelBound);
+    // M65e: 音響の残光。**SRV が null なら params が全部 0 = w も 0** で
+    // シェーダは分岐に一度も入らない (= 従来の絵とビット恒等)
+    const bool acousticBound = AcousticIsBound(view);
+    pf.acoustic = MakeAcousticCB(view, acousticBound);
     UploadCB(dc, perFrameCB_.Get(), pf);
 
     ID3D11Buffer* cbs[2] = { perFrameCB_.Get(), perObjectCB_.Get() };
@@ -299,12 +306,14 @@ void ForwardPath::Render(GraphicsDevice& device, const RenderView& view, const R
     // t7 に (M57e。統合契約 予約 2)。
     // アトラス用のサンプラは増やさず s1 の比較サンプラを共有する (CSM と同じ設定でよい)。
     // froxel は s2 (IBL 用 LINEAR/CLAMP) を流用する = サンプラは 1 つも増えない
-    ID3D11ShaderResourceView* frameSrvs[7] = { view.shadowSRV,      nullptr,
+    ID3D11ShaderResourceView* frameSrvs[8] = { view.shadowSRV,      nullptr,
                                                view.iblIrradiance,  view.iblPrefiltered,
                                                view.iblBrdfLut,     view.shadowAtlasSRV,
-                                               froxelBound ? view.froxelSRV : nullptr };
+                                               froxelBound ? view.froxelSRV : nullptr,
+                                               acousticBound ? view.acousticSRV : nullptr };
     static_assert(froxel::kForwardSrvSlot == 7, "froxel の Forward SRV は統合契約 予約 2 の t7");
-    dc->PSSetShaderResources(1, 7, frameSrvs);
+    static_assert(acoustic::kGlowForwardSrvSlot == 8, "音響の Forward SRV は t8 (M65e で 7->8)");
+    dc->PSSetShaderResources(1, 8, frameSrvs);
     dc->RSSetState(wire ? rasterizerWire_.Get() : rasterizer_.Get());
     dc->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
@@ -377,8 +386,9 @@ void ForwardPath::Render(GraphicsDevice& device, const RenderView& view, const R
     // ---- M57e: t1-t7 を剥がす。**t7 (フロクセル積分結果) を残してはいけない** ----
     // 残すと次フレームの積分パスが同じテクスチャを UAV に取った瞬間に D3D が
     // 片方を黙って外す (M57d が Deferred の t15 で踏んだのと同じ罠)
-    ID3D11ShaderResourceView* fwdNull[7] = {};
-    dc->PSSetShaderResources(1, 7, fwdNull);
+    // ★M65e: **本数も 8 にすること** (t8 = 残光)。剥がし忘れると次フレームまで生き残る
+    ID3D11ShaderResourceView* fwdNull[8] = {};
+    dc->PSSetShaderResources(1, 8, fwdNull);
 }
 
 void ForwardPath::DrawItems(GraphicsDevice& device, const std::vector<RenderItem>& items,

@@ -546,7 +546,7 @@ golden 2 枚を `--update` して差分を目視。
 | M65b 波面伝播 + デバッグ線 | **完了** | replay 7 ペア目 / `--acoustic-demo` / `kMaxWaveRing` 40→64 | 下の「M65b の申し送り」参照 |
 | M65c 床材と発音源 | **完了** | PhysMat 末尾 append 3 本 / physmat 新規 5 種 + wood 追記 / 上書きビットは不採用 | 下の「M65c の申し送り」参照 |
 | M65d 残光ボリューム + 転送 | **完了** | `VolumeTexture::Create(withUav)` / `RenderView` 5 本 append / `--acoustic-dump N` | 下の「M65d の申し送り」参照 |
-| M65e ライティング差し込み | 未着手 | Deferred t13 / Forward t8 / golden 18-19 枚目 / `$constGroups` 2 件 | |
+| M65e ライティング差し込み | **完了** | Deferred t13 / Forward t8 / golden 18-19 枚目 / `$constGroups` 2 件 / `acoustic_common.hlsli` | 下の「M65e の申し送り」参照 |
 | M65f 流れ場 + FSM | 未着手 | なし (描画・版とも無風) | |
 | M65g ゲームの薄皮 | 未着手 | ABI 据え置きを確定 (要冒頭確認) | |
 
@@ -747,3 +747,59 @@ check_rules 0 error / build_managed Debug+Release 0 /
     (既定 1.0)。
 12. デモの残光の実測 (frame 120 / 400): 非ゼロ 5378 → 5648 セル (33% → 35%)、最大値
     181 (energy 0.254) → 219 (0.544)。**閉セルの点灯は両方 0** = 波も残光も壁を越えていない。
+
+---
+
+## M65e の申し送り (計画外の事実・罠だけ)
+
+**実測**: 両構成 0 警告 / selftest 43 本 ALL PASS (音響は 20 群) /
+replay_verify **10 ジョブ PASS (79.7s)** / shot_verify **19 枚すべて maxDiff=0**
+(★**既存 17 枚は `--update` してもバイト同一** = 二重ゲートが主張どおり効いた) /
+check_rules 0 error / build_managed Debug+Release 0。
+
+1. ★★**合成を殺す A/B を実際にやった**。`AcousticSample` の `SampleLevel` を `return 0.0f`
+   に差し替えて撮り直すと **Forward 49,315 画素 / maxDiff=170、Deferred 49,329 画素 /
+   maxDiff=171** が動いた (差は 14 画素 = 2 実装が同じものを計算している証拠でもある)。
+   計画が「真っ黒な golden は回帰検出ゼロ」と警告していた点は、この数字を測って初めて
+   「守れている」と言える。★シェーダは実行時コンパイルなので **.hlsl を書き換えて
+   撮り直すだけ** — リビルド不要で 2 分で回せる。
+2. ★**`acoustic::kSrvSlot` / `kForwardSrvSlot` という名前は使えなかった**。froxel が
+   同じ `RenderTypes.h` に**同名の定数**を持っており、check_rules の規則 9 は
+   「1 ファイル 1 整数」を**名前の正規表現**でしか特定できないので、
+   `froxel::kForwardSrvSlot` の照合が acoustic の 8 を拾って赤くなった (実際に踏んだ)。
+   `kGlowSrvSlot` / `kGlowForwardSrvSlot` へ改名。**規則 9 に登録する定数は
+   ヘッダ内で名前がユニークでなければならない**、が正しい制約。
+3. ★**HLSL 側は `register(t13)` を直書きしない**。`#define MYE_ACOUSTIC_SRV_SLOT 13` から
+   トークン連結 (`MYE_ACOUSTIC_REG`) で組み立ててある。froxel は「define と
+   register(t7) の両方」を持っていて**同じファイルの中で食い違える**が、連結なら
+   数字はファイルに 1 個しか無い。fxc の `##` は問題なく通った (5 本とも実測)。
+4. ★**音色 (tone) は光に載せなかった** — v1 の意図した境界。R8_UNORM は 1 セル 1 バイトで
+   強さしか持てない。代わりに「強い = 近い / 新しい」を暖色、「弱い = 遠い / 古い」を
+   寒色にする energy ランプにした。tone はデバッグ線と `AcousticListener.lastTone`
+   (M65f が読む) に残っている。載せるなら 2 枚目のボリューム (R8_UINT) か RGBA8 で、
+   どちらもメモリ 4 倍 — 色相 1 本の代償としては高い。
+5. 合成は**フォグより前**に置いた。残光は面から出ていく放射なので霧が掛かる側に居るのが
+   正しい (後ろに足すと霧の向こうの壁だけ素の明るさで光って奥行きが死ぬ)。
+   deferred / forward の 5 本すべてで同じ位置 (`色 += 発光` の直後)。
+6. ★**`--acoustic-demo` のカメラを寄せた** (26,-17 -> 20,-13)。golden をここで初めて
+   撮るので churn はゼロだが、間取りが小さいままだと**残光が壊れても差分画素が
+   埋もれる**。寄せられるのは「golden が存在しない今だけ」なので、このタイミングでやった。
+7. **設置光を 1 個足した** (部屋 A の隅、点光源 range 6 / intensity 2.2 / 暖色)。企画 §4-3 の
+   「持ち込んだ光」でもあり、golden の非黒要件でもある。**関数の末尾に足してある**
+   (前に挿すと以降のエンティティ index が全部ずれる)。
+8. ★**CI 判定に載せた** (計画は `MYE_SHOT_SKIP_ACOUSTIC` を ci.yml の env に登録すると
+   書いていたが、**囲いだけ作って立てなかった**)。根拠は「FXAA / TAA / SSR / froxel を
+   降格させた *1 ULP が増幅する機構* がどこにも無い」— 波面は整数チャンファ距離、
+   符号化は sqrt (IEEE-754 で正しく丸められる)、合成は lerp と乗算だけ。
+   ランナーで赤くなったら tol を上げずに ci.yml へ 1 行足すこと。
+9. ★**M63a が `MYE_SHOT_SKIP_PARTICLE` を ci.yml へ登録し忘れていた**のを発見して直した
+   (bat 側の囲いはあるのに env が無く、CI は tol=0 の 2 枚を撮ることになっていた)。
+   CI は M63 以降まだ一度も回っていないので実害は出ていない。CI 判定は 10 -> **12 枚**
+   (19 枚 - skip 7 枚)。
+10. Forward の SRV は 7 -> 8 本。**張る 2 箇所と剥がす 2 箇所の計 4 箇所**を同時に直した
+    (ForwardPath の frameSrvs/fwdNull、DeferredPath の透明後段 fwdSrvs/fwdNull)。
+    Deferred 光パスは t13 が既存の `gbSrvs[16]` / `nullSrvs[16]` の内側なので**本数不変** —
+    この席を選んだ最大の理由がこれ。
+11. M65f への申し送り: `AgentSystem` が使うのは `AcousticListenerComponent` の鏡と
+    `parentDir` で、**描画側 (残光) には一切依存しない**。残光を止めても AI は動く。
+    逆に「聞こえた所」と「光った所」が食い違ったら疑うのは M65d の WriteShell の位置。

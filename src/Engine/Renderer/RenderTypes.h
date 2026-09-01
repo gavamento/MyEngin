@@ -631,6 +631,64 @@ inline FroxelForwardCB MakeFroxelForwardCB(const RenderView& view, bool bound)
     return out;
 }
 
+// ---- M65e: 音響の残光ボリューム (光パスへの差し込み) ----
+namespace acoustic {
+
+// SRV スロット。**HLSL 側の正本は acoustic_common.hlsli の MYE_ACOUSTIC_SRV_SLOT /
+// MYE_ACOUSTIC_FWD_SRV_SLOT** で、tools\check_rules.ps1 の規則 9 が機械照合する。
+// ★t13 は SSR の予約席だったが SSR (M56d) は光パスの**出力**を読む別パスになったので
+//   空いたままだった (統合契約 予約 2)。M65e がここを取る。この席を選んだ理由は
+//   **Deferred の gbSrvs[16] / nullSrvs[16] の本数が 1 つも変わらない**こと —
+//   M57d/e が 3 回踏んだ「SRV 剥がし忘れ」を構造的に回避できる。
+// ★Forward 側は t8 = 本数が 7 -> 8 に増える。張る側と**剥がす側の両方**を 8 にすること
+//   (4 箇所: ForwardPath の 2 + DeferredPath の透明後段の 2)。
+// ★名前を kSrvSlot / kForwardSrvSlot にしないこと — froxel が同じヘッダで同名の定数を
+//   持っており、check_rules の規則 9 は**名前の正規表現**でしか場所を特定できないので
+//   同名だと片方の値をもう片方の照合が拾って理由の分からない赤が出る (実際に踏んだ)
+constexpr int kGlowSrvSlot = 13;
+constexpr int kGlowForwardSrvSlot = 8;
+
+} // namespace acoustic
+
+// M65e: 「このビューで残光を合成してよいか」の唯一の判定 (FroxelIsBound と同じ型)。
+//   ・acousticSRV == nullptr になる経路が複数ある (ボリュームの無いシーン / 一度も音が
+//     鳴っていない / AssetPreviewCache の別 RenderSystem / selftest の手組み RenderView)。
+//     **ここを通さないとサムネイルだけが前フレームの残骸をサンプルする。**
+//   ・Unlit / Wireframe (debugViewMode != 0) も外す — 残光はライティングの一部で、
+//     ライティングを潰した表示モードに音の光だけ載せるのは筋が通らない (froxel と同じ規約)
+inline bool AcousticIsBound(const RenderView& view)
+{
+    return view.debugViewMode == 0 && view.acousticSRV != nullptr
+        && view.acousticIntensity > 0.0f;
+}
+
+// M65e: 光パスの CB 末尾に置く音響のブロック。
+// **C++ ミラーが 3 つある** (DeferredPath の LightPassCB / DeferredPath の PerFrameCB /
+// ForwardPath の PerFrameCB) ので、形を 1 本にして「片方だけ直す」を型で潰してある
+// (FroxelForwardCB と同じ理由・同じ流儀)。
+// HLSL 側は deferred_light + forward_lit / _instanced / forward_skinned / forward_terrain の 5 本。
+struct AcousticCB {
+    DirectX::XMFLOAT4 gridMin = { 0.0f, 0.0f, 0.0f, 0.0f }; // xyz = セル(0,0,0) の最小角
+    DirectX::XMFLOAT4 invSize = { 0.0f, 0.0f, 0.0f, 0.0f }; // xyz = 1/(dim*cellSize)
+    // x=強さ / y=法線押し出し [m] / z=予約 (0) / **w=有効フラグ**
+    DirectX::XMFLOAT4 params = { 0.0f, 0.0f, 0.0f, 0.0f };
+};
+static_assert(sizeof(AcousticCB) == 48, "HLSL 側 (float4 x 3) と一致させること");
+
+inline AcousticCB MakeAcousticCB(const RenderView& view, bool bound)
+{
+    AcousticCB out;
+    if (!bound) {
+        return out; // 全部 0 = w も 0 = シェーダは分岐に入らない
+    }
+    out.gridMin = { view.acousticGridMin[0], view.acousticGridMin[1], view.acousticGridMin[2],
+                    0.0f };
+    out.invSize = { view.acousticInvSize[0], view.acousticInvSize[1], view.acousticInvSize[2],
+                    0.0f };
+    out.params = { view.acousticIntensity, view.acousticNormalPush, 0.0f, 1.0f };
+    return out;
+}
+
 // GPU へ渡すライト 1 個 (定数バッファ配列要素、16 バイト境界に揃えた 64 バイト)。
 // HLSL 側 common.hlsli の Light 構造体とレイアウト一致。
 struct GpuLight {

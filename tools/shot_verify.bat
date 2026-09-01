@@ -105,8 +105,9 @@ if exist %TERRAIN_SCENE% del /q %TERRAIN_SCENE%
 set FAILED=0
 set SHOTS=0
 
-rem ---- 14 本。既定デモの 2 経路 (Forward / Deferred) + 生成シーン 2 本 + UI プローブ
+rem ---- 19 本。既定デモの 2 経路 (Forward / Deferred) + 生成シーン 2 本 + UI プローブ
 rem      + 描画ショーケースの 2 経路 (M54a) + 地形 (M58c) + 物理 (M59l) + 関節 (M60k)
+rem      + 霧 (M57追補) + パーティクル 2 経路 (M63a) + 音響 2 経路 (M65e)
 rem      + ローカル限定 4 本 (ssr / fxaa / taa / froxel) ----
 rem RT デモは WARP では重すぎるので CI 対象外 (ローカル任意)
 call :shot demo_forward
@@ -294,6 +295,38 @@ set TOLNOW=%TOL%
 set SHOT=%SHOTBASE% --no-fxaa
 :skip_particle
 
+rem ---- 18/19 枚目 (M65e): 音響ショーケースの 2 経路。
+rem      **M65 で初めてピクセルが動くサブの、唯一の回帰検出**。
+rem      M65a〜M65d は「存在ゲートの内側なので既存 17 枚が maxDiff=0」を主張し続けてきたが、
+rem      裏を返すと **M65 の成果物は 4 サブぶん 1 画素も golden に写っていなかった**。
+rem      この 2 枚がその全部 (波面伝播 / 床材 / 残光 / 転送 / 合成) を初めて絵に固定する。
+rem
+rem ★★**真っ黒な画にしないことが 1 枚目の設計要件**。企画は「世界は真っ暗」だが、
+rem   全画素が黒い golden は**機能が壊れて残光が 1 画素も出なくても一致して通る** =
+rem   回帰検出がゼロになる。デモには弱い環境光 (Sun 0.35) + 設置光 1 個 (M65e) を
+rem   置いてあり、合成を意図的に殺した A/B で **49,315 画素 / maxDiff=170 が動く**ことを
+rem   実測済み (Forward / Deferred とも。差は 14 画素)。ここが 0 に近づいたら
+rem   「暗くしすぎて golden が守るものを失った」合図。
+rem ★frame 120 で撮る (physics / joints / fog / particle と同じ理由)。frame 3 では
+rem   歩行者が 1 歩も踏み出しておらず、波も残光も箱の落下も絵に出ない。
+rem   120 tick 回すと 足音 6 材質ぶんの波 / L 字を曲がった残光 / 金属板への着地 /
+rem   設置光 が全部同じフレームに乗る。
+rem ★**CI 判定に載せる** (tol=3。skip 5 本の仲間には入れない)。載せられる根拠:
+rem   波面は整数チャンファ距離 = 機種非依存、残光の符号化は sqrt (IEEE-754 で正しく
+rem   丸められる)、合成は lerp と乗算だけで**しきい値分岐もテンポラル蓄積も無い** —
+rem   FXAA / TAA / SSR / froxel を降格させた「1 ULP が増幅する」機構がどこにも無い。
+rem   ★もしランナーで赤くなったら tol を上げずに MYE_SHOT_SKIP_ACOUSTIC を立てること
+rem     (ci.yml の env に 1 行足すだけ。囲いは下に用意してある)
+rem ★2 経路撮るのは、残光の合成が **deferred_light.hlsl と forward_lit.hlsl の 2 実装**に
+rem   あるため。共有しているのは acoustic_common.hlsli の式だけなので、1 枚だと
+rem   片方が壊れても緑のまま通る (particle_cpu/gpu を 2 枚撮ったのと同じ理由)
+if defined MYE_SHOT_SKIP_ACOUSTIC goto :skip_acoustic
+set SHOT=--warp --no-audio --font-embedded --width 960 --height 540 --frames 123 --shot-frame 120 --no-fxaa
+call :shot acoustic_forward --acoustic-demo
+call :shot acoustic_deferred --acoustic-demo --deferred
+set SHOT=%SHOTBASE% --no-fxaa
+:skip_acoustic
+
 echo.
 if %UPDATE%==1 (
     echo [shot_verify] golden updated in %GOLDEN% - review the images before committing
@@ -306,9 +339,9 @@ if not %FAILED%==0 (
     exit /b 1
 )
 if defined MYE_SHOT_SKIP_FXAA (
-    echo [PASS] screenshot regression ^(%SHOTS% shots, warp, no-fxaa, tol=%TOL% + terrain at 12, physics/joints/fog/particle at frame 120^)
+    echo [PASS] screenshot regression ^(%SHOTS% shots, warp, no-fxaa, tol=%TOL% + terrain at 12, physics/joints/fog/particle/acoustic at frame 120^)
 ) else (
-    echo [PASS] screenshot regression ^(%SHOTS% shots, warp, tol=%TOL% + terrain at 12 + physics/joints/fog/particle at frame 120 + fxaa/taa/ssr/froxel/fog/particle at tol=0^)
+    echo [PASS] screenshot regression ^(%SHOTS% shots, warp, tol=%TOL% + terrain at 12 + physics/joints/fog/particle/acoustic at frame 120 + fxaa/taa/ssr/froxel/fog/particle at tol=0^)
 )
 exit /b 0
 

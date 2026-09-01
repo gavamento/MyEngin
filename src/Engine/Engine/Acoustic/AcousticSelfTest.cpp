@@ -763,6 +763,62 @@ bool RunAcousticSelfTest()
         check(roundTrip, "glow encode: decode(encode(e)) recovers e within 2%");
     }
 
+    // ---- (20) ★法線押し出しが壁面で開セルを拾う (M65e) ----
+    // acoustic_common.hlsli の AcousticSample の**幾何だけ**を CPU で再現して固定する。
+    // 閉セルは波が絶対に訪れない = 残光は開セル側にしかないので、壁面をそのまま
+    // サンプルすると常に 0 = 「壁が光らない」という、絵を見ても原因の分からない不具合になる。
+    // ★シェーダ側はバイリニアで引くが、ここで固定したいのは補間ではなく
+    //   「押し出し先が隣の開セルに入るか」= 最近傍で十分 (むしろそこだけを見たい)
+    {
+        AcousticField field;
+        AcousticGridDesc g;
+        const bool ok = acoustic::MakeGridDesc(16, 1, 16, 0.5f, 0.0f, 0.0f, 0.0f, g);
+        MYE_CHECK(ok);
+        // x = 8 の列だけを壁にした 1 枚の板。原点は x=4 側 (壁の手前)
+        std::vector<uint8_t> occ(static_cast<size_t>(g.CellCount()), 0u);
+        for (int32_t z = 0; z < g.dimZ; ++z) {
+            occ[static_cast<size_t>(acoustic::CellIndex(g, 8, 0, z))] = 1u;
+        }
+        field.DebugSetGrid(g, std::move(occ));
+        float ox = 0.0f, oy = 0.0f, oz = 0.0f;
+        acoustic::CellToWorldCenter(g, 4, 0, 8, ox, oy, oz);
+        check(field.Emit(EntityID{ 11, 1 }, ox, oy, oz, 1.0f, 30.0f, 0, 1, 0), "push: emitted");
+        for (int i = 0; i < 12; ++i) {
+            field.Advance();
+        }
+
+        // CPU ミラー: posW + N * push をセルへ落として残光を最近傍で引く
+        auto sampleAt = [&](float wx, float wy, float wz, float nx, float ny, float nz,
+                            float push) -> uint8_t {
+            int32_t cx = 0, cy = 0, cz = 0;
+            if (!acoustic::WorldToCell(g, wx + nx * push, wy + ny * push, wz + nz * push, cx, cy,
+                                       cz)) {
+                return 0u; // グリッドの外は厳密に 0 (シェーダ側の saturate 判定と同じ契約)
+            }
+            return field.Glow()[static_cast<size_t>(acoustic::CellIndex(g, cx, cy, cz))];
+        };
+
+        // 壁 (x=8) の -X 面のワールド座標。法線は -X (音源のほう)
+        float wx = 0.0f, wy = 0.0f, wz = 0.0f;
+        acoustic::CellToWorldCenter(g, 8, 0, 8, wx, wy, wz);
+        const float faceX = wx - g.cellSize * 0.5f; // セル中心から半セル戻ると面
+        const float push = 0.75f * g.cellSize;      // RenderSystem が view へ入れる値
+
+        check(sampleAt(faceX, wy, wz, 0.0f, 0.0f, 0.0f, 0.0f) == 0u
+                  || field.IsSolid(8, 0, 8),
+              "push: sampling the wall surface itself lands on a cell that is never lit");
+        check(sampleAt(faceX, wy, wz, -1.0f, 0.0f, 0.0f, push) > 0u,
+              "push: pushing along the normal picks up the lit open cell (this is what makes "
+              "a wall face glow at all)");
+        // 押し出しが**行き過ぎない**こと: 2 セル先まで飛ぶと薄い壁の裏側を拾う
+        int32_t px = 0, py = 0, pz = 0;
+        const bool inside = acoustic::WorldToCell(g, faceX - push, wy, wz, px, py, pz);
+        check(inside && px == 7, "push: 0.75 cells lands in the adjacent cell, never two away");
+        // グリッドの外は厳密に 0 (CLAMP サンプラの外側漏れを殺している側の契約)
+        check(sampleAt(-100.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f) == 0u,
+              "push: outside the volume the sample is exactly zero, never clamped-to-edge");
+    }
+
     if (failCount == 0) {
         MYE_LOG_INFO("==== Acoustic self test: ALL PASS ====");
         return true;

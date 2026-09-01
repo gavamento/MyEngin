@@ -2782,7 +2782,10 @@ void BuildAcousticShowcaseScene(EngineContext& ctx)
     camera.AddComponent<CameraComponent>();
     // ★間取り全体が 1 枚に入る俯瞰。**L 字の 2 本の腕と 2 部屋が同時に見えること**が
     //   画角の唯一の要件 — 片方の腕が切れていると「回り込んだ」が絵から読めない
-    camera.SetLocalPosition(0.0f, 26.0f, -17.0f);
+    // ★M65e で寄せた (26,-17 -> 20,-13)。golden をここで初めて撮るので、間取りが
+    //   画面の中で小さいと**残光が壊れても差分画素が少なすぎて埋もれる**。
+    //   2 本の腕と 2 部屋が入る限界まで寄せてある
+    camera.SetLocalPosition(0.0f, 20.0f, -13.0f);
     camera.SetLocalRotationEuler(56.0f, 0.0f, 0.0f);
 
     // 弱い環境光。★企画は真っ暗だが、**壁の輪郭が読めない画は golden にならない**
@@ -2946,6 +2949,25 @@ void BuildAcousticShowcaseScene(EngineContext& ctx)
         //   なる様子は絵として魅力的だが、**永久音源はデモとして嘘**なので捨てた
         //   (減衰そのものは ImpactGain のセルフテストが固定している)
         rb->restitution = 0.0f;
+    }
+
+    // ---- M65e: 設置光 1 個 (企画 §4-3 の「持ち込んだ光」) ----
+    // ★**golden を撮るために必須の 1 個**。M65e で初めてピクセルが動くが、企画どおり
+    //   真っ暗な画にすると「機能が壊れて残光が 1 画素も出なくても golden と一致する」=
+    //   回帰検出がゼロになる (計画 M65e の最大の罠)。弱い環境光 (Sun 0.35) で壁の輪郭を、
+    //   この点光源で「音以外の光」を出しておくと、**音の帯が消えたときだけ絵が変わる**。
+    // ★置き場所は部屋 A の隅。廊下と部屋 B には届かない範囲にしてあるので、
+    //   L 字の向こう側で光っているものは残光しかない = 1 枚で両方を主張できる
+    // ★**関数の末尾に足すこと** — 前に挿すと以降の全エンティティの index がずれ、
+    //   波スロットの割り当て順まで動く (plans の「デモの生成順は RNG のストリーム」)
+    {
+        GameObject lamp = s.CreateGameObject("Placed Light");
+        lamp.SetLocalPosition(AcousticMapToWorld(3), 1.6f, AcousticMapToWorld(3));
+        auto* pl = lamp.AddComponent<LightComponent>();
+        pl->type = 1; // 点光源
+        pl->range = 6.0f;
+        pl->intensity = 2.2f;
+        pl->color = { 1.0f, 0.86f, 0.62f }; // 携行灯らしい暖色 (残光の寒色と対になる)
     }
 }
 

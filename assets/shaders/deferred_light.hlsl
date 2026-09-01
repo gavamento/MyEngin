@@ -4,6 +4,7 @@
 #include "common.hlsli"
 // M57d: フロクセルのグリッド幾何とサンプル座標の式 (register 宣言は持たないヘッダ)
 #include "froxel_common.hlsli"
+#include "acoustic_common.hlsli" // M65e: 残光の式の正本 (register 宣言は持たない)
 
 cbuffer LightPass : register(b0)
 {
@@ -74,6 +75,11 @@ cbuffer LightPass : register(b0)
     // ★カメラ前方ベクトルを正規化して内積する式にしない — 非一様スケールの入った
     //   ビュー行列で静かにずれる。列をそのまま渡せば定義どおりになる
     float4   gFroxelViewZRow;
+    // ---- M65e: 音響の残光ボリューム (末尾 append)。
+    //      **w = 0 で従来と完全に同一の式** (下の分岐に一度も入らない) ----
+    float4   gAcousticGridMin; // xyz = セル(0,0,0) の最小角のワールド座標
+    float4   gAcousticInvSize; // xyz = 1/(dim*cellSize)
+    float4   gAcousticParams;  // x=強さ y=法線押し出し[m] z=予約 w=有効
 };
 
 Texture2D gAlbedo    : register(t0);
@@ -89,9 +95,12 @@ Texture2D   gRtGi           : register(t9); // M46f (内部解像度、demodulat
 Texture2D   gRtShadow       : register(t10); // M46g (フル解像度 R8、太陽の可視率)
 Texture2D   gRtRefl         : register(t11); // M46h (内部解像度、反射方向の入射放射輝度)
 Texture2D   gShadowAtlas    : register(t12); // M54c (局所ライトの深度アトラス、R32_FLOAT)
-// t13 = SSR の予約席だが、SSR (M56d) は光パスの**出力**を読む別パスになったので
-// **空いたまま**。詰めないこと — レジスタ番号の食い違いはコンパイルも実行も通るので、
-// 番号を前倒しすると並列ブランチ同士が無言で潰し合う (統合契約 予約 2)
+// t13 = SSR の予約席だったが、SSR (M56d) は光パスの**出力**を読む別パスになったので
+// 空いたままだった席。**M65e (音響の残光) がここを取った** = 統合契約 予約 2 の更新。
+// ★この席を選んだ理由は「gbSrvs[16] / nullSrvs[16] の本数が 1 つも変わらない」こと —
+//   本数を増やすと M57d/e が 3 回踏んだ「SRV 剥がし忘れ」の的が増える。
+// 番号の正本は acoustic_common.hlsli の MYE_ACOUSTIC_SRV_SLOT (C++ と機械照合される)
+Texture3D   gAcousticGlow   : MYE_ACOUSTIC_REG(MYE_ACOUSTIC_SRV_SLOT); // M65e (r=符号化残光)
 TextureCubeArray gProbeCubes : register(t14); // M56f (プリフィルタ済みプローブ、6 面 × N)
 Texture3D   gFroxelVolume   : register(t15); // M57d (rgb=積算内向き散乱 / a=透過率)
 SamplerState gIblSampler : register(s0); // LINEAR/CLAMP (M38c、s0 は光パスで空きだった)
@@ -210,6 +219,17 @@ float4 PSMain(VSOut i) : SV_Target
     // 放射する分を足す。発光なしのマテリアルは b が厳密に 0 なので加算項もちょうど 0 になり、
     // M46i 以前の出力とビット単位で一致する
     color += albedo.rgb * DecodeEmissive(matG.b);
+    // ---- M65e: 音響の残光 (末尾 append。gAcousticParams.w == 0 で従来とビット恒等) ----
+    // ★足すのは**フォグより前**。残光は面から出ていく放射なので、霧が掛かる側に居るのが
+    //   正しい (後ろに足すと霧の向こうの壁だけが素の明るさで光る = 奥行きが死ぬ)。
+    // ★サンプラは s0 (IBL 用 LINEAR/CLAMP) を流用する = サンプラは 1 つも増えない
+    //   (統合契約 予約 2)。CLAMP の外側漏れは AcousticSample が範囲判定で殺している
+    if (gAcousticParams.w != 0.0f) {
+        const float glow = AcousticSample(gAcousticGlow, gIblSampler, posW, n,
+                                          gAcousticGridMin.xyz, gAcousticInvSize.xyz,
+                                          gAcousticParams.y);
+        color += AcousticRadiance(glow, gAcousticParams.x);
+    }
     // ---- 大気散乱 (M29d + M43a の解析フォグ、M57d でフロクセルと分担) ----
     // ★ここが「霧を 3 回足さない」ための唯一の分岐点。同じ大気散乱を表現する仕組みが
     //   3 つある (解析フォグ / フロクセル / ゴッドレイ) ので、素直に全部足すと 3 倍になる。

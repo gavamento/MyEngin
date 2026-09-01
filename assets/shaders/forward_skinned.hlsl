@@ -5,6 +5,7 @@
 #include "common.hlsli"
 // M57e: フロクセルのサンプル座標と合成 (register 宣言を持たないヘッダなので衝突しない)
 #include "froxel_common.hlsli"
+#include "acoustic_common.hlsli" // M65e: 残光の式の正本
 
 // RenderTypes.h の mye::kMaxBones と必ず一致させること (check_rules.ps1 規則 9 が検査)
 #define MYE_MAX_BONES 128
@@ -57,6 +58,13 @@ cbuffer PerFrame : register(b0)
     float4   gFroxelViewZRow;
     float2   gFroxelScreenSize;
     float2   _froxelPad;
+    // ---- M65e: 音響の残光ボリューム (末尾 append)。
+    //      **w = 0 で従来と完全に同一の式**。★形は DeferredPath / ForwardPath の
+    //      PerFrameCB と共有 (RenderTypes.h の AcousticCB) — 片方だけ足すと
+    //      Deferred の透明後段だけがゴミを読む (M54e の轍) ----
+    float4   gAcousticGridMin; // xyz = セル(0,0,0) の最小角のワールド座標
+    float4   gAcousticInvSize; // xyz = 1/(dim*cellSize)
+    float4   gAcousticParams;  // x=強さ y=法線押し出し[m] z=予約 w=有効
 };
 
 cbuffer PerObject : register(b1)
@@ -87,6 +95,10 @@ TextureCube              gIblPrefiltered: register(t4);
 Texture2D                gIblBrdfLut    : register(t5);
 Texture2D                gShadowAtlas   : register(t6); // M54e (局所ライトの深度アトラス)
 Texture3D                gFroxelVolume  : register(t7); // M57e (rgb=積算内向き散乱 / a=透過率)
+// M65e: 残光ボリューム。番号の正本は acoustic_common.hlsli の MYE_ACOUSTIC_FWD_SRV_SLOT。
+// ★張る側 (ForwardPath / DeferredPath の透明後段) の本数を 7 -> 8 にすること。
+//   **null を張り直す側も 8**。剥がし忘れると次フレームまで生き残る (M57e の罠)
+Texture3D                gAcousticGlow  : MYE_ACOUSTIC_REG(MYE_ACOUSTIC_FWD_SRV_SLOT);
 SamplerState             gSampler       : register(s0);
 SamplerComparisonState   gShadowSampler : register(s1);
 SamplerState             gIblSampler    : register(s2); // LINEAR/CLAMP (M38c)
@@ -161,6 +173,15 @@ float4 PSMain(VSOut i) : SV_Target
     // M46i: 自己発光。ライティングに依らず放射する分を足す (フォグより前 =
     // 遠くの発光もフォグに減衰される)。gEmissive=0 なら加算項がちょうど 0
     color += albedo.rgb * gEmissive;
+    // ---- M65e: 音響の残光 (gAcousticParams.w == 0 で従来とビット恒等) ----
+    // ★足すのは**フォグより前**。残光は面から出ていく放射なので霧が掛かる側に居るのが正しい。
+    // ★サンプラは s2 (IBL 用 LINEAR/CLAMP) を流用 = サンプラは 1 つも増えない
+    if (gAcousticParams.w != 0.0f) {
+        const float glow = AcousticSample(gAcousticGlow, gIblSampler, i.posW, n,
+                                          gAcousticGridMin.xyz, gAcousticInvSize.xyz,
+                                          gAcousticParams.y);
+        color += AcousticRadiance(glow, gAcousticParams.x);
+    }
     // 大気散乱 (M29d + M43a、M57e でフロクセルと分担)。forward_lit.hlsl と同一の分岐
     if (gFroxelEnabled != 0) {
         const float fviewZ = dot(float4(i.posW, 1.0f), gFroxelViewZRow);

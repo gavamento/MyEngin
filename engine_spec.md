@@ -1496,6 +1496,42 @@ content serial is unchanged, since the simulation advances at 60 Hz while the re
 is the only way to catch a `RowPitch`/`SysMemSlicePitch` mix-up — that particular error still
 draws a picture, just one shifted in Z.
 
+**Lighting injection (M65e).** The volume is read at `t13` in the deferred light pass and at `t8`
+in the four forward shaders, and the composite is one additive term placed *before* fog — the
+afterglow is radiance leaving a surface, so it belongs on the side of the atmosphere that gets
+attenuated. `t13` was the slot SSR reserved and then never took, and choosing it means the
+deferred SRV array stays exactly sixteen entries long: the failure this engine has actually hit
+three times is a stale SRV left bound, and not changing a count is the way not to hit it again.
+Forward does grow from seven to eight, so all four sites — two that bind and two that unbind —
+move together.
+
+Both gates are structural. The CPU side emits an all-zero constant block whenever the view has no
+volume bound, and every shader touches the texture only *inside* `params.w != 0`, so a scene
+without acoustics compiles to the same instructions it did before. The measured consequence is
+that all seventeen pre-existing golden images stay bit-identical across this change.
+
+The sampling geometry is the part worth stating plainly: solid cells are never visited by a wave,
+so a wall's afterglow lives entirely in the open cell next to it, and sampling the wall surface
+itself returns zero. Every sample is therefore pushed 0.75 cells along the surface normal. Outside
+the grid the sample is forced to zero rather than left to the clamping sampler, which would
+otherwise smear the boundary value across the rest of the world.
+
+Brightness is `sqrt(energy)`, halfway between the stored gamma-1/4 byte (too flat to locate a
+source) and raw inverse-square energy (black within a few metres). Colour is a ramp from cold blue
+at low values to near-white at high ones. **The material's tone is deliberately not in the light**
+in v1 — one byte per cell only carries strength. Tone survives in the debug lines and in the
+listener mirror the AI reads; putting it in the picture needs either a second volume or an RGBA8
+one, and neither is worth a fourfold memory cost for a hue.
+
+Two goldens cover this, one per path, taken at frame 120. They are judged in CI at the standard
+tolerance rather than exiled to the local-only set: the wave metric is integer, the encode is
+`sqrt`, and the composite is a lerp and a multiply — none of the threshold branching or temporal
+accumulation that forced FXAA, TAA, SSR, froxel and the GPU-particle shots out of CI exists here.
+The demo carries a weak sun and one placed point light for a reason that has nothing to do with
+art direction: an all-black reference image agrees with a completely broken feature. Deliberately
+killing the composite moves 49,315 pixels by up to 170 levels, and that number is the real measure
+of what these two images protect.
+
 ---
 
 ## 11. Debug/Release Consistency Policy
