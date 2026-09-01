@@ -13,6 +13,7 @@
 #include "Engine/Core/World.h"
 #include "Engine/Engine/CollisionSystem.h"
 #include "Engine/Engine/Particles/CpuParticleBackend.h"
+#include "Engine/Engine/Acoustic/AcousticField.h"
 #include "Engine/Engine/Physics/XpbdBackend.h"
 #include "Engine/Engine/Scene.h"
 #include "Engine/Engine/Script/ScriptHost.h"
@@ -28,6 +29,7 @@ constexpr uint32_t kCollMagic = 0x314C4F43u;  // 'COL1'
 constexpr uint32_t kScrMagic = 0x31524353u;   // 'SCR1'
 constexpr uint32_t kLoopMagic = 0x31504F4Cu;  // 'LOP1'
 constexpr uint32_t kXpbdMagic = 0x31425058u;  // 'XPB1' (M60'b)
+constexpr uint32_t kAcousticMagic = 0x31554341u; // 'ACU1' (M65a)
 
 constexpr size_t kHeaderBytes = 4 * sizeof(uint32_t) + sizeof(uint64_t);
 
@@ -297,6 +299,62 @@ bool ReadXpbd(ByteReader& r, std::vector<XpbdBackend::Pool>& out)
     return r.Ok();
 }
 
+// ---- 音響の波スロット表 (M65a) ----
+// ★blob に入るのは**波だけ**。占有グリッドも波ごとの距離場も残光も導出値なので書かない。
+//   復元側は読み終わったあと AcousticField::Invalidate() を呼び、次の Update に
+//   ring 0 から現リングまで**引き直させる**。「増分で育てた場」と「引き直した場」が
+//   ビット同一であることが、この設計が成立している唯一の条件 (AcousticSelfTest が固定する)
+void WriteAcoustic(ByteWriter& w, const AcousticField* field)
+{
+    w.U32(kAcousticMagic);
+    const std::vector<AcousticField::Wave> empty;
+    const std::vector<AcousticField::Wave>& waves = field != nullptr ? field->Waves() : empty;
+    w.Count(waves.size());
+    for (const AcousticField::Wave& v : waves) {
+        w.U32(v.active);
+        w.U32(v.source.index);
+        w.U32(v.source.generation);
+        w.U32(static_cast<uint32_t>(v.ox));
+        w.U32(static_cast<uint32_t>(v.oy));
+        w.U32(static_cast<uint32_t>(v.oz));
+        w.U32(v.ring);
+        w.U32(v.maxRing);
+        w.U32(v.ticksPerRing);
+        w.U32(v.phase);
+        w.F32(v.amplitude);
+        w.U32(v.tone);
+        w.U64(v.bornTick);
+    }
+}
+
+bool ReadAcoustic(ByteReader& r, std::vector<AcousticField::Wave>& out)
+{
+    if (r.U32() != kAcousticMagic) {
+        MYE_LOG_ERROR("[snapshot] acoustic section magic mismatch");
+        return false;
+    }
+    // 1 波あたりの最小バイト数 = U32 x 12 + U64 x 1
+    const size_t count = r.Count(sizeof(uint32_t) * 12 + sizeof(uint64_t));
+    out.resize(count);
+    for (size_t i = 0; i < count && r.Ok(); ++i) {
+        AcousticField::Wave& v = out[i];
+        v.active = r.U32();
+        v.source.index = r.U32();
+        v.source.generation = r.U32();
+        v.ox = static_cast<int32_t>(r.U32());
+        v.oy = static_cast<int32_t>(r.U32());
+        v.oz = static_cast<int32_t>(r.U32());
+        v.ring = r.U32();
+        v.maxRing = r.U32();
+        v.ticksPerRing = r.U32();
+        v.phase = r.U32();
+        v.amplitude = r.F32();
+        v.tone = r.U32();
+        v.bornTick = r.U64();
+    }
+    return r.Ok();
+}
+
 // ---- EngineLoop の tick 間キャリー (M51d の前 tick 入力 + M52e の音ハンドル採番) ----
 void WriteLoop(ByteWriter& w, const InputSnapshot* prevTickInput, const uint64_t* audioHandleSeq)
 {
@@ -335,6 +393,7 @@ bool CaptureSimSnapshot(const SimRefs& refs, std::vector<std::byte>& out)
     WriteScripts(w, refs.scripts);
     WriteLoop(w, refs.prevTickInput, refs.audioHandleSeq);
     WriteXpbd(w, refs.xpbd); // M60'b (v4)
+    WriteAcoustic(w, refs.acoustic); // M65a (v10)
     // ★World は**最後**に置く。復元は「小さい節を全部一時領域へ読み切ってから
     //   World::SnapshotRead (それ自体が全読み後に一括差し替え) を呼ぶ」順で走るので、
     //   どこで失敗しても現世界に手が付いていない状態で戻れる
@@ -401,6 +460,10 @@ bool RestoreSimSnapshot(const SimRefs& refs, const std::byte* data, size_t size)
     if (!ReadXpbd(r, xpbdPools)) { // M60'b (v4)。refs.xpbd が無い構成では読み捨てる
         return false;
     }
+    std::vector<AcousticField::Wave> acousticWaves;
+    if (!ReadAcoustic(r, acousticWaves)) { // M65a (v10)。refs.acoustic が無ければ読み捨てる
+        return false;
+    }
     if (!r.Ok()) {
         MYE_LOG_ERROR("[snapshot] truncated blob");
         return false;
@@ -423,6 +486,12 @@ bool RestoreSimSnapshot(const SimRefs& refs, const std::byte* data, size_t size)
     }
     if (refs.xpbd != nullptr) {
         refs.xpbd->PoolsForSnapshot() = std::move(xpbdPools);
+    }
+    if (refs.acoustic != nullptr) {
+        refs.acoustic->WavesForSnapshot() = std::move(acousticWaves);
+        // ★これを忘れると「戻した波」と「戻す前に育てた距離場」が組み合わさり、
+        //   タイムトラベル/ロールバックの再シムでだけ結果が変わる
+        refs.acoustic->Invalidate();
     }
     if (refs.collision != nullptr) {
         refs.collision->PrevPairsForSnapshot() = std::move(prevPairs);

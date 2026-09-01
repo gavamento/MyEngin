@@ -1394,6 +1394,44 @@ connects. **Where the filter sits is the specification**, not an implementation 
 
 ---
 
+### 10.6 Acoustic propagation (M65)
+
+A voxel field that spreads sound through open space, folds around corners, and is read by both
+the enemy AI and the renderer. Opt-in: with no `AcousticVolume` in the scene the system returns
+from its first archetype walk and allocates nothing.
+
+**One wavefront serves three consumers.** A sound event advances one *ring* per tick across the
+grid. The same frontier is (a) the thin shell the renderer lights, (b) the moment a listener
+learns the direction and loudness of an arrival, and (c) what the afterglow volume accumulates.
+Deriving the picture and the AI from one field is what makes "what you can see" and "what the
+enemy can hear" agree structurally rather than by convention. A shadow map cannot do this: it
+occludes in straight lines and so never folds around a corner.
+
+**The metric is an integer chamfer distance, not a plain BFS.** 26 neighbours with the Borgefors
+weights `<11, 16, 19>` (face / edge / corner). Plain 6-neighbour BFS gives a diamond and equal-cost
+26-neighbour BFS gives a cube; both are 40 %+ off a sphere and do not read as a wave. At its best
+scale `<11,16,19>` stays within 2 % of a sphere. **The weights being integers is the determinism
+argument, not an optimisation**: physics can absorb a 1 ulp difference as a body twitching, but a
+1 ulp difference in a propagation *ordering* swaps the visit order, changes the parent link, and
+changes the direction the AI hears. The rule for this layer is that everything deciding an order
+is an integer, and the only float is the one expression converting a chamfer distance to metres.
+
+**Only the wave slot table is sim state.** The occupancy grid, the per-wave distance fields, the
+navigation flow field and the afterglow volume are all derived and are hashed and snapshotted
+nowhere. That holds because arrival energy is a pure function of the integer chamfer distance —
+material only sets a wave's amplitude and its ring limit at the moment it is emitted, never
+attenuating mid-flight. Attenuating mid-flight would make energy path-dependent, which drops the
+cell arrays themselves into sim state and takes the snapshot from under a kilobyte to megabytes.
+After a restore the field is invalidated and every live wave is redrawn from ring 0; **"grown
+incrementally" and "redrawn from scratch" being bit-identical is the invariant the whole design
+rests on**, and it is the one the self test pins.
+
+The grid is axis-aligned and sized in *integer* cells, with the extent derived as
+`dim * cellSize`. Deriving it the other way round would put a float-to-int rounding step in the
+grid's shape, where a rounding change of one shifts every cell a wave reaches.
+
+---
+
 ## 11. Debug/Release Consistency Policy
 
 ### 11.1 Purpose
@@ -1426,6 +1464,17 @@ Eliminate cases in which the engine works in Debug but fails in Release, or vice
 
 - Introducing a fixed timestep, marked [TBD] in Section 5.3, is strongly recommended as a prerequisite
 - CPU particles are included in the hash. GPU particles are excluded because they are rendering output; their behavior is verified separately through comparison mode without readback
+- **Out-of-ECS sim state** is carried by a three-part contract: the pool itself, a `WorldHasher`
+  section reached through `SimSources`, and a `SimSnapshot` section reached through `SimRefs`.
+  Wiring only one of the three produces the worst failure mode there is — the replay passes while
+  rewinding (time travel / rollback) diverges. There are three such pools today:
+  `CpuParticleBackend`, `XpbdBackend` and, from M65a, `AcousticField`
+- The acoustic field folds **only its wave slot table**. The occupancy grid, the per-wave distance
+  fields, the navigation flow field and the afterglow volume are all *derived* and are hashed
+  nowhere: arrival energy is a pure function of the integer chamfer distance, so any of them can
+  be rebuilt from (origin cell, ring, amplitude) alone after a restore. The fold is
+  **content-gated** — with no active wave the section is not folded at all, which is why adding
+  the field left all six existing replay pairs and all seventeen golden images bit-identical
 - The test can run in CI through a command-line invocation such as `Editor.exe --replay-verify xxx.rep`
 - `tools\replay_verify.bat` runs **six scene pairs**, each rebuilt from code before recording:
   the default demo (scripts, physics, particles, schema fields), the parts showcase

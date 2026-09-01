@@ -1179,6 +1179,102 @@ struct RopeComponent {
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
+// ---- 音響伝播 (M65a、計画 hushed-rippling-beacon) ----
+// 音のボクセル場を張る箱。**シーンにこれが 1 個も無ければ音響システムは何もしない**
+// (存在ゲート)。既存シーンのハッシュと golden が 1 ビットも動かない根拠は、この
+// 「1 コンポーネントが場そのものの有無を決める」形に集約されている。
+//
+// グリッドは常に軸平行 — 原点はこのエンティティのワールド位置で、**回転は無視する**。
+// 消費は「entity.index 最小の active な 1 個」(Skybox / Fog / PhysicsEnvironment と同じ規約)。
+// 2 個目以降は黙って無視され警告が出る。
+//
+// フィールドは **hash 対象** — グリッドの形が変われば波の到達セルが変わる = sim 入力そのもの。
+// opt-in (TypeId 末尾 append =45) なので既存シーンは 1 バイトも変わらない。
+struct AcousticVolumeComponent {
+    // ★**セル数は整数で持ち、範囲 (half extent) を dim*cellSize/2 の導出値にする**。
+    //   逆にすると float -> int の丸めがグリッド形状そのものになり、丸めが 1 変わるだけで
+    //   波の到達セルが全部ずれる (AcousticGrid.h の設計コメント)
+    int32_t dimX = 64, dimY = 16, dimZ = 64;
+    float cellSize = 0.5f; // [m]。伝播速度 = cellSize * 60 / ticksPerRing
+    // 航法グリッドの間引き比 (M65f)。2 = 音響 2 セルを航法 1 セルへ畳む
+    int32_t navCellRatio = 2;
+    // このマスクに載るレイヤーのコライダーだけが音を遮る (Raycast の mask と同じ意味)
+    uint32_t blockLayerMask = 0xFFFFFFFFu;
+    bool enabled = true;
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
+// 音を出す口 (M65b/c で消費)。**無ければ音を出さない** (opt-in、TypeId =46)。
+// pending* を書くと次の音響フェーズで波が 1 本生まれ、エンジンが pending* を 0 へ戻す。
+// スクリプトからは v11 の SetComponentField で書ける (ABI 追加ゼロ)。
+struct AcousticEmitterComponent {
+    float pendingLoudness = 0.0f; // > 0 で発音。消費した tick にエンジンが 0 へ戻す
+    float pendingRadiusM = 0.0f;  // 到達距離 [m]。maxRing = radiusM / cellSize (切り捨て)
+    int32_t pendingTone = 0;      // 音色 0..3 (描画の色づけと敵の反応の区別)
+    int32_t ticksPerRing = 1;     // 波面の分周。大きいほど波がゆっくり広がる
+    bool autoFootstep = false;    // CharacterController の移動距離から足音を自動生成 (M65c)
+    float stepDistanceM = 0.8f;   // 足音 1 歩ぶんの移動距離 [m]
+    float travelAccum = 0.0f;     // 歩幅の累積。**sim 状態** (エンジンが書く)
+    int32_t cooldownTicks = 0;    // 連続発音の下限間隔 (0 = 制限なし)
+    int32_t cooldown = 0;         // 残り tick。**sim 状態** (エンジンが書く)
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
+// 音を聞く耳 (M65b が書き、M65f が読む)。**無ければ何も聞かない** (opt-in、TypeId =47)。
+//
+// ★**PlayerInputComponent と全く同じ「エンジンが毎 tick 書く鏡」**。
+//   kFieldNoSerialize を付けるとハッシュ対象から外れて**配線の被覆が消える**ので
+//   絶対に付けないこと (CLAUDE.md の入力レーンの罠と同じ形)。ここがハッシュに載ることが、
+//   「波がいつ・どこから届いたか」を replay_verify が機械検査できる唯一の根拠。
+struct AcousticListenerComponent {
+    float threshold = 0.02f; // この強度未満の到達は無視する (作者が設定する唯一の値)
+    // ---- 以下はエンジンが書く (Inspector では読み取り専用) ----
+    uint64_t lastHeardTick = 0; // 0 = まだ一度も聞いていない
+    // 音源の**推定位置**。親方向を遡って得るので、角を曲がった音は「曲がり角の側」を指す
+    // (企画 6-3 の「敵は音のした場所へ向かう」がそのまま角の回り込みになる)
+    DirectX::XMFLOAT3 lastHeardPos = { 0.0f, 0.0f, 0.0f };
+    float lastLoudness = 0.0f;
+    EntityID lastSourceEntity = kNullEntity; // 自分の音を自分で聞かないための除外にも使う
+    int32_t lastTone = 0;
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
+// 光に寄る目 (M65f)。**無ければ光を見ない** (opt-in、TypeId =48)。
+// ★光源は既存の LightComponent をそのまま使う — 新しい「光」概念は作らない。
+//   LightComponent は既にハッシュ対象なので、光の設置がそのまま sim 入力になる。
+struct LightSeekerComponent {
+    float attractRadius = 12.0f; // この距離までの光を見る
+    float minIntensity = 0.05f;  // これ未満の光は見えない (設置途中の弱い光の閾値)
+    // ---- 以下はエンジンが書く (Inspector では読み取り専用) ----
+    EntityID nearestLight = kNullEntity;
+    DirectX::XMFLOAT3 nearestPos = { 0.0f, 0.0f, 0.0f };
+    float nearestStrength = 0.0f;
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
+// 敵の共通思考 (M65f)。**無ければ動かない** (opt-in、TypeId =49)。
+// 状態機械は 5 状態固定で、変わるのは (a) どのセンサーが載っているか
+// (AcousticListener / LightSeeker) と (b) 下の閾値・時定数だけ。
+// ★**性格づけ = このコンポーネントのフィールド値**。遷移表を .json 資産にしないのは
+//   状態数が固定で、資産化すると版・ローダ・エディタ窓が全部ついてくるのに得るものが
+//   無いから (計画 判断 7)。3 種目の敵が要求されたら AnimatorController の型で再検討する。
+struct AgentBrainComponent {
+    int32_t state = 0;      // 0=巡回 1=警戒 2=探索 3=追跡 4=帰還。**sim 状態**
+    int32_t stateTicks = 0; // 現在状態に入ってからの tick。**sim 状態**
+    DirectX::XMFLOAT3 home = { 0.0f, 0.0f, 0.0f };   // 帰還先 (初回 Update で現在地を焼く)
+    DirectX::XMFLOAT3 target = { 0.0f, 0.0f, 0.0f }; // 今向かっている場所。**sim 状態**
+    int32_t alertTicks = 30;     // 警戒 (波を止める) 時間 = 企画 6-3 の「波が止まる」
+    int32_t searchTicks = 180;   // 探索を続ける時間
+    int32_t loseTicks = 120;     // 追跡を諦めるまでの無音時間
+    int32_t memoryTicks = 600;   // 調べ終えた場所を覚えている時間 (企画 6-4)
+    float walkSpeed = 1.2f;      // 巡回/探索の速度 [m/s]
+    float runSpeed = 3.0f;       // 追跡の速度 [m/s]
+    int32_t emitEveryTicks = 45; // 自分が音を出す間隔。警戒中は出さない (企画 6-3)
+    float emitLoudness = 0.35f;
+    int32_t emitPhase = 0; // 発音の位相カウンタ。**sim 状態**
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
 class World;
 
 // エンティティが有効か。ActiveComponent が無ければ有効 / enabled==0 なら無効。

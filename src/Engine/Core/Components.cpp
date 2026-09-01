@@ -835,6 +835,108 @@ void RegisterBuiltinComponents()
                              "carries the body, the body loads the rope). anchored where the "
                              "rope end sits when first resolved; clearing it drops the body")),
     });
+
+    // ---- M65a: 音響伝播 (TypeId 45〜49、末尾 append) ----
+    // ★M60' が予約していた 45=Cloth / 46=SoftBody は **50/51 へ繰り下げた**
+    //   (M60'h/k はどちらも未登録なのでデータは 1 バイトも壊れていない。
+    //    plans\supple-weaving-loom.md の予約表も同じコミットで書き換えてある)。
+    //   登録順 = TypeId なので飛ばし登録はできない — M60' 再開時はその時点の末尾へ append する。
+    //
+    // 5 本まとめて確保するのは、M65f までしか使わないフィールドも含めて
+    // **共有契約の変更を M65a の 1 コミットに畳む**ため (M63a / M61a の型)。
+    // 途中のサブで足すと snapshot 版が 5 回上がる。
+
+    // 音のボクセル場を張る箱。**この 1 個の有無が音響システム全体の存在ゲート**。
+    // hash 対象 — グリッドの形は波の到達セルを決める sim 入力そのもの
+    RegisterComponent<AcousticVolumeComponent>("AcousticVolume", {
+        MYE_JP("セル数 X", MYE_FIELD_RANGE(AcousticVolumeComponent, dimX, Int32, 1.0f, 256.0f)),
+        MYE_JP("セル数 Y", MYE_FIELD_RANGE(AcousticVolumeComponent, dimY, Int32, 1.0f, 256.0f)),
+        MYE_JP("セル数 Z", MYE_FIELD_RANGE(AcousticVolumeComponent, dimZ, Int32, 1.0f, 256.0f)),
+        MYE_JP("セルサイズ",
+               MYE_FIELD_TIP(AcousticVolumeComponent, cellSize, Float,
+                             "metres per cell; the box extent is dim * cellSize, derived - "
+                             "never authored directly")),
+        MYE_JP("航法グリッド比",
+               MYE_FIELD_RANGE(AcousticVolumeComponent, navCellRatio, Int32, 1.0f, 8.0f)),
+        MYE_JP("遮蔽レイヤー",
+               MYE_FIELD_TIP(AcousticVolumeComponent, blockLayerMask, UInt32,
+                             "only colliders on these layers block sound")),
+        MYE_JP("有効", MYE_FIELD(AcousticVolumeComponent, enabled, Bool)),
+    });
+
+    // 音を出す口。pending* を書くと次の音響フェーズで波が 1 本生まれる。
+    // travelAccum / cooldown は **sim 状態** (エンジンが書く) なので hash 対象のまま置く
+    RegisterComponent<AcousticEmitterComponent>("AcousticEmitter", {
+        MYE_JP("発音の大きさ",
+               MYE_FIELD_TIP(AcousticEmitterComponent, pendingLoudness, Float,
+                             "write a positive value to fire one wave; the engine clears it "
+                             "on the tick it is consumed")),
+        MYE_JP("発音の到達距離", MYE_FIELD(AcousticEmitterComponent, pendingRadiusM, Float)),
+        MYE_JP("音色", MYE_FIELD_RANGE(AcousticEmitterComponent, pendingTone, Int32, 0.0f, 3.0f)),
+        MYE_JP("リング分周",
+               MYE_FIELD_TIP(AcousticEmitterComponent, ticksPerRing, Int32,
+                             "ticks per wavefront ring; speed = cellSize * 60 / this")),
+        MYE_JP("足音を自動生成", MYE_FIELD(AcousticEmitterComponent, autoFootstep, Bool)),
+        MYE_JP("歩幅", MYE_FIELD(AcousticEmitterComponent, stepDistanceM, Float)),
+        MYE_JP("歩幅の累積", MYE_FIELD_FLAGS(AcousticEmitterComponent, travelAccum, Float,
+                                             kFieldReadOnly)),
+        MYE_JP("発音間隔", MYE_FIELD(AcousticEmitterComponent, cooldownTicks, Int32)),
+        MYE_JP("発音待ち", MYE_FIELD_FLAGS(AcousticEmitterComponent, cooldown, Int32,
+                                           kFieldReadOnly)),
+    });
+
+    // 音を聞く耳。★ミラーに kFieldNoSerialize を付けないこと — 付けるとハッシュ対象から
+    // 外れて「波がいつ・どこから届いたか」の被覆が丸ごと消える (PlayerInput と同じ罠)
+    RegisterComponent<AcousticListenerComponent>("AcousticListener", {
+        MYE_JP("聴取しきい値", MYE_FIELD(AcousticListenerComponent, threshold, Float)),
+        MYE_JP("最終聴取 tick", MYE_FIELD_FLAGS(AcousticListenerComponent, lastHeardTick, UInt64,
+                                                kFieldReadOnly)),
+        MYE_JP("最終聴取位置", MYE_FIELD_FLAGS(AcousticListenerComponent, lastHeardPos, Float3,
+                                               kFieldReadOnly)),
+        MYE_JP("最終聴取の大きさ", MYE_FIELD_FLAGS(AcousticListenerComponent, lastLoudness, Float,
+                                                   kFieldReadOnly)),
+        MYE_JP("最終音源", MYE_FIELD_FLAGS(AcousticListenerComponent, lastSourceEntity, EntityRef,
+                                           kFieldReadOnly)),
+        MYE_JP("最終音色", MYE_FIELD_FLAGS(AcousticListenerComponent, lastTone, Int32,
+                                           kFieldReadOnly)),
+    });
+
+    // 光に寄る目。光源は既存の LightComponent をそのまま読む (新しい光の概念を作らない)
+    RegisterComponent<LightSeekerComponent>("LightSeeker", {
+        MYE_JP("感知半径", MYE_FIELD(LightSeekerComponent, attractRadius, Float)),
+        MYE_JP("最小強度",
+               MYE_FIELD_TIP(LightSeekerComponent, minIntensity, Float,
+                             "lights dimmer than this are invisible - this is what lets a "
+                             "light being placed be seen before it finishes growing")),
+        MYE_JP("最寄りの光", MYE_FIELD_FLAGS(LightSeekerComponent, nearestLight, EntityRef,
+                                             kFieldReadOnly)),
+        MYE_JP("最寄りの光の位置", MYE_FIELD_FLAGS(LightSeekerComponent, nearestPos, Float3,
+                                                   kFieldReadOnly)),
+        MYE_JP("最寄りの光の強さ", MYE_FIELD_FLAGS(LightSeekerComponent, nearestStrength, Float,
+                                                   kFieldReadOnly)),
+    });
+
+    // 敵の共通思考。**性格づけはこのフィールド値だけ** — 遷移表は 5 状態固定でコードに持つ
+    RegisterComponent<AgentBrainComponent>("AgentBrain", {
+        MYE_JP("状態", MYE_FIELD_TIP(AgentBrainComponent, state, Int32,
+                                     "0=patrol 1=alert 2=search 3=chase 4=return")),
+        MYE_JP("状態経過 tick", MYE_FIELD_FLAGS(AgentBrainComponent, stateTicks, Int32,
+                                                kFieldReadOnly)),
+        MYE_JP("帰還先", MYE_FIELD(AgentBrainComponent, home, Float3)),
+        MYE_JP("目標", MYE_FIELD_FLAGS(AgentBrainComponent, target, Float3, kFieldReadOnly)),
+        MYE_JP("警戒時間", MYE_FIELD_TIP(AgentBrainComponent, alertTicks, Int32,
+                                         "ticks spent frozen and silent after hearing "
+                                         "something - this is the tell the player reads")),
+        MYE_JP("探索時間", MYE_FIELD(AgentBrainComponent, searchTicks, Int32)),
+        MYE_JP("追跡を諦める時間", MYE_FIELD(AgentBrainComponent, loseTicks, Int32)),
+        MYE_JP("記憶時間", MYE_FIELD(AgentBrainComponent, memoryTicks, Int32)),
+        MYE_JP("歩行速度", MYE_FIELD(AgentBrainComponent, walkSpeed, Float)),
+        MYE_JP("走行速度", MYE_FIELD(AgentBrainComponent, runSpeed, Float)),
+        MYE_JP("自発音の間隔", MYE_FIELD(AgentBrainComponent, emitEveryTicks, Int32)),
+        MYE_JP("自発音の大きさ", MYE_FIELD(AgentBrainComponent, emitLoudness, Float)),
+        MYE_JP("自発音の位相", MYE_FIELD_FLAGS(AgentBrainComponent, emitPhase, Int32,
+                                               kFieldReadOnly)),
+    });
 }
 
 } // namespace mye

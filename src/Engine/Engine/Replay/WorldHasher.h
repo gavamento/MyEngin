@@ -11,6 +11,7 @@ namespace mye {
 class World;
 class CpuParticleBackend;
 class XpbdBackend;
+class AcousticField;
 struct TimeControl;
 class PersistStore;
 
@@ -35,6 +36,11 @@ struct SimSources {
     // M60'b: XPBD 変形体の池。★畳み込みは内容ゲート (池が空なら節ごと畳まない) —
     // CPU 粒子節と違い「配線しただけ」で既存シーンのハッシュを動かさないため
     const XpbdBackend* xpbd = nullptr;
+    // M65a: 音響の波スロット表。★xpbd と同じ**内容ゲート** (active な波が 1 本も
+    //   無ければ節ごと畳まない) — 配線しただけで既存シーンのハッシュが動くと
+    //   .rep 版 bump が要る。占有グリッドと残光は**導出値なのでハッシュに入れない**
+    //   (計画 hushed-rippling-beacon 判断 3)
+    const AcousticField* acoustic = nullptr;
 };
 
 uint64_t HashWorld(World& world, const SimSources& src = {});

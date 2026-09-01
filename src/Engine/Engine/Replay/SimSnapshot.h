@@ -10,6 +10,7 @@ namespace mye {
 class Scene;
 class CpuParticleBackend;
 class XpbdBackend;
+class AcousticField;
 class CollisionSystem;
 class ScriptHost;
 
@@ -41,6 +42,11 @@ struct SimRefs {
     // M60'b: XPBD 変形体の池。ハッシュ (WorldHasher の SimSources) と対で撮る —
     // 片方だけだと「リプレイは通るのに巻き戻しで割れる」型のバグになる (3 点セット契約)
     XpbdBackend* xpbd = nullptr;
+    // M65a: 音響の場。**復元されるのは波スロット表だけ**で、占有グリッドも距離場も
+    // 導出値なので blob に入らない。★RestoreSimSnapshot は復元の最後に
+    // AcousticField::Invalidate() を呼ぶ — 呼ばないと「戻した波」と「戻す前に育てた
+    // 距離場」が組み合わさり、再シムでだけ結果が変わる (最悪の型のバグ)
+    AcousticField* acoustic = nullptr;
     CollisionSystem* collision = nullptr;
     ScriptHost* scripts = nullptr;
     // M52g: **kMaxPlayers 本のレーン配列**の先頭を指す (1 本ではない)。
@@ -72,7 +78,10 @@ struct SimRefs {
 //            (エンティティ, スクリプト型) の 2 語へ。**同じエンティティに 2 つ以上
 //            スクリプトを付けると 2 つ目以降の Start() が呼ばれない**バグの修正で、
 //            キーの語数がそのまま blob の語数になる
-inline constexpr uint32_t kSimSnapshotVersion = 9;
+// v10 (M65a): ACU 節 (音響の波スロット表) を XPB 節の後・World 節の前に追加。
+//            ★M65b〜g が使うフィールドも M65a でまとめて確保してあるので、
+//              音響で版が上がるのはこの 1 回だけ (分割して足すと 7 回上がる)
+inline constexpr uint32_t kSimSnapshotVersion = 10;
 
 // 撮る: out を clear して blob を書く。成功で true。
 // 節ごとの参照が null なら「空の節」を書くのでレイアウトは常に同じ

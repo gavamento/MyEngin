@@ -17,6 +17,7 @@
 #include "Engine/Engine/CollisionSystem.h"
 #include "Engine/Engine/HotReload/DllReloader.h"
 #include "Engine/Engine/HotReload/ReloadHub.h"
+#include "Engine/Engine/Acoustic/AcousticField.h"
 #include "Engine/Engine/Audio/AudioMixer.h"
 #include "Engine/Engine/Audio/AudioSourceSystem.h"
 #include "Engine/Engine/Audio/AudioSystem.h"
@@ -117,6 +118,11 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // XPBD 変形体の粒子池 (M60'b)。ECS 外 sim 状態の 2 例目 — ハッシュ節 (SimSources) と
     // snapshot 節 (SimRefs) の両方へ必ず配線する (3 点セット契約)
     XpbdBackend xpbd;
+    // 音響の場 (M65a)。ECS 外 sim 状態の 3 例目 — xpbd と全く同じ 3 点セット契約で運ぶ
+    // (ハッシュ節 = SimSources / snapshot 節 = SimRefs / 池 = ここ)。
+    // ★シーンに AcousticVolume が 1 個も無ければ Sync は最初の走査で return するので、
+    //   ここに実体を置くこと自体は既存シーンのハッシュにも golden にも影響しない
+    AcousticField acoustic;
     std::vector<SolidContact> solidContacts; // 物理→衝突イベントの tick 内受け渡し (M28c)
     PrefabLibrary prefabLibrary;
     AnimationLibrary animLibrary;
@@ -456,6 +462,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     simRefs.scene = &scene;
     simRefs.particles = &particleSystem.Cpu();
     simRefs.xpbd = &xpbd; // M60'b: ハッシュ (SimSources) と対で撮る
+    simRefs.acoustic = &acoustic; // M65a: 同上 (復元側が Invalidate も呼ぶ)
     simRefs.collision = &collisionSystem;
     simRefs.scripts = &scriptHost;
     simRefs.prevTickInput = prevTickInput;
@@ -699,6 +706,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     tickServices.effectSystem = &effectSystem;
     tickServices.physicsSystem = &physicsSystem;
     tickServices.xpbd = &xpbd; // M60'b
+    tickServices.acoustic = &acoustic; // M65a
     tickServices.transformSystem = &transformSystem;
     tickServices.collisionSystem = &collisionSystem;
     tickServices.particleSystem = &particleSystem;

@@ -44,6 +44,7 @@
 #include "Engine/Engine/Project.h"
 #include "Engine/Engine/Replay/Replay.h"
 #include "Engine/Engine/Replay/WorldHasher.h"
+#include "Engine/Engine/Acoustic/AcousticSelfTest.h"
 #include "Engine/Engine/Replay/SimSnapshotSelfTest.h"
 #include "Engine/Engine/Replay/TimeTravelSelfTest.h"
 #include "Engine/Engine/Replay/WorldHasherSelfTest.h"
@@ -589,7 +590,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             && mye::RunRagdollBuildSelfTest()   // M60g2
             && mye::RunCameraPilotSelfTest()    // カメラ操縦 (視錐台 UI 追補)
             && mye::RunDllReloaderSelfTest()    // DLL 書き込み完了プローブ (M52h 追補)
-            && mye::RunXpbdSelfTest();          // M60'b
+            && mye::RunXpbdSelfTest()           // M60'b
+            && mye::RunAcousticSelfTest();      // M65a
         return ok ? 0 : 1;
     }
 

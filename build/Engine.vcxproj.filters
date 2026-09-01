@@ -7,6 +7,9 @@
     <Filter Include="Engine">
       <UniqueIdentifier>{582F5D06-2930-51DE-CAD8-59B10249443A}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Engine\Acoustic">
+      <UniqueIdentifier>{4DE32154-5722-F731-D33C-5C952749BE8E}</UniqueIdentifier>
+    </Filter>
     <Filter Include="Engine\Asset">
       <UniqueIdentifier>{9A2B1019-B5E2-F703-E666-AD9277ECABC5}</UniqueIdentifier>
     </Filter>
@@ -125,6 +128,15 @@
     </ClCompile>
     <ClCompile Include="..\src\Engine\Core\World.cpp">
       <Filter>Core</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Acoustic\AcousticField.cpp">
+      <Filter>Engine\Acoustic</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Acoustic\AcousticGrid.cpp">
+      <Filter>Engine\Acoustic</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Acoustic\AcousticSelfTest.cpp">
+      <Filter>Engine\Acoustic</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Animation.cpp">
       <Filter>Engine</Filter>
@@ -632,6 +644,15 @@
     </ClInclude>
     <ClInclude Include="..\src\Engine\Core\World.h">
       <Filter>Core</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Acoustic\AcousticField.h">
+      <Filter>Engine\Acoustic</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Acoustic\AcousticGrid.h">
+      <Filter>Engine\Acoustic</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Acoustic\AcousticSelfTest.h">
+      <Filter>Engine\Acoustic</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Animation.h">
       <Filter>Engine</Filter>

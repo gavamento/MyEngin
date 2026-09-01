@@ -46,6 +46,9 @@
     <ClCompile Include="..\src\Engine\Core\Profiler.cpp" />
     <ClCompile Include="..\src\Engine\Core\Utf8.cpp" />
     <ClCompile Include="..\src\Engine\Core\World.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Acoustic\AcousticField.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Acoustic\AcousticGrid.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Acoustic\AcousticSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Animation.cpp" />
     <ClCompile Include="..\src\Engine\Engine\AnimatorController.cpp" />
     <ClCompile Include="..\src\Engine\Engine\AnimatorControllerSelfTest.cpp" />
@@ -215,6 +218,9 @@
     <ClInclude Include="..\src\Engine\Core\Reflection.h" />
     <ClInclude Include="..\src\Engine\Core\Utf8.h" />
     <ClInclude Include="..\src\Engine\Core\World.h" />
+    <ClInclude Include="..\src\Engine\Engine\Acoustic\AcousticField.h" />
+    <ClInclude Include="..\src\Engine\Engine\Acoustic\AcousticGrid.h" />
+    <ClInclude Include="..\src\Engine\Engine\Acoustic\AcousticSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Animation.h" />
     <ClInclude Include="..\src\Engine\Engine\AnimatorController.h" />
     <ClInclude Include="..\src\Engine\Engine\AnimatorControllerSelfTest.h" />

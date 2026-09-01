@@ -14,6 +14,7 @@
 #include "Engine/Core/World.h"
 #include "Engine/Engine/Animation.h"
 #include "Engine/Engine/AnimatorController.h"
+#include "Engine/Engine/Acoustic/AcousticField.h"
 #include "Engine/Engine/Audio/AudioMixer.h"
 #include "Engine/Engine/Audio/AudioSourceSystem.h"
 #include "Engine/Engine/Audio/AudioSystem.h"
@@ -295,6 +296,19 @@ void RunOneTick(TickServices& ts)
         managedHost.SetTickContext(ctx.Input(), ctx.tickIndex, ctx.fixedDt);
         managedHost.RunStartAndUpdate();
     }
+    // ---- 音響 (フェーズ 3.4、M65a): スクリプト層の直後・アニメと物理の前 ----
+    // ここに置く理由は 2 つある:
+    //   1. スクリプトが書いた発音要求 (AcousticEmitter.pending*) を**同じ tick で**波にする
+    //   2. M65f の AgentSystem が書く CharacterController.moveInput を、物理 (3.6) が
+    //      **同じ tick で**消費できる (フェーズ 4 に置くと敵の操作が 1 tick 遅れる)
+    // ★読む WorldMatrix は**前 tick のもの** (確定は フェーズ 4 の TransformSystem)。
+    //   これは物理がコライダを tick 頭の位置で判定しているのと同じ扱いで、意図的な 1 tick 遅延。
+    // ★TimeControl のゲート (stepSim) に載せる — ポーズ中に波だけ広がると
+    //   「止めたのに音で見える」になるうえ、タイムトラベルのリングとも位相がずれる
+    if (stepSim && ts.acoustic != nullptr) {
+        MYE_PROFILE_SCOPE("acoustic");
+        ts.acoustic->Sync(scene.GetWorld());
+    }
     // ---- アニメーション (フェーズ 3.5): スクリプト後・Transform 前に LocalTransform を確定 ----
     // Play 中のみ進行 (編集時は Animation 窓が明示サンプリングする)。M51g からは
     // TimeControl の tick ゲート (stepSim) も掛かる — エフェクトの duration/linger や
@@ -419,7 +433,7 @@ void RunOneTick(TickServices& ts)
         std::vector<EntityHash> order;
         uint64_t total = 0;
         HashWorldDetailed(scene.GetWorld(),
-                          {&particleSystem.Cpu(), &scene.Time(), &scene.Persist(), ts.xpbd}, order, total);
+                          {&particleSystem.Cpu(), &scene.Time(), &scene.Persist(), ts.xpbd, ts.acoustic}, order, total);
         for (const EntityHash& e : order) {
             if (auto* t = scene.GetWorld().GetComponent<LocalTransform>(e.entity)) {
                 t->position.x += 0.001f;
@@ -438,7 +452,7 @@ void RunOneTick(TickServices& ts)
         && ctx.tickIndex == static_cast<uint64_t>(config.hashDumpTick)) {
         HashDump dump;
         HashWorldDump(scene.GetWorld(),
-                      {&particleSystem.Cpu(), &scene.Time(), &scene.Persist(), ts.xpbd}, ctx.tickIndex, dump);
+                      {&particleSystem.Cpu(), &scene.Time(), &scene.Persist(), ts.xpbd, ts.acoustic}, ctx.tickIndex, dump);
         WriteHashDump(config.hashDumpPath, dump);
     }
 
@@ -446,14 +460,14 @@ void RunOneTick(TickServices& ts)
     if (Recording()) {
         ts.recorder->RecordTick(ctx.inputs, ctx.playerCount,
                                 HashWorld(scene.GetWorld(),
-                                          {&particleSystem.Cpu(), &scene.Time(), &scene.Persist(), ts.xpbd}));
+                                          {&particleSystem.Cpu(), &scene.Time(), &scene.Persist(), ts.xpbd, ts.acoustic}));
         if (ts.recorder->TickCount() >= static_cast<uint64_t>(config.replayTicks)) {
             ts.recorder->Finish();
             ctx.requestExit = true;
         }
     } else if (Verifying()) {
         const uint64_t actual = HashWorld(scene.GetWorld(),
-                                          {&particleSystem.Cpu(), &scene.Time(), &scene.Persist(), ts.xpbd});
+                                          {&particleSystem.Cpu(), &scene.Time(), &scene.Persist(), ts.xpbd, ts.acoustic});
         const uint64_t expected = ts.player->ExpectedHash(ctx.tickIndex);
         if (expected == 0) {
             // ★期待値なし = クラッシュ .rep の「走り切らなかった最後の tick」(M52f)。
@@ -476,7 +490,7 @@ void RunOneTick(TickServices& ts)
             std::vector<EntityHash> detail;
             uint64_t total = 0;
             HashWorldDetailed(scene.GetWorld(),
-                              {&particleSystem.Cpu(), &scene.Time(), &scene.Persist(), ts.xpbd}, detail, total);
+                              {&particleSystem.Cpu(), &scene.Time(), &scene.Persist(), ts.xpbd, ts.acoustic}, detail, total);
             MYE_LOG_ERROR("[replay]   entities=%zu rng=%016llX", detail.size(),
                           static_cast<unsigned long long>(scene.GetWorld().Rng().State()));
             for (size_t i = 0; i < detail.size() && i < 8; ++i) {
@@ -495,7 +509,7 @@ void RunOneTick(TickServices& ts)
                     config.replayVerifyPath + L".tick" + tickStr + L".actual.dump";
                 HashDump dump;
                 HashWorldDump(scene.GetWorld(),
-                              {&particleSystem.Cpu(), &scene.Time(), &scene.Persist(), ts.xpbd}, ctx.tickIndex, dump);
+                              {&particleSystem.Cpu(), &scene.Time(), &scene.Persist(), ts.xpbd, ts.acoustic}, ctx.tickIndex, dump);
                 WriteHashDump(dumpPath, dump);
                 std::ofstream mf(
                     std::filesystem::path(config.replayVerifyPath + L".mismatch.txt"));
@@ -598,6 +612,9 @@ void RunOneTick(TickServices& ts)
             particleSystem.ResetParticles();
             if (ts.xpbd) {
                 ts.xpbd->Reset(); // M60'b: 旧シーンの変形体の池を捨てる
+            }
+            if (ts.acoustic) {
+                ts.acoustic->Reset(); // M65a: 旧シーンの波と占有グリッドを捨てる
             }
             vfxRenderer.Reset(); // M29c: トレイル点列も新シーンでリセット
             partFollowSystem.Reset(); // M48g: 旧シーンの warn 抑制を捨てる

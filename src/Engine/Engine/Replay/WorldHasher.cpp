@@ -12,6 +12,7 @@
 #include "Engine/Core/World.h"
 #include "Engine/Engine/GameFlow.h"
 #include "Engine/Engine/Particles/CpuParticleBackend.h"
+#include "Engine/Engine/Acoustic/AcousticField.h"
 #include "Engine/Engine/Physics/XpbdBackend.h"
 #include "Engine/Platform/PathUtil.h"
 
@@ -271,6 +272,56 @@ uint64_t HashCpuParticles(const CpuParticleBackend& cpu, DumpCtx* d)
 // 粒子 SoA と距離拘束 (rest は塑性で変わる状態) を生バイトで畳む。
 // 要素数も明示的に畳む: 空配列の並びだけでは「粒子 0 + 拘束 1」と「粒子 1 + 拘束 0」の
 // 境界が曖昧になるため
+// M65a: 音響の波スロット表。★**ここに入るのは波だけ** — 占有グリッドも距離場も
+// 残光も導出値なので 1 バイトも畳まない。それが成立するのは到達エネルギーを
+// 整数チャンファ距離の純関数にしてあるから (計画 判断 3)。
+// 空きスロット (active==0) も**そのまま畳む** — 表は常に kMaxWaves 本の固定長で、
+// 「どのスロットが空いているか」自体が Emit の割当 (最小 index) を決める sim 状態
+uint64_t HashAcousticWaves(const AcousticField& field, DumpCtx* d)
+{
+    uint64_t h = kFnvOffset;
+    uint32_t slot = 0;
+    for (const AcousticField::Wave& w : field.Waves()) {
+        if (d && d->lines) {
+            d->entityCol.clear();
+            AppendDecU64(d->entityCol, w.source.index);
+            d->entityCol.push_back(':');
+            AppendDecU64(d->entityCol, w.source.generation);
+        }
+        h = HashCombine(h, slot);
+        EmitU64(d, "Acoustic", "slot", slot, h);
+        h = HashCombine(h, w.active);
+        EmitU64(d, "Acoustic", "active", w.active, h);
+        h = HashCombine(h, w.source.index);
+        EmitU64(d, "Acoustic", "source.index", w.source.index, h);
+        h = HashCombine(h, w.source.generation);
+        EmitU64(d, "Acoustic", "source.generation", w.source.generation, h);
+        h = HashCombine(h, static_cast<uint32_t>(w.ox));
+        EmitU64(d, "Acoustic", "ox", static_cast<uint32_t>(w.ox), h);
+        h = HashCombine(h, static_cast<uint32_t>(w.oy));
+        EmitU64(d, "Acoustic", "oy", static_cast<uint32_t>(w.oy), h);
+        h = HashCombine(h, static_cast<uint32_t>(w.oz));
+        EmitU64(d, "Acoustic", "oz", static_cast<uint32_t>(w.oz), h);
+        h = HashCombine(h, w.ring);
+        EmitU64(d, "Acoustic", "ring", w.ring, h);
+        h = HashCombine(h, w.maxRing);
+        EmitU64(d, "Acoustic", "maxRing", w.maxRing, h);
+        h = HashCombine(h, w.ticksPerRing);
+        EmitU64(d, "Acoustic", "ticksPerRing", w.ticksPerRing, h);
+        h = HashCombine(h, w.phase);
+        EmitU64(d, "Acoustic", "phase", w.phase, h);
+        // float は**ビットパターン**で畳む (spec 11.3)
+        h = HashBytes(&w.amplitude, sizeof(float), h);
+        EmitArray(d, "Acoustic", "amplitude", &w.amplitude, 1u, h);
+        h = HashCombine(h, w.tone);
+        EmitU64(d, "Acoustic", "tone", w.tone, h);
+        h = HashCombine(h, w.bornTick);
+        EmitU64(d, "Acoustic", "bornTick", w.bornTick, h);
+        ++slot;
+    }
+    return h;
+}
+
 uint64_t HashXpbdPools(const XpbdBackend& xpbd, DumpCtx* d)
 {
     uint64_t h = kFnvOffset;
@@ -439,6 +490,14 @@ uint64_t HashWorldImpl(World& world, const SimSources& src,
         const uint64_t xh = HashXpbdPools(*src.xpbd, d);
         total = HashCombine(total, xh);
         EmitU64(d, "Xpbd", "#total", xh, total);
+    }
+    // 音響の波 (M65a)。★XPBD 池と同じ**内容ゲート** — active な波が 1 本も無ければ
+    //   節ごと畳まない。「AcousticField を配線しただけ」で既存 6 シーンのハッシュが
+    //   動くと .rep 版 bump が要るので、そこを踏まないための条件
+    if (src.acoustic && src.acoustic->AnyWaveActive()) {
+        const uint64_t ah = HashAcousticWaves(*src.acoustic, d);
+        total = HashCombine(total, ah);
+        EmitU64(d, "Acoustic", "#total", ah, total);
     }
     return total;
 }

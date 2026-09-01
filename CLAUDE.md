@@ -30,7 +30,7 @@ MyEngine — C++20 / DirectX 11 の自作ゲームエンジン (VS2022 / x64 / W
 
 | コマンド | 担保するもの |
 |---|---|
-| `bin\x64\Debug\Editor.exe --selftest` | ヘッドレス回帰 40 スイート (D3D もウィンドウも作らない) |
+| `bin\x64\Debug\Editor.exe --selftest` | ヘッドレス回帰 43 スイート (D3D もウィンドウも作らない) |
 | `tools\replay_verify.bat [ticks]` | 8 ビルド → 並列 9 ジョブ (6 シーンチェーン = 記録 `--replay-fast` + snapshot 往復付き照合 + Release 照合 / タイムトラベル ×2 / 規則検査)。1 本だけ回すなら `--job <名前>` 再入 (ビルド済み前提)、並列度は `MYE_REPLAY_JOBS` |
 | `tools\shot_verify.bat [--update]` | 決定的スクショ 15 枚を `tests\golden\*.png` と比較 (CI 判定は 10 枚 — FXAA / TAA / SSR / froxel / fog の 5 枚は分岐反転や GPU sim で機種差が増幅するので tol=0 のローカル限定。地形の 1 枚だけ異方性フィルタの実装依存で tol=12。**物理・関節・霧の 3 枚だけ frame 120 で撮る** — 他は frame 3 = ほぼ初期配置なので物理も粒子も絵に出ない。**先に Release ビルドが必要**) |
 | `pwsh -File tools\check_rules.ps1` | 規則 1/2/4/7/8/9/10/11 の静的検査 |
@@ -111,7 +111,9 @@ MyEngine — C++20 / DirectX 11 の自作ゲームエンジン (VS2022 / x64 / W
 ## 横断的な変更のチェックリスト
 
 **コンポーネントを足す** — `Components.h` に POD で定義 → `RegisterBuiltinComponents()` の
-**末尾に append** (TypeId は登録順で決まる。途中挿入は既存シーンと .rep を壊す) →
+**末尾に append** (TypeId は登録順で決まる。途中挿入は既存シーンと .rep を壊す。
+現行の末尾は **49 = AgentBrain** — M65a が 45〜49 を取り、M60′ の Cloth/SoftBody 予約は
+50/51 へ繰り下げてある) →
 `FieldDesc` 表を書く (`MYE_JP("表示名", MYE_FIELD(...))`) → ハッシュ対象になるか確認 →
 影響するなら `SceneSerializer` の版と `.rep` の版を検討。
 

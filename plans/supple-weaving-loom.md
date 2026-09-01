@@ -33,8 +33,11 @@ replay / タイムトラベル / ネットロールバックが従来どおり�
   エミッタ別 PCG32 / owner.index 昇順の池。XPBD バックエンドは全面的にこの範型を踏む。
 - SimSnapshot は節ごとに magic を持ち「小さい節を全部読み切ってから World を最後に差し替え」
   る構造 (`SimSnapshot.cpp:244-247`)。節追加は World 節の前に挿して版を bump するだけ。
-- TypeId は 43 (Vehicle) まで消費済み → **44=Rope / 45=Cloth / 46=SoftBody** (登録順 =
+- TypeId は 43 (Vehicle) まで消費済み → **44=Rope / 50=Cloth / 51=SoftBody** (登録順 =
   実装順 c → h → k を厳守)。
+  ★**M65a で 45〜49 を音響伝播の 5 本が取った** (M60'h/k は中断中で未登録だったため、
+  データは 1 バイトも壊れていない)。登録順 = TypeId なので飛ばし登録は不可能 —
+  M60' を再開するときは `Components.cpp` の**その時点の末尾**へ append すること。
 - ABI は M60 と同じく追加ゼロ見込み (M59k の汎用スロットで届く。v14 のまま)。
 
 **逆風 (完全新規になるもの)**:
@@ -114,7 +117,7 @@ EngineLoop (所有)
   昇順で回す。カーネル本体は**変更しない** (唯一の実運用呼び手 Aero.surfaceModel を
   護る。両面フラグを足したくなったら別コミットで検討)。
 - 予約事項 4 (substeps の置き場) → そのまま使う。XPBD も `PhysicsEnvironment.substeps` に従う。
-- 予約事項 6 (TypeId 末尾 append) → 44/45/46。
+- 予約事項 6 (TypeId 末尾 append) → 44/50/51 (M65a が 45〜49 を取った後の番号)。
 
 ## サブ分割 (14 サブ、a → n)
 
@@ -208,8 +211,8 @@ EngineLoop (所有)
 - 検証: --replay-record しながら絵を目視 + スクショ 1 枚を一時プローブで撮る
   (golden 登録は m まで待つ)。既存 golden 14 枚が maxDiff=0 のまま。
 
-### M60'h: 布 — Cloth (TypeId 45) + 曲げ拘束
-- `ClothComponent` (TypeId 45): `countX` / `countY` / `width` / `height` / `mass` /
+### M60'h: 布 — Cloth (TypeId 50) + 曲げ拘束
+- `ClothComponent` (TypeId 50): `countX` / `countY` / `width` / `height` / `mass` /
   `stretchCompliance` / `bendCompliance` / `damping` / `thickness` (衝突半径) /
   ピン指定 (上辺固定等のプリセット int) / `connectedEntity` / material AssetRef。
 - 生成: N×M グリッド + 構造/せん断エッジ (距離拘束) + 曲げ拘束 (隣接三角形の
@@ -240,8 +243,8 @@ EngineLoop (所有)
   ③--render-demo / 既存 golden 14 枚 maxDiff=0、④ヘッドレス (--selftest) で
   D3D 無しでも sim 側が落ちない。
 
-### M60'k: ソフトボディ — SoftBody (TypeId 46) + 体積拘束
-- `SoftBodyComponent` (TypeId 46): 閉表面メッシュ (球/箱のプリセット生成。任意メッシュは
+### M60'k: ソフトボディ — SoftBody (TypeId 51) + 体積拘束
+- `SoftBodyComponent` (TypeId 51): 閉表面メッシュ (球/箱のプリセット生成。任意メッシュは
   対象外)、`volumeCompliance` (圧縮性) / `stretchCompliance` (剛性・弾性) / `damping`
   (粘性の一次) / `pressure` (過圧係数、風船)。
 - 全体積拘束: C = V − pressure·V0、勾配は面法線の 1/3 和 (標準 XPBD 体積拘束)。
@@ -284,7 +287,7 @@ EngineLoop (所有)
 | 対象 | いつ | 内容 |
 |---|---|---|
 | WorldHasher の署名 | a | 3 出口 + Impl を `SimSources` へ (**ハッシュ値はビット同一** — 証明は 2 段階ビルドの `[phys] hash` 照合) |
-| TypeId | c, h, k | **44=Rope / 45=Cloth / 46=SoftBody** を末尾 append |
+| TypeId | c, h, k | **44=Rope / 50=Cloth / 51=SoftBody** を末尾 append (45〜49 は M65a の音響 5 本) |
 | SimSnapshot 版 | b | v3 → **v4** (Xpbd 節追加。World 節の前)。旧 blob は版不一致で拒否 = 仕様どおり |
 | ReplayFile 版 | **bump なし見込み** | ハッシュは a で値不変・b で内容ゲート。変形体入りシーンは新規コンテンツなので過去 .rep と衝突しない |
 | `.physmat.json` スキーマ | l | compliance 系 6 キーを末尾 append (未指定 = 既定値 = 従来) |
