@@ -59,9 +59,55 @@ public:
 
     AcousticField();
 
-    // ボリュームを探し、必要なら占有を焼き直す。音響フェーズ (3.4) の先頭から毎 tick 呼ぶ。
+    // 波ごとの距離場 (M65b)。★**導出値** — ハッシュにも snapshot にも入らない。
+    // 復元後は Wave 表だけから ring 0 まで巻き戻して引き直す。
+    // 「増分で育てた場」と「引き直した場」がビット同一であることが、この設計が
+    // 成立している唯一の条件 (AcousticSelfTest が memcmp で固定する)
+    struct WaveField {
+        // 原点セルを含む局所ボックス (グリッドでクリップ済み)。
+        // 面コストが 11 で最大距離が maxRing*11 なので、軸方向 maxRing セルより外へは届かない
+        int32_t x0 = 0, y0 = 0, z0 = 0;
+        int32_t sx = 0, sy = 0, sz = 0;
+        uint32_t maxDist = 0;                     // maxRing * kFaceCost
+        std::vector<uint16_t> dist;               // kUnreached = 未到達
+        std::vector<uint8_t> parentDir;           // **親の方角** (kNeighbors の index)。kNoParent = 無し
+        std::vector<std::vector<int32_t>> buckets; // Dial 法のバケット (index = チャンファ距離)
+    };
+    static constexpr uint16_t kUnreached = 0xFFFFu;
+    static constexpr uint8_t kNoParent = 0xFFu;
+
+    // ボリュームを探し、必要なら占有と距離場を焼き直す。音響フェーズ (3.4) の先頭で毎 tick。
     // **AcousticVolumeComponent が 1 個も無ければ最初の走査で return する** (存在ゲート)
     void Sync(World& world);
+
+    // 波を 1 本立てる。**最小 index の空きスロット**を使う (決定論)。
+    // ★満杯なら**最古を潰さず false を返す** — 潰す実装にすると「満杯時の挙動が
+    //   到着順に依存する」= 決定論の穴になる。
+    // 原点セルが閉じているとき (足元が床コライダの中など) は 26 近傍を表の順に探して
+    // 最初に見つかった開セルへ寄せる。見つからなければ false
+    bool Emit(EntityID source, float wx, float wy, float wz, float loudness, float radiusM,
+              uint32_t tone, uint32_t ticksPerRing, uint64_t tick);
+
+    // AcousticEmitterComponent の発音要求を波に変える。**entity.index 昇順**で処理し、
+    // 消費した pendingLoudness は 0 へ戻す (エンジンが書く sim 状態)。
+    // ★スロットが満杯なら要求は**捨てる** (次 tick へ持ち越さない) — 持ち越すと
+    //   「いつ鳴るか」が過去の混雑具合に依存して、原因の遠い非決定性の温床になる
+    void DrainEmitters(World& world, uint64_t tick);
+
+    // 全アクティブ波を 1 tick ぶん進める (分周を見て 1 リング前進、maxRing 超えで消す)
+    void Advance();
+
+    // ---- 距離場の読み出し (描画 / AI / デバッグ線が使う) ----
+    // グリッドセル -> その波でのチャンファ距離。範囲外・未到達は kUnreached
+    uint16_t DistanceAt(uint32_t slot, int32_t cx, int32_t cy, int32_t cz) const;
+    // 同じく親の方角 (kNeighbors の index)。原点と未到達は kNoParent
+    uint8_t ParentDirAt(uint32_t slot, int32_t cx, int32_t cy, int32_t cz) const;
+    const WaveField& FieldOf(uint32_t slot) const { return fields_[slot]; }
+
+    // 全アクティブ波の距離場を ring 0 から引き直す。占有が焼き直された直後 (Sync) と、
+    // snapshot 復元後の最初の Sync で必ず走る。★セルフテストはこれと増分成長の結果を
+    // memcmp で突き合わせる
+    void Rebuild();
 
     // シーン遷移時の全消し (TickRunner の LoadScene 反映ブロックから)
     void Reset();
@@ -96,12 +142,17 @@ private:
     // (全セル x 全コライダを回すと 52 万 x 数百で即死する)
     void BakeOccupancy(World& world, uint32_t blockLayerMask);
 
+    // ---- 距離場 (M65b) ----
+    void SeedWave(uint32_t slot);            // 局所ボックスを確保して原点だけ置く
+    void AdvanceWaveOneRing(uint32_t slot);  // バケット [ring*11, (ring+1)*11) を処理
+
     AcousticGridDesc grid_;             // 導出値 (ボリュームのコンポーネントから毎 tick 組む)
     EntityID owner_ = kNullEntity;      // 採用したボリューム (entity.index 最小の active な 1 個)
     int32_t navRatio_ = 2;              // 導出値
     std::vector<uint8_t> occupancy_;    // 導出値
     uint64_t staticSig_ = 0;            // 導出値。静的コライダの署名 (変化で焼き直す)
     bool derivedValid_ = false;         // 導出値が現在の world と整合しているか
+    std::vector<WaveField> fields_;     // 導出値。waves_ と同じ長さ・同じ slot
     std::vector<Wave> waves_;           // ★**sim 状態**。常に kMaxWaves 本 (空きは active=0)
 };
 

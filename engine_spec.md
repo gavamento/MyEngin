@@ -1430,6 +1430,19 @@ The grid is axis-aligned and sized in *integer* cells, with the extent derived a
 `dim * cellSize`. Deriving it the other way round would put a float-to-int rounding step in the
 grid's shape, where a rounding change of one shifts every cell a wave reaches.
 
+**Propagation is Dial's algorithm, one ring per tick.** A ring is exactly the face weight (11)
+wide, so a relaxation from a cell in the current ring always lands in a *later* bucket and no
+processed bucket is ever written again — that width is why the ring boundary needs no fixup.
+Each reached cell keeps the neighbour index pointing back at its parent, so "which way did this
+arrival come from" is one byte that is already correct around a corner. Diagonal steps do not
+inspect the cells they pass between, so a convex corner is cut at cost 16 rather than 11+11 —
+that reads as diffraction, keeps the inner loop at 26 occupancy probes instead of up to 74, and
+never leaks through an axis-aligned wall (walls voxelise at least one cell thick on some axis).
+
+Emission takes the lowest free slot and **refuses when the table is full rather than evicting the
+oldest** — evicting would make behaviour under load depend on arrival order. An origin inside a
+collider is nudged to the first open neighbour in table order.
+
 ---
 
 ## 11. Debug/Release Consistency Policy

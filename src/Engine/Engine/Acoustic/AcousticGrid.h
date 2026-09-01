@@ -105,6 +105,25 @@ inline float ChamferToMeters(uint32_t dist, float cellSize)
     return static_cast<float>(dist) * cellSize / static_cast<float>(kFaceCost);
 }
 
+// 到達エネルギー (M65b)。
+// ★**整数チャンファ距離の純関数**であることがこの設計全体の土台。伝播中に材質で
+//   減衰させると経路依存になり、波の全状態がセル配列に落ちて snapshot が数 MB になる
+//   (計画 判断 3)。床材は「発音時の振幅と到達上限」にだけ効かせる。
+// ★減衰式は Audio/SpatialMath.h の RolloffGain (逆二乗) をそのまま借りる —
+//   **聞こえる音の減衰と見える波の減衰が同じ式**になるので、M65c 以降で実際に鳴らしても
+//   絵と音がずれない。d >= maxD で厳密に 0 を返す性質もそのまま欲しい (境界でポップしない)。
+float EnergyAt(uint32_t chamferDist, uint32_t maxChamferDist, float amplitude, float cellSize);
+
+// 波 1 本が使う局所ボックスの半径 [セル]。到達距離の上限 = R * cellSize [m]
+// (64 * 0.5 = 32m。企画の「金属板は部屋を突き抜ける」が成り立つ長さ)。
+// ★メモリは **min((2R+1)^3, グリッド全体) * 3B / 波**。ボックスはグリッドで
+//   クリップされるので、既定ボリューム (64x16x64 = 65,536 セル) なら 196KB/波 =
+//   16 本で 3.1MB。規格上限のグリッド (kMaxCells = 4M) を 64 リングの波で 16 本
+//   同時に満たすと 192MB になるが、その構成は**伝播コストのほうが先に破綻する**ので
+//   実務上の上限は cellSize と dim が決めている。
+// 縮退はこの値ではなく ticksPerRing / cellSize から先に触ること (計画 M65b のリスク)
+inline constexpr uint32_t kMaxWaveRing = 64;
+
 // 中心とセル数から desc を組む (ボリュームの WorldMatrix の平行移動が center)。
 // dim は 1..kMaxDim にクランプし、総セル数が kMaxCells を超えたら**均等に間引く**のではなく
 // 呼び出し側へ false を返す — 黙って解像度を変えると「シーンによって波の形が違う」に化ける

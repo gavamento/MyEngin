@@ -46,6 +46,7 @@
     <ClCompile Include="..\src\Engine\Core\Profiler.cpp" />
     <ClCompile Include="..\src\Engine\Core\Utf8.cpp" />
     <ClCompile Include="..\src\Engine\Core\World.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Acoustic\AcousticDebugDraw.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Acoustic\AcousticField.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Acoustic\AcousticGrid.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Acoustic\AcousticSelfTest.cpp" />
@@ -218,6 +219,7 @@
     <ClInclude Include="..\src\Engine\Core\Reflection.h" />
     <ClInclude Include="..\src\Engine\Core\Utf8.h" />
     <ClInclude Include="..\src\Engine\Core\World.h" />
+    <ClInclude Include="..\src\Engine\Engine\Acoustic\AcousticDebugDraw.h" />
     <ClInclude Include="..\src\Engine\Engine\Acoustic\AcousticField.h" />
     <ClInclude Include="..\src\Engine\Engine\Acoustic\AcousticGrid.h" />
     <ClInclude Include="..\src\Engine\Engine\Acoustic\AcousticSelfTest.h" />

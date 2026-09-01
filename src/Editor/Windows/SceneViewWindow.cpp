@@ -23,6 +23,7 @@
 #include "Engine/Engine/GameObject.h"
 #include "Engine/Engine/Parts.h"
 #include "Engine/Engine/Physics/ConvexHull.h" // M60f: shape=5 のワイヤ表示
+#include "Engine/Engine/Acoustic/AcousticDebugDraw.h"
 #include "Engine/Engine/Physics/PhysicsDebugDraw.h"
 #include "Engine/Engine/Physics/Shapes.h"
 #include "Engine/Engine/RenderSystem.h"
@@ -880,6 +881,14 @@ void SceneViewWindow::DrawToolbar(EditorSettings& settings)
         //   グループ幅測定が化けるため。OpenPopup と Begin は同一ウィンドウ内なら
         //   離れていてよい (挙動は不変)
     }
+    ImGui::SameLine();
+    // 音響デバッグ可視化 (M65b)。物理と全く同じ扱い (Play 中しか線は出ない)
+    {
+        const AcousticDebugFlags& ad = GetAcousticDebugFlags();
+        if (ToolbarToggle(Tr(StrId::SceneView_AcDebug), ad.Any())) {
+            ImGui::OpenPopup("##sv_acdbg_popup");
+        }
+    }
     toolbarFlow_.Separator();
     // 表示モード (M40b): Lit / Unlit / Wireframe。GameView は常に Lit
     auto modeBtn = [&](StrId id, int mode) {
@@ -927,6 +936,17 @@ void SceneViewWindow::DrawToolbar(EditorSettings& settings)
             ImGui::Checkbox(Tr(StrId::SceneView_PhysVel), &pd.velocities);
             ImGui::Checkbox(Tr(StrId::SceneView_PhysJoint), &pd.joints); // M60a
             ImGui::Checkbox(Tr(StrId::SceneView_PhysDeform), &pd.deform); // M60'c
+            ImGui::EndPopup();
+        }
+    }
+    // 音響デバッグ popup の本体 (M65b。物理と同じ理由でツールバーの幅測定の外)
+    {
+        AcousticDebugFlags& ad = GetAcousticDebugFlags();
+        if (ImGui::BeginPopup("##sv_acdbg_popup")) {
+            ImGui::Checkbox(Tr(StrId::SceneView_AcFrontier), &ad.frontier);
+            ImGui::Checkbox(Tr(StrId::SceneView_AcOccupancy), &ad.occupancy);
+            ImGui::Checkbox(Tr(StrId::SceneView_AcOrigin), &ad.waveOrigin);
+            ImGui::Checkbox(Tr(StrId::SceneView_AcListener), &ad.listener);
             ImGui::EndPopup();
         }
     }

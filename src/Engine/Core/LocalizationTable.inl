@@ -386,6 +386,18 @@ MYE_STR(SceneView_PhysJoint,  "Joint anchors###sv_phys_joint",
 // M60'c: 変形体 (ロープ等) の拘束線 + ピン
 MYE_STR(SceneView_PhysDeform, "Deformables###sv_phys_deform",
                               "変形体###sv_phys_deform")
+// ---- 音響デバッグ可視化 (M65b)。物理と同じ「ボタン + ポップアップ」の型 ----
+// ★M65e でライティングに差し込むまでは、**波が壁を貫通せず角を曲がったことを
+//   人間が確かめる唯一の手段**がこの 4 トグル
+MYE_STR(SceneView_AcDebug,    "Acoustic###sv_acdbg_btn", "音響###sv_acdbg_btn")
+MYE_STR(SceneView_AcFrontier, "Wavefront###sv_ac_frontier",
+                              "波面###sv_ac_frontier")
+MYE_STR(SceneView_AcOccupancy, "Occupancy###sv_ac_occupancy",
+                              "占有セル###sv_ac_occupancy")
+MYE_STR(SceneView_AcOrigin,   "Sound sources###sv_ac_origin",
+                              "音源###sv_ac_origin")
+MYE_STR(SceneView_AcListener, "Listeners###sv_ac_listener",
+                              "聴者###sv_ac_listener")
 // ---- 関節の種類 (M60b)。Inspector の type コンボの選択肢 ----
 // 表示順 = JointComponent.type の値順 (0..4)。値の意味を変えると既存シーンが壊れる
 MYE_STR(Insp_JointBall,       "Ball (3 linear)",        "ボール (線形 3)")

@@ -78,13 +78,13 @@ rem 前回の失敗マーカーが残っていると :diagnose が古い tick �
 del /q cache\*.mismatch.txt 2>nul
 if exist cache\replay_logs rd /s /q cache\replay_logs
 
-echo === parallel verification: 6 scene chains + time travel x2 + rule check ===
+echo === parallel verification: 7 scene chains + time travel x2 + rule check ===
 rem ★Entry は空白なし相対パスで渡す (人間/CI が bat を叩くのと同じ呼び形に固定。
 rem   バッチ読取りの罠と chcp 437 の理由は runner 冒頭のコメント参照)
-pwsh -NoProfile -ExecutionPolicy Bypass -File tools\run_parallel.ps1 -Entry tools\replay_verify.bat -LogDir cache\replay_logs -Jobs "demo,parts,flow,mp,physics,joints,ttdebug,ttrelease,rules" || goto :failed
+pwsh -NoProfile -ExecutionPolicy Bypass -File tools\run_parallel.ps1 -Entry tools\replay_verify.bat -LogDir cache\replay_logs -Jobs "demo,parts,flow,mp,physics,joints,acoustic,ttdebug,ttrelease,rules" || goto :failed
 
 echo.
-echo [PASS] replay consistency (Debug/Release, 6 scenes: demo + parts + flow + mp + physics + joints) + snapshot round-trip + time travel + rule check
+echo [PASS] replay consistency (Debug/Release, 7 scenes: demo + parts + flow + mp + physics + joints + acoustic) + snapshot round-trip + time travel + rule check
 exit /b 0
 
 rem ---------------------------------------------------------------- :failed
@@ -115,6 +115,10 @@ if exist cache\golden_physics.rep.mismatch.txt (
 if exist cache\golden_joints.rep.mismatch.txt (
     set DIAGFOUND=1
     call :diagnose "cache\golden_joints.rep" "--joint-demo"
+)
+if exist cache\golden_acoustic.rep.mismatch.txt (
+    set DIAGFOUND=1
+    call :diagnose "cache\golden_acoustic.rep" "--acoustic-demo"
 )
 if "%DIAGFOUND%"=="0" echo [diag] no mismatch markers - failures happened before any hash comparison, see the job logs above
 echo [FAIL] replay verification
@@ -216,6 +220,20 @@ if exist cache\joint_showcase.scene.json del /q cache\joint_showcase.scene.json
 call :chain cache\golden_joints.rep "--joint-demo" "--joint-demo"
 exit /b %ERRORLEVEL%
 
+rem ---- 音響伝播 (M65b) ----
+rem M65 で足した層 — 整数チャンファ距離の bucket Dijkstra で広がる波面 — が Debug と
+rem Release でビット一致することを 600 tick 実走で固定する。
+rem ★このペアが押さえているのは **ECS 外 sim 状態の 3 例目 (波スロット表)** の 3 点セット。
+rem   snapshot 往復 (--snapshot-stress 37) が通ることが「復元後に距離場を引き直す経路」の
+rem   実走検査で、selftest の memcmp と合わせて「増分と引き直しが同値」を二重に固定する。
+rem ★波は WavePinger (GameLogic.dll) が 150 tick ごとに立てる。DLL が焼けていないと
+rem   波が 1 本も出ず、**ハッシュ節が内容ゲートで畳まれないまま緑になる** (= 何も検査
+rem   していない状態で PASS する) ので、DLL のビルドはこの検査の前提。
+rem シーンはコードから毎回組み直す (parts / physics / joints と同じ流儀)
+:job_acoustic
+call :chain cache\golden_acoustic.rep "--acoustic-demo" "--acoustic-demo"
+exit /b %ERRORLEVEL%
+
 rem ---- タイムトラベルの巻き戻し (M52e) ----
 rem 「T まで進める → T-K へ戻す → 記録入力で T まで再シム → 元の T とハッシュ一致」を
 rem 複数の K で実走し、続けて「スクラブ中は tick が止まる」「再開すると分岐して未来を捨てる」
@@ -276,7 +294,8 @@ endlocal & exit /b 1
 rem ---------------------------------------------------------------- :diagnose
 rem 失敗した照合の「どのフィールドが割れたか」を出す (M52a)。
 rem   %1 = .rep パス / %2 = シーン切替の追加引数 ("" / "--parts-demo" / "--flow-demo" /
-rem                        "--local-demo" / "--physics-demo" / "--joint-demo")
+rem                        "--local-demo" / "--physics-demo" / "--joint-demo" /
+rem                        "--acoustic-demo")
 rem 失敗側のダンプは EngineLoop が MISMATCH 時に自動で残しているので、
 rem ここでは期待側 (= その .rep を録ったのと同じコマンド) を撮り直して突き合わせる
 :diagnose

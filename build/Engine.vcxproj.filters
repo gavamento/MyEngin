@@ -129,6 +129,9 @@
     <ClCompile Include="..\src\Engine\Core\World.cpp">
       <Filter>Core</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Acoustic\AcousticDebugDraw.cpp">
+      <Filter>Engine\Acoustic</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Acoustic\AcousticField.cpp">
       <Filter>Engine\Acoustic</Filter>
     </ClCompile>
@@ -644,6 +647,9 @@
     </ClInclude>
     <ClInclude Include="..\src\Engine\Core\World.h">
       <Filter>Core</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Acoustic\AcousticDebugDraw.h">
+      <Filter>Engine\Acoustic</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Acoustic\AcousticField.h">
       <Filter>Engine\Acoustic</Filter>

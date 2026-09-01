@@ -1,12 +1,13 @@
 //====================================================================================
 //                          AcousticSelfTest.cpp
 //  MyEngine/ 秋田蓮音                                                      09/01/2026
-//                                          音響伝播のヘッドレス回帰テスト（M65a 分）
+//                                          音響伝播のヘッドレス回帰テスト（M65a/M65b 分）
 //====================================================================================
 #include "Engine/Engine/Acoustic/AcousticSelfTest.h"
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <vector>
 
 #include "Engine/Core/Check.h"
@@ -30,6 +31,22 @@ AcousticGridDesc MakeTestGrid()
     const bool ok = acoustic::MakeGridDesc(8, 4, 8, 0.5f, 0.0f, 0.0f, 0.0f, g);
     MYE_CHECK(ok);
     return g;
+}
+
+// L 字の 1 セル幅の廊下 (M65b の伝播テストの土台)。dimY=1 の平面迷路。
+//   腕 1: x in [2,20], z = 2   /   腕 2: x = 20, z in [2,20]
+// 廊下以外は全部壁なので、斜めで角をすり抜けることもできない。
+// (10,0,10) は廊下から完全に切り離された「壁の向こう」の代表点
+std::vector<uint8_t> MakeLMaze(const AcousticGridDesc& g)
+{
+    std::vector<uint8_t> occ(static_cast<size_t>(g.CellCount()), 1u);
+    for (int32_t x = 2; x <= 20; ++x) {
+        occ[static_cast<size_t>(acoustic::CellIndex(g, x, 0, 2))] = 0u;
+    }
+    for (int32_t z = 2; z <= 20; ++z) {
+        occ[static_cast<size_t>(acoustic::CellIndex(g, 20, 0, z))] = 0u;
+    }
+    return occ;
 }
 
 // 占有セル数を数える
@@ -288,6 +305,207 @@ bool RunAcousticSelfTest()
         field.DebugSetGrid(g, std::move(occ));
         check(field.HasVolume() && field.IsSolid(2, 1, 2) && !field.IsSolid(2, 1, 3),
               "debug: DebugSetGrid installs a hand-built occupancy grid");
+    }
+
+    // ---- (8) 迷路の伝播: 壁を貫通せず、角を回り込む ----
+    // L 字の 1 セル幅の廊下。原点 (2,0,2) から角 (20,0,2) を経て (20,0,20) へ。
+    // 経路は 34 面ステップ + 角の斜め 1 歩 = 34*11 + 16 = 390。
+    // ★**斜めの角抜けを許している**ことをここで固定する — 凸角を 22 ではなく 16 で
+    //   曲がれる。もし空間が空いていれば通る 18 斜めステップ = 288 より**長い**
+    //   という大小関係が「回り込んだ (直進していない)」証拠
+    {
+        AcousticField field;
+        AcousticGridDesc g;
+        const bool gok = acoustic::MakeGridDesc(24, 1, 24, 0.5f, 0.0f, 0.0f, 0.0f, g);
+        check(gok, "maze: grid built");
+        field.DebugSetGrid(g, MakeLMaze(g));
+
+        float wx = 0.0f, wy = 0.0f, wz = 0.0f;
+        acoustic::CellToWorldCenter(g, 2, 0, 2, wx, wy, wz);
+        const bool emitted = field.Emit(EntityID{ 7, 1 }, wx, wy, wz, 1.0f, 20.0f, 0, 1, 0);
+        check(emitted && field.Waves()[0].active != 0 && field.Waves()[0].ox == 2
+                  && field.Waves()[0].oz == 2 && field.Waves()[0].maxRing == 40,
+              "maze: Emit takes slot 0 and floors radius into rings");
+
+        for (int i = 0; i < 40; ++i) {
+            field.Advance();
+        }
+        check(field.Waves()[0].ring == 40, "maze: one ring per tick at ticksPerRing=1");
+
+        const uint16_t dCorner = field.DistanceAt(0, 20, 0, 20);
+        check(dCorner == 34 * acoustic::kFaceCost + acoustic::kEdgeCost,
+              "maze: the far arm is reached by walking the corner (34 face steps + one diagonal)");
+        check(dCorner > 18 * acoustic::kEdgeCost,
+              "maze: the folded path is longer than the straight-line chamfer distance");
+        check(field.DistanceAt(0, 10, 0, 10) == AcousticField::kUnreached,
+              "maze: a sealed cell behind the walls is never reached");
+        check(field.DistanceAt(0, 3, 0, 3) == AcousticField::kUnreached,
+              "maze: the wall cell next to the corridor stays unreached (walls are not entered)");
+
+        // 親方向を辿ると必ず原点へ戻り、距離は単調に減る
+        int32_t cx = 20, cy = 0, cz = 20;
+        int steps = 0;
+        bool walkOk = true;
+        uint16_t prev = dCorner;
+        while (!(cx == 2 && cy == 0 && cz == 2)) {
+            const uint8_t pd = field.ParentDirAt(0, cx, cy, cz);
+            if (pd == AcousticField::kNoParent || ++steps > 200) {
+                walkOk = false;
+                break;
+            }
+            const acoustic::Neighbor& nb = acoustic::kNeighbors[pd];
+            cx += nb.dx;
+            cy += nb.dy;
+            cz += nb.dz;
+            const uint16_t d = field.DistanceAt(0, cx, cy, cz);
+            if (d >= prev) {
+                walkOk = false;
+                break;
+            }
+            prev = d;
+        }
+        check(walkOk && steps == 35 && prev == 0,
+              "maze: parentDir walks back to the source with strictly decreasing distance");
+    }
+
+    // ---- (8b) 軸平行な 1 セル厚の壁は漏らさない ----
+    // ★これが企画 §3-1 の「壁を貫通しない」の本体。斜めの角抜けを許しているので
+    //   「斜め 1 セル厚の壁」は理屈のうえでは漏れるが、壁は box で組む前提
+    //   (= ボクセル化すると必ず軸平行で 1 セル以上の厚みになる) なので起きない。
+    //   塞ぐなら「斜め移動は面隣接の中間セルが 1 つでも開いていること」を条件に足す
+    {
+        AcousticField field;
+        AcousticGridDesc g;
+        (void)acoustic::MakeGridDesc(12, 1, 12, 0.5f, 0.0f, 0.0f, 0.0f, g);
+        std::vector<uint8_t> occ(static_cast<size_t>(g.CellCount()), 0u);
+        for (int32_t z = 0; z < 12; ++z) {
+            occ[static_cast<size_t>(acoustic::CellIndex(g, 6, 0, z))] = 1u; // 端から端までの仕切り
+        }
+        field.DebugSetGrid(g, std::move(occ));
+        float wx = 0.0f, wy = 0.0f, wz = 0.0f;
+        acoustic::CellToWorldCenter(g, 2, 0, 6, wx, wy, wz);
+        (void)field.Emit(EntityID{ 3, 1 }, wx, wy, wz, 1.0f, 20.0f, 0, 1, 0);
+        for (int i = 0; i < 40; ++i) {
+            field.Advance();
+        }
+        bool leaked = false;
+        for (int32_t z = 0; z < 12; ++z) {
+            for (int32_t x = 6; x < 12; ++x) {
+                if (field.DistanceAt(0, x, 0, z) != AcousticField::kUnreached) {
+                    leaked = true;
+                }
+            }
+        }
+        check(!leaked, "wall: a one-cell-thick axis-aligned wall is never crossed");
+        check(field.DistanceAt(0, 5, 0, 11) != AcousticField::kUnreached,
+              "wall: the near side of that wall is fully reached (the test is not vacuous)");
+    }
+
+    // ---- (9) ★引き直しの同値性 (この計画で最も重要な不変条件) ----
+    // 「増分で ring 0→20 まで育てた場」と「Invalidate() 後に引き直した場」が
+    // memcmp で同一。ここが割れると **リプレイは通るのに巻き戻しでだけ割れる**
+    {
+        AcousticField field;
+        AcousticGridDesc g;
+        (void)acoustic::MakeGridDesc(24, 1, 24, 0.5f, 0.0f, 0.0f, 0.0f, g);
+        field.DebugSetGrid(g, MakeLMaze(g));
+        float wx = 0.0f, wy = 0.0f, wz = 0.0f;
+        acoustic::CellToWorldCenter(g, 2, 0, 2, wx, wy, wz);
+        (void)field.Emit(EntityID{ 7, 1 }, wx, wy, wz, 1.0f, 20.0f, 0, 1, 0);
+        for (int i = 0; i < 20; ++i) {
+            field.Advance();
+        }
+        const std::vector<uint16_t> grownDist = field.FieldOf(0).dist;
+        const std::vector<uint8_t> grownParent = field.FieldOf(0).parentDir;
+
+        field.Invalidate();
+        field.Rebuild();
+        const AcousticField::WaveField& re = field.FieldOf(0);
+        const bool same =
+            re.dist.size() == grownDist.size() && re.parentDir.size() == grownParent.size()
+            && std::memcmp(re.dist.data(), grownDist.data(), grownDist.size() * sizeof(uint16_t)) == 0
+            && std::memcmp(re.parentDir.data(), grownParent.data(), grownParent.size()) == 0;
+        check(same, "rebuild: growing incrementally and rebuilding from ring 0 are bit-identical");
+        check(field.Waves()[0].ring == 20, "rebuild: the wave is left at the same ring");
+
+        // 別インスタンスで同じ手順を踏んでも同一 (状態の持ち越しが無いことの確認)
+        AcousticField other;
+        other.DebugSetGrid(g, MakeLMaze(g));
+        (void)other.Emit(EntityID{ 7, 1 }, wx, wy, wz, 1.0f, 20.0f, 0, 1, 0);
+        for (int i = 0; i < 20; ++i) {
+            other.Advance();
+        }
+        check(other.FieldOf(0).dist == grownDist && other.FieldOf(0).parentDir == grownParent,
+              "rebuild: a second field fed the same inputs lands on the same array");
+    }
+
+    // ---- (10) スロットの決定論: 最小 index の空き / 満杯は false ----
+    {
+        AcousticField field;
+        AcousticGridDesc g;
+        (void)acoustic::MakeGridDesc(24, 1, 24, 0.5f, 0.0f, 0.0f, 0.0f, g);
+        field.DebugSetGrid(g, MakeLMaze(g));
+        float wx = 0.0f, wy = 0.0f, wz = 0.0f;
+        acoustic::CellToWorldCenter(g, 2, 0, 2, wx, wy, wz);
+
+        bool allTook = true;
+        for (uint32_t s = 0; s < AcousticField::kMaxWaves; ++s) {
+            // radius を小さくしておかないと 16 本ぶんの局所ボックスで時間を食う
+            if (!field.Emit(EntityID{ s + 1, 1 }, wx, wy, wz, 1.0f, 1.0f, 0, 1, s)) {
+                allTook = false;
+            }
+        }
+        check(allTook && field.Waves()[15].active != 0, "slots: 16 emits fill the table in order");
+        const uint64_t survivorTick = field.Waves()[0].bornTick;
+        check(!field.Emit(EntityID{ 99, 1 }, wx, wy, wz, 1.0f, 1.0f, 0, 1, 99),
+              "slots: a full table refuses the emit (it must not evict the oldest)");
+        check(field.Waves()[0].bornTick == survivorTick,
+              "slots: the refused emit left every existing wave untouched");
+
+        // 途中のスロットが空くと、次の Emit はその**最小 index** を取る
+        field.WavesForSnapshot()[4] = AcousticField::Wave{};
+        check(field.Emit(EntityID{ 42, 1 }, wx, wy, wz, 1.0f, 1.0f, 0, 1, 100)
+                  && field.Waves()[4].source.index == 42,
+              "slots: the freed slot 4 is the one reused (lowest free index wins)");
+    }
+
+    // ---- (11) 原点が閉セルなら開セルへ寄せる / 完全に埋まっていれば false ----
+    {
+        AcousticField field;
+        AcousticGridDesc g;
+        (void)acoustic::MakeGridDesc(8, 4, 8, 0.5f, 0.0f, 0.0f, 0.0f, g);
+        std::vector<uint8_t> occ(static_cast<size_t>(g.CellCount()), 0u);
+        occ[static_cast<size_t>(acoustic::CellIndex(g, 4, 2, 4))] = 1u; // 足元だけ塞ぐ
+        field.DebugSetGrid(g, std::move(occ));
+        float wx = 0.0f, wy = 0.0f, wz = 0.0f;
+        acoustic::CellToWorldCenter(g, 4, 2, 4, wx, wy, wz);
+        const bool nudged = field.Emit(EntityID{ 1, 1 }, wx, wy, wz, 1.0f, 2.0f, 0, 1, 0);
+        const AcousticField::Wave& w0 = field.Waves()[0];
+        check(nudged && !(w0.ox == 4 && w0.oy == 2 && w0.oz == 4)
+                  && !field.IsSolid(w0.ox, w0.oy, w0.oz),
+              "emit: an origin inside a collider is nudged to the first open neighbour");
+
+        AcousticField sealed;
+        std::vector<uint8_t> full(static_cast<size_t>(g.CellCount()), 1u);
+        sealed.DebugSetGrid(g, std::move(full));
+        check(!sealed.Emit(EntityID{ 1, 1 }, wx, wy, wz, 1.0f, 2.0f, 0, 1, 0),
+              "emit: a fully sealed grid refuses the emit");
+    }
+
+    // ---- (12) エネルギーは整数距離の純関数 (減衰は Audio の RolloffGain と同じ式) ----
+    {
+        const float amp = 1.0f;
+        const float cs = 0.5f;
+        const uint32_t maxD = 40 * acoustic::kFaceCost;
+        const float e0 = acoustic::EnergyAt(0, maxD, amp, cs);
+        const float e1 = acoustic::EnergyAt(11, maxD, amp, cs);
+        const float e2 = acoustic::EnergyAt(22, maxD, amp, cs);
+        check(e0 >= e1 && e1 > e2 && e2 > 0.0f, "energy: monotonically decreasing with distance");
+        check(acoustic::EnergyAt(maxD + 1, maxD, amp, cs) == 0.0f,
+              "energy: nothing past the reach (RolloffGain returns exactly 0 at maxDistance)");
+        // 同じ整数距離なら何度呼んでも同値 = 純関数 (経路も履歴も持たない)
+        check(acoustic::EnergyAt(33, maxD, amp, cs) == acoustic::EnergyAt(33, maxD, amp, cs),
+              "energy: a pure function of the integer chamfer distance");
     }
 
     if (failCount == 0) {

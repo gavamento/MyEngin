@@ -108,6 +108,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     bool jointShowcase = false;   // --joint-demo (M60i: 関節と機構のリプレイ被覆シーン)
     bool fogShowcase = false;     // --fog-demo (M57追補: 霧のショーケース)
     bool particleShowcase = false; // --particle-demo (M63a: 粒子表現のショーケース)
+    bool acousticShowcase = false; // --acoustic-demo (M65b: 音響伝播のショーケース)
     float terrainLodDistance = 0.0f; // --terrain-lod DIST (M58e: 0 = LOD 無効)
     float terrainSkirtDepth = 0.0f;  // --terrain-skirt D (M58e: 0 = 自動 / < 0 = 無し)
     std::wstring editActorPath;  // --edit-actor PATH (M48k)
@@ -394,6 +395,9 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             } else if (arg == L"--particle-demo") {
                 // M63a: 粒子表現のショーケース (golden 16/17 枚目 = CPU/GPU の突き合わせ)
                 particleShowcase = true;
+            } else if (arg == L"--acoustic-demo") {
+                // M65b: 音響伝播のショーケース (replay 7 ペア目の被写体)
+                acousticShowcase = true;
             } else if (arg == L"--terrain-demo") {
                 terrainShowcase = true; // M58c: 地形ショーケース (golden demo_terrain_deferred)
             } else if (arg == L"--terrain-lod" && i + 1 < argc) {
@@ -637,6 +641,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     app.jointShowcase = jointShowcase;     // M60i
     app.fogShowcase = fogShowcase;         // M57追補
     app.particleShowcase = particleShowcase; // M63a
+    app.acousticShowcase = acousticShowcase; // M65b
     app.terrainLodDistance = terrainLodDistance; // M58e
     app.terrainSkirtDepth = terrainSkirtDepth;   // M58e
     app.editActorPath = editActorPath;

@@ -14,6 +14,7 @@
 #include "Engine/Core/World.h"
 #include "Engine/Engine/Animation.h"
 #include "Engine/Engine/AnimatorController.h"
+#include "Engine/Engine/Acoustic/AcousticDebugDraw.h"
 #include "Engine/Engine/Acoustic/AcousticField.h"
 #include "Engine/Engine/Audio/AudioMixer.h"
 #include "Engine/Engine/Audio/AudioSourceSystem.h"
@@ -308,6 +309,10 @@ void RunOneTick(TickServices& ts)
     if (stepSim && ts.acoustic != nullptr) {
         MYE_PROFILE_SCOPE("acoustic");
         ts.acoustic->Sync(scene.GetWorld());
+        // 発音 → 前進の順。同じ tick で立った波も 1 リング目まで進む
+        // (「鳴った瞬間から音源セルの周りが光る」= 遅延ゼロに見える)
+        ts.acoustic->DrainEmitters(scene.GetWorld(), ctx.tickIndex);
+        ts.acoustic->Advance();
     }
     // ---- アニメーション (フェーズ 3.5): スクリプト後・Transform 前に LocalTransform を確定 ----
     // Play 中のみ進行 (編集時は Animation 窓が明示サンプリングする)。M51g からは
@@ -372,6 +377,12 @@ void RunOneTick(TickServices& ts)
             if (physDebug.Any()) {
                 BuildPhysicsDebugLines(scene.GetWorld(), solidContacts, physDebug, debugLines,
                                        ts.xpbd);
+            }
+            // 音響デバッグ可視化 (M65b)。物理と全く同じ扱い —
+            // 既定 off / 出力レーン / 再シム中は積まない
+            const AcousticDebugFlags& acDebug = GetAcousticDebugFlags();
+            if (acDebug.Any() && ts.acoustic != nullptr) {
+                BuildAcousticDebugLines(scene.GetWorld(), *ts.acoustic, acDebug, debugLines);
             }
         }
     }

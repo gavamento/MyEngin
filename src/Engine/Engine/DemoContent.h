@@ -204,6 +204,18 @@ void BuildParticleShowcaseScene(EngineContext& ctx);
 // テクスチャが要るのは、既定の procedural ソフト円が点対称で**回しても絵が変わらない**ため
 void RegisterParticleShowcaseContent(EngineContext& ctx);
 
+// M65b: 音響ショーケース (--acoustic-demo)。**L 字の廊下で 2 部屋を繋いだ**間取りに
+// 音源を 1 個置くだけのシーン。replay 7 ペア目の被写体で、波スロット表がハッシュに
+// 載る唯一の場所。
+// ★M65b 時点では**絵に出ない** (デバッグ線でしか見えない) — ライティングへの差し込みは
+//   M65e。それでも先にシーンを置くのは、伝播のハッシュ被覆をこのサブで確保するため。
+// ★音源は WavePinger (GameLogic.dll) が叩く。DLL が焼けていないと波が 1 本も出ず、
+//   ハッシュ被覆が丸ごと消える (joints の VehicleDemoDriver と同じ依存)。
+void BuildAcousticShowcaseScene(EngineContext& ctx);
+
+// 上のショーケースが参照するマテリアルの実体登録 (adem_ 接頭辞)
+void RegisterAcousticShowcaseContent(EngineContext& ctx);
+
 // assets\ 以下の .prefab.json / .anim.json を各ライブラリへ登録する (Editor / Runtime 共用)。
 // M48g からは .glb / .gltf / .fbx のスケルトンもここで (エンティティを作らずに) 登録する
 void RegisterAssetLibraries(EngineContext& ctx);

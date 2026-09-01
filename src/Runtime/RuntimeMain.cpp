@@ -51,6 +51,7 @@ public:
     bool jointShowcase = false;   // --joint-demo (M60i: 関節と機構のショーケース)
     bool fogShowcase = false;     // --fog-demo (M57追補: 霧 + GPU 粒子 + VFX。golden 15 枚目)
     bool particleShowcase = false; // --particle-demo (M63a: 粒子表現。golden 16/17 枚目)
+    bool acousticShowcase = false; // --acoustic-demo (M65b: 音響伝播。replay 7 ペア目)
     float terrainLodDistance = 0.0f; // --terrain-lod DIST (M58e: 0 = LOD 無効)
     float terrainSkirtDepth = 0.0f;  // --terrain-skirt D (M58e: 0 = 自動 / < 0 = 無し)
 
@@ -109,6 +110,7 @@ public:
         mye::RegisterJointShowcaseContent(ctx);   // M60i: jdemo_* 材質 + 車輪メッシュ (同上)
         mye::RegisterFogShowcaseContent(ctx);     // M57追補: fdemo_* 材質 (同上)
         mye::RegisterParticleShowcaseContent(ctx); // M63a: vdemo_* 材質 + 手続きテクスチャ (同上)
+        mye::RegisterAcousticShowcaseContent(ctx); // M65b: adem_* 材質 (同上)
         if (std::filesystem::exists(scenePath)) {
             mye::SceneSerializer::LoadFromFile(*ctx.scene, scenePath);
             // Editor と同じ「ロード直後 1 回」(M48e)。ここを揃えないと Editor で録った .rep と
@@ -116,6 +118,8 @@ public:
             mye::Prefab::RefreshNonOverridden(*ctx.scene, *ctx.prefabs);
         } else if (jointShowcase) {
             mye::BuildJointShowcaseScene(ctx); // M60i
+        } else if (acousticShowcase) {
+            mye::BuildAcousticShowcaseScene(ctx); // M65b
         } else if (particleShowcase) {
             mye::BuildParticleShowcaseScene(ctx); // M63a
         } else if (fogShowcase) {
@@ -381,6 +385,9 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             } else if (arg == L"--particle-demo") {
                 // M63a: 粒子表現のショーケース (golden 16/17 枚目 = CPU/GPU の突き合わせ)
                 app.particleShowcase = true;
+            } else if (arg == L"--acoustic-demo") {
+                // M65b: 音響伝播のショーケース (replay 7 ペア目の被写体)
+                app.acousticShowcase = true;
             } else if (arg == L"--terrain-lod" && i + 1 < argc) {
                 // M58e: 地形 LOD の切替距離。**golden は LOD 無しのまま**で、
                 // クラック A/B のときだけ点ける

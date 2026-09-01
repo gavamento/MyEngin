@@ -1,7 +1,7 @@
 //====================================================================================
 //                          AcousticField.cpp
 //  MyEngine/ 秋田蓮音                                                      09/01/2026
-//                                          音響の場：ボリューム探索と静的コライダの占有ベイク
+//                                          音響の場：占有ベイクと波面伝播（整数チャンファ Dijkstra）
 //====================================================================================
 #include "Engine/Engine/Acoustic/AcousticField.h"
 
@@ -67,6 +67,7 @@ uint64_t FoldBlocker(uint64_t h, const Blocker& b)
 AcousticField::AcousticField()
 {
     waves_.assign(kMaxWaves, Wave{});
+    fields_.assign(kMaxWaves, WaveField{});
 }
 
 void AcousticField::Reset()
@@ -79,6 +80,7 @@ void AcousticField::Reset()
     staticSig_ = 0;
     derivedValid_ = false;
     waves_.assign(kMaxWaves, Wave{});
+    fields_.assign(kMaxWaves, WaveField{});
 }
 
 bool AcousticField::IsSolid(int32_t cx, int32_t cy, int32_t cz) const
@@ -109,6 +111,7 @@ void AcousticField::DebugSetGrid(const AcousticGridDesc& grid, std::vector<uint8
     owner_ = kNullEntity;
     staticSig_ = 0;
     derivedValid_ = true; // セルフテストは Sync を呼ばないので「整合済み」を主張しておく
+    Rebuild();            // 占有が変わった = 距離場は引き直し (Sync の末尾と同じ扱い)
 }
 
 void AcousticField::Sync(World& world)
@@ -215,8 +218,16 @@ void AcousticField::Sync(World& world)
     if (derivedValid_ && sig == staticSig_) {
         return; // 何も変わっていない
     }
+    // ★シーン構築直後の 1 tick だけは**必ず 2 回焼く**。フェーズ 3.4 は TransformSystem
+    //   (フェーズ 4) より前なので、最初の tick では全コライダの WorldMatrix が既定値の
+    //   まま = 全部が原点に重なった署名になり、次の tick で本物の配置に変わるため。
+    //   決定論的な 2 回なので害は無い (実測: --acoustic-demo で 4 セル → 8064 セル)
     staticSig_ = sig;
     BakeOccupancy(world, bestVol.blockLayerMask);
+    // ★占有が変わったら距離場は**全部引き直す**。増分で育った波は古い占有で育っている
+    //   ので、ここを通さないと「巻き戻すと波の形が変わる」= 最悪の型のバグになる。
+    //   snapshot 復元後の Invalidate() もこの経路 (derivedValid_=false) でここへ来る
+    Rebuild();
 }
 
 void AcousticField::BakeOccupancy(World& world, uint32_t blockLayerMask)
@@ -303,4 +314,337 @@ void AcousticField::BakeOccupancy(World& world, uint32_t blockLayerMask)
     derivedValid_ = true;
 }
 
+// ---- 波面伝播 (M65b) ---------------------------------------------------------------
+//
+// Dial 法 (バケット付き Dijkstra)。26 近傍 x Borgefors の整数重み <11,16,19> なので
+// キーが 0..maxDist の整数に収まり、優先度キューが要らない。
+//
+// ★**キーが整数であることが決定論の核心**。物理の float は 1 ulp ずれても剛体が
+//   微動するだけだが、伝播は順序比較が 1 ulp ずれると訪問順が入れ替わり、親リンクが
+//   変わり、AI が聞く方向が変わる。規約は「順序を決めるものは全部整数。float は
+//   整数から導く末端の 1 式 (EnergyAt) だけ」。
+//
+// メモリの見積り (kMaxWaves = 16 の根拠):
+//   局所ボックスは軸ごとに **min(2*maxRing+1, dim)** セル。★グリッドでクリップされる
+//   のが効いていて、既定ボリューム (64x16x64 = 65,536 セル) なら 1 波 196 KB
+//   (uint16 dist + uint8 parentDir = 3 B/セル) → 16 本で 3.1 MB。
+//   上限が出るので固定本数で持ってよい (プールも LRU も要らない = 隠れた状態が無い)。
+// 重くなったときの縮退はこの順で (絵の劣化が小さい順):
+//   (1) ticksPerRing を上げる (2) cellSize 0.5→0.75 (セル数は 1/s^3)
+//   (3) kMaxWaves を下げる (4) 26→6 近傍 ← **波が菱形になるので最後の手段**
+
+namespace {
+
+// 局所ボックス内の線形 index。**x が最速** (acoustic::CellIndex と同じ並び)
+inline int32_t LocalIndex(const AcousticField::WaveField& f, int32_t lx, int32_t ly, int32_t lz)
+{
+    return (lz * f.sy + ly) * f.sx + lx;
+}
+
+} // namespace
+
+void AcousticField::SeedWave(uint32_t slot)
+{
+    const Wave& w = waves_[slot];
+    WaveField& f = fields_[slot];
+
+    // 面コストが 11 = 1 リングぶんなので、軸方向に maxRing セルより遠いセルは
+    // 必ず maxRing*11 を超える。だから箱は原点 ± maxRing で足りる (証明付きの切り詰め)
+    const int32_t r = static_cast<int32_t>(w.maxRing);
+    const int32_t x0 = (std::max)(0, w.ox - r);
+    const int32_t y0 = (std::max)(0, w.oy - r);
+    const int32_t z0 = (std::max)(0, w.oz - r);
+    const int32_t x1 = (std::min)(grid_.dimX - 1, w.ox + r);
+    const int32_t y1 = (std::min)(grid_.dimY - 1, w.oy + r);
+    const int32_t z1 = (std::min)(grid_.dimZ - 1, w.oz + r);
+    f.x0 = x0;
+    f.y0 = y0;
+    f.z0 = z0;
+    f.sx = x1 - x0 + 1;
+    f.sy = y1 - y0 + 1;
+    f.sz = z1 - z0 + 1;
+    f.maxDist = w.maxRing * acoustic::kFaceCost;
+
+    const size_t n = static_cast<size_t>(f.sx) * static_cast<size_t>(f.sy)
+                   * static_cast<size_t>(f.sz);
+    f.dist.assign(n, kUnreached);
+    f.parentDir.assign(n, kNoParent);
+    // バケットは capacity を捨てずに使い回す (波は毎秒何本も立つ)
+    f.buckets.resize(static_cast<size_t>(f.maxDist) + 1);
+    for (std::vector<int32_t>& b : f.buckets) {
+        b.clear();
+    }
+
+    const int32_t li = LocalIndex(f, w.ox - x0, w.oy - y0, w.oz - z0);
+    f.dist[static_cast<size_t>(li)] = 0;
+    f.buckets[0].push_back(li);
+}
+
+void AcousticField::AdvanceWaveOneRing(uint32_t slot)
+{
+    Wave& w = waves_[slot];
+    WaveField& f = fields_[slot];
+
+    // 1 リング = チャンファ距離 11 ぶん。[ring*11, (ring+1)*11) のバケットを昇順に空にする。
+    // ★relax の挿入先は必ず d+11 以上 = 現区間の**外**なので、処理済みバケットへ
+    //   書き戻されることが構造的に起きない (これが「1 リング = 幅 11」を選んだ理由)
+    const uint32_t lo = w.ring * acoustic::kFaceCost;
+    const uint32_t hi = lo + acoustic::kFaceCost; // 排他
+    for (uint32_t d = lo; d < hi && d <= f.maxDist; ++d) {
+        std::vector<int32_t>& bucket = f.buckets[d];
+        for (size_t k = 0; k < bucket.size(); ++k) {
+            const int32_t li = bucket[k];
+            if (f.dist[static_cast<size_t>(li)] != static_cast<uint16_t>(d)) {
+                continue; // 後からより短い距離で上書きされた古いエントリ
+            }
+            const int32_t lx = li % f.sx;
+            const int32_t ly = (li / f.sx) % f.sy;
+            const int32_t lz = li / (f.sx * f.sy);
+            for (int i = 0; i < acoustic::kNeighborCount; ++i) {
+                const acoustic::Neighbor& nb = acoustic::kNeighbors[i];
+                const int32_t nlx = lx + nb.dx;
+                const int32_t nly = ly + nb.dy;
+                const int32_t nlz = lz + nb.dz;
+                if (nlx < 0 || nlx >= f.sx || nly < 0 || nly >= f.sy || nlz < 0 || nlz >= f.sz) {
+                    continue; // 箱の外 = この波では必ず maxDist 超え
+                }
+                const uint32_t nd = d + nb.cost;
+                if (nd > f.maxDist) {
+                    continue;
+                }
+                const int32_t ni = LocalIndex(f, nlx, nly, nlz);
+                if (nd >= f.dist[static_cast<size_t>(ni)]) {
+                    continue;
+                }
+                // 閉セルは**絶対に訪れない**。だから壁面は「開セルと閉セルの境界」に
+                // 現れる — これが「壁を貫通せず、当たった面だけが光る」の正体。
+                // ★中間セルは見ない (= 斜めの角抜けを許す)。凸角を 11+11 ではなく 16 で
+                //   曲がれるので回折らしく見えるうえ、内側ループの IsSolid が 26 回で
+                //   済む (中間セル判定を入れると最大 74 回 = 伝播の主コストが 3 倍)。
+                //   代償は「斜め 1 セル厚の壁」が漏れること。壁は box で組む前提なので
+                //   ボクセル化すると必ず軸平行 1 セル厚以上になり、実際には起きない
+                //   (AcousticSelfTest (8b) が軸平行の 1 セル厚で漏れないことを固定)。
+                //   塞ぐ必要が出たら「面隣接の中間セルが 1 つでも開いていること」を条件に足す
+                if (IsSolid(nlx + f.x0, nly + f.y0, nlz + f.z0)) {
+                    continue;
+                }
+                f.dist[static_cast<size_t>(ni)] = static_cast<uint16_t>(nd);
+                // ★親は「隣から自分へ戻る向き」。表を (dz,dy,dx) 辞書順で中心だけ
+                //   抜いて並べてあるので反転は 25-i で求まる (表が要らない)
+                f.parentDir[static_cast<size_t>(ni)] =
+                    acoustic::OppositeNeighbor(static_cast<uint8_t>(i));
+                f.buckets[nd].push_back(ni);
+            }
+        }
+        bucket.clear();
+    }
+    ++w.ring;
+}
+
+void AcousticField::Rebuild()
+{
+    if (!grid_.Valid()) {
+        for (WaveField& f : fields_) {
+            f = WaveField{};
+        }
+        return;
+    }
+    for (uint32_t s = 0; s < kMaxWaves; ++s) {
+        Wave& w = waves_[s];
+        if (w.active == 0) {
+            fields_[s] = WaveField{};
+            continue;
+        }
+        // ★ここが本システムで最も重要な不変条件。ring 0 から target まで
+        //   AdvanceWaveOneRing を回すのは、増分で育てたときと**同じ関数を同じ回数**
+        //   同じ入力で呼ぶということ。だから結果は memcmp で一致する。
+        //   逆に「途中で占有が変わった波」は増分側が古い占有で育っているので一致しない —
+        //   だから占有を焼き直したら必ずここを通す (Sync の末尾)
+        const uint32_t target = w.ring;
+        w.ring = 0;
+        SeedWave(s);
+        while (w.ring < target) {
+            AdvanceWaveOneRing(s);
+        }
+    }
+}
+
+bool AcousticField::Emit(EntityID source, float wx, float wy, float wz, float loudness,
+                         float radiusM, uint32_t tone, uint32_t ticksPerRing, uint64_t tick)
+{
+    if (!grid_.Valid() || loudness <= 0.0f || radiusM <= 0.0f) {
+        return false;
+    }
+    int32_t cx = 0, cy = 0, cz = 0;
+    if (!acoustic::WorldToCell(grid_, wx, wy, wz, cx, cy, cz)) {
+        return false; // ボリュームの外で鳴った音はこの場では表現しない
+    }
+    if (IsSolid(cx, cy, cz)) {
+        // 足元が床コライダの中、という状況は普通に起きる。26 近傍を**表の順**に見て
+        // 最初の開セルへ寄せる (順序が決まっているので機種に依らない)
+        bool moved = false;
+        for (int i = 0; i < acoustic::kNeighborCount; ++i) {
+            const acoustic::Neighbor& nb = acoustic::kNeighbors[i];
+            if (!IsSolid(cx + nb.dx, cy + nb.dy, cz + nb.dz)) {
+                cx += nb.dx;
+                cy += nb.dy;
+                cz += nb.dz;
+                moved = true;
+                break;
+            }
+        }
+        if (!moved) {
+            return false; // 完全に埋まっている
+        }
+    }
+
+    // ★満杯なら**最古を潰さず false を返す**。潰す実装にすると「満杯時にどの波が
+    //   生き残るか」が到着順に依存し、しかも .rep には現れない形で挙動が変わる
+    uint32_t slot = kMaxWaves;
+    for (uint32_t s = 0; s < kMaxWaves; ++s) {
+        if (waves_[s].active == 0) {
+            slot = s; // **最小 index の空き** = 決定論のタイブレーク
+            break;
+        }
+    }
+    if (slot == kMaxWaves) {
+        return false;
+    }
+
+    // 到達上限。★float→int の変換はこの 1 式に閉じる (**切り捨て**)。
+    //   順序を決める比較には float を一切使わないので、ここが唯一の境界
+    const uint32_t rings = static_cast<uint32_t>(radiusM / grid_.cellSize);
+    Wave& w = waves_[slot];
+    w = Wave{};
+    w.active = 1;
+    w.source = source;
+    w.ox = cx;
+    w.oy = cy;
+    w.oz = cz;
+    w.ring = 0;
+    w.maxRing = std::clamp(rings, 1u, acoustic::kMaxWaveRing);
+    w.ticksPerRing = std::clamp(ticksPerRing, 1u, 64u);
+    w.phase = 0;
+    w.amplitude = loudness;
+    w.tone = tone;
+    w.bornTick = tick;
+    SeedWave(slot);
+    return true;
+}
+
+void AcousticField::DrainEmitters(World& world, uint64_t tick)
+{
+    if (!grid_.Valid()) {
+        return; // 存在ゲートの内側。ボリュームが無ければエミッタは走査すらしない
+    }
+    // 発音要求 1 件。**ポインタは書き戻しのハンドルにしか使わない** —
+    // 並べ替えのキーは entity.index (規則 7。ポインタ値を sim に混ぜてはならない)
+    struct Pending {
+        EntityID entity = kNullEntity;
+        AcousticEmitterComponent* comp = nullptr;
+        float wx = 0.0f, wy = 0.0f, wz = 0.0f;
+    };
+    std::vector<Pending> pend;
+    const ComponentTypeId req[] = { AcousticEmitterComponent::sTypeId,
+                                    WorldMatrixComponent::sTypeId };
+    world.ForEachArchetype(req, [&](Archetype& arch) {
+        const int ei = arch.FindTypeIndex(AcousticEmitterComponent::sTypeId);
+        const int wi = arch.FindTypeIndex(WorldMatrixComponent::sTypeId);
+        for (uint32_t row = 0; row < arch.Count(); ++row) {
+            const EntityID e = arch.EntityAt(row);
+            if (!IsEntityActive(world, e)) {
+                continue;
+            }
+            Pending p;
+            p.entity = e;
+            p.comp = static_cast<AcousticEmitterComponent*>(arch.GetPtr(ei, row));
+            const auto& wm =
+                static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row))->value;
+            p.wx = wm.m[3][0];
+            p.wy = wm.m[3][1];
+            p.wz = wm.m[3][2];
+            pend.push_back(p);
+        }
+    });
+    std::sort(pend.begin(), pend.end(),
+              [](const Pending& a, const Pending& b) { return a.entity.index < b.entity.index; });
+
+    for (const Pending& p : pend) {
+        AcousticEmitterComponent& em = *p.comp;
+        if (em.cooldown > 0) {
+            --em.cooldown;
+        }
+        if (em.pendingLoudness <= 0.0f) {
+            continue;
+        }
+        if (em.cooldown > 0) {
+            em.pendingLoudness = 0.0f; // クールダウン中の要求は落とす (溜め込まない)
+            continue;
+        }
+        const uint32_t tone = static_cast<uint32_t>(std::clamp(em.pendingTone, 0, 3));
+        const uint32_t tpr = static_cast<uint32_t>(std::clamp(em.ticksPerRing, 1, 64));
+        if (Emit(p.entity, p.wx, p.wy, p.wz, em.pendingLoudness, em.pendingRadiusM, tone, tpr,
+                 tick)) {
+            em.cooldown = (std::max)(0, em.cooldownTicks);
+        }
+        em.pendingLoudness = 0.0f;
+        em.pendingRadiusM = 0.0f;
+    }
+}
+
+void AcousticField::Advance()
+{
+    if (!grid_.Valid()) {
+        return;
+    }
+    MYE_PROFILE_SCOPE("acoustic.advance");
+    for (uint32_t s = 0; s < kMaxWaves; ++s) {
+        Wave& w = waves_[s];
+        if (w.active == 0) {
+            continue;
+        }
+        ++w.phase;
+        if (w.phase < w.ticksPerRing) {
+            continue; // 分周中。伝播速度 = cellSize * 60 / ticksPerRing [m/s]
+        }
+        w.phase = 0;
+        if (w.ring >= w.maxRing) {
+            // 最終リングを ticksPerRing のあいだ見せてから消す
+            w = Wave{};
+            fields_[s] = WaveField{};
+            continue;
+        }
+        AdvanceWaveOneRing(s);
+    }
+}
+
+uint16_t AcousticField::DistanceAt(uint32_t slot, int32_t cx, int32_t cy, int32_t cz) const
+{
+    if (slot >= kMaxWaves || waves_[slot].active == 0) {
+        return kUnreached;
+    }
+    const WaveField& f = fields_[slot];
+    const int32_t lx = cx - f.x0;
+    const int32_t ly = cy - f.y0;
+    const int32_t lz = cz - f.z0;
+    if (lx < 0 || lx >= f.sx || ly < 0 || ly >= f.sy || lz < 0 || lz >= f.sz) {
+        return kUnreached;
+    }
+    return f.dist[static_cast<size_t>(LocalIndex(f, lx, ly, lz))];
+}
+
+uint8_t AcousticField::ParentDirAt(uint32_t slot, int32_t cx, int32_t cy, int32_t cz) const
+{
+    if (slot >= kMaxWaves || waves_[slot].active == 0) {
+        return kNoParent;
+    }
+    const WaveField& f = fields_[slot];
+    const int32_t lx = cx - f.x0;
+    const int32_t ly = cy - f.y0;
+    const int32_t lz = cz - f.z0;
+    if (lx < 0 || lx >= f.sx || ly < 0 || ly >= f.sy || lz < 0 || lz >= f.sz) {
+        return kNoParent;
+    }
+    return f.parentDir[static_cast<size_t>(LocalIndex(f, lx, ly, lz))];
+}
 } // namespace mye

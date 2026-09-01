@@ -2685,6 +2685,171 @@ void BuildFogShowcaseScene(EngineContext& ctx)
     w.ApplyStructuralChanges();
 }
 
+// ---- M65b: 音響ショーケース (--acoustic-demo) ----
+// 接頭辞は **adem_**。材質は全ショーケース分が無条件登録されるので、他と名前が被ると
+// 先に登録したほうが黙って上書きされる (M54a の申し送りと同じ配慮)。
+// 既使用: rdemo_ / tdemo_ / pdemo_ / jdemo_ / fdemo_ / vdemo_
+void RegisterAcousticShowcaseContent(EngineContext& ctx)
+{
+    RenderResources& res = *ctx.resources;
+    const AssetID white = res.textures.White();
+    const AssetID shader = AssetID{ HashStr("forward_lit") };
+    res.meshes.Cube();
+
+    auto makeMat = [&](const char* name, float r, float g, float b) {
+        Material m;
+        m.shader = shader;
+        m.texture = white;
+        m.baseColor = { r, g, b, 1.0f };
+        return res.materials.Register(name, m);
+    };
+    // ★暗い。企画は「世界は真っ暗で、音の波だけが世界を描く」なので素の色は沈めてある。
+    //   ただし**真っ黒にはしない** — M65e で golden を撮るときに全画素が黒だと
+    //   機能が壊れて何も出なくても golden 一致で通る = 回帰検出がゼロになる
+    //   (計画 M65e の最大の罠)。壁と床の輪郭が薄く読める程度に留めてある
+    makeMat("adem_floor", 0.13f, 0.14f, 0.16f);
+    makeMat("adem_wall", 0.20f, 0.20f, 0.23f);
+    makeMat("adem_source", 0.85f, 0.72f, 0.30f); // 音源の目印 (黄)
+}
+
+// ---- 音響ショーケースの間取り ----
+// 12x12 タイル / 1 タイル = 2m → 24x24m。'#' = 壁 / '.' = 通れる。
+// **L 字の廊下で 2 部屋を繋ぐ**のが唯一の要件 — 直線で見通せる配置にすると
+// 「角を回り込んだ」ことが絵から読めない (シャドウマップでも同じ絵になってしまう)。
+//   部屋 A (左上) → 横に伸びる廊下 (row 4) → 縦の廊下 (col 9) → 部屋 B (下)
+// 音源は部屋 A に置く。部屋 B は**部屋 A から一直線には見えない**位置にある
+static const char* const kAcousticMap[12] = {
+    "############", // r0
+    "#....#######", // r1  部屋 A (col 1..4)
+    "#....#######", // r2
+    "#....#######", // r3
+    "#..........#", // r4  横の廊下 (col 1..10)
+    "#########.##", // r5  縦の廊下 (col 9)
+    "#########.##", // r6
+    "##.........#", // r7  部屋 B (col 2..10)
+    "##.........#", // r8
+    "##.........#", // r9
+    "##.........#", // r10
+    "############", // r11
+};
+constexpr float kAcousticTile = 2.0f;
+constexpr int kAcousticMapN = 12;
+
+// マップ座標 -> ワールド。中心が原点に来るように寄せる
+static float AcousticMapToWorld(int i)
+{
+    return (static_cast<float>(i) - (kAcousticMapN - 1) * 0.5f) * kAcousticTile;
+}
+
+// M65b: 音響ショーケース (--acoustic-demo)。
+// ★**波が壁を貫通せず L 字を曲がる**ことを見せるためだけのシーン。
+//   M65b 時点では絵は出ず、デバッグ線 (View > 音響) でしか見えない —
+//   ライティングに差し込むのは M65e。それでも今サブで置くのは、replay 7 ペア目の
+//   被写体 (= 波のハッシュ被覆) がここにしか無いため。
+void BuildAcousticShowcaseScene(EngineContext& ctx)
+{
+    Scene& s = *ctx.scene;
+    World& w = s.GetWorld();
+    RenderResources& res = *ctx.resources;
+    s.SetName("acoustic_showcase");
+    const AssetID cube = res.meshes.Cube();
+
+    auto box = [&](const char* name, float x, float y, float z, float sx, float sy, float sz,
+                   const char* mat) {
+        GameObject go = s.CreateGameObject(name);
+        go.SetLocalPosition(x, y, z);
+        go.SetLocalScale(sx, sy, sz);
+        auto* mr = go.AddComponent<MeshRendererComponent>();
+        mr->mesh = cube;
+        mr->material = AssetID{ HashStr(mat) };
+        auto* col = go.AddComponent<ColliderComponent>();
+        col->shape = 1; // box。★これが占有ベイクの入力 = 音を遮る実体
+        col->halfExtents = { 0.5f, 0.5f, 0.5f }; // スケールが掛かるので単位箱でよい
+        return go;
+    };
+
+    GameObject camera = s.CreateGameObject("Main Camera");
+    camera.AddComponent<CameraComponent>();
+    // ★間取り全体が 1 枚に入る俯瞰。**L 字の 2 本の腕と 2 部屋が同時に見えること**が
+    //   画角の唯一の要件 — 片方の腕が切れていると「回り込んだ」が絵から読めない
+    camera.SetLocalPosition(0.0f, 26.0f, -17.0f);
+    camera.SetLocalRotationEuler(56.0f, 0.0f, 0.0f);
+
+    // 弱い環境光。★企画は真っ暗だが、**壁の輪郭が読めない画は golden にならない**
+    //   (何も出なくても一致してしまう)。輪郭だけが見える強さに落としてある
+    GameObject sun = s.CreateGameObject("Sun");
+    auto* sunLight = sun.AddComponent<LightComponent>();
+    sunLight->intensity = 0.35f;
+    sun.SetLocalRotationEuler(62.0f, 24.0f, 0.0f);
+
+    box("Floor", 0.0f, -0.5f, 0.0f, 26.0f, 1.0f, 26.0f, "adem_floor");
+
+    // ---- 壁 ----
+    // 1 タイル = 1 箱。**連結して 1 枚の板にまとめない** — まとめると占有ベイクの
+    // 入力が減って速くはなるが、間取りを変えたときに手で貼り直すことになる
+    for (int r = 0; r < kAcousticMapN; ++r) {
+        for (int c = 0; c < kAcousticMapN; ++c) {
+            if (kAcousticMap[r][c] != '#') {
+                continue;
+            }
+            char name[32];
+            std::snprintf(name, sizeof(name), "Wall_%02d_%02d", r, c);
+            box(name, AcousticMapToWorld(c), 1.5f, AcousticMapToWorld(r), kAcousticTile, 3.0f,
+                kAcousticTile, "adem_wall");
+        }
+    }
+
+    // ---- 音響ボリューム ----
+    // 52x6x52 セル / 0.5m = 26x3x26m。間取り (24x24m) を水平に 1m ずつ包んでいる。
+    // ★グリッド外は壁扱いなので、包みきれていないと端で波が消えて理由不明のバグに見える。
+    // ★★**高さは壁より高くしてはいけない**。中心 1.75 / 6 セル = y[0.25, 3.25] は
+    //   壁 (y[0,3]) が全 6 層を塞ぐ高さで、床 (y[-1,0]) はグリッドの外に落ちる。
+    //   最初 8 セル (y[-0.5,3.5]) で組んだら**壁の上に 0.5m の隙間が開いて波が壁を
+    //   飛び越え**、L 字を曲がらずに直接となりの部屋へ届いていた (実測: 到達セルが
+    //   開セルのほぼ全部になり、企画の中核が絵から消えた)。
+    //   高さ方向の包み込みは水平方向と逆で、**きつく取る**のが正しい
+    {
+        GameObject vol = s.CreateGameObject("Acoustic Volume");
+        vol.SetLocalPosition(0.0f, 1.75f, 0.0f);
+        auto* av = vol.AddComponent<AcousticVolumeComponent>();
+        av->dimX = 52;
+        av->dimY = 6;
+        av->dimZ = 52;
+        av->cellSize = 0.5f;
+        av->navCellRatio = 2;
+    }
+
+    // ---- 音源 (部屋 A) ----
+    // ★**生成順の末尾に置く**。デモへ物を足すときに前へ挿すと粒子 RNG のストリームが
+    //   ずれる、という既知の罠と同じ理由で、末尾追加を習慣にしておく
+    {
+        GameObject src = s.CreateGameObject("Wave Source");
+        src.SetLocalPosition(AcousticMapToWorld(2), 1.0f, AcousticMapToWorld(2));
+        src.SetLocalScale(0.6f, 0.6f, 0.6f);
+        auto* mr = src.AddComponent<MeshRendererComponent>();
+        mr->mesh = cube;
+        mr->material = AssetID{ HashStr("adem_source") };
+        auto* em = src.AddComponent<AcousticEmitterComponent>();
+        em->ticksPerRing = 2; // 0.5m / 2 tick = 15 m/s。部屋 A から部屋 B まで約 1.6 秒
+        em->cooldownTicks = 30;
+        // WavePinger (GameLogic.dll) が 150 tick ごとに pendingLoudness を書く。
+        // ★DLL が焼けていないと**波が 1 本も出ない** — replay 7 ペア目のハッシュ被覆が
+        //   丸ごと消えるので、joints の VehicleDemoDriver と同じ「DLL 依存の被写体」
+        AttachScriptIfRegistered(w, src.Id(), "WavePinger");
+    }
+
+    // ---- 聴者 (部屋 B) ----
+    // M65b では鏡が空のままだが、**デバッグ線の被写体**として先に置いてある。
+    // M65f でここに「いつ・どこから聞こえたか」が入る
+    {
+        GameObject ear = s.CreateGameObject("Listener");
+        // ★部屋 B の**入口寄り**に置く。奥に置くと L 字経路が 32m を超えて
+        //   一度も届かず、M65f の聴覚 AI が無反応のまま「壊れていないのに動かない」になる
+        ear.SetLocalPosition(AcousticMapToWorld(8), 1.0f, AcousticMapToWorld(8));
+        ear.AddComponent<AcousticListenerComponent>();
+    }
+}
+
 void RegisterAssetLibraries(EngineContext& ctx)
 {
     std::error_code ec;

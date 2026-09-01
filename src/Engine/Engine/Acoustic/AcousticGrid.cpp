@@ -8,6 +8,7 @@
 #include <cmath>
 
 #include "Engine/Core/Log.h"
+#include "Engine/Engine/Audio/SpatialMath.h"
 
 namespace mye {
 namespace acoustic {
@@ -85,6 +86,18 @@ bool MakeGridDesc(int32_t dimX, int32_t dimY, int32_t dimZ, float cellSize, floa
     out.minY = centerY - static_cast<float>(dimY) * cellSize * 0.5f;
     out.minZ = centerZ - static_cast<float>(dimZ) * cellSize * 0.5f;
     return true;
+}
+
+float EnergyAt(uint32_t chamferDist, uint32_t maxChamferDist, float amplitude, float cellSize)
+{
+    if (chamferDist > maxChamferDist) {
+        return 0.0f;
+    }
+    const float d = ChamferToMeters(chamferDist, cellSize);
+    const float maxD = ChamferToMeters(maxChamferDist, cellSize);
+    // minD = 1 セル: 音源セルそのものは減衰なし (それより内側は無い)。
+    // rolloff 2 = 逆二乗 = 物理的なパワー減衰 (SpatialMath.h の並び)
+    return amplitude * RolloffGain(2, cellSize, maxD, d);
 }
 
 bool SameGrid(const AcousticGridDesc& a, const AcousticGridDesc& b)
