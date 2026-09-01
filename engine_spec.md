@@ -1569,6 +1569,33 @@ active total, because a wave expiring in the same tick would otherwise hide one 
 Randomness is drawn only when agents exist, and only for patrol and search wander targets. One
 draw in a scene without agents shifts every existing replay's random stream.
 
+**The game skin (M65g).** First-person look, placing and retrieving lights, and throwing decoys are
+three C++ scripts in GameLogic.dll. They add nothing to the engine: the view comes from v15's
+`GetMouseDelta` / `SetCursorMode`, movement from v5's `CharacterMove`, footsteps from M65c's
+automatic emitter, and every field write goes through v11's generic `SetComponentField`. The API
+version stays at v15 / 104 slots.
+
+The look angles live in registered script fields, which is what puts them in the world hash, and the
+acoustic replay pair now records with `--synth-input` so that the recorded raw mouse deltas drive
+them. Without that, a headless run leaves every input at a constant zero and a miswiring would fail
+identically on both sides of the comparison — the same hole the local-multiplayer pair was built to
+close.
+
+Two things that look like implementation detail are actually the design. **Components added from a
+script do not exist until the end of the tick**, so the lights are three entities the scene builds
+up front and the tool moves and dims; creating a light at runtime would leave one frame in which a
+default *directional* light at full intensity floods a game whose whole premise is darkness. And
+**the camera is untouched until the player asks for it** with a dedicated key: the two acoustic
+reference images are overhead shots, so a view that snapped to first person the moment a mouse
+crossed the window would make screenshot regression depend on where someone left the cursor.
+
+What the scripts express of the design document is the loop, not the content: speed chooses stride
+length so a run scatters more waves than a walk (loudness itself stays the floor material's to
+decide); standing still emits a breath small enough to light your own feet and nothing else;
+placing takes 150 ticks during which the light itself is the only progress indicator, moving
+cancels it, and a cancelled placement costs time but never a light; being caught costs one light
+and returns you to the start.
+
 ---
 
 ## 11. Debug/Release Consistency Policy

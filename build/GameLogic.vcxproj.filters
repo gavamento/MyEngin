@@ -55,6 +55,15 @@
     <ClCompile Include="..\src\GameLogic\Scripts\WalkerDemo.cpp">
       <Filter>Scripts</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\GameLogic\Scripts\WatcherFpsCamera.cpp">
+      <Filter>Scripts</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\GameLogic\Scripts\WatcherLightTool.cpp">
+      <Filter>Scripts</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\GameLogic\Scripts\WatcherThrowTool.cpp">
+      <Filter>Scripts</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\GameLogic\Scripts\WavePinger.cpp">
       <Filter>Scripts</Filter>
     </ClCompile>

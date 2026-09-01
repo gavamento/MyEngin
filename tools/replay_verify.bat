@@ -229,9 +229,15 @@ rem   実走検査で、selftest の memcmp と合わせて「増分と引き直
 rem ★波は WavePinger (GameLogic.dll) が 150 tick ごとに立てる。DLL が焼けていないと
 rem   波が 1 本も出ず、**ハッシュ節が内容ゲートで畳まれないまま緑になる** (= 何も検査
 rem   していない状態で PASS する) ので、DLL のビルドはこの検査の前提。
+rem ★M65g から **記録側に --synth-input を渡す**。プレイヤー (Watcher* 3 本) の視点角は
+rem   GetMouseDelta を積分した登録フィールドで、無入力だと恒常ゼロのまま「配線ミスが
+rem   記録側と検証側で対称に起きて一致してしまう」= mp ペアと同じ穴が開く。合成入力は
+rem   生マウスデルタも流す (M64a) ので、これで視点・移動・足音・敵との接触までが
+rem   Debug/Release のビット一致として機械検証される。
+rem   ★検証側には渡さない (合成入力は .rep に記録済み。mp ペアと同じ理由)
 rem シーンはコードから毎回組み直す (parts / physics / joints と同じ流儀)
 :job_acoustic
-call :chain cache\golden_acoustic.rep "--acoustic-demo" "--acoustic-demo"
+call :chain cache\golden_acoustic.rep "--acoustic-demo --synth-input" "--acoustic-demo"
 exit /b %ERRORLEVEL%
 
 rem ---- タイムトラベルの巻き戻し (M52e) ----

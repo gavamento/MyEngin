@@ -2725,6 +2725,14 @@ void RegisterAcousticShowcaseContent(EngineContext& ctx)
     //   違うのは載っているセンサーだけ、という設計が絵で確かめられる
     makeMat("adem_agent_ear", 0.58f, 0.20f, 0.22f);
     makeMat("adem_agent_eye", 0.22f, 0.52f, 0.26f);
+    // ---- M65g: プレイヤーと道具 ----
+    // ★設置光 (adem_lamp) だけ明るい。**スクリプトが強度を 0 から育てる**ので、
+    //   球そのものが暗いと「置いている最中」が絵から読めない (企画 4-3 はゲージを
+    //   出さないと決めているので、光の育ち方が唯一の進行表示になる)
+    makeMat("adem_player", 0.30f, 0.44f, 0.58f);
+    makeMat("adem_lamp", 0.95f, 0.86f, 0.62f);
+    makeMat("adem_stone", 0.38f, 0.36f, 0.33f);
+    makeMat("adem_bottle", 0.30f, 0.52f, 0.44f);
 }
 
 // ---- 音響ショーケースの間取り ----
@@ -3029,6 +3037,71 @@ void BuildAcousticShowcaseScene(EngineContext& ctx)
         auto* seek = eye.AddComponent<LightSeekerComponent>();
         seek->attractRadius = 30.0f;
         seek->minIntensity = 0.5f; // 太陽 (0.35) には引かれない (平行光は元々見ない)
+    }
+
+    // ---- M65g: プレイヤー (企画のゲームループを通すための薄皮) ----
+    // ★**エンジンには 1 行も足していない**。一人称視点 / 光の設置・回収 / 投擲は
+    //   すべて GameLogic.dll の C++ スクリプト 3 本で、使っているのは既存 ABI (v15) だけ。
+    // ★置き場所は部屋 A の隅。企画 4-2 の「決して消えない開始地点の光」= M65e で置いた
+    //   Placed Light がすぐそこにあり、**捕まったときに押し戻される先**でもある。
+    //   敵 2 体の経路 (廊下 → 部屋 A の光) から 1.7m (catchRadius) 以上離してあるので、
+    //   無入力のスクショ実行で勝手に捕まって絵が動くことはない。
+    // ★CC 単体 (ソリッド Collider なし) — 足音のレイが自分に当たると無音になる、という
+    //   M65c からの規約。歩行者・敵とまったく同じ組み方。
+    // ★**関数の末尾に足す** (以降のエンティティ index を動かさない = 波スロットの
+    //   割り当て順と粒子 RNG のストリームを保つ)
+    {
+        GameObject player = s.CreateGameObject("Watcher");
+        // ★y は敵 2 体と同じ 1.35。**CC の寸法にはスケールが掛かる** ので、
+        //   height 1.6 x scale.y 1.6 = 全高 2.56 → 静止時の中心は床天面 + 1.28 になる。
+        //   1.0 で置いたら床にめり込んだ状態から始まり、押し出しで浮き上がりながら
+        //   歩くという分かりにくい壊れ方をした (probe で発見)
+        player.SetLocalPosition(AcousticMapToWorld(1), 1.35f, AcousticMapToWorld(1));
+        player.SetLocalScale(0.55f, 1.6f, 0.55f);
+        auto* mr = player.AddComponent<MeshRendererComponent>();
+        mr->mesh = cube;
+        mr->material = AssetID{ HashStr("adem_player") };
+        auto* cc = player.AddComponent<CharacterControllerComponent>();
+        cc->radius = 0.3f;
+        cc->height = 1.6f;
+        auto* em = player.AddComponent<AcousticEmitterComponent>();
+        // 足音は**床材が大きさを決める** (企画 3-4)。歩幅だけを WatcherFpsCamera が
+        // 移動モード (しゃがみ / 歩き / 走り) で書き替える = 企画 3-2 の速度と危険度
+        em->autoFootstep = true;
+        em->stepDistanceM = 0.9f;
+        em->ticksPerRing = 2;
+        em->cooldownTicks = 12;
+        // ★3 本とも AttachScriptIfRegistered。DLL が焼けていなくてもシーンは成立する
+        //   (プレイヤーはただの箱として立っているだけになる)
+        AttachScriptIfRegistered(w, player.Id(), "WatcherFpsCamera");
+        AttachScriptIfRegistered(w, player.Id(), "WatcherLightTool");
+        AttachScriptIfRegistered(w, player.Id(), "WatcherThrowTool");
+    }
+
+    // ---- M65g: 携行できる光 3 本 (企画 4-1 の上限そのもの) ----
+    // ★★**スクリプトが実行時に生成するのではなく、シーンが用意して使い回す**。
+    //   スクリプトから足したコンポーネントは tick 末まで存在しない (EngineAPI.h v14 の明文)
+    //   ので、生成した同じ tick に LightComponent へ書いても 1 バイトも入らず、
+    //   翌 tick までの 1 フレーム**既定値の平行光** (白 / intensity 1.0) が
+    //   シーン全体を照らす = 暗闇のゲームで最悪の閃光になる (probe で実測して設計を変えた)。
+    //   使い回しなら構造変更が 1 度も起きず、企画の「同時に持てるのは 3 本」とも一致する。
+    // ★床下 (y=-4) に格納しておく。床は y[-1,0] を占めるので俯瞰のスクショには出ず、
+    //   intensity 0 なのでライティングにも LightSeeker (minIntensity 0.5) にも寄与しない
+    //   = golden は「プレイヤーの箱が増えたぶん」しか動かない
+    for (int i = 0; i < 3; ++i) {
+        char name[32];
+        std::snprintf(name, sizeof(name), "Watcher Lamp %d", i);
+        GameObject lamp = s.CreateGameObject(name);
+        lamp.SetLocalPosition(0.0f, -4.0f, 0.0f);
+        lamp.SetLocalScale(0.3f, 0.3f, 0.3f);
+        auto* lmr = lamp.AddComponent<MeshRendererComponent>();
+        lmr->mesh = res.meshes.Sphere();
+        lmr->material = AssetID{ HashStr("adem_lamp") };
+        auto* pl = lamp.AddComponent<LightComponent>();
+        pl->type = 1; // 点光源
+        pl->range = 6.0f;
+        pl->intensity = 0.0f; // 消灯 = 手札。設置中にスクリプトが 0 から育てる
+        pl->color = { 1.0f, 0.86f, 0.62f }; // 携行灯らしい暖色 (残光の寒色と対になる)
     }
 }
 
