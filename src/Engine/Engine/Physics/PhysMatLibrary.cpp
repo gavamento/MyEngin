@@ -128,6 +128,11 @@ json PhysMatLibrary::ToJson(const PhysMat& m)
     j["rollingResistance"] = m.rollingResistance;
     j["dragCoefficient"] = m.dragCoefficient;
     j["adhesion"] = m.adhesion; // M60d
+    // M65c: 音響。**書くのは常に 3 本とも** — 0 でも書いておかないと、エディタで
+    // 保存した資産だけキーが欠けて「読み直すと無音に戻る」種類の事故になる
+    j["acousticLoudness"] = m.acousticLoudness;
+    j["acousticRadiusM"] = m.acousticRadiusM;
+    j["acousticTone"] = m.acousticTone;
     return j;
 }
 
@@ -147,6 +152,13 @@ bool PhysMatLibrary::FromJson(const json& j, PhysMat& out)
     out.rollingResistance = ReadFloat(j, "rollingResistance", def.rollingResistance);
     out.dragCoefficient = ReadFloat(j, "dragCoefficient", def.dragCoefficient);
     out.adhesion = ReadFloat(j, "adhesion", def.adhesion); // M60d (旧ファイルは 0)
+    // M65c (旧ファイルは 3 本とも既定 = 無音)。tone だけ整数なので ReadFloat を通さない —
+    // 通すと 0..3 の意味が float の丸めに乗ってしまう
+    out.acousticLoudness = ReadFloat(j, "acousticLoudness", def.acousticLoudness);
+    out.acousticRadiusM = ReadFloat(j, "acousticRadiusM", def.acousticRadiusM);
+    if (j.contains("acousticTone") && j["acousticTone"].is_number_integer()) {
+        out.acousticTone = j["acousticTone"].get<int32_t>();
+    }
     Sanitize(out);
     return true;
 }
@@ -164,6 +176,12 @@ void PhysMatLibrary::Sanitize(PhysMat& m)
     m.dragCoefficient = SanitizeValue(m.dragCoefficient, def.dragCoefficient, 0.0f, 100.0f);
     // 粘着力は N。上限 1e6 は「1t の物体を 100G で保持できる」程度あれば表現上困らない
     m.adhesion = SanitizeValue(m.adhesion, def.adhesion, 0.0f, 1.0e6f);
+    // M65c: 振幅の上限 100 / 半径の上限 1000m は「表現上困らない」以上の意味は無い。
+    // ★重要なのは**下限 0** — 負の振幅は EnergyAt の単調減少を破り、負の半径は
+    //   maxRing の切り捨てで 0 になって「鳴ったのに 1 リングも進まない波」を作る
+    m.acousticLoudness = SanitizeValue(m.acousticLoudness, def.acousticLoudness, 0.0f, 100.0f);
+    m.acousticRadiusM = SanitizeValue(m.acousticRadiusM, def.acousticRadiusM, 0.0f, 1000.0f);
+    m.acousticTone = std::clamp(m.acousticTone, 0, 3);
 }
 
 // ==== physmat:: モジュール注入 ====

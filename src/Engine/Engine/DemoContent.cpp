@@ -2710,6 +2710,16 @@ void RegisterAcousticShowcaseContent(EngineContext& ctx)
     makeMat("adem_floor", 0.13f, 0.14f, 0.16f);
     makeMat("adem_wall", 0.20f, 0.20f, 0.23f);
     makeMat("adem_source", 0.85f, 0.72f, 0.30f); // 音源の目印 (黄)
+    // ---- M65c: 床材タイル 6 種 ----
+    // ★色は**音の大きさの順に明るく**してある。企画は「材質は事前には分からない」だが、
+    //   デモは検証用なので「どのタイルで大きい波が出たか」が絵で読めることを優先する
+    makeMat("adem_carpet", 0.26f, 0.15f, 0.14f);
+    makeMat("adem_wood", 0.34f, 0.24f, 0.13f);
+    makeMat("adem_gravel", 0.30f, 0.30f, 0.27f);
+    makeMat("adem_water", 0.12f, 0.26f, 0.38f);
+    makeMat("adem_metal", 0.46f, 0.48f, 0.52f);
+    makeMat("adem_glass", 0.34f, 0.48f, 0.50f);
+    makeMat("adem_drop", 0.62f, 0.30f, 0.28f); // 衝撃音の被写体 (落ちてくる箱)
 }
 
 // ---- 音響ショーケースの間取り ----
@@ -2847,6 +2857,95 @@ void BuildAcousticShowcaseScene(EngineContext& ctx)
         //   一度も届かず、M65f の聴覚 AI が無反応のまま「壊れていないのに動かない」になる
         ear.SetLocalPosition(AcousticMapToWorld(8), 1.0f, AcousticMapToWorld(8));
         ear.AddComponent<AcousticListenerComponent>();
+    }
+
+    // ---- M65c: 床材タイル (横の廊下 row 4 の col 2..7) ----
+    // ★**厚み 0.6 / 中心 y=0.15 = 天面 0.45**。この 2 つの数字には理由がある:
+    //   (a) 天面が音響ボリュームの下端 (y=0.25) より**上**にあること —
+    //       下にあると衝撃の接触点がグリッド外に落ちて WorldToCell が失敗し、
+    //       「材質は正しいのに波が 1 本も出ない」という理由の分かりにくい沈黙になる。
+    //   (b) セル中心 (層 0 = y=0.5) には**届かない**こと — 届くと廊下の床が
+    //       占有セルになり、M65b で測った「断面 24 セルの平面波」が変わる。
+    // ★6 枚を**隙間なく並べる**のも意図的。歩行者は端から端まで段差を踏まずに歩ける
+    //   (0.45m の段差は CC の collide-and-slide では登れず、その場で止まる)
+    {
+        static const char* const kTileMats[6] = { "carpet", "wood",  "gravel",
+                                                  "water",  "metal", "glass" };
+        static const char* const kTileVisuals[6] = { "adem_carpet", "adem_wood",  "adem_gravel",
+                                                     "adem_water",  "adem_metal", "adem_glass" };
+        for (int i = 0; i < 6; ++i) {
+            const int col = 2 + i;
+            char name[48];
+            std::snprintf(name, sizeof(name), "Tile_%s", kTileMats[i]);
+            GameObject t = s.CreateGameObject(name);
+            t.SetLocalPosition(AcousticMapToWorld(col), 0.15f, AcousticMapToWorld(4));
+            t.SetLocalScale(kAcousticTile, 0.6f, kAcousticTile);
+            auto* mr = t.AddComponent<MeshRendererComponent>();
+            mr->mesh = cube;
+            mr->material = AssetID{ HashStr(kTileVisuals[i]) };
+            auto* col2 = t.AddComponent<ColliderComponent>();
+            col2->shape = 1;
+            col2->halfExtents = { 0.5f, 0.5f, 0.5f };
+            // ★materials 未登録なら AssetID{} = 未割当 = 無音に落ちるだけ (デモは壊れない)
+            col2->physMaterial = FindPhysMat(kTileMats[i]);
+        }
+    }
+
+    // ---- M65c: 歩行者 (足音の被写体) ----
+    // ★CC 単体で組む (ソリッド Collider を併用しない) — 足元へ撃つレイが自分に当たると
+    //   GroundMaterialUnder が無音を返す仕様なので、併用すると足音が 1 度も出なくなる
+    {
+        GameObject walker = s.CreateGameObject("Walker");
+        // 天面 0.45 + カプセル半長 0.9 = 1.35。落として馴染ませるより初期値で載せる
+        walker.SetLocalPosition(AcousticMapToWorld(2), 1.35f, AcousticMapToWorld(4));
+        walker.SetLocalScale(0.6f, 1.0f, 0.6f);
+        auto* mr = walker.AddComponent<MeshRendererComponent>();
+        mr->mesh = cube;
+        mr->material = AssetID{ HashStr("adem_source") };
+        auto* cc = walker.AddComponent<CharacterControllerComponent>();
+        cc->radius = 0.3f;
+        cc->height = 1.8f;
+        auto* em = walker.AddComponent<AcousticEmitterComponent>();
+        em->autoFootstep = true;
+        em->stepDistanceM = 0.9f; // 歩幅。2.0 m/s なら 27 tick に 1 歩
+        em->ticksPerRing = 2;
+        em->cooldownTicks = 12; // 金属の上で走っても波が詰まらない下限間隔
+        AttachScriptIfRegistered(w, walker.Id(), "WaveWalker");
+    }
+
+    // ---- M65c: 衝撃音 (部屋 B の金属板へ箱を落とす) ----
+    // ★歩行者の通り道から**外して**置く。廊下に置くと CC が剛体に阻まれて止まり、
+    //   足音の被写体が丸ごと死ぬ (CC は剛体を押せない)
+    {
+        GameObject plate = s.CreateGameObject("Impact Plate");
+        plate.SetLocalPosition(AcousticMapToWorld(5), 0.15f, AcousticMapToWorld(8));
+        plate.SetLocalScale(kAcousticTile, 0.6f, kAcousticTile);
+        auto* mr = plate.AddComponent<MeshRendererComponent>();
+        mr->mesh = cube;
+        mr->material = AssetID{ HashStr("adem_metal") };
+        auto* pc = plate.AddComponent<ColliderComponent>();
+        pc->shape = 1;
+        pc->halfExtents = { 0.5f, 0.5f, 0.5f };
+        pc->physMaterial = FindPhysMat("metal");
+
+        GameObject drop = s.CreateGameObject("Impact Box");
+        drop.SetLocalPosition(AcousticMapToWorld(5), 4.5f, AcousticMapToWorld(8));
+        drop.SetLocalScale(0.7f, 0.7f, 0.7f);
+        auto* dmr = drop.AddComponent<MeshRendererComponent>();
+        dmr->mesh = cube;
+        dmr->material = AssetID{ HashStr("adem_drop") };
+        auto* dc = drop.AddComponent<ColliderComponent>();
+        dc->shape = 1;
+        dc->halfExtents = { 0.5f, 0.5f, 0.5f };
+        auto* rb = drop.AddComponent<RigidbodyComponent>();
+        rb->mass = 2.0f;
+        // ★**反発は 0**。0.5 で組んだら、跳ね返りが減衰しきらずに
+        //   「5 tick ごとに力積 1.6 N*s」の極限周期に入り、**900 tick で 151 回**
+        //   衝撃音を出し続けた (実測)。反発 + 貫通押し出しが作る古典的なリミットサイクルで、
+        //   速度は 0.5 m/s あるのでスリープ閾値にも掛からない。跳ねるたびに音が小さく
+        //   なる様子は絵として魅力的だが、**永久音源はデモとして嘘**なので捨てた
+        //   (減衰そのものは ImpactGain のセルフテストが固定している)
+        rb->restitution = 0.0f;
     }
 }
 

@@ -1,0 +1,15 @@
+{
+  "engine": "MyEngine",
+  "physmat": 1,
+  "name": "carpet",
+  "density": 200.0,
+  "staticFriction": 0.7,
+  "dynamicFriction": 0.6,
+  "restitution": 0.05,
+  "rollingResistance": 0.05,
+  "dragCoefficient": 0.47,
+  "adhesion": 0.0,
+  "acousticLoudness": 0.12,
+  "acousticRadiusM": 3.0,
+  "acousticTone": 0
+}

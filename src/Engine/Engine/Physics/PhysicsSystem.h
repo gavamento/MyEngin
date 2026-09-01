@@ -22,7 +22,7 @@ struct SolidContact {
     uint64_t key = 0;
     float nx = 0, ny = 1, nz = 0;
     // ---- M59e 追加 (末尾 append)。消費者は 可視化 (M59e) / 接触 ABI (M59k) /
-    //      破壊の応力入力 (M61) / 衝撃音 (将来) の 4 者を想定した共通形 ----
+    //      破壊の応力入力 (M61) / 衝撃音 (**M65c で消費開始**) の 4 者を想定した共通形 ----
     // 代表接触点 (ワールド)。マニフォールド最大 4 点の重心 = ソルバが中央法線インパルスと
     // 摩擦を効かせている点そのもの (別に平均を取り直していない)
     float px = 0, py = 0, pz = 0;
@@ -94,6 +94,14 @@ float SelectRestitution(const ColliderComponent* col, const RigidbodyComponent* 
 // 無いので、材料が無ければ 0 = 法線インパルスの下限が従来どおり 0 (存在ゲート)。
 // 結合則は **min** (弱いほうが勝つ = 反発と同じ)
 float SelectAdhesion(const PhysMat* mat);
+// M65c: 音響 3 本。**Collider 側に旧フィールドが無いので override ビットも取らない** —
+// SelectAdhesion と全く同じ形で、「材料が無ければ無音」しか状態が無い = 未割当シーンの
+// ビット同一が式の上で自明に立つ。黙らせたい床は材料を外せばよい。
+// ★結合則を持たない (相手が誰でも同じ値) — 摩擦や反発と違い「鳴ったのは床」であって
+//   ペアの性質ではないため。衝撃音で 2 材質が当たるときは**大きいほう**を呼び出し側が採る
+float SelectAcousticLoudness(const PhysMat* mat);
+float SelectAcousticRadiusM(const PhysMat* mat);
+int32_t SelectAcousticTone(const PhysMat* mat);
 
 // ワールドスケール済み衝突形状の体積 (m^3)。スケール規約は shapes::ApplyScaledExtents と
 // 同一 (球 = 最大成分 / box = 成分別 / capsule = 半径 max(sx,sz)・高さ sy)。mesh (shape=3) は 0

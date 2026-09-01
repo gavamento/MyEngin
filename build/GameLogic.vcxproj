@@ -59,6 +59,7 @@
     <ClCompile Include="..\src\GameLogic\Scripts\VehicleDemoDriver.cpp" />
     <ClCompile Include="..\src\GameLogic\Scripts\WalkerDemo.cpp" />
     <ClCompile Include="..\src\GameLogic\Scripts\WavePinger.cpp" />
+    <ClCompile Include="..\src\GameLogic\Scripts\WaveWalker.cpp" />
     <ClInclude Include="..\src\Shared\EngineAPI.h" />
     <ClInclude Include="..\src\Shared\MathPod.h" />
     <ClInclude Include="..\src\Shared\ScriptAPI.h" />

@@ -114,6 +114,22 @@ inline float ChamferToMeters(uint32_t dist, float cellSize)
 //   絵と音がずれない。d >= maxD で厳密に 0 を返す性質もそのまま欲しい (境界でポップしない)。
 float EnergyAt(uint32_t chamferDist, uint32_t maxChamferDist, float amplitude, float cellSize);
 
+// ---- 衝撃音の強さ (M65c) ----
+// 接触の法線インパルス [N*s] から発音の倍率 [0,1] を作る純関数。
+// ★引数は「**載っているだけの力積を差し引いた残り**」であること (差し引きは呼び出し側)。
+//   素の力積で閾値を切ると、重い箱が静止しているだけで鳴り続ける = 常時音源になる。
+inline constexpr float kImpactRefImpulse = 6.0f;    // 倍率 1.0 に達する力積 (1.5kg を 1m 落下)
+inline constexpr float kImpactMinImpulse = 0.35f;   // これ以下は擦り扱いで鳴らさない
+inline constexpr float kImpactRestingMargin = 2.0f; // 静止支持ぶんの何倍を超えたら「当たった」
+inline float ImpactGain(float excessImpulse)
+{
+    if (excessImpulse <= kImpactMinImpulse) {
+        return 0.0f; // 境界で厳密に 0 — 微小な擦りが 1 リングの波を毎 tick 立てるのを防ぐ
+    }
+    const float g = excessImpulse / kImpactRefImpulse;
+    return (g < 1.0f) ? g : 1.0f;
+}
+
 // 波 1 本が使う局所ボックスの半径 [セル]。到達距離の上限 = R * cellSize [m]
 // (64 * 0.5 = 32m。企画の「金属板は部屋を突き抜ける」が成り立つ長さ)。
 // ★メモリは **min((2R+1)^3, グリッド全体) * 3B / 波**。ボックスはグリッドで

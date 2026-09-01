@@ -13,6 +13,7 @@
 namespace mye {
 
 class World;
+struct SolidContact;
 
 // 音響の「場」(M65a、計画 hushed-rippling-beacon)。
 //
@@ -57,6 +58,12 @@ public:
     // 潰す実装にすると「満杯時の挙動が到着順に依存する」= 決定論の穴になる
     static constexpr uint32_t kMaxWaves = 16;
 
+    // 1 tick に衝撃音として立てる波の上限 (M65c)。**key 昇順で先着**が取る —
+    // 「最も大きい接触を選ぶ」にすると順序が float で決まってしまう (規則: 順序を
+    // 決めるものは全部整数)。積み上がった箱が全スロットを食い潰すのを防ぐのが目的で、
+    // 落とした音が 1 tick 遅れて鳴ることは無い (落ちる = 次 tick も接触は続く)
+    static constexpr uint32_t kMaxImpactsPerTick = 4;
+
     AcousticField();
 
     // 波ごとの距離場 (M65b)。★**導出値** — ハッシュにも snapshot にも入らない。
@@ -91,8 +98,24 @@ public:
     // AcousticEmitterComponent の発音要求を波に変える。**entity.index 昇順**で処理し、
     // 消費した pendingLoudness は 0 へ戻す (エンジンが書く sim 状態)。
     // ★スロットが満杯なら要求は**捨てる** (次 tick へ持ち越さない) — 持ち越すと
-    //   「いつ鳴るか」が過去の混雑具合に依存して、原因の遠い非決定性の温床になる
-    void DrainEmitters(World& world, uint64_t tick);
+    //   「いつ鳴るか」が過去の混雑具合に依存して、原因の遠い非決定性の温床になる。
+    //
+    // M65c: 同じループの中で**足音**も作る (autoFootstep)。CharacterController の
+    // 水平速度から歩幅を積み、超えた tick に真下の床材を引いて pending へ書く —
+    // つまり足音は「エンジンが書く発音要求」で、スクリプトが書いたものと**同じ 1 本の道**を
+    // 通ってクールダウンもスロット割当も共有する (別経路にすると片方だけ満杯時の
+    // 挙動が違う、という形の非対称なバグが入る)。
+    // dt は固定 tick 長 (歩幅の積算に使う唯一の実数)
+    void DrainEmitters(World& world, float dt, uint64_t tick);
+
+    // 前 tick のソリッド接触から**衝撃音**を作る (M65c)。key 昇順 = 決定論。
+    // ★接触は物理 (フェーズ 3.6) の出力なので、音響 (3.4) が読むのは必ず **1 tick 古い**。
+    //   足音と同じ「1 tick 遅れ」の割り切りで、60Hz では知覚できない。
+    // ★「載っているだけ」の接触を鳴らさないため、**その接触が支えている重さぶんの力積**
+    //   (質量 x 重力 x dt) を差し引いてから閾値に掛ける。単純な固定閾値だと
+    //   「重い箱が静止しているだけで鳴り続ける」= 常時音源になる
+    void DrainImpacts(World& world, const std::vector<SolidContact>& contacts, float dt,
+                      uint64_t tick);
 
     // 全アクティブ波を 1 tick ぶん進める (分周を見て 1 リング前進、maxRing 超えで消す)
     void Advance();

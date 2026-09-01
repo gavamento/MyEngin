@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <string>
 #include <vector>
 
 #include "Engine/Core/Check.h"
@@ -17,6 +18,9 @@
 #include "Engine/Engine/Acoustic/AcousticField.h"
 #include "Engine/Engine/Acoustic/AcousticGrid.h"
 #include "Engine/Engine/GameObject.h"
+#include "Engine/Engine/Physics/PhysMatLibrary.h"
+#include "Engine/Engine/Physics/PhysicsSystem.h"
+#include "Engine/Platform/PathUtil.h"
 #include "Engine/Engine/Replay/WorldHasher.h"
 #include "Engine/Engine/Scene.h"
 #include "Engine/Engine/TransformSystem.h"
@@ -506,6 +510,102 @@ bool RunAcousticSelfTest()
         // 同じ整数距離なら何度呼んでも同値 = 純関数 (経路も履歴も持たない)
         check(acoustic::EnergyAt(33, maxD, amp, cs) == acoustic::EnergyAt(33, maxD, amp, cs),
               "energy: a pure function of the integer chamfer distance");
+    }
+
+    // ---- (13) 床材が発音を決める (M65c)。**出荷している .physmat.json をそのまま読む** ----
+    // ★インラインの PhysMat を組んで比べても意味が無い — ここで守りたいのは
+    //   「企画 3-4 の表どおりの資産が入っていること」であって式ではない。
+    //   資産の値は sim ハッシュに載らないので、壊れても replay_verify は無反応になる =
+    //   このテストが唯一の防波堤
+    {
+        const std::wstring root = FindAssetsRoot();
+        static const wchar_t* const kNames[6] = { L"carpet", L"wood",  L"gravel",
+                                                  L"water",  L"metal", L"glass" };
+        PhysMatLibrary lib;
+        const PhysMat* mats[6] = {};
+        int loaded = 0;
+        for (int i = 0; i < 6; ++i) {
+            const std::wstring p = root + L"\\physmats\\" + kNames[i] + L".physmat.json";
+            const uint64_t h = lib.LoadFromFile(p);
+            if (h != 0) {
+                mats[i] = lib.Get(h);
+                ++loaded;
+            }
+        }
+        check(loaded == 6, "materials: the six acoustic floor presets are on disk");
+        if (loaded == 6) {
+            bool louder = true;
+            bool farther = true;
+            for (int i = 0; i + 1 < 5; ++i) { // carpet < wood < gravel < water < metal
+                louder = louder && mats[i]->acousticLoudness < mats[i + 1]->acousticLoudness;
+                farther = farther && mats[i]->acousticRadiusM < mats[i + 1]->acousticRadiusM;
+            }
+            check(louder, "materials: carpet < wood < gravel < water < metal in loudness");
+            check(farther, "materials: the reach grows together with the loudness");
+            check(mats[5]->acousticLoudness == mats[4]->acousticLoudness,
+                  "materials: glass is exactly as loud as metal (the plan's 'metal ~= glass')");
+            check(mats[0]->acousticLoudness > 0.0f,
+                  "materials: even carpet is audible (0 would mean 'no material at all')");
+            // 音色 4 種すべてに使い道があること = M65e の色分けの被覆が空にならない
+            bool tones[4] = { false, false, false, false };
+            for (int i = 0; i < 6; ++i) {
+                tones[mats[i]->acousticTone & 3] = true;
+            }
+            check(tones[0] && tones[1] && tones[2] && tones[3],
+                  "materials: all four tones are exercised by the presets");
+        }
+        // ★未割当 = 無音。これが「材料を割り当てていない既存シーンはビット同一」の入口
+        check(SelectAcousticLoudness(nullptr) == 0.0f && SelectAcousticRadiusM(nullptr) == 0.0f
+                  && SelectAcousticTone(nullptr) == 0,
+              "materials: an unassigned physMaterial is silent");
+    }
+
+    // ---- (14) 到達距離 [m] -> maxRing は整数の純関数 (切り捨て) ----
+    // ★float が整数へ落ちる境界はここ 1 箇所しかない。切り捨てが切り上げに変わると
+    //   全材質の到達セルが 1 リングぶんずれる (絵では気づけない種類の変化)
+    {
+        AcousticField field;
+        const AcousticGridDesc g = MakeTestGrid(); // 8x4x8 / 0.5m
+        std::vector<uint8_t> open(static_cast<size_t>(g.CellCount()), 0u);
+        field.DebugSetGrid(g, std::move(open));
+        float wx = 0.0f, wy = 0.0f, wz = 0.0f;
+        acoustic::CellToWorldCenter(g, 4, 2, 4, wx, wy, wz);
+
+        // carpet 相当 (3.0m / 0.5 = 6 リングちょうど)
+        check(field.Emit(EntityID{ 1, 1 }, wx, wy, wz, 0.12f, 3.0f, 0, 1, 0)
+                  && field.Waves()[0].maxRing == 6,
+              "reach: 3.0m at 0.5m cells is exactly 6 rings");
+        // 端数は**切り捨て** (3.4 / 0.5 = 6.8 -> 6)
+        check(field.Emit(EntityID{ 2, 1 }, wx, wy, wz, 0.12f, 3.4f, 0, 1, 0)
+                  && field.Waves()[1].maxRing == 6,
+              "reach: a fractional radius is floored, never rounded");
+        // 0 より大きいが 1 セルに満たない半径でも**必ず 1 リングは進む** (無音にはしない)
+        check(field.Emit(EntityID{ 3, 1 }, wx, wy, wz, 0.12f, 0.2f, 0, 1, 0)
+                  && field.Waves()[2].maxRing == 1,
+              "reach: a sub-cell radius still emits one ring (clamped, not silenced)");
+        // 振幅 0 (= 材質未割当) は**そもそも波にならない**
+        check(!field.Emit(EntityID{ 4, 1 }, wx, wy, wz, 0.0f, 30.0f, 0, 1, 0),
+              "reach: zero loudness never becomes a wave");
+    }
+
+    // ---- (15) 衝撃の力積 -> 発音倍率 (M65c) ----
+    {
+        check(acoustic::ImpactGain(0.0f) == 0.0f, "impact: no gain below the floor threshold");
+        check(acoustic::ImpactGain(acoustic::kImpactMinImpulse) == 0.0f,
+              "impact: the threshold itself is silent (exclusive)");
+        check(acoustic::ImpactGain(acoustic::kImpactRefImpulse) == 1.0f,
+              "impact: saturates at the reference impulse");
+        check(acoustic::ImpactGain(acoustic::kImpactRefImpulse * 10.0f) == 1.0f,
+              "impact: never exceeds 1 no matter how hard the hit");
+        const float g1 = acoustic::ImpactGain(1.0f);
+        const float g2 = acoustic::ImpactGain(2.0f);
+        check(g1 > 0.0f && g2 > g1, "impact: monotonic between threshold and reference");
+        // ★**載っているだけの接触は鳴らない**。2kg が静止している接触の力積は m*g*dt で、
+        //   そこから静止支持ぶん (x kImpactRestingMargin) を引くと必ず負になる
+        const float restingImpulse = 2.0f * 9.81f * (1.0f / 60.0f);
+        const float subtracted = restingImpulse * acoustic::kImpactRestingMargin;
+        check(acoustic::ImpactGain(restingImpulse - subtracted) == 0.0f,
+              "impact: a body that is merely resting on a floor is silent");
     }
 
     if (failCount == 0) {

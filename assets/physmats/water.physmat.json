@@ -1,0 +1,15 @@
+{
+  "engine": "MyEngine",
+  "physmat": 1,
+  "name": "water",
+  "density": 1000.0,
+  "staticFriction": 0.1,
+  "dynamicFriction": 0.05,
+  "restitution": 0.0,
+  "rollingResistance": 0.01,
+  "dragCoefficient": 0.47,
+  "adhesion": 0.0,
+  "acousticLoudness": 0.8,
+  "acousticRadiusM": 20.0,
+  "acousticTone": 0
+}

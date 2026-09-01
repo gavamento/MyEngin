@@ -4688,6 +4688,22 @@ float SelectAdhesion(const PhysMat* mat)
     return mat ? mat->adhesion : 0.0f;
 }
 
+// M65c: 音響 3 本。SelectAdhesion と同型 (旧フィールド無し = 上書きビット無し)
+float SelectAcousticLoudness(const PhysMat* mat)
+{
+    return mat ? mat->acousticLoudness : 0.0f;
+}
+
+float SelectAcousticRadiusM(const PhysMat* mat)
+{
+    return mat ? mat->acousticRadiusM : 0.0f;
+}
+
+int32_t SelectAcousticTone(const PhysMat* mat)
+{
+    return mat ? mat->acousticTone : 0;
+}
+
 float SelectRestitution(const ColliderComponent* col, const RigidbodyComponent* rb,
                         const PhysMat* mat)
 {

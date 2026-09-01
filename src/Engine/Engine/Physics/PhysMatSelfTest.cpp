@@ -65,6 +65,22 @@ bool RunPhysMatSelfTest()
         // ★M60d で足した adhesion が **旧ファイルで 0** になることが「粘着 0 = 従来と
         //   ビット同一」の入口。既定が 0 でなくなった瞬間に全既存資産の挙動が変わる
         check(d.adhesion == 0.0f, "a physmat written before M60d has no adhesion at all");
+        // ★M65c で足した音響 3 本も同じ形。**旧ファイルは 3 本とも 0 = 完全に無音**で、
+        //   足音も衝撃音も 1 本の波も出さない (存在ゲート)。既定が 0 でなくなった瞬間に
+        //   既存 5 プリセットを使う全シーンが音を出し始める
+        check(m.acousticLoudness == d.acousticLoudness && m.acousticRadiusM == d.acousticRadiusM
+                  && m.acousticTone == d.acousticTone,
+              "missing acoustic keys fall back to struct defaults (M65c forward compat)");
+        check(d.acousticLoudness == 0.0f && d.acousticRadiusM == 0.0f && d.acousticTone == 0,
+              "a physmat written before M65c is silent");
+
+        // 音色は整数キー。float で書かれていても**読まない** (0..3 の意味が丸めに乗るため)
+        nlohmann::json toned;
+        toned["physmat"] = 1;
+        toned["acousticTone"] = 2.7;
+        PhysMat tm;
+        check(PhysMatLibrary::FromJson(toned, tm) && tm.acousticTone == 0,
+              "acousticTone ignores a non-integer JSON value");
     }
 
     // ---- Sanitize: NaN / 負値 / 範囲外の防波堤 ----
@@ -78,6 +94,9 @@ bool RunPhysMatSelfTest()
         m.rollingResistance = -0.25f;
         m.dragCoefficient = -std::numeric_limits<float>::infinity();
         m.adhesion = -50.0f;
+        m.acousticLoudness = -1.0f;                                  // M65c
+        m.acousticRadiusM = std::numeric_limits<float>::quiet_NaN(); // 同上
+        m.acousticTone = 9;                                          // 同上
         PhysMatLibrary::Sanitize(m);
         check(m.density == d.density, "NaN density falls back to default (not 0)");
         check(m.staticFriction == 0.0f, "negative static friction clamps to 0");
@@ -87,6 +106,11 @@ bool RunPhysMatSelfTest()
         check(m.rollingResistance == 0.0f, "negative rolling resistance clamps to 0");
         check(m.dragCoefficient == d.dragCoefficient, "-inf drag falls back to default");
         check(m.adhesion == 0.0f, "negative adhesion clamps to 0 (a contact never repels harder)");
+        // M65c: 負の振幅は EnergyAt の単調減少を壊し、NaN の半径は maxRing の
+        // 切り捨てで未定義になる。**音色の範囲外は色表の添字**になるので特に効く
+        check(m.acousticLoudness == 0.0f, "negative acoustic loudness clamps to 0 (silent)");
+        check(m.acousticRadiusM == d.acousticRadiusM, "NaN acoustic radius falls back to default");
+        check(m.acousticTone == 3, "acoustic tone clamps into the 4 colour slots");
         m.density = 0.0f;
         m.dynamicFriction = 250.0f; // 有限の範囲外はクランプ (非有限との扱いの差を固定)
         PhysMatLibrary::Sanitize(m);
@@ -105,6 +129,9 @@ bool RunPhysMatSelfTest()
         src.rollingResistance = 0.001f;
         src.dragCoefficient = 0.47f;
         src.adhesion = 25.0f; // M60d
+        src.acousticLoudness = 0.55f; // M65c
+        src.acousticRadiusM = 13.0f;
+        src.acousticTone = 2;
         PhysMat dst;
         check(PhysMatLibrary::FromJson(PhysMatLibrary::ToJson(src), dst),
               "ToJson output parses back");
@@ -113,7 +140,10 @@ bool RunPhysMatSelfTest()
                   && dst.dynamicFriction == src.dynamicFriction
                   && dst.restitution == src.restitution
                   && dst.rollingResistance == src.rollingResistance
-                  && dst.dragCoefficient == src.dragCoefficient && dst.adhesion == src.adhesion,
+                  && dst.dragCoefficient == src.dragCoefficient && dst.adhesion == src.adhesion
+                  && dst.acousticLoudness == src.acousticLoudness
+                  && dst.acousticRadiusM == src.acousticRadiusM
+                  && dst.acousticTone == src.acousticTone,
               "ToJson/FromJson round-trip is bit-identical");
     }
 

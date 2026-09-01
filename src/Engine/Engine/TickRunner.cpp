@@ -311,7 +311,13 @@ void RunOneTick(TickServices& ts)
         ts.acoustic->Sync(scene.GetWorld());
         // 発音 → 前進の順。同じ tick で立った波も 1 リング目まで進む
         // (「鳴った瞬間から音源セルの周りが光る」= 遅延ゼロに見える)
-        ts.acoustic->DrainEmitters(scene.GetWorld(), ctx.tickIndex);
+        ts.acoustic->DrainEmitters(scene.GetWorld(), ctx.fixedDt, ctx.tickIndex);
+        // 衝撃音 (M65c)。★ここで読む solidContacts は**前 tick の物理 (3.6) の出力**。
+        //   音響 (3.4) は物理より前なので構造的にそうなる。60Hz で 1 tick = 16ms の
+        //   遅れは知覚できないうえ、「接触した tick に鳴らす」ために音響を物理の後ろへ
+        //   動かすと、今度は M65f の AgentSystem が書く moveInput が 1 tick 遅れる
+        //   (どちらかは必ず 1 tick 古い。動くもののほうを優先した)
+        ts.acoustic->DrainImpacts(scene.GetWorld(), solidContacts, ctx.fixedDt, ctx.tickIndex);
         ts.acoustic->Advance();
     }
     // ---- アニメーション (フェーズ 3.5): スクリプト後・Transform 前に LocalTransform を確定 ----

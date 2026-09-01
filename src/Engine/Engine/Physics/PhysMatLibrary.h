@@ -50,6 +50,17 @@ struct PhysMat {
     //   直接オーサリングする形にした。結合則は **min** (弱いほうが勝つ = 反発と揃える)。
     // ★0 なら下限は 0 = **従来とビット同一** (存在ゲート)
     float adhesion = 0.0f;
+    // ---- M65c 追加 (末尾 append。旧ファイルは contains 無し = 0 = 無音) ----
+    // 企画 3-4「床の材質が音を決める」の実体。★**伝播中の吸収はやらない** —
+    // 材質を経路に効かせるとエネルギーが経路依存になり、セル配列そのものが sim 状態に
+    // 落ちて snapshot が数 MB になる (計画 判断 3)。材質は「発音時の振幅」と
+    // 「到達上限」の 2 つにだけ効かせる。カーペットの「ほとんど広がらない」も
+    // 金属板の「遠くまで一直線」も、この 2 値の組で表現しきれる。
+    // ★**0 = 無音**が既定。既存 5 プリセット (glue/ice/rubber/steel/wood の物理値) は
+    //   JSON にキーが無いので 0 に落ち、足音も衝撃音も 1 本も出ない (存在ゲート)
+    float acousticLoudness = 0.0f; // 発音時の振幅 (原点でのエネルギー)。0 = 無音
+    float acousticRadiusM = 0.0f;  // 到達距離 [m]。maxRing = radiusM / cellSize (切り捨て)
+    int32_t acousticTone = 0;      // 音色 0..3 (AcousticDebugDraw の kToneColors が色の正本)
 };
 
 // 列挙 1 件 (AssetRef ピッカー / Asset Browser 用。SoundEntry 範型)

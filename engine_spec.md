@@ -988,7 +988,8 @@ persists the parse results so warm starts skip the parsers entirely.
 Material properties for the rigid-body solver, stored as assets (`PhysMatLibrary`, SI units).
 Schema: `density` / `staticFriction` / `dynamicFriction` / `restitution` / `rollingResistance` /
 `dragCoefficient` (static friction, rolling resistance and Cd are parsed and stored but not
-consumed until M59f2/M59b), plus `adhesion` appended in M60d. Values are sanitized on load
+consumed until M59f2/M59b), plus `adhesion` appended in M60d and
+`acousticLoudness` / `acousticRadiusM` / `acousticTone` appended in M65c (§10.6). Values are sanitized on load
 (non-finite → default, finite but out of range → clamp) so NaN can never reach the
 pair-combination rules. Material values are **not**
 world-hashed (same class as mesh collider data: replay assumes the same assets are present).
@@ -997,7 +998,8 @@ world-hashed (same class as mesh collider data: replay assumes the same assets a
 |---|---|
 | Assignment | `Collider.physMaterial` (AssetRef). Empty = unassigned = the legacy component fields are read through the exact same code path — existing scenes stay bit-identical |
 | Resolution priority | Per property: `Collider.materialOverrideBits` bit set → legacy component field / material assigned → material value / unassigned → legacy field. Resolution is a pure value selection at solver collection time (no fp arithmetic), shared by the solver and the script ABI (`SelectFriction` / `SelectRestitution` / `ResolveBodyMass` in `PhysicsSystem.h`) |
-| Pair combination | Unchanged from M28b: `μ = sqrt(μa·μb)`, `e = min(ea, eb)` |
+| Pair combination | Unchanged from M28b: `μ = sqrt(μa·μb)`, `e = min(ea, eb)`. The acoustic properties combine as **max** instead: a wooden crate landing on a steel plate makes the steel's noise, not an average of the two, and the tie goes to the lower entity index |
+| Acoustic properties | `acousticLoudness` **0 = silent**, which is what every preset written before M65c parses as — so footsteps and impacts are gated by the material assignment itself. No override bit exists (there is no legacy component field to fall back to), exactly as with `adhesion` |
 | Static restitution | **New capability in M59a2**: a static collider used to be structurally `e = 0` (no Rigidbody to store the field, so `e = min` killed every bounce off static geometry). A material assigned to a static collider now supplies its `e`. Unassigned static colliders keep `e = 0` |
 | Mass from density | `Rigidbody.useDensity` (opt-in): mass = material `density` × world-scaled collider volume (sphere/box/capsule; scaling rules identical to `shapes::ApplyScaledExtents`). Falls back to the `mass` field when there is no material, no collider, a mesh collider (shape 3), or a degenerate volume. The ABI entry points (`AddForce` / `AddImpulse` / `AddTorque`) resolve mass through the same function, so mass is never two different values |
 
@@ -1442,6 +1444,29 @@ never leaks through an axis-aligned wall (walls voxelise at least one cell thick
 Emission takes the lowest free slot and **refuses when the table is full rather than evicting the
 oldest** — evicting would make behaviour under load depend on arrival order. An origin inside a
 collider is nudged to the first open neighbour in table order.
+
+**What makes a sound (M65c).** Three sources, all funnelled through the same emitter request so
+that cooldown and slot assignment cannot diverge between them:
+
+| Source | Trigger | Amplitude / reach |
+|---|---|---|
+| Script | writes `AcousticEmitter.pending*` through the generic field ABI | whatever it wrote |
+| Footstep | `AcousticEmitter.autoFootstep` + a `CharacterController`: horizontal travel accumulates, and each `stepDistanceM` of it probes straight down for the floor's `.physmat` | the material's `acousticLoudness` / `acousticRadiusM` / `acousticTone` |
+| Impact | a solid contact whose normal impulse exceeds what the contact is merely *supporting* | the louder material of the pair, scaled by the excess impulse |
+
+Distance, not time, drives footsteps: pacing them by a tick count would make walking and running
+equally loud and delete the trade the game is built on. Travel does not accumulate off the ground,
+so a landing is an impact rather than a doubled footstep.
+
+An impact subtracts `mass × g × dt × 2` — the impulse a contact holding that weight up would
+carry anyway — before testing the threshold, with `g` taken from the scene's `PhysicsEnvironment`.
+A flat threshold instead would let any sufficiently heavy resting box ring forever. At most four
+impacts become waves per tick, taken in contact-key order rather than by loudness, because a
+float ordering has no place in this layer.
+
+Contacts reach the acoustic phase (3.4) one tick stale, since physics (3.6) runs after it. Some
+consumer has to be a tick behind; the choice was to delay impact audio rather than the agent
+steering that phase 3.4 will write in M65f.
 
 ---
 

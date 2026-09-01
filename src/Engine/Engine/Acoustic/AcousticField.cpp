@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <utility>
 
 #include "Engine/Core/Check.h"
 #include "Engine/Core/Components.h"
@@ -14,6 +15,8 @@
 #include "Engine/Core/Log.h"
 #include "Engine/Core/Profiler.h"
 #include "Engine/Core/World.h"
+#include "Engine/Engine/Physics/PhysMatLibrary.h"
+#include "Engine/Engine/Physics/PhysicsSystem.h"
 #include "Engine/Engine/Physics/Shapes.h"
 
 namespace mye {
@@ -60,6 +63,33 @@ uint64_t FoldBlocker(uint64_t h, const Blocker& b)
         }
     }
     return h;
+}
+
+// 衝撃音の波の速さ [tick/リング]。足音と揃えてある (cellSize 0.5 なら 15 m/s)。
+// 衝撃には発音要求を書くコンポーネントが無いので、ここが唯一の指定場所
+constexpr uint32_t kImpactTicksPerRing = 2;
+
+// CC の真下へレイを撃って床材を引く (M65c)。企画 3-4「踏んでいる床が音を決める」の入口。
+// ★RaycastWorld は WorldMatrix 基準なので、フェーズ 3.4 では**1 tick 古い床**を見る。
+//   足音のためのプローブなので実害は無い (60Hz で 1 tick ぶんの床の入れ替わりは知覚できない)。
+// ★自分に当たったら**無音扱い**にする。CC と同じエンティティにソリッド Collider を
+//   併用しているとレイの始点がその中に入るため — 足音が要るキャラは CC 単体で組むこと。
+// ★材料が無い床は nullptr = 無音。「未割当は鳴らない」が存在ゲートの実体
+const PhysMat* GroundMaterialUnder(World& world, EntityID self, float wx, float wy, float wz,
+                                   float castDown)
+{
+    MyeRaycastHit hit = {};
+    const MyeVec3 origin = { wx, wy, wz };
+    const MyeVec3 down = { 0.0f, -1.0f, 0.0f };
+    if (RaycastWorld(world, origin, down, castDown, &hit) == 0) {
+        return nullptr;
+    }
+    if (hit.entity.index == self.index) {
+        return nullptr;
+    }
+    const EntityID hitEntity = { hit.entity.index, hit.entity.generation };
+    const auto* col = world.GetComponent<ColliderComponent>(hitEntity);
+    return (col != nullptr) ? physmat::Resolve(col->physMaterial) : nullptr;
 }
 
 } // namespace
@@ -532,7 +562,7 @@ bool AcousticField::Emit(EntityID source, float wx, float wy, float wz, float lo
     return true;
 }
 
-void AcousticField::DrainEmitters(World& world, uint64_t tick)
+void AcousticField::DrainEmitters(World& world, float dt, uint64_t tick)
 {
     if (!grid_.Valid()) {
         return; // 存在ゲートの内側。ボリュームが無ければエミッタは走査すらしない
@@ -542,6 +572,7 @@ void AcousticField::DrainEmitters(World& world, uint64_t tick)
     struct Pending {
         EntityID entity = kNullEntity;
         AcousticEmitterComponent* comp = nullptr;
+        CharacterControllerComponent* cc = nullptr; // 足音 (M65c)。無ければ歩かない
         float wx = 0.0f, wy = 0.0f, wz = 0.0f;
     };
     std::vector<Pending> pend;
@@ -558,6 +589,9 @@ void AcousticField::DrainEmitters(World& world, uint64_t tick)
             Pending p;
             p.entity = e;
             p.comp = static_cast<AcousticEmitterComponent*>(arch.GetPtr(ei, row));
+            // CC は同じアーキタイプに居るとは限らない (エミッタ単体の音源もある) ので
+            // 型引きで取る。**居なければ足音は出ない** = autoFootstep の実質的なゲート
+            p.cc = world.GetComponent<CharacterControllerComponent>(e);
             const auto& wm =
                 static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row))->value;
             p.wx = wm.m[3][0];
@@ -574,6 +608,34 @@ void AcousticField::DrainEmitters(World& world, uint64_t tick)
         if (em.cooldown > 0) {
             --em.cooldown;
         }
+        // ---- 足音 (M65c) ----
+        // ★歩幅は**移動距離**で測る。時間で測る (n tick ごと) と、走っても歩いても
+        //   同じ間隔で鳴って「速く動くほど音を出す」という企画の根っこが消える。
+        // ★接地していないあいだは**溜めない**。空中で歩幅が溜まると、着地の瞬間に
+        //   足音と衝撃音が二重に鳴る (着地音は DrainImpacts の担当)
+        if (em.autoFootstep && em.stepDistanceM > 0.0f && p.cc != nullptr) {
+            if (p.cc->isGrounded == 0) {
+                em.travelAccum = 0.0f;
+            } else {
+                const float vx = p.cc->velocity.x;
+                const float vz = p.cc->velocity.z;
+                em.travelAccum += std::sqrt(vx * vx + vz * vz) * dt;
+                if (em.travelAccum >= em.stepDistanceM) {
+                    // 余りは持ち越す (切り捨てると速度によって歩幅が伸び縮みする)
+                    em.travelAccum -= em.stepDistanceM;
+                    const float castDown = p.cc->height * 0.5f + 0.4f;
+                    const PhysMat* mat =
+                        GroundMaterialUnder(world, p.entity, p.wx, p.wy, p.wz, castDown);
+                    const float loud = SelectAcousticLoudness(mat);
+                    // スクリプトが同じ tick に書いた要求を**踏み潰さない** (明示 > 自動)
+                    if (loud > 0.0f && em.pendingLoudness <= 0.0f) {
+                        em.pendingLoudness = loud;
+                        em.pendingRadiusM = SelectAcousticRadiusM(mat);
+                        em.pendingTone = SelectAcousticTone(mat);
+                    }
+                }
+            }
+        }
         if (em.pendingLoudness <= 0.0f) {
             continue;
         }
@@ -589,6 +651,91 @@ void AcousticField::DrainEmitters(World& world, uint64_t tick)
         }
         em.pendingLoudness = 0.0f;
         em.pendingRadiusM = 0.0f;
+    }
+}
+
+void AcousticField::DrainImpacts(World& world, const std::vector<SolidContact>& contacts, float dt,
+                                 uint64_t tick)
+{
+    if (!grid_.Valid() || contacts.empty()) {
+        return; // 存在ゲートの内側 (ボリュームが無ければ接触表を走査すらしない)
+    }
+    // 接触キーは entity.index の対。現世代のハンドルを引く表を**1 回だけ**組む
+    // (CollisionSystem の resolve は接触 1 件ごとに全アーキタイプを線形走査するが、
+    //  こちらは毎 tick 走るので表を作って二分探索する)。接触は必ずコライダ同士
+    std::vector<std::pair<uint32_t, EntityID>> byIndex;
+    const ComponentTypeId creq[] = { ColliderComponent::sTypeId };
+    world.ForEachArchetype(creq, [&](Archetype& arch) {
+        for (uint32_t row = 0; row < arch.Count(); ++row) {
+            const EntityID e = arch.EntityAt(row);
+            byIndex.emplace_back(e.index, e);
+        }
+    });
+    std::sort(byIndex.begin(), byIndex.end(),
+              [](const std::pair<uint32_t, EntityID>& a, const std::pair<uint32_t, EntityID>& b) {
+                  return a.first < b.first;
+              });
+    const auto lookup = [&byIndex](uint32_t index) {
+        const auto it = std::lower_bound(
+            byIndex.begin(), byIndex.end(), index,
+            [](const std::pair<uint32_t, EntityID>& p, uint32_t v) { return p.first < v; });
+        return (it != byIndex.end() && it->first == index) ? it->second : kNullEntity;
+    };
+
+    // 「載っているだけ」の力積を測るための重力。★シーンの PhysicsEnvironment を見る —
+    // 重力を強くしたシーンで固定 9.81 を使うと、静止した箱が閾値を超えて鳴り続ける
+    const PhysicsEnvironmentComponent* env = ResolvePhysicsEnvironment(world);
+    const float gx = (env != nullptr) ? env->gravity.x : 0.0f;
+    const float gy = (env != nullptr) ? env->gravity.y : -9.81f; // ソルバ既定と同値
+    const float gz = (env != nullptr) ? env->gravity.z : 0.0f;
+    const float gMag = std::sqrt(gx * gx + gy * gy + gz * gz);
+
+    // その接触が支えている**動的な質量**の合計 (kinematic / 静的は 0)
+    const auto dynamicMass = [&world](EntityID e) {
+        const auto* rb = world.GetComponent<RigidbodyComponent>(e);
+        if (rb == nullptr || rb->isKinematic != 0) {
+            return 0.0f;
+        }
+        return EffectiveMassWorld(world, e, *rb);
+    };
+
+    uint32_t emitted = 0;
+    for (const SolidContact& c : contacts) { // ★key 昇順 (PhysicsSystem の出力規約)
+        if (emitted >= kMaxImpactsPerTick) {
+            break;
+        }
+        const EntityID ea = lookup(static_cast<uint32_t>(c.key >> 32));
+        const EntityID eb = lookup(static_cast<uint32_t>(c.key & 0xFFFFFFFFu));
+        if (ea.IsNull() || eb.IsNull()) {
+            continue; // 1 tick 古い接触なので、消えたエンティティが混じりうる
+        }
+        const auto* ca = world.GetComponent<ColliderComponent>(ea);
+        const auto* cb = world.GetComponent<ColliderComponent>(eb);
+        const PhysMat* ma = (ca != nullptr) ? physmat::Resolve(ca->physMaterial) : nullptr;
+        const PhysMat* mb = (cb != nullptr) ? physmat::Resolve(cb->physMaterial) : nullptr;
+        // ★結合則は **max** (大きいほうが勝つ)。摩擦の sqrt 平均や反発の min とは違う —
+        //   「金属板の上に落ちた木箱」は金属の音がするのであって、平均の音はしない。
+        //   同値なら key の小さい側 (ea) を音源に採る = 決定論のタイブレーク
+        const float la = SelectAcousticLoudness(ma);
+        const float lb = SelectAcousticLoudness(mb);
+        const PhysMat* mat = (lb > la) ? mb : ma;
+        const EntityID src = (lb > la) ? eb : ea;
+        const float loud = SelectAcousticLoudness(mat);
+        if (loud <= 0.0f) {
+            continue; // 材料未割当 = 無音 (存在ゲート)
+        }
+        const float rest = (dynamicMass(ea) + dynamicMass(eb)) * gMag * dt
+                           * acoustic::kImpactRestingMargin;
+        const float gain = acoustic::ImpactGain(c.impulse - rest);
+        if (gain <= 0.0f) {
+            continue;
+        }
+        // ★振幅と到達距離の**両方**を gain で縮める。振幅だけ縮めると、かすった音でも
+        //   波の届く範囲は全開のまま = 敵に「小さいのに遠くまで届く音」が聞こえる
+        if (Emit(src, c.px, c.py, c.pz, loud * gain, SelectAcousticRadiusM(mat) * gain,
+                 static_cast<uint32_t>(SelectAcousticTone(mat)), kImpactTicksPerRing, tick)) {
+            ++emitted;
+        }
     }
 }
 

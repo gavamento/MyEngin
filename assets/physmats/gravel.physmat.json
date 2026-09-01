@@ -1,0 +1,15 @@
+{
+  "engine": "MyEngine",
+  "physmat": 1,
+  "name": "gravel",
+  "density": 1600.0,
+  "staticFriction": 0.8,
+  "dynamicFriction": 0.7,
+  "restitution": 0.1,
+  "rollingResistance": 0.08,
+  "dragCoefficient": 0.47,
+  "adhesion": 0.0,
+  "acousticLoudness": 0.55,
+  "acousticRadiusM": 13.0,
+  "acousticTone": 2
+}

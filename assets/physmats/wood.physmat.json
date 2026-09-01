@@ -7,5 +7,8 @@
   "dynamicFriction": 0.35,
   "restitution": 0.35,
   "rollingResistance": 0.01,
-  "dragCoefficient": 0.47
+  "dragCoefficient": 0.47,
+  "acousticLoudness": 0.3,
+  "acousticRadiusM": 7.0,
+  "acousticTone": 1
 }

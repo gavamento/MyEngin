@@ -1,0 +1,15 @@
+{
+  "engine": "MyEngine",
+  "physmat": 1,
+  "name": "glass",
+  "density": 2500.0,
+  "staticFriction": 0.6,
+  "dynamicFriction": 0.4,
+  "restitution": 0.5,
+  "rollingResistance": 0.002,
+  "dragCoefficient": 0.47,
+  "adhesion": 0.0,
+  "acousticLoudness": 1.0,
+  "acousticRadiusM": 28.0,
+  "acousticTone": 3
+}

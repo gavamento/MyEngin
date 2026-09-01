@@ -58,6 +58,9 @@
     <ClCompile Include="..\src\GameLogic\Scripts\WavePinger.cpp">
       <Filter>Scripts</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\GameLogic\Scripts\WaveWalker.cpp">
+      <Filter>Scripts</Filter>
+    </ClCompile>
     <ClInclude Include="..\src\Shared\EngineAPI.h">
       <Filter>Shared</Filter>
     </ClInclude>
