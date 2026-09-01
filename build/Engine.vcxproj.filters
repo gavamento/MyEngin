@@ -138,7 +138,13 @@
     <ClCompile Include="..\src\Engine\Engine\Acoustic\AcousticGrid.cpp">
       <Filter>Engine\Acoustic</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Acoustic\AcousticNav.cpp">
+      <Filter>Engine\Acoustic</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Acoustic\AcousticSelfTest.cpp">
+      <Filter>Engine\Acoustic</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Acoustic\AgentSystem.cpp">
       <Filter>Engine\Acoustic</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Animation.cpp">
@@ -660,7 +666,13 @@
     <ClInclude Include="..\src\Engine\Engine\Acoustic\AcousticGrid.h">
       <Filter>Engine\Acoustic</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Acoustic\AcousticNav.h">
+      <Filter>Engine\Acoustic</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Acoustic\AcousticSelfTest.h">
+      <Filter>Engine\Acoustic</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Acoustic\AgentSystem.h">
       <Filter>Engine\Acoustic</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Animation.h">

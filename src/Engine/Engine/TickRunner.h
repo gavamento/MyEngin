@@ -21,6 +21,7 @@ class EffectSystem;
 class PhysicsSystem;
 class XpbdBackend;
 class AcousticField;
+class AgentSystem;
 class TransformSystem;
 class CollisionSystem;
 class ParticleSystem;
@@ -80,6 +81,10 @@ struct TickServices {
     // M65a: 音響の場 (ECS 外 sim 状態の 3 例目)。フェーズ 3.4 で Sync/Advance する。
     // null = 音響を回さない (World 単体の selftest 経路)
     AcousticField* acoustic = nullptr;
+    // M65f: 敵の思考 (流れ場 + 共通 FSM)。フェーズ 3.4 の音響伝播の**直後**に回す —
+    // 物理 (3.6) より前なので、書いた moveInput が同じ tick で効く。
+    // null = AI を回さない (World 単体の selftest 経路)
+    AgentSystem* agentSystem = nullptr;
     TransformSystem* transformSystem = nullptr;
     CollisionSystem* collisionSystem = nullptr;
     ParticleSystem* particleSystem = nullptr;

@@ -750,12 +750,119 @@ void AcousticField::DrainImpacts(World& world, const std::vector<SolidContact>& 
     }
 }
 
-void AcousticField::Advance()
+bool AcousticField::TraceToOrigin(uint32_t slot, int32_t cx, int32_t cy, int32_t cz,
+                                  int32_t& outX, int32_t& outY, int32_t& outZ) const
+{
+    if (slot >= kMaxWaves || waves_[slot].active == 0) {
+        return false;
+    }
+    // 打ち切りは maxRing の 2 倍 + 余裕。斜めが混ざると 1 リングで 1 セルより多く進むので
+    // 「リング数 = セル数」ではないが、必ず有限で終わることをこの上限が保証する
+    const uint32_t limit = waves_[slot].maxRing * 2u + 8u;
+    int32_t x = cx, y = cy, z = cz;
+    for (uint32_t step = 0; step < limit; ++step) {
+        const uint8_t dir = ParentDirAt(slot, x, y, z);
+        if (dir == kNoParent) {
+            // 親が無い = 音源セルそのもの (距離 0) に辿り着いた
+            outX = x;
+            outY = y;
+            outZ = z;
+            return DistanceAt(slot, x, y, z) == 0;
+        }
+        if (dir >= acoustic::kNeighborCount) {
+            return false;
+        }
+        const acoustic::Neighbor& nb = acoustic::kNeighbors[dir];
+        x += nb.dx;
+        y += nb.dy;
+        z += nb.dz;
+    }
+    return false; // 親の輪 = 距離場が壊れている (起きたら伝播側のバグ)
+}
+
+void AcousticField::DeliverArrivals(uint32_t slot, const std::vector<ListenerSite>& sites,
+                                    uint64_t tick)
+{
+    const Wave& w = waves_[slot];
+    const WaveField& f = fields_[slot];
+    // 今のリングで確定した距離の範囲。バケット幅が面コストちょうどなので、
+    // 「[(ring-1)*11, ring*11) に入っている = このリングで初めて確定した」が状態無しで言える
+    const uint32_t hi = w.ring * acoustic::kFaceCost;
+    const uint32_t lo = (w.ring > 0) ? (hi - acoustic::kFaceCost) : 0u;
+    for (const ListenerSite& site : sites) {
+        // ★自分が出した音を自分で聞かない。忘れると**全個体が永久に追跡状態**になる
+        //   (自分の足音で自分を警戒し続ける)
+        if (site.entity.index == w.source.index && site.entity.generation == w.source.generation) {
+            continue;
+        }
+        const uint16_t d = DistanceAt(slot, site.cx, site.cy, site.cz);
+        if (d == kUnreached || d < lo || d >= hi) {
+            continue; // 未到達、または前のリングで既に配ってある
+        }
+        const float energy = acoustic::EnergyAt(d, f.maxDist, w.amplitude, grid_.cellSize);
+        if (energy < site.mirror->threshold) {
+            continue; // 閾値未満は「聞こえなかった」
+        }
+        // 音源の位置は**親方向を遡って**得る。距離場そのものを辿るので、角を曲がって
+        // 届いた音でも「実際に音が通った道の先」が出る (企画 §6-3 と §3-1 が同じ配列から出る)
+        int32_t ox = 0, oy = 0, oz = 0;
+        if (!TraceToOrigin(slot, site.cx, site.cy, site.cz, ox, oy, oz)) {
+            continue;
+        }
+        float wx = 0.0f, wy = 0.0f, wz = 0.0f;
+        acoustic::CellToWorldCenter(grid_, ox, oy, oz, wx, wy, wz);
+        AcousticListenerComponent& m = *site.mirror;
+        // ★同じ tick に複数の波が届いたら**大きいほうが勝つ** (先着ではない)。
+        //   先着だとスロット番号 = 発音順という実装都合が「どちらへ向かうか」を決めてしまう
+        if (m.lastHeardTick == tick && m.lastLoudness >= energy) {
+            continue;
+        }
+        m.lastHeardTick = tick;
+        m.lastHeardPos = { wx, wy, wz };
+        m.lastLoudness = energy;
+        m.lastSourceEntity = w.source;
+        m.lastTone = static_cast<int32_t>(w.tone);
+    }
+}
+
+void AcousticField::Advance(World* world, uint64_t tick)
 {
     if (!grid_.Valid()) {
         return;
     }
     MYE_PROFILE_SCOPE("acoustic.advance");
+    // 聴者は**波を進める前に 1 回だけ**集める (波ごとに集め直すと N 倍の走査になる)。
+    // entity.index 昇順 = 決定論のタイブレーク
+    std::vector<ListenerSite> sites;
+    if (world != nullptr) {
+        const ComponentTypeId req[] = { AcousticListenerComponent::sTypeId,
+                                        WorldMatrixComponent::sTypeId };
+        world->ForEachArchetype(req, [&](Archetype& arch) {
+            const int li = arch.FindTypeIndex(AcousticListenerComponent::sTypeId);
+            const int wi = arch.FindTypeIndex(WorldMatrixComponent::sTypeId);
+            for (uint32_t row = 0; row < arch.Count(); ++row) {
+                const EntityID e = arch.EntityAt(row);
+                if (!IsEntityActive(*world, e)) {
+                    continue;
+                }
+                const auto& wm = static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row))
+                                     ->value;
+                ListenerSite site;
+                site.entity = e;
+                if (!acoustic::WorldToCell(grid_, wm.m[3][0], wm.m[3][1], wm.m[3][2], site.cx,
+                                           site.cy, site.cz)) {
+                    continue; // ボリュームの外に居る聴者には何も届かない
+                }
+                site.mirror = static_cast<AcousticListenerComponent*>(arch.GetPtr(li, row));
+                sites.push_back(site);
+            }
+        });
+        std::sort(sites.begin(), sites.end(),
+                  [](const ListenerSite& a, const ListenerSite& b) {
+                      return a.entity.index < b.entity.index;
+                  });
+    }
+
     for (uint32_t s = 0; s < kMaxWaves; ++s) {
         Wave& w = waves_[s];
         if (w.active == 0) {
@@ -773,6 +880,11 @@ void AcousticField::Advance()
             continue;
         }
         AdvanceWaveOneRing(s);
+        // ★**同じループの中で**配る。進めたばかりの dist 配列を、残光と同じ EnergyAt で
+        //   読む — 「聞こえた場所」と「光った場所」が別式になる余地をここで潰している
+        if (!sites.empty()) {
+            DeliverArrivals(s, sites, tick);
+        }
     }
 }
 

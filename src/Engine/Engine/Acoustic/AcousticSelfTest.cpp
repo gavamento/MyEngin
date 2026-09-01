@@ -17,6 +17,8 @@
 #include "Engine/Core/World.h"
 #include "Engine/Engine/Acoustic/AcousticField.h"
 #include "Engine/Engine/Acoustic/AcousticGrid.h"
+#include "Engine/Engine/Acoustic/AcousticNav.h"
+#include "Engine/Engine/Acoustic/AgentSystem.h"
 #include "Engine/Engine/GameObject.h"
 #include "Engine/Engine/Physics/PhysMatLibrary.h"
 #include "Engine/Engine/Physics/PhysicsSystem.h"
@@ -51,6 +53,41 @@ std::vector<uint8_t> MakeLMaze(const AcousticGridDesc& g)
         occ[static_cast<size_t>(acoustic::CellIndex(g, 20, 0, z))] = 0u;
     }
     return occ;
+}
+
+// M65f: 流れ場テスト用の L 字迷路 (24x2x24)。MakeLMaze と同じ間取りで**廊下を 2 セル幅**に
+// してある — 粗グリッド (ratio 2) で「サブセルの過半が開」を満たすには 1 セル幅では足りず、
+// 廊下が丸ごと閉じてしまうため (これ自体が過半ルールの性質そのもの)
+std::vector<uint8_t> MakeLMaze2(const AcousticGridDesc& g)
+{
+    std::vector<uint8_t> occ(static_cast<size_t>(g.CellCount()), 1u);
+    for (int32_t y = 0; y < g.dimY; ++y) {
+        for (int32_t x = 2; x <= 21; ++x) {
+            for (int32_t z = 2; z <= 3; ++z) {
+                occ[static_cast<size_t>(acoustic::CellIndex(g, x, y, z))] = 0u;
+            }
+        }
+        for (int32_t z = 2; z <= 21; ++z) {
+            for (int32_t x = 20; x <= 21; ++x) {
+                occ[static_cast<size_t>(acoustic::CellIndex(g, x, y, z))] = 0u;
+            }
+        }
+    }
+    return occ;
+}
+
+// 「そのエンティティが sinceTick 以降に立てた波」の本数 (FSM テストが使う)。
+// ★単に「アクティブな波が増えたか」では検査にならない — 同じ tick に別の波が
+//   寿命で消えると増分が打ち消され、鳴っていても 0 に見える。**誰がいつ立てたか**で数える
+size_t CountWavesFrom(const AcousticField& f, EntityID who, uint64_t sinceTick)
+{
+    size_t n = 0;
+    for (const AcousticField::Wave& w : f.Waves()) {
+        if (w.active != 0 && w.source.index == who.index && w.bornTick >= sinceTick) {
+            ++n;
+        }
+    }
+    return n;
 }
 
 // 占有セル数を数える
@@ -332,7 +369,7 @@ bool RunAcousticSelfTest()
               "maze: Emit takes slot 0 and floors radius into rings");
 
         for (int i = 0; i < 40; ++i) {
-            field.Advance();
+            field.Advance(nullptr, 0);
         }
         check(field.Waves()[0].ring == 40, "maze: one ring per tick at ticksPerRing=1");
 
@@ -390,7 +427,7 @@ bool RunAcousticSelfTest()
         acoustic::CellToWorldCenter(g, 2, 0, 6, wx, wy, wz);
         (void)field.Emit(EntityID{ 3, 1 }, wx, wy, wz, 1.0f, 20.0f, 0, 1, 0);
         for (int i = 0; i < 40; ++i) {
-            field.Advance();
+            field.Advance(nullptr, 0);
         }
         bool leaked = false;
         for (int32_t z = 0; z < 12; ++z) {
@@ -417,7 +454,7 @@ bool RunAcousticSelfTest()
         acoustic::CellToWorldCenter(g, 2, 0, 2, wx, wy, wz);
         (void)field.Emit(EntityID{ 7, 1 }, wx, wy, wz, 1.0f, 20.0f, 0, 1, 0);
         for (int i = 0; i < 20; ++i) {
-            field.Advance();
+            field.Advance(nullptr, 0);
         }
         const std::vector<uint16_t> grownDist = field.FieldOf(0).dist;
         const std::vector<uint8_t> grownParent = field.FieldOf(0).parentDir;
@@ -437,7 +474,7 @@ bool RunAcousticSelfTest()
         other.DebugSetGrid(g, MakeLMaze(g));
         (void)other.Emit(EntityID{ 7, 1 }, wx, wy, wz, 1.0f, 20.0f, 0, 1, 0);
         for (int i = 0; i < 20; ++i) {
-            other.Advance();
+            other.Advance(nullptr, 0);
         }
         check(other.FieldOf(0).dist == grownDist && other.FieldOf(0).parentDir == grownParent,
               "rebuild: a second field fed the same inputs lands on the same array");
@@ -633,7 +670,7 @@ bool RunAcousticSelfTest()
         const uint64_t withWave = HashWorld(w, src);
         check(before != withWave, "glow: emitting does move the hash (the wave table is sim state)");
         for (int i = 0; i < 4; ++i) {
-            field.Advance(); // 残光が焼かれる
+            field.Advance(nullptr, 0); // 残光が焼かれる
         }
         check(field.VisualActive() && !field.Glow().empty(),
               "glow: advancing a wave lights cells");
@@ -661,7 +698,7 @@ bool RunAcousticSelfTest()
         float wx = 0.0f, wy = 0.0f, wz = 0.0f;
         acoustic::CellToWorldCenter(g, 4, 2, 4, wx, wy, wz);
         check(field.Emit(EntityID{ 1, 1 }, wx, wy, wz, 1.0f, 2.0f, 0, 1, 0), "decay: emitted");
-        field.Advance();
+        field.Advance(nullptr, 0);
         check(field.VisualActive(), "decay: the wave lit at least one cell");
 
         auto maxGlow = [&]() {
@@ -706,7 +743,7 @@ bool RunAcousticSelfTest()
         acoustic::CellToWorldCenter(g, 2, 0, 2, wx, wy, wz);
         check(field.Emit(EntityID{ 7, 1 }, wx, wy, wz, 1.0f, 30.0f, 0, 1, 0), "shell: emitted");
         for (int i = 0; i < 40; ++i) {
-            field.Advance();
+            field.Advance(nullptr, 0);
         }
         size_t lit = 0, litSolid = 0, litUnreached = 0;
         for (int32_t z = 0; z < g.dimZ; ++z) {
@@ -784,7 +821,7 @@ bool RunAcousticSelfTest()
         acoustic::CellToWorldCenter(g, 4, 0, 8, ox, oy, oz);
         check(field.Emit(EntityID{ 11, 1 }, ox, oy, oz, 1.0f, 30.0f, 0, 1, 0), "push: emitted");
         for (int i = 0; i < 12; ++i) {
-            field.Advance();
+            field.Advance(nullptr, 0);
         }
 
         // CPU ミラー: posW + N * push をセルへ落として残光を最近傍で引く
@@ -817,6 +854,242 @@ bool RunAcousticSelfTest()
         // グリッドの外は厳密に 0 (CLAMP サンプラの外側漏れを殺している側の契約)
         check(sampleAt(-100.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f) == 0u,
               "push: outside the volume the sample is exactly zero, never clamped-to-edge");
+    }
+
+    // ---- (21) 流れ場: 迷路で勾配を降りると必ず目標に着く (M65f) ----
+    // ★**壁を通り抜けないこと**と**同じ入力なら 2 回計算してビット同一**の 2 本が本体。
+    //   後者は「キャッシュを持たない」判断が守られている証拠でもある
+    {
+        AcousticField field;
+        AcousticGridDesc g;
+        const bool ok = acoustic::MakeGridDesc(24, 2, 24, 0.5f, 0.0f, 0.0f, 0.0f, g);
+        MYE_CHECK(ok);
+        field.DebugSetGrid(g, MakeLMaze2(g));
+
+        AcousticNav nav;
+        nav.Sync(field);
+        check(nav.Valid(), "nav: the coarse grid is built from the field");
+        // navCellRatio は AcousticVolume 由来 (DebugSetGrid 経路の既定は 2)
+        check(nav.Grid().dimX == 12 && nav.Grid().dimZ == 12,
+              "nav: 24 cells at ratio 2 becomes 12 coarse cells");
+
+        nav.BeginTick();
+        float tx = 0.0f, ty = 0.0f, tz = 0.0f;
+        acoustic::CellToWorldCenter(g, 20, 0, 20, tx, ty, tz); // L 字の**遠い端**
+        const int fi = nav.BuildFlowField(tx, ty, tz);
+        check(fi >= 0, "nav: a flow field can be built toward the far end of the maze");
+
+        // 勾配降下: 廊下の反対の端から出発して、必ず目標セルへ着く
+        float px = 0.0f, py = 0.0f, pz = 0.0f;
+        acoustic::CellToWorldCenter(g, 2, 0, 2, px, py, pz);
+        int steps = 0;
+        bool leftMaze = false;
+        while (steps < 400 && !nav.ReachedTarget(fi, px, py, pz)) {
+            float dx = 0.0f, dz = 0.0f;
+            if (!nav.SampleDirection(fi, px, py, pz, dx, dz)) {
+                break;
+            }
+            // 粗セル半分ずつ進む (実機の CC より細かい刻みで、通り抜けを見逃さない)
+            px += dx * nav.Grid().cellSize * 0.5f;
+            pz += dz * nav.Grid().cellSize * 0.5f;
+            int32_t cx = 0, cy = 0, cz = 0;
+            if (!acoustic::WorldToCell(g, px, py, pz, cx, cy, cz) || field.IsSolid(cx, 0, cz)) {
+                leftMaze = true; // 壁の中か箱の外へ出た
+                break;
+            }
+            ++steps;
+        }
+        check(!leftMaze, "nav: gradient descent never walks into a wall");
+        check(nav.ReachedTarget(fi, px, py, pz), "nav: gradient descent reaches the target");
+        // L 字を曲がった証拠: 直線距離 (18 セル) よりずっと多くの歩数が要る
+        // 粗セル 12x12 で (1,1) -> (10,10)。**直線に飛べれば 9 斜め歩 = 18 半歩**だが、
+        // L 字を回ると 18 歩 = 36 半歩前後になる。25 はその間に置いた境
+        check(steps > 25, "nav: the path is far longer than the straight line (it turned a corner)");
+
+        // ★同じ目標なら 2 回目もビット同一 (キャッシュを持たない = 純関数である証拠)
+        AcousticNav nav2;
+        nav2.Sync(field);
+        nav2.BeginTick();
+        const int fi2 = nav2.BuildFlowField(tx, ty, tz);
+        float ax = 0.0f, az = 0.0f, bx = 0.0f, bz = 0.0f;
+        bool same = (fi2 == fi);
+        for (int32_t cz = 0; cz < g.dimZ && same; ++cz) {
+            for (int32_t cx = 0; cx < g.dimX && same; ++cx) {
+                float wx = 0.0f, wy = 0.0f, wz = 0.0f;
+                acoustic::CellToWorldCenter(g, cx, 0, cz, wx, wy, wz);
+                const bool ra = nav.SampleDirection(fi, wx, wy, wz, ax, az);
+                const bool rb = nav2.SampleDirection(fi2, wx, wy, wz, bx, bz);
+                same = (ra == rb) && (ax == bx) && (az == bz);
+            }
+        }
+        check(same, "nav: the same target rebuilds a bit-identical field (no hidden cache)");
+
+        // 壁の向こうの閉じた区画からは「進めない」= false を返す (0 を返して迷わない)
+        float ox = 0.0f, oy = 0.0f, oz = 0.0f;
+        acoustic::CellToWorldCenter(g, 10, 0, 10, ox, oy, oz);
+        float ddx = 0.0f, ddz = 0.0f;
+        check(!nav.SampleDirection(fi, ox, oy, oz, ddx, ddz),
+              "nav: a cell cut off from the target reports 'no direction' rather than guessing");
+    }
+
+    // ---- (22) 敵 FSM: 5 状態の遷移と「警戒中は 1 波も出さない」(M65f) ----
+    // ★企画 §6-3 の中核。**警戒中に 1 本でも波が出ると「音を立てた代償」が消える**
+    {
+        Scene scene;
+        World& w = scene.GetWorld();
+
+        // 音響ボリューム (存在ゲートを開ける)
+        GameObject vol = scene.CreateGameObjectTracked("Volume");
+        auto* av = vol.AddComponent<AcousticVolumeComponent>();
+        av->dimX = 24;
+        av->dimY = 2;
+        av->dimZ = 24;
+        av->cellSize = 0.5f;
+
+        GameObject agent = scene.CreateGameObjectTracked("Agent");
+        agent.SetLocalPosition(1.0f, 0.0f, 1.0f);
+        auto* cc = agent.AddComponent<CharacterControllerComponent>();
+        (void)cc;
+        auto* brain = agent.AddComponent<AgentBrainComponent>();
+        brain->home = { 1.0f, 0.0f, 1.0f };
+        brain->target = brain->home;
+        brain->alertTicks = 5;
+        brain->searchTicks = 10;
+        brain->loseTicks = 4;
+        brain->emitEveryTicks = 2; // **毎 tick 近く鳴る**設定にして「鳴らない」を厳しく見る
+        brain->emitLoudness = 0.5f;
+        auto* ear = agent.AddComponent<AcousticListenerComponent>();
+        ear->threshold = 0.0f;
+        w.ApplyStructuralChanges();
+        TransformSystem ts;
+        ts.Update(w);
+
+        AcousticField field;
+        field.Sync(w);
+        check(field.HasVolume(), "fsm: the volume gate is open");
+
+        AgentSystem sys;
+        uint64_t tick = 1;
+        auto step = [&]() {
+            sys.Update(w, field, tick);
+            field.Advance(&w, tick);
+            ++tick;
+        };
+        auto brainOf = [&]() { return w.GetComponent<AgentBrainComponent>(agent.Id()); };
+        auto earOf = [&]() { return w.GetComponent<AcousticListenerComponent>(agent.Id()); };
+
+        // 巡回から始まる
+        step();
+        check(brainOf()->state == kAgentPatrol, "fsm: starts in patrol");
+
+        // 音を聞かせる → 警戒
+        earOf()->lastHeardTick = tick;
+        earOf()->lastHeardPos = { -2.0f, 0.0f, -2.0f };
+        earOf()->lastLoudness = 1.0f;
+        step();
+        check(brainOf()->state == kAgentAlert, "fsm: hearing a sound this tick enters alert");
+
+        // ★警戒のあいだ**1 本も波を立てない**。alertTicks ぶん回して数える
+        //   (emitEveryTicks=2 なので、鳴る実装ならこの区間で必ず何本か出る)
+        // ★遷移は `stateTicks >= alertTicks` なので、入った tick を 0 として
+        //   alertTicks + 1 tick 目に抜ける。**回数を数え打ちにせずループで待つ** —
+        //   数え打ちにすると閾値の意味を 1 tick 変えただけでテストが壊れる
+        size_t wavesDuringAlert = 0;
+        int alertSteps = 0;
+        const uint64_t alertFrom = tick;
+        while (brainOf()->state == kAgentAlert && alertSteps < 20) {
+            step();
+            // ★**警戒のまま終わった tick だけ**数える。遷移した tick は既に追跡なので
+            //   鳴って当然 (状態遷移は発音より前に評価される)
+            if (brainOf()->state == kAgentAlert) {
+                wavesDuringAlert += CountWavesFrom(field, agent.Id(), alertFrom);
+            }
+            ++alertSteps;
+        }
+        check(alertSteps >= brain->alertTicks,
+              "fsm: alert is held for at least alertTicks before it releases");
+        check(wavesDuringAlert == 0, "fsm: an alert agent emits not one single wave (design 6-3)");
+        check(brainOf()->state == kAgentChase, "fsm: alert times out into chase");
+        check(brainOf()->target.x == -2.0f && brainOf()->target.z == -2.0f,
+              "fsm: chase heads for the last heard position");
+
+        // 追跡中は音を出す (警戒との対比。ここが 0 だと「常に黙る」実装になっている)
+        const uint64_t chaseFrom = tick;
+        size_t wavesDuringChase = 0;
+        for (int i = 0; i < 6; ++i) {
+            step();
+            wavesDuringChase += CountWavesFrom(field, agent.Id(), chaseFrom);
+        }
+        check(wavesDuringChase > 0, "fsm: a chasing agent does emit (the silence is alert-only)");
+
+        // 音が途切れて loseTicks 経過 → 探索 → searchTicks 経過 → 帰還
+        for (int i = 0; i < 8 && brainOf()->state == kAgentChase; ++i) {
+            step();
+        }
+        check(brainOf()->state == kAgentSearch, "fsm: losing the trail falls back to search");
+        for (int i = 0; i < 20 && brainOf()->state == kAgentSearch; ++i) {
+            step();
+        }
+        check(brainOf()->state == kAgentReturn, "fsm: search times out into return");
+
+        // 探索中に音が戻れば即追跡 (帰還からも同じ)
+        earOf()->lastHeardTick = tick;
+        earOf()->lastHeardPos = { 2.0f, 0.0f, 2.0f };
+        step();
+        check(brainOf()->state == kAgentAlert,
+              "fsm: a fresh sound while returning re-enters alert (never straight to chase)");
+    }
+
+    // ---- (23) 聴覚の鏡: 自分の音は聞かない / 閾値未満は届かない (M65f) ----
+    // ★自分の音を自分で聞くと**全個体が永久に追跡状態**になる。絵では
+    //   「なぜか全員こちらを見ている」としか見えないので、ここで固定しておく
+    {
+        Scene scene;
+        World& w = scene.GetWorld();
+        GameObject vol = scene.CreateGameObjectTracked("Volume");
+        auto* av = vol.AddComponent<AcousticVolumeComponent>();
+        av->dimX = 24;
+        av->dimY = 2;
+        av->dimZ = 24;
+        av->cellSize = 0.5f;
+        GameObject who = scene.CreateGameObjectTracked("Ear");
+        who.SetLocalPosition(0.0f, 0.0f, 0.0f);
+        auto* ear = who.AddComponent<AcousticListenerComponent>();
+        ear->threshold = 0.0f;
+        w.ApplyStructuralChanges();
+        TransformSystem ts;
+        ts.Update(w);
+
+        AcousticField field;
+        field.Sync(w);
+        // 自分が原点で鳴らす → 何 tick 進めても鏡は空のまま
+        check(field.Emit(who.Id(), 0.0f, 0.0f, 0.0f, 1.0f, 8.0f, 0, 1, 1), "mirror: self emit ok");
+        for (int i = 0; i < 8; ++i) {
+            field.Advance(&w, static_cast<uint64_t>(2 + i));
+        }
+        check(w.GetComponent<AcousticListenerComponent>(who.Id())->lastHeardTick == 0,
+              "mirror: an agent never hears the wave it emitted itself");
+
+        // 他人の音は聞く
+        const EntityID other = { 4242u, 1u };
+        check(field.Emit(other, 1.0f, 0.0f, 1.0f, 1.0f, 8.0f, 2, 1, 20), "mirror: other emit ok");
+        for (int i = 0; i < 8; ++i) {
+            field.Advance(&w, static_cast<uint64_t>(21 + i));
+        }
+        const auto* m = w.GetComponent<AcousticListenerComponent>(who.Id());
+        check(m->lastHeardTick != 0, "mirror: a wave from somebody else is heard");
+        check(m->lastSourceEntity.index == other.index, "mirror: the source entity is recorded");
+        check(m->lastTone == 2, "mirror: the tone survives to the mirror (M65g reads it)");
+        check(m->lastLoudness > 0.0f, "mirror: the loudness is the energy at the listener cell");
+
+        // 閾値を上げると同じ音が届かなくなる (= 閾値が本当に効いている)
+        w.GetComponent<AcousticListenerComponent>(who.Id())->threshold = 10.0f;
+        const uint64_t before = m->lastHeardTick;
+        check(field.Emit(other, 1.0f, 0.0f, 1.0f, 1.0f, 8.0f, 2, 1, 40), "mirror: third emit ok");
+        for (int i = 0; i < 8; ++i) {
+            field.Advance(&w, static_cast<uint64_t>(41 + i));
+        }
+        check(m->lastHeardTick == before, "mirror: below the threshold nothing is written");
     }
 
     if (failCount == 0) {

@@ -2720,6 +2720,11 @@ void RegisterAcousticShowcaseContent(EngineContext& ctx)
     makeMat("adem_metal", 0.46f, 0.48f, 0.52f);
     makeMat("adem_glass", 0.34f, 0.48f, 0.50f);
     makeMat("adem_drop", 0.62f, 0.30f, 0.28f); // 衝撃音の被写体 (落ちてくる箱)
+    // ---- M65f: 敵 2 種 ----
+    // ★色でセンサーが読めるようにしてある (赤 = 耳 / 緑 = 目)。同じ FSM を回していて
+    //   違うのは載っているセンサーだけ、という設計が絵で確かめられる
+    makeMat("adem_agent_ear", 0.58f, 0.20f, 0.22f);
+    makeMat("adem_agent_eye", 0.22f, 0.52f, 0.26f);
 }
 
 // ---- 音響ショーケースの間取り ----
@@ -2863,14 +2868,19 @@ void BuildAcousticShowcaseScene(EngineContext& ctx)
     }
 
     // ---- M65c: 床材タイル (横の廊下 row 4 の col 2..7) ----
-    // ★**厚み 0.6 / 中心 y=0.15 = 天面 0.45**。この 2 つの数字には理由がある:
-    //   (a) 天面が音響ボリュームの下端 (y=0.25) より**上**にあること —
-    //       下にあると衝撃の接触点がグリッド外に落ちて WorldToCell が失敗し、
-    //       「材質は正しいのに波が 1 本も出ない」という理由の分かりにくい沈黙になる。
-    //   (b) セル中心 (層 0 = y=0.5) には**届かない**こと — 届くと廊下の床が
+    // ★**厚み 0.6 / 中心 y=-0.25 = 天面 0.05**。数字の理由:
+    //   (a) セル中心 (層 0 = y=0.5) には**届かない**こと — 届くと廊下の床が
     //       占有セルになり、M65b で測った「断面 24 セルの平面波」が変わる。
-    // ★6 枚を**隙間なく並べる**のも意図的。歩行者は端から端まで段差を踏まずに歩ける
-    //   (0.45m の段差は CC の collide-and-slide では登れず、その場で止まる)
+    //   (b) 床 (天面 y=0) との段差が **CC が登れる高さ**であること。
+    //       ★★M65c は天面 0.45 で置いていたが、それは **M65f で敵が廊下へ入れない**
+    //         原因だった。0.45m の段差は collide-and-slide では登れず、追跡中の敵が
+    //         タイルの端で永久に足踏みする (probe で発見。歩行者はタイルの上で
+    //         生まれるので一度も跨がず、絵にも出ていなかった)。5cm なら誰でも登れる。
+    //   ★(a) の「天面が音響ボリュームの下端 (y=0.25) より上」は**タイルには要らない**。
+    //     足音は歩行者の位置 (y=1.35) で鳴るので、タイルの高さは発音位置に無関係。
+    //     この制約が効くのは接触点そのものが発音位置になる**衝撃の金属板だけ**で、
+    //     あちらは天面 0.45 のまま据え置いてある。
+    // ★6 枚を**隙間なく並べる**のも意図的 (端で段差を作らない)
     {
         static const char* const kTileMats[6] = { "carpet", "wood",  "gravel",
                                                   "water",  "metal", "glass" };
@@ -2881,7 +2891,7 @@ void BuildAcousticShowcaseScene(EngineContext& ctx)
             char name[48];
             std::snprintf(name, sizeof(name), "Tile_%s", kTileMats[i]);
             GameObject t = s.CreateGameObject(name);
-            t.SetLocalPosition(AcousticMapToWorld(col), 0.15f, AcousticMapToWorld(4));
+            t.SetLocalPosition(AcousticMapToWorld(col), -0.25f, AcousticMapToWorld(4));
             t.SetLocalScale(kAcousticTile, 0.6f, kAcousticTile);
             auto* mr = t.AddComponent<MeshRendererComponent>();
             mr->mesh = cube;
@@ -2968,6 +2978,57 @@ void BuildAcousticShowcaseScene(EngineContext& ctx)
         pl->range = 6.0f;
         pl->intensity = 2.2f;
         pl->color = { 1.0f, 0.86f, 0.62f }; // 携行灯らしい暖色 (残光の寒色と対になる)
+    }
+
+    // ---- M65f: 敵 2 種 (同じ FSM / 違うセンサー) ----
+    // ★**2 体置くことが企画の主張そのもの**。同じ AgentBrain を回していて、
+    //   片方は AcousticListener だけ、もう片方は LightSeeker だけを持つ。
+    //   絵の中で「赤は足音のほうへ、緑は設置光のほうへ」動けば、
+    //   「1 つの FSM に差し替え可能なセンサーを挿す」という設計が成立している。
+    // ★どちらも **CC 単体** (ソリッド Collider を付けない) — 足音のときと同じ理由で、
+    //   同じエンティティにコライダを併用すると真下のレイが自分に当たる。
+    //   さらに敵にコライダを付けると占有ベイクの署名が毎 tick 変わって全再ベイクが走る
+    //   (動くものは遮蔽に入れない、という Sync 側の規約)。
+    auto agent = [&](const char* name, int col, int row, const char* mat) {
+        GameObject go = s.CreateGameObject(name);
+        const float px = AcousticMapToWorld(col);
+        const float pz = AcousticMapToWorld(row);
+        go.SetLocalPosition(px, 1.35f, pz);
+        go.SetLocalScale(0.6f, 1.6f, 0.6f);
+        auto* mr = go.AddComponent<MeshRendererComponent>();
+        mr->mesh = cube;
+        mr->material = AssetID{ HashStr(mat) };
+        auto* cc = go.AddComponent<CharacterControllerComponent>();
+        cc->radius = 0.3f;
+        cc->height = 1.6f;
+        auto* br = go.AddComponent<AgentBrainComponent>();
+        // ★home は明示的に焼く。AgentSystem は「原点なら未設定」で拾うが、
+        //   それに頼るとデモの巡回先が「たまたま原点」になったときに壊れる
+        br->home = { px, 1.35f, pz };
+        br->target = br->home;
+        return go;
+    };
+    {
+        // 耳の敵: 部屋 B の奥。廊下を往復する歩行者の足音 (材質で 3m〜30m) を聞いて、
+        // **音が回り込んできたのと同じ道**を辿って寄ってくる
+        GameObject ear = agent("Agent Ear", 9, 9, "adem_agent_ear");
+        auto* ls = ear.AddComponent<AcousticListenerComponent>();
+        // ★閾値は**逆二乗のスケールで決める**こと。EnergyAt は minD = 1 セル (0.5m) の
+        //   逆二乗なので、振幅 1.0 の音でも 10m 先では (0.5/10)^2 = 0.0025 しかない。
+        //   0.015 のような「一見ちょうどよさそうな」値だと 3m 以内でしか聞こえず、
+        //   デモでは 600 tick 走らせても 1 度も反応しなかった (probe で発見)。
+        //   0.0015 = 廊下 (10m) の water / metal / glass は聞こえて gravel は聞こえない境
+        ls->threshold = 0.0015f;
+    }
+    {
+        // 目の敵: 部屋 B の入口寄り。**視線判定は持たない** (v1 の割り切り) ので、
+        // 壁の向こうの設置光にも引かれる — 企画の「光に寄る」をそのまま素直に実装した形。
+        // attractRadius を既定の 12 から広げてあるのは、部屋 B から部屋 A の光までが
+        // 直線で 15m あり、既定のままだと 1 度も反応せず絵に出ないため
+        GameObject eye = agent("Agent Eye", 4, 8, "adem_agent_eye");
+        auto* seek = eye.AddComponent<LightSeekerComponent>();
+        seek->attractRadius = 30.0f;
+        seek->minIntensity = 0.5f; // 太陽 (0.35) には引かれない (平行光は元々見ない)
     }
 }
 

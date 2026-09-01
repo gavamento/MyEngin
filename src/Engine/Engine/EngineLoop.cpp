@@ -18,6 +18,7 @@
 #include "Engine/Engine/HotReload/DllReloader.h"
 #include "Engine/Engine/HotReload/ReloadHub.h"
 #include "Engine/Engine/Acoustic/AcousticField.h"
+#include "Engine/Engine/Acoustic/AgentSystem.h" // M65f: 敵の思考 (実体はここが持つ)
 #include "Engine/Engine/Audio/AudioMixer.h"
 #include "Engine/Engine/Audio/AudioSourceSystem.h"
 #include "Engine/Engine/Audio/AudioSystem.h"
@@ -123,6 +124,10 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // ★シーンに AcousticVolume が 1 個も無ければ Sync は最初の走査で return するので、
     //   ここに実体を置くこと自体は既存シーンのハッシュにも golden にも影響しない
     AcousticField acoustic;
+    // M65f: 敵の思考。**ECS 外に持つのは航法グリッド (導出値) だけ**で、
+    // FSM の状態は全部 AgentBrainComponent 側 = ECS = snapshot に載っている。
+    // だから 3 点セット契約の対象外 (XpbdBackend / AcousticField とはそこが違う)
+    AgentSystem agentSystem;
     std::vector<SolidContact> solidContacts; // 物理→衝突イベントの tick 内受け渡し (M28c)
     PrefabLibrary prefabLibrary;
     AnimationLibrary animLibrary;
@@ -711,6 +716,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     tickServices.physicsSystem = &physicsSystem;
     tickServices.xpbd = &xpbd; // M60'b
     tickServices.acoustic = &acoustic; // M65a
+    tickServices.agentSystem = &agentSystem; // M65f
     tickServices.transformSystem = &transformSystem;
     tickServices.collisionSystem = &collisionSystem;
     tickServices.particleSystem = &particleSystem;

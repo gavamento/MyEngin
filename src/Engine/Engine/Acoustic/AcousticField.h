@@ -117,8 +117,19 @@ public:
     void DrainImpacts(World& world, const std::vector<SolidContact>& contacts, float dt,
                       uint64_t tick);
 
-    // 全アクティブ波を 1 tick ぶん進める (分周を見て 1 リング前進、maxRing 超えで消す)
-    void Advance();
+    // 全アクティブ波を 1 tick ぶん進める (分周を見て 1 リング前進、maxRing 超えで消す)。
+    //
+    // M65f: **同じループの中で `AcousticListenerComponent` の鏡も書く**。
+    // ★「聞こえた場所」と「光った場所」が食い違わない根拠は、両方が **今まさに進めた
+    //   その `dist` 配列**と**同じ EnergyAt** から出ていること。到達判定を別ループへ
+    //   切り出しても配列が同じなら食い違わないが、**別の距離式や別の走査**を持った
+    //   瞬間に企画 §3-1 の約束 (見えている所と敵に届く所が一致する) が保証でなくなる。
+    // ★内側 (バケット) のループではなく波ごとのループで配るのは 2 つ理由がある:
+    //   (1) 内側は World を知らない (Renderer/Engine の層と同じで、場は ECS を見ない)
+    //   (2) `Rebuild()` はリングを引き直すので、内側で配ると**復元のたびに過去の到達が
+    //       今の tick で再通知される** (鏡は ECS = snapshot で戻っているのに上書きされる)
+    // world == nullptr なら伝播だけ行う (World を持たないセルフテスト経路)
+    void Advance(World* world, uint64_t tick);
 
     // ---- 距離場の読み出し (描画 / AI / デバッグ線が使う) ----
     // グリッドセル -> その波でのチャンファ距離。範囲外・未到達は kUnreached
@@ -178,6 +189,13 @@ public:
     std::vector<Wave>& WavesForSnapshot() { return waves_; }
     bool AnyWaveActive() const;
 
+    // 聴者 1 人ぶんの走査結果 (M65f)。**entity.index 昇順**で作る = 決定論のタイブレーク
+    struct ListenerSite {
+        EntityID entity = kNullEntity;
+        int32_t cx = 0, cy = 0, cz = 0;
+        struct AcousticListenerComponent* mirror = nullptr; // tick 内は安定 (構造変更は tick 末)
+    };
+
     // ---- セルフテスト専用 ----
     // World を組まずに占有を直接与える (迷路を手組みして伝播を検査するため)
     void DebugSetGrid(const AcousticGridDesc& grid, std::vector<uint8_t> occupancy);
@@ -195,6 +213,17 @@ private:
     // 合成は max — 「より近い距離で塗り直された = より強い」ので、同じセルを何度
     // relax しても結果は塗り順に依らない (Rebuild で引き直しても同じ絵になる)
     void WriteShell(uint32_t slot, int32_t cx, int32_t cy, int32_t cz, uint32_t dist);
+
+    // 1 本の波について、今のリングで**新たに確定した**セルに居る聴者へ到達を配る (M65f)。
+    // 「新たに確定した」= dist が [(ring-1)*11, ring*11) に入っていること —
+    // バケット幅が面コストちょうどなので、この判定だけで状態を持たずに縁が取れる
+    void DeliverArrivals(uint32_t slot, const std::vector<ListenerSite>& sites, uint64_t tick);
+
+    // 聴者セルから親方向を遡って音源セルへ戻る。戻り値 = 遡れたか。
+    // ★遡ること自体が「その波が本当にそこへ届いた」ことの検算になっている
+    //   (途中で親が切れていたら距離場が壊れている)
+    bool TraceToOrigin(uint32_t slot, int32_t cx, int32_t cy, int32_t cz, int32_t& outX,
+                       int32_t& outY, int32_t& outZ) const;
 
     AcousticGridDesc grid_;             // 導出値 (ボリュームのコンポーネントから毎 tick 組む)
     EntityID owner_ = kNullEntity;      // 採用したボリューム (entity.index 最小の active な 1 個)

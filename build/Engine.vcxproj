@@ -49,7 +49,9 @@
     <ClCompile Include="..\src\Engine\Engine\Acoustic\AcousticDebugDraw.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Acoustic\AcousticField.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Acoustic\AcousticGrid.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Acoustic\AcousticNav.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Acoustic\AcousticSelfTest.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Acoustic\AgentSystem.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Animation.cpp" />
     <ClCompile Include="..\src\Engine\Engine\AnimatorController.cpp" />
     <ClCompile Include="..\src\Engine\Engine\AnimatorControllerSelfTest.cpp" />
@@ -223,7 +225,9 @@
     <ClInclude Include="..\src\Engine\Engine\Acoustic\AcousticDebugDraw.h" />
     <ClInclude Include="..\src\Engine\Engine\Acoustic\AcousticField.h" />
     <ClInclude Include="..\src\Engine\Engine\Acoustic\AcousticGrid.h" />
+    <ClInclude Include="..\src\Engine\Engine\Acoustic\AcousticNav.h" />
     <ClInclude Include="..\src\Engine\Engine\Acoustic\AcousticSelfTest.h" />
+    <ClInclude Include="..\src\Engine\Engine\Acoustic\AgentSystem.h" />
     <ClInclude Include="..\src\Engine\Engine\Animation.h" />
     <ClInclude Include="..\src\Engine\Engine\AnimatorController.h" />
     <ClInclude Include="..\src\Engine\Engine\AnimatorControllerSelfTest.h" />

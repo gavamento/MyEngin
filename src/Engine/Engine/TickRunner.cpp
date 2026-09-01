@@ -16,6 +16,7 @@
 #include "Engine/Engine/AnimatorController.h"
 #include "Engine/Engine/Acoustic/AcousticDebugDraw.h"
 #include "Engine/Engine/Acoustic/AcousticField.h"
+#include "Engine/Engine/Acoustic/AgentSystem.h" // M65f: 敵の思考 (フェーズ 3.4 の後半)
 #include "Engine/Engine/Audio/AudioMixer.h"
 #include "Engine/Engine/Audio/AudioSourceSystem.h"
 #include "Engine/Engine/Audio/AudioSystem.h"
@@ -318,7 +319,15 @@ void RunOneTick(TickServices& ts)
         //   動かすと、今度は M65f の AgentSystem が書く moveInput が 1 tick 遅れる
         //   (どちらかは必ず 1 tick 古い。動くもののほうを優先した)
         ts.acoustic->DrainImpacts(scene.GetWorld(), solidContacts, ctx.fixedDt, ctx.tickIndex);
-        ts.acoustic->Advance();
+        // ★World と tick を渡す = 進めたリングでの到達を聴者の鏡へ配る (M65f)
+        ts.acoustic->Advance(&scene.GetWorld(), ctx.tickIndex);
+        // 敵の思考 (M65f)。**伝播の直後・物理の前**でなければならない:
+        //   ・前 = 今 tick に届いた音を同じ tick で消費できる
+        //   ・物理より前 = 書いた moveInput が同じ tick で歩数になる
+        // AgentBrain が 0 個なら最初の走査で return する (乱数も 1 draw も引かない)
+        if (ts.agentSystem != nullptr) {
+            ts.agentSystem->Update(scene.GetWorld(), *ts.acoustic, ctx.tickIndex);
+        }
         // ★M65d: 残光の減衰。**sim 相の中で描画レーンのデータを触る唯一の場所**だが、
         //   DecayVisual は sim 状態 (波スロット表) を 1 バイトも読まないし書かない。
         //   ここに置くのは「1 tick = 1 減衰」を tick の進行と同じゲート (stepSim) に
@@ -638,6 +647,9 @@ void RunOneTick(TickServices& ts)
             }
             if (ts.acoustic) {
                 ts.acoustic->Reset(); // M65a: 旧シーンの波と占有グリッドを捨てる
+            }
+            if (ts.agentSystem) {
+                ts.agentSystem->Reset(); // M65f: 航法グリッドも旧シーンのもの
             }
             vfxRenderer.Reset(); // M29c: トレイル点列も新シーンでリセット
             partFollowSystem.Reset(); // M48g: 旧シーンの warn 抑制を捨てる

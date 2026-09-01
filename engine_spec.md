@@ -1532,6 +1532,43 @@ art direction: an all-black reference image agrees with a completely broken feat
 killing the composite moves 49,315 pixels by up to 170 levels, and that number is the real measure
 of what these two images protect.
 
+**Hearing and navigation (M65f).** A listener's mirror is written inside the same per-wave loop
+that advances the ring, from the very `dist` array the afterglow was written from and through the
+same `EnergyAt`. That is what makes "what the player sees" and "what the enemy hears" the same
+statement rather than two implementations that happen to agree. A cell counts as *newly* heard
+when its chamfer distance falls in `[(ring-1)·11, ring·11)` — the bucket width being exactly the
+face cost means the edge is detectable without storing anything. The reported source position is
+found by walking the parent links back to the origin, so it is the end of the path the sound
+actually travelled, and walking it also proves the chain is intact. A wave never reaches the
+listener that emitted it; skip that check and every agent hears its own footsteps and stays
+alerted forever.
+
+Navigation is a second Dijkstra with the *same* weights over a grid decimated by `navCellRatio`,
+where a coarse cell is open when a majority of its sub-cells are. Same occupancy, same metric —
+so the route an enemy walks is the route the sound took, without a second data structure that
+could disagree. Gradient descent picks the strictly-smaller neighbour, ties broken by the
+neighbour table's order; interpolating for a smoother heading would put a float back in an
+ordering decision.
+
+**The flow field is rebuilt every tick and never cached.** That is the design, not an
+optimisation left undone. Any cache — LRU, lazy build, a per-frame budget — makes "was the field
+ready" an input to `moveInput`, which is hashed, and a derived value that was quietly promoted to
+simulation state fails only when something rewinds. Recomputed each tick, the field is a pure
+function of occupancy and target cell and has no history at all. When it costs too much the only
+direction to retreat in is resolution.
+
+Five states, fixed: patrol, alert, search, chase, return. What differs between the design's two
+enemies is which sensor component they carry, not the graph — `AcousticListener` for one,
+`LightSeeker` for the other, and the FSM never asks which it is. Carrying both, sound wins: a
+sound is an event with a decay window, while a light is simply present, so letting light win
+would mean walking past a placed lamp deafens the agent. **Alert is where the design's central
+trade lives** — an alerted agent stops and emits nothing, so making noise costs the player the
+enemy's position too. The self test counts waves by source and birth tick rather than watching the
+active total, because a wave expiring in the same tick would otherwise hide one being born.
+
+Randomness is drawn only when agents exist, and only for patrol and search wander targets. One
+draw in a scene without agents shifts every existing replay's random stream.
+
 ---
 
 ## 11. Debug/Release Consistency Policy

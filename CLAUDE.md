@@ -67,10 +67,12 @@ MyEngine — C++20 / DirectX 11 の自作ゲームエンジン (VS2022 / x64 / W
   `--joint-demo` (M60i: 関節/機構/ラグドール/車のショーケース。replay 6 ペア目 + スクショ 14 枚目。substeps 16) /
   `--fog-demo` (M57追補: 霧 + GPU 粒子 + Sprite/Trail/TextMesh のショーケース。スクショ 15 枚目 =
   GPU 描画経路と VfxRenderer の唯一のピクセル被覆) /
-  `--acoustic-demo` (M65b/M65c/M65e: 音響伝播のショーケース。L 字の廊下 + 2 部屋 +
+  `--acoustic-demo` (M65b/M65c/M65e/M65f: 音響伝播のショーケース。L 字の廊下 + 2 部屋 +
   床材タイル 6 枚を往復する歩行者 + 金属板へ落ちる箱。replay 7 ペア目 =
   波スロット表がハッシュに載る唯一の場所。**波は SceneView の「音響」トグルでしか見えない** —
-  ライティングへの差し込みは M65e = golden 18/19 枚目) /
+  ライティングへの差し込みは M65e = golden 18/19 枚目。M65f で**敵 2 種**
+  (赤 = 聴覚センサー / 緑 = 光センサー。**同じ FSM で載っているセンサーだけが違う**) が
+  L 字を回って寄ってくる) /
   `--acoustic-dump N` (M65d: N 回目の描画で残光ボリュームを読み戻し、CPU の場と
   **バイト単位で**照合してログへ。`--froxel-dump` と同じ調査専用) /
   `--particle-backend <cpu|gpu>` / `--particle-compare` (M57追補: バックエンドの CLI 固定。
