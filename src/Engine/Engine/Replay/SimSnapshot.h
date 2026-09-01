@@ -81,7 +81,12 @@ struct SimRefs {
 // v10 (M65a): ACU 節 (音響の波スロット表) を XPB 節の後・World 節の前に追加。
 //            ★M65b〜g が使うフィールドも M65a でまとめて確保してあるので、
 //              音響で版が上がるのはこの 1 回だけ (分割して足すと 7 回上がる)
-inline constexpr uint32_t kSimSnapshotVersion = 10;
+// v11 (M65h): AcousticVolumeComponent へ glowKeepPerTick / glowIntensity、
+//            AcousticEmitterComponent へ footstepGain を追加。World 節のカラム
+//            Raw サイズが変わる (残光の 2 本は描画レーン専用の値だが、
+//            コンポーネントの生バイトが blob に載るので版は上がる。
+//            3 本を 1 回で足したのは M63a と同じ「まとめて確保」の型)
+inline constexpr uint32_t kSimSnapshotVersion = 11;
 
 // 撮る: out を clear して blob を書く。成功で true。
 // 節ごとの参照が null なら「空の節」を書くのでレイアウトは常に同じ

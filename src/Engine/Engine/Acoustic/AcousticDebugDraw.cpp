@@ -19,6 +19,7 @@ namespace {
 constexpr uint32_t kOccupancyColor = 0x606878FFu; // 占有面 (くすんだ青灰)
 constexpr uint32_t kListenerColor = 0x40FF90FFu;  // 聴者 (緑)
 constexpr uint32_t kHeardColor = 0xFFD040FFu;     // 最後に聞いた位置への線 (黄)
+constexpr uint32_t kBoundsColor = 0x40C8FFFFu;    // ボリューム境界 (明るい水色、M65h)
 
 // 音色 0..3 の色。M65e のライティングでも同じ 4 色を使う予定なので、
 // **ここが色の正本**になる (先に決めておかないと絵とデバッグ線で色が食い違う)
@@ -85,6 +86,31 @@ void BuildAcousticDebugLines(World& world, const AcousticField& field,
     }
     const AcousticGridDesc& g = field.Grid();
     const float arm = g.cellSize * 0.35f;
+
+    // ---- ボリューム境界 (M65h): グリッド AABB の 12 辺 ----
+    // 壁の上端とボリューム上面の位置関係を目視するためのもの。特に「ボリュームが壁より
+    // 高い = 波が壁の上を飛び越える」事故は、この箱と壁を見比べるのが最短の検出手段
+    if (flags.bounds) {
+        const float x0 = g.minX, y0 = g.minY, z0 = g.minZ;
+        const float x1 = g.minX + static_cast<float>(g.dimX) * g.cellSize;
+        const float y1 = g.minY + static_cast<float>(g.dimY) * g.cellSize;
+        const float z1 = g.minZ + static_cast<float>(g.dimZ) * g.cellSize;
+        // 底面 4 辺
+        PushLine(out, x0, y0, z0, x1, y0, z0, kBoundsColor);
+        PushLine(out, x1, y0, z0, x1, y0, z1, kBoundsColor);
+        PushLine(out, x1, y0, z1, x0, y0, z1, kBoundsColor);
+        PushLine(out, x0, y0, z1, x0, y0, z0, kBoundsColor);
+        // 天面 4 辺
+        PushLine(out, x0, y1, z0, x1, y1, z0, kBoundsColor);
+        PushLine(out, x1, y1, z0, x1, y1, z1, kBoundsColor);
+        PushLine(out, x1, y1, z1, x0, y1, z1, kBoundsColor);
+        PushLine(out, x0, y1, z1, x0, y1, z0, kBoundsColor);
+        // 縦 4 辺
+        PushLine(out, x0, y0, z0, x0, y1, z0, kBoundsColor);
+        PushLine(out, x1, y0, z0, x1, y1, z0, kBoundsColor);
+        PushLine(out, x1, y0, z1, x1, y1, z1, kBoundsColor);
+        PushLine(out, x0, y0, z1, x0, y1, z1, kBoundsColor);
+    }
 
     // ---- 占有: 開セルに面している閉セルだけ ----
     // 「内部まで全部描く」と箱が塗り潰されて、肝心の壁の形が見えなくなる

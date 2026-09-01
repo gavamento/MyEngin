@@ -1092,6 +1092,71 @@ bool RunAcousticSelfTest()
         check(m->lastHeardTick == before, "mirror: below the threshold nothing is written");
     }
 
+    // ---- (24) 残光パラメータの鏡 (M65h) ----
+    // Sync がコンポーネント値を鏡へ写し、範囲外は消費側の既定へ倒れること。
+    // ★glowKeepPerTick / glowIntensity は描画レーンの値なので、ここが壊れても
+    //   リプレイは割れない = このセルフテストだけが検出の網
+    {
+        Scene scene;
+        World& w = scene.GetWorld();
+        GameObject vol = scene.CreateGameObjectTracked("Volume");
+        {
+            auto* av = vol.AddComponent<AcousticVolumeComponent>();
+            av->dimX = 8;
+            av->dimY = 2;
+            av->dimZ = 8;
+            av->cellSize = 0.5f;
+            av->glowKeepPerTick = 0.5f;
+            av->glowIntensity = -1.0f; // 負は Sync 側で 0 (消灯) へ丸める
+        }
+        w.ApplyStructuralChanges();
+        TransformSystem ts;
+        ts.Update(w);
+
+        AcousticField field;
+        field.Sync(w);
+        check(field.GlowKeepPerTick() == 0.5f, "tune: Sync mirrors glowKeepPerTick");
+        check(field.GlowIntensity() == 0.0f, "tune: a negative glowIntensity clamps to zero");
+
+        // keep=0.5 は 1 tick で半分になる = 鏡の値が DecayVisual まで実際に流れる形
+        float wx = 0.0f, wy = 0.0f, wz = 0.0f;
+        acoustic::CellToWorldCenter(field.Grid(), 4, 1, 4, wx, wy, wz);
+        check(field.Emit(EntityID{ 1, 1 }, wx, wy, wz, 1.0f, 3.0f, 0, 1, 0), "tune: emit ok");
+        for (int i = 0; i < 3; ++i) {
+            field.Advance(nullptr, 0);
+        }
+        check(field.VisualActive(), "tune: the probe wave lit at least one cell");
+        uint8_t peak = 0;
+        for (uint8_t v : field.Glow()) {
+            peak = (v > peak) ? v : peak;
+        }
+        field.DecayVisual(field.GlowKeepPerTick());
+        uint8_t half = 0;
+        for (uint8_t v : field.Glow()) {
+            half = (v > half) ? v : half;
+        }
+        check(peak > 0 && half <= static_cast<uint8_t>(peak / 2),
+              "tune: keep=0.5 halves the glow in one tick (truncated)");
+
+        // 0 (未設定) は DecayVisual 側の範囲ガードで既定 0.995 へ倒れる = ゆっくり減る。
+        // ★AddComponent 後の生ポインタは構造変更で動くので、書き換えは取り直してから
+        if (auto* av = w.GetComponent<AcousticVolumeComponent>(vol.Id())) {
+            av->glowKeepPerTick = 0.0f;
+            av->glowIntensity = 2.0f;
+        }
+        field.Sync(w);
+        check(field.GlowKeepPerTick() == 0.0f && field.GlowIntensity() == 2.0f,
+              "tune: Sync re-mirrors after the component changes");
+        const uint8_t before = half;
+        field.DecayVisual(field.GlowKeepPerTick());
+        uint8_t after = 0;
+        for (uint8_t v : field.Glow()) {
+            after = (v > after) ? v : after;
+        }
+        check(after < before && after + 3 >= before,
+              "tune: keep=0 falls back to the engine default (slow decay)");
+    }
+
     if (failCount == 0) {
         MYE_LOG_INFO("==== Acoustic self test: ALL PASS ====");
         return true;

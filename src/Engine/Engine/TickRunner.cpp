@@ -333,7 +333,9 @@ void RunOneTick(TickServices& ts)
         //   ここに置くのは「1 tick = 1 減衰」を tick の進行と同じゲート (stepSim) に
         //   縛るため — フレームレートで減衰させると、同じ .rep でも 60fps と 300fps で
         //   残光の長さが変わる (絵が機種依存になる = golden が撮れない)
-        ts.acoustic->DecayVisual(acoustic::kGlowDecayPerTick);
+        // M65h: 減衰率は AcousticVolume の glowKeepPerTick (Sync が鏡へ写した値)。
+        // 0 = 既定 kGlowDecayPerTick へ倒すのは DecayVisual 側の範囲ガードの仕事
+        ts.acoustic->DecayVisual(ts.acoustic->GlowKeepPerTick());
     }
     // ---- アニメーション (フェーズ 3.5): スクリプト後・Transform 前に LocalTransform を確定 ----
     // Play 中のみ進行 (編集時は Animation 窓が明示サンプリングする)。M51g からは

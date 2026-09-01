@@ -30,7 +30,10 @@ struct AcousticDebugFlags {
     bool occupancy = false;
     bool waveOrigin = false; // 音源セルの大きい十字 (音色で色分け)
     bool listener = false;   // 聴者の十字 + 最後に聞いた位置への線 (M65f で中身が入る)
-    bool Any() const { return frontier || occupancy || waveOrigin || listener; }
+    // ボリュームの AABB ワイヤ (M65h)。「高さが壁より 0.5m 高いだけで波が壁を
+    // 飛び越える」罠 (M65b 申し送り 1) を目視で防ぐための 12 本
+    bool bounds = false;
+    bool Any() const { return frontier || occupancy || waveOrigin || listener || bounds; }
 };
 
 AcousticDebugFlags& GetAcousticDebugFlags();

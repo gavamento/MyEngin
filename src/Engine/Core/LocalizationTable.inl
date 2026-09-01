@@ -398,6 +398,10 @@ MYE_STR(SceneView_AcOrigin,   "Sound sources###sv_ac_origin",
                               "音源###sv_ac_origin")
 MYE_STR(SceneView_AcListener, "Listeners###sv_ac_listener",
                               "聴者###sv_ac_listener")
+// M65h: ボリューム境界。「高さが壁より 0.5m 高いだけで波が壁を飛び越える」罠 (M65b
+// 申し送り 1) を目視で防ぐための箱ワイヤ
+MYE_STR(SceneView_AcBounds,   "Volume bounds###sv_ac_bounds",
+                              "ボリューム境界###sv_ac_bounds")
 // ---- 関節の種類 (M60b)。Inspector の type コンボの選択肢 ----
 // 表示順 = JointComponent.type の値順 (0..4)。値の意味を変えると既存シーンが壊れる
 MYE_STR(Insp_JointBall,       "Ball (3 linear)",        "ボール (線形 3)")

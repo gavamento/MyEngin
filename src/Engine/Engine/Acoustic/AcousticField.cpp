@@ -198,6 +198,10 @@ void AcousticField::Sync(World& world)
         return;
     }
     navRatio_ = std::clamp(bestVol.navCellRatio, 1, 8);
+    // M65h: 残光の見た目パラメータを鏡へ写す (描画レーン。範囲ガードは消費側 —
+    // DecayVisual が (0,1) 外を既定へ倒し、強度は負だけここで落とす)
+    glowKeepPerTick_ = bestVol.glowKeepPerTick;
+    glowIntensity_ = (bestVol.glowIntensity > 0.0f) ? bestVol.glowIntensity : 0.0f;
     if (!acoustic::SameGrid(desc, grid_) || owner_ != best) {
         grid_ = desc;
         owner_ = best;
@@ -640,8 +644,13 @@ void AcousticField::DrainEmitters(World& world, float dt, uint64_t tick)
                     const float loud = SelectAcousticLoudness(mat);
                     // スクリプトが同じ tick に書いた要求を**踏み潰さない** (明示 > 自動)
                     if (loud > 0.0f && em.pendingLoudness <= 0.0f) {
-                        em.pendingLoudness = loud;
-                        em.pendingRadiusM = SelectAcousticRadiusM(mat);
+                        // M65h: 速度段階の振幅係数 (企画 §3-2「走るほど大きい波」)。
+                        // 振幅と到達距離の**両方**に掛ける — DrainImpacts の ImpactGain と
+                        // 同じ流儀 (大きい音は明るいだけでなく遠くまで届く)。
+                        // 0 以下は既定 1.0 (未設定の旧シーン。消音は autoFootstep で行う)
+                        const float gain = (em.footstepGain > 0.0f) ? em.footstepGain : 1.0f;
+                        em.pendingLoudness = loud * gain;
+                        em.pendingRadiusM = SelectAcousticRadiusM(mat) * gain;
                         em.pendingTone = SelectAcousticTone(mat);
                     }
                 }

@@ -947,6 +947,7 @@ void SceneViewWindow::DrawToolbar(EditorSettings& settings)
             ImGui::Checkbox(Tr(StrId::SceneView_AcOccupancy), &ad.occupancy);
             ImGui::Checkbox(Tr(StrId::SceneView_AcOrigin), &ad.waveOrigin);
             ImGui::Checkbox(Tr(StrId::SceneView_AcListener), &ad.listener);
+            ImGui::Checkbox(Tr(StrId::SceneView_AcBounds), &ad.bounds); // M65h
             ImGui::EndPopup();
         }
     }

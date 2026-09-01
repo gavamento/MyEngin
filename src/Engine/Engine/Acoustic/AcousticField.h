@@ -182,6 +182,11 @@ public:
     bool VisualActive() const { return visualActive_; }
     // 内容が変わるたびに +1。GPU 側は「前回転送した通番と違うときだけ」上げ直す
     uint32_t VisualSerial() const { return visualSerial_; }
+    // ---- 残光の見た目パラメータ (M65h)。AcousticVolume から Sync が写す鏡 ----
+    // どちらも描画レーン専用の値。TickRunner が DecayVisual(GlowKeepPerTick()) の形で渡し
+    // (0 = 既定へ倒すのは DecayVisual 側の範囲ガード)、RenderSystem が合成強度に乗算する
+    float GlowKeepPerTick() const { return glowKeepPerTick_; }
+    float GlowIntensity() const { return glowIntensity_; }
 
     // 波スロット表。**書き換えてよいのは SimSnapshot / セルフテスト / 音響システム本体だけ**
     // (CpuParticleBackend::PoolsForSnapshot と同じ契約)
@@ -237,6 +242,10 @@ private:
     std::vector<uint8_t> glow_;         // 残光。空 = 一度も光っていない
     bool visualActive_ = false;         // 非ゼロのセルが在るか (全 0 になったら false へ戻る)
     uint32_t visualSerial_ = 0;         // 内容が変わるたびに +1 (転送の要否判定)
+    // M65h: AcousticVolume の見た目パラメータの鏡 (Sync が毎回写す)。
+    // コンポーネント側はハッシュ対象だが、この鏡は描画レーン (snapshot に入らない)
+    float glowKeepPerTick_ = 0.0f;      // 0 = kGlowDecayPerTick (既定)
+    float glowIntensity_ = 1.0f;
 };
 
 } // namespace mye

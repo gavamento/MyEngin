@@ -862,6 +862,13 @@ void RegisterBuiltinComponents()
                MYE_FIELD_TIP(AcousticVolumeComponent, blockLayerMask, UInt32,
                              "only colliders on these layers block sound")),
         MYE_JP("有効", MYE_FIELD(AcousticVolumeComponent, enabled, Bool)),
+        MYE_JP("残光の減衰率",
+               MYE_FIELD_TIP(AcousticVolumeComponent, glowKeepPerTick, Float,
+                             "per-tick keep factor for the afterglow; 0 or out of (0,1) = "
+                             "engine default 0.995. closer to 1 = longer afterglow, but the "
+                             "uint8 storage caps the tail at ~4.25s regardless")),
+        MYE_JP("残光の明るさ",
+               MYE_FIELD_RANGE(AcousticVolumeComponent, glowIntensity, Float, 0.0f, 4.0f)),
     });
 
     // 音を出す口。pending* を書くと次の音響フェーズで波が 1 本生まれる。
@@ -883,6 +890,11 @@ void RegisterBuiltinComponents()
         MYE_JP("発音間隔", MYE_FIELD(AcousticEmitterComponent, cooldownTicks, Int32)),
         MYE_JP("発音待ち", MYE_FIELD_FLAGS(AcousticEmitterComponent, cooldown, Int32,
                                            kFieldReadOnly)),
+        MYE_JP("足音の振幅係数",
+               MYE_FIELD_TIP(AcousticEmitterComponent, footstepGain, Float,
+                             "scales the auto-footstep amplitude and reach; 0 or less = 1.0. "
+                             "lets run steps be louder and carry farther than crouch steps, "
+                             "independent of the floor material")),
     });
 
     // 音を聞く耳。★ミラーに kFieldNoSerialize を付けないこと — 付けるとハッシュ対象から

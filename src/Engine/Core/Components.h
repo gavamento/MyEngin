@@ -1201,6 +1201,16 @@ struct AcousticVolumeComponent {
     // このマスクに載るレイヤーのコライダーだけが音を遮る (Raycast の mask と同じ意味)
     uint32_t blockLayerMask = 0xFFFFFFFFu;
     bool enabled = true;
+    // ---- 残光の見た目 (M65h 追補) ----
+    // ★どちらも**描画レーンにしか効かない** (AcousticField が Sync で鏡へ写し、
+    //   減衰と合成だけが読む)。ただしコンポーネントの生バイトはハッシュ/snapshot に
+    //   載るので、追加時に kSimSnapshotVersion を上げてある (v11)。
+    // 残光の減衰率 [/tick]。0 または範囲外 (>= 1.0) = 既定 kGlowDecayPerTick (0.995)。
+    // 1 に近いほど長く残る。企画 §3-5「残光がどれだけ残るかが難易度そのもの」の調整口。
+    // ★uint8 の切り捨てにより、いくら 1 に近づけても最長 ~4.25 秒 (AcousticGrid.h の注記)
+    float glowKeepPerTick = 0.0f;
+    // ライティングへ合成する残光の明るさ。0 = 転送はするが絵に出ない (企画 §12 全体照明の対)
+    float glowIntensity = 1.0f;
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
@@ -1217,6 +1227,11 @@ struct AcousticEmitterComponent {
     float travelAccum = 0.0f;     // 歩幅の累積。**sim 状態** (エンジンが書く)
     int32_t cooldownTicks = 0;    // 連続発音の下限間隔 (0 = 制限なし)
     int32_t cooldown = 0;         // 残り tick。**sim 状態** (エンジンが書く)
+    // 足音の振幅係数 (M65h 追補、企画 §3-2)。自動足音の振幅と到達距離の両方に乗算される —
+    // 「走り = 大きく遠く / しゃがみ = 小さく近く」を床材と独立に表現する口。
+    // ★0 以下は既定 1.0 として扱う (消音したいなら autoFootstep を切る)。
+    //   振幅に効く = 聴者の判定に効く = **sim 入力**なので、書き換えは .rep に影響する
+    float footstepGain = 1.0f;
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 

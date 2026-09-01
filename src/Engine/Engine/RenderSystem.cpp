@@ -1211,7 +1211,9 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
                 view.acousticInvSize[0] = 1.0f / (static_cast<float>(ag.dimX) * ag.cellSize);
                 view.acousticInvSize[1] = 1.0f / (static_cast<float>(ag.dimY) * ag.cellSize);
                 view.acousticInvSize[2] = 1.0f / (static_cast<float>(ag.dimZ) * ag.cellSize);
-                view.acousticIntensity = acousticIntensity;
+                // M65h: ボリューム側の明るさ (glowIntensity) と全体係数の積。
+                // 既定はどちらも 1.0 = 既存の絵と 1 ビットも変わらない
+                view.acousticIntensity = acousticIntensity * acousticField->GlowIntensity();
                 // 閉セルは波が絶対に訪れない = 壁面の残光は開セル側にしかない。
                 // 法線方向へ 0.75 セル押し出して開セル側を引くのが
                 // 「壁に当たった面だけが光る」の正体 (計画 判断 5)
