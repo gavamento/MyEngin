@@ -381,6 +381,24 @@ struct RenderView {
     //      ★null のままになる経路がある (AssetPreviewCache の別 RenderSystem / selftest の
     //        手組み RenderView)。**消費側は「null ならライティング無効」のゲートを必ず置く**
     const struct SceneLightData* lights = nullptr;
+    // ---- M65d: 音響の残光ボリューム (末尾 append。**null = 従来と 1 ビットも同じ**) ----
+    //   acousticSRV = Texture3D<R8_UNORM>。CPU の波面伝播が焼いた残光を
+    //     AcousticVolumePass が転送したもの。**null のままになる経路が複数ある**
+    //     (シーンに AcousticVolume が無い / 一度も音が鳴っていない /
+    //      AssetPreviewCache の別 RenderSystem / selftest の手組み RenderView)
+    //     ので、**消費側は「null ならフラグ 0」のゲートを必ず置くこと**。
+    //   acousticGridMin = セル (0,0,0) の**最小角**のワールド座標 (中心ではない)。
+    //   acousticInvSize = 1 / (dim * cellSize)。posW からテクスチャ座標 [0,1] への変換が
+    //     `(posW - gridMin) * invSize` の 1 式で済む。
+    //   acousticNormalPush = サンプル位置を法線方向へ押し出す距離 [m] (= 0.75 * cellSize)。
+    //     ★閉セルは波が絶対に訪れないので、壁面の残光は**開セル側**にしかない。
+    //       押し出さずに壁面そのものをサンプルすると常に 0 = 「壁が光らない」になる。
+    //   acousticIntensity = 合成の強さ。0 = 消灯 (M65e の消費側が乗算で使う)
+    ID3D11ShaderResourceView* acousticSRV = nullptr;
+    float acousticGridMin[3] = { 0.0f, 0.0f, 0.0f };
+    float acousticInvSize[3] = { 0.0f, 0.0f, 0.0f };
+    float acousticIntensity = 0.0f;
+    float acousticNormalPush = 0.0f;
 };
 
 // ---- デカール (M56a) ----

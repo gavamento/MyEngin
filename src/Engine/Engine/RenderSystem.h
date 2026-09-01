@@ -10,6 +10,7 @@
 #include "Engine/Engine/LightSelection.h"
 #include "Engine/Engine/RayTracing/RtScene.h"
 #include "Engine/Engine/TerrainSystem.h"
+#include "Engine/Renderer/AcousticVolumePass.h"
 #include "Engine/Renderer/EditorLinePass.h"
 #include "Engine/Renderer/EnvMapBaker.h"
 #include "Engine/Renderer/FroxelPass.h"
@@ -26,6 +27,7 @@ class World;
 class GraphicsDevice;
 class IRenderPath;
 class ShaderManager;
+class AcousticField;
 class ParticleSystem;
 class VfxRenderer;
 struct RenderResources;
@@ -200,6 +202,22 @@ public:
     // 両者が一致する)。負値 = 何もしない。7MB を Map する完全同期経路なので調査専用
     int froxelDumpFrame = -1;
 
+    // ---- M65d: 音響の残光ボリューム ----
+    // ★sim が焼いた残光への**非所有ポインタ** (実体は EngineLoop が持つ AcousticField)。
+    //   null = ボリュームの無いシーン = 従来と完全に同じ絵。埋めるのは所有者
+    //   (EngineLoop) で、RenderSystem は毎フレーム転送して view へ写すだけ。
+    //   ★**AssetPreviewCache の RenderSystem はここを埋めない** ので、サムネイルに
+    //     音の光が漏れることは構造的に起きない (reflectionProbes と同じ流儀)。
+    //   ★実体を壊す前に必ず nullptr へ戻すこと (ぶら下がりポインタになる)
+    const AcousticField* acousticField = nullptr;
+    // 合成の強さ。0 にすると転送はするが絵には出ない (M65e の消費側が乗算で使う)
+    float acousticIntensity = 1.0f;
+    // --acoustic-dump N: **そのビューの N 回目の描画**で 3D テクスチャを全セル読み戻し、
+    // CPU 側の残光配列と**バイト単位で突き合わせる**。負値 = 何もしない。
+    // ★これが RowPitch / DepthPitch の取り違え (= Z がずれるが絵は出る) を捕まえる
+    //   唯一の網。130KB を Map する完全同期経路なので調査専用 (--froxel-dump と同じ型)
+    int acousticDumpFrame = -1;
+
     // M44d: ポストプロセス解決の GPU 時間 (直近の Resolve、ProfilerWindow 表示用)
     float PostFxGpuMs() const { return postFx_.ResolveGpuMs(); }
     // M56c: HZB を組んだ GPU 時間 (パスが持つ計測を Render 直後に写したもの)
@@ -235,6 +253,13 @@ public:
     // 直近フレームで履歴を混ぜられたか (0 = 初フレーム / 通番が飛んだ / テンポラル off)
     bool FroxelHistoryValid() const { return froxelPass_.LastHistoryValid(); }
     float FroxelSliceJitter() const { return froxelPass_.LastSliceJitter(); }
+    // M65d: 残光ボリュームの統計 (ProfilerWindow 表示用)。cells が 0 = まだ 1 度も
+    // 転送していない (= ボリュームが無いか、一度も音が鳴っていない)。
+    // ms が 0 でも「速い」ではなく「通番が同じで転送を省いた」フレームでありうる
+    float AcousticUploadMs() const { return acousticPass_.LastUploadMs(); }
+    int AcousticCellCount() const { return acousticPass_.CellCount(); }
+    // 直近フレームに SRV を光パスへ供給できたか (= 残光が実際に絵へ載る状態か)
+    bool AcousticSupplied() const { return acousticSupplied_; }
 
     // M54b: 直近フレームのライト選別結果 (カリング + 決定論ソート + 上限)。
     // shadowSlot は M54c のシャドウアトラスが読む — この時点ではまだ誰も配線していない
@@ -276,6 +301,10 @@ private:
     // 3D テクスチャ 7MB と CS を、霧を使わないシーン (AssetPreview の別 RenderSystem を
     // 含む) にまで払わせないため (ShadowAtlas の 64MB と同じ理由)
     FroxelPass froxelPass_;
+    // M65d: 音響の残光ボリューム。**acousticField が繋がるまで 1 バイトも確保しない**
+    // (ShadowAtlas の 64MB / FroxelPass の 7MB と同じ遅延確保の流儀)
+    AcousticVolumePass acousticPass_;
+    bool acousticSupplied_ = false; // 直近フレームで SRV を供給できたか (統計表示用)
     EditorLinePass linePass_; // DebugDrawLine 用 (v7、遅延 Init)
     EnvMapBaker envBaker_;    // IBL 環境マップ (M38c、lazy ベイク + キャッシュ)
     // スキンメッシュのボーンパレット (M18)。フレーム毎に再構築。deque = push_back で

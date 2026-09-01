@@ -319,6 +319,12 @@ void RunOneTick(TickServices& ts)
         //   (どちらかは必ず 1 tick 古い。動くもののほうを優先した)
         ts.acoustic->DrainImpacts(scene.GetWorld(), solidContacts, ctx.fixedDt, ctx.tickIndex);
         ts.acoustic->Advance();
+        // ★M65d: 残光の減衰。**sim 相の中で描画レーンのデータを触る唯一の場所**だが、
+        //   DecayVisual は sim 状態 (波スロット表) を 1 バイトも読まないし書かない。
+        //   ここに置くのは「1 tick = 1 減衰」を tick の進行と同じゲート (stepSim) に
+        //   縛るため — フレームレートで減衰させると、同じ .rep でも 60fps と 300fps で
+        //   残光の長さが変わる (絵が機種依存になる = golden が撮れない)
+        ts.acoustic->DecayVisual(acoustic::kGlowDecayPerTick);
     }
     // ---- アニメーション (フェーズ 3.5): スクリプト後・Transform 前に LocalTransform を確定 ----
     // Play 中のみ進行 (編集時は Animation 窓が明示サンプリングする)。M51g からは

@@ -2,6 +2,7 @@
 
 #include "Engine/Core/Localization.h"
 #include "Engine/Core/Profiler.h"
+#include "Engine/Engine/Acoustic/AcousticField.h" // M65d: 残光の統計行
 #include "Engine/Engine/Particles/ParticleSystem.h"
 #include "Engine/Engine/RenderSystem.h"
 #include "Engine/Engine/Scene.h"
@@ -82,6 +83,21 @@ void ProfilerWindow::OnImGui(EngineContext& ctx)
                         ctx.renderSystem->froxelSettings.anisotropy,
                         ctx.renderSystem->FroxelSliceJitter(),
                         ctx.renderSystem->FroxelHistoryValid() ? 1 : 0);
+        }
+        // M65d: 音響の残光ボリューム (シーンに AcousticVolume が無ければ行ごと出さない)。
+        // ★upload ms が 0.000 でも「速い」とは限らない — 内容の通番が前フレームと同じで
+        //   転送を**省いた**フレームも 0 になる。supplied=0 が続くなら
+        //   「一度も音が鳴っていない」か「テクスチャを作れなかった」のどちらか
+        if (ctx.renderSystem->acousticField != nullptr
+            && ctx.renderSystem->AcousticCellCount() > 0) {
+            int acousticWaves = 0;
+            for (const AcousticField::Wave& w : ctx.renderSystem->acousticField->Waves()) {
+                acousticWaves += (w.active != 0) ? 1 : 0;
+            }
+            ImGui::Text("  acoustic: %6.3f ms upload (CPU, %d cells, waves %d, supplied %d)",
+                        ctx.renderSystem->AcousticUploadMs(),
+                        ctx.renderSystem->AcousticCellCount(), acousticWaves,
+                        ctx.renderSystem->AcousticSupplied() ? 1 : 0);
         }
         // M46b: レイトレ (デバッグ表示も GI 合成も off のときは行ごと出さない)
         const bool rtGiOn = ctx.renderSystem->enableRtGi;             // M46f

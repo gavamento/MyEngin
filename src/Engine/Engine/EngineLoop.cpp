@@ -271,6 +271,10 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     renderSystem.enableFroxel = config.froxel;         // M57b (--froxel。まだ絵は変わらない)
     renderSystem.froxelSettings.temporal = config.froxelTemporal; // M57c (--froxel-no-temporal)
     renderSystem.froxelDumpFrame = config.froxelDumpFrame; // M57b/M57c (--froxel-dump N)
+    // M65d: 音響の残光ボリューム。**ここが唯一の配線点** — AssetPreviewCache が持つ
+    // 別の RenderSystem は誰もここを埋めないので、サムネイルに音の光が漏れない
+    renderSystem.acousticField = &acoustic;
+    renderSystem.acousticDumpFrame = config.acousticDumpFrame; // M65d (--acoustic-dump N)
     renderSystem.postFxSettings.tonemap = config.postFxTonemap;
     renderSystem.postFxSettings.exposure = config.postFxExposure;
     renderSystem.postFxSettings.bloom = config.postFxBloom;
@@ -774,6 +778,10 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             // 落とす。**CPU パーティクルの池は blob 側で戻っている**ので触ってはいけない
             vfxRenderer.Reset();
             particleSystem.Gpu().Reset();
+            // M65d: 残光も落とす。**捨てた未来で照らした壁が残っていると
+            // 「過去へ飛んだのに未来の地図が見えている」**になる。この後の再シムが
+            // 記録入力で同じ波を立て直すので、戻った先の残光はちゃんと復元される
+            acoustic.ResetVisual();
         } else {
             // 前進シークは現在地からそのまま再シムする (戻す必要が無い)。
             // 「T-K へ戻ってから記録入力で T まで進めると元の T と一致する」という
@@ -1761,6 +1769,10 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     //   カーソルが消えたままになる (プロセスが死んでも OS は数え直さない)
     input.ApplyCursorLock(window.Hwnd(), false);
     app.OnShutdown(ctx);
+    // M65d: 実体 (acoustic) は renderSystem より後に宣言されている = 先に死ぬ。
+    // 描画はもう止まっているので実害は無いが、「所有者が死ぬ前に参照を切る」を
+    // 1 箇所で守っておく (reflectionProbes と同じ規約)
+    renderSystem.acousticField = nullptr;
     meshcol::Install(nullptr); // M41 (meshColliders 破棄前に必ず外す)
     convexcol::Install(nullptr); // M60f (convexColliders 破棄前に必ず外す)
     physmat::Install(nullptr); // M59a1 (physMatLibrary 破棄前に必ず外す)

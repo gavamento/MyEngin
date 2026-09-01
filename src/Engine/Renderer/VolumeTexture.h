@@ -25,17 +25,25 @@ class GraphicsDevice;
 //   (M57c のテンポラルも履歴は SRV 側で読む)。
 //   WARP が本当に R16G16B16A16_FLOAT の 3D UAV ストアを通すかは机上では決まらないので、
 //   下の RunFroxelVolumeProbe が実際に書いて読み戻して確かめる。
+//
+// ★M65d: `withUav = false` で **SRV だけ**の 3D テクスチャも作れるようにした。
+//   R8_UNORM は FL11_0 の「typed UAV 必須」リストの外なので、UAV 込みで作ろうとすると
+//   CreateUnorderedAccessView が落ちて Create ごと false を返す。音響の残光は CPU が
+//   UpdateSubresource で流し込んで PS が読むだけ = UAV は 1 度も要らないので、
+//   ビットを落とせば通る。引数作法は RenderTexture::Create に揃えてある。
 class VolumeTexture {
 public:
     bool Create(GraphicsDevice& device, int width, int height, int depth,
-                DXGI_FORMAT format = DXGI_FORMAT_R16G16B16A16_FLOAT);
-    // 同寸・同フォーマットなら何もしない (RenderTexture::Resize と同じ契約)
+                DXGI_FORMAT format = DXGI_FORMAT_R16G16B16A16_FLOAT, bool withUav = true);
+    // 同寸・同フォーマット・同 UAV 有無なら何もしない (RenderTexture::Resize と同じ契約)
     void Resize(GraphicsDevice& device, int width, int height, int depth,
-                DXGI_FORMAT format = DXGI_FORMAT_R16G16B16A16_FLOAT);
+                DXGI_FORMAT format = DXGI_FORMAT_R16G16B16A16_FLOAT, bool withUav = true);
     void Release();
 
     ID3D11ShaderResourceView* SRV() const { return srv_.Get(); }
     ID3D11UnorderedAccessView* UAV() const { return uav_.Get(); }
+    // M65d: CPU から UpdateSubresource で流し込むための実体 (UAV 無しの経路が使う)
+    ID3D11Texture3D* Texture() const { return tex_.Get(); }
     int Width() const { return width_; }
     int Height() const { return height_; }
     int Depth() const { return depth_; }
@@ -44,9 +52,16 @@ public:
 
     // 検証用の同期読み戻し。STAGING テクスチャを都度作って CopyResource + Map する =
     // GPU を完全に待たせる経路なので、**毎フレームの描画からは呼ばないこと**
-    // (プローブと将来の selftest 専用)。対応フォーマットは R16G16B16A16_FLOAT と
-    // R32G32B32A32_FLOAT のみ — それ以外は false を返す。
+    // (プローブと将来の selftest 専用)。対応フォーマットは R16G16B16A16_FLOAT /
+    // R32G32B32A32_FLOAT / R8_UNORM (M65d) のみ — それ以外は false を返す。
+    // R8_UNORM のときは out[0] だけ埋まり、out[1..3] は 0
     bool ReadbackTexel(GraphicsDevice& device, int x, int y, int z, float out[4]) const;
+
+    // M65d: R8_UNORM 専用の全セル読み戻し (`--acoustic-dump`)。out は w*h*d バイトで、
+    // **CPU 側の配列と memcmp できる並び** (x が最内、次に y、最後に z)。
+    // ★これが `SysMemPitch` / `SysMemSlicePitch` の取り違えを捕まえる唯一の網 —
+    //   取り違えると「Z がずれた絵」になり、しかも絵は普通に出るので目視では分からない
+    bool ReadbackBytes(GraphicsDevice& device, std::vector<uint8_t>& out) const;
 
     // M57b: 全セルの同期読み戻し (`--froxel-dump`)。out は w*h*d*4 の float 列
     // (x が最内、次に y、最後に z)。**7MB のボリュームで float 換算 14.7MB を
@@ -62,6 +77,7 @@ private:
     int height_ = 0;
     int depth_ = 0;
     DXGI_FORMAT format_ = DXGI_FORMAT_R16G16B16A16_FLOAT;
+    bool hasUav_ = true; // M65d: Resize の「同じ構成か」判定に要る (寸法だけでは足りない)
 };
 
 // ---- M57a: WARP 実測プローブ (`Editor.exe --froxel-probe`) ----

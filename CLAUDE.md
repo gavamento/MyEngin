@@ -69,6 +69,8 @@ MyEngine — C++20 / DirectX 11 の自作ゲームエンジン (VS2022 / x64 / W
   床材タイル 6 枚を往復する歩行者 + 金属板へ落ちる箱。replay 7 ペア目 =
   波スロット表がハッシュに載る唯一の場所。**波は SceneView の「音響」トグルでしか見えない** —
   ライティングへの差し込みは M65e) /
+  `--acoustic-dump N` (M65d: N 回目の描画で残光ボリュームを読み戻し、CPU の場と
+  **バイト単位で**照合してログへ。`--froxel-dump` と同じ調査専用) /
   `--particle-backend <cpu|gpu>` / `--particle-compare` (M57追補: バックエンドの CLI 固定。
   project_settings.json より優先し**書き戻さない**。GPU 粒子を --screenshot で撮る唯一の口) /
   `--taa` (M55d) / `--ssr` (M56d) / `--froxel` (M57) / `--hzb-debug N` (M56c) /

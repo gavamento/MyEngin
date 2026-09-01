@@ -34,6 +34,8 @@ int BytesPerTexel(DXGI_FORMAT format)
         return 8;
     case DXGI_FORMAT_R32G32B32A32_FLOAT:
         return 16;
+    case DXGI_FORMAT_R8_UNORM: // M65d: 音響の残光 (1 チャンネル・UAV 無し)
+        return 1;
     default:
         return 0;
     }
@@ -42,7 +44,7 @@ int BytesPerTexel(DXGI_FORMAT format)
 } // namespace
 
 bool VolumeTexture::Create(GraphicsDevice& device, int width, int height, int depth,
-                           DXGI_FORMAT format)
+                           DXGI_FORMAT format, bool withUav)
 {
     if (width <= 0 || height <= 0 || depth <= 0) {
         return false;
@@ -58,7 +60,12 @@ bool VolumeTexture::Create(GraphicsDevice& device, int width, int height, int de
     td.MipLevels = 1; // フロクセルはミップを持たない (積分は最細のまま Z 列を舐める)
     td.Format = format;
     td.Usage = D3D11_USAGE_DEFAULT;
-    td.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
+    // M65d: UAV は要求されたときだけ。R8_UNORM のように FL11_0 の typed UAV 必須リストの
+    // 外にあるフォーマットは、ここでビットを立てると **ビュー作成が落ちて Create ごと失敗**する
+    td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    if (withUav) {
+        td.BindFlags |= D3D11_BIND_UNORDERED_ACCESS;
+    }
 
     if (FAILED(dev->CreateTexture3D(&td, nullptr, tex_.GetAddressOf()))) {
         MYE_LOG_ERROR("VolumeTexture: CreateTexture3D failed (%dx%dx%d, format %d)", width, height,
@@ -80,12 +87,19 @@ bool VolumeTexture::Create(GraphicsDevice& device, int width, int height, int de
     ud.Texture3D.FirstWSlice = 0;
     ud.Texture3D.WSize = static_cast<UINT>(depth);
 
-    if (FAILED(dev->CreateShaderResourceView(tex_.Get(), &sd, srv_.GetAddressOf()))
-        || FAILED(dev->CreateUnorderedAccessView(tex_.Get(), &ud, uav_.GetAddressOf()))) {
+    if (FAILED(dev->CreateShaderResourceView(tex_.Get(), &sd, srv_.GetAddressOf()))) {
+        // ★SRV 作成の失敗も必ずログに残す (M65d)。「絵が出ない」だけだと
+        //   バインドし忘れと区別が付かない
+        MYE_LOG_ERROR("VolumeTexture: SRV creation failed (%dx%dx%d, format %d)", width, height,
+                      depth, static_cast<int>(format));
+        Release();
+        return false;
+    }
+    if (withUav && FAILED(dev->CreateUnorderedAccessView(tex_.Get(), &ud, uav_.GetAddressOf()))) {
         // ★ここで落ちるのが「FL11_0 の typed 3D UAV が使えない」ケース。
-        //   フォーマットを変える (R32_FLOAT 4 枚に分ける等) 設計変更の合図なので、
-        //   黙って null を返さずログに残す
-        MYE_LOG_ERROR("VolumeTexture: view creation failed (%dx%dx%d, format %d は typed 3D UAV "
+        //   フォーマットを変える (R32_FLOAT 4 枚に分ける等) か withUav=false にする、
+        //   という設計変更の合図なので、黙って null を返さずログに残す
+        MYE_LOG_ERROR("VolumeTexture: UAV creation failed (%dx%dx%d, format %d は typed 3D UAV "
                       "非対応か)",
                       width, height, depth, static_cast<int>(format));
         Release();
@@ -96,16 +110,18 @@ bool VolumeTexture::Create(GraphicsDevice& device, int width, int height, int de
     height_ = height;
     depth_ = depth;
     format_ = format;
+    hasUav_ = withUav;
     return true;
 }
 
 void VolumeTexture::Resize(GraphicsDevice& device, int width, int height, int depth,
-                           DXGI_FORMAT format)
+                           DXGI_FORMAT format, bool withUav)
 {
-    if (width == width_ && height == height_ && depth == depth_ && format == format_) {
+    if (width == width_ && height == height_ && depth == depth_ && format == format_
+        && withUav == hasUav_) {
         return;
     }
-    Create(device, width, height, depth, format);
+    Create(device, width, height, depth, format, withUav);
 }
 
 void VolumeTexture::Release()
@@ -117,6 +133,7 @@ void VolumeTexture::Release()
     height_ = 0;
     depth_ = 0;
     format_ = DXGI_FORMAT_R16G16B16A16_FLOAT;
+    hasUav_ = true;
 }
 
 bool VolumeTexture::ReadbackTexel(GraphicsDevice& device, int x, int y, int z, float out[4]) const
@@ -158,10 +175,53 @@ bool VolumeTexture::ReadbackTexel(GraphicsDevice& device, int x, int y, int z, f
         for (int i = 0; i < 4; ++i) {
             out[i] = DirectX::PackedVector::XMConvertHalfToFloat(h[i]);
         }
+    } else if (format_ == DXGI_FORMAT_R8_UNORM) {
+        // M65d: 1 チャンネル。UNORM の復号は「/255」で厳密 (0 と 255 が 0.0 と 1.0)
+        out[0] = static_cast<float>(*base) / 255.0f;
+        out[1] = out[2] = out[3] = 0.0f;
     } else {
         const float* f = reinterpret_cast<const float*>(base);
         for (int i = 0; i < 4; ++i) {
             out[i] = f[i];
+        }
+    }
+    dc->Unmap(staging.Get(), 0);
+    return true;
+}
+
+bool VolumeTexture::ReadbackBytes(GraphicsDevice& device, std::vector<uint8_t>& out) const
+{
+    if (!tex_ || format_ != DXGI_FORMAT_R8_UNORM) {
+        return false;
+    }
+    ID3D11Device* dev = device.Device();
+    ID3D11DeviceContext* dc = device.Context();
+
+    D3D11_TEXTURE3D_DESC td = {};
+    tex_->GetDesc(&td);
+    td.Usage = D3D11_USAGE_STAGING;
+    td.BindFlags = 0;
+    td.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+
+    Microsoft::WRL::ComPtr<ID3D11Texture3D> staging;
+    if (FAILED(dev->CreateTexture3D(&td, nullptr, staging.GetAddressOf()))) {
+        return false;
+    }
+    dc->CopyResource(staging.Get(), tex_.Get());
+
+    D3D11_MAPPED_SUBRESOURCE mapped = {};
+    if (FAILED(dc->Map(staging.Get(), 0, D3D11_MAP_READ, 0, &mapped))) {
+        return false;
+    }
+    out.assign(static_cast<size_t>(width_) * height_ * depth_, 0u);
+    for (int z = 0; z < depth_; ++z) {
+        for (int y = 0; y < height_; ++y) {
+            // ★RowPitch / DepthPitch はドライバのパディング込み。要求寸法で歩かないこと
+            const uint8_t* row = static_cast<const uint8_t*>(mapped.pData)
+                + static_cast<size_t>(z) * mapped.DepthPitch
+                + static_cast<size_t>(y) * mapped.RowPitch;
+            std::memcpy(out.data() + (static_cast<size_t>(z) * height_ + y) * width_, row,
+                        static_cast<size_t>(width_));
         }
     }
     dc->Unmap(staging.Get(), 0);

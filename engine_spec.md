@@ -1468,6 +1468,34 @@ Contacts reach the acoustic phase (3.4) one tick stale, since physics (3.6) runs
 consumer has to be a tick behind; the choice was to delay impact audio rather than the agent
 steering that phase 3.4 will write in M65f.
 
+**The afterglow volume (M65d).** One byte per cell, written by `max` **inside the ring-advance
+loop itself**, at the instant a cell's distance is settled. Splitting that into a second pass is
+the one refactor this system must never accept: the moment "what was heard" and "what was lit"
+come from two traversals, they are free to disagree, and §3-1 of the design — you see exactly
+what the enemy hears — stops being structural.
+
+The buffer is **draw-lane data**: it is not hashed, not snapshotted, and not allocated until a
+wave first lights something. Rewinding is therefore the consumer's call, exactly as it is for
+GPU particles and trails — a time-travel seek clears it (a map lit by a discarded future is
+worse than none) while a network rollback keeps it (eight ticks of staleness beats a flicker
+every rollback).
+
+Storage is gamma-encoded rather than linear. Arrival energy is inverse-square, so a linear byte
+is zero a few metres out and the far walls of a room never appear at all; the encode is
+`sqrt(sqrt(e))` — gamma 1/4 built from the one correctly-rounded operation in IEEE-754, so the
+bytes are identical across Debug, Release and WARP even though nothing forces them to be.
+Decay is multiplicative per *tick* (never per frame — a frame-paced fade would make the same
+`.rep` look different at 60 and 300 fps). Truncation guarantees the fade always reaches exactly
+zero, and equally caps the afterglow at 255 ticks: the byte is the time constant's ceiling.
+
+Transfer is a whole-volume `UpdateSubresource` into an `R8_UNORM` `Texture3D` created **without a
+UAV** — R8_UNORM is outside the FL11_0 typed-UAV list, so asking for one fails view creation
+outright, and the GPU never writes this volume anyway. The upload is skipped whenever the
+content serial is unchanged, since the simulation advances at 60 Hz while the renderer does not.
+`--acoustic-dump N` reads the volume back and compares it to the CPU array byte for byte, which
+is the only way to catch a `RowPitch`/`SysMemSlicePitch` mix-up — that particular error still
+draws a picture, just one shifted in Z.
+
 ---
 
 ## 11. Debug/Release Consistency Policy

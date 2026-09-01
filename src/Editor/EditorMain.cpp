@@ -357,6 +357,10 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 // (--froxel も立てる)
                 config.froxelDumpFrame = _wtoi(argv[++i]);
                 config.froxel = true;
+            } else if (arg == L"--acoustic-dump" && i + 1 < argc) {
+                // M65d: N 回目の描画で残光ボリュームを読み戻し、CPU 側の配列と
+                // バイト単位で突き合わせてログへ (他のフラグは立てない)
+                config.acousticDumpFrame = _wtoi(argv[++i]);
             } else if (arg == L"--particle-backend" && i + 1 < argc) {
                 // M57追補: バックエンドを CLI から固定する (project_settings.json より優先。
                 // ただし書き戻さない)。GPU 粒子を --screenshot で撮る唯一の口

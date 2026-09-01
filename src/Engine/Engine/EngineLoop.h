@@ -144,6 +144,12 @@ struct EngineConfig {
     // (負値 = 何もしない)。--froxel も一緒に立てる
     int froxelDumpFrame = -1;
 
+    // M65d: --acoustic-dump N。そのビューの N 回目の描画で残光ボリュームを全セル
+    // 読み戻し、CPU 側の配列とバイト単位で突き合わせて統計をログへ出す (負値 = 何もしない)。
+    // ★--froxel-dump と違い**他のフラグを立てない** — 残光は「音響ボリュームが
+    //   シーンに在る」ことだけが条件で、CLI で on/off するものではないから
+    int acousticDumpFrame = -1;
+
     // ---- パーティクルバックエンドの CLI 上書き (M57追補) ----
     // -1 = 未指定 (project_settings.json に従う) / 0 = CPU / 1 = GPU。
     // ★これが無いと GPU バックエンドはエディタ GUI と設定ファイルからしか選べず、

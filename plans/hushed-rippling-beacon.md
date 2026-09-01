@@ -545,7 +545,7 @@ golden 2 枚を `--update` して差分を目視。
 | M65a 共有契約 + ボクセル化 | **完了** | TypeId 45〜49 / snapshot v10 / phase 3.4 新設 / M60′ 予約を 50/51 へ | 下の「M65a の申し送り」参照 |
 | M65b 波面伝播 + デバッグ線 | **完了** | replay 7 ペア目 / `--acoustic-demo` / `kMaxWaveRing` 40→64 | 下の「M65b の申し送り」参照 |
 | M65c 床材と発音源 | **完了** | PhysMat 末尾 append 3 本 / physmat 新規 5 種 + wood 追記 / 上書きビットは不採用 | 下の「M65c の申し送り」参照 |
-| M65d 残光ボリューム + 転送 | 未着手 | `VolumeTexture::Create(withUav)` | |
+| M65d 残光ボリューム + 転送 | **完了** | `VolumeTexture::Create(withUav)` / `RenderView` 5 本 append / `--acoustic-dump N` | 下の「M65d の申し送り」参照 |
 | M65e ライティング差し込み | 未着手 | Deferred t13 / Forward t8 / golden 18-19 枚目 / `$constGroups` 2 件 | |
 | M65f 流れ場 + FSM | 未着手 | なし (描画・版とも無風) | |
 | M65g ゲームの薄皮 | 未着手 | ABI 据え置きを確定 (要冒頭確認) | |
@@ -689,3 +689,61 @@ check_rules 0 error / build_managed Debug+Release 0。
     (ハッシュ対象) が機種依存になる。
 11. 足音は**スクリプトが書いた発音要求を踏み潰さない** (`pendingLoudness > 0` なら自動足音は
     見送る)。明示 > 自動。逆にすると「スクリプトで鳴らしたのに床の音がした」になる。
+
+---
+
+## M65d の申し送り (計画外の事実・罠だけ)
+
+**実測**: 両構成 0 警告 / selftest 43 本 ALL PASS (音響は 19 群 / 新規 22 チェック) /
+replay_verify **10 ジョブ PASS (79.0s)** / shot_verify **17 枚すべて maxDiff=0** /
+check_rules 0 error / build_managed Debug+Release 0 /
+`--acoustic-demo --timetravel-selftest 400` も PASS (ResetVisual を挟んでもハッシュは合う)。
+
+1. ★**冒頭確認 (R8_UNORM の Texture3D が WARP で通るか) に `--acoustic-probe` は書かなかった**。
+   `--acoustic-dump` が「読み戻して CPU と突き合わせる」= プローブの上位互換で、しかも
+   M65d の成果物そのものだから。実測結果: **WARP で通る**
+   (`grid 52x6x52 = 16,224 セル / 15.8KB / 転送 0.003〜0.008 ms / GPU 読み戻しが CPU と
+   バイト単位で一致 / 閉セルの点灯 0`)。縮退 (R16_FLOAT → R8G8B8A8_UNORM) は不要だった。
+   ★通った理由は **UAV を落としたこと**。R8_UNORM は FL11_0 の typed UAV 必須リストの外なので、
+   `withUav=true` のままだと `CreateUnorderedAccessView` が落ちて `Create` ごと false になる。
+2. ★★**uint8 の残光は 255 tick (4.25 秒) より長く持てない**。乗算の切り捨てが
+   「1 tick に最低 1 は減る」を強制するので、割合をいくら 1 に近づけても末尾が線形になる。
+   当初 0.985 (「5 秒」のつもり) で組んだが実測 135 tick = 2.25 秒しか保たなかった。
+   0.995 に上げて **227 tick = 3.8 秒**。もっと長い残光が要るなら uint8 をやめるか
+   (R16_UNORM)、減衰を数 tick に 1 回へ間引くしかない — 割合では届かない。
+3. ★**残光の格納はガンマ 1/4 (sqrt を 2 回)**。エネルギーは逆二乗なので線形に uint8 へ
+   落とすと 5m で 1/100、20m で 1/1600 = **数メートル先が全部 0** になり、企画 §3-1 の
+   「波が遠くの壁を描く」が絵から丸ごと消える。`pow(x, 0.25f)` にしなかったのは、
+   sqrt が IEEE-754 で正しく丸められる = コンパイラ / CRT に依らない唯一の関数だから
+   (残光はハッシュ外だが M65e で golden に載る)。復号は v^4 で、シェーダ側の正本は
+   `acoustic_common.hlsli` が持つ (M65e)。selftest (19) が往復誤差 2% を固定している。
+4. ★**`AcousticVolumePass` は `AcousticField` を受け取らない**。Renderer 層から Engine 層を
+   参照すると依存が逆流するので、POD の `AcousticVolumeUpload` (cells ポインタ + dim3 + 通番)
+   だけを見る形にした。詰め替えは RenderSystem (Engine 層) の仕事。計画本文は
+   `Upload(GraphicsDevice&, const AcousticField&)` と書いていたが**そのままでは層を割る**。
+5. `WriteShell` は `AdvanceWaveOneRing` の**relax したその行**と `SeedWave` の 2 箇所から呼ぶ。
+   max 合成なので「後からより短い距離で塗り直される」順序に依らず、**`Rebuild()` で
+   引き直しても同じ絵**になる (増分と引き直しの同値性が距離場だけでなく残光にも効く)。
+6. 転送は**内容の通番が変わったフレームだけ**。sim は 60Hz なのに Runtime は vsync 無効で
+   数千 fps 回るので、素直に毎フレーム流すと 16KB のコピーがほとんど無駄打ちになる。
+   ★副作用として **ProfilerWindow の upload ms が 0.000 でも「速い」とは限らない**
+   (転送を省いたフレームも 0)。行に `supplied` を出しているのはそのため。
+7. ★**グリッドの形が変わったら残光は捨てる** (`Sync` の中で `ResetVisual`)。セル index →
+   ワールド位置の対応がグリッドに紐づいているので、平行移動ですら再アドレスできない
+   (追従グリッドを採らなかったのと同じ理由 = 計画 判断 4)。
+8. **タイムトラベルは残光を落とし、ネットのロールバックは落とさない**。前者は
+   「捨てた未来で照らした壁が残っていると過去へ飛んだ意味が無い」、後者は
+   「巻き戻し幅 8 tick = 133ms のちらつきのほうが実害が大きい」— vfxRenderer /
+   GPU パーティクルの既存の使い分けをそのまま踏襲した (新しい規約を足していない)。
+9. `DecayVisual` はフェーズ 3.4 の末尾 = **`stepSim` ゲートの内側**。フレーム時間で減衰
+   させると同じ .rep が 60fps と 300fps で違う絵になり、M65e で golden が撮れなくなる。
+10. ★**この時点でシェーダは 1 行も変わっていない** ので golden 17 枚は完全無風
+    (実測どおり全部 maxDiff=0)。M65e が初めてピクセルを動かす。
+11. M65e への申し送り: `RenderView` の 5 本は**もう埋まっている**
+    (`acousticSRV` / `acousticGridMin[3]` / `acousticInvSize[3]` / `acousticIntensity` /
+    `acousticNormalPush = 0.75 * cellSize`)。`acousticInvSize` は **`1/(dim*cellSize)`** で、
+    `(posW - gridMin) * invSize` が [0,1] のテクスチャ座標になる — cellSize だけで割ると
+    セル単位になるので取り違えないこと。強さの入口は `RenderSystem::acousticIntensity`
+    (既定 1.0)。
+12. デモの残光の実測 (frame 120 / 400): 非ゼロ 5378 → 5648 セル (33% → 35%)、最大値
+    181 (energy 0.254) → 219 (0.544)。**閉セルの点灯は両方 0** = 波も残光も壁を越えていない。

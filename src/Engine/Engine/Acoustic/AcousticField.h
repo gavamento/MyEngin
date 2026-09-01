@@ -150,6 +150,28 @@ public:
     const std::vector<uint8_t>& Occupancy() const { return occupancy_; }
     bool IsSolid(int32_t cx, int32_t cy, int32_t cz) const;
 
+    // ---- 残光ボリューム (M65d) ----
+    //
+    // ★★**ここから下は描画レーン。ハッシュにも snapshot にも 1 バイトも入らない。**
+    //   波スロット表 (Waves) とは別アクセサにしてあるのは、「sim 状態のつもりで
+    //   glow_ を畳む」事故を型で防ぐため。GPU パーティクルや VfxRenderer のトレイルと
+    //   同じ扱いで、巻き戻し後の見せ方は**呼び手 (TimeTravel) が ResetVisual で決める**。
+    //
+    // ★書き込みは AdvanceWaveOneRing の**中**、距離を確定したその場で行う (WriteShell)。
+    //   別ループに分けた瞬間に「聞こえる場所と光る場所がずれる」種類のバグが入る余地が
+    //   できる — 企画の中核 (§3-1「見えている所と敵に届く所が一致する」) はこの
+    //   「同じ 1 ループ」でしか構造的に保証できない。
+    //
+    // 1 セル 1 バイト (EncodeGlow の符号化済み値)。既定ボリューム 104x12x104 で 130KB。
+    // ★**波が 1 本も光るまで確保しない** — ボリュームだけ置いたシーンは 0 バイト
+    void DecayVisual(float perTick);
+    void ResetVisual();
+    const std::vector<uint8_t>& Glow() const { return glow_; }
+    // 0 = 全セルが 0 (= 転送する意味が無い)。RenderSystem のゲートはこれを見る
+    bool VisualActive() const { return visualActive_; }
+    // 内容が変わるたびに +1。GPU 側は「前回転送した通番と違うときだけ」上げ直す
+    uint32_t VisualSerial() const { return visualSerial_; }
+
     // 波スロット表。**書き換えてよいのは SimSnapshot / セルフテスト / 音響システム本体だけ**
     // (CpuParticleBackend::PoolsForSnapshot と同じ契約)
     const std::vector<Wave>& Waves() const { return waves_; }
@@ -169,6 +191,11 @@ private:
     void SeedWave(uint32_t slot);            // 局所ボックスを確保して原点だけ置く
     void AdvanceWaveOneRing(uint32_t slot);  // バケット [ring*11, (ring+1)*11) を処理
 
+    // 残光へ 1 セル焼く (M65d)。**距離を確定した直後にその場で呼ぶ**。
+    // 合成は max — 「より近い距離で塗り直された = より強い」ので、同じセルを何度
+    // relax しても結果は塗り順に依らない (Rebuild で引き直しても同じ絵になる)
+    void WriteShell(uint32_t slot, int32_t cx, int32_t cy, int32_t cz, uint32_t dist);
+
     AcousticGridDesc grid_;             // 導出値 (ボリュームのコンポーネントから毎 tick 組む)
     EntityID owner_ = kNullEntity;      // 採用したボリューム (entity.index 最小の active な 1 個)
     int32_t navRatio_ = 2;              // 導出値
@@ -177,6 +204,10 @@ private:
     bool derivedValid_ = false;         // 導出値が現在の world と整合しているか
     std::vector<WaveField> fields_;     // 導出値。waves_ と同じ長さ・同じ slot
     std::vector<Wave> waves_;           // ★**sim 状態**。常に kMaxWaves 本 (空きは active=0)
+    // ---- 描画レーン (M65d)。ハッシュにも snapshot にも入らない ----
+    std::vector<uint8_t> glow_;         // 残光。空 = 一度も光っていない
+    bool visualActive_ = false;         // 非ゼロのセルが在るか (全 0 になったら false へ戻る)
+    uint32_t visualSerial_ = 0;         // 内容が変わるたびに +1 (転送の要否判定)
 };
 
 } // namespace mye

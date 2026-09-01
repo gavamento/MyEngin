@@ -4,6 +4,7 @@
 //                                          音響ボクセルグリッドの座標変換とチャンファ重み（純関数のみ）
 //====================================================================================
 #pragma once
+#include <cmath>
 #include <cstdint>
 
 namespace mye {
@@ -129,6 +130,48 @@ inline float ImpactGain(float excessImpulse)
     const float g = excessImpulse / kImpactRefImpulse;
     return (g < 1.0f) ? g : 1.0f;
 }
+
+// ---- 残光の符号化 (M65d) ----
+//
+// 残光ボリュームは **R8_UNORM の 3D テクスチャ** (1 セル 1 バイト)。
+// ★エネルギーをそのまま線形に uint8 へ落とすと**数メートル先で全部 0 になる** —
+//   EnergyAt は逆二乗なので 5m で 1/100、20m で 1/1600 まで落ちる。企画 §3-1 の
+//   「波が部屋の壁を描く」は遠い壁も薄く光ることが前提なので、**格納時にガンマを掛けて**
+//   ダイナミックレンジを稼ぐ (sRGB テクスチャと同じ発想)。
+// ★ガンマは 1/4 ちょうどで、実装は **sqrt を 2 回**。pow(x, 0.25f) にしないのは、
+//   sqrt が IEEE-754 で正しく丸められる (= コンパイラや CRT に依らない) 唯一の
+//   超越風関数だから。残光はハッシュ対象外だが、M65e で golden スクショに載るので
+//   Debug/Release/WARP で同じバイトが出る形にしておく。
+// 復号 (シェーダ側) は v^4 = (v*v)*(v*v)。M65e の acoustic_common.hlsli がこれを持つ。
+inline constexpr float kGlowGamma = 0.25f;
+
+inline uint8_t EncodeGlow(float energy)
+{
+    if (!(energy > 0.0f)) {
+        return 0; // NaN もここで 0 に落ちる
+    }
+    const float e = (energy < 1.0f) ? energy : 1.0f;
+    const float g = std::sqrt(std::sqrt(e));
+    const int v = static_cast<int>(g * 255.0f + 0.5f);
+    return static_cast<uint8_t>((v < 0) ? 0 : ((v > 255) ? 255 : v));
+}
+
+inline float DecodeGlow(uint8_t v)
+{
+    const float t = static_cast<float>(v) / 255.0f;
+    const float t2 = t * t;
+    return t2 * t2;
+}
+
+// 残光が 1 tick に残る割合。255 から 0 まで **227 tick = 約 3.8 秒** (実測)。
+// 企画 §3-5 の「記憶の地図」= 直前に通った道が薄く残っている、の時定数。
+// ★uint8 の乗算は切り捨てなので、割合が 1 未満なら必ず単調減少して 0 に届く
+//   (255 -> ... -> 1 -> 0。「途中で止まる」ことが構造的に無い)。
+// ★裏返すと**残光は 255 tick (4.25 秒) より長くは持てない** — 切り捨ては
+//   「1 tick に最低 1 は減る」を意味するので、割合をいくら 1 に近づけても
+//   末尾が線形になる。もっと長い残光が要るなら uint8 をやめるしかない
+//   (R16_UNORM にするか、減衰を数 tick に 1 回へ間引くか)。
+inline constexpr float kGlowDecayPerTick = 0.995f;
 
 // 波 1 本が使う局所ボックスの半径 [セル]。到達距離の上限 = R * cellSize [m]
 // (64 * 0.5 = 32m。企画の「金属板は部屋を突き抜ける」が成り立つ長さ)。

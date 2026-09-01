@@ -111,6 +111,7 @@ void AcousticField::Reset()
     derivedValid_ = false;
     waves_.assign(kMaxWaves, Wave{});
     fields_.assign(kMaxWaves, WaveField{});
+    ResetVisual(); // M65d: 残光もシーンと一緒に捨てる
 }
 
 bool AcousticField::IsSolid(int32_t cx, int32_t cy, int32_t cz) const
@@ -201,6 +202,10 @@ void AcousticField::Sync(World& world)
         grid_ = desc;
         owner_ = best;
         derivedValid_ = false; // 形が変わったら占有も距離場も引き直し
+        // M65d: 残光は「セル index -> ワールド位置」の対応がグリッドに紐づいているので、
+        // 形が変わったら**再アドレスできない**。平行移動すら残光を歪めるだけなので捨てる
+        // (追従グリッドを採らなかったのと同じ理由。計画 判断 4)
+        ResetVisual();
     }
 
     // ---- 静的コライダの署名。変化していなければ焼き直さない ----
@@ -408,6 +413,7 @@ void AcousticField::SeedWave(uint32_t slot)
     const int32_t li = LocalIndex(f, w.ox - x0, w.oy - y0, w.oz - z0);
     f.dist[static_cast<size_t>(li)] = 0;
     f.buckets[0].push_back(li);
+    WriteShell(slot, w.ox, w.oy, w.oz, 0); // M65d: 音源セルそのものも残光に焼く
 }
 
 void AcousticField::AdvanceWaveOneRing(uint32_t slot)
@@ -464,6 +470,11 @@ void AcousticField::AdvanceWaveOneRing(uint32_t slot)
                 f.parentDir[static_cast<size_t>(ni)] =
                     acoustic::OppositeNeighbor(static_cast<uint8_t>(i));
                 f.buckets[nd].push_back(ni);
+                // ★★M65d: 残光を焼くのは**ここ以外にない**。距離が確定したその場、
+                //   同じ 1 ループの中で焼くから「音が届いた場所」と「光った場所」が
+                //   構造的に一致する (企画 §3-1 の中核。別ループに切り出した瞬間に
+                //   ずれる余地ができる)。max 合成なので後から短い距離で来ても正しい
+                WriteShell(slot, nlx + f.x0, nly + f.y0, nlz + f.z0, nd);
             }
         }
         bucket.clear();
@@ -763,6 +774,68 @@ void AcousticField::Advance()
         }
         AdvanceWaveOneRing(s);
     }
+}
+
+// ---- 残光ボリューム (M65d) ---------------------------------------------------------
+//
+// ★**ここから下は描画レーンだけを触る**。sim 状態 (waves_) は 1 バイトも読まないし
+//   書かない。だから glow_ が何であろうとワールドハッシュは動かず、
+//   replay_verify / snapshot 往復に一切影響しない (AcousticSelfTest (16) が固定)。
+
+void AcousticField::WriteShell(uint32_t slot, int32_t cx, int32_t cy, int32_t cz, uint32_t dist)
+{
+    const int64_t cells = grid_.CellCount();
+    if (cells <= 0) {
+        return;
+    }
+    // ★確保は初回の書き込みまで遅らせる。ボリュームを置いただけで一度も音が鳴っていない
+    //   シーンでは 1 バイトも持たない (存在ゲートの延長)
+    if (static_cast<int64_t>(glow_.size()) != cells) {
+        glow_.assign(static_cast<size_t>(cells), 0u);
+    }
+    const Wave& w = waves_[slot];
+    const float e = acoustic::EnergyAt(dist, fields_[slot].maxDist, w.amplitude, grid_.cellSize);
+    const uint8_t v = acoustic::EncodeGlow(e);
+    if (v == 0) {
+        return; // 遠すぎて符号化しても 0 — 触らない (visualSerial_ を無駄に進めない)
+    }
+    uint8_t& dst = glow_[static_cast<size_t>(acoustic::CellIndex(grid_, cx, cy, cz))];
+    if (v > dst) {
+        dst = v;
+        visualActive_ = true;
+        ++visualSerial_;
+    }
+}
+
+void AcousticField::DecayVisual(float perTick)
+{
+    if (!visualActive_ || glow_.empty()) {
+        return; // 光っていないフレームは 130KB を舐めない
+    }
+    // 1 以上を渡されたら「減らない」= 永久に残る、になるので弾く (呼び手のバグ)
+    const float keep = (perTick > 0.0f && perTick < 1.0f) ? perTick : acoustic::kGlowDecayPerTick;
+    bool any = false;
+    for (uint8_t& v : glow_) {
+        if (v == 0) {
+            continue;
+        }
+        // ★切り捨てなので keep < 1 なら必ず 1 以上減る = 単調に 0 へ届く。
+        //   四捨五入にすると v=255,keep=0.999 が 255 のまま止まって**永久に消えない**
+        v = static_cast<uint8_t>(static_cast<float>(v) * keep);
+        any = any || (v != 0);
+    }
+    visualActive_ = any;
+    ++visualSerial_;
+}
+
+void AcousticField::ResetVisual()
+{
+    if (!glow_.empty()) {
+        glow_.clear();
+        glow_.shrink_to_fit();
+    }
+    visualActive_ = false;
+    ++visualSerial_;
 }
 
 uint16_t AcousticField::DistanceAt(uint32_t slot, int32_t cx, int32_t cy, int32_t cz) const

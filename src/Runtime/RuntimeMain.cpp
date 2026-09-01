@@ -349,6 +349,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             } else if (arg == L"--froxel-dump" && i + 1 < argc) {
                 config.froxelDumpFrame = _wtoi(argv[++i]); // M57b/M57c: 読み戻して検査
                 config.froxel = true;
+            } else if (arg == L"--acoustic-dump" && i + 1 < argc) {
+                config.acousticDumpFrame = _wtoi(argv[++i]); // M65d: 残光を読み戻して検査
             } else if (arg == L"--particle-backend" && i + 1 < argc) {
                 // M57追補: バックエンドの CLI 固定。**shot_verify は Runtime.exe で撮る**ので
                 // Editor 側だけに足しても golden は撮れない (両方に要る)

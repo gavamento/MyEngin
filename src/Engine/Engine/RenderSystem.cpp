@@ -10,6 +10,7 @@
 #include "Engine/Core/Log.h"
 #include "Engine/Core/Profiler.h"
 #include "Engine/Core/World.h"
+#include "Engine/Engine/Acoustic/AcousticField.h" // M65d: 残光ボリュームの転送元
 #include "Engine/Engine/Particles/ParticleSystem.h"
 #include "Engine/Engine/Ragdoll.h" // M60g1: 剛体が骨を駆動しているときのパレット
 #include "Engine/Engine/Vfx/VfxRenderer.h"
@@ -36,6 +37,84 @@ struct CullCand {
 };
 
 constexpr size_t kCullGrain = 256; // これ未満は直列 (スレッド起動コスト回避)
+
+// ---- M65d: `--acoustic-dump N` の読み戻し検査 ----
+//
+// ★消費者 (M65e のライティング) がまだ居ない段階で「転送が正しい」と主張できる
+//   唯一の手段。GPU から読み戻したバイト列を **CPU 側の残光配列とバイト単位で**
+//   突き合わせる — RowPitch と DepthPitch を取り違えると Z がずれた絵になり、
+//   しかも絵は普通に出るので目視では絶対に見つからない。
+// 併せて「残光が閉セルに入っていないこと」も数える。閉セルは波が絶対に訪れないので、
+// ここが 0 でなければ伝播か転送のどちらかが壁を越えている。
+void DumpAcousticVolume(GraphicsDevice& device, const AcousticVolumePass& pass,
+                        const AcousticField& field)
+{
+    std::vector<uint8_t> gpu;
+    if (!pass.Volume().ReadbackBytes(device, gpu)) {
+        MYE_LOG_ERROR("[acoustic-dump] readback failed (R8_UNORM の Texture3D が読めない)");
+        return;
+    }
+    const std::vector<uint8_t>& cpu = field.Glow();
+    const AcousticGridDesc& g = field.Grid();
+    if (gpu.size() != cpu.size()) {
+        MYE_LOG_ERROR("[acoustic-dump] size mismatch: gpu %zu vs cpu %zu", gpu.size(), cpu.size());
+        return;
+    }
+    size_t mismatch = 0;
+    int32_t firstX = -1, firstY = -1, firstZ = -1;
+    size_t nonZero = 0, solidLit = 0;
+    uint8_t maxV = 0;
+    for (int32_t z = 0; z < g.dimZ; ++z) {
+        for (int32_t y = 0; y < g.dimY; ++y) {
+            for (int32_t x = 0; x < g.dimX; ++x) {
+                const size_t i = static_cast<size_t>(acoustic::CellIndex(g, x, y, z));
+                if (gpu[i] != cpu[i]) {
+                    if (mismatch == 0) {
+                        firstX = x;
+                        firstY = y;
+                        firstZ = z;
+                    }
+                    ++mismatch;
+                }
+                if (cpu[i] != 0) {
+                    ++nonZero;
+                    maxV = (cpu[i] > maxV) ? cpu[i] : maxV;
+                    if (field.IsSolid(x, y, z)) {
+                        ++solidLit;
+                    }
+                }
+            }
+        }
+    }
+    uint32_t activeWaves = 0;
+    for (const AcousticField::Wave& w : field.Waves()) {
+        activeWaves += (w.active != 0) ? 1u : 0u;
+    }
+    MYE_LOG_INFO("[acoustic-dump] grid %dx%dx%d (%zu cells, %.1f KB) / active waves %u / "
+                 "upload %.3f ms",
+                 g.dimX, g.dimY, g.dimZ, cpu.size(),
+                 static_cast<double>(cpu.size()) / 1024.0, activeWaves,
+                 static_cast<double>(pass.LastUploadMs()));
+    MYE_LOG_INFO("[acoustic-dump] glow: %zu non-zero (%.2f%%), max %u (energy %.5f)", nonZero,
+                 cpu.empty() ? 0.0 : 100.0 * static_cast<double>(nonZero) / static_cast<double>(cpu.size()),
+                 static_cast<unsigned>(maxV), static_cast<double>(acoustic::DecodeGlow(maxV)));
+    if (mismatch != 0) {
+        MYE_LOG_ERROR("[acoustic-dump] GPU/CPU MISMATCH: %zu cells (first at %d,%d,%d: gpu %u vs "
+                      "cpu %u) — RowPitch/DepthPitch を疑うこと",
+                      mismatch, firstX, firstY, firstZ,
+                      static_cast<unsigned>(gpu[static_cast<size_t>(acoustic::CellIndex(g, firstX, firstY, firstZ))]),
+                      static_cast<unsigned>(cpu[static_cast<size_t>(acoustic::CellIndex(g, firstX, firstY, firstZ))]));
+    } else {
+        MYE_LOG_INFO("[acoustic-dump] GPU readback matches the CPU field byte for byte");
+    }
+    if (solidLit != 0) {
+        MYE_LOG_ERROR("[acoustic-dump] %zu solid cells are lit — 波が壁の中へ入っている",
+                      solidLit);
+    } else {
+        MYE_LOG_INFO("[acoustic-dump] no solid cell is lit (壁の向こうは完全にゼロ)");
+    }
+}
+
 
 // 前 tick → 現 tick のワールド行列を成分 lerp する (M36b 描画補間)。
 // 平行移動は厳密 lerp、回転 3x3 は成分 lerp — 1/60s の姿勢差では非直交化は不可視。
@@ -1102,6 +1181,49 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
             // その状態の scatter_ を積分し直さないまま光パスへ渡すと「ダンプした
             // フレームだけ絵が違う」になるので、確定した設定でもう一度回して戻す
             view.froxelSRV = froxelPass_.Render(device, shaders, view, lights, effectiveFroxel);
+        }
+    }
+
+    // ---- M65d: 音響の残光ボリューム (CPU の波面 → 3D テクスチャ → M65e の光パス) ----
+    // ★**この時点では消費者が 1 人も居ない** (合成は M65e)。それでも配線してあるのは、
+    //   転送そのものの正しさを `--acoustic-dump` の読み戻しで数値として主張しておくため
+    //   (M57c が「積分結果を読む者が居ない段階で golden を撮らない」とした流儀と同じ)。
+    // ★三重のゲート: ポインタが null / ボリュームが無い / 一度も光っていない、の
+    //   どれかなら SRV は null のまま = 既存の絵は 1 ビットも動かない
+    acousticSupplied_ = false;
+    if (acousticField != nullptr && acousticField->HasVolume() && acousticField->VisualActive()) {
+        const AcousticGridDesc& ag = acousticField->Grid();
+        const std::vector<uint8_t>& glow = acousticField->Glow();
+        if (static_cast<int64_t>(glow.size()) == ag.CellCount()) {
+            AcousticVolumeUpload up;
+            up.cells = glow.data();
+            up.dimX = ag.dimX;
+            up.dimY = ag.dimY;
+            up.dimZ = ag.dimZ;
+            up.serial = acousticField->VisualSerial();
+            if (acousticPass_.Upload(device, up)) {
+                view.acousticSRV = acousticPass_.SRV();
+                view.acousticGridMin[0] = ag.minX;
+                view.acousticGridMin[1] = ag.minY;
+                view.acousticGridMin[2] = ag.minZ;
+                // 1 / (dim * cellSize) = ワールド差分をテクスチャ座標 [0,1] へ写す係数。
+                // ★**dim を掛けるのが要点** — cellSize だけで割るとセル単位の座標になる
+                view.acousticInvSize[0] = 1.0f / (static_cast<float>(ag.dimX) * ag.cellSize);
+                view.acousticInvSize[1] = 1.0f / (static_cast<float>(ag.dimY) * ag.cellSize);
+                view.acousticInvSize[2] = 1.0f / (static_cast<float>(ag.dimZ) * ag.cellSize);
+                view.acousticIntensity = acousticIntensity;
+                // 閉セルは波が絶対に訪れない = 壁面の残光は開セル側にしかない。
+                // 法線方向へ 0.75 セル押し出して開セル側を引くのが
+                // 「壁に当たった面だけが光る」の正体 (計画 判断 5)
+                view.acousticNormalPush = 0.75f * ag.cellSize;
+                acousticSupplied_ = true;
+            }
+        }
+        // 「そのビューの N 回目の描画」= 決定的撮影モードでは frame 番号と一致する
+        const uint32_t acSerial = (target.viewKey < 4) ? viewSerial_[target.viewKey] : 0u;
+        if (acousticDumpFrame >= 0 && static_cast<uint32_t>(acousticDumpFrame) == acSerial
+            && acousticSupplied_) {
+            DumpAcousticVolume(device, acousticPass_, *acousticField);
         }
     }
 

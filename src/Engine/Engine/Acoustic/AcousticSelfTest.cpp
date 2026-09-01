@@ -608,6 +608,161 @@ bool RunAcousticSelfTest()
               "impact: a body that is merely resting on a floor is silent");
     }
 
+    // ---- (16) ★残光は描画レーン: 焼いてもワールドハッシュが動かない (M65d) ----
+    // ここが崩れると「絵のために場を書き換えたらリプレイが割れた」という、
+    // 原因の一番遠いバグになる。(6) の裏返しで、この計画のもう 1 本の柱
+    {
+        Scene scene;
+        GameObject a = scene.CreateGameObjectTracked("Alpha");
+        (void)a;
+        World& w = scene.GetWorld();
+        w.ApplyStructuralChanges();
+
+        AcousticField field;
+        const AcousticGridDesc g = MakeTestGrid();
+        std::vector<uint8_t> open(static_cast<size_t>(g.CellCount()), 0u);
+        field.DebugSetGrid(g, std::move(open));
+        const SimSources src{ nullptr, &scene.Time(), &scene.Persist(), nullptr, &field };
+        const uint64_t before = HashWorld(w, src);
+
+        float wx = 0.0f, wy = 0.0f, wz = 0.0f;
+        acoustic::CellToWorldCenter(g, 4, 2, 4, wx, wy, wz);
+        check(field.Emit(EntityID{ 1, 1 }, wx, wy, wz, 1.0f, 3.0f, 0, 1, 0),
+              "glow: the probe wave was emitted");
+        // ★波を立てた時点でハッシュは動く (波スロット表は sim 状態)。ここで測り直す
+        const uint64_t withWave = HashWorld(w, src);
+        check(before != withWave, "glow: emitting does move the hash (the wave table is sim state)");
+        for (int i = 0; i < 4; ++i) {
+            field.Advance(); // 残光が焼かれる
+        }
+        check(field.VisualActive() && !field.Glow().empty(),
+              "glow: advancing a wave lights cells");
+        const uint64_t litHash = HashWorld(w, src);
+        // 波を 4 リング進めたぶんハッシュは動いているので、**残光だけを動かして**比べる
+        const uint32_t serialBefore = field.VisualSerial();
+        field.DecayVisual(0.5f);
+        check(HashWorld(w, src) == litHash,
+              "glow: decaying the afterglow cannot move the world hash");
+        field.ResetVisual();
+        check(HashWorld(w, src) == litHash,
+              "glow: clearing the afterglow cannot move the world hash");
+        check(field.VisualSerial() != serialBefore && !field.VisualActive() && field.Glow().empty(),
+              "glow: ResetVisual drops the buffer and bumps the serial");
+    }
+
+    // ---- (17) 減衰は単調で必ず 0 に届く (M65d) ----
+    // ★uint8 の乗算を四捨五入にすると 255 が 255 のまま止まって**永久に消えない**。
+    //   切り捨てであることをここで固定する
+    {
+        AcousticField field;
+        const AcousticGridDesc g = MakeTestGrid();
+        std::vector<uint8_t> open(static_cast<size_t>(g.CellCount()), 0u);
+        field.DebugSetGrid(g, std::move(open));
+        float wx = 0.0f, wy = 0.0f, wz = 0.0f;
+        acoustic::CellToWorldCenter(g, 4, 2, 4, wx, wy, wz);
+        check(field.Emit(EntityID{ 1, 1 }, wx, wy, wz, 1.0f, 2.0f, 0, 1, 0), "decay: emitted");
+        field.Advance();
+        check(field.VisualActive(), "decay: the wave lit at least one cell");
+
+        auto maxGlow = [&]() {
+            uint8_t m = 0;
+            for (uint8_t v : field.Glow()) {
+                m = (v > m) ? v : m;
+            }
+            return m;
+        };
+        uint8_t prev = maxGlow();
+        check(prev > 0, "decay: the source cell is at full brightness");
+        // 単調非増加であること + 有限の tick で 0 に落ちること
+        int ticks = 0;
+        bool monotonic = true;
+        while (field.VisualActive() && ticks < 20000) {
+            field.DecayVisual(acoustic::kGlowDecayPerTick);
+            const uint8_t now = maxGlow();
+            monotonic = monotonic && (now < prev);
+            prev = now;
+            ++ticks;
+        }
+        check(monotonic, "decay: the afterglow is strictly monotonic downwards");
+        check(!field.VisualActive() && maxGlow() == 0,
+              "decay: the afterglow always reaches exactly zero");
+        // 実測 227 tick = 約 3.8 秒 — 企画 §3-5 の「記憶の地図」の長さ。
+        // ★上限に幅を持たせているのは、uint8 の切り捨てが「1 tick に最低 1 減る」を
+        //   強制するせいで 255 tick より長くはならないから (割合を変えても越えられない)
+        check(ticks > 150 && ticks < 320,
+              "decay: the afterglow lasts a few seconds, not forever");
+    }
+
+    // ---- (18) ★残光は閉セルに絶対入らない / 聞こえた所しか光らない (M65d) ----
+    // 企画 §3-1「見えている所と敵に届く所が一致する」を数値で固定する 1 本。
+    // WriteShell を AdvanceWaveOneRing の外へ切り出すと、まずここが割れる
+    {
+        AcousticField field;
+        AcousticGridDesc g;
+        const bool ok = acoustic::MakeGridDesc(24, 1, 24, 0.5f, 0.0f, 0.0f, 0.0f, g);
+        MYE_CHECK(ok);
+        field.DebugSetGrid(g, MakeLMaze(g));
+        float wx = 0.0f, wy = 0.0f, wz = 0.0f;
+        acoustic::CellToWorldCenter(g, 2, 0, 2, wx, wy, wz);
+        check(field.Emit(EntityID{ 7, 1 }, wx, wy, wz, 1.0f, 30.0f, 0, 1, 0), "shell: emitted");
+        for (int i = 0; i < 40; ++i) {
+            field.Advance();
+        }
+        size_t lit = 0, litSolid = 0, litUnreached = 0;
+        for (int32_t z = 0; z < g.dimZ; ++z) {
+            for (int32_t x = 0; x < g.dimX; ++x) {
+                const size_t i = static_cast<size_t>(acoustic::CellIndex(g, x, 0, z));
+                if (field.Glow()[i] == 0) {
+                    continue;
+                }
+                ++lit;
+                if (field.IsSolid(x, 0, z)) {
+                    ++litSolid;
+                }
+                if (field.DistanceAt(0, x, 0, z) == AcousticField::kUnreached) {
+                    ++litUnreached;
+                }
+            }
+        }
+        check(lit > 0, "shell: the corridor is lit");
+        check(litSolid == 0, "shell: not a single solid cell is ever lit");
+        check(litUnreached == 0, "shell: every lit cell is a cell the wave actually reached");
+        // 壁の向こう (10,0,10) は廊下から切り離されている = 音も光も届かない
+        check(field.Glow()[static_cast<size_t>(acoustic::CellIndex(g, 10, 0, 10))] == 0,
+              "shell: the far side of the wall stays pitch black");
+    }
+
+    // ---- (19) 残光の符号化: 逆二乗のダイナミックレンジが uint8 に載る (M65d) ----
+    // ★線形量子化にすると数メートル先が全部 0 になり、「波が遠くの壁を描く」が
+    //   絵から消える。ガンマ 1/4 (sqrt 2 回) であることをここで固定する
+    {
+        check(acoustic::EncodeGlow(0.0f) == 0 && acoustic::EncodeGlow(-1.0f) == 0,
+              "glow encode: zero and negative energy encode to zero");
+        check(acoustic::EncodeGlow(1.0f) == 255 && acoustic::EncodeGlow(4.0f) == 255,
+              "glow encode: saturates at 255 and never wraps");
+        // 20m 先 (逆二乗で 1/1600) でも 0 にならないことが要求そのもの
+        const float far20m = 1.0f / 1600.0f;
+        check(acoustic::EncodeGlow(far20m) > 0,
+              "glow encode: a 1/1600 energy is still visible (linear would be zero)");
+        // 単調増加
+        uint8_t prev = 0;
+        bool mono = true;
+        for (int i = 1; i <= 64; ++i) {
+            const uint8_t v = acoustic::EncodeGlow(static_cast<float>(i) / 64.0f);
+            mono = mono && (v >= prev);
+            prev = v;
+        }
+        check(mono && prev == 255, "glow encode: monotonic in energy");
+        // 復号は 4 乗。往復の相対誤差が 2% 未満 (シェーダ側の逆変換の正本)
+        bool roundTrip = true;
+        for (int i = 1; i <= 32; ++i) {
+            const float e = static_cast<float>(i) / 32.0f;
+            const float back = acoustic::DecodeGlow(acoustic::EncodeGlow(e));
+            roundTrip = roundTrip && (std::fabs(back - e) < e * 0.02f);
+        }
+        check(roundTrip, "glow encode: decode(encode(e)) recovers e within 2%");
+    }
+
     if (failCount == 0) {
         MYE_LOG_INFO("==== Acoustic self test: ALL PASS ====");
         return true;
