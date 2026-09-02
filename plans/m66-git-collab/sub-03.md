@@ -54,3 +54,10 @@ tools\replay_verify.bat
 ## 実装メモ (coder が追記)
 
 ## フィードバック履歴
+
+## planner 追記 (sub-02 round 1 の判定から。coder は着手前に読む)
+
+- **対の規則の訂正**: `.terrain.edit` は `x.terrain.json` の `.json` を `.edit` に差し替えた名前 (`TerrainEdit.cpp:469 EditPathFor`)。上の「本体 + `.meta` + `.terrain.edit`」は「`x.terrain.json` + `x.terrain.json.meta` (あれば) + `x.terrain.edit`」と読むこと。sub-02 の `PrimaryPathFor` が既にこの形で束ねているので、`PairRule::Collect` は同じ判定を再利用する (二重実装しない)。
+- [should] Source Control 窓の既定表示: プロジェクト起動では `open = true` (Assets と同束のタブ)、裸起動では false (spec §4.3)。`EditorApp` の窓登録 1 か所。
+- `.meta` 無し資産の判定に使う `AssetDatabase::ClassifyPath` が `.terrain.edit` を資産扱いするかは未確認 — 資産扱いなら `.terrain.edit` 自身にも `.meta` が付くので、束ねは「存在するサイドカーだけ」を集める実装で依存しないこと (spec §7)。
+- `SourceControlSession::Busy()` / `Client()` / `HintChanged()` は sub-02 が用意した未使用の口。stage / commit はこの Session 経由で呼ぶ。

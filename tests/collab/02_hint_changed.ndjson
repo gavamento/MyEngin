@@ -1,0 +1,18 @@
+# 02_hint_changed — 保存直後の即時取り直し (M66b)。
+#
+# hint_changed は「今このパスを保存した」の合図。監視 (300 ms デバウンス) を待たずに
+# status を取り直す口で、**応答に status をそのまま載せて返す**。
+# 通知 (status_changed) ではなく応答で返す理由は ops.rs の dispatch のコメントを見ること
+# — CLI (script モード) の出力に event 行を混ぜないため (spec §4.4)。
+#
+# ★ここで検査したいのは「paths を渡しても status と同じ結果が返る」= C++ 側が
+#   監視経路と同じ 1 本の関数へ流せること。paths の中身は v1 では使っていない
+#   (どのパスが変わったかに関係なく全体を取り直す — 部分更新は差分が正しい保証を
+#   作れないので v1 では持たない)。
+{"id":1,"op":"status"}
+{"id":2,"op":"hint_changed","args":{"paths":["assets/scenes/main.scene.json"]}}
+# --- エディタが新しいアセットを保存した想定 (清浄 -> ? 1 件に変わることが見える) ---
+# write assets/materials/hinted.mat.json {"engine":"MyEngine","shader":"forward_lit"}
+{"id":3,"op":"hint_changed","args":{"paths":["assets/materials/hinted.mat.json"]}}
+# --- paths が空でも落ちない (引数無しの呼び出しは bad_request にしない) ---
+{"id":4,"op":"hint_changed"}

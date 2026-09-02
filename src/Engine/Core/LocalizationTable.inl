@@ -935,3 +935,97 @@ MYE_STR(Insp_PhysMatNote,     "Applied when assigned to a collider.",
                               "コライダーに割り当てると適用されます。")
 MYE_STR(Insp_PmOvFriction,    "Override Friction",   "摩擦を上書き")
 MYE_STR(Insp_PmOvRestitution, "Override Restitution", "反発を上書き")
+
+// ---- Source Control (M66b) ----
+// "###" の右辺は両言語一致 + テーブル内で一意 (規則 10)。窓名の ID は
+// imgui.ini / DockBuilderDockWindow / layouts の panels.json が参照するので変更禁止。
+// ★"###" の右辺は **DockBuilderDockWindow / layouts に渡す文字列と 1 バイト一致**
+//   させること。ImHashStr は "###" でシードに戻すので、ID は右辺だけで決まる —
+//   ここを "SourceControl" (空白なし) にすると DockBuilderDockWindow("Source Control")
+//   と別 ID になり、**既定のドック位置が黙って無視されて窓が浮く** (M66b で実際に踏んだ)
+MYE_STR(Win_SourceControl,    "Source Control###Source Control", "ソース管理###Source Control")
+MYE_STR(Scm_TabChanges,       "Changes###ScmChanges",   "変更###ScmChanges")
+MYE_STR(Scm_TabBranches,      "Branches###ScmBranches", "ブランチ###ScmBranches")
+MYE_STR(Scm_TabHistory,       "History###ScmHistory",   "履歴###ScmHistory")
+MYE_STR(Scm_Refresh,          "Refresh###ScmRefresh",   "更新###ScmRefresh")
+MYE_STR(Scm_Settings,         "Settings###ScmSettings", "設定###ScmSettings")
+MYE_STR(Scm_SettingsEmpty,    "Background fetch settings arrive with pull / push.",
+                              "背景 fetch の設定は pull / push と一緒に入ります。")
+MYE_STR(Scm_NoChanges,        "No changes in the working tree.",
+                              "作業ツリーに変更はありません。")
+MYE_STR(Scm_ChangeCount,      "%d changed", "%d 件の変更")
+MYE_STR(Scm_Detached,         "(detached HEAD)", "(detached HEAD)")
+MYE_STR(Scm_NoUpstream,       "no upstream", "追跡ブランチなし")
+MYE_STR(Scm_AheadBehind,      "ahead %d / behind %d", "先行 %d / 遅れ %d")
+MYE_STR(Scm_MergeInProgress,  "merge in progress - resolve or abort before anything else",
+                              "マージ中 — 先に解決するか中止してください")
+MYE_STR(Scm_RebaseInProgress, "rebase in progress", "リベース中")
+MYE_STR(Scm_Busy,             "working...", "実行中...")
+MYE_STR(Scm_Loading,          "reading the repository...", "リポジトリを読んでいます...")
+MYE_STR(Scm_SidecarCount,     "+%d sidecar", "+%d サイドカー")
+MYE_STR(Scm_SidecarNote,      "The sidecars move with the file they belong to; they are never listed on their own.",
+                              "サイドカーは本体と一体で扱います。単独では一覧に出しません。")
+MYE_STR(Scm_RenamedFrom,      "renamed from %s", "%s からリネーム")
+MYE_STR(Scm_ComingSoon,       "Not in this build yet.", "このビルドにはまだありません。")
+// ---- 利用不可の理由 (spec §4.3 の Unavailable 8 値) ----
+MYE_STR(Scm_NoProject,        "Source control needs a project. Open one from the project manager.",
+                              "ソース管理にはプロジェクトが必要です。プロジェクトマネージャーから開いてください。")
+MYE_STR(Scm_NoService,        "MyeCollab.dll was not found. Build it with tools\\build_collab.bat (needs rustup stable).",
+                              "MyeCollab.dll が見つかりません。tools\\build_collab.bat でビルドしてください (rustup stable が必要)。")
+MYE_STR(Scm_ProtoMismatch,    "MyeCollab.dll speaks a different protocol version. Rebuild it with tools\\build_collab.bat.",
+                              "MyeCollab.dll のプロトコル版が違います。tools\\build_collab.bat で作り直してください。")
+MYE_STR(Scm_NoGit,            "git was not found on PATH. Install Git for Windows.",
+                              "git が PATH にありません。Git for Windows を入れてください。")
+MYE_STR(Scm_GitTooOld,        "git is too old. 2.11 or newer is required.",
+                              "git が古すぎます。2.11 以降が必要です。")
+MYE_STR(Scm_NotRepo,          "This project is not inside a git repository.",
+                              "このプロジェクトは git リポジトリの中にありません。")
+MYE_STR(Scm_NotRepoHint,      "Create or clone the repository outside the editor - the editor does not run git init.",
+                              "リポジトリの作成やクローンはエディタの外で行ってください。エディタは git init を実行しません。")
+MYE_STR(Scm_ToplevelMismatch, "The project root is not the top of the repository.",
+                              "プロジェクトルートがリポジトリのトップではありません。")
+MYE_STR(Scm_ToplevelHint,     "Repository top: %s",  "リポジトリのトップ: %s")
+MYE_STR(Scm_ServiceDied,      "The source control service stopped. Restart the editor.",
+                              "ソース管理サービスが停止しました。エディタを再起動してください。")
+// ---- canonicalRoot (spec §4.2) ----
+MYE_STR(Scm_CanonicalMismatch, "This project was created at a different path.",
+                               "このプロジェクトは別のパスで作成されています。")
+MYE_STR(Scm_CanonicalRecorded, "recorded: %s", "記録: %s")
+MYE_STR(Scm_AdoptCanonical,    "Use this path###ScmAdoptCanonical",
+                               "このパスを正にする###ScmAdoptCanonical")
+MYE_STR(Scm_AdoptDone,         "project.mye.json now points at this path.",
+                               "project.mye.json をこのパスで書き換えました。")
+MYE_STR(Scm_AdoptFailed,       "Could not write project.mye.json.",
+                               "project.mye.json を書き換えられませんでした。")
+MYE_STR(Scm_HeadMoved,         "HEAD moved outside the editor. Restarting is recommended.",
+                               "外部で HEAD が移動しました。再起動を推奨します。")
+// ---- error.code -> 文言 (spec §4.3。未知の code は detail をそのまま出す) ----
+MYE_STR(ScmErr_NotRepo,        "not a git repository", "git リポジトリではありません")
+MYE_STR(ScmErr_ToplevelMismatch, "the project root is not the repository top",
+                                 "プロジェクトルートがリポジトリのトップではありません")
+MYE_STR(ScmErr_GitMissing,     "git was not found", "git が見つかりません")
+MYE_STR(ScmErr_GitTooOld,      "git is too old (2.11+ required)", "git が古すぎます (2.11 以降が必要)")
+MYE_STR(ScmErr_IdentityMissing, "user.name / user.email are not set",
+                                "user.name / user.email が設定されていません")
+MYE_STR(ScmErr_LocalChanges,   "local changes would be overwritten",
+                               "ローカルの変更が上書きされます")
+MYE_STR(ScmErr_LockedIndex,    "the index is locked by another git process",
+                               "index が他の git プロセスにロックされています")
+MYE_STR(ScmErr_LockedFile,     "a file is locked by another process",
+                               "ファイルが他のプロセスにロックされています")
+MYE_STR(ScmErr_AuthFailed,     "authentication failed", "認証に失敗しました")
+MYE_STR(ScmErr_NonFastForward, "the remote has commits you do not have - pull first",
+                               "リモートに未取得のコミットがあります。先に pull してください")
+MYE_STR(ScmErr_Conflict,       "the merge produced conflicts", "マージで競合が発生しました")
+MYE_STR(ScmErr_MergeInProgress, "a merge is already in progress", "すでにマージ中です")
+MYE_STR(ScmErr_NothingToCommit, "nothing is staged", "ステージされたものがありません")
+MYE_STR(ScmErr_Network,        "the network is unreachable", "ネットワークに到達できません")
+MYE_STR(ScmErr_InternalPanic,  "the source control service crashed",
+                               "ソース管理サービスがクラッシュしました")
+MYE_STR(ScmErr_ServiceDead,    "the source control service is no longer running",
+                               "ソース管理サービスは停止しています")
+MYE_STR(ScmErr_BadRequest,     "the service rejected the request",
+                               "サービスが要求を受け付けませんでした")
+MYE_STR(ScmErr_GitFailed,      "git failed", "git が失敗しました")
+MYE_STR(ScmErr_Timeout,        "the service did not answer in time",
+                               "サービスが時間内に応答しませんでした")

@@ -21,6 +21,7 @@ pub mod git;
 pub mod ops;
 pub mod porcelain;
 pub mod protocol;
+pub mod watch;
 pub mod worker;
 
 use worker::Service;
@@ -59,7 +60,9 @@ pub extern "C" fn mye_collab_create(root_utf8: *const c_char) -> *mut c_void {
             Some(r) => r,
             None => return std::ptr::null_mut(),
         };
-        Box::into_raw(Box::new(Service::new(root))) as *mut c_void
+        // ★DLL 経路だけ監視スレッドを立てる (CLI は Service::new)。
+        //   spec §4.4: script モードで event 行が出ると期待 NDJSON が非決定になる
+        Box::into_raw(Box::new(Service::with_watch(root))) as *mut c_void
     }))
     .unwrap_or(std::ptr::null_mut())
 }

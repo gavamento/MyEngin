@@ -128,3 +128,141 @@ fn status_outside_a_repo_is_not_repo() {
     assert_eq!(r["ok"], false);
     assert_eq!(r["error"]["code"], code::NOT_REPO);
 }
+
+// ---- M66b: 非 ASCII パス / 監視 → 通知 ----
+//
+// ★非 ASCII の検査は**ここでしかできない**。collab_verify.bat は cmd 経由で
+//   stdout を読むので、コンソール CP (CP932) で復号されて化ける = ASCII 限定。
+//   「core.quotepath=false のおかげで entries.path が生 UTF-8 で載る」ことは
+//   cargo test で証明する。
+
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+/// 一時ディレクトリに空の git リポジトリを作る。**global/system の設定は遮断する**
+/// (開発者の hook / gpgsign / quotepath に検査が引きずられないため)。
+/// 空 config はリポジトリの**外**に置く — 中に置くと自分が untracked として出る
+fn temp_repo(name: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("mye_collab_{}_{}", name, std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let empty_config = std::env::temp_dir().join(format!("mye_collab_{}_{}.gitconfig", name, std::process::id()));
+    std::fs::write(&empty_config, b"").unwrap();
+    git(&dir, &empty_config, &["init", "-q", "-b", "main"]);
+    dir
+}
+
+fn git(dir: &Path, empty_config: &Path, args: &[&str]) {
+    let out = Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .env("GIT_CONFIG_GLOBAL", empty_config)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .output()
+        .expect("git must be on PATH");
+    assert!(out.status.success(), "git {args:?} failed: {}", String::from_utf8_lossy(&out.stderr));
+}
+
+fn config_path_for(dir: &Path) -> PathBuf {
+    PathBuf::from(format!("{}.gitconfig", dir.to_string_lossy()))
+}
+
+#[test]
+fn non_ascii_paths_come_back_as_raw_utf8() {
+    let dir = temp_repo("utf8");
+    std::fs::create_dir_all(dir.join("assets/textures")).unwrap();
+    // ファイル名も中身も非 ASCII。git の既定 (core.quotepath=true) だと
+    // "\346\227\245..." のような 8 進エスケープで返ってきて UI に化けて出る
+    std::fs::write(dir.join("assets/textures/日本語.png"), "テクスチャ").unwrap();
+
+    let svc = Service::new(dir.to_string_lossy().to_string());
+    svc.request(json!({ "id": 1, "op": "status" }).to_string());
+    let r = wait_line(&svc);
+    assert_eq!(r["ok"], true, "status failed: {r}");
+    let entries = r["result"]["entries"].as_array().expect("entries must be an array");
+    assert_eq!(entries.len(), 1, "未追跡ファイル 1 件のはず: {r}");
+    assert_eq!(entries[0]["path"], "assets/textures/日本語.png");
+    assert_eq!(entries[0]["index"], "?");
+    assert_eq!(entries[0]["worktree"], "?");
+
+    drop(svc);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn refresh_reports_head_moves_and_swallows_identical_status() {
+    let dir = temp_repo("head");
+    let cfg = config_path_for(&dir);
+    let ident = [
+        "-c", "user.name=mye",
+        "-c", "user.email=mye@example.com",
+        // 開発者の commit.gpgsign=true を遮断済みでも念のため明示する
+        // (署名を要求されるとテストが**固まる**)
+        "-c", "commit.gpgsign=false",
+    ];
+    std::fs::write(dir.join("a.txt"), "1").unwrap();
+    git(&dir, &cfg, &["add", "-A"]);
+    let mut commit1: Vec<&str> = ident.to_vec();
+    commit1.extend_from_slice(&["commit", "-q", "-m", "one"]);
+    git(&dir, &cfg, &commit1);
+    std::fs::write(dir.join("a.txt"), "2").unwrap();
+    git(&dir, &cfg, &["add", "-A"]);
+    let mut commit2: Vec<&str> = ident.to_vec();
+    commit2.extend_from_slice(&["commit", "-q", "-m", "two"]);
+    git(&dir, &cfg, &commit2);
+
+    let mut state = State::new(dir.clone());
+    // 1 回目は「基準を覚える」だけ。**初回に repo_changed を出さない**ことが要点
+    // (出すと起動直後に必ず「外部で HEAD が移動しました」が出る)
+    let first = mye_collab::ops::refresh_status(&mut state);
+    assert_eq!(first.len(), 1, "初回は status_changed だけ: {first:?}");
+    assert!(first[0].contains("\"event\":\"status_changed\""));
+
+    // 2 回目は何も変わっていない = 通知ゼロ (窓が毎秒作り直されないための要)
+    assert!(mye_collab::ops::refresh_status(&mut state).is_empty());
+
+    // 外部で HEAD を戻した (= ターミナルで checkout されたのと同じ)
+    git(&dir, &cfg, &["reset", "--hard", "-q", "HEAD~1"]);
+    let moved = mye_collab::ops::refresh_status(&mut state);
+    assert_eq!(moved.len(), 2, "repo_changed + status_changed: {moved:?}");
+    assert!(moved[0].contains("\"event\":\"repo_changed\""), "{moved:?}");
+    assert!(moved[1].contains("\"event\":\"status_changed\""), "{moved:?}");
+
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_file(&cfg);
+}
+
+#[test]
+fn watching_service_emits_status_changed_when_a_file_appears() {
+    let dir = temp_repo("watch");
+    let svc = Service::with_watch(dir.to_string_lossy().to_string());
+    // 先に status を 1 回取って基準を作る (これをしないと初回の通知が
+    // 「空 → 空」で握り潰されるのか「空 → 1 件」なのか読み取れない)
+    svc.request(json!({ "id": 1, "op": "status" }).to_string());
+    let r = wait_line(&svc);
+    assert_eq!(r["ok"], true, "status failed: {r}");
+
+    std::thread::sleep(Duration::from_millis(200)); // 監視の登録待ち
+    std::fs::write(dir.join("new.txt"), "hi").unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let mut got: Option<Value> = None;
+    while Instant::now() < deadline {
+        if let Some(line) = svc.poll() {
+            let v: Value = serde_json::from_str(&line).unwrap();
+            if v["event"] == "status_changed" {
+                got = Some(v);
+                break;
+            }
+        } else {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+    let ev = got.expect("status_changed が 15 s 以内に来ない (監視が動いていない)");
+    let entries = ev["status"]["entries"].as_array().unwrap();
+    assert!(entries.iter().any(|e| e["path"] == "new.txt"), "{ev}");
+
+    drop(svc); // 監視 → worker の順に止まること (固まったら Drop の順序が逆)
+    let _ = std::fs::remove_dir_all(&dir);
+}

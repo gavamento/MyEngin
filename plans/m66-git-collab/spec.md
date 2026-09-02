@@ -119,6 +119,12 @@ JSON をメモリから直列化した文字列」と「ディスクの現物」
 評価は `GitTransaction::CanRunGitWriteOp` からのみ呼び、結果は 500 ms キャッシュ (毎フレーム直列化しない)。
 ProjectSettings の render-path ラジオ (永続化されない) は対象外。
 
+**対の規則 (決定 7 の確定版、sub-02 round 1 で修正)**: 本体 `X` に `X.meta` を束ねる。地形は
+**`x.terrain.json` ⇄ `x.terrain.edit`** (`TerrainEdit.cpp:469 EditPathFor` = `.json` を `.edit` に差し替える。
+「`X` + `X.terrain.edit`」ではない)。束ねの主 (primary) は本体、サイドカーは「存在するものだけ」。
+状態の合成とフォルダ集約はどちらも **`CombineState` = 最も重いもの** (競合 > D > R > A > M > ?)。
+`{D, ?}` の親は D (削除が折り畳みに隠れない)。
+
 **ゲートの阻害要因 (列挙型 `GateBlocker`)**: `SceneDirty` / `ActorEdit` / `AnimationDirty` /
 `ControllerDirty` / `MixerDirty` / `ProjectSettingsDirty` / `Playing` / `NetActive` / `BuildRunning` /
 `ScriptBuildRunning` / `OpInFlight` / `MergeInProgress` / `ServiceUnavailable`。全件を列挙して返す (最初の 1 件で止めない)。
@@ -157,6 +163,9 @@ GCM の GUI を許す (`GIT_TERMINAL_PROMPT=0` のみ)。全 git 呼び出しは
 - proto 版: Rust `pub const PROTO_VERSION: u32 = N;` (`tools\collab\src\protocol.rs`) と C++
   `constexpr int kCollabProtoVersion = N;` (`src\Editor\SourceControl\CollabProtocol.h`) を
   `check_rules.ps1` の `$constGroups` で機械照合。
+  **bump の規則** (sub-02 round 1 で確定): C ABI の関数を増減・改変したとき / JSON のフィールドを**削除・改名・意味変更**したとき /
+  `error.code` や event 名を削除・改名したとき。**フィールドの追加は bump しない** (C++ は `value(key, default)` 読みで前方互換)。
+  op の追加も bump しない (未知 op は `bad_request` で返る = 実行時に分かる)。
 
 ### 4.3 UI / ビジュアル
 
@@ -165,6 +174,8 @@ GCM の GUI を許す (`GIT_TERMINAL_PROMPT=0` のみ)。全 git 呼び出しは
 利用不可の理由は列挙型 `Unavailable::{NoProject, NoService, ProtoMismatch, NoGit, GitTooOld, NotRepo,
 ToplevelMismatch, ServiceDied}` → `Tr()`。裸起動 (プロジェクト無し) は `NoProject`。
 `error.code` → `Tr()` キーの表を C++ が持ち、未知 code は生文字列を `Text("%s")` で出す。
+**窓の既定表示** (sub-02 round 1 で確定): プロジェクト起動では**既定で開く** (Assets と同じドック束のタブ = 場所を取らない。
+利用不可でも理由が見えることに価値がある)。裸起動では閉じる。以後は `.mye\imgui.ini` がユーザーの選択を保持する。
 
 ### 4.4 非機能
 
@@ -183,6 +194,8 @@ ToplevelMismatch, ServiceDied}` → `Tr()`。裸起動 (プロジェクト無し
   期待ファイルは serde_json 既定のキー順 (辞書順)。fixture のパスと中身は ASCII に限る (cmd 経由の stdout はコンソール CP で復号される)。
 - **CLI (script モード) は決定的でなければならない**: 応答は要求順、`event` 行は**出さない** (watcher と定期 fetch を起動しない。
   `create` 経由 = DLL では起動する)。通知の検証は cargo test の単体側で行う (sub-02 以降)。
+  `hint_changed` は通知ではなく**応答に status を載せて返す** (同じ理由。C++ は監視経路と同じ `ApplyStatusResult` へ流す)。
+- **fixture はシナリオごとに作り直す** (sub-02 で確定): 共用すると N 本目の期待が 1..N-1 本目の実行結果に依存する。+1 s/シナリオは許容。
 - `Cargo.lock` は版管理対象 (cdylib / bin を配る crate。再現ビルドのため)。
 - `status` は `--untracked-files=all` (バッジがファイル単位。既定の normal だと未追跡ディレクトリが畳まれる)。
 - **CLAUDE.md**: 「43 スイート」→ 44、検証表に `collab_verify.bat`、ビルド節に `build_collab.bat` + rustup 前提 (M66j)。
@@ -251,3 +264,7 @@ sub-08 / sub-09 は sub-05〜07 と独立。
 - 同上: §4.4 に `Cargo.lock` 版管理対象、`status --untracked-files=all` を追記 (coder の追加を仕様として採用)。
 - 同上: §7 の `--porcelain=v2` 下限の未決を閉じた (一次情報で確認済み)。
 - 同上: `build_collab.bat` の cargo 不在時は **exit 1 のまま** (sub-01 受け入れ条件 2)。司会の申し送り「WARN + exit 0」は採らない — `tools\build_managed.bat:10` も dotnet 不在で `exit /b 1` であり、この bat は sln ビルドから呼ばれない (明示的に叩いたときだけ走る) ので、rustup 未導入の開発者が巻き込まれる経路は無い。CI は失敗にしたい。
+- 2026-09-03 (sub-02 round 1、coder SELF_EVAL): §4.1 に対の規則の確定版 — `.terrain.edit` は `x.terrain.json` の `.json` を `.edit` に差し替えた名前 (`TerrainEdit.cpp:469`)。sub-02 / sub-03 の「`X` + `X.terrain.edit`」は planner の誤り。フォルダ集約は「最も重いもの」に一般化 (`{D, ?}` → D。削除が折り畳みに隠れない)。
+- 同上: §4.2 に PROTO_VERSION の bump 規則 (フィールド追加は bump しない)。status 結果への `head` 追加は据え置きで正しい。
+- 同上: §4.3 に窓の既定表示 (プロジェクト起動で開く / 裸起動で閉じる) — coder の質問 6 への裁定。実装は sub-03 (should)。
+- 同上: §4.4 に `hint_changed` は応答で status を返す (CLI の決定論を優先)、fixture はシナリオごとに作り直す。

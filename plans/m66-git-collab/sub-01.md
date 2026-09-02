@@ -1,7 +1,7 @@
 # sub-01: M66a: Rust cdylib + CLI + fixture + collab_verify + CI + 規則 12 + DLL 往復の縦切り
 
 - 依存: なし
-- 状態: OK (commit: M66a — ハッシュは harness.md のサブ進捗表)
+- 状態: OK (commit 4716d6a)
 - 往復: 1
 - 前提 (ユーザー側): rustup (stable) がインストール済みで `cargo --version` が通ること。**coder は環境を変えない**。
   通らなければ着手せず「不安・質問」で司会へ返す。

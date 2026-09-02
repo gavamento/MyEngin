@@ -68,6 +68,7 @@ void EditorApp::OnStart(EngineContext& ctx)
                     { "Profiler", &profiler_.open },
                     { "Timeline", &timeline_.open },
                     { "Network", &net_.open },
+                    { "Source Control", &sourceControl_.open },
                     { "Particle Settings", &particleSettings_.open },
                     { "Sound Generator", &soundGen_.open },
                     { "Audio Mixer", &audioMixer_.open },
@@ -209,6 +210,20 @@ void EditorApp::OnStart(EngineContext& ctx)
             projectName_ = manifest.name;
         }
     }
+    // ---- Source Control (M66b) ----
+    // ★プロジェクト起動のときだけ立ち上げる。裸起動では DLL のロードすらしない
+    //   (どのリポジトリかが決まらないので機能が成立しない = Unavailable::NoProject)。
+    //   ロードに失敗しても例外は飛ばない = エディタの他機能は一切影響を受けない
+    scm_.Start(GetExecutableDir(), ctx.projectRoot);
+    if (scm_.CanonicalRootMismatch()) {
+        // 起動時 1 回だけ。窓を開かなくても気付ける場所はここしかない。
+        // ★ログにも残す — トーストは 4 秒で消えるので、後から「本当に出たのか」を
+        //   確かめる手段が無くなる (INFO で出す。WARN にすると ToastCenter の
+        //   ログ自動収集が拾って**同じ内容のトーストが 2 枚**出る)
+        MYE_LOG_INFO("[collab] canonicalRoot mismatch: recorded=%s actual=%s",
+                     scm_.CanonicalRoot().c_str(), WideToUtf8(ctx.projectRoot).c_str());
+        toasts_.Notify(LogLevel::Warn, Tr(StrId::Scm_CanonicalMismatch));
+    }
     savedStateSerial_ = undo_.StateSerial(); // ロード直後 = clean
     {
         wchar_t title[256] = {};
@@ -338,6 +353,9 @@ void EditorApp::OnShutdown(EngineContext& ctx)
     probeSet_.Clear();
     probePreview_ = {};
     probeBaker_.Shutdown();
+    // M66b: destroy (worker を join) -> FreeLibrary。デバイス解放とは無関係だが、
+    // ★プロセス終了任せにすると、走行中の worker のコードごとアンロードされうる
+    scm_.Shutdown();
 }
 
 // 焼いた 6 面のサムネイル (M56e)。**Inspector ではなく専用の小窓**にしてある —
@@ -484,6 +502,15 @@ void EditorApp::CloseActorEdit(EngineContext& ctx)
 
 void EditorApp::OnImGui(EngineContext& ctx)
 {
+    // ---- Source Control (M66b) ----
+    // **どのウィンドウ描画よりも先**に drain する。応答はコールバックでモデルを
+    // 差し替えるので、描画の途中で入れ替わると同一フレーム内で一覧の件数が変わる
+    scm_.Poll();
+    if (scm_.TakeHeadMoved()) {
+        // 外部 (ターミナル) の checkout / pull。v1 は知らせるだけ (spec §3「後回し」)
+        toasts_.Notify(LogLevel::Warn, Tr(StrId::Scm_HeadMoved));
+    }
+
     // ---- ミニシーン編集モード (M48k) ----
     // 全ウィンドウの描画の間だけ `ctx.scene` をアセットのミニシーンへ差し替える。
     // Hierarchy / Inspector / SceneView / AssetBrowser の配置は ctx.scene 駆動なので、
@@ -564,6 +591,12 @@ void EditorApp::OnImGui(EngineContext& ctx)
     profiler_.OnImGui(ctx);
     timeline_.OnImGui(ctx, playMode_);
     net_.OnImGui(ctx);
+    sourceControl_.OnImGui(scm_); // M66b (状態は scm_、窓は描くだけ)
+    if (sourceControl_.TakeAdoptCanonicalRoot()) {
+        const bool adopted = scm_.AdoptCanonicalRoot();
+        toasts_.Notify(adopted ? LogLevel::Info : LogLevel::Error,
+                       Tr(adopted ? StrId::Scm_AdoptDone : StrId::Scm_AdoptFailed));
+    }
     DrawProbePreview();
     assetBrowser_.OnImGui(ctx, selection_, undo_, settings_.externalEditorCmd, preview_);
     // AssetBrowser で .scene.json がダブルクリックされたら未保存変更ガード経由で開く
@@ -964,6 +997,7 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
         ImGui::MenuItem(Tr(StrId::Win_Profiler), nullptr, &profiler_.open);
         ImGui::MenuItem(Tr(StrId::Win_Timeline), nullptr, &timeline_.open);
         ImGui::MenuItem(Tr(StrId::Win_Net), nullptr, &net_.open);
+        ImGui::MenuItem(Tr(StrId::Win_SourceControl), nullptr, &sourceControl_.open);
         ImGui::MenuItem(Tr(StrId::Win_ParticleSettings), nullptr, &particleSettings_.open);
         ImGui::MenuItem(Tr(StrId::Win_SoundGenerator), nullptr, &soundGen_.open);
         ImGui::MenuItem(Tr(StrId::Win_AudioMixer), nullptr, &audioMixer_.open);
@@ -1170,6 +1204,7 @@ void EditorApp::SetupDockLayout(unsigned int dockspaceId)
     ImGui::DockBuilderDockWindow("Timeline", bottom);
     ImGui::DockBuilderDockWindow("Console", bottom);
     ImGui::DockBuilderDockWindow("Assets", bottomRight);
+    ImGui::DockBuilderDockWindow("Source Control", bottomRight); // M66b (Assets と同じタブ束)
     ImGui::DockBuilderDockWindow("Animation", bottom);
     ImGui::DockBuilderDockWindow("Animator", bottom);
     ImGui::DockBuilderDockWindow("Scene", center);

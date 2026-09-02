@@ -8,6 +8,7 @@
 
 use std::collections::VecDeque;
 use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Sender};
 use std::sync::{Arc, Mutex};
@@ -17,9 +18,12 @@ use serde_json::Value;
 
 use crate::ops::{self, Dispatcher, State};
 use crate::protocol::{self, code, ErrorBody, Request, Response};
+use crate::watch::WatchHandle;
 
 enum Msg {
     Request(String),
+    /// 監視スレッド発。status を取り直し、前回と違えば通知を積む (M66b)
+    Refresh,
     Shutdown,
 }
 
@@ -28,11 +32,30 @@ pub struct Service {
     out: Arc<Mutex<VecDeque<String>>>,
     dead: Arc<AtomicBool>,
     handle: Option<JoinHandle<()>>,
+    /// None = 監視なし。**CLI (script モード) は必ず None** — 監視を立てると
+    /// 出力に event 行がタイミング次第で混ざり、期待 NDJSON が非決定になる
+    /// (spec §4.4)
+    watch: Option<WatchHandle>,
 }
 
 impl Service {
+    /// 監視なし。CLI と単体テストが使う
     pub fn new(root: String) -> Self {
         Self::with_dispatcher(root, ops::dispatch)
+    }
+
+    /// 監視あり。**mye_collab_create (DLL) だけが使う**。
+    /// 監視が張れなくても Service は生きる (窓の「更新」で status は取れる)
+    pub fn with_watch(root: String) -> Self {
+        let mut svc = Self::with_dispatcher(root.clone(), ops::dispatch);
+        if let Some(tx) = svc.tx.clone() {
+            svc.watch = crate::watch::spawn(&PathBuf::from(root), move || {
+                // 送信失敗 = worker が既に落ちている。監視スレッドは次の
+                // stop チェックで抜けるので、ここでは黙って捨てる
+                let _ = tx.send(Msg::Refresh);
+            });
+        }
+        svc
     }
 
     /// テストが panic する dispatcher を差し込むための入口。
@@ -54,11 +77,14 @@ impl Service {
                         Msg::Request(line) => {
                             handle_line(&mut state, &line, &out_w, &dead_w, dispatcher);
                         }
+                        Msg::Refresh => {
+                            handle_refresh(&mut state, &out_w, &dead_w);
+                        }
                     }
                 }
             })
             .ok();
-        Service { tx: Some(tx), out, dead, handle }
+        Service { tx: Some(tx), out, dead, handle, watch: None }
     }
 
     /// 非同期。応答は poll で届く
@@ -94,6 +120,10 @@ impl Service {
 
 impl Drop for Service {
     fn drop(&mut self) {
+        // ★監視を**先に**止める。逆順にすると、閉じた worker のチャネルへ
+        //   Refresh を送りつける競合が残る (送信は握り潰すので害は無いが、
+        //   監視スレッドが生きたまま FreeLibrary されると即死する)
+        self.watch = None;
         // ★join を飛ばして FreeLibrary すると、走っている worker のコードごと
         //   アンロードされてエディタが落ちる。destroy → FreeLibrary の順は
         //   C++ 側 (CollabClient::Shutdown) の契約でもある
@@ -166,6 +196,25 @@ fn handle_line(
                 push_line(out, protocol::service_error_line(code::INTERNAL_PANIC, &detail));
             }
             push_line(out, Response::err(req.id, ErrorBody::new(code::INTERNAL_PANIC, detail)).to_line());
+        }
+    }
+}
+
+/// 監視スレッド発の取り直し。**応答 (id) は無い**ので、通知行だけを積む。
+/// panic は要求経路と同じ扱い (service_error 1 回 + dead 化) — ここだけ
+/// 握り潰すと「監視のせいで静かに死んだサービス」ができる
+fn handle_refresh(state: &mut State, out: &Arc<Mutex<VecDeque<String>>>, dead: &Arc<AtomicBool>) {
+    match catch_unwind(AssertUnwindSafe(|| ops::refresh_status(state))) {
+        Ok(lines) => {
+            for line in lines {
+                push_line(out, line);
+            }
+        }
+        Err(payload) => {
+            let detail = panic_text(&payload);
+            if !dead.swap(true, Ordering::SeqCst) {
+                push_line(out, protocol::service_error_line(code::INTERNAL_PANIC, &detail));
+            }
         }
     }
 }

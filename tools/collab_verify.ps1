@@ -47,15 +47,20 @@ if (-not $scenarios) { Write-Host "[collab_verify] no scenarios in $scenarioDir"
 
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 
-# fixture を作り直す。**毎回まっさらから**作るのが決定論の前提
-if (Test-Path $work) { Remove-Item -Recurse -Force $work }
-New-Item -ItemType Directory -Force -Path $work | Out-Null
-& pwsh -NoProfile -File (Join-Path $PSScriptRoot 'collab_fixture.ps1') $root
-if ($LASTEXITCODE -ne 0) { Write-Host "[collab_verify] fixture creation failed"; exit 1 }
-
-# サービスが起動する git にも開発者設定を見せない (fixture と同じ隔離)
-$env:GIT_CONFIG_GLOBAL = "$root.gitconfig"
-$env:GIT_CONFIG_NOSYSTEM = '1'
+# fixture は**シナリオ 1 本ごとに作り直す** (M66b で shared → per-scenario に変更)。
+# ★共用にすると N 本目の期待ファイルが 1..N-1 本目の実行結果に依存する。
+#   「新しいシナリオを足しただけで既存の期待が動く」「単体で --job 的に 1 本流すと
+#   落ちる」という、原因が読めない壊れ方をする。git init + commit 1 回は
+#   1 秒程度なので、独立性の方を買う
+function New-Fixture {
+    if (Test-Path $work) { Remove-Item -Recurse -Force $work }
+    New-Item -ItemType Directory -Force -Path $work | Out-Null
+    & pwsh -NoProfile -File (Join-Path $PSScriptRoot 'collab_fixture.ps1') $root
+    if ($LASTEXITCODE -ne 0) { Write-Host "[collab_verify] fixture creation failed"; exit 1 }
+    # サービスが起動する git にも開発者設定を見せない (fixture と同じ隔離)
+    $env:GIT_CONFIG_GLOBAL = "$root.gitconfig"
+    $env:GIT_CONFIG_NOSYSTEM = '1'
+}
 
 # 環境依存の値を伏せる。$root は '\' と '/' の両方の綴りで出うる
 $rootFull = [System.IO.Path]::GetFullPath($root)
@@ -95,6 +100,7 @@ $failed = 0
 foreach ($path in $scenarios) {
     $name = [System.IO.Path]::GetFileNameWithoutExtension($path)
     Write-Host "=== collab scenario: $name ==="
+    New-Fixture
     $actual = New-Object System.Collections.Generic.List[string]
     $pending = New-Object System.Collections.Generic.List[string]
     $seg = 0

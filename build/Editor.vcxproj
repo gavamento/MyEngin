@@ -65,6 +65,7 @@
     <ClCompile Include="..\src\Editor\RagdollBuildSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\SourceControl\CollabClient.cpp" />
     <ClCompile Include="..\src\Editor\SourceControl\SourceControlSelfTest.cpp" />
+    <ClCompile Include="..\src\Editor\SourceControl\SourceControlState.cpp" />
     <ClCompile Include="..\src\Editor\SsrSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\StatusBar.cpp" />
     <ClCompile Include="..\src\Editor\TerrainSelfTest.cpp" />
@@ -87,6 +88,7 @@
     <ClCompile Include="..\src\Editor\Windows\SceneViewWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\SearchWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\SoundGenWindow.cpp" />
+    <ClCompile Include="..\src\Editor\Windows\SourceControlWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\TimelineWindow.cpp" />
     <ClInclude Include="..\src\Editor\AssetOps.h" />
     <ClInclude Include="..\src\Editor\AssetOpsSelfTest.h" />
@@ -120,6 +122,7 @@
     <ClInclude Include="..\src\Editor\SourceControl\CollabClient.h" />
     <ClInclude Include="..\src\Editor\SourceControl\CollabProtocol.h" />
     <ClInclude Include="..\src\Editor\SourceControl\SourceControlSelfTest.h" />
+    <ClInclude Include="..\src\Editor\SourceControl\SourceControlState.h" />
     <ClInclude Include="..\src\Editor\SsrSelfTest.h" />
     <ClInclude Include="..\src\Editor\StatusBar.h" />
     <ClInclude Include="..\src\Editor\TerrainSelfTest.h" />
@@ -142,6 +145,7 @@
     <ClInclude Include="..\src\Editor\Windows\SceneViewWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\SearchWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\SoundGenWindow.h" />
+    <ClInclude Include="..\src\Editor\Windows\SourceControlWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\TimelineWindow.h" />
   </ItemGroup>
   <!-- END FILES -->

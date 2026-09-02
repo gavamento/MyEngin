@@ -1,6 +1,7 @@
 #pragma once
+#include <string_view>
 
-// MyeCollab.dll との会話の定数 (M66a)。
+// MyeCollab.dll との会話の定数 (M66a / M66b)。
 // 実装形態と ABI の正本は plans\m66-git-collab\spec.md §4.0 / ADR-015。
 
 namespace mye {
@@ -19,7 +20,58 @@ namespace collabop {
 constexpr const char* kHello = "hello";
 constexpr const char* kRepoCheck = "repo_check";
 constexpr const char* kStatus = "status";
+constexpr const char* kHintChanged = "hint_changed"; // M66b: 保存直後の即時取り直し
 } // namespace collabop
+
+// op の待ち方 (spec §4.4「タイムアウト」)。
+//   Handshake … hello だけ。5 s (git.exe が 1 回起動できない環境は待っても無駄)
+//   Read      … 30 s。落ちても状態は変わらないので打ち切ってよい
+//   Write     … **無期限**。打ち切っても git は走り続けるので、「諦めた」と
+//               表示した後で index だけ書き換わる = 最悪の食い違いになる
+enum class CollabOpKind {
+    Handshake,
+    Read,
+    Write,
+};
+
+constexpr int kCollabHelloTimeoutMs = 5000;
+constexpr int kCollabReadTimeoutMs = 30000;
+
+// op 名 → 待ち方。**未知の op は Write 扱い** (= 打ち切らない) に倒す。
+// 分類を間違えたときの被害が「余計に待つ」で済む側を既定にしている。
+// ★op 一覧は spec §4.1 で v1 に凍結済みなので、実装がまだ無い op もここには並ぶ
+//   (M66c 以降が ops.rs を埋めるたびに、この表を触らなくて済むようにするため)
+inline CollabOpKind CollabOpKindOf(std::string_view op)
+{
+    if (op == "hello") {
+        return CollabOpKind::Handshake;
+    }
+    // 読み取り系 = リポジトリを 1 バイトも変えない op
+    constexpr std::string_view kReadOps[] = {
+        "repo_check", "status", "log",      "diff",         "diff_names",
+        "branches",   "conflicts", "remote_state", "identity_check", "hint_changed",
+    };
+    for (const std::string_view r : kReadOps) {
+        if (op == r) {
+            return CollabOpKind::Read;
+        }
+    }
+    return CollabOpKind::Write;
+}
+
+// error.code のうち C++ が分岐に使うもの (綴りは tools\collab\src\protocol.rs の
+// code モジュールが正本。文字列の一致でしか照合できないので直書きを 1 箇所に集める)
+namespace collaberr {
+constexpr const char* kNotRepo = "not_repo";
+constexpr const char* kGitMissing = "git_missing";
+constexpr const char* kGitTooOld = "git_too_old";
+constexpr const char* kServiceDead = "service_dead";
+constexpr const char* kInternalPanic = "internal_panic";
+constexpr const char* kBadRequest = "bad_request";
+// C++ 側が合成する疑似 code (サービスは返さない)。応答が期限内に来なかった要求は
+// **必ずコールバックを呼んで消す** — 呼ばないと窓が「実行中」のまま二度と操作できない
+constexpr const char* kTimeout = "timeout";
+} // namespace collaberr
 
 // Source Control が使えない理由 (spec §4.3)。UI はこれを Tr() で文言にする。
 // 「使えない」を 1 つの bool に潰さないのは、理由ごとに**ユーザーがすべきことが違う**ため

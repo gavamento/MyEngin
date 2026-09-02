@@ -44,3 +44,7 @@ tools\replay_verify.bat
 ## 実装メモ (coder が追記)
 
 ## フィードバック履歴
+
+## planner 追記 (sub-02 round 1 の判定から)
+
+- フォルダ集約は sub-02 で **`CombineState` = 最も重いもの** に確定した (`{D, ?}` → D)。上の「子 M + ? → 親 M」はそのまま成り立つが、セルフテストのケースに `{D, ?}` → D と `{競合, M}` → 競合 を足すこと。集約の実体は `SourceControlState.cpp` の `PropagateFolderState` で、AssetBrowser 側はそれを引くだけ (再実装しない)。

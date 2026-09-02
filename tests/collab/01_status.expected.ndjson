@@ -1,6 +1,6 @@
 {"id":1,"ok":true,"result":{"gitVersion":"<gitversion>"}}
 {"id":2,"ok":true,"result":{"head":"<sha>","isRepo":true,"mergeInProgress":false,"rebaseInProgress":false,"toplevel":"<root>"}}
-{"id":3,"ok":true,"result":{"ahead":0,"behind":0,"branch":"main","entries":[],"upstream":""}}
-{"id":4,"ok":true,"result":{"ahead":0,"behind":0,"branch":"main","entries":[{"conflict":false,"index":".","path":"assets/scenes/main.scene.json","worktree":"M"}],"upstream":""}}
-{"id":5,"ok":true,"result":{"ahead":0,"behind":0,"branch":"main","entries":[{"conflict":false,"index":".","path":"assets/scenes/main.scene.json","worktree":"M"},{"conflict":false,"index":"?","path":"assets/textures/added.txt","worktree":"?"}],"upstream":""}}
-{"id":6,"ok":true,"result":{"ahead":0,"behind":0,"branch":"main","entries":[{"conflict":false,"index":".","path":"assets/scenes/main.scene.json","worktree":"M"},{"conflict":false,"index":".","path":"assets/textures/test.png","worktree":"D"},{"conflict":false,"index":"?","path":"assets/textures/added.txt","worktree":"?"}],"upstream":""}}
+{"id":3,"ok":true,"result":{"ahead":0,"behind":0,"branch":"main","entries":[],"head":"<sha>","upstream":""}}
+{"id":4,"ok":true,"result":{"ahead":0,"behind":0,"branch":"main","entries":[{"conflict":false,"index":".","path":"assets/scenes/main.scene.json","worktree":"M"}],"head":"<sha>","upstream":""}}
+{"id":5,"ok":true,"result":{"ahead":0,"behind":0,"branch":"main","entries":[{"conflict":false,"index":".","path":"assets/scenes/main.scene.json","worktree":"M"},{"conflict":false,"index":"?","path":"assets/textures/added.txt","worktree":"?"}],"head":"<sha>","upstream":""}}
+{"id":6,"ok":true,"result":{"ahead":0,"behind":0,"branch":"main","entries":[{"conflict":false,"index":".","path":"assets/scenes/main.scene.json","worktree":"M"},{"conflict":false,"index":".","path":"assets/textures/test.png","worktree":"D"},{"conflict":false,"index":"?","path":"assets/textures/added.txt","worktree":"?"}],"head":"<sha>","upstream":""}}

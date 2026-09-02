@@ -1,0 +1,4 @@
+{"id":1,"ok":true,"result":{"ahead":0,"behind":0,"branch":"main","entries":[],"head":"<sha>","upstream":""}}
+{"id":2,"ok":true,"result":{"ahead":0,"behind":0,"branch":"main","entries":[],"head":"<sha>","upstream":""}}
+{"id":3,"ok":true,"result":{"ahead":0,"behind":0,"branch":"main","entries":[{"conflict":false,"index":"?","path":"assets/materials/hinted.mat.json","worktree":"?"}],"head":"<sha>","upstream":""}}
+{"id":4,"ok":true,"result":{"ahead":0,"behind":0,"branch":"main","entries":[{"conflict":false,"index":"?","path":"assets/materials/hinted.mat.json","worktree":"?"}],"head":"<sha>","upstream":""}}

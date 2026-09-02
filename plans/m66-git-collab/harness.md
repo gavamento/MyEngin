@@ -11,9 +11,9 @@
 ## サブ進捗
 | サブ | 状態 | 往復 | コミット | メモ |
 |---|---|---|---|---|
-| sub-01 | OK | 1 | (M66a、下の記入待ち) | M66a: Rust cdylib + CLI + fixture + collab_verify + CI + 規則 12 + DLL 往復の縦切り。依存: なし |
-| sub-02 | 未着手 | 0 | | M66b: CollabClient 完成 + SourceControlState + Source Control 窓 (読み取り専用) + canonicalRoot。依存: sub-01 |
-| sub-03 | 未着手 | 0 | | M66c: stage / unstage / commit / History / diff / identity。依存: sub-02 |
+| sub-01 | OK | 1 | 4716d6a | M66a: Rust cdylib + CLI + fixture + collab_verify + CI + 規則 12 + DLL 往復の縦切り。依存: なし。VERDICT round 1 OK (should 1 → sub-02、nit 3 → sub-02 / sub-10) |
+| sub-02 | OK | 1 | (M66b、下の記入待ち) | M66b: CollabClient 完成 + SourceControlState + Source Control 窓 (読み取り専用) + canonicalRoot。依存: sub-01 |
+| sub-03 | 実装中 | 0 | | M66c: stage / unstage / commit / History / diff / identity。依存: sub-02 |
 | sub-04 | 未着手 | 0 | | M66d: ReloadHub Begin/EndBatch + ゲート + 4 窓の HasUnsavedChanges + トランザクション + revert。依存: sub-03 |
 | sub-05 | 未着手 | 0 | | M66e: Branches — 一覧 / 作成 / checkout + 段階の事前判定。依存: sub-04 |
 | sub-06 | 未着手 | 0 | | M66f: fetch / pull / push + 定期 fetch + 通知 + EditorSettings。依存: sub-04 (sub-05 と独立。並列なら SourceControlWindow.cpp / ops.rs のマージ順を司会が決める) |
@@ -27,10 +27,11 @@
 - B 段階の `.controller.json` / `.terrain.json`: ライブラリのキャッシュ無効化 API の有無 (無ければ C に格上げ) — sub-04
 - `.terrain.edit` に `.meta` が付くか (`ClassifyPath`) — sub-03 は「存在するサイドカーだけ束ねる」実装で依存しない
 - GUI 無しの孫プロセス git から GCM のダイアログが出るか — sub-06 の冒頭確認 (出なければ案内文を変える)
-- `--porcelain=v2` の下限 git 2.11 は記憶ベース — sub-01 の冒頭確認で公式を見る
+- ~~`--porcelain=v2` の下限 git 2.11 は記憶ベース~~ → **閉じた (sub-01)**: 2.11.0 で正しいことを一次情報で確認、出典 URL は `tools\collab\src\git.rs` の定数コメント
 - `StartGameLogicBuild` の全呼び出し元 (同期経路の有無) — sub-04 のゲート `ScriptBuildRunning`
 - `kCollabMaxBatchApply = 200` / `kReloadRetryMax = 60` は初期値。実機で不便なら仕様変更として spec §8 に積む
-- Rust cdylib が実際に Editor.exe から LoadLibrary で往復するかは策定時点で**未検証** — sub-01 の縦切り (受け入れ条件 4) で最初に潰す
+- ~~Rust cdylib が実際に Editor.exe から LoadLibrary で往復するかは策定時点で未検証~~ → **閉じた (sub-01)**: Debug / Release とも Editor.exe が MyeCollab.dll をロードして JSON が往復し git 版が返る (selftest で恒常検査)
+- ci.yml の GitHub 上の実走は**未検証** (push 後の最初の run で見る。割れやすいのは `dtolnay/rust-toolchain` の所要時間と cmd の `&&` 連鎖の終了コード伝播)
 
 ## レビュー
 | round | 判定 | 深度/機能/視覚/品質 | 未解決 |
@@ -47,8 +48,20 @@
   司会が scratchpad で cdylib のプローブ (`#[unsafe(no_mangle)] extern "C"`) を `cargo build --release` → DLL 生成 + dumpbin でエクスポート確認済み = MSVC リンカまで通る。
   - **罠 1**: `~/.cargo/bin` はユーザー PATH に入ったが、Claude Code のツールシェル (PowerShell / Bash) は起動時の環境を引き継ぐので **`cargo` が PATH に無い**。
     コマンドの先頭で `$env:PATH = "$env:USERPROFILE\.cargo\bin;$env:PATH"` (bash なら `export PATH="$USERPROFILE/.cargo/bin:$PATH"`) を付けること。
-    `tools\build_collab.bat` は PATH の cargo → 無ければ `%USERPROFILE%\.cargo\bin\cargo.exe` の順に解決し、どちらも無ければ機能 OFF の WARN で 0 終了 (MyeScripting 不在時と同じ縮退) にするのが筋。
+    `tools\build_collab.bat` は PATH の cargo → 無ければ `%USERPROFILE%\.cargo\bin\cargo.exe` の順に解決する (sub-01 で実装済み)。
+    **どちらも無ければ exit 1** — 司会が当初「WARN + exit 0 の縮退」と書いたが planner が退けた (`build_managed.bat` も dotnet 不在で exit 1、この bat は sln ビルドから呼ばれないので未導入者を巻き込まない、CI は失敗にしたい。spec §8 に記録)。
   - **罠 2**: `cargo new` の既定 edition は **2024** — `#[no_mangle]` は `#[unsafe(no_mangle)]` と書かないとエラー (unsafe attribute)。
   - **罠 3**: MSVC リンカが「ライブラリ ... .dll.lib とオブジェクト ... .dll.exp を作成中」を stdout に出し、rustc が `linker_messages` lint の **warning** として拾う (無害)。
     CI で `RUSTFLAGS=-D warnings` 相当を立てるとこれがエラーになるので、`#![allow(linker_messages)]` か lint 個別指定で逃がすこと。
+- **sub-01 (M66a) からの申し送り** (coder SELF_EVAL + planner VERDICT round 1):
+  - 入口: `CollabClient::Load(GetExecutableDir())` → `Create(WideToUtf8(projectRoot))` → 毎フレーム `Poll()`。**まだどこからも呼ばれていない** (配線は sub-02)。`Unavailable` 列挙は `CollabProtocol.h` に spec §4.3 の 8 値ぶん。
+  - op を足す = `tools\collab\src\ops.rs::dispatch` の match に 1 行 + `CollabProtocol.h` の `collabop` に定数 1 行。**C ABI は増やさない** (増やすなら PROTO_VERSION と kCollabProtoVersion を同時に上げる = 規則 9 が止める)。
+  - collab_verify のシナリオ追加 = `tests\collab\NN_*.ndjson` を置いて `--update` で期待を撮る。ファイル操作は `# write` / `# delete` ディレクティブ。**期待ファイルは必ず中身を読んでからコミット** (--update は今の出力を正にする)。期待 NDJSON のキー順は serde_json 既定の辞書順 (`preserve_order` を有効にすると全部ずれる)。
+  - **CLI (script モード) は event 行を出さず watcher・定期 fetch を起動しない** (planner が spec §4.4 に追記。sub-02 で通知が入ると CLI 出力が非決定になるのを先に封じた)。
+  - 実機目視: `pwsh -File tools\collab_fixture.ps1 cache\collab_fixture` → `bin\x64\Debug\Editor.exe --project cache\collab_fixture` (fixture は既存ディレクトリを拒否する)。
+  - `MyeCollab.dll` はエディタ起動中に上書きできない (build_collab.bat がコピー失敗で exit 1 + "is the editor running?")。
+  - edition は **2021** を採用 (2024 だと rustc 1.85 未満で `#[unsafe(no_mangle)]` が通らない)。`Cargo.lock` は版管理対象で確定。
+  - planner の should (sub-02 へ): porcelain の fixture に非 ASCII パス (`core.quotepath=false` で生 UTF-8) が 1 本も無い。collab_verify は cmd 経由で ASCII 限定なので、UTF-8 パスが `entries.path` にそのまま載る検査は cargo test で。sub-02 で watch.rs を足すとき 1 本追加 (sub-02.md の「planner 追記」節)。
+  - planner の nit: `CollabClient::AddPendingForTest` (テスト専用公開 API) は sub-02 で `DispatchLine` の検査経路が増えるなら friend か「Request の DLL 無し分岐」に寄せられないか検討 / ci.yml の `dtolnay/rust-toolchain@stable` ステップに `name:` が無い → sub-10 / linker stdout の warning は触らない。
+  - Bash ツールのヒアドキュメント経由で PowerShell / 正規表現を patch すると**バックスラッシュが 1 段潰れる**。patch スクリプトは scratchpad にファイルとして書いてから実行する。
 - planner のエージェント ID はセッション限り。セッションを跨いだら `MODE: VERDICT` 用の planner を新規起動し、文脈は spec.md / sub-NN.md / この台帳で渡す。

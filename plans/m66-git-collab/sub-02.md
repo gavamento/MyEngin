@@ -1,8 +1,8 @@
 # sub-02: M66b: CollabClient 完成 + SourceControlState + Source Control 窓 (読み取り専用) + canonicalRoot
 
 - 依存: sub-01
-- 状態: 未着手
-- 往復: 0
+- 状態: OK (commit: M66b — ハッシュは harness.md のサブ進捗表)
+- 往復: 1
 
 ## やること
 
@@ -62,6 +62,34 @@ tools\replay_verify.bat
 
 ## 実装メモ (coder が追記)
 
+### round 1 (SELF_EVAL の写し)
+
+```
+SELF_EVAL: sub-02 (round 1)
+実装:
+  - tools/collab/src/watch.rs:is_interesting / relative_key / spawn — notify 8 (既定機能オフ) で
+    toplevel を再帰監視。.git\ は HEAD / index / MERGE_HEAD / refs/** / rebase-merge/ /
+    rebase-apply/ だけ拾い、.mye / cache / dist / target は捨てる。300 ms デバウンス +
+    2 s の上限 (書き込みが続く環境で永久に更新されないのを防ぐ)。判定は純関数で単体検査
+  - tools/collab/src/worker.rs:Service::with_watch / Msg::Refresh / handle_refresh —
+    監視スレッドは worker に Refresh を送るだけ (git は 1 本のスレッドで直列のまま)。
+    Drop は監視 -> worker の順。CLI (Service::new) は監視を立てない
+  - tools/collab/src/ops.rs:refresh_status / build_status / status / hint_changed —
+    status の結果に "head" (porcelain の branch.oid) を追加し、HEAD 移動の検知に
+    rev-parse を足さずに済ませた。前回と同じ結果なら status_changed を出さない
+  - src/Editor/SourceControl/SourceControlState.*:BuildModel / PrimaryPathFor /
+    CombineState / EvaluateRepoCheck / SourceControlSession — 対の束ね、フォルダ集約、
+    repo_check 判定はすべて純関数。セッションは hello -> repo_check -> status の順で起動
+  - src/Editor/SourceControl/CollabClient.*:ExpireTimedOut / OpInFlight / SetUnavailable —
+    hello 5 s / 読み取り 30 s / 書き込み無期限。期限切れは timeout 応答を合成して配る
+  - src/Editor/Windows/SourceControlWindow.* — Changes タブ (バッジ + 折り畳み + 選択 +
+    ツールチップ)、Branches / History は枠、歯車ポップアップの枠、利用不可の理由 8 種
+  - src/Engine/Engine/Project.*:ProjectManifest::canonicalRoot — 空ならキーごと書かない
+  - src/Editor/EditorApp.* — メンバ / Window メニュー / dock 既定 / Poll / Start / Shutdown
+  - tools/collab_verify.ps1:New-Fixture — fixture をシナリオ 1 本ごとに作り直す
+検証: 下記「検証コマンド」を全部実行、すべて緑 (詳細は SELF_EVAL 本文)
+```
+
 ## フィードバック履歴
 
 ## planner 追記 (sub-01 round 1 の判定から。coder は着手前に読む)
@@ -71,3 +99,4 @@ tools\replay_verify.bat
 - [nit] CollabClient::AddPendingForTest はテスト専用の公開 API。sub-02 で DispatchLine の検査経路が増えるなら、friend か「Request の DLL 無し分岐」に寄せられないか検討 (無理なら現状維持で可)。
 - [nit] ci.yml の `dtolnay/rust-toolchain@stable` ステップに `name:` が無い (ログで探しにくい)。sub-10 でまとめて直してもよい。
 - [nit] cargo build のたびに `warning: linker stdout: ライブラリ ... を作成中` が 1 件出る (MSVC リンカの情報行)。CI は -D warnings ではないので実害なし。触らない。
+- round 1: VERDICT OK (planner、2026-09-03)。裏取り: `TerrainEdit.cpp:469 EditPathFor` は `.json` を `.edit` に差し替える = 逸脱 1 は coder が正しく sub-02 の字面が誤り (spec §4.1 と sub-03 を修正)。`CombineState` は最重 (`SourceControlState.cpp:71`)、`LocalizationTable.inl:973-976` の `tools\build_collab.bat` は正しくエスケープ済み (cat -A で確認)、`Project.cpp:40,57` で canonicalRoot は value() 読み・空なら書かない、`watch.rs:37-` の除外集合、`cache/replay_m66b2.log:3711` に [PASS]。`tests/actual/scm_final.png` で Assets と同束のタブ・5 changed・M/? の束ね表示を目視。質問 1〜5 は全て承認、6 は「プロジェクト起動で既定表示」に裁定 (sub-03 で実装)。

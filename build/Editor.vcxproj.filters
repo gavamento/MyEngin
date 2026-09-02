@@ -46,6 +46,9 @@
     <ClCompile Include="..\src\Editor\SourceControl\SourceControlSelfTest.cpp">
       <Filter>SourceControl</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Editor\SourceControl\SourceControlState.cpp">
+      <Filter>SourceControl</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Editor\SsrSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\StatusBar.cpp" />
     <ClCompile Include="..\src\Editor\TerrainSelfTest.cpp" />
@@ -102,6 +105,9 @@
     <ClCompile Include="..\src\Editor\Windows\SoundGenWindow.cpp">
       <Filter>Windows</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Editor\Windows\SourceControlWindow.cpp">
+      <Filter>Windows</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Editor\Windows\TimelineWindow.cpp">
       <Filter>Windows</Filter>
     </ClCompile>
@@ -141,6 +147,9 @@
       <Filter>SourceControl</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\SourceControl\SourceControlSelfTest.h">
+      <Filter>SourceControl</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\SourceControl\SourceControlState.h">
       <Filter>SourceControl</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\SsrSelfTest.h" />
@@ -197,6 +206,9 @@
       <Filter>Windows</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\Windows\SoundGenWindow.h">
+      <Filter>Windows</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Windows\SourceControlWindow.h">
       <Filter>Windows</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\Windows\TimelineWindow.h">

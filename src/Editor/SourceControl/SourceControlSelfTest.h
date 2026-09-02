@@ -11,6 +11,13 @@ namespace mye {
 //       DLL が無ければ SKIP して true (rustup 未導入の環境で selftest 全体を
 //       赤くしない)。ただし環境変数 MYE_COLLAB_REQUIRED=1 のときは失敗にする
 //       — CI では「Rust をビルドし忘れて静かに素通り」が起きてはいけない
+//
+// M66b で足したもの (すべて DLL 不要 = 純関数の検査):
+//   (c1) 偽の status トランスクリプト -> 対の束ね (.meta / .terrain.edit) と合成状態
+//   (d)  フォルダ集約 (子の状態から親の状態)
+//   (e1) repo_check の toplevel 不一致 -> ToplevelMismatch
+//   (i)  ProjectManifest の canonicalRoot 往復 (一時ディレクトリで Save -> Load)
+//   おまけ: op の待ち方の分類 (読み取り系だけがタイムアウトする / OpInFlight は書き込み系だけ)
 bool RunSourceControlSelfTest();
 
 } // namespace mye

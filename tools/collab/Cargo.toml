@@ -26,6 +26,12 @@ name = "mye_collab_cli"
 path = "src/main.rs"
 
 [dependencies]
+# notify 8 = Windows では ReadDirectoryChangesW。default-features を切っているのは
+# macOS の FSEvents バインディング (objc/fsevent-sys) を持ち込まないため — この
+# エンジンは Windows 専用なので、依存が増えるほど「cargo build が通らない同僚」が増える。
+# ★9.x (rc) は rust-version 1.88 を要求する。edition 2021 を選んだのと同じ理由
+#   (古い stable でも通る側に倒す) で 8 系に留める
+notify = { version = "8", default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 

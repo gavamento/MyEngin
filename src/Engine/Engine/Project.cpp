@@ -37,6 +37,7 @@ bool LoadProjectManifest(const std::wstring& root, ProjectManifest& out)
         out.name = j.value("name", out.name);
         out.engineVersion = j.value("engineVersion", out.engineVersion);
         out.bootScene = j.value("bootScene", out.bootScene);
+        out.canonicalRoot = j.value("canonicalRoot", out.canonicalRoot);
         return true;
     } catch (const nlohmann::json::exception& ex) {
         MYE_LOG_WARN("project.mye.json parse error: %s", ex.what());
@@ -51,6 +52,11 @@ bool SaveProjectManifest(const std::wstring& root, const ProjectManifest& m)
     j["name"] = m.name;
     j["engineVersion"] = m.engineVersion;
     j["bootScene"] = m.bootScene;
+    // 空なら**キー自体を書かない**。既定値の "" を書き出すと、
+    // 「未記録」と「空に設定した」の区別が付かなくなる (M66b)
+    if (!m.canonicalRoot.empty()) {
+        j["canonicalRoot"] = m.canonicalRoot;
+    }
 
     std::ofstream f(std::filesystem::path(ManifestPath(root)), std::ios::binary);
     if (!f) {

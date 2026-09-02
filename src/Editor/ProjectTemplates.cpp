@@ -110,6 +110,10 @@ bool CreateProject(const std::wstring& dir, const std::string& name, ProjectTemp
     ProjectManifest m;
     m.name = name.empty() ? WideToUtf8(root.filename().wstring()) : name;
     m.engineVersion = kEngineVersion;
+    // M66b: 作成時のパスを「正のパス」として刻む。以後ここと違う場所で開くと
+    // Source Control 窓が警告を出す (= 誰かのローカルパスが共有マニフェストへ
+    // 混ざったまま push された、を検知する唯一の手掛かり)
+    m.canonicalRoot = WideToUtf8(fs::absolute(root).wstring());
     if (!SaveProjectManifest(dir, m)) {
         return SetError(outError, "cannot write project.mye.json");
     }

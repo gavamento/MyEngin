@@ -29,6 +29,7 @@
 #include "Editor/Windows/TimelineWindow.h"
 #include "Editor/Windows/ProjectSettingsWindow.h"
 #include "Editor/Windows/SceneViewWindow.h"
+#include "Editor/Windows/SourceControlWindow.h"
 #include "Editor/Windows/SearchWindow.h"
 #include "Editor/Windows/AudioMixerWindow.h"
 #include "Editor/Windows/SoundGenWindow.h"
@@ -161,6 +162,9 @@ private:
     ProfilerWindow profiler_;
     TimelineWindow timeline_; // M52e: 巻き戻しスクラブ (Play 中のみ中身がある)
     NetWindow net_;           // M52i: ネットセッションの状態 (--net-host/join 時のみ中身がある)
+    // M66b: git 連携。**セッションは窓と独立**に生きる (窓を閉じていても status は最新)
+    SourceControlSession scm_;
+    SourceControlWindow sourceControl_;
     // M52e: スクラブ解除の判定に使う前フレームの再生状態 (状態ではなく遷移を見るため)
     PlayState prevPlayState_ = PlayState::Editing;
     AssetBrowserWindow assetBrowser_;

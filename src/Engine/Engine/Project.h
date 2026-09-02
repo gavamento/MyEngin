@@ -18,6 +18,14 @@ struct ProjectManifest {
     std::string name;
     std::string engineVersion;
     std::string bootScene = "scenes/main.scene.json"; // <root>/assets/ 相対 (スラッシュ区切り)
+    // M66b: プロジェクトを**作った**ときの絶対パス (任意。空 = 未記録)。
+    // 起動時に今のパスと NormalizePathKey で比べ、食い違えば警告する。
+    // ★これは「正しい場所」を強制するためのものではない (クローン先が人ごとに
+    //   違うのは普通)。狙いは「チームで共有する project.mye.json に個人の
+    //   ローカルパスが載ったまま」に気付ける口を 1 つ作ること。
+    //   formatVersion は 1 のまま — 読み手は value(key, default) なので、
+    //   このキーが無い旧マニフェストもそのまま読める
+    std::string canonicalRoot;
 };
 
 // dir がプロジェクトルートか (マニフェストの存在チェックのみ)

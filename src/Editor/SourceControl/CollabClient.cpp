@@ -1,6 +1,7 @@
 #include "Editor/SourceControl/CollabClient.h"
 
 #include <utility>
+#include <vector>
 
 #include <Windows.h>
 
@@ -94,6 +95,24 @@ bool CollabClient::Create(const std::string& rootUtf8)
     return true;
 }
 
+namespace {
+
+// op の待ち方 → ミリ秒 (0 = 無期限)
+int TimeoutMsFor(CollabOpKind kind)
+{
+    switch (kind) {
+    case CollabOpKind::Handshake:
+        return kCollabHelloTimeoutMs;
+    case CollabOpKind::Read:
+        return kCollabReadTimeoutMs;
+    case CollabOpKind::Write:
+    default:
+        return 0;
+    }
+}
+
+} // namespace
+
 uint64_t CollabClient::Request(const char* op, const nlohmann::json& args, ResponseFn onDone)
 {
     if (!Ready() || !requestFn_) {
@@ -107,17 +126,47 @@ uint64_t CollabClient::Request(const char* op, const nlohmann::json& args, Respo
     req["op"] = op;
     req["args"] = args.is_null() ? nlohmann::json::object() : args;
     if (onDone) {
-        pending_.emplace(id, std::move(onDone));
+        Pending p;
+        p.fn = std::move(onDone);
+        p.sentAt = std::chrono::steady_clock::now();
+        p.kind = CollabOpKindOf(op);
+        p.timeoutMs = TimeoutMsFor(p.kind);
+        p.op = op;
+        pending_.emplace(id, std::move(p));
     }
     requestFn_(handle_, req.dump().c_str());
     return id;
 }
 
-uint64_t CollabClient::AddPendingForTest(ResponseFn fn)
+uint64_t CollabClient::AddPendingForTest(ResponseFn fn, const char* op)
 {
     const uint64_t id = nextId_++;
-    pending_.emplace(id, std::move(fn));
+    Pending p;
+    p.fn = std::move(fn);
+    p.sentAt = std::chrono::steady_clock::now();
+    p.kind = CollabOpKindOf(op);
+    p.timeoutMs = TimeoutMsFor(p.kind);
+    p.op = op;
+    pending_.emplace(id, std::move(p));
     return id;
+}
+
+bool CollabClient::OpInFlight() const
+{
+    for (const auto& [id, p] : pending_) {
+        if (p.kind == CollabOpKind::Write) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void CollabClient::SetUnavailable(Unavailable reason)
+{
+    if (reason == Unavailable::None) {
+        return; // 復帰は許さない (理由ごとに「やり直す手段」が違う)
+    }
+    state_ = reason;
 }
 
 void CollabClient::Poll()
@@ -131,6 +180,50 @@ void CollabClient::Poll()
         std::string owned(line);
         freeFn_(line); // ★Rust のアロケータへ返す。ここを free/delete にすると即死
         DispatchLine(owned);
+    }
+    ExpireTimedOut();
+}
+
+void CollabClient::ExpireTimedOut()
+{
+    if (pending_.empty()) {
+        return;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    // ★走査中にコールバックが新しい要求を積むので、消す対象を先に決めてから配る
+    //   (map への挿入でイテレータは無効化されないが、同じ枠を二度見る形になる)
+    std::vector<uint64_t> expired;
+    for (const auto& [id, p] : pending_) {
+        if (p.timeoutMs <= 0) {
+            continue; // 書き込み系は待ち続ける (spec §4.4)
+        }
+        const auto ms =
+            std::chrono::duration_cast<std::chrono::milliseconds>(now - p.sentAt).count();
+        if (ms > p.timeoutMs) {
+            expired.push_back(id);
+        }
+    }
+    for (const uint64_t id : expired) {
+        auto it = pending_.find(id);
+        if (it == pending_.end()) {
+            continue;
+        }
+        ResponseFn fn = std::move(it->second.fn);
+        const std::string op = it->second.op;
+        const int limit = it->second.timeoutMs;
+        pending_.erase(it);
+        MYE_LOG_WARN("[collab] op '%s' (id %llu) timed out after %d ms", op.c_str(),
+                     static_cast<unsigned long long>(id), limit);
+        if (fn) {
+            // サービスは timeout を返さない。ここで**同じ形の応答**を合成して
+            // 待っている側へ渡す — 呼ばずに捨てると窓が永久に「実行中」になる
+            nlohmann::json msg;
+            msg["id"] = id;
+            msg["ok"] = false;
+            msg["error"] = { { "code", collaberr::kTimeout },
+                             { "detail", "no response from MyeCollab.dll" } };
+            fn(msg);
+        }
     }
 }
 
@@ -165,7 +258,7 @@ void CollabClient::DispatchLine(const std::string& line)
         MYE_LOG_WARN("[collab] response for unknown id %llu", static_cast<unsigned long long>(id));
         return;
     }
-    ResponseFn fn = std::move(it->second);
+    ResponseFn fn = std::move(it->second.fn);
     pending_.erase(it);
     if (fn) {
         fn(msg);
