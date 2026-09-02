@@ -19,3 +19,7 @@ tests/actual/
 # クラッシュバンドル (M52f)。レガシー起動なら bin/ 配下だが、プロジェクト起動では
 # <projectRoot>\crash\ に出る = リポジトリ直下にも落ちうる
 crash/
+
+# Rust (MyeCollab, M66a) のビルド成果物。DLL / CLI は bin\ へコピーされる方が正
+# (bin\ 自体も gitignore。cargo の target は数百 MB になるので絶対に載せない)
+tools/collab/target/

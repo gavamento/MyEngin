@@ -63,6 +63,8 @@
     <ClCompile Include="..\src\Editor\ProjectRegistry.cpp" />
     <ClCompile Include="..\src\Editor\ProjectTemplates.cpp" />
     <ClCompile Include="..\src\Editor\RagdollBuildSelfTest.cpp" />
+    <ClCompile Include="..\src\Editor\SourceControl\CollabClient.cpp" />
+    <ClCompile Include="..\src\Editor\SourceControl\SourceControlSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\SsrSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\StatusBar.cpp" />
     <ClCompile Include="..\src\Editor\TerrainSelfTest.cpp" />
@@ -115,6 +117,9 @@
     <ClInclude Include="..\src\Editor\RagdollBuildSelfTest.h" />
     <ClInclude Include="..\src\Editor\Selection.h" />
     <ClInclude Include="..\src\Editor\ShortcutHub.h" />
+    <ClInclude Include="..\src\Editor\SourceControl\CollabClient.h" />
+    <ClInclude Include="..\src\Editor\SourceControl\CollabProtocol.h" />
+    <ClInclude Include="..\src\Editor\SourceControl\SourceControlSelfTest.h" />
     <ClInclude Include="..\src\Editor\SsrSelfTest.h" />
     <ClInclude Include="..\src\Editor\StatusBar.h" />
     <ClInclude Include="..\src\Editor\TerrainSelfTest.h" />

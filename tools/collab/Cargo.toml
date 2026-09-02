@@ -1,0 +1,36 @@
+# MyeCollab — エディタ内 Git 連携のサービス層 (M66a)。
+#
+# 出力は 2 つ:
+#   cdylib mye_collab.dll     … Editor.exe が LoadLibraryW で in-process ロードする (spec §4.0)
+#   bin    mye_collab_cli.exe … 同じロジックを NDJSON (stdin→stdout) で叩く CLI。
+#                               collab_verify.bat がエディタ抜きで回帰を取るための口
+#
+# ★edition は 2021 に固定している。2024 だと `#[no_mangle]` が `#[unsafe(no_mangle)]` を
+#   要求する = rustc 1.85 未満のツールチェーンでビルドが通らない。チーム全員が
+#   rustup stable を最新に保っている保証は無いので、古い stable でも通る側に倒す。
+# ★panic = "unwind" を明示する。abort にすると lib.rs の catch_unwind が意味を失い、
+#   Rust の panic が **エディタごと** プロセスを落とす (in-process 化で失った
+#   メモリ隔離を、せめて panic だけでも取り戻すための唯一の仕掛け)。
+[package]
+name = "mye_collab"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "mye_collab"
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "mye_collab_cli"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+panic = "unwind"
+
+[profile.dev]
+panic = "unwind"

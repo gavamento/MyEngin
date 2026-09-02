@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
+    <Filter Include="SourceControl">
+      <UniqueIdentifier>{5590C054-446C-F986-95EB-F68E197B6B7A}</UniqueIdentifier>
+    </Filter>
     <Filter Include="Undo">
       <UniqueIdentifier>{C45724AD-B67D-BA3E-BE10-0FFAC17BD3A6}</UniqueIdentifier>
     </Filter>
@@ -37,6 +40,12 @@
     <ClCompile Include="..\src\Editor\ProjectRegistry.cpp" />
     <ClCompile Include="..\src\Editor\ProjectTemplates.cpp" />
     <ClCompile Include="..\src\Editor\RagdollBuildSelfTest.cpp" />
+    <ClCompile Include="..\src\Editor\SourceControl\CollabClient.cpp">
+      <Filter>SourceControl</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\SourceControl\SourceControlSelfTest.cpp">
+      <Filter>SourceControl</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Editor\SsrSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\StatusBar.cpp" />
     <ClCompile Include="..\src\Editor\TerrainSelfTest.cpp" />
@@ -125,6 +134,15 @@
     <ClInclude Include="..\src\Editor\RagdollBuildSelfTest.h" />
     <ClInclude Include="..\src\Editor\Selection.h" />
     <ClInclude Include="..\src\Editor\ShortcutHub.h" />
+    <ClInclude Include="..\src\Editor\SourceControl\CollabClient.h">
+      <Filter>SourceControl</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\SourceControl\CollabProtocol.h">
+      <Filter>SourceControl</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\SourceControl\SourceControlSelfTest.h">
+      <Filter>SourceControl</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Editor\SsrSelfTest.h" />
     <ClInclude Include="..\src\Editor\StatusBar.h" />
     <ClInclude Include="..\src\Editor\TerrainSelfTest.h" />

@@ -423,6 +423,19 @@ $constGroups = @(
             'assets\shaders\particle_render_gpu.hlsl'  = '#\s*define\s+MYE_PARTICLE_LIGHT_SLOT_SAMP\s+s(\d+)'
         }
     }
+    @{
+        # M66a: Collab の proto 版。**C++ (Editor.exe) と Rust (MyeCollab.dll) は
+        # 別々にビルドされて別々に配られる**ので、食い違いは「DLL は読めるのに応答の
+        # 形だけ違う」= 最も気付きにくい壊れ方をする。C ABI の 6 関数を増減させたら
+        # 両方の定数を同時に上げること (片方だけだとここで止まる)。
+        # ★このグループだけ照合先が .rs = HLSL ではない (rule 9 のメッセージ文言は
+        #   "across C++ and HLSL" のままだが、比較しているのは整数 1 個で同じ)
+        label = 'kCollabProtoVersion / PROTO_VERSION'
+        sites = @{
+            'src\Editor\SourceControl\CollabProtocol.h' = 'constexpr\s+int\s+kCollabProtoVersion\s*=\s*(\d+)'
+            'tools\collab\src\protocol.rs'              = 'pub\s+const\s+PROTO_VERSION\s*:\s*u32\s*=\s*(\d+)'
+        }
+    }
 )
 foreach ($g in $constGroups) {
     $values = @{}
@@ -627,6 +640,33 @@ if (-not (Test-Path $apiHeaderPath) -or -not (Test-Path $interopPath) -or -not (
         foreach ($s in $cppSlots) {
             if ($tableText -notmatch ('out\.' + [regex]::Escape($s.Name) + '\s*=')) {
                 Write-Host "ERROR [rule 11] EngineApiTable.cpp: slot '$($s.Name)' is never assigned (out.$($s.Name) = ...)"
+                $errors++
+            }
+        }
+    }
+}
+
+# 規則 12: Source control (M66) は Editor 層に閉じ込める
+# エディタの git 連携は **sim に 1 バイトも触らない**ことが存在条件 (spec §4.4)。
+# Engine / Runtime / GameLogic / Shared から SourceControl/ を include した瞬間、
+# 「ワールドハッシュに関係しない」という主張が崩れ、replay_verify では**捕まらない**
+# (割れるのは「エディタで git を触ったとき」だけなので再現条件が残らない)。
+# 静的に見えるのは include だけなので、そこを機械検査する
+$scmDirs = @('src\Engine', 'src\Runtime', 'src\GameLogic', 'src\Shared')
+foreach ($d in $scmDirs) {
+    $full = Join-Path $repo $d
+    if (-not (Test-Path $full)) {
+        Write-Host "ERROR [rule 12] missing directory: $d"
+        $errors++
+        continue
+    }
+    $files = Get-ChildItem -Recurse -File $full | Where-Object { $_.Extension -in '.cpp', '.h', '.hpp', '.inl' }
+    foreach ($f in $files) {
+        $lineNo = 0
+        foreach ($line in [System.IO.File]::ReadLines($f.FullName)) {
+            $lineNo++
+            if ($line -match '^\s*#\s*include\s*[<"][^>"]*SourceControl[\\/]') {
+                Write-Host "ERROR [rule 12] $($f.FullName):${lineNo}: source control must stay in the Editor layer"
                 $errors++
             }
         }

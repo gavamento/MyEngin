@@ -28,6 +28,7 @@
 #include "Editor/DecalSelfTest.h"
 #include "Editor/HzbSelfTest.h"
 #include "Editor/SsrSelfTest.h"
+#include "Editor/SourceControl/SourceControlSelfTest.h"
 #include "Editor/ProbeBakerSelfTest.h"
 #include "Editor/CameraPilotSelfTest.h"
 #include "Engine/Engine/AnimatorControllerSelfTest.h"
@@ -599,7 +600,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             && mye::RunCameraPilotSelfTest()    // カメラ操縦 (視錐台 UI 追補)
             && mye::RunDllReloaderSelfTest()    // DLL 書き込み完了プローブ (M52h 追補)
             && mye::RunXpbdSelfTest()           // M60'b
-            && mye::RunAcousticSelfTest();      // M65a
+            && mye::RunAcousticSelfTest()       // M65a
+            && mye::RunSourceControlSelfTest(); // M66a
         return ok ? 0 : 1;
     }
 

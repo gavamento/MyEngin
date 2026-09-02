@@ -1,0 +1,22 @@
+# 01_status — hello / repo_check / status の基本形 (M66a)。
+#
+# 行頭 '#' は collab_verify.ps1 が読むディレクティブかコメント:
+#   # write  <relpath> <text...>   fixture のファイルを書き換える (LF 終端)
+#   # delete <relpath>             fixture のファイルを消す
+#   それ以外の '#' 行はコメント。
+# ディレクティブの位置で CLI は一度終了して次の行から起動し直す
+# (走行中のプロセスへ「ファイルを変えたぞ」と伝える経路をわざと作らないため)。
+#
+# それ以外の行は 1 行 1 要求として MyeCollabCli.exe の stdin へ流れる。
+{"id":1,"op":"hello","args":{"fetchIntervalMin":5,"autoFetch":false}}
+{"id":2,"op":"repo_check"}
+{"id":3,"op":"status"}
+# --- 追跡ファイルを書き換える -> worktree 側が M ---
+# write assets/scenes/main.scene.json {"engine":"MyEngine","version":2,"sceneName":"edited","nextFileId":1,"entities":[]}
+{"id":4,"op":"status"}
+# --- 新しいファイルを置く -> 未追跡 ? ---
+# write assets/textures/added.txt added by the collab_verify driver
+{"id":5,"op":"status"}
+# --- 追跡ファイルを消す -> worktree 側が D ---
+# delete assets/textures/test.png
+{"id":6,"op":"status"}

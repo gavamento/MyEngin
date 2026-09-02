@@ -2055,7 +2055,8 @@ ADR-006 build system / ADR-007 dual render path / ADR-008 particle determinism /
 ADR-009 hybrid path tracing (§6.4) / ADR-010 editor localization (§9.1) /
 **ADR-011 compose assets (`.actor.json` = prefab 2.0)** (§10) /
 ADR-012 structural prefab overrides / **ADR-013 predictive rollback netcode** (§11.4) /
-**ADR-014 CI and pixel regression** (§11).
+**ADR-014 CI and pixel regression** (§11) /
+**ADR-015 in-process Rust collab service (`MyeCollab.dll`)** (M66).
 
 ---
 

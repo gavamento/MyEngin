@@ -80,6 +80,7 @@ jobs:
       MYE_SHOT_SKIP_SSR: 1
       MYE_SHOT_SKIP_FOG: 1
       MYE_SHOT_SKIP_PARTICLE: 1
+      MYE_COLLAB_REQUIRED: 1
     steps:
       - uses: actions/checkout@v4
 
@@ -92,6 +93,16 @@ jobs:
       - name: managed host (Release)
         shell: cmd
         run: tools\build_managed.bat Release
+
+      # ①b Source control のサービス (Rust cdylib MyeCollab.dll + CLI、M66a)。
+      #    replay の**前**に置くのは、この後の selftest が MYE_COLLAB_REQUIRED=1 で
+      #    「DLL が無ければ失敗」を要求するため (作り忘れを SKIP で素通りさせない)。
+      #    collab_verify.bat はエディタも D3D も使わない = ここで完結する
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: collab service (cargo test + dll/cli build + fixture verify)
+        shell: cmd
+        run: cargo test --manifest-path tools\collab\Cargo.toml && tools\build_collab.bat Release && tools\collab_verify.bat
 
       # ② ローカルで打つのと同じ 1 行。この中で
       #    8 ビルド (4 プロジェクト x Debug/Release) → 7 ペアのリプレイ照合
@@ -132,6 +143,11 @@ jobs:
           $need = @('Runtime.exe', 'GameLogic.dll', 'assets\shaders', 'assets\scenes')
           $missing = $need | Where-Object { -not (Test-Path "cache\dist_ci\$_") }
           if ($missing) { throw "package is missing: $($missing -join ', ')" }
+          # M66a: 配布物に開発用の道具とリポジトリを混ぜない。--package は明示コピーなので
+          # 現状は素通りするが、コピー規則を足したときに黙って入り込むのを止める
+          $forbidden = @('MyeCollab.dll', 'MyeCollabCli.exe', '.git')
+          $leaked = $forbidden | Where-Object { Test-Path "cache\dist_ci\$_" }
+          if ($leaked) { throw "package must not contain: $($leaked -join ', ')" }
           '[package] ' + ((Get-ChildItem -Recurse -File cache\dist_ci | Measure-Object -Property Length -Sum).Sum / 1MB).ToString('0.0') + ' MB'
 
       # 失敗したときだけ .rep とダンプを持ち帰る (ローカルで --hash-diff にかけられる)
