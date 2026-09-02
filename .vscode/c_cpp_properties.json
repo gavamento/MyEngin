@@ -1,0 +1,71 @@
+{
+    // VS Code の C/C++ IntelliSense に、MSBuild と同じインクルードルートと定義を渡す。
+    // ★これが無いと cpptools はソースファイル自身のディレクトリしか見ないので、
+    //   src\ 起点で書かれている #include "Engine/Engine/EngineLoop.h" が軒並み解決できず、
+    //   ツリー全域が「ソース ファイルを開けません」(E1696) で赤くなる。
+    //   ビルドは build\Common.props を読む MSBuild が通すので、**症状は VS Code の中だけ** —
+    //   「コンパイルエラーが出ている」ように見えるが cl.exe は一度も失敗していない、
+    //   という食い違いがこの設定の不在から出る。
+    // ★正本は build\Common.props:36 (AdditionalIncludeDirectories) と :35
+    //   (PreprocessorDefinitions)。あちらを触ったらここも同時に直すこと —
+    //   機械照合は無いので、ズレても静かに IntelliSense だけが古い世界を見続ける。
+    "version": 4,
+    "configurations": [
+        {
+            "name": "x64-Debug",
+            "includePath": [
+                "${workspaceFolder}/src",
+                "${workspaceFolder}/external",
+                "${workspaceFolder}/external/imgui",
+                // MyeBuildInfo.h (git ハッシュ + 構成) の生成先。Engine のビルドが吐くので、
+                // 一度もビルドしていないチェックアウトでは空 = CrashHandler.cpp だけ赤くなる
+                "${workspaceFolder}/obj/generated/Debug"
+            ],
+            "defines": [
+                // Common.props:35 と同じ並び
+                "NOMINMAX",
+                "WIN32_LEAN_AND_MEAN",
+                "_CRT_SECURE_NO_WARNINGS",
+                "IMGUI_DISABLE_OBSOLETE_FUNCTIONS",
+                // build\Engine.vcxproj:22 の CharacterSet=Unicode が定義するもの
+                "UNICODE",
+                "_UNICODE",
+                // Debug 構成 (RuntimeLibrary=MultiThreadedDebugDLL) が定義するもの。
+                // ★これを外すと #ifdef _DEBUG のブロック (D3D11 デバッグレイヤ等) が
+                //   グレーアウトして読めなくなる
+                "_DEBUG"
+            ],
+            // ★絶対パスを焼かない。VS の更新で MSVC のバージョン番号ディレクトリが変わり、
+            //   そのたびに IntelliSense が黙って死ぬ。"cl.exe" なら cpptools が
+            //   インストール済みの最新ツールセットを自分で解決する
+            "compilerPath": "cl.exe",
+            "cStandard": "c17",
+            // Common.props:18 の LanguageStandard=stdcpp20 と対
+            "cppStandard": "c++20",
+            "intelliSenseMode": "windows-msvc-x64"
+        },
+        {
+            "name": "x64-Release",
+            "includePath": [
+                "${workspaceFolder}/src",
+                "${workspaceFolder}/external",
+                "${workspaceFolder}/external/imgui",
+                "${workspaceFolder}/obj/generated/Release"
+            ],
+            "defines": [
+                "NOMINMAX",
+                "WIN32_LEAN_AND_MEAN",
+                "_CRT_SECURE_NO_WARNINGS",
+                "IMGUI_DISABLE_OBSOLETE_FUNCTIONS",
+                "UNICODE",
+                "_UNICODE",
+                // Common.props:54
+                "NDEBUG"
+            ],
+            "compilerPath": "cl.exe",
+            "cStandard": "c17",
+            "cppStandard": "c++20",
+            "intelliSenseMode": "windows-msvc-x64"
+        }
+    ]
+}
