@@ -49,3 +49,10 @@ tools\replay_verify.bat
 ## 実装メモ (coder が追記)
 
 ## フィードバック履歴
+
+## planner 追記 (sub-03 round 1 の判定から。coder は着手前に読む)
+
+- [should] **既定ドックを左列 (Hierarchy 束) のタブへ**移す。下段帯 (Assets 束、高さ ≒ 200 px) では Changes 一覧が 2 行で切れ、コミット欄が見えない (`cache/scm_m66c3.png`)。`DockBuilderDockWindow` の行き先 1 か所 + layouts のパネル表。**`###` の右辺は 1 バイト一致**させること (sub-02 申し送り)。
+- [should] **差分は別の dockable 窓「Diff」** (読み取り専用、選択時に開く / 閉じられる) にし、Changes タブの inline ペインを外す。元計画 M66c の「読み取り専用の子窓」に戻す形。`###Diff` の ID を LocalizationTable に足す (規則 10)。
+- 上 2 点は「ユーザーの手触り」で再調整しうるので、実装後に既定レイアウトのスクショを 1 枚 `cache/` に残し、SELF_EVAL にパスを書く。
+- Branches タブの一覧も同じ高さ制約を受けるので、左列前提で組む。

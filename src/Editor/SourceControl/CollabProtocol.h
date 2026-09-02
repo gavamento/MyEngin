@@ -21,6 +21,15 @@ constexpr const char* kHello = "hello";
 constexpr const char* kRepoCheck = "repo_check";
 constexpr const char* kStatus = "status";
 constexpr const char* kHintChanged = "hint_changed"; // M66b: 保存直後の即時取り直し
+// M66c。stage / unstage / commit は書き込み系 = CollabOpKindOf が Write に落とす
+// (無期限に待つ + OpInFlight でボタンを塞ぐ)。log / diff / identity_check は
+// 上の kReadOps 表に既に載っている
+constexpr const char* kStage = "stage";
+constexpr const char* kUnstage = "unstage";
+constexpr const char* kCommit = "commit";
+constexpr const char* kLog = "log";
+constexpr const char* kDiff = "diff";
+constexpr const char* kIdentityCheck = "identity_check";
 } // namespace collabop
 
 // op の待ち方 (spec §4.4「タイムアウト」)。

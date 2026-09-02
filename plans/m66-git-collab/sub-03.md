@@ -1,8 +1,8 @@
 # sub-03: M66c: stage / unstage / commit / History / diff / identity
 
 - 依存: sub-02
-- 状態: 未着手
-- 往復: 0
+- 状態: OK (commit: M66c — ハッシュは harness.md のサブ進捗表)
+- 往復: 1
 
 ## やること
 
@@ -53,6 +53,43 @@ tools\replay_verify.bat
 
 ## 実装メモ (coder が追記)
 
+### round 1 (SELF_EVAL の写し)
+
+**実装**
+- `tools/collab/src/git.rs`: `run` を `build`(共通引数+env) + `output` に分解し、`run_with_stdin`
+  (`git commit -F -` 用) を追加。`classify_error` に `identity_missing` の 3 文言を追加。
+- `tools/collab/src/ops.rs`: `stage` / `unstage` / `commit` / `log` / `diff` / `identity_check` を
+  dispatch に追加。`arg_paths` (空配列・`..`・先頭 `-` を bad_request)、`run_per_path_chunk`
+  (64 本ずつ = Windows のコマンドライン長対策)、`status_after_write` (応答に status を載せ
+  `last_status`/`last_head` も更新 = 自分の書き込みで通知が二重に出ないようにする)。
+- `tools/collab/src/porcelain.rs`: `parse_log_z` / `clip_text` を純関数として追加 (cargo test 対象)。
+- `src/Editor/SourceControl/PairRule.{h,cpp}` (新規): `pairrule::{PairPlan, SidecarCandidates,
+  IsAssetPath, Collect, ListedPaths}`。`PrimaryPathFor` の逆写像。`exists` を注入して純関数化。
+- `src/Editor/SourceControl/SourceControlState.{h,cpp}`: `CommitInfo` / `DiffView` /
+  `SourceControlModel::FindEntry` / `StageRows` / `UnstageRows` / `StageSavedPath` / `Commit` /
+  `RequestLog` / `RequestDiff` / `RequestIdentity` / `TakeLastCommit` / `WriteInFlight` /
+  `ApplyWriteResult` / `AbsolutePathOf`。repo_check 成功時に `RequestIdentity` も投げる。
+- `src/Editor/Windows/SourceControlWindow.{h,cpp}`: Changes タブ (Stage/Unstage/選択件数/一覧/
+  差分ペイン/コミット欄/保存してコミット)、History タブ、`SourceControlHost` (dirty + 保存手段)。
+- `src/Editor/EditorApp.cpp`: 窓の既定表示 (`open = !projectRoot.empty()`)、`SourceControlHost` の
+  組み立て、commit 成功トースト。
+- `src/Engine/Core/LocalizationTable.inl`: Scm_* を 16 本追加 (en/ja)。
+- `tools/collab_verify.ps1`: `# git <args>` ディレクティブ (fixture の前提条件を作る口) と、
+  diff の `index <blob>..<blob>` 正規化。ディレクティブ判定を `^#\s(verb)\s` の厳密一致に。
+- `tests/collab/03_commit.ndjson` / `04_identity.ndjson` (+ expected)。
+
+**この実装で確定させた解釈** (詳細は SELF_EVAL「仕様との差分」)
+- unstage は `git restore --staged` ではなく **`git reset -q -- <paths>`** (未出生ブランチで
+  restore が "could not resolve HEAD" になるのを実測)。
+- 「保存してコミット」は **保存 → 保存した文書を対の規則で stage → commit** の 3 手。
+- identity NG は**案内のみ**でボタンは塞がない (spec の「案内」に忠実)。
+- シナリオ番号は 02 が埋まっていたので `03_commit` / `04_identity`。
+
+**検証**: cargo test 32 / collab_verify 4 本 / --selftest 両構成 exit 0 / check_rules 0 /
+replay_verify 10 ジョブ / 実機 fixture のスクショ 3 枚 + 一時プローブで stage→commit→log を
+実走 (`git show --stat` で `fresh.png` と `fresh.png.meta` が同じコミットに入ることを確認)。
+
+
 ## フィードバック履歴
 
 ## planner 追記 (sub-02 round 1 の判定から。coder は着手前に読む)
@@ -61,3 +98,4 @@ tools\replay_verify.bat
 - [should] Source Control 窓の既定表示: プロジェクト起動では `open = true` (Assets と同束のタブ)、裸起動では false (spec §4.3)。`EditorApp` の窓登録 1 か所。
 - `.meta` 無し資産の判定に使う `AssetDatabase::ClassifyPath` が `.terrain.edit` を資産扱いするかは未確認 — 資産扱いなら `.terrain.edit` 自身にも `.meta` が付くので、束ねは「存在するサイドカーだけ」を集める実装で依存しないこと (spec §7)。
 - `SourceControlSession::Busy()` / `Client()` / `HintChanged()` は sub-02 が用意した未使用の口。stage / commit はこの Session 経由で呼ぶ。
+- round 1: VERDICT OK (planner、2026-09-03)。裏取り: ops.rs:291 `add -A` / :302 `reset -q` / :222 `status_after_write` が last_head を更新 / MAX_DIFF_BYTES 256 KB / PairRule.cpp:65-86 が SidecarCandidates + EnsureMeta 後に .meta を stage 集合へ / SourceControlState.cpp:543-547 で EnsureMeta を git 呼び出し前に実行 / SourceControlWindow.cpp:477-484 保存してコミットが StageSavedPath を経由 / EditorApp.cpp:223 で既定表示 = projectRoot 非空 / cache の golden*.rep が 06:56 に再生成 (replay_verify 最終状態で実行) / cache/scm_m66c3.png と c4.png で既定ドックの窮屈さを確認 (質問 5 は実害あり → 左列 + Diff 別窓に裁定、sub-05)。質問 1 承認 / 2 = ボタン無効に裁定 (sub-04) / 3 = 仕様の文言を訂正 / 4 承認 / 6 = ヘッダ不要で確定。

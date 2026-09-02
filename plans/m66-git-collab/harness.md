@@ -12,9 +12,9 @@
 | サブ | 状態 | 往復 | コミット | メモ |
 |---|---|---|---|---|
 | sub-01 | OK | 1 | 4716d6a | M66a: Rust cdylib + CLI + fixture + collab_verify + CI + 規則 12 + DLL 往復の縦切り。依存: なし。VERDICT round 1 OK (should 1 → sub-02、nit 3 → sub-02 / sub-10) |
-| sub-02 | OK | 1 | (M66b、下の記入待ち) | M66b: CollabClient 完成 + SourceControlState + Source Control 窓 (読み取り専用) + canonicalRoot。依存: sub-01 |
-| sub-03 | 実装中 | 0 | | M66c: stage / unstage / commit / History / diff / identity。依存: sub-02 |
-| sub-04 | 未着手 | 0 | | M66d: ReloadHub Begin/EndBatch + ゲート + 4 窓の HasUnsavedChanges + トランザクション + revert。依存: sub-03 |
+| sub-02 | OK | 1 | 165cfc6 | M66b: CollabClient 完成 + SourceControlState + Source Control 窓 (読み取り専用) + canonicalRoot。依存: sub-01 |
+| sub-03 | OK | 1 | (M66c、下の記入待ち) | M66c: stage / unstage / commit / History / diff / identity。依存: sub-02 |
+| sub-04 | 実装中 | 0 | | M66d: ReloadHub Begin/EndBatch + ゲート + 4 窓の HasUnsavedChanges + トランザクション + revert。依存: sub-03 |
 | sub-05 | 未着手 | 0 | | M66e: Branches — 一覧 / 作成 / checkout + 段階の事前判定。依存: sub-04 |
 | sub-06 | 未着手 | 0 | | M66f: fetch / pull / push + 定期 fetch + 通知 + EditorSettings。依存: sub-04 (sub-05 と独立。並列なら SourceControlWindow.cpp / ops.rs のマージ順を司会が決める) |
 | sub-07 | 未着手 | 0 | | M66g: 競合 — abort / ours / theirs / continue。依存: sub-06 |
@@ -64,4 +64,16 @@
   - planner の should (sub-02 へ): porcelain の fixture に非 ASCII パス (`core.quotepath=false` で生 UTF-8) が 1 本も無い。collab_verify は cmd 経由で ASCII 限定なので、UTF-8 パスが `entries.path` にそのまま載る検査は cargo test で。sub-02 で watch.rs を足すとき 1 本追加 (sub-02.md の「planner 追記」節)。
   - planner の nit: `CollabClient::AddPendingForTest` (テスト専用公開 API) は sub-02 で `DispatchLine` の検査経路が増えるなら friend か「Request の DLL 無し分岐」に寄せられないか検討 / ci.yml の `dtolnay/rust-toolchain@stable` ステップに `name:` が無い → sub-10 / linker stdout の warning は触らない。
   - Bash ツールのヒアドキュメント経由で PowerShell / 正規表現を patch すると**バックスラッシュが 1 段潰れる**。patch スクリプトは scratchpad にファイルとして書いてから実行する。
+- **sub-02 (M66b) からの申し送り** (coder SELF_EVAL + planner VERDICT round 1):
+  - 仕様確定 (planner が spec / sub-03 / sub-09 を修正済み): `.terrain.edit` の対は **`x.terrain.json` ⇄ `x.terrain.edit`** (元 sub の「`X` + `X.terrain.edit`」は planner の誤り。`TerrainEdit.cpp EditPathFor` が根拠)。束ねは `SourceControlState.cpp` の `PrimaryPathFor` を再利用し二重実装しない。フォルダ集約は `CombineState` = 最重 (`{D,?}` → D)。**PROTO_VERSION の bump 規則** (spec §4.2): C ABI の増減・改変 / フィールドの削除・改名・意味変更 / error.code・event 名の削除・改名で bump、**追加は bump しない**。`hint_changed` は応答に status を載せる (通知にしない = CLI の決定論)。
+  - planner の should (sub-03 で 1 行): Source Control 窓の既定表示をプロジェクト起動で `open = true` (裸起動は false)。以後は `.mye\imgui.ini` が保持。
+  - planner の nit: `SourceControlState.h` のモデル / セッション同居は sub-04 で `GitTransaction` が Session を掴むときに分割余地を見る / 監視除外集合 (`.mye / cache / dist / target`) は sub-08 の `.gitignore` 4 行と揃えるか検討。
+  - `ServiceDied` の実機表示は未検証 → sub-04 で `GateBlocker::ServiceUnavailable` を検査するとき、cargo test の panic 注入経路 (service.rs) を DLL 経由でも 1 回通す。`ProtoMismatch` / `GitTooOld` / タイムアウト実発火も未検証 (文言経路は NoService と同一)。
+  - op を足す = `ops.rs::dispatch` に 1 行 + `CollabProtocol.h` の `collabop` に 1 行 + **読み取り系なら `CollabOpKindOf` の表にも 1 行** (書き込み系は既定 = 無期限)。書き込み系 op は `CollabClient::OpInFlight()` が自動でゲートを閉じる (sub-04 はこれを読むだけ)。
+  - `SourceControlSession::Busy()` / `Client()` / `HintChanged()` はまだ未使用 (sub-03 / sub-04 / sub-09 用の口)。
+  - **ImGui の罠**: `###` の右辺は DockBuilderDockWindow / layouts の文字列と 1 バイト一致させる (`ImHashStr` は `###` でシードに戻すので ID は右辺だけ。不一致だと既定ドックが**黙って無視**される)。`ImGui::SameLine(x)` の x は窓ローカル絶対座標で `TreePush` のインデントを含まない → 行頭の `GetCursorPosX()` 基準で列を作る。新しい窓 / タブを足すサブは必ず実機で 1 枚撮る。
+  - **トーストは実時間 4 秒で消えるので `--screenshot` では撮れない** → 発火の検証は INFO ログを併置する。
+  - Bash ヒアドキュメントの `\\` 潰れ: `LocalizationTable.inl` の `tools\\build_collab.bat` が `\b` になり UI に `tools?uild_collab.bat` と出た。パスを含む文字列は `cat -A` か実機で確認。
+  - collab_verify は fixture を**シナリオごとに作り直す** (共用だと N 本目が 1..N-1 の結果に依存)。notify は `default-features = false` (Cargo.lock +24 crate、初回ビルド 12 秒)。
+  - fixture の残骸 (`cache\fixture_proj`、`cache\fixture_proj.gitconfig`、`%TEMP%\mye_notrepo_proj`) は生成物・gitignore 済み。
 - planner のエージェント ID はセッション限り。セッションを跨いだら `MODE: VERDICT` 用の planner を新規起動し、文脈は spec.md / sub-NN.md / この台帳で渡す。

@@ -43,6 +43,9 @@
     <ClCompile Include="..\src\Editor\SourceControl\CollabClient.cpp">
       <Filter>SourceControl</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Editor\SourceControl\PairRule.cpp">
+      <Filter>SourceControl</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Editor\SourceControl\SourceControlSelfTest.cpp">
       <Filter>SourceControl</Filter>
     </ClCompile>
@@ -144,6 +147,9 @@
       <Filter>SourceControl</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\SourceControl\CollabProtocol.h">
+      <Filter>SourceControl</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\SourceControl\PairRule.h">
       <Filter>SourceControl</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\SourceControl\SourceControlSelfTest.h">

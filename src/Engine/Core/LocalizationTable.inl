@@ -1029,3 +1029,28 @@ MYE_STR(ScmErr_BadRequest,     "the service rejected the request",
 MYE_STR(ScmErr_GitFailed,      "git failed", "git が失敗しました")
 MYE_STR(ScmErr_Timeout,        "the service did not answer in time",
                                "サービスが時間内に応答しませんでした")
+// ---- M66c: stage / unstage / commit / History / diff ----
+MYE_STR(Scm_Stage,             "Stage###ScmStage",     "ステージ###ScmStage")
+MYE_STR(Scm_Unstage,           "Unstage###ScmUnstage", "ステージ解除###ScmUnstage")
+MYE_STR(Scm_SelectedCount,     "%d selected", "%d 件選択")
+MYE_STR(Scm_SelectToStage,     "Select a file to stage it. The .meta and .terrain.edit sidecars follow it automatically.",
+                               "ファイルを選ぶとステージできます。.meta と .terrain.edit は自動で一緒に動きます。")
+MYE_STR(Scm_DiffStaged,        "staged###ScmDiffStaged", "ステージ済み###ScmDiffStaged")
+MYE_STR(Scm_DiffPick,          "Select a file to see its diff.", "ファイルを選ぶと差分が出ます。")
+MYE_STR(Scm_DiffEmpty,         "No textual diff (new, binary or unchanged on this side).",
+                               "テキスト差分はありません (未追跡 / バイナリ / こちら側は無変更)。")
+MYE_STR(Scm_DiffTruncated,     "The diff was too large and has been truncated.",
+                               "差分が大きすぎるため途中で切りました。")
+MYE_STR(Scm_CommitMessage,     "Commit message", "コミットメッセージ")
+MYE_STR(Scm_Commit,            "Commit###ScmCommit", "コミット###ScmCommit")
+MYE_STR(Scm_SaveAndCommit,     "Save and commit###ScmSaveAndCommit",
+                               "保存してコミット###ScmSaveAndCommit")
+MYE_STR(Scm_UnsavedNotIncluded, "Unsaved edits are not part of the commit.",
+                                "未保存の変更は含まれません。")
+MYE_STR(Scm_IdentitySetup,     "Set your identity first: git config --global user.name / user.email",
+                               "先に名前を設定してください: git config --global user.name / user.email")
+MYE_STR(Scm_CommitDone,        "Committed %s", "コミットしました: %s")
+MYE_STR(Scm_HistoryEmpty,      "No commits yet.", "まだコミットがありません。")
+MYE_STR(Scm_HistoryPick,       "Select a commit to read its full subject.",
+                               "コミットを選ぶと件名の全文が出ます。")
+

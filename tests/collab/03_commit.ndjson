@@ -1,0 +1,33 @@
+# 03_commit - stage / unstage / commit / log / diff の一巡 (M66c)。
+#
+# ここで固めたいのは「対 (.meta) が本体と一緒に index へ入る」= 対の規則の**下半分**。
+# 束ねの判断そのものは C++ (PairRule) の仕事で、サービスは渡されたパスを
+# そのまま扱う - だから検査は「2 本渡したら 2 本とも index に入ったか」になる。
+#
+# ★diff を撮る対象を小さいファイルにしてあるのは意図的。既存のシーンを書き換えると
+#   差分が数百行になり、期待 NDJSON が「読めないから誰も見ない」ファイルに化ける。
+{"id":1,"op":"identity_check"}
+# --- 新しいアセットとその .meta を置く (エディタが保存した直後の形) ---
+# write assets/notes.txt hello from the fixture
+# write assets/notes.txt.meta {"guid":1,"type":"Unknown","version":1}
+{"id":2,"op":"status"}
+# --- 対で stage: 2 本とも index 側が A になる ---
+{"id":3,"op":"stage","args":{"paths":["assets/notes.txt","assets/notes.txt.meta"]}}
+{"id":4,"op":"diff","args":{"path":"assets/notes.txt","staged":true}}
+# --- .meta だけ unstage -> 本体 A / .meta ? に戻る (片方だけ動かせることの確認) ---
+{"id":5,"op":"unstage","args":{"paths":["assets/notes.txt.meta"]}}
+{"id":6,"op":"stage","args":{"paths":["assets/notes.txt.meta"]}}
+{"id":7,"op":"commit","args":{"message":"M66c: notes and its meta go together"}}
+{"id":8,"op":"log","args":{"n":2}}
+# --- 清浄な作業ツリーでの commit は nothing_to_commit。
+#     ★git はこれを stderr ではなく **stdout** に書く (classify_error は stderr しか
+#       見ないので、commit だけ両方を読んでいる)。清浄なうちに撮るのは、変更が
+#       あるときの git の案内文 ("use \"git restore\"...") が版で変わるため
+{"id":9,"op":"commit","args":{"message":"nothing is staged"}}
+# --- 追跡済みファイルを書き換える -> 未ステージの差分が読める ---
+# write assets/notes.txt hello again
+{"id":10,"op":"diff","args":{"path":"assets/notes.txt"}}
+# --- 空の paths は bad_request。**通すとリポジトリ全体が stage される** ---
+{"id":11,"op":"stage","args":{"paths":[]}}
+{"id":12,"op":"commit","args":{"message":"   "}}
+{"id":13,"op":"log","args":{"n":1}}

@@ -215,6 +215,12 @@ void EditorApp::OnStart(EngineContext& ctx)
     //   (どのリポジトリかが決まらないので機能が成立しない = Unavailable::NoProject)。
     //   ロードに失敗しても例外は飛ばない = エディタの他機能は一切影響を受けない
     scm_.Start(GetExecutableDir(), ctx.projectRoot);
+    // ★既定表示はプロジェクト起動のときだけ開く (spec §4.3、M66c)。Assets と同じ
+    //   ドック束のタブなので場所を取らず、利用不可でも「なぜ使えないか」が読める。
+    //   裸起動では Source control 自体が成立しない (NoProject) ので出さない。
+    //   ★ImGui の imgui.ini はこの bool を保存しない (p_open は ImGui の管理外) —
+    //     ユーザーの開閉を跨いで覚えるのは名前付きレイアウト (panels.json) だけ
+    sourceControl_.open = !ctx.projectRoot.empty();
     if (scm_.CanonicalRootMismatch()) {
         // 起動時 1 回だけ。窓を開かなくても気付ける場所はここしかない。
         // ★ログにも残す — トーストは 4 秒で消えるので、後から「本当に出たのか」を
@@ -591,11 +597,32 @@ void EditorApp::OnImGui(EngineContext& ctx)
     profiler_.OnImGui(ctx);
     timeline_.OnImGui(ctx, playMode_);
     net_.OnImGui(ctx);
-    sourceControl_.OnImGui(scm_); // M66b (状態は scm_、窓は描くだけ)
+    {
+        // M66b/M66c (状態は scm_、窓は描くだけ)。
+        // ★窓に渡すのは「今 dirty か」と「保存する手段」だけ。EngineContext を
+        //   渡すと、ソース管理の窓からシーンを開き直すような越境が書けてしまう
+        SourceControlHost scmHost;
+        scmHost.sceneDirty = IsSceneDirty();
+        scmHost.saveDocument = [this, &ctx]() -> std::wstring {
+            const std::wstring path = actorEdit_ ? actorEdit_->path : scenePath_;
+            SaveCurrentScene(ctx);
+            // 保存に失敗すると dirty のまま (失敗のトーストは SaveCurrentScene が出す)。
+            // 空を返す = 呼び出し側は stage も commit もしない
+            return IsSceneDirty() ? std::wstring() : path;
+        };
+        sourceControl_.OnImGui(scm_, scmHost);
+    }
     if (sourceControl_.TakeAdoptCanonicalRoot()) {
         const bool adopted = scm_.AdoptCanonicalRoot();
         toasts_.Notify(adopted ? LogLevel::Info : LogLevel::Error,
                        Tr(adopted ? StrId::Scm_AdoptDone : StrId::Scm_AdoptFailed));
+    }
+    if (const std::string sha = scm_.TakeLastCommit(); !sha.empty()) {
+        // ★ログにも残す — トーストは 4 秒で消えるので、後から「本当にコミット
+        //   できたのか」を確かめる手段が無くなる (SourceControlSession が INFO で出す)
+        char buf[128];
+        snprintf(buf, sizeof(buf), Tr(StrId::Scm_CommitDone), sha.substr(0, 7).c_str());
+        toasts_.Notify(LogLevel::Info, buf);
     }
     DrawProbePreview();
     assetBrowser_.OnImGui(ctx, selection_, undo_, settings_.externalEditorCmd, preview_);

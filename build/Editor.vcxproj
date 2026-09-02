@@ -64,6 +64,7 @@
     <ClCompile Include="..\src\Editor\ProjectTemplates.cpp" />
     <ClCompile Include="..\src\Editor\RagdollBuildSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\SourceControl\CollabClient.cpp" />
+    <ClCompile Include="..\src\Editor\SourceControl\PairRule.cpp" />
     <ClCompile Include="..\src\Editor\SourceControl\SourceControlSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\SourceControl\SourceControlState.cpp" />
     <ClCompile Include="..\src\Editor\SsrSelfTest.cpp" />
@@ -121,6 +122,7 @@
     <ClInclude Include="..\src\Editor\ShortcutHub.h" />
     <ClInclude Include="..\src\Editor\SourceControl\CollabClient.h" />
     <ClInclude Include="..\src\Editor\SourceControl\CollabProtocol.h" />
+    <ClInclude Include="..\src\Editor\SourceControl\PairRule.h" />
     <ClInclude Include="..\src\Editor\SourceControl\SourceControlSelfTest.h" />
     <ClInclude Include="..\src\Editor\SourceControl\SourceControlState.h" />
     <ClInclude Include="..\src\Editor\SsrSelfTest.h" />

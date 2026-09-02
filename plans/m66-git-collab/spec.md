@@ -125,6 +125,16 @@ ProjectSettings の render-path ラジオ (永続化されない) は対象外�
 状態の合成とフォルダ集約はどちらも **`CombineState` = 最も重いもの** (競合 > D > R > A > M > ?)。
 `{D, ?}` の親は D (削除が折り畳みに隠れない)。
 
+**commit 周り (sub-03 round 1 で確定)**:
+- 「保存してコミット」= **保存 → 保存した文書を対の規則で stage → commit** の 3 手。「保存 → commit」だと保存前の index が
+  コミットされる (押した人の意図と逆)。stage するのは保存した文書 (+ サイドカー) だけで、他の未 stage 変更には触れない。
+- identity (`user.name` / `user.email`) が未設定なら**コミットボタンを無効化** + 案内。git は未設定でも OS アカウント名と
+  機体名 (`akita@DESKTOP-....(none)`) で補完してコミットに成功してしまい、共有履歴が汚れる。設定 UI は作らない (決定 6)。
+- unstage は `git reset -q -- <paths>` (`git restore --staged` は未出生ブランチで `could not resolve HEAD` になる。実測)。
+- `diff` は 256 KB で打ち切り `truncated: true` を返す (巨大差分で 1 フレーム固まるのを防ぐ)。
+- 書き込み系 op の応答は `{"status": <実行後 status>}` を載せ、Rust 側で `last_status` / `last_head` も更新する
+  (自分の commit が「外部で HEAD が移動」トーストを誘発しない)。revert / checkout / pull も同じ型。
+
 **ゲートの阻害要因 (列挙型 `GateBlocker`)**: `SceneDirty` / `ActorEdit` / `AnimationDirty` /
 `ControllerDirty` / `MixerDirty` / `ProjectSettingsDirty` / `Playing` / `NetActive` / `BuildRunning` /
 `ScriptBuildRunning` / `OpInFlight` / `MergeInProgress` / `ServiceUnavailable`。全件を列挙して返す (最初の 1 件で止めない)。
@@ -174,8 +184,11 @@ GCM の GUI を許す (`GIT_TERMINAL_PROMPT=0` のみ)。全 git 呼び出しは
 利用不可の理由は列挙型 `Unavailable::{NoProject, NoService, ProtoMismatch, NoGit, GitTooOld, NotRepo,
 ToplevelMismatch, ServiceDied}` → `Tr()`。裸起動 (プロジェクト無し) は `NoProject`。
 `error.code` → `Tr()` キーの表を C++ が持ち、未知 code は生文字列を `Text("%s")` で出す。
-**窓の既定表示** (sub-02 round 1 で確定): プロジェクト起動では**既定で開く** (Assets と同じドック束のタブ = 場所を取らない。
-利用不可でも理由が見えることに価値がある)。裸起動では閉じる。以後は `.mye\imgui.ini` がユーザーの選択を保持する。
+**窓の既定表示** (sub-02 round 1 で確定、sub-03 round 1 で訂正): プロジェクト起動では**毎回開く**、裸起動では閉じる。
+ImGui の ini は `p_open` を保存しない (保持するのは名前付きレイアウトの `panels.json` だけ) ので「選択を保持する」は誤りだった。
+**既定ドック** (sub-03 round 1 で変更): 下段帯 (Assets 束、高さ ≒ 200 px) では Changes 一覧が 2 行で切れコミット欄が見えない
+(`cache\scm_m66c3.png` で実測) → **左列 (Hierarchy 束) のタブ**に移す。差分は inline ペインではなく**別の dockable 窓「Diff」**
+(選択時に開く、読み取り専用) — 元計画 M66c の「読み取り専用の子窓」に戻す。実装は sub-05。ユーザーの手触りで再調整可。
 
 ### 4.4 非機能
 
@@ -191,6 +204,8 @@ ToplevelMismatch, ServiceDied}` → `Tr()`。裸起動 (プロジェクト無し
 - **collab_verify のシナリオ形式** (sub-01 で確定): `tests\collab\NN_*.ndjson`。行頭 `#` はコメントまたはディレクティブ
   (`# write <relpath> <text>` / `# delete <relpath>`)。ディレクティブの位置で CLI は終了して次行から起動し直す
   (走行中プロセスへ変更を伝える経路を作らない)。`--update` は期待ファイルを今の出力で上書きするので、**中身を読んでからコミット**。
+  `# git <args>` (fixture の前提条件専用。identity 未設定など) も使える。ディレクティブ判定は `'#' + 半角空白 1 個 + 動詞`。
+  期待ファイルに git の案内文 (`use "git restore ..."`) や機体名を含む fatal を入れない (版・機体依存)。
   期待ファイルは serde_json 既定のキー順 (辞書順)。fixture のパスと中身は ASCII に限る (cmd 経由の stdout はコンソール CP で復号される)。
 - **CLI (script モード) は決定的でなければならない**: 応答は要求順、`event` 行は**出さない** (watcher と定期 fetch を起動しない。
   `create` 経由 = DLL では起動する)。通知の検証は cargo test の単体側で行う (sub-02 以降)。
@@ -268,3 +283,6 @@ sub-08 / sub-09 は sub-05〜07 と独立。
 - 同上: §4.2 に PROTO_VERSION の bump 規則 (フィールド追加は bump しない)。status 結果への `head` 追加は据え置きで正しい。
 - 同上: §4.3 に窓の既定表示 (プロジェクト起動で開く / 裸起動で閉じる) — coder の質問 6 への裁定。実装は sub-03 (should)。
 - 同上: §4.4 に `hint_changed` は応答で status を返す (CLI の決定論を優先)、fixture はシナリオごとに作り直す。
+- 2026-09-03 (sub-03 round 1、coder SELF_EVAL): §4.1 に「commit 周り」を新設 (保存してコミット = 保存 → 対で stage → commit / identity 未設定はコミットボタン無効 / unstage は `reset -q` / diff 256 KB 打ち切り / 書き込み系の応答に status)。「保存 → commit」は保存前の index をコミットする = 仕様の誤り。identity は「git が機体名で補完して成功する」実測から塞ぐ側に裁定。
+- 同上: §4.3 の「imgui.ini が選択を保持」は誤り (p_open は保存されない) → 「毎回開く」に訂正。既定ドックを下段帯から左列 (Hierarchy 束) へ、差分を別窓「Diff」へ (sub-05 で実装)。根拠 = `cache\scm_m66c3.png` で一覧が 2 行で切れる。
+- 同上: §4.4 に `# git <args>` ディレクティブと期待ファイルの禁則 (案内文・機体名)。

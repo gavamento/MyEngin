@@ -1,5 +1,6 @@
 #include "Editor/SourceControl/SourceControlSelfTest.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
@@ -9,6 +10,7 @@
 #include <thread>
 
 #include "Editor/SourceControl/CollabClient.h"
+#include "Editor/SourceControl/PairRule.h"
 #include "Editor/SourceControl/SourceControlState.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Engine/Project.h"
@@ -283,6 +285,128 @@ bool RunSourceControlSelfTest()
                   && CombineState(ChangeState::Conflict, ChangeState::Deleted)
                       == ChangeState::Conflict,
               "CombineState: conflict > D > R > A > M > ?");
+    }
+
+    // ---- (c2) 対の規則 (PairRule) ----
+    // ★ここが M66c の中心。間違えても**画面は自然に見える** (一覧は 1 行のまま) のに、
+    //   commit された中身だけが片肺になる = 他人のマシンで GUID が作り直されて
+    //   シーン参照が壊れる、という形でしか露見しない
+    {
+        // ディスクにあることにするパスの集合 (実ファイルを置かずに条件を作る)
+        std::vector<std::string> onDisk = {
+            "assets/textures/a.png",
+            "assets/textures/a.png.meta",
+            "assets/terrain/level.terrain.json",
+            "assets/terrain/level.terrain.edit",
+            "assets/models/fresh.glb", // .meta がまだ無い新規アセット
+            "assets/notes.txt",        // 資産ではないファイル (.meta を作らない)
+        };
+        auto exists = [&onDisk](const std::string& p) {
+            return std::find(onDisk.begin(), onDisk.end(), p) != onDisk.end();
+        };
+
+        // (1) 本体 + 実在する .meta -> 両方 stage
+        PairedEntry png;
+        png.path = "assets/textures/a.png";
+        png.primaryListed = true;
+        png.sidecars = { "assets/textures/a.png.meta" };
+        pairrule::PairPlan plan = pairrule::Collect({ png }, exists);
+        check(plan.toStage.size() == 2 && plan.toStage[0] == "assets/textures/a.png"
+                  && plan.toStage[1] == "assets/textures/a.png.meta"
+                  && plan.toEnsureMeta.empty(),
+              "PairRule: a file and its existing .meta are staged together");
+
+        // (2) .meta が無い資産 -> toEnsureMeta に載り、生成後の .meta も toStage に入る
+        PairedEntry fresh;
+        fresh.path = "assets/models/fresh.glb";
+        fresh.primaryListed = true;
+        plan = pairrule::Collect({ fresh }, exists);
+        check(plan.toEnsureMeta.size() == 1 && plan.toEnsureMeta[0] == "assets/models/fresh.glb",
+              "PairRule: an asset without a .meta is queued for EnsureMeta");
+        check(std::find(plan.toStage.begin(), plan.toStage.end(), "assets/models/fresh.glb.meta")
+                  != plan.toStage.end(),
+              "PairRule: the .meta that EnsureMeta will create is staged too");
+
+        // (3) 資産でないファイルには .meta を作らない
+        PairedEntry notes;
+        notes.path = "assets/notes.txt";
+        notes.primaryListed = true;
+        plan = pairrule::Collect({ notes }, exists);
+        check(plan.toEnsureMeta.empty() && plan.toStage.size() == 1,
+              "PairRule: a non-asset file never gets a .meta invented for it");
+
+        // (4) 地形: .terrain.edit が同居していれば一緒に stage する
+        //     (status に出ていなくてもディスクにあれば渡す)
+        PairedEntry terrain;
+        terrain.path = "assets/terrain/level.terrain.json";
+        terrain.primaryListed = true;
+        plan = pairrule::Collect({ terrain }, exists);
+        check(std::find(plan.toStage.begin(), plan.toStage.end(),
+                        "assets/terrain/level.terrain.edit") != plan.toStage.end(),
+              "PairRule: .terrain.edit rides along with .terrain.json");
+
+        // (5) .meta だけが変わった行 (primaryListed=false) でも本体を束ねる。
+        //     ★本体はディスクに実在するので渡す = 変更が無ければ git の no-op
+        PairedEntry orphan;
+        orphan.path = "assets/textures/a.png";
+        orphan.primaryListed = false;
+        orphan.sidecars = { "assets/textures/a.png.meta" };
+        plan = pairrule::Collect({ orphan }, exists);
+        check(plan.toStage.size() == 2, "PairRule: a lone .meta still drags its owner along");
+
+        // (6) status にも無く、ディスクにも無いパスは渡さない
+        //     ★渡すと git が pathspec エラーで**選択ごと**失敗する
+        PairedEntry gone;
+        gone.path = "assets/textures/vanished.png";
+        gone.primaryListed = false;
+        gone.sidecars = { "assets/textures/vanished.png.meta" };
+        plan = pairrule::Collect({ gone }, exists);
+        check(plan.toStage.size() == 1 && plan.toStage[0] == "assets/textures/vanished.png.meta",
+              "PairRule: a primary that is neither listed nor on disk is left out");
+
+        // (7) 削除された本体 (status に D で載る / ディスクには無い) は渡す
+        PairedEntry deleted;
+        deleted.path = "assets/textures/deleted.png";
+        deleted.primaryListed = true;
+        deleted.sidecars = { "assets/textures/deleted.png.meta" };
+        plan = pairrule::Collect({ deleted }, exists);
+        check(plan.toStage.size() == 2 && plan.toEnsureMeta.empty(),
+              "PairRule: a deleted pair is staged (the deletion must reach the index)");
+
+        // (8) 重複と並び: 同じ行を 2 回渡しても 1 回ずつ、昇順
+        plan = pairrule::Collect({ png, png }, exists);
+        check(plan.toStage.size() == 2, "PairRule: duplicate rows collapse");
+        bool ordered = true;
+        for (size_t i = 1; i < plan.toStage.size(); ++i) {
+            if (!(plan.toStage[i - 1] < plan.toStage[i])) {
+                ordered = false;
+            }
+        }
+        check(ordered, "PairRule: the staged paths come out sorted (same selection, same command)");
+
+        // (9) unstage は status に出ているものだけ / ディスクを見ない
+        const std::vector<std::string> listed = pairrule::ListedPaths({ orphan, terrain });
+        check(listed.size() == 2
+                  && listed[0] == "assets/terrain/level.terrain.json"
+                  && listed[1] == "assets/textures/a.png.meta",
+              "PairRule: unstage only touches what git already listed");
+
+        // (10) サイドカーの綴り候補そのもの (PrimaryPathFor の逆写像)
+        const std::vector<std::string> cands =
+            pairrule::SidecarCandidates("assets/terrain/level.terrain.json");
+        check(cands.size() == 3
+                  && std::find(cands.begin(), cands.end(), "assets/terrain/level.terrain.edit")
+                      != cands.end()
+                  && std::find(cands.begin(), cands.end(), "assets/terrain/level.terrain.json.meta")
+                      != cands.end()
+                  && std::find(cands.begin(), cands.end(), "assets/terrain/level.terrain.edit.meta")
+                      != cands.end(),
+              "PairRule: SidecarCandidates is the inverse of PrimaryPathFor");
+        check(pairrule::SidecarCandidates("assets/a.png").size() == 1,
+              "PairRule: a plain asset has exactly one sidecar candidate");
+        check(pairrule::IsAssetPath("a/b.png") && pairrule::IsAssetPath("a/b.terrain.json")
+                  && !pairrule::IsAssetPath("a/b.terrain.edit") && !pairrule::IsAssetPath("a/b.txt"),
+              "PairRule: IsAssetPath follows AssetDatabase::ClassifyPath");
     }
 
     // ---- (d) フォルダ集約 ----

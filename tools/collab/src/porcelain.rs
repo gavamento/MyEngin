@@ -16,6 +16,17 @@
 //   ? <path>
 //   ! <path>
 
+/// `git log --format=%H%x00%an%x00%aI%x00%s -z` の 1 レコード (M66c)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LogEntry {
+    pub sha: String,
+    pub author: String,
+    /// 厳密 ISO-8601 (`%aI`)。表示の整形は C++ 側の仕事
+    pub date: String,
+    /// subject = 本文の 1 行目だけ (`%s`)。改行はここに入らない
+    pub subject: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StatusEntry {
     /// toplevel 相対・'/' 区切り (git がそのまま出す形)
@@ -165,4 +176,47 @@ pub fn parse_status_v2(raw: &[u8]) -> StatusInfo {
         // 未知のレコード種別は黙って捨てる (将来 git が種別を足しても落ちない)
     }
     info
+}
+
+/// `git log ... -z` の出力を 4 フィールドずつ切り出す (M66c)。
+///
+/// 実測 (git 2.48.1): 各レコードは NUL で**終端**される = 末尾に空要素が 1 個余る。
+/// 端数は捨てる — 「途中で切れた出力から半端なコミットを作る」より、
+/// 「その 1 件を出さない」方が読み手を騙さない。
+pub fn parse_log_z(raw: &[u8]) -> Vec<LogEntry> {
+    let fields: Vec<&[u8]> = raw.split(|b| *b == 0).collect();
+    let mut out = Vec::new();
+    for chunk in fields.chunks(4) {
+        if chunk.len() < 4 {
+            break;
+        }
+        let text = |b: &[u8]| String::from_utf8_lossy(b).to_string();
+        // 4 個そろっていても全部空 = 終端 NUL が連続しただけ、なら捨てる
+        if chunk.iter().all(|f| f.is_empty()) {
+            continue;
+        }
+        out.push(LogEntry {
+            sha: text(chunk[0]),
+            author: text(chunk[1]),
+            date: text(chunk[2]),
+            subject: text(chunk[3]),
+        });
+    }
+    out
+}
+
+/// 差分テキストを上限バイトで切る。戻り値の bool = 切ったか。
+///
+/// ★UTF-8 の文字境界まで戻してから切ること。バイト位置で truncate すると
+///   マルチバイトの途中で割れて **panic** する (String::truncate の契約)。
+///   日本語のコミットや日本語を含む JSON の差分で普通に踏む
+pub fn clip_text(text: &str, max: usize) -> (String, bool) {
+    if text.len() <= max {
+        return (text.to_string(), false);
+    }
+    let mut cut = max;
+    while cut > 0 && !text.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    (text[..cut].to_string(), true)
 }

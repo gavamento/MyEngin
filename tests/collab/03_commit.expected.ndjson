@@ -1,0 +1,13 @@
+{"id":1,"ok":true,"result":{"email":"mye@example.com","name":"mye","ok":true}}
+{"id":2,"ok":true,"result":{"ahead":0,"behind":0,"branch":"main","entries":[{"conflict":false,"index":"?","path":"assets/notes.txt","worktree":"?"},{"conflict":false,"index":"?","path":"assets/notes.txt.meta","worktree":"?"}],"head":"<sha>","upstream":""}}
+{"id":3,"ok":true,"result":{"status":{"ahead":0,"behind":0,"branch":"main","entries":[{"conflict":false,"index":"A","path":"assets/notes.txt","worktree":"."},{"conflict":false,"index":"A","path":"assets/notes.txt.meta","worktree":"."}],"head":"<sha>","upstream":""}}}
+{"id":4,"ok":true,"result":{"path":"assets/notes.txt","staged":true,"text":"diff --git a/assets/notes.txt b/assets/notes.txt\nnew file mode 100644\nindex <blob>..<blob>\n--- /dev/null\n+++ b/assets/notes.txt\n@@ -0,0 +1 @@\n+hello from the fixture\n","truncated":false}}
+{"id":5,"ok":true,"result":{"status":{"ahead":0,"behind":0,"branch":"main","entries":[{"conflict":false,"index":"A","path":"assets/notes.txt","worktree":"."},{"conflict":false,"index":"?","path":"assets/notes.txt.meta","worktree":"?"}],"head":"<sha>","upstream":""}}}
+{"id":6,"ok":true,"result":{"status":{"ahead":0,"behind":0,"branch":"main","entries":[{"conflict":false,"index":"A","path":"assets/notes.txt","worktree":"."},{"conflict":false,"index":"A","path":"assets/notes.txt.meta","worktree":"."}],"head":"<sha>","upstream":""}}}
+{"id":7,"ok":true,"result":{"head":"<sha>","status":{"ahead":0,"behind":0,"branch":"main","entries":[],"head":"<sha>","upstream":""}}}
+{"id":8,"ok":true,"result":{"commits":[{"author":"<author>","date":"<time>","sha":"<sha>","subject":"M66c: notes and its meta go together"},{"author":"<author>","date":"<time>","sha":"<sha>","subject":"fixture: initial"}]}}
+{"id":9,"ok":false,"error":{"code":"nothing_to_commit","detail":"On branch main\nnothing to commit, working tree clean"}}
+{"id":10,"ok":true,"result":{"path":"assets/notes.txt","staged":false,"text":"diff --git a/assets/notes.txt b/assets/notes.txt\nindex <blob>..<blob> 100644\n--- a/assets/notes.txt\n+++ b/assets/notes.txt\n@@ -1 +1 @@\n-hello from the fixture\n+hello again\n","truncated":false}}
+{"id":11,"ok":false,"error":{"code":"bad_request","detail":"paths must not be empty"}}
+{"id":12,"ok":false,"error":{"code":"bad_request","detail":"commit message is empty"}}
+{"id":13,"ok":true,"result":{"commits":[{"author":"<author>","date":"<time>","sha":"<sha>","subject":"M66c: notes and its meta go together"}]}}

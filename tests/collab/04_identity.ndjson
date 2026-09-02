@@ -1,0 +1,27 @@
+# 04_identity - user.name / user.email が無いときの identity_check (M66c)。
+#
+# ★'# git' ディレクティブは fixture の**前提条件**を作るためだけの口 (M66c で追加)。
+#   op を git で代行するためではない。ここでは「git を入れたばかりで、まだ名前を
+#   設定していない同僚」の状態を作る。
+#
+# identity_check は未設定を **ok:false で返す** (error にはしない) — 「設定されて
+# いない」は正常な答えで、UI は案内を出すだけ。
+#
+# ★**commit の失敗はここでは撮らない**。実測 (git 2.48.1): user.name だけ消しても
+#   git は OS アカウント名から補完して commit に成功し、user.email まで消すと
+#   "unable to auto-detect email address (got 'akita@DESKTOP-...')" と
+#   **機体名を含む** fatal を返す = 期待ファイルが機体依存になる。
+#   error.code=identity_missing への分類は cargo test (classify_error) 側で検査する。
+{"id":1,"op":"identity_check"}
+# git config --unset user.name
+{"id":2,"op":"identity_check"}
+# git config --unset user.email
+{"id":3,"op":"identity_check"}
+# --- 設定し直せば元どおり通る ---
+# git config user.name mye
+# git config user.email mye@example.com
+{"id":4,"op":"identity_check"}
+# write assets/notes.txt written once the identity is back
+{"id":5,"op":"stage","args":{"paths":["assets/notes.txt"]}}
+{"id":6,"op":"commit","args":{"message":"M66c: commit works once the identity is set"}}
+{"id":7,"op":"log","args":{"n":1}}

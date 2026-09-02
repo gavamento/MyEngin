@@ -1,7 +1,7 @@
 # sub-02: M66b: CollabClient 完成 + SourceControlState + Source Control 窓 (読み取り専用) + canonicalRoot
 
 - 依存: sub-01
-- 状態: OK (commit: M66b — ハッシュは harness.md のサブ進捗表)
+- 状態: OK (commit 165cfc6)
 - 往復: 1
 
 ## やること

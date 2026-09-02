@@ -266,3 +266,48 @@ fn watching_service_emits_status_changed_when_a_file_appears() {
     drop(svc); // 監視 → worker の順に止まること (固まったら Drop の順序が逆)
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// ---- M66c: git の失敗文 -> error.code の分類 ----
+// ★実 git を走らせて撮らない理由: identity 未設定の fatal は
+//   "unable to auto-detect email address (got 'user@HOSTNAME.(none)')" のように
+//   **機体名を含む**。期待値に機体名が混ざるテストは他人の環境で赤くなる。
+//   分類器は純関数なので、git が出す文言を手で与えて検査する方が強い。
+
+use mye_collab::git::{classify_error, GitOutput};
+
+fn failed(stderr: &str) -> GitOutput {
+    GitOutput { status: 128, stdout: Vec::new(), stderr: stderr.as_bytes().to_vec() }
+}
+
+#[test]
+fn missing_identity_is_classified() {
+    // git 2.48.1 が実際に出す 2 文 (LC_ALL=C)
+    let e = classify_error(&failed(
+        "\n*** Please tell me who you are.\n\nfatal: unable to auto-detect email address (got 'u@h.(none)')",
+    ));
+    assert_eq!(e.code, code::IDENTITY_MISSING);
+    let e2 = classify_error(&failed("fatal: empty ident name (for <u@h>) not allowed"));
+    assert_eq!(e2.code, code::IDENTITY_MISSING);
+}
+
+#[test]
+fn unrelated_failures_stay_unclassified_with_their_stderr() {
+    // ★分類を広げすぎない。拾えなかったものは git_failed + stderr 全文で出す
+    //   (誤分類は「見当違いの案内」になるので、未分類より害が大きい)
+    let e = classify_error(&failed("fatal: pathspec 'nope' did not match any files"));
+    assert_eq!(e.code, code::GIT_FAILED);
+    assert!(e.detail.contains("did not match"), "detail に stderr が残ること");
+}
+
+#[test]
+fn locked_index_and_overwrite_are_still_classified() {
+    // M66a からの既存分類が M66c の追加で壊れていないこと
+    assert_eq!(
+        classify_error(&failed("fatal: Unable to create '.../index.lock': File exists.")).code,
+        code::LOCKED_INDEX
+    );
+    assert_eq!(
+        classify_error(&failed("error: Your local changes would be overwritten by merge.")).code,
+        code::LOCAL_CHANGES_OVERWRITTEN
+    );
+}

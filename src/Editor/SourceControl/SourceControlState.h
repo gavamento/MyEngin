@@ -71,6 +71,27 @@ struct ScmNode {
     std::vector<int> children;
 };
 
+// History タブの 1 行 (M66c)。`log` 応答の 1 コミット。
+// ★整形はしない (短縮 SHA も日時の表示形も窓の仕事)。サービスは git が出した
+//   ままの値を返し、C++ が表示用に削る — 逆にするとサービス側の都合で
+//   「7 桁だと思っていたら 8 桁だった」のような表示専用のバグが増える
+struct CommitInfo {
+    std::string sha;     // 40 桁
+    std::string author;
+    std::string date;    // 厳密 ISO-8601 (%aI)
+    std::string subject; // 本文の 1 行目だけ
+};
+
+// 差分の子窓が読む内容 (M66c)。シーン JSON の意味付けはしない (v1.5)
+struct DiffView {
+    std::string path;
+    bool staged = false;
+    std::string text;
+    bool truncated = false; // サービス側で上限まで切られた
+    bool loading = false;   // 応答待ち
+    bool valid = false;     // 一度でも応答を受けたか
+};
+
 struct SourceControlModel {
     std::string branch;   // "main" / "(detached)"
     std::string upstream; // "origin/main"。空 = 追跡なし
@@ -83,6 +104,8 @@ struct SourceControlModel {
 
     int ChangedCount() const { return static_cast<int>(entries.size()); }
     bool HasConflict() const;
+    // 本体パスで行を引く (窓の選択 -> 行。見つからなければ nullptr)
+    const PairedEntry* FindEntry(const std::string& path) const;
 };
 
 // status 応答の `result` → モデル。**純関数** (副作用なし・入力だけで決まる)
@@ -143,6 +166,36 @@ public:
     // 外部での HEAD 移動を 1 回だけ取り出す (EditorApp がトーストにする)
     bool TakeHeadMoved();
 
+    // ---- M66c: stage / unstage / commit / log / diff / identity ----
+    // 選択された行を対の規則で束ねてから stage する。
+    // `.meta` が欠けている資産はここで EnsureMeta してから git へ渡す
+    void StageRows(const std::vector<PairedEntry>& rows);
+    // index を戻すだけ。**ファイルは 1 個も作らない**
+    void UnstageRows(const std::vector<PairedEntry>& rows);
+    // 「保存してコミット」用: 今保存した文書 (絶対パス) を対の規則で stage する。
+    // リポジトリの外なら何もしない
+    void StageSavedPath(const std::wstring& absPath);
+    // 本文は空でないこと (空はサービスが bad_request で弾くが、窓側でも止める)
+    void Commit(const std::string& message);
+    void RequestLog(int n);
+    void RequestDiff(const std::string& path, bool staged);
+    void RequestIdentity();
+
+    const std::vector<CommitInfo>& History() const { return history_; }
+    bool HistoryValid() const { return historyValid_; }
+    const DiffView& Diff() const { return diff_; }
+    // identity_check の結果。未応答なら Checked() が false (案内は出さない —
+    // 「まだ聞いていない」と「未設定」を混ぜると起動直後に必ず警告が出る)
+    bool IdentityChecked() const { return identityChecked_; }
+    bool IdentityOk() const { return identityOk_; }
+    // 直近に成功した commit の SHA を 1 回だけ取り出す (EditorApp がトーストにする)
+    std::string TakeLastCommit();
+
+    // 書き込み系 (stage / unstage / commit) が飛んでいる間は true。
+    // ★読み取り系 (status の自動更新) では立たない — 立てると監視が動くたびに
+    //   ボタンが押せなくなる
+    bool WriteInFlight() const { return client_.OpInFlight(); }
+
     CollabClient& Client() { return client_; }
 
 private:
@@ -150,6 +203,11 @@ private:
     void SendRepoCheck();
     void ApplyStatusResult(const nlohmann::json& result);
     void ApplyError(const nlohmann::json& msg);
+    // 書き込み系の応答 (`{"status": {...}}`) を status 経路へ流す共通処理。
+    // 成功なら true
+    bool ApplyWriteResult(const nlohmann::json& msg);
+    // toplevel 相対 -> 絶対パス (EnsureMeta / 実在判定に使う)
+    std::wstring AbsolutePathOf(const std::string& rel) const;
     // error.code → Unavailable。分類できないものは None (= 窓にエラー文だけ出す)
     static Unavailable UnavailableFromCode(const std::string& code);
 
@@ -168,6 +226,18 @@ private:
     bool rebaseInProgress_ = false;
     bool canonicalMismatch_ = false;
     bool headMoved_ = false;
+
+    // ---- M66c ----
+    std::vector<CommitInfo> history_;
+    DiffView diff_;
+    std::string lastCommit_;   // TakeLastCommit で 1 回だけ取り出す
+    std::string identityName_;
+    std::string identityEmail_;
+    bool historyValid_ = false;
+    bool logInFlight_ = false;
+    bool identityChecked_ = false;
+    bool identityOk_ = false;
+    int historyCount_ = 0; // 最後に要求した件数 (commit 後の取り直しで使う)
 };
 
 } // namespace mye

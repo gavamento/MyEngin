@@ -6,7 +6,7 @@
 # やること:
 #   1. cache\collab_verify\repo に collab_fixture.ps1 で一時プロジェクト + git リポジトリを作る
 #   2. tests\collab\*.ndjson のシナリオを MyeCollabCli.exe の stdin へ流す
-#      (ディレクティブ '# write' / '# delete' の位置で区切り、ファイルを変えてから再開)
+#      (ディレクティブ '# write' / '# delete' / '# git' の位置で区切り、fixture を変えてから再開)
 #   3. 出力を正規化 (<sha> / <time> / <author> / <gitversion> / <root>) して
 #      *.expected.ndjson と比較する
 #
@@ -74,6 +74,10 @@ function Normalize-Line([string]$line) {
     #   **普通の単語**まで <sha> に化けて検査が空洞化する。短縮 SHA を返す op を
     #   足すときは、その op のフィールド名を指定して置換すること
     $s = $s -replace '\b[0-9a-f]{40}\b', '<sha>'
+    # M66c: diff の "index 1a2b3c4..5d6e7f8 100644" 行。**短縮長は git がリポジトリの
+    # オブジェクト数から決める**ので、fixture が育つと桁が変わる = 期待が理由もなく赤くなる。
+    # 差分の +/- 行はそのまま残るので、ここを伏せても検査は空にならない
+    $s = $s -replace 'index [0-9a-f]{4,40}\.\.[0-9a-f]{4,40}', 'index <blob>..<blob>'
     $s = $s -replace '"gitVersion":"[^"]*"', '"gitVersion":"<gitversion>"'
     $s = $s -replace '"(date|time|when)":"[^"]*"', '"$1":"<time>"'
     $s = $s -replace '"author":"[^"]*"', '"author":"<author>"'
@@ -108,9 +112,13 @@ foreach ($path in $scenarios) {
         $line = $raw.Trim()
         if ($line -eq '') { continue }
         if ($line.StartsWith('#')) {
+            # ★ディレクティブは「'#' + 半角空白 1 個 + 動詞」に限る。Trim してから
+            #   先頭語を見る書き方だと、**動詞で始まる地の文**がディレクティブに化ける
+            #   (M66c で実際に踏んだ: '#   git は OS アカウント名から…' という説明行が
+            #    git 実行に化けて落ちた)。字下げされたコメントはこれで確実に外れる
+            if ($line -notmatch '^#\s(write|delete|git)\s') { continue } # ただのコメント
             $body = $line.Substring(1).Trim()
             $verb = ($body -split '\s+', 2)[0]
-            if ($verb -notin @('write', 'delete')) { continue } # ただのコメント
             # ディレクティブの前に溜まった要求を流し切ってからファイルを触る
             foreach ($o in (Invoke-Segment $pending.ToArray() $seg)) { $actual.Add($o) }
             $pending.Clear()
@@ -122,6 +130,20 @@ foreach ($path in $scenarios) {
                 $text = if ($parts.Count -gt 1) { $parts[1] } else { '' }
                 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $target) | Out-Null
                 [System.IO.File]::WriteAllText($target, "$text`n", $utf8NoBom)
+            } elseif ($verb -eq 'git') {
+                # M66c: fixture の**前提条件**を作る口 (identity 未設定など)。
+                # ★op を git で代行するためではない — サービスが叩く git と同じ
+                #   隔離設定 (GIT_CONFIG_GLOBAL / NOSYSTEM は New-Fixture が設定済み) で
+                #   走るので、「開発者のマシンにはこう設定されている」を再現できる。
+                #   出力は捨てる: 期待 NDJSON に git の生の文言を混ぜると版で割れる
+                $gitArgs = [System.Text.RegularExpressions.Regex]::Split($rest, '\s+')
+                $null = & git -C $root @gitArgs 2>$null
+                if ($LASTEXITCODE -ne 0) {
+                    # ★黙って続けない。前提が作れていないシナリオは「通ったが何も
+                    #   検査していない」= 一番たちの悪い緑になる
+                    Write-Host "[collab_verify] directive failed: git $rest (exit $LASTEXITCODE)"
+                    exit 1
+                }
             } else {
                 Remove-Item -Force (Join-Path $root ($rest -replace '/', '\'))
             }

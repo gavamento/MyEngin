@@ -131,3 +131,85 @@ fn empty_input_does_not_panic() {
     // 種別だけで本体が無い壊れたレコード (途中で切れた出力) も落ちないこと
     assert!(parse_status_v2(b"1 .M\0? \0").entries.len() <= 1);
 }
+
+// ---- M66c: git log / diff の解析 ----
+// fixture は**バイト列を手で組む** (parse_status_v2 と同じ方針)。実 git を呼ぶと
+// 「この環境の git が返した並び」しか検査できず、端数レコードや非 UTF-8 の
+// author 名のような**作るのが面倒な形**が永久に未検査で残る。
+
+use mye_collab::porcelain::{clip_text, parse_log_z};
+
+/// git log -z の実測形 (各レコードが NUL で終端される)
+fn log_fixture() -> Vec<u8> {
+    let mut out = Vec::new();
+    for rec in [
+        ("1111111111111111111111111111111111111111", "Alice", "2026-09-03T00:18:55+09:00", "M66c: stage and commit"),
+        ("2222222222222222222222222222222222222222", "Bob Builder", "2026-09-02T12:00:00+09:00", "fixture: initial"),
+    ] {
+        out.extend_from_slice(rec.0.as_bytes());
+        out.push(0);
+        out.extend_from_slice(rec.1.as_bytes());
+        out.push(0);
+        out.extend_from_slice(rec.2.as_bytes());
+        out.push(0);
+        out.extend_from_slice(rec.3.as_bytes());
+        out.push(0);
+    }
+    out
+}
+
+#[test]
+fn parses_log_records() {
+    let entries = parse_log_z(&log_fixture());
+    assert_eq!(entries.len(), 2, "終端 NUL の後ろの空要素をコミットに数えない");
+    assert_eq!(entries[0].sha, "1111111111111111111111111111111111111111");
+    assert_eq!(entries[0].author, "Alice");
+    assert_eq!(entries[0].date, "2026-09-03T00:18:55+09:00");
+    assert_eq!(entries[0].subject, "M66c: stage and commit");
+    // author に空白が入っても 4 フィールドの切り出しは NUL 基準なので壊れない
+    assert_eq!(entries[1].author, "Bob Builder");
+    assert_eq!(entries[1].subject, "fixture: initial");
+}
+
+#[test]
+fn log_is_empty_for_empty_output() {
+    assert!(parse_log_z(b"").is_empty(), "commit 0 件 = 空配列 (エラーではない)");
+    assert!(parse_log_z(b"\0").is_empty(), "NUL だけの出力も空");
+}
+
+#[test]
+fn log_drops_a_partial_trailing_record() {
+    // 途中で切れた出力 (3 フィールドしか無い) から半端なコミットを作らないこと
+    let mut raw = log_fixture();
+    raw.extend_from_slice(b"3333333333333333333333333333333333333333\0Carol\0");
+    let entries = parse_log_z(&raw);
+    assert_eq!(entries.len(), 2, "端数レコードは捨てる");
+}
+
+#[test]
+fn log_keeps_an_empty_subject() {
+    // subject が空のコミット (git commit --allow-empty-message) でも 1 件として数える
+    let raw = b"4444444444444444444444444444444444444444\0Dave\02026-09-03T00:00:00+09:00\0\0";
+    let entries = parse_log_z(raw);
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].subject, "");
+}
+
+#[test]
+fn clip_text_leaves_short_text_alone() {
+    let (text, truncated) = clip_text("diff --git a/x b/x", 1024);
+    assert_eq!(text, "diff --git a/x b/x");
+    assert!(!truncated);
+}
+
+#[test]
+fn clip_text_never_splits_a_multibyte_char() {
+    // "日" は 3 バイト。上限 4 は 2 文字目の途中 = 文字境界まで戻して 1 文字で切る
+    let (text, truncated) = clip_text("日本語", 4);
+    assert!(truncated);
+    assert_eq!(text, "日", "UTF-8 の途中で切ると String が panic する");
+    // 上限 0 でも panic しない (境界まで戻すと 0 になる)
+    let (empty, truncated0) = clip_text("日本語", 0);
+    assert!(truncated0);
+    assert_eq!(empty, "");
+}

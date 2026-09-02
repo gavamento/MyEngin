@@ -2,7 +2,7 @@
 // (共通引数と env を 1 箇所に閉じ込めないと、op を足すたびに「この op だけ
 // ロケール依存のエラー文が返る」形で静かに崩れる)。
 
-use std::io::ErrorKind;
+use std::io::{ErrorKind, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
 
@@ -58,6 +58,59 @@ impl GitOutput {
 ///   LC_ALL=C                … エラー文の照合 (error.code 分類) を言語設定から独立させる
 ///   GIT_TERMINAL_PROMPT=0   … 認証プロンプトで固まらない (stdin は NUL なので答えられない)
 pub fn run(cwd: &Path, args: &[&str]) -> Result<GitOutput, ErrorBody> {
+    let mut cmd = build(cwd, args)?;
+    match cmd.output() {
+        Ok(out) => Ok(GitOutput {
+            // 異常終了 (シグナル相当) は -1 にまとめる。呼び出し側は success() しか見ない
+            status: out.status.code().unwrap_or(-1),
+            stdout: out.stdout,
+            stderr: out.stderr,
+        }),
+        Err(e) => Err(spawn_error(e)),
+    }
+}
+
+/// stdin へ `input` を流してから git を待つ (`git commit -F -` 用、M66c)。
+///
+/// なぜ `-m <msg>` ではなく `-F -` か: コミット本文は複数行で、引用符も `%` も
+/// バックスラッシュも入りうる。コマンドライン経由だと Windows の引数分解と
+/// git のオプション解釈の**両方**を通るので、`-` で始まる行が混ざっただけで
+/// 別の意味になる。stdin なら中身は 1 バイトも解釈されない。
+pub fn run_with_stdin(cwd: &Path, args: &[&str], input: &[u8]) -> Result<GitOutput, ErrorBody> {
+    let mut cmd = build(cwd, args)?;
+    cmd.stdin(Stdio::piped());
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => return Err(spawn_error(e)),
+    };
+    if let Some(mut stdin) = child.stdin.take() {
+        // ★書き終えたら**必ず閉じる** (drop)。閉じないと git は EOF を待ち続け、
+        //   worker スレッドが 1 本しかない以上そこで全体が固まる
+        let _ = stdin.write_all(input);
+        drop(stdin);
+    }
+    match child.wait_with_output() {
+        Ok(out) => Ok(GitOutput {
+            status: out.status.code().unwrap_or(-1),
+            stdout: out.stdout,
+            stderr: out.stderr,
+        }),
+        Err(e) => Err(ErrorBody::new(code::GIT_FAILED, format!("git failed: {e}"))),
+    }
+}
+
+/// git の起動失敗を error.code へ。**NotFound だけ**を「git が無い」に落とす
+fn spawn_error(e: std::io::Error) -> ErrorBody {
+    if e.kind() == ErrorKind::NotFound {
+        ErrorBody::new(code::GIT_MISSING, "git was not found on PATH")
+    } else {
+        ErrorBody::new(code::GIT_FAILED, format!("cannot start git: {e}"))
+    }
+}
+
+/// 共通引数 + env を積んだ `Command` を組む (stdin は既定で NUL)。
+/// **git を起動する経路が 2 本になっても引数と env が 1 箇所で決まる**ようにするため
+fn build(cwd: &Path, args: &[&str]) -> Result<Command, ErrorBody> {
     // ★cwd が存在しないと CreateProcess は ERROR_DIRECTORY で失敗する。std はこれを
     //   NotFound 系に丸めることがあり、そのままだと **git_missing** (= 「git を入れて
     //   ください」) という**まったく見当違いの案内**が UI に出る。先に切り分ける
@@ -87,19 +140,7 @@ pub fn run(cwd: &Path, args: &[&str]) -> Result<GitOutput, ErrorBody> {
         use std::os::windows::process::CommandExt;
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
-
-    match cmd.output() {
-        Ok(out) => Ok(GitOutput {
-            // 異常終了 (シグナル相当) は -1 にまとめる。呼び出し側は success() しか見ない
-            status: out.status.code().unwrap_or(-1),
-            stdout: out.stdout,
-            stderr: out.stderr,
-        }),
-        Err(e) if e.kind() == ErrorKind::NotFound => {
-            Err(ErrorBody::new(code::GIT_MISSING, "git was not found on PATH"))
-        }
-        Err(e) => Err(ErrorBody::new(code::GIT_FAILED, format!("cannot start git: {e}"))),
-    }
+    Ok(cmd)
 }
 
 /// "git version 2.48.1.windows.1" → ("2.48.1.windows.1", 2, 48)。
@@ -150,6 +191,13 @@ pub fn classify_error(out: &GitOutput) -> ErrorBody {
         code::LOCAL_CHANGES_OVERWRITTEN
     } else if low.contains("not a git repository") {
         code::NOT_REPO
+    // M66c: commit の直前で初めて出る。identity_check を先に通していても、
+    // 「エディタを開いたまま別端末で global config を消した」経路が残るので分類する
+    } else if low.contains("please tell me who you are")
+        || low.contains("unable to auto-detect email")
+        || low.contains("empty ident name")
+    {
+        code::IDENTITY_MISSING
     } else if low.contains("authentication failed") || low.contains("could not read username") {
         code::AUTH_FAILED
     } else if low.contains("non-fast-forward") || low.contains("fetch first") {

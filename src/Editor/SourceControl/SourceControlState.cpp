@@ -1,10 +1,13 @@
 #include "Editor/SourceControl/SourceControlState.h"
 
 #include <algorithm>
+#include <filesystem>
 #include <map>
 #include <utility>
 
+#include "Editor/SourceControl/PairRule.h"
 #include "Engine/Core/Log.h"
+#include "Engine/Engine/AssetDatabase.h"
 #include "Engine/Engine/Project.h"
 #include "Engine/Platform/PathUtil.h"
 
@@ -133,6 +136,16 @@ std::string PrimaryPathFor(const std::string& path)
         break;
     }
     return p;
+}
+
+const PairedEntry* SourceControlModel::FindEntry(const std::string& path) const
+{
+    for (const PairedEntry& e : entries) {
+        if (e.path == path) {
+            return &e;
+        }
+    }
+    return nullptr;
 }
 
 bool SourceControlModel::HasConflict() const
@@ -357,6 +370,10 @@ void SourceControlSession::SendRepoCheck()
             return;
         }
         RequestStatus();
+        // ★起動時に 1 回聞いておく (M66c)。コミットしようとした瞬間に初めて
+        //   「名前が設定されていません」と言われるより、欄の下に最初から
+        //   案内が出ている方がずっと親切
+        RequestIdentity();
     });
 }
 
@@ -485,6 +502,210 @@ bool SourceControlSession::AdoptCanonicalRoot()
     canonicalRoot_ = manifest.canonicalRoot;
     canonicalMismatch_ = false;
     return true;
+}
+
+
+// ---- M66c: stage / unstage / commit / log / diff / identity ----
+
+std::wstring SourceControlSession::AbsolutePathOf(const std::string& rel) const
+{
+    // toplevel == projectRoot は EvaluateRepoCheck が保証している (違えば
+    // ToplevelMismatch で機能ごと止まる) ので、素直に連結してよい
+    std::filesystem::path p(projectRoot_);
+    p /= std::filesystem::path(Utf8ToWide(rel));
+    return p.lexically_normal().wstring();
+}
+
+bool SourceControlSession::ApplyWriteResult(const nlohmann::json& msg)
+{
+    if (!msg.value("ok", false)) {
+        ApplyError(msg);
+        return false;
+    }
+    // 書き込み系 op は「実行後の status」を応答に載せて返す。
+    // ★取り込まずに監視 (300 ms デバウンス) 任せにすると、押した直後の一覧が
+    //   古いまま = 二度押しを誘発する
+    if (msg.contains("result") && msg["result"].contains("status")) {
+        ApplyStatusResult(msg["result"]["status"]);
+    }
+    return true;
+}
+
+void SourceControlSession::StageRows(const std::vector<PairedEntry>& rows)
+{
+    if (!client_.Ready() || repoState_ != Unavailable::None || rows.empty()) {
+        return;
+    }
+    const pairrule::PairPlan plan = pairrule::Collect(rows, [this](const std::string& rel) {
+        std::error_code ec;
+        return std::filesystem::exists(AbsolutePathOf(rel), ec);
+    });
+    // ★EnsureMeta を **git を呼ぶ前に** 済ませる。plan.toStage には生成後の
+    //   `<path>.meta` が既に入っているので、順番を逆にすると pathspec エラーで
+    //   選択ごと失敗する
+    for (const std::string& asset : plan.toEnsureMeta) {
+        const uint64_t guid = AssetDatabase::EnsureMeta(AbsolutePathOf(asset));
+        MYE_LOG_INFO("[collab] created %s.meta (guid %llu) before staging", asset.c_str(),
+                     static_cast<unsigned long long>(guid));
+    }
+    if (plan.toStage.empty()) {
+        return;
+    }
+    client_.Request(collabop::kStage, { { "paths", plan.toStage } },
+                    [this](const nlohmann::json& msg) { ApplyWriteResult(msg); });
+}
+
+void SourceControlSession::UnstageRows(const std::vector<PairedEntry>& rows)
+{
+    if (!client_.Ready() || repoState_ != Unavailable::None || rows.empty()) {
+        return;
+    }
+    const std::vector<std::string> paths = pairrule::ListedPaths(rows);
+    if (paths.empty()) {
+        return;
+    }
+    client_.Request(collabop::kUnstage, { { "paths", paths } },
+                    [this](const nlohmann::json& msg) { ApplyWriteResult(msg); });
+}
+
+void SourceControlSession::StageSavedPath(const std::wstring& absPath)
+{
+    if (!client_.Ready() || repoState_ != Unavailable::None || absPath.empty()) {
+        return;
+    }
+    std::error_code ec;
+    // ★lexically_relative ではなく std::filesystem::relative を使う理由:
+    //   projectRoot_ は起動引数由来で相対のことがあり、絶対化していないと
+    //   ".." だらけの結果になる
+    const std::filesystem::path rel =
+        std::filesystem::relative(std::filesystem::path(absPath), std::filesystem::path(projectRoot_), ec);
+    if (ec || rel.empty()) {
+        return;
+    }
+    std::string relUtf8 = WideToUtf8(rel.wstring());
+    for (char& c : relUtf8) {
+        if (c == '\\') {
+            c = '/'; // git は toplevel 相対の '/' 区切りしか受けない
+        }
+    }
+    // リポジトリの外 (別ドライブや親ディレクトリ) は黙って諦める。
+    // ★ここを通すと **プロジェクト外のファイルを stage する**
+    if (relUtf8.empty() || relUtf8.rfind("..", 0) == 0) {
+        MYE_LOG_WARN("[collab] saved document is outside the repository: %s", relUtf8.c_str());
+        return;
+    }
+    // status に出ていない (= まだ保存直後で status が古い) こともあるので、
+    // primaryListed は false のまま。Collect が「実在するなら渡す」で拾う
+    PairedEntry row;
+    row.path = relUtf8;
+    StageRows({ row });
+}
+
+void SourceControlSession::Commit(const std::string& message)
+{
+    if (!client_.Ready() || repoState_ != Unavailable::None || message.empty()) {
+        return;
+    }
+    client_.Request(collabop::kCommit, { { "message", message } }, [this](const nlohmann::json& msg) {
+        if (!ApplyWriteResult(msg)) {
+            return;
+        }
+        lastCommit_ = msg["result"].value("head", std::string());
+        MYE_LOG_INFO("[collab] commit %s", lastCommit_.c_str());
+        // 履歴を一度でも見ていたら取り直す (History タブを開いたまま commit した
+        // ときに、自分のコミットが出てこないのは明らかに壊れて見える)
+        if (historyValid_ && historyCount_ > 0) {
+            RequestLog(historyCount_);
+        }
+    });
+}
+
+void SourceControlSession::RequestLog(int n)
+{
+    if (!client_.Ready() || repoState_ != Unavailable::None || logInFlight_) {
+        return;
+    }
+    historyCount_ = n;
+    logInFlight_ = true;
+    client_.Request(collabop::kLog, { { "n", n } }, [this](const nlohmann::json& msg) {
+        logInFlight_ = false;
+        if (!msg.value("ok", false)) {
+            ApplyError(msg);
+            return;
+        }
+        history_.clear();
+        const nlohmann::json& result = msg["result"];
+        if (result.contains("commits") && result["commits"].is_array()) {
+            for (const nlohmann::json& c : result["commits"]) {
+                CommitInfo info;
+                info.sha = c.value("sha", std::string());
+                info.author = c.value("author", std::string());
+                info.date = c.value("date", std::string());
+                info.subject = c.value("subject", std::string());
+                history_.push_back(std::move(info));
+            }
+        }
+        // ★commit が 0 件でも valid にする。未出生ブランチ (clone 直後 / git init 直後)
+        //   で「読み込み中...」のまま止まって見えるのを防ぐ
+        historyValid_ = true;
+    });
+}
+
+void SourceControlSession::RequestDiff(const std::string& path, bool staged)
+{
+    if (!client_.Ready() || repoState_ != Unavailable::None || path.empty()) {
+        return;
+    }
+    // 応答が返る前に別の行を選んでも、最後に投げた要求の結果だけが残るように
+    // 「今どのパスを見ているか」を先に確定させる
+    diff_.path = path;
+    diff_.staged = staged;
+    diff_.loading = true;
+    client_.Request(collabop::kDiff, { { "path", path }, { "staged", staged } },
+                    [this, path, staged](const nlohmann::json& msg) {
+                        // 先行して投げた別パスの応答が後から来ることがある。
+                        // 今見ているものと違えば捨てる (捨てないと一覧の選択と
+                        // 差分の中身が食い違ったまま残る)
+                        if (diff_.path != path || diff_.staged != staged) {
+                            return;
+                        }
+                        diff_.loading = false;
+                        if (!msg.value("ok", false)) {
+                            ApplyError(msg);
+                            diff_.text.clear();
+                            diff_.valid = true;
+                            return;
+                        }
+                        diff_.text = msg["result"].value("text", std::string());
+                        diff_.truncated = msg["result"].value("truncated", false);
+                        diff_.valid = true;
+                    });
+}
+
+void SourceControlSession::RequestIdentity()
+{
+    if (!client_.Ready() || repoState_ != Unavailable::None) {
+        return;
+    }
+    client_.Request(collabop::kIdentityCheck, nlohmann::json::object(),
+                    [this](const nlohmann::json& msg) {
+                        if (!msg.value("ok", false)) {
+                            ApplyError(msg);
+                            return;
+                        }
+                        const nlohmann::json& r = msg["result"];
+                        identityOk_ = r.value("ok", false);
+                        identityName_ = r.value("name", std::string());
+                        identityEmail_ = r.value("email", std::string());
+                        identityChecked_ = true;
+                    });
+}
+
+std::string SourceControlSession::TakeLastCommit()
+{
+    std::string sha;
+    sha.swap(lastCommit_);
+    return sha;
 }
 
 } // namespace mye

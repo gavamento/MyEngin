@@ -64,3 +64,10 @@ tools\replay_verify.bat
 ## 実装メモ (coder が追記)
 
 ## フィードバック履歴
+
+## planner 追記 (sub-03 round 1 の判定から。coder は着手前に読む)
+
+- [should] identity (`user.name` / `user.email`) 未設定のときコミットボタンを **無効化** する (spec §4.1「commit 周り」)。今は案内のみ。`scm.IdentityChecked() && !scm.IdentityOk()` の分岐に `BeginDisabled` を足すだけ (SourceControlWindow.cpp:456 付近)。ゲート (`GateBlocker`) には入れない — commit は working tree を書かないので別系統。
+- 書き込み系 op (revert) の応答は sub-03 の `status_after_write` の型 (`{"status": ...}`) に揃え、C++ は `ApplyWriteResult` へ流す。**`last_head` の更新を忘れると自分の操作で「外部で HEAD が移動」トーストが出る** (coder 申し送り)。
+- 一時プローブのレシピ (coder 申し送り): `MYE_COLLAB_PROBE=<repo> Editor.exe --selftest` で Session を実 DLL 経由で駆動できる。ゲートとトランザクションの結線検証に使うこと (受け入れ条件 2・3 の目視の前に)。
+- ServiceDied の実機経路は未検証のまま (sub-02 から持ち越し)。`GateBlocker::ServiceUnavailable` を検査するとき、cargo test の panic 注入 (service.rs) を DLL 経由で 1 回通し、窓が ServiceDied を出すことをスクショで 1 枚残す。
