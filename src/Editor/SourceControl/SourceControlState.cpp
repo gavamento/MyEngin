@@ -473,6 +473,21 @@ void SourceControlSession::ApplyStatusResult(const nlohmann::json& result)
     model_ = BuildModel(result);
     errorCode_.clear();
     errorDetail_.clear();
+    // ★マージ / リベースの途中かは **status にも載っている** (M66g)。repo_check
+    //   (= 起動時 1 回) だけで配ると、pull が競合した直後のゲートが開いたままになる。
+    //   起動時の残骸トースト (mergeWarned_) は repo_check だけが立てる —
+    //   ここで立てると、自分で起こした競合にも「前回の残骸です」と出る
+    mergeInProgress_ = result.value("mergeInProgress", mergeInProgress_);
+    rebaseInProgress_ = result.value("rebaseInProgress", rebaseInProgress_);
+    if (mergeInProgress_ || rebaseInProgress_ || model_.HasConflict()) {
+        // 競合中は一覧を status と同じ頻度で取り直す。**窓が開いていなくても**
+        // 保存のガード (IsConflictedPath) がこの一覧を読むので、窓の描画に
+        // 取得を紐付けない
+        RequestConflicts({});
+    } else if (conflicts_.valid) {
+        // マージが終わった = 一覧を捨てる。残すと「解決済みなのに競合モードのまま」
+        conflicts_ = ConflictList{};
+    }
 }
 
 void SourceControlSession::ApplyError(const nlohmann::json& msg)
@@ -634,19 +649,19 @@ void SourceControlSession::UnstageRows(const std::vector<PairedEntry>& rows)
                     [this](const nlohmann::json& msg) { ApplyWriteResult(msg); });
 }
 
-void SourceControlSession::StageSavedPath(const std::wstring& absPath)
+std::string SourceControlSession::RelativePathOf(const std::wstring& absPath) const
 {
-    if (!client_.Ready() || repoState_ != Unavailable::None || absPath.empty()) {
-        return;
+    if (absPath.empty() || projectRoot_.empty()) {
+        return {};
     }
     std::error_code ec;
     // ★lexically_relative ではなく std::filesystem::relative を使う理由:
     //   projectRoot_ は起動引数由来で相対のことがあり、絶対化していないと
     //   ".." だらけの結果になる
-    const std::filesystem::path rel =
-        std::filesystem::relative(std::filesystem::path(absPath), std::filesystem::path(projectRoot_), ec);
+    const std::filesystem::path rel = std::filesystem::relative(
+        std::filesystem::path(absPath), std::filesystem::path(projectRoot_), ec);
     if (ec || rel.empty()) {
-        return;
+        return {};
     }
     std::string relUtf8 = WideToUtf8(rel.wstring());
     for (char& c : relUtf8) {
@@ -654,10 +669,23 @@ void SourceControlSession::StageSavedPath(const std::wstring& absPath)
             c = '/'; // git は toplevel 相対の '/' 区切りしか受けない
         }
     }
-    // リポジトリの外 (別ドライブや親ディレクトリ) は黙って諦める。
+    // リポジトリの外 (別ドライブや親ディレクトリ) は空を返す。
     // ★ここを通すと **プロジェクト外のファイルを stage する**
-    if (relUtf8.empty() || relUtf8.rfind("..", 0) == 0) {
-        MYE_LOG_WARN("[collab] saved document is outside the repository: %s", relUtf8.c_str());
+    if (relUtf8.rfind("..", 0) == 0) {
+        return {};
+    }
+    return relUtf8;
+}
+
+void SourceControlSession::StageSavedPath(const std::wstring& absPath)
+{
+    if (!client_.Ready() || repoState_ != Unavailable::None || absPath.empty()) {
+        return;
+    }
+    const std::string relUtf8 = RelativePathOf(absPath);
+    if (relUtf8.empty()) {
+        MYE_LOG_WARN("[collab] saved document is outside the repository: %s",
+                     WideToUtf8(absPath).c_str());
         return;
     }
     // status に出ていない (= まだ保存直後で status が古い) こともあるので、
@@ -947,10 +975,11 @@ void SourceControlSession::RequestDiffNames(const std::string& from, const std::
                     });
 }
 
-void SourceControlSession::Checkout(const std::string& name, CheckoutDoneFn done)
+void SourceControlSession::SendTreeOp(const char* op, const nlohmann::json& args,
+                                      CheckoutDoneFn done, TreeOpExtraFn extra)
 {
     TreeOpResult res;
-    if (!client_.Ready() || repoState_ != Unavailable::None || name.empty()) {
+    if (!client_.Ready() || repoState_ != Unavailable::None) {
         // ★呼び手 (GitTransaction) は ReloadHub::BeginBatch を済ませているので、
         //   黙って return すると一括モードのまま帰ってこない
         res.errorCode = collaberr::kServiceDead;
@@ -960,39 +989,64 @@ void SourceControlSession::Checkout(const std::string& name, CheckoutDoneFn done
         }
         return;
     }
-    client_.Request(collabop::kCheckout, { { "name", name } },
-                    [this, done = std::move(done)](const nlohmann::json& msg) {
-                        TreeOpResult r;
-                        r.ok = ApplyWriteResult(msg);
-                        if (r.ok) {
-                            const nlohmann::json& result = msg["result"];
-                            r.branch = result.value("branch", std::string());
-                            if (result.contains("names")) {
-                                r.changes = ChangesFromNames(result["names"]);
-                            }
-                            // 切り替えた先のブランチ一覧は current が変わっている
-                            branches_.valid = false;
-                            RequestBranches();
-                            MYE_LOG_INFO("[collab] checkout %s (%zu path(s) changed)",
-                                         r.branch.c_str(), r.changes.size());
-                        } else {
-                            r.errorCode = errorCode_;
-                            r.errorDetail = errorDetail_;
-                            // local_changes_overwritten の対象一覧 (spec S7)。
-                            // ここを落とすとモーダルに「何を破棄すればいいか」が出せない
-                            if (msg.contains("error") && msg["error"].contains("paths")
-                                && msg["error"]["paths"].is_array()) {
-                                for (const nlohmann::json& p : msg["error"]["paths"]) {
-                                    if (p.is_string()) {
-                                        r.errorPaths.push_back(p.get<std::string>());
-                                    }
-                                }
-                            }
+    client_.Request(
+        op, args,
+        [this, op, done = std::move(done), extra = std::move(extra)](const nlohmann::json& msg) {
+            TreeOpResult r;
+            r.ok = ApplyWriteResult(msg);
+            if (r.ok) {
+                const nlohmann::json& result = msg["result"];
+                if (result.contains("names")) {
+                    // ★段階分類の入力はここ 1 本。pull だけ別の読み方をすると
+                    //   D を取りこぼして消えたファイルを読み直そうとする
+                    r.changes = ChangesFromNames(result["names"]);
+                }
+                if (result.contains("remote")) {
+                    remote_ = BuildRemoteState(result["remote"]);
+                }
+                // checkout だけが branch を返す。他は今のブランチのまま
+                r.branch = result.value("branch", model_.branch);
+                if (extra) {
+                    extra(result, r);
+                }
+                MYE_LOG_INFO("[collab] %s done (%zu path(s) changed)", op, r.changes.size());
+            } else {
+                r.errorCode = errorCode_;
+                r.errorDetail = errorDetail_;
+                // local_changes_overwritten / conflict / merge_in_progress の対象一覧。
+                // ここを落とすとモーダルに「何を破棄すればいいか」が出せない
+                if (msg.contains("error") && msg["error"].contains("paths")
+                    && msg["error"]["paths"].is_array()) {
+                    for (const nlohmann::json& p : msg["error"]["paths"]) {
+                        if (p.is_string()) {
+                            r.errorPaths.push_back(p.get<std::string>());
                         }
-                        if (done) {
-                            done(r);
-                        }
-                    });
+                    }
+                }
+            }
+            if (done) {
+                done(r);
+            }
+        });
+}
+
+void SourceControlSession::Checkout(const std::string& name, CheckoutDoneFn done)
+{
+    if (name.empty()) {
+        TreeOpResult res;
+        res.errorCode = collaberr::kBadRequest;
+        res.errorDetail = "branch name is empty";
+        if (done) {
+            done(res);
+        }
+        return;
+    }
+    SendTreeOp(collabop::kCheckout, { { "name", name } }, std::move(done),
+               [this](const nlohmann::json&, TreeOpResult&) {
+                   // 切り替えた先のブランチ一覧は current が変わっている
+                   branches_.valid = false;
+                   RequestBranches();
+               });
 }
 
 // ---- M66f: fetch / pull / push / remote_state ----
@@ -1081,50 +1135,7 @@ void SourceControlSession::RequestFetch()
 
 void SourceControlSession::Pull(bool allowMerge, CheckoutDoneFn done)
 {
-    TreeOpResult res;
-    if (!client_.Ready() || repoState_ != Unavailable::None) {
-        // ★呼び手 (GitTransaction) は ReloadHub::BeginBatch を済ませているので、
-        //   黙って return すると一括モードのまま帰ってこない
-        res.errorCode = collaberr::kServiceDead;
-        res.errorDetail = "source control is not available";
-        if (done) {
-            done(res);
-        }
-        return;
-    }
-    client_.Request(collabop::kPull, { { "allowMerge", allowMerge } },
-                    [this, done = std::move(done)](const nlohmann::json& msg) {
-                        TreeOpResult r;
-                        r.ok = ApplyWriteResult(msg);
-                        if (r.ok) {
-                            const nlohmann::json& result = msg["result"];
-                            if (result.contains("names")) {
-                                // ★checkout と**同じ 1 本**で段階分類の入力を作る。
-                                //   pull だけ別の読み方をすると、D を取りこぼして
-                                //   消えたファイルを読み直そうとする形で静かに壊れる
-                                r.changes = ChangesFromNames(result["names"]);
-                            }
-                            if (result.contains("remote")) {
-                                remote_ = BuildRemoteState(result["remote"]);
-                            }
-                            r.branch = model_.branch;
-                            MYE_LOG_INFO("[collab] pull (%zu path(s) changed)", r.changes.size());
-                        } else {
-                            r.errorCode = errorCode_;
-                            r.errorDetail = errorDetail_;
-                            if (msg.contains("error") && msg["error"].contains("paths")
-                                && msg["error"]["paths"].is_array()) {
-                                for (const nlohmann::json& p : msg["error"]["paths"]) {
-                                    if (p.is_string()) {
-                                        r.errorPaths.push_back(p.get<std::string>());
-                                    }
-                                }
-                            }
-                        }
-                        if (done) {
-                            done(r);
-                        }
-                    });
+    SendTreeOp(collabop::kPull, { { "allowMerge", allowMerge } }, std::move(done), {});
 }
 
 void SourceControlSession::Push(bool setUpstream, WriteDoneFn done)
@@ -1147,6 +1158,186 @@ void SourceControlSession::Push(bool setUpstream, WriteDoneFn done)
                             done(ok, errorCode_, errorDetail_);
                         }
                     });
+}
+
+
+// ---- M66g: 競合 (conflicts / resolve / merge_abort / continue) ----
+
+ConflictList BuildConflictList(const nlohmann::json& r)
+{
+    ConflictList out;
+    if (!r.is_object()) {
+        return out;
+    }
+    if (r.contains("conflicts") && r["conflicts"].is_array()) {
+        for (const nlohmann::json& c : r["conflicts"]) {
+            if (!c.is_object()) {
+                continue;
+            }
+            ConflictFile f;
+            f.path = c.value("path", std::string());
+            if (f.path.empty()) {
+                continue;
+            }
+            f.kind = c.value("kind", std::string("unmerged"));
+            // ★既定を true にしない。欠けている応答を「どちらも採れる」と読むと、
+            //   相手が消したファイルに theirs を出して git が落ちる
+            f.ours = c.value("ours", false);
+            f.theirs = c.value("theirs", false);
+            out.files.push_back(std::move(f));
+        }
+    }
+    if (r.contains("merged")) {
+        // 競合しなかった側は `names` と同じ形 = 段階分類へそのまま流せる
+        out.merged = ChangesFromNames(r["merged"]);
+    }
+    out.mergeInProgress = r.value("mergeInProgress", false);
+    out.rebaseInProgress = r.value("rebaseInProgress", false);
+    out.valid = true;
+    return out;
+}
+
+std::vector<ConflictRow> BuildConflictRows(const std::vector<ConflictFile>& files)
+{
+    // 本体パスで束ねる (BuildModel と同じ PrimaryPathFor を通す = 束ね方を 2 つ持たない)
+    std::map<std::string, ConflictRow> rows;
+    for (const ConflictFile& f : files) {
+        const std::string primary = PrimaryPathFor(f.path);
+        ConflictRow& row = rows[primary];
+        row.path = primary;
+        row.paths.push_back(f.path);
+        // ★束の中に 1 つでも「その側を採れない」ものがあれば行としても採れない。
+        //   採れないまま押すと git が pathspec で落ち、対の片方だけが解決される
+        row.ours = row.ours && f.ours;
+        row.theirs = row.theirs && f.theirs;
+        if (f.path == primary) {
+            row.primaryConflicted = true;
+            row.kind = f.kind; // 本体の種別を代表にする
+        } else if (row.kind.empty()) {
+            row.kind = f.kind;
+        }
+    }
+    std::vector<ConflictRow> out;
+    out.reserve(rows.size());
+    for (auto& [path, row] : rows) {
+        std::sort(row.paths.begin(), row.paths.end());
+        out.push_back(std::move(row));
+    }
+    return out; // std::map の走査 = path 昇順 (決定的)
+}
+
+void SourceControlSession::RequestConflicts(ConflictsDoneFn done)
+{
+    if (!client_.Ready() || repoState_ != Unavailable::None) {
+        if (done) {
+            // ★呼び手 (GitTransaction) は応答を待っているので、投げられないときも
+            //   必ず 1 回呼ぶ。呼ばないと一括モードのまま帰ってこない
+            done(false, conflicts_);
+        }
+        return;
+    }
+    if (done) {
+        conflictsWaiters_.push_back(std::move(done));
+    }
+    if (conflictsInFlight_) {
+        // ★飛んでいる要求に**相乗りする**。ここで「投げられなかった」と返すと、
+        //   競合直後 (監視由来の status が先に conflicts を投げている) に
+        //   GitTransaction が空の merged を掴み、相手のファイルが 1 件も
+        //   反映されないまま競合モードへ入る (実際に起きる並び)
+        return;
+    }
+    conflictsInFlight_ = true;
+    client_.Request(collabop::kConflicts, nlohmann::json::object(),
+                    [this](const nlohmann::json& msg) {
+                        conflictsInFlight_ = false;
+                        const bool ok = msg.value("ok", false);
+                        if (ok) {
+                            conflicts_ = BuildConflictList(msg["result"]);
+                        } else {
+                            ApplyError(msg);
+                        }
+                        // ★先に取り出してから呼ぶ。コールバックの中で
+                        //   RequestConflicts が呼ばれても二重に呼ばれない
+                        std::vector<ConflictsDoneFn> waiters;
+                        waiters.swap(conflictsWaiters_);
+                        for (const ConflictsDoneFn& fn : waiters) {
+                            fn(ok, conflicts_);
+                        }
+                    });
+}
+
+void SourceControlSession::Resolve(const std::vector<std::string>& paths, const char* side,
+                                   WriteDoneFn done)
+{
+    if (!client_.Ready() || repoState_ != Unavailable::None || paths.empty() || side == nullptr) {
+        if (done) {
+            done(false, collaberr::kBadRequest, "nothing to resolve");
+        }
+        return;
+    }
+    client_.Request(collabop::kResolve, { { "paths", paths }, { "side", std::string(side) } },
+                    [this, done = std::move(done)](const nlohmann::json& msg) {
+                        const bool ok = ApplyWriteResult(msg);
+                        if (ok) {
+                            MYE_LOG_INFO("[collab] resolved %d path(s)",
+                                         msg["result"].value("resolved", 0));
+                        }
+                        // 一覧の取り直しは status 経路が自動でやる
+                        // (ApplyStatusResult がマージ中を見て conflicts を投げ直す)
+                        if (done) {
+                            done(ok, errorCode_, errorDetail_);
+                        }
+                    });
+}
+
+// merge_abort / continue は pull / checkout と**同じ受け取り方**。
+// ★型を分けない — 分けると「同じ後処理を 2 通り書く」ことになり、片方だけ直す事故が出る
+void SourceControlSession::MergeAbort(CheckoutDoneFn done)
+{
+    SendTreeOp(collabop::kMergeAbort, nlohmann::json::object(), std::move(done), {});
+}
+
+void SourceControlSession::MergeContinue(CheckoutDoneFn done)
+{
+    SendTreeOp(collabop::kContinue, nlohmann::json::object(), std::move(done), {});
+}
+
+bool ConflictMatchesPath(const std::vector<ConflictFile>& files, const std::string& rel)
+{
+    if (rel.empty()) {
+        return false;
+    }
+    for (const ConflictFile& f : files) {
+        // 対の片方 (`.meta`) だけが競合していても「その文書は競合中」と見なす。
+        // ★見なさないと、本体を保存した拍子に `.meta` が書き換わって
+        //   マーカー入りの `.meta` を潰す (= 黙って ours を選ぶ) 経路が残る
+        if (f.path == rel || PrimaryPathFor(f.path) == rel) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool SourceControlSession::IsConflictedPath(const std::wstring& absPath) const
+{
+    if (absPath.empty() || conflicts_.files.empty()) {
+        return false;
+    }
+    return ConflictMatchesPath(conflicts_.files, RelativePathOf(absPath));
+}
+
+std::vector<StageChange> SourceControlSession::ConflictChangeSet() const
+{
+    std::vector<StageChange> out = conflicts_.merged;
+    for (const ConflictFile& f : conflicts_.files) {
+        StageChange c;
+        c.path = f.path;
+        // 競合中のファイルは「今そこにある」= 中止でも継続でも書き換わる。
+        // 実際の A/D/M は実行後の names で付け直すので、予測は Modified でよい
+        c.kind = BatchChange::Kind::Modified;
+        out.push_back(std::move(c));
+    }
+    return out;
 }
 
 } // namespace mye

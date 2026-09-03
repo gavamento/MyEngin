@@ -1,7 +1,7 @@
 # sub-06: M66f: fetch / pull / push + 定期 fetch + 通知 + EditorSettings
 
 - 依存: sub-04 (sub-05 とは独立。同時に進めるなら `SourceControlWindow.cpp` と `ops.rs` のマージ順を司会が決める)
-- 状態: OK (commit: M66f — ハッシュは harness.md のサブ進捗表)
+- 状態: OK (commit 1e6b8f8)
 - 往復: 1
 
 ## やること

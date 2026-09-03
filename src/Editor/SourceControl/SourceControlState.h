@@ -127,6 +127,47 @@ struct RemoteState {
 // `remote_state` 相当の JSON → モデル。**純関数**
 RemoteState BuildRemoteState(const nlohmann::json& remoteResult);
 
+// 競合した 1 ファイル (M66g)。`conflicts` 応答の 1 件。
+// ★`kind` はサービスの綴りをそのまま持つ ("both_modified" / "deleted_by_them" …)。
+//   C++ 側で列挙型に落とさないのは、git が組を増やしても**表示だけ**が
+//   「不明」になって済むようにするため (分岐に使うのは ours / theirs の 2 つだけ)
+struct ConflictFile {
+    std::string path;
+    std::string kind;
+    bool ours = false;   // 自分側の版が index にある = ours を採れる
+    bool theirs = false; // 相手側の版が index にある = theirs を採れる
+};
+
+// 競合一覧の 1 行。**対の規則で束ねたもの** (M66g)。
+// ★本体が競合していなくてもサイドカー (`.meta`) だけが競合することがある。
+//   その場合も行の見出しは本体で、resolve に渡すのは「実際に競合しているパスだけ」
+struct ConflictRow {
+    std::string path;               // 本体のパス (表示とキー)
+    std::vector<std::string> paths; // resolve に渡す = 競合しているパスだけ (昇順)
+    std::string kind;               // 代表の種別 (本体が競合していればそれ)
+    bool ours = true;               // 束の全員が ours を採れるか
+    bool theirs = true;             // 束の全員が theirs を採れるか
+    bool primaryConflicted = false; // 本体そのものが競合しているか
+};
+
+// `conflicts` 応答。
+struct ConflictList {
+    std::vector<ConflictFile> files;
+    // 競合せずにマージ済みのファイル (段階分類の入力にそのまま使う)
+    std::vector<StageChange> merged;
+    bool mergeInProgress = false;
+    bool rebaseInProgress = false;
+    bool valid = false; // 一度でも応答を受けたか
+};
+
+// `conflicts` 応答の `result` → モデル。**純関数**
+ConflictList BuildConflictList(const nlohmann::json& conflictsResult);
+// 競合ファイル → 対で束ねた一覧の行。**純関数** (path 昇順)
+std::vector<ConflictRow> BuildConflictRows(const std::vector<ConflictFile>& files);
+// toplevel 相対パスが競合一覧に含まれるか (**サイドカーだけの競合も本体に効く**)。
+// **純関数** — 保存を止めるかの判定なので、窓を開かずに検査できる形にしておく
+bool ConflictMatchesPath(const std::vector<ConflictFile>& files, const std::string& rel);
+
 // `checkout` / `diff_names` の `names` 配列 → 段階分類の入力。**純関数**。
 // ★git の name-status 1 文字と BatchChange::Kind の対応をここ 1 箇所に閉じる。
 //   2 箇所に書くと「D を Modified と読んで消えたファイルを読み直そうとする」形で
@@ -300,6 +341,25 @@ public:
     // 起動時の残骸検査 (決定 13)。マージ / リベースの途中で開いたことを 1 回だけ知らせる
     bool TakeMergeWarning();
 
+    // ---- M66g: 競合 (conflicts / resolve / merge_abort / continue) ----
+    // 競合一覧の取り直し。**status がマージ中を告げるたびに自動で 1 回**投げるので、
+    // 窓から明示的に呼ぶ必要は無い (done は GitTransaction が競合直後に使う)
+    using ConflictsDoneFn = std::function<void(bool ok, const ConflictList& list)>;
+    void RequestConflicts(ConflictsDoneFn done);
+    const ConflictList& Conflicts() const { return conflicts_; }
+    // 競合の解決 (`ours` / `theirs`)。paths は対で渡す — 本体だけ解決して `.meta` を
+    // 競合のまま残すと、次の continue が「まだ未解決です」で止まる
+    void Resolve(const std::vector<std::string>& paths, const char* side, WriteDoneFn done);
+    // ★**GitTransaction 経由でのみ呼ぶこと** (Pull / Checkout と同じ理由 —
+    //   working tree が丸ごと入れ替わる)。応答は同じ TreeOpResult
+    void MergeAbort(CheckoutDoneFn done);
+    void MergeContinue(CheckoutDoneFn done);
+    // 絶対パスが競合一覧にあるか (保存を止める判定。spec §7「競合中のアクティブシーン」)
+    bool IsConflictedPath(const std::wstring& absPath) const;
+    // 競合の解決で入れ替わりうるファイルの集合 = マージ済み + 競合中。
+    // abort / continue の**段階の事前予測**に使う (実行後は応答の names で分類し直す)
+    std::vector<StageChange> ConflictChangeSet() const;
+
     // 書き込み系 (stage / unstage / commit) が飛んでいる間は true。
     // ★読み取り系 (status の自動更新) では立たない — 立てると監視が動くたびに
     //   ボタンが押せなくなる
@@ -319,8 +379,16 @@ private:
     // 書き込み系の応答 (`{"status": {...}}`) を status 経路へ流す共通処理。
     // 成功なら true
     bool ApplyWriteResult(const nlohmann::json& msg);
+    // working tree を入れ替える op (checkout / pull / merge_abort / continue) の共通経路。
+    // ★4 本とも応答が同じ型 (`{head, names, status, remote}`) なので、受け取り方も
+    //   1 本に寄せる — 分けて書くと「片方だけ names を読み落とす」形で静かに壊れる
+    using TreeOpExtraFn = std::function<void(const nlohmann::json& result, TreeOpResult& r)>;
+    void SendTreeOp(const char* op, const nlohmann::json& args, CheckoutDoneFn done,
+                    TreeOpExtraFn extra);
     // toplevel 相対 -> 絶対パス (EnsureMeta / 実在判定に使う)
     std::wstring AbsolutePathOf(const std::string& rel) const;
+    // 絶対パス -> toplevel 相対 '/' 区切り。リポジトリの外なら空
+    std::string RelativePathOf(const std::wstring& absPath) const;
     // error.code → Unavailable。分類できないものは None (= 窓にエラー文だけ出す)
     static Unavailable UnavailableFromCode(const std::string& code);
 
@@ -344,6 +412,12 @@ private:
     // ---- M66e ----
     BranchList branches_;
     bool branchesInFlight_ = false;
+
+    // ---- M66g ----
+    ConflictList conflicts_;
+    // 飛んでいる conflicts に相乗りした呼び手。応答が返ったら全員に配る
+    std::vector<ConflictsDoneFn> conflictsWaiters_;
+    bool conflictsInFlight_ = false;
 
     // ---- M66f ----
     RemoteState remote_;

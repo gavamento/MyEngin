@@ -966,3 +966,199 @@ fn the_timer_is_not_starved_by_a_steady_stream_of_requests() {
     let _ = std::fs::remove_dir_all(&origin);
     let _ = std::fs::remove_file(&cfg);
 }
+
+// ---- M66g: 競合 (conflicts / resolve / merge_abort / continue) ----
+
+/// 「同じ行を両側で変更」+「片側が消したファイルをもう片側が変更」の 2 種を作り、
+/// 競合したまま止まっているリポジトリを返す (本体 / origin / 同僚)。
+///
+/// ★2 種目 (modify/delete) を必ず混ぜる。ours / theirs の分岐は
+///   「相手の版が存在するか」で変わるので、content 競合だけだと
+///   `git checkout --theirs` が落ちる経路が永久に未検査になる
+fn conflicted_repo(name: &str) -> (PathBuf, PathBuf, PathBuf, PathBuf) {
+    let dir = temp_repo(name);
+    let cfg = config_path_for(&dir);
+    pin_identity(&dir, &cfg);
+    std::fs::create_dir_all(dir.join("assets")).unwrap();
+    std::fs::write(dir.join("assets/shared.txt"), "base").unwrap();
+    std::fs::write(dir.join("assets/del.txt"), "base").unwrap();
+    commit_all(&dir, &cfg, "one");
+    let origin = attach_origin(&dir, &cfg, name);
+    let peer = clone_of(&origin, &cfg, name);
+
+    // 同僚: shared を書き換え、del を消し、無関係な 1 本を足す
+    std::fs::write(peer.join("assets/shared.txt"), "peer side").unwrap();
+    std::fs::remove_file(peer.join("assets/del.txt")).unwrap();
+    std::fs::write(peer.join("assets/clean.txt"), "peer only").unwrap();
+    commit_all(&peer, &cfg, "peer-edit");
+    git(&peer, &cfg, &["push", "-q"]);
+
+    // こちら: shared と del の両方を書き換える
+    std::fs::write(dir.join("assets/shared.txt"), "my side").unwrap();
+    std::fs::write(dir.join("assets/del.txt"), "my side").unwrap();
+    commit_all(&dir, &cfg, "my-edit");
+    (dir, cfg, origin, peer)
+}
+
+fn cleanup(paths: &[&Path], cfg: &Path) {
+    for p in paths {
+        let _ = std::fs::remove_dir_all(p);
+    }
+    let _ = std::fs::remove_file(cfg);
+}
+
+#[test]
+fn conflicts_lists_unmerged_files_and_the_cleanly_merged_ones() {
+    let (dir, cfg, origin, peer) = conflicted_repo("conflist");
+    let svc = Service::new(dir.to_string_lossy().to_string());
+    svc.request(json!({ "id": 1, "op": "pull", "args": { "allowMerge": true } }).to_string());
+    let r = wait_line(&svc);
+    assert_eq!(r["error"]["code"], code::CONFLICT, "{r}");
+    // ★競合したファイルは応答に載る (git の案内文ではなく status の u レコード由来)
+    let paths: Vec<String> = r["error"]["paths"]
+        .as_array()
+        .expect("conflict は paths を載せる")
+        .iter()
+        .map(|v| v.as_str().unwrap().to_string())
+        .collect();
+    assert!(paths.contains(&"assets/shared.txt".to_string()), "{paths:?}");
+    assert!(paths.contains(&"assets/del.txt".to_string()), "{paths:?}");
+
+    svc.request(json!({ "id": 2, "op": "conflicts" }).to_string());
+    let c = wait_line(&svc);
+    assert_eq!(c["ok"], true, "{c}");
+    assert_eq!(c["result"]["mergeInProgress"], true);
+    let list = c["result"]["conflicts"].as_array().unwrap();
+    assert_eq!(list.len(), 2, "{c}");
+    let shared = list.iter().find(|e| e["path"] == "assets/shared.txt").unwrap();
+    assert_eq!(shared["kind"], "both_modified");
+    assert_eq!(shared["ours"], true);
+    assert_eq!(shared["theirs"], true);
+    let del = list.iter().find(|e| e["path"] == "assets/del.txt").unwrap();
+    assert_eq!(del["kind"], "deleted_by_them");
+    assert_eq!(del["theirs"], false, "相手の版が無い = theirs は「消す」の意味");
+    // 競合しなかったファイルは **もうディスクに書かれている** ので merged に載る
+    let merged = c["result"]["merged"].as_array().unwrap();
+    assert_eq!(merged.len(), 1, "{c}");
+    assert_eq!(merged[0]["path"], "assets/clean.txt");
+    assert_eq!(merged[0]["status"], "A");
+
+    // status にもマージ中が載る (ゲートが毎回読む口)
+    svc.request(json!({ "id": 3, "op": "status" }).to_string());
+    let s = wait_line(&svc);
+    assert_eq!(s["result"]["mergeInProgress"], true, "{s}");
+
+    git(&dir, &cfg, &["merge", "--abort"]);
+    drop(svc);
+    cleanup(&[&dir, &peer, &origin], &cfg);
+}
+
+#[test]
+fn resolve_then_continue_closes_the_merge() {
+    let (dir, cfg, origin, peer) = conflicted_repo("resolve");
+    let svc = Service::new(dir.to_string_lossy().to_string());
+    svc.request(json!({ "id": 1, "op": "pull", "args": { "allowMerge": true } }).to_string());
+    assert_eq!(wait_line(&svc)["error"]["code"], code::CONFLICT);
+
+    // 全件解決する前の continue は **merge_in_progress + 残り** で返る
+    svc.request(json!({ "id": 2, "op": "continue" }).to_string());
+    let early = wait_line(&svc);
+    assert_eq!(early["error"]["code"], code::MERGE_IN_PROGRESS, "{early}");
+    assert_eq!(early["error"]["paths"].as_array().unwrap().len(), 2, "{early}");
+
+    // ours = 自分の版を採る
+    svc.request(
+        json!({ "id": 3, "op": "resolve",
+                "args": { "paths": ["assets/shared.txt"], "side": "ours" } })
+            .to_string(),
+    );
+    let r3 = wait_line(&svc);
+    assert_eq!(r3["ok"], true, "{r3}");
+    assert_eq!(r3["result"]["resolved"], 1);
+    assert_eq!(
+        std::fs::read_to_string(dir.join("assets/shared.txt")).unwrap(),
+        "my side",
+        "ours はマーカーを消して自分の版に戻す"
+    );
+
+    // theirs = 相手の版が無い (消された) ので「消す」
+    svc.request(
+        json!({ "id": 4, "op": "resolve",
+                "args": { "paths": ["assets/del.txt"], "side": "theirs" } })
+            .to_string(),
+    );
+    let r4 = wait_line(&svc);
+    assert_eq!(r4["ok"], true, "{r4}");
+    assert!(!dir.join("assets/del.txt").exists(), "theirs = 相手に合わせて消える");
+
+    svc.request(json!({ "id": 5, "op": "continue" }).to_string());
+    let done = wait_line(&svc);
+    assert_eq!(done["ok"], true, "{done}");
+    assert_eq!(done["result"]["status"]["mergeInProgress"], false, "{done}");
+    // names は「マージ前の HEAD → マージコミット」= 相手から入ったもの
+    let names: Vec<(String, String)> = done["result"]["names"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|n| {
+            (n["path"].as_str().unwrap().to_string(), n["status"].as_str().unwrap().to_string())
+        })
+        .collect();
+    assert!(names.contains(&("assets/clean.txt".to_string(), "A".to_string())), "{names:?}");
+    assert!(names.contains(&("assets/del.txt".to_string(), "D".to_string())), "{names:?}");
+    // マージコミットが 1 本増え、working tree は清浄
+    assert!(done["result"]["status"]["entries"].as_array().unwrap().is_empty(), "{done}");
+    assert_eq!(done["result"]["status"]["ahead"], 2, "{done}");
+
+    drop(svc);
+    cleanup(&[&dir, &peer, &origin], &cfg);
+}
+
+#[test]
+fn merge_abort_puts_the_working_tree_back() {
+    let (dir, cfg, origin, peer) = conflicted_repo("abort");
+    let svc = Service::new(dir.to_string_lossy().to_string());
+    svc.request(json!({ "id": 1, "op": "pull", "args": { "allowMerge": true } }).to_string());
+    assert_eq!(wait_line(&svc)["error"]["code"], code::CONFLICT);
+    assert!(dir.join("assets/clean.txt").exists(), "競合しなかった方は既に降っている");
+
+    svc.request(json!({ "id": 2, "op": "merge_abort" }).to_string());
+    let a = wait_line(&svc);
+    assert_eq!(a["ok"], true, "{a}");
+    assert_eq!(a["result"]["status"]["mergeInProgress"], false, "{a}");
+    // ★names は **ディスクの在り方の変化**。中止は HEAD を動かさないので、
+    //   コミット間の diff で作ると必ず空になる
+    let names: Vec<(String, String)> = a["result"]["names"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|n| {
+            (n["path"].as_str().unwrap().to_string(), n["status"].as_str().unwrap().to_string())
+        })
+        .collect();
+    assert!(names.contains(&("assets/clean.txt".to_string(), "D".to_string())), "{names:?}");
+    assert!(names.contains(&("assets/shared.txt".to_string(), "M".to_string())), "{names:?}");
+    assert!(!dir.join("assets/clean.txt").exists(), "相手のファイルは消えて元に戻る");
+    assert_eq!(
+        std::fs::read_to_string(dir.join("assets/shared.txt")).unwrap(),
+        "my side",
+        "マーカーは消え、pull 前の内容に戻る"
+    );
+    assert!(a["result"]["status"]["entries"].as_array().unwrap().is_empty(), "{a}");
+
+    // マージ中でなければ中止も継続も受け付けない (押せてしまうと状態が読めなくなる)
+    svc.request(json!({ "id": 3, "op": "merge_abort" }).to_string());
+    assert_eq!(wait_line(&svc)["error"]["code"], code::BAD_REQUEST);
+    svc.request(json!({ "id": 4, "op": "continue" }).to_string());
+    assert_eq!(wait_line(&svc)["error"]["code"], code::BAD_REQUEST);
+    // 競合していないパスへの resolve も同じ (「解決したつもり」を作らない)
+    svc.request(
+        json!({ "id": 5, "op": "resolve",
+                "args": { "paths": ["assets/shared.txt"], "side": "ours" } })
+            .to_string(),
+    );
+    assert_eq!(wait_line(&svc)["error"]["code"], code::BAD_REQUEST);
+
+    drop(svc);
+    cleanup(&[&dir, &peer, &origin], &cfg);
+}

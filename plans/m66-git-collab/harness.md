@@ -16,9 +16,9 @@
 | sub-03 | OK | 1 | 83d0b4f | M66c: stage / unstage / commit / History / diff / identity。依存: sub-02 |
 | sub-04 | OK | 2 | 205e90d | M66d: ReloadHub Begin/EndBatch + ゲート + 4 窓の HasUnsavedChanges + トランザクション + revert。依存: sub-03。round 1 REWORK (must 1 = 段階 C モーダルの「あとで」撤去。should 2 件 → sub-05、nit 1 件 → sub-10) |
 | sub-05 | OK | 1 | c3be569 | M66e: Branches — 一覧 / 作成 / checkout + 段階の事前判定。依存: sub-04 |
-| sub-06 | OK | 1 | (M66f、下の記入待ち) | M66f: fetch / pull / push + 定期 fetch + 通知 + EditorSettings。依存: sub-04 (sub-05 と独立。並列なら SourceControlWindow.cpp / ops.rs のマージ順を司会が決める) |
-| sub-07 | 実装中 | 0 | | M66g: 競合 — abort / ours / theirs / continue。依存: sub-06 |
-| sub-08 | 未着手 | 0 | | M66h: 衛生 — .gitignore テンプレ 4 行 + project_settings.json の個人設定分離。依存: sub-03 (sub-05〜07 と独立) |
+| sub-06 | OK | 1 | 1e6b8f8 | M66f: fetch / pull / push + 定期 fetch + 通知 + EditorSettings。依存: sub-04 (sub-05 と独立。並列なら SourceControlWindow.cpp / ops.rs のマージ順を司会が決める) |
+| sub-07 | OK | 1 | (M66g、下の記入待ち) | M66g: 競合 — abort / ours / theirs / continue。依存: sub-06 |
+| sub-08 | 実装中 | 0 | | M66h: 衛生 — .gitignore テンプレ 4 行 + project_settings.json の個人設定分離。依存: sub-03 (sub-05〜07 と独立) |
 | sub-09 | 未着手 | 0 | | M66i: Content Browser に Git バッジ + 保存直後のヒント。依存: sub-02 (sub-03〜08 と独立) |
 | sub-10 | 未着手 | 0 | | M66j: 仕上げ — engine_spec §14 Source control / README / CLAUDE.md / 規則の記載。依存: sub-01〜sub-09 |
 
@@ -26,7 +26,7 @@
 - ~~S5 の新規アセット登録方式~~ → **閉じた (sub-04)**: 増分登録 (`AssetDatabase::GuidForPath(abs, createIfMissing=true)`)。`ScanAndSync` は 3 表を clear するので解決先が一瞬空になる窓が開く。増分なら `.meta` 同梱の guid をそのまま採る
 - ~~B 段階の `.controller.json` / `.terrain.json` のキャッシュ無効化 API~~ → **閉じた (sub-04)**: 両方ある (`ControllerLibrary::LoadFromFile` の差し替え / `RenderSystem::InvalidateTerrain()`)。C への格上げ不要。無効化の置き場は `GitTransaction::ApplyStageB` の 1 箇所
 - `.terrain.edit` に `.meta` が付くか (`ClassifyPath`) — sub-03 は「存在するサイドカーだけ束ねる」実装で依存しない
-- GUI 無しの孫プロセス git から GCM のダイアログが出るか — sub-06 の冒頭確認 (出なければ案内文を変える)
+- ~~GUI 無しの孫プロセス git から GCM のダイアログが出るか~~ → **閉じた (sub-06、実測)**: `GIT_TERMINAL_PROMPT=0` **だけでは GCM の GUI が出る** (GCM は端末プロンプトの可否としか読まない)、`GCM_INTERACTIVE=never` でのみ止まる。仮置き 3 はそのまま成立 → 背景 fetch から外さない / ユーザー操作側に付けない (付けると初回認証ができない)。手順は `git.rs` の `run_background` のコメント
 - ~~`--porcelain=v2` の下限 git 2.11 は記憶ベース~~ → **閉じた (sub-01)**: 2.11.0 で正しいことを一次情報で確認、出典 URL は `tools\collab\src\git.rs` の定数コメント
 - ~~`StartGameLogicBuild` の全呼び出し元~~ → **閉じた (sub-04)**: `BuildSettingsWindow::AdvancePipeline` の 1 箇所のみ、同期経路なし。**ただし Asset Browser の [Rebuild Scripts] (`AssetOps::RebuildGameLogic`) は `ShellExecuteW` の fire-and-forget でハンドルを持たず、ゲートから観測できない** → **閉じた (sub-05)**: `RebuildGameLogic` を削除し `StartGameLogicBuild` 1 本に寄せて EditorApp がハンドルを保持、`GateInputs.scriptBuildRunning` に OR。退行 (可視 cmd 窓でコンパイルエラーが読めた) は sub-08 の should で Console へ error 行を流して埋める
 - `kCollabMaxBatchApply = 200` / `kReloadRetryMax = 60` は初期値。実機で不便なら仕様変更として spec §8 に積む
@@ -107,4 +107,13 @@
   - fixture は「テクスチャを貼った床 + 立方体 + guid 固定の `.meta` 3 枚」。**エディタに `.meta` を作らせない** (作らせると未追跡が増えて checkout が拒否される)。ブランチ検証は fixture を作り直してから。collab_verify の次の番号は **07**。
   - 未検証: `-t` 付き checkout、detached HEAD 表示、`shot_verify.bat` (golden は Runtime.exe が撮るのでエディタの既定レイアウトは入らない。sub-08 で回る)。
   - 生成物: `cache\m66e_fx` (+ `.gitconfig`、3 ブランチ入り)、`cache\fx_test`、`cache\scm_m66e_*.png`、`cache\*.log`。
+- **sub-06 (M66f) からの申し送り** (coder SELF_EVAL + planner VERDICT round 1):
+  - 仕様確定 (planner が spec §4.1「リモート周り」/ §7 と sub-07 を修正済み): Pull は `behind > 0` のときだけ有効 (未 fetch の予測 `HEAD..@{u}` は必ず空。「Pull が内部で fetch する」は v1.5)。`push{setUpstream}` は省略可・既定 false・UI に口を作らない (**引数は削らない** = フィールド削除は bump 対象)。背景 fetch の失敗トーストは `error.code` のみ。`non_fast_forward` の detail は固定文。fetch / pull / push の応答に `remote`、`remote_state` に `hasRemote`。`CheckoutResult` → `TreeOpResult` に改名。
+  - **定期処理は worker の `handle_tick` に相乗りさせ、スレッドを増やさない。`handle_tick` は `recv_timeout` の前に毎周回呼ぶ** (timeout 枝だけだと 1 秒未満の間隔でメッセージが届く間タイマーが飢える。実機で発見、回帰テストあり)。
+  - **sub-07 の入口**: `pull{allowMerge:true}` の競合が `error.code=conflict` + 固定文を返し、リポジトリはマージ途中で止まる。`continue` を pull と同型の応答 (`{head, names, status}`) にすれば `GitTransaction` は `OpKind` を 1 つ足すだけ (`TreeOpResult` / `ApplyResult` を共有)。**競合ファイル一覧を git の案内文から解析しない** (`CONFLICT (modify/delete)` など別形がある。porcelain v2 の `u` レコードが正)。競合は git が stdout に書く (`classify_pull_failure`)。
+  - planner の nit (sub-07 で): pull の段階 B / C の実機は未検証 → sub-07 の競合シナリオ (同じシーンを両側で変更 → pull) が B 経路を通るので、そこでシーン開き直しまで観測する。左列の Changes タブが縦に混んできた → 競合中は一覧を競合モードに切り替える (spec §4.1 決定 9)、UI を足さないこと。
+  - planner の nit (sub-10 で): `auth_failed` の実 https 経路は fixture で作れない → README に「初回認証はターミナルで一度 `git push`」。
+  - **`.txt` のような未知拡張子にもエディタが `.meta` を作る** — 実機 fixture にテキストを置くと未追跡が増え checkout / pull が弾かれる。
+  - collab_verify の `# write` / `# git` は `..` を受け付ける (07 は兄弟に origin と workB を作成)。**bare origin は必ず `init --bare -b main`** (省くと HEAD が master になり clone がすれ違い「分岐しないはずのテスト」が緑になる)。次の番号は **08**。
+  - 生成物: `cache\m66f_fx` (+`.gitconfig`)、`cache\m66f_origin.git`、`cache\m66f_peer`、`cache\scm_m66f_*.png`、`cache\m66f_*.log`。
 - planner のエージェント ID はセッション限り。セッションを跨いだら `MODE: VERDICT` 用の planner を新規起動し、文脈は spec.md / sub-NN.md / この台帳で渡す。

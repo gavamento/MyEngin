@@ -36,6 +36,13 @@ struct SourceControlHost {
     bool autoFetch = true;
     int fetchIntervalMin = 5;
     std::function<void(bool, int)> applyFetchSettings;
+    // ---- M66g: 競合 ----
+    // マージの中止 / 解決の完了。どちらもトランザクション経由 (working tree が動く)
+    std::function<void()> requestMergeAbort;
+    std::function<void()> requestMergeContinue;
+    // `git mergetool` を外部のコンソールで開く (結果は監視が拾う)。
+    // ★窓から ShellExecuteW を呼ばない — Windows.h を窓に持ち込まないため
+    std::function<void()> openMergeTool;
 };
 
 // Source Control 窓 (M66b = 読み取り、M66c = stage / unstage / commit / History / diff)。
@@ -66,6 +73,9 @@ public:
 private:
     void DrawHeader(SourceControlSession& scm, const SourceControlHost& host);
     void DrawChanges(SourceControlSession& scm, const SourceControlHost& host);
+    // 競合中の Changes タブ (M66g、spec §4.1 決定 9)。**タブは増やさない** —
+    // 競合中に「変更一覧」を見せても、できることは解決か中止しかないため
+    void DrawConflicts(SourceControlSession& scm, const SourceControlHost& host);
     // 上流との関係の帯 + fetch / pull / push の 3 ボタン (M66f)
     void DrawRemoteBar(SourceControlSession& scm, const SourceControlHost& host);
     void DrawBranches(SourceControlSession& scm, const SourceControlHost& host);

@@ -66,6 +66,11 @@ struct GateInputs {
 std::vector<GateBlocker> ComputeBlockers(const GateInputs& in);
 // 阻害要因 → ツールチップの文言
 StrId GateBlockerText(GateBlocker b);
+// 競合の後始末 (中止 / 解決を完了 / ours / theirs) を止める理由だけを残す (M66g)。
+// ★`MergeInProgress` は**除く** — それを解消するための操作なので、含めると
+//   「競合中は競合を解決できない」という手詰まりになる。他の理由 (未保存 /
+//   再生中 / ビルド中) は競合の解決でも同じように効かせる
+std::vector<GateBlocker> BlockersForConflictOps(const std::vector<GateBlocker>& all);
 
 // 4 窓の未保存判定 (直列化してディスクと比較する = 高い)。
 // GitTransaction が 500 ms キャッシュする
@@ -122,6 +127,14 @@ public:
     //   予測は空になるが、実行後の names で必ず分類し直すので安全側
     void RequestPull();
 
+    // ---- 競合 (M66g) ----
+    // マージを中止して pull 前へ戻す / 解決済みのマージを 1 コミットで閉じる。
+    // `known` = 「競合 + マージ済み」の集合 (SourceControlSession::ConflictChangeSet)。
+    // ★これは**段階の事前予測**にしか使わない。実行後は必ず応答の names で分類し直す —
+    //   予測に頼ると、外部ツールで解決された分を見落とす
+    void RequestMergeAbort(std::vector<StageChange> known);
+    void RequestMergeContinue(std::vector<StageChange> known);
+
     // 毎フレーム 1 回。応答の消化とモーダルの描画。
     // ★scm_.Poll() より**後**に呼ぶこと (応答は Poll の中でフラグになる)
     void OnImGui(EngineContext& ctx, SourceControlSession& scm);
@@ -140,7 +153,13 @@ private:
         Revert,
         Checkout,
         Pull,
+        MergeAbort,    // M66g: マージの中止
+        MergeContinue, // M66g: 解決を完了 (マージコミット)
     };
+
+    // 変更集合を「git が返した names」から採る op か (= revert 以外)。
+    // revert だけは実行前後のディスクを見て組む (選んだパスが正本)
+    static bool IsTreeOp(OpKind k) { return k != OpKind::Revert; }
 
     enum class Phase {
         Idle,
@@ -148,11 +167,18 @@ private:
         Confirm, // 確認モーダル
         Running, // git 実行中 (応答待ち)
         Applying,// 応答が返った (次の OnImGui で後処理する)
+        // M66g: 競合で止まった pull の後始末。**一括モードのまま** conflicts を聞き、
+        // 「競合せずにマージ済みのファイル」だけを適用するために 1 往復挟む。
+        // ★ここを飛ばして EndBatch({}) すると、競合しなかったファイル (相手の
+        //   テクスチャなど) がディスクだけ新しくエディタに反映されないまま残る
+        ConflictScan,
         Report,  // 結果 / エラーの表示
         Restart, // 段階 C: 再起動の確認
     };
 
     void BeginOp(EngineContext& ctx, SourceControlSession& scm);
+    // 競合の後始末 (中止 / 完了) の共通の入口。既知の集合で段階を見積もって確認へ
+    void BeginConflictOp(OpKind kind, std::vector<StageChange> known);
     void ApplyResult(EngineContext& ctx, SourceControlSession& scm);
     // checkout の事前予測 (diff_names) を 1 回だけ投げる
     void SendPredict(SourceControlSession& scm);
@@ -192,6 +218,11 @@ private:
     // ★既定を true にしない。黙ってマージコミットを作ると、後から見た人には
     //   「誰も押していないコミット」が履歴に残る
     bool allowMerge_ = false;
+    // ---- 競合 (M66g) ----
+    bool conflictScanSent_ = false; // conflicts を投げたか (ConflictScan で 1 回だけ)
+    // マージ済みの適用が終わったら「競合しました」を出す (成功の後処理と
+    // 失敗の報告が **1 回の pull で両方起きる** のはこの経路だけ)
+    bool conflictReport_ = false;
 
     bool responseOk_ = false;
     std::string errorCode_;

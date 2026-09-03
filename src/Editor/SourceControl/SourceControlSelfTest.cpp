@@ -504,6 +504,113 @@ bool RunSourceControlSelfTest()
         fs::remove_all(dir, ec);
     }
 
+    // ---- (j) 競合のモデル (M66g) ----
+    // ★ここも**手で組んだ応答**で検査する。実際に競合を作るには 2 つのクローンと
+    //   分岐した履歴が要り、セルフテスト (D3D も git も無い前提) では組めない。
+    //   git 側の形は cargo test (porcelain / service) が押さえている
+    {
+        nlohmann::json result;
+        result["mergeInProgress"] = true;
+        result["rebaseInProgress"] = false;
+        result["conflicts"] = nlohmann::json::array();
+        auto conflict = [](const char* path, const char* kind, bool ours, bool theirs) {
+            nlohmann::json c;
+            c["path"] = path;
+            c["kind"] = kind;
+            c["ours"] = ours;
+            c["theirs"] = theirs;
+            return c;
+        };
+        result["conflicts"].push_back(
+            conflict("assets/scenes/main.scene.json", "both_modified", true, true));
+        result["conflicts"].push_back(
+            conflict("assets/textures/wall.png.meta", "deleted_by_them", true, false));
+        result["merged"] = nlohmann::json::array();
+        {
+            nlohmann::json m;
+            m["path"] = "assets/textures/floor.png";
+            m["status"] = "M";
+            result["merged"].push_back(m);
+            nlohmann::json d;
+            d["path"] = "assets/old.png";
+            d["status"] = "D";
+            result["merged"].push_back(d);
+        }
+        const ConflictList list = BuildConflictList(result);
+        check(list.valid && list.mergeInProgress && !list.rebaseInProgress,
+              "conflicts: the merge flag comes through");
+        check(list.files.size() == 2 && list.files[1].path == "assets/textures/wall.png.meta"
+                  && list.files[1].kind == "deleted_by_them" && list.files[1].ours
+                  && !list.files[1].theirs,
+              "conflicts: kind and the available sides survive the trip");
+        check(list.merged.size() == 2 && list.merged[0].kind == BatchChange::Kind::Modified
+                  && list.merged[1].kind == BatchChange::Kind::Deleted,
+              "conflicts: merged files arrive as a stage-classification input (D stays D)");
+
+        // ★欠けている ours / theirs を「採れる」と読まない。読むと、相手が消した
+        //   ファイルに theirs を出して git が pathspec で落ちる
+        nlohmann::json bare;
+        bare["conflicts"] = nlohmann::json::array();
+        bare["conflicts"].push_back(nlohmann::json{ { "path", "a.txt" } });
+        const ConflictList defaults = BuildConflictList(bare);
+        check(defaults.files.size() == 1 && !defaults.files[0].ours
+                  && !defaults.files[0].theirs && defaults.files[0].kind == "unmerged",
+              "conflicts: a response without ours/theirs is read as 'cannot take either'");
+
+        // 対の束ね: 本体 + `.meta` が両方競合 -> 1 行 2 パス
+        std::vector<ConflictFile> files;
+        files.push_back({ "assets/textures/wall.png.meta", "both_modified", true, true });
+        files.push_back({ "assets/textures/wall.png", "both_modified", true, false });
+        files.push_back({ "assets/terrain/l.terrain.edit", "both_modified", true, true });
+        std::vector<ConflictRow> rows = BuildConflictRows(files);
+        check(rows.size() == 2, "conflicts: the sidecar is folded into its asset");
+        check(rows[0].path == "assets/terrain/l.terrain.json"
+                  && rows[0].paths.size() == 1
+                  && rows[0].paths[0] == "assets/terrain/l.terrain.edit"
+                  && !rows[0].primaryConflicted,
+              "conflicts: a .terrain.edit alone is listed under its .terrain.json");
+        check(rows[1].path == "assets/textures/wall.png" && rows[1].paths.size() == 2
+                  && rows[1].paths[0] == "assets/textures/wall.png"
+                  && rows[1].paths[1] == "assets/textures/wall.png.meta"
+                  && rows[1].primaryConflicted,
+              "conflicts: the pair is resolved in one call, in ascending order");
+        // ★束の 1 つでも採れない側があれば行としても採れない (片方だけ解決される)
+        check(rows[1].ours && !rows[1].theirs,
+              "conflicts: a side the whole pair cannot take is not offered as 'take'");
+
+        // 保存のガード (spec §7)。サイドカーだけの競合でも本体の保存を止める
+        check(ConflictMatchesPath(files, "assets/textures/wall.png")
+                  && ConflictMatchesPath(files, "assets/textures/wall.png.meta")
+                  && ConflictMatchesPath(files, "assets/terrain/l.terrain.json"),
+              "conflicts: saving is blocked for the asset even if only its sidecar conflicts");
+        check(!ConflictMatchesPath(files, "assets/scenes/main.scene.json")
+                  && !ConflictMatchesPath(files, ""),
+              "conflicts: an unrelated document is still saveable");
+
+        // 競合中の操作のゲート: MergeInProgress **だけ**を外す
+        GateInputs merging;
+        merging.mergeInProgress = true;
+        const std::vector<GateBlocker> all = ComputeBlockers(merging);
+        check(all.size() == 1 && all[0] == GateBlocker::MergeInProgress,
+              "conflicts: a merge in progress closes the normal write gate");
+        check(BlockersForConflictOps(all).empty(),
+              "conflicts: abort / resolve / finish are allowed while the merge is open");
+        GateInputs both;
+        both.mergeInProgress = true;
+        both.sceneDirty = true;
+        both.playing = true;
+        const std::vector<GateBlocker> kept = BlockersForConflictOps(ComputeBlockers(both));
+        check(kept.size() == 2 && kept[0] == GateBlocker::SceneDirty
+                  && kept[1] == GateBlocker::Playing,
+              "conflicts: every other reason still blocks the conflict actions");
+
+        check(CollabOpKindOf(collabop::kConflicts) == CollabOpKind::Read
+                  && CollabOpKindOf(collabop::kResolve) == CollabOpKind::Write
+                  && CollabOpKindOf(collabop::kMergeAbort) == CollabOpKind::Write
+                  && CollabOpKindOf(collabop::kContinue) == CollabOpKind::Write,
+              "op kinds: conflicts is a read, the three fixes are writes");
+    }
+
     // ---- op の待ち方 (タイムアウトと OpInFlight) ----
     {
         check(CollabOpKindOf("hello") == CollabOpKind::Handshake

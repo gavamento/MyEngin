@@ -1,0 +1,9 @@
+{"id":1,"ok":true,"result":{"remote":{"ahead":1,"behind":1,"commits":[{"author":"<author>","date":"<time>","sha":"<sha>","subject":"peer-commit"}],"hasRemote":true,"upstream":"origin/main"},"status":{"ahead":1,"behind":1,"branch":"main","entries":[],"head":"<sha>","mergeInProgress":false,"rebaseInProgress":false,"upstream":"origin/main"}}}
+{"id":2,"ok":false,"error":{"code":"conflict","detail":"the merge produced conflicts","paths":["assets/scenes/main.scene.json"]}}
+{"id":3,"ok":true,"result":{"conflicts":[{"kind":"both_modified","ours":true,"path":"assets/scenes/main.scene.json","theirs":true}],"mergeInProgress":true,"merged":[{"path":"assets/peer.txt","status":"A"}],"rebaseInProgress":false}}
+{"id":4,"ok":true,"result":{"head":"<sha>","names":[{"path":"assets/peer.txt","status":"D"},{"path":"assets/scenes/main.scene.json","status":"M"}],"remote":{"ahead":1,"behind":1,"commits":[{"author":"<author>","date":"<time>","sha":"<sha>","subject":"peer-commit"}],"hasRemote":true,"upstream":"origin/main"},"status":{"ahead":1,"behind":1,"branch":"main","entries":[],"head":"<sha>","mergeInProgress":false,"rebaseInProgress":false,"upstream":"origin/main"}}}
+{"id":5,"ok":true,"result":{"conflicts":[],"mergeInProgress":false,"merged":[],"rebaseInProgress":false}}
+{"id":6,"ok":true,"result":{"ahead":1,"behind":1,"branch":"main","entries":[],"head":"<sha>","mergeInProgress":false,"rebaseInProgress":false,"upstream":"origin/main"}}
+{"id":7,"ok":false,"error":{"code":"bad_request","detail":"no merge or rebase is in progress"}}
+{"id":8,"ok":false,"error":{"code":"bad_request","detail":"no merge is in progress"}}
+{"id":9,"ok":false,"error":{"code":"bad_request","detail":"none of the given paths are unmerged"}}

@@ -102,6 +102,19 @@ std::vector<GateBlocker> ComputeBlockers(const GateInputs& in)
     return out;
 }
 
+std::vector<GateBlocker> BlockersForConflictOps(const std::vector<GateBlocker>& all)
+{
+    std::vector<GateBlocker> out;
+    out.reserve(all.size());
+    for (const GateBlocker b : all) {
+        if (b == GateBlocker::MergeInProgress) {
+            continue;
+        }
+        out.push_back(b);
+    }
+    return out;
+}
+
 StrId GateBlockerText(GateBlocker b)
 {
     switch (b) {
@@ -231,7 +244,53 @@ void GitTransaction::RequestPull()
     predicted_ = ApplyStage::A;
     predictSent_ = false;
     allowMerge_ = false;
+    conflictReport_ = false;
     phase_ = Phase::Predict;
+}
+
+// 競合の後始末 (中止 / 完了) は**予測を投げない**。
+// ★abort は HEAD を動かさないので `diff_names` が必ず空になり、continue は
+//   コミットするまで結果が決まらない。どちらも「今分かっている集合」
+//   (競合 + マージ済み) で段階を見積もり、実行後に応答の names で分類し直す
+void GitTransaction::BeginConflictOp(OpKind kind, std::vector<StageChange> known)
+{
+    op_ = kind;
+    target_.clear();
+    checkoutChanges_.clear();
+    reportPaths_.clear();
+    untrackedCount_ = 0;
+    predictSent_ = false;
+    conflictReport_ = false;
+    allowMerge_ = false;
+    UpdateActiveSceneRel();
+    paths_.clear();
+    paths_.reserve(known.size());
+    for (const StageChange& c : known) {
+        paths_.push_back(c.path);
+    }
+    std::sort(paths_.begin(), paths_.end());
+    paths_.erase(std::unique(paths_.begin(), paths_.end()), paths_.end());
+    StageInputs in;
+    in.changes = std::move(known);
+    in.activeScene = activeSceneRel_;
+    predicted_ = Classify(in);
+    phase_ = Phase::Confirm;
+}
+
+void GitTransaction::RequestMergeAbort(std::vector<StageChange> known)
+{
+    if (phase_ != Phase::Idle) {
+        return;
+    }
+    BeginConflictOp(OpKind::MergeAbort, std::move(known));
+}
+
+void GitTransaction::RequestMergeContinue(std::vector<StageChange> known)
+{
+    if (phase_ != Phase::Idle) {
+        return;
+    }
+    BeginConflictOp(OpKind::MergeContinue, std::move(known));
 }
 
 void GitTransaction::SendPredict(SourceControlSession& scm)
@@ -316,9 +375,9 @@ void GitTransaction::BeginOp(EngineContext& ctx, SourceControlSession& scm)
     errorDetail_.clear();
     reportPaths_.clear();
     phase_ = Phase::Running;
-    // ★checkout と pull は**同じ受け取り方**。違うのは投げる op だけで、
-    //   応答 (TreeOpResult) から先の後処理は 1 本に寄せてある
-    if (op_ == OpKind::Checkout || op_ == OpKind::Pull) {
+    // ★checkout / pull / merge_abort / continue は**同じ受け取り方**。違うのは
+    //   投げる op だけで、応答 (TreeOpResult) から先の後処理は 1 本に寄せてある
+    if (IsTreeOp(op_)) {
         auto onDone = [this](const SourceControlSession::TreeOpResult& r) {
             responseOk_ = r.ok;
             errorCode_ = r.errorCode;
@@ -330,10 +389,19 @@ void GitTransaction::BeginOp(EngineContext& ctx, SourceControlSession& scm)
             checkoutChanges_ = r.changes;
             phase_ = Phase::Applying;
         };
-        if (op_ == OpKind::Pull) {
+        switch (op_) {
+        case OpKind::Pull:
             scm.Pull(allowMerge_, onDone);
-        } else {
+            break;
+        case OpKind::MergeAbort:
+            scm.MergeAbort(onDone);
+            break;
+        case OpKind::MergeContinue:
+            scm.MergeContinue(onDone);
+            break;
+        default:
             scm.Checkout(target_, onDone);
+            break;
         }
         return;
     }
@@ -535,6 +603,14 @@ void GitTransaction::ApplyStageB(EngineContext& ctx, const std::vector<StageChan
 void GitTransaction::ApplyResult(EngineContext& ctx, SourceControlSession& scm)
 {
     (void)scm;
+    if (!responseOk_ && op_ == OpKind::Pull && errorCode_ == collaberr::kConflict) {
+        // ★マージ競合 (M66g)。**ここで EndBatch({}) してはいけない** — 競合しなかった
+        //   ファイルは既にディスクへ書かれており、捨てるとエディタだけが古いまま残る。
+        //   一括モードを保ったまま conflicts を 1 往復聞いて、マージ済みの分だけ適用する
+        conflictScanSent_ = false;
+        phase_ = Phase::ConflictScan;
+        return;
+    }
     if (!responseOk_) {
         // 失敗。**必ず EndBatch を通す** — 通さないとホットリロードが止まったまま残る
         if (ctx.reloadHub != nullptr) {
@@ -551,7 +627,7 @@ void GitTransaction::ApplyResult(EngineContext& ctx, SourceControlSession& scm)
     // ★op ごとに違うのは**ここだけ** (「変更集合をどう決めるか")。
     //   revert = 実行前後のディスク、checkout = git が返した before..after の差分
     std::vector<StageChange> changes;
-    if (op_ == OpKind::Checkout || op_ == OpKind::Pull) {
+    if (IsTreeOp(op_)) {
         changes = std::move(checkoutChanges_);
         checkoutChanges_.clear();
         ResolveMetaGuidChanges(ctx, changes);
@@ -568,6 +644,8 @@ void GitTransaction::ApplyResult(EngineContext& ctx, SourceControlSession& scm)
         if (ctx.reloadHub != nullptr) {
             ctx.reloadHub->EndBatch({});
         }
+        // 競合の報告より再起動が優先 (再起動後は窓が競合モードで開く)
+        conflictReport_ = false;
         restartFailed_ = false;
         phase_ = Phase::Restart;
         return;
@@ -596,15 +674,26 @@ void GitTransaction::ApplyResult(EngineContext& ctx, SourceControlSession& scm)
     if (applied_ == ApplyStage::B) {
         ApplyStageB(ctx, changes);
     }
-    const char* opName =
-        op_ == OpKind::Checkout ? "checkout" : op_ == OpKind::Pull ? "pull" : "revert";
-    if (hooks_.toast) {
+    const char* opName = op_ == OpKind::Checkout      ? "checkout"
+        : op_ == OpKind::Pull                         ? "pull"
+        : op_ == OpKind::MergeAbort                   ? "merge_abort"
+        : op_ == OpKind::MergeContinue                ? "continue"
+                                                      : "revert";
+    // ★競合で止まった pull では成功のトーストを出さない。「取り込みました」と
+    //   「競合しました」が同時に出ると、どちらが本当か読めない
+    if (hooks_.toast && !conflictReport_) {
         char buf[192];
         if (op_ == OpKind::Checkout) {
             std::snprintf(buf, sizeof(buf), Tr(StrId::Scm_CheckoutDone), target_.c_str(),
                           static_cast<int>(changes.size()));
         } else if (op_ == OpKind::Pull) {
             std::snprintf(buf, sizeof(buf), Tr(StrId::Scm_PullDone),
+                          static_cast<int>(changes.size()));
+        } else if (op_ == OpKind::MergeAbort) {
+            std::snprintf(buf, sizeof(buf), Tr(StrId::Scm_AbortDone),
+                          static_cast<int>(changes.size()));
+        } else if (op_ == OpKind::MergeContinue) {
+            std::snprintf(buf, sizeof(buf), Tr(StrId::Scm_ContinueDone),
                           static_cast<int>(changes.size()));
         } else {
             std::snprintf(buf, sizeof(buf), Tr(StrId::Scm_DiscardDone),
@@ -617,6 +706,12 @@ void GitTransaction::ApplyResult(EngineContext& ctx, SourceControlSession& scm)
     MYE_LOG_INFO("[collab] %s applied: %zu path(s), stage %c", opName, changes.size(),
                  applied_ == ApplyStage::A ? 'A' : 'B');
     paths_.clear();
+    if (conflictReport_) {
+        // マージ済みの分は適用した。残りは競合の報告 (一覧は窓の競合モードが持つ)
+        conflictReport_ = false;
+        phase_ = Phase::Report;
+        return;
+    }
     phase_ = Phase::Idle;
 }
 
@@ -634,6 +729,26 @@ void GitTransaction::OnImGui(EngineContext& ctx, SourceControlSession& scm)
     if (phase_ == Phase::Predict && !predictSent_) {
         SendPredict(scm);
     }
+    if (phase_ == Phase::ConflictScan && !conflictScanSent_) {
+        // ★一括モード (BeginBatch) を保ったまま 1 往復。マージ済みのファイルを
+        //   受け取ってから EndBatch へ進む
+        conflictScanSent_ = true;
+        scm.RequestConflicts([this](bool ok, const ConflictList& list) {
+            checkoutChanges_ = ok ? list.merged : std::vector<StageChange>{};
+            if (ok) {
+                // 失敗モーダルの一覧は「競合したファイル」。error.paths でも同じ物が
+                // 来るが、conflicts の方が新しい (解決の途中で変わりうる)
+                reportPaths_.clear();
+                for (const ConflictFile& f : list.files) {
+                    reportPaths_.push_back(f.path);
+                }
+            }
+            // マージ済みの適用は成功経路と同じ 1 本を通す。報告は適用の後
+            responseOk_ = true;
+            conflictReport_ = true;
+            phase_ = Phase::Applying;
+        });
+    }
 
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     // ★ImGuiCond_Appearing ではなく **Always**。AlwaysAutoResize の窓は
@@ -644,10 +759,23 @@ void GitTransaction::OnImGui(EngineContext& ctx, SourceControlSession& scm)
                                    vp->WorkPos.y + vp->WorkSize.y * 0.5f),
                             ImGuiCond_Always, ImVec2(0.5f, 0.5f));
 
-    // モーダルの題名は op ごと。pull は「切替」でも「破棄」でもないので 3 つ目を持つ
+    // モーダルの題名は op ごと。pull は「切替」でも「破棄」でもないので別に持つ
     const StrId titleId = op_ == OpKind::Checkout ? StrId::Scm_SwitchTitle
         : op_ == OpKind::Pull                     ? StrId::Scm_PullTitle
+        : op_ == OpKind::MergeAbort               ? StrId::Scm_AbortTitle
+        : op_ == OpKind::MergeContinue            ? StrId::Scm_ContinueTitle
                                                   : StrId::Scm_DiscardTitle;
+
+    if (phase_ == Phase::ConflictScan) {
+        // 競合の後始末を組み立てている最中。**入力は止めたまま** —
+        // ここで別のボタンを押せると、一括モードの途中で次の op が飛ぶ
+        ImGui::OpenPopup(Tr(titleId));
+        if (ImGui::BeginPopupModal(Tr(titleId), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::TextDisabled("%s", Tr(StrId::Scm_OpRunning));
+            ImGui::EndPopup();
+        }
+        return;
+    }
 
     if (phase_ == Phase::Predict) {
         // 予測の待ち。**モーダルで入力を止める** — ここで別のボタンを押せると、
@@ -682,6 +810,14 @@ void GitTransaction::OnImGui(EngineContext& ctx, SourceControlSession& scm)
                     ImGui::TextUnformatted(Tr(StrId::Scm_PullMergeNote));
                     ImGui::PopStyleColor();
                 }
+            } else if (op_ == OpKind::MergeAbort) {
+                // 中止で失われるのは「マージが降らせた分」。**元に戻せない**ので
+                // 件数だけでなく警告色で言う
+                ImGui::PushStyleColor(ImGuiCol_Text, themeColor::Warning);
+                ImGui::TextUnformatted(Tr(StrId::Scm_AbortBody));
+                ImGui::PopStyleColor();
+            } else if (op_ == OpKind::MergeContinue) {
+                ImGui::Text(Tr(StrId::Scm_ContinueBody), static_cast<int>(paths_.size()));
             } else {
                 ImGui::Text(Tr(StrId::Scm_DiscardBody), static_cast<int>(paths_.size()));
             }
@@ -708,6 +844,8 @@ void GitTransaction::OnImGui(EngineContext& ctx, SourceControlSession& scm)
             } else {
                 const StrId confirmId = op_ == OpKind::Checkout ? StrId::Scm_SwitchConfirm
                     : op_ == OpKind::Pull                       ? StrId::Scm_PullConfirm
+                    : op_ == OpKind::MergeAbort                 ? StrId::Scm_AbortConfirm
+                    : op_ == OpKind::MergeContinue              ? StrId::Scm_ContinueConfirm
                                                                 : StrId::Scm_DiscardConfirm;
                 if (ImGui::Button(Tr(confirmId), ImVec2(140, 0))) {
                     BeginOp(ctx, scm);
@@ -736,6 +874,13 @@ void GitTransaction::OnImGui(EngineContext& ctx, SourceControlSession& scm)
             //   読むしかなくなる (窓の中では読めない)
             if (errorCode_ == collaberr::kLocalChangesOverwritten) {
                 ImGui::TextWrapped("%s", Tr(StrId::Scm_OverwriteHint));
+            }
+            // ★競合したまま閉じる先を書く (M66g)。ここで「Changes タブへ」と
+            //   言わないと、押した人は「取り込みに失敗した」としか読めない
+            if (errorCode_ == collaberr::kConflict) {
+                ImGui::TextWrapped("%s", Tr(StrId::Scm_ConflictHint));
+            } else if (errorCode_ == collaberr::kMergeInProgress) {
+                ImGui::TextWrapped("%s", Tr(StrId::Scm_ContinueBlocked));
             }
             if (!reportPaths_.empty()) {
                 if (ImGui::BeginChild("###ScmErrPaths", ImVec2(420.0f, 100.0f),

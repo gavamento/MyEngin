@@ -49,6 +49,17 @@ constexpr const char* kFetch = "fetch";
 constexpr const char* kPull = "pull";
 constexpr const char* kPush = "push";
 constexpr const char* kRemoteState = "remote_state";
+// M66g。conflicts は読み取り系 (上の kReadOps に既に載っている)。resolve /
+// merge_abort / continue は working tree を書き換える。**merge_abort と continue は
+// GitTransaction 経由でだけ投げる** (段階 A/B/C の後処理が要る)。resolve は
+// 競合したファイルだけを書き換えるので、監視のホットリロードに任せてよい
+constexpr const char* kConflicts = "conflicts";
+constexpr const char* kResolve = "resolve";
+constexpr const char* kMergeAbort = "merge_abort";
+constexpr const char* kContinue = "continue";
+// resolve の side。綴りは ops.rs の SIDE_OURS / SIDE_THEIRS が正本
+constexpr const char* kSideOurs = "ours";
+constexpr const char* kSideTheirs = "theirs";
 } // namespace collabop
 
 // op の待ち方 (spec §4.4「タイムアウト」)。
@@ -102,6 +113,10 @@ constexpr const char* kLocalChangesOverwritten = "local_changes_overwritten";
 constexpr const char* kNonFastForward = "non_fast_forward";
 // M66f: 認証に失敗した。Credential Manager のダイアログを閉じた場合もここへ来る
 constexpr const char* kAuthFailed = "auth_failed";
+// M66g: pull がマージ競合で止まった。error.paths に競合したファイルが載る
+constexpr const char* kConflict = "conflict";
+// M66g: 未解決のまま continue した。error.paths に残りが載る
+constexpr const char* kMergeInProgress = "merge_in_progress";
 // C++ 側が合成する疑似 code (サービスは返さない)。応答が期限内に来なかった要求は
 // **必ずコールバックを呼んで消す** — 呼ばないと窓が「実行中」のまま二度と操作できない
 constexpr const char* kTimeout = "timeout";

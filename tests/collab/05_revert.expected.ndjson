@@ -1,8 +1,8 @@
-{"id":1,"ok":true,"result":{"ahead":0,"behind":0,"branch":"main","entries":[],"head":"<sha>","upstream":""}}
-{"id":2,"ok":true,"result":{"ahead":0,"behind":0,"branch":"main","entries":[{"conflict":false,"index":".","path":"assets/notes.txt","worktree":"M"},{"conflict":false,"index":"?","path":"assets/notes.txt.meta","worktree":"?"}],"head":"<sha>","upstream":""}}
-{"id":3,"ok":true,"result":{"deleted":1,"reverted":2,"status":{"ahead":0,"behind":0,"branch":"main","entries":[],"head":"<sha>","upstream":""}}}
-{"id":4,"ok":true,"result":{"ahead":0,"behind":0,"branch":"main","entries":[],"head":"<sha>","upstream":""}}
-{"id":5,"ok":true,"result":{"deleted":1,"reverted":1,"status":{"ahead":0,"behind":0,"branch":"main","entries":[],"head":"<sha>","upstream":""}}}
+{"id":1,"ok":true,"result":{"ahead":0,"behind":0,"branch":"main","entries":[],"head":"<sha>","mergeInProgress":false,"rebaseInProgress":false,"upstream":""}}
+{"id":2,"ok":true,"result":{"ahead":0,"behind":0,"branch":"main","entries":[{"conflict":false,"index":".","path":"assets/notes.txt","worktree":"M"},{"conflict":false,"index":"?","path":"assets/notes.txt.meta","worktree":"?"}],"head":"<sha>","mergeInProgress":false,"rebaseInProgress":false,"upstream":""}}
+{"id":3,"ok":true,"result":{"deleted":1,"reverted":2,"status":{"ahead":0,"behind":0,"branch":"main","entries":[],"head":"<sha>","mergeInProgress":false,"rebaseInProgress":false,"upstream":""}}}
+{"id":4,"ok":true,"result":{"ahead":0,"behind":0,"branch":"main","entries":[],"head":"<sha>","mergeInProgress":false,"rebaseInProgress":false,"upstream":""}}
+{"id":5,"ok":true,"result":{"deleted":1,"reverted":1,"status":{"ahead":0,"behind":0,"branch":"main","entries":[],"head":"<sha>","mergeInProgress":false,"rebaseInProgress":false,"upstream":""}}}
 {"id":6,"ok":false,"error":{"code":"bad_request","detail":"paths must not be empty"}}
 {"id":7,"ok":true,"result":{"from":"HEAD","names":[],"to":"HEAD"}}
 {"id":8,"ok":true,"result":{"from":"HEAD~1","names":[{"path":"assets/added.txt","status":"A"}],"to":"HEAD"}}

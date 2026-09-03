@@ -2,6 +2,6 @@
 {"id":2,"ok":true,"result":{"email":"mye@example.com","name":"","ok":false}}
 {"id":3,"ok":true,"result":{"email":"","name":"","ok":false}}
 {"id":4,"ok":true,"result":{"email":"mye@example.com","name":"mye","ok":true}}
-{"id":5,"ok":true,"result":{"status":{"ahead":0,"behind":0,"branch":"main","entries":[{"conflict":false,"index":"A","path":"assets/notes.txt","worktree":"."}],"head":"<sha>","upstream":""}}}
-{"id":6,"ok":true,"result":{"head":"<sha>","status":{"ahead":0,"behind":0,"branch":"main","entries":[],"head":"<sha>","upstream":""}}}
+{"id":5,"ok":true,"result":{"status":{"ahead":0,"behind":0,"branch":"main","entries":[{"conflict":false,"index":"A","path":"assets/notes.txt","worktree":"."}],"head":"<sha>","mergeInProgress":false,"rebaseInProgress":false,"upstream":""}}}
+{"id":6,"ok":true,"result":{"head":"<sha>","status":{"ahead":0,"behind":0,"branch":"main","entries":[],"head":"<sha>","mergeInProgress":false,"rebaseInProgress":false,"upstream":""}}}
 {"id":7,"ok":true,"result":{"commits":[{"author":"<author>","date":"<time>","sha":"<sha>","subject":"M66c: commit works once the identity is set"}]}}

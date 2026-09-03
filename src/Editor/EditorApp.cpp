@@ -698,6 +698,32 @@ void EditorApp::OnImGui(EngineContext& ctx)
             // (working tree が入れ替わる = ゲートと段階 A/B/C が要る)
             gitTx_.RequestPull();
         };
+        // M66g: 競合の後始末。**中止も完了もトランザクション経由** (working tree が
+        // 入れ替わる)。予測に使う集合はセッションが持っている競合一覧から作る
+        scmHost.requestMergeAbort = [this]() {
+            gitTx_.RequestMergeAbort(scm_.ConflictChangeSet());
+        };
+        scmHost.requestMergeContinue = [this]() {
+            gitTx_.RequestMergeContinue(scm_.ConflictChangeSet());
+        };
+        scmHost.openMergeTool = [this, &ctx]() {
+            // ★エディタからは待たない (mergetool は対話的)。別コンソールで走らせ、
+            //   結果はファイル監視 -> status -> 競合一覧の取り直しで入ってくる。
+            //   `/k` にしているのは「mergetool が設定されていません」の案内を
+            //   読ませるため (`/c` だと窓が一瞬で閉じて何も残らない)
+            const std::wstring args =
+                L"/k cd /d \"" + ctx.projectRoot + L"\" && git mergetool";
+            const HINSTANCE r = ShellExecuteW(nullptr, L"open", L"cmd.exe", args.c_str(), nullptr,
+                                              SW_SHOWNORMAL);
+            if (reinterpret_cast<INT_PTR>(r) <= 32) {
+                MYE_LOG_ERROR("[collab] could not start git mergetool (%lld)",
+                              static_cast<long long>(reinterpret_cast<INT_PTR>(r)));
+                toasts_.Notify(LogLevel::Error, Tr(StrId::Scm_MergeToolFailed));
+                return;
+            }
+            MYE_LOG_INFO("[collab] launched git mergetool in a console");
+            toasts_.Notify(LogLevel::Info, Tr(StrId::Scm_MergeToolOpened));
+        };
         scmHost.requestCheckout = [this](std::string target) {
             // M66e: 切替も破棄と同じトランザクション経由。窓は名前を渡すだけで、
             // 事前判定 (diff_names) → 確認 → checkout → 後処理は GitTransaction が持つ
@@ -1222,6 +1248,16 @@ void EditorApp::HandleShortcuts(EngineContext& ctx)
 
 void EditorApp::SaveCurrentScene(EngineContext& ctx)
 {
+    // ★M66g: 競合中の文書は保存しない (spec §7)。ディスクには競合マーカー入りの
+    //   JSON があり、メモリには pull 前の内容がある。ここで保存すると
+    //   **マーカーごと上書きして黙って ours を選ぶ** = 相手の変更が履歴にも
+    //   残らないまま消える。File メニュー / Ctrl+S / 未保存モーダル / 「保存して
+    //   コミット」が全部この 1 箇所を通るので、ガードもここ 1 つで足りる
+    if (scm_.IsConflictedPath(actorEdit_ ? actorEdit_->path : scenePath_)) {
+        MYE_LOG_WARN("[collab] save blocked: the open document is conflicting");
+        toasts_.Notify(LogLevel::Error, Tr(StrId::Scm_SaveBlockedConflict));
+        return;
+    }
     // ミニシーン編集中は「保存 = アセットの保存」(M48k)。File メニュー / Ctrl+S /
     // 未保存確認モーダルの「保存」が全部ここを通るので、分岐はこの 1 箇所で足りる
     if (actorEdit_) {

@@ -146,6 +146,17 @@ ProjectSettings の render-path ラジオ (永続化されない) は対象外�
 - `.meta` の guid 変化: 予測に無かった `.meta` は C へ倒す (実行後の比較)。
 - Asset Browser の [Rebuild Scripts] は `StartGameLogicBuild` 経由に一本化し `EditorApp` が HANDLE を保持 → ゲートの `ScriptBuildRunning` に載る。旧 `AssetOps::RebuildGameLogic` (可視 cmd 窓 + 失敗時 `pause`) は削除。出力は `<project>/cache/build_scripts.log` + トースト。**失敗時のエラー行を Console へ流して旧 UX (その場で読める) と同等にする** — sub-08 で。
 
+**競合周り (sub-07 round 1 で確定)**:
+- `resolve{paths[], side}` (単数ではない): 本体と `.meta` を 1 往復で解決しないと「本体は theirs、.meta は競合のまま」が 1 往復ぶん存在する。ours / theirs を採れるかは porcelain `u` の **モード (m2 / m3) で決める** (XY の文字だと `AU` のように相手の版が無いのに Y='U' な組があり `checkout --theirs` が落ちる。実測)。版が無い側を選ぶ = `git rm`。
+- `conflicts` op が `{files[{path, kind, ours, theirs}], merged[{path,status}], mergeInProgress, rebaseInProgress}` を返す。種別は git-status.txt の 7 組 (`both_modified` / `deleted_by_us` / `deleted_by_them` / `added_by_both` / `both_deleted` / `added_by_us` / `added_by_them`) + `unmerged`。競合ファイル一覧を git の案内文から解析しない。
+- `status` / `repo_check` の両方に `mergeInProgress` / `rebaseInProgress` (status に無いと pull が競合した直後のゲートが開いたまま = 決定 9 が成立しない)。
+- 競合した pull は **`EndBatch({})` せず** `conflicts` を 1 往復聞いて `merged[]` の A 段階だけ適用してから競合を報告する (`Phase::ConflictScan`)。`merged[]` は `diff --name-status HEAD` 由来なので pull 前からの未コミット変更も混ざる (実害 = 余分に読み直すだけ)。
+- `merge_abort` / `continue` の応答は pull と同型 `{head, names, status, remote}`。abort の names は実行前後のディスクの在り方から A/D/M (HEAD が動かないので diff は必ず空)。`continue` は未解決があれば `merge_in_progress` + 残りのパス、全件解決なら `commit --no-edit`。
+- `continue` は **merge のみ**。外で始まった rebase の続行は `bad_request` (GIT_EDITOR が要る経路)。中止は rebase も受ける。
+- `resolve` はトランザクションを通さない (競合ファイルだけを書き換える = 監視 → ReloadHub の通常経路で拾える)。
+- **競合したシーンは JSON として壊れているので起動時に読めず、エディタは空シーンで開く**。`SaveCurrentScene` 先頭の `IsConflictedPath` (actor edit のパスも対象) が「空シーンを競合ファイルへ上書き」を止める唯一の砦。
+- 競合の入口は 2 つ: pull の応答 (ConflictScan) と、起動時に外の git で競合していた場合 (status の `mergeInProgress` → 自動で `conflicts`)。
+
 **ゲートの阻害要因 (列挙型 `GateBlocker`)**: `SceneDirty` / `ActorEdit` / `AnimationDirty` /
 `ControllerDirty` / `MixerDirty` / `ProjectSettingsDirty` / `Playing` / `NetActive` / `BuildRunning` /
 `ScriptBuildRunning` / `OpInFlight` / `MergeInProgress` / `ServiceUnavailable`。全件を列挙して返す (最初の 1 件で止めない)。
@@ -294,7 +305,8 @@ sub-08 / sub-09 は sub-05〜07 と独立。
 - `kReloadRetryMax = 60` の WARN は実機で発火させていない (共有違反を 60 フレーム続ける再現手段が無い)。カウントの配線はコードレビューで確認 (`ReloadHub.cpp` の `retryAttempt_` 引き継ぎ)。
 - `kCollabMaxBatchApply = 200` と `kReloadRetryMax = 60` は R2 で確定した初期値。実機で不便なら定数だけ変える (仕様変更として §8 に積む)。
 - 競合中のアクティブシーン: 競合マーカー入り JSON は開けない (決定 9)。競合中はアクティブシーンが競合一覧にある間 **Save を止める** (保存 = マーカーを潰して「ours」を黙って選ぶのと同じ)。詳細は sub-07。
-- `pull` の非 ff: 既定 `--ff-only` で `non_fast_forward` を返し、UI が「マージして pull」を提示 → `pull{allowMerge:true}` (`--no-rebase`)。競合は sub-07。
+- `pull` の非 ff: 既定 `--ff-only` で `non_fast_forward` を返し、UI が「マージして pull」を提示 → `pull{allowMerge:true}` (`--no-rebase`)。競合は §4.1「競合周り」。
+- マージ中に pull を投げると `git_failed` + 生文 ("Pulling is not possible because you have unmerged files.")。UI ではゲートで到達しないが `merge_in_progress` へ分類する (sub-08 の衛生)。
 
 ## 8. 変更履歴
 
@@ -321,3 +333,4 @@ sub-08 / sub-09 は sub-05〜07 と独立。
 - 同上: §4.1 に「ブランチ周り」を新設 (応答に names / 未出生は全部 A / branch_create はゲート外 / detail 固定文 / -t / guid / Rebuild Scripts の一本化)。旧 RebuildGameLogic の可視 cmd 窓 (失敗時 pause で読めた) が消える代わりに、失敗時のエラー行を Console へ流す should を sub-08 に割り当て。
 - 同上: §4.3 の既定ドック (左列) と Diff 別窓は sub-05 で実装済み (`cache/scm_m66e_layout.png`)。§7 の Rebuild Scripts の穴を閉じた。
 - 2026-09-03 (sub-06 round 1、coder SELF_EVAL): §4.1 に GCM の実測 (GIT_TERMINAL_PROMPT=0 だけでは GUI が出る) と「リモート周り」を新設 (hasRemote / 応答に remote / Pull は behind > 0 / setUpstream 省略可 / detail 固定文 / 競合は stdout / タイマーは毎周回 / 失敗トーストは code のみ)。質問 1〜3 はすべて coder の判断を採用。§7 の GCM 未決を閉じた。
+- 2026-09-03 (sub-07 round 1、coder SELF_EVAL): §4.1 に「競合周り」を新設 (resolve は paths[] / モードで側を決める / conflicts が merged[] と 7 種別を返す / status に merge フラグ / 競合 pull は ConflictScan / abort・continue は pull と同型 / continue は merge のみ / resolve はトランザクション外 / 競合シーンは空で開くので保存ガードが唯一の砦)。元の「pull の応答に mergedPaths」は conflicts op へ移した (coder の判断を採用)。既存の期待 NDJSON 7 本の撮り直しは 2 キー追加だけであることを diff で機械確認。質問 1 (merge_in_progress 分類) は sub-08 へ、質問 2 (Scm_ComingSoon) も sub-08 へ。

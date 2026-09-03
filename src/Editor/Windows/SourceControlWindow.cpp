@@ -95,6 +95,32 @@ const char* ErrorText(const std::string& code)
     return nullptr;
 }
 
+// 競合の種別 (サービスの綴り) → 文言 (M66g)。
+// ★表に無い綴りは「マージできませんでした」に落とす。git が組を増やしても
+//   表示が「不明」になるだけで、解決の操作 (ours / theirs) は効き続ける
+StrId ConflictKindText(const std::string& kind)
+{
+    struct Row {
+        const char* kind;
+        StrId id;
+    };
+    static const Row kTable[] = {
+        { "both_modified", StrId::ScmConf_BothModified },
+        { "added_by_both", StrId::ScmConf_AddedByBoth },
+        { "deleted_by_them", StrId::ScmConf_DeletedByThem },
+        { "deleted_by_us", StrId::ScmConf_DeletedByUs },
+        { "both_deleted", StrId::ScmConf_BothDeleted },
+        { "added_by_us", StrId::ScmConf_AddedByUs },
+        { "added_by_them", StrId::ScmConf_AddedByThem },
+    };
+    for (const Row& r : kTable) {
+        if (kind == r.kind) {
+            return r.id;
+        }
+    }
+    return StrId::ScmConf_Unmerged;
+}
+
 // History に読み込む件数 (spec の M66c: log{n=100})
 constexpr int kHistoryCount = 100;
 
@@ -503,6 +529,13 @@ void SourceControlWindow::DrawChanges(SourceControlSession& scm, const SourceCon
         ImGui::TextDisabled("%s", Tr(StrId::Scm_Loading));
         return;
     }
+    // ★競合中は一覧ごと競合モードへ切り替える (spec §4.1 決定 9)。タブもボタンも
+    //   増やさない — 競合中にできることは「解決する」「中止する」だけで、
+    //   stage / commit / pull はすべてゲートで閉じている
+    if (scm.MergeInProgress() || scm.RebaseInProgress() || model.HasConflict()) {
+        DrawConflicts(scm, host);
+        return;
+    }
 
     DrawRemoteBar(scm, host);
     ImGui::Separator();
@@ -609,6 +642,117 @@ void SourceControlWindow::DrawChanges(SourceControlSession& scm, const SourceCon
     SyncDiffRequest(scm);
     ImGui::Separator();
     DrawCommitBox(scm, host, compact);
+}
+
+void SourceControlWindow::DrawConflicts(SourceControlSession& scm, const SourceControlHost& host)
+{
+    // ★見出しは赤。競合中は「保存もコミットも切替もできない」異常な状態で、
+    //   そこにいることが 1 行で分かる必要がある
+    ImGui::PushStyleColor(ImGuiCol_Text, themeColor::Error);
+    ImGui::TextWrapped("%s", Tr(scm.RebaseInProgress() ? StrId::Scm_RebaseInProgress
+                                                       : StrId::Scm_ConflictMode));
+    ImGui::PopStyleColor();
+    const ConflictList& list = scm.Conflicts();
+    if (!list.valid) {
+        ImGui::TextDisabled("%s", Tr(StrId::Scm_Loading));
+        return;
+    }
+    const std::vector<ConflictRow> rows = BuildConflictRows(list.files);
+    const bool busy = scm.WriteInFlight();
+    // ★MergeInProgress を除いたゲートで判定する。含めると「競合中は競合を
+    //   解決できない」という手詰まりになる (未保存 / 再生中 / ビルド中は効かせる)
+    const std::vector<GateBlocker> blockers = BlockersForConflictOps(host.writeBlockers);
+    const bool gateOpen = blockers.empty();
+    const bool allResolved = rows.empty();
+
+    // ---- 操作列 (既定のドック幅 285px に収まるのは 3 個まで) ----
+    ImGui::BeginDisabled(busy || !gateOpen || !host.requestMergeAbort);
+    if (ImGui::Button(Tr(StrId::Scm_AbortMerge))) {
+        host.requestMergeAbort();
+    }
+    ImGui::EndDisabled();
+    // ★BeginDisabled の外でツールチップを出す (中だとホバー判定ごと殺される)
+    if (!gateOpen && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+        DrawBlockerTooltip(blockers);
+    }
+    ImGui::SameLine();
+    ImGui::BeginDisabled(busy || !gateOpen || !allResolved || !host.requestMergeContinue);
+    if (ImGui::Button(Tr(StrId::Scm_ContinueMerge))) {
+        host.requestMergeContinue();
+    }
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+        if (!allResolved) {
+            // 「押せない理由」がゲートではなく**残件**であることを言う
+            ImGui::SetTooltip(Tr(StrId::Scm_ConflictRemaining), static_cast<int>(rows.size()));
+        } else if (!gateOpen) {
+            DrawBlockerTooltip(blockers);
+        }
+    }
+    ImGui::SameLine();
+    ImGui::BeginDisabled(busy || !host.openMergeTool);
+    if (ImGui::Button(Tr(StrId::Scm_MergeTool))) {
+        // 外部ツールは非同期 (別コンソール)。結果はファイル監視が拾って
+        // 一覧が減る = ここでは待たない
+        host.openMergeTool();
+    }
+    ImGui::EndDisabled();
+
+    ImGui::Separator();
+    if (allResolved) {
+        ImGui::PushStyleColor(ImGuiCol_Text, themeColor::Success);
+        ImGui::TextWrapped("%s", Tr(StrId::Scm_ConflictAllResolved));
+        ImGui::PopStyleColor();
+    } else {
+        ImGui::Text(Tr(StrId::Scm_ConflictCount), static_cast<int>(rows.size()));
+    }
+    if (!list.merged.empty()) {
+        // 競合しなかった分は**もう適用されている** (GitTransaction が EndBatch で流す)。
+        // 件数だけ出しておかないと「pull したのに何も来ていない」ように見える
+        ImGui::TextDisabled(Tr(StrId::Scm_ConflictMerged), static_cast<int>(list.merged.size()));
+    }
+
+    if (ImGui::BeginChild("###ScmConflictList", ImVec2(0, 0), ImGuiChildFlags_Borders)) {
+        for (const ConflictRow& row : rows) {
+            ImGui::PushID(row.path.c_str());
+            ImGui::PushStyleColor(ImGuiCol_Text, themeColor::Error);
+            ImGui::TextUnformatted("!");
+            ImGui::PopStyleColor();
+            ImGui::SameLine();
+            ImGui::TextUnformatted(row.path.c_str());
+            if (ImGui::IsItemHovered()) {
+                ImGui::BeginTooltip();
+                ImGui::TextUnformatted(row.path.c_str());
+                for (const std::string& p : row.paths) {
+                    // 対で解決する = 実際に git へ渡すパスを見せる
+                    ImGui::TextDisabled("%s", p.c_str());
+                }
+                ImGui::EndTooltip();
+            }
+            // ours / theirs は**どちらも常に押せる**。片側の版が無い競合
+            // (modify/delete) では「その選択でファイルが消える」という意味になるので、
+            // 無効化せずにツールチップで伝える
+            if (ImGui::SmallButton(Tr(StrId::Scm_TakeOurs))) {
+                scm.Resolve(row.paths, collabop::kSideOurs, {});
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("%s", Tr(row.ours ? StrId::Scm_TakeOursHint
+                                                    : StrId::Scm_TakeDeletesHint));
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton(Tr(StrId::Scm_TakeTheirs))) {
+                scm.Resolve(row.paths, collabop::kSideTheirs, {});
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("%s", Tr(row.theirs ? StrId::Scm_TakeTheirsHint
+                                                      : StrId::Scm_TakeDeletesHint));
+            }
+            ImGui::SameLine();
+            ImGui::TextDisabled("%s", Tr(ConflictKindText(row.kind)));
+            ImGui::PopID();
+        }
+    }
+    ImGui::EndChild();
 }
 
 void SourceControlWindow::DrawDiffWindow(SourceControlSession& scm)

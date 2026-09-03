@@ -308,3 +308,70 @@ fn z_paths_drops_the_trailing_empty_record() {
     assert_eq!(out, vec!["a/b.png".to_string(), "c.txt".to_string()]);
     assert!(mye_collab::porcelain::parse_z_paths(b"").is_empty());
 }
+
+// ---- M66g: 未マージ (u) レコード ----
+
+const H3: &str = "3333333333333333333333333333333333333333";
+/// その段が存在しないことを表すモード
+const NO_STAGE: &str = "000000";
+
+/// `u <XY> <sub> <m1> <m2> <m3> <mW> <h1> <h2> <h3> <path>`。
+/// modes は「その段が存在するか」を表す (000000 = 無い)
+fn u_record(xy: &str, m1: &str, m2: &str, m3: &str, path: &str) -> String {
+    format!("u {xy} N... {m1} {m2} {m3} 100644 {HH} {HI} {H3} {path}")
+}
+
+#[test]
+fn unmerged_reads_kinds_and_available_sides() {
+    // 実測 (git 2.48.1) の形をそのまま並べる。UD は「相手が消した」= m3 が 000000
+    let raw = nul(&[
+        &u_record("UU", "100644", "100644", "100644", "assets/shared.txt"),
+        &u_record("UD", "100644", "100644", NO_STAGE, "assets/del.txt"),
+        &u_record("DU", "100644", NO_STAGE, "100644", "assets/gone_here.txt"),
+        &u_record("AA", NO_STAGE, "100644", "100644", "assets/both new.txt"),
+        &u_record("DD", "100644", NO_STAGE, NO_STAGE, "assets/both_gone.txt"),
+        // 未マージ以外のレコードは 1 件も拾わない
+        &format!("1 .M N... 100644 100644 100644 {HH} {HI} assets/plain.txt"),
+        "? assets/untracked.txt",
+    ]);
+    let list = mye_collab::porcelain::parse_unmerged(&raw);
+    assert_eq!(list.len(), 5, "u レコードだけを拾う");
+
+    assert_eq!(list[0].path, "assets/shared.txt");
+    assert_eq!(list[0].kind(), "both_modified");
+    assert!(list[0].has_ours && list[0].has_theirs);
+
+    assert_eq!(list[1].kind(), "deleted_by_them");
+    assert!(list[1].has_ours, "自分の版は残っている");
+    assert!(!list[1].has_theirs, "相手の版が無い = checkout --theirs は打てない");
+
+    assert_eq!(list[2].kind(), "deleted_by_us");
+    assert!(!list[2].has_ours);
+    assert!(list[2].has_theirs);
+
+    assert_eq!(list[3].path, "assets/both new.txt", "パス中の空白が切れない");
+    assert_eq!(list[3].kind(), "added_by_both");
+    assert!(list[3].has_ours && list[3].has_theirs);
+
+    assert_eq!(list[4].kind(), "both_deleted");
+    assert!(!list[4].has_ours && !list[4].has_theirs);
+}
+
+#[test]
+fn unmerged_side_comes_from_modes_not_from_the_xy_letters() {
+    // AU = added by us。**Y が 'U' なのに相手の版は無い** — 文字で振り分けると
+    // `git checkout --theirs` を打ってしまい "does not have their version" で落ちる
+    let raw = nul(&[&u_record("AU", NO_STAGE, "100644", NO_STAGE, "assets/mine.txt")]);
+    let list = mye_collab::porcelain::parse_unmerged(&raw);
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].kind(), "added_by_us");
+    assert!(list[0].has_ours);
+    assert!(!list[0].has_theirs);
+}
+
+#[test]
+fn unmerged_ignores_short_and_unknown_records() {
+    // フィールドが足りない行で panic しない (将来 git が形を足しても落ちない)
+    let raw = nul(&["u UU N... 100644", "x weird", ""]);
+    assert!(mye_collab::porcelain::parse_unmerged(&raw).is_empty());
+}

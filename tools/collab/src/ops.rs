@@ -1,7 +1,8 @@
 // op の実装 (M66a = hello / repo_check / status、M66b = hint_changed、
 // M66c = stage / unstage / commit / log / diff / identity_check、
 // M66d = revert / diff_names、M66e = branches / branch_create / checkout、
-// M66f = fetch / pull / push / remote_state + 定期 fetch)。
+// M66f = fetch / pull / push / remote_state + 定期 fetch、
+// M66g = conflicts / resolve / merge_abort / continue)。
 // op 一覧そのものは spec §4.1 で v1 に凍結済み。ここに無い op は bad_request を返す
 // — 「知らない op を黙って ok で返す」と C++ 側が永久に待つ形の不具合になる。
 
@@ -39,6 +40,12 @@ pub struct State {
     last_status: Option<Value>,
     /// 直近の HEAD (porcelain の `# branch.oid`)。変化で repo_changed を出す
     last_head: String,
+    /// `.git` の絶対パス。**1 回聞いて覚える** (M66g)。
+    /// ★status はファイル監視のたびに走るので、そのたびに `rev-parse` を 1 本
+    ///   増やすと「エディタが何もしていないのに git が毎回 2 プロセス」になる。
+    ///   パスを自前で組み立てないのは worktree / submodule / `.git` がファイルの
+    ///   場合まで git 自身に解かせるため (repo_check と同じ理由)
+    git_dir: Option<PathBuf>,
 }
 
 impl State {
@@ -52,6 +59,7 @@ impl State {
             last_fetch_error: String::new(),
             last_status: None,
             last_head: String::new(),
+            git_dir: None,
         }
     }
 
@@ -92,6 +100,11 @@ pub fn dispatch(state: &mut State, op: &str, args: &Value) -> Result<Value, Erro
         "pull" => pull(state, args),
         "push" => push(state, args),
         "remote_state" => remote_state(state),
+        // M66g。conflicts は読み取り系、残り 3 本は working tree を書き換える
+        "conflicts" => conflicts(state),
+        "resolve" => resolve(state, args),
+        "merge_abort" => merge_abort(state),
+        "continue" => merge_continue(state),
         other => Err(ErrorBody::new(code::BAD_REQUEST, format!("unknown op: {other}"))),
     }
 }
@@ -129,9 +142,42 @@ fn hello(state: &mut State, args: &Value) -> Result<Value, ErrorBody> {
     Ok(json!({ "gitVersion": ver }))
 }
 
+/// `.git` の絶対パス (覚えたものがあればそれ)。リポジトリでなければ空。
+///
+/// ★失敗を覚えない — エディタを開いたままリポジトリを外で `git init` される経路が
+///   あり、覚えてしまうと「その回の起動の間は永久にリポジトリ外」になる
+fn git_dir(state: &mut State) -> PathBuf {
+    if let Some(dir) = &state.git_dir {
+        return dir.clone();
+    }
+    let out = match git::run(&state.root, &["rev-parse", "--absolute-git-dir"]) {
+        Ok(o) if o.success() => PathBuf::from(o.stdout_text()),
+        _ => return PathBuf::new(),
+    };
+    state.git_dir = Some(out.clone());
+    out
+}
+
+/// (マージ中, リベース中)。**status の応答にも載せる** (M66g) —
+/// ★競合中は他の書き込み系をゲートで止める (spec §4.1 決定 9) のに、この 2 つを
+///   repo_check (= 起動時 1 回) でしか配らないと、**pull が競合した直後のゲートが
+///   開いたまま**になる。監視は `.git\MERGE_HEAD` も見ているので、status に載せれば
+///   外部での `git merge` も同じ 1 本で伝わる
+fn merge_state(state: &mut State) -> (bool, bool) {
+    let dir = git_dir(state);
+    if dir.as_os_str().is_empty() {
+        return (false, false);
+    }
+    (
+        dir.join("MERGE_HEAD").exists(),
+        // rebase-merge = 対話/マージ型、rebase-apply = am 型。どちらも「rebase 中」
+        dir.join("rebase-merge").exists() || dir.join("rebase-apply").exists(),
+    )
+}
+
 /// `.git` の中を見るのではなく `git rev-parse` に聞く。worktree / submodule /
 /// `.git` がファイル (gitdir: リンク) の場合まで git 自身が面倒を見てくれる
-fn repo_check(state: &State) -> Result<Value, ErrorBody> {
+fn repo_check(state: &mut State) -> Result<Value, ErrorBody> {
     let toplevel = match toplevel(&state.root) {
         Ok(t) => t,
         // 「リポジトリではない」は repo_check にとっては**正常な答え**なので
@@ -146,18 +192,16 @@ fn repo_check(state: &State) -> Result<Value, ErrorBody> {
             }))
         }
     };
-    let git_dir = git::run(&state.root, &["rev-parse", "--absolute-git-dir"])?;
-    let git_dir = if git_dir.success() { PathBuf::from(git_dir.stdout_text()) } else { PathBuf::new() };
     // 未出生ブランチ (init 直後) では rev-parse HEAD が失敗する = head は空
     let head = git::run(&state.root, &["rev-parse", "HEAD"])?;
     let head = if head.success() { head.stdout_text() } else { String::new() };
+    let (merging, rebasing) = merge_state(state);
     Ok(json!({
         "isRepo": true,
         "toplevel": toplevel,
         "head": head,
-        "mergeInProgress": git_dir.join("MERGE_HEAD").exists(),
-        // rebase-merge = 対話/マージ型、rebase-apply = am 型。どちらも「rebase 中」
-        "rebaseInProgress": git_dir.join("rebase-merge").exists() || git_dir.join("rebase-apply").exists(),
+        "mergeInProgress": merging,
+        "rebaseInProgress": rebasing,
     }))
 }
 
@@ -202,7 +246,7 @@ fn status(state: &mut State) -> Result<Value, ErrorBody> {
     Ok(value)
 }
 
-fn build_status(state: &State) -> Result<Value, ErrorBody> {
+fn build_status(state: &mut State) -> Result<Value, ErrorBody> {
     // リポジトリでないときは status を空で返さない — 「清浄」と区別が付かなくなる
     toplevel(&state.root)?;
     // -uall: 未追跡ディレクトリを "dir/" に畳まず 1 ファイルずつ出す。
@@ -231,11 +275,16 @@ fn build_status(state: &State) -> Result<Value, ErrorBody> {
             Value::Object(o)
         })
         .collect();
+    // ★マージ / リベースの途中かを **status に載せる** (M66g)。ゲート (決定 9) が
+    //   これを毎回読むので、repo_check だけで配ると競合した直後に開いたままになる
+    let (merging, rebasing) = merge_state(state);
     Ok(json!({
         "branch": info.branch,
         "upstream": info.upstream,
         "ahead": info.ahead,
         "behind": info.behind,
+        "mergeInProgress": merging,
+        "rebaseInProgress": rebasing,
         // porcelain の `# branch.oid`。**ここに載せておくと HEAD の移動検知に
         // rev-parse を 1 回も足さずに済む** (未出生ブランチでは空文字列)
         "head": info.oid,
@@ -867,7 +916,19 @@ fn pull(state: &mut State, args: &Value) -> Result<Value, ErrorBody> {
     let mode = if allow_merge { "--no-rebase" } else { "--ff-only" };
     let out = git::run(&state.root, &["pull", mode])?;
     if !out.success() {
-        return Err(classify_pull_failure(&out));
+        let mut err = classify_pull_failure(&out);
+        if err.code == code::CONFLICT {
+            // ★競合したファイルは **status の `u` レコード**から採る (spec §4.1)。
+            //   git の案内文 (`CONFLICT (modify/delete): ...`) は種別ごとに形が
+            //   違ううえ版で変わるので、1 バイトも当てにしない。
+            //   ここで載せておくと、UI は失敗モーダルにそのまま一覧を出せる
+            if let Ok(list) = unmerged(state) {
+                if !list.is_empty() {
+                    err.paths = Some(list.into_iter().map(|e| e.path).collect());
+                }
+            }
+        }
+        return Err(err);
     }
     let after = head_oid(&state.root)?;
     let names = changed_names(state, &before, &after)?;
@@ -1008,4 +1069,233 @@ fn push_fetch_error(state: &mut State, err: ErrorBody, lines: &mut Vec<String>) 
     }
     state.last_fetch_error = err.code.clone();
     lines.push(protocol::event_line(event::REMOTE_CHANGED, json!({ "error": err })));
+}
+
+// ---- M66g: 競合 (conflicts / resolve / merge_abort / continue) ----
+
+const SIDE_OURS: &str = "ours";
+const SIDE_THEIRS: &str = "theirs";
+
+/// 未マージ (`u` レコード) の一覧。
+///
+/// ★git の案内文 (`CONFLICT (modify/delete): ...`) を解析しない。あれは種別ごとに
+///   形が違ううえ版で変わる。porcelain v2 の `u` レコードが唯一の正本 (spec §4.1)
+fn unmerged(state: &State) -> Result<Vec<porcelain::UnmergedEntry>, ErrorBody> {
+    let out = git::run(&state.root, &["status", "--porcelain=v2", "-z"])?;
+    if !out.success() {
+        return Err(git::classify_error(&out));
+    }
+    Ok(porcelain::parse_unmerged(&out.stdout))
+}
+
+/// HEAD と working tree の差 (パスと A/M/D)。
+///
+/// マージ競合の最中に呼ぶと「このマージがきれいに入れたファイル」+「元から
+/// あった未コミット変更」が返る (未マージのファイルは呼び手が差し引く)。
+/// ★元からあった未コミット変更まで混ざるのは避けられない (git は両者を区別しない)。
+///   混ざった分は「変わっていないファイルをもう一度読み直す」だけで実害が無い方に倒す
+fn diff_head_names(state: &State) -> Result<Vec<porcelain::NameStatusEntry>, ErrorBody> {
+    let out = git::run(&state.root, &["diff", "--name-status", "-z", "--no-renames", "HEAD"])?;
+    if !out.success() {
+        return Err(git::classify_error(&out));
+    }
+    Ok(porcelain::parse_name_status_z(&out.stdout))
+}
+
+/// conflicts — 競合一覧と「競合せずにマージ済みのファイル」。**読み取り系**。
+///
+/// merged を返す理由: 競合した pull でも、競合しなかったファイルは既にディスクへ
+/// 書かれている。エディタは一括適用 (ReloadHub) の最中なので、この一覧を返して
+/// やらないと、それらの変更が 1 件も反映されないまま競合の解決に入ることになる
+fn conflicts(state: &mut State) -> Result<Value, ErrorBody> {
+    toplevel(&state.root)?;
+    let list = unmerged(state)?;
+    let (merging, rebasing) = merge_state(state);
+    let conflicted: Vec<Value> = list
+        .iter()
+        .map(|e| {
+            json!({
+                "path": e.path,
+                "kind": e.kind(),
+                // ★「その側の版が実在するか」まで返す。UI が ours / theirs の
+                //   ボタンを「消す」と読み替えて出せる (modify/delete の競合)
+                "ours": e.has_ours,
+                "theirs": e.has_theirs,
+            })
+        })
+        .collect();
+    let merged: Vec<Value> = if merging || rebasing {
+        diff_head_names(state)?
+            .into_iter()
+            .filter(|n| !list.iter().any(|u| u.path == n.path))
+            .map(|n| json!({ "path": n.path, "status": n.status.to_string() }))
+            .collect()
+    } else {
+        // マージ中でなければ「マージ済み」という概念が無い。ここで HEAD との差を
+        // 返すと、ただの未コミット変更が「マージが入れたもの」として読まれる
+        Vec::new()
+    };
+    Ok(json!({
+        "conflicts": conflicted,
+        "merged": merged,
+        "mergeInProgress": merging,
+        "rebaseInProgress": rebasing,
+    }))
+}
+
+/// resolve — 競合したファイルを ours / theirs のどちらかで確定する。
+///
+/// ★`paths` は配列で受ける (sub-07 の `{path, side}` から変更)。本体と `.meta` は
+///   対で解決しないと「本体は theirs、`.meta` は競合のまま」という中途半端な状態が
+///   1 往復ぶん存在してしまう。stage / revert と同じ `arg_paths` を通せる利点もある。
+/// ★どちらの版を採るかの分岐は XY の文字ではなく**モード** (has_ours / has_theirs)。
+///   相手が消したファイル (`UD`) に `checkout --theirs` を打つと
+///   `error: path 'x' does not have their version` で落ちる (実測)。
+///   その場合の「theirs を採る」は `git rm` = 消す、が正しい意味になる
+fn resolve(state: &mut State, args: &Value) -> Result<Value, ErrorBody> {
+    let paths = arg_paths(args)?;
+    let side = args.get("side").and_then(|v| v.as_str()).unwrap_or("");
+    if side != SIDE_OURS && side != SIDE_THEIRS {
+        return Err(ErrorBody::new(code::BAD_REQUEST, "side must be ours or theirs"));
+    }
+    let list = unmerged(state)?;
+    let mut resolved = 0;
+    for p in &paths {
+        // 競合していないパスは黙って飛ばす — 対で送られてくる `.meta` は
+        // 片方だけが競合していることの方が多い
+        let entry = match list.iter().find(|e| &e.path == p) {
+            Some(e) => e,
+            None => continue,
+        };
+        let keep = if side == SIDE_OURS { entry.has_ours } else { entry.has_theirs };
+        let one = std::slice::from_ref(p);
+        if keep {
+            let flag = if side == SIDE_OURS { "--ours" } else { "--theirs" };
+            run_per_path_chunk(state, &["checkout", flag], one)?;
+            // ★checkout だけでは index は未マージのまま (実測)。add まで打って
+            //   初めて「解決した」ことになる
+            run_per_path_chunk(state, &["add"], one)?;
+        } else {
+            // 採る側の版が無い = そちらでは削除されている。`git rm` が
+            // index と working tree の両方から落とす
+            run_per_path_chunk(state, &["rm", "-q"], one)?;
+        }
+        resolved += 1;
+    }
+    if resolved == 0 {
+        // ★黙って ok を返さない。「解決したつもりで何も起きていない」は
+        //   一覧が減らない形でしか気付けず、原因が読めない
+        return Err(ErrorBody::new(code::BAD_REQUEST, "none of the given paths are unmerged"));
+    }
+    Ok(json!({ "resolved": resolved, "side": side, "status": status_after_write(state)? }))
+}
+
+/// 実行前後の「ディスクに在るか」で A / D / M を決める (M66g)。
+///
+/// ★`merge --abort` は HEAD を動かさないので `diff <before>..<after>` は必ず空。
+///   それを names として返すと「何も変わっていない」= 段階 A で何もしない、と
+///   読まれるが、実際にはファイルが丸ごと入れ替わっている
+fn names_by_existence(state: &State, paths: &[String], before: &[bool]) -> Vec<Value> {
+    let mut out = Vec::new();
+    for (i, p) in paths.iter().enumerate() {
+        let existed = before.get(i).copied().unwrap_or(false);
+        let exists = state.root.join(p).exists();
+        let status = match (existed, exists) {
+            (false, true) => "A",
+            (true, false) => "D",
+            (true, true) => "M",
+            (false, false) => continue, // 元から無く今も無い = 何も起きていない
+        };
+        out.push(json!({ "path": p, "status": status }));
+    }
+    out
+}
+
+/// merge_abort — マージ (無ければリベース) を中止して pull 前の状態へ戻す。
+///
+/// 応答は pull と同じ型 (`{head, names, status, remote}`)。C++ 側は
+/// `GitTransaction` の OpKind を 1 つ足すだけで、段階分類から後処理まで同じ 1 本を通る
+fn merge_abort(state: &mut State) -> Result<Value, ErrorBody> {
+    toplevel(&state.root)?;
+    let (merging, rebasing) = merge_state(state);
+    if !merging && !rebasing {
+        return Err(ErrorBody::new(code::BAD_REQUEST, "no merge or rebase is in progress"));
+    }
+    // 中止でディスクが動きうるのは「HEAD と違うもの」+「未マージのもの」。
+    // 前者にはマージが入れたファイルも元からの未コミット変更も入る (後者は
+    // 中止しても動かない = 実行前後で在り方が同じなので M として出るだけ)
+    let mut candidates: Vec<String> =
+        diff_head_names(state)?.into_iter().map(|n| n.path).collect();
+    for e in unmerged(state)? {
+        candidates.push(e.path);
+    }
+    candidates.sort();
+    candidates.dedup();
+    let before: Vec<bool> = candidates.iter().map(|p| state.root.join(p).exists()).collect();
+    let argv: &[&str] = if merging { &["merge", "--abort"] } else { &["rebase", "--abort"] };
+    let out = git::run(&state.root, argv)?;
+    if !out.success() {
+        return Err(git::classify_error(&out));
+    }
+    let names = names_by_existence(state, &candidates, &before);
+    let head = head_oid(&state.root)?;
+    let status = status_after_write(state)?;
+    let remote = build_remote_state(state)?;
+    state.last_remote = Some(remote.clone());
+    Ok(json!({ "head": head, "names": names, "status": status, "remote": remote }))
+}
+
+/// continue — 全件解決済みのマージを 1 コミットにして閉じる。
+///
+/// ★`--no-edit` を付けないとエディタ (`GIT_EDITOR`) が起動する = GUI の無い
+///   孫プロセスで開かれ、応答が永久に返らない。付ければ `MERGE_MSG` を
+///   そのまま使って即コミットする (実測 git 2.48.1)
+fn merge_continue(state: &mut State) -> Result<Value, ErrorBody> {
+    toplevel(&state.root)?;
+    let (merging, rebasing) = merge_state(state);
+    if rebasing {
+        // v1 は rebase を始めない (spec §4.1 の pull は --no-rebase)。外で始まった
+        // リベースの続行はエディタが要る経路なので受けない — 中止だけ受ける
+        return Err(ErrorBody::new(
+            code::BAD_REQUEST,
+            "a rebase cannot be continued from the editor - abort it or finish it in a terminal",
+        ));
+    }
+    if !merging {
+        return Err(ErrorBody::new(code::BAD_REQUEST, "no merge is in progress"));
+    }
+    let left = unmerged(state)?;
+    if !left.is_empty() {
+        // 残りのパスを返す。UI は「まだ N 件残っています」を出せる
+        return Err(ErrorBody::with_paths(
+            code::MERGE_IN_PROGRESS,
+            "some files are still unmerged",
+            left.into_iter().map(|e| e.path).collect(),
+        ));
+    }
+    let before = head_oid(&state.root)?;
+    let out = git::run(&state.root, &["commit", "--no-edit"])?;
+    if !out.success() {
+        // commit と同じく stdout も見る (git commit は失敗理由をそちらに書く)
+        let mut text = out.stderr_text();
+        if !text.is_empty() {
+            text.push('\n');
+        }
+        text.push_str(&out.stdout_text());
+        let mut err = git::classify_error(&out);
+        if err.detail.is_empty() {
+            err.detail = text.trim().to_string();
+        }
+        return Err(err);
+    }
+    let after = head_oid(&state.root)?;
+    // ★変更集合は「マージ前の HEAD → マージコミット」。continue の瞬間に
+    //   ディスクは動かない (解決のときに動いている) が、その差分は競合の間に
+    //   一括適用 (ReloadHub) の外で起きているので、ここでまとめて配り直す方が
+    //   取りこぼしが無い
+    let names = changed_names(state, &before, &after)?;
+    let status = status_after_write(state)?;
+    let remote = build_remote_state(state)?;
+    state.last_remote = Some(remote.clone());
+    Ok(json!({ "head": after, "names": names, "status": status, "remote": remote }))
 }

@@ -1,0 +1,58 @@
+# 08_conflict - マージ競合 -> conflicts -> resolve -> continue (M66g)。
+#
+# ここで固めたいのは 5 つ:
+#   1) 競合した pull は error.code=conflict で、**競合したファイルが paths に載る**こと。
+#      git の案内文 (CONFLICT (content) / (modify/delete)) を解析していない証拠に、
+#      種別の違う 2 種 (内容の衝突 / 相手が消した) を同時に作って両方を出させる。
+#   2) conflicts が「未マージ」と「競合せずにマージ済み」を分けて返すこと。
+#      後者はもうディスクに書かれているので、エディタが取りこぼすと相手の
+#      ファイルだけが反映されないまま残る。
+#   3) 対 (本体 + .meta) を 1 回の resolve で解決できること。
+#   4) 相手の版が無い競合 (modify/delete) の theirs は「消す」の意味になること。
+#      ours/theirs を XY の文字で振り分けていると、ここで git が
+#      "does not have their version" で落ちる。
+#   5) 全件解決したら continue でマージコミットが 1 本増え、working tree が清浄に戻ること。
+#
+# ★log は出さない。マージコミットの件名にはリモートの URL が入る (実測) ので、
+#   期待ファイルに載せるとチェックアウト先に依存する。マージが成立したことは
+#   status の ahead / entries と conflicts の mergeInProgress=false で見る。
+# --- bare な origin を作って main を push する ---
+# ★-b main を必ず付ける (省くと bare の HEAD が master になり clone がすれ違う)
+# git init -q --bare -b main ../origin.git
+# git remote add origin ../origin.git
+# git push -q -u origin main
+# --- 同僚のクローン: シーンと .meta を書き換え、テクスチャを消し、1 本足して push ---
+# git clone -q ../origin.git ../workB
+# write ../workB/assets/scenes/main.scene.json peer-scene
+# write ../workB/assets/scenes/main.scene.json.meta peer-meta
+# delete ../workB/assets/textures/test.png
+# write ../workB/assets/peer.txt peer
+# git -C ../workB add -A
+# git -C ../workB -c user.name=mye -c user.email=mye@example.com -c commit.gpgsign=false commit -q -m peer-commit
+# git -C ../workB push -q
+# --- こちら: 同じ 3 ファイルを別内容で変更してコミット ---
+# write assets/scenes/main.scene.json my-scene
+# write assets/scenes/main.scene.json.meta my-meta
+# write assets/textures/test.png my-texture
+# git add -A
+# git -c user.name=mye -c user.email=mye@example.com -c commit.gpgsign=false commit -q -m my-commit
+{"id":1,"op":"fetch"}
+# --- --ff-only は分岐で拒否される ---
+{"id":2,"op":"pull"}
+# --- allowMerge=true で走らせると競合して止まる。paths に 3 件 ---
+{"id":3,"op":"pull","args":{"allowMerge":true}}
+# --- 未マージ 3 件 + 競合せずに入った peer.txt ---
+{"id":4,"op":"conflicts"}
+# --- status にもマージ中が載る (ゲートが毎回読む口) ---
+{"id":5,"op":"status"}
+# --- 対 (本体 + .meta) を 1 回で ours に確定する ---
+{"id":6,"op":"resolve","args":{"paths":["assets/scenes/main.scene.json","assets/scenes/main.scene.json.meta"],"side":"ours"}}
+# --- 相手が消したファイルの theirs = 消す (checkout --theirs は打てない) ---
+{"id":7,"op":"resolve","args":{"paths":["assets/textures/test.png"],"side":"theirs"}}
+# --- 残り 0 件。マージ中のまま ---
+{"id":8,"op":"conflicts"}
+# --- 完了。names は「マージ前の HEAD -> マージコミット」 ---
+{"id":9,"op":"continue"}
+# --- 後始末が済んでいる: マージ中でない / 未マージ 0 / 送信していないコミットが 2 本 ---
+{"id":10,"op":"conflicts"}
+{"id":11,"op":"status"}

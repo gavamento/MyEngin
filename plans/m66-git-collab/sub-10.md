@@ -45,3 +45,9 @@ pwsh -File tools\check_rules.ps1
 ## 実装メモ (coder が追記)
 
 ## フィードバック履歴
+
+## planner 追記 (sub-05〜07 の判定から)
+
+- コードの衛生 (DocumentDirty 改名 / Scm_ComingSoon 削除 / merge_in_progress 分類) は **sub-08 へ移した**。本サブは引き続きドキュメント専用。
+- engine_spec §14 に書く内容は spec §4.0 (DLL / C ABI / FreeLibrary を呼ばない理由) と §4.1 の確定版 (段階表 / 対の規則 / commit 周り / ブランチ周り / リモート周り / 競合周り / ゲート 13 要因) を正とする。元計画 `plans/quiet-merging-harbor.md` の記述ではなく spec を写すこと。
+- README の「初回認証はターミナルで一度 `git push`」(GCM の GUI は背景 fetch から出ない仕様) を忘れずに。

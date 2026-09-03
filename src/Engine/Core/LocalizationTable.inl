@@ -1181,3 +1181,57 @@ MYE_STR(Scm_FetchInterval,     "Every (minutes)###ScmFetchInterval",
                                "間隔 (分)###ScmFetchInterval")
 MYE_STR(Scm_FetchNote,         "Background fetch never opens a credential dialog.",
                                "背景での取得は資格情報のダイアログを出しません。")
+
+// ---- M66g: 競合 (一覧の競合モード / ours / theirs / 中止 / 完了) ----
+// ★競合中は Changes タブが**丸ごとこの一覧に置き換わる** (spec §4.1 決定 9)。
+//   タブもボタンも増やさない — 競合中にできることは解決か中止しかない
+MYE_STR(Scm_ConflictMode,      "The merge stopped on conflicts. Resolve them or abort.",
+                               "マージが競合して止まっています。解決するか中止してください。")
+MYE_STR(Scm_ConflictCount,     "%d file(s) still conflicting", "未解決 %d 件")
+MYE_STR(Scm_ConflictMerged,    "%d file(s) merged cleanly and are already applied.",
+                               "競合しなかった %d 件は反映済みです。")
+MYE_STR(Scm_ConflictAllResolved, "Everything is resolved - finish the merge.",
+                                 "すべて解決しました。マージを完了してください。")
+MYE_STR(Scm_ConflictRemaining, "%d file(s) are still unresolved.", "未解決が %d 件あります。")
+MYE_STR(Scm_AbortMerge,        "Abort###ScmAbortMerge", "中止###ScmAbortMerge")
+MYE_STR(Scm_ContinueMerge,     "Finish###ScmContinueMerge", "完了###ScmContinueMerge")
+MYE_STR(Scm_MergeTool,         "Tool###ScmMergeTool", "外部ツール###ScmMergeTool")
+MYE_STR(Scm_MergeToolOpened,   "Opened git mergetool in a console window.",
+                               "コンソールで git mergetool を開きました。")
+MYE_STR(Scm_MergeToolFailed,   "Could not start git mergetool - see the log.",
+                               "git mergetool を起動できませんでした。ログを見てください。")
+MYE_STR(Scm_TakeOurs,          "ours###ScmTakeOurs", "自分###ScmTakeOurs")
+MYE_STR(Scm_TakeTheirs,        "theirs###ScmTakeTheirs", "相手###ScmTakeTheirs")
+MYE_STR(Scm_TakeOursHint,      "Keep your version of the file.", "自分の版を採ります。")
+MYE_STR(Scm_TakeTheirsHint,    "Take the incoming version of the file.", "相手の版を採ります。")
+// ★片側の版が無い競合 (modify/delete) は「採る」が「消す」になる。
+//   同じボタンで意味が変わるので、押す前に言う
+MYE_STR(Scm_TakeDeletesHint,   "That side deleted the file - choosing it removes the file.",
+                               "その側では削除されています。選ぶとファイルが消えます。")
+MYE_STR(Scm_ConflictHint,      "Resolve the files in the Changes tab, then finish the merge.",
+                               "「変更」タブで解決してから、マージを完了してください。")
+MYE_STR(Scm_ContinueBlocked,   "Some files are still unresolved.",
+                               "まだ解決していないファイルがあります。")
+// ★保存 = 競合マーカーを潰して黙って ours を選ぶのと同じ (spec §7)。止める
+MYE_STR(Scm_SaveBlockedConflict, "This document is conflicting. Resolve it before saving.",
+                                 "この文書は競合中です。保存する前に解決してください。")
+MYE_STR(Scm_AbortTitle,        "Abort merge###ScmAbortModal", "マージの中止###ScmAbortModal")
+MYE_STR(Scm_AbortBody,         "The merge is undone and everything it brought in is lost.",
+                               "マージを取り消します。降ってきた変更は失われます。")
+MYE_STR(Scm_AbortConfirm,      "Abort###ScmAbortConfirm", "中止する###ScmAbortConfirm")
+MYE_STR(Scm_AbortDone,         "Aborted the merge (%d file(s))", "マージを中止しました (%d 件)")
+MYE_STR(Scm_ContinueTitle,     "Finish merge###ScmContinueModal",
+                               "マージの完了###ScmContinueModal")
+MYE_STR(Scm_ContinueBody,      "%d file(s) are recorded as one merge commit.",
+                               "%d 件を 1 つのマージコミットとして記録します。")
+MYE_STR(Scm_ContinueConfirm,   "Finish###ScmContinueConfirm", "完了する###ScmContinueConfirm")
+MYE_STR(Scm_ContinueDone,      "Finished the merge (%d file(s))", "マージを完了しました (%d 件)")
+// 競合の種別 (porcelain v2 の u レコードの XY 由来)。表示専用
+MYE_STR(ScmConf_BothModified,  "both changed it", "両方が変更")
+MYE_STR(ScmConf_AddedByBoth,   "both added it", "両方が追加")
+MYE_STR(ScmConf_DeletedByThem, "they deleted it", "相手が削除")
+MYE_STR(ScmConf_DeletedByUs,   "you deleted it", "自分が削除")
+MYE_STR(ScmConf_BothDeleted,   "both deleted it", "両方が削除")
+MYE_STR(ScmConf_AddedByUs,     "you added it", "自分が追加")
+MYE_STR(ScmConf_AddedByThem,   "they added it", "相手が追加")
+MYE_STR(ScmConf_Unmerged,      "could not be merged", "マージできませんでした")

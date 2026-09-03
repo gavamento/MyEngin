@@ -358,3 +358,78 @@ pub fn parse_name_status_z(raw: &[u8]) -> Vec<NameStatusEntry> {
     }
     out
 }
+
+/// 未マージ (`u`) レコード 1 件 (M66g)。
+///
+/// ★「どちら側の版が存在するか」は **XY の文字ではなくモード (m2 / m3)** で決める。
+///   XY には `AU` (added by us) のように「相手の版が無いのに Y が 'U'」になる組があり、
+///   文字だけで振り分けると `git checkout --theirs` が
+///   `error: path 'x' does not have their version` で落ちる (実測 git 2.48.1)。
+///   モードが "000000" = その段が無い、は v2 の形式定義そのものなので版に依存しない。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnmergedEntry {
+    /// toplevel 相対・'/' 区切り
+    pub path: String,
+    /// X = 自分側の状態文字
+    pub us: char,
+    /// Y = 相手側の状態文字
+    pub them: char,
+    /// stage 2 (ours) が存在する = `checkout --ours` が使える
+    pub has_ours: bool,
+    /// stage 3 (theirs) が存在する = `checkout --theirs` が使える
+    pub has_theirs: bool,
+}
+
+impl UnmergedEntry {
+    /// 競合の種別。UI の表示専用で、`resolve` の分岐には使わない
+    /// (分岐は has_ours / has_theirs = モード。文字の組は上のとおり例外がある)。
+    /// 一覧は git-status.txt の "Unmerged entries" の表そのまま
+    pub fn kind(&self) -> &'static str {
+        match (self.us, self.them) {
+            ('U', 'U') => "both_modified",
+            ('A', 'A') => "added_by_both",
+            ('U', 'D') => "deleted_by_them",
+            ('D', 'U') => "deleted_by_us",
+            ('D', 'D') => "both_deleted",
+            ('A', 'U') => "added_by_us",
+            ('U', 'A') => "added_by_them",
+            // 将来 git が組を増やしても落ちない。UI は未知の種別を
+            // 「マージできませんでした」とだけ出す
+            _ => "unmerged",
+        }
+    }
+}
+
+/// `git status --porcelain=v2 -z` の出力から `u` レコードだけを取り出す (M66g)。
+///
+/// parse_status_v2 と別に持つ理由: あちらの StatusEntry は一覧の表示モデル用で
+/// モードを持たない。`resolve` は「ours / theirs の版が実在するか」で打つ git が
+/// 変わる (無い側を checkout すると失敗する) ので、**モードまで読む口**が要る。
+/// レコード形は 1 箇所 (split_fields) を共有しているので、綴りが二重管理になる部分は無い
+pub fn parse_unmerged(raw: &[u8]) -> Vec<UnmergedEntry> {
+    let mut out = Vec::new();
+    for rec in raw.split(|b| *b == 0) {
+        if rec.is_empty() {
+            continue;
+        }
+        let text = String::from_utf8_lossy(rec).to_string();
+        let body = match text.strip_prefix("u ") {
+            Some(b) => b,
+            None => continue,
+        };
+        // u <XY> <sub> <m1> <m2> <m3> <mW> <h1> <h2> <h3> <path>
+        let (fields, path) = match split_fields(body, 9) {
+            Some(v) => v,
+            None => continue,
+        };
+        let (us, them) = xy(fields[0]);
+        out.push(UnmergedEntry {
+            path: path.to_string(),
+            us,
+            them,
+            has_ours: fields[3] != "000000",
+            has_theirs: fields[4] != "000000",
+        });
+    }
+    out
+}

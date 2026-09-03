@@ -1,0 +1,36 @@
+# 09_merge_abort - 競合したマージを中止して pull 前に戻す (M66g)。
+#
+# ここで固めたいのは 3 つ:
+#   1) 中止の応答の names が「ディスクの在り方の変化」であること。
+#      merge --abort は **HEAD を動かさない**ので、コミット間の diff で組むと
+#      必ず空になり、エディタは「何も変わっていない」と読んで古い絵を出し続ける。
+#      競合しなかったファイル (peer.txt) は D、競合したファイルは M で出るはず。
+#   2) 中止後は working tree が清浄で、ahead/behind が pull 前に戻ること。
+#   3) マージ中でないときの merge_abort / continue が bad_request で返ること
+#      (押せてしまうと「何が起きたか読めない」状態になる)。
+# git init -q --bare -b main ../origin.git
+# git remote add origin ../origin.git
+# git push -q -u origin main
+# git clone -q ../origin.git ../workB
+# write ../workB/assets/scenes/main.scene.json peer-scene
+# write ../workB/assets/peer.txt peer
+# git -C ../workB add -A
+# git -C ../workB -c user.name=mye -c user.email=mye@example.com -c commit.gpgsign=false commit -q -m peer-commit
+# git -C ../workB push -q
+# write assets/scenes/main.scene.json my-scene
+# git add -A
+# git -c user.name=mye -c user.email=mye@example.com -c commit.gpgsign=false commit -q -m my-commit
+{"id":1,"op":"fetch"}
+{"id":2,"op":"pull","args":{"allowMerge":true}}
+# --- 競合 1 件 + マージ済み 1 件 (peer.txt はもうディスクにある) ---
+{"id":3,"op":"conflicts"}
+# --- 中止。names で「peer.txt が消えた / シーンが書き戻った」が伝わること ---
+{"id":4,"op":"merge_abort"}
+# --- pull 前と同じ: 未マージ 0、working tree は清浄、ahead 1 / behind 1 ---
+{"id":5,"op":"conflicts"}
+{"id":6,"op":"status"}
+# --- マージ中でなければどちらも受け付けない ---
+{"id":7,"op":"merge_abort"}
+{"id":8,"op":"continue"}
+# --- 競合していないパスの resolve も同じ (「解決したつもり」を作らない) ---
+{"id":9,"op":"resolve","args":{"paths":["assets/scenes/main.scene.json"],"side":"ours"}}
