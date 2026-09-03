@@ -1,5 +1,6 @@
 // op の実装 (M66a = hello / repo_check / status、M66b = hint_changed、
-// M66c = stage / unstage / commit / log / diff / identity_check)。
+// M66c = stage / unstage / commit / log / diff / identity_check、
+// M66d = revert / diff_names、M66e = branches / branch_create / checkout)。
 // op 一覧そのものは spec §4.1 で v1 に凍結済み。ここに無い op は bad_request を返す
 // — 「知らない op を黙って ok で返す」と C++ 側が永久に待つ形の不具合になる。
 
@@ -60,6 +61,9 @@ pub fn dispatch(state: &mut State, op: &str, args: &Value) -> Result<Value, Erro
         "identity_check" => identity_check(state),
         "revert" => revert(state, args),
         "diff_names" => diff_names(state, args),
+        "branches" => branches(state),
+        "branch_create" => branch_create(state, args),
+        "checkout" => checkout(state, args),
         other => Err(ErrorBody::new(code::BAD_REQUEST, format!("unknown op: {other}"))),
     }
 }
@@ -525,4 +529,188 @@ fn rev_arg(args: &Value, key: &str) -> Result<String, ErrorBody> {
         return Err(ErrorBody::new(code::BAD_REQUEST, format!("bad revision: {raw}")));
     }
     Ok(raw.to_string())
+}
+
+// ---- M66e: branches / branch_create / checkout ----
+
+/// ブランチ名の検証 (**必須**引数)。
+///
+/// ★`checkout` には `--` を置けない — `git checkout -- <name>` は「その**パス**を
+///   index から復元する」という**まったく別の操作**になる (working tree を上書きする側)。
+///   つまりオプション化を止める最後の砦がここしか無いので、rev_arg より厳しく見る。
+///   実在確認と綴りの厳密な検証は git (`check-ref-format` 相当) に任せる
+fn branch_name_arg(args: &Value, key: &str) -> Result<String, ErrorBody> {
+    let raw = match args.get(key).and_then(|v| v.as_str()) {
+        Some(s) => s.trim(),
+        None => return Err(ErrorBody::new(code::BAD_REQUEST, format!("{key} is required"))),
+    };
+    if raw.is_empty() {
+        return Err(ErrorBody::new(code::BAD_REQUEST, format!("{key} is empty")));
+    }
+    if raw.starts_with('-') {
+        return Err(ErrorBody::new(code::BAD_REQUEST, format!("name looks like an option: {raw}")));
+    }
+    if raw.contains(char::is_whitespace) {
+        return Err(ErrorBody::new(code::BAD_REQUEST, format!("name has whitespace: {raw}")));
+    }
+    if raw.split('/').any(|seg| seg == "..") {
+        return Err(ErrorBody::new(code::BAD_REQUEST, format!("bad branch name: {raw}")));
+    }
+    Ok(raw.to_string())
+}
+
+/// 今の HEAD の oid。未出生ブランチ (commit が 1 つも無い) は空文字列
+fn head_oid(root: &Path) -> Result<String, ErrorBody> {
+    let out = git::run(root, &["rev-parse", "HEAD"])?;
+    Ok(if out.success() { out.stdout_text() } else { String::new() })
+}
+
+/// `refs/<prefix>/<name>` が実在するか。`--verify --quiet` は不在で exit 1 (エラーではない)
+fn ref_exists(root: &Path, full_ref: &str) -> Result<bool, ErrorBody> {
+    let out = git::run(root, &["rev-parse", "--verify", "--quiet", full_ref])?;
+    Ok(out.success())
+}
+
+/// branches — ローカルとリモート追跡の一覧 (段階判定の前に「どこへ行けるか」を出す)。
+///
+/// ★`for-each-ref` に `-z` は無い (git 2.48 で "unknown switch `z'")。フィールドだけ
+///   `%00` で区切り、レコードは LF。ref 名に制御文字は入れられないので安全。
+///   `refs/remotes/*/HEAD` (symbolic ref) は checkout 先として意味が無いので落とす
+fn branches(state: &mut State) -> Result<Value, ErrorBody> {
+    toplevel(&state.root)?;
+    let out = git::run(
+        &state.root,
+        &[
+            "for-each-ref",
+            "--format=%(refname)%00%(refname:short)%00%(objectname)%00%(upstream:short)%00%(HEAD)",
+            "refs/heads",
+            "refs/remotes",
+        ],
+    )?;
+    if !out.success() {
+        return Err(git::classify_error(&out));
+    }
+    let mut current = String::new();
+    let mut locals: Vec<Value> = Vec::new();
+    let mut remotes: Vec<Value> = Vec::new();
+    for e in porcelain::parse_for_each_ref(&out.stdout) {
+        if e.current {
+            current = e.name.clone();
+        }
+        let row = json!({ "name": e.name, "oid": e.oid, "upstream": e.upstream });
+        if e.refname.starts_with("refs/remotes/") {
+            if e.refname.ends_with("/HEAD") {
+                continue;
+            }
+            remotes.push(row);
+        } else {
+            locals.push(row);
+        }
+    }
+    // detached HEAD では `%(HEAD)` が 1 件も立たない = current は空のまま
+    // (UI は「(detached)」を出す。ここで嘘の名前を作らない)
+    Ok(json!({ "current": current, "locals": locals, "remotes": remotes }))
+}
+
+/// branch_create — `git branch <name> <from>` (既定 `from = HEAD`)。
+/// **working tree は 1 バイトも動かない**ので、段階判定もトランザクションも要らない
+fn branch_create(state: &mut State, args: &Value) -> Result<Value, ErrorBody> {
+    let name = branch_name_arg(args, "name")?;
+    let from = rev_arg(args, "from")?;
+    let out = git::run(&state.root, &["branch", &name, &from])?;
+    if !out.success() {
+        return Err(git::classify_error(&out));
+    }
+    Ok(json!({ "name": name, "status": status_after_write(state)? }))
+}
+
+/// checkout — ブランチを切り替え、**この 1 回の応答で「何が変わったか」まで返す**。
+///
+/// ★変更集合 (`diff --name-status <before>..<after>`) を C++ からもう 1 往復させない。
+///   させると、checkout と diff の間に別の要求 (監視由来の status など) が挟まりうるし、
+///   何より「切り替わったが、何が変わったかは分からない」中途半端な状態が 1 フレーム
+///   でも作れてしまう。段階 A/B/C の判定はこの names が唯一の入力なので、
+///   **切り替えと同じ応答で確定させる**のが安全側。
+fn checkout(state: &mut State, args: &Value) -> Result<Value, ErrorBody> {
+    let name = branch_name_arg(args, "name")?;
+    let before = head_oid(&state.root)?;
+
+    // ローカルに同名が無く、リモート追跡だけある = 追跡ブランチを作って乗る。
+    // ★素の `git checkout origin/x` は **detached HEAD** になる (コミットしても
+    //   どのブランチにも残らない = 作業が迷子になる最悪の形)
+    let local_exists = ref_exists(&state.root, &format!("refs/heads/{name}"))?;
+    let remote_exists = !local_exists && ref_exists(&state.root, &format!("refs/remotes/{name}"))?;
+    let mut argv: Vec<&str> = vec!["checkout"];
+    if remote_exists {
+        argv.push("-t");
+    }
+    argv.push(name.as_str());
+    let out = git::run(&state.root, &argv)?;
+    if !out.success() {
+        let mut err = git::classify_error(&out);
+        if err.code == code::LOCAL_CHANGES_OVERWRITTEN {
+            let paths = porcelain::parse_overwritten_paths(&err.detail);
+            if !paths.is_empty() {
+                // ★detail を**自分の文言に差し替える**。git の案内文
+                //   ("Please commit your changes or stash them before you switch branches")
+                //   は版で変わるので、そのまま載せると期待 NDJSON が git の更新で割れる。
+                //   ユーザーが要るのは「どのファイルか」= paths の方
+                err = ErrorBody::with_paths(
+                    code::LOCAL_CHANGES_OVERWRITTEN,
+                    "local changes would be overwritten by checkout",
+                    paths,
+                );
+            }
+        }
+        return Err(err);
+    }
+
+    let after = head_oid(&state.root)?;
+    let names = changed_names(state, &before, &after)?;
+    let status = status_after_write(state)?;
+    let branch = status.get("branch").and_then(|b| b.as_str()).unwrap_or("").to_string();
+    Ok(json!({ "branch": branch, "head": after, "names": names, "status": status }))
+}
+
+/// `before` から `after` へ移ったときに working tree で入れ替わったファイル。
+///
+/// `before` が空 = 未出生ブランチから乗り換えた (clone 直後 + fetch の形)。
+/// この場合 `diff` は使えないので **`ls-tree` で「全部 A」**にする。
+/// ★ここで空を返すと段階 A (= 何もしない) と読まれる。実際にはファイルが
+///   丸ごと降ってきているので、シーンもアセットも古いまま動き続ける
+fn changed_names(state: &State, before: &str, after: &str) -> Result<Vec<Value>, ErrorBody> {
+    if after.is_empty() {
+        return Ok(Vec::new());
+    }
+    if before.is_empty() {
+        let out = git::run(&state.root, &["ls-tree", "-r", "-z", "--name-only", after])?;
+        if !out.success() {
+            return Err(git::classify_error(&out));
+        }
+        return Ok(porcelain::parse_z_paths(&out.stdout)
+            .into_iter()
+            .map(|p| json!({ "path": p, "status": "A" }))
+            .collect());
+    }
+    if before == after {
+        return Ok(Vec::new()); // 同じコミットを指すブランチへ移った (よくある)
+    }
+    let range = format!("{before}..{after}");
+    // --no-renames の理由は diff_names と同じ (検出閾値が機体依存になるのを断つ)
+    let out = git::run(&state.root, &["diff", "--name-status", "-z", "--no-renames", &range])?;
+    if !out.success() {
+        return Err(git::classify_error(&out));
+    }
+    Ok(porcelain::parse_name_status_z(&out.stdout)
+        .into_iter()
+        .map(|e| {
+            let mut o = serde_json::Map::new();
+            o.insert("path".into(), Value::String(e.path));
+            o.insert("status".into(), Value::String(e.status.to_string()));
+            if let Some(old) = e.old_path {
+                o.insert("oldPath".into(), Value::String(old));
+            }
+            Value::Object(o)
+        })
+        .collect())
 }

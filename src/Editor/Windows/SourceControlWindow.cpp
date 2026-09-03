@@ -140,8 +140,19 @@ bool SourceControlWindow::TakeAdoptCanonicalRoot()
     return v;
 }
 
+std::string SourceControlWindow::TakeCreatedBranch()
+{
+    std::string name;
+    name.swap(createdBranch_);
+    return name;
+}
+
 void SourceControlWindow::OnImGui(SourceControlSession& scm, const SourceControlHost& host)
 {
+    // ★差分の窓は Source Control 窓の開閉と**独立**に描く。ここを `open` の内側に
+    //   入れると、Source Control を閉じた瞬間に差分の窓が消えて二度と閉じられなくなる
+    //   (ドックのタブだけが残る)
+    DrawDiffWindow(scm);
     if (!open) {
         return;
     }
@@ -178,10 +189,8 @@ void SourceControlWindow::OnImGui(SourceControlSession& scm, const SourceControl
             DrawChanges(scm, host);
             ImGui::EndTabItem();
         }
-        // Branches は枠だけ (M66e で中身が入る)。
-        // ★タブを先に出しておくのは「どこに何が来るか」を先に固定するため
         if (ImGui::BeginTabItem(Tr(StrId::Scm_TabBranches))) {
-            ImGui::TextDisabled("%s", Tr(StrId::Scm_ComingSoon));
+            DrawBranches(scm, host);
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem(Tr(StrId::Scm_TabHistory))) {
@@ -236,6 +245,11 @@ void SourceControlWindow::DrawHeader(SourceControlSession& scm)
         scm.RequestIdentity();
         if (scm.HistoryValid()) {
             scm.RequestLog(kHistoryCount);
+        }
+        if (scm.Branches().valid) {
+            // 一度でも Branches タブを開いていれば取り直す (外で `git branch` を
+            // 叩かれた分はこれでしか入ってこない)
+            scm.RequestBranches();
         }
         // 差分も取り直す (中身が変わっていても選択は変わらないので、
         // 二重要求よけの記録を消してから SyncDiffRequest に拾わせる)
@@ -437,16 +451,9 @@ void SourceControlWindow::DrawChanges(SourceControlSession& scm, const SourceCon
         commitH += ImGui::GetTextLineHeightWithSpacing();
     }
     const float avail = ImGui::GetContentRegionAvail().y;
-    const float diffHeader = ImGui::GetFrameHeightWithSpacing();
-    const float rest = avail - commitH - style.ItemSpacing.y * 2.0f;
-    // ★既定のドック (Assets と同じ下段の帯 = 200px 強) では 3 段は入らない。
-    //   入らないときに削るのは**差分ペイン**で、コミット欄ではない — 一覧と
-    //   コミット欄が窓の外へ押し出されると「選ぶ」も「コミットする」も
-    //   できなくなり、窓が何のためにあるのか分からなくなる。
-    //   差分を見たい人は窓を広げるか切り離せば戻ってくる
-    constexpr float kDiffPaneMinRoom = 220.0f;
-    const bool showDiff = rest >= kDiffPaneMinRoom;
-    const float listH = showDiff ? (rest - diffHeader) * 0.55f : (std::max)(60.0f, rest);
+    // 差分は別窓へ出した (M66e) ので、ここは「一覧 + コミット欄」の 2 段だけ。
+    // ★コミット欄の高さを先に確保し、残り全部を一覧に渡す
+    const float listH = (std::max)(60.0f, avail - commitH - style.ItemSpacing.y * 2.0f);
 
     if (ImGui::BeginChild("###ScmChangeList", ImVec2(0, listH), ImGuiChildFlags_Borders)) {
         for (const int child : model.nodes[0].children) {
@@ -456,15 +463,25 @@ void SourceControlWindow::DrawChanges(SourceControlSession& scm, const SourceCon
     ImGui::EndChild();
 
     SyncDiffRequest(scm);
-    if (showDiff) {
-        DrawDiffPane(scm, rest - diffHeader - listH);
-    }
     ImGui::Separator();
     DrawCommitBox(scm, host, compact);
 }
 
-void SourceControlWindow::DrawDiffPane(SourceControlSession& scm, float height)
+void SourceControlWindow::DrawDiffWindow(SourceControlSession& scm)
 {
+    if (!diffOpen) {
+        return;
+    }
+    // 浮いた状態で最初に開いたときの大きさ (差分は横に長い)
+    ImGui::SetNextWindowSize(ImVec2(640.0f, 320.0f), ImGuiCond_FirstUseEver);
+    if (diffFocusRequest_) {
+        diffFocusRequest_ = false;
+        ImGui::SetNextWindowFocus(); // ドック束の中で手前のタブにする
+    }
+    if (!ImGui::Begin(Tr(StrId::Win_Diff), &diffOpen)) {
+        ImGui::End();
+        return;
+    }
     const DiffView& diff = scm.Diff();
     if (ImGui::Checkbox(Tr(StrId::Scm_DiffStaged), &diffStaged_)) {
         diffRequestedPath_.clear(); // 次のフレームで取り直す
@@ -475,12 +492,13 @@ void SourceControlWindow::DrawDiffPane(SourceControlSession& scm, float height)
     } else {
         ImGui::TextDisabled("%s", Tr(StrId::Scm_DiffPick));
     }
+    ImGui::Separator();
     // ★横スクロールは**差分本文があるときだけ**有効にする。案内文まで横スクロール
     //   領域に入れると、窓が細いときに 1 行が右へ流れて読めなくなる
     //   (M66c のプローブで "No textual diff (new, binary or unchanged on thi" と切れた)
     const bool hasDiffText = selected_.size() == 1 && diff.valid && !diff.loading
         && !diff.text.empty();
-    if (ImGui::BeginChild("###ScmDiffView", ImVec2(0, height), ImGuiChildFlags_Borders,
+    if (ImGui::BeginChild("###ScmDiffView", ImVec2(0, 0), ImGuiChildFlags_None,
                           hasDiffText ? ImGuiWindowFlags_HorizontalScrollbar : 0)) {
         if (selected_.size() != 1) {
             ImGui::TextWrapped("%s", Tr(StrId::Scm_DiffPick));
@@ -500,6 +518,146 @@ void SourceControlWindow::DrawDiffPane(SourceControlSession& scm, float height)
                 ImGui::TextWrapped("%s", Tr(StrId::Scm_DiffTruncated));
                 ImGui::PopStyleColor();
             }
+        }
+    }
+    ImGui::EndChild();
+    ImGui::End();
+}
+
+void SourceControlWindow::DrawBranches(SourceControlSession& scm, const SourceControlHost& host)
+{
+    if (!branchesRequested_) {
+        // タブを開いた最初のフレームで 1 回だけ (窓を開いているだけで
+        // for-each-ref が走り続けるのは無駄)
+        branchesRequested_ = true;
+        scm.RequestBranches();
+    }
+    const BranchList& branches = scm.Branches();
+    if (!branches.valid) {
+        ImGui::TextDisabled("%s", Tr(StrId::Scm_Loading));
+        return;
+    }
+
+    // ---- 操作列 ----
+    // ★既定のドック幅 (左列 ≒ 285px) に収まるのはボタン 3 個まで。
+    //   ここは 2 個 + 状態テキストに留める
+    const bool busy = scm.WriteInFlight();
+    const bool gateOpen = host.writeBlockers.empty() && host.requestCheckout;
+    const bool pickedOther = !selectedBranch_.empty() && selectedBranch_ != branches.current;
+    ImGui::BeginDisabled(!pickedOther || busy || !gateOpen);
+    if (ImGui::Button(Tr(StrId::Scm_Switch))) {
+        // ★ここでは**要求するだけ**。事前判定 (diff_names) → 確認 → checkout →
+        //   後処理は GitTransaction が持つ (窓が working tree を触らない)
+        host.requestCheckout(selectedBranch_);
+    }
+    ImGui::EndDisabled();
+    // ★BeginDisabled の外でツールチップを出す (中だとホバー判定ごと殺される)
+    if (!gateOpen && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+        DrawBlockerTooltip(host.writeBlockers);
+    }
+    ImGui::SameLine();
+    ImGui::BeginDisabled(busy);
+    if (ImGui::Button(Tr(StrId::Scm_NewBranch))) {
+        newBranchName_[0] = '\0';
+        newBranchOpen_ = true;
+    }
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    if (busy) {
+        ImGui::TextDisabled("%s", Tr(StrId::Scm_Busy));
+    } else if (!pickedOther) {
+        ImGui::TextDisabled("%s", Tr(StrId::Scm_BranchPick));
+    }
+
+    // ---- 作成モーダル ----
+    if (newBranchOpen_) {
+        ImGui::OpenPopup(Tr(StrId::Scm_NewBranchTitle));
+    }
+    {
+        const ImGuiViewport* vp = ImGui::GetMainViewport();
+        // ★Appearing ではなく Always。AlwaysAutoResize の窓は出た最初のフレームに
+        //   自分の大きさを知らないので、Appearing だとずれた位置で確定する (M66d の nit)
+        ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f,
+                                       vp->WorkPos.y + vp->WorkSize.y * 0.5f),
+                                ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    }
+    if (ImGui::BeginPopupModal(Tr(StrId::Scm_NewBranchTitle), nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextDisabled(Tr(StrId::Scm_NewBranchFrom),
+                            branches.current.empty() ? Tr(StrId::Scm_Detached)
+                                                     : branches.current.c_str());
+        ImGui::SetNextItemWidth(260.0f);
+        ImGui::InputText(Tr(StrId::Scm_NewBranchName), newBranchName_, sizeof(newBranchName_));
+        ImGui::Spacing();
+        const bool nameOk = HasVisibleText(newBranchName_);
+        ImGui::BeginDisabled(!nameOk || busy);
+        if (ImGui::Button(Tr(StrId::Scm_NewBranchCreate), ImVec2(120, 0))) {
+            const std::string name = newBranchName_;
+            // from は空 = 現在の HEAD (サービス側の既定)
+            scm.CreateBranch(name, {},
+                             [this, name](bool ok, const std::string&, const std::string&) {
+                                 if (ok) {
+                                     createdBranch_ = name;
+                                     selectedBranch_ = name;
+                                 }
+                             });
+            newBranchOpen_ = false;
+            // ★閉じるのを明示する。開いたままにすると次に開く modal が
+            //   その上に積まれ、位置も入力も前の modal に引きずられる
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        if (ImGui::Button(Tr(StrId::Common_Cancel), ImVec2(110, 0))) {
+            newBranchOpen_ = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+
+    ImGui::Separator();
+    if (branches.locals.empty() && branches.remotes.empty()) {
+        ImGui::TextDisabled("%s", Tr(StrId::Scm_BranchNone));
+        return;
+    }
+    // ---- 一覧 (ローカル → リモート) ----
+    auto drawRows = [this, &branches](const std::vector<BranchInfo>& rows) {
+        for (const BranchInfo& b : rows) {
+            const bool isCurrent = b.name == branches.current;
+            ImGui::PushID(b.name.c_str());
+            if (isCurrent) {
+                // 現在のブランチだけ意味色で強調 (themeColor のみ = テーマ切替に追随)
+                ImGui::PushStyleColor(ImGuiCol_Text, themeColor::Accent);
+            }
+            if (ImGui::Selectable(b.name.c_str(), selectedBranch_ == b.name)) {
+                selectedBranch_ = b.name;
+            }
+            if (isCurrent) {
+                ImGui::PopStyleColor();
+                ImGui::SameLine();
+                ImGui::TextDisabled("(%s)", Tr(StrId::Scm_BranchCurrent));
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::BeginTooltip();
+                ImGui::TextUnformatted(b.name.c_str());
+                if (!b.upstream.empty()) {
+                    ImGui::TextDisabled(Tr(StrId::Scm_BranchTracking), b.upstream.c_str());
+                }
+                // 短縮 SHA は表示専用 (7 桁)。UI では長い方に意味が無い
+                ImGui::TextDisabled("%s", ShortSha(b.oid).c_str());
+                ImGui::EndTooltip();
+            }
+            ImGui::PopID();
+        }
+    };
+    if (ImGui::BeginChild("###ScmBranchList", ImVec2(0, 0), ImGuiChildFlags_Borders)) {
+        ImGui::SeparatorText(Tr(StrId::Scm_BranchLocal));
+        drawRows(branches.locals);
+        if (!branches.remotes.empty()) {
+            // ★リモート追跡は checkout の扱いが違う (-t で追跡ブランチを作ってから乗る)
+            //   ので節を分ける。混ぜると「同じ名前が 2 つある」ように見える
+            ImGui::SeparatorText(Tr(StrId::Scm_BranchRemote));
+            drawRows(branches.remotes);
         }
     }
     ImGui::EndChild();
@@ -645,6 +803,13 @@ void SourceControlWindow::DrawNode(const SourceControlModel& model, int index)
         std::find(selected_.begin(), selected_.end(), entry.path) != selected_.end();
     ImGui::PushID(node.path.c_str());
     if (ImGui::Selectable(node.name.c_str(), isSelected)) {
+        // 行を選んだら差分の窓を開く (spec §4.3「選択時に開く」)。閉じたあとは
+        // 次に選び直すまで開かない = 邪魔にならない。
+        // ★**手前に出すところまでやる**。開くだけだと、同じドック束の別タブ
+        //   (既定では Assets) の後ろに隠れたままで、押しても何も起きないように見える
+        //   (M66e のプローブで実際にそうなった)
+        diffOpen = true;
+        diffFocusRequest_ = true;
         if (ImGui::GetIO().KeyCtrl) {
             auto it = std::find(selected_.begin(), selected_.end(), entry.path);
             if (it != selected_.end()) {

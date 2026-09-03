@@ -1106,3 +1106,43 @@ MYE_STR(GateB_OpInFlight,      "another git operation is still running",
 MYE_STR(GateB_MergeInProgress, "a merge or rebase is in progress", "マージ / リベースの途中です")
 MYE_STR(GateB_ServiceUnavailable, "source control is not available",
                                   "ソース管理が利用できません")
+
+// ---- M66e: ブランチ (一覧 / 作成 / 切替) と差分の別窓 ----
+// ★"###" の右辺は DockBuilderDockWindow("Diff") / layouts の panels.json と
+//   **1 バイト一致**させること (不一致だと既定ドックが黙って無視される)
+MYE_STR(Win_Diff,              "Diff###Diff", "差分###Diff")
+MYE_STR(Scm_BranchLocal,       "Local", "ローカル")
+MYE_STR(Scm_BranchRemote,      "Remote", "リモート")
+MYE_STR(Scm_BranchCurrent,     "current", "現在")
+MYE_STR(Scm_BranchTracking,    "tracks %s", "追跡: %s")
+MYE_STR(Scm_BranchNone,        "No branches yet (the repository has no commits).",
+                               "ブランチがありません (コミットが 1 つもありません)。")
+MYE_STR(Scm_BranchPick,        "Select a branch to switch to it.",
+                               "切り替えたいブランチを選んでください。")
+MYE_STR(Scm_Switch,            "Switch###ScmSwitch", "切替###ScmSwitch")
+MYE_STR(Scm_NewBranch,         "New###ScmNewBranch", "作成###ScmNewBranch")
+MYE_STR(Scm_NewBranchTitle,    "New branch###ScmNewBranchModal",
+                               "ブランチの作成###ScmNewBranchModal")
+MYE_STR(Scm_NewBranchName,     "Name###ScmNewBranchName", "名前###ScmNewBranchName")
+MYE_STR(Scm_NewBranchFrom,     "Starts from %s (the current branch).",
+                               "%s (現在のブランチ) から作ります。")
+MYE_STR(Scm_NewBranchCreate,   "Create###ScmNewBranchCreate", "作成する###ScmNewBranchCreate")
+MYE_STR(Scm_BranchCreated,     "Created branch %s", "ブランチ %s を作成しました")
+MYE_STR(Scm_SwitchTitle,       "Switch branch###ScmSwitchModal",
+                               "ブランチの切替###ScmSwitchModal")
+MYE_STR(Scm_SwitchTo,          "Switch to %s", "%s へ切り替えます")
+MYE_STR(Scm_SwitchChecking,    "checking what would change...", "何が変わるか調べています...")
+MYE_STR(Scm_SwitchBody,        "%d file(s) will be replaced on disk.",
+                               "ディスク上の %d 件のファイルが入れ替わります。")
+MYE_STR(Scm_SwitchConfirm,     "Switch###ScmSwitchConfirm", "切り替える###ScmSwitchConfirm")
+MYE_STR(Scm_CheckoutDone,      "Switched to %s (%d file(s))",
+                               "%s へ切り替えました (%d 件)")
+MYE_STR(Scm_OverwriteHint,     "Discard the changes in these files first, then switch again.",
+                               "先にこれらのファイルの変更を破棄してから切り替えてください。")
+MYE_STR(Scm_MergeLeftover,     "A merge or rebase from an earlier session is still open.",
+                               "前回のマージ / リベースが途中のままです。")
+MYE_STR(Scm_ScriptBuildDone,   "Script build finished", "スクリプトのビルドが終わりました")
+// ★書式指定子を持たせない。失敗経路は 2 つ (起動できなかった / 終了コードが 0 でない)
+//   あり、片方はログのパスを持たない。詳細 (パスと exit code) はログへ出す
+MYE_STR(Scm_ScriptBuildFailed, "Script build failed - see the console log.",
+                               "スクリプトのビルドが失敗しました。コンソールのログを見てください。")

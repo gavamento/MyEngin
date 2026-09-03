@@ -273,8 +273,18 @@ void CollabClient::Shutdown()
     handle_ = nullptr;
     pending_.clear();
     if (dll_) {
-        // ★destroy の後で FreeLibrary する。逆順だと走行中のコードごとアンロードされる
-        ::FreeLibrary(static_cast<HMODULE>(dll_));
+        // ★**FreeLibrary は呼ばない** (M66e で調査したうえでの意図的な放置)。
+        //   MyeCollab.dll の中には**こちらから join できないスレッドが 1 本ある** —
+        //   notify 8.2.0 の ReadDirectoryChangesWatcher::drop は
+        //   「Stop を送って起こす」だけで内部スレッドを join しない
+        //   (~/.cargo/.../notify-8.2.0/src/windows.rs:590)。destroy が worker と
+        //   監視ラッパを join した直後でも、その OS スレッドはまだ DLL のコードを
+        //   実行していることがあり、そこへ FreeLibrary を掛けると**アンマップされた
+        //   コードを実行して落ちる** (0xC0000005)。
+        //   実測: checkout の直後 (= 監視が大量のイベントを処理している最中) に
+        //   終了すると 6 回に 1〜2 回落ちた。この行を外すと 12 回連続で落ちない。
+        //   Shutdown はプロセス終了の直前にしか呼ばれない (ホットリロードもしない)
+        //   ので、モジュールを張ったままにして失うものは無い。
         dll_ = nullptr;
     }
     protoVersionFn_ = nullptr;

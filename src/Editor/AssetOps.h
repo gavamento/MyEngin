@@ -124,18 +124,16 @@ bool AssignMaterialToEntity(EngineContext& ctx, Selection& selection, UndoStack&
 
 // ---- スクリプトワークフロー ----
 void OpenInExternalEditor(const std::string& editorCmd, const std::wstring& path); // {file}/{line} 置換
-// C++ スクリプトのビルド。プロジェクト起動時は <project>\src\GameLogic\Scripts\*.cpp を
-// cl.exe で <project>\cache\GameLogic.dll へ直接ビルドする (vcxproj / msbuild を介さない)。
-// レガシー起動時のみ従来どおり tools\build_scripts.bat (gen + msbuild) を起動する
-void RebuildGameLogic(EngineContext& ctx);
 void CompileCSharpScripts(EngineContext& ctx); // assets\scripts\*.cs をエンジン内 Roslyn でコンパイル
 
-// M51j: ビルドワンストップ (BuildSettings) 用の非対話スクリプトビルド。
-// RebuildGameLogic と同じ生成物 (bat) を使うが、fire-and-forget ではなく
+// C++ スクリプトのビルド (M51j。**唯一の起動口** — M66e で fire-and-forget 版を廃止)。
+// プロジェクト起動時は <project>\src\GameLogic\Scripts\*.cpp を <project>\cache\ に
+// 生成した vcxproj で、レガシー起動時は tools\build_scripts.bat でビルドする。
 // プロセスハンドル (void* = HANDLE) を返し、呼び出し側が毎フレームポーリングして
 // 完了と終了コードを拾う。出力は logPathOut のファイルへリダイレクトされる
 // (pause で止まらないよう stdin は NUL)。失敗 (bat 不在等) は nullptr。
-// ハンドルは呼び出し側が CloseHandle すること
+// ★ハンドルは呼び出し側が CloseHandle すること。**走っている間は書き込み系 git 操作の
+//   ゲートを閉じる** (bin\ と cache\ を書き換えている最中に checkout が通らないように)
 void* StartGameLogicBuild(EngineContext& ctx, std::wstring& logPathOut);
 
 } // namespace mye

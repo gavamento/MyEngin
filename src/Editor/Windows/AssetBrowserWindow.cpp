@@ -293,7 +293,11 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
     // ---- 右: ファイルグリッド ----
     ImGui::BeginChild("##filegrid", ImVec2(0, 0), ImGuiChildFlags_Borders);
     if (ImGui::Button(Tr(StrId::Asset_RebuildScripts))) {
-        RebuildGameLogic(ctx); // gen + msbuild GameLogic → ホットリロード
+        // ★ここで直接 ShellExecuteW しない (M66e)。fire-and-forget で起動すると
+        //   プロセスハンドルが誰の手にも残らず、**走っている間ゲートが閉じない** =
+        //   ビルドが bin\ と cache\ を書いている最中に checkout / pull が通る。
+        //   EditorApp がハンドルを持って毎フレーム見る形へ寄せる
+        rebuildScriptsRequest_ = true;
     }
     if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip("%s", Tr(StrId::Asset_TipRebuild));

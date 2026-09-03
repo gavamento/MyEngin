@@ -369,6 +369,12 @@ void SourceControlSession::SendRepoCheck()
         if (repoState_ != Unavailable::None) {
             return;
         }
+        // 起動時の残骸検査 (決定 13、M66e)。外で `git merge` を途中放置したまま
+        // 開くと、書き込み系はすべてゲートで止まる (MergeInProgress) —
+        // **理由を出さないと「押せないボタン」だけが残る**
+        if (mergeInProgress_ || rebaseInProgress_) {
+            mergeWarned_ = true;
+        }
         RequestStatus();
         // ★起動時に 1 回聞いておく (M66c)。コミットしようとした瞬間に初めて
         //   「名前が設定されていません」と言われるより、欄の下に最初から
@@ -482,6 +488,13 @@ bool SourceControlSession::TakeHeadMoved()
     const bool moved = headMoved_;
     headMoved_ = false;
     return moved;
+}
+
+bool SourceControlSession::TakeMergeWarning()
+{
+    const bool warn = mergeWarned_;
+    mergeWarned_ = false;
+    return warn;
 }
 
 bool SourceControlSession::AdoptCanonicalRoot()
@@ -729,6 +742,202 @@ void SourceControlSession::Revert(const std::vector<std::string>& paths, WriteDo
                         const bool ok = ApplyWriteResult(msg);
                         if (done) {
                             done(ok, errorCode_, errorDetail_);
+                        }
+                    });
+}
+
+// ---- M66e: branches / branch_create / checkout / diff_names ----
+
+BranchList BuildBranchList(const nlohmann::json& r)
+{
+    BranchList out;
+    if (!r.is_object()) {
+        return out;
+    }
+    out.current = r.value("current", std::string());
+    auto read = [](const nlohmann::json& arr, std::vector<BranchInfo>& dst) {
+        if (!arr.is_array()) {
+            return;
+        }
+        for (const nlohmann::json& b : arr) {
+            if (!b.is_object()) {
+                continue;
+            }
+            BranchInfo info;
+            info.name = b.value("name", std::string());
+            if (info.name.empty()) {
+                continue; // 名前の無い行は出さない (押すと git に空文字列が飛ぶ)
+            }
+            info.oid = b.value("oid", std::string());
+            info.upstream = b.value("upstream", std::string());
+            dst.push_back(std::move(info));
+        }
+    };
+    if (r.contains("locals")) {
+        read(r["locals"], out.locals);
+    }
+    if (r.contains("remotes")) {
+        read(r["remotes"], out.remotes);
+    }
+    out.valid = true;
+    return out;
+}
+
+std::vector<StageChange> ChangesFromNames(const nlohmann::json& names)
+{
+    std::vector<StageChange> out;
+    if (!names.is_array()) {
+        return out;
+    }
+    out.reserve(names.size());
+    for (const nlohmann::json& n : names) {
+        if (!n.is_object()) {
+            continue;
+        }
+        StageChange c;
+        c.path = n.value("path", std::string());
+        if (c.path.empty()) {
+            continue;
+        }
+        c.oldPath = n.value("oldPath", std::string());
+        switch (FirstChar(n, "status", 'M')) {
+        case 'A':
+            c.kind = BatchChange::Kind::Added;
+            break;
+        case 'D':
+            // ★D を Modified と読むと、消えたファイルを ReloadHub が読み直そうとして
+            //   リトライ列に永久に残る (spec S4)。ここが段階 B への唯一の入口
+            c.kind = BatchChange::Kind::Deleted;
+            break;
+        case 'R':
+            c.kind = BatchChange::Kind::Renamed;
+            break;
+        default: // M / T / C
+            c.kind = BatchChange::Kind::Modified;
+            break;
+        }
+        out.push_back(std::move(c));
+    }
+    return out;
+}
+
+void SourceControlSession::RequestBranches()
+{
+    if (!client_.Ready() || repoState_ != Unavailable::None || branchesInFlight_) {
+        return;
+    }
+    branchesInFlight_ = true;
+    client_.Request(collabop::kBranches, nlohmann::json::object(),
+                    [this](const nlohmann::json& msg) {
+                        branchesInFlight_ = false;
+                        if (!msg.value("ok", false)) {
+                            ApplyError(msg);
+                            return;
+                        }
+                        branches_ = BuildBranchList(msg["result"]);
+                    });
+}
+
+void SourceControlSession::CreateBranch(const std::string& name, const std::string& from,
+                                        WriteDoneFn done)
+{
+    if (!client_.Ready() || repoState_ != Unavailable::None || name.empty()) {
+        if (done) {
+            done(false, collaberr::kBadRequest, "branch name is empty");
+        }
+        return;
+    }
+    nlohmann::json args = { { "name", name } };
+    if (!from.empty()) {
+        args["from"] = from;
+    }
+    client_.Request(collabop::kBranchCreate, args,
+                    [this, done = std::move(done)](const nlohmann::json& msg) {
+                        const bool ok = ApplyWriteResult(msg);
+                        if (ok) {
+                            // 作った直後に一覧へ出ないと「押したのに何も起きていない」
+                            // ように見える (HEAD は動かないので status では分からない)
+                            branches_.valid = false;
+                            RequestBranches();
+                        }
+                        if (done) {
+                            done(ok, errorCode_, errorDetail_);
+                        }
+                    });
+}
+
+void SourceControlSession::RequestDiffNames(const std::string& from, const std::string& to,
+                                            DiffNamesDoneFn done)
+{
+    if (!client_.Ready() || repoState_ != Unavailable::None) {
+        if (done) {
+            done(false, {}, collaberr::kServiceDead, "source control is not available");
+        }
+        return;
+    }
+    client_.Request(collabop::kDiffNames, { { "from", from }, { "to", to } },
+                    [this, done = std::move(done)](const nlohmann::json& msg) {
+                        if (!msg.value("ok", false)) {
+                            ApplyError(msg);
+                            if (done) {
+                                done(false, {}, errorCode_, errorDetail_);
+                            }
+                            return;
+                        }
+                        std::vector<StageChange> changes;
+                        if (msg["result"].contains("names")) {
+                            changes = ChangesFromNames(msg["result"]["names"]);
+                        }
+                        if (done) {
+                            done(true, changes, {}, {});
+                        }
+                    });
+}
+
+void SourceControlSession::Checkout(const std::string& name, CheckoutDoneFn done)
+{
+    CheckoutResult res;
+    if (!client_.Ready() || repoState_ != Unavailable::None || name.empty()) {
+        // ★呼び手 (GitTransaction) は ReloadHub::BeginBatch を済ませているので、
+        //   黙って return すると一括モードのまま帰ってこない
+        res.errorCode = collaberr::kServiceDead;
+        res.errorDetail = "source control is not available";
+        if (done) {
+            done(res);
+        }
+        return;
+    }
+    client_.Request(collabop::kCheckout, { { "name", name } },
+                    [this, done = std::move(done)](const nlohmann::json& msg) {
+                        CheckoutResult r;
+                        r.ok = ApplyWriteResult(msg);
+                        if (r.ok) {
+                            const nlohmann::json& result = msg["result"];
+                            r.branch = result.value("branch", std::string());
+                            if (result.contains("names")) {
+                                r.changes = ChangesFromNames(result["names"]);
+                            }
+                            // 切り替えた先のブランチ一覧は current が変わっている
+                            branches_.valid = false;
+                            RequestBranches();
+                            MYE_LOG_INFO("[collab] checkout %s (%zu path(s) changed)",
+                                         r.branch.c_str(), r.changes.size());
+                        } else {
+                            r.errorCode = errorCode_;
+                            r.errorDetail = errorDetail_;
+                            // local_changes_overwritten の対象一覧 (spec S7)。
+                            // ここを落とすとモーダルに「何を破棄すればいいか」が出せない
+                            if (msg.contains("error") && msg["error"].contains("paths")
+                                && msg["error"]["paths"].is_array()) {
+                                for (const nlohmann::json& p : msg["error"]["paths"]) {
+                                    if (p.is_string()) {
+                                        r.errorPaths.push_back(p.get<std::string>());
+                                    }
+                                }
+                            }
+                        }
+                        if (done) {
+                            done(r);
                         }
                     });
 }

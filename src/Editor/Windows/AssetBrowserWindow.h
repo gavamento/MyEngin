@@ -49,6 +49,16 @@ public:
         return r;
     }
 
+    // [Rebuild Scripts] が押されたか (M66e)。**窓は起動しない** —
+    // EditorApp が StartGameLogicBuild でハンドルを持ち、走っている間は
+    // 書き込み系 git 操作のゲートを閉じる (GateBlocker::ScriptBuildRunning)
+    bool TakeRebuildScriptsRequest()
+    {
+        const bool r = rebuildScriptsRequest_;
+        rebuildScriptsRequest_ = false;
+        return r;
+    }
+
     // ---- エクスプローラー D&D (EditorApp が WM_DROPFILES 処理時に参照) ----
     // 前フレームにパネルが前面に描画されていて (x,y) [クライアント座標] が矩形内なら true
     bool IsClientPosInPanel(float x, float y) const;
@@ -65,6 +75,7 @@ private:
     std::wstring pendingOpenScene_; // ダブルクリックされたシーン (TakePendingOpenScene で消費)
     std::wstring pendingOpenActor_; // ダブルクリックされた構成アセット (M48k)
     bool openMixerRequest_ = false; // .mixer.json をダブルクリックした (M45d)
+    bool rebuildScriptsRequest_ = false; // [Rebuild Scripts] (M66e。起動は EditorApp)
     // D&D 移動 (M30b)。描画中の fs 変更 (iterator 破壊) を避けるためフレーム末に実行する
     std::wstring pendingMoveSrc_;
     std::wstring pendingMoveDstDir_;

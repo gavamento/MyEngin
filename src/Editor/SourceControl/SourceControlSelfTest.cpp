@@ -727,6 +727,55 @@ bool RunSourceControlSelfTest()
         }
     }
 
+    // ---- (j) M66e: branches の解析と、checkout の names → 段階分類 ----
+    {
+        // `branches` 応答 (Rust の ops.rs::branches が返す形そのもの)
+        const nlohmann::json branchesResult = nlohmann::json::parse(R"({
+            "current": "main",
+            "locals": [
+                { "name": "main", "oid": "aaaa", "upstream": "origin/main" },
+                { "name": "feature", "oid": "bbbb", "upstream": "" },
+                { "name": "", "oid": "cccc", "upstream": "" }
+            ],
+            "remotes": [ { "name": "origin/main", "oid": "aaaa", "upstream": "" } ]
+        })");
+        const BranchList list = BuildBranchList(branchesResult);
+        check(list.valid && list.current == "main" && list.locals.size() == 2
+                  && list.remotes.size() == 1,
+              "branches: locals and remotes are kept apart and the nameless row is dropped");
+        check(list.locals[0].upstream == "origin/main" && list.locals[1].upstream.empty(),
+              "branches: the tracking branch comes through per row");
+        check(!BuildBranchList(nlohmann::json::object()).current.size()
+                  && BuildBranchList(nlohmann::json::object()).valid,
+              "branches: an empty answer is still 'valid' (detached HEAD has no current)");
+
+        // checkout / diff_names の `names` → 段階分類の入力
+        const nlohmann::json names = nlohmann::json::parse(R"([
+            { "path": "assets/textures/wall.png", "status": "M" },
+            { "path": "assets/textures/new.png", "status": "A" },
+            { "path": "assets/textures/gone.png", "status": "D" },
+            { "path": "assets/textures/moved.png", "status": "R", "oldPath": "assets/old.png" },
+            { "path": "", "status": "M" }
+        ])");
+        const std::vector<StageChange> changes = ChangesFromNames(names);
+        check(changes.size() == 4, "names: the row without a path is dropped");
+        check(changes[0].kind == BatchChange::Kind::Modified
+                  && changes[1].kind == BatchChange::Kind::Added
+                  && changes[2].kind == BatchChange::Kind::Deleted
+                  && changes[3].kind == BatchChange::Kind::Renamed
+                  && changes[3].oldPath == "assets/old.png",
+              "names: M / A / D / R map onto the ReloadHub kinds");
+        // ★D が 1 件混ざるだけで段階は B (消えた資産は差し替えられない)
+        check(Classify(StageInputs{ changes, "", kCollabMaxBatchApply }) == ApplyStage::B,
+              "names: a deleted asset in the checkout set forces a reopen (B)");
+        std::vector<StageChange> onlyEdits = { changes[0], changes[1] };
+        check(Classify(StageInputs{ onlyEdits, "", kCollabMaxBatchApply }) == ApplyStage::A,
+              "names: textures alone stay in place (A)");
+        check(ChangesFromNames(nlohmann::json::object()).empty()
+                  && ChangesFromNames(nlohmann::json::array()).empty(),
+              "names: a missing or empty array is not a change set");
+    }
+
     // ---- 実 DLL 経由の結線 (MYE_COLLAB_PROBE=<repo> のときだけ) ----
     // ★窓のボタン -> Session -> DLL -> git の 1 本を、UI を触らずに実走させる。
     //   ここを通していないと「ゲートは正しいがボタンが何にも繋がっていない」に
@@ -781,6 +830,27 @@ bool RunSourceControlSelfTest()
             std::error_code ec;
             check(!fs::exists(scratch, ec),
                   "probe: reverting an untracked file deletes it from disk");
+
+            // M66e: ブランチの一覧と checkout を**実 DLL 経由**で 1 往復させる。
+            // ★リポジトリを変えない形にしてある (今いるブランチへ切り替える) —
+            //   プローブが repo を書き換えると、次に走ったときの前提が変わる
+            scm.RequestBranches();
+            const bool branched = pump([&scm] { return scm.Branches().valid; }, 15000);
+            check(branched && !scm.Branches().current.empty()
+                      && !scm.Branches().locals.empty(),
+                  "probe: branches comes back with a current branch through the real DLL");
+            if (branched && !scm.Branches().current.empty()) {
+                bool coDone = false;
+                SourceControlSession::CheckoutResult coRes;
+                scm.Checkout(scm.Branches().current,
+                             [&coDone, &coRes](const SourceControlSession::CheckoutResult& r) {
+                                 coDone = true;
+                                 coRes = r;
+                             });
+                check(pump([&coDone] { return coDone; }, 30000) && coRes.ok
+                          && coRes.changes.empty(),
+                      "probe: switching to the branch we are already on changes no files");
+            }
 
             // サービスが死んだら**ゲートが閉じる**ところまで通す (spec §4.0 / M66b の
             // 積み残し)。DLL 側の panic 注入は v1 で凍結した op 一覧の外なので、

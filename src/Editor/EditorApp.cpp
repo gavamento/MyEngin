@@ -72,6 +72,7 @@ void EditorApp::OnStart(EngineContext& ctx)
                     { "Timeline", &timeline_.open },
                     { "Network", &net_.open },
                     { "Source Control", &sourceControl_.open },
+                    { "Diff", &sourceControl_.diffOpen },
                     { "Particle Settings", &particleSettings_.open },
                     { "Sound Generator", &soundGen_.open },
                     { "Audio Mixer", &audioMixer_.open },
@@ -658,6 +659,11 @@ void EditorApp::OnImGui(EngineContext& ctx)
         scmHost.requestRevert = [this](std::vector<std::string> paths, int untracked) {
             gitTx_.RequestRevert(std::move(paths), untracked);
         };
+        scmHost.requestCheckout = [this](std::string target) {
+            // M66e: 切替も破棄と同じトランザクション経由。窓は名前を渡すだけで、
+            // 事前判定 (diff_names) → 確認 → checkout → 後処理は GitTransaction が持つ
+            gitTx_.RequestCheckout(std::move(target));
+        };
         scmHost.saveDocument = [this, &ctx]() -> std::wstring {
             const std::wstring path = actorEdit_ ? actorEdit_->path : scenePath_;
             SaveCurrentScene(ctx);
@@ -672,6 +678,20 @@ void EditorApp::OnImGui(EngineContext& ctx)
         toasts_.Notify(adopted ? LogLevel::Info : LogLevel::Error,
                        Tr(adopted ? StrId::Scm_AdoptDone : StrId::Scm_AdoptFailed));
     }
+    if (const std::string branch = sourceControl_.TakeCreatedBranch(); !branch.empty()) {
+        // ★ログにも残す (トーストは 4 秒で消える)。一覧は取り直しているが、
+        //   スクロールの外に出た新しい行は目に入らない
+        MYE_LOG_INFO("[collab] created branch %s", branch.c_str());
+        char buf[128];
+        snprintf(buf, sizeof(buf), Tr(StrId::Scm_BranchCreated), branch.c_str());
+        toasts_.Notify(LogLevel::Info, buf);
+    }
+    if (scm_.TakeMergeWarning()) {
+        // 決定 13: 起動時の残骸検査。窓のヘッダにも帯が出るが、窓を開いていない
+        // 人にも「なぜ書き込み系が全部押せないのか」が伝わる必要がある
+        MYE_LOG_WARN("[collab] the repository is in the middle of a merge or rebase");
+        toasts_.Notify(LogLevel::Warn, Tr(StrId::Scm_MergeLeftover));
+    }
     if (const std::string sha = scm_.TakeLastCommit(); !sha.empty()) {
         // ★ログにも残す — トーストは 4 秒で消えるので、後から「本当にコミット
         //   できたのか」を確かめる手段が無くなる (SourceControlSession が INFO で出す)
@@ -681,6 +701,15 @@ void EditorApp::OnImGui(EngineContext& ctx)
     }
     DrawProbePreview();
     assetBrowser_.OnImGui(ctx, selection_, undo_, settings_.externalEditorCmd, preview_);
+    // [Rebuild Scripts] (M66e)。**窓ではなくここで起動してハンドルを持つ** —
+    // 走っている間 GateBlocker::ScriptBuildRunning を立て続けるため
+    if (assetBrowser_.TakeRebuildScriptsRequest() && scriptBuildProc_ == nullptr) {
+        scriptBuildProc_ = StartGameLogicBuild(ctx, scriptBuildLog_);
+        if (scriptBuildProc_ == nullptr) {
+            toasts_.Notify(LogLevel::Error, Tr(StrId::Scm_ScriptBuildFailed));
+        }
+    }
+    PollScriptBuild();
     // AssetBrowser で .scene.json がダブルクリックされたら未保存変更ガード経由で開く
     if (std::wstring p = assetBrowser_.TakePendingOpenScene(); !p.empty()) {
         pendingOpenScenePath_ = std::move(p);
@@ -1086,6 +1115,7 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
         ImGui::MenuItem(Tr(StrId::Win_Timeline), nullptr, &timeline_.open);
         ImGui::MenuItem(Tr(StrId::Win_Net), nullptr, &net_.open);
         ImGui::MenuItem(Tr(StrId::Win_SourceControl), nullptr, &sourceControl_.open);
+        ImGui::MenuItem(Tr(StrId::Win_Diff), nullptr, &sourceControl_.diffOpen);
         ImGui::MenuItem(Tr(StrId::Win_ParticleSettings), nullptr, &particleSettings_.open);
         ImGui::MenuItem(Tr(StrId::Win_SoundGenerator), nullptr, &soundGen_.open);
         ImGui::MenuItem(Tr(StrId::Win_AudioMixer), nullptr, &audioMixer_.open);
@@ -1273,6 +1303,28 @@ void EditorApp::DeleteSelection(EngineContext& ctx)
     undo_.EndRecord(selection_); // CaptureAfter 無し → destroyed 扱い
 }
 
+void EditorApp::PollScriptBuild()
+{
+    if (scriptBuildProc_ == nullptr) {
+        return;
+    }
+    if (WaitForSingleObject(scriptBuildProc_, 0) != WAIT_OBJECT_0) {
+        return; // 実行中 — 次フレームでまた見る (この間ゲートは閉じている)
+    }
+    DWORD code = 1;
+    GetExitCodeProcess(scriptBuildProc_, &code);
+    CloseHandle(scriptBuildProc_);
+    scriptBuildProc_ = nullptr;
+    if (code == 0) {
+        // DLL の差し替えは DllReloader が拾う (~0.5s)。ここは「終わった」だけ知らせる
+        toasts_.Notify(LogLevel::Info, Tr(StrId::Scm_ScriptBuildDone));
+    } else {
+        MYE_LOG_ERROR("[build] script build failed (exit %lu) - see %s", code,
+                      WideToUtf8(scriptBuildLog_).c_str());
+        toasts_.Notify(LogLevel::Error, Tr(StrId::Scm_ScriptBuildFailed));
+    }
+}
+
 GateInputs EditorApp::BuildGateInputs(EngineContext& ctx)
 {
     GateInputs in;
@@ -1282,7 +1334,10 @@ GateInputs EditorApp::BuildGateInputs(EngineContext& ctx)
     in.playing = playMode_.InPlayMode();
     in.netActive = ctx.net != nullptr && ctx.net->active;
     in.buildRunning = buildSettings_.IsPipelineRunning();
-    in.scriptBuildRunning = buildSettings_.IsScriptBuildRunning();
+    // ★Asset Browser の [Rebuild Scripts] も OR で入れる (M66e)。以前は
+    //   ShellExecuteW の fire-and-forget で観測できず、**その間だけゲートに穴が開いていた**
+    //   (checkout が src\GameLogic\Scripts\ を入れ替えている最中にビルドが走る)
+    in.scriptBuildRunning = buildSettings_.IsScriptBuildRunning() || scriptBuildProc_ != nullptr;
     in.opInFlight = scm_.WriteInFlight();
     in.mergeInProgress = scm_.MergeInProgress() || scm_.RebaseInProgress();
     in.serviceUnavailable = scm_.State() != Unavailable::None;
@@ -1327,12 +1382,34 @@ void EditorApp::SetupDockLayout(unsigned int dockspaceId)
     ImGui::DockBuilderDockWindow("Profiler", rightBottom);
     ImGui::DockBuilderDockWindow("Timeline", bottom);
     ImGui::DockBuilderDockWindow("Console", bottom);
+    // ★Source Control は**左列 (Hierarchy と同じ束)** (M66e で下段帯から移した)。
+    //   下段帯 (高さ ≒ 200px) では変更一覧が 2 行で切れ、コミット欄が窓の外へ落ちる
+    //   (M66c で実測)。縦に長い左列なら「選ぶ → 書く → 押す」がスクロール無しで通る
+    ImGui::DockBuilderDockWindow("Source Control", left);
+    // Diff は横に長いので下段の帯へ。**既定では閉じている**ので、開くまで
+    // Assets のタブを奪わない (閉じた窓はタブを作らない)
+    ImGui::DockBuilderDockWindow("Diff", bottomRight);
     ImGui::DockBuilderDockWindow("Assets", bottomRight);
-    ImGui::DockBuilderDockWindow("Source Control", bottomRight); // M66b (Assets と同じタブ束)
     ImGui::DockBuilderDockWindow("Animation", bottom);
     ImGui::DockBuilderDockWindow("Animator", bottom);
     ImGui::DockBuilderDockWindow("Scene", center);
     ImGui::DockBuilderDockWindow("Game", center);
+    // ★束の既定タブを明示する。ImGui は「最後に足されたタブ」を選ぶので、
+    //   束へ窓を 1 つ足しただけで「起動したら Hierarchy ではなく Source Control が
+    //   出ている」という意図しない既定になる (M66e で Source Control を左列へ移した)。
+    //   ★タブ ID は窓 ID そのものではなく `ImHashStr("#TAB", 0, 窓 ID)`
+    //     (ImGuiWindow の TabId = GetID("#TAB"))。窓 ID の方を入れると一致せず、
+    //     「書いたのに効かない」形で静かに無視される
+    auto tabIdOf = [](const char* windowName) {
+        // ImHashStr は "###" でシードに戻すので、窓名は右辺だけでよい
+        return ImHashStr("#TAB", 0, ImHashStr(windowName));
+    };
+    if (ImGuiDockNode* node = ImGui::DockBuilderGetNode(left)) {
+        node->SelectedTabId = tabIdOf("Hierarchy");
+    }
+    if (ImGuiDockNode* node = ImGui::DockBuilderGetNode(bottomRight)) {
+        node->SelectedTabId = tabIdOf("Assets");
+    }
     ImGui::DockBuilderFinish(dockspaceId);
 }
 

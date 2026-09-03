@@ -1,0 +1,40 @@
+# 06_branch - ブランチの一覧 / 作成 / 切替 (M66e)。
+#
+# ここで固めたいのは 3 つ:
+#   1) checkout の応答が **「何が working tree で入れ替わったか」まで含む**こと。
+#      段階 A/B/C の判定はこの names が唯一の入力で、空だと「何も変わらなかった」=
+#      その場で差し替えも開き直しもしない、と読まれる (絵とシーンが古いまま残る)。
+#   2) ローカル変更と重なったときに **対象ファイルの一覧**が返ること (spec S7)。
+#      これが空だとモーダルに「何を破棄すればいいか」を出せない。
+#   3) オプションに化ける名前を弾くこと。checkout には `--` を置けない
+#      (`git checkout -- x` は「パス x を index から復元する」= working tree を壊す別操作)
+#      ので、引数検証が唯一の砦になる。
+#
+# ★エラーの detail に git の案内文を載せない (版で文言が変わる)。
+#   local_changes_overwritten はこちらの固定文 + paths[] で返す。
+# --- 前提: main 側に notes.txt を 1 本置く ---
+# write assets/notes.txt one
+# git add -A
+# git -c user.name=mye -c user.email=mye@example.com -c commit.gpgsign=false commit -q -m fixture-notes
+{"id":1,"op":"branches"}
+# --- 作成は working tree を動かさない (HEAD も動かない) ---
+{"id":2,"op":"branch_create","args":{"name":"feature"}}
+{"id":3,"op":"branches"}
+# --- 同じコミットを指すブランチへ移る = names は空 (絵は 1 枚も変わらない) ---
+{"id":4,"op":"checkout","args":{"name":"feature"}}
+# --- feature 側だけ notes.txt を書き換えてコミットする ---
+# write assets/notes.txt two
+# git add -A
+# git -c user.name=mye -c user.email=mye@example.com -c commit.gpgsign=false commit -q -m feature-notes
+# --- main へ戻ると notes.txt が入れ替わる = names に M で載ること ---
+{"id":5,"op":"checkout","args":{"name":"main"}}
+# --- 事前判定 (押す前に段階を出す) に使う向き ---
+{"id":6,"op":"diff_names","args":{"from":"main","to":"feature"}}
+# --- ローカルの未コミット変更と重なる checkout は git が拒否する ---
+# write assets/notes.txt local edit
+{"id":7,"op":"checkout","args":{"name":"feature"}}
+# --- 拒否されたら working tree は 1 バイトも動いていない (main のまま M) ---
+{"id":8,"op":"status"}
+# --- オプションに化ける名前 / 名前なしは弾く ---
+{"id":9,"op":"branch_create","args":{"name":"--force"}}
+{"id":10,"op":"checkout"}

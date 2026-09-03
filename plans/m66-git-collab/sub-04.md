@@ -1,7 +1,7 @@
 # sub-04: M66d: ReloadHub Begin/EndBatch + ゲート + 4 窓の HasUnsavedChanges + トランザクション + revert
 
 - 依存: sub-03
-- 状態: OK (commit: M66d — ハッシュは harness.md のサブ進捗表)
+- 状態: OK (commit 205e90d)
 - 往復: 2
 
 ## やること

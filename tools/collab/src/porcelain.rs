@@ -221,6 +221,94 @@ pub fn clip_text(text: &str, max: usize) -> (String, bool) {
     (text[..cut].to_string(), true)
 }
 
+/// `git for-each-ref` の 1 行 (M66e)。
+///
+/// ★`for-each-ref` に **`-z` は無い** (git 2.48 で "unknown switch `z'" を実測)。
+///   なのでフィールド区切りだけ `%00` にし、レコードは LF で切る。ref 名には
+///   制御文字が入れられない (`git check-ref-format` が拒否する) ので LF 区切りは安全。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RefEntry {
+    /// 完全な ref 名 (`refs/heads/main` / `refs/remotes/origin/main`)。
+    /// ★ローカル / リモートの判別は**これで**行う。短縮名だけだと
+    ///   `refs/heads/origin/main` (スラッシュ入りのローカルブランチ) と
+    ///   `refs/remotes/origin/main` が同じ "origin/main" になって区別が付かない
+    pub refname: String,
+    /// 短縮名 (UI と checkout に渡す形)
+    pub name: String,
+    pub oid: String,
+    /// 追跡先の短縮名 (無ければ空)
+    pub upstream: String,
+    /// `%(HEAD)` が `*` = 今チェックアウトされているブランチ
+    pub current: bool,
+}
+
+/// `git for-each-ref --format=%(refname)%00%(refname:short)%00%(objectname)%00%(upstream:short)%00%(HEAD)`
+/// の解析。フィールドが 5 個そろわない行は捨てる (将来 git が空行を挟んでも落ちない)
+pub fn parse_for_each_ref(raw: &[u8]) -> Vec<RefEntry> {
+    let text = String::from_utf8_lossy(raw);
+    let mut out = Vec::new();
+    for line in text.split('\n') {
+        let line = line.trim_end_matches('\r');
+        if line.is_empty() {
+            continue;
+        }
+        let fields: Vec<&str> = line.split('\0').collect();
+        if fields.len() < 5 {
+            continue;
+        }
+        out.push(RefEntry {
+            refname: fields[0].to_string(),
+            name: fields[1].to_string(),
+            oid: fields[2].to_string(),
+            upstream: fields[3].to_string(),
+            current: fields[4] == "*",
+        });
+    }
+    out
+}
+
+/// `error: Your local changes to the following files would be overwritten by checkout:` の
+/// 直後に続くタブ字下げの行だけを取り出す (M66e、spec §4.1 の S7)。
+///
+/// ★案内文 (`Please commit your changes or stash them ...`) は git の版で文言が変わるので
+///   **1 バイトも当てにしない**。「見出し行を見つけたら、そこからタブ始まりの行が
+///   続く間だけ集める」= 版が変わっても崩れない読み方にする。
+///   未追跡側の見出し ("The following untracked working tree files would be overwritten")
+///   も同じ形なので、同じ 1 本で拾える
+pub fn parse_overwritten_paths(stderr: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut collecting = false;
+    for line in stderr.split('\n') {
+        let line = line.trim_end_matches('\r');
+        if line.contains("would be overwritten") {
+            collecting = true;
+            continue;
+        }
+        if !collecting {
+            continue;
+        }
+        if let Some(path) = line.strip_prefix('\t') {
+            let path = path.trim();
+            if !path.is_empty() {
+                out.push(path.to_string());
+            }
+            continue;
+        }
+        // タブで始まらない行が来た = 一覧の終わり。**ここで止める** —
+        // 止めないと後続の別の見出し以降まで巻き込む
+        collecting = false;
+    }
+    out
+}
+
+/// `git ls-tree -r -z --name-only <rev>` の解析 (M66e)。NUL 区切りのパス列
+pub fn parse_z_paths(raw: &[u8]) -> Vec<String> {
+    raw.split(|b| *b == 0)
+        .filter(|r| !r.is_empty())
+        .map(|r| String::from_utf8_lossy(r).to_string())
+        .collect()
+}
+
 /// `git diff --name-status -z <range>` の 1 レコード (M66d)。
 /// 段階分類 (spec §4.1 A/B/C) の入力になるので、**status と同じ状態文字**で返す
 #[derive(Debug, Clone, PartialEq, Eq)]

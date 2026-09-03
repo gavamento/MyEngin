@@ -1410,43 +1410,13 @@ std::wstring PrepareProjectScriptsBat(EngineContext& ctx)
     return batPath;
 }
 
-// 生成した bat を可視の cmd 窓で起動する (従来の Rebuild Scripts ボタン挙動)
-void BuildProjectScripts(EngineContext& ctx)
-{
-    const std::wstring batPath = PrepareProjectScriptsBat(ctx);
-    if (batPath.empty()) {
-        return;
-    }
-    const std::wstring cacheDir = ctx.projectRoot + L"\\cache";
-    const std::wstring args = L"/c \"\"" + batPath + L"\"\"";
-    ShellExecuteW(nullptr, L"open", L"cmd.exe", args.c_str(), cacheDir.c_str(), SW_SHOWNORMAL);
-}
-
 } // namespace
 
-void RebuildGameLogic(EngineContext& ctx)
-{
-    // プロジェクト起動時はプロジェクト内のスクリプトを cl.exe でビルドする。
-    // レガシー起動 (--project なし) はエンジン同梱スクリプトを vcxproj でビルドする従来経路 —
-    // replay_verify / golden.rep がこちらに依存しているので変更しない
-    if (!ctx.projectRoot.empty()) {
-        BuildProjectScripts(ctx);
-        return;
-    }
-    const std::wstring repo = ScriptsRoot(ctx);
-    const std::wstring bat = repo + L"\\tools\\build_scripts.bat";
-    if (!fs::exists(bat)) {
-        MYE_LOG_ERROR(Tr(StrId::Log_BatMissing), WideToUtf8(bat).c_str());
-        return;
-    }
-    const std::wstring cfg = RunningRelease() ? L"Release" : L"Debug";
-    // cmd /c ""<bat>" <cfg>"  (スペース入りパス対応)
-    const std::wstring args = L"/c \"\"" + bat + L"\" " + cfg + L"\"";
-    MYE_LOG_INFO(Tr(StrId::Log_BuildingGameLogic),
-                 WideToUtf8(cfg).c_str());
-    ShellExecuteW(nullptr, L"open", L"cmd.exe", args.c_str(), repo.c_str(), SW_SHOWNORMAL);
-}
-
+// ★可視の cmd 窓で bat を投げる `RebuildGameLogic` は M66e で**削除した**。
+//   fire-and-forget ではプロセスハンドルが誰の手にも残らず、走っている間
+//   `GateBlocker::ScriptBuildRunning` が立たない = ビルドが bin\ と cache\ を
+//   書いている最中に checkout / pull が通ってしまう (spec §7 の穴)。
+//   起動口は「ハンドルを返す」この 1 本だけにする。
 void* StartGameLogicBuild(EngineContext& ctx, std::wstring& logPathOut)
 {
     // RebuildGameLogic の二経路と同じ bat を使う。違いは起動形態のみ:

@@ -53,3 +53,10 @@ tools\replay_verify.bat
 ## 実装メモ (coder が追記)
 
 ## フィードバック履歴
+
+## planner 追記 (sub-05 round 1 の判定から。coder は着手前に読む)
+
+- **Rust 側に join できないスレッドを増やさない** (spec §4.0)。定期 fetch は worker スレッドのタイマー (recv_timeout) で実装し、新しいスレッドを立てない。notify の Drop が join しないせいで `FreeLibrary` を撤去した経緯 (CollabClient.cpp:276-282) を読むこと。
+- [should] bare origin ができたら **リモート追跡だけのブランチへの `-t` 付き checkout** を collab_verify に 1 本足す (sub-05 で未実走の経路)。
+- pull の応答は checkout と同じ型 `{head, names, status}` に揃える (spec §4.1「実行後の変更集合は op の応答に載せる」)。`GitTransaction` は `OpKind` を 1 つ足し、`SendPredict` と `BeginOp` の 2 箇所だけ差し替える (coder 申し送り)。
+- `Scm_ComingSoon` は未使用。sub-07 の競合 UI で使わないなら sub-10 で消す。

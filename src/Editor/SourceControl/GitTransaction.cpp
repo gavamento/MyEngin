@@ -156,15 +156,31 @@ bool GitTransaction::CanRunGitWriteOp(const GateInputs& in,
     return blockers.empty();
 }
 
+void GitTransaction::UpdateActiveSceneRel()
+{
+    // ★予測 (RequestRevert / diff_names の応答) は ctx を持たないので、
+    //   projectRoot_ は OnImGui が毎フレーム控えている値を使う。
+    //   ここを実行時 (BeginOp) にしか更新しないと、**最初の 1 回の予測だけ**
+    //   activeScene が空 = 「開いているシーンを戻すのに『その場で反映』と出る」
+    activeSceneRel_ = hooks_.activeScenePath
+        ? RelativeToRoot(hooks_.activeScenePath(), projectRoot_)
+        : std::string();
+}
+
 void GitTransaction::RequestRevert(std::vector<std::string> paths, int untrackedCount)
 {
     if (paths.empty() || phase_ != Phase::Idle) {
         return;
     }
+    op_ = OpKind::Revert;
+    target_.clear();
+    checkoutChanges_.clear();
+    reportPaths_.clear();
     std::sort(paths.begin(), paths.end());
     paths.erase(std::unique(paths.begin(), paths.end()), paths.end());
     paths_ = std::move(paths);
     untrackedCount_ = untrackedCount;
+    UpdateActiveSceneRel();
 
     // 段階の**予測** (spec §4.1「実行前に予測して確認ダイアログに出す」)。
     // 未追跡は消える = Deleted、それ以外は書き換わる = Modified と見なす。
@@ -180,6 +196,55 @@ void GitTransaction::RequestRevert(std::vector<std::string> paths, int untracked
     }
     predicted_ = Classify(guess);
     phase_ = Phase::Confirm;
+}
+
+void GitTransaction::RequestCheckout(std::string target)
+{
+    if (target.empty() || phase_ != Phase::Idle) {
+        return;
+    }
+    op_ = OpKind::Checkout;
+    target_ = std::move(target);
+    paths_.clear();
+    checkoutChanges_.clear();
+    reportPaths_.clear();
+    untrackedCount_ = 0;
+    predicted_ = ApplyStage::A;
+    predictSent_ = false;
+    // 実行は確認の後。まず「何が降ってくるか」を聞く (SendPredict)
+    phase_ = Phase::Predict;
+}
+
+void GitTransaction::SendPredict(SourceControlSession& scm)
+{
+    predictSent_ = true;
+    UpdateActiveSceneRel();
+    // ★向きは HEAD -> target。「共通祖先から」ではない — 知りたいのは
+    //   **working tree に実際に降ってくるファイル**で、履歴の枝分かれではない
+    scm.RequestDiffNames("HEAD", target_,
+                         [this](bool ok, const std::vector<StageChange>& changes,
+                                const std::string& code, const std::string& detail) {
+                             if (!ok) {
+                                 responseOk_ = false;
+                                 errorCode_ = code;
+                                 errorDetail_ = detail;
+                                 reportPaths_.clear();
+                                 phase_ = Phase::Report;
+                                 return;
+                             }
+                             paths_.clear();
+                             paths_.reserve(changes.size());
+                             for (const StageChange& c : changes) {
+                                 paths_.push_back(c.path);
+                             }
+                             StageInputs in;
+                             in.changes = changes;
+                             in.activeScene = activeSceneRel_;
+                             // ★予測は楽観側 (`.meta` の guid が変わるかは実行しないと
+                             //   分からない)。実行後に必ず分類し直す
+                             predicted_ = Classify(in);
+                             phase_ = Phase::Confirm;
+                         });
 }
 
 std::wstring GitTransaction::AbsolutePathOf(EngineContext& ctx, const std::string& rel) const
@@ -208,9 +273,7 @@ void GitTransaction::BeginOp(EngineContext& ctx, SourceControlSession& scm)
     }
 
     // 実行前のディスクの様子を控える (kind と guid 変化の判定に使う)
-    activeSceneRel_ = hooks_.activeScenePath
-        ? RelativeToRoot(hooks_.activeScenePath(), ctx.projectRoot)
-        : std::string();
+    UpdateActiveSceneRel();
     existedBefore_.clear();
     metaGuidBefore_.clear();
     existedBefore_.reserve(paths_.size());
@@ -232,7 +295,22 @@ void GitTransaction::BeginOp(EngineContext& ctx, SourceControlSession& scm)
     responseOk_ = false;
     errorCode_.clear();
     errorDetail_.clear();
+    reportPaths_.clear();
     phase_ = Phase::Running;
+    if (op_ == OpKind::Checkout) {
+        scm.Checkout(target_, [this](const SourceControlSession::CheckoutResult& r) {
+            responseOk_ = r.ok;
+            errorCode_ = r.errorCode;
+            errorDetail_ = r.errorDetail;
+            reportPaths_ = r.errorPaths;
+            // ★変更集合は git が返したものをそのまま使う (BuildChangeSet の代わり)。
+            //   checkout は「選んだパス」ではなく「2 つのコミットの差」で動くので、
+            //   こちらでディスクを舐めて推測すると必ずずれる
+            checkoutChanges_ = r.changes;
+            phase_ = Phase::Applying;
+        });
+        return;
+    }
     scm.Revert(paths_, [this](bool ok, const std::string& code, const std::string& detail) {
         responseOk_ = ok;
         errorCode_ = code;
@@ -272,6 +350,41 @@ std::vector<StageChange> GitTransaction::BuildChangeSet(EngineContext& ctx) cons
         out.push_back(std::move(c));
     }
     return out;
+}
+
+void GitTransaction::ResolveMetaGuidChanges(EngineContext& ctx,
+                                            std::vector<StageChange>& changes) const
+{
+    for (StageChange& c : changes) {
+        if (!EndsWithCase(c.path, ".meta") || c.kind == BatchChange::Kind::Deleted) {
+            continue;
+        }
+        // 実行**前**に控えた guid を探す (paths_ = 予測された集合)。
+        // ★予測と実際は同じ 2 コミットの差なので普通は必ず見つかる。見つからない =
+        //   予測の後に外から HEAD が動いた等の想定外 → **重い側 (C) に倒す**。
+        //   guid が変わったのに A で流すと、シーンの参照が全部別物を指したまま
+        //   保存できてしまう (相手のデータが消える形)
+        bool found = false;
+        uint64_t before = 0;
+        for (size_t i = 0; i < paths_.size(); ++i) {
+            if (paths_[i] == c.path) {
+                found = true;
+                before = i < metaGuidBefore_.size() ? metaGuidBefore_[i] : 0;
+                break;
+            }
+        }
+        if (!found) {
+            MYE_LOG_WARN("[collab] %s was not in the predicted set - assuming its guid moved",
+                         c.path.c_str());
+            c.metaGuidChanged = true;
+            continue;
+        }
+        AssetMeta m;
+        const std::wstring abs = AbsolutePathOf(ctx, c.path);
+        if (AssetDatabase::ReadMeta(abs, m) && before != 0 && m.guid != before) {
+            c.metaGuidChanged = true;
+        }
+    }
 }
 
 void GitTransaction::RegisterAdded(EngineContext& ctx,
@@ -402,11 +515,23 @@ void GitTransaction::ApplyResult(EngineContext& ctx, SourceControlSession& scm)
             ctx.reloadHub->EndBatch({});
         }
         reportText_.clear();
+        if (reportPaths_.empty()) {
+            reportPaths_ = paths_; // 対象一覧が来なかったときは要求した集合を出す
+        }
         phase_ = Phase::Report;
         return;
     }
 
-    const std::vector<StageChange> changes = BuildChangeSet(ctx);
+    // ★op ごとに違うのは**ここだけ** (「変更集合をどう決めるか")。
+    //   revert = 実行前後のディスク、checkout = git が返した before..after の差分
+    std::vector<StageChange> changes;
+    if (op_ == OpKind::Checkout) {
+        changes = std::move(checkoutChanges_);
+        checkoutChanges_.clear();
+        ResolveMetaGuidChanges(ctx, changes);
+    } else {
+        changes = BuildChangeSet(ctx);
+    }
     StageInputs in;
     in.changes = changes;
     in.activeScene = activeSceneRel_;
@@ -446,12 +571,20 @@ void GitTransaction::ApplyResult(EngineContext& ctx, SourceControlSession& scm)
         ApplyStageB(ctx, changes);
     }
     if (hooks_.toast) {
-        char buf[128];
-        std::snprintf(buf, sizeof(buf), Tr(StrId::Scm_DiscardDone),
-                      static_cast<int>(paths_.size()));
+        char buf[192];
+        if (op_ == OpKind::Checkout) {
+            std::snprintf(buf, sizeof(buf), Tr(StrId::Scm_CheckoutDone), target_.c_str(),
+                          static_cast<int>(changes.size()));
+        } else {
+            std::snprintf(buf, sizeof(buf), Tr(StrId::Scm_DiscardDone),
+                          static_cast<int>(paths_.size()));
+        }
         hooks_.toast(LogLevel::Info, buf);
     }
-    MYE_LOG_INFO("[collab] revert applied: %zu path(s), stage %c", paths_.size(),
+    // ★ログにも残す (トーストは実時間 4 秒で消えるので、後から
+    //   「本当に段階 A で済んだのか」を確かめる手段がここしか無い)
+    MYE_LOG_INFO("[collab] %s applied: %zu path(s), stage %c",
+                 op_ == OpKind::Checkout ? "checkout" : "revert", changes.size(),
                  applied_ == ApplyStage::A ? 'A' : 'B');
     paths_.clear();
     phase_ = Phase::Idle;
@@ -459,25 +592,55 @@ void GitTransaction::ApplyResult(EngineContext& ctx, SourceControlSession& scm)
 
 void GitTransaction::OnImGui(EngineContext& ctx, SourceControlSession& scm)
 {
+    // ★毎フレーム控える。予測 (diff_names の応答) は ctx を持たないので、
+    //   パスの相対化に使えるルートはここで拾った値だけになる
+    projectRoot_ = ctx.projectRoot;
     if (phase_ == Phase::Applying) {
         ApplyResult(ctx, scm);
     }
     if (phase_ == Phase::Idle) {
         return;
     }
+    if (phase_ == Phase::Predict && !predictSent_) {
+        SendPredict(scm);
+    }
 
     const ImGuiViewport* vp = ImGui::GetMainViewport();
+    // ★ImGuiCond_Appearing ではなく **Always**。AlwaysAutoResize の窓は
+    //   「出た最初のフレームには自分の大きさを知らない」ので、Appearing だと
+    //   ずれた位置 (M66d では中央より上) で確定して二度と直らない。
+    //   modal は掴んで動かす対象ではないので、毎フレーム中央へ置き直してよい
     ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f,
                                    vp->WorkPos.y + vp->WorkSize.y * 0.5f),
-                            ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+                            ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+
+    if (phase_ == Phase::Predict) {
+        // 予測の待ち。**モーダルで入力を止める** — ここで別のボタンを押せると、
+        // 「切替を頼んだ覚えがあるのに再生が始まる」ような取り違えが起きる
+        ImGui::OpenPopup(Tr(StrId::Scm_SwitchTitle));
+        if (ImGui::BeginPopupModal(Tr(StrId::Scm_SwitchTitle), nullptr,
+                                   ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::Text(Tr(StrId::Scm_SwitchTo), target_.c_str());
+            ImGui::TextDisabled("%s", Tr(StrId::Scm_SwitchChecking));
+            ImGui::EndPopup();
+        }
+        return;
+    }
 
     if (phase_ == Phase::Confirm || phase_ == Phase::Running) {
         // ★確認と実行中で**同じモーダル**を使う。閉じて開き直すと、その 1 フレームだけ
-        //   他の窓に入力が通る (押しっぱなしのクリックがそのまま吸われる)
-        ImGui::OpenPopup(Tr(StrId::Scm_DiscardTitle));
-        if (ImGui::BeginPopupModal(Tr(StrId::Scm_DiscardTitle), nullptr,
-                                   ImGuiWindowFlags_AlwaysAutoResize)) {
-            ImGui::Text(Tr(StrId::Scm_DiscardBody), static_cast<int>(paths_.size()));
+        //   他の窓に入力が通る (押しっぱなしのクリックがそのまま吸われる)。
+        //   checkout は Predict の待ちとも同じ題名 = 予測 → 確認 → 実行が 1 枚で流れる
+        const char* title =
+            Tr(op_ == OpKind::Checkout ? StrId::Scm_SwitchTitle : StrId::Scm_DiscardTitle);
+        ImGui::OpenPopup(title);
+        if (ImGui::BeginPopupModal(title, nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+            if (op_ == OpKind::Checkout) {
+                ImGui::Text(Tr(StrId::Scm_SwitchTo), target_.c_str());
+                ImGui::Text(Tr(StrId::Scm_SwitchBody), static_cast<int>(paths_.size()));
+            } else {
+                ImGui::Text(Tr(StrId::Scm_DiscardBody), static_cast<int>(paths_.size()));
+            }
             if (untrackedCount_ > 0) {
                 ImGui::PushStyleColor(ImGuiCol_Text, themeColor::Error);
                 ImGui::Text(Tr(StrId::Scm_DiscardUntracked), untrackedCount_);
@@ -499,7 +662,9 @@ void GitTransaction::OnImGui(EngineContext& ctx, SourceControlSession& scm)
             if (phase_ == Phase::Running) {
                 ImGui::TextDisabled("%s", Tr(StrId::Scm_OpRunning));
             } else {
-                if (ImGui::Button(Tr(StrId::Scm_DiscardConfirm), ImVec2(140, 0))) {
+                if (ImGui::Button(Tr(op_ == OpKind::Checkout ? StrId::Scm_SwitchConfirm
+                                                             : StrId::Scm_DiscardConfirm),
+                                  ImVec2(140, 0))) {
                     BeginOp(ctx, scm);
                 }
                 ImGui::SameLine();
@@ -521,10 +686,16 @@ void GitTransaction::OnImGui(EngineContext& ctx, SourceControlSession& scm)
             ImGui::PushStyleColor(ImGuiCol_Text, themeColor::Error);
             ImGui::TextWrapped("%s: %s", errorCode_.c_str(), errorDetail_.c_str());
             ImGui::PopStyleColor();
-            if (!paths_.empty()) {
+            // ★ローカル変更と重なった checkout の一覧はここが出口 (spec S7)。
+            //   「何を破棄すれば進めるか」を出さないと、ユーザーは git のエラー文を
+            //   読むしかなくなる (窓の中では読めない)
+            if (errorCode_ == collaberr::kLocalChangesOverwritten) {
+                ImGui::TextWrapped("%s", Tr(StrId::Scm_OverwriteHint));
+            }
+            if (!reportPaths_.empty()) {
                 if (ImGui::BeginChild("###ScmErrPaths", ImVec2(420.0f, 100.0f),
                                       ImGuiChildFlags_Borders)) {
-                    for (const std::string& p : paths_) {
+                    for (const std::string& p : reportPaths_) {
                         ImGui::TextUnformatted(p.c_str());
                     }
                 }
@@ -532,6 +703,7 @@ void GitTransaction::OnImGui(EngineContext& ctx, SourceControlSession& scm)
             }
             if (ImGui::Button(Tr(StrId::Common_Close), ImVec2(110, 0))) {
                 paths_.clear();
+                reportPaths_.clear();
                 phase_ = Phase::Idle;
                 ImGui::CloseCurrentPopup();
             }

@@ -34,6 +34,13 @@ constexpr const char* kIdentityCheck = "identity_check";
 // 投げる。diff_names は読み取り系で、既に上の kReadOps 表に載っている
 constexpr const char* kRevert = "revert";
 constexpr const char* kDiffNames = "diff_names";
+// M66e。branches は読み取り系 (上の kReadOps に既に載っている)。branch_create は
+// ref を 1 本足すだけで working tree を動かさないが、**書き込み系**として扱う
+// (index.lock と同じ理屈で git の直列化に乗せる)。checkout は working tree を
+// 丸ごと入れ替えるので GitTransaction 経由でだけ投げる
+constexpr const char* kBranches = "branches";
+constexpr const char* kBranchCreate = "branch_create";
+constexpr const char* kCheckout = "checkout";
 } // namespace collabop
 
 // op の待ち方 (spec §4.4「タイムアウト」)。
@@ -81,6 +88,8 @@ constexpr const char* kGitTooOld = "git_too_old";
 constexpr const char* kServiceDead = "service_dead";
 constexpr const char* kInternalPanic = "internal_panic";
 constexpr const char* kBadRequest = "bad_request";
+// M66e: checkout がローカルの未コミット変更と重なった。error.paths に対象が載る
+constexpr const char* kLocalChangesOverwritten = "local_changes_overwritten";
 // C++ 側が合成する疑似 code (サービスは返さない)。応答が期限内に来なかった要求は
 // **必ずコールバックを呼んで消す** — 呼ばないと窓が「実行中」のまま二度と操作できない
 constexpr const char* kTimeout = "timeout";

@@ -1,0 +1,10 @@
+{"id":1,"ok":true,"result":{"current":"main","locals":[{"name":"main","oid":"<sha>","upstream":""}],"remotes":[]}}
+{"id":2,"ok":true,"result":{"name":"feature","status":{"ahead":0,"behind":0,"branch":"main","entries":[],"head":"<sha>","upstream":""}}}
+{"id":3,"ok":true,"result":{"current":"main","locals":[{"name":"feature","oid":"<sha>","upstream":""},{"name":"main","oid":"<sha>","upstream":""}],"remotes":[]}}
+{"id":4,"ok":true,"result":{"branch":"feature","head":"<sha>","names":[],"status":{"ahead":0,"behind":0,"branch":"feature","entries":[],"head":"<sha>","upstream":""}}}
+{"id":5,"ok":true,"result":{"branch":"main","head":"<sha>","names":[{"path":"assets/notes.txt","status":"M"}],"status":{"ahead":0,"behind":0,"branch":"main","entries":[],"head":"<sha>","upstream":""}}}
+{"id":6,"ok":true,"result":{"from":"main","names":[{"path":"assets/notes.txt","status":"M"}],"to":"feature"}}
+{"id":7,"ok":false,"error":{"code":"local_changes_overwritten","detail":"local changes would be overwritten by checkout","paths":["assets/notes.txt"]}}
+{"id":8,"ok":true,"result":{"ahead":0,"behind":0,"branch":"main","entries":[{"conflict":false,"index":".","path":"assets/notes.txt","worktree":"M"}],"head":"<sha>","upstream":""}}
+{"id":9,"ok":false,"error":{"code":"bad_request","detail":"name looks like an option: --force"}}
+{"id":10,"ok":false,"error":{"code":"bad_request","detail":"name is required"}}

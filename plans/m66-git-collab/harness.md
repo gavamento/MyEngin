@@ -14,9 +14,9 @@
 | sub-01 | OK | 1 | 4716d6a | M66a: Rust cdylib + CLI + fixture + collab_verify + CI + 規則 12 + DLL 往復の縦切り。依存: なし。VERDICT round 1 OK (should 1 → sub-02、nit 3 → sub-02 / sub-10) |
 | sub-02 | OK | 1 | 165cfc6 | M66b: CollabClient 完成 + SourceControlState + Source Control 窓 (読み取り専用) + canonicalRoot。依存: sub-01 |
 | sub-03 | OK | 1 | 83d0b4f | M66c: stage / unstage / commit / History / diff / identity。依存: sub-02 |
-| sub-04 | OK | 2 | (M66d、下の記入待ち) | M66d: ReloadHub Begin/EndBatch + ゲート + 4 窓の HasUnsavedChanges + トランザクション + revert。依存: sub-03。round 1 REWORK (must 1 = 段階 C モーダルの「あとで」撤去。should 2 件 → sub-05、nit 1 件 → sub-10) |
-| sub-05 | 実装中 | 0 | | M66e: Branches — 一覧 / 作成 / checkout + 段階の事前判定。依存: sub-04 |
-| sub-06 | 未着手 | 0 | | M66f: fetch / pull / push + 定期 fetch + 通知 + EditorSettings。依存: sub-04 (sub-05 と独立。並列なら SourceControlWindow.cpp / ops.rs のマージ順を司会が決める) |
+| sub-04 | OK | 2 | 205e90d | M66d: ReloadHub Begin/EndBatch + ゲート + 4 窓の HasUnsavedChanges + トランザクション + revert。依存: sub-03。round 1 REWORK (must 1 = 段階 C モーダルの「あとで」撤去。should 2 件 → sub-05、nit 1 件 → sub-10) |
+| sub-05 | OK | 1 | (M66e、下の記入待ち) | M66e: Branches — 一覧 / 作成 / checkout + 段階の事前判定。依存: sub-04 |
+| sub-06 | 実装中 | 0 | | M66f: fetch / pull / push + 定期 fetch + 通知 + EditorSettings。依存: sub-04 (sub-05 と独立。並列なら SourceControlWindow.cpp / ops.rs のマージ順を司会が決める) |
 | sub-07 | 未着手 | 0 | | M66g: 競合 — abort / ours / theirs / continue。依存: sub-06 |
 | sub-08 | 未着手 | 0 | | M66h: 衛生 — .gitignore テンプレ 4 行 + project_settings.json の個人設定分離。依存: sub-03 (sub-05〜07 と独立) |
 | sub-09 | 未着手 | 0 | | M66i: Content Browser に Git バッジ + 保存直後のヒント。依存: sub-02 (sub-03〜08 と独立) |
@@ -87,4 +87,14 @@
   - `SourceControlSession::Diff()` / `History()` / `IdentityOk()` / `WriteInFlight()` が使える口。`WriteInFlight()` は `CollabClient::OpInFlight()` の別名で、ゲート (sub-04) はこれとは別に `GateBlocker` を組む想定。
   - Bash ツール経由の heredoc / python は quoted でも `\\` を 1 段潰す (`'\0'` が実 NUL バイトになった)。C++ / Rust のエスケープを含む編集は Edit ツールか `bytes([92])`。
   - 未検証: マウス実押下 (プローブで代替)。fixture の残骸 `cache\collab_fixture` / `cache\probe_repo` / `cache\*.gitconfig` / `cache\scm_*.png` は生成物。
+- **sub-04 (M66d) からの申し送り** (coder SELF_EVAL round 1/2 + planner VERDICT round 1/2):
+  - 仕様確定 (planner が spec §4.1 / §7 / sub-05 を修正済み): `src/GameLogic/Scripts/` の `.h .hpp .inl` も段階 B / B で `EndBatch` に渡すのは A 集合のみ / `.meta` の guid 変化は実行前後の比較で検出 (事前予測は楽観側 = A/B に倒れる) / 未追跡の削除は `git clean -q -f` (`-d` 無し) / C の前に `EndBatch({})` / **段階 C のモーダルは『再起動』のみ** (「あとで」「キャンセル」を置かない = 食い違ったまま保存できる経路を作らない) / 再起動失敗 (`RelaunchSelfWithProject` = ShellExecuteW ≤ 32) はモーダルを閉じず赤字で案内、**`GitTransaction::Hooks::relaunch` は bool を返す契約** (握り潰すと「あとで」と同じ状態になる)。DLL 内 panic の隠し op は作らない (§7 に残存リスク)。v1 は「B なら必ず開き直す」(`.cs` / `.cpp` だけの最適化は後回し)。
+  - planner の should (sub-05 で): (1) Asset Browser の [Rebuild Scripts] (`AssetOps::RebuildGameLogic`、`ShellExecuteW` fire-and-forget) をゲートから観測できるようにする — ハンドルを返す `StartGameLogicBuild` に寄せて EditorApp が保持、`GateInputs.scriptBuildRunning` に OR。(2) fixture (`tools/collab_fixture.ps1`) にテクスチャを参照するエンティティを 1 個置く (A 段階の画素証拠と sub-05 受け入れ条件 3 のため)。(3) 既定ドックを左列 (Hierarchy 束) + Diff 別窓 (sub-03 からの持ち越し)。
+  - planner の nit: 段階 C モーダルが画面中央でなく上寄り (y ≒ 137 px) に出る — 破棄の確認モーダルが open stack に残ったまま次の `OpenPopup` をしている疑い。sub-05 で Branches / Diff のモーダルを足すときに一緒に見る (`CloseCurrentPopup()` を明示)。`DocumentDirty.h` の改名 (`DiskCompare.h` 等) は sub-10。
+  - **sub-05 / sub-06 が書き込み系 op を足す形**: `GitTransaction` に op を 1 種足す (今は revert 専用の `RequestRevert`)。`BeginOp` / `ApplyResult` / `BuildChangeSet` は op 非依存なので「変更集合をどう決めるか」だけ差し替える。checkout / pull は `diff_names(HEAD, target)` を事前予測へ、実行後は `diff_names(before, after)` を `BuildChangeSet` の代わりに使う。段階 B のライブラリ無効化を足す場所は `GitTransaction::ApplyStageB` の 1 箇所。
+  - `GateBlocker` を足したら `SourceControlSelfTest.cpp` の `kRows` 表にも足す (`static_assert(std::size(kRows) == GateBlocker::Count)` が止める)。
+  - `ImGui::IsItemHovered` は `BeginDisabled` の内側では効かない → `EndDisabled` の後で `AllowWhenDisabled` 付きで呼ぶ。既定ドック幅 (285 px) にボタンは 3 個まで。
+  - collab_verify の `# git <args>` は `-c` 付きも通る。`commit.gpgsign=false` を明示しないと開発者設定で固まる。
+  - 未検証: 「Restart now」でプロセスが実際に入れ替わる経路 (押すと撮影プロセスが終了する) → sub-05 の受け入れ条件 3 (C: schemas が違うブランチへ切替) で実走。テクスチャ画素の A 段階証拠 → fixture 拡張後に撮る。`kReloadRetryMax` の WARN 発火は許容。
+  - 生成物: `cache\probe_repo` (schemas を追加コミット済み)、`cache\collab_verify\`、`cache\scm_m66d_*.png`、`cache\*.log`。
 - planner のエージェント ID はセッション限り。セッションを跨いだら `MODE: VERDICT` 用の planner を新規起動し、文脈は spec.md / sub-NN.md / この台帳で渡す。

@@ -7,6 +7,7 @@
 #include "nlohmann/json.hpp"
 
 #include "Editor/SourceControl/CollabClient.h"
+#include "Editor/SourceControl/StageClassifier.h" // StageChange (checkout の応答をそのまま段階分類へ)
 
 namespace mye {
 
@@ -92,6 +93,31 @@ struct DiffView {
     bool loading = false;   // 応答待ち
     bool valid = false;     // 一度でも応答を受けたか
 };
+
+// Branches タブの 1 行 (M66e)。`branches` 応答の 1 件
+struct BranchInfo {
+    std::string name;     // 短縮名 ("main" / "origin/main")。checkout にそのまま渡す
+    std::string oid;      // 先端のコミット (40 桁)
+    std::string upstream; // 追跡先の短縮名。空 = 追跡なし
+};
+
+// `branches` 応答。**リモートは別の配列**にしておく (checkout の扱いが違う —
+// リモート追跡だけの名前は `-t` で追跡ブランチを作ってから乗る)
+struct BranchList {
+    std::string current; // 今のブランチ。空 = detached HEAD
+    std::vector<BranchInfo> locals;
+    std::vector<BranchInfo> remotes;
+    bool valid = false; // 一度でも応答を受けたか
+};
+
+// `branches` 応答の `result` → モデル。**純関数**
+BranchList BuildBranchList(const nlohmann::json& branchesResult);
+
+// `checkout` / `diff_names` の `names` 配列 → 段階分類の入力。**純関数**。
+// ★git の name-status 1 文字と BatchChange::Kind の対応をここ 1 箇所に閉じる。
+//   2 箇所に書くと「D を Modified と読んで消えたファイルを読み直そうとする」形で
+//   静かに壊れる (ReloadHub のリトライ列に永久に残る)
+std::vector<StageChange> ChangesFromNames(const nlohmann::json& names);
 
 struct SourceControlModel {
     std::string branch;   // "main" / "(detached)"
@@ -202,6 +228,37 @@ public:
         std::function<void(bool ok, const std::string& code, const std::string& detail)>;
     void Revert(const std::vector<std::string>& paths, WriteDoneFn done);
 
+    // ---- M66e: branches / branch_create / checkout / diff_names ----
+    void RequestBranches();
+    const BranchList& Branches() const { return branches_; }
+    // ブランチ作成 (working tree は動かない = トランザクション不要)。
+    // from が空なら現在の HEAD から
+    void CreateBranch(const std::string& name, const std::string& from, WriteDoneFn done);
+
+    // 段階の**事前**判定に使う。from..to で working tree に降ってくるものを聞く
+    using DiffNamesDoneFn = std::function<void(bool ok, const std::vector<StageChange>& changes,
+                                               const std::string& code, const std::string& detail)>;
+    void RequestDiffNames(const std::string& from, const std::string& to, DiffNamesDoneFn done);
+
+    // checkout の応答。**changes が段階分類の唯一の入力**
+    struct CheckoutResult {
+        bool ok = false;
+        std::string branch;               // 切り替わった先 (成功時)
+        std::vector<StageChange> changes; // working tree で入れ替わったもの
+        std::string errorCode;
+        std::string errorDetail;
+        // local_changes_overwritten のとき「何を破棄すれば進めるか」(spec S7)
+        std::vector<std::string> errorPaths;
+    };
+    using CheckoutDoneFn = std::function<void(const CheckoutResult&)>;
+    // ★**GitTransaction 経由でのみ呼ぶこと** (Revert と同じ理由 — ゲートと
+    //   ReloadHub の一括適用が掛かっていない状態で working tree を入れ替えると、
+    //   エディタが掴んだままのファイルが下から差し替わる)
+    void Checkout(const std::string& name, CheckoutDoneFn done);
+
+    // 起動時の残骸検査 (決定 13)。マージ / リベースの途中で開いたことを 1 回だけ知らせる
+    bool TakeMergeWarning();
+
     // 書き込み系 (stage / unstage / commit) が飛んでいる間は true。
     // ★読み取り系 (status の自動更新) では立たない — 立てると監視が動くたびに
     //   ボタンが押せなくなる
@@ -237,6 +294,11 @@ private:
     bool rebaseInProgress_ = false;
     bool canonicalMismatch_ = false;
     bool headMoved_ = false;
+    bool mergeWarned_ = false; // 起動時の残骸トーストを 1 回だけ出すための取り出し口 (M66e)
+
+    // ---- M66e ----
+    BranchList branches_;
+    bool branchesInFlight_ = false;
 
     // ---- M66c ----
     std::vector<CommitInfo> history_;

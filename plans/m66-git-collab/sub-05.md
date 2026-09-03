@@ -1,8 +1,8 @@
 # sub-05: M66e: Branches — 一覧 / 作成 / checkout + 段階の事前判定
 
 - 依存: sub-04
-- 状態: 未着手
-- 往復: 0
+- 状態: OK (commit: M66e — ハッシュは harness.md のサブ進捗表)
+- 往復: 1
 
 ## やること
 
@@ -48,6 +48,41 @@ tools\replay_verify.bat
 
 ## 実装メモ (coder が追記)
 
+### round 1 (SELF_EVAL の写し)
+
+実装:
+- `tools/collab/src/ops.rs` — `branches` / `branch_create` / `checkout` を dispatch に追加。`checkout` は
+  **応答の中で `before..after` の差分まで返す** (`names`)。`branch_name_arg` は `-` 始まり / 空白 / `..` を弾く
+  (checkout に `--` は置けない = `git checkout -- x` は別操作)。ローカルに無くリモート追跡だけある名前は `-t`。
+  `local_changes_overwritten` は `paths[]` + **自前の固定 detail** (git の案内文は版で変わる)。
+- `tools/collab/src/porcelain.rs` — `parse_for_each_ref` (for-each-ref に `-z` は無い = LF レコード + `%00` フィールド) /
+  `parse_overwritten_paths` (見出し行 → タブ字下げの塊) / `parse_z_paths`。
+- `src/Editor/SourceControl/SourceControlState.*` — `BranchList` / `BuildBranchList` / `ChangesFromNames` (どちらも純関数) /
+  `RequestBranches` / `CreateBranch` / `Checkout` / `RequestDiffNames` / `TakeMergeWarning`。
+- `src/Editor/SourceControl/GitTransaction.*` — `OpKind{Revert,Checkout}` と `Phase::Predict` を追加。
+  checkout は「押す → `diff_names(HEAD,target)` で予測 → 確認モーダル (件数 + 段階 A/B/C) → checkout →
+  応答の `names` で再分類 → 後処理」。`ResolveMetaGuidChanges` が実行前後の guid を比較 (予測に無い `.meta` は C へ倒す)。
+  モーダルの位置を `ImGuiCond_Always` にして中央固定 (sub-04 の nit)。
+- `src/Editor/Windows/SourceControlWindow.*` — Branches タブ (一覧 / 現在ブランチを Accent / 切替 / 作成モーダル)、
+  差分を別 dockable 窓「Diff」へ移動 (選択で開き、`SetNextWindowFocus` で手前に出す)。
+- `src/Editor/EditorApp.*` — 既定ドックで Source Control を左列へ / Diff を下段右へ (既定は閉) /
+  束の既定タブを `SelectedTabId` で明示 / [Rebuild Scripts] を `StartGameLogicBuild` へ寄せてハンドルを保持 (`PollScriptBuild`)。
+- `tools/collab_fixture.ps1` — テクスチャを貼った床 + 立方体のシーン + `.mat.json` + 3 つの `.meta` (guid 固定)。
+- `tests/collab/06_branch.*` — 一覧 / 作成 / 切替 / 差分名 / ローカル変更衝突 / 不正名の 10 行。
+
+検証 (すべて緑): `cargo test` 50 本 (新規 10) / `collab_verify.bat` 6 シナリオ / `--selftest` Debug+Release /
+`check_rules.ps1` / `replay_verify.bat` 10 ジョブ / 実機 4 種 (A: `cache/scm_m66e_texA.png`、
+B: `cache/scm_m66e_sceneB.png`、C: `cache/scm_m66e_restartC.png` + 再起動後に `FixtureHealth` が TypeId 50 で登録、
+衝突: `cache/scm_m66e_overwrite.png`) / マージ残骸 (`cache/scm_m66e_merge.png`) / 既定レイアウト (`cache/scm_m66e_layout.png`)。
+
+仕様との差分 (詳細は SELF_EVAL):
+- [追加] `checkout` の応答に `names` を載せた (C++ から `diff_names` を 2 往復目に投げない)。
+- [追加] `CollabClient::Shutdown` の `FreeLibrary` を**やめた** — notify 8.2.0 の内部スレッドが join されず、
+  checkout 直後に終了すると 0xC0000005 で落ちた (実測 1〜2/6 → 0/12)。spec §4.0 の「destroy -> FreeLibrary」に抵触。
+- [追加] `AssetOps::RebuildGameLogic` (fire-and-forget) を削除して `StartGameLogicBuild` 1 本に寄せた。
+- [追加] `for-each-ref` の `-z` はサブ仕様の想定と違い**存在しない**。
+- [追加] 予測時の `activeSceneRel_` 更新 (sub-04 は BeginOp でしか更新せず、初回の予測が必ず A に倒れていた)。
+
 ## フィードバック履歴
 
 ## planner 追記 (sub-03 round 1 の判定から。coder は着手前に読む)
@@ -65,3 +100,4 @@ tools\replay_verify.bat
 - 書き込み系 op を `GitTransaction` に足すときは coder 申し送りどおり「変更集合の決め方」だけ差し替える (`BeginOp` / `ApplyResult` / `BuildChangeSet` は op 非依存)。checkout は事前 `diff_names(HEAD, target)`、事後 `diff_names(before, after)`。
 - [nit、sub-04 round 2 から] 段階 C モーダルが画面中央でなく上寄り (y ≒ 137px) に出る (`cache/scm_m66d_restart.png`)。破棄の確認モーダルが open stack に残ったまま次の OpenPopup をしている疑い (未確認)。Branches / Diff のモーダルを足すときに「Applying を 1 フレーム描いて CloseCurrentPopup を明示」の形で一緒に見る。実害なし (modal として入力は止まっている)。
 - `GitTransaction::Hooks::relaunch` は **bool を返す契約** (sub-04 round 2)。checkout / pull で段階 C を通すときも失敗を握り潰さない (握り潰すとモーダルが閉じて「あとで」と同じ状態になる)。
+- round 1: VERDICT OK (planner、2026-09-03)。裏取り: notify-8.2.0/src/windows.rs:590-596 の Drop は `tx.send(Stop)` + wakeup のみで join 無し (coder の主張を一次情報で確認) / CollabClient.cpp:276-282 に撤去理由のコメント / 旧 RebuildGameLogic は `cmd /c build_scripts.bat` で bat 側が失敗時 `pause` = 可視窓でエラーが読めていた (質問 2 の判断材料 → 同等 UX を sub-08 の should に) / ops.rs:672 checkout 応答に names、:518 diff_names / EditorApp.cpp:1388 左列ドック、:1408-1411 SelectedTabId、:712,1306 PollScriptBuild / golden*.rep 10:46 再生成 (replay 最終状態) / cache/scm_m66e_layout.png (左列に Source Control タブ、床 + 立方体の fixture) と scm_m66e_overwrite.png (中央のモーダル、error.code + 固定文 + paths) を目視。質問 1〜5 はすべて coder の判断を採用し spec §4.0 / §4.1 に確定。

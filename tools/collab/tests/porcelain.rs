@@ -247,3 +247,64 @@ fn name_status_ignores_a_truncated_tail() {
     assert!(out.is_empty());
     assert!(mye_collab::porcelain::parse_name_status_z(b"").is_empty());
 }
+
+// ---- M66e: for-each-ref / would be overwritten / ls-tree -z ----
+
+#[test]
+fn for_each_ref_splits_five_fields() {
+    // `-z` が無いのでレコードは LF、フィールドだけ NUL
+    let raw = b"refs/heads/main\0main\0aaa\0origin/main\0*\n\
+                refs/heads/feature\0feature\0bbb\0\0 \n\
+                refs/remotes/origin/main\0origin/main\0aaa\0\0 \n";
+    let out = mye_collab::porcelain::parse_for_each_ref(raw);
+    assert_eq!(out.len(), 3, "{out:?}");
+    assert!(out[0].current, "%(HEAD) が * の行だけが current");
+    assert_eq!(out[0].upstream, "origin/main");
+    assert!(!out[1].current);
+    assert_eq!(out[1].upstream, "");
+    assert!(out[2].refname.starts_with("refs/remotes/"),
+            "ローカル / リモートの判別は短縮名ではなく完全な ref 名で行う");
+}
+
+#[test]
+fn for_each_ref_drops_short_records() {
+    // フィールドが欠けた行は捨てる (捨てないと空名のブランチが一覧に出る)
+    let raw = b"refs/heads/main\0main\n\n";
+    assert!(mye_collab::porcelain::parse_for_each_ref(raw).is_empty());
+}
+
+#[test]
+fn overwritten_paths_takes_only_the_indented_block() {
+    // ★案内文の文言は git の版で変わる。当てにしているのは
+    //   「見出し行 → タブ字下げの並び」という形だけ
+    let stderr = "error: Your local changes to the following files would be overwritten by \
+                  checkout:\n\tassets/a.png\n\tassets/scenes/main.scene.json\n\
+                  Please commit your changes or stash them before you switch branches.\nAborting";
+    let out = mye_collab::porcelain::parse_overwritten_paths(stderr);
+    assert_eq!(out, vec!["assets/a.png".to_string(),
+                         "assets/scenes/main.scene.json".to_string()]);
+}
+
+#[test]
+fn overwritten_paths_handles_the_untracked_wording_and_crlf() {
+    let stderr = "error: The following untracked working tree files would be overwritten by \
+                  checkout:\r\n\tassets/new.png\r\nPlease move or remove them.\r\nAborting";
+    assert_eq!(mye_collab::porcelain::parse_overwritten_paths(stderr),
+               vec!["assets/new.png".to_string()]);
+}
+
+#[test]
+fn overwritten_paths_is_empty_for_other_errors() {
+    // 関係の無い stderr から**でっち上げない** (でっち上げると「これを破棄すれば
+    // 直る」という嘘の案内がモーダルに出る)
+    assert!(mye_collab::porcelain::parse_overwritten_paths(
+        "error: pathspec 'nope' did not match any file(s) known to git").is_empty());
+    assert!(mye_collab::porcelain::parse_overwritten_paths("").is_empty());
+}
+
+#[test]
+fn z_paths_drops_the_trailing_empty_record() {
+    let out = mye_collab::porcelain::parse_z_paths(b"a/b.png\0c.txt\0");
+    assert_eq!(out, vec!["a/b.png".to_string(), "c.txt".to_string()]);
+    assert!(mye_collab::porcelain::parse_z_paths(b"").is_empty());
+}

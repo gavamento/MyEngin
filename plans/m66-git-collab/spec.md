@@ -92,6 +92,7 @@ MyeCollab.dll (Rust cdylib, tools\collab\) … worker スレッド 1 本 (git �
   **失うもの**: メモリ隔離 (Rust の未定義動作はエディタごと落ちる。safe Rust に限定し `unsafe` は FFI 境界だけ)。
 - 出力: `cargo build --release` → `bin\x64\Debug\` と `bin\x64\Release\` の両方へ `MyeCollab.dll` +
   `MyeCollabCli.exe` をコピー (`build_collab.bat <Config>` は引数を受けるが両方に置く。Rust 側に構成の区別を持ち込まない)。
+- **Shutdown は `destroy` のみで `FreeLibrary` は呼ばない** (sub-05 round 1 で確定)。notify 8.2.0 の `ReadDirectoryChangesWatcher::drop` (`src/windows.rs:590-596`) は Stop を送るだけで内部スレッドを join しない → アンマップ後にそのスレッドが DLL のコードを実行して 0xC0000005 (実測 1〜2/6 → 撤去後 0/12)。Shutdown はプロセス終了直前にしか呼ばれないので失うものは無い。**Rust 側に join できないスレッドを増やさない** (定期 fetch は worker のタイマーで)。
 - 不在時: `LoadLibraryW` 失敗 → `NoService`。`mye_collab_proto_version() != kCollabProtoVersion` → `ProtoMismatch`。
 - **前提**: rustup (stable) をユーザーが着手前にインストールする。coder は環境を変えない。
   README / CLAUDE.md に前提として明記 (M66j)。CI は `dtolnay/rust-toolchain@stable`。
@@ -135,6 +136,15 @@ ProjectSettings の render-path ラジオ (永続化されない) は対象外�
 - `diff` は 256 KB で打ち切り `truncated: true` を返す (巨大差分で 1 フレーム固まるのを防ぐ)。
 - 書き込み系 op の応答は `{"status": <実行後 status>}` を載せ、Rust 側で `last_status` / `last_head` も更新する
   (自分の commit が「外部で HEAD が移動」トーストを誘発しない)。revert / checkout / pull も同じ型。
+
+**ブランチ周り (sub-05 round 1 で確定)**:
+- **実行後の変更集合は op の応答に載せる** (`checkout` は `{branch, head, names, status}`)。C++ から 2 往復目の `diff_names` を投げる形にしない — 間に監視由来の status が割り込み「切り替わったが何が変わったか分からない」状態が生まれる。pull / continue / abort も同じ型。
+- 未出生ブランチから乗り換えたときは `ls-tree` で「全部 A」を返す (diff が使えない。空を返すと段階 A = 何もしない と読まれる)。
+- `branch_create` はゲートを通さない (working tree を触らない = commit / stage と同じ扱い。塞ぐのは `WriteInFlight` だけ)。
+- `local_changes_overwritten` の `detail` はサービス側の固定文 (git の原文は版で変わる)。対象は `paths[]` が正。
+- リモート追跡だけのブランチは `-t` 付きで checkout (sub-06 の bare origin で 1 回実走する)。
+- `.meta` の guid 変化: 予測に無かった `.meta` は C へ倒す (実行後の比較)。
+- Asset Browser の [Rebuild Scripts] は `StartGameLogicBuild` 経由に一本化し `EditorApp` が HANDLE を保持 → ゲートの `ScriptBuildRunning` に載る。旧 `AssetOps::RebuildGameLogic` (可視 cmd 窓 + 失敗時 `pause`) は削除。出力は `<project>/cache/build_scripts.log` + トースト。**失敗時のエラー行を Console へ流して旧 UX (その場で読める) と同等にする** — sub-08 で。
 
 **ゲートの阻害要因 (列挙型 `GateBlocker`)**: `SceneDirty` / `ActorEdit` / `AnimationDirty` /
 `ControllerDirty` / `MixerDirty` / `ProjectSettingsDirty` / `Playing` / `NetActive` / `BuildRunning` /
@@ -269,7 +279,7 @@ sub-08 / sub-09 は sub-05〜07 と独立。
 - Rust cdylib と MSVC CRT: Rust は自前のアロケータで文字列を返すので `mye_collab_free` 以外で解放しない (境界の規則、sub-01 のヘッダコメントに書く)。
 - ~~S5 の登録方式~~ → **閉じた** (sub-04: 増分登録 `AssetDatabase::GuidForPath(abs, createIfMissing=true)`。`ScanAndSync` は 3 表を clear するので解決先が一瞬空になる窓が開く)。
 - ~~B 段階のキャッシュ無効化 API~~ → **閉じた** (sub-04: `ControllerLibrary::LoadFromFile` は同 hash で差し替え、`RenderSystem::InvalidateTerrain()` が public、`InputActions::Load(root, true)` / `PhysicsLayerNames`・`PartTagNames::Load(root, true)`。C への格上げ不要)。
-- ~~`StartGameLogicBuild` の呼び出し元~~ → **閉じた**が穴が 1 本: 呼び出し元は `BuildSettingsWindow::AdvancePipeline` のみ。ただし Asset Browser の [Rebuild Scripts] = `AssetOps::RebuildGameLogic` (`AssetOps.cpp:1447`) は `ShellExecuteW` の fire-and-forget で**ハンドルを持たない** → その間 `ScriptBuildRunning` が立たない。**sub-05 で塞ぐ** (ハンドルを返す起動口に寄せて EditorApp が保持、ゲートが読む)。
+- ~~`StartGameLogicBuild` の呼び出し元~~ → **閉じた**が穴が 1 本: 呼び出し元は `BuildSettingsWindow::AdvancePipeline` のみ。ただし Asset Browser の [Rebuild Scripts] = `AssetOps::RebuildGameLogic` (`AssetOps.cpp:1447`) は `ShellExecuteW` の fire-and-forget で**ハンドルを持たない** → その間 `ScriptBuildRunning` が立たない。→ **sub-05 で塞いだ** (`EditorApp::PollScriptBuild`、`RebuildGameLogic` は削除)。
 - DLL 内で本当に panic させる経路は作らない (sub-04 の質問 1 = (a))。`catch_unwind` → `service_error` → `ServiceDied` → ゲート閉鎖の C++ 側は通知行の注入で実走済み、Rust 側は cargo test (service.rs) の panic 注入で実走済み。残るのは C ABI ラッパ 1 段だけで、隠し op を足すほどの価値は無い。
 - `kReloadRetryMax = 60` の WARN は実機で発火させていない (共有違反を 60 フレーム続ける再現手段が無い)。カウントの配線はコードレビューで確認 (`ReloadHub.cpp` の `retryAttempt_` 引き継ぎ)。
 - `kCollabMaxBatchApply = 200` と `kReloadRetryMax = 60` は R2 で確定した初期値。実機で不便なら定数だけ変える (仕様変更として §8 に積む)。
@@ -297,3 +307,6 @@ sub-08 / sub-09 は sub-05〜07 と独立。
 - 同上: §3 後回しに「.cs / .cpp だけの B で開き直しを省く」を v1.5 として記録 (質問 3)。§7 の未決 3 件 (S5 / B の無効化 API / StartGameLogicBuild) を閉じ、Rebuild Scripts の fire-and-forget をゲートの穴として sub-05 に割り当て。panic 注入の隠し op は作らない (質問 1 = a)。
 - 同上: revert の未追跡削除は `git clean -q -f` (`-d` 無し = ディレクトリごと消さない)、段階 B で EndBatch に渡すのは A 集合のみ、段階 C の再起動前に `EndBatch({})` — いずれも coder の実装を仕様として採用。
 - 2026-09-03 (sub-04 round 2、coder SELF_EVAL): §4.1 C 行に再起動失敗時の振る舞い (モーダルを閉じず赤字案内、`Hooks::relaunch` は bool を返す契約) を追記。coder の追加を採用 — 3 択 (閉じる / 黙って exit / 閉じずに知らせる) のうち唯一「食い違ったまま編集できる状態」を作らない。
+- 2026-09-03 (sub-05 round 1、coder SELF_EVAL): §4.0 に「Shutdown は destroy のみ、FreeLibrary は呼ばない」— notify の Drop が join しない一次情報 (windows.rs:590-596) と終了時クラッシュの実測。coder の判断を採用。
+- 同上: §4.1 に「ブランチ周り」を新設 (応答に names / 未出生は全部 A / branch_create はゲート外 / detail 固定文 / -t / guid / Rebuild Scripts の一本化)。旧 RebuildGameLogic の可視 cmd 窓 (失敗時 pause で読めた) が消える代わりに、失敗時のエラー行を Console へ流す should を sub-08 に割り当て。
+- 同上: §4.3 の既定ドック (左列) と Diff 別窓は sub-05 で実装済み (`cache/scm_m66e_layout.png`)。§7 の Rebuild Scripts の穴を閉じた。

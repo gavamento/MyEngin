@@ -103,9 +103,17 @@ public:
     // 書き込み系 op を実行してよいか。blockers には立っている理由を全件入れる
     bool CanRunGitWriteOp(const GateInputs& in, std::vector<GateBlocker>& blockers) const;
 
-    // ---- revert (M66d でトランザクションを通す唯一の op) ----
+    // ---- revert (M66d) ----
     // paths は toplevel 相対 '/' 区切り。untracked = そのうち「削除される」件数
     void RequestRevert(std::vector<std::string> paths, int untrackedCount);
+
+    // ---- checkout (M66e) ----
+    // ブランチを切り替える。**押した瞬間には何もしない** — まず
+    // `diff_names(HEAD, target)` で「何が降ってくるか」を聞き、段階 (A/B/C) と
+    // 件数を確認モーダルに出してから実行する (spec §4.1「実行前に予測して確認」)。
+    // ★段階 C (再起動が要る) をユーザーが止められるのは**実行前だけ**なので、
+    //   予測を挟まずに走らせてはいけない
+    void RequestCheckout(std::string target);
 
     // 毎フレーム 1 回。応答の消化とモーダルの描画。
     // ★scm_.Poll() より**後**に呼ぶこと (応答は Poll の中でフラグになる)
@@ -117,8 +125,18 @@ public:
     bool Running() const { return phase_ == Phase::Running; }
 
 private:
+    // どの op を通しているか (M66e で 2 種になった)。
+    // ★`BeginOp` / `ApplyResult` / 後処理は op に依存しない。違うのは
+    //   「変更集合をどう決めるか」だけ — revert は実行前後のディスク、
+    //   checkout は git が返した `names`
+    enum class OpKind : uint8_t {
+        Revert,
+        Checkout,
+    };
+
     enum class Phase {
         Idle,
+        Predict, // checkout: diff_names の応答待ち (段階を出すため)
         Confirm, // 確認モーダル
         Running, // git 実行中 (応答待ち)
         Applying,// 応答が返った (次の OnImGui で後処理する)
@@ -128,8 +146,15 @@ private:
 
     void BeginOp(EngineContext& ctx, SourceControlSession& scm);
     void ApplyResult(EngineContext& ctx, SourceControlSession& scm);
+    // checkout の事前予測 (diff_names) を 1 回だけ投げる
+    void SendPredict(SourceControlSession& scm);
     // 実行前後のディスクを見て変更集合を組む (kind と .meta の guid 変化)
     std::vector<StageChange> BuildChangeSet(EngineContext& ctx) const;
+    // checkout: git が返した集合に「`.meta` の guid が変わったか」を足す。
+    // ★guid の変化は**実行前に控えた値との比較でしか**分からない (spec §4.1 C 行)
+    void ResolveMetaGuidChanges(EngineContext& ctx, std::vector<StageChange>& changes) const;
+    // 「今開いている文書」の toplevel 相対パスを取り直す (段階 B の判定に効く)
+    void UpdateActiveSceneRel();
     // 段階 A: 新しく現れた資産を AssetDatabase へ登録する (spec S5)
     void RegisterAdded(EngineContext& ctx, const std::vector<StageChange>& changes) const;
     // 段階 B: ライブラリのキャッシュを捨ててから開き直す
@@ -138,15 +163,23 @@ private:
 
     Hooks hooks_;
     Phase phase_ = Phase::Idle;
+    OpKind op_ = OpKind::Revert;
 
-    std::vector<std::string> paths_;   // 対象 (toplevel 相対)
+    std::vector<std::string> paths_;   // 対象 (toplevel 相対)。checkout では予測された集合
     int untrackedCount_ = 0;
     ApplyStage predicted_ = ApplyStage::A;
     ApplyStage applied_ = ApplyStage::A;
     // 実行前のディスクの様子 (paths_ と同じ並び)
     std::vector<bool> existedBefore_;
     std::vector<uint64_t> metaGuidBefore_;
-    std::string activeSceneRel_; // 実行時に確定させた「今開いているシーン」
+    std::string activeSceneRel_; // 「今開いているシーン」(予測時にも実行時にも取り直す)
+    std::wstring projectRoot_;   // OnImGui で毎フレーム控える (予測は ctx を持たない)
+
+    // ---- checkout (M66e) ----
+    std::string target_;                          // 切り替え先のブランチ名
+    bool predictSent_ = false;                    // diff_names を投げたか
+    std::vector<StageChange> checkoutChanges_;    // 応答が返した実際の変更集合
+    std::vector<std::string> reportPaths_;        // 失敗モーダルに出す一覧
 
     bool responseOk_ = false;
     std::string errorCode_;

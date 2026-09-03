@@ -47,3 +47,7 @@ cmd /c bin\x64\Debug\Editor.exe --project cache\fixture_proj   (目視)
 ## 実装メモ (coder が追記)
 
 ## フィードバック履歴
+
+## planner 追記 (sub-05 round 1 の判定から。coder は着手前に読む)
+
+- [should] **スクリプトビルド失敗時のエラー行を Console へ流す**。sub-05 で Asset Browser の [Rebuild Scripts] を `StartGameLogicBuild` 経由 (出力は `<project>/cache/build_scripts.log` + トースト) に一本化した結果、旧経路の可視 cmd 窓 (bat が失敗時に `pause` するのでその場でコンパイルエラーが読めた) が消えた。同等の UX として、`EditorApp::PollScriptBuild` が失敗を検知したら log の `error` を含む行 (MSVC の `path(line): error Cxxxx:` 形式) を `MYE_LOG_ERROR` で Console へ流す。Console の double-click ソースジャンプ (`ConsoleWindow.cpp:33-49 JumpToSource`) が `file:line` を拾える形に整えること。成功時は流さない (トーストのみ)。

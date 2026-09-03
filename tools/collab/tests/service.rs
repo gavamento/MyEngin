@@ -456,3 +456,119 @@ fn diff_names_rejects_an_option_like_revision() {
     drop(svc);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// ---- M66e: branches / branch_create / checkout ----
+
+#[test]
+fn branches_lists_locals_and_marks_the_current_one() {
+    let dir = temp_repo("branches");
+    let cfg = config_path_for(&dir);
+    std::fs::write(dir.join("a.txt"), "1").unwrap();
+    commit_all(&dir, &cfg, "one");
+    git(&dir, &cfg, &["branch", "feature"]);
+
+    let svc = Service::new(dir.to_string_lossy().to_string());
+    svc.request(json!({ "id": 1, "op": "branches" }).to_string());
+    let r = wait_line(&svc);
+    assert_eq!(r["ok"], true, "branches failed: {r}");
+    assert_eq!(r["result"]["current"], "main");
+    let locals = r["result"]["locals"].as_array().unwrap();
+    assert_eq!(locals.len(), 2, "{r}");
+    let names: Vec<&str> = locals.iter().map(|b| b["name"].as_str().unwrap()).collect();
+    assert!(names.contains(&"main") && names.contains(&"feature"), "{r}");
+    assert!(r["result"]["remotes"].as_array().unwrap().is_empty());
+
+    drop(svc);
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_file(&cfg);
+}
+
+#[test]
+fn branch_create_then_checkout_reports_what_changed_on_disk() {
+    let dir = temp_repo("checkout");
+    let cfg = config_path_for(&dir);
+    std::fs::create_dir_all(dir.join("assets")).unwrap();
+    std::fs::write(dir.join("assets/keep.txt"), "1").unwrap();
+    commit_all(&dir, &cfg, "one");
+
+    let svc = Service::new(dir.to_string_lossy().to_string());
+    svc.request(json!({ "id": 1, "op": "branch_create", "args": { "name": "feature" } }).to_string());
+    assert_eq!(wait_line(&svc)["ok"], true);
+    // feature 側にだけテクスチャを 1 枚足す
+    git(&dir, &cfg, &["checkout", "-q", "feature"]);
+    std::fs::write(dir.join("assets/only_feature.png"), "png").unwrap();
+    commit_all(&dir, &cfg, "two");
+    git(&dir, &cfg, &["checkout", "-q", "main"]);
+
+    svc.request(json!({ "id": 2, "op": "checkout", "args": { "name": "feature" } }).to_string());
+    let r = wait_line(&svc);
+    assert_eq!(r["ok"], true, "checkout failed: {r}");
+    assert_eq!(r["result"]["branch"], "feature");
+    // ★段階分類の唯一の入力。空だと「何も変わらなかった」と読まれる
+    let names = r["result"]["names"].as_array().unwrap();
+    assert_eq!(names.len(), 1, "{r}");
+    assert_eq!(names[0]["path"], "assets/only_feature.png");
+    assert_eq!(names[0]["status"], "A");
+    assert_eq!(r["result"]["status"]["branch"], "feature", "応答に実行後の status が載る");
+    assert!(dir.join("assets/only_feature.png").exists());
+
+    drop(svc);
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_file(&cfg);
+}
+
+#[test]
+fn checkout_with_conflicting_local_changes_lists_the_files() {
+    // spec §4.1 (S7): git に任せて、拒否されたら**対象ファイル一覧**を返す。
+    // ここが空だとモーダルに「何を破棄すればいいか」が出せない
+    let dir = temp_repo("overwrite");
+    let cfg = config_path_for(&dir);
+    std::fs::create_dir_all(dir.join("assets")).unwrap();
+    std::fs::write(dir.join("assets/shared.txt"), "main").unwrap();
+    commit_all(&dir, &cfg, "one");
+    git(&dir, &cfg, &["checkout", "-q", "-b", "feature"]);
+    std::fs::write(dir.join("assets/shared.txt"), "feature").unwrap();
+    commit_all(&dir, &cfg, "two");
+    git(&dir, &cfg, &["checkout", "-q", "main"]);
+    // 未コミットのローカル変更を作る (保存しただけ = 普通の状態)
+    std::fs::write(dir.join("assets/shared.txt"), "local edit").unwrap();
+
+    let svc = Service::new(dir.to_string_lossy().to_string());
+    svc.request(json!({ "id": 1, "op": "checkout", "args": { "name": "feature" } }).to_string());
+    let r = wait_line(&svc);
+    assert_eq!(r["ok"], false, "git は拒否するはず: {r}");
+    assert_eq!(r["error"]["code"], code::LOCAL_CHANGES_OVERWRITTEN);
+    let paths = r["error"]["paths"].as_array().expect("paths が要る");
+    assert_eq!(paths.len(), 1, "{r}");
+    assert_eq!(paths[0], "assets/shared.txt");
+    // detail は git の案内文ではなく**こちらの固定文**(版で割れないため)
+    assert!(!r["error"]["detail"].as_str().unwrap().contains("stash"), "{r}");
+    assert_eq!(
+        std::fs::read_to_string(dir.join("assets/shared.txt")).unwrap(),
+        "local edit",
+        "拒否されたら working tree は 1 バイトも動かない"
+    );
+
+    drop(svc);
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_file(&cfg);
+}
+
+#[test]
+fn checkout_and_branch_create_reject_option_like_names() {
+    // ★checkout には `--` を置けない (`git checkout -- x` はパスの復元 = 別操作)。
+    //   オプション化を止める砦は引数検証しか無い
+    let dir = temp_repo("badname");
+    let svc = Service::new(dir.to_string_lossy().to_string());
+    svc.request(json!({ "id": 1, "op": "checkout", "args": { "name": "--orphan" } }).to_string());
+    let r = wait_line(&svc);
+    assert_eq!(r["ok"], false);
+    assert_eq!(r["error"]["code"], code::BAD_REQUEST);
+    svc.request(json!({ "id": 2, "op": "branch_create", "args": { "name": "" } }).to_string());
+    assert_eq!(wait_line(&svc)["error"]["code"], code::BAD_REQUEST);
+    svc.request(json!({ "id": 3, "op": "checkout" }).to_string());
+    assert_eq!(wait_line(&svc)["error"]["code"], code::BAD_REQUEST, "name は必須");
+
+    drop(svc);
+    let _ = std::fs::remove_dir_all(&dir);
+}
