@@ -21,6 +21,9 @@ public:
     // ★対象外にしているもの:
     //     * レンダリングパスのラジオ … そもそも永続化されない (spec が明示的に除外)
     //     * editor_settings.json      … <project>\.mye\ = 個人設定でチームと共有しない
+    //     * パーティクルバックエンドのラジオ (M66h) … **セッション上書き**が正常な状態で、
+    //       ディスクと違うことは未保存を意味しない。ここに入れると
+    //       `--particle-backend gpu` で起動しただけでゲートが永久に閉じる
     //   窓を一度も開いていなければ nullptr / 未 Load = false (この窓でしか編集できない)
     bool HasUnsavedChanges() const;
 
@@ -36,6 +39,9 @@ private:
     InputActions* inputActions_ = nullptr;
     std::wstring assetsRoot_;
     InputSnapshot lastInput_ = {}; // 前フレームのスナップショット (押下エッジ検出用)
+    // 「プロジェクト既定にする」を押した直後の確認表示 (M66h)。窓を閉じるか
+    // バックエンドを選び直すと消える
+    bool particleSaved_ = false;
 };
 
 } // namespace mye

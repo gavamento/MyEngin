@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cstdio> // M56c: HZB のミップ番号入りメニューラベルを訳文書式から組む
 #include <filesystem>
+#include <fstream>  // M66h: .gitignore の読み書き
+#include <iterator>
 #include <vector>
 
 #include <Windows.h>
@@ -13,6 +15,7 @@
 #include "Editor/CreateMenu.h"
 #include "Editor/EditorGlobalSettings.h"
 #include "Editor/ProjectManager.h" // M66d: 段階 C の RelaunchSelfWithProject
+#include "Editor/ProjectTemplates.h" // M66h: 推奨 .gitignore の正本
 #include "Engine/Engine/Script/ManagedHost.h" // M66d: 段階 B の .cs 再コンパイル
 #include "Engine/Core/Hash.h"
 #include "Engine/Core/Localization.h"
@@ -23,6 +26,7 @@
 #include "Engine/Engine/HotReload/ReloadHub.h"
 #include "Engine/Engine/ModelLoader.h"
 #include "Engine/Engine/Net/NetRuntime.h"
+#include "Engine/Engine/Particles/ParticleSystem.h" // M66h: 個人設定の流し込み
 #include "Engine/Engine/Prefab.h"
 #include "Engine/Engine/Project.h"
 #include "Engine/Engine/Script/ScriptHost.h"
@@ -46,6 +50,18 @@ namespace {
 // 範囲だけをメニューに出す。それより上を見たいときは --hzb-debug N で任意の段を指定できる
 // (指定が段数を超えたら DeferredPath 側が最上段で頭打ちにする)
 constexpr int kHzbDebugMenuMips = 6;
+
+// 小さなテキストファイルを丸ごと読む (無ければ空)。M66h の .gitignore 専用で、
+// バイト列を**一切正規化しない** — 追記して書き戻すときに既存行の改行コードを
+// 勝手に揃えると、本人が触っていない行が全部 diff に乗る
+std::string ReadWholeTextFile(const std::wstring& path)
+{
+    std::ifstream f(std::filesystem::path(path), std::ios::binary);
+    if (!f) {
+        return {};
+    }
+    return std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+}
 
 } // namespace
 
@@ -214,6 +230,19 @@ void EditorApp::OnStart(EngineContext& ctx)
             projectName_ = manifest.name;
         }
     }
+    // ---- パーティクルの個人設定を流し込む (M66h、spec §4.2 の決定 8) ----
+    // ★比較モード / 比較オフセット / SIMD の正本は <project>\.mye\editor_settings.json。
+    //   Engine 層は EditorSettings を知らないので、**Editor が起動時に押し込む**。
+    //   `--particle-compare` で起動していたら CLI を勝たせる (撮影の再現性が
+    //   機体の個人設定で割れると、golden が「撮った人によって違う」ものになる)
+    if (ctx.particles != nullptr) {
+        if (!ctx.particles->CompareOverriddenByCli()) {
+            ctx.particles->SetCompareMode(settings_.particleCompareMode);
+        }
+        ctx.particles->SetCompareOffsetX(settings_.particleCompareOffsetX);
+        ctx.particles->Cpu().SetSimdEnabled(settings_.particleCpuSimd);
+    }
+
     // ---- Source Control (M66b) ----
     // ★プロジェクト起動のときだけ立ち上げる。裸起動では DLL のロードすらしない
     //   (どのリポジトリかが決まらないので機能が成立しない = Unavailable::NoProject)。
@@ -667,7 +696,7 @@ void EditorApp::OnImGui(EngineContext& ctx)
     console_.OnImGui(settings_.externalEditorCmd);
     sceneView_.OnImGui(ctx, selection_, undo_, settings_);
     gameView_.OnImGui(ctx, selection_);
-    particleSettings_.OnImGui(ctx);
+    particleSettings_.OnImGui(ctx, settings_);
     profiler_.OnImGui(ctx);
     timeline_.OnImGui(ctx, playMode_);
     net_.OnImGui(ctx);
@@ -728,6 +757,38 @@ void EditorApp::OnImGui(EngineContext& ctx)
             // M66e: 切替も破棄と同じトランザクション経由。窓は名前を渡すだけで、
             // 事前判定 (diff_names) → 確認 → checkout → 後処理は GitTransaction が持つ
             gitTx_.RequestCheckout(std::move(target));
+        };
+        // M66h: 推奨 .gitignore。**窓はファイルを読めない** (Windows.h も fstream も
+        // 持ち込まない方針) ので、読みも書きもここで閉じる。読みは設定ポップアップを
+        // 描いている間だけ呼ばれる契約 = 毎フレームの file open にはならない
+        scmHost.gitignoreMissing = [&ctx]() -> std::vector<std::string> {
+            return MissingGitignoreLines(ReadWholeTextFile(ctx.projectRoot + L"\\.gitignore"));
+        };
+        scmHost.applyGitignore = [this, &ctx]() {
+            const std::wstring path = ctx.projectRoot + L"\\.gitignore";
+            const std::string existing = ReadWholeTextFile(path);
+            const int missing = static_cast<int>(MissingGitignoreLines(existing).size());
+            if (missing == 0) {
+                return;
+            }
+            // 追記本文の組み立ては純関数側 (ProjectTemplates)。ここは読み書きだけを持つ
+            const std::string text = GitignoreWithRecommended(existing);
+            std::ofstream f(std::filesystem::path(path), std::ios::binary);
+            if (!f) {
+                MYE_LOG_ERROR("[collab] cannot write %s", WideToUtf8(path).c_str());
+                toasts_.Notify(LogLevel::Error, Tr(StrId::Scm_GitignoreFailed));
+                return;
+            }
+            f.write(text.data(), static_cast<std::streamsize>(text.size()));
+            f.close();
+            MYE_LOG_INFO("[collab] appended %d line(s) to %s", missing,
+                         WideToUtf8(path).c_str());
+            char buf[128];
+            snprintf(buf, sizeof(buf), Tr(StrId::Scm_GitignoreDone), missing);
+            toasts_.Notify(LogLevel::Info, buf);
+            // 一覧はファイル監視 → status で入ってくるが、.gitignore を書いた直後は
+            // 「今まで未追跡で出ていた行が消える」= 目に見える変化なので待たせない
+            scm_.RequestStatus();
         };
         scmHost.saveDocument = [this, &ctx]() -> std::wstring {
             const std::wstring path = actorEdit_ ? actorEdit_->path : scenePath_;
@@ -1404,7 +1465,59 @@ void EditorApp::PollScriptBuild()
     } else {
         MYE_LOG_ERROR("[build] script build failed (exit %lu) - see %s", code,
                       WideToUtf8(scriptBuildLog_).c_str());
+        // ★旧経路 (可視 cmd 窓 + pause) ではコンパイルエラーがその場で読めた。
+        //   M66e で窓を消した分を Console へ戻す (M66h)
+        ReportScriptBuildErrors();
         toasts_.Notify(LogLevel::Error, Tr(StrId::Scm_ScriptBuildFailed));
+    }
+}
+
+// build_scripts.log のエラー行を Console へ流す (M66h)。
+//
+// なぜそのまま MYE_LOG_ERROR ではないか: マクロは __FILE__/__LINE__ を注入するので、
+// Console のダブルクリックジャンプが**この EditorApp.cpp** へ飛ぶ。
+// logging::WriteSrc を直接呼んで MSVC が告げた `path(line)` をそのまま乗せると、
+// LogEntry.file/line がスクリプト側を指す = ConsoleWindow::JumpToSource がそこへ飛ぶ。
+void EditorApp::ReportScriptBuildErrors()
+{
+    if (scriptBuildLog_.empty()) {
+        return;
+    }
+    // ログは MSBuild の stdout そのまま = コンソール ANSI コードページ (CP932 等)。
+    // UTF-8 へ直さないと日本語のエラー文が ImGui で化ける
+    const std::string raw = ReadWholeTextFile(scriptBuildLog_);
+    if (raw.empty()) {
+        return;
+    }
+    const int wn =
+        MultiByteToWideChar(CP_ACP, 0, raw.data(), static_cast<int>(raw.size()), nullptr, 0);
+    std::wstring wide(static_cast<size_t>(wn > 0 ? wn : 0), L'\0');
+    if (wn > 0) {
+        MultiByteToWideChar(CP_ACP, 0, raw.data(), static_cast<int>(raw.size()), wide.data(), wn);
+    }
+    const std::vector<BuildErrorLine> errors = ParseBuildErrorLines(WideToUtf8(wide));
+
+    constexpr int kMaxReported = 20; // リングを埋め尽くさない (残りは件数だけ告げる)
+    int shown = 0;
+    for (const BuildErrorLine& e : errors) {
+        if (shown >= kMaxReported) {
+            break;
+        }
+        ++shown;
+        if (e.line > 0 && !e.file.empty()) {
+            // ★マクロ (MYE_LOG_ERROR) を使わないのは __FILE__/__LINE__ が入るから。
+            //   それだと Console のダブルクリックが**この EditorApp.cpp** へ飛ぶ。
+            //   MSVC が告げた path(line) をそのまま乗せると、ジャンプ先が
+            //   壊れているスクリプトの行になる (旧経路の可視 cmd 窓の代替)
+            logging::WriteSrc(LogLevel::Error, e.file.c_str(), e.line, "%s", e.text.c_str());
+        } else {
+            logging::Write(LogLevel::Error, "%s", e.text.c_str());
+        }
+    }
+    if (static_cast<int>(errors.size()) > shown) {
+        MYE_LOG_ERROR("[build] ... and %d more error line(s) in %s",
+                      static_cast<int>(errors.size()) - shown,
+                      WideToUtf8(scriptBuildLog_).c_str());
     }
 }
 

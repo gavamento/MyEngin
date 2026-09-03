@@ -5,7 +5,10 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
-#include <iterator> // M42追補: std::size (ソート網の入力表)
+#include <filesystem> // M66h: 設定ファイルの不変検査
+#include <fstream>
+#include <iterator> // M42追補: std::size (ソート網の入力表) / M66h: istreambuf_iterator
+#include <string>
 #include <vector>
 
 #include "Engine/Core/Components.h"
@@ -16,6 +19,7 @@
 #include "Engine/Engine/Particles/CpuParticleBackend.h"
 #include "Engine/Engine/Particles/GpuAliveEstimator.h"
 #include "Engine/Engine/Particles/ParticleCurves.h"
+#include "Engine/Engine/Particles/ParticleSystem.h" // M66h: 永続化の不変検査
 #include "Engine/Engine/Replay/SimSnapshot.h"
 #include "Engine/Engine/Replay/WorldHasher.h"
 #include "Engine/Engine/Scene.h"
@@ -2414,6 +2418,56 @@ bool RunParticleSelfTest()
         check(NearF(u, 0.5f) && NearF(v, 0.25f), "m63c: the tile origin lands on its own corner");
         ParticleFlipTileUvCpu(1.0f, 1.0f, 6u, 4u, 4u, u, v);
         check(NearF(u, 0.75f) && NearF(v, 0.5f), "m63c: the tile never spills into its neighbour");
+    }
+
+    // ---- (M66h) 調査用トグルは project_settings.json を 1 バイトも書かない ----
+    // ★以前は SetActiveKind / SetCompareMode / SIMD トグルがその場で SaveSettings() を
+    //   呼んでいた = 比較モードを一瞬見ただけで、チームで共有するファイルに
+    //   差分が出た。ここは「どの setter も書かない」をバイト列で固める検査で、
+    //   D3D の無い selftest で回せるよう Init を通さず LoadSettings(path) から始める
+    {
+        namespace fs = std::filesystem;
+        std::error_code ec;
+        const fs::path dir = fs::temp_directory_path() / L"mye_particle_settings";
+        fs::remove_all(dir, ec);
+        fs::create_directories(dir, ec);
+        const fs::path file = dir / L"project_settings.json";
+        auto readAll = [&file]() {
+            std::ifstream f(file, std::ios::binary);
+            return std::string((std::istreambuf_iterator<char>(f)),
+                               std::istreambuf_iterator<char>());
+        };
+        // 旧プロジェクトの JSON = 4 キー + 他の機能のキー
+        {
+            std::ofstream f(file, std::ios::binary);
+            f << R"({"particleBackend":"gpu","particleCompareMode":true,)"
+                 R"("particleCompareOffsetX":9.5,"particleCpuSimd":false,)"
+                 R"("physicsLayers":["Default"]})";
+        }
+        ParticleSystem ps; // Init は通さない (永続化の経路だけを見る)
+        ps.LoadSettings(file.wstring());
+        check(ps.ActiveKind() == ParticleBackendKind::Gpu,
+              "m66h: particleBackend is still read from project_settings.json");
+        check(!ps.CompareMode() && NearF(ps.CompareOffsetX(), 4.0f) && ps.Cpu().SimdEnabled(),
+              "m66h: the three personal keys left in an old file are ignored, not migrated");
+
+        const std::string before = readAll();
+        ps.SetCompareMode(true);
+        ps.Cpu().SetSimdEnabled(false);
+        ps.SetCompareOffsetX(9.0f);
+        ps.SetActiveKind(ParticleBackendKind::Cpu);
+        check(readAll() == before,
+              "m66h: toggling compare / simd / backend leaves project_settings.json byte-identical");
+
+        ps.SaveSettings(); // Project Settings 窓の「プロジェクト既定にする」相当
+        const std::string after = readAll();
+        check(after.find("\"particleBackend\": \"cpu\"") != std::string::npos,
+              "m66h: an explicit save writes the backend");
+        check(after.find("physicsLayers") != std::string::npos,
+              "m66h: an explicit save keeps the other owners' keys (merge save)");
+        check(after.find("particleCompareMode") != std::string::npos,
+              "m66h: an explicit save does not delete the dead personal keys either");
+        fs::remove_all(dir, ec);
     }
 
     if (failCount == 0) {

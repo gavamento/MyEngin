@@ -28,6 +28,9 @@ void EditorSettings::Load(const std::wstring& dir)
         camMoveSpeed = root.value("camMoveSpeed", camMoveSpeed);
         scmAutoFetch = root.value("scmAutoFetch", scmAutoFetch);
         scmFetchIntervalMin = root.value("scmFetchIntervalMin", scmFetchIntervalMin);
+        particleCompareMode = root.value("particleCompareMode", particleCompareMode);
+        particleCompareOffsetX = root.value("particleCompareOffsetX", particleCompareOffsetX);
+        particleCpuSimd = root.value("particleCpuSimd", particleCpuSimd);
     } catch (const nlohmann::json::exception& ex) {
         MYE_LOG_WARN("editor_settings.json parse error: %s", ex.what());
     }
@@ -59,6 +62,9 @@ void EditorSettings::Save() const
     root["camMoveSpeed"] = camMoveSpeed;
     root["scmAutoFetch"] = scmAutoFetch;
     root["scmFetchIntervalMin"] = scmFetchIntervalMin;
+    root["particleCompareMode"] = particleCompareMode;
+    root["particleCompareOffsetX"] = particleCompareOffsetX;
+    root["particleCpuSimd"] = particleCpuSimd;
 
     std::ofstream f(std::filesystem::path(path_), std::ios::binary);
     if (f) {

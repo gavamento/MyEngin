@@ -24,6 +24,14 @@ struct EditorSettings {
     //   ような設定を押し付けることになる
     bool scmAutoFetch = true;
     int scmFetchIntervalMin = 5;
+    // ---- パーティクルの調査用トグル (M66h、spec §4.2 の決定 8) ----
+    // ★同上の理由でここ。以前は assets\project_settings.json (= チームで共有され、
+    //   git に載る) にあり、比較モードを 1 回入れただけで「全員の画面に粒子が 2 重に出る」
+    //   差分が push できてしまう状態だった。値は Editor が起動時と変更時に
+    //   ParticleSystem の setter へ流す (Engine 層は EditorSettings を知らない)
+    bool particleCompareMode = false;
+    float particleCompareOffsetX = 4.0f;
+    bool particleCpuSimd = true;
 
     void Load(const std::wstring& dir);
     void Save() const;

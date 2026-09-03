@@ -11,6 +11,7 @@
 #include <thread>
 
 #include "Editor/EditorSettings.h"
+#include "Editor/ProjectTemplates.h"
 #include "Editor/SourceControl/CollabClient.h"
 #include "Editor/SourceControl/GitTransaction.h"
 #include "Editor/SourceControl/PairRule.h"
@@ -897,6 +898,11 @@ bool RunSourceControlSelfTest()
             fresh.Load(dir.wstring());
             check(fresh.scmAutoFetch && fresh.scmFetchIntervalMin == 5,
                   "settings: background fetch defaults to on, every 5 minutes");
+            // M66h: 粒子の個人設定。既定は**旧 project_settings.json と同じ値**
+            // (移行しない方針なので、既定がずれると見た目が黙って変わる)
+            check(!fresh.particleCompareMode && fresh.particleCompareOffsetX == 4.0f
+                      && fresh.particleCpuSimd,
+                  "settings: the particle personal keys default to compare off / +4.0 / simd on");
         }
         // 2) 書いて読み直す (往復)
         {
@@ -905,6 +911,9 @@ bool RunSourceControlSelfTest()
             written.scmAutoFetch = false;
             written.scmFetchIntervalMin = 17;
             written.camMoveSpeed = 12.5f; // 既存キーが巻き添えで消えないことも見る
+            written.particleCompareMode = true;
+            written.particleCompareOffsetX = 9.5f;
+            written.particleCpuSimd = false;
             written.Save();
 
             EditorSettings read;
@@ -912,6 +921,9 @@ bool RunSourceControlSelfTest()
             check(!read.scmAutoFetch && read.scmFetchIntervalMin == 17
                       && read.camMoveSpeed == 12.5f,
                   "settings: scmAutoFetch / scmFetchIntervalMin survive the round trip");
+            check(read.particleCompareMode && read.particleCompareOffsetX == 9.5f
+                      && !read.particleCpuSimd,
+                  "settings: the particle personal keys survive the round trip");
         }
         // 3) 旧 JSON (キーが無い) は既定値で読める。
         //    ★ここが「前方/後方互換」の実体 — 既存プロジェクトの
@@ -938,6 +950,88 @@ bool RunSourceControlSelfTest()
                   "settings: saving an old file adds the scm keys");
         }
         fs::remove_all(dir, ec);
+    }
+
+    // ---- (g) 推奨 .gitignore (spec §2 の S10、M66h) ----
+    // ★検査の中心は「足りない行だけを返す」と「既存行を 1 行も壊さない」の 2 点。
+    //   ここが壊れると、押した人の .gitignore が黙って書き換わる = 取り返しがつかない
+    {
+        std::error_code ec;
+        // 1) ファイルが無い (空文字列) → 全 7 行
+        const std::vector<std::string> all = MissingGitignoreLines("");
+        check(all.size() == 7 && all.front() == "/.mye/" && all.back() == "*.log",
+              "gitignore: an empty file is missing all seven recommended lines");
+
+        // 2) 旧テンプレ (3 行) → 不足は 4 行、並びは推奨順のまま
+        const std::vector<std::string> four =
+            MissingGitignoreLines("/.mye/\n/cache/\n/dist/\n");
+        check(four.size() == 4 && four[0] == "/crash/" && four[1] == "/save/"
+                  && four[2] == "/assets/scripts/Generated/" && four[3] == "*.log",
+              "gitignore: the three old template lines leave exactly the four new ones");
+
+        // 3) 全部ある → 空 (ボタンが無効になる条件)
+        check(MissingGitignoreLines(RecommendedGitignoreText()).empty(),
+              "gitignore: the template itself needs nothing appended");
+
+        // 4) 末尾改行なし / CRLF / 前後の空白 / コメント混じりでも同じ結論。
+        //   ★このリポジトリは core.autocrlf=true 前提 = 手元の .gitignore は CRLF になりうる。
+        //     行末の CR を落とさないと「全部足りない」と誤判定して 7 行を二重に追記する
+        check(MissingGitignoreLines("# generated\r\n  /.mye/  \r\n/cache/\r\n/dist/\r\n"
+                                    "/crash/\r\n/save/\r\n/assets/scripts/Generated/\r\n*.log")
+                  .empty(),
+              "gitignore: CRLF, padding, comments and a missing final newline are all tolerated");
+
+        // 5) 似ているだけの行は「ある」と見なさない (完全一致のみ)
+        const std::vector<std::string> similar = MissingGitignoreLines("cache/\ndist\n!*.log\n");
+        check(similar.size() == 7,
+              "gitignore: near-misses (no leading slash, a negation) do not count as present");
+
+        // 6) 追記の本文を組む純関数 — 既存部分は**バイト単位で不変**。
+        //    ★ここがボタンの実体 (EditorApp は読む→これを呼ぶ→書くだけ)。
+        //      人の .gitignore に追記する以上、「触っていない行を 1 バイトも動かさない」は
+        //      コメントではなく検査で担保する
+        {
+            const std::string kept = "# my rules\r\n/.mye/\r\nsecret/\r\n/cache/\r\n/dist/\r\n";
+            const std::string grown = GitignoreWithRecommended(kept);
+            check(grown.compare(0, kept.size(), kept) == 0,
+                  "gitignore: appending never rewrites a single byte of what was there");
+            check(grown == kept + "/crash/\n/save/\n/assets/scripts/Generated/\n*.log\n",
+                  "gitignore: the four missing lines are appended in the recommended order");
+            check(MissingGitignoreLines(grown).empty(),
+                  "gitignore: applying once is enough (the button goes quiet)");
+            check(GitignoreWithRecommended(grown) == grown,
+                  "gitignore: applying twice changes nothing (no duplicated lines)");
+            // 末尾に改行が無い形 → 改行を 1 つだけ補ってから足す
+            const std::string noEol = "/.mye/\n/cache/\n/dist/";
+            check(GitignoreWithRecommended(noEol)
+                      == noEol + "\n/crash/\n/save/\n/assets/scripts/Generated/\n*.log\n",
+                  "gitignore: a file without a final newline gets exactly one added");
+            // 空のファイル (= 新規作成) はテンプレと同じ本文になる
+            check(GitignoreWithRecommended("") == RecommendedGitignoreText(),
+                  "gitignore: applying to a missing file produces the template itself");
+        }
+
+        // 7) テンプレ生成 = CreateProject が書く .gitignore が 7 行
+        //    (エンジン assets は空の偽ディレクトリでよい — Empty テンプレの
+        //     コピーは error_code 受けなので、中身が無くても作成は成功する)
+        const fs::path tmp = fs::temp_directory_path() / L"mye_gitignore_tmpl";
+        fs::remove_all(tmp, ec);
+        fs::create_directories(tmp / L"engine_assets", ec);
+        const fs::path proj = tmp / L"proj";
+        std::string err;
+        const bool made = CreateProject(proj.wstring(), "tmpl", ProjectTemplate::Empty,
+                                        (tmp / L"engine_assets").wstring(), &err);
+        std::string written;
+        {
+            std::ifstream f(proj / L".gitignore", std::ios::binary);
+            written.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+        }
+        check(made && written == RecommendedGitignoreText()
+                  && std::count(written.begin(), written.end(), '\n') == 7,
+              "gitignore: a new project is created with all seven lines");
+        check(MissingGitignoreLines(written).empty(),
+              "gitignore: the file a new project gets never asks to be updated");
+        fs::remove_all(tmp, ec);
     }
 
     // ---- (k) M66f: remote_state の解析と remote_changed の配線 ----

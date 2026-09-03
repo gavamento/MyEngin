@@ -43,6 +43,13 @@ struct SourceControlHost {
     // `git mergetool` を外部のコンソールで開く (結果は監視が拾う)。
     // ★窓から ShellExecuteW を呼ばない — Windows.h を窓に持ち込まないため
     std::function<void()> openMergeTool;
+    // ---- M66h: 推奨 .gitignore ----
+    // 不足している推奨行 (空 = 足りている)。**呼ばれたときだけ**ディスクを読む契約で、
+    // 窓は設定ポップアップを描いている間しか呼ばない (毎フレーム .gitignore を
+    // 開き直すのを避けるため。窓は自分でファイルを読めないのでここに置く)
+    std::function<std::vector<std::string>()> gitignoreMissing;
+    // 不足行だけを末尾に追記する (既存行は触らない)
+    std::function<void()> applyGitignore;
 };
 
 // Source Control 窓 (M66b = 読み取り、M66c = stage / unstage / commit / History / diff)。

@@ -1,7 +1,7 @@
 # sub-07: M66g: 競合 — abort / ours / theirs / continue
 
 - 依存: sub-06
-- 状態: OK (commit: M66g — ハッシュは harness.md のサブ進捗表)
+- 状態: OK (commit 3c0bf56)
 - 往復: 1
 
 ## やること

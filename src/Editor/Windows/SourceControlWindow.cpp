@@ -316,6 +316,33 @@ void SourceControlWindow::DrawHeader(SourceControlSession& scm, const SourceCont
         if (changed && host.applyFetchSettings) {
             host.applyFetchSettings(autoFetch, interval);
         }
+
+        // ---- 推奨 .gitignore (M66h、spec §2 の S10) ----
+        // ★ここに置いたのは「1 回押せば終わり」の衛生作業だから。Changes タブに
+        //   常設のボタンを足すと、既定ドック幅 (285 px) の 3 個枠を食い潰す
+        ImGui::Separator();
+        if (host.gitignoreMissing) {
+            const std::vector<std::string> missing = host.gitignoreMissing();
+            ImGui::BeginDisabled(missing.empty());
+            if (ImGui::Button(Tr(StrId::Scm_ApplyGitignore)) && host.applyGitignore) {
+                host.applyGitignore();
+            }
+            ImGui::EndDisabled();
+            // ★ツールチップは EndDisabled の**後**で AllowWhenDisabled 付き
+            //   (BeginDisabled の内側では IsItemHovered が効かない — M66d)
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                ImGui::BeginTooltip();
+                if (missing.empty()) {
+                    ImGui::TextUnformatted(Tr(StrId::Scm_GitignoreOk));
+                } else {
+                    ImGui::Text(Tr(StrId::Scm_GitignoreMissing), static_cast<int>(missing.size()));
+                    for (const std::string& line : missing) {
+                        ImGui::BulletText("%s", line.c_str());
+                    }
+                }
+                ImGui::EndTooltip();
+            }
+        }
         ImGui::EndPopup();
     }
 

@@ -157,6 +157,8 @@ ProjectSettings の render-path ラジオ (永続化されない) は対象外�
 - **競合したシーンは JSON として壊れているので起動時に読めず、エディタは空シーンで開く**。`SaveCurrentScene` 先頭の `IsConflictedPath` (actor edit のパスも対象) が「空シーンを競合ファイルへ上書き」を止める唯一の砦。
 - 競合の入口は 2 つ: pull の応答 (ConflictScan) と、起動時に外の git で競合していた場合 (status の `mergeInProgress` → 自動で `conflicts`)。
 
+**推奨 `.gitignore` (sub-08 で確定)**: 正本は `ProjectTemplates.cpp` の `kRecommendedGitignore` 7 行 (`/.mye/ /cache/ /dist/ /crash/ /save/ /assets/scripts/Generated/ *.log`)。`CreateProject` と Source Control 窓の「推奨 .gitignore を適用」(設定ポップアップ内。不足行だけ末尾に追記、既存行はバイト単位で不変) が同じ配列から作る。`watch.rs::is_interesting` の除外集合 (`.mye / cache / dist / target`) は**意図的に揃えない** — 監視は全プロジェクト共通で、新しい 4 行を持たない既存プロジェクトでは `crash/` や `*.log` が追跡対象でありうる (拾えないより拾いすぎに倒す)。
+
 **ゲートの阻害要因 (列挙型 `GateBlocker`)**: `SceneDirty` / `ActorEdit` / `AnimationDirty` /
 `ControllerDirty` / `MixerDirty` / `ProjectSettingsDirty` / `Playing` / `NetActive` / `BuildRunning` /
 `ScriptBuildRunning` / `OpInFlight` / `MergeInProgress` / `ServiceUnavailable`。全件を列挙して返す (最初の 1 件で止めない)。
@@ -199,6 +201,8 @@ GCM の GUI を許す (`GIT_TERMINAL_PROMPT=0` のみ)。全 git 呼び出しは
   比較は `NormalizePathKey` 同士。`formatVersion` は現状どおり 1。
 - `EditorSettings` に `scmAutoFetch` (bool, true) / `scmFetchIntervalMin` (int, 5) /
   `particleCompareMode` / `particleCompareOffsetX` / `particleCpuSimd` (M66h)。旧 JSON は `value(key, default)` で読める。
+  **旧 `project_settings.json` の個人 3 キーは読み飛ばすだけで移行せず、`SaveSettings` でも消さない** (sub-08 で確定): 移行すると共有ファイルの古い値が個人設定を後から上書きする順序問題が残り、消すと Project Settings を一度保存しただけで共有ファイルに他人の値の削除差分が出る。`SaveSettings` の呼び出し元は `ProjectSettingsWindow` の 1 箇所のみ (増やすと決定 8 が崩れる。`ParticleSelfTest` の byte-identical 検査は呼び出し元の増加をすり抜ける)。
+  `ProjectSettingsWindow` のバックエンドラジオは `HasUnsavedChanges` の対象外 (入れると `--particle-backend gpu` 起動だけで書き込み系ゲートが永久に閉じる)。
 - `.rep` / snapshot / SceneSerializer / TypeId / ABI (`EngineAPI.h`): **一切触らない**。
 - JSON: UTF-8、パスは toplevel 相対 `/` 区切り。C++ 側で `Utf8ToWide` → 絶対化 → `NormalizePathKey`。
   260 文字超のパスは v1 非対応 (エラーはそのまま表示)。
@@ -303,6 +307,7 @@ sub-08 / sub-09 は sub-05〜07 と独立。
 - ~~`StartGameLogicBuild` の呼び出し元~~ → **閉じた**が穴が 1 本: 呼び出し元は `BuildSettingsWindow::AdvancePipeline` のみ。ただし Asset Browser の [Rebuild Scripts] = `AssetOps::RebuildGameLogic` (`AssetOps.cpp:1447`) は `ShellExecuteW` の fire-and-forget で**ハンドルを持たない** → その間 `ScriptBuildRunning` が立たない。→ **sub-05 で塞いだ** (`EditorApp::PollScriptBuild`、`RebuildGameLogic` は削除)。
 - DLL 内で本当に panic させる経路は作らない (sub-04 の質問 1 = (a))。`catch_unwind` → `service_error` → `ServiceDied` → ゲート閉鎖の C++ 側は通知行の注入で実走済み、Rust 側は cargo test (service.rs) の panic 注入で実走済み。残るのは C ABI ラッパ 1 段だけで、隠し op を足すほどの価値は無い。
 - `kReloadRetryMax = 60` の WARN は実機で発火させていない (共有違反を 60 フレーム続ける再現手段が無い)。カウントの配線はコードレビューで確認 (`ReloadHub.cpp` の `retryAttempt_` 引き継ぎ)。
+- **M66 の範囲外のフレーク (sub-08 で発見)**: `shot_verify.bat` の `acoustic_forward` / `acoustic_deferred` (golden 18/19、CI 判定 12 枚に含まれる) が同一 Release バイナリで 1/4〜1/2 の確率で座標 (237,443) 付近 ~40×40 画素だけ動く (maxDiff 120〜145、diffPixels 909〜1585)。実行ログは PID 以外一致、sim は replay でビット一致 → **描画側の run-to-run 非決定性**。golden は M65g で撮られ、その後 M65h (`04b0733`: `AcousticField` / `RenderSystem` / `TickRunner`) が入っている。sub-08 の Engine 層差分は `ParticleSystem` / `ParticleSelfTest` / `LocalizationTable.inl` のみで音響には触れていない。計測データ: `cache/m66h_ac_t1..t4.png`、`cache/m66h_acoustic_*.png`、`tests/actual/acoustic_deferred.diff.png`。**扱いはユーザー判断待ち** (sub-08 round 1 の VERDICT で質問)。
 - `kCollabMaxBatchApply = 200` と `kReloadRetryMax = 60` は R2 で確定した初期値。実機で不便なら定数だけ変える (仕様変更として §8 に積む)。
 - 競合中のアクティブシーン: 競合マーカー入り JSON は開けない (決定 9)。競合中はアクティブシーンが競合一覧にある間 **Save を止める** (保存 = マーカーを潰して「ours」を黙って選ぶのと同じ)。詳細は sub-07。
 - `pull` の非 ff: 既定 `--ff-only` で `non_fast_forward` を返し、UI が「マージして pull」を提示 → `pull{allowMerge:true}` (`--no-rebase`)。競合は §4.1「競合周り」。
@@ -334,3 +339,4 @@ sub-08 / sub-09 は sub-05〜07 と独立。
 - 同上: §4.3 の既定ドック (左列) と Diff 別窓は sub-05 で実装済み (`cache/scm_m66e_layout.png`)。§7 の Rebuild Scripts の穴を閉じた。
 - 2026-09-03 (sub-06 round 1、coder SELF_EVAL): §4.1 に GCM の実測 (GIT_TERMINAL_PROMPT=0 だけでは GUI が出る) と「リモート周り」を新設 (hasRemote / 応答に remote / Pull は behind > 0 / setUpstream 省略可 / detail 固定文 / 競合は stdout / タイマーは毎周回 / 失敗トーストは code のみ)。質問 1〜3 はすべて coder の判断を採用。§7 の GCM 未決を閉じた。
 - 2026-09-03 (sub-07 round 1、coder SELF_EVAL): §4.1 に「競合周り」を新設 (resolve は paths[] / モードで側を決める / conflicts が merged[] と 7 種別を返す / status に merge フラグ / 競合 pull は ConflictScan / abort・continue は pull と同型 / continue は merge のみ / resolve はトランザクション外 / 競合シーンは空で開くので保存ガードが唯一の砦)。元の「pull の応答に mergedPaths」は conflicts op へ移した (coder の判断を採用)。既存の期待 NDJSON 7 本の撮り直しは 2 キー追加だけであることを diff で機械確認。質問 1 (merge_in_progress 分類) は sub-08 へ、質問 2 (Scm_ComingSoon) も sub-08 へ。
+- 2026-09-03 (sub-08 round 1、coder SELF_EVAL): §4.2 に旧 3 キーの扱い (移行せず・消さず) と backend ラジオのゲート除外、§4.1 に推奨 .gitignore の正本と watch.rs を揃えない理由、§7 に acoustic golden のフレーク (M66 範囲外、ユーザー判断待ち) を記録。差分 4 件はすべて coder の判断を採用。DocumentDirty → DiskCompare の改名は git mv で実施 (司会の転記漏れだが sub-08.md が正本)。

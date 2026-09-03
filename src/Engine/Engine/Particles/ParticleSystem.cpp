@@ -16,24 +16,25 @@ bool ParticleSystem::Init(GraphicsDevice& device, ShaderManager& shaders,
                           const std::wstring& assetsRoot, int backendOverride,
                           int compareOverride)
 {
-    settingsPath_ = assetsRoot + L"\\project_settings.json";
     const bool cpuOk = cpu_.Init(device, shaders);
     const bool gpuOk = gpu_.Init(device, shaders);
     if (!cpuOk || !gpuOk) {
         MYE_LOG_ERROR("ParticleSystem: backend init failed (cpu=%d gpu=%d)", cpuOk, gpuOk);
     }
-    LoadSettings();
+    LoadSettings(assetsRoot + L"\\project_settings.json");
     // M57追補: CLI (--particle-backend / --particle-compare) は設定ファイルより優先する。
-    // ★SetActiveKind() / SetCompareMode() を**呼んではいけない** — あちらは SaveSettings() を
-    //   呼ぶので、スクショ 1 枚のために開発者の project_settings.json が書き換わる。
-    //   ここは LoadSettings() の直後なので、直接代入で「読んだ値を上書きする」だけで足りる。
-    // ※ 上書き中に GUI (ParticleSettingsWindow) でバックエンドを触ると保存されるが、それは
-    //    明示的なユーザー操作の結果なので許容する (ヘッドレス撮影では GUI が無いので起きない)
+    // ★M66h 以降、この 2 つの setter は保存しない (書き戻しは Project Settings 窓だけ) ので
+    //   経路の選択は自由になったが、Reset とログを走らせない直接代入のままにしてある —
+    //   ここは LoadSettings() の直後で「読んだ値を差し替える」以上のことをする必要が無い。
+    // ★compare が CLI 由来かどうかは覚えておく: Editor が個人設定 (editor_settings.json) の
+    //   比較モードを流し込む前に見て、CLI を勝たせるため (撮影の再現性が個人設定で壊れると
+    //   golden が「撮った人によって違う」ものになる)
     if (backendOverride >= 0) {
         active_ = (backendOverride == 1) ? ParticleBackendKind::Gpu : ParticleBackendKind::Cpu;
     }
     if (compareOverride >= 0) {
         compareMode_ = (compareOverride != 0);
+        compareFromCli_ = true;
     }
     MYE_LOG_INFO("ParticleSystem: active backend = %s%s", Active().Name(),
                  compareMode_ ? " (+compare)" : "");
@@ -93,7 +94,6 @@ void ParticleSystem::SetActiveKind(ParticleBackendKind kind)
     gpu_.Reset();
     active_ = kind;
     MYE_LOG_INFO("[particles] backend switched to %s (particles restarted)", Active().Name());
-    SaveSettings();
 }
 
 void ParticleSystem::SetCompareMode(bool enabled)
@@ -105,11 +105,11 @@ void ParticleSystem::SetCompareMode(bool enabled)
     cpu_.Reset();
     gpu_.Reset();
     MYE_LOG_INFO("[particles] compare mode %s", enabled ? "ON" : "OFF");
-    SaveSettings();
 }
 
-void ParticleSystem::LoadSettings()
+void ParticleSystem::LoadSettings(const std::wstring& settingsPath)
 {
+    settingsPath_ = settingsPath;
     std::ifstream f(std::filesystem::path(settingsPath_), std::ios::binary);
     if (!f) {
         return;
@@ -119,9 +119,12 @@ void ParticleSystem::LoadSettings()
         f >> root;
         const std::string backend = root.value("particleBackend", std::string("cpu"));
         active_ = (backend == "gpu") ? ParticleBackendKind::Gpu : ParticleBackendKind::Cpu;
-        compareMode_ = root.value("particleCompareMode", false);
-        compareOffsetX_ = root.value("particleCompareOffsetX", 4.0f);
-        cpu_.SetSimdEnabled(root.value("particleCpuSimd", true));
+        // ★particleCompareMode / particleCompareOffsetX / particleCpuSimd は**読まない** (M66h)。
+        //   既存プロジェクトの JSON には残っているが、個人設定の正本は
+        //   <project>\.mye\editor_settings.json に移った。ここで読むと
+        //   「共有ファイルの古い値が、あとから個人設定を上書きする」順序問題が生まれる
+        //   (移行は行わない = 既定値から始まる。compare は本来 OFF が既定の調査用表示なので、
+        //    共有ファイルに ON が焼かれていた場合はむしろ消える方が正しい)
     } catch (const nlohmann::json::exception& ex) {
         MYE_LOG_WARN("project_settings.json parse error: %s", ex.what());
     }
@@ -129,7 +132,13 @@ void ParticleSystem::LoadSettings()
 
 void ParticleSystem::SaveSettings() const
 {
-    // 既存の設定を保持しつつパーティクル関連キーのみ更新
+    if (settingsPath_.empty()) {
+        return; // Init も LoadSettings も通っていない (ヘッドレスのテスト等)
+    }
+    // 既存の設定を保持しつつ particleBackend のみ更新 (マージ保存)。
+    // ★旧 3 キーが残っていても**消さない** — 消すと「Project Settings を一度開いて
+    //   保存しただけ」で共有ファイルに 3 行の削除差分が出る。読む人が誰もいない
+    //   死んだキーなので、放っておくのが最も安い
     nlohmann::json root;
     {
         std::ifstream f(std::filesystem::path(settingsPath_), std::ios::binary);
@@ -142,9 +151,6 @@ void ParticleSystem::SaveSettings() const
         }
     }
     root["particleBackend"] = (active_ == ParticleBackendKind::Gpu) ? "gpu" : "cpu";
-    root["particleCompareMode"] = compareMode_;
-    root["particleCompareOffsetX"] = compareOffsetX_;
-    root["particleCpuSimd"] = cpu_.SimdEnabled();
 
     std::ofstream f(std::filesystem::path(settingsPath_), std::ios::binary);
     if (f) {

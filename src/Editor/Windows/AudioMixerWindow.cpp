@@ -4,7 +4,7 @@
 #include <cstdio>
 #include <vector>
 
-#include "Editor/DocumentDirty.h"
+#include "Editor/DiskCompare.h"
 #include "Engine/Core/Localization.h"
 #include "Engine/Engine/Audio/AudioSystem.h"
 

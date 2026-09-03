@@ -189,8 +189,13 @@ foreach ($pair in @(
                                    $utf8NoBom)
 }
 
-# ProjectTemplates.cpp の CreateProject が書くのと同じ 3 行 (M66h でここへ 4 行足す)
-[System.IO.File]::WriteAllText((Join-Path $root '.gitignore'), "/.mye/`n/cache/`n/dist/`n", $utf8NoBom)
+# ProjectTemplates.cpp の kRecommendedGitignore と同じ 7 行 (M66h)。
+# ★ここが食い違うと「新規プロジェクトでは無視されるのに fixture では未追跡で出る」
+#   という、実機と検証で挙動が違う状態になる。増やしたら両方に足すこと
+[System.IO.File]::WriteAllText(
+    (Join-Path $root '.gitignore'),
+    "/.mye/`n/cache/`n/dist/`n/crash/`n/save/`n/assets/scripts/Generated/`n*.log`n",
+    $utf8NoBom)
 
 # ---- git ----
 # 空の global config はリポジトリの**外**に置く (中に置くと自分でコミットしてしまう)

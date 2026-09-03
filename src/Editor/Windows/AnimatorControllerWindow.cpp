@@ -5,7 +5,7 @@
 #include <cstdio>
 #include <cstring>
 
-#include "Editor/DocumentDirty.h"
+#include "Editor/DiskCompare.h"
 #include "Editor/Selection.h"
 #include "Engine/Core/Components.h"
 #include "Engine/Core/Localization.h"

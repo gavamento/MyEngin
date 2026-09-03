@@ -238,6 +238,13 @@ pub fn classify_error(out: &GitOutput) -> ErrorBody {
         || low.contains("can't be fast-forwarded")
     {
         code::NON_FAST_FORWARD
+    // M66h: マージ途中で pull / commit を投げたとき。git 2.48.1 (LC_ALL=C) は
+    //   error: Pulling is not possible because you have unmerged files.
+    //   error: Committing is not possible because you have unmerged files.
+    // ★動詞が違うので「you have unmerged files」だけを見る。ここを拾えないと
+    //   git_failed に落ち、UI が「まず競合を解決する」案内を出せない
+    } else if low.contains("you have unmerged files") {
+        code::MERGE_IN_PROGRESS
     } else if low.contains("could not resolve host") || low.contains("connection timed out") {
         code::NETWORK
     } else {

@@ -274,6 +274,9 @@ MYE_STR(Particle_Alive,       "alive: %u",                   "生存数: %u")
 MYE_STR(Particle_Update,      "update: %.3f ms",             "更新: %.3f ms")
 MYE_STR(Particle_EditHint,    "(emitter properties are edited in the Inspector)",
                               "(エミッタの各種設定は Inspector で編集します)")
+// M66h: この窓のトグルは共有ファイルを書かない (決定 8)。どこで永続化されるかを言う
+MYE_STR(Particle_SessionOnly, "  this session only - the project default lives in Project Settings",
+                              "  このセッションのみ — プロジェクト既定は「プロジェクト設定」にあります")
 
 // ---- ビルド設定 (M47b) ----
 MYE_STR(Build_Desc,           "Package Runtime.exe + GameLogic.dll + C# host + assets\\ into a folder.",
@@ -315,6 +318,16 @@ MYE_STR(PrjSet_SnapRotate,    "Snap: rotate (deg)",  "スナップ: 回転 (度)
 MYE_STR(PrjSet_SnapScale,     "Snap: scale",         "スナップ: 拡縮")
 MYE_STR(PrjSet_GridVisible,   "Grid visible",        "グリッドを表示")
 MYE_STR(PrjSet_SaveSettings,  "Save Settings",       "設定を保存")
+// ---- パーティクルのプロジェクト既定 (M66h、決定 8) ----
+// ★ここが particleBackend を assets\project_settings.json へ書き戻す**唯一の**場所。
+//   比較モード / SIMD は個人設定なのでこの窓には出さない (Particle Settings 窓 + .mye\)
+MYE_STR(PrjSet_ParticleBackend, "Particle backend", "パーティクルバックエンド")
+MYE_STR(PrjSet_SaveParticles, "Set as project default###PrjSetSaveParticles",
+                              "プロジェクト既定にする###PrjSetSaveParticles")
+MYE_STR(PrjSet_ParticleNote,  "  written to assets/project_settings.json (shared). Compare mode and SIMD are personal settings.",
+                              "  assets/project_settings.json (共有) に書き込みます。比較モードと SIMD は個人設定です。")
+MYE_STR(PrjSet_ParticleSaved, "Particle backend saved as the project default.",
+                              "パーティクルバックエンドをプロジェクト既定として保存しました。")
 MYE_STR(PrjSet_PhysicsLayers, "Physics Layers",      "物理レイヤー")
 MYE_STR(PrjSet_SaveLayers,    "Save Layers",         "レイヤーを保存")
 MYE_STR(PrjSet_Shortcuts,     "Shortcuts",           "ショートカット")
@@ -964,7 +977,6 @@ MYE_STR(Scm_SidecarCount,     "+%d sidecar", "+%d サイドカー")
 MYE_STR(Scm_SidecarNote,      "The sidecars move with the file they belong to; they are never listed on their own.",
                               "サイドカーは本体と一体で扱います。単独では一覧に出しません。")
 MYE_STR(Scm_RenamedFrom,      "renamed from %s", "%s からリネーム")
-MYE_STR(Scm_ComingSoon,       "Not in this build yet.", "このビルドにはまだありません。")
 // ---- 利用不可の理由 (spec §4.3 の Unavailable 8 値) ----
 MYE_STR(Scm_NoProject,        "Source control needs a project. Open one from the project manager.",
                               "ソース管理にはプロジェクトが必要です。プロジェクトマネージャーから開いてください。")
@@ -1181,6 +1193,20 @@ MYE_STR(Scm_FetchInterval,     "Every (minutes)###ScmFetchInterval",
                                "間隔 (分)###ScmFetchInterval")
 MYE_STR(Scm_FetchNote,         "Background fetch never opens a credential dialog.",
                                "背景での取得は資格情報のダイアログを出しません。")
+
+// ---- M66h: 推奨 .gitignore (spec §2 の S10) ----
+// ★「足りない行だけを末尾に追記」と言い切る。
+//   既存の .gitignore を書き換えると思われると、誰も押さない
+MYE_STR(Scm_ApplyGitignore,    "Update .gitignore###ScmApplyGitignore",
+                               "推奨 .gitignore を適用###ScmApplyGitignore")
+MYE_STR(Scm_GitignoreOk,       "The recommended lines are already there.",
+                               "推奨行はすべて入っています。")
+MYE_STR(Scm_GitignoreMissing,  "%d recommended line(s) will be appended (nothing else is touched):",
+                               "推奨行を %d 行、末尾に追記します (既存行は触りません):")
+MYE_STR(Scm_GitignoreDone,     "Appended %d line(s) to .gitignore",
+                               ".gitignore に %d 行追記しました")
+MYE_STR(Scm_GitignoreFailed,   "Could not write .gitignore - see the log.",
+                               ".gitignore を書けませんでした。ログを見てください。")
 
 // ---- M66g: 競合 (一覧の競合モード / ours / theirs / 中止 / 完了) ----
 // ★競合中は Changes タブが**丸ごとこの一覧に置き換わる** (spec §4.1 決定 9)。

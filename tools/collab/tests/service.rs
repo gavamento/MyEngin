@@ -300,6 +300,27 @@ fn unrelated_failures_stay_unclassified_with_their_stderr() {
 }
 
 #[test]
+fn pulling_with_unmerged_files_is_merge_in_progress() {
+    // M66h: マージ中に pull を投げた実文言 (git 2.48.1、LC_ALL=C)。
+    // ★これが git_failed のままだと、UI は生の英文をそのまま出すしかなく
+    //   「まず競合を解決する」という次の一手が案内できない
+    let e = classify_error(&failed(
+        "error: Pulling is not possible because you have unmerged files.\n\
+         hint: Fix them up in the work tree, and then use 'git add/rm <file>'\n\
+         fatal: Exiting because of an unresolved conflict.",
+    ));
+    assert_eq!(e.code, code::MERGE_IN_PROGRESS);
+    // 動詞違い (commit 側) も同じ分類に落ちる
+    assert_eq!(
+        classify_error(&failed(
+            "error: Committing is not possible because you have unmerged files."
+        ))
+        .code,
+        code::MERGE_IN_PROGRESS
+    );
+}
+
+#[test]
 fn locked_index_and_overwrite_are_still_classified() {
     // M66a からの既存分類が M66c の追加で壊れていないこと
     assert_eq!(

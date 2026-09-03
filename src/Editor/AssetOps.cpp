@@ -1417,6 +1417,54 @@ std::wstring PrepareProjectScriptsBat(EngineContext& ctx)
 //   `GateBlocker::ScriptBuildRunning` が立たない = ビルドが bin\ と cache\ を
 //   書いている最中に checkout / pull が通ってしまう (spec §7 の穴)。
 //   起動口は「ハンドルを返す」この 1 本だけにする。
+std::vector<BuildErrorLine> ParseBuildErrorLines(const std::string& logUtf8)
+{
+    std::vector<BuildErrorLine> out;
+    for (size_t pos = 0; pos <= logUtf8.size();) {
+        const size_t nl = logUtf8.find('\n', pos);
+        const size_t end = (nl == std::string::npos) ? logUtf8.size() : nl;
+        std::string line = logUtf8.substr(pos, end - pos);
+        pos = (nl == std::string::npos) ? logUtf8.size() + 1 : nl + 1;
+        const size_t first = line.find_first_not_of(" \t\r");
+        const size_t last = line.find_last_not_of(" \t\r");
+        if (first == std::string::npos) {
+            continue;
+        }
+        line = line.substr(first, last - first + 1);
+        size_t at = line.find(": error ");
+        if (at == std::string::npos) {
+            at = line.find(": fatal error ");
+        }
+        if (at == std::string::npos) {
+            continue;
+        }
+        bool dup = false;
+        for (const BuildErrorLine& e : out) {
+            dup = dup || e.text == line;
+        }
+        if (dup) {
+            continue;
+        }
+        BuildErrorLine e;
+        e.text = line;
+        // "C:\\path\\x.cpp(12,34): error C2065: ..." → file / line。
+        // 括弧が無い形 ("LINK : fatal error LNK1104: ...") は file/line 無しで出す
+        const size_t open = line.rfind('(', at);
+        if (open != std::string::npos && open > 0) {
+            const size_t close = line.find_first_of(",)", open + 1);
+            if (close != std::string::npos && close < at) {
+                const std::string num = line.substr(open + 1, close - open - 1);
+                if (!num.empty() && num.find_first_not_of("0123456789") == std::string::npos) {
+                    e.line = std::atoi(num.c_str());
+                    e.file = line.substr(0, open);
+                }
+            }
+        }
+        out.push_back(std::move(e));
+    }
+    return out;
+}
+
 void* StartGameLogicBuild(EngineContext& ctx, std::wstring& logPathOut)
 {
     // RebuildGameLogic の二経路と同じ bat を使う。違いは起動形態のみ:

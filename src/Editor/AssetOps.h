@@ -136,4 +136,19 @@ void CompileCSharpScripts(EngineContext& ctx); // assets\scripts\*.cs をエン�
 //   ゲートを閉じる** (bin\ と cache\ を書き換えている最中に checkout が通らないように)
 void* StartGameLogicBuild(EngineContext& ctx, std::wstring& logPathOut);
 
+// build_scripts.log の 1 行を Console へ流すための分解結果 (M66h)
+struct BuildErrorLine {
+    std::string file; // MSVC が告げたソースパス。空 = 行番号が無い形 (LINK エラー等)
+    int line = 0;     // 1 以上なら Console のソースジャンプが使える
+    std::string text; // ログの行 (前後の空白を落としたもの)
+};
+
+// MSBuild / MSVC のログから **error 行だけ**を拾う (M66h)。**純関数**。
+//   - 判定は ": error " / ": fatal error " の部分一致。warning は拾わない —
+//     「なぜ失敗したか」を知りたい場面で警告を流すと、本当の行が埋もれる
+//   - "x.cpp(12,34): error C2065:" → file="x.cpp" / line=12。括弧が無ければ line=0
+//   - MSBuild は同じエラーを要約でもう 1 度出すので**完全一致で重複を落とす**
+//   - 入力は UTF-8 (ログはコンソール ANSI なので呼ぶ前に変換すること)
+std::vector<BuildErrorLine> ParseBuildErrorLines(const std::string& logUtf8);
+
 } // namespace mye

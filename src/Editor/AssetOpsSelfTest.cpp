@@ -331,6 +331,41 @@ bool RunAssetOpsSelfTest()
               "preview: RegisterAnonymous is resolvable by Get but stays out of Enumerate");
     }
 
+    // ---- (M66h) build_scripts.log の error 行を Console へ流す分解 ----
+    // ★旧経路は可視の cmd 窓 + pause で、コンパイルエラーをその場で読めた。
+    //   M66e で窓を消したので、同じ情報を Console へ戻すのがこの分解。
+    //   file/line を拾い損ねるとダブルクリックジャンプが死ぬ = 退行が埋まらない
+    {
+        const std::string log =
+            "=== building C++ scripts (Debug) ===\r\n"
+            "  Rotator.cpp\r\n"
+            "C:\\proj\\src\\GameLogic\\Scripts\\Rotator.cpp(42,17): error C2065: 'foo': "
+            "undeclared identifier [C:\\proj\\cache\\GameLogic.vcxproj]\r\n"
+            "C:\\proj\\src\\GameLogic\\Scripts\\Rotator.cpp(7): warning C4100: unreferenced\r\n"
+            "  C:\\proj\\src\\GameLogic\\Scripts\\Rotator.cpp(42,17): error C2065: 'foo': "
+            "undeclared identifier [C:\\proj\\cache\\GameLogic.vcxproj]\r\n"
+            "LINK : fatal error LNK1104: cannot open file 'GameLogic.dll'\r\n"
+            "[scripts] BUILD FAILED -- fix errors above\r\n";
+        const std::vector<BuildErrorLine> errs = ParseBuildErrorLines(log);
+        check(errs.size() == 2, "build log: only the error lines are picked (warnings and "
+                                "progress lines are not), duplicates collapse");
+        check(!errs.empty() && errs[0].line == 42
+                  && errs[0].file == "C:\\proj\\src\\GameLogic\\Scripts\\Rotator.cpp",
+              "build log: 'path(line,col): error Cxxxx' yields the source path and line");
+        check(errs.size() > 1 && errs[1].line == 0 && errs[1].file.empty()
+                  && errs[1].text.find("LNK1104") != std::string::npos,
+              "build log: a linker error without a line still reaches the console");
+        check(!errs.empty() && errs[0].text.front() == 'C',
+              "build log: the MSBuild indent is trimmed (the path must start the message)");
+        // 行番号の無い括弧形を file と見なさない (ジャンプ先が存在しない行になる)
+        const std::vector<BuildErrorLine> odd =
+            ParseBuildErrorLines("MSBuild(x): error MSB1009: project file does not exist\n");
+        check(odd.size() == 1 && odd[0].line == 0 && odd[0].file.empty(),
+              "build log: a non-numeric parenthesis is not mistaken for a line number");
+        check(ParseBuildErrorLines("").empty() && ParseBuildErrorLines("all good\n").empty(),
+              "build log: a successful log produces nothing");
+    }
+
     if (failCount == 0) {
         MYE_LOG_INFO("==== AssetOps self test: ALL PASS ====");
         return true;

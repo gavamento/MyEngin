@@ -17,9 +17,9 @@
 | sub-04 | OK | 2 | 205e90d | M66d: ReloadHub Begin/EndBatch + ゲート + 4 窓の HasUnsavedChanges + トランザクション + revert。依存: sub-03。round 1 REWORK (must 1 = 段階 C モーダルの「あとで」撤去。should 2 件 → sub-05、nit 1 件 → sub-10) |
 | sub-05 | OK | 1 | c3be569 | M66e: Branches — 一覧 / 作成 / checkout + 段階の事前判定。依存: sub-04 |
 | sub-06 | OK | 1 | 1e6b8f8 | M66f: fetch / pull / push + 定期 fetch + 通知 + EditorSettings。依存: sub-04 (sub-05 と独立。並列なら SourceControlWindow.cpp / ops.rs のマージ順を司会が決める) |
-| sub-07 | OK | 1 | (M66g、下の記入待ち) | M66g: 競合 — abort / ours / theirs / continue。依存: sub-06 |
-| sub-08 | 実装中 | 0 | | M66h: 衛生 — .gitignore テンプレ 4 行 + project_settings.json の個人設定分離。依存: sub-03 (sub-05〜07 と独立) |
-| sub-09 | 未着手 | 0 | | M66i: Content Browser に Git バッジ + 保存直後のヒント。依存: sub-02 (sub-03〜08 と独立) |
+| sub-07 | OK | 1 | 3c0bf56 | M66g: 競合 — abort / ours / theirs / continue。依存: sub-06 |
+| sub-08 | OK | 1 | (M66h、下の記入待ち) | M66h: 衛生 — .gitignore テンプレ 4 行 + project_settings.json の個人設定分離。依存: sub-03 (sub-05〜07 と独立) |
+| sub-09 | 実装中 | 0 | | M66i: Content Browser に Git バッジ + 保存直後のヒント。依存: sub-02 (sub-03〜08 と独立) |
 | sub-10 | 未着手 | 0 | | M66j: 仕上げ — engine_spec §14 Source control / README / CLAUDE.md / 規則の記載。依存: sub-01〜sub-09 |
 
 ## 未決事項 (planner PLAN_RESULT より。coder が「不安・質問」で拾う)
@@ -116,4 +116,11 @@
   - **`.txt` のような未知拡張子にもエディタが `.meta` を作る** — 実機 fixture にテキストを置くと未追跡が増え checkout / pull が弾かれる。
   - collab_verify の `# write` / `# git` は `..` を受け付ける (07 は兄弟に origin と workB を作成)。**bare origin は必ず `init --bare -b main`** (省くと HEAD が master になり clone がすれ違い「分岐しないはずのテスト」が緑になる)。次の番号は **08**。
   - 生成物: `cache\m66f_fx` (+`.gitconfig`)、`cache\m66f_origin.git`、`cache\m66f_peer`、`cache\scm_m66f_*.png`、`cache\m66f_*.log`。
+- **sub-07 (M66g) からの申し送り** (coder SELF_EVAL + planner VERDICT round 1):
+  - 仕様確定 (planner が spec §4.1「競合周り」と sub-08 / sub-10 を修正済み): `resolve{paths[], side}` (単数 path は仕様の穴 = 本体と `.meta` を 1 往復で)。ours / theirs の可否は porcelain `u` の**モード (m2/m3)** で決める (XY の文字では `AU` を誤る)。`status` / `repo_check` の両方に `mergeInProgress` / `rebaseInProgress` (status に無いと pull 競合直後のゲートが開いたまま)。競合種別は git-status.txt の 7 組 + `unmerged`。`conflicts` op が `merged[]` と ours / theirs を返す。`merge_abort` / `continue` は pull と同型 `{head, names, status, remote}`。`continue` は merge のみ (rebase の続行は `bad_request` = v1 外)。
+  - **競合の入口は 2 つ**: pull の応答 (`Phase::ConflictScan`) と、起動時に外の git で競合していた場合 (status の mergeInProgress → `ApplyStatusResult` が自動で conflicts を投げる)。**競合したシーンは JSON として壊れて空で開くので `SaveCurrentScene` 先頭の `IsConflictedPath` が唯一の砦**。`resolve` はトランザクションを通さない (監視 → ReloadHub の通常経路で拾う)。`conflicts.merged[]` に pull 前の未コミット変更が混ざるのは v1 許容 (余分に読み直すだけ)。
+  - planner の nit (sub-08 で): マージ中に pull を投げたときの `git_failed` + 生文を `merge_in_progress` へ分類 (1 行) / `Scm_ComingSoon` の削除。
+  - collab_verify の次の番号は **10**。期待ファイルにマージコミットの件名を載せない (`Merge branch 'main' of <URL>` にリモート URL が入る)。
+  - 未検証: UI クリック自体 (プローブ代替)、`git mergetool` の実起動 (`cmd /k` の配線のみ)。sub-06 の未検証「pull の段階 B」は競合シナリオで消込 (シーン開き直りまで観測)。
+  - 生成物: `cache\m66g_fx` (+`.gitconfig`)、`cache\m66g_origin.git`、`cache\m66g_peer`、`cache\scm_m66g_*.png`、`cache\m66g_*.log`。
 - planner のエージェント ID はセッション限り。セッションを跨いだら `MODE: VERDICT` 用の planner を新規起動し、文脈は spec.md / sub-NN.md / この台帳で渡す。

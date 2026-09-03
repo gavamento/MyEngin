@@ -7,7 +7,7 @@
 #include <functional>
 #include <string>
 
-#include "Editor/DocumentDirty.h"
+#include "Editor/DiskCompare.h"
 #include "Editor/Undo/UndoStack.h"
 #include "Engine/Core/ComponentRegistry.h"
 #include "Engine/Core/Localization.h"

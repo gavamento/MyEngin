@@ -1,5 +1,6 @@
 #include "Editor/ProjectTemplates.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 
@@ -62,6 +63,73 @@ void WriteTextFile(const fs::path& path, const std::string& text)
 
 } // namespace
 
+// clang-format off
+const char* const kRecommendedGitignore[7] = {
+    "/.mye/",
+    "/cache/",
+    "/dist/",
+    "/crash/",
+    "/save/",
+    "/assets/scripts/Generated/",
+    "*.log",
+};
+// clang-format on
+
+std::string RecommendedGitignoreText()
+{
+    std::string text;
+    for (const char* line : kRecommendedGitignore) {
+        text += line;
+        text += '\n';
+    }
+    return text;
+}
+
+std::vector<std::string> MissingGitignoreLines(const std::string& existingText)
+{
+    // 既存行を「前後の空白と CR を落とした形」で集める。CRLF / LF の両方を受ける
+    // (このリポジトリは core.autocrlf=true 前提なので、手元のファイルは CRLF もある)
+    std::vector<std::string> have;
+    for (size_t pos = 0; pos <= existingText.size();) {
+        const size_t nl = existingText.find('\n', pos);
+        const size_t end = (nl == std::string::npos) ? existingText.size() : nl;
+        const std::string line = existingText.substr(pos, end - pos);
+        const size_t first = line.find_first_not_of(" \t\r");
+        const size_t last = line.find_last_not_of(" \t\r");
+        if (first != std::string::npos) {
+            have.push_back(line.substr(first, last - first + 1));
+        }
+        if (nl == std::string::npos) {
+            break;
+        }
+        pos = nl + 1;
+    }
+    std::vector<std::string> missing;
+    for (const char* want : kRecommendedGitignore) {
+        if (std::find(have.begin(), have.end(), std::string(want)) == have.end()) {
+            missing.emplace_back(want);
+        }
+    }
+    return missing;
+}
+
+std::string GitignoreWithRecommended(const std::string& existingText)
+{
+    const std::vector<std::string> missing = MissingGitignoreLines(existingText);
+    if (missing.empty()) {
+        return existingText;
+    }
+    std::string text = existingText;
+    if (!text.empty() && text.back() != '\n') {
+        text += '\n';
+    }
+    for (const std::string& line : missing) {
+        text += line;
+        text += '\n';
+    }
+    return text;
+}
+
 bool CreateProject(const std::wstring& dir, const std::string& name, ProjectTemplate tmpl,
                    const std::wstring& engineAssetsRoot, std::string* outError)
 {
@@ -119,7 +187,7 @@ bool CreateProject(const std::wstring& dir, const std::string& name, ProjectTemp
     }
 
     fs::create_directories(root / kProjectLocalDir, ec);
-    WriteTextFile(root / L".gitignore", "/.mye/\n/cache/\n/dist/\n");
+    WriteTextFile(root / L".gitignore", RecommendedGitignoreText());
 
     MYE_LOG_INFO("CreateProject: '%s' (%s) at %s", m.name.c_str(),
                  tmpl == ProjectTemplate::Demo3D ? "3D Demo" : "Empty",

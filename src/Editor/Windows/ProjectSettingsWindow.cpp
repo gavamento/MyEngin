@@ -3,13 +3,14 @@
 #include <algorithm>
 #include <string>
 
-#include "Editor/DocumentDirty.h"
+#include "Editor/DiskCompare.h"
 #include "Editor/EditorSettings.h"
 #include "Editor/PartTagNames.h"
 #include "Editor/PhysicsLayerNames.h"
 #include "Editor/ShortcutHub.h"
 #include "Engine/Core/Hash.h"
 #include "Engine/Core/Localization.h"
+#include "Engine/Engine/Particles/ParticleSystem.h"
 #include "Engine/Platform/InputActions.h"
 #include "Engine/Renderer/RenderPath.h"
 
@@ -23,7 +24,8 @@ void ProjectSettingsWindow::OnImGui(EngineContext& ctx, EditorSettings& settings
                                     ShortcutHub& shortcuts)
 {
     if (!open) {
-        captureKind_ = 0; // 窓を閉じたら捕捉も取り消す
+        captureKind_ = 0;     // 窓を閉じたら捕捉も取り消す
+        particleSaved_ = false; // 保存の確認表示も持ち越さない
         return;
     }
     // 未保存判定に使う参照を控える (M66d)
@@ -47,6 +49,33 @@ void ProjectSettingsWindow::OnImGui(EngineContext& ctx, EditorSettings& settings
         ImGui::SameLine();
         if (ImGui::RadioButton(Tr(StrId::Menu_Deferred), !isForward)) {
             ctx.renderPath = ctx.renderPathDeferred;
+        }
+
+        // ---- パーティクルのプロジェクト既定 (M66h、spec §4.2 の決定 8) ----
+        // ★`particleBackend` を assets\project_settings.json へ書き戻すのは**ここだけ**。
+        //   Particle Settings 窓のラジオはセッション上書き (= `--particle-backend` の
+        //   CLI と同じ「書き戻さない」扱い) で、触っただけでは共有ファイルは動かない
+        if (ctx.particles != nullptr) {
+            ImGui::SeparatorText(Tr(StrId::PrjSet_ParticleBackend));
+            int kind = static_cast<int>(ctx.particles->ActiveKind());
+            bool changed = false;
+            changed |= ImGui::RadioButton(Tr(StrId::Particle_Cpu), &kind, 0);
+            ImGui::SameLine();
+            changed |= ImGui::RadioButton(Tr(StrId::Particle_Gpu), &kind, 1);
+            if (changed) {
+                ctx.particles->SetActiveKind(static_cast<ParticleBackendKind>(kind));
+                particleSaved_ = false; // 保存済みの表示と食い違う値になった
+            }
+            if (ImGui::Button(Tr(StrId::PrjSet_SaveParticles))) {
+                ctx.particles->SaveSettings();
+                particleSaved_ = true;
+            }
+            ImGui::TextDisabled("%s", Tr(StrId::PrjSet_ParticleNote));
+            if (particleSaved_) {
+                // ★トーストを出す口をこの窓は持たない (ToastCenter は EditorApp)。
+                //   押した直後の 1 行だけをここに残す
+                ImGui::TextColored(themeColor::Success, "%s", Tr(StrId::PrjSet_ParticleSaved));
+            }
         }
     }
 

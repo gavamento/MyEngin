@@ -1,5 +1,6 @@
 #include "Editor/Windows/ParticleSettingsWindow.h"
 
+#include "Editor/EditorSettings.h"
 #include "Engine/Core/Localization.h"
 #include "Engine/Engine/Particles/ParticleSystem.h"
 
@@ -7,7 +8,7 @@
 
 namespace mye {
 
-void ParticleSettingsWindow::OnImGui(EngineContext& ctx)
+void ParticleSettingsWindow::OnImGui(EngineContext& ctx, EditorSettings& settings)
 {
     if (!open) {
         return;
@@ -18,7 +19,11 @@ void ParticleSettingsWindow::OnImGui(EngineContext& ctx)
     }
     ParticleSystem& ps = *ctx.particles;
 
-    // ---- バックエンド選択 (spec 7.4: ラジオボタン、プロジェクト設定に保存) ----
+    // ---- バックエンド選択 (spec 7.4: ラジオボタン) ----
+    // ★M66h: ここでの切替は**このセッションだけ**。プロジェクト既定 (project_settings.json の
+    //   particleBackend) にしたいときは Project Settings 窓の「プロジェクト既定にする」を押す。
+    //   触った瞬間に共有ファイルへ書いていた頃は、GPU の絵を 1 度見ただけで
+    //   チーム全員のバックエンドが変わる差分が commit 待ちになっていた
     ImGui::TextUnformatted(Tr(StrId::Particle_Backend));
     int kind = static_cast<int>(ps.ActiveKind());
     bool changed = false;
@@ -28,16 +33,21 @@ void ParticleSettingsWindow::OnImGui(EngineContext& ctx)
     if (changed) {
         ps.SetActiveKind(static_cast<ParticleBackendKind>(kind));
     }
+    ImGui::TextDisabled("%s", Tr(StrId::Particle_SessionOnly));
 
+    // 比較 / SIMD は個人設定 (.mye\editor_settings.json) へ保存する
     bool compare = ps.CompareMode();
     if (ImGui::Checkbox(Tr(StrId::Particle_Compare), &compare)) {
         ps.SetCompareMode(compare);
+        settings.particleCompareMode = compare;
+        settings.Save();
     }
 
     bool simd = ps.Cpu().SimdEnabled();
     if (ImGui::Checkbox(Tr(StrId::Particle_Simd), &simd)) {
         ps.Cpu().SetSimdEnabled(simd);
-        ps.SaveSettings();
+        settings.particleCpuSimd = simd;
+        settings.Save();
     }
 
     ImGui::Separator();

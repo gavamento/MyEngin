@@ -51,3 +51,4 @@ pwsh -File tools\check_rules.ps1
 - コードの衛生 (DocumentDirty 改名 / Scm_ComingSoon 削除 / merge_in_progress 分類) は **sub-08 へ移した**。本サブは引き続きドキュメント専用。
 - engine_spec §14 に書く内容は spec §4.0 (DLL / C ABI / FreeLibrary を呼ばない理由) と §4.1 の確定版 (段階表 / 対の規則 / commit 周り / ブランチ周り / リモート周り / 競合周り / ゲート 13 要因) を正とする。元計画 `plans/quiet-merging-harbor.md` の記述ではなく spec を写すこと。
 - README の「初回認証はターミナルで一度 `git push`」(GCM の GUI は背景 fetch から出ない仕様) を忘れずに。
+- **acoustic golden のフレーク (sub-08 で発見、spec §7)**: ユーザーの回答を待って反映する。(a) なら `ci.yml` の env に `MYE_SHOT_SKIP_ACOUSTIC: 1` を 1 行 + CLAUDE.md の「わざと立てていない」の記述を「M66h で run-to-run 非決定性を実測 (座標 (237,443) 付近) したため一時降格、根治は別マイルストーン」に書き換え、`shot_verify.bat` の囲いが既にあることを確認。(b) なら sub-11 を planner が切る。(c) なら CLAUDE.md にフレークの事実だけ記す。

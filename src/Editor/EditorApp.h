@@ -119,6 +119,8 @@ private:
     GateInputs BuildGateInputs(EngineContext& ctx);
     // M66e: [Rebuild Scripts] の子プロセスを毎フレーム見る (終了でトースト + ゲート解放)
     void PollScriptBuild();
+    // M66h: 失敗した build_scripts.log の error 行を Console へ流す (file:line 付き)
+    void ReportScriptBuildErrors();
     void SaveSceneAs(EngineContext& ctx);
     bool OpenScene(EngineContext& ctx); // true = 実際にロードした (キャンセル時 false)
     bool LoadSceneFromPath(EngineContext& ctx, const std::wstring& path); // ダイアログなし共通経路
