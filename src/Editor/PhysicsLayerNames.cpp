@@ -79,6 +79,21 @@ bool PhysicsLayerNames::Save(const std::wstring& assetsRoot) const
     return true;
 }
 
+bool PhysicsLayerNames::DiffersFromDisk() const
+{
+    if (loadedRoot_.empty()) {
+        return false; // 一度も読んでいない = この窓では何も編集していない
+    }
+    PhysicsLayerNames onDisk;
+    onDisk.Load(loadedRoot_, true);
+    for (int i = 0; i < kCount; ++i) {
+        if (std::strcmp(names_[i], onDisk.names_[i]) != 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
 const char* PhysicsLayerNames::Name(int i) const
 {
     if (i < 0 || i >= kCount) {

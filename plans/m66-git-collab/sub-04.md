@@ -1,8 +1,8 @@
 # sub-04: M66d: ReloadHub Begin/EndBatch + ゲート + 4 窓の HasUnsavedChanges + トランザクション + revert
 
 - 依存: sub-03
-- 状態: 未着手
-- 往復: 0
+- 状態: OK (commit: M66d — ハッシュは harness.md のサブ進捗表)
+- 往復: 2
 
 ## やること
 
@@ -63,6 +63,55 @@ tools\replay_verify.bat
 
 ## 実装メモ (coder が追記)
 
+### round 1 (SELF_EVAL の写し)
+
+```
+SELF_EVAL: sub-04 (round 1)
+実装:
+  - tools/collab/src/ops.rs:revert — status を 1 回読んで追跡済み/未追跡に振り分け、
+    追跡済みは `git checkout -- <paths>`、未追跡は `git clean -q -f -- <paths>`。
+    応答は `{reverted, deleted, status}` (status_after_write 経由で last_head も更新)
+  - tools/collab/src/ops.rs:diff_names — `git diff --name-status -z --no-renames <from>..<to>`。
+    リビジョンは `-` 始まり / 空白を弾く。C++ 側の呼び手は sub-05
+  - tools/collab/src/porcelain.rs:parse_name_status_z — R/C だけ 3 レコードになる形を扱う
+  - ReloadHub.h/.cpp:BatchChange / OrderBatch / BeginBatch / EndBatch / kReloadRetryMax=60
+  - StageClassifier.h/.cpp:ApplyStage / StageChange / ClassifyChange / Classify (全部純関数)
+  - GitTransaction.h/.cpp:GateBlocker(13) / ComputeBlockers / GitTransaction (確認 →
+    実行前処理 → revert → 段階 A/B/C の後処理 → モーダル)
+  - DocumentDirty.h/.cpp:TextDiffersFromDisk (改行と末尾空白を無視して比較)
+  - AnimationWindow / AnimatorControllerWindow / AudioMixerWindow / ProjectSettingsWindow:
+    HasUnsavedChanges()、PhysicsLayerNames / PartTagNames: DiffersFromDisk()
+  - BuildSettingsWindow.h:IsRunning / IsPipelineRunning / IsScriptBuildRunning
+  - SourceControlState:Revert / SourceControlWindow:破棄 2 ボタン + 阻害要因ツールチップ +
+    identity 未設定でコミット無効化 (planner の should)
+  - EditorApp:BuildGateInputs / フック配線 / モーダル中のショートカットと D&D 抑止
+  - tests/collab/05_revert.ndjson + expected、cargo test 8 本、selftest (e)(f)(f2) + 実 DLL プローブ
+仕様との差分:
+  - [追加] `src/GameLogic/Scripts/` の `.h/.hpp/.inl` も段階 B (spec は `*.cpp` のみ)
+  - [追加] 段階 B は「A 段階の変更だけ」を EndBatch へ渡す (B の引き金を渡すと
+    開き直す直前に捨てられる ApplyDiff が 1 回走る)
+  - [追加] `.meta` の guid 変化は「実行の前後でディスクの .meta を読み比べる」で判定
+  - [追加] 未追跡は `git clean -q -f` (`-d` は付けない)
+  - [未実装] `diff_names` の C++ 呼び手は無い (sub-05)
+検証: (SELF_EVAL 本体を参照。cargo test / selftest 両構成 / check_rules / collab_verify /
+  replay_verify すべて緑、実機は fixture の一時プローブで A・B の 2 経路を実走)
+```
+
+### round 2 (VERDICT round 1 の must 1 への対応)
+
+```
+SELF_EVAL: sub-04 (round 2)
+実装:
+  - #1: GitTransaction.cpp の段階 C モーダルから「あとで」(Scm_RestartLater) を撤去。
+    ボタンは『再起動』1 個だけ。LocalizationTable.inl の Scm_RestartLater も削除。
+    ★失敗経路を塞いだ: Hooks::relaunch を bool 返しに変え、RelaunchSelfWithProject が
+    失敗したら**モーダルを閉じない** (閉じると「あとで」と同じ状態になる)。
+    代わりに赤字で Scm_RestartFailed を出す (新規 1 組。差し引き +-0)。
+検証: --selftest Debug/Release 緑、check_rules 0/0、collab_verify 5 本緑、
+  cache\scm_m66d_restart.png = ボタン 1 個の再起動モーダル (schemas の revert で
+  実際に段階 C へ到達させて撮影)
+```
+
 ## フィードバック履歴
 
 ## planner 追記 (sub-03 round 1 の判定から。coder は着手前に読む)
@@ -71,3 +120,5 @@ tools\replay_verify.bat
 - 書き込み系 op (revert) の応答は sub-03 の `status_after_write` の型 (`{"status": ...}`) に揃え、C++ は `ApplyWriteResult` へ流す。**`last_head` の更新を忘れると自分の操作で「外部で HEAD が移動」トーストが出る** (coder 申し送り)。
 - 一時プローブのレシピ (coder 申し送り): `MYE_COLLAB_PROBE=<repo> Editor.exe --selftest` で Session を実 DLL 経由で駆動できる。ゲートとトランザクションの結線検証に使うこと (受け入れ条件 2・3 の目視の前に)。
 - ServiceDied の実機経路は未検証のまま (sub-02 から持ち越し)。`GateBlocker::ServiceUnavailable` を検査するとき、cargo test の panic 注入 (service.rs) を DLL 経由で 1 回通し、窓が ServiceDied を出すことをスクショで 1 枚残す。
+- round 1: VERDICT REWORK (planner、2026-09-03)。must 1 件 = 段階 C モーダルの「あとで」(GitTransaction.cpp:557) を撤去し『再起動』のみにする (spec §4.1 C 行を先に確定)。裏取り: ReloadHub.cpp の diff で `if (batching_)` 早期 return + `EndBatch` = DiscardPendingChanges → OrderBatch (Deleted 除外) → HandleChange + `retryAttempt_` の引き継ぎと `kReloadRetryMax` の give-up を確認 / StageClassifier.cpp:52,63-64 で schemas と `.cpp .h .hpp .inl` / SourceControlSelfTest.cpp:553 の static_assert / SourceControlWindow.cpp:536-538 の canCommit で identity 無効化 (sub-03 の should 消込) / ops.rs:477 `clean -q -f` (`-d` 無し) / GitTransaction.cpp:282-301 増分登録、:340-356 controller・terrain の無効化 / golden*.rep が 08:42 再生成 (replay 最終状態) / cache/scm_m66d_modal.png で確認モーダル (件数・赤字の未追跡削除警告・パス一覧・段階予測・暗転) を目視。質問 1 = a、2 = 仕様側を `.h` 込みに、3 = v1 は常に開き直し、4 = 現状可、5 = fixture 拡張は sub-05 へ。
+- round 2: VERDICT OK (planner、2026-09-03)。must 1 の消込を現物で確認: `grep RestartLater src/ tools/` = 0 件、GitTransaction.cpp:555-571 = ボタンは Scm_RestartNow の 1 個、relaunch 失敗で restartFailed_ を立てて閉じない、成功時のみ CloseCurrentPopup、GitTransaction.h:92 / EditorApp.cpp:266 で relaunch は bool 契約、cache/scm_m66d_restart.png で「Restart required」+ ボタン 1 個 + 暗転を目視 (段階 C へ実到達させて撮影)。replay 再実行は不要と判断: このサブで Engine 層に触れたのは ReloadHub.{h,cpp} (round 1 の replay で緑) と LocalizationTable.inl (UI 文字列) だけ (`git diff --stat -- src/Engine` で確認)。nit: coder の「src/Engine に 1 バイトも触れていない」は不正確 (LocalizationTable.inl は src/Engine/Core にある) — 実害なし。質問 1 = spec §4.1 C 行に採用。

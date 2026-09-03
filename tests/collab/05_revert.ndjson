@@ -1,0 +1,39 @@
+# 05_revert - 破棄 (revert) と、段階の事前判定に使う diff_names (M66d)。
+#
+# ここで固めたいのは 2 つ:
+#   1) revert が「追跡済みは戻す / 未追跡は消す」を **1 回の要求で**やり分けること。
+#      checkout に未追跡パスを混ぜると pathspec エラーで呼び出しごと失敗する =
+#      一緒に選んだ追跡済みファイルまで戻らない。そして混ぜて渡すのが普通の使い方
+#      (本体 M + .meta ? の対) なので、ここが割れると破棄が丸ごと使えない。
+#   2) 空の paths を必ず弾くこと。**通すとリポジトリ全体が戻る** = 全編集の消失。
+#      UI 側でも塞いでいるが、サービス側が最後の砦。
+#
+# ★diff_names には --no-renames を付けてある。同じ 2 コミットの差分がリネーム検出の
+#   閾値で R にも A+D にもなると、段階分類 (R は A / D は B) が機体依存になる。
+# --- 前提: 追跡済みのファイルを 1 本用意する ---
+# write assets/notes.txt original
+# git add -A
+# git -c user.name=mye -c user.email=mye@example.com -c commit.gpgsign=false commit -q -m fixture-notes
+{"id":1,"op":"status"}
+# --- 追跡済みを書き換える + 未追跡の .meta を置く (エディタが保存した直後の形) ---
+# write assets/notes.txt edited by hand
+# write assets/notes.txt.meta {"guid":1,"type":"Unknown","version":1}
+{"id":2,"op":"status"}
+# --- 対で破棄: notes.txt は元に戻り、notes.txt.meta は消える ---
+{"id":3,"op":"revert","args":{"paths":["assets/notes.txt","assets/notes.txt.meta"]}}
+# --- 戻ったので working tree は清浄 (id:1 と同じ形になること) ---
+{"id":4,"op":"status"}
+# --- 未追跡だけを選ぶのも普通の操作。checkout を呼ばずに clean だけ走ること ---
+# write assets/only_new.txt fresh
+{"id":5,"op":"revert","args":{"paths":["assets/only_new.txt"]}}
+# --- 空の paths は bad_request ---
+{"id":6,"op":"revert","args":{"paths":[]}}
+# --- diff_names: 既定は HEAD..HEAD = 空。段階分類は「何も来ない」を A と読む ---
+{"id":7,"op":"diff_names"}
+# --- 追加を 1 件コミットしてから HEAD~1..HEAD を撮る ---
+# write assets/added.txt one
+# git add -A
+# git -c user.name=mye -c user.email=mye@example.com -c commit.gpgsign=false commit -q -m third
+{"id":8,"op":"diff_names","args":{"from":"HEAD~1","to":"HEAD"}}
+# --- オプションに化けるリビジョンは弾く ---
+{"id":9,"op":"diff_names","args":{"from":"--upload-pack=calc"}}

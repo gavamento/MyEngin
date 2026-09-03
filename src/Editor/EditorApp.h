@@ -115,6 +115,8 @@ private:
     void PasteClipboard(EngineContext& ctx);
     void DeleteSelection(EngineContext& ctx);
     void SetupDockLayout(unsigned int dockspaceId);
+    // M66d: 書き込み系 git 操作のゲート入力を集める (4 窓の未保存判定は 500 ms キャッシュ)
+    GateInputs BuildGateInputs(EngineContext& ctx);
     void SaveSceneAs(EngineContext& ctx);
     bool OpenScene(EngineContext& ctx); // true = 実際にロードした (キャンセル時 false)
     bool LoadSceneFromPath(EngineContext& ctx, const std::wstring& path); // ダイアログなし共通経路
@@ -165,6 +167,8 @@ private:
     // M66b: git 連携。**セッションは窓と独立**に生きる (窓を閉じていても status は最新)
     SourceControlSession scm_;
     SourceControlWindow sourceControl_;
+    // M66d: working tree を書き換える git 操作の唯一の入口 (ゲート + 一括適用 + モーダル)
+    GitTransaction gitTx_;
     // M52e: スクラブ解除の判定に使う前フレームの再生状態 (状態ではなく遷移を見るため)
     PlayState prevPlayState_ = PlayState::Editing;
     AssetBrowserWindow assetBrowser_;

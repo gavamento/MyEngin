@@ -220,3 +220,53 @@ pub fn clip_text(text: &str, max: usize) -> (String, bool) {
     }
     (text[..cut].to_string(), true)
 }
+
+/// `git diff --name-status -z <range>` の 1 レコード (M66d)。
+/// 段階分類 (spec §4.1 A/B/C) の入力になるので、**status と同じ状態文字**で返す
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NameStatusEntry {
+    pub path: String,
+    pub old_path: Option<String>,
+    /// `M` `A` `D` `R` `C` `T` のいずれか (スコア部分 `R100` の数字は落とす)
+    pub status: char,
+}
+
+/// `git diff --name-status -z` の解析。
+///
+/// -z の形: `<status>\0<path>\0` の繰り返し。ただし `R`/`C` だけは
+/// `<status><score>\0<old>\0<new>\0` の **3 レコード**になる (旧パスが先)。
+/// ここを 2 レコードだと決め打つと、リネームを含む diff から先が**全部 1 個ずつずれる**
+/// = 「関係の無いファイルが変更扱いになる」形で静かに壊れる
+pub fn parse_name_status_z(raw: &[u8]) -> Vec<NameStatusEntry> {
+    let records: Vec<&[u8]> = raw.split(|b| *b == 0).collect();
+    let mut out = Vec::new();
+    let mut i = 0usize;
+    while i < records.len() {
+        let head = String::from_utf8_lossy(records[i]).to_string();
+        i += 1;
+        if head.is_empty() {
+            continue;
+        }
+        let status = head.chars().next().unwrap_or('M');
+        let renamed = status == 'R' || status == 'C';
+        // 空レコード = 出力が途中で切れた (パスは空文字列になりえない)。
+        // ここで捨てないと path が空のエントリが 1 件混ざり、段階分類が
+        // 「未知拡張子のファイルが 1 個変わった」と読む
+        let first = match records.get(i) {
+            Some(r) if !r.is_empty() => String::from_utf8_lossy(r).to_string(),
+            _ => break,
+        };
+        i += 1;
+        if !renamed {
+            out.push(NameStatusEntry { path: first, old_path: None, status });
+            continue;
+        }
+        let second = match records.get(i) {
+            Some(r) if !r.is_empty() => String::from_utf8_lossy(r).to_string(),
+            _ => break,
+        };
+        i += 1;
+        out.push(NameStatusEntry { path: second, old_path: Some(first), status });
+    }
+    out
+}

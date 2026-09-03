@@ -50,7 +50,8 @@ sim には 1 バイトも触れない (`replay_verify.bat` 7 ペア + golden 19 
   同一リポを 2 つのエディタで同時に開く運用は非対応 (index.lock 競合は git のエラーをそのまま表示)。
   `MyeCollab.dll` のホットリロードはしない (エディタ実行中は `build_collab.bat` が上書きできない = `MyeScripting.dll` と同じ)。
 - 後回し: 外部 (ターミナル) で git を叩いたときの HEAD 移動検知は**トーストのみ** (v1)。
-  再適用のトランザクション化は v1.5。
+  再適用のトランザクション化は v1.5。段階 B のうち `.cs` / `.cpp` だけの変更でシーン開き直しを省く最適化も v1.5
+  (v1 は「B なら必ず開き直す」。ゲートが保存済みを保証しているので失うものは undo 履歴だけ)。
 
 ## 4. 仕様 (元計画との差分のみ。無印は元計画どおり)
 
@@ -103,8 +104,8 @@ MyeCollab.dll (Rust cdylib, tools\collab\) … worker スレッド 1 本 (git �
 | 段階 | 対象 | 後処理 |
 |---|---|---|
 | A (その場) | ReloadHub が扱う拡張子 `.hlsl .hlsli .png .tga .jpg .jpeg .dds .wav .ogg .glb .gltf .fbx .mat.json .anim.json .sound.json .mixer.json .physmat.json .actor.json .prefab.json` の M / R。非アクティブ `.scene.json`、`project.mye.json`、未知拡張子、`assets\` と `src\GameLogic\Scripts\` の外 = no-op。**`A` (新規) は AssetDatabase へ登録** (S5) | `EndBatch` が種別順 (texture → mat → model → actor → scene) に `HandleChange` |
-| B (開き直し) | アクティブ `.scene.json` / `src\GameLogic\Scripts\*.cpp` (S3) / `.cs` / `.controller.json` / `.terrain.json` / `.terrain.edit` / `assets\input\actions.json` / `assets\project_settings.json` / **A 対象の `D`** / A 対象に actor と scene が同居 | `LoadSceneFromPath` 経路 (`EditorApp.cpp:1218-1234`) + `.cs` は `CompileScripts` 自動 + `.cpp` は「Rebuild Scripts」トースト。開き直し前に `.controller` / `.terrain` のライブラリキャッシュを無効化 (API が無ければその種別は C へ格上げ) |
-| C (再起動) | `assets\schemas\*` / `.meta` の guid 変更・リネーム / 変更件数 > `kCollabMaxBatchApply` (= 200、R2 で確定) | 「再起動します」確認 → `RelaunchSelfWithProject` → 自プロセス終了 |
+| B (開き直し) | アクティブ `.scene.json` / `src\GameLogic\Scripts\` 配下の `.cpp .h .hpp .inl` (S3。ヘッダだけの変更でも DLL は古い) / `.cs` / `.controller.json` / `.terrain.json` / `.terrain.edit` / `assets\input\actions.json` / `assets\project_settings.json` / **A 対象の `D`** / A 対象に actor と scene が同居 | `LoadSceneFromPath` 経路 (`EditorApp.cpp:1218-1234`) + `.cs` は `CompileScripts` 自動 + `.cpp` は「Rebuild Scripts」トースト。開き直し前に `.controller` / `.terrain` のライブラリキャッシュを無効化 (API が無ければその種別は C へ格上げ) |
+| C (再起動) | `assets\schemas\*` / `.meta` の guid 変更・リネーム (実行前に guid を控え、実行後に読み直して比較。事前予測では見えないので楽観側に倒れる) / 変更件数 > `kCollabMaxBatchApply` (= 200、R2 で確定) | `EndBatch({})` → モーダル「再起動します」は**『再起動』ボタンのみ** (「あとで」「キャンセル」を置かない) → `RelaunchSelfWithProject` → 自プロセス終了。ゲートが「全文書保存済み」を保証しているので即時再起動で失うものは無い。**「あとで」を許すと、メモリ上のスキーマとディスクのスキーマが食い違ったまま保存できる = 未知コンポーネント読み飛ばしで相手のデータが消える** (C を設けた理由そのもの)。再起動に失敗したら (`RelaunchSelfWithProject` = `ShellExecuteW` の戻り ≤ 32) **モーダルを閉じない** — 赤字で「手動で起動し直してください」を出し、ボタンは押し直せる。閉じると「あとで」と同じ状態になる (sub-04 round 2 で確定) |
 
 - S2: 「エンジンソースが build hash と差分」判定は**無し**。
 - 段階は**実行前**に `diff_names(HEAD, target)` で予測して確認ダイアログに出し、実行後は実際の変更集合で再分類する (予測 < 実際なら実際に従う)。
@@ -266,6 +267,11 @@ sub-08 / sub-09 は sub-05〜07 と独立。
 - Windows の GCM が GUI 無しプロセスの子孫から GUI を出せるかは未検証 (sub-06 の冒頭確認)。
 - ~~`--porcelain=v2` の下限 git 2.11 は記憶ベース~~ → **閉じた** (sub-01 round 1: v2.11.0 の `Documentation/git-status.txt` に "Porcelain Format Version 2" と `# branch.ab`、v2.10.0 には無い。出典 URL は `tools\collab\src\git.rs` の定数コメント)。
 - Rust cdylib と MSVC CRT: Rust は自前のアロケータで文字列を返すので `mye_collab_free` 以外で解放しない (境界の規則、sub-01 のヘッダコメントに書く)。
+- ~~S5 の登録方式~~ → **閉じた** (sub-04: 増分登録 `AssetDatabase::GuidForPath(abs, createIfMissing=true)`。`ScanAndSync` は 3 表を clear するので解決先が一瞬空になる窓が開く)。
+- ~~B 段階のキャッシュ無効化 API~~ → **閉じた** (sub-04: `ControllerLibrary::LoadFromFile` は同 hash で差し替え、`RenderSystem::InvalidateTerrain()` が public、`InputActions::Load(root, true)` / `PhysicsLayerNames`・`PartTagNames::Load(root, true)`。C への格上げ不要)。
+- ~~`StartGameLogicBuild` の呼び出し元~~ → **閉じた**が穴が 1 本: 呼び出し元は `BuildSettingsWindow::AdvancePipeline` のみ。ただし Asset Browser の [Rebuild Scripts] = `AssetOps::RebuildGameLogic` (`AssetOps.cpp:1447`) は `ShellExecuteW` の fire-and-forget で**ハンドルを持たない** → その間 `ScriptBuildRunning` が立たない。**sub-05 で塞ぐ** (ハンドルを返す起動口に寄せて EditorApp が保持、ゲートが読む)。
+- DLL 内で本当に panic させる経路は作らない (sub-04 の質問 1 = (a))。`catch_unwind` → `service_error` → `ServiceDied` → ゲート閉鎖の C++ 側は通知行の注入で実走済み、Rust 側は cargo test (service.rs) の panic 注入で実走済み。残るのは C ABI ラッパ 1 段だけで、隠し op を足すほどの価値は無い。
+- `kReloadRetryMax = 60` の WARN は実機で発火させていない (共有違反を 60 フレーム続ける再現手段が無い)。カウントの配線はコードレビューで確認 (`ReloadHub.cpp` の `retryAttempt_` 引き継ぎ)。
 - `kCollabMaxBatchApply = 200` と `kReloadRetryMax = 60` は R2 で確定した初期値。実機で不便なら定数だけ変える (仕様変更として §8 に積む)。
 - 競合中のアクティブシーン: 競合マーカー入り JSON は開けない (決定 9)。競合中はアクティブシーンが競合一覧にある間 **Save を止める** (保存 = マーカーを潰して「ours」を黙って選ぶのと同じ)。詳細は sub-07。
 - `pull` の非 ff: 既定 `--ff-only` で `non_fast_forward` を返し、UI が「マージして pull」を提示 → `pull{allowMerge:true}` (`--no-rebase`)。競合は sub-07。
@@ -286,3 +292,8 @@ sub-08 / sub-09 は sub-05〜07 と独立。
 - 2026-09-03 (sub-03 round 1、coder SELF_EVAL): §4.1 に「commit 周り」を新設 (保存してコミット = 保存 → 対で stage → commit / identity 未設定はコミットボタン無効 / unstage は `reset -q` / diff 256 KB 打ち切り / 書き込み系の応答に status)。「保存 → commit」は保存前の index をコミットする = 仕様の誤り。identity は「git が機体名で補完して成功する」実測から塞ぐ側に裁定。
 - 同上: §4.3 の「imgui.ini が選択を保持」は誤り (p_open は保存されない) → 「毎回開く」に訂正。既定ドックを下段帯から左列 (Hierarchy 束) へ、差分を別窓「Diff」へ (sub-05 で実装)。根拠 = `cache\scm_m66c3.png` で一覧が 2 行で切れる。
 - 同上: §4.4 に `# git <args>` ディレクティブと期待ファイルの禁則 (案内文・機体名)。
+- 2026-09-03 (sub-04 round 1、coder SELF_EVAL): §4.1 B 行に `src/GameLogic/Scripts/` 配下の `.h .hpp .inl` を追加 (ヘッダだけの変更で DLL が古いまま進むのを防ぐ。coder の追加を採用)。C 行に guid 変化の検出方式 (実行前後の比較) を明記。
+- 同上: §4.1 C 行を「モーダルは『再起動』のみ」に確定 — coder が置いた「あとで」は、スキーマ不一致のまま保存できる経路を開き、C を設けた理由 (未知コンポーネント読み飛ばしを保存前に止める) を無効化する。must で差し戻し。
+- 同上: §3 後回しに「.cs / .cpp だけの B で開き直しを省く」を v1.5 として記録 (質問 3)。§7 の未決 3 件 (S5 / B の無効化 API / StartGameLogicBuild) を閉じ、Rebuild Scripts の fire-and-forget をゲートの穴として sub-05 に割り当て。panic 注入の隠し op は作らない (質問 1 = a)。
+- 同上: revert の未追跡削除は `git clean -q -f` (`-d` 無し = ディレクトリごと消さない)、段階 B で EndBatch に渡すのは A 集合のみ、段階 C の再起動前に `EndBatch({})` — いずれも coder の実装を仕様として採用。
+- 2026-09-03 (sub-04 round 2、coder SELF_EVAL): §4.1 C 行に再起動失敗時の振る舞い (モーダルを閉じず赤字案内、`Hooks::relaunch` は bool を返す契約) を追記。coder の追加を採用 — 3 択 (閉じる / 黙って exit / 閉じずに知らせる) のうち唯一「食い違ったまま編集できる状態」を作らない。

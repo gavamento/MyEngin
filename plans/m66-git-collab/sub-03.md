@@ -1,7 +1,7 @@
 # sub-03: M66c: stage / unstage / commit / History / diff / identity
 
 - 依存: sub-02
-- 状態: OK (commit: M66c — ハッシュは harness.md のサブ進捗表)
+- 状態: OK (commit 83d0b4f)
 - 往復: 1
 
 ## やること

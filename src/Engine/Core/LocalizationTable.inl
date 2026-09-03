@@ -1054,3 +1054,55 @@ MYE_STR(Scm_HistoryEmpty,      "No commits yet.", "まだコミットがあり�
 MYE_STR(Scm_HistoryPick,       "Select a commit to read its full subject.",
                                "コミットを選ぶと件名の全文が出ます。")
 
+
+// ---- M66d: 破棄 (revert) / 書き込みトランザクションのゲート ----
+MYE_STR(Scm_Discard,           "Discard selected###ScmDiscard", "選択を破棄###ScmDiscard")
+MYE_STR(Scm_DiscardAll,        "Discard all###ScmDiscardAll",   "すべて破棄###ScmDiscardAll")
+MYE_STR(Scm_DiscardTitle,      "Discard changes###ScmDiscardModal",
+                               "変更を破棄###ScmDiscardModal")
+MYE_STR(Scm_DiscardBody,       "Discard the changes in %d file(s)? This cannot be undone.",
+                               "%d 件のファイルの変更を破棄しますか? 元には戻せません。")
+MYE_STR(Scm_DiscardUntracked,  "%d untracked file(s) will be DELETED from disk.",
+                               "未追跡ファイル %d 件はディスクから削除されます。")
+MYE_STR(Scm_DiscardConfirm,    "Discard###ScmDiscardConfirm", "破棄する###ScmDiscardConfirm")
+MYE_STR(Scm_DiscardDone,       "Discarded %d file(s)", "%d 件の変更を破棄しました")
+MYE_STR(Scm_OpRunning,         "Running git...", "git を実行しています...")
+MYE_STR(Scm_ResultTitle,       "Source control###ScmOpResult", "ソース管理###ScmOpResult")
+MYE_STR(Scm_StagePlanA,        "Applied in place - no restart, no reopen.",
+                               "その場で反映されます (再起動も開き直しも不要)。")
+MYE_STR(Scm_StagePlanB,        "The open document will be reopened.",
+                               "開いている文書を読み直します。")
+MYE_STR(Scm_StagePlanC,        "The editor has to restart afterwards.",
+                               "このあとエディタの再起動が必要になります。")
+MYE_STR(Scm_RestartTitle,      "Restart required###ScmRestartModal",
+                               "再起動が必要です###ScmRestartModal")
+MYE_STR(Scm_RestartBody,       "The change touches schemas or asset identities. The editor restarts with the same project.",
+                               "スキーマまたはアセット ID が変わりました。同じプロジェクトでエディタを起動し直します。")
+MYE_STR(Scm_RestartNow,        "Restart now###ScmRestartNow", "今すぐ再起動###ScmRestartNow")
+MYE_STR(Scm_RestartFailed,     "Could not restart. Close the editor and start it again yourself.",
+                               "再起動できませんでした。エディタを閉じて自分で起動し直してください。")
+MYE_STR(Scm_SceneGone,         "The scene you had open is gone. Started an empty scene.",
+                               "開いていたシーンが無くなりました。空のシーンに切り替えます。")
+MYE_STR(Scm_RebuildScriptsHint, "C++ scripts changed - press Rebuild Scripts in the Asset Browser.",
+                                "C++ スクリプトが変わりました。Asset Browser の Rebuild Scripts を押してください。")
+MYE_STR(Scm_Blocked,           "Cannot run right now:", "今は実行できません:")
+MYE_STR(GateB_SceneDirty,      "the scene has unsaved changes", "シーンに未保存の変更があります")
+MYE_STR(GateB_ActorEdit,       "an asset is open in mini-scene edit mode",
+                               "ミニシーン編集モードでアセットを開いています")
+MYE_STR(GateB_AnimationDirty,  "the Animation window has unsaved changes",
+                               "Animation ウィンドウに未保存の変更があります")
+MYE_STR(GateB_ControllerDirty, "the Animator window has unsaved changes",
+                               "Animator ウィンドウに未保存の変更があります")
+MYE_STR(GateB_MixerDirty,      "the Audio Mixer has unsaved changes",
+                               "Audio Mixer に未保存の変更があります")
+MYE_STR(GateB_ProjectSettingsDirty, "Project Settings has unsaved changes",
+                                    "Project Settings に未保存の変更があります")
+MYE_STR(GateB_Playing,         "the game is playing", "再生中です")
+MYE_STR(GateB_NetActive,       "a network session is running", "ネットセッション中です")
+MYE_STR(GateB_BuildRunning,    "a build is running", "ビルドを実行中です")
+MYE_STR(GateB_ScriptBuildRunning, "a script build is running", "スクリプトのビルドを実行中です")
+MYE_STR(GateB_OpInFlight,      "another git operation is still running",
+                               "別の git 操作を実行中です")
+MYE_STR(GateB_MergeInProgress, "a merge or rebase is in progress", "マージ / リベースの途中です")
+MYE_STR(GateB_ServiceUnavailable, "source control is not available",
+                                  "ソース管理が利用できません")

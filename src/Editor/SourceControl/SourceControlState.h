@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -190,6 +191,16 @@ public:
     bool IdentityOk() const { return identityOk_; }
     // 直近に成功した commit の SHA を 1 回だけ取り出す (EditorApp がトーストにする)
     std::string TakeLastCommit();
+
+    // ---- M66d: revert ----
+    // paths を「最後に stage / commit した状態」へ戻す (未追跡は削除)。
+    // ★**GitTransaction 経由でのみ呼ぶこと**。ゲート (未保存 / 再生中 / ビルド中) と
+    //   ReloadHub の一括適用が掛かっていない状態で working tree を書き換えると、
+    //   エディタが掴んだままのファイルが消える / 中間状態でホットリロードが走る。
+    //   done(ok, code, detail) は応答が届いたときに 1 回だけ呼ばれる
+    using WriteDoneFn =
+        std::function<void(bool ok, const std::string& code, const std::string& detail)>;
+    void Revert(const std::vector<std::string>& paths, WriteDoneFn done);
 
     // 書き込み系 (stage / unstage / commit) が飛んでいる間は true。
     // ★読み取り系 (status の自動更新) では立たない — 立てると監視が動くたびに

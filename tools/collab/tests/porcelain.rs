@@ -213,3 +213,37 @@ fn clip_text_never_splits_a_multibyte_char() {
     assert!(truncated0);
     assert_eq!(empty, "");
 }
+
+// ---- M66d: --name-status -z ----
+
+#[test]
+fn name_status_parses_plain_records() {
+    let raw = b"M\0assets/a.png\0A\0assets/b.png\0D\0assets/c.png\0";
+    let out = mye_collab::porcelain::parse_name_status_z(raw);
+    assert_eq!(out.len(), 3);
+    assert_eq!(out[0].status, 'M');
+    assert_eq!(out[0].path, "assets/a.png");
+    assert_eq!(out[2].status, 'D');
+    assert!(out[0].old_path.is_none());
+}
+
+#[test]
+fn name_status_consumes_three_records_for_a_rename() {
+    // ★R だけ 3 レコード。2 レコードと決め打つと**以降が全部ずれる**
+    let raw = b"R100\0old/x.png\0new/x.png\0M\0assets/z.png\0";
+    let out = mye_collab::porcelain::parse_name_status_z(raw);
+    assert_eq!(out.len(), 2, "{out:?}");
+    assert_eq!(out[0].status, 'R');
+    assert_eq!(out[0].old_path.as_deref(), Some("old/x.png"));
+    assert_eq!(out[0].path, "new/x.png");
+    assert_eq!(out[1].status, 'M', "リネームの後ろがずれていないこと");
+    assert_eq!(out[1].path, "assets/z.png");
+}
+
+#[test]
+fn name_status_ignores_a_truncated_tail() {
+    // 途中で切れた出力で panic しないこと (worker ごと dead 化する)
+    let out = mye_collab::porcelain::parse_name_status_z(b"M\0");
+    assert!(out.is_empty());
+    assert!(mye_collab::porcelain::parse_name_status_z(b"").is_empty());
+}

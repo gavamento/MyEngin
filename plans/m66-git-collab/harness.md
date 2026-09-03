@@ -13,9 +13,9 @@
 |---|---|---|---|---|
 | sub-01 | OK | 1 | 4716d6a | M66a: Rust cdylib + CLI + fixture + collab_verify + CI + 規則 12 + DLL 往復の縦切り。依存: なし。VERDICT round 1 OK (should 1 → sub-02、nit 3 → sub-02 / sub-10) |
 | sub-02 | OK | 1 | 165cfc6 | M66b: CollabClient 完成 + SourceControlState + Source Control 窓 (読み取り専用) + canonicalRoot。依存: sub-01 |
-| sub-03 | OK | 1 | (M66c、下の記入待ち) | M66c: stage / unstage / commit / History / diff / identity。依存: sub-02 |
-| sub-04 | 実装中 | 0 | | M66d: ReloadHub Begin/EndBatch + ゲート + 4 窓の HasUnsavedChanges + トランザクション + revert。依存: sub-03 |
-| sub-05 | 未着手 | 0 | | M66e: Branches — 一覧 / 作成 / checkout + 段階の事前判定。依存: sub-04 |
+| sub-03 | OK | 1 | 83d0b4f | M66c: stage / unstage / commit / History / diff / identity。依存: sub-02 |
+| sub-04 | OK | 2 | (M66d、下の記入待ち) | M66d: ReloadHub Begin/EndBatch + ゲート + 4 窓の HasUnsavedChanges + トランザクション + revert。依存: sub-03。round 1 REWORK (must 1 = 段階 C モーダルの「あとで」撤去。should 2 件 → sub-05、nit 1 件 → sub-10) |
+| sub-05 | 実装中 | 0 | | M66e: Branches — 一覧 / 作成 / checkout + 段階の事前判定。依存: sub-04 |
 | sub-06 | 未着手 | 0 | | M66f: fetch / pull / push + 定期 fetch + 通知 + EditorSettings。依存: sub-04 (sub-05 と独立。並列なら SourceControlWindow.cpp / ops.rs のマージ順を司会が決める) |
 | sub-07 | 未着手 | 0 | | M66g: 競合 — abort / ours / theirs / continue。依存: sub-06 |
 | sub-08 | 未着手 | 0 | | M66h: 衛生 — .gitignore テンプレ 4 行 + project_settings.json の個人設定分離。依存: sub-03 (sub-05〜07 と独立) |
@@ -23,12 +23,12 @@
 | sub-10 | 未着手 | 0 | | M66j: 仕上げ — engine_spec §14 Source control / README / CLAUDE.md / 規則の記載。依存: sub-01〜sub-09 |
 
 ## 未決事項 (planner PLAN_RESULT より。coder が「不安・質問」で拾う)
-- S5 の新規アセット登録方式 (増分登録 vs `ScanAndSync` 再実行。`AssetDatabase.cpp:250-278` は 3 表を clear するので安全性未確認) — sub-04 で比較して選ぶ
-- B 段階の `.controller.json` / `.terrain.json`: ライブラリのキャッシュ無効化 API の有無 (無ければ C に格上げ) — sub-04
+- ~~S5 の新規アセット登録方式~~ → **閉じた (sub-04)**: 増分登録 (`AssetDatabase::GuidForPath(abs, createIfMissing=true)`)。`ScanAndSync` は 3 表を clear するので解決先が一瞬空になる窓が開く。増分なら `.meta` 同梱の guid をそのまま採る
+- ~~B 段階の `.controller.json` / `.terrain.json` のキャッシュ無効化 API~~ → **閉じた (sub-04)**: 両方ある (`ControllerLibrary::LoadFromFile` の差し替え / `RenderSystem::InvalidateTerrain()`)。C への格上げ不要。無効化の置き場は `GitTransaction::ApplyStageB` の 1 箇所
 - `.terrain.edit` に `.meta` が付くか (`ClassifyPath`) — sub-03 は「存在するサイドカーだけ束ねる」実装で依存しない
 - GUI 無しの孫プロセス git から GCM のダイアログが出るか — sub-06 の冒頭確認 (出なければ案内文を変える)
 - ~~`--porcelain=v2` の下限 git 2.11 は記憶ベース~~ → **閉じた (sub-01)**: 2.11.0 で正しいことを一次情報で確認、出典 URL は `tools\collab\src\git.rs` の定数コメント
-- `StartGameLogicBuild` の全呼び出し元 (同期経路の有無) — sub-04 のゲート `ScriptBuildRunning`
+- ~~`StartGameLogicBuild` の全呼び出し元~~ → **閉じた (sub-04)**: `BuildSettingsWindow::AdvancePipeline` の 1 箇所のみ、同期経路なし。**ただし Asset Browser の [Rebuild Scripts] (`AssetOps::RebuildGameLogic`) は `ShellExecuteW` の fire-and-forget でハンドルを持たず、ゲートから観測できない** → planner の should として sub-05 で塞ぐ (ハンドルを返す `StartGameLogicBuild` に寄せて EditorApp が保持、`GateInputs.scriptBuildRunning` に OR)
 - `kCollabMaxBatchApply = 200` / `kReloadRetryMax = 60` は初期値。実機で不便なら仕様変更として spec §8 に積む
 - ~~Rust cdylib が実際に Editor.exe から LoadLibrary で往復するかは策定時点で未検証~~ → **閉じた (sub-01)**: Debug / Release とも Editor.exe が MyeCollab.dll をロードして JSON が往復し git 版が返る (selftest で恒常検査)
 - ci.yml の GitHub 上の実走は**未検証** (push 後の最初の run で見る。割れやすいのは `dtolnay/rust-toolchain` の所要時間と cmd の `&&` 連鎖の終了コード伝播)
@@ -76,4 +76,15 @@
   - Bash ヒアドキュメントの `\\` 潰れ: `LocalizationTable.inl` の `tools\\build_collab.bat` が `\b` になり UI に `tools?uild_collab.bat` と出た。パスを含む文字列は `cat -A` か実機で確認。
   - collab_verify は fixture を**シナリオごとに作り直す** (共用だと N 本目が 1..N-1 の結果に依存)。notify は `default-features = false` (Cargo.lock +24 crate、初回ビルド 12 秒)。
   - fixture の残骸 (`cache\fixture_proj`、`cache\fixture_proj.gitconfig`、`%TEMP%\mye_notrepo_proj`) は生成物・gitignore 済み。
+- **sub-03 (M66c) からの申し送り** (coder SELF_EVAL + planner VERDICT round 1):
+  - 仕様確定 (planner が spec §4.1 / §4.3 / §4.4 と sub-04 / sub-05 を修正済み): 「保存してコミット」= **保存 → 保存した文書を対で stage → commit** (「保存 → commit」は保存前の index をコミットする = 元 sub の誤り)。unstage は `git reset -q --` (restore --staged は未出生ブランチで落ちる)。diff は 256 KB 打ち切り + `truncated`。書き込み系 op の応答型 `{"status": ...}` + `last_head` 更新を §4.1 で固定 (sub-04 の revert / sub-05 の checkout / sub-06 の pull・push は同じ型を使う。**`last_head` を更新し忘れると自分の操作で「外部で HEAD が移動」トーストが出る**)。spec §4.3 の「imgui.ini が選択を保持」は planner の誤り → 「プロジェクト起動では毎回開く」。新規ファイルの 5 行ヘッダは**付けない**で確定。
+  - planner の should (sub-04 で): identity 未設定のときコミットボタンを**無効化** (`SourceControlWindow.cpp` の分岐に `BeginDisabled`。設定 UI は作らない)。根拠: `user.name` 未設定でも git は OS アカウント名 + 機体名で補完してコミットに成功する = 共有履歴が汚れる。
+  - planner の should (sub-05 で): 既定ドックを下段帯 (Assets 束) から**左列 (Hierarchy 束) のタブ**へ移し、差分は inline ペインではなく**別の dockable 窓「Diff」**にする (高さ 200 px の帯では一覧が 2 行で切れる)。既定レイアウトのスクショを 1 枚残す。
+  - planner の nit: 「窓のボタン → Session → DLL」の結線に永続テストが無い → `MYE_COLLAB_PROBE` のレシピを sub-04 の受け入れ検証で再利用。
+  - **一時プローブのレシピ**: `SourceControlSelfTest.cpp` に env ガード付きブロックを足し、`MYE_COLLAB_PROBE=<repo> Editor.exe --selftest` で Session を実 DLL 経由で駆動する (UI を触らずに窓のボタンと同じ経路を実走)。スクショ側は `DockBuilderDockWindow` を `left` に変える + `SetNextWindowFocus()` + `ImGuiTabItemFlags_SetSelected` の 3 点でクリックなしに任意のタブを撮れる。
+  - `git commit` は失敗理由を **stdout** に書く (`no changes added to commit`)。`classify_error` は stderr しか見ないので stdout も読む op はその場で分類する。
+  - collab_verify の期待ファイルに **git の案内文 (`use "git restore <file>..."` 等、版で変わる) と機体名 (identity 未設定の fatal に入る) を入れない**。`# git <args>` ディレクティブは fixture の前提条件専用。ディレクティブ判定は `'#' + 半角空白 1 個 + 動詞` (字下げした説明行は誤爆しない)。
+  - `SourceControlSession::Diff()` / `History()` / `IdentityOk()` / `WriteInFlight()` が使える口。`WriteInFlight()` は `CollabClient::OpInFlight()` の別名で、ゲート (sub-04) はこれとは別に `GateBlocker` を組む想定。
+  - Bash ツール経由の heredoc / python は quoted でも `\\` を 1 段潰す (`'\0'` が実 NUL バイトになった)。C++ / Rust のエスケープを含む編集は Edit ツールか `bytes([92])`。
+  - 未検証: マウス実押下 (プローブで代替)。fixture の残骸 `cache\collab_fixture` / `cache\probe_repo` / `cache\*.gitconfig` / `cache\scm_*.png` は生成物。
 - planner のエージェント ID はセッション限り。セッションを跨いだら `MODE: VERDICT` 用の planner を新規起動し、文脈は spec.md / sub-NN.md / この台帳で渡す。

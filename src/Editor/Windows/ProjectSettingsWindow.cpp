@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <string>
 
+#include "Editor/DocumentDirty.h"
 #include "Editor/EditorSettings.h"
 #include "Editor/PartTagNames.h"
 #include "Editor/PhysicsLayerNames.h"
@@ -25,6 +26,9 @@ void ProjectSettingsWindow::OnImGui(EngineContext& ctx, EditorSettings& settings
         captureKind_ = 0; // 窓を閉じたら捕捉も取り消す
         return;
     }
+    // 未保存判定に使う参照を控える (M66d)
+    inputActions_ = ctx.inputActions;
+    assetsRoot_ = ctx.assetsRoot;
     // M51d: キー捕捉はセクションの開閉と無関係に毎フレーム処理する
     // (折り畳み中に lastInput_ が止まると、再展開時に偽の押下エッジを拾う)
     UpdateKeyCapture(ctx);
@@ -384,6 +388,19 @@ void ProjectSettingsWindow::DrawInputSection(EngineContext& ctx)
             ia.Load(ctx.assetsRoot, true);
         }
     }
+}
+
+bool ProjectSettingsWindow::HasUnsavedChanges() const
+{
+    if (PhysicsLayerNames::Get().DiffersFromDisk() || PartTagNames::Get().DiffersFromDisk()) {
+        return true;
+    }
+    if (inputActions_ != nullptr && !assetsRoot_.empty()) {
+        // ToJsonText() は Save の実体そのもの = 「保存したらこうなる」文字列
+        return TextDiffersFromDisk(assetsRoot_ + L"\\input\\actions.json",
+                                   inputActions_->ToJsonText());
+    }
+    return false;
 }
 
 } // namespace mye

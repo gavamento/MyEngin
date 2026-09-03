@@ -1,5 +1,6 @@
 #include "Engine/Engine/HotReload/ReloadHub.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 
@@ -27,7 +28,83 @@ std::wstring ExtensionLower(const std::wstring& path)
     return (dot == std::wstring::npos) ? L"" : path.substr(dot); // path は正規化済み (小文字)
 }
 
+bool HasSuffix(const std::wstring& s, const wchar_t* suffix)
+{
+    const size_t n = std::char_traits<wchar_t>::length(suffix);
+    return s.size() >= n && s.compare(s.size() - n, n, suffix) == 0;
+}
+
+// 適用順の階級 (小さいほど先)。参照する側が後に来るように並べてある:
+//   シェーダ → テクスチャ/音 → マテリアル → モデル → クリップ類 → アクター → シーン
+// ★spec §4.1 の「texture → mat → model → actor → scene」を部分列として含む。
+//   間に挟んだものは「誰も参照していない」か「テクスチャと同格」のどちらかで、
+//   相対順が結果を変えない位置に置いてある
+int ReloadRank(const std::wstring& normPath)
+{
+    const std::wstring ext = ExtensionLower(normPath);
+    if (ext == L".hlsl" || ext == L".hlsli") {
+        return 0;
+    }
+    if (ext == L".png" || ext == L".tga" || ext == L".jpg" || ext == L".jpeg" || ext == L".dds") {
+        return 1;
+    }
+    if (ext == L".wav" || ext == L".ogg") {
+        return 2;
+    }
+    if (ext == L".json") {
+        if (HasSuffix(normPath, L".mat.json")) {
+            return 3;
+        }
+        if (HasSuffix(normPath, L".anim.json")) {
+            return 5;
+        }
+        if (HasSuffix(normPath, L".sound.json")) {
+            return 6;
+        }
+        if (HasSuffix(normPath, L".mixer.json")) {
+            return 6;
+        }
+        if (HasSuffix(normPath, L".physmat.json")) {
+            return 6;
+        }
+        if (HasSuffix(normPath, L".actor.json") || HasSuffix(normPath, L".prefab.json")) {
+            return 7;
+        }
+        if (HasSuffix(normPath, L".scene.json")) {
+            return 8;
+        }
+        return 9; // 未知の .json (HandleChange は何もしない)
+    }
+    if (ext == L".glb" || ext == L".gltf" || ext == L".fbx") {
+        return 4;
+    }
+    return 9;
+}
+
 } // namespace
+
+std::vector<std::wstring> OrderBatch(const std::vector<BatchChange>& changes)
+{
+    std::vector<std::wstring> paths;
+    paths.reserve(changes.size());
+    for (const BatchChange& c : changes) {
+        // ★Deleted は落とす。HandleChange は「登録済みの資産を読み直す」しかできず、
+        //   消えたファイルを渡すと開けずにリトライ列へ積まれるだけになる (spec S4)
+        if (c.kind == BatchChange::Kind::Deleted || c.path.empty()) {
+            continue;
+        }
+        paths.push_back(NormalizePathKey(c.path));
+    }
+    // 種別順 → 同種は正規化キーの昇順。**明示的な決定論キー**で並べる
+    // (入力の並びに依存させると、同じ checkout が機体によって違う順で適用される)
+    std::stable_sort(paths.begin(), paths.end(), [](const std::wstring& a, const std::wstring& b) {
+        const int ra = ReloadRank(a);
+        const int rb = ReloadRank(b);
+        return (ra != rb) ? (ra < rb) : (a < b);
+    });
+    paths.erase(std::unique(paths.begin(), paths.end()), paths.end());
+    return paths;
+}
 
 bool ReloadHub::Init(ShaderManager* shaders, RenderResources* resources, Scene* scene,
                      PrefabLibrary* prefabs, AnimationLibrary* anims, SoundLibrary* sounds,
@@ -74,10 +151,46 @@ void ReloadHub::SetActiveScenePath(const std::wstring& path)
     activeSceneNorm_ = NormalizePathKey(path);
 }
 
+void ReloadHub::DiscardPendingChanges()
+{
+    // DrainChanges は溜まりを取り出して空にする = 呼んで捨てるのが「破棄」
+    watcher_.DrainChanges();
+    engineShaderWatcher_.DrainChanges();
+}
+
+void ReloadHub::BeginBatch()
+{
+    batching_ = true;
+}
+
+void ReloadHub::EndBatch(const std::vector<BatchChange>& changes)
+{
+    batching_ = false;
+    // ★先に捨ててから適用する。git が書いた分は changes が正本なので、
+    //   watcher の溜まりを一緒に流すと同じファイルを 2 度読む (テクスチャなら
+    //   無駄なだけだが、シーンは ApplyDiff が 2 回走って編集が 1 世代戻る)
+    DiscardPendingChanges();
+    const std::vector<std::wstring> ordered = OrderBatch(changes);
+    for (const std::wstring& path : ordered) {
+        HandleChange(path);
+    }
+    if (!ordered.empty()) {
+        MYE_LOG_INFO("[reload] batch applied: %zu change(s)", ordered.size());
+    }
+}
+
 void ReloadHub::Update()
 {
     // フェーズ 2 = セーフポイント (spec 5.3)。ここ以外でリロードを適用しない
     shaders_->PollAsyncCompiles();
+
+    if (batching_) {
+        // 一括適用の最中。**溜まりは捨てるだけ**で 1 件も適用しない (M66d)。
+        // 捨てないと、EndBatch までの数フレームぶんが後からまとめて流れ込み、
+        // 適用済みのものをもう一度読み直す
+        DiscardPendingChanges();
+        return;
+    }
 
     for (const std::wstring& path : watcher_.DrainChanges()) {
         HandleChange(path);
@@ -90,8 +203,17 @@ void ReloadHub::Update()
         std::vector<Retry> current;
         current.swap(retries_);
         for (Retry& r : current) {
-            HandleChange(r.path); // 失敗すれば HandleChange が再登録する
+            // ★上限で諦める。付けないと「外部で消されたファイル」が永久に残り、
+            //   毎フレーム開き直しを試み続ける (spec §2 の S4)
+            if (r.attempts >= kReloadRetryMax) {
+                MYE_LOG_WARN("[reload] giving up after %d attempts: %s", r.attempts,
+                             WideToUtf8(r.path).c_str());
+                continue;
+            }
+            retryAttempt_ = r.attempts + 1; // retryLater が積み直すときに引き継ぐ
+            HandleChange(r.path);           // 失敗すれば HandleChange が再登録する
         }
+        retryAttempt_ = 0;
     }
 }
 
@@ -106,7 +228,9 @@ void ReloadHub::HandleChange(const std::wstring& normPath)
                 return;
             }
         }
-        retries_.push_back({ normPath, 0 });
+        // retryAttempt_ = 「今 Update が処理している Retry の回数 + 1」。
+        // watcher 由来の初回は 0 のまま = 1 回目として積まれる
+        retries_.push_back({ normPath, retryAttempt_ });
     };
 
     if (ext == L".hlsl" || ext == L".hlsli") {

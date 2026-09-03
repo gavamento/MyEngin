@@ -3,6 +3,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "Engine/Engine/AnimatorController.h"
 #include "Engine/Engine/EngineLoop.h"
 
 namespace mye {
@@ -20,7 +21,16 @@ public:
     bool open = true;
     void OnImGui(EngineContext& ctx, Selection& selection);
 
+    // 触ったコントローラのうち 1 本でもディスクと食い違うか (M66d、spec §4.1 の S6)。
+    // 判定の理屈は AnimationWindow::HasUnsavedChanges と同じ (この窓も dirty を持たない)
+    bool HasUnsavedChanges() const;
+
 private:
+    void MarkTouched(ControllerLibrary* controllers, uint64_t ctrlHash);
+
+    ControllerLibrary* controllers_ = nullptr; // 寿命は EngineContext と同じ
+    std::vector<uint64_t> touched_;
+
     struct NodePos {
         float x = 0.0f;
         float y = 0.0f;

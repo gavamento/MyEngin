@@ -708,4 +708,29 @@ std::string SourceControlSession::TakeLastCommit()
     return sha;
 }
 
+// ---- M66d: revert ----
+
+void SourceControlSession::Revert(const std::vector<std::string>& paths, WriteDoneFn done)
+{
+    if (paths.empty()) {
+        return;
+    }
+    if (!client_.Ready() || repoState_ != Unavailable::None) {
+        // ★呼び手 (GitTransaction) は ReloadHub::BeginBatch を済ませた後なので、
+        //   ここで黙って return すると一括モードのまま帰ってこない。
+        //   必ずコールバックを呼んで「失敗した」と伝える
+        if (done) {
+            done(false, collaberr::kServiceDead, "source control is not available");
+        }
+        return;
+    }
+    client_.Request(collabop::kRevert, { { "paths", paths } },
+                    [this, done = std::move(done)](const nlohmann::json& msg) {
+                        const bool ok = ApplyWriteResult(msg);
+                        if (done) {
+                            done(ok, errorCode_, errorDetail_);
+                        }
+                    });
+}
+
 } // namespace mye

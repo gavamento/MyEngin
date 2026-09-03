@@ -17,6 +17,13 @@ public:
     void Load(const std::wstring& assetsRoot, bool force = false);
     bool Save(const std::wstring& assetsRoot) const;
 
+    // 編集中の表が保存済みの内容と食い違うか (M66d、spec §4.1 の S6)。
+    // ★「ディスクを読み直した表」と比べる = Save/Load が互いの逆であることを利用する。
+    //   Save が書く JSON と直接比べると、キーが無いプロジェクトで Load が入れた
+    //   既定名 ("Layer 7" 等) が「未保存の変更」に見えてしまう。
+    //   一度も Load していない (窓を開いていない) なら常に false
+    bool DiffersFromDisk() const;
+
     const char* Name(int i) const;          // 表示名 (常に非空)
     char* EditBuffer(int i) { return names_[i]; } // ProjectSettingsWindow の InputText 用
     // Combo 用の連結ラベル配列 (毎フレーム呼んで良い軽さ)

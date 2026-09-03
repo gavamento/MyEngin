@@ -113,6 +113,38 @@ void PartTagNames::SetCount(int n)
     count_ = n;
 }
 
+bool PartTagNames::DiffersFromDisk() const
+{
+    if (loadedRoot_.empty()) {
+        return false;
+    }
+    PartTagNames onDisk;
+    onDisk.Load(loadedRoot_, true);
+    // ★件数は Save が空欄を落とすので一致しないことがある。空欄を飛ばして
+    //   「実際に保存される名前の列」同士で比べる (空行を足しただけで
+    //   未保存扱いになると、ゲートが理由もなく閉じ続ける)
+    int a = 0;
+    int b = 0;
+    while (true) {
+        while (a < count_ && names_[a][0] == '\0') {
+            ++a;
+        }
+        while (b < onDisk.count_ && onDisk.names_[b][0] == '\0') {
+            ++b;
+        }
+        const bool endA = a >= count_;
+        const bool endB = b >= onDisk.count_;
+        if (endA || endB) {
+            return endA != endB;
+        }
+        if (std::strcmp(names_[a], onDisk.names_[b]) != 0) {
+            return true;
+        }
+        ++a;
+        ++b;
+    }
+}
+
 const char* PartTagNames::Name(int i) const
 {
     return (i < 0 || i >= count_) ? "" : names_[i];

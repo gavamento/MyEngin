@@ -26,6 +26,9 @@ public:
     int Count() const { return count_; }
     void SetCount(int n); // 増やした分は空文字列。Save 時に空の要素は落ちる
 
+    // 編集中の表が保存済みの内容と食い違うか (M66d)。理屈は PhysicsLayerNames と同じ
+    bool DiffersFromDisk() const;
+
     const char* Name(int i) const;   // 範囲外は ""
     uint64_t Id(int i) const;        // HashStr(Name(i))。空名は 0
     char* EditBuffer(int i);         // ProjectSettingsWindow の InputText 用 (kNameCapacity バイト)

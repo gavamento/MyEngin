@@ -1,9 +1,11 @@
 #include "Editor/Windows/AnimatorControllerWindow.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
 
+#include "Editor/DocumentDirty.h"
 #include "Editor/Selection.h"
 #include "Engine/Core/Components.h"
 #include "Engine/Core/Localization.h"
@@ -93,6 +95,9 @@ void AnimatorControllerWindow::OnImGui(EngineContext& ctx, Selection& selection)
         return;
     }
     const int nStates = static_cast<int>(ctrl->states.size());
+
+    // 未保存判定のために「この窓が触ったコントローラ」を控える (M66d)
+    MarkTouched(ctx.controllers, ctrl->hash);
 
     // ---- ツールバー ----
     ImGui::Text(Tr(StrId::Anim_Controller), ctrl->name.c_str());
@@ -295,6 +300,33 @@ void AnimatorControllerWindow::OnImGui(EngineContext& ctx, Selection& selection)
     }
 
     ImGui::End();
+}
+
+void AnimatorControllerWindow::MarkTouched(ControllerLibrary* controllers, uint64_t ctrlHash)
+{
+    controllers_ = controllers;
+    if (ctrlHash == 0
+        || std::find(touched_.begin(), touched_.end(), ctrlHash) != touched_.end()) {
+        return;
+    }
+    touched_.push_back(ctrlHash);
+}
+
+bool AnimatorControllerWindow::HasUnsavedChanges() const
+{
+    if (controllers_ == nullptr) {
+        return false;
+    }
+    for (const uint64_t hash : touched_) {
+        const ControllerAsset* c = controllers_->Get(hash);
+        if (c == nullptr) {
+            continue;
+        }
+        if (TextDiffersFromDisk(c->path, ControllerLibrary::ToJson(*c).dump(2))) {
+            return true;
+        }
+    }
+    return false;
 }
 
 } // namespace mye

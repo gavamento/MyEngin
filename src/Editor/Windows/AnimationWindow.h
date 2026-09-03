@@ -26,7 +26,23 @@ public:
     bool open = true; // 閉じる / 再表示 (タブ [x] と Window メニューに連動)
     void OnImGui(EngineContext& ctx, Selection& selection, UndoStack& undo);
 
+    // 触ったクリップのうち 1 本でもディスクと食い違うか (M66d、spec §4.1 の S6)。
+    // ★この窓は dirty フラグを持たない (編集がキー追加/削除/長さ/レコードと散っていて、
+    //   1 箇所漏らすと「未保存なのに保存済みに見える」= git の書き込みで黙って消える)。
+    //   代わりに「この窓が触ったクリップ」を覚えておいて、そのつど直列化して照合する。
+    //   評価が高いので呼ぶのは GitTransaction のゲートだけ (500 ms キャッシュ付き)
+    bool HasUnsavedChanges() const;
+
 private:
+    // 触ったクリップを記録する (同じものは 1 回だけ)
+    void MarkTouched(AnimationLibrary* anims, uint64_t clipHash);
+
+    // ★ライブラリのポインタは EngineContext の寿命と同じ (EngineLoop がメンバで持つ)
+    //   ので、窓を閉じた後でも安全に読める。窓を一度も開いていなければ nullptr =
+    //   「この窓では何も編集していない」で正しい
+    AnimationLibrary* anims_ = nullptr;
+    std::vector<uint64_t> touched_;
+
     void StartPreview(EngineContext& ctx, EntityID animator);
     void StopPreview(EngineContext& ctx);
     void HandleRecord(EngineContext& ctx, AnimationClipAsset& clip, EntityID animator);

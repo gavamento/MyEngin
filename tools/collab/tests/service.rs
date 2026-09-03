@@ -311,3 +311,148 @@ fn locked_index_and_overwrite_are_still_classified() {
         code::LOCAL_CHANGES_OVERWRITTEN
     );
 }
+
+// ---- M66d: revert / diff_names ----
+
+/// identity 付きのコミット (署名を明示的に切る — 開発者の commit.gpgsign=true で固まらないため)
+fn commit_all(dir: &Path, cfg: &Path, message: &str) {
+    git(dir, cfg, &["add", "-A"]);
+    git(
+        dir,
+        cfg,
+        &[
+            "-c",
+            "user.name=mye",
+            "-c",
+            "user.email=mye@example.com",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-q",
+            "-m",
+            message,
+        ],
+    );
+}
+
+#[test]
+fn revert_restores_tracked_and_deletes_untracked() {
+    let dir = temp_repo("revert");
+    let cfg = config_path_for(&dir);
+    std::fs::write(dir.join("kept.txt"), "original").unwrap();
+    commit_all(&dir, &cfg, "one");
+    // 追跡済みを書き換え + 未追跡を 1 個置く
+    std::fs::write(dir.join("kept.txt"), "edited").unwrap();
+    std::fs::write(dir.join("fresh.txt"), "new").unwrap();
+
+    let svc = Service::new(dir.to_string_lossy().to_string());
+    svc.request(
+        json!({ "id": 1, "op": "revert", "args": { "paths": ["kept.txt", "fresh.txt"] } })
+            .to_string(),
+    );
+    let r = wait_line(&svc);
+    assert_eq!(r["ok"], true, "revert failed: {r}");
+    assert_eq!(r["result"]["reverted"], 2);
+    assert_eq!(r["result"]["deleted"], 1, "未追跡は 1 件だけ消える");
+    assert_eq!(
+        std::fs::read_to_string(dir.join("kept.txt")).unwrap(),
+        "original",
+        "追跡済みは index の内容へ戻る"
+    );
+    assert!(!dir.join("fresh.txt").exists(), "未追跡ファイルは消える");
+    // 書き込み系の応答は実行後の status を載せる (spec §4.1)
+    let entries = r["result"]["status"]["entries"].as_array().unwrap();
+    assert!(entries.is_empty(), "revert 後は清浄なはず: {r}");
+
+    drop(svc);
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_file(&cfg);
+}
+
+#[test]
+fn revert_with_only_untracked_paths_does_not_call_checkout() {
+    // ★checkout に未追跡パスを混ぜると pathspec エラーで**呼び出しごと**失敗する。
+    //   「未追跡だけ選んだ」は普通の操作なので、ここが割れると revert が丸ごと使えない
+    let dir = temp_repo("revert_untracked");
+    let cfg = config_path_for(&dir);
+    std::fs::write(dir.join("base.txt"), "b").unwrap();
+    commit_all(&dir, &cfg, "one");
+    std::fs::write(dir.join("only.txt"), "x").unwrap();
+
+    let svc = Service::new(dir.to_string_lossy().to_string());
+    svc.request(json!({ "id": 1, "op": "revert", "args": { "paths": ["only.txt"] } }).to_string());
+    let r = wait_line(&svc);
+    assert_eq!(r["ok"], true, "revert failed: {r}");
+    assert!(!dir.join("only.txt").exists());
+
+    drop(svc);
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_file(&cfg);
+}
+
+#[test]
+fn revert_rejects_an_empty_path_list() {
+    // 空を通すと `git checkout -- ` = リポジトリ全体が戻る (= 全編集の消失)
+    let dir = temp_repo("revert_empty");
+    let svc = Service::new(dir.to_string_lossy().to_string());
+    svc.request(json!({ "id": 1, "op": "revert", "args": { "paths": [] } }).to_string());
+    let r = wait_line(&svc);
+    assert_eq!(r["ok"], false);
+    assert_eq!(r["error"]["code"], code::BAD_REQUEST);
+
+    drop(svc);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn diff_names_reports_add_modify_delete_between_two_commits() {
+    let dir = temp_repo("diffnames");
+    let cfg = config_path_for(&dir);
+    std::fs::create_dir_all(dir.join("assets")).unwrap();
+    std::fs::write(dir.join("assets/a.png"), "1").unwrap();
+    std::fs::write(dir.join("assets/gone.png"), "1").unwrap();
+    commit_all(&dir, &cfg, "one");
+    std::fs::write(dir.join("assets/a.png"), "2").unwrap();
+    std::fs::remove_file(dir.join("assets/gone.png")).unwrap();
+    std::fs::write(dir.join("assets/added.png"), "3").unwrap();
+    commit_all(&dir, &cfg, "two");
+
+    let svc = Service::new(dir.to_string_lossy().to_string());
+    svc.request(
+        json!({ "id": 1, "op": "diff_names", "args": { "from": "HEAD~1", "to": "HEAD" } })
+            .to_string(),
+    );
+    let r = wait_line(&svc);
+    assert_eq!(r["ok"], true, "diff_names failed: {r}");
+    let names = r["result"]["names"].as_array().unwrap();
+    let find = |p: &str| -> String {
+        names
+            .iter()
+            .find(|n| n["path"] == p)
+            .map(|n| n["status"].as_str().unwrap_or("").to_string())
+            .unwrap_or_default()
+    };
+    assert_eq!(find("assets/a.png"), "M");
+    assert_eq!(find("assets/added.png"), "A");
+    assert_eq!(find("assets/gone.png"), "D");
+    assert_eq!(names.len(), 3, "{r}");
+
+    drop(svc);
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_file(&cfg);
+}
+
+#[test]
+fn diff_names_rejects_an_option_like_revision() {
+    let dir = temp_repo("diffnames_bad");
+    let svc = Service::new(dir.to_string_lossy().to_string());
+    svc.request(
+        json!({ "id": 1, "op": "diff_names", "args": { "from": "--exec=calc" } }).to_string(),
+    );
+    let r = wait_line(&svc);
+    assert_eq!(r["ok"], false);
+    assert_eq!(r["error"]["code"], code::BAD_REQUEST);
+
+    drop(svc);
+    let _ = std::fs::remove_dir_all(&dir);
+}

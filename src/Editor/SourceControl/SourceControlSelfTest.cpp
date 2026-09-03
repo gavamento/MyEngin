@@ -5,13 +5,17 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iterator>
 #include <string>
 #include <thread>
 
 #include "Editor/SourceControl/CollabClient.h"
+#include "Editor/SourceControl/GitTransaction.h"
 #include "Editor/SourceControl/PairRule.h"
 #include "Editor/SourceControl/SourceControlState.h"
+#include "Editor/SourceControl/StageClassifier.h"
+#include "Engine/Core/Localization.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Engine/Project.h"
 #include "Engine/Platform/PathUtil.h"
@@ -518,6 +522,280 @@ bool RunSourceControlSelfTest()
         check(!client.OpInFlight(), "OpInFlight: the gate opens once the write op answers");
         client.DispatchLine("{\"id\":" + std::to_string(readId) + ",\"ok\":true,\"result\":{}}");
         check(client.PendingCount() == 0, "OpInFlight: nothing is left waiting");
+    }
+
+    // ---- (e) ゲートの阻害要因を全列挙 (spec §4.1 の 13 種) ----
+    {
+        // 1 つずつ立てて「その 1 件だけ」が返ること。表の 13 行を機械的に舐める
+        struct Row {
+            const char* name;
+            bool GateInputs::*field;
+            GateBlocker expected;
+        };
+        static const Row kRows[] = {
+            { "SceneDirty", &GateInputs::sceneDirty, GateBlocker::SceneDirty },
+            { "ActorEdit", &GateInputs::actorEdit, GateBlocker::ActorEdit },
+            { "AnimationDirty", &GateInputs::animationDirty, GateBlocker::AnimationDirty },
+            { "ControllerDirty", &GateInputs::controllerDirty, GateBlocker::ControllerDirty },
+            { "MixerDirty", &GateInputs::mixerDirty, GateBlocker::MixerDirty },
+            { "ProjectSettingsDirty", &GateInputs::projectSettingsDirty,
+              GateBlocker::ProjectSettingsDirty },
+            { "Playing", &GateInputs::playing, GateBlocker::Playing },
+            { "NetActive", &GateInputs::netActive, GateBlocker::NetActive },
+            { "BuildRunning", &GateInputs::buildRunning, GateBlocker::BuildRunning },
+            { "ScriptBuildRunning", &GateInputs::scriptBuildRunning,
+              GateBlocker::ScriptBuildRunning },
+            { "OpInFlight", &GateInputs::opInFlight, GateBlocker::OpInFlight },
+            { "MergeInProgress", &GateInputs::mergeInProgress, GateBlocker::MergeInProgress },
+            { "ServiceUnavailable", &GateInputs::serviceUnavailable,
+              GateBlocker::ServiceUnavailable },
+        };
+        static_assert(std::size(kRows) == static_cast<size_t>(GateBlocker::Count),
+                      "GateBlocker を足したらこの表にも足すこと (足さないと新しい条件が "
+                      "永久に未検査で通る)");
+        check(ComputeBlockers(GateInputs{}).empty(),
+              "gate: nothing set means the write op may run");
+        bool allSingles = true;
+        for (const Row& r : kRows) {
+            GateInputs in;
+            in.*(r.field) = true;
+            const std::vector<GateBlocker> got = ComputeBlockers(in);
+            if (got.size() != 1 || got[0] != r.expected) {
+                MYE_LOG_ERROR("  gate: %s did not produce exactly its own blocker", r.name);
+                allSingles = false;
+            }
+            // 文言が引けること (Tr の表に載せ忘れると空文字列のツールチップになる)
+            if (Tr(GateBlockerText(r.expected))[0] == '\0') {
+                MYE_LOG_ERROR("  gate: %s has no localized reason", r.name);
+                allSingles = false;
+            }
+        }
+        check(allSingles, "gate: each of the 13 conditions maps to exactly one reason with text");
+
+        // 複合: **全件が列挙順で**返る (最初の 1 件で止めない)
+        GateInputs many;
+        many.sceneDirty = true;
+        many.playing = true;
+        many.serviceUnavailable = true;
+        const std::vector<GateBlocker> got = ComputeBlockers(many);
+        check(got.size() == 3 && got[0] == GateBlocker::SceneDirty
+                  && got[1] == GateBlocker::Playing
+                  && got[2] == GateBlocker::ServiceUnavailable,
+              "gate: three reasons come back together, in declaration order");
+    }
+
+    // ---- (f) EndBatch の適用順と Deleted の除外 ----
+    {
+        auto change = [](const wchar_t* p, BatchChange::Kind k) {
+            BatchChange c;
+            c.path = p;
+            c.kind = k;
+            return c;
+        };
+        // わざと「参照される側が後ろ」の並びで渡す
+        const std::vector<BatchChange> mixed = {
+            change(L"c:/p/assets/a.scene.json", BatchChange::Kind::Modified),
+            change(L"c:/p/assets/hero.actor.json", BatchChange::Kind::Modified),
+            change(L"c:/p/assets/hero.glb", BatchChange::Kind::Modified),
+            change(L"c:/p/assets/wall.mat.json", BatchChange::Kind::Modified),
+            change(L"c:/p/assets/b_tex.png", BatchChange::Kind::Modified),
+            change(L"c:/p/assets/a_tex.png", BatchChange::Kind::Added),
+            change(L"c:/p/assets/lit.hlsl", BatchChange::Kind::Modified),
+            change(L"c:/p/assets/gone.png", BatchChange::Kind::Deleted),
+        };
+        const std::vector<std::wstring> ordered = OrderBatch(mixed);
+        check(ordered.size() == 7, "OrderBatch: the deleted file is dropped from the output");
+        bool noDeleted = true;
+        for (const std::wstring& p : ordered) {
+            if (p.find(L"gone.png") != std::wstring::npos) {
+                noDeleted = false;
+            }
+        }
+        check(noDeleted, "OrderBatch: a Deleted change never reaches HandleChange");
+        // 種別順: hlsl -> png -> mat -> glb -> actor -> scene
+        auto indexOf = [&ordered](const wchar_t* needle) {
+            for (size_t i = 0; i < ordered.size(); ++i) {
+                if (ordered[i].find(needle) != std::wstring::npos) {
+                    return static_cast<int>(i);
+                }
+            }
+            return -1;
+        };
+        check(indexOf(L"lit.hlsl") < indexOf(L"a_tex.png")
+                  && indexOf(L"a_tex.png") < indexOf(L"wall.mat.json")
+                  && indexOf(L"wall.mat.json") < indexOf(L"hero.glb")
+                  && indexOf(L"hero.glb") < indexOf(L"hero.actor.json")
+                  && indexOf(L"hero.actor.json") < indexOf(L"a.scene.json"),
+              "OrderBatch: texture -> mat -> model -> actor -> scene (the referenced side first)");
+        check(indexOf(L"a_tex.png") < indexOf(L"b_tex.png"),
+              "OrderBatch: files of the same kind come back in ascending key order");
+        // Renamed は新しい名前が Modified と同じ扱いで残る
+        BatchChange ren = change(L"c:/p/assets/new.png", BatchChange::Kind::Renamed);
+        ren.oldPath = L"c:/p/assets/old.png";
+        const std::vector<std::wstring> renamed = OrderBatch({ ren });
+        check(renamed.size() == 1 && renamed[0].find(L"new.png") != std::wstring::npos,
+              "OrderBatch: a rename applies the new name and forgets the old one");
+        check(OrderBatch({}).empty(), "OrderBatch: an empty batch stays empty");
+    }
+
+    // ---- (f2) 段階分類の表 (spec §4.1) ----
+    {
+        auto stageOf = [](std::vector<StageChange> changes, const char* activeScene) {
+            StageInputs in;
+            in.changes = std::move(changes);
+            in.activeScene = activeScene;
+            return Classify(in);
+        };
+        auto one = [](const char* path, BatchChange::Kind k = BatchChange::Kind::Modified) {
+            StageChange c;
+            c.path = path;
+            c.kind = k;
+            return c;
+        };
+
+        check(stageOf({ one("assets/textures/wall.png") }, "assets/scenes/main.scene.json")
+                  == ApplyStage::A,
+              "stage: a texture is swapped in place (A)");
+        check(stageOf({ one("assets/scenes/other.scene.json") }, "assets/scenes/main.scene.json")
+                  == ApplyStage::A,
+              "stage: a scene that is not open is a no-op (A)");
+        check(stageOf({ one("project.mye.json") }, "") == ApplyStage::A,
+              "stage: the manifest is a no-op (A)");
+        check(stageOf({ one("readme.md") }, "") == ApplyStage::A,
+              "stage: an unknown extension is a no-op (A)");
+        check(stageOf({ one("assets/scenes/main.scene.json") }, "assets/scenes/main.scene.json")
+                  == ApplyStage::B,
+              "stage: the scene that is open forces a reopen (B)");
+        check(stageOf({ one("src/GameLogic/Scripts/Player.cpp") }, "") == ApplyStage::B,
+              "stage: a C++ script lives under src/GameLogic/Scripts (B)");
+        check(stageOf({ one("assets/scripts/Player.cs") }, "") == ApplyStage::B,
+              "stage: a C# script needs a recompile (B)");
+        check(stageOf({ one("assets/anim/hero.controller.json") }, "") == ApplyStage::B
+                  && stageOf({ one("assets/terrain/l.terrain.json") }, "") == ApplyStage::B
+                  && stageOf({ one("assets/terrain/l.terrain.edit") }, "") == ApplyStage::B,
+              "stage: controller and terrain go through the reopen path (B)");
+        check(stageOf({ one("assets/input/actions.json") }, "") == ApplyStage::B
+                  && stageOf({ one("assets/project_settings.json") }, "") == ApplyStage::B,
+              "stage: the shared settings files force a reopen (B)");
+        check(stageOf({ one("assets/textures/wall.png", BatchChange::Kind::Deleted) }, "")
+                  == ApplyStage::B,
+              "stage: a deleted asset cannot be swapped in place, so it is B");
+        check(stageOf({ one("assets/schemas/health.component.schema.json") }, "")
+                  == ApplyStage::C,
+              "stage: a schema change means TypeIds move - restart (C)");
+        {
+            StageChange meta = one("assets/textures/wall.png.meta");
+            check(Classify(StageInputs{ { meta }, "", kCollabMaxBatchApply }) == ApplyStage::A,
+                  "stage: a .meta whose guid did not move rides with its asset (A)");
+            meta.metaGuidChanged = true;
+            check(Classify(StageInputs{ { meta }, "", kCollabMaxBatchApply }) == ApplyStage::C,
+                  "stage: a .meta whose guid moved invalidates every reference (C)");
+            StageChange renamedMeta = one("assets/textures/wall.png.meta",
+                                          BatchChange::Kind::Renamed);
+            check(Classify(StageInputs{ { renamedMeta }, "", kCollabMaxBatchApply })
+                      == ApplyStage::C,
+                  "stage: a renamed .meta is C as well");
+        }
+        // 混在は最も重いもの
+        check(stageOf({ one("assets/textures/wall.png"),
+                        one("assets/schemas/x.component.schema.json"),
+                        one("assets/scripts/Player.cs") },
+                      "")
+                  == ApplyStage::C,
+              "stage: a mixed set takes the heaviest stage");
+        // actor と scene の同居 (どちらも単体では A)
+        check(stageOf({ one("assets/actors/hero.actor.json"),
+                        one("assets/scenes/other.scene.json") },
+                      "assets/scenes/main.scene.json")
+                  == ApplyStage::B,
+              "stage: an actor and a scene moving together must be reopened (B)");
+        check(stageOf({ one("assets/actors/hero.actor.json") }, "assets/scenes/main.scene.json")
+                  == ApplyStage::A,
+              "stage: the actor alone is still applied in place (A)");
+        // 件数上限
+        {
+            StageInputs many;
+            many.activeScene = "";
+            for (int i = 0; i <= kCollabMaxBatchApply; ++i) {
+                many.changes.push_back(one(("assets/t/" + std::to_string(i) + ".png").c_str()));
+            }
+            check(static_cast<int>(many.changes.size()) == kCollabMaxBatchApply + 1
+                      && Classify(many) == ApplyStage::C,
+                  "stage: more than kCollabMaxBatchApply changes is a restart (C)");
+            many.changes.pop_back();
+            check(Classify(many) == ApplyStage::A, "stage: exactly the limit is still A");
+        }
+    }
+
+    // ---- 実 DLL 経由の結線 (MYE_COLLAB_PROBE=<repo> のときだけ) ----
+    // ★窓のボタン -> Session -> DLL -> git の 1 本を、UI を触らずに実走させる。
+    //   ここを通していないと「ゲートは正しいがボタンが何にも繋がっていない」に
+    //   気付けない (どの純関数テストも配線は見ていない)
+    if (const char* probe = std::getenv("MYE_COLLAB_PROBE"); probe != nullptr && probe[0] != '\0') {
+        const std::wstring root = Utf8ToWide(probe);
+        SourceControlSession scm;
+        scm.Start(GetExecutableDir(), root);
+        auto pump = [&scm](const std::function<bool()>& done, int timeoutMs) {
+            const auto deadline =
+                std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
+            while (std::chrono::steady_clock::now() < deadline) {
+                scm.Poll();
+                if (done()) {
+                    return true;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+            scm.Poll();
+            return done();
+        };
+        const bool ready = pump([&scm] { return scm.Model().valid; }, 15000);
+        check(ready && scm.State() == Unavailable::None,
+              "probe: the session reached a usable state through the real DLL");
+        if (ready) {
+            GateInputs gi;
+            gi.serviceUnavailable = scm.State() != Unavailable::None;
+            check(ComputeBlockers(gi).empty(), "probe: a healthy session leaves the gate open");
+
+            // 未追跡ファイルを 1 個置いて revert で消す = 書き込み系の往復
+            const fs::path scratch = fs::path(root) / L"mye_probe_scratch.txt";
+            {
+                std::ofstream f(scratch, std::ios::binary);
+                f << "probe";
+            }
+            scm.RequestStatus();
+            const bool listed = pump(
+                [&scm] {
+                    return scm.Model().FindEntry("mye_probe_scratch.txt") != nullptr;
+                },
+                15000);
+            check(listed, "probe: the new file shows up in status");
+            bool done = false;
+            bool ok = false;
+            scm.Revert({ "mye_probe_scratch.txt" },
+                       [&done, &ok](bool success, const std::string&, const std::string&) {
+                           done = true;
+                           ok = success;
+                       });
+            check(pump([&done] { return done; }, 30000) && ok,
+                  "probe: revert answers through the real DLL");
+            std::error_code ec;
+            check(!fs::exists(scratch, ec),
+                  "probe: reverting an untracked file deletes it from disk");
+
+            // サービスが死んだら**ゲートが閉じる**ところまで通す (spec §4.0 / M66b の
+            // 積み残し)。DLL 側の panic 注入は v1 で凍結した op 一覧の外なので、
+            // サービスが出すのと同じ通知行を配って C++ の経路だけを実走させる
+            scm.Client().DispatchLine(
+                "{\"event\":\"service_error\",\"code\":\"internal_panic\",\"detail\":\"probe\"}");
+            check(scm.State() == Unavailable::ServiceDied,
+                  "probe: service_error moves the session to ServiceDied");
+            GateInputs dead;
+            dead.serviceUnavailable = scm.State() != Unavailable::None;
+            const std::vector<GateBlocker> blocked = ComputeBlockers(dead);
+            check(blocked.size() == 1 && blocked[0] == GateBlocker::ServiceUnavailable,
+                  "probe: a dead service closes the write gate");
+        }
+        scm.Shutdown();
     }
 
     if (failCount == 0) {

@@ -56,3 +56,12 @@ tools\replay_verify.bat
 - [should] **差分は別の dockable 窓「Diff」** (読み取り専用、選択時に開く / 閉じられる) にし、Changes タブの inline ペインを外す。元計画 M66c の「読み取り専用の子窓」に戻す形。`###Diff` の ID を LocalizationTable に足す (規則 10)。
 - 上 2 点は「ユーザーの手触り」で再調整しうるので、実装後に既定レイアウトのスクショを 1 枚 `cache/` に残し、SELF_EVAL にパスを書く。
 - Branches タブの一覧も同じ高さ制約を受けるので、左列前提で組む。
+
+## planner 追記 (sub-04 round 1 の判定から。coder は着手前に読む)
+
+- [should] **ゲートの穴を塞ぐ**: Asset Browser の [Rebuild Scripts] = `AssetOps::RebuildGameLogic` (`AssetOps.cpp:1427-1447`) は `ShellExecuteW` の fire-and-forget でハンドルを持たず、その間 `GateBlocker::ScriptBuildRunning` が立たない。checkout は `src/GameLogic/Scripts/` を丸ごと入れ替えるので、ここで初めて実害になる。直し方: `StartGameLogicBuild` (ハンドルを返す既存の口) に寄せ、`EditorApp` が HANDLE を保持して毎フレーム `PollProcess`、`GateInputs.scriptBuildRunning` に OR で流す。DllReloader の監視は従来どおり (ビルド出力の場所は変えない)。
+- [should] **fixture にテクスチャを参照するエンティティを 1 個置く** (`tools/collab_fixture.ps1`)。sub-04 の受け入れ条件 3 後半 (テクスチャだけ変えて破棄 → 絵が戻る) と本サブの受け入れ条件 3 (A: テクスチャだけ違うブランチへ切替 → 絵が変わる) は、今の fixture (エンティティ 0 件) では `HandleChange` が no-op で画素証拠が撮れない。最小: 床の平面 1 枚 + `test.png` を貼る `.mat.json`。既存の 5 シナリオの期待 NDJSON が変わる (entries が増える) ので `--update` 後に**全行を読んで**採用する。
+- 段階 C のモーダルは sub-04 の差し戻しで『再起動』のみになる。checkout の事前予測が C のときは、実行**前**の確認ダイアログで「再起動します。続けますか」を取る (実行後は取り返しがつかないので、ユーザーが止められるのは実行前だけ)。
+- 書き込み系 op を `GitTransaction` に足すときは coder 申し送りどおり「変更集合の決め方」だけ差し替える (`BeginOp` / `ApplyResult` / `BuildChangeSet` は op 非依存)。checkout は事前 `diff_names(HEAD, target)`、事後 `diff_names(before, after)`。
+- [nit、sub-04 round 2 から] 段階 C モーダルが画面中央でなく上寄り (y ≒ 137px) に出る (`cache/scm_m66d_restart.png`)。破棄の確認モーダルが open stack に残ったまま次の OpenPopup をしている疑い (未確認)。Branches / Diff のモーダルを足すときに「Applying を 1 フレーム描いて CloseCurrentPopup を明示」の形で一緒に見る。実害なし (modal として入力は止まっている)。
+- `GitTransaction::Hooks::relaunch` は **bool を返す契約** (sub-04 round 2)。checkout / pull で段階 C を通すときも失敗を握り潰さない (握り潰すとモーダルが閉じて「あとで」と同じ状態になる)。

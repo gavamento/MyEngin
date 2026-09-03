@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <vector>
 
+#include "Editor/DocumentDirty.h"
 #include "Engine/Core/Localization.h"
 #include "Engine/Engine/Audio/AudioSystem.h"
 
@@ -414,6 +415,9 @@ void AudioMixerWindow::OnImGui(EngineContext& ctx)
         ImGui::End();
         return;
     }
+    // 未保存判定に使う参照を控える (M66d)
+    audio_ = ctx.audio;
+    mixers_ = ctx.mixers;
     if (!ctx.audio->IsReady()) {
         ImGui::TextDisabled("%s", Tr(StrId::Mixer_NoDevice));
     }
@@ -436,6 +440,25 @@ void AudioMixerWindow::OnImGui(EngineContext& ctx)
 
     DrawFooter(ctx);
     ImGui::End();
+}
+
+bool AudioMixerWindow::HasUnsavedChanges() const
+{
+    if (audio_ == nullptr || mixers_ == nullptr) {
+        return false;
+    }
+    const uint64_t hash = mixers_->ActiveHash();
+    const MixerAsset* asset = mixers_->Get(hash);
+    if (asset == nullptr) {
+        return false; // アクティブな .mixer.json が無い = 保存先が無い
+    }
+    // Save が組み立てるものと**同じ形**を作る (同一性のフィールドはアセット側を採る)。
+    // ここを揃えないと hash / name / path の差だけで常に未保存扱いになる
+    MixerAsset cur = audio_->CurrentMixer();
+    cur.hash = asset->hash;
+    cur.name = asset->name;
+    cur.path = asset->path;
+    return TextDiffersFromDisk(asset->path, MixerLibrary::ToJson(cur).dump(2));
 }
 
 } // namespace mye

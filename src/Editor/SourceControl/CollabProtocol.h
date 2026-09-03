@@ -30,6 +30,10 @@ constexpr const char* kCommit = "commit";
 constexpr const char* kLog = "log";
 constexpr const char* kDiff = "diff";
 constexpr const char* kIdentityCheck = "identity_check";
+// M66d。revert は書き込み系 = GitTransaction (ゲート + ReloadHub の一括適用) 経由でだけ
+// 投げる。diff_names は読み取り系で、既に上の kReadOps 表に載っている
+constexpr const char* kRevert = "revert";
+constexpr const char* kDiffNames = "diff_names";
 } // namespace collabop
 
 // op の待ち方 (spec §4.4「タイムアウト」)。

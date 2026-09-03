@@ -3,20 +3,28 @@
 #include <string>
 #include <vector>
 
+#include "Editor/SourceControl/GitTransaction.h"
 #include "Editor/SourceControl/SourceControlState.h"
 
 namespace mye {
 
-// 窓が EditorApp に頼むこと / EditorApp が窓に渡すこと (M66c)。
+// 窓が EditorApp に頼むこと / EditorApp が窓に渡すこと (M66c / M66d)。
 //
 // ★窓に EngineContext を渡さない。渡すと「ソース管理の窓がシーンを開き直す」
-//   ような越境が書けてしまう。頼めるのは**保存 1 個**だけに絞る
+//   ような越境が書けてしまう。頼めるのは**保存**と**破棄の要求**だけに絞る
+//   (実際の破棄は GitTransaction が確認モーダルとゲートを通してから実行する)
 struct SourceControlHost {
     // 今開いている文書 (シーン or ミニシーン編集中のアセット) に未保存の変更があるか
     bool sceneDirty = false;
     // 保存を実行し、保存した文書の**絶対パス**を返す。
     // 失敗 (まだ dirty) / 何もしなかったときは空文字列
     std::function<std::wstring()> saveDocument;
+    // 書き込み系 git 操作を今実行できない理由 (M66d)。空 = 実行してよい。
+    // ★窓はこれを**判定に使うだけ**で自分では作らない。ゲートの表を窓側にも
+    //   書くと、2 箇所の条件が食い違って「押せるのに何も起きない」が生まれる
+    std::vector<GateBlocker> writeBlockers;
+    // 破棄 (revert) を要求する。paths は toplevel 相対、untracked = 削除される件数
+    std::function<void(std::vector<std::string>, int)> requestRevert;
 };
 
 // Source Control 窓 (M66b = 読み取り、M66c = stage / unstage / commit / History / diff)。
@@ -45,6 +53,11 @@ private:
     void DrawHistory(SourceControlSession& scm);
     // ツリーを 1 ノード分描く (再帰)
     void DrawNode(const SourceControlModel& model, int index);
+    // ゲートが閉じている理由をツールチップに出す (直前の項目に対して)
+    static void DrawBlockerTooltip(const std::vector<GateBlocker>& blockers);
+    // 行の集合 -> revert に渡すパスと「削除される件数」
+    static void CollectRevertTargets(const std::vector<PairedEntry>& rows,
+                                     std::vector<std::string>& paths, int& untracked);
     // 選択中のパスに対応する行を集める (消えた行は黙って落とす)
     std::vector<PairedEntry> SelectedRows(const SourceControlModel& model) const;
     // 選択が変わったら差分を取り直す

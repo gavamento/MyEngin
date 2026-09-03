@@ -2,6 +2,7 @@
 
 #include <algorithm>
 
+#include "Editor/SourceControl/PairRule.h"
 #include "Engine/Core/Localization.h"
 #include "Engine/Renderer/ImGuiTheme.h" // themeColor (意味色。バッジ色はここからしか採らない)
 
@@ -284,6 +285,33 @@ void SourceControlWindow::DrawHeader(SourceControlSession& scm)
     }
 }
 
+void SourceControlWindow::DrawBlockerTooltip(const std::vector<GateBlocker>& blockers)
+{
+    ImGui::BeginTooltip();
+    ImGui::TextUnformatted(Tr(StrId::Scm_Blocked));
+    for (const GateBlocker b : blockers) {
+        // 全件出す。1 件だけ出すと「直したのにまだ押せない」を繰り返させることになる
+        ImGui::BulletText("%s", Tr(GateBlockerText(b)));
+    }
+    ImGui::EndTooltip();
+}
+
+void SourceControlWindow::CollectRevertTargets(const std::vector<PairedEntry>& rows,
+                                               std::vector<std::string>& paths, int& untracked)
+{
+    // ★対の規則で束ねる。本体だけ戻して `.meta` を残すと、次の status で
+    //   「.meta だけ変更されている」行が出る = 直したはずのものが直っていない
+    paths = pairrule::ListedPaths(rows);
+    untracked = 0;
+    for (const PairedEntry& row : rows) {
+        // 未追跡 = 消える。件数を数えて確認モーダルに出す (元に戻せない操作なので、
+        // 「何件消えるか」を押す前に見せる)
+        if (row.state == ChangeState::Untracked) {
+            ++untracked;
+        }
+    }
+}
+
 std::vector<PairedEntry> SourceControlWindow::SelectedRows(const SourceControlModel& model) const
 {
     std::vector<PairedEntry> rows;
@@ -342,6 +370,44 @@ void SourceControlWindow::DrawChanges(SourceControlSession& scm, const SourceCon
         ImGui::TextDisabled("%s", Tr(StrId::Scm_SelectToStage));
     } else {
         ImGui::TextDisabled(Tr(StrId::Scm_SelectedCount), static_cast<int>(rows.size()));
+    }
+
+    // ---- 破棄 (M66d) ----
+    // ★stage / unstage と違い、破棄は working tree を書き換える = **ゲートを通す**。
+    //   再生中や未保存のまま実行すると、エディタが掴んでいるファイルが下から
+    //   差し替わる (未追跡ファイルに至っては消える)。
+    // ★行を分けているのは幅の問題だけではない — 「index を動かすだけの操作」と
+    //   「ディスクを書き換えて元に戻せない操作」を同じ行に並べない
+    //   (既定のドック幅 285px では 4 個目のボタンのラベルが実際に切れた)
+    const bool gateOpen = host.writeBlockers.empty() && host.requestRevert;
+    ImGui::BeginDisabled(rows.empty() || busy || !gateOpen);
+    if (ImGui::Button(Tr(StrId::Scm_Discard))) {
+        std::vector<std::string> paths;
+        int untracked = 0;
+        CollectRevertTargets(rows, paths, untracked);
+        if (!paths.empty()) {
+            host.requestRevert(std::move(paths), untracked);
+        }
+    }
+    ImGui::EndDisabled();
+    // ★BeginDisabled の**外**でツールチップを出す。中に置くと ImGui が
+    //   ホバー判定ごと殺すので「押せない理由」が永久に読めない
+    if (!gateOpen && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+        DrawBlockerTooltip(host.writeBlockers);
+    }
+    ImGui::SameLine();
+    ImGui::BeginDisabled(model.entries.empty() || busy || !gateOpen);
+    if (ImGui::Button(Tr(StrId::Scm_DiscardAll))) {
+        std::vector<std::string> paths;
+        int untracked = 0;
+        CollectRevertTargets(model.entries, paths, untracked);
+        if (!paths.empty()) {
+            host.requestRevert(std::move(paths), untracked);
+        }
+    }
+    ImGui::EndDisabled();
+    if (!gateOpen && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+        DrawBlockerTooltip(host.writeBlockers);
     }
     ImGui::Separator();
 
@@ -455,18 +521,20 @@ void SourceControlWindow::DrawCommitBox(SourceControlSession& scm, const SourceC
     }
     // ★identity は「まだ聞いていない」と「未設定」を区別する。起動直後の
     //   1 フレームで案内が出ると、設定済みの人にも一瞬警告が見える
-    if (scm.IdentityChecked() && !scm.IdentityOk()) {
-        // ★案内を出すだけで**ボタンは塞がない** (spec §M66c は「案内」とだけ言っている)。
-        //   実測: user.name だけ未設定なら git は OS アカウント名で補完して commit に
-        //   成功し、user.email が無いときだけ fatal になる。どちらになるかを
-        //   こちらで先回りして決めず、git の判断に任せて失敗は
-        //   error.code=identity_missing として表示する
+    const bool identityMissing = scm.IdentityChecked() && !scm.IdentityOk();
+    if (identityMissing) {
+        // ★案内を出すだけでなく**ボタンも塞ぐ** (spec §4.1「commit 周り」、M66d)。
+        //   実測: user.name だけ未設定でも git は OS アカウント名 + 機体名
+        //   (`akita@DESKTOP-....(none)`) で補完して commit に**成功する**。
+        //   つまり「git に任せる」を選ぶと、共有する履歴に誰のものか分からない
+        //   author が静かに混ざる。設定 UI は作らない (決定 6) ので案内 + 無効化まで
         ImGui::PushStyleColor(ImGuiCol_Text, themeColor::Warning);
         ImGui::TextWrapped("%s", Tr(StrId::Scm_IdentitySetup));
         ImGui::PopStyleColor();
     }
 
-    const bool canCommit = HasVisibleText(commitMessage_) && !scm.WriteInFlight();
+    const bool canCommit =
+        HasVisibleText(commitMessage_) && !scm.WriteInFlight() && !identityMissing;
     ImGui::BeginDisabled(!canCommit);
     if (ImGui::Button(Tr(StrId::Scm_Commit))) {
         scm.Commit(commitMessage_);

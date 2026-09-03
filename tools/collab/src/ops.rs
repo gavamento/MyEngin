@@ -58,6 +58,8 @@ pub fn dispatch(state: &mut State, op: &str, args: &Value) -> Result<Value, Erro
         "log" => log(state, args),
         "diff" => diff(state, args),
         "identity_check" => identity_check(state),
+        "revert" => revert(state, args),
+        "diff_names" => diff_names(state, args),
         other => Err(ErrorBody::new(code::BAD_REQUEST, format!("unknown op: {other}"))),
     }
 }
@@ -422,4 +424,105 @@ fn config_value(root: &Path, key: &str) -> Result<String, ErrorBody> {
         return Ok(String::new());
     }
     Ok(out.stdout_text())
+}
+
+// ---- M66d: revert / diff_names ----
+
+/// revert — 選んだパスを「最後に stage / commit した状態」へ戻す。
+///
+/// 追跡済みと未追跡で**別の git を打つ**必要がある:
+///   * 追跡済み … `git checkout -- <paths>` (index の内容で working tree を上書き)
+///   * 未追跡   … `git clean -f -- <paths>` (= ファイルを消す)
+/// `checkout` に未追跡パスを混ぜると `error: pathspec ... did not match` で
+/// **呼び出しごと**失敗する = 一緒に選んだ追跡済みファイルまで戻らない。
+/// 逆に `clean` に追跡済みを混ぜても何も起きない (clean は追跡済みを消さない) ので、
+/// 「どちらに振るか」は status を 1 回読んで決める。
+///
+/// ★消えたファイルは元に戻せない。UI 側 (GitTransaction) が確認モーダルで
+///   「未追跡ファイルは削除されます」と明示してから呼ぶこと (spec §4.1)。
+fn revert(state: &mut State, args: &Value) -> Result<Value, ErrorBody> {
+    let paths = arg_paths(args)?;
+    // 未追跡集合を作るために status を 1 回読む。**revert の直前に読む**こと —
+    // C++ 側が持っている status は古いことがあり、その差で「消すつもりの無い
+    // ファイルを消す」形の事故になる
+    let out = git::run(
+        &state.root,
+        &["status", "--porcelain=v2", "-z", "--branch", "--untracked-files=all"],
+    )?;
+    if !out.success() {
+        return Err(git::classify_error(&out));
+    }
+    let info = porcelain::parse_status_v2(&out.stdout);
+    let mut tracked: Vec<String> = Vec::new();
+    let mut untracked: Vec<String> = Vec::new();
+    for p in paths {
+        let is_untracked = info
+            .entries
+            .iter()
+            .any(|e| e.path == p && e.index == '?' && !e.conflict);
+        if is_untracked {
+            untracked.push(p);
+        } else {
+            tracked.push(p);
+        }
+    }
+    if !tracked.is_empty() {
+        // run_per_path_chunk が "--" を足すのでここでは書かない (二重に置くと
+        // pathspec "--" を探しに行って失敗する)
+        run_per_path_chunk(state, &["checkout"], &tracked)?;
+    }
+    if !untracked.is_empty() {
+        // -f = 「本当に消す」。-d は付けない (ディレクトリごと消すのは v1 の範囲外で、
+        // 「1 ファイルを戻したらフォルダが消えた」は取り返しがつかない)
+        run_per_path_chunk(state, &["clean", "-q", "-f"], &untracked)?;
+    }
+    Ok(json!({
+        "reverted": tracked.len() + untracked.len(),
+        "deleted": untracked.len(),
+        "status": status_after_write(state)?,
+    }))
+}
+
+/// diff_names — 2 つのリビジョン間で名前が動いたファイルの一覧 (段階の**事前**判定用)。
+///
+/// `from` / `to` は省略可 (既定 `HEAD`)。`..` を使うのは「共通祖先から」ではなく
+/// 「今の HEAD から見て何が変わるか」を知りたいため — 段階分類は
+/// **working tree に実際に降ってくるファイル**が対象で、履歴の枝分かれは関係ない。
+fn diff_names(state: &mut State, args: &Value) -> Result<Value, ErrorBody> {
+    let from = rev_arg(args, "from")?;
+    let to = rev_arg(args, "to")?;
+    let range = format!("{from}..{to}");
+    let out = git::run(&state.root, &["diff", "--name-status", "-z", "--no-renames", &range])?;
+    // ★--no-renames を付けるのは、リネーム検出の**閾値**が git の設定と版で変わるため。
+    //   同じ 2 コミットの差分が機体によって R にも A+D にもなると、段階分類 (R は A 段階、
+    //   D は B 段階) が機体依存になる。検出を切って A+D に固定すれば必ず重い側に倒れる
+    if !out.success() {
+        return Err(git::classify_error(&out));
+    }
+    let names: Vec<Value> = porcelain::parse_name_status_z(&out.stdout)
+        .into_iter()
+        .map(|e| {
+            let mut o = serde_json::Map::new();
+            o.insert("path".into(), Value::String(e.path));
+            o.insert("status".into(), Value::String(e.status.to_string()));
+            if let Some(old) = e.old_path {
+                o.insert("oldPath".into(), Value::String(old));
+            }
+            Value::Object(o)
+        })
+        .collect();
+    Ok(json!({ "from": from, "to": to, "names": names }))
+}
+
+/// リビジョン名の検証。**`-` 始まりと空白を弾く**だけの最小限。
+/// git のオプションに化けるのを防ぐのが目的で、実在確認は git に任せる
+fn rev_arg(args: &Value, key: &str) -> Result<String, ErrorBody> {
+    let raw = args.get(key).and_then(|v| v.as_str()).unwrap_or("HEAD").trim();
+    if raw.is_empty() {
+        return Ok("HEAD".to_string());
+    }
+    if raw.starts_with('-') || raw.contains(char::is_whitespace) {
+        return Err(ErrorBody::new(code::BAD_REQUEST, format!("bad revision: {raw}")));
+    }
+    Ok(raw.to_string())
 }

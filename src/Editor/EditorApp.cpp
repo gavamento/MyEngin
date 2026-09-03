@@ -12,6 +12,8 @@
 #include "Editor/AssetOps.h"
 #include "Editor/CreateMenu.h"
 #include "Editor/EditorGlobalSettings.h"
+#include "Editor/ProjectManager.h" // M66d: 段階 C の RelaunchSelfWithProject
+#include "Engine/Engine/Script/ManagedHost.h" // M66d: 段階 B の .cs 再コンパイル
 #include "Engine/Core/Hash.h"
 #include "Engine/Core/Localization.h"
 #include "Engine/Core/Log.h"
@@ -20,6 +22,7 @@
 #include "Engine/Engine/HotReload/DllReloader.h"
 #include "Engine/Engine/HotReload/ReloadHub.h"
 #include "Engine/Engine/ModelLoader.h"
+#include "Engine/Engine/Net/NetRuntime.h"
 #include "Engine/Engine/Prefab.h"
 #include "Engine/Engine/Project.h"
 #include "Engine/Engine/Script/ScriptHost.h"
@@ -229,6 +232,52 @@ void EditorApp::OnStart(EngineContext& ctx)
         MYE_LOG_INFO("[collab] canonicalRoot mismatch: recorded=%s actual=%s",
                      scm_.CanonicalRoot().c_str(), WideToUtf8(ctx.projectRoot).c_str());
         toasts_.Notify(LogLevel::Warn, Tr(StrId::Scm_CanonicalMismatch));
+    }
+    // ---- 書き込みトランザクション (M66d) ----
+    // ★後処理でシーンを開き直す / 再起動する必要があるので、EditorApp の私有関数を
+    //   フックとして渡す。GitTransaction 側は「誰がやるか」を知らないまま
+    //   段階 A/B/C の手順だけを持つ
+    {
+        GitTransaction::Hooks hooks;
+        hooks.loadScene = [this, &ctx](const std::wstring& path) {
+            const bool ok = LoadSceneFromPath(ctx, path);
+            if (ok) {
+                savedStateSerial_ = undo_.StateSerial(); // ロード直後 = clean
+            }
+            return ok;
+        };
+        hooks.newScene = [this, &ctx]() {
+            // アクティブシーンがブランチ側で消えた (spec §4.1)。
+            // ★lastScenePath も消す — 残すと次の起動で「無いファイル」を開こうとする
+            ExecuteAction(ctx, PendingAction::NewScene);
+            scenePath_.clear();
+            ctx.reloadHub->SetActiveScenePath(L"");
+            settings_.lastScenePath.clear();
+            settings_.Save();
+        };
+        hooks.toast = [this](LogLevel level, const std::string& text) {
+            toasts_.Notify(level, text);
+        };
+        hooks.compileCs = [&ctx]() {
+            if (ctx.managedHost != nullptr && ctx.managedHost->IsReady()) {
+                ctx.managedHost->CompileScripts(ctx.assetsRoot + L"\\scripts");
+            }
+        };
+        hooks.relaunch = [&ctx]() {
+            // 失敗 (ShellExecuteW が 32 以下) は false を返す。呼び手はモーダルを
+            // 閉じずに「手動で起動し直してください」を出す = 食い違ったまま編集させない
+            if (!RelaunchSelfWithProject(ctx.projectRoot)) {
+                return false;
+            }
+            ctx.requestExit = true;
+            return true;
+        };
+        hooks.activeScenePath = [this]() {
+            // ミニシーン編集中は「今開いている文書」= アセット側。
+            // ただしゲートが ActorEdit で閉じているので、実際にはここへ来ない
+            return actorEdit_ ? actorEdit_->path : scenePath_;
+        };
+        gitTx_.SetHooks(std::move(hooks));
     }
     savedStateSerial_ = undo_.StateSerial(); // ロード直後 = clean
     {
@@ -603,6 +652,12 @@ void EditorApp::OnImGui(EngineContext& ctx)
         //   渡すと、ソース管理の窓からシーンを開き直すような越境が書けてしまう
         SourceControlHost scmHost;
         scmHost.sceneDirty = IsSceneDirty();
+        // M66d: working tree を書き換えるボタン (破棄) のゲート。窓は判定に使うだけで
+        // 表そのものは持たない (2 箇所に条件を書くと必ず食い違う)
+        scmHost.writeBlockers = ComputeBlockers(BuildGateInputs(ctx));
+        scmHost.requestRevert = [this](std::vector<std::string> paths, int untracked) {
+            gitTx_.RequestRevert(std::move(paths), untracked);
+        };
         scmHost.saveDocument = [this, &ctx]() -> std::wstring {
             const std::wstring path = actorEdit_ ? actorEdit_->path : scenePath_;
             SaveCurrentScene(ctx);
@@ -701,6 +756,12 @@ void EditorApp::OnImGui(EngineContext& ctx)
     if (editBar.exitRequested) {
         RequestGuardedAction(ctx, PendingAction::ExitActorEdit); // dirty なら確認モーダル
     }
+
+    // ---- 書き込みトランザクション (M66d) ----
+    // ★**必ず ctx.scene を本シーンへ戻した後**に呼ぶ。後処理でシーンを開き直すので、
+    //   ミニシーンへ差し替えたままだとアセット側の World を潰してしまう
+    //   (M48k 由来の use-after-free と同族の罠)
+    gitTx_.OnImGui(ctx, scm_);
 
     // ---- フィードバック層 (M27b): 最前面に描く ----
     if (closeRequested_) {
@@ -1046,6 +1107,12 @@ void EditorApp::HandleShortcuts(EngineContext& ctx)
     if (ImGui::GetIO().WantTextInput) {
         return;
     }
+    // M66d: 書き込みトランザクション中 (確認モーダル / git 実行中) は
+    // Save も Undo も通さない。**モーダルは ImGui の入力しか止めない** —
+    // ショートカットはエンジンのキー状態を直接見ているので別に塞ぐ必要がある
+    if (gitTx_.Busy()) {
+        return;
+    }
     if (shortcuts_.Pressed(Shortcut::Save)) {
         SaveCurrentScene(ctx);
     }
@@ -1204,6 +1271,36 @@ void EditorApp::DeleteSelection(EngineContext& ctx)
     ctx.scene->GetWorld().ApplyStructuralChanges();
     selection_.Clear();
     undo_.EndRecord(selection_); // CaptureAfter 無し → destroyed 扱い
+}
+
+GateInputs EditorApp::BuildGateInputs(EngineContext& ctx)
+{
+    GateInputs in;
+    // ---- 安い判定 (毎フレーム見てよい) ----
+    in.sceneDirty = IsSceneDirty();
+    in.actorEdit = actorEdit_ != nullptr;
+    in.playing = playMode_.InPlayMode();
+    in.netActive = ctx.net != nullptr && ctx.net->active;
+    in.buildRunning = buildSettings_.IsPipelineRunning();
+    in.scriptBuildRunning = buildSettings_.IsScriptBuildRunning();
+    in.opInFlight = scm_.WriteInFlight();
+    in.mergeInProgress = scm_.MergeInProgress() || scm_.RebaseInProgress();
+    in.serviceUnavailable = scm_.State() != Unavailable::None;
+    // ---- 高い判定 (4 窓の直列化)。500 ms キャッシュ ----
+    // ★毎フレームやると Animation 窓を開いているだけで 60 Hz で JSON を作り続ける
+    const DocumentDirty& dirty = gitTx_.CachedDirty([this]() {
+        DocumentDirty d;
+        d.animation = animation_.HasUnsavedChanges();
+        d.controller = animatorController_.HasUnsavedChanges();
+        d.mixer = audioMixer_.HasUnsavedChanges();
+        d.projectSettings = projectSettings_.HasUnsavedChanges();
+        return d;
+    });
+    in.animationDirty = dirty.animation;
+    in.controllerDirty = dirty.controller;
+    in.mixerDirty = dirty.mixer;
+    in.projectSettingsDirty = dirty.projectSettings;
+    return in;
 }
 
 void EditorApp::SetupDockLayout(unsigned int dockspaceId)
@@ -1393,6 +1490,13 @@ void EditorApp::UpdateWindowTitle(EngineContext& ctx)
 void EditorApp::ProcessPendingFileDrops(EngineContext& ctx)
 {
     if (pendingFileDrops_.empty()) {
+        return;
+    }
+    if (gitTx_.Busy()) {
+        // M66d: git が working tree を書き換えている / その確認中。
+        // ★捨てずに**保留する** (return するだけで pendingFileDrops_ は残る)。
+        //   ここでインポートすると、git が同じディレクトリを書いている最中に
+        //   ファイルを増やすことになる
         return;
     }
     for (PendingFileDrop& pd : pendingFileDrops_) {

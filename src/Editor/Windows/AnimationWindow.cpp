@@ -7,6 +7,7 @@
 #include <functional>
 #include <string>
 
+#include "Editor/DocumentDirty.h"
 #include "Editor/Undo/UndoStack.h"
 #include "Engine/Core/ComponentRegistry.h"
 #include "Engine/Core/Localization.h"
@@ -250,6 +251,9 @@ void AnimationWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
         return;
     }
 
+    // 未保存判定のために「この窓が触ったクリップ」を控える (M66d)
+    MarkTouched(ctx.anims, clip->hash);
+
     ImGui::Text(Tr(StrId::Clip_Name), clip->name.c_str());
     ImGui::SameLine();
     if (ImGui::SmallButton(Tr(StrId::Common_Save))) {
@@ -378,6 +382,33 @@ void AnimationWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
     ImGui::EndChild();
 
     ImGui::End();
+}
+
+void AnimationWindow::MarkTouched(AnimationLibrary* anims, uint64_t clipHash)
+{
+    anims_ = anims;
+    if (clipHash == 0
+        || std::find(touched_.begin(), touched_.end(), clipHash) != touched_.end()) {
+        return;
+    }
+    touched_.push_back(clipHash);
+}
+
+bool AnimationWindow::HasUnsavedChanges() const
+{
+    if (anims_ == nullptr) {
+        return false;
+    }
+    for (const uint64_t hash : touched_) {
+        const AnimationClipAsset* clip = anims_->Get(hash);
+        if (clip == nullptr) {
+            continue; // ライブラリから消えた (= 保存対象でもない)
+        }
+        if (TextDiffersFromDisk(clip->path, AnimationLibrary::ToJson(*clip).dump(2))) {
+            return true;
+        }
+    }
+    return false;
 }
 
 } // namespace mye
