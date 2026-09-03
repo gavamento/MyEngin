@@ -67,6 +67,7 @@
     <ClCompile Include="..\src\Editor\SourceControl\CollabClient.cpp" />
     <ClCompile Include="..\src\Editor\SourceControl\GitTransaction.cpp" />
     <ClCompile Include="..\src\Editor\SourceControl\PairRule.cpp" />
+    <ClCompile Include="..\src\Editor\SourceControl\ScmHint.cpp" />
     <ClCompile Include="..\src\Editor\SourceControl\SourceControlSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\SourceControl\SourceControlState.cpp" />
     <ClCompile Include="..\src\Editor\SourceControl\StageClassifier.cpp" />
@@ -128,6 +129,7 @@
     <ClInclude Include="..\src\Editor\SourceControl\CollabProtocol.h" />
     <ClInclude Include="..\src\Editor\SourceControl\GitTransaction.h" />
     <ClInclude Include="..\src\Editor\SourceControl\PairRule.h" />
+    <ClInclude Include="..\src\Editor\SourceControl\ScmHint.h" />
     <ClInclude Include="..\src\Editor\SourceControl\SourceControlSelfTest.h" />
     <ClInclude Include="..\src\Editor\SourceControl\SourceControlState.h" />
     <ClInclude Include="..\src\Editor\SourceControl\StageClassifier.h" />

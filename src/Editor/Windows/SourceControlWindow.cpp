@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdio>
 
+#include "Editor/EditorWidgets.h" // ScmBadgeColor (バッジの色表は 1 箇所、M66i)
 #include "Editor/SourceControl/PairRule.h"
 #include "Engine/Core/Localization.h"
 #include "Engine/Renderer/ImGuiTheme.h" // themeColor (意味色。バッジ色はここからしか採らない)
@@ -13,27 +14,9 @@ namespace mye {
 
 namespace {
 
-// 状態 → 意味色。ImGuiTheme の 5 箇条どおり themeColor::* だけを使う
-// (直値の ImVec4 を書くとテーマ切替で 1 箇所だけ取り残される)
-ImVec4 BadgeColor(ChangeState s)
-{
-    switch (s) {
-    case ChangeState::Conflict:
-        return themeColor::Error;
-    case ChangeState::Deleted:
-        return themeColor::Warning;
-    case ChangeState::Added:
-        return themeColor::Success;
-    case ChangeState::Renamed:
-        return themeColor::Prefab;
-    case ChangeState::Modified:
-        return themeColor::Accent;
-    case ChangeState::Untracked:
-    case ChangeState::None:
-    default:
-        return ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled);
-    }
-}
+// 状態 → 意味色は EditorWidgets の ScmBadgeColor へ移した (M66i)。
+// ★Content Browser のバッジ (M66i) と**同じ表**を引くため。ここに残しておくと、
+//   意味の見直しで一覧と Content Browser の色が食い違う
 
 // 利用不可の理由 → 文言
 StrId UnavailableText(Unavailable u)
@@ -1091,7 +1074,7 @@ void SourceControlWindow::DrawNode(const SourceControlModel& model, int index)
     constexpr float kBadgeWidth = 18.0f;
     const float rowX = ImGui::GetCursorPosX();
     const char* badge = ChangeStateBadge(node.state);
-    ImGui::PushStyleColor(ImGuiCol_Text, BadgeColor(node.state));
+    ImGui::PushStyleColor(ImGuiCol_Text, ScmBadgeColor(node.state));
     ImGui::TextUnformatted(badge[0] != '\0' ? badge : " ");
     ImGui::PopStyleColor();
     ImGui::SameLine(rowX + kBadgeWidth);

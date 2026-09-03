@@ -18,9 +18,9 @@
 | sub-05 | OK | 1 | c3be569 | M66e: Branches — 一覧 / 作成 / checkout + 段階の事前判定。依存: sub-04 |
 | sub-06 | OK | 1 | 1e6b8f8 | M66f: fetch / pull / push + 定期 fetch + 通知 + EditorSettings。依存: sub-04 (sub-05 と独立。並列なら SourceControlWindow.cpp / ops.rs のマージ順を司会が決める) |
 | sub-07 | OK | 1 | 3c0bf56 | M66g: 競合 — abort / ours / theirs / continue。依存: sub-06 |
-| sub-08 | OK | 1 | (M66h、下の記入待ち) | M66h: 衛生 — .gitignore テンプレ 4 行 + project_settings.json の個人設定分離。依存: sub-03 (sub-05〜07 と独立) |
-| sub-09 | 実装中 | 0 | | M66i: Content Browser に Git バッジ + 保存直後のヒント。依存: sub-02 (sub-03〜08 と独立) |
-| sub-10 | 未着手 | 0 | | M66j: 仕上げ — engine_spec §14 Source control / README / CLAUDE.md / 規則の記載。依存: sub-01〜sub-09 |
+| sub-08 | OK | 1 | 69e767e | M66h: 衛生 — .gitignore テンプレ 4 行 + project_settings.json の個人設定分離。依存: sub-03 (sub-05〜07 と独立) |
+| sub-09 | OK | 2 | (M66i、下の記入待ち) | M66i: Content Browser に Git バッジ + 保存直後のヒント。依存: sub-02 (sub-03〜08 と独立)。round 1 REWORK (must 1 = バッジ色表 Modified=Accent がテーマ配色ルール 3 に違反 → spec §4.3 の確定表へ。nit 2 件 → sub-10) |
+| sub-10 | 実装中 | 0 | | M66j: 仕上げ — engine_spec §14 Source control / README / CLAUDE.md / 規則の記載。依存: sub-01〜sub-09 |
 
 ## 未決事項 (planner PLAN_RESULT より。coder が「不安・質問」で拾う)
 - ~~S5 の新規アセット登録方式~~ → **閉じた (sub-04)**: 増分登録 (`AssetDatabase::GuidForPath(abs, createIfMissing=true)`)。`ScanAndSync` は 3 表を clear するので解決先が一瞬空になる窓が開く。増分なら `.meta` 同梱の guid をそのまま採る
@@ -123,4 +123,12 @@
   - collab_verify の次の番号は **10**。期待ファイルにマージコミットの件名を載せない (`Merge branch 'main' of <URL>` にリモート URL が入る)。
   - 未検証: UI クリック自体 (プローブ代替)、`git mergetool` の実起動 (`cmd /k` の配線のみ)。sub-06 の未検証「pull の段階 B」は競合シナリオで消込 (シーン開き直りまで観測)。
   - 生成物: `cache\m66g_fx` (+`.gitconfig`)、`cache\m66g_origin.git`、`cache\m66g_peer`、`cache\scm_m66g_*.png`、`cache\m66g_*.log`。
+- **sub-08 (M66h) からの申し送り** (coder SELF_EVAL + planner VERDICT round 1):
+  - 仕様確定 (planner が spec §4.1 / §4.2 / §7 を修正済み): 旧 `project_settings.json` の個人 3 キーは**読み飛ばすだけで移行せず・消さず**。`ParticleSystem::SaveSettings()` の呼び出し元は `ProjectSettingsWindow` の 1 箇所のみ (増やすと決定 8 が崩れ、`ParticleSelfTest` の byte-identical 検査はすり抜ける)。backend ラジオは `HasUnsavedChanges` 対象外。推奨 `.gitignore` の正本は `ProjectTemplates.cpp` の `kRecommendedGitignore` 7 行 (増やすときは fixture の 1 行と `SourceControlSelfTest` (g) の期待も = 3 か所)。`watch.rs` の除外集合は**意図的に揃えない**。`DocumentDirty` → `DiskCompare` 改名は sub-08.md の planner 追記 (a) が正本 (司会の転記漏れ、coder が正しく実施)。
+  - **ユーザー判断 (2026-09-03): acoustic golden 2 枚 (18/19) の run-to-run フレークは「c. 何もしない」** — ローカルは再実行で通す、CI は赤くなったら再実行。M66 では ci.yml も CLAUDE.md も触らない。根治は M66 の外。事実: 同一 Release バイナリで 1/4〜1/2 の確率で (237,443) 付近 ~40×40 画素が動く、sim はビット一致 = 描画側、golden は M65g で撮られ M65h が後から入っている。sub-08 の Engine 層差分は Particle 系のみで音響に触れていない。
+  - planner の nit: 「推奨 .gitignore を適用」は設定ポップアップ内 (発見性は v1.5) / 壊れた C++ スクリプトの実ビルド → Console の error 行は未実走 (reviewer の最終回で 1 度通す価値あり)。
+  - Console のソースジャンプは `LogEntry.file/line` を見る。外部ツールの出力を飛べる形で流すときは `logging::WriteSrc` を直接呼ぶ (`ReportScriptBuildErrors` が実例)。`ParticleSystem::LoadSettings(path)` が public なのはテスト用 (Init 不要で永続化を検査)。
+  - ImGui のドックタブを撮影用に選ぶ: `SelectedTabId` の書き込みは**その実行では効かず `.mye\imgui.ini` に保存されて次回起動で効く**。2 回起動する前提で撮ると確実。
+  - collab_verify の次の番号は **10**。生成物: `cache\m66h_fx` (+`.gitconfig`)、`cache\m66h_ui_*.png`、`cache\m66h_ac*.png`、`cache\m66h_*.log`。
 - planner のエージェント ID はセッション限り。セッションを跨いだら `MODE: VERDICT` 用の planner を新規起動し、文脈は spec.md / sub-NN.md / この台帳で渡す。
+- acoustic golden 2 枚 (18/19) のフレーク = ユーザー判断 c (何もしない、2026-09-03)。M66 では ci.yml / CLAUDE.md を触らない。sub-10 と reviewer の最終検証で赤くなったら shot_verify.bat を再実行して通す。根治は M66 の外 (spec §2 S14)。

@@ -4,6 +4,7 @@
 #include <string>
 
 #include "Editor/DiskCompare.h"
+#include "Editor/SourceControl/ScmHint.h" // M66i: 保存直後に status を取り直させる
 #include "Editor/EditorSettings.h"
 #include "Editor/PartTagNames.h"
 #include "Editor/PhysicsLayerNames.h"
@@ -69,6 +70,7 @@ void ProjectSettingsWindow::OnImGui(EngineContext& ctx, EditorSettings& settings
             if (ImGui::Button(Tr(StrId::PrjSet_SaveParticles))) {
                 ctx.particles->SaveSettings();
                 particleSaved_ = true;
+                scmhint::Changed(ctx.assetsRoot + L"\\project_settings.json"); // M66i
             }
             ImGui::TextDisabled("%s", Tr(StrId::PrjSet_ParticleNote));
             if (particleSaved_) {
@@ -115,6 +117,7 @@ void ProjectSettingsWindow::OnImGui(EngineContext& ctx, EditorSettings& settings
         if (ImGui::Button(Tr(StrId::PrjSet_SaveLayers))) {
             if (ln.Save(ctx.assetsRoot)) {
                 ln.Load(ctx.assetsRoot, true);
+                scmhint::Changed(ctx.assetsRoot + L"\\project_settings.json"); // M66i
             }
         }
     }
@@ -142,6 +145,7 @@ void ProjectSettingsWindow::OnImGui(EngineContext& ctx, EditorSettings& settings
         if (ImGui::Button(Tr(StrId::PrjSet_SavePartTags))) {
             if (pt.Save(ctx.assetsRoot)) {
                 pt.Load(ctx.assetsRoot, true); // 空欄が落ちた結果を読み直す
+                scmhint::Changed(ctx.assetsRoot + L"\\project_settings.json"); // M66i
             }
         }
     }
@@ -415,6 +419,7 @@ void ProjectSettingsWindow::DrawInputSection(EngineContext& ctx)
     if (ImGui::Button(Tr(StrId::PrjSet_SaveInput))) {
         if (ia.Save(ctx.assetsRoot)) {
             ia.Load(ctx.assetsRoot, true);
+            scmhint::Changed(ctx.assetsRoot + L"\\input\\actions.json"); // M66i
         }
     }
 }

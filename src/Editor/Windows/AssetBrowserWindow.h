@@ -9,6 +9,7 @@ namespace mye {
 
 class UndoStack;
 class AssetPreviewCache;
+class SourceControlSession;
 
 // Asset Browser (engine_spec.md 9 章、M11)。
 // assets/ をフォルダツリー + ファイルグリッドで表示。テクスチャはサムネイル、
@@ -18,8 +19,12 @@ class AssetPreviewCache;
 class AssetBrowserWindow {
 public:
     bool open = true; // 閉じる / 再表示 (タブ [x] と Window メニューに連動)
+    // scm は Git バッジの引き先 (M66i)。**null 可** — 裸起動 / Collab 利用不可でも
+    // Content Browser は従来どおり動く。窓の開閉とは無関係に status は最新なので、
+    // Source Control 窓を閉じていてもバッジは出る
     void OnImGui(EngineContext& ctx, Selection& selection, UndoStack& undo,
-                 const std::string& externalEditorCmd, AssetPreviewCache& preview);
+                 const std::string& externalEditorCmd, AssetPreviewCache& preview,
+                 const SourceControlSession* scm);
 
     // ダブルクリックされた .scene.json のパスを取り出す (空 = リクエストなし)。
     // EditorApp が毎フレーム消費し、未保存変更ガードを通してロードする
@@ -70,6 +75,11 @@ private:
     void DoCreate(EngineContext& ctx, UndoStack& undo, const std::string& externalEditorCmd);
     // リネームモーダルを開く準備 (createName_ に現在の stem をプリフィル、M30d)
     void BeginRename(const std::wstring& path);
+
+    // OnImGui の 1 フレームだけ借りる Source Control セッション (M66i)。
+    // ★フレームをまたいで持たない — 保持すると「窓が古いセッションを指したまま」の
+    //   経路ができる。使うのは DrawDirTree / タイル描画からの読み取りだけ
+    const SourceControlSession* scm_ = nullptr;
 
     std::wstring current_; // 表示中フォルダ (絶対パス)
     std::wstring pendingOpenScene_; // ダブルクリックされたシーン (TakePendingOpenScene で消費)

@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "Editor/DiskCompare.h"
+#include "Editor/SourceControl/ScmHint.h" // M66i: 保存直後に status を取り直させる
 #include "Engine/Core/Localization.h"
 #include "Engine/Engine/Audio/AudioSystem.h"
 
@@ -187,8 +188,11 @@ void AudioMixerWindow::Save(EngineContext& ctx)
     cur.name = dst->name;
     cur.path = dst->path;
     *dst = std::move(cur);
-    status_ = ctx.mixers->SaveToFile(hash) ? ("saved: " + dst->name + ".mixer.json")
-                                           : "save failed (see Console)";
+    const bool saved = ctx.mixers->SaveToFile(hash);
+    if (saved) {
+        scmhint::Changed(dst->path); // M66i: バッジと Changes の即時反映
+    }
+    status_ = saved ? ("saved: " + dst->name + ".mixer.json") : "save failed (see Console)";
 }
 
 // ---------------------------------------------------------------------------

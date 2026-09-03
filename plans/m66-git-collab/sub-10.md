@@ -51,4 +51,6 @@ pwsh -File tools\check_rules.ps1
 - コードの衛生 (DocumentDirty 改名 / Scm_ComingSoon 削除 / merge_in_progress 分類) は **sub-08 へ移した**。本サブは引き続きドキュメント専用。
 - engine_spec §14 に書く内容は spec §4.0 (DLL / C ABI / FreeLibrary を呼ばない理由) と §4.1 の確定版 (段階表 / 対の規則 / commit 周り / ブランチ周り / リモート周り / 競合周り / ゲート 13 要因) を正とする。元計画 `plans/quiet-merging-harbor.md` の記述ではなく spec を写すこと。
 - README の「初回認証はターミナルで一度 `git push`」(GCM の GUI は背景 fetch から出ない仕様) を忘れずに。
-- **acoustic golden のフレーク (sub-08 で発見、spec §7)**: ユーザーの回答を待って反映する。(a) なら `ci.yml` の env に `MYE_SHOT_SKIP_ACOUSTIC: 1` を 1 行 + CLAUDE.md の「わざと立てていない」の記述を「M66h で run-to-run 非決定性を実測 (座標 (237,443) 付近) したため一時降格、根治は別マイルストーン」に書き換え、`shot_verify.bat` の囲いが既にあることを確認。(b) なら sub-11 を planner が切る。(c) なら CLAUDE.md にフレークの事実だけ記す。
+- **acoustic golden のフレーク (sub-08 で発見、spec §2 S14 / §7)**: ユーザー判断 = **c. 何もしない** (2026-09-03)。本サブでは `ci.yml` も CLAUDE.md の「わざと立てていない」の記述も**触らない**。全検証を回すとき acoustic 2 枚が赤くなったら `shot_verify.bat` を再実行して通す (受け入れ条件 2 は「再実行で緑」を許容)。根治は M66 の外。
+- [申し送り、sub-09 から] `SoundGenWindow` の `.wav` 書き出しには保存ヒントが無い (監視で 300 ms 後に反映)。数百タイル時のバッジ引きコスト (~1 ms/frame 見込み) は未実測。どちらも v1 では許容 — engine_spec §14 の「既知の制約」に 1 行ずつ書く。
+- [申し送り、sub-09 から] themeColor の新しい割り当てを足すときは (d3) と同型の固定テストを添える (配色ルール違反は画面では「なんとなく読みにくい」としか出ない)。CLAUDE.md の UI 文字列の節の隣に 1 行あってよい。

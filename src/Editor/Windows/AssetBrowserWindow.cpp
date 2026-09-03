@@ -10,6 +10,9 @@
 
 #include "Editor/AssetOps.h"
 #include "Editor/AssetPreviewCache.h"
+#include "Editor/EditorWidgets.h"                    // ScmBadgeColor / DrawScmTileBadge (M66i)
+#include "Editor/SourceControl/ScmHint.h"            // 作成直後のヒント (M66i)
+#include "Editor/SourceControl/SourceControlState.h" // バッジの引き先 (M66i)
 #include "Editor/Undo/UndoStack.h"
 #include "Engine/Core/Localization.h"
 #include "Engine/Core/Log.h"
@@ -161,6 +164,22 @@ const char* TileLabel(const std::wstring& ext, const std::wstring& path, bool is
     return IconFor(ext);
 }
 
+// ツリー行の末尾に Git バッジを添える (M66i)。
+// ★ラベルの**後ろ**に置く。行頭に置くと、変更が 1 件も無い平常時まで
+//   フォルダ名が右へずれる (Source Control 窓の一覧はバッジが主役なので行頭でよいが、
+//   こちらはアセット名が主役)。TreeNodeEx の ItemSize はラベル幅なので
+//   SameLine() は名前の直後に付く (imgui_widgets.cpp の TreeNodeBehavior)。
+// ★呼ぶのは IsItemClicked / D&D / 右クリックメニューを**全部さばいた後**。
+//   先に呼ぶと「直前のアイテム」がバッジ文字になり、右クリックメニューが行から外れる
+void DrawTreeBadge(ChangeState s)
+{
+    if (s == ChangeState::None) {
+        return;
+    }
+    ImGui::SameLine();
+    ImGui::TextColored(ScmBadgeColor(s), "%s", ChangeStateBadge(s));
+}
+
 } // namespace
 
 void AssetBrowserWindow::BeginRename(const std::wstring& path)
@@ -213,6 +232,10 @@ void AssetBrowserWindow::DrawDirTree(EngineContext& ctx, const std::wstring& dir
             }
             ImGui::EndPopup();
         }
+        // フォルダの集約バッジ (配下で最も重い状態。M66i)
+        if (scm_ != nullptr) {
+            DrawTreeBadge(scm_->BadgeForFolder(entry.path().wstring()));
+        }
         if (nodeOpen) {
             DrawDirTree(ctx, entry.path().wstring());
             ImGui::TreePop();
@@ -222,9 +245,10 @@ void AssetBrowserWindow::DrawDirTree(EngineContext& ctx, const std::wstring& dir
 
 void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStack& undo,
                                  const std::string& externalEditorCmd,
-                                 AssetPreviewCache& preview)
+                                 AssetPreviewCache& preview, const SourceControlSession* scm)
 {
     panelRectValid_ = false; // Begin に成功したフレームだけ矩形が有効
+    scm_ = scm;              // このフレームだけ借りる (M66i)
     if (!open) {
         return;
     }
@@ -282,6 +306,11 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
             pendingMoveDstDir_ = ctx.assetsRoot;
         }
         ImGui::EndDragDropTarget();
+    }
+    // assets ルートの集約バッジ (M66i)。ここが唯一「プロジェクト全体に変更があるか」を
+    // Content Browser だけ見て判断できる場所になる
+    if (scm_ != nullptr) {
+        DrawTreeBadge(scm_->BadgeForFolder(ctx.assetsRoot));
     }
     if (rootOpen) {
         DrawDirTree(ctx, ctx.assetsRoot);
@@ -448,6 +477,10 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
                 folderHovered ? IM_COL32(219, 194, 134, 255) : IM_COL32(199, 173, 112, 255),
                 ICON_FA_FOLDER);
             ImGui::PopFont();
+            // フォルダタイルの集約バッジ (M66i)。左上に重ねる = 名前を隠さない
+            if (scm_ != nullptr) {
+                DrawScmTileBadge(scm_->BadgeForFolder(dirPath.wstring()), mn);
+            }
         }
         const std::string dirNameU = WideToUtf8(dirPath.filename().wstring());
         // フォルダ自身も移動のドラッグ元になれる (フォルダ→フォルダ移動、M30b)
@@ -560,6 +593,12 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
             if (ImGui::IsItemHovered()) {
                 dl->AddRect(mn, mx, IM_COL32(255, 255, 255, 96)); // 透明ボタンの代わりのホバー表示
             }
+        }
+        // ファイルタイルのバッジ (M66i)。**`.meta` は本体に束ねて出る** —
+        // グリッドは `.meta` を隠しているので、束ねないと「保存したのに何も出ない」
+        // (新規アセットは本体が ? で `.meta` も ?、どちらも同じ行)
+        if (scm_ != nullptr) {
+            DrawScmTileBadge(scm_->BadgeForFile(path), ImGui::GetItemRectMin());
         }
         // 再帰検索モードではどのサブフォルダの一致か分かるよう相対パスを添える (M51i)
         if (filtering && ImGui::IsItemHovered()) {
@@ -920,50 +959,62 @@ void AssetBrowserWindow::DoCreate(EngineContext& ctx, UndoStack& undo,
 {
     // アセット系 8 種は Create Undo を記録する (M51i: undo = ごみ箱へ / redo = 書き戻し)
     const std::string name = createName_;
+    // 作った実パスをここで受ける (M66i)。各 Create*Asset の末尾に scmhint を
+    // 散らすより、**作成の唯一の入口**であるここで 1 回拾う方が漏れない
+    std::wstring created;
     switch (pendingCreate_) {
     case kCreateFolder:
-        RecordAssetCreated(undo, CreateFolderAsset(current_, name));
+        created = CreateFolderAsset(current_, name);
+        RecordAssetCreated(undo, created);
         break;
     case kCreateScene:
-        RecordAssetCreated(undo, CreateSceneAsset(current_, name));
+        created = CreateSceneAsset(current_, name);
+        RecordAssetCreated(undo, created);
         break;
     case kCreateAnim:
-        RecordAssetCreated(undo, CreateAnimationAsset(ctx, current_, name));
+        created = CreateAnimationAsset(ctx, current_, name);
+        RecordAssetCreated(undo, created);
         break;
     case kCreateMaterial:
-        RecordAssetCreated(undo, CreateMaterialAsset(ctx, current_, name));
+        created = CreateMaterialAsset(ctx, current_, name);
+        RecordAssetCreated(undo, created);
         break;
     case kCreateActor:
-        RecordAssetCreated(undo, CreateActorAsset(ctx, current_, name));
+        created = CreateActorAsset(ctx, current_, name);
+        RecordAssetCreated(undo, created);
         break;
     case kCreateSound:
-        RecordAssetCreated(undo, CreateSoundAsset(ctx, current_, name));
+        created = CreateSoundAsset(ctx, current_, name);
+        RecordAssetCreated(undo, created);
         break;
     case kCreateMixer:
-        RecordAssetCreated(undo, CreateMixerAsset(ctx, current_, name));
+        created = CreateMixerAsset(ctx, current_, name);
+        RecordAssetCreated(undo, created);
         break;
     case kCreatePhysMat: // M59a1
-        RecordAssetCreated(undo, CreatePhysMatAsset(ctx, current_, name));
+        created = CreatePhysMatAsset(ctx, current_, name);
+        RecordAssetCreated(undo, created);
         break;
     case kCreateScript: {
         // スクリプトは Create Undo 対象外 — 既存ファイルなら「開くだけ」で返る経路と
         // 区別できず、Undo が既存ソースをごみ箱送りにしてしまう
-        const std::wstring p = CreateCppScript(ctx, name);
-        if (!p.empty()) {
-            OpenInExternalEditor(externalEditorCmd, p);
+        created = CreateCppScript(ctx, name);
+        if (!created.empty()) {
+            OpenInExternalEditor(externalEditorCmd, created);
         }
         break;
     }
     case kCreateCSharp: {
-        const std::wstring p = CreateCSharpScript(ctx, name);
-        if (!p.empty()) {
-            OpenInExternalEditor(externalEditorCmd, p);
+        created = CreateCSharpScript(ctx, name);
+        if (!created.empty()) {
+            OpenInExternalEditor(externalEditorCmd, created);
         }
         break;
     }
     default:
         break;
     }
+    scmhint::Changed(created); // 空 (失敗 / 既存を開いただけ) なら no-op
 }
 
 bool AssetBrowserWindow::IsClientPosInPanel(float x, float y) const

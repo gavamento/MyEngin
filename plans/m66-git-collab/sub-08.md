@@ -1,7 +1,7 @@
 # sub-08: M66h: 衛生 — .gitignore テンプレ 4 行 + project_settings.json の個人設定分離
 
 - 依存: sub-03 (sub-05〜07 とは独立)
-- 状態: OK (commit: M66h — ハッシュは harness.md のサブ進捗表)
+- 状態: OK (commit 69e767e)
 - 往復: 1
 
 ## やること

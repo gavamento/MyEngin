@@ -16,6 +16,7 @@
 #include "Editor/EditorGlobalSettings.h"
 #include "Editor/ProjectManager.h" // M66d: 段階 C の RelaunchSelfWithProject
 #include "Editor/ProjectTemplates.h" // M66h: 推奨 .gitignore の正本
+#include "Editor/SourceControl/ScmHint.h" // M66i: 保存ヒントの受け口
 #include "Engine/Engine/Script/ManagedHost.h" // M66d: 段階 B の .cs 再コンパイル
 #include "Engine/Core/Hash.h"
 #include "Engine/Core/Localization.h"
@@ -249,6 +250,15 @@ void EditorApp::OnStart(EngineContext& ctx)
     //   ロードに失敗しても例外は飛ばない = エディタの他機能は一切影響を受けない
     scm_.Start(GetExecutableDir(), ctx.projectRoot, settings_.scmAutoFetch,
                settings_.scmFetchIntervalMin);
+    // 保存ヒントの受け口 (M66i)。AssetOps の自由関数や各 Save 窓は
+    // SourceControlSession を知らないので、中継はここ 1 箇所で張る。
+    // ★Unavailable / リポジトリ外の判定は HintSaved の中にある = 呼び出し側は
+    //   「保存した」とだけ言えばよい
+    scmhint::SetSink(
+        [](void* user, const std::wstring& absPath) {
+            static_cast<EditorApp*>(user)->scm_.HintSaved(absPath);
+        },
+        this);
     // ★既定表示はプロジェクト起動のときだけ開く (spec §4.3、M66c)。Assets と同じ
     //   ドック束のタブなので場所を取らず、利用不可でも「なぜ使えないか」が読める。
     //   裸起動では Source control 自体が成立しない (NoProject) ので出さない。
@@ -439,6 +449,10 @@ void EditorApp::OnShutdown(EngineContext& ctx)
     probeSet_.Clear();
     probePreview_ = {};
     probeBaker_.Shutdown();
+    // M66i: 受け口を **Shutdown より先に**外す。畳んだ後に誰かが保存すると
+    // 死んだセッションへヒントが飛ぶ (HintSaved は Ready() でない間 no-op だが、
+    // 経路そのものを残さない)
+    scmhint::SetSink(nullptr, nullptr);
     // M66b: destroy (worker を join) -> FreeLibrary。デバイス解放とは無関係だが、
     // ★プロセス終了任せにすると、走行中の worker のコードごとアンロードされうる
     scm_.Shutdown();
@@ -564,6 +578,7 @@ void EditorApp::SaveActorEdit(EngineContext& ctx)
                            actorEdit_->actorFormat)) {
         savedStateSerial_ = undo_.StateSerial(); // 現在の状態が保存済み基準になる
         // 配置済みインスタンスへの伝播は ReloadHub (ファイル監視) の既存経路が拾う
+        scm_.HintSaved(actorEdit_->path); // M66i: バッジと Changes の即時反映
         toasts_.Notify(LogLevel::Info, "アセットを保存しました: " + actorEdit_->name);
     } else {
         toasts_.Notify(LogLevel::Error, "アセットを保存できませんでした");
@@ -834,7 +849,8 @@ void EditorApp::OnImGui(EngineContext& ctx)
         toasts_.Notify(LogLevel::Info, buf);
     }
     DrawProbePreview();
-    assetBrowser_.OnImGui(ctx, selection_, undo_, settings_.externalEditorCmd, preview_);
+    // scm_ は Git バッジの引き先 (M66i)。裸起動でも Unavailable のまま no-op になる
+    assetBrowser_.OnImGui(ctx, selection_, undo_, settings_.externalEditorCmd, preview_, &scm_);
     // [Rebuild Scripts] (M66e)。**窓ではなくここで起動してハンドルを持つ** —
     // 走っている間 GateBlocker::ScriptBuildRunning を立て続けるため
     if (assetBrowser_.TakeRebuildScriptsRequest() && scriptBuildProc_ == nullptr) {
@@ -1330,6 +1346,9 @@ void EditorApp::SaveCurrentScene(EngineContext& ctx)
         settings_.lastScenePath = WideToUtf8(scenePath_);
         settings_.Save();
         savedStateSerial_ = undo_.StateSerial(); // この状態が保存済み基準になる (M27b)
+        // 監視 (300 ms デバウンス) を待たずに status を取り直す (M66i)。
+        // ★EditorApp はセッションを持っているので中継 (scmhint) を通さない
+        scm_.HintSaved(scenePath_);
         toasts_.Notify(LogLevel::Info,
                        "シーンを保存しました: "
                            + WideToUtf8(std::filesystem::path(scenePath_).filename().wstring()));

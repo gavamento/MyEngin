@@ -1,6 +1,7 @@
 #include "Editor/SourceControl/SourceControlState.h"
 
 #include <algorithm>
+#include <cwctype>
 #include <filesystem>
 #include <map>
 #include <utility>
@@ -138,6 +139,35 @@ std::string PrimaryPathFor(const std::string& path)
     return p;
 }
 
+std::string ScmPathKey(const std::string& rel)
+{
+    if (rel.empty()) {
+        return {};
+    }
+    // ★ディスク側 (NormalizePathKey) と**同じ towlower** を通すため、いったん
+    //   wide へ戻す。UTF-8 のバイト列に直接 tolower を掛けると多バイト文字を壊す
+    std::wstring w = Utf8ToWide(rel);
+    for (wchar_t& c : w) {
+        c = (c == L'\\') ? L'/' : static_cast<wchar_t>(towlower(c));
+    }
+    return WideToUtf8(w);
+}
+
+ChangeState SourceControlModel::StateFor(const std::string& relKey) const
+{
+    // サイドカーは本体へ寄せる (`x.png.meta` のタイルも `x.png` と同じバッジ)。
+    // ★束ねの規則は PrimaryPathFor 1 本に閉じる — ここで「.meta なら 5 文字削る」
+    //   と書くと `.terrain.edit` の対 (拡張子の差し替え) を必ず取りこぼす
+    const auto it = fileBadges.find(PrimaryPathFor(relKey));
+    return it == fileBadges.end() ? ChangeState::None : it->second;
+}
+
+ChangeState SourceControlModel::FolderStateFor(const std::string& relDirKey) const
+{
+    const auto it = folderBadges.find(relDirKey);
+    return it == folderBadges.end() ? ChangeState::None : it->second;
+}
+
 const PairedEntry* SourceControlModel::FindEntry(const std::string& path) const
 {
     for (const PairedEntry& e : entries) {
@@ -269,6 +299,19 @@ SourceControlModel BuildModel(const nlohmann::json& statusResult)
     }
     SortChildren(m.nodes, 0);
     PropagateFolderState(m.nodes, 0);
+
+    // ---- バッジ引きの索引 (M66i) ----
+    // ★フォルダの集約は**ここでは計算しない** — PropagateFolderState が出した
+    //   結果をそのまま写すだけ。Content Browser 用にもう一度たたみ込むと、
+    //   一覧のバッジと Content Browser のバッジが違う、という形で静かに割れる
+    for (const PairedEntry& e : m.entries) {
+        m.fileBadges[ScmPathKey(e.path)] = e.state;
+    }
+    for (const ScmNode& n : m.nodes) {
+        if (n.folder && !n.path.empty()) {
+            m.folderBadges[ScmPathKey(n.path)] = n.state;
+        }
+    }
     return m;
 }
 
@@ -310,6 +353,12 @@ void SourceControlSession::Start(const std::wstring& exeDir, const std::wstring&
         return;
     }
     repoState_ = Unavailable::None;
+    // バッジ引きの基準 (M66i)。末尾の区切りは落とす — "C:\p\" のまま持つと
+    // 相対化で先頭に空の要素が付き、キーが 1 文字ずれて全部引けなくなる
+    rootKey_ = NormalizePathKey(projectRoot_);
+    while (!rootKey_.empty() && rootKey_.back() == L'\\') {
+        rootKey_.pop_back();
+    }
 
     // canonicalRoot の照合 (spec §4.2)。DLL の有無とは無関係なのでここで済ませる
     ProjectManifest manifest;
@@ -457,8 +506,10 @@ void SourceControlSession::HintChanged(const std::vector<std::string>& paths)
     if (!client_.Ready() || repoState_ != Unavailable::None) {
         return;
     }
+    hintInFlight_ = true;
     client_.Request(collabop::kHintChanged, { { "paths", paths } },
                     [this](const nlohmann::json& msg) {
+                        hintInFlight_ = false;
                         if (!msg.value("ok", false)) {
                             ApplyError(msg);
                             return;
@@ -466,6 +517,30 @@ void SourceControlSession::HintChanged(const std::vector<std::string>& paths)
                         // 監視経路 (status_changed 通知) と**同じ 1 本**へ流す
                         ApplyStatusResult(msg["result"]);
                     });
+}
+
+void SourceControlSession::HintSaved(const std::wstring& absPath)
+{
+    if (!client_.Ready() || repoState_ != Unavailable::None || absPath.empty()) {
+        return;
+    }
+    // git へ渡すのは**実際の綴り**なので、小文字キー (RelativeKeyOf) ではなく
+    // こちらを使う。ヒントは保存操作ごとの低頻度なので実ファイルを触ってよい
+    const std::string rel = RelativePathOf(absPath);
+    if (rel.empty()) {
+        return; // リポジトリの外 (bin\ / 別ドライブ / cache\) は捨てる
+    }
+    hintPending_.insert(rel);
+}
+
+void SourceControlSession::FlushHints()
+{
+    if (hintPending_.empty() || hintInFlight_) {
+        return; // 飛んでいる要求があるうちは貯め続ける (= 次の 1 往復に相乗り)
+    }
+    const std::vector<std::string> paths(hintPending_.begin(), hintPending_.end());
+    hintPending_.clear();
+    HintChanged(paths);
 }
 
 void SourceControlSession::ApplyStatusResult(const nlohmann::json& result)
@@ -543,6 +618,10 @@ Unavailable SourceControlSession::State() const
 void SourceControlSession::Poll()
 {
     client_.Poll();
+    // ★client_.Poll() の**後**に流す。先に流すと、このフレームで返ってきた
+    //   ヒントの応答 (= hintInFlight_ を下ろす) を見る前に判定してしまい、
+    //   相乗りのつもりが 1 フレーム余計に待つ
+    FlushHints();
 }
 
 void SourceControlSession::Shutdown()
@@ -675,6 +754,44 @@ std::string SourceControlSession::RelativePathOf(const std::wstring& absPath) co
         return {};
     }
     return relUtf8;
+}
+
+std::string SourceControlSession::RelativeKeyOf(const std::wstring& absPath) const
+{
+    if (absPath.empty() || rootKey_.empty()) {
+        return {};
+    }
+    // NormalizePathKey は絶対化 + 小文字 + '\\' 化まで済ませてくれる (ファイルは開かない)
+    std::wstring key = NormalizePathKey(absPath);
+    if (key.size() <= rootKey_.size() + 1 || key.compare(0, rootKey_.size(), rootKey_) != 0
+        || key[rootKey_.size()] != L'\\') {
+        return {}; // リポジトリの外、またはルート自身
+    }
+    key.erase(0, rootKey_.size() + 1);
+    for (wchar_t& c : key) {
+        if (c == L'\\') {
+            c = L'/';
+        }
+    }
+    return WideToUtf8(key);
+}
+
+ChangeState SourceControlSession::BadgeForFile(const std::wstring& absPath) const
+{
+    if (!model_.valid || repoState_ != Unavailable::None) {
+        return ChangeState::None;
+    }
+    const std::string key = RelativeKeyOf(absPath);
+    return key.empty() ? ChangeState::None : model_.StateFor(key);
+}
+
+ChangeState SourceControlSession::BadgeForFolder(const std::wstring& absDir) const
+{
+    if (!model_.valid || repoState_ != Unavailable::None) {
+        return ChangeState::None;
+    }
+    const std::string key = RelativeKeyOf(absDir);
+    return key.empty() ? ChangeState::None : model_.FolderStateFor(key);
 }
 
 void SourceControlSession::StageSavedPath(const std::wstring& absPath)

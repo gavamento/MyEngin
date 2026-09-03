@@ -1,5 +1,7 @@
 #pragma once
+#include <cstdint>
 
+struct ImVec2;
 struct ImVec4;
 
 namespace mye {
@@ -58,5 +60,26 @@ private:
 // ラベルを "###id" で空にして上から描く方式。アイテム矩形でクリップする。
 // framed = CollapsingHeader (枠あり TreeNode)。false = Hierarchy の素の TreeNode
 void DrawItemIconLabel(const char* icon, const ImVec4& iconColor, const char* label, bool framed);
+
+// ---- Source Control のバッジ (M66b の変更一覧 / M66i の Content Browser) ----
+// ★色の表は**ここ 1 箇所**に置く。窓ごとに持つと、意味の見直しやテーマ替えで
+//   片方だけ取り残される (配色ルール 2 が禁じている ad-hoc な ImVec4 と同じ罠)。
+//   前方宣言なのは、汎用ウィジェットのヘッダに nlohmann/json を引き込まないため
+//   (SourceControlState.h の実体と 1 バイト一致していること)
+enum class ChangeState : uint8_t;
+
+// 状態 → 意味色 (spec §4.3 の確定表):
+//   M = Warning / A = Success / D = Error / R = Prefab / 競合 = Error / ? = TextDisabled
+// ★**Accent 系 (Accent / AccentSoft) を状態色に使わない** — ImGuiTheme.h の配色ルール 3
+//   「Accent は選択・フォーカス・トグル ON 専用」。選択行 (Accent の面) の上に
+//   Accent のバッジが載ると読めなくなる (M66i round 1 で実測)。
+//   SourceControlSelfTest (d3) が全状態について機械的に固定している
+ImVec4 ScmBadgeColor(ChangeState s);
+
+// タイル (フォルダアイコン / サムネイル) の左上隅へバッジ文字を描く。
+// None なら何も描かない。**drawlist へ直接描く**のでアイテムを消費しない =
+// タイルのドラッグ元 / 右クリック / ダブルクリックの配線に一切触らない。
+// tileMin は ImGui::GetItemRectMin() (スクリーン座標) をそのまま渡す
+void DrawScmTileBadge(ChangeState s, const ImVec2& tileMin);
 
 } // namespace mye

@@ -1,6 +1,8 @@
 #pragma once
 #include <cstdint>
 #include <functional>
+#include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -45,6 +47,14 @@ const char* ChangeStateBadge(ChangeState s);
 //                                                 本体と束ならない)
 //   "x.terrain.edit.meta" -> "x.terrain.json"   (何段でも剥がす)
 std::string PrimaryPathFor(const std::string& path);
+
+// バッジ引きのキー: toplevel 相対 '/' 区切りを小文字化したもの (M66i)。
+// ★ディスク側は `NormalizePathKey` (絶対化 + 小文字 + '\\') でキー化するので、
+//   **同じ towlower を通す**。バイト単位の ASCII 小文字化にすると非 ASCII の
+//   綴り違いでディスク側とだけキーがずれ、バッジが黙って消える。
+//   Windows のパスは大小を区別しない = git が記録した綴りとディスクの綴りが
+//   違うだけでバッジが出ない、という形の不具合を先に潰しておく
+std::string ScmPathKey(const std::string& rel);
 
 // 一覧の 1 行。本体 + サイドカーを束ねたもの。
 // ★束ねる理由: `.meta` は本体を保存すると必ず一緒に動く。別行で出すと変更件数が
@@ -184,10 +194,26 @@ struct SourceControlModel {
     std::vector<ScmNode> nodes;       // nodes[0] = ルート
     bool valid = false;               // status の応答を 1 度でも受けたか
 
+    // ---- M66i: Content Browser のバッジ引き ----
+    // ★これが「集約のキャッシュ」そのもの。BuildModel が entries / nodes と同時に
+    //   組むので、**status を受け直した瞬間に必ず作り直される** = 無効化を別に
+    //   書く必要がない (無効化を手で書くと、必ずどこかの経路で忘れて古い
+    //   バッジが残る)。キーは ScmPathKey を通したもの
+    std::map<std::string, ChangeState> fileBadges;   // 対で束ねた本体 1 行につき 1 件
+    std::map<std::string, ChangeState> folderBadges; // フォルダ (PropagateFolderState の結果)
+
     int ChangedCount() const { return static_cast<int>(entries.size()); }
     bool HasConflict() const;
     // 本体パスで行を引く (窓の選択 -> 行。見つからなければ nullptr)
     const PairedEntry* FindEntry(const std::string& path) const;
+
+    // ---- M66i: バッジ (relKey は ScmPathKey を通したキー) ----
+    // ★**サイドカーは本体へ寄せて引く** (PrimaryPathFor)。`x.png.meta` だけが
+    //   変わっていても `x.png` のタイルに出る = 一覧 (対で束ねた行) と同じ見え方。
+    //   None = 変更なし (「引けなかった」と区別しない — 変更が無いことと
+    //   一覧に居ないことは同じ意味なので、optional にしても呼び手が困るだけ)
+    ChangeState StateFor(const std::string& relKey) const;
+    ChangeState FolderStateFor(const std::string& relDirKey) const;
 };
 
 // status 応答の `result` → モデル。**純関数** (副作用なし・入力だけで決まる)
@@ -225,8 +251,21 @@ public:
 
     // 窓の「更新」ボタン / 起動直後。飛んでいる status があれば二重には出さない
     void RequestStatus();
-    // 保存直後の即時取り直し (M66i)。paths は toplevel 相対
+    // 保存直後の即時取り直し (M66i)。paths は toplevel 相対。**その場で 1 往復投げる**
     void HintChanged(const std::vector<std::string>& paths);
+
+    // ---- M66i: 保存ヒント (絶対パス) と Content Browser のバッジ ----
+    // 「今このファイルを保存した / 作った / 消した」を伝える。監視 (notify + 300 ms
+    // デバウンス) でも同じ status に行き着くので、これは**速く反映するためだけ**の口。
+    // リポジトリの外・利用不可なら黙って捨てる (呼び出し側に分岐を書かせない)。
+    // ★送信は Poll() まで遅延し、フレーム内の連打を 1 往復にまとめる。飛んでいる
+    //   ヒントがある間は貯めておいて相乗りさせる — 一括インポート (数百ファイル) が
+    //   そのまま数百回の git status になると、その間エディタが固まる
+    void HintSaved(const std::wstring& absPath);
+    // 絶対パス → バッジ。無変更 / リポジトリ外 / 利用不可はすべて None。
+    // **毎フレーム・タイル 1 枚ごとに呼ばれる**ので、実ファイルには触らない
+    ChangeState BadgeForFile(const std::wstring& absPath) const;
+    ChangeState BadgeForFolder(const std::wstring& absDir) const;
 
     Unavailable State() const;
     bool Ready() const { return State() == Unavailable::None; }
@@ -389,12 +428,22 @@ private:
     std::wstring AbsolutePathOf(const std::string& rel) const;
     // 絶対パス -> toplevel 相対 '/' 区切り。リポジトリの外なら空
     std::string RelativePathOf(const std::wstring& absPath) const;
+    // 絶対パス -> バッジ引きのキー (小文字 '/' 区切り)。リポジトリの外なら空。
+    // ★RelativePathOf (std::filesystem::relative) は weakly_canonical 経由で
+    //   **実ファイルを開く** ので、毎フレーム何十回も呼べない。バッジ用の
+    //   こちらは NormalizePathKey の文字列比較だけで済ませる
+    std::string RelativeKeyOf(const std::wstring& absPath) const;
+    // 貯めた保存ヒントを 1 往復にまとめて送る (Poll から)
+    void FlushHints();
     // error.code → Unavailable。分類できないものは None (= 窓にエラー文だけ出す)
     static Unavailable UnavailableFromCode(const std::string& code);
 
     CollabClient client_;
     SourceControlModel model_;
     std::wstring projectRoot_;
+    // NormalizePathKey(projectRoot_) を末尾の区切りを落として控えたもの (M66i)。
+    // バッジ引きが毎フレーム作り直さずに済むよう Start で 1 回だけ作る
+    std::wstring rootKey_;
     std::string toplevel_;
     std::string canonicalRoot_;
     std::string errorCode_;
@@ -408,6 +457,12 @@ private:
     bool canonicalMismatch_ = false;
     bool headMoved_ = false;
     bool mergeWarned_ = false; // 起動時の残骸トーストを 1 回だけ出すための取り出し口 (M66e)
+
+    // ---- M66i ----
+    // 次の Poll でまとめて送る保存ヒント。**set** なのは、同じパスを何度保存しても
+    // 1 件に畳み、かつ送る順を決定的にするため
+    std::set<std::string> hintPending_;
+    bool hintInFlight_ = false;
 
     // ---- M66e ----
     BranchList branches_;

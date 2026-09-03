@@ -8,6 +8,7 @@
 #include <string>
 
 #include "Editor/DiskCompare.h"
+#include "Editor/SourceControl/ScmHint.h" // M66i: 保存直後に status を取り直させる
 #include "Editor/Undo/UndoStack.h"
 #include "Engine/Core/ComponentRegistry.h"
 #include "Engine/Core/Localization.h"
@@ -226,7 +227,9 @@ void AnimationWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
             clip.name = safe;
             clip.lengthTicks = 60;
             const uint64_t hash = ctx.anims->Register(path, clip);
-            ctx.anims->SaveToFile(hash);
+            if (ctx.anims->SaveToFile(hash)) {
+                scmhint::Changed(path); // M66i
+            }
             undo.BeginRecord("Create Animator", selection);
             const uint64_t fid = ctx.scene->EnsureFileId(e);
             undo.CaptureBefore(*ctx.scene, fid);
@@ -259,6 +262,7 @@ void AnimationWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
     if (ImGui::SmallButton(Tr(StrId::Common_Save))) {
         if (ctx.anims->SaveToFile(clip->hash)) {
             MYE_LOG_INFO("anim saved: %s", clip->name.c_str());
+            scmhint::Changed(clip->path); // M66i: バッジと Changes の即時反映
         }
     }
     ImGui::SetNextItemWidth(120);

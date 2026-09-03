@@ -17,6 +17,7 @@
 #include "nlohmann/json.hpp"
 
 #include "Editor/Selection.h"
+#include "Editor/SourceControl/ScmHint.h" // M66i: 生成 / 移動 / 削除の直後に status を取り直させる
 #include "Editor/Undo/UndoStack.h"
 #include "Engine/Core/Localization.h"
 #include "Engine/Core/ComponentRegistry.h"
@@ -203,6 +204,9 @@ void RegisterImported(EngineContext& ctx, const std::wstring& destPath)
     } else {
         AssetDatabase::EnsureMeta(destPath);
     }
+    // インポート / 複製の唯一の着地点なので、Source Control のヒントもここで出す
+    // (M66i)。数百ファイルの一括インポートでも、セッション側が 1 往復にまとめる
+    scmhint::Changed(destPath);
 }
 
 // フォルダを再帰コピー。fs::copy(recursive) ではなくファイル単位で回すことで、
@@ -716,6 +720,10 @@ bool PerformAssetRelocate(EngineContext& ctx, const std::wstring& src, const std
     if (ctx.assetDb) {
         ctx.assetDb->MoveAsset(src, dst); // 実行時テーブルの旧キー除去 + 新パス再登録
     }
+    // ★**移動元と移動先の両方**を出す (M66i)。git から見るとリネームは
+    //   「旧パスの削除 + 新パスの追加」なので、片方だけだと元の場所のバッジが残る
+    scmhint::Changed(src);
+    scmhint::Changed(dst);
     MYE_LOG_INFO(Tr(StrId::Log_Relocated), WideToUtf8(src).c_str(), WideToUtf8(dst).c_str());
     return true;
 }
@@ -844,6 +852,13 @@ bool RecycleToBin(const std::vector<std::wstring>& paths)
     } // ComPtr は CoUninitialize より先に解放する
     if (co == S_OK || co == S_FALSE) {
         CoUninitialize();
+    }
+    if (ok) {
+        // 削除 (ごみ箱送り) の唯一の実体 (M66i)。本体と `.meta` が同時に来るので、
+        // まとめて 1 往復に畳まれる
+        for (const std::wstring& p : paths) {
+            scmhint::Changed(p);
+        }
     }
     return ok;
 }

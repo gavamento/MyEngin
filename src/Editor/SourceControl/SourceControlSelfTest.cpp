@@ -11,6 +11,7 @@
 #include <thread>
 
 #include "Editor/EditorSettings.h"
+#include "Editor/EditorWidgets.h" // ScmBadgeColor (M66i: バッジの色表を機械で固定する)
 #include "Editor/ProjectTemplates.h"
 #include "Editor/SourceControl/CollabClient.h"
 #include "Editor/SourceControl/GitTransaction.h"
@@ -21,6 +22,9 @@
 #include "Engine/Core/Log.h"
 #include "Engine/Engine/Project.h"
 #include "Engine/Platform/PathUtil.h"
+#include "Engine/Renderer/ImGuiTheme.h" // themeColor (M66i)
+
+#include "imgui.h"
 
 namespace fs = std::filesystem;
 
@@ -438,6 +442,101 @@ bool RunSourceControlSelfTest()
               "folders: the heaviest child state climbs every level (a delete never hides)");
         check(m.nodes[0].children.size() == 3,
               "folders: the root holds exactly the three top level folders");
+    }
+
+    // ---- (d2) Content Browser のバッジ引き (M66i) ----
+    // ★集約は PropagateFolderState (= 一覧と同じ 1 本) の結果を写すだけ。
+    //   ここで検査するのは「重い方が勝つ」規則と、バッジ引きの索引が
+    //   一覧と食い違わないこと
+    {
+        nlohmann::json result;
+        result["entries"] = nlohmann::json::array({
+            Entry("assets/tex/a.png", '.', 'M'),      // 変更
+            Entry("assets/tex/a.png.meta", '.', 'M'), // 対 (本体に束ねる)
+            Entry("assets/tex/b.png", '?', '?'),      // 未追跡 -> {M, ?} で親は M
+            Entry("assets/gone/old.png", 'D', '.'),   // 削除
+            Entry("assets/gone/new.png", '?', '?'),   // {D, ?} -> D (削除が勝つ)
+            Entry("assets/mix/c.scene.json", '.', '.', /*conflict=*/true),
+            Entry("assets/mix/d.mat.json", '.', 'M'), // {競合, M} -> 競合
+            Entry("assets/terr/x.terrain.edit", '.', 'M'), // 本体は無変更のサイドカー
+        });
+        const SourceControlModel m = BuildModel(result);
+        check(m.StateFor("assets/tex/a.png") == ChangeState::Modified,
+              "badge: a changed file shows M");
+        check(m.StateFor("assets/tex/a.png.meta") == ChangeState::Modified,
+              "badge: the .meta sidecar borrows the badge of its owner");
+        check(m.StateFor("assets/tex/b.png") == ChangeState::Untracked,
+              "badge: a new file shows ?");
+        check(m.StateFor("assets/terr/x.terrain.json") == ChangeState::Modified
+                  && m.StateFor("assets/terr/x.terrain.edit") == ChangeState::Modified,
+              "badge: .terrain.edit and .terrain.json share one badge");
+        check(m.StateFor("assets/tex/never.png") == ChangeState::None,
+              "badge: an unchanged file has no badge");
+        // ★キーは必ず ScmPathKey を通してから引く (ディスク側は NormalizePathKey が
+        //   同じ小文字化を済ませている)。通さないと大小が違うだけで引けない
+        check(m.StateFor(ScmPathKey("ASSETS/Tex/A.png")) == ChangeState::Modified,
+              "badge: the lookup key ignores case (git and the disk may differ)");
+        check(m.FolderStateFor("assets/tex") == ChangeState::Modified,
+              "badge folders: {M, ?} shows M");
+        check(m.FolderStateFor("assets/gone") == ChangeState::Deleted,
+              "badge folders: {D, ?} shows D");
+        check(m.FolderStateFor("assets/mix") == ChangeState::Conflict,
+              "badge folders: {conflict, M} shows the conflict");
+        check(m.FolderStateFor("assets") == ChangeState::Conflict,
+              "badge folders: the heaviest state climbs to the top folder");
+        check(m.FolderStateFor("assets/empty") == ChangeState::None,
+              "badge folders: a folder with no changed child has no badge");
+        check(m.FolderStateFor("assets/tex/a.png") == ChangeState::None,
+              "badge folders: a file is never answered by the folder lookup");
+        // 索引と一覧が同じことを言っているか (二重実装の検出)
+        bool sameAsRows = true;
+        for (const PairedEntry& e : m.entries) {
+            if (m.StateFor(e.path) != e.state) {
+                sameAsRows = false;
+            }
+        }
+        check(sameAsRows, "badge: every row of the change list answers with its own state");
+    }
+
+    // ---- (d3) バッジの色表 (spec §4.3 の確定表 + 配色ルール 3) ----
+    // ★ここで固定する理由: 色は「画面を見れば分かる」ように思えて、実際には
+    //   **選択行の面と同じ色になって初めて読めなくなる** (M66i round 1 の実測)。
+    //   人の目でしか分からない性質のものほど、表そのものは機械で止める
+    {
+        // ScmBadgeColor は ? / None で ImGui::GetStyleColorVec4 (= GImGui) を通るので、
+        // ヘッドレスのまま呼ぶと落ちる。**バックエンドは要らない** — 既定スタイルが
+        // 入った context を 1 つ作って捨てるだけ
+        ImGuiContext* const prevCtx = ImGui::GetCurrentContext();
+        ImGuiContext* const tmpCtx = (prevCtx == nullptr) ? ImGui::CreateContext() : nullptr;
+        auto sameColor = [](const ImVec4& a, const ImVec4& b) {
+            return a.x == b.x && a.y == b.y && a.z == b.z && a.w == b.w;
+        };
+        check(sameColor(ScmBadgeColor(ChangeState::Modified), themeColor::Warning)
+                  && sameColor(ScmBadgeColor(ChangeState::Added), themeColor::Success)
+                  && sameColor(ScmBadgeColor(ChangeState::Deleted), themeColor::Error)
+                  && sameColor(ScmBadgeColor(ChangeState::Renamed), themeColor::Prefab)
+                  && sameColor(ScmBadgeColor(ChangeState::Conflict), themeColor::Error),
+              "badge colors: the table matches spec 4.3 (M=Warning A=Success D/conflict=Error "
+              "R=Prefab)");
+        // ★配色ルール 3 の再発防止。Accent は「選択・フォーカス・トグル ON」専用で、
+        //   状態の意味色に混ぜると選択行の上で消える
+        constexpr ChangeState kAllStates[] = {
+            ChangeState::None,    ChangeState::Untracked, ChangeState::Modified,
+            ChangeState::Added,   ChangeState::Renamed,   ChangeState::Deleted,
+            ChangeState::Conflict,
+        };
+        bool noAccent = true;
+        for (const ChangeState st : kAllStates) {
+            const ImVec4 c = ScmBadgeColor(st);
+            if (sameColor(c, themeColor::Accent) || sameColor(c, themeColor::AccentSoft)) {
+                noAccent = false;
+            }
+        }
+        check(noAccent, "badge colors: no state borrows an Accent token (theme rule 3)");
+        if (tmpCtx != nullptr) {
+            ImGui::DestroyContext(tmpCtx);
+            ImGui::SetCurrentContext(prevCtx); // 借りる前 (= nullptr) へ戻す
+        }
     }
 
     // ---- (e1) repo_check の判定 ----
@@ -1150,13 +1249,37 @@ bool RunSourceControlSelfTest()
                 std::ofstream f(scratch, std::ios::binary);
                 f << "probe";
             }
-            scm.RequestStatus();
+            // ★取り直しの合図は **M66i の保存ヒント**で出す。RequestStatus と同じ
+            //   結果になるが、こちらは「保存 -> HintSaved -> Poll でまとめて送信 ->
+            //   応答の status をモデルへ」の 1 本を実 DLL で通す
+            //   (監視スレッドも同じ変更を拾うので、これは配線の実走であって
+            //    「監視より速い」ことの証明ではない — 速さは実機で見る)
+            const auto hintAt = std::chrono::steady_clock::now();
+            scm.HintSaved(scratch.wstring());
             const bool listed = pump(
                 [&scm] {
                     return scm.Model().FindEntry("mye_probe_scratch.txt") != nullptr;
                 },
                 15000);
             check(listed, "probe: the new file shows up in status");
+            // 実測値をログに残す (spec の「保存した瞬間に反映」= 監視の 300 ms
+            // デバウンスより速いこと。閾値では止めない — git の起動時間は
+            // 機体とウイルス対策で桁が変わるので、赤くしても原因が読めない)
+            MYE_LOG_INFO("[probe] hint_changed round trip: %lld ms",
+                         static_cast<long long>(
+                             std::chrono::duration_cast<std::chrono::milliseconds>(
+                                 std::chrono::steady_clock::now() - hintAt)
+                                 .count()));
+            // バッジ引き (M66i): **絶対パス**から toplevel 相対キーへ落ちるか。
+            // ここが壊れるとバッジは 1 個も出ないが、画面上は「変更が無い」と
+            // 区別が付かない (純関数テストは絶対パスを見ていない)
+            check(scm.BadgeForFile(scratch.wstring()) == ChangeState::Untracked,
+                  "probe: the badge lookup finds the new file by its absolute path");
+            check(scm.BadgeForFile((fs::path(root) / L"no_such_file.txt").wstring())
+                      == ChangeState::None,
+                  "probe: an unchanged path has no badge");
+            check(scm.BadgeForFile(L"C:\\mye_outside_the_repo.txt") == ChangeState::None,
+                  "probe: a path outside the repository has no badge");
             bool done = false;
             bool ok = false;
             scm.Revert({ "mye_probe_scratch.txt" },

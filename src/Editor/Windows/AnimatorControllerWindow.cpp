@@ -6,6 +6,7 @@
 #include <cstring>
 
 #include "Editor/DiskCompare.h"
+#include "Editor/SourceControl/ScmHint.h" // M66i: 保存直後に status を取り直させる
 #include "Editor/Selection.h"
 #include "Engine/Core/Components.h"
 #include "Engine/Core/Localization.h"
@@ -118,7 +119,9 @@ void AnimatorControllerWindow::OnImGui(EngineContext& ctx, Selection& selection)
     }
     ImGui::SameLine();
     if (ImGui::SmallButton(Tr(StrId::Common_Save))) {
-        ctx.controllers->SaveToFile(ctrl->hash);
+        if (ctx.controllers->SaveToFile(ctrl->hash)) {
+            scmhint::Changed(ctrl->path); // M66i: バッジと Changes の即時反映
+        }
     }
     ImGui::Separator();
 

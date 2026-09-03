@@ -2,6 +2,7 @@
 
 #include <algorithm>
 
+#include "Editor/SourceControl/SourceControlState.h" // ChangeState / ChangeStateBadge (M66i)
 #include "Engine/Renderer/ImGuiTheme.h"
 
 #include "imgui.h"
@@ -156,6 +157,46 @@ void DrawItemIconLabel(const char* icon, const ImVec4& iconColor, const char* la
     dl->AddText(font, size, pos, ImGui::GetColorU32(iconColor), icon, nullptr, 0.0f, &clip);
     pos.x += ImGui::CalcTextSize(icon).x + style.ItemInnerSpacing.x;
     dl->AddText(font, size, pos, ImGui::GetColorU32(ImGuiCol_Text), label, nullptr, 0.0f, &clip);
+}
+
+ImVec4 ScmBadgeColor(ChangeState s)
+{
+    switch (s) {
+    // 競合と D はどちらも Error。**グリフ ('!' と 'D') が区別を持つ**ので色を
+    // 分ける必要がない (spec §4.3)。競合中は一覧そのものが競合モードへ切り替わる
+    case ChangeState::Conflict:
+    case ChangeState::Deleted:
+        return themeColor::Error;
+    case ChangeState::Added:
+        return themeColor::Success;
+    case ChangeState::Renamed:
+        return themeColor::Prefab;
+    case ChangeState::Modified:
+        return themeColor::Warning;
+    case ChangeState::Untracked:
+    case ChangeState::None:
+    default:
+        return ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled);
+    }
+}
+
+void DrawScmTileBadge(ChangeState s, const ImVec2& tileMin)
+{
+    const char* text = ChangeStateBadge(s);
+    if (text[0] == '\0') {
+        return;
+    }
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImVec2 ts = ImGui::CalcTextSize(text);
+    const ImVec2 mn(tileMin.x + 2.0f, tileMin.y + 2.0f);
+    const ImVec2 mx(mn.x + ts.x + 8.0f, mn.y + ts.y + 2.0f);
+    // ★**必ず面を敷く**。バッジはサムネイル (明るい絵のことがある) の上に載るので、
+    //   文字だけだと白い画像の上で完全に消える。面色はテーマのポップアップ面から
+    //   採る (直値の暗色を書くとテーマ替えで 1 箇所だけ取り残される)
+    ImVec4 bg = ImGui::GetStyle().Colors[ImGuiCol_PopupBg];
+    bg.w = 0.85f;
+    dl->AddRectFilled(mn, mx, ImGui::GetColorU32(bg), 3.0f);
+    dl->AddText(ImVec2(mn.x + 4.0f, mn.y + 1.0f), ImGui::GetColorU32(ScmBadgeColor(s)), text);
 }
 
 } // namespace mye
