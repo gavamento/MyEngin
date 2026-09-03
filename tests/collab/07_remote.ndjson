@@ -1,0 +1,66 @@
+# 07_remote - fetch / pull / push と 2 クローンの往復 (M66f)。
+#
+# ここで固めたいのは 4 つ:
+#   1) fetch するまで behind が立たないこと。立ったら「まだ見えないはずの物」を見ている。
+#   2) pull の応答が checkout と**同じ型** ({head, names, status}) であること。
+#      names が段階 A/B/C の唯一の入力なので、空だと降ってきたファイルが古いまま使われる。
+#   3) 分岐したら push も pull(--ff-only) も **non_fast_forward** で返ること。
+#      ここが git_failed に化けると UI が「先に pull」「マージして pull」を出せない。
+#   4) リモート追跡だけのブランチへ `-t` で乗ること (sub-05 で実走できなかった経路)。
+#      素の `git checkout origin/x` は detached HEAD = コミットが迷子になる形なので、
+#      「checkout の後に locals へ upstream 付きで現れる」ところまで見る。
+#
+# ★fixture はシナリオごとに作り直されるので、origin と同僚のクローンもここで作る。
+#   `# git` / `# write` のパスに `..` を使うと fixture の**兄弟**を触れる
+#   (cache\collab_verify\ 直下。New-Fixture が毎回丸ごと消す)。
+# ★期待ファイルに git の進捗行 (`To <url>` / `* [new branch]`) を入れない — 版と
+#   パスに依存する。応答 JSON にはリモートの URL が 1 度も載らない作りにしてある。
+# --- bare な origin を作って main を push する ---
+# ★-b main を必ず付ける。省くと bare の HEAD が master になり、clone した側が
+#   main ではなく master に乗って 2 つのクローンが永久にすれ違う (実測)
+# git init -q --bare -b main ../origin.git
+# git remote add origin ../origin.git
+# git push -q -u origin main
+{"id":1,"op":"remote_state"}
+# --- 同僚のクローン (workB) が 1 本コミットして push する ---
+# git clone -q ../origin.git ../workB
+# write ../workB/assets/peer.txt peer
+# git -C ../workB add -A
+# git -C ../workB -c user.name=mye -c user.email=mye@example.com -c commit.gpgsign=false commit -q -m peer-commit
+# git -C ../workB push -q
+# --- fetch する前は知らないまま (behind 0) ---
+{"id":2,"op":"remote_state"}
+# --- fetch すると behind 1 + 誰の何かが分かる。working tree は動かない ---
+{"id":3,"op":"fetch"}
+# --- pull で降ってくる。names に A で載ること ---
+{"id":4,"op":"pull"}
+# --- 分岐を作る: 同僚がもう 1 本、こちらは別ファイルで 1 本 ---
+# write ../workB/assets/peer2.txt peer2
+# git -C ../workB add -A
+# git -C ../workB -c user.name=mye -c user.email=mye@example.com -c commit.gpgsign=false commit -q -m peer-commit-2
+# git -C ../workB push -q
+# write assets/mine.txt mine
+# git add -A
+# git -c user.name=mye -c user.email=mye@example.com -c commit.gpgsign=false commit -q -m my-commit
+# --- 分岐したら push は拒否される ---
+{"id":5,"op":"push"}
+# --- 既定の pull (--ff-only) も拒否される ---
+{"id":6,"op":"pull"}
+# --- allowMerge=true でマージが作られ、相手のファイルが降ってくる ---
+{"id":7,"op":"pull","args":{"allowMerge":true}}
+# --- マージ後の push は通り、ahead も behind も 0 に戻る ---
+{"id":8,"op":"push"}
+# --- 同僚がブランチを 1 本立てて push する (こちらにはローカルに存在しない) ---
+# git -C ../workB checkout -q -b feature
+# write ../workB/assets/feat.txt feat
+# git -C ../workB add -A
+# git -C ../workB -c user.name=mye -c user.email=mye@example.com -c commit.gpgsign=false commit -q -m feature-commit
+# git -C ../workB push -q -u origin feature
+{"id":9,"op":"fetch"}
+# --- リモート追跡だけの名前は remotes 側に出る ---
+{"id":10,"op":"branches"}
+# --- -t 付き checkout = ローカルに追跡ブランチができて乗る (detached ではない) ---
+{"id":11,"op":"checkout","args":{"name":"origin/feature"}}
+# --- 証拠: locals に feature が upstream 付きで現れ、current になっている ---
+{"id":12,"op":"branches"}
+{"id":13,"op":"remote_state"}

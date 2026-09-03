@@ -115,6 +115,13 @@ public:
     //   予測を挟まずに走らせてはいけない
     void RequestCheckout(std::string target);
 
+    // ---- pull (M66f) ----
+    // upstream から取り込む。checkout と同じ流れ (予測 → 確認 → 実行 → 段階 A/B/C) を
+    // 通る — 降ってくるファイルの扱いは「どの git で降ってきたか」に依存しない。
+    // ★予測の向きは `HEAD..@{u}` (fetch 済みの追跡ブランチとの差)。fetch していなければ
+    //   予測は空になるが、実行後の names で必ず分類し直すので安全側
+    void RequestPull();
+
     // 毎フレーム 1 回。応答の消化とモーダルの描画。
     // ★scm_.Poll() より**後**に呼ぶこと (応答は Poll の中でフラグになる)
     void OnImGui(EngineContext& ctx, SourceControlSession& scm);
@@ -132,6 +139,7 @@ private:
     enum class OpKind : uint8_t {
         Revert,
         Checkout,
+        Pull,
     };
 
     enum class Phase {
@@ -175,11 +183,15 @@ private:
     std::string activeSceneRel_; // 「今開いているシーン」(予測時にも実行時にも取り直す)
     std::wstring projectRoot_;   // OnImGui で毎フレーム控える (予測は ctx を持たない)
 
-    // ---- checkout (M66e) ----
-    std::string target_;                          // 切り替え先のブランチ名
+    // ---- checkout (M66e) / pull (M66f) ----
+    std::string target_;                          // 切り替え先のブランチ名 (pull では空)
     bool predictSent_ = false;                    // diff_names を投げたか
     std::vector<StageChange> checkoutChanges_;    // 応答が返した実際の変更集合
     std::vector<std::string> reportPaths_;        // 失敗モーダルに出す一覧
+    // pull がマージを許すか (非 ff で拒否された後、ユーザーが選んだときだけ true)。
+    // ★既定を true にしない。黙ってマージコミットを作ると、後から見た人には
+    //   「誰も押していないコミット」が履歴に残る
+    bool allowMerge_ = false;
 
     bool responseOk_ = false;
     std::string errorCode_;

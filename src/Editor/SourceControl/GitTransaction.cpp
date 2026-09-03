@@ -215,6 +215,25 @@ void GitTransaction::RequestCheckout(std::string target)
     phase_ = Phase::Predict;
 }
 
+void GitTransaction::RequestPull()
+{
+    if (phase_ != Phase::Idle) {
+        return;
+    }
+    op_ = OpKind::Pull;
+    // ★予測先は追跡ブランチ (`@{u}`)。ブランチ名ではないので target_ は「表示用の名前」
+    //   ではなくリビジョン式そのものを入れる — SendPredict はこれを diff_names へ渡す
+    target_ = "@{u}";
+    paths_.clear();
+    checkoutChanges_.clear();
+    reportPaths_.clear();
+    untrackedCount_ = 0;
+    predicted_ = ApplyStage::A;
+    predictSent_ = false;
+    allowMerge_ = false;
+    phase_ = Phase::Predict;
+}
+
 void GitTransaction::SendPredict(SourceControlSession& scm)
 {
     predictSent_ = true;
@@ -297,18 +316,25 @@ void GitTransaction::BeginOp(EngineContext& ctx, SourceControlSession& scm)
     errorDetail_.clear();
     reportPaths_.clear();
     phase_ = Phase::Running;
-    if (op_ == OpKind::Checkout) {
-        scm.Checkout(target_, [this](const SourceControlSession::CheckoutResult& r) {
+    // ★checkout と pull は**同じ受け取り方**。違うのは投げる op だけで、
+    //   応答 (TreeOpResult) から先の後処理は 1 本に寄せてある
+    if (op_ == OpKind::Checkout || op_ == OpKind::Pull) {
+        auto onDone = [this](const SourceControlSession::TreeOpResult& r) {
             responseOk_ = r.ok;
             errorCode_ = r.errorCode;
             errorDetail_ = r.errorDetail;
             reportPaths_ = r.errorPaths;
             // ★変更集合は git が返したものをそのまま使う (BuildChangeSet の代わり)。
-            //   checkout は「選んだパス」ではなく「2 つのコミットの差」で動くので、
+            //   checkout / pull は「選んだパス」ではなく「2 つのコミットの差」で動くので、
             //   こちらでディスクを舐めて推測すると必ずずれる
             checkoutChanges_ = r.changes;
             phase_ = Phase::Applying;
-        });
+        };
+        if (op_ == OpKind::Pull) {
+            scm.Pull(allowMerge_, onDone);
+        } else {
+            scm.Checkout(target_, onDone);
+        }
         return;
     }
     scm.Revert(paths_, [this](bool ok, const std::string& code, const std::string& detail) {
@@ -525,7 +551,7 @@ void GitTransaction::ApplyResult(EngineContext& ctx, SourceControlSession& scm)
     // ★op ごとに違うのは**ここだけ** (「変更集合をどう決めるか")。
     //   revert = 実行前後のディスク、checkout = git が返した before..after の差分
     std::vector<StageChange> changes;
-    if (op_ == OpKind::Checkout) {
+    if (op_ == OpKind::Checkout || op_ == OpKind::Pull) {
         changes = std::move(checkoutChanges_);
         checkoutChanges_.clear();
         ResolveMetaGuidChanges(ctx, changes);
@@ -570,10 +596,15 @@ void GitTransaction::ApplyResult(EngineContext& ctx, SourceControlSession& scm)
     if (applied_ == ApplyStage::B) {
         ApplyStageB(ctx, changes);
     }
+    const char* opName =
+        op_ == OpKind::Checkout ? "checkout" : op_ == OpKind::Pull ? "pull" : "revert";
     if (hooks_.toast) {
         char buf[192];
         if (op_ == OpKind::Checkout) {
             std::snprintf(buf, sizeof(buf), Tr(StrId::Scm_CheckoutDone), target_.c_str(),
+                          static_cast<int>(changes.size()));
+        } else if (op_ == OpKind::Pull) {
+            std::snprintf(buf, sizeof(buf), Tr(StrId::Scm_PullDone),
                           static_cast<int>(changes.size()));
         } else {
             std::snprintf(buf, sizeof(buf), Tr(StrId::Scm_DiscardDone),
@@ -583,8 +614,7 @@ void GitTransaction::ApplyResult(EngineContext& ctx, SourceControlSession& scm)
     }
     // ★ログにも残す (トーストは実時間 4 秒で消えるので、後から
     //   「本当に段階 A で済んだのか」を確かめる手段がここしか無い)
-    MYE_LOG_INFO("[collab] %s applied: %zu path(s), stage %c",
-                 op_ == OpKind::Checkout ? "checkout" : "revert", changes.size(),
+    MYE_LOG_INFO("[collab] %s applied: %zu path(s), stage %c", opName, changes.size(),
                  applied_ == ApplyStage::A ? 'A' : 'B');
     paths_.clear();
     phase_ = Phase::Idle;
@@ -614,13 +644,19 @@ void GitTransaction::OnImGui(EngineContext& ctx, SourceControlSession& scm)
                                    vp->WorkPos.y + vp->WorkSize.y * 0.5f),
                             ImGuiCond_Always, ImVec2(0.5f, 0.5f));
 
+    // モーダルの題名は op ごと。pull は「切替」でも「破棄」でもないので 3 つ目を持つ
+    const StrId titleId = op_ == OpKind::Checkout ? StrId::Scm_SwitchTitle
+        : op_ == OpKind::Pull                     ? StrId::Scm_PullTitle
+                                                  : StrId::Scm_DiscardTitle;
+
     if (phase_ == Phase::Predict) {
         // 予測の待ち。**モーダルで入力を止める** — ここで別のボタンを押せると、
         // 「切替を頼んだ覚えがあるのに再生が始まる」ような取り違えが起きる
-        ImGui::OpenPopup(Tr(StrId::Scm_SwitchTitle));
-        if (ImGui::BeginPopupModal(Tr(StrId::Scm_SwitchTitle), nullptr,
-                                   ImGuiWindowFlags_AlwaysAutoResize)) {
-            ImGui::Text(Tr(StrId::Scm_SwitchTo), target_.c_str());
+        ImGui::OpenPopup(Tr(titleId));
+        if (ImGui::BeginPopupModal(Tr(titleId), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+            if (op_ == OpKind::Checkout) {
+                ImGui::Text(Tr(StrId::Scm_SwitchTo), target_.c_str());
+            }
             ImGui::TextDisabled("%s", Tr(StrId::Scm_SwitchChecking));
             ImGui::EndPopup();
         }
@@ -631,13 +667,21 @@ void GitTransaction::OnImGui(EngineContext& ctx, SourceControlSession& scm)
         // ★確認と実行中で**同じモーダル**を使う。閉じて開き直すと、その 1 フレームだけ
         //   他の窓に入力が通る (押しっぱなしのクリックがそのまま吸われる)。
         //   checkout は Predict の待ちとも同じ題名 = 予測 → 確認 → 実行が 1 枚で流れる
-        const char* title =
-            Tr(op_ == OpKind::Checkout ? StrId::Scm_SwitchTitle : StrId::Scm_DiscardTitle);
+        const char* title = Tr(titleId);
         ImGui::OpenPopup(title);
         if (ImGui::BeginPopupModal(title, nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
             if (op_ == OpKind::Checkout) {
                 ImGui::Text(Tr(StrId::Scm_SwitchTo), target_.c_str());
                 ImGui::Text(Tr(StrId::Scm_SwitchBody), static_cast<int>(paths_.size()));
+            } else if (op_ == OpKind::Pull) {
+                ImGui::Text(Tr(StrId::Scm_PullBody), static_cast<int>(paths_.size()));
+                if (allowMerge_) {
+                    // 2 周目 (非 ff で拒否された後)。**マージコミットが増える**ことを
+                    // 押す前に言う — 履歴に残るものを黙って作らない
+                    ImGui::PushStyleColor(ImGuiCol_Text, themeColor::Warning);
+                    ImGui::TextUnformatted(Tr(StrId::Scm_PullMergeNote));
+                    ImGui::PopStyleColor();
+                }
             } else {
                 ImGui::Text(Tr(StrId::Scm_DiscardBody), static_cast<int>(paths_.size()));
             }
@@ -662,9 +706,10 @@ void GitTransaction::OnImGui(EngineContext& ctx, SourceControlSession& scm)
             if (phase_ == Phase::Running) {
                 ImGui::TextDisabled("%s", Tr(StrId::Scm_OpRunning));
             } else {
-                if (ImGui::Button(Tr(op_ == OpKind::Checkout ? StrId::Scm_SwitchConfirm
-                                                             : StrId::Scm_DiscardConfirm),
-                                  ImVec2(140, 0))) {
+                const StrId confirmId = op_ == OpKind::Checkout ? StrId::Scm_SwitchConfirm
+                    : op_ == OpKind::Pull                       ? StrId::Scm_PullConfirm
+                                                                : StrId::Scm_DiscardConfirm;
+                if (ImGui::Button(Tr(confirmId), ImVec2(140, 0))) {
                     BeginOp(ctx, scm);
                 }
                 ImGui::SameLine();
@@ -700,6 +745,33 @@ void GitTransaction::OnImGui(EngineContext& ctx, SourceControlSession& scm)
                     }
                 }
                 ImGui::EndChild();
+            }
+            // ★非 ff で拒否された pull にだけ「マージして pull」を出す (spec §7)。
+            //   ここで押せないと、ユーザーはターミナルへ逃げるしかない。
+            //   **既定では出さない** — マージコミットは履歴に残るので、
+            //   「他に道が無い」ことが確定した後にだけ提示する
+            const bool offerMerge =
+                op_ == OpKind::Pull && errorCode_ == collaberr::kNonFastForward && !allowMerge_;
+            // ★認証で弾かれたときの逃げ道を先に書く。**GUI ダイアログ自体は出る**
+            //   (実測: GIT_TERMINAL_PROMPT=0 だけでは GCM の GUI は止まらない) ので、
+            //   「閉じてしまった / 資格情報が古い」場合の案内になる
+            if (errorCode_ == collaberr::kAuthFailed) {
+                ImGui::TextWrapped("%s", Tr(StrId::Scm_AuthHint));
+            }
+            if (offerMerge) {
+                ImGui::TextWrapped("%s", Tr(StrId::Scm_PullMergeHint));
+                if (ImGui::Button(Tr(StrId::Scm_PullMerge), ImVec2(160, 0))) {
+                    allowMerge_ = true;
+                    reportPaths_.clear();
+                    ImGui::CloseCurrentPopup();
+                    // ★確認をもう 1 枚挟まずに走らせる。押した人は今まさに
+                    //   「マージしてよい」と答えたところで、同じ内容の確認を
+                    //   2 回出すのは同意を薄くするだけ
+                    BeginOp(ctx, scm);
+                    ImGui::EndPopup();
+                    return;
+                }
+                ImGui::SameLine();
             }
             if (ImGui::Button(Tr(StrId::Common_Close), ImVec2(110, 0))) {
                 paths_.clear();

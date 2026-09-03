@@ -15,9 +15,9 @@
 | sub-02 | OK | 1 | 165cfc6 | M66b: CollabClient 完成 + SourceControlState + Source Control 窓 (読み取り専用) + canonicalRoot。依存: sub-01 |
 | sub-03 | OK | 1 | 83d0b4f | M66c: stage / unstage / commit / History / diff / identity。依存: sub-02 |
 | sub-04 | OK | 2 | 205e90d | M66d: ReloadHub Begin/EndBatch + ゲート + 4 窓の HasUnsavedChanges + トランザクション + revert。依存: sub-03。round 1 REWORK (must 1 = 段階 C モーダルの「あとで」撤去。should 2 件 → sub-05、nit 1 件 → sub-10) |
-| sub-05 | OK | 1 | (M66e、下の記入待ち) | M66e: Branches — 一覧 / 作成 / checkout + 段階の事前判定。依存: sub-04 |
-| sub-06 | 実装中 | 0 | | M66f: fetch / pull / push + 定期 fetch + 通知 + EditorSettings。依存: sub-04 (sub-05 と独立。並列なら SourceControlWindow.cpp / ops.rs のマージ順を司会が決める) |
-| sub-07 | 未着手 | 0 | | M66g: 競合 — abort / ours / theirs / continue。依存: sub-06 |
+| sub-05 | OK | 1 | c3be569 | M66e: Branches — 一覧 / 作成 / checkout + 段階の事前判定。依存: sub-04 |
+| sub-06 | OK | 1 | (M66f、下の記入待ち) | M66f: fetch / pull / push + 定期 fetch + 通知 + EditorSettings。依存: sub-04 (sub-05 と独立。並列なら SourceControlWindow.cpp / ops.rs のマージ順を司会が決める) |
+| sub-07 | 実装中 | 0 | | M66g: 競合 — abort / ours / theirs / continue。依存: sub-06 |
 | sub-08 | 未着手 | 0 | | M66h: 衛生 — .gitignore テンプレ 4 行 + project_settings.json の個人設定分離。依存: sub-03 (sub-05〜07 と独立) |
 | sub-09 | 未着手 | 0 | | M66i: Content Browser に Git バッジ + 保存直後のヒント。依存: sub-02 (sub-03〜08 と独立) |
 | sub-10 | 未着手 | 0 | | M66j: 仕上げ — engine_spec §14 Source control / README / CLAUDE.md / 規則の記載。依存: sub-01〜sub-09 |
@@ -28,7 +28,7 @@
 - `.terrain.edit` に `.meta` が付くか (`ClassifyPath`) — sub-03 は「存在するサイドカーだけ束ねる」実装で依存しない
 - GUI 無しの孫プロセス git から GCM のダイアログが出るか — sub-06 の冒頭確認 (出なければ案内文を変える)
 - ~~`--porcelain=v2` の下限 git 2.11 は記憶ベース~~ → **閉じた (sub-01)**: 2.11.0 で正しいことを一次情報で確認、出典 URL は `tools\collab\src\git.rs` の定数コメント
-- ~~`StartGameLogicBuild` の全呼び出し元~~ → **閉じた (sub-04)**: `BuildSettingsWindow::AdvancePipeline` の 1 箇所のみ、同期経路なし。**ただし Asset Browser の [Rebuild Scripts] (`AssetOps::RebuildGameLogic`) は `ShellExecuteW` の fire-and-forget でハンドルを持たず、ゲートから観測できない** → planner の should として sub-05 で塞ぐ (ハンドルを返す `StartGameLogicBuild` に寄せて EditorApp が保持、`GateInputs.scriptBuildRunning` に OR)
+- ~~`StartGameLogicBuild` の全呼び出し元~~ → **閉じた (sub-04)**: `BuildSettingsWindow::AdvancePipeline` の 1 箇所のみ、同期経路なし。**ただし Asset Browser の [Rebuild Scripts] (`AssetOps::RebuildGameLogic`) は `ShellExecuteW` の fire-and-forget でハンドルを持たず、ゲートから観測できない** → **閉じた (sub-05)**: `RebuildGameLogic` を削除し `StartGameLogicBuild` 1 本に寄せて EditorApp がハンドルを保持、`GateInputs.scriptBuildRunning` に OR。退行 (可視 cmd 窓でコンパイルエラーが読めた) は sub-08 の should で Console へ error 行を流して埋める
 - `kCollabMaxBatchApply = 200` / `kReloadRetryMax = 60` は初期値。実機で不便なら仕様変更として spec §8 に積む
 - ~~Rust cdylib が実際に Editor.exe から LoadLibrary で往復するかは策定時点で未検証~~ → **閉じた (sub-01)**: Debug / Release とも Editor.exe が MyeCollab.dll をロードして JSON が往復し git 版が返る (selftest で恒常検査)
 - ci.yml の GitHub 上の実走は**未検証** (push 後の最初の run で見る。割れやすいのは `dtolnay/rust-toolchain` の所要時間と cmd の `&&` 連鎖の終了コード伝播)
@@ -97,4 +97,14 @@
   - collab_verify の `# git <args>` は `-c` 付きも通る。`commit.gpgsign=false` を明示しないと開発者設定で固まる。
   - 未検証: 「Restart now」でプロセスが実際に入れ替わる経路 (押すと撮影プロセスが終了する) → sub-05 の受け入れ条件 3 (C: schemas が違うブランチへ切替) で実走。テクスチャ画素の A 段階証拠 → fixture 拡張後に撮る。`kReloadRetryMax` の WARN 発火は許容。
   - 生成物: `cache\probe_repo` (schemas を追加コミット済み)、`cache\collab_verify\`、`cache\scm_m66d_*.png`、`cache\*.log`。
+- **sub-05 (M66e) からの申し送り** (coder SELF_EVAL + planner VERDICT round 1):
+  - 仕様確定 (planner が spec §4.0 / §4.1 / §7 と sub-06 / sub-08 を修正済み): **`CollabClient::Shutdown` で `FreeLibrary` を呼ばない** (notify 8.2.0 の `ReadDirectoryChangesWatcher::drop` は内部スレッドを join しない → アンマップ後にコードが走り 0xC0000005、実測 1〜2/6 → 0/12)。**Rust 側に join できないスレッドを増やさない — 定期 fetch は worker のタイマーで** (spec §4.0)。§4.1「ブランチ周り」: **実行後の変更集合は op の応答に載せる** (`checkout` = `{branch, head, names, status}`。2 往復目を挟むと監視の status が割り込む。pull / continue / abort も同型)、未出生ブランチは `ls-tree` で全部 A、予測に無かった `.meta` は C。`branch_create` はゲート外 (working tree を触らない = commit / stage と同じ)。`local_changes_overwritten` の `detail` は固定文、`paths[]` が正。
+  - planner の should (sub-06 で): リモート追跡だけのブランチへの `-t` 付き checkout を bare origin ができたら collab_verify に 1 本足す (sub-06.md に転記済み)。
+  - planner の should (sub-08 で): スクリプトビルド失敗時の `error` 行を Console へ流す (`PollScriptBuild` の失敗検知で log の `path(line): error Cxxxx:` 行を `MYE_LOG_ERROR` へ、Console の double-click ジャンプが拾える形。旧 `RebuildGameLogic` の可視 cmd 窓 + `pause` の代替。sub-08.md に転記済み)。
+  - planner の nit: `Scm_ComingSoon` が未使用 (sub-07 で使わないなら sub-10 で消す) / `ResolveMetaGuidChanges` の線形検索 (触らない)。
+  - **書き込み系 op を足す形 (sub-06/07)**: `GitTransaction` に `OpKind` を 1 つ足し、(a) 予測の作り方 (`SendPredict`) と (b) 実行の呼び出し (`BeginOp` の分岐) の 2 箇所だけ差し替える。`ApplyResult` 以降 (段階分類 → `RegisterAdded` → `EndBatch(A集合)` → `ApplyStageB` → 段階 C モーダル) は共通。`SourceControlSession` の口: `Branches()` / `RequestBranches()` / `CreateBranch()` / `Checkout()` / `RequestDiffNames()` / `TakeMergeWarning()`。`ChangesFromNames()` は pull / merge の `names` にそのまま使える。
+  - **ImGui の罠 (実測)**: `SetNextWindowFocus()` はドックのタブを直接選ばない (次フレームの `DockNodeUpdateTabBar` が `g.NavWindow` から拾う → 毎フレーム他窓に focus を与えていると永久に効かない) / 束の既定タブは `node->SelectedTabId = ImHashStr("#TAB", 0, 窓 ID)` / `AlwaysAutoResize` の modal を pivot 中央に置くなら `ImGuiCond_Always`。
+  - fixture は「テクスチャを貼った床 + 立方体 + guid 固定の `.meta` 3 枚」。**エディタに `.meta` を作らせない** (作らせると未追跡が増えて checkout が拒否される)。ブランチ検証は fixture を作り直してから。collab_verify の次の番号は **07**。
+  - 未検証: `-t` 付き checkout、detached HEAD 表示、`shot_verify.bat` (golden は Runtime.exe が撮るのでエディタの既定レイアウトは入らない。sub-08 で回る)。
+  - 生成物: `cache\m66e_fx` (+ `.gitconfig`、3 ブランチ入り)、`cache\fx_test`、`cache\scm_m66e_*.png`、`cache\*.log`。
 - planner のエージェント ID はセッション限り。セッションを跨いだら `MODE: VERDICT` 用の planner を新規起動し、文脈は spec.md / sub-NN.md / この台帳で渡す。

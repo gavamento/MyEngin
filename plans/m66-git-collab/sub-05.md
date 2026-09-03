@@ -1,7 +1,7 @@
 # sub-05: M66e: Branches — 一覧 / 作成 / checkout + 段階の事前判定
 
 - 依存: sub-04
-- 状態: OK (commit: M66e — ハッシュは harness.md のサブ進捗表)
+- 状態: OK (commit c3be569)
 - 往復: 1
 
 ## やること

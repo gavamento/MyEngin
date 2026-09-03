@@ -1,6 +1,7 @@
 #include "Editor/Windows/SourceControlWindow.h"
 
 #include <algorithm>
+#include <cstdio>
 
 #include "Editor/SourceControl/PairRule.h"
 #include "Engine/Core/Localization.h"
@@ -147,6 +148,13 @@ std::string SourceControlWindow::TakeCreatedBranch()
     return name;
 }
 
+std::string SourceControlWindow::TakePushed()
+{
+    std::string target;
+    target.swap(pushedTo_);
+    return target;
+}
+
 void SourceControlWindow::OnImGui(SourceControlSession& scm, const SourceControlHost& host)
 {
     // ★差分の窓は Source Control 窓の開閉と**独立**に描く。ここを `open` の内側に
@@ -181,7 +189,7 @@ void SourceControlWindow::OnImGui(SourceControlSession& scm, const SourceControl
         return;
     }
 
-    DrawHeader(scm);
+    DrawHeader(scm, host);
     ImGui::Separator();
 
     if (ImGui::BeginTabBar("###ScmTabs")) {
@@ -202,7 +210,7 @@ void SourceControlWindow::OnImGui(SourceControlSession& scm, const SourceControl
     ImGui::End();
 }
 
-void SourceControlWindow::DrawHeader(SourceControlSession& scm)
+void SourceControlWindow::DrawHeader(SourceControlSession& scm, const SourceControlHost& host)
 {
     const SourceControlModel& model = scm.Model();
     // ★status がまだ 1 度も返っていない間にブランチ欄を描かない。
@@ -260,8 +268,28 @@ void SourceControlWindow::DrawHeader(SourceControlSession& scm)
         ImGui::OpenPopup("###ScmSettingsPopup");
     }
     if (ImGui::BeginPopup("###ScmSettingsPopup")) {
-        // 枠だけ (背景 fetch の間隔などは M66f)
-        ImGui::TextDisabled("%s", Tr(StrId::Scm_SettingsEmpty));
+        // ★背景 fetch の設定 (M66f)。**個人設定**なので EditorSettings 側にある。
+        //   窓は値を預かって編集するだけで、保存と hello の再送は EditorApp が行う
+        //   (窓が EditorSettings を直接触ると、保存の契機が 2 箇所に散る)
+        bool autoFetch = host.autoFetch;
+        int interval = host.fetchIntervalMin;
+        bool changed = false;
+        if (ImGui::Checkbox(Tr(StrId::Scm_AutoFetch), &autoFetch)) {
+            changed = true;
+        }
+        ImGui::BeginDisabled(!autoFetch);
+        ImGui::SetNextItemWidth(120.0f);
+        // ★1 分未満にできないようにする。0 にすると worker のタイマーが毎秒 git を
+        //   起動し続ける (Rust 側は 0 を許すがそれはテスト用)
+        if (ImGui::InputInt(Tr(StrId::Scm_FetchInterval), &interval)) {
+            interval = (std::max)(1, (std::min)(interval, 1440));
+            changed = true;
+        }
+        ImGui::EndDisabled();
+        ImGui::TextDisabled("%s", Tr(StrId::Scm_FetchNote));
+        if (changed && host.applyFetchSettings) {
+            host.applyFetchSettings(autoFetch, interval);
+        }
         ImGui::EndPopup();
     }
 
@@ -296,6 +324,13 @@ void SourceControlWindow::DrawHeader(SourceControlSession& scm)
             ImGui::TextWrapped("%s: %s", scm.ErrorCode().c_str(), scm.ErrorDetail().c_str());
         }
         ImGui::PopStyleColor();
+        // ★「どうすればいいか」まで書く (M66f)。code の説明だけだと、押した人は
+        //   ターミナルへ逃げるしかない。push はモーダルを通らないので**ここが唯一の出口**
+        if (scm.ErrorCode() == collaberr::kNonFastForward) {
+            ImGui::TextWrapped("%s", Tr(StrId::Scm_PushHintPullFirst));
+        } else if (scm.ErrorCode() == collaberr::kAuthFailed) {
+            ImGui::TextWrapped("%s", Tr(StrId::Scm_AuthHint));
+        }
     }
 }
 
@@ -355,6 +390,112 @@ void SourceControlWindow::SyncDiffRequest(SourceControlSession& scm)
     scm.RequestDiff(diffRequestedPath_, diffStaged_);
 }
 
+void SourceControlWindow::DrawRemoteBar(SourceControlSession& scm, const SourceControlHost& host)
+{
+    if (!remoteRequested_) {
+        // Changes タブを最初に描いたフレームで 1 回だけ。**fetch はしない**
+        // (ネットワークに出るのはユーザーが押したときと背景のタイマーだけ)
+        remoteRequested_ = true;
+        scm.RequestRemoteState();
+    }
+    const RemoteState& remote = scm.Remote();
+    const SourceControlModel& model = scm.Model();
+    const bool busy = scm.WriteInFlight();
+
+    // ---- fetch / pull / push ----
+    // ★既定のドック幅 (左列 ≒ 285px) に収まるのはボタン 3 個まで。ここはちょうど 3 個で、
+    //   状態テキストは下の帯が受け持つ
+    ImGui::BeginDisabled(busy);
+    if (ImGui::Button(Tr(StrId::Scm_Fetch))) {
+        scm.RequestFetch();
+    }
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+
+    // pull は working tree を入れ替える = **ゲートを通す** (revert / checkout と同じ)。
+    // ★behind が 0 のときは押せない。押しても「Already up to date」で終わるうえ、
+    //   段階の事前判定 (`HEAD..@{u}`) は fetch 済みの追跡ブランチが基準なので、
+    //   「まだ fetch していない状態の pull」は予測が必ず空になる (= 予測の意味が消える)
+    const bool gateOpen = host.writeBlockers.empty() && host.requestPull;
+    const bool canPull = model.behind > 0 && gateOpen;
+    ImGui::BeginDisabled(!canPull || busy);
+    if (ImGui::Button(Tr(StrId::Scm_Pull))) {
+        host.requestPull();
+    }
+    ImGui::EndDisabled();
+    // ★BeginDisabled の外でツールチップを出す (中だとホバー判定ごと殺される)
+    if (!gateOpen && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+        DrawBlockerTooltip(host.writeBlockers);
+    }
+    ImGui::SameLine();
+
+    // push はゲート不要 (ディスクを 1 バイトも触らない = 開いている文書に影響しない)
+    ImGui::BeginDisabled(busy || (remote.valid && !remote.hasRemote));
+    if (ImGui::Button(Tr(StrId::Scm_Push))) {
+        // setUpstream=false: upstream が無ければサービス側が自動で -u を張る。
+        // ★失敗の表示はヘッダの赤字 (ErrorText) が受け持つ — 押した直後に見る場所を
+        //   2 つに分けない。成功だけ EditorApp がトーストにする
+        const std::string target =
+            scm.Model().upstream.empty() ? std::string("origin") : scm.Model().upstream;
+        scm.Push(false, [this, target](bool ok, const std::string&, const std::string&) {
+            if (ok) {
+                pushedTo_ = target;
+            }
+        });
+    }
+    ImGui::EndDisabled();
+
+    // ---- 上流との関係の帯 ----
+    if (remote.valid && !remote.hasRemote) {
+        ImGui::TextDisabled("%s", Tr(StrId::Scm_NoRemote));
+        return;
+    }
+    if (model.upstream.empty()) {
+        ImGui::TextDisabled("%s", Tr(StrId::Scm_NoUpstream));
+        return;
+    }
+    if (model.behind > 0) {
+        // ★展開でコミット一覧 (誰が何を入れたか)。畳んだ 1 行だけでも
+        //   「取り込むものがある」が分かるようにする
+        ImGui::PushStyleColor(ImGuiCol_Text, themeColor::Accent);
+        char label[192];
+        std::snprintf(label, sizeof(label), Tr(StrId::Scm_BehindBanner), model.behind,
+                      model.upstream.c_str());
+        if (ImGui::ArrowButton("###ScmRemoteExpand",
+                               remoteExpanded_ ? ImGuiDir_Down : ImGuiDir_Right)) {
+            remoteExpanded_ = !remoteExpanded_;
+            if (remoteExpanded_ && scm.Remote().commits.empty()) {
+                // 帯は status の behind で出るが、一覧は remote_state でしか来ない
+                scm.RequestRemoteState();
+            }
+        }
+        ImGui::SameLine();
+        ImGui::TextUnformatted(label);
+        ImGui::PopStyleColor();
+        if (remoteExpanded_) {
+            if (remote.commits.empty()) {
+                ImGui::TextDisabled("%s", Tr(StrId::Scm_Loading));
+            } else {
+                // ★BeginChild / EndChild は**戻り値に関わらず対で呼ぶ**
+                //   (この版の ImGui は畳まれていても EndChild を要求する)
+                if (ImGui::BeginChild("###ScmRemoteCommits", ImVec2(0, 84.0f),
+                                      ImGuiChildFlags_Borders)) {
+                    for (const CommitInfo& c : remote.commits) {
+                        ImGui::TextDisabled("%s", c.author.c_str());
+                        ImGui::SameLine();
+                        ImGui::TextUnformatted(c.subject.c_str());
+                    }
+                }
+                ImGui::EndChild();
+            }
+        }
+    } else if (model.ahead > 0) {
+        ImGui::TextDisabled(Tr(StrId::Scm_AheadBanner), model.ahead);
+    } else {
+        ImGui::TextDisabled(Tr(StrId::Scm_UpToDate), model.upstream.c_str());
+    }
+}
+
 void SourceControlWindow::DrawChanges(SourceControlSession& scm, const SourceControlHost& host)
 {
     const SourceControlModel& model = scm.Model();
@@ -362,6 +503,9 @@ void SourceControlWindow::DrawChanges(SourceControlSession& scm, const SourceCon
         ImGui::TextDisabled("%s", Tr(StrId::Scm_Loading));
         return;
     }
+
+    DrawRemoteBar(scm, host);
+    ImGui::Separator();
 
     // ---- 操作列 ----
     // ★書き込みが飛んでいる間 (WriteInFlight) は塞ぐ。git は index.lock を握るので

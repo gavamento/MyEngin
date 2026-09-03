@@ -28,6 +28,14 @@ struct SourceControlHost {
     // ブランチ切替を要求する (M66e)。実際の切替は GitTransaction が
     // 「事前判定 → 確認 → checkout → 後処理」の順で行う
     std::function<void(std::string)> requestCheckout;
+    // ---- M66f ----
+    // pull を要求する。checkout と同じくトランザクション経由 (ゲート + 段階 A/B/C)
+    std::function<void()> requestPull;
+    // 背景 fetch の設定 (EditorSettings の現在値)。窓は**表示と編集だけ**で、
+    // 保存も hello の再送も EditorApp 側が行う
+    bool autoFetch = true;
+    int fetchIntervalMin = 5;
+    std::function<void(bool, int)> applyFetchSettings;
 };
 
 // Source Control 窓 (M66b = 読み取り、M66c = stage / unstage / commit / History / diff)。
@@ -52,10 +60,14 @@ public:
     bool TakeAdoptCanonicalRoot();
     // 作成に成功したブランチ名を 1 回だけ取り出す (同上)
     std::string TakeCreatedBranch();
+    // push が成功した先 ("origin/main")。1 回だけ取り出す (同上、M66f)
+    std::string TakePushed();
 
 private:
-    void DrawHeader(SourceControlSession& scm);
+    void DrawHeader(SourceControlSession& scm, const SourceControlHost& host);
     void DrawChanges(SourceControlSession& scm, const SourceControlHost& host);
+    // 上流との関係の帯 + fetch / pull / push の 3 ボタン (M66f)
+    void DrawRemoteBar(SourceControlSession& scm, const SourceControlHost& host);
     void DrawBranches(SourceControlSession& scm, const SourceControlHost& host);
     void DrawDiffWindow(SourceControlSession& scm);
     // compact = 窓が低いとき (ラベルを省いて入力欄を 2 行にする)
@@ -91,6 +103,10 @@ private:
     bool diffFocusRequest_ = false;  // 行を選んだ = 差分の窓を手前に出す (M66e)
     bool branchesRequested_ = false; // Branches タブを一度でも開いたか
     bool newBranchOpen_ = false;     // 作成モーダルを出しているか
+    // ---- M66f ----
+    bool remoteRequested_ = false;   // remote_state を一度でも聞いたか
+    bool remoteExpanded_ = false;    // 帯を展開してコミット一覧を出しているか
+    std::string pushedTo_;           // push に成功した先 (EditorApp が取り出す)
 };
 
 } // namespace mye

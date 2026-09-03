@@ -26,6 +26,8 @@ void EditorSettings::Load(const std::wstring& dir)
         snapScale = root.value("snapScale", snapScale);
         gridVisible = root.value("gridVisible", gridVisible);
         camMoveSpeed = root.value("camMoveSpeed", camMoveSpeed);
+        scmAutoFetch = root.value("scmAutoFetch", scmAutoFetch);
+        scmFetchIntervalMin = root.value("scmFetchIntervalMin", scmFetchIntervalMin);
     } catch (const nlohmann::json::exception& ex) {
         MYE_LOG_WARN("editor_settings.json parse error: %s", ex.what());
     }
@@ -55,6 +57,8 @@ void EditorSettings::Save() const
     root["snapScale"] = snapScale;
     root["gridVisible"] = gridVisible;
     root["camMoveSpeed"] = camMoveSpeed;
+    root["scmAutoFetch"] = scmAutoFetch;
+    root["scmFetchIntervalMin"] = scmFetchIntervalMin;
 
     std::ofstream f(std::filesystem::path(path_), std::ios::binary);
     if (f) {

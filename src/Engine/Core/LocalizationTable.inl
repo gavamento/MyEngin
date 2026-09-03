@@ -949,8 +949,6 @@ MYE_STR(Scm_TabBranches,      "Branches###ScmBranches", "ブランチ###ScmBranc
 MYE_STR(Scm_TabHistory,       "History###ScmHistory",   "履歴###ScmHistory")
 MYE_STR(Scm_Refresh,          "Refresh###ScmRefresh",   "更新###ScmRefresh")
 MYE_STR(Scm_Settings,         "Settings###ScmSettings", "設定###ScmSettings")
-MYE_STR(Scm_SettingsEmpty,    "Background fetch settings arrive with pull / push.",
-                              "背景 fetch の設定は pull / push と一緒に入ります。")
 MYE_STR(Scm_NoChanges,        "No changes in the working tree.",
                               "作業ツリーに変更はありません。")
 MYE_STR(Scm_ChangeCount,      "%d changed", "%d 件の変更")
@@ -1146,3 +1144,40 @@ MYE_STR(Scm_ScriptBuildDone,   "Script build finished", "スクリプトのビ�
 //   あり、片方はログのパスを持たない。詳細 (パスと exit code) はログへ出す
 MYE_STR(Scm_ScriptBuildFailed, "Script build failed - see the console log.",
                                "スクリプトのビルドが失敗しました。コンソールのログを見てください。")
+// ---- M66f: fetch / pull / push + 背景 fetch の設定 ----
+MYE_STR(Scm_Fetch,             "Fetch###ScmFetch", "取得###ScmFetch")
+MYE_STR(Scm_Pull,              "Pull###ScmPull",   "取り込み###ScmPull")
+MYE_STR(Scm_Push,              "Push###ScmPush",   "送信###ScmPush")
+MYE_STR(Scm_NoRemote,          "No remote is configured for this repository.",
+                               "このリポジトリにはリモートが設定されていません。")
+MYE_STR(Scm_UpToDate,          "Up to date with %s.", "%s と同じ状態です。")
+// ★書式指定子の**並び**を en / ja で一致させること (%d → %s)。
+//   日本語の語順に合わせて入れ替えると、片方の言語でだけ引数が入れ替わって落ちる
+MYE_STR(Scm_BehindBanner,      "%d new commit(s) on %s", "新しいコミットが %d 件 (%s)")
+MYE_STR(Scm_AheadBanner,       "%d commit(s) to push", "送信していないコミットが %d 件")
+MYE_STR(Scm_PullTitle,         "Pull###ScmPullModal", "取り込み###ScmPullModal")
+MYE_STR(Scm_PullBody,          "%d file(s) will be replaced on disk.",
+                               "%d 件のファイルがディスク上で入れ替わります。")
+MYE_STR(Scm_PullConfirm,       "Pull###ScmPullConfirm", "取り込む###ScmPullConfirm")
+MYE_STR(Scm_PullDone,          "Pulled %d file(s)", "%d 件を取り込みました")
+MYE_STR(Scm_PullMergeHint,     "Your branch and the remote have both moved on. Pulling will create a merge commit.",
+                               "こちらとリモートの両方が進んでいます。取り込むとマージコミットが作られます。")
+MYE_STR(Scm_PullMerge,         "Merge and pull###ScmPullMerge",
+                               "マージして取り込む###ScmPullMerge")
+MYE_STR(Scm_PullMergeNote,     "A merge commit will be added to the history.",
+                               "履歴にマージコミットが 1 件増えます。")
+// ★ScmErr_NonFastForward (赤字の理由) と**別のことを書く**。同じ文を 2 行並べても
+//   読み手は 1 行分の情報しか得られない — ここは「次に何を押すか」だけを書く
+MYE_STR(Scm_PushHintPullFirst, "Press Pull to bring them in, then push again.",
+                               "「取り込み」を押してから、もう一度送信してください。")
+MYE_STR(Scm_PushDone,          "Pushed to %s", "%s へ送信しました")
+MYE_STR(Scm_AuthHint,          "Credential Manager should ask for your account. If you closed it, run 'git push' once in a terminal.",
+                               "資格情報マネージャーが認証を求めます。閉じてしまった場合はターミナルで一度 git push を実行してください。")
+MYE_STR(Scm_FetchFailed,       "Background fetch failed: %s",
+                               "背景での取得に失敗しました: %s")
+MYE_STR(Scm_AutoFetch,         "Fetch in the background###ScmAutoFetch",
+                               "背景で取得する###ScmAutoFetch")
+MYE_STR(Scm_FetchInterval,     "Every (minutes)###ScmFetchInterval",
+                               "間隔 (分)###ScmFetchInterval")
+MYE_STR(Scm_FetchNote,         "Background fetch never opens a credential dialog.",
+                               "背景での取得は資格情報のダイアログを出しません。")

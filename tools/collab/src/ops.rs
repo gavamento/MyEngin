@@ -1,10 +1,12 @@
 // op の実装 (M66a = hello / repo_check / status、M66b = hint_changed、
 // M66c = stage / unstage / commit / log / diff / identity_check、
-// M66d = revert / diff_names、M66e = branches / branch_create / checkout)。
+// M66d = revert / diff_names、M66e = branches / branch_create / checkout、
+// M66f = fetch / pull / push / remote_state + 定期 fetch)。
 // op 一覧そのものは spec §4.1 で v1 に凍結済み。ここに無い op は bad_request を返す
 // — 「知らない op を黙って ok で返す」と C++ 側が永久に待つ形の不具合になる。
 
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use serde_json::{json, Value};
 
@@ -15,9 +17,21 @@ use crate::protocol::{self, code, event, ErrorBody};
 /// worker スレッドが 1 本だけ持つ状態。**sim にも UI にも触らない**
 pub struct State {
     pub root: PathBuf,
-    /// hello で受け取る設定 (定期 fetch は M66f。ここでは保持するだけ)
+    /// hello で受け取る設定 (M66f: worker のタイマーがこの 2 つを読む)
     pub fetch_interval_min: i64,
     pub auto_fetch: bool,
+    /// 次に定期 fetch を走らせる時刻。None = 走らせない (auto_fetch が false / CLI)。
+    /// ★**worker スレッドのタイマー**で回す (spec §4.0)。専用スレッドを立てない —
+    ///   notify の Drop が join しないせいで FreeLibrary を撤去した経緯があり、
+    ///   「join できないスレッド」をこれ以上増やすとアンロード時の即死が戻ってくる
+    pub next_fetch_at: Option<Instant>,
+    /// 直近の remote_state。**中身が同じなら remote_changed を出さない**
+    /// (5 分ごとに同じトーストが出ると、本当に誰かが push したときに誰も見なくなる)
+    last_remote: Option<Value>,
+    /// 直近の背景 fetch の失敗 code。**同じ code が続く間は 1 回だけ**通知する
+    /// (spec §4.1「背景 fetch と認証」)。オフラインのまま作業する人に
+    /// 5 分ごとの「ネットワークに到達できません」を投げつけないため
+    last_fetch_error: String,
     /// 直近に組み立てた status の結果。監視スレッド由来の取り直しで
     /// **同じ物なら通知を出さない**ための比較用 (M66b)。
     /// ★これが無いと、エディタが cache\ の外に書いたどんな 1 バイトでも
@@ -33,9 +47,19 @@ impl State {
             root: root.into(),
             fetch_interval_min: 5,
             auto_fetch: true,
+            next_fetch_at: None,
+            last_remote: None,
+            last_fetch_error: String::new(),
             last_status: None,
             last_head: String::new(),
         }
+    }
+
+    /// hello / タイマーが使う間隔。**負や巨大な値をそのまま Duration にしない**
+    /// (設定ファイルを手で書き換えられる = 0 除算ならぬオーバーフローの口になる)
+    pub fn fetch_interval(&self) -> std::time::Duration {
+        let minutes = self.fetch_interval_min.clamp(0, 24 * 60) as u64;
+        std::time::Duration::from_secs(minutes * 60)
     }
 }
 
@@ -64,6 +88,10 @@ pub fn dispatch(state: &mut State, op: &str, args: &Value) -> Result<Value, Erro
         "branches" => branches(state),
         "branch_create" => branch_create(state, args),
         "checkout" => checkout(state, args),
+        "fetch" => fetch(state),
+        "pull" => pull(state, args),
+        "push" => push(state, args),
+        "remote_state" => remote_state(state),
         other => Err(ErrorBody::new(code::BAD_REQUEST, format!("unknown op: {other}"))),
     }
 }
@@ -91,6 +119,12 @@ fn hello(state: &mut State, args: &Value) -> Result<Value, ErrorBody> {
     if let Some(v) = args.get("autoFetch").and_then(|v| v.as_bool()) {
         state.auto_fetch = v;
     }
+    // ★設定の反映は hello の**再送**で行う (spec の M66f)。ここでタイマーを組み直すので、
+    //   エディタが歯車で間隔を変えたら次の tick から新しい間隔になる。
+    //   `Some(now)` = 「すぐ 1 回」= spec の「起動直後 + 間隔ごと」の起動直後の分。
+    //   auto_fetch を切ったら None にして**タイマーごと止める**
+    //   (フラグだけ見て走らせない形にすると、切った直後の 1 回が漏れる)
+    state.next_fetch_at = if state.auto_fetch { Some(Instant::now()) } else { None };
     let ver = git::version(&state.root)?;
     Ok(json!({ "gitVersion": ver }))
 }
@@ -713,4 +747,265 @@ fn changed_names(state: &State, before: &str, after: &str) -> Result<Vec<Value>,
             Value::Object(o)
         })
         .collect())
+}
+
+// ---- M66f: fetch / pull / push / remote_state + 定期 fetch ----
+
+/// 「upstream に何が来ているか」の一覧に載せる上限 (spec の M66f: 最大 20 件)。
+/// ★全部返さない理由: 長期間 pull していないブランチでは数百件になり、
+///   窓の帯に流し込むだけで整形が効いてくる。20 件あれば
+///   「誰が何を入れたか」は十分伝わる
+const MAX_REMOTE_COMMITS: i64 = 20;
+
+/// 現在のブランチ名 (detached HEAD では "HEAD")。push の `-u origin <branch>` に使う
+fn current_branch(root: &Path) -> Result<String, ErrorBody> {
+    let out = git::run(root, &["rev-parse", "--abbrev-ref", "HEAD"])?;
+    Ok(if out.success() { out.stdout_text() } else { String::new() })
+}
+
+/// 追跡先の短縮名 ("origin/main")。**未設定はエラーではなく空文字列**。
+///
+/// ★実測: upstream が無いと `rev-parse @{u}` は exit 128 +
+///   `fatal: no upstream configured for branch 'main'` を返す。これを err にすると
+///   「まだ 1 回も push していないブランチ」で窓が赤くなる = 直しようの無い警告になる
+fn upstream_name(root: &Path) -> Result<String, ErrorBody> {
+    let out = git::run(root, &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"])?;
+    Ok(if out.success() { out.stdout_text() } else { String::new() })
+}
+
+/// リモートが 1 つでも設定されているか (`git remote` の出力が非空)。
+/// ★UI が push のボタンを塞ぐ判断に使う。無いまま push すると
+///   `fatal: No configured push destination.` = git_failed で返ってくるだけで、
+///   ユーザーには「押したのに謎のエラー」にしか見えない
+fn has_remote(root: &Path) -> Result<bool, ErrorBody> {
+    let out = git::run(root, &["remote"])?;
+    Ok(out.success() && !out.stdout_text().is_empty())
+}
+
+/// `HEAD...@{u}` の左右件数 = (ahead, behind)。upstream が無ければ (0, 0)。
+/// ★`...` (3 点) であること。`..` だと片側しか数えない
+fn ahead_behind(root: &Path) -> Result<(i64, i64), ErrorBody> {
+    let out = git::run(root, &["rev-list", "--left-right", "--count", "HEAD...@{u}"])?;
+    if !out.success() {
+        return Ok((0, 0));
+    }
+    let text = out.stdout_text();
+    let mut it = text.split_whitespace();
+    let ahead = it.next().and_then(|s| s.parse::<i64>().ok()).unwrap_or(0);
+    let behind = it.next().and_then(|s| s.parse::<i64>().ok()).unwrap_or(0);
+    Ok((ahead, behind))
+}
+
+/// `HEAD..@{u}` = 「まだ手元に無いコミット」。log と同じ整形で返す
+fn incoming_commits(root: &Path) -> Result<Vec<Value>, ErrorBody> {
+    let n = MAX_REMOTE_COMMITS.to_string();
+    let out = git::run(
+        root,
+        &["log", "-n", &n, "--format=%H%x00%an%x00%aI%x00%s", "-z", "HEAD..@{u}"],
+    )?;
+    if !out.success() {
+        // upstream が無い / 未出生ブランチ。**空で返す** (エラーにしない)
+        return Ok(Vec::new());
+    }
+    Ok(porcelain::parse_log_z(&out.stdout)
+        .into_iter()
+        .map(|e| json!({ "sha": e.sha, "author": e.author, "date": e.date, "subject": e.subject }))
+        .collect())
+}
+
+/// remote_state の本体。**last_remote は更新しない** (更新するのは
+/// 「ユーザーに見せた」ことが確定する fetch / remote_state / 背景 fetch の側)
+fn build_remote_state(state: &State) -> Result<Value, ErrorBody> {
+    toplevel(&state.root)?;
+    let upstream = upstream_name(&state.root)?;
+    let (ahead, behind) = ahead_behind(&state.root)?;
+    let commits = if upstream.is_empty() { Vec::new() } else { incoming_commits(&state.root)? };
+    Ok(json!({
+        "upstream": upstream,
+        "hasRemote": has_remote(&state.root)?,
+        "ahead": ahead,
+        "behind": behind,
+        "commits": commits,
+    }))
+}
+
+/// remote_state — 読み取り系。窓の帯 (「upstream に N 件の新しいコミット」) の入力
+fn remote_state(state: &mut State) -> Result<Value, ErrorBody> {
+    let value = build_remote_state(state)?;
+    state.last_remote = Some(value.clone());
+    Ok(value)
+}
+
+/// fetch — `git fetch --prune`。**ユーザーが押したとき用**なので GCM の GUI を許す
+/// (`git::run` = GIT_TERMINAL_PROMPT=0 のみ)。背景の定期 fetch は background_fetch。
+///
+/// ★リモートが 1 つも無いリポジトリでも `git fetch` は **exit 0 + 無出力**で返る
+///   (実測 git 2.48.1)。特別扱いは要らない
+fn fetch(state: &mut State) -> Result<Value, ErrorBody> {
+    toplevel(&state.root)?;
+    let out = git::run(&state.root, &["fetch", "--prune"])?;
+    if !out.success() {
+        return Err(git::classify_error(&out));
+    }
+    let remote = build_remote_state(state)?;
+    state.last_remote = Some(remote.clone());
+    Ok(json!({ "remote": remote, "status": status_after_write(state)? }))
+}
+
+/// pull — 既定は `--ff-only`、`allowMerge=true` で `--no-rebase` (マージを作る)。
+///
+/// 応答は checkout と**同じ型** (`{head, names, status}`) にしてある (spec §4.1
+/// 「ブランチ周り」)。C++ 側は段階 A/B/C の判定を `names` 1 本から行うので、
+/// 「working tree を入れ替える op」はすべてこの形で返すのが契約。
+///
+/// ★rebase を既定にしない。rebase 中の中断状態 (rebase-apply) をエディタから
+///   復帰させる手段が v1 に無く、ゲートが永久に閉じたリポジトリができる
+fn pull(state: &mut State, args: &Value) -> Result<Value, ErrorBody> {
+    toplevel(&state.root)?;
+    let allow_merge = args.get("allowMerge").and_then(|v| v.as_bool()).unwrap_or(false);
+    let before = head_oid(&state.root)?;
+    let mode = if allow_merge { "--no-rebase" } else { "--ff-only" };
+    let out = git::run(&state.root, &["pull", mode])?;
+    if !out.success() {
+        return Err(classify_pull_failure(&out));
+    }
+    let after = head_oid(&state.root)?;
+    let names = changed_names(state, &before, &after)?;
+    let status = status_after_write(state)?;
+    let remote = build_remote_state(state)?;
+    state.last_remote = Some(remote.clone());
+    Ok(json!({ "head": after, "names": names, "status": status, "remote": remote }))
+}
+
+/// pull の失敗を error.code へ。
+///
+/// ★マージの競合は **stdout** に出る (`CONFLICT (content): Merge conflict in x` /
+///   `Automatic merge failed; fix conflicts and then commit the result.`)。
+///   classify_error は stderr しか見ないので、commit と同じくここで両方を読む。
+///   拾い損ねると `git_failed` に化け、リポジトリがマージ途中で止まっているのに
+///   UI は「git が失敗しました」としか言わない = 一番危ない見落とし方になる。
+/// ★detail は**固定文**にする。競合したファイルは sub-07 の `conflicts` op が
+///   `git status` の未マージ行から取る — git の案内文を解析すると
+///   `CONFLICT (modify/delete)` のような別形で必ず外れる
+/// `non_fast_forward` の detail を**固定文へ差し替える**。
+///
+/// ★git の原文には短縮 SHA (`From ../origin  a609161..68eeffa main -> origin/main`) と
+///   版で変わる hint (`Disable this message with "git config set advice.diverging false"`)
+///   が載る。そのまま返すと collab_verify の期待 NDJSON が**毎回**赤くなる
+///   (実際に 1 度撮って気付いた)。UI は既知 code を Tr() の文言に置き換えるので
+///   detail は表示に使われない = 固定文にして失うものは無い。
+///   分類できなかった失敗 (`git_failed`) は今までどおり stderr 全文を載せる —
+///   そちらは「何が起きたか分からない」を避ける方が大事
+fn stable_non_fast_forward(err: ErrorBody) -> ErrorBody {
+    if err.code == code::NON_FAST_FORWARD {
+        return ErrorBody::new(
+            code::NON_FAST_FORWARD,
+            "the remote has commits that are not in this branch",
+        );
+    }
+    err
+}
+
+fn classify_pull_failure(out: &git::GitOutput) -> ErrorBody {
+    let mut text = out.stderr_text();
+    if !text.is_empty() {
+        text.push('\n');
+    }
+    text.push_str(&out.stdout_text());
+    let low = text.to_ascii_lowercase();
+    if low.contains("automatic merge failed") || low.contains("merge conflict in") {
+        return ErrorBody::new(code::CONFLICT, "the merge produced conflicts");
+    }
+    let mut err = git::classify_error(out);
+    if err.code == code::LOCAL_CHANGES_OVERWRITTEN {
+        let paths = porcelain::parse_overwritten_paths(&err.detail);
+        if !paths.is_empty() {
+            // checkout と同じ扱い (spec S7): 案内文ではなく **paths[]** が正
+            err = ErrorBody::with_paths(
+                code::LOCAL_CHANGES_OVERWRITTEN,
+                "local changes would be overwritten by pull",
+                paths,
+            );
+        }
+    }
+    if err.detail.is_empty() {
+        err.detail = text.trim().to_string();
+    }
+    stable_non_fast_forward(err)
+}
+
+/// push — upstream が無ければ `-u origin <branch>` で作ってから押す。
+///
+/// ★upstream が無いまま素の `git push` を打つと
+///   `fatal: The current branch X has no upstream branch.` で止まる。
+///   「初めての push」はチーム作業で最も普通の操作なので、ここで自動的に
+///   追跡を張る (`setUpstream` はそれを明示的に要求する口)
+fn push(state: &mut State, args: &Value) -> Result<Value, ErrorBody> {
+    toplevel(&state.root)?;
+    let set_upstream = args.get("setUpstream").and_then(|v| v.as_bool()).unwrap_or(false);
+    let upstream = upstream_name(&state.root)?;
+    let branch = current_branch(&state.root)?;
+    let need_upstream = set_upstream || upstream.is_empty();
+    if need_upstream && (branch.is_empty() || branch == "HEAD") {
+        // detached HEAD。**どのブランチにも属さないコミットを push しようとしている**
+        return Err(ErrorBody::new(code::BAD_REQUEST, "cannot push a detached HEAD"));
+    }
+    let mut argv: Vec<&str> = vec!["push"];
+    if need_upstream {
+        argv.push("-u");
+        argv.push("origin");
+        argv.push(branch.as_str());
+    }
+    let out = git::run(&state.root, &argv)?;
+    if !out.success() {
+        return Err(stable_non_fast_forward(git::classify_error(&out)));
+    }
+    let remote = build_remote_state(state)?;
+    state.last_remote = Some(remote.clone());
+    Ok(json!({ "remote": remote, "status": status_after_write(state)? }))
+}
+
+/// 定期 fetch の本体 (worker のタイマーから呼ばれる)。**通知行だけ**を返す。
+///
+/// 認証は `git::run_background` = `GIT_TERMINAL_PROMPT=0` + `GCM_INTERACTIVE=never`。
+/// 誰も見ていない 5 分ごとの fetch が資格情報ダイアログを積み上げるのを防ぐ
+/// (実測はその関数のコメント)。
+pub fn background_fetch(state: &mut State) -> Vec<String> {
+    let mut lines = Vec::new();
+    if toplevel(&state.root).is_err() {
+        // リポジトリでなくなった (フォルダごと移動された等)。**黙って諦める** —
+        // 通知経路でエラーを出すと、リポジトリ外のプロジェクトで 5 分ごとにトーストが出る
+        return lines;
+    }
+    let out = match git::run_background(&state.root, &["fetch", "--prune"]) {
+        Ok(o) => o,
+        Err(e) => {
+            push_fetch_error(state, e, &mut lines);
+            return lines;
+        }
+    };
+    if !out.success() {
+        push_fetch_error(state, git::classify_error(&out), &mut lines);
+        return lines;
+    }
+    // 成功したら「次に失敗したらまた 1 回知らせる」状態へ戻す
+    state.last_fetch_error.clear();
+    // ahead/behind は status にも載っているので、監視経路と同じ 1 本に流す
+    lines.extend(refresh_status(state));
+    if let Ok(remote) = build_remote_state(state) {
+        if state.last_remote.as_ref() != Some(&remote) {
+            state.last_remote = Some(remote.clone());
+            lines.push(protocol::event_line(event::REMOTE_CHANGED, json!({ "remote": remote })));
+        }
+    }
+    lines
+}
+
+/// 背景 fetch の失敗通知。**同じ code が続く間は 1 回だけ** (spec §4.1)
+fn push_fetch_error(state: &mut State, err: ErrorBody, lines: &mut Vec<String>) {
+    if state.last_fetch_error == err.code {
+        return;
+    }
+    state.last_fetch_error = err.code.clone();
+    lines.push(protocol::event_line(event::REMOTE_CHANGED, json!({ "error": err })));
 }

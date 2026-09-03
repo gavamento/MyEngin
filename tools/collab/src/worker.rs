@@ -10,9 +10,10 @@ use std::collections::VecDeque;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{channel, Sender};
+use std::sync::mpsc::{channel, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
@@ -27,6 +28,17 @@ enum Msg {
     Shutdown,
 }
 
+/// 定期 fetch の時刻合わせのために worker が目を覚ます間隔 (M66f)。
+///
+/// ★**新しいスレッドを立てない**ための仕掛け (spec §4.0)。notify 8.2.0 の
+///   `ReadDirectoryChangesWatcher::drop` が内部スレッドを join しないせいで
+///   `FreeLibrary` を撤去した経緯があり、「join できないスレッド」をこれ以上
+///   増やすとアンロード時の即死が戻ってくる。既にある worker の `recv` を
+///   `recv_timeout` に変えるだけなら、スレッドは 1 本のままで済む。
+/// ★1 秒にしているのは「間隔が分単位である以上、それより細かい精度に意味が無い」から。
+///   起き抜けにやるのは Instant の比較 1 回だけなので、常駐コストは無視できる
+const TICK: Duration = Duration::from_secs(1);
+
 pub struct Service {
     tx: Option<Sender<Msg>>,
     out: Arc<Mutex<VecDeque<String>>>,
@@ -39,15 +51,24 @@ pub struct Service {
 }
 
 impl Service {
-    /// 監視なし。CLI と単体テストが使う
+    /// 監視なし・タイマーなし。CLI と単体テストが使う。
+    /// ★CLI (script モード) がこちらを使うのは spec §4.4 の要求 —
+    ///   event 行が出ると期待 NDJSON が非決定になる
     pub fn new(root: String) -> Self {
         Self::with_dispatcher(root, ops::dispatch)
     }
 
-    /// 監視あり。**mye_collab_create (DLL) だけが使う**。
+    /// 定期 fetch のタイマーだけを回す (監視スレッドは立てない)。**テスト専用の入口** —
+    /// 本番 (DLL) は with_watch。監視を外せるので「タイマーが本当に fetch したか」を
+    /// ファイル変更由来の通知と混ぜずに観測できる
+    pub fn with_timer(root: String) -> Self {
+        Self::build(root, ops::dispatch, true)
+    }
+
+    /// 監視あり + 定期 fetch のタイマーあり。**mye_collab_create (DLL) だけが使う**。
     /// 監視が張れなくても Service は生きる (窓の「更新」で status は取れる)
     pub fn with_watch(root: String) -> Self {
-        let mut svc = Self::with_dispatcher(root.clone(), ops::dispatch);
+        let mut svc = Self::build(root.clone(), ops::dispatch, true);
         if let Some(tx) = svc.tx.clone() {
             svc.watch = crate::watch::spawn(&PathBuf::from(root), move || {
                 // 送信失敗 = worker が既に落ちている。監視スレッドは次の
@@ -62,6 +83,12 @@ impl Service {
     /// **本番経路と同じ worker を使う**ことに意味がある (panic 隔離の検査は
     /// 「本物の worker が dead 化するか」でしか意味を持たない)
     pub fn with_dispatcher(root: String, dispatcher: Dispatcher) -> Self {
+        Self::build(root, dispatcher, false)
+    }
+
+    /// worker を 1 本起こす。`background` = 定期 fetch のタイマーを回すか
+    /// (spec §4.4: CLI は false = `recv` で寝たまま起きない)
+    fn build(root: String, dispatcher: Dispatcher, background: bool) -> Self {
         let out: Arc<Mutex<VecDeque<String>>> = Arc::new(Mutex::new(VecDeque::new()));
         let dead = Arc::new(AtomicBool::new(false));
         let (tx, rx) = channel::<Msg>();
@@ -71,7 +98,30 @@ impl Service {
             .name("mye_collab_worker".to_string())
             .spawn(move || {
                 let mut state = State::new(root);
-                while let Ok(msg) = rx.recv() {
+                loop {
+                    // ★background のときだけ `recv_timeout`。CLI で使うと
+                    //   「何も来ていないのに 1 秒ごとに起きる」だけの無駄になるうえ、
+                    //   タイマー由来の通知が期待 NDJSON に混ざりうる
+                    let msg = if background {
+                        // ★期限の確認は**待つ前**に、毎周回やる。timeout の枝にだけ
+                        //   置くと、メッセージが 1 秒より短い間隔で届き続ける限り
+                        //   タイマーが永久に飢える。監視スレッドは
+                        //   `.git\index` の更新 (status を走らせると自分で触る) で
+                        //   デバウンス間隔ごとに Refresh を投げうるので、これは
+                        //   理論上の話ではない — 実機で 2 分半 fetch が 1 回も
+                        //   走らないのを観測して直した
+                        handle_tick(&mut state, &out_w, &dead_w);
+                        match rx.recv_timeout(TICK) {
+                            Ok(m) => m,
+                            Err(RecvTimeoutError::Timeout) => continue, // 次の周回で期限を見る
+                            Err(RecvTimeoutError::Disconnected) => break,
+                        }
+                    } else {
+                        match rx.recv() {
+                            Ok(m) => m,
+                            Err(_) => break,
+                        }
+                    };
                     match msg {
                         Msg::Shutdown => break,
                         Msg::Request(line) => {
@@ -196,6 +246,40 @@ fn handle_line(
                 push_line(out, protocol::service_error_line(code::INTERNAL_PANIC, &detail));
             }
             push_line(out, Response::err(req.id, ErrorBody::new(code::INTERNAL_PANIC, detail)).to_line());
+        }
+    }
+}
+
+/// タイマーの 1 目盛り (M66f)。**定期 fetch の期限が来ていなければ何もしない**。
+///
+/// ★fetch を走らせるのは worker スレッド自身 = git の直列実行に自然に乗る。
+///   別スレッドから git を叩くと index.lock を自分同士で踏む (worker が 1 本である
+///   理由そのもの)。「ユーザーが押した pull の最中に背景 fetch が割り込む」も
+///   構造的に起こらない。
+/// ★次回の予定は fetch が**終わってから**組む。走る前に組むと、ネットワークが遅くて
+///   fetch に間隔以上かかる環境で背中合わせに走り続ける
+fn handle_tick(state: &mut State, out: &Arc<Mutex<VecDeque<String>>>, dead: &Arc<AtomicBool>) {
+    if !state.auto_fetch {
+        return;
+    }
+    match state.next_fetch_at {
+        Some(at) if Instant::now() >= at => {}
+        _ => return,
+    }
+    match catch_unwind(AssertUnwindSafe(|| ops::background_fetch(state))) {
+        Ok(lines) => {
+            for line in lines {
+                push_line(out, line);
+            }
+            state.next_fetch_at = Some(Instant::now() + state.fetch_interval());
+        }
+        Err(payload) => {
+            // 要求経路・監視経路と同じ扱い。ここだけ握り潰すと
+            // 「定期 fetch のせいで静かに死んだサービス」ができる
+            let detail = panic_text(&payload);
+            if !dead.swap(true, Ordering::SeqCst) {
+                push_line(out, protocol::service_error_line(code::INTERNAL_PANIC, &detail));
+            }
         }
     }
 }

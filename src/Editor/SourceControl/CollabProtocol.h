@@ -41,6 +41,14 @@ constexpr const char* kDiffNames = "diff_names";
 constexpr const char* kBranches = "branches";
 constexpr const char* kBranchCreate = "branch_create";
 constexpr const char* kCheckout = "checkout";
+// M66f。remote_state は読み取り系 (上の kReadOps に既に載っている)。fetch / push は
+// working tree を触らないが**書き込み系**として扱う — ネットワーク待ちがあるので
+// 30 s で打ち切られると「諦めた後に refs だけ書き換わる」食い違いが起きる。
+// pull は working tree を丸ごと入れ替えるので GitTransaction 経由でだけ投げる
+constexpr const char* kFetch = "fetch";
+constexpr const char* kPull = "pull";
+constexpr const char* kPush = "push";
+constexpr const char* kRemoteState = "remote_state";
 } // namespace collabop
 
 // op の待ち方 (spec §4.4「タイムアウト」)。
@@ -90,6 +98,10 @@ constexpr const char* kInternalPanic = "internal_panic";
 constexpr const char* kBadRequest = "bad_request";
 // M66e: checkout がローカルの未コミット変更と重なった。error.paths に対象が載る
 constexpr const char* kLocalChangesOverwritten = "local_changes_overwritten";
+// M66f: pull / push がリモートの先行に負けた。UI は「マージして pull」「先に pull」を出す
+constexpr const char* kNonFastForward = "non_fast_forward";
+// M66f: 認証に失敗した。Credential Manager のダイアログを閉じた場合もここへ来る
+constexpr const char* kAuthFailed = "auth_failed";
 // C++ 側が合成する疑似 code (サービスは返さない)。応答が期限内に来なかった要求は
 // **必ずコールバックを呼んで消す** — 呼ばないと窓が「実行中」のまま二度と操作できない
 constexpr const char* kTimeout = "timeout";

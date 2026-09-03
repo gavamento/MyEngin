@@ -18,6 +18,12 @@ struct EditorSettings {
     bool gridVisible = true;
     // Scene View カメラの WASD 移動速度 (M27d。RMB ホールド中のホイールで調整)
     float camMoveSpeed = 6.0f;
+    // ---- Source Control の背景 fetch (M66f、spec §4.2) ----
+    // ★**個人設定**なのでここ (.mye\editor_settings.json) に置く。project_settings.json に
+    //   置くとチームで共有されてしまい、「同僚のリポジトリが 1 分ごとに fetch する」
+    //   ような設定を押し付けることになる
+    bool scmAutoFetch = true;
+    int scmFetchIntervalMin = 5;
 
     void Load(const std::wstring& dir);
     void Save() const;

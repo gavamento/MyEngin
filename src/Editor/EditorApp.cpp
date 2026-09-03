@@ -218,7 +218,8 @@ void EditorApp::OnStart(EngineContext& ctx)
     // ★プロジェクト起動のときだけ立ち上げる。裸起動では DLL のロードすらしない
     //   (どのリポジトリかが決まらないので機能が成立しない = Unavailable::NoProject)。
     //   ロードに失敗しても例外は飛ばない = エディタの他機能は一切影響を受けない
-    scm_.Start(GetExecutableDir(), ctx.projectRoot);
+    scm_.Start(GetExecutableDir(), ctx.projectRoot, settings_.scmAutoFetch,
+               settings_.scmFetchIntervalMin);
     // ★既定表示はプロジェクト起動のときだけ開く (spec §4.3、M66c)。Assets と同じ
     //   ドック束のタブなので場所を取らず、利用不可でも「なぜ使えないか」が読める。
     //   裸起動では Source control 自体が成立しない (NoProject) ので出さない。
@@ -566,6 +567,29 @@ void EditorApp::OnImGui(EngineContext& ctx)
         // 外部 (ターミナル) の checkout / pull。v1 は知らせるだけ (spec §3「後回し」)
         toasts_.Notify(LogLevel::Warn, Tr(StrId::Scm_HeadMoved));
     }
+    // ---- 背景 fetch の結果 (M66f) ----
+    // ★窓を開いていない人にも「取り込むものがある」を伝える唯一の場所。
+    //   帯 (窓の中) だけだと、Source Control を閉じている間は永久に気付けない
+    if (scm_.TakeRemoteChanged()) {
+        const RemoteState& remote = scm_.Remote();
+        if (remote.behind > 0) {
+            char buf[192];
+            snprintf(buf, sizeof(buf), Tr(StrId::Scm_BehindBanner), remote.behind,
+                     remote.upstream.c_str());
+            toasts_.Notify(LogLevel::Info, buf);
+        }
+    }
+    {
+        std::string fetchCode;
+        std::string fetchDetail;
+        if (scm_.TakeFetchError(fetchCode, fetchDetail)) {
+            // ★同じ code が続く間サービス側が 1 回しか通知しないので、ここでも
+            //   重複排除は要らない (ToastCenter の同文まとめに任せない = 理由が読める)
+            char buf[224];
+            snprintf(buf, sizeof(buf), Tr(StrId::Scm_FetchFailed), fetchCode.c_str());
+            toasts_.Notify(LogLevel::Warn, buf);
+        }
+    }
 
     // ---- ミニシーン編集モード (M48k) ----
     // 全ウィンドウの描画の間だけ `ctx.scene` をアセットのミニシーンへ差し替える。
@@ -659,6 +683,21 @@ void EditorApp::OnImGui(EngineContext& ctx)
         scmHost.requestRevert = [this](std::vector<std::string> paths, int untracked) {
             gitTx_.RequestRevert(std::move(paths), untracked);
         };
+        // M66f: 背景 fetch の設定は EditorSettings (個人設定) 側にあり、窓は
+        // 預かって編集するだけ。保存と hello の再送はここで一括して行う
+        scmHost.autoFetch = settings_.scmAutoFetch;
+        scmHost.fetchIntervalMin = settings_.scmFetchIntervalMin;
+        scmHost.applyFetchSettings = [this](bool autoFetch, int intervalMin) {
+            settings_.scmAutoFetch = autoFetch;
+            settings_.scmFetchIntervalMin = intervalMin;
+            settings_.Save();
+            scm_.ApplyFetchSettings(autoFetch, intervalMin);
+        };
+        scmHost.requestPull = [this]() {
+            // M66f: pull も checkout と同じトランザクション経由
+            // (working tree が入れ替わる = ゲートと段階 A/B/C が要る)
+            gitTx_.RequestPull();
+        };
         scmHost.requestCheckout = [this](std::string target) {
             // M66e: 切替も破棄と同じトランザクション経由。窓は名前を渡すだけで、
             // 事前判定 (diff_names) → 確認 → checkout → 後処理は GitTransaction が持つ
@@ -677,6 +716,14 @@ void EditorApp::OnImGui(EngineContext& ctx)
         const bool adopted = scm_.AdoptCanonicalRoot();
         toasts_.Notify(adopted ? LogLevel::Info : LogLevel::Error,
                        Tr(adopted ? StrId::Scm_AdoptDone : StrId::Scm_AdoptFailed));
+    }
+    if (const std::string target = sourceControl_.TakePushed(); !target.empty()) {
+        // ★ログにも残す (トーストは 4 秒で消える)。「本当に送れたのか」を
+        //   後から確かめる手段がここしか無い
+        MYE_LOG_INFO("[collab] pushed to %s", target.c_str());
+        char buf[160];
+        snprintf(buf, sizeof(buf), Tr(StrId::Scm_PushDone), target.c_str());
+        toasts_.Notify(LogLevel::Info, buf);
     }
     if (const std::string branch = sourceControl_.TakeCreatedBranch(); !branch.empty()) {
         // ★ログにも残す (トーストは 4 秒で消える)。一覧は取り直しているが、

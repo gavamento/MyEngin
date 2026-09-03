@@ -160,6 +160,16 @@ HEAD が変わっていたらトースト「外部で HEAD が移動しました
 で実行し、失敗は**同じ `error.code` が続く間は 1 回だけ**通知。ユーザーが押した push / pull / fetch は
 GCM の GUI を許す (`GIT_TERMINAL_PROMPT=0` のみ)。全 git 呼び出しは `LC_ALL=C`
 (エラー文の照合を安定させる) + `-c core.quotepath=false -c color.ui=false --no-pager`。
+★実測 (sub-06、GCM 2.x / git 2.48.1、CreateNoWindow + stdio リダイレクトの孫プロセス): `GIT_TERMINAL_PROMPT=0` **だけでは GCM の GUI が出る** (GCM は端末プロンプトの可否としか読まない)。`GCM_INTERACTIVE=never` を足すと `fatal: Cannot prompt because user interactivity has been disabled.` で止まる。= 背景 fetch から `GCM_INTERACTIVE=never` を外さない / ユーザー操作側には付けない (付けると初回認証が一切できない)。
+
+**リモート周り (sub-06 round 1 で確定)**:
+- `remote_state` は `{hasRemote, upstream, ahead, behind, commits[]}`。`hasRemote=false` なら Push を塞ぐ (他に判断材料が無い)。
+- `fetch` / `pull` / `push` の応答に `remote` (実行後の remote_state) を載せる。pull は checkout と同型 `{head, names, status, remote}`。
+- **Pull ボタンは `behind > 0` のときだけ有効** (ツールチップ「先に Fetch」)。未 fetch の pull は予測 `HEAD..@{u}` が必ず空で確認モーダルの意味が消える。起動時と定期 fetch があるので実用上は困らない。「Pull が内部で fetch する」は v1.5。
+- `push{setUpstream}` は省略可 (既定 false)。upstream が無ければサービスが自動で `-u origin <branch>` を張るので UI に口は作らない。引数は削らない (フィールド削除 = bump 対象)。
+- `non_fast_forward` の `detail` はサービス側の固定文 (git 原文は短縮 SHA と版依存の hint を含む)。競合は git が **stdout** に書くので pull 専用の分類 (`classify_pull_failure`) を通す。
+- 定期 fetch は worker のタイマー (`recv_timeout(1 s)` + `handle_tick`) でスレッドを増やさない。**`handle_tick` は待つ前に毎周回呼ぶ** (timeout の枝だけだと 1 s より短い間隔でメッセージが届き続けるとタイマーが飢える。実機で 2 分半 fetch が走らなかった)。
+- 背景 fetch の失敗トーストは `error.code` のみ (detail はログ)。同じ code が続く間は 1 回。
 
 **op 一覧 (v1 で凍結)**: `hello` / `repo_check` / `status` / `stage` / `unstage` / `commit` / `log` /
 `diff` / `identity_check` / `revert` / `diff_names` / `branches` / `branch_create` / `checkout` /
@@ -274,7 +284,7 @@ sub-08 / sub-09 は sub-05〜07 と独立。
   「`ScanAndSync` 再実行」を比較し、選んだ方を実装メモに残す。
 - B 段階の `.controller.json` / `.terrain.json`: ライブラリ側にキャッシュ無効化 API があるか未確認 (coder が sub-04 で確認。無ければ C へ格上げ)。
 - `.terrain.edit` に `.meta` が付くか (`ClassifyPath` の分類) は未確認 → 対の束ねは「存在するサイドカーだけ」を集める実装にして依存しない。
-- Windows の GCM が GUI 無しプロセスの子孫から GUI を出せるかは未検証 (sub-06 の冒頭確認)。
+- ~~Windows の GCM が GUI 無しプロセスの子孫から GUI を出せるか~~ → **閉じた** (sub-06: 出る。`GCM_INTERACTIVE=never` でのみ止まる。§4.1 参照)。
 - ~~`--porcelain=v2` の下限 git 2.11 は記憶ベース~~ → **閉じた** (sub-01 round 1: v2.11.0 の `Documentation/git-status.txt` に "Porcelain Format Version 2" と `# branch.ab`、v2.10.0 には無い。出典 URL は `tools\collab\src\git.rs` の定数コメント)。
 - Rust cdylib と MSVC CRT: Rust は自前のアロケータで文字列を返すので `mye_collab_free` 以外で解放しない (境界の規則、sub-01 のヘッダコメントに書く)。
 - ~~S5 の登録方式~~ → **閉じた** (sub-04: 増分登録 `AssetDatabase::GuidForPath(abs, createIfMissing=true)`。`ScanAndSync` は 3 表を clear するので解決先が一瞬空になる窓が開く)。
@@ -310,3 +320,4 @@ sub-08 / sub-09 は sub-05〜07 と独立。
 - 2026-09-03 (sub-05 round 1、coder SELF_EVAL): §4.0 に「Shutdown は destroy のみ、FreeLibrary は呼ばない」— notify の Drop が join しない一次情報 (windows.rs:590-596) と終了時クラッシュの実測。coder の判断を採用。
 - 同上: §4.1 に「ブランチ周り」を新設 (応答に names / 未出生は全部 A / branch_create はゲート外 / detail 固定文 / -t / guid / Rebuild Scripts の一本化)。旧 RebuildGameLogic の可視 cmd 窓 (失敗時 pause で読めた) が消える代わりに、失敗時のエラー行を Console へ流す should を sub-08 に割り当て。
 - 同上: §4.3 の既定ドック (左列) と Diff 別窓は sub-05 で実装済み (`cache/scm_m66e_layout.png`)。§7 の Rebuild Scripts の穴を閉じた。
+- 2026-09-03 (sub-06 round 1、coder SELF_EVAL): §4.1 に GCM の実測 (GIT_TERMINAL_PROMPT=0 だけでは GUI が出る) と「リモート周り」を新設 (hasRemote / 応答に remote / Pull は behind > 0 / setUpstream 省略可 / detail 固定文 / 競合は stdout / タイマーは毎周回 / 失敗トーストは code のみ)。質問 1〜3 はすべて coder の判断を採用。§7 の GCM 未決を閉じた。

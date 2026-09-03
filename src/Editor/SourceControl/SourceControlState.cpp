@@ -293,12 +293,15 @@ Unavailable EvaluateRepoCheck(const nlohmann::json& repoCheckResult,
 
 // ---- SourceControlSession ----
 
-void SourceControlSession::Start(const std::wstring& exeDir, const std::wstring& projectRoot)
+void SourceControlSession::Start(const std::wstring& exeDir, const std::wstring& projectRoot,
+                                 bool autoFetch, int fetchIntervalMin)
 {
     if (started_) {
         return;
     }
     started_ = true;
+    autoFetch_ = autoFetch;
+    fetchIntervalMin_ = fetchIntervalMin;
     projectRoot_ = projectRoot;
     if (projectRoot_.empty()) {
         // 裸起動。**DLL のロードすらしない** — プロジェクトが無ければ
@@ -318,36 +321,86 @@ void SourceControlSession::Start(const std::wstring& exeDir, const std::wstring&
         }
     }
 
+    // ★通知の配線は DLL のロードより**先**に張る。後ろに置くと、ロードに失敗した経路で
+    //   ハンドラごと存在しなくなり「サービスは動いているのに通知だけ届かない」形の
+    //   不具合と区別が付かない (セルフテストがこの 1 本を検査できるのもこの順のおかげ)
+    client_.SetEventHandler([this](const nlohmann::json& msg) { ApplyEvent(msg); });
     if (!client_.Load(exeDir)) {
         return; // 理由は client_.State() (NoService / ProtoMismatch)
     }
     if (!client_.Create(WideToUtf8(projectRoot_))) {
         return;
     }
-    client_.SetEventHandler([this](const nlohmann::json& msg) {
-        const std::string ev = msg.value("event", std::string());
-        if (ev == "status_changed" && msg.contains("status")) {
-            ApplyStatusResult(msg["status"]);
-        } else if (ev == "repo_changed") {
-            // v1 は「トーストで知らせる」だけ (spec §3「後回し」)。状態そのものは
-            // 同時に来る status_changed が持ってくる
-            headMoved_ = true;
-        }
-    });
     SendHello();
+}
+
+void SourceControlSession::ApplyEvent(const nlohmann::json& msg)
+{
+    const std::string ev = msg.value("event", std::string());
+    if (ev == "status_changed" && msg.contains("status")) {
+        ApplyStatusResult(msg["status"]);
+    } else if (ev == "remote_changed") {
+        // 背景 fetch (worker のタイマー) 発。**成功と失敗が同じ event 名で来る**
+        // (spec §4.1)。失敗は同じ code が続く間 1 回しか来ないので、
+        // ここで握り潰さずそのまま外へ出す
+        if (msg.contains("remote")) {
+            remote_ = BuildRemoteState(msg["remote"]);
+            remoteChanged_ = true;
+            MYE_LOG_INFO("[collab] background fetch: %d behind, %d ahead (%s)", remote_.behind,
+                         remote_.ahead,
+                         remote_.upstream.empty() ? "no upstream" : remote_.upstream.c_str());
+        } else if (msg.contains("error") && msg["error"].is_object()) {
+            fetchErrorCode_ = msg["error"].value("code", std::string());
+            fetchErrorDetail_ = msg["error"].value("detail", std::string());
+            // ★ここは errorCode_ (窓のヘッダに赤字で出るもの) に**入れない**。
+            //   背景 fetch の失敗でヘッダを赤くすると、オフラインで作業している間
+            //   ずっと「壊れている」ように見える。出すのはトースト 1 回だけ
+            MYE_LOG_WARN("[collab] background fetch failed: %s: %s", fetchErrorCode_.c_str(),
+                         fetchErrorDetail_.c_str());
+        }
+    } else if (ev == "repo_changed") {
+        // v1 は「トーストで知らせる」だけ (spec §3「後回し」)。状態そのものは
+        // 同時に来る status_changed が持ってくる
+        headMoved_ = true;
+    }
 }
 
 void SourceControlSession::SendHello()
 {
-    client_.Request(collabop::kHello, { { "fetchIntervalMin", 5 }, { "autoFetch", false } },
+    client_.Request(collabop::kHello,
+                    { { "fetchIntervalMin", fetchIntervalMin_ }, { "autoFetch", autoFetch_ } },
                     [this](const nlohmann::json& msg) {
                         if (!msg.value("ok", false)) {
                             ApplyError(msg);
                             return;
                         }
                         gitVersion_ = msg["result"].value("gitVersion", std::string());
-                        MYE_LOG_INFO("[collab] git %s", gitVersion_.c_str());
+                        MYE_LOG_INFO("[collab] git %s (auto fetch %s, every %d min)",
+                                     gitVersion_.c_str(), autoFetch_ ? "on" : "off",
+                                     fetchIntervalMin_);
                         SendRepoCheck();
+                    });
+}
+
+void SourceControlSession::ApplyFetchSettings(bool autoFetch, int fetchIntervalMin)
+{
+    autoFetch_ = autoFetch;
+    fetchIntervalMin_ = fetchIntervalMin;
+    if (!client_.Ready()) {
+        return;
+    }
+    // ★hello を**再送**するのが設定の反映手段 (spec の M66f)。サービス側は hello の中で
+    //   タイマーを組み直す。ここで repo_check からやり直さないのは、リポジトリの
+    //   状態は何も変わっていないから (status を無駄に 1 往復させない)
+    client_.Request(collabop::kHello,
+                    { { "fetchIntervalMin", fetchIntervalMin_ }, { "autoFetch", autoFetch_ } },
+                    [this](const nlohmann::json& msg) {
+                        if (!msg.value("ok", false)) {
+                            ApplyError(msg);
+                            return;
+                        }
+                        MYE_LOG_INFO("[collab] auto fetch %s, every %d min",
+                                     autoFetch_ ? "on" : "off", fetchIntervalMin_);
                     });
 }
 
@@ -896,7 +949,7 @@ void SourceControlSession::RequestDiffNames(const std::string& from, const std::
 
 void SourceControlSession::Checkout(const std::string& name, CheckoutDoneFn done)
 {
-    CheckoutResult res;
+    TreeOpResult res;
     if (!client_.Ready() || repoState_ != Unavailable::None || name.empty()) {
         // ★呼び手 (GitTransaction) は ReloadHub::BeginBatch を済ませているので、
         //   黙って return すると一括モードのまま帰ってこない
@@ -909,7 +962,7 @@ void SourceControlSession::Checkout(const std::string& name, CheckoutDoneFn done
     }
     client_.Request(collabop::kCheckout, { { "name", name } },
                     [this, done = std::move(done)](const nlohmann::json& msg) {
-                        CheckoutResult r;
+                        TreeOpResult r;
                         r.ok = ApplyWriteResult(msg);
                         if (r.ok) {
                             const nlohmann::json& result = msg["result"];
@@ -938,6 +991,160 @@ void SourceControlSession::Checkout(const std::string& name, CheckoutDoneFn done
                         }
                         if (done) {
                             done(r);
+                        }
+                    });
+}
+
+// ---- M66f: fetch / pull / push / remote_state ----
+
+RemoteState BuildRemoteState(const nlohmann::json& r)
+{
+    RemoteState out;
+    if (!r.is_object()) {
+        return out;
+    }
+    out.upstream = r.value("upstream", std::string());
+    out.hasRemote = r.value("hasRemote", false);
+    out.ahead = r.value("ahead", 0);
+    out.behind = r.value("behind", 0);
+    if (r.contains("commits") && r["commits"].is_array()) {
+        for (const nlohmann::json& c : r["commits"]) {
+            if (!c.is_object()) {
+                continue;
+            }
+            CommitInfo info;
+            info.sha = c.value("sha", std::string());
+            info.author = c.value("author", std::string());
+            info.date = c.value("date", std::string());
+            info.subject = c.value("subject", std::string());
+            out.commits.push_back(std::move(info));
+        }
+    }
+    out.valid = true;
+    return out;
+}
+
+bool SourceControlSession::TakeRemoteChanged()
+{
+    const bool changed = remoteChanged_;
+    remoteChanged_ = false;
+    return changed;
+}
+
+bool SourceControlSession::TakeFetchError(std::string& code, std::string& detail)
+{
+    if (fetchErrorCode_.empty()) {
+        return false;
+    }
+    code.swap(fetchErrorCode_);
+    detail.swap(fetchErrorDetail_);
+    fetchErrorCode_.clear();
+    fetchErrorDetail_.clear();
+    return true;
+}
+
+void SourceControlSession::RequestRemoteState()
+{
+    if (!client_.Ready() || repoState_ != Unavailable::None || remoteStateInFlight_) {
+        return;
+    }
+    remoteStateInFlight_ = true;
+    client_.Request(collabop::kRemoteState, nlohmann::json::object(),
+                    [this](const nlohmann::json& msg) {
+                        remoteStateInFlight_ = false;
+                        if (!msg.value("ok", false)) {
+                            ApplyError(msg);
+                            return;
+                        }
+                        remote_ = BuildRemoteState(msg["result"]);
+                    });
+}
+
+void SourceControlSession::RequestFetch()
+{
+    if (!client_.Ready() || repoState_ != Unavailable::None) {
+        return;
+    }
+    // ★ユーザーが押した fetch は GIT_TERMINAL_PROMPT=0 のみ = Credential Manager の
+    //   GUI が出うる (実測: git.rs の run_background のコメント)。押した本人が
+    //   画面の前にいる操作なので、ダイアログが出るのは正しい
+    client_.Request(collabop::kFetch, nlohmann::json::object(), [this](const nlohmann::json& msg) {
+        if (!ApplyWriteResult(msg)) {
+            return;
+        }
+        if (msg["result"].contains("remote")) {
+            remote_ = BuildRemoteState(msg["result"]["remote"]);
+            MYE_LOG_INFO("[collab] fetch: %d behind, %d ahead", remote_.behind, remote_.ahead);
+        }
+    });
+}
+
+void SourceControlSession::Pull(bool allowMerge, CheckoutDoneFn done)
+{
+    TreeOpResult res;
+    if (!client_.Ready() || repoState_ != Unavailable::None) {
+        // ★呼び手 (GitTransaction) は ReloadHub::BeginBatch を済ませているので、
+        //   黙って return すると一括モードのまま帰ってこない
+        res.errorCode = collaberr::kServiceDead;
+        res.errorDetail = "source control is not available";
+        if (done) {
+            done(res);
+        }
+        return;
+    }
+    client_.Request(collabop::kPull, { { "allowMerge", allowMerge } },
+                    [this, done = std::move(done)](const nlohmann::json& msg) {
+                        TreeOpResult r;
+                        r.ok = ApplyWriteResult(msg);
+                        if (r.ok) {
+                            const nlohmann::json& result = msg["result"];
+                            if (result.contains("names")) {
+                                // ★checkout と**同じ 1 本**で段階分類の入力を作る。
+                                //   pull だけ別の読み方をすると、D を取りこぼして
+                                //   消えたファイルを読み直そうとする形で静かに壊れる
+                                r.changes = ChangesFromNames(result["names"]);
+                            }
+                            if (result.contains("remote")) {
+                                remote_ = BuildRemoteState(result["remote"]);
+                            }
+                            r.branch = model_.branch;
+                            MYE_LOG_INFO("[collab] pull (%zu path(s) changed)", r.changes.size());
+                        } else {
+                            r.errorCode = errorCode_;
+                            r.errorDetail = errorDetail_;
+                            if (msg.contains("error") && msg["error"].contains("paths")
+                                && msg["error"]["paths"].is_array()) {
+                                for (const nlohmann::json& p : msg["error"]["paths"]) {
+                                    if (p.is_string()) {
+                                        r.errorPaths.push_back(p.get<std::string>());
+                                    }
+                                }
+                            }
+                        }
+                        if (done) {
+                            done(r);
+                        }
+                    });
+}
+
+void SourceControlSession::Push(bool setUpstream, WriteDoneFn done)
+{
+    if (!client_.Ready() || repoState_ != Unavailable::None) {
+        if (done) {
+            done(false, collaberr::kServiceDead, "source control is not available");
+        }
+        return;
+    }
+    client_.Request(collabop::kPush, { { "setUpstream", setUpstream } },
+                    [this, done = std::move(done)](const nlohmann::json& msg) {
+                        const bool ok = ApplyWriteResult(msg);
+                        if (ok && msg["result"].contains("remote")) {
+                            remote_ = BuildRemoteState(msg["result"]["remote"]);
+                            MYE_LOG_INFO("[collab] push done (%d ahead, %d behind)", remote_.ahead,
+                                         remote_.behind);
+                        }
+                        if (done) {
+                            done(ok, errorCode_, errorDetail_);
                         }
                     });
 }

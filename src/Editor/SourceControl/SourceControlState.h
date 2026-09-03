@@ -113,6 +113,20 @@ struct BranchList {
 // `branches` 応答の `result` → モデル。**純関数**
 BranchList BuildBranchList(const nlohmann::json& branchesResult);
 
+// upstream との関係 (M66f)。`remote_state` / `fetch` / `pull` / `push` の応答と
+// `remote_changed` 通知が同じ形で運んでくる
+struct RemoteState {
+    std::string upstream;             // "origin/main"。空 = 追跡なし
+    bool hasRemote = false;           // リモートが 1 つでも設定されているか
+    int ahead = 0;                    // 手元にあって upstream に無い
+    int behind = 0;                   // upstream にあって手元に無い
+    std::vector<CommitInfo> commits;  // HEAD..@{u} の最大 20 件 (帯の展開に出す)
+    bool valid = false;               // 一度でも応答/通知を受けたか
+};
+
+// `remote_state` 相当の JSON → モデル。**純関数**
+RemoteState BuildRemoteState(const nlohmann::json& remoteResult);
+
 // `checkout` / `diff_names` の `names` 配列 → 段階分類の入力。**純関数**。
 // ★git の name-status 1 文字と BatchChange::Kind の対応をここ 1 箇所に閉じる。
 //   2 箇所に書くと「D を Modified と読んで消えたファイルを読み直そうとする」形で
@@ -160,8 +174,10 @@ public:
     SourceControlSession(const SourceControlSession&) = delete;
     SourceControlSession& operator=(const SourceControlSession&) = delete;
 
-    // 起動時に 1 回。projectRoot が空 (裸起動) なら NoProject のまま何もしない
-    void Start(const std::wstring& exeDir, const std::wstring& projectRoot);
+    // 起動時に 1 回。projectRoot が空 (裸起動) なら NoProject のまま何もしない。
+    // autoFetch / fetchIntervalMin は EditorSettings 由来で、そのまま hello に載る
+    void Start(const std::wstring& exeDir, const std::wstring& projectRoot, bool autoFetch,
+               int fetchIntervalMin);
     // 毎フレーム 1 回 (OnImGui の先頭)。応答/通知の配布とタイムアウトの回収
     void Poll();
     void Shutdown();
@@ -240,21 +256,46 @@ public:
                                                const std::string& code, const std::string& detail)>;
     void RequestDiffNames(const std::string& from, const std::string& to, DiffNamesDoneFn done);
 
-    // checkout の応答。**changes が段階分類の唯一の入力**
-    struct CheckoutResult {
+    // working tree を入れ替える op (checkout / pull) の応答。
+    // **changes が段階分類の唯一の入力**。
+    // ★checkout と pull で 1 つの型を共有しているのは、`GitTransaction::ApplyResult`
+    //   以降 (段階分類 → 登録 → EndBatch → 段階 B/C) が op に依存しないため。
+    //   型を分けると「同じ後処理を 2 通り書く」ことになり、片方だけ直す事故が必ず出る
+    struct TreeOpResult {
         bool ok = false;
-        std::string branch;               // 切り替わった先 (成功時)
+        std::string branch;               // 切り替わった先 (checkout の成功時)
         std::vector<StageChange> changes; // working tree で入れ替わったもの
         std::string errorCode;
         std::string errorDetail;
         // local_changes_overwritten のとき「何を破棄すれば進めるか」(spec S7)
         std::vector<std::string> errorPaths;
     };
-    using CheckoutDoneFn = std::function<void(const CheckoutResult&)>;
+    using CheckoutDoneFn = std::function<void(const TreeOpResult&)>;
     // ★**GitTransaction 経由でのみ呼ぶこと** (Revert と同じ理由 — ゲートと
     //   ReloadHub の一括適用が掛かっていない状態で working tree を入れ替えると、
     //   エディタが掴んだままのファイルが下から差し替わる)
     void Checkout(const std::string& name, CheckoutDoneFn done);
+
+    // ---- M66f: fetch / pull / push / remote_state ----
+    // fetch は working tree を触らないのでゲートを通さない (塞ぐのは WriteInFlight だけ)。
+    // 応答の remote / status はそのままモデルへ入る
+    void RequestFetch();
+    // 帯 (「upstream に N 件」) の取り直し。fetch はしない = ネットワークに出ない
+    void RequestRemoteState();
+    const RemoteState& Remote() const { return remote_; }
+    // ★**GitTransaction 経由でのみ呼ぶこと** (Checkout と同じ理由)。
+    //   allowMerge=false は `--ff-only`、true は `--no-rebase`
+    void Pull(bool allowMerge, CheckoutDoneFn done);
+    // push は working tree を触らないのでゲート不要。upstream が無ければ
+    // サービス側が `-u origin <branch>` を張る
+    void Push(bool setUpstream, WriteDoneFn done);
+    // 背景 fetch が「何か来ている」と言ってきたら 1 回だけ true
+    // (EditorApp がトーストにする。窓は Remote() を毎フレーム読む)
+    bool TakeRemoteChanged();
+    // 背景 fetch の失敗を 1 回だけ取り出す。戻り値 = 取り出したか
+    bool TakeFetchError(std::string& code, std::string& detail);
+    // 歯車で設定を変えたとき。**hello を再送**してタイマーを組み直す (spec の M66f)
+    void ApplyFetchSettings(bool autoFetch, int fetchIntervalMin);
 
     // 起動時の残骸検査 (決定 13)。マージ / リベースの途中で開いたことを 1 回だけ知らせる
     bool TakeMergeWarning();
@@ -269,6 +310,10 @@ public:
 private:
     void SendHello();
     void SendRepoCheck();
+    // 通知 (status_changed / remote_changed / repo_changed) の受け口。
+    // ★Start が DLL のロードより先に CollabClient へ登録する = DLL が無くても
+    //   配線は生きている (セルフテストが偽の通知行を流して検査できる)
+    void ApplyEvent(const nlohmann::json& msg);
     void ApplyStatusResult(const nlohmann::json& result);
     void ApplyError(const nlohmann::json& msg);
     // 書き込み系の応答 (`{"status": {...}}`) を status 経路へ流す共通処理。
@@ -299,6 +344,15 @@ private:
     // ---- M66e ----
     BranchList branches_;
     bool branchesInFlight_ = false;
+
+    // ---- M66f ----
+    RemoteState remote_;
+    std::string fetchErrorCode_;   // 背景 fetch の失敗 (TakeFetchError で 1 回だけ)
+    std::string fetchErrorDetail_;
+    bool autoFetch_ = true;        // hello に載せる値 (EditorSettings の写し)
+    int fetchIntervalMin_ = 5;
+    bool remoteChanged_ = false;   // TakeRemoteChanged で 1 回だけ
+    bool remoteStateInFlight_ = false;
 
     // ---- M66c ----
     std::vector<CommitInfo> history_;

@@ -10,6 +10,7 @@
 #include <string>
 #include <thread>
 
+#include "Editor/EditorSettings.h"
 #include "Editor/SourceControl/CollabClient.h"
 #include "Editor/SourceControl/GitTransaction.h"
 #include "Editor/SourceControl/PairRule.h"
@@ -776,6 +777,140 @@ bool RunSourceControlSelfTest()
               "names: a missing or empty array is not a change set");
     }
 
+    // ---- (h) EditorSettings の新キー (spec §4.2、M66f) ----
+    {
+        std::error_code ec;
+        const fs::path dir = fs::temp_directory_path() / L"mye_scm_settings";
+        fs::remove_all(dir, ec);
+        fs::create_directories(dir, ec);
+
+        // 1) 既定値 (ファイルが無い) — 「背景で取得する / 5 分ごと」
+        {
+            EditorSettings fresh;
+            fresh.Load(dir.wstring());
+            check(fresh.scmAutoFetch && fresh.scmFetchIntervalMin == 5,
+                  "settings: background fetch defaults to on, every 5 minutes");
+        }
+        // 2) 書いて読み直す (往復)
+        {
+            EditorSettings written;
+            written.Load(dir.wstring());
+            written.scmAutoFetch = false;
+            written.scmFetchIntervalMin = 17;
+            written.camMoveSpeed = 12.5f; // 既存キーが巻き添えで消えないことも見る
+            written.Save();
+
+            EditorSettings read;
+            read.Load(dir.wstring());
+            check(!read.scmAutoFetch && read.scmFetchIntervalMin == 17
+                      && read.camMoveSpeed == 12.5f,
+                  "settings: scmAutoFetch / scmFetchIntervalMin survive the round trip");
+        }
+        // 3) 旧 JSON (キーが無い) は既定値で読める。
+        //    ★ここが「前方/後方互換」の実体 — 既存プロジェクトの
+        //      editor_settings.json には当然このキーが無い
+        {
+            {
+                std::ofstream f(dir / L"editor_settings.json", std::ios::binary);
+                f << "{\"camMoveSpeed\": 3.0, \"gridVisible\": false}";
+            }
+            EditorSettings legacy;
+            legacy.Load(dir.wstring());
+            check(legacy.scmAutoFetch && legacy.scmFetchIntervalMin == 5
+                      && legacy.camMoveSpeed == 3.0f && !legacy.gridVisible,
+                  "settings: an old file without the scm keys loads with the defaults");
+            // 保存しても他人のキーを消さない (マージ保存)
+            legacy.Save();
+            std::string text;
+            {
+                std::ifstream f(dir / L"editor_settings.json", std::ios::binary);
+                text.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+            }
+            check(text.find("scmAutoFetch") != std::string::npos
+                      && text.find("scmFetchIntervalMin") != std::string::npos,
+                  "settings: saving an old file adds the scm keys");
+        }
+        fs::remove_all(dir, ec);
+    }
+
+    // ---- (k) M66f: remote_state の解析と remote_changed の配線 ----
+    {
+        // 1) 応答 → モデル (純関数)
+        nlohmann::json remote;
+        remote["upstream"] = "origin/main";
+        remote["hasRemote"] = true;
+        remote["ahead"] = 2;
+        remote["behind"] = 3;
+        remote["commits"] = nlohmann::json::array();
+        for (int i = 0; i < 2; ++i) {
+            nlohmann::json c;
+            c["sha"] = std::string(40, static_cast<char>('a' + i));
+            c["author"] = i == 0 ? "hina" : "rui";
+            c["date"] = "2026-09-03T12:00:00+09:00";
+            c["subject"] = i == 0 ? "add the boss room" : "retune the fog";
+            remote["commits"].push_back(c);
+        }
+        const RemoteState parsed = BuildRemoteState(remote);
+        check(parsed.valid && parsed.upstream == "origin/main" && parsed.hasRemote
+                  && parsed.ahead == 2 && parsed.behind == 3 && parsed.commits.size() == 2
+                  && parsed.commits[0].author == "hina"
+                  && parsed.commits[1].subject == "retune the fog",
+              "remote_state: upstream / ahead / behind / commits come through");
+        // 空 (リモートなし) でも valid にする — 「まだ聞いていない」と区別するため
+        const RemoteState empty = BuildRemoteState(nlohmann::json::object());
+        check(empty.valid && empty.upstream.empty() && !empty.hasRemote && empty.behind == 0
+                  && empty.commits.empty(),
+              "remote_state: a repository without a remote parses as valid-but-empty");
+        check(!BuildRemoteState(nlohmann::json()).valid,
+              "remote_state: a null result is not valid (nothing to show yet)");
+
+        // 2) remote_changed 通知 → セッション。**通知はここでしか入ってこない**
+        //    (背景 fetch は worker のタイマー発で、応答 id を持たない)。
+        // ★Start に「DLL の無い exeDir」を渡す = ロードは失敗するが通知の配線は張られる
+        //   (Start が SetEventHandler を Load より先に呼んでいるのはこのため)。
+        //   projectRoot が空だと NoProject で即 return するので、実在するどこかを渡す
+        SourceControlSession scm;
+        std::error_code sec;
+        const fs::path noDll = fs::temp_directory_path() / L"mye_scm_no_dll";
+        fs::create_directories(noDll, sec);
+        scm.Start(noDll.wstring(), noDll.wstring(), false, 5);
+        check(scm.State() == Unavailable::NoService,
+              "remote_changed: a session without the dll is NoService (but still wired)");
+        nlohmann::json ev;
+        ev["event"] = "remote_changed";
+        ev["remote"] = remote;
+        scm.Client().DispatchLine(ev.dump());
+        check(scm.Remote().valid && scm.Remote().behind == 3
+                  && scm.Remote().commits.size() == 2,
+              "remote_changed: the background fetch result lands in the session");
+        check(scm.TakeRemoteChanged() && !scm.TakeRemoteChanged(),
+              "remote_changed: the toast fires once, not every frame");
+
+        // 3) 失敗の通知は**エラー欄を赤くしない** (オフラインで作業している間ずっと
+        //    「壊れている」ように見えるのを防ぐ)。取り出せるのは 1 回だけ
+        nlohmann::json fail;
+        fail["event"] = "remote_changed";
+        fail["error"] = { { "code", "network" }, { "detail", "could not resolve host" } };
+        scm.Client().DispatchLine(fail.dump());
+        std::string code;
+        std::string detail;
+        check(scm.TakeFetchError(code, detail) && code == "network",
+              "remote_changed: a background failure is reported once");
+        check(!scm.TakeFetchError(code, detail),
+              "remote_changed: the same failure is not reported twice");
+        check(scm.ErrorCode().empty(),
+              "remote_changed: a background failure does not turn the window red");
+
+        // 4) op の待ち方: fetch / pull / push は書き込み系 (打ち切らない)、
+        //    remote_state は読み取り系。**分類を間違えるとネットワーク待ちが
+        //    30 s で打ち切られ、諦めた後に refs だけ書き換わる**
+        check(CollabOpKindOf(collabop::kFetch) == CollabOpKind::Write
+                  && CollabOpKindOf(collabop::kPull) == CollabOpKind::Write
+                  && CollabOpKindOf(collabop::kPush) == CollabOpKind::Write
+                  && CollabOpKindOf(collabop::kRemoteState) == CollabOpKind::Read,
+              "op kinds: network writes never time out, remote_state does");
+    }
+
     // ---- 実 DLL 経由の結線 (MYE_COLLAB_PROBE=<repo> のときだけ) ----
     // ★窓のボタン -> Session -> DLL -> git の 1 本を、UI を触らずに実走させる。
     //   ここを通していないと「ゲートは正しいがボタンが何にも繋がっていない」に
@@ -783,7 +918,10 @@ bool RunSourceControlSelfTest()
     if (const char* probe = std::getenv("MYE_COLLAB_PROBE"); probe != nullptr && probe[0] != '\0') {
         const std::wstring root = Utf8ToWide(probe);
         SourceControlSession scm;
-        scm.Start(GetExecutableDir(), root);
+        // ★プローブでは背景 fetch を切る (autoFetch=false)。走らせると
+        //   「タイマー由来の通知」と「プローブが起こした変化」が混ざり、
+        //   何を観測しているのか読めなくなる (定期 fetch の検査は cargo test 側)
+        scm.Start(GetExecutableDir(), root, false, 5);
         auto pump = [&scm](const std::function<bool()>& done, int timeoutMs) {
             const auto deadline =
                 std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
@@ -841,9 +979,9 @@ bool RunSourceControlSelfTest()
                   "probe: branches comes back with a current branch through the real DLL");
             if (branched && !scm.Branches().current.empty()) {
                 bool coDone = false;
-                SourceControlSession::CheckoutResult coRes;
+                SourceControlSession::TreeOpResult coRes;
                 scm.Checkout(scm.Branches().current,
-                             [&coDone, &coRes](const SourceControlSession::CheckoutResult& r) {
+                             [&coDone, &coRes](const SourceControlSession::TreeOpResult& r) {
                                  coDone = true;
                                  coRes = r;
                              });

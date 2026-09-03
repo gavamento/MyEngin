@@ -52,3 +52,12 @@ tools\replay_verify.bat
 ## 実装メモ (coder が追記)
 
 ## フィードバック履歴
+
+## planner 追記 (sub-06 round 1 の判定から。coder は着手前に読む)
+
+- 競合の入口は sub-06 で既にある: `pull{allowMerge:true}` が `error.code=conflict` + 固定文を返し、リポジトリはマージ途中で止まる。**競合ファイル一覧は `conflicts` op (porcelain v2 の `u` 行) から取る。git の案内文 (`CONFLICT (modify/delete)` など別形がある) を解析しない**。
+- `continue` / `merge_abort` の応答は pull と同型 `{head, names, status, remote}` にし、`GitTransaction` は `OpKind` を足して `SendPredict` と `BeginOp` の 2 箇所だけ差し替える (`TreeOpResult` / `ApplyResult` を共有)。
+- pull の段階 B/C は sub-06 で実機未検証。競合シナリオ (同じシーンを両側で変更 → pull) が B 経路を通るので、そこでシーン開き直しまで観測する。
+- 実機 fixture にテキストを置くとエディタが `.meta` を作って未追跡が増え、checkout / pull が `local_changes_overwritten` で弾かれる (coder 申し送り)。競合用の変更はシーン / テクスチャで作る。
+- collab_verify の次の番号は 08。bare origin は `init --bare -b main`。
+- `Scm_ComingSoon` は未使用。競合 UI で使わないなら sub-10 で消す。

@@ -108,6 +108,33 @@ fn spawn_error(e: std::io::Error) -> ErrorBody {
     }
 }
 
+/// 背景 (定期 fetch) 専用。**認証プロンプトを完全に殺す** (M66f、spec §4.1「背景 fetch と認証」)。
+///
+/// ★実測 (2026-09-03、GCM 2.x + git 2.48.1、`CreateNoWindow` + stdio リダイレクトの
+///   孫プロセスで確認):
+///     env 無し                              … GUI ダイアログ「Git Credential Manager」が出る
+///     GIT_TERMINAL_PROMPT=0 だけ            … **やはり GUI ダイアログが出る**
+///                                             (GCM は GIT_TERMINAL_PROMPT を「端末プロンプト」
+///                                              の可否としか読まない)
+///     GIT_TERMINAL_PROMPT=0 + GCM_INTERACTIVE=never
+///                                           … 出ない。`fatal: Cannot prompt because user
+///                                              interactivity has been disabled.` で即終了
+///   つまり **GCM_INTERACTIVE=never が無いと、誰も見ていない 5 分ごとの fetch が
+///   ダイアログを画面に積み上げる**。ユーザーが押した fetch / pull / push は
+///   `run` (= GIT_TERMINAL_PROMPT=0 のみ) を使い、GUI を許す
+pub fn run_background(cwd: &Path, args: &[&str]) -> Result<GitOutput, ErrorBody> {
+    let mut cmd = build(cwd, args)?;
+    cmd.env("GCM_INTERACTIVE", "never");
+    match cmd.output() {
+        Ok(out) => Ok(GitOutput {
+            status: out.status.code().unwrap_or(-1),
+            stdout: out.stdout,
+            stderr: out.stderr,
+        }),
+        Err(e) => Err(spawn_error(e)),
+    }
+}
+
 /// 共通引数 + env を積んだ `Command` を組む (stdin は既定で NUL)。
 /// **git を起動する経路が 2 本になっても引数と env が 1 箇所で決まる**ようにするため
 fn build(cwd: &Path, args: &[&str]) -> Result<Command, ErrorBody> {
@@ -200,7 +227,16 @@ pub fn classify_error(out: &GitOutput) -> ErrorBody {
         code::IDENTITY_MISSING
     } else if low.contains("authentication failed") || low.contains("could not read username") {
         code::AUTH_FAILED
-    } else if low.contains("non-fast-forward") || low.contains("fetch first") {
+    } else if low.contains("non-fast-forward")
+        || low.contains("fetch first")
+        // M66f: `git pull --ff-only` が分岐を見つけたときの文言 (実測 git 2.48.1、LC_ALL=C):
+        //   hint: Diverging branches can't be fast-forwarded, you need to either:
+        //   fatal: Not possible to fast-forward, aborting.
+        // ★ここを拾い損ねると git_failed に落ち、UI が「マージして pull」を出せない
+        //   = ユーザーはターミナルへ逃げるしかなくなる
+        || low.contains("not possible to fast-forward")
+        || low.contains("can't be fast-forwarded")
+    {
         code::NON_FAST_FORWARD
     } else if low.contains("could not resolve host") || low.contains("connection timed out") {
         code::NETWORK

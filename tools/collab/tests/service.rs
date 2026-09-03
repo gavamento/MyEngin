@@ -572,3 +572,397 @@ fn checkout_and_branch_create_reject_option_like_names() {
     drop(svc);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// ---- M66f: fetch / pull / push / remote_state と定期 fetch ----
+//
+// ★ここが「2 クローンの往復」を実際に走らせる唯一の場所…ではない
+//   (collab_verify の 07_remote.ndjson も同じ形を通す) が、**通知**
+//   (remote_changed) はここでしか検査できない — CLI は event 行を出さない契約なので。
+
+/// bare な origin を作り、`dir` を push して追跡を張る。戻り値 = origin のパス。
+///
+/// ★`-b main` を必ず付ける。省くと bare の HEAD が master になり、clone した側が
+///   **main ではなく master に乗る** = 2 つのクローンが永久にすれ違う
+///   (実測でこれを踏んで「分岐しないはずの分岐テスト」が緑になった)
+fn attach_origin(dir: &Path, cfg: &Path, name: &str) -> PathBuf {
+    let origin = std::env::temp_dir()
+        .join(format!("mye_collab_{}_{}_origin.git", name, std::process::id()));
+    let _ = std::fs::remove_dir_all(&origin);
+    let tmp = std::env::temp_dir();
+    git(&tmp, cfg, &["init", "-q", "--bare", "-b", "main", &origin.to_string_lossy()]);
+    git(dir, cfg, &["remote", "add", "origin", &origin.to_string_lossy()]);
+    git(dir, cfg, &["push", "-q", "-u", "origin", "main"]);
+    origin
+}
+
+/// origin をもう 1 つの作業ツリーへ clone する (= 同僚の機体)
+fn clone_of(origin: &Path, cfg: &Path, name: &str) -> PathBuf {
+    let dst = std::env::temp_dir().join(format!("mye_collab_{}_{}_peer", name, std::process::id()));
+    let _ = std::fs::remove_dir_all(&dst);
+    let tmp = std::env::temp_dir();
+    git(&tmp, cfg, &["clone", "-q", &origin.to_string_lossy(), &dst.to_string_lossy()]);
+    dst
+}
+
+/// サービスが叩く git はテストの env を継がない (= 開発者の global config を見る)。
+/// マージコミットで identity を聞かれたり gpgsign で固まったりしないよう、
+/// **リポジトリ設定**で塞ぐ (repo local は global に勝つ)
+fn pin_identity(dir: &Path, cfg: &Path) {
+    git(dir, cfg, &["config", "user.name", "mye"]);
+    git(dir, cfg, &["config", "user.email", "mye@example.com"]);
+    git(dir, cfg, &["config", "commit.gpgsign", "false"]);
+}
+
+#[test]
+fn fetch_then_pull_brings_the_peer_commit_and_names_it() {
+    let dir = temp_repo("remote");
+    let cfg = config_path_for(&dir);
+    pin_identity(&dir, &cfg);
+    std::fs::create_dir_all(dir.join("assets")).unwrap();
+    std::fs::write(dir.join("assets/a.txt"), "one").unwrap();
+    commit_all(&dir, &cfg, "one");
+    let origin = attach_origin(&dir, &cfg, "remote");
+    let peer = clone_of(&origin, &cfg, "remote");
+
+    // 同僚が 1 本コミットして push する
+    std::fs::write(peer.join("assets/b.txt"), "peer").unwrap();
+    commit_all(&peer, &cfg, "peer-commit");
+    git(&peer, &cfg, &["push", "-q"]);
+
+    let svc = Service::new(dir.to_string_lossy().to_string());
+
+    // fetch する前は「遅れ 0」— まだ知らないのだから知らないままであること
+    svc.request(json!({ "id": 1, "op": "remote_state" }).to_string());
+    let r = wait_line(&svc);
+    assert_eq!(r["ok"], true, "remote_state failed: {r}");
+    assert_eq!(r["result"]["upstream"], "origin/main");
+    assert_eq!(r["result"]["hasRemote"], true);
+    assert_eq!(r["result"]["behind"], 0, "fetch 前に behind が立ったら見えないはずの物を見ている");
+
+    svc.request(json!({ "id": 2, "op": "fetch" }).to_string());
+    let r = wait_line(&svc);
+    assert_eq!(r["ok"], true, "fetch failed: {r}");
+    assert_eq!(r["result"]["remote"]["behind"], 1, "{r}");
+    let commits = r["result"]["remote"]["commits"].as_array().unwrap();
+    assert_eq!(commits.len(), 1, "{r}");
+    assert_eq!(commits[0]["subject"], "peer-commit");
+    // 帯に出す 3 つ (誰が / いつ / 何を) がそろっていること
+    assert!(!commits[0]["author"].as_str().unwrap_or("").is_empty(), "{r}");
+    assert!(!commits[0]["date"].as_str().unwrap_or("").is_empty(), "{r}");
+    // fetch は working tree を 1 バイトも動かさない
+    assert!(!dir.join("assets/b.txt").exists(), "fetch がファイルを降らせている");
+
+    svc.request(json!({ "id": 3, "op": "pull" }).to_string());
+    let r = wait_line(&svc);
+    assert_eq!(r["ok"], true, "pull failed: {r}");
+    // ★names が段階分類の唯一の入力。空だと「何も変わらなかった」と読まれ、
+    //   降ってきたファイルが古いまま使われる
+    let names = r["result"]["names"].as_array().expect("names が要る");
+    assert_eq!(names.len(), 1, "{r}");
+    assert_eq!(names[0]["path"], "assets/b.txt");
+    assert_eq!(names[0]["status"], "A");
+    assert_eq!(r["result"]["remote"]["behind"], 0, "{r}");
+    assert!(dir.join("assets/b.txt").exists(), "pull がファイルを降らせていない");
+
+    drop(svc);
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&peer);
+    let _ = std::fs::remove_dir_all(&origin);
+    let _ = std::fs::remove_file(&cfg);
+}
+
+#[test]
+fn diverged_push_is_non_fast_forward_and_merge_pull_resolves_it() {
+    let dir = temp_repo("diverge");
+    let cfg = config_path_for(&dir);
+    pin_identity(&dir, &cfg);
+    std::fs::create_dir_all(dir.join("assets")).unwrap();
+    std::fs::write(dir.join("assets/a.txt"), "one").unwrap();
+    commit_all(&dir, &cfg, "one");
+    let origin = attach_origin(&dir, &cfg, "diverge");
+    let peer = clone_of(&origin, &cfg, "diverge");
+
+    // 同僚と自分が**別々のファイル**を触って分岐する (中身が衝突しない = 自動マージできる)
+    std::fs::write(peer.join("assets/peer.txt"), "peer").unwrap();
+    commit_all(&peer, &cfg, "peer-commit");
+    git(&peer, &cfg, &["push", "-q"]);
+    std::fs::write(dir.join("assets/mine.txt"), "mine").unwrap();
+    commit_all(&dir, &cfg, "my-commit");
+
+    let svc = Service::new(dir.to_string_lossy().to_string());
+
+    // 1) push は拒否される。**ここを git_failed に落とすと UI が「先に pull」を出せない**
+    svc.request(json!({ "id": 1, "op": "push" }).to_string());
+    let r = wait_line(&svc);
+    assert_eq!(r["ok"], false, "分岐しているのに push が通った: {r}");
+    assert_eq!(r["error"]["code"], code::NON_FAST_FORWARD, "{r}");
+
+    // 2) 既定の pull (--ff-only) も拒否される (fatal: Not possible to fast-forward)
+    svc.request(json!({ "id": 2, "op": "pull" }).to_string());
+    let r = wait_line(&svc);
+    assert_eq!(r["ok"], false, "{r}");
+    assert_eq!(r["error"]["code"], code::NON_FAST_FORWARD, "{r}");
+    assert!(!dir.join("assets/peer.txt").exists(), "拒否された pull がファイルを降らせている");
+
+    // 3) allowMerge=true でマージが作られ、相手のファイルが降ってくる
+    svc.request(json!({ "id": 3, "op": "pull", "args": { "allowMerge": true } }).to_string());
+    let r = wait_line(&svc);
+    assert_eq!(r["ok"], true, "merge pull failed: {r}");
+    let names = r["result"]["names"].as_array().unwrap();
+    assert!(names.iter().any(|n| n["path"] == "assets/peer.txt"), "{r}");
+    assert!(dir.join("assets/peer.txt").exists());
+
+    // 4) マージ後の push は通り、ahead が 0 に戻る
+    svc.request(json!({ "id": 4, "op": "push" }).to_string());
+    let r = wait_line(&svc);
+    assert_eq!(r["ok"], true, "push after merge failed: {r}");
+    assert_eq!(r["result"]["remote"]["ahead"], 0, "{r}");
+    assert_eq!(r["result"]["remote"]["behind"], 0, "{r}");
+
+    drop(svc);
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&peer);
+    let _ = std::fs::remove_dir_all(&origin);
+    let _ = std::fs::remove_file(&cfg);
+}
+
+#[test]
+fn pull_with_conflicting_content_is_reported_as_conflict() {
+    // ★競合の解決 UI は sub-07 だが、**分類**はここで確定させる。
+    //   git は競合を stdout に書く (stderr ではない) ので、classify_error 任せだと
+    //   git_failed に化ける = 「マージ途中で止まっているのに理由が分からない」
+    let dir = temp_repo("pullconf");
+    let cfg = config_path_for(&dir);
+    pin_identity(&dir, &cfg);
+    std::fs::create_dir_all(dir.join("assets")).unwrap();
+    std::fs::write(dir.join("assets/a.txt"), "base").unwrap();
+    commit_all(&dir, &cfg, "one");
+    let origin = attach_origin(&dir, &cfg, "pullconf");
+    let peer = clone_of(&origin, &cfg, "pullconf");
+
+    std::fs::write(peer.join("assets/a.txt"), "peer side").unwrap();
+    commit_all(&peer, &cfg, "peer-edit");
+    git(&peer, &cfg, &["push", "-q"]);
+    std::fs::write(dir.join("assets/a.txt"), "my side").unwrap();
+    commit_all(&dir, &cfg, "my-edit");
+
+    let svc = Service::new(dir.to_string_lossy().to_string());
+    svc.request(json!({ "id": 1, "op": "pull", "args": { "allowMerge": true } }).to_string());
+    let r = wait_line(&svc);
+    assert_eq!(r["ok"], false, "同じ行を両側で書き換えたのに通った: {r}");
+    assert_eq!(r["error"]["code"], code::CONFLICT, "{r}");
+    // detail は固定文 (git の案内文は版で変わる)
+    assert_eq!(r["error"]["detail"], "the merge produced conflicts");
+
+    // 後片付け: 競合を残したまま次のテストへ持ち越さない (sub-07 の abort 相当)
+    git(&dir, &cfg, &["merge", "--abort"]);
+    drop(svc);
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&peer);
+    let _ = std::fs::remove_dir_all(&origin);
+    let _ = std::fs::remove_file(&cfg);
+}
+
+#[test]
+fn background_fetch_notifies_once_per_error_code() {
+    // spec §4.1「背景 fetch の失敗は**同じ code が続く間は 1 回だけ**」。
+    // オフラインのまま作業する人に 5 分ごとのトーストを投げつけないための唯一の仕掛け
+    let dir = temp_repo("bgerr");
+    let cfg = config_path_for(&dir);
+    std::fs::write(dir.join("a.txt"), "one").unwrap();
+    commit_all(&dir, &cfg, "one");
+    // 存在しないローカルパスを origin にする = fetch が必ず失敗する
+    let nowhere = std::env::temp_dir().join("mye_collab_no_such_origin.git");
+    git(&dir, &cfg, &["remote", "add", "origin", &nowhere.to_string_lossy()]);
+
+    let mut state = State::new(dir.to_string_lossy().to_string());
+    let first = mye_collab::ops::background_fetch(&mut state);
+    assert_eq!(first.len(), 1, "最初の失敗は 1 回知らせる: {first:?}");
+    assert!(first[0].contains("\"event\":\"remote_changed\""), "{first:?}");
+    assert!(first[0].contains("\"error\""), "{first:?}");
+    let second = mye_collab::ops::background_fetch(&mut state);
+    assert!(second.is_empty(), "同じ code の 2 回目は黙ること: {second:?}");
+
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_file(&cfg);
+}
+
+#[test]
+fn background_fetch_reports_the_peer_commit_once() {
+    let dir = temp_repo("bgok");
+    let cfg = config_path_for(&dir);
+    pin_identity(&dir, &cfg);
+    std::fs::write(dir.join("a.txt"), "one").unwrap();
+    commit_all(&dir, &cfg, "one");
+    let origin = attach_origin(&dir, &cfg, "bgok");
+    let peer = clone_of(&origin, &cfg, "bgok");
+
+    let mut state = State::new(dir.to_string_lossy().to_string());
+    // 1 回目で基準を作る (何も変わっていないので remote_changed は出ない…とは限らない —
+    // last_remote が空なので初回は必ず 1 本出る。そこを基準にする)
+    let _ = mye_collab::ops::background_fetch(&mut state);
+    let quiet = mye_collab::ops::background_fetch(&mut state);
+    assert!(
+        !quiet.iter().any(|l| l.contains("remote_changed")),
+        "何も変わっていないのに通知が出ている: {quiet:?}"
+    );
+
+    std::fs::write(peer.join("b.txt"), "peer").unwrap();
+    commit_all(&peer, &cfg, "peer-commit");
+    git(&peer, &cfg, &["push", "-q"]);
+
+    let lines = mye_collab::ops::background_fetch(&mut state);
+    let ev = lines
+        .iter()
+        .find(|l| l.contains("\"event\":\"remote_changed\""))
+        .expect("同僚の push が remote_changed にならない");
+    let v: Value = serde_json::from_str(ev).unwrap();
+    assert_eq!(v["remote"]["behind"], 1, "{ev}");
+    assert_eq!(v["remote"]["commits"][0]["subject"], "peer-commit", "{ev}");
+
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&peer);
+    let _ = std::fs::remove_dir_all(&origin);
+    let _ = std::fs::remove_file(&cfg);
+}
+
+#[test]
+fn the_worker_timer_fetches_without_a_second_thread() {
+    // spec §4.0「Rust 側に join できないスレッドを増やさない」= 定期 fetch は
+    // worker の recv_timeout で回る。ここではその**配線**を実走で確かめる:
+    // hello{autoFetch:true, fetchIntervalMin:0} → タイマーが 1 秒後に fetch する
+    let dir = temp_repo("timer");
+    let cfg = config_path_for(&dir);
+    pin_identity(&dir, &cfg);
+    std::fs::write(dir.join("a.txt"), "one").unwrap();
+    commit_all(&dir, &cfg, "one");
+    let origin = attach_origin(&dir, &cfg, "timer");
+    let peer = clone_of(&origin, &cfg, "timer");
+    std::fs::write(peer.join("b.txt"), "peer").unwrap();
+    commit_all(&peer, &cfg, "peer-commit");
+    git(&peer, &cfg, &["push", "-q"]);
+
+    let svc = Service::with_timer(dir.to_string_lossy().to_string());
+    svc.request(
+        json!({ "id": 1, "op": "hello", "args": { "autoFetch": true, "fetchIntervalMin": 0 } })
+            .to_string(),
+    );
+
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let mut got: Option<Value> = None;
+    while Instant::now() < deadline {
+        if let Some(line) = svc.poll() {
+            let v: Value = serde_json::from_str(&line).unwrap();
+            if v["event"] == "remote_changed" && v.get("remote").is_some() {
+                got = Some(v);
+                break;
+            }
+        } else {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+    let ev = got.expect("タイマーが 30 s 以内に fetch していない (recv_timeout の配線)");
+    assert_eq!(ev["remote"]["behind"], 1, "{ev}");
+
+    drop(svc); // タイマーを回していても join できること (固まったら Drop が壊れている)
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&peer);
+    let _ = std::fs::remove_dir_all(&origin);
+    let _ = std::fs::remove_file(&cfg);
+}
+
+#[test]
+fn auto_fetch_off_keeps_the_timer_silent() {
+    // 受け入れ条件 4 の「scmAutoFetch=false で fetch が止まる」の機械的な証明。
+    // ★実機では「トーストが出ないこと」でしか見えないので、ここで押さえておく
+    let dir = temp_repo("timeroff");
+    let cfg = config_path_for(&dir);
+    pin_identity(&dir, &cfg);
+    std::fs::write(dir.join("a.txt"), "one").unwrap();
+    commit_all(&dir, &cfg, "one");
+    let origin = attach_origin(&dir, &cfg, "timeroff");
+    let peer = clone_of(&origin, &cfg, "timeroff");
+    std::fs::write(peer.join("b.txt"), "peer").unwrap();
+    commit_all(&peer, &cfg, "peer-commit");
+    git(&peer, &cfg, &["push", "-q"]);
+
+    let svc = Service::with_timer(dir.to_string_lossy().to_string());
+    svc.request(
+        json!({ "id": 1, "op": "hello", "args": { "autoFetch": false, "fetchIntervalMin": 0 } })
+            .to_string(),
+    );
+    let r = wait_line(&svc);
+    assert_eq!(r["ok"], true, "hello failed: {r}");
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        if let Some(line) = svc.poll() {
+            assert!(
+                !line.contains("remote_changed"),
+                "autoFetch=false なのに定期 fetch が走っている: {line}"
+            );
+        } else {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+    // 5 秒経っても origin/main は取り込まれていないこと (fetch していない証拠)
+    let refs = dir.join(".git/refs/remotes/origin/main");
+    let before = std::fs::read_to_string(&refs).unwrap_or_default();
+    svc.request(json!({ "id": 2, "op": "remote_state" }).to_string());
+    let r = wait_line(&svc);
+    assert_eq!(r["result"]["behind"], 0, "fetch していないなら behind は 0 のまま: {r}");
+    assert_eq!(std::fs::read_to_string(&refs).unwrap_or_default(), before);
+
+    drop(svc);
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&peer);
+    let _ = std::fs::remove_dir_all(&origin);
+    let _ = std::fs::remove_file(&cfg);
+}
+
+#[test]
+fn the_timer_is_not_starved_by_a_steady_stream_of_requests() {
+    // ★実機で踏んだ回帰。定期 fetch の期限確認を `recv_timeout` の **timeout の枝だけ**に
+    //   置くと、TICK より短い間隔でメッセージが届き続ける限りタイマーが永久に飢える。
+    //   監視スレッドは status が触った `.git\index` を拾って Refresh を投げ返すので、
+    //   これは理論上の話ではない (実機で 2 分半 fetch が 1 回も走らなかった)。
+    //   ここでは「200 ms ごとに要求を投げ続けても定期 fetch が走る」ことを見る
+    let dir = temp_repo("starve");
+    let cfg = config_path_for(&dir);
+    pin_identity(&dir, &cfg);
+    std::fs::write(dir.join("a.txt"), "one").unwrap();
+    commit_all(&dir, &cfg, "one");
+    let origin = attach_origin(&dir, &cfg, "starve");
+    let peer = clone_of(&origin, &cfg, "starve");
+    std::fs::write(peer.join("b.txt"), "peer").unwrap();
+    commit_all(&peer, &cfg, "peer-commit");
+    git(&peer, &cfg, &["push", "-q"]);
+
+    let svc = Service::with_timer(dir.to_string_lossy().to_string());
+    svc.request(
+        json!({ "id": 1, "op": "hello", "args": { "autoFetch": true, "fetchIntervalMin": 0 } })
+            .to_string(),
+    );
+
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let mut id = 2;
+    let mut fetched = false;
+    while Instant::now() < deadline && !fetched {
+        // 途切れなく要求を積む = worker の recv が待たされない状態を作る
+        svc.request(json!({ "id": id, "op": "status" }).to_string());
+        id += 1;
+        std::thread::sleep(Duration::from_millis(200));
+        while let Some(line) = svc.poll() {
+            if line.contains("\"event\":\"remote_changed\"") && line.contains("\"remote\"") {
+                fetched = true;
+            }
+        }
+    }
+    assert!(fetched, "要求が続いている間もタイマーが定期 fetch を走らせること");
+
+    drop(svc);
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&peer);
+    let _ = std::fs::remove_dir_all(&origin);
+    let _ = std::fs::remove_file(&cfg);
+}
