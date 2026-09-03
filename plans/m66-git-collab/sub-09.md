@@ -1,7 +1,7 @@
 # sub-09: M66i: Content Browser に Git バッジ + 保存直後のヒント
 
 - 依存: sub-02 (sub-03〜08 とは独立)
-- 状態: OK (commit: M66i — ハッシュは harness.md のサブ進捗表)
+- 状態: OK (commit 048ec64)
 - 往復: 2
 
 ## やること

@@ -25,15 +25,21 @@ MyEngine — C++20 / DirectX 11 の自作ゲームエンジン (VS2022 / x64 / W
   (`bin\x64\<Config>\MyeScripting.dll`。両構成とも起動時にロードされるので両方作る)。
 - GameLogic.dll だけ焼き直す: `tools\build_scripts.bat <Config>`
   (エディタの「Rebuild Scripts」ボタンと同一。実行中のエディタが ~0.5s でホットリロードする)。
+- Source Control のサービスも **sln の外** — `tools\build_collab.bat [Config]` (**rustup stable 前提**、
+  cargo が無ければ exit 1)。`cargo build --release` 1 回で Rust の cdylib `MyeCollab.dll` と
+  `MyeCollabCli.exe` を作り、**Debug / Release の両方の bin へ同じ物**を置く (Rust 側に構成の区別は無い)。
+  無ければ Source Control 窓が「利用不可」になるだけで他の機能は無傷。
 
 ## 検証 (変更後に回すもの)
 
 | コマンド | 担保するもの |
 |---|---|
-| `bin\x64\Debug\Editor.exe --selftest` | ヘッドレス回帰 43 スイート (D3D もウィンドウも作らない) |
+| `bin\x64\Debug\Editor.exe --selftest` | ヘッドレス回帰 44 スイート (D3D もウィンドウも作らない) |
 | `tools\replay_verify.bat [ticks]` | 8 ビルド → 並列 10 ジョブ (7 シーンチェーン = 記録 `--replay-fast` + snapshot 往復付き照合 + Release 照合 / タイムトラベル ×2 / 規則検査)。1 本だけ回すなら `--job <名前>` 再入 (ビルド済み前提)、並列度は `MYE_REPLAY_JOBS` |
 | `tools\shot_verify.bat [--update]` | 決定的スクショ 19 枚を `tests\golden\*.png` と比較 (CI 判定は 12 枚 — FXAA / TAA / SSR / froxel / fog / パーティクル 2 枚の計 7 枚は分岐反転や GPU sim で機種差が増幅するので tol=0 のローカル限定。地形の 1 枚だけ異方性フィルタの実装依存で tol=12。**物理・関節・霧・パーティクル 2・音響 2 の 7 枚は frame 120 で撮る** — 他は frame 3 = ほぼ初期配置なので物理も粒子も絵に出ない。**先に Release ビルドが必要**) |
-| `pwsh -File tools\check_rules.ps1` | 規則 1/2/4/7/8/9/10/11 の静的検査 |
+| `pwsh -File tools\check_rules.ps1` | 規則 1/2/4/7/8/9/10/11/12 の静的検査 (12 = Source Control の Editor 層封じ込め。9 の `$constGroups` に `kCollabProtoVersion` ⇄ `PROTO_VERSION` も載る) |
+| `cd tools\collab && cargo test` | MyeCollab (Rust) の単体 — porcelain v2 解析 / `diff_names` / `error.code` 分類 / worker のタイマー / panic 隔離 |
+| `tools\collab_verify.bat [--update]` | Source Control の回帰 9 シナリオ (一時リポ + 期待 NDJSON。**エディタも D3D も要らない**。先に `build_collab.bat`。実機目視は `tools\collab_fixture.ps1 <dir>` → `Editor.exe --project <dir>`) |
 | `tools\crash_verify.bat [Debug\|Release]` | 5 経路で実際に落として crash バンドル → .rep が再生・再現すること (**CI 対象外**) |
 | `tools\net_verify.bat [ticks]` | host/join 2 プロセスの .rep が一致 + ローカル 2P 参照とも一致 + ロールバック 3 帯 + desync 注入の検出 (**CI 対象外**) |
 
@@ -87,7 +93,7 @@ MyEngine — C++20 / DirectX 11 の自作ゲームエンジン (VS2022 / x64 / W
 
 ## 決定論の契約
 
-`engine_spec.md` 11.2 の規則 1-11 が本文。実務上効いてくるのは:
+`engine_spec.md` 11.2 の規則 1-12 が本文。実務上効いてくるのは:
 
 - `#ifdef _DEBUG` でロジックを分岐しない (ログ・可視化のみ可)。`assert` ではなく `MYE_CHECK`。
   宣言時に必ず初期化。`/fp:fast` 禁止。
@@ -150,6 +156,21 @@ MyEngine — C++20 / DirectX 11 の自作ゲームエンジン (VS2022 / x64 / W
 **UI 文字列** — `src\Engine\Core\LocalizationTable.inl` に en/ja 両方を書き、`Tr()` 経由で読む。
 `Tr()` を printf 系の**唯一の引数**にしない (`TextUnformatted(Tr(x))` か `Text("%s", Tr(x))`)。
 `###` の右辺 (= ImGui ID) は両言語一致かつテーブル内で一意。書式指定子の並びも一致必須。
+`themeColor::*` の新しい割り当て (状態 → 色の表) を足すときは `SourceControlSelfTest` の (d3) と
+同型の固定テストを添える — 配色ルール違反 (`Accent` 系を状態色に使う等) は画面では
+「なんとなく読みにくい」としか出ないので、機械で固定するしかない。
+
+**Source Control の op を足す** (M66) — `tools\collab\src\ops.rs::dispatch` に 1 行 +
+`CollabProtocol.h` の `collabop` に 1 行 + 読み取り系なら `CollabOpKindOf` の `kReadOps` にも 1 行
+(未知 op は Write = 無期限待ちに倒れる)。**C ABI の 6 関数は増やさない**。
+`PROTO_VERSION` (Rust) と `kCollabProtoVersion` (C++) の bump は「C ABI の増減 / フィールドの
+削除・改名・意味変更 / `error.code`・event 名の削除・改名」のときだけ**同時に**行う
+(**追加は bump しない**。片方だけ変えると規則 9 の `$constGroups` で止まる)。書き込み系の応答には
+必ず実行後の `status` を載せ、Rust 側の `last_head` も更新する (忘れると自分の操作で
+「外部で HEAD が移動」トーストが出る)。**`FreeLibrary` を呼ばない / join できないスレッドを
+Rust 側に増やさない** (notify の Drop が内部スレッドを join しないため。定期処理は worker の
+タイマーに相乗りさせる)。検証シナリオは `tests\collab\NN_*.ndjson` を置いて `--update` で
+期待を撮り、**中身を読んでから**コミットする。
 
 ## アーキテクチャで押さえること
 
@@ -215,4 +236,19 @@ Editor → GameLogic → Engine → Renderer → Core → Platform   (上位は�
   (gitignore)。`tests\golden\*.png` だけが版管理された正解。
   `obj\generated\<Config>\MyeBuildInfo.h` は Engine プロジェクトのビルドが吐く
   (git ハッシュと構成。クラッシュ報告用)。
+- **cargo がツールシェルの PATH に無い**ことがある (rustup を入れた後に開き直していないシェル —
+  環境変数はプロセス起動時に固定される)。`$env:PATH = "$env:USERPROFILE\.cargo\bin;$env:PATH"` を
+  先頭に付ける (`build_collab.bat` は PATH → `%USERPROFILE%\.cargo\bin` の順で自力解決する)。
+  crate の edition は **2021** 固定 (2024 だと `#[unsafe(no_mangle)]` が要る)。MSVC リンカが
+  stdout に出す「.dll.lib を作成中」は `linker_messages` の warning で拾われる (無害だが
+  `-D warnings` 相当を立てるなら逃がすこと)。
+- **`MyeCollab.dll` はエディタ起動中に上書きできない** (`MyeScripting.dll` と同じ。
+  `build_collab.bat` がコピー失敗で exit 1 + "is the editor running?")。
+- `tests\collab\*.expected.ndjson` に **git の案内文・機体名・リモート URL を書かない**
+  (版と環境で変わる)。bare origin は必ず `git init --bare -b main` (省くと HEAD が master になり
+  clone がすれ違って「分岐しないはずのテスト」が緑になる)。
+- **PNG を壊すと `--screenshot` が黙って撮れなくなる** (非同期テクスチャの drain が終わらず保存自体が
+  起きない。ログにも出ない)。検証用に「変更されたテクスチャ」を作るなら別の正しい PNG で上書きする。
+- エディタは **`.txt` のような未知拡張子にも `.meta` を作る** — git の fixture にテキストを置くと
+  未追跡が増えて checkout / pull が弾かれる。
 - 計画ファイルは `plans\*.md`、進捗の一次情報は `git log`。

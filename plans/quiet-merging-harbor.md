@@ -1,5 +1,10 @@
 # M66: エンジン内 Git 連携 v1 — 別プロセス Rust サービス (MyeCollab) + Editor 層クライアント
 
+**★実装形態の正本は `plans\m66-git-collab\spec.md` §4.0** — 決定 1 はユーザー判断 (2026-09-02) で
+反転し、**別プロセス exe から in-process の Rust cdylib (`MyeCollab.dll`) へ**なった。
+本ファイルの spawn / Job Object / stdio に関する記述は読まない (経緯は ADR-015、
+穴 14 件 S1〜S14 と確定仕様は spec、サブごとの判定は `plans\m66-git-collab\harness.md`)。
+
 **再開手順**: `git log --oneline -5` で最後に完了したサブを確認 → 本ファイルの進捗表と
 突き合わせ → 次のサブの節を読む → 着手前にそのサブの「冒頭確認」があれば先に潰す。
 1 サブ = 1 コミット (`M66a: ...` 形式の日本語件名) = 1 セッション + /clear。
@@ -315,13 +320,13 @@ MyeCollab.exe (Rust, tools\collab\)   … git CLI ラッパ + porcelain v2 解�
 
 | サブ | 状態 | コミット | 申し送り |
 |---|---|---|---|
-| M66a | 未着手 | | |
-| M66b | 未着手 | | |
-| M66c | 未着手 | | |
-| M66d | 未着手 | | |
-| M66e | 未着手 | | |
-| M66f | 未着手 | | |
-| M66g | 未着手 | | |
-| M66h | 未着手 | | |
-| M66i | 未着手 | | |
-| M66j | 未着手 | | |
+| M66a | 完了 | 4716d6a | 実装形態が in-process cdylib になり spawn / Job Object / stdio が丸ごと不要に。crate の edition は **2021** 固定 (2024 は `#[unsafe(no_mangle)]` が要る)。cargo 不在は exit 1 (縮退しない) |
+| M66b | 完了 | 165cfc6 | 対は **`x.terrain.json` ⇄ `x.terrain.edit`** (計画の「`X` + `X.terrain.edit`」は誤り)。フォルダ集約は「最も重い状態」。PROTO_VERSION は**フィールド追加では bump しない** |
+| M66c | 完了 | 83d0b4f | 「保存してコミット」= 保存 → **保存した文書を対で stage** → commit (「保存 → commit」は保存前の index を撮る)。identity 未設定はボタン無効 — git は機体名で補完して**成功してしまう** |
+| M66d | 完了 | 205e90d | 段階 C のモーダルは**『再起動』のみ** (「あとで」を置くとスキーマ不一致のまま保存できる = C の存在理由が消える)。新規アセットは増分登録 (`ScanAndSync` は 3 表を clear する) |
+| M66e | 完了 | c3be569 | **`FreeLibrary` を呼ばない** — notify の `Drop` が内部スレッドを join せず終了時に 0xC0000005 (実測 1〜2/6 → 0/12)。Asset Browser の [Rebuild Scripts] は fire-and-forget でゲートから見えなかったので `StartGameLogicBuild` へ一本化 |
+| M66f | 完了 | 1e6b8f8 | `GIT_TERMINAL_PROMPT=0` **だけでは GCM の GUI が出る** (`GCM_INTERACTIVE=never` が要る) → 背景 fetch にだけ付ける。定期 fetch は worker のタイマーに相乗り、`handle_tick` は `recv_timeout` の**前**に毎周回呼ぶ (でないと飢える) |
+| M66g | 完了 | 3c0bf56 | ours / theirs の可否は porcelain `u` の**モード (m2/m3)** で決める (XY の文字だと `AU` を誤る)。`resolve` は `paths[]` (本体と `.meta` を 1 往復で)。競合したシーンは空で開くので保存ガードが唯一の砦 |
+| M66h | 完了 | 69e767e | 旧 `project_settings.json` の個人 3 キーは**移行せず・消さず**読み飛ばす。計画外: `shot_verify` の acoustic 2 枚 (golden 18/19) に **M66 以前からの run-to-run フレーク**を発見 → ユーザー判断「何もしない」(2026-09-03)、根治は M66 の外 |
+| M66i | 完了 | 048ec64 | バッジに **`Accent` 系を使わない** (選択行の面と同色で読めない)。保存ヒントは `AssetOps` の choke point 3 箇所に置く (公開関数の末尾に散らすと取りこぼす) |
+| M66j | 完了 | (本コミット) | ドキュメントのみ。`engine_spec.md` に **§14 Source control** を新設し §11.2 に規則 11 (S12 の抜け) と規則 12 を追加。仕様の正本は `plans\m66-git-collab\spec.md` |

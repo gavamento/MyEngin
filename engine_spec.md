@@ -910,7 +910,8 @@ As a shared foundation for all hot-reload targets, the Core layer provides **fil
 | Console | Display logs, shader compilation errors, and hot-reload notifications |
 | Profiler | Display frame time, phase timings, and particle update time for CPU and GPU implementations |
 | Particle Settings | **Switch particle backends between GPU and CPU**, launch comparison mode, and configure maximum particle counts |
-| Asset Browser | List files under `assets/` and display reload status |
+| Asset Browser | List files under `assets/` and display reload status. Each entry also carries its git state as a badge (§14); a folder shows the heaviest state it contains |
+| Source Control | Git for the project repository (§14), in three tabs — **Changes** (pair-aware working tree, stage / unstage / revert, commit message, "save and commit"; selecting a file opens the read-only **Diff** window), **Branches** (list / create / switch, with the A/B/C reload stage decided before the checkout runs) and **History** (the last 100 commits). Conflicts take over the Changes list while a merge is in progress. Write operations are greyed out with the full list of reasons whenever the gate is closed (§14.3). When the feature cannot run at all, the window states which of the eight reasons applies (`NoProject` on a bare start, no `MyeCollab.dll`, protocol mismatch, no git, git < 2.11, not a repository, project root is not the repository top, service died) rather than collapsing them into one message |
 | Build Settings | One-stop staged packaging (M51j): 1) script rebuild (C++ GameLogic + C# Roslyn, opt-out) → 2) asset cook warm-up → 3) package copy (Runtime.exe + GameLogic.dll + C# host + assets + boot scene + **sealed cooked cache**, §10.2) → 4) batch DDS texture cook (opt-in) → 5) zip (opt-in). Child processes (script build / `tar.exe`) are polled per frame so the UI stays live; each stage reports OK/NG in a list. The same pipeline runs from the CLI for CI: `Editor.exe --package <dir> [--package-dds] [--package-zip]` |
 
 - Provide Play / Pause / Step controls. Editing policy during Play mode: [TBD: discard changes as Unity does / save changes]
@@ -1618,6 +1619,8 @@ Eliminate cases in which the engine works in Debug but fails in Release, or vice
 | 8 | Only the engine-provided deterministic RNG with managed seeds may be used. Direct use of `rand()` or `std::random_device` is prohibited |
 | 9 | Constants shared between C++ and HLSL must hold the same value on both sides. A mismatch corrupts constant buffers or traversal state and fails silently, so the values are compared by static analysis |
 | 10 | UI strings live in `LocalizationTable.inl` and are read through `Tr()`. `Tr()` must never be the sole argument of a printf-style call, because a `%` inside a translation would then be read as a conversion specifier. Both languages of an entry must be non-empty, must agree on the identifier after `###`, and must use the same conversion specifiers in the same order — MSVC's `printf` does not support positional arguments, so word order cannot differ between languages |
+| 11 | The script ABI mirror is compared mechanically. `src/Scripting/Interop.cs` mirrors `src/Shared/EngineAPI.h` **by position with no runtime version check**, so a difference in order, count, name or argument count makes every slot call a different function, silently. The static check compares the two slot lists, requires `EngineApiTable.cpp` to fill every slot, and requires `MYE_API_VERSION` and the slot count to be bumped together |
+| 12 | Source control (§14) stays inside the Editor layer: `src/Engine`, `src/Runtime`, `src/GameLogic` and `src/Shared` must not include `Editor/SourceControl/`. The claim that the feature cannot affect the world hash rests on that boundary, and a violation would only diverge when a git button is pressed — a condition no replay can reproduce, so the include check is the only place it can be caught |
 
 ### 11.3 Automated Verification: Replay Consistency Test
 
@@ -2056,7 +2059,219 @@ ADR-009 hybrid path tracing (§6.4) / ADR-010 editor localization (§9.1) /
 **ADR-011 compose assets (`.actor.json` = prefab 2.0)** (§10) /
 ADR-012 structural prefab overrides / **ADR-013 predictive rollback netcode** (§11.4) /
 **ADR-014 CI and pixel regression** (§11) /
-**ADR-015 in-process Rust collab service (`MyeCollab.dll`)** (M66).
+**ADR-015 in-process Rust collab service (`MyeCollab.dll`)** (§14).
+
+---
+
+## 14. Source Control (M66)
+
+Git for the **project** repository from inside the editor: review the working tree, stage,
+commit, fetch / pull / push, list / create / switch branches, and resolve a merge conflict
+without closing the editor. The engine repository is deliberately not covered — it has no
+project manifest, cannot be opened with `--project`, and is edited with an ordinary git client.
+
+The feature is shaped by one moment: **a `pull` or a `checkout` rewrites files under a running
+editor**. Everything below is arranged around it. A write operation is refused unless every open
+document is saved, the set of files that actually changed decides whether the editor reloads them
+in place, reopens the scene, or restarts itself, and the file watcher is held in a batch for the
+duration so that a half-applied tree is never hot-reloaded.
+
+**None of it touches the simulation.** The whole feature lives in the Editor layer, and Rule 12
+(§11.2) forbids `Engine` / `Runtime` / `GameLogic` / `Shared` from including
+`Editor/SourceControl/`. `replay_verify.bat` stays green unchanged across the entire milestone;
+that is the claim, and the include check is what keeps it honest — a dependency pointing the
+wrong way would only diverge *when someone clicks a git button*, which no replay can reproduce.
+
+### 14.1 An in-process Rust cdylib behind six C entry points
+
+```
+Editor.exe (Editor layer only)
+  EditorApp
+   ├ CollabClient   … LoadLibraryW(<exeDir>\MyeCollab.dll) + GetProcAddress x6.
+   │                  Drains mye_collab_poll to NULL every frame and routes replies (id)
+   │                  and notifications (event). No thread on the C++ side
+   ├ SourceControlState / GitTransaction / SourceControlWindow / ScmHint / PairRule
+          │ C ABI: one UTF-8 JSON string in each direction. No per-op slot
+          ▼
+MyeCollab.dll (Rust cdylib, tools\collab\) … one worker thread (serialised git + fetch timer)
+          │                                   + one notify watcher thread. Returns no UI strings
+          ▼
+   git.exe (2.11+, CREATE_NO_WINDOW, stdin NUL, LC_ALL=C, core.quotepath=false, --no-pager)
+```
+
+```c
+uint32_t mye_collab_proto_version(void);
+void*    mye_collab_create(const char* rootUtf8);        // NULL = failure
+void     mye_collab_request(void* h, const char* json);  // asynchronous
+char*    mye_collab_poll(void* h);                       // one reply or event, NULL when idle
+void     mye_collab_free(char* s);
+void     mye_collab_destroy(void* h);
+```
+
+- Messages are `{id,op,args}` → `{id,ok,result|error}`, plus unsolicited `{event,...}`. Paths are
+  toplevel-relative with `/` separators; the C++ side runs them through `Utf8ToWide` →
+  absolute → `NormalizePathKey`.
+- **Six functions is the whole ABI.** `src/Shared/EngineAPI.h` ⇄ `Interop.cs` is a positional
+  mirror with no runtime version check, and Rule 11 is its only guard rail; adding a second
+  structure of that kind would double the amount of mechanical checking the project has to
+  maintain. With JSON, a new operation is one string and the ABI stays frozen.
+- The version is compared instead of trusted: `PROTO_VERSION` (`tools\collab\src\protocol.rs`) and
+  `kCollabProtoVersion` (`src\Editor\SourceControl\CollabProtocol.h`) are matched by Rule 9's
+  `$constGroups`, because the DLL and the executable are built and shipped separately — a mismatch
+  would otherwise present as "it starts, only the shape of the replies is different".
+  **Bump on**: a change to the six C functions, a removed / renamed / re-meaning-ed JSON field, a
+  removed or renamed `error.code` or event name. **Do not bump on**: added fields (the C++ side
+  reads with `value(key, default)`) or added operations (an unknown op answers `bad_request`).
+- Rust panics are contained, not avoided: every export and the worker are wrapped in
+  `catch_unwind`, a panic emits `{event:"service_error", code:"internal_panic"}` once and marks
+  the handle dead (later requests answer `service_dead`). The profile keeps `panic = "unwind"` —
+  switching to `abort` would silently delete the containment.
+- **Shutdown calls `destroy` and never `FreeLibrary`.** `notify` 8.2.0's
+  `ReadDirectoryChangesWatcher::drop` signals its thread but does not join it, so unmapping the
+  module lets that thread run freed code (0xC0000005, reproduced 1–2 times in 6 runs; 0 in 12 after
+  removing the call). Shutdown only happens just before process exit, so nothing is lost.
+  The same reasoning is a standing rule for the crate: **do not add a thread that cannot be joined.**
+  The periodic fetch is a timer inside the existing worker for exactly this reason.
+- Build: `cargo build --release` once, copied to **both** `bin\x64\Debug\` and `bin\x64\Release\`
+  (`tools\build_collab.bat`); the Rust side has no notion of configuration. rustup (stable) is a
+  developer prerequisite. Without the DLL the editor is unharmed and the window reports
+  `NoService` — the same degradation as a missing `MyeScripting.dll`. `MyeCollab.dll` is not
+  hot-reloadable and cannot be overwritten while the editor runs.
+
+### 14.2 Operations, events and errors (frozen for v1)
+
+| Kind | Timeout | Operations |
+|---|---|---|
+| Handshake | 5 s | `hello` (git version + settings; the proto version is checked before it, through the export) |
+| Read | 30 s | `repo_check` `status` `log` `diff` `diff_names` `branches` `conflicts` `remote_state` `identity_check` `hint_changed` |
+| Write | **none** | `stage` `unstage` `commit` `revert` `branch_create` `checkout` `fetch` `pull` `push` `resolve` `merge_abort` `continue` |
+
+A write is never abandoned: git keeps running after a timeout, so reporting "gave up" and then
+having the index change anyway is the worst outcome available. Unknown operations classify as
+writes for the same reason. Events are `status_changed` / `remote_changed` / `repo_changed` /
+`service_error`.
+
+Every write replies with the post-operation `status` and updates the service's `last_head`;
+forgetting the latter makes your own commit raise the "HEAD moved outside the editor" toast.
+Tree-changing writes (`checkout` / `pull` / `merge_abort` / `continue`) additionally carry the
+change set (`names`) **in the same reply** — asking for it in a second round trip lets a
+watcher-driven `status` slip in between and produces "it switched, but what changed is unknown".
+
+`error.code` (v1): `not_repo` `toplevel_mismatch` `git_missing` `git_too_old` `identity_missing`
+`local_changes_overwritten` `locked_index` `locked_file` `auth_failed` `non_fast_forward`
+`conflict` `merge_in_progress` `nothing_to_commit` `network` `internal_panic` `service_dead`
+`bad_request` `git_failed` (unclassified; the stderr text rides in `detail`). The C++ side adds one
+synthetic `timeout`. Codes map to `Tr()` strings; an unknown code is printed verbatim through
+`Text("%s")`. Where the wording of a git message is version-dependent
+(`local_changes_overwritten`, `non_fast_forward`) the service substitutes a fixed sentence and the
+machine-readable `paths[]` carries the truth.
+
+Why the window is unavailable is an enum rather than a boolean, because the user's next action
+differs per case: `NoProject` (bare start) / `NoService` / `ProtoMismatch` / `NoGit` / `GitTooOld`
+(< 2.11, no `status --porcelain=v2`) / `NotRepo` / `ToplevelMismatch` / `ServiceDied`.
+Creating a repository (`git init`) is not in v1 — `NotRepo` explains and points elsewhere.
+
+### 14.3 The write transaction
+
+A write is allowed only when **every document is saved and nothing is running**. All thirteen
+blockers are collected and shown, not just the first:
+
+| Blocker | Source |
+|---|---|
+| `SceneDirty` / `ActorEdit` | the active scene or a mini-scene asset edit |
+| `AnimationDirty` / `ControllerDirty` / `MixerDirty` / `ProjectSettingsDirty` | the four windows that had no dirty flag before M66; each answers `HasUnsavedChanges()` by serialising what *Save* would write and comparing it with the file on disk (500 ms cache, evaluated only from the gate) |
+| `Playing` / `NetActive` | play or pause mode, an active net session |
+| `BuildRunning` / `ScriptBuildRunning` | the packaging pipeline, a GameLogic script build |
+| `OpInFlight` / `MergeInProgress` | another write awaiting its reply; a merge or rebase left half-done |
+| `ServiceUnavailable` | any of §14.2's unavailable reasons |
+
+The transaction then runs: **predict** the change set (`diff_names(HEAD, target)`) → confirm in a
+modal that names the stage → `ReloadHub::BeginBatch` → run the operation → re-classify with the
+*actual* change set (the prediction is allowed to be optimistic; the real one wins) → apply.
+Batching the watcher for the whole window is what stops a half-written tree from being reloaded
+file by file.
+
+| Stage | What lands in it | What the editor does |
+|---|---|---|
+| **A** — in place | `M` / `R` of extensions `ReloadHub` already handles (`.hlsl .hlsli .png .tga .jpg .jpeg .dds .wav .ogg .glb .gltf .fbx .mat.json .anim.json .sound.json .mixer.json .physmat.json .actor.json .prefab.json`), plus `A` (new files), which are registered incrementally into `AssetDatabase` — a full `ScanAndSync` clears three tables and opens a window where lookups resolve to nothing. Non-active scenes, `project.mye.json`, unknown extensions and anything outside `assets\` / `src\GameLogic\Scripts\` are no-ops | `EndBatch` replays the changes in type order (texture → material → model → actor → scene) |
+| **B** — reopen | the active `.scene.json`; `.cpp .h .hpp .inl` under `src\GameLogic\Scripts\` (a header-only change still leaves the DLL stale); `.cs`; `.controller.json`; `.terrain.json`; `.terrain.edit`; `assets\input\actions.json`; `assets\project_settings.json`; a **`D`** of any A-extension (deletions never reach `ReloadHub` — the watcher only enqueues MODIFIED / ADDED / RENAMED_NEW_NAME); A-changes that mix actors and scenes | invalidate the controller / terrain / input caches, then reopen through the `LoadSceneFromPath` path. `.cs` recompiles automatically, `.cpp` raises a "Rebuild Scripts" toast. Only the A subset is passed to `EndBatch` |
+| **C** — restart | `assets\schemas\*`; a `.meta` whose guid changed or was renamed (compared before and after, since a prediction cannot see it); more than `kCollabMaxBatchApply` (200) changes | `EndBatch({})`, then a modal with **a single button, "Restart"**. There is no "Later" and no "Cancel": leaving the editor running with in-memory schemas that disagree with the ones on disk means the next save silently drops components it no longer knows — the exact loss stage C exists to prevent. The gate has already guaranteed every document is saved, so an immediate restart costs nothing. If `RelaunchSelfWithProject` fails (`ShellExecuteW` ≤ 32) **the modal stays open** in red; closing it would recreate "Later" |
+
+**Pairing.** A file is staged, reverted and displayed together with its sidecars: `X` with
+`X.meta`, and `x.terrain.json` with `x.terrain.edit`. Only sidecars that exist are collected. A
+folder's badge and a pair's badge both come from `CombineState` = the heaviest member
+(conflict > D > R > A > M > ?), so a deletion cannot hide inside a collapsed folder.
+"Save and commit" is three steps in this order — **save, stage the saved document (with its
+pair), commit** — because "save then commit" would commit the index as it stood *before* the save.
+The commit button is disabled while `user.name` / `user.email` are unset: git happily invents
+`user@MACHINE.(none)` and the fabricated identity would then live in shared history.
+
+### 14.4 Remote and conflicts
+
+- `remote_state` is `{hasRemote, upstream, ahead, behind, commits[]}`; with no remote, Push is
+  disabled (there is nothing else to judge by). **Pull is enabled only while `behind > 0`** —
+  without a preceding fetch the prediction `HEAD..@{u}` is necessarily empty and the confirmation
+  modal would be meaningless. Startup and periodic fetch (`scmAutoFetch`, `scmFetchIntervalMin`,
+  default 5 min, stored per user in `.mye\editor_settings.json`) keep that condition live.
+- Background fetch runs with `GIT_TERMINAL_PROMPT=0` **and** `GCM_INTERACTIVE=never`. Measured:
+  the first variable alone does not stop Git Credential Manager from opening a GUI from a
+  windowless grandchild process — GCM reads it only as "may I prompt on the terminal". User-driven
+  fetch / pull / push deliberately omit `GCM_INTERACTIVE`, because that is the only way a first
+  authentication can ever succeed. Background failures notify once per distinct `error.code`.
+- A non-fast-forward pull answers `non_fast_forward` (the default is `--ff-only`) and the UI offers
+  `pull{allowMerge:true}` (`--no-rebase`).
+- Conflicts: `resolve{paths[], side}` takes a **list**, so a file and its `.meta` are resolved in
+  one round trip. Whether *ours* / *theirs* exists is decided by the porcelain `u` record's
+  **modes (m2 / m3)**, not by its XY letters — `AU` has no counterpart version and
+  `checkout --theirs` fails on it; the missing side is a `git rm`. The `conflicts` operation
+  returns the seven kinds from git's own documentation plus `unmerged`, and the conflicted paths
+  come from porcelain records rather than from parsing git's advice text.
+- A conflicted pull does **not** `EndBatch({})`: it asks `conflicts` first and applies the A-stage
+  part of `merged[]` before reporting. Conflicts have two entrances — the pull reply, and a merge
+  that was already in progress at startup (`status` carries `mergeInProgress` / `rebaseInProgress`
+  for exactly this; without them the gate would stay open after a failed pull).
+- **A conflicted scene is not valid JSON, so the editor opens it empty.** The `IsConflictedPath`
+  check at the top of `SaveCurrentScene` is the only thing standing between that empty scene and
+  an overwrite of the conflicted file. `continue` handles merges only; continuing a rebase started
+  outside the editor answers `bad_request` (it needs `GIT_EDITOR`), while aborting accepts both.
+
+### 14.5 Verification
+
+| What | Covers |
+|---|---|
+| `cargo test` (`tools\collab`) | porcelain v2 parsing (M / A / D / R / ? / conflicted `u`), `diff_names`, request→reply, `error.code` classification, the fetch timer, panic containment |
+| `tools\collab_verify.bat` | the CLI (`MyeCollabCli.exe`, NDJSON stdin → stdout) against real temporary repositories: status → stage → commit → log → branch → checkout → two clones of a bare origin (push, behind, pull) → conflict → ours → continue, compared with expected NDJSON after normalising SHAs, times and authors. **No editor, no D3D** |
+| `--selftest` (`RunSourceControlSelfTest`) | transcript parsing, the DLL round trip, pairing, folder aggregation, all thirteen gate blockers, `EndBatch` ordering, the `.gitignore` template, the new `EditorSettings` keys, `canonicalRoot` persistence, and the badge colour table |
+| `pwsh -File tools\check_rules.ps1` | Rule 12 (Editor-layer containment) and Rule 9 on the proto version pair |
+| `tools\collab_fixture.ps1 <dir>` | builds a git-initialised minimal project, because nothing else in the repository can be opened with `--project` — `replay_verify`, `shot_verify` and CI all start bare, where Source Control is off by definition |
+
+The CLI is required to be deterministic: in script mode it emits no `event` lines and starts
+neither the watcher nor the fetch timer (both run when the DLL is used through `create`).
+`hint_changed` — the "this file was just saved, re-read status now" nudge from the asset
+operations — is therefore answered with a status **reply** rather than a notification.
+Every temporary repository is created with `GIT_CONFIG_GLOBAL` pointing at an empty file,
+`GIT_CONFIG_NOSYSTEM=1` and `core.autocrlf=false`, so a developer's global hooks or `commit.gpgsign`
+cannot reach the fixture. CI adds one step before the replay job and sets `MYE_COLLAB_REQUIRED=1`,
+which turns the self test's DLL round trip from SKIP into a failure.
+
+### 14.6 Known limitations (v1)
+
+- Detection of git run *outside* the editor is a toast only ("HEAD moved; a restart is
+  recommended"). Re-applying such a change through the transaction is v1.5.
+- Stage B always reopens the scene. Skipping that when only `.cs` / `.cpp` changed is v1.5; the
+  gate guarantees everything is saved, so what is lost today is the undo history.
+- `SoundGenWindow` writes `.wav` files without sending the save hint, so those appear in the
+  change list through the watcher's 300 ms debounce instead of immediately.
+- The Content Browser badge lookup is per visible entry per frame; at a few hundred tiles the cost
+  (estimated ~1 ms/frame) has not been measured. If it shows up, resolve it once per frame.
+- Authenticating for the first time must be done once from a terminal (`git push`), because the
+  background fetch suppresses the credential GUI on purpose.
+- One repository open in two editors at once is unsupported (git's `index.lock` error is shown
+  as-is), paths beyond 260 characters are not supported, and sub-asset IDs derived from absolute
+  paths still require the team convention "everyone clones to the same path"
+  (`canonicalRoot` in `project.mye.json` records it and warns on a mismatch).
+- Out of scope for v1: pull requests and review, LFS, sparse checkout, three-way merge of scene
+  files, `git init`, and any credential UI.
 
 ---
 

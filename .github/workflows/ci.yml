@@ -98,7 +98,8 @@ jobs:
       #    replay の**前**に置くのは、この後の selftest が MYE_COLLAB_REQUIRED=1 で
       #    「DLL が無ければ失敗」を要求するため (作り忘れを SKIP で素通りさせない)。
       #    collab_verify.bat はエディタも D3D も使わない = ここで完結する
-      - uses: dtolnay/rust-toolchain@stable
+      - name: rust toolchain (stable)
+        uses: dtolnay/rust-toolchain@stable
 
       - name: collab service (cargo test + dll/cli build + fixture verify)
         shell: cmd

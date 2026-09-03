@@ -18,6 +18,14 @@ C++20 / DirectX 11 製の自作ゲームエンジン。**Unity 風の使いや�
 | Runtime | exe | エディタ UI 無しの配布用ランタイム (エンジンは Editor と完全共有) |
 | GameLogic | DLL | ユーザースクリプト。**ホットリロード対象** |
 
+sln の外にもう 2 本ある。どちらも無い状態でエディタは起動し、該当機能だけが OFF になる:
+
+- **C# スクリプトホスト** — `tools\build_managed.bat Debug` / `Release` (.NET SDK が要る)。
+  出力は `bin\x64\<Config>\MyeScripting.dll`。両構成とも起動時に読むので両方作る
+- **Source Control のサービス** — `tools\build_collab.bat` (**rustup の stable ツールチェーン**が要る)。
+  Rust の cdylib `MyeCollab.dll` + `MyeCollabCli.exe` を 1 回のビルドで作り、両構成の `bin\x64\` へ置く。
+  無ければ Source Control 窓が「利用不可 (サービスがありません)」になるだけで他は無傷
+
 ## 主要機能
 
 - **ハイブリッド ECS** — 外部 API は `GameObject` / `GetComponent<T>()`、内部はアーキタイプ別 SoA。
@@ -53,6 +61,22 @@ C++20 / DirectX 11 製の自作ゲームエンジン。**Unity 風の使いや�
   つまり `imgui.ini` とドッキング配置 — は 1 バイトも変わらない。
   Inspector の表示名は `FieldDesc::displayName` に持ち、シリアライズキー兼ハッシュ入力である
   英語の `name` には触れない。詳細は [ADR-010](docs/adr/ADR-010-editor-localization.md)
+- **エディタ内 Git 連携 (Source Control)** — 変更一覧 → stage → commit → push、fetch → pull、
+  ブランチの作成と切替、競合の abort / ours / theirs までを**エディタを閉じずに**通す。
+  設計の中心は「`pull` や `checkout` が走っているエディタの足元でファイルを書き換える」瞬間:
+  書き込み系は**全文書が保存済みかつ何も実行中でないとき**だけ押せて (阻害要因 13 種を全部並べて出す)、
+  実際に変わったファイルの集合から **A (その場でホットリロード) / B (シーンを開き直す) /
+  C (再起動)** を決める。`.meta` や `.terrain.edit` は本体と一体で扱い、
+  Content Browser のバッジにも同じ状態が出る。実体は Rust の cdylib `MyeCollab.dll` で、
+  会話は **UTF-8 の JSON 1 本 + C ABI 6 関数**だけ (`cargo test` と
+  `tools\collab_verify.bat` がエディタ抜きで回帰を取る)。**sim には 1 バイトも触れない** —
+  Engine / Runtime / GameLogic / Shared からの include を静的検査 (規則 12) が禁じている。
+  前提は git 2.11 以上と rustup、そしてチーム規則「全員同じパスに clone」
+  (サブアセット ID が絶対パス由来のため。`project.mye.json` の `canonicalRoot` が記録して食い違いを警告する)。
+  **初回の認証だけはターミナルで一度 `git push` して済ませておく** — 背景 fetch は
+  資格情報のダイアログを意図的に抑止している。詳細は [engine_spec.md §14](engine_spec.md) と
+  [ADR-015](docs/adr/ADR-015-in-process-rust-collab.md)。v1 でやらないこと: PR / レビュー / LFS /
+  sparse checkout / シーンの 3-way マージ / `git init` / 認証 UI
 - **Debug/Release 一貫性** — 固定 60Hz tick、`/fp:precise`、PCG32、明示ソートキー。
   リプレイ (.rep) の tick 毎ワールドハッシュ比較で機械検証:
   `tools\replay_verify.bat` が両構成ビルド → Debug 記録 → Debug/Release 照合 → 静的規則検査。
@@ -143,6 +167,12 @@ tools\crash_verify.bat                    # 5 経路で実際に落として .re
 tools\net_verify.bat                      # 2 プロセスのネット対戦 + desync 検出の実地検証
 tools\check_rules.ps1                     # コーディング規則の静的検査
 tools\gen_project_files.ps1               # ソース一覧を vcxproj に反映
+tools\collab_verify.bat [--update]        # Source Control の回帰検証。一時リポジトリへ
+                                          #   NDJSON のシナリオを流し、期待出力と比較する
+                                          #   (エディタも D3D も要らない。先に build_collab.bat)
+pwsh -File tools\collab_fixture.ps1 <dir> # git 管理下の最小プロジェクトを作る。実機目視は
+                                          #   Editor.exe --project <dir> (Source Control は
+                                          #   --project 起動でしか動かない)
 ```
 
 CI (`.github\workflows\ci.yml`) は**この bat をそのまま呼ぶ** — CI 専用の検証ロジックは
