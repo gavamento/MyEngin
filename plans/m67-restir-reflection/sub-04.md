@@ -35,7 +35,10 @@ ReSTIR on でも off と `--img-diff --tol 1` で一致することが、配管�
    off なら**現行コードのまま** (u1-u5 を張らない)。
 6. `RenderDebug`: 12 = `Blit(reservoirM, mode 1, param 32)`、14 = `Blit(reservoirCls, mode 4)`。
    `rt_blit.hlsl` に mode 4 (`a` → `RtReflClassColor` と同じ 5 色。rt_common を include できないなら色表を複製し
-   「rt_common.hlsli::RtReflClassColor と一致」のコメント)。
+   「rt_common.hlsli::RtReflClassColor と一致」のコメント。スカイ / 空 reservoir = 範囲外 → 黒、sub-02 の実装と同じ落ち方)。
+   ★sub-02 の申し送り: 4〜11 は Blit で早期 return し、**13 は「どの早期 return にも当たらない」ことで CS 経路に
+   落ちている**。12 / 14 の if はその連鎖の中 (11 の直後) に置き、13 の経路を塞がないこと。
+   12 / 14 は `--rt-refl` 前提 (反射パスの産物を読む)、13 は不要 (spec §4.4)。
 7. `RenderView` 末尾 append: `int32_t rtReflRestir = 0; RtReflRestirParams rtReflRestirParams;`。
    `RenderSystem`: `bool rtReflRestir = false; RtReflRestirParams rtReflRestirParams;` → 毎フレーム写す。
    `rtDebugMode ∈ {12, 14}` で `view.rtReflRestir = 1`。

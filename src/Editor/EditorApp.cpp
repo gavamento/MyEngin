@@ -1200,6 +1200,11 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
             if (ImGui::MenuItem(Tr(StrId::Menu_RtDbgSvgfRefl), nullptr, mode == 11)) {
                 mode = 11;
             }
+            // M67: 一次ヒットの反射クラス。12 (reservoir M) / 14 (反射像側) は ReSTIR が
+            // 入ってから足すので、ここは 13 だけが飛び番で並ぶ
+            if (ImGui::MenuItem(Tr(StrId::Menu_RtDbgReflClass), nullptr, mode == 13)) {
+                mode = 13;
+            }
             ImGui::Separator();
             // M46c: GI の品質。解像度は内部バッファ、バウンスは二次光線の深さ
             float& scale = ctx.renderSystem->rtResolutionScale;

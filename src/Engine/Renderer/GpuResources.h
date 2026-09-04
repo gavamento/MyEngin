@@ -15,6 +15,9 @@
 #include <wrl/client.h>
 
 #include "Engine/Core/EntityID.h"
+// M67: Material::reflectionClass の既定値を kRtReflClassDefault 1 箇所から取るため。
+// RtTypes.h は <cstdint> と <DirectXMath.h> しか引かない (どちらも上で取り込み済み)
+#include "Engine/Renderer/RayTracing/RtTypes.h"
 #include "Engine/Renderer/Skeleton.h"
 
 namespace mye {
@@ -193,6 +196,22 @@ struct Material {
     // 上限 kEmissiveMaxIntensity・量子化 1/255 刻み (Forward は CB 直渡しで量子化なし)。
     // レイトレでは RtMaterial.emissive に載り、そのままバウンス先の光源になる
     float emissiveIntensity = 0.0f;
+    // M67: 反射に映るときの品質クラス (RtTypes.h の kRtReflClass*、0=Hero … 4=Default)。
+    // ★**Material 単位**にしてあるのは、値の出所を .mat.json 1 箇所に閉じるため
+    //   (オブジェクト単位の上書きは ECS / シーン / プレハブ override の全部に波及する)。
+    //   ReSTIR は「反射に**映る**物体」の重要度で再利用の強さを決めるので、
+    //   受け側 (映す面) ではなくヒット側から引く = RtInstance に載せて GPU へ運ぶ。
+    // ★欠損・範囲外を 4 (中立) にするのはクランプを避けるため — -1 や 99 の打ち間違いが
+    //   0 (Hero) に丸まると「最も保守的で最も重いクラス」に化けて静かにコストが増える
+    int32_t reflectionClass = kRtReflClassDefault;
+    // ★暗黙パディングを作らないための明示的な詰め物 (値は読まない)。
+    //   Material は cooked キャッシュ (ModelCook) に **memcpy で丸ごと書かれ**、
+    //   CookedCacheSelfTest が sizeof(Material) 全体を memcmp する。AssetID が uint64 =
+    //   アラインメント 8 なので、reflectionClass を足した 60 バイトは 64 に丸められる —
+    //   その 4 バイトを暗黙パディングのままにすると値が不定になり、
+    //   「同じ入力から作った cooked ファイルのバイト列が run ごとに違う」が生まれる
+    //   (M67 以前の Material はちょうど 56 バイトでこの穴が無かった)
+    int32_t pad0 = 0;
 };
 
 class MaterialLibrary {

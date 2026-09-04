@@ -14,6 +14,7 @@
 #include "Engine/Engine/EngineLoop.h"
 #include "Engine/Engine/Prefab.h"
 #include "Engine/Engine/Scene.h"
+#include "Engine/Renderer/RayTracing/RtTypes.h" // kRtReflClass* (M67)
 
 namespace fs = std::filesystem;
 
@@ -307,17 +308,65 @@ bool RunAssetOpsSelfTest()
         Material m;
         const char* json = R"({"engine":"MyEngine","material":1,"name":"t",
             "shader":"forward_lit","baseColor":[0.25,0.5,0.75,1.0],"metallic":0.5,
-            "roughness":0.125,"emissive":2.5,"texture":"","normalMap":"","transparent":true})";
+            "roughness":0.125,"emissive":2.5,"reflectionClass":1,"texture":"","normalMap":"",
+            "transparent":true})";
         check(MaterialLibrary::MaterialFromJsonText(json, res.textures, L"", m)
                   && m.baseColor.x == 0.25f && m.baseColor.y == 0.5f && m.baseColor.z == 0.75f
                   && m.metallic == 0.5f && m.roughness == 0.125f && m.emissiveIntensity == 2.5f
-                  && m.transparent == 1,
+                  && m.reflectionClass == 1 && m.transparent == 1,
               "preview: MaterialFromJsonText maps every editable field");
         Material def;
         check(MaterialLibrary::MaterialFromJsonText("{}", res.textures, L"", def)
                   && def.metallic == 0.0f && def.roughness == 0.5f
-                  && def.emissiveIntensity == 0.0f && def.transparent == 0,
+                  && def.emissiveIntensity == 0.0f && def.transparent == 0
+                  && def.reflectionClass == kRtReflClassDefault,
               "preview: missing keys fall back to the same defaults as LoadFromFile");
+        // M67: 反射クラスは**クランプせず**中立 (4) へ落とす。-1 が 0 (Hero) に丸まると
+        // 打ち間違いが「最も重いクラス」に化けて静かにコストだけ増える。
+        // 非整数 (文字列 / 小数 / 真偽) も 4 — value() に食わせると type_error が
+        // ParseMaterialJson の外まで飛んでマテリアル 1 枚で起動ごと落ちるため型で弾いている
+        {
+            Material oor;
+            const char* neg = R"({"reflectionClass":-1})";
+            const char* big = R"({"reflectionClass":9})";
+            const char* str = R"({"reflectionClass":"Hero"})";
+            const char* flt = R"({"reflectionClass":1.5})";
+            bool allDefault = true;
+            for (const char* t : { neg, big, str, flt }) {
+                oor = Material{};
+                allDefault = allDefault && MaterialLibrary::MaterialFromJsonText(
+                                               t, res.textures, L"", oor)
+                             && oor.reflectionClass == kRtReflClassDefault;
+            }
+            check(allDefault,
+                  "material: out-of-range / non-integer reflectionClass falls back to 4 "
+                  "(no clamping, no throw)");
+            Material edge;
+            check(MaterialLibrary::MaterialFromJsonText(R"({"reflectionClass":0})", res.textures,
+                                                        L"", edge)
+                      && edge.reflectionClass == kRtReflClassHero
+                      && MaterialLibrary::MaterialFromJsonText(
+                             R"({"reflectionClass":4})", res.textures, L"", edge)
+                      && edge.reflectionClass == kRtReflClassDefault,
+                  "material: reflectionClass accepts both ends of the valid range (0 and 4)");
+        }
+        // M67: Create > Material の雛形にキーが載っていること。欠損でも 4 になるので
+        // 「書き忘れても動く」= 静かに抜けやすい。雛形 → パースの往復で機械固定する
+        {
+            // ★root は直前の削除テストで丸ごとゴミ箱送りにされていることがあるので、
+            //   この検査専用のディレクトリを作り直してから書く
+            const fs::path matDir = root / L"m67_mat";
+            fs::create_directories(matDir, ec);
+            const std::wstring made = CreateMaterialAsset(ctx, matDir.wstring(), "M67 Class");
+            std::ifstream in(fs::path(made), std::ios::binary);
+            const std::string text((std::istreambuf_iterator<char>(in)),
+                                   std::istreambuf_iterator<char>());
+            Material tpl;
+            check(!made.empty() && text.find("\"reflectionClass\"") != std::string::npos
+                      && MaterialLibrary::MaterialFromJsonText(text, res.textures, L"", tpl)
+                      && tpl.reflectionClass == kRtReflClassDefault,
+                  "material: Create > Material writes reflectionClass and it reads back as 4");
+        }
         Material broken = m;
         check(!MaterialLibrary::MaterialFromJsonText("{ not json", res.textures, L"", broken)
                   && !MaterialLibrary::MaterialFromJsonText("[1,2]", res.textures, L"", broken),

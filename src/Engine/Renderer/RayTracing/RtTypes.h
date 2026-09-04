@@ -92,6 +92,23 @@ constexpr int kRtReflAtrousIterations = 2;
 // (分散が高い = ノイズのときだけ均し、収束したら像を保つ)
 constexpr float kRtReflSigmaLuma = 1.0f;
 
+// ---- M67: ReflectionClass (反射に「映る側」の品質クラス) ----
+
+// 反射に映る物体の重要度。**受け側 (映す面) ではなくヒット側 (映る物体) に付く**ので、
+// 値の出所は Material、GPU へは RtInstance で運び、HLSL はヒット点から引く。
+// ReSTIR の再利用 (空間半径 / タップ数 / M 上限) をクラスごとに変えて
+// 「主役は保守的に = にじませずゴーストさせず、小物は積極的に再利用」を作る。
+// 番号は .mat.json にそのまま整数で載る = **既存の値の意味を変えない** (追加は末尾へ)。
+constexpr int kRtReflClassHero = 0;      // 主役 (プレイヤー / ボス)
+constexpr int kRtReflClassCharacter = 1; // 人型・敵
+constexpr int kRtReflClassVehicle = 2;   // 乗り物
+constexpr int kRtReflClassProp = 3;      // 小物
+// 中立クラス。**欠損・範囲外はクランプせずここへ落とす** — -1 を 0 (Hero) に丸めると
+// 打ち間違いが「最も保守的で最も重いクラス」に化けて静かにコストだけ増える
+constexpr int kRtReflClassDefault = 4;
+// HLSL の MYE_RT_REFL_CLASS_COUNT と一致検査される (tools/check_rules.ps1 規則 9)
+constexpr int kRtReflClassCount = 5;
+
 // BVH ノード (BLAS / TLAS 共通)。
 //   内部ノード: left/right = 子ノードの絶対 index (どちらも >= 0)
 //   葉:         left = -(start + 1) で負、right = 個数
@@ -135,7 +152,10 @@ struct RtInstance {
     DirectX::XMFLOAT4 invRow3 = { 0, 0, 0, 0 }; // xyz = 平行移動成分
     int32_t blasRoot = 0;      // 連結ノード配列における BLAS のルート index
     int32_t materialIndex = 0; // マテリアル配列の index
-    int32_t pad0 = 0;
+    // M67: 反射に映る側の品質クラス (kRtReflClass*)。旧 pad0 の枠をそのまま意味付けした
+    // ものなのでレイアウトは不変 (static_assert 80 が動かない)。**コメントではなく名前で
+    // 縛る** — pad は「誰も読まない」が前提の名前で、読み始めた瞬間に嘘になる
+    int32_t reflectionClass = kRtReflClassDefault;
     int32_t pad1 = 0;
 };
 static_assert(sizeof(RtInstance) == 80, "HLSL RtInstance と一致させること");

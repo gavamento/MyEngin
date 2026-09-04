@@ -151,6 +151,9 @@ MYE_STR(Menu_RtDbgVariance,   "Variance",              "分散")
 MYE_STR(Menu_RtDbgShadowVis,  "RT Shadow Visibility",  "RT 影の可視率")
 MYE_STR(Menu_RtDbgRawRefl,    "Raw Reflection (1spp)", "生の反射 (1spp)")
 MYE_STR(Menu_RtDbgSvgfRefl,   "Denoised Reflection",   "デノイズ後の反射")
+// M67: 一次ヒットの ReflectionClass を色分け (赤=Hero / 橙=Character / 黄=Vehicle /
+// 水色=Prop / 灰=Default / 黒=空)。Material → RtInstance の配管の目視確認用
+MYE_STR(Menu_RtDbgReflClass,  "Reflection Class (primary)", "反射クラス (一次ヒット)")
 MYE_STR(Menu_RtScale100,      "Scale 100%",            "解像度 100%")
 MYE_STR(Menu_RtScale50,       "Scale 50%",             "解像度 50%")
 MYE_STR(Menu_RtScale25,       "Scale 25%",             "解像度 25%")
@@ -489,6 +492,13 @@ MYE_STR(Insp_BoundsNoPart,    "no Part component — RaycastParts ignores bounds
 MYE_STR(Mat_Emissive,         "emissive",                   "自己発光")
 MYE_STR(Mat_Metallic,         "metallic",                   "メタリック")
 MYE_STR(Mat_Roughness,        "roughness",                  "ラフネス")
+// M67: 反射クラス (Combo のラベルと 5 項目)
+MYE_STR(Mat_ReflClass,        "reflection class",           "反射クラス")
+MYE_STR(ReflClass_Hero,       "Hero",                       "主役")
+MYE_STR(ReflClass_Character,  "Character",                  "キャラクター")
+MYE_STR(ReflClass_Vehicle,    "Vehicle",                    "乗り物")
+MYE_STR(ReflClass_Prop,       "Prop",                       "小物")
+MYE_STR(ReflClass_Default,    "Default",                    "既定")
 MYE_STR(Insp_NoPublicFields,  "(no public fields)",         "(public なフィールドがありません)")
 MYE_STR(Insp_NoManagedInst,   "(no managed instance — click 'Compile C# Scripts')",
                               "(マネージドインスタンスがありません — 「C# スクリプトをコンパイル」を押してください)")
@@ -513,6 +523,10 @@ MYE_STR(Insp_PreviewNote,     "(preview uses the saved-in-editor values, not the
                               "(プレビューはエディタ上の値を使います。ディスク上のファイルではありません)")
 MYE_STR(Insp_TipEmissive,     "Emissive strength. With RT GI on, the surface itself becomes an indirect light source",
                               "自己発光の強さ。RT GI が有効なら発光面がそのまま間接光の光源になる")
+MYE_STR(Insp_TipReflClass,    "How conservatively this surface is reused when it appears IN a reflection "
+                              "(not what it reflects). Heroes stay sharp, props are reused aggressively",
+                              "この面が反射に「映るとき」の再利用の厳しさ (何を映すか、ではありません)。"
+                              "主役ほど保守的 = にじませない、小物ほど積極的に再利用します")
 MYE_STR(Insp_GenerateMips,    "Generate Mips",              "ミップマップを生成")
 MYE_STR(Insp_CookCompress,    "Cook Compress",              "圧縮 (cook)")
 MYE_STR(Insp_Srgb,            "sRGB",                       "sRGB")

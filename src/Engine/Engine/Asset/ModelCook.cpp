@@ -15,7 +15,8 @@ namespace {
 // blob は生バイト保存 (float ビットパターン維持)。struct を memcpy で書くため、
 // レイアウトが変わったら kCookVersion を bump して全キャッシュを無効化すること
 static_assert(sizeof(MeshVertex) == 52, "MeshVertex layout changed -- bump kCookVersion");
-static_assert(sizeof(Material) == 56, "Material layout changed -- bump kCookVersion");
+// M67: reflectionClass (int32) + 明示 pad を末尾 append して 56 → 64 (kCookVersion 1 → 2)
+static_assert(sizeof(Material) == 64, "Material layout changed -- bump kCookVersion");
 static_assert(sizeof(DirectX::XMFLOAT4X4) == 64, "XMFLOAT4X4 layout changed");
 
 void Append(std::vector<uint8_t>& buf, const void* src, size_t n)

@@ -19,13 +19,19 @@
    ★sub-01 の申し送り: `engine_spec.md:1711` の「captures **fifteen** deterministic screenshots」は 19 の時点で
    既に古い → 22 に。`:403` の「the RT demo is too slow under WARP, so the feature would carry permanently zero
    automated coverage」は前提が半分崩れた (反射 / GI は golden を得た。RT 影は依然ゼロ) → 文言を実態に合わせる。
+   ★sub-02 の申し送り (spec §2 S15): `engine_spec.md` §10.2 の Invalidation 行に「`kCookVersion` = 2 since M67b —
+   `Material` grew 56 → 64 (reflectionClass + explicit pad); any `Material` layout change bumps it because the blob
+   memcpys the struct」を 1 文。Sealed bundle 行に「packages are rebuilt with the new exe (exe と cache は一緒に配る)」。
+   ADR-016 には書かない (設計判断ではなく機械的帰結)。
 3. `README.md`: 機能概要のレイトレ節に ReSTIR 反射 + ReflectionClass を 1 段落、CLI 一覧に
    `--rt-restir` / `--rt-restir-no-spatial` / `--rt-restir-visray` / `--rt-class-override N`。
 4. `CLAUDE.md`: CLI 一覧 (`--rt-*` の並び) に同 4 本 **+ 元から未掲載だった `--rt-refl` / `--rt-gi` / `--rt-shadow` /
    `--rt-debug N` / `--rt-no-temporal` / `--rt-no-svgf` / `--rt-freeze-seed` / `--rt-anim-seed`** (sub-01 の申し送り。
    受理フラグは `EditorMain.cpp:299-346` / `RuntimeMain.cpp:297-342`)、検証表の `shot_verify.bat` 行を 22 枚に、
    「横断的な変更のチェックリスト」に「**Material にフィールドを足す** — `ParseMaterialJson` / Inspector の
-   load・save・widget / `CreateMaterialAsset` の雛形 / `AssetOpsSelfTest` の 4 者」を 1 項 (M67b で踏んだ手順の固定)、
+   load・save・widget / `CreateMaterialAsset` の雛形 / `AssetOpsSelfTest` の 4 者 **+ cooked blob は struct を memcpy
+   するので `kCookVersion` bump / `ModelCook.cpp` の `static_assert` / `AssetID` (8 バイト境界) で丸まる分は明示パディング
+   (暗黙パディングは cooked ファイルのバイト列を run ごとに変える)**」を 1 項 (M67b で踏んだ手順の固定、spec §2 S15)、
    「環境の罠」に「**`GpuTimer` は kFrames=6 のリングを 7 フレーム目からしか回収しない** — `--frames 6` の撮影 run では
    `[rt]` / `[ssr]` の GPU 時間が全部 0.000 ms。計測は `--frames 20`」を 1 項 (sub-01 で踏んだ罠の固定)。
 5. `tools\shot_verify.bat` に `demo_render_rtrefl_restir --render-demo --deferred --rt-refl --rt-restir` を
@@ -35,9 +41,13 @@
    (司会が転記してもよい)。
 7. 全検証 (下記)。
 
+8. 衛生 (コメントの実態合わせ、M66l と同型): `src\Engine\Engine\Asset\CookedCache.h:20` の「56 → 60 バイトになった」は
+   `ModelCook.cpp:19` の `static_assert(sizeof(Material) == 64)` と食い違う → 「56 → 64 (60 + `AssetID` 境界の明示
+   パディング 4)」に直す (sub-02 round 1 の should)。
+
 ## やらないこと (このサブでは)
 
-- 既定パラメータの変更。シェーダ / C++ の変更 (指摘があれば差し戻しで前サブへ)。
+- 既定パラメータの変更。シェーダ / C++ のロジック変更 (指摘があれば差し戻しで前サブへ。8 のコメント修正だけは例外)。
 
 ## 触る場所 (planner の見立て)
 

@@ -32,6 +32,7 @@
 #include "Engine/Engine/SceneSerializer.h"
 #include "Engine/Platform/PathUtil.h"
 #include "Engine/Renderer/GpuResources.h"
+#include "Engine/Renderer/RayTracing/RtTypes.h" // kRtReflClass* (M67: デモの反射クラス)
 #include "Engine/Renderer/ShaderManager.h"
 
 namespace mye {
@@ -1123,8 +1124,11 @@ void RegisterRenderShowcaseContent(EngineContext& ctx)
     // 名前は **rdemo_ 接頭辞**。既定デモ (mat_*) / RT (rt_*) / parts / flow / mp_ / duel_ の
     // どれとも衝突させない — 材質は全ショーケース分が無条件登録されるので、名前が被ると
     // 「後勝ちで別のシーンの色に化ける」が静かに起きる
+    // M67: 末尾の reflClass は「この材質の面が反射に**映るとき**の再利用の厳しさ」。
+    // 省略時は 4 (中立) = 従来と同じ扱いなので、既存の呼び出しは書き換えない
     auto makeMat = [&](const char* name, float r, float g, float b, float metallic,
-                       float roughness, float emissive) {
+                       float roughness, float emissive,
+                       int reflClass = kRtReflClassDefault) {
         Material m;
         m.shader = shader;
         m.texture = white;
@@ -1132,16 +1136,20 @@ void RegisterRenderShowcaseContent(EngineContext& ctx)
         m.metallic = metallic;
         m.roughness = roughness;
         m.emissiveIntensity = emissive;
+        m.reflectionClass = reflClass;
         return res.materials.Register(name, m);
     };
     makeMat("rdemo_ground", 0.34f, 0.35f, 0.38f, 0.0f, 0.90f, 0.0f);
-    makeMat("rdemo_pillar_a", 0.72f, 0.70f, 0.66f, 0.0f, 0.75f, 0.0f);
-    makeMat("rdemo_pillar_b", 0.60f, 0.34f, 0.28f, 0.0f, 0.65f, 0.0f);
-    makeMat("rdemo_pillar_c", 0.28f, 0.42f, 0.56f, 0.0f, 0.55f, 0.0f);
+    // 柱は小物 (Prop) — 反射像の中で最も面積を占めるので、ここが積極再利用で崩れないかが
+    // ReSTIR の A/B の主戦場になる
+    makeMat("rdemo_pillar_a", 0.72f, 0.70f, 0.66f, 0.0f, 0.75f, 0.0f, kRtReflClassProp);
+    makeMat("rdemo_pillar_b", 0.60f, 0.34f, 0.28f, 0.0f, 0.65f, 0.0f, kRtReflClassProp);
+    makeMat("rdemo_pillar_c", 0.28f, 0.42f, 0.56f, 0.0f, 0.55f, 0.0f, kRtReflClassProp);
     // 反射床パッチ。M56d (SSR) と M56f (反射プローブ) の被写体そのものなので、
     // **粗さは 0.1 以下**にしておく (SSR は粗さでフェードするため、粗いと画に出ない)
     makeMat("rdemo_mirror", 0.85f, 0.87f, 0.90f, 0.90f, 0.10f, 0.0f);
-    makeMat("rdemo_spin", 0.95f, 0.58f, 0.14f, 0.0f, 0.45f, 0.0f);
+    // 回転体は唯一の動く被写体 = 主役 (Hero)。ゴーストが出るなら真っ先にここに出る
+    makeMat("rdemo_spin", 0.95f, 0.58f, 0.14f, 0.0f, 0.45f, 0.0f, kRtReflClassHero);
     makeMat("rdemo_far", 0.42f, 0.45f, 0.52f, 0.0f, 0.85f, 0.0f);
     // ライト位置の目印。**発光だけ**でライティングには寄与しない (エンジンに面光源は無い) —
     // 「どこにスポット/点光源があるか」が絵の上で分かると M54c/M54d の A/B が読みやすい
@@ -2696,11 +2704,14 @@ void RegisterAcousticShowcaseContent(EngineContext& ctx)
     const AssetID shader = AssetID{ HashStr("forward_lit") };
     res.meshes.Cube();
 
-    auto makeMat = [&](const char* name, float r, float g, float b) {
+    // M67: 末尾の reflClass = 反射に映るときの再利用の厳しさ (省略時は 4 = 中立)
+    auto makeMat = [&](const char* name, float r, float g, float b,
+                       int reflClass = kRtReflClassDefault) {
         Material m;
         m.shader = shader;
         m.texture = white;
         m.baseColor = { r, g, b, 1.0f };
+        m.reflectionClass = reflClass;
         return res.materials.Register(name, m);
     };
     // ★暗い。企画は「世界は真っ暗で、音の波だけが世界を描く」なので素の色は沈めてある。
@@ -2723,13 +2734,13 @@ void RegisterAcousticShowcaseContent(EngineContext& ctx)
     // ---- M65f: 敵 2 種 ----
     // ★色でセンサーが読めるようにしてある (赤 = 耳 / 緑 = 目)。同じ FSM を回していて
     //   違うのは載っているセンサーだけ、という設計が絵で確かめられる
-    makeMat("adem_agent_ear", 0.58f, 0.20f, 0.22f);
-    makeMat("adem_agent_eye", 0.22f, 0.52f, 0.26f);
+    makeMat("adem_agent_ear", 0.58f, 0.20f, 0.22f, kRtReflClassCharacter);
+    makeMat("adem_agent_eye", 0.22f, 0.52f, 0.26f, kRtReflClassCharacter);
     // ---- M65g: プレイヤーと道具 ----
     // ★設置光 (adem_lamp) だけ明るい。**スクリプトが強度を 0 から育てる**ので、
     //   球そのものが暗いと「置いている最中」が絵から読めない (企画 4-3 はゲージを
     //   出さないと決めているので、光の育ち方が唯一の進行表示になる)
-    makeMat("adem_player", 0.30f, 0.44f, 0.58f);
+    makeMat("adem_player", 0.30f, 0.44f, 0.58f, kRtReflClassHero);
     makeMat("adem_lamp", 0.95f, 0.86f, 0.62f);
     makeMat("adem_stone", 0.38f, 0.36f, 0.33f);
     makeMat("adem_bottle", 0.30f, 0.52f, 0.44f);

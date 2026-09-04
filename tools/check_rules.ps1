@@ -101,6 +101,16 @@ $constGroups = @(
             'assets\shaders\rt_common.hlsli'           = '#\s*define\s+MYE_RT_MAX_VISIT\s+(\d+)'
         }
     },
+    # M67: ReflectionClass の段数。C++ 側が Material の範囲チェック (欠損・範囲外 = 4) に、
+    # HLSL 側が色分けと再利用パラメータ表の添字に使う。食い違うと「クラス 4 の物体が
+    # 表の外を読む」= 未初期化のパラメータで再利用する、という静かな壊れ方をする
+    @{
+        label = 'kRtReflClassCount / MYE_RT_REFL_CLASS_COUNT'
+        sites = @{
+            'src\Engine\Renderer\RayTracing\RtTypes.h' = 'constexpr\s+int\s+kRtReflClassCount\s*=\s*(\d+)'
+            'assets\shaders\rt_common.hlsli'           = '#\s*define\s+MYE_RT_REFL_CLASS_COUNT\s+(\d+)'
+        }
+    },
     @{
         label = 'kRtTemporalMaxHistory / MYE_RT_TEMPORAL_MAX_HISTORY'
         sites = @{

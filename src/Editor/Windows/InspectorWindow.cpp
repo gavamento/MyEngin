@@ -37,6 +37,7 @@
 #include "Engine/Platform/PathUtil.h"
 #include "Engine/Renderer/GpuResources.h"
 #include "Engine/Renderer/ImGuiTheme.h"  // 見出しフォント (テーマ第 3 世代)
+#include "Engine/Renderer/RayTracing/RtTypes.h" // kRtReflClassCount (M67)
 #include "Engine/Renderer/RenderTypes.h" // kEmissiveMaxIntensity (M46i)
 #include "Engine/Renderer/Skeleton.h"    // SkinnedModel のジョイント名 (M48i)
 
@@ -1456,6 +1457,15 @@ void InspectorWindow::LoadMaterialEdit(EngineContext& ctx, const std::wstring& p
     matEdit_.metallic = root.value("metallic", 0.0f);
     matEdit_.roughness = root.value("roughness", 0.5f);
     matEdit_.emissive = root.value("emissive", 0.0f); // M46i (欠損 = 発光なし)
+    // M67: 反射クラス。ParseMaterialJson と同じ判定 (非整数・範囲外は 4 = 中立) にしておく
+    // — ここで拾い方がずれると「Inspector に出る値」と「描画に効く値」が食い違う
+    matEdit_.reflectionClass = 4;
+    if (root.contains("reflectionClass") && root["reflectionClass"].is_number_integer()) {
+        const int64_t cls = root["reflectionClass"].get<int64_t>();
+        if (cls >= 0 && cls < kRtReflClassCount) {
+            matEdit_.reflectionClass = static_cast<int>(cls);
+        }
+    }
     matEdit_.transparent = root.value("transparent", false);
     // texture/normalMap: 数値 = GUID / 文字列 = 旧相対パス (GUID に変換して保持 —
     // 保存時は常に GUID 数値で書く = M39a の「次回保存で guid 書き」)
@@ -1495,7 +1505,8 @@ std::string InspectorWindow::MaterialEditToJson(const std::wstring& path) const
                           matEdit_.baseColor[3] };
     root["metallic"] = matEdit_.metallic;
     root["roughness"] = matEdit_.roughness;
-    root["emissive"] = matEdit_.emissive; // M46i
+    root["emissive"] = matEdit_.emissive;                  // M46i
+    root["reflectionClass"] = matEdit_.reflectionClass;    // M67
     // サブ参照は GUID 数値で書く (M39a)。0 = 空文字列 (従来互換の「なし」)
     if (matEdit_.textureGuid != 0) {
         root["texture"] = matEdit_.textureGuid;
@@ -1569,6 +1580,21 @@ void InspectorWindow::DrawMaterialInspector(EngineContext& ctx, const std::wstri
                        static_cast<float>(kEmissiveMaxIntensity));
     if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip("%s", Tr(StrId::Insp_TipEmissive));
+    }
+    // M67: 反射に映るときの品質クラス。**このマテリアルの面が反射像に写るときの扱い**で、
+    // このマテリアルが「何を映すか」ではない (Inspector で最も誤解されやすい点なので
+    // ツールチップで明示する)
+    {
+        const char* classItems[] = { Tr(StrId::ReflClass_Hero), Tr(StrId::ReflClass_Character),
+                                     Tr(StrId::ReflClass_Vehicle), Tr(StrId::ReflClass_Prop),
+                                     Tr(StrId::ReflClass_Default) };
+        static_assert(sizeof(classItems) / sizeof(classItems[0]) == kRtReflClassCount,
+                      "classItems は kRtReflClassCount と同数にすること");
+        ImGui::Combo(Tr(StrId::Mat_ReflClass), &matEdit_.reflectionClass, classItems,
+                     kRtReflClassCount);
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("%s", Tr(StrId::Insp_TipReflClass));
+        }
     }
     ImGui::Checkbox(Tr(StrId::Insp_Transparent), &matEdit_.transparent);
 

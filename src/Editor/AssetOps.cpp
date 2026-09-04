@@ -337,6 +337,9 @@ std::wstring CreateMaterialAsset(EngineContext& ctx, const std::wstring& dir, co
     root["metallic"] = 0.0;
     root["roughness"] = 0.5;
     root["emissive"] = 0.0; // M46i: 自己発光の強さ (0 = 発光なし)
+    // M67: 反射に映るときの品質クラス (0=Hero … 4=Default)。欠損でも 4 になるが、
+    // 雛形に書いておくと Inspector を開かなくても「そういう項目がある」と分かる
+    root["reflectionClass"] = 4;
     root["texture"] = "";   // assets ルート相対パス (空 = 白テクスチャ)
     root["normalMap"] = ""; // 空 = ノーマルマップなし
     root["transparent"] = false;

@@ -11,7 +11,7 @@ cbuffer RtDebugCB : register(b2) // b0=RtSceneCB / b1=RtEnvCB は rt_common.hlsl
     float3 gCameraPos;
     float gTMax;
     float2 gScreenSize;
-    int gDebugMode;  // 1=BVH ヒート 2=法線 3=インスタンス ID
+    int gDebugMode;  // 1=BVH ヒート 2=法線 3=インスタンス ID 13=反射クラス (M67)
     float gHeatScale; // ヒートマップを 1.0 に飽和させる訪問ノード数
 };
 
@@ -57,6 +57,10 @@ void CSMain(uint3 tid : SV_DispatchThreadID)
     } else if (got) {
         if (gDebugMode == 2) {
             col = RtHitNormal(hit) * 0.5f + 0.5f;
+        } else if (gDebugMode == 13) {
+            // M67: 一次ヒットの ReflectionClass。Material → RtInstance の配管が
+            // 通っているかを絵で確かめる唯一の口 (反射像側は 14 = sub-04)
+            col = RtReflClassColor(RtHitReflectionClass(hit));
         } else {
             col = IdColor(hit.inst);
         }

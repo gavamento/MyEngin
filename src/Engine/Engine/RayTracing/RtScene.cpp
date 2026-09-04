@@ -157,6 +157,10 @@ void RtScene::Update(const std::vector<InstanceDesc>& instances, RenderResources
         WorldAabb(d.world, mesh->aabbMin, mesh->aabbMax, ab.min, ab.max);
         boundScratch_.push_back(ab);
 
+        // M67: マテリアルを**先に**引く。RtInstance がクラスを載せるようになったので、
+        // 「inst を push してから mat を引く」順だと inst 側に値を書けない
+        const Material* mat = resources.materials.Get(d.material);
+
         // worldToLocal (行ベクトル規約 4x3)。方向は正規化せずに使うので t はワールドのまま
         XMFLOAT4X4 wi;
         XMStoreFloat4x4(&wi, XMMatrixInverse(nullptr, XMLoadFloat4x4(&d.world)));
@@ -167,10 +171,14 @@ void RtScene::Update(const std::vector<InstanceDesc>& instances, RenderResources
         inst.invRow3 = { wi._41, wi._42, wi._43, 0.0f };
         inst.blasRoot = slot->second.nodeBase;
         inst.materialIndex = static_cast<int32_t>(matScratch_.size());
+        // M67: 反射に映る側の品質クラス。マテリアル未解決 (Get == nullptr) は中立の 4 —
+        // RtMaterial 側が既定値のまま白く映るのと同じ「無害な既定」に揃える。
+        // ParseMaterialJson が既に範囲外を落としているので、ここでのクランプは不要
+        inst.reflectionClass = mat ? mat->reflectionClass : kRtReflClassDefault;
         instScratch_.push_back(inst);
 
         RtMaterial rm;
-        if (const Material* mat = resources.materials.Get(d.material)) {
+        if (mat) {
             const XMFLOAT3 lin = SrgbToLinear(XMFLOAT3{ mat->baseColor.x, mat->baseColor.y,
                                                         mat->baseColor.z });
             rm.baseColor = lin;

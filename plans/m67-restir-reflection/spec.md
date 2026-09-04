@@ -48,6 +48,7 @@ ping-pong (`RtPasses.h:116-125`)、UAV は u0 のみ使用。
 | S12 | reservoir の保存量は wSum か W か | 元計画は wSum。統合の重み (教科書形) は `p̂_q(y) · W · M · J` で W を使う。resolve は `Ls · wSum / (M · lum(Ls))` で D_vis が約分される | 裁定 | **保存は W = wSum / (M · p̂_q(y))** (統合が教科書形のまま)。resolve はパス内のレジスタで wSum を持って `Ls · wSum / (M · lum)` (M=1 なら `lum/lum = 1` で **Ls とビット一致**) |
 | S13 | `DemoContent.cpp` の場所 | 元計画は `src/GameLogic/DemoContent.cpp:3075` と書くが実体は **`src/Engine/Engine/DemoContent.cpp`** (Engine 層) | 事実 | 触る場所を訂正。デモへ足すのは Material のフィールドだけ (エンティティは足さない = 粒子 RNG ストリーム不変) |
 | S14 | 撮影時の自動シード凍結 (`EngineLoop.cpp:299`) で temporal の効果が golden に写らない | 凍結中は毎フレーム同じ 1spp → M は伸びるが推定値は不変。spatial は画素間で違うので写る | 事実 | golden は「経路が壊れていない」を固定する目的。品質の観測は `--rt-anim-seed` で (A6 / A7) |
+| S15 | **`Material` は cooked blob へ memcpy される** — フィールド追加は「末尾 append」だけでは済まない (planner の見落とし、sub-02 で coder が発見) | `ModelCook.cpp:15-19`「struct を memcpy で書く」+ `static_assert(sizeof(Material) == 56)` の門番。`kCookVersion` は M51b 導入 (`git log -S`) で、前例 `emissiveIntensity` (M46i) は cook cache **より前**の追加 = M67b が cook 以後で初のフィールド追加。`AssetID` (uint64) のアラインメントで 60 → 64 に丸まるため、暗黙パディングのままだと同じ入力の cooked ファイルのバイト列が run ごとに違いうる (`CookedCacheSelfTest` の memcmp も不定に) | 事実 (coder SELF_EVAL sub-02) | `kCookVersion` 1 → 2、`static_assert` 56 → 64、`Material` 末尾に明示 `pad0`。影響は「初回起動で 1 回焼き直す」だけ (cache は gitignore)。配布パッケージ (M51j 封印) は新 exe で作り直す (exe と cache は常に一緒に配る)。sub-07 で engine_spec §10.2 と CLAUDE.md のチェックリストに固定 |
 
 再検証で**そのまま使える**と確認したもの: `--rt-refl` / `--rt-gi` / `--rt-debug N` / `--rt-no-temporal` /
 `--rt-no-svgf` / `--rt-freeze-seed` / `--rt-anim-seed` の CLI (両 main)、`RtHistoryUv` / `RtReprojectValid` /
@@ -194,7 +195,10 @@ rt_temporal / rt_variance / rt_atrous (無変更)  入力が reflRt_ から refl
   非永続 (rtBounces と同じ扱い)。ReSTIR off の間はサブメニューを `BeginDisabled`。
 - RT Debug のモード: 12 `Reservoir M` (Blit mode 1、param = 32: 赤 = 1 → 緑 = 32) /
   13 `Reflection Class (primary)` (rt_debug CS) / 14 `Reflection Class (reflected)` (Blit 新 mode 4 = `nrm.w` を
-  §4.1 の色へ。空 = 黒)。12 / 14 は `--rt-refl` が前提 (10 / 11 と同じ)。
+  §4.1 の色へ。空 = 黒)。12 / 14 は `--rt-refl` が前提 (10 / 11 と同じ。反射パスの産物を読む)。
+  **13 は `--rt-refl` 不要** (rt_debug の CS はカメラから一次レイを撃つだけで反射バッファを見ない — sub-02 で確認)。
+  `RtPasses::RenderDebug` は 4〜11 が Blit で早期 return し、それ以外が CS 経路に落ちる構造なので、
+  12 / 14 の if は**その連鎖の中**に置き、13 は「どの早期 return にも当たらない」ことで CS へ落とす。
 - Inspector: `反射クラス` Combo + ツールチップ (「反射に映るときの再利用の厳しさ。主役ほど保守的」)。
 - 文字列は `LocalizationTable.inl` に en/ja、`###` 右辺は両言語一致・一意、`Tr()` を printf の唯一の引数にしない。
 
@@ -225,7 +229,7 @@ rt_temporal / rt_variance / rt_atrous (無変更)  入力が reflRt_ から refl
 |---|---|---|
 | A1 | ReSTIR off (既定) で golden **全枚**がビット一致 (sub-01 以降 21 枚、sub-07 以降 22 枚) | `tools\shot_verify.bat` (Release、`MYE_SHOT_SKIP_*` 無し) 全緑 |
 | A2 | 新 golden (`demo_render_rtrefl` / `demo_render_rtgi`) は同一バイナリで 2 回撮って maxDiff=0、1 枚 ≤ 60 s (WARP、SHOTBASE 条件) | sub-01 で 2 回撮影 + `Editor.exe --img-diff A B --tol 0` PASS、所要秒を実装メモに |
-| A3 | ReflectionClass の配管: JSON 欠損 = 4 / 範囲外 = 4 / 値 1 → 1、Inspector 保存 → 読み直しで往復、`--rt-debug 13` で一次ヒットがクラス色 | `Editor.exe --selftest` (AssetOps の JSON 往復に 3 ケース追加)、`Runtime.exe --render-demo --deferred --rt-refl --rt-debug 13 --screenshot` の画像 (spin 赤 / 柱 水色 / 床 灰) |
+| A3 | ReflectionClass の配管: JSON 欠損 = 4 / 範囲外・非整数 = 4 / 値 1 → 1 / 両端 0・4、雛形 (`CreateMaterialAsset`) の往復、Inspector 保存 → 読み直しで往復、`--rt-debug 13` で一次ヒットがクラス色 | `Editor.exe --selftest` (AssetOps の JSON 往復。sub-02 で実装済み)、`Runtime.exe --render-demo --deferred --rt-debug 13 --screenshot` の画像 (spin 赤 / 柱 水色 / 床 灰。sub-02 で画素実測済み)。**Inspector の往復は reviewer の実機操作** (`LoadMaterialEdit` / `MaterialEditToJson` は private でヘッドレスから呼べない): `.mat.json` を選択 → Combo でクラス変更 → 保存 → 別アセットを選んで戻ると値が残り、ファイルに `"reflectionClass": N` が書かれている |
 | A4 | ReSTIR 数学の CPU ミラー: VNDF pdf が半球で 1 に積分 (α = 0.36 / 0.04、±3%) / reservoir 更新の採用確率が重み比 (1:2:7、2 万回、±0.02) / M=1 で `Ls · wSum/(M·lum) == Ls` ビット一致、lum=0 で 0 / J(A→B)·J(B→A) = 1 (±1e-5)、同一点 = 1、スカイ = 1、受け側が 2 倍遠ざかると J = 1/4 (cosθ 同じ) / 統合の重みが J に比例 (J=2 で候補の重みが 2 倍、範囲外 J で 0) / M 上限: M'=100・cap 8 で統合後 M = 9 / 書き戻しクランプで W 不変 / 定数表 5 行・taps ≤ 8・mCap ≤ 32 | `Editor.exe --selftest` (`RtSelfTest.cpp` に `TestRestir`) |
 | A5 | `--rt-restir` (再利用なし = **sub-04 時点**の状態) と off の絵が `--img-diff --tol 1` PASS。sub-05 以降は temporal が常に効くので再検証しない (チューニング UI で全クラスの M 上限を 1 にすれば同等の状態を作れる — `--rt-no-temporal` は SVGF 側で ReSTIR の temporal は止めない) | sub-04 で `Runtime.exe --render-demo --deferred --rt-refl [--rt-restir] --rt-no-temporal --rt-no-svgf --screenshot` 2 枚を比較 |
 | A6 | temporal: `--rt-anim-seed --rt-restir` で debug 12 の M が伸びる (鏡面パッチ領域の平均 G が frame 3 → 40 で増加) / フリッカー指標 (frame 40 と 41 の同領域の平均絶対差、`--rt-no-temporal --rt-no-svgf` で SVGF を外して測る) が off より小さい / `rpos` の配線: 静止シーンでは `P_prev == P` で J = 1 ちょうどなので、配線が壊れていれば J が範囲外で temporal が棄却され **M が 1 から伸びない** — 「M が cap まで伸びる」が配線の検査を兼ねる (J ≠ 1 の経路はヘッドレスでは通らない。selftest A4 とユーザーの実機のみ) | sub-05 の一時 Python (scratch) で PNG を数値化。画像は reviewer 用に `tests\actual\` へ |
@@ -298,3 +302,9 @@ rt_temporal / rt_variance / rt_atrous (無変更)  入力が reflRt_ から refl
   検証手順にも反映。(c) §7 の「`--rt-gi` の決定性」リスクを実測で否定に更新。(d) sub-07 に CLAUDE.md の CLI 一覧
   (`--rt-refl` / `--rt-gi` が元から未掲載)・環境の罠 (GpuTimer)・`engine_spec.md:1711` の古い枚数 (fifteen) と
   `:403` の文言更新を積む。
+- 2026-09-05 (coder SELF_EVAL sub-02 round 1): (a) §2 に S15 = `Material` は cooked blob へ memcpy (planner の見落とし) →
+  `kCookVersion` 1 → 2 / `static_assert` 64 / 明示パディングを承認。(b) §4.4 に「13 は `--rt-refl` 不要、12/14 は前提」と
+  `RenderDebug` の早期 return の順序を追記 (sub-04 にも)。(c) A3 の検証手段を実態に合わせ、Inspector の往復は reviewer の
+  実機操作に (private メンバでヘッドレス不可。静的ヘルパへの切り出しは M67 の外)。(d) sub-07 に engine_spec §10.2 の
+  版記述 + CLAUDE.md チェックリスト「Material にフィールドを足す」の 3 項 (cook 版 / static_assert / 明示パディング) +
+  `CookedCache.h:20` のコメント数値 (56 → 60 は 64 の誤り) の衛生を積む。

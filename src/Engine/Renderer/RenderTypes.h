@@ -272,7 +272,9 @@ struct RenderView {
     int32_t prevViewProjValid = 0;
     // ---- M46b: ハイブリッド・パストレーシング (末尾 append。既定 = 0/null = 従来と同一)。
     //      rtScene/rtPasses が null のパス (Forward / AssetPreview) では自然に無効化される ----
-    int32_t rtDebugMode = 0; // 0=off 1=BVH ヒートマップ 2=ヒット法線 3=インスタンス ID 4=生 GI
+    // 0=off 1=BVH ヒートマップ 2=ヒット法線 3=インスタンス ID 4=生 GI … 11=デノイズ後の反射
+    // 13=反射クラス (M67、一次ヒット)。12/14 は ReSTIR (M67d) で埋まる
+    int32_t rtDebugMode = 0;
     const struct RtSceneBindings* rtScene = nullptr;
     class RtPasses* rtPasses = nullptr;
     // ---- M46c: 拡散 GI ----

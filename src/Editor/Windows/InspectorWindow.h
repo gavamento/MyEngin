@@ -62,6 +62,8 @@ private:
         float metallic = 0.0f;
         float roughness = 0.5f;
         float emissive = 0.0f; // M46i: 自己発光の強さ (0 = 発光なし)
+        // M67: 反射に映るときの品質クラス (0=Hero … 4=Default)。読みで範囲外は 4 に落とす
+        int reflectionClass = 4;
         bool transparent = false;
         uint64_t textureGuid = 0; // 0 = なし (保存は GUID 数値、M39a)
         uint64_t normalGuid = 0;

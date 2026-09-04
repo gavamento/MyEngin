@@ -9,6 +9,10 @@
 #define MYE_RT_STACK_DEPTH 32
 #define MYE_RT_MAX_VISIT 512
 
+// M67: ReflectionClass の段数 (0=Hero / 1=Character / 2=Vehicle / 3=Prop / 4=Default)。
+// C++ の kRtReflClassCount と一致検査される (規則 9)
+#define MYE_RT_REFL_CLASS_COUNT 5
+
 // ---- GPU データレイアウト (RtTypes.h と一致) ----
 
 struct RtBvhNode {
@@ -41,7 +45,7 @@ struct RtInstance {
     float4 invRow3;
     int blasRoot;
     int materialIndex;
-    int pad0;
+    int reflectionClass; // M67: 反射に映る側の品質クラス (旧 pad0。レイアウト不変)
     int pad1;
 };
 
@@ -282,6 +286,34 @@ float2 RtHitUv(RtHit hit)
 RtMaterial RtHitMaterial(RtHit hit)
 {
     return gRtMaterials[gRtInstances[hit.inst].materialIndex];
+}
+
+// M67: ヒットしたインスタンスの ReflectionClass。RtHitMaterial と同じく
+// gRtInstances を 1 回引くだけ (C++ 側で欠損・範囲外は 4 に落として詰めてある)
+int RtHitReflectionClass(RtHit hit)
+{
+    return gRtInstances[hit.inst].reflectionClass;
+}
+
+// M67: クラス → デバッグ表示色 (モード 13 = 一次ヒット / 14 = 反射像側 で共通)。
+// **スカイ / 未定義は黒** — 「何も当たっていない」と「クラス 4 の面」を混同しないため
+// (灰色は 4 = Default に割り当ててある)
+float3 RtReflClassColor(int cls)
+{
+    // ★範囲外は黒。**MYE_RT_REFL_CLASS_COUNT を実際に添字の上限として使っている**のは
+    //   ここだけ — 定義するだけだと規則 9 の照合が形だけになり、段数を増やしたときに
+    //   「HLSL は 5 のまま」でも誰も気付けない
+    if (cls < 0 || cls >= MYE_RT_REFL_CLASS_COUNT) {
+        return float3(0.0f, 0.0f, 0.0f);
+    }
+    const float3 kColors[MYE_RT_REFL_CLASS_COUNT] = {
+        float3(1.0f, 0.2f, 0.2f), // 0 Hero      = 赤
+        float3(1.0f, 0.6f, 0.1f), // 1 Character = 橙
+        float3(0.9f, 0.9f, 0.2f), // 2 Vehicle   = 黄
+        float3(0.2f, 0.8f, 1.0f), // 3 Prop      = 水色
+        float3(0.5f, 0.5f, 0.5f), // 4 Default   = 灰
+    };
+    return kColors[cls];
 }
 
 // 影レイ: [0, tMax) に遮蔽物があれば true。最近ヒットを求めないので最初の交差で抜ける

@@ -12,9 +12,9 @@
 ## サブ進捗
 | サブ | 状態 | 往復 | コミット | メモ |
 |---|---|---|---|---|
-| sub-01 | OK | 1 | (次コミットで記入) | M67a: RT 反射 / GI の golden 2 枚 (ローカル限定 tol=0、`MYE_SHOT_SKIP_RT`) + S0 ベースライン計測。依存: なし。VERDICT round 1 OK (nit 2 → sub-07 申し送り)。coder の [逸脱] (末尾 20/21 枚目) は仕様側の誤りとして planner が sub-01.md を訂正。S0 ベースライン (WARP / Release / frames 20): render-demo refl 4.275 / denoise 22.646 ms、acoustic refl 7.992 / denoise 18.492 ms。`--rt-gi` の run-to-run 決定性リスクは空振り (3 回 maxDiff=0) |
-| sub-02 | 未着手 | 0 | | M67b: ReflectionClass の配管 (Material → RtInstance.reflectionClass → HLSL) + デバッグ 13 + デモ材質への割り当て。依存: sub-01 |
-| sub-03 | 未着手 | 0 | | M67c: ReSTIR の数学 (rt_restir_common.hlsli ⇄ RtMath.h ミラー + selftest、定数表)。依存: sub-02 |
+| sub-01 | OK | 1 | 73a439e | M67a: RT 反射 / GI の golden 2 枚 (ローカル限定 tol=0、`MYE_SHOT_SKIP_RT`) + S0 ベースライン計測。依存: なし。VERDICT round 1 OK (nit 2 → sub-07 申し送り)。coder の [逸脱] (末尾 20/21 枚目) は仕様側の誤りとして planner が sub-01.md を訂正。S0 ベースライン (WARP / Release / frames 20): render-demo refl 4.275 / denoise 22.646 ms、acoustic refl 7.992 / denoise 18.492 ms。`--rt-gi` の run-to-run 決定性リスクは空振り (3 回 maxDiff=0) |
+| sub-02 | OK | 1 | (次コミットで記入) | M67b: ReflectionClass の配管 (Material → RtInstance.reflectionClass → HLSL) + デバッグ 13 + デモ材質への割り当て。依存: sub-01。VERDICT round 1 OK (should 1 = CookedCache.h のコメント 56→60 が門番 64 と食い違い → sub-07 衛生 8、nit 1 → 申し送り)。planner の見落とし S15: `Material` は cooked blob へ memcpy = M67b が cook 版導入後で初のフィールド追加 → coder の [追加] (kCookVersion 1→2 / static_assert 56→64 / 明示 pad0) を仕様として承認。golden 21 枚 tol=0 緑、replay 全緑、デバッグ 13 の色を 2 デモで画素実測 |
+| sub-03 | 実装中 | 0 | | M67c: ReSTIR の数学 (rt_restir_common.hlsli ⇄ RtMath.h ミラー + selftest、定数表)。依存: sub-02 |
 | sub-04 | 未着手 | 0 | | M67d: reservoir の配管 (初期化 + resolve、M=1 で現行と等価) + デバッグ 12/14 + `--rt-restir`。U4 反映: reservoir 5 枚 (`rpos` 追加、u1-u5 / t11-t15)。依存: sub-02, sub-03 |
 | sub-05 | 未着手 | 0 | | M67e: temporal reuse (クラス別 M 上限、厳密 Jacobian = `RtRestirJacobian(xs', ns', P_prev, P)`、velocity は t16)。依存: sub-04 |
 | sub-06 | 未着手 | 0 | | M67f: spatial reuse (クラス駆動) + 可視レイ + `--rt-class-override` + チューニング UI。依存: sub-05 |
@@ -34,6 +34,10 @@
 |---|---|---|---|
 
 ## 申し送り (セッション跨ぎ)
+- (sub-02 → sub-07) `CookedCache.h:20` のコメント「56 → 60 バイト」は門番 `ModelCook.cpp:19` の `static_assert(sizeof(Material) == 64)` と食い違う → 「56 → 64 (60 + 明示パディング 4)」に直す (VERDICT should 1、sub-07 衛生 8)。`Material::pad0` の「値は読まない」コメントに「cooked blob のバイト列を run ごとに変えないため 0 で初期化する」を添えると消されにくい (nit、任意)
+- (sub-02 → sub-04) デバッグ 13 は `rt_debug.cs.hlsl` の CS 経路で **`--rt-refl` 不要**。`RtPasses::RenderDebug` の 4〜11 は Blit で早期 return するので、12 / 14 を足すときは 13 より前に if を置く (13 は「どの早期 return にも当たらない」ことで CS へ落ちている)。反射像側 (14) は同じ `RtReflClassColor` を使えば 13 と色が揃う (スカイ = cls 範囲外は黒)
+- (sub-02 → sub-03 以降) `RtInstance` の残りの空きは `pad1` 1 本だけ (sizeof==80 の枠が満杯)。クラス以外の per-instance 値が要るなら 80 → 96 = golden 再撮影が要る
+- (sub-02 → reviewer) A3 の Inspector 往復 (`LoadMaterialEdit` / `MaterialEditToJson` は private でヘッドレス不可) は **reviewer の実機操作**で担保する (spec §5 A3 を実態に合わせ済み)。probe 画像: `testsctual\probe_rtdebug13.png` / `probe_rtdebug13_acoustic.png` (gitignore 配下、再撮影可)
 - (sub-01 → sub-07) `tools\shot_verify.bat:335` の「RT レーン (M46) の唯一のピクセル被覆」は正確には「RT 反射 / GI の」(RT 影 M46g は依然ゼロ被覆)。engine_spec `:403` / `:1711` (fifteen → 22) を直すときに bat 側の文言も揃える (VERDICT nit 1)
 - (sub-01 → sub-04 以降) `--frames 6` では GpuTimer (kFrames=6 のリング、スロット再利用時にしか回収しない) が全項 0.000 ms を返す。GPU 時間の計測 run は **`--frames 20`** で別に回す (golden の撮影条件 frames 6 は不変、両者のスクショはビット一致)。ログは標準出力 (`.log` は作られない)。GpuTimer は M67 で触らない (VERDICT nit 2 / spec §5 A11)
 - (sub-01 → sub-07) CLAUDE.md の CLI 一覧に `--rt-refl` / `--rt-gi` 等の `--rt-*` 8 本が元から未掲載。`--rt-restir` 系を書くときに一緒に載せる
