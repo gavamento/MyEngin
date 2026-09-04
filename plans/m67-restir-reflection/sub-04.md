@@ -16,12 +16,18 @@ ReSTIR on でも off と `--img-diff --tol 1` で一致することが、配管�
 2. `rt_reproject.hlsli` (新規): `RtClipToPrevUv` / `RtHistoryUv` / `RtReprojectValid` / `RtAdvanceHistory` /
    `RtTemporalAlpha` / `RtLuminance` を `rt_temporal.cs.hlsl` から**純移動** (rt_temporal は include に置き換え)。
    本サブでは rt_refl から使わないが、移動による不変を golden で先に固定しておく。
+   ★sub-03 の申し送り: `rt_restir_common.hlsli` の `RtLuminance` は `#ifndef MYE_RT_LUMINANCE_DEFINED` で包んである。
+   移動先でも**同じガード**を使うこと — でないと rt_refl が 2 定義を見て再定義エラー = 反射シェーダが落ちて golden が動く。
 3. `rt_refl.cs.hlsl`: `cbuffer RtRestirCB : register(b3)` (spec §4.3 の項目。クラス表配列込み)、
    `RWTexture2D<float4> gRsOutPos/Rad/Nrm/Geom/Rpos : register(u1..u5)`、前フレーム reservoir の SRV `t11..t15`
    (本サブでは読まない)。`gRsOn == 0` は**現行と同一のコード経路** (uniform 分岐で早期に現行の書き出しへ)。
-   `gRsOn != 0`: `RtTraceRadianceFirstHit` → 初期 reservoir (`w = lum(Ls)`、M = 1、W = wSum/(M·p̂)) → u1-u5 へ
+   `gRsOn != 0`: `RtTraceRadianceFirstHit` → 初期 reservoir (**sub-03 の申し送りの 4 行そのまま**: `w = lum(Ls)`、
+   `wSum = w`、`M = 1` (`RtReservoirUpdate`。lum = 0 でも M = 1)、`W = RtRestirWeight(wSum, M, p̂)`) → u1-u5 へ
    (`geom` = 受け側 N + `length(P − cameraPos)`、`rpos` = G-Buffer の P そのもの、w = 0)、
-   u0 (reflRt_) には現行どおり `float4(Ls, 1)`。ジオメトリ無し / roughness 超過は M = 0 を書く。
+   u0 (reflRt_) には現行どおり `float4(Ls, 1)`。ジオメトリ無し / roughness 超過は M = 0 を書く
+   (`RtReservoirEmpty()` を pack = cls -1)。スカイヒットは `cls = 4`、`ns = 0`、`xs = 方向` (spec §4.2)。
+   `RtRestirResolve` は **scale を先に求めてから Ls に掛ける**順序 (sub-03 の申し送り。`(Ls*wSum)/(M*lum)` に
+   書き換えると 1 ulp ずれて A5 が落ちうる)。`RtReservoirUnpack` の cls は `round` (切り捨てだと -1 が 0 に化ける)。
 4. `rt_refl_restir_spatial.cs.hlsl` (新規): B (t11-t15) と G-Buffer (t7-t10) を読み、**本サブはタップ 0** =
    `RtRestirResolve` → `gRsOut : u0` (reflRestirRt_)、書き戻し `u1-u5` (A。`rpos` = 自画素の P — 統合後の
    reservoir の受け側はこの画素なので、B から写すのではなく G-Buffer の P を書く。本サブでは同値)。
@@ -35,7 +41,8 @@ ReSTIR on でも off と `--img-diff --tol 1` で一致することが、配管�
    off なら**現行コードのまま** (u1-u5 を張らない)。
 6. `RenderDebug`: 12 = `Blit(reservoirM, mode 1, param 32)`、14 = `Blit(reservoirCls, mode 4)`。
    `rt_blit.hlsl` に mode 4 (`a` → `RtReflClassColor` と同じ 5 色。rt_common を include できないなら色表を複製し
-   「rt_common.hlsli::RtReflClassColor と一致」のコメント。スカイ / 空 reservoir = 範囲外 → 黒、sub-02 の実装と同じ落ち方)。
+   「rt_common.hlsli::RtReflClassColor と一致」のコメント。**空 reservoir = cls -1 = 範囲外 → 黒、スカイヒットは
+   cls 4 なので `rgb (= ns) == 0` を見て黒に落とす** — spec §4.1。`nrm` テクスチャを丸ごと blit に渡せば両方見える)。
    ★sub-02 の申し送り: 4〜11 は Blit で早期 return し、**13 は「どの早期 return にも当たらない」ことで CS 経路に
    落ちている**。12 / 14 の if はその連鎖の中 (11 の直後) に置き、13 の経路を塞がないこと。
    12 / 14 は `--rt-refl` 前提 (反射パスの産物を読む)、13 は不要 (spec §4.4)。
@@ -47,6 +54,10 @@ ReSTIR on でも off と `--img-diff --tol 1` で一致することが、配管�
 9. `EditorApp` RT Debug メニュー: `ReSTIR Reflection` トグル (Temporal / SVGF の並び)、mode 12 / 14 の項目。
    `LocalizationTable.inl` に `Menu_RtRestir` / `Menu_RtDbgReservoirM` / `Menu_RtDbgReflClassRefl`。
 10. `RtScene::Update` の `classOverride` 引数 (-1 = off) を通すのは sub-06 でよい (ここでは配線不要)。
+
+11. ★sub-03 round 2 の申し送り (spec §4.5): **新シェーダで `isfinite()` / `isinf()` を使わない** — fxc は `/Gis` 抜きだと
+    警告 X3577 を出して最適化除去しうる。非有限の防波堤は `!(x < kMax)` の比較で。候補を「外す」ときは
+    **`RtReservoirUpdate` を呼ばずに return** (呼んだ時点で M が増える設計)。幾何不一致の棄却も Update より前に置く。
 
 ## やらないこと (このサブでは)
 

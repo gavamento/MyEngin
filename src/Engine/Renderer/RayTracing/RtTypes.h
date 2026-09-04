@@ -109,6 +109,30 @@ constexpr int kRtReflClassDefault = 4;
 // HLSL の MYE_RT_REFL_CLASS_COUNT と一致検査される (tools/check_rules.ps1 規則 9)
 constexpr int kRtReflClassCount = 5;
 
+// ---- M67: ReSTIR 反射 (時空間サンプル再利用) の数学定数 ----
+// 数式は assets/shaders/rt_restir_common.hlsli と RtMath.h の 2 か所に**同じ式**で置き、
+// RtSelfTest.cpp の TestRestir が CPU 側を固定する。**変更時は必ず両方を同時に直すこと**。
+
+// 空間再利用のタップ数の上限 (= ループの静的上限。クラス表の taps はこれ以下)。
+// HLSL の MYE_RT_RESTIR_MAX_TAPS と一致検査される (tools/check_rules.ps1 規則 9)
+constexpr int kRtRestirMaxTaps = 8;
+
+// reservoir が持てる M (統合済みサンプル数) の上限。**半精度テクスチャの w に載せる**ので
+// 32 までは整数が厳密に表現できる = 書き戻しで値が動かない。クラス表の mCap もこれ以下
+constexpr float kRtRestirMaxM = 32.0f;
+
+// target function を評価するときの alpha の下限。alpha = 0 (完全鏡面) の GGX は
+// デルタ分布 = pdf が発散するので、ReSTIR の重み比が 0/0 になる。
+// **サンプリング側 (RtGgxVndf) は alpha=0 でも鏡面方向へ退化して破綻しない**ため
+// クランプするのは pdf の評価だけ。HLSL の MYE_RT_RESTIR_ALPHA_MIN と同値 (規則 9 は
+// 整数しか比べられないので、ここだけは目視同期 — 変えたら両方直す)
+constexpr float kRtRestirAlphaMin = 1e-3f;
+
+// 再利用時の Jacobian の許容範囲 (この逆数〜この値の外は候補ごと棄却する)。
+// 幾何が違いすぎる候補を「重みを補正して使う」と、補正係数そのものが分散源になって
+// firefly になる。既定値は CB (gRsJacobianMax) 経由で HLSL へ渡す = C++ が唯一の出所
+constexpr float kRtRestirJacobianMax = 10.0f;
+
 // BVH ノード (BLAS / TLAS 共通)。
 //   内部ノード: left/right = 子ノードの絶対 index (どちらも >= 0)
 //   葉:         left = -(start + 1) で負、right = 個数
@@ -169,5 +193,49 @@ struct RtMaterial {
     float roughness = 0.5f;
 };
 static_assert(sizeof(RtMaterial) == 32, "HLSL RtMaterial と一致させること");
+
+// ---- M67: ReSTIR の再利用パラメータ (GPU バッファのレイアウトではなく、
+//      定数バッファと RenderView へ運ぶ POD。定数は上の kRtRestir* 節を参照) ----
+
+// クラスごとの再利用の強さ。**CB の float4 配列 (gRsClass) にそのまま載る**ので
+// 16 バイト固定。taps / mCap を float で持つのは HLSL 側の float4 と型を揃えるため
+// (int で持つと CB の詰め方が言語間でずれる)
+struct RtReflClassParams {
+    float radiusPx = 0.0f; // 空間再利用の探索半径 (**内部解像度の画素**)
+    float taps = 0.0f;     // 1 画素あたりのタップ数 (0 = 空間再利用しない)
+    float mCap = 0.0f;     // 候補として取り込める M の上限 (= 履歴の長さの上限)
+    float pad = 0.0f;      // float4 の余り (HLSL 側は .w を読まない)
+};
+static_assert(sizeof(RtReflClassParams) == 16, "HLSL の gRsClass (float4) と一致させること");
+
+// クラス別の既定値。**向きが元計画の初版と逆で「Hero ほど数字が小さい = 保守的」**。
+// 反射に映る主役を遠くの画素から借りると、輪郭がにじみ (空間)、動いたときに
+// 残像として引きずる (時間) — 主役ほどそれが目立つので、主役の再利用を絞る。
+// 逆に小物は多少にじんでも気付かれないので、思い切って借りてノイズを消す。
+// **ここが唯一の出所** (UI のスライダも「既定に戻す」でこの表へ戻る)
+constexpr RtReflClassParams kRtReflClassTable[kRtReflClassCount] = {
+    { 2.0f, 2.0f, 8.0f, 0.0f },   // 0 Hero      = 最も保守的
+    { 4.0f, 4.0f, 16.0f, 0.0f },  // 1 Character
+    { 6.0f, 6.0f, 24.0f, 0.0f },  // 2 Vehicle
+    { 12.0f, 8.0f, 32.0f, 0.0f }, // 3 Prop      = 最も積極的
+    { 8.0f, 4.0f, 16.0f, 0.0f },  // 4 Default   = 中立 (欠損・範囲外はここへ落ちる)
+};
+static_assert(kRtReflClassCount == 5,
+              "段数を変えたら kRtReflClassTable と RtReflRestirParams の既定も直すこと");
+
+// ReSTIR の実行時パラメータ一式 (RenderView に載り、CB へ写される)。
+// **非永続** — チューニング UI (M67f) が実行中に書き換えるだけでプロジェクトには保存しない。
+// 既定は上の定数表と M46h の SVGF 設定そのもの = 「既定のまま on にしたら元計画の表で動く」
+struct RtReflRestirParams {
+    RtReflClassParams classTable[kRtReflClassCount] = {
+        kRtReflClassTable[0], kRtReflClassTable[1], kRtReflClassTable[2],
+        kRtReflClassTable[3], kRtReflClassTable[4],
+    };
+    float svgfHistory = kRtReflMaxHistory;              // ReSTIR 後段の SVGF 履歴長
+    int atrousIterations = kRtReflAtrousIterations;     // 同 A-Trous 反復回数
+    int spatial = 1;                                    // 空間再利用 (0 = temporal のみ)
+    int visRay = 0;                                     // 候補の可視レイ (既定 off = 光漏れ許容)
+    int classOverride = -1;                             // 全インスタンスのクラス強制 (-1 = off)
+};
 
 } // namespace mye

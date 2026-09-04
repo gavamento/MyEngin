@@ -13,9 +13,9 @@
 | サブ | 状態 | 往復 | コミット | メモ |
 |---|---|---|---|---|
 | sub-01 | OK | 1 | 73a439e | M67a: RT 反射 / GI の golden 2 枚 (ローカル限定 tol=0、`MYE_SHOT_SKIP_RT`) + S0 ベースライン計測。依存: なし。VERDICT round 1 OK (nit 2 → sub-07 申し送り)。coder の [逸脱] (末尾 20/21 枚目) は仕様側の誤りとして planner が sub-01.md を訂正。S0 ベースライン (WARP / Release / frames 20): render-demo refl 4.275 / denoise 22.646 ms、acoustic refl 7.992 / denoise 18.492 ms。`--rt-gi` の run-to-run 決定性リスクは空振り (3 回 maxDiff=0) |
-| sub-02 | OK | 1 | (次コミットで記入) | M67b: ReflectionClass の配管 (Material → RtInstance.reflectionClass → HLSL) + デバッグ 13 + デモ材質への割り当て。依存: sub-01。VERDICT round 1 OK (should 1 = CookedCache.h のコメント 56→60 が門番 64 と食い違い → sub-07 衛生 8、nit 1 → 申し送り)。planner の見落とし S15: `Material` は cooked blob へ memcpy = M67b が cook 版導入後で初のフィールド追加 → coder の [追加] (kCookVersion 1→2 / static_assert 56→64 / 明示 pad0) を仕様として承認。golden 21 枚 tol=0 緑、replay 全緑、デバッグ 13 の色を 2 デモで画素実測 |
-| sub-03 | 実装中 | 0 | | M67c: ReSTIR の数学 (rt_restir_common.hlsli ⇄ RtMath.h ミラー + selftest、定数表)。依存: sub-02 |
-| sub-04 | 未着手 | 0 | | M67d: reservoir の配管 (初期化 + resolve、M=1 で現行と等価) + デバッグ 12/14 + `--rt-restir`。U4 反映: reservoir 5 枚 (`rpos` 追加、u1-u5 / t11-t15)。依存: sub-02, sub-03 |
+| sub-02 | OK | 1 | 4511cce | M67b: ReflectionClass の配管 (Material → RtInstance.reflectionClass → HLSL) + デバッグ 13 + デモ材質への割り当て。依存: sub-01。VERDICT round 1 OK (should 1 = CookedCache.h のコメント 56→60 が門番 64 と食い違い → sub-07 衛生 8、nit 1 → 申し送り)。planner の見落とし S15: `Material` は cooked blob へ memcpy = M67b が cook 版導入後で初のフィールド追加 → coder の [追加] (kCookVersion 1→2 / static_assert 56→64 / 明示 pad0) を仕様として承認。golden 21 枚 tol=0 緑、replay 全緑、デバッグ 13 の色を 2 デモで画素実測 |
+| sub-03 | OK | 2 | (次コミットで記入) | M67c: ReSTIR の数学 (rt_restir_common.hlsli ⇄ RtMath.h ミラー + selftest、定数表)。依存: sub-02。round 1 REWORK (must 2 = `RtReservoirMerge` が p̂=0 の候補で M だけ増やす → w=0/非有限は Update を呼ばず false、+ その selftest / nit 1 = Update のコメント)。仕様側の誤り 1 件 (A4「VNDF pdf 半球積分 = 1」は成立しない → 「上半球積分 + 下半球漏れ = 1」に訂正)。裁定: 空 reservoir cls=-1 / スカイ cls=4 / Merge に jMax 引数 / 「M を数える規則」を §4.2 に新設。planner の round 1 応答はセッション上限 (429) で 1 度中断 → 再開して完走。round 2 OK (nit 2 = kWeightMax の昇格余地 / NaN ケース → 申し送り)。coder の [追加] `isfinite` → 定数比較 (fxc X3577 で最適化除去されうる) を承認し spec §4.5 に「HLSL で isfinite/isinf を使わない」を新設 |
+| sub-04 | 実装中 | 0 | | M67d: reservoir の配管 (初期化 + resolve、M=1 で現行と等価) + デバッグ 12/14 + `--rt-restir`。U4 反映: reservoir 5 枚 (`rpos` 追加、u1-u5 / t11-t15)。依存: sub-02, sub-03 |
 | sub-05 | 未着手 | 0 | | M67e: temporal reuse (クラス別 M 上限、厳密 Jacobian = `RtRestirJacobian(xs', ns', P_prev, P)`、velocity は t16)。依存: sub-04 |
 | sub-06 | 未着手 | 0 | | M67f: spatial reuse (クラス駆動) + 可視レイ + `--rt-class-override` + チューニング UI。依存: sub-05 |
 | sub-07 | 未着手 | 0 | | M67g: 仕上げ (ADR-016 / engine_spec §6.4 / README / CLAUDE.md / ReSTIR on の golden / replay_verify)。依存: sub-06 |
@@ -28,12 +28,18 @@
 - U4 temporal の Jacobian → **厳密に計算する** (**裁定と逆**。reservoir に P_prev (R32G32B32A32、+16 B/px) が増える。planner へ補足として送り spec / sub-05 (と reservoir レイアウトを持つサブ) を直させてから実装へ)
 - U5 パス構成 → **2 パス** (裁定どおり。typed UAV load を避ける)
 - U6 S5 (パラメータ調整) → **harness の外に置き、確定値は M67h で焼く** (裁定どおり)
+- (2026-09-05 ユーザー指示、セッション運用) 全サブ完了 → レビュー → 完了報告 → Notion の活動記録 → **PC をシャットダウン** (`shutdown /s /t 120`、取り消しは `shutdown /a`) の順で司会が無人で進める
 
 ## レビュー
 | round | 判定 | 深度/機能/視覚/品質 | 未解決 |
 |---|---|---|---|
 
 ## 申し送り (セッション跨ぎ)
+- (sub-03 → sub-04 以降) **HLSL で `isfinite()` / `isinf()` を使わない** — fxc は `/Gis` 抜きだと警告 X3577 を出したうえで最適化除去しうる (実測)。`ShaderManager` は `D3DCOMPILE_IEEE_STRICTNESS` を渡していない。非有限の防波堤は `!(w < kWeightMax)` のような普通の比較で書く (spec §4.5)
+- (sub-03 → sub-04 / 05 / 06) 候補を「外す」ときは **`RtReservoirUpdate` を呼ばずに M を加算しないまま return**。幾何不一致 (深度・法線・クラス半径) の棄却も Update より前に置く。`RtLuminance` は `MYE_RT_LUMINANCE_DEFINED` ガード付き (`rt_reproject.hlsli` へ括り出すときも同じガード)。`RtReservoirUnpack` の cls は `round`、初期サンプルは `w = lum(Ls)` / `wSum = w` / `M = 1` / `W = RtRestirWeight(wSum, M, p̂)` の 4 行、`RtRestirResolve` は scale を先に求める順序 (spec §4.2 / sub-04.md)
+- (sub-03 → sub-06) spatial の `[loop]` 上限に `MYE_RT_RESTIR_MAX_TAPS` を使う (規則 9 の登録を形骸化させない)
+- (sub-03 → 後続、nit) `kWeightMax = 1e30f` は両言語の関数ローカル定数。同じ上限を別の場所に書く必要が出たら `RtTypes.h` / `rt_restir_common.hlsli` の定数群へ昇格させて規則 9 に載せる。`RtSelfTest.cpp` の非有限ケースは `INFINITY` のみ — `quiet_NaN()` を 1 行足すと C++ 側でも「両方の比較に落ちる」が機械化される (任意)
+- (sub-03 → reviewer) 数学の根拠は selftest のログ 5 行 (integral / leak / pdf peak / RIS ratio)。ガードを外すと selftest が狙った 3 件だけ FAIL する (変異テスト実施済み)
 - (sub-02 → sub-07) `CookedCache.h:20` のコメント「56 → 60 バイト」は門番 `ModelCook.cpp:19` の `static_assert(sizeof(Material) == 64)` と食い違う → 「56 → 64 (60 + 明示パディング 4)」に直す (VERDICT should 1、sub-07 衛生 8)。`Material::pad0` の「値は読まない」コメントに「cooked blob のバイト列を run ごとに変えないため 0 で初期化する」を添えると消されにくい (nit、任意)
 - (sub-02 → sub-04) デバッグ 13 は `rt_debug.cs.hlsl` の CS 経路で **`--rt-refl` 不要**。`RtPasses::RenderDebug` の 4〜11 は Blit で早期 return するので、12 / 14 を足すときは 13 より前に if を置く (13 は「どの早期 return にも当たらない」ことで CS へ落ちている)。反射像側 (14) は同じ `RtReflClassColor` を使えば 13 と色が揃う (スカイ = cls 範囲外は黒)
 - (sub-02 → sub-03 以降) `RtInstance` の残りの空きは `pad1` 1 本だけ (sizeof==80 の枠が満杯)。クラス以外の per-instance 値が要るなら 80 → 96 = golden 再撮影が要る

@@ -111,6 +111,16 @@ $constGroups = @(
             'assets\shaders\rt_common.hlsli'           = '#\s*define\s+MYE_RT_REFL_CLASS_COUNT\s+(\d+)'
         }
     },
+    # M67: 空間再利用のタップ数の上限。HLSL 側は [loop] の静的上限 (これを超えるタップは
+    # 黙って落ちる)、C++ 側はクラス表の検査に使う。食い違うと「クラス表の taps は 12 なのに
+    # 実際は 8 本しか撃っていない」= 絵は出るがノイズだけ増える、という静かな壊れ方をする
+    @{
+        label = 'kRtRestirMaxTaps / MYE_RT_RESTIR_MAX_TAPS'
+        sites = @{
+            'src\Engine\Renderer\RayTracing\RtTypes.h' = 'constexpr\s+int\s+kRtRestirMaxTaps\s*=\s*(\d+)'
+            'assets\shaders\rt_restir_common.hlsli'    = '#\s*define\s+MYE_RT_RESTIR_MAX_TAPS\s+(\d+)'
+        }
+    },
     @{
         label = 'kRtTemporalMaxHistory / MYE_RT_TEMPORAL_MAX_HISTORY'
         sites = @{

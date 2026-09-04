@@ -14,7 +14,9 @@ spec §4.3 の spatial、§4.1 の `--rt-class-override`、§4.4 のチューニ
    候補の `cls_n` で `length(offset) ≤ gRsClass[cls_n].x` → `L' = normalize(xs_n − P)` (スカイは `xs_n`) が
    `dot(L', N) > 0` → `J = RtRestirJacobian(xs_n, ns_n, P_n, P)` (`P_n` は候補の `gp` から `gRfPosition.Load`) が
    `[1/gRsJacobianMax, gRsJacobianMax]` 内 → `gRsVisRay != 0` なら `RtTraceAnyHit(P + N·eps, L', d − 2·eps)` で
-   遮蔽なし → `RtReservoirMerge(..., mCap[cls_n], J, rnd)`。統合後 `RtRestirClampM` → resolve → 書き戻し。
+   遮蔽なし → `RtReservoirMerge(..., mCap[cls_n], J, gRsJacobianMax, rnd)` (p̂ = 0 の候補は M 不加算 — spec §4.2。
+   鏡面パッチでは候補の大半がこれに当たるので spatial は鏡面を暗くしない)。統合後 `RtRestirClampM` → resolve → 書き戻し。
+   ループ上限は `MYE_RT_RESTIR_MAX_TAPS` (規則 9 に登録済み。使わないと登録が形だけになる)。
    `gRsSpatialOn == 0` は sub-04 のタップ 0 経路。
 2. `RtScene::Update(instances, resources, int classOverride)`: `≥ 0` なら全 `inst.reflectionClass` に強制。
    `RenderSystem` から `rtReflRestirParams.classOverride` を渡す。**Material は書き換えない**。
@@ -30,6 +32,8 @@ spec §4.3 の spatial、§4.1 の `--rt-class-override`、§4.4 のチューニ
    `Restir_Radius` / `Restir_Taps` / `Restir_MCap` / `Restir_SvgfHistory` / `Restir_Atrous` / `Restir_Reset` (en/ja)。
    同じ `###` 右辺が 5 行で衝突しないよう行ごとに `PushID(cls)`。
 7. A7 の観測 (sub-05 の Python を再利用)。
+8. ★spec §4.5: `isfinite()` / `isinf()` を使わない (fxc X3577)。タップごとの棄却 (画面外・幾何不一致・クラス半径・
+   半球外・J 範囲外・可視レイ) は全て `RtReservoirMerge` に入る前か Merge 内の `w` ゲートで落とす = M 不加算。
 
 ## やらないこと (このサブでは)
 

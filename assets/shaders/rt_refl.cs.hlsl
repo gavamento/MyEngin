@@ -10,6 +10,10 @@
 // 同じしきい値でフォールバックする (撃たなかった画素の値は使われない)。
 
 #include "rt_common.hlsli"
+// M67c: ReSTIR の数学。**まだ呼んでいない** (配管は M67d) — ここで include しておくのは、
+// fxc に通して構文を検証し続けるため。壊れたらこのシェーダのコンパイルが落ちて
+// 反射が IBL へフォールバックする = golden (demo_render_rtrefl) が動くので必ず気付ける
+#include "rt_restir_common.hlsli"
 
 cbuffer RtReflCB : register(b2)
 {

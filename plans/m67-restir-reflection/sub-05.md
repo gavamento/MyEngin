@@ -14,7 +14,8 @@ spec §4.2 の統合と §4.3 の temporal を `rt_refl.cs.hlsl` の `gRsOn != 0
    妥当なら A の reservoir を unpack + A の `rpos` から `P_prev` → `p̂_q(y')` を**現フレームの V / N / α** で評価
    (`L' = normalize(xs' − P)`、スカイは `L' = xs'`、`dot(L', N) ≤ 0` なら棄却) →
    **`J = RtRestirJacobian(xs', ns', P_prev, P)`** (ユーザー判断 U4 = 厳密。spatial と同じ関数・同じ
-   `[1/gRsJacobianMax, gRsJacobianMax]` 棄却。スカイは 1) → `RtReservoirMerge(r, wSum, r', p̂, mCap[cls'], J, rnd)`。
+   `[1/gRsJacobianMax, gRsJacobianMax]` 棄却。スカイは 1) → `RtReservoirMerge(r, wSum, r', p̂, mCap[cls'], J, gRsJacobianMax, rnd)`
+   (spec §4.2「M を数える規則」: p̂ = 0 / J 範囲外 / 空は候補外で M 不加算 = 履歴が使えないフレームは M が 1 に戻る)。
    書き戻し前に `RtRestirClampM(r, wSum, mCap[r.cls])`。`geom` (u4) には受け側 N と `length(P − cameraPos)`、
    `rpos` (u5) には P を書く (sub-04 と同じ)。
 2. `RtPasses::RenderReflection`: `RtRestirCB` に `histValid` (`slot.hasLast && slot.lastSerial + 1 == rtViewSerial &&
@@ -25,6 +26,9 @@ spec §4.2 の統合と §4.3 の temporal を `rt_refl.cs.hlsl` の `gRsOn != 0
 4. フリッカー指標の一時 Python (scratch、コミットしない): PNG 2 枚の同一領域 (鏡面パッチ = `demo_render_*` の
    画面中央付近。座標は `probe_rtdebug14.png` で水色 / 赤が映る矩形を実測して決める) の平均絶対差、および
    debug 12 画像の同領域の平均 R / G。値を実装メモに表で残す。
+
+5. ★spec §4.5: `isfinite()` / `isinf()` を使わない (fxc X3577)。幾何不一致・J 範囲外・w ≤ 0 の棄却は
+   `RtReservoirUpdate` を呼ぶ前に return (呼んだ時点で M が増える)。
 
 ## やらないこと (このサブでは)
 

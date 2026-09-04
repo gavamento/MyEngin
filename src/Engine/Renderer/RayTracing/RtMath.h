@@ -385,6 +385,209 @@ inline float RtAtrousKernel(int d)
     }
 }
 
+// ---- M67: ReSTIR 反射 (HLSL の rt_restir_common.hlsli と一致。**変更時は両方更新**) ----
+//
+// 推定対象は現行 (M46h) と同じ「VNDF 方向の入射放射輝度の期待値」なので、
+// 出力の次元は変わらない = 合成側 (common.hlsli::RtReflWeight の混色) は不変。
+// M = 1 (再利用なし) のとき RtRestirResolve が Ls をそのまま返すことが、
+// 「ReSTIR off = 現行とビット一致」の数学的な根拠になっている。
+// **この節は RtLuminance に依存するので SVGF 節より後ろに置いてある**
+// (sub-03 の見立ては M46h 節の直後だったが、それだと前方参照になる)。
+
+// reservoir が保持する 1 サンプルと統計。GPU 側は 3 枚のテクスチャに詰めて運ぶ
+// (rt_restir_common.hlsli の struct RtReservoir と同じ並び)。
+// 受け側の情報 (geom / rpos) は reservoir ではなく別テクスチャで持つ —
+// 「どこから借りたか」は再利用の判定にしか使わず、サンプルそのものではないため
+struct RtReservoirCpu {
+    DirectX::XMFLOAT3 xs = { 0, 0, 0 }; // first hit のワールド座標 (スカイは方向ベクトル)
+    float W = 0.0f;                     // = wSum / (M * pHat(y))
+    DirectX::XMFLOAT3 Ls = { 0, 0, 0 }; // ヒット点から出た放射輝度 (バウンス込み)
+    float M = 0.0f;                     // 統合したサンプル数 (0 = 空)
+    DirectX::XMFLOAT3 ns = { 0, 0, 0 }; // ヒット点の法線 (**ゼロ = スカイのセンチネル**)
+    int32_t cls = -1;                   // ReflectionClass (空 = -1 = 範囲外 = 表示は黒)
+};
+
+// 空の reservoir。cls は **-1 (範囲外)** — 4 (Default) にすると
+// デバッグ表示で「何も入っていない画素」と「クラス 4 の物体」が同じ灰色になる
+inline RtReservoirCpu RtReservoirEmpty()
+{
+    return RtReservoirCpu{};
+}
+
+// GGX VNDF サンプリング (RtGgxVndf) の pdf。**立体角 (方向 l) に対する密度**で、
+// Heitz 2018 の可視法線分布 D_vis(h) に半ベクトル → 反射方向のヤコビアン
+// 1/(4 (v·h)) を掛けたもの: G1(v) * D(h) / (4 (n·v))。
+//   n = 面法線 / v = 面 → カメラ / l = 面 → 反射先 / alpha = roughness²
+// alpha は kRtRestirAlphaMin で下から留める (alpha=0 のデルタ分布は pdf が発散する)。
+// ★半球で積分すると 1 ではなく「1 − 下半球へ抜けた分」になる (alpha=0.36 で約 0.885) —
+//   VNDF は半ベクトル側で正規化されており、反射後に地平線の下へ回った分は
+//   pdf の定義域から外れるため。selftest はこの関係そのものを検査する。
+// HLSL の RtGgxVndfPdf と同一式
+inline float RtGgxVndfPdf(const DirectX::XMFLOAT3& n, const DirectX::XMFLOAT3& v,
+                          const DirectX::XMFLOAT3& l, float alpha)
+{
+    constexpr float kPi = 3.14159265358979f;
+    const float a = (alpha > kRtRestirAlphaMin) ? alpha : kRtRestirAlphaMin;
+    const float ndotv = n.x * v.x + n.y * v.y + n.z * v.z;
+    const float ndotl = n.x * l.x + n.y * l.y + n.z * l.z;
+    if (ndotl <= 0.0f || ndotv <= 1e-6f) {
+        return 0.0f; // 面の裏 / 視線が面と平行 (G1/(4 n·v) が 0/0 になる)
+    }
+    const DirectX::XMFLOAT3 hv = { v.x + l.x, v.y + l.y, v.z + l.z };
+    const float hlen = std::sqrt(hv.x * hv.x + hv.y * hv.y + hv.z * hv.z);
+    if (hlen <= 1e-8f) {
+        return 0.0f; // v と l が正反対 (半ベクトルが定義できない)
+    }
+    float ndoth = (n.x * hv.x + n.y * hv.y + n.z * hv.z) / hlen;
+    ndoth = (ndoth < 0.0f) ? 0.0f : ((ndoth > 1.0f) ? 1.0f : ndoth);
+    const float a2 = a * a;
+    const float dd = ndoth * ndoth * (a2 - 1.0f) + 1.0f;
+    const float ggxD = a2 / (kPi * dd * dd);
+    const float g1 = 2.0f * ndotv / (ndotv + std::sqrt(a2 + (1.0f - a2) * ndotv * ndotv));
+    return g1 * ggxD / (4.0f * ndotv);
+}
+
+// ReSTIR の target function p̂_q(y)。「この受け側画素にとってこのサンプルがどれだけ
+// 効くか」を 1 本のスカラーで表す = 再利用の重み付けの基準。
+// 輝度 × VNDF pdf にしてあるので、初期サンプル (ソース pdf = VNDF) では
+// w = p̂/p = lum(Ls) に約分される = M=1 で現行と一致する形になる。
+// HLSL の RtRestirTargetPdf と同一式
+inline float RtRestirTargetPdf(const DirectX::XMFLOAT3& Ls, const DirectX::XMFLOAT3& L,
+                               const DirectX::XMFLOAT3& V, const DirectX::XMFLOAT3& N,
+                               float alpha)
+{
+    const float lum = RtLuminance(Ls);
+    if (lum <= 0.0f) {
+        return 0.0f; // 真っ黒なサンプルは誰の役にも立たない (借りても絵が変わらない)
+    }
+    return lum * RtGgxVndfPdf(N, V, L, alpha);
+}
+
+// unbiased contribution weight W = wSum / (M * p̂(y))。**テクスチャへ書き戻すのはこの W**
+// (wSum ではなく) — 統合の式 (RtReservoirMerge) が教科書形 `p̂ * W * M * J` のままになる。
+// HLSL の RtRestirWeight と同一式
+inline float RtRestirWeight(float wSum, float M, float pHat)
+{
+    if (M <= 0.0f || pHat <= 0.0f) {
+        return 0.0f;
+    }
+    return wSum / (M * pHat);
+}
+
+// streaming RIS の 1 手。重み w の候補を確率 w/wSum で採用し、M は**重みに関わらず**進める。
+// ★ここは**自画素のサンプル専用**の入口 — 真っ黒 (lum = 0 → w = 0) でも「1 本撃った」事実は
+//   変わらないので M = 1 になる。**ここに w > 0 のゲートを足さないこと**
+//   (足すと黒い画素の M が 0 に落ち、resolve が 0 を返し続ける)。
+//   借りてきた候補を「候補から外す」判定は RtReservoirMerge の仕事。
+// rnd は [0,1)。HLSL の RtReservoirUpdate と同一式
+inline bool RtReservoirUpdate(RtReservoirCpu& r, float& wSum, const DirectX::XMFLOAT3& xs,
+                              const DirectX::XMFLOAT3& ns, const DirectX::XMFLOAT3& Ls,
+                              int32_t cls, float mInc, float w, float rnd)
+{
+    r.M += mInc;
+    if (!(w > 0.0f)) {
+        return false; // 0 と NaN をまとめて弾く (NaN を足すと wSum が二度と戻らない)
+    }
+    wSum += w;
+    if (rnd < w / wSum) {
+        r.xs = xs;
+        r.ns = ns;
+        r.Ls = Ls;
+        r.cls = cls;
+        return true;
+    }
+    return false;
+}
+
+// 候補 reservoir を 1 つ統合する (temporal / spatial 共通)。
+//   w = p̂_q(y') * W' * min(M', mCap) * J
+// mCap はクラス別の M 上限 (kRtReflClassTable)、J は受け側が変わったぶんの Jacobian、
+// jMax は棄却の閾値 (CB の gRsJacobianMax。関数内の定数にすると temporal だけ緩められない)。
+// ★**候補から外したものは M にも数えない** (spec §4.2「M を数える規則」)。外すのは
+//   空 reservoir / J が範囲外 / **有効重み w が 0 または非有限** (p̂=0 = ローブ外・受け側の
+//   半球外・真っ黒、W'=0) の 3 経路。教科書の biased 変種は p̂=0 でも M を足すが、それだと
+//   W = wSum/(M·p̂) が縮んで**暗化**する — 粗さ 0.10 の鏡面 (α=0.01、ローブ幅 ≈ 1°) では
+//   半径 8px の候補の大半が p̂ ≈ 0 なので、鏡面パッチが目に見えて暗くなる。数えない側の
+//   偏りは「わずかに明るい / 分散が減らない」= 鏡面のディテールを守る向き。
+//   **自画素の初期サンプルは別扱い** (RtReservoirUpdate を直接呼ぶので w=0 でも M=1)。
+// HLSL の RtReservoirMerge と同一式
+inline bool RtReservoirMerge(RtReservoirCpu& r, float& wSum, const RtReservoirCpu& cand,
+                             float pHatAtQ, float mCap, float J, float jMax, float rnd)
+{
+    if (!(cand.M > 0.0f)) {
+        return false; // 空 reservoir は候補にならない
+    }
+    if (!(J >= 1.0f / jMax && J <= jMax)) {
+        return false; // NaN もここで落ちる (比較が両方 false になる)
+    }
+    const float mInc = (cand.M < mCap) ? cand.M : mCap;
+    const float w = pHatAtQ * cand.W * mInc * J;
+    // 有効重みが 0 / 非有限なら候補から外す (M も wSum も動かさない)。
+    // ★`isfinite()` ではなく上限との比較で書く — fxc は /Gis 抜きだと
+    //   「値が無限になることは無い」前提で isfinite() を消しうる (警告 X3577) ので、
+    //   **GPU でも実際に実行される形**にそろえる。NaN も両方の比較に落ちる
+    const float kWeightMax = 1e30f;
+    if (!(w > 0.0f) || !(w < kWeightMax)) {
+        return false;
+    }
+    return RtReservoirUpdate(r, wSum, cand.xs, cand.ns, cand.Ls, cand.cls, mInc, w, rnd);
+}
+
+// 受け側が P_from から P_to へ変わったときの立体角の伸縮 (Jacobian)。
+//   J = (cosθ_to / cosθ_from) * (d_from² / d_to²)、d = |xs − P|、cosθ = |ns·(P−xs)/d|
+// temporal (P_from = 前フレームの受け側) と spatial (P_from = 近傍画素) で共通。
+// スカイ (ns = 0) は無限遠の方向サンプルなので伸縮しない = 1。
+// HLSL の RtRestirJacobian と同一式
+inline float RtRestirJacobian(const DirectX::XMFLOAT3& xs, const DirectX::XMFLOAT3& ns,
+                              const DirectX::XMFLOAT3& pFrom, const DirectX::XMFLOAT3& pTo)
+{
+    constexpr float kEps = 1e-6f;
+    if (ns.x * ns.x + ns.y * ns.y + ns.z * ns.z <= 0.0f) {
+        return 1.0f; // スカイのセンチネル
+    }
+    const DirectX::XMFLOAT3 df = { pFrom.x - xs.x, pFrom.y - xs.y, pFrom.z - xs.z };
+    const DirectX::XMFLOAT3 dt = { pTo.x - xs.x, pTo.y - xs.y, pTo.z - xs.z };
+    const float lenF = std::sqrt(df.x * df.x + df.y * df.y + df.z * df.z);
+    const float lenT = std::sqrt(dt.x * dt.x + dt.y * dt.y + dt.z * dt.z);
+    if (lenF <= kEps || lenT <= kEps) {
+        return 1.0f; // 受け側がヒット点に重なった (退化。棄却せず素通しする)
+    }
+    float cosF = std::fabs(ns.x * df.x + ns.y * df.y + ns.z * df.z) / lenF;
+    const float cosT = std::fabs(ns.x * dt.x + ns.y * dt.y + ns.z * dt.z) / lenT;
+    cosF = (cosF > kEps) ? cosF : kEps; // 0 除算を避ける (真横から見た面 → J が巨大 → 棄却)
+    return (cosT / cosF) * ((lenF * lenF) / (lenT * lenT));
+}
+
+// 書き戻し前に M をクラスの上限へ切り詰める。wSum を同じ比率で縮めるので
+// **W = wSum/(M·p̂) は変わらない = 出力される絵は変わらない**。
+// 変わるのは「次のフレームがこの reservoir をどれだけ重く扱うか」だけ。
+// HLSL の RtRestirClampM と同一式
+inline void RtRestirClampM(RtReservoirCpu& r, float& wSum, float mCap)
+{
+    if (r.M > mCap && r.M > 0.0f) {
+        wSum *= mCap / r.M;
+        r.M = mCap;
+    }
+}
+
+// reservoir → 出力放射輝度。out = Ls * wSum / (M * lum(Ls))。
+// ★**Ls を先に掛けない** — scale を先に求めることで M=1 (wSum = lum) のとき
+//   scale が厳密に 1.0f になり、Ls がビット単位でそのまま出る (A5 の根拠)。
+//   (Ls*wSum)/(M*lum) の順だと丸めが 2 回入って 1 ulp ずれうる。
+// HLSL の RtRestirResolve と同一式
+inline DirectX::XMFLOAT3 RtRestirResolve(const RtReservoirCpu& r, float wSum)
+{
+    if (!(r.M > 0.0f)) {
+        return { 0.0f, 0.0f, 0.0f };
+    }
+    const float lum = RtLuminance(r.Ls);
+    if (!(lum > 0.0f)) {
+        return { 0.0f, 0.0f, 0.0f };
+    }
+    const float scale = wSum / (r.M * lum);
+    return { r.Ls.x * scale, r.Ls.y * scale, r.Ls.z * scale };
+}
+
 // BLAS (単一メッシュ) のヒット結果。tri は連結三角形配列の絶対 index
 struct RtBlasHit {
     float t = 0.0f;

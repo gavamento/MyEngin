@@ -643,6 +643,369 @@ void TestSvgf()
                < 1e-3f);
 }
 
+// ---- M67c: ReSTIR の数学 ----
+
+// Duff らの分岐なし ONB (RtGgxVndf / RtCosineHemisphere が使っているものと同じ基底)。
+// 半球の一様グリッドを張るのに使う
+void BuildOnb(const XMFLOAT3& n, XMFLOAT3& t1, XMFLOAT3& t2)
+{
+    const float sgn = (n.z >= 0.0f) ? 1.0f : -1.0f;
+    const float a = -1.0f / (sgn + n.z);
+    const float b = n.x * n.y * a;
+    t1 = { 1.0f + sgn * n.x * n.x * a, sgn * b, -sgn * n.x };
+    t2 = { b, sgn + n.y * n.y * a, -n.y };
+}
+
+float Dot3(const XMFLOAT3& a, const XMFLOAT3& b)
+{
+    return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+
+// HLSL の reflect(-v, h) と同じ (視線 v を微小面法線 h で折り返した方向)
+XMFLOAT3 ReflectAbout(const XMFLOAT3& v, const XMFLOAT3& h)
+{
+    const float d = 2.0f * Dot3(v, h);
+    return { d * h.x - v.x, d * h.y - v.y, d * h.z - v.z };
+}
+
+// ReSTIR (M67) の数式。HLSL 側 rt_restir_common.hlsli と同一式なので、ここが通れば
+// GPU 側の reservoir 統合・解決も同じ挙動になる
+void TestRestir()
+{
+    MYE_LOG_INFO("[selftest] rt: restir (VNDF pdf / reservoir / jacobian)");
+
+    const XMFLOAT3 N = Normalize({ 0.2f, 0.9f, -0.35f });
+    XMFLOAT3 t1, t2;
+    BuildOnb(N, t1, t2);
+    // 法線から 35° 傾いた視線。**真上 (0°) を避ける**のは、ローブの頂点が cosθ=1 の
+    // グリッド端に載ると中点則が α の小さい側で収束しないため (実測: α=0.04 / 0° は
+    // 256×256 でも 0.909、35° なら 128×128 で 0.99821)
+    constexpr float kViewCos = 0.8191520f; // cos 35°
+    constexpr float kViewSin = 0.5735764f;
+    const XMFLOAT3 V = Normalize({ N.x * kViewCos + t1.x * kViewSin,
+                                   N.y * kViewCos + t1.y * kViewSin,
+                                   N.z * kViewCos + t1.z * kViewSin });
+    const XMFLOAT3 mirror = ReflectAbout(V, N);
+
+    // ---- VNDF pdf の正規化: 半球積分 + 下半球へ抜けた分 = 1 ----
+    // ★半球積分そのものは 1 にならない (α=0.36 で約 0.885)。VNDF は半ベクトル側で
+    //   正規化されており、反射後に地平線の下へ回ったサンプルは pdf の定義域から
+    //   外れるため。**サンプラ (RtGgxVndf) と pdf が同じ分布を指している**ことは
+    //   「積分 + 漏れ = 1」でしか確かめられない (どちらか片方だけでは検査にならない)
+    constexpr int kGrid = 256;   // (cosθ, φ) の一様グリッド (中点則)
+    constexpr int kMc = 32768;   // 下半球へ抜けた割合の推定サンプル数
+    const float kAlphas[2] = { kRtReflMaxRoughness * kRtReflMaxRoughness, 0.04f };
+    for (int ai = 0; ai < 2; ++ai) {
+        const float alpha = kAlphas[ai];
+        double sum = 0.0;
+        for (int i = 0; i < kGrid; ++i) {
+            const float ct = (static_cast<float>(i) + 0.5f) / static_cast<float>(kGrid);
+            const float st = std::sqrt((std::max)(0.0f, 1.0f - ct * ct));
+            for (int j = 0; j < kGrid; ++j) {
+                const float phi = 6.28318530718f * (static_cast<float>(j) + 0.5f)
+                                  / static_cast<float>(kGrid);
+                const float c1 = st * std::cos(phi);
+                const float c2 = st * std::sin(phi);
+                const XMFLOAT3 L = { t1.x * c1 + t2.x * c2 + N.x * ct,
+                                     t1.y * c1 + t2.y * c2 + N.y * ct,
+                                     t1.z * c1 + t2.z * c2 + N.z * ct };
+                sum += RtGgxVndfPdf(N, V, L, alpha);
+            }
+        }
+        const double integral = sum / (kGrid * kGrid) * 6.283185307179586;
+        // サンプラ側の漏れ (反射方向が面の下へ回った割合)
+        RtSeed s{ 17u, 41u, static_cast<uint32_t>(ai) };
+        int below = 0;
+        for (int i = 0; i < kMc; ++i) {
+            const XMFLOAT3 h = RtGgxVndf(N, V, alpha, RtNextRand2(s));
+            if (Dot3(N, ReflectAbout(V, h)) <= 0.0f) {
+                ++below;
+            }
+        }
+        const double leak = static_cast<double>(below) / kMc;
+        MYE_LOG_INFO("  restir: alpha=%.3f  integral=%.4f  leak=%.4f  sum=%.4f",
+                     static_cast<double>(alpha), integral, leak, integral + leak);
+        TEST_CHECK(std::fabs(integral + leak - 1.0) < 0.01);
+        // 粗い面ほど地平線の下へ多く漏れる (= 半球積分は 1 から離れる)。
+        // ここが 0 になったら「漏れを測れていない」= 上の等式が形だけになる
+        TEST_CHECK((ai == 0) ? (leak > 0.05) : (leak < 0.01));
+    }
+
+    // ---- pdf の絶対値: ピーク (半ベクトル = 法線) の解析値と突き合わせる ----
+    // D(N·H=1) = 1/(π α²) なので pdf(鏡面方向) = G1 / (4π α² (N·V))。
+    // 定数 4 (半ベクトル → 反射方向のヤコビアン)・π・α² のスケールをここで固定する。
+    // ★G1 は実装 (2c / (c + √(α²+(1−α²)c²))) と**別形の Smith Λ** で書く —
+    //   同じ式を 2 回書いても転記ミスの検査にならない (両者は代数的に同一)
+    const float ndotv = Dot3(N, V);
+    for (int ai = 0; ai < 2; ++ai) {
+        const float alpha = kAlphas[ai];
+        const float a2 = alpha * alpha;
+        const float tan2 = (1.0f - ndotv * ndotv) / (ndotv * ndotv);
+        const float lambda = 0.5f * (-1.0f + std::sqrt(1.0f + a2 * tan2));
+        const float expect = (1.0f / (1.0f + lambda))
+                             / (4.0f * 3.14159265358979f * a2 * ndotv);
+        const float got = RtGgxVndfPdf(N, V, mirror, alpha);
+        MYE_LOG_INFO("  restir: pdf peak alpha=%.3f  got=%.3f  expect=%.3f",
+                     static_cast<double>(alpha), static_cast<double>(got),
+                     static_cast<double>(expect));
+        TEST_CHECK(std::fabs(got / expect - 1.0f) < 1e-3f);
+    }
+    // α の下限クランプが効いている (α=0 と α=αmin が同じ値、かつ発散しない)。
+    // ★αmin では解析値と突き合わせられない — α²=1e-6 に対して normalize(V+L) の
+    //   丸め (1−(N·H)² ≈ 2e-7) が分母の 2 割を占めてしまい、式が正しくても 3 割ずれる
+    const float pdfMirror = RtGgxVndfPdf(N, V, mirror, 0.0f);
+    TEST_CHECK(RtGgxVndfPdf(N, V, mirror, kRtRestirAlphaMin) == pdfMirror);
+    TEST_CHECK(std::isfinite(pdfMirror) && pdfMirror > 0.0f);
+    // 面の裏は 0 (target function がここで消えるので「借りない」判断になる)
+    TEST_CHECK(RtGgxVndfPdf(N, V, { -N.x, -N.y, -N.z }, 0.36f) == 0.0f);
+    // 粗いほどピークが低い / 鏡面方向から離れるほど小さい
+    TEST_CHECK(RtGgxVndfPdf(N, V, mirror, 0.36f) < RtGgxVndfPdf(N, V, mirror, 0.04f));
+    const XMFLOAT3 offMirror = Normalize({ mirror.x + 0.25f * t2.x, mirror.y + 0.25f * t2.y,
+                                           mirror.z + 0.25f * t2.z });
+    TEST_CHECK(RtGgxVndfPdf(N, V, offMirror, 0.36f) < RtGgxVndfPdf(N, V, mirror, 0.36f));
+
+    // ---- target function = 輝度 × pdf ----
+    const XMFLOAT3 kLs = { 0.8f, 0.4f, 0.1f };
+    const float pHatMirror = RtRestirTargetPdf(kLs, mirror, V, N, 0.36f);
+    TEST_CHECK(std::fabs(pHatMirror - RtLuminance(kLs) * RtGgxVndfPdf(N, V, mirror, 0.36f))
+               < 1e-6f);
+    TEST_CHECK(RtRestirTargetPdf({ 0.0f, 0.0f, 0.0f }, mirror, V, N, 0.36f) == 0.0f);
+    // 輝度に比例する (2 倍明るいサンプルは 2 倍重い)
+    const XMFLOAT3 kLs2 = { 1.6f, 0.8f, 0.2f };
+    TEST_CHECK(std::fabs(RtRestirTargetPdf(kLs2, mirror, V, N, 0.36f) / pHatMirror - 2.0f)
+               < 1e-4f);
+
+    // ---- streaming RIS: 採用確率が重みに比例する ----
+    // 重み 1:2:7 の 3 候補を順に流し、最後に残ったサンプルの内訳を数える
+    {
+        constexpr int kTrials = 20000;
+        const float kW[3] = { 1.0f, 2.0f, 7.0f };
+        int picked[3] = { 0, 0, 0 };
+        bool mOk = true;
+        RtSeed s{ 7u, 13u, 0u };
+        for (int i = 0; i < kTrials; ++i) {
+            RtReservoirCpu r = RtReservoirEmpty();
+            float wSum = 0.0f;
+            for (int k = 0; k < 3; ++k) {
+                RtReservoirUpdate(r, wSum, { static_cast<float>(k), 0.0f, 0.0f }, N, kLs, k,
+                                  1.0f, kW[k], RtNextRand2(s).x);
+            }
+            if (r.M != 3.0f) {
+                mOk = false;
+            }
+            if (r.cls >= 0 && r.cls < 3) {
+                ++picked[r.cls];
+            }
+        }
+        TEST_CHECK(mOk); // 重みに関わらず M は候補の数だけ進む
+        const double f0 = static_cast<double>(picked[0]) / kTrials;
+        const double f1 = static_cast<double>(picked[1]) / kTrials;
+        const double f2 = static_cast<double>(picked[2]) / kTrials;
+        MYE_LOG_INFO("  restir: RIS pick ratio %.4f / %.4f / %.4f (expect 0.1/0.2/0.7)", f0, f1,
+                     f2);
+        TEST_CHECK(std::fabs(f0 - 0.1) < 0.02);
+        TEST_CHECK(std::fabs(f1 - 0.2) < 0.02);
+        TEST_CHECK(std::fabs(f2 - 0.7) < 0.02);
+        // 重み 0 の候補は絶対に採用されない (真っ黒を借りて絵を暗くしない)
+        RtReservoirCpu r = RtReservoirEmpty();
+        float wSum = 0.0f;
+        TEST_CHECK(!RtReservoirUpdate(r, wSum, { 9.0f, 9.0f, 9.0f }, N, kLs, 2, 1.0f, 0.0f,
+                                      0.0f));
+        TEST_CHECK(r.M == 1.0f && wSum == 0.0f && r.cls == -1);
+    }
+
+    // ---- resolve: M=1 は現行 (1spp) とビット一致 ----
+    {
+        RtReservoirCpu r = RtReservoirEmpty();
+        float wSum = 0.0f;
+        // 初期サンプルの重みは p̂/p = lum(Ls) (ソース pdf = VNDF で D_vis が約分される)
+        const XMFLOAT3 ls = { 0.3125f, 1.7f, 0.041f };
+        RtReservoirUpdate(r, wSum, mirror, N, ls, kRtReflClassProp, 1.0f, RtLuminance(ls),
+                          0.5f);
+        const XMFLOAT3 out = RtRestirResolve(r, wSum);
+        TEST_CHECK(r.M == 1.0f);
+        TEST_CHECK(out.x == ls.x && out.y == ls.y && out.z == ls.z); // ★ビット一致
+        // 真っ黒 / 空 reservoir は 0 (0 除算しない)
+        RtReservoirCpu black = RtReservoirEmpty();
+        float bSum = 0.0f;
+        RtReservoirUpdate(black, bSum, mirror, N, { 0.0f, 0.0f, 0.0f }, 0, 1.0f, 0.0f, 0.5f);
+        const XMFLOAT3 bo = RtRestirResolve(black, bSum);
+        TEST_CHECK(bo.x == 0.0f && bo.y == 0.0f && bo.z == 0.0f);
+        const XMFLOAT3 eo = RtRestirResolve(RtReservoirEmpty(), 0.0f);
+        TEST_CHECK(eo.x == 0.0f && eo.y == 0.0f && eo.z == 0.0f);
+        // 空 reservoir の既定値 (cls = -1 = 範囲外 = デバッグ表示で黒)
+        const RtReservoirCpu empty = RtReservoirEmpty();
+        TEST_CHECK(empty.M == 0.0f && empty.W == 0.0f && empty.cls == -1);
+    }
+
+    // ---- Jacobian ----
+    {
+        const XMFLOAT3 xs = { 1.0f, 2.0f, -3.0f };
+        const XMFLOAT3 ns = Normalize({ 0.3f, 0.8f, 0.5f });
+        const XMFLOAT3 pa = { 4.0f, 1.0f, 2.0f };
+        const XMFLOAT3 pb = { -2.0f, 5.0f, 1.5f };
+        const float jab = RtRestirJacobian(xs, ns, pa, pb);
+        const float jba = RtRestirJacobian(xs, ns, pb, pa);
+        TEST_CHECK(std::fabs(jab * jba - 1.0f) < 1e-5f); // 逆向きに掛けると 1
+        TEST_CHECK(RtRestirJacobian(xs, ns, pa, pa) == 1.0f); // 同じ受け側 = 伸縮なし
+        // ★静止シーンではこれが効いて J = 1 ちょうどになる = temporal が棄却されない
+        TEST_CHECK(RtRestirJacobian(xs, { 0.0f, 0.0f, 0.0f }, pa, pb) == 1.0f); // スカイ
+        // 受け側が 2 倍遠ざかる (向きは同じ = cosθ 不変) → 1/4
+        const XMFLOAT3 far = { xs.x + 2.0f * (pa.x - xs.x), xs.y + 2.0f * (pa.y - xs.y),
+                               xs.z + 2.0f * (pa.z - xs.z) };
+        TEST_CHECK(std::fabs(RtRestirJacobian(xs, ns, pa, far) - 0.25f) < 1e-6f);
+        // 距離は同じで cosθ が半分 → J も半分 (cos の比が効いていることの確認)
+        const XMFLOAT3 org = { 0.0f, 0.0f, 0.0f };
+        const XMFLOAT3 up = { 0.0f, 1.0f, 0.0f };
+        const XMFLOAT3 pUp = { 0.0f, 3.0f, 0.0f };                    // cos = 1
+        const XMFLOAT3 pTilt = { 3.0f * 0.8660254f, 1.5f, 0.0f };     // 60° = cos 0.5
+        TEST_CHECK(std::fabs(RtRestirJacobian(org, up, pUp, pTilt) - 0.5f) < 1e-5f);
+    }
+
+    // ---- 統合 (merge): 重み = p̂ · W' · min(M', mCap) · J ----
+    {
+        RtReservoirCpu cand = RtReservoirEmpty();
+        cand.xs = mirror;
+        cand.ns = N;
+        cand.Ls = kLs;
+        cand.cls = kRtReflClassHero;
+        cand.W = 3.0f;
+        cand.M = 1.0f;
+        const float pHat = 2.0f;
+        // J = 1 / J = 2 で重みがちょうど 2 倍になる
+        RtReservoirCpu r1 = RtReservoirEmpty();
+        float w1 = 0.0f;
+        RtReservoirMerge(r1, w1, cand, pHat, 8.0f, 1.0f, kRtRestirJacobianMax, 0.5f);
+        RtReservoirCpu r2 = RtReservoirEmpty();
+        float w2 = 0.0f;
+        RtReservoirMerge(r2, w2, cand, pHat, 8.0f, 2.0f, kRtRestirJacobianMax, 0.5f);
+        TEST_CHECK(std::fabs(w1 - pHat * cand.W * 1.0f) < 1e-6f);
+        TEST_CHECK(std::fabs(w2 - 2.0f * w1) < 1e-6f);
+        TEST_CHECK(r1.M == 1.0f && r1.cls == kRtReflClassHero);
+
+        // J が範囲外の候補は **重みも M も動かさない** (幾何が違いすぎる = 別物)
+        RtReservoirCpu r3 = RtReservoirEmpty();
+        float w3 = 0.0f;
+        TEST_CHECK(!RtReservoirMerge(r3, w3, cand, pHat, 8.0f, kRtRestirJacobianMax + 1.0f,
+                                     kRtRestirJacobianMax, 0.5f));
+        TEST_CHECK(!RtReservoirMerge(r3, w3, cand, pHat, 8.0f,
+                                     0.5f / kRtRestirJacobianMax, kRtRestirJacobianMax, 0.5f));
+        TEST_CHECK(w3 == 0.0f && r3.M == 0.0f);
+        // 空 reservoir は候補にならない
+        TEST_CHECK(!RtReservoirMerge(r3, w3, RtReservoirEmpty(), pHat, 8.0f, 1.0f,
+                                     kRtRestirJacobianMax, 0.5f));
+        TEST_CHECK(r3.M == 0.0f);
+
+        // ★p̂_q(y') = 0 の候補も「候補から外す」= **M も wSum も動かさない**。
+        //   ここで M を足すと W = wSum/(M·p̂) が縮んで鏡面が暗化する (spec §4.2 の
+        //   「M を数える規則」。粗さ 0.10 の面では半径 8px の候補の大半が p̂ ≈ 0)
+        TEST_CHECK(!RtReservoirMerge(r3, w3, cand, 0.0f, 8.0f, 1.0f, kRtRestirJacobianMax,
+                                     0.5f));
+        TEST_CHECK(w3 == 0.0f && r3.M == 0.0f);
+        // W' = 0 (一度も有効な重みを積めなかった reservoir) も同じ
+        RtReservoirCpu dark = cand;
+        dark.W = 0.0f;
+        TEST_CHECK(!RtReservoirMerge(r3, w3, dark, pHat, 8.0f, 1.0f, kRtRestirJacobianMax,
+                                     0.5f));
+        TEST_CHECK(w3 == 0.0f && r3.M == 0.0f);
+        // 非有限の重み (0 除算などで inf が入った候補) も外す — 足すと wSum が二度と戻らない
+        TEST_CHECK(!RtReservoirMerge(r3, w3, cand, INFINITY, 8.0f, 1.0f, kRtRestirJacobianMax,
+                                     0.5f));
+        TEST_CHECK(w3 == 0.0f && r3.M == 0.0f);
+        // ★対比: **自画素の**黒サンプルは Update を直接呼ぶので M = 1 になる
+        //   (上の「重み 0 の候補は採用されない」の検査と同じ経路。Update に w>0 の
+        //    ゲートを足すとここが 0 に落ちて resolve が 0 を返し続ける)
+        RtReservoirCpu self = RtReservoirEmpty();
+        float wSelf = 0.0f;
+        RtReservoirUpdate(self, wSelf, mirror, N, { 0.0f, 0.0f, 0.0f }, kRtReflClassDefault,
+                          1.0f, 0.0f, 0.5f);
+        TEST_CHECK(self.M == 1.0f && wSelf == 0.0f);
+
+        // クラス別 M 上限: M'=100 は cap 8 に切り詰められる (M は 1 + 8 = 9)
+        RtReservoirCpu big = cand;
+        big.M = 100.0f;
+        RtReservoirCpu r4 = RtReservoirEmpty();
+        float w4 = 0.0f;
+        RtReservoirUpdate(r4, w4, mirror, N, kLs, kRtReflClassProp, 1.0f, 1.0f, 0.5f);
+        RtReservoirMerge(r4, w4, big, pHat, 8.0f, 1.0f, kRtRestirJacobianMax, 0.99f);
+        TEST_CHECK(r4.M == 9.0f);
+        TEST_CHECK(std::fabs(w4 - (1.0f + pHat * big.W * 8.0f)) < 1e-5f);
+    }
+
+    // ---- 書き戻し前の M クランプ: W が変わらない (= 絵が変わらない) ----
+    {
+        RtReservoirCpu r = RtReservoirEmpty();
+        r.M = 20.0f;
+        r.Ls = kLs;
+        float wSum = 5.0f;
+        const float pHat = 1.75f;
+        const float wBefore = RtRestirWeight(wSum, r.M, pHat);
+        const XMFLOAT3 outBefore = RtRestirResolve(r, wSum);
+        RtRestirClampM(r, wSum, 8.0f);
+        TEST_CHECK(r.M == 8.0f);
+        TEST_CHECK(std::fabs(wSum - 2.0f) < 1e-6f); // 5 * 8/20
+        TEST_CHECK(std::fabs(RtRestirWeight(wSum, r.M, pHat) - wBefore) < 1e-6f);
+        const XMFLOAT3 outAfter = RtRestirResolve(r, wSum);
+        TEST_CHECK(std::fabs(outAfter.x - outBefore.x) < 1e-6f
+                   && std::fabs(outAfter.y - outBefore.y) < 1e-6f);
+        // 上限より小さい M は触らない
+        RtReservoirCpu r2 = RtReservoirEmpty();
+        r2.M = 3.0f;
+        float w2 = 1.25f;
+        RtRestirClampM(r2, w2, 8.0f);
+        TEST_CHECK(r2.M == 3.0f && w2 == 1.25f);
+        // W の定義 (0 除算しない)
+        TEST_CHECK(RtRestirWeight(5.0f, 0.0f, 1.0f) == 0.0f);
+        TEST_CHECK(RtRestirWeight(5.0f, 2.0f, 0.0f) == 0.0f);
+        TEST_CHECK(std::fabs(RtRestirWeight(6.0f, 2.0f, 1.5f) - 2.0f) < 1e-6f);
+    }
+
+    // ---- クラス別パラメータ表 ----
+    {
+        bool tapsOk = true, capOk = true, radiusOk = true;
+        for (int i = 0; i < kRtReflClassCount; ++i) {
+            const RtReflClassParams& p = kRtReflClassTable[i];
+            if (!(p.taps >= 0.0f && p.taps <= static_cast<float>(kRtRestirMaxTaps))) {
+                tapsOk = false; // [loop] の静的上限を超えるとタップが黙って落ちる
+            }
+            if (!(p.mCap >= 1.0f && p.mCap <= kRtRestirMaxM)) {
+                capOk = false; // 半精度の w に載らない M は書き戻しで値が動く
+            }
+            if (!(p.radiusPx > 0.0f) || p.pad != 0.0f) {
+                radiusOk = false;
+            }
+        }
+        TEST_CHECK(tapsOk && capOk && radiusOk);
+        // 中立クラスは元計画の {8, 4, 16}
+        TEST_CHECK(kRtReflClassTable[kRtReflClassDefault].radiusPx == 8.0f
+                   && kRtReflClassTable[kRtReflClassDefault].taps == 4.0f
+                   && kRtReflClassTable[kRtReflClassDefault].mCap == 16.0f);
+        // **主役ほど保守的** (半径・タップ・M 上限のどれも Hero < Prop)。
+        // 向きが逆だと「主役が最もにじむ」という真逆の絵になるので機械で固定する
+        const RtReflClassParams& hero = kRtReflClassTable[kRtReflClassHero];
+        const RtReflClassParams& prop = kRtReflClassTable[kRtReflClassProp];
+        TEST_CHECK(hero.radiusPx < prop.radiusPx && hero.taps < prop.taps
+                   && hero.mCap < prop.mCap);
+        TEST_CHECK(kRtReflClassTable[kRtReflClassCharacter].mCap
+                   < kRtReflClassTable[kRtReflClassVehicle].mCap);
+
+        // 実行時パラメータの既定 = 定数表 + M46h の SVGF 設定そのもの
+        const RtReflRestirParams def;
+        bool tableOk = true;
+        for (int i = 0; i < kRtReflClassCount; ++i) {
+            if (def.classTable[i].radiusPx != kRtReflClassTable[i].radiusPx
+                || def.classTable[i].taps != kRtReflClassTable[i].taps
+                || def.classTable[i].mCap != kRtReflClassTable[i].mCap) {
+                tableOk = false;
+            }
+        }
+        TEST_CHECK(tableOk);
+        TEST_CHECK(def.svgfHistory == kRtReflMaxHistory);
+        TEST_CHECK(def.atrousIterations == kRtReflAtrousIterations);
+        TEST_CHECK(def.spatial == 1 && def.visRay == 0 && def.classOverride == -1);
+    }
+}
+
 } // namespace
 
 bool RunRtSelfTest()
@@ -658,6 +1021,7 @@ bool RunRtSelfTest()
     TestReflection();
     TestTemporal();
     TestSvgf();
+    TestRestir();
     if (g_failCount == 0) {
         MYE_LOG_INFO("==== Ray tracing self test: ALL PASS ====");
         return true;

@@ -95,7 +95,9 @@ ping-pong (`RtPasses.h:116-125`)、UAV は u0 のみ使用。
   `rdemo_spin` = 0 Hero / `rdemo_pillar_a,b,c` = 3 Prop / `adem_player` = 0 Hero /
   `adem_agent_ear`, `adem_agent_eye` = 1 Character。他は既定 4。
 - 色分け (デバッグ 13 / 14 で共通、HLSL `RtReflClassColor(int)`): 0 = 赤 (1, 0.2, 0.2) / 1 = 橙 (1, 0.6, 0.1) /
-  2 = 黄 (0.9, 0.9, 0.2) / 3 = 水色 (0.2, 0.8, 1) / 4 = 灰 (0.5, 0.5, 0.5) / スカイ・空 reservoir = 黒。
+  2 = 黄 (0.9, 0.9, 0.2) / 3 = 水色 (0.2, 0.8, 1) / 4 = 灰 (0.5, 0.5, 0.5) / 範囲外 (空 reservoir の -1) = 黒。
+  デバッグ 14 (反射像側) では**スカイヒット (`ns` = 0) も黒**にする — `cls` は 4 (§4.2) なので、blit は `nrm.xyz == 0`
+  を見て黒に落とす (13 の一次レイはミス = 黒なので同じ見え方になる)。
 
 ### 4.2 Reservoir と数学 (`rt_restir_common.hlsli` ⇄ `RtMath.h`、両方更新・selftest がミラーを検証)
 
@@ -107,7 +109,7 @@ ping-pong (`RtPasses.h:116-125`)、UAV は u0 のみ使用。
 | `xs` | 反射レイ first hit のワールド座標。スカイヒットは**方向ベクトル**を入れる |
 | `ns` | ヒット点の法線 (両面規約 = レイに向く側)。**ゼロ = スカイのセンチネル** |
 | `Ls` | ヒット点から出た放射輝度 = 既存 `RtTraceRadianceLod` の戻り値 (バウンス込み) |
-| `cls` | ヒットしたインスタンスの ReflectionClass。スカイ = 4 |
+| `cls` | ヒットしたインスタンスの ReflectionClass。**スカイヒット = 4** (再利用パラメータは Default を使う = 静的背景扱い)。**空 reservoir (M = 0) = -1** (センチネル。`RtReservoirUnpack` は `round` で読む — 切り捨てだと -1 が 0 = Hero に化ける) |
 | `M` | 統合したサンプル数 (0 = 空 reservoir) |
 | `W` | unbiased contribution weight = `wSum / (M · p̂_q(y))` |
 
@@ -118,9 +120,20 @@ ping-pong (`RtPasses.h:116-125`)、UAV は u0 のみ使用。
 - **初期サンプル** (rt_refl): 現行どおり VNDF で L を 1 本、`RtTraceRadianceFirstHit` で Ls と first-hit を得る。
   ソース pdf = D_vis なので `w = p̂/p = lum(Ls)`。`wSum = w, M = 1`。`lum = 0` (真っ黒) なら w = 0。
   現行の「N·V ≤ 1e-4 は鏡面方向」「ローブが面の下なら鏡面方向」の分岐はそのまま (ソース pdf の近似も現行と同じ)。
-- **統合 (temporal / spatial 共通、`RtReservoirMerge`)**: 候補 reservoir `r'` (サンプル y'、W'、M'、cls') を
-  `w = p̂_q(y') · W' · min(M', mCap[cls']) · J` で streaming RIS に足す (`wSum += w; M += min(M', mCap[cls'])`、
-  `rnd < w / wSum` で採用)。乱数は `RtNextRand2(seed)` (既存の PCG3D 系列)。
+- **統合 (temporal / spatial 共通、`RtReservoirMerge(r, wSum, cand, p̂_q(y'), mCap[cls'], J, jMax, rnd)`)**:
+  候補 reservoir `r'` (サンプル y'、W'、M'、cls') を `w = p̂_q(y') · W' · min(M', mCap[cls']) · J` で streaming RIS に
+  足す (`wSum += w; M += min(M', mCap[cls'])`、`rnd < w / wSum` で採用)。`jMax` は CB (`gRsJacobianMax`) から渡す
+  (関数内定数にしない — §7 の「temporal だけ緩める」に備える)。乱数は `RtNextRand2(seed)` (既存の PCG3D 系列)。
+  **M を数える規則 (sub-03 round 1 で確定)**: 候補を「候補から外す」= **M も数えない**のは、空 reservoir (M' = 0) /
+  受け側の幾何不一致 (深度・法線・クラス半径) / J が範囲外 / **有効重み `w` が `!(w > 0) || !(w < kWeightMax = 1e30)`
+  (p̂_q(y') = 0 = ローブ外・受け側半球外・真っ黒、W' = 0、inf / NaN)** の 4 種。「非有限」は `isfinite()` ではなく
+  上限定数との比較で書く — fxc は `/Gis` (IEEE strictness) 抜きだと `isfinite()` を警告 X3577 つきで最適化除去しうる
+  (sub-03 で実測) ので GPU では守れない。`[1e30, FLT_MAX]` の有限重みも外れるが、そこは p̂ が 1e-25 級に潰れた異常値。**自画素の初期サンプルだけは常に M = 1** (lum = 0 でも。
+  `RtReservoirUpdate` は M を数え、`RtReservoirMerge` は w > 0 のときだけ Update を呼ぶ)。
+  理由: 教科書の biased 変種 (p̂ = 0 でも M を足す) は W = wSum/(M·p̂) が縮んで**暗化**する。本計画の被写体
+  (`rdemo_mirror` = 粗さ 0.10、α = 0.01、ローブ幅 ≈ 1°) では Default クラスの半径 8 px (960 px 幅で ≈ 1°) の候補の
+  大半が p̂ ≈ 0 になるので、M を数えると鏡面パッチが目に見えて暗くなる。数えない側の偏りは「わずかに明るい /
+  分散が減らない」で、鏡面のディテールを守る方向 (= 元計画の狙い)。
 - **Jacobian** (temporal / spatial 共通、S4 = ユーザー判断で厳密化): 受け側 `P_from` (候補の受け側 =
   temporal なら reservoir の `rpos`、spatial なら近傍の G-Buffer 位置) → `P_to` (自画素の P)、
   `J = (cosθ_to / cosθ_from) · (d_from² / d_to²)`、`d = |xs − P|`、`cosθ = |dot(ns, (P − xs) / d)|`。
@@ -214,6 +227,9 @@ rt_temporal / rt_variance / rt_atrous (無変更)  入力が reflRt_ から refl
 - **規則**: 9 (`kRtReflClassCount` / `kRtRestirMaxTaps` を `$constGroups` へ)、10 (書式指定子)、
   1/2/4/7/8/11/12 は非接触だが `check_rules.ps1` を毎サブ回す。
 - **層**: 生の D3D は `RtPasses` (Renderer) に閉じる。`RtScene` (Engine) は既存の前例どおり。
+- **HLSL で `isfinite()` / `isinf()` を使わない** (sub-03 で確定): `ShaderManager` は `D3DCOMPILE_IEEE_STRICTNESS` を
+  渡していないので fxc が警告 X3577 を出して最適化除去しうる = ノーガードのうえ実行時コンパイルの警告がログに出る。
+  非有限の防波堤は `!(x < kMax)` のような普通の比較で書く (NaN も落ちる)。sub-04 以降の新シェーダ全てに適用。
 
 ### 4.6 S5 (パラメータ調整) の切り分け
 
@@ -230,7 +246,7 @@ rt_temporal / rt_variance / rt_atrous (無変更)  入力が reflRt_ から refl
 | A1 | ReSTIR off (既定) で golden **全枚**がビット一致 (sub-01 以降 21 枚、sub-07 以降 22 枚) | `tools\shot_verify.bat` (Release、`MYE_SHOT_SKIP_*` 無し) 全緑 |
 | A2 | 新 golden (`demo_render_rtrefl` / `demo_render_rtgi`) は同一バイナリで 2 回撮って maxDiff=0、1 枚 ≤ 60 s (WARP、SHOTBASE 条件) | sub-01 で 2 回撮影 + `Editor.exe --img-diff A B --tol 0` PASS、所要秒を実装メモに |
 | A3 | ReflectionClass の配管: JSON 欠損 = 4 / 範囲外・非整数 = 4 / 値 1 → 1 / 両端 0・4、雛形 (`CreateMaterialAsset`) の往復、Inspector 保存 → 読み直しで往復、`--rt-debug 13` で一次ヒットがクラス色 | `Editor.exe --selftest` (AssetOps の JSON 往復。sub-02 で実装済み)、`Runtime.exe --render-demo --deferred --rt-debug 13 --screenshot` の画像 (spin 赤 / 柱 水色 / 床 灰。sub-02 で画素実測済み)。**Inspector の往復は reviewer の実機操作** (`LoadMaterialEdit` / `MaterialEditToJson` は private でヘッドレスから呼べない): `.mat.json` を選択 → Combo でクラス変更 → 保存 → 別アセットを選んで戻ると値が残り、ファイルに `"reflectionClass": N` が書かれている |
-| A4 | ReSTIR 数学の CPU ミラー: VNDF pdf が半球で 1 に積分 (α = 0.36 / 0.04、±3%) / reservoir 更新の採用確率が重み比 (1:2:7、2 万回、±0.02) / M=1 で `Ls · wSum/(M·lum) == Ls` ビット一致、lum=0 で 0 / J(A→B)·J(B→A) = 1 (±1e-5)、同一点 = 1、スカイ = 1、受け側が 2 倍遠ざかると J = 1/4 (cosθ 同じ) / 統合の重みが J に比例 (J=2 で候補の重みが 2 倍、範囲外 J で 0) / M 上限: M'=100・cap 8 で統合後 M = 9 / 書き戻しクランプで W 不変 / 定数表 5 行・taps ≤ 8・mCap ≤ 32 | `Editor.exe --selftest` (`RtSelfTest.cpp` に `TestRestir`) |
+| A4 | ReSTIR 数学の CPU ミラー: **VNDF pdf の上半球積分 + サンプラ (`RtGgxVndf`) が下半球へ漏らした割合 = 1 (±0.01、決定的な (cosθ, φ) グリッド)** (α = 0.36 / 0.04。反射方向の pdf は半ベクトル側で正規化されるので上半球だけでは 1 未満 — sub-03 で実測 0.884 + 0.117 / 0.998 + 0.002。「半球積分 = 1」と書いた初版は誤り) / pdf のピークが独立な Smith Λ 形の式と一致 / reservoir 更新の採用確率が重み比 (1:2:7、2 万回、±0.02) / M=1 で `Ls · wSum/(M·lum) == Ls` ビット一致、lum=0 で 0 / J(A→B)·J(B→A) = 1 (±1e-5)、同一点 = 1、スカイ = 1、受け側が 2 倍遠ざかると J = 1/4 (cosθ 同じ) / 統合の重みが J に比例 (J=2 で候補の重みが 2 倍、範囲外 J で候補外 = M 不加算) / **p̂_q(y') = 0 の候補は M も wSum も増えない** (Merge)、自画素の黒サンプルは M = 1 (Update) / M 上限: M'=100・cap 8 で統合後 M = 9 / 書き戻しクランプで W 不変 / 定数表 5 行・taps ≤ 8・mCap ≤ 32 | `Editor.exe --selftest` (`RtSelfTest.cpp` に `TestRestir`) |
 | A5 | `--rt-restir` (再利用なし = **sub-04 時点**の状態) と off の絵が `--img-diff --tol 1` PASS。sub-05 以降は temporal が常に効くので再検証しない (チューニング UI で全クラスの M 上限を 1 にすれば同等の状態を作れる — `--rt-no-temporal` は SVGF 側で ReSTIR の temporal は止めない) | sub-04 で `Runtime.exe --render-demo --deferred --rt-refl [--rt-restir] --rt-no-temporal --rt-no-svgf --screenshot` 2 枚を比較 |
 | A6 | temporal: `--rt-anim-seed --rt-restir` で debug 12 の M が伸びる (鏡面パッチ領域の平均 G が frame 3 → 40 で増加) / フリッカー指標 (frame 40 と 41 の同領域の平均絶対差、`--rt-no-temporal --rt-no-svgf` で SVGF を外して測る) が off より小さい / `rpos` の配線: 静止シーンでは `P_prev == P` で J = 1 ちょうどなので、配線が壊れていれば J が範囲外で temporal が棄却され **M が 1 から伸びない** — 「M が cap まで伸びる」が配線の検査を兼ねる (J ≠ 1 の経路はヘッドレスでは通らない。selftest A4 とユーザーの実機のみ) | sub-05 の一時 Python (scratch) で PNG を数値化。画像は reviewer 用に `tests\actual\` へ |
 | A7 | spatial + class: `--rt-class-override 0` と `3` で絵が異なる (maxDiff > 0) かつ 3 (Prop) のフリッカー指標 ≤ 0 (Hero)。`--rt-debug 14` で反射像側にクラス色 | sub-06、A6 と同じ手順 |
@@ -279,6 +295,9 @@ rt_temporal / rt_variance / rt_atrous (無変更)  入力が reflRt_ から refl
   可能性 (理論上)。golden が 1 でも動いたら**塗り潰さず**報告 (golden-diff-triage の 4 点計測)。
 - W のオーバーフロー: `Ls` が半精度、W は fp32。極端に暗い `lum` の候補が大きな W を持つ → firefly。
   `J` 範囲棄却に加え `W ≤ kRtRestirWMax` (仮 64) でクランプするかは sub-05 の実測で決める。
+- 鏡面 (粗さ ≲ 0.15) では spatial の候補がほぼ全部 p̂ ≈ 0 → 「M 不加算」規則により spatial は鏡面をほとんど
+  変えない (暗化はしない)。滑らかな面ほど半径を粗さで縮める (radius × f(α)) のは S5 のノブ候補 — v1 の表は
+  クラスだけで決める。
 - temporal の厳密 J (U4): カメラが大きく動いたフレームは J が範囲外になって temporal 候補が棄却されやすい
   (= 履歴が切れてノイズへ落ちる。安全側)。S5 で「動くと荒れる」が目立つなら `kRtRestirJacobianMax` を
   temporal だけ緩める (別定数) — 判断はユーザー。
@@ -308,3 +327,12 @@ rt_temporal / rt_variance / rt_atrous (無変更)  入力が reflRt_ から refl
   実機操作に (private メンバでヘッドレス不可。静的ヘルパへの切り出しは M67 の外)。(d) sub-07 に engine_spec §10.2 の
   版記述 + CLAUDE.md チェックリスト「Material にフィールドを足す」の 3 項 (cook 版 / static_assert / 明示パディング) +
   `CookedCache.h:20` のコメント数値 (56 → 60 は 64 の誤り) の衛生を積む。
+- 2026-09-05 (coder SELF_EVAL sub-03 round 1): (a) A4 の「VNDF pdf が半球で 1 に積分」は誤り (反射方向の pdf は
+  半ベクトル側で正規化 = 下半球へ回った分だけ 1 未満) → 「上半球積分 + サンプラの漏れ = 1 (±0.01、決定的グリッド)」に
+  訂正、pdf ピークの独立式との照合を追加。(b) `RtReservoirMerge` に `jMax` 引数 (CB 由来) を承認、§4.2 の署名を更新。
+  (c) §4.2 の `cls`: スカイヒット = 4 / 空 reservoir = -1 に確定、§4.1 のデバッグ 14 は `ns == 0` で黒。
+  (d) **M を数える規則を確定** — p̂_q(y') = 0 の候補は M 不加算 (鏡面パッチの暗化を避ける。coder の実装は
+  数える側だったので REWORK の must)。§7 に鏡面と半径の関係をノブ候補として記録。sub-03 / 04 / 05 / 06 に反映。
+- 2026-09-05 (coder SELF_EVAL sub-03 round 2): must 2 件 + nit を確認して OK。「非有限」の実装を `isfinite()` から
+  `!(w < 1e30)` の比較に置き換えた [追加] を承認し、§4.2 の文言と §4.5 の非機能に「HLSL で `isfinite` / `isinf` を
+  使わない (X3577、`/Gis` 無し)」を追記。sub-04 / 05 / 06 の「やること」にも同じ注意を明記。

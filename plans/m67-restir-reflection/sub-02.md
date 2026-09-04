@@ -1,7 +1,7 @@
 # sub-02: ReflectionClass の配管 (Material → RtInstance → HLSL) + デバッグ 13
 
 - 依存: sub-01
-- 状態: OK (commit: 司会が記入)
+- 状態: OK (commit 4511cce)
 - 往復: 1
 
 ## やること
