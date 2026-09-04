@@ -2,7 +2,7 @@
 
 - 依頼原文: "C:\HAL\MyEngin\plans\quiet-merging-harbor.md"を読んで計画に穴が無いかを確認したのち実装をしたい
 - 開始: 2026-09-02 / 基点コミット: 02bf3c924a6b5036255f5e31a694b4bd8c054055
-- フェーズ: レビュー
+- フェーズ: 完了 (2026-09-04、reviewer round 2 PASS)
 - 元計画: `plans/quiet-merging-harbor.md` (M66: エンジン内 Git 連携 v1 — 別プロセス Rust サービス MyeCollab + Editor 層クライアント。ユーザー作成、327 行)
 - 仕様書: `spec.md` 確定 (2026-09-02)。穴 13 件 (S1〜S13) を §2 に記録、受け入れ条件 17 件 (§5)、サブ 10 本 (§6、元計画 M66a〜M66j に 1:1)
 - 策定の往復: R1 (4 問: Rust 前提 / 段階 C 判定 / 未コミット変更 / 未保存ガード 4 窓) → R2 (3 問: DLL 解釈 / 仮置き 6 点 / 確定)
@@ -22,7 +22,7 @@
 | sub-09 | OK | 2 | 048ec64 | M66i: Content Browser に Git バッジ + 保存直後のヒント。依存: sub-02 (sub-03〜08 と独立)。round 1 REWORK (must 1 = バッジ色表 Modified=Accent がテーマ配色ルール 3 に違反 → spec §4.3 の確定表へ。nit 2 件 → sub-10) |
 | sub-10 | OK | 1 | 4ab1322 | M66j: 仕上げ — engine_spec §14 Source control / README / CLAUDE.md / 規則の記載。依存: sub-01〜sub-09 |
 | sub-11 | OK | 1 | 7d99a85 | M66k: review-1 の実害 (指摘 1・2・4・8) — 保存失敗で commit しない / 偽 dirty でゲートが閉じない / 本文を失わない / 15 s 超で回復案内。依存: sub-01〜sub-10。VERDICT round 1 OK (nit 2 = %TEMP% の空ディレクトリ掃除 → sub-12 / 自由関数の置き場は「直すな」)。commit 失敗時のエラー表示は planner が「足さない」と裁定 (M66f の「見る場所を 2 つに分けない」線を崩さない) |
-| sub-12 | OK | 2 | (M66l、下の記入待ち) | M66l: review-1 の衛生 (指摘 3・6・7・9 + 5・8 の文書化) — 折り返しとコメントの実態合わせ、§14.6 に既知の制約と MYE_COLLAB_PROBE。依存: sub-11。round 1 REWORK (must 1 = probe の失敗 commit 検査が未追跡 1 個で空振り = テストがあるのに走っていない / should 1 = DrawRemoteBar も折り返す)。coder の質問 2 件を round 2 へ取り込み、spec §4.3 に「幅の規則」+ 受け入れ条件 21・22 を新設 |
+| sub-12 | OK | 2 | 81aa33d | M66l: review-1 の衛生 (指摘 3・6・7・9 + 5・8 の文書化) — 折り返しとコメントの実態合わせ、§14.6 に既知の制約と MYE_COLLAB_PROBE。依存: sub-11。round 1 REWORK (must 1 = probe の失敗 commit 検査が未追跡 1 個で空振り = テストがあるのに走っていない / should 1 = DrawRemoteBar も折り返す)。coder の質問 2 件を round 2 へ取り込み、spec §4.3 に「幅の規則」+ 受け入れ条件 21・22 を新設 |
 
 ## 未決事項 (planner PLAN_RESULT より。coder が「不安・質問」で拾う)
 - ~~S5 の新規アセット登録方式~~ → **閉じた (sub-04)**: 増分登録 (`AssetDatabase::GuidForPath(abs, createIfMissing=true)`)。`ScanAndSync` は 3 表を clear するので解決先が一瞬空になる窓が開く。増分なら `.meta` 同梱の guid をそのまま採る
@@ -39,6 +39,7 @@
 | round | 判定 | 深度/機能/視覚/品質 | 未解決 |
 |---|---|---|---|
 | 1 | FAIL | 3/3/4/4 | major 2 (coder 宛: 1 = 保存失敗でも commit へ進む / 2 = actions.json 不在で ProjectSettings ゲートが恒久閉鎖)、minor 7 (coder 5 / planner 2)。全文 `review-1.md` |
+| 2 | **PASS** | 4/4/4/5 | round 1 の 9 件すべて消込 (5 は却下で確定)。新規 minor 1 = 長いブランチ名でヘッダの「先行/遅れ」が画面外へ消え、分岐時に ahead がどこにも出ない。全文 `review-2.md` |
 
 - planner の REVIEW_RESPONSE (2026-09-04): 指摘 5・8 を実コードで裏取りして裁定 → spec §7 に反対案ごと記録、修正は sub-11 (挙動) / sub-12 (文言・文書) の 2 本に分割。
   **planner はサブエージェントなので `AskUserQuestion` が使えない** (`No such tool available`) → planner 宛の判断は司会がユーザーへ引き取る。
@@ -148,6 +149,19 @@
 - planner のエージェント ID はセッション限り。セッションを跨いだら `MODE: VERDICT` 用の planner を新規起動し、文脈は spec.md / sub-NN.md / この台帳で渡す。
 - acoustic golden 2 枚 (18/19) のフレーク = ユーザー判断 c (何もしない、2026-09-03)。M66 では ci.yml / CLAUDE.md を触らない。sub-10 と reviewer の最終検証で赤くなったら shot_verify.bat を再実行して通す。根治は M66 の外 (spec §2 S14)。
 - 全サブ OK (2026-09-04)。reviewer 向けの読み順: spec §5 の受け入れ条件 17 件 → engine_spec §14 (spec §4.0-4.4 の写し。段階表 / ゲート 13 / op 23 / error.code 18 / event 4 / Unavailable 8 の件数はコードと突き合わせ済み) → 実機は `pwsh -File tools\collab_fixture.ps1 cache\review_fx` → `Editor.exe --project cache\review_fx` (裸起動では Collab は OFF)。acoustic 2 枚が赤くなったら `shot_verify.bat` を再実行 (ユーザー判断 c)。ci.yml の GitHub 上の実走は依然未検証 (push 後の最初の run で確認)。
+- **レビュー完了 (2026-09-04)**: round 1 FAIL (指摘 9 件) → 修正 2 本 (`7d99a85` M66k / `81aa33d` M66l) → round 2 PASS (4/4/4/5)。
+  受け入れ条件は 17 → **22** 件 (18/19/20 = M66k、21/22 = M66l)。spec §4.3 に「幅の規則」、§7 に裁定 2 件が増えている。
+- **繰り越した minor (review-2 #1)**: 長いブランチ名 (`feature/inventory-rework` 等) だとヘッダ行の「先行 %d / 遅れ %d」が
+  `SameLine()` の並びで画面外へ出て**描かれた形跡ごと消える** (`SourceControlWindow.cpp:234-241`、窓に横スクロールバーは無い)。
+  `DrawRemoteBar` は `if (behind>0) … else if (ahead>0)` と排他 (`同:526-556`) なので、**分岐時 (ahead>0 かつ behind>0) は
+  ahead がどこにも出ない** = `pull --ff-only` が失敗する理由を押す前に読めない。直すなら「先行/遅れ を独立行にする」か
+  「分岐時は帯に ahead も併記する」。根拠画像 `cache2_ja_ahead_win.png` / `r2_ja_diverged_win.png` / `r2_en_conflict_win.png`。
+- **根拠が無いため指摘にならなかった観察 (review-2 末尾)**: `AudioMixerWindow::HasUnsavedChanges` が**ライブのバス構成を往復させている**。
+  非可逆なら review-1 #2 (偽 dirty でゲートが恒久閉鎖) と同型になりうるが、reviewer は再現も反証もできていない。
+  M66 の外で触るときに一度見ること。
+- **レビューで未検証のまま残った 4 経路** (いずれもマウス実押下が要る。判定ロジックはセルフテストか実 DLL プローブで実走済みで、残るのは配線 2〜3 行):
+  Project Settings 窓を開いた後にゲートが開いたままである目視 (条件 19 の実機側) / 15 s 案内の実画面 (条件 20 の目視側) /
+  Branches・History タブ / 「保存してコミット」の実押下。
 - M66 の外に残した別件 (reviewer は指摘しなくてよい): README の M65 時点の数字 (6 ペア / 15 枚 / env 4 種) と engine_spec §12 のマイルストーン表 (M45 以降が無い)、acoustic 描画の run-to-run 非決定性の根治、SoundGenWindow の保存ヒント、数百タイル時のバッジ引きコスト。
 - **review-1 への応答 (planner、2026-09-04)**: 指摘 5 は**却下**、指摘 8 は**一部採用**。coder 宛 7 件は sub-11 / sub-12 の 2 本へ束ねた。
   - **AskUserQuestion がサブエージェントでは使えなかった** (`No such tool available`) ため、planner 宛 2 件は根拠を実コードで確認したうえで planner が裁定した。判断はユーザーに差し戻せる形で spec §7 に反対案ごと残してある — 司会がユーザーに聞く場合の材料は次の 2 点:
