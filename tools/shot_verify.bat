@@ -61,7 +61,8 @@ rem ★tol は 3 種類ある。**どれも実測値から決めていて、赤�
 rem   tol=3  … 既定。ラスタ + ライティング + トーンマップの丸め (実測 maxDiff 1〜3)
 rem   tol=12 … demo_terrain_deferred の 1 枚だけ。**異方性フィルタは実装依存**で
 rem            WARP のビルド違いで一致しない (実測 maxDiff=8)。詳細は該当 call の直前
-rem   tol=0  … ローカル限定の 5 枚 (fxaa / taa / ssr / froxel / fog)。どれも**離散的に分岐する**
+rem   tol=0  … ローカル限定の 9 枚 (fxaa / taa / ssr / froxel / fog / パーティクル 2 /
+rem            RT 反射 / RT GI)。どれも**離散的に分岐する**
 rem            演算で、1 ULP の差が分岐を反転させると数十画素が丸ごと飛ぶ。この形は
 rem            tol をいくつにしても守れない (上げると本物の回帰も一緒に見逃す) ので、
 rem            ランナーでは撮らず、開発機でのビット一致だけを主張する
@@ -105,11 +106,15 @@ if exist %TERRAIN_SCENE% del /q %TERRAIN_SCENE%
 set FAILED=0
 set SHOTS=0
 
-rem ---- 19 本。既定デモの 2 経路 (Forward / Deferred) + 生成シーン 2 本 + UI プローブ
+rem ---- 21 本。既定デモの 2 経路 (Forward / Deferred) + 生成シーン 2 本 + UI プローブ
 rem      + 描画ショーケースの 2 経路 (M54a) + 地形 (M58c) + 物理 (M59l) + 関節 (M60k)
 rem      + 霧 (M57追補) + パーティクル 2 経路 (M63a) + 音響 2 経路 (M65e)
+rem      + RT 反射 / RT GI (M67a)
 rem      + ローカル限定 4 本 (ssr / fxaa / taa / froxel) ----
-rem RT デモは WARP では重すぎるので CI 対象外 (ローカル任意)
+rem ★**--rt-demo (コーネル箱) は** WARP では重すぎるので golden にしない (ローカル任意)。
+rem   ただし **--render-demo に --rt-refl / --rt-gi を足す 20/21 枚目は別物** で、
+rem   1 枚 11 s・同一バイナリで 2 回撮って maxDiff=0 (M67a 実測)。「RT は WARP では重い」を
+rem   RT レーン全体へ広げた結果、M67 まで RT の絵が 1 枚も固定されていなかった
 call :shot demo_forward
 call :shot demo_deferred --deferred
 call :shot parts --scene %PARTS_SCENE%
@@ -327,6 +332,33 @@ call :shot acoustic_deferred --acoustic-demo --deferred
 set SHOT=%SHOTBASE% --no-fxaa
 :skip_acoustic
 
+rem ---- 20/21 枚目 (M67a): RT 反射 / RT GI。**RT レーン (M46) の唯一のピクセル被覆**。
+rem      それまで 19 本の call :shot に --rt-* が 1 つも無く、rtReflEnabled を立てる口は
+rem      --rt-refl とメニューだけ = **RT 反射も RT GI も壊れて全 golden が緑のまま通る**
+rem      状態だった (M65 で踏んだ「4 サブぶん golden に 1 画素も写っていなかった」と同根)。
+rem      M67 の ReSTIR は「off = 現行の絵とビット一致」を主張の土台にするので、
+rem      その現行の絵をここで固定しておかないと主張そのものが空振りする。
+rem
+rem ★2 枚撮るのが要点。反射 (rt_refl.cs.hlsl) と GI (rt_gi.cs.hlsl) が共有しているのは
+rem   rt_common.hlsli の RtTraceRadianceLod だけなので、1 枚だと共有ヘルパを触ったときに
+rem   片方の経路が壊れても緑のまま通る (particle_cpu/gpu を 2 枚撮ったのと同じ理由)。
+rem   M67 は実際にこのヘルパを first-hit 版へ分解する予定なので、GI 側が本当に要る。
+rem ★実測 (M67a、開発機 WARP 10.0.26100 / Release / SHOTBASE 条件):
+rem   撮影 11 s/枚 (RT 無しの同条件は 7 s)、**同一バイナリで 2 回撮って maxDiff=0** の
+rem   ビット一致、RT 無し (demo_render_deferred) との差は 反射 45114 画素 (maxDiff=221) /
+rem   GI 221162 画素 (maxDiff=93) = どちらも守るものが絵に出ている。
+rem ★tol=0 のローカル限定 (MYE_SHOT_SKIP_RT=1 で 2 枚とも飛ぶ)。**SSR を降格させたのと
+rem   同じ形**で、BVH のトラバーサルは「レイが当たったか外れたか」で離散的に分岐する演算 —
+rem   1 ULP の差が hit/miss を反転させると、その画素は反射色 ⇔ IBL フォールバックへ丸ごと飛ぶ。
+rem   ランナーの WARP は版が違う (10.0.20348) のでこの形は tol をいくつにしても守れない。
+rem   ★赤くなったから tol を上げる、はやらないこと (SSR / FXAA と同じ)
+if defined MYE_SHOT_SKIP_RT goto :skip_rt
+set TOLNOW=0
+call :shot demo_render_rtrefl --render-demo --deferred --rt-refl
+call :shot demo_render_rtgi --render-demo --deferred --rt-gi
+set TOLNOW=%TOL%
+:skip_rt
+
 echo.
 if %UPDATE%==1 (
     echo [shot_verify] golden updated in %GOLDEN% - review the images before committing
@@ -341,7 +373,7 @@ if not %FAILED%==0 (
 if defined MYE_SHOT_SKIP_FXAA (
     echo [PASS] screenshot regression ^(%SHOTS% shots, warp, no-fxaa, tol=%TOL% + terrain at 12, physics/joints/fog/particle/acoustic at frame 120^)
 ) else (
-    echo [PASS] screenshot regression ^(%SHOTS% shots, warp, tol=%TOL% + terrain at 12 + physics/joints/fog/particle/acoustic at frame 120 + fxaa/taa/ssr/froxel/fog/particle at tol=0^)
+    echo [PASS] screenshot regression ^(%SHOTS% shots, warp, tol=%TOL% + terrain at 12 + physics/joints/fog/particle/acoustic at frame 120 + fxaa/taa/ssr/froxel/fog/particle/rt at tol=0^)
 )
 exit /b 0
 

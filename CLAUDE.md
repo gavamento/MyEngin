@@ -36,7 +36,7 @@ MyEngine — C++20 / DirectX 11 の自作ゲームエンジン (VS2022 / x64 / W
 |---|---|
 | `bin\x64\Debug\Editor.exe --selftest` | ヘッドレス回帰 44 スイート (D3D もウィンドウも作らない) |
 | `tools\replay_verify.bat [ticks]` | 8 ビルド → 並列 10 ジョブ (7 シーンチェーン = 記録 `--replay-fast` + snapshot 往復付き照合 + Release 照合 / タイムトラベル ×2 / 規則検査)。1 本だけ回すなら `--job <名前>` 再入 (ビルド済み前提)、並列度は `MYE_REPLAY_JOBS` |
-| `tools\shot_verify.bat [--update]` | 決定的スクショ 19 枚を `tests\golden\*.png` と比較 (CI 判定は 12 枚 — FXAA / TAA / SSR / froxel / fog / パーティクル 2 枚の計 7 枚は分岐反転や GPU sim で機種差が増幅するので tol=0 のローカル限定。地形の 1 枚だけ異方性フィルタの実装依存で tol=12。**物理・関節・霧・パーティクル 2・音響 2 の 7 枚は frame 120 で撮る** — 他は frame 3 = ほぼ初期配置なので物理も粒子も絵に出ない。**先に Release ビルドが必要**) |
+| `tools\shot_verify.bat [--update]` | 決定的スクショ 21 枚を `tests\golden\*.png` と比較 (CI 判定は 12 枚 — FXAA / TAA / SSR / froxel / fog / パーティクル 2 枚 / RT 反射 / RT GI の計 9 枚は分岐反転や GPU sim で機種差が増幅するので tol=0 のローカル限定。地形の 1 枚だけ異方性フィルタの実装依存で tol=12。**物理・関節・霧・パーティクル 2・音響 2 の 7 枚は frame 120 で撮る** — 他は frame 3 = ほぼ初期配置なので物理も粒子も絵に出ない。**先に Release ビルドが必要**) |
 | `pwsh -File tools\check_rules.ps1` | 規則 1/2/4/7/8/9/10/11/12 の静的検査 (12 = Source Control の Editor 層封じ込め。9 の `$constGroups` に `kCollabProtoVersion` ⇄ `PROTO_VERSION` も載る) |
 | `cd tools\collab && cargo test` | MyeCollab (Rust) の単体 — porcelain v2 解析 / `diff_names` / `error.code` 分類 / worker のタイマー / panic 隔離 |
 | `tools\collab_verify.bat [--update]` | Source Control の回帰 9 シナリオ (一時リポ + 期待 NDJSON。**エディタも D3D も要らない**。先に `build_collab.bat`。実機目視は `tools\collab_fixture.ps1 <dir>` → `Editor.exe --project <dir>`) |
@@ -46,8 +46,9 @@ MyEngine — C++20 / DirectX 11 の自作ゲームエンジン (VS2022 / x64 / W
 - **CI (`.github\workflows\ci.yml`) はこの bat をそのまま呼ぶ。CI 専用の検証ロジックを書かない。**
   CI 固有の事情は環境変数 4 種だけで注入する: `MYE_EXTRA_ARGS` (`--warp --no-audio`)、
   `MYE_MSBUILD_ARGS` (`/p:MyeWarnAsError=true`)、`MYE_DOTNET_ARGS` (`/p:TreatWarningsAsErrors=true`)、
-  `MYE_SHOT_SKIP_FXAA` / `_TAA` / `_SSR` / `_FROXEL` / `_FOG` / `_PARTICLE`
-  (機種差が増幅する 7 枚をランナーでは撮らない。`_ACOUSTIC` の囲いも bat にあるが
+  `MYE_SHOT_SKIP_FXAA` / `_TAA` / `_SSR` / `_FROXEL` / `_FOG` / `_PARTICLE` / `_RT`
+  (機種差が増幅する 9 枚をランナーでは撮らない。`_RT` = 20/21 枚目 (M67a) で、
+  BVH の hit/miss 分岐が SSR と同型に増幅するのでローカル限定。`_ACOUSTIC` の囲いも bat にあるが
   **わざと立てていない** — 音響は整数距離 + sqrt + lerp だけで増幅する機構が無い)。
   ※ C++ の警告 0 は `/p:TreatWarningAsError=true` では**効かない** (ClCompile の項目メタデータなので
   グローバルプロパティは誰にも読まれない)。`Common.props` の `MyeWarnAsError` 橋渡しを使う。

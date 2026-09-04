@@ -2,7 +2,8 @@
 #
 # 方針: CI 専用の検証ロジックは書かない (二重メンテを作らない)。
 # CI 固有の事情は環境変数 4 種だけで注入し、bat 本体はローカルと 1 文字も変えない
-# (4 つ目の MYE_SHOT_SKIP_* は同じ役目の 6 本 = FXAA / TAA / SSR / FROXEL / FOG / PARTICLE):
+# (4 つ目の MYE_SHOT_SKIP_* は同じ役目の 7 本 = FXAA / TAA / SSR / FROXEL / FOG /
+#  PARTICLE / RT):
 #   MYE_EXTRA_ARGS   … 全 Editor.exe 実行へ後置する引数
 #                      --warp    = GPU の無い runner でも D3D11 デバイスを作る (WARP)
 #                      --no-audio = 音声デバイスが無いので XAudio2 を初期化しない
@@ -44,11 +45,18 @@
 #                      ★M63a が shot_verify.bat に囲いを作りながら**ここへの登録を
 #                        忘れていた** (M65e で発見・追加)。CI は M63 以降まだ一度も
 #                        回っていないので実害は出ていない
+#   MYE_SHOT_SKIP_RT … スクショ 20/21 枚目 (RT 反射 / RT GI、M67a) を飛ばす。
+#                      **SSR を降格させたのと同型**: BVH のトラバーサルは「レイが当たったか
+#                      外れたか」で離散的に分岐する演算なので、1 ULP の差が hit/miss を
+#                      反転させると画素が反射色 ⇔ IBL フォールバックへ丸ごと飛ぶ。
+#                      開発機とランナーで WARP の版が違う以上、この形は tol をいくつに
+#                      しても守れない (上げると本物の RT 回帰も一緒に見逃す)。
+#                      ローカルでは maxDiff=0 のビット一致なので降格で検出力は落ちない
 #
 # ★MYE_SHOT_SKIP_ACOUSTIC (スクショ 18/19 枚目、M65e) は**わざと立てていない**。
 #   波面は整数チャンファ距離 = 機種非依存、残光の符号化は sqrt (IEEE-754 で正しく
 #   丸められる)、合成は lerp と乗算だけで**しきい値分岐もテンポラル蓄積も無い** —
-#   上の 6 本を降格させた「1 ULP が増幅する」機構がどこにも無いので tol=3 で判定できる。
+#   上の 7 本を降格させた「1 ULP が増幅する」機構がどこにも無いので tol=3 で判定できる。
 #   ランナーで赤くなったら **tol を上げずに** ここへ 1 行足すこと (囲いは bat 側にある)。
 #
 # sim は CPU 専用なのでリプレイのワールドハッシュは WARP でも実 GPU でも同一 —
@@ -80,6 +88,7 @@ jobs:
       MYE_SHOT_SKIP_SSR: 1
       MYE_SHOT_SKIP_FOG: 1
       MYE_SHOT_SKIP_PARTICLE: 1
+      MYE_SHOT_SKIP_RT: 1
       MYE_COLLAB_REQUIRED: 1
     steps:
       - uses: actions/checkout@v4
@@ -128,7 +137,7 @@ jobs:
       #    --warp --font-embedded --no-fxaa 固定 = ラスタライザ・フォント・
       #    機種差を増幅する 1 パスを開発機と揃える。
       #    replay_verify が先に Release をビルドしている前提 (bat はビルドしない)
-      - name: screenshot regression (12 shots, no-fxaa/taa/ssr/froxel/fog/particle)
+      - name: screenshot regression (12 shots, no-fxaa/taa/ssr/froxel/fog/particle/rt)
         shell: cmd
         run: tools\shot_verify.bat
 
