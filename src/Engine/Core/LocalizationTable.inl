@@ -1077,6 +1077,10 @@ MYE_STR(Scm_DiscardUntracked,  "%d untracked file(s) will be DELETED from disk."
 MYE_STR(Scm_DiscardConfirm,    "Discard###ScmDiscardConfirm", "破棄する###ScmDiscardConfirm")
 MYE_STR(Scm_DiscardDone,       "Discarded %d file(s)", "%d 件の変更を破棄しました")
 MYE_STR(Scm_OpRunning,         "Running git...", "git を実行しています...")
+// ★15 秒を超えたときだけ出す (M66k、spec §4.4)。書式指定子を持たせない —
+//   経過秒を出すと「あと少しで終わる」と読まれる。伝えたいのは「終了してよい」の 1 点
+MYE_STR(Scm_OpStuckHint,       "Still running. If it never comes back, quit the editor: every document was saved before this started, so you only lose the undo history.",
+                               "まだ実行中です。戻らない場合はエディタを終了してください。開始前にすべての文書が保存されているので、失われるのは undo 履歴だけです。")
 MYE_STR(Scm_ResultTitle,       "Source control###ScmOpResult", "ソース管理###ScmOpResult")
 MYE_STR(Scm_StagePlanA,        "Applied in place - no restart, no reopen.",
                                "その場で反映されます (再起動も開き直しも不要)。")

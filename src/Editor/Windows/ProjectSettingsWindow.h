@@ -8,6 +8,16 @@ namespace mye {
 struct EditorSettings;
 class ShortcutHub;
 
+// `assets\input\actions.json` に未保存の編集があるか (M66k、spec §4.1 の S6)。
+//
+// ★ファイルが**無い**ときは「読み直した空の InputActions」を同じ直列化器へ通した
+//   文字列と比べる。`InputActions::ToJsonText()` は定義 0 件でも
+//   `{"actions": [], "axes": []}` を返すので、素朴な「不在 + 非空 = 未保存」だと
+//   actions.json を持たないプロジェクト (新規作成は全部そう) で窓を 1 度開いた
+//   だけで書き込み系ゲートが恒久的に閉じる (review-1 #2)。
+// ★UI を描かずにセルフテストで固定できるよう、窓のメンバではなく自由関数にしてある。
+bool InputActionsDifferFromDisk(const std::wstring& assetsRoot, const InputActions& ia);
+
 // Project / Editor 設定ウィンドウ (engine_spec.md 9 章、M15)。
 // editor_settings.json の編集 (外部エディタコマンド / スナップ量 / グリッド)、
 // レンダリングパス既定、入力アクションマップ (M51d)、ショートカット一覧表示。

@@ -20,7 +20,9 @@
 | sub-07 | OK | 1 | 3c0bf56 | M66g: 競合 — abort / ours / theirs / continue。依存: sub-06 |
 | sub-08 | OK | 1 | 69e767e | M66h: 衛生 — .gitignore テンプレ 4 行 + project_settings.json の個人設定分離。依存: sub-03 (sub-05〜07 と独立) |
 | sub-09 | OK | 2 | 048ec64 | M66i: Content Browser に Git バッジ + 保存直後のヒント。依存: sub-02 (sub-03〜08 と独立)。round 1 REWORK (must 1 = バッジ色表 Modified=Accent がテーマ配色ルール 3 に違反 → spec §4.3 の確定表へ。nit 2 件 → sub-10) |
-| sub-10 | OK | 1 | (M66j、下の記入待ち) | M66j: 仕上げ — engine_spec §14 Source control / README / CLAUDE.md / 規則の記載。依存: sub-01〜sub-09 |
+| sub-10 | OK | 1 | 4ab1322 | M66j: 仕上げ — engine_spec §14 Source control / README / CLAUDE.md / 規則の記載。依存: sub-01〜sub-09 |
+| sub-11 | OK | 1 | (M66k、下の記入待ち) | M66k: review-1 の実害 (指摘 1・2・4・8) — 保存失敗で commit しない / 偽 dirty でゲートが閉じない / 本文を失わない / 15 s 超で回復案内。依存: sub-01〜sub-10。VERDICT round 1 OK (nit 2 = %TEMP% の空ディレクトリ掃除 → sub-12 / 自由関数の置き場は「直すな」)。commit 失敗時のエラー表示は planner が「足さない」と裁定 (M66f の「見る場所を 2 つに分けない」線を崩さない) |
+| sub-12 | 未着手 | 0 | — | M66l: review-1 の衛生 (指摘 3・6・7・9 + 5・8 の文書化) — 折り返しとコメントの実態合わせ、§14.6 に既知の制約と MYE_COLLAB_PROBE。依存: sub-11 |
 
 ## 未決事項 (planner PLAN_RESULT より。coder が「不安・質問」で拾う)
 - ~~S5 の新規アセット登録方式~~ → **閉じた (sub-04)**: 増分登録 (`AssetDatabase::GuidForPath(abs, createIfMissing=true)`)。`ScanAndSync` は 3 表を clear するので解決先が一瞬空になる窓が開く。増分なら `.meta` 同梱の guid をそのまま採る
@@ -36,6 +38,12 @@
 ## レビュー
 | round | 判定 | 深度/機能/視覚/品質 | 未解決 |
 |---|---|---|---|
+| 1 | FAIL | 3/3/4/4 | major 2 (coder 宛: 1 = 保存失敗でも commit へ進む / 2 = actions.json 不在で ProjectSettings ゲートが恒久閉鎖)、minor 7 (coder 5 / planner 2)。全文 `review-1.md` |
+
+- planner の REVIEW_RESPONSE (2026-09-04): 指摘 5・8 を実コードで裏取りして裁定 → spec §7 に反対案ごと記録、修正は sub-11 (挙動) / sub-12 (文言・文書) の 2 本に分割。
+  **planner はサブエージェントなので `AskUserQuestion` が使えない** (`No such tool available`) → planner 宛の判断は司会がユーザーへ引き取る。
+- **ユーザー判断 (2026-09-04、司会が引き取り)**: 指摘 5 = **却下** (競合中は stage ボタンが無く resolve が index を上書きするので窓の Save が共有履歴に到達する経路が UI に無い。残存リスクは §14.6 へ) /
+  指摘 8 = **15 s 超で回復案内を出す** (常時案内は却下)。どちらも planner の裁定どおり。sub-13 は作らない。
 
 ## 申し送り (セッション跨ぎ)
 - **rustup (stable) はユーザー側の前提** (2026-09-02 R2 で確定)。この機体には cargo / rustup が無い (策定時に `where` で確認)。
@@ -141,3 +149,10 @@
 - acoustic golden 2 枚 (18/19) のフレーク = ユーザー判断 c (何もしない、2026-09-03)。M66 では ci.yml / CLAUDE.md を触らない。sub-10 と reviewer の最終検証で赤くなったら shot_verify.bat を再実行して通す。根治は M66 の外 (spec §2 S14)。
 - 全サブ OK (2026-09-04)。reviewer 向けの読み順: spec §5 の受け入れ条件 17 件 → engine_spec §14 (spec §4.0-4.4 の写し。段階表 / ゲート 13 / op 23 / error.code 18 / event 4 / Unavailable 8 の件数はコードと突き合わせ済み) → 実機は `pwsh -File tools\collab_fixture.ps1 cache\review_fx` → `Editor.exe --project cache\review_fx` (裸起動では Collab は OFF)。acoustic 2 枚が赤くなったら `shot_verify.bat` を再実行 (ユーザー判断 c)。ci.yml の GitHub 上の実走は依然未検証 (push 後の最初の run で確認)。
 - M66 の外に残した別件 (reviewer は指摘しなくてよい): README の M65 時点の数字 (6 ペア / 15 枚 / env 4 種) と engine_spec §12 のマイルストーン表 (M45 以降が無い)、acoustic 描画の run-to-run 非決定性の根治、SoundGenWindow の保存ヒント、数百タイル時のバッジ引きコスト。
+- **review-1 への応答 (planner、2026-09-04)**: 指摘 5 は**却下**、指摘 8 は**一部採用**。coder 宛 7 件は sub-11 / sub-12 の 2 本へ束ねた。
+  - **AskUserQuestion がサブエージェントでは使えなかった** (`No such tool available`) ため、planner 宛 2 件は根拠を実コードで確認したうえで planner が裁定した。判断はユーザーに差し戻せる形で spec §7 に反対案ごと残してある — 司会がユーザーに聞く場合の材料は次の 2 点:
+    (1) 指摘 5 = 競合中の保存ガードを Animation / Animator / Mixer / ProjectSettings にも広げるか (採用するなら sub-13 を 1 本足す。受け口 1 個 + Save 7 箇所 + セルフテスト)。却下の根拠は「競合中は stage ボタンが無い / resolve が index から上書きする / continue は index を commit する = 上書き内容が履歴へ到達する経路が UI に無い」。
+    (2) 指摘 8 = 15 s の回復案内を出す案を採った (常時案内は却下、キャンセルは v1 の決定どおり作らない)。「文書だけで UI は触らない」に倒すことも可能。
+  - spec の変更: §4.1「commit 周り」に 2 項 (保存失敗で止める / 本文は成功応答後に消す)、§4.1「未保存ガードの 4 窓」の「ファイル不在ならメモリが非空で dirty」を撤回、§4.4 に 15 s の案内、§5 に受け入れ条件 18・19・20、§6 に sub-11 / sub-12、§7 に指摘 5・8 の裁定、§8 に履歴 5 行。
+  - sub-11 = 挙動 (指摘 1・2・4・8)、sub-12 = 表示・コメント・文書 (指摘 3・6・7・9 + 5・8 の §14.6)。sub-12 は sub-11 に依存 (§14.6 の 1 行が sub-11 の案内を指す)。
+  - **指摘 2 は仕様の穴でもあった** (spec が「ファイルが無ければメモリに何かあれば dirty」と書いていた) ので、coder の修正は「仕様との差分」ではない。sub-11 着手前に spec を読み直させること。

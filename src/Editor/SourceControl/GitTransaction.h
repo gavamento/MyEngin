@@ -72,6 +72,21 @@ StrId GateBlockerText(GateBlocker b);
 //   再生中 / ビルド中) は競合の解決でも同じように効かせる
 std::vector<GateBlocker> BlockersForConflictOps(const std::vector<GateBlocker>& all);
 
+// 実行中モーダルに回復案内を出し始めるまでの実時間 (M66k、spec §4.4)。
+constexpr double kStuckHintSec = 15.0;
+
+// 実行中モーダルに「エディタを終了して回復してください」を出すか (M66k)。
+//
+// なぜ「しきい値つき」か: 書き込み系にキャンセルは作らない (打ち切っても git は
+// 走り続け、working tree が半端に書き換わったままエディタだけが『やめた』と思い込む)
+// という v1 の決定は動かさない。一方でチームリポの `pre-commit` / `pre-push` hook は
+// git が同期実行するので、**返らない git は想定内の事故**であり、そのとき
+// Phase::Running のモーダルはボタンが 1 つも無い = エディタ全体が固まる。
+// ただし常時案内すると 200 ms で終わる通常の commit でも毎回「終了して回復」が出て
+// 警告として読まれなくなるので、`kStuckHintSec` を超えたときだけ出す。
+// ★時間の分岐は目で確かめる手段が無いので純関数にしてセルフテストで固定する。
+bool ShouldShowStuckHint(double elapsedSec);
+
 // 4 窓の未保存判定 (直列化してディスクと比較する = 高い)。
 // GitTransaction が 500 ms キャッシュする
 struct DocumentDirty {
@@ -208,6 +223,10 @@ private:
     std::vector<uint64_t> metaGuidBefore_;
     std::string activeSceneRel_; // 「今開いているシーン」(予測時にも実行時にも取り直す)
     std::wstring projectRoot_;   // OnImGui で毎フレーム控える (予測は ctx を持たない)
+    // Phase::Running に入った時刻 (ImGui::GetTime() = 実時間の秒)。回復案内のしきい値用。
+    // ★ImGui の時計を使う: git は DLL の worker が回すので**フレームは進み続ける**
+    //   (モーダルが入力を止めているだけ)。sim は 1 バイトも触らないので決定論に無関係
+    double runningSince_ = 0.0;
 
     // ---- checkout (M66e) / pull (M66f) ----
     std::string target_;                          // 切り替え先のブランチ名 (pull では空)

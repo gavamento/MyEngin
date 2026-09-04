@@ -812,23 +812,40 @@ void SourceControlSession::StageSavedPath(const std::wstring& absPath)
     StageRows({ row });
 }
 
-void SourceControlSession::Commit(const std::string& message)
+void SourceControlSession::Commit(const std::string& message, WriteDoneFn done)
 {
-    if (!client_.Ready() || repoState_ != Unavailable::None || message.empty()) {
+    if (message.empty()) {
+        // 窓側でも止めているので通常は来ない。**黙って return しない** —
+        // 呼び手は「応答が来たら入力欄を空にする」で待つので、送れなかったことを返す
+        if (done) {
+            done(false, collaberr::kBadRequest, "the commit message is empty");
+        }
         return;
     }
-    client_.Request(collabop::kCommit, { { "message", message } }, [this](const nlohmann::json& msg) {
-        if (!ApplyWriteResult(msg)) {
-            return;
+    if (!client_.Ready() || repoState_ != Unavailable::None) {
+        if (done) {
+            done(false, collaberr::kServiceDead, "source control is not available");
         }
-        lastCommit_ = msg["result"].value("head", std::string());
-        MYE_LOG_INFO("[collab] commit %s", lastCommit_.c_str());
-        // 履歴を一度でも見ていたら取り直す (History タブを開いたまま commit した
-        // ときに、自分のコミットが出てこないのは明らかに壊れて見える)
-        if (historyValid_ && historyCount_ > 0) {
-            RequestLog(historyCount_);
-        }
-    });
+        return;
+    }
+    client_.Request(collabop::kCommit, { { "message", message } },
+                    [this, done = std::move(done)](const nlohmann::json& msg) {
+                        const bool ok = ApplyWriteResult(msg);
+                        if (ok) {
+                            lastCommit_ = msg["result"].value("head", std::string());
+                            MYE_LOG_INFO("[collab] commit %s", lastCommit_.c_str());
+                            // 履歴を一度でも見ていたら取り直す (History タブを開いたまま
+                            // commit したときに、自分のコミットが出てこないのは明らかに
+                            // 壊れて見える)
+                            if (historyValid_ && historyCount_ > 0) {
+                                RequestLog(historyCount_);
+                            }
+                        }
+                        // ★失敗も必ず返す。窓はこれを見て「本文を残す」を決める
+                        if (done) {
+                            done(ok, errorCode_, errorDetail_);
+                        }
+                    });
 }
 
 void SourceControlSession::RequestLog(int n)

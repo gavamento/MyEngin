@@ -18,9 +18,13 @@
 #include "Editor/SourceControl/PairRule.h"
 #include "Editor/SourceControl/SourceControlState.h"
 #include "Editor/SourceControl/StageClassifier.h"
+#include "Editor/Windows/ProjectSettingsWindow.h" // InputActionsDifferFromDisk (M66k)
+#include "Editor/Windows/SourceControlWindow.h"   // SaveThenCommit / ShouldClearCommitMessage (M66k)
+#include "Engine/Core/Hash.h"
 #include "Engine/Core/Localization.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Engine/Project.h"
+#include "Engine/Platform/InputActions.h"
 #include "Engine/Platform/PathUtil.h"
 #include "Engine/Renderer/ImGuiTheme.h" // themeColor (M66i)
 
@@ -1211,6 +1215,92 @@ bool RunSourceControlSelfTest()
               "op kinds: network writes never time out, remote_state does");
     }
 
+    // ---- (j) M66k: review-1 の実害 3 件 (spec の受け入れ条件 18 / 19 / 20) ----
+    {
+        // (j1) 受け入れ条件 18 前半: 「保存してコミット」の 1 手目が失敗したら
+        //      stage も commit もしない。**ここが開いていると、既に stage 済みの
+        //      別ファイルだけが「保存してコミット」の名前で共有履歴に残る**
+        int staged = 0;
+        int committed = 0;
+        std::wstring stagedPath;
+        auto stage = [&](const std::wstring& p) {
+            ++staged;
+            stagedPath = p;
+        };
+        auto commit = [&] { ++committed; };
+        check(!SaveThenCommit([] { return std::wstring(); }, stage, commit) && staged == 0
+                  && committed == 0,
+              "save+commit: a failed save stages nothing and commits nothing");
+        check(SaveThenCommit([] { return std::wstring(L"C:\\proj\\assets\\a.scene.json"); },
+                             stage, commit)
+                  && staged == 1 && stagedPath == L"C:\\proj\\assets\\a.scene.json"
+                  && committed == 1,
+              "save+commit: a successful save stages that document, then commits");
+        check(!SaveThenCommit({}, stage, commit) && staged == 1 && committed == 1,
+              "save+commit: with no save hook wired nothing is staged or committed");
+
+        // (j2) 受け入れ条件 18 後半: コミット本文は**成功応答を受けてから**消す
+        check(!ShouldClearCommitMessage(false, "fix the fog", "fix the fog"),
+              "commit message: a failed commit keeps what the user wrote");
+        check(ShouldClearCommitMessage(true, "fix the fog", "fix the fog"),
+              "commit message: a successful commit clears the box");
+        check(!ShouldClearCommitMessage(true, "fix the fog", "fix the fog and the sky"),
+              "commit message: text typed while the commit was in flight is not thrown away");
+
+        // 送れなかった commit も**必ず 1 回応答する** (呼ばないと窓が「投げた本文」を
+        // 抱えたまま、消してよいのか分からない状態で固まる)
+        SourceControlSession scm;
+        std::error_code sec;
+        const fs::path noDll = fs::temp_directory_path() / L"mye_scm_no_dll";
+        fs::create_directories(noDll, sec);
+        scm.Start(noDll.wstring(), noDll.wstring(), false, 5);
+        int answers = 0;
+        bool sawOk = true;
+        std::string code;
+        auto record = [&](bool ok, const std::string& c, const std::string&) {
+            ++answers;
+            sawOk = ok;
+            code = c;
+        };
+        scm.Commit("anything", record);
+        check(answers == 1 && !sawOk && code == collaberr::kServiceDead,
+              "commit: a commit that could not be sent answers with a failure");
+        scm.Commit("", record);
+        check(answers == 2 && code == collaberr::kBadRequest,
+              "commit: an empty message is refused with an answer, not with silence");
+
+        // (j3) 受け入れ条件 19: actions.json が無いプロジェクトで偽の未保存を立てない
+        std::error_code ec;
+        const fs::path assets = fs::temp_directory_path() / L"mye_scm_actions";
+        fs::remove_all(assets, ec);
+        fs::create_directories(assets, ec);
+        InputActions ia;
+        check(!InputActionsDifferFromDisk(assets.wstring(), ia),
+              "project settings: a project without actions.json is not dirty");
+        InputActionDef def;
+        def.name = "Jump";
+        def.nameHash = HashStr(def.name);
+        ia.Actions().push_back(def);
+        check(InputActionsDifferFromDisk(assets.wstring(), ia),
+              "project settings: an action added but not saved is dirty (file still absent)");
+        check(ia.Save(assets.wstring()), "project settings: actions.json was written");
+        check(!InputActionsDifferFromDisk(assets.wstring(), ia),
+              "project settings: saving clears the dirty state");
+        // 空の root は「まだ窓を開いていない」= 判定しない
+        check(!InputActionsDifferFromDisk(std::wstring(), ia),
+              "project settings: without an assets root there is nothing to compare");
+        fs::remove_all(assets, ec);
+
+        // (j4) 受け入れ条件 20: 実行中モーダルの回復案内は 15 s を超えたときだけ
+        check(!ShouldShowStuckHint(0.0) && !ShouldShowStuckHint(0.2)
+                  && !ShouldShowStuckHint(14.9) && !ShouldShowStuckHint(kStuckHintSec),
+              "stuck hint: a normal write op (and the threshold itself) shows nothing");
+        check(ShouldShowStuckHint(15.1) && ShouldShowStuckHint(600.0),
+              "stuck hint: a git that never comes back gets the recovery note");
+        check(Tr(StrId::Scm_OpStuckHint)[0] != '\0',
+              "stuck hint: the recovery note has a localized text");
+    }
+
     // ---- 実 DLL 経由の結線 (MYE_COLLAB_PROBE=<repo> のときだけ) ----
     // ★窓のボタン -> Session -> DLL -> git の 1 本を、UI を触らずに実走させる。
     //   ここを通していないと「ゲートは正しいがボタンが何にも繋がっていない」に
@@ -1292,6 +1382,33 @@ bool RunSourceControlSelfTest()
             std::error_code ec;
             check(!fs::exists(scratch, ec),
                   "probe: reverting an untracked file deletes it from disk");
+
+            // M66k: commit の**失敗**を実 DLL で 1 回通す (review-1 #4)。
+            // index に何も無ければ git は nothing_to_commit で必ず落ちるので、
+            // **リポジトリを 1 バイトも変えずに**「失敗応答 → 本文を残す」を実走できる。
+            // ★staged が 1 件でもある / マージ途中なら**やらない** — 走らせると
+            //   本物のコミットが増えてしまう (プローブは repo を変えない約束)
+            bool anythingStaged = scm.MergeInProgress() || scm.RebaseInProgress();
+            for (const PairedEntry& e : scm.Model().entries) {
+                if (e.indexState != ChangeState::None || e.conflict) {
+                    anythingStaged = true;
+                }
+            }
+            if (anythingStaged) {
+                MYE_LOG_INFO("[probe] skipped the failing-commit check (the index is not empty)");
+            } else {
+                const std::string sent = "probe: this commit must fail";
+                bool cDone = false;
+                bool cOk = true;
+                scm.Commit(sent, [&cDone, &cOk](bool ok, const std::string&, const std::string&) {
+                    cDone = true;
+                    cOk = ok;
+                });
+                check(pump([&cDone] { return cDone; }, 30000) && !cOk,
+                      "probe: a commit with an empty index answers with a failure");
+                check(!ShouldClearCommitMessage(cOk, sent, sent),
+                      "probe: a failed commit leaves the message in the box");
+            }
 
             // M66e: ブランチの一覧と checkout を**実 DLL 経由**で 1 往復させる。
             // ★リポジトリを変えない形にしてある (今いるブランチへ切り替える) —

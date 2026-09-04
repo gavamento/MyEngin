@@ -26,19 +26,26 @@ std::string Normalize(const std::string& s)
 
 } // namespace
 
-bool TextDiffersFromDisk(const std::wstring& path, const std::string& inMemory)
+bool TextDiffersFromDisk(const std::wstring& path, const std::string& inMemory,
+                         const std::string& whenMissing)
 {
     if (path.empty()) {
         return false; // 書き出し先が決まっていない = まだ「保存すべきもの」が無い
     }
     std::ifstream f(std::filesystem::path(path), std::ios::binary);
     if (!f) {
-        // ファイルが無い = 一度も保存していない。中身があるなら未保存の変更そのもの
-        return !Normalize(inMemory).empty();
+        // ファイルが無い = 一度も保存していない。呼び手が渡した「読み直した既定状態」と
+        // 比べる (2 引数版は空文字列 = 「中身があるなら未保存」の従来どおり)
+        return Normalize(inMemory) != Normalize(whenMissing);
     }
     const std::string onDisk((std::istreambuf_iterator<char>(f)),
                              std::istreambuf_iterator<char>());
     return Normalize(onDisk) != Normalize(inMemory);
+}
+
+bool TextDiffersFromDisk(const std::wstring& path, const std::string& inMemory)
+{
+    return TextDiffersFromDisk(path, inMemory, std::string());
 }
 
 } // namespace mye

@@ -102,6 +102,13 @@ std::vector<GateBlocker> ComputeBlockers(const GateInputs& in)
     return out;
 }
 
+bool ShouldShowStuckHint(double elapsedSec)
+{
+    // ★境界は「超えたら」。ちょうど 15.0 では出さない (フレーム時刻の丸めで
+    //   出たり出なかったりする値を仕様の境界にしない)
+    return elapsedSec > kStuckHintSec;
+}
+
 std::vector<GateBlocker> BlockersForConflictOps(const std::vector<GateBlocker>& all)
 {
     std::vector<GateBlocker> out;
@@ -375,6 +382,8 @@ void GitTransaction::BeginOp(EngineContext& ctx, SourceControlSession& scm)
     errorDetail_.clear();
     reportPaths_.clear();
     phase_ = Phase::Running;
+    // ここは確認モーダルのボタン内 = ImGui のフレーム中なので GetTime() が読める
+    runningSince_ = ImGui::GetTime();
     // ★checkout / pull / merge_abort / continue は**同じ受け取り方**。違うのは
     //   投げる op だけで、応答 (TreeOpResult) から先の後処理は 1 本に寄せてある
     if (IsTreeOp(op_)) {
@@ -841,6 +850,17 @@ void GitTransaction::OnImGui(EngineContext& ctx, SourceControlSession& scm)
             ImGui::Spacing();
             if (phase_ == Phase::Running) {
                 ImGui::TextDisabled("%s", Tr(StrId::Scm_OpRunning));
+                // ★15 s を超えたときだけ回復手順を出す (spec §4.4、M66k)。
+                //   キャンセルは作らない (打ち切っても git は走り続ける) が、
+                //   hook が返らない git は塞げないので「終了すれば失うのは undo 履歴
+                //   だけ」であることを、固まった当人が読める場所に置く
+                if (ShouldShowStuckHint(ImGui::GetTime() - runningSince_)) {
+                    ImGui::PushStyleColor(ImGuiCol_Text, themeColor::Warning);
+                    ImGui::PushTextWrapPos(420.0f);
+                    ImGui::TextWrapped("%s", Tr(StrId::Scm_OpStuckHint));
+                    ImGui::PopTextWrapPos();
+                    ImGui::PopStyleColor();
+                }
             } else {
                 const StrId confirmId = op_ == OpKind::Checkout ? StrId::Scm_SwitchConfirm
                     : op_ == OpKind::Pull                       ? StrId::Scm_PullConfirm

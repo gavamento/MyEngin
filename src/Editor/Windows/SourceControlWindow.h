@@ -52,6 +52,24 @@ struct SourceControlHost {
     std::function<void()> applyGitignore;
 };
 
+// 「保存してコミット」の 3 手 (spec §4.1「commit 周り」、M66k)。
+// **1 手目 (保存) が失敗したら stage も commit もしない** — そのまま commit すると
+// 既に stage 済みの別ファイルだけが「保存してコミット」の名前で履歴に残り、
+// 押した人の意図と違う中身が共有履歴へ入る (review-1 #1)。
+// 戻り値 = commit まで進んだか (false = 保存で止まった → 本文は消さない)。
+// ★UI を描かずにセルフテストで通せるよう、副作用を全部フックに出してある。
+bool SaveThenCommit(const std::function<std::wstring()>& save,
+                    const std::function<void(const std::wstring&)>& stage,
+                    const std::function<void()>& commit);
+
+// commit の応答を受けたときに入力欄を空にしてよいか (M66k)。
+//   ok      … 応答が成功だったか (nothing_to_commit / identity_missing / hook 失敗で普通に失敗する)
+//   sent    … 投げた本文
+//   current … 今の入力欄
+// ★失敗なら残す (書き直させない)。成功でも「応答を待つ間に書き換えられていたら」残す —
+//   消してよいのは「自分が投げたものがまだそのまま置いてある」ときだけ。
+bool ShouldClearCommitMessage(bool ok, const std::string& sent, const std::string& current);
+
 // Source Control 窓 (M66b = 読み取り、M66c = stage / unstage / commit / History / diff)。
 //
 // ★状態 (SourceControlSession) は EditorApp が持つ。窓が閉じていても status は
@@ -89,6 +107,8 @@ private:
     void DrawDiffWindow(SourceControlSession& scm);
     // compact = 窓が低いとき (ラベルを省いて入力欄を 2 行にする)
     void DrawCommitBox(SourceControlSession& scm, const SourceControlHost& host, bool compact);
+    // 今の入力欄を commit へ投げる。**成功応答を受けてから**入力欄を空にする (M66k)
+    void SubmitCommit(SourceControlSession& scm);
     void DrawHistory(SourceControlSession& scm);
     // ツリーを 1 ノード分描く (再帰)
     void DrawNode(const SourceControlModel& model, int index);

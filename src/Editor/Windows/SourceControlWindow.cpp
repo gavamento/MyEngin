@@ -993,8 +993,7 @@ void SourceControlWindow::DrawCommitBox(SourceControlSession& scm, const SourceC
         HasVisibleText(commitMessage_) && !scm.WriteInFlight() && !identityMissing;
     ImGui::BeginDisabled(!canCommit);
     if (ImGui::Button(Tr(StrId::Scm_Commit))) {
-        scm.Commit(commitMessage_);
-        commitMessage_[0] = '\0';
+        SubmitCommit(scm);
     }
     if (host.sceneDirty) {
         ImGui::SameLine();
@@ -1003,15 +1002,50 @@ void SourceControlWindow::DrawCommitBox(SourceControlSession& scm, const SourceC
             // ★stage を挟むのが要点。保存しただけでは index は古いままなので、
             //   そのまま commit すると**保存前の中身**が記録される (「保存して
             //   コミット」を押した人の意図と正反対のものが残る)
-            const std::wstring saved = host.saveDocument ? host.saveDocument() : std::wstring();
-            if (!saved.empty()) {
-                scm.StageSavedPath(saved);
-            }
-            scm.Commit(commitMessage_);
-            commitMessage_[0] = '\0';
+            // ★1 手目が失敗したら残り 2 手は**やらない** (M66k、review-1 #1)。
+            //   保存失敗のトーストは SaveCurrentScene / 競合ガードが既に出しているので
+            //   ここで二重に出さない。本文も消さない (SubmitCommit を呼ばない = 消えない)
+            SaveThenCommit(
+                host.saveDocument, [&scm](const std::wstring& p) { scm.StageSavedPath(p); },
+                [this, &scm] { SubmitCommit(scm); });
         }
     }
     ImGui::EndDisabled();
+}
+
+bool SaveThenCommit(const std::function<std::wstring()>& save,
+                    const std::function<void(const std::wstring&)>& stage,
+                    const std::function<void()>& commit)
+{
+    // 保存フックが無い = 保存できない (EditorApp が配線していない)。
+    // 「保存してコミット」なのだから、保存せずに commit だけ通してはいけない
+    const std::wstring saved = save ? save() : std::wstring();
+    if (saved.empty()) {
+        return false;
+    }
+    if (stage) {
+        stage(saved);
+    }
+    if (commit) {
+        commit();
+    }
+    return true;
+}
+
+bool ShouldClearCommitMessage(bool ok, const std::string& sent, const std::string& current)
+{
+    return ok && sent == current;
+}
+
+void SourceControlWindow::SubmitCommit(SourceControlSession& scm)
+{
+    const std::string sent = commitMessage_;
+    scm.Commit(sent, [this, sent](bool ok, const std::string&, const std::string&) {
+        // ★失敗の表示はヘッダの赤字 (ErrorText) が受け持つ。ここは本文の後始末だけ
+        if (ShouldClearCommitMessage(ok, sent, commitMessage_)) {
+            commitMessage_[0] = '\0';
+        }
+    });
 }
 
 void SourceControlWindow::DrawHistory(SourceControlSession& scm)

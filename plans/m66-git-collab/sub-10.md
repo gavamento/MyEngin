@@ -1,7 +1,7 @@
 # sub-10: M66j: 仕上げ — engine_spec §14 Source control / README / CLAUDE.md / 規則の記載
 
 - 依存: sub-01〜sub-09 (全部 OK 後)
-- 状態: OK (commit: M66j — ハッシュは harness.md のサブ進捗表)
+- 状態: OK (commit 4ab1322)
 - 往復: 1
 
 ## やること

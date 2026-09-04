@@ -424,15 +424,27 @@ void ProjectSettingsWindow::DrawInputSection(EngineContext& ctx)
     }
 }
 
+bool InputActionsDifferFromDisk(const std::wstring& assetsRoot, const InputActions& ia)
+{
+    if (assetsRoot.empty()) {
+        return false;
+    }
+    // ToJsonText() は Save の実体そのもの = 「保存したらこうなる」文字列。
+    // ★不在時の相手は**既定構築した InputActions を同じ直列化器へ通したもの** —
+    //   Load は不在なら空マップで返る (InputActions::Load) ので、これが
+    //   「ディスクを読み直した状態」と一致する
+    const InputActions fresh;
+    return TextDiffersFromDisk(assetsRoot + L"\\input\\actions.json", ia.ToJsonText(),
+                               fresh.ToJsonText());
+}
+
 bool ProjectSettingsWindow::HasUnsavedChanges() const
 {
     if (PhysicsLayerNames::Get().DiffersFromDisk() || PartTagNames::Get().DiffersFromDisk()) {
         return true;
     }
-    if (inputActions_ != nullptr && !assetsRoot_.empty()) {
-        // ToJsonText() は Save の実体そのもの = 「保存したらこうなる」文字列
-        return TextDiffersFromDisk(assetsRoot_ + L"\\input\\actions.json",
-                                   inputActions_->ToJsonText());
+    if (inputActions_ != nullptr) {
+        return InputActionsDifferFromDisk(assetsRoot_, *inputActions_);
     }
     return false;
 }

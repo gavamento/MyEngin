@@ -289,6 +289,12 @@ public:
     // 外部での HEAD 移動を 1 回だけ取り出す (EditorApp がトーストにする)
     bool TakeHeadMoved();
 
+    // 書き込み系 op の応答 1 件。done(ok, code, detail) は応答が届いたときに 1 回だけ
+    // 呼ばれる。**送れなかったとき (サービス停止など) も必ず 1 回呼ぶ** — 呼ばないと
+    // 呼び手 (GitTransaction は一括モード、窓は入力欄) が待ったまま帰ってこない
+    using WriteDoneFn =
+        std::function<void(bool ok, const std::string& code, const std::string& detail)>;
+
     // ---- M66c: stage / unstage / commit / log / diff / identity ----
     // 選択された行を対の規則で束ねてから stage する。
     // `.meta` が欠けている資産はここで EnsureMeta してから git へ渡す
@@ -298,8 +304,11 @@ public:
     // 「保存してコミット」用: 今保存した文書 (絶対パス) を対の規則で stage する。
     // リポジトリの外なら何もしない
     void StageSavedPath(const std::wstring& absPath);
-    // 本文は空でないこと (空はサービスが bad_request で弾くが、窓側でも止める)
-    void Commit(const std::string& message);
+    // 本文は空でないこと (空はサービスが bad_request で弾くが、窓側でも止める)。
+    // ★done は省略可。**成功したときだけ入力欄を空にする**ために窓が渡す —
+    //   commit は nothing_to_commit / identity_missing / hook 失敗で普通に失敗するので、
+    //   投げた直後に消すとユーザーが書いた本文がどこにも残らない (review-1 #4)
+    void Commit(const std::string& message, WriteDoneFn done = {});
     void RequestLog(int n);
     void RequestDiff(const std::string& path, bool staged);
     void RequestIdentity();
@@ -319,9 +328,7 @@ public:
     // ★**GitTransaction 経由でのみ呼ぶこと**。ゲート (未保存 / 再生中 / ビルド中) と
     //   ReloadHub の一括適用が掛かっていない状態で working tree を書き換えると、
     //   エディタが掴んだままのファイルが消える / 中間状態でホットリロードが走る。
-    //   done(ok, code, detail) は応答が届いたときに 1 回だけ呼ばれる
-    using WriteDoneFn =
-        std::function<void(bool ok, const std::string& code, const std::string& detail)>;
+    //   done(ok, code, detail) は応答が届いたときに 1 回だけ呼ばれる (上の WriteDoneFn)
     void Revert(const std::vector<std::string>& paths, WriteDoneFn done);
 
     // ---- M66e: branches / branch_create / checkout / diff_names ----

@@ -118,9 +118,19 @@ MyeCollab.dll (Rust cdylib, tools\collab\) … worker スレッド 1 本 (git �
 
 **未保存ガードの 4 窓** (S6 = a): `AnimationWindow` / `AnimatorControllerWindow` / `AudioMixerWindow` /
 `ProjectSettingsWindow` に `bool HasUnsavedChanges() const` を追加。判定 = 「その窓が Save で書き出す
-JSON をメモリから直列化した文字列」と「ディスクの現物」の比較 (ファイルが無ければ「メモリに何かあれば dirty」)。
+JSON をメモリから直列化した文字列」と「ディスクの現物」の比較。
 評価は `GitTransaction::CanRunGitWriteOp` からのみ呼び、結果は 500 ms キャッシュ (毎フレーム直列化しない)。
 ProjectSettings の render-path ラジオ (永続化されない) は対象外。
+- **ディスクにファイルが無いときの判定 (review-1 #2 で訂正)**: 「メモリに何かあれば dirty」は**誤り**。
+  未保存とは「今 git に working tree を書き換えられたら失われる**ユーザーの編集**がある」ことであって、
+  「ディスクとバイト一致しない」ことではない。ファイルが無いときは**ディスクを読み直した既定状態**
+  (= 何も読み込まなかったときの状態) を同じ直列化器に通した文字列と比べ、一致するなら dirty ではない。
+  根拠: `InputActions::ToJsonText()` は定義 0 件でも `{"actions": [], "axes": []}` を返す (`InputActions.cpp:325`) ため、
+  素朴な「不在 + 非空 = dirty」では **`assets\input\actions.json` を持たない全プロジェクト**
+  (`ProjectTemplates::CreateProject` は作らない) で Project Settings 窓を 1 度開くだけで
+  `ProjectSettingsDirty` が立ちっぱなしになり、revert / checkout / pull / abort / continue が恒久的に塞がる。
+  方式は `PhysicsLayerNames::DiffersFromDisk` (`PhysicsLayerNames.h:20-25`) と揃える — あちらは同じ罠を
+  「ディスクを読み直した表と比べる」ことで意図的に避けている。
 
 **対の規則 (決定 7 の確定版、sub-02 round 1 で修正)**: 本体 `X` に `X.meta` を束ねる。地形は
 **`x.terrain.json` ⇄ `x.terrain.edit`** (`TerrainEdit.cpp:469 EditPathFor` = `.json` を `.edit` に差し替える。
@@ -137,6 +147,16 @@ ProjectSettings の render-path ラジオ (永続化されない) は対象外�
 - `diff` は 256 KB で打ち切り `truncated: true` を返す (巨大差分で 1 フレーム固まるのを防ぐ)。
 - 書き込み系 op の応答は `{"status": <実行後 status>}` を載せ、Rust 側で `last_status` / `last_head` も更新する
   (自分の commit が「外部で HEAD が移動」トーストを誘発しない)。revert / checkout / pull も同じ型。
+- **保存に失敗したら stage も commit もしない (review-1 #1 で追記)**: 「保存してコミット」の 1 手目が失敗したら
+  (`saveDocument` が空を返す = 保存後もまだ dirty、または競合ガードで止められた) **そこで止める**。
+  保存失敗は実在する経路で (競合中の保存ガード / `SceneSerializer::SaveToFile` が false = 読み取り専用・ロック・書き込み不能)、
+  そのまま commit すると **既に stage 済みの別ファイルだけが「保存してコミット」の名前で履歴に残る** —
+  押した人の意図と違う中身が共有履歴に入る、この 3 手を定めた理由そのものの事故。
+  失敗したことは伝える (トーストは保存側が出す) が、**コミット本文は消さない**。
+- **コミット本文は成功応答を受けてから消す (review-1 #4 で追記)**: `commit` は `nothing_to_commit` /
+  `identity_missing` / hook 失敗で普通に失敗する (`ops.rs` の分類)。投げた直後に入力欄を空にすると、
+  ユーザーが書いた本文は**どこにも残らない**。応答が ok のときだけ空にし、失敗なら本文を残したまま
+  エラーを見せる (書き直させない)。
 
 **ブランチ周り (sub-05 round 1 で確定)**:
 - **実行後の変更集合は op の応答に載せる** (`checkout` は `{branch, head, names, status}`)。C++ から 2 往復目の `diff_names` を投げる形にしない — 間に監視由来の status が割り込み「切り替わったが何が変わったか分からない」状態が生まれる。pull / continue / abort も同じ型。
@@ -239,6 +259,15 @@ ImGui の ini は `p_open` を保存しない (保持するのは名前付きレ
   managed host の後・replay の前。環境変数 `MYE_COLLAB_REQUIRED=1` を CI env に追加 (selftest の DLL 往復を
   SKIP ではなく失敗にする。ローカルで DLL 不在なら SKIP + ログ 1 行)。既存 6 ステップと環境変数 4 種は不変。
 - **タイムアウト**: `hello` 5 s、読み取り系 30 s、書き込み系は無期限 (キャンセル無し)。
+  打ち切りを作らないのは「打ち切っても git は走り続け、working tree が半端に書き換わったまま
+  エディタだけが『やめた』と思い込む」から (v1 で確定、再議論しない)。
+  **代わりに回復手段を案内する (review-1 #8)**: 実行中モーダル (`GitTransaction` の `Phase::Running`) は
+  ボタンが 1 つも無く、git が返らない限りエディタ全体が入力を受け付けない。チームリポの
+  `pre-commit` / `pre-push` hook は git が同期実行するので、返らない git は想定内の事故。
+  **経過が `kStuckHintSec` (= 15 s) を超えたときだけ**「戻らない場合はエディタを終了してください
+  (ゲートが全文書の保存を保証しているので、失うのは undo 履歴だけです)」を出す。
+  常時出さないのは、200 ms で終わる通常の commit でも毎回「終了して回復」の文字が出ると
+  警告として読まれなくなるから。しきい値の判定は純関数に切り出してセルフテストで固定する。
 - **collab_verify のシナリオ形式** (sub-01 で確定): `tests\collab\NN_*.ndjson`。行頭 `#` はコメントまたはディレクティブ
   (`# write <relpath> <text>` / `# delete <relpath>`)。ディレクティブの位置で CLI は終了して次行から起動し直す
   (走行中プロセスへ変更を伝える経路を作らない)。`--update` は期待ファイルを今の出力で上書きするので、**中身を読んでからコミット**。
@@ -274,6 +303,9 @@ ImGui の ini は `p_open` を保存しない (保持するのは名前付きレ
 | 15 | ドキュメント: `engine_spec.md` §9 行 + 新節「§14 Source control」+ 11.2 に規則 11 / 12、README、CLAUDE.md、ADR-015 | 目視 (reviewer が読む) |
 | 16 | `--package` 出力に `MyeCollab.dll` / `MyeCollabCli.exe` / `.git` が無い | ci.yml の package contents ステップに否定検査 1 行 |
 | 17 | エンジンリポの既存ホットリロード (hlsl / png / 外部編集 scene) が batch 外で従来どおり動く | 目視 3 種 (M66d) |
+| 18 | 「保存してコミット」は保存に失敗したら stage も commit もせず、コミット本文を残す。commit が失敗したときも本文が残る | セルフテスト (保存フックが空を返す / 応答が失敗の 2 経路を、UI を描かずに通せる形で固定) + 目視 |
+| 19 | `assets\input\actions.json` を持たないプロジェクトで Project Settings 窓を開閉しても書き込み系ゲートが閉じない (= `ProjectSettingsDirty` が立たない)。アクションを 1 本足すと立つ | セルフテスト (不在 / 既定一致 / 編集後の 3 ケース) + `MYE_COLLAB_PROBE` か実機で「窓を開いた後に Discard が押せる」 |
+| 20 | 書き込み系の実行中モーダルは 15 s を超えたときだけ回復案内を出す (通常の操作では出ない) | しきい値の純関数をセルフテストで固定 + 目視 |
 
 ## 6. サブ分割
 
@@ -289,10 +321,14 @@ ImGui の ini は `p_open` を保存しない (保持するのは名前付きレ
 | sub-08 | M66h: .gitignore テンプレ 4 行 + project_settings の個人設定分離 | sub-03 | 4(g), 6, 13 | `M66h: 衛生 — .gitignore テンプレと project_settings.json の個人設定分離` |
 | sub-09 | M66i: AssetBrowser バッジ + 保存ヒント | sub-02 | 14 | `M66i: Content Browser に Git バッジ — 保存直後にヒントを送る` |
 | sub-10 | M66j: spec / README / CLAUDE.md / 規則の記載 | sub-01〜09 | 15 + 全検証緑 | `M66j: 仕上げ — engine_spec §14 Source control / README / CLAUDE.md` |
+| sub-11 | M66k: review-1 の実害 — 保存失敗で commit しない / 偽 dirty でゲートが閉じない / 本文を失わない / 固まった git の逃げ道 | sub-01〜10 | 18, 19, 20 (+ 4, 5 の維持) | `M66k: 書き込み経路の取りこぼし — 保存に失敗したらコミットしない` |
+| sub-12 | M66l: review-1 の衛生 — ヒント文の折り返し / 腐ったコメントと未使用アクセサ / EndBatch のコメント / 既知の制約と検証フックの記載 | sub-11 | 15 (追記分) | `M66l: 衛生 — 折り返しとコメントの実態合わせ、§14 に既知の制約と MYE_COLLAB_PROBE` |
 
 依存が一方向であることの注記: sub-05 と sub-06 は互いに独立 (両方 sub-04 待ち) だが
 `SourceControlWindow.cpp` と Rust の `ops.rs` を両方触るので、並列にするなら司会がマージ順を決める。
 sub-08 / sub-09 は sub-05〜07 と独立。
+sub-12 が sub-11 に依存するのは、§14.6 に書く既知の制約の 1 つ (15 s の回復案内) が sub-11 の実装を指すため。
+逆向きの依存は無い (sub-11 は文書を触らない)。
 
 ## 7. 未決事項・リスク
 
@@ -314,6 +350,28 @@ sub-08 / sub-09 は sub-05〜07 と独立。
 - 競合中のアクティブシーン: 競合マーカー入り JSON は開けない (決定 9)。競合中はアクティブシーンが競合一覧にある間 **Save を止める** (保存 = マーカーを潰して「ours」を黙って選ぶのと同じ)。詳細は sub-07。
 - `pull` の非 ff: 既定 `--ff-only` で `non_fast_forward` を返し、UI が「マージして pull」を提示 → `pull{allowMerge:true}` (`--no-rebase`)。競合は §4.1「競合周り」。
 - マージ中に pull を投げると `git_failed` + 生文 ("Pulling is not possible because you have unmerged files.")。UI ではゲートで到達しないが `merge_in_progress` へ分類する (sub-08 の衛生)。
+- **競合中の保存ガードはシーン / アクター編集だけ (review-1 #5、planner が却下)**: Animation /
+  AnimatorController / AudioMixer / ProjectSettings の Save には `IsConflictedPath` を**足さない**。
+  却下の根拠 (実コードで確認):
+  (a) 競合中は Changes 一覧ごと競合モードへ切り替わり、**stage ボタンが存在しない**
+      (`SourceControlWindow.cpp:543-547` が `DrawConflicts` へ return する)。
+  (b) `resolve` は `checkout --ours|--theirs` の後に `add` する (`ops.rs:1173-1179`) = working tree を
+      **index から上書きする**ので、窓の Save が書いた内容は index にも履歴にも入らない。
+  (c) `continue` は index を `commit --no-edit` する。つまりエディタの UI だけを使う限り、
+      上書きした内容が共有履歴へ到達する経路が無い。
+  (d) シーンだけ砦が要るのは質が違うから — **競合シーンは起動時に JSON パースが失敗して「空」で開き、
+      そこで保存すると空で上書きされる**。他の 3 窓はライブラリに前の版が残るので、上書きされるのは
+      「pull 前の ours 相当」で、(b) の resolve が元に戻せる。
+  残存リスク (§14.6 に既知の制約として書く): 競合中に窓の Save を押すと working tree の競合マーカーが
+  消え、**外部のターミナルから `git add` すればその内容を混ぜられる**。また、競合した文書を触っていた
+  場合はその窓が「保存できないのに未保存」でゲートを閉じるため、`abort` / `continue` の前に
+  ours / theirs で解決する必要がある。どちらも v1 は案内で済ませ、砦を増やすなら v1.5。
+  ※ 砦を 4 窓へ広げる案 (受け口 1 個 + Save 7 箇所 + セルフテスト) は上記 (a)〜(c) の理由で
+  費用対効果が合わないと判断した。判断はユーザーに差し戻せる (採用するなら sub-13 を 1 本足すだけ)。
+- **返らない git (review-1 #8、planner が一部採用)**: キャンセルは v1 で無期限と決めた線を動かさない
+  (打ち切っても git は走り続ける)。代わりに 15 s を超えた実行中モーダルに回復手順を出し、
+  §14.6 にも 1 行書く (§4.4)。hook が待つ経路は塞げないので、「終了して再起動すれば失うのは
+  undo 履歴だけ」であることをユーザーが読める場所に置くのが v1 の答え。
 
 ## 8. 変更履歴
 
@@ -344,3 +402,8 @@ sub-08 / sub-09 は sub-05〜07 と独立。
 - 2026-09-03 (sub-08 round 1、coder SELF_EVAL): §4.2 に旧 3 キーの扱い (移行せず・消さず) と backend ラジオのゲート除外、§4.1 に推奨 .gitignore の正本と watch.rs を揃えない理由、§7 に acoustic golden のフレーク (M66 範囲外、ユーザー判断待ち) を記録。差分 4 件はすべて coder の判断を採用。DocumentDirty → DiskCompare の改名は git mv で実施 (司会の転記漏れだが sub-08.md が正本)。
 - 2026-09-03 (ユーザー判断、sub-08 round 1 の質問): acoustic golden のフレークは **c. 何もしない**。§2 に S14 として記録、§7 を更新。sub-10 は ci.yml / CLAUDE.md に触れない。
 - 2026-09-03 (sub-09 round 1、coder SELF_EVAL): §4.3 にバッジの色表を確定 (M = Warning / A = Success / D = Error / R = Prefab / 競合 = Error / ? = TextDisabled、Accent 禁止)。sub-02 で出荷した M = Accent はテーマ配色ルール 3 に反しており、sub-09 で共有色表 1 箇所に集約されたのを機に must で差し戻し。受け入れ条件の「< 300 ms」は「監視のデバウンス 300 ms を待たずに即時に status を投げる」の意味に確定 (実測は git status の所要時間)。ScmHint (保存ヒントのグローバル受け口 1 個) と削除・移動元のヒントは採用。
+- 2026-09-04 (reviewer round 1 #1・#4): §4.1「commit 周り」に、保存に失敗したら stage も commit もしない / コミット本文は成功応答を受けてから消す、を追記。**仕様の穴を認めた** — 3 手の順序だけを決めて「1 手目が失敗したら」を書いていなかったため、実装が `if (!saved.empty())` の外で `Commit()` を呼んでも仕様違反にならなかった (`SourceControlWindow.cpp:1006-1011`)。受け入れ条件 18 を追加。
+- 2026-09-04 (reviewer round 1 #2): §4.1「未保存ガードの 4 窓」の「ファイルが無ければメモリに何かあれば dirty」を**撤回**。未保存 = 「git に上書きされたら失われるユーザーの編集がある」であって「ディスクとバイト一致しない」ではない。この一文がそのまま「`actions.json` を持たない全プロジェクトで Project Settings 窓を開くとゲートが恒久的に閉じる」を生んでいた (`InputActions::ToJsonText()` は定義 0 件でも非空)。判定は `PhysicsLayerNames::DiffersFromDisk` 方式へ。受け入れ条件 19 を追加。
+- 2026-09-04 (reviewer round 1 #5、planner が却下): 競合中の保存ガードは**シーン / アクター編集だけ**のまま。根拠は §7 (競合中は stage ボタンが無い / resolve が index から上書きする / continue は index を commit する = 上書き内容が履歴へ到達する経路が UI に無い。シーンだけ砦が要るのは「空で開く」から質が違う)。残存リスクは §14.6 の既知の制約へ。
+- 2026-09-04 (reviewer round 1 #8、planner が一部採用): キャンセル無しは動かさず、§4.4 に「実行中モーダルは 15 s を超えたときだけ回復案内を出す」を追記。受け入れ条件 20 を追加。常時案内は却下 (通常の 200 ms の操作で毎回出ると警告として読まれない)。
+- 2026-09-04 (reviewer round 1 の消し込み): §6 に sub-11 (実害 3 件 + 15 s の案内) と sub-12 (衛生 4 件 + 文書) を追加。挙動を変えるものと文言・コメント・文書だけのものを分けた。
