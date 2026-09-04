@@ -21,8 +21,8 @@
 | sub-08 | OK | 1 | 69e767e | M66h: 衛生 — .gitignore テンプレ 4 行 + project_settings.json の個人設定分離。依存: sub-03 (sub-05〜07 と独立) |
 | sub-09 | OK | 2 | 048ec64 | M66i: Content Browser に Git バッジ + 保存直後のヒント。依存: sub-02 (sub-03〜08 と独立)。round 1 REWORK (must 1 = バッジ色表 Modified=Accent がテーマ配色ルール 3 に違反 → spec §4.3 の確定表へ。nit 2 件 → sub-10) |
 | sub-10 | OK | 1 | 4ab1322 | M66j: 仕上げ — engine_spec §14 Source control / README / CLAUDE.md / 規則の記載。依存: sub-01〜sub-09 |
-| sub-11 | OK | 1 | (M66k、下の記入待ち) | M66k: review-1 の実害 (指摘 1・2・4・8) — 保存失敗で commit しない / 偽 dirty でゲートが閉じない / 本文を失わない / 15 s 超で回復案内。依存: sub-01〜sub-10。VERDICT round 1 OK (nit 2 = %TEMP% の空ディレクトリ掃除 → sub-12 / 自由関数の置き場は「直すな」)。commit 失敗時のエラー表示は planner が「足さない」と裁定 (M66f の「見る場所を 2 つに分けない」線を崩さない) |
-| sub-12 | 未着手 | 0 | — | M66l: review-1 の衛生 (指摘 3・6・7・9 + 5・8 の文書化) — 折り返しとコメントの実態合わせ、§14.6 に既知の制約と MYE_COLLAB_PROBE。依存: sub-11 |
+| sub-11 | OK | 1 | 7d99a85 | M66k: review-1 の実害 (指摘 1・2・4・8) — 保存失敗で commit しない / 偽 dirty でゲートが閉じない / 本文を失わない / 15 s 超で回復案内。依存: sub-01〜sub-10。VERDICT round 1 OK (nit 2 = %TEMP% の空ディレクトリ掃除 → sub-12 / 自由関数の置き場は「直すな」)。commit 失敗時のエラー表示は planner が「足さない」と裁定 (M66f の「見る場所を 2 つに分けない」線を崩さない) |
+| sub-12 | OK | 2 | (M66l、下の記入待ち) | M66l: review-1 の衛生 (指摘 3・6・7・9 + 5・8 の文書化) — 折り返しとコメントの実態合わせ、§14.6 に既知の制約と MYE_COLLAB_PROBE。依存: sub-11。round 1 REWORK (must 1 = probe の失敗 commit 検査が未追跡 1 個で空振り = テストがあるのに走っていない / should 1 = DrawRemoteBar も折り返す)。coder の質問 2 件を round 2 へ取り込み、spec §4.3 に「幅の規則」+ 受け入れ条件 21・22 を新設 |
 
 ## 未決事項 (planner PLAN_RESULT より。coder が「不安・質問」で拾う)
 - ~~S5 の新規アセット登録方式~~ → **閉じた (sub-04)**: 増分登録 (`AssetDatabase::GuidForPath(abs, createIfMissing=true)`)。`ScanAndSync` は 3 表を clear するので解決先が一瞬空になる窓が開く。増分なら `.meta` 同梱の guid をそのまま採る

@@ -1348,8 +1348,9 @@ bool WriteGeneratedVcxproj(const std::wstring& path, const std::wstring& engineR
 // bat の絶対パスを返す (空 = 失敗)。C# の [Compile C# Scripts] と同じ
 // 「プロジェクト内のソースをエンジンがビルドする」モデル。エンジンリポジトリの vcxproj や
 // gen_project_files.ps1 には一切依存しない。vcvars は使わない — MSBuild はツールチェーンを
-// 自前で解決するので環境依存が少ない。起動は呼び出し側 (RebuildGameLogic =
-// fire-and-forget / StartGameLogicBuild = ハンドルをポーリング) の責務
+// 自前で解決するので環境依存が少ない。起動は呼び出し側 (`StartGameLogicBuild` が
+// 返すハンドルを呼び出し側がポーリングする) の責務 — fire-and-forget の起動口は
+// M66e で消した (下の削除跡コメントを参照)
 std::wstring PrepareProjectScriptsBat(EngineContext& ctx)
 {
     const std::wstring engineRepo = FindEngineRepoRoot();

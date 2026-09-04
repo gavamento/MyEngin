@@ -1268,6 +1268,10 @@ bool RunSourceControlSelfTest()
         scm.Commit("", record);
         check(answers == 2 && code == collaberr::kBadRequest,
               "commit: an empty message is refused with an answer, not with silence");
+        // ★掃除する。DLL の無い exeDir として %TEMP% に作った空ディレクトリで、
+        //   このテスト以外に使い道が無い (mye_scm_actions と同じ扱いに揃える)。
+        //   DLL のロードは失敗しているのでこの時点で誰も掴んでいない
+        fs::remove_all(noDll, sec);
 
         // (j3) 受け入れ条件 19: actions.json が無いプロジェクトで偽の未保存を立てない
         std::error_code ec;
@@ -1387,10 +1391,22 @@ bool RunSourceControlSelfTest()
             // index に何も無ければ git は nothing_to_commit で必ず落ちるので、
             // **リポジトリを 1 バイトも変えずに**「失敗応答 → 本文を残す」を実走できる。
             // ★staged が 1 件でもある / マージ途中なら**やらない** — 走らせると
-            //   本物のコミットが増えてしまう (プローブは repo を変えない約束)
+            //   本物のコミットが増えてしまう (プローブは repo を変えない約束)。
+            // ★**未追跡 (`?`) は staged ではない**。porcelain v2 は未追跡を index / worktree とも
+            //   '?' で返す (porcelain.rs) ので `indexState` にも `Untracked` が入り、
+            //   「None でなければ staged」で見ると**未追跡が 1 個あるだけで検査ごと飛ぶ**。
+            //   fixture は必ず未追跡を持つので、それだと恒久検査が永久に空振りする
+            //   (sub-12 round 2 の must。実際 round 1 の実行が skip で通っていた)
+            const auto stagedForCommit = [](ChangeState s) {
+                return s != ChangeState::None && s != ChangeState::Untracked;
+            };
             bool anythingStaged = scm.MergeInProgress() || scm.RebaseInProgress();
             for (const PairedEntry& e : scm.Model().entries) {
-                if (e.indexState != ChangeState::None || e.conflict) {
+                // ★サイドカーだけが status に載った行 (primaryListed=false) は index 側の
+                //   状態を持っていないので、合成状態で保守的に見る (`x.png.meta` だけを
+                //   stage した状態で走らせると commit が**成功**してしまう)
+                if (stagedForCommit(e.indexState) || e.conflict
+                    || (!e.primaryListed && stagedForCommit(e.state))) {
                     anythingStaged = true;
                 }
             }

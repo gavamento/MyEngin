@@ -168,7 +168,18 @@ void ReloadHub::EndBatch(const std::vector<BatchChange>& changes)
     batching_ = false;
     // ★先に捨ててから適用する。git が書いた分は changes が正本なので、
     //   watcher の溜まりを一緒に流すと同じファイルを 2 度読む (テクスチャなら
-    //   無駄なだけだが、シーンは ApplyDiff が 2 回走って編集が 1 世代戻る)
+    //   無駄なだけだが、シーンは ApplyDiff が 2 回走って編集が 1 世代戻る)。
+    // ★ただし「捨てる」は**全部は捨てられない** (review-1 #7)。`DrainChanges` が返すのは
+    //   最後のイベントから `kDebounceMs` (150 ms) 経ったパスだけで (FileWatcher.cpp)、
+    //   git が書き終えてから EndBatch までは数十 ms しかない = 直前に書かれたパスは
+    //   `pending_` に残り、**EndBatch の 150 ms 後に通常経路でもう一度 HandleChange される**。
+    //   起きるのは「同じファイルをもう一度読み直す」だけ — ディスクの中身は EndBatch で
+    //   適用したものと同じままなので、シーンは同内容の ApplyDiff、prefab は同じ base の
+    //   PropagateBaseChange で結果が変わらない (この 150 ms の間に人が編集していれば
+    //   ディスク側へ引き戻されるが、それは外部編集を拾う経路本来の挙動と同じ)。
+    //   塞ごうとして「EndBatch で適用したパスを 1 デバウンス分だけ無視する」を足すと、
+    //   **EndBatch 直後に人が入れた本物の外部編集まで飲み込む** — 取りこぼしの方が
+    //   高くつくので、v1 は二度読みを許す
     DiscardPendingChanges();
     const std::vector<std::wstring> ordered = OrderBatch(changes);
     for (const std::wstring& path : ordered) {

@@ -482,14 +482,23 @@ void SourceControlWindow::DrawRemoteBar(SourceControlSession& scm, const SourceC
     ImGui::EndDisabled();
 
     // ---- 上流との関係の帯 ----
+    // ★この帯に出るのは**文**なので折り返す (spec §4.3 の幅の規則)。既定ドックの
+    //   左列 (287 px) の ja で「このリポジトリにはリモートが設定されていません。」が
+    //   "…設定されて" で切れていた (cache\m66l_ui_ja_win.png)。upstream 名や件数が
+    //   入る 3 つも同じ幅にさらされる (長い origin 名で同型になる) ので揃える。
+    //   `TextDisabled` は折り返さないため、色だけ借りて `TextWrapped` を使う
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
     if (remote.valid && !remote.hasRemote) {
-        ImGui::TextDisabled("%s", Tr(StrId::Scm_NoRemote));
+        ImGui::TextWrapped("%s", Tr(StrId::Scm_NoRemote));
+        ImGui::PopStyleColor();
         return;
     }
     if (model.upstream.empty()) {
-        ImGui::TextDisabled("%s", Tr(StrId::Scm_NoUpstream));
+        ImGui::TextWrapped("%s", Tr(StrId::Scm_NoUpstream));
+        ImGui::PopStyleColor();
         return;
     }
+    ImGui::PopStyleColor();
     if (model.behind > 0) {
         // ★展開でコミット一覧 (誰が何を入れたか)。畳んだ 1 行だけでも
         //   「取り込むものがある」が分かるようにする
@@ -506,7 +515,9 @@ void SourceControlWindow::DrawRemoteBar(SourceControlSession& scm, const SourceC
             }
         }
         ImGui::SameLine();
-        ImGui::TextUnformatted(label);
+        // ★upstream 名が入るので長さが読めない = 折り返す (spec §4.3)。折り返した
+        //   2 行目は矢印の下 (行頭) から始まるが、切れて読めないよりはよい
+        ImGui::TextWrapped("%s", label);
         ImGui::PopStyleColor();
         if (remoteExpanded_) {
             if (remote.commits.empty()) {
@@ -526,9 +537,13 @@ void SourceControlWindow::DrawRemoteBar(SourceControlSession& scm, const SourceC
             }
         }
     } else if (model.ahead > 0) {
-        ImGui::TextDisabled(Tr(StrId::Scm_AheadBanner), model.ahead);
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+        ImGui::TextWrapped(Tr(StrId::Scm_AheadBanner), model.ahead);
+        ImGui::PopStyleColor();
     } else {
-        ImGui::TextDisabled(Tr(StrId::Scm_UpToDate), model.upstream.c_str());
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+        ImGui::TextWrapped(Tr(StrId::Scm_UpToDate), model.upstream.c_str());
+        ImGui::PopStyleColor();
     }
 }
 
@@ -564,14 +579,23 @@ void SourceControlWindow::DrawChanges(SourceControlSession& scm, const SourceCon
         scm.UnstageRows(rows);
     }
     ImGui::EndDisabled();
-    ImGui::SameLine();
+    // ★ヒントはボタンの右 (SameLine) ではなく**次の行に折り返して**出す。既定ドック幅
+    //   (左列 ≒ 287 px) だと 2 個のボタンの右に残る幅が 100 px も無く、
+    //   "Select a file to stage it. The" で文が切れて残りが読めなかった
+    //   (review-1 #3、根拠 cache\rev_ui_05_win.png)。文言を短くする直し方は採らない —
+    //   .meta / .terrain.edit が黙って一緒に動くことは、押す前に読ませたい情報そのもの。
+    // ★3 つとも同じ扱いにするのは、短い 2 つ (実行中 / N 件選択) だけ横に残すと
+    //   状態によって行の高さが変わり、下の破棄ボタンの位置が動くから。
+    //   TextDisabled は折り返さないので、色だけ借りて TextWrapped で出す
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
     if (busy) {
-        ImGui::TextDisabled("%s", Tr(StrId::Scm_Busy));
+        ImGui::TextWrapped("%s", Tr(StrId::Scm_Busy));
     } else if (rows.empty()) {
-        ImGui::TextDisabled("%s", Tr(StrId::Scm_SelectToStage));
+        ImGui::TextWrapped("%s", Tr(StrId::Scm_SelectToStage));
     } else {
-        ImGui::TextDisabled(Tr(StrId::Scm_SelectedCount), static_cast<int>(rows.size()));
+        ImGui::TextWrapped(Tr(StrId::Scm_SelectedCount), static_cast<int>(rows.size()));
     }
+    ImGui::PopStyleColor();
 
     // ---- 破棄 (M66d) ----
     // ★stage / unstage と違い、破棄は working tree を書き換える = **ゲートを通す**。

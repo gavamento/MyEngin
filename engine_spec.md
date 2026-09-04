@@ -2242,6 +2242,7 @@ The commit button is disabled while `user.name` / `user.email` are unset: git ha
 | `cargo test` (`tools\collab`) | porcelain v2 parsing (M / A / D / R / ? / conflicted `u`), `diff_names`, request→reply, `error.code` classification, the fetch timer, panic containment |
 | `tools\collab_verify.bat` | the CLI (`MyeCollabCli.exe`, NDJSON stdin → stdout) against real temporary repositories: status → stage → commit → log → branch → checkout → two clones of a bare origin (push, behind, pull) → conflict → ours → continue, compared with expected NDJSON after normalising SHAs, times and authors. **No editor, no D3D** |
 | `--selftest` (`RunSourceControlSelfTest`) | transcript parsing, the DLL round trip, pairing, folder aggregation, all thirteen gate blockers, `EndBatch` ordering, the `.gitignore` template, the new `EditorSettings` keys, `canonicalRoot` persistence, and the badge colour table |
+| `MYE_COLLAB_PROBE=<repo> Editor.exe --selftest` | the same self test, extended with a block that drives a real `SourceControlSession` against the repository named by the variable through the loaded DLL: reaching a usable state, the save hint (`hint_changed`) landing in the model, the badge lookup from an absolute path, `revert` of an untracked file, a commit that must fail (`nothing_to_commit`, so the message survives in the box), `branches` plus a `checkout` of the branch already checked out, and a `service_error` closing the gate. **This is the only place where "a button in the window → session → DLL → git" runs without a UI**, which is how the wiring is checked when nobody can click. The block is skipped unless the variable is set, and it deliberately leaves the repository as it found it: the failing commit runs only while nothing is staged and no merge is in progress. **Untracked files do not count as staged** — porcelain v2 reports them with `?` in the index column as well, and treating that as "the index is not empty" made the check skip itself against every fixture |
 | `pwsh -File tools\check_rules.ps1` | Rule 12 (Editor-layer containment) and Rule 9 on the proto version pair |
 | `tools\collab_fixture.ps1 <dir>` | builds a git-initialised minimal project, because nothing else in the repository can be opened with `--project` — `replay_verify`, `shot_verify` and CI all start bare, where Source Control is off by definition |
 
@@ -2260,6 +2261,23 @@ which turns the self test's DLL round trip from SKIP into a failure.
   recommended"). Re-applying such a change through the transaction is v1.5.
 - Stage B always reopens the scene. Skipping that when only `.cs` / `.cpp` changed is v1.5; the
   gate guarantees everything is saved, so what is lost today is the undo history.
+- **The conflicted-file save guard covers the scene and actor edits only.** `IsConflictedPath` sits
+  at the top of `SaveCurrentScene`; the Animation, Animator, Audio Mixer and Project Settings
+  windows can still save over a conflicted file and wipe its markers from the working tree. That
+  is deliberate: while a merge is in progress the change list switches to conflict mode and has
+  **no stage button**, and `resolve` rewrites the working tree from the index
+  (`checkout --ours|--theirs`, then `add`), so nothing written that way can reach shared history
+  through the editor's own UI — whereas a conflicted *scene* is invalid JSON, opens empty, and
+  would be saved back as empty. Two consequences remain: adding such a file from an outside
+  terminal (`git add`) does mix it in, and a window that was editing a conflicted document reports
+  "unsaved" while being unable to save it, which keeps the write gate closed. Resolve with
+  ours / theirs first, then continue or abort. Extending the guard to the four windows is v1.5.
+- **A write that never returns is recovered by quitting the editor.** Writes cannot be cancelled
+  (§14.2), and the running modal has no button, so a `pre-commit` / `pre-push` hook that waits
+  freezes the whole editor. After 15 s the modal adds exactly that instruction: quit and start
+  again. The gate guaranteed every document was saved before the operation began, so the only
+  thing lost is the undo history. The note appears only past the threshold, because a warning
+  printed on every 200 ms commit stops being read as a warning.
 - `SoundGenWindow` writes `.wav` files without sending the save hint, so those appear in the
   change list through the watcher's 300 ms debounce instead of immediately.
 - The Content Browser badge lookup is per visible entry per frame; at a few hundred tiles the cost

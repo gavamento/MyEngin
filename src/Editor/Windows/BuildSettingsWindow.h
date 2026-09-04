@@ -30,13 +30,13 @@ public:
     bool PipelineSucceeded() const; // Done かつ全段 OK (スキップは成功扱い)
 
     // ---- M66d: 書き込み系 git 操作のゲート ----
-    // 子プロセス (スクリプトビルド / zip) が生きているか。
-    // ★`StartGameLogicBuild` の呼び出し元は**この窓の Stage::Scripts 1 箇所だけ**
-    //   (2026-09-03 に全文検索で確認)。Asset Browser の [Rebuild Scripts] は
-    //   `AssetOps::RebuildGameLogic` = ShellExecuteW の fire-and-forget で
-    //   **ハンドルを持たない**ため、そちらが走っているかはエディタから観測できない
-    //   (spec の未決事項に対する回答: 同期ビルド経路は無い / 観測不能な経路が 1 本ある)
-    bool IsRunning() const { return proc_ != nullptr; }
+    // ★`StartGameLogicBuild` の呼び出し元は 2 経路ある: **この窓の Stage::Scripts** と、
+    //   Asset Browser の [Rebuild Scripts] を受ける `EditorApp::PollScriptBuild`
+    //   (2026-09-04 に全文検索で再確認)。後者は M66e で「可視 cmd 窓へ投げっぱなし =
+    //   プロセスハンドルが誰の手にも残らない」旧経路を廃してこの 1 本へ寄せたもので、
+    //   EditorApp が握ったハンドルを `GateInputs` の `scriptBuildRunning` に
+    //   OR している (EditorApp.cpp の BuildGateInputs)。
+    //   **ゲートから観測できないビルド経路はもう無い**
     // 段階パイプライン全体が進行中か (dist\ を書き換えている間 = git を通さない)
     bool IsPipelineRunning() const { return stage_ != Stage::Idle && stage_ != Stage::Done; }
     // GameLogic のビルドが走っている段 (bin\ と cache\ を書き換える)
