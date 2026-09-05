@@ -34,6 +34,11 @@ spec §4.3 の spatial、§4.1 の `--rt-class-override`、§4.4 のチューニ
 7. A7 の観測 (sub-05 の Python を再利用)。
 8. ★spec §4.5: `isfinite()` / `isinf()` を使わない (fxc X3577)。タップごとの棄却 (画面外・幾何不一致・クラス半径・
    半球外・J 範囲外・可視レイ) は全て `RtReservoirMerge` に入る前か Merge 内の `w` ゲートで落とす = M 不加算。
+9. ★sub-04 の申し送り: タップの挿入点は spatial の「M67f: ここに近傍タップ〜」のコメント位置 (自画素の Merge の直後、
+   `RtRestirClampM` の前)。`gRsSpatialOn` / `gRsVisRay` / `gRsClassOverride` / `RtRestirClassParams(cls)` は CB とヘルパが
+   用意済みで**まだ誰も読んでいない**。候補の p̂ は `RtRestirSampleDir(r_n, P)` で。`RtScene::Update` の override 引数と
+   `--rt-class-override` の CLI はまだ無い (本サブで足す)。チューニング UI は `RenderSystem::rtReflRestirParams` を直接
+   触れば効く (`svgfHistory` / `atrousIterations` は RtPasses 側で [1,32] / [0,4] にクランプ済み — UI の範囲を合わせる)。
 
 ## やらないこと (このサブでは)
 

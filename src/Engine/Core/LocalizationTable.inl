@@ -154,6 +154,10 @@ MYE_STR(Menu_RtDbgSvgfRefl,   "Denoised Reflection",   "デノイズ後の反射
 // M67: 一次ヒットの ReflectionClass を色分け (赤=Hero / 橙=Character / 黄=Vehicle /
 // 水色=Prop / 灰=Default / 黒=空)。Material → RtInstance の配管の目視確認用
 MYE_STR(Menu_RtDbgReflClass,  "Reflection Class (primary)", "反射クラス (一次ヒット)")
+// M67d: ReSTIR の reservoir (12 = 統合済みサンプル数 M / 14 = 反射像側のクラス色)。
+// どちらも RT 反射のパスが作る面を映すので --rt-refl と併用する
+MYE_STR(Menu_RtDbgReservoirM, "Reservoir M (ReSTIR)",       "reservoir の M (ReSTIR)")
+MYE_STR(Menu_RtDbgReflClassRefl, "Reflection Class (reflected)", "反射クラス (反射像側)")
 MYE_STR(Menu_RtScale100,      "Scale 100%",            "解像度 100%")
 MYE_STR(Menu_RtScale50,       "Scale 50%",             "解像度 50%")
 MYE_STR(Menu_RtScale25,       "Scale 25%",             "解像度 25%")
@@ -161,6 +165,8 @@ MYE_STR(Menu_RtBounce1,       "1 bounce",              "1 バウンス")
 MYE_STR(Menu_RtBounce2,       "2 bounces",             "2 バウンス")
 MYE_STR(Menu_RtTemporal,      "Temporal Accumulation", "テンポラル蓄積")
 MYE_STR(Menu_RtSvgf,          "SVGF Spatial Filter",   "SVGF 空間フィルタ")
+// M67d: ReSTIR (反射サンプルの時空間再利用)。RT 反射が前提で、off なら M67d 以前の絵
+MYE_STR(Menu_RtRestir,        "ReSTIR Reflection",     "ReSTIR 反射")
 MYE_STR(Menu_RtFreezeSeed,    "Freeze Seed",           "シード固定")
 
 // ---- ツールバー (M47b) ----

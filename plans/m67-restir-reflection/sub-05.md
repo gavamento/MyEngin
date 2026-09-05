@@ -29,6 +29,10 @@ spec §4.2 の統合と §4.3 の temporal を `rt_refl.cs.hlsl` の `gRsOn != 0
 
 5. ★spec §4.5: `isfinite()` / `isinf()` を使わない (fxc X3577)。幾何不一致・J 範囲外・w ≤ 0 の棄却は
    `RtReservoirUpdate` を呼ぶ前に return (呼んだ時点で M が増える)。
+6. ★sub-04 の申し送り: 入口は全部配線済み (t11-t15 = 組 A、`gRsHistValid` / `gRsUseVelocity` / `gRsPrevViewProj` /
+   `gRsPrevCameraPos` / しきい値 / `gRsJacobianMax` は CB に充填済み) だが**一度も実行されていない** — sub-05 が最初の
+   実走者。velocity SRV (t16) だけ未配線。p̂ の評価方向は必ず `RtRestirSampleDir(r', P)` (撃った L で評価しない)。
+   シルエット際 (受け側 p̂ = 0) は仕様どおり M = 0 のまま = temporal でも積まれず 1spp フォールバック (spec §4.2)。
 
 ## やらないこと (このサブでは)
 

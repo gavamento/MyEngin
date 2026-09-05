@@ -21,6 +21,11 @@
 //          スキンメッシュは前フレームのボーンパレットが無いので velocity が
 //          カメラ + 物体トランスフォームぶんしか出ない (M55c から続く制限)。
 
+// M67d: 再投影の共通関数 (RtClipToPrevUv / RtHistoryUv / RtReprojectValid /
+// RtAdvanceHistory / RtTemporalAlpha / RtLuminance) は rt_reproject.hlsli へ移した。
+// ReSTIR の temporal 再利用 (M67e) が rt_refl 側から同じ判定を使うため
+#include "rt_reproject.hlsli"
+
 // C++ の kRtTemporalMaxHistory と一致検査される (tools/check_rules.ps1 規則 9)
 #define MYE_RT_TEMPORAL_MAX_HISTORY 32
 
@@ -59,66 +64,6 @@ RWTexture2D<float4> gTempOutColor : register(u0);
 RWTexture2D<float4> gTempOutGeom : register(u1);
 // M46e: SVGF の分散推定に使う輝度モーメント (x = μ, y = μ²)。色と同じ重みで積む
 RWTexture2D<float4> gTempOutMoments : register(u2);
-
-// ---- RtMath.h と同一式 (変更時は両方更新。selftest が C++ 側を検証する) ----
-
-// 前フレームのクリップ座標 → 履歴 UV。背後 (w<=0) と画面外は false
-bool RtClipToPrevUv(float4 clip, out float2 outUv)
-{
-    outUv = float2(0.0f, 0.0f);
-    bool ok = false;
-    if (clip.w > 1e-6f) {
-        const float2 ndc = clip.xy / clip.w;
-        outUv = ndc * float2(0.5f, -0.5f) + 0.5f;
-        ok = all(outUv >= 0.0f) && all(outUv < 1.0f);
-    }
-    return ok;
-}
-
-// M55f: 履歴 UV をどちらの経路で作るか。useVelocity != 0 なら画面速度、0 なら前フレーム VP。
-// 画面外の棄却は 2 経路で同じ規約 (RtClipToPrevUv と揃えて [0,1) 判定)
-bool RtHistoryUv(int useVelocity, float2 uv, float2 velocity, float4 prevClip, out float2 outUv)
-{
-    if (useVelocity != 0) {
-        outUv = uv - velocity;
-        return all(outUv >= 0.0f) && all(outUv < 1.0f);
-    }
-    return RtClipToPrevUv(prevClip, outUv);
-}
-
-// 再投影先の履歴が現在の面と同じものか (深度 = カメラ距離の相対差 + 法線 cos)
-bool RtReprojectValid(float expectedDepth, float storedDepth, float3 n, float3 prevN,
-                      float depthThreshold, float normalThreshold)
-{
-    bool ok = (storedDepth > 0.0f) && (expectedDepth > 0.0f);
-    if (ok) {
-        const float d = abs(expectedDepth - storedDepth);
-        if (d > depthThreshold * max(expectedDepth, 1e-3f)) {
-            ok = false; // 別の面が手前/奥にある
-        } else if (dot(n, prevN) < normalThreshold) {
-            ok = false; // 面の向きが違う
-        }
-    }
-    return ok;
-}
-
-// 履歴長を 1 進める。無効なら 1 に若返る (= 今フレームの 1spp をそのまま採用)
-float RtAdvanceHistory(float prevLen, bool valid, float maxLen)
-{
-    return min((valid ? prevLen : 0.0f) + 1.0f, maxLen);
-}
-
-// 移動平均の重み (新サンプルの寄与)。履歴長 1 で 1.0
-float RtTemporalAlpha(float histLen)
-{
-    return 1.0f / max(histLen, 1.0f);
-}
-
-// 輝度 (Rec.709)。RtMath.h の RtLuminance と同一式
-float RtLuminance(float3 c)
-{
-    return dot(c, float3(0.2126f, 0.7152f, 0.0722f));
-}
 
 [numthreads(8, 8, 1)]
 void CSMain(uint3 tid : SV_DispatchThreadID)

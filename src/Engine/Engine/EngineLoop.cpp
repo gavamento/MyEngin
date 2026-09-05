@@ -273,6 +273,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     renderSystem.enableRtGi = config.rtGi;             // M46f (--rt-gi、Deferred のみ)
     renderSystem.enableRtShadow = config.rtShadow;     // M46g (--rt-shadow、Deferred のみ)
     renderSystem.enableRtRefl = config.rtRefl;         // M46h (--rt-refl、Deferred のみ)
+    renderSystem.rtReflRestir = config.rtRestir;       // M67d (--rt-restir、RT 反射が前提)
     renderSystem.enableFroxel = config.froxel;         // M57b (--froxel。まだ絵は変わらない)
     renderSystem.froxelSettings.temporal = config.froxelTemporal; // M57c (--froxel-no-temporal)
     renderSystem.froxelDumpFrame = config.froxelDumpFrame; // M57b/M57c (--froxel-dump N)
@@ -1824,17 +1825,20 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         recorder.Finish(); // maxFrames 等で先に抜けた場合も書き出す
     }
     if (config.rtDebugMode != 0 || config.rtGi || config.rtShadow || config.rtRefl) {
-        // M46b: BVH の規模とソフトウェアトラバーサルの実測値 (性能ゲートの一次データ)
+        // M46b: BVH の規模とソフトウェアトラバーサルの実測値 (性能ゲートの一次データ)。
+        // M67d: restir = ReSTIR の 2 パス目 (off なら 0.000)。初期 reservoir の書き出しは
+        // 反射レイと同じディスパッチなので refl 側に含まれる
         MYE_LOG_INFO("[rt] mode %d: %d instances / %d triangles / build %.3f ms (CPU) / "
                      "trace %.3f ms / gi %.3f ms / temporal %.3f ms / svgf %.3f ms / "
                      "shadow %.3f ms (+ filter %.3f ms) / refl %.3f ms (+ denoise %.3f ms) "
-                     "(GPU, last frame)",
+                     "/ restir %.3f ms (GPU, last frame)",
                      config.rtDebugMode, renderSystem.RtInstanceCount(),
                      renderSystem.RtTriangleCount(), renderSystem.RtBuildCpuMs(),
                      renderSystem.RtDebugGpuMs(), renderSystem.RtGiGpuMs(),
                      renderSystem.RtTemporalGpuMs(), renderSystem.RtSvgfGpuMs(),
                      renderSystem.RtShadowGpuMs(), renderSystem.RtShadowFilterGpuMs(),
-                     renderSystem.RtReflGpuMs(), renderSystem.RtReflDenoiseGpuMs());
+                     renderSystem.RtReflGpuMs(), renderSystem.RtReflDenoiseGpuMs(),
+                     renderSystem.RtRestirGpuMs());
     }
     if (config.ssr) {
         // M56d: SSR の実測 (ヘッドレス撮影で数字を残す唯一の口。理由は下の [hzb] と同じ)。

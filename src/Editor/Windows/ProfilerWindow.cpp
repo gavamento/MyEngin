@@ -132,10 +132,15 @@ void ProfilerWindow::OnImGui(EngineContext& ctx)
             }
             // M46h: 反射レイと、そのデノイズ (蓄積 + 分散推定 + A-Trous の合計)
             if (ctx.renderSystem->rtDebugMode == 10 || ctx.renderSystem->rtDebugMode == 11
+                || ctx.renderSystem->rtDebugMode == 12 || ctx.renderSystem->rtDebugMode == 14
                 || rtReflOn) {
-                ImGui::Text("  rt refl: %6.3f ms trace / %6.3f ms denoise (GpuTimer, %.0f%% res)",
+                // M67d: restir = ReSTIR の 2 パス目 (off なら 0.000)。初期 reservoir の
+                // 書き出しは反射レイと同じディスパッチなので trace 側に含まれる
+                ImGui::Text("  rt refl: %6.3f ms trace / %6.3f ms denoise / %6.3f ms restir "
+                            "(GpuTimer, %.0f%% res)",
                             ctx.renderSystem->RtReflGpuMs(),
                             ctx.renderSystem->RtReflDenoiseGpuMs(),
+                            ctx.renderSystem->RtRestirGpuMs(),
                             ctx.renderSystem->rtResolutionScale * 100.0f);
             }
         }

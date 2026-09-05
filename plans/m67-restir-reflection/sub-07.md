@@ -23,6 +23,11 @@
    `Material` grew 56 → 64 (reflectionClass + explicit pad); any `Material` layout change bumps it because the blob
    memcpys the struct」を 1 文。Sealed bundle 行に「packages are rebuilt with the new exe (exe と cache は一緒に配る)」。
    ADR-016 には書かない (設計判断ではなく機械的帰結)。
+   ★sub-04 の申し送り: engine_spec の RT デバッグモード表を 12 (reservoir M) / 13 (一次ヒットのクラス) / 14 (反射像側の
+   クラス) で更新。ADR-016 に載せる reservoir のメモリ = 480×270 で 1 スロット約 14.6 MB (5 枚 × 2 組 × 48 B/px)、
+   エディタで SceneView + GameView なら約 29 MB (viewKey 別に遅延確保)。新規 .hlsli は 3 本
+   (`rt_restir_common` / `rt_restir_cb` / `rt_reproject`) + CS 1 本 (`rt_refl_restir_spatial`)。
+   ReSTIR on の golden は tol=0 (自身が基準。A5 の 1 ulp は off との比較にしか出ない)。
 3. `README.md`: 機能概要のレイトレ節に ReSTIR 反射 + ReflectionClass を 1 段落、CLI 一覧に
    `--rt-restir` / `--rt-restir-no-spatial` / `--rt-restir-visray` / `--rt-class-override N`。
 4. `CLAUDE.md`: CLI 一覧 (`--rt-*` の並び) に同 4 本 **+ 元から未掲載だった `--rt-refl` / `--rt-gi` / `--rt-shadow` /

@@ -160,6 +160,13 @@ public:
     // roughness が kRtReflMaxRoughness を超える面は従来どおり IBL プリフィルタのまま
     // (ローブが広すぎて 1spp が成立せず、かつ IBL との差も縮むため)
     bool enableRtRefl = false;
+    // M67d: ReSTIR 反射 (--rt-restir / View > RT デバッグのトグル)。RT 反射が前提。
+    // false なら反射シェーダの uniform 分岐が M67d 以前の経路を走る = 絵はビット一致。
+    // ★rtDebugMode が 12 / 14 のときは RenderSystem が強制的に立てる (影の 9 と同じ流儀)
+    bool rtReflRestir = false;
+    // M67d: 再利用の強さ (クラス表 / 後段 SVGF / 空間再利用 / 可視レイ / クラス上書き)。
+    // **非永続** — チューニング UI (M67f) が実行中に書き換えるだけで保存しない
+    RtReflRestirParams rtReflRestirParams;
     // M55b: TAA 用カメラジッタの振幅 (サブピクセル単位。1.0 = ±0.5 画素の全振幅)。
     // ジッタ列は viewKey 別の描画通番から引くので実時間に依存しない (決定的撮影で再現する)。
     // ★M55d: **ジッタが載るのは RenderView::taaEnabled != 0 のビューだけ**。
@@ -233,6 +240,8 @@ public:
     float RtShadowFilterGpuMs() const { return rtPasses_.ShadowFilterGpuMs(); }
     float RtReflGpuMs() const { return rtPasses_.ReflGpuMs(); }
     float RtReflDenoiseGpuMs() const { return rtPasses_.ReflDenoiseGpuMs(); }
+    // M67d: ReSTIR の 2 パス目。off のときは 0 (Begin/End を 1 度も呼ばないため)
+    float RtRestirGpuMs() const { return rtPasses_.RestirGpuMs(); }
     float RtBuildCpuMs() const { return rtScene_.BuildCpuMs(); }
     int RtInstanceCount() const { return rtScene_.InstanceCount(); }
     int RtTriangleCount() const { return rtScene_.TriangleCount(); }

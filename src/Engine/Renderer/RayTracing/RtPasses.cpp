@@ -142,6 +142,33 @@ struct RtReflCB {
 };
 static_assert(sizeof(RtReflCB) == 64, "HLSL の RtReflCB と一致させること");
 
+// M67d: assets/shaders/rt_restir_cb.hlsli の RtRestirCB (b3) と一致。
+// **並びは HLSL のパッキング規則に合わせてある** — float3 の直後にスカラーを 1 つ置いて
+// 16 バイト行を埋め、float4 配列は 16 バイト境界 (offset 144) から始める。
+// 途中に 1 つ足すと配列の開始がずれて再利用パラメータが丸ごと化けるので、
+// 追加は**必ず gRsClass の直前まで**で、サイズの static_assert を必ず更新すること
+struct RtRestirCB {
+    XMFLOAT4X4 prevViewProj = {}; // 転置済み
+    XMFLOAT3 prevCameraPos = { 0, 0, 0 };
+    int32_t on = 0;
+    XMFLOAT3 cameraPos = { 0, 0, 0 };
+    int32_t spatialOn = 0;
+    float outSize[2] = { 0, 0 };
+    float gbSize[2] = { 0, 0 };
+    int32_t visRay = 0;
+    int32_t histValid = 0;
+    int32_t useVelocity = 0;
+    int32_t classOverride = -1;
+    uint32_t frameIndex = 0;
+    float depthThreshold = kRtTemporalDepthThreshold;
+    float normalThreshold = kRtTemporalNormalThreshold;
+    float jacobianMax = kRtRestirJacobianMax;
+    RtReflClassParams classTable[kRtReflClassCount] = {};
+};
+static_assert(sizeof(RtRestirCB) == 224, "HLSL の RtRestirCB と一致させること");
+static_assert(offsetof(RtRestirCB, classTable) == 144,
+              "gRsClass は 16 バイト境界から始まること (HLSL の配列パッキング)");
+
 // viewKey → 履歴スロット (範囲外は 0 へ丸める)。GI と反射で同じ写像を使う
 uint32_t HistorySlot(uint32_t viewKey, int slots)
 {
@@ -151,7 +178,9 @@ uint32_t HistorySlot(uint32_t viewKey, int slots)
 // rt_blit.hlsl の RtBlitCB (b0) と一致
 struct RtBlitCB {
     float dstSize[2] = { 0, 0 };
-    int32_t mode = 0;   // 0 = rgb / 1 = a を履歴長 / 2 = a を分散のヒートマップとして表示
+    // 0 = rgb / 1 = a を履歴長 / 2 = a を分散のヒートマップ / 3 = r をグレースケール /
+    // 4 = a を ReflectionClass の色として表示 (M67d)
+    int32_t mode = 0;
     float param = 1.0f; // ヒートマップの正規化スケール
 };
 
@@ -172,6 +201,7 @@ bool RtPasses::Init(GraphicsDevice& device, ShaderManager& shaders)
     shadowCS_ = shaders.LoadCompute("rt_shadow.cs");
     shadowFilterCS_ = shaders.LoadCompute("rt_shadow_filter.cs");
     reflCS_ = shaders.LoadCompute("rt_refl.cs");
+    restirCS_ = shaders.LoadCompute("rt_refl_restir_spatial.cs"); // M67d
     blitShader_ = shaders.Load("rt_blit");
 
     if (!CreateConstant(dev, sizeof(RtSceneCB), sceneCB_)
@@ -184,6 +214,7 @@ bool RtPasses::Init(GraphicsDevice& device, ShaderManager& shaders)
         || !CreateConstant(dev, sizeof(RtShadowCB), shadowCB_)
         || !CreateConstant(dev, sizeof(RtShadowFilterCB), shadowFilterCB_)
         || !CreateConstant(dev, sizeof(RtReflCB), reflCB_)
+        || !CreateConstant(dev, sizeof(RtRestirCB), restirCB_) // M67d
         || !CreateConstant(dev, sizeof(RtBlitCB), blitCB_)) {
         MYE_LOG_ERROR("RtPasses: constant buffer creation failed");
         return false;
@@ -205,7 +236,12 @@ bool RtPasses::Init(GraphicsDevice& device, ShaderManager& shaders)
     rd.FillMode = D3D11_FILL_SOLID;
     rd.CullMode = D3D11_CULL_NONE;
     rd.DepthClipEnable = TRUE;
+    // M67d: デバッグ 12 / 14 用の点サンプラ。クラス番号 (整数) を線形補間すると
+    // 境界に「隣り合う 2 クラスの中間の番号」= 存在しないクラスの色が出る
+    D3D11_SAMPLER_DESC pd = sd;
+    pd.Filter = D3D11_FILTER_MIN_MAG_MIP_POINT;
     if (FAILED(dev->CreateSamplerState(&sd, linearClamp_.GetAddressOf()))
+        || FAILED(dev->CreateSamplerState(&pd, pointClamp_.GetAddressOf()))
         || FAILED(dev->CreateDepthStencilState(&dsd, depthDisabled_.GetAddressOf()))
         || FAILED(dev->CreateBlendState(&bd, blendOpaque_.GetAddressOf()))
         || FAILED(dev->CreateRasterizerState(&rd, raster_.GetAddressOf()))) {
@@ -222,6 +258,7 @@ bool RtPasses::Init(GraphicsDevice& device, ShaderManager& shaders)
     reflTimer_.Init(device);
     reflTemporalTimer_.Init(device);
     reflSvgfTimer_.Init(device);
+    restirTimer_.Init(device); // M67d
     inited_ = true;
     return true;
 }
@@ -231,6 +268,7 @@ void RtPasses::Shutdown()
     debugRt_.Release();
     giRt_.Release();
     reflRt_.Release();
+    reflRestirRt_.Release(); // M67d
     for (RenderTexture& rt : svgfRt_) {
         rt.Release();
     }
@@ -255,6 +293,20 @@ void RtPasses::Shutdown()
             h.hasLast = false;
         }
     }
+    // M67d: reservoir (一度も ReSTIR を使っていなければ全部空のまま)
+    for (RtReservoirSlot& slot : reservoirs_) {
+        for (RtReservoirSet& set : slot.set) {
+            set.pos.Release();
+            set.rad.Release();
+            set.nrm.Release();
+            set.geom.Release();
+            set.rpos.Release();
+        }
+        slot.w = 0;
+        slot.h = 0;
+        slot.lastSerial = 0;
+        slot.hasLast = false;
+    }
     sceneCB_.Reset();
     envCB_.Reset();
     debugCB_.Reset();
@@ -265,8 +317,10 @@ void RtPasses::Shutdown()
     shadowCB_.Reset();
     shadowFilterCB_.Reset();
     reflCB_.Reset();
+    restirCB_.Reset(); // M67d
     blitCB_.Reset();
     linearClamp_.Reset();
+    pointClamp_.Reset(); // M67d
     depthDisabled_.Reset();
     blendOpaque_.Reset();
     raster_.Reset();
@@ -313,11 +367,12 @@ void RtPasses::UnbindCompute(GraphicsDevice& device)
     // 同じテクスチャを次のパスで SRV / RTV として使うので必ず外す
     // (テンポラルは履歴 ping-pong で「前フレーム書込先」を今フレーム SRV で読むため必須。
     //  SVGF も ping-pong で書いた面を次の反復で読むので同様)。
-    // 上限は反射パスが使う t10 (GBuffer マテリアル) まで
-    ID3D11ShaderResourceView* nullSrvs[11] = {};
-    ID3D11UnorderedAccessView* nullUavs[3] = {};
-    dc->CSSetShaderResources(0, 11, nullSrvs);
-    dc->CSSetUnorderedAccessViews(0, 3, nullUavs, nullptr);
+    // 上限は ReSTIR (M67d) が使う t15 / u5 まで。**ここを伸ばし忘れると
+    // 「同じ reservoir を SRV と UAV で同時に張った」で D3D が片方を黙って外す**
+    ID3D11ShaderResourceView* nullSrvs[16] = {};
+    ID3D11UnorderedAccessView* nullUavs[6] = {};
+    dc->CSSetShaderResources(0, 16, nullSrvs);
+    dc->CSSetUnorderedAccessViews(0, 6, nullUavs, nullptr);
     dc->CSSetShader(nullptr, nullptr, 0);
 }
 
@@ -668,6 +723,17 @@ RtReflResult RtPasses::RenderReflection(GraphicsDevice& device, ShaderManager& s
         return result;
     }
 
+    // M67d: ReSTIR。**ここを通らない限り reservoir は 1 バイトも確保しない**。
+    // シェーダのコンパイルに失敗したら現行経路へ黙って縮退する (絵は M67d 以前と同じ)
+    RtReservoirSlot& slot = reservoirs_[HistorySlot(view.rtViewKey, kHistorySlots)];
+    ShaderProgram* restirCs = shaders.Get(restirCS_);
+    const bool restirOn = view.rtReflRestir != 0 && restirCs != nullptr && restirCs->valid
+        && restirCs->cs && EnsureReservoirs(device, slot, gw, gh);
+    if (!restirOn) {
+        // ReSTIR を切ったフレームは履歴を捨てる (on/off を跨いで混ざらない)
+        slot.hasLast = false;
+    }
+
     ID3D11DeviceContext* dc = device.Context();
     reflTimer_.Begin(device);
     BindCommon(device, view, in);
@@ -688,12 +754,63 @@ RtReflResult RtPasses::RenderReflection(GraphicsDevice& device, ShaderManager& s
     ID3D11Buffer* reflCbs[1] = { reflCB_.Get() };
     dc->CSSetConstantBuffers(2, 1, reflCbs);
 
+    // M67d: 履歴が使えるのは「同じビューが前フレームも ReSTIR で描かれた」ときだけ。
+    // 判定は Accumulate と同じ規約 (lastSerial+1 == 今フレームの通番 かつ prevViewProj 有効)
+    const bool rsHistValid =
+        restirOn && slot.hasLast && (slot.lastSerial + 1u == view.rtViewSerial)
+        && view.prevViewProjValid != 0;
+    // ★**off でも必ず上げて張る** — UnbindCompute は SRV/UAV しか外さないので、
+    //   「off にしたら b3 を張らない」にすると前フレームの gRsOn = 1 が残ったままになり、
+    //   トグルを切った次のフレームがまだ ReSTIR 経路を走る (UAV は張られていないので
+    //   書き込みは捨てられるが、無駄な計算をしたうえで挙動が状態依存になる)。
+    //   off のときの中身は on = 0 だけが意味を持つ
+    RtRestirCB rs = {};
+    XMStoreFloat4x4(&rs.prevViewProj, XMMatrixTranspose(XMLoadFloat4x4(&view.prevViewProj)));
+    rs.prevCameraPos = view.prevCameraPos;
+    rs.on = restirOn ? 1 : 0;
+    rs.cameraPos = view.cameraPos;
+    rs.spatialOn = (view.rtReflRestirParams.spatial != 0) ? 1 : 0;
+    rs.outSize[0] = static_cast<float>(gw);
+    rs.outSize[1] = static_cast<float>(gh);
+    rs.gbSize[0] = static_cast<float>(view.width);
+    rs.gbSize[1] = static_cast<float>(view.height);
+    rs.visRay = (view.rtReflRestirParams.visRay != 0) ? 1 : 0;
+    rs.histValid = rsHistValid ? 1 : 0;
+    // M55f と同じ条件 — velocity が全画素 0 のフレームを「動いていない」と読まない
+    rs.useVelocity = (in.gbVelocity != nullptr && rsHistValid) ? 1 : 0;
+    rs.classOverride = view.rtReflRestirParams.classOverride;
+    rs.frameIndex = view.rtFrameIndex;
+    rs.depthThreshold = kRtTemporalDepthThreshold;
+    rs.normalThreshold = kRtTemporalNormalThreshold;
+    rs.jacobianMax = kRtRestirJacobianMax;
+    for (int i = 0; i < kRtReflClassCount; ++i) {
+        rs.classTable[i] = view.rtReflRestirParams.classTable[i];
+    }
+    UploadCB(dc, restirCB_.Get(), rs);
+    ID3D11Buffer* rsCbs[1] = { restirCB_.Get() };
+    dc->CSSetConstantBuffers(3, 1, rsCbs);
+
     // t7-t9 は GI/影と同じ並び、t10 に metallic/roughness を足す
     ID3D11ShaderResourceView* gbuf[4] = { in.gbNormal, in.gbPosition, in.gbAlbedo,
                                           in.gbMaterial };
     dc->CSSetShaderResources(7, 4, gbuf);
-    ID3D11UnorderedAccessView* uavs[1] = { reflRt_.UAV() };
-    dc->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
+    // ★off のときは reservoir を 1 枚も張らない (t11-t15 / u1-u5 は UnbindCompute が
+    //   前のパスで null にしてある) = 現行と同じ「UAV 1 本だけ」のバインド
+    if (restirOn) {
+        // 前フレームの組 A を t11-t15 へ (M67d では読まないが、バインドの形は
+        // M67e = temporal 統合と同じにしておく)。書き先は組 B なので衝突しない
+        RtReservoirSet& a = slot.set[0];
+        RtReservoirSet& b = slot.set[1];
+        ID3D11ShaderResourceView* prev[5] = { a.pos.SRV(), a.rad.SRV(), a.nrm.SRV(),
+                                              a.geom.SRV(), a.rpos.SRV() };
+        dc->CSSetShaderResources(11, 5, prev);
+        ID3D11UnorderedAccessView* uavs[6] = { reflRt_.UAV(),  b.pos.UAV(),  b.rad.UAV(),
+                                               b.nrm.UAV(),    b.geom.UAV(), b.rpos.UAV() };
+        dc->CSSetUnorderedAccessViews(0, 6, uavs, nullptr);
+    } else {
+        ID3D11UnorderedAccessView* uavs[1] = { reflRt_.UAV() };
+        dc->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
+    }
     dc->CSSetShader(cs->cs.Get(), nullptr, 0);
     dc->Dispatch(static_cast<UINT>((gw + 7) / 8), static_cast<UINT>((gh + 7) / 8), 1);
 
@@ -702,17 +819,40 @@ RtReflResult RtPasses::RenderReflection(GraphicsDevice& device, ShaderManager& s
 
     result.raw = reflRt_.SRV();
     result.filtered = result.raw;
+    // M67d: 2 パス目 (空間再利用 + resolve)。ここから先の入力は reflRestirRt_ に変わる
+    const bool restirRan =
+        restirOn && RenderRestirSpatial(device, shaders, view, in, slot, gw, gh);
+    ID3D11ShaderResourceView* denoiseSrc = reflRt_.SRV();
+    if (restirRan) {
+        denoiseSrc = reflRestirRt_.SRV();
+        result.filtered = denoiseSrc;
+        result.reservoirM = slot.set[0].rad.SRV();
+        result.reservoirCls = slot.set[0].nrm.SRV();
+        slot.lastSerial = view.rtViewSerial;
+        slot.hasLast = true;
+    } else if (restirOn) {
+        slot.hasLast = false; // spatial を走らせられなかった = 組 A は更新されていない
+    }
     if (view.rtTemporal != 0) {
+        // ReSTIR 後段の SVGF は既定値が M46h と同値なので、on にしただけでは何も変わらない。
+        // スライダ (M67f) が壊れた値を入れても内部で潰れないよう範囲はここで締める
+        const float maxHistory = restirRan
+            ? std::clamp(view.rtReflRestirParams.svgfHistory, 1.0f,
+                         static_cast<float>(kRtTemporalMaxHistory))
+            : kRtReflMaxHistory;
+        const int atrous = restirRan
+            ? std::clamp(view.rtReflRestirParams.atrousIterations, 0, 4)
+            : kRtReflAtrousIterations;
         const AccumResult acc =
-            Accumulate(device, shaders, view, in, gw, gh, reflRt_.SRV(),
-                       reflHist_[HistorySlot(view.rtViewKey, kHistorySlots)], kRtReflMaxHistory,
+            Accumulate(device, shaders, view, in, gw, gh, denoiseSrc,
+                       reflHist_[HistorySlot(view.rtViewKey, kHistorySlots)], maxHistory,
                        reflTemporalTimer_);
         if (acc.color != nullptr) {
             result.filtered = acc.color;
             if (view.rtSvgf != 0) {
                 ID3D11ShaderResourceView* f =
-                    Denoise(device, shaders, view, acc, gw, gh, reflSvgfRt_,
-                            kRtReflAtrousIterations, kRtReflSigmaLuma, reflSvgfTimer_);
+                    Denoise(device, shaders, view, acc, gw, gh, reflSvgfRt_, atrous,
+                            kRtReflSigmaLuma, reflSvgfTimer_);
                 if (f != nullptr) {
                     result.filtered = f;
                 }
@@ -722,6 +862,81 @@ RtReflResult RtPasses::RenderReflection(GraphicsDevice& device, ShaderManager& s
         reflHist_[HistorySlot(view.rtViewKey, kHistorySlots)].hasLast = false;
     }
     return result;
+}
+
+// M67d: reservoir 5 枚 × 2 組を確保する。**ReSTIR を一度も使わないなら呼ばれない** =
+// 既定の描画では 1 バイトも増えない。内部解像度が変わったら履歴は捨てる
+// (RtHistory::Resize と同型 — 落とし忘れると SceneView と GameView が混線する)
+bool RtPasses::EnsureReservoirs(GraphicsDevice& device, RtReservoirSlot& slot, int gw, int gh)
+{
+    if (slot.w != gw || slot.h != gh) {
+        for (RtReservoirSet& set : slot.set) {
+            set.pos.Resize(device, gw, gh, DXGI_FORMAT_R32G32B32A32_FLOAT, /*withDepth=*/false,
+                           /*withUav=*/true);
+            set.rad.Resize(device, gw, gh, DXGI_FORMAT_R16G16B16A16_FLOAT, /*withDepth=*/false,
+                           /*withUav=*/true);
+            set.nrm.Resize(device, gw, gh, DXGI_FORMAT_R16G16B16A16_FLOAT, /*withDepth=*/false,
+                           /*withUav=*/true);
+            set.geom.Resize(device, gw, gh, DXGI_FORMAT_R16G16B16A16_FLOAT, /*withDepth=*/false,
+                            /*withUav=*/true);
+            set.rpos.Resize(device, gw, gh, DXGI_FORMAT_R32G32B32A32_FLOAT, /*withDepth=*/false,
+                            /*withUav=*/true);
+        }
+        slot.w = gw;
+        slot.h = gh;
+        slot.hasLast = false; // リサイズで履歴は捨てる
+    }
+    for (RtReservoirSet& set : slot.set) {
+        const RenderTexture* rts[5] = { &set.pos, &set.rad, &set.nrm, &set.geom, &set.rpos };
+        for (const RenderTexture* rt : rts) {
+            if (!rt->UAV() || !rt->SRV()) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+// M67d: ReSTIR の 2 パス目。組 B (t11-t15) を読んで組 A (u1-u5) へ書き戻し、
+// 解決した反射放射輝度を reflRestirRt_ (u0) へ出す。
+// **読む組と書く組が別テクスチャ**なので、同じフレーム内で SRV/UAV の衝突が起きない
+bool RtPasses::RenderRestirSpatial(GraphicsDevice& device, ShaderManager& shaders,
+                                   const RenderView& view, const RtFrameInputs& in,
+                                   RtReservoirSlot& slot, int gw, int gh)
+{
+    ShaderProgram* cs = shaders.Get(restirCS_);
+    if (!cs || !cs->valid || !cs->cs) {
+        return false;
+    }
+    reflRestirRt_.Resize(device, gw, gh, DXGI_FORMAT_R16G16B16A16_FLOAT, /*withDepth=*/false,
+                         /*withUav=*/true);
+    if (!reflRestirRt_.UAV() || !reflRestirRt_.SRV()) {
+        return false;
+    }
+
+    ID3D11DeviceContext* dc = device.Context();
+    restirTimer_.Begin(device);
+    BindCommon(device, view, in); // 可視レイ (M67f) が BVH を引くので同じ土台を張る
+    ID3D11Buffer* rsCbs[1] = { restirCB_.Get() }; // b3 は反射パスで上げたものをそのまま使う
+    dc->CSSetConstantBuffers(3, 1, rsCbs);
+
+    ID3D11ShaderResourceView* gbuf[4] = { in.gbNormal, in.gbPosition, in.gbAlbedo,
+                                          in.gbMaterial };
+    dc->CSSetShaderResources(7, 4, gbuf);
+    RtReservoirSet& b = slot.set[1];
+    ID3D11ShaderResourceView* src[5] = { b.pos.SRV(), b.rad.SRV(), b.nrm.SRV(), b.geom.SRV(),
+                                         b.rpos.SRV() };
+    dc->CSSetShaderResources(11, 5, src);
+    RtReservoirSet& a = slot.set[0];
+    ID3D11UnorderedAccessView* uavs[6] = { reflRestirRt_.UAV(), a.pos.UAV(),  a.rad.UAV(),
+                                           a.nrm.UAV(),         a.geom.UAV(), a.rpos.UAV() };
+    dc->CSSetUnorderedAccessViews(0, 6, uavs, nullptr);
+    dc->CSSetShader(cs->cs.Get(), nullptr, 0);
+    dc->Dispatch(static_cast<UINT>((gw + 7) / 8), static_cast<UINT>((gh + 7) / 8), 1);
+
+    UnbindCompute(device);
+    restirTimer_.End(device);
+    return true;
 }
 
 bool RtPasses::Blit(GraphicsDevice& device, ShaderManager& shaders, const RenderView& view,
@@ -754,8 +969,9 @@ bool RtPasses::Blit(GraphicsDevice& device, ShaderManager& shaders, const Render
     dc->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     ID3D11Buffer* cbs[1] = { blitCB_.Get() };
     dc->PSSetConstantBuffers(0, 1, cbs);
-    ID3D11SamplerState* samps[1] = { linearClamp_.Get() };
-    dc->PSSetSamplers(0, 1, samps);
+    // s0 = 線形 (従来のモード)、s1 = 点 (M67d のクラス表示。整数を補間させない)
+    ID3D11SamplerState* samps[2] = { linearClamp_.Get(), pointClamp_.Get() };
+    dc->PSSetSamplers(0, 2, samps);
     ID3D11ShaderResourceView* srvs[1] = { src };
     dc->PSSetShaderResources(0, 1, srvs);
     dc->VSSetShader(blit->vs.Get(), nullptr, 0);
@@ -800,6 +1016,16 @@ bool RtPasses::RenderDebug(GraphicsDevice& device, ShaderManager& shaders, const
     }
     if (view.rtDebugMode == 11) { // M46h: デノイズ後の反射
         return Blit(device, shaders, view, refl.filtered);
+    }
+    // M67d: ReSTIR の reservoir。**13 (一次ヒットのクラス) はここを素通りして CS 経路へ
+    // 落ちる** — 4〜11 と 12 / 14 は Blit で早期 return する側、13 だけが「どの早期
+    // return にも当たらない」ことで rt_debug.cs に届く構造なので、順序を崩さないこと
+    if (view.rtDebugMode == 12) { // reservoir の M (赤 = 1 本 → 緑 = 上限まで再利用)
+        return Blit(device, shaders, view, refl.reservoirM, /*mode=*/1,
+                    /*param=*/kRtRestirMaxM);
+    }
+    if (view.rtDebugMode == 14) { // 反射像側の ReflectionClass (空 = 黒 / スカイ = 黒)
+        return Blit(device, shaders, view, refl.reservoirCls, /*mode=*/4);
     }
 
     ShaderProgram* cs = shaders.Get(debugCS_);

@@ -7,6 +7,9 @@
 #include <d3d11.h>
 
 #include "Engine/Core/EntityID.h"
+// M67d: RenderView が ReSTIR のパラメータ (RtReflRestirParams) を POD で運ぶため。
+// RtTypes.h は <cstdint> と DirectXMath しか引かないので循環はしない
+#include "Engine/Renderer/RayTracing/RtTypes.h"
 
 namespace mye {
 
@@ -273,7 +276,7 @@ struct RenderView {
     // ---- M46b: ハイブリッド・パストレーシング (末尾 append。既定 = 0/null = 従来と同一)。
     //      rtScene/rtPasses が null のパス (Forward / AssetPreview) では自然に無効化される ----
     // 0=off 1=BVH ヒートマップ 2=ヒット法線 3=インスタンス ID 4=生 GI … 11=デノイズ後の反射
-    // 13=反射クラス (M67、一次ヒット)。12/14 は ReSTIR (M67d) で埋まる
+    // 12=reservoir の M (M67d) 13=反射クラス (M67、一次ヒット) 14=反射像側の反射クラス (M67d)
     int32_t rtDebugMode = 0;
     const struct RtSceneBindings* rtScene = nullptr;
     class RtPasses* rtPasses = nullptr;
@@ -401,6 +404,15 @@ struct RenderView {
     float acousticInvSize[3] = { 0.0f, 0.0f, 0.0f };
     float acousticIntensity = 0.0f;
     float acousticNormalPush = 0.0f;
+    // ---- M67d: ReSTIR 反射 (末尾 append。**0 = 従来と 1 ビットも変わらない**) ----
+    //   rtReflRestir = 1 で反射レイの結果を reservoir に積み、空間再利用 (M67f) と
+    //     temporal 再利用 (M67e) を通してから SVGF へ渡す。0 なら rt_refl.cs の
+    //     uniform 分岐が M67d 以前の経路をそのまま走り、reservoir は確保すらされない。
+    //     RenderSystem が「トグル or rtDebugMode ∈ {12, 14}」で立てる。
+    //   rtReflRestirParams = クラス表と後段 SVGF の設定 (RtTypes.h の定数表が既定)。
+    //     **非永続** — チューニング UI (M67f) が実行中に書き換えるだけ
+    int32_t rtReflRestir = 0;
+    RtReflRestirParams rtReflRestirParams;
 };
 
 // ---- デカール (M56a) ----

@@ -133,6 +133,10 @@ struct EngineConfig {
     bool rtShadow = false;
     // M46h: スペキュラ環境項をレイトレ反射で置き換える (--rt-refl)。Deferred パスのみ。同上
     bool rtRefl = false;
+    // M67d: ReSTIR 反射 (--rt-restir)。**--rt-refl と併用する**もので、単体では
+    // (デバッグ 12 / 14 を除いて) 何も起きない。off なら反射シェーダの uniform 分岐が
+    // M67d 以前の経路を走るので絵はビット一致する
+    bool rtRestir = false;
     // M57: フロクセル (--froxel)。注入 → テンポラル → 前方積分 → 最終画像へ合成まで。
     // Deferred/Forward の両方 + 地形 / スカイ / パーティクルに載る (既定 off)
     bool froxel = false;

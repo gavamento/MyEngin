@@ -8,12 +8,22 @@
 // roughness > gRfMaxRoughness ではレイを撃たない — GGX ローブが広がるほど 1spp の
 // 分散が跳ね上がる一方、プリフィルタ IBL との見た目の差は縮むため。合成側が
 // 同じしきい値でフォールバックする (撃たなかった画素の値は使われない)。
+//
+// M67d: ReSTIR (時空間サンプル再利用) の初期 reservoir もここで作る。
+// **gRsOn == 0 の経路は M67d 以前と同じ計算をして同じ値を書く** — 分岐は CB の
+// スカラー 1 個で完全に uniform、reservoir 側の UAV (u1-u5) は C++ が張りもしない。
+// golden `demo_render_rtrefl` (tol=0) がそのビット一致を機械証明している。
 
 #include "rt_common.hlsli"
-// M67c: ReSTIR の数学。**まだ呼んでいない** (配管は M67d) — ここで include しておくのは、
-// fxc に通して構文を検証し続けるため。壊れたらこのシェーダのコンパイルが落ちて
-// 反射が IBL へフォールバックする = golden (demo_render_rtrefl) が動くので必ず気付ける
+// M67c: ReSTIR の数学。M67d からは実際に呼んでいる。
+// ★rt_restir_common → rt_reproject の順で include すること — RtLuminance は
+//   両方が `MYE_RT_LUMINANCE_DEFINED` ガードで定義していて、先に来た方が勝つ。
+//   ReSTIR の重みは RtMath.h の CPU ミラーと同じ式 (rt_restir_common 側) で
+//   評価しないと、selftest が固定した値と GPU の値がずれる
 #include "rt_restir_common.hlsli"
+#include "rt_reproject.hlsli"
+// ReSTIR の CB (b3)。**宣言は rt_restir_cb.hlsli の 1 か所だけ** (spatial と共有)
+#include "rt_restir_cb.hlsli"
 
 cbuffer RtReflCB : register(b2)
 {
@@ -33,8 +43,36 @@ Texture2D gRfNormal : register(t7);   // GBuffer 法線 (*0.5+0.5 のワール�
 Texture2D gRfPosition : register(t8); // GBuffer ワールド座標
 Texture2D gRfMark : register(t9);     // GBuffer アルベド (a = ジオメトリ有りマーク)
 Texture2D gRfMaterial : register(t10); // GBuffer マテリアル (r = metallic, g = roughness)
+// M67d: 前フレームの reservoir (組 A)。**M67d では読まない** — temporal 統合は M67e。
+// 宣言だけ先に置いておくのは、レジスタ割り当てと C++ 側のバインドを 1 サブで固定するため
+Texture2D gRsPrevPos : register(t11);
+Texture2D gRsPrevRad : register(t12);
+Texture2D gRsPrevNrm : register(t13);
+Texture2D gRsPrevGeom : register(t14);
+Texture2D gRsPrevRpos : register(t15);
 
 RWTexture2D<float4> gRfOut : register(u0);
+// M67d: 今フレームの reservoir (組 B)。**gRsOn == 0 のときは C++ 側が張らない**ので、
+// 書き込みは黙って捨てられる — が、そもそも uniform 分岐で 1 回も実行されない
+RWTexture2D<float4> gRsOutPos : register(u1);
+RWTexture2D<float4> gRsOutRad : register(u2);
+RWTexture2D<float4> gRsOutNrm : register(u3);
+RWTexture2D<float4> gRsOutGeom : register(u4);
+RWTexture2D<float4> gRsOutRpos : register(u5);
+
+// 「この画素にサンプルは無い」を書く (ジオメトリ無し / roughness 超過)。
+// M = 0 / cls = -1 なので、次段はこれを候補にしないし、デバッグ 12/14 は黒になる。
+// geom.w = 0 は RtReprojectValid が必ず落とす値 (= 履歴としても使われない)
+void RtRestirWriteEmpty(uint2 px)
+{
+    float4 pos, rad, nrm;
+    RtReservoirPack(RtReservoirEmpty(), pos, rad, nrm);
+    gRsOutPos[px] = pos;
+    gRsOutRad[px] = rad;
+    gRsOutNrm[px] = nrm;
+    gRsOutGeom[px] = float4(0.0f, 0.0f, 0.0f, 0.0f);
+    gRsOutRpos[px] = float4(0.0f, 0.0f, 0.0f, 0.0f);
+}
 
 [numthreads(8, 8, 1)]
 void CSMain(uint3 tid : SV_DispatchThreadID)
@@ -47,11 +85,17 @@ void CSMain(uint3 tid : SV_DispatchThreadID)
     const int3 gp = int3(int2(uv * gRfGbSize), 0);
     if (gRfMark.Load(gp).a < 0.5f) {
         gRfOut[tid.xy] = float4(0.0f, 0.0f, 0.0f, 0.0f); // ジオメトリ無し (空)
+        if (gRsOn != 0) {
+            RtRestirWriteEmpty(tid.xy);
+        }
         return;
     }
     const float roughness = gRfMaterial.Load(gp).g;
     if (roughness > gRfMaxRoughness) {
         gRfOut[tid.xy] = float4(0.0f, 0.0f, 0.0f, 0.0f); // 合成側で IBL へフォールバック
+        if (gRsOn != 0) {
+            RtRestirWriteEmpty(tid.xy);
+        }
         return;
     }
     const float3 N = normalize(gRfNormal.Load(gp).xyz * 2.0f - 1.0f);
@@ -81,8 +125,48 @@ void CSMain(uint3 tid : SV_DispatchThreadID)
     const float dist = max(length(P - gRfCameraPos), length(P));
     const float eps = max(gRfEpsMin, gRfEpsRel * dist);
     // ミス時のスカイは lod 0 — 鏡面反射に映る空をぼかさない (GI は粗い mip のまま)。
-    // envOnLastHit = 1: 映り込んだ面もラスタと同じ明るさ (直接光 + 環境項) にする
-    const float3 radiance =
-        RtTraceRadianceLod(P + N * eps, L, gRfTMax, max(gRfBounces, 1), seed, 0.0f, 1.0f);
-    gRfOut[tid.xy] = float4(radiance, 1.0f);
+    // envOnLastHit = 1: 映り込んだ面もラスタと同じ明るさ (直接光 + 環境項) にする。
+    //
+    // ★トレースは gRsOn に関わらず**この 1 回だけ**。off/on の分岐の中でそれぞれ
+    //   RtTraceRadianceLod / RtTraceRadianceFirstHit を呼ぶと、BVH トラバーサルが
+    //   2 度インライン展開されてスタック (indexable temp) が倍になり、fxc が
+    //   X4714 (レジスタ超過、性能低下) を出す — **off 経路の性能まで落ちる** (実測)。
+    //   RtTraceRadianceLod は RtTraceRadianceFirstHit を呼ぶだけのラッパなので、
+    //   ここで直接呼んでも返る放射輝度はビット単位で同じ
+    RtFirstHit fh;
+    const float3 Ls = RtTraceRadianceFirstHit(P + N * eps, L, gRfTMax, max(gRfBounces, 1), seed,
+                                              0.0f, 1.0f, fh);
+    gRfOut[tid.xy] = float4(Ls, 1.0f); // 生の 1spp (デバッグ 10 が読む。M67d 以前と同一)
+    if (gRsOn == 0) {
+        return; // ---- M67d 以前と完全に同一 (以降は 1 命令も実行されない) ----
+    }
+
+    // ---- M67d: ReSTIR の初期 reservoir ----
+    // 放射輝度は上と同じ 1 本のレイから取る (レイ数は 1 本も増えない)。違うのは
+    // 「どこに当たったか」(fh) も一緒に持ち帰って reservoir に積むところだけ。
+    //
+    // ソース pdf = D_vis なので初期重みは p̂/p = lum(Ls) に約分される。
+    // **lum = 0 (真っ黒) でも M = 1** — 「1 本撃った」事実は変わらないので、
+    // RtReservoirUpdate を w = 0 のまま呼ぶ (spec §4.2「M を数える規則」)
+    RtReservoir r = RtReservoirEmpty();
+    float wSum = 0.0f;
+    const float w = RtLuminance(Ls);
+    RtReservoirUpdate(r, wSum, fh.pos, fh.nrm, Ls, fh.cls, /*mInc=*/1.0f, w, /*rnd=*/0.0f);
+
+    // ★p̂ は**保存した xs から復元した方向**で評価する — 撃った L そのものではない。
+    //   次段 (spatial) と次フレーム (temporal) は xs しか知らないので、そちらと同じ
+    //   復元 (RtRestirSampleDir) をしておかないと p̂ の比が 1 にならず、
+    //   再利用ゼロ (M=1) でも絵が現行から数 % ずれる (A5 の根拠)
+    const float pHat = RtRestirTargetPdf(r.Ls, RtRestirSampleDir(r, P), V, N, alpha);
+    r.W = RtRestirWeight(wSum, r.M, pHat);
+
+    float4 pos, rad, nrm;
+    RtReservoirPack(r, pos, rad, nrm);
+    gRsOutPos[tid.xy] = pos;
+    gRsOutRad[tid.xy] = rad;
+    gRsOutNrm[tid.xy] = nrm;
+    // 受け側の情報 (RtHistory.geom と同レイアウト = 再投影の妥当性判定に流用できる)
+    gRsOutGeom[tid.xy] = float4(N, length(P - gRfCameraPos));
+    // 受け側のワールド座標。次フレームの temporal が Jacobian の P_from に使う (U4)
+    gRsOutRpos[tid.xy] = float4(P, 0.0f);
 }

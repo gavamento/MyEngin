@@ -120,6 +120,11 @@ ping-pong (`RtPasses.h:116-125`)、UAV は u0 のみ使用。
 - **初期サンプル** (rt_refl): 現行どおり VNDF で L を 1 本、`RtTraceRadianceFirstHit` で Ls と first-hit を得る。
   ソース pdf = D_vis なので `w = p̂/p = lum(Ls)`。`wSum = w, M = 1`。`lum = 0` (真っ黒) なら w = 0。
   現行の「N·V ≤ 1e-4 は鏡面方向」「ローブが面の下なら鏡面方向」の分岐はそのまま (ソース pdf の近似も現行と同じ)。
+  **W を作るときの p̂ は「撃った L」ではなく `RtRestirSampleDir(r, P)` = 保存した `xs` から復元した方向で評価する**
+  (sub-04 で確定): レイ原点を法線方向へ eps ずらすので両者は最大 1e-3 rad ずれ、粗さ 0.10 では pdf が 10% 級に
+  変わる。次段 (spatial / temporal) は `xs` しか知らないので、初期側を次段に合わせないと再利用ゼロでも
+  `p̂_spatial / p̂_init ≠ 1` で絵が動き A5 が成立しない。スカイは `xs` = 方向そのもの。
+  `RtRestirSampleDir` は `rt_restir_cb.hlsli` に 1 本だけ置き、全パスがそれを呼ぶ。
 - **統合 (temporal / spatial 共通、`RtReservoirMerge(r, wSum, cand, p̂_q(y'), mCap[cls'], J, jMax, rnd)`)**:
   候補 reservoir `r'` (サンプル y'、W'、M'、cls') を `w = p̂_q(y') · W' · min(M', mCap[cls']) · J` で streaming RIS に
   足す (`wSum += w; M += min(M', mCap[cls'])`、`rnd < w / wSum` で採用)。`jMax` は CB (`gRsJacobianMax`) から渡す
@@ -142,8 +147,16 @@ ping-pong (`RtPasses.h:116-125`)、UAV は u0 のみ使用。
   (fp でも同じ式に同じ値が入るので比は 1) = 静止画では近似案と同じ絵になる。
 - **クラス別の M 上限 (`mCap`)**: 統合前に候補の M を `mCap[cls']` へ切り詰める (上の式)。
   **書き戻し前**に `M > mCap[cls_sel]` なら `wSum *= mCap/M; M = mCap` (W は変わらない = 出力不変)。
-- **Resolve**: `out = Ls_sel · wSum / (M · lum(Ls_sel))`、`lum ≤ 0` または `M = 0` なら 0。
-  M = 1 (再利用なし) のとき `wSum = lum` → `out = Ls` とビット一致 (A5 の根拠)。
+- **Resolve**: `out = Ls_sel · wSum / (M · lum(Ls_sel))`、`lum ≤ 0` なら 0。
+  **`M = 0` (候補を 1 つも採れなかった画素) は 1spp の `Ls` をそのまま出す** (sub-04 で確定。reservoir 側は M = 0 の
+  まま書き戻す): 受け側の p̂ が 0 になる画素が実在する — 補間法線が視線の裏へ回ったシルエット際
+  (`RtGgxVndfPdf` の `ndotv ≤ 1e-6 → 0`、現行 rt_refl が「鏡面方向で代用」する画素。`--render-demo` frame 3 で
+  実測 950 テクセル) では自画素の W = 0 になり、temporal / spatial を足しても全候補が p̂ = 0 で落ちるので
+  「M = 0 なら 0」だと**永久に黒**。不変量は「ReSTIR は 1spp を置き換えるが、置き換えられない画素は置き換えない」。
+  却下した代替: (a) pdf の `ndotv` を下限クランプ = sub-03 の CPU ミラーと selftest の書き換え、かつ `ndotl ≤ 0` は残る /
+  (b) reservoir に wSum を持つ = 保存表の変更。どちらも 1 行のフォールバックより大きく可逆性が低い。
+  M = 1 (再利用なし) のとき `wSum = lum` → `out = Ls` (spatial パスの往復 `fl(p̂ · (lum / p̂))` で 1 ulp 動くことがある =
+  A5 は tol 1。run-to-run は tol 0)。
 - **保存 (5 テクスチャ × 2 組、内部解像度、viewKey 別スロット)**:
 
 | テクスチャ | フォーマット | xyz | w |
@@ -162,21 +175,31 @@ ping-pong (`RtPasses.h:116-125`)、UAV は u0 のみ使用。
 ### 4.3 パス構成と配管
 
 ```
-rt_refl.cs.hlsl (改)            gRsOn == 0: 現行と同一経路 (uniform 分岐、u1-u5 は書かない・張らない)
-                                gRsOn != 0: 1spp → 初期 reservoir → temporal 統合 (A を SRV で読む、
-                                            J は A の rpos と現 P から) → B (u1-u5) へ。
-                                            u0 (reflRt_) には現行どおり生の Ls を書く
-rt_refl_restir_spatial.cs.hlsl (新)  B と G-Buffer を読み、k タップ統合 → resolve → reflRestirRt_ (u0)
+rt_refl.cs.hlsl (改)            トレース (RtTraceRadianceFirstHit) は gRsOn に関わらず**分岐の外で 1 回だけ**
+                                (分岐内で別々に呼ぶと BVH 走査が 2 度インライン展開され fxc X4714 = レジスタ超過。
+                                sub-04 で実測)。u0 (reflRt_) に生の Ls を書いてから
+                                gRsOn == 0: return (現行と同一の値。u1-u5 は張られていない)
+                                gRsOn != 0: 初期 reservoir → temporal 統合 (A を SRV で読む、
+                                            J は A の rpos と現 P から) → B (u1-u5) へ
+rt_refl_restir_spatial.cs.hlsl (新)  B と G-Buffer を読み、自画素を Merge (J=1, rnd=0) → k タップ統合 → resolve
+                                            (M = 0 なら 1spp をそのまま) → reflRestirRt_ (u0)
                                             + 次フレーム用に A (u1-u5) へ書き戻し (rpos = 自画素の P)
+rt_restir_cb.hlsli (新)          RtRestirCB (b3) の唯一の宣言 + RtRestirClassParams / RtRestirSampleDir
+rt_reproject.hlsli (新)          rt_temporal から純移動した再投影ヘルパ (RtLuminance は MYE_RT_LUMINANCE_DEFINED ガード)
 rt_temporal / rt_variance / rt_atrous (無変更)  入力が reflRt_ から reflRestirRt_ に変わるだけ
 ```
 
-- **`RtRestirCB : register(b3)`** (両パス共通、C++ `struct RtRestirCB` + `static_assert`):
-  `gRsOn / gRsSpatialOn / gRsVisRay / gRsHistValid / gRsUseVelocity / gRsClassOverride` (int)、
-  `gRsPrevViewProj` (転置)、`gRsPrevCameraPos`、`gRsFrameIndex`、`gRsDepthThreshold` /
-  `gRsNormalThreshold` (`kRtTemporal*` を流用)、`gRsJacobianMax`、
-  `gRsClass[MYE_RT_REFL_CLASS_COUNT]` (float4: 半径 px / タップ数 / M 上限 / 予備)。
-  レイアウトは coder が決めるが**配列長は規則 9 に登録**。`RtReflCB` (64 B) は触らない。
+- **`RtRestirCB : register(b3)`** (両パス共通、C++ `struct RtRestirCB` (224 B) + `static_assert` ×2 (サイズと
+  `offsetof(classTable) == 144`)): `gRsOn / gRsSpatialOn / gRsVisRay / gRsHistValid / gRsUseVelocity /
+  gRsClassOverride` (int)、`gRsPrevViewProj` (転置)、`gRsPrevCameraPos`、`gRsCameraPos` / `gRsOutSize` / `gRsGbSize`
+  (spatial が `RtReflCB` (b2) を読まずに済むため — sub-04 で追加)、`gRsFrameIndex`、`gRsDepthThreshold` /
+  `gRsNormalThreshold` (`kRtTemporal*` を流用)、`gRsJacobianMax`、`gRsClass[MYE_RT_REFL_CLASS_COUNT]`
+  (float4: 半径 px / タップ数 / M 上限 / 予備)。配列長は規則 9 に登録済み。`RtReflCB` (64 B) は触らない。
+  **宣言は `rt_restir_cb.hlsli` の 1 箇所** (rt_refl と spatial が include。M58d の `terrain_common.hlsli` と同じ流儀 —
+  2 箇所に写経すると CB のずれが「絵は出るが再利用パラメータがでたらめ」の形で静かに壊れる)。同居するヘルパ:
+  `RtRestirClassParams(cls)` (範囲外 = 中立クラス) / `RtRestirSampleDir(r, P)`。
+  **b3 は ReSTIR off でも毎フレーム上げて張る** (`gRsOn = 0`): `UnbindCompute` は CB を外さないので、off なら張らない
+  にすると前フレームの `gRsOn = 1` が残り、トグルを切った次のフレームがまだ ReSTIR 経路を走る (sub-04 で発見)。
 - temporal の履歴 UV: `RtHistoryUv` / `RtClipToPrevUv` / `RtReprojectValid` / `RtLuminance` を
   `rt_temporal.cs.hlsl` から **`rt_reproject.hlsli` へ純移動** (rt_temporal / rt_refl / spatial が include)。
   移動だけなので GI / 反射の golden で不変を証明する。履歴の有効条件は `Accumulate` と同じ
@@ -208,8 +231,9 @@ rt_temporal / rt_variance / rt_atrous (無変更)  入力が reflRt_ から refl
   非永続 (rtBounces と同じ扱い)。ReSTIR off の間はサブメニューを `BeginDisabled`。
 - RT Debug のモード: 12 `Reservoir M` (Blit mode 1、param = 32: 赤 = 1 → 緑 = 32) /
   13 `Reflection Class (primary)` (rt_debug CS) / 14 `Reflection Class (reflected)` (Blit 新 mode 4 = `nrm.w` を
-  §4.1 の色へ。空 = 黒)。12 / 14 は `--rt-refl` が前提 (10 / 11 と同じ。反射パスの産物を読む)。
-  **13 は `--rt-refl` 不要** (rt_debug の CS はカメラから一次レイを撃つだけで反射バッファを見ない — sub-02 で確認)。
+  §4.1 の色へ。空 = 黒)。**12 / 14 は 10 / 11 と同じく `DeferredPath` の `needRefl` で反射パスを強制する**
+  (= `--rt-refl` 無しでも映る。sub-04 で確認。初版の「12/14 は `--rt-refl` 前提」は 10/11 の実装を読み違えていた)。
+  13 は rt_debug の CS がカメラから一次レイを撃つだけで、反射パスは要らない (sub-02 で確認)。
   `RtPasses::RenderDebug` は 4〜11 が Blit で早期 return し、それ以外が CS 経路に落ちる構造なので、
   12 / 14 の if は**その連鎖の中**に置き、13 は「どの早期 return にも当たらない」ことで CS へ落とす。
 - Inspector: `反射クラス` Combo + ツールチップ (「反射に映るときの再利用の厳しさ。主役ほど保守的」)。
@@ -336,3 +360,10 @@ rt_temporal / rt_variance / rt_atrous (無変更)  入力が reflRt_ から refl
 - 2026-09-05 (coder SELF_EVAL sub-03 round 2): must 2 件 + nit を確認して OK。「非有限」の実装を `isfinite()` から
   `!(w < 1e30)` の比較に置き換えた [追加] を承認し、§4.2 の文言と §4.5 の非機能に「HLSL で `isfinite` / `isinf` を
   使わない (X3577、`/Gis` 無し)」を追記。sub-04 / 05 / 06 の「やること」にも同じ注意を明記。
+- 2026-09-05 (coder SELF_EVAL sub-04 round 1): (a) §4.2 Resolve に「M = 0 は 1spp の Ls をそのまま」のフォールバックを
+  確定 (受け側の p̂ = 0 のシルエット際 950 テクセルが永久に黒くなるのを避ける。却下した代替 2 案を記録)。
+  (b) §4.2 初期サンプル: W を作る p̂ は `RtRestirSampleDir` (xs から復元した方向) で評価 — 撃った L だと再利用ゼロでも
+  絵が動く。(c) §4.3: `rt_restir_cb.hlsli` (CB の唯一の宣言) と `rt_reproject.hlsli` をパス構成に追加、CB に
+  `gRsCameraPos / gRsOutSize / gRsGbSize`、「b3 は off でも毎フレーム張る」「トレースは分岐の外で 1 回 (X4714)」を記録。
+  (d) §4.4: 12 / 14 は `needRefl` で反射パスを強制 (`--rt-refl` 不要) — 初版の記述を訂正。
+  (e) A5 は tol 1 (p̂ の往復の 1 ulp)、sub-07 の ReSTIR golden は自身が基準なので tol 0。sub-05 / 06 / 07 に反映。

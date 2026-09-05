@@ -1102,7 +1102,10 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
         rtIn.skyCube = view.skyCubemap;
         const bool needGi = rtGiOn || (view.rtDebugMode >= 4 && view.rtDebugMode <= 8);
         const bool needShadow = rtShadowOn || view.rtDebugMode == 9;
-        const bool needRefl = rtReflOn || view.rtDebugMode == 10 || view.rtDebugMode == 11;
+        // M67d: 12 (reservoir の M) / 14 (反射像側のクラス) も反射パスの産物なので、
+        // 10 / 11 と同じく「反射合成が off でも撃つ」側に入れる
+        const bool needRefl = rtReflOn || view.rtDebugMode == 10 || view.rtDebugMode == 11
+            || view.rtDebugMode == 12 || view.rtDebugMode == 14;
         if (needGi || needShadow || needRefl) {
             // GBuffer を CS の SRV で読むので RTV を先に外す
             // (SSAO off の経路では GBuffer が RTV に残ったままなので必須。M44b と同じ罠)

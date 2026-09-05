@@ -340,6 +340,9 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 config.rtShadow = true; // M46g: 平行光の影をレイトレで (Deferred のみ)
             } else if (arg == L"--rt-refl") {
                 config.rtRefl = true; // M46h: スペキュラ環境項をレイトレ反射で (Deferred のみ)
+            } else if (arg == L"--rt-restir") {
+                // M67d: 反射のサンプルを reservoir で時空間再利用する (--rt-refl と併用)
+                config.rtRestir = true;
             } else if (arg == L"--froxel") {
                 // M57b: フロクセルへの注入 (積分 = M57c / 合成 = M57e まで絵は不変)
                 config.froxel = true;

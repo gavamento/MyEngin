@@ -533,6 +533,20 @@ float3 RtDirectLight(float3 P, float3 N, float3 albedo, float metallic)
     return albedo * (1.0f - metallic) * Lo;
 }
 
+// M67d: 反射レイの **first hit** の幾何。ReSTIR の reservoir が運ぶ「サンプル y」そのもので、
+// 放射輝度 (Ls) と対で 1 サンプルを成す。
+//   pos = ヒット点のワールド座標。**ミス (スカイ) はレイ方向**を入れる — 無限遠の
+//         サンプルに座標は無く、再利用側が要るのは方向だけのため (spec §4.2)
+//   nrm = 両面反転後の法線。**ゼロ = スカイのセンチネル** (Jacobian が 1 に落ちる目印)
+//   inst = ヒットしたインスタンス index (ミス = -1)
+//   cls  = ヒットしたインスタンスの ReflectionClass (ミス = 4 = Default = 静的背景扱い)
+struct RtFirstHit {
+    float3 pos;
+    float3 nrm;
+    int inst;
+    int cls;
+};
+
 // レイに沿った放射輝度を bounces 回まで積む。skyLod = ミス時のスカイ mip。
 // cosine 重点サンプリングと 1/PI 省略規約により、throughput は albedo の積そのものになる
 // (BRDF の 1/PI を省いた分と pdf の PI が相殺する)。
@@ -546,9 +560,19 @@ float3 RtDirectLight(float3 P, float3 N, float3 albedo, float metallic)
 //
 // v1 制限: ヒット点のシェーディングは拡散のみ — 二次ヒット面の鏡面反射は評価しない
 // (金属に映った金属は黒く落ちる)。マテリアルは定数のみでテクスチャは引かない
-float3 RtTraceRadianceLod(float3 ro, float3 rd, float tMax, int bounces, inout uint3 seed,
-                          float skyLod, float envOnLastHit)
+//
+// M67d: **本体はこちら** — 1 周目のヒット情報 (fh) も一緒に返す版。ReSTIR (M67d) は
+// 「どこに当たったか」を reservoir に積むので、放射輝度だけでは足りない。
+// 既存の RtTraceRadianceLod はこれを呼ぶ薄いラッパで、**式は 1 つも複製していない**
+// (複製すると片方だけ直されて GI と反射の明るさが静かにずれる)
+float3 RtTraceRadianceFirstHit(float3 ro, float3 rd, float tMax, int bounces, inout uint3 seed,
+                               float skyLod, float envOnLastHit, out RtFirstHit fh)
 {
+    // 既定はミス (スカイ)。1 周目でヒットしたときだけ上書きする
+    fh.pos = rd;
+    fh.nrm = float3(0.0f, 0.0f, 0.0f);
+    fh.inst = -1;
+    fh.cls = 4; // kRtReflClassDefault (MYE_RT_REFL_CLASS_COUNT - 1 ではなく「中立」の番号)
     float3 radiance = float3(0.0f, 0.0f, 0.0f);
     float3 throughput = float3(1.0f, 1.0f, 1.0f);
     for (int b = 0; b < bounces; ++b) {
@@ -561,6 +585,14 @@ float3 RtTraceRadianceLod(float3 ro, float3 rd, float tMax, int bounces, inout u
         float3 N = RtHitNormal(hit);
         if (dot(N, rd) > 0.0f) {
             N = -N; // 裏面ヒットは法線を反転 (マテリアルは両面扱い)
+        }
+        if (b == 0) {
+            // ★ここは**代入だけ** — 上の計算行に一切触っていないので、
+            //   ラッパ経由の GI / 反射の出力はビット単位で従来のまま
+            fh.pos = P;
+            fh.nrm = N;
+            fh.inst = hit.inst;
+            fh.cls = RtHitReflectionClass(hit);
         }
         const RtMaterial m = RtHitMaterial(hit);
         radiance += throughput * (RtDirectLight(P, N, m.baseColor, m.metallic) + m.emissive);
@@ -584,6 +616,14 @@ float3 RtTraceRadianceLod(float3 ro, float3 rd, float tMax, int bounces, inout u
         ro = P + N * gRtRayEps;
     }
     return radiance;
+}
+
+// first hit を要らない呼び出し用の薄いラッパ (M46c/M46g/M46h の既存経路はこちら)
+float3 RtTraceRadianceLod(float3 ro, float3 rd, float tMax, int bounces, inout uint3 seed,
+                          float skyLod, float envOnLastHit)
+{
+    RtFirstHit fh;
+    return RtTraceRadianceFirstHit(ro, rd, tMax, bounces, seed, skyLod, envOnLastHit, fh);
 }
 
 // 拡散 GI 既定 (skyLod = 2 / 環境項なし)。M46c からの呼び出しはこちら = 出力はビット不変

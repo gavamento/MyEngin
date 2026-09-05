@@ -56,6 +56,11 @@ struct RtGiResult {
 struct RtReflResult {
     ID3D11ShaderResourceView* raw = nullptr;      // 1spp そのまま
     ID3D11ShaderResourceView* filtered = nullptr; // デノイズ後 (off なら raw と同じ)
+    // M67d: ReSTIR のデバッグ表示 (12 = M / 14 = 反射像側のクラス) が読む面。
+    // reservoir の組 A の rad (a = M) と nrm (rgb = ns, a = cls)。
+    // **ReSTIR off なら null** — 消費側 (RenderDebug) は Blit が null で false を返すのに任せる
+    ID3D11ShaderResourceView* reservoirM = nullptr;
+    ID3D11ShaderResourceView* reservoirCls = nullptr;
 };
 
 // レイトレーシングのコンピュートパス群 (M46b: デバッグ表示 / M46c: 拡散 GI /
@@ -103,6 +108,9 @@ public:
     {
         return reflTemporalTimer_.Milliseconds() + reflSvgfTimer_.Milliseconds();
     }
+    // M67d: ReSTIR の 2 パス目 (空間再利用 + resolve)。初期 reservoir の書き出しは
+    // 反射レイと同じディスパッチなので ReflGpuMs() 側に含まれる (分離できない)
+    float RestirGpuMs() const { return restirTimer_.Milliseconds(); }
 
 private:
     // viewKey (0=AssetPreview 1=runtime 2=SceneView 3=GameView) 毎に履歴を分ける。
@@ -118,6 +126,34 @@ private:
         RenderTexture geom[2];
         RenderTexture moments[2];
         int write = 0; // 今フレームの書き込み先 index (読みは 1-write)
+        int w = 0;
+        int h = 0;
+        uint32_t lastSerial = 0; // 最後に書いたフレームのビュー通番
+        bool hasLast = false;
+    };
+
+    // M67d: reservoir 1 組 (spec §4.2 の 5 枚)。
+    //   pos  = R32G32B32A32 (xyz = xs / w = W)。**fp32 が要る** — 半精度だと遠景で
+    //          Jacobian の d² が狂う
+    //   rad  = R16G16B16A16 (xyz = Ls / w = M。M は 32 までなので半精度で厳密)
+    //   nrm  = R16G16B16A16 (xyz = ns (0 = スカイ) / w = cls)
+    //   geom = R16G16B16A16 (xyz = 受け側 N / w = 受け側カメラ距離。RtHistory.geom と同型)
+    //   rpos = R32G32B32A32 (xyz = 受け側ワールド座標 P / w = 予備)。temporal の
+    //          厳密 Jacobian (U4) が P_from に使う
+    struct RtReservoirSet {
+        RenderTexture pos;
+        RenderTexture rad;
+        RenderTexture nrm;
+        RenderTexture geom;
+        RenderTexture rpos;
+    };
+
+    // viewKey 別の reservoir スロット。**flip しない ping-pong** —
+    // set[0] = 組 A (フレーム間で持ち越す) / set[1] = 組 B (フレーム内のスクラッチ)。
+    // rt_refl は A を読み B へ書き、spatial は B を読み A へ書く = 読む側と書く側が
+    // 常に別テクスチャなので typed UAV load が要らない (ユーザー判断 U5)
+    struct RtReservoirSlot {
+        RtReservoirSet set[2];
         int w = 0;
         int h = 0;
         uint32_t lastSerial = 0; // 最後に書いたフレームのビュー通番
@@ -147,9 +183,17 @@ private:
                                       const RenderView& view, const AccumResult& acc, int gw,
                                       int gh, RenderTexture (&pp)[2], int iterations,
                                       float sigmaLuma, GpuTimer& timer);
-    // src を view.rtv 全面に貼る (mode 1 = a を履歴長 / 2 = a を分散のヒートマップとして表示)
+    // src を view.rtv 全面に貼る (mode 1 = a を履歴長 / 2 = a を分散のヒートマップとして表示 /
+    // 4 = a を ReflectionClass の色として表示)
     bool Blit(GraphicsDevice& device, ShaderManager& shaders, const RenderView& view,
               ID3D11ShaderResourceView* src, int mode = 0, float param = 0.0f);
+    // M67d: reservoir 5 枚 × 2 組を (必要になった時点で) 確保する。
+    // サイズが変わったら hasLast を落とす。false = 確保に失敗 = ReSTIR を諦める
+    bool EnsureReservoirs(GraphicsDevice& device, RtReservoirSlot& slot, int gw, int gh);
+    // M67d: ReSTIR の 2 パス目。B (t11-t15) を読み A (u1-u5) へ書き戻しつつ、
+    // 解決した反射放射輝度を reflRestirRt_ (u0) へ。false = 走らせられなかった
+    bool RenderRestirSpatial(GraphicsDevice& device, ShaderManager& shaders, const RenderView& view,
+                             const RtFrameInputs& in, RtReservoirSlot& slot, int gw, int gh);
 
     RenderTexture debugRt_;   // デバッグ CS の出力先 (フル解像度、UAV 付き)
     RenderTexture giRt_;      // GI の出力先 (内部解像度、UAV 付き)
@@ -160,8 +204,13 @@ private:
     // ping-pong を共有できない = 専用に持つ
     RenderTexture reflRt_;
     RenderTexture reflSvgfRt_[2];
+    // M67d: ReSTIR の resolve 結果 (内部解像度)。**reflRt_ とは別に持つ** —
+    // reflRt_ は生の 1spp (デバッグ 10) として同じフレーム内で生きているため
+    RenderTexture reflRestirRt_;
     RtHistory giHist_[kHistorySlots];
     RtHistory reflHist_[kHistorySlots];
+    // M67d: reservoir (遅延確保。ReSTIR を一度も使わないなら 1 バイトも取らない)
+    RtReservoirSlot reservoirs_[kHistorySlots];
     AssetID debugCS_ = {};
     AssetID giCS_ = {};
     AssetID temporalCS_ = {};
@@ -170,6 +219,7 @@ private:
     AssetID shadowCS_ = {};
     AssetID shadowFilterCS_ = {};
     AssetID reflCS_ = {};
+    AssetID restirCS_ = {}; // M67d: rt_refl_restir_spatial.cs
     AssetID blitShader_ = {};
     Microsoft::WRL::ComPtr<ID3D11Buffer> sceneCB_;
     Microsoft::WRL::ComPtr<ID3D11Buffer> envCB_;
@@ -181,8 +231,12 @@ private:
     Microsoft::WRL::ComPtr<ID3D11Buffer> shadowCB_;
     Microsoft::WRL::ComPtr<ID3D11Buffer> shadowFilterCB_;
     Microsoft::WRL::ComPtr<ID3D11Buffer> reflCB_;
+    Microsoft::WRL::ComPtr<ID3D11Buffer> restirCB_; // M67d (b3、rt_refl と spatial で共有)
     Microsoft::WRL::ComPtr<ID3D11Buffer> blitCB_;
     Microsoft::WRL::ComPtr<ID3D11SamplerState> linearClamp_;
+    // M67d: デバッグ表示 (12 / 14) が reservoir を等倍でない画面へ貼るときに使う。
+    // クラス番号や M を線形補間すると境界に「存在しないクラスの色」が出るので点サンプル
+    Microsoft::WRL::ComPtr<ID3D11SamplerState> pointClamp_;
     Microsoft::WRL::ComPtr<ID3D11DepthStencilState> depthDisabled_;
     Microsoft::WRL::ComPtr<ID3D11BlendState> blendOpaque_;
     Microsoft::WRL::ComPtr<ID3D11RasterizerState> raster_;
@@ -195,6 +249,7 @@ private:
     GpuTimer reflTimer_;
     GpuTimer reflTemporalTimer_;
     GpuTimer reflSvgfTimer_;
+    GpuTimer restirTimer_; // M67d
     bool inited_ = false;
 };
 

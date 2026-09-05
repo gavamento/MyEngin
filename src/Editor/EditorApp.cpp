@@ -1200,10 +1200,17 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
             if (ImGui::MenuItem(Tr(StrId::Menu_RtDbgSvgfRefl), nullptr, mode == 11)) {
                 mode = 11;
             }
-            // M67: 一次ヒットの反射クラス。12 (reservoir M) / 14 (反射像側) は ReSTIR が
-            // 入ってから足すので、ここは 13 だけが飛び番で並ぶ
+            // M67d: ReSTIR の reservoir に積んだサンプル数 (赤 = 1 本 → 緑 = 上限まで再利用)
+            if (ImGui::MenuItem(Tr(StrId::Menu_RtDbgReservoirM), nullptr, mode == 12)) {
+                mode = 12;
+            }
+            // M67: 一次ヒットの反射クラス (13) と、反射像側の反射クラス (14)。
+            // 13 だけは RT 反射が要らない (カメラから一次レイを撃つだけ)
             if (ImGui::MenuItem(Tr(StrId::Menu_RtDbgReflClass), nullptr, mode == 13)) {
                 mode = 13;
+            }
+            if (ImGui::MenuItem(Tr(StrId::Menu_RtDbgReflClassRefl), nullptr, mode == 14)) {
+                mode = 14;
             }
             ImGui::Separator();
             // M46c: GI の品質。解像度は内部バッファ、バウンスは二次光線の深さ
@@ -1230,6 +1237,9 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
             ImGui::MenuItem(Tr(StrId::Menu_RtTemporal), nullptr, &ctx.renderSystem->rtTemporal);
             // M46e: 空間フィルタ。蓄積 off では幾何バッファが無いので連動して効かない
             ImGui::MenuItem(Tr(StrId::Menu_RtSvgf), nullptr, &ctx.renderSystem->rtSvgf);
+            // M67d: ReSTIR (反射サンプルの時空間再利用)。off なら M67d 以前とビット一致の絵。
+            // 再利用の強さを触るスライダ (クラス表 / 後段 SVGF) は M67f でこの下に生える
+            ImGui::MenuItem(Tr(StrId::Menu_RtRestir), nullptr, &ctx.renderSystem->rtReflRestir);
             ImGui::MenuItem(Tr(StrId::Menu_RtFreezeSeed), nullptr, &ctx.renderSystem->rtFreezeSeed);
             ImGui::EndMenu();
         }

@@ -1,7 +1,7 @@
 # sub-03: ReSTIR の数学 — HLSL ⇄ C++ ミラーと selftest
 
 - 依存: sub-02 (`kRtReflClassCount` / `MYE_RT_REFL_CLASS_COUNT` を定数表と CB 配列長に使う)
-- 状態: OK (commit: 司会が記入)
+- 状態: OK (commit ea0860b)
 - 往復: 2
 
 ## やること
