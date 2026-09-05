@@ -45,6 +45,17 @@ sln の外にもう 2 本ある。どちらも無い状態でエディタは起�
   Feature Level 11_0 縛りで DXR が使えないため `cs_5_0` のコンピュートシェーダで実装し、
   SVGF (テンポラル蓄積 → 分散推定 → A-Trous) でデノイズする。発光マテリアルはそのまま
   GI の面光源になる。詳細は [ADR-009](docs/adr/ADR-009-hybrid-path-tracing.md)
+- **ReSTIR 反射 + ReflectionClass (既定 off)** — 反射レーンは 1spp なので、分散を隠す
+  A-Trous が反射像のディテールごと溶かしてしまう。`--rt-restir` は**レイ数を増やさずに**
+  時空間のサンプル再利用 (ReSTIR) で実効サンプル数を上げる。reservoir が持つのは方向ではなく
+  **ヒット点そのもの**なので、借りた側は自分の視線・法線・粗さで重みを評価し直せるうえ、
+  **そこに刺さっているオブジェクトのクラスが分かる** — これが `ReflectionClass` の土台。
+  クラスは「反射する床」ではなく**反射に映る物体**の属性 (`Material` の 5 段: 主役 / 人型 /
+  乗り物 / 小物 / 既定) で、主役ほど再利用を絞り (にじませない・ゴーストさせない)、
+  小物ほど積極的に借りる。G-Buffer には 1 ビットも触れていない。
+  **off の絵は現行とビット一致**で、それを golden 3 枚 (`demo_render_rtrefl` /
+  `_rtgi` / `_rtrefl_restir`) が機械証明する。詳細は
+  [ADR-016](docs/adr/ADR-016-restir-reflection.md)
 - **剛体物理 (自作ソルバ)** — 蓄積インパルス + サブステップの接触ソルバに、空力 (等方抗力 /
   翼面 / マグヌス) / 浮力 / ジャイロ項 / 静動摩擦 / 転がり抵抗 / 材料資産 (`.physmat.json`) /
   スリープとアイランド / CCD / 地形ハイトフィールドを積んである。その上に**関節と機構**が
@@ -129,6 +140,14 @@ Editor.exe --replay-verify out.rep        # exit code 0/1
 Editor.exe --autoplay --deferred --frames 600 --screenshot shot.png
 Runtime.exe --deferred --rt-demo --rt-gi --rt-shadow --rt-refl --rt-anim-seed
                                           # レイトレのショーケース (コーネル箱)
+Runtime.exe --render-demo --deferred --rt-refl --rt-restir
+                                          # ReSTIR 反射 (M67) = スクショ 22 枚目。
+                                          #   既定は temporal のみ。--rt-restir-spatial で
+                                          #   空間再利用も on (既定 off = 目標帯の計測結果)、
+                                          #   --rt-restir-no-spatial は明示 off、
+                                          #   --rt-restir-visray は候補ごとに可視レイを撃つ
+                                          #   (spatial を含意)。--rt-class-override N で
+                                          #   全インスタンスの ReflectionClass を強制 (-1 = off)
 Editor.exe --parts-demo                   # 部位 (ソケット) のボーン追従シーン
 Editor.exe --physics-demo                 # 物理ショーケース (空力/浮力/マグヌス/材料/CCD)
                                           #   = replay 5 ペア目 + スクショ 13 枚目
@@ -162,7 +181,7 @@ Runtime.exe --net-demo --net-join 127.0.0.1:7777 --net-delay 3
 Runtime.exe --net-poke-tick 60            # 片側だけ壊して desync 検出と診断チェーンを試す
 Runtime.exe --rep-diff a.rep b.rep        # 2 本の .rep がどの tick で割れたか
 tools\replay_verify.bat                   # 一貫性検証一式 (6 シーン被覆)
-tools\shot_verify.bat [--update]          # 決定的スクショ 15 枚を tests\golden と比較
+tools\shot_verify.bat [--update]          # 決定的スクショ 22 枚を tests\golden と比較
 tools\crash_verify.bat                    # 5 経路で実際に落として .rep の再現性を検証
 tools\net_verify.bat                      # 2 プロセスのネット対戦 + desync 検出の実地検証
 tools\check_rules.ps1                     # コーディング規則の静的検査
@@ -183,7 +202,7 @@ CI (`.github\workflows\ci.yml`) は**この bat をそのまま呼ぶ** — CI �
 | `MYE_EXTRA_ARGS` | `--warp --no-audio` | 全 `Editor.exe` 実行へ後置 (GPU / 音源の無い runner 用) |
 | `MYE_MSBUILD_ARGS` | `/p:MyeWarnAsError=true` | 警告 0 を強制 (既定 off。ローカル開発は止めない) |
 | `MYE_DOTNET_ARGS` | `/p:TreatWarningsAsErrors=true` | 同上 (C# 側。綴りが違う) |
-| `MYE_SHOT_SKIP_FXAA` / `_TAA` / `_SSR` / `_FROXEL` | `1` | 機種差が増幅する 4 枚をランナーでは撮らない (tol=0 のローカル限定枠) |
+| `MYE_SHOT_SKIP_FXAA` / `_TAA` / `_SSR` / `_FROXEL` / `_FOG` / `_PARTICLE` / `_RT` | `1` | 機種差が増幅する 10 枚をランナーでは撮らない (tol=0 のローカル限定枠) |
 
 ## 計測 (RTX 3060 / 1600x900 / Release)
 

@@ -36,7 +36,7 @@ MyEngine — C++20 / DirectX 11 の自作ゲームエンジン (VS2022 / x64 / W
 |---|---|
 | `bin\x64\Debug\Editor.exe --selftest` | ヘッドレス回帰 44 スイート (D3D もウィンドウも作らない) |
 | `tools\replay_verify.bat [ticks]` | 8 ビルド → 並列 10 ジョブ (7 シーンチェーン = 記録 `--replay-fast` + snapshot 往復付き照合 + Release 照合 / タイムトラベル ×2 / 規則検査)。1 本だけ回すなら `--job <名前>` 再入 (ビルド済み前提)、並列度は `MYE_REPLAY_JOBS` |
-| `tools\shot_verify.bat [--update]` | 決定的スクショ 21 枚を `tests\golden\*.png` と比較 (CI 判定は 12 枚 — FXAA / TAA / SSR / froxel / fog / パーティクル 2 枚 / RT 反射 / RT GI の計 9 枚は分岐反転や GPU sim で機種差が増幅するので tol=0 のローカル限定。地形の 1 枚だけ異方性フィルタの実装依存で tol=12。**物理・関節・霧・パーティクル 2・音響 2 の 7 枚は frame 120 で撮る** — 他は frame 3 = ほぼ初期配置なので物理も粒子も絵に出ない。**先に Release ビルドが必要**) |
+| `tools\shot_verify.bat [--update]` | 決定的スクショ 22 枚を `tests\golden\*.png` と比較 (CI 判定は 12 枚 — FXAA / TAA / SSR / froxel / fog / パーティクル 2 枚 / RT 反射 / RT GI / RT 反射+ReSTIR の計 10 枚は分岐反転や GPU sim で機種差が増幅するので tol=0 のローカル限定。地形の 1 枚だけ異方性フィルタの実装依存で tol=12。**物理・関節・霧・パーティクル 2・音響 2 の 7 枚は frame 120 で撮る** — 他は frame 3 = ほぼ初期配置なので物理も粒子も絵に出ない。**ReSTIR の 1 枚だけ frame 40** (M 上限 Default 16 / Prop 32 が飽和した状態を固定する。frame 3 では M ≈ 4 でクラス別上限が絵に出ない)。**先に Release ビルドが必要**) |
 | `pwsh -File tools\check_rules.ps1` | 規則 1/2/4/7/8/9/10/11/12 の静的検査 (12 = Source Control の Editor 層封じ込め。9 の `$constGroups` に `kCollabProtoVersion` ⇄ `PROTO_VERSION` も載る) |
 | `cd tools\collab && cargo test` | MyeCollab (Rust) の単体 — porcelain v2 解析 / `diff_names` / `error.code` 分類 / worker のタイマー / panic 隔離 |
 | `tools\collab_verify.bat [--update]` | Source Control の回帰 9 シナリオ (一時リポ + 期待 NDJSON。**エディタも D3D も要らない**。先に `build_collab.bat`。実機目視は `tools\collab_fixture.ps1 <dir>` → `Editor.exe --project <dir>`) |
@@ -47,7 +47,7 @@ MyEngine — C++20 / DirectX 11 の自作ゲームエンジン (VS2022 / x64 / W
   CI 固有の事情は環境変数 4 種だけで注入する: `MYE_EXTRA_ARGS` (`--warp --no-audio`)、
   `MYE_MSBUILD_ARGS` (`/p:MyeWarnAsError=true`)、`MYE_DOTNET_ARGS` (`/p:TreatWarningsAsErrors=true`)、
   `MYE_SHOT_SKIP_FXAA` / `_TAA` / `_SSR` / `_FROXEL` / `_FOG` / `_PARTICLE` / `_RT`
-  (機種差が増幅する 9 枚をランナーでは撮らない。`_RT` = 20/21 枚目 (M67a) で、
+  (機種差が増幅する 10 枚をランナーでは撮らない。`_RT` = 20〜22 枚目 (M67a / M67g) で、
   BVH の hit/miss 分岐が SSR と同型に増幅するのでローカル限定。`_ACOUSTIC` の囲いも bat にあるが
   **わざと立てていない** — 音響は整数距離 + sqrt + lerp だけで増幅する機構が無い)。
   ※ C++ の警告 0 は `/p:TreatWarningAsError=true` では**効かない** (ClCompile の項目メタデータなので
@@ -90,6 +90,20 @@ MyEngine — C++20 / DirectX 11 の自作ゲームエンジン (VS2022 / x64 / W
   project_settings.json より優先し**書き戻さない**。GPU 粒子を --screenshot で撮る唯一の口) /
   `--taa` (M55d) / `--ssr` (M56d) / `--froxel` (M57) / `--hzb-debug N` (M56c) /
   `--velocity-debug` (M55c) / `--froxel-dump N` / `--froxel-no-temporal` (M57) /
+  `--rt-refl` / `--rt-gi` / `--rt-shadow` (M46f-M46h: RT の 3 レーン。**Deferred のみ**) /
+  `--rt-debug N` (M46b: 4〜11 は Blit、12 = reservoir の M / 13 = 一次ヒットのクラス /
+  14 = 反射像側のクラス。**12 / 14 は反射パスを強制するので `--rt-refl` は要らない**) /
+  `--rt-no-temporal` / `--rt-no-svgf` (M46d/e: デノイザの段を外す A/B) /
+  `--rt-freeze-seed` / `--rt-anim-seed` (M46d: 乱数を止める / **撮影時の自動 freeze を解除する**。
+  ReSTIR や SVGF の画質を測るときは後者が要る — 凍結中は毎フレーム同じ 1spp なので差が出ない) /
+  `--rt-restir` (M67d: 反射の時空間サンプル再利用。`--rt-refl` と併用) /
+  `--rt-restir-spatial` (M67f: 空間再利用を on。**既定は off** = 目標帯の計測で temporal 単独に
+  負けたため) / `--rt-restir-no-spatial` (明示 off。既定と同値だが、S5 / M67h で既定を on へ
+  反転したときに「この run は off で撮った」を CLI に残せる) /
+  `--rt-restir-visray` (M67f: 候補ごとに可視レイ。`--rt-restir` と `--rt-restir-spatial` を含意 —
+  可視レイはタップループの中でしか撃たないので単体では no-op) /
+  `--rt-class-override N` (M67f: 全インスタンスの ReflectionClass を N に強制、-1 = off。
+  ReSTIR とは独立でデバッグ 13 にも効く) /
   `--package DIR` / `--img-diff A B [--tol N]`。
 
 ## 決定論の契約
@@ -153,6 +167,17 @@ MyEngine — C++20 / DirectX 11 の自作ゲームエンジン (VS2022 / x64 / W
 
 **C++ と HLSL で定数を共有する** — 追加したら `check_rules.ps1` の `$constGroups` にも登録する
 (食い違いは定数バッファ不一致として静かに壊れるので、機械照合が唯一の防波堤)。
+
+**`Material` にフィールドを足す** (`GpuResources.h`) — **末尾に append** したうえで
+`ParseMaterialJson` / Inspector のロード・保存・widget / `CreateMaterialAsset` の雛形 /
+`AssetOpsSelfTest` の JSON 往復の **4 者**に手を入れる。加えて **cooked blob は `Material` を
+memcpy する**ので、次の 3 つを同時にやる (M67b で踏んだ。片方だけだと旧キャッシュを短く読んで
+以降のフィールドが全部ずれる):
+`CookedCache.h` の **`kCookVersion` を bump** / `ModelCook.cpp` の
+`static_assert(sizeof(Material) == N)` を更新 / **`AssetID` (uint64) の 8 バイト境界で丸まる分は
+明示パディングにする** (暗黙パディングは同じ入力でも cooked ファイルのバイト列を run ごとに
+変えうる = `CookedCacheSelfTest` の memcmp が不定になる)。影響は「初回起動で 1 回焼き直す」だけ
+(`cache\` は gitignore)。配布パッケージ (M51j の封印) は**新しい exe で作り直す**。
 
 **UI 文字列** — `src\Engine\Core\LocalizationTable.inl` に en/ja 両方を書き、`Tr()` 経由で読む。
 `Tr()` を printf 系の**唯一の引数**にしない (`TextUnformatted(Tr(x))` か `Text("%s", Tr(x))`)。
@@ -233,6 +258,12 @@ Editor → GameLogic → Engine → Renderer → Core → Platform   (上位は�
   git のオプション名などを地の文に書くときは注意 (M52f で全ビルドを一度落とした)。
 - `.gitattributes` は `*.png binary` を明示している — golden スクショが改行変換されると
   「ピクセル回帰が理由不明で赤い」形で出るため。
+- **`GpuTimer` は `kFrames = 6` のリングを 7 フレーム目からしか回収しない** (スロットを
+  再利用するときに前回の値を読む実装)。つまり `--frames 6` の**撮影 run では `[rt]` /
+  `[ssr]` の GPU 時間が全部 0.000 ms** になり、「計測したら 0 だった = 機能が動いていない」と
+  読み違える。GPU 時間の計測は **`--frames 20`** の run を撮影とは別に回すこと
+  (frames 6 と 20 のスクショはビット一致するので golden の撮影条件は変えない)。
+  ログの出力先は標準出力で `.log` は作られない (M67a で踏んだ)。
 - `bin/`、`obj/`、`cache/`、`crash/`、`tests/actual/`、`assets/scripts/Generated/` は生成物
   (gitignore)。`tests\golden\*.png` だけが版管理された正解。
   `obj\generated\<Config>\MyeBuildInfo.h` は Engine プロジェクトのビルドが吐く

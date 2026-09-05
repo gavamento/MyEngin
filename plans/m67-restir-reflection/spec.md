@@ -167,7 +167,10 @@ ping-pong (`RtPasses.h:116-125`)、UAV は u0 のみ使用。
 | `geom` | R16G16B16A16_FLOAT | 受け側 N (G-Buffer) | 受け側カメラ距離 (`RtHistory.geom` と同レイアウト) |
 | `rpos` | R32G32B32A32_FLOAT | 受け側ワールド座標 P (G-Buffer の `gp` の値そのもの。temporal の Jacobian の `P_from`。半精度にすると遠景で d² の比が狂うので fp32) | 予備 (0) |
 
-  48 B/px × 2 組。1600×900 × 0.5² で約 35 MB/viewKey、`RtHistory` と同じく**使ったスロットだけ遅延確保**。
+  **56 B/px** (pos 16 + rad 8 + nrm 8 + geom 8 + rpos 16) × 2 組 = 112 B/px。960×540 × 0.5² (480×270) で約 14.5 MB/viewKey、
+  1600×900 × 0.5² (800×450) で約 40.3 MB/viewKey (sub-07 で訂正 — 初版の「48 B/px / 35 MB」は rpos を 8 B で数えた
+  planner の算術ミス。実体は `RtPasses::EnsureReservoirs` の 5 フォーマット)。`RtHistory` と同じく**使ったスロットだけ
+  遅延確保**。
   **2 組は `RtHistory` と同じ ping-pong** (sub-06 round 1 で変更): `rt_refl` は履歴 (read) を読み今フレーム (write) へ
   書き、`spatial` は今フレームを**読むだけ** (resolve を `reflRestirRt_` へ。**reservoir は書き戻さない**)、フレーム末に
   `write` を flip。読む側と書く側は常に別テクスチャ = typed UAV load 不要。「ジオメトリ無し」「roughness 超過」の
@@ -289,7 +292,7 @@ rt_temporal / rt_variance / rt_atrous (無変更)  入力が reflRt_ から refl
 
 | # | 条件 | 検証手段 |
 |---|---|---|
-| A1 | ReSTIR off (既定) で golden **全枚**がビット一致 (sub-01 以降 21 枚、sub-07 以降 22 枚) | `tools\shot_verify.bat` (Release、`MYE_SHOT_SKIP_*` 無し) 全緑 |
+| A1 | ReSTIR off (既定) で golden **全枚**がビット一致 (sub-01 以降 21 枚、sub-07 以降 22 枚)。「全枚」= **ローカルで全枚** (RT の 3 枚は `MYE_SHOT_SKIP_RT` でランナーでは撮らない = SSR / FXAA と同じ既知の取引。CI 判定は 12 枚のまま) | `tools\shot_verify.bat` (Release、`MYE_SHOT_SKIP_*` 無し) 全緑 |
 | A2 | 新 golden (`demo_render_rtrefl` / `demo_render_rtgi`) は同一バイナリで 2 回撮って maxDiff=0、1 枚 ≤ 60 s (WARP、SHOTBASE 条件) | sub-01 で 2 回撮影 + `Editor.exe --img-diff A B --tol 0` PASS、所要秒を実装メモに |
 | A3 | ReflectionClass の配管: JSON 欠損 = 4 / 範囲外・非整数 = 4 / 値 1 → 1 / 両端 0・4、雛形 (`CreateMaterialAsset`) の往復、Inspector 保存 → 読み直しで往復、`--rt-debug 13` で一次ヒットがクラス色 | `Editor.exe --selftest` (AssetOps の JSON 往復。sub-02 で実装済み)、`Runtime.exe --render-demo --deferred --rt-debug 13 --screenshot` の画像 (spin 赤 / 柱 水色 / 床 灰。sub-02 で画素実測済み)。**Inspector の往復は reviewer の実機操作** (`LoadMaterialEdit` / `MaterialEditToJson` は private でヘッドレスから呼べない): `.mat.json` を選択 → Combo でクラス変更 → 保存 → 別アセットを選んで戻ると値が残り、ファイルに `"reflectionClass": N` が書かれている |
 | A4 | ReSTIR 数学の CPU ミラー: **VNDF pdf の上半球積分 + サンプラ (`RtGgxVndf`) が下半球へ漏らした割合 = 1 (±0.01、決定的な (cosθ, φ) グリッド)** (α = 0.36 / 0.04。反射方向の pdf は半ベクトル側で正規化されるので上半球だけでは 1 未満 — sub-03 で実測 0.884 + 0.117 / 0.998 + 0.002。「半球積分 = 1」と書いた初版は誤り) / pdf のピークが独立な Smith Λ 形の式と一致 / reservoir 更新の採用確率が重み比 (1:2:7、2 万回、±0.02) / M=1 で `Ls · wSum/(M·lum) == Ls` ビット一致、lum=0 で 0 / J(A→B)·J(B→A) = 1 (±1e-5)、同一点 = 1、スカイ = 1、受け側が 2 倍遠ざかると J = 1/4 (cosθ 同じ) / 統合の重みが J に比例 (J=2 で候補の重みが 2 倍、範囲外 J で候補外 = M 不加算) / **p̂_q(y') = 0 の候補は M も wSum も増えない** (Merge)、自画素の黒サンプルは M = 1 (Update) / M 上限: M'=100・cap 8 で統合後 M = 9 / 書き戻しクランプで W 不変 / 定数表 5 行・taps ≤ 8・mCap ≤ 32 | `Editor.exe --selftest` (`RtSelfTest.cpp` に `TestRestir`) |
@@ -423,3 +426,8 @@ rt_temporal / rt_variance / rt_atrous (無変更)  入力が reflRt_ から refl
   明示パディング)。(c) A7 (c) — 「Prop 画素数 frame 3 vs 40 で ±10%」を「spatial on/off でクラス別画素数がビット一致」に
   読み替え (temporal 単独でも +40% 動くので前者は伝播を測れない。後者の方が強い証拠)。(d) §7 — S5 で最初に触るノブは
   M 上限 (spatial off + 一様 Prop が最良)。sub-07 に golden 条件 (既定 = spatial off、frame 40)、CLI 4 本、ADR の決定 4 件を反映。
+- 2026-09-05 (coder SELF_EVAL sub-07 round 1、OK): (a) §4.2 の reservoir 容量を 48 → **56 B/px** (× 2 組 = 112 B/px、
+  480×270 で 14.5 MB、800×450 で 40.3 MB) に訂正 — planner の算術ミス、coder が `EnsureReservoirs` の実物で発見。
+  (b) A1 の「全枚」= ローカルで全枚 (RT 3 枚は CI で撮らない) を明文化。(c) golden の記録は `--update` ではなく比較 run の
+  実物をコピーする方法を承認 (他 21 枚に触れない = `git status` が直接の証拠。3 回の別 run と tol=0)。
+  (d) やること 6 (harness.md) は司会指示により coder は見送り、転記は司会。

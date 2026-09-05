@@ -166,8 +166,11 @@ void CSMain(uint3 tid : SV_DispatchThreadID)
     }
 
     // M をクラスの上限へ切り詰める (wSum も同じ比率で縮むので resolve の結果は不変)。
-    // ★書き戻しは無くなったが**残す** — spec §4.2 の「統合後は cls_sel の上限まで」を
-    //   1 か所でも崩すと、CPU ミラーの往復 selftest と GPU の M が食い違う
+    // ★**書き戻しが無い今、この 1 行は出力に効かない** — 縮めた M / wSum は下の resolve で
+    //   比としてしか使われず、reservoir はどこにも保存されないので次フレームにも伝わらない。
+    //   それでも残すのは、CPU ミラーの 2 パス往復テスト (RtSelfTest の spatial 側) と
+    //   形を揃えるため。spec §4.2 の「統合後は cls_sel の上限まで」を片側だけ崩すと、
+    //   書き戻しを復活させた瞬間に GPU と CPU の M が食い違う
     RtRestirClampM(r, wSum, RtRestirClassParams(r.cls).z);
     // ★候補を 1 つも採れなかった画素は **1spp をそのまま通す** (0 にしない)。
     //   補間法線が視線の裏へ回った画素 (現行コードが「鏡面方向で代用する」と書いている

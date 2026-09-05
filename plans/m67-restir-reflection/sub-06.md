@@ -1,7 +1,7 @@
 # sub-06: spatial reuse (ReflectionClass 駆動) + 可視レイ + `--rt-class-override` + チューニング UI
 
 - 依存: sub-05
-- 状態: OK (commit: 司会が記入)
+- 状態: OK (commit b8d17aa)
 - 往復: 2
 
 ## やること

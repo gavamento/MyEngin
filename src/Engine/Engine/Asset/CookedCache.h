@@ -17,9 +17,12 @@ namespace mye::CookedCache {
 //   deps (クック時に解決した外部テクスチャ実ファイル) は存在のみ検証 — 内容はリプレイ時も
 //   実ファイルを読み直すので、編集は自動で反映される。
 // kCookVersion bump で全キャッシュ無効化 (blob 形式を変えたら必ず上げる)。
-// 2 = M67: Material に reflectionClass (int32) が末尾 append され 56 → 60 バイトになった。
-// blob は Material を memcpy で書くので、bump しないと旧キャッシュを 4 バイト短く読んで
-// 以降のフィールドが全てずれる (ModelCook.cpp の static_assert が門番)
+// 2 = M67: Material に reflectionClass (int32) が末尾 append され
+// **56 → 64 バイト** (60 + AssetID (uint64) の 8 バイト境界で足りない 4 バイトを明示パディング)。
+// ★暗黙パディングのまま 60 → 64 に丸めさせないこと — 詰め物の中身が不定だと同じ入力でも
+//   cooked ファイルのバイト列が run ごとに変わり、CookedCacheSelfTest の memcmp が不定になる。
+// blob は Material を memcpy で書くので、bump しないと旧キャッシュを 8 バイト短く読んで
+// 以降のフィールドが全てずれる (ModelCook.cpp の static_assert(sizeof(Material) == 64) が門番)
 inline constexpr uint32_t kCookVersion = 2;
 
 // M51j: 封印マーカー。cooked ディレクトリにこの名前のファイルがあると「配布ビルドの

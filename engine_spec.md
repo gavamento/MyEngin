@@ -363,10 +363,18 @@ Design rationale and measured cost: **ADR-009**.
 | Diffuse GI (1 spp, cosine-importance + NEE) | The diffuse environment term (IBL irradiance / constant ambient) | 1/2 | Temporal accumulation → variance estimation → A-Trous ×3 |
 | Directional shadow (sun cone, 0.265°) | The CSM lookup | Full | Separable spatial filter only (no history — shadows must not ghost) |
 | Specular reflection (GGX VNDF, 1 ray) | The prefiltered IBL specular term, fading back to IBL above roughness 0.6 | 1/2 | Same chain as GI, tuned shorter (history 8, A-Trous ×2) |
+| **ReSTIR resampling of the reflection lane (M67, default off)** | The 1 spp estimate that feeds the reflection denoiser — same units, same dimension, so the compositing side is untouched. It replaces no *lane*: reuse changes how the estimate is built, not what it estimates | 1/2 | Unchanged. `--rt-restir` enables **temporal reuse (class-capped M)**; **spatial reuse is off by default** and is opted into with `--rt-restir-spatial` |
 
 - **Acceptance criterion**: with every lane off, the output is *bit-identical* to the build
   before the ray tracer existed. Each milestone verified this by comparing screenshots
-  with `fc /b` against the previous commit's binary, on both render paths
+  with `fc /b` against the previous commit's binary, on both render paths.
+  Since M67a the RT lanes carry their own goldens, so the same claim is now *mechanically*
+  checked on every run rather than by hand: `demo_render_rtrefl` / `demo_render_rtgi`
+  (and `demo_render_rtrefl_restir` for ReSTIR on) are compared at `--tol 0`. **ReSTIR off is
+  bit-identical to the pre-M67 build** because those first two goldens did not move across
+  M67a-M67g. All three are local-only (`MYE_SHOT_SKIP_RT`) for the same reason SSR is:
+  BVH traversal branches discretely on hit/miss, so one ULP throws a pixel from reflected
+  colour to the IBL fallback
 - **Scene representation**: BLAS reuses the deterministic median-split builder from the
   physics mesh collider; only the TLAS is new. Instances carry `worldToLocal` only and the
   ray direction is deliberately left unnormalized so `t` stays in world units
@@ -392,6 +400,53 @@ Design rationale and measured cost: **ADR-009**.
   hits shade from material constants only (no bindless textures), and local lights cast no
   ray-traced shadows
 
+**ReSTIR reflections and `ReflectionClass` (M67, default off).** The reflection lane is 1 spp,
+so the A-Trous pass that hides its variance also dissolves the detail of the reflected image in
+the roughness 0.3-0.6 band. `--rt-restir` raises the *effective* sample count without tracing
+more rays, by resampling (ReSTIR) across time and — optionally — space. Design rationale,
+rejected alternatives and measured cost: **ADR-016**.
+
+- **The reservoir stores the hit point, not the direction** (reconnection): `xs` (world position;
+  a direction plus a zero-normal sentinel for sky hits), `Ls`, `ns`, the unbiased contribution
+  weight `W`, `M`, the class of whatever was hit, and the *receiving* pixel's normal / camera
+  distance / world position. Five textures, two sets, 56 B/px per set, allocated lazily per
+  viewKey exactly like `RtHistory`. A candidate is only usable because the receiving pixel
+  re-derives `L = normalize(xs - P)` and re-evaluates the target function
+  `p̂ = lum(Ls) · D_vis(L | V, N, α)` with **its own** V / N / α
+- **`ReflectionClass` describes the object that is reflected, not the surface reflecting it.**
+  Five steps (`Hero` / `Character` / `Vehicle` / `Prop` / `Default`) sourced from
+  `Material::reflectionClass` (`int32`, default 4; a missing, non-integer or out-of-range JSON
+  key falls back to 4 rather than being clamped, so `-1` never becomes `Hero`).
+  `RtScene::Update` copies it into `RtInstance.reflectionClass` (the former `pad0`, so the
+  80-byte layout is unchanged) and the shader reads it **at the hit point** through
+  `gRtInstances[hit.inst]`. The class picks the reuse radius / tap count / `M` cap: a hero is
+  conservative (it must not smear or ghost), a prop is aggressive (nobody notices a blurred
+  prop, and the noise goes away). The G-Buffer is not touched at all
+- **Two passes, not three**: `rt_refl.cs.hlsl` traces, builds the initial reservoir and folds in
+  the temporal candidate; `rt_refl_restir_spatial.cs.hlsl` adds neighbour taps and resolves.
+  The two sets ping-pong like `RtHistory`, so nothing is ever read and written through the same
+  typed UAV (typed UAV load is not guaranteed at Feature Level 11_0 outside single-channel R32).
+  **Spatial never writes back into the reservoir** — the history holds only the temporal output
+- **Where the estimate cannot be replaced, it is not replaced**: a pixel whose interpolated
+  normal has rotated behind the view direction has `p̂ = 0`, so no candidate survives; those
+  pixels pass the raw 1 spp `Ls` through instead of going black (950 texels in `--render-demo`
+  at frame 3). With `M = 1` the resolve reduces to `Ls · lum/lum`, which is why "ReSTIR on with
+  no reuse" reproduces the current image to within one ULP (measured at M67d: maxDiff 1 over
+  120 pixels, from the `p̂` round trip inside the spatial pass; run-to-run is still exact)
+- **Debug views** (`--rt-debug N`, Deferred only; 12 and 14 force the reflection pass on, so
+  `--rt-refl` is not required): **12** = reservoir `M` as a heat map (red 1 → green 32, so a
+  class-capped history is visible as flat plateaus), **13** = `ReflectionClass` of the primary
+  hit, **14** = `ReflectionClass` of the *reflected* sample held in the reservoir. 13 and 14
+  share one colour table, and 14 paints sky hits black
+- **Tuning is live and non-persistent** (View → RT Debug → ReSTIR): the 5×3 class table, the
+  α reference for the radius, SVGF history / A-Trous count, the visibility-ray toggle and a
+  global class override, plus *Reset to defaults*. The single source of the defaults stays
+  `RtTypes.h`. `--rt-class-override N` does the same forcing from the command line
+- **Known v1 limits**: no visibility ray by default (light leaks through occluders), no MIS
+  weights (the estimator is biased by design), and the skinned-mesh limitation above bites
+  hardest here — **a skinned protagonist is absent from the BVH and therefore never appears in
+  a reflection at all**, so no amount of `ReflectionClass` tuning can improve it
+
 ### 6.5 Deliberate Non-Goals of the Rendering Roadmap (M54-M58)
 
 The M54-M58 roadmap (`plans/radiant-shimmering-lumen.md`) adds local-light shadows, TAA,
@@ -400,7 +455,7 @@ were considered and **deliberately left out**. They are non-goals of v1, not ove
 
 | Non-goal | Why it is out |
 |---|---|
-| **Ray-traced shadows for local lights** | The RT lane is default-off *and* excluded from the screenshot regression (`tools\shot_verify.bat`: the RT demo is too slow under WARP), so the feature would carry permanently zero automated coverage. The M54 shadow atlas produces the same image on a lane CI does exercise. The §6.4 v1 limitation "local lights cast no ray-traced shadows" therefore stands. |
+| **Ray-traced shadows for local lights** | The RT lane is default-off, and when this was written it was also excluded from the screenshot regression altogether (`tools\shot_verify.bat`: "the RT demo is too slow under WARP"), so the feature would have carried permanently zero automated coverage. **M67a showed that premise was half wrong**: the cost belongs to `--rt-demo` (the closed Cornell box, where every ray hits), not to the RT lane as such — `--render-demo --rt-refl` shoots in 11 s under WARP and is bit-identical run to run, so RT *reflection* and *GI* now have goldens. **RT shadows still have zero pixel coverage**, and the reason to leave them out is now the plainer one: the M54 shadow atlas produces the same image on a lane CI already exercises. The §6.4 v1 limitation "local lights cast no ray-traced shadows" therefore stands. |
 | **Diffuse SH probe grid** | Two implementations of diffuse ambient already exist (IBL irradiance, and RT diffuse GI + SVGF). An SH grid would be a third, lower in quality than the RT lane, and would require a whole bake infrastructure. M56 ships *specular* reflection probes only. |
 | **Terrain collision** | Terrain (M58) is a render-only lane: `TerrainComponent` is `kComponentNoHash` and nothing it does reaches the simulation. A heightfield collider would move terrain into the hashed lane, requiring a fifth scene pair in `tools\replay_verify.bat` and an ABI bump for height/normal queries. Deferred to M59. |
 
@@ -979,10 +1034,10 @@ persists the parse results so warm starts skip the parsers entirely.
 | Files | `<project>/cache/cooked/<guid 16hex>.mmdl` (models) / `.mpcm` (ogg PCM). Legacy launch and distributed builds use `<exeDir>/cache/cooked/` — the branch is on `projectRoot`, never on `assetsRoot` |
 | Blob contents | The raw bytes handed to the resource libraries (vertices / indices / materials / skins / clips, and texture sources). Float bit patterns are preserved; replaying registers content bit-identical to a fresh parse (`CookedCacheSelfTest` enforces this, `replay_verify` records cold and verifies warm) |
 | Insertion point | `RegisterAssets` (the startup scan via `RegisterAssetLibraries`, shared by Editor/Runtime) and the ogg branch of `LoadAudioFile`. `ModelLoader::Load` (drag & drop placement) always parses fresh. wav files are not cooked — their decode is near-memcpy |
-| Invalidation | Header `{magic, kCookVersion, guid, srcSize, srcMtime, srcContentHash, srcPathKey, deps}`. size+mtime match → valid; mtime mismatch → re-hash the source, and if the content is unchanged the header mtime self-heals; content change → recook. A moved source recooks (sub-asset AssetIDs derive from the normalized path, so a fresh parse would register different keys). Recorded external texture paths (`deps`) are existence-checked; texture *content* stays live because replay re-reads the files |
+| Invalidation | Header `{magic, kCookVersion, guid, srcSize, srcMtime, srcContentHash, srcPathKey, deps}`. size+mtime match → valid; mtime mismatch → re-hash the source, and if the content is unchanged the header mtime self-heals; content change → recook. A moved source recooks (sub-asset AssetIDs derive from the normalized path, so a fresh parse would register different keys). Recorded external texture paths (`deps`) are existence-checked; texture *content* stays live because replay re-reads the files. **`kCookVersion` is 2 since M67b**, where `Material` grew 56 → 64 bytes (`reflectionClass` plus an explicit tail pad, because the `AssetID` alignment would otherwise round 60 → 64 with *implicit* padding and make the blob's bytes differ run to run). **Any change to a `Material` layout must bump it** — the blob `memcpy`s the struct, so an unbumped cache is read four bytes short and every field after it silently shifts. `ModelCook.cpp`'s `static_assert(sizeof(Material) == 64)` is the gate that makes the mistake a compile error rather than corrupt geometry |
 | Textures | Embedded images are stored encoded and re-decoded on replay (so `.meta` import settings keep working); external files are re-loaded from the recorded resolved path |
 | Escape hatch | `--no-cook-cache` (mirrors `--no-jobs` / `--no-sim-cache`): parse everything fresh, never read or write the cache |
-| Sealed bundle (M51j) | A `.sealed` marker inside `cache/cooked/` (written only by Build Settings into the package) makes `ReadValidated` skip the pathKey / stat / content-hash / deps checks (magic / version / guid still apply). This is a **correctness** device, not an optimization: sub-asset AssetIDs derive from the packaging machine's absolute paths, so a relocated package that recooked would register different IDs and every scene reference to model meshes/materials would silently break. Replaying the sealed registrations reproduces the original IDs anywhere. External texture paths recorded in the blob are remapped onto the package's `assets/` root when missing (`ModelCook::Replay`) |
+| Sealed bundle (M51j) | A `.sealed` marker inside `cache/cooked/` (written only by Build Settings into the package) makes `ReadValidated` skip the pathKey / stat / content-hash / deps checks (magic / version / guid still apply). This is a **correctness** device, not an optimization: sub-asset AssetIDs derive from the packaging machine's absolute paths, so a relocated package that recooked would register different IDs and every scene reference to model meshes/materials would silently break. Replaying the sealed registrations reproduces the original IDs anywhere. External texture paths recorded in the blob are remapped onto the package's `assets/` root when missing (`ModelCook::Replay`). A sealed cache still checks the version, so **packages are rebuilt with the new exe** whenever `kCookVersion` moves — the exe and the cache are always shipped together, so this is a rebuild, not a migration |
 
 ### 10.3 Physics material assets (`.physmat.json`, M59a1/M59a2)
 
@@ -1697,7 +1752,7 @@ append verbatim, which is why the script bodies are identical locally and in CI:
 | `MYE_EXTRA_ARGS` | `--warp --no-audio` | appended to every `Editor.exe` invocation |
 | `MYE_MSBUILD_ARGS` | `/p:MyeWarnAsError=true` | opt-in warnings-as-errors (off by default) |
 | `MYE_DOTNET_ARGS` | `/p:TreatWarningsAsErrors=true` | the same for the C# host |
-| `MYE_SHOT_SKIP_FXAA` / `_TAA` / `_SSR` / `_FROXEL` | `1` | skip the four shots whose discrete branches amplify machine differences |
+| `MYE_SHOT_SKIP_FXAA` / `_TAA` / `_SSR` / `_FROXEL` / `_FOG` / `_PARTICLE` / `_RT` | `1` | skip the ten shots whose discrete branches (or GPU-side simulation) amplify machine differences |
 
 `GraphicsDevice::Init` tries `D3D_DRIVER_TYPE_HARDWARE` first and falls back to
 `D3D_DRIVER_TYPE_WARP`, logging the adapter it actually adopted; `--warp` skips straight to WARP.
@@ -1708,20 +1763,21 @@ a GPU-less runner an acceptable place to prove determinism. Golden screenshots, 
 *are* driver-dependent and are therefore always captured with `--warp`.
 
 **Screenshot regression (M52c).** Hashes prove that the *simulation* is reproducible; they say
-nothing about what is drawn. `tools\shot_verify.bat` captures fifteen deterministic screenshots with
+nothing about what is drawn. `tools\shot_verify.bat` captures 22 deterministic screenshots with
 `Runtime.exe` (no ImGui, so neither `imgui.ini` nor the cursor position can leak in) and compares
 them against `tests\golden\*.png` pixel by pixel, writing a difference heat map next to any shot
-that moved. `--update` re-records the golden set. Ten of the fifteen gate CI; the other five
-exist only to cover FXAA, TAA, SSR, froxel volumetrics and the fog showcase -- all five compared
-at `--tol 0` and all five skipped on the runner (`MYE_SHOT_SKIP_FXAA` / `_TAA` / `_SSR` /
-`_FROXEL` / `_FOG`). Each is a
+that moved. `--update` re-records the golden set. Twelve of the 22 gate CI; the other ten
+exist only to cover FXAA, TAA, SSR, froxel volumetrics, the fog showcase, the two particle
+backends and the three RT lane shots -- all ten compared
+at `--tol 0` and all ten skipped on the runner (`MYE_SHOT_SKIP_FXAA` / `_TAA` / `_SSR` /
+`_FROXEL` / `_FOG` / `_PARTICLE` / `_RT`). Each is a
 pass that **branches discretely**, so a 1-ULP difference flips the branch and throws a few dozen
 pixels a long way: FXAA was measured at maxDiff 35 (M52c) and SSR at maxDiff 95 over just 30
 pixels (M56d). No tolerance can cover that shape -- a genuine regression looks the same -- so the
 runner does not shoot them at all and only bit-identity on the dev machine is claimed. One of the
-ten, `demo_terrain_deferred`, gates CI at `--tol 12` rather than 3: **anisotropic filtering is
+twelve, `demo_terrain_deferred`, gates CI at `--tol 12` rather than 3: **anisotropic filtering is
 implementation-defined** and the two WARP builds disagree by up to 8 levels on terrain viewed at
-grazing angles (four splat layers x albedo+normal, amplified by the derivative-based TBN). Two of the ten
+grazing angles (four splat layers x albedo+normal, amplified by the derivative-based TBN). Two of the twelve
 (`demo_render_forward` / `demo_render_deferred`, M54a) shoot the `--render-demo` showcase, which
 is the only golden scene carrying spot and point lights -- without it every feature added by the
 M54-M58 rendering roadmap would be pixel-invariant by default and land with zero coverage.
@@ -1730,7 +1786,9 @@ extending `--render-demo`: terrain covers the whole frame, so folding it into th
 showcase would have re-recorded goldens shared with other in-flight branches, and
 `tests\golden\*.png` is binary and therefore unmergeable.
 
-Three shots -- `physics` (M59l), `joints` (M60k) and `fog` (M57追補) -- are the only ones **not** taken at frame 3.
+Eight shots are **not** taken at frame 3: `physics` (M59l), `joints` (M60k), `fog` (M57追補),
+the two particle backends (M63a) and the two acoustic paths (M65e) all shoot frame 120, and
+`demo_render_rtrefl_restir` (M67g) shoots frame 40.
 Every other shot is a near-initial pose, which is the right way to ask "is the renderer still
 drawing this scene correctly" but leaves physics untested: after three ticks nothing has visibly
 moved. `physics` shoots the M59 showcase at frame 120 (two seconds), where the fluttering feather,
@@ -1762,6 +1820,19 @@ two identical sprites scaled by their distance ratio -- they land at the same on
 two reasons at once: it enables the froxel volume, and the GPU particle simulation itself runs on
 WARP, so particle positions can move with the runner's WARP build. Its trail needs `Rotator` from
 `GameLogic.dll` to be built, the same dependency `joints` has on `VehicleDemoDriver`.
+
+The three RT shots (`demo_render_rtrefl` / `demo_render_rtgi`, M67a; `demo_render_rtrefl_restir`,
+M67g) closed a hole of the same shape as `fog`'s: none of the nineteen `call :shot` lines passed
+a single `--rt-*` flag, so **the ray-traced image was fixed nowhere** and every RT lane could
+break with the whole golden set green. The blanket claim that "the RT demo is too slow under WARP"
+turned out to be about `--rt-demo` (the closed Cornell box) specifically: `--render-demo`
+with `--rt-refl` shoots in 11 s and is bit-identical across repeated runs, which is exactly what a
+golden needs. Reflection and GI are shot separately because the only thing they share is
+`rt_common.hlsli`'s tracing helper — M67 went on to split that helper, so one shot would have
+covered only half of it. The ReSTIR shot is **frame 40, not 3**: at frame 3 the reservoir's `M` is
+still around 4, so the per-class caps (16 for `Default`, 32 for `Prop`) have not saturated and the
+`ReflectionClass` machinery does not reach the image at all. All three are local-only at `--tol 0`
+(`MYE_SHOT_SKIP_RT`) for the SSR reason: BVH traversal branches on hit/miss.
 
 Determinism of a *frame* needs two guarantees that determinism of a *tick* does not:
 
@@ -2059,7 +2130,8 @@ ADR-009 hybrid path tracing (§6.4) / ADR-010 editor localization (§9.1) /
 **ADR-011 compose assets (`.actor.json` = prefab 2.0)** (§10) /
 ADR-012 structural prefab overrides / **ADR-013 predictive rollback netcode** (§11.4) /
 **ADR-014 CI and pixel regression** (§11) /
-**ADR-015 in-process Rust collab service (`MyeCollab.dll`)** (§14).
+**ADR-015 in-process Rust collab service (`MyeCollab.dll`)** (§14) /
+**ADR-016 ReSTIR reflections and `ReflectionClass`** (§6.4).
 
 ---
 
