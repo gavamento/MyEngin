@@ -1,7 +1,7 @@
 # sub-07: 仕上げ — ADR-016 / engine_spec §6.4 / README / CLAUDE.md / ReSTIR on の golden / 全検証
 
 - 依存: sub-06
-- 状態: OK (commit: 司会が記入)
+- 状態: OK (commit abeb851)
 - 往復: 1
 
 ## やること
