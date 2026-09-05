@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <limits> // M67f: 半径スケールの NaN ケース
 #include <vector>
 
 #include <DirectXMath.h>
@@ -960,16 +961,18 @@ void TestRestir()
         TEST_CHECK(std::fabs(RtRestirWeight(6.0f, 2.0f, 1.5f) - 2.0f) < 1e-6f);
     }
 
-    // ---- M67e: temporal 再利用の 2 パス往復 (rt_refl → spatial → 次フレーム) ----
+    // ---- M67e/M67f: temporal 再利用の 2 パス往復 (rt_refl → spatial → 次フレーム) ----
     // 「静止カメラ・静止面・毎フレーム同じサンプル」= 凍結シードのスクリーンショットと
     // 同じ条件を CPU で回し、**M が 1 フレームに 1 ずつ伸びてクラス上限で止まる**ことと
     // **推定値が Ls のまま動かない**ことを固定する。
-    // ★不変量は「**両方のパスが書き戻す前に W を作り直す**」— テクスチャに載るのは
-    //   wSum ではなく W = wSum/(M·p̂) なので、どちらか一方でも W を空 reservoir の 0 の
-    //   まま書くと、次フレームの `w = p̂ · W · min(M', mCap) · J` が 0 になって候補ごと
-    //   外れ、**M が永久に 1 のまま**になる。M67e の実装で実際に踏んだバグで、
-    //   GPU 側ではデバッグ 12 が frame 3 / 40 / 80 で同一画像になる形でしか出ない
-    //   (絵は 1spp と同じなので golden も A5 も緑のまま通る) — CPU で先に落とす
+    // ★M67f で**履歴は rt_refl (temporal) の出力だけ**になった (spatial は書き戻さない)
+    //   ので、このループも「パス 1 の出力を次フレームの候補にする」流れで回す。
+    //   不変量は「**パス 1 が書き出す前に W を作り直す**」— テクスチャに載るのは wSum では
+    //   なく W = wSum/(M·p̂) なので、ここを空 reservoir の 0 のまま書くと次フレームの
+    //   `w = p̂ · W · min(M', mCap) · J` が 0 になって候補ごと外れ、**M が永久に 1 のまま**
+    //   になる。M67e の実装で実際に踏んだバグで、GPU 側ではデバッグ 12 が
+    //   frame 3 / 40 / 80 で同一画像になる形でしか出ない (絵は 1spp と同じなので golden も
+    //   A5 も緑のまま通る) — CPU で先に落とす
     {
         const XMFLOAT3 P = { 0.0f, 0.0f, 0.0f }; // 受け側 (静止 = P_prev と同じ)
         // ヒット点はレイの先 4m、法線はレイに向く側 (両面規約)
@@ -979,7 +982,8 @@ void TestRestir()
         const XMFLOAT3 ls = { 0.7f, 0.55f, 0.2f };
         const float alpha = 0.36f;
         const float mCap = kRtReflClassTable[kRtReflClassDefault].mCap;
-        RtReservoirCpu prev = RtReservoirEmpty(); // 組 A (前フレームの書き戻し)
+        // 前フレームに rt_refl が書いた面 (ping-pong の read 側)
+        RtReservoirCpu prev = RtReservoirEmpty();
         bool histValid = false;
         bool growOk = true;
         bool unbiasedOk = true;
@@ -1002,26 +1006,27 @@ void TestRestir()
             const XMFLOAT3 lSel = Normalize({ r.xs.x - P.x, r.xs.y - P.y, r.xs.z - P.z });
             r.W = RtRestirWeight(wSum, r.M, RtRestirTargetPdf(r.Ls, lSel, V, N, alpha));
 
-            // --- パス 2 = rt_refl_restir_spatial.cs.hlsl (自画素 → ClampM → resolve → W) ---
+            // --- パス 2 = rt_refl_restir_spatial.cs.hlsl (自画素 → ClampM → resolve) ---
+            // ★M67f: **書き戻さない**ので prev には入れない。タップ 0 (静止した単一画素の
+            //   モデル) なので、統合するのは自画素 1 つだけ = 出力は r を resolve した値
             RtReservoirCpu s = RtReservoirEmpty();
             float sSum = 0.0f;
             const float pc = RtRestirTargetPdf(r.Ls, lSel, V, N, alpha);
             RtReservoirMerge(s, sSum, r, pc, mCap, 1.0f, kRtRestirJacobianMax, 0.0f);
             RtRestirClampM(s, sSum, mCap);
             const XMFLOAT3 out = RtRestirResolve(s, sSum);
-            const XMFLOAT3 lOut = Normalize({ s.xs.x - P.x, s.xs.y - P.y, s.xs.z - P.z });
-            s.W = RtRestirWeight(sSum, s.M, RtRestirTargetPdf(s.Ls, lOut, V, N, alpha));
 
             const float expectM = std::min(static_cast<float>(frame + 1), mCap);
-            if (s.M != expectM) {
-                growOk = false;
+            if (s.M != expectM || r.M != expectM) {
+                growOk = false; // 履歴側 (r) と表示側 (s) の両方が同じ伸び方をすること
             }
             // 同じサンプルを何度積んでも推定値は Ls のまま (再利用で暗化・明化しない)
             if (std::fabs(out.x - ls.x) > 1e-4f || std::fabs(out.y - ls.y) > 1e-4f
                 || std::fabs(out.z - ls.z) > 1e-4f) {
                 unbiasedOk = false;
             }
-            prev = s;
+            // ★次フレームへ渡すのは**パス 1 の出力** (spatial の s ではない)
+            prev = r;
             histValid = true;
         }
         MYE_LOG_INFO("  restir: temporal loop M = %.0f after 24 frames (cap %.0f)",
@@ -1030,8 +1035,9 @@ void TestRestir()
         TEST_CHECK(unbiasedOk);  // 出力は Ls のまま
         TEST_CHECK(prev.M == mCap);
 
-        // ★変異テスト: 組 A の W を 0 にする (= 書き戻しで W を作り忘れた状態) と、
-        //   候補の重みが 0 になって M が 1 から伸びない = 上のループが守っている性質
+        // ★変異テスト: **rt_refl 側の** W を 0 にする (= 書き出しで W を作り忘れた状態) と、
+        //   次フレームの候補の重みが 0 になって M が 1 から伸びない = 上のループが守る性質。
+        //   手元で再現するなら rt_refl.cs.hlsl の `r.W = RtRestirWeight(...)` を 0 にする
         RtReservoirCpu stale = prev;
         stale.W = 0.0f;
         RtReservoirCpu r2 = RtReservoirEmpty();
@@ -1043,6 +1049,104 @@ void TestRestir()
         RtReservoirMerge(r2, w2, stale, RtRestirTargetPdf(stale.Ls, lStale, V, N, alpha),
                          mCap, 1.0f, kRtRestirJacobianMax, 0.75f);
         TEST_CHECK(r2.M == 1.0f);
+    }
+
+    // ---- M67f: 半径を受け側の α で縮める係数 ----
+    // 「滑らかな面ほど空間再利用を切る」を決める唯一の式。ここが 1 に張り付くと
+    // 鏡面で spatial が全開になり、round 1 で観測した暗化 (-5.2%) とフリッカー増加が戻る
+    {
+        // 基準そのもの (粗さ kRtReflMaxRoughness) で等倍、それ以上は 1 に飽和
+        TEST_CHECK(RtRestirRadiusScale(kRtRestirRadiusAlphaRef, kRtRestirRadiusAlphaRef)
+                   == 1.0f);
+        TEST_CHECK(RtRestirRadiusScale(1.0f, kRtRestirRadiusAlphaRef) == 1.0f);
+        // 粗さ 0.5 (α 0.25) = 目標帯、粗さ 0.10 (α 0.01) = 鏡面
+        const float mid = RtRestirRadiusScale(0.25f, kRtRestirRadiusAlphaRef);
+        const float spec = RtRestirRadiusScale(0.01f, kRtRestirRadiusAlphaRef);
+        MYE_LOG_INFO("  restir: radius scale alpha 0.25 -> %.3f / 0.01 -> %.3f",
+                     static_cast<double>(mid), static_cast<double>(spec));
+        TEST_CHECK(std::fabs(mid - 0.6944f) < 1e-3f);
+        TEST_CHECK(std::fabs(spec - 0.0278f) < 1e-3f);
+        // 退化入力は全て 0 (= タップ 0)。**NaN も比較 2 つで落ちる**
+        TEST_CHECK(RtRestirRadiusScale(0.0f, kRtRestirRadiusAlphaRef) == 0.0f);
+        TEST_CHECK(RtRestirRadiusScale(-0.5f, kRtRestirRadiusAlphaRef) == 0.0f);
+        TEST_CHECK(RtRestirRadiusScale(std::numeric_limits<float>::quiet_NaN(),
+                                       kRtRestirRadiusAlphaRef)
+                   == 0.0f);
+        TEST_CHECK(RtRestirRadiusScale(0.25f, 0.0f) == 0.0f);
+        // 鏡面では Default の半径 8px が 1px を切る = spatial が自然に切れる
+        TEST_CHECK(kRtReflClassTable[kRtReflClassDefault].radiusPx * spec < 1.0f);
+        // 目標帯では Prop の半径 12px が 1px を超える = spatial が効く
+        TEST_CHECK(kRtReflClassTable[kRtReflClassProp].radiusPx * mid >= 1.0f);
+    }
+
+    // ---- M67f: 空間タップ (Vogel 螺旋) ----
+    // 空間再利用でどこから借りるかを決める唯一の幾何。**GPU 側と同じ式**なので、
+    // ここが通れば「クラスの半径を超えて借りない」「タップが同じ点に重ならない」
+    // 「回転で配置が回るだけ」が GPU でも成り立つ。クラス表の数字が実際の
+    // タップ距離に効いていることを機械で固定するのはここだけ (絵では読めない)
+    {
+        bool insideOk = true, distinctOk = true, rotOk = true, monotoneOk = true;
+        double maxRatio = 0.0;
+        for (int k = 1; k <= kRtRestirMaxTaps; ++k) {
+            for (int ci = 0; ci < kRtReflClassCount; ++ci) {
+                const float radius = kRtReflClassTable[ci].radiusPx;
+                std::vector<XMFLOAT2> taps;
+                for (int i = 0; i < k; ++i) {
+                    const XMFLOAT2 t = RtRestirVogelTap(i, k, radius, 0.7f);
+                    const double len = std::sqrt(static_cast<double>(t.x) * t.x
+                                                 + static_cast<double>(t.y) * t.y);
+                    if (len > static_cast<double>(radius) + 1e-4) {
+                        insideOk = false; // 半径をはみ出したら「クラスで縛る」が嘘になる
+                    }
+                    maxRatio = (std::max)(maxRatio, len / static_cast<double>(radius));
+                    for (const XMFLOAT2& p : taps) {
+                        if (std::fabs(p.x - t.x) < 1e-5f && std::fabs(p.y - t.y) < 1e-5f) {
+                            distinctOk = false; // 同じ点を 2 回借りると M だけ増える
+                        }
+                    }
+                    taps.push_back(t);
+
+                    // 回転角を足すと**全タップがちょうどその角度だけ回る** (配置は不変)。
+                    // 画素ごとに回すのが「螺旋の偏りを絵に焼き付けない」仕掛けなので、
+                    // 回転が半径や順序を変えていないことをここで固定する
+                    constexpr float kRot = 1.234f;
+                    const XMFLOAT2 tRot = RtRestirVogelTap(i, k, radius, 0.7f + kRot);
+                    const float c = std::cos(kRot), s = std::sin(kRot);
+                    if (std::fabs(t.x * c - t.y * s - tRot.x) > 1e-3f
+                        || std::fabs(t.x * s + t.y * c - tRot.y) > 1e-3f) {
+                        rotOk = false;
+                    }
+                }
+                // 半径を 2 倍にすると全タップの距離もちょうど 2 倍 (線形スケール)
+                for (int i = 0; i < k; ++i) {
+                    const XMFLOAT2 a = RtRestirVogelTap(i, k, radius, 0.7f);
+                    const XMFLOAT2 b = RtRestirVogelTap(i, k, radius * 2.0f, 0.7f);
+                    if (std::fabs(a.x * 2.0f - b.x) > 1e-3f
+                        || std::fabs(a.y * 2.0f - b.y) > 1e-3f) {
+                        monotoneOk = false;
+                    }
+                }
+            }
+        }
+        MYE_LOG_INFO("  restir: vogel taps max |offset| / radius = %.4f", maxRatio);
+        TEST_CHECK(insideOk && distinctOk && rotOk && monotoneOk);
+        // count = 0 で呼んでも 0 除算しない (呼ぶ側がループを回さないのが正だが、
+        // ここが NaN を返すと画面全体が NaN になるので二重に守っている)
+        const XMFLOAT2 degenerate = RtRestirVogelTap(0, 0, 8.0f, 0.0f);
+        TEST_CHECK(degenerate.x == degenerate.x && degenerate.y == degenerate.y);
+        // **主役ほど近くからしか借りない** — Hero の全タップは Prop の半径の内側。
+        // クラス表の向き (§4.1) が実際のタップ距離に効いていることの機械証明
+        bool heroInsideProp = true;
+        for (int i = 0; i < kRtRestirMaxTaps; ++i) {
+            const XMFLOAT2 h = RtRestirVogelTap(i, kRtRestirMaxTaps,
+                                                kRtReflClassTable[kRtReflClassHero].radiusPx,
+                                                0.3f);
+            if (std::sqrt(h.x * h.x + h.y * h.y)
+                > kRtReflClassTable[kRtReflClassProp].radiusPx) {
+                heroInsideProp = false;
+            }
+        }
+        TEST_CHECK(heroInsideProp);
     }
 
     // ---- クラス別パラメータ表 ----
@@ -1087,7 +1191,11 @@ void TestRestir()
         TEST_CHECK(tableOk);
         TEST_CHECK(def.svgfHistory == kRtReflMaxHistory);
         TEST_CHECK(def.atrousIterations == kRtReflAtrousIterations);
-        TEST_CHECK(def.spatial == 1 && def.visRay == 0 && def.classOverride == -1);
+        // ★spatial の既定は **0** (sub-06 round 2 の計測で決めた。spec §7 U7) —
+        //   目標帯で temporal 単独より悪化したので既定 off、ノブは残す。
+        //   ここを 1 に戻すなら「目標帯で改善する」計測をやり直すこと
+        TEST_CHECK(def.spatial == 0 && def.visRay == 0 && def.classOverride == -1);
+        TEST_CHECK(def.radiusAlphaRef == kRtRestirRadiusAlphaRef);
     }
 }
 

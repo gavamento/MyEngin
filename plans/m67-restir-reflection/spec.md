@@ -168,9 +168,15 @@ ping-pong (`RtPasses.h:116-125`)、UAV は u0 のみ使用。
 | `rpos` | R32G32B32A32_FLOAT | 受け側ワールド座標 P (G-Buffer の `gp` の値そのもの。temporal の Jacobian の `P_from`。半精度にすると遠景で d² の比が狂うので fp32) | 予備 (0) |
 
   48 B/px × 2 組。1600×900 × 0.5² で約 35 MB/viewKey、`RtHistory` と同じく**使ったスロットだけ遅延確保**。
-  組 A = フレーム間で持ち越す側 (固定 index 0)、組 B = フレーム内のスクラッチ (index 1)。
-  `rt_refl` は A を読み B へ書く、`spatial` は B を読み A へ書く (flip しない。読む側と書く側が常に別テクスチャ
-  = typed UAV load 不要)。「ジオメトリ無し」「roughness 超過」の画素は M = 0 を書く。
+  **2 組は `RtHistory` と同じ ping-pong** (sub-06 round 1 で変更): `rt_refl` は履歴 (read) を読み今フレーム (write) へ
+  書き、`spatial` は今フレームを**読むだけ** (resolve を `reflRestirRt_` へ。**reservoir は書き戻さない**)、フレーム末に
+  `write` を flip。読む側と書く側は常に別テクスチャ = typed UAV load 不要。「ジオメトリ無し」「roughness 超過」の
+  画素は M = 0 を書く。デバッグ 12 / 14 は今フレーム側を読む。
+  初版 (組 A 固定 = spatial の結果を書き戻す) を捨てた理由: 書き戻すと近傍の履歴が自画素の履歴に混ざり、
+  (a) 明るい / M の重いサンプルが 1 フレームに半径ぶんずつ**拡散**する (sub-06 実測: Prop のサンプルが frame 3 → 40 で
+  9988 → 40432 px を占拠、平均輝度 +8.4%)、(b) フレームごとに回るタップ集合と合わさって採用サンプルの乗り換えが
+  起き、一様クラスでもフリッカーが temporal 単独より悪化 (0.15 → 0.26〜0.45)。書き戻しを断てば「Hero のサンプルは
+  radius[Hero] より遠くへ運ばれない」が**フレームを跨いでも**成り立つ。
 
 ### 4.3 パス構成と配管
 
@@ -181,19 +187,21 @@ rt_refl.cs.hlsl (改)            トレース (RtTraceRadianceFirstHit) は gRsO
                                 gRsOn == 0: return (現行と同一の値。u1-u5 は張られていない)
                                 gRsOn != 0: 初期 reservoir → temporal 統合 (A を SRV で読む、
                                             J は A の rpos と現 P から) → B (u1-u5) へ
-rt_refl_restir_spatial.cs.hlsl (新)  B と G-Buffer を読み、自画素を Merge (J=1, rnd=0) → k タップ統合 → resolve
-                                            (M = 0 なら 1spp をそのまま) → reflRestirRt_ (u0)
-                                            + 次フレーム用に A (u1-u5) へ書き戻し (rpos = 自画素の P)
+rt_refl_restir_spatial.cs.hlsl (新)  今フレーム側 (write) と G-Buffer を読み、自画素を Merge (J=1, rnd=0) → k タップ統合
+                                            → resolve (M = 0 なら 1spp をそのまま) → reflRestirRt_ (u0)。
+                                            **reservoir は書き戻さない** (sub-06 round 1。履歴は temporal の出力だけ)
+RtPasses                         フレーム末に write を flip (RtHistory と同じ)
 rt_restir_cb.hlsli (新)          RtRestirCB (b3) の唯一の宣言 + RtRestirClassParams / RtRestirSampleDir
 rt_reproject.hlsli (新)          rt_temporal から純移動した再投影ヘルパ (RtLuminance は MYE_RT_LUMINANCE_DEFINED ガード)
 rt_temporal / rt_variance / rt_atrous (無変更)  入力が reflRt_ から reflRestirRt_ に変わるだけ
 ```
 
-- **`RtRestirCB : register(b3)`** (両パス共通、C++ `struct RtRestirCB` (224 B) + `static_assert` ×2 (サイズと
-  `offsetof(classTable) == 144`)): `gRsOn / gRsSpatialOn / gRsVisRay / gRsHistValid / gRsUseVelocity /
-  gRsClassOverride` (int)、`gRsPrevViewProj` (転置)、`gRsPrevCameraPos`、`gRsCameraPos` / `gRsOutSize` / `gRsGbSize`
-  (spatial が `RtReflCB` (b2) を読まずに済むため — sub-04 で追加)、`gRsFrameIndex`、`gRsDepthThreshold` /
-  `gRsNormalThreshold` (`kRtTemporal*` を流用)、`gRsJacobianMax`、`gRsClass[MYE_RT_REFL_CLASS_COUNT]`
+- **`RtRestirCB : register(b3)`** (両パス共通、C++ `struct RtRestirCB` (**240 B**、sub-06 round 2 で 224 → 240) +
+  `static_assert` ×2 (サイズと `offsetof(classTable) == 160`)): `gRsOn / gRsSpatialOn / gRsVisRay / gRsHistValid /
+  gRsUseVelocity / gRsClassOverride` (int)、`gRsPrevViewProj` (転置)、`gRsPrevCameraPos`、`gRsCameraPos` / `gRsOutSize` /
+  `gRsGbSize` (spatial が `RtReflCB` (b2) を読まずに済むため — sub-04 で追加)、`gRsFrameIndex`、`gRsDepthThreshold` /
+  `gRsNormalThreshold` (`kRtTemporal*` を流用)、`gRsJacobianMax`、**`gRsRadiusAlphaRef` + 明示パディング `float3 gRsPad0`**
+  (sub-06。float4 配列の 16 バイト境界を揃える — 両言語に書く)、`gRsClass[MYE_RT_REFL_CLASS_COUNT]`
   (float4: 半径 px / タップ数 / M 上限 / 予備)。配列長は規則 9 に登録済み。`RtReflCB` (64 B) は触らない。
   **宣言は `rt_restir_cb.hlsli` の 1 箇所** (rt_refl と spatial が include。M58d の `terrain_common.hlsli` と同じ流儀 —
   2 箇所に写経すると CB のずれが「絵は出るが再利用パラメータがでたらめ」の形で静かに壊れる)。同居するヘルパ:
@@ -205,12 +213,26 @@ rt_temporal / rt_variance / rt_atrous (無変更)  入力が reflRt_ から refl
   移動だけなので GI / 反射の golden で不変を証明する。履歴の有効条件は `Accumulate` と同じ
   (`lastSerial + 1 == rtViewSerial && prevViewProjValid`、velocity は `gbVelocity != null && histValid`)。
   ReSTIR を off にしたフレームで `hasLast = false` に落とす (on/off を切り替えても混ざらない)。
-- spatial: 中心 reservoir のクラス `c0` で `k = taps[c0]`、`r = radius[c0]` (**内部解像度の画素**)。
-  タップ = 半径 r の円板上の Vogel 螺旋 k 点を画素・フレームのハッシュで回転 (乱数は `RtPcg3d` 系列)。
+- spatial (sub-06 round 1 で確定): 中心 reservoir のクラス `c0` で `k = taps[c0]`、`r = radius[c0]` (**内部解像度の画素**)。
+  **半径は受け側の α に比例して縮める**: `s = min(1, α / kRtRestirRadiusAlphaRef)`、`kRtRestirRadiusAlphaRef =
+  kRtReflMaxRoughness² = 0.36` (粗さ 0.6 で等倍、粗さ 0.5 (α 0.25) で 0.69 倍、粗さ 0.10 (α 0.01) で 0.03 倍)。
+  `r_eff = r · s` が 1 px 未満なら**タップ 0** (= 鏡面では spatial が自然に切れる)。理由: p̂ のローブ幅は α に比例するので、
+  ローブの外のタップは p̂ ≈ 0 で M だけ薄めて暗化する (sub-06 実測: 鏡面パッチで一様 Prop −5.2%、Hero −1.9%)。
+  CB で `gRsRadiusAlphaRef` として渡し、チューニング UI にスライダ (0.01〜1.0)。
+  タップ = 半径 `r_eff` の円板上の Vogel 螺旋 k 点 (`RtRestirVogelTap`、両言語ミラー + selftest)。回転は
+  **画素のハッシュだけで決め、フレームで回さない** (`RtNextRand2(uint3(px, kRtRestirTapSeed))`) — 書き戻しを断ったので
+  フレーム間の脱相関は要らず、回すと候補集合が毎フレーム入れ替わって乗り換えフリッカーが倍になる (sub-06 実測 1.21 → 0.61)。
   候補ごとに: 受け側の幾何一致 (`RtReprojectValid` を近傍 `geom` に流用) → **候補のクラス `cn` で
-  `|offset| ≤ radius[cn]`** (Hero のサンプルは 2 px より遠くへ運ばれない = クラス境界で急変させない仕組み) →
+  `|offset| ≤ radius[cn] · s`** (Hero のサンプルは 2 px より遠くへ運ばれない = クラス境界で急変させない仕組み) →
   `L' = normalize(xs_n − P)` が半球内 → J の範囲内 → (`gRsVisRay` なら `RtTraceAnyHit(P + N·eps, L', d − eps)` で
-  遮蔽なら棄却) → 統合。ループは `[loop]` で `MYE_RT_RESTIR_MAX_TAPS` (= 8、規則 9) を上限に `i ≥ k` で抜ける。
+  遮蔽なら棄却) → 統合。候補の受け側座標 `P_n` は今フレーム側の `rpos` から (G-Buffer の P と同値)。
+  ループは `[loop]` で `MYE_RT_RESTIR_MAX_TAPS` (= 8、規則 9) を上限に `i ≥ k` で抜ける。
+  **既定は off (`RtReflRestirParams::spatial = 0`)** — sub-06 round 2 の計測 (§5 A7 (a)) で目標帯 (音響デモの床、
+  粗さ 0.5、`--rt-debug 11` = 反射レーン単体) の 3 矩形とも spatial on が temporal 単独より悪かった
+  (床全体 0.255 vs 0.181、プレイヤー 0.367 vs 0.342、敵 0.343 vs 0.239)。U7 の規則どおり off。実装・UI・CLI は残す:
+  `--rt-restir-spatial` で on、`--rt-restir-no-spatial` は明示 off (既定と同値)、`--rt-restir-visray` は
+  `--rt-restir` と `--rt-restir-spatial` を**含意** (可視レイはタップループの中でしか撃たないので、単体では no-op になる)。
+  ユーザーが S5 で on にして評価でき、反転は M67h で 1 行。
 - `RtPasses`: `RtReservoirSlot` × `kHistorySlots`、`restirCS_` / `restirCB_` / `restirTimer_` /
   `RestirGpuMs()`、`RtReflResult` に `reservoirM` / `reservoirCls` (組 A の `rad` / `nrm` SRV、off なら null)。
   `RenderReflection` は `view.rtReflRestir != 0` のとき「refl → spatial → Accumulate(reflRestirRt_) → Denoise」、
@@ -273,7 +295,7 @@ rt_temporal / rt_variance / rt_atrous (無変更)  入力が reflRt_ から refl
 | A4 | ReSTIR 数学の CPU ミラー: **VNDF pdf の上半球積分 + サンプラ (`RtGgxVndf`) が下半球へ漏らした割合 = 1 (±0.01、決定的な (cosθ, φ) グリッド)** (α = 0.36 / 0.04。反射方向の pdf は半ベクトル側で正規化されるので上半球だけでは 1 未満 — sub-03 で実測 0.884 + 0.117 / 0.998 + 0.002。「半球積分 = 1」と書いた初版は誤り) / pdf のピークが独立な Smith Λ 形の式と一致 / reservoir 更新の採用確率が重み比 (1:2:7、2 万回、±0.02) / M=1 で `Ls · wSum/(M·lum) == Ls` ビット一致、lum=0 で 0 / J(A→B)·J(B→A) = 1 (±1e-5)、同一点 = 1、スカイ = 1、受け側が 2 倍遠ざかると J = 1/4 (cosθ 同じ) / 統合の重みが J に比例 (J=2 で候補の重みが 2 倍、範囲外 J で候補外 = M 不加算) / **p̂_q(y') = 0 の候補は M も wSum も増えない** (Merge)、自画素の黒サンプルは M = 1 (Update) / M 上限: M'=100・cap 8 で統合後 M = 9 / 書き戻しクランプで W 不変 / 定数表 5 行・taps ≤ 8・mCap ≤ 32 | `Editor.exe --selftest` (`RtSelfTest.cpp` に `TestRestir`) |
 | A5 | `--rt-restir` (再利用なし = **sub-04 時点**の状態) と off の絵が `--img-diff --tol 1` PASS。sub-05 以降は temporal が常に効くので再検証しない (チューニング UI で全クラスの M 上限を 1 にすれば同等の状態を作れる — `--rt-no-temporal` は SVGF 側で ReSTIR の temporal は止めない) | sub-04 で `Runtime.exe --render-demo --deferred --rt-refl [--rt-restir] --rt-no-temporal --rt-no-svgf --screenshot` 2 枚を比較 |
 | A6 | temporal: `--rt-anim-seed --rt-restir` で debug 12 の M が伸びる (鏡面パッチ領域の平均 G が frame 3 → 40 で増加) / フリッカー指標 (frame 40 と 41 の同領域の平均絶対差、`--rt-no-temporal --rt-no-svgf` で SVGF を外して測る) が off より小さい / `rpos` の配線: 静止シーンでは `P_prev == P` で J = 1 ちょうどなので、配線が壊れていれば J が範囲外で temporal が棄却され **M が 1 から伸びない** — 「M が cap まで伸びる」が配線の検査を兼ねる (J ≠ 1 の経路はヘッドレスでは通らない。selftest A4 とユーザーの実機のみ) | sub-05 の一時 Python (scratch) で PNG を数値化。画像は reviewer 用に `tests\actual\` へ |
-| A7 | spatial + class: `--rt-class-override 0` と `3` で絵が異なる (maxDiff > 0) かつ 3 (Prop) のフリッカー指標 ≤ 0 (Hero)。`--rt-debug 14` で反射像側にクラス色 | sub-06、A6 と同じ手順 |
+| A7 | spatial + class (sub-06 round 1 で再定義。被写体を 2 つに分ける): **(a) 目標帯** = `--acoustic-demo` の床 (粗さ 0.5、α 0.25。矩形はプレイヤー / 敵が映る領域を `--rt-debug 14` (frame 120) の赤・橙で決める) で、spatial on (既定クラス) のフリッカー指標 (frame 120/121、`--rt-anim-seed --rt-no-temporal --rt-no-svgf`) が **temporal 単独より小さい** = 機能の効果。**これが不成立なら `RtReflRestirParams::spatial` の既定を 0 にする** (ノブは残す。§7 U7) / **(b) 鏡面** = `--render-demo` の鏡面パッチ (α 0.01) で、spatial on のフリッカーが temporal 単独の 1.05 倍以内かつ平均輝度が ±1% 以内 (α 比例半径で spatial がほぼ切れる = 悪化させない) / **(c) 伝播なし**: クラス混在の平均輝度が一様 Default の ±1% 以内、かつ **`--rt-debug 14` のクラス別画素数が spatial on と off でビット一致** (書き戻しを断った証拠 = デバッグ 14 が読む reservoir は rt_refl の出力だけになる。sub-06 round 2 で「frame 3 → 40 で ±10%」から読み替え — temporal 単独でも柱の映り込みに Prop の履歴が積まれて +40% 動くので、フレーム間比較は spatial の伝播を測れない。round 1 の 9988 → 40432 (+305%) は対照 8264 → 11656 から大きく外れていた) / **(d) クラス順序**: 目標帯で `--rt-class-override 3` (Prop) のフリッカー ≤ `0` (Hero)、かつ override 0 と 3 の絵が異なる (maxDiff > 0) / **(e)** `--rt-debug 14` で反射像側にクラス色 | sub-06、A6 と同じ一時 Python。両被写体の 5 条件 (off / temporal / spatial 既定 / 一様 Hero / 一様 Prop) を表にして実装メモへ |
 | A8 | メニュー / Inspector / デバッグ表示の文字列が en/ja 両方にあり規則 10 を通る | `pwsh -File tools\check_rules.ps1` |
 | A9 | 規則 9 に `kRtReflClassCount` / `kRtRestirMaxTaps` が登録され緑 | 同上 |
 | A10 | sim 非接触 | `tools\replay_verify.bat` 全緑 (sub-07) |
@@ -308,6 +330,17 @@ rt_temporal / rt_variance / rt_atrous (無変更)  入力が reflRt_ から refl
   §2 S4 に記録済み。以後蒸し返さない。
 - U5 temporal を `rt_refl` に畳んで 2 パスにするか / 裁定: 2 パス (S3) / **確認済み: 2 パス**。
 - U6 S5 を harness の外に置き、確定値は `M67h` で焼くか / 裁定: そうする (§4.6) / **確認済み: そうする**。
+- U7 `[ユーザーに聞ける]` (sub-06 round 1 で新規) spatial reuse の**既定 on / off を sub-06 の計測結果で planner が
+  決めてよいか** / 裁定 (規則): 目標帯 (音響デモの床、粗さ 0.5) で spatial on のフリッカーが temporal 単独より小さければ
+  **on**、小さくなければ **off** (実装・UI・CLI は残し、S5 でユーザーが on にして評価できる) / 逆 (計測に関わらず on、
+  または off) を選ぶと: 常時 on なら鏡面以外の面で temporal 単独より悪い状態を出荷する可能性、常時 off なら
+  クラス表の半径 / タップ数が既定では使われず ReflectionClass の効きは temporal の M 上限だけになる (A6 で実証済み)。
+  planner の反対意見は無い — 計測で決めるのが妥当。
+  **結果 (sub-06 round 2、2026-09-05): 規則により既定 off**。目標帯の 3 矩形すべてで spatial on > temporal 単独
+  (床全体 0.255 vs 0.181)。鏡面は α 比例半径で悪化なし (0.198 ≤ 0.206 × 1.05)。司会が完了報告でユーザーへ提示し、
+  ユーザーが「既定 on にする」なら M67h で `RtReflRestirParams::spatial = 1` の 1 行 + golden 撮り直し。
+  副産物の所見: 出荷構成 (spatial off) で一様 Prop (M 上限 32) が既定混在より 1.8 倍良い (床全体 0.100 vs 0.181)
+  = **S5 で最初に触るノブは M 上限** (半径・タップではない)。ADR-016 に載せる。
 
 **リスク・実装中に判明する見込みのもの (coder が「不安・質問」で拾う)**
 
@@ -322,9 +355,11 @@ rt_temporal / rt_variance / rt_atrous (無変更)  入力が reflRt_ から refl
   `kRtRestirWMax` は**入れない**。カメラが大きく動く条件は S5 でしか通らないので、出たら M67h で 1 行足す。
 - ReSTIR をトグルしても SVGF 側の履歴 (`reflHist_`) は落ちない → 切り替え直後の数フレームは値が混ざる (同じ量の
   推定量なので数フレームで収束、実害なし。M67d からの性質。既知の minor、触らない)。
-- 鏡面 (粗さ ≲ 0.15) では spatial の候補がほぼ全部 p̂ ≈ 0 → 「M 不加算」規則により spatial は鏡面をほとんど
-  変えない (暗化はしない)。滑らかな面ほど半径を粗さで縮める (radius × f(α)) のは S5 のノブ候補 — v1 の表は
-  クラスだけで決める。
+- ~~鏡面では「M 不加算」規則により spatial は鏡面をほとんど変えない~~ → **sub-06 で反証**: p̂ が「ちょうど 0」ではなく
+  「小さい」候補は M に数えられて薄める (一様 Prop で −5.2%)。§4.3 の α 比例半径を v1 に入れた (S5 のノブから昇格)。
+- spatial の書き戻し (feedback) は sub-06 で断った (§4.2)。教科書 (ReSTIR GI) は書き戻す設計だが、鏡面反射 + クラス
+  意味論 + 輝度目標の RIS では明るいサンプルが半径ぶんずつ拡散して主役 / 小物の区別が数十フレームで消える。
+  書き戻し無しは「spatial の効果がフレーム間で積み上がらない」代償を払う — 目標帯で効果が出なければ既定 off (U7)。
 - temporal の厳密 J (U4): カメラが大きく動いたフレームは J が範囲外になって temporal 候補が棄却されやすい
   (= 履歴が切れてノイズへ落ちる。安全側)。S5 で「動くと荒れる」が目立つなら `kRtRestirJacobianMax` を
   temporal だけ緩める (別定数) — 判断はユーザー。
@@ -374,3 +409,17 @@ rt_temporal / rt_variance / rt_atrous (無変更)  入力が reflRt_ から refl
   (絵に出ない壊れ方で planner も見落とし。sub-04 の履歴に事後記録、CPU ミラーの 2 パス往復 selftest を防波堤に)。
   (b) §7: W クランプは実測で兆候なしのため入れない (S5 → M67h)。SVGF 履歴がトグルで落ちない件を既知の minor に。
   (c) A12: ReSTIR golden は frame 40 で撮る (クラス別 M 上限が飽和した状態)。sub-07 に反映。
+- 2026-09-05 (coder SELF_EVAL sub-06 round 1、**REWORK**): A7-b 不成立 (spatial が一様クラスでも temporal 単独より
+  フリッカー悪化、クラス混在で +8.4% と Prop の占拠)。裁定: (a) §4.2 / §4.3 — **spatial の書き戻しを断ち、2 組を
+  ping-pong に** (coder の案 (C))。(b) §4.3 — **半径を受け側 α に比例させる** (`kRtRestirRadiusAlphaRef` = 0.36、
+  1 px 未満はタップ 0)。(c) §4.3 — タップ回転はフレームで回さない。(d) A7 を被写体 2 つ (目標帯 = 音響デモの床 /
+  鏡面) で再定義し、目標帯で効果が無ければ既定 off (§7 U7 `[ユーザーに聞ける]`)。却下: (A) 基準緩和 = 目的未達の
+  既定 on を出荷、(B) `min(mCap)` = 非対称を減らすだけで乗り換えと拡散は残る、(D) 線形補間 = 対症。
+  coder の [逸脱] 6 件 (P_n を rpos から / CLI の含意 / `RtRestirEffectiveClass` / override 範囲外 = off / t9 削除 /
+  ラジオ MenuItem) と `gRsOutSize` 寄せ・Vogel selftest は承認。
+- 2026-09-05 (coder SELF_EVAL sub-06 round 2、OK): must 4 件の実装と計測を確認。(a) §4.3 — **spatial の既定は off**
+  (U7 の規則: 目標帯で temporal 単独より改善せず。結果と数値を §7 U7 に記録)、CLI に `--rt-restir-spatial`、
+  `--rt-restir-visray` は spatial も含意。(b) §4.3 — `RtRestirCB` 224 → 240 B / offset 144 → 160 (`gRsRadiusAlphaRef` +
+  明示パディング)。(c) A7 (c) — 「Prop 画素数 frame 3 vs 40 で ±10%」を「spatial on/off でクラス別画素数がビット一致」に
+  読み替え (temporal 単独でも +40% 動くので前者は伝播を測れない。後者の方が強い証拠)。(d) §7 — S5 で最初に触るノブは
+  M 上限 (spatial off + 一様 Prop が最良)。sub-07 に golden 条件 (既定 = spatial off、frame 40)、CLI 4 本、ADR の決定 4 件を反映。

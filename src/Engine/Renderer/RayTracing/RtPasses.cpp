@@ -144,9 +144,11 @@ static_assert(sizeof(RtReflCB) == 64, "HLSL の RtReflCB と一致させるこ�
 
 // M67d: assets/shaders/rt_restir_cb.hlsli の RtRestirCB (b3) と一致。
 // **並びは HLSL のパッキング規則に合わせてある** — float3 の直後にスカラーを 1 つ置いて
-// 16 バイト行を埋め、float4 配列は 16 バイト境界 (offset 144) から始める。
+// 16 バイト行を埋め、float4 配列は 16 バイト境界 (M67f で 144 → offset 160) から始める。
 // 途中に 1 つ足すと配列の開始がずれて再利用パラメータが丸ごと化けるので、
-// 追加は**必ず gRsClass の直前まで**で、サイズの static_assert を必ず更新すること
+// 追加は**必ず gRsClass の直前まで**で、サイズの static_assert を必ず更新すること。
+// M67f で gRsRadiusAlphaRef を足したぶん **明示パディング float3 を添えて 240 B** にした
+// (足さないと C++ は 148、HLSL は 160 から配列を始めて 12 バイトずれる)
 struct RtRestirCB {
     XMFLOAT4X4 prevViewProj = {}; // 転置済み
     XMFLOAT3 prevCameraPos = { 0, 0, 0 };
@@ -163,10 +165,12 @@ struct RtRestirCB {
     float depthThreshold = kRtTemporalDepthThreshold;
     float normalThreshold = kRtTemporalNormalThreshold;
     float jacobianMax = kRtRestirJacobianMax;
+    float radiusAlphaRef = kRtRestirRadiusAlphaRef; // M67f
+    float pad0[3] = { 0, 0, 0 }; // gRsClass を 16 バイト境界へ揃えるための明示パディング
     RtReflClassParams classTable[kRtReflClassCount] = {};
 };
-static_assert(sizeof(RtRestirCB) == 224, "HLSL の RtRestirCB と一致させること");
-static_assert(offsetof(RtRestirCB, classTable) == 144,
+static_assert(sizeof(RtRestirCB) == 240, "HLSL の RtRestirCB と一致させること");
+static_assert(offsetof(RtRestirCB, classTable) == 160,
               "gRsClass は 16 バイト境界から始まること (HLSL の配列パッキング)");
 
 // viewKey → 履歴スロット (範囲外は 0 へ丸める)。GI と反射で同じ写像を使う
@@ -783,6 +787,10 @@ RtReflResult RtPasses::RenderReflection(GraphicsDevice& device, ShaderManager& s
     rs.depthThreshold = kRtTemporalDepthThreshold;
     rs.normalThreshold = kRtTemporalNormalThreshold;
     rs.jacobianMax = kRtRestirJacobianMax;
+    // M67f: 半径を受け側の α で縮める基準。チューニング UI が実行中に触るので
+    // 定数ではなく params から取る (既定は kRtRestirRadiusAlphaRef)。
+    // 0 以下を入れられると HLSL 側が「タップ 0」に倒れるだけなので下限だけ締める
+    rs.radiusAlphaRef = std::clamp(view.rtReflRestirParams.radiusAlphaRef, 0.01f, 1.0f);
     for (int i = 0; i < kRtReflClassCount; ++i) {
         rs.classTable[i] = view.rtReflRestirParams.classTable[i];
     }
@@ -797,10 +805,10 @@ RtReflResult RtPasses::RenderReflection(GraphicsDevice& device, ShaderManager& s
     // ★off のときは reservoir を 1 枚も張らない (t11-t15 / u1-u5 は UnbindCompute が
     //   前のパスで null にしてある) = 現行と同じ「UAV 1 本だけ」のバインド
     if (restirOn) {
-        // 前フレームの組 A を t11-t15 へ (M67e = temporal 統合が読む)。
-        // 書き先は組 B なので同じテクスチャを SRV と UAV で同時に張ることはない
-        RtReservoirSet& a = slot.set[0];
-        RtReservoirSet& b = slot.set[1];
+        // M67f: ping-pong。前フレームに書いた面 (1-write) を t11-t15 で読み、
+        // 今フレームの面 (write) へ書く。読む面と書く面は常に別テクスチャ
+        RtReservoirSet& a = slot.set[1 - slot.write];
+        RtReservoirSet& b = slot.set[slot.write];
         ID3D11ShaderResourceView* prev[5] = { a.pos.SRV(), a.rad.SRV(), a.nrm.SRV(),
                                               a.geom.SRV(), a.rpos.SRV() };
         dc->CSSetShaderResources(11, 5, prev);
@@ -832,12 +840,17 @@ RtReflResult RtPasses::RenderReflection(GraphicsDevice& device, ShaderManager& s
     if (restirRan) {
         denoiseSrc = reflRestirRt_.SRV();
         result.filtered = denoiseSrc;
-        result.reservoirM = slot.set[0].rad.SRV();
-        result.reservoirCls = slot.set[0].nrm.SRV();
+        // デバッグ 12 / 14 が読むのは**今フレームの面** = rt_refl が書いた reservoir。
+        // spatial は書き戻さないので、ここ以外に「今フレームの reservoir」は無い
+        result.reservoirM = slot.set[slot.write].rad.SRV();
+        result.reservoirCls = slot.set[slot.write].nrm.SRV();
         slot.lastSerial = view.rtViewSerial;
         slot.hasLast = true;
+        slot.write = 1 - slot.write; // 次フレームは今書いた面を読む (RtHistory と同じ)
     } else if (restirOn) {
-        slot.hasLast = false; // spatial を走らせられなかった = 組 A は更新されていない
+        // spatial を走らせられなかった = この絵は reservoir を経由していないので、
+        // 次フレームが「連続している」と思い込まないよう履歴を捨てる (flip もしない)
+        slot.hasLast = false;
     }
     if (view.rtTemporal != 0) {
         // ReSTIR 後段の SVGF は既定値が M46h と同値なので、on にしただけでは何も変わらない。
@@ -890,6 +903,7 @@ bool RtPasses::EnsureReservoirs(GraphicsDevice& device, RtReservoirSlot& slot, i
         }
         slot.w = gw;
         slot.h = gh;
+        slot.write = 0;
         slot.hasLast = false; // リサイズで履歴は捨てる
     }
     for (RtReservoirSet& set : slot.set) {
@@ -903,9 +917,10 @@ bool RtPasses::EnsureReservoirs(GraphicsDevice& device, RtReservoirSlot& slot, i
     return true;
 }
 
-// M67d: ReSTIR の 2 パス目。組 B (t11-t15) を読んで組 A (u1-u5) へ書き戻し、
-// 解決した反射放射輝度を reflRestirRt_ (u0) へ出す。
-// **読む組と書く組が別テクスチャ**なので、同じフレーム内で SRV/UAV の衝突が起きない
+// M67d: ReSTIR の 2 パス目。今フレームの reservoir (t11-t15) を読んで、解決した
+// 反射放射輝度を reflRestirRt_ (u0) へ出す。
+// **M67f: reservoir は書き戻さない** (u1-u5 を張らない) — 履歴は rt_refl の出力だけ。
+// 読む面は UAV に張っていないので、同じフレーム内で SRV/UAV の衝突が起きない
 bool RtPasses::RenderRestirSpatial(GraphicsDevice& device, ShaderManager& shaders,
                                    const RenderView& view, const RtFrameInputs& in,
                                    RtReservoirSlot& slot, int gw, int gh)
@@ -929,14 +944,12 @@ bool RtPasses::RenderRestirSpatial(GraphicsDevice& device, ShaderManager& shader
     ID3D11ShaderResourceView* gbuf[4] = { in.gbNormal, in.gbPosition, in.gbAlbedo,
                                           in.gbMaterial };
     dc->CSSetShaderResources(7, 4, gbuf);
-    RtReservoirSet& b = slot.set[1];
+    RtReservoirSet& b = slot.set[slot.write]; // rt_refl がこのフレームに書いた面
     ID3D11ShaderResourceView* src[5] = { b.pos.SRV(), b.rad.SRV(), b.nrm.SRV(), b.geom.SRV(),
                                          b.rpos.SRV() };
     dc->CSSetShaderResources(11, 5, src);
-    RtReservoirSet& a = slot.set[0];
-    ID3D11UnorderedAccessView* uavs[6] = { reflRestirRt_.UAV(), a.pos.UAV(),  a.rad.UAV(),
-                                           a.nrm.UAV(),         a.geom.UAV(), a.rpos.UAV() };
-    dc->CSSetUnorderedAccessViews(0, 6, uavs, nullptr);
+    ID3D11UnorderedAccessView* uavs[1] = { reflRestirRt_.UAV() };
+    dc->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
     dc->CSSetShader(cs->cs.Get(), nullptr, 0);
     dc->Dispatch(static_cast<UINT>((gw + 7) / 8), static_cast<UINT>((gh + 7) / 8), 1);
 

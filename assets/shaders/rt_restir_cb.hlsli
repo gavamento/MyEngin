@@ -35,18 +35,36 @@ cbuffer RtRestirCB : register(b3)
     float gRsDepthThreshold;  // 再投影の妥当性 (kRtTemporal* の流用)
     float gRsNormalThreshold;
     float gRsJacobianMax;  // これと逆数の外の J は候補ごと棄却 (kRtRestirJacobianMax)
+    float gRsRadiusAlphaRef; // 半径を α で縮める基準 (M67f。kRtRestirRadiusAlphaRef)
+    // ★明示パディング。float4 配列は 16 バイト境界からしか始まらないので、ここを
+    //   省くと C++ 側の offsetof と HLSL の実配置が 12 バイトずれて表が丸ごと化ける
+    float3 gRsPad0;
     // クラス別の再利用パラメータ (x = 半径 px / y = タップ数 / z = M 上限 / w = 予備)
     float4 gRsClass[MYE_RT_REFL_CLASS_COUNT];
 };
 
+// M67f: クラス上書き (--rt-class-override / チューニング UI) を適用したクラス。
+// **上書きの本体は CPU 側** (RtScene::Update が RtInstance.reflectionClass を書き換える)
+// なので、今フレームに撃ったサンプルはここを通らなくても既に N になっている。
+// ここが効くのは**上書きを切り替えた瞬間に残っている古い reservoir** —
+// 時間再利用の履歴は最大 32 フレーム分生き残るので、シェーダ側でも一度潰さないと
+// 「スライダを動かしてから効き始めるまで数十フレーム掛かる」= UI が壊れて見える。
+// ★**空 reservoir の -1 は上書きしない** (センチネルを潰すとデバッグ 14 で
+//   「何も入っていない画素」が上書き先のクラス色で塗り潰される)
+int RtRestirEffectiveClass(int cls)
+{
+    return (gRsClassOverride >= 0 && cls >= 0) ? gRsClassOverride : cls;
+}
+
 // クラス表の安全な引き方。**空 reservoir の cls = -1 を 0 (Hero) へ丸めない** —
 // 範囲外は中立クラス (Default) を返す (spec §4.1 と同じ規約)。
 // cls = -1 の候補は重み 0 で必ず外れるので値そのものは絵に出ないが、
-// gRsClass[-1] は**配列の外**なので読み方だけは正しくしておく
+// gRsClass[-1] は**配列の外**なので読み方だけは正しくしておく。
+// クラス上書きはここに畳んである = **表を引く全経路が自動的に上書きに従う**
 float4 RtRestirClassParams(int cls)
 {
-    const int c =
-        (cls >= 0 && cls < MYE_RT_REFL_CLASS_COUNT) ? cls : (MYE_RT_REFL_CLASS_COUNT - 1);
+    const int e = RtRestirEffectiveClass(cls);
+    const int c = (e >= 0 && e < MYE_RT_REFL_CLASS_COUNT) ? e : (MYE_RT_REFL_CLASS_COUNT - 1);
     return gRsClass[c];
 }
 

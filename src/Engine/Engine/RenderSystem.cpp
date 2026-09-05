@@ -1115,7 +1115,10 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
             rtPasses_.Init(device, shaders);
         }
         rtScene_.Init(device);
-        rtScene_.Update(rtInstances_, resources);
+        // M67f: クラス上書き (--rt-class-override / チューニング UI) は**インスタンスを
+        // 組むこの 1 か所**で効かせる。デバッグ 13 (一次ヒットのクラス色) も同じ
+        // RtInstance を読むので、上書きした瞬間に画面全体が 1 色になるのが期待どおり
+        rtScene_.Update(rtInstances_, resources, rtReflRestirParams.classOverride);
         if (rtPasses_.IsReady() && rtScene_.Bindings().IsValid()) {
             view.rtDebugMode = rtDebugMode;
             view.rtScene = &rtScene_.Bindings();

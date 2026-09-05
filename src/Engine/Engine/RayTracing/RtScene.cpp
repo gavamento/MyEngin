@@ -125,8 +125,12 @@ void RtScene::RebuildBlasIfNeeded(const std::vector<InstanceDesc>& instances,
            static_cast<uint32_t>(attrScratch_.size()));
 }
 
-void RtScene::Update(const std::vector<InstanceDesc>& instances, RenderResources& resources)
+void RtScene::Update(const std::vector<InstanceDesc>& instances, RenderResources& resources,
+                     int classOverride)
 {
+    // M67f: クラス上書き。**範囲外は off として扱う** — 打ち間違いの `--rt-class-override 7`
+    // が「表の外を引く壊れた状態」にならないよう、ここ 1 か所で正規化しておく
+    const bool overrideOn = (classOverride >= 0 && classOverride < kRtReflClassCount);
     bindings_ = RtSceneBindings{};
     buildMs_ = 0.0f;
     if (!device_ || instances.empty()) {
@@ -173,8 +177,10 @@ void RtScene::Update(const std::vector<InstanceDesc>& instances, RenderResources
         inst.materialIndex = static_cast<int32_t>(matScratch_.size());
         // M67: 反射に映る側の品質クラス。マテリアル未解決 (Get == nullptr) は中立の 4 —
         // RtMaterial 側が既定値のまま白く映るのと同じ「無害な既定」に揃える。
-        // ParseMaterialJson が既に範囲外を落としているので、ここでのクランプは不要
-        inst.reflectionClass = mat ? mat->reflectionClass : kRtReflClassDefault;
+        // ParseMaterialJson が既に範囲外を落としているので、ここでのクランプは不要。
+        // M67f: 上書きが立っていれば Material より優先する (Material は書き換えない)
+        inst.reflectionClass = overrideOn ? classOverride
+                                          : (mat ? mat->reflectionClass : kRtReflClassDefault);
         instScratch_.push_back(inst);
 
         RtMaterial rm;

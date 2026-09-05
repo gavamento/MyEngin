@@ -148,12 +148,16 @@ private:
         RenderTexture rpos;
     };
 
-    // viewKey 別の reservoir スロット。**flip しない ping-pong** —
-    // set[0] = 組 A (フレーム間で持ち越す) / set[1] = 組 B (フレーム内のスクラッチ)。
-    // rt_refl は A を読み B へ書き、spatial は B を読み A へ書く = 読む側と書く側が
-    // 常に別テクスチャなので typed UAV load が要らない (ユーザー判断 U5)
+    // viewKey 別の reservoir スロット。**M67f で RtHistory と同じ ping-pong になった** —
+    // rt_refl は set[1-write] (前フレーム) を読んで set[write] へ書き、spatial は
+    // set[write] を**読むだけ** (reservoir を書き戻さない)。フレーム末に write を flip。
+    // 読む側と書く側が常に別テクスチャなのは変わらない = typed UAV load 不要 (U5)。
+    // ★初版は「set[0] 固定 = spatial が書き戻す」だったが、近傍の履歴が自画素の履歴へ
+    //   混ざり、M の重いクラスのサンプルが 1 フレームに半径ぶんずつ拡散した
+    //   (sub-06 round 1 実測: Prop が 40 フレームで画面の 94% を占拠)
     struct RtReservoirSlot {
         RtReservoirSet set[2];
+        int write = 0; // 今フレームの書き込み先 index (読みは 1-write)
         int w = 0;
         int h = 0;
         uint32_t lastSerial = 0; // 最後に書いたフレームのビュー通番

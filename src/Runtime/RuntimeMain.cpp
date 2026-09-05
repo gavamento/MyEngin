@@ -343,6 +343,21 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             } else if (arg == L"--rt-restir") {
                 // M67d: 反射のサンプルを reservoir で時空間再利用する (--rt-refl と併用)
                 config.rtRestir = true;
+            } else if (arg == L"--rt-restir-spatial") {
+                config.rtRestirSpatial = true; // M67f: 空間再利用を on (既定 off)
+                config.rtRestir = true;
+            } else if (arg == L"--rt-restir-no-spatial") {
+                config.rtRestirSpatial = false; // M67f: 明示 off (既定と同値)
+                config.rtRestir = true;
+            } else if (arg == L"--rt-restir-visray") {
+                // M67f: 可視レイはタップの中でしか撃たないので空間再利用も立てる
+                config.rtRestirVisRay = true;
+                config.rtRestirSpatial = true;
+                config.rtRestir = true;
+            } else if (arg == L"--rt-class-override" && i + 1 < argc) {
+                // M67f: 全インスタンスの ReflectionClass を強制 (-1 = off)。
+                // ReSTIR とは独立 (デバッグ 13 にも効く) ので --rt-restir は立てない
+                config.rtClassOverride = _wtoi(argv[++i]);
             } else if (arg == L"--froxel") {
                 // M57b: フロクセルへの注入 (積分 = M57c / 合成 = M57e まで絵は不変)
                 config.froxel = true;

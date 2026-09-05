@@ -22,6 +22,10 @@
 // C++ の kRtRestirMaxTaps と一致検査される (tools/check_rules.ps1 規則 9)
 #define MYE_RT_RESTIR_MAX_TAPS 8
 
+// 空間タップの回転角ハッシュの第 3 成分。**フレーム番号を混ぜない** (spec §4.3)。
+// C++ の kRtRestirTapSeed と一致検査される (tools/check_rules.ps1 規則 9)
+#define MYE_RT_RESTIR_TAP_SEED 23
+
 // target function を評価するときの alpha の下限。C++ の kRtRestirAlphaMin と同値。
 // ★規則 9 は整数しか比べられないのでここだけは目視同期 — 変えたら両方直すこと
 #define MYE_RT_RESTIR_ALPHA_MIN 1e-3f
@@ -231,6 +235,36 @@ void RtRestirClampM(inout RtReservoir r, inout float wSum, float mCap)
         wSum *= mCap / r.M;
         r.M = mCap;
     }
+}
+
+// M67f: 空間再利用の半径を受け側の α で縮める係数 (0〜1)。実効半径 = radius[cls] * これ。
+// p̂ (VNDF pdf) のローブ幅は α に比例するので、滑らかな面ほど円板を小さくしないと
+// 「ローブの外のタップが増えるだけ」になり、暗化とフリッカーを増やす。
+// α <= 0 / ref <= 0 / NaN は 0 (= タップしない) — **`isfinite` を使わずに比較で落とす**
+// (fxc は /Gis 抜きだと isfinite を最適化除去しうる。spec §4.5)。
+// **RtMath.h の RtRestirRadiusScale と同一式**
+float RtRestirRadiusScale(float alpha, float ref)
+{
+    if (!(alpha > 0.0f) || !(ref > 0.0f)) {
+        return 0.0f;
+    }
+    return min(1.0f, alpha / ref);
+}
+
+// M67f: 空間再利用のタップ位置 (半径 radius の円板上の Vogel 螺旋、i 番目 / 全 count 点)。
+//   r = radius * sqrt((i + 0.5) / count)  … 面積が均等になる半径の配り方
+//   θ = i * 黄金角 + rotation             … 隣り合う点が同じ方角に並ばない回し方
+// **rotation を画素ごとに変える**のが要で、全画素が同じ配置だとタップの偏りが
+// 「格子状のまだら」として絵に固定される (時間再利用と違い空間再利用は平均されない)。
+// count = 0 で呼ばれても 0 除算しないよう max(1) を噛ませる (呼ぶ側がループを回さない
+// のが正だが、ここが落ちると画面全体が NaN になるので二重に守る)。
+// **RtMath.h の RtRestirVogelTap と同一式**
+float2 RtRestirVogelTap(int i, int count, float radius, float rotation)
+{
+    const float kGoldenAngle = 2.39996323f; // π(3 − √5)
+    const float r = radius * sqrt((float(i) + 0.5f) / max((float)count, 1.0f));
+    const float a = (float)i * kGoldenAngle + rotation;
+    return float2(r * cos(a), r * sin(a));
 }
 
 // reservoir → 出力放射輝度。out = Ls * wSum / (M * lum(Ls))。

@@ -570,6 +570,36 @@ inline void RtRestirClampM(RtReservoirCpu& r, float& wSum, float mCap)
     }
 }
 
+// M67f: 空間再利用の半径を受け側の α で縮める係数 (0〜1)。実効半径 = radius[cls] * これ。
+// p̂ (VNDF pdf) のローブ幅は α に比例するので、滑らかな面ほど円板を小さくしないと
+// 「ローブの外のタップが増えるだけ」になり、暗化とフリッカーを増やす。
+// α <= 0 / ref <= 0 / NaN は 0 (= タップしない)。
+// HLSL の RtRestirRadiusScale と同一式
+inline float RtRestirRadiusScale(float alpha, float ref)
+{
+    if (!(alpha > 0.0f) || !(ref > 0.0f)) {
+        return 0.0f;
+    }
+    return (std::min)(1.0f, alpha / ref);
+}
+
+// M67f: 空間再利用のタップ位置 (半径 radius の円板上の Vogel 螺旋、i 番目 / 全 count 点)。
+//   r = radius * sqrt((i + 0.5) / count)  … 面積が均等になる半径の配り方
+//   θ = i * 黄金角 + rotation             … 隣り合う点が同じ方角に並ばない回し方
+// **rotation を画素ごとに変える**のが要で、全画素が同じ配置だとタップの偏りが
+// 「格子状のまだら」として絵に固定される (時間再利用と違い空間再利用は平均されない)。
+// count = 0 で呼ばれても 0 除算しないよう max(1) を噛ませる。
+// HLSL の RtRestirVogelTap と同一式
+inline DirectX::XMFLOAT2 RtRestirVogelTap(int i, int count, float radius, float rotation)
+{
+    const float kGoldenAngle = 2.39996323f; // π(3 − √5)
+    const float r = radius
+        * std::sqrt((static_cast<float>(i) + 0.5f)
+                    / (std::max)(static_cast<float>(count), 1.0f));
+    const float a = static_cast<float>(i) * kGoldenAngle + rotation;
+    return { r * std::cos(a), r * std::sin(a) };
+}
+
 // reservoir → 出力放射輝度。out = Ls * wSum / (M * lum(Ls))。
 // ★**Ls を先に掛けない** — scale を先に求めることで M=1 (wSum = lum) のとき
 //   scale が厳密に 1.0f になり、Ls がビット単位でそのまま出る (A5 の根拠)。

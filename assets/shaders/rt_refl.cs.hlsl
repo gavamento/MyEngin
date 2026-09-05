@@ -176,8 +176,11 @@ void CSMain(uint3 tid : SV_DispatchThreadID)
         // 画面速度は G-Buffer と同解像度なので P/N と同じ gp で引く (rt_temporal と同じ)
         const float2 vel = gRsGbVelocity.Load(gp);
         if (RtHistoryUv(gRsUseVelocity, uv, vel, mul(float4(P, 1.0f), gRsPrevViewProj), prevUv)) {
-            // reservoir は内部解像度なので履歴 UV も内部解像度で引く
-            const int3 hp = int3(int2(prevUv * gRfOutSize), 0);
+            // reservoir は内部解像度なので履歴 UV も内部解像度で引く。
+            // ★解像度の出所は **b3 の gRsOutSize** に寄せる (b2 の gRfOutSize と同じ値を
+            //   C++ が詰めるが、reservoir を触る計算は spatial パスと同じ 1 本から引く。
+            //   出所が 2 つあると「片方だけ直して temporal と spatial の座標がずれる」)
+            const int3 hp = int3(int2(prevUv * gRsOutSize), 0);
             const float4 geom = gRsPrevGeom.Load(hp);
             // ★深度は「**現**フレームの P を前カメラから測った距離」と比べる —
             //   rt_temporal.cs.hlsl と同じ近似 (画面速度は 2D なので前フレームの

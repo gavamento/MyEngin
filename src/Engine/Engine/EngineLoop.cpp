@@ -274,6 +274,11 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     renderSystem.enableRtShadow = config.rtShadow;     // M46g (--rt-shadow、Deferred のみ)
     renderSystem.enableRtRefl = config.rtRefl;         // M46h (--rt-refl、Deferred のみ)
     renderSystem.rtReflRestir = config.rtRestir;       // M67d (--rt-restir、RT 反射が前提)
+    // M67f: ReSTIR の再利用パラメータ。**CLI が触るのはこの 3 つだけ** — クラス表と
+    // SVGF の設定は定数表の既定のまま (実行中の調整はエディタのスライダで行う)
+    renderSystem.rtReflRestirParams.spatial = config.rtRestirSpatial ? 1 : 0;
+    renderSystem.rtReflRestirParams.visRay = config.rtRestirVisRay ? 1 : 0;
+    renderSystem.rtReflRestirParams.classOverride = config.rtClassOverride;
     renderSystem.enableFroxel = config.froxel;         // M57b (--froxel。まだ絵は変わらない)
     renderSystem.froxelSettings.temporal = config.froxelTemporal; // M57c (--froxel-no-temporal)
     renderSystem.froxelDumpFrame = config.froxelDumpFrame; // M57b/M57c (--froxel-dump N)

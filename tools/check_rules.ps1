@@ -121,6 +121,16 @@ $constGroups = @(
             'assets\shaders\rt_restir_common.hlsli'    = '#\s*define\s+MYE_RT_RESTIR_MAX_TAPS\s+(\d+)'
         }
     },
+    # M67f: 空間タップの回転角ハッシュの第 3 成分。**フレーム番号を混ぜない**のが要点で、
+    # 値そのものは何でもよいが C++ と HLSL で違うと「C++ の定数を直したのに絵が変わらない」
+    # (= HLSL 側の数字が生きている) という追いにくい形でずれる
+    @{
+        label = 'kRtRestirTapSeed / MYE_RT_RESTIR_TAP_SEED'
+        sites = @{
+            'src\Engine\Renderer\RayTracing\RtTypes.h' = 'constexpr\s+int\s+kRtRestirTapSeed\s*=\s*(\d+)'
+            'assets\shaders\rt_restir_common.hlsli'    = '#\s*define\s+MYE_RT_RESTIR_TAP_SEED\s+(\d+)'
+        }
+    },
     @{
         label = 'kRtTemporalMaxHistory / MYE_RT_TEMPORAL_MAX_HISTORY'
         sites = @{

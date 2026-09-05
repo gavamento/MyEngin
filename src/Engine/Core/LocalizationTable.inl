@@ -167,6 +167,22 @@ MYE_STR(Menu_RtTemporal,      "Temporal Accumulation", "テンポラル蓄積")
 MYE_STR(Menu_RtSvgf,          "SVGF Spatial Filter",   "SVGF 空間フィルタ")
 // M67d: ReSTIR (反射サンプルの時空間再利用)。RT 反射が前提で、off なら M67d 以前の絵
 MYE_STR(Menu_RtRestir,        "ReSTIR Reflection",     "ReSTIR 反射")
+// M67f: ReSTIR のチューニング (非永続。既定の出所は RtTypes.h の定数表)。
+// ★"###" の右辺は両言語で一致・テーブル内で一意。クラス表の 3 本は 5 行で
+//   同じラベルを使い回すので、呼ぶ側が PushID(cls) で ID を分ける
+MYE_STR(Restir_Menu,          "ReSTIR Tuning",         "ReSTIR の調整")
+MYE_STR(Restir_Spatial,       "Spatial reuse",         "空間再利用")
+MYE_STR(Restir_VisRay,        "Visibility ray",        "可視レイ")
+MYE_STR(Restir_ClassOverride, "Class override",        "クラス上書き")
+MYE_STR(Restir_ClassOff,      "Off (use material)",    "Off (マテリアルの値)")
+MYE_STR(Restir_Radius,        "radius px###RsRadius",  "半径 px###RsRadius")
+MYE_STR(Restir_Taps,          "taps###RsTaps",         "タップ数###RsTaps")
+MYE_STR(Restir_MCap,          "M cap###RsMCap",        "M 上限###RsMCap")
+MYE_STR(Restir_AlphaRef,      "radius alpha ref",      "半径の α 基準")
+MYE_STR(Restir_SvgfHistory,   "SVGF history",          "SVGF 履歴長")
+MYE_STR(Restir_Atrous,        "A-Trous iterations",    "A-Trous 反復回数")
+MYE_STR(Restir_Reset,         "Reset to defaults",     "既定に戻す")
+MYE_STR(Restir_Gpu,           "restir %.3f ms",        "restir %.3f ms")
 MYE_STR(Menu_RtFreezeSeed,    "Freeze Seed",           "シード固定")
 
 // ---- ツールバー (M47b) ----

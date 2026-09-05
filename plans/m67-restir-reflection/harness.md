@@ -16,9 +16,9 @@
 | sub-02 | OK | 1 | 4511cce | M67b: ReflectionClass の配管 (Material → RtInstance.reflectionClass → HLSL) + デバッグ 13 + デモ材質への割り当て。依存: sub-01。VERDICT round 1 OK (should 1 = CookedCache.h のコメント 56→60 が門番 64 と食い違い → sub-07 衛生 8、nit 1 → 申し送り)。planner の見落とし S15: `Material` は cooked blob へ memcpy = M67b が cook 版導入後で初のフィールド追加 → coder の [追加] (kCookVersion 1→2 / static_assert 56→64 / 明示 pad0) を仕様として承認。golden 21 枚 tol=0 緑、replay 全緑、デバッグ 13 の色を 2 デモで画素実測 |
 | sub-03 | OK | 2 | ea0860b | M67c: ReSTIR の数学 (rt_restir_common.hlsli ⇄ RtMath.h ミラー + selftest、定数表)。依存: sub-02。round 1 REWORK (must 2 = `RtReservoirMerge` が p̂=0 の候補で M だけ増やす → w=0/非有限は Update を呼ばず false、+ その selftest / nit 1 = Update のコメント)。仕様側の誤り 1 件 (A4「VNDF pdf 半球積分 = 1」は成立しない → 「上半球積分 + 下半球漏れ = 1」に訂正)。裁定: 空 reservoir cls=-1 / スカイ cls=4 / Merge に jMax 引数 / 「M を数える規則」を §4.2 に新設。planner の round 1 応答はセッション上限 (429) で 1 度中断 → 再開して完走。round 2 OK (nit 2 = kWeightMax の昇格余地 / NaN ケース → 申し送り)。coder の [追加] `isfinite` → 定数比較 (fxc X3577 で最適化除去されうる) を承認し spec §4.5 に「HLSL で isfinite/isinf を使わない」を新設 |
 | sub-04 | OK | 1 | e10f399 | M67d: reservoir の配管 (初期化 + resolve、M=1 で現行と等価) + デバッグ 12/14 + `--rt-restir`。U4 反映: reservoir 5 枚 (`rpos` 追加、u1-u5 / t11-t15)。依存: sub-02, sub-03。VERDICT round 1 OK (should 1 = spatial の sub-06 用未使用宣言は sub-06 で全部読む側へ / nit 2 → 申し送り)。[追加] 8 件を仕様に取り込み: M=0 の画素は 1spp フォールバック (シルエット際 950 テクセルが永久に黒くなるのを防ぐ) / p̂ は xs から復元した方向で評価 / `rt_restir_cb.hlsli` (CB の唯一の宣言) / b3 は off でも毎フレーム張る / トレースは分岐の外で 1 回 (X4714)。golden 21 枚 tol=0 不変、M=1 で off と maxDiff 1 (120 px、p̂ 往復の 1 ulp)、run-to-run tol=0。restir 1.5 ms (WARP) |
-| sub-05 | OK | 1 | (次コミットで記入) | M67e: temporal reuse (クラス別 M 上限、厳密 Jacobian = `RtRestirJacobian(xs', ns', P_prev, P)`、velocity は t16)。依存: sub-04。VERDICT round 1 OK (should 1 = 履歴 UV の解像度を b3 の `gRsOutSize` に寄せる → sub-06 / nit 1 → 申し送り)。**M67d の spatial パスが組 A へ W=0 を書き戻していた欠落を発見・修正** (resolve は wSum を使うので絵に出ず golden も A5 も緑 = sub-04 の受け入れ条件では検出不能。planner も見落とし。CPU ミラーの 2 パス往復 selftest で固定、変異テストで FAIL を確認)。M が Default 16 / Prop 32 で飽和、鏡面パッチのフリッカー 0.226 倍、A14 は 3 条件 tol=0。W クランプは実測で不要 (最大輝度 on 227.5 < off 247.9)。ReSTIR on の golden は **frame 40** で撮ると確定 (sub-07)。restir 2.4 ms (WARP) |
-| sub-06 | 実装中 | 0 | | M67f: spatial reuse (クラス駆動) + 可視レイ + `--rt-class-override` + チューニング UI。依存: sub-05 |
-| sub-07 | 未着手 | 0 | | M67g: 仕上げ (ADR-016 / engine_spec §6.4 / README / CLAUDE.md / ReSTIR on の golden / replay_verify)。依存: sub-06 |
+| sub-05 | OK | 1 | be8b4ce | M67e: temporal reuse (クラス別 M 上限、厳密 Jacobian = `RtRestirJacobian(xs', ns', P_prev, P)`、velocity は t16)。依存: sub-04。VERDICT round 1 OK (should 1 = 履歴 UV の解像度を b3 の `gRsOutSize` に寄せる → sub-06 / nit 1 → 申し送り)。**M67d の spatial パスが組 A へ W=0 を書き戻していた欠落を発見・修正** (resolve は wSum を使うので絵に出ず golden も A5 も緑 = sub-04 の受け入れ条件では検出不能。planner も見落とし。CPU ミラーの 2 パス往復 selftest で固定、変異テストで FAIL を確認)。M が Default 16 / Prop 32 で飽和、鏡面パッチのフリッカー 0.226 倍、A14 は 3 条件 tol=0。W クランプは実測で不要 (最大輝度 on 227.5 < off 247.9)。ReSTIR on の golden は **frame 40** で撮ると確定 (sub-07)。restir 2.4 ms (WARP) |
+| sub-06 | OK | 2 | (次コミットで記入) | M67f: spatial reuse (クラス駆動) + 可視レイ + `--rt-class-override` + チューニング UI。依存: sub-05。round 1 REWORK (must 4): 仕様どおりの spatial で A7-b 不成立 — M 上限の大きい Prop のサンプルが spatial → 組 A 書き戻し → 次フレーム temporal でフレームを跨いで伝播 (frame 40 で reservoir の 94% を占拠、鏡面パッチ +8.4% / フリッカー 2.4 倍)。coder が仮説 3 つを実験で棄却し (A)〜(D) を提示 → planner は (C) 書き戻しを断つ (RtHistory 型 ping-pong、履歴 = temporal の出力のみ) + 半径を受け側 α に比例 (`kRtRestirRadiusAlphaRef` = 0.36) + タップ回転のフレーム項を外す + 目標帯 (音響デモの床、粗さ 0.5) で計測して既定 on/off を決める、を裁定。逸脱 6 件は全て承認。round 2 OK (should 1 = spatial に残した `RtRestirClampM` のコメント → sub-07 衛生 / nit 2)。round 1 の 3 症状は解消を実測 (鏡面 +8.4% → −0.18%、フリッカー 1.21 → 0.198 ≤ temporal 単独 0.206、クラス画素数は spatial on/off でビット一致 = 伝播消滅)。**目標帯 (音響デモの床、`--rt-debug 11`) では spatial on 0.255 > temporal 単独 0.181 で U7 の規則どおり既定 `spatial = 0`** (`--rt-restir-spatial` で on)。副産物: 一様 Prop (M 上限 32) が既定混在の 1.8 倍良い = S5 で最初に触るノブは M 上限。`RtRestirCB` 224 → 240 B (`gRsRadiusAlphaRef` + 明示パディング)。restir 既定 2.320 / spatial on 2.826 / visray 6.166 ms (WARP) |
+| sub-07 | 実装中 | 0 | | M67g: 仕上げ (ADR-016 / engine_spec §6.4 / README / CLAUDE.md / ReSTIR on の golden / replay_verify)。依存: sub-06 |
 
 ## ユーザー判断
 - (2026-09-04、司会が AskUserQuestion で確認。planner 裁定 = U1〜U6 を spec §7 に記載)
@@ -28,6 +28,7 @@
 - U4 temporal の Jacobian → **厳密に計算する** (**裁定と逆**。reservoir に P_prev (R32G32B32A32、+16 B/px) が増える。planner へ補足として送り spec / sub-05 (と reservoir レイアウトを持つサブ) を直させてから実装へ)
 - U5 パス構成 → **2 パス** (裁定どおり。typed UAV load を避ける)
 - U6 S5 (パラメータ調整) → **harness の外に置き、確定値は M67h で焼く** (裁定どおり)
+- U7 spatial reuse の既定 on/off (sub-06 round 1 で planner が `[ユーザーに聞ける]` として提示) → **未確認のまま planner の規則で進行**: 目標帯 (音響デモの床) の計測で temporal 単独より改善すれば on、しなければ off。実装・UI・CLI は残すので逆に振るのは既定値 1 行 (M67h)。ユーザーが「全部終わったらシャットダウン」= 無人完了を指示しているため司会は AskUserQuestion で止めなかった。完了報告で提示する
 - (2026-09-05 ユーザー指示、セッション運用) 全サブ完了 → レビュー → 完了報告 → Notion の活動記録 → **PC をシャットダウン** (`shutdown /s /t 120`、取り消しは `shutdown /a`) の順で司会が無人で進める
 
 ## レビュー
@@ -35,6 +36,11 @@
 |---|---|---|---|
 
 ## 申し送り (セッション跨ぎ)
+- (sub-06 → sub-07、should) `rt_refl_restir_spatial.cs.hlsl` に残した `RtRestirClampM` は書き戻し無しでは resolve 前に M / wSum を等比で縮めるだけの no-op — コメントに「書き戻し無しでは出力に効かない。CPU ミラーの往復テストと形を揃えるために置いている」を 1 行 (衛生)
+- (sub-06 → sub-07、必須) **`spatial` の既定は 0**。golden `demo_render_rtrefl_restir` は既定 (spatial off) で frame 40。CLI 5 本を CLAUDE.md へ: `--rt-restir` / `--rt-restir-spatial` (on) / `--rt-restir-no-spatial` (既定と同値の明示 off — S5 で既定を on に反転したときに意味が生きる旨を添える) / `--rt-restir-visray` (`--rt-restir` と `--rt-restir-spatial` を含意) / `--rt-class-override N`
+- (sub-06 → sub-07、ADR-016) 決定 4 件と実測: (a) spatial は reservoir を書き戻さない (書き戻すと Prop が 40 フレームで画面の 94% を占拠、平均輝度 +8.4%)、(b) 半径は受け側 α に比例 (`kRtRestirRadiusAlphaRef = 0.36`、1px 未満はタップ 0 = 鏡面では自然に切れる)、(c) タップ回転はフレームで回さない (回すと乗り換えフリッカー 2 倍: 1.21 → 0.61)、(d) 既定 off の理由 = 目標帯で temporal 単独 0.181 に対し spatial on 0.255 (MIS 重みなしの biased 合成では近傍の p̂ 比が重みの分散になる。unbiased 化は spec §3 の外)。所見「S5 で最初に触るノブは M 上限」(spatial off + 一様 Prop (32) が既定混在の 1.8 倍良い: 0.100 vs 0.181)。GPU 時間 (WARP / Release / frames 20、render-demo): refl 6.520 / denoise 23.327 / restir 2.320 ms (既定)、spatial on 2.826、visray 6.166。reservoir 14.6 MB/スロット (ping-pong)
+- (sub-06 → reviewer) 実機確認 3 点: (1) A13 のスライダ (α 基準 / クラス表 / SVGF) と Reset、(2) ReSTIR off → on → off でデバッグ 12 が「赤に戻ってから伸び直す」、(3) クラス上書きメニューを Off ⇄ Prop と往復してその場で絵が変わること。比較画像は `testsctual\` の `r2_d14_{03,40}` / `r2_d14ns_{03,40}` (伝播消滅の証拠)、`r2_b_*` / `r2_c_*` (目標帯 debug11)、`r2_m_*` (鏡面)
+- (sub-06 → 後続、nit) `--img-diff` に「矩形指定の平均絶対差」オプションがあると S5 のループが速くなる (M67 の範囲外)
 - (sub-05 → sub-06、should) 履歴 UV の解像度に `gRfOutSize` (b2) を使い、CB には `gRsOutSize` (b3) もある = 出所が 2 つ。spatial のタップ座標を書くときに **rt_refl 側も `gRsOutSize` に寄せて b2 依存を 1 本減らす** (同じ値を C++ が詰めるので絵は動かない。golden で確認)
 - (sub-05 → sub-06 / reviewer) `hasLast` を落とす場所は `RtPasses.cpp` の 3 か所: (1) `restirOn == false` のフレーム (`RenderReflection` 冒頭)、(2) 内部解像度が変わった (`EnsureReservoirs`)、(3) spatial を走らせられなかった (`restirRan == false` かつ `restirOn`)。`rsHistValid` は `slot.lastSerial + 1 == view.rtViewSerial` と `view.prevViewProjValid != 0` も要求。**reviewer の実機確認**: ReSTIR を off → on → off と切り替えてデバッグ 12 が「赤に戻ってから伸び直す」こと (受け入れ条件 6)
 - (sub-05 → sub-06) 候補の M 上限に使うクラスは **候補側 (映っている物体) の `cls`**、書き戻し前の `RtRestirClampM` だけが採用サンプルの `cls`。タップでも同じ使い分け。temporal で積まれた M が spatial の入力になるので、タップを足すと M の伸び方が変わる — デバッグ 12 の矩形 (330,255)-(470,400) の「平均 G」と「連続 2 フレームの平均絶対差」で効きを読む
@@ -67,3 +73,7 @@
 - (planner) `AskUserQuestion` が無い環境で策定し、U1〜U6 は司会がユーザーに確認済み (2026-09-04)。
   **U4 だけ裁定と逆 (temporal の Jacobian を厳密に計算)** → reservoir に `rpos` (R32G32B32A32) が増え、
   sub-04 (配管、u1-u5 / t11-t15) と sub-05 (J の式、velocity は t16) と sub-07 (ADR) に反映済み (spec §8)。
+- (planner、sub-06 round 2) **U7 `[ユーザーに聞ける]` の結果: spatial reuse の既定は off** (規則 = 目標帯で temporal 単独より
+  改善しなければ off。実測 床全体 0.255 vs 0.181)。完了報告でユーザーへ提示すること。ユーザーが既定 on を望むなら
+  M67h で `RtReflRestirParams::spatial = 1` + golden `demo_render_rtrefl_restir` の撮り直し。S5 で最初に触るノブは
+  M 上限 (spec §7 U7 の所見)。

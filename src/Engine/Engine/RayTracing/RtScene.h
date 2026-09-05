@@ -32,8 +32,13 @@ public:
     bool Init(GraphicsDevice& device);
     void Shutdown();
 
-    // フレーム毎の更新。instances が空なら Bindings() は無効 (IsValid()==false) になる
-    void Update(const std::vector<InstanceDesc>& instances, RenderResources& resources);
+    // フレーム毎の更新。instances が空なら Bindings() は無効 (IsValid()==false) になる。
+    // M67f: classOverride >= 0 なら全インスタンスの ReflectionClass をその値に強制する
+    // (-1 = off = Material の値をそのまま使う)。**Material 側は書き換えない**ので、
+    // 切っただけで元に戻る = チューニング (S5) と `--rt-class-override` のための口。
+    // 既定引数を置かないのは、呼び出し側が「渡し忘れて常に off」になるのを防ぐため
+    void Update(const std::vector<InstanceDesc>& instances, RenderResources& resources,
+                int classOverride);
 
     const RtSceneBindings& Bindings() const { return bindings_; }
     int32_t InstanceCount() const { return bindings_.instanceCount; }

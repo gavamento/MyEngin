@@ -128,6 +128,23 @@ constexpr float kRtRestirMaxM = 32.0f;
 // 整数しか比べられないので、ここだけは目視同期 — 変えたら両方直す)
 constexpr float kRtRestirAlphaMin = 1e-3f;
 
+// M67f: 空間再利用の半径を「受け側の α」で縮める基準値。実効半径 =
+// radius[cls] * min(1, α / この値)。**滑らかな面ほど円板を小さくする**のが目的。
+// p̂ (VNDF pdf) のローブ幅は α に比例するので、α の小さい面ではローブの外のタップが
+// 増えるだけ = 候補が p̂ ≈ 0 で全部落ちるか、たまに通った 1 本が重みを独占して荒れる
+// (sub-06 round 1 実測: 粗さ 0.10 の鏡面で一様 Prop -5.2% / 一様 Hero -1.9% の暗化と
+// フリッカー 5〜7 倍)。基準は「レイを撃つ上限の粗さ」= kRtReflMaxRoughness² なので、
+// その粗さでだけ表の半径が等倍になる。CB (gRsRadiusAlphaRef) 経由で HLSL へ渡す
+// = C++ が唯一の出所 (チューニング UI が実行中に書き換える)
+constexpr float kRtRestirRadiusAlphaRef = kRtReflMaxRoughness * kRtReflMaxRoughness;
+
+// M67f: 空間タップの回転角を決めるハッシュの第 3 成分。**フレーム番号を混ぜない** —
+// spatial は reservoir を書き戻さない (履歴は temporal の出力だけ) ので、フレーム間で
+// タップ集合を回して脱相関させる必要が無い。回すと候補集合が毎フレーム入れ替わり、
+// 採用サンプルの乗り換えがそのままフリッカーになる (sub-06 round 1 実測: 回すと 2 倍)。
+// HLSL の MYE_RT_RESTIR_TAP_SEED と一致検査される (tools/check_rules.ps1 規則 9)
+constexpr int kRtRestirTapSeed = 23;
+
 // 再利用時の Jacobian の許容範囲 (この逆数〜この値の外は候補ごと棄却する)。
 // 幾何が違いすぎる候補を「重みを補正して使う」と、補正係数そのものが分散源になって
 // firefly になる。既定値は CB (gRsJacobianMax) 経由で HLSL へ渡す = C++ が唯一の出所
@@ -233,7 +250,16 @@ struct RtReflRestirParams {
     };
     float svgfHistory = kRtReflMaxHistory;              // ReSTIR 後段の SVGF 履歴長
     int atrousIterations = kRtReflAtrousIterations;     // 同 A-Trous 反復回数
-    int spatial = 1;                                    // 空間再利用 (0 = temporal のみ)
+    float radiusAlphaRef = kRtRestirRadiusAlphaRef;     // 半径を α で縮める基準 (M67f)
+    // 空間再利用の既定。**sub-06 round 2 の計測で 0 に決めた** (spec §7 U7 の規則:
+    // 目標帯で temporal 単独より改善すれば on、しなければ off)。実測 (音響デモの床、
+    // 粗さ 0.5、--rt-debug 11 = 反射レーンだけ、frame 120/121 のフリッカー):
+    //   off 2.943 → temporal 単独 0.181 → spatial on 0.255
+    // temporal 単独が最良で、spatial を足すと 1.4 倍に戻る。MIS 重みを持たない
+    // biased 合成では近傍の p̂ 比がそのまま重みの分散になるため (unbiased 化は M67 の
+    // スコープ外 = spec §3)。**ノブ (UI) と CLI は残す** — 粗い面が主役のシーンでは
+    // 効く可能性があり、S5 / M67h で再評価できるようにしておく
+    int spatial = 0;                                    // 空間再利用 (0 = temporal のみ)
     int visRay = 0;                                     // 候補の可視レイ (既定 off = 光漏れ許容)
     int classOverride = -1;                             // 全インスタンスのクラス強制 (-1 = off)
 };

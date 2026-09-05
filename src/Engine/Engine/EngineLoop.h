@@ -137,6 +137,20 @@ struct EngineConfig {
     // (デバッグ 12 / 14 を除いて) 何も起きない。off なら反射シェーダの uniform 分岐が
     // M67d 以前の経路を走るので絵はビット一致する
     bool rtRestir = false;
+    // M67f: 空間再利用。**既定 off** (sub-06 round 2 の計測 = spec §7 U7)。
+    // `--rt-restir-spatial` で on、`--rt-restir-no-spatial` で明示 off (既定と同じだが
+    // 意図を書き残せるので残す)。どちらも --froxel-no-temporal と同じ流儀で
+    // **--rt-restir を一緒に立てる** (単体で渡して「何も起きない」より事故が少ない)
+    bool rtRestirSpatial = false;
+    // M67f: --rt-restir-visray。候補ごとに可視レイを撃って遮蔽された候補を捨てる。
+    // 既定 off = 光漏れを許容 (v1 の既知バイアス)。**可視レイはタップの中でしか撃たない**
+    // ので、これを渡したら --rt-restir と一緒に空間再利用も立てる (でないと無効果)
+    bool rtRestirVisRay = false;
+    // M67f: --rt-class-override N。全インスタンスの ReflectionClass を N に強制する
+    // (-1 = off)。**Material は書き換えない**ので、クラスごとの効きを機械で比べる口。
+    // ReSTIR とは独立 (デバッグ 13 = 一次ヒットのクラス色にも効く) なので
+    // --rt-restir は立てない
+    int rtClassOverride = -1;
     // M57: フロクセル (--froxel)。注入 → テンポラル → 前方積分 → 最終画像へ合成まで。
     // Deferred/Forward の両方 + 地形 / スカイ / パーティクルに載る (既定 off)
     bool froxel = false;

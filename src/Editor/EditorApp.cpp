@@ -1237,9 +1237,91 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
             ImGui::MenuItem(Tr(StrId::Menu_RtTemporal), nullptr, &ctx.renderSystem->rtTemporal);
             // M46e: 空間フィルタ。蓄積 off では幾何バッファが無いので連動して効かない
             ImGui::MenuItem(Tr(StrId::Menu_RtSvgf), nullptr, &ctx.renderSystem->rtSvgf);
-            // M67d: ReSTIR (反射サンプルの時空間再利用)。off なら M67d 以前とビット一致の絵。
-            // 再利用の強さを触るスライダ (クラス表 / 後段 SVGF) は M67f でこの下に生える
+            // M67d: ReSTIR (反射サンプルの時空間再利用)。off なら M67d 以前とビット一致の絵
             ImGui::MenuItem(Tr(StrId::Menu_RtRestir), nullptr, &ctx.renderSystem->rtReflRestir);
+            // M67f: 再利用の強さを実行中に触る。**非永続** (rtBounces と同じ扱い) で、
+            // プロジェクトにも project_settings.json にも書かない — 既定の出所は
+            // RtTypes.h の kRtReflClassTable ただ 1 か所という規約を崩さないため。
+            // ★ここで確定した値は後続 M67h が定数表へ焼く (spec §4.6)
+            if (ImGui::BeginMenu(Tr(StrId::Restir_Menu))) {
+                // 親が off なら reservoir すら確保されない (遅延確保) ので子は無効表示。
+                // ただしデバッグ 12 / 14 は RenderSystem 側でトグルを強制するので、
+                // 「off のまま 12 を見ている」ときはここが灰色でも絵は出ている
+                ImGui::BeginDisabled(!ctx.renderSystem->rtReflRestir);
+                RtReflRestirParams& rp = ctx.renderSystem->rtReflRestirParams;
+                bool spatial = rp.spatial != 0;
+                if (ImGui::MenuItem(Tr(StrId::Restir_Spatial), nullptr, &spatial)) {
+                    rp.spatial = spatial ? 1 : 0;
+                }
+                bool visRay = rp.visRay != 0;
+                if (ImGui::MenuItem(Tr(StrId::Restir_VisRay), nullptr, &visRay)) {
+                    rp.visRay = visRay ? 1 : 0;
+                }
+                // クラス上書き: Off + 5 クラス。**Material は書き換えない** ので、
+                // Off へ戻せば元の割り当てがそのまま戻る (--rt-class-override と同じ口)。
+                // ★Combo ではなく MenuItem のラジオにしてあるのは、メニューのポップアップの
+                //   中でさらにポップアップを開く形 (Combo) を避けるため — RT Debug の
+                //   モード選択や解像度と同じ流儀に揃える
+                const char* classNames[] = { Tr(StrId::ReflClass_Hero),
+                                             Tr(StrId::ReflClass_Character),
+                                             Tr(StrId::ReflClass_Vehicle),
+                                             Tr(StrId::ReflClass_Prop),
+                                             Tr(StrId::ReflClass_Default) };
+                static_assert(sizeof(classNames) / sizeof(classNames[0]) == kRtReflClassCount,
+                              "classNames は kRtReflClassCount と同数にすること");
+                if (ImGui::BeginMenu(Tr(StrId::Restir_ClassOverride))) {
+                    if (ImGui::MenuItem(Tr(StrId::Restir_ClassOff), nullptr,
+                                        rp.classOverride < 0)) {
+                        rp.classOverride = -1;
+                    }
+                    for (int cls = 0; cls < kRtReflClassCount; ++cls) {
+                        if (ImGui::MenuItem(classNames[cls], nullptr, rp.classOverride == cls)) {
+                            rp.classOverride = cls;
+                        }
+                    }
+                    ImGui::EndMenu();
+                }
+                ImGui::Separator();
+                // クラス表 5 行 × 3 スライダ。範囲は selftest が定数表に課している不変量
+                // (taps ≤ kRtRestirMaxTaps / mCap ≤ kRtRestirMaxM) と同じ = UI から
+                // 「シェーダが黙って切り捨てる値」を入れられないようにする
+                for (int cls = 0; cls < kRtReflClassCount; ++cls) {
+                    // ★同じラベル (### 右辺) を 5 行で使い回すので ID を行ごとに分ける
+                    ImGui::PushID(cls);
+                    ImGui::TextUnformatted(classNames[cls]);
+                    RtReflClassParams& cp = rp.classTable[cls];
+                    ImGui::SetNextItemWidth(160.0f);
+                    ImGui::SliderFloat(Tr(StrId::Restir_Radius), &cp.radiusPx, 1.0f, 32.0f,
+                                       "%.0f");
+                    ImGui::SetNextItemWidth(160.0f);
+                    ImGui::SliderFloat(Tr(StrId::Restir_Taps), &cp.taps, 0.0f,
+                                       static_cast<float>(kRtRestirMaxTaps), "%.0f");
+                    ImGui::SetNextItemWidth(160.0f);
+                    ImGui::SliderFloat(Tr(StrId::Restir_MCap), &cp.mCap, 1.0f, kRtRestirMaxM,
+                                       "%.0f");
+                    ImGui::PopID();
+                }
+                ImGui::Separator();
+                // M67f: 半径を受け側の α で縮める基準。小さくするほど「粗い面でしか
+                // 空間再利用しない」= 鏡面のディテールを守る。範囲は RtPasses のクランプと同じ
+                ImGui::SetNextItemWidth(160.0f);
+                ImGui::SliderFloat(Tr(StrId::Restir_AlphaRef), &rp.radiusAlphaRef, 0.01f, 1.0f,
+                                   "%.3f");
+                // 後段の SVGF。範囲は RtPasses::RenderReflection のクランプと同じ
+                ImGui::SetNextItemWidth(160.0f);
+                ImGui::SliderFloat(Tr(StrId::Restir_SvgfHistory), &rp.svgfHistory, 1.0f,
+                                   static_cast<float>(kRtTemporalMaxHistory), "%.0f");
+                ImGui::SetNextItemWidth(160.0f);
+                ImGui::SliderInt(Tr(StrId::Restir_Atrous), &rp.atrousIterations, 0, 4);
+                if (ImGui::MenuItem(Tr(StrId::Restir_Reset))) {
+                    rp = RtReflRestirParams{}; // 既定 = 定数表 (唯一の出所)
+                }
+                ImGui::EndDisabled();
+                ImGui::Separator();
+                // ★Tr() を書式文字列として渡している (規則 10 が並びを機械検査する)
+                ImGui::TextDisabled(Tr(StrId::Restir_Gpu), ctx.renderSystem->RtRestirGpuMs());
+                ImGui::EndMenu();
+            }
             ImGui::MenuItem(Tr(StrId::Menu_RtFreezeSeed), nullptr, &ctx.renderSystem->rtFreezeSeed);
             ImGui::EndMenu();
         }

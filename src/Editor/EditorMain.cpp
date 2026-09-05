@@ -347,6 +347,24 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             } else if (arg == L"--rt-restir") {
                 // M67d: 反射のサンプルを reservoir で時空間再利用する (--rt-refl と併用)
                 config.rtRestir = true;
+            } else if (arg == L"--rt-restir-spatial") {
+                // M67f: 空間再利用を on (既定 off = round 2 の計測。spec §7 U7)。
+                // --froxel-no-temporal と同じく本体も一緒に立てる
+                config.rtRestirSpatial = true;
+                config.rtRestir = true;
+            } else if (arg == L"--rt-restir-no-spatial") {
+                config.rtRestirSpatial = false; // M67f: 明示 off (既定と同値)
+                config.rtRestir = true;
+            } else if (arg == L"--rt-restir-visray") {
+                // M67f: 候補ごとに可視レイ (光漏れを消す)。**タップの中でしか撃たない**ので
+                // 空間再利用も一緒に立てないと何も起きない
+                config.rtRestirVisRay = true;
+                config.rtRestirSpatial = true;
+                config.rtRestir = true;
+            } else if (arg == L"--rt-class-override" && i + 1 < argc) {
+                // M67f: 全インスタンスの ReflectionClass を強制 (-1 = off)。
+                // ReSTIR とは独立 (デバッグ 13 にも効く) ので --rt-restir は立てない
+                config.rtClassOverride = _wtoi(argv[++i]);
             } else if (arg == L"--froxel") {
                 // M57b-M57e: フロクセルのグリッドを回して最終画像へ合成する
                 // (不透明 / 透明 / 地形 / スカイ / パーティクルの全部。既定 off)

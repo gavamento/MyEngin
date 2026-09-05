@@ -1,7 +1,7 @@
 # sub-05: temporal reuse (クラス別 M 上限)
 
 - 依存: sub-04
-- 状態: OK (commit: 司会が記入)
+- 状態: OK (commit be8b4ce)
 - 往復: 1
 
 ## やること

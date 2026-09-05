@@ -29,7 +29,21 @@
    (`rt_restir_common` / `rt_restir_cb` / `rt_reproject`) + CS 1 本 (`rt_refl_restir_spatial`)。
    ReSTIR on の golden は tol=0 (自身が基準。A5 の 1 ulp は off との比較にしか出ない)。
    ★sub-05 の申し送り: `[rt]` restir は 1.5 (M67d) → 2.4 ms (M67e、WARP render-demo frames 20)。ADR の数字は sub-06 の
-   spatial 込みで取り直す。ADR の「既知の制限」に「ReSTIR トグルで SVGF 履歴は落ちない (数フレームで収束)」と
+   spatial 込みで取り直す。
+   ★sub-06 の確定事項 (round 2、spec §4.3 / §7 U7): **spatial の既定は off**。golden `demo_render_rtrefl_restir` は
+   **既定 = spatial off、frame 40** で撮る (= temporal のみの絵。`--rt-restir` 以外のフラグは足さない)。
+   ADR-016 に載せる決定 4 件と実測: (a) **spatial は reservoir を書き戻さない** (書き戻すと Prop が 40 フレームで
+   9988 → 40432 px を占拠、平均輝度 +8.4%、一様クラスでもフリッカー 0.15 → 0.26〜0.45)、(b) **半径は受け側 α に比例**
+   (`kRtRestirRadiusAlphaRef = 0.36`、1 px 未満はタップ 0 = 鏡面では自然に切れる。鏡面パッチ 0.198 ≤ temporal 0.206)、
+   (c) **タップ回転はフレームで回さない** (回すと乗り換えフリッカー 1.21 → 0.61 の 2 倍)、(d) **spatial 既定 off の理由** =
+   目標帯 (音響デモの床、粗さ 0.5、反射レーン単体) で temporal 単独 0.181 に対し spatial on 0.255 (MIS 重み無しの biased
+   合成では近傍の p̂ 比が重みの分散になる。unbiased 化は spec §3 の外)。**S5 で最初に触るノブは M 上限** (spatial off +
+   一様 Prop (32) が既定混在の 1.8 倍良い: 床全体 0.100 vs 0.181)。
+   CLI 一覧: `--rt-restir` / `--rt-restir-spatial` / `--rt-restir-no-spatial` / `--rt-restir-visray` (`--rt-restir` と
+   `--rt-restir-spatial` を含意) / `--rt-class-override N` (ReSTIR と独立、デバッグ 13 にも効く)。
+   GPU 時間 (WARP / Release / frames 20、render-demo): refl 6.520 / denoise 23.327 / **restir 2.320 ms** (既定)、
+   spatial on 2.826、visray 6.166。reservoir は 480×270 で 1 スロット約 14.6 MB (5 枚 × 2 組 × 48 B/px、ping-pong)。
+   engine_spec §6.4 の表の ReSTIR 段も「temporal reuse (class-capped M), spatial reuse off by default」の文言に。ADR の「既知の制限」に「ReSTIR トグルで SVGF 履歴は落ちない (数フレームで収束)」と
    「W クランプは入れていない (実測で兆候なし。firefly が出たら `kRtRestirWMax`)」を載せる。
 3. `README.md`: 機能概要のレイトレ節に ReSTIR 反射 + ReflectionClass を 1 段落、CLI 一覧に
    `--rt-restir` / `--rt-restir-no-spatial` / `--rt-restir-visray` / `--rt-class-override N`。

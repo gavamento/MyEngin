@@ -1,16 +1,19 @@
 // M67d: ReSTIR 反射の 2 パス目 (空間再利用 + resolve)。
 //
-// 入力  = rt_refl.cs.hlsl が書いた reservoir の組 B (t11-t15) と G-Buffer (t7-t10)
-// 出力  = 解決した反射放射輝度 (u0 = reflRestirRt_、後段の SVGF がこれを食う) と、
-//         次フレームへ持ち越す reservoir の組 A (u1-u5)
+// 入力  = rt_refl.cs.hlsl が今フレームに書いた reservoir (t11-t15) と G-Buffer (t7-t10)
+// 出力  = 解決した反射放射輝度 (u0 = reflRestirRt_、後段の SVGF がこれを食う) **だけ**
 //
-// ★読む組と書く組が常に別テクスチャなのは意図的 (ping-pong を flip しない) —
-//   同じテクスチャを SRV と UAV で同時に張れない D3D11 の制約を、typed UAV load
-//   (= フォーマット制限が厳しい) を使わずに回避するため。spec §4.2 / ユーザー判断 U5。
+// ★M67f: **reservoir を書き戻さない**。時間再利用の履歴は rt_refl (temporal) の出力
+//   そのもので、spatial の結果は「今フレームの絵」にしか使わない。書き戻していた初版は
+//   近傍の履歴が自画素の履歴に混ざり、(a) M の重いクラス (Prop) のサンプルが 1 フレーム
+//   あたり半径ぶんずつ拡散して 40 フレームで画面の 94% を占拠 (実測 9988 → 40432 px、
+//   平均輝度 +8.4%)、(b) 採用サンプルの乗り換えがフリッカーになる、という壊れ方をした。
+//   断てば「Hero のサンプルは radius[Hero] より遠くへ運ばれない」がフレームを跨いでも
+//   成り立つ (spec §4.2 の保存の項)。
+//   組の入れ替え (ping-pong の flip) は RtPasses が持つ — このシェーダは
+//   「今フレームの reservoir を読んで絵を作る」だけの純粋な消費者になった。
 //
-// **M67d ではタップ 0** = 自画素の reservoir を 1 つ統合して resolve するだけ。
-// それでも「reservoir に詰めて → 読み直して → 解決した」絵が現行とビット一致することが、
-// 配管が正しいことの証拠になる (受け入れ条件 A5)。空間タップは M67f。
+// 読む面と書く面が常に別テクスチャなのは変わらない (typed UAV load を避ける。U5)。
 
 #include "rt_common.hlsli"
 #include "rt_restir_common.hlsli"
@@ -19,37 +22,19 @@
 
 Texture2D gRsGbNormal : register(t7);   // GBuffer 法線 (*0.5+0.5 のワールド法線)
 Texture2D gRsGbPosition : register(t8); // GBuffer ワールド座標
-// GBuffer アルベド。**このパスは読まない** (「ジオメトリ無し」は reservoir の M = 0 で
-// 既に分かる) が、C++ 側は rt_refl と同じ t7-t10 の 4 枚をまとめて張るので宣言だけ置く
-Texture2D gRsGbMark : register(t9);
+// t9 (GBuffer アルベド = ジオメトリ有りマーク) は C++ が rt_refl と同じ 4 枚まとめて
+// 張るが、このパスは**宣言もしない** — 「ジオメトリ無し」は reservoir の M = 0 で
+// 既に分かるので読む用が無い。読まない SRV を宣言だけ残すと死コードになる
 Texture2D gRsGbMaterial : register(t10); // GBuffer マテリアル (r = metallic, g = roughness)
-// 組 B (rt_refl がこのフレームに書いたもの)
+// 今フレームの reservoir (rt_refl が初期化 + temporal 統合まで済ませたもの)
 Texture2D gRsInPos : register(t11);
 Texture2D gRsInRad : register(t12);
 Texture2D gRsInNrm : register(t13);
 Texture2D gRsInGeom : register(t14);
 Texture2D gRsInRpos : register(t15);
 
-RWTexture2D<float4> gRsOut : register(u0); // 解決した反射放射輝度 (rgb) + 有効マーク (a)
-// 組 A (次フレームの rt_refl が temporal 候補として読む)
-RWTexture2D<float4> gRsOutPos : register(u1);
-RWTexture2D<float4> gRsOutRad : register(u2);
-RWTexture2D<float4> gRsOutNrm : register(u3);
-RWTexture2D<float4> gRsOutGeom : register(u4);
-RWTexture2D<float4> gRsOutRpos : register(u5);
-
-// 「この画素にサンプルは無い」を書く。rt_refl の同名関数と同じ規約
-// (M = 0 / cls = -1 / geom.w = 0 = 再投影の妥当性判定が必ず落とす値)
-void RtRestirWriteEmpty(uint2 px)
-{
-    float4 pos, rad, nrm;
-    RtReservoirPack(RtReservoirEmpty(), pos, rad, nrm);
-    gRsOutPos[px] = pos;
-    gRsOutRad[px] = rad;
-    gRsOutNrm[px] = nrm;
-    gRsOutGeom[px] = float4(0.0f, 0.0f, 0.0f, 0.0f);
-    gRsOutRpos[px] = float4(0.0f, 0.0f, 0.0f, 0.0f);
-}
+// 解決した反射放射輝度 (rgb) + 有効マーク (a)。**このパスの出力はこれだけ** (M67f)
+RWTexture2D<float4> gRsOut : register(u0);
 
 [numthreads(8, 8, 1)]
 void CSMain(uint3 tid : SV_DispatchThreadID)
@@ -61,9 +46,8 @@ void CSMain(uint3 tid : SV_DispatchThreadID)
     const RtReservoir center =
         RtReservoirUnpack(gRsInPos.Load(sp), gRsInRad.Load(sp), gRsInNrm.Load(sp));
     if (!(center.M > 0.0f)) {
-        // ジオメトリ無し / roughness 超過。rt_refl の同じ画素と同じ「空」を書く
+        // ジオメトリ無し / roughness 超過。rt_refl の同じ画素と同じ「空」を出す
         gRsOut[tid.xy] = float4(0.0f, 0.0f, 0.0f, 0.0f);
-        RtRestirWriteEmpty(tid.xy);
         return;
     }
 
@@ -85,10 +69,105 @@ void CSMain(uint3 tid : SV_DispatchThreadID)
     RtReservoirMerge(r, wSum, center, pc, RtRestirClassParams(center.cls).z, /*J=*/1.0f,
                      gRsJacobianMax, /*rnd=*/0.0f);
 
-    // ---- M67f: ここに近傍タップ (Vogel 螺旋 × gRsSpatialOn × クラス別の半径/タップ数) が入る。
-    //      [loop] の静的上限は MYE_RT_RESTIR_MAX_TAPS ----
+    // ---- M67f: 近傍タップ (Vogel 螺旋 × クラス別の半径 / タップ数) ----
+    // 半径とタップ数は**中心画素の reservoir が持っているクラス** (= この画素の反射像に
+    // 今映っている物体) で決める。「主役が映っている画素は借りる範囲を狭くする」が
+    // ReflectionClass の狙いなので、受け側 (鏡そのもの) の材質では決めない。
+    //
+    // ★上限は必ず MYE_RT_RESTIR_MAX_TAPS (= C++ の kRtRestirMaxTaps と規則 9 で照合)。
+    //   ここを生の数字にすると照合が形だけになる。[unroll] にしないのは、タップ数が
+    //   gRsClass 由来の動的値だから (fxc が展開に失敗しうる)
+    // ★半径は**受け側の α に比例して縮める** (M67f)。p̂ のローブ幅は α に比例するので、
+    //   滑らかな面で表の半径をそのまま使うと「ローブの外のタップ」が増えるだけで、
+    //   暗化とフリッカーしか生まない (round 1 実測: 粗さ 0.10 で -5.2% / フリッカー 5 倍)。
+    //   実効半径が 1 px 未満なら**タップ 0** = 鏡面では spatial が自然に切れる
+    const float4 centerParams = RtRestirClassParams(center.cls);
+    const float radiusScale = RtRestirRadiusScale(alpha, gRsRadiusAlphaRef);
+    const float radiusEff = centerParams.x * radiusScale;
+    const int tapCount = (gRsSpatialOn != 0 && radiusEff >= 1.0f)
+        ? (int)clamp(centerParams.y, 0.0f, (float)MYE_RT_RESTIR_MAX_TAPS)
+        : 0;
+    // タップの回転角。**画素ごとに違うがフレームでは回さない** — 全画素同じだと螺旋の
+    // 偏りが格子模様として絵に焼き付くが、フレームで回すと候補集合が毎フレーム
+    // 入れ替わって採用サンプルの乗り換えがそのままフリッカーになる (round 1 実測 2 倍)。
+    // 書き戻しを断ったのでフレーム間の脱相関は要らない (spec §4.3)
+    uint3 seed = uint3(tid.x, tid.y, (uint)MYE_RT_RESTIR_TAP_SEED);
+    const float rot = RtNextRand2(seed).x * 6.28318531f;
+    const float centerDist = length(P - gRsCameraPos);
+    [loop]
+    for (int i = 0; i < MYE_RT_RESTIR_MAX_TAPS; ++i) {
+        if (i >= tapCount) {
+            break;
+        }
+        const float2 tapOff = RtRestirVogelTap(i, tapCount, radiusEff, rot);
+        const int2 tp = int2(tid.xy) + int2(round(tapOff));
+        if (tp.x < 0 || tp.y < 0 || tp.x >= (int)gRsOutSize.x || tp.y >= (int)gRsOutSize.y) {
+            continue; // 画面外
+        }
+        if (tp.x == (int)tid.x && tp.y == (int)tid.y) {
+            continue; // 半径が 1px 未満に丸まった = 自画素。二重に数えない
+        }
+        const int3 sn = int3(tp, 0);
+        // ★**受け側の幾何一致を先に見る** — 別の面 (奥の壁・向きの違う面) の画素から
+        //   借りると、Jacobian では補正しきれない不連続がにじみとして出る。
+        //   判定は SVGF の再投影とまったく同じ関数 (rt_reproject.hlsli) で、
+        //   「前フレームの同じ点か」を「隣の画素は同じ面か」に読み替えて使う。
+        //   geom.w == 0 (= rt_refl が空を書いた画素) は必ず落ちる
+        const float4 geomN = gRsInGeom.Load(sn);
+        if (!RtReprojectValid(centerDist, geomN.w, N, geomN.xyz, gRsDepthThreshold,
+                              gRsNormalThreshold)) {
+            continue;
+        }
+        const RtReservoir cand =
+            RtReservoirUnpack(gRsInPos.Load(sn), gRsInRad.Load(sn), gRsInNrm.Load(sn));
+        // ★半径のもう一段の縛りは**候補のクラス** — 中心が Prop (半径 12px) でも、
+        //   その円板の中に Hero (半径 2px) が映っている画素があれば 2px より遠くへは
+        //   運ばない。クラスの境界で「主役が急に遠くから借りられる」を防ぐ仕掛け
+        //   (spec §4.3)。距離は丸めた後の実際の画素差で測る (実際に運ぶ距離だから)。
+        //   ★候補側の半径にも同じ α 係数を掛ける — 中心と候補で尺度が違うと
+        //     「中心の実効半径では届く距離なのに候補の生半径で弾かれる」がまだらに起きる
+        const float4 candParams = RtRestirClassParams(cand.cls);
+        const float2 realOff = float2(tp - int2(tid.xy));
+        if (!(length(realOff) <= candParams.x * radiusScale)) {
+            continue;
+        }
+        // 受け側 (自画素) から見たサンプル方向。半球の外は p̂ = 0 になるので
+        // Merge でも落ちるが、可視レイを撃つ前にここで落とす (無駄なレイを減らす)
+        const float3 candL = RtRestirSampleDir(cand, P);
+        if (!(dot(candL, N) > 0.0f)) {
+            continue;
+        }
+        // 受け側が候補の画素から自画素へ移ったぶんの立体角の伸縮。
+        // 候補の受け側ワールド座標は組 B の rpos (rt_refl がその画素の G-Buffer P を
+        // そのまま書いたもの) から取る — G-Buffer を引き直すより一致が保証される
+        const float3 candP = gRsInRpos.Load(sn).xyz;
+        const float J = RtRestirJacobian(cand.xs, cand.ns, candP, P);
+        if (!(J >= 1.0f / gRsJacobianMax && J <= gRsJacobianMax)) {
+            continue; // 幾何が違いすぎる (Merge も同じ判定で落とすが、レイの前に抜ける)
+        }
+        // ★可視レイ (既定 off)。「隣の画素から見えていたヒット点が、自画素からも
+        //   見えるか」を実際に撃って確かめる。off のときの光漏れ (壁の裏の明るさが
+        //   にじむ) が v1 の既知バイアスで、これを on にすると消える代わりに
+        //   タップ数ぶんのレイが増える (spec §7)
+        if (gRsVisRay != 0) {
+            const bool sky = !(dot(cand.ns, cand.ns) > 0.0f);
+            // スカイは xs が方向 = 距離が無い。遮蔽物が 1 つでもあれば棄却でよいので
+            // 実質無限の tMax で撃つ (rt_common の太陽影と同じ 1e16)
+            const float tMax = sky ? 1e16f : (length(cand.xs - P) - 2.0f * gRtRayEps);
+            if (tMax > gRtRayEps && RtTraceAnyHit(P + N * gRtRayEps, candL, tMax)) {
+                continue;
+            }
+        }
+        // p̂ は**今フレームの受け側の V / N / α**で評価し直す (= 重み付けの本体)。
+        // M 上限は候補のクラス。ここまで来た候補だけが M に数えられる
+        const float candPHat = RtRestirTargetPdf(cand.Ls, candL, V, N, alpha);
+        RtReservoirMerge(r, wSum, cand, candPHat, candParams.z, J, gRsJacobianMax,
+                         RtNextRand2(seed).x);
+    }
 
-    // 書き戻し前に M をクラスの上限へ切り詰める (W は変わらない = 絵は変わらない)
+    // M をクラスの上限へ切り詰める (wSum も同じ比率で縮むので resolve の結果は不変)。
+    // ★書き戻しは無くなったが**残す** — spec §4.2 の「統合後は cls_sel の上限まで」を
+    //   1 か所でも崩すと、CPU ミラーの往復 selftest と GPU の M が食い違う
     RtRestirClampM(r, wSum, RtRestirClassParams(r.cls).z);
     // ★候補を 1 つも採れなかった画素は **1spp をそのまま通す** (0 にしない)。
     //   補間法線が視線の裏へ回った画素 (現行コードが「鏡面方向で代用する」と書いている
@@ -99,28 +178,8 @@ void CSMain(uint3 tid : SV_DispatchThreadID)
     //   = 「ReSTIR on が off より悪くなることはない」を不変量にする。
     //   center.Ls は rt_refl が u0 (reflRt_) へ書いた 1spp と**同じ fp16 の値**なので、
     //   これで再利用ゼロのときに現行とビット一致する (受け入れ条件 A5)。
-    //   ★この画素の reservoir は M = 0 のまま書き戻す — 採点できなかったサンプルを
-    //     次フレームに再利用させないため。デバッグ 12 では赤 (M=0) として見える
+    //   ★M67f: reservoir は書き戻さないので、この画素が「採点できなかった」ことは
+    //     次フレームには伝わらない — 伝える必要も無い (履歴は rt_refl の出力が持つ)
     const float3 radiance = (r.M > 0.0f) ? RtRestirResolve(r, wSum) : center.Ls;
     gRsOut[tid.xy] = float4(radiance, 1.0f);
-
-    // ★M67e: **書き戻す前に W を作り直す** — テクスチャに載るのは wSum ではなく
-    //   W = wSum / (M · p̂(y)) なので (spec §4.2 の保存表)、ここで入れ忘れると
-    //   組 A の pos.w が RtReservoirEmpty() の 0 のまま出ていく。M67d では誰も
-    //   読まなかったので無害だったが、M67e の temporal はこの W を
-    //   `w = p̂ · W · M · J` に掛ける = **全候補の重みが 0 になり M が永久に 1 のまま**
-    //   になる (実測: この 2 行が無いとデバッグ 12 が frame 3 / 40 / 80 で同一画像)。
-    //   p̂ は rt_refl の初期 reservoir とまったく同じ式・同じ方向の復元で評価する
-    const float pSel = RtRestirTargetPdf(r.Ls, RtRestirSampleDir(r, P), V, N, alpha);
-    r.W = RtRestirWeight(wSum, r.M, pSel);
-
-    float4 pos, rad, nrm;
-    RtReservoirPack(r, pos, rad, nrm);
-    gRsOutPos[tid.xy] = pos;
-    gRsOutRad[tid.xy] = rad;
-    gRsOutNrm[tid.xy] = nrm;
-    gRsOutGeom[tid.xy] = float4(N, length(P - gRsCameraPos));
-    // ★**統合後の reservoir の受け側はこの画素** — B から写すのではなく
-    //   G-Buffer の P を書く (M67d はタップ 0 なので同値だが、M67f で意味が分かれる)
-    gRsOutRpos[tid.xy] = float4(P, 0.0f);
 }
