@@ -104,6 +104,16 @@ void CSMain(uint3 tid : SV_DispatchThreadID)
     const float3 radiance = (r.M > 0.0f) ? RtRestirResolve(r, wSum) : center.Ls;
     gRsOut[tid.xy] = float4(radiance, 1.0f);
 
+    // ★M67e: **書き戻す前に W を作り直す** — テクスチャに載るのは wSum ではなく
+    //   W = wSum / (M · p̂(y)) なので (spec §4.2 の保存表)、ここで入れ忘れると
+    //   組 A の pos.w が RtReservoirEmpty() の 0 のまま出ていく。M67d では誰も
+    //   読まなかったので無害だったが、M67e の temporal はこの W を
+    //   `w = p̂ · W · M · J` に掛ける = **全候補の重みが 0 になり M が永久に 1 のまま**
+    //   になる (実測: この 2 行が無いとデバッグ 12 が frame 3 / 40 / 80 で同一画像)。
+    //   p̂ は rt_refl の初期 reservoir とまったく同じ式・同じ方向の復元で評価する
+    const float pSel = RtRestirTargetPdf(r.Ls, RtRestirSampleDir(r, P), V, N, alpha);
+    r.W = RtRestirWeight(wSum, r.M, pSel);
+
     float4 pos, rad, nrm;
     RtReservoirPack(r, pos, rad, nrm);
     gRsOutPos[tid.xy] = pos;

@@ -278,7 +278,7 @@ rt_temporal / rt_variance / rt_atrous (無変更)  入力が reflRt_ から refl
 | A9 | 規則 9 に `kRtReflClassCount` / `kRtRestirMaxTaps` が登録され緑 | 同上 |
 | A10 | sim 非接触 | `tools\replay_verify.bat` 全緑 (sub-07) |
 | A11 | `[rt]` ログと ProfilerWindow に `restir` の GPU 時間が出る。S0 のベースライン (`--render-demo` / `--acoustic-demo` の `--rt-refl`、WARP) が sub-01 の実装メモに残る | ログ行の目視 (coder)。**GPU 時間の計測 run は `--frames 20`** で回す — `GpuTimer` は `kFrames = 6` のリングをスロット再利用時 (7 フレーム目以降) にしか回収しないので `--frames 6` では全項 0.000 ms になる (sub-01 で実測)。golden の撮影条件 (frames 6) は変えない。frames 6 と 20 のスクショはビット一致 (sub-01 で確認済み)。ログの出力先は標準出力 (`.log` は作られない) |
-| A12 | ADR-016 / `engine_spec.md` §6.4 / README / CLAUDE.md (CLI 一覧・golden 枚数・SKIP 変数) 更新、golden `demo_render_rtrefl_restir` (`--rt-refl --rt-restir`) 追加 | sub-07、`shot_verify.bat` 22 枚緑 |
+| A12 | ADR-016 / `engine_spec.md` §6.4 / README / CLAUDE.md (CLI 一覧・golden 枚数・SKIP 変数) 更新、golden `demo_render_rtrefl_restir` (`--rt-refl --rt-restir`、**frame 40** = `--frames 41 --shot-frame 40`。Default の M 上限 16 と Prop の 32 が両方飽和した状態を固定する — frame 3 では M ≈ 4 でクラス別上限が写らない。sub-05 で決定) 追加 | sub-07、`shot_verify.bat` 22 枚緑 |
 | A13 | チューニング UI が実行中に効き、Reset で既定に戻る。非永続 | reviewer が実機で操作 (`cmd /c bin\x64\Release\Editor.exe --render-demo --deferred --rt-refl --rt-restir`) |
 | A14 | ReSTIR on の絵も run-to-run で決定的 (maxDiff=0) | sub-04 以降、各サブで `--rt-restir` の撮影を 2 回 |
 
@@ -318,7 +318,10 @@ rt_temporal / rt_variance / rt_atrous (無変更)  入力が reflRt_ から refl
 - `rt_refl.cs.hlsl` に uniform 分岐と include を足しただけで fxc のスケジューリングが off 経路の丸めを変える
   可能性 (理論上)。golden が 1 でも動いたら**塗り潰さず**報告 (golden-diff-triage の 4 点計測)。
 - W のオーバーフロー: `Ls` が半精度、W は fp32。極端に暗い `lum` の候補が大きな W を持つ → firefly。
-  `J` 範囲棄却に加え `W ≤ kRtRestirWMax` (仮 64) でクランプするかは sub-05 の実測で決める。
+  → **sub-05 の実測で兆候なし** (`--rt-debug 11` の最大輝度 on 227.5 < off 247.9、孤立高輝度画素 0) のため
+  `kRtRestirWMax` は**入れない**。カメラが大きく動く条件は S5 でしか通らないので、出たら M67h で 1 行足す。
+- ReSTIR をトグルしても SVGF 側の履歴 (`reflHist_`) は落ちない → 切り替え直後の数フレームは値が混ざる (同じ量の
+  推定量なので数フレームで収束、実害なし。M67d からの性質。既知の minor、触らない)。
 - 鏡面 (粗さ ≲ 0.15) では spatial の候補がほぼ全部 p̂ ≈ 0 → 「M 不加算」規則により spatial は鏡面をほとんど
   変えない (暗化はしない)。滑らかな面ほど半径を粗さで縮める (radius × f(α)) のは S5 のノブ候補 — v1 の表は
   クラスだけで決める。
@@ -367,3 +370,7 @@ rt_temporal / rt_variance / rt_atrous (無変更)  入力が reflRt_ から refl
   `gRsCameraPos / gRsOutSize / gRsGbSize`、「b3 は off でも毎フレーム張る」「トレースは分岐の外で 1 回 (X4714)」を記録。
   (d) §4.4: 12 / 14 は `needRefl` で反射パスを強制 (`--rt-refl` 不要) — 初版の記述を訂正。
   (e) A5 は tol 1 (p̂ の往復の 1 ulp)、sub-07 の ReSTIR golden は自身が基準なので tol 0。sub-05 / 06 / 07 に反映。
+- 2026-09-05 (coder SELF_EVAL sub-05 round 1): (a) sub-04 の spatial が組 A へ W = 0 を書き戻していた欠落を M67e で修正
+  (絵に出ない壊れ方で planner も見落とし。sub-04 の履歴に事後記録、CPU ミラーの 2 パス往復 selftest を防波堤に)。
+  (b) §7: W クランプは実測で兆候なしのため入れない (S5 → M67h)。SVGF 履歴がトグルで落ちない件を既知の minor に。
+  (c) A12: ReSTIR golden は frame 40 で撮る (クラス別 M 上限が飽和した状態)。sub-07 に反映。

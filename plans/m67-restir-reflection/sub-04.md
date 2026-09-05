@@ -1,7 +1,7 @@
 # sub-04: reservoir の配管 (初期化 + resolve、再利用なし) + デバッグ 12 / 14 + `--rt-restir`
 
 - 依存: sub-02, sub-03
-- 状態: OK (commit: 司会が記入)
+- 状態: OK (commit e10f399)
 - 往復: 1
 
 ## やること
@@ -321,3 +321,9 @@ SELF_EVAL: sub-04 (round 1)
   を読んで裏取り。[追加] 8 件は全て承認し spec に取り込んだ (§4.2 フォールバックと p̂ の方向 / §4.3 の 3 本目と CB 項目 /
   §4.4 の needRefl)。[未実装] `[loop]` 骨組み → 「置いてよい」の範囲内。テスト軸 3 (新規自動テスト 0) は正直な採点として
   受け入れ — A5 は sub-04 時点にしか成立しない性質で恒久テストにならず、A14 とパイプラインの固定は sub-07 の golden が担う。
+- **事後 (sub-05 round 1 で発覚、M67e で修正)**: spatial パスが組 A へ書き戻す `W` が常に 0 だった (`RtReservoirEmpty()` から
+  統合して pack するだけで W を作り直していない)。resolve は wSum を使うので**絵は 1 画素も変わらず golden も A5 も緑**
+  = sub-04 の受け入れ条件では検出不能な壊れ方。planner も round 1 の裏取りで `spatial:83-104` を読みながら pack 前の
+  W 再計算の有無を見落とした。temporal (sub-05) は `w = p̂·W·M'·J` にこの W を掛けるので M が永久に 1 になる形で露見。
+  sub-05 が `pSel → r.W = RtRestirWeight(wSum, r.M, pSel)` を pack 前に追加し、CPU ミラーの 2 パス往復 selftest
+  (組 A の W を 0 にすると M が伸びない変異で FAIL) を恒久の防波堤にした。

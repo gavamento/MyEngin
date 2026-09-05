@@ -13,6 +13,12 @@
 // **gRsOn == 0 の経路は M67d 以前と同じ計算をして同じ値を書く** — 分岐は CB の
 // スカラー 1 個で完全に uniform、reservoir 側の UAV (u1-u5) は C++ が張りもしない。
 // golden `demo_render_rtrefl` (tol=0) がそのビット一致を機械証明している。
+//
+// M67e: 時間再利用。初期 reservoir を作った直後に「前フレームの同じ材質点の reservoir」
+// (組 A = t11-t15) を 1 つだけ統合する。**別ディスパッチにしない** = 近傍を読まないので
+// 同期が要らず、reservoir を SRV と UAV で同時に張らずに済む (ユーザー判断 U5)。
+// 妥当性の判定は SVGF の蓄積 (rt_temporal) と**同じ関数** (rt_reproject.hlsli) —
+// 2 か所に写経すると「片方だけ直して履歴条件がずれる」形で静かに壊れる。
 
 #include "rt_common.hlsli"
 // M67c: ReSTIR の数学。M67d からは実際に呼んでいる。
@@ -43,13 +49,17 @@ Texture2D gRfNormal : register(t7);   // GBuffer 法線 (*0.5+0.5 のワール�
 Texture2D gRfPosition : register(t8); // GBuffer ワールド座標
 Texture2D gRfMark : register(t9);     // GBuffer アルベド (a = ジオメトリ有りマーク)
 Texture2D gRfMaterial : register(t10); // GBuffer マテリアル (r = metallic, g = roughness)
-// M67d: 前フレームの reservoir (組 A)。**M67d では読まない** — temporal 統合は M67e。
-// 宣言だけ先に置いておくのは、レジスタ割り当てと C++ 側のバインドを 1 サブで固定するため
+// M67d: 前フレームの reservoir (組 A)。M67e から temporal 統合が実際に読んでいる
 Texture2D gRsPrevPos : register(t11);
 Texture2D gRsPrevRad : register(t12);
 Texture2D gRsPrevNrm : register(t13);
 Texture2D gRsPrevGeom : register(t14);
 Texture2D gRsPrevRpos : register(t15);
+// M67e: GBuffer RT4 = 画面速度 (今 UV − 前 UV、フル解像度)。rt_temporal の t7 と同じもの。
+// gRsUseVelocity == 0 のときは null が張られる (Load は 0 を返すが、そもそも読まない)。
+// ★t16 は **ReSTIR が on のフレームでしか張られない** — off 経路は gRsOn == 0 で
+//   ここへ来る前に return するので、張られていない SRV を読むことは無い
+Texture2D<float2> gRsGbVelocity : register(t16);
 
 RWTexture2D<float4> gRfOut : register(u0);
 // M67d: 今フレームの reservoir (組 B)。**gRsOn == 0 のときは C++ 側が張らない**ので、
@@ -153,10 +163,56 @@ void CSMain(uint3 tid : SV_DispatchThreadID)
     const float w = RtLuminance(Ls);
     RtReservoirUpdate(r, wSum, fh.pos, fh.nrm, Ls, fh.cls, /*mInc=*/1.0f, w, /*rnd=*/0.0f);
 
+    // ---- M67e: 時間再利用 (前フレームの組 A から候補を 1 つ) ----
+    // 「同じ材質点が前フレームのどこに写っていたか」を SVGF の蓄積とまったく同じ規約で
+    // 探す (rt_reproject.hlsli)。当たらなければ候補ゼロ = M は 1 のまま = 1spp と同じ絵。
+    //
+    // ★候補が外れた経路では **M を 1 も足さない** (spec §4.2「M を数える規則」)。
+    //   RtReservoirMerge が空 reservoir / J 範囲外 / w が 0・非有限を全部
+    //   RtReservoirUpdate を呼ぶ前に落とすので、ここでは呼ぶだけでよい。
+    //   幾何が食い違う (再投影が無効) 場合はそもそも Merge を呼ばない
+    if (gRsHistValid != 0) {
+        float2 prevUv;
+        // 画面速度は G-Buffer と同解像度なので P/N と同じ gp で引く (rt_temporal と同じ)
+        const float2 vel = gRsGbVelocity.Load(gp);
+        if (RtHistoryUv(gRsUseVelocity, uv, vel, mul(float4(P, 1.0f), gRsPrevViewProj), prevUv)) {
+            // reservoir は内部解像度なので履歴 UV も内部解像度で引く
+            const int3 hp = int3(int2(prevUv * gRfOutSize), 0);
+            const float4 geom = gRsPrevGeom.Load(hp);
+            // ★深度は「**現**フレームの P を前カメラから測った距離」と比べる —
+            //   rt_temporal.cs.hlsl と同じ近似 (画面速度は 2D なので前フレームの
+            //   カメラ距離を復元できない)。geom.w == 0 = 未記録は必ず落ちる
+            if (RtReprojectValid(length(P - gRsPrevCameraPos), geom.w, N, geom.xyz,
+                                 gRsDepthThreshold, gRsNormalThreshold)) {
+                const RtReservoir prev = RtReservoirUnpack(
+                    gRsPrevPos.Load(hp), gRsPrevRad.Load(hp), gRsPrevNrm.Load(hp));
+                // 前フレームの**受け側**ワールド座標 (ユーザー判断 U4 = 厳密な Jacobian)。
+                // 静止した面では P_prev == P なので J = 1 ちょうど — 逆に言えば
+                // rpos の配線が壊れると J が範囲外に落ちて M が 1 から伸びなくなる
+                const float3 pPrev = gRsPrevRpos.Load(hp).xyz;
+                // p̂ は**今フレームの V / N / α** で評価する (受け側が変わったぶんの
+                // 重み付け直しが ReSTIR の本体)。方向は必ず xs からの復元
+                const float pHatPrev =
+                    RtRestirTargetPdf(prev.Ls, RtRestirSampleDir(prev, P), V, N, alpha);
+                const float J = RtRestirJacobian(prev.xs, prev.ns, pPrev, P);
+                // M 上限は**候補のクラス** (映っている物体) で決まる — 主役ほど短く積む
+                RtReservoirMerge(r, wSum, prev, pHatPrev, RtRestirClassParams(prev.cls).z, J,
+                                 gRsJacobianMax, RtNextRand2(seed).x);
+            }
+        }
+    }
+
+    // M67e: 書き戻す前に M を採用サンプルのクラス上限へ切り詰める。
+    // wSum を同じ比率で縮めるので W も resolve の結果も変わらない — 変わるのは
+    // 「次のフレームがこの reservoir をどれだけ重く扱うか」だけ (spec §4.2)
+    RtRestirClampM(r, wSum, RtRestirClassParams(r.cls).z);
+
     // ★p̂ は**保存した xs から復元した方向**で評価する — 撃った L そのものではない。
     //   次段 (spatial) と次フレーム (temporal) は xs しか知らないので、そちらと同じ
     //   復元 (RtRestirSampleDir) をしておかないと p̂ の比が 1 にならず、
-    //   再利用ゼロ (M=1) でも絵が現行から数 % ずれる (A5 の根拠)
+    //   再利用ゼロ (M=1) でも絵が現行から数 % ずれる (A5 の根拠)。
+    //   ★**temporal の統合より後**に評価すること — 採用されたサンプルが履歴側に
+    //     入れ替わっていることがあるので、r.Ls / r.xs を見てから W を作る
     const float pHat = RtRestirTargetPdf(r.Ls, RtRestirSampleDir(r, P), V, N, alpha);
     r.W = RtRestirWeight(wSum, r.M, pHat);
 

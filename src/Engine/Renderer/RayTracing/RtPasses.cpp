@@ -367,11 +367,11 @@ void RtPasses::UnbindCompute(GraphicsDevice& device)
     // 同じテクスチャを次のパスで SRV / RTV として使うので必ず外す
     // (テンポラルは履歴 ping-pong で「前フレーム書込先」を今フレーム SRV で読むため必須。
     //  SVGF も ping-pong で書いた面を次の反復で読むので同様)。
-    // 上限は ReSTIR (M67d) が使う t15 / u5 まで。**ここを伸ばし忘れると
+    // 上限は ReSTIR が使う t16 (M67e = 画面速度) / u5 まで。**ここを伸ばし忘れると
     // 「同じ reservoir を SRV と UAV で同時に張った」で D3D が片方を黙って外す**
-    ID3D11ShaderResourceView* nullSrvs[16] = {};
+    ID3D11ShaderResourceView* nullSrvs[17] = {};
     ID3D11UnorderedAccessView* nullUavs[6] = {};
-    dc->CSSetShaderResources(0, 16, nullSrvs);
+    dc->CSSetShaderResources(0, 17, nullSrvs);
     dc->CSSetUnorderedAccessViews(0, 6, nullUavs, nullptr);
     dc->CSSetShader(nullptr, nullptr, 0);
 }
@@ -797,13 +797,19 @@ RtReflResult RtPasses::RenderReflection(GraphicsDevice& device, ShaderManager& s
     // ★off のときは reservoir を 1 枚も張らない (t11-t15 / u1-u5 は UnbindCompute が
     //   前のパスで null にしてある) = 現行と同じ「UAV 1 本だけ」のバインド
     if (restirOn) {
-        // 前フレームの組 A を t11-t15 へ (M67d では読まないが、バインドの形は
-        // M67e = temporal 統合と同じにしておく)。書き先は組 B なので衝突しない
+        // 前フレームの組 A を t11-t15 へ (M67e = temporal 統合が読む)。
+        // 書き先は組 B なので同じテクスチャを SRV と UAV で同時に張ることはない
         RtReservoirSet& a = slot.set[0];
         RtReservoirSet& b = slot.set[1];
         ID3D11ShaderResourceView* prev[5] = { a.pos.SRV(), a.rad.SRV(), a.nrm.SRV(),
                                               a.geom.SRV(), a.rpos.SRV() };
         dc->CSSetShaderResources(11, 5, prev);
+        // M67e: 画面速度 (t16)。**null もそのまま張る** — rs.useVelocity が同じ条件
+        // (gbVelocity && histValid) で 0 になるので、シェーダは読まない。
+        // 「張らない」にすると前のパスの残りが t16 に居座りうる (UnbindCompute が
+        // 外すのでこの経路では起きないが、依存を持たせない方が安い)
+        ID3D11ShaderResourceView* vel[1] = { in.gbVelocity };
+        dc->CSSetShaderResources(16, 1, vel);
         ID3D11UnorderedAccessView* uavs[6] = { reflRt_.UAV(),  b.pos.UAV(),  b.rad.UAV(),
                                                b.nrm.UAV(),    b.geom.UAV(), b.rpos.UAV() };
         dc->CSSetUnorderedAccessViews(0, 6, uavs, nullptr);

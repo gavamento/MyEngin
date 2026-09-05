@@ -28,6 +28,9 @@
    エディタで SceneView + GameView なら約 29 MB (viewKey 別に遅延確保)。新規 .hlsli は 3 本
    (`rt_restir_common` / `rt_restir_cb` / `rt_reproject`) + CS 1 本 (`rt_refl_restir_spatial`)。
    ReSTIR on の golden は tol=0 (自身が基準。A5 の 1 ulp は off との比較にしか出ない)。
+   ★sub-05 の申し送り: `[rt]` restir は 1.5 (M67d) → 2.4 ms (M67e、WARP render-demo frames 20)。ADR の数字は sub-06 の
+   spatial 込みで取り直す。ADR の「既知の制限」に「ReSTIR トグルで SVGF 履歴は落ちない (数フレームで収束)」と
+   「W クランプは入れていない (実測で兆候なし。firefly が出たら `kRtRestirWMax`)」を載せる。
 3. `README.md`: 機能概要のレイトレ節に ReSTIR 反射 + ReflectionClass を 1 段落、CLI 一覧に
    `--rt-restir` / `--rt-restir-no-spatial` / `--rt-restir-visray` / `--rt-class-override N`。
 4. `CLAUDE.md`: CLI 一覧 (`--rt-*` の並び) に同 4 本 **+ 元から未掲載だった `--rt-refl` / `--rt-gi` / `--rt-shadow` /
@@ -42,6 +45,12 @@
 5. `tools\shot_verify.bat` に `demo_render_rtrefl_restir --render-demo --deferred --rt-refl --rt-restir` を
    `MYE_SHOT_SKIP_RT` の囲いの中に追加 → `--update` で撮り、**中身を見てから**コミット。
    bat の数え書きと CLAUDE.md を 22 に。
+   ★**frame 40 で撮る** (`--frames 41 --shot-frame 40`。sub-05 で決定、spec A12): Default の M 上限 16 と Prop の 32 が
+   両方飽和した状態を固定する (frame 3 では M ≈ 4 でクラス別上限が写らない)。SHOTBASE は frames 6 / shot-frame 3 なので、
+   physics / acoustic の frame 120 枠と同じ方法で `SHOT` を差し替えて撮る (bat 220-240 行付近の書き方を踏襲)。
+   撮影条件の注記を bat のコメントに (「凍結シードなので temporal は同一サンプルを積む = M は伸びるが推定値は不変。
+   spatial は画素間で違うので写る」)。CLAUDE.md の「frame 120 で撮る 7 枚」の注記に「ReSTIR の 1 枚は frame 40」を足す。
+   所要時間の目安: acoustic の frame 120 が 19 s だったので 30 s 以内。
 6. `plans\m67-restir-reflection\harness.md` の申し送りに S5 の手順 (spec §4.6) と `M67h` で焼く項目を書く
    (司会が転記してもよい)。
 7. 全検証 (下記)。

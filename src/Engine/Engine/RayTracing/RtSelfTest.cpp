@@ -960,6 +960,91 @@ void TestRestir()
         TEST_CHECK(std::fabs(RtRestirWeight(6.0f, 2.0f, 1.5f) - 2.0f) < 1e-6f);
     }
 
+    // ---- M67e: temporal 再利用の 2 パス往復 (rt_refl → spatial → 次フレーム) ----
+    // 「静止カメラ・静止面・毎フレーム同じサンプル」= 凍結シードのスクリーンショットと
+    // 同じ条件を CPU で回し、**M が 1 フレームに 1 ずつ伸びてクラス上限で止まる**ことと
+    // **推定値が Ls のまま動かない**ことを固定する。
+    // ★不変量は「**両方のパスが書き戻す前に W を作り直す**」— テクスチャに載るのは
+    //   wSum ではなく W = wSum/(M·p̂) なので、どちらか一方でも W を空 reservoir の 0 の
+    //   まま書くと、次フレームの `w = p̂ · W · min(M', mCap) · J` が 0 になって候補ごと
+    //   外れ、**M が永久に 1 のまま**になる。M67e の実装で実際に踏んだバグで、
+    //   GPU 側ではデバッグ 12 が frame 3 / 40 / 80 で同一画像になる形でしか出ない
+    //   (絵は 1spp と同じなので golden も A5 も緑のまま通る) — CPU で先に落とす
+    {
+        const XMFLOAT3 P = { 0.0f, 0.0f, 0.0f }; // 受け側 (静止 = P_prev と同じ)
+        // ヒット点はレイの先 4m、法線はレイに向く側 (両面規約)
+        const XMFLOAT3 hitN = { -mirror.x, -mirror.y, -mirror.z };
+        const XMFLOAT3 xs = { P.x + mirror.x * 4.0f, P.y + mirror.y * 4.0f,
+                              P.z + mirror.z * 4.0f };
+        const XMFLOAT3 ls = { 0.7f, 0.55f, 0.2f };
+        const float alpha = 0.36f;
+        const float mCap = kRtReflClassTable[kRtReflClassDefault].mCap;
+        RtReservoirCpu prev = RtReservoirEmpty(); // 組 A (前フレームの書き戻し)
+        bool histValid = false;
+        bool growOk = true;
+        bool unbiasedOk = true;
+        for (int frame = 0; frame < 24; ++frame) {
+            // --- パス 1 = rt_refl.cs.hlsl (初期 reservoir → temporal 統合 → ClampM → W) ---
+            RtReservoirCpu r = RtReservoirEmpty();
+            float wSum = 0.0f;
+            RtReservoirUpdate(r, wSum, xs, hitN, ls, kRtReflClassDefault, 1.0f,
+                              RtLuminance(ls), 0.0f);
+            if (histValid) {
+                const XMFLOAT3 lPrev =
+                    Normalize({ prev.xs.x - P.x, prev.xs.y - P.y, prev.xs.z - P.z });
+                const float pHatPrev = RtRestirTargetPdf(prev.Ls, lPrev, V, N, alpha);
+                // 受け側が動いていないので J = 1 ちょうど (rpos が正しく往復した状態)
+                const float j = RtRestirJacobian(prev.xs, prev.ns, P, P);
+                RtReservoirMerge(r, wSum, prev, pHatPrev, mCap, j, kRtRestirJacobianMax,
+                                 0.75f);
+            }
+            RtRestirClampM(r, wSum, mCap);
+            const XMFLOAT3 lSel = Normalize({ r.xs.x - P.x, r.xs.y - P.y, r.xs.z - P.z });
+            r.W = RtRestirWeight(wSum, r.M, RtRestirTargetPdf(r.Ls, lSel, V, N, alpha));
+
+            // --- パス 2 = rt_refl_restir_spatial.cs.hlsl (自画素 → ClampM → resolve → W) ---
+            RtReservoirCpu s = RtReservoirEmpty();
+            float sSum = 0.0f;
+            const float pc = RtRestirTargetPdf(r.Ls, lSel, V, N, alpha);
+            RtReservoirMerge(s, sSum, r, pc, mCap, 1.0f, kRtRestirJacobianMax, 0.0f);
+            RtRestirClampM(s, sSum, mCap);
+            const XMFLOAT3 out = RtRestirResolve(s, sSum);
+            const XMFLOAT3 lOut = Normalize({ s.xs.x - P.x, s.xs.y - P.y, s.xs.z - P.z });
+            s.W = RtRestirWeight(sSum, s.M, RtRestirTargetPdf(s.Ls, lOut, V, N, alpha));
+
+            const float expectM = std::min(static_cast<float>(frame + 1), mCap);
+            if (s.M != expectM) {
+                growOk = false;
+            }
+            // 同じサンプルを何度積んでも推定値は Ls のまま (再利用で暗化・明化しない)
+            if (std::fabs(out.x - ls.x) > 1e-4f || std::fabs(out.y - ls.y) > 1e-4f
+                || std::fabs(out.z - ls.z) > 1e-4f) {
+                unbiasedOk = false;
+            }
+            prev = s;
+            histValid = true;
+        }
+        MYE_LOG_INFO("  restir: temporal loop M = %.0f after 24 frames (cap %.0f)",
+                     static_cast<double>(prev.M), static_cast<double>(mCap));
+        TEST_CHECK(growOk);      // 1 フレームに 1 ずつ、cap で頭打ち
+        TEST_CHECK(unbiasedOk);  // 出力は Ls のまま
+        TEST_CHECK(prev.M == mCap);
+
+        // ★変異テスト: 組 A の W を 0 にする (= 書き戻しで W を作り忘れた状態) と、
+        //   候補の重みが 0 になって M が 1 から伸びない = 上のループが守っている性質
+        RtReservoirCpu stale = prev;
+        stale.W = 0.0f;
+        RtReservoirCpu r2 = RtReservoirEmpty();
+        float w2 = 0.0f;
+        RtReservoirUpdate(r2, w2, xs, hitN, ls, kRtReflClassDefault, 1.0f, RtLuminance(ls),
+                          0.0f);
+        const XMFLOAT3 lStale =
+            Normalize({ stale.xs.x - P.x, stale.xs.y - P.y, stale.xs.z - P.z });
+        RtReservoirMerge(r2, w2, stale, RtRestirTargetPdf(stale.Ls, lStale, V, N, alpha),
+                         mCap, 1.0f, kRtRestirJacobianMax, 0.75f);
+        TEST_CHECK(r2.M == 1.0f);
+    }
+
     // ---- クラス別パラメータ表 ----
     {
         bool tapsOk = true, capOk = true, radiusOk = true;
