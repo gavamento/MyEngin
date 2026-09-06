@@ -118,6 +118,33 @@ struct AudioBusState {
     float reverbSend = 0.0f; // ルートバスは常に 0 (reverb の出力先がルートのため)
 };
 
+// I3DL2 リバーブの 13 パラメータ (M68b)。**SDK の XAUDIO2FX_REVERB_I3DL2_PARAMETERS と
+// 同名・同順・同型の POD**。
+// ★このヘッダは xaudio2fx.h を include できない (Windows.h を丸ごと引き込む。
+//   AudioSystem.cpp:59 の x3daudio.h と同じ事情) ので、SDK 型をそのままヘッダへ出せない。
+//   .cpp 側で 1 対 1 に写し、sizeof を static_assert で結んで「SDK が増えたら気づく」形にしてある。
+// ★POD にしてある理由はもう 1 つあって、**補間 (LerpReverbParams) をデバイス無しで
+//   セルフテストできる**こと。音響 (M68b) が部屋の広さから響きを連続に変えるとき、
+//   実際に鳴らして耳で確かめるしかない代物を「純関数 + 固定テスト」に落とせる
+struct AudioReverbParams {
+    // 既定値は I3DL2 の DEFAULT プリセット (Room = -10000 = 実質リバーブ無し)。
+    // ★ゼロ初期化にすると DecayTime = 0 が SDK の有効範囲外になるので、
+    //   「未設定の POD をそのまま SetEffectParameters へ流しても壊れない」値を置いている
+    float WetDryMix = 100.0f;
+    int32_t Room = -10000;
+    int32_t RoomHF = 0;
+    float RoomRolloffFactor = 0.0f;
+    float DecayTime = 1.0f;
+    float DecayHFRatio = 0.5f;
+    int32_t Reflections = -2602;
+    float ReflectionsDelay = 0.007f;
+    int32_t Reverb = 200;
+    float ReverbDelay = 0.011f;
+    float Diffusion = 100.0f;
+    float Density = 100.0f;
+    float HFReference = 5000.0f;
+};
+
 // XAudio2 ベースのオーディオ。**出力 sink であり決定論レーン外** (M19 からの不変条件)。
 // スクリプトが tick 内で積んだ再生イベントを、EngineLoop がハッシュ後に流す。
 // **voice 状態は絶対に hashed state へ戻さない**。読み取り API を sim へ公開しないこと
@@ -242,6 +269,19 @@ public:
     float ReverbWetDryMix() const { return reverbWetDry_; }
     void SetReverbWetDryMix(float percent);
 
+    // ---- リバーブの上書き (M68b: 音響が部屋の広さから響きを連続に変える) ----
+    // ★**プリセット index (reverbPreset_) には触らない**。ミキサー窓の combo も
+    //   .mixer.json の保存値も資産値のままで、上書きは「今この瞬間の響き」だけを差し替える。
+    //   だから上書きを止めれば選んだプリセットへ即座に戻るし、ホットリロードで
+    //   バスグラフを作り直しても (BuildBusGraph 末尾の ApplyReverbParams が)
+    //   自動的に上書き側を再適用する — **選択は ApplyReverbParams() の 1 箇所だけ**。
+    // ★プリセット表の写し。index が範囲外なら 0 (Default)。**static** なので
+    //   デバイスもインスタンスも要らない = 補間のセルフテストがここから素材を取れる
+    static AudioReverbParams PresetReverbParams(int index);
+    void SetReverbOverride(const AudioReverbParams& p);
+    void ClearReverbOverride();
+    bool ReverbOverrideActive() const { return reverbOverrideActive_; }
+
     // トポロジ変更 (バスの追加/削除/改名/親変更)。**次の Update() で 1 回だけ**
     // グラフを作り直す — UI の連続操作をフレーム境界で束ねるため。
     // 検証に失敗したミキサーは適用せず、現在のグラフを保つ
@@ -342,6 +382,9 @@ private:
     int rootBus_ = 0;
     int reverbPreset_ = 0;
     float reverbWetDry_ = 100.0f;
+    // M68b: 音響による上書き。active のあいだだけ ApplyReverbParams がこちらを選ぶ
+    AudioReverbParams reverbOverride_;
+    bool reverbOverrideActive_ = false;
 
     // 保留中のトポロジ変更 (Update() の頭で 1 回だけ消費する)
     std::vector<AudioBusState> pendingBuses_;

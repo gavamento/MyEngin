@@ -76,6 +76,8 @@ Grid / HasVolume / Occupancy / IsSolid / StaticSignature / DebugSetGrid`、`Wave
 | S19 | reverb override の受け渡し型 | `AudioSystem.h` は `xaudio2fx.h` を include できない (`Windows.h` を引き込む、`AudioSystem.cpp:59` の注記) ので `XAUDIO2FX_REVERB_I3DL2_PARAMETERS` をヘッダに出せない | 事実 | SDK 型と同名 13 フィールドの POD **`AudioReverbParams`** を `AudioSystem.h` に置き、`.cpp` で相互変換 (`static_assert` で件数を SDK に結ぶ)。`LerpReverbParams` はこの POD の純関数 = ヘッドレスで検査できる |
 | S20 | (sub-01 round 1、coder 発見) **起動時の `ApplyMixer` が保留したバスグラフ再構築が、フレーム 0 の playOnAwake を殺す** | `RegisterAssetLibraries` → `ApplyMixer` は再構築をフレーム境界へ保留 (`AudioSystem.cpp:1402`)。フレーム 0 は `audioSources.Update` (playOnAwake → `Play`) → `audioSystem.Update` (`RebuildBusGraphNow` → `DestroyAllSourceVoices`) の順 (`EngineLoop.cpp:1544-1550`) なので鳴らした voice が即死し、`started` が立ったままループ音が二度と復活しない。**M45 からの既存不具合**で `--acoustic-demo` に AudioSource が 0 個だったため露見していなかった (実測: hum が 2 tick で無音) | 事実 (coder SELF_EVAL) | メインループ直前に `audioSystem.Update(0.0f)` を 1 回 (dt = 0 なのでフェードもメーターも進まない) = 起動時ミキサーを**最初のフレームより前**に確定させる。spec 側の穴として採用 (§4.1.5 に追記)。replay 7 ペア / golden 22 枚は無風 (出力レーン) |
 | S21 | (sub-01 round 1、coder 発見) tick 1 の 1 行だけ場が「壁なし」で焼かれる (`dPath 20.77 / open 1.00`) | `AcousticField::Sync` の占有ベイクは静的コライダの WorldMatrix を見るが、シーン構築直後の最初の tick は行列確定前 = 壁が 1 枚も無い状態で焼く (M65a からの既存挙動、tick 2 で署名が変わり正常化)。**sim 側の性質**で、tick 1 に立つ波が無い限り実害は無い | 裁定 | v1 で許容。出力レーンは場を写すだけなので直す場所はここではない。M65 の追補候補として harness 申し送りに残す (「占有ベイクを最初の transform 更新の後にする」)。A11 の帯は t ≥ 2 で評価 |
+| S23 | (sub-02 round 1、coder 実測) 開放度の実測値と残響アンカー | 同じ間取りを World に組んで `AcousticField::Sync` に焼かせた使い捨てプローブ (エンジンの占有ベイク + probe をそのまま呼ぶ、`roomProbeM` 6): 部屋 A 隅 0.468 / 部屋 A 中央 0.668 / 横廊下 西端 0.496・中央 0.357・東端 0.287 / 縦廊下 0.404・0.529 / 部屋 B 戸口 0.607 / 部屋 B 中央 (hum) 0.800。**廊下の西端 (0.50) は部屋 A の隅 (0.47) より開いている** = この指標は「部屋の隅」と「廊下の端」を区別できない (v1 の限界。局所の自由体積を測っているだけ) | 裁定 | `openLarge` 0.8 は部屋 B がちょうど上端に着く良い値 (据え置き)。**`openSmall` 0.2 → 0.30** で 廊下 東端 0.00 / 中央 0.09 / 西端 0.24、部屋 A 隅 0.26 / 中央 0.83、縦廊下 0.11〜0.44、部屋 B 戸口 0.67 / 中央 1.00 = 企画どおりの対比 (0.35 だと部屋 A 中央が 0.75 に下がるだけで廊下側は変わらない)。NoHash の既定値なので replay / golden に無影響 |
+| S24 | (sub-02 round 2、coder 特定) **`acoustic_forward` / `acoustic_deferred` の golden は生マウスデルタに晒されている** (sub-01 の「1 shot(s) differ」の正体) | 割れた枚は `acoustic_deferred` maxDiff=125 / 520 px、位置 (236,444) = 部屋 A の隅の Watcher の箱。`WatcherFpsCamera.cpp:110` が `GetMouseDelta` (= `Input.cpp:40` の `WM_INPUT` 生カウント) を yaw に積分し `:134` で MeshRenderer 付きの箱を回す。shot_verify は acoustic の 2 枚に `--synth-input` を渡さないので、撮影中 (123 フレーム) にマウスが動くと箱が回る。`GetMouseDelta` の消費者は ABI 経由の `WatcherFpsCamera` だけ (planner grep)。M65g から埋まっていた性質で、M68 のコードは `--no-audio` の撮影では 1 行も走らない (`IsReady()` false) | 裁定 | **案 (a) を M68c に 1 行の例外として載せる**: `deterministicShot` (= `--screenshot` かつ `--shot-every` 無し) のとき、生デバイス由来のレーン 0 の `mouseDeltaX/Y` を 0 にする (`EngineLoop.cpp:1287` 付近の入力レーン確定で、`--synth-input` / .rep の置換より**前**。合成入力と記録入力は触らない = A11 のレシピと replay 7 ペア目に影響しない)。frame == tick と同じ「撮影モードの決定化」の一部。golden は無入力 run と同値なので 22 枚 maxDiff=0 のまま (A26 で機械確認)。却下: (b) 別コミット = 司会の段取りが増えるだけで内容は同じ / (c) 放置 = 「acoustic の 1 枚だけ時々赤い」が恒常の雑音になり A3 の信頼が落ちる |
 | S22 | (sub-01 round 1) spec の経路長見積り 35.8 m は Manhattan 寄りで**誤り** | coder の独立実装 (Python の 26 近傍チャンファ Dijkstra、デモの壁配置) がエンジンのログと小数 2 位まで一致: 静止 (8,2,8)→(28,1,40) = chamfer 651 = **29.59 m**、移動中 26.64〜30.73 m。斜めの近道が 6 m 縮める | 事実 | A11 (b) の帯を **26〜32 m** に訂正、§4.2 の「≈ 35.8 m」→「≈ 29.6 m」。実装は正しい |
 
 ## 3. スコープ
@@ -86,6 +88,8 @@ Grid / HasVolume / Occupancy / IsSolid / StaticSignature / DebugSetGrid`、`Wave
   複数リスナー / 一発再生の追従 (S17) / ABI 追加 / HRTF・高さ定位 / tone の絵への反映 / 到来方向の平均化 (S16)。
   `AcousticField.h/.cpp` は**コメント 1 行 (`Wave::bornTick` の「診断用」) 以外触らない**。`AudioSystem` の変更は
   `AudioSpatial::lpfCoefficient` + `applyLpf` の min + reverb override 3 関数 + `ApplyReverbParams` の選択 + POD だけ。
+- 例外 (sub-02 round 2 で追加、S24): sub-03 に**コード 1 行**だけ入る — `deterministicShot` で生マウスデルタを 0 にする
+  (撮影モードの決定化)。M68 の機能ではなく、A3 の golden を安定させるための修正。
 - 後回し: 調整値 (`bendFullM` / `lpfFloor` / `occludedGain` / `detourWet` / `waveVolume` / 残響のアンカー) の耳による追い込み。
   すべて Inspector で実行中に触れる (`AcousticAudio` は NoHash なので再生中に変えても replay に影響しない)。
   確定値はユーザーが M68c 後に別コミットで焼く。
@@ -166,7 +170,8 @@ probe に `AcousticField*` を持たせる案は寿命の罠なので不採用)
   **`ApplyReverbParams()` の 1 箇所**で「override があればそれ、無ければ `kReverbPresets[reverbPreset_]`」を選ぶ。
   `SetReverbOverride` は保持して `ApplyReverbParams()` を呼ぶ。`reverbPreset_` / `CurrentMixer()` / combo は資産値を保つ。
   `.mixer.json` ホットリロード (`ApplyMixer → RebuildBusGraphNow → BuildBusGraph 末尾`) 後も自動で再適用される。
-- Clear の契機: `AudioSourceSystem::Reset()`、有効な `AcousticAudio` が無い tick、probe が無効な tick。
+- Clear の契機: `AudioSourceSystem::Reset(AudioSystem&)` (Clear に `AudioSystem` が要るので引数に取る。呼び出し元は
+  `TickRunner` の LoadScene ブロック 1 箇所。sub-02 round 1)、有効な `AcousticAudio` が無い tick、probe が無効な tick。
 
 #### 4.1.4 鳴る波 (M68b)
 
@@ -186,7 +191,13 @@ probe に `AcousticField*` を持たせる案は寿命の罠なので不採用)
   `minDistance = cellSize`、`maxDistance = maxRing · cellSize` (= `ChamferToMeters(maxRing·11)`)、`rolloff = waveRolloff`、
   `dopplerScale = 0`、`reverbSend = waveReverbSend`、`pitch = desc.pitch` → `ShapeAcousticSpatial(..., smooth = nullptr)` →
   `desc.volume *= gainOut`、`desc.spatial = &spatial` → `audio.Play(desc)`。この組み立ては純関数 `MakeWaveShotPlay(...)`
-  に切り出し、`Play` だけを呼び手が行う (T19〜T21 がデバイス無しで検査する)。
+  に切り出し、`Play` だけを呼び手が行う (T19〜T21 がデバイス無しで検査する)。署名は
+  `MakeWaveShotPlay(const AcousticField&, const AcousticProbe&, const AcousticAudioComponent&, const PendingWaveShot&,
+  listenerPos, const AudioSystem&, const SoundLibrary&, Pcg32&, PlayDesc&, AudioSpatial&, AcousticShapeInfo*) -> WaveShotResult`
+  (`field` / `probe` は `ShapeAcousticSpatial` が要求する。sub-02 round 1)。**`outDesc.loop = false` を強制**
+  (ループする `.sound.json` を tone に指されても鳴りっぱなしにしない)、`PickVariationIndex` が −1 なら `UnknownKey`。
+  未知 tone の警告は tone ごとに 1 回 (`Reset` で戻す)。`Play` が無効ハンドルを返した回数は `shotsPlayFailed` に数える
+  (round 2、A16 (d) の機械検査「51 回 Play を呼んだ」→「51 回 voice が立った」を主張するため)。
 - 「波が届く所でだけ聞こえる」の根拠: `RolloffGain` は全 rolloff で `d ≥ maxD` → 0 (`SpatialMath.h:36-41`)。
 
 #### 4.1.5 ゲート (共通)
@@ -212,7 +223,8 @@ probe に `AcousticField*` を持たせる案は寿命の罠なので不採用)
   値は**平滑化後**。
 - 終了時 (`--acoustic-audio-log` > 0 のとき、`EngineLoop.cpp:1832` の `[rt]` 行の隣):
   `[acaudio] summary: ticks=%llu rebuilds=%d boxCells=%d probeMsAvg=%.3f shaped=%d classes D/T/O/B=%d/%d/%d/%d`
-  (M68b で ` shots=%d skipped=%d unknownKey=%d` を足す)。run-to-run 比較では `probeMsAvg` を除く。
+  (M68b で ` shots=%d skipped=%d unknownKey=%d dropped=%d room=%.2f`、round 2 で末尾に ` playFailed=%d` を足す。
+  **追加は常に末尾** = 既存の grep を壊さない)。run-to-run 比較では `probeMsAvg` を除く。
 - Profiler (`ProfilerWindow.cpp:87-101` の隣、有効な `AcousticAudio` と有効な probe があるときだけ):
   `  acoustic-audio: probe %6.3f ms (rebuilds %d, box %d cells, shaped %d, open %.2f)` (M68b で `, shots %d, room t=%.2f`)。
   統計は `AudioSourceSystem::AcousticAudioStats()` (POD) から。
@@ -232,7 +244,7 @@ probe に `AcousticField*` を持たせる案は寿命の罠なので不採用)
   | occludedLpf | Float | 0.10 | 0..1 | 密閉時の lpf |
   | smoothTicks | Int32 | 6 | 0..120 | gain/lpf/位置の半減期 [tick]。0 = スナップ |
   | roomProbeM | Float | 6.0 | 1..32 | 開放度の半径 [m] |
-  | openSmall | Float | 0.2 | 0..1 | 開放度 → t の下端 |
+  | openSmall | Float | 0.2 → **0.30** (sub-02 round 2 で変更) | 0..1 | 開放度 → t の下端。sub-02 実測 (S23): 廊下 0.29〜0.50、部屋 A 中央 0.67、部屋 B 0.80。0.2 では廊下西端・縦廊下が部屋 A と区別できない (変更履歴 #10) |
   | openLarge | Float | 0.6 → **0.8** (sub-02 で変更) | 0..1 | 同 上端。sub-01 実測: 部屋 A (8×6 m) で 0.33〜0.62 → 0.6 では部屋 A が上端に張り付き部屋 B と区別がつかない (変更履歴 #7) |
   | roomSmoothTicks | Int32 | 18 | 0..300 | t の半減期 [tick] (S12) |
   | reverbSmall | Int32 | 3 | 0..10 | 狭い側のプリセット index (SmallRoom) |
@@ -319,7 +331,7 @@ sub-02 (M68b):
 | # | 条件 | 検証手段 |
 |---|---|---|
 | A15 | selftest T16〜T21 PASS | A1 |
-| A16 | A11 と同じ run で (a) `kind=shot` ≥ 20 行 (Walker の足音 + 衝撃 + 敵の自発音) (b) shot 行の `class` に `Direct` と `Detour` の両方 (c) `room=` の tick 間 `|Δroom| ≤ 0.05` (d) summary の `shots` ≥ 20、`unknownKey == 0` (e) 2 run バイト一致 | A11 のコマンド |
+| A16 | A11 と同じ run で (a) `kind=shot` ≥ 20 行 (Walker の足音 + 衝撃 + 敵の自発音) (b) shot 行の `class` に `Direct` と `Detour` の両方 (c) `room=` の tick 間 `|Δroom| ≤ 0.05` (t ≥ 2) (d) summary の `shots` ≥ 20、`unknownKey == 0`、`dropped == 0`、**`playFailed == 0`** (round 2) (e) 2 run バイト一致 (f) **予測** (S23、`openSmall 0.30 / openLarge 0.8`): summary の `room` が 0.00〜0.75 (部屋 A の開放度 0.33〜0.62 → t 0.01〜0.70。tick 1 の自由空間で 1.0 から始まり 18 tick 半減期で降りる) | A11 のコマンド |
 | A17 | `replay_verify` 中に 1 音も鳴らず、解除後に一斉に鳴らない | `IsSuspended` return より前の clear = T18 + `Update` のコード読み |
 | A18 | ミキサー窓の combo は資産値のまま、override 中は「音響が上書き中」が出る。`LocalizationSelfTest` PASS | コード読み + A1 (目視はユーザー) |
 | A19 | 足音 4 本の `SynthParams` が実装メモに書いてある (再現可能) | sub-02.md |
@@ -334,6 +346,7 @@ sub-03 (M68c):
 | A23 | `docs\test_checklists.md` に `## M68` 節 (`- [ ] 操作 → 期待`) | ファイル |
 | A24 | `CLAUDE.md` 検証表 / CLI / チェックリストが M68 後の実態と一致 | 読み合わせ |
 | A25 | `plan-original.md` 進捗表 + 申し送り | ファイル |
+| A26 | (S24) `deterministicShot` で生マウスデルタが 0 になる: (a) 22 枚 maxDiff=0 のまま (b) `acoustic_deferred` の撮影コマンドを、マウスを動かしながら (`SendInput` の `MOUSEEVENTF_MOVE` ループ、または手で) 回しても golden と maxDiff=0 (c) `--synth-input` + `--screenshot` の A11 レシピの `[acaudio]` 行が sub-02 round 2 の run と**一致** (合成入力のデルタは殺していない証拠) (d) `replay_verify` 7 ペア無風 | `tools\shot_verify.bat` ×2 / (b) の手順と結果を実装メモに / A11 のコマンド / A2 |
 
 ユーザー確認 (reviewer のゲートではない): 廊下を歩いて hum がこもり → 開き → 戸口側に定位すること、廊下と部屋 B で残響が
 段差なく変わること、足音が床材で遠近が変わること (M68c の checklists の項目)。
@@ -344,7 +357,7 @@ sub-03 (M68c):
 |---|---|---|---|---|
 | sub-01 | リスナー場 + 遮蔽・回折の整形 + `AcousticAudio` (TypeId 50) + selftest 45 本目 + hum | なし | A1〜A14 | `M68a: 音響 × オーディオ — リスナー場 (Dial の 3 本目) + 遮蔽・回折の整形 (仮想発音位置 / LPF) + AcousticAudio (TypeId 50)` |
 | sub-02 | 部屋の残響 (連続補間) + 鳴る波 (`PendingWaveShot`) + 足音 WAV 4 本 | sub-01 | A1〜A9, A15〜A19 | `M68b: 音響 × オーディオ — 部屋の残響 (2 プリセット連続補間) + 鳴る波 (PendingWaveShot) + 足音 WAV 4 本` |
-| sub-03 | 仕上げ (ADR-017 / engine_spec / README / test_checklists / CLAUDE.md / 進捗表) | sub-02 | A1〜A9 (無風の再確認), A20〜A25 | `M68c: 音響 × オーディオ — 仕上げ (ADR-017 / engine_spec §10.6 / README / test_checklists / CLAUDE.md)` |
+| sub-03 | 仕上げ (ADR-017 / engine_spec / README / test_checklists / CLAUDE.md / 進捗表) + 撮影モードのマウスデルタ固定 (S24、1 行) | sub-02 | A1〜A9 (無風の再確認), A20〜A26 | `M68c: 音響 × オーディオ — 仕上げ (ADR-017 / engine_spec §10.6 / README / test_checklists / CLAUDE.md)` |
 
 コミット本文に「ABI 変更なし / sim 状態変更なし」を明記 (元計画の手順 3)。sub-01 のコミットに `plans/m68-acoustic-audio/`
 (harness.md / plan-original.md / spec.md / sub-*.md) を含める (M67 の `73a439e` と同じ)。
@@ -381,3 +394,17 @@ sub-03 (M68c):
 8. 同 (不安・質問 4) — §4.4: probe 再構築の実測 (Debug 9.3 / Release 0.65 ms) を記録。「Debug 数 ms」は過小だったが v1 で許容。
 9. 同 ([逸脱] 4 / [追加] 5 / [追加] 7) — アクセサ名 `AcousticStats()`、summary の `ticks > 0` ゲート、sub-01 T10 の床到達を
    `bendFullM = 4` の複製で検査 (L 字 12 m 四方では回り込みが 5 m 弱で既定 8 では床に届かない = 既定値では書けない主張だった)。
+10. 2026-09-06 sub-02 round 1 (coder 不安・質問 1、S23) — §4.2 表: `openSmall` 既定 0.2 → **0.30** を sub-02 round 2 で適用。
+    coder の実測で廊下 0.29〜0.50 / 部屋 A 隅 0.47 / 部屋 B 0.80。0.2 では廊下西端と縦廊下が部屋 A と区別できない。
+11. 同 ([追加] 1〜7) — §4.1.3 `Reset(AudioSystem&)`、§4.1.4 `MakeWaveShotPlay` の署名 (field / probe)・`loop = false` 強制・
+    `PickVariationIndex` −1 → `UnknownKey`・tone ごと 1 回の警告、§4.1.6 summary に `dropped` / `room` (末尾追加)、
+    `AudioReverbParams` の既定値 = DEFAULT プリセット (ゼロ初期化は `DecayTime = 0` が SDK 範囲外)。全部 spec の穴。
+12. 同 (不安・質問 2) — §4.1.4 / §4.1.6 / A16 (d): `shotsPlayFailed` (Play が無効ハンドルを返した回数) を stats と summary
+    末尾に足す (round 2)。「Play を呼んだ」と「voice が立った」の差を機械で埋める唯一の口。XAudio2 が実際に出す音は耳 (M68c)。
+13. 同 (不安・質問 3) — shot の log `src=` は `PendingWaveShot::source` の index (null なら −1) を出してよい (nit、任意)。
+    `name=tone<k>` は据え置き (発音元は drain 時に死んでいることがあり、名前の借用は `IsAlive` 検査が要る)。
+14. 2026-09-06 sub-02 round 2 — #10 / #12 / #13 を適用済み (openSmall 0.30 / `shotsPlayFailed` / `src=`)。A16 は予測どおり
+    (room 0.02、playFailed 0、2 run バイト一致、src 5 種)。
+15. 同 (coder 不安・質問 1、S24) — §3 / §5 A26 / §6 / sub-03: sub-03 に**コード 1 行の例外** (`deterministicShot` で生マウスデルタを 0)。
+    sub-01 で未捕捉だったフレークの正体が M65g 由来の「撮影中のマウス」と判明したため。M68 のスコープ外だが A3 (golden 22 枚) の
+    信頼性の話なので、別コミットに切るより M68c に載せる。golden は動かない (A26 (a))、合成入力は触らない (A26 (c))。

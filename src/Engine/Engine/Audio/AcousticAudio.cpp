@@ -9,7 +9,9 @@
 #include <cmath>
 #include <cstdlib>
 
+#include "Engine/Core/Hash.h"
 #include "Engine/Core/Log.h"
+#include "Engine/Engine/Audio/SoundAsset.h"
 
 namespace mye {
 namespace {
@@ -415,6 +417,14 @@ void ShapeAcousticSpatial(const AcousticField& field, const AcousticProbe& probe
         targetLpf = std::clamp(comp.occludedLpf, 0.0f, 1.0f);
         targetGain = std::clamp(comp.occludedGain, 0.0f, 1.0f);
     }
+    // M68b: 回り込んで/遮られて届く音はリバーブ側を**足す**。
+    // ★直達が閉じるほど「部屋の響きだけが残る」= 壁の向こうに音源があることの手掛かりになる
+    //   (applyLpf がリバーブ送り側の LPF に lpfCoefficient を掛けないのと対になる設計)。
+    // ★平滑化しない。送りは X3DAudio 側の ReverbLevel と掛け算で毎フレーム書き直され、
+    //   class の切り替わりは position/gain/lpf の平滑化で既になだらかになっている
+    if (cls == AcousticPathClass::Detour || cls == AcousticPathClass::Occluded) {
+        io.reverbSend = (std::min)(1.0f, io.reverbSend + std::clamp(comp.detourWet, 0.0f, 1.0f));
+    }
 
     // ---- (7) 平滑化 (整数 tick 基準の半減期。kVelocityHalfLifeTicks と同型) ----
     float gain = targetGain;
@@ -448,6 +458,130 @@ void ShapeAcousticSpatial(const AcousticField& field, const AcousticProbe& probe
     inf.dLine = dLine;
     inf.lpf = lpf;
     inf.gain = gainOut;
+}
+
+// ---------------------------------------------------------------------------
+// 部屋の残響 (M68b)
+// ---------------------------------------------------------------------------
+
+AudioReverbParams LerpReverbParams(const AudioReverbParams& a, const AudioReverbParams& b, float t)
+{
+    const float u = std::clamp(t, 0.0f, 1.0f);
+    // ★(1-u)*x + u*y の形。u=0 で厳密に a、u=1 で厳密に b になる (係数が厳密な 0/1 になるため)
+    auto lf = [u](float x, float y) { return (1.0f - u) * x + u * y; };
+    // 整数 (mB) は float で混ぜてから四捨五入する。**切り捨てにしない** —
+    // t を 0→1 へ動かしたときに片側だけ 1 早く動いて、単調性のテストが不定になる
+    auto li = [u](int32_t x, int32_t y) {
+        const float v = (1.0f - u) * static_cast<float>(x) + u * static_cast<float>(y);
+        return static_cast<int32_t>(std::lround(v));
+    };
+    AudioReverbParams r;
+    r.WetDryMix = lf(a.WetDryMix, b.WetDryMix);
+    r.Room = li(a.Room, b.Room);
+    r.RoomHF = li(a.RoomHF, b.RoomHF);
+    r.RoomRolloffFactor = lf(a.RoomRolloffFactor, b.RoomRolloffFactor);
+    r.DecayTime = lf(a.DecayTime, b.DecayTime);
+    r.DecayHFRatio = lf(a.DecayHFRatio, b.DecayHFRatio);
+    r.Reflections = li(a.Reflections, b.Reflections);
+    r.ReflectionsDelay = lf(a.ReflectionsDelay, b.ReflectionsDelay);
+    r.Reverb = li(a.Reverb, b.Reverb);
+    r.ReverbDelay = lf(a.ReverbDelay, b.ReverbDelay);
+    r.Diffusion = lf(a.Diffusion, b.Diffusion);
+    r.Density = lf(a.Density, b.Density);
+    r.HFReference = lf(a.HFReference, b.HFReference);
+    return r;
+}
+
+float RoomBlend(float openness, float openSmall, float openLarge)
+{
+    // 下端 >= 上端 の指定 (Inspector でスライダを交差させると起きる) は**段**に落とす。
+    // 0 除算を避けるためだけでなく、「上端を下端まで下げたら常に広い側」が直感に合うため
+    if (!(openLarge > openSmall)) {
+        return openness >= openLarge ? 1.0f : 0.0f;
+    }
+    const float u = std::clamp((openness - openSmall) / (openLarge - openSmall), 0.0f, 1.0f);
+    return u * u * (3.0f - 2.0f * u);
+}
+
+// ---------------------------------------------------------------------------
+// 鳴る波 (M68b)
+// ---------------------------------------------------------------------------
+
+WaveShotResult MakeWaveShotPlay(const AcousticField& field, const AcousticProbe& probe,
+                                const AcousticAudioComponent& comp, const PendingWaveShot& shot,
+                                AudioVec3 listenerPos, const AudioSystem& audio,
+                                const SoundLibrary& sounds, Pcg32& rng, PlayDesc& outDesc,
+                                AudioSpatial& outSpatial, AcousticShapeInfo* info)
+{
+    // ---- (1) 音量の足切り。**outDesc に 1 バイトも触る前**に判定する ----
+    // ★呼吸 (0.07) は鳴らず carpet の足音 (0.12) は鳴る、が既定 0.10 の意味 (spec S4)。
+    //   波は「聞こえないほど小さいもの」まで立つので、ここで捨てないと voice を
+    //   微音で食い潰して肝心の足音がスティールされる
+    const float vol = shot.amplitude * comp.waveVolume;
+    if (!(vol >= comp.minWaveVolume) || !(vol > 0.0f)) {
+        return WaveShotResult::BelowMin;
+    }
+
+    // ---- (2) tone -> .sound.json の名前キー ----
+    const char* const toneNames[4] = { comp.toneSound0, comp.toneSound1, comp.toneSound2,
+                                       comp.toneSound3 };
+    const uint32_t tone = shot.tone < 4u ? shot.tone : 0u;
+    const char* name = toneNames[tone];
+    if (name == nullptr || name[0] == '\0') {
+        return WaveShotResult::UnknownKey; // その音色は鳴らさない設定 (空文字)
+    }
+    const ResolvedSound rs = ResolveSoundKey(audio, sounds, HashStr(name));
+    if (!rs.Valid()) {
+        return WaveShotResult::UnknownKey;
+    }
+    if (rs.asset != nullptr && rs.asset->stream) {
+        return WaveShotResult::Stream; // BGM を一発再生に流すと 1 本きりのレーンを奪う
+    }
+
+    // ---- (3) 2D 部分 ----
+    if (rs.asset != nullptr) {
+        const int variation = PickVariationIndex(*rs.asset, rng.NextU32());
+        if (variation < 0) {
+            return WaveShotResult::UnknownKey; // クリップが 1 つも割り当たっていない
+        }
+        // 揺らぎは MakeSourcePlay と同じ [-1,1] の 2 本引き (足音が毎回同じ音にならない)
+        const float volJitter = rng.Range(-1.0f, 1.0f);
+        const float pitchJitter = rng.Range(-1.0f, 1.0f);
+        outDesc = MakePlayDesc(*rs.asset, variation, volJitter, pitchJitter, audio);
+        outDesc.volume = std::clamp(outDesc.volume * vol, 0.0f, 1.0f);
+    } else {
+        // 生クリップ経路 (.sound.json を置かずに .wav の stem で鳴らす M19 からの道)
+        outDesc = PlayDesc{};
+        outDesc.clip = rs.clip;
+        outDesc.bus = audio.DefaultBus();
+        outDesc.volume = std::clamp(vol, 0.0f, 1.0f);
+    }
+    outDesc.loop = false; // 一発再生。ループする .sound.json を指されても鳴りっぱなしにしない
+
+    // ---- (4) 3D は**波から**組む ----
+    const AcousticGridDesc& g = field.Grid();
+    float wx = 0.0f, wy = 0.0f, wz = 0.0f;
+    acoustic::CellToWorldCenter(g, shot.ox, shot.oy, shot.oz, wx, wy, wz);
+    outSpatial = AudioSpatial{};
+    outSpatial.position = AudioVec3{ wx, wy, wz };
+    outSpatial.spatialBlend = 1.0f;
+    outSpatial.minDistance = g.cellSize;
+    // ★到達上限 = 波の到達上限そのもの。RolloffGain は d >= maxDistance で厳密 0 なので、
+    //   「波が届く所でだけ聞こえる」は距離判定を書かずに減衰式の性質として出る
+    outSpatial.maxDistance = static_cast<float>(shot.maxRing) * g.cellSize;
+    outSpatial.rolloff = std::clamp(comp.waveRolloff, 0, 2);
+    outSpatial.dopplerScale = 0.0f; // 波は動かない (原点は tick 内で固定)
+    outSpatial.reverbSend = std::clamp(comp.waveReverbSend, 0.0f, 1.0f);
+    outSpatial.pitch = outDesc.pitch;
+
+    // ---- (5) 遮蔽・回折は per-voice と**同じ 1 本**を通す (smooth = nullptr = 一発きり) ----
+    float gain = 1.0f;
+    ShapeAcousticSpatial(field, probe, comp, listenerPos, outSpatial.position, outSpatial, gain,
+                         nullptr, 1.0f, info);
+    outDesc.volume = std::clamp(outDesc.volume * gain, 0.0f, 1.0f);
+    // Play() の呼び出し中だけ有効な借用ポインタ。呼び出し側の outSpatial を指す
+    outDesc.spatial = &outSpatial;
+    return WaveShotResult::Played;
 }
 
 } // namespace mye

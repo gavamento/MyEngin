@@ -9,12 +9,17 @@
 
 #include "Engine/Core/Components.h"
 #include "Engine/Core/EntityID.h"
+#include "Engine/Core/Random.h"
 #include "Engine/Engine/Acoustic/AcousticField.h"
 #include "Engine/Engine/Acoustic/AcousticGrid.h"
 #include "Engine/Engine/Audio/AudioSystem.h"
 #include "Engine/Engine/Audio/SpatialMath.h"
 
 namespace mye {
+
+// M68b: 一発再生の組み立てで参照するだけ。**SoundAsset.h を include しない** —
+// あちらは nlohmann/json.hpp を引き込むので、音響のヘッダが JSON に依存してしまう
+class SoundLibrary;
 
 // 音響伝播 × 実オーディオ (M68)。**ここは全部「出力レーン」** — sim 状態は 1 バイトも
 // 持たないし、World にも書き戻さない。AcousticField からは読むだけ (HasVolume / Grid /
@@ -110,6 +115,16 @@ struct AcousticAudioStats {
     int32_t classCount[4] = {}; // Direct / Detour / Occluded / Bypass
     float openness = 0.0f;
     bool active = false;     // 有効な AcousticAudio と有効な probe があるか
+    // ---- 鳴る波 (M68b) ----
+    int32_t shots = 0;       // 実際に Play まで行った一発再生
+    int32_t shotsSkipped = 0; // minWaveVolume 未満 / stream で捨てた
+    int32_t shotsUnknownKey = 0; // tone → .sound.json が引けなかった
+    int32_t shotsDropped = 0; // キュー上限 (kMaxPendingShots) 超過で捨てた
+    // ★Play が無効ハンドルを返した回数 (クリップ未ロード / suspend / voice 枯渇)。
+    //   これが 0 でないと「shots 本 Play を呼んだ」が「shots 本 voice が立った」に
+    //   ならない — ログだけ緑で音が出ていない状態を機械で捕まえる唯一の口
+    int32_t shotsPlayFailed = 0;
+    float roomT = 0.0f;      // 平滑化後の部屋補間パラメータ (0 = 狭い / 1 = 広い)
 
     float ProbeMsAvg() const
     {
@@ -118,8 +133,9 @@ struct AcousticAudioStats {
 };
 
 // 「この tick に生まれた波」を音として鳴らすための POD (M68b で push/drain する)。
-// ★M68a では**定義だけ**。tick 側で積んでフレーム側で流す形にするのは、
-//   kMaxTicksPerFrame = 5 のフレームで 4 tick しか生きない衝撃波を取りこぼさないため
+// ★tick 側で積んでフレーム側で流す形にするのは、kMaxTicksPerFrame = 5 のフレームで
+//   4 tick しか生きない衝撃波を取りこぼさないため。逆に drain をフレーム側に置くのは、
+//   **その同じフレームで焼き直したリスナー場**で整形して鳴らせるから
 struct PendingWaveShot {
     int32_t ox = 0, oy = 0, oz = 0;
     uint32_t tone = 0;
@@ -161,5 +177,52 @@ void ShapeAcousticSpatial(const AcousticField& field, const AcousticProbe& probe
                           const AcousticAudioComponent& comp, AudioVec3 listenerPos,
                           AudioVec3 sourcePos, AudioSpatial& io, float& gainOut,
                           AcousticShapeState* smooth, float dTicks, AcousticShapeInfo* info);
+
+// ---- 部屋の残響 (M68b) ----
+
+// I3DL2 の 13 パラメータを線形補間する **純関数**。
+// ★mB (Room / RoomHF / Reflections / Reverb) は既に対数域の整数なので、線形に混ぜると
+//   dB が線形に動く = 耳には「連続に広くなる」と聞こえる。整数は float で混ぜてから四捨五入。
+// ★端点は**厳密に**一致させる必要がある (t=0 で a、t=1 で b)。`a + (b-a)*t` は
+//   t=1 で 1ulp ずれることがあるので、必ず `(1-t)*a + t*b` の形で書く —
+//   ずれると「上書きは掛かっているのにプリセットと 1 ビット違う」というテストできない
+//   状態が生まれる
+AudioReverbParams LerpReverbParams(const AudioReverbParams& a, const AudioReverbParams& b, float t);
+
+// 開放度 → 2 プリセット間の補間パラメータ (smoothstep)。
+// ★段差なく変わることが企画の要求 (廊下と部屋で響きが**切り替わる**と、
+//   境目で「カチッ」と鳴って世界が嘘になる)。smoothstep にしてあるのは端点で
+//   微分が 0 になるから — 線形だと閾値をまたぐ瞬間に速度が不連続に見える
+float RoomBlend(float openness, float openSmall, float openLarge);
+
+// ---- 鳴る波 (M68b) ----
+
+// 一発再生の組み立て結果。**Played 以外は 1 音も鳴らない** (summary が内訳を数える)
+enum class WaveShotResult : int32_t {
+    Played = 0,     // outDesc / outSpatial が埋まった (呼び出し側が Play する)
+    BelowMin = 1,   // amplitude * waveVolume < minWaveVolume (呼吸などの微音)
+    UnknownKey = 2, // tone → .sound.json / 生クリップが引けなかった
+    Stream = 3,     // BGM (stream) は一発再生の対象外
+};
+
+// 波 1 本 → 一発再生の PlayDesc + AudioSpatial を組み立てる **純関数**
+// (`AudioSystem::Play` は呼ばない = デバイス無しのセルフテストが全部検査できる)。
+//
+// ★spatial は **波から**取る (音源コンポーネントを持たない音なので当然だが、要点は
+//   `maxDistance = maxRing * cellSize` にすること)。RolloffGain は全カーブで
+//   `d >= maxDistance` を厳密 0 にするので、これで「波が届く所でだけ聞こえる」が
+//   減衰式の性質として保証される — 距離判定を別に書かない。
+// ★rolloff の既定が 0 (Logarithmic) なのは spec S2。EnergyAt は**エネルギー**で
+//   XAudio2 の volume は**振幅**なので、逆二乗をそのまま振幅に掛けると 10m で -52dB になる。
+// ★rng は AudioSourceSystem 所有の Pcg32。**world.Rng() も audioScriptRng も使わない**
+//   (前者は sim が壊れ、後者はスクリプトの一発再生の乱数列が動く)。
+//
+// field/probe/listenerPos は ShapeAcousticSpatial へそのまま渡す (遮蔽・回折は
+// 一発再生も per-voice とまったく同じ 1 本を通る)。info は非 null なら log 用の観測値。
+WaveShotResult MakeWaveShotPlay(const AcousticField& field, const AcousticProbe& probe,
+                                const AcousticAudioComponent& comp, const PendingWaveShot& shot,
+                                AudioVec3 listenerPos, const AudioSystem& audio,
+                                const SoundLibrary& sounds, Pcg32& rng, PlayDesc& outDesc,
+                                AudioSpatial& outSpatial, AcousticShapeInfo* info);
 
 } // namespace mye

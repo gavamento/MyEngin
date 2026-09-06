@@ -51,6 +51,52 @@ const XAUDIO2FX_REVERB_I3DL2_PARAMETERS kReverbPresets[] = {
 static_assert(sizeof(kReverbPresets) / sizeof(kReverbPresets[0]) == kReverbPresetCount,
               "reverb preset table must match AudioMixer.h's name table");
 
+// ---- I3DL2 パラメータ POD ⇄ SDK 型 (M68b) ----
+// ★ヘッダに SDK 型を出せない (xaudio2fx.h が Windows.h を引き込む) ので、写しを 2 本置く。
+//   memcpy にしていないのは「SDK 側にフィールドが 1 本増えたら**静かに**ずれる」から —
+//   フィールド名で書いておけば増えたときにコンパイルが通るぶんだけ危ないが、
+//   下の static_assert がサイズで捕まえる (13 個 × 4 バイト = 52)
+static_assert(sizeof(AudioReverbParams) == sizeof(XAUDIO2FX_REVERB_I3DL2_PARAMETERS),
+              "AudioReverbParams must mirror XAUDIO2FX_REVERB_I3DL2_PARAMETERS field for field");
+
+AudioReverbParams ToPod(const XAUDIO2FX_REVERB_I3DL2_PARAMETERS& s)
+{
+    AudioReverbParams d;
+    d.WetDryMix = s.WetDryMix;
+    d.Room = s.Room;
+    d.RoomHF = s.RoomHF;
+    d.RoomRolloffFactor = s.RoomRolloffFactor;
+    d.DecayTime = s.DecayTime;
+    d.DecayHFRatio = s.DecayHFRatio;
+    d.Reflections = s.Reflections;
+    d.ReflectionsDelay = s.ReflectionsDelay;
+    d.Reverb = s.Reverb;
+    d.ReverbDelay = s.ReverbDelay;
+    d.Diffusion = s.Diffusion;
+    d.Density = s.Density;
+    d.HFReference = s.HFReference;
+    return d;
+}
+
+XAUDIO2FX_REVERB_I3DL2_PARAMETERS FromPod(const AudioReverbParams& s)
+{
+    XAUDIO2FX_REVERB_I3DL2_PARAMETERS d = {};
+    d.WetDryMix = s.WetDryMix;
+    d.Room = s.Room;
+    d.RoomHF = s.RoomHF;
+    d.RoomRolloffFactor = s.RoomRolloffFactor;
+    d.DecayTime = s.DecayTime;
+    d.DecayHFRatio = s.DecayHFRatio;
+    d.Reflections = s.Reflections;
+    d.ReflectionsDelay = s.ReflectionsDelay;
+    d.Reverb = s.Reverb;
+    d.ReverbDelay = s.ReverbDelay;
+    d.Diffusion = s.Diffusion;
+    d.Density = s.Density;
+    d.HFReference = s.HFReference;
+    return d;
+}
+
 // メーターの減衰速度 (フルスケール/秒)。アタックは即時、リリースだけこの速度で落とす
 constexpr float kMeterFallPerSec = 1.6f;
 constexpr float kMeterHoldFallPerSec = 0.35f;
@@ -591,8 +637,12 @@ void AudioSystem::ApplyReverbParams()
     if (reverbVoice_ == nullptr) {
         return;
     }
+    // ★**響きを選ぶのはここ 1 箇所だけ** (M68b)。上書きの有無で分岐する場所を増やすと、
+    //   .mixer.json のホットリロードやバスグラフ再構築の経路が上書きを取りこぼして
+    //   「歩いていると時々プリセットに戻る」形で壊れる (どの経路も最後はここを通る)
     const int idx = (reverbPreset_ >= 0 && reverbPreset_ < kReverbPresetCount) ? reverbPreset_ : 0;
-    XAUDIO2FX_REVERB_I3DL2_PARAMETERS i3dl2 = kReverbPresets[idx];
+    XAUDIO2FX_REVERB_I3DL2_PARAMETERS i3dl2 =
+        reverbOverrideActive_ ? FromPod(reverbOverride_) : kReverbPresets[idx];
     XAUDIO2FX_REVERB_PARAMETERS native = {};
     ReverbConvertI3DL2ToNative(&i3dl2, &native, FALSE); // FALSE = 5.1/7.1 用でなくステレオ
     native.WetDryMix = std::clamp(reverbWetDry_, 0.0f, 100.0f);
@@ -734,6 +784,28 @@ void AudioSystem::SetReverbPreset(int index)
 void AudioSystem::SetReverbWetDryMix(float percent)
 {
     reverbWetDry_ = std::clamp(percent, 0.0f, 100.0f);
+    ApplyReverbParams();
+}
+
+AudioReverbParams AudioSystem::PresetReverbParams(int index)
+{
+    const int idx = (index >= 0 && index < kReverbPresetCount) ? index : 0;
+    return ToPod(kReverbPresets[idx]);
+}
+
+void AudioSystem::SetReverbOverride(const AudioReverbParams& p)
+{
+    reverbOverride_ = p;
+    reverbOverrideActive_ = true;
+    ApplyReverbParams();
+}
+
+void AudioSystem::ClearReverbOverride()
+{
+    if (!reverbOverrideActive_) {
+        return; // 既に素の状態。無駄に SetEffectParameters を撃たない
+    }
+    reverbOverrideActive_ = false;
     ApplyReverbParams();
 }
 

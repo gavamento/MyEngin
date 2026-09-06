@@ -51,7 +51,7 @@ public:
         uint32_t phase = 0;              // 分周のカウンタ
         float amplitude = 0.0f;          // 原点での大きさ
         uint32_t tone = 0;               // 音色 0..3
-        uint64_t bornTick = 0;           // 診断用 (どの tick に生まれたか)
+        uint64_t bornTick = 0;           // 診断用 + M68b の出力レーンが「この tick に生まれた波」を拾う鍵
     };
 
     // 同時に走れる波の本数。★満杯のときの Emit は**最古を潰さず false を返す** —

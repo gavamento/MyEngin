@@ -7,7 +7,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
+#include <string>
 #include <vector>
 
 #include "Engine/Core/Check.h"
@@ -17,8 +19,11 @@
 #include "Engine/Engine/Acoustic/AcousticField.h"
 #include "Engine/Engine/Acoustic/AcousticGrid.h"
 #include "Engine/Engine/Audio/AcousticAudio.h"
+#include "Engine/Engine/Audio/AudioSourceSystem.h" // M68b: キューの検査 (T18)
+#include "Engine/Engine/Audio/SoundAsset.h"        // M68b: tone -> .sound.json (T20)
 #include "Engine/Engine/Audio/SpatialMath.h"
 #include "Engine/Engine/Replay/SimSnapshot.h"
+#include "Engine/Engine/Scene.h" // M68b: Update を叩くための World (T18)
 
 namespace mye {
 namespace {
@@ -555,6 +560,279 @@ bool RunAcousticAudioSelfTest()
         check(info.cls == AcousticPathClass::Bypass && gain == 1.0f
                   && std::memcmp(&before, &after, sizeof(AudioSpatial)) == 0,
               "T15: without a volume the spatial parameters are untouched");
+    }
+
+    // ---- (T16) I3DL2 の 13 パラメータ補間 ----
+    // ★端点が**厳密に**一致することが要点。t=1 で 1ulp ずれると「上書きしているのに
+    //   プリセットと違う」という、耳では絶対に気づけない差が残る
+    {
+        const AudioReverbParams small = AudioSystem::PresetReverbParams(3);  // SmallRoom
+        const AudioReverbParams large = AudioSystem::PresetReverbParams(6);  // MEDIUMHALL
+        const AudioReverbParams at0 = LerpReverbParams(small, large, 0.0f);
+        const AudioReverbParams at1 = LerpReverbParams(small, large, 1.0f);
+        check(std::memcmp(&at0, &small, sizeof(AudioReverbParams)) == 0,
+              "T16: t=0 reproduces the small preset in all 13 fields");
+        check(std::memcmp(&at1, &large, sizeof(AudioReverbParams)) == 0,
+              "T16: t=1 reproduces the large preset in all 13 fields");
+
+        // 中点と丸め。**合成値**を使うのは、実プリセットだと Room が両方 -1000 で
+        // 等しく、整数の混ぜ方を 1 ビットも検査できないため
+        AudioReverbParams a = small;
+        AudioReverbParams b = small;
+        a.Room = -1000;
+        b.Room = -1004;
+        a.DecayTime = 1.0f;
+        b.DecayTime = 2.0f;
+        const AudioReverbParams mid = LerpReverbParams(a, b, 0.5f);
+        check(mid.Room == -1002 && Near(mid.DecayTime, 1.5f, 1e-6f),
+              "T16: t=0.5 lands on the midpoint (integers included)");
+        a.Reflections = 0;
+        b.Reflections = 10;
+        // 3.6 -> 4。**切り捨てなら 3** になるので、四捨五入していることがここで固定される
+        check(LerpReverbParams(a, b, 0.36f).Reflections == 4,
+              "T16: integer fields round to nearest instead of truncating");
+
+        bool decayUp = true;
+        float prev = -1.0f;
+        for (int i = 0; i <= 20; ++i) {
+            const float t = static_cast<float>(i) / 20.0f;
+            const float d = LerpReverbParams(small, large, t).DecayTime;
+            decayUp = decayUp && d >= prev - 1e-6f;
+            prev = d;
+        }
+        check(decayUp, "T16: DecayTime is monotonic as t sweeps 0 -> 1");
+    }
+
+    // ---- (T17) 開放度 -> 補間パラメータ ----
+    {
+        const float lo = 0.2f;
+        const float hi = 0.8f;
+        check(RoomBlend(0.0f, lo, hi) == 0.0f && RoomBlend(lo, lo, hi) == 0.0f,
+              "T17: openness at or below openSmall gives the small room");
+        check(RoomBlend(hi, lo, hi) == 1.0f && RoomBlend(1.0f, lo, hi) == 1.0f,
+              "T17: openness at or above openLarge gives the large room");
+        check(Near(RoomBlend(0.5f * (lo + hi), lo, hi), 0.5f, 1e-6f),
+              "T17: the midpoint blends exactly half way");
+        bool monotone = true;
+        float prev = -1.0f;
+        for (int i = 0; i <= 40; ++i) {
+            const float o = static_cast<float>(i) / 40.0f;
+            const float t = RoomBlend(o, lo, hi);
+            monotone = monotone && t >= prev - 1e-6f;
+            prev = t;
+        }
+        check(monotone, "T17: the blend never goes backwards as the room opens up");
+    }
+
+    // ---- (T18) 一発再生のキュー ----
+    // ★「早期 return より前に空にする」= 検証やタイムトラベルが明けた瞬間に
+    //   溜まった波が一斉に鳴らないことの証明 (spec A17)
+    {
+        Scene scene;
+        AudioSystem audio; // Init を呼ばない = IsReady() false (デバイス非依存)
+        SoundLibrary lib;
+        AudioSourceSystem sys;
+        PendingWaveShot shot;
+        shot.amplitude = 1.0f;
+        shot.maxRing = 8;
+
+        for (int i = 0; i < 3; ++i) {
+            sys.PushWaveShot(shot);
+        }
+        sys.Reset(audio);
+        check(sys.PendingShotCount() == 0, "T18: Reset drops every queued shot");
+
+        for (int i = 0; i < 3; ++i) {
+            sys.PushWaveShot(shot);
+        }
+        sys.Update(scene.GetWorld(), audio, lib, 1, 1.0f / 60.0f, true);
+        check(sys.PendingShotCount() == 0,
+              "T18: the queue is cleared before Update's IsReady early-out");
+
+        for (int i = 0; i < AudioSourceSystem::kMaxPendingShots + 1; ++i) {
+            sys.PushWaveShot(shot);
+        }
+        check(sys.PendingShotCount()
+                      == static_cast<size_t>(AudioSourceSystem::kMaxPendingShots)
+                  && sys.AcousticStats().shotsDropped == 1,
+              "T18: the 65th shot is dropped and counted");
+    }
+
+    // ---- 波の一発再生 (T19〜T21) の土台 ----
+    // ★.sound.json を 4 本メモリ登録する。ファイルを置かないのは「tone -> 名前キー ->
+    //   アセット」の**規則**だけを検査したいから (ディスクの内容に依存させない)
+    AudioSystem shotAudio; // Init しない (バス解決は既定へ落ちる)
+    SoundLibrary shotLib;
+    const uint64_t kToneClips[4] = { 1001ull, 1002ull, 1003ull, 1004ull };
+    {
+        static const char* const kNames[4] = { "step_soft", "step_wood", "step_hard",
+                                               "step_metal" };
+        static const wchar_t* const kPaths[4] = { L"mem\\step_soft.sound.json",
+                                                  L"mem\\step_wood.sound.json",
+                                                  L"mem\\step_hard.sound.json",
+                                                  L"mem\\step_metal.sound.json" };
+        for (int i = 0; i < 4; ++i) {
+            SoundAsset a;
+            a.name = kNames[i];
+            a.volume = 1.0f;      // 揺らぎ無し = T21 の音量が閉じた式で書ける
+            a.volumeRandom = 0.0f;
+            a.pitchRandom = 0.0f;
+            SoundVariation v;
+            v.clip = kToneClips[i];
+            v.weight = 1;
+            a.variations.push_back(v);
+            shotLib.Register(kPaths[i], a);
+        }
+    }
+    AcousticAudioComponent tones = kDefault;
+    std::snprintf(tones.toneSound0, sizeof(tones.toneSound0), "step_soft");
+    std::snprintf(tones.toneSound1, sizeof(tones.toneSound1), "step_wood");
+    std::snprintf(tones.toneSound2, sizeof(tones.toneSound2), "step_hard");
+    std::snprintf(tones.toneSound3, sizeof(tones.toneSound3), "step_metal");
+
+    // ---- (T19) minWaveVolume ----
+    // ★呼吸 (0.07) が鳴らず carpet の足音 (0.12) が鳴る境が既定 0.10 (spec S4)。
+    //   捨てるときに PlayDesc へ 1 バイトも書かないことまで固定する (呼び出し側が
+    //   「戻り値を見ずに Play する」実装になっていたら、前の shot の音がもう一度鳴る)
+    {
+        AcousticField field;
+        field.DebugSetGrid(maze, MakeLMaze(maze));
+        AcousticProbe probe;
+        (void)UpdateAcousticProbe(field, tones, CellCenter(maze, 2, 0, 2), probe);
+        Pcg32 rng;
+        rng.Seed(1234);
+
+        PendingWaveShot quiet;
+        quiet.ox = 4;
+        quiet.oy = 0;
+        quiet.oz = 2;
+        quiet.tone = 0;
+        quiet.amplitude = 0.07f; // 呼吸 (WatcherFpsCamera の breathLoudness)
+        quiet.maxRing = 8;
+        PlayDesc desc;
+        desc.volume = 0.777f; // 「触られていない」ことを見るための目印
+        desc.clip = AssetID{ 42ull };
+        AudioSpatial spatial;
+        const WaveShotResult r = MakeWaveShotPlay(field, probe, tones, quiet,
+                                                  CellCenter(maze, 2, 0, 2), shotAudio, shotLib,
+                                                  rng, desc, spatial, nullptr);
+        check(r == WaveShotResult::BelowMin, "T19: a breath-sized wave is below minWaveVolume");
+        check(desc.volume == 0.777f && desc.clip.value == 42ull && desc.spatial == nullptr,
+              "T19: a rejected shot leaves the PlayDesc untouched");
+
+        PendingWaveShot loud = quiet;
+        loud.amplitude = 0.12f; // carpet
+        check(MakeWaveShotPlay(field, probe, tones, loud, CellCenter(maze, 2, 0, 2), shotAudio,
+                               shotLib, rng, desc, spatial, nullptr)
+                  == WaveShotResult::Played,
+              "T19: a carpet footstep clears the same threshold");
+    }
+
+    // ---- (T20) tone -> 名前キー -> クリップ ----
+    {
+        AcousticField field;
+        field.DebugSetGrid(maze, MakeLMaze(maze));
+        AcousticProbe probe;
+        (void)UpdateAcousticProbe(field, tones, CellCenter(maze, 2, 0, 2), probe);
+        Pcg32 rng;
+        rng.Seed(7);
+        bool allTones = true;
+        for (uint32_t tone = 0; tone < 4; ++tone) {
+            PendingWaveShot shot;
+            shot.ox = 4;
+            shot.oy = 0;
+            shot.oz = 2;
+            shot.tone = tone;
+            shot.amplitude = 1.0f;
+            shot.maxRing = 8;
+            PlayDesc desc;
+            AudioSpatial spatial;
+            const WaveShotResult r =
+                MakeWaveShotPlay(field, probe, tones, shot, CellCenter(maze, 2, 0, 2), shotAudio,
+                                 shotLib, rng, desc, spatial, nullptr);
+            allTones = allTones && r == WaveShotResult::Played
+                && desc.clip.value == kToneClips[tone];
+        }
+        check(allTones, "T20: tones 0..3 resolve to their own .sound.json clip");
+
+        AcousticAudioComponent silent = tones;
+        silent.toneSound3[0] = '\0'; // 「その音色は鳴らさない」設定 (空文字)
+        PendingWaveShot shot;
+        shot.ox = 4;
+        shot.oy = 0;
+        shot.oz = 2;
+        shot.tone = 3;
+        shot.amplitude = 1.0f;
+        shot.maxRing = 8;
+        PlayDesc desc;
+        AudioSpatial spatial;
+        check(MakeWaveShotPlay(field, probe, silent, shot, CellCenter(maze, 2, 0, 2), shotAudio,
+                               shotLib, rng, desc, spatial, nullptr)
+                  == WaveShotResult::UnknownKey,
+              "T20: an unmapped tone reports UnknownKey instead of playing something else");
+    }
+
+    // ---- (T21) 波 -> spatial (+ Detour の追加リバーブ送り) ----
+    // ★maxDistance = maxRing * cellSize が「波が届く所でだけ聞こえる」の実装そのもの。
+    //   RolloffGain は全カーブで d >= maxDistance を厳密 0 にするので、距離判定を
+    //   別に書かなくても到達範囲が一致する
+    {
+        const AcousticGridDesc free = MakeFreeGrid();
+        AcousticField openField;
+        openField.DebugSetGrid(free,
+                               std::vector<uint8_t>(static_cast<size_t>(free.CellCount()), 0u));
+        AcousticProbe probe;
+        (void)UpdateAcousticProbe(openField, tones, CellCenter(free, 12, 2, 12), probe);
+        Pcg32 rng;
+        rng.Seed(99);
+
+        PendingWaveShot shot;
+        shot.ox = 14;
+        shot.oy = 2;
+        shot.oz = 12;
+        shot.tone = 0;
+        shot.amplitude = 0.7f;
+        shot.maxRing = 20;
+        PlayDesc desc;
+        AudioSpatial spatial;
+        AcousticShapeInfo info;
+        const WaveShotResult r =
+            MakeWaveShotPlay(openField, probe, tones, shot, CellCenter(free, 12, 2, 12), shotAudio,
+                             shotLib, rng, desc, spatial, &info);
+        check(r == WaveShotResult::Played && info.cls == AcousticPathClass::Direct,
+              "T21: a free-space shot is Direct");
+        check(Near(spatial.minDistance, free.cellSize, 1e-6f)
+                  && Near(spatial.maxDistance, 10.0f, 1e-4f),
+              "T21: the reach comes from the wave (minDistance = 1 cell, maxDistance = 20 cells)");
+        check(spatial.rolloff == tones.waveRolloff && spatial.dopplerScale == 0.0f
+                  && spatial.spatialBlend == 1.0f,
+              "T21: the wave sets the rolloff curve, kills doppler and forces full 3D");
+        check(Near(spatial.reverbSend, tones.waveReverbSend, 1e-6f),
+              "T21: a Direct shot keeps the plain wave reverb send");
+        check(Near(desc.volume, 0.7f * tones.waveVolume * info.gain, 1e-6f),
+              "T21: the volume is amplitude * waveVolume * the shaped gain");
+
+        // L 字の向こう側 = Detour。detourWet が**足し算**で乗ることを固定する
+        AcousticField mazeField;
+        mazeField.DebugSetGrid(maze, MakeLMaze(maze));
+        AcousticProbe mp;
+        (void)UpdateAcousticProbe(mazeField, tones, CellCenter(maze, 2, 0, 2), mp);
+        PendingWaveShot bent;
+        bent.ox = 20;
+        bent.oy = 0;
+        bent.oz = 18;
+        bent.tone = 0;
+        bent.amplitude = 1.0f;
+        bent.maxRing = 60;
+        PlayDesc bentDesc;
+        AudioSpatial bentSpatial;
+        AcousticShapeInfo bentInfo;
+        (void)MakeWaveShotPlay(mazeField, mp, tones, bent, CellCenter(maze, 2, 0, 2), shotAudio,
+                               shotLib, rng, bentDesc, bentSpatial, &bentInfo);
+        check(bentInfo.cls == AcousticPathClass::Detour
+                  && Near(bentSpatial.reverbSend,
+                          (std::min)(1.0f, tones.waveReverbSend + tones.detourWet), 1e-6f),
+              "T21: a Detour shot adds detourWet to the reverb send");
     }
 
     if (failCount == 0) {

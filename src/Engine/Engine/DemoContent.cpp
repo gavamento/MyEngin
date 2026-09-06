@@ -3140,7 +3140,14 @@ void BuildAcousticShowcaseScene(EngineContext& ctx)
     {
         // 調整卓。既定値のまま = spec §4.2 の表そのもの (耳で詰めるのは M68c の後)
         GameObject tune = s.CreateGameObject("Acoustic Audio");
-        tune.AddComponent<AcousticAudioComponent>();
+        auto* ac = tune.AddComponent<AcousticAudioComponent>();
+        // M68b: 音色 → .sound.json の名前キー。**GUID を直書きしない**のは Hum と同じ理由で、
+        // 名前キーならチェックアウト先に依存しない。physmat の acousticTone の割り当ては
+        // 0 = carpet/water/呼吸 / 1 = wood/敵の自発音 / 2 = gravel / 3 = metal/glass
+        std::snprintf(ac->toneSound0, sizeof(ac->toneSound0), "step_soft");
+        std::snprintf(ac->toneSound1, sizeof(ac->toneSound1), "step_wood");
+        std::snprintf(ac->toneSound2, sizeof(ac->toneSound2), "step_hard");
+        std::snprintf(ac->toneSound3, sizeof(ac->toneSound3), "step_metal");
     }
     {
         // 部屋 B の持続音。★**部屋 A からは一直線に見えない**位置 (map 6,9) に置くのが

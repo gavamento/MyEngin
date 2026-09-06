@@ -572,6 +572,33 @@ void RunOneTick(TickServices& ts)
             ApplyScriptAudioEvent(e, scene.GetWorld(), audioSystem, soundLibrary, audioSources,
                                   audioScriptRng);
         }
+        // ---- M68b: この tick に生まれた波を「鳴る波」として出力レーンへ積む ----
+        // ★**tick 側で拾う**のが要点。フレーム単位で Waves() を舐めると、
+        //   kMaxTicksPerFrame = 5 のフレームで 4 tick しか生きない衝撃波 (maxRing 小 /
+        //   ticksPerRing 1) を丸ごと取りこぼす。実際に鳴らすのは AudioSourceSystem::Update
+        //   (= リスナー場を焼き直した後) なので、ここは積むだけ。
+        // ★`bornTick == ctx.tickIndex` が「この tick に生まれた」の判定として正しいのは、
+        //   ++ctx.tickIndex がこの関数の**末尾**にあるから (ここではまだ今 tick の番号)。
+        // ★!ts.resim ブロックの中にあるので、ロールバックの再シムでは二重に鳴らない。
+        //   記録/検証中は AudioSystem が suspend されているので積むだけ無駄 = 手前で弾く
+        if (ts.acoustic != nullptr && audioSystem.IsReady() && !audioSystem.IsSuspended()) {
+            const std::vector<AcousticField::Wave>& waves = ts.acoustic->Waves();
+            for (const AcousticField::Wave& wv : waves) {
+                if (wv.active == 0 || wv.bornTick != ctx.tickIndex) {
+                    continue;
+                }
+                PendingWaveShot shot;
+                shot.ox = wv.ox;
+                shot.oy = wv.oy;
+                shot.oz = wv.oz;
+                shot.tone = wv.tone;
+                shot.amplitude = wv.amplitude;
+                shot.maxRing = wv.maxRing;
+                shot.bornTick = wv.bornTick;
+                shot.source = wv.source;
+                audioSources.PushWaveShot(shot);
+            }
+        }
     }
     audioQueue.clear();
 
@@ -664,7 +691,9 @@ void RunOneTick(TickServices& ts)
             //   シーンをまたいで曲が途切れないのが BGM の要件。新シーンが別の曲を
             //   指定すれば PlayMusic 側でクロスフェードし、同じ曲なら鳴り続ける
             audioSystem.StopAll();
-            audioSources.Reset(); // 旧シーンの音源キャッシュ (速度推定 / 再生済みフラグ)
+            // 旧シーンの音源キャッシュ (速度推定 / 再生済みフラグ) と、M68b の
+            // 一発再生キュー + 部屋の残響の上書きを一緒に降ろす
+            audioSources.Reset(audioSystem);
             audioHandleSeq = 0;
             MYE_LOG_INFO("[scene] loaded: %s", WideToUtf8(full).c_str());
         } else {

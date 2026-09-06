@@ -106,9 +106,10 @@ void ProfilerWindow::OnImGui(EngineContext& ctx)
         if (ctx.audioSources != nullptr && ctx.audioSources->AcousticStats().active) {
             const AcousticAudioStats& acs = ctx.audioSources->AcousticStats();
             ImGui::Text("  acoustic-audio: probe %6.3f ms (rebuilds %d, box %d cells, "
-                        "shaped %d, open %.2f)",
+                        "shaped %d, open %.2f, shots %d, room t=%.2f)",
                         static_cast<double>(acs.probeMsLast), acs.rebuilds, acs.boxCells,
-                        acs.shaped, static_cast<double>(acs.openness));
+                        acs.shaped, static_cast<double>(acs.openness), acs.shots,
+                        static_cast<double>(acs.roomT));
         }
         // M46b: レイトレ (デバッグ表示も GI 合成も off のときは行ごと出さない)
         const bool rtGiOn = ctx.renderSystem->enableRtGi;             // M46f

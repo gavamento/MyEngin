@@ -1,0 +1,28 @@
+{
+  "engine": "MyEngine",
+  "sound": 1,
+  "name": "step_wood",
+  "variations": [
+    {
+      "clip": 5493721009220876040,
+      "weight": 1
+    }
+  ],
+  "volume": 0.9,
+  "volumeRandom": 0.1,
+  "pitch": 1.0,
+  "pitchRandom": 0.08,
+  "loop": false,
+  "stream": false,
+  "bus": "SE",
+  "priority": 128,
+  "maxInstances": 0,
+  "spatialBlend": 1.0,
+  "minDistance": 1.0,
+  "maxDistance": 30.0,
+  "rolloff": "logarithmic",
+  "dopplerScale": 0.0,
+  "reverbSend": 0.35,
+  "loopStartSample": 0,
+  "loopEndSample": 0
+}

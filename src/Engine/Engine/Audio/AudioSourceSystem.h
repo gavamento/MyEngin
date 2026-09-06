@@ -76,8 +76,21 @@ public:
     //   隠れる (以後 mye:: 修飾が必須になる) ので、アクセサ側の名前を短くしてある
     const AcousticAudioStats& AcousticStats() const { return acStats_; }
 
-    // シーン遷移 / Play 停止で呼ぶ。鳴っている音を止めるのは呼び出し側 (AudioSystem::StopAll)
-    void Reset();
+    // ---- 鳴る波 (M68b) ----
+    // 1 フレームに溜めておける一発再生の上限。★超過は**捨てて数える** — 溜め続けると
+    //   検証や一時停止が明けた瞬間に数百発が一斉に鳴る (voice 64 本を全部食う)
+    static constexpr int kMaxPendingShots = 64;
+    // 「この tick に生まれた波」を積む。**TickRunner の !resim ブロックからだけ**呼ぶ
+    // (フレーム単位で AcousticField を舐めると、kMaxTicksPerFrame = 5 のフレームで
+    //  4 tick しか生きない衝撃波を取りこぼす)
+    void PushWaveShot(const PendingWaveShot& shot);
+    // セルフテスト用。キューが Update / Reset で確実に空になることを外から見るため
+    size_t PendingShotCount() const { return pendingShots_.size(); }
+
+    // シーン遷移 / Play 停止で呼ぶ。鳴っている音を止めるのは呼び出し側 (AudioSystem::StopAll)。
+    // ★M68b で AudioSystem を取るようになった: 残響の上書きは AudioSystem 側に載っているので、
+    //   シーンを捨てるときに一緒に降ろさないと「前のシーンの部屋の響き」が残る
+    void Reset(AudioSystem& audio);
 
 private:
     // 音源 1 つぶんの非決定論レーン状態。**コンポーネントには持たせない** —
@@ -117,6 +130,14 @@ private:
     AcousticProbe acProbe_;
     AcousticAudioStats acStats_;
     int acousticLogTicks_ = 0;
+    // ---- 部屋の残響 / 鳴る波 (M68b) ----
+    std::vector<PendingWaveShot> pendingShots_;
+    float roomT_ = 0.0f;         // 平滑化後の補間パラメータ
+    bool roomValid_ = false;     // false = 次の更新でスナップする
+    float roomAppliedT_ = 0.0f;  // 最後に SetReverbOverride した t
+    bool roomApplied_ = false;   // 一度も適用していないうちは |Δt| を見ずに撃つ
+    // tone ごとの「鍵が引けない」警告の抑制 (毎歩ログを埋めない)
+    bool unknownToneWarned_[4] = {};
 };
 
 } // namespace mye

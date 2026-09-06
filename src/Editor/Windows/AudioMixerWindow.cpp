@@ -395,6 +395,14 @@ void AudioMixerWindow::DrawFooter(EngineContext& ctx)
         }
         ImGui::SameLine();
         ImGui::TextDisabled("%s", Tr(StrId::Mixer_NoReverb));
+        // M68b: 音響 (AcousticAudio) が部屋の広さから響きを上書きしている間の注記。
+        // ★combo が指すのは**資産値のまま** (上書きは reverbPreset_ に触らない)。
+        //   ここに一言出さないと「プリセットを選んでいるのに響きが違う」という
+        //   原因の遠い混乱になる
+        if (audio.ReverbOverrideActive()) {
+            ImGui::SameLine();
+            ImGui::TextDisabled("%s", Tr(StrId::Mixer_AcousticOverride));
+        }
     }
 
     if (!status_.empty()) {

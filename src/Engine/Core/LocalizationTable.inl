@@ -647,6 +647,7 @@ MYE_STR(Mixer_NoDevice,       "audio device is not available (--no-audio) — fa
 MYE_STR(Mixer_NoSystem,       "audio system is not available", "オーディオシステムが使えません")
 MYE_STR(Mixer_NoReverbBus,    "reverb bus is unavailable on this device",
                               "この環境ではリバーブバスが使えません")
+MYE_STR(Mixer_AcousticOverride, "(acoustics override this preset)", "(音響が上書き中)")
 
 // ---- アニメーター (M47b) ----
 MYE_STR(Anim_SelectEntity,    "Select an entity that has an AnimatorController component.",

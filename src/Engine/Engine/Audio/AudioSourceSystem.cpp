@@ -234,7 +234,7 @@ void MakeSourcePlay(const SoundAsset& asset, const AudioSourceComponent& src,
 // システム
 // ---------------------------------------------------------------------------
 
-void AudioSourceSystem::Reset()
+void AudioSourceSystem::Reset(AudioSystem& audio)
 {
     states_.clear();
     listenerVel_ = {};
@@ -246,6 +246,24 @@ void AudioSourceSystem::Reset()
     // M68a: シーンが替われば占有もリスナーも別物。**配列は捨てず valid だけ落とす**
     // (次の Update が焼き直す)。統計は run 全体の診断値なので残す
     acProbe_.valid = false;
+    // M68b: 積んだままの一発再生は**捨てる** (次のシーンで前のシーンの足音が鳴る)。
+    // 残響の上書きも一緒に降ろす — 新しいシーンの開放度が決まるまでは資産のプリセットが正
+    pendingShots_.clear();
+    roomValid_ = false;
+    roomApplied_ = false;
+    for (bool& w : unknownToneWarned_) {
+        w = false; // 新しいシーンでは設定ミスをもう一度知らせる (PartFollowSystem と同じ流儀)
+    }
+    audio.ClearReverbOverride();
+}
+
+void AudioSourceSystem::PushWaveShot(const PendingWaveShot& shot)
+{
+    if (static_cast<int>(pendingShots_.size()) >= kMaxPendingShots) {
+        ++acStats_.shotsDropped; // 溢れは黙って捨てる。数だけ summary に出す
+        return;
+    }
+    pendingShots_.push_back(shot);
 }
 
 AudioSourceSystem::SourceState& AudioSourceSystem::StateFor(EntityID e)
@@ -367,6 +385,13 @@ bool AudioSourceSystem::StopEntity(World& world, AudioSystem& audio, const Sound
 void AudioSourceSystem::Update(World& world, AudioSystem& audio, const SoundLibrary& sounds,
                                uint64_t tickIndex, float fixedDt, bool simulateScripts)
 {
+    // ★M68b: 一発再生のキューは**どの early return よりも先に**取り出して空にする。
+    //   ここを return の後ろに置くと、記録/検証中に積まれた波が溜まり続けて、
+    //   サスペンドが明けた瞬間に数十発が一斉に鳴る (A17)。捨てるのが正しい —
+    //   「鳴らなかった音」は決定論レーンに何の影響も無い
+    std::vector<PendingWaveShot> shots;
+    shots.swap(pendingShots_);
+
     // ★決定論契約 2: 記録/検証中は 3D 計算も playOnAwake も一切走らせない。
     //   検証中は 1 フレームで最大 64 tick 回るので、ここを開けると計算量も発音も暴れる。
     //   状態はそのまま残す (サスペンドが明けたら続きから鳴らせるように)
@@ -445,6 +470,39 @@ void AudioSourceSystem::Update(World& world, AudioSystem& audio, const SoundLibr
     acStats_.active = acOn && acProbe_.valid;
     const bool acLog = acOn && acousticLogTicks_ > 0
         && tickIndex < static_cast<uint64_t>(acousticLogTicks_);
+
+    // ---- 部屋の残響 (M68b): 開放度 → 2 プリセット間の連続補間 ----
+    // ★**段階切替にしない**のがユーザー決定 U2。廊下と部屋で響きが切り替わると
+    //   境目で「カチッ」と鳴って世界が嘘になるので、開放度から t を作って
+    //   I3DL2 の 13 パラメータを丸ごと混ぜる。
+    // ★平滑化は gain/lpf とは**別の半減期** (roomSmoothTicks、既定 18 = 300ms)。
+    //   reverb APO のパラメータ更新は重いので |Δt| > 0.01 でしか撃たない (spec S12)
+    if (acStats_.active) {
+        const float target = RoomBlend(acProbe_.openness, acComp->openSmall, acComp->openLarge);
+        const float half = static_cast<float>(acComp->roomSmoothTicks);
+        if (!roomValid_ || !(half > 0.0f)) {
+            roomT_ = target; // 初回 / スナップ指定は即座に合わせる
+            roomValid_ = true;
+        } else {
+            const float alpha = 1.0f - std::pow(0.5f, acDTicks / half);
+            roomT_ += (target - roomT_) * alpha;
+        }
+        if (!roomApplied_ || std::fabs(roomT_ - roomAppliedT_) > 0.01f) {
+            audio.SetReverbOverride(
+                LerpReverbParams(AudioSystem::PresetReverbParams(acComp->reverbSmall),
+                                 AudioSystem::PresetReverbParams(acComp->reverbLarge), roomT_));
+            roomAppliedT_ = roomT_;
+            roomApplied_ = true;
+        }
+    } else {
+        // 調整卓が無い / 耳がグリッド外 = **資産のプリセットへ戻す**。
+        // 上書きを掛けっぱなしにすると、音響ボリュームを出た瞬間の響きが固まる
+        roomValid_ = false;
+        roomApplied_ = false;
+        roomT_ = 0.0f;
+        audio.ClearReverbOverride();
+    }
+    acStats_.roomT = roomT_;
 
     // ---- 音源 ----
     const ComponentTypeId req[] = { AudioSourceComponent::sTypeId, WorldMatrixComponent::sTypeId };
@@ -537,13 +595,15 @@ void AudioSourceSystem::Update(World& world, AudioSystem& audio, const SoundLibr
                 ++acStats_.classCount[static_cast<int>(info.cls)];
                 if (acLog) {
                     MYE_LOG_INFO("[acaudio] t=%llu kind=voice src=%u name=%s class=%s "
-                                 "dPath=%.2f dLine=%.2f dReal=%.2f lpf=%.3f gain=%.3f open=%.2f",
+                                 "dPath=%.2f dLine=%.2f dReal=%.2f lpf=%.3f gain=%.3f open=%.2f "
+                                 "room=%.2f",
                                  static_cast<unsigned long long>(tickIndex), e.index,
                                  EntityNameOf(world, e), AcousticPathClassName(info.cls),
                                  static_cast<double>(info.dPath), static_cast<double>(info.dLine),
                                  static_cast<double>(info.dReal), static_cast<double>(info.lpf),
                                  static_cast<double>(info.gain),
-                                 static_cast<double>(acProbe_.valid ? acProbe_.openness : 0.0f));
+                                 static_cast<double>(acProbe_.valid ? acProbe_.openness : 0.0f),
+                                 static_cast<double>(roomT_));
                 }
             }
 
@@ -557,6 +617,62 @@ void AudioSourceSystem::Update(World& world, AudioSystem& audio, const SoundLibr
             }
         }
     });
+
+    // ---- 鳴る波 (M68b): この tick に生まれた波を一発再生する ----
+    // ★probe を焼き直した**後**に流すので、同じフレームに生まれた波でも
+    //   「今の耳から見た経路」で整形される (これが tick 側 push / フレーム側 drain の理由)。
+    // ★調整卓が無い / 場が繋がっていない run では**捨てる**。上の swap で既に
+    //   キューは空なので、ここを素通りするだけで溜まらない
+    if (acOn) {
+        for (const PendingWaveShot& shot : shots) {
+            PlayDesc desc;
+            AudioSpatial spatial;
+            AcousticShapeInfo info;
+            const WaveShotResult r =
+                MakeWaveShotPlay(*acousticField_, acProbe_, *acComp, shot, listener.position,
+                                 audio, sounds, rng_, desc, spatial, &info);
+            if (r != WaveShotResult::Played) {
+                if (r == WaveShotResult::UnknownKey) {
+                    ++acStats_.shotsUnknownKey;
+                    // ★tone ごとに 1 回だけ警告する。毎歩出すと足音のたびにログが埋まる
+                    if (shot.tone < 4u && !unknownToneWarned_[shot.tone]) {
+                        unknownToneWarned_[shot.tone] = true;
+                        MYE_LOG_WARN("[audio] unknown sound key for acoustic tone %u "
+                                     "(AcousticAudio.toneSound%u)",
+                                     shot.tone, shot.tone);
+                    }
+                } else {
+                    ++acStats_.shotsSkipped;
+                }
+                continue;
+            }
+            ++acStats_.shots;
+            ++acStats_.shaped;
+            ++acStats_.classCount[static_cast<int>(info.cls)];
+            if (acLog) {
+                // ★src は**発音元エンティティ** (無ければ -1)。名前は引かない — drain は
+                //   tick の後なので、鳴らした主体が既に破棄されていることがある
+                //   (借用するなら IsAlive 検査が要る)。tone は音色の識別に足りる
+                const int src =
+                    shot.source.IsNull() ? -1 : static_cast<int>(shot.source.index);
+                MYE_LOG_INFO("[acaudio] t=%llu kind=shot src=%d name=tone%u class=%s "
+                             "dPath=%.2f dLine=%.2f dReal=%.2f lpf=%.3f gain=%.3f open=%.2f "
+                             "room=%.2f",
+                             static_cast<unsigned long long>(tickIndex), src, shot.tone,
+                             AcousticPathClassName(info.cls), static_cast<double>(info.dPath),
+                             static_cast<double>(info.dLine), static_cast<double>(info.dReal),
+                             static_cast<double>(info.lpf), static_cast<double>(info.gain),
+                             static_cast<double>(acProbe_.valid ? acProbe_.openness : 0.0f),
+                             static_cast<double>(roomT_));
+            }
+            // ★戻り値を捨てない。無効ハンドル = voice が立たなかった (クリップ未ロード /
+            //   suspend / 枯渇) ので数える。ここを見ていないと「ログは 51 行出ているのに
+            //   1 音も鳴っていない」が緑のまま通る
+            if (!audio.Play(desc).Valid()) {
+                ++acStats_.shotsPlayFailed;
+            }
+        }
+    }
 
     Sweep(audio);
 }

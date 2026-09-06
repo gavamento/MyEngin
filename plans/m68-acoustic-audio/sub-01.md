@@ -1,7 +1,7 @@
 # sub-01: リスナー場 + 遮蔽・回折の整形 + `AcousticAudio` (TypeId 50) + selftest 45 本目 + hum (M68a)
 
 - 依存: なし
-- 状態: OK (round 1。commit は司会が記入)
+- 状態: OK (commit c29f7b3)
 - 往復: 1
 
 ## やること

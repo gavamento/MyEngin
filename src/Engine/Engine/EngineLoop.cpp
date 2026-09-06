@@ -1851,10 +1851,13 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     if (config.acousticAudioLogTicks > 0 && audioSources.AcousticStats().ticks > 0) {
         const AcousticAudioStats& acs = audioSources.AcousticStats();
         MYE_LOG_INFO("[acaudio] summary: ticks=%llu rebuilds=%d boxCells=%d probeMsAvg=%.3f "
-                     "shaped=%d classes D/T/O/B=%d/%d/%d/%d",
+                     "shaped=%d classes D/T/O/B=%d/%d/%d/%d shots=%d skipped=%d unknownKey=%d "
+                     "dropped=%d room=%.2f playFailed=%d",
                      static_cast<unsigned long long>(acs.ticks), acs.rebuilds, acs.boxCells,
                      static_cast<double>(acs.ProbeMsAvg()), acs.shaped, acs.classCount[0],
-                     acs.classCount[1], acs.classCount[2], acs.classCount[3]);
+                     acs.classCount[1], acs.classCount[2], acs.classCount[3], acs.shots,
+                     acs.shotsSkipped, acs.shotsUnknownKey, acs.shotsDropped,
+                     static_cast<double>(acs.roomT), acs.shotsPlayFailed);
     }
     if (config.rtDebugMode != 0 || config.rtGi || config.rtShadow || config.rtRefl) {
         // M46b: BVH の規模とソフトウェアトラバーサルの実測値 (性能ゲートの一次データ)。

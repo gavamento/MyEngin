@@ -10,8 +10,8 @@
 ## サブ進捗
 | サブ | 状態 | 往復 | コミット | メモ |
 |---|---|---|---|---|
-| sub-01 | 判定待ち | 1 | — | M68a: リスナー場 (Dial の 3 本目) + 遮蔽・回折の整形 (仮想発音位置 / LPF) + AcousticAudio (TypeId 50) + selftest 45 本目 + hum。依存: なし |
-| sub-02 | 未着手 | 0 | — | M68b: 部屋の残響 (2 プリセット連続補間) + 鳴る波 (PendingWaveShot) + 足音 WAV 4 本。依存: sub-01 |
+| sub-01 | OK | 1 | c29f7b3 | M68a: リスナー場 (Dial の 3 本目) + 遮蔽・回折の整形 (仮想発音位置 / LPF) + AcousticAudio (TypeId 50) + selftest 45 本目 + hum。依存: なし VERDICT round 1 OK (should 1 = shot_verify を 2 回追加実行して枚名を残す → reviewer 申し送り / nit 2 = 冗長な前方宣言・Debug probe 9.3ms)。M45 の既存不具合 (起動時 ApplyMixer が playOnAwake を殺す) を同時修正 |
+| sub-02 | 判定待ち (round 2) | 2 | — | M68b: 部屋の残響 (2 プリセット連続補間) + 鳴る波 (PendingWaveShot) + 足音 WAV 4 本。依存: sub-01 round 1 REWORK (must 1 = openSmall 0.2→0.30 / should 1 = shotsPlayFailed / nit 1 = shot の src=) |
 | sub-03 | 未着手 | 0 | — | M68c: 仕上げ (ADR-017 / engine_spec §10.6 / README / test_checklists / CLAUDE.md / 進捗表)。依存: sub-02 |
 
 ## ユーザー判断
@@ -32,9 +32,11 @@
 ## 申し送り (セッション跨ぎ)
 - (sub-01 round 1、planner) **M45 の既存不具合を M68a で直した**: 起動時 `ApplyMixer` の保留再構築がフレーム 0 の playOnAwake voice を殺す (spec S20)。`EngineLoop` メインループ直前の `audioSystem.Update(0.0f)` 1 行。コミット本文に書くこと
 - (同) tick 1 の占有未ベイク (spec S21、M65a 継承、sim 側の性質) — M65 追補候補「占有ベイクを最初の transform 更新の後に」。M68 では触らない
-- (同) `shot_verify.bat` が 1 回だけ「1 shot(s) differ」(枚名未捕捉)、直後 3 回連続 22/22。M68a はピクセルに触っていない (新規 3 体に MeshRenderer 無し)。reviewer は shot_verify を 2 回回して割れたら枚名を書くこと (tol=0 のローカル限定枠の run-to-run が疑わしい)
+- (同) `shot_verify.bat` が 1 回だけ「1 shot(s) differ」(枚名未捕捉)、直後 3 回連続 22/22 → **(sub-02 round 2 で解決)** 正体は `acoustic_deferred` (maxDiff 125 / 520 px、Watcher の箱): `WatcherFpsCamera` が生マウスデルタ (`WM_INPUT`) を yaw に積分するので**撮影中に机を触ると割れる** (M65g 由来、M68 無関係)。恒久対策 = sub-03 の 1 行 (`deterministicShot` で生デルタを 0、spec S24 / A26)。それまでの reviewer は撮影中にマウスを触らないこと
 - (同) Debug の probe 再構築 9.3 ms/回 (Release 0.65) — v1 許容。後続で `assign` の毎回確保をやめる余地 (spec §4.4)
 - (同) nit: `AudioSourceSystem.h` の `class AcousticField;` 前方宣言は `AcousticAudio.h` 経由で実体が見えるので冗長 (害なし)
-- (同) sub-02 へ: `openLarge` 0.6 → 0.8 (spec 変更履歴 #7)。廊下の `open=` 実測を報告させる
+- (同) sub-02 へ: `openLarge` 0.6 → 0.8 (spec 変更履歴 #7)。廊下の `open=` 実測を報告させる → (sub-02 round 1) 報告あり、`openSmall` 0.30 を round 2 で適用 (spec S23 / #10)
+- (sub-02 round 1、planner) **ADR-017 の実測値** (M68c が写す): 開放度 = 部屋 A 隅 0.468 / 中央 0.668、横廊下 西 0.496 / 中 0.357 / 東 0.287、縦廊下 0.404・0.529、部屋 B 戸口 0.607 / 中央 0.800 (`roomProbeM` 6)。既知の制限: この指標は「部屋の隅」と「廊下の端」を区別できない (局所の自由体積しか見ていない)。probe 0.61〜0.65 ms (Release、16224 セル)、shots 51 / 600 tick (合成入力)
+- (同) M68c の test_checklists / ADR に「壁越しの hum は Detour (lpf 床 0.25) であって Occluded ではない — Occluded は密閉と経路上限超えだけ」を書く (A11 の予測が 0 行だった根拠)
 - メモリ (`myengine-project.md`) の現在地更新はリポジトリ外なので司会が行う (M68c の coder は触らない)
 - 案 4 (XPBD 布・ソフトボディ、M60'e〜) は 2026-09-06 20:00 にセッション内リマインド (harness とは無関係)

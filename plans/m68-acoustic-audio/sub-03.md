@@ -30,10 +30,19 @@
    `ShapeAcousticSpatial` の 1 本 / 波の spatial は rolloff 0)、TypeId 末尾 **50 = AcousticAudio** (Cloth/SoftBody 51/52) の記述。
 6. `plan-original.md` の進捗表 (3 行) と申し送り。`harness.md` の申し送りに「メモリ (`myengine-project.md`) の現在地更新は司会」と書く
    (リポジトリ外なので coder は触らない)。
+7. **コードの唯一の例外 (spec S24 / 変更履歴 #15)**: `EngineLoop.cpp` の入力レーン確定 (`:1287` 付近、`--synth-input` の置換と
+   同じ場所) で、`deterministicShot` のとき**生デバイス由来のレーン 0** の `mouseDeltaX` / `mouseDeltaY` を 0 にする。
+   置く位置は `--synth-input` / .rep の置換より**前** (合成入力と記録入力のデルタは殺さない — A11 のレシピと replay 7 ペア目の
+   記録側 `--synth-input` が視点角の被覆に使っている)。コメントに「frame == tick と同じ撮影モードの決定化。`WatcherFpsCamera` が
+   デルタを yaw に積分して MeshRenderer 付きの箱を回すので、撮影中に机を触ると acoustic の golden が割れた (M68b で実測)」を書く。
+   キーボード / マウス位置は触らない (`ui_probe` 等の golden がマウス位置に依存していないことは未確認なので広げない)。
+   `CLAUDE.md` の「環境の罠」に 1 行 (「決定的撮影モードは生マウスデルタを 0 にする。acoustic の golden は M68c 以前は撮影中の
+   マウスで割れた」)。`engine_spec.md` の決定的スクショの記述 (M52c の段落、`grep -n "deterministic" engine_spec.md`) に半文を足す。
 
 ## やらないこと (このサブでは)
 
-- コードの変更。調整値の焼き込み (ユーザーが耳で決めた後の別コミット)。golden の更新 (動いていたらそれは M68a/b のバグ)。
+- コードの変更 (**例外は 7 の 1 行だけ**)。調整値の焼き込み (ユーザーが耳で決めた後の別コミット)。golden の更新 (動いていたら
+  それは M68a/b のバグ、または 7 が合成入力まで殺している = A26 (c) で検出)。
 
 ## 触る場所 (planner の見立て)
 
@@ -45,10 +54,18 @@
 | `docs\test_checklists.md` | 末尾 (M46 節の後) |
 | `CLAUDE.md` | 検証表 / CLI / チェックリスト / TypeId |
 | `plans\m68-acoustic-audio\plan-original.md` | 進捗表 |
+| `src\Engine\Engine\EngineLoop.cpp` | `:1287` 付近の入力レーン確定 (7 の 1 行 + コメント) |
+| `CLAUDE.md` 環境の罠 / `engine_spec.md` の決定的スクショの段落 | 7 の 1 行ずつ |
 
 ## 受け入れ条件 (このサブ)
 
-spec §5 の A1〜A9 (再確認) と A20〜A25。加えて `pwsh -File tools\check_rules.ps1` (文書は対象外だが習慣)。
+spec §5 の A1〜A9 (再確認) と A20〜A26。加えて `pwsh -File tools\check_rules.ps1` (文書は対象外だが習慣)。
+A26 の内訳: (a) `shot_verify.bat` ×2 で 22 枚 maxDiff=0 (b) `acoustic_deferred` の撮影コマンド (bat の `SHOTBASE` + `--acoustic-demo
+--deferred --frames 121 --shot-frame 120`) を、マウスを動かしながら回して golden と `--img-diff --tol 0` PASS — 自動化は PowerShell の
+`SendInput` (`MOUSEEVENTF_MOVE`、`user32.dll` を `Add-Type` で呼ぶ) を撮影中ループさせる。`WM_INPUT` に乗らなければ手で 1 回
+(方法と結果を実装メモに。**変更前のバイナリで同じ手順が割れること**も 1 回確かめて「故障点で検証した」形にする)
+(c) A11 のレシピ (`--synth-input --screenshot`) の `[acaudio] t=` 行が sub-02 round 2 の run と一致 (合成入力のデルタが生きている証拠。
+round 2 のログは coder の scratchpad に無ければ司会に問う。無ければ変更前バイナリで 1 回撮って比較) (d) `replay_verify` 7 ペア無風。
 
 ## 検証コマンド
 
@@ -57,7 +74,9 @@ grep -n "six replay\|seventeen golden\|six scene" engine_spec.md      # 空
 grep -n "6 シーン\|6 ペア" README.md                                    # 空
 ls docs/adr/ADR-017-acoustic-audio.md
 grep -n "^## M68" docs/test_checklists.md
-cmd /c bin\x64\Debug\Editor.exe --selftest / tools\replay_verify.bat / tools\shot_verify.bat / check_rules (無風の再確認)
+cmd /c bin\x64\Debug\Editor.exe --selftest / tools\replay_verify.bat / tools\shot_verify.bat ×2 / check_rules (無風の再確認)
+A26 (b): cmd /c bin\x64\Release\Runtime.exe --acoustic-demo --deferred --warp --no-audio --font-embedded --width 960 --height 540 --frames 121 --shot-frame 120 --no-fxaa --screenshot <scratch>\wiggle.png   (撮影中にマウスを動かす) → cmd /c bin\x64\Debug\Editor.exe --img-diff tests\golden\acoustic_deferred.png <scratch>\wiggle.png --tol 0
+A26 (c): sub-01 の A11 コマンドをそのまま → `[acaudio] t=` 行を sub-02 round 2 のログと fc
 ```
 
 ## 実装メモ (coder が追記)
