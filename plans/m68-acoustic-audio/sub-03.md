@@ -1,7 +1,7 @@
 # sub-03: 仕上げ — ADR-017 / engine_spec §10.6 / README / test_checklists / CLAUDE.md / 進捗表 (M68c)
 
 - 依存: sub-02
-- 状態: OK (round 1。commit は司会が記入)
+- 状態: OK (commit 8994b1d)
 - 往復: 1
 
 ## やること
