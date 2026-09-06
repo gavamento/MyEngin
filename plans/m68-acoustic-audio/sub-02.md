@@ -1,7 +1,7 @@
 # sub-02: 部屋の残響 (連続補間) + 鳴る波 (`PendingWaveShot`) + 足音 WAV 4 本 (M68b)
 
 - 依存: sub-01
-- 状態: OK (round 2。commit は司会が記入)
+- 状態: OK (commit 01183b1)
 - 往復: 2
 
 ## やること

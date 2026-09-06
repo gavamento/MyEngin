@@ -1160,6 +1160,21 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             for (uint32_t p = 0; p < captureLanes; ++p) {
                 ctx.inputs[p] = input.CaptureSnapshot(p);
             }
+            if (deterministicShot) {
+                // ---- 撮影モードの決定化 (M68c、dt 固定と同じ趣旨) ----
+                // frame == tick に倒すのと同じ理由で、**生デバイス由来の**マウスデルタを
+                // 0 にする。WatcherFpsCamera (M65g) がこのデルタを yaw に積分して
+                // MeshRenderer 付きのプレイヤーの箱を回すので、**撮影中に机のマウスが
+                // 動くと acoustic の golden が割れる** (M68b で実測: acoustic_deferred が
+                // maxDiff=125 / 520 px、worst pixel は部屋 A の隅の箱)。
+                // ★合成入力 (--synth-input) と .rep の記録入力はここより**後**で
+                //   レーンごと置換されるので 1 カウントも殺していない — 生デルタは
+                //   replay 7 ペア目 (記録側 --synth-input) の視点角の被覆に使っている。
+                // ★キーボードとマウス**位置**は触らない。位置に依存する golden が
+                //   無いことを確認していないので、効く範囲を最小に留める
+                ctx.inputs[0].mouseDeltaX = 0;
+                ctx.inputs[0].mouseDeltaY = 0;
+            }
             if (netEnabled) {
                 // ★ライブ入力は tick ループへ入る前に退避する。ループ内で ctx.inputs は
                 //   ネットの確定入力で丸ごと上書きされるので、そこから自レーンを読むと

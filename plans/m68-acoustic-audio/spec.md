@@ -408,3 +408,17 @@ sub-03 (M68c):
 15. 同 (coder 不安・質問 1、S24) — §3 / §5 A26 / §6 / sub-03: sub-03 に**コード 1 行の例外** (`deterministicShot` で生マウスデルタを 0)。
     sub-01 で未捕捉だったフレークの正体が M65g 由来の「撮影中のマウス」と判明したため。M68 のスコープ外だが A3 (golden 22 枚) の
     信頼性の話なので、別コミットに切るより M68c に載せる。golden は動かない (A26 (a))、合成入力は触らない (A26 (c))。
+16. 2026-09-07 sub-03 round 1 (coder [逸脱]) — S24 / sub-03 7: 置き場所は **フレーム頭の `CaptureSnapshot` 直後 (`EngineLoop.cpp:1163`)**。
+    planner の見立て (`:1287` の tick ループ内) は誤り: そこではネット経路の `net.InputsFor()` が全レーンを上書きするので、自分が
+    送った生デルタが相手経由で戻って復活する。キャプチャ直後なら `netLiveInput` の退避 (`:1182`) より前で送信値も 0 に揃い、
+    合成入力 / .rep の置換 (tick ループ内) より前という必須条件も満たす。
+17. 同 (不安・質問 1) — A26 (b) の再現手段: 物理マウス (WM_INPUT) は `RIDEV_INPUTSINK` 無し (`Input.cpp:167`) のため前面でないと
+    届かず、coder はユーザーの全画面アプリからフォーカスを奪わなかった (正しい)。代わりに `CaptureSnapshot` の出口へ環境変数で
+    デルタを注入する使い捨てプローブで **修正前 FAIL (maxDiff 127 / 1612 px / (236,446)) → 修正後 PASS** を取った。修正が守る
+    範囲 (CaptureSnapshot の戻り値以降) は同じで、WM_INPUT → CaptureSnapshot の上流は M68b の実マウスの割れが証明している
+    ので採用。実マウスでの再実行はマシンが空いたときのユーザー任意 (test_checklists の M68 節に手順あり)。
+18. 同 (不安・質問 2 / 3、[追加] 6 件) — 質問 2: `[shot] deterministic capture:` のログ文言に「raw mouse delta zeroed」を足すのは
+    nit (CLAUDE.md の「決定論の契約」と「環境の罠」に書いてあるので発見経路はある。次に EngineLoop を触るときに 1 行)。
+    質問 3: ADR-017 の「決定 0」(M65 の土台) は据え置き。M65 の ADR を後から立てるならそちらへ移す。
+    [追加] 6 件 (engine_spec の bullet 化と列挙の 7 個化 / README `:170` の言い換え / CLAUDE.md の 2 箇所 / test_checklists の
+    「壊れ方の切り分け」小節 / ADR の決定 0) はいずれも spec の指示が粗かった箇所の妥当な補完として採用。

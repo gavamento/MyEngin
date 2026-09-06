@@ -347,9 +347,23 @@ Occluded → Detour → Direct と遷移し dPath ≥ dLine が常に成立)。r
 
 | サブ | 状態 | 版 / 契約の変更 | メモ |
 |---|---|---|---|
-| M68a 場 + 遮蔽 + LPF | 未着手 | TypeId 50 (NoHash) / `AudioSpatial` 末尾 1 本 / selftest 45 本目 / `--acoustic-audio-log` | |
-| M68b 残響 + 鳴る波 + WAV | 未着手 | `AudioSystem` reverb override 3 関数 / `Mixer_AcousticOverride` / assets 4 本 | |
-| M68c 仕上げ | 未着手 | ADR-017 / spec §10.6 / README / test_checklists / CLAUDE.md | |
+| M68a 場 + 遮蔽 + LPF | 完了 `c29f7b3` | TypeId 50 (NoHash) / `AudioSpatial` 末尾 1 本 / selftest 45 本目 (T1〜T15) / `--acoustic-audio-log` | 計画外 1: **M45 の既存不具合を直した** — 起動時 `ApplyMixer` の保留再構築がフレーム 0 の playOnAwake voice を殺す (メインループ直前に `audioSystem.Update(0.0f)`)。`--acoustic-demo` に AudioSource が 0 個だったので M45 から露見していなかった。計画外 2: 経路長の見積り 35.8 m は誤りで**実測 29.6 m** (斜めの近道)。計画外 3: `AudioListener` は最初から**子エンティティ** (`ApplySetParent` は全員 `HierarchyComponent` を持つ前提なのでアーキタイプが動かない)。計画外 4: tick 1 だけ占有が未ベイク (M65a 継承、v1 で許容 → M65 追補候補) |
+| M68b 残響 + 鳴る波 + WAV | 完了 `01183b1` | `AudioSystem` reverb override 3 関数 + `AudioReverbParams` (POD 13) / `Mixer_AcousticOverride` / assets 16 ファイル / selftest T16〜T21 | 計画外 1: **開放度の実測でアンカーを動かした** (`openSmall` 0.2 → **0.30** / `openLarge` 0.6 → **0.8**)。廊下 0.287〜0.496 / 部屋 A 0.468〜0.668 / 部屋 B 0.800 で、**この指標は部屋の隅と廊下の端を区別できない** (v1 の限界)。計画外 2: `shotsPlayFailed` を足した (「Play を呼んだ」と「voice が立った」の差を埋める唯一の口。実測 0)。計画外 3: shot ログに `src=` (発音元 entity index)。実測 600 tick で shots 51 (Direct 23 / Detour 28、tone 4 種すべて)、2 run バイト一致 |
+| M68c 仕上げ | 完了 | ADR-017 / engine_spec §10.6 + 決定的撮影の 3 つ目の保証 / README / test_checklists / CLAUDE.md / **コード 1 行** | 計画外 1: **撮影モードで生マウスデルタを 0 にする 1 行**を入れた (M68 の機能ではない)。M68a/M68b で `acoustic_deferred` の golden が時々割れた正体が「撮影中の物理マウス → `WatcherFpsCamera` の yaw → 箱の回転」だったため (maxDiff 125 / 520 px)。計画外 2: 故障点の再現に `SendInput` は**使えなかった** — raw input が `RIDEV_INPUTSINK` 無しなので前面でないと届かない。代わりに `CaptureSnapshot` へ環境変数でデルタを合成する使い捨てプローブで、修正前 maxDiff 127 → 修正後 0 を確認した |
+
+### 申し送り (M68 完了時点)
+
+- **調整値は未確定**。`bendFullM` / `lpfFloor` / `occludedGain` / `detourWet` / `waveVolume` /
+  残響のアンカー (`openSmall` 0.30 / `openLarge` 0.8) は計算と実測に基づく初期値で、**耳で決めた値ではない**。
+  `AcousticAudio` は NoHash なので実行中に Inspector で触れる (replay / golden に影響しない)。
+  確定したら Components.h の既定値へ焼く別コミットにする (`docs\test_checklists.md` の M68 節が確認手順)。
+- **M65 の追補候補**: tick 1 の占有未ベイク (占有ベイクを最初の transform 更新の後へ)。M68 では触っていない。
+- **後続の最適化候補**: probe 再構築が Debug 9.3 ms / 回 (Release 0.65 ms、16224 セル、歩行中 6.6 回/秒)。
+  詰めるなら `assign` の毎回確保をやめてバケットの capacity を使い回す。
+- **耳で確認できていない主張が 1 つだけ残っている**: 「XAudio2 が実際に音を出したか」。
+  `playFailed = 0` は voice が立ったことまでしか言わない (`docs\test_checklists.md` の M68 節の
+  「壊れ方の切り分け」がそこから先の手順)。
+- メモリ (`myengine-project.md`) の現在地更新は**リポジトリ外**なので harness の司会が行う。
 
 ---
 

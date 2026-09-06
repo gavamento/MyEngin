@@ -1652,6 +1652,62 @@ placing takes 150 ticks during which the light itself is the only progress indic
 cancels it, and a cancelled placement costs time but never a light; being caught costs one light
 and returns you to the start.
 
+**Audible output (M68).** The wavefront now serves a fourth consumer: the mixer. A *listener
+probe* runs the same Dial a third time — after the wave and the navigation flow field — this time
+outward from the ear and run to completion in one call rather than one ring per tick, so every
+audible source can ask "how long is the path from you to me, and which way does it arrive". Every
+voice with `spatialBlend > 0` is then shaped into one of four classes: `Direct` (the detour over
+the straight line is under a cell), `Detour` (folded around a corner), `Occluded` (unreachable, or
+past the probe's ring limit) and `Bypass` (no usable probe — the listener stands outside the
+grid). Sharing the field rather than adding an occlusion ray is the whole point: what the renderer
+lights, what the enemy hears and what attenuates in the speakers are then the same number by
+construction, and none of them can drift apart as the level changes.
+
+A `Detour` source is not attenuated in place, it is **moved**: the voice is positioned at
+`L + dir · dPath`, where `dir` is the last step of the parent chain into the listener's cell and
+`dPath` the chamfer path length. A 3D panner that knows nothing about walls then pans the sound
+towards the doorway it actually comes through, and the extra length `dPath − dLine` drives the
+one-pole low-pass — muffled *and* mislocated is what a corner does to a sound. Doppler is pinned
+to zero while a source is virtually positioned, because that position moves in cell-sized jumps
+and a velocity derived from it would be a chirp rather than a doppler shift. Only the last step is
+used for the direction: the virtual position is already smoothed by a half-life in ticks, and
+averaging several steps points into the wall right after a corner.
+
+One conversion is easy to get backwards and silences everything. `RolloffGain` and the afterglow
+work in **energy**, while a voice volume is an **amplitude**, and amplitude is the square root of
+energy — feeding an inverse-square curve straight into a volume gives `(0.5/10)² = −52 dB` at ten
+metres, which is not "distant" but "absent". The wave lane therefore defaults to the logarithmic
+curve and the relation `gain² · amplitude == EnergyAt` is what the self test pins, rather than any
+particular curve. Reach is still exactly the wave's own: `maxDistance = maxRing · cellSize`, and
+`RolloffGain` is identically zero at and beyond `maxDistance` for every curve, so "you hear it
+where the wave reaches, and nowhere else" holds structurally instead of by tuning.
+
+Room reverberation comes from the same probe. Openness — reached cells over free-space cells
+within `roomProbeM` — is smoothstepped between two anchors and used to interpolate **two I3DL2
+presets continuously**, so walking a corridor into a hall changes the tail without a step. The
+choice between the interpolated parameters and the mixer asset's preset is made in
+`ApplyReverbParams` and nowhere else, which is what keeps the override a layer: `reverbPreset_`,
+the mixer window's combo and the `.mixer.json` round trip all keep reporting the asset's value,
+and a hot reload of the mixer re-applies the override on its own.
+
+Waves that sound are handed over as a `PendingWaveShot` POD, **pushed from the tick and drained
+from the audio update**. Pushed from the tick because a frame runs up to five ticks and a wave
+that lives four would otherwise never be seen; pushed from inside the `!ts.resim` block because a
+rollback or a time-travel seek must not fire the same footstep twice; drained from the update
+because the shot has to be shaped by a probe that was rebuilt this frame. The queue is emptied
+unconditionally at the top of the update, ahead of the `IsReady` / `IsSuspended` return, so a
+recording session does not save up an hour of footsteps and play them all at once when it ends.
+
+**None of this is simulation state.** `AcousticAudio` is registered `kComponentNoHash`; the probe,
+the per-voice smoothing state and the shot queue are side tables next to `SourceState`; the lane
+never touches `world.Rng()`; `.rep`, the snapshot version and API v15 are untouched. The evidence
+is the ordinary one — all seven replay pairs and all twenty-two golden images stayed bit-identical
+across M68. Because ears are not a test, `--acoustic-audio-log N` prints one line per shaped voice
+and per shot (class, path length, straight-line distance, LPF, gain, openness, room blend) plus a
+closing summary, and two runs of the same command under `--synth-input` produce byte-identical
+lines. With `--no-audio` the lane costs nothing at all: the update returns on `IsReady()` before
+the probe is even considered, which is why a GPU-less, sound-less CI runner never pays for it.
+
 ---
 
 ## 11. Debug/Release Consistency Policy
@@ -1698,9 +1754,10 @@ Eliminate cases in which the engine works in Debug but fails in Release, or vice
   nowhere: arrival energy is a pure function of the integer chamfer distance, so any of them can
   be rebuilt from (origin cell, ring, amplitude) alone after a restore. The fold is
   **content-gated** — with no active wave the section is not folded at all, which is why adding
-  the field left all six existing replay pairs and all seventeen golden images bit-identical
+  the field left every replay pair and golden image that predates it bit-identical (seven pairs
+  and twenty-two images today)
 - The test can run in CI through a command-line invocation such as `Editor.exe --replay-verify xxx.rep`
-- `tools\replay_verify.bat` runs **six scene pairs**, each rebuilt from code before recording:
+- `tools\replay_verify.bat` runs **seven scene pairs**, each rebuilt from code before recording:
   the default demo (scripts, physics, particles, schema fields), the parts showcase
   (`--parts-demo`: skinned bones, part following, part raycasts), the game-flow showcase
   (`--flow-demo`, M51j: **LoadScene transitions across two scenes, TimeControl pause and
@@ -1711,10 +1768,14 @@ Eliminate cases in which the engine works in Debug but fails in Release, or vice
   the gyroscopic term, materials and density-derived mass, CCD) and the joint showcase
   (`--joint-demo`, M60i: the constraint solver, all five joint types, limits, motors, breaking,
   adhesion, compound colliders, cooked convex hulls, a generated ragdoll and a driven vehicle,
-  at `substeps = 16`). The flow pair is the aggregate proof that the M51 gameplay-flow features
-  are replay-deterministic; the physics and joint pairs are the same for every equation M59 and
-  M60 added. The joint pair also covers the `.mcvx` convex-hull cook: Debug and Release bake it
-  independently into separate cooked directories and still agree bit for bit
+  at `substeps = 16`) and the acoustic showcase (`--acoustic-demo`, M65g: the wave slot table —
+  the one part of the acoustic field that *is* simulation state — plus the enemy FSM and the
+  player scripts, **recorded with `--synth-input`** so that the raw mouse deltas the look angles
+  integrate are not a constant zero). The flow pair is the aggregate proof that the M51
+  gameplay-flow features are replay-deterministic; the physics and joint pairs are the same for
+  every equation M59 and M60 added. The joint pair also covers the `.mcvx` convex-hull cook:
+  Debug and Release bake it independently into separate cooked directories and still agree bit
+  for bit
 
 **Field-level divergence diagnosis (M52a).** Knowing *which tick* broke is not the same as
 knowing *what* broke. `HashWorld`, `HashWorldDetailed` and `HashWorldDump` are three exits of a
@@ -1739,7 +1800,7 @@ the terminator stays visible instead of being hidden by string semantics.
 **Continuous integration (M52b).** `.github\workflows\ci.yml` is a single Windows job that calls
 the *same* scripts a developer runs locally — no CI-only verification logic, so there is nothing
 to keep in sync twice. It builds the managed host for both configurations, runs
-`tools\replay_verify.bat` (eight project builds, six replay pairs, `check_rules.ps1`),
+`tools\replay_verify.bat` (eight project builds, seven replay pairs, `check_rules.ps1`),
 runs `--selftest` in both configurations, and finishes with a `--package` smoke test whose
 success is reported through the process exit code. On failure the replay files and field dumps
 are uploaded as artifacts, so a divergence found in CI can be diffed locally with `--hash-diff`.
@@ -1834,7 +1895,7 @@ still around 4, so the per-class caps (16 for `Default`, 32 for `Prop`) have not
 `ReflectionClass` machinery does not reach the image at all. All three are local-only at `--tol 0`
 (`MYE_SHOT_SKIP_RT`) for the SSR reason: BVH traversal branches on hit/miss.
 
-Determinism of a *frame* needs two guarantees that determinism of a *tick* does not:
+Determinism of a *frame* needs three guarantees that determinism of a *tick* does not:
 
 - **Frame-to-tick coupling.** The tick loop consumes an accumulator fed by real elapsed time, so
   the number of ticks simulated by frame *N* normally depends on how fast the machine drew the
@@ -1844,6 +1905,14 @@ Determinism of a *frame* needs two guarantees that determinism of a *tick* does 
 - **Resource residency.** Textures decode on a worker thread and are published at a frame
   boundary (M23), so "did the decode finish in time" is another wall-clock dependency. The same
   capture mode drains the async queue before drawing
+- **The device on the desk (M68c).** Lane 0's raw mouse delta reaches the simulation through
+  v15's `GetMouseDelta`, and M65g's first-person script integrates it into a yaw that rotates a
+  *rendered* box, so a mouse nudged during a 123-frame capture moved the acoustic goldens by
+  maxDiff 125 over 520 pixels. The capture mode therefore zeroes the device-derived delta of lane
+  0. Synthesized (`--synth-input`) and recorded (`.rep`) lanes are substituted afterwards and keep
+  theirs — the acoustic replay pair records with `--synth-input` precisely so that those deltas
+  are non-zero. Keys and cursor *position* are left alone: no golden is known to depend on them,
+  so the pinning stays as narrow as the observed failure
 
 Three machine-dependent inputs are pinned rather than tolerated: the rasterizer (`--warp`, because
 WARP and a discrete GPU differ by up to two levels per channel over most of the frame), the

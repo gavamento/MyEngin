@@ -86,8 +86,13 @@ MyEngine — C++20 / DirectX 11 の自作ゲームエンジン (VS2022 / x64 / W
   恒常ゼロで検査にならない) /
   `--acoustic-dump N` (M65d: N 回目の描画で残光ボリュームを読み戻し、CPU の場と
   **バイト単位で**照合してログへ。`--froxel-dump` と同じ調査専用) /
-  `--acoustic-audio-log N` (M68a: tick < N のあいだ、遮蔽・回折で整形した voice と
-  shot を 1 行ずつ標準出力へ + 終了時に summary。**耳を使わずに配管を検査する唯一の口**。
+  `--acoustic-audio-log N` (M68a/M68b: tick < N のあいだ、遮蔽・回折で整形した voice と
+  波の一発再生 (`kind=shot`) を 1 行ずつ標準出力へ + 終了時に summary。
+  **耳を使わずに配管を検査する唯一の口**。summary の欄は順に
+  `ticks / rebuilds / boxCells / probeMsAvg / shaped / classes D/T/O/B` +
+  `shots / skipped / unknownKey / dropped / room / playFailed` で、**追加は常に末尾**
+  (既存の grep を壊さない)。
+  `--synth-input` と併せた 2 run は `[acaudio] t=` 行がバイト一致する (出力レーンの決定性)。
   `--no-audio` と併用すると 1 行も出ない = ヘッドレスはゼロコスト) /
   `--particle-backend <cpu|gpu>` / `--particle-compare` (M57追補: バックエンドの CLI 固定。
   project_settings.json より優先し**書き戻さない**。GPU 粒子を --screenshot で撮る唯一の口) /
@@ -144,7 +149,9 @@ MyEngine — C++20 / DirectX 11 の自作ゲームエンジン (VS2022 / x64 / W
   `crash\desync_<tick>_p<lane>\` を吐いて **exit 4** (`--net-no-halt-on-desync` で継続)。
 - 描画結果は決定論の対象外 (ハッシュに入らない) が、**スクショ回帰は別途機種依存を殺している**:
   ラスタライザは `--warp` 固定、フォントは `--font-embedded` 固定、`--screenshot` 指定時は
-  dt を固定 tick 長にして **frame 番号 == tick 番号** にし、非同期テクスチャを撮影前に drain する。
+  dt を固定 tick 長にして **frame 番号 == tick 番号** にし、非同期テクスチャを撮影前に drain し、
+  **生デバイス由来のレーン 0 のマウスデルタを 0 にする** (M68c。合成入力と .rep の置換はこの後なので
+  無傷)。
 
 ## 横断的な変更のチェックリスト
 
@@ -181,6 +188,17 @@ memcpy する**ので、次の 3 つを同時にやる (M67b で踏んだ。片�
 明示パディングにする** (暗黙パディングは同じ入力でも cooked ファイルのバイト列を run ごとに
 変えうる = `CookedCacheSelfTest` の memcmp が不定になる)。影響は「初回起動で 1 回焼き直す」だけ
 (`cache\` は gitignore)。配布パッケージ (M51j の封印) は**新しい exe で作り直す**。
+
+**音響を耳に出すものを触る** (M68) — `AcousticField` を読むのは**出力レーンだけ**
+(`AudioSourceSystem` が `AcousticProbe` を所有し、include の向きは Engine/Audio → Engine/Acoustic の
+一方向。`AcousticField.h` から `AcousticAudio.h` を include しない)。遮蔽・回折の規則は
+**`ShapeAcousticSpatial` の 1 本**で、per-voice 更新と波の一発再生の両方がそれを呼ぶ
+(`MakeSourcePlay` の「規則は 1 本」と同型 — 2 本目を書くと必ずずれる)。波の spatial は
+**rolloff 0 / `dopplerScale = 0` / `maxDistance = maxRing · cellSize`** (`RolloffGain` が到達上限で
+厳密に 0 = 「波が届く所でだけ聞こえる」の根拠)。響きの override の選択は **`ApplyReverbParams()` の
+1 箇所**で、`reverbPreset_` には書き戻さない (ミキサー窓の combo は資産値のまま)。
+`AcousticAudio` は NoHash / sim 状態ゼロなので、実行中に Inspector で触っても replay に影響しない。
+詳細は [ADR-017](docs/adr/ADR-017-acoustic-audio.md) と `engine_spec.md` §10.6。
 
 **UI 文字列** — `src\Engine\Core\LocalizationTable.inl` に en/ja 両方を書き、`Tr()` 経由で読む。
 `Tr()` を printf 系の**唯一の引数**にしない (`TextUnformatted(Tr(x))` か `Text("%s", Tr(x))`)。
@@ -261,6 +279,13 @@ Editor → GameLogic → Engine → Renderer → Core → Platform   (上位は�
   git のオプション名などを地の文に書くときは注意 (M52f で全ビルドを一度落とした)。
 - `.gitattributes` は `*.png binary` を明示している — golden スクショが改行変換されると
   「ピクセル回帰が理由不明で赤い」形で出るため。
+- **決定的撮影モード (`--screenshot` かつ `--shot-every` 無し) は生マウスデルタを 0 にする**
+  (M68c)。M68c 以前は `acoustic_*` の golden が**撮影中に机のマウスを触ると割れた** —
+  `WatcherFpsCamera` (M65g) が `GetMouseDelta` を yaw に積分して MeshRenderer 付きの箱を回すため
+  (実測 maxDiff 125 / 520 px)。合成入力 (`--synth-input`) と .rep の置換はこの後なので無傷。
+  raw input は `RIDEV_INPUTSINK` 無しで登録しているので、**前面でないウィンドウには
+  WM_INPUT が 1 通も届かない** (`SendInput` で撮影中のマウスを再現しようとしても、
+  Runtime が前面に出ていなければ再現できない = 前面のアプリに入るだけ)。
 - **`GpuTimer` は `kFrames = 6` のリングを 7 フレーム目からしか回収しない** (スロットを
   再利用するときに前回の値を読む実装)。つまり `--frames 6` の**撮影 run では `[rt]` /
   `[ssr]` の GPU 時間が全部 0.000 ms** になり、「計測したら 0 だった = 機能が動いていない」と

@@ -11,8 +11,8 @@
 | サブ | 状態 | 往復 | コミット | メモ |
 |---|---|---|---|---|
 | sub-01 | OK | 1 | c29f7b3 | M68a: リスナー場 (Dial の 3 本目) + 遮蔽・回折の整形 (仮想発音位置 / LPF) + AcousticAudio (TypeId 50) + selftest 45 本目 + hum。依存: なし VERDICT round 1 OK (should 1 = shot_verify を 2 回追加実行して枚名を残す → reviewer 申し送り / nit 2 = 冗長な前方宣言・Debug probe 9.3ms)。M45 の既存不具合 (起動時 ApplyMixer が playOnAwake を殺す) を同時修正 |
-| sub-02 | 判定待ち (round 2) | 2 | — | M68b: 部屋の残響 (2 プリセット連続補間) + 鳴る波 (PendingWaveShot) + 足音 WAV 4 本。依存: sub-01 round 1 REWORK (must 1 = openSmall 0.2→0.30 / should 1 = shotsPlayFailed / nit 1 = shot の src=) |
-| sub-03 | 未着手 | 0 | — | M68c: 仕上げ (ADR-017 / engine_spec §10.6 / README / test_checklists / CLAUDE.md / 進捗表)。依存: sub-02 |
+| sub-02 | OK | 2 | 01183b1 | M68b: 部屋の残響 (2 プリセット連続補間) + 鳴る波 (PendingWaveShot) + 足音 WAV 4 本。依存: sub-01 round 1 REWORK (must 1 = openSmall 0.2→0.30 / should 1 = shotsPlayFailed / nit 1 = shot の src=) round 2 OK (nit 2 = Update の 4 仕事 200 行超 / shot の src= を文書へ → 申し送り)。golden フレークの正体 = 撮影中の生マウスデルタ (M65g 由来) → 恒久対策は sub-03 (S24 / A26) |
+| sub-03 | 判定待ち | 1 | — | M68c: 仕上げ (ADR-017 / engine_spec §10.6 / README / test_checklists / CLAUDE.md / 進捗表)。依存: sub-02 |
 
 ## ユーザー判断
 - (2026-09-06、harness 起動前に司会が AskUserQuestion で確認済み。planner は蒸し返さない)
@@ -39,4 +39,8 @@
 - (sub-02 round 1、planner) **ADR-017 の実測値** (M68c が写す): 開放度 = 部屋 A 隅 0.468 / 中央 0.668、横廊下 西 0.496 / 中 0.357 / 東 0.287、縦廊下 0.404・0.529、部屋 B 戸口 0.607 / 中央 0.800 (`roomProbeM` 6)。既知の制限: この指標は「部屋の隅」と「廊下の端」を区別できない (局所の自由体積しか見ていない)。probe 0.61〜0.65 ms (Release、16224 セル)、shots 51 / 600 tick (合成入力)
 - (同) M68c の test_checklists / ADR に「壁越しの hum は Detour (lpf 床 0.25) であって Occluded ではない — Occluded は密閉と経路上限超えだけ」を書く (A11 の予測が 0 行だった根拠)
 - メモリ (`myengine-project.md`) の現在地更新はリポジトリ外なので司会が行う (M68c の coder は触らない)
+- (sub-03 round 1、planner) **M68 の残り = ユーザーの耳** (`docs/test_checklists.md` の M68 節 30 項目) と調整値の焼き込み (`bendFullM` / `lpfFloor` / `occludedGain` / `detourWet` / `waveVolume` / `openSmall 0.30` / `openLarge 0.8`)。Inspector で実行中に触れる (NoHash)
+- (同) nit 3 件: (1) `[shot] deterministic capture:` のログ行に「+ raw mouse delta zeroed (--shot-realtime で解除)」を足す (`EngineLoop.cpp:686`、次に触るとき) (2) ADR-017 の「決定 0」は M65 の ADR を立てるならそちらへ (3) README の CLI ブロックに `--acoustic-demo` / `--acoustic-audio-log` が無い (M65 からの漏れ。`--joint-demo` の隣に「= replay ペアの 7 本目 + スクショ 16/17 枚目」の形で)
+- (同) **撮影モードの 2 行 (`EngineLoop.cpp:1163`) を守る回帰テストは無い** (`EngineLoop::Run` の中でヘッドレスから呼べない)。golden がまた時々割れたら、まずこの 2 行が消えていないかを見る。実マウス (WM_INPUT) での再現は未実施 (前面を取れない環境だった) — マシンが空いたときに `acoustic_deferred` の撮影中にマウスを動かして maxDiff=0 を 1 回確かめるとよい (任意)
+- (同) reviewer へ: sub-03 のコード差分は `EngineLoop.cpp` の 2 行 + コメントだけ。A26 (c) は変更前バイナリとの 650 行バイト一致で取れている (合成入力のデルタは生きている)
 - 案 4 (XPBD 布・ソフトボディ、M60'e〜) は 2026-09-06 20:00 にセッション内リマインド (harness とは無関係)
