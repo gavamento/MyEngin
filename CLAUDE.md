@@ -34,7 +34,7 @@ MyEngine — C++20 / DirectX 11 の自作ゲームエンジン (VS2022 / x64 / W
 
 | コマンド | 担保するもの |
 |---|---|
-| `bin\x64\Debug\Editor.exe --selftest` | ヘッドレス回帰 44 スイート (D3D もウィンドウも作らない) |
+| `bin\x64\Debug\Editor.exe --selftest` | ヘッドレス回帰 45 スイート (D3D もウィンドウも作らない) |
 | `tools\replay_verify.bat [ticks]` | 8 ビルド → 並列 10 ジョブ (7 シーンチェーン = 記録 `--replay-fast` + snapshot 往復付き照合 + Release 照合 / タイムトラベル ×2 / 規則検査)。1 本だけ回すなら `--job <名前>` 再入 (ビルド済み前提)、並列度は `MYE_REPLAY_JOBS` |
 | `tools\shot_verify.bat [--update]` | 決定的スクショ 22 枚を `tests\golden\*.png` と比較 (CI 判定は 12 枚 — FXAA / TAA / SSR / froxel / fog / パーティクル 2 枚 / RT 反射 / RT GI / RT 反射+ReSTIR の計 10 枚は分岐反転や GPU sim で機種差が増幅するので tol=0 のローカル限定。地形の 1 枚だけ異方性フィルタの実装依存で tol=12。**物理・関節・霧・パーティクル 2・音響 2 の 7 枚は frame 120 で撮る** — 他は frame 3 = ほぼ初期配置なので物理も粒子も絵に出ない。**ReSTIR の 1 枚だけ frame 40** (M 上限 Default 16 / Prop 32 が飽和した状態を固定する。frame 3 では M ≈ 4 でクラス別上限が絵に出ない)。**先に Release ビルドが必要**) |
 | `pwsh -File tools\check_rules.ps1` | 規則 1/2/4/7/8/9/10/11/12 の静的検査 (12 = Source Control の Editor 層封じ込め。9 の `$constGroups` に `kCollabProtoVersion` ⇄ `PROTO_VERSION` も載る) |
@@ -86,6 +86,9 @@ MyEngine — C++20 / DirectX 11 の自作ゲームエンジン (VS2022 / x64 / W
   恒常ゼロで検査にならない) /
   `--acoustic-dump N` (M65d: N 回目の描画で残光ボリュームを読み戻し、CPU の場と
   **バイト単位で**照合してログへ。`--froxel-dump` と同じ調査専用) /
+  `--acoustic-audio-log N` (M68a: tick < N のあいだ、遮蔽・回折で整形した voice と
+  shot を 1 行ずつ標準出力へ + 終了時に summary。**耳を使わずに配管を検査する唯一の口**。
+  `--no-audio` と併用すると 1 行も出ない = ヘッドレスはゼロコスト) /
   `--particle-backend <cpu|gpu>` / `--particle-compare` (M57追補: バックエンドの CLI 固定。
   project_settings.json より優先し**書き戻さない**。GPU 粒子を --screenshot で撮る唯一の口) /
   `--taa` (M55d) / `--ssr` (M56d) / `--froxel` (M57) / `--hzb-debug N` (M56c) /
@@ -147,8 +150,8 @@ MyEngine — C++20 / DirectX 11 の自作ゲームエンジン (VS2022 / x64 / W
 
 **コンポーネントを足す** — `Components.h` に POD で定義 → `RegisterBuiltinComponents()` の
 **末尾に append** (TypeId は登録順で決まる。途中挿入は既存シーンと .rep を壊す。
-現行の末尾は **49 = AgentBrain** — M65a が 45〜49 を取り、M60′ の Cloth/SoftBody 予約は
-50/51 へ繰り下げてある) →
+現行の末尾は **50 = AcousticAudio** — M65a が 45〜49、M68a が 50 を取り、M60′ の
+Cloth/SoftBody 予約は 51/52 へ繰り下げてある) →
 `FieldDesc` 表を書く (`MYE_JP("表示名", MYE_FIELD(...))`) → ハッシュ対象になるか確認 →
 影響するなら `SceneSerializer` の版と `.rep` の版を検討。
 

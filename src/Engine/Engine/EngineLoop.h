@@ -25,6 +25,7 @@ class AnimationLibrary;
 class ControllerLibrary;
 class AssetDatabase;
 class AudioSystem;
+class AudioSourceSystem;
 class SoundLibrary;
 class MixerLibrary;
 class InputActions;
@@ -167,6 +168,12 @@ struct EngineConfig {
     // ★--froxel-dump と違い**他のフラグを立てない** — 残光は「音響ボリュームが
     //   シーンに在る」ことだけが条件で、CLI で on/off するものではないから
     int acousticDumpFrame = -1;
+
+    // M68a: --acoustic-audio-log N。tick < N のあいだ、整形した voice と shot ごとに
+    // 1 行を標準出力へ出し、終了時に summary を 1 行足す (0 = 何も出さない)。
+    // ★**耳を使わずに配管を検査する唯一の口**。--no-audio では 1 行も出ない
+    //   (AudioSourceSystem::Update が IsReady() で return する = ヘッドレスはゼロコスト)
+    int acousticAudioLogTicks = 0;
 
     // ---- パーティクルバックエンドの CLI 上書き (M57追補) ----
     // -1 = 未指定 (project_settings.json に従う) / 0 = CPU / 1 = GPU。
@@ -325,6 +332,9 @@ struct EngineContext {
     // 読み戻してはいけない (読んだ瞬間にリプレイが壊れる)。エディタの試聴/ミキサー用に公開する
     AudioSystem* audio = nullptr;
     SoundLibrary* sounds = nullptr;     // 登録済みサウンドアセット (.sound.json、M45c)
+    // M68a: AudioSource/AudioListener の駆動系。Profiler と終了時 summary が
+    // 音響 × オーディオの統計を引くためだけに公開している (**書き込み禁止**)
+    AudioSourceSystem* audioSources = nullptr;
     MixerLibrary* mixers = nullptr;     // 登録済みミキサー (.mixer.json、M45d)。アクティブは 1 本
     std::wstring assetsRoot;            // assets\ の絶対パス
     std::wstring projectRoot;           // プロジェクトルート (M26)。レガシー起動時は空

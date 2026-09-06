@@ -286,6 +286,10 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // 別の RenderSystem は誰もここを埋めないので、サムネイルに音の光が漏れない
     renderSystem.acousticField = &acoustic;
     renderSystem.acousticDumpFrame = config.acousticDumpFrame; // M65d (--acoustic-dump N)
+    // M68a: 音響 × オーディオ。**ここが唯一の配線点** (残光の 1 行上と同じ理由 —
+    // AssetPreviewCache が持つ別インスタンスは誰も埋めないので、試聴音が遮蔽されない)
+    audioSources.SetAcousticField(&acoustic);
+    audioSources.SetAcousticAudioLog(config.acousticAudioLogTicks);
     renderSystem.postFxSettings.tonemap = config.postFxTonemap;
     renderSystem.postFxSettings.exposure = config.postFxExposure;
     renderSystem.postFxSettings.bloom = config.postFxBloom;
@@ -389,6 +393,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     ctx.assetDb = &assetDatabase;
     ctx.audio = &audioSystem;
     ctx.sounds = &soundLibrary;
+    ctx.audioSources = &audioSources; // M68a: Profiler が音響 × オーディオの統計を引く口
     ctx.mixers = &mixerLibrary;
     ctx.assetsRoot = assetsRoot;
     ctx.projectRoot = config.projectRoot;
@@ -682,6 +687,16 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         MYE_LOG_INFO("[shot] deterministic capture: fixed dt + async texture drain "
                      "(frame index == tick index)");
     }
+
+    // ★起動時ミキサー (.mixer.json) のバスグラフを**最初のフレームより前**に作っておく。
+    //   ApplyMixer は「UI のドラッグ操作を 1 フレームに束ねる」ために再構築を保留するが、
+    //   RegisterAssetLibraries が起動時に必ず 1 回呼ぶので、放っておくと**フレーム 0 の
+    //   audioSystem.Update() で再構築が走り、その直前に audioSources.Update() が
+    //   playOnAwake で鳴らした音を DestroyAllSourceVoices が全部殺す**。
+    //   AudioSourceSystem は「voice が消えた = 鳴り終わった」と解釈して started を
+    //   立てたままにするので、ループ音が二度と復活しない (M68a の hum が 2 tick で
+    //   無音になって発覚。dt = 0 なのでフェードもメーターも進まない)
+    audioSystem.Update(0.0f);
 
     // ---- メインループ (フェーズ構成は engine_spec.md 5.3 / ADR-005) ----
     double accumulator = 0.0;
@@ -1828,6 +1843,18 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     }
     if (recorder.IsActive()) {
         recorder.Finish(); // maxFrames 等で先に抜けた場合も書き出す
+    }
+    // M68a: 音響 × オーディオの run 総括。**probeMsAvg だけは run-to-run 比較から除く**
+    // (実時間なので機種と負荷で動く)。それ以外は同じコマンドなら一致するはずの値。
+    // ★ticks == 0 のときは 1 行も出さない — --no-audio では Update が丸ごと return して
+    //   統計が 1 つも進まないので、「ヘッドレスはゼロコスト」を出力でも示す
+    if (config.acousticAudioLogTicks > 0 && audioSources.AcousticStats().ticks > 0) {
+        const AcousticAudioStats& acs = audioSources.AcousticStats();
+        MYE_LOG_INFO("[acaudio] summary: ticks=%llu rebuilds=%d boxCells=%d probeMsAvg=%.3f "
+                     "shaped=%d classes D/T/O/B=%d/%d/%d/%d",
+                     static_cast<unsigned long long>(acs.ticks), acs.rebuilds, acs.boxCells,
+                     static_cast<double>(acs.ProbeMsAvg()), acs.shaped, acs.classCount[0],
+                     acs.classCount[1], acs.classCount[2], acs.classCount[3]);
     }
     if (config.rtDebugMode != 0 || config.rtGi || config.rtShadow || config.rtRefl) {
         // M46b: BVH の規模とソフトウェアトラバーサルの実測値 (性能ゲートの一次データ)。

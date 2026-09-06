@@ -1141,7 +1141,9 @@ void AudioSystem::ApplySpatialToVoice(Voice& v, const AudioSpatial& s)
         XAUDIO2_FILTER_PARAMETERS p = { LowPassFilter, freq, 1.0f };
         v.voice->SetOutputFilterParameters(dst, &p);
     };
-    applyLpf(dry, dsp.LPFDirectCoefficient);
+    // M68a: 遮蔽/回折ぶんの追加ローパスを **min** で載せる (乗算にすると二重に暗くなる)。
+    // 既定 (1.0) なら従来と 1 ビットも変わらない
+    applyLpf(dry, (std::min)(dsp.LPFDirectCoefficient, s.lpfCoefficient));
     if (reverbVoice_ != nullptr) {
         applyLpf(reverbVoice_, dsp.LPFReverbCoefficient);
     }

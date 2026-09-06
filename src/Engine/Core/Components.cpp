@@ -837,8 +837,9 @@ void RegisterBuiltinComponents()
     });
 
     // ---- M65a: 音響伝播 (TypeId 45〜49、末尾 append) ----
-    // ★M60' が予約していた 45=Cloth / 46=SoftBody は **50/51 へ繰り下げた**
-    //   (M60'h/k はどちらも未登録なのでデータは 1 バイトも壊れていない。
+    // ★M60' が予約していた 45=Cloth / 46=SoftBody は **51/52 へ繰り下げた**
+    //   (M68a が 50 = AcousticAudio を取ったので、M65a 時点の 50/51 から更に 1 つずつ後ろ。
+    //    M60'h/k はどちらも未登録なのでデータは 1 バイトも壊れていない。
     //    plans\supple-weaving-loom.md の予約表も同じコミットで書き換えてある)。
     //   登録順 = TypeId なので飛ばし登録はできない — M60' 再開時はその時点の末尾へ append する。
     //
@@ -949,6 +950,54 @@ void RegisterBuiltinComponents()
         MYE_JP("自発音の位相", MYE_FIELD_FLAGS(AgentBrainComponent, emitPhase, Int32,
                                                kFieldReadOnly)),
     });
+
+    // ---- M68a: 音響 × オーディオの調整卓 (TypeId 50、末尾 append) ----
+    // ★**kComponentNoHash** — 出力レーンしか触らないので、WorldHasher が丸ごとスキップする。
+    //   だから既存シーンのハッシュも .rep も snapshot 版 (11) も 1 ビットも動かない
+    //   (前例 M45e の AudioListener/AudioSource = 28/29 と同じ根拠)。
+    // ★実行中に Inspector で全部触れることが設計の一部。調整値は耳でしか決まらないので、
+    //   「触っても replay が割れない」ことがそのまま作業速度になる。
+    RegisterComponent<AcousticAudioComponent>("AcousticAudio", {
+        MYE_JP("有効", MYE_FIELD(AcousticAudioComponent, enabled, Bool)),
+        MYE_JP("リスナー場の半径",
+               MYE_FIELD_RANGE(AcousticAudioComponent, probeMaxRing, Int32, 1.0f, 256.0f)),
+        MYE_JP("回折が飽和する長さ",
+               MYE_FIELD_RANGE(AcousticAudioComponent, bendFullM, Float, 0.5f, 64.0f)),
+        MYE_JP("回折 LPF の下限",
+               MYE_FIELD_RANGE(AcousticAudioComponent, lpfFloor, Float, 0.0f, 1.0f)),
+        MYE_JP("密閉時の音量",
+               MYE_FIELD_RANGE(AcousticAudioComponent, occludedGain, Float, 0.0f, 1.0f)),
+        MYE_JP("密閉時の LPF",
+               MYE_FIELD_RANGE(AcousticAudioComponent, occludedLpf, Float, 0.0f, 1.0f)),
+        MYE_JP("整形の半減期",
+               MYE_FIELD_RANGE(AcousticAudioComponent, smoothTicks, Int32, 0.0f, 120.0f)),
+        MYE_JP("開放度の半径",
+               MYE_FIELD_RANGE(AcousticAudioComponent, roomProbeM, Float, 1.0f, 32.0f)),
+        MYE_JP("開放度の下端",
+               MYE_FIELD_RANGE(AcousticAudioComponent, openSmall, Float, 0.0f, 1.0f)),
+        MYE_JP("開放度の上端",
+               MYE_FIELD_RANGE(AcousticAudioComponent, openLarge, Float, 0.0f, 1.0f)),
+        MYE_JP("残響の半減期",
+               MYE_FIELD_RANGE(AcousticAudioComponent, roomSmoothTicks, Int32, 0.0f, 300.0f)),
+        MYE_JP("狭い側のプリセット",
+               MYE_FIELD_RANGE(AcousticAudioComponent, reverbSmall, Int32, 0.0f, 10.0f)),
+        MYE_JP("広い側のプリセット",
+               MYE_FIELD_RANGE(AcousticAudioComponent, reverbLarge, Int32, 0.0f, 10.0f)),
+        MYE_JP("回り込みの残響送り",
+               MYE_FIELD_RANGE(AcousticAudioComponent, detourWet, Float, 0.0f, 1.0f)),
+        MYE_JP("波の音量係数",
+               MYE_FIELD_RANGE(AcousticAudioComponent, waveVolume, Float, 0.0f, 4.0f)),
+        MYE_JP("波の最小音量",
+               MYE_FIELD_RANGE(AcousticAudioComponent, minWaveVolume, Float, 0.0f, 1.0f)),
+        MYE_JP("波の残響送り",
+               MYE_FIELD_RANGE(AcousticAudioComponent, waveReverbSend, Float, 0.0f, 1.0f)),
+        MYE_JP("波の減衰カーブ",
+               MYE_FIELD_RANGE(AcousticAudioComponent, waveRolloff, Int32, 0.0f, 2.0f)),
+        MYE_JP("音色 0 のサウンド", MYE_FIELD(AcousticAudioComponent, toneSound0, String64)),
+        MYE_JP("音色 1 のサウンド", MYE_FIELD(AcousticAudioComponent, toneSound1, String64)),
+        MYE_JP("音色 2 のサウンド", MYE_FIELD(AcousticAudioComponent, toneSound2, String64)),
+        MYE_JP("音色 3 のサウンド", MYE_FIELD(AcousticAudioComponent, toneSound3, String64)),
+    }, kComponentNoHash);
 }
 
 } // namespace mye

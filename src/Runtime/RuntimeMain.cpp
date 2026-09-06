@@ -369,6 +369,10 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 config.froxel = true;
             } else if (arg == L"--acoustic-dump" && i + 1 < argc) {
                 config.acousticDumpFrame = _wtoi(argv[++i]); // M65d: 残光を読み戻して検査
+            } else if (arg == L"--acoustic-audio-log" && i + 1 < argc) {
+                // M68a: tick < N のあいだ整形の結果を 1 行ずつ標準出力へ + 終了時に summary。
+                // ★--no-audio と併用すると 1 行も出ない (設計どおり = ヘッドレスはゼロコスト)
+                config.acousticAudioLogTicks = _wtoi(argv[++i]);
             } else if (arg == L"--particle-backend" && i + 1 < argc) {
                 // M57追補: バックエンドの CLI 固定。**shot_verify は Runtime.exe で撮る**ので
                 // Editor 側だけに足しても golden は撮れない (両方に要る)

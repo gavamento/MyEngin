@@ -177,6 +177,12 @@
     <ClCompile Include="..\src\Engine\Engine\AssetDatabaseSelfTest.cpp">
       <Filter>Engine</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Audio\AcousticAudio.cpp">
+      <Filter>Engine\Audio</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Audio\AcousticAudioSelfTest.cpp">
+      <Filter>Engine\Audio</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Audio\AudioClip.cpp">
       <Filter>Engine\Audio</Filter>
     </ClCompile>
@@ -704,6 +710,12 @@
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\AssetDatabaseSelfTest.h">
       <Filter>Engine</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Audio\AcousticAudio.h">
+      <Filter>Engine\Audio</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Audio\AcousticAudioSelfTest.h">
+      <Filter>Engine\Audio</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Audio\AudioClip.h">
       <Filter>Engine\Audio</Filter>

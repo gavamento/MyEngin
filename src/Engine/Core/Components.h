@@ -1290,6 +1290,56 @@ struct AgentBrainComponent {
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
+// 音響伝播を実際の音へ差し込む調整卓 (M68a、計画 m68-acoustic-audio)。
+// **無ければ音響は音に一切効かない** (opt-in、TypeId =50)。
+//
+// ★**kComponentNoHash**。ここが決めるのは「どう聞こえるか」だけで、波にも敵にも
+//   1 バイトも影響しない = 決定論レーンの外 (AudioListener/AudioSource と同じ扱い)。
+//   だから実行中にスライダを動かしても .rep は 1 ビットも変わらない — 調整値を耳で
+//   詰めるのにビルドもリプレイの録り直しも要らない、という運用がここから来ている。
+// ★消費は「entity.index 最小の active な 1 個」(AcousticVolume と同じ規約)。
+// ★フィールドは M68a で**全部**確定させてある (M68b でしか読まない残響と波の欄も含む)。
+//   後から足すと Inspector のレイアウトとシーン JSON が 2 度動くので、共有契約の
+//   変更は 1 コミットに畳む (M65a が 5 コンポーネントをまとめて確保したのと同じ型)。
+struct AcousticAudioComponent {
+    bool enabled = true;
+    // ---- リスナー場 ----
+    // 96 セル = 48m。デモの最長経路 (部屋 A の隅 → 部屋 B の奥 ≈ 40m) を包む値。
+    // ★リング数を削ってもコストはほぼ変わらない (箱はグリッドでクリップされるので、
+    //   既定ボリュームでは常にグリッド全体)。**上限を超えた音は Occluded に落ちて
+    //   段差が出る**ので、包めるなら包んでおくほうがよい
+    int32_t probeMaxRing = 96;
+    // ---- 遮蔽・回折 ----
+    float bendFullM = 8.0f;    // 回り込みがこの長さで LPF が床に着く
+    float lpfFloor = 0.25f;    // 回折 LPF の下限 (0 = 完全に潰す)
+    float occludedGain = 0.15f; // 届かない音の音量
+    float occludedLpf = 0.10f;  // 同 LPF
+    int32_t smoothTicks = 6;    // gain/lpf/位置の半減期 [tick]。0 = スナップ
+    // ---- 部屋の残響 (M68b) ----
+    float roomProbeM = 6.0f;    // 開放度を測る半径 [m]
+    float openSmall = 0.2f;     // 開放度 → 補間パラメータ t の下端
+    float openLarge = 0.6f;     // 同 上端
+    // ★残響の平滑化は gain/lpf と**別の半減期**にしてある。reverb APO のパラメータ更新は
+    //   |Δt| > 0.01 でしか撃たない設計 = 頻度を抑えたい意図なので、6 tick では速すぎる
+    int32_t roomSmoothTicks = 18;
+    int32_t reverbSmall = 3;    // 狭い側のプリセット index (SmallRoom)
+    int32_t reverbLarge = 6;    // 広い側 (Hall = MEDIUMHALL)
+    float detourWet = 0.25f;    // Detour / Occluded に足すリバーブ送り
+    // ---- 鳴る波 (M68b) ----
+    float waveVolume = 1.0f;    // 波の振幅 → 音量の係数
+    float minWaveVolume = 0.10f; // これ未満は鳴らさない (呼吸 0.07 は鳴らず carpet 0.12 は鳴る)
+    float waveReverbSend = 0.35f;
+    // ★0 = Logarithmic 既定。**逆二乗 (2) を振幅に掛けてはいけない** — EnergyAt は
+    //   エネルギーで、XAudio2 の volume は振幅 (= √エネルギー)。10m で -52dB = 無音になる
+    int32_t waveRolloff = 0;
+    // tone 0..3 → .sound.json の名前 (または生クリップの stem)。空 = その音色は鳴らさない
+    char toneSound0[64] = {};
+    char toneSound1[64] = {};
+    char toneSound2[64] = {};
+    char toneSound3[64] = {};
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
 class World;
 
 // エンティティが有効か。ActiveComponent が無ければ有効 / enabled==0 なら無効。

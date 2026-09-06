@@ -54,6 +54,12 @@ struct AudioSpatial {
     float dopplerScale = 1.0f; // 0 = ドップラー無効
     float reverbSend = 0.0f;   // リバーブバスへの送り量。X3DAudio の ReverbLevel に乗る
     float pitch = 1.0f;        // ドップラーと合成する基準ピッチ (アセット/コンポーネント由来)
+    // 直達側の追加ローパス係数 (M68a、**末尾追加**)。1 = 素通し / 0 = 閉じ切る。
+    // ★X3DAudio が出す LPFDirectCoefficient と **min** を取る (掛け算にしない) —
+    //   掛けると「音源が正面にあるだけで既定 1.0 未満」の環境で二重に暗くなる。
+    //   リバーブ送り側の LPF には掛けない: 遮蔽された音の「回り込んだ残響」は
+    //   むしろ残ってほしい (壁の向こうの部屋鳴りが手掛かりになる)
+    float lpfCoefficient = 1.0f;
 };
 
 // リスナー (3D 定位の基準点)。向きは正規化済み・直交していること

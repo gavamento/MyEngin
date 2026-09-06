@@ -46,6 +46,7 @@
 #include "Engine/Engine/Replay/Replay.h"
 #include "Engine/Engine/Replay/WorldHasher.h"
 #include "Engine/Engine/Acoustic/AcousticSelfTest.h"
+#include "Engine/Engine/Audio/AcousticAudioSelfTest.h"
 #include "Engine/Engine/Replay/SimSnapshotSelfTest.h"
 #include "Engine/Engine/Replay/TimeTravelSelfTest.h"
 #include "Engine/Engine/Replay/WorldHasherSelfTest.h"
@@ -383,6 +384,10 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 // M65d: N 回目の描画で残光ボリュームを読み戻し、CPU 側の配列と
                 // バイト単位で突き合わせてログへ (他のフラグは立てない)
                 config.acousticDumpFrame = _wtoi(argv[++i]);
+            } else if (arg == L"--acoustic-audio-log" && i + 1 < argc) {
+                // M68a: tick < N のあいだ整形の結果を 1 行ずつ標準出力へ + 終了時に summary。
+                // ★--no-audio と併用すると 1 行も出ない (設計どおり = ヘッドレスはゼロコスト)
+                config.acousticAudioLogTicks = _wtoi(argv[++i]);
             } else if (arg == L"--particle-backend" && i + 1 < argc) {
                 // M57追補: バックエンドを CLI から固定する (project_settings.json より優先。
                 // ただし書き戻さない)。GPU 粒子を --screenshot で撮る唯一の口
@@ -622,7 +627,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             && mye::RunDllReloaderSelfTest()    // DLL 書き込み完了プローブ (M52h 追補)
             && mye::RunXpbdSelfTest()           // M60'b
             && mye::RunAcousticSelfTest()       // M65a
-            && mye::RunSourceControlSelfTest(); // M66a
+            && mye::RunSourceControlSelfTest()  // M66a
+            && mye::RunAcousticAudioSelfTest(); // M68a
         return ok ? 0 : 1;
     }
 

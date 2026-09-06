@@ -1,0 +1,28 @@
+{
+  "engine": "MyEngine",
+  "sound": 1,
+  "name": "hum",
+  "variations": [
+    {
+      "clip": 4579137290032794480,
+      "weight": 1
+    }
+  ],
+  "volume": 0.8,
+  "volumeRandom": 0.0,
+  "pitch": 1.0,
+  "pitchRandom": 0.0,
+  "loop": true,
+  "stream": false,
+  "bus": "SE",
+  "priority": 128,
+  "maxInstances": 0,
+  "spatialBlend": 1.0,
+  "minDistance": 2.0,
+  "maxDistance": 40.0,
+  "rolloff": "logarithmic",
+  "dopplerScale": 0.0,
+  "reverbSend": 0.35,
+  "loopStartSample": 0,
+  "loopEndSample": 0
+}

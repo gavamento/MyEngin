@@ -4,12 +4,16 @@
 
 #include "Engine/Core/EntityID.h"
 #include "Engine/Core/Random.h"
+#include "Engine/Engine/Audio/AcousticAudio.h"
 #include "Engine/Engine/Audio/AudioSystem.h"
 
 namespace mye {
 
 class World;
 class SoundLibrary;
+// M68a: 場は読むだけ。**include の向きは Engine/Audio → Engine/Acoustic の一方向**で、
+// このヘッダはポインタしか持たないので前方宣言で足りる (実体は AcousticAudio.h 経由)
+class AcousticField;
 struct SoundAsset;
 struct AudioSourceComponent;
 
@@ -60,6 +64,18 @@ public:
     // (AudioListener → primary カメラ)。指定が死んでいる/非アクティブなら自動へ落ちる
     void SetListenerOverride(EntityID e) { listenerOverride_ = e; }
 
+    // ---- 音響 × オーディオ (M68a) ----
+    // 音響の場を注ぐ。**配線点は EngineLoop の 1 箇所だけ** (AssetPreviewCache が持つ
+    // 別インスタンスは誰も埋めないので、サムネイル用の音が遮蔽されることがない)。
+    // null なら整形も probe も一切走らない = 既存の挙動そのまま
+    void SetAcousticField(const AcousticField* field) { acousticField_ = field; }
+    // --acoustic-audio-log N: tick < N のあいだ整形の結果を 1 行ずつ標準出力へ。
+    // **耳を使わずに配管を検査する唯一の口** (reviewer のレシピはこれを数える)
+    void SetAcousticAudioLog(int ticks) { acousticLogTicks_ = ticks; }
+    // ★型名 AcousticAudioStats と同名のメンバ関数にすると、クラス内でその型名が
+    //   隠れる (以後 mye:: 修飾が必須になる) ので、アクセサ側の名前を短くしてある
+    const AcousticAudioStats& AcousticStats() const { return acStats_; }
+
     // シーン遷移 / Play 停止で呼ぶ。鳴っている音を止めるのは呼び出し側 (AudioSystem::StopAll)
     void Reset();
 
@@ -75,6 +91,9 @@ private:
         float pitchJitter = 0.0f; // 同上
         bool started = false;     // playOnAwake を撃ったか (非アクティブ化で戻る)
         bool seen = false;        // 今フレーム見かけたか (掃除用)
+        // M68a: 遮蔽/回折の平滑化。**vel と全く同じ扱い** — 音源が使えなくなったら
+        // 一緒に {} へ落とす (残すと鳴らし直しの 1 フレーム目が前の遮蔽値で始まる)
+        AcousticShapeState shape;
     };
 
     SourceState& StateFor(EntityID e);
@@ -92,6 +111,12 @@ private:
     uint64_t lastTick_ = 0;      // 0-tick フレームを丸ごと省くための直前 tick
     bool lastTickValid_ = false;
     Pcg32 rng_;
+
+    // ---- 音響 × オーディオ (M68a)。**全部 ECS の外**の側テーブル ----
+    const AcousticField* acousticField_ = nullptr;
+    AcousticProbe acProbe_;
+    AcousticAudioStats acStats_;
+    int acousticLogTicks_ = 0;
 };
 
 } // namespace mye

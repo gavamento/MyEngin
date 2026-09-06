@@ -3,6 +3,7 @@
 #include "Engine/Core/Localization.h"
 #include "Engine/Core/Profiler.h"
 #include "Engine/Engine/Acoustic/AcousticField.h" // M65d: 残光の統計行
+#include "Engine/Engine/Audio/AudioSourceSystem.h" // M68a: 音響 × オーディオの統計行
 #include "Engine/Engine/Particles/ParticleSystem.h"
 #include "Engine/Engine/RenderSystem.h"
 #include "Engine/Engine/Scene.h"
@@ -98,6 +99,16 @@ void ProfilerWindow::OnImGui(EngineContext& ctx)
                         ctx.renderSystem->AcousticUploadMs(),
                         ctx.renderSystem->AcousticCellCount(), acousticWaves,
                         ctx.renderSystem->AcousticSupplied() ? 1 : 0);
+        }
+        // M68a: 音響 × オーディオ (有効な AcousticAudio と有効なリスナー場があるときだけ)。
+        // ★--no-audio では AudioSourceSystem::Update が丸ごと return するので
+        //   active が立たず、行ごと出ない = 「ヘッドレスはゼロコスト」が画面でも読める
+        if (ctx.audioSources != nullptr && ctx.audioSources->AcousticStats().active) {
+            const AcousticAudioStats& acs = ctx.audioSources->AcousticStats();
+            ImGui::Text("  acoustic-audio: probe %6.3f ms (rebuilds %d, box %d cells, "
+                        "shaped %d, open %.2f)",
+                        static_cast<double>(acs.probeMsLast), acs.rebuilds, acs.boxCells,
+                        acs.shaped, static_cast<double>(acs.openness));
         }
         // M46b: レイトレ (デバッグ表示も GI 合成も off のときは行ごと出さない)
         const bool rtGiOn = ctx.renderSystem->enableRtGi;             // M46f

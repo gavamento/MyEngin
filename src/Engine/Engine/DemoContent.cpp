@@ -3061,8 +3061,13 @@ void BuildAcousticShowcaseScene(EngineContext& ctx)
     //   M65c からの規約。歩行者・敵とまったく同じ組み方。
     // ★**関数の末尾に足す** (以降のエンティティ index を動かさない = 波スロットの
     //   割り当て順と粒子 RNG のストリームを保つ)
+    // ★M68a: 耳 (Watcher Ears) を後から**子として**足すために ID だけ持ち出す。
+    //   Watcher ブロックの中でエンティティを増やすと以降の index が全部ずれ、
+    //   波スロットの割り当て順と粒子 RNG のストリームまで動く (末尾追加の鉄則)
+    EntityID watcherId = kNullEntity;
     {
         GameObject player = s.CreateGameObject("Watcher");
+        watcherId = player.Id();
         // ★y は敵 2 体と同じ 1.35。**CC の寸法にはスケールが掛かる** ので、
         //   height 1.6 x scale.y 1.6 = 全高 2.56 → 静止時の中心は床天面 + 1.28 になる。
         //   1.0 で置いたら床にめり込んだ状態から始まり、押し出しで浮き上がりながら
@@ -3113,6 +3118,41 @@ void BuildAcousticShowcaseScene(EngineContext& ctx)
         pl->range = 6.0f;
         pl->intensity = 0.0f; // 消灯 = 手札。設置中にスクリプトが 0 から育てる
         pl->color = { 1.0f, 0.86f, 0.62f }; // 携行灯らしい暖色 (残光の寒色と対になる)
+    }
+
+    // ---- M68a: 音響 × 実オーディオ (企画の波の 4 役目 = 耳に届く音) ----
+    // ★**関数の末尾に足す**。ここまでの理由と全く同じで、前に挿すと波スロットの
+    //   割り当て順と粒子 RNG のストリームが動いて replay 7 ペア目が割れる。
+    // ★3 つとも **NoHash / 出力レーン専用** のコンポーネントしか付けない
+    //   (AudioListener / AcousticAudio / AudioSource)。だから足しても sim は
+    //   1 バイトも変わらない — 「replay も golden も無風」がこの一点に乗っている。
+    {
+        // 耳は Watcher の**子**として置く。本体に直付けするとアーキタイプが変わり…
+        // …とは実は**ならない** (HierarchyComponent は全エンティティが生成時に持つので
+        // SetParent は 1 ビットも構造を変えない) のだが、子にしておくと
+        // 「頭の高さ」を後から独立に動かせるので、こちらを既定にしてある。
+        // 向きは本体の yaw をそのまま継ぐ (WatcherFpsCamera が本体を回す)
+        GameObject ears = s.CreateGameObject("Watcher Ears");
+        ears.SetParent(GameObject(&w, watcherId));
+        ears.SetLocalPosition(0.0f, 0.0f, 0.0f);
+        ears.AddComponent<AudioListenerComponent>();
+    }
+    {
+        // 調整卓。既定値のまま = spec §4.2 の表そのもの (耳で詰めるのは M68c の後)
+        GameObject tune = s.CreateGameObject("Acoustic Audio");
+        tune.AddComponent<AcousticAudioComponent>();
+    }
+    {
+        // 部屋 B の持続音。★**部屋 A からは一直線に見えない**位置 (map 6,9) に置くのが
+        //   要点で、廊下を進むと「戸口の方向から次第に開いて聞こえる」が体験できる。
+        //   MeshRenderer は付けない — 絵が 1 画素も変わらないことが golden 22 枚の条件
+        GameObject hum = s.CreateGameObject("Hum");
+        hum.SetLocalPosition(AcousticMapToWorld(6), 1.0f, AcousticMapToWorld(9));
+        auto* src = hum.AddComponent<AudioSourceComponent>();
+        // ★GUID を直書きしない。名前キーで引くのでチェックアウト先に依存しない
+        //   (モデル由来のサブアセット ID と同じ罠を避ける)
+        src->sound = AssetID{ ctx.sounds != nullptr ? ctx.sounds->ResolveKey(HashStr("hum")) : 0 };
+        src->playOnAwake = 1;
     }
 }
 

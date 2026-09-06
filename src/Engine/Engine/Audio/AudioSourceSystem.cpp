@@ -1,12 +1,15 @@
 #include "Engine/Engine/Audio/AudioSourceSystem.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 
 #include <DirectXMath.h>
 
 #include "Engine/Core/Components.h"
+#include "Engine/Core/Log.h"
 #include "Engine/Core/World.h"
+#include "Engine/Engine/Acoustic/AcousticField.h"
 #include "Engine/Engine/Audio/SoundAsset.h"
 
 using namespace DirectX;
@@ -137,6 +140,42 @@ bool FindListener(World& world, AudioListenerState& out, EntityID& outEntity)
     return true;
 }
 
+// M68a: 音響の調整卓を 1 個だけ選ぶ。**entity.index 最小の active かつ enabled** —
+// AcousticVolume / Skybox / Fog と同じ規約 (ForEachArchetype の走査順はアーキタイプの
+// 生成順なので、index で明示的に選ばないと「シーンの組み方で音が変わる」)
+const AcousticAudioComponent* FindAcousticAudio(World& world)
+{
+    const AcousticAudioComponent* best = nullptr;
+    EntityID bestEntity = kNullEntity;
+    const ComponentTypeId req[] = { AcousticAudioComponent::sTypeId };
+    world.ForEachArchetype(req, [&](Archetype& arch) {
+        const int ci = arch.FindTypeIndex(AcousticAudioComponent::sTypeId);
+        for (uint32_t row = 0; row < arch.Count(); ++row) {
+            const auto* c = static_cast<const AcousticAudioComponent*>(arch.GetPtr(ci, row));
+            if (!c->enabled) {
+                continue;
+            }
+            const EntityID e = arch.EntityAt(row);
+            if (!bestEntity.IsNull() && bestEntity.index <= e.index) {
+                continue;
+            }
+            if (!IsEntityActive(world, e)) {
+                continue;
+            }
+            bestEntity = e;
+            best = c;
+        }
+    });
+    return best;
+}
+
+// log 用のエンティティ名 (無ければ空文字)。**tick 内では安定**なので借用でよい
+const char* EntityNameOf(World& world, EntityID e)
+{
+    const auto* n = world.GetComponent<NameComponent>(e);
+    return (n != nullptr) ? n->value : "";
+}
+
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -204,6 +243,9 @@ void AudioSourceSystem::Reset()
     // リスナーになりかねないので自動へ戻す
     listenerOverride_ = kNullEntity;
     lastTickValid_ = false;
+    // M68a: シーンが替われば占有もリスナーも別物。**配列は捨てず valid だけ落とす**
+    // (次の Update が焼き直す)。統計は run 全体の診断値なので残す
+    acProbe_.valid = false;
 }
 
 AudioSourceSystem::SourceState& AudioSourceSystem::StateFor(EntityID e)
@@ -256,6 +298,7 @@ bool AudioSourceSystem::StartSource(AudioSystem& audio, const SoundAsset& asset,
     desc.spatial = spatial.spatialBlend > 0.0f ? &spatial : nullptr;
     st.voice = audio.Play(desc);
     st.vel = {};
+    st.shape = {}; // M68a: 鳴らし直しは遮蔽の平滑化も仕切り直す (次の整形でスナップ)
     return st.voice.Valid();
 }
 
@@ -337,6 +380,12 @@ void AudioSourceSystem::Update(World& world, AudioSystem& audio, const SoundLibr
     if (lastTickValid_ && tickIndex == lastTick_) {
         return;
     }
+    // ★M68a: 平滑化の歩幅は lastTick_ を**上書きする前**に取る (最小 1)。
+    //   追いつきフレームでは 1 フレームで複数 tick 進むので、ここを 1 固定にすると
+    //   実時間の遮蔽の追従がフレームレートに依存してしまう
+    const float acDTicks = (lastTickValid_ && tickIndex > lastTick_)
+        ? static_cast<float>(tickIndex - lastTick_)
+        : 1.0f;
     lastTick_ = tickIndex;
     lastTickValid_ = true;
 
@@ -361,6 +410,41 @@ void AudioSourceSystem::Update(World& world, AudioSystem& audio, const SoundLibr
         listener.velocity = listenerVel_.velocity;
     }
     audio.SetListener(listener);
+
+    // ---- 音響 × オーディオ (M68a): リスナー場 ----
+    // ★リスナーが確定した**後**でなければ焼けない (原点が耳のセルそのもの)。
+    //   逆に音源ループより**前**に済ませておかないと、同じフレームの voice が
+    //   1 本目と 2 本目で違う場を見ることになる
+    const AcousticAudioComponent* acComp = FindAcousticAudio(world);
+    const bool acOn = acComp != nullptr && acousticField_ != nullptr;
+    if (acOn) {
+        if (haveListener) {
+            const auto t0 = std::chrono::steady_clock::now();
+            const bool rebuilt =
+                UpdateAcousticProbe(*acousticField_, *acComp, listener.position, acProbe_);
+            if (rebuilt) {
+                const float ms = static_cast<float>(
+                    std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now()
+                                                              - t0)
+                        .count());
+                ++acStats_.rebuilds;
+                acStats_.probeMsLast = ms;
+                acStats_.probeMsTotal += ms;
+            }
+        } else {
+            acProbe_.valid = false; // 耳が 1 つも無いシーンは整形しない
+        }
+        ++acStats_.ticks;
+        acStats_.boxCells = static_cast<int32_t>(acProbe_.valid ? acProbe_.BoxCells() : 0);
+        acStats_.openness = acProbe_.valid ? acProbe_.openness : 0.0f;
+    } else {
+        acProbe_.valid = false; // 調整卓が消えた / 場が繋がっていない = 何も主張しない
+    }
+    // ★有効な AcousticAudio が無い / 場が繋がっていない tick は **Bypass 相当** =
+    //   spatial に 1 バイトも触らない (= M68 以前と 1 ビットも変わらない)
+    acStats_.active = acOn && acProbe_.valid;
+    const bool acLog = acOn && acousticLogTicks_ > 0
+        && tickIndex < static_cast<uint64_t>(acousticLogTicks_);
 
     // ---- 音源 ----
     const ComponentTypeId req[] = { AudioSourceComponent::sTypeId, WorldMatrixComponent::sTypeId };
@@ -387,6 +471,7 @@ void AudioSourceSystem::Update(World& world, AudioSystem& audio, const SoundLibr
                 }
                 st.started = false;
                 st.vel = {};
+                st.shape = {};
                 continue;
             }
 
@@ -404,6 +489,7 @@ void AudioSourceSystem::Update(World& world, AudioSystem& audio, const SoundLibr
                     st.started = PlayMusicSound(audio, a, kMusicDefaultFadeSeconds);
                 }
                 st.vel = {};
+                st.shape = {}; // BGM は 2D レーン = 遮蔽の対象外
                 continue;
             }
 
@@ -437,6 +523,29 @@ void AudioSourceSystem::Update(World& world, AudioSystem& audio, const SoundLibr
                 st.vel.valid = true;
             }
             spatial.position = pos;
+
+            // ---- 遮蔽・回折の整形 (M68a)。**規則はこの 1 本だけ** ----
+            // 一発再生 (M68b の波) も同じ関数を通る = 「テストが見ている規則」と
+            // 「実際に鳴らしている規則」が構造的に一致する
+            if (acOn) {
+                float acGain = 1.0f;
+                AcousticShapeInfo info;
+                ShapeAcousticSpatial(*acousticField_, acProbe_, *acComp, listener.position, pos,
+                                     spatial, acGain, &st.shape, acDTicks, &info);
+                desc.volume = std::clamp(desc.volume * acGain, 0.0f, 1.0f);
+                ++acStats_.shaped;
+                ++acStats_.classCount[static_cast<int>(info.cls)];
+                if (acLog) {
+                    MYE_LOG_INFO("[acaudio] t=%llu kind=voice src=%u name=%s class=%s "
+                                 "dPath=%.2f dLine=%.2f dReal=%.2f lpf=%.3f gain=%.3f open=%.2f",
+                                 static_cast<unsigned long long>(tickIndex), e.index,
+                                 EntityNameOf(world, e), AcousticPathClassName(info.cls),
+                                 static_cast<double>(info.dPath), static_cast<double>(info.dLine),
+                                 static_cast<double>(info.dReal), static_cast<double>(info.lpf),
+                                 static_cast<double>(info.gain),
+                                 static_cast<double>(acProbe_.valid ? acProbe_.openness : 0.0f));
+                }
+            }
 
             audio.SetVoiceVolume(st.voice, desc.volume);
             if (spatial.spatialBlend > 0.0f) {
