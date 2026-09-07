@@ -132,6 +132,20 @@ json WriteEntity(Scene& scene, EntityID e, uint32_t childIndex)
             comps[desc.name] = std::move(fields);
         }
     }
+    // ★M70a: 型を引けなかったコンポーネントを生 JSON のまま書き戻す。ここが無いと
+    //   「読めなかった状態で Ctrl+S」がディスクの側からデータを消す (Scene.h の解説)。
+    //   同名が登録済みになっていたら**アーキタイプ側が勝つ** — スキーマや DLL を直して
+    //   開き直したあとに二重書きしないため。json のオブジェクトはキー昇順で出力されるので、
+    //   ここでの挿入順は出力バイト列に影響しない
+    if (const Scene::UnknownCompSet* unknown = scene.GetUnknownComponents(fileId)) {
+        for (const auto& [compName, raw] : *unknown) {
+            if (comps.contains(compName)) {
+                continue;
+            }
+            json parsed = json::parse(raw, nullptr, false);
+            comps[compName] = parsed.is_discarded() ? json::object() : std::move(parsed);
+        }
+    }
     item["components"] = std::move(comps);
     // 記録があるときだけキーを出す (空配列も出す = 「新形式・上書き無し」の明示)。
     // 記録が無いエンティティ = プレハブ非メンバ or レガシー → キーごと省略し、旧形式の
@@ -173,17 +187,26 @@ void ReadEntityOverrides(Scene& scene, uint64_t fileId, const json& item)
 // removeHiddenMissing=true なら kComponentHidden なものも除去対象に含める (M48c) —
 // シリアライズされる隠しコンポーネントは PrefabInstance / PrefabLink だけなので、
 // これは実質「プレハブタグを JSON に一致させるか」のスイッチ。既定 false は従来どおりの
-// ビット不変ロード (シーンロード/ApplyDiff/プレハブ展開はタグを消してはならない)
-void ReadEntityComponents(World& world, EntityID e, const json& item,
-                          const std::function<EntityID(uint64_t)>& toEntity, bool removeMissing,
-                          bool removeHiddenMissing = false)
+// ビット不変ロード (シーンロード/ApplyDiff/プレハブ展開はタグを消してはならない)。
+//
+// ★M70a: 型を引けなかった分は捨てず Scene へ預ける (WriteEntity が書き戻す)。戻り値は
+// 預けた件数 — 呼び出し元がまとめて 1 行警告を出せるようにするため。fileId は預かりの鍵で、
+// 呼び出し元 3 本 (LoadFromJson / ApplyDiff / ApplyPartial) はいずれも 0 のものを弾いている
+int ReadEntityComponents(Scene& scene, uint64_t fileId, EntityID e, const json& item,
+                         const std::function<EntityID(uint64_t)>& toEntity, bool removeMissing,
+                         bool removeHiddenMissing = false)
 {
+    World& world = scene.GetWorld();
     const ComponentRegistry& reg = ComponentRegistry::Get();
     const json comps = item.contains("components") ? item["components"] : json::object();
+    Scene::UnknownCompSet unknown;
     for (const auto& [compName, fields] : comps.items()) {
         const ComponentTypeId t = reg.FindByName(compName);
         if (t == kInvalidComponentType) {
-            MYE_LOG_WARN("scene load: unknown component '%s' (skipped)", compName.c_str());
+            // 生 JSON のまま預ける。ここを `continue` だけにしていたのが M70a の地雷で、
+            // 「読めなかった」事実が呼び出し元にも保存側にも 1 バイトも伝わっていなかった
+            unknown.emplace(compName, fields.dump());
+            MYE_LOG_WARN("scene load: unknown component '%s' (kept verbatim)", compName.c_str());
             continue;
         }
         void* comp = world.AddComponentRaw(e, t); // 既存ならそのポインタ
@@ -216,6 +239,10 @@ void ReadEntityComponents(World& world, EntityID e, const json& item,
             }
         }
     }
+    // JSON が唯一の正解 (ReadEntityOverrides と同じ意味論) — 前回の預かりは必ず置き換える。
+    // マージにすると、ファイルから消したはずの未知コンポーネントが次の保存で蘇る
+    const int unknownCount = static_cast<int>(unknown.size());
+    scene.SetUnknownComponents(fileId, std::move(unknown));
     if (removeMissing) {
         if (const Archetype* arch = world.GetArchetype(e)) {
             std::vector<ComponentTypeId> types(arch->Types().begin(), arch->Types().end());
@@ -234,6 +261,7 @@ void ReadEntityComponents(World& world, EntityID e, const json& item,
             }
         }
     }
+    return unknownCount;
 }
 
 // DFS 順 (ルート firstRoot → 子は firstChild/nextSibling) で全エンティティと兄弟 index を収集
@@ -306,6 +334,16 @@ json SaveToJson(Scene& scene)
         EnsureFileId(scene, world, e);
     }
 
+    // M70a: 生きているエンティティの分だけ預かりを残す (孤児の掃除)。採番の後に行うこと
+    {
+        std::vector<uint64_t> liveFids;
+        liveFids.reserve(entities.size());
+        for (EntityID e : entities) {
+            liveFids.push_back(FidOf(world, e));
+        }
+        scene.RetainUnknownComponents(liveFids);
+    }
+
     json items = json::array();
     for (size_t i = 0; i < entities.size(); ++i) {
         items.push_back(WriteEntity(scene, entities[i], childIndices[i]));
@@ -358,14 +396,22 @@ bool LoadFromJson(Scene& scene, const json& root)
     };
 
     // 2) コンポーネントとフィールド (EntityRef は fileId で解決)
+    int unknownTotal = 0;
     for (const json& item : items) {
         const uint64_t fileId = item.value("fileId", 0ull);
         const EntityID e = toEntity(fileId);
         if (e.IsNull()) {
             continue;
         }
-        ReadEntityComponents(world, e, item, toEntity, /*removeMissing*/ false);
+        unknownTotal += ReadEntityComponents(scene, fileId, e, item, toEntity,
+                                             /*removeMissing*/ false);
         ReadEntityOverrides(scene, fileId, item); // M48e
+    }
+    if (unknownTotal > 0) {
+        // 型が引けない = スキーマ未登録 / GameLogic.dll のロード失敗 / C# ホストの初期化失敗。
+        // どの経路でも起動は続くので、「保存しても消えない」ことをここで明言しておく (M70a)
+        MYE_LOG_WARN("scene load: %d unknown component(s) kept verbatim (saving preserves them)",
+                     unknownTotal);
     }
 
     // 3) 親子関係 (ファイル順に SetParent → 兄弟順は DFS 順で復元される)
@@ -442,7 +488,7 @@ bool ApplyDiff(Scene& scene, const json& root)
             continue;
         }
         SetEntityName(world, e, item.value("name", std::string()));
-        ReadEntityComponents(world, e, item, toEntity, /*removeMissing*/ true);
+        ReadEntityComponents(scene, fid, e, item, toEntity, /*removeMissing*/ true);
         ReadEntityOverrides(scene, fid, item); // M48e
         ++updated;
     }
@@ -557,7 +603,8 @@ bool ApplyPartial(Scene& scene, const json& entities, bool removeHiddenMissing)
             continue;
         }
         SetEntityName(world, e, item.value("name", std::string()));
-        ReadEntityComponents(world, e, item, toEntity, /*removeMissing*/ true, removeHiddenMissing);
+        ReadEntityComponents(scene, fid, e, item, toEntity, /*removeMissing*/ true,
+                             removeHiddenMissing);
         ReadEntityOverrides(scene, fid, item); // M48e
     }
 
@@ -591,6 +638,9 @@ void RemapEntityRefsInComponents(json& components,
     for (auto& [compName, fields] : components.items()) {
         const ComponentTypeId t = reg.FindByName(compName);
         if (t == kInvalidComponentType) {
+            // 未登録型 (M70a のパススルー分) はフィールド表が無いので、どのキーが
+            // EntityRef なのか判定できない = 付け替えられない。複製した先の参照は
+            // 元の fileId を指したままになる。型が引ける状態で複製し直せば直る
             continue;
         }
         for (const FieldDesc& f : reg.Desc(t).fields) {

@@ -64,6 +64,22 @@ std::string ReadWholeTextFile(const std::wstring& path)
     return std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
 }
 
+// ★M70a: 型を引けなかったコンポーネントを抱えたまま保存したことを知らせる。
+// 保存自体は成功していて中身も消えていないが、**黙って通すと「保存したのに次に開くと
+// 値が既定へ戻った」ようにしか見えない** (実際は型が戻れば値も戻る)。Unity の
+// Missing Script と同じで、「保持している」と言い切ることが手当ての本体。
+// シーン保存とアセット (.actor.json / .prefab.json) 保存の 2 経路から呼ぶ
+void NotifyUnknownKept(ToastCenter& toasts, const Scene& scene)
+{
+    const size_t n = scene.UnknownComponentCount();
+    if (n == 0) {
+        return;
+    }
+    char buf[192];
+    std::snprintf(buf, sizeof(buf), Tr(StrId::Save_UnknownKept), static_cast<int>(n));
+    toasts.Notify(LogLevel::Warn, buf, 8.0f); // 既定 4s だと保存トーストに紛れて読み落とす
+}
+
 } // namespace
 
 void EditorApp::OnStart(EngineContext& ctx)
@@ -580,6 +596,7 @@ void EditorApp::SaveActorEdit(EngineContext& ctx)
         // 配置済みインスタンスへの伝播は ReloadHub (ファイル監視) の既存経路が拾う
         scm_.HintSaved(actorEdit_->path); // M66i: バッジと Changes の即時反映
         toasts_.Notify(LogLevel::Info, "アセットを保存しました: " + actorEdit_->name);
+        NotifyUnknownKept(toasts_, actorEdit_->scene); // M70a
     } else {
         toasts_.Notify(LogLevel::Error, "アセットを保存できませんでした");
     }
@@ -1449,6 +1466,7 @@ void EditorApp::SaveCurrentScene(EngineContext& ctx)
         toasts_.Notify(LogLevel::Info,
                        "シーンを保存しました: "
                            + WideToUtf8(std::filesystem::path(scenePath_).filename().wstring()));
+        NotifyUnknownKept(toasts_, *ctx.scene); // M70a
     } else {
         toasts_.Notify(LogLevel::Error, "シーンの保存に失敗しました");
     }

@@ -42,7 +42,7 @@ sln の外にもう 2 本ある。どちらも無い状態でエディタは起�
 
 **ドッグフーディングの記録は [docs/dogfooding.md](docs/dogfooding.md)** —
 作者視点で踏んだ 20 件を「何をしようとした / 何が無かった / どう回避した / エンジンをどう
-直すべきか」の形で残してある。**3 件は修正済み、17 件は未解決**で、その台帳も同じ文書にある
+直すべきか」の形で残してある。**4 件は修正済み、16 件は未解決**で、その台帳も同じ文書にある
 (最上位は「スキーマ未登録のコンポーネントがエディタ保存で黙って消える」= データ消失)。
 エンジン単体の回帰テストでは絶対に出てこない種類の穴が並んでいる。
 
@@ -334,6 +334,6 @@ DLL 境界 (`src/Shared/`) は C ABI + POD のみ (STL / vtable / 例外は越�
 ## ドキュメント
 
 - [docs/adr/](docs/adr/) — Architecture Decision Records (設計判断とトレードオフ)
-- [docs/dogfooding.md](docs/dogfooding.md) — 外部プロジェクトの作者視点で踏んだ 20 件 (3 件修正済み / 17 件未解決)
+- [docs/dogfooding.md](docs/dogfooding.md) — 外部プロジェクトの作者視点で踏んだ 20 件 (4 件修正済み / 16 件未解決)
 - [docs/demo_script.md](docs/demo_script.md) — デモ動画の台本
 - [docs/test_checklists.md](docs/test_checklists.md) — 手動テスト手順 (ホットリロード)

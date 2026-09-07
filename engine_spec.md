@@ -969,6 +969,7 @@ As a shared foundation for all hot-reload targets, the Core layer provides **fil
 - Monitor scene files, prefabs, and project settings, all stored as **JSON** (`.scene.json` / `.actor.json` / `project_settings.json`). A custom binary format was rejected: JSON diffs in review and merges in source control (§14), and the per-entity `fileId` already gives the stable identity a binary format would have provided
 - Detect edits made in an external editor and apply the differences to the running scene
 - Inspector changes are applied immediately and are treated as normal editing rather than hot reloading
+- **Loading is lossless (M70a).** A component whose type is not in the registry is parked on the scene as raw JSON (`Scene::unknownComps_`, keyed by `fileId`) and written back verbatim on save, rather than being dropped. Before M70a, loading discarded it and saving rebuilt `components` from the live archetype alone, so opening a scene whose types could not be resolved and pressing Ctrl+S **deleted the data on disk** - and not only for schema types: the engine keeps running when `GameLogic.dll` fails to load, so the same save wiped every C++ script component. The side table sits outside the ECS, is excluded from the world hash, and is deliberately **not** part of `SimSnapshot` (it never changes during a tick). A type that becomes registered later loses to the live archetype, so nothing is written twice. `Scene::kDocVersion` stays 3: a document with no unknown components is byte-identical to before
 
 ### 8.4 C++ Code (GameLogic.dll) — Core Engine Feature
 
@@ -2265,7 +2266,7 @@ to the physics roadmap.
 | M60′ e-n (XPBD deformables) | **Paused.** a-d shipped (backend, solver core, rope, two-way attachment). The remaining ten sub-milestones — particle/world collision, cloth, soft bodies, plasticity, showcase — are unstarted, and rope still has no replay or screenshot coverage |
 | M61 / M62 (physics roadmap) | **Unstarted.** Fracture, and thermal / fluid / optical / electrical. Roadmap only; see the numbering note above |
 | M64a-M64c (in-game UI) | **All three unstarted.** The plan `plans/gleaming-strolling-swing.md` covers canvas unification, UI events and focus, and Inspector metadata for script fields. **The labels collide with other work**: commit `080d5d5` shipped raw mouse look and `Active` hierarchy propagation, and its source comments call those M64a and M64b, but they are different changes. The consequence still stands — `UIHitTest` and focus navigation are hard-coded to 1920x1080 (`EngineApiTable.cpp:421-422, 773`) while the renderer works in real client pixels, so in-game UI hit testing is wrong at any other resolution |
-| Dogfooding backlog | 17 of the 20 findings in [`docs/dogfooding.md`](docs/dogfooding.md) are open, including one data-loss bug: components whose schema is not registered are silently dropped when the editor saves |
+| Dogfooding backlog | 16 of the 20 findings in [`docs/dogfooding.md`](docs/dogfooding.md) are open. The data-loss bug (finding 10) was closed by M70a - see §8.3 |
 
 ---
 

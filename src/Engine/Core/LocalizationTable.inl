@@ -476,6 +476,12 @@ MYE_STR(Insp_RevertAll,       "Revert All",                 "すべて戻す")
 MYE_STR(Insp_RevertAddedComp, "Revert Added Component",     "追加したコンポーネントを戻す")
 MYE_STR(Insp_RemovedComps,    "Removed prefab components:", "削除されたプレハブコンポーネント:")
 MYE_STR(Insp_RestoreComp,     "Restore",                    "復元")
+// 未知のコンポーネント (M70a)。型が引けないので編集はできないが、**保持していることを
+// 見せないとユーザーは「消えた」と思って作り直す** = 型が戻った瞬間に二重になる
+MYE_STR(Insp_UnknownComps,    "Unknown components (%d):",   "未知のコンポーネント (%d 個):")
+MYE_STR(Insp_UnknownCompsHint, "The type is not registered - the values are kept as-is and "
+                               "written back on save.",
+                               "型が登録されていません。値はそのまま保持され、保存時に書き戻されます。")
 // Collider の衝突マスク。元から "##mask" で ID を分けていたので "###" 付きに揃える
 MYE_STR(Insp_Everything,      "Everything###mask_all",      "すべて###mask_all")
 MYE_STR(Insp_Nothing,         "Nothing###mask_none",        "なし###mask_none")
@@ -750,6 +756,10 @@ MYE_STR(Confirm_UnsavedBody,  "The scene has unsaved changes. Save them?",
                               "シーンに未保存の変更があります。保存しますか？")
 MYE_STR(Confirm_Save,         "Save",       "保存する")
 MYE_STR(Confirm_DontSave,     "Don't Save", "保存しない")
+// ★M70a: 型を引けなかったコンポーネントを抱えたまま保存したときの告知。**黙って通すと
+// 「保存は成功したのに次に開くと値が既定へ戻る」に見える**ので、保持したことを必ず言う
+MYE_STR(Save_UnknownKept,     "Saved with %d unknown component(s) kept as-is.",
+                              "未知のコンポーネント %d 個を保持したまま保存しました。")
 
 // ---- インスペクター: オーディオ/マテリアルの手書きラベル (M47b) ----
 MYE_STR(Insp_Bus,             "bus",              "バス")

@@ -746,6 +746,24 @@ void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
         }
     }
 
+    // ---- 未知のコンポーネント (M70a) ----
+    // 型が引けていないので編集も削除もできないが、生 JSON のまま保持していて保存でも
+    // 消えない。**ここに出さないと「消えた」と思って作り直され、型が戻った瞬間に
+    // 二重になる**。マルチ選択では出さない (どの対象の話か行から読めないため)
+    if (!multi) {
+        if (const Scene::UnknownCompSet* unknown = ctx.scene->GetUnknownComponents(fid)) {
+            ImGui::Separator();
+            char header[96];
+            std::snprintf(header, sizeof(header), Tr(StrId::Insp_UnknownComps),
+                          static_cast<int>(unknown->size()));
+            ImGui::TextDisabled("%s", header);
+            for (const auto& [compName, raw] : *unknown) {
+                ImGui::TextDisabled("    %s %s", ICON_FA_CIRCLE_QUESTION, compName.c_str());
+            }
+            ImGui::TextDisabled("%s", Tr(StrId::Insp_UnknownCompsHint));
+        }
+    }
+
     // ---- Add Component ----
     ImGui::Separator();
     if (ImGui::Button(Tr(StrId::Insp_AddComponent), ImVec2(-1, 0))) {

@@ -1,6 +1,7 @@
 #include "Engine/Engine/SceneSelfTest.h"
 
 #include <algorithm>
+#include <map>
 #include <new>
 #include <string>
 #include <unordered_map>
@@ -2044,6 +2045,151 @@ bool RunSceneSerializerSelfTest()
         check(s.FindByFileId(id1).Id() == g3.Id() && s.FindByFileId(id2).Id() == g2.Id(),
               "fileId index: linear path agrees with cached path");
         World::SetSimCacheEnabled(savedFlag);
+    }
+
+    // ---- 未知コンポーネントのパススルー (M70a) ----
+    //
+    // 「型が引けないコンポーネントはロードで捨て、保存はアーキタイプだけを正本にする」
+    // という非対称が、**保存した瞬間にディスクからデータを消していた**。引き金は
+    // スキーマ未登録に限らず GameLogic.dll のロード失敗でも同じ (どちらも起動は続く)。
+    //
+    // ★このスイートは連鎖の 2 番目 (EditorMain.cpp)、RunSchemaSelfTest は 20 番目なので、
+    //   ここに来た時点でスキーマ型は 1 つも登録されていない = "MyeTestUnknownComp" が
+    //   未登録であることをレジストリを汚さずに保証できる
+    {
+        const char* kUnknown = "MyeTestUnknownComp";
+        check(ComponentRegistry::Get().FindByName(kUnknown) == kInvalidComponentType,
+              "unknown passthrough: the probe type really is unregistered");
+
+        // エンジンが吐いた文書を土台にする (手書きだとフィールド名の綴り違いで
+        // 「往復した」の判定が緩む)。そこへ未登録型を 2 エンティティ分ねじ込む
+        Scene src;
+        src.SetName("UnknownPassthrough");
+        GameObject keeper = src.CreateGameObjectTracked("Keeper");
+        keeper.SetLocalPosition(1.0f, 2.0f, 3.0f);
+        keeper.AddComponent<MeshRendererComponent>()->mesh = AssetID{ 0x55ull };
+        GameObject doomed = src.CreateGameObjectTracked("Doomed");
+        src.GetWorld().ApplyStructuralChanges();
+        const uint64_t keeperFid = keeper.GetComponent<FileIdComponent>()->value;
+        const uint64_t doomedFid = doomed.GetComponent<FileIdComponent>()->value;
+
+        // 文書の指紋。**配列順はルートの登録順に依存しうる**ので fileId で束ねてから
+        // 比較する (このファイル冒頭のラウンドトリップ検査と同じ理由)。中身は dump で
+        // 持つ = キー順・数値表記まで見る
+        auto fingerprint = [](const nlohmann::json& root) {
+            std::map<uint64_t, std::string> byFid;
+            for (const nlohmann::json& item : root["entities"]) {
+                byFid[item.value("fileId", 0ull)] = item.dump(2);
+            }
+            std::string out = root.value("sceneName", std::string()) + "|"
+                + std::to_string(root.value("nextFileId", 0ull)) + "|"
+                + std::to_string(root.value("version", 0));
+            for (const auto& [fid, text] : byFid) {
+                out += "|#" + std::to_string(fid) + "|" + text;
+            }
+            return out;
+        };
+
+        const nlohmann::json clean = SceneSerializer::SaveToJson(src);
+        nlohmann::json injected = clean;
+        for (nlohmann::json& item : injected["entities"]) {
+            const uint64_t fid = item.value("fileId", 0ull);
+            if (fid == keeperFid) {
+                // 数値表記・入れ子・非 ASCII まで通ることを見る (dump/parse を挟むため)
+                item["components"][kUnknown] = { { "alpha", 7 },
+                                                { "flag", true },
+                                                { "note", "日本語も通る" },
+                                                { "zeta", { 1.5, -2.25, 0.0 } } };
+            } else if (fid == doomedFid) {
+                item["components"][kUnknown] = { { "alpha", 99 } };
+            }
+        }
+
+        // (1) 未知ゼロの文書は 1 バイトも変わらない (既存シーンへの非干渉)
+        Scene s;
+        check(SceneSerializer::LoadFromJson(s, clean)
+                  && fingerprint(SceneSerializer::SaveToJson(s)) == fingerprint(clean),
+              "unknown passthrough: a document with no unknowns round-trips byte for byte");
+
+        // (2) 未知を含む文書がそのまま戻る — キー順・数値表記まで
+        check(SceneSerializer::LoadFromJson(s, injected), "unknown passthrough: load succeeds");
+        check(s.GetUnknownComponents(keeperFid) != nullptr
+                  && s.GetUnknownComponents(keeperFid)->count(kUnknown) == 1,
+              "unknown passthrough: the raw json is parked on the scene");
+        check(s.UnknownComponentCount() == 2, "unknown passthrough: both entities are counted");
+        check(fingerprint(SceneSerializer::SaveToJson(s)) == fingerprint(injected),
+              "unknown passthrough: load -> save reproduces the unknown component verbatim");
+        // 既知の側が巻き添えで壊れていないこと
+        {
+            GameObject k = s.FindByFileId(keeperFid);
+            auto* kmr = k ? k.GetComponent<MeshRendererComponent>() : nullptr;
+            check(kmr && kmr->mesh.value == 0x55ull,
+                  "unknown passthrough: the known components on the same entity still load");
+        }
+
+        // (3) ApplyDiff (ホットリロード経路) を挟んでも預かりが生き残る
+        check(SceneSerializer::ApplyDiff(s, injected)
+                  && fingerprint(SceneSerializer::SaveToJson(s)) == fingerprint(injected),
+              "unknown passthrough: survives a hot-reload ApplyDiff");
+
+        // (4) ファイルから消えた未知は蘇らない (預かりはマージではなく置換)
+        {
+            nlohmann::json dropped = injected;
+            for (nlohmann::json& item : dropped["entities"]) {
+                item["components"].erase(kUnknown);
+            }
+            check(SceneSerializer::ApplyDiff(s, dropped)
+                      && s.UnknownComponentCount() == 0
+                      && fingerprint(SceneSerializer::SaveToJson(s)) == fingerprint(clean),
+                  "unknown passthrough: an unknown removed from the file does not come back");
+        }
+
+        // (5) エンティティを破棄したら孤児が出力にも表にも残らない
+        check(SceneSerializer::LoadFromJson(s, injected), "unknown passthrough: reload for orphans");
+        s.FindByFileId(doomedFid).Destroy();
+        s.GetWorld().ApplyStructuralChanges();
+        {
+            const nlohmann::json after = SceneSerializer::SaveToJson(s);
+            bool orphan = false;
+            for (const nlohmann::json& item : after["entities"]) {
+                if (item.value("fileId", 0ull) == doomedFid) {
+                    orphan = true;
+                }
+            }
+            check(!orphan && s.GetUnknownComponents(doomedFid) == nullptr
+                      && s.UnknownComponentCount() == 1,
+                  "unknown passthrough: a destroyed entity leaves no orphan behind");
+        }
+
+        // (6) 型が登録されたらアーキタイプ側が勝つ (二重書き = 古い値での上書きをしない)。
+        //     スキーマや DLL を直したあと、リロードを挟まず Inspector で足した場合の経路
+        {
+            struct LateComp {
+                int32_t alpha = 0;
+            };
+            ComponentDesc d;
+            d.name = kUnknown;
+            d.nameHash = HashStr(kUnknown);
+            d.size = sizeof(LateComp);
+            d.align = alignof(LateComp);
+            d.flags = kComponentNone;
+            d.construct = [](void* p) { new (p) LateComp(); };
+            d.fields = { FieldDesc{ "alpha", FieldType::Int32,
+                                    static_cast<uint32_t>(offsetof(LateComp, alpha)),
+                                    kFieldNone } };
+            const ComponentTypeId lateType = ComponentRegistry::Get().Register(std::move(d));
+
+            const EntityID ke = s.FindByFileId(keeperFid).Id();
+            static_cast<LateComp*>(s.GetWorld().AddComponentRaw(ke, lateType))->alpha = 1234;
+            const nlohmann::json after = SceneSerializer::SaveToJson(s);
+            bool live = false;
+            for (const nlohmann::json& item : after["entities"]) {
+                if (item.value("fileId", 0ull) == keeperFid) {
+                    live = item["components"][kUnknown] == nlohmann::json{ { "alpha", 1234 } };
+                }
+            }
+            check(live, "unknown passthrough: a now-registered type is written from the archetype");
+        }
     }
 
     if (failCount == 0) {

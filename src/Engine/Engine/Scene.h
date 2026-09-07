@@ -1,8 +1,10 @@
 #pragma once
+#include <map>
 #include <set>
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <vector>
 
 #include "Engine/Core/World.h"
 #include "Engine/Engine/GameFlow.h"
@@ -56,6 +58,7 @@ public:
     {
         world_.Clear();
         overrides_.clear();
+        unknownComps_.clear();
         fileIdCache_.clear();
     }
 
@@ -126,6 +129,66 @@ public:
     }
     bool HasOverrideRecord(uint64_t fileId) const { return overrides_.count(fileId) != 0; }
 
+    // ---- 未知コンポーネントのパススルー (M70a) ----
+    //
+    // レジストリに引けなかった型のコンポーネントを、生 JSON のまま fileId 別に預かる表。
+    // 元凶は「ロードが非可逆 / 保存はアーキタイプだけを正本とする」という 2 経路の非対称で、
+    // **壊れるのは読めなかった瞬間ではなく保存した瞬間**だった。引き金はスキーマ型に限らず、
+    // GameLogic.dll のロード失敗や C# ホストの初期化失敗でも同じ消え方をする
+    // (どちらも起動は続行するので、気付くのは次に開いて調整値が既定値へ戻ったとき)。
+    // 「知らないから捨てる」を「知らないから触らない」へ寄せるための箱。
+    //
+    // overrides_ と同じく **ECS の外に置き WorldHash には入れない**。ただし overrides_ と違い
+    // **SimSnapshot にも入れない** — tick 中に 1 バイトも変化しないので撮る理由が無く、
+    // blob を太らせるだけ (Play/Stop の往復は SaveToJson/LoadFromJson が運ぶので無傷)。
+    // 内側を std::map にするのは出力順を決定論にするため (OverrideSet が std::set なのと同じ)。
+    using UnknownCompSet = std::map<std::string, std::string>; // 型名 → フィールドの生 JSON
+
+    // JSON が唯一の正解 (SetOverrides と同じ意味論)。空なら記録ごと消す —
+    // マージにすると、ファイルから消えたはずの未知コンポーネントが次の保存で蘇る
+    void SetUnknownComponents(uint64_t fileId, UnknownCompSet comps)
+    {
+        if (fileId == 0) {
+            return;
+        }
+        if (comps.empty()) {
+            unknownComps_.erase(fileId);
+        } else {
+            unknownComps_[fileId] = std::move(comps);
+        }
+    }
+    const UnknownCompSet* GetUnknownComponents(uint64_t fileId) const
+    {
+        auto it = unknownComps_.find(fileId);
+        return (it != unknownComps_.end()) ? &it->second : nullptr;
+    }
+    // 保持している総件数 (エディタの保存トーストが「N 個を保持したまま保存した」を出す)
+    size_t UnknownComponentCount() const
+    {
+        size_t n = 0;
+        for (const auto& [fid, set] : unknownComps_) {
+            n += set.size();
+        }
+        return n;
+    }
+    // live に無い fileId の預かりを捨てる (SaveToJson が全エンティティ確定後に呼ぶ)。
+    // 破棄済み fileId の分はどこからも書き出されないので無害だが、ApplyDiff
+    // (ホットリロード) を繰り返すと溜まりっぱなしになるため一掃する
+    void RetainUnknownComponents(const std::vector<uint64_t>& live)
+    {
+        if (unknownComps_.empty()) {
+            return;
+        }
+        std::set<uint64_t> keep(live.begin(), live.end());
+        for (auto it = unknownComps_.begin(); it != unknownComps_.end();) {
+            if (keep.count(it->first) != 0) {
+                ++it;
+            } else {
+                it = unknownComps_.erase(it);
+            }
+        }
+    }
+
     // ---- sim スナップショット (M52d) ----
     // SimSnapshot 専用の入り口。override 表は編集メタデータで WorldHash 非対象だが、
     // タイムトラベルで「過去の tick に戻る」ときは編集状態ごと戻さないと辻褄が合わない
@@ -145,6 +208,8 @@ private:
     uint64_t nextFileId_ = 1;
     int loadedVersion_ = kDocVersion; // LoadFromJson が文書の値で上書きする
     std::unordered_map<uint64_t, OverrideSet> overrides_; // fileId → 上書き済みキー集合
+    // fileId → 未登録型の生 JSON (M70a)。ロードで預かり、保存でそのまま書き戻す
+    std::unordered_map<uint64_t, UnknownCompSet> unknownComps_;
     // fileId → EntityID の検証つきキャッシュ (M51a)。ヒット時に生存 + 値一致を必ず確認
     // するため stale エントリは無害 (書込点の網羅は不要)。0 (未採番) は入れない
     std::unordered_map<uint64_t, EntityID> fileIdCache_;
