@@ -1259,7 +1259,8 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
             // M67f: 再利用の強さを実行中に触る。**非永続** (rtBounces と同じ扱い) で、
             // プロジェクトにも project_settings.json にも書かない — 既定の出所は
             // RtTypes.h の kRtReflClassTable ただ 1 か所という規約を崩さないため。
-            // ★ここで確定した値は後続 M67h が定数表へ焼く (spec §4.6)
+            // ★ここで触った値はどこにも残らない。既定値の確定は M67h で決着済みで、
+            //   出所は今も RtTypes.h ただ 1 か所 (ADR-016「S5 の結論」)
             if (ImGui::BeginMenu(Tr(StrId::Restir_Menu))) {
                 // 親が off なら reservoir すら確保されない (遅延確保) ので子は無効表示。
                 // ★判定は RenderSystem::RtRestirEffective() 1 本 (M67h)。トグルを直接

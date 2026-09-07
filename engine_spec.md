@@ -515,8 +515,9 @@ rejected alternatives and measured cost: **ADR-016**.
   on the moving reflection for a lag increase that **neither metric could resolve** (+0.042 to
   +0.083 by the rule's metric, 0.010 by a motion-isolated control). The rejected numbers are
   kept in ADR-016 so the change can be reverted on evidence. One golden moved
-  (`demo_render_rtrefl_restir`, maxDiff 5 over 233 pixels, 99.6% of them within the denoiser's
-  footprint around the pixels whose reservoir holds a `Hero` sample). Two consequences worth
+  (`demo_render_rtrefl_restir`, maxDiff 5 over 233 pixels, all of them within 10 px — Chebyshev,
+  median 1, p95 4 — of the pixels whose reservoir holds a `Hero` sample, so every one of them
+  sits inside the denoiser's ±12 px footprint). Two consequences worth
   knowing: `Hero` (16) now equals `Character` and `Default`, and since the class only selects
   `mCap` while spatial reuse is off, **those three behave identically in the shipping config**;
   and `RtSelfTest` now pins `hero.mCap <= every other class` so raising `Hero` again cannot
@@ -1944,8 +1945,8 @@ Eliminate cases in which the engine works in Debug but fails in Release, or vice
   nowhere: arrival energy is a pure function of the integer chamfer distance, so any of them can
   be rebuilt from (origin cell, ring, amplitude) alone after a restore. The fold is
   **content-gated** — with no active wave the section is not folded at all, which is why adding
-  the field left every replay pair and golden image that predates it bit-identical (seven pairs
-  and twenty-four images today)
+  the field left every replay pair and golden image that predates it bit-identical (the suite is
+  seven pairs and twenty-four images today)
 - The test can run in CI through a command-line invocation such as `Editor.exe --replay-verify xxx.rep`
 - `tools\replay_verify.bat` runs **seven scene pairs**, each rebuilt from code before recording:
   the default demo (scripts, physics, particles, schema fields), the parts showcase

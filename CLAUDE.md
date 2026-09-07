@@ -106,8 +106,8 @@ MyEngine — C++20 / DirectX 11 の自作ゲームエンジン (VS2022 / x64 / W
   ReSTIR や SVGF の画質を測るときは後者が要る — 凍結中は毎フレーム同じ 1spp なので差が出ない) /
   `--rt-restir` (M67d: 反射の時空間サンプル再利用。`--rt-refl` と併用) /
   `--rt-restir-spatial` (M67f: 空間再利用を on。**既定は off** = 目標帯の計測で temporal 単独に
-  負けたため) / `--rt-restir-no-spatial` (明示 off。既定と同値だが、S5 / M67h で既定を on へ
-  反転したときに「この run は off で撮った」を CLI に残せる) /
+  負けたため) / `--rt-restir-no-spatial` (明示 off。既定と同値だが、将来 既定を on へ
+  反転したときに「この run は off で撮った」を CLI に残せる。S5 は M67h で決着済み = off 維持) /
   `--rt-restir-visray` (M67f: 候補ごとに可視レイ。`--rt-restir` と `--rt-restir-spatial` を含意 —
   可視レイはタップループの中でしか撃たないので単体では no-op) /
   `--rt-class-override N` (M67f: 全インスタンスの ReflectionClass を N に強制、-1 = off。

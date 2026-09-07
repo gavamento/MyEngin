@@ -375,7 +375,10 @@ rem   つまりこの golden が固定しているのは「reservoir の配管�
 rem   ノイズ低減の質ではない (質の観測は --rt-anim-seed の A/B = 開発者の手元でだけ)。
 rem   spatial は画素ごとにタップ先が違うので凍結シードでも絵に出る (既定 off なので今は出ない)。
 rem ★自身が基準なので tol=0 (A5 の 1 ulp は「on と off を比べる」ときにしか出ない)。
-rem   M67h でユーザーの確定パラメータを焼いたら、この 1 枚は --update で撮り直す
+rem   M67i (2026-09-08) で Hero の M 上限を 8 -> 16 にしたので、この 1 枚は差し替え済み。
+rem   ★次に既定値を動かすときも **--update は使わない**。--update は 24 枚を一括で撮り直すので
+rem     「1 枚しか動いていない」を git status で示せなくなる。比較 run が tests\actual\ に
+rem     残した実物を tests\golden\ へ 1 枚コピーし、コピー後にもう一度この bat を回すこと
 set SHOT=--warp --no-audio --font-embedded --width 960 --height 540 --frames 41 --shot-frame 40 --no-fxaa
 call :shot demo_render_rtrefl_restir --render-demo --deferred --rt-refl --rt-restir
 set SHOT=%SHOTBASE% --no-fxaa
