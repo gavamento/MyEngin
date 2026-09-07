@@ -2264,7 +2264,7 @@ to the physics roadmap.
 |---|---|
 | M60′ e-n (XPBD deformables) | **Paused.** a-d shipped (backend, solver core, rope, two-way attachment). The remaining ten sub-milestones — particle/world collision, cloth, soft bodies, plasticity, showcase — are unstarted, and rope still has no replay or screenshot coverage |
 | M61 / M62 (physics roadmap) | **Unstarted.** Fracture, and thermal / fluid / optical / electrical. Roadmap only; see the numbering note above |
-| M64c | **Unstarted.** M64a (raw mouse delta, cursor lock, ABI v15) and M64b (`Active` hierarchy propagation, per-script `Start`) shipped; the remaining sub covers Inspector metadata for script fields |
+| M64a-M64c (in-game UI) | **All three unstarted.** The plan `plans/gleaming-strolling-swing.md` covers canvas unification, UI events and focus, and Inspector metadata for script fields. **The labels collide with other work**: commit `080d5d5` shipped raw mouse look and `Active` hierarchy propagation, and its source comments call those M64a and M64b, but they are different changes. The consequence still stands — `UIHitTest` and focus navigation are hard-coded to 1920x1080 (`EngineApiTable.cpp:421-422, 773`) while the renderer works in real client pixels, so in-game UI hit testing is wrong at any other resolution |
 | Dogfooding backlog | 17 of the 20 findings in [`docs/dogfooding.md`](docs/dogfooding.md) are open, including one data-loss bug: components whose schema is not registered are silently dropped when the editor saves |
 
 ---

@@ -389,6 +389,22 @@ Hierarchy からの `ImGui::AcceptDragDropPayload` を受ける + `MYE_F_REQUIRE
 
 | サブ | 状態 | コミット | メモ |
 |---|---|---|---|
-| M64a キャンバス統一 + 入力の記録 | 未着手 | | |
-| M64b UI イベント + フォーカス + ABI v15 | 未着手 | | |
+| M64a キャンバス統一 + 入力の記録 | 未着手 | | **ラベルが別作業に使われた** (下の注記) |
+| M64b UI イベント + フォーカス + ABI v15 | 未着手 | | 同上 |
 | M64c 穴埋め + インスペクタのメタデータ | 未着手 | | |
+
+★**ラベルの衝突に注意** (M69f で確認)。`080d5d5`「Raw Input マウスルック・カーソルロック
+対応/API拡張」で入った作業が、**ソースコメント上で M64a / M64b を名乗っている** —
+ただし中身はこの計画とは別物:
+
+| ラベル | この計画の中身 | `080d5d5` が実際にやったこと |
+|---|---|---|
+| M64a | キャンバス統一 (`mouseCanvasX/Y`、UI を 1920x1080 基準へ、`ui_probe` の数値 2 倍、golden 18 枚目) | 生マウスデルタ `mouseDeltaX/Y` + カーソルロック + ABI v15 (`GetMouseDelta` / `SetCursorMode`)。`InputSnapshot` 64→72B、`.rep` v5、snapshot v8 |
+| M64b | UI イベント + フォーカス駆動 + ABI v15 | `IsEntityActive` の祖先まで見る階層伝播 + 2 つ目以降のスクリプトの `Start()` 修正 (snapshot v9) |
+
+**この計画の 3 サブは 3 つとも未着手のまま**。根拠は実装:
+`mouseCanvasX/Y` は存在せず (`Input.h:30-31` にあるのは `mouseDeltaX/Y` だけ)、
+`uilayout::CanvasTransform` も無く、`EngineApiTable.cpp:421-422` (フォーカスナビ) と
+`:773` (`UIHitTest`) は今も `kRefW=1920 / kRefH=1080` の決め打ち。
+つまり**ゲーム内 UI は実解像度でヒットテストが合わない**という欠落 1 が残っている。
+再開するときは、ラベルを M64 のまま使うか新しい番号にするかを先に決めること。
