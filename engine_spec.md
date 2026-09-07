@@ -198,20 +198,61 @@ struct PlayerController : Script<PlayerController> {
 REGISTER_SCRIPT(PlayerController, FIELDS(moveSpeed, jumpCount));
 ```
 
-### 5.3 Frame Phases
+**Convention: tuning values belong in a schema component, not in script fields.**
+`MyeScriptField` carries only `{name, type, offset}`, so a script field reaches the Inspector as
+a bare English name and a plain drag widget — there is no way to attach a display name, tooltip,
+range or drag speed the way `MYE_JP(...)` does for a built-in component. Put anything an author
+will tune at runtime in a **schema component** (`assets/schemas/*.component.schema.json`, §10),
+which supports `display` / `tooltip` / `min` / `max` / `speed` and generates a labelled slider
+automatically; scripts then read the value with `MyeGetField`. This is not a workaround: it keeps
+data separate from logic and lets several scripts read the same value. It is recorded here because
+the alternative — widening the script ABI — buys less and costs a version bump
+(see [`docs/dogfooding.md`](docs/dogfooding.md), finding 2).
+
+### 5.3 Frame and Tick Phases
+
+A frame and a tick are **not the same thing**. `EngineLoop` accumulates real time and runs the
+fixed 60 Hz tick zero or more times before drawing once, so anything that must be deterministic
+belongs to the tick and anything that draws belongs to the frame.
 
 ```
-1. Update time / acquire input
-2. Detect and apply hot reloads at a safe point
-3. Script layer: Start for newly created scripts → Update
-4. System layer: animation → particles → Transform hierarchy update
-5. Script layer: LateUpdate
-6. Rendering through Renderer
-7. Apply all structural changes
-8. Render ImGui / Present
+Frame (EngineLoop)
+  1. Update time / acquire input
+  2. Detect and apply hot reloads at a safe point
+  3. Run 0..5 ticks from the accumulator   ← RunOneTick, below
+  4. Rendering through Renderer
+  5. Render ImGui / Present
 ```
 
-- **Adopted**: a fixed 60 Hz timestep drives this phase list, and structural changes are applied at the end of each tick rather than the end of the frame (ADR-005). Replay reproducibility in Section 11.3 depends on it
+```
+Tick (RunOneTick, TickRunner.cpp)
+  3    Script layer: Start for newly created scripts → Update
+  3.4  Acoustic propagation, then agent AI that consumes it (M65a / M65f)
+  3.5  Animation: resolve LocalTransform before the hierarchy is flattened
+  3.6  Physics: integrate rigid bodies, still before the hierarchy update
+  4    System layer: particles → Transform hierarchy update
+  5    Script layer: LateUpdate
+  7    Apply all structural changes (end of tick, not end of frame — ADR-005)
+  ·    End-of-tick world hash (§11.3)
+  ·    Output lanes, after the hash: audio drain, save write, load consume, scene transition
+```
+
+The numbering is historical and deliberately preserved, because the source cites it: phases 3.4,
+3.5 and 3.6 were inserted between the original 3 and 4 as acoustics, animation and physics
+arrived, and `TickRunner.cpp` names them by these numbers.
+
+Three consequences worth stating, because each one has caused a bug:
+
+- **Acoustics runs at 3.4, before animation and physics**, so an agent hears a sound and acts on
+  it within the same tick. Moving it to phase 4 would delay every reaction by one tick.
+- **`Start()` runs at phase 3, but `TransformSystem` runs at phase 4.** On the first tick after a
+  scene load, `WorldMatrixComponent` is not yet resolved, so **spatial queries do not work inside
+  `Start()`** — a raycast there hits nothing. The editor hides this (it renders before Play, which
+  fills the matrices), so it fails only in `Runtime.exe`. Do the work on the second tick instead.
+- **Output lanes run after the hash**, which is what lets audio, saving and scene transitions
+  exist at all without entering the simulation state.
+
+- **Adopted**: a fixed 60 Hz timestep drives the tick list above, and structural changes are applied at the end of each tick rather than the end of the frame (ADR-005). Replay reproducibility in Section 11.3 depends on it
 - Script execution order within the same phase is deterministic and follows registration order. Undefined ordering is not permitted under the consistency policy
 
 ---
@@ -1203,7 +1244,7 @@ want a different value from ragdolls, and it lives **inside the existence gate**
 `Aero.surfaceModel` switches how drag is computed — from the orientation-blind representative area
 of M59b to a per-face pressure integral (`Physics/AeroSampling.h`). The kernel is one pure function
 over a **surface element** (point, outward normal, area, the velocity of that point); the shape
-emitters that feed it are the only part that knows about boxes and capsules, and M60' cloth is
+emitters that feed it are the only part that knows about boxes and capsules, and M60′ cloth is
 expected to become its second caller by emitting its own elements.
 
 | Concept | Decision |
@@ -2169,6 +2210,10 @@ enforcement. `--net-demo` (`NetDuelDemo` + `NetHudDemo`) exists as the worked ex
 
 ## 12. Milestones
 
+### 12.1 The original plan (M0-M7)
+
+Kept verbatim, because the completion criteria it set are still the ones the project is held to.
+
 | M | Scope | Completion Criteria |
 |---|---|---|
 | M0 | Foundation | Window creation, DirectX 11 initialization, main loop, logging, and ImGui rendering |
@@ -2180,7 +2225,47 @@ enforcement. `--net-demo` (`NetDuelDemo` + `NetHudDemo`) exists as the worked ex
 | M6 | Consistency verification | Replay consistency tests running in CI and static enforcement of coding rules |
 | M7 | Finalization | Demo scene, Profiler, documentation, and video recording |
 
-The order is intentional: implementing the reload foundation in M3 first accelerates subsequent particle development through dogfooding.
+The order was intentional: implementing the reload foundation in M3 first accelerated subsequent particle development through dogfooding.
+
+### 12.2 What was actually built (M0-M68)
+
+**2026-07-19 → 2026-09-07, 268 commits.** The primary source is `git log`; the prefix on each
+commit subject names the milestone. Grouped by system rather than by number, because the numbers
+interleave — several tracks ran in parallel and a few milestones were revisited weeks later.
+
+| Group | Milestones | Delivered |
+|---|---|---|
+| Foundation, ECS, editor shell | M0-M2, M8-M11 | Win32 / DX11 / fixed tick / ImGui; GameObject over an archetype ECS; Hierarchy, reflection-driven Inspector, Console, Scene View, Play; `fileId` identity, Undo/Redo, multi-selection, sibling order; ImGuizmo gizmos, click picking, camera control; editor overlays; Asset Browser |
+| Hot reloading | M3, M4 | Shaders (include dependency graph, last-good kept on failure), textures, models, scene JSON by `fileId` diff; **GameLogic.dll with script state preserved** (ADR-002 / ADR-003) |
+| Rendering core | M6.5, M12, M16, M17, M38, M43, M44, M53 | Deferred + Forward switchable at runtime (ADR-007); Profiler; frustum culling and HDR / post-process; shadows, PBR, `.mat.json`, normal maps; linear pipeline (sRGB decode, OETF); height fog and sun inscattering; colour grading LUT; material live preview |
+| Rendering roadmap | M54-M58 | Local-light shadow atlas; TAA and screen-space velocity; decals; hierarchical Z-buffer; SSR; reflection probe capture and local probes; froxel volumetric fog; terrain assets, cook, LOD and collision |
+| Ray tracing | M46, M67 | Hybrid path tracing on `cs_5_0` with a hand-written BVH — diffuse GI, directional shadows, specular reflections, SVGF denoise (ADR-009); ReSTIR reflections and `ReflectionClass` (ADR-016), default off |
+| Particles and VFX | M5, M29, M32, M42, M61, M63 | CPU (SoA + SIMD) and GPU (compute) back ends with runtime switch and side-by-side comparison; Sprite / Trail / TextMesh; Skybox, Fog, per-camera post-process; bursts, gradients, flipbooks, `EffectComponent` lifecycle; scene depth SRV, soft particles, GPU bitonic sort, distortion; A-group and B-group expansions (rotation, lighting) |
+| Animation and skinning | M14, M18, M22 | Animation clips, keyframe tracks and the Animation window; skeletal animation with GPU skinning (128-bone palette, glTF and FBX); Animator Controller with a node graph |
+| Assets and prefabs | M13, M23, M24, M30, M36, M39-M41, M48-M50 | Prefabs; asset database with `.meta` GUIDs and async loading; BCn / DDS cook and ufbx FBX import; GUID key resolution that survives renames; collision layers and masks; component copy / paste / reset; static mesh colliders with a BVH; **compose assets (`.actor.json`, prefab 2.0)** with parts, sockets and structural overrides (ADR-011 / ADR-012) |
+| Scripting, ABI and input | M19, M21, M31, M34, M35, M37, M47, M64 | Gamepad, XAudio2 and `LoadScene`; in-game UI; script drag-and-drop attach; Japanese in-game text with a dynamic glyph cache; `fillAmount`, 9-slice, focus navigation; ABI bundles; editor localisation (ADR-010); raw mouse look and cursor lock, `Active` propagating down the hierarchy |
+| Audio | M45 | Decode, voice pool, bus graph with dB faders and mute / solo, reverb presets, streaming music, a procedural synth window |
+| Physics | M20, M28, M59, M60, M60′ | Rigid bodies and raycasts; capsules and OBBs; an accumulated-impulse substepping solver with aerodynamics, buoyancy, gyroscopic terms, friction, material assets, sleep and islands, CCD and terrain height fields; joints, motors, breakage, compound and convex colliders, ragdolls, vehicles; an XPBD lane for deformables (rope) |
+| Acoustics | M65, M68 | Integer chamfer wavefront propagation in which **one field serves four roles** — the glow volume that draws the world, enemy hearing with direction of arrival, navigation drawn from the same weights, and the player's ears (ADR-017); occlusion and diffraction shaping, room reverb interpolation, waves that are actually audible |
+| Determinism and verification | M6, M51, M52 | Replay hashing across Debug / Release plus static rule checks; sim indices, game flow, pause and time scale, save / load, staged packaging; field-level hash diffing, a `git bisect` wrapper, time travel, crash bundles that replay, **two-player P2P rollback netcode** (ADR-013); CI and pixel regression (ADR-014) |
+| Project system and source control | M26, M27, M33, M66 | `--project` and the project manager; editor theme and Japanese fonts; **Git for the project repository from inside the editor**, backed by an in-process Rust cdylib behind six C entry points (§14, ADR-015) |
+| Infrastructure | M25 | Job system (`ParallelFor` / `ParallelRanges`), used by the transform hierarchy and frustum culling |
+
+**A note on the numbering.** M17-M25 and M30-M31 have no commits of their own: they were finished
+before the repository was brought up to date and landed in two bundle commits (`M16-M25` and
+`M29-M32`) whose bodies list them individually. **M61 and M62 are overloaded** — the physics
+roadmap in `plans/` reserved them for fracture and for thermal / fluid work, but the numbers were
+later spent on the particle A-group expansion. Nothing named M61 or M62 in this repository refers
+to the physics roadmap.
+
+### 12.3 Paused and unstarted
+
+| Item | State |
+|---|---|
+| M60′ e-n (XPBD deformables) | **Paused.** a-d shipped (backend, solver core, rope, two-way attachment). The remaining ten sub-milestones — particle/world collision, cloth, soft bodies, plasticity, showcase — are unstarted, and rope still has no replay or screenshot coverage |
+| M61 / M62 (physics roadmap) | **Unstarted.** Fracture, and thermal / fluid / optical / electrical. Roadmap only; see the numbering note above |
+| M64c | **Unstarted.** M64a (raw mouse delta, cursor lock, ABI v15) and M64b (`Active` hierarchy propagation, per-script `Start`) shipped; the remaining sub covers Inspector metadata for script fields |
+| Dogfooding backlog | 17 of the 20 findings in [`docs/dogfooding.md`](docs/dogfooding.md) are open, including one data-loss bug: components whose schema is not registered are silently dropped when the editor saves |
 
 ---
 
@@ -2205,7 +2290,8 @@ ADR-009 hybrid path tracing (§6.4) / ADR-010 editor localization (§9.1) /
 ADR-012 structural prefab overrides / **ADR-013 predictive rollback netcode** (§11.4) /
 **ADR-014 CI and pixel regression** (§11) /
 **ADR-015 in-process Rust collab service (`MyeCollab.dll`)** (§14) /
-**ADR-016 ReSTIR reflections and `ReflectionClass`** (§6.4).
+**ADR-016 ReSTIR reflections and `ReflectionClass`** (§6.4) /
+**ADR-017 acoustic propagation driving real audio** (§10.6).
 
 ---
 
