@@ -1,9 +1,9 @@
 # Custom Game Engine Specification
 
-- **Engine Name**: [TBD]
-- **Version**: Draft 0.1
+- **Engine Name**: MyEngine
+- **Version**: 1.0 (as of M68)
 - **Author**: Gavament
-- **Last Updated**: 2026-07-19
+- **Last Updated**: 2026-09-07
 
 ---
 
@@ -33,15 +33,20 @@ The primary purpose of this engine is to serve as a job-hunting portfolio projec
 - Recruiters and technical interviewers (to review design decisions and their rationale)
 - The developer (as an implementation reference)
 
-### 1.4 Out of Scope
+### 1.4 Scope Boundaries
 
-To prioritize the completeness of the project as a portfolio piece, the following items are excluded from the initial scope:
+The initial scope deliberately excluded several areas to keep the project completable as a portfolio piece. Two of them were later brought in once the determinism work made them cheap; the rest still stand.
+
+**Still out of scope**
 
 - Cross-platform support (Windows only)
-- DirectX 12 / Vulkan support (the abstraction layer will only be designed with future extensibility in mind)
-- Networking features
-- A custom 3D physics engine ([TBD]: implement only simple collision detection / integrate an external library / exclude entirely)
-- Embedded scripting languages such as Lua — scripts will be written in C++ as a logic DLL
+- DirectX 12 / Vulkan support (the abstraction layer is only designed with future extensibility in mind)
+- Embedded scripting languages such as Lua — scripts are written in C++ as a logic DLL, with C# (CoreCLR + Roslyn) added later as a second lane that talks to the engine only through the slot table in `EngineAPI.h`
+
+**Originally out of scope, implemented later**
+
+- **Networking** (M52h / M52i) — two-player P2P delay lockstep with predictive rollback (§11.4, ADR-013). Reconsidered because the fixed tick and per-tick world hash built for §11.3 already supply everything rollback netcode needs: the net layer only assembles the input lanes a tick consumes and **writes no simulation state at all**.
+- **A custom 3D physics engine** (M59 / M60) — an accumulated-impulse substepping solver with aerodynamics, buoyancy, material assets, joints, ragdolls and vehicles (§10.4, §10.5), plus an XPBD lane for deformables (M60′, partially complete). Integrating an external library was rejected because a third-party solver would have to stay bit-identical across Debug, Release and the CI WARP runner to satisfy §11, which none of the candidates guarantees.
 
 ---
 
@@ -51,11 +56,11 @@ To prioritize the completeness of the project as a portfolio piece, the followin
 |---|---|
 | Target OS | Windows 10 / 11 (x64) |
 | Development Environment | Visual Studio 2022 |
-| Language Standard | C++20 [TBD: whether to use C++17 instead] |
+| Language Standard | C++20 (`<LanguageStandard>stdcpp20` in `build/Common.props`) |
 | Graphics API | DirectX 11 (Feature Level 11_0) |
 | Shaders | HLSL (Shader Model 5.0, including Compute Shaders) |
 | GUI | Dear ImGui (docking branch) |
-| Build System | [TBD: native Visual Studio solution / CMake / Premake] |
+| Build System | Native Visual Studio solution (`MyEngine.sln` + `build/Common.props`); CMake and Premake rejected (ADR-006) |
 
 ### 2.1 Build Configurations
 
@@ -100,7 +105,7 @@ Higher-level layers may depend only on lower-level layers. Reverse dependencies 
 | Engine.lib | Static library | Platform / Core / Renderer / Engine layers |
 | Editor.exe | Executable | Engine and editor; host process during development |
 | GameLogic.dll | Dynamic library | User scripts. **Target of hot reloading** |
-| Runtime.exe | Executable | Standalone game runtime without the editor (for distribution) [TBD: whether to include in the initial scope] |
+| Runtime.exe | Executable | Standalone game runtime without the editor (for distribution). Included; it shares the engine with Editor.exe and is what a packaged build ships (§9, Build Settings) |
 
 **Design Decision**: Keep the engine itself statically linked and restrict hot reloading to GameLogic.dll. Compared with making the entire engine a DLL, this significantly reduces the complexity of preserving state and maintaining vtable compatibility during reloads.
 
@@ -206,7 +211,7 @@ REGISTER_SCRIPT(PlayerController, FIELDS(moveSpeed, jumpCount));
 8. Render ImGui / Present
 ```
 
-- [TBD] Introduce a fixed timestep equivalent to FixedUpdate. This is recommended if replay reproducibility in Section 11.3 is prioritized
+- **Adopted**: a fixed 60 Hz timestep drives this phase list, and structural changes are applied at the end of each tick rather than the end of the frame (ADR-005). Replay reproducibility in Section 11.3 depends on it
 - Script execution order within the same phase is deterministic and follows registration order. Undefined ordering is not permitted under the consistency policy
 
 ---
@@ -744,16 +749,16 @@ IParticleBackend (switchable interface)
 |---|---|---|
 | Update | SoA layout + SIMD | Compute Shader (`Dispatch`) |
 | Random numbers | Engine-provided deterministic RNG, as defined in Chapter 11 | Pre-generate a seed array and supply it through a buffer. Do not generate random numbers on the GPU, to preserve determinism |
-| Alive-particle management | swap-and-pop | Free list or compaction [TBD] |
-| Initial maximum count | 100,000 per emitter [TBD] | 1,000,000 per emitter [TBD] |
+| Alive-particle management | swap-and-pop | **Both**: a dead list (append / consume) hands out slots and an alive list A/B ping-pong compacts the survivors (`GpuParticleBackend.h`) |
+| Initial maximum count | 100,000 per emitter (`ParticleEmitterComponent::maxParticles` default) | GPU pool capacity is `maxParticles` clamped to [1,024, 1,000,000] (`GpuEmitterCapacityFor`) |
 | Sorting for blended draw order | CPU sorting (`std::sort`) | Bitonic sort on the GPU (M42追補). Both back ends use the same key on every emitter except distortion: view-space z descending, ties by ascending index |
 
 ### 7.4 Switching Behavior
 
 - Select the backend using radio buttons in the editor’s Particle Settings window. The selection is saved as a project setting
 - `--particle-backend <cpu|gpu>` and `--particle-compare` (M57追補) force the choice from the command line for a single run. They take precedence over the project setting and are **deliberately not written back**, so a screenshot run cannot silently change what the editor opens with next time. An unrecognised value is rejected rather than defaulting, because a silent fallback to CPU would quietly turn a "GPU" golden into a CPU one. Before these existed the GPU backend was reachable only from the editor GUI, which is why its draw path had no pixel coverage at all
-- On switching, **discard all living particles and restart the emitter** in the initial implementation
-  - [TBD] Whether to support preservation of living particles through GPU-to-CPU and CPU-to-GPU buffer transfer in a later milestone
+- On switching, **discard all living particles and restart the emitter**
+  - **Decided: not supported.** Carrying living particles across a switch would need a GPU-to-CPU readback, which ADR-008 forbids outright. The emitter restarts instead, and because both back ends draw from the same deterministic RNG stream the restarted run is reproducible
 - Provide a comparison mode that runs the same emitter on both backends in parallel, displays them side by side, and shows update time in milliseconds. This will serve as a portfolio showcase feature
 
 ### 7.5 Consistency
@@ -920,7 +925,7 @@ As a shared foundation for all hot-reload targets, the Core layer provides **fil
 
 ### 8.3 Parameters / Scene Data
 
-- Monitor scene files, prefabs, and project settings, all stored in a text format: [TBD: JSON / custom format]
+- Monitor scene files, prefabs, and project settings, all stored as **JSON** (`.scene.json` / `.actor.json` / `project_settings.json`). A custom binary format was rejected: JSON diffs in review and merges in source control (§14), and the per-entity `fileId` already gives the stable identity a binary format would have provided
 - Detect edits made in an external editor and apply the differences to the running scene
 - Inspector changes are applied immediately and are treated as normal editing rather than hot reloading
 
@@ -960,7 +965,7 @@ As a shared foundation for all hot-reload targets, the Core layer provides **fil
 |---|---|
 | Hierarchy | Display the scene’s GameObject tree; select objects; modify parent-child relationships; create and delete objects |
 | Inspector | Display and edit components on the selected GameObject; generated automatically through reflection |
-| Scene View | Render the scene and provide translation, rotation, and scale gizmos [TBD: whether gizmos are included in the initial scope]. Camera authoring: the **selected** camera draws a frustum wire (aspect fixed at 16:9, far clipped for legibility by a toolbar slider) and a small preview of what it sees in the bottom-right corner; the Camera component has a **Pilot** button that redirects the scene view's fly controls (RMB look + WASDQE / wheel dolly / MMB pan) to that camera entity while the viewpoint stays put. Piloting rotates the pose as a quaternion delta — yaw about world up, pitch about the camera's own right axis — so an authored roll survives; decomposing to yaw/pitch would silently flatten it (`CameraPilotSelfTest`) |
+| Scene View | Render the scene and provide translation, rotation, and scale gizmos (ImGuizmo, with configurable translate / rotate / scale snapping). Camera authoring: the **selected** camera draws a frustum wire (aspect fixed at 16:9, far clipped for legibility by a toolbar slider) and a small preview of what it sees in the bottom-right corner; the Camera component has a **Pilot** button that redirects the scene view's fly controls (RMB look + WASDQE / wheel dolly / MMB pan) to that camera entity while the viewpoint stays put. Piloting rotates the pose as a quaternion delta — yaw about world up, pitch about the camera's own right axis — so an authored roll survives; decomposing to yaw/pitch would silently flatten it (`CameraPilotSelfTest`) |
 | Game View | Display the game camera view |
 | Console | Display logs, shader compilation errors, and hot-reload notifications |
 | Profiler | Display frame time, phase timings, and particle update time for CPU and GPU implementations |
@@ -969,7 +974,7 @@ As a shared foundation for all hot-reload targets, the Core layer provides **fil
 | Source Control | Git for the project repository (§14), in three tabs — **Changes** (pair-aware working tree, stage / unstage / revert, commit message, "save and commit"; selecting a file opens the read-only **Diff** window), **Branches** (list / create / switch, with the A/B/C reload stage decided before the checkout runs) and **History** (the last 100 commits). Conflicts take over the Changes list while a merge is in progress. Write operations are greyed out with the full list of reasons whenever the gate is closed (§14.3). When the feature cannot run at all, the window states which of the eight reasons applies (`NoProject` on a bare start, no `MyeCollab.dll`, protocol mismatch, no git, git < 2.11, not a repository, project root is not the repository top, service died) rather than collapsing them into one message |
 | Build Settings | One-stop staged packaging (M51j): 1) script rebuild (C++ GameLogic + C# Roslyn, opt-out) → 2) asset cook warm-up → 3) package copy (Runtime.exe + GameLogic.dll + C# host + assets + boot scene + **sealed cooked cache**, §10.2) → 4) batch DDS texture cook (opt-in) → 5) zip (opt-in). Child processes (script build / `tar.exe`) are polled per frame so the UI stays live; each stage reports OK/NG in a list. The same pipeline runs from the CLI for CI: `Editor.exe --package <dir> [--package-dds] [--package-zip]` |
 
-- Provide Play / Pause / Step controls. Editing policy during Play mode: [TBD: discard changes as Unity does / save changes]
+- Provide Play / Pause / Step controls. **Editing during Play mode is discarded, as in Unity**: `PlayModeController` snapshots the scene to JSON on Play and restores it on Stop. The persistent store and pause state are snapshotted separately, because otherwise values written during Play leak into the editing state after Stop
 
 ### 9.1 Localization
 
@@ -1742,7 +1747,7 @@ Eliminate cases in which the engine works in Debug but fails in Release, or vice
 3. For every frame, calculate and record a hash of world state, including all entity Transforms, major components, and internal deterministic RNG state
 4. Compare the hash sequences from both configurations. **The test fails if even one frame differs**, and reports the first divergent frame together with the differing state
 
-- Introducing a fixed timestep, marked [TBD] in Section 5.3, is strongly recommended as a prerequisite
+- The fixed timestep adopted in Section 5.3 is a prerequisite, not an option: a variable delta time makes the hash sequence unreproducible by construction
 - CPU particles are included in the hash. GPU particles are excluded because they are rendering output; their behavior is verified separately through comparison mode without readback
 - **Out-of-ECS sim state** is carried by a three-part contract: the pool itself, a `WorldHasher`
   section reached through `SimSources`, and a `SimSnapshot` section reached through `SimRefs`.
@@ -2434,20 +2439,23 @@ which turns the self test's DLL round trip from SKIP into a failure.
 
 ---
 
-## Appendix A: List of Undecided Items
+## Appendix A: Decisions Log
 
-| Chapter | Item | Options |
-|---|---|---|
-| Cover | Engine name | — |
-| 1.4 | Physics | Simple custom implementation / external library / out of scope |
-| 2 | C++ standard | C++20 / C++17 |
-| 2 | Build system | Native Visual Studio solution / CMake / Premake |
-| 3.2 | Runtime.exe | Whether to include it in the initial scope |
-| 5.3 | Fixed timestep | Introduce it (recommended) / variable timestep only |
-| 6.1 | Rendering path | Forward / Deferred |
-| 6.2 | Shadows, post-processing, and skinning | Priority of each feature |
-| 7.3 | Maximum particle count, GPU alive-particle management, and sorting | — |
-| 7.4 | Particle preservation when switching backends | Discard in the initial version / support later |
-| 8.3 | Scene file format | JSON / custom format |
-| 9 | Gizmos / Play-mode editing policy | — |
-| 10 | Texture cache / model format | — |
+Every question this document once left open. They are kept rather than deleted: what was uncertain
+at the start, and what settled it, is the part of the project worth discussing.
+
+| Chapter | Question | Decision | What settled it |
+|---|---|---|---|
+| Cover | Engine name | **MyEngine** | Used by `MyEngine.sln`, the README title and the `"engine"` key every `.scene.json` carries |
+| 1.4 | Physics: simple collision / external library / out of scope | **Custom solver** (M59, M60) | An external solver would have to stay bit-identical across Debug, Release and the CI WARP runner to satisfy §11. No candidate guarantees that, so the constraint chose the answer |
+| 2 | C++ standard: C++20 / C++17 | **C++20** | `<LanguageStandard>stdcpp20` in `build/Common.props`; designated initializers carry the `FieldDesc` tables in §4 |
+| 2 | Build system: VS solution / CMake / Premake | **Native VS solution** | ADR-006. One IDE, one compiler, one platform — a generator would add a layer with nothing to abstract over |
+| 3.2 | Runtime.exe: include in the initial scope? | **Included** | It is what a packaged build ships (§9, Build Settings), and running the engine without the editor is what exposed the phase-order and lazy-init bugs the editor was hiding |
+| 5.3 | Fixed timestep / variable timestep | **Fixed 60 Hz** | ADR-005. §11.3 is unreproducible under a variable delta time by construction, so this was a prerequisite rather than a preference |
+| 6.1 | Rendering path: Forward / Deferred | **Both, switchable at runtime** | ADR-007. The lighting maths lives once in `common.hlsli`, so the two paths agree and the switch is a demonstration rather than a fork |
+| 6.2 | Priority of shadows, post-processing, skinning | **All implemented** | CSM + a local-light shadow atlas (§6.1), the post-process chain in §6.1, and 128-bone skinning for glTF and FBX |
+| 7.3 | Max particle count / GPU alive management / sorting | **100,000 default per emitter; dead list + alive A/B ping-pong; explicit sort key** | GPU capacity clamps to [1,024, 1,000,000]. Draw order is view-space z descending, ties by ascending index, on both back ends (§7.5) |
+| 7.4 | Preserve living particles when switching backends? | **No — restart the emitter** | Carrying them across needs a GPU-to-CPU readback, which ADR-008 forbids |
+| 8.3 | Scene file format: JSON / custom | **JSON** | It diffs in review and merges in source control (§14); `fileId` already supplies the stable identity a binary format would have given |
+| 9 | Gizmos / Play-mode editing policy | **Gizmos included (ImGuizmo, with snapping); Play-mode edits discarded** | Unity's model. `PlayModeController` snapshots to JSON on Play and restores on Stop |
+| 10 | Texture cache / model format | **Cooked cache under `cache/cooked/`** | `.mmdl` / `.mpcm` blobs invalidated by size, mtime and content hash (§10.2), BCn DDS texture cook, glTF via cgltf and FBX via ufbx. A packaged build ships a **sealed** cache so sub-asset IDs survive relocation |
