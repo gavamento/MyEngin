@@ -86,6 +86,12 @@ sln の外にもう 2 本ある。どちらも無い状態でエディタは起�
   **既存シーンは 1 ビットも変わらない** — 全部が「そのコンポーネントが在るときだけ効く」
   存在ゲートの内側にあり、`--physics-demo` / `--joint-demo` の 2 ペアが Debug ⇔ Release の
   ハッシュ一致でそれを守っている
+- **XPBD 変形体 (M60′、途中まで)** — 剛体ソルバとは別の池に粒子と拘束を持つ変形体レーン。
+  現在あるのは **ロープ** (`RopeComponent`、TypeId 44) だけで、`XpbdSolver` / `XpbdBackend` の
+  核と、剛体との双方向アタッチまでが動く。粒子数がオーサリング依存で可変なので状態は
+  ECS カラムではなく池に住み、`SimSources` 経由で `WorldHasher` と `SimSnapshot` (v6) の
+  両方に載せてある。**布とソフトボディは未実装** (a〜d 完了 / e〜n 中断) で、粒子と世界の
+  衝突もまだ無い。replay と golden の被覆はセルフテストのみ
 - **音響伝播と、その波が実際に鳴ること (M65 + M68)** — 整数チャンファ距離 (26 近傍の
   `<11,16,19>`) の波面を **1 tick 1 リング**で広げ、**1 枚の場が 4 つの役**を持つ:
   残光ボリュームの描画 / 敵 AI の聴覚 (到来方向つき) / 同じ重みで引いたナビゲーション /
@@ -184,6 +190,22 @@ Runtime.exe --render-demo --deferred --rt-refl --rt-restir
                                           #   (spatial を含意)。--rt-class-override N で
                                           #   全インスタンスの ReflectionClass を強制 (-1 = off)
 Editor.exe --parts-demo                   # 部位 (ソケット) のボーン追従シーン
+Editor.exe --acoustic-demo                # 音響ショーケース (L 字廊下 + 2 部屋 + 床材 6 枚 +
+                                          #   敵 2 種 + プレイヤー) = replay 7 ペア目 +
+                                          #   スクショ 18/19 枚目。波は SceneView の「音響」
+                                          #   トグルでしか見えない
+Editor.exe --acoustic-demo --acoustic-audio-log 300 --synth-input
+                                          # 耳を使わずに音響 x オーディオの配管を検査する。
+                                          #   整形した voice と波の一発再生を 1 行ずつ +
+                                          #   終了時 summary。--no-audio と併用すると 0 行
+Editor.exe --terrain-demo [--terrain-lod N] [--terrain-skirt N]
+                                          # 地形ショーケース (M58c) = スクショ 8 枚目
+Editor.exe --flow-demo                    # タイトル/ゲームのシーン遷移 + セーブ/ロード統合デモ
+Editor.exe --local-demo --local-players 2 # ローカル 2P (レーン n は XInput スロット n)
+Editor.exe --particle-demo                # 粒子表現のショーケース (M63a) = スクショ 16/17 枚目
+                                          #   (CPU/GPU の突き合わせ)
+Editor.exe --scene assets\scenes\x.scene.json
+                                          # 任意のシーンを開く (相対パス可)
 Editor.exe --physics-demo                 # 物理ショーケース (空力/浮力/マグヌス/材料/CCD)
                                           #   = replay 5 ペア目 + スクショ 13 枚目
 Editor.exe --joint-demo                   # 関節ショーケース (関節/機構/ラグドール/車)
@@ -206,6 +228,39 @@ Runtime.exe --fog-demo --froxel --particle-backend gpu
                                           #   並べてグリッド端 (64m) の受け持ち交代を絵に出し、
                                           #   画面上で同じ大きさの板 2 枚で霧の量だけを比べる
 Runtime.exe --particle-compare            # CPU/GPU を横に並べて描く (設定は書き戻さない)
+Runtime.exe --render-demo --deferred --taa
+                                          # TAA (M55d、Deferred のみ)。--ssr で SSR、
+                                          #   --hzb-debug N で Hi-Z ピラミッド、
+                                          #   --velocity-debug で速度バッファを可視化
+Runtime.exe --render-demo --deferred --froxel --froxel-dump 3
+                                          # フロクセルを読み戻して CPU と照合 (調査専用)。
+                                          #   --froxel-no-temporal でテンポラル再投影を外す。
+                                          #   音響側の同型は --acoustic-dump N
+Runtime.exe --render-demo --deferred --rt-refl --rt-debug 12
+                                          # RT のデバッグ表示 (12 = reservoir の M /
+                                          #   13 = 一次ヒットのクラス / 14 = 反射像側のクラス)。
+                                          #   --rt-no-temporal / --rt-no-svgf でデノイザの段を
+                                          #   外す A/B、--rt-freeze-seed で乱数を止める
+                                          #   (撮影時は自動 freeze。画質を測るなら --rt-anim-seed)
+Editor.exe --snapshot-stress 600          # スナップショットの撮影/復元を往復させ続ける
+Editor.exe --timetravel-selftest [N]      # タイムトラベルのシーク結果と記録ハッシュを照合
+Editor.exe --replay-record out.rep --replay-fast
+                                          # 記録を早回し (描画を待たない)。replay_verify が使う
+Editor.exe --img-diff a.png b.png --tol 3 # PNG 差分 (exit code で成否)
+Editor.exe --font-embedded                # 内蔵フォント固定 (スクショの機種差を殺す)
+Editor.exe --screenshot shot.png --shot-frame 120 --frames 200
+                                          # 決定的撮影。frame 番号 == tick 番号になり、
+                                          #   生マウスデルタは 0 に固定される (M68c)。
+                                          #   --shot-every N で連写 (この場合は決定的にならない)
+Runtime.exe --no-crash-handler            # クラッシュハンドラを外して素で落とす
+Runtime.exe --net-demo --net-join HOST:PORT --net-loss 5 --net-no-halt-on-desync
+                                          # パケットロス注入 / desync でも止めずに継続
+Editor.exe --create-project DIR --template demo
+                                          # プロジェクトを CLI で作る (--template は empty|demo、既定 empty)
+Editor.exe --lang en --width 1600 --height 900
+                                          # 起動言語とウィンドウサイズ
+Editor.exe --package dist --package-dds --package-zip
+                                          # DDS 一括クックと zip 圧縮まで含めてパッケージ
 Editor.exe --warp                         # WARP (ソフトウェアラスタライザ) 固定で起動
 Editor.exe --package dist                 # 配布パッケージを CLI で作成 (exit code で成否)
 Runtime.exe --crash-test av --crash-at-tick 60
@@ -228,6 +283,12 @@ pwsh -File tools\collab_fixture.ps1 <dir> # git 管理下の最小プロジェ�
                                           #   Editor.exe --project <dir> (Source Control は
                                           #   --project 起動でしか動かない)
 ```
+
+上は**作者が使う口**だけ。ほかに調整・調査専用のフラグが 24 本ある
+(`--bloom-threshold` / `--exposure` / `--postfx-mode` / `--no-jobs` / `--no-cook-cache` /
+`--hash-dump` / `--pick-test` / `--probe-bake*` / `--manager-shot` など)。
+実在する全 113 本は `src\Editor\EditorMain.cpp` と `src\Runtime\RuntimeMain.cpp` の
+引数解析が正本。
 
 CI (`.github\workflows\ci.yml`) は**この bat をそのまま呼ぶ** — CI 専用の検証ロジックは
 書かない。CI 固有の事情は環境変数 4 種だけで注入する:
