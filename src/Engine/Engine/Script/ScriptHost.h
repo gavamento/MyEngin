@@ -5,6 +5,7 @@
 #include <string>
 
 #include "Engine/Core/EntityID.h"
+#include "Engine/Core/Reflection.h" // FieldDesc (FieldDescFromScriptField の戻り値)
 #include "Engine/Engine/Script/EngineApiTable.h"
 #include "Engine/Platform/Input.h"
 #include "Shared/ScriptTypes.h"
@@ -12,6 +13,13 @@
 namespace mye {
 
 class Scene;
+
+// MyeScriptField (DLL 側の 1 フィールド) → FieldDesc (エンジン側のリフレクション)。
+// 名前・型・オフセットに加えて **v16 の表示メタデータ (displayName / rangeMin / rangeMax)**
+// を写す (M70d)。文字列は永続コピーになる。
+// ★公開しているのは SchemaSelfTest から直接叩いて検査するため — 変換規則が
+//   LoadModule の中に埋まっていると、DLL を実際にロードしないと確かめられなくなる
+FieldDesc FieldDescFromScriptField(const MyeScriptField& sf);
 
 // Start 済みインスタンスの識別子 (M64b)。
 // ★**エンティティ ID だけでは足りない**。同じエンティティに 2 つ目のスクリプトを

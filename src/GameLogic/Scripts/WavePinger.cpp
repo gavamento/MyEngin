@@ -52,4 +52,10 @@ struct WavePinger : Script<WavePinger> {
     }
 };
 REGISTER_SCRIPT(WavePinger,
-                FIELDS(ticks, everyTicks, startDelay, loudness, radiusM, tone, ringTicks));
+                FIELDS(MYE_F_JP(ticks, "経過 tick"),
+                       MYE_F_RANGE(everyTicks, "発音の間隔 (tick)", 1.0f, 600.0f),
+                       MYE_F_RANGE(startDelay, "開始を遅らせる tick", 0.0f, 600.0f),
+                       MYE_F_RANGE(loudness, "音量", 0.0f, 2.0f),
+                       MYE_F_RANGE(radiusM, "到達距離 (m)", 0.0f, 64.0f),
+                       MYE_F_JP(tone, "音色"),
+                       MYE_F_RANGE(ringTicks, "リングの分周", 1.0f, 8.0f)));

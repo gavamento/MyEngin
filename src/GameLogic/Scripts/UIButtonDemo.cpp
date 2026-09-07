@@ -33,4 +33,5 @@ struct UIButtonDemo : Script<UIButtonDemo> {
         // ctx.api->LoadScene(ctx.api->engine, "scenes/scene_b.scene.json");
     }
 };
-REGISTER_SCRIPT(UIButtonDemo, FIELDS(target, clicks));
+REGISTER_SCRIPT(UIButtonDemo,
+                FIELDS(MYE_F_JP(target, "対象のボタン"), MYE_F_JP(clicks, "クリック回数")));

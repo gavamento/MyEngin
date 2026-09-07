@@ -16,7 +16,9 @@
 #include "Engine/Engine/SceneSerializer.h"
 #include "Engine/Engine/SchemaCodegen.h"
 #include "Engine/Engine/SchemaComponents.h"
+#include "Engine/Engine/TransformSystem.h" // WorldMatrix を確定させる (M70d)
 #include "Engine/Engine/Script/EngineApiTable.h" // v11 汎用フィールドスロットの実配線 (M50d)
+#include "Engine/Engine/Script/ScriptHost.h"  // FieldDescFromScriptField (M70d)
 #include "Shared/ScriptAPI.h"                    // MyeNameHash (Shared 再掲 FNV の機械検査)
 
 #include "nlohmann/json.hpp"
@@ -48,6 +50,26 @@ T Read(const void* comp, const FieldDesc& f)
     T v{};
     std::memcpy(&v, static_cast<const uint8_t*>(comp) + f.offset, sizeof(T));
     return v;
+}
+
+// ---- M70d: スクリプトのフィールドメタデータ (MYE_F_JP / MYE_F_RANGE) ----
+// GameLogic.dll をロードせずに「マクロの展開」と「FieldDesc への変換」を検査するための
+// 標本。REGISTER_SCRIPT ではなく MYE_SF_FOREACH を直に使う (Registrar に登録すると
+// エンジン側の静的レジストリを汚すため — 検査したいのは表そのもの)
+struct MyeTestScriptState {
+    float moveSpeed = 5.0f;
+    float jumpPower = 8.0f;
+    int32_t jumpCount = 0;
+};
+
+const MyeScriptField kTestScriptFields[] = { MYE_SF_FOREACH(
+    MyeTestScriptState, MYE_F_JP(moveSpeed, "移動速度"),
+    MYE_F_RANGE(jumpPower, "跳躍力", 0.0f, 20.0f), jumpCount) };
+
+bool NearlyEqual(float a, float b, float tol = 1.0e-4f)
+{
+    const float d = a - b;
+    return (d < 0.0f ? -d : d) <= tol;
 }
 
 } // namespace
@@ -306,10 +328,21 @@ bool RunSchemaSelfTest()
             const MyeEntityId se2 = { e.Id().index, e.Id().generation };
             float v = 1.0f;
             check(api.GetComponentField(&apiCtx, se2, HashStr("MyeTestNoHash"), HashStr("v"), &v,
-                                        4, nullptr) == 0
-                      && api.SetComponentField(&apiCtx, se2, HashStr("MyeTestNoHash"),
-                                               HashStr("v"), &v, 4) == 0,
-                  "abi: the NoHash (C#) lane is blocked in both directions");
+                                        4, nullptr) == 0,
+                  "abi: reading the NoHash lane stays blocked");
+            // ★M70d: **書きは通す**。読みだけを閉じる非対称が意図した形で、
+            //   これが通らないと Fog / CameraPostFx / Decal のような描画専用
+            //   コンポーネントを実行時に動かす手段が (専用スロット以外に) 無くなる
+            const float writeMe = 7.5f;
+            check(api.SetComponentField(&apiCtx, se2, HashStr("MyeTestNoHash"), HashStr("v"),
+                                        &writeMe, 4)
+                      == 1,
+                  "abi: writing the NoHash lane is allowed (M70d)");
+            const float* stored = static_cast<const float*>(
+                w.GetComponentRaw(e.Id(), ComponentRegistry::Get().FindByNameHash(
+                                              HashStr("MyeTestNoHash"))));
+            check(stored != nullptr && *stored == 7.5f,
+                  "abi: the value written to the NoHash lane actually landed");
         }
     }
 
@@ -397,6 +430,146 @@ bool RunSchemaSelfTest()
         schema::WriteIfChanged(
             (fs::temp_directory_path() / L"mye_selftest_schema_gen.h").wstring(), hpp);
         fs::remove_all(dir2, ec);
+    }
+
+    // ---- M70d: MyeGameObject::GetWorldPosition (MyePlaySoundHere の実バグ修正の土台) ----
+    // ★親を持つエンティティで「実際に居る場所」が返ること。ここが local のままだと、
+    //   足音・衝突音が**親のワールド位置ぶんずれた場所で鳴る** (v8 からの実バグ)。
+    //   読みは WorldMatrix の汎用フィールドアクセス = ABI 追加ゼロの経路
+    {
+        Scene ws;
+        World& ww = ws.GetWorld();
+        GameObject parent = ws.CreateGameObjectTracked("WpParent");
+        GameObject child = ws.CreateGameObjectTracked("WpChild");
+        ww.ApplyStructuralChanges();
+        ww.SetParent(child.Id(), parent.Id());
+        ww.ApplyStructuralChanges();
+        parent.SetLocalPosition(10.0f, 0.0f, -4.0f);
+        child.SetLocalPosition(1.0f, 2.0f, 0.0f);
+
+        ScriptApiContext apiCtx;
+        apiCtx.scene = &ws;
+        MyeEngineApi api = {};
+        BuildEngineApi(api, &apiCtx);
+        const MyeGameObject go{ MyeEntityId{ child.Id().index, child.Id().generation }, &api };
+
+        // 親が無いエンティティは TransformSystem を回す前でも厳密に答えられる
+        // (= Start から呼んでも黙って原点にならない。足音の鳴る場所がここに乗っている)
+        const MyeGameObject rootGo{ MyeEntityId{ parent.Id().index, parent.Id().generation },
+                                    &api };
+        const MyeVec3 rootBefore = rootGo.GetWorldPosition();
+        check(rootBefore.x == 10.0f && rootBefore.y == 0.0f && rootBefore.z == -4.0f,
+              "world pos: a parentless entity is exact before TransformSystem has run");
+
+        TransformSystem ts;
+        ts.Update(ww);
+        const MyeVec3 after = go.GetWorldPosition();
+        const MyeVec3 local = go.GetLocalPosition();
+        check(after.x == 11.0f && after.y == 2.0f && after.z == -4.0f,
+              "world pos: a child reports the parent-composed world position");
+        check(local.x == 1.0f && local.y == 2.0f && local.z == 0.0f,
+              "world pos: the local getter is unchanged (the two are different answers)");
+    }
+
+    // ---- M70d: スクリプトのフィールドメタデータ ----
+    // Inspector は組込み / スキーマ / スクリプトを同じ DrawField で描くので、
+    // 「FieldDesc に載ったか」まで見れば日本語名とスライダが出ることまで担保できる
+    {
+        check(sizeof(kTestScriptFields) / sizeof(MyeScriptField) == 3,
+              "script fields: the metadata macros and bare names count as one entry each");
+
+        // (a) 素の名前 = 従来どおり (メタデータ無し)
+        const MyeScriptField& bare = kTestScriptFields[2];
+        check(std::strcmp(bare.name, "jumpCount") == 0 && bare.type == MYE_FIELD_INT32
+                  && bare.offset == offsetof(MyeTestScriptState, jumpCount)
+                  && bare.displayName == nullptr && bare.rangeMin == 0.0f
+                  && bare.rangeMax == 0.0f,
+              "script fields: a bare name still expands to name/type/offset only");
+
+        // (b) MYE_F_JP = 表示名だけ。名前 (JSON キー / 移行キー) は素のまま
+        const MyeScriptField& jp = kTestScriptFields[0];
+        check(std::strcmp(jp.name, "moveSpeed") == 0 && jp.type == MYE_FIELD_FLOAT
+                  && jp.offset == offsetof(MyeTestScriptState, moveSpeed)
+                  && jp.displayName != nullptr && std::strcmp(jp.displayName, "移動速度") == 0
+                  && jp.rangeMin == 0.0f && jp.rangeMax == 0.0f,
+              "script fields: MYE_F_JP attaches a display name without touching the key");
+
+        // (c) MYE_F_RANGE = 表示名 + スライダ範囲
+        const MyeScriptField& rng = kTestScriptFields[1];
+        check(std::strcmp(rng.name, "jumpPower") == 0
+                  && rng.offset == offsetof(MyeTestScriptState, jumpPower)
+                  && rng.displayName != nullptr && rng.rangeMin == 0.0f && rng.rangeMax == 20.0f,
+              "script fields: MYE_F_RANGE attaches a slider range");
+
+        // (d) メタデータは layoutHash に混ざらない = 表示名を変えても状態移行は走らない
+        const MyeScriptField plainCopy[3] = {
+            { kTestScriptFields[0].name, kTestScriptFields[0].type, kTestScriptFields[0].offset,
+              nullptr, 0.0f, 0.0f },
+            { kTestScriptFields[1].name, kTestScriptFields[1].type, kTestScriptFields[1].offset,
+              nullptr, 0.0f, 0.0f },
+            { kTestScriptFields[2].name, kTestScriptFields[2].type, kTestScriptFields[2].offset,
+              nullptr, 0.0f, 0.0f },
+        };
+        check(mye_script_detail::LayoutHash(kTestScriptFields, 3)
+                  == mye_script_detail::LayoutHash(plainCopy, 3),
+              "script fields: display metadata is excluded from the layout hash");
+
+        // (e) エンジン側の変換 (ScriptHost が LoadModule で通す唯一の関数)
+        const FieldDesc fd = FieldDescFromScriptField(kTestScriptFields[1]);
+        check(fd.name != nullptr && std::strcmp(fd.name, "jumpPower") == 0
+                  && fd.name != kTestScriptFields[1].name // DLL 文字列ではなく永続コピー
+                  && fd.type == FieldType::Float
+                  && fd.offset == offsetof(MyeTestScriptState, jumpPower)
+                  && fd.displayName != nullptr && std::strcmp(fd.displayName, "跳躍力") == 0
+                  && fd.minVal == 0.0f && fd.maxVal == 20.0f,
+              "script fields: the engine-side conversion carries name, range and display name");
+        const FieldDesc fdBare = FieldDescFromScriptField(kTestScriptFields[2]);
+        check(fdBare.displayName == nullptr && fdBare.minVal == fdBare.maxVal,
+              "script fields: a bare field yields no display name and no range (min==max)");
+    }
+
+    // ---- M70d: 角度ヘルパ (ScriptAPI.h) が DirectXMath と同じ規約か ----
+    // ★スクリプト側は CRT の sin/cos を使えない (決定論) ので多項式で近似している。
+    //   「近似が正しい」ことと「回転の順序 (roll→pitch→yaw) が engine と同じ」ことを
+    //   ここで機械照合する — 食い違うとカメラだけが静かに壊れる種類のバグになる
+    {
+        using namespace DirectX;
+        const float d2r = 3.14159265358979f / 180.0f;
+        struct Case { float pitch, yaw, roll; } cases[] = {
+            { 50.0f, -30.0f, 0.0f },  // dogfooding #7 の検算に使われた Sun の角度
+            { 20.0f, 40.0f, 15.0f },  // roll 込み
+            { -75.0f, 170.0f, -60.0f },
+        };
+        bool allMatch = true;
+        for (const Case& c : cases) {
+            const MyeQuat mine = MyeQuatFromEuler(c.pitch, c.yaw, c.roll);
+            XMFLOAT4 ref;
+            XMStoreFloat4(&ref, XMQuaternionRotationRollPitchYaw(c.pitch * d2r, c.yaw * d2r,
+                                                                 c.roll * d2r));
+            allMatch = allMatch && NearlyEqual(mine.x, ref.x) && NearlyEqual(mine.y, ref.y)
+                && NearlyEqual(mine.z, ref.z) && NearlyEqual(mine.w, ref.w);
+        }
+        check(allMatch, "script math: MyeQuatFromEuler matches XMQuaternionRotationRollPitchYaw");
+
+        // 360 度を跨いだ角度も同じ回転になる (MyeSinRad の前提 |x| <= 3pi/2 を守るための折返し)
+        const MyeQuat a = MyeQuatFromEuler(50.0f, -30.0f, 0.0f);
+        const MyeQuat b = MyeQuatFromEuler(50.0f + 720.0f, -30.0f - 360.0f, 0.0f);
+        check(a.x == b.x && a.y == b.y && a.z == b.z && a.w == b.w,
+              "script math: MyeQuatFromEuler wraps the angle before evaluating");
+
+        // 前方向 = +Z を回した結果
+        const MyeQuat yaw90 = MyeQuatFromEuler(0.0f, 90.0f, 0.0f);
+        const MyeVec3 fwd = MyeForwardOf(yaw90);
+        check(NearlyEqual(fwd.x, 1.0f) && NearlyEqual(fwd.y, 0.0f) && NearlyEqual(fwd.z, 0.0f),
+              "script math: MyeForwardOf turns a yaw-90 rotation into +X");
+        XMFLOAT3 refFwd;
+        const MyeQuat tilt = MyeQuatFromEuler(-25.0f, 200.0f, 10.0f);
+        XMStoreFloat3(&refFwd, XMVector3Rotate(XMVectorSet(0.0f, 0.0f, 1.0f, 0.0f),
+                                               XMVectorSet(tilt.x, tilt.y, tilt.z, tilt.w)));
+        const MyeVec3 mineFwd = MyeForwardOf(tilt);
+        check(NearlyEqual(mineFwd.x, refFwd.x) && NearlyEqual(mineFwd.y, refFwd.y)
+                  && NearlyEqual(mineFwd.z, refFwd.z),
+              "script math: MyeForwardOf matches XMVector3Rotate for an arbitrary rotation");
     }
 
     fs::remove_all(dir, ec);

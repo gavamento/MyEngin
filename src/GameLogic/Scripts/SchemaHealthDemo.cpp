@@ -41,4 +41,5 @@ struct SchemaHealthDemo : Script<SchemaHealthDemo> {
         }
     }
 };
-REGISTER_SCRIPT(SchemaHealthDemo, FIELDS(writes, mirrored));
+REGISTER_SCRIPT(SchemaHealthDemo,
+                FIELDS(MYE_F_JP(writes, "書き込み回数"), MYE_F_JP(mirrored, "ミラーした値")));

@@ -50,4 +50,7 @@ struct WalkerDemo : Script<WalkerDemo> {
         prevJump = jump;
     }
 };
-REGISTER_SCRIPT(WalkerDemo, FIELDS(moveSpeed, jumpSpeed, prevJump));
+REGISTER_SCRIPT(WalkerDemo,
+                FIELDS(MYE_F_RANGE(moveSpeed, "移動速度 (m/s)", 0.0f, 20.0f),
+                       MYE_F_RANGE(jumpSpeed, "ジャンプ初速 (m/s)", 0.0f, 20.0f),
+                       MYE_F_JP(prevJump, "前 tick のジャンプ入力")));

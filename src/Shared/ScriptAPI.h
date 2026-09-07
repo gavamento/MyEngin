@@ -198,12 +198,43 @@ struct Registrar {
 
 } // namespace mye_script_detail
 
-// ---- フィールド列挙マクロ (最大 16 個。/Zc:preprocessor 必須) ----
-// v16 (M70c): 末尾 3 つ (displayName / rangeMin / rangeMax) は**明示的に**埋める。
-// 省略しても値初期化されるが、書いておかないと「増えたことに気づかない」
-#define MYE_SF(T, m) \
-    { #m, MyeTypeOf<std::remove_cv_t<decltype(T::m)>>::value, (uint32_t)offsetof(T, m), \
-      nullptr, 0.0f, 0.0f },
+// ---- フィールド列挙マクロ (最大 32 個。/Zc:preprocessor 必須) ----
+//
+// 素の名前と「メタデータ付き」を同じ FIELDS() に混ぜて書ける (M70d):
+//
+//     REGISTER_SCRIPT(PlayerController,
+//         FIELDS(MYE_F_JP(moveSpeed, "移動速度"),                    // 表示名だけ
+//                MYE_F_RANGE(jumpPower, "跳躍力", 0.0f, 20.0f),      // 表示名 + スライダ範囲
+//                jumpCount));                                        // 従来どおりの素の名前
+//
+// 仕掛けは「メタデータ付きの項目だけ**括弧で包まれたタプル**へ展開する」こと。
+// MYE_SF が括弧の有無で分岐する (MYE_SF_IS_PAREN) ので、**既存の書き方は 1 文字も
+// 変えずに通る**。表示名に nullptr を渡せば「名前をそのまま出す」= 範囲だけの指定になる。
+//
+// ★メタデータは layoutHash に混ざらない (LayoutHash は name/type/offset だけ) ので、
+//   表示名やスライダ範囲を書き換えても DLL リロードの状態移行は走らない = 調整中の値が飛ばない。
+// ★エンジン側の受け取りは ScriptHost.cpp の FieldDescFromScriptField 1 本。
+#define MYE_F_JP(m, jp) (m, jp, 0.0f, 0.0f)
+#define MYE_F_RANGE(m, jp, lo, hi) (m, jp, lo, hi)
+
+// 引数が括弧で包まれているかの判定 (プリプロセッサの定石)。
+// `MYE_SF_PROBE x` は x が `(…)` のときだけ関数マクロとして展開されて `~, 1,` になり、
+// そうでなければ 1 つのトークン列のまま残る — 2 番目の要素を拾えば 1 / 0 が得られる
+#define MYE_SF_PROBE(...) ~, 1,
+#define MYE_SF_PICK2(a, b, ...) b
+#define MYE_SF_IS_PAREN_I(...) MYE_SF_PICK2(__VA_ARGS__)
+#define MYE_SF_IS_PAREN(x) MYE_SF_IS_PAREN_I(MYE_SF_PROBE x, 0, )
+
+#define MYE_SF_MAKE(T, m, jp, lo, hi)                                                            \
+    { #m, MyeTypeOf<std::remove_cv_t<decltype(T::m)>>::value, (uint32_t)offsetof(T, m),          \
+      jp, lo, hi },
+// タプルの括弧を外して MYE_SF_MAKE へ渡す。**1 段の間接**が要る —
+// MYE_SF_MAKE(T, MYE_SF_UNWRAP m) と直接書くと「引数 2 個」で解釈されて足りなくなる
+#define MYE_SF_UNWRAP(...) __VA_ARGS__
+#define MYE_SF_MAKE_I(...) MYE_SF_MAKE(__VA_ARGS__)
+#define MYE_SF_ENTRY_0(T, m) MYE_SF_MAKE(T, m, nullptr, 0.0f, 0.0f)
+#define MYE_SF_ENTRY_1(T, m) MYE_SF_MAKE_I(T, MYE_SF_UNWRAP m)
+#define MYE_SF(T, m) MYE_SF_CAT(MYE_SF_ENTRY_, MYE_SF_IS_PAREN(m))(T, m)
 #define MYE_SF_1(T, m) MYE_SF(T, m)
 #define MYE_SF_2(T, m, ...) MYE_SF(T, m) MYE_SF_1(T, __VA_ARGS__)
 #define MYE_SF_3(T, m, ...) MYE_SF(T, m) MYE_SF_2(T, __VA_ARGS__)
@@ -220,8 +251,31 @@ struct Registrar {
 #define MYE_SF_14(T, m, ...) MYE_SF(T, m) MYE_SF_13(T, __VA_ARGS__)
 #define MYE_SF_15(T, m, ...) MYE_SF(T, m) MYE_SF_14(T, __VA_ARGS__)
 #define MYE_SF_16(T, m, ...) MYE_SF(T, m) MYE_SF_15(T, __VA_ARGS__)
-#define MYE_SF_NARGS(...) MYE_SF_NARGS_I(__VA_ARGS__, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1)
-#define MYE_SF_NARGS_I(_1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, _13, _14, _15, _16, N, ...) N
+// M70d: 16 → 32。16 が上限だったせいで AudioDemo が 9 個のキーのエッジ検出を
+// int32_t のビットへ畳んでいた (= 上限が設計を歪めていた) ので倍にした
+#define MYE_SF_17(T, m, ...) MYE_SF(T, m) MYE_SF_16(T, __VA_ARGS__)
+#define MYE_SF_18(T, m, ...) MYE_SF(T, m) MYE_SF_17(T, __VA_ARGS__)
+#define MYE_SF_19(T, m, ...) MYE_SF(T, m) MYE_SF_18(T, __VA_ARGS__)
+#define MYE_SF_20(T, m, ...) MYE_SF(T, m) MYE_SF_19(T, __VA_ARGS__)
+#define MYE_SF_21(T, m, ...) MYE_SF(T, m) MYE_SF_20(T, __VA_ARGS__)
+#define MYE_SF_22(T, m, ...) MYE_SF(T, m) MYE_SF_21(T, __VA_ARGS__)
+#define MYE_SF_23(T, m, ...) MYE_SF(T, m) MYE_SF_22(T, __VA_ARGS__)
+#define MYE_SF_24(T, m, ...) MYE_SF(T, m) MYE_SF_23(T, __VA_ARGS__)
+#define MYE_SF_25(T, m, ...) MYE_SF(T, m) MYE_SF_24(T, __VA_ARGS__)
+#define MYE_SF_26(T, m, ...) MYE_SF(T, m) MYE_SF_25(T, __VA_ARGS__)
+#define MYE_SF_27(T, m, ...) MYE_SF(T, m) MYE_SF_26(T, __VA_ARGS__)
+#define MYE_SF_28(T, m, ...) MYE_SF(T, m) MYE_SF_27(T, __VA_ARGS__)
+#define MYE_SF_29(T, m, ...) MYE_SF(T, m) MYE_SF_28(T, __VA_ARGS__)
+#define MYE_SF_30(T, m, ...) MYE_SF(T, m) MYE_SF_29(T, __VA_ARGS__)
+#define MYE_SF_31(T, m, ...) MYE_SF(T, m) MYE_SF_30(T, __VA_ARGS__)
+#define MYE_SF_32(T, m, ...) MYE_SF(T, m) MYE_SF_31(T, __VA_ARGS__)
+#define MYE_SF_NARGS(...)                                                                        \
+    MYE_SF_NARGS_I(__VA_ARGS__, 32, 31, 30, 29, 28, 27, 26, 25, 24, 23, 22, 21, 20, 19, 18, 17,  \
+                   16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1)
+#define MYE_SF_NARGS_I(_1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, _13, _14, _15, _16,    \
+                       _17, _18, _19, _20, _21, _22, _23, _24, _25, _26, _27, _28, _29, _30,     \
+                       _31, _32, N, ...)                                                         \
+    N
 #define MYE_SF_CAT(a, b) MYE_SF_CAT_I(a, b)
 #define MYE_SF_CAT_I(a, b) a##b
 #define MYE_SF_FOREACH(T, ...) MYE_SF_CAT(MYE_SF_, MYE_SF_NARGS(__VA_ARGS__))(T, __VA_ARGS__)
@@ -239,6 +293,21 @@ struct Registrar {
         ::mye_script_detail::MakeDesc<T>(#T, nullptr, 0))
 
 // ---- スクリプト用ユーティリティ (DLL 内で完結。境界は越えない) ----
+
+// 名前 → ハッシュ。FNV-1a 64bit で **Engine/Core/Hash.h の HashStr と同一の定数**
+// (MyePartTag と同じ再掲。一致は SchemaSelfTest が機械検査している)。
+// ★M70d でこの節の先頭へ移動 (MyeGameObject が WorldMatrix を引くのに使うため)
+inline constexpr uint64_t MyeNameHash(const char* name)
+{
+    uint64_t h = 14695981039346656037ull;
+    if (name != nullptr) {
+        for (const char* c = name; *c != '\0'; ++c) {
+            h ^= static_cast<unsigned char>(*c);
+            h *= 1099511628211ull;
+        }
+    }
+    return h;
+}
 
 inline void MyeLogf(const MyeUpdateContext& ctx, const char* fmt, ...)
 {
@@ -265,12 +334,129 @@ struct MyeGameObject {
     }
     void SetLocalPosition(MyeVec3 v) const { api->SetLocalPosition(api->engine, id, v); }
     void SetLocalRotation(MyeQuat q) const { api->SetLocalRotation(api->engine, id, q); }
+    // M70d (dogfooding #18): 回転とスケールは**書けるのに読めない**非対称だった。
+    // ABI スロットは v1 から 6 本とも埋まっているので、足りなかったのは糖衣だけ
+    MyeQuat GetLocalRotation() const
+    {
+        MyeQuat q;
+        api->GetLocalRotation(api->engine, id, &q);
+        return q;
+    }
+    MyeVec3 GetLocalScale() const
+    {
+        MyeVec3 v;
+        api->GetLocalScale(api->engine, id, &v);
+        return v;
+    }
+    void SetLocalScale(MyeVec3 v) const { api->SetLocalScale(api->engine, id, v); }
+
+    // ワールド位置 (M70d)。親を持つエンティティで「自分が実際に居る場所」を知る唯一の口。
+    //
+    // ★親が無ければ**ローカル位置をそのまま返す** (定義上つねに同値)。これは速さのためでは
+    //   なく正しさのため — WorldMatrix は生成時から単位行列で存在するので、
+    //   「まだ TransformSystem が回っていない」と「本当に原点に居る」を行列からは
+    //   区別できない。親なしだけでも常に厳密な答えを返せるようにしておくと、
+    //   Start から呼んでも黙って原点にならない (足音の鳴る場所がここに乗っている)。
+    // ★親があるときは WorldMatrix を読む。**Start (フェーズ 3) は TransformSystem
+    //   (フェーズ 4) より前**なので、シーンを読み込んだ最初の tick では原点が返る。
+    //   位置に依存する処理は Update に置いて 2 tick 目以降で走らせること
+    //   (dogfooding #3 と EngineAPI.h の空間クエリ節と同じ罠)。
+    MyeVec3 GetWorldPosition() const
+    {
+        MyeEntityId parent = {};
+        const int32_t gotParent =
+            api->GetComponentField(api->engine, id, MyeNameHash("Hierarchy"),
+                                   MyeNameHash("parent"), &parent, (int32_t)sizeof(parent),
+                                   nullptr);
+        if (gotParent != (int32_t)sizeof(parent) || MyeEntityIdIsNull(parent)) {
+            return GetLocalPosition();
+        }
+        // WorldMatrix.value は Float4x4 (行優先)。平行移動は 4 行目 = 添字 12/13/14
+        float m[16] = {};
+        const int32_t got = api->GetComponentField(api->engine, id, MyeNameHash("WorldMatrix"),
+                                                   MyeNameHash("value"), m, (int32_t)sizeof(m),
+                                                   nullptr);
+        if (got != (int32_t)sizeof(m)) {
+            return GetLocalPosition();
+        }
+        return MyeVec3{ m[12], m[13], m[14] };
+    }
     void Destroy() const { api->DestroyGameObject(api->engine, id); }
 };
 
 inline MyeGameObject MyeSelf(const MyeUpdateContext& ctx)
 {
     return { ctx.self, ctx.api };
+}
+
+// ---- 角度まわり (M70d、dogfooding #7)。ABI 追加なし = ヘッダ内で完結 ----
+//
+// `Shared/` は DirectXMath を持ち込めない (DLL 境界規則) ので、これが無いと
+// ゲーム側が XMQuaternionRotationRollPitchYaw 相当を手で書くことになる。
+// 式を間違えるとカメラだけが静かに壊れる、という一番気づけない形で出る。
+//
+// ★**CRT の sinf / cosf は使わない**。`Physics\AeroSampling.cpp` の注記が正本で、
+//   「std::sin / std::cos は CRT 実装依存でビットが動きうる」。ここで作った回転は
+//   ハッシュ対象のフィールドへそのまま入るので、CRT 依存を挟むと
+//   「別の Windows で .rep が再生できない」種類の壊れ方になる。乗算と加算だけの
+//   多項式なら /fp:precise の下でどのビルドでも厳密に同じビット列になる。
+constexpr float kMyePi = 3.14159265358979f;
+constexpr float kMyeDeg2Rad = kMyePi / 180.0f;
+
+// sin(x)。**前提: |x| <= 3pi/2** (sin(x)=sin(pi-x) の対称性で [-pi/2, pi/2] へ 1 回だけ
+// 折り返し、9 次のテイラーで評価する。この区間の誤差は 1e-9 未満)。
+// ★実装は WatcherFpsCamera (M65g) が持っていたものを**1 命令も変えずに**引き上げた —
+//   変えると同スクリプトの視点角が動いて replay 7 ペア目が割れる
+inline float MyeSinRad(float x)
+{
+    if (x > kMyePi * 0.5f) {
+        x = kMyePi - x;
+    } else if (x < -kMyePi * 0.5f) {
+        x = -kMyePi - x;
+    }
+    const float x2 = x * x;
+    return x
+        * (1.0f
+           + x2
+               * (-1.0f / 6.0f
+                  + x2 * (1.0f / 120.0f + x2 * (-1.0f / 5040.0f + x2 * (1.0f / 362880.0f)))));
+}
+inline float MyeCosRad(float x) { return MyeSinRad(x + kMyePi * 0.5f); }
+
+// 角度を [-180, 180] へ折り返す (加減算だけ = 決定論)。
+// MyeSinRad の前提 |x| <= 3pi/2 を満たすために MyeQuatFromEuler が必ず通す
+inline float MyeWrapDeg(float deg)
+{
+    while (deg > 180.0f) {
+        deg -= 360.0f;
+    }
+    while (deg < -180.0f) {
+        deg += 360.0f;
+    }
+    return deg;
+}
+
+// オイラー角 (度) → 四元数。**エンジンの GameObject::SetLocalRotationEuler
+// (= XMQuaternionRotationRollPitchYaw) と同じ規約** — 適用順は roll(Z) → pitch(X) → yaw(Y)。
+// 一致は SchemaSelfTest が DirectXMath と照合して機械検査している
+inline MyeQuat MyeQuatFromEuler(float pitchDeg, float yawDeg, float rollDeg = 0.0f)
+{
+    const float hp = MyeWrapDeg(pitchDeg) * kMyeDeg2Rad * 0.5f;
+    const float hy = MyeWrapDeg(yawDeg) * kMyeDeg2Rad * 0.5f;
+    const float hr = MyeWrapDeg(rollDeg) * kMyeDeg2Rad * 0.5f;
+    const float sp = MyeSinRad(hp), cp = MyeCosRad(hp);
+    const float sy = MyeSinRad(hy), cy = MyeCosRad(hy);
+    const float sr = MyeSinRad(hr), cr = MyeCosRad(hr);
+    return MyeQuat{ sp * cy * cr + cp * sy * sr, cp * sy * cr - sp * cy * sr,
+                    cp * cy * sr - sp * sy * cr, cp * cy * cr + sp * sy * sr };
+}
+
+// 四元数の前方向 (+Z を回した結果)。「向いている方へ進む / 撃つ」の唯一の導き方。
+// 正規化された四元数を前提にする (SetLocalRotation に入れる値は常にそう)
+inline MyeVec3 MyeForwardOf(MyeQuat q)
+{
+    return MyeVec3{ 2.0f * (q.x * q.z + q.w * q.y), 2.0f * (q.y * q.z - q.w * q.x),
+                    1.0f - 2.0f * (q.x * q.x + q.y * q.y) };
 }
 
 // ---- オーディオ (v8、M45g)。ABI 追加なしの糖衣 (呼び先は EngineAPI.h のスロットそのもの) ----
@@ -288,10 +474,13 @@ inline uint64_t MyePlaySoundAt(const MyeUpdateContext& ctx, const char* key, Mye
     return ctx.api->PlaySoundAt(ctx.api->engine, key, worldPos, volume);
 }
 
-// 自分の位置で 3D 再生する (足音・衝突音など)
+// 自分の位置で 3D 再生する (足音・衝突音など)。
+// ★M70d で実バグを修正: v8 から **ローカル位置をワールド位置として**渡していたので、
+//   親を持つエンティティ (車輪・手に持った物・キャラの子ボーン) では鳴る場所がずれていた。
+//   ずれは「親のワールド位置ぶん」なので、原点付近の親では気づけない
 inline uint64_t MyePlaySoundHere(const MyeUpdateContext& ctx, const char* key, float volume = 1.0f)
 {
-    return MyePlaySoundAt(ctx, key, MyeSelf(ctx).GetLocalPosition(), volume);
+    return MyePlaySoundAt(ctx, key, MyeSelf(ctx).GetWorldPosition(), volume);
 }
 
 inline void MyeStopVoice(const MyeUpdateContext& ctx, uint64_t handle, float fadeSeconds = 0.0f)
@@ -398,19 +587,9 @@ inline bool MyeRaycastParts(const MyeUpdateContext& ctx, MyeEntityId root, const
 // スキーマごとに提供する — 手書きでここを直接呼ぶのは probe / 一時実験くらいのはず。
 // ★C# スクリプト状態 (非決定論レーン) は読み書きとも 0 が返る (EngineAPI.h の契約)
 
-// 名前 → ハッシュ。FNV-1a 64bit で **Engine/Core/Hash.h の HashStr と同一の定数**
-// (MyePartTag と同じ再掲。一致は SchemaSelfTest が機械検査している)
-inline constexpr uint64_t MyeNameHash(const char* name)
-{
-    uint64_t h = 14695981039346656037ull;
-    if (name != nullptr) {
-        for (const char* c = name; *c != '\0'; ++c) {
-            h ^= static_cast<unsigned char>(*c);
-            h *= 1099511628211ull;
-        }
-    }
-    return h;
-}
+// ★MyeNameHash の定義は「スクリプト用ユーティリティ」節の先頭へ移した (M70d) —
+//   MyeGameObject::GetWorldPosition が WorldMatrix を汎用フィールドアクセスで読むため、
+//   ここより前で必要になった
 
 // 生スロットの糖衣。戻り値は Get = 実サイズ / Set = 1 (0 = 無し/不一致)
 inline int32_t MyeGetComponentField(const MyeUpdateContext& ctx, MyeEntityId e, uint64_t comp,

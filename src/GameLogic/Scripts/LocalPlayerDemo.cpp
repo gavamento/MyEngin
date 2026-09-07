@@ -70,4 +70,7 @@ struct LocalPlayerDemo : Script<LocalPlayerDemo> {
     }
 };
 
-REGISTER_SCRIPT(LocalPlayerDemo, FIELDS(moveSpeed, jumpSpeed, vy, jumpCount));
+REGISTER_SCRIPT(LocalPlayerDemo,
+                FIELDS(MYE_F_RANGE(moveSpeed, "移動速度 (m/s)", 0.0f, 20.0f),
+                       MYE_F_RANGE(jumpSpeed, "ジャンプ初速 (m/s)", 0.0f, 20.0f),
+                       MYE_F_JP(vy, "垂直速度 (m/s)"), MYE_F_JP(jumpCount, "ジャンプ回数")));

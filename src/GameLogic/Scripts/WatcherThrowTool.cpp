@@ -242,5 +242,14 @@ struct WatcherThrowTool : Script<WatcherThrowTool> {
     }
 };
 REGISTER_SCRIPT(WatcherThrowTool,
-                FIELDS(stones, bottles, cooldown, prevStoneKey, prevBottleKey, throwSpeed,
-                       throwLift, fly0, fly1, fly2, age0, age1, age2, kind0, kind1, kind2));
+                FIELDS(MYE_F_RANGE(stones, "石の所持数", 0.0f, 99.0f),
+                       MYE_F_RANGE(bottles, "瓶の所持数", 0.0f, 99.0f),
+                       MYE_F_JP(cooldown, "クールダウン (tick)"),
+                       MYE_F_JP(prevStoneKey, "前 tick の Q"), MYE_F_JP(prevBottleKey, "前 tick の E"),
+                       MYE_F_RANGE(throwSpeed, "投擲の速さ (m/s)", 0.0f, 30.0f),
+                       MYE_F_RANGE(throwLift, "投擲の上向き (m/s)", 0.0f, 10.0f),
+                       MYE_F_JP(fly0, "飛翔体 1"), MYE_F_JP(fly1, "飛翔体 2"),
+                       MYE_F_JP(fly2, "飛翔体 3"), MYE_F_JP(age0, "飛翔体 1 の経過"),
+                       MYE_F_JP(age1, "飛翔体 2 の経過"), MYE_F_JP(age2, "飛翔体 3 の経過"),
+                       MYE_F_JP(kind0, "飛翔体 1 の種類"), MYE_F_JP(kind1, "飛翔体 2 の種類"),
+                       MYE_F_JP(kind2, "飛翔体 3 の種類")));

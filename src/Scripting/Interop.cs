@@ -922,6 +922,33 @@ namespace MyeScripting
             return true;
         }
 
+        // ---- M70d: ワールド位置 (ABI 追加ゼロ — WorldMatrix を汎用フィールドで読む) ----
+        // 規則は ScriptAPI.h の MyeGameObject::GetWorldPosition と**同じ 1 本**:
+        //   親が無ければローカルをそのまま返す (定義上つねに同値。WorldMatrix は生成時から
+        //   単位行列で存在するので「未計算」と「本当に原点」を行列からは区別できない)。
+        //   親があるときだけ WorldMatrix を読む — Start はフェーズ 3 で TransformSystem
+        //   (フェーズ 4) より前なので、最初の tick では原点が返る (dogfooding #3)
+        private static readonly ulong _hierarchyHash = NameHash("Hierarchy");
+        private static readonly ulong _hierarchyParentHash = NameHash("parent");
+        private static readonly ulong _worldMatrixHash = NameHash("WorldMatrix");
+        private static readonly ulong _worldMatrixValueHash = NameHash("value");
+
+        public static MyeVec3 GetWorldPosition(MyeEntityId id)
+        {
+            if (_api == null) return default;
+            MyeEntityId parent;
+            int gotParent = _api->GetComponentField(_api->Engine, id, _hierarchyHash,
+                                                    _hierarchyParentHash, &parent,
+                                                    sizeof(MyeEntityId), null);
+            if (gotParent != sizeof(MyeEntityId) || parent.IsNull) return GetLocalPosition(id);
+            float* m = stackalloc float[16];
+            int got = _api->GetComponentField(_api->Engine, id, _worldMatrixHash,
+                                              _worldMatrixValueHash, m, 16 * sizeof(float), null);
+            // 行優先 (XMFLOAT4X4) なので平行移動は 4 行目 = 添字 12/13/14
+            if (got != 16 * sizeof(float)) return GetLocalPosition(id);
+            return new MyeVec3(m[12], m[13], m[14]);
+        }
+
         // ---- v15 (M64a): マウスルック ----
         public static void MouseDelta(out int dx, out int dy)
         {

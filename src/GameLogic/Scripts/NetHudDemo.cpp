@@ -40,4 +40,4 @@ struct NetHudDemo : Script<NetHudDemo> {
     }
 };
 
-REGISTER_SCRIPT(NetHudDemo, FIELDS(style));
+REGISTER_SCRIPT(NetHudDemo, FIELDS(MYE_F_JP(style, "表示スタイル")));

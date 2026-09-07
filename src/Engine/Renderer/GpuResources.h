@@ -64,14 +64,31 @@ struct AssetEntry {
 
 class MeshLibrary {
 public:
-    void Init(GraphicsDevice& device) { device_ = &device; }
+    // ★M70d (dogfooding #12): 組込みプリミティブ 6 種を**ここで登録し切る**。
+    //   以前は全部遅延生成だったので、Runtime で生きているのは cube / sphere だけ —
+    //   しかもそれは RuntimeMain がショーケースの材質登録を呼ぶときの**副作用**。
+    //   結果、「エディタで作った円柱を含むシーンが Runtime では黙って描画されない」が
+    //   成立していた (使える組込みメッシュが**実行環境で変わる**)。
+    //   6 つで合計数百頂点なので遅延にする価値が無い。
+    //   ★Init を呼ばない CPU 専用モード (TerrainSelfTest) は従来どおり 1 本も作らない
+    void Init(GraphicsDevice& device)
+    {
+        device_ = &device;
+        Cube();
+        Sphere();
+        Plane();
+        Quad();
+        Cylinder();
+        Capsule();
+    }
     AssetID Register(std::string_view name, std::span<const MeshVertex> vertices,
                      std::span<const uint32_t> indices);
     Mesh* Get(AssetID id);
     // 登録名の逆引き (未登録は nullptr)。モデル由来なら "<正規化絶対パス>#mesh0#prim0" —
     // M60f の凸包クックが「この AssetID の元ファイルはどれか」を知る唯一の手段
     const std::string* NameOf(AssetID id) const;
-    // 組み込みプリミティブ (いずれも遅延生成・中心原点・単位サイズ基準)
+    // 組み込みプリミティブ (中心原点・単位サイズ基準)。Init が 6 つとも先に登録するので
+    // 実行中の初回呼び出しは常にキャッシュヒット (遅延生成の形は CPU 専用モードのために残す)
     AssetID Cube();     // 単位キューブ (辺長 1)
     AssetID Sphere();   // UV 球 (半径 0.5)
     AssetID Plane();    // XZ 平面 (1x1, 法線 +Y)

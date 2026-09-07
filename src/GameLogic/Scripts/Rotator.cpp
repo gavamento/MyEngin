@@ -21,5 +21,7 @@ struct Rotator : Script<Rotator> {
         MyeSelf(ctx).SetLocalRotation(q);
     }
 };
-REGISTER_SCRIPT(Rotator, FIELDS(speedDegPerSec, angleDeg));
+REGISTER_SCRIPT(Rotator,
+                FIELDS(MYE_F_RANGE(speedDegPerSec, "回転速度 (度/秒)", -360.0f, 360.0f),
+                       MYE_F_JP(angleDeg, "現在の角度 (度)")));
 

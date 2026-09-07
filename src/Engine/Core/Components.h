@@ -446,8 +446,14 @@ struct SpringJointComponent {
 // 状態なので **hash 対象**。moveInput / jumpSpeed は決定論スクリプトが ABI で書く sim 入力。
 // ソリッドな Collider (capsule) を併用すると剛体側からもブロック面として見える (推奨パターン。
 // その場合 collider は tick 頭の位置で判定される = 1 tick 遅延は許容)。
+// ★**カプセルは Transform のスケールを拾う** (dogfooding #5、M70d で明記)。
+//   PhysicsSystem::SolveCharacters が radius / height に scale を掛けるので、見た目のために
+//   本体へ scale [0.7, 1.8, 0.7] を入れると当たり判定も 1.8 倍に伸びる。
+//   **本体は無スケールにして、見た目は子エンティティへ逃がすこと** —
+//   VehicleComponent の「車体は無スケール」と同じ罠・同じ回避で、DemoContent.cpp の
+//   車とプレイヤーはどちらもその形になっている。
 struct CharacterControllerComponent {
-    float radius = 0.3f;         // カプセル半径 (m)
+    float radius = 0.3f;         // カプセル半径 (m)。★Transform の scale が掛かる
     float height = 1.8f;         // 全高 (両端の半球込み)。線分半長 = max(0, height/2 − radius)
     float slopeLimitDeg = 45.0f; // これ以下の傾斜の面を「接地」とみなす (面法線と Y の角度)
     float skinWidth = 0.02f;     // 接地プローブの探り距離
@@ -500,13 +506,16 @@ struct TextMeshComponent {
 // ---- スカイボックス (M29d) ----
 // 背景の空。シーン内の **最初の active な 1 個** (entity.index 最小) を使用 (isPrimary カメラ前例)。
 // **無ければ従来の clearColor 背景** (opt-in)。描画専用 = **kComponentNoHash**。
-// mode=1 (Cubemap) は将来拡張の予約 — 現状は Gradient にフォールバックする。
+// mode=1 (Cubemap) は M38b で実装済み (cubemapTexture が解決できないときだけ Gradient)。
 struct SkyboxComponent {
-    int32_t mode = 0; // 0=Gradient 1=Cubemap (予約。現状 Gradient フォールバック)
+    // 0=Gradient 1=Cubemap。★**cubemap は M38b で実装済み** (dogfooding #8 の記述が古かった。
+    // SkyboxPass の専用シェーダ skybox_cubemap + GpuResources の DDS cubemap ローダ +
+    // RtPasses の環境サンプル)。SRV が解決できないときだけ Gradient へフォールバックする
+    int32_t mode = 0;
     DirectX::XMFLOAT4 topColor = { 0.24f, 0.42f, 0.83f, 1.0f };     // 天頂
     DirectX::XMFLOAT4 horizonColor = { 0.74f, 0.81f, 0.90f, 1.0f }; // 地平線
     DirectX::XMFLOAT4 bottomColor = { 0.28f, 0.25f, 0.22f, 1.0f };  // 地面方向
-    AssetID cubemapTexture = {}; // 予約 (mode=1 用。DDS cubemap ローダは未実装)
+    AssetID cubemapTexture = {}; // mode=1 用の DDS cubemap (面順 +X,-X,+Y,-Y,+Z,-Z)
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 

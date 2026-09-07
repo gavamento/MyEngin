@@ -332,7 +332,7 @@ M70c → M70d の順序は入れ替えできない。
 | M70a | シリアライザのラウンドトリップ (データ消失の封鎖) | **完了 (2026-09-07)** |
 | M70b | キャンバス統一 (Unity / UE 準拠の可変キャンバス) | **完了 (2026-09-07)** |
 | M70c | UI イベントとフォーカス駆動 + ABI v16 | **完了 (2026-09-07)** |
-| M70d | スクリプト⇄オブジェクトの穴埋め + dogfooding の回収 | 未着手 |
+| M70d | スクリプト⇄オブジェクトの穴埋め + dogfooding の回収 | **完了 (2026-09-07)** |
 
 ### M70a の実施メモ (計画との差分)
 
@@ -463,6 +463,61 @@ M70c → M70d の順序は入れ替えできない。
 - 文書更新: `engine_spec.md` に **§6.12 In-game UI interaction** を新設 + §12.3 の台帳行を
   M70d だけに / `README.md` に機能の項 / `CLAUDE.md` の ABI 行 (v15=104 → v16=110) /
   `docs/dogfooding.md` の #16 を修正済みへ (20 件中 5 件修正済み)。
+
+### M70d の実施メモ (計画との差分)
+
+- 計画の 10 件 (NoHash ゲート / メタデータ / FIELDS 32 / `MyePlaySoundHere` / #18 / #7 / #4 /
+  #12 / #3・#5・#6・#8・#9 の文書) はすべて実施。ABI は**触っていない** (v16 = 110 のまま)。
+- **ユーザー判断で 2 つ広げた (2026-09-07)**: (1) 計画 M64c (5) の **C# レーンの底上げ**を含める、
+  (2) メタデータを**主要スクリプト 20 本すべて**へ付ける。
+- **計画との差分 1**: `MYE_F_JP` / `MYE_F_RANGE` は「メタデータ付きの項目だけ括弧付きタプルへ
+  展開し、`MYE_SF` が括弧の有無で分岐する」形にした (`MYE_SF_IS_PAREN`)。**既存の書き方が
+  1 文字も変わらない**のが要点。/Zc:preprocessor は既に既定で入っている。
+- **計画との差分 2**: `MyePlaySoundHere` の修正には**ワールド位置を読む口**が要るので
+  `MyeGameObject::GetWorldPosition` を足した (計画の表には無い。WorldMatrix の汎用フィールド
+  読み = ABI 追加ゼロ)。★**親が無いときはローカル位置を返す**規則にしてある —
+  `WorldMatrix` は生成時から単位行列で存在するので「まだ TransformSystem が回っていない」と
+  「本当に原点に居る」を行列からは区別できず、素直に行列だけを読むと **Start から呼んだ
+  ルートエンティティが黙って原点で鳴る**という新しい罠を作ってしまう (実測で気づいた)。
+- **計画との差分 3**: `MyeQuatFromEuler` の中身で **CRT の `sinf`/`cosf` は使えない**
+  (`AeroSampling.cpp` の注記 = 実装依存でビットが動く。作った回転はハッシュ対象へ入る)。
+  `WatcherFpsCamera` (M65g) が持っていた 9 次多項式を `MyeSinRad` / `MyeCosRad` として
+  **1 命令も変えずに** `ScriptAPI.h` へ引き上げ、同スクリプトはそれを呼ぶ形へ寄せた。
+  実際 golden 24 枚が maxDiff=0 のままなので、ビット一致は実測で確認できている。
+- ★**触らなかったもの**: `Rotator.cpp` の `sinf`/`cosf`。これも同じ CRT 依存だが、
+  多項式へ寄せると値が動いて **golden (fog / render / parts の Spinner) が動く**。
+  「決定論の穴だが機種差でしか出ない」ので、絵を動かす価値と釣り合わない。
+  **次に golden を撮り直す用事があるサブで一緒に寄せる**のが安い (申し送り)。
+- **計画との差分 4**: `SetComponentField` の NoHash 開放に伴い、`SchemaSelfTest` の
+  「読み書きとも遮断」の 1 検査を**非対称の 3 検査**へ (読み 0 / 書き 1 / 実際に値が入った)。
+- **計画との差分 5 (C# レーン、ユーザー判断)**: `MyeScript` / `MyeEntity` へ
+  CharacterController 4 本 / `Instantiate` / `FindByFileId` / `PlayEffect` / `EmitterBurst` /
+  `SetEmitterPlaying` / `RestartEffect` / `SetAnimatorParam` / `SetTextMeshText` /
+  `SetMeshRenderer` / `DebugDrawLine` / `Overlap*` / `SphereCast*` / `RaycastMasked` /
+  `NameHash` / `WorldPosition` を公開し、**`tickIndex` を `MyeScript.Tick` として渡す**
+  (`ScriptRuntime.Invoke` が受け取っておきながら捨てていた。C# には他に決定論的な時間
+  カウンタが無い)。★`UISetFocused` / `LoadPersist` / `SetUIRect` は**開けていない** —
+  M70c の判断 (ハッシュ対象を C# から書かせない) をそのまま守る。
+- **テストの置き場**: 新スイートは作らず `SchemaSelfTest` に足した (45 スイートのまま)。
+  検査は「マクロの展開 3 種 + layoutHash に混ざらないこと + エンジン側変換 + 角度ヘルパの
+  DirectXMath 照合 + ワールド位置の親合成」。
+- 実測 (すべてローカル):
+  - 8 ビルド 0 警告 (`/p:MyeWarnAsError=true`) / C# も `TreatWarningsAsErrors` で 0 警告
+  - Debug・Release の `--selftest` 全 PASS / `check_rules.ps1` 0 error
+  - `replay_verify.bat` 10 ジョブ全 PASS (118.9s) / `shot_verify.bat` **24 枚すべて
+    maxDiff=0 diffPixels=0** (golden は 1 枚も動かない = 挙動を変えていないことの確認)
+  - `net_verify.bat` 4 ケース + desync 注入 PASS
+  - **Inspector 目視**: `Editor.exe --fog-demo --select Spinner --lang ja` の一時スクショで
+    `Rotator` が「回転速度 (度/秒)」「現在の角度 (度)」で出ること、アセット一覧に
+    `builtin://` 6 種が並ぶことを確認
+  - **C# は一時 probe で実走確認** (`abi-bump-verification` の手順)。実測値: `Tick=2` /
+    子エンティティの `local=5 → world=6` / `Fog` への `SetField=True` かつ `TryGetField=False`
+    (非対称そのもの) / 型サイズ違いの Get は False / `SetMeshRenderer("builtin://cylinder")=True`
+    (#12 の修正が Runtime で効いている証拠) / `Instantiate` が fileId を返す。probe は削除済み
+- 文書更新: `engine_spec.md` §5.2 (メタデータの節を追記 + 規約を「共有する値」の話へ) /
+  §12.2 の表と見出し (M0-M70、283 コミット) / §12.3 から M70d の行を削除し dogfooding の
+  残り 5 件へ差し替え / `README.md` に機能の項 + Inspector の行 /
+  `docs/dogfooding.md` を **20 件中 15 件決着 (実装 10 / 文書と確認 5)** へ。
 
 ## 次のタスクの置き場 (M70 では実装しない)
 

@@ -36,4 +36,5 @@ struct PartAttachDemo : Script<PartAttachDemo> {
         MyeLogf(ctx, "[parts] attached 'PartCharm' to the HandR socket");
     }
 };
-REGISTER_SCRIPT(PartAttachDemo, FIELDS(done, attached));
+REGISTER_SCRIPT(PartAttachDemo,
+                FIELDS(MYE_F_JP(done, "実行済み"), MYE_F_JP(attached, "取り付けた数")));

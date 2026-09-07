@@ -73,4 +73,8 @@ struct PlayerController : Script<PlayerController> {
         }
     }
 };
-REGISTER_SCRIPT(PlayerController, FIELDS(moveSpeed, jumpCount, prevSpace, pickupCount));
+REGISTER_SCRIPT(PlayerController,
+                FIELDS(MYE_F_RANGE(moveSpeed, "移動速度 (m/s)", 0.0f, 20.0f),
+                       MYE_F_JP(jumpCount, "ジャンプ回数"),
+                       MYE_F_JP(prevSpace, "前 tick の Space"),
+                       MYE_F_JP(pickupCount, "拾った数")));

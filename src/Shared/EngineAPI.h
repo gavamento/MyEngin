@@ -199,6 +199,14 @@ struct MyeEngineApi {
     int (*SetVelocity)(void* engine, MyeEntityId id, MyeVec3 v);
 
     // ---- 空間クエリ (v4 で予約、M28c で実装)。トリガー含む全コライダー対象 ----
+    // ★**Start() からは使えない** (dogfooding #3)。Start はスクリプト層 = フェーズ 3 で、
+    //   TransformSystem はその後のフェーズ 4 (TickRunner.cpp) なので、シーンを読み込んだ
+    //   直後の最初の tick では WorldMatrix がまだ確定していない = 何にも当たらない。
+    //   エディタは Play 前に毎フレーム描画が走っていて行列が埋まっているため気づけず、
+    //   **Runtime.exe (描画前に tick が回る) でだけ壊れる**という一番たちの悪い形になる。
+    //   置き場所は Update にして「2 tick 目以降」を自分で待つこと。Raycast* / Overlap* /
+    //   SphereCast* / RaycastParts と、位置を読む糖衣 (MyeGameObject::GetWorldPosition)
+    //   のすべてに同じことが言える。
     // Overlap 系: ヒットしたエンティティを outEntities に最大 maxCount 個 (index 昇順) 書き、
     // 戻り値は「切り捨て前の総ヒット数」。バッファは呼び出し側が確保する (DLL 境界規則)。
     int (*OverlapSphere)(void* engine, MyeVec3 center, float radius, MyeEntityId* outEntities,
@@ -212,7 +220,11 @@ struct MyeEngineApi {
     // ---- キャラクターコントローラ (v5、M29b)。CC 非所持は 0 を返す ----
     // CharacterMove: 水平移動速度 (m/s) を設定する。値は保持される (毎 tick 設定推奨)。y は無視
     int (*CharacterMove)(void* engine, MyeEntityId id, MyeVec3 move);
-    // CharacterJump: 次の物理 tick で接地していれば vy=speed。接地可否に関わらず消費される
+    // CharacterJump: ★**接地判定は呼び出し側の責任** (dogfooding #6)。名前は「跳ぶ」だが
+    //   実体は「跳躍要求を積む」だけで、接地可否に関わらずその tick で消費される —
+    //   素で呼ぶと空中で何度でも跳べる。CharacterIsGrounded を確かめてから呼ぶこと
+    //   (PlayerController / WalkerDemo がその形)。
+    //   効果は「次の物理 tick で接地していれば vy=speed」
     int (*CharacterJump)(void* engine, MyeEntityId id, float speed);
     int (*CharacterIsGrounded)(void* engine, MyeEntityId id);           // 1=前 tick 接地
     int (*CharacterGetVelocity)(void* engine, MyeEntityId id, MyeVec3* out); // 実効速度
@@ -334,9 +346,17 @@ struct MyeEngineApi {
     // compNameHash / fieldNameHash は FNV-1a 64bit (ScriptAPI.h の MyeNameHash /
     // C# は生成定数)。ポインタは越境しない — 常に値コピー (DLL 境界規則)。
     //
-    // ★読み書きできるのは決定論レーンのコンポーネントだけ。kComponentNoHash
-    //   (C# スクリプト状態 = 非決定論レーン) は読みも書きも 0 を返す — そこから
-    //   1 bit でも sim に読み込むとリプレイ (spec 11.3) が壊れるため。
+    // ★**Get と Set は非対称** (M70d)。kComponentNoHash のコンポーネント
+    //   (C# スクリプト状態 / UIElement / Fog / CameraPostFx … = 非決定論レーン) は
+    //     - Get: 0 を返して**恒久的に閉じる**。そこから 1 bit でも sim へ読み込むと
+    //       リプレイ (spec 11.3) が壊れる。C# レーンは record/verify 中に走らないので、
+    //       C# が書いた値を sim が読み返した瞬間に「録画と再生で違う世界」になる。
+    //     - Set: **通す**。書き込みは決定論レーン (C++ スクリプト) の副作用で、値は
+    //       ハッシュに載らず、NoHash コンポーネントも World のカラムとして SimSnapshot に
+    //       入る (Replay/SimSnapshot.h) ので巻き戻しでも復元される。
+    //   これで Fog / Decal / TrailRenderer / SpriteRenderer / Skybox / Terrain /
+    //   ReflectionProbe / SkinnedMesh / CameraPostFx (露出・ブルーム・DOF …) が
+    //   **新スロット 0 本で**実行時に操作できる。
     //
     // GetComponentField: 成功でフィールドの実バイト数を返し buf へ値コピー、outType
     //   (null 可) へ MyeFieldType を書く。未知の comp/field・死んだエンティティ・

@@ -17,9 +17,10 @@
 - 進捗: Phase 1（歩く・視点切替・拾う）/ 1.5（マウスルックのエンジン修正）/ 2（撃つ）/
   **3（車）/ 4（タイトル・ポーズ・リザルト・ハイスコア・デバッグ表示）まで完了**
 
-## 状態の台帳 (M70c 時点)
+## 状態の台帳 (M70d 時点)
 
-**20 件中 5 件が修正済み、15 件が未解決。** 番号は下の節に対応する。
+**20 件中 15 件が決着 (実装で 10 / 文書と確認で 5)、5 件が未解決。** 番号は下の節に対応する。
+未解決の 5 件はいずれも**新しい実装面が要る**もので、#20 は次の ABI bump の設計から始まる。
 
 | # | 内容 | 状態 |
 |---|---|---|
@@ -28,19 +29,19 @@
 | 1 | マウスの視点操作が書けない | 修正済み (M64a / API v15) |
 | 14 | `Active{enabled:0}` が階層に伝播しない | 修正済み (M64b) |
 | 15 | 2 つ目以降のスクリプトの `Start()` が呼ばれない | 修正済み (M64b) |
-| 2 | スクリプトの調整フィールドに Inspector のメタ情報を付けられない | **文書で決着** — 「調整値はスキーマコンポーネントへ」を規約として `engine_spec.md` §5.2 に明記した |
-| 3 | `Start()` の時点では WorldMatrix が無い（空間クエリが使えない） | 未解決（`engine_spec.md` §5.3 に罠として明記済み） |
-| 4 | `Instantiate` / `PlayEffect` の「親なし」の渡し方が罠 | 未解決（1 行修正） |
-| 5 | CharacterController のカプセルが Transform のスケールを拾う | 未解決（コメント追加で足りる） |
-| 6 | `CharacterJump` は接地を見ない | 未解決（コメント追加で足りる） |
-| 7 | 角度 → 四元数のヘルパがスクリプト側に無い | 未解決（`ScriptAPI.h` の糖衣。ABI bump 不要） |
-| 8 | Skybox の cubemap モードが未実装 | 未解決 |
-| 9 | エンティティ参照が名前引きに寄りがち | 未解決 |
+| **2** | **スクリプトの調整フィールドに Inspector のメタ情報を付けられない** | **修正済み (M70d)** — `MYE_F_JP` / `MYE_F_RANGE` で表示名とスライダ範囲が付く。「共有する調整値はスキーマへ」の規約 (`engine_spec.md` §5.2) はそのまま残る |
+| 3 | `Start()` の時点では WorldMatrix が無い（空間クエリが使えない） | **文書で決着 (M70d)** — `EngineAPI.h` の空間クエリ節に「Start では使えない・Runtime でだけ壊れる」を明記 |
+| **4** | **`Instantiate` / `PlayEffect` の「親なし」の渡し方が罠** | **修正済み (M70d)** — 判定を `MyeEntityIdIsNull` へ。実在する `{0,0}` を親に渡すと黙ってルート生成になる本物のバグも一緒に消えた |
+| 5 | CharacterController のカプセルが Transform のスケールを拾う | **文書で決着 (M70d)** — `Components.h` に `VehicleComponent` と同じ注意書き |
+| 6 | `CharacterJump` は接地を見ない | **文書で決着 (M70d)** — 「接地判定は呼び出し側の責任」を注記の先頭へ (改名は採らない) |
+| **7** | **角度 → 四元数のヘルパがスクリプト側に無い** | **修正済み (M70d)** — `MyeQuatFromEuler` / `MyeForwardOf` (+ CRT に依存しない `MyeSinRad` / `MyeCosRad`)。ABI 追加ゼロ |
+| 8 | Skybox の cubemap モードが未実装 | **記録の誤り (M70d で判明)** — M38b で実装済み。古かったのは `Components.h` のコメントとこの記録のほう |
+| 9 | エンティティ参照が名前引きに寄りがち | **エンジン側は完備 (M70d で確認)** — 書き方の問題。M70c の `UIButtonDemo` が名前引き → `EntityRef` の実例 |
 | 11 | スクリプトのレイキャストをヘッドレスで追えない | 未解決（`--debug-draw-log` 案） |
-| 12 | `builtin://` プリミティブが遅延生成で Runtime では半分解決しない | 未解決 |
+| **12** | **`builtin://` プリミティブが遅延生成で Runtime では半分解決しない** | **修正済み (M70d)** — `MeshLibrary::Init` が 6 種とも登録する |
 | 13 | プロジェクト側に車輪メッシュを用意する手段が無い | 未解決（`builtin://wheel` 案） |
 | 17 | CharacterController と Rigidbody が一方通行 | 未解決 |
-| 18 | `MyeGameObject` は回転を書けるのに読めない | 未解決（1 行） |
+| **18** | **`MyeGameObject` は回転を書けるのに読めない** | **修正済み (M70d)** — `GetLocalRotation` / `GetLocalScale` / `SetLocalScale`、加えて `GetWorldPosition` |
 | 19 | `Vehicle` があるのに `PhysicsEnvironment` が無いと黙って柔らかい車になる | 未解決（起動時 WARN 案） |
 | 20 | スクリプト間で値を渡す手段が名前引きしかない | 未解決 |
 
@@ -114,7 +115,7 @@
 
 ---
 
-## 2. C++ スクリプトの調整フィールドに Inspector のメタ情報を付けられない
+## 2. C++ スクリプトの調整フィールドに Inspector のメタ情報を付けられない → **修正済み (M70d)**
 
 **やろうとしたこと** — 移動速度やカメラ距離を Play 中に Inspector で詰める。
 
@@ -133,9 +134,29 @@
 **直すなら** — `MyeScriptDesc` にフィールドのメタ配列を足す（ABI 追加）か、
 **「調整値はスキーマへ」を規約として README / engine_spec に明記**する。後者のほうが安い。
 
+**M70d で実際に直したもの** — 両方やった。`MyeScriptField` の末尾 3 メンバ
+(`displayName` / `rangeMin` / `rangeMax`) は **M70c の ABI v16 で先に予約**してあり
+(レイアウト変更を bump と同じコミットに閉じ込めるため)、M70d はそれを読む側を書いた:
+
+```cpp
+REGISTER_SCRIPT(PlayerController,
+                FIELDS(MYE_F_JP(moveSpeed, "移動速度"),
+                       MYE_F_RANGE(jumpPower, "跳躍力", 0.0f, 20.0f),
+                       jumpCount));   // 素の名前は 1 文字も変えずに通る
+```
+
+エンジン側の受け口は `ScriptHost::FieldDescFromScriptField` の 1 本きりで、Inspector は
+組込み・スキーマ・スクリプトを同じ `DrawField` で描くので、渡すだけで日本語ラベルと
+範囲付きドラッグになる。メタデータは **`layoutHash` に混ぜない**ので、表示名を変えても
+DLL リロードの状態移行は走らない (= 調整中の値が飛ばない)。`FIELDS()` の上限も 16 → **32**。
+
+★ただし**回避策のほうが間違いだったわけではない**。複数のスクリプトが読む値や、
+JSON としてデータで持ちたい値は今もスキーマコンポーネントが正しい置き場所で、
+`engine_spec.md` §5.2 の規約はその形で残してある。
+
 ---
 
-## 3. `Start()` の時点では WorldMatrix がまだ無い（空間クエリが使えない）
+## 3. `Start()` の時点では WorldMatrix がまだ無い（空間クエリが使えない） → **文書で決着 (M70d)**
 
 **やろうとしたこと** — ゲーム開始時にアイテムを撒く。真下へレイを飛ばして、床でも箱の上でも
 その面の上に置きたかった。
@@ -153,9 +174,18 @@ Runtime.exe（描画前に tick が回る）でだけ壊れる**という一番�
 できないなら `EngineAPI.h` の空間クエリ群のコメントに
 「Start では使えない（Transform 未確定）」と明記する。
 
+**M70d の決着** — 後者。`EngineAPI.h` の空間クエリ節に「Start はフェーズ 3 /
+TransformSystem はフェーズ 4 なので最初の tick では何にも当たらない。エディタでは
+描画が行列を埋めているので気づけず **Runtime.exe でだけ壊れる**」を明記した。
+前者を採らなかったのは、Start の前に 1 回余分に回すと**フェーズ順序そのもの**が変わり、
+既存の .rep とスナップショットの意味が動くため。
+★同じ理由で `MyeGameObject::GetWorldPosition` (M70d) は**親を持たないエンティティだけ**
+ローカル位置で答える — WorldMatrix は生成時から単位行列で存在するので、
+「まだ計算していない」と「本当に原点に居る」を行列からは区別できない。
+
 ---
 
-## 4. `Instantiate` / `PlayEffect` の「親なし」の渡し方が罠
+## 4. `Instantiate` / `PlayEffect` の「親なし」の渡し方が罠 → **修正済み (M70d)**
 
 **踏んだ罠** — `Instantiate(engine, key, pos, parent)` の `parent` に「親は無い」を渡したい。
 自然に書けば `MyeEntityId{}` だが、これは `index = 0xFFFFFFFF`（null id）であって
@@ -169,9 +199,14 @@ Runtime.exe（描画前に tick が回る）でだけ壊れる**という一番�
 **直すなら** — drain の判定を `MyeEntityIdIsNull(req.parent)` に変えるのが正しい
 （`MathPod.h` に既にこのヘルパがある）。ABI 変更を伴わない 1 行修正。
 
+**M70d で実際に直したもの** — そのとおり 1 行 (`TickRunner.cpp`)。
+★書いてみて分かったのは、**逆向きの本物のバグ**も同じ 1 行だったこと —
+`{0,0}` は「最初に作られた実在のエンティティ」なので、それを親に渡すと
+`hasParent == false` に落ちて**黙ってルート生成**になっていた。
+
 ---
 
-## 5. CharacterController のカプセルが Transform のスケールを拾う
+## 5. CharacterController のカプセルが Transform のスケールを拾う → **文書で決着 (M70d)**
 
 **踏んだ罠** — プレイヤーの見た目を出すために本体へ `scale [0.7, 1.8, 0.7]` を入れると、
 `CharacterControllerComponent.height` に `scale.y` が掛かって
@@ -185,7 +220,7 @@ Runtime.exe（描画前に tick が回る）でだけ壊れる**という一番�
 
 ---
 
-## 6. `CharacterJump` は接地を見ない
+## 6. `CharacterJump` は接地を見ない → **文書で決着 (M70d)**
 
 `EngineAPI.h:200` に「接地可否に関わらず消費される」と明記はされているが、名前からは
 「ジャンプする API」に読める。素で呼ぶと空中で何度でも跳べてしまう。
@@ -195,9 +230,12 @@ Runtime.exe（描画前に tick が回る）でだけ壊れる**という一番�
 **直すなら** — 名前を `CharacterRequestJump` にする、あるいは
 「接地判定は呼び出し側の責任」をコメントの先頭に上げる。
 
+**M70d の決着** — 後者。改名は `EngineAPI.h` / `Interop.cs` / `MyeScript.cs` の 3 か所を
+規則 11 が名前で照合するので、得るもの (呼び名の分かりやすさ) に対して波及が大きい。
+
 ---
 
-## 7. 角度 → 四元数のヘルパがスクリプト側に無い
+## 7. 角度 → 四元数のヘルパがスクリプト側に無い → **修正済み (M70d)**
 
 `Shared/` は C ABI + POD のみで DirectXMath を持ち込めないため、
 `XMQuaternionRotationRollPitchYaw` 相当を**ゲーム側で手で書く**必要がある
@@ -210,17 +248,31 @@ Runtime.exe（描画前に tick が回る）でだけ壊れる**という一番�
 **直すなら** — `ScriptAPI.h` に `MyeQuatFromEuler` / `MyeForwardOf` を inline で足す。
 ABI 追加ではなくヘッダ内の糖衣なので `MYE_API_VERSION` の bump は要らない。
 
+**M70d で実際に直したもの** — そのとおり。ただし**中身で CRT の `sinf` / `cosf` は呼べない** —
+`Physics/AeroSampling.cpp` の注記どおり CRT の三角関数は実装依存でビットが動きうるのに、
+ここで作った回転はハッシュ対象のフィールドへそのまま入るため。`MyeSinRad` / `MyeCosRad`
+(乗算と加算だけの 9 次多項式) を土台にし、規約が `XMQuaternionRotationRollPitchYaw` と
+一致することは `SchemaSelfTest` が DirectXMath と照合して機械検査する。
+多項式そのものは `WatcherFpsCamera` (M65g) が持っていたものを 1 命令も変えずに引き上げた
+(視点角のビット列が動くと replay 7 ペア目が割れるため)。
+
 ---
 
-## 8. Skybox の cubemap モードが未実装
+## 8. Skybox の cubemap モードが未実装 → **記録の誤り (M70d で判明)**
 
-`SkyboxComponent.mode = 1`（Cubemap）は予約で、実際は Gradient にフォールバックする
-（`Components.h:502`）。プロジェクトには `assets/textures/test_sky_cubemap.dds` が入っているのに
-使えない。Gradient で足りたので実害は無かったが、アセットだけあって経路が無いのは紛らわしい。
+当時の記録: 「`SkyboxComponent.mode = 1`（Cubemap）は予約で、実際は Gradient に
+フォールバックする（`Components.h:502`）。プロジェクトには
+`assets/textures/test_sky_cubemap.dds` が入っているのに使えない」。
+
+**実際は M38b で実装済みだった** — 専用シェーダ (`assets/shaders/skybox_cubemap.hlsl` を
+`SkyboxPass` がロード)、DDS cubemap ローダ (`GpuResources.cpp`、面順 +X,-X,+Y,-Y,+Z,-Z)、
+`RenderSystem` の SRV 解決、RT 側の環境サンプルまで揃っている。SRV が解決できないときだけ
+Gradient へフォールバックする。古かったのは `Components.h` の「予約」コメント
+(それを読んで書かれたこの記録) のほうで、M70d で 3 行とも実態へ直した。
 
 ---
 
-## 9. エンティティ参照が名前引きに寄りがち（改善余地・未対応）
+## 9. エンティティ参照が名前引きに寄りがち → **エンジン側は完備 (M70d で確認)**
 
 カメラ / HUD / GameRoot を毎 tick `FindByName` で引いている。`MyeScriptField` は
 `MYE_FIELD_ENTITYREF`（`MyeEntityId` 型のフィールド）を扱えて、シーン JSON では fileId で
@@ -228,6 +280,13 @@ ABI 追加ではなくヘッダ内の糖衣なので `MYE_API_VERSION` の bump 
 今回は Phase 1 の範囲を広げないため名前引きのままにしてある。
 規模が大きくなったら EntityRef フィールドへ移す（そのときに Inspector から実際に
 参照を張れるかも検証対象）。
+
+**M70d で確認したこと** — エンジン側は既に一通り揃っている: `MYE_FIELD_ENTITYREF` の
+リフレクション、Hierarchy からの Inspector へのドラッグ&ドロップ、シーン JSON の
+fileId 再マップ、Search 窓の逆引き。つまりこれは**エンジンの不足ではなく書き方**の話で、
+残す価値があるのは「名前引きに寄りやすい」という観察のほう。
+実例として M70c で `UIButtonDemo` を名前引きから `EntityRef` フィールドへ移してある
+(C# からも `MyeEntity.Find` に頼らず参照を持てる)。
 
 ---
 
@@ -301,7 +360,7 @@ ERROR ログだけ出して起動を続ける。その状態で保存すると**
 
 ---
 
-## 12. `builtin://` プリミティブは**遅延生成**で、Runtime では半分が解決しない
+## 12. `builtin://` プリミティブは**遅延生成**で、Runtime では半分が解決しない → **修正済み (M70d)**
 
 **やろうとしたこと** — 車輪に円柱を使う。`builtin://cylinder` は `MeshLibrary::Cylinder()` に
 あり、エディタの Create メニューにも並んでいる。シーン JSON には
@@ -326,6 +385,12 @@ ERROR ログだけ出して起動を続ける。その状態で保存すると**
 **直すなら** — `MeshLibrary::Init` で 6 つとも登録してしまう（各数百頂点で、
 遅延にする価値が無い）。せめて `AssetID` の解決に失敗したときに
 `unknown mesh builtin://cylinder` を 1 行 WARN で出す。
+
+**M70d で実際に直したもの** — 前者。`MeshLibrary::Init` が `Cube / Sphere / Plane / Quad /
+Cylinder / Capsule` を呼んで登録を確定させる。`Init` を呼ばない CPU 専用モード
+(`TerrainSelfTest`) は従来どおり 1 本も作らない。エディタのアセット一覧に
+`builtin://` 6 種が並ぶことと、C# から `SetMeshRenderer("builtin://cylinder", ...)` が
+Runtime で成功することを実測で確認した。
 
 ---
 
@@ -481,7 +546,7 @@ no-op + WARN も同じ（セーブファイルは sim の外にあるので、�
 
 ---
 
-## 18. `MyeGameObject` は回転を**書けるのに読めない**
+## 18. `MyeGameObject` は回転を**書けるのに読めない** → **修正済み (M70d)**
 
 `MyeGameObject` は `GetLocalPosition` / `SetLocalPosition` / `SetLocalRotation` を持つが、
 **`GetLocalRotation` が無い**（`ScriptAPI.h:250`）。ABI にはスロットが存在する
@@ -490,6 +555,12 @@ no-op + WARN も同じ（セーブファイルは sim の外にあるので、�
 （自分でヨーを積んでいる `PlayerController` と違って）、Phase 3 で初めて踏んだ。
 
 **直すなら** — 1 行足すだけ。ついでに `GetLocalScale` も無い。
+
+**M70d で実際に直したもの** — `GetLocalRotation` / `GetLocalScale` / `SetLocalScale` の 3 本。
+加えて `GetWorldPosition` を足した — こちらは糖衣ではなく**実バグの修正**で、
+`MyePlaySoundHere` が v8 以来ローカル位置をワールド位置として `PlaySoundAt` に渡していた
+(親を持つエンティティで鳴る場所が「親のワールド位置ぶん」ずれる)。C# 側の
+`MyeScript.PlaySoundHere` も同じバグで、同時に直した。
 
 ---
 

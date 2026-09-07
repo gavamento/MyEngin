@@ -39,5 +39,9 @@ struct Spawner : Script<Spawner> {
         *target = e;
     }
 };
-REGISTER_SCRIPT(Spawner, FIELDS(intervalTicks, counter, slot, spawned0, spawned1, spawned2, spawned3));
+REGISTER_SCRIPT(Spawner,
+                FIELDS(MYE_F_RANGE(intervalTicks, "生成間隔 (tick)", 1.0f, 600.0f),
+                       MYE_F_JP(counter, "カウンタ"), MYE_F_JP(slot, "次のスロット"),
+                       MYE_F_JP(spawned0, "生成物 1"), MYE_F_JP(spawned1, "生成物 2"),
+                       MYE_F_JP(spawned2, "生成物 3"), MYE_F_JP(spawned3, "生成物 4")));
 

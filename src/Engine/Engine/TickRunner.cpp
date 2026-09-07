@@ -440,7 +440,14 @@ void RunOneTick(TickServices& ts)
             if (!prefabLibrary.Contains(hash)) {
                 prefabLibrary.LoadFromFile(full);
             }
-            const bool hasParent = (req.parent.index != 0u || req.parent.generation != 0u);
+            // ★M70d (dogfooding #4): 判定は null id そのもので行う。以前は
+            //   「index も generation も 0 でなければ親あり」だったので、
+            //   (a) 自然に書ける MyeEntityId{} (= null id、index 0xFFFFFFFF) が
+            //       「親あり」に分類され、EnsureFileId が死んだエンティティに 0 を返す
+            //       という**2 段階の偶然**でルート生成になっていた。
+            //   (b) 逆に最初に作られた実在エンティティ {0,0} を親に渡すと、
+            //       黙ってルート生成になっていた (こちらは本物のバグ)。
+            const bool hasParent = !MyeEntityIdIsNull(req.parent);
             const uint64_t parentFid =
                 hasParent ? scene.EnsureFileId(
                                 EntityID{ req.parent.index, req.parent.generation })

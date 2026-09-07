@@ -20,7 +20,7 @@ namespace {
 
 MyeEntityId ToShared(EntityID id) { return { id.index, id.generation }; }
 
-FieldType ToFieldType(int32_t t)
+FieldType ToFieldTypeImpl(int32_t t)
 {
     switch (t) {
     case MYE_FIELD_FLOAT:    return FieldType::Float;
@@ -50,6 +50,26 @@ ScriptStartedKey StartedKey(EntityID e, ComponentTypeId script)
 }
 
 } // namespace
+
+// ---- MyeScriptField → FieldDesc (M70d) ----
+// ★**スクリプトのフィールド表を作るのはこの 1 本きり**。DLL 内の文字列はリロードで
+//   解放されるので、name も displayName も必ず永続コピーを作る (SchemaComponents.cpp の
+//   _strdup と同じ扱い。スクリプト型は小規模なので解放しない)。
+// ★minVal == maxVal は「範囲無し」= 従来のドラッグ入力 (Reflection.h の規約)。
+//   マクロ側の既定値 0/0 がそのまま「未指定」になるので変換は要らない
+FieldDesc FieldDescFromScriptField(const MyeScriptField& sf)
+{
+    FieldDesc fd;
+    fd.name = _strdup(sf.name);
+    fd.type = ToFieldTypeImpl(sf.type);
+    fd.offset = sf.offset;
+    fd.flags = kFieldNone;
+    fd.minVal = sf.rangeMin;
+    fd.maxVal = sf.rangeMax;
+    // v16 (M70c で予約 → M70d で読む)。null なら Inspector は name をそのまま出す
+    fd.displayName = (sf.displayName != nullptr) ? _strdup(sf.displayName) : nullptr;
+    return fd;
+}
 
 // ---- C ABI テーブル構築 ----
 // engine ポインタは apiCtx_ (ScriptApiContext)。テーブル本体は EngineApiTable.cpp に
@@ -197,12 +217,9 @@ bool ScriptHost::LoadModule(const std::wstring& dllPath)
         cd.construct = sd.construct;
         cd.fields.reserve(sd.fieldCount);
         for (uint32_t f = 0; f < sd.fieldCount; ++f) {
-            FieldDesc fd;
-            fd.name = _strdup(sd.fields[f].name); // 永続コピー (小規模なので解放しない)
-            fd.type = ToFieldType(sd.fields[f].type);
-            fd.offset = sd.fields[f].offset;
-            fd.flags = kFieldNone;
-            cd.fields.push_back(fd);
+            // 表示名 / スライダ範囲もここで写る (M70d)。Inspector は組込みもスキーマも
+            // スクリプトも同じ DrawField を通るので、渡すだけで日本語名とスライダが出る
+            cd.fields.push_back(FieldDescFromScriptField(sd.fields[f]));
         }
 
         if (isNew) {

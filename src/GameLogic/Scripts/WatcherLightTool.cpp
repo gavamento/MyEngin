@@ -302,6 +302,13 @@ struct WatcherLightTool : Script<WatcherLightTool> {
     }
 };
 REGISTER_SCRIPT(WatcherLightTool,
-                FIELDS(placeTicks, retrieveTicks, mode, progress, busyIdx, lamp0, lamp1, lamp2,
-                       state0, state1, state2, lightIntensity, startPos, caughtGrace, agent0,
-                       agent1));
+                FIELDS(MYE_F_RANGE(placeTicks, "設置にかかる tick", 1.0f, 600.0f),
+                       MYE_F_RANGE(retrieveTicks, "回収にかかる tick", 1.0f, 600.0f),
+                       MYE_F_JP(mode, "動作 (0=待機 1=設置 2=回収)"), MYE_F_JP(progress, "進捗 (tick)"),
+                       MYE_F_JP(busyIdx, "作業中のランプ番号"), MYE_F_JP(lamp0, "ランプ 1"),
+                       MYE_F_JP(lamp1, "ランプ 2"), MYE_F_JP(lamp2, "ランプ 3"),
+                       MYE_F_JP(state0, "ランプ 1 の状態"), MYE_F_JP(state1, "ランプ 2 の状態"),
+                       MYE_F_JP(state2, "ランプ 3 の状態"),
+                       MYE_F_RANGE(lightIntensity, "光の強さ", 0.0f, 20.0f),
+                       MYE_F_JP(startPos, "開始位置"), MYE_F_JP(caughtGrace, "捕捉の猶予 (tick)"),
+                       MYE_F_JP(agent0, "敵 1"), MYE_F_JP(agent1, "敵 2")));

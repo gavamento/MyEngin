@@ -19,35 +19,14 @@ constexpr uint8_t kVkShift = 0x10;
 constexpr uint8_t kVkControl = 0x11;
 constexpr uint8_t kVkV = 0x56; // 一人称 / 俯瞰の切り替え
 
-constexpr float kPi = 3.14159265358979f;
-constexpr float kDeg2Rad = kPi / 180.0f;
-
 // ★**sin / cos を CRT から取らない**。`Physics\AeroSampling.cpp` の注記が正本で、
 //   「std::cos / std::sin は CRT 実装依存でビットが動きうる」。視点角はハッシュ対象の
 //   フィールドから移動速度まで一直線に流れるので、ここに CRT 依存を挟むと
-//   「別の Windows で .rep が再生できない」種類の壊れ方になる。乗算と加算だけの
-//   多項式なら /fp:precise の下でどのビルドでも厳密に同じビット列になる。
-//   前提: |x| <= 3pi/2 (半角と Cos の +pi/2 しか渡さないので満たされる)。sin(x)=sin(pi-x)
-//   の対称性で [-pi/2, pi/2] へ折り返し、
-//   9 次のテイラー (この区間で誤差 1e-9 未満 = 視点には過剰なほど)
-float Sin(float x)
-{
-    if (x > kPi * 0.5f) {
-        x = kPi - x;
-    } else if (x < -kPi * 0.5f) {
-        x = -kPi - x;
-    }
-    const float x2 = x * x;
-    return x
-        * (1.0f
-           + x2
-               * (-1.0f / 6.0f
-                  + x2 * (1.0f / 120.0f + x2 * (-1.0f / 5040.0f + x2 * (1.0f / 362880.0f)))));
-}
-float Cos(float x)
-{
-    return Sin(x + kPi * 0.5f);
-}
+//   「別の Windows で .rep が再生できない」種類の壊れ方になる。
+//   ★M70d で **ScriptAPI.h の MyeSinRad / MyeCosRad へ引き上げた** (実装は 1 命令も
+//     変えていない = 視点角のビット列は M65g のまま)。角度を扱うスクリプトが増えるたびに
+//     多項式を書き写す形になっていたのを 1 本に寄せたもの
+constexpr float kDeg2Rad = kMyeDeg2Rad;
 
 // AcousticEmitterComponent (Engine/Core/Components.h) の名前ハッシュ。
 // **毎 tick 取り直さない** (WavePinger と同じ流儀)
@@ -127,8 +106,8 @@ struct WatcherFpsCamera : Script<WatcherFpsCamera> {
         // (roll=0 のとき x=sp*cy / y=cp*sy / z=-sp*sy / w=cp*cy)
         const float hp = pitchDeg * kDeg2Rad * 0.5f;
         const float hy = yawDeg * kDeg2Rad * 0.5f;
-        const float sp = Sin(hp), cp = Cos(hp);
-        const float sy = Sin(hy), cy = Cos(hy);
+        const float sp = MyeSinRad(hp), cp = MyeCosRad(hp);
+        const float sy = MyeSinRad(hy), cy = MyeCosRad(hy);
         const MyeQuat rot = { sp * cy, cp * sy, -sp * sy, cp * cy };
         MyeGameObject self = MyeSelf(ctx);
         self.SetLocalRotation(rot);
@@ -143,7 +122,7 @@ struct WatcherFpsCamera : Script<WatcherFpsCamera> {
         const float ax = MyeAxis(ctx, "MoveX");
         const float ay = MyeAxis(ctx, "MoveY");
         // yaw だけで水平面へ落とす (見上げても前進速度が落ちないようにする)
-        const float fwdX = Sin(yawDeg * kDeg2Rad), fwdZ = Cos(yawDeg * kDeg2Rad);
+        const float fwdX = MyeSinRad(yawDeg * kDeg2Rad), fwdZ = MyeCosRad(yawDeg * kDeg2Rad);
         const float vx = (fwdZ * ax + fwdX * ay) * speed;
         const float vz = (-fwdX * ax + fwdZ * ay) * speed;
         api->CharacterMove(api->engine, ctx.self, { vx, 0.0f, vz });
@@ -196,5 +175,12 @@ struct WatcherFpsCamera : Script<WatcherFpsCamera> {
     }
 };
 REGISTER_SCRIPT(WatcherFpsCamera,
-                FIELDS(lookSensDeg, yawDeg, pitchDeg, walkSpeed, runSpeed, crouchSpeed,
-                       breathPhase, breathLoudness, firstPerson, prevViewKey, cursorMode, camera));
+                FIELDS(MYE_F_RANGE(lookSensDeg, "視点感度 (度/カウント)", 0.0f, 1.0f),
+                       MYE_F_JP(yawDeg, "方位角 (度)"), MYE_F_JP(pitchDeg, "仰俯角 (度)"),
+                       MYE_F_RANGE(walkSpeed, "歩行速度 (m/s)", 0.0f, 10.0f),
+                       MYE_F_RANGE(runSpeed, "走行速度 (m/s)", 0.0f, 15.0f),
+                       MYE_F_RANGE(crouchSpeed, "しゃがみ速度 (m/s)", 0.0f, 10.0f),
+                       MYE_F_JP(breathPhase, "呼吸の位相 (tick)"),
+                       MYE_F_RANGE(breathLoudness, "呼吸の音量", 0.0f, 1.0f),
+                       MYE_F_JP(firstPerson, "一人称か"), MYE_F_JP(prevViewKey, "前 tick の V"),
+                       MYE_F_JP(cursorMode, "カーソルモード"), MYE_F_JP(camera, "カメラ")));

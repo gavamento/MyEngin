@@ -38,4 +38,6 @@ struct PartRaycastDemo : Script<PartRaycastDemo> {
         }
     }
 };
-REGISTER_SCRIPT(PartRaycastDemo, FIELDS(hitCount, lastDist, marker));
+REGISTER_SCRIPT(PartRaycastDemo,
+                FIELDS(MYE_F_JP(hitCount, "ヒット回数"), MYE_F_JP(lastDist, "最後のヒット距離"),
+                       MYE_F_JP(marker, "マーカー")));

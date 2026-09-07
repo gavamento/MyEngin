@@ -105,6 +105,19 @@ sln の外にもう 2 本ある。どちらも無い状態でエディタは起�
   耳を使わずに配管を検査する口が `--acoustic-audio-log N` (整形した voice と一発再生を 1 行ずつ +
   summary)、ショーケースが `--acoustic-demo`。詳細は
   [ADR-017](docs/adr/ADR-017-acoustic-audio.md)
+- **スクリプトから触れる面を埋める (M70d)** — 外部プロジェクトで実際にゲームを作って
+  溜めた穴 (`docs/dogfooding.md`) のうち、**新しい ABI スロットを 1 本も足さずに直せる 10 件**を
+  まとめて回収した。スクリプトの調整フィールドに**日本語表示名とスライダ範囲**が付き
+  (`MYE_F_JP` / `MYE_F_RANGE`。上限も 16 → 32 フィールド)、`SetComponentField` が
+  **非ハッシュのコンポーネントにも書けるようになった** (読みは恒久的に閉じたまま —
+  書きは決定論レーンの副作用でスナップショットにも載るが、読むと C# が書いた値が
+  sim へ漏れる)。これで Fog / CameraPostFx / Decal / Terrain などの描画専用パラメータが
+  スロット 0 本で実行時に動かせる。あわせて回転・スケール・**ワールド位置**の取得、
+  CRT に依存しない角度ヘルパ (`MyeQuatFromEuler` / `MyeForwardOf`)、組込みメッシュ 6 種の
+  起動時登録、C# レーンへの生成 / 空間クエリ / CC / デバッグ描画 / `Tick` の公開。
+  ★実バグ 2 件も同じ回で消えた: `MyePlaySoundHere` が v8 以来**ローカル位置をワールド位置
+  として**鳴らしていたもの (親を持つ物で鳴る場所がずれる) と、`Instantiate` の親判定が
+  「実在する最初のエンティティ」を親なしと誤判定していたもの
 - **UI の押下判定をエンジンが持つ (M70c)** — hovered / pressed / clicked / focused を
   `Scene` の sim 状態として持ち、**スクリプト層より前**に毎 tick 確定させる。
   それまで押下判定は UIRenderer の中にだけ在って**ハイライト表示に使って捨てられており**、
@@ -197,6 +210,7 @@ sln の外にもう 2 本ある。どちらも無い状態でエディタは起�
 - **Game ビュー**: シーン内カメラ視点。Play 中は矢印キーで BoxTextured (プレイヤー) が移動、
   黄色い Spawned キューブに触れると回収 (GameLogic.dll の `OnTriggerEnter`)
 - **Inspector**: リフレクションから widget を自動生成。スクリプトのフィールドもここに出る
+  (M70d 以降は `MYE_F_JP` / `MYE_F_RANGE` を付ければ日本語表示名とスライダ範囲も付く)
 - **Particle Settings**: CPU/GPU 切替・比較モード・SIMD トグル・更新時間表示
 
 ## CLI (検証/CI 用)

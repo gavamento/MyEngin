@@ -26,4 +26,8 @@ struct WaveWalker : Script<WaveWalker> {
         ++ticks;
     }
 };
-REGISTER_SCRIPT(WaveWalker, FIELDS(ticks, startDelay, legTicks, speed));
+REGISTER_SCRIPT(WaveWalker,
+                FIELDS(MYE_F_JP(ticks, "経過 tick"),
+                       MYE_F_RANGE(startDelay, "開始を遅らせる tick", 0.0f, 600.0f),
+                       MYE_F_RANGE(legTicks, "片道の tick 数", 1.0f, 1200.0f),
+                       MYE_F_RANGE(speed, "速度 (m/s)", 0.0f, 10.0f)));

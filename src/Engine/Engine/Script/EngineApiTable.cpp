@@ -655,8 +655,12 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
     // ---- 汎用フィールドアクセス (v11、M50d) ----
     // 解決は「compNameHash → TypeId → FieldDesc」の 1 本道 (Inspector / シリアライザと
     // 同じメタデータを読む = スキーマ型も組込み型も同じ道)。ポインタは越境させない —
-    // 常に値コピー。★kComponentNoHash (C# スクリプト状態 = 非決定論レーン) は読み書き
-    // とも遮断する — そこから 1 bit でも sim へ読むとリプレイが壊れる (EngineAPI.h の契約)
+    // 常に値コピー。
+    // ★kComponentNoHash (C# スクリプト状態 / UIElement / Fog … = 非決定論レーン) の扱いは
+    //   **Get と Set で非対称** (M70d)。読みは恒久的に閉じる (そこから 1 bit でも sim へ
+    //   読むとリプレイが壊れる) が、書きは通す — 書き手は決定論レーンで、値はハッシュに
+    //   載らず、NoHash コンポーネントも SimSnapshot のカラムとして巻き戻る。
+    //   根拠の全文は EngineAPI.h の v11 節
     out.GetComponentField = [](void* engine, MyeEntityId e, uint64_t compNameHash,
                                uint64_t fieldNameHash, void* buf, int32_t bufSize,
                                int32_t* outType) -> int32_t {
@@ -687,7 +691,8 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
         const ComponentTypeId t = ComponentRegistry::Get().FindByNameHash(compNameHash);
         if (t == kInvalidComponentType) { return 0; }
         const ComponentDesc& desc = ComponentRegistry::Get().Desc(t);
-        if (desc.flags & kComponentNoHash) { return 0; }
+        // ★ここに NoHash ゲートは**置かない** (M70d)。書き込みは決定論レーンの副作用で、
+        //   描画専用コンポーネント (Fog / CameraPostFx / Decal …) を実行時に動かす唯一の口
         void* comp = w.GetComponentRaw(ToEngine(e), t);
         if (!comp) { return 0; }
         for (const FieldDesc& f : desc.fields) {

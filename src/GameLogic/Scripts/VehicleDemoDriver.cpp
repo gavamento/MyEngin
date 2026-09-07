@@ -69,4 +69,4 @@ struct VehicleDemoDriver : Script<VehicleDemoDriver> {
     }
 };
 
-REGISTER_SCRIPT(VehicleDemoDriver, FIELDS(ticks));
+REGISTER_SCRIPT(VehicleDemoDriver, FIELDS(MYE_F_JP(ticks, "経過 tick")));

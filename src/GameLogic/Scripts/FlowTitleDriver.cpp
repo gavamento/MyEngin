@@ -67,4 +67,7 @@ struct FlowTitleDriver : Script<FlowTitleDriver> {
     }
 };
 REGISTER_SCRIPT(FlowTitleDriver,
-                FIELDS(ticksInScene, lastBest, lastScore, lastRuns, clearClicks));
+                FIELDS(MYE_F_JP(ticksInScene, "シーン内の経過 tick"),
+                       MYE_F_JP(lastBest, "最高記録"), MYE_F_JP(lastScore, "前回のスコア"),
+                       MYE_F_JP(lastRuns, "プレイ回数"),
+                       MYE_F_JP(clearClicks, "記録消去の押下数")));

@@ -29,8 +29,38 @@ namespace MyeScripting
         public MyeTransform Transform => new MyeTransform(Id);
         public MyeVec3 Position { get => Engine.GetLocalPosition(Id); set => Engine.SetLocalPosition(Id, value); }
 
+        // ワールド位置 (M70d)。親を持つエンティティで「実際に居る場所」を知る唯一の口。
+        // ★親が無ければローカル位置と同値なのでそれを返す (常に厳密)。親があるときは
+        //   WorldMatrix を読む — TransformSystem はスクリプト層より後のフェーズなので、
+        //   Start と生成直後の tick では原点が返る (dogfooding #3 と同じ罠)
+        public MyeVec3 WorldPosition => Engine.GetWorldPosition(Id);
+
         public void Destroy() => Engine.DestroyGameObject(Id);
         public void SetParent(MyeEntity parent) => Engine.SetParent(Id, parent.Id);
+
+        // ---- 見た目 (v2)。M70d で C# へ開通 ----
+        // meshKey は "builtin://cube" などの登録名 (組込み 6 種は起動時に登録済み)。
+        // materialKey は登録マテリアル名。実体の解決はエンジン側
+        public bool SetMeshRenderer(string meshKey, string materialKey)
+            => Engine.SetMeshRenderer(Id, meshKey, materialKey);
+        // TextMesh のテキスト差し替え (v5)
+        public bool SetText(string text) => Engine.SetTextMeshText(Id, text);
+
+        // ---- キャラクターコントローラ (v5、M29b)。M70d で C# へ開通 ----
+        // ★Move は水平速度 (m/s) の**設定**で、値は保持される (毎 tick 呼ぶ想定)。y は無視。
+        // ★Jump は「跳躍要求」で接地を見ない — IsGrounded を確かめてから呼ぶこと
+        public bool CharacterMove(MyeVec3 move) => Engine.CharacterMove(Id, move);
+        public bool CharacterJump(float speed) => Engine.CharacterJump(Id, speed);
+        public bool CharacterIsGrounded() => Engine.CharacterIsGrounded(Id);
+        public MyeVec3 CharacterVelocity => Engine.CharacterGetVelocity(Id);
+
+        // ---- エフェクト / アニメータ (v6 + v7)。M70d で C# へ開通 ----
+        public bool EmitterBurst(int count) => Engine.EmitterBurst(Id, count);
+        public bool SetEmitterPlaying(bool playing) => Engine.SetEmitterPlaying(Id, playing);
+        public bool RestartEffect() => Engine.RestartEffect(Id);
+        // Animator Controller のパラメータ (index 0..3)
+        public bool SetAnimatorParam(int index, int value) => Engine.SetAnimatorParam(Id, index, value);
+        public int GetAnimatorParam(int index) => Engine.GetAnimatorParam(Id, index);
 
         // AudioSource コンポーネントの再生 / 停止 (v8、M45g)。非所持なら false。
         // PlayAudio は鳴っている音を鳴らし直す (Unity の AudioSource.Play と同じ)
@@ -144,9 +174,21 @@ namespace MyeScripting
         public MyeVec3 Position { get => Engine.GetLocalPosition(SelfId); set => Engine.SetLocalPosition(SelfId, value); }
         public MyeQuat Rotation { get => Engine.GetLocalRotation(SelfId); set => Engine.SetLocalRotation(SelfId, value); }
         public MyeVec3 Scale { get => Engine.GetLocalScale(SelfId); set => Engine.SetLocalScale(SelfId, value); }
+        // 親の変換を掛けたあとの位置 (M70d)。読み取り専用 — 書けるのはローカルだけ。
+        // 規則と Start の注意は MyeEntity.WorldPosition と同じ
+        public MyeVec3 WorldPosition => Engine.GetWorldPosition(SelfId);
+
+        // 現在の sim tick 番号 (M70d)。ネイティブは以前から Invoke で渡していたのに
+        // 捨てていた — C# にはこれ以外に**決定論的な時間カウンタが 1 つも無い**
+        // (実時間は機種依存、dt の積算は誤差が乗る)。「N tick に 1 回だけ」を書く土台
+        public ulong Tick { get; internal set; }
 
         // ---- ヘルパ ----
         protected void Log(string message) => Engine.Log(message);
+        // 名前 → FNV-1a 64bit (ネイティブ HashStr と同一定数)。M70d で公開。
+        // ★これが無いと汎用フィールドアクセス (TryGetField / SetField) が
+        //   スキーマ codegen の生成定数からしか呼べない = 手書きスクリプトから使えない
+        protected static ulong NameHash(string name) => Engine.NameHash(name);
         protected bool GetKey(int virtualKey) => Engine.KeyDown((byte)virtualKey);
         protected bool GetMouseButton(int button) => Engine.MouseButton(button);
         protected float Random01() => Engine.RandomFloat01();
@@ -280,6 +322,70 @@ namespace MyeScripting
         protected static bool Raycast(MyeVec3 origin, MyeVec3 dir, float maxDist, out MyeRaycastHit hit)
             => Engine.Raycast(origin, dir, maxDist, out hit);
 
+        // ---- 空間クエリ (v4 + v7 のマスク版)。M70d で C# へ開通 ----
+        // ★**Start() からは使えない** (WorldMatrix がまだ確定していない = 何にも当たらない)。
+        //   撒く / 探す処理は Update に置いて 2 tick 目以降で走らせること (dogfooding #3)。
+        // ★バッファは呼び出し側が確保する規約 (DLL 境界)。戻り値は**切り捨て前の総数**なので、
+        //   戻り値 > 配列長 なら取りこぼしている
+        protected static int OverlapSphere(MyeVec3 center, float radius, MyeEntity[] hits)
+            => FillEntities(hits, buf => Engine.OverlapSphere(center, radius, buf));
+        protected static int OverlapBox(MyeVec3 center, MyeVec3 halfExtents, MyeQuat rotation,
+                                        MyeEntity[] hits)
+            => FillEntities(hits, buf => Engine.OverlapBox(center, halfExtents, rotation, buf));
+        protected static bool SphereCast(MyeVec3 origin, MyeVec3 dir, float radius, float maxDist,
+                                         out MyeRaycastHit hit)
+            => Engine.SphereCast(origin, dir, radius, maxDist, out hit);
+        // レイヤーマスク付き (v7、M36a)。mask のビット = 対象レイヤー
+        protected static bool RaycastMasked(MyeVec3 origin, MyeVec3 dir, float maxDist, uint mask,
+                                            out MyeRaycastHit hit)
+            => Engine.RaycastMasked(origin, dir, maxDist, mask, out hit);
+        protected static int OverlapSphereMasked(MyeVec3 center, float radius, uint mask,
+                                                 MyeEntity[] hits)
+            => FillEntities(hits, buf => Engine.OverlapSphereMasked(center, radius, mask, buf));
+        protected static bool SphereCastMasked(MyeVec3 origin, MyeVec3 dir, float radius,
+                                               float maxDist, uint mask, out MyeRaycastHit hit)
+            => Engine.SphereCastMasked(origin, dir, radius, maxDist, mask, out hit);
+
+        // クエリの共通後処理 (ネイティブは MyeEntityId 配列を書くので MyeEntity へ包み直す)
+        private static int FillEntities(MyeEntity[] hits,
+                                        System.Func<MyeEntityId[], int> query)
+        {
+            if (hits == null || hits.Length == 0) return query(System.Array.Empty<MyeEntityId>());
+            var buf = new MyeEntityId[hits.Length];
+            int total = query(buf);
+            int n = total < hits.Length ? total : hits.Length;
+            for (int i = 0; i < n; ++i) hits[i] = new MyeEntity(buf[i]);
+            return total;
+        }
+
+        // ---- 生成 (v7、M37)。M70d で C# へ開通 ----
+        // ★生成は **tick 末**。戻り値の fileId をフィールドに覚えておいて、
+        //   次の tick 以降に FindByFileId で EntityID へ解決する (即座には引けない)。
+        // ★親を渡さない = ルート生成。MyeEntity の既定値 (null id) をそのまま渡してよい
+        protected static ulong Instantiate(string prefabKey, MyeVec3 pos)
+            => Engine.Instantiate(prefabKey, pos);
+        protected static ulong Instantiate(string prefabKey, MyeVec3 pos, MyeEntity parent)
+            => Engine.Instantiate(prefabKey, pos, parent.Id);
+        protected static MyeEntity FindByFileId(ulong fileId)
+            => new MyeEntity(Engine.FindByFileId(fileId));
+        // fire-and-forget のエフェクト生成 (ハンドルを返さない版)
+        protected static void PlayEffect(string prefabKey, MyeVec3 pos)
+            => Engine.PlayEffect(prefabKey, pos);
+        protected static void PlayEffect(string prefabKey, MyeVec3 pos, MyeEntity parent)
+            => Engine.PlayEffect(prefabKey, pos, parent.Id);
+
+        // ---- デバッグ描画 (v7)。M70d で C# へ開通 ----
+        // 描画専用 = 非ハッシュ。今 tick に積んだ線は次の描画フレームに出る
+        protected static void DebugDrawLine(MyeVec3 a, MyeVec3 b, float r = 1.0f, float g = 1.0f,
+                                            float bl = 1.0f)
+            => Engine.DebugDrawLine(a, b, new MyeColor(r, g, bl, 1.0f));
+
+        // ---- キャラクターコントローラ (v5、M29b)。自分に対する省略形 ----
+        protected bool CharacterMove(MyeVec3 move) => Engine.CharacterMove(SelfId, move);
+        protected bool CharacterJump(float speed) => Engine.CharacterJump(SelfId, speed);
+        protected bool CharacterIsGrounded() => Engine.CharacterIsGrounded(SelfId);
+        protected MyeVec3 CharacterVelocity => Engine.CharacterGetVelocity(SelfId);
+
         // ---- 超リアル物理 (v14、M59k) ----
         // 作用点付きの力 (1 tick 分)。端を押せば回る = 並進と回転が同時に入る
         protected bool AddForceAtPosition(MyeVec3 force, MyeVec3 worldPoint)
@@ -317,9 +423,11 @@ namespace MyeScripting
         // 戻り値は voice ハンドル (0 = 失敗)。StopVoice / SetVoiceVolume / SetVoicePitch で使う
         protected static ulong PlaySound(string soundKey, float volume = 1.0f, float pitch = 1.0f)
             => Engine.PlaySound(soundKey, volume, pitch);
-        // 自分の位置で 3D 再生する (足音・衝突音など)
+        // 自分の位置で 3D 再生する (足音・衝突音など)。
+        // ★M70d で実バグを修正: **ローカル位置をワールド位置として**渡していたので、
+        //   親を持つエンティティでは鳴る場所が「親のワールド位置ぶん」ずれていた
         protected ulong PlaySoundHere(string soundKey, float volume = 1.0f)
-            => Engine.PlaySoundAt(soundKey, Engine.GetLocalPosition(SelfId), volume);
+            => Engine.PlaySoundAt(soundKey, Engine.GetWorldPosition(SelfId), volume);
         protected static ulong PlaySoundAt(string soundKey, MyeVec3 worldPos, float volume = 1.0f)
             => Engine.PlaySoundAt(soundKey, worldPos, volume);
         protected static void StopVoice(ulong handle, float fadeSeconds = 0.0f)

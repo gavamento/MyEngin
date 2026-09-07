@@ -198,16 +198,30 @@ struct PlayerController : Script<PlayerController> {
 REGISTER_SCRIPT(PlayerController, FIELDS(moveSpeed, jumpCount));
 ```
 
-**Convention: tuning values belong in a schema component, not in script fields.**
-`MyeScriptField` carries only `{name, type, offset}`, so a script field reaches the Inspector as
-a bare English name and a plain drag widget — there is no way to attach a display name, tooltip,
-range or drag speed the way `MYE_JP(...)` does for a built-in component. Put anything an author
-will tune at runtime in a **schema component** (`assets/schemas/*.component.schema.json`, §10),
-which supports `display` / `tooltip` / `min` / `max` / `speed` and generates a labelled slider
-automatically; scripts then read the value with `MyeGetField`. This is not a workaround: it keeps
-data separate from logic and lets several scripts read the same value. It is recorded here because
-the alternative — widening the script ABI — buys less and costs a version bump
-(see [`docs/dogfooding.md`](docs/dogfooding.md), finding 2).
+**Inspector metadata on script fields (v16, M70d).** A field entry may be wrapped to carry a
+display name and a range; bare names keep working unchanged, and the two forms mix freely:
+
+```cpp
+REGISTER_SCRIPT(PlayerController,
+                FIELDS(MYE_F_JP(moveSpeed, "移動速度"),                 // display name only
+                       MYE_F_RANGE(jumpPower, "跳躍力", 0.0f, 20.0f),   // display name + range
+                       jumpCount));                                     // as before
+```
+
+`MyeScriptField` reserved the three trailing members (`displayName`, `rangeMin`, `rangeMax`) in
+the v16 ABI bump (M70c) and M70d reads them: `ScriptHost::FieldDescFromScriptField` copies them
+into the engine-side `FieldDesc`, and because the Inspector draws built-in, schema and script
+components through the same `DrawField`, a script field now renders with a Japanese label and a
+clamped drag exactly like `MYE_JP(...)` does for a built-in component. Up to **32** fields may be
+listed (raised from 16 in M70d). The metadata is deliberately **excluded from `layoutHash`**, so
+renaming a label never triggers the DLL-reload state migration.
+
+**Convention: shared tuning values still belong in a schema component.**
+Script metadata covers "this script's own knobs". Anything **several** scripts read, or that an
+author wants to edit as data (JSON, source control, per-scene overrides), belongs in a
+**schema component** (`assets/schemas/*.component.schema.json`, §10) which additionally supports
+`tooltip` / `speed`; scripts then read the value with `MyeGetField`. That keeps data separate from
+logic (see [`docs/dogfooding.md`](docs/dogfooding.md), finding 2).
 
 ### 5.3 Frame and Tick Phases
 
@@ -2335,9 +2349,9 @@ Kept verbatim, because the completion criteria it set are still the ones the pro
 
 The order was intentional: implementing the reload foundation in M3 first accelerated subsequent particle development through dogfooding.
 
-### 12.2 What was actually built (M0-M68)
+### 12.2 What was actually built (M0-M70)
 
-**2026-07-19 → 2026-09-07, 268 commits.** The primary source is `git log`; the prefix on each
+**2026-07-19 → 2026-09-07, 283 commits.** The primary source is `git log`; the prefix on each
 commit subject names the milestone. Grouped by system rather than by number, because the numbers
 interleave — several tracks ran in parallel and a few milestones were revisited weeks later.
 
@@ -2351,7 +2365,7 @@ interleave — several tracks ran in parallel and a few milestones were revisite
 | Particles and VFX | M5, M29, M32, M42, M61, M63 | CPU (SoA + SIMD) and GPU (compute) back ends with runtime switch and side-by-side comparison; Sprite / Trail / TextMesh; Skybox, Fog, per-camera post-process; bursts, gradients, flipbooks, `EffectComponent` lifecycle; scene depth SRV, soft particles, GPU bitonic sort, distortion; A-group and B-group expansions (rotation, lighting) |
 | Animation and skinning | M14, M18, M22 | Animation clips, keyframe tracks and the Animation window; skeletal animation with GPU skinning (128-bone palette, glTF and FBX); Animator Controller with a node graph |
 | Assets and prefabs | M13, M23, M24, M30, M36, M39-M41, M48-M50 | Prefabs; asset database with `.meta` GUIDs and async loading; BCn / DDS cook and ufbx FBX import; GUID key resolution that survives renames; collision layers and masks; component copy / paste / reset; static mesh colliders with a BVH; **compose assets (`.actor.json`, prefab 2.0)** with parts, sockets and structural overrides (ADR-011 / ADR-012) |
-| Scripting, ABI and input | M19, M21, M31, M34, M35, M37, M47, M64 | Gamepad, XAudio2 and `LoadScene`; in-game UI; script drag-and-drop attach; Japanese in-game text with a dynamic glyph cache; `fillAmount`, 9-slice, focus navigation; ABI bundles; editor localisation (ADR-010); raw mouse look and cursor lock, `Active` propagating down the hierarchy |
+| Scripting, ABI and input | M19, M21, M31, M34, M35, M37, M47, M64, M70 | Gamepad, XAudio2 and `LoadScene`; in-game UI; script drag-and-drop attach; Japanese in-game text with a dynamic glyph cache; `fillAmount`, 9-slice, focus navigation; ABI bundles; editor localisation (ADR-010); raw mouse look and cursor lock, `Active` propagating down the hierarchy; a **resolution-independent UI canvas** with engine-owned hit testing and focus (§6.11 / §6.12), lossless scene loading (§8.3), and Inspector metadata plus world-space and rotation getters for script fields (§5.2) |
 | Audio | M45 | Decode, voice pool, bus graph with dB faders and mute / solo, reverb presets, streaming music, a procedural synth window |
 | Physics | M20, M28, M59, M60, M60′ | Rigid bodies and raycasts; capsules and OBBs; an accumulated-impulse substepping solver with aerodynamics, buoyancy, gyroscopic terms, friction, material assets, sleep and islands, CCD and terrain height fields; joints, motors, breakage, compound and convex colliders, ragdolls, vehicles; an XPBD lane for deformables (rope) |
 | Acoustics | M65, M68 | Integer chamfer wavefront propagation in which **one field serves four roles** — the glow volume that draws the world, enemy hearing with direction of arrival, navigation drawn from the same weights, and the player's ears (ADR-017); occlusion and diffraction shaping, room reverb interpolation, waves that are actually audible |
@@ -2372,8 +2386,7 @@ to the physics roadmap.
 |---|---|
 | M60′ e-n (XPBD deformables) | **Paused.** a-d shipped (backend, solver core, rope, two-way attachment). The remaining ten sub-milestones — particle/world collision, cloth, soft bodies, plasticity, showcase — are unstarted, and rope still has no replay or screenshot coverage |
 | M61 / M62 (physics roadmap) | **Unstarted.** Fracture, and thermal / fluid / optical / electrical. Roadmap only; see the numbering note above |
-| M70d (script-to-object gaps) | **Unstarted.** The last sub of `plans/sparkling-gliding-quokka.md`: the `SetComponentField` NoHash gate, Inspector metadata for script fields (the `MyeScriptField` layout is already reserved by M70c), `FIELDS()` 16 -> 32, and the dogfooding items that need no new ABI slot. The canvas unification shipped as **M70b** (§6.11) and the UI interaction model as **M70c** (§6.12). The old plan `plans/gleaming-strolling-swing.md` (labelled M64) is kept as research notes: its labels collide with commit `080d5d5`, which shipped raw mouse look and `Active` hierarchy propagation under the same names |
-| Dogfooding backlog | 16 of the 20 findings in [`docs/dogfooding.md`](docs/dogfooding.md) are open. The data-loss bug (finding 10) was closed by M70a - see §8.3 |
+| Dogfooding backlog | 5 of the 20 findings in [`docs/dogfooding.md`](docs/dogfooding.md) are open (11 debug-draw log, 13 `builtin://wheel`, 17 CC ⇄ Rigidbody, 19 missing-`PhysicsEnvironment` warning, 20 script-to-script messaging). Each needs a new implementation surface; 20 needs the next ABI bump (`onMessage` on `MyeScriptDesc`) |
 
 ---
 

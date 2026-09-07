@@ -106,4 +106,6 @@ struct FlowGameDriver : Script<FlowGameDriver> {
                         MyeColor{ 1.0f, 0.85f, 0.30f, MyeIsPaused(ctx) ? 1.0f : 0.0f });
     }
 };
-REGISTER_SCRIPT(FlowGameDriver, FIELDS(ticksInScene, score, bounces));
+REGISTER_SCRIPT(FlowGameDriver,
+                FIELDS(MYE_F_JP(ticksInScene, "シーン内の経過 tick"), MYE_F_JP(score, "スコア"),
+                       MYE_F_JP(bounces, "跳ねた回数")));
