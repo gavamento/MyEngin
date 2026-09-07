@@ -53,6 +53,19 @@ void WriteScene(ByteWriter& w, const Scene& scene)
         w.Blob(blob.data(), blob.size());
     }
 
+    // UI 対話状態 (M70c)。TimeControl の隣に置くという方針どおり Scene 節の中。
+    // EntityID は index/generation の 2 語 x 4 本
+    const UIInteractionState& ui = scene.UI();
+    const auto writeId = [&w](EntityID e) {
+        w.U32(e.index);
+        w.U32(e.generation);
+    };
+    writeId(ui.hovered);
+    writeId(ui.pressed);
+    writeId(ui.clicked);
+    writeId(ui.focused);
+    w.U32(ui.adoptedAuthored);
+
     w.U64(scene.PeekNextFileId());
     w.WStr(scene.SourcePath());
 
@@ -76,6 +89,7 @@ void WriteScene(ByteWriter& w, const Scene& scene)
 
 struct SceneState {
     TimeControl time;
+    UIInteractionState ui;
     PersistStore::Map persist;
     uint64_t nextFileId = 1;
     std::wstring sourcePath;
@@ -100,6 +114,18 @@ bool ReadScene(ByteReader& r, SceneState& out)
         r.Raw(blob.data(), n);
         out.persist.emplace(key, std::move(blob));
     }
+
+    const auto readId = [&r]() {
+        EntityID e;
+        e.index = r.U32();
+        e.generation = r.U32();
+        return e;
+    };
+    out.ui.hovered = readId(); // M70c (書いた順に読む)
+    out.ui.pressed = readId();
+    out.ui.clicked = readId();
+    out.ui.focused = readId();
+    out.ui.adoptedAuthored = r.U32();
 
     out.nextFileId = r.U64();
     out.sourcePath = r.WStr();
@@ -475,6 +501,7 @@ bool RestoreSimSnapshot(const SimRefs& refs, const std::byte* data, size_t size)
     }
 
     refs.scene->Time() = scene.time;
+    refs.scene->UI() = scene.ui; // M70c
     refs.scene->Persist().Entries() = std::move(scene.persist);
     refs.scene->SetNextFileId(scene.nextFileId);
     refs.scene->SetSourcePath(std::move(scene.sourcePath));

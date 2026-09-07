@@ -438,6 +438,9 @@
     <ClCompile Include="..\src\Engine\Engine\UfbxImpl.cpp">
       <Filter>Engine</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\UI\UIInteraction.cpp">
+      <Filter>Engine\UI</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\UI\UILayout.cpp">
       <Filter>Engine\UI</Filter>
     </ClCompile>
@@ -994,6 +997,9 @@
       <Filter>Engine</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\UI\UIGeometry.h">
+      <Filter>Engine\UI</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\UI\UIInteraction.h">
       <Filter>Engine\UI</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\UI\UILayout.h">

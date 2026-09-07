@@ -109,6 +109,8 @@ struct TickServices {
     std::wstring* pendingScene = nullptr;
     int* pendingSaveSlot = nullptr;
     int* pendingLoadSlot = nullptr;
+    // M70c: LoadPersist の要求 (シーンを動かさない persist だけのロード)
+    int* pendingLoadPersistSlot = nullptr;
 
     // アセット / パス
     PrefabLibrary* prefabLibrary = nullptr;

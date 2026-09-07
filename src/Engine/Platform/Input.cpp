@@ -258,7 +258,15 @@ InputSnapshot SynthLaneInput(uint64_t tick, uint32_t lane)
     s.padConnected = 1;
     s.padLX = static_cast<int16_t>((static_cast<int32_t>((h >> 8) & 0xFFFFu) - 32768) / 2);
     s.padLY = static_cast<int16_t>((static_cast<int32_t>((h >> 24) & 0xFFFFu) - 32768) / 2);
-    s.padButtons = static_cast<uint16_t>((h >> 40) & 0x1000u); // A ボタンだけ
+    s.padButtons = static_cast<uint16_t>((h >> 40) & 0x1000u); // A ボタン (= UINavSubmit)
+    // M70c: D-Pad も疎に押す。これが無いと UI のフォーカス移動 (UINav*) が
+    // replay で 1 度も動かず、「エンジンがフォーカスを持つ」配線が被覆から漏れる。
+    // 4 方向のうち 1 つだけを押す (同時押しは意味論が曖昧になるので作らない) —
+    // 8 通りのうち 4 通りが「どれも押さない」= ブロック境界でだけ押される疎な列になる
+    const uint32_t dpad = static_cast<uint32_t>((h >> 53) & 7u);
+    if (dpad < 4u) {
+        s.padButtons |= static_cast<uint16_t>(1u << dpad); // DPadUp/Down/Left/Right
+    }
 
     // ★マウスの**位置**は動かさない。動かすとエディタの GameView ヒットテストと UI が
     //   合成入力で誤爆し、「検証フラグを足した途端に UI が勝手に操作される」ことになる。

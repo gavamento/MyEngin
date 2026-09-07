@@ -44,14 +44,23 @@ namespace MyeScripting
         public bool SetUIFill(float amount) => Engine.SetUIFill(Id, amount);
         public bool SetUIColor(float r, float g, float b, float a = 1.0f)
             => Engine.SetUIColor(Id, new MyeColor(r, g, b, a));
-        public bool SetUIFocused(bool focused) => Engine.SetUIFocused(Id, focused);
-        // 矩形/レイアウト書込 (v12、M51h)。w/h・anchor 以降の負値は「現値維持」
-        public bool SetUIRect(float x, float y, float w = -1.0f, float h = -1.0f)
-            => Engine.SetUIRect(Id, x, y, w, h);
-        public bool SetUILayout(int anchor, int space = -1, int clipChildren = -1,
-                                int align = -1, int wrap = -1)
-            => Engine.SetUILayout(Id, anchor, space, clipChildren, align, wrap);
         public bool SetUITexture(string textureKey) => Engine.SetUITexture(Id, textureKey);
+        // 解決済みのキャンバス矩形 (v16、M70c)。**UI 幾何の唯一の読み取り口**で、
+        // 描画・ヒットテスト・フォーカスナビが通るのと同じ解決を返す
+        public bool GetUIRect(out float x, out float y, out float w, out float h)
+            => Engine.GetUIRect(Id, out x, out y, out w, out h);
+
+        // ---- ★M70c で C# から閉じた口: SetUIRect / SetUILayout / SetUIFocused ----
+        // どれも **UI の当たり判定を動かす** = M70c でワールドハッシュに載った値
+        // (hovered / pressed / clicked / focused) を間接的に書き換える。
+        // ところが C# レーンは
+        //   * タイムトラベル / ロールバックの再シム中は止まる (TickServices::resim)
+        //   * ネット対戦中は止まる (TickServices::netLockstep)
+        //   * リプレイの被覆外
+        // なので、ここから UI 幾何を書くと「録ったときと再生で当たり判定が違う」形の
+        // 割れ方をする。**演出 (テキスト / 色 / 塗り率 / テクスチャ) は今までどおり**で、
+        // 幾何とフォーカスを動かしたいときは C++ スクリプト側 (ScriptAPI.h の
+        // MyeSetUIRect / MyeUISetFocused) を使うこと。
 
         public static MyeEntity Create(string name) => new MyeEntity(Engine.CreateGameObject(name));
         public static MyeEntity Find(string name) => new MyeEntity(Engine.FindByName(name));
@@ -161,6 +170,24 @@ namespace MyeScripting
             => Engine.GetAxisForPlayer(name, player);
         // このフレームに累積したホイール生値 (WHEEL_DELTA=120 単位)
         protected static int MouseWheel() => Engine.GetMouseWheel();
+
+        // ---- UI の対話 (v16、M70c)。**読み取りだけ** ----
+        // 判定はエンジンが tick 中 (スクリプト層より前) に確定済み。C# は演出レーンなので
+        // 「押されたか」を読んで見た目を変える用途に使う — フォーカスを**動かす**口
+        // (UISetFocused) は開けていない (ハッシュ対象を C# から書かせないため)。
+        // ビットは bit0 hovered / bit1 pressed / bit2 clicked / bit3 focused
+        protected static uint UIButtonState(MyeEntity e) => Engine.UIButtonState(e.Id);
+        protected static bool UIHovered(MyeEntity e) => (Engine.UIButtonState(e.Id) & 1u) != 0;
+        protected static bool UIPressed(MyeEntity e) => (Engine.UIButtonState(e.Id) & 2u) != 0;
+        protected static bool UIClicked(MyeEntity e) => (Engine.UIButtonState(e.Id) & 4u) != 0;
+        protected static bool UIFocusedNow(MyeEntity e) => (Engine.UIButtonState(e.Id) & 8u) != 0;
+        protected static MyeEntity UIFocusedElement() => new MyeEntity(Engine.UIGetFocused());
+        // キャンバス座標 (基準 1920x1080、M70b) のマウス位置。UI の座標系はすべてこれ
+        protected static MyeVec2 MouseCanvasPos()
+        {
+            Engine.MouseCanvasPos(out float x, out float y);
+            return new MyeVec2(x, y);
+        }
 
         // ---- マウスルック (v15、M64a) ----
         // この tick の生マウスデルタ (Raw Input のカウント)。MousePos の差分ではないので

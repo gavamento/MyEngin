@@ -21,7 +21,7 @@ class ScriptHost;
 //
 // **対象は sim レーンだけ** = record/verify がハッシュを撮っている範囲と同一:
 //   World (全アーキタイプのカラム生バイト + レコード表 + freeIndices + ルート + RNG)
-//   Scene (TimeControl / PersistStore / nextFileId / sourcePath / override 表)
+//   Scene (TimeControl / UI 対話状態 / PersistStore / nextFileId / sourcePath / override 表)
 //   CpuParticleBackend の池 / XpbdBackend の池 (M60'b) /
 //   CollisionSystem の前 tick ペア / ScriptHost の Start 済み記録
 //   EngineLoop の prevTickInput (アクション評価の pressed/released 判定に効く) と
@@ -89,7 +89,10 @@ struct SimRefs {
 // v12 (M70b): InputSnapshot が 72 -> 88 バイト (UI キャンバスの 4 値)。
 //            LOP 節の prevTickInput がレーン数ぶんそのまま太るので blob レイアウトが変わる
 //            (v8 = M64a と同型の理由)
-inline constexpr uint32_t kSimSnapshotVersion = 12;
+// v13 (M70c): Scene 節に UI の対話状態 (hovered / pressed / clicked / focused =
+//            EntityID x 4) が入った。TimeControl と同じ「Scene が持つ sim 状態」で、
+//            巻き戻したときに押下中の要素まで戻らないと再シムが割れる
+inline constexpr uint32_t kSimSnapshotVersion = 13;
 
 // 撮る: out を clear して blob を書く。成功で true。
 // 節ごとの参照が null なら「空の節」を書くのでレイアウトは常に同じ

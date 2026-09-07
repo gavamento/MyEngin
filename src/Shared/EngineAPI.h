@@ -71,7 +71,7 @@
 //             ★この 2 本は**非対称**であることに意味がある。デルタは .rep に載る
 //               sim 入力、カーソルの掴みは載せてはいけない機種依存の副作用で、
 //               後者を sim から読み返す口は今後も作らない
-#define MYE_API_VERSION 15u
+#define MYE_API_VERSION 16u
 
 // PersistSet の 1 エントリ最大バイト数 (v12)。PersistStore は WorldHash / セーブ出力に
 // 全量が載るため、無制限だと 1 キーでハッシュとセーブが肥大する
@@ -113,6 +113,12 @@ struct MyeRaycastHit {
 
 // ソリッド接触 1 ペアの詳細 (v14、M59k)。GetContactInfo の出力。
 // エンジン内部の SolidContact (M59e で拡張) を「自分から見た形」に直したもの
+// UI 矩形 (v16 GetUIRect)。**単位はキャンバス座標** (基準 1920x1080、M70b) で、
+// UIElementComponent の x/y/w/h と同じ土俵。左上原点
+struct MyeUIRect {
+    float x, y, w, h;
+};
+
 struct MyeContactInfo {
     MyeEntityId other;  // 相手のエンティティ
     MyeVec3 point;      // 代表接触点 (ワールド) = マニフォールド最大 4 点の重心
@@ -508,6 +514,48 @@ struct MyeEngineApi {
     //   毎 tick 1 を書き続ける実装が Escape を握り潰すのを構造的に防ぐため。
     //   つまり作法は「Escape (= Pause) を見たら 0、再開の意思表示で 1」。
     void (*SetCursorMode)(void* engine, int mode);
+
+    // ---- v16 (M70c): UI の対話をエンジンが持つ ----
+    // M70b までは「押されたか」がエンジン内 (UIRenderer のハイライト計算) にしか無く、
+    // ゲーム側は UIElement と同じ矩形をスクリプトに手書きして自前でヒットテストしていた。
+    // 矩形の二重管理はレイアウト変更で黙って食い違うので、判定をエンジンへ 1 本化した。
+    // 状態は Scene が持つ sim 状態で **WorldHash 対象** = 配線が壊れれば replay が赤くなる。
+
+    // UIButtonState: 要素の対話状態をビットで返す。
+    //   bit0 hovered / bit1 pressed / bit2 clicked / bit3 focused (MyeUIButton* と同値)。
+    //   UIElement 非所持・null id は 0。
+    //   ★clicked は **1 tick だけ**立つ (「掴んだ要素の上で離した」瞬間、Unity 意味論)。
+    //     フォーカス中の要素で UINavSubmit を押した tick も clicked が立つ = パッドと
+    //     マウスでゲーム側の分岐を分けなくてよい。
+    //   ★評価は**スクリプト層より前**なので、Update から読めるのは今 tick の値
+    uint32_t (*UIButtonState)(void* engine, MyeEntityId id);
+
+    // UIGetFocused / UISetFocused: エンジンが持つフォーカスの読み書き。
+    //   UISetFocused に null id を渡すとフォーカスを外す。focusable でない要素や
+    //   UIElement 非所持を渡した場合も 0 を返して**何も変えない**。
+    //   ★UIElement.focused は毎 tick これのミラーとして書き直される表示専用の値。
+    //     直接書いても次の tick で戻るので、フォーカスを動かすときは必ずこちらを使う
+    //     (旧 SetUIFocused は互換のためこのスロットへ委譲する)
+    MyeEntityId (*UIGetFocused)(void* engine);
+    int (*UISetFocused)(void* engine, MyeEntityId id);
+
+    // MouseCanvasPos: **キャンバス座標**のマウス位置 (M70b の基準 1920x1080 系)。
+    //   UIHitTest / GetUIRect と同じ土俵なので、こちらを渡せば解像度に依らず当たる。
+    //   MousePos (クライアント実 px) との違いはそこだけ。out は null 可
+    void (*MouseCanvasPos)(void* engine, float* outX, float* outY);
+
+    // GetUIRect: 解決済みのキャンバス矩形 (アンカー・親子 space・距離スケール適用後)。
+    //   **UI 幾何の唯一の読み取り口**で、描画・ヒットテスト・フォーカスナビが使うのと
+    //   同じ uilayout::ResolveRect を通る。UIElement 非所持は 0 (out は触らない)。
+    //   祖先クリップは適用しない (クリップ後の可視矩形ではなく素の矩形を返す)
+    int (*GetUIRect)(void* engine, MyeEntityId id, MyeUIRect* out);
+
+    // LoadPersist: セーブスロットから **PersistStore だけ**を読む (シーンは動かさない)。
+    //   LoadGame は保存時のシーンへ必ず遷移するので「タイトル画面でハイスコアだけ読む」
+    //   ができなかった (dogfooding #16)。読めたら 1。
+    //   ★LoadGame と同じく record/verify/netplay 中は no-op + WARN — セーブファイルは
+    //     sim の外にあり、再生を跨ぐと同じ入力から別の世界が出てしまう
+    int (*LoadPersist)(void* engine, int slot);
 };
 
 // スクリプトの各コールバックに渡されるコンテキスト (POD)

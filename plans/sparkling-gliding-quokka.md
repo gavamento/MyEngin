@@ -331,7 +331,7 @@ M70c → M70d の順序は入れ替えできない。
 | — | 計画確定 + 提案一覧の公開 + M64 計画への移管注記 | **完了 (2026-09-07)** |
 | M70a | シリアライザのラウンドトリップ (データ消失の封鎖) | **完了 (2026-09-07)** |
 | M70b | キャンバス統一 (Unity / UE 準拠の可変キャンバス) | **完了 (2026-09-07)** |
-| M70c | UI イベントとフォーカス駆動 + ABI v16 | 未着手 |
+| M70c | UI イベントとフォーカス駆動 + ABI v16 | **完了 (2026-09-07)** |
 | M70d | スクリプト⇄オブジェクトの穴埋め + dogfooding の回収 | 未着手 |
 
 ### M70a の実施メモ (計画との差分)
@@ -397,6 +397,72 @@ M70c → M70d の順序は入れ替えできない。
 - 文書更新: `engine_spec.md` に **§6.11 In-game UI canvas** を新設 + §12.3 の台帳行を
   M64a-M64c → M70c / M70d へ差し替え / `README.md` に機能の項 + スクショ枚数 /
   `CLAUDE.md` の shot_verify 行 (22 → 24 枚、CI 判定 12 → 14 枚)。
+
+### M70c の実施メモ (計画との差分)
+
+- 計画どおり `UIInteraction.{h,cpp}` + `Scene` の状態 + ABI v16 (110 スロット) で実装。
+  評価点も計画どおり `UpdatePlayerInputMirror` の直後 (スクリプト層より前)。
+- **計画との差分 1**: 版が 2 つ余分に動いた。計画表は M70c を「ABI だけ」としていたが、
+  Scene 節に状態を足せば **`kSimSnapshotVersion` 12 → 13**、ワールドハッシュに節を足せば
+  **`kReplayFileVersion` 6 → 7** が要る (`Replay.h` 冒頭の「InputSnapshot / WorldHasher の
+  レイアウトが変わったら版を上げる」がそのまま効く)。`kNetProtoVersion` は**据え置き 4** —
+  パケットも NetIdentity も 1 バイトも変わっていない (版の食い違いは repVersion /
+  snapshotVersion の照合で弾かれる)。
+- **計画との差分 2**: **`clicked` を 4 本目の状態として持った** (計画は 3 本)。
+  「押した要素の上で離した瞬間」は tick 内の派生値だが、スクリプトはその tick にしか
+  読めないので状態として持つほかない。1 tick で必ず落ちることを selftest で固定した。
+- **計画との差分 3**: **`adoptedAuthored` (5 本目)**。エンジンがフォーカスの正本になると
+  `UIElement.focused` を毎 tick 上書きするので、**シーンが書いた `focused=1` が起動直後に
+  消える**。実際 golden 3 枚 (ui_probe / _720p / _16x10) がフォーカス枠のぶんだけ割れて
+  発覚した。「起動後 1 回だけ拾う」規則を入れて 3 枚とも元へ戻した (Unity の EventSystem
+  "First Selected" と同型。毎 tick 拾い直すとユーザーが外した次の tick に戻ってしまう)。
+- **計画との差分 4**: `OnUIClick` **コールバックは作らず**、`UIButtonState` のポーリング
+  1 本にした。計画の表は `UIButtonState` をスロットとして挙げているので、コールバックを
+  足すと同じことを 2 通りで表す (`MyeScriptDesc` のレイアウトも動く)。`UIButtonDemo` は
+  ポーリング版へ書き換え、ついでに対象指定を名前引きから **EntityRef** にした
+  (dogfooding #9 の「名前引きに寄る」を実装で外した)。
+- **計画との差分 5**: `LoadPersist` は **M70c で実装まで済ませた** (計画は「スロットだけ
+  確保して TickRunner の分岐は M70d」)。何もしないスロットを 1 サブ分放置すると、
+  呼んだスクリプトが黙って失敗する罠になるため。dogfooding #16 はこれで解決済み。
+- **計画との差分 6**: `MyeScript.cs` は `SetUIRect` / `SetUILayout` に加えて
+  **`SetUIFocused` も閉じた** (フォーカスは M70c でハッシュ対象になったので、C# から
+  書くと再シムで割れる = 閉じる理由が同じ)。
+- ★**既存バグを 1 件回収**: `HashWorld` の `SimSources` に **`acoustic` を渡し忘れていた
+  箇所が 5 か所**あった (`EngineLoop.cpp` の 4 か所 = startWorldHash / タイムトラベルの
+  自己検証 / `TickEndHash` / desync ダンプ、`TimeTravel.cpp` の 1 か所)。M65a が
+  TickRunner 側にだけ配線して、他は 4 引数のまま残っていた。音響の節は内容ゲート
+  (波が 1 本も無ければ畳まない) なので**波の出ないシーンでは同じ値**が出ていて誰も
+  気づけない — 波のあるシーンでだけ「クラッシュ .rep が全 tick MISMATCH」
+  「タイムトラベルの自己検証とネットの desync 検出が波スロット表を見ない」形で出る。
+  `ui` を足すついでに 5 か所とも直した。
+- **計画との差分 7 (撮影の中立化)**: 決定的撮影モードで**マウスの位置とボタンも 0 に倒した**
+  (M68c は生デルタだけ)。hovered / pressed がボタンのハイライトを決めるようになったので、
+  **撮影中にカーソルが窓の上にあるだけで golden が割れる**。位置は -100000 という
+  「どのキャンバス座標も指さない」値へ (0,0 は左上の正当な座標なので使えない)。
+- **計画との差分 8 (デモ)**: 被覆のためにタイトル画面へ **focusable なボタンを 2 個**足した
+  (`MakeUiButton`)。**横並び**にしたのは合成入力の都合 — `SynthLaneInput` の D-Pad 分布は
+  600 tick で Left 9 / Right 5 / Up 12 / Down 2 で、縦に積むと「上端でさらに上」ばかりに
+  なりフォーカスが 1 度も動かなかった (実測)。あわせて `FlowTitleDriver` から
+  `"Jump"` の直接判定を外した (Space / パッド A は `UINavSubmit` にも割り当てたので、
+  CLEAR BEST を選んで決定すると「消えると同時にゲームも始まる」二重発火になっていた)。
+  ★ついでに **TitleHint と TitleBest の文字が重なっていた**のを直した (M70c 以前の
+  golden にもそのまま写っていた)。
+- **合成入力の変更**: `SynthLaneInput` が D-Pad を疎に押すようになった (8 通り中 4 通りで
+  1 方向)。これが無いと `UINav*` が replay で 1 度も動かない。
+- 実測 (すべてローカル):
+  - 8 ビルド 0 警告 / Debug・Release の `--selftest` 全 PASS / `check_rules` 0 error
+    (規則 11 の 110 スロット照合込み)
+  - `replay_verify` 10 ジョブ全 PASS (148.2s)、`shot_verify` 24 枚 PASS
+    (**動いたのは flow_title.png の 1 枚だけ** = ボタン 2 個とヒント位置。他 23 枚は
+    maxDiff=0 のビット一致)
+  - **UI 対話の replay 被覆を実測で確認**: tick 527 → 528 で
+    `focused 9 → 0x0A` / `clicked 0x0A` / `FlowTitleDriver.clearClicks 0 → 1`、
+    529 で `clicked` が null へ戻る (1 tick 意味論)。すべて `--hash-dump` の行で確認。
+  - `net_verify` 4 ケース + desync 注入 PASS
+  - C# ミラーは一時 probe で実走確認 (`abi-bump-verification` の手順)
+- 文書更新: `engine_spec.md` に **§6.12 In-game UI interaction** を新設 + §12.3 の台帳行を
+  M70d だけに / `README.md` に機能の項 / `CLAUDE.md` の ABI 行 (v15=104 → v16=110) /
+  `docs/dogfooding.md` の #16 を修正済みへ (20 件中 5 件修正済み)。
 
 ## 次のタスクの置き場 (M70 では実装しない)
 

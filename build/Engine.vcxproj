@@ -149,6 +149,7 @@
     <ClCompile Include="..\src\Engine\Engine\TickRunner.cpp" />
     <ClCompile Include="..\src\Engine\Engine\TransformSystem.cpp" />
     <ClCompile Include="..\src\Engine\Engine\UfbxImpl.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\UI\UIInteraction.cpp" />
     <ClCompile Include="..\src\Engine\Engine\UI\UILayout.cpp" />
     <ClCompile Include="..\src\Engine\Engine\UI\UIRenderer.cpp" />
     <ClCompile Include="..\src\Engine\Engine\UI\UISelfTest.cpp" />
@@ -335,6 +336,7 @@
     <ClInclude Include="..\src\Engine\Engine\TickRunner.h" />
     <ClInclude Include="..\src\Engine\Engine\TransformSystem.h" />
     <ClInclude Include="..\src\Engine\Engine\UI\UIGeometry.h" />
+    <ClInclude Include="..\src\Engine\Engine\UI\UIInteraction.h" />
     <ClInclude Include="..\src\Engine\Engine\UI\UILayout.h" />
     <ClInclude Include="..\src\Engine\Engine\UI\UINav.h" />
     <ClInclude Include="..\src\Engine\Engine\UI\UIRenderer.h" />

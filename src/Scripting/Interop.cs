@@ -81,6 +81,16 @@ namespace MyeScripting
         public float Impulse;   // その tick の法線インパルス合計 [N*s]
     }
 
+    // v16 (M70c): GetUIRect の出力。**キャンバス座標** (基準 1920x1080、M70b)
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct MyeUIRect
+    {
+        public float X;
+        public float Y;
+        public float W;
+        public float H;
+    }
+
     // ---- ネイティブ C ABI テーブル (Shared/EngineAPI.h の MyeEngineApi と同一レイアウト) ----
     // フィールド順は EngineAPI.h と厳密に一致させること。
     [StructLayout(LayoutKind.Sequential)]
@@ -211,6 +221,13 @@ namespace MyeScripting
         // ---- v15 (M64a): マウスルック 2 本。宣言順 = ネイティブと一致 ----
         public delegate* unmanaged<void*, int*, int*, void> GetMouseDelta;
         public delegate* unmanaged<void*, int, void> SetCursorMode;
+        // ---- v16 (M70c): UI の対話 6 本。宣言順 = ネイティブと一致 ----
+        public delegate* unmanaged<void*, MyeEntityId, uint> UIButtonState;
+        public delegate* unmanaged<void*, MyeEntityId> UIGetFocused;
+        public delegate* unmanaged<void*, MyeEntityId, int> UISetFocused;
+        public delegate* unmanaged<void*, float*, float*, void> MouseCanvasPos;
+        public delegate* unmanaged<void*, MyeEntityId, MyeUIRect*, int> GetUIRect;
+        public delegate* unmanaged<void*, int, int> LoadPersist;
     }
 
     // ネイティブ ManagedHost が保持する関数ポインタ表。Bootstrap がここに書き込む。
@@ -879,6 +896,31 @@ namespace MyeScripting
             => _api != null && _api->WakeRigidbody(_api->Engine, id) != 0;
         public static bool IsSleeping(MyeEntityId id)
             => _api != null && _api->IsSleeping(_api->Engine, id) != 0;
+
+        // ---- v16 (M70c): UI の対話 (読み取りだけ公開する) ----
+        // ★UISetFocused / LoadPersist は**あえて包まない** — どちらもハッシュ対象の
+        //   sim 状態を書くので、再シムで止まる C# レーンから触らせない (MyeScript.cs の
+        //   SetUIRect / SetUILayout / SetUIFocused を閉じたのと同じ理由)
+        public static uint UIButtonState(MyeEntityId id)
+            => _api == null ? 0u : _api->UIButtonState(_api->Engine, id);
+        public static MyeEntityId UIGetFocused()
+            => _api == null ? default : _api->UIGetFocused(_api->Engine);
+        public static void MouseCanvasPos(out float x, out float y)
+        {
+            x = 0.0f; y = 0.0f;
+            if (_api == null) return;
+            fixed (float* px = &x) fixed (float* py = &y) { _api->MouseCanvasPos(_api->Engine, px, py); }
+        }
+        public static bool GetUIRect(MyeEntityId id, out float x, out float y, out float w,
+                                     out float h)
+        {
+            x = 0.0f; y = 0.0f; w = 0.0f; h = 0.0f;
+            if (_api == null) return false;
+            MyeUIRect r;
+            if (_api->GetUIRect(_api->Engine, id, &r) == 0) return false;
+            x = r.X; y = r.Y; w = r.W; h = r.H;
+            return true;
+        }
 
         // ---- v15 (M64a): マウスルック ----
         public static void MouseDelta(out int dx, out int dy)

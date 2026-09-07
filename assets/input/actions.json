@@ -2,7 +2,12 @@
   "actions": [
     { "name": "Jump", "keys": ["Space"], "pad": ["A"], "mouse": [] },
     { "name": "Fire", "keys": ["J"], "pad": ["RB"], "mouse": ["Left"] },
-    { "name": "Pause", "keys": ["Escape"], "pad": ["Start"], "mouse": [] }
+    { "name": "Pause", "keys": ["Escape"], "pad": ["Start"], "mouse": [] },
+    { "name": "UINavUp", "keys": ["Up"], "pad": ["DPadUp"], "mouse": [] },
+    { "name": "UINavDown", "keys": ["Down"], "pad": ["DPadDown"], "mouse": [] },
+    { "name": "UINavLeft", "keys": ["Left"], "pad": ["DPadLeft"], "mouse": [] },
+    { "name": "UINavRight", "keys": ["Right"], "pad": ["DPadRight"], "mouse": [] },
+    { "name": "UINavSubmit", "keys": ["Enter", "Space"], "pad": ["A"], "mouse": [] }
   ],
   "axes": [
     { "name": "MoveX", "posKey": "D", "negKey": "A", "padAxis": "LX", "deadzone": 0.24 },

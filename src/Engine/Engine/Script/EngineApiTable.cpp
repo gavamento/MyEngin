@@ -15,7 +15,8 @@
 #include "Engine/Engine/Parts.h" // v9 部位クエリ (M48h)
 #include "Engine/Engine/Physics/PhysicsSystem.h"
 #include "Engine/Engine/Scene.h"
-#include "Engine/Engine/UI/UILayout.h" // M51e: 矩形解決を描画と共有 (基準解像度でのナビ矩形)
+#include "Engine/Engine/UI/UIInteraction.h" // v16 (M70c): ヒットテスト/ナビの唯一の実装
+#include "Engine/Engine/UI/UILayout.h" // M51e: 矩形解決を描画と共有 (キャンバス座標のナビ矩形)
 #include "Engine/Engine/UI/UINav.h"    // v7 UIFocusNav (M37)
 #include "Engine/Platform/InputActions.h" // v12 GetActionState/GetAxisValue (M51h)
 #include "Engine/Platform/PathUtil.h"
@@ -424,71 +425,32 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
         el->color = { color.r, color.g, color.b, color.a };
         return 1;
     };
+    // ★M70c: フォーカスの正本はエンジン (UIInteractionState) へ移った。UIElement.focused は
+    // 毎 tick そのミラーとして書き直される表示専用の値なので、ここで直接書いても次の tick で
+    // 戻ってしまう。旧スロットは **UISetFocused への委譲**にして意味を保つ (規則は 1 本)
     out.SetUIFocused = [](void* engine, MyeEntityId id, int focused) -> int {
-        auto* el = Sc(engine)->GetWorld().GetComponent<UIElementComponent>(ToEngine(id));
+        Scene* sc = Sc(engine);
+        auto* el = sc->GetWorld().GetComponent<UIElementComponent>(ToEngine(id));
         if (!el) { return 0; }
-        el->focused = focused;
+        if (focused) {
+            sc->UI().focused = ToEngine(id);
+        } else if (sc->UI().focused == ToEngine(id)) {
+            sc->UI().focused = kNullEntity;
+        }
+        el->focused = focused ? 1 : 0; // 同 tick 中に読み返せるようミラーも即時更新
         return 1;
     };
-    // フォーカスナビ: **キャンバス座標**でアンカー解決 (M70b。描画と同じ土俵)。
-    // 値は入力レーン 0 に記録されたものなので、再生は窓の大きさに依らず一致する
+    // フォーカスナビ (M35 の純関数を駆動)。★M70c で実装は uiinteract::FindNextFocus へ。
+    // **これは「次の候補を教える」だけでフォーカスを動かさない** — フォーカスの正本は
+    // エンジンが持つ UIInteractionState で、動かす口は UISetFocused。
+    // 自前でフォーカスを持ちたいスクリプト (M70c 以前の書き方) のために残してある
     out.UIFocusNav = [](void* engine, MyeEntityId current, int dir) -> MyeEntityId {
         int canvasW = 0, canvasH = 0;
         UiCanvasOf(engine, canvasW, canvasH);
-        World& w = Sc(engine)->GetWorld();
-        // ワールド追従 UI 用の決定論カメラ (UIHitTest と同じ)。背面の追従ボタンは
-        // ResolveVisibleRect が退化矩形を返す = ナビ候補から自然に外れる
-        uilayout::UIWorldContext wcData;
-        const uilayout::UIWorldContext* wc =
-            uilayout::BuildSimWorldContext(w, canvasW, canvasH, wcData) ? &wcData : nullptr;
-        std::vector<uinav::NavRect> rects;
-        std::vector<uint32_t> gens;
-        uinav::NavRect cur = {};
-        bool haveCur = false;
-        const ComponentTypeId req[] = { UIElementComponent::sTypeId };
-        w.ForEachArchetype(req, [&](Archetype& arch) {
-            const int ci = arch.FindTypeIndex(UIElementComponent::sTypeId);
-            for (uint32_t row = 0; row < arch.Count(); ++row) {
-                const EntityID e = arch.EntityAt(row);
-                if (!IsEntityActive(w, e)) {
-                    continue;
-                }
-                const auto* el = static_cast<const UIElementComponent*>(arch.GetPtr(ci, row));
-                if (el->focusable == 0) {
-                    continue;
-                }
-                // M51e: 描画と同じ UILayout で解決 (親子 space 対応)。祖先クリップで完全に
-                // 隠れた要素はナビ候補から外す (スクロール外の項目へ飛ばない)
-                const auto vis = uilayout::ResolveVisibleRect(w, e, canvasW, canvasH, wc);
-                if (vis.w <= 0.0f || vis.h <= 0.0f) {
-                    continue;
-                }
-                const auto rect = uilayout::ResolveRect(w, e, canvasW, canvasH, wc);
-                uinav::NavRect r;
-                r.x = rect.x;
-                r.y = rect.y;
-                r.w = rect.w;
-                r.h = rect.h;
-                r.index = e.index;
-                if (e.index == current.index) {
-                    cur = r;
-                    haveCur = true;
-                }
-                rects.push_back(r);
-                gens.push_back(e.generation);
-            }
-        });
-        if (!haveCur || rects.empty()) {
-            return current; // 現フォーカスが候補に無ければ維持
-        }
-        const uint32_t next =
-            uinav::FindNext(rects.data(), static_cast<int>(rects.size()), cur, dir);
-        for (size_t i = 0; i < rects.size(); ++i) {
-            if (rects[i].index == next) {
-                return { next, gens[i] };
-            }
-        }
-        return current;
+        const EntityID next =
+            uiinteract::FindNextFocus(Sc(engine)->GetWorld(), canvasW, canvasH, ToEngine(current),
+                                      dir);
+        return (next == kNullEntity) ? current : ToShared(next);
     };
 
     // ---- デバッグ描画 (v7)。描画レーンのキューに積むだけ (audioQueue パターン) ----
@@ -782,44 +744,13 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
                                                             : AssetID{};
         return 1;
     };
-    // キャンバス座標でのヒットテスト (UIFocusNav と同じ解決 = 描画とズレない、M70b)。
-    // 最前面 = order 最大、同値は entity.index 最大 (UIRenderer の描画順で上のもの)
+    // キャンバス座標でのヒットテスト (M70b)。★M70c で実装は uiinteract::HitTest 1 本に
+    // なった — エンジン内の対話評価 (UIInteraction) とスクリプトからの問い合わせが
+    // 同じ規則を通らないと、「押せた場所」が 2 種類できてしまう
     out.UIHitTest = [](void* engine, float x, float y) -> MyeEntityId {
         int canvasW = 0, canvasH = 0;
         UiCanvasOf(engine, canvasW, canvasH);
-        World& w = Sc(engine)->GetWorld();
-        // ワールド追従 UI 用の決定論カメラ (scalar 構築)。カメラ不在なら追従要素は
-        // 非表示扱い = 当たらない (screen UI は無関係)
-        uilayout::UIWorldContext wcData;
-        const uilayout::UIWorldContext* wc =
-            uilayout::BuildSimWorldContext(w, canvasW, canvasH, wcData) ? &wcData : nullptr;
-        MyeEntityId best = {}; // 既定 = null id (index 0xFFFFFFFF)
-        int32_t bestOrder = 0;
-        bool have = false;
-        const ComponentTypeId req[] = { UIElementComponent::sTypeId };
-        w.ForEachArchetype(req, [&](Archetype& arch) {
-            const int ci = arch.FindTypeIndex(UIElementComponent::sTypeId);
-            for (uint32_t row = 0; row < arch.Count(); ++row) {
-                const EntityID e = arch.EntityAt(row);
-                if (!IsEntityActive(w, e)) {
-                    continue;
-                }
-                const auto* el = static_cast<const UIElementComponent*>(arch.GetPtr(ci, row));
-                // 可視矩形 (祖先クリップ適用済み) で判定 — 見えない部分には当たらない
-                const auto vis = uilayout::ResolveVisibleRect(w, e, canvasW, canvasH, wc);
-                if (vis.w <= 0.0f || vis.h <= 0.0f || x < vis.x || x >= vis.x + vis.w
-                    || y < vis.y || y >= vis.y + vis.h) {
-                    continue;
-                }
-                if (!have || el->order > bestOrder
-                    || (el->order == bestOrder && e.index > best.index)) {
-                    best = { e.index, e.generation };
-                    bestOrder = el->order;
-                    have = true;
-                }
-            }
-        });
-        return best;
+        return ToShared(uiinteract::HitTest(Sc(engine)->GetWorld(), canvasW, canvasH, x, y));
     };
 
     // アクションマップ (M51d)。評価は EngineLoop が tick 頭 (verify 入力置換後) に済ませて
@@ -1039,6 +970,72 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
             //   初めて再ロックできる = 毎 tick 1 を書く実装が Escape を握り潰せない
             c->escapeReleased = false;
         }
+    };
+
+    // ---- v16 (M70c): UI の対話 ----
+    out.UIButtonState = [](void* engine, MyeEntityId id) -> uint32_t {
+        Scene* sc = Sc(engine);
+        const EntityID e = ToEngine(id);
+        if (sc->GetWorld().GetComponent<UIElementComponent>(e) == nullptr) {
+            return 0u;
+        }
+        return uiinteract::BitsFor(sc->UI(), e);
+    };
+    out.UIGetFocused = [](void* engine) -> MyeEntityId {
+        return ToShared(Sc(engine)->UI().focused);
+    };
+    out.UISetFocused = [](void* engine, MyeEntityId id) -> int {
+        Scene* sc = Sc(engine);
+        const EntityID e = ToEngine(id);
+        if (e == kNullEntity) {
+            sc->UI().focused = kNullEntity; // null id (MyeEntityId{}) = フォーカスを外す
+            return 1;
+        }
+        const auto* el = sc->GetWorld().GetComponent<UIElementComponent>(e);
+        if (el == nullptr || el->focusable == 0) {
+            return 0; // focusable でない要素は掴ませない (ナビの候補と食い違わせない)
+        }
+        sc->UI().focused = e;
+        return 1;
+    };
+    // ★MousePos (クライアント実 px) との違いはキャンバス正規化だけ。UI 系の引数は
+    //   すべてキャンバス座標なので、UI を触るならこちらを使う (M70b)
+    out.MouseCanvasPos = [](void* engine, float* outX, float* outY) {
+        const InputSnapshot& in = Ctx(engine)->input;
+        if (outX) { *outX = in.mouseCanvasX; }
+        if (outY) { *outY = in.mouseCanvasY; }
+    };
+    out.GetUIRect = [](void* engine, MyeEntityId id, MyeUIRect* out_) -> int {
+        World& w = Sc(engine)->GetWorld();
+        const EntityID e = ToEngine(id);
+        if (w.GetComponent<UIElementComponent>(e) == nullptr) {
+            return 0;
+        }
+        int canvasW = 0, canvasH = 0;
+        UiCanvasOf(engine, canvasW, canvasH);
+        // 描画とヒットテストが通るのと同じ解決 (ワールド追従 UI は sim レーンの
+        // 決定論カメラで射影される)
+        uilayout::UIWorldContext wcData;
+        const uilayout::UIWorldContext* wc =
+            uilayout::BuildSimWorldContext(w, canvasW, canvasH, wcData) ? &wcData : nullptr;
+        const uilayout::UIRect r = uilayout::ResolveRect(w, e, canvasW, canvasH, wc);
+        if (out_) {
+            out_->x = r.x;
+            out_->y = r.y;
+            out_->w = r.w;
+            out_->h = r.h;
+        }
+        return 1;
+    };
+    // dogfooding #16: LoadGame は保存時のシーンへ必ず飛ぶので「タイトルでハイスコアだけ
+    // 読む」ができなかった。要求を積むだけの書き方は SaveGame / LoadGame と同じ
+    out.LoadPersist = [](void* engine, int slot) -> int {
+        int* pending = Ctx(engine)->pendingLoadPersistSlot;
+        if (pending == nullptr) {
+            return 0;
+        }
+        *pending = slot; // 同 tick 複数回は後勝ち (LoadGame と同じ規約)
+        return 1;
     };
 
     out.IsSleeping = [](void* engine, MyeEntityId id) -> int {

@@ -533,6 +533,26 @@ GameObject MakeUiText(Scene& s, const char* name, int anchor, float x, float y, 
     return go;
 }
 
+// UI ボタン要素 (kind=2、M70c)。**focusable=1 が既定** — パッド/キーのフォーカスナビの
+// 候補になるのはこれだけで、押下判定とハイライトはエンジン (UIInteraction) が持つ
+GameObject MakeUiButton(Scene& s, const char* name, int anchor, float x, float y, float w,
+                        float h, const char* label, float fontScale)
+{
+    GameObject go = s.CreateGameObject(name);
+    auto* ui = go.AddComponent<UIElementComponent>();
+    ui->kind = 2;
+    ui->anchor = anchor;
+    ui->x = x;
+    ui->y = y;
+    ui->w = w;
+    ui->h = h;
+    ui->fontScale = fontScale;
+    ui->focusable = 1;
+    ui->color = { 0.22f, 0.27f, 0.38f, 1.0f }; // CreateMenu の生成ボタンと同じ配色
+    std::snprintf(ui->text, sizeof(ui->text), "%s", label);
+    return go;
+}
+
 void AttachScriptIfRegistered(World& w, EntityID e, const char* name)
 {
     const ComponentTypeId t = ComponentRegistry::Get().FindByName(name);
@@ -566,11 +586,26 @@ void BuildFlowTitleScene(EngineContext& ctx)
 
     MakeUiText(s, "TitleText", 1, -800.0f, 240.0f, 1600.0f, 160.0f, "MyEngine FLOW DEMO", 6.0f,
                4);
-    GameObject hint = MakeUiText(s, "TitleHint", 4, -600.0f, 240.0f, 1200.0f, 80.0f,
-                                 "Space / Pad A : START   (auto start in 90 ticks)", 2.4f, 4);
+    // ★anchor 7 (下中央) へ移した。M70c 以前は anchor 4 + y=240 で、真下の TitleBest と
+    //   **文字が重なっていた** (golden にもそのまま写っていた)。ボタンを足して画面の
+    //   下半分が埋まったので、ここで解消しておく
+    GameObject hint = MakeUiText(s, "TitleHint", 7, -600.0f, -170.0f, 1200.0f, 80.0f,
+                                 "D-Pad / Arrows : MOVE   A / Enter : SELECT", 2.4f, 4);
     AttachScriptIfRegistered(s.GetWorld(), hint.Id(), "FlowMenu"); // C# 点滅 (別レーン)
     MakeUiText(s, "TitleBest", 7, -600.0f, -280.0f, 1200.0f, 80.0f, "BEST 0   LAST 0   RUNS 0",
                2.8f, 4);
+
+    // ---- 操作できるメニュー (M70c) ----
+    // **エンジンが持つ UI 対話状態の唯一の replay 被覆**。ボタンを 2 個縦に並べるのは、
+    // 1 個だと uinav::FindNext が「移動先が無い」で毎回同じ答えを返し、フォーカス移動の
+    // 配線が検査にならないため。判定と描画のハイライトは両方エンジン側 (FlowTitleDriver は
+    // MyeUIClicked を読むだけ)
+    // ★**横に並べる**のは合成入力の都合でもある: SynthLaneInput の D-Pad 分布は
+    //   600 tick で Left 9 / Right 5 / Up 12 / Down 2 で、縦に積むと「上端でさらに上」
+    //   ばかりになりフォーカスが 1 度も動かない (実測)。横なら Left/Right の 14 回が
+    //   そのまま移動になる = 被覆が実際に成立する
+    MakeUiButton(s, "TitleStart", 4, -560.0f, 20.0f, 520.0f, 110.0f, "START", 3.0f);
+    MakeUiButton(s, "TitleClearBest", 4, 40.0f, 20.0f, 520.0f, 110.0f, "CLEAR BEST", 3.0f);
 
     GameObject director = s.CreateGameObject("FlowDirector");
     AttachScriptIfRegistered(s.GetWorld(), director.Id(), "FlowTitleDriver");

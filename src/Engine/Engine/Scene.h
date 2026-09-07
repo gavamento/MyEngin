@@ -9,6 +9,7 @@
 #include "Engine/Core/World.h"
 #include "Engine/Engine/GameFlow.h"
 #include "Engine/Engine/GameObject.h"
+#include "Engine/Engine/UI/UIInteraction.h"
 
 namespace mye {
 
@@ -69,6 +70,14 @@ public:
     const TimeControl& Time() const { return time_; }
     PersistStore& Persist() { return persist_; }
     const PersistStore& Persist() const { return persist_; }
+
+    // ---- UI 対話状態 (M70c) ----
+    // TimeControl と同じ扱い: Scene が持つ sim 状態で WorldHash 対象、SimSnapshot の
+    // Scene 節に入る。**Clear では消さない** — シーン遷移をまたぐ意味は無いが、
+    // 消すなら「消す」を明示的に書くべき値なので LoadScene 側で Clear() を呼ぶ
+    // (TickRunner のシーン遷移が呼ぶ)。詳細は UIInteraction.h
+    UIInteractionState& UI() { return ui_; }
+    const UIInteractionState& UI() const { return ui_; }
 
     // このシーンを読み書きしたファイルの絶対パス (SceneSerializer::SaveToFile/LoadFromFile
     // が設定)。メモリ上で組んだシーン (デモ構築) は空。SaveGame の「現シーンパス」記録用 (M51g)
@@ -214,6 +223,7 @@ private:
     // するため stale エントリは無害 (書込点の網羅は不要)。0 (未採番) は入れない
     std::unordered_map<uint64_t, EntityID> fileIdCache_;
     TimeControl time_;       // ポーズ/タイムスケール (M51g)
+    UIInteractionState ui_;  // UI の hovered/pressed/clicked/focused (M70c)
     PersistStore persist_;   // シーン跨ぎ永続 (M51g)。Clear で消えない
     std::wstring sourcePath_; // ロード/保存元の絶対パス (M51g)。メモリ構築シーンは空
 };

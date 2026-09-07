@@ -10,8 +10,11 @@
 #include "Engine/Core/World.h"
 #include "Engine/Engine/TransformSystem.h" // ワールド追従 UI の検証 (WorldMatrix 生成)
 #include "Engine/Engine/UI/UIGeometry.h"
+#include "Engine/Engine/UI/UIInteraction.h"
 #include "Engine/Engine/UI/UILayout.h"
 #include "Engine/Engine/UI/UINav.h"
+#include "Engine/Platform/Input.h"
+#include "Engine/Platform/InputActions.h"
 #include "Engine/Engine/UI/UITextLayout.h"
 
 namespace mye {
@@ -483,6 +486,107 @@ bool RunUISelfTest()
         const auto rs = uilayout::ResolveRect(w, button, 1920, 1080, &wc);
         check(rs.x == 5.0f && rs.y == 6.0f,
               "world UI: script-state components keep an entity ui-only (screen)");
+    }
+
+    // ---- UI の対話 (M70c) ----
+    // エンジンが hovered / pressed / clicked / focused を持つようになった経路の検査。
+    // ここが守るのは 4 つ:
+    //   (1) click = 「掴んだ要素の上で離した」(押しっぱなしで外へ出て離すのは取り消し)
+    //   (2) 押下中は掴んだ要素から移らない (別の要素の上を通っても pressed は動かない)
+    //   (3) フォーカスは UINav* の pressed エッジでだけ動き、UIElement.focused へ書き戻る
+    //   (4) 参照先が消えたら手放す (破棄済み EntityID を握り続けない)
+    {
+        World w;
+        // 縦に 2 個。キャンバス 1920x1080 の左上基準 (anchor=0) なので座標がそのまま矩形
+        const EntityID a = w.CreateEntity("btnA");
+        const EntityID b = w.CreateEntity("btnB");
+        for (const EntityID e : { a, b }) {
+            auto* el = w.AddComponent<UIElementComponent>(e);
+            el->kind = 2;
+            el->anchor = 0;
+            el->x = 100.0f;
+            el->w = 200.0f;
+            el->h = 80.0f;
+            el->focusable = 1;
+        }
+        w.GetComponent<UIElementComponent>(a)->y = 100.0f; // 上
+        w.GetComponent<UIElementComponent>(b)->y = 300.0f; // 下
+        w.ApplyStructuralChanges();
+
+        InputActions actions;
+        UIInteractionState st;
+        // キャンバス寸法 + キャンバス座標のマウスを持つ入力を組む (レーン 0 の規約)
+        InputSnapshot in = {};
+        in.canvasW = 1920.0f;
+        in.canvasH = 1080.0f;
+        const auto mouse = [&in](float x, float y, bool down) {
+            in.mouseCanvasX = x;
+            in.mouseCanvasY = y;
+            in.mouseButtons = down ? 1u : 0u;
+        };
+
+        // (a) ヒットテスト: 矩形の内と外
+        check(uiinteract::HitTest(w, 1920, 1080, 150.0f, 150.0f) == a,
+              "interaction: hit test finds the element under the point");
+        check(uiinteract::HitTest(w, 1920, 1080, 50.0f, 150.0f) == kNullEntity,
+              "interaction: hit test misses outside the rect");
+
+        // (b) hover → press → release で click が 1 tick だけ立つ
+        mouse(150.0f, 150.0f, false);
+        uiinteract::Evaluate(w, in, &actions, st);
+        check(st.hovered == a && st.pressed == kNullEntity && st.clicked == kNullEntity,
+              "interaction: hovering alone does not press or click");
+        mouse(150.0f, 150.0f, true);
+        uiinteract::Evaluate(w, in, &actions, st);
+        check(st.pressed == a && st.clicked == kNullEntity,
+              "interaction: the press is captured but does not click yet");
+        mouse(150.0f, 150.0f, false);
+        uiinteract::Evaluate(w, in, &actions, st);
+        check(st.clicked == a && st.pressed == kNullEntity,
+              "interaction: releasing over the pressed element clicks it");
+        uiinteract::Evaluate(w, in, &actions, st);
+        check(st.clicked == kNullEntity, "interaction: clicked lasts exactly one tick");
+
+        // (c) 押したまま別の要素へ移っても掴んだ相手は変わらない / そこで離しても click しない
+        mouse(150.0f, 150.0f, true);
+        uiinteract::Evaluate(w, in, &actions, st);
+        mouse(150.0f, 350.0f, true); // btnB の上へドラッグ
+        uiinteract::Evaluate(w, in, &actions, st);
+        check(st.pressed == a && st.hovered == b,
+              "interaction: the captured element does not change while the button is held");
+        mouse(150.0f, 350.0f, false);
+        uiinteract::Evaluate(w, in, &actions, st);
+        check(st.clicked == kNullEntity,
+              "interaction: releasing over a different element cancels the click");
+
+        // (d) フォーカス: 候補が無い状態から下へ動かすと index 最小の候補へ吸着し、
+        //     UIElement.focused へ書き戻る
+        check(uiinteract::FindNextFocus(w, 1920, 1080, kNullEntity, uinav::kNavDown) == a,
+              "interaction: focus enters at the lowest entity index");
+        check(uiinteract::FindNextFocus(w, 1920, 1080, a, uinav::kNavDown) == b,
+              "interaction: focus moves down to the next candidate");
+        check(uiinteract::FindNextFocus(w, 1920, 1080, b, uinav::kNavDown) == b,
+              "interaction: focus stays put when there is nothing further down");
+        st.focused = b;
+        uiinteract::Evaluate(w, in, &actions, st);
+        check(w.GetComponent<UIElementComponent>(b)->focused == 1
+                  && w.GetComponent<UIElementComponent>(a)->focused == 0,
+              "interaction: UIElement.focused mirrors the engine focus");
+
+        // (e) 参照先が消えたら手放す (破棄済みの EntityID を握り続けない)
+        w.DestroyEntity(b);
+        w.ApplyStructuralChanges();
+        uiinteract::Evaluate(w, in, &actions, st);
+        check(st.focused == kNullEntity, "interaction: a destroyed element drops the focus");
+
+        // (f) BitsFor はビットの意味を固定する (ScriptAPI.h の MyeUIButton* と同値)
+        st.Clear();
+        st.hovered = a;
+        st.clicked = a;
+        check(uiinteract::BitsFor(st, a) == (uiinteract::kHovered | uiinteract::kClicked),
+              "interaction: BitsFor reports exactly the states that hold");
+        check(uiinteract::BitsFor(st, kNullEntity) == 0u,
+              "interaction: BitsFor of a null entity is 0");
     }
 
     // ---- キャンバス (M70b) ----

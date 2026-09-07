@@ -199,7 +199,11 @@ struct Registrar {
 } // namespace mye_script_detail
 
 // ---- フィールド列挙マクロ (最大 16 個。/Zc:preprocessor 必須) ----
-#define MYE_SF(T, m) { #m, MyeTypeOf<std::remove_cv_t<decltype(T::m)>>::value, (uint32_t)offsetof(T, m) },
+// v16 (M70c): 末尾 3 つ (displayName / rangeMin / rangeMax) は**明示的に**埋める。
+// 省略しても値初期化されるが、書いておかないと「増えたことに気づかない」
+#define MYE_SF(T, m) \
+    { #m, MyeTypeOf<std::remove_cv_t<decltype(T::m)>>::value, (uint32_t)offsetof(T, m), \
+      nullptr, 0.0f, 0.0f },
 #define MYE_SF_1(T, m) MYE_SF(T, m)
 #define MYE_SF_2(T, m, ...) MYE_SF(T, m) MYE_SF_1(T, __VA_ARGS__)
 #define MYE_SF_3(T, m, ...) MYE_SF(T, m) MYE_SF_2(T, __VA_ARGS__)
@@ -446,32 +450,84 @@ inline bool MyeSetField(const MyeUpdateContext& ctx, MyeEntityId e, uint64_t com
 // InputSnapshot のマウス経由** で判定する (ABI 追加なし = bump 不要)。verify では記録された
 // マウスで再現されるため replay 一致。
 //
-// ★★M70b の申し送り: **この 2 本は今もクライアント実 px で判定する**。UIElement の
-//   x/y/w/h は M70b でキャンバス単位 (基準 1920x1080) になったので、実 px と 1:1 で
-//   対応するのは画面がちょうど 1920x1080 のときだけ — つまり anchor=0 の要素でも
-//   矩形をそのまま渡すとズレる。直すにはキャンバス座標のマウスが要り、それは
-//   ABI スロット (MouseCanvasPos) の追加 = **M70c** になる。そこで UIButtonDemo ごと
-//   OnUIClick 版へ寄せる予定なので、ここでは px のまま据え置いてある。
-struct MyeUIRect {
-    float x, y, w, h;
-};
+// ★M70c で解消: 矩形は**キャンバス座標** (基準 1920x1080、UIElement の x/y/w/h と同じ
+//   土俵) で、マウスも MouseCanvasPos 経由のキャンバス座標になった。
+//   さらに「矩形を手書きしない」経路 (MyeUIClicked) が下に増えている — 新しく書くなら
+//   そちらを使うこと。
+// キャンバス座標のマウス位置 (v16、M70b/M70c)。UI の引数はすべてこの座標系
+inline void MyeMouseCanvasPos(const MyeUpdateContext& ctx, float& outX, float& outY)
+{
+    ctx.api->MouseCanvasPos(ctx.api->engine, &outX, &outY);
+}
 
 inline bool MyeMouseInRect(const MyeUpdateContext& ctx, MyeUIRect r)
 {
-    int32_t mx = 0, my = 0;
-    ctx.api->MousePos(ctx.api->engine, &mx, &my);
-    const float fx = static_cast<float>(mx), fy = static_cast<float>(my);
+    float fx = 0.0f, fy = 0.0f;
+    MyeMouseCanvasPos(ctx, fx, fy);
     return fx >= r.x && fx < r.x + r.w && fy >= r.y && fy < r.y + r.h;
 }
 
 // 左ボタンを rect 内で押した瞬間に true。prevDown は呼び出し側スクリプトがフィールドで
 // 保持する (エッジ検出。登録フィールドなら DLL リロードを跨いで状態維持)。
+// ★**新しく書くなら MyeUIClicked を使うこと** — こちらは矩形を手書きする形なので、
+//   UIElement 側のレイアウトを変えると黙って食い違う (M70c で潰したのがまさにこれ)
 inline bool MyeButtonClicked(const MyeUpdateContext& ctx, MyeUIRect r, int32_t& prevDown)
 {
     const int down = ctx.api->MouseButton(ctx.api->engine, 0);
     const bool clicked = down && !prevDown && MyeMouseInRect(ctx, r);
     prevDown = down;
     return clicked;
+}
+
+// ---- v16 (M70c): エンジンが持つ UI の対話状態 ----
+// 矩形はエンジンが解決し、判定もエンジンが tick 中 (スクリプト層より前) に済ませてある。
+// スクリプトは結果を読むだけ = **矩形の二重管理が無くなる**。
+enum MyeUIButtonBits : uint32_t {
+    MyeUIButtonHovered = 1u << 0,
+    MyeUIButtonPressed = 1u << 1,
+    MyeUIButtonClicked = 1u << 2, // 1 tick だけ立つ (離した瞬間 / Submit した瞬間)
+    MyeUIButtonFocused = 1u << 3,
+};
+
+inline uint32_t MyeUIButtonState(const MyeUpdateContext& ctx, MyeEntityId id)
+{
+    return ctx.api->UIButtonState(ctx.api->engine, id);
+}
+inline bool MyeUIHovered(const MyeUpdateContext& ctx, MyeEntityId id)
+{
+    return (MyeUIButtonState(ctx, id) & MyeUIButtonHovered) != 0;
+}
+inline bool MyeUIPressed(const MyeUpdateContext& ctx, MyeEntityId id)
+{
+    return (MyeUIButtonState(ctx, id) & MyeUIButtonPressed) != 0;
+}
+// クリック (マウスで離した / フォーカス中に UINavSubmit)。**この tick だけ true**
+inline bool MyeUIClicked(const MyeUpdateContext& ctx, MyeEntityId id)
+{
+    return (MyeUIButtonState(ctx, id) & MyeUIButtonClicked) != 0;
+}
+inline bool MyeUIFocused(const MyeUpdateContext& ctx, MyeEntityId id)
+{
+    return (MyeUIButtonState(ctx, id) & MyeUIButtonFocused) != 0;
+}
+inline MyeEntityId MyeUIGetFocused(const MyeUpdateContext& ctx)
+{
+    return ctx.api->UIGetFocused(ctx.api->engine);
+}
+// null id でフォーカスを外す。focusable でない要素は false (何も変わらない)
+inline bool MyeUISetFocused(const MyeUpdateContext& ctx, MyeEntityId id)
+{
+    return ctx.api->UISetFocused(ctx.api->engine, id) != 0;
+}
+// 解決済みのキャンバス矩形 (アンカー・親子 space 適用後)。UIElement 非所持は false
+inline bool MyeGetUIRect(const MyeUpdateContext& ctx, MyeEntityId id, MyeUIRect& out)
+{
+    return ctx.api->GetUIRect(ctx.api->engine, id, &out) != 0;
+}
+// セーブスロットから PersistStore だけ読む (シーンは動かさない、dogfooding #16)
+inline bool MyeLoadPersist(const MyeUpdateContext& ctx, int slot)
+{
+    return ctx.api->LoadPersist(ctx.api->engine, slot) != 0;
 }
 
 // ---- v12 (M51h): 入力アクション / UI 拡張 / ゲームフロー / パッド振動 ----

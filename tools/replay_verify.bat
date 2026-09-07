@@ -171,7 +171,13 @@ if not exist assets\scenes\flow_game.scene.json (
     echo [FAIL] flow game scene was not written
     exit /b 1
 )
-call :chain cache\golden_flow.rep "--flow-demo" "--flow-demo"
+rem ★M70c: 記録側にだけ --synth-input を渡す (7 ペア目の acoustic と同じ流儀)。
+rem    合成入力は D-Pad を疎に押し A ボタンを押す = タイトルの 2 ボタンで
+rem    フォーカス移動 + 決定が実際に起きる。**これがエンジン側 UI 対話
+rem    (hovered/pressed/clicked/focused = ワールドハッシュ対象) の唯一の被覆**で、
+rem    FlowTitleDriver の clearClicks (登録フィールド = ハッシュ対象) に結果が乗る。
+rem    検証側に --synth-input は要らない (合成入力は .rep に記録済み)。
+call :chain cache\golden_flow.rep "--flow-demo --synth-input" "--flow-demo"
 exit /b %ERRORLEVEL%
 
 rem ---- マルチプレイヤー入力レーン (M52g) ----

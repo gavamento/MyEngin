@@ -174,8 +174,8 @@ bool RunPartSelfTest()
         };
         const MyeEntityId root = toShared(enemy.Id());
 
-        check(api.version == MYE_API_VERSION && MYE_API_VERSION == 15u,
-              "abi: the table reports v15");
+        check(api.version == MYE_API_VERSION && MYE_API_VERSION == 16u,
+              "abi: the table reports v16");
         check(api.FindPart != nullptr && api.FindPartsByTag != nullptr,
               "abi: the v9 part slots are filled in");
         check(api.RaycastParts != nullptr, "abi: the v10 RaycastParts slot is filled in");
@@ -210,6 +210,32 @@ bool RunPartSelfTest()
             api.SetCursorMode(api.engine, 1);
             api.SetCursorMode(api.engine, 0);
             check(true, "abi: SetCursorMode is a no-op without a wired cursor-lock state");
+        }
+        // v16 (M70c): UI の対話 6 本。**充填漏れ**は規則 11 が静的に見るので、
+        // ここでは「組み立てた実物のテーブルに入っているか」と既定値の契約を見る
+        check(api.UIButtonState != nullptr && api.UIGetFocused != nullptr
+                  && api.UISetFocused != nullptr && api.MouseCanvasPos != nullptr
+                  && api.GetUIRect != nullptr && api.LoadPersist != nullptr,
+              "abi: the v16 UI interaction slots are filled in");
+        {
+            // UIElement を持たない相手には 0 (UIButtonState / GetUIRect の契約)
+            check(api.UIButtonState(api.engine, root) == 0u,
+                  "abi: UIButtonState is 0 for an entity without a UIElement");
+            MyeUIRect r = { 1.0f, 2.0f, 3.0f, 4.0f };
+            check(api.GetUIRect(api.engine, root, &r) == 0 && r.x == 1.0f,
+                  "abi: GetUIRect fails without a UIElement and does not touch the output");
+            // フォーカスは既定で null id。null id を書けば「外す」= 常に成功
+            check(MyeEntityIdIsNull(api.UIGetFocused(api.engine)),
+                  "abi: nothing is focused by default");
+            check(api.UISetFocused(api.engine, MyeEntityId{}) == 1,
+                  "abi: UISetFocused(null) clears the focus");
+            check(api.UISetFocused(api.engine, root) == 0,
+                  "abi: UISetFocused refuses an entity that is not focusable");
+            float mx = 9.0f, my = 9.0f;
+            api.MouseCanvasPos(api.engine, &mx, &my);
+            check(mx == 0.0f && my == 0.0f,
+                  "abi: MouseCanvasPos writes both outputs (empty input = 0)");
+            api.MouseCanvasPos(api.engine, nullptr, nullptr); // null 出力で落ちないこと
         }
         check(api.GetMouseWheel != nullptr && api.SetUIRect != nullptr
                   && api.SetUILayout != nullptr && api.SetUITexture != nullptr

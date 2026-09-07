@@ -43,7 +43,12 @@ namespace mye {
 
 // .rep のフォーマット版。ネットのハンドシェイク (M52h) でも照合するので、
 // Replay.cpp の中に閉じずにここへ出してある
-inline constexpr uint32_t kReplayFileVersion = 6;
+// v7 (M70c): WorldHasher に UI 対話状態の節が入った (InputSnapshot は不変)。
+// このファイルの冒頭が言うとおり「InputSnapshot / WorldHasher のレイアウトが変わったら
+// 版を上げる」— 記録ハッシュの意味が変わるので、旧 .rep を再生すると全 tick で
+// MISMATCH になる。版で弾いて「読めない」と言わせるほうが診断として正しい。
+
+inline constexpr uint32_t kReplayFileVersion = 7;
 
 struct MyeReplayHeader {
     uint32_t magic = 0x5045524Du; // 'MREP'

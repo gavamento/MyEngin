@@ -121,10 +121,11 @@ bool RunAcousticAudioSelfTest()
             ComponentRegistry::Get().Desc(AcousticAudioComponent::sTypeId);
         check((d.flags & kComponentNoHash) != 0, "T1: AcousticAudio is kComponentNoHash");
         // NoHash = WorldHasher が丸ごと飛ばす = **M68a が snapshot の版を上げる理由は無い**。
-        // ★数字そのものは M70b (InputSnapshot が 72 -> 88 バイト) で 11 -> 12 へ動いた。
+        // ★数字そのものは M70b (InputSnapshot 72 -> 88) と M70c (Scene 節に UI 対話状態)
+        //   で 11 -> 13 へ動いた。
         //   この検査が守っているのは「AcousticAudio を足したせいで版が動いていないこと」で、
         //   別の理由で上がった版に追随するのは正しい (>= にすると主張が消えるので値で書く)
-        check(kSimSnapshotVersion == 12, "T1: kSimSnapshotVersion is not bumped by AcousticAudio");
+        check(kSimSnapshotVersion == 13, "T1: kSimSnapshotVersion is not bumped by AcousticAudio");
     }
 
     // ---- (T2) 同一原点なら波の場と probe が**ビット一致**する ----

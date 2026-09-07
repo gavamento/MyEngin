@@ -13,6 +13,7 @@ class CpuParticleBackend;
 class XpbdBackend;
 class AcousticField;
 struct TimeControl;
+struct UIInteractionState;
 class PersistStore;
 
 // ワールド状態ハッシュ (engine_spec.md 11.3)。
@@ -41,6 +42,11 @@ struct SimSources {
     //   .rep 版 bump が要る。占有グリッドと残光は**導出値なのでハッシュに入れない**
     //   (計画 hushed-rippling-beacon 判断 3)
     const AcousticField* acoustic = nullptr;
+    // M70c: UI の対話状態 (hovered / pressed / clicked / focused)。**内容ゲートしない** —
+    // TimeControl と同格の「Scene が持つ小さな sim 状態」で、既定 (全部 null) でも
+    // 4 語畳む。ゲートすると「フォーカスが外れた瞬間だけ節が消える」= 節の有無が
+    // 状態に依存する形になり、ダンプが読みにくくなる
+    const UIInteractionState* ui = nullptr;
 };
 
 uint64_t HashWorld(World& world, const SimSources& src = {});

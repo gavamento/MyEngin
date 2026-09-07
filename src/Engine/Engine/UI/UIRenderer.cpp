@@ -1,5 +1,7 @@
 #include "Engine/Engine/UI/UIRenderer.h"
 
+#include "Engine/Engine/UI/UIInteraction.h" // M70c: hover/press の正本
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -201,7 +203,7 @@ void UIRenderer::PushTextInRect(const char* s, float rx, float ry, float rw, flo
 
 void UIRenderer::Render(World& world, GraphicsDevice& device, ShaderManager& shaders,
                         RenderResources& resources, ID3D11RenderTargetView* rtv, int width,
-                        int height, int mouseX, int mouseY, bool mouseDown,
+                        int height, const UIInteractionState* ui,
                         const uilayout::UIWorldContext* worldCtx)
 {
     if (!ready_ || width <= 0 || height <= 0) {
@@ -306,13 +308,16 @@ void UIRenderer::Render(World& world, GraphicsDevice& device, ShaderManager& sha
             PushTextInRect(el.text, rx, ry, rect.w, rect.h, textScale, el.color, el.align,
                            el.wrap != 0);
         } else if (el.kind == 2) {
-            // ボタン: 背景 + hover/press ハイライト (display only) + 中央ラベル
+            // ボタン: 背景 + hover/press ハイライト + 中央ラベル。
+            // ★M70c: 判定はエンジンが tick 中に確定した状態を読むだけ (自前で矩形と
+            //   マウスを比べない) = 「光っている要素」と「押したことになる要素」が
+            //   構造的に同じものになる
             XMFLOAT4 bg = el.color;
-            const bool hover = mouseX >= static_cast<int>(rx)
-                && mouseX < static_cast<int>(rx + rect.w) && mouseY >= static_cast<int>(ry)
-                && mouseY < static_cast<int>(ry + rect.h);
-            if (hover) {
-                const float k = mouseDown ? 0.8f : 1.25f; // press で暗く、hover で明るく
+            const uint32_t bits = ui ? uiinteract::BitsFor(*ui, it.e) : 0u;
+            if (bits & uiinteract::kHovered) {
+                // press で暗く、hover で明るく。pressed は「掴んだ要素」なので、
+                // 押したまま外へ出ているあいだは hovered が落ちて暗くならない
+                const float k = (bits & uiinteract::kPressed) ? 0.8f : 1.25f;
                 bg.x = std::min(1.0f, bg.x * k);
                 bg.y = std::min(1.0f, bg.y * k);
                 bg.z = std::min(1.0f, bg.z * k);

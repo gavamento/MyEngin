@@ -815,6 +815,57 @@ resolution into `project_settings.json`. Script-side helpers are also one milest
 `MyeMouseInRect` / `MyeButtonClicked` still test in client pixels because converting them needs a
 canvas-space mouse, which is an ABI slot (`MouseCanvasPos`, M70c).
 
+### 6.12 In-game UI interaction (M70c)
+
+Who decides that a button was pressed. Before M70c the answer was "both, separately": the
+renderer computed hover/press from the mouse to tint the quad and then **threw the result away**,
+and the only working game-side path re-typed the element's rectangle into a script and compared it
+against the mouse itself (`UIButtonDemo`). Two rectangles for one button drift apart the moment a
+layout changes - and after §6.11 they were in different units as well.
+
+The engine now owns the state. `UIInteractionState` (four `EntityID`s plus an "adopted" flag)
+lives on `Scene` next to `TimeControl`, is evaluated once per tick in `TickRunner` **before the
+script layer**, and is **part of the world hash**: `UIElementComponent` is `kComponentNoHash`, so
+without this nothing about UI interaction would ever reach a replay, and a broken wiring would
+stay green. It is in `SimSnapshot` for the same reason - a rollback that forgot which element was
+being held would re-simulate differently.
+
+| State | Rule |
+|---|---|
+| `hovered` | The front-most element under the canvas-space mouse (`uiinteract::HitTest`, the same function the `UIHitTest` ABI slot calls) |
+| `pressed` | Captured when the left button goes down and **held until release**: dragging off the element does not move the capture |
+| `clicked` | Set for **exactly one tick**, when the release happens over the captured element (Unity semantics), or when `UINavSubmit` is pressed while something is focused |
+| `focused` | Moved by the `UINavUp/Down/Left/Right` actions through `uinav::FindNext`; mirrored into `UIElement.focused` every tick for the focus ring |
+
+Because submit and click land in the same `clicked` slot, game code branches once for mouse and
+gamepad instead of twice.
+
+**Authored focus.** A scene that ships `focused = 1` on a focusable element is adopted once, on
+the first tick after a load (`adoptedAuthored`) - the Unity `EventSystem` "First Selected" idea.
+Re-reading it every tick would fight the player: clearing the focus would snap straight back.
+
+**ABI v16 (110 slots).** `UIButtonState`, `UIGetFocused`, `UISetFocused`, `MouseCanvasPos`,
+`GetUIRect` and `LoadPersist`. The last one is unrelated to UI and rides along because the house
+rule is one ABI bump per milestone: `LoadGame` always jumps to the scene the save was taken in, so
+a title screen could not read its own high score (`docs/dogfooding.md` #16); `LoadPersist` reads
+the key-value store and leaves the scene alone. The same bump also freezes the layout of
+`MyeScriptField`, which gains `displayName` / `rangeMin` / `rangeMax` for M70d to read - adding
+those later would let a stale `GameLogic.dll` pass the `apiVersion` check with a different field
+layout.
+
+**What was closed.** `MyeScript.cs` no longer exposes `SetUIRect` / `SetUILayout` /
+`SetUIFocused`. All three move UI geometry or focus, which now feeds hashed state, and the C# lane
+is suspended during rollback and time-travel re-simulation and is outside replay coverage - so a
+C# script writing there would produce a world that the replay cannot reproduce. Text, colour, fill
+and texture stay open, because they are display only.
+
+**Coverage.** `replay_verify`'s flow pair records with `--synth-input`, whose synthetic D-pad and A
+button drive the title screen's two buttons for real: measured at tick 528 the focus moves from
+`START` to `CLEAR BEST`, submit clicks it in the same tick, and the driver's registered
+`clearClicks` field goes to 1 - all inside the hashed state, verified against Release and through
+snapshot round-trips. `kReplayFileVersion` 6 -> 7 and `kSimSnapshotVersion` 12 -> 13 follow from
+the hash and blob layout changing.
+
 ---
 
 ## 7. Particle System Specification
@@ -2321,7 +2372,7 @@ to the physics roadmap.
 |---|---|
 | M60′ e-n (XPBD deformables) | **Paused.** a-d shipped (backend, solver core, rope, two-way attachment). The remaining ten sub-milestones — particle/world collision, cloth, soft bodies, plasticity, showcase — are unstarted, and rope still has no replay or screenshot coverage |
 | M61 / M62 (physics roadmap) | **Unstarted.** Fracture, and thermal / fluid / optical / electrical. Roadmap only; see the numbering note above |
-| M70c / M70d (in-game UI, continued) | **Unstarted.** The plan `plans/sparkling-gliding-quokka.md` carries the two remaining subs: UI events and focus driven by the engine (`hovered` / `pressed` / `focused` on the world hash, ABI v16) and the script-to-object gaps plus the dogfooding sweep. The canvas unification that used to head this row shipped as **M70b** - see §6.11. The old plan `plans/gleaming-strolling-swing.md` (labelled M64) is kept as research notes: its labels collide with commit `080d5d5`, which shipped raw mouse look and `Active` hierarchy propagation under the same names |
+| M70d (script-to-object gaps) | **Unstarted.** The last sub of `plans/sparkling-gliding-quokka.md`: the `SetComponentField` NoHash gate, Inspector metadata for script fields (the `MyeScriptField` layout is already reserved by M70c), `FIELDS()` 16 -> 32, and the dogfooding items that need no new ABI slot. The canvas unification shipped as **M70b** (§6.11) and the UI interaction model as **M70c** (§6.12). The old plan `plans/gleaming-strolling-swing.md` (labelled M64) is kept as research notes: its labels collide with commit `080d5d5`, which shipped raw mouse look and `Active` hierarchy propagation under the same names |
 | Dogfooding backlog | 16 of the 20 findings in [`docs/dogfooding.md`](docs/dogfooding.md) are open. The data-loss bug (finding 10) was closed by M70a - see §8.3 |
 
 ---

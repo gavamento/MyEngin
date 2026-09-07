@@ -87,6 +87,12 @@ constexpr double kMaxFrameDt = 0.25;   // ブレークポイント等の巨大 d
 // どちらも sim には影響しない (待つのは「いつ回すか」だけ) ので体感で決めてよい値
 constexpr uint32_t kNetStallWaitMs = 6;
 
+// 決定的撮影モードで使うマウス位置 (M70c)。**どの UI 要素にも当たらない値**であればよく、
+// -1 のような「1 px 外」では anchor 次第で負の座標に置かれた要素に当たりうる。
+// 十分に大きな負値にしておけば、キャンバス座標へ正規化しても符号は変わらない
+constexpr int32_t kShotMouseX = -100000;
+constexpr int32_t kShotMouseY = -100000;
+
 } // namespace
 
 int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
@@ -158,6 +164,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // セーフポイントで消費し record/verify 中は no-op + WARN (決定台帳 5)
     int pendingSaveSlot = -1;
     int pendingLoadSlot = -1;
+    int pendingLoadPersistSlot = -1; // M70c: LoadPersist (シーンを動かさないロード)
     // M51h: SetPadVibration の目標値。スロットは書くだけで、適用はフレーム末の出力レーン
     // (record/verify 中とフォーカス喪失中は 0 に落とし、終了時も 0 リセット)
     PadVibrationState padVibration;
@@ -362,10 +369,12 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     NetRuntimeInfo netInfo;
     scriptHost.SetSharedServices(&audioQueue, &pendingScene, &effectQueue, &debugLines,
                                  &audioHandleSeq, &inputActions, &pendingSaveSlot,
-                                 &pendingLoadSlot, &padVibration, &netInfo, &cursorLock);
+                                 &pendingLoadSlot, &padVibration, &netInfo, &cursorLock,
+                                 &pendingLoadPersistSlot);
     managedHost.SetSharedServices(&audioQueue, &pendingScene, &effectQueue, &debugLines,
                                   &audioHandleSeq, &inputActions, &pendingSaveSlot,
-                                  &pendingLoadSlot, &padVibration, &netInfo, &cursorLock);
+                                  &pendingLoadSlot, &padVibration, &netInfo, &cursorLock,
+                                  &pendingLoadPersistSlot);
 
     clock.Init();
 
@@ -583,7 +592,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         // 開始点のワールドハッシュ。**tick 末にハッシュを撮るのと同じ点** (OnStart +
         // ApplyStructuralChanges の直後) で撮る = 「同じシーンから始めたか」の機械照合
         id.startWorldHash = HashWorld(scene.GetWorld(),
-                                      {&particleSystem.Cpu(), &scene.Time(), &scene.Persist(), &xpbd});
+                                      {&particleSystem.Cpu(), &scene.Time(), &scene.Persist(), &xpbd, &acoustic, &scene.UI()});
         const bool ok = !netFailed && net.Start(ncfg, id, ctx.tickIndex)
             && net.WaitUntilReady([&window] { return window.PumpMessages(); });
         if (!ok) {
@@ -765,6 +774,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     tickServices.pendingScene = &pendingScene;
     tickServices.pendingSaveSlot = &pendingSaveSlot;
     tickServices.pendingLoadSlot = &pendingLoadSlot;
+    tickServices.pendingLoadPersistSlot = &pendingLoadPersistSlot;
     tickServices.prefabLibrary = &prefabLibrary;
     tickServices.assetsRoot = &assetsRoot;
     tickServices.saveDir = &saveDir;
@@ -873,7 +883,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             //   ビット一致しなければ、決定論の外 (C# レーン等) が混ざっている証拠
             rep.expectedHash = timeTravel.HashAtTick(target);
             rep.actualHash = HashWorld(scene.GetWorld(),
-                                       {&particleSystem.Cpu(), &scene.Time(), &scene.Persist(), &xpbd});
+                                       {&particleSystem.Cpu(), &scene.Time(), &scene.Persist(), &xpbd, &acoustic, &scene.UI()});
             rep.outcome = (rep.expectedHash == rep.actualHash) ? SeekOutcome::Ok
                                                               : SeekOutcome::HashMismatch;
         }
@@ -896,7 +906,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // ここで 1 本に畳んだ
     const auto TickEndHash = [&]() -> uint64_t {
         return HashWorld(scene.GetWorld(),
-                         {&particleSystem.Cpu(), &scene.Time(), &scene.Persist(), &xpbd});
+                         {&particleSystem.Cpu(), &scene.Time(), &scene.Persist(), &xpbd, &acoustic, &scene.UI()});
     };
 
     // ---- 予測ロールバック (M52i、決定台帳 2) ----
@@ -1113,7 +1123,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         report.role = config.netRole;
         HashDump dump;
         HashWorldDump(scene.GetWorld(),
-                      {&particleSystem.Cpu(), &scene.Time(), &scene.Persist(), &xpbd}, ctx.tickIndex, dump);
+                      {&particleSystem.Cpu(), &scene.Time(), &scene.Persist(), &xpbd, &acoustic, &scene.UI()}, ctx.tickIndex, dump);
         std::wstring dir;
         const std::wstring crashRoot =
             config.projectRoot.empty() ? GetExecutableDir() : config.projectRoot;
@@ -1197,6 +1207,18 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                 //   無いことを確認していないので、効く範囲を最小に留める
                 ctx.inputs[0].mouseDeltaX = 0;
                 ctx.inputs[0].mouseDeltaY = 0;
+                // ---- M70c: マウスの**位置とボタン**も中立化する ----
+                // M68c は「位置に依存する golden が無いことを確認していない」ので位置を
+                // 触らなかったが、M70c で hovered / pressed がボタンのハイライトを決める
+                // ようになった = **撮影中にカーソルが窓の上にあるだけで golden が割れる**
+                // (ui_probe と flow_title はまさにボタンを含む)。
+                // 位置は「どのキャンバス座標も指さない」値へ倒す — 0,0 は左上の正当な
+                // 座標なので使えない (負の座標に置かれた要素にも当たらない値にする)
+                ctx.inputs[0].mouseX = kShotMouseX;
+                ctx.inputs[0].mouseY = kShotMouseY;
+                ctx.inputs[0].mouseCanvasX = static_cast<float>(kShotMouseX);
+                ctx.inputs[0].mouseCanvasY = static_cast<float>(kShotMouseY);
+                ctx.inputs[0].mouseButtons = 0;
             }
             if (netEnabled) {
                 // ★ライブ入力は tick ループへ入る前に退避する。ループ内で ctx.inputs は
@@ -1675,8 +1697,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                 uiWc.prevWorld = renderSystem.prevWorld;
                 uiWc.alpha = renderSystem.interpAlpha;
                 uiRenderer.Render(scene.GetWorld(), device, shaderManager, resources, target.rtv,
-                                  target.width, target.height, ctx.Input().mouseX,
-                                  ctx.Input().mouseY, ctx.Input().MouseDown(0),
+                                  target.width, target.height, &scene.UI(),
                                   renderSystem.lastCamValid ? &uiWc : nullptr);
             } else {
                 // ImGui 描画の下地としてクリアのみ

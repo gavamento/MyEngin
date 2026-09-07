@@ -60,8 +60,10 @@ public:
                            int* pendingSaveSlot = nullptr, int* pendingLoadSlot = nullptr,
                            PadVibrationState* padVibration = nullptr,
                            const NetRuntimeInfo* net = nullptr,
-                           CursorLockState* cursorLock = nullptr)
+                           CursorLockState* cursorLock = nullptr,
+                           int* pendingLoadPersistSlot = nullptr)
     {
+        apiCtx_.pendingLoadPersistSlot = pendingLoadPersistSlot; // v16 (M70c)
         apiCtx_.audioQueue = audioQueue;
         apiCtx_.pendingScene = pendingScene;
         apiCtx_.effectQueue = effectQueue;

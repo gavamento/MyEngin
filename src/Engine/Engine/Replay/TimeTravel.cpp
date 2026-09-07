@@ -15,9 +15,15 @@ uint64_t TimeTravel::HashOf(const SimRefs& refs)
         return 0;
     }
     // ★record/verify が撮っているのと**同じ 3 出口の同じ引数**で撮ること。
-    //   ここだけ引数が欠けるとシークの自己検証が「割れていないのに割れた」と言い出す
+    //   ここだけ引数が欠けるとシークの自己検証が「割れていないのに割れた」と言い出す。
+    // ★M70c で **refs.acoustic の渡し忘れを修正**した (M65a が TickRunner 側にだけ
+    //   配線して、ここと EngineLoop の 4 か所が 4 引数のまま残っていた)。音響の節は
+    //   内容ゲート = 波が 1 本も無ければ畳まないので、波の出ないシーンでは同じ値が
+    //   出ていて誰も気づけなかった — 波のあるシーンでだけ「クラッシュ .rep が全 tick
+    //   MISMATCH」「タイムトラベルの自己検証が波スロット表を見ない」形で出る
     return HashWorld(refs.scene->GetWorld(),
-                     {refs.particles, &refs.scene->Time(), &refs.scene->Persist(), refs.xpbd});
+                     {refs.particles, &refs.scene->Time(), &refs.scene->Persist(), refs.xpbd, refs.acoustic,
+                      &refs.scene->UI()});
 }
 
 void TimeTravel::SetEnabled(bool on)

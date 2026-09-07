@@ -7,6 +7,10 @@
 //     (フィールドは hash 対象 — シーンを跨いだ持ち越し値が構成間でズレたら即 divergence)
 //   - アクションマップ (M51d): "Jump" pressed で開始 (ヘッドレス記録では未押下 = 純 tick 進行)
 //   - LoadScene: tick 決定の自動開始 (90 tick) → 記録/検証とも同一 tick で遷移する
+//   - **UI の対話 (M70c)**: START / CLEAR BEST の 2 ボタンを MyeUIClicked で読む。
+//     矩形はエンジンが解決し、押下もフォーカスもエンジンが持つ = スクリプト側に
+//     矩形の写しが 1 つも無い。合成入力の D-Pad + A がここを毎回通る
+//     (replay_verify の flow ペアが「エンジンがフォーカスを持つ」配線の唯一の検査)
 // UI 文字列の書き込み (SetUIText) は演出レーン (UIElement は NoHash) なので何を書いても
 // リプレイ不変 — 表示とハッシュ被覆を分けるのがこのデモの流儀。
 #include "Shared/ScriptAPI.h"
@@ -16,6 +20,9 @@ struct FlowTitleDriver : Script<FlowTitleDriver> {
     int32_t lastBest = 0;     // persist "flow.best" のミラー (hash 被覆の本体)
     int32_t lastScore = 0;    // persist "flow.last" のミラー
     int32_t lastRuns = 0;     // persist "flow.runs" のミラー
+    // M70c: CLEAR BEST を押した回数。**登録フィールド = ハッシュ対象**なので、
+    // 「エンジンのクリック判定がスクリプトへ届いたか」がリプレイの照合対象になる
+    int32_t clearClicks = 0;
 
     void Update(MyeUpdateContext& ctx)
     {
@@ -32,12 +39,32 @@ struct FlowTitleDriver : Script<FlowTitleDriver> {
         snprintf(buf, sizeof(buf), "BEST %d   LAST %d   RUNS %d", lastBest, lastScore, lastRuns);
         api->SetUIText(api->engine, api->FindByName(api->engine, "TitleBest"), buf);
 
-        // ---- 開始: "Jump" アクション (対話) または 90 tick (自動デモ = 決定論) ----
-        if (MyeActionPressed(ctx, "Jump") || ticksInScene == 90) {
+        // ---- 入ったら START にフォーカスを置く ----
+        // ★フォーカス不在だと UINavSubmit が何も指さないので、パッドだけでは 1 手も
+        //   進めない。「メニューに入ったら既定の項目を選んでおく」は UI の作法そのもの
+        const MyeEntityId startBtn = api->FindByName(api->engine, "TitleStart");
+        if (ticksInScene == 1) {
+            MyeUISetFocused(ctx, startBtn);
+        }
+
+        // ---- CLEAR BEST: ハイスコアだけ消す (シーンは動かない) ----
+        const MyeEntityId clearBtn = api->FindByName(api->engine, "TitleClearBest");
+        if (MyeUIClicked(ctx, clearBtn)) {
+            ++clearClicks;
+            MyePersistSetValue(ctx, "flow.best", 0);
+        }
+
+        // ---- 開始: START のクリック / 90 tick (自動デモ = 決定論) ----
+        // ★"Jump" (Space / パッド A) の直接判定は M70c で外した — Space と A は
+        //   UINavSubmit にも割り当ててあるので、CLEAR BEST を選んで決定したときに
+        //   「消えると同時にゲームも始まる」二重発火になっていた。
+        //   決定は 1 本 (フォーカス + Submit) に寄せる
+        if (MyeUIClicked(ctx, startBtn) || ticksInScene == 90) {
             MyePersistSetValue(ctx, "flow.runs", lastRuns + 1);
             MyePersistSetValue(ctx, "flow.resume", 0); // タイトル経由の開始はスコア 0 から
             api->LoadScene(api->engine, "scenes/flow_game.scene.json");
         }
     }
 };
-REGISTER_SCRIPT(FlowTitleDriver, FIELDS(ticksInScene, lastBest, lastScore, lastRuns));
+REGISTER_SCRIPT(FlowTitleDriver,
+                FIELDS(ticksInScene, lastBest, lastScore, lastRuns, clearClicks));

@@ -101,6 +101,9 @@ struct ScriptApiContext {
     // pendingScene と同じ「書くだけ」パターン。null 時は該当 API が no-op
     int* pendingSaveSlot = nullptr;
     int* pendingLoadSlot = nullptr;
+    // v16 (M70c): LoadPersist の要求先。LoadGame と違い**シーンは動かさない**
+    // (dogfooding #16)。null 時は該当 API が no-op
+    int* pendingLoadPersistSlot = nullptr;
     // v12 (M51h): パッド振動の目標値の書き先。適用は EngineLoop (出力レーン)
     PadVibrationState* padVibration = nullptr;
     // v15 (M64a): カーソルロックの要求値の書き先。適用は EngineLoop (出力レーン)

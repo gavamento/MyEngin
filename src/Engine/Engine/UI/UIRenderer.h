@@ -13,6 +13,7 @@
 namespace mye {
 
 class World;
+struct UIInteractionState; // M70c: hover/press/focus の正本 (Scene が持つ sim 状態)
 class GraphicsDevice;
 class ShaderManager;
 struct RenderResources;
@@ -29,7 +30,9 @@ struct UIWorldContext;
 // clipChildren はシザー矩形 (バッチはシザー変化でも分割)。フォントは FontAtlas
 // (stb_truetype 動的グリフキャッシュ、TTF 無し環境は埋め込み 8x8 フォールバック)。
 // レイヤ規約: 生 D3D11 はこのクラスに閉じる。決定論規約: sim には触れない (描画専用 = 非ハッシュ)。
-// ボタン操作は描画に非関与 — スクリプトが InputSnapshot のマウス (決定論) でヒットテストする。
+// ★M70c: hover / press のハイライトは**エンジンが tick 中に確定した UIInteractionState を
+// 読むだけ**になった。M70b までは描画が自前でマウス座標と矩形を比べていて、
+// 「絵の上でのハイライト」と「ゲームが押したと思う要素」が別々の判定になっていた。
 class UIRenderer {
 public:
     // fontEmbedded=true でフォントアトラスを内蔵 8x8 に固定する (M52c: 決定的スクショ)
@@ -39,12 +42,12 @@ public:
     bool IsReady() const { return ready_; }
 
     // world の UIElementComponent を rtv に重ね描画する (クリアしない)。
-    // mouse* は button の hover/press 表示にのみ使う (display only、非決定論可)。
+    // ui は tick が確定した対話状態 (M70c、null = ハイライトなし = 編集中の GameView)。
     // worldCtx はワールド追従 UI の射影入力 (RenderSystem::lastViewProjNoJitter +
     // prevWorld/interpAlpha)。nullptr = 追従要素は描かない (screen UI は無関係)
     void Render(World& world, GraphicsDevice& device, ShaderManager& shaders,
                 RenderResources& resources, ID3D11RenderTargetView* rtv, int width, int height,
-                int mouseX, int mouseY, bool mouseDown,
+                const UIInteractionState* ui,
                 const uilayout::UIWorldContext* worldCtx = nullptr);
 
     // ---- レイアウト補助 ----

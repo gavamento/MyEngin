@@ -41,6 +41,7 @@
 #include "Engine/Engine/Script/ScriptHost.h"
 #include "Engine/Engine/SkinningSystem.h"
 #include "Engine/Engine/TransformSystem.h"
+#include "Engine/Engine/UI/UIInteraction.h" // M70c: UI 対話の評価 (スクリプト層より前)
 #include "Engine/Engine/Vfx/VfxRenderer.h"
 #include "Engine/Platform/InputActions.h"
 #include "Engine/Platform/PathUtil.h"
@@ -232,6 +233,7 @@ void RunOneTick(TickServices& ts)
     std::wstring& pendingScene = *ts.pendingScene;
     int& pendingSaveSlot = *ts.pendingSaveSlot;
     int& pendingLoadSlot = *ts.pendingLoadSlot;
+    int& pendingLoadPersistSlot = *ts.pendingLoadPersistSlot;
     PrefabLibrary& prefabLibrary = *ts.prefabLibrary;
     const std::wstring& assetsRoot = *ts.assetsRoot;
     const std::wstring& saveDir = *ts.saveDir;
@@ -255,6 +257,12 @@ void RunOneTick(TickServices& ts)
     // スクリプトはこの tick のミラーを読んで動く。ここで書いた値が tick 末のハッシュに
     // 載ることが、レーンの配線を replay_verify が検査できる唯一の根拠
     UpdatePlayerInputMirror(scene.GetWorld(), inputActions, ctx.inputs, ctx.playerCount);
+    // M70c: UI の対話状態 (hovered / pressed / clicked / focused) を確定する。
+    // **スクリプト層より前**に置くのが要点 — スクリプトはこの tick の判定を読んで動く。
+    // 消費するのはレーン 0 の入力だけ (キャンバス座標のマウスを持つ唯一のレーン)。
+    // 結果は Scene が持つ sim 状態 = tick 末のハッシュに載るので、配線が壊れれば
+    // replay_verify が赤くなる (UIElement 自体は NoHash なので他に防波堤が無い)
+    uiinteract::Evaluate(scene.GetWorld(), ctx.Input(), &inputActions, scene.UI());
     // M36b: tick 頭のワールド行列を補間用に採取 (record/verify 中は補間しないので省く)
     if (ts.prevWorld != nullptr && !Recording() && !Verifying()) {
         CapturePrevWorld(*ts.prevWorld, scene.GetWorld());
@@ -467,7 +475,7 @@ void RunOneTick(TickServices& ts)
         std::vector<EntityHash> order;
         uint64_t total = 0;
         HashWorldDetailed(scene.GetWorld(),
-                          {&particleSystem.Cpu(), &scene.Time(), &scene.Persist(), ts.xpbd, ts.acoustic}, order, total);
+                          {&particleSystem.Cpu(), &scene.Time(), &scene.Persist(), ts.xpbd, ts.acoustic, &scene.UI()}, order, total);
         for (const EntityHash& e : order) {
             if (auto* t = scene.GetWorld().GetComponent<LocalTransform>(e.entity)) {
                 t->position.x += 0.001f;
@@ -486,7 +494,7 @@ void RunOneTick(TickServices& ts)
         && ctx.tickIndex == static_cast<uint64_t>(config.hashDumpTick)) {
         HashDump dump;
         HashWorldDump(scene.GetWorld(),
-                      {&particleSystem.Cpu(), &scene.Time(), &scene.Persist(), ts.xpbd, ts.acoustic}, ctx.tickIndex, dump);
+                      {&particleSystem.Cpu(), &scene.Time(), &scene.Persist(), ts.xpbd, ts.acoustic, &scene.UI()}, ctx.tickIndex, dump);
         WriteHashDump(config.hashDumpPath, dump);
     }
 
@@ -494,14 +502,14 @@ void RunOneTick(TickServices& ts)
     if (Recording()) {
         ts.recorder->RecordTick(ctx.inputs, ctx.playerCount,
                                 HashWorld(scene.GetWorld(),
-                                          {&particleSystem.Cpu(), &scene.Time(), &scene.Persist(), ts.xpbd, ts.acoustic}));
+                                          {&particleSystem.Cpu(), &scene.Time(), &scene.Persist(), ts.xpbd, ts.acoustic, &scene.UI()}));
         if (ts.recorder->TickCount() >= static_cast<uint64_t>(config.replayTicks)) {
             ts.recorder->Finish();
             ctx.requestExit = true;
         }
     } else if (Verifying()) {
         const uint64_t actual = HashWorld(scene.GetWorld(),
-                                          {&particleSystem.Cpu(), &scene.Time(), &scene.Persist(), ts.xpbd, ts.acoustic});
+                                          {&particleSystem.Cpu(), &scene.Time(), &scene.Persist(), ts.xpbd, ts.acoustic, &scene.UI()});
         const uint64_t expected = ts.player->ExpectedHash(ctx.tickIndex);
         if (expected == 0) {
             // ★期待値なし = クラッシュ .rep の「走り切らなかった最後の tick」(M52f)。
@@ -524,7 +532,7 @@ void RunOneTick(TickServices& ts)
             std::vector<EntityHash> detail;
             uint64_t total = 0;
             HashWorldDetailed(scene.GetWorld(),
-                              {&particleSystem.Cpu(), &scene.Time(), &scene.Persist(), ts.xpbd, ts.acoustic}, detail, total);
+                              {&particleSystem.Cpu(), &scene.Time(), &scene.Persist(), ts.xpbd, ts.acoustic, &scene.UI()}, detail, total);
             MYE_LOG_ERROR("[replay]   entities=%zu rng=%016llX", detail.size(),
                           static_cast<unsigned long long>(scene.GetWorld().Rng().State()));
             for (size_t i = 0; i < detail.size() && i < 8; ++i) {
@@ -543,7 +551,7 @@ void RunOneTick(TickServices& ts)
                     config.replayVerifyPath + L".tick" + tickStr + L".actual.dump";
                 HashDump dump;
                 HashWorldDump(scene.GetWorld(),
-                              {&particleSystem.Cpu(), &scene.Time(), &scene.Persist(), ts.xpbd, ts.acoustic}, ctx.tickIndex, dump);
+                              {&particleSystem.Cpu(), &scene.Time(), &scene.Persist(), ts.xpbd, ts.acoustic, &scene.UI()}, ctx.tickIndex, dump);
                 WriteHashDump(dumpPath, dump);
                 std::ofstream mf(
                     std::filesystem::path(config.replayVerifyPath + L".mismatch.txt"));
@@ -657,6 +665,29 @@ void RunOneTick(TickServices& ts)
         }
     }
 
+    // ---- persist だけのロード (M70c、dogfooding #16) ----
+    // LoadGame は保存時のシーンへ必ず遷移するので、タイトル画面でハイスコアだけ読む、が
+    // できなかった。こちらは PersistStore を置換するだけでシーンには触らない。
+    // record/verify/netplay のゲートは LoadGame と同じ (セーブファイルは sim の外)
+    if (pendingLoadPersistSlot >= 0) {
+        const int slot = pendingLoadPersistSlot;
+        pendingLoadPersistSlot = -1;
+        if (Recording() || Verifying() || Networked()) {
+            MYE_LOG_WARN("[save] LoadPersist(slot %d) is a no-op during record/verify/netplay",
+                         slot);
+        } else {
+            SaveGameData data;
+            const std::wstring savePath = SaveGameFile::PathForSlot(saveDir, slot);
+            if (SaveGameFile::Read(savePath, data)) {
+                scene.Persist().Entries() = std::move(data.persist);
+                MYE_LOG_INFO("[save] slot %d persist loaded (%zu keys, scene untouched)", slot,
+                             scene.Persist().Entries().size());
+            } else {
+                MYE_LOG_WARN("[save] persist load failed: %s", WideToUtf8(savePath).c_str());
+            }
+        }
+    }
+
     // ---- シーン遷移 (M19.4): pendingScene が積まれていれば tick 末にロードする ----
     // スクリプトが決定論的に LoadScene → 記録/検証とも同一 tick に再現される。
     // world.Clear (LoadFromFile 内) + carry-state リセット + RNG 決定論的再シードで
@@ -677,6 +708,9 @@ void RunOneTick(TickServices& ts)
             if (ts.acoustic) {
                 ts.acoustic->Reset(); // M65a: 旧シーンの波と占有グリッドを捨てる
             }
+            // M70c: 旧シーンの EntityID を握ったままにしない。世代付きなので
+            // 「別シーンの同じ index」を掴むことは無いが、UI 状態がシーンを跨ぐ意味も無い
+            scene.UI().Clear();
             if (ts.agentSystem) {
                 ts.agentSystem->Reset(); // M65f: 航法グリッドも旧シーンのもの
             }

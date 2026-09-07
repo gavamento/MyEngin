@@ -31,6 +31,18 @@ struct MyeScriptField {
     const char* name;  // DLL 内静的文字列 (エンジンはロード時にコピーする)
     int32_t type;      // MyeFieldType
     uint32_t offset;
+    // ---- v16 (M70c) で予約した Inspector 用メタデータ ----
+    // ★**中身を読むのは M70d**。ここに置いてあるのはレイアウトを ABI bump と同じ
+    //   コミットで固定するため — 後から足すと、apiVersion が一致したまま別レイアウトの
+    //   GameLogic.dll が受理されて静かに壊れる (フィールド表が丸ごとずれる)。
+    // displayName: Inspector の表示名 (null = name をそのまま出す)。engine 側の
+    //   FieldDesc::displayName と同じ役割で、シリアライズキーである name には触らない。
+    // rangeMin/rangeMax: スライダの範囲 (両方 0 = 範囲指定なし = 従来のドラッグ入力)。
+    // ★layoutHash には**入れない** — 表示メタデータが変わっただけでスクリプト状態の
+    //   移行を走らせる理由は無い (移行判定は (name,type,offset) が正本)
+    const char* displayName;
+    float rangeMin;
+    float rangeMax;
 };
 
 // スクリプト型 1 つ分。関数ポインタは DLL 内を指す — リロード時に必ず再バインドされる

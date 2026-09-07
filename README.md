@@ -105,6 +105,20 @@ sln の外にもう 2 本ある。どちらも無い状態でエディタは起�
   耳を使わずに配管を検査する口が `--acoustic-audio-log N` (整形した voice と一発再生を 1 行ずつ +
   summary)、ショーケースが `--acoustic-demo`。詳細は
   [ADR-017](docs/adr/ADR-017-acoustic-audio.md)
+- **UI の押下判定をエンジンが持つ (M70c)** — hovered / pressed / clicked / focused を
+  `Scene` の sim 状態として持ち、**スクリプト層より前**に毎 tick 確定させる。
+  それまで押下判定は UIRenderer の中にだけ在って**ハイライト表示に使って捨てられており**、
+  ゲーム側で動く経路は「UIElement と同じ矩形をスクリプトに手書きしてマウスと比べる」
+  しか無かった (矩形の二重管理 = レイアウトを変えた瞬間に絵と当たり判定が食い違う)。
+  click は「掴んだ要素の上で離した」(Unity 意味論)、**フォーカス中の要素で決定を押した
+  tick も同じ clicked に合流する**ので、ゲーム側でマウスとパッドの分岐を書かなくてよい。
+  フォーカスは `UINavUp/Down/Left/Right` のアクションで動き、シーンが書いた
+  `focused=1` は起動直後に 1 度だけ拾う (Unity の EventSystem "First Selected" 相当)。
+  ★状態は**ワールドハッシュ対象** — UIElement 自体は非ハッシュなので、ここに載せないと
+  「配線が壊れても replay_verify が緑」になる。合成入力の D-Pad + A がタイトル画面の
+  2 ボタンを実際に操作し、フォーカス移動 → 決定 → スクリプトの登録フィールドまで
+  リプレイの照合対象に乗る (実測: tick 528 で focus が START → CLEAR BEST へ動き、
+  同 tick の決定でクリックが成立)。ABI は v16 = 110 スロット。詳細は `engine_spec.md` §6.12
 - **解像度に依らないゲーム内 UI (M70b)** — UI の数値は基準 1920x1080 の**キャンバス単位**で、
   実 px へは `s = min(w/1920, h/1080)` の**一様スケール**だけを掛ける (Unity の Canvas Scaler
   = Expand / UE5 の UMG DPI スケーリングと同じモデル)。キャンバス矩形は画面のアスペクトへ

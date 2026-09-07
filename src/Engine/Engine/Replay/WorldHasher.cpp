@@ -11,6 +11,7 @@
 #include "Engine/Core/Log.h"
 #include "Engine/Core/World.h"
 #include "Engine/Engine/GameFlow.h"
+#include "Engine/Engine/UI/UIInteraction.h"
 #include "Engine/Engine/Particles/CpuParticleBackend.h"
 #include "Engine/Engine/Acoustic/AcousticField.h"
 #include "Engine/Engine/Physics/XpbdBackend.h"
@@ -424,6 +425,27 @@ uint64_t HashGameFlow(uint64_t h, const TimeControl* time, const PersistStore* p
     return h;
 }
 
+// M70c: UI の対話状態。ゲームフローの直後・パーティクルの前 (Scene が持つ小さな sim 状態
+// という点で TimeControl と同格なので隣に置く)。EntityID は index/generation の 2 語で畳む
+uint64_t HashUiInteraction(uint64_t h, const UIInteractionState* ui, DumpCtx* d)
+{
+    if (ui == nullptr) {
+        return h;
+    }
+    const auto fold = [&h, d](const char* field, EntityID e) {
+        h = HashCombine(h, e.index);
+        EmitU64(d, "UIInteraction", field, e.index, h);
+        h = HashCombine(h, e.generation);
+    };
+    fold("hovered", ui->hovered);
+    fold("pressed", ui->pressed);
+    fold("clicked", ui->clicked);
+    fold("focused", ui->focused);
+    h = HashCombine(h, ui->adoptedAuthored);
+    EmitU64(d, "UIInteraction", "adoptedAuthored", ui->adoptedAuthored, h);
+    return h;
+}
+
 void CollectEntitiesSorted(World& world, std::vector<EntityID>& out)
 {
     out.clear();
@@ -477,6 +499,7 @@ uint64_t HashWorldImpl(World& world, const SimSources& src,
     EmitU64(d, "World", "rngInc", world.Rng().Inc(), total);
     // ゲームフロー状態 (M51g: RNG の直後)
     total = HashGameFlow(total, src.time, src.persist, d);
+    total = HashUiInteraction(total, src.ui, d);
     // CPU パーティクル (spec 11.3: ハッシュ対象)
     if (src.particles) {
         const uint64_t ph = HashCpuParticles(*src.particles, d);
