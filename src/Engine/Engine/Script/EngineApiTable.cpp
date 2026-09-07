@@ -34,6 +34,17 @@ MyeEntityId ToShared(EntityID id) { return { id.index, id.generation }; }
 ScriptApiContext* Ctx(void* engine) { return static_cast<ScriptApiContext*>(engine); }
 Scene* Sc(void* engine) { return Ctx(engine)->scene; }
 
+// UI を解く土俵 (M70b)。**レーン 0 の入力に記録されたキャンバス寸法**を使う —
+// ここでライブのウィンドウ実寸を読むと、UIElement が kComponentNoHash なせいで
+// 「窓の大きさで当たり判定が変わるのに replay もワールドハッシュも緑」になる
+// (Input.h の InputSnapshot 解説)。0 = 未確定 (ヘッドレス / 旧い記録) は基準解像度へ倒す
+void UiCanvasOf(void* engine, int& outW, int& outH)
+{
+    const InputSnapshot& in = Ctx(engine)->input;
+    outW = (in.canvasW > 0.0f) ? static_cast<int>(in.canvasW) : uilayout::kCanvasRefW;
+    outH = (in.canvasH > 0.0f) ? static_cast<int>(in.canvasH) : uilayout::kCanvasRefH;
+}
+
 // v8 (M45): 再生ハンドルを 1 つ予約する。**採番は push 側 = 記録/検証でもゲートされない**
 // ので、同じスクリプト呼出順なら常に同じ値が返る (v7 Instantiate の fileId 予約と同型)。
 uint64_t ReserveAudioHandle(ScriptApiContext* c)
@@ -77,6 +88,9 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
     out.MouseButton = [](void* engine, int button) -> int {
         return Ctx(engine)->input.MouseDown(button) ? 1 : 0;
     };
+    // ★**クライアント実 px** を返す (M70b で意味は変えていない)。UI のヒットテストは
+    //   キャンバス座標なので、この値をそのまま UIHitTest に渡すと解像度に応じてズレる —
+    //   キャンバス座標のマウスを返す MouseCanvasPos は M70c で足す
     out.MousePos = [](void* engine, int32_t* x, int32_t* y) {
         if (x) { *x = Ctx(engine)->input.mouseX; }
         if (y) { *y = Ctx(engine)->input.mouseY; }
@@ -416,16 +430,17 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
         el->focused = focused;
         return 1;
     };
-    // フォーカスナビ: 基準解像度 1920x1080 でアンカー解決 (ウィンドウ実寸非依存 = 決定論)
+    // フォーカスナビ: **キャンバス座標**でアンカー解決 (M70b。描画と同じ土俵)。
+    // 値は入力レーン 0 に記録されたものなので、再生は窓の大きさに依らず一致する
     out.UIFocusNav = [](void* engine, MyeEntityId current, int dir) -> MyeEntityId {
-        static constexpr int kRefW = 1920; // 内側ラムダから ODR 非使用で参照 (C4189 回避に static)
-        static constexpr int kRefH = 1080;
+        int canvasW = 0, canvasH = 0;
+        UiCanvasOf(engine, canvasW, canvasH);
         World& w = Sc(engine)->GetWorld();
         // ワールド追従 UI 用の決定論カメラ (UIHitTest と同じ)。背面の追従ボタンは
         // ResolveVisibleRect が退化矩形を返す = ナビ候補から自然に外れる
         uilayout::UIWorldContext wcData;
         const uilayout::UIWorldContext* wc =
-            uilayout::BuildSimWorldContext(w, kRefW, kRefH, wcData) ? &wcData : nullptr;
+            uilayout::BuildSimWorldContext(w, canvasW, canvasH, wcData) ? &wcData : nullptr;
         std::vector<uinav::NavRect> rects;
         std::vector<uint32_t> gens;
         uinav::NavRect cur = {};
@@ -444,11 +459,11 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
                 }
                 // M51e: 描画と同じ UILayout で解決 (親子 space 対応)。祖先クリップで完全に
                 // 隠れた要素はナビ候補から外す (スクロール外の項目へ飛ばない)
-                const auto vis = uilayout::ResolveVisibleRect(w, e, kRefW, kRefH, wc);
+                const auto vis = uilayout::ResolveVisibleRect(w, e, canvasW, canvasH, wc);
                 if (vis.w <= 0.0f || vis.h <= 0.0f) {
                     continue;
                 }
-                const auto rect = uilayout::ResolveRect(w, e, kRefW, kRefH, wc);
+                const auto rect = uilayout::ResolveRect(w, e, canvasW, canvasH, wc);
                 uinav::NavRect r;
                 r.x = rect.x;
                 r.y = rect.y;
@@ -767,17 +782,17 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
                                                             : AssetID{};
         return 1;
     };
-    // 基準解像度でのヒットテスト (UIFocusNav と同じ解決 = 描画とズレない)。
+    // キャンバス座標でのヒットテスト (UIFocusNav と同じ解決 = 描画とズレない、M70b)。
     // 最前面 = order 最大、同値は entity.index 最大 (UIRenderer の描画順で上のもの)
     out.UIHitTest = [](void* engine, float x, float y) -> MyeEntityId {
-        static constexpr int kRefW = 1920;
-        static constexpr int kRefH = 1080;
+        int canvasW = 0, canvasH = 0;
+        UiCanvasOf(engine, canvasW, canvasH);
         World& w = Sc(engine)->GetWorld();
         // ワールド追従 UI 用の決定論カメラ (scalar 構築)。カメラ不在なら追従要素は
         // 非表示扱い = 当たらない (screen UI は無関係)
         uilayout::UIWorldContext wcData;
         const uilayout::UIWorldContext* wc =
-            uilayout::BuildSimWorldContext(w, kRefW, kRefH, wcData) ? &wcData : nullptr;
+            uilayout::BuildSimWorldContext(w, canvasW, canvasH, wcData) ? &wcData : nullptr;
         MyeEntityId best = {}; // 既定 = null id (index 0xFFFFFFFF)
         int32_t bestOrder = 0;
         bool have = false;
@@ -791,7 +806,7 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
                 }
                 const auto* el = static_cast<const UIElementComponent*>(arch.GetPtr(ci, row));
                 // 可視矩形 (祖先クリップ適用済み) で判定 — 見えない部分には当たらない
-                const auto vis = uilayout::ResolveVisibleRect(w, e, kRefW, kRefH, wc);
+                const auto vis = uilayout::ResolveVisibleRect(w, e, canvasW, canvasH, wc);
                 if (vis.w <= 0.0f || vis.h <= 0.0f || x < vis.x || x >= vis.x + vis.w
                     || y < vis.y || y >= vis.y + vis.h) {
                     continue;

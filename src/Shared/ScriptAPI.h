@@ -444,8 +444,14 @@ inline bool MyeSetField(const MyeUpdateContext& ctx, MyeEntityId e, uint64_t com
 // ---- ゲーム内 UI ヒットテスト (M21) ----
 // UI 描画はエンジン (UIElementComponent) が行うが、ボタン操作は **決定論のため
 // InputSnapshot のマウス経由** で判定する (ABI 追加なし = bump 不要)。verify では記録された
-// マウスで再現されるため replay 一致。rect は UIElementComponent と同じピクセル座標系 (左上原点)。
-// anchor=0(左上) の要素なら x/y/w/h をそのまま渡せる (他 anchor は画面サイズ依存)。
+// マウスで再現されるため replay 一致。
+//
+// ★★M70b の申し送り: **この 2 本は今もクライアント実 px で判定する**。UIElement の
+//   x/y/w/h は M70b でキャンバス単位 (基準 1920x1080) になったので、実 px と 1:1 で
+//   対応するのは画面がちょうど 1920x1080 のときだけ — つまり anchor=0 の要素でも
+//   矩形をそのまま渡すとズレる。直すにはキャンバス座標のマウスが要り、それは
+//   ABI スロット (MouseCanvasPos) の追加 = **M70c** になる。そこで UIButtonDemo ごと
+//   OnUIClick 版へ寄せる予定なので、ここでは px のまま据え置いてある。
 struct MyeUIRect {
     float x, y, w, h;
 };
@@ -511,7 +517,9 @@ inline bool MyeSetUITexture(const MyeUpdateContext& ctx, MyeEntityId id, const c
 {
     return ctx.api->SetUITexture(ctx.api->engine, id, textureKey) != 0;
 }
-// 基準解像度 (1920x1080) でのヒットテスト。無ヒットは null id (MyeEntityIdIsNull で判定)
+// **キャンバス座標**でのヒットテスト (M70b。描画と同じ土俵)。無ヒットは null id
+// (MyeEntityIdIsNull で判定)。★MousePos は実 px なのでそのまま渡さないこと —
+// キャンバス座標のマウス (MouseCanvasPos) は M70c で足す
 inline MyeEntityId MyeUIHitTest(const MyeUpdateContext& ctx, float x, float y)
 {
     return ctx.api->UIHitTest(ctx.api->engine, x, y);

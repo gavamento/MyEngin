@@ -512,7 +512,10 @@ void BuildFlowStage(Scene& s, RenderResources& res, bool withColliders)
     }
 }
 
-// UI テキスト要素 (kind=1)。矩形左上がアンカー点 + オフセットに置かれる (M51e 意味論)
+// UI テキスト要素 (kind=1)。矩形左上がアンカー点 + オフセットに置かれる (M51e 意味論)。
+// ★数値の単位は**キャンバス単位 (基準 1920x1080)** — M70b でこのデモ一式の x/y/w/h/
+//   fontScale を 2 倍してある (それまでは 960x540 相当の実 px で書かれていた)。
+//   960x540 では canvasScale がちょうど 0.5 なので、絵は IEEE754 でビット一致する
 GameObject MakeUiText(Scene& s, const char* name, int anchor, float x, float y, float w, float h,
                       const char* text, float fontScale, int align)
 {
@@ -561,12 +564,13 @@ void BuildFlowTitleScene(EngineContext& ctx)
         AttachScriptIfRegistered(s.GetWorld(), deco.Id(), "Rotator");
     }
 
-    MakeUiText(s, "TitleText", 1, -400.0f, 120.0f, 800.0f, 80.0f, "MyEngine FLOW DEMO", 3.0f, 4);
-    GameObject hint = MakeUiText(s, "TitleHint", 4, -300.0f, 120.0f, 600.0f, 40.0f,
-                                 "Space / Pad A : START   (auto start in 90 ticks)", 1.2f, 4);
+    MakeUiText(s, "TitleText", 1, -800.0f, 240.0f, 1600.0f, 160.0f, "MyEngine FLOW DEMO", 6.0f,
+               4);
+    GameObject hint = MakeUiText(s, "TitleHint", 4, -600.0f, 240.0f, 1200.0f, 80.0f,
+                                 "Space / Pad A : START   (auto start in 90 ticks)", 2.4f, 4);
     AttachScriptIfRegistered(s.GetWorld(), hint.Id(), "FlowMenu"); // C# 点滅 (別レーン)
-    MakeUiText(s, "TitleBest", 7, -300.0f, -140.0f, 600.0f, 40.0f, "BEST 0   LAST 0   RUNS 0",
-               1.4f, 4);
+    MakeUiText(s, "TitleBest", 7, -600.0f, -280.0f, 1200.0f, 80.0f, "BEST 0   LAST 0   RUNS 0",
+               2.8f, 4);
 
     GameObject director = s.CreateGameObject("FlowDirector");
     AttachScriptIfRegistered(s.GetWorld(), director.Id(), "FlowTitleDriver");
@@ -631,28 +635,28 @@ void BuildFlowGameScene(EngineContext& ctx)
     }
     AttachScriptIfRegistered(s.GetWorld(), ball.Id(), "FlowGameDriver");
 
-    MakeUiText(s, "GameScore", 0, 40.0f, 30.0f, 400.0f, 50.0f, "SCORE 0", 2.0f, 0);
+    MakeUiText(s, "GameScore", 0, 80.0f, 60.0f, 800.0f, 100.0f, "SCORE 0", 4.0f, 0);
     {
         GameObject bar = s.CreateGameObject("GameScoreBar");
         auto* ui = bar.AddComponent<UIElementComponent>();
         ui->kind = 0;
         ui->anchor = 0;
-        ui->x = 40.0f;
-        ui->y = 95.0f;
-        ui->w = 400.0f;
-        ui->h = 22.0f;
+        ui->x = 80.0f;
+        ui->y = 190.0f;
+        ui->w = 800.0f;
+        ui->h = 44.0f;
         ui->color = { 0.30f, 0.85f, 0.45f, 0.9f };
         ui->fillMode = 1; // 水平バー (FlowGameDriver が SetUIFill で書く)
         ui->fillAmount = 0.0f;
     }
     // PAUSED 表示はアルファ 0 で常設し、ドライバが SetUIColor で出し入れする
-    GameObject paused = MakeUiText(s, "GamePause", 4, -300.0f, -40.0f, 600.0f, 80.0f, "PAUSED",
-                                   4.0f, 4);
+    GameObject paused = MakeUiText(s, "GamePause", 4, -600.0f, -80.0f, 1200.0f, 160.0f, "PAUSED",
+                                   8.0f, 4);
     if (auto* ui = paused.GetComponent<UIElementComponent>()) {
         ui->color = { 1.0f, 0.85f, 0.30f, 0.0f };
     }
-    MakeUiText(s, "GameHint", 6, 40.0f, -60.0f, 900.0f, 40.0f,
-               "A/D : MOVE   Esc/Start : PAUSE   J : LOAD SAVE", 1.2f, 0);
+    MakeUiText(s, "GameHint", 6, 80.0f, -120.0f, 1800.0f, 80.0f,
+               "A/D : MOVE   Esc/Start : PAUSE   J : LOAD SAVE", 2.4f, 0);
     s.GetWorld().ApplyStructuralChanges();
 }
 
@@ -737,7 +741,7 @@ void BuildNetDuelScene(EngineContext& ctx)
     }
 
     // HUD。**ここだけがネット状態 (機種依存の値) を書いてよい場所**
-    GameObject hud = MakeUiText(s, "NetHud", 0, 16.0f, 16.0f, 640.0f, 28.0f, "net", 2.0f, 0);
+    GameObject hud = MakeUiText(s, "NetHud", 0, 32.0f, 32.0f, 1280.0f, 56.0f, "net", 4.0f, 0);
     AttachScriptIfRegistered(s.GetWorld(), hud.Id(), "NetHudDemo");
 }
 

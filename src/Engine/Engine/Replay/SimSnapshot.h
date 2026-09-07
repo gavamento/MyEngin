@@ -86,7 +86,10 @@ struct SimRefs {
 //            Raw サイズが変わる (残光の 2 本は描画レーン専用の値だが、
 //            コンポーネントの生バイトが blob に載るので版は上がる。
 //            3 本を 1 回で足したのは M63a と同じ「まとめて確保」の型)
-inline constexpr uint32_t kSimSnapshotVersion = 11;
+// v12 (M70b): InputSnapshot が 72 -> 88 バイト (UI キャンバスの 4 値)。
+//            LOP 節の prevTickInput がレーン数ぶんそのまま太るので blob レイアウトが変わる
+//            (v8 = M64a と同型の理由)
+inline constexpr uint32_t kSimSnapshotVersion = 12;
 
 // 撮る: out を clear して blob を書く。成功で true。
 // 節ごとの参照が null なら「空の節」を書くのでレイアウトは常に同じ

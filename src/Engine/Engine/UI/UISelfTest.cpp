@@ -485,6 +485,51 @@ bool RunUISelfTest()
               "world UI: script-state components keep an entity ui-only (screen)");
     }
 
+    // ---- キャンバス (M70b) ----
+    // 主張は 3 つ: (1) 16:9 はどの画素数でも厳密に 1920x1080 = 既存 golden が動かない、
+    // (2) 非 16:9 はアスペクトぶんだけキャンバスが伸びる (黒帯は作らない)、
+    // (3) キャンバス寸法は**アスペクト比だけの関数**で画素数に依らない
+    {
+        struct CanvasCase {
+            int w, h;      // 実 px
+            int cw, ch;    // 期待キャンバス
+            float scale;   // 期待スケール
+            const char* what;
+        };
+        const CanvasCase canvasCases[] = {
+            { 960, 540, 1920, 1080, 0.5f, "canvas: 960x540 (16:9) is exactly 1920x1080 at 0.5" },
+            { 1600, 900, 1920, 1080, 1600.0f / 1920.0f, "canvas: 1600x900 (16:9) is 1920x1080" },
+            { 1920, 1080, 1920, 1080, 1.0f, "canvas: 1920x1080 is identity" },
+            { 3840, 2160, 1920, 1080, 2.0f, "canvas: 4K (16:9) is 1920x1080 at 2.0" },
+            { 960, 600, 1920, 1200, 0.5f, "canvas: 960x600 (16:10) grows to 1920x1200" },
+            { 2560, 1080, 2560, 1080, 1.0f, "canvas: 2560x1080 (21:9) grows sideways" },
+        };
+        bool ok = true;
+        for (const CanvasCase& c : canvasCases) {
+            const uilayout::CanvasInfo ci = uilayout::CanvasSize(c.w, c.h);
+            const bool hit = ci.w == c.cw && ci.h == c.ch && std::fabs(ci.scale - c.scale) < 1e-6f;
+            if (!hit) {
+                MYE_LOG_ERROR("    %dx%d -> canvas %dx%d scale %.6f (expected %dx%d %.6f)", c.w,
+                              c.h, ci.w, ci.h, static_cast<double>(ci.scale), c.cw, c.ch,
+                              static_cast<double>(c.scale));
+            }
+            check(hit, c.what);
+            ok = ok && hit;
+        }
+        // 黒帯を作らない = キャンバスを実 px へ戻すと画面ぴったりになる (丸め 1 px 以内)
+        for (const CanvasCase& c : canvasCases) {
+            const uilayout::CanvasInfo ci = uilayout::CanvasSize(c.w, c.h);
+            ok = ok && std::fabs(static_cast<float>(ci.w) * ci.scale - static_cast<float>(c.w)) < 1.0f
+                && std::fabs(static_cast<float>(ci.h) * ci.scale - static_cast<float>(c.h)) < 1.0f;
+        }
+        check(ok, "canvas: the canvas always covers the whole screen (no letterbox)");
+        // 退化した画面 (最小化 / 0 px) は基準解像度へ倒す — 0 除算で NaN を作らない
+        const uilayout::CanvasInfo degenerate = uilayout::CanvasSize(0, 0);
+        check(degenerate.w == uilayout::kCanvasRefW && degenerate.h == uilayout::kCanvasRefH
+                  && degenerate.scale == 1.0f,
+              "canvas: a degenerate screen falls back to the reference resolution");
+    }
+
     if (failCount == 0) {
         MYE_LOG_INFO("==== UI self test: ALL PASS ====");
         return true;

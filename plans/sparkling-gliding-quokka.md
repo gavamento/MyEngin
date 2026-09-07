@@ -330,7 +330,7 @@ M70c → M70d の順序は入れ替えできない。
 |---|---|---|
 | — | 計画確定 + 提案一覧の公開 + M64 計画への移管注記 | **完了 (2026-09-07)** |
 | M70a | シリアライザのラウンドトリップ (データ消失の封鎖) | **完了 (2026-09-07)** |
-| M70b | キャンバス統一 (Unity / UE 準拠の可変キャンバス) | 未着手 |
+| M70b | キャンバス統一 (Unity / UE 準拠の可変キャンバス) | **完了 (2026-09-07)** |
 | M70c | UI イベントとフォーカス駆動 + ABI v16 | 未着手 |
 | M70d | スクリプト⇄オブジェクトの穴埋め + dogfooding の回収 | 未着手 |
 
@@ -348,6 +348,55 @@ M70c → M70d の順序は入れ替えできない。
   **保存側の GUI 目視 (Ctrl+S → JSON diff) は未実施** — セルフテストの指紋一致で担保している。
 - 文書更新: `docs/dogfooding.md` #10 を修正済みへ / `engine_spec.md` §8.3 に節を追加 + §12.3 の
   台帳行 / `README.md` と `docs/demo_script.md` の件数 (17 → 16)。
+
+### M70b の実施メモ (計画との差分)
+
+- 計画どおり `uilayout::CanvasSize` + `InputSnapshot` の 4 値 + 版 bump 4 種で実装。
+  `Resolve*` のシグネチャは変えていない (UISelfTest の 40 検査は無傷)。
+- **計画との差分 1**: `Input::CaptureSnapshot` は `uilayout::CanvasSize` を**呼べない** —
+  Platform 層から Engine 層を include することになるため。式の正本は Engine 側に置いたまま、
+  `InputCanvas` (scale/w/h の POD) を EngineLoop が計算して渡す形にした。
+  正規化そのものは計画どおり CaptureSnapshot の中で 1 回だけ起きる。
+- **計画との差分 2**: キャンバス寸法は `int` へ丸める (`lroundf`)。`Resolve*` の引数型を
+  変えないための妥協で、誤差は最大 0.5 px、しかも描画とヒットテストが同じ整数を通るので
+  **両者がズレることは無い** (損をするのは右端/下端の 0.5 px だけ)。1366x768 のような
+  非 16:9 かつ端数が出る解像度でしか効かない。
+- **計画との差分 3**: `NetIdentity` が 40 → **48 バイト** (canvasW/H で 8 バイト増)。
+  `NetHandshakePayload` も 48 → 56 で、`NetSelfTest` の 3 つの表明を更新。
+  拒否理由に `NetReject::Canvas` を足した。
+- **計画との差分 4**: golden の動いた画素は**計算と厳密に一致した**。フォーカス枠
+  (`kRing`) をキャンバス単位にしたので 960x540 では 2 px → 1 px になる。
+  対象は `StartButton` (336x88 キャンバス = 168x44 px) だけで、
+  リング面積は 2 px 時 `172*48 - 168*44 = 864`、1 px 時 `170*46 - 168*44 = 428`、
+  差 **864 - 428 = 436** = 実測の `diffPixels=436` そのもの (maxDiff=206 は白枠と
+  暗い背景のコントラスト)。**他の 21 枚は maxDiff=0 のビット一致**なので、
+  `--update` で塗り潰したのは ui_probe.png 1 枚だけ。
+- **計画との差分 5**: 資産側の 2 倍化は `ui_probe.scene.json` の 144 値 (16 要素 ×
+  x/y/w/h/fontScale + sliceBorder 4) と `DemoContent.cpp` の 7 箇所。
+  `UIElementComponent` の**既定値と CreateMenu の生成サイズは 2 倍しなかった** —
+  golden には出ないうえ、既定値を動かすと「その値で保存された既存シーン」の解釈が
+  変わりうるため (単位がキャンバスになったことはコメントで明記)。
+- ★**申し送り (M70c への引き継ぎ)**: `ScriptAPI.h` の `MyeMouseInRect` /
+  `MyeButtonClicked` は**まだクライアント実 px で判定する**ので、`UIButtonDemo` は
+  1920x1080 以外でズレる (M70b 以前は anchor=0 なら合っていたので、ここだけは一時的な
+  後退)。直すにはキャンバス座標のマウスが要り、それは ABI スロット (`MouseCanvasPos`) =
+  M70c。同サブで `UIButtonDemo` ごと `OnUIClick` 版へ寄せる予定なので px のまま据え置いた。
+- 実測 (すべてローカル):
+  - 8 ビルド 0 警告 (`/p:MyeWarnAsError=true`)、Debug / Release の `--selftest` 全 PASS
+  - `replay_verify.bat` 10 ジョブ 93.3s 全 PASS / `check_rules.ps1` 0 error
+  - `shot_verify.bat` 24 枚 PASS (更新は ui_probe.png のみ + 新規 2 枚)
+  - `net_verify.bat` 4 ケース + desync 注入 PASS
+  - **アスペクト拒否の実測**: 960x540 (16:9) ホスト ⇄ 960x600 (16:10) 参加 →
+    `host rejected the connection: UI canvas size (the two windows have different aspect ratios)`。
+    960x540 ⇄ 1280x720 (どちらも 16:9) は `lockstep ready` まで通る。
+  - **`--rep-diff` の実測**: .rep のバイトを 1 フィールドだけ書き換えて
+    `mouseDeltaX / mouseDeltaY / mouseCanvasX / canvasW / canvasH` の 5 つとも
+    `tick 5: input lane 0 differs at <名前>` と名指しできることを確認。
+  - 21:9 (2560x1080) は golden にしていないが、一時スクショで
+    「左端/右端/下端アンカーが本当の端に付く・黒帯なし」を目視確認した。
+- 文書更新: `engine_spec.md` に **§6.11 In-game UI canvas** を新設 + §12.3 の台帳行を
+  M64a-M64c → M70c / M70d へ差し替え / `README.md` に機能の項 + スクショ枚数 /
+  `CLAUDE.md` の shot_verify 行 (22 → 24 枚、CI 判定 12 → 14 枚)。
 
 ## 次のタスクの置き場 (M70 では実装しない)
 

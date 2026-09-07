@@ -106,10 +106,11 @@ if exist %TERRAIN_SCENE% del /q %TERRAIN_SCENE%
 set FAILED=0
 set SHOTS=0
 
-rem ---- 22 本。既定デモの 2 経路 (Forward / Deferred) + 生成シーン 2 本 + UI プローブ
+rem ---- 24 本。既定デモの 2 経路 (Forward / Deferred) + 生成シーン 2 本 + UI プローブ
 rem      + 描画ショーケースの 2 経路 (M54a) + 地形 (M58c) + 物理 (M59l) + 関節 (M60k)
 rem      + 霧 (M57追補) + パーティクル 2 経路 (M63a) + 音響 2 経路 (M65e)
 rem      + RT 反射 / RT GI (M67a) + RT 反射 + ReSTIR (M67g)
+rem      + UI キャンバス 2 本 (M70b)
 rem      + ローカル限定 4 本 (ssr / fxaa / taa / froxel) ----
 rem ★**--rt-demo (コーネル箱) は** WARP では重すぎるので golden にしない (ローカル任意)。
 rem   ただし **--render-demo に --rt-refl / --rt-gi を足す 20〜22 枚目は別物** で、
@@ -380,6 +381,27 @@ call :shot demo_render_rtrefl_restir --render-demo --deferred --rt-refl --rt-res
 set SHOT=%SHOTBASE% --no-fxaa
 set TOLNOW=%TOL%
 :skip_rt
+
+rem ---- 23/24 枚目 (M70b): UI キャンバス。**可変キャンバスの唯一のピクセル被覆**。
+rem      5 枚目 (ui_probe) は 960x540 = 16:9 なのでキャンバスが厳密に 1920x1080 になり、
+rem      スケールもちょうど 1/2 = **2 進で割り切れる**。つまりあの 1 枚だけでは
+rem      「実 px とキャンバスが 1:1 でない経路」も「非 16:9 でキャンバスが伸びる経路」も
+rem      1 画素も通らない (M65 で踏んだ「4 サブぶん golden に写っていなかった」と同根)。
+rem
+rem ★23 枚目 = **スケール経路**。1280x720 も 16:9 なのでキャンバスは 1920x1080 のままだが、
+rem   s = 2/3 で 2 進では割り切れない。ここが緑なら「キャンバス → 実 px の一様スケールが
+rem   丸めで崩れていない」が言える。
+rem ★24 枚目 = **可変キャンバス経路**。960x600 は 16:10 なので canvas 1920x1200 になり、
+rem   下端/右端アンカーの UI が**本当の画面端**へ動く。レターボックス (黒帯) を採らない
+rem   という判断そのものがこの 1 枚に固定される。
+rem ★どちらも tol=3 の CI 判定に載せる。UI は不透明クアッドとフォントアトラスの貼り付け
+rem   だけで、しきい値で分岐する演算もテンポラル蓄積も無い (音響 2 枚を CI に載せたのと
+rem   同じ根拠)。撮影の frame 3 も既定どおり — UI は初期配置で全部絵に出る。
+set SHOT=--warp --no-audio --font-embedded --width 1280 --height 720 --frames 6 --shot-frame 3 --no-fxaa
+call :shot ui_probe_720p --scene assets\scenes\ui_probe.scene.json
+set SHOT=--warp --no-audio --font-embedded --width 960 --height 600 --frames 6 --shot-frame 3 --no-fxaa
+call :shot ui_probe_16x10 --scene assets\scenes\ui_probe.scene.json
+set SHOT=%SHOTBASE% --no-fxaa
 
 echo.
 if %UPDATE%==1 (

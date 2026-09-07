@@ -143,6 +143,10 @@ std::string FirstDifferentInputField(const InputSnapshot& a, const InputSnapshot
     }
     if (a.mouseX != b.mouseX) return "mouseX";
     if (a.mouseY != b.mouseY) return "mouseY";
+    // ★M64a で足した生マウスデルタの比較が抜けていた (M70b で回収)。ここに無いと
+    //   視点入力だけが食い違ったときに --rep-diff が「入力は同じ」と嘘をつく
+    if (a.mouseDeltaX != b.mouseDeltaX) return "mouseDeltaX";
+    if (a.mouseDeltaY != b.mouseDeltaY) return "mouseDeltaY";
     if (a.wheelDelta != b.wheelDelta) return "wheelDelta";
     if (a.mouseButtons != b.mouseButtons) return "mouseButtons";
     if (std::memcmp(a.pad, b.pad, sizeof(a.pad)) != 0) return "pad";
@@ -155,6 +159,11 @@ std::string FirstDifferentInputField(const InputSnapshot& a, const InputSnapshot
     if (a.padRY != b.padRY) return "padRY";
     if (a.padConnected != b.padConnected) return "padConnected";
     if (std::memcmp(a.pad2, b.pad2, sizeof(a.pad2)) != 0) return "pad2";
+    // UI キャンバス (M70b)。float だが「同じ入力なら同じビット列」の照合なので == でよい
+    if (a.mouseCanvasX != b.mouseCanvasX) return "mouseCanvasX";
+    if (a.mouseCanvasY != b.mouseCanvasY) return "mouseCanvasY";
+    if (a.canvasW != b.canvasW) return "canvasW";
+    if (a.canvasH != b.canvasH) return "canvasH";
     return std::string();
 }
 

@@ -759,6 +759,62 @@ probes that have never been baked renders bit-identically to one with no probes 
 | **The baked state is frozen, and lives only in memory** | Position, box and intensity are captured *at bake time*; moving or editing a probe afterwards does not re-bake it (the picture and the box would then disagree). Nothing is written to disk, so a packaged build has no probes until something bakes them. |
 | **Probes do not see each other** | Inherited from §6.9: each capture only sees the sky IBL, never another probe's reflection. |
 
+### 6.11 In-game UI canvas (M70b)
+
+`UIElementComponent` is authored against a **reference resolution of 1920x1080**, and every
+consumer resolves rectangles in those *canvas units* rather than in real pixels. The model
+follows Unity's Canvas Scaler (`Scale With Screen Size`, `Screen Match Mode = Expand`) and UE5's
+UMG DPI scaling: the reference resolution contributes a **uniform scale only**, and the canvas
+rectangle itself stretches to the screen's aspect ratio. **There is no letterbox**, so an
+edge-anchored element always reaches the real edge of the window.
+
+```
+s        = min(w / 1920, h / 1080)          // uilayout::CanvasSize
+canvasW  = w / s        canvasH = h / s     // rounded to integers
+```
+
+| Client pixels | Canvas | Scale |
+|---|---|---|
+| 1600x900 (16:9, the default window) | 1920x1080 | 0.8333 |
+| 960x540 (16:9, the screenshot regression) | 1920x1080 | 0.5 |
+| 3840x2160 (16:9) | 1920x1080 | 2.0 |
+| 960x600 (16:10) | 1920x**1200** | 0.5 |
+| 2560x1080 (21:9) | **2560**x1080 | 1.0 |
+
+Because `s` is a `min`, **the canvas size is a function of the aspect ratio alone and does not
+depend on the pixel count**: every 16:9 window resolves to exactly 1920x1080, which is why the
+change moved no existing golden image and no CI result.
+
+**What this fixed.** Before M70b the renderer resolved in real client pixels while `UIHitTest`
+and `UIFocusNav` resolved at a hard-coded 1920x1080 (`EngineApiTable.cpp`). No configuration in
+this repository runs at 1920x1080 (the default window is 1600x900 and screenshots are 960x540),
+so at 960x540 an `anchor=4` (centre) element was drawn around (480,270) and hit-tested around
+(960,540): every anchor except `0` (top-left) had "where it looks" and "where it can be pressed"
+two times apart. Only `anchor=0` happened to line up.
+
+**Why the canvas is recorded in the input snapshot.** `UIElementComponent` is `kComponentNoHash`,
+so nothing about UI geometry reaches the world hash - a hit test that reads the live window size
+would change behaviour with the window and **the replay suite would stay green anyway**. So
+`Input::CaptureSnapshot` normalises once, and `InputSnapshot` carries `mouseCanvasX/Y` and
+`canvasW/H` (lane 0 only, like the mouse). The `.rep` therefore stores post-normalisation values
+and replays identically at any window size; `--rep-diff` names all four fields (and, from the
+same change, the `mouseDeltaX/Y` pair that M64a had left uncompared). The layout change bumped
+`sizeof(InputSnapshot)` 72 -> 88, `kReplayFileVersion` 5 -> 6, `kSimSnapshotVersion` 11 -> 12 and
+`kNetProtoVersion` 3 -> 4 together.
+
+**Networking.** The sim reads lane 0's canvas on both peers, so determinism holds by itself; what
+does *not* hold is fairness - the joiner would see its own aspect ratio drawn while pressing
+against the host's canvas. The handshake fingerprint therefore carries `canvasW/H` and refuses a
+mismatch (`NetReject::Canvas`). Two 16:9 machines connect regardless of resolution.
+
+**Deliberately not implemented.** Only the `Expand` (`min`) rule exists. Unity's
+`Match Width Or Height` (a lerp in log space, `pow(2, lerp(log2(w/refW), log2(h/refH), match))`)
+and `Shrink` (`max`) change how `s` is chosen inside the same "uniform scale + elastic canvas"
+frame, so **adding them later breaks no existing scene**; the same goes for moving the reference
+resolution into `project_settings.json`. Script-side helpers are also one milestone behind:
+`MyeMouseInRect` / `MyeButtonClicked` still test in client pixels because converting them needs a
+canvas-space mouse, which is an ABI slot (`MouseCanvasPos`, M70c).
+
 ---
 
 ## 7. Particle System Specification
@@ -2265,7 +2321,7 @@ to the physics roadmap.
 |---|---|
 | M60′ e-n (XPBD deformables) | **Paused.** a-d shipped (backend, solver core, rope, two-way attachment). The remaining ten sub-milestones — particle/world collision, cloth, soft bodies, plasticity, showcase — are unstarted, and rope still has no replay or screenshot coverage |
 | M61 / M62 (physics roadmap) | **Unstarted.** Fracture, and thermal / fluid / optical / electrical. Roadmap only; see the numbering note above |
-| M64a-M64c (in-game UI) | **All three unstarted.** The plan `plans/gleaming-strolling-swing.md` covers canvas unification, UI events and focus, and Inspector metadata for script fields. **The labels collide with other work**: commit `080d5d5` shipped raw mouse look and `Active` hierarchy propagation, and its source comments call those M64a and M64b, but they are different changes. The consequence still stands — `UIHitTest` and focus navigation are hard-coded to 1920x1080 (`EngineApiTable.cpp:421-422, 773`) while the renderer works in real client pixels, so in-game UI hit testing is wrong at any other resolution |
+| M70c / M70d (in-game UI, continued) | **Unstarted.** The plan `plans/sparkling-gliding-quokka.md` carries the two remaining subs: UI events and focus driven by the engine (`hovered` / `pressed` / `focused` on the world hash, ABI v16) and the script-to-object gaps plus the dogfooding sweep. The canvas unification that used to head this row shipped as **M70b** - see §6.11. The old plan `plans/gleaming-strolling-swing.md` (labelled M64) is kept as research notes: its labels collide with commit `080d5d5`, which shipped raw mouse look and `Active` hierarchy propagation under the same names |
 | Dogfooding backlog | 16 of the 20 findings in [`docs/dogfooding.md`](docs/dogfooding.md) are open. The data-loss bug (finding 10) was closed by M70a - see §8.3 |
 
 ---

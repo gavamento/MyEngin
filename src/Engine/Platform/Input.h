@@ -12,6 +12,16 @@ namespace mye {
 //   (kSimSnapshotVersion の bump が要る)
 inline constexpr uint32_t kMaxPlayers = 4;
 
+// このフレームの UI キャンバス (M70b)。**式の正本は Engine 層の uilayout::CanvasSize** —
+// Platform 層は Engine 層を include できないので、EngineLoop が計算して渡す形にしてある
+// (Input はデバイスの層で、UI の基準解像度を知る立場ではない)。
+// scale <= 0 は「未確定」の予約値で、CaptureSnapshot はキャンバス欄を 0 のままにする
+struct InputCanvas {
+    float scale = 0.0f; // キャンバス単位 → 実 px の一様倍率
+    float w = 0.0f;     // キャンバス幅 (キャンバス単位)
+    float h = 0.0f;     // キャンバス高さ
+};
+
 // 1 tick 分の入力状態。リプレイ記録の最小単位 (spec 11.3)。
 // - POD であること (このビットパターンがそのまま .rep に保存され、ハッシュされる)
 // - レイアウトを変更すると過去のリプレイと互換が壊れるため、変更時は
@@ -42,14 +52,27 @@ struct InputSnapshot {
     int16_t  padRY;           // 右スティック Y
     uint8_t  padConnected;    // 0=未接続 1=接続
     uint8_t  pad2[3];         // 明示パディング
+    // ---- UI キャンバス (M70b)。**レーン 0 だけが持つ** (マウスと同じ規約、レーン n>0 は 0) ----
+    // なぜ入力に載せるのか: UI のヒットテストとフォーカスナビは sim レーンにあり、
+    // キャンバス寸法は**ウィンドウの大きさという機種依存の値**から出る。実解像度をその場で
+    // 読ませると 2 台/2 回の実行でズレるが、UIElement は kComponentNoHash なので
+    // **ワールドハッシュには 1 ビットも出ない** = replay も desync 検出も助けてくれない
+    // (「最悪の壊れ方」)。ここへ載せて .rep に記録すれば、再生は窓の大きさに依らず一致する。
+    // ★消費側は必ず ctx.Input() (レーン 0) を読むこと。canvasW/H == 0 は「まだ確定して
+    //   いない」(ヘッドレス / 旧い記録) で、読み手が基準解像度へ倒す
+    float mouseCanvasX;       // mouseX をキャンバス座標へ正規化した値 (= mouseX / scale)
+    float mouseCanvasY;
+    float canvasW;            // uilayout::CanvasSize(クライアント実 px) の結果 (整数値を float で)
+    float canvasH;
 
     bool KeyDown(uint8_t vk) const { return ((keys[vk >> 3] >> (vk & 7)) & 1) != 0; }
     bool MouseDown(int button) const { return ((mouseButtons >> button) & 1) != 0; }
     bool PadButton(uint16_t mask) const { return (padButtons & mask) != 0; }
 };
-// M64a で 64 -> 72。レイアウトが変わったので kReplayFileVersion / kSimSnapshotVersion /
-// kNetProtoVersion を同時に上げてある (この 3 つがこのビット列をそのまま持ち回る)
-static_assert(sizeof(InputSnapshot) == 72, "InputSnapshot layout is part of the replay format");
+// M64a で 64 -> 72、M70b で 72 -> 88。レイアウトが変わったので kReplayFileVersion /
+// kSimSnapshotVersion / kNetProtoVersion を同時に上げてある
+// (この 3 つがこのビット列をそのまま持ち回る)
+static_assert(sizeof(InputSnapshot) == 88, "InputSnapshot layout is part of the replay format");
 
 // Win32 メッセージを蓄積し、フレーム頭でスナップショットを確定する。
 class Input {
@@ -66,7 +89,12 @@ public:
     // 1 本) に無く、レーンごとの別マップを持つ設計は M52 の範囲外だから。
     // ★つまりローカル 2P には物理パッドが 2 本要る。パッド無しでレーンを動かす手段は
     //   検証用の合成入力 (SynthLaneInput / --synth-input) 側に寄せてある
-    InputSnapshot CaptureSnapshot(uint32_t lane = 0);
+    //
+    // canvas = このフレームの UI キャンバス (呼び出し側が uilayout::CanvasSize で作る)。
+    // ここでキャンバス座標へ正規化してしまうのが M70b の要点 — 実解像度が sim へ生で
+    // 入る口をこの 1 箇所に閉じ込め、**記録される値は正規化後**にする (InputSnapshot の解説)。
+    // レーン n>0 は canvas を持たない (0 のまま) ので引数は無視される
+    InputSnapshot CaptureSnapshot(uint32_t lane, const InputCanvas& canvas);
 
     // パッド振動を適用する (M51h、XInput パッド 0、値 0..1)。**出力レーン専用** —
     // sim から振動状態を読み返す API は作らない。実際の XInputSetState は

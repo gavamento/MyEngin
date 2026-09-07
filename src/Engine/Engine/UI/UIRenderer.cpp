@@ -257,6 +257,17 @@ void UIRenderer::Render(World& world, GraphicsDevice& device, ShaderManager& sha
         return;
     }
 
+    // ---- キャンバス (M70b) ----
+    // 矩形解決は**キャンバス単位**で行い、実 px へは最後に一様スケールを掛けるだけにする。
+    // 解く側 (uilayout) に px を持ち込まないので、ヒットテスト / フォーカスナビ
+    // (EngineApiTable、キャンバス単位) と描画が同じ数値の上で一致する。
+    // ★16:9 ならキャンバスは厳密に 1920x1080 で、960x540 なら canvasScale はちょうど 0.5。
+    //   資産側の数値を 2 倍してあるので、この経路は IEEE754 で元の絵とビット一致する
+    const uilayout::CanvasInfo canvas = uilayout::CanvasSize(width, height);
+    const int canvasW = canvas.w;
+    const int canvasH = canvas.h;
+    const float canvasScale = canvas.scale;
+
     const D3D11_RECT fullScissor = { 0, 0, width, height };
     for (const Item& it : items) {
         const UIElementComponent& el = *it.el;
@@ -264,21 +275,26 @@ void UIRenderer::Render(World& world, GraphicsDevice& device, ShaderManager& sha
         // 無い要素は RT 全域シザー = 従来と同じバッチにまとまる。
         // ワールド追従要素はここで射影され、背面 (クランプ OFF) は visible=false で消える。
         // res.scale (距離スケール) は矩形に折り込み済み — テキストのグリフ倍率にだけ手で掛ける
-        const uilayout::UIResolved res = uilayout::Resolve(world, it.e, width, height, worldCtx);
+        const uilayout::UIResolved res = uilayout::Resolve(world, it.e, canvasW, canvasH, worldCtx);
         if (!res.visible) {
             continue;
         }
-        const uilayout::UIRect rect = res.rect;
+        // キャンバス単位 → 実 px。**ここが唯一の変換点**で、以降の PushQuad / PushText は
+        // 従来どおり実 px を積む (シザーもフォーカス枠も同じ土俵に乗る)
+        const uilayout::UIRect rect = { res.rect.x * canvasScale, res.rect.y * canvasScale,
+                                        res.rect.w * canvasScale, res.rect.h * canvasScale };
         const float rx = rect.x;
         const float ry = rect.y;
-        const float textScale = el.fontScale * res.scale;
+        const float textScale = el.fontScale * res.scale * canvasScale;
         curScissor_ = fullScissor;
         {
-            const uilayout::UIRect clip =
-                uilayout::ResolveClipRect(world, it.e, width, height, worldCtx);
-            if (clip.w <= 0.0f || clip.h <= 0.0f) {
+            const uilayout::UIRect c =
+                uilayout::ResolveClipRect(world, it.e, canvasW, canvasH, worldCtx);
+            if (c.w <= 0.0f || c.h <= 0.0f) {
                 continue; // 祖先クリップで完全に隠れている
             }
+            const uilayout::UIRect clip = { c.x * canvasScale, c.y * canvasScale,
+                                            c.w * canvasScale, c.h * canvasScale };
             if (clip.x > 0.0f || clip.y > 0.0f || clip.x + clip.w < static_cast<float>(width)
                 || clip.y + clip.h < static_cast<float>(height)) {
                 curScissor_ = ToScissor(clip);
@@ -317,11 +333,15 @@ void UIRenderer::Render(World& world, GraphicsDevice& device, ShaderManager& sha
                 }
             }
             if (el.sliced != 0 && texW > 0.0f) {
-                // 9-slice の境界 px は距離スケール対象外 (枠の太さは見た目の一貫性を優先)
+                // 9-slice の境界は距離スケール対象外 (枠の太さは見た目の一貫性を優先) だが、
+                // **キャンバススケールは掛ける** — sliceBorder は他の x/y/w/h と同じ
+                // キャンバス単位でオーサリングされているので、ここだけ実 px 扱いにすると
+                // 解像度を変えた瞬間に枠だけ太さが合わなくなる (M70b)
                 uigeom::UIQuad quads[9];
-                const int n = uigeom::Build9Slice(rx, ry, rect.w, rect.h, el.sliceBorder.x,
-                                                  el.sliceBorder.y, el.sliceBorder.z,
-                                                  el.sliceBorder.w, texW, texH, quads);
+                const int n = uigeom::Build9Slice(
+                    rx, ry, rect.w, rect.h, el.sliceBorder.x * canvasScale,
+                    el.sliceBorder.y * canvasScale, el.sliceBorder.z * canvasScale,
+                    el.sliceBorder.w * canvasScale, texW, texH, quads);
                 for (int i = 0; i < n; ++i) {
                     const uigeom::UIQuad& q = quads[i];
                     PushQuad(srv, false, q.x, q.y, q.w, q.h, q.u0, q.v0, q.u1, q.v1, el.color);
@@ -338,9 +358,11 @@ void UIRenderer::Render(World& world, GraphicsDevice& device, ShaderManager& sha
         }
 
         // フォーカス枠 (M35): focusable かつ focused (スクリプトが書く表示専用状態) の要素に
-        // 2px の白枠を重ねる。kind 問わず矩形 (x,y,w,h) 基準
+        // 白枠を重ねる。kind 問わず矩形 (x,y,w,h) 基準
         if (el.focusable != 0 && el.focused != 0) {
-            constexpr float kRing = 2.0f;
+            // M70b: リング幅もキャンバス単位 (基準解像度で 2 px)。実 px 固定にすると
+            // 4K で髪の毛のように細くなる — UI 層のものは一様に伸縮させる
+            const float kRing = 2.0f * canvasScale;
             const XMFLOAT4 ring = { 1.0f, 1.0f, 1.0f, 0.9f };
             PushQuad(whiteSrv_, false, rx - kRing, ry - kRing, rect.w + kRing * 2, kRing, 0, 0, 1,
                      1, ring); // 上

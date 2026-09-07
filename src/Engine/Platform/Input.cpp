@@ -101,7 +101,7 @@ bool Input::HandleMessage(void* hwnd, uint32_t msg, uint64_t wparam, int64_t lpa
     return false; // 消費しない (ImGui など他のハンドラにも流す)
 }
 
-InputSnapshot Input::CaptureSnapshot(uint32_t lane)
+InputSnapshot Input::CaptureSnapshot(uint32_t lane, const InputCanvas& canvas)
 {
     InputSnapshot s = {};
     if (lane == 0) {
@@ -118,6 +118,16 @@ InputSnapshot Input::CaptureSnapshot(uint32_t lane)
         wheelAccum_ = 0;
         mouseDeltaX_ = 0; // M64a: wheel と同じ「1 tick で消費」規約
         mouseDeltaY_ = 0;
+        // M70b: 実解像度が sim へ入る唯一の口。ここで正規化して「記録される値は
+        // キャンバス座標」にしておくと、再生は窓の大きさに依らず一致する。
+        // scale <= 0 (退化した画面 / 呼び出し側が埋めていない) は 0 のまま残す =
+        // 「まだ確定していない」の予約値 (読み手が基準解像度へ倒す)
+        if (canvas.scale > 0.0f) {
+            s.canvasW = canvas.w;
+            s.canvasH = canvas.h;
+            s.mouseCanvasX = static_cast<float>(s.mouseX) / canvas.scale;
+            s.mouseCanvasY = static_cast<float>(s.mouseY) / canvas.scale;
+        }
     }
 
     // gamepad (XInput、スロット = レーン番号)。verify 中は記録値が上書きするので透過 (spec 11.3)
@@ -263,6 +273,17 @@ InputSnapshot SynthLaneInput(uint64_t tick, uint32_t lane)
     const auto span3 = [h](int shift) { return static_cast<int32_t>((h >> shift) & 7u); };
     s.mouseDeltaX = span3(40) - span3(43);
     s.mouseDeltaY = span3(46) - span3(49);
+
+    // キャンバス (M70b)。**基準解像度で固定する** — 合成入力は「(tick, lane) だけの
+    // 純関数」なので、ここに実ウィンドウの寸法を混ぜたら決定論が壊れる。
+    // レーン 0 だけが持つのは実キャプチャと同じ規約 (Input.h)。
+    // ★マウス位置を動かさない規約は据え置きなので mouseCanvasX/Y は 0 のまま。
+    //   0 も正当なキャンバス座標 (左上) で、被覆としては canvasW/H が
+    //   .rep / SimSnapshot の往復にレイアウトごと載ることに意味がある
+    if (lane == 0) {
+        s.canvasW = 1920.0f; // = uilayout::kCanvasRefW (Engine 層なので直接は引けない)
+        s.canvasH = 1080.0f; // = uilayout::kCanvasRefH
+    }
     return s;
 }
 

@@ -570,6 +570,16 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         id.configBits = (config.synthInput ? kNetCfgSynthInput : 0u)
             | (config.useJobs ? kNetCfgJobs : 0u) | (config.useSimCache ? kNetCfgSimCache : 0u)
             | (config.useCookCache ? kNetCfgCookCache : 0u);
+        // UI キャンバス (M70b)。**アスペクト比が違う 2 台は入口で弾く** —
+        // sim (ヒットテスト / フォーカスナビ) が読むのはレーン 0 = ホスト側のキャンバスなので、
+        // 参加側のアスペクトが違うと「見えている場所」と「押せる場所」が参加側だけズレる。
+        // ★16:9 同士なら解像度が違っても通る (キャンバスが厳密に 1920x1080 で一致するため)
+        {
+            const uilayout::CanvasInfo c =
+                uilayout::CanvasSize(swapChain.Width(), swapChain.Height());
+            id.canvasW = static_cast<float>(c.w);
+            id.canvasH = static_cast<float>(c.h);
+        }
         // 開始点のワールドハッシュ。**tick 末にハッシュを撮るのと同じ点** (OnStart +
         // ApplyStructuralChanges の直後) で撮る = 「同じシーンから始めたか」の機械照合
         id.startWorldHash = HashWorld(scene.GetWorld(),
@@ -1156,9 +1166,22 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         //   相手の端末が持っている = XInput スロット n を撃つ意味が無い (M52g 申し送り 4 の
         //   「未接続スロットへの XInputGetState は重い」がそのまま効く)
         {
+            // ---- UI キャンバス (M70b) ----
+            // **実解像度が sim へ入る唯一の口**。ここで正規化した値が .rep に載るので、
+            // 再生は窓の大きさに依らず一致する (Input.h の InputSnapshot 解説)。
+            // 基準はバックバッファ = Runtime のゲーム画面そのもの。エディタのゲーム UI は
+            // GameView RT に描かれるので、**描画側のキャンバスは GameViewWindow が
+            // 自分の RT から別に解く** — エディタでのスクリプト側ヒットテストは
+            // (マウス座標がメインウィンドウのクライアント px なので) 元から近似
+            const uilayout::CanvasInfo canvasInfo =
+                uilayout::CanvasSize(swapChain.Width(), swapChain.Height());
+            InputCanvas canvas;
+            canvas.scale = canvasInfo.scale;
+            canvas.w = static_cast<float>(canvasInfo.w);
+            canvas.h = static_cast<float>(canvasInfo.h);
             const uint32_t captureLanes = netEnabled ? 1u : ctx.playerCount;
             for (uint32_t p = 0; p < captureLanes; ++p) {
-                ctx.inputs[p] = input.CaptureSnapshot(p);
+                ctx.inputs[p] = input.CaptureSnapshot(p, canvas);
             }
             if (deterministicShot) {
                 // ---- 撮影モードの決定化 (M68c、dt 固定と同じ趣旨) ----

@@ -23,6 +23,9 @@ struct UIWorldContext;
 // ゲーム内 UI 描画 (M21、M34 で日本語対応、M51e で親子/クリップ/整列/折返し)。
 // UIElementComponent を screen-space クアッド (色/画像/テキスト) として backbuffer /
 // GameView RT に重ね描画する。矩形解決は uilayout::ResolveRect (UIFocusNav と共有)。
+// **M70b: 解決はキャンバス単位で行い、実 px へは uilayout::CanvasSize().scale を
+// 掛けるだけ** — ヒットテスト / フォーカスナビと同じ数値の上で解くので、
+// 「見えている場所」と「押せる場所」が構造的にズレない。
 // clipChildren はシザー矩形 (バッチはシザー変化でも分割)。フォントは FontAtlas
 // (stb_truetype 動的グリフキャッシュ、TTF 無し環境は埋め込み 8x8 フォールバック)。
 // レイヤ規約: 生 D3D11 はこのクラスに閉じる。決定論規約: sim には触れない (描画専用 = 非ハッシュ)。

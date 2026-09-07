@@ -32,7 +32,10 @@ namespace mye {
 // v3 (M64a): InputSnapshot が 64 -> 72 バイトになり、1 パケットの本体長が変わった
 //            (kNetMaxPacket は sizeof から導出しているので式は不変)。
 //            意味論は変えていないが、**旧版と繋ぐと入力が丸ごとずれる**ので版を上げる
-inline constexpr uint32_t kNetProtoVersion = 3;
+// v4 (M70b): InputSnapshot が 72 -> 88 バイト (UI キャンバスの 4 値) + ハンドシェイクの
+//            指紋に canvasW/H が入って NetIdentity が 40 -> 48 バイト。
+//            **本体長とハンドシェイク項目の両方**が変わる
+inline constexpr uint32_t kNetProtoVersion = 4;
 inline constexpr uint32_t kNetMagic = 0x4E45594Du; // 'MYEN'
 inline constexpr uint32_t kNetRedundancy = 8;  // 1 パケットに載せる直近 tick 数
 inline constexpr uint32_t kNetRingTicks = 512; // 入力リングの深さ (tick)
@@ -78,10 +81,16 @@ struct NetIdentity {
     uint32_t playerCount = 0;
     uint32_t inputDelay = 0;
     uint32_t configBits = 0;      // 決定論に効く起動オプション (NetConfigBits)
+    // UI キャンバス (M70b)。**アスペクト比が違う 2 台を入口で弾くためだけに載せている** —
+    // sim が読むのはレーン 0 (ホスト) のキャンバスなので、決定論そのものは canvasW/H を
+    // .rep へ記録した時点で守られている。ここで弾くのは「参加側だけ当たり判定がズレた
+    // 状態で遊べてしまう」のを防ぐため。16:9 同士は解像度が違っても厳密に一致する
+    float canvasW = 0.0f;
+    float canvasH = 0.0f;
     uint32_t pad = 0;
     uint64_t startWorldHash = 0;  // 開始時点のワールドハッシュ (= 同じシーンか)
 };
-static_assert(sizeof(NetIdentity) == 40, "NetIdentity is part of the wire format");
+static_assert(sizeof(NetIdentity) == 48, "NetIdentity is part of the wire format");
 
 // configBits の内訳。**「ビット同一のはず」と分かっているものも入れる** —
 // 分かっているのは検証済みの構成だけで、食い違ったまま何時間も desync を追うより
@@ -103,6 +112,7 @@ enum class NetReject : uint32_t {
     PlayerCount,
     InputDelay,
     ConfigBits,
+    Canvas, // UI キャンバス寸法 (= 画面アスペクト) の不一致 (M70b)
     WorldHash,
     Busy, // 既に別の相手と繋がっている
 };
@@ -144,7 +154,7 @@ struct NetHandshakePayload {
     uint32_t assignedIndex = 0; // Accept: 受信者が使うレーン
     uint32_t reason = 0;        // Reject: NetReject
 };
-static_assert(sizeof(NetHandshakePayload) == 48, "NetHandshakePayload is part of the wire format");
+static_assert(sizeof(NetHandshakePayload) == 56, "NetHandshakePayload is part of the wire format");
 
 // パケット 1 個の最大長 (ヘッダ + 冗長分の入力)
 inline constexpr size_t kNetMaxPacket =

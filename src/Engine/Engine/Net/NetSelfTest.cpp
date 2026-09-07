@@ -26,6 +26,8 @@ NetIdentity MakeIdentity()
     id.playerCount = 2;
     id.inputDelay = 3;
     id.configBits = kNetCfgSynthInput | kNetCfgJobs;
+    id.canvasW = 1920.0f; // M70b: 16:9 の基準キャンバス (960x540 でも 4K でもこの値)
+    id.canvasH = 1080.0f;
     id.startWorldHash = 0xABCDEF0123456789ull;
     return id;
 }
@@ -109,11 +111,12 @@ bool RunNetSelfTest()
     // ---- 1. 線上のレイアウト ----
     // proto v2 (M52i) でヘッダへ確定 (tick, hash) の 16 バイトが増えた
     check(sizeof(NetPacketHeader) == 64, "packet header is 64 bytes");
-    check(sizeof(NetHandshakePayload) == 48, "handshake payload is 48 bytes");
-    // M64a: 生マウスデルタ (int32 x2) が入って 64 -> 72
-    check(sizeof(InputSnapshot) == 72, "input snapshot is 72 bytes");
-    check(kNetMaxPacket == 64 + 8 * 72, "max packet = header + 8 inputs");
-    check(kNetProtoVersion == 3, "protocol version is 3 (M64a input layout)");
+    // M70b: NetIdentity に canvasW/H が入って 40 -> 48、payload もその分だけ太る
+    check(sizeof(NetHandshakePayload) == 56, "handshake payload is 56 bytes");
+    // M64a: 生マウスデルタ (int32 x2) が入って 64 -> 72 / M70b: UI キャンバス 4 値で 88
+    check(sizeof(InputSnapshot) == 88, "input snapshot is 88 bytes");
+    check(kNetMaxPacket == 64 + 8 * 88, "max packet = header + 8 inputs");
+    check(kNetProtoVersion == 4, "protocol version is 4 (M70b input layout + canvas)");
 
     // ---- 2. 指紋の照合はフィールドごとに理由を返す ----
     {
@@ -131,11 +134,14 @@ bool RunNetSelfTest()
         NetIdentity f = base; f.inputDelay += 1;
         NetIdentity g = base; g.configBits ^= kNetCfgSynthInput;
         NetIdentity h = base; h.startWorldHash ^= 1ull;
+        // M70b: アスペクトが違う 2 台 (16:9 の 1920x1080 と 16:10 の 1920x1200) は弾く
+        NetIdentity i = base; i.canvasH = 1200.0f;
         const Case cases[] = {
             { NetReject::Proto, a },           { NetReject::ApiVersion, b },
             { NetReject::RepVersion, c },      { NetReject::SnapshotVersion, d },
             { NetReject::PlayerCount, e },     { NetReject::InputDelay, f },
             { NetReject::ConfigBits, g },      { NetReject::WorldHash, h },
+            { NetReject::Canvas, i },
         };
         bool ok = true;
         for (const Case& cs : cases) {

@@ -51,6 +51,7 @@ const char* NetRejectName(NetReject r)
     case NetReject::PlayerCount: return "player count";
     case NetReject::InputDelay: return "input delay";
     case NetReject::ConfigBits: return "launch options (--synth-input / --no-jobs / caches)";
+    case NetReject::Canvas: return "UI canvas size (the two windows have different aspect ratios)";
     case NetReject::WorldHash: return "starting world hash (different scene or build)";
     case NetReject::Busy: return "host is already connected to another peer";
     }
@@ -66,6 +67,10 @@ NetReject CompareNetIdentity(const NetIdentity& a, const NetIdentity& b)
     if (a.playerCount != b.playerCount) return NetReject::PlayerCount;
     if (a.inputDelay != b.inputDelay) return NetReject::InputDelay;
     if (a.configBits != b.configBits) return NetReject::ConfigBits;
+    // M70b: キャンバスは「実 px ÷ 一様スケール」を整数へ丸めた値なので、同じアスペクトなら
+    // 解像度が違っても厳密に同じ float になる (== で比べてよい。近似比較にすると
+    // 「ほぼ同じアスペクト」を通してしまい、弾く意味が薄れる)
+    if (a.canvasW != b.canvasW || a.canvasH != b.canvasH) return NetReject::Canvas;
     if (a.startWorldHash != b.startWorldHash) return NetReject::WorldHash;
     return NetReject::None;
 }

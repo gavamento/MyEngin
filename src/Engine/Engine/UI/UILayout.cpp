@@ -181,6 +181,20 @@ UIResolved ResolveImpl(World& world, EntityID e, int screenW, int screenH,
 
 } // namespace
 
+CanvasInfo CanvasSize(int screenW, int screenH)
+{
+    CanvasInfo c;
+    if (screenW <= 0 || screenH <= 0) {
+        return c; // 退化した画面 (最小化など) は基準解像度そのままに倒す
+    }
+    const float sx = static_cast<float>(screenW) / static_cast<float>(kCanvasRefW);
+    const float sy = static_cast<float>(screenH) / static_cast<float>(kCanvasRefH);
+    c.scale = (sx < sy) ? sx : sy; // Expand = min。★16:9 では sx と sy が**同じ float** になる
+    c.w = static_cast<int>(std::lroundf(static_cast<float>(screenW) / c.scale));
+    c.h = static_cast<int>(std::lroundf(static_cast<float>(screenH) / c.scale));
+    return c;
+}
+
 UIResolved Resolve(World& world, EntityID e, int screenW, int screenH, const UIWorldContext* wc)
 {
     return ResolveImpl(world, e, screenW, screenH, wc, 0);

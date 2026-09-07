@@ -105,6 +105,19 @@ sln の外にもう 2 本ある。どちらも無い状態でエディタは起�
   耳を使わずに配管を検査する口が `--acoustic-audio-log N` (整形した voice と一発再生を 1 行ずつ +
   summary)、ショーケースが `--acoustic-demo`。詳細は
   [ADR-017](docs/adr/ADR-017-acoustic-audio.md)
+- **解像度に依らないゲーム内 UI (M70b)** — UI の数値は基準 1920x1080 の**キャンバス単位**で、
+  実 px へは `s = min(w/1920, h/1080)` の**一様スケール**だけを掛ける (Unity の Canvas Scaler
+  = Expand / UE5 の UMG DPI スケーリングと同じモデル)。キャンバス矩形は画面のアスペクトへ
+  伸びるので**レターボックスは出ず**、端アンカーの UI は必ず本当の画面端に付く。
+  それまで描画は実 px、ヒットテストとフォーカスナビは 1920x1080 固定で、
+  1920x1080 で走る構成がリポジトリに 1 つも無いため (既定 1600x900 / 撮影 960x540)
+  **`anchor=0` 以外は「見えている場所」と「押せる場所」が常にズレていた**。
+  ★キャンバス寸法とキャンバス座標のマウスは `InputSnapshot` に載せて `.rep` に記録する —
+  UIElement は非ハッシュなので、記録せずに実解像度を渡すと「窓の大きさで当たり判定が変わるのに
+  リプレイは緑」になる。ネット対戦はハンドシェイクでキャンバスを照合し、
+  アスペクトの違う 2 台は接続を拒否する (16:9 同士は解像度が違っても通る)。
+  被覆は golden の 23/24 枚目 (1280x720 = スケール経路 / 960x600 = 可変キャンバス経路)。
+  詳細は `engine_spec.md` §6.11
 - **エディタの日本語化** — UI 言語は**日本語が既定**で、View > 言語 から実行時に英語へ切替。
   文字列は X マクロ 1 ファイルに集約し、訳の書き忘れを**コンパイルエラー**にする。
   ウィンドウ名は `"表示名###英語ID"` 形式なので、切り替えても ImGui の ID —
@@ -271,7 +284,7 @@ Runtime.exe --net-demo --net-join 127.0.0.1:7777 --net-delay 3
 Runtime.exe --net-poke-tick 60            # 片側だけ壊して desync 検出と診断チェーンを試す
 Runtime.exe --rep-diff a.rep b.rep        # 2 本の .rep がどの tick で割れたか
 tools\replay_verify.bat                   # 一貫性検証一式 (7 シーン被覆)
-tools\shot_verify.bat [--update]          # 決定的スクショ 22 枚を tests\golden と比較
+tools\shot_verify.bat [--update]          # 決定的スクショ 24 枚を tests\golden と比較
 tools\crash_verify.bat                    # 5 経路で実際に落として .rep の再現性を検証
 tools\net_verify.bat                      # 2 プロセスのネット対戦 + desync 検出の実地検証
 tools\check_rules.ps1                     # コーディング規則の静的検査

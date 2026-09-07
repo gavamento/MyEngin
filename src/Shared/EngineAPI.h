@@ -244,9 +244,11 @@ struct MyeEngineApi {
     int (*SetUIFill)(void* engine, MyeEntityId id, float amount);   // fillAmount 0..1
     int (*SetUIColor)(void* engine, MyeEntityId id, MyeColor color);
     int (*SetUIFocused)(void* engine, MyeEntityId id, int focused); // フォーカス枠の表示
-    // フォーカスナビ: 全 active focusable UIElement を基準解像度 (1920x1080) で解決し
-    // dir (0=上 1=下 2=左 3=右) の最近傍を返す (無ければ current)。ウィンドウ実寸に
-    // 依存しない = 決定論 (フォーカス状態はスクリプト側が保持する)
+    // フォーカスナビ: 全 active focusable UIElement を**キャンバス座標**で解決し
+    // dir (0=上 1=下 2=左 3=右) の最近傍を返す (無ければ current)。
+    // ★M70b: キャンバス寸法は入力レーン 0 に記録された値 (アスペクト比だけの関数で、
+    //   16:9 なら常に 1920x1080)。ライブのウィンドウ実寸は読まないので決定論のまま
+    //   (フォーカス状態はスクリプト側が保持する)
     MyeEntityId (*UIFocusNav)(void* engine, MyeEntityId current, int dir);
 
     // ---- デバッグ描画 (v7)。描画専用 (非 hash) — 今 tick の線は次の描画フレームに出る ----
@@ -361,11 +363,13 @@ struct MyeEngineApi {
                        int32_t clipChildren, int32_t align, int32_t wrap);
     // SetUITexture: 登録テクスチャキー名 (SetMeshRenderer と同じ規約)。null/空 = 単色に戻す
     int (*SetUITexture)(void* engine, MyeEntityId id, const char* textureKey);
-    // UIHitTest: 基準解像度 (1920x1080、UIFocusNav と同じ) で点 (x,y) を含む最前面の
+    // UIHitTest: **キャンバス座標** (UIFocusNav と同じ) で点 (x,y) を含む最前面の
     //   active UIElement を返す (order 最大、同値は entity.index 最大 = 描画で上のもの)。
     //   祖先クリップで見えない部分には当たらない。無ヒットは null id。
-    //   ★ウィンドウ実寸は決定論のため読まない — クライアント実寸が基準解像度と異なる
-    //     場合のスケーリングは呼び出し側の責務 (Canvas スケーリングは M52 候補)
+    //   ★M70b: 描画もキャンバス座標で解くので「見えている場所 = 押せる場所」が構造的に
+    //     一致する。キャンバス寸法は入力レーン 0 に記録された値なので決定論。
+    //   ★MousePos は**クライアント実 px**を返すので、そのまま渡すと解像度に応じてズレる。
+    //     キャンバス座標のマウスを返す MouseCanvasPos は M70c で足す
     MyeEntityId (*UIHitTest)(void* engine, float x, float y);
 
     // ---- 入力アクションマップ (M51d の回収)。assets\input\actions.json で定義し、

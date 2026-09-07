@@ -117,20 +117,22 @@ void GameViewWindow::OnImGui(EngineContext& ctx, const Selection& selection)
         }
 
         // ---- 選択 UI 要素の解決済み矩形アウトライン (M51f) ----
-        // UIRenderer と同じ uilayout::ResolveRect を RT 実寸で解く = 描画とズレない。
-        // RT px → 表示 px はスケール変換 (RT はリサイズが 1 フレーム遅れるので、窓リサイズ中
-        // だけ僅かに伸縮するが表示専用なので許容)
+        // UIRenderer と同じ uilayout::ResolveRect を**同じキャンバス**で解く = 描画とズレない
+        // (M70b: RT 実寸ではなく RT から求めたキャンバスで解き、結果に canvas.scale を掛ける)。
+        // キャンバス px → 表示 px はさらにスケール変換 (RT はリサイズが 1 フレーム遅れるので、
+        // 窓リサイズ中だけ僅かに伸縮するが表示専用なので許容)
         {
             World& world = ctx.scene->GetWorld();
-            const float sx = imgSize.x / static_cast<float>(rt_.Width());
-            const float sy = imgSize.y / static_cast<float>(rt_.Height());
+            const uilayout::CanvasInfo canvas = uilayout::CanvasSize(rt_.Width(), rt_.Height());
+            const float sx = imgSize.x / static_cast<float>(rt_.Width()) * canvas.scale;
+            const float sy = imgSize.y / static_cast<float>(rt_.Height()) * canvas.scale;
             for (uint64_t fid : selection.ids) {
                 GameObject go = ctx.scene->FindByFileId(fid);
                 if (!go || world.GetComponent<UIElementComponent>(go.Id()) == nullptr) {
                     continue;
                 }
                 const uilayout::UIRect r = uilayout::ResolveRect(
-                    world, go.Id(), rt_.Width(), rt_.Height(), uiWcValid_ ? &uiWc_ : nullptr);
+                    world, go.Id(), canvas.w, canvas.h, uiWcValid_ ? &uiWc_ : nullptr);
                 if (r.w <= 0.0f || r.h <= 0.0f) {
                     continue;
                 }

@@ -36,9 +36,14 @@ namespace mye {
 // ★過去の .rep は読めなくなるが、このリポジトリは golden .rep をコミットしておらず
 //   (replay_verify.bat が毎回録り直す)、失うものは無い
 
+// v6 (M70b): InputSnapshot に UI キャンバスの 4 値 (mouseCanvasX/Y, canvasW/H) が入り
+// 72 -> 88 バイトになった。**この 4 値を記録することが M70b の決定論の要**で、
+// UIElement は kComponentNoHash = ワールドハッシュに出ないため、記録せずに実解像度を
+// 渡す作りにすると「窓の大きさで当たり判定が変わるのに replay は緑」になる。
+
 // .rep のフォーマット版。ネットのハンドシェイク (M52h) でも照合するので、
 // Replay.cpp の中に閉じずにここへ出してある
-inline constexpr uint32_t kReplayFileVersion = 5;
+inline constexpr uint32_t kReplayFileVersion = 6;
 
 struct MyeReplayHeader {
     uint32_t magic = 0x5045524Du; // 'MREP'
