@@ -475,8 +475,13 @@ rejected alternatives and measured cost: **ADR-016**.
   `p̂ = lum(Ls) · D_vis(L | V, N, α)` with **its own** V / N / α
 - **`ReflectionClass` describes the object that is reflected, not the surface reflecting it.**
   Five steps (`Hero` / `Character` / `Vehicle` / `Prop` / `Default`) sourced from
-  `Material::reflectionClass` (`int32`, default 4; a missing, non-integer or out-of-range JSON
-  key falls back to 4 rather than being clamped, so `-1` never becomes `Hero`).
+  `Material::reflectionClass` (`int32`, default 4). The JSON key is read by a single rule
+  (`ReflectionClassJson.h`, shared by the loader and the Inspector): a **missing** key is 4 and
+  silent, and a value that is not a whole number in `[0, 5)` — a fraction like `1.5`, a
+  non-numeric type, or an out-of-range index — falls back to 4 **with one warning line**, never
+  clamped, so `-1` never becomes `Hero`. "Whole number" is judged by **value, not by JSON type**,
+  so `3.0` written by `jq` or a hand edit reads as 3 (M67h; the type-based check it replaced
+  dropped such values silently).
   `RtScene::Update` copies it into `RtInstance.reflectionClass` (the former `pad0`, so the
   80-byte layout is unchanged) and the shader reads it **at the hit point** through
   `gRtInstances[hit.inst]`. The class picks the reuse radius / tap count / `M` cap: a hero is

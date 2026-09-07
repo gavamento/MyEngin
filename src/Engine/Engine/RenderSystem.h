@@ -242,6 +242,17 @@ public:
     float RtReflDenoiseGpuMs() const { return rtPasses_.ReflDenoiseGpuMs(); }
     // M67d: ReSTIR の 2 パス目。off のときは 0 (Begin/End を 1 度も呼ばないため)
     float RtRestirGpuMs() const { return rtPasses_.RestirGpuMs(); }
+    // M67h: ReSTIR が**実際に走っている**か = reservoir が確保され、チューニングの
+    // スライダが絵に効くか。デバッグ 12 (reservoir の M) / 14 (反射像側のクラス) は
+    // reservoir そのものを映すので、トグルが off でも下の Update が強制的に立てる
+    // (RT 影のデバッグ 9 が enableRtShadow と独立に撃つのと同じ流儀)。
+    // ★実効状態の判定はここ 1 本。**rtReflRestir / rtDebugMode を直接読む第 3 の経路を
+    //   作らないこと** — M67 review-1 minor 1 は、エディタの BeginDisabled がこの式を
+    //   知らずに「絵は出ているのにスライダが灰色」になっていた欠陥そのもの
+    bool RtRestirEffective() const
+    {
+        return rtReflRestir || rtDebugMode == 12 || rtDebugMode == 14;
+    }
     float RtBuildCpuMs() const { return rtScene_.BuildCpuMs(); }
     int RtInstanceCount() const { return rtScene_.InstanceCount(); }
     int RtTriangleCount() const { return rtScene_.TriangleCount(); }

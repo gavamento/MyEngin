@@ -1262,9 +1262,10 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
             // ★ここで確定した値は後続 M67h が定数表へ焼く (spec §4.6)
             if (ImGui::BeginMenu(Tr(StrId::Restir_Menu))) {
                 // 親が off なら reservoir すら確保されない (遅延確保) ので子は無効表示。
-                // ただしデバッグ 12 / 14 は RenderSystem 側でトグルを強制するので、
-                // 「off のまま 12 を見ている」ときはここが灰色でも絵は出ている
-                ImGui::BeginDisabled(!ctx.renderSystem->rtReflRestir);
+                // ★判定は RenderSystem::RtRestirEffective() 1 本 (M67h)。トグルを直接
+                //   読んでいた M67 は、デバッグ 12 / 14 が RenderSystem 側で ReSTIR を
+                //   強制する条件を知らず「絵は出ているのにスライダが灰色」だった
+                ImGui::BeginDisabled(!ctx.renderSystem->RtRestirEffective());
                 RtReflRestirParams& rp = ctx.renderSystem->rtReflRestirParams;
                 bool spatial = rp.spatial != 0;
                 if (ImGui::MenuItem(Tr(StrId::Restir_Spatial), nullptr, &spatial)) {
@@ -1298,25 +1299,31 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
                     }
                     ImGui::EndMenu();
                 }
-                ImGui::Separator();
                 // クラス表 5 行 × 3 スライダ。範囲は selftest が定数表に課している不変量
                 // (taps ≤ kRtRestirMaxTaps / mCap ≤ kRtRestirMaxM) と同じ = UI から
-                // 「シェーダが黙って切り捨てる値」を入れられないようにする
-                for (int cls = 0; cls < kRtReflClassCount; ++cls) {
-                    // ★同じラベル (### 右辺) を 5 行で使い回すので ID を行ごとに分ける
-                    ImGui::PushID(cls);
-                    ImGui::TextUnformatted(classNames[cls]);
-                    RtReflClassParams& cp = rp.classTable[cls];
-                    ImGui::SetNextItemWidth(160.0f);
-                    ImGui::SliderFloat(Tr(StrId::Restir_Radius), &cp.radiusPx, 1.0f, 32.0f,
-                                       "%.0f");
-                    ImGui::SetNextItemWidth(160.0f);
-                    ImGui::SliderFloat(Tr(StrId::Restir_Taps), &cp.taps, 0.0f,
-                                       static_cast<float>(kRtRestirMaxTaps), "%.0f");
-                    ImGui::SetNextItemWidth(160.0f);
-                    ImGui::SliderFloat(Tr(StrId::Restir_MCap), &cp.mCap, 1.0f, kRtRestirMaxM,
-                                       "%.0f");
-                    ImGui::PopID();
+                // 「シェーダが黙って切り捨てる値」を入れられないようにする。
+                // ★M67h: この 20 項目を親メニューへ直に並べると、1400x900 窓
+                //   (クライアント高 861 px) では下端が切れて Reset と GPU 時間の行に
+                //   到達できなかった (M67 review-1 minor 2)。子メニューへ畳んで親を
+                //   10 項目程度に収める — 「クラス上書き」が既に子メニューなので流儀も揃う
+                if (ImGui::BeginMenu(Tr(StrId::Restir_ClassTable))) {
+                    for (int cls = 0; cls < kRtReflClassCount; ++cls) {
+                        // ★同じラベル (### 右辺) を 5 行で使い回すので ID を行ごとに分ける
+                        ImGui::PushID(cls);
+                        ImGui::TextUnformatted(classNames[cls]);
+                        RtReflClassParams& cp = rp.classTable[cls];
+                        ImGui::SetNextItemWidth(160.0f);
+                        ImGui::SliderFloat(Tr(StrId::Restir_Radius), &cp.radiusPx, 1.0f, 32.0f,
+                                           "%.0f");
+                        ImGui::SetNextItemWidth(160.0f);
+                        ImGui::SliderFloat(Tr(StrId::Restir_Taps), &cp.taps, 0.0f,
+                                           static_cast<float>(kRtRestirMaxTaps), "%.0f");
+                        ImGui::SetNextItemWidth(160.0f);
+                        ImGui::SliderFloat(Tr(StrId::Restir_MCap), &cp.mCap, 1.0f, kRtRestirMaxM,
+                                           "%.0f");
+                        ImGui::PopID();
+                    }
+                    ImGui::EndMenu();
                 }
                 ImGui::Separator();
                 // M67f: 半径を受け側の α で縮める基準。小さくするほど「粗い面でしか

@@ -38,6 +38,7 @@
 #include "Engine/Renderer/GpuResources.h"
 #include "Engine/Renderer/ImGuiTheme.h"  // 見出しフォント (テーマ第 3 世代)
 #include "Engine/Renderer/RayTracing/RtTypes.h" // kRtReflClassCount (M67)
+#include "Engine/Renderer/ReflectionClassJson.h" // reflectionClass の受理規則 (M67h)
 #include "Engine/Renderer/RenderTypes.h" // kEmissiveMaxIntensity (M46i)
 #include "Engine/Renderer/Skeleton.h"    // SkinnedModel のジョイント名 (M48i)
 
@@ -1475,15 +1476,9 @@ void InspectorWindow::LoadMaterialEdit(EngineContext& ctx, const std::wstring& p
     matEdit_.metallic = root.value("metallic", 0.0f);
     matEdit_.roughness = root.value("roughness", 0.5f);
     matEdit_.emissive = root.value("emissive", 0.0f); // M46i (欠損 = 発光なし)
-    // M67: 反射クラス。ParseMaterialJson と同じ判定 (非整数・範囲外は 4 = 中立) にしておく
+    // M67: 反射クラス。ParseMaterialJson と**同じ関数**を呼ぶ (M67h で規則を 1 本に集約)
     // — ここで拾い方がずれると「Inspector に出る値」と「描画に効く値」が食い違う
-    matEdit_.reflectionClass = 4;
-    if (root.contains("reflectionClass") && root["reflectionClass"].is_number_integer()) {
-        const int64_t cls = root["reflectionClass"].get<int64_t>();
-        if (cls >= 0 && cls < kRtReflClassCount) {
-            matEdit_.reflectionClass = static_cast<int>(cls);
-        }
-    }
+    matEdit_.reflectionClass = ParseReflectionClassJson(root);
     matEdit_.transparent = root.value("transparent", false);
     // texture/normalMap: 数値 = GUID / 文字列 = 旧相対パス (GUID に変換して保持 —
     // 保存時は常に GUID 数値で書く = M39a の「次回保存で guid 書き」)

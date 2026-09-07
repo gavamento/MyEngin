@@ -1,0 +1,279 @@
+# M67h: ReSTIR 反射の積み残し回収 (レビュー minor 5 件 + S5 の既定値確定) — 仕様書
+
+- slug: m67h-restir-finalize
+- 状態: **確定 (2026-09-08、planner 裁定)**。`AskUserQuestion` が生えていない環境なので確定確認は司会が代行する
+  (harness-protocol §1)。§7 の Q1 は `[ユーザーに聞ける]` = **回答で変わるのは sub-02 の入力だけ**で、
+  受け入れ条件と分割は変わらない設計にしてある (回答が来なくても着手できる)
+- 依頼原文: `M67hの実装`
+- 基点コミット: 9a893cd (master、clean)
+- 前提資料: `plans/m67-restir-reflection/` の `harness.md` / `spec.md` / `review-1.md` / `sub-07.md`
+
+## 1. 目的 (なぜ作るか)
+
+M67 (ReSTIR 反射 + ReflectionClass) は完走・PASS したが、**意図的に 2 種類を後続へ積んだ**。
+M67h はその 2 つを閉じて「M67 という機能が、根拠を持って出荷状態に固定された」と言える状態にする。
+
+1. **review-1 の minor 5 件** — どれも目的を損なわないが、放置すると「触れないチューニング UI」
+   「実態と食い違うコメント」「読み手のいない CB 項目」「黙って既定値に落ちる `.mat.json`」として
+   次に触る人を確実に誤らせる。特に minor 5 は **静かなデータ損失** (書いた値が無言で無視される) で、
+   M70a が保存経路で潰したのと同じ種類の欠陥。
+2. **S5 = パラメータ調整の確定** — M67 のユーザー判断 U6 で「harness の外で決め、確定値は M67h で焼く」と
+   決まっている。ここで達成したい状態は「**既定値が計測の裏付けを持ち、裏付けが取れない値は
+   『取れていない』と書かれている**」であって、「何か数字を変えること」ではない。
+
+## 2. 疑った点と結論
+
+`AskUserQuestion` が planner に生えていない環境なので、全件を planner が裁定し、
+Q1 だけ `[ユーザーに聞ける]` の印を付けて司会へ返す (harness-protocol §1)。
+
+| # | 疑い | 根拠 (コード / 事実) | 裁定 | 却下した案と理由 |
+|---|---|---|---|---|
+| S1 | 「M67h の実装」は何を指すのか。依頼文は 6 文字しかない | M67 台帳の U6 / `sub-07.md` の申し送り「焼く項目」/ review-1 の minor 5 件 / メモリ索引「M67h (S5 確定値 + minor 5 件) は未着手」の 4 つが同じ 2 種類を指す | **(a) review-1 minor 5 件 + (b) S5 の確定** の 2 本立て。それ以外 (未実装の unbiased ReSTIR、GI レーンの ReSTIR、スキンメッシュ BVH) は M67 spec §3 で明示的にスコープ外なので入れない | 「M67 の残タスク全部」= スコープ外項目まで拾う読み。M67 spec §3 が既に「やらない」と書いているものを M67h で蒸し返すのは決定台帳の破壊 |
+| S2 | S5 の確定値は誰が決めるのか。ユーザーは今回「M67hの実装」としか言っていない | U6 は「ユーザーが実機で見て決める」前提。今のセッションに確定値の提示は無い。一方 M67 の A6 / A7 は同種の判断をヘッドレスの数値で決着させた実績がある | **計測で確定する。ただし帰無仮説 = 現行の既定表**。「変える根拠が測れたときだけ 1 行変える」。ユーザーが実機の確定値を持っていればそれが計測に優先する (§7 Q1) | (i) ユーザー確定値を待って止まる = 依頼に対して 0 行返す。(iii) minor だけやって S5 を無期限に積む = 「未着手」がもう 1 マイルストーン延びるだけ。どちらも「聞けないなら裁定する」の原則に反する |
+| S3 | sub-06 の所見「spatial off + 一様 Prop (mCap 32) が既定混在の 1.8 倍良い (床全体 0.100 vs 0.181)」を根拠に、mCap を上げて表を平坦化してよいか | その 0.100 / 0.181 は**フリッカー指標**単独 (frame 120/121 の平均絶対差)。静止シーンでは「履歴を長くするほど絵が動かない」ので、この指標は **mCap を上げるほど無条件に良くなる**。代償 (映っている物が動いたときのゴースト・遅れ) は M67 で 1 画素も測っていない | **駄目。片側の指標で ReflectionClass の意味論を消してはいけない。** 2 軸目 (動く反射像への追従率) を足してから判断する (§4.4 R1) | 「1.8 倍という数字があるのだから焼く」= 測っていない軸を 0 とみなす仮定。ReflectionClass は「主役ほど再利用を絞る = 遅れを出さない」が存在理由 (`RtTypes.h:224-231` のコメントが正本) なので、遅れを測らずに表を潰すと機能そのものが消える |
+| S4 | `kRtReflClassTable` の `radiusPx` / `taps` と `kRtRestirRadiusAlphaRef` を焼けるか | `rt_refl_restir_spatial.cs.hlsl:87` が `tapCount = (gRsSpatialOn != 0 && radiusEff >= 1.0f) ? ... : 0`。**spatial が既定 off の間、この 3 つはシェーダで 1 タップも使われない** = 絵に 1 画素も出ない | **焼かない (現行維持)。** 測れない値を「確定」と書くのは嘘。ADR-016 に「spatial を on にしたときの初期値であって、確定値ではない」と明記する | spatial を一時的に on にして測って焼く = 出荷構成 (off) と違う条件で決めた値を出荷構成の定数として残すことになり、次に spatial を on にする人が「これは測って決めた値だ」と誤読する |
+| S5 | フレーム列 (frame N-k … N) を `--shot-every` で 1 run で撮れるか。撮れるなら遅れ測定が 10 倍速い | `EngineLoop.cpp:704` の `deterministicShot = !screenshotPath.empty() && screenshotEvery == 0 && !shotRealtime`。**`--shot-every` を付けた瞬間に決定的撮影モードが外れる** = dt 固定も非同期テクスチャの drain も生マウスデルタのゼロ化 (M68c) も効かない | **使わない。** フレーム列は `--shot-frame` を変えた個別 run で撮る。測定コストは M67 の A6/A7 が既に払った規模 (§4.4 R8) | 「連番なら速い」= 決定性を失った PNG で `--tol 0` を主張することになり、測定そのものが再現不能になる |
+| S6 | minor 5 の「非整数」は JSON の型か、値か | `GpuResources.cpp:1022` / `InspectorWindow.cpp:1481` の `is_number_integer()` は `3.0` に対して false。M67 spec §4.1 は「非整数 = 4」としか書いておらず未定義。`AssetOpsSelfTest.cpp:333` は `1.5` しか固定していない | **値で判定する** (`3.0` → 3 を受ける)。落とすのは「小数部を持つ数値 / 数値でない型 / 範囲外」(§4.1) | 型で弾く現行維持 = 書いた値が無言で無視される静かなデータ損失が残る。`.mat.json` を書きうるのはエディタだけではない (jq / Python / 手編集) |
+| S7 | 値判定を他の JSON 整数フィールドへ横展開するか (`SchemaComponents.cpp:125` / `SceneSerializer.cpp:232,651` / `AnimatorController.cpp:250` / `SoundAsset.cpp:258` / `PhysMatLibrary.cpp:159`) | `SceneSerializer` と `SchemaComponents` は **sim 状態の復元経路** = `replay_verify` の被覆下。読み方を変えるとシーン JSON の解釈が変わりうる | **しない。** M67h は `reflectionClass` の 2 か所に閉じる | 「せっかくだから全部」= 決定論の契約に触れる変更を、レビュー minor の巻き添えで入れることになる |
+| S8 | firefly 対策の `kRtRestirWMax` を予防的に入れるか | M67 spec §7 が実測で兆候なしと結論 (`--rt-debug 11` の最大輝度 on 227.5 < off 247.9、孤立高輝度画素 0) | **入れない。** M67h の測定 (§4.4 A10 の回転体領域) でも観測されなければそのまま | 「念のためクランプ」= 絵が動く = golden を根拠なく更新することになる |
+| S9 | review-1 の「J ≠ 1 の temporal 経路は GPU では未観測」は、ヘッドレスでは本当に閉じられないのか | `DemoContent.cpp:1190` のコメント「回転体は唯一の動く被写体 = 主役 (Hero)。ゴーストが出るなら真っ先にここに出る」。`rdemo_spin` は roughness 0.45 < `kRtReflMaxRoughness` 0.6 = **自分自身が反射の受け面**でもあり、かつ回っている → 受け側の `P_prev ≠ P` = **J ≠ 1 の経路をヘッドレスで通る** | **閉じられる。** 回転体の画素で M が 1 より伸び、かつ firefly が出ないことを測る (§5 A10) | 「カメラが動かないから未検証のまま」= 受け側が動く経路を「カメラが動く経路」だけだと思い込んでいた読み。デモには手を触れない (§4.4 R7) |
+| S10 | 1 コミットにまとめるか | `git log` の規約は 1 サブ = 1 コミット (`M67a`〜`M67g`)。S5 は Q1 の回答待ちで止まりうる | **2 コミット**: `M67h:` (minor 5 件) と `M67i:` (S5)。minor は S5 の回答に依らず単独で価値が閉じる | 1 本にまとめる = Q1 が長引くと minor 5 件も一緒に止まる |
+| S11 | `engine_spec.md` の golden 枚数記述をどこまで直すか | sub-07 の申し送りに「§11.3 の歴史的記述 (`all fourteen other shots...`)」。実測は現在 24 枚 (M70b が 2 枚追加)。`:1872` / `:1926` / `:2041` / `:1995` に 22 / fourteen が残る。うち `:1872` は **M67 時点の史実**として正しい | **現在形の記述だけ実測へ。歴史的記述は触らない** (触るなら「M67 時点で」と主語を補う)。範囲は grep で見つかる数行に限定し、変更点を実装メモに列挙する | 全文の枚数を機械置換 = 史実まで書き換えて記録を壊す |
+| S12 | `--img-diff` に矩形指定オプションを足すか (sub-06 の nit) | M67 の A6/A7 は一時 Python で矩形の平均絶対差を出して完走している | **足さない。** M67h の測定も一時スクリプト (scratchpad) で行う | 新 CLI = CLAUDE.md / engine_spec / README に載る恒久的な文書負債。測定 1 回のために増やす面ではない |
+| S13 | 範囲外・非整数を落としたときにログを出すか | review-1 minor 5 の核は「**黙って** 4 に落ちる」。欠損は既存 `.mat.json` の正常形 | **出す。ただし「キーがあって落とした」ときだけ** (欠損は無言) | 欠損でも出す = 既存 2 枚の `.mat.json` を読むたびに警告が出て、本物の警告が埋もれる |
+
+## 3. スコープ
+
+- **やる**
+  - review-1 minor 1〜5 の全件 (UI の無効判定 / サブメニューの高さ / 未使用 CB 項目 / 実態と違うコメント 2 か所 /
+    `.mat.json` の整数値受理)。
+  - S5 の確定: `kRtReflClassTable` の `mCap` を 2 軸で測って規則 §4.4 R1 を適用、`spatial` / `visRay` /
+    `radiusPx` / `taps` / `radiusAlphaRef` / `svgfHistory` / `atrousIterations` / `kRtRestirWMax` は
+    R2〜R6 の規則で「維持」または「1 行変更」を決め、**根拠ごと** ADR-016 に残す。
+  - review-1 の「未確認」1 件 (J ≠ 1 の temporal 経路) をヘッドレスで閉じる (S9)。
+  - 文書衛生: `engine_spec` の現在形の golden 枚数 (S11)、`RtPasses.h` のコメント、
+    `rt_restir_cb.hlsli` の `gRsClass` 直前の offsetof 注意 1 行 (M67 sub-04 の nit)。
+- **やらない (明示的に外す)**
+  - M67 spec §3 が既に外したもの全部 (unbiased ReSTIR / GI レーンの ReSTIR / スキンメッシュ BVH /
+    cubemap 代替 / オブジェクト単位のクラス上書き)。
+  - `.mat.json` 以外の JSON 整数フィールドの読み方 (S7)。
+  - `--img-diff` の矩形オプション (S12)、`shot_verify.bat` の frame 指定枠の SHOTBASE 化 (M67 の nit、
+    「SHOTBASE の解像度を変える日」が条件)。
+  - **デモシーン / デモ材質の変更** — `--render-demo` / `--acoustic-demo` は golden 24 枚の被写体そのもの。
+    測定のためにカメラや物を足すのは golden の作り直しを意味する (§4.4 R7)。
+  - `GpuTimer` (M67 で「触らない」と決めた)。
+- **後回し**
+  - カメラが大きく動く条件での firefly / 二重 temporal の主観品質。ヘッドレスに経路が無いので、
+    S5 の測定で代替できない分は **「未検証」と ADR に書いて残す** (嘘の「確定」を書かない)。
+
+## 4. 仕様
+
+### 4.1 `.mat.json` の `reflectionClass` 受理規則 (minor 5、M67 spec §4.1 を上書き)
+
+「非整数」は **JSON の型ではなく値**で判定する。
+
+| 入力 | 結果 |
+|---|---|
+| キー欠損 | 4 (Default)、**無言** |
+| `3` / `-0` (整数型) | 3 / 0 |
+| `3.0` / `4.0` (浮動小数点型・整数値) | 3 / 4 ← **本件で変わるのはここだけ** |
+| `1.5` / `-0.5` (小数部あり) | 4 + 警告 1 行 |
+| `"Hero"` / `true` / `null` / `[3]` / `{}` | 4 + 警告 1 行 |
+| `-1` / `5` / `9` / `3.0e10` (範囲外) | 4 + 警告 1 行 |
+
+- 判定順: (1) キーが無ければ 4 で終了 (無言)。(2) 整数型ならその値。(3) 浮動小数点型かつ `v == std::floor(v)` ならその値。
+  (4) それ以外は 4 + 警告。(5) 値が `0 <= v < kRtReflClassCount` を外れたら 4 + 警告。
+  **`value()` に食わせて型例外を投げさせない**という M67 の制約 (`GpuResources.cpp:1017` のコメント) はそのまま維持する。
+- 警告は `MYE_LOG_WARN` 1 行で、**キー名・読めなかった値の見え方・「4 (Default) として読んだ」** を含む。
+- **規則は 1 本**。`ParseMaterialJson` (`GpuResources.cpp:1022`) と Inspector の `LoadMaterialEdit`
+  (`InspectorWindow.cpp:1481`) が**同じ関数**を呼ぶ。2 か所に同じ if を書き直すのは不可
+  (CLAUDE.md の「規則は 1 本」= `ShapeAcousticSpatial` / `MakeSourcePlay` と同型)。
+  Inspector 側はヘッドレスから呼べない (private) ので、**共有関数を selftest が固定することが
+  Inspector 側の唯一の機械的な担保**になる。
+- 保存側 (`MaterialEditToJson`、`InspectorWindow.cpp:1527`) は今までどおり**整数で書く**。読みだけを緩める。
+
+### 4.2 チューニング UI (minor 1 / minor 2)
+
+- **実効 ReSTIR 状態の規則を 1 本にする。** 現在 `RenderSystem.cpp:1148-1149` が
+  `(rtReflRestir || rtDebugMode == 12 || rtDebugMode == 14)` を持ち、`EditorApp.cpp:1267` の
+  `BeginDisabled(!ctx.renderSystem->rtReflRestir)` はそれを知らない。
+  → `RenderSystem` に読み取り専用の判定 (例: `bool RtRestirEffective() const`、`RtRestirGpuMs()` の並び)
+  を 1 本置き、**両方がそれを呼ぶ**。デバッグ 12 / 14 を表示している間もサブメニューが操作できること。
+- **サブメニューを 1400x900 窓 (クライアント高 861 px) に収める。** クラス表 5 行 × 3 スライダ (計 20 項目) を
+  **1 つの子メニューへ畳む** (`クラス上書き` が既に子メニューなので流儀が揃う)。親メニューは
+  Spatial / Visibility ray / クラス上書き / クラス表 / α 基準 / SVGF / A-Trous / Reset / GPU 時間 ≈ 10 項目になり、
+  `Reset to defaults` と GPU 時間の行が見える。
+  - 新規文字列 1 本 (クラス表の子メニュー名) を `LocalizationTable.inl` に en/ja。`###` 右辺は両言語一致・一意。
+  - スライダの中身・範囲・Reset の意味は変えない (`rp = RtReflRestirParams{}` が既定の唯一の出所)。
+
+### 4.3 CB とコメントの衛生 (minor 3 / minor 4)
+
+- `RtRestirCB::frameIndex` (`RtPasses.cpp:786`) と HLSL の `uint gRsFrameIndex`
+  (`rt_restir_cb.hlsli:34`) を**落として明示パディングにする**。`sizeof == 240` と
+  `gRsClass` の offsetof 160 は不変。
+  - パディングのコメントに **なぜ外したか** を残す: 「M67f でタップ回転のフレーム項を外した
+    (回すと候補集合が毎フレーム入れ替わり、乗り換えがそのままフリッカーになる = 実測 2 倍)。
+    フレーム番号を混ぜたくなったらまず `kRtRestirTapSeed` のコメントを読むこと」。
+    名前だけ `pad` にして理由を書かないと、次の人が同じ理由で足し直す。
+- `RtPasses.h:60`「reservoir の組 A の rad と nrm」→ 実体 (`slot.set[slot.write]` = rt_refl が今フレーム
+  書いた面)。`RtPasses.h:197`「B (t11-t15) を読み A (u1-u5) へ書き戻しつつ」→ 実体 (書き戻さない、UAV は u0 のみ)。
+- `rt_restir_cb.hlsli` の `float4 gRsClass[...]` 直前に「C++ 側 `offsetof` 160 と一致 — 前に float を
+  足すときは両方」の 1 行 (M67 sub-04 の nit。CB を触るこの機会に入れる)。
+
+### 4.4 S5 の確定規則 (R1〜R8)
+
+**帰無仮説 = 現行の既定値。** 「規則が変更を要求したとき」以外は変えない。規則は測定より**先**に確定させる
+(結果を見てから基準を作らない)。
+
+- **R1 (`mCap` = クラス表の M 上限)** — `--rt-class-override 0/1/2/3` が mCap 8 / 16 / 24 / 32 の 4 点を
+  再ビルド無しで作れる (spatial off では表の他の 2 列が効かないため、override は実質 mCap の sweep になる)。
+  これに ReSTIR off を足した 5 条件で 2 軸を測る:
+  - **軸 A (フリッカー)**: M67 と同一手法 (連続 2 フレームの同領域の平均絶対差、`--rt-anim-seed
+    --rt-no-temporal --rt-no-svgf`)。大きいほど悪い。
+  - **軸 B (追従率)**: 動いている反射像の領域で `mean|test[N] − test[N−1]| / mean|ref[N] − ref[N−1]|`
+    (ref = ReSTIR off、両者とも既定のデノイズ構成)。1 に近いほど遅れが無い。1 を大きく下回る = ゴースト・遅れ。
+  - 変更条件: **あるクラスで mCap を上げると軸 A が 20% 以上改善し、かつ軸 B の低下が 0.05 未満**のときだけ
+    そのクラスの `mCap` を上げる。片方しか満たさないなら現行維持。
+  - 軸 B が mCap に反応しない (全条件で差が測定ノイズ以下) 場合は「この条件では差が出ない」と結論し、
+    **既定は維持**して ADR に「差が出る条件 (カメラ移動 / 速い被写体) は未検証」と書く。
+  - 軸 A/B が期待どおり (mCap ↑ で A 改善・B 低下) なら、**現行表の順序付けが計測で裏付いた**ことになる。
+    それが最も価値のある結論なので、その旨を ADR-016 に数値ごと残す。
+- **R2 (`spatial`)** — U7 で決着済み (既定 off、目標帯で temporal 単独 0.181 < spatial on 0.255)。
+  **M67h では再評価しない** (決定台帳を蒸し返さない)。ユーザーが on を望む場合のみ 1 行 + golden 撮り直し (§7 Q1)。
+- **R3 (`visRay`)** — 既定 off を維持。根拠: コストが 2.7 倍 (WARP / frames 20 で restir 2.320 → visray 6.166 ms)
+  に対し、利得は候補の光漏れ緩和のみで、ADR-016 に既知の制限として記載済み。A/B は `--rt-restir-visray` で
+  いつでも取れる。
+- **R4 (`radiusPx` / `taps` / `radiusAlphaRef`)** — 焼かない (S4)。ADR-016 に「spatial を on にしたときの
+  初期値であって確定値ではない」と明記する。
+- **R5 (`svgfHistory` / `atrousIterations`)** — **条件付き**。R1 の測定で軸 B が **0.8 未満** (= 二重 temporal の
+  引きずりが実在する) のときに限り、`svgfHistory` 8 → 4 の**候補 1 つだけ**を再ビルドして測る。
+  軸 B が上がり、かつ軸 A が悪化しないときだけ焼く。それ以外は現行維持。総当たり sweep はしない
+  (再ビルドを伴うので、止め時を先に決めておく)。
+- **R6 (`kRtRestirWMax`)** — 入れない (S8)。A10 の回転体領域で孤立高輝度画素が観測されたときのみ再検討し、
+  そのときは planner へ「不安・質問」で上げる。
+- **R7 (被写体)** — `--render-demo` / `--acoustic-demo` のシーン・材質・カメラに**触らない**。
+  測定は既存の CLI (`--rt-class-override` / `--rt-debug` / `--rt-anim-seed` / `--rt-no-temporal` /
+  `--rt-no-svgf` / `--screenshot` / `--shot-frame`) と一時スクリプトだけで組む。
+  矩形は M67 と同じ方法 (`--rt-debug 14` のクラス色から機械的に決める) で選ぶ。
+- **R8 (測定の再現性)** — `--shot-every` は決定的撮影モードを解除する (`EngineLoop.cpp:704`) ので**使わない**。
+  フレーム列は `--shot-frame` を変えた個別 run。代表 1 条件は 2 回撮って `--img-diff --tol 0` PASS を示す。
+
+### 4.5 データ・保存形式・互換性
+
+- `Material` のレイアウトは変えない → `kCookVersion` の bump は**不要**。
+  ただし coder は「`.mat.json` の parse 結果が cooked blob に入るか」を確認して 1 行で報告する
+  (入るなら parse 規則の変更でキャッシュが古くなりうる。planner の見立ては「`.mat.json` は cook 対象外、
+  cooked blob へ入る `Material` はモデル由来のもの」= `ModelCook.cpp` を読めば分かる)。
+- `.mat.json` の**書き出し形式は不変** (整数)。既存 2 枚 (`assets/materials/demo_bump.mat.json` /
+  `demo_emissive.mat.json`) は `reflectionClass` キーを持たない = 挙動不変。
+- `RtRestirCB` は size / offset とも不変。シェーダの再コンパイルだけ。
+- 既定値を変えた場合、変わるのは golden `demo_render_rtrefl_restir.png` の**1 枚だけ**。他 23 枚は不変。
+
+### 4.6 UI / ビジュアル
+
+- ReSTIR Tuning サブメニュー: 1400x900 窓で `Reset to defaults` と GPU 時間の行が**見える**こと。
+  デバッグ 12 / 14 を表示している間も**灰色にならない**こと。どちらも reviewer が実機スクショで判定する。
+- golden `demo_render_rtrefl_restir.png` (frame 40) は、既定値を変えたときだけ差し替える。
+  差し替えは M67g と同じ手順 — **`--update` で塗り潰さず、比較 run の実物をコピーし、
+  `git status` が「1 枚しか動いていない」証拠になる形**にする。
+
+### 4.7 非機能
+
+- **決定論**: 描画・アセット読み込み専用。sim / `WorldHash` / `.rep` / ECS / `FieldDesc` / ABI / C# に触れない。
+  `Material` の中身はワールドハッシュに載らない (載るのは `MeshRendererComponent::material` の `AssetID`)
+  ことを coder が確認して報告する。最終的な担保は `replay_verify.bat`。
+- **規則**: `check_rules.ps1` 0 error / 0 warning。新規ローカライズ文字列は規則 10 (書式指定子) と
+  en/ja 両方の存在を通す。`$constGroups` に登録済みの `MYE_RT_REFL_CLASS_COUNT` /
+  `MYE_RT_RESTIR_MAX_TAPS` / `MYE_RT_RESTIR_TAP_SEED` を壊さない。
+- **層**: 生の D3D は `RtPasses` に閉じる。§4.1 の共有関数は Renderer 層より上に D3D 型を出さない
+  (`Engine/Core` には置けない — `kRtReflClass*` は Renderer 層の `RtTypes.h` にあり、Core は Renderer を知らない)。
+- **警告 0**: 最終ビルドは Debug / Release とも `/p:MyeWarnAsError=true`。
+- **コメントは日本語**、「なぜそうなっているか」を書く。
+
+## 5. 受け入れ条件
+
+| # | 条件 | 検証手段 |
+|---|---|---|
+| A1 | golden が**ローカル全枚**ビット一致。既定値を変えた場合のみ `demo_render_rtrefl_restir` の 1 枚が変わり、**他は 1 枚も動かない** | `tools\shot_verify.bat` (Release、`MYE_SHOT_SKIP_*` 無し) 全緑 + `git status` |
+| A2 | `.mat.json` の `reflectionClass` が §4.1 の表どおりに読まれる (**`3.0` → 3** を含む。`1.5` / 文字列 / 真偽 / 範囲外 / 欠損は 4、例外を投げない) | `Editor.exe --selftest` (`AssetOpsSelfTest` に §4.1 の表を追加) |
+| A3 | 受理規則が **1 本**である (`ParseMaterialJson` と `LoadMaterialEdit` が同じ関数を呼ぶ) | coder が呼び出し 2 か所を実装メモに file:line で示す + reviewer の読み |
+| A4 | キーがあって落としたときだけ警告が 1 行出る (欠損は無言) | selftest のログ行を実装メモに貼る |
+| A5 | 実効 ReSTIR 状態の判定が **1 本**で、RT Debug 12 / 14 を表示中もチューニング UI が操作できる | reviewer の実機 (12 を出したままスライダを動かして絵が変わるスクショ) |
+| A6 | 1400x900 窓で `Reset to defaults` と GPU 時間の行が見える | reviewer の実機スクショ (M67 review-1 の `g\03_tuning.png` と同条件) |
+| A7 | `gRsFrameIndex` / `RtRestirCB::frameIndex` の**宣言と読み書きが 0 件**になる。`sizeof(RtRestirCB) == 240` と `gRsClass` の offsetof 160 が不変。★**旧名を挙げた「なぜ外したか」のコメントは残してよい** (むしろ残す — §4.3 が要求している。旧名で検索して理由に辿り着けることの方が、grep が 0 になることより価値がある。初版は「grep が 0 件」と書いていた = planner の書き間違い。2026-09-08 訂正) | grep (宣言・使用) + `static_assert` / `offsetof` がビルドを通ること + A1 |
+| A8 | `RtPasses.h:60` / `:197` と `rt_restir_cb.hlsli` の記述が実態と一致 | reviewer の読み |
+| A9 | **J ≠ 1 の temporal 経路が GPU で観測される**: `--render-demo` の回転体 (`rdemo_spin`) 表面の画素で frame 40 の M が 1 より大きく (debug 12)、同領域に孤立高輝度画素 (firefly) が無い | 一時スクリプトで PNG を数値化。画像は `tests\actual\` へ。review-1 の「未確認」1 件を閉じる |
+| A10 | mCap の **2 軸表** (5 条件 × 軸 A/軸 B) が実装メモにあり、軸 B の健全性 (静止領域で ≈ 1、mCap に対して単調) を**本測定より先に**確認している | 一時スクリプト。健全性が取れなければ「軸 B は使えない」と報告して R1 を「維持」で閉じる |
+| A11 | §4.4 の R1〜R6 を適用した結果が spec §8 と ADR に記録され、**憶測で変えた値が 1 つも無い** (変更があれば「どの規則がどの数値で要求したか」が書かれている) | planner の VERDICT + reviewer の読み |
+| A12 | 測定に使った run が再現する (代表 1 条件を 2 回撮って maxDiff=0) | `Editor.exe --img-diff A B --tol 0` |
+| A13 | 文書: ADR-016 に「S5 の結論」節 (計測表 / 変えた・変えなかった理由 / **未検証のまま残る条件**)、`engine_spec.md` §6.4 の `reflectionClass` の受理規則 (`:478` の "non-integer") と現在形の golden 枚数、CLAUDE.md (必要なら) | reviewer の読み合わせ |
+| A14 | sim 非接触 | `tools\replay_verify.bat` 全緑 |
+| A15 | Debug / Release とも `/p:MyeWarnAsError=true` で警告 0、`check_rules.ps1` 0/0 | ビルドログ |
+
+## 6. サブ分割
+
+**順序の理由**: 最もリスクの高い未知は S5 の測定可能性だが、S5 は §7 Q1 (ユーザー回答) に依存して入力が
+変わりうる。**回答に依存しない sub-01 を先に置くことで、回答待ちの間も手が止まらない**。
+sub-01 は golden を 1 枚も動かさない前提なので、golden を触りうる sub-02 の直前に「全枚緑」の基準線を作る役目も持つ。
+
+| サブ | 題名 | 依存 | 受け入れ条件 | コミット件名候補 |
+|---|---|---|---|---|
+| sub-01 | review-1 minor 5 件の回収 (UI の実効判定 / サブメニューの高さ / 未使用 CB 項目 / コメント 2 か所 / `.mat.json` の整数値受理) | なし | A1 (24 枚不変) / A2 / A3 / A4 / A5 / A6 / A7 / A8 / A15 | `M67h: レビュー minor 5 件の回収 — 触れないチューニング UI と黙って落ちる reflectionClass` |
+| sub-02 | S5 の確定 (2 軸の計測 → 規則適用 → 既定値と文書、必要なら golden 1 枚) | sub-01 | A1 / A9 / A10 / A11 / A12 / A13 / A14 / A15 | `M67i: ReSTIR の既定値を計測で確定する — クラス表の順序を 2 軸で裏付ける` |
+
+最終レビュー後の司会コミットは `M67 追補: レビュー完了 — ...` を推奨 (`M67: レビュー完了` = 8e4272e が既にあるため衝突する)。
+
+## 7. 未決事項・リスク
+
+### `[ユーザーに聞ける]`
+
+- **Q1: S5 の確定値をどう決めるか。**
+  - planner の裁定: **(ii) ヘッドレスの計測で確定する。ただし帰無仮説 = 現行の既定表** (§2 S2 / §4.4)。
+  - 逆を選ぶと何が変わるか:
+    - (i) **ユーザーが実機で見た確定値を持っている** → sub-02 の測定 (§5 A10) は不要になり、
+      「値を焼く + golden 1 枚 + 文書」に縮む。**受け入れ条件 A9 / A13 / A14 は残す** (J ≠ 1 の観測と文書は
+      値の出所と無関係)。ユーザー値は計測に優先する。
+    - (iii) **minor 5 件だけ先に片付けて S5 は別途** → sub-02 を落として M67h は sub-01 の 1 コミットで完了。
+      S5 は「未着手」のまま次のマイルストーンへ積み直しになる。
+  - 併せて聞けると良いもの (Q1 に付随、回答は 1 行ずつ):
+    - **Q1-a: `spatial` の既定を on にするか。** M67 の U7 は「計測により off」で確定し、司会が完了報告で
+      ユーザーへ提示することになっていた (M67 台帳)。**回答が台帳に無い**ので、planner は現行 (off) 維持を裁定した。
+      on を選ぶなら `RtReflRestirParams::spatial = 1` の 1 行 + golden `demo_render_rtrefl_restir` の撮り直し。
+    - **Q1-b: `visRay` の既定を on にするか。** 裁定は off 維持 (§4.4 R3、コスト 2.7 倍)。
+      on を選ぶと GPU 時間が約 2.7 倍になり golden も動く。
+
+### リスク (coder が「不安・質問」で拾う)
+
+- **軸 B (追従率) が機能しない可能性。** 分母 (`ref` の連続フレーム差) がノイズに支配されると比が意味を失う。
+  → **健全性検査を本測定より先にやる** (A10)。取れなければ R1 は「維持」で閉じ、その旨を ADR に書く
+  (「測ろうとしたが指標が立たなかった」も正直な結論)。
+- **測定コスト。** WARP + RT の 42 フレーム run が 10 本以上必要になる (M67 の A6/A7 と同規模)。
+  1 本ずつ背景実行し、途中経過を実装メモに積む。想定より桁が違ったら planner へ相談する。
+- **`--rt-class-override` は「候補側のクラス」を全部 N にする** (M67 sub-05 の申し送り)。
+  受け側の半径に使うクラスも同じ N になるが、spatial off では半径が効かないので mCap の sweep として
+  読んでよい。読めない挙動が出たら報告する。
+- **サブメニューの折り畳みで既定値の出所が増えないこと。** Reset は `rp = RtReflRestirParams{}` のまま
+  (定数表が唯一の出所)。子メニュー化のついでに既定を UI 側へ書かない。
+- **`RtRestirEffective()` の置き場所。** `RenderSystem` は Engine 層、`EditorApp` は Editor 層なので
+  参照方向は問題ないが、`rtDebugMode` / `rtReflRestir` が public メンバのままなので「呼ばずに直接読む」
+  第 3 の経路が生まれうる。コメントで「実効状態はここ 1 本」と明記する。
+- **cooked cache**: §4.5 の確認で「`.mat.json` も cook される」と分かったら、`kCookVersion` の扱いを
+  planner へ上げる (勝手に bump しない — 全ユーザーの初回起動で焼き直しになる)。
+
+## 8. 変更履歴
+
+- 2026-09-08 (coder SELF_EVAL sub-01 round 1、OK): (a) **§5 A7 の「grep が 0 件」は planner の書き間違い**。
+  §4.3 が「外した理由を残せ」と要求しているので、旧名 `gRsFrameIndex` を挙げたコメントは必ず 1 件残る。
+  条件を「**宣言と読み書きが 0 件**。理由コメントは残してよい (旧名で検索して理由に辿り着ける方が価値が高い)」へ訂正。
+  coder の [逸脱] はこの誤りを突いたもので、実装は仕様の意図どおり。
+  (b) coder の [追加] 3 件を仕様として承認: selftest を §4.1 の表の**全行** (`null` / `[3]` / `{}` / `-0` /
+  `-0.0` / `3.0e10` を含む) へ拡張 (表が仕様そのものなので部分固定だと緩めたときに気付けない) /
+  `engine_spec.md:478` に「欠損は無言・落としたら警告 1 行」も明記 / 新規 2 ファイルのヘッダコメントを
+  既存 25 枚の流儀に合わせた。
+  (c) §4.5 の確認 2 件に回答が付いた: **`.mat.json` は cooked blob に入らない** (`ModelCookData::AddMaterial`
+  の呼び出しは `FbxLoader.cpp:400,523` / `ModelLoader.cpp:174` のモデル取り込み 3 か所だけ) = `kCookVersion`
+  の bump は不要。**`Material` はワールドハッシュに載らない** (`WorldHasher.cpp/.h` に material / GpuResources の
+  語が 0 件。載るのは `MeshRendererComponent` の `AssetID` 2 本) — planner が実物で再確認済み。
+  (d) `ProfilerWindow.cpp:147` (`10 || 11 || 12 || 14 || rtReflOn` = 反射レーンの計測行を出すか) と
+  `DeferredPath.cpp:1108` (`needRefl` = 反射パスを撃つか) を `RtRestirEffective()` に寄せない、という
+  coder の判断を**承認** — 実物を読んで別の述語であることを確認した (寄せると 10 / 11 が落ちて絵が変わる)。

@@ -1143,10 +1143,10 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
             // M46h: スペキュラ環境項をレイトレ反射で置換
             view.rtReflEnabled = enableRtRefl ? 1 : 0;
             // M67d: ReSTIR。デバッグ 12 (reservoir の M) / 14 (反射像側のクラス) は
-            // reservoir そのものを映すので、トグルが off でも強制的に立てる
-            // (RT 影のデバッグ 9 が enableRtShadow と独立に撃つのと同じ流儀)
-            view.rtReflRestir =
-                (rtReflRestir || rtDebugMode == 12 || rtDebugMode == 14) ? 1 : 0;
+            // reservoir そのものを映すので、トグルが off でも強制的に立てる。
+            // ★条件の出所は RtRestirEffective() 1 本 (M67h) — エディタのチューニング UI も
+            //   同じ関数で有効/無効を決める
+            view.rtReflRestir = RtRestirEffective() ? 1 : 0;
             view.rtReflRestirParams = rtReflRestirParams;
             // 合成は split-sum なので環境 BRDF LUT (t7) が要る。IBL は「スカイがある」
             // ことが条件だが LUT 自体はスカイに依らない純関数なので、スカイ無しの

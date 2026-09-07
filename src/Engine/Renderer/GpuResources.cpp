@@ -19,6 +19,7 @@
 #include "Engine/Core/Log.h"
 #include "Engine/Platform/PathUtil.h"
 #include "Engine/Renderer/GraphicsDevice.h"
+#include "Engine/Renderer/ReflectionClassJson.h" // .mat.json の reflectionClass 受理規則 (M67h)
 
 #include "stb/stb_image.h"
 
@@ -1015,16 +1016,10 @@ static void ParseMaterialJson(const nlohmann::json& root, TextureLibrary& textur
     // M46i: 自己発光。欠損 = 0 = 発光なしなので、既存の .mat.json は挙動不変
     m.emissiveIntensity = root.value("emissive", 0.0f);
     // M67: 反射に映るときの品質クラス。欠損 = 4 (中立) なので既存の .mat.json は挙動不変。
-    // ★value() ではなく型を明示的に見る — 非整数 (文字列・小数・真偽) を value() に食わせると
-    //   nlohmann が type_error を投げ、ここは try の外なのでマテリアル 1 枚で起動ごと落ちる。
-    // ★範囲外はクランプせず 4 に落とす (RtTypes.h の kRtReflClassDefault のコメント参照)
-    m.reflectionClass = kRtReflClassDefault;
-    if (root.contains("reflectionClass") && root["reflectionClass"].is_number_integer()) {
-        const int64_t cls = root["reflectionClass"].get<int64_t>();
-        if (cls >= 0 && cls < kRtReflClassCount) {
-            m.reflectionClass = static_cast<int32_t>(cls);
-        }
-    }
+    // ★受理規則は ReflectionClassJson.h の 1 本だけ — Inspector の LoadMaterialEdit も
+    //   同じ関数を呼ぶ (M67h)。2 か所に同じ if を書き直すと「Inspector に出る値」と
+    //   「描画に効く値」が静かに食い違う
+    m.reflectionClass = static_cast<int32_t>(ParseReflectionClassJson(root));
 
     // texture/normalMap のサブ参照 (M39a で GUID 化):
     //   数値 = GUID (assetguid::ResolvePath で現在パスへ解決 — リネーム/移動に追従)

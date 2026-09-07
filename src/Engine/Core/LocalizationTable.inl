@@ -175,6 +175,9 @@ MYE_STR(Restir_Spatial,       "Spatial reuse",         "空間再利用")
 MYE_STR(Restir_VisRay,        "Visibility ray",        "可視レイ")
 MYE_STR(Restir_ClassOverride, "Class override",        "クラス上書き")
 MYE_STR(Restir_ClassOff,      "Off (use material)",    "Off (マテリアルの値)")
+// M67h: クラス表 5 行 × 3 スライダは親メニューに並べると 1400x900 窓で下端が切れる
+// (Reset と GPU 時間が見えなくなる) ので、子メニューへ畳んだ。その子メニュー名
+MYE_STR(Restir_ClassTable,    "Class table",           "クラス表")
 MYE_STR(Restir_Radius,        "radius px###RsRadius",  "半径 px###RsRadius")
 MYE_STR(Restir_Taps,          "taps###RsTaps",         "タップ数###RsTaps")
 MYE_STR(Restir_MCap,          "M cap###RsMCap",        "M 上限###RsMCap")

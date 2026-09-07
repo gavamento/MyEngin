@@ -183,6 +183,7 @@
     <ClCompile Include="..\src\Engine\Renderer\PickingPass.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\PostProcess.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\RayTracing\RtPasses.cpp" />
+    <ClCompile Include="..\src\Engine\Renderer\ReflectionClassJson.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\RenderQueue.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\RenderSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\RenderTexture.cpp" />
@@ -380,6 +381,7 @@
     <ClInclude Include="..\src\Engine\Renderer\RayTracing\RtMath.h" />
     <ClInclude Include="..\src\Engine\Renderer\RayTracing\RtPasses.h" />
     <ClInclude Include="..\src\Engine\Renderer\RayTracing\RtTypes.h" />
+    <ClInclude Include="..\src\Engine\Renderer\ReflectionClassJson.h" />
     <ClInclude Include="..\src\Engine\Renderer\RenderPath.h" />
     <ClInclude Include="..\src\Engine\Renderer\RenderSelfTest.h" />
     <ClInclude Include="..\src\Engine\Renderer\RenderTexture.h" />

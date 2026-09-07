@@ -57,7 +57,10 @@ struct RtReflResult {
     ID3D11ShaderResourceView* raw = nullptr;      // 1spp そのまま
     ID3D11ShaderResourceView* filtered = nullptr; // デノイズ後 (off なら raw と同じ)
     // M67d: ReSTIR のデバッグ表示 (12 = M / 14 = 反射像側のクラス) が読む面。
-    // reservoir の組 A の rad (a = M) と nrm (rgb = ns, a = cls)。
+    // 実体は **今フレームの面** `slot.set[slot.write]` の rad (a = M) と nrm (rgb = ns, a = cls)
+    // = rt_refl がこのフレームに書いた reservoir。spatial は reservoir を書き戻さないので、
+    // 「今フレームの reservoir」はここ以外に存在しない (M67h: 組 A/B の呼び方は M67f で
+    // ping-pong を入れた時点で意味が変わっている — A = 前フレームに書いた面)。
     // **ReSTIR off なら null** — 消費側 (RenderDebug) は Blit が null で false を返すのに任せる
     ID3D11ShaderResourceView* reservoirM = nullptr;
     ID3D11ShaderResourceView* reservoirCls = nullptr;
@@ -194,8 +197,10 @@ private:
     // M67d: reservoir 5 枚 × 2 組を (必要になった時点で) 確保する。
     // サイズが変わったら hasLast を落とす。false = 確保に失敗 = ReSTIR を諦める
     bool EnsureReservoirs(GraphicsDevice& device, RtReservoirSlot& slot, int gw, int gh);
-    // M67d: ReSTIR の 2 パス目。B (t11-t15) を読み A (u1-u5) へ書き戻しつつ、
-    // 解決した反射放射輝度を reflRestirRt_ (u0) へ。false = 走らせられなかった
+    // M67d: ReSTIR の 2 パス目。rt_refl が今フレームに書いた面 (t11-t15) を読み、
+    // 解決した反射放射輝度を reflRestirRt_ (u0) へ。**reservoir は書き戻さない**
+    // (UAV は u0 の 1 本だけ) — 書き戻すと近傍の候補が伝播して Prop が 40 フレームで
+    // 画面の 94% を占拠する (M67f 実測、ADR-016)。false = 走らせられなかった
     bool RenderRestirSpatial(GraphicsDevice& device, ShaderManager& shaders, const RenderView& view,
                              const RtFrameInputs& in, RtReservoirSlot& slot, int gw, int gh);
 

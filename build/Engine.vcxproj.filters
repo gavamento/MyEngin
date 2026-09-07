@@ -540,6 +540,9 @@
     <ClCompile Include="..\src\Engine\Renderer\RayTracing\RtPasses.cpp">
       <Filter>Renderer\RayTracing</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Renderer\ReflectionClassJson.cpp">
+      <Filter>Renderer</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Renderer\RenderQueue.cpp">
       <Filter>Renderer</Filter>
     </ClCompile>
@@ -1130,6 +1133,9 @@
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\RayTracing\RtTypes.h">
       <Filter>Renderer\RayTracing</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\ReflectionClassJson.h">
+      <Filter>Renderer</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\RenderPath.h">
       <Filter>Renderer</Filter>

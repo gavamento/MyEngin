@@ -323,24 +323,36 @@ bool RunAssetOpsSelfTest()
               "preview: missing keys fall back to the same defaults as LoadFromFile");
         // M67: 反射クラスは**クランプせず**中立 (4) へ落とす。-1 が 0 (Hero) に丸まると
         // 打ち間違いが「最も重いクラス」に化けて静かにコストだけ増える。
-        // 非整数 (文字列 / 小数 / 真偽) も 4 — value() に食わせると type_error が
-        // ParseMaterialJson の外まで飛んでマテリアル 1 枚で起動ごと落ちるため型で弾いている
+        // 数値でない型 (文字列 / 真偽 / null / 配列) と小数部を持つ値も 4 —
+        // value() に食わせると type_error が ParseMaterialJson の外まで飛んで
+        // マテリアル 1 枚で起動ごと落ちるので、受理規則の側で型を見て弾いている。
+        // ★M67h: 「非整数」は **JSON の型ではなく値**で判定する = `3.0` は 3 として受ける。
+        //   型で弾いていた M67 は jq / Python / 手編集が書いた `3.0` を黙って 4 に落として
+        //   いた (静かなデータ損失。review-1 minor 5)。
+        //   受理規則は ReflectionClassJson.h の 1 本で、Inspector の LoadMaterialEdit も
+        //   同じ関数を呼ぶ — あちらは private でヘッドレスから叩けないので、
+        //   **この検査が Inspector 側の唯一の機械的な担保**になる (spec §4.1)
         {
             Material oor;
             const char* neg = R"({"reflectionClass":-1})";
             const char* big = R"({"reflectionClass":9})";
             const char* str = R"({"reflectionClass":"Hero"})";
             const char* flt = R"({"reflectionClass":1.5})";
+            const char* boolean = R"({"reflectionClass":true})";
+            const char* null = R"({"reflectionClass":null})";
+            const char* arr = R"({"reflectionClass":[3]})";
+            const char* obj = R"({"reflectionClass":{}})";
+            const char* huge = R"({"reflectionClass":3.0e10})";
             bool allDefault = true;
-            for (const char* t : { neg, big, str, flt }) {
+            for (const char* t : { neg, big, str, flt, boolean, null, arr, obj, huge }) {
                 oor = Material{};
                 allDefault = allDefault && MaterialLibrary::MaterialFromJsonText(
                                                t, res.textures, L"", oor)
                              && oor.reflectionClass == kRtReflClassDefault;
             }
             check(allDefault,
-                  "material: out-of-range / non-integer reflectionClass falls back to 4 "
-                  "(no clamping, no throw)");
+                  "material: out-of-range / fractional / non-numeric reflectionClass falls back "
+                  "to 4 (no clamping, no throw)");
             Material edge;
             check(MaterialLibrary::MaterialFromJsonText(R"({"reflectionClass":0})", res.textures,
                                                         L"", edge)
@@ -349,6 +361,23 @@ bool RunAssetOpsSelfTest()
                              R"({"reflectionClass":4})", res.textures, L"", edge)
                       && edge.reflectionClass == kRtReflClassDefault,
                   "material: reflectionClass accepts both ends of the valid range (0 and 4)");
+            // M67h: 整数値を float で書いたもの。`3.0` / `4.0` / `-0.0` はすべて整数値なので
+            // 受ける (0 は Hero = 最も重いクラスなので、`-0.0` が中立へ落ちない側に
+            // 転ぶことも固定しておく)
+            Material fp;
+            check(MaterialLibrary::MaterialFromJsonText(R"({"reflectionClass":3.0})",
+                                                        res.textures, L"", fp)
+                      && fp.reflectionClass == kRtReflClassProp
+                      && MaterialLibrary::MaterialFromJsonText(R"({"reflectionClass":4.0})",
+                                                               res.textures, L"", fp)
+                      && fp.reflectionClass == kRtReflClassDefault
+                      && MaterialLibrary::MaterialFromJsonText(R"({"reflectionClass":-0.0})",
+                                                               res.textures, L"", fp)
+                      && fp.reflectionClass == kRtReflClassHero
+                      && MaterialLibrary::MaterialFromJsonText(R"({"reflectionClass":-0})",
+                                                               res.textures, L"", fp)
+                      && fp.reflectionClass == kRtReflClassHero,
+                  "material: reflectionClass judges 'non-integer' by value, so 3.0 reads as 3");
         }
         // M67: Create > Material の雛形にキーが載っていること。欠損でも 4 になるので
         // 「書き忘れても動く」= 静かに抜けやすい。雛形 → パースの往復で機械固定する

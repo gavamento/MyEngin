@@ -161,7 +161,13 @@ struct RtRestirCB {
     int32_t histValid = 0;
     int32_t useVelocity = 0;
     int32_t classOverride = -1;
-    uint32_t frameIndex = 0;
+    // M67h: 旧 frameIndex の枠。**フレーム番号は ReSTIR には二度と混ぜない** —
+    // M67f でタップ回転のフレーム項を外した (回すと候補集合が毎フレーム入れ替わり、
+    // 乗り換えがそのままフリッカーになる = 実測 2 倍: 1.21 → 0.61)。名前だけ pad にして
+    // 理由を書かないと次の人が同じ理由で足し直すので、ここに残す。
+    // 混ぜたくなったら先に RtTypes.h の kRtRestirTapSeed のコメントを読むこと。
+    // 枠を潰さず残しているのは 240 B / offsetof(classTable) == 160 を動かさないため
+    uint32_t pad1 = 0;
     float depthThreshold = kRtTemporalDepthThreshold;
     float normalThreshold = kRtTemporalNormalThreshold;
     float jacobianMax = kRtRestirJacobianMax;
@@ -783,7 +789,8 @@ RtReflResult RtPasses::RenderReflection(GraphicsDevice& device, ShaderManager& s
     // M55f と同じ条件 — velocity が全画素 0 のフレームを「動いていない」と読まない
     rs.useVelocity = (in.gbVelocity != nullptr && rsHistValid) ? 1 : 0;
     rs.classOverride = view.rtReflRestirParams.classOverride;
-    rs.frameIndex = view.rtFrameIndex;
+    // (M67h: 旧 rs.frameIndex への代入はここにあった。読み手がいないので落とした —
+    //  RtRestirCB の pad1 のコメントに理由がある)
     rs.depthThreshold = kRtTemporalDepthThreshold;
     rs.normalThreshold = kRtTemporalNormalThreshold;
     rs.jacobianMax = kRtRestirJacobianMax;

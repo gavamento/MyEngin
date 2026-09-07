@@ -31,7 +31,12 @@ cbuffer RtRestirCB : register(b3)
     int gRsHistValid;      // 0 = 前フレームの reservoir が無い (初回 / リサイズ / 不連続)
     int gRsUseVelocity;    // 1 = 履歴 UV を GBuffer RT4 (画面速度) から作る (M67e)
     int gRsClassOverride;  // -1 = off (M67f)
-    uint gRsFrameIndex;    // タップ回転の乱数列 (シード凍結中は 0 固定)
+    // M67h: 旧 gRsFrameIndex の枠。**フレーム番号は ReSTIR には二度と混ぜない** —
+    // M67f でタップ回転のフレーム項を外した (回すと候補集合が毎フレーム入れ替わり、
+    // 乗り換えがそのままフリッカーになる = 実測 2 倍)。理由の本文は
+    // rt_restir_common.hlsli の MYE_RT_RESTIR_TAP_SEED / C++ の kRtRestirTapSeed。
+    // 枠を残しているのは C++ の 240 B / gRsClass の offsetof 160 を動かさないため
+    uint gRsPad1;
     float gRsDepthThreshold;  // 再投影の妥当性 (kRtTemporal* の流用)
     float gRsNormalThreshold;
     float gRsJacobianMax;  // これと逆数の外の J は候補ごと棄却 (kRtRestirJacobianMax)
@@ -39,7 +44,10 @@ cbuffer RtRestirCB : register(b3)
     // ★明示パディング。float4 配列は 16 バイト境界からしか始まらないので、ここを
     //   省くと C++ 側の offsetof と HLSL の実配置が 12 バイトずれて表が丸ごと化ける
     float3 gRsPad0;
-    // クラス別の再利用パラメータ (x = 半径 px / y = タップ数 / z = M 上限 / w = 予備)
+    // クラス別の再利用パラメータ (x = 半径 px / y = タップ数 / z = M 上限 / w = 予備)。
+    // ★ここは C++ の offsetof(RtRestirCB, classTable) == 160 と一致している
+    //   (RtPasses.cpp の static_assert が門番)。**前に float を足すときは両方**直すこと —
+    //   片方だけ動かすと表が丸ごとずれ、絵は出るが再利用パラメータが全部でたらめになる
     float4 gRsClass[MYE_RT_REFL_CLASS_COUNT];
 };
 
