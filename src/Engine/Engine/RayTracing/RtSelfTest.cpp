@@ -1177,6 +1177,19 @@ void TestRestir()
                    && hero.mCap < prop.mCap);
         TEST_CHECK(kRtReflClassTable[kRtReflClassCharacter].mCap
                    < kRtReflClassTable[kRtReflClassVehicle].mCap);
+        // ★M67h: **Hero の mCap は全クラス中の最小でなければならない** (等号は許す)。
+        //   Hero < Prop だけでは足りない — M67h でユーザー判断により Hero を 8 → 16 へ上げた
+        //   結果、**Hero == Character == Default (16) = 意味論の境界ちょうど**まで来ている。
+        //   ここから Hero を 24 にすると「主役が中立 (Default 16) より積極的に再利用する」=
+        //   このクラス表の存在理由と真逆の設定になるが、上の 2 本は 24 < 32 で通ってしまう。
+        //   spatial が既定 off の間はクラスが選ぶのが mCap だけなので、絵でも気付けない
+        bool heroIsMinCap = true;
+        for (int i = 0; i < kRtReflClassCount; ++i) {
+            if (i != kRtReflClassHero && kRtReflClassTable[i].mCap < hero.mCap) {
+                heroIsMinCap = false;
+            }
+        }
+        TEST_CHECK(heroIsMinCap);
 
         // 実行時パラメータの既定 = 定数表 + M46h の SVGF 設定そのもの
         const RtReflRestirParams def;
@@ -1189,6 +1202,12 @@ void TestRestir()
             }
         }
         TEST_CHECK(tableOk);
+        // ★M67h (S5): 表の 4 行と下の 2 行は「測ったうえで据え置いた」値
+        //   (Hero の mCap だけユーザー判断で 8 → 16。根拠は RtTypes.h のコメントと ADR-016)。
+        //   mCap を上げればフリッカーは必ず減るので片側の軸だけ見て平坦化したくなるが、
+        //   そのとき動く反射像の追従が落ちることは実測済み (ADR-016「S5 の結論」)。
+        //   svgfHistory 8→4 も規則上は候補になったが、判定に使う軸が
+        //   `--rt-no-temporal` で丸ごと止まる段のパラメータで**ビット不感**だったため見送った
         TEST_CHECK(def.svgfHistory == kRtReflMaxHistory);
         TEST_CHECK(def.atrousIterations == kRtReflAtrousIterations);
         // ★spatial の既定は **0** (sub-06 round 2 の計測で決めた。spec §7 U7) —

@@ -507,6 +507,23 @@ rejected alternatives and measured cost: **ADR-016**.
   α reference for the radius, SVGF history / A-Trous count, the visibility-ray toggle and a
   global class override, plus *Reset to defaults*. The single source of the defaults stays
   `RtTypes.h`. `--rt-class-override N` does the same forcing from the command line
+- **The default table was measured, not guessed (M67h).** The rule was fixed *before* the
+  measurement — raise a class's `mCap` only if flicker improves by 20% or more **and** the
+  tracking ratio on a moving reflection drops by less than 0.05 — and **no row met both**.
+  Four rows therefore stand as they were; **`Hero`'s `M` cap was raised 8 → 16 by an explicit
+  user decision that overrode the rule** (2026-09-08), trading a 35.5–38.9% flicker improvement
+  on the moving reflection for a lag increase that **neither metric could resolve** (+0.042 to
+  +0.083 by the rule's metric, 0.010 by a motion-isolated control). The rejected numbers are
+  kept in ADR-016 so the change can be reverted on evidence. One golden moved
+  (`demo_render_rtrefl_restir`, maxDiff 5 over 233 pixels, 99.6% of them within the denoiser's
+  footprint around the pixels whose reservoir holds a `Hero` sample). Two consequences worth
+  knowing: `Hero` (16) now equals `Character` and `Default`, and since the class only selects
+  `mCap` while spatial reuse is off, **those three behave identically in the shipping config**;
+  and `RtSelfTest` now pins `hero.mCap <= every other class` so raising `Hero` again cannot
+  silently invert the table's meaning. The same runs closed M67's one open observation (the
+  `J != 1` temporal path: on the rotating body's own surface `M` reaches its candidate class's
+  cap, with zero isolated bright pixels) and showed the tracking metric is noise-confounded —
+  numbers, regions and what stays unverified are in ADR-016 ("S5 の結論")
 - **Known v1 limits**: no visibility ray by default (light leaks through occluders), no MIS
   weights (the estimator is biased by design), and the skinned-mesh limitation above bites
   hardest here — **a skinned protagonist is absent from the BVH and therefore never appears in
@@ -1928,7 +1945,7 @@ Eliminate cases in which the engine works in Debug but fails in Release, or vice
   be rebuilt from (origin cell, ring, amplitude) alone after a restore. The fold is
   **content-gated** — with no active wave the section is not folded at all, which is why adding
   the field left every replay pair and golden image that predates it bit-identical (seven pairs
-  and twenty-two images today)
+  and twenty-four images today)
 - The test can run in CI through a command-line invocation such as `Editor.exe --replay-verify xxx.rep`
 - `tools\replay_verify.bat` runs **seven scene pairs**, each rebuilt from code before recording:
   the default demo (scripts, physics, particles, schema fields), the parts showcase
@@ -1997,10 +2014,10 @@ a GPU-less runner an acceptable place to prove determinism. Golden screenshots, 
 *are* driver-dependent and are therefore always captured with `--warp`.
 
 **Screenshot regression (M52c).** Hashes prove that the *simulation* is reproducible; they say
-nothing about what is drawn. `tools\shot_verify.bat` captures 22 deterministic screenshots with
+nothing about what is drawn. `tools\shot_verify.bat` captures 24 deterministic screenshots with
 `Runtime.exe` (no ImGui, so neither `imgui.ini` nor the cursor position can leak in) and compares
 them against `tests\golden\*.png` pixel by pixel, writing a difference heat map next to any shot
-that moved. `--update` re-records the golden set. Twelve of the 22 gate CI; the other ten
+that moved. `--update` re-records the golden set. Fourteen of the 24 gate CI; the other ten
 exist only to cover FXAA, TAA, SSR, froxel volumetrics, the fog showcase, the two particle
 backends and the three RT lane shots -- all ten compared
 at `--tol 0` and all ten skipped on the runner (`MYE_SHOT_SKIP_FXAA` / `_TAA` / `_SSR` /
@@ -2009,9 +2026,9 @@ pass that **branches discretely**, so a 1-ULP difference flips the branch and th
 pixels a long way: FXAA was measured at maxDiff 35 (M52c) and SSR at maxDiff 95 over just 30
 pixels (M56d). No tolerance can cover that shape -- a genuine regression looks the same -- so the
 runner does not shoot them at all and only bit-identity on the dev machine is claimed. One of the
-twelve, `demo_terrain_deferred`, gates CI at `--tol 12` rather than 3: **anisotropic filtering is
+fourteen, `demo_terrain_deferred`, gates CI at `--tol 12` rather than 3: **anisotropic filtering is
 implementation-defined** and the two WARP builds disagree by up to 8 levels on terrain viewed at
-grazing angles (four splat layers x albedo+normal, amplified by the derivative-based TBN). Two of the twelve
+grazing angles (four splat layers x albedo+normal, amplified by the derivative-based TBN). Two of the fourteen
 (`demo_render_forward` / `demo_render_deferred`, M54a) shoot the `--render-demo` showcase, which
 is the only golden scene carrying spot and point lights -- without it every feature added by the
 M54-M58 rendering roadmap would be pixel-invariant by default and land with zero coverage.
@@ -2044,7 +2061,7 @@ two draw paths had **no pixel coverage whatsoever**: the GPU particle backend (u
 the command line until `--particle-backend` existed) and `VfxRenderer`'s Sprite / Trail / TextMesh
 (not present in any demo scene or committed scene file -- the text in `flow_title` and `ui_probe`
 is screen-space `UIElement`, a different renderer). Either could break and all fourteen other
-shots would stay green. Folding the subjects into an existing scene was not an option: only
+shots that existed then would stay green. Folding the subjects into an existing scene was not an option: only
 `--render-demo` carries a `FogComponent` and it has no emitter, only the default demo has an
 emitter and it has no fog, so extending either would have re-recorded goldens shared with other
 branches. The scene puts the same pillar at 10/25/45/70 m so the hand-off at the grid's 64 m edge
