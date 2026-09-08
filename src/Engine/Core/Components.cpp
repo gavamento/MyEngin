@@ -81,6 +81,7 @@ void RegisterBuiltinComponents()
         MYE_JP("スポット内角 (度)", MYE_FIELD(LightComponent, spotInnerDeg, Float)),
         MYE_JP("スポット外角 (度)", MYE_FIELD(LightComponent, spotOuterDeg, Float)),
         MYE_JP("影を落とす", MYE_FIELD(LightComponent, castShadow, Int32)), // M54b (点/スポット用)
+        MYE_JP("安全半径", MYE_FIELD(LightComponent, safeRadius, Float)),
     });
 
     RegisterComponent<FileIdComponent>("FileId", {

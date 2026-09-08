@@ -334,7 +334,7 @@ void RunOneTick(TickServices& ts)
         //   ・物理より前 = 書いた moveInput が同じ tick で歩数になる
         // AgentBrain が 0 個なら最初の走査で return する (乱数も 1 draw も引かない)
         if (ts.agentSystem != nullptr) {
-            ts.agentSystem->Update(scene.GetWorld(), *ts.acoustic, ctx.tickIndex);
+            ts.agentSystem->Update(scene.GetWorld(), *ts.acoustic, ctx.tickIndex, ctx.fixedDt);
         }
         // ★M65d: 残光の減衰。**sim 相の中で描画レーンのデータを触る唯一の場所**だが、
         //   DecayVisual は sim 状態 (波スロット表) を 1 バイトも読まないし書かない。

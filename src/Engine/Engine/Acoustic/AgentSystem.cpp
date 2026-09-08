@@ -34,6 +34,7 @@ struct LightSample {
     EntityID entity = kNullEntity;
     float x = 0.0f, y = 0.0f, z = 0.0f;
     float intensity = 0.0f;
+    float safeRadius = 0.0f;
 };
 
 // 巡回の再目標づけ間隔と半径。**AgentBrain のフィールドにしていない**のは、
@@ -51,7 +52,7 @@ float Dist2(float ax, float ay, float az, float bx, float by, float bz)
 
 } // namespace
 
-void AgentSystem::Update(World& world, AcousticField& field, uint64_t tick)
+void AgentSystem::Update(World& world, AcousticField& field, uint64_t tick, float dt)
 {
     lastAgents_ = 0;
 
@@ -108,11 +109,7 @@ void AgentSystem::Update(World& world, AcousticField& field, uint64_t tick)
     // ---- 光センサーの入力を 1 回だけ集める (entity.index 昇順) ----
     std::vector<LightSample> lights;
     {
-        bool anyEye = false;
-        for (const Agent& a : agents) {
-            anyEye = anyEye || (a.eye != nullptr);
-        }
-        if (anyEye) {
+        {
             const ComponentTypeId req[] = { LightComponent::sTypeId,
                                             WorldMatrixComponent::sTypeId };
             world.ForEachArchetype(req, [&](Archetype& arch) {
@@ -136,6 +133,7 @@ void AgentSystem::Update(World& world, AcousticField& field, uint64_t tick)
                     s.y = wm.m[3][1];
                     s.z = wm.m[3][2];
                     s.intensity = lc->intensity;
+                    s.safeRadius = lc->intensity > 0.0f ? lc->safeRadius : 0.0f;
                     lights.push_back(s);
                 }
             });
@@ -147,9 +145,30 @@ void AgentSystem::Update(World& world, AcousticField& field, uint64_t tick)
     }
 
     Pcg32& rng = world.Rng();
+    for (const LightSample& light : lights) {
+        nav_.ExcludeCircle(light.x, light.z, light.safeRadius);
+    }
 
+    size_t agentOrdinal = 0;
     for (Agent& a : agents) {
         AgentBrainComponent& b = *a.brain;
+        const size_t slot = agentOrdinal++ % 8;
+        auto lightTarget = [&]() {
+            auto target = a.eye->nearestPos;
+            for (const LightSample& light : lights) {
+                if (light.entity == a.eye->nearestLight && light.safeRadius > 0.0f) {
+                    constexpr float dirs[8][2] = { {1,0}, {0.70710678f,0.70710678f},
+                        {0,1}, {-0.70710678f,0.70710678f}, {-1,0},
+                        {-0.70710678f,-0.70710678f}, {0,-1}, {0.70710678f,-0.70710678f} };
+                    const float radius = light.safeRadius + 2.0f * nav_.Grid().cellSize;
+                    target.x += dirs[slot][0] * radius;
+                    target.z += dirs[slot][1] * radius;
+                    target.y = a.y;
+                    break;
+                }
+            }
+            return target;
+        };
 
         // 初回だけ現在地を home に焼く。★フラグを足さずに済ませるため
         //   「home が厳密に原点なら未設定」と決めている (デモは明示的に入れている)
@@ -206,7 +225,7 @@ void AgentSystem::Update(World& world, AcousticField& field, uint64_t tick)
                 b.state = kAgentAlert; // 何か聞こえた → まず**止まって黙る**
             } else if (lightVisible) {
                 b.state = kAgentChase;
-                b.target = a.eye->nearestPos;
+                b.target = lightTarget();
             } else if (b.state == kAgentReturn) {
                 const int fi = nav_.BuildFlowField(b.home.x, b.home.y, b.home.z);
                 if (fi >= 0 && nav_.ReachedTarget(fi, a.x, a.y, a.z)) {
@@ -236,7 +255,7 @@ void AgentSystem::Update(World& world, AcousticField& field, uint64_t tick)
             if (heardNow) {
                 b.target = a.ear->lastHeardPos; // 追いながら更新
             } else if (lightVisible && !soundFresh) {
-                b.target = a.eye->nearestPos;
+                b.target = lightTarget();
             } else if (!soundFresh && !lightVisible) {
                 b.state = kAgentSearch; // 手がかりが切れた
             }
@@ -284,6 +303,37 @@ void AgentSystem::Update(World& world, AcousticField& field, uint64_t tick)
         // ★moveInput は「水平 m/s・保持」なので毎 tick 上書きする。
         //   同じエンティティにスクリプトが付いていると AI が勝つ (フェーズ 3.4 は
         //   スクリプト層の後) — 仕様として AgentSystem.h に明記してある
+        // 設置完了時に範囲内に居た敵は外へ退避する。外側からは1tickの線分全体を検査。
+        // 壁との衝突は通常の CharacterController が処理する。
+        for (const LightSample& light : lights) {
+            if (light.safeRadius <= 0.0f) {
+                continue;
+            }
+            const float ox = a.x - light.x, oz = a.z - light.z;
+            const float d2 = ox * ox + oz * oz;
+            const float r2 = light.safeRadius * light.safeRadius;
+            if (d2 < r2) {
+                const float d = std::sqrt(d2);
+                vx = d > 0.0001f ? ox / d * b.runSpeed : b.runSpeed;
+                vz = d > 0.0001f ? oz / d * b.runSpeed : 0.0f;
+            }
+        }
+        for (const LightSample& light : lights) {
+            if (light.safeRadius <= 0.0f) {
+                continue;
+            }
+            const float ox = a.x - light.x, oz = a.z - light.z;
+            const float sx = vx * dt, sz = vz * dt;
+            const float len2 = sx * sx + sz * sz;
+            const float r2 = light.safeRadius * light.safeRadius;
+            if (ox * ox + oz * oz >= r2 && len2 > 0.0f) {
+                const float t = std::clamp(-(ox * sx + oz * sz) / len2, 0.0f, 1.0f);
+                const float dx = ox + t * sx, dz = oz + t * sz;
+                if (dx * dx + dz * dz < r2) {
+                    vx = vz = 0.0f;
+                }
+            }
+        }
         a.cc->moveInput = { vx, 0.0f, vz };
 
         // ---- 自分の音 ----

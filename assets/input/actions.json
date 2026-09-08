@@ -1,5 +1,8 @@
 {
   "actions": [
+    { "name": "WatcherRun", "keys": ["Shift"], "pad": ["LB"], "mouse": [] },
+    { "name": "WatcherCrouch", "keys": ["Ctrl"], "pad": ["B"], "mouse": [] },
+    { "name": "WatcherLight", "keys": ["F"], "pad": ["X"], "mouse": [] },
     { "name": "Jump", "keys": ["Space"], "pad": ["A"], "mouse": [] },
     { "name": "Fire", "keys": ["J"], "pad": ["RB"], "mouse": ["Left"] },
     { "name": "Pause", "keys": ["Escape"], "pad": ["Start"], "mouse": [] },
@@ -10,6 +13,8 @@
     { "name": "UINavSubmit", "keys": ["Enter", "Space"], "pad": ["A"], "mouse": [] }
   ],
   "axes": [
+    { "name": "WatcherLookX", "padAxis": "RX", "deadzone": 0.24 },
+    { "name": "WatcherLookY", "padAxis": "RY", "deadzone": 0.24 },
     { "name": "MoveX", "posKey": "D", "negKey": "A", "padAxis": "LX", "deadzone": 0.24 },
     { "name": "MoveY", "posKey": "W", "negKey": "S", "padAxis": "LY", "deadzone": 0.24 }
   ]

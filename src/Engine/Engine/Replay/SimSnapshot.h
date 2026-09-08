@@ -92,7 +92,8 @@ struct SimRefs {
 // v13 (M70c): Scene 節に UI の対話状態 (hovered / pressed / clicked / focused =
 //            EntityID x 4) が入った。TimeControl と同じ「Scene が持つ sim 状態」で、
 //            巻き戻したときに押下中の要素まで戻らないと再シムが割れる
-inline constexpr uint32_t kSimSnapshotVersion = 13;
+// v14: Light.safeRadius の追加で World 節のカラム生バイトが変化する。
+inline constexpr uint32_t kSimSnapshotVersion = 14;
 
 // 撮る: out を clear して blob を書く。成功で true。
 // 節ごとの参照が null なら「空の節」を書くのでレイアウトは常に同じ

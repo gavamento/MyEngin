@@ -11,12 +11,12 @@
 //   (M64a の ABI に実走の被覆が付くのはここが初めて)。
 // ★呼吸 (企画 3-3) もここ。止まっているあいだだけ極小の波を出す — 「完全な無音には
 //   なれない」が企画の主張で、同時に**暗闇で自分の足元だけは見える**ことの実装でもある。
+#include <cmath>
+
 #include "Shared/ScriptAPI.h"
 
 namespace {
 // <Windows.h> を引き込まないため VK コードを直接定義 (PlayerController.cpp と同じ流儀)
-constexpr uint8_t kVkShift = 0x10;
-constexpr uint8_t kVkControl = 0x11;
 constexpr uint8_t kVkV = 0x56; // 一人称 / 俯瞰の切り替え
 
 // ★**sin / cos を CRT から取らない**。`Physics\AeroSampling.cpp` の注記が正本で、
@@ -32,6 +32,7 @@ constexpr float kDeg2Rad = kMyeDeg2Rad;
 // **毎 tick 取り直さない** (WavePinger と同じ流儀)
 const uint64_t kCompEmitter = MyeNameHash("AcousticEmitter");
 const uint64_t kFieldStride = MyeNameHash("stepDistanceM");
+const uint64_t kFieldGain = MyeNameHash("footstepGain");
 const uint64_t kFieldLoudness = MyeNameHash("pendingLoudness");
 const uint64_t kFieldRadius = MyeNameHash("pendingRadiusM");
 const uint64_t kFieldTone = MyeNameHash("pendingTone");
@@ -51,6 +52,7 @@ constexpr float kBreathRadiusM = 3.0f; // 10m 先の耳 (閾値 0.0015) には�
 //   映り込んだ (probe のスクショで発見) — 縦画角の半分 30 度に対し、0.275m 横の天面が
 //   0.15m 下では 29 度にしかならないため。1.10 なら 42 度で画角の外へ落ちる
 constexpr float kEyeHeight = 1.10f;
+constexpr float kPadLookDegPerSecond = 120.0f;
 } // namespace
 
 struct WatcherFpsCamera : Script<WatcherFpsCamera> {
@@ -63,9 +65,8 @@ struct WatcherFpsCamera : Script<WatcherFpsCamera> {
     float pitchDeg = 0.0f;
 
     // ---- 移動 (企画 3-2: 速度がそのまま危険度になる) ----
-    // ★**歩幅**で速度差を表す。音の大きさそのものは床材が決める (企画 3-4 = M65c) ので、
-    //   走ると「同じ大きさの波がより短い間隔で出る」形になる。振幅まで速度で変えるには
-    //   エミッタ側に係数フィールドが要る = エンジンの変更なので v1 の境界の外
+    // 歩幅で発音間隔を変え、footstepGain で床材由来の振幅と到達距離を変える。
+    // スティック量も係数へ反映するため、小さく倒すほど静かに移動できる。
     float walkSpeed = 2.2f;
     float runSpeed = 4.4f;
     float crouchSpeed = 1.0f;
@@ -89,6 +90,8 @@ struct WatcherFpsCamera : Script<WatcherFpsCamera> {
         api->GetMouseDelta(api->engine, &dx, &dy);
         yawDeg += static_cast<float>(dx) * lookSensDeg;
         pitchDeg += static_cast<float>(dy) * lookSensDeg; // 下向きが正 (画面座標と同じ)
+        yawDeg += MyeAxis(ctx, "WatcherLookX") * kPadLookDegPerSecond * ctx.dt;
+        pitchDeg -= MyeAxis(ctx, "WatcherLookY") * kPadLookDegPerSecond * ctx.dt;
         // 折り返しは 1 回で足りる (1 tick の回転量が 360 度を超えることはない)
         if (yawDeg > 180.0f) {
             yawDeg -= 360.0f;
@@ -115,12 +118,21 @@ struct WatcherFpsCamera : Script<WatcherFpsCamera> {
         //   スクリプトは**この回転から前方を導く** (角度を持つのはここ 1 箇所)
 
         // ---- 移動 ----
-        const bool run = api->KeyDown(api->engine, kVkShift) != 0;
-        const bool crouch = api->KeyDown(api->engine, kVkControl) != 0;
+        const bool run = MyeActionHeld(ctx, "WatcherRun");
+        const bool crouch = MyeActionHeld(ctx, "WatcherCrouch");
         const float speed = crouch ? crouchSpeed : (run ? runSpeed : walkSpeed);
         const float stride = crouch ? kCrouchStrideM : (run ? kRunStrideM : kWalkStrideM);
-        const float ax = MyeAxis(ctx, "MoveX");
-        const float ay = MyeAxis(ctx, "MoveY");
+        float ax = MyeAxis(ctx, "MoveX");
+        float ay = MyeAxis(ctx, "MoveY");
+        const float inputLength = std::sqrt(ax * ax + ay * ay);
+        if (inputLength > 1.0f) {
+            ax /= inputLength;
+            ay /= inputLength;
+        }
+        // 小さいスティック入力を単位長へ拡大しない。係数は振幅と距離の両方に効く。
+        const float inputAmount = inputLength > 1.0f ? 1.0f : inputLength;
+        const float gaitGain = crouch ? 0.4f : (run ? 1.6f : 1.0f);
+        const float gain = gaitGain * (0.2f + 0.8f * inputAmount);
         // yaw だけで水平面へ落とす (見上げても前進速度が落ちないようにする)
         const float fwdX = MyeSinRad(yawDeg * kDeg2Rad), fwdZ = MyeCosRad(yawDeg * kDeg2Rad);
         const float vx = (fwdZ * ax + fwdX * ay) * speed;
@@ -130,6 +142,7 @@ struct WatcherFpsCamera : Script<WatcherFpsCamera> {
             api->CharacterJump(api->engine, ctx.self, kJumpSpeed);
         }
         MyeSetField(ctx, ctx.self, kCompEmitter, kFieldStride, stride);
+        MyeSetField(ctx, ctx.self, kCompEmitter, kFieldGain, gain);
 
         // ---- 呼吸 (企画 3-3) ----
         // ★止まっているあいだ**だけ**数える。歩いていれば足音が出るので、両方鳴らすと

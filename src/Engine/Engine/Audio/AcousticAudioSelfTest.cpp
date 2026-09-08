@@ -125,7 +125,8 @@ bool RunAcousticAudioSelfTest()
         //   で 11 -> 13 へ動いた。
         //   この検査が守っているのは「AcousticAudio を足したせいで版が動いていないこと」で、
         //   別の理由で上がった版に追随するのは正しい (>= にすると主張が消えるので値で書く)
-        check(kSimSnapshotVersion == 13, "T1: kSimSnapshotVersion is not bumped by AcousticAudio");
+        // Light.safeRadius の生バイト追加で13 -> 14。AcousticAudio自身の変更ではない。
+        check(kSimSnapshotVersion == 14, "T1: kSimSnapshotVersion is not bumped by AcousticAudio");
     }
 
     // ---- (T2) 同一原点なら波の場と probe が**ビット一致**する ----

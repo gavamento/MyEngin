@@ -31,10 +31,8 @@ class AcousticField;
 //   重いときは**解像度を落とす方向にしか逃げない** (navCellRatio 2 -> 4)。
 class AcousticNav {
 public:
-    // 1 tick に張れる流れ場の本数。目標が同じ敵は 1 本を共有する (セルで dedupe)。
-    // 超えた敵は「場が無い」= その tick は動かない — **先着で決まるのは
-    // entity.index 昇順の走査順なので決定論**
-    static constexpr int kMaxFields = 4;
+    // 同じ目標セルの要求は共有する。異なる目標はすべて同期的に処理し、
+    // 要求順や過去の予算消費によって後続の敵を停止させない。
 
     // 粗グリッドを組み直す (形か占有の署名が変わったときだけ焼き直す)。
     // field にボリュームが無ければ空にして戻る
@@ -43,9 +41,11 @@ public:
     // その tick に張った流れ場を全部捨てる。**毎 tick の先頭で必ず呼ぶこと** —
     // これを呼び忘れた瞬間にキャッシュが生まれ、上の判断が崩れる
     void BeginTick();
+    // tick 限定の通行禁止円。場を構築する前に登録する (音響の占有は変更しない)。
+    void ExcludeCircle(float x, float z, float radius);
 
     // 目標のワールド座標から流れ場を 1 本張る。同じ粗セルを指す要求は同じ場を返す。
-    // 戻り値: 場の index / 張れなければ -1 (グリッド外・目標が閉セル・本数超過)
+    // 戻り値: 場の index / 張れなければ -1 (グリッド外・開セルへ寄せられない目標)
     int BuildFlowField(float wx, float wy, float wz);
 
     // 場 index と現在位置から進む向き (水平、単位ベクトル) を得る。
@@ -75,6 +75,7 @@ private:
 
     AcousticGridDesc nav_;            // 粗グリッド (導出値)
     std::vector<uint8_t> navSolid_;   // 粗占有 (導出値)。1 = 閉
+    std::vector<uint8_t> excluded_;
     AcousticGridDesc srcGrid_;        // 元にした細グリッド (形が変わったら焼き直す)
     uint64_t sourceSig_ = 0;          // 元にした AcousticField の署名 (焼き直し判定)
     int32_t sourceRatio_ = 0;

@@ -41,7 +41,7 @@ enum AgentState : int32_t {
 class AgentSystem {
 public:
     // field は const ではない — エージェント自身が音を出す (企画 §6-3「敵も音を立てる」)
-    void Update(World& world, AcousticField& field, uint64_t tick);
+    void Update(World& world, AcousticField& field, uint64_t tick, float dt = 1.0f / 60.0f);
 
     // シーン遷移時 (航法グリッドを捨てる)
     void Reset() { nav_.Reset(); }

@@ -24,6 +24,8 @@
 #include "Engine/Engine/Physics/PhysicsSystem.h"
 #include "Engine/Platform/PathUtil.h"
 #include "Engine/Engine/Replay/WorldHasher.h"
+#include "Engine/Engine/Replay/SimSnapshot.h"
+#include "Engine/Engine/SceneSerializer.h"
 #include "Engine/Engine/Scene.h"
 #include "Engine/Engine/TransformSystem.h"
 
@@ -930,6 +932,156 @@ bool RunAcousticSelfTest()
         float ddx = 0.0f, ddz = 0.0f;
         check(!nav.SampleDirection(fi, ox, oy, oz, ddx, ddz),
               "nav: a cell cut off from the target reports 'no direction' rather than guessing");
+    }
+
+    // 多目標: 8 体に加え、帰還判定などの追加要求があっても既存の場を失わない。
+    {
+        AcousticField field;
+        AcousticGridDesc g;
+        MYE_CHECK(acoustic::MakeGridDesc(32, 2, 32, 0.5f, 0.0f, 0.0f, 0.0f, g));
+        field.DebugSetGrid(g, std::vector<uint8_t>(32 * 2 * 32, 0));
+        AcousticNav nav;
+        nav.Sync(field);
+        nav.BeginTick();
+        int fields[12] = {};
+        float targets[12][3] = {};
+        for (int i = 0; i < 12; ++i) {
+            acoustic::CellToWorldCenter(g, 2 + i * 2, 0, 26,
+                                       targets[i][0], targets[i][1], targets[i][2]);
+            fields[i] = nav.BuildFlowField(targets[i][0], targets[i][1], targets[i][2]);
+        }
+        check(nav.FieldCount() == 12, "nav: twelve distinct targets are served in one tick");
+        float sx = 0.0f, sy = 0.0f, sz = 0.0f;
+        acoustic::CellToWorldCenter(g, 2, 0, 2, sx, sy, sz);
+        bool allMove = true;
+        bool allShared = true;
+        for (int i = 0; i < 12; ++i) {
+            float dx = 0.0f, dz = 0.0f;
+            allMove = nav.SampleDirection(fields[i], sx, sy, sz, dx, dz)
+                && (dx != 0.0f || dz != 0.0f) && allMove;
+            allShared = nav.BuildFlowField(targets[i][0], targets[i][1], targets[i][2])
+                == fields[i] && allShared;
+        }
+        check(allMove, "nav: late requests and earlier field handles all remain usable");
+        check(allShared && nav.FieldCount() == 12, "nav: repeated goals share their field");
+        nav.BeginTick();
+        check(nav.FieldCount() == 0, "nav: multiple goals leave no history across ticks");
+    }
+
+    // 本編予算の 8 体が別の帰還目標を持つ実際の AgentSystem 経路。
+    {
+        Scene scene;
+        World& w = scene.GetWorld();
+        auto vol = scene.CreateGameObjectTracked("Volume");
+        auto* av = vol.AddComponent<AcousticVolumeComponent>();
+        av->dimX = 96;
+        av->dimY = 2;
+        av->dimZ = 96;
+        av->cellSize = 0.5f;
+        EntityID ids[8] = {};
+        for (int i = 0; i < 8; ++i) {
+            auto agent = scene.CreateGameObjectTracked("Agent");
+            agent.SetLocalPosition(-10.0f + i * 2.0f, 0.0f, -10.0f);
+            agent.AddComponent<CharacterControllerComponent>();
+            auto* brain = agent.AddComponent<AgentBrainComponent>();
+            brain->home = { -10.0f + i * 2.0f, 0.0f, 10.0f };
+            brain->target = brain->home;
+            brain->state = kAgentReturn;
+            brain->emitEveryTicks = 0;
+            ids[i] = agent.Id();
+        }
+        w.ApplyStructuralChanges();
+        TransformSystem ts;
+        ts.Update(w);
+        AcousticField field;
+        field.Sync(w);
+        AgentSystem sys;
+        bool allMove = true;
+        for (uint64_t tick = 1; tick <= 3; ++tick) {
+            sys.Update(w, field, tick);
+            for (const EntityID id : ids) {
+                const auto* cc = w.GetComponent<CharacterControllerComponent>(id);
+                allMove = cc != nullptr && cc->moveInput.z > 0.0f && allMove;
+            }
+        }
+        check(allMove, "agent: all eight distinct return goals produce movement on every tick");
+    }
+
+    // 完成した光は耳だけの敵にも効く。通常照明や消灯後には障害を残さない。
+    {
+        Scene scene;
+        World& w = scene.GetWorld();
+        auto vol = scene.CreateGameObjectTracked("Volume");
+        auto* av = vol.AddComponent<AcousticVolumeComponent>();
+        av->dimX = av->dimZ = 48; av->dimY = 2; av->cellSize = 0.5f;
+        auto lamp = scene.CreateGameObjectTracked("Sanctuary");
+        auto* lc = lamp.AddComponent<LightComponent>();
+        lc->type = 1; lc->safeRadius = 2.5f;
+        auto enemy = scene.CreateGameObjectTracked("EarOnly");
+        enemy.SetLocalPosition(-8.0f, 0.0f, 0.0f);
+        enemy.AddComponent<CharacterControllerComponent>();
+        auto* brain = enemy.AddComponent<AgentBrainComponent>();
+        brain->state = kAgentReturn;
+        brain->home = {8.0f, 0.0f, 0.0f}; brain->target = brain->home;
+        brain->emitEveryTicks = 0;
+        w.ApplyStructuralChanges();
+        TransformSystem transforms;
+        transforms.Update(w);
+        AcousticField field; field.Sync(w);
+        AgentSystem sys; sys.Update(w, field, 1);
+        const auto& g = sys.Nav().Grid();
+        int32_t cx = 0, cy = 0, cz = 0;
+        acoustic::WorldToCell(g, 0.0f, 0.0f, 0.0f, cx, cy, cz);
+        check(sys.Nav().IsSolid(cx, cy, cz), "sanctuary: completed light excludes navigation for ear-only enemy");
+        AcousticNav nav;
+        nav.Sync(field); nav.BeginTick(); nav.ExcludeCircle(0.0f, 0.0f, 2.5f);
+        const int goal = nav.BuildFlowField(8.0f, 0.0f, 0.0f);
+        float x = -8.0f, z = 0.0f;
+        bool outside = true;
+        for (int step = 0; step < 200 && !nav.ReachedTarget(goal, x, 0.0f, z); ++step) {
+            float dx = 0.0f, dz = 0.0f;
+            if (!nav.SampleDirection(goal, x, 0.0f, z, dx, dz)) break;
+            x += dx * 0.25f; z += dz * 0.25f;
+            outside = outside && x * x + z * z > 2.5f * 2.5f;
+        }
+        check(outside && nav.ReachedTarget(goal, x, 0.0f, z),
+              "sanctuary: path goes around the light and reaches a goal beyond it");
+        check(nav.BuildFlowField(0.0f, 0.0f, 0.0f) >= 0,
+              "sanctuary: a sound inside the light maps to an outside investigation goal");
+        nav.BeginTick();
+        check(!nav.IsSolid(cx, cy, cz), "sanctuary: exclusions have no hidden history across ticks");
+        enemy.SetLocalPosition(1.0f, 0.0f, 0.0f); transforms.Update(w);
+        sys.Update(w, field, 2);
+        check(w.GetComponent<CharacterControllerComponent>(enemy.Id())->moveInput.x > 0.0f,
+              "sanctuary: an enemy already inside retreats outwards");
+        w.GetComponent<LightComponent>(lamp.Id())->intensity = 0.0f;
+        sys.Update(w, field, 3);
+        check(!sys.Nav().IsSolid(cx, cy, cz), "sanctuary: extinguished light releases navigation");
+        auto* light = w.GetComponent<LightComponent>(lamp.Id());
+        light->intensity = 1.0f;
+        const uint64_t hash = HashWorld(w);
+        light->safeRadius = 0.0f;
+        check(HashWorld(w) != hash, "sanctuary: radius participates in world hashing");
+        light->safeRadius = 2.5f;
+        const auto json = SceneSerializer::SaveToJson(scene);
+        Scene loaded;
+        check(SceneSerializer::LoadFromJson(loaded, json), "sanctuary: scene loads with the radius field");
+        bool found = false;
+        const ComponentTypeId req[] = { LightComponent::sTypeId };
+        loaded.GetWorld().ForEachArchetype(req, [&](Archetype& arch) {
+            const int ci = arch.FindTypeIndex(LightComponent::sTypeId);
+            for (uint32_t row = 0; row < arch.Count(); ++row) {
+                found = found || static_cast<LightComponent*>(arch.GetPtr(ci, row))->safeRadius == 2.5f;
+            }
+        });
+        check(found, "sanctuary: scene roundtrip preserves safe radius");
+        SimRefs refs = {}; refs.scene = &scene;
+        std::vector<std::byte> blob;
+        check(CaptureSimSnapshot(refs, blob), "sanctuary: snapshot captures radius");
+        light->safeRadius = 0.0f;
+        const bool restored = RestoreSimSnapshot(refs, blob.data(), blob.size());
+        check(restored && w.GetComponent<LightComponent>(lamp.Id())->safeRadius == 2.5f,
+              "sanctuary: snapshot restores radius");
     }
 
     // ---- (22) 敵 FSM: 5 状態の遷移と「警戒中は 1 波も出さない」(M65f) ----

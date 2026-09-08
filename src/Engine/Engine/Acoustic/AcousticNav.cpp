@@ -27,6 +27,7 @@ void AcousticNav::Reset()
 {
     nav_ = AcousticGridDesc{};
     navSolid_.clear();
+    excluded_.clear();
     navSolid_.shrink_to_fit();
     srcGrid_ = AcousticGridDesc{};
     sourceSig_ = 0;
@@ -102,14 +103,38 @@ bool AcousticNav::IsSolid(int32_t cx, int32_t cy, int32_t cz) const
     if (!acoustic::InBounds(nav_, cx, cy, cz)) {
         return true; // グリッド外は壁扱い (敵が箱の外へ出ない保証を型で持つ)
     }
-    return navSolid_[static_cast<size_t>(NavIndex(nav_, cx, cy, cz))] != 0;
+    const size_t index = static_cast<size_t>(NavIndex(nav_, cx, cy, cz));
+    return navSolid_[index] != 0 || (index < excluded_.size() && excluded_[index] != 0);
 }
 
 void AcousticNav::BeginTick()
 {
+    excluded_.assign(navSolid_.size(), 0);
     // ★**ここが判断 6 の実体**。前 tick の場を 1 本も残さない = 場は毎 tick
     //   (占有, 目標セル) の純関数で、履歴が存在しない
     fields_.clear();
+}
+
+void AcousticNav::ExcludeCircle(float x, float z, float radius)
+{
+    if (!Valid() || radius <= 0.0f) {
+        return;
+    }
+    fields_.clear();
+    const float half = nav_.cellSize * 0.5f;
+    for (int32_t cz = 0; cz < nav_.dimZ; ++cz) {
+        for (int32_t cx = 0; cx < nav_.dimX; ++cx) {
+            float wx = 0.0f, wy = 0.0f, wz = 0.0f;
+            acoustic::CellToWorldCenter(nav_, cx, 0, cz, wx, wy, wz);
+            const float dx = (std::max)(0.0f, std::abs(wx - x) - half);
+            const float dz = (std::max)(0.0f, std::abs(wz - z) - half);
+            if (dx * dx + dz * dz <= radius * radius) {
+                for (int32_t cy = 0; cy < nav_.dimY; ++cy) {
+                    excluded_[static_cast<size_t>(NavIndex(nav_, cx, cy, cz))] = 1;
+                }
+            }
+        }
+    }
 }
 
 void AcousticNav::BuildDistance(Field& f) const
@@ -188,6 +213,27 @@ int AcousticNav::BuildFlowField(float wx, float wy, float wz)
     if (!acoustic::WorldToCell(nav_, wx, wy, wz, tx, ty, tz)) {
         return -1; // グリッドの外を目標にはできない
     }
+    if (!excluded_.empty() && excluded_[static_cast<size_t>(NavIndex(nav_, tx, ty, tz))]) {
+        // 安全範囲の内側で鳴った音へは、最寄りの開セルまで近づく。
+        // 距離・同点の走査順は整数だけで決定する。
+        int64_t best = INT64_MAX;
+        int32_t bx = tx, by = ty, bz = tz;
+        for (int32_t z = 0; z < nav_.dimZ; ++z) {
+            for (int32_t y = 0; y < nav_.dimY; ++y) {
+                for (int32_t x = 0; x < nav_.dimX; ++x) {
+                    const int64_t dx = x - tx, dy = y - ty, dz = z - tz;
+                    const int64_t distance = dx * dx + dy * dy + dz * dz;
+                    if (!IsSolid(x, y, z) && distance < best) {
+                        best = distance; bx = x; by = y; bz = z;
+                    }
+                }
+            }
+        }
+        if (best == INT64_MAX) {
+            return -1;
+        }
+        tx = bx; ty = by; tz = bz;
+    }
     if (IsSolid(tx, ty, tz)) {
         // 目標が閉セル (壁の中で鳴った音など) は 26 近傍の**表の順**に開セルへ寄せる。
         // 見つからなければ諦める — 寄せ先を距離で選ぶと float が順序に入る
@@ -210,9 +256,6 @@ int AcousticNav::BuildFlowField(float wx, float wy, float wz)
         if (fields_[i].tx == tx && fields_[i].ty == ty && fields_[i].tz == tz) {
             return static_cast<int>(i); // 同じ粗セルを指す要求は 1 本を共有する
         }
-    }
-    if (static_cast<int>(fields_.size()) >= kMaxFields) {
-        return -1;
     }
     MYE_PROFILE_SCOPE("acoustic.nav");
     Field f;

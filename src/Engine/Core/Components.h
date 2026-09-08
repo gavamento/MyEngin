@@ -70,6 +70,8 @@ struct LightComponent {
     // 対象は**局所ライト (点/スポット)** — 平行光の影は既存の CSM が常に担当する。
     // bool ではなく int32_t なのはパディングの 4 バイトを潰さないため
     int32_t castShadow = 0;
+    // 完成したゲーム用光の水平安全半径。0 は通常照明 (敵に影響しない)。
+    float safeRadius = 0.0f;
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
