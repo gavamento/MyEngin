@@ -343,9 +343,11 @@ rem      その現行の絵をここで固定しておかないと主張その�
 rem
 rem ★off の 2 枚 (反射 / GI) を分けて撮るのが要点。
 rem   反射 (rt_refl.cs.hlsl) と GI (rt_gi.cs.hlsl) が共有しているのは
-rem   rt_common.hlsli の RtTraceRadianceLod だけなので、1 枚だと共有ヘルパを触ったときに
+rem   rt_common.hlsli の放射輝度トレース 1 本だけなので、1 枚だと共有ヘルパを触ったときに
 rem   片方の経路が壊れても緑のまま通る (particle_cpu/gpu を 2 枚撮ったのと同じ理由)。
-rem   M67 は実際にこのヘルパを first-hit 版へ分解する予定なので、GI 側が本当に要る。
+rem   M67d で実際にこのヘルパを first-hit 版へ分解した (rt_common.hlsli の
+rem   RtTraceRadianceFirstHit が本体、RtTraceRadianceLod はそれを呼ぶ薄いラッパ) ので、
+rem   共有部分は今も 1 本 = GI 側の 1 枚が本当に要る。
 rem ★実測 (M67a、開発機 WARP 10.0.26100 / Release / SHOTBASE 条件):
 rem   撮影 11 s/枚 (RT 無しの同条件は 7 s)、**同一バイナリで 2 回撮って maxDiff=0** の
 rem   ビット一致、RT 無し (demo_render_deferred) との差は 反射 45114 画素 (maxDiff=221) /

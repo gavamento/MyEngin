@@ -305,8 +305,99 @@ ADR への追記 1 行が増えた分)、`grep -rn "S5" src/ tools/ docs/ CLAUDE
 | 「S5 の結論」節への参照 | `RtSelfTest.cpp:1208` / `RtTypes.h:235` / `ADR-016:308` / `engine_spec.md:527` | 節名そのもの。正しい |
 
 
+### SELF_EVAL: sub-03 (round 2)
+
+```
+SELF_EVAL: sub-03 (round 2)
+実装:
+  - #1 docs\adr\ADR-016-restir-reflection.md:501-507 — 「距離の定義」バケットの直後に
+    **規則として** 1 項目追加: 「★位置を測るときはマスクを収縮しない — 値を読むときとは逆」。
+    理由を耐久文書へ移した (今までは sub-02.md の実装メモと harness.md の申し送りにしか無かった):
+    reservoir は半解像度 → `--rt-debug 12` は **LINEAR 拡大**で境界画素が近傍の M と
+    0.5625 : 0.1875 : 0.1875 : 0.0625 に混ざる → **M を読むときは 1 px 収縮が要る**
+    (A17 表の「1 px 収縮、20 px」の出所。収縮前は中央値 11.13 = 8 と 16 の混合)。
+    `--rt-debug 13` / `14` は **POINT 拡大**なので混ざらず、**位置**を測るときに収縮すると
+    細いマスクが消えるだけ。反転の実測も併記: 収縮なし 400 px → max 10 px / 足跡外 0 画素、
+    1 px 収縮 20 px → max 486 px / 足跡外 169 画素 = **収縮 1 回で結論が反転する**
+  - #2 tools\shot_verify.bat:348-350 — 「M67 は実際にこのヘルパを first-hit 版へ**分解する予定**
+    なので」→「M67d で実際に first-hit 版へ**分解した** (`rt_common.hlsli` の
+    `RtTraceRadianceFirstHit` が本体、`RtTraceRadianceLod` はそれを呼ぶ薄いラッパ) ので、
+    共有部分は今も 1 本 = GI 側の 1 枚が本当に要る」。分解済みであることは実物で確認
+    (`rt_common.hlsli:568` = 本体 / `:622-626` = ラッパ / `rt_refl.cs.hlsl:147` が本体を直接呼ぶ)
+  - #2 tools\shot_verify.bat:346 — 上の 2 行前「共有しているのは rt_common.hlsli の
+    **RtTraceRadianceLod** だけ」→「**放射輝度トレース 1 本**だけ」。分解後は反射が本体を
+    直接呼ぶので Lod は共有点ではなくなっており、直後に足した行と矛盾して読めるため
+    (「仕様との差分」の [追加])
+仕様との差分:
+  - [追加] **`shot_verify.bat:346` の 1 語**。指摘 2 は `:348` の 1 行だけを求めているが、
+    直前の行が「共有しているのは Lod だけ」のままだと、新しく足した「本体は FirstHit」と
+    矛盾して読める (M67d 以降、反射は Lod を経由しない = `rt_refl.cs.hlsl:147`)。
+    同じ 2 文の単位なので一緒に直した。**主張 (GI 側の 1 枚が要る) は不変**
+  - なし (他は指摘どおり)
+検証:
+  - **CRLF**: `tr -cd '\r' | wc -c` = **466** と `tr -cd '\n' | wc -c` = **466** が一致、
+    Python の byte 検査でも「LF のみの行 = 0 / BEL = 0」。
+    ★指示どおり `awk '!/\r$/'` は使っていない (MSYS が text モードで \r を落とす偽陽性)
+  - MSBuild Release /p:MyeWarnAsError=true → exit 0、warning / error 行 **0**
+  - pwsh -File tools\check_rules.ps1 → **0 error / 0 warning**
+  - tools\shot_verify.bat → **exit 0 / [PASS] screenshot regression (24 shots)**、
+    `[img-diff] PASS` 24 本 / `FAIL` 0 本。**= 書き換えた bat が壊れていない唯一の検出手段**
+  - git status → `tests/` に変更 **0 件** (golden 不変)
+  - Debug ビルド / `--selftest` → **未実行**。round 2 の変更は **文書 1 か所 + bat の `rem` だけ**で
+    C++ / HLSL のバイトが 1 つも変わっていない (`git diff -- src assets` が空) ため、
+    round 1 の結果 (exit 0 / `FAIL:` 0 行 / `PASS: heroIsMinCap`) がそのまま成立する
+  - tools\replay_verify.bat → **未実行**。理由は round 1 と同じ (sim に触れる変更が 0。
+    コード行の増減 0、sub-02 が同一の意味論で全 10 ジョブ緑)。FIX_REQUEST でも不要と指示された
+自己採点 (1-5):
+  仕様適合: 5 — 指摘 2 件とも指定された場所に指定された内容を入れた。#1 は「文面は sub-02.md に
+    既にあるので写すだけ」の指示どおり、そこの理由 (LINEAR / POINT と混合比) を写し、
+    反転の実測値を添えて規則として読める形にした
+  正しさ: 5 — bat は CRLF を 2 通りの byte 計数で確認したうえで実際に完走 (24 枚 maxDiff=0)。
+    #2 の「分解は完了済み」は shader 実物 3 か所で裏を取った (本体 / ラッパ / 反射側の直接呼び出し)。
+    引用した数値は round 1 で自分が測ったもので、reviewer の再測とも一致している
+  コード品質: 5 — 文書は日本語で「なぜ」中心。ADR の追記は既存のバケット書式に揃え、
+    A17 表への相互参照を張って「同じマスクを別の使い方で 2 回使う」ことが 1 か所で分かるようにした
+  テスト: 3 — 新規テストは無し (文書と `rem` のみで、機械で固定できる対象が無い)。
+    既存の被覆のうち shot_verify / check_rules / Release ビルドは回した。
+    selftest と replay_verify は「バイトが変わっていない」根拠で省いた = 未実行は未実行と書く
+不安・質問:
+  - **`shot_verify.bat:346` の 1 語まで直したのはスコープ外か。** 指摘 2 は `:348` だけを
+    求めていたが、直後に「本体は FirstHit」と書く以上、2 行前の「共有は Lod だけ」を残すと
+    矛盾して読める。過剰なら差し戻してもらえれば元に戻す (1 語)
+  - **`予定` の同種 5 件 (他マイルストーン) は触っていない** — FIX_REQUEST が明示的に
+    「本件の宿題にしない」としているため。次に誰かが `grep -rn "予定" tools/ src/` で
+    拾えるよう申し送りに残す
+触ったファイル:
+  - C:\HAL\MyEngin\docs\adr\ADR-016-restir-reflection.md
+  - C:\HAL\MyEngin\tools\shot_verify.bat
+  - C:\HAL\MyEngin\plans\m67h-restir-finalize\sub-03.md (この実装メモ)
+申し送り:
+  - **同じマスクを「値を読む」と「位置を測る」で 2 回使う場所は、収縮の要否が逆になる。**
+    ADR-016 の「S5 の結論 → 1 行の変更が本当に絵へ届いたか」節に規則として書いた。
+    次に RT のデバッグ出力を数値化する人はここを読むこと。
+  - `予定` と書かれた完了済み記述が **他マイルストーンに 5 件**残っている (reviewer 調べ)。
+    M67 系ではないので本件では触っていない。掃除するなら `grep -rn "予定" tools/ src/ docs/` から。
+  - 検証コスト: 今回の 2 か所は C++ のバイトを 1 つも変えないので、次に同種の
+    「文書 + `rem` だけ」の修正をするときも **Release ビルド + shot_verify** で足りる
+    (selftest / replay_verify は `git diff -- src assets` が空であることを根拠に省ける)。
+```
+
 ## フィードバック履歴
 
+- round 2: **VERDICT OK** (planner、2026-09-08)。指摘 0 件。**サブ完了 (2 コミット目)。**
+  - **不安 1 (`shot_verify.bat:346` の 1 語はスコープ外か) → スコープ内。むしろ必要だった。**
+    M67d 以降 `rt_refl.cs.hlsl:147` は `RtTraceRadianceFirstHit` を**直接**呼ぶので、
+    「共有しているのは `RtTraceRadianceLod` だけ」は**もう事実ではない**。`:348` だけ直すと
+    隣り合う 2 文が矛盾したまま残る。**最小限の巻き添えで、主張 (GI 側の 1 枚が要る) も不変。**
+  - **不安 2 (他マイルストーンの「予定」5 件) → 触らないでよい。** M67h のスコープ外。申し送りへ。
+  - **selftest / replay_verify を省いた根拠を planner が裏取りした**: `git diff --stat -- src assets`
+    が **0 行** = C++ / HLSL のバイトが 1 つも動いていない。したがって round 1 の結果がそのまま
+    成立する。テスト 3 という自己採点も「未実行は未実行」の原則どおりで矛盾なし。
+  - planner が実物で再検証した項目: bat が **466 CR / 466 LF / BEL 0** /
+    `RtTraceRadianceFirstHit` が本体 (`rt_common.hlsli:568`)・`RtTraceRadianceLod` が
+    それを呼ぶラッパ (`:622-626`)・`rt_refl.cs.hlsl:147` が本体を直接呼ぶ、の 3 点 /
+    ADR の双一次の重み **0.5625 : 0.1875 : 0.1875 : 0.0625** (半テクセルずらしの (0.75, 0.25)²) が正しい /
+    `tests/` と `src/` `assets/` が未変更。
 - round 1: **VERDICT OK** (planner、2026-09-08)。must 0 / should 0 / nit 1。**サブ完了。**
   - **[未実装] CLAUDE.md:109 を認める。** coder の運用規約による**正当な拒否**で、責めるべきものではない。
     B2 を訂正して `CLAUDE.md` を coder の対象から外し、ユーザー / 司会の作業として置換文つきで
