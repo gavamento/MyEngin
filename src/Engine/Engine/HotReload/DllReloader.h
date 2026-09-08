@@ -15,6 +15,9 @@ class ScriptHost;
 //      → /PDBALTPATH:GameLogic.pdb と組み合わせて、デバッガはコピー先の PDB を
 //        ロードする。ビルド出力はロックされず、ブレークポイントも維持される
 //   4. フェーズ 2 (スクリプト非実行中) で ScriptHost::LoadModule → 旧 DLL 解放
+//   ★4 が失敗した DLL (版不一致 / export 不在 / LoadLibrary 失敗) は、その mtime を
+//     記録して**書き直されるまで再試行しない** (M70e)。以前は 500ms ごとに棚を 1 段ずつ
+//     積みながら失敗し続けた
 class DllReloader {
 public:
     void Init(ScriptHost* host, const std::wstring& buildDllPath, const std::wstring& cacheDir);
@@ -26,6 +29,11 @@ public:
     bool Update();
 
     uint32_t Version() const { return counter_; }
+
+    // 最後にロードを試みた DLL の書き込み時刻 (FILETIME)。**失敗も記録する** — 同じ mtime の
+    // ファイルには再挑戦しない (M70e)。0 = まだ試していない。セルフテストが「ロードできない
+    // DLL を 500ms ごとに再試行して棚を積まない」契約を固定するために読む
+    uint64_t LastTriedWriteTime() const { return lastWriteTime_; }
 
     // 書き手 (リンカ / コピー) の不在確認。0 = 書き込み完了 / それ以外 = Win32 エラーコード。
     // stateless な static にしてあるのはセルフテストから直接叩くため。
@@ -43,7 +51,7 @@ private:
     std::wstring dllPath_;
     std::wstring pdbPath_;
     std::wstring cacheDir_;
-    uint64_t lastWriteTime_ = 0; // FILETIME (ロード済み DLL のもの)
+    uint64_t lastWriteTime_ = 0; // FILETIME (最後にロードを試みた DLL のもの。失敗でも記録)
     uint32_t counter_ = 0;
     uint64_t lastPollMs_ = 0;
 };

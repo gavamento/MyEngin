@@ -171,6 +171,9 @@ Cloth/SoftBody 予約は 51/52 へ繰り下げてある) →
 `MYE_API_VERSION` の bump と `check_rules.ps1` の `$apiVersionSlots` 表の更新を**同時に**行う
 (片方だけだと規則 11 で止まる)。現行は v16 = 110 スロット。C# レーンは replay 被覆の外なので、
 実走確認は一時的な probe スクリプトで行う。
+**bump 後は外部プロジェクト (`--project DIR`) の `DIR\cache\GameLogic.dll` も焼き直す** — sln の外
+なのでエンジンをビルドしても追従せず、そのプロジェクトで Rebuild Scripts を押すまで
+`[dll] API version mismatch` で C++ スクリプト 0 本になる (M70e で三校の v15 DLL が踏んだ)。
 **v13 の `Net*` 5 本は機種依存の値を返す** — スクリプトが sim 状態へ書き戻すと 2 台の
 ワールドハッシュが割れる。禁止する手段は無いので desync 検出が唯一の防波堤
 (`--net-demo` の `NetHudDemo` = UIElement へ書くだけ、が正しい使い分けの実例)。

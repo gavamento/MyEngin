@@ -327,7 +327,10 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     //   レガシー起動 (--project なし) = エンジンの exe と同じ構成のビルド出力。
     //     build\GameLogic.vcxproj が作るもので、replay_verify / selftest はこちらを使う
     //   プロジェクト起動 = <project>\cache\GameLogic.dll。
-    //     エディタの Rebuild Scripts が cl.exe で直接ビルドする (vcxproj を介さない)
+    //     エディタの Rebuild Scripts が cache\GameLogic.vcxproj を生成して MSBuild で焼く
+    //     (AssetOps.cpp の PrepareProjectScriptsBat)。★sln の外なので、MYE_API_VERSION を
+    //     bump したらプロジェクト側でも Rebuild Scripts を押し直す (M70e: 三校の v15 DLL が
+    //     v16 のエディタに拒否され、当時の DllReloader は 500ms ごとに再試行して棚を積んだ)
     // 分岐は assetsRoot ではなく projectRoot の有無で行う — assetsRoot 由来にすると
     // レガシー時に <repo>\cache\GameLogic.dll を見に行って既存の検証経路が壊れる
     scriptHost.Init(&scene);

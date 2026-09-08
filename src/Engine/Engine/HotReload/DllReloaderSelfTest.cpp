@@ -1,5 +1,6 @@
 #include "Engine/Engine/HotReload/DllReloaderSelfTest.h"
 
+#include <cstring>
 #include <filesystem>
 #include <string>
 
@@ -7,6 +8,8 @@
 
 #include "Engine/Core/Log.h"
 #include "Engine/Engine/HotReload/DllReloader.h"
+#include "Engine/Engine/Scene.h"
+#include "Engine/Engine/Script/ScriptHost.h"
 
 namespace mye {
 namespace {
@@ -117,6 +120,91 @@ bool RunDllReloaderSelfTest()
         HandleHolder w(filePath, GENERIC_WRITE, 0);
         const unsigned long err = DllReloader::WaitUntilWritable(filePath, 30);
         check(err == ERROR_SHARING_VIOLATION, "書き手が居座ったら共有違反のまま有界で戻る");
+    }
+
+    // ---- 7. ロードできない DLL は「ファイルが変わるまで」再試行しない (M70e) ----
+    // 三校プロジェクトで踏んだ: 旧 ABI (v15) の DLL を v16 のエディタが拒否 → Update() が
+    // 500ms ごとに棚 (cache\hot\p<pid>\vN) へ DLL+PDB を複製してから失敗し、51 秒で
+    // 101 段 / 63MB + 偽の「ホットリロードしました (vN)」トースト。ここでは PE ですらない
+    // ファイルを DLL として渡して LoadModule を確実に失敗させ、DllReloader 側の契約
+    // (時刻を記録 / Version を進めない / 棚を残さない / 書き直されたら再試行) を固定する。
+    // 失敗の理由 (LoadLibrary 失敗 / 版不一致 / export 不在) は DllReloader から見れば
+    // 同じ false なので、いちばん作りやすい壊れ方で代表させてよい
+    {
+        const std::filesystem::path hotRoot = tempDir / L"mye_dllreloader_selftest_hot";
+        const std::filesystem::path bogusDll = tempDir / L"mye_dllreloader_selftest_bogus.dll";
+        auto writeBogus = [&](const char* payload) {
+            const HANDLE h = CreateFileW(bogusDll.c_str(), GENERIC_WRITE, 0, nullptr,
+                                         CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+            if (h == INVALID_HANDLE_VALUE) {
+                return false;
+            }
+            DWORD written = 0;
+            WriteFile(h, payload, static_cast<DWORD>(std::strlen(payload)), &written, nullptr);
+            CloseHandle(h);
+            return true;
+        };
+        // p<pid> の下の v* を数える (Init が作る p<pid> 自体は数えない)
+        auto shelfCount = [&]() {
+            size_t n = 0;
+            std::error_code itEc;
+            for (const auto& p : std::filesystem::directory_iterator(hotRoot, itEc)) {
+                for (const auto& v : std::filesystem::directory_iterator(p.path(), itEc)) {
+                    (void)v;
+                    ++n;
+                }
+            }
+            return n;
+        };
+        // mtime を確実に進める (書き直しが同じタイムスタンプ粒度に収まっても差が付くように)
+        auto bumpWriteTime = [&](uint64_t base) {
+            const HANDLE h = CreateFileW(bogusDll.c_str(), FILE_WRITE_ATTRIBUTES, FILE_SHARE_READ,
+                                         nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+            if (h == INVALID_HANDLE_VALUE) {
+                return false;
+            }
+            const uint64_t t = base + 10000000ull; // +1 秒 (FILETIME は 100ns 単位)
+            FILETIME ft = {};
+            ft.dwLowDateTime = static_cast<DWORD>(t & 0xFFFFFFFFu);
+            ft.dwHighDateTime = static_cast<DWORD>(t >> 32);
+            const bool ok = SetFileTime(h, nullptr, nullptr, &ft) != 0;
+            CloseHandle(h);
+            return ok;
+        };
+
+        check(writeBogus("not a PE image"), "壊れた DLL を作れる");
+        MYE_LOG_INFO("  (以下の [dll] ERROR は期待どおり — 壊れた DLL を意図的に読ませている)");
+
+        Scene scene;
+        ScriptHost host;
+        host.Init(&scene);
+        DllReloader reloader;
+        reloader.Init(&host, bogusDll.wstring(), hotRoot.wstring());
+
+        check(!reloader.LoadInitial(), "壊れた DLL の初回ロードは false");
+        check(reloader.Version() == 0, "失敗では Version (counter_) を進めない");
+        check(shelfCount() == 0, "失敗した棚 (vN) を残さない");
+        const uint64_t tried = reloader.LastTriedWriteTime();
+        check(tried != 0, "失敗した DLL の書き込み時刻を記録する");
+
+        // 同じファイルのまま Update() → 再試行しない (直後の Update はまだ 1 度も
+        // ポーリングしていないので間引きに掛からず、確実に mtime 比較まで進む)
+        check(!reloader.Update(), "同じ mtime のままでは Update() が再試行しない");
+        check(reloader.Version() == 0 && shelfCount() == 0, "再試行しないので棚も版も動かない");
+
+        // 書き直す → 次のポーリングで再試行する (そして再び失敗する)。ポーリング間隔
+        // (500ms) を跨ぐために待つ。下限のタイミングではなく「跨げば動く」だけを主張する
+        check(writeBogus("still not a PE image"), "壊れた DLL を書き直せる");
+        check(bumpWriteTime(tried), "書き直した DLL の mtime を進められる");
+        Sleep(600);
+        check(!reloader.Update(), "書き直された壊れた DLL の再試行も false");
+        check(reloader.LastTriedWriteTime() != 0 && reloader.LastTriedWriteTime() != tried,
+              "書き直されたら再試行して新しい時刻を記録する");
+        check(reloader.Version() == 0 && shelfCount() == 0, "再試行の失敗でも棚と版は動かない");
+
+        host.Shutdown();
+        std::filesystem::remove_all(hotRoot, ec);
+        std::filesystem::remove(bogusDll, ec);
     }
 
     std::filesystem::remove(filePath, ec);

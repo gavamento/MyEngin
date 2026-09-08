@@ -333,6 +333,7 @@ M70c → M70d の順序は入れ替えできない。
 | M70b | キャンバス統一 (Unity / UE 準拠の可変キャンバス) | **完了 (2026-09-07)** |
 | M70c | UI イベントとフォーカス駆動 + ABI v16 | **完了 (2026-09-07)** |
 | M70d | スクリプト⇄オブジェクトの穴埋め + dogfooding の回収 | **完了 (2026-09-07)** |
+| M70e | 追補: ロードできない GameLogic.dll を 500ms ごとに再試行して棚を積む欠陥 (三校の v15 DLL で発覚) | **完了 (2026-09-08)** |
 
 ### M70a の実施メモ (計画との差分)
 
@@ -518,6 +519,36 @@ M70c → M70d の順序は入れ替えできない。
   §12.2 の表と見出し (M0-M70、283 コミット) / §12.3 から M70d の行を削除し dogfooding の
   残り 5 件へ差し替え / `README.md` に機能の項 + Inspector の行 /
   `docs/dogfooding.md` を **20 件中 15 件決着 (実装 10 / 文書と確認 5)** へ。
+
+### M70e の実施メモ (追補 — 計画外。三校プロジェクトで踏んだ地雷)
+
+- **発端**: `--project C:\HAL\三校` で開いたエディタが `[dll] API version mismatch (dll=15, engine=16)` +
+  `[dll] reload failed` を **500ms ごとに**吐き続けた。三校の `cache\GameLogic.dll` は 9/2 ビルド
+  (v15) で、M70c の ABI bump (9/7) 以降 一度も焼き直されていなかった。外部プロジェクトの DLL は
+  **sln の外**なので、エンジンをビルドしても追従しない = 次に `MYE_API_VERSION` を bump しても
+  同じ形で再発する (対処は「そのプロジェクトで Rebuild Scripts を押す」だけ。CLAUDE.md の
+  ABI 手順に足した)。
+- **欠陥 (M4 からの潜在)**: `DllReloader::TryCopyAndLoad` は `LoadModule` 失敗時に
+  `lastWriteTime_` を更新しなかった → `Update()` の `writeTime != lastWriteTime_` が毎回真 →
+  500ms ごとに `cache\hot\p<pid>\vN` へ DLL+PDB を複製してから失敗 (実測 51 秒で 101 段 / 63MB)、
+  `counter_` も進むので EditorApp が「ホットリロードしました (vN)」の**偽トースト**を出し続けた。
+  M52h追補が `LoadInitial` 側に「TryCopyAndLoad 全体はリトライしない」と書いた意図と、
+  `Update()` の実挙動が食い違っていた。
+- **直し方**: 失敗の枝で `lastWriteTime_ = writeTime` (= 同じ mtime には再挑戦しない) +
+  `--counter_` (CopyFile 失敗と対称) + 失敗した棚の `remove_all`。`Update()` 側には入れない —
+  そこで記録すると `ProbeWritable` 失敗 (リンカ書き込み中の正当な再試行) まで潰れる。
+  代償は「LoadLibrary の一過性失敗も次のビルドまで再試行しない」で、コメントに明記。
+  sim 状態にもハッシュにも触れない (`lastWriteTime_` / `counter_` は表示 3 箇所の読み手のみ)。
+- **テスト**: `DllReloaderSelfTest` に第 7 節 — PE ですらないファイルを DLL として `LoadInitial` →
+  「時刻を記録 / Version を進めない / 棚を残さない / 同じ mtime では `Update()` が再試行しない /
+  `SetFileTime` で +1 秒して 600ms 待つと再試行して新しい時刻を記録する」の 12 項目。
+  観測用に `LastTriedWriteTime()` を足した (`ProbeWritable` を static にしたのと同じ理由)。
+- **文書の齟齬も回収**: `EngineLoop.cpp` の「Rebuild Scripts が cl.exe で直接ビルドする」は
+  古く、実態は `PrepareProjectScriptsBat` が vcxproj を生成して MSBuild を回す。
+- **検証**: Debug `--selftest` 全 PASS (DllReloader 節 22 PASS / FAIL 0) / `check_rules.ps1` 0 error /
+  `replay_verify.bat` 10 ジョブ全 PASS (95.0s)。三校は `cache\GameLogic.vcxproj` を Release で
+  MSBuild → Runtime の `--project` 起動で 3 スクリプト登録 + `hot reload complete (v1)` を確認、
+  古い棚 `p6016` は起動時の `Init` が自動で消した。
 
 ## 次のタスクの置き場 (M70 では実装しない)
 

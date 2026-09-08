@@ -154,7 +154,20 @@ bool DllReloader::TryCopyAndLoad()
 
     const uint64_t writeTime = GetWriteTime(dllPath_);
     if (!host_->LoadModule(dllCopy)) {
-        MYE_LOG_ERROR("[dll] reload failed - keeping previous logic");
+        // ★失敗した DLL の書き込み時刻も記録する = 同じファイルには二度と挑まない。
+        //   記録しないと Update() が 500ms ごとにここへ戻ってきて、版不一致のような
+        //   「待っても直らない」失敗のたびに ERROR 2 行 + 棚 1 段 (DLL+PDB) を積み、
+        //   counter_ も進むので EditorApp が「ホットリロードしました (vN)」の偽トーストを
+        //   出し続ける (M70e で踏んだ: 三校プロジェクトの v15 DLL を v16 のエディタが
+        //   51 秒で 101 段 / 63MB 積んだ)。棚は消し、counter_ は CopyFile 失敗と同じく戻す —
+        //   LoadModule は失敗時に FreeLibrary 済みなので消せる (ロード中の旧棚は別の vN)。
+        //   代償: LoadLibrary の一過性失敗 (AV スキャナが握っている等) も次のビルドまで
+        //   再試行しない。その場合は Rebuild Scripts を押し直せば mtime が変わって通る
+        lastWriteTime_ = writeTime;
+        --counter_;
+        std::filesystem::remove_all(dir, ec);
+        MYE_LOG_ERROR("[dll] reload failed - keeping previous logic "
+                      "(will retry when the file changes)");
         return false;
     }
     lastWriteTime_ = writeTime;
@@ -171,7 +184,8 @@ bool DllReloader::LoadInitial()
     // ここは 1 発勝負 (ネット起動では Update() の 500ms 再試行が開始ワールドハッシュ
     // 照合に間に合わない) なので、書き手が居る間だけ短く待ってから 1 回だけ試す。
     // TryCopyAndLoad 全体はリトライしない — LoadModule 失敗 (待っても直らない) を
-    // 巻き込み、counter_ も無駄に進むため
+    // 巻き込むため。失敗した mtime は TryCopyAndLoad が記録するので、Update() 側も
+    // ファイルが書き直されるまでは再試行しない (M70e)
     const unsigned long err = WaitUntilWritable(dllPath_, kInitialDllWaitMs);
     if (err != 0) {
         MYE_LOG_WARN("[dll] initial load: GameLogic.dll is still busy (err=%lu): %s",
@@ -189,6 +203,8 @@ bool DllReloader::Update()
     }
     lastPollMs_ = now;
 
+    // lastWriteTime_ は「最後に試した DLL」の時刻 (失敗も含む)。同じ mtime のまま
+    // 再試行しないことが、ロードできない DLL で 500ms ごとに棚を積まない根拠 (M70e)
     const uint64_t writeTime = GetWriteTime(dllPath_);
     if (writeTime == 0 || writeTime == lastWriteTime_) {
         return false;
