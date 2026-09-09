@@ -84,6 +84,17 @@ const ScmNode* FindNode(const SourceControlModel& m, const char* path)
     return nullptr;
 }
 
+// 同じものを添字で (CollectSubtreePaths は添字を取る)。見つからなければ -1
+int NodeIndexOf(const SourceControlModel& m, const char* path)
+{
+    for (size_t i = 0; i < m.nodes.size(); ++i) {
+        if (m.nodes[i].path == path) {
+            return static_cast<int>(i);
+        }
+    }
+    return -1;
+}
+
 } // namespace
 
 bool RunSourceControlSelfTest()
@@ -467,6 +478,59 @@ bool RunSourceControlSelfTest()
               "folders: the heaviest child state climbs every level (a delete never hides)");
         check(m.nodes[0].children.size() == 3,
               "folders: the root holds exactly the three top level folders");
+    }
+
+    // ---- (d1b) フォルダ単位の選択 (M66n) ----
+    // ★ここも「間違えても画面は自然に見える」側。配下を 1 段取りこぼしても
+    //   選ばれた行にだけ色が付くので、気付けるのは commit の中身が片肺だったとき
+    {
+        nlohmann::json result;
+        result["entries"] = nlohmann::json::array({
+            Entry("a/x.txt", '.', 'M'),
+            Entry("a/deep/y.txt", '.', 'M'), // フォルダの下のフォルダ
+            Entry("b/z.txt", '?', '?'),
+            Entry("root.txt", '.', 'M'),     // ルート直下のファイル
+        });
+        const SourceControlModel m = BuildModel(result);
+
+        const std::vector<std::string> all = CollectSubtreePaths(m, 0);
+        check(all.size() == 4 && all[0] == "a/deep/y.txt" && all[3] == "root.txt",
+              "subtree: the root gathers every row, sorted by path");
+        const std::vector<std::string> aOnly = CollectSubtreePaths(m, NodeIndexOf(m, "a"));
+        check(aOnly.size() == 2 && aOnly[0] == "a/deep/y.txt" && aOnly[1] == "a/x.txt",
+              "subtree: a folder gathers its nested children too");
+        const std::vector<std::string> deep =
+            CollectSubtreePaths(m, NodeIndexOf(m, "a/deep"));
+        check(deep.size() == 1 && deep[0] == "a/deep/y.txt",
+              "subtree: an inner folder gathers only what is under it");
+        const std::vector<std::string> leaf =
+            CollectSubtreePaths(m, NodeIndexOf(m, "b/z.txt"));
+        check(leaf.size() == 1 && leaf[0] == "b/z.txt",
+              "subtree: a file node is its own single row");
+        check(CollectSubtreePaths(m, -1).empty()
+                  && CollectSubtreePaths(m, static_cast<int>(m.nodes.size())).empty(),
+              "subtree: an out of range index is empty (never reads past nodes)");
+
+        // 置き換え (ふつうのクリック)
+        std::vector<std::string> sel = { "b/z.txt" };
+        ApplySubtreeSelection(sel, aOnly, /*additive=*/false);
+        check(sel == aOnly, "selection: a plain click replaces the selection with the folder");
+        // Ctrl+クリックで足す -> 昇順に保たれる
+        ApplySubtreeSelection(sel, leaf, /*additive=*/true);
+        check(sel.size() == 3 && sel[2] == "b/z.txt"
+                  && std::is_sorted(sel.begin(), sel.end()),
+              "selection: ctrl+click adds and keeps the list sorted by path");
+        // 全部入っている部分木への Ctrl+クリックは **外す**
+        ApplySubtreeSelection(sel, aOnly, /*additive=*/true);
+        check(sel.size() == 1 && sel[0] == "b/z.txt",
+              "selection: ctrl+click on a fully selected folder removes it");
+        // 一部だけ入っている部分木は「足す」側 (外すのは全部入っているときだけ)
+        sel = { "a/x.txt" };
+        ApplySubtreeSelection(sel, aOnly, /*additive=*/true);
+        check(sel == aOnly, "selection: a partially selected folder is completed, not cleared");
+        // 空の部分木は何もしない (選択を黙って消さない)
+        ApplySubtreeSelection(sel, {}, /*additive=*/false);
+        check(sel == aOnly, "selection: an empty subtree leaves the selection alone");
     }
 
     // ---- (d2) Content Browser のバッジ引き (M66i) ----

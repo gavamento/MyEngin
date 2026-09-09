@@ -70,6 +70,21 @@ bool SaveThenCommit(const std::function<std::wstring()>& save,
 //   消してよいのは「自分が投げたものがまだそのまま置いてある」ときだけ。
 bool ShouldClearCommitMessage(bool ok, const std::string& sent, const std::string& current);
 
+// フォルダ行の下にある変更行 (本体パス) を集める (M66n)。path 昇順・重複なし。
+// folder=false のノードを渡すとそのノード自身の 1 件。範囲外の添字は空。
+// ★純関数にして窓の外へ出しているのは、ここが 1 段取りこぼしても**画面は自然に
+//   見える** (選ばれた行にだけ色が付く) ため。取りこぼしはそのまま
+//   「フォルダごと stage したのに 1 個だけ index に入っていない」= 片肺コミットになる
+std::vector<std::string> CollectSubtreePaths(const SourceControlModel& model, int nodeIndex);
+
+// フォルダ行を押したときの選択の作り替え (M66n)。
+//   additive=false … subtree で置き換える (ふつうのクリック)
+//   additive=true  … 全部入っていれば外す / 1 つでも欠けていれば足す (Ctrl+クリック)
+// ★結果は必ず path 昇順に保つ。ファイル行の Ctrl+クリックと同じ理由で、
+//   後続サブ (stage / revert) が「どの順で git に渡したか」で結果を変えないため
+void ApplySubtreeSelection(std::vector<std::string>& selected,
+                           const std::vector<std::string>& subtree, bool additive);
+
 // Source Control 窓 (M66b = 読み取り、M66c = stage / unstage / commit / History / diff)。
 //
 // ★状態 (SourceControlSession) は EditorApp が持つ。窓が閉じていても status は

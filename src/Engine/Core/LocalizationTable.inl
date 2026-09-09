@@ -1093,8 +1093,8 @@ MYE_STR(ScmErr_Timeout,        "the service did not answer in time",
 MYE_STR(Scm_Stage,             "Stage###ScmStage",     "ステージ###ScmStage")
 MYE_STR(Scm_Unstage,           "Unstage###ScmUnstage", "ステージ解除###ScmUnstage")
 MYE_STR(Scm_SelectedCount,     "%d selected", "%d 件選択")
-MYE_STR(Scm_SelectToStage,     "Select a file to stage it. The .meta and .terrain.edit sidecars follow it automatically.",
-                               "ファイルを選ぶとステージできます。.meta と .terrain.edit は自動で一緒に動きます。")
+MYE_STR(Scm_SelectToStage,     "Select a file or a folder to stage it. The .meta and .terrain.edit sidecars follow it automatically.",
+                               "ファイルまたはフォルダを選ぶとステージできます。.meta と .terrain.edit は自動で一緒に動きます。")
 MYE_STR(Scm_DiffStaged,        "staged###ScmDiffStaged", "ステージ済み###ScmDiffStaged")
 MYE_STR(Scm_DiffPick,          "Select a file to see its diff.", "ファイルを選ぶと差分が出ます。")
 MYE_STR(Scm_DiffEmpty,         "No textual diff (new, binary or unchanged on this side).",
@@ -1113,6 +1113,14 @@ MYE_STR(Scm_CommitDone,        "Committed %s", "コミットしました: %s")
 MYE_STR(Scm_HistoryEmpty,      "No commits yet.", "まだコミットがありません。")
 MYE_STR(Scm_HistoryPick,       "Select a commit to read its full subject.",
                                "コミットを選ぶと件名の全文が出ます。")
+
+// ---- M66n: フォルダ単位の選択 / すべてステージ ----
+// ★「すべて解除」を「すべてステージ解除」にしないのは幅の都合 (既定のドック幅では
+//   ボタン 2 個で切れる)。直上の行が「ステージ / ステージ解除」なので、この行の
+//   「解除」が何の解除かは並びで読める
+MYE_STR(Scm_StageAll,          "Stage all###ScmStageAll",     "すべてステージ###ScmStageAll")
+MYE_STR(Scm_UnstageAll,        "Unstage all###ScmUnstageAll", "すべて解除###ScmUnstageAll")
+MYE_STR(Scm_FolderCount,       "%d file(s) under this folder", "このフォルダ配下 %d 件")
 
 
 // ---- M66d: 破棄 (revert) / 書き込みトランザクションのゲート ----
