@@ -381,6 +381,67 @@ void SourceControlWindow::DrawBlockerTooltip(const std::vector<GateBlocker>& blo
     ImGui::EndTooltip();
 }
 
+std::vector<std::string> CollectSubtreePaths(const SourceControlModel& model, int nodeIndex)
+{
+    std::vector<std::string> out;
+    if (nodeIndex < 0 || static_cast<size_t>(nodeIndex) >= model.nodes.size()) {
+        return out;
+    }
+    // ★明示スタックで降りる (深い階層でも再帰段数を気にしない)。フォルダは entry を
+    //   持たないので、葉に着いたときだけ entries から**本体パス**を採る
+    std::vector<int> stack{ nodeIndex };
+    while (!stack.empty()) {
+        const ScmNode& node = model.nodes[static_cast<size_t>(stack.back())];
+        stack.pop_back();
+        if (!node.folder) {
+            if (node.entry >= 0 && static_cast<size_t>(node.entry) < model.entries.size()) {
+                out.push_back(model.entries[static_cast<size_t>(node.entry)].path);
+            }
+            continue;
+        }
+        for (const int child : node.children) {
+            stack.push_back(child);
+        }
+    }
+    std::sort(out.begin(), out.end());
+    out.erase(std::unique(out.begin(), out.end()), out.end());
+    return out;
+}
+
+void ApplySubtreeSelection(std::vector<std::string>& selected,
+                           const std::vector<std::string>& subtree, bool additive)
+{
+    if (subtree.empty()) {
+        return;
+    }
+    if (!additive) {
+        selected = subtree; // subtree は昇順で来る (CollectSubtreePaths が整列済み)
+        return;
+    }
+    // ★Ctrl+クリックは「足す」ではなく **toggle**。足すだけにすると、選び過ぎた
+    //   フォルダを外す手段が「全部選び直す」しか無くなる (ファイル行の
+    //   Ctrl+クリックと同じ手触りに揃える)
+    const bool all =
+        std::all_of(subtree.begin(), subtree.end(), [&selected](const std::string& p) {
+            return std::find(selected.begin(), selected.end(), p) != selected.end();
+        });
+    if (all) {
+        selected.erase(std::remove_if(selected.begin(), selected.end(),
+                                      [&subtree](const std::string& p) {
+                                          return std::find(subtree.begin(), subtree.end(), p)
+                                              != subtree.end();
+                                      }),
+                       selected.end());
+        return;
+    }
+    for (const std::string& p : subtree) {
+        if (std::find(selected.begin(), selected.end(), p) == selected.end()) {
+            selected.push_back(p);
+        }
+    }
+    std::sort(selected.begin(), selected.end());
+}
+
 void SourceControlWindow::CollectRevertTargets(const std::vector<PairedEntry>& rows,
                                                std::vector<std::string>& paths, int& untracked)
 {
@@ -577,6 +638,19 @@ void SourceControlWindow::DrawChanges(SourceControlSession& scm, const SourceCon
     ImGui::SameLine();
     if (ImGui::Button(Tr(StrId::Scm_Unstage))) {
         scm.UnstageRows(rows);
+    }
+    ImGui::EndDisabled();
+    // ★「すべて」は選択に依らない (一覧に出ている変更行**全部**)。フォルダを 1 つずつ
+    //   選んで回らずに済ませるための行で、index を動かすだけなので破棄と違って
+    //   ゲートは通さない (M66n)。行を分けているのは幅 — 既定のドック幅では 4 個の
+    //   ボタンが 1 行に収まらない (M66d の破棄行と同じ理由)
+    ImGui::BeginDisabled(model.entries.empty() || busy);
+    if (ImGui::Button(Tr(StrId::Scm_StageAll))) {
+        scm.StageRows(model.entries);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button(Tr(StrId::Scm_UnstageAll))) {
+        scm.UnstageRows(model.entries);
     }
     ImGui::EndDisabled();
     // ★ヒントはボタンの右 (SameLine) ではなく**次の行に折り返して**出す。既定ドック幅
@@ -1141,9 +1215,38 @@ void SourceControlWindow::DrawNode(const SourceControlModel& model, int index)
         // ★ID にフルパスを使う。名前だけだと同名フォルダ (assets\a\x と assets\b\x) が
         //   同じ ID になり、片方を開くと両方開く
         ImGui::PushID(node.path.c_str());
-        const bool opened = ImGui::TreeNodeEx(node.name.c_str(),
-                                              ImGuiTreeNodeFlags_DefaultOpen
-                                                  | ImGuiTreeNodeFlags_SpanAvailWidth);
+        // ★フォルダ行も**選べる** (M66n)。配下の全ファイル行を選択に載せるだけで、
+        //   ステージ / ステージ解除 / 破棄 は既存のボタンがそのまま効く = 操作の
+        //   入口を増やさない。選択は折り畳みと競合するので、開閉は**矢印か
+        //   ダブルクリック**へ寄せる (単クリックで開閉すると、フォルダを選ぶたびに
+        //   ツリーが畳まれて、いま選んだ中身が見えなくなる)
+        const std::vector<std::string> subtree = CollectSubtreePaths(model, index);
+        const bool subtreeSelected =
+            !subtree.empty()
+            && std::all_of(subtree.begin(), subtree.end(), [this](const std::string& p) {
+                   return std::find(selected_.begin(), selected_.end(), p)
+                       != selected_.end();
+               });
+        ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_DefaultOpen
+            | ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_OpenOnArrow
+            | ImGuiTreeNodeFlags_OpenOnDoubleClick;
+        if (subtreeSelected) {
+            flags |= ImGuiTreeNodeFlags_Selected;
+        }
+        const bool opened = ImGui::TreeNodeEx(node.name.c_str(), flags);
+        // ★IsItemToggledOpen を見ないと、矢印を押した / ダブルクリックで開いた
+        //   フレームでも選択が動く (開閉のつもりの操作で選択が入れ替わる)
+        if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
+            ApplySubtreeSelection(selected_, subtree, ImGui::GetIO().KeyCtrl);
+        }
+        // ★ツールチップは**子を描く前**に出す (直前の項目 = このフォルダ行)。
+        //   件数を出すのは「このフォルダを選ぶと何件動くか」を押す前に見せるため
+        if (ImGui::IsItemHovered()) {
+            ImGui::BeginTooltip();
+            ImGui::TextUnformatted(node.path.c_str());
+            ImGui::TextDisabled(Tr(StrId::Scm_FolderCount), static_cast<int>(subtree.size()));
+            ImGui::EndTooltip();
+        }
         if (opened) {
             for (const int child : node.children) {
                 DrawNode(model, child);
