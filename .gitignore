@@ -27,3 +27,7 @@ tools/collab/target/
 # --package DIR の出力 (M51j の封印)。exe / dotnet / assets を丸ごと抱えるので
 # 数十 MB になる。作り直せる生成物なので版管理しない
 dist/
+/stage.md
+/tools/lab_assets_v01/__pycache__
+/tools/player_fp_v01
+/tools/stage01
