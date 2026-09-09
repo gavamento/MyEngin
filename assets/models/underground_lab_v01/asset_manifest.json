@@ -1,0 +1,314 @@
+{
+  "version": 1,
+  "units": "meters",
+  "source_axes": "Blender Z-up, +Y corridor",
+  "engine_axes": "left-handed Y-up; position mapping (x,z,y)",
+  "fps": 60,
+  "room_clear_size_m": [
+    10,
+    8,
+    3
+  ],
+  "corridor_width_m": 2.5,
+  "corridor_centerline_length_m": 15,
+  "assets": [
+    {
+      "file": "Lab_Room.fbx",
+      "mesh_objects": 5,
+      "triangles": 65396,
+      "engine_position": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "engine_rotation_degrees": [
+        0,
+        0,
+        0
+      ],
+      "engine_scale": [
+        1,
+        1,
+        1
+      ],
+      "clips": []
+    },
+    {
+      "file": "Lab_Corridor.fbx",
+      "mesh_objects": 5,
+      "triangles": 39140,
+      "engine_position": [
+        0.0,
+        0.0,
+        4.0
+      ],
+      "engine_rotation_degrees": [
+        0,
+        0,
+        0
+      ],
+      "engine_scale": [
+        1,
+        1,
+        1
+      ],
+      "clips": []
+    },
+    {
+      "file": "Lab_Bench.fbx",
+      "mesh_objects": 1,
+      "triangles": 3096,
+      "engine_position": [
+        -2.5,
+        0.0,
+        0.25
+      ],
+      "engine_rotation_degrees": [
+        0,
+        0,
+        0
+      ],
+      "engine_scale": [
+        1,
+        1,
+        1
+      ],
+      "clips": []
+    },
+    {
+      "file": "Lab_Sink.fbx",
+      "mesh_objects": 1,
+      "triangles": 5052,
+      "engine_position": [
+        -3.5999999046325684,
+        0.0,
+        3.25
+      ],
+      "engine_rotation_degrees": [
+        0,
+        0,
+        0
+      ],
+      "engine_scale": [
+        1,
+        1,
+        1
+      ],
+      "clips": []
+    },
+    {
+      "file": "Lab_StorageShelf.fbx",
+      "mesh_objects": 1,
+      "triangles": 8704,
+      "engine_position": [
+        3.8499999046325684,
+        0.0,
+        3.3499999046325684
+      ],
+      "engine_rotation_degrees": [
+        0,
+        0,
+        0
+      ],
+      "engine_scale": [
+        1,
+        1,
+        1
+      ],
+      "clips": []
+    },
+    {
+      "file": "Lab_MetalFloorPlate.fbx",
+      "mesh_objects": 1,
+      "triangles": 26140,
+      "engine_position": [
+        0.0,
+        0.0,
+        7.0
+      ],
+      "engine_rotation_degrees": [
+        0,
+        0,
+        0
+      ],
+      "engine_scale": [
+        1,
+        1,
+        1
+      ],
+      "clips": []
+    },
+    {
+      "file": "Lab_GlassShards.fbx",
+      "mesh_objects": 1,
+      "triangles": 412,
+      "engine_position": [
+        1.75,
+        0.0,
+        2.5
+      ],
+      "engine_rotation_degrees": [
+        0,
+        0,
+        0
+      ],
+      "engine_scale": [
+        1,
+        1,
+        1
+      ],
+      "clips": []
+    },
+    {
+      "file": "Lab_WaterPuddle.fbx",
+      "mesh_objects": 1,
+      "triangles": 80,
+      "engine_position": [
+        -3.1500000953674316,
+        0.0,
+        2.299999952316284
+      ],
+      "engine_rotation_degrees": [
+        0,
+        0,
+        0
+      ],
+      "engine_scale": [
+        1,
+        1,
+        1
+      ],
+      "clips": []
+    },
+    {
+      "file": "Lab_Door.fbx",
+      "mesh_objects": 2,
+      "triangles": 5136,
+      "engine_position": [
+        0.0,
+        0.0,
+        4.110000133514404
+      ],
+      "engine_rotation_degrees": [
+        0,
+        0,
+        0
+      ],
+      "engine_scale": [
+        1,
+        1,
+        1
+      ],
+      "clips": [
+        "Lab_Door_Rig|00_Door_Open",
+        "Lab_Door_Rig|01_Door_Close"
+      ]
+    }
+  ],
+  "materials": {
+    "Plaster": {
+      "metallic": 0.0,
+      "roughness": 0.8799999952316284,
+      "opacity": 1.0,
+      "base_color": "textures/Plaster_BaseColor.png",
+      "normal_engine": "textures/Plaster_Normal_DX.png",
+      "normal_blender": "textures/Plaster_Normal.png"
+    },
+    "PaintWhite": {
+      "metallic": 0.0,
+      "roughness": 0.5699999928474426,
+      "opacity": 1.0,
+      "base_color": "textures/PaintWhite_BaseColor.png",
+      "normal_engine": "textures/PaintWhite_Normal_DX.png",
+      "normal_blender": "textures/PaintWhite_Normal.png"
+    },
+    "PaintGreen": {
+      "metallic": 0.0,
+      "roughness": 0.6499999761581421,
+      "opacity": 1.0,
+      "base_color": "textures/PaintGreen_BaseColor.png",
+      "normal_engine": "textures/PaintGreen_Normal_DX.png",
+      "normal_blender": "textures/PaintGreen_Normal.png"
+    },
+    "Floor": {
+      "metallic": 0.0,
+      "roughness": 0.7300000190734863,
+      "opacity": 1.0,
+      "base_color": "textures/Floor_BaseColor.png",
+      "normal_engine": "textures/Floor_Normal_DX.png",
+      "normal_blender": "textures/Floor_Normal.png"
+    },
+    "Steel": {
+      "metallic": 0.8999999761581421,
+      "roughness": 0.3400000035762787,
+      "opacity": 1.0,
+      "base_color": "textures/Steel_BaseColor.png",
+      "normal_engine": "textures/Steel_Normal_DX.png",
+      "normal_blender": "textures/Steel_Normal.png"
+    },
+    "Rust": {
+      "metallic": 0.0,
+      "roughness": 0.9399999976158142,
+      "opacity": 1.0,
+      "base_color": "textures/Rust_BaseColor.png",
+      "normal_engine": "textures/Rust_Normal_DX.png",
+      "normal_blender": "textures/Rust_Normal.png"
+    },
+    "Rubber": {
+      "metallic": 0.0,
+      "roughness": 0.8500000238418579,
+      "opacity": 1.0,
+      "base_color": "textures/Rubber_BaseColor.png",
+      "normal_engine": "textures/Rubber_Normal_DX.png",
+      "normal_blender": "textures/Rubber_Normal.png"
+    },
+    "Grime": {
+      "metallic": 0.0,
+      "roughness": 0.9599999785423279,
+      "opacity": 1.0,
+      "base_color": "textures/Grime_BaseColor.png",
+      "normal_engine": "textures/Grime_Normal_DX.png",
+      "normal_blender": "textures/Grime_Normal.png"
+    },
+    "Epoxy": {
+      "metallic": 0.0,
+      "roughness": 0.28999999165534973,
+      "opacity": 1.0,
+      "base_color": "textures/Epoxy_BaseColor.png",
+      "normal_engine": "textures/Epoxy_Normal_DX.png",
+      "normal_blender": "textures/Epoxy_Normal.png"
+    },
+    "Ceramic": {
+      "metallic": 0.0,
+      "roughness": 0.23000000417232513,
+      "opacity": 1.0,
+      "base_color": "textures/Ceramic_BaseColor.png",
+      "normal_engine": "textures/Ceramic_Normal_DX.png",
+      "normal_blender": "textures/Ceramic_Normal.png"
+    },
+    "Ink": {
+      "metallic": 0.0,
+      "roughness": 0.8500000238418579,
+      "opacity": 1.0,
+      "base_color": "textures/Ink_BaseColor.png",
+      "normal_engine": "textures/Ink_Normal_DX.png",
+      "normal_blender": "textures/Ink_Normal.png"
+    },
+    "Glass": {
+      "metallic": 0.0,
+      "roughness": 0.09000000357627869,
+      "opacity": 0.5799999833106995,
+      "base_color": "textures/Glass_BaseColor.png",
+      "normal_engine": "textures/Glass_Normal_DX.png",
+      "normal_blender": "textures/Glass_Normal.png"
+    },
+    "Water": {
+      "metallic": 0.0,
+      "roughness": 0.05999999865889549,
+      "opacity": 0.550000011920929,
+      "base_color": "textures/Water_BaseColor.png",
+      "normal_engine": "textures/Water_Normal_DX.png",
+      "normal_blender": "textures/Water_Normal.png"
+    }
+  }
+}

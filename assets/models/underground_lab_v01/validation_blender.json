@@ -1,0 +1,377 @@
+{
+  "fbx": [
+    {
+      "file": "Lab_Room.fbx",
+      "triangles": 65396,
+      "mesh_objects": 5
+    },
+    {
+      "file": "Lab_Corridor.fbx",
+      "triangles": 39140,
+      "mesh_objects": 5
+    },
+    {
+      "file": "Lab_Bench.fbx",
+      "triangles": 3096,
+      "mesh_objects": 1
+    },
+    {
+      "file": "Lab_Sink.fbx",
+      "triangles": 5052,
+      "mesh_objects": 1
+    },
+    {
+      "file": "Lab_StorageShelf.fbx",
+      "triangles": 8704,
+      "mesh_objects": 1
+    },
+    {
+      "file": "Lab_MetalFloorPlate.fbx",
+      "triangles": 26140,
+      "mesh_objects": 1
+    },
+    {
+      "file": "Lab_GlassShards.fbx",
+      "triangles": 412,
+      "mesh_objects": 1
+    },
+    {
+      "file": "Lab_WaterPuddle.fbx",
+      "triangles": 80,
+      "mesh_objects": 1
+    },
+    {
+      "file": "Lab_Door.fbx",
+      "triangles": 5136,
+      "mesh_objects": 2
+    }
+  ],
+  "textures": [
+    {
+      "file": "Ceramic_BaseColor.png",
+      "size": [
+        2048,
+        2048
+      ]
+    },
+    {
+      "file": "Ceramic_Normal.png",
+      "size": [
+        2048,
+        2048
+      ]
+    },
+    {
+      "file": "Ceramic_Normal_DX.png",
+      "size": [
+        2048,
+        2048
+      ]
+    },
+    {
+      "file": "Epoxy_BaseColor.png",
+      "size": [
+        2048,
+        2048
+      ]
+    },
+    {
+      "file": "Epoxy_Normal.png",
+      "size": [
+        2048,
+        2048
+      ]
+    },
+    {
+      "file": "Epoxy_Normal_DX.png",
+      "size": [
+        2048,
+        2048
+      ]
+    },
+    {
+      "file": "Floor_BaseColor.png",
+      "size": [
+        2048,
+        2048
+      ]
+    },
+    {
+      "file": "Floor_Normal.png",
+      "size": [
+        2048,
+        2048
+      ]
+    },
+    {
+      "file": "Floor_Normal_DX.png",
+      "size": [
+        2048,
+        2048
+      ]
+    },
+    {
+      "file": "Glass_BaseColor.png",
+      "size": [
+        2048,
+        2048
+      ]
+    },
+    {
+      "file": "Glass_Normal.png",
+      "size": [
+        2048,
+        2048
+      ]
+    },
+    {
+      "file": "Glass_Normal_DX.png",
+      "size": [
+        2048,
+        2048
+      ]
+    },
+    {
+      "file": "Grime_BaseColor.png",
+      "size": [
+        2048,
+        2048
+      ]
+    },
+    {
+      "file": "Grime_Normal.png",
+      "size": [
+        2048,
+        2048
+      ]
+    },
+    {
+      "file": "Grime_Normal_DX.png",
+      "size": [
+        2048,
+        2048
+      ]
+    },
+    {
+      "file": "Ink_BaseColor.png",
+      "size": [
+        2048,
+        2048
+      ]
+    },
+    {
+      "file": "Ink_Normal.png",
+      "size": [
+        2048,
+        2048
+      ]
+    },
+    {
+      "file": "Ink_Normal_DX.png",
+      "size": [
+        2048,
+        2048
+      ]
+    },
+    {
+      "file": "PaintGreen_BaseColor.png",
+      "size": [
+        2048,
+        2048
+      ]
+    },
+    {
+      "file": "PaintGreen_Normal.png",
+      "size": [
+        2048,
+        2048
+      ]
+    },
+    {
+      "file": "PaintGreen_Normal_DX.png",
+      "size": [
+        2048,
+        2048
+      ]
+    },
+    {
+      "file": "PaintWhite_BaseColor.png",
+      "size": [
+        2048,
+        2048
+      ]
+    },
+    {
+      "file": "PaintWhite_Normal.png",
+      "size": [
+        2048,
+        2048
+      ]
+    },
+    {
+      "file": "PaintWhite_Normal_DX.png",
+      "size": [
+        2048,
+        2048
+      ]
+    },
+    {
+      "file": "Plaster_BaseColor.png",
+      "size": [
+        2048,
+        2048
+      ]
+    },
+    {
+      "file": "Plaster_Normal.png",
+      "size": [
+        2048,
+        2048
+      ]
+    },
+    {
+      "file": "Plaster_Normal_DX.png",
+      "size": [
+        2048,
+        2048
+      ]
+    },
+    {
+      "file": "Rubber_BaseColor.png",
+      "size": [
+        2048,
+        2048
+      ]
+    },
+    {
+      "file": "Rubber_Normal.png",
+      "size": [
+        2048,
+        2048
+      ]
+    },
+    {
+      "file": "Rubber_Normal_DX.png",
+      "size": [
+        2048,
+        2048
+      ]
+    },
+    {
+      "file": "Rust_BaseColor.png",
+      "size": [
+        2048,
+        2048
+      ]
+    },
+    {
+      "file": "Rust_Normal.png",
+      "size": [
+        2048,
+        2048
+      ]
+    },
+    {
+      "file": "Rust_Normal_DX.png",
+      "size": [
+        2048,
+        2048
+      ]
+    },
+    {
+      "file": "Steel_BaseColor.png",
+      "size": [
+        2048,
+        2048
+      ]
+    },
+    {
+      "file": "Steel_Normal.png",
+      "size": [
+        2048,
+        2048
+      ]
+    },
+    {
+      "file": "Steel_Normal_DX.png",
+      "size": [
+        2048,
+        2048
+      ]
+    },
+    {
+      "file": "Water_BaseColor.png",
+      "size": [
+        2048,
+        2048
+      ]
+    },
+    {
+      "file": "Water_Normal.png",
+      "size": [
+        2048,
+        2048
+      ]
+    },
+    {
+      "file": "Water_Normal_DX.png",
+      "size": [
+        2048,
+        2048
+      ]
+    }
+  ],
+  "previews": [
+    {
+      "file": "01_Room.png",
+      "size": [
+        1600,
+        1000
+      ],
+      "mean": 0.45843374729156494,
+      "std": 0.25323164463043213,
+      "nonblack_fraction": 0.997893125
+    },
+    {
+      "file": "02_Corridor.png",
+      "size": [
+        1600,
+        1000
+      ],
+      "mean": 0.5413634777069092,
+      "std": 0.24549363553524017,
+      "nonblack_fraction": 0.998215625
+    },
+    {
+      "file": "03_Workstations.png",
+      "size": [
+        1600,
+        1000
+      ],
+      "mean": 0.5205675363540649,
+      "std": 0.18877559900283813,
+      "nonblack_fraction": 0.99932875
+    },
+    {
+      "file": "04_Door.png",
+      "size": [
+        1600,
+        1000
+      ],
+      "mean": 0.537686288356781,
+      "std": 0.21425403654575348,
+      "nonblack_fraction": 0.99996625
+    },
+    {
+      "file": "05_Layout.png",
+      "size": [
+        1600,
+        1000
+      ],
+      "mean": 0.2569969594478607,
+      "std": 0.17679747939109802,
+      "nonblack_fraction": 0.996320625
+    }
+  ],
+  "failures": []
+}

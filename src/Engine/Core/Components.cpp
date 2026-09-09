@@ -571,7 +571,6 @@ void RegisterBuiltinComponents()
         MYE_JP("描画順", MYE_FIELD(DecalComponent, sortOrder, Int32)),
         // ---- M56b (末尾 append)。**強度 0 = 恒等** = 既存シーンを読み直しても
         //      GBuffer は 1 ビットも動かない (フィールドが増えるだけ) ----
-        // 注: 名前推定は小文字 "tex" を探すので "normalTex" は総当たり一覧の側に落ちる
         MYE_JP("法線マップ", MYE_FIELD_TIP(DecalComponent, normalTex, AssetRef,
                                            "tangent-space normal map (null = flat)")),
         MYE_JP("法線の強さ", MYE_FIELD_RANGE(DecalComponent, normalStrength, Float, 0.0f, 1.0f)),

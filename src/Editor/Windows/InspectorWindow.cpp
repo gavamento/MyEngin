@@ -1,5 +1,6 @@
 #include "Editor/Windows/InspectorWindow.h"
 
+#include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <cstring>
@@ -27,6 +28,7 @@
 #include "Engine/Core/Log.h"
 #include "Engine/Core/World.h"
 #include "Engine/Engine/Animation.h"
+#include "Engine/Engine/AnimatorController.h"
 #include "Engine/Engine/AssetDatabase.h"
 #include "Engine/Engine/EntityNaming.h"
 #include "Engine/Engine/GameObject.h"
@@ -1956,18 +1958,30 @@ void InspectorWindow::DrawAssetRef(EngineContext& ctx, const FieldDesc& field, v
                                    const std::vector<void*>& comps, uint32_t fieldOffset)
 {
     auto* id = static_cast<AssetID*>(p);
-    // フィールド名からライブラリを推定 (mesh / material / texture)
-    const std::string fname = field.name;
+    // フィールド名からライブラリを推定 (mesh / material / texture)。
+    // ★**小文字へ畳んでから照合する**。素の名前で探していたため "cubemapTexture" /
+    //   "lutTexture" / "normalTex" が "tex" に一致せず、どれも総当たり一覧へ落ちていた
+    std::string fname = field.name;
+    std::transform(fname.begin(), fname.end(), fname.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     std::vector<AssetEntry> entries;
-    if (fname.find("physMat") != std::string::npos || fname.find("physmat") != std::string::npos) {
+    if (fname.find("physmat") != std::string::npos) {
         // M59a1: 物理マテリアル (M59a2 の Collider.physMaterial 等)。
-        // ★"material"/"mat" 系より**先に**見る — 照合は大文字小文字を区別するので
-        //   "physMaterial".find("material") は npos になり、順序を誤ると既定の混合リストに
-        //   落ちて MaterialLibrary と取り違えたまま気付けない
+        // ★"material" より**先に**見ること。小文字化した "physmaterial" は "material" を
+        //   含むので、順序を誤ると MaterialLibrary と取り違えたまま気付けない
+        //   (小文字化前は find("material") が npos で、代わりに混合リストへ落ちていた)
         if (PhysMatLibrary* pm = physmat::Library()) {
             for (const PhysMatEntry& e : pm->Enumerate()) {
                 entries.push_back({ AssetID{ e.hash }, e.name });
             }
+        }
+    } else if (fname.find("model") != std::string::npos) {
+        // M18: SkinnedMesh.model。★"model" は "mesh" を含まないので、この分岐が無いと
+        //   最後の else (メッシュ + マテリアル + テクスチャの混合) に落ちる。正解の
+        //   SkinnedModel が 1 件も候補に出ないうえ、現在値も一覧に無いので表示は常に
+        //   "None" になり、そこから選ぶと FBX ローダが入れた参照が壊れる
+        for (const SkinnedModelEntry& s : ctx.resources->skinnedModels.Enumerate()) {
+            entries.push_back({ AssetID{ s.hash }, s.name });
         }
     } else if (fname.find("mesh") != std::string::npos) {
         entries = ctx.resources->meshes.Enumerate();
@@ -1991,6 +2005,15 @@ void InspectorWindow::DrawAssetRef(EngineContext& ctx, const FieldDesc& field, v
         // 注: "clip" はアニメーションクリップの既存規約。音のクリップは "audio" を使うこと
         for (const AnimClipEntry& c : ctx.anims->Enumerate()) {
             entries.push_back({ AssetID{ c.hash }, c.name });
+        }
+    } else if (fname.find("controller") != std::string::npos) {
+        // M22: AnimatorController.controller。★"clip" も "anim" も含まないので、この分岐が
+        //   無いと SkinnedMesh.model と同じく総当たり一覧へ落ちる — 正解の .controller.json
+        //   が 1 件も候補に出ず、選ぶと参照が壊れる
+        if (ctx.controllers) {
+            for (const ControllerEntry& c : ctx.controllers->Enumerate()) {
+                entries.push_back({ AssetID{ c.hash }, c.name });
+            }
         }
     } else {
         entries = ctx.resources->meshes.Enumerate();

@@ -495,6 +495,18 @@ bool RunPartSelfTest()
         check(registered == 1 && registeredFbx == 1,
               "follow: RegisterSkinnedModels registers glTF and FBX skeletons headlessly");
 
+        // (0a) 名前を覚えていること。★M18 の積み残しで SkinnedModelLibrary だけ names_ を
+        //   持たず Enumerate も無かったため、Inspector の AssetRef ピッカーは
+        //   SkinnedMesh.model の候補を 1 件も作れず、メッシュ + マテリアル + テクスチャの
+        //   混合リストへ落ちていた (正解が出ないうえ、選ぶと参照が壊れる)
+        const std::vector<SkinnedModelEntry> skinList = headless.skinnedModels.Enumerate();
+        check(skinList.size() == 2
+                  && std::all_of(skinList.begin(), skinList.end(),
+                                 [](const SkinnedModelEntry& e) {
+                                     return e.name.find("#skin") != std::string::npos;
+                                 }),
+              "follow: SkinnedModelLibrary::Enumerate returns the registered skins by name");
+
         // (0b) M50a: 一括登録 (起動走査の実体) はメッシュ / マテリアルまで揃えること。
         // スケルトンだけだと保存済みシーン経由のロードでモデルが描画されない
         // (M48i 申し送りの穴)。照合はスキン同様、Load とは別ライブラリに対して行う

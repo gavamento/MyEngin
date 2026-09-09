@@ -52,13 +52,26 @@ struct SkinnedModel {
     int32_t FindJointByName(std::string_view name) const;
 };
 
+// 列挙の 1 件 (参照ピッカー用)。GpuResources.h の AssetEntry は **このヘッダより下流**
+// (GpuResources.h が Skeleton.h を include する) なので使えない。PhysMatEntry /
+// AnimClipEntry と同じく自前の型を返し、呼び出し側で AssetEntry へ詰め替える
+struct SkinnedModelEntry {
+    uint64_t hash = 0;
+    std::string name;
+};
+
 class SkinnedModelLibrary {
 public:
     AssetID Register(std::string_view name, SkinnedModel model); // 同名は差し替え
     const SkinnedModel* Get(AssetID id) const;
+    // ★名前は Register でしか手に入らない (models_ はハッシュしか持たない)。これが無いと
+    //   Inspector の AssetRef ピッカーが候補を 1 件も作れず、SkinnedMesh.model が
+    //   「メッシュ + マテリアル + テクスチャの混合リスト」へ落ちる (M18 の積み残し)
+    std::vector<SkinnedModelEntry> Enumerate() const;
 
 private:
     std::unordered_map<uint64_t, SkinnedModel> models_;
+    std::unordered_map<uint64_t, std::string> names_; // 列挙用 (MeshLibrary と同じ流儀)
 };
 
 // clip を timeSec でサンプルして各ジョイントのローカル TRS を作り、階層を掛け合わせて

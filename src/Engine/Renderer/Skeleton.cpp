@@ -12,6 +12,7 @@ AssetID SkinnedModelLibrary::Register(std::string_view name, SkinnedModel model)
 {
     const AssetID id{ HashStr(name) };
     models_[id.value] = std::move(model);
+    names_[id.value] = std::string(name);
     return id;
 }
 
@@ -19,6 +20,21 @@ const SkinnedModel* SkinnedModelLibrary::Get(AssetID id) const
 {
     auto it = models_.find(id.value);
     return (it != models_.end()) ? &it->second : nullptr;
+}
+
+// GpuResources.cpp の EnumerateNames と同じ形 (名前順で固定する — unordered_map の
+// 走査順は不定で、そのまま返すとピッカーを開くたびに並びが変わる)
+std::vector<SkinnedModelEntry> SkinnedModelLibrary::Enumerate() const
+{
+    std::vector<SkinnedModelEntry> out;
+    out.reserve(names_.size());
+    for (const auto& [hash, name] : names_) {
+        out.push_back({ hash, name });
+    }
+    std::sort(out.begin(), out.end(), [](const SkinnedModelEntry& a, const SkinnedModelEntry& b) {
+        return a.name < b.name;
+    });
+    return out;
 }
 
 namespace {
