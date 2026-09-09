@@ -198,6 +198,27 @@ bool RunSourceControlSelfTest()
         }
     }
 
+    // ---- (b2) RetryAfterBuild の冪等性 (M66m: 初回自動ビルド) ----
+    // ★cargo build の実走は検査しない (遅い上に環境依存)。ここで固定したいのは
+    //   「DLL が既にロード済みなら Load をやり直さない」ガードだけ — これが無いと
+    //   ビルド完了のたびに Create/SendHello が二重に飛んで status が二重取得される。
+    //   実際の「DLL を消して起動 -> 自動ビルド」は実機の目視で確認する (申し送り)
+    {
+        const std::wstring exeDir = GetExecutableDir();
+        std::error_code ec;
+        if (fs::exists(fs::path(exeDir) / L"MyeCollab.dll", ec)) {
+            SourceControlSession session;
+            const fs::path tmp = fs::temp_directory_path() / L"mye_collab_selftest_retry";
+            fs::create_directories(tmp, ec);
+            session.Start(exeDir, tmp.wstring(), false, 5);
+            check(!session.RetryAfterBuild(exeDir),
+                  "RetryAfterBuild no-ops once the dll is already loaded");
+            session.Shutdown();
+        } else {
+            MYE_LOG_INFO("[selftest] SourceControl: MyeCollab.dll not found - SKIP (b2)");
+        }
+    }
+
     // ---- (c1) 偽 status トランスクリプト -> 対の束ねと合成状態 ----
     {
         nlohmann::json result;

@@ -1429,6 +1429,26 @@ std::wstring PrepareProjectScriptsBat(EngineContext& ctx)
     return batPath;
 }
 
+// build_collab.bat と同じ解決順 (PATH -> rustup の既定インストール先)。ここで先に
+// 判定しておくことで、rustup 未導入の環境では bat をそもそも起動しない
+// (毎起動 exit 1 のログが出て未導入の同僚を汚すのを防ぐ)
+bool IsCargoAvailable()
+{
+    wchar_t buf[MAX_PATH];
+    if (::SearchPathW(nullptr, L"cargo.exe", nullptr, MAX_PATH, buf, nullptr) > 0) {
+        return true;
+    }
+    wchar_t* userProfile = nullptr;
+    size_t len = 0;
+    bool found = false;
+    if (_wdupenv_s(&userProfile, &len, L"USERPROFILE") == 0 && userProfile) {
+        std::error_code ec;
+        found = fs::exists(fs::path(userProfile) / L".cargo" / L"bin" / L"cargo.exe", ec);
+        free(userProfile);
+    }
+    return found;
+}
+
 } // namespace
 
 // ★可視の cmd 窓で bat を投げる `RebuildGameLogic` は M66e で**削除した**。
@@ -1540,6 +1560,56 @@ void* StartGameLogicBuild(EngineContext& ctx, std::wstring& logPathOut)
     }
     CloseHandle(pi.hThread);
     MYE_LOG_INFO(Tr(StrId::Log_BuildingGameLogic), WideToUtf8(cfg).c_str());
+    return pi.hProcess;
+}
+
+void* StartCollabBuild(std::wstring& logPathOut)
+{
+    if (!IsCargoAvailable()) {
+        return nullptr; // rustup 未導入 = 正常な縮退 (CollabClient::Load と同じ方針でログもしない)
+    }
+    const std::wstring repo = FindEngineRepoRoot();
+    if (repo.empty()) {
+        return nullptr; // リポジトリから切り離された配布 exe 等
+    }
+    const std::wstring bat = repo + L"\\tools\\build_collab.bat";
+    if (!fs::exists(bat)) {
+        return nullptr;
+    }
+    logPathOut = repo + L"\\build_collab.log";
+    const std::wstring args = L"cmd.exe /c \"\"" + bat + L"\"\"";
+
+    SECURITY_ATTRIBUTES sa = {};
+    sa.nLength = sizeof(sa);
+    sa.bInheritHandle = TRUE;
+    HANDLE log = CreateFileW(logPathOut.c_str(), GENERIC_WRITE, FILE_SHARE_READ, &sa,
+                             CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    HANDLE nulIn = CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa,
+                               OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    STARTUPINFOW si = {};
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESTDHANDLES;
+    si.hStdOutput = log;
+    si.hStdError = log;
+    si.hStdInput = nulIn;
+    PROCESS_INFORMATION pi = {};
+    std::vector<wchar_t> cmdline(args.begin(), args.end());
+    cmdline.push_back(L'\0'); // CreateProcessW は書込可能バッファを要求する
+    const BOOL ok = CreateProcessW(nullptr, cmdline.data(), nullptr, nullptr, TRUE,
+                                   CREATE_NO_WINDOW, nullptr, repo.c_str(), &si, &pi);
+    if (log != INVALID_HANDLE_VALUE) {
+        CloseHandle(log); // 子が継承済み — 親側は即クローズでよい
+    }
+    if (nulIn != INVALID_HANDLE_VALUE) {
+        CloseHandle(nulIn);
+    }
+    if (!ok) {
+        MYE_LOG_ERROR("[collab] CreateProcess failed for first-run build (%lu)", GetLastError());
+        return nullptr;
+    }
+    CloseHandle(pi.hThread);
+    MYE_LOG_INFO("[collab] MyeCollab.dll not found - building in the background "
+                 "(tools\\build_collab.bat)");
     return pi.hProcess;
 }
 

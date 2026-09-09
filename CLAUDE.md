@@ -29,6 +29,10 @@ MyEngine — C++20 / DirectX 11 の自作ゲームエンジン (VS2022 / x64 / W
   cargo が無ければ exit 1)。`cargo build --release` 1 回で Rust の cdylib `MyeCollab.dll` と
   `MyeCollabCli.exe` を作り、**Debug / Release の両方の bin へ同じ物**を置く (Rust 側に構成の区別は無い)。
   無ければ Source Control 窓が「利用不可」になるだけで他の機能は無傷。
+  **DLL が無いだけなら Editor.exe が起動時に裏で自動的に呼ぶ** (M66m。`AssetOps::StartCollabBuild`)。
+  cargo が PATH にも rustup の既定インストール先にも無ければ何もせず無音の縮退のまま
+  (未導入の同僚を汚さない)。成功したら再起動なしで `SourceControlSession::RetryAfterBuild` が
+  DLL を読み直して機能を有効化する。
 
 ## 検証 (変更後に回すもの)
 

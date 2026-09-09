@@ -119,6 +119,8 @@ private:
     GateInputs BuildGateInputs(EngineContext& ctx);
     // M66e: [Rebuild Scripts] の子プロセスを毎フレーム見る (終了でトースト + ゲート解放)
     void PollScriptBuild();
+    // M66m: 初回自動ビルドの子プロセスを毎フレーム見る。成功したら scm_ の再ロードを試す
+    void PollCollabBuild();
     // M66h: 失敗した build_scripts.log の error 行を Console へ流す (file:line 付き)
     void ReportScriptBuildErrors();
     void SaveSceneAs(EngineContext& ctx);
@@ -178,6 +180,12 @@ private:
     //   ビルド中に checkout が通る (bin\ と cache\ を書いている最中に入れ替わる)
     void* scriptBuildProc_ = nullptr;
     std::wstring scriptBuildLog_;
+    // M66m: 初回自動ビルド (scm_.Start が NoService で終わったときだけ立つ)。
+    // scriptBuildProc_ と同じ理由でハンドルを持ち続ける必要は無い —
+    // MyeCollab.dll が無い間は scm_.State() != None が既に GateBlocker::ServiceUnavailable
+    // を立てているので、ここは完了検知とトーストのためだけの保持
+    void* collabBuildProc_ = nullptr;
+    std::wstring collabBuildLog_;
     // M52e: スクラブ解除の判定に使う前フレームの再生状態 (状態ではなく遷移を見るため)
     PlayState prevPlayState_ = PlayState::Editing;
     AssetBrowserWindow assetBrowser_;

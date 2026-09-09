@@ -245,6 +245,10 @@ public:
     // autoFetch / fetchIntervalMin は EditorSettings 由来で、そのまま hello に載る
     void Start(const std::wstring& exeDir, const std::wstring& projectRoot, bool autoFetch,
                int fetchIntervalMin);
+    // Start() が NoService (DLL が無い) で終わった後、初回自動ビルド (M66m) が成功したら
+    // EditorApp から呼ぶ。**dll_ が未ロードのときだけ**再試行する — 既にロード済み
+    // (None はもちろん ProtoMismatch も) なら何もせず false。二重に呼んでも安全
+    bool RetryAfterBuild(const std::wstring& exeDir);
     // 毎フレーム 1 回 (OnImGui の先頭)。応答/通知の配布とタイムアウトの回収
     void Poll();
     void Shutdown();

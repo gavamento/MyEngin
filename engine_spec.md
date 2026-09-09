@@ -2513,6 +2513,14 @@ void     mye_collab_destroy(void* h);
   developer prerequisite. Without the DLL the editor is unharmed and the window reports
   `NoService` — the same degradation as a missing `MyeScripting.dll`. `MyeCollab.dll` is not
   hot-reloadable and cannot be overwritten while the editor runs.
+- **First-run auto-build (M66m).** If the editor starts and finds `NoService` because the DLL is
+  simply missing, it silently spawns `tools\build_collab.bat` in the background
+  (`AssetOps::StartCollabBuild`, same non-blocking pattern as the GameLogic script build) —
+  *only* when cargo is resolvable (PATH or the rustup default install path); otherwise it does
+  nothing, matching the existing "no rustup, no noise" degradation. On success the DLL is
+  reloaded in place (`SourceControlSession::RetryAfterBuild`) and the window becomes usable
+  without a restart; a genuine build failure (cargo present, compile broke) is logged but not
+  toasted — this is an opportunistic background attempt, not a user-initiated action.
 
 ### 14.2 Operations, events and errors (frozen for v1)
 

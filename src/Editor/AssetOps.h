@@ -136,6 +136,15 @@ void CompileCSharpScripts(EngineContext& ctx); // assets\scripts\*.cs をエン�
 //   ゲートを閉じる** (bin\ と cache\ を書き換えている最中に checkout が通らないように)
 void* StartGameLogicBuild(EngineContext& ctx, std::wstring& logPathOut);
 
+// MyeCollab.dll (Rust) の初回自動ビルド (M66m)。EditorApp が起動直後、DLL が見つからず
+// Unavailable::NoService になったときだけ呼ぶ。cargo が PATH にも rustup の既定
+// インストール先にも見つからなければ**何もせず nullptr** (ログもしない) — rustup 未導入は
+// CollabClient::Load と同じく正常な縮退であって異常ではない。エンジンリポジトリが
+// 見つからない (配布 exe 等) 場合も同様に nullptr。
+// StartGameLogicBuild と同型 (cmd.exe /c 経由、stdout/stderr をログへ、stdin は NUL、
+// CREATE_NO_WINDOW)。ハンドルは呼び出し側が CloseHandle すること
+void* StartCollabBuild(std::wstring& logPathOut);
+
 // build_scripts.log の 1 行を Console へ流すための分解結果 (M66h)
 struct BuildErrorLine {
     std::string file; // MSVC が告げたソースパス。空 = 行番号が無い形 (LINK エラー等)

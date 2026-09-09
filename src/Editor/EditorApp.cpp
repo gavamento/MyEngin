@@ -266,6 +266,13 @@ void EditorApp::OnStart(EngineContext& ctx)
     //   ロードに失敗しても例外は飛ばない = エディタの他機能は一切影響を受けない
     scm_.Start(GetExecutableDir(), ctx.projectRoot, settings_.scmAutoFetch,
                settings_.scmFetchIntervalMin);
+    // ---- 初回自動ビルド (M66m) ----
+    // DLL が丸ごと無い (まだ一度も build_collab.bat を回していない) ときだけ試す。
+    // cargo が無ければ StartCollabBuild が黙って nullptr を返す = rustup 未導入の
+    // 同僚には今まで通り無音の縮退のまま (エラーログもトーストも出さない)
+    if (scm_.State() == Unavailable::NoService) {
+        collabBuildProc_ = StartCollabBuild(collabBuildLog_);
+    }
     // 保存ヒントの受け口 (M66i)。AssetOps の自由関数や各 Save 窓は
     // SourceControlSession を知らないので、中継はここ 1 箇所で張る。
     // ★Unavailable / リポジトリ外の判定は HintSaved の中にある = 呼び出し側は
@@ -877,6 +884,7 @@ void EditorApp::OnImGui(EngineContext& ctx)
         }
     }
     PollScriptBuild();
+    PollCollabBuild();
     // AssetBrowser で .scene.json がダブルクリックされたら未保存変更ガード経由で開く
     if (std::wstring p = assetBrowser_.TakePendingOpenScene(); !p.empty()) {
         pendingOpenScenePath_ = std::move(p);
@@ -1611,6 +1619,33 @@ void EditorApp::PollScriptBuild()
         //   M66e で窓を消した分を Console へ戻す (M66h)
         ReportScriptBuildErrors();
         toasts_.Notify(LogLevel::Error, Tr(StrId::Scm_ScriptBuildFailed));
+    }
+}
+
+void EditorApp::PollCollabBuild()
+{
+    if (collabBuildProc_ == nullptr) {
+        return;
+    }
+    if (WaitForSingleObject(collabBuildProc_, 0) != WAIT_OBJECT_0) {
+        return; // 実行中 — 次フレームでまた見る
+    }
+    DWORD code = 1;
+    GetExitCodeProcess(collabBuildProc_, &code);
+    CloseHandle(collabBuildProc_);
+    collabBuildProc_ = nullptr;
+    if (code == 0) {
+        // DLL が今できたので Load をやり直す。再起動なしで Source Control が生きる
+        if (scm_.RetryAfterBuild(GetExecutableDir())) {
+            toasts_.Notify(LogLevel::Info, Tr(StrId::Scm_CollabBuildDone));
+        }
+        // false (proto 不一致等) は scm_.State() が理由を持ったまま — 窓の「利用不可」表示に任せる
+    } else {
+        // ★トーストは出さない — バックグラウンドで黙って試した初回ビルドなので、
+        //   失敗を知りたいのは Rust 側を触っている開発者だけ。ログで十分 (M66j 系の
+        //   ScriptBuildFailed トーストとは違い、これはユーザーが明示的に押した操作ではない)
+        MYE_LOG_ERROR("[collab] first-run build failed (exit %lu) - see %s", code,
+                      WideToUtf8(collabBuildLog_).c_str());
     }
 }
 

@@ -383,6 +383,21 @@ void SourceControlSession::Start(const std::wstring& exeDir, const std::wstring&
     SendHello();
 }
 
+bool SourceControlSession::RetryAfterBuild(const std::wstring& exeDir)
+{
+    if (!started_ || client_.Loaded()) {
+        return false; // 裸起動、または既にロード済み (None/ProtoMismatch 問わず) なら何もしない
+    }
+    if (!client_.Load(exeDir)) {
+        return false; // まだ無い / 版が違う -> 理由は State() に残る
+    }
+    if (!client_.Create(WideToUtf8(projectRoot_))) {
+        return false;
+    }
+    SendHello();
+    return true;
+}
+
 void SourceControlSession::ApplyEvent(const nlohmann::json& msg)
 {
     const std::string ev = msg.value("event", std::string());

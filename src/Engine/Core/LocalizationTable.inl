@@ -1206,6 +1206,10 @@ MYE_STR(Scm_OverwriteHint,     "Discard the changes in these files first, then s
 MYE_STR(Scm_MergeLeftover,     "A merge or rebase from an earlier session is still open.",
                                "前回のマージ / リベースが途中のままです。")
 MYE_STR(Scm_ScriptBuildDone,   "Script build finished", "スクリプトのビルドが終わりました")
+// M66m: 初回自動ビルド (DLL が無いときだけ、cargo があれば黙って試す)。失敗はトーストにしない
+// (ログのみ) ので文言は成功の 1 本だけでよい
+MYE_STR(Scm_CollabBuildDone,   "Source control finished building - ready to use",
+                               "Source Control のビルドが終わりました。使えるようになりました")
 // ★書式指定子を持たせない。失敗経路は 2 つ (起動できなかった / 終了コードが 0 でない)
 //   あり、片方はログのパスを持たない。詳細 (パスと exit code) はログへ出す
 MYE_STR(Scm_ScriptBuildFailed, "Script build failed - see the console log.",
