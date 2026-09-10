@@ -259,6 +259,8 @@ Editor → GameLogic → Engine → Renderer → Core → Platform   (上位は�
   シーク / 焼き / 乖離ダンプの再シムは `RunResim` 1 本 (出力抑止の置き場所はここだけ)。
   **入力の上書き (M72f、`Replay\InputOverride.*`)** は置換チェーン (verify / net / synth) の
   **後ろ**で OR / 置換する = entry に記録されてシークで再現する。verify / net では適用しない。
+  **フィールド差分 (M72g、`RequestDiff` → `DiffAt`)** は 2 レーンをその tick まで再シムして
+  `HashWorldDump` + `DiffHashDumps(…, outReport)` をインプロセスで撃つ (CLI の `--hash-diff` と同じ行)。
 - **起動経路が 2 つある**: プロジェクト起動 (`--project DIR`) と裸起動 (プロジェクトマネージャ)。
   **分岐は必ず `config.projectRoot` の有無で判定する**。シェーダは
   「プロジェクトの `assets\shaders` → エンジンリポジトリの `assets\shaders`」の 2 ルート解決

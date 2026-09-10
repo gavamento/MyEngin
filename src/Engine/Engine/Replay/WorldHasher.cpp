@@ -661,7 +661,8 @@ bool ReadHashDump(const std::wstring& path, HashDump& out)
     return true;
 }
 
-HashDumpDiff DiffHashDumps(const HashDump& a, const HashDump& b, int maxReport)
+HashDumpDiff DiffHashDumps(const HashDump& a, const HashDump& b, int maxReport,
+                           std::vector<std::string>* outReport)
 {
     HashDumpDiff r;
     r.totalDiffers = (a.total != b.total);
@@ -711,6 +712,13 @@ HashDumpDiff DiffHashDumps(const HashDump& a, const HashDump& b, int maxReport)
                               std::string(ca.col[3]).c_str(), std::string(ca.col[4]).c_str());
                 MYE_LOG_ERROR("[hashdiff]   A = %s", Shorten(ca.col[5]).c_str());
                 MYE_LOG_ERROR("[hashdiff]   B = %s", Shorten(cb.col[5]).c_str());
+                if (outReport != nullptr) {
+                    std::string row;
+                    row.append(ca.col[1]).append("\t").append(ca.col[2]).append("\t");
+                    row.append(ca.col[3]).append(".").append(ca.col[4]).append("\t");
+                    row.append(Shorten(ca.col[5])).append("\t").append(Shorten(cb.col[5]));
+                    outReport->push_back(std::move(row));
+                }
             }
         }
     }

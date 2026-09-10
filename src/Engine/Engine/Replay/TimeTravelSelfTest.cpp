@@ -11,6 +11,7 @@
 #include "Engine/Engine/Replay/InputOverride.h"
 #include "Engine/Engine/Replay/SimSnapshot.h"
 #include "Engine/Engine/Replay/TimeTravel.h"
+#include "Engine/Engine/Replay/WorldHasher.h"
 #include "Engine/Engine/Scene.h"
 
 namespace mye {
@@ -428,6 +429,29 @@ bool RunTimeTravelSelfTest()
         set.Apply(20, late, 2);
         check(!late[0].KeyDown(0x20) && late[1].padButtons == 0, "toTick is exclusive");
         check(std::string(set.items[0].label) == "Jump", "the label carries the action name");
+    }
+
+    // ---- フィールド差分の報告行 (M72g): DiffHashDumps の outReport ----
+    {
+        World& w = scene.GetWorld();
+        HashDump a;
+        HashDump b;
+        HashWorldDump(w, {}, 7, a);
+        if (auto* t = w.GetComponent<LocalTransform>(mover)) {
+            t->position.z += 2.0f;
+        }
+        HashWorldDump(w, {}, 7, b);
+        std::vector<std::string> rows;
+        const HashDumpDiff d = DiffHashDumps(a, b, 8, &rows);
+        check(d.valueDiffs == 1 && rows.size() == 1, "one changed field -> one report row");
+        check(!rows.empty() && rows.front().find("Mover") != std::string::npos
+                  && rows.front().find("LocalTransform.position") != std::string::npos,
+              "the row names the entity and the component.field");
+        int tabs = 0;
+        for (char c : rows.empty() ? std::string() : rows.front()) {
+            tabs += (c == '\t') ? 1 : 0;
+        }
+        check(tabs == 4, "the row has 5 tab-separated columns");
     }
 
     // ---- 停止 ----

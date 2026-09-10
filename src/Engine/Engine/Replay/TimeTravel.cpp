@@ -40,6 +40,8 @@ void TimeTravel::Clear()
     scrubbing_ = false;
     seekPending_ = false;
     switchPending_ = false;
+    diffPending_ = false;
+    lastDiff_ = DiffReport{};
     scrubbedSinceLastTick_ = false;
     seekTarget_ = 0;
     switchTarget_ = 0;
@@ -192,6 +194,19 @@ uint32_t TimeTravel::Fork(const SimRefs& refs, uint64_t tick)
                  static_cast<unsigned long long>(tick), id != 0 ? "branch B" : "no branch, id ", id,
                  movedTicks, edited ? " - the live state was edited, re-captured" : "");
     return id;
+}
+
+void TimeTravel::RequestDiff(uint32_t laneA, uint32_t laneB, uint64_t tick)
+{
+    if (!enabled_ || !HasLane(laneA) || !HasLane(laneB)) {
+        return;
+    }
+    diffLaneA_ = laneA;
+    diffLaneB_ = laneB;
+    diffTick_ = tick;
+    diffPending_ = true;
+    scrubbing_ = true;
+    scrubbedSinceLastTick_ = true;
 }
 
 void TimeTravel::RequestSwitch(uint32_t branchId)

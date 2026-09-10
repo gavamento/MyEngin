@@ -6,7 +6,10 @@
 #include "Engine/Engine/Replay/GhostTrack.h"
 #include "Engine/Engine/Replay/InputOverride.h"
 #include "Engine/Engine/Replay/SimSnapshot.h"
+#include "Engine/Engine/Replay/WorldHasher.h"
 #include "Engine/Platform/Input.h"
+
+#include <string>
 
 namespace mye {
 
@@ -131,6 +134,19 @@ struct DivergenceReport {
     uint64_t commonEnd = 0;  // 含む (= min(EndA, EndB))
 };
 
+// 2 レーンのフィールド単位の差分 (M72g)。EngineLoop がフレーム頭で両レーンをその tick まで
+// 再シムしてダンプし、DiffHashDumps に掛けた結果。lines は「entity / 名前 / comp.field / A / B」
+struct DiffReport {
+    bool valid = false;
+    uint32_t laneA = 0;
+    uint32_t laneB = 0;
+    uint64_t tick = 0;
+    bool restoredOk = false; // 終わった後にライブへ戻せた (戻せなかったらタイムラインは嘘)
+    double ms = 0.0;
+    HashDumpDiff diff;
+    std::vector<std::string> lines;
+};
+
 class TimeTravel {
 public:
     static constexpr uint32_t kLiveLane = 0;
@@ -180,6 +196,17 @@ public:
     // 適用は EngineLoop の入力置換チェーンの後ろで、ライブレーンにだけ効く
     InputOverrideSet& Overrides() { return overrides_; }
     const InputOverrideSet& Overrides() const { return overrides_; }
+
+    // フィールド差分の要求 (UI → EngineLoop、M72g)。RequestSeek と同じくスクラブ状態に入る
+    // (両レーンを再シムするので世界が動く。終わったらライブの現在 tick へ強制復元される)
+    void RequestDiff(uint32_t laneA, uint32_t laneB, uint64_t tick);
+    bool HasPendingDiff() const { return diffPending_; }
+    void ClearPendingDiff() { diffPending_ = false; }
+    uint32_t PendingDiffLaneA() const { return diffLaneA_; }
+    uint32_t PendingDiffLaneB() const { return diffLaneB_; }
+    uint64_t PendingDiffTick() const { return diffTick_; }
+    void ReportDiff(DiffReport&& r) { lastDiff_ = std::move(r); }
+    const DiffReport& LastDiff() const { return lastDiff_; }
 
     // レーン切替の要求 (UI → EngineLoop)。RequestSeek と同じくスクラブ状態に入る
     void RequestSwitch(uint32_t branchId);
@@ -277,6 +304,11 @@ private:
     bool scrubbing_ = false;
     bool seekPending_ = false;
     bool switchPending_ = false;
+    bool diffPending_ = false;
+    uint32_t diffLaneA_ = 0;
+    uint32_t diffLaneB_ = 0;
+    uint64_t diffTick_ = 0;
+    DiffReport lastDiff_;
     bool scrubbedSinceLastTick_ = false; // シーク/切替の後、まだ tick が走っていない
     uint64_t seekTarget_ = 0;
     uint32_t switchTarget_ = 0;

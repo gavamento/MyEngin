@@ -2220,6 +2220,15 @@ is marked as such rather than drawn as truth, and the live lane is then restored
 seek to the tick it was at. Seek, ghost bake and (M72g) divergence dumps share one
 `RunResim` routine, so output suppression lives in exactly one place.
 
+**Field-level divergence (M72g).** `FirstDivergence` names the tick; `RequestDiff` names the
+field. At the frame head the loop restores each of the two lanes from its own snapshot,
+re-simulates it to that tick with the lane's recorded inputs, writes a `HashWorldDump` (the
+same per-field dump `--hash-dump` produces), and runs `DiffHashDumps` in process with a report
+buffer, so the Timeline can show *which entity, which component field, which two byte
+patterns* — the tooling M52a built for replay mismatches, pointed at two lanes instead of two
+files. The live lane is restored afterwards with a forced seek; a failed restore is shown, not
+hidden.
+
 **Input overrides (M72f).** The third way to change a branch is its input. An
 `InputOverride` holds an action (its first key binding, else its lowest pad button, else its
 mouse button) or an axis (its pos/neg key, else the pad stick value) on one lane for a tick

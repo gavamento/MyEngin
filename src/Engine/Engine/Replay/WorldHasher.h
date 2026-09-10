@@ -103,7 +103,11 @@ struct HashDumpDiff {
         return valueDiffs == 0 && rollupDiffs == 0 && !structureDiffers && !totalDiffers;
     }
 };
-// 差分をログへ報告して結果を返す (maxReport 行まで詳細、以降は件数のみ)
-HashDumpDiff DiffHashDumps(const HashDump& a, const HashDump& b, int maxReport = 32);
+// 差分をログへ報告して結果を返す (maxReport 行まで詳細、以降は件数のみ)。
+// M72g: outReport が非 null なら、ログに出したのと同じ葉の差分を 1 行ずつ積む
+// (タブ区切り 5 列: entity / 名前 / コンポーネント.フィールド / A の値 / B の値)。
+// 既存の呼び出し側 (CLI) は 1 文字も変わらない
+HashDumpDiff DiffHashDumps(const HashDump& a, const HashDump& b, int maxReport = 32,
+                           std::vector<std::string>* outReport = nullptr);
 
 } // namespace mye

@@ -150,10 +150,76 @@ void TimelineWindow::OnImGui(EngineContext& ctx, PlayModeController& playMode)
     DrawLaneStrip(ctx, *tt);
     DrawBranchTable(ctx, *tt, playMode);
     DrawOverrides(ctx, *tt);
+    DrawDiff(ctx, *tt);
 
     ImGui::Separator();
     ImGui::TextDisabled("%s", Tr(StrId::TT_CsharpNote));
     ImGui::End();
+}
+
+void TimelineWindow::DrawDiff(EngineContext& ctx, TimeTravel& tt)
+{
+    const DiffReport& r = tt.LastDiff();
+    if (!r.valid && r.tick == 0) {
+        return; // まだ 1 度も撃っていない
+    }
+    ImGui::Separator();
+    if (!r.valid) {
+        ImGui::TextColored(themeColor::Error, "%s", Tr(StrId::TT_DiffFailed));
+        return;
+    }
+    ImGui::Text(Tr(StrId::TT_DiffHeader), r.laneB, static_cast<unsigned long long>(r.tick),
+                static_cast<unsigned long long>(r.diff.valueDiffs),
+                static_cast<unsigned long long>(r.diff.rollupDiffs), r.ms);
+    if (!r.restoredOk) {
+        ImGui::TextColored(themeColor::Error, "%s", Tr(StrId::TT_DiffNotRestored));
+    }
+    if (r.diff.structureDiffers) {
+        ImGui::TextColored(themeColor::Warning, "%s", Tr(StrId::TT_DiffStructure));
+    }
+    if (r.lines.empty()) {
+        ImGui::TextDisabled("%s", Tr(StrId::TT_DiffNone));
+        return;
+    }
+    const ImGuiTableFlags flags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg
+        | ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_ScrollY;
+    const float rows = static_cast<float>(std::min<size_t>(r.lines.size(), 12)) + 1.5f;
+    if (ImGui::BeginTable("##ttdiff", 4, flags, ImVec2(0.0f, ImGui::GetTextLineHeightWithSpacing() * rows))) {
+        ImGui::TableSetupScrollFreeze(0, 1);
+        ImGui::TableSetupColumn(Tr(StrId::TT_DiffColEntity));
+        ImGui::TableSetupColumn(Tr(StrId::TT_DiffColField));
+        ImGui::TableSetupColumn(Tr(StrId::TT_DiffColLive));
+        ImGui::TableSetupColumn(Tr(StrId::TT_DiffColBranch));
+        ImGui::TableHeadersRow();
+        for (const std::string& line : r.lines) {
+            // 5 列 (entity / 名前 / comp.field / A / B) のタブ区切り。entity と名前は 1 列にまとめる
+            std::string cols[5];
+            size_t start = 0;
+            for (int c = 0; c < 5; ++c) {
+                const size_t tab = line.find('\t', start);
+                cols[c] = line.substr(start, tab == std::string::npos ? std::string::npos : tab - start);
+                if (tab == std::string::npos) {
+                    break;
+                }
+                start = tab + 1;
+            }
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::Text("%s %s", cols[1].c_str(), cols[0].c_str());
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(cols[2].c_str());
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(cols[3].c_str());
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(cols[4].c_str());
+        }
+        ImGui::EndTable();
+    }
+    if (r.diff.valueDiffs > r.lines.size()) {
+        ImGui::TextDisabled(Tr(StrId::TT_DiffMore),
+                            static_cast<unsigned long long>(r.diff.valueDiffs - r.lines.size()));
+    }
+    (void)ctx;
 }
 
 void TimelineWindow::DrawOverrides(EngineContext& ctx, TimeTravel& tt)
@@ -381,6 +447,18 @@ void TimelineWindow::DrawBranchTable(EngineContext& ctx, TimeTravel& tt, PlayMod
         ImGui::SameLine();
         if (ImGui::SmallButton(Tr(StrId::TT_Delete))) {
             toDelete = b.id;
+        }
+        // ---- フィールド差分 (M72g): 乖離した tick で 2 レーンをダンプして比べる ----
+        if (d.comparable && d.diverged) {
+            ImGui::SameLine();
+            if (ImGui::SmallButton(Tr(StrId::TT_Diff))) {
+                playMode.Pause();
+                tt.RequestDiff(TimeTravel::kLiveLane, b.id, d.firstTick);
+                pendingPos_ = -1;
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(Tr(StrId::TT_DiffHint), static_cast<unsigned long long>(d.firstTick));
+            }
         }
         ImGui::PopID();
     }

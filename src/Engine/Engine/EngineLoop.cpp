@@ -998,6 +998,54 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         }
         return true;
     };
+    // ---- 2 レーンのフィールド差分 (M72g) ----
+    // 両レーンを tick まで再シムして HashWorldDump し、DiffHashDumps に掛ける。
+    // ★終わったらライブの現在 tick へ強制復元する (BakeGhosts と同じ規約)。
+    //   フィールドまで名指しできる道具は M52a からあった (--hash-diff) が、ファイル経由の
+    //   CLI にしか配線されていなかった。ここはそれを 2 レーンに対してインプロセスで撃つ
+    const auto DiffAt = [&](uint32_t laneA, uint32_t laneB, uint64_t tick) {
+        DiffReport rep;
+        rep.laneA = laneA;
+        rep.laneB = laneB;
+        rep.tick = tick;
+        const double t0 = clock.Now();
+        const uint64_t liveTick = ctx.tickIndex;
+        scene.GetWorld().ApplyStructuralChanges();
+        HashDump dumps[2];
+        const uint32_t lanes[2] = { laneA, laneB };
+        bool ok = true;
+        for (int i = 0; i < 2 && ok; ++i) {
+            uint64_t snapTick = 0;
+            const std::vector<std::byte>* blob =
+                timeTravel.SnapshotAtOrBeforeOn(lanes[i], tick, snapTick);
+            if (blob == nullptr || !RestoreSimSnapshot(simRefs, blob->data(), blob->size())) {
+                MYE_LOG_ERROR("[timetravel] diff: no restorable snapshot at or before tick %llu on lane %u",
+                              static_cast<unsigned long long>(tick), lanes[i]);
+                ok = false;
+                break;
+            }
+            ResetNonSimLanesAfterRestore();
+            ok = RunResim(lanes[i], tick, nullptr).ok;
+            if (ok) {
+                HashWorldDump(scene.GetWorld(),
+                              {&particleSystem.Cpu(), &scene.Time(), &scene.Persist(), &xpbd, &acoustic, &scene.UI()},
+                              tick, dumps[i]);
+            }
+        }
+        if (ok) {
+            rep.diff = DiffHashDumps(dumps[0], dumps[1], 64, &rep.lines);
+            rep.valid = true;
+        }
+        const SeekReport back = SeekTo(liveTick, /*forceRestore*/ true);
+        rep.restoredOk = back.outcome == SeekOutcome::Ok;
+        rep.ms = (clock.Now() - t0) * 1000.0;
+        MYE_LOG_INFO("[timetravel] diff lane %u vs %u at tick %llu: %s, %llu field(s) differ, %.1f ms, "
+                     "live %s",
+                     laneA, laneB, static_cast<unsigned long long>(tick), rep.valid ? "ok" : "FAILED",
+                     static_cast<unsigned long long>(rep.diff.valueDiffs), rep.ms,
+                     rep.restoredOk ? "restored" : "NOT restored");
+        timeTravel.ReportDiff(std::move(rep));
+    };
     // ---- tick 末のワールドハッシュ (M52f 申し送り 6 の畳み込み) ----
     // クラッシュリング / タイムトラベル / ロールバックの 3 者が**同じ 1 個**を使う。
     // M52f までは消費者ごとに撮っていて、両方 on だと同じ tick で 2 回走っていた
@@ -1261,6 +1309,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     uint64_t wiEditedHash = 0;
     uint32_t wiBranch = 0;
     uint8_t wiOverrideVk = 0;
+    uint64_t wiDiffTick = 0;
 
     while (running) {
         // ---- フェーズ 1: 時間更新 / 入力取得 ----
@@ -1422,6 +1471,14 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             const uint64_t target = timeTravel.PendingSeek();
             timeTravel.ClearPendingSeek();
             SeekTo(target);
+        }
+        // ---- フィールド差分 (M72g) ----
+        if (timeTravel.HasPendingDiff()) {
+            const uint32_t a = timeTravel.PendingDiffLaneA();
+            const uint32_t b = timeTravel.PendingDiffLaneB();
+            const uint64_t t = timeTravel.PendingDiffTick();
+            timeTravel.ClearPendingDiff();
+            DiffAt(a, b, t);
         }
         // スクラブ中は tick を 1 本も進めない。
         // ★ここを止めないと、シーク直後のポーズ tick が「分岐」としてリングの未来を
@@ -1964,6 +2021,23 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                 wiCheck(back.outcome == SeekOutcome::Ok && fwd.outcome == SeekOutcome::Ok,
                         "the overridden ticks replay from the ring (seek OK)");
                 timeTravel.Overrides().Clear();
+                // ---- フィールド差分 (M72g): 最初に乖離した tick で 2 レーンをダンプして比べる ----
+                wiDiffTick = d.diverged ? d.firstTick : wiN + 1;
+                timeTravel.RequestDiff(TimeTravel::kLiveLane, wiBranch, wiDiffTick);
+                wiFramesLeft = 3;
+                wiStage = 43;
+            } else if (wiStage == 43 && --wiFramesLeft <= 0) {
+                const DiffReport& r = timeTravel.LastDiff();
+                wiCheck(r.valid && r.tick == wiDiffTick && r.laneB == wiBranch,
+                        "the field diff ran at the first diverging tick");
+                wiCheck(r.valid && r.diff.valueDiffs >= 1 && !r.lines.empty(),
+                        "at least one leaf field differs and is named");
+                wiCheck(r.restoredOk && timeTravel.Scrubbing(),
+                        "the live lane was restored after the diff (and the ring is scrubbing)");
+                if (!r.lines.empty()) {
+                    MYE_LOG_INFO("[whatif]   first differing field: %s", r.lines.front().c_str());
+                }
+                timeTravel.EndScrub();
                 if (wiFails == 0) {
                     MYE_LOG_INFO("==== what-if probe: ALL PASS ====");
                 } else {

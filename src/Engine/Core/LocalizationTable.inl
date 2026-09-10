@@ -959,6 +959,26 @@ MYE_STR(TT_GhostMismatch,     "HASH MISMATCH", "ハッシュ不一致")
 MYE_STR(TT_GhostTruncated,    "up to tick %llu (%zu KB, budget)", "tick %llu まで (%zu KB、予算)")
 MYE_STR(TT_GhostOk,           "%zu moving (%zu KB)", "動く物 %zu (%zu KB)")
 // ---- 入力の上書き (M72f) ----
+// ---- フィールド差分 (M72g) ----
+MYE_STR(TT_Diff,              "Diff###TTDiff", "差分###TTDiff")
+MYE_STR(TT_DiffHint,          "Re-simulate both lanes to tick %llu (the first diverging tick), dump every hashed "
+                              "field, and list the ones that differ. The live lane is restored afterwards.",
+                              "両レーンを tick %llu (最初に乖離した tick) まで再シムして、ハッシュ対象の全フィールドを"
+                              "ダンプし、違うものを並べます。終わるとライブは元に戻ります。")
+MYE_STR(TT_DiffHeader,        "live vs B%u at tick %llu: %llu field(s) differ (%llu rollup rows), %.1f ms",
+                              "ライブ vs B%u (tick %llu): %llu フィールドが違う (まとめ行 %llu)、%.1f ms")
+MYE_STR(TT_DiffFailed,        "field diff failed - no restorable snapshot on one of the lanes",
+                              "差分に失敗しました — どちらかのレーンに戻れるスナップショットがありません")
+MYE_STR(TT_DiffNotRestored,   "the live lane could NOT be restored after the diff - seek manually",
+                              "差分の後にライブへ戻せませんでした — 手でシークしてください")
+MYE_STR(TT_DiffStructure,     "the entity / component structure differs - only the first mismatch is listed",
+                              "エンティティ / コンポーネントの構造が違います — 最初の食い違いだけ出しています")
+MYE_STR(TT_DiffNone,          "no leaf field differs at this tick", "この tick では違うフィールドがありません")
+MYE_STR(TT_DiffColEntity,     "entity", "エンティティ")
+MYE_STR(TT_DiffColField,      "component.field", "コンポーネント.フィールド")
+MYE_STR(TT_DiffColLive,       "live", "ライブ")
+MYE_STR(TT_DiffColBranch,     "branch", "分岐")
+MYE_STR(TT_DiffMore,          "... and %llu more", "... 他 %llu 件")
 MYE_STR(TT_OvrTitle,          "Input overrides (live lane)", "入力の上書き (ライブレーン)")
 MYE_STR(TT_OvrNoActions,      "No actions or axes are defined (assets\\input\\actions.json).",
                               "アクションも軸も定義されていません (assets\\input\\actions.json)。")

@@ -39,6 +39,8 @@ private:
     void DrawBranchTable(EngineContext& ctx, TimeTravel& tt, PlayModeController& playMode);
     // 入力の上書き (M72f): アクション / 軸を [from, from+len) の間押し続ける項目の編集
     void DrawOverrides(EngineContext& ctx, TimeTravel& tt);
+    // フィールド差分 (M72g): 直前の RequestDiff の結果を表で
+    void DrawDiff(EngineContext& ctx, TimeTravel& tt);
 
     int ovrSel_ = 0;      // 0..A-1 = アクション、A.. = 軸
     int ovrLane_ = 0;

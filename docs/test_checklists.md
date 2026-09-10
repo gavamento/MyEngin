@@ -222,3 +222,15 @@ Q 石・E 瓶)。波そのものを見たいときは SceneView の「音響」�
 - [ ] その区間へシークすると同じ動きが再現する (上書きはリングの entry に記録されている)
 - [ ] 軸 (MoveX 等) は値スライダー付き。負の値で negKey、キーの無い軸はパッドの値を置く
 - [ ] 適用が終わった項目はグレーになる。「Clear all」で全部消える。Stop でも消える
+
+### フィールド差分 (M72g)
+
+- [ ] 乖離のある分岐の行に「Diff」が出る → 押すとポーズし、Console に
+      `[timetravel] diff lane 0 vs B at tick T: ok, N field(s) differ, ... live restored`、
+      Timeline の下に「live vs B<id> at tick T: N field(s) differ」の表 (エンティティ /
+      コンポーネント.フィールド / ライブの値 / 分岐の値、hex)
+- [ ] Jump を押し続けた分岐なら、最初に違うのは `PlayerController.jumpCount` と `prevSpace`
+      (= 押した入力を読んだスクリプトの状態)。Inspector で位置を編集した分岐なら
+      `LocalTransform.position` (= 編集そのもの)
+- [ ] 表の後も self-check が `OK` (両レーンを再シムした後、ライブへ戻している)。
+      「Branch and resume」でそのまま続けられる
