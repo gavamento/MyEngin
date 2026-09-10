@@ -709,6 +709,16 @@ inline bool MyeLoadPersist(const MyeUpdateContext& ctx, int slot)
     return ctx.api->LoadPersist(ctx.api->engine, slot) != 0;
 }
 
+// ---- v17 (M71a): 現在のシーンの識別 ----
+// 今ロードされているシーンの sceneName を buf へ取り出す。戻り値は NUL を除く実バイト数で、
+// **cap が足りなくても実長を返す** (切り詰めを呼び側が判定できる)。
+// ★分岐は MyeNameHash(buf) == MyeNameHash("Stage1") で書ける — MyeNameHash は
+//   constexpr 関数だが実行時の文字列にもそのまま使える (新しいハッシュ関数は要らない)
+inline int32_t MyeGetSceneName(const MyeUpdateContext& ctx, char* buf, int32_t cap)
+{
+    return ctx.api->GetSceneName(ctx.api->engine, buf, cap);
+}
+
 // ---- v12 (M51h): 入力アクション / UI 拡張 / ゲームフロー / パッド振動 ----
 
 inline int32_t MyeGetMouseWheel(const MyeUpdateContext& ctx)

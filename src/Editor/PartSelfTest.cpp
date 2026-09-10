@@ -174,8 +174,8 @@ bool RunPartSelfTest()
         };
         const MyeEntityId root = toShared(enemy.Id());
 
-        check(api.version == MYE_API_VERSION && MYE_API_VERSION == 16u,
-              "abi: the table reports v16");
+        check(api.version == MYE_API_VERSION && MYE_API_VERSION == 17u,
+              "abi: the table reports v17");
         check(api.FindPart != nullptr && api.FindPartsByTag != nullptr,
               "abi: the v9 part slots are filled in");
         check(api.RaycastParts != nullptr, "abi: the v10 RaycastParts slot is filled in");
@@ -236,6 +236,26 @@ bool RunPartSelfTest()
             check(mx == 0.0f && my == 0.0f,
                   "abi: MouseCanvasPos writes both outputs (empty input = 0)");
             api.MouseCanvasPos(api.engine, nullptr, nullptr); // null 出力で落ちないこと
+        }
+        // v17 (M71a): GetSceneName。**切り詰めても実長を返す**のが契約の要点で、
+        // ここを取り違えると呼び側が「切れた」ことを判定できなくなる
+        check(api.GetSceneName != nullptr, "abi: the v17 GetSceneName slot is filled in");
+        {
+            scene.SetName("StageProbe"); // 10 バイト
+            char buf[32] = {};
+            check(api.GetSceneName(api.engine, buf, static_cast<int32_t>(sizeof(buf))) == 10
+                      && std::strcmp(buf, "StageProbe") == 0,
+                  "abi: GetSceneName returns the scene name and its exact length");
+            // cap 不足: 実長は 10 のまま、buf は NUL 終端された 4 文字
+            char tiny[5] = { 'x', 'x', 'x', 'x', 'x' };
+            check(api.GetSceneName(api.engine, tiny, 5) == 10
+                      && std::strcmp(tiny, "Stag") == 0,
+                  "abi: a short buffer is truncated and NUL-terminated but the length is real");
+            // buf なし / cap 0 は長さを測るためだけの呼び方。書かずに実長を返す
+            check(api.GetSceneName(api.engine, nullptr, 0) == 10
+                      && api.GetSceneName(api.engine, buf, 0) == 10,
+                  "abi: GetSceneName measures without writing when there is no room");
+            scene.SetName("Untitled"); // 後続の試験に名前を持ち越さない
         }
         check(api.GetMouseWheel != nullptr && api.SetUIRect != nullptr
                   && api.SetUILayout != nullptr && api.SetUITexture != nullptr

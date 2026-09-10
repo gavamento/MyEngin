@@ -1047,6 +1047,22 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
         const auto* rb = Sc(engine)->GetWorld().GetComponent<RigidbodyComponent>(ToEngine(id));
         return (rb && rb->isSleeping) ? 1 : 0;
     };
+
+    // ---- v17 (M71a): 現在のシーンの識別 ----
+    // 遷移先をスクリプトが決めるための唯一の材料。SourcePath() ではなく Name() を返すのは
+    // 前者が絶対パス = チェックアウト先依存で、sim の分岐に使うとワールドハッシュが
+    // 機種ごとに割れるため (EngineAPI.h の v17 の注記が正本)
+    out.GetSceneName = [](void* engine, char* buf, int32_t cap) -> int32_t {
+        const std::string& name = Sc(engine)->Name();
+        const int32_t len = static_cast<int32_t>(name.size());
+        if (buf != nullptr && cap > 0) {
+            // cap 不足でも戻り値は実長のまま = 呼び側が「切れた」ことを判定できる
+            const int32_t copy = (len < cap - 1) ? len : (cap - 1);
+            std::memcpy(buf, name.data(), static_cast<size_t>(copy));
+            buf[copy] = '\0';
+        }
+        return len;
+    };
 }
 
 } // namespace mye

@@ -173,7 +173,7 @@ Cloth/SoftBody 予約は 51/52 へ繰り下げてある) →
 **ABI スロットを足す** (`src\Shared\EngineAPI.h`) — `Interop.cs` は**位置ベースのミラーで実行時の
 版検証が無い**。順序・件数・名前・引数個数を揃え、`EngineApiTable.cpp` で全スロットを充填し、
 `MYE_API_VERSION` の bump と `check_rules.ps1` の `$apiVersionSlots` 表の更新を**同時に**行う
-(片方だけだと規則 11 で止まる)。現行は v16 = 110 スロット。C# レーンは replay 被覆の外なので、
+(片方だけだと規則 11 で止まる)。現行は v17 = 111 スロット。C# レーンは replay 被覆の外なので、
 実走確認は一時的な probe スクリプトで行う。
 **bump 後は外部プロジェクト (`--project DIR`) の `DIR\cache\GameLogic.dll` も焼き直す** — sln の外
 なのでエンジンをビルドしても追従せず、そのプロジェクトで Rebuild Scripts を押すまで

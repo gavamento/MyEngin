@@ -70,6 +70,7 @@ void BuildScene(Scene& scene)
     scene.Persist().Set(0xABCDull, &score, sizeof(score));
     scene.Persist().Set(0x1111ull, "hi", 2);
     scene.SetSourcePath(L"C:\\proj\\assets\\scenes\\probe.scene.json");
+    scene.SetName("ProbeStage"); // v15 (M71a): ABI v17 でスクリプトが読む sim 状態
     scene.SetOverrides(3, { "LocalTransform.position", "name" });
     scene.SetOverrides(1, {}); // 空集合でも「記録あり」= レガシー判定と区別される
     w.Rng().NextU32();
@@ -136,6 +137,7 @@ bool RunSimSnapshotSelfTest()
     scene.Time().scalePercent = 100;
     scene.Persist().Clear();
     scene.SetSourcePath(L"");
+    scene.SetName("WrongStage"); // 復元で必ず上書きされること
     scene.ReplaceOverridesTable({});
     scene.SetNextFileId(9999);
     for (uint32_t p = 0; p < kMaxPlayers; ++p) {
@@ -154,6 +156,9 @@ bool RunSimSnapshotSelfTest()
     check(scene.PeekNextFileId() == nextFileId0, "scene nextFileId is restored");
     check(scene.SourcePath() == L"C:\\proj\\assets\\scenes\\probe.scene.json",
           "scene source path is restored");
+    // v15 (M71a): 名前を撮らないと、遷移をまたぐ巻き戻しで「World は復元済みなのに
+    // GetSceneName だけ復元前」になり、スクリプトの分岐がそこだけ別世界を見る
+    check(scene.Name() == "ProbeStage", "scene name is restored");
     check(scene.Persist().Find(0xABCDull) != nullptr
               && scene.Persist().Find(0xABCDull)->size() == sizeof(uint64_t),
           "persist entries are restored");

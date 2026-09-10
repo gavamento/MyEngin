@@ -93,7 +93,11 @@ struct SimRefs {
 //            EntityID x 4) が入った。TimeControl と同じ「Scene が持つ sim 状態」で、
 //            巻き戻したときに押下中の要素まで戻らないと再シムが割れる
 // v14: Light.safeRadius の追加で World 節のカラム生バイトが変化する。
-inline constexpr uint32_t kSimSnapshotVersion = 14;
+// v15 (M71a): Scene 節に sceneName が入った。ABI v17 の GetSceneName で
+//            スクリプトが読めるようになった = 分岐に使う sim 状態へ昇格したので、
+//            撮らないとタイムトラベルと .rep 埋め込みスナップショットが
+//            「World は復元済みなのに名前だけ復元前」という食い違いを起こす
+inline constexpr uint32_t kSimSnapshotVersion = 15;
 
 // 撮る: out を clear して blob を書く。成功で true。
 // 節ごとの参照が null なら「空の節」を書くのでレイアウトは常に同じ

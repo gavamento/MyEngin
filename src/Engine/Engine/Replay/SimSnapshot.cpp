@@ -33,7 +33,7 @@ constexpr uint32_t kAcousticMagic = 0x31554341u; // 'ACU1' (M65a)
 
 constexpr size_t kHeaderBytes = 4 * sizeof(uint32_t) + sizeof(uint64_t);
 
-// ---- Scene (TimeControl / PersistStore / nextFileId / sourcePath / override 表) ----
+// ---- Scene (TimeControl / PersistStore / nextFileId / name / sourcePath / override 表) ----
 //
 // override 表は unordered_map なので、そのまま走査すると blob のバイト列が実行ごとに
 // 変わる (規則 7)。fileId 昇順に整列してから書く — 「同じ状態なら同じ blob」は
@@ -67,6 +67,7 @@ void WriteScene(ByteWriter& w, const Scene& scene)
     w.U32(ui.adoptedAuthored);
 
     w.U64(scene.PeekNextFileId());
+    w.Str(scene.Name()); // v15 (M71a)
     w.WStr(scene.SourcePath());
 
     const std::unordered_map<uint64_t, Scene::OverrideSet>& ov = scene.OverridesTable();
@@ -92,6 +93,9 @@ struct SceneState {
     UIInteractionState ui;
     PersistStore::Map persist;
     uint64_t nextFileId = 1;
+    // v15 (M71a): ABI v17 GetSceneName でスクリプトが読めるようになった = sim が
+    // 分岐に使う状態。載せないと遷移をまたぐ巻き戻しで名前だけ古いまま復元される
+    std::string name;
     std::wstring sourcePath;
     std::unordered_map<uint64_t, Scene::OverrideSet> overrides;
 };
@@ -128,6 +132,7 @@ bool ReadScene(ByteReader& r, SceneState& out)
     out.ui.adoptedAuthored = r.U32();
 
     out.nextFileId = r.U64();
+    out.name = r.Str(); // v15 (M71a)。書いた順に読む
     out.sourcePath = r.WStr();
 
     const size_t ovCount = r.Count(sizeof(uint64_t) * 2);
@@ -504,6 +509,7 @@ bool RestoreSimSnapshot(const SimRefs& refs, const std::byte* data, size_t size)
     refs.scene->UI() = scene.ui; // M70c
     refs.scene->Persist().Entries() = std::move(scene.persist);
     refs.scene->SetNextFileId(scene.nextFileId);
+    refs.scene->SetName(scene.name); // v15 (M71a)
     refs.scene->SetSourcePath(std::move(scene.sourcePath));
     refs.scene->ReplaceOverridesTable(std::move(scene.overrides));
     refs.scene->InvalidateFileIdCache(); // 派生物 (EntityID が総入れ替えされたので必ず)

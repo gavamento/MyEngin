@@ -17,6 +17,11 @@ struct FlowGameDriver : Script<FlowGameDriver> {
     int32_t ticksInScene = 0; // シーン内経過 tick (ポーズ中も進む — スクリプトは非ゲート)
     int32_t score = 0;        // hash 被覆の本体
     int32_t bounces = 0;      // 衝突コールバック経由の加点回数
+    // v17 (M71a): 今いるシーン名のハッシュ下位 31bit。**登録フィールド = ハッシュ対象**
+    // なので、GetSceneName が記録と検証で同じ値を返すことがリプレイの照合対象になる
+    // (persist を登録フィールドへ書き戻しているのと同じ作法)。flow ペアは 2 シーンを
+    // 行き来する唯一の検査なので、遷移の前後で名前が入れ替わることもここに載る
+    int32_t sceneTag = 0;
 
     void Start(MyeUpdateContext& ctx)
     {
@@ -39,6 +44,11 @@ struct FlowGameDriver : Script<FlowGameDriver> {
     void Update(MyeUpdateContext& ctx)
     {
         ++ticksInScene;
+        {
+            char sceneName[64] = {};
+            MyeGetSceneName(ctx, sceneName, static_cast<int32_t>(sizeof(sceneName)));
+            sceneTag = static_cast<int32_t>(MyeNameHash(sceneName) & 0x7FFFFFFFull);
+        }
         const MyeEngineApi* api = ctx.api;
 
         // ---- パドル移動 (対話のみ。リプレイでは軸 0 = 完全 no-op) ----
@@ -108,4 +118,5 @@ struct FlowGameDriver : Script<FlowGameDriver> {
 };
 REGISTER_SCRIPT(FlowGameDriver,
                 FIELDS(MYE_F_JP(ticksInScene, "シーン内の経過 tick"), MYE_F_JP(score, "スコア"),
-                       MYE_F_JP(bounces, "跳ねた回数")));
+                       MYE_F_JP(bounces, "跳ねた回数"),
+                       MYE_F_JP(sceneTag, "シーン名のハッシュ")));

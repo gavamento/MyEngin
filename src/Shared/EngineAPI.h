@@ -71,7 +71,17 @@
 //             ★この 2 本は**非対称**であることに意味がある。デルタは .rep に載る
 //               sim 入力、カーソルの掴みは載せてはいけない機種依存の副作用で、
 //               後者を sim から読み返す口は今後も作らない
-#define MYE_API_VERSION 16u
+// v17 (M71a): GetSceneName 1 本。シーン遷移 (v3 LoadScene) は M19.4 から動いていたが、
+//             スクリプトが「今どのシーンに居るか」を知る口が無く、遷移先を決める材料が
+//             常にスクリプト側の外部知識だった (三校のステージ進行で詰まった)。
+//             ★返すのは **sceneName であってパスではない**。SourcePath() は assets ルート
+//               込みの絶対パスなのでチェックアウト先ごとに変わる = sim へ持ち込むと
+//               機種依存になる (決定論の契約: パス由来の値をハッシュへ載せない)。
+//               sceneName は作者が書いた値なので機種に依らない。
+//             ★これに伴い Scene::name_ は sim が分岐に使う状態へ昇格したので、
+//               SimSnapshot v15 で撮る対象に加えた (載せないとタイムトラベルと
+//               .rep 埋め込みスナップショットが名前だけ古いまま復元される)
+#define MYE_API_VERSION 17u
 
 // PersistSet の 1 エントリ最大バイト数 (v12)。PersistStore は WorldHash / セーブ出力に
 // 全量が載るため、無制限だと 1 キーでハッシュとセーブが肥大する
@@ -576,6 +586,17 @@ struct MyeEngineApi {
     //   ★LoadGame と同じく record/verify/netplay 中は no-op + WARN — セーブファイルは
     //     sim の外にあり、再生を跨ぐと同じ入力から別の世界が出てしまう
     int (*LoadPersist)(void* engine, int slot);
+
+    // ---- v17 (M71a): 現在のシーンの識別 ----
+    // GetSceneName: 今ロードされているシーンの sceneName (シーン JSON の "sceneName")。
+    //   戻り値は NUL を除く実バイト数で、**cap が足りなくても実長を返す** (PersistGet と
+    //   同じ規約 = 呼び側が「切れた」ことを判定できる)。buf へは min(実長, cap-1) バイト
+    //   + NUL を書く。buf == null または cap <= 0 なら何も書かずに長さだけ返す。
+    //   ★**パスではなく名前**を返すのが要点。SourcePath() は assets ルート込みの絶対パス
+    //     なので、これを sim の分岐に使うとチェックアウト先でワールドハッシュが割れる。
+    //   ★名前は sim 状態 (SimSnapshot v15 で往復する) なので、記録/検証・タイムトラベル・
+    //     ロールバックのいずれでも同じ tick で同じ値が返る = 登録フィールドへ書き戻してよい
+    int32_t (*GetSceneName)(void* engine, char* buf, int32_t cap);
 };
 
 // スクリプトの各コールバックに渡されるコンテキスト (POD)

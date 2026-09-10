@@ -890,6 +890,18 @@ the key-value store and leaves the scene alone. The same bump also freezes the l
 those later would let a stale `GameLogic.dll` pass the `apiVersion` check with a different field
 layout.
 
+**ABI v17 (111 slots).** `GetSceneName`. Scene transition itself has worked since M19.4 -
+`LoadScene` queues a path into `pendingScene` and `RunOneTick` swaps the world at the tick-end
+safepoint - but a script had no way to ask *which* scene it was in, so the target of a transition
+was always knowledge the script carried from outside. It returns the authored `sceneName`, **not
+`Scene::SourcePath()`**: the latter is an absolute path under the assets root, so branching on it
+would make the world hash depend on where the repository was checked out. Because the name now
+feeds sim branches, `Scene::name_` is captured by **`SimSnapshot` v15** - without it a time-travel
+seek or a `.rep` with an embedded snapshot would restore the World but leave the name behind, and
+the script would branch on a scene it is no longer in. `FlowTitleDriver` / `FlowGameDriver` mirror
+the name hash into a registered field, so the flow replay pair - the only one that crosses scenes -
+covers it. As with `UISetFocused` and `LoadPersist`, the C# lane is deliberately left unwrapped.
+
 **What was closed.** `MyeScript.cs` no longer exposes `SetUIRect` / `SetUILayout` /
 `SetUIFocused`. All three move UI geometry or focus, which now feeds hashed state, and the C# lane
 is suspended during rollback and time-travel re-simulation and is outside replay coverage - so a

@@ -228,6 +228,11 @@ namespace MyeScripting
         public delegate* unmanaged<void*, float*, float*, void> MouseCanvasPos;
         public delegate* unmanaged<void*, MyeEntityId, MyeUIRect*, int> GetUIRect;
         public delegate* unmanaged<void*, int, int> LoadPersist;
+        // ---- v17 (M71a): 現在のシーンの識別 ----
+        // ★ラッパ (static class Engine) は**あえて足さない** — UISetFocused / LoadPersist と
+        //   同じ理由で、C# レーンは record/verify 中に走らないため、C# が読んだシーン名を
+        //   sim が読み返すとリプレイが壊れる
+        public delegate* unmanaged<void*, byte*, int, int> GetSceneName;
     }
 
     // ネイティブ ManagedHost が保持する関数ポインタ表。Bootstrap がここに書き込む。

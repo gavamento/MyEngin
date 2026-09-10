@@ -23,10 +23,20 @@ struct FlowTitleDriver : Script<FlowTitleDriver> {
     // M70c: CLEAR BEST を押した回数。**登録フィールド = ハッシュ対象**なので、
     // 「エンジンのクリック判定がスクリプトへ届いたか」がリプレイの照合対象になる
     int32_t clearClicks = 0;
+    // v17 (M71a): 今いるシーン名のハッシュ下位 31bit。**登録フィールド = ハッシュ対象**
+    // なので、GetSceneName が記録と検証で同じ値を返すことがリプレイの照合対象になる
+    // (persist を登録フィールドへ書き戻しているのと同じ作法)。flow ペアは 2 シーンを
+    // 行き来する唯一の検査なので、遷移の前後で名前が入れ替わることもここに載る
+    int32_t sceneTag = 0;
 
     void Update(MyeUpdateContext& ctx)
     {
         ++ticksInScene;
+        {
+            char sceneName[64] = {};
+            MyeGetSceneName(ctx, sceneName, static_cast<int32_t>(sizeof(sceneName)));
+            sceneTag = static_cast<int32_t>(MyeNameHash(sceneName) & 0x7FFFFFFFull);
+        }
 
         // ---- persist → 登録フィールド (sim 状態への書き戻し = リプレイ被覆) ----
         lastBest = MyePersistGetInt(ctx, "flow.best", 0);
@@ -70,4 +80,5 @@ REGISTER_SCRIPT(FlowTitleDriver,
                 FIELDS(MYE_F_JP(ticksInScene, "シーン内の経過 tick"),
                        MYE_F_JP(lastBest, "最高記録"), MYE_F_JP(lastScore, "前回のスコア"),
                        MYE_F_JP(lastRuns, "プレイ回数"),
-                       MYE_F_JP(clearClicks, "記録消去の押下数")));
+                       MYE_F_JP(clearClicks, "記録消去の押下数"),
+                       MYE_F_JP(sceneTag, "シーン名のハッシュ")));
