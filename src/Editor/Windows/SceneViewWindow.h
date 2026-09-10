@@ -10,6 +10,7 @@
 #include "Engine/Engine/Asset/TerrainEdit.h" // M58f: 地形ブラシ
 #include "Engine/Engine/EngineLoop.h"
 #include "Engine/Renderer/EditorLinePass.h"
+#include "Engine/Renderer/GhostMeshPass.h" // M72i: 分岐のゴーストのメッシュ
 #include "Engine/Renderer/PickingPass.h"
 #include "Engine/Renderer/RenderTexture.h"
 
@@ -140,6 +141,7 @@ private:
 
     PickingPass picking_;    // クリック選択 (遅延 Init)
     EditorLinePass lines_;   // グリッド/ワイヤ/アウトライン (遅延 Init)
+    GhostMeshPass ghostMesh_; // M72i: 分岐のゴーストの半透明メッシュ (遅延 Init)。線より先に描く
 };
 
 } // namespace mye

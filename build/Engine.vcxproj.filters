@@ -507,6 +507,9 @@
     <ClCompile Include="..\src\Engine\Renderer\FroxelPass.cpp">
       <Filter>Renderer</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Renderer\GhostMeshPass.cpp">
+      <Filter>Renderer</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Renderer\GpuResources.cpp">
       <Filter>Renderer</Filter>
     </ClCompile>
@@ -1093,6 +1096,9 @@
       <Filter>Renderer</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\FrustumCull.h">
+      <Filter>Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\GhostMeshPass.h">
       <Filter>Renderer</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\GpuBufferUtil.h">

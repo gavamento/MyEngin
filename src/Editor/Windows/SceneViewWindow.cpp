@@ -236,8 +236,15 @@ void SceneViewWindow::OnRenderViews(EngineContext& ctx, Selection& selection)
     if (!lines_.IsReady()) {
         lines_.Init(*ctx.device, *ctx.shaders);
     }
+    if (!ghostMesh_.IsReady()) {
+        ghostMesh_.Init(*ctx.device, *ctx.shaders);
+    }
     lines_.Begin();
+    ghostMesh_.Begin();
     BuildOverlays(ctx, selection);
+    // M72i: ゴーストのメッシュは線より先 (半透明の上にワイヤとトレイルが乗る)
+    ghostMesh_.Render(*ctx.device, *ctx.shaders, rt_.RTV(), rt_.DSV(), rt_.Width(), rt_.Height(),
+                      lastView_, lastProj_);
     lines_.Render(*ctx.device, *ctx.shaders, rt_.RTV(), rt_.DSV(), rt_.Width(), rt_.Height(),
                   lastView_, lastProj_);
 

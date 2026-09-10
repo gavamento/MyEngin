@@ -212,6 +212,9 @@ Q 石・E 瓶)。波そのものを見たいときは SceneView の「音響」�
       チェックを外すとその分岐だけ消える。表の ghost 列に `N moving (S KB)`、
       予算で打ち切られたら `up to tick T (S KB, budget)`、再現できなければ赤の `HASH MISMATCH`
 - [ ] GameView / --screenshot (Runtime) には 1 本も出ない (SceneView の RT だけ)
+- [ ] (M72i) 動いている物は**分岐色の半透明メッシュ** (陰影付き、不透明度 40%) で出て、ライブの壁の
+      向こう側は隠れる (深度テストあり)。メッシュが引けない物だけワイヤ箱。トレイルと Timeline の
+      目アイコンはそのまま
 
 ### 入力の上書き (M72f)
 

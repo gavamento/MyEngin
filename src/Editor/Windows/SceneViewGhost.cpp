@@ -1,8 +1,10 @@
 // SceneView の分岐ゴースト (M72e)。SceneViewWindow.cpp が 1600 行を超えているので分けた。
 //
 // 分岐 (= いまライブではないレーン) の未来を、GhostTrack の tick ごとのワールド行列から
-// **同じ tick の**ワイヤ箱として重ね描く。加えて前後のトレイル (平行移動の折れ線) を引く。
-// ★描くのは EditorLinePass = SceneView の RT だけ。GameView / 撮影経路には出ない = golden 不変。
+// **同じ tick の**半透明メッシュ (M72i、GhostMeshPass) として重ね描く。メッシュが引けない物は
+// ワイヤ箱。加えて前後のトレイル (平行移動の折れ線) を引く。
+// ★描くのは EditorLinePass / GhostMeshPass = SceneView の RT だけ。GameView / 撮影経路には
+//   出ない = golden 不変。
 // ★ゴーストは sim 状態ではない (GhostTrack.h)。ここは読むだけ
 #include "Editor/Windows/SceneViewWindow.h"
 
@@ -21,6 +23,7 @@ namespace {
 // トレイルの範囲 (tick)。過去は短く、未来は長く — 「これからどう違うか」を見せたい
 constexpr uint64_t kTrailBack = 60;
 constexpr uint64_t kTrailAhead = 180;
+constexpr uint32_t kMeshAlpha = 0x66u; // 半透明メッシュの不透明度 (0x66 = 40%)
 
 uint32_t WithAlpha(uint32_t rgba, uint32_t alpha)
 {
@@ -55,26 +58,25 @@ void SceneViewWindow::BuildGhostOverlay(EngineContext& ctx)
             if (k == nullptr || k->alive == 0) {
                 continue;
             }
-            // ---- 同じ tick の箱 (選択アウトラインと同じ AABB の出所) ----
+            // ---- 同じ tick のメッシュ (M72i: 半透明の実メッシュ)。無ければワイヤ箱 ----
             XMFLOAT4X4 world;
             GhostTrack::ToMatrix(*k, world);
-            XMFLOAT3 lo = { -0.5f, -0.5f, -0.5f };
-            XMFLOAT3 hi = { 0.5f, 0.5f, 0.5f };
-            if (ctx.resources != nullptr) {
-                if (Mesh* mesh = ctx.resources->meshes.Get(t.mesh)) {
-                    lo = mesh->aabbMin;
-                    hi = mesh->aabbMax;
-                }
+            const Mesh* mesh = ctx.resources != nullptr ? ctx.resources->meshes.Get(t.mesh) : nullptr;
+            if (mesh != nullptr) {
+                ghostMesh_.Add(mesh, world, WithAlpha(rgba, kMeshAlpha));
+            } else {
+                XMFLOAT3 lo = { -0.5f, -0.5f, -0.5f };
+                XMFLOAT3 hi = { 0.5f, 0.5f, 0.5f };
+                const XMFLOAT3 center = { (lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f,
+                                          (lo.z + hi.z) * 0.5f };
+                const XMFLOAT3 half = { (hi.x - lo.x) * 0.5f, (hi.y - lo.y) * 0.5f,
+                                        (hi.z - lo.z) * 0.5f };
+                const XMMATRIX boxWorld =
+                    XMMatrixTranslation(center.x, center.y, center.z) * XMLoadFloat4x4(&world);
+                XMFLOAT4X4 bw;
+                XMStoreFloat4x4(&bw, boxWorld);
+                lines_.AddWireBox(bw, half, rgba, /*onTop*/ true);
             }
-            const XMFLOAT3 center = { (lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f,
-                                      (lo.z + hi.z) * 0.5f };
-            const XMFLOAT3 half = { (hi.x - lo.x) * 0.5f, (hi.y - lo.y) * 0.5f,
-                                    (hi.z - lo.z) * 0.5f };
-            const XMMATRIX boxWorld =
-                XMMatrixTranslation(center.x, center.y, center.z) * XMLoadFloat4x4(&world);
-            XMFLOAT4X4 bw;
-            XMStoreFloat4x4(&bw, boxWorld);
-            lines_.AddWireBox(bw, half, rgba, /*onTop*/ true);
 
             // ---- トレイル: [now - back, now + ahead] の平行移動を結ぶ ----
             const uint64_t from = (now > kTrailBack) ? now - kTrailBack : 0;
