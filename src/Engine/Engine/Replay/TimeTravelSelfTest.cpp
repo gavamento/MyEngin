@@ -7,6 +7,7 @@
 #include "Engine/Core/Log.h"
 #include "Engine/Core/World.h"
 #include "Engine/Engine/GameObject.h"
+#include "Engine/Engine/Replay/SimSnapshot.h"
 #include "Engine/Engine/Replay/TimeTravel.h"
 #include "Engine/Engine/Scene.h"
 
@@ -60,6 +61,13 @@ bool RunTimeTravelSelfTest()
         tt.OnTickEnd(refs, tick, in, 2, simulated, TimeTravel::HashOf(refs));
         ++tick;
     };
+    // 「シークで tick t へ戻った」の代わり: そのレーンの最寄りスナップショットを復元する
+    // (テストは再シムを持たないので、スナップショットそのものの tick へしか戻れない)
+    const auto RestoreOn = [&](TimeTravel& tt, uint32_t lane, uint64_t t) {
+        uint64_t got = 0;
+        const std::vector<std::byte>* blob = tt.SnapshotAtOrBeforeOn(lane, t, got);
+        return blob != nullptr && got == t && RestoreSimSnapshot(refs, blob->data(), blob->size());
+    };
 
     TimeTravel tt;
     TimeTravelConfig cfg;
@@ -76,6 +84,7 @@ bool RunTimeTravelSelfTest()
     check(tt.SnapshotCount() == 1, "Begin() takes the first snapshot");
     const uint64_t startHash = tt.HashAtTick(100);
     check(startHash != 0, "HashAtTick(firstTick) is the state before that tick runs");
+    check(!tt.NeedsBoundaryCheck(100), "a fresh ring needs no boundary check");
 
     // ---- 90 tick 積む (30 tick ごとにスナップショット) ----
     for (int i = 0; i < 90; ++i) {
@@ -97,6 +106,9 @@ bool RunTimeTravelSelfTest()
           "HashAtTick(t) is the hash after tick t-1");
     check(tt.HashAtTick(100) == startHash, "the first tick's hash is kept separately");
     check(tt.HashAtTick(150) != tt.HashAtTick(151), "a moving world hashes differently per tick");
+    check(tt.HashAtTick(160) == tt.Entry(159)->hashAfter,
+          "a snapshot tick hashes the same through the snapshot and through the entry");
+    check(!tt.NeedsBoundaryCheck(190), "a running ring needs no boundary check at its end");
 
     uint64_t snapTick = 0;
     check(tt.SnapshotAtOrBefore(175, snapTick) != nullptr && snapTick == 160,
@@ -115,17 +127,142 @@ bool RunTimeTravelSelfTest()
     check(tt.EndTick() == 290, "...but they are still recorded (prevTickInput moves)");
     check(tt.Entry(200) != nullptr && !tt.Entry(200)->simulated,
           "a paused tick is recorded as simulated=false");
+    check(tt.NeedsBoundaryCheck(290), "after a paused tick the next boundary is checked (edits)");
+    const uint64_t oldEndHash = tt.HashAtTick(290);
+    const uint64_t oldHash130 = tt.HashAtTick(130);
 
-    // ---- 分岐: シークで戻った後に走った tick は未来を捨てる ----
+    // ---- 縮退経路: Fork を呼ばずにリングの途中で tick が走る = 未来は分岐へ移る (M72a) ----
+    // (M52e まではここで未来を捨てていた)
     const uint64_t branchHash = tt.HashAtTick(150);
     tick = 150;
     RunTick(tt, true);
-    check(tt.EndTick() == 151, "re-running tick 150 truncates the recorded future");
-    check(tt.SnapshotCount() == 2, "snapshots after the branch point are dropped (100 / 130)");
+    check(tt.EndTick() == 151, "re-running tick 150 ends the live lane at 151");
+    check(tt.SnapshotCount() == 2, "live snapshots after the fork point move away (100 / 130 stay)");
     check(tt.HashAtTick(150) == branchHash,
-          "the state *before* the branch tick is unchanged (its snapshot stays valid)");
+          "the state *before* the branch tick is unchanged (its hash stays valid)");
     check(tt.SnapshotAtOrBefore(150, snapTick) != nullptr && snapTick == 130,
-          "seeking into the branch still finds 130");
+          "seeking into the branch point still finds 130");
+    check(tt.BranchCount() == 1, "the recorded future is kept as one branch");
+    const uint32_t b1 = tt.BranchCount() == 1 ? tt.Branches().front().id : 0;
+    check(b1 == 1 && tt.ForkTickOn(b1) == 150 && tt.EndTickOn(b1) == 290,
+          "branch B1 owns [150, 290)");
+    check(tt.FindBranch(b1) != nullptr && tt.FindBranch(b1)->parent == TimeTravel::kLiveLane,
+          "B1 hangs off the live lane");
+    check(tt.EntryOn(b1, 200) != nullptr && !tt.EntryOn(b1, 200)->simulated
+              && tt.EntryOn(b1, 200)->inputs[0].mouseX == 200,
+          "EntryOn(B1, t) reads the moved future");
+    check(tt.EntryOn(b1, 120) != nullptr && tt.EntryOn(b1, 120)->inputs[0].mouseX == 120,
+          "EntryOn(B1, t) walks to the parent before the fork tick");
+    check(tt.HashAtTickOn(b1, 150) == branchHash && tt.HashAtTickOn(b1, 290) == oldEndHash,
+          "HashAtTickOn(B1) covers the fork tick and the old end");
+    check(tt.SnapshotAtOrBeforeOn(b1, 175, snapTick) != nullptr && snapTick == 160,
+          "SnapshotAtOrBeforeOn(B1, 175) uses the moved 160");
+    check(tt.SnapshotAtOrBeforeOn(b1, 150, snapTick) != nullptr && snapTick == 130,
+          "SnapshotAtOrBeforeOn(B1, 150) walks to the parent's 130");
+    check(tt.SnapshotAtOrBefore(175, snapTick) != nullptr && snapTick == 130,
+          "the live lane no longer sees the branch's snapshots");
+    {
+        const DivergenceReport d = tt.FirstDivergence(TimeTravel::kLiveLane, b1);
+        check(d.comparable && d.diverged && d.firstTick == 151,
+              "the re-run tick moved the world differently -> first divergence at 151");
+    }
+
+    // ---- 正規経路: Fork (未来あり・編集なし) ----
+    check(RestoreOn(tt, TimeTravel::kLiveLane, 130), "restore the live snapshot at 130");
+    tick = 130;
+    check(tt.NeedsBoundaryCheck(130), "a tick with recorded future needs the boundary check");
+    const uint32_t b2 = tt.Fork(refs, 130);
+    check(b2 == 2, "Fork(130) with a recorded future creates B2");
+    check(tt.EndTick() == 130 && tt.EndTickOn(b2) == 151 && tt.ForkTickOn(b2) == 130,
+          "live ends at 130, B2 owns [130, 151)");
+    check(tt.SnapshotCount() == 2 && tt.HashAtTick(130) == oldHash130,
+          "live keeps 100 + a pinned re-capture at 130 with the same hash (no edit)");
+    check(tt.FindBranch(b1) != nullptr && tt.FindBranch(b1)->parent == b2,
+          "B1 (forked later at 150) is re-parented under B2");
+    check(tt.EntryOn(b1, 140) != nullptr && tt.EntryOn(b1, 140)->inputs[0].mouseX == 140,
+          "B1 reads [130, 150) through B2");
+    check(tt.SnapshotAtOrBeforeOn(b1, 149, snapTick) != nullptr && snapTick == 130,
+          "B1's nearest snapshot for 149 is B2's 130 (moved with the suffix)");
+    check(tt.FindBranch(b2) != nullptr && !tt.FindBranch(b2)->snapshots.empty()
+              && tt.FindBranch(b2)->snapshots.front().pinned,
+          "the fork-tick snapshot a branch inherits is pinned");
+    check(!tt.NeedsBoundaryCheck(130), "right after Fork the boundary is settled");
+
+    // ---- 正規経路: Fork (未来なし・編集あり) = 潜在バグの回帰 ----
+    if (auto* t = scene.GetWorld().GetComponent<LocalTransform>(mover)) {
+        t->position.y += 5.0f; // ポーズ中に Inspector が触った、の代わり
+    }
+    const uint64_t editedHash = TimeTravel::HashOf(refs);
+    check(editedHash != oldHash130, "the edit changes the world hash");
+    const uint32_t none = tt.Fork(refs, 130);
+    check(none == 0, "Fork(130) with no future creates no branch");
+    check(tt.SnapshotCount() == 2 && tt.HashAtTick(130) == editedHash,
+          "...but re-captures the edited state (the stale snapshot at 130 is replaced)");
+    {
+        const DivergenceReport d = tt.FirstDivergence(TimeTravel::kLiveLane, b2);
+        check(d.comparable && d.diverged && d.firstTick == 130,
+              "the edit itself shows up as a divergence at the fork tick");
+    }
+    check(RestoreOn(tt, b2, 130) && TimeTravel::HashOf(refs) == oldHash130,
+          "B2's own snapshot at 130 is still the pre-edit state");
+    check(RestoreOn(tt, TimeTravel::kLiveLane, 130) && TimeTravel::HashOf(refs) == editedHash,
+          "seeking back to the fork tick on the live lane keeps the edit (M52e lost it)");
+    for (int i = 0; i < 20; ++i) {
+        RunTick(tt, true); // 130..149 を編集後の世界で走らせる
+    }
+    check(tt.EndTick() == 150, "20 ticks on the edited lane -> [100, 150)");
+    check(tt.FirstDivergence(TimeTravel::kLiveLane, b2).firstTick == 130,
+          "the divergence stays at the edit point");
+
+    // ---- レーン切替: B1 をライブへ (経路 B2 -> B1 を継ぎ足し、いまのライブは分岐に降格) ----
+    uint64_t seekTarget = 0;
+    check(tt.SwitchToBranch(b1, 150, seekTarget), "SwitchToBranch(B1) succeeds");
+    check(seekTarget == 150, "the seek target is min(now, new end)");
+    check(tt.EndTick() == 290 && tt.SnapshotCount() == 4,
+          "live is [100, 290) again with snapshots 100 / 130 / 160 / 190");
+    check(tt.HashAtTick(290) == oldEndHash && tt.HashAtTick(130) == oldHash130,
+          "the grafted lane hashes like the original run");
+    check(tt.FindBranch(b1) == nullptr && tt.FindBranch(b2) == nullptr,
+          "the grafted branches are gone");
+    check(tt.BranchCount() == 2, "the edited run and B2's own tail survive as branches");
+    uint32_t edited = 0;
+    uint32_t tail = 0;
+    for (const TimeTravelBranch& b : tt.Branches()) {
+        if (b.forkTick == 130) {
+            edited = b.id;
+        } else if (b.forkTick == 150) {
+            tail = b.id;
+        }
+    }
+    check(edited != 0 && tt.EndTickOn(edited) == 150 && tt.HashAtTickOn(edited, 130) == editedHash
+              && tt.FindBranch(edited)->parent == TimeTravel::kLiveLane,
+          "the demoted live lane is a branch at 130 that starts from the edited state");
+    check(tail != 0 && tt.EndTickOn(tail) == 151 && tt.FindBranch(tail)->parent == TimeTravel::kLiveLane,
+          "B2's continuation past 150 became its own branch off the live lane");
+    check(tt.FirstDivergence(TimeTravel::kLiveLane, edited).firstTick == 130,
+          "live vs edited branch: diverges at the edit");
+    {
+        const DivergenceReport d = tt.FirstDivergence(TimeTravel::kLiveLane, tail);
+        check(d.comparable && d.diverged && d.firstTick == 151,
+              "live vs tail: same state before 150, different after");
+    }
+
+    // ---- 同一分岐の畳み込み: 同じ入力で同じ未来をなぞったら分岐は消える ----
+    check(RestoreOn(tt, TimeTravel::kLiveLane, 190), "restore the live snapshot at 190");
+    tick = 190;
+    const uint32_t b5 = tt.Fork(refs, 190);
+    check(b5 != 0 && tt.EndTick() == 190 && tt.BranchCount() == 3, "Fork(190) keeps [190, 290) as B5");
+    for (int i = 0; i < 100; ++i) {
+        RunTick(tt, false); // 元の 190..289 もポーズ tick だった
+    }
+    check(tt.EndTick() == 290 && tt.HashAtTick(290) == oldEndHash,
+          "re-tracing the paused stretch reproduces the old end hash");
+    check(tt.FindBranch(b5) == nullptr && tt.BranchCount() == 2,
+          "an identical branch collapses when the live lane reaches its end");
+
+    // ---- 部分木の削除 ----
+    tt.DeleteBranch(edited);
+    check(tt.FindBranch(edited) == nullptr && tt.BranchCount() == 1, "DeleteBranch removes it");
 
     // ---- 追い出し: 上限を超えたら古い方から捨て、戻れない範囲は見せない ----
     TimeTravelConfig tight;
@@ -135,22 +272,30 @@ bool RunTimeTravelSelfTest()
     ring2.Configure(tight);
     tick = 0;
     ring2.Begin(refs, tick);
+    for (int i = 0; i < 50; ++i) {
+        RunTick(ring2, true);
+    }
+    // 50 tick 走った時点で最古は 30 (30 / 40 / 50)。その範囲内の 40 で縮退分岐させる
+    tick = 40;
+    RunTick(ring2, true); // 縮退経路で [40, 50) が分岐になる
+    check(ring2.BranchCount() == 1 && ring2.ForkTickOn(ring2.Branches().front().id) == 40,
+          "ring2 forked a branch at 40");
     for (int i = 0; i < 100; ++i) {
         RunTick(ring2, true);
     }
     check(ring2.SnapshotCount() == 3, "at most maxSnapshots are kept");
-    check(ring2.FirstTick() == 80, "the range shrinks to the oldest snapshot (80 / 90 / 100)");
-    check(ring2.EndTick() == 100, "the newest end is unchanged");
-    check(ring2.Entry(79) == nullptr, "ticks we can no longer reach are dropped");
-    check(ring2.HashAtTick(80) != 0 && ring2.HashAtTick(80) == ring2.HashAtTick(80),
-          "the new first tick keeps a valid start hash");
+    check(ring2.FirstTick() == 120, "the range shrinks to the oldest snapshot (120 / 130 / 140)");
+    check(ring2.EndTick() == 141, "the newest end is unchanged");
+    check(ring2.Entry(119) == nullptr, "ticks we can no longer reach are dropped");
+    check(ring2.HashAtTick(120) != 0, "the new first tick keeps a valid start hash");
+    check(ring2.BranchCount() == 0, "a branch whose fork tick left the ring is pruned");
     // 追い出し後も「最寄り探索 → その tick の入力が揃っている」が崩れないこと。
     // ここが崩れると再シムが途中で入力を見失う (シークが Failed になる)
     bool inputsIntact = true;
-    if (ring2.SnapshotAtOrBefore(95, snapTick) == nullptr) {
+    if (ring2.SnapshotAtOrBefore(135, snapTick) == nullptr) {
         inputsIntact = false;
     } else {
-        for (uint64_t t = snapTick; t < 95; ++t) {
+        for (uint64_t t = snapTick; t < 135; ++t) {
             if (ring2.Entry(t) == nullptr) {
                 inputsIntact = false;
             }
@@ -158,9 +303,29 @@ bool RunTimeTravelSelfTest()
     }
     check(inputsIntact, "every tick between the chosen snapshot and the target still has input");
 
+    // ---- 分岐の本数上限: 最古の葉から消える (いま作ったものは守る) ----
+    TimeTravelConfig few;
+    few.snapshotInterval = 10;
+    few.maxBranches = 2;
+    TimeTravel ring3;
+    ring3.Configure(few);
+    tick = 0;
+    ring3.Begin(refs, tick);
+    for (int i = 0; i < 30; ++i) {
+        RunTick(ring3, true);
+    }
+    for (int k = 0; k < 3; ++k) {
+        tick = 10;
+        RunTick(ring3, true); // 毎回 [10, ...) が分岐になる
+    }
+    check(ring3.BranchCount() == 2, "no more than maxBranches survive");
+    check(ring3.FindBranch(1) == nullptr && ring3.FindBranch(3) != nullptr,
+          "the oldest leaf went, the newest fork is protected");
+
     // ---- 停止 ----
     ring2.SetEnabled(false);
-    check(!ring2.Enabled() && ring2.SnapshotCount() == 0 && ring2.EntryCount() == 0,
+    check(!ring2.Enabled() && ring2.SnapshotCount() == 0 && ring2.EntryCount() == 0
+              && ring2.BranchCount() == 0,
           "SetEnabled(false) drops the whole ring (Stop must not leak the play session)");
 
     if (failCount == 0) {

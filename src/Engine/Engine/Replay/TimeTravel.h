@@ -18,7 +18,7 @@ namespace mye {
 // ★ここは**リングの器と方針だけ**を持つ純データ構造にしてある (エンジンの参照を持たない)。
 //   実際の Restore + 再シムは EngineLoop が回す — 再シムには tick 本体の参照束
 //   (TickServices) が要り、それは EngineLoop のスコープにしか無いため。
-//   この分離のおかげでリングの方針 (分岐時の切り捨て / 追い出し / 最寄り探索) は
+//   この分離のおかげでリングの方針 (分岐 / 追い出し / 最寄り探索) は
 //   ライブなワールド無しで selftest できる。
 //
 // ★**Engine 層に置いてある**のは M52f のクラッシュ用リングが同じ型の別インスタンスを
@@ -28,12 +28,28 @@ namespace mye {
 // ★リングに載るのは **sim レーンだけ** (SimSnapshot.h の境界と同一)。
 //   C# スクリプトの状態は巻き戻らない = 再シムの結果が割れうる。これは record/verify と
 //   同じ制約で、シークの自己検証 (期待ハッシュとの照合) がその事実を毎回可視化する。
+//
+// ---- 分岐 (M72a) ----
+// M52e までは「シークで戻った後に走った tick」が記録済みの未来を**捨てて**いた。
+// M72 からは捨てずに **分岐 (Branch)** として残す。レーンはツリーを成す:
+//
+//   live (id 0) : [firstTick_, End)         entries_ / snapshots_ を直接持つ
+//   branch B    : [B.forkTick, B.End)        fork 以降の **suffix だけ**を所有し、
+//                                            それより前は parent へ委譲する
+//
+// ★tick == forkTick のスナップショットは**レーン固有**。分岐点でポーズ中に Inspector が
+//   世界を編集すると「tick が走る前の状態」がレーンごとに別物になる (編集前 = 分岐側 /
+//   編集後 = ライブ側)。M52e はこれを区別せず、編集前のスナップショットを残したまま未来を
+//   捨てていたので、後からその tick へ戻ると**編集が黙って消え**、その先へ戻ると
+//   HASH MISMATCH になっていた。Fork は必ず編集後の状態を **pinned** で撮り直す。
+// ★HashAtTick は「その tick のスナップショットがあればその stateHash」を優先する。
+//   編集点以外では entry の hashAfter と一致するのが不変条件 (selftest で固定)。
 
 // リング 1 tick 分の記録
 struct TimeTravelEntry {
     // その tick が消費した入力レーン (ライブ入力の確定値)。M52g から **kMaxPlayers 本**。
     // 実効レーン数に関わらず上限本数を持つのは、1 エントリ長を固定して
-    // 「途中でレーン数が変わったリング」という状態を作らないため (64B × 4 = 256B/tick)
+    // 「途中でレーン数が変わったリング」という状態を作らないため (88B × 4 ≒ 360B/tick)
     InputSnapshot inputs[kMaxPlayers] = {};
     uint64_t hashAfter = 0; // tick 末のワールドハッシュ (シークの自己検証に使う)
     // その tick で sim を進めたか。ポーズ中の tick は false で記録する —
@@ -42,11 +58,34 @@ struct TimeTravelEntry {
     bool simulated = false;
 };
 
+// スナップショット 1 枚。blob は「tick が走る**前**」の状態
+struct TimeTravelSnap {
+    uint64_t tick = 0;
+    std::vector<std::byte> blob;
+    uint64_t stateHash = 0; // blob の状態のハッシュ (撮影時に呼び出し側が持っている値)
+    // 分岐点で撮った「編集後」の 1 枚 (または分岐が受け継いだ fork tick の 1 枚)。
+    // 分岐側の予算追い出しでは落とさない — これが無いと分岐の再シム起点が消える
+    bool pinned = false;
+};
+
+// レーン 1 本。id 0 = ライブ (EngineLoop が実際に回している世界)
+struct TimeTravelBranch {
+    uint32_t id = 0;
+    uint32_t parent = 0;      // [firstTick_, forkTick) を所有するレーン。ライブでは未使用
+    uint64_t forkTick = 0;    // ライブでは firstTick_
+    uint64_t startHash = 0;   // forkTick が走る前の状態のハッシュ (自前のスナップショットが無いとき)
+    uint64_t createdSeq = 0;  // 作成順 (追い出し / 上限で古い方から消す)
+    std::vector<TimeTravelEntry> entries;   // entries[i] = tick forkTick+i
+    std::vector<TimeTravelSnap> snapshots;  // tick 昇順、すべて tick >= forkTick
+    uint64_t EndTick() const { return forkTick + entries.size(); }
+};
+
 struct TimeTravelConfig {
     // sim tick 何個ごとに 1 枚撮るか。ポーズ tick は数えない (止まった世界を撮り続けない)
     uint64_t snapshotInterval = 30;
     size_t maxSnapshots = 120;                   // 30 * 120 = 3600 tick = 60 秒
-    size_t maxBytes = 64ull * 1024ull * 1024ull; // 既定デモ 528 体で 1 枚 148KB
+    size_t maxBytes = 64ull * 1024ull * 1024ull; // 既定デモ 528 体で 1 枚 148KB (全レーン合計)
+    size_t maxBranches = 8;                      // 超えたら最古の葉を消す (M72a)
 };
 
 // シークの結果。**ハッシュ照合まで込み** — 戻して再シムした世界が元の tick と
@@ -68,8 +107,21 @@ struct SeekReport {
     uint64_t actualHash = 0;
 };
 
+// 2 レーンの最初の乖離 (M72a)。共通範囲 [commonBegin, commonEnd] の「tick が走る前」の
+// ハッシュを比べ、最初に食い違う tick を返す。commonBegin == 分岐点なら
+// 「分岐点での編集そのもの」が乖離として出る
+struct DivergenceReport {
+    bool comparable = false; // 両レーンが存在し、共通範囲が空でない
+    bool diverged = false;
+    uint64_t firstTick = 0;  // diverged のときだけ有効
+    uint64_t commonBegin = 0;
+    uint64_t commonEnd = 0;  // 含む (= min(EndA, EndB))
+};
+
 class TimeTravel {
 public:
+    static constexpr uint32_t kLiveLane = 0;
+
     void Configure(const TimeTravelConfig& c) { config_ = c; }
     const TimeTravelConfig& Config() const { return config_; }
 
@@ -84,19 +136,61 @@ public:
     void Clear();
 
     // tick 1 本走った直後に呼ぶ。ranTick = いま走り終えた tick の番号。
-    // ranTick がリングの途中なら「シーク後に走った = 分岐」とみなして未来を捨てる。
     // inputs は playerCount 本のレーン配列 (残りはゼロ値で埋める)。
     // ★hashAfter は**呼び出し側が撮った tick 末ハッシュ**を渡す (M52i)。
     //   M52f までは中で HashOf していたが、クラッシュリング / ロールバックが同じ tick で
     //   同じものを撮るので、消費者ごとに撮ると 1 tick に 2〜3 回走る (実測 約 0.2ms/回)。
-    //   撮る点そのものは変えていない — HashOf を公開してあるので、呼び出し側が
-    //   「同じ 3 出口・同じ引数」で撮っていることは型で担保できる
+    //   撮る点そのものは変えないため HashOf を公開してあり、呼び出し側が
+    //   「同じ 3 出口・同じ引数」で撮っていることは型で担保できる。
+    // ★ranTick がリングの途中 (= Fork を呼ばずに走った) なら縮退経路として未来を分岐へ
+    //   移し WARN する。正規の経路は tick を走らせる**前**に Fork を呼ぶこと
     void OnTickEnd(const SimRefs& refs, uint64_t ranTick, const InputSnapshot* inputs,
                    uint32_t playerCount, bool simulated, uint64_t hashAfter);
 
     // record/verify が撮っているのと同じ 3 出口・同じ引数のワールドハッシュ。
     // OnTickEnd へ渡す値はこれと一致していること
     static uint64_t HashOf(const SimRefs& refs);
+
+    // ---- 分岐 (M72a) ----
+    // tick を走らせる**前**の tick 境界で呼ぶ。
+    //   - tick より先に記録済みの未来があれば、それを新しい分岐へ移して id を返す
+    //   - 現在の世界のハッシュが「記録上の tick 前の状態」と違えば (= ポーズ中に編集された)、
+    //     編集後の状態を pinned スナップショットで撮り直す
+    //   - どちらでもなければ何もせず 0 を返す
+    // 呼び出し側は直前に ApplyStructuralChanges() を済ませておくこと (撮影点の前提)。
+    // ★毎 tick 呼ぶとハッシュを 1 回余分に撮る (約 0.2ms)。NeedsBoundaryCheck が真の
+    //   tick だけ呼べばよい (未来がある / 直前がポーズ tick / まだ 1 本も走っていない)
+    bool NeedsBoundaryCheck(uint64_t tick) const;
+    uint32_t Fork(const SimRefs& refs, uint64_t tick);
+
+    // レーン切替の要求 (UI → EngineLoop)。RequestSeek と同じくスクラブ状態に入る
+    void RequestSwitch(uint32_t branchId);
+    bool HasPendingSwitch() const { return switchPending_; }
+    uint32_t PendingSwitch() const { return switchTarget_; }
+    void ClearPendingSwitch() { switchPending_ = false; }
+
+    // 分岐 X をライブにする (純データ操作。復元 + 再シムは呼び出し側が SeekTo で行う)。
+    // いまのライブの suffix は分岐として残る (分岐点の pinned スナップショットを失わない)。
+    // outSeekTarget = min(currentTick, 新しい EndTick)。失敗 (id 不明) なら false
+    bool SwitchToBranch(uint32_t branchId, uint64_t currentTick, uint64_t& outSeekTarget);
+    // 部分木ごと消す
+    void DeleteBranch(uint32_t branchId);
+
+    const std::vector<TimeTravelBranch>& Branches() const { return branches_; }
+    size_t BranchCount() const { return branches_.size(); }
+    const TimeTravelBranch* FindBranch(uint32_t id) const;
+
+    // レーン付きの参照 (lane = kLiveLane または分岐 id)。forkTick より前は parent を歩く
+    bool HasLane(uint32_t lane) const;
+    uint64_t EndTickOn(uint32_t lane) const;
+    uint64_t ForkTickOn(uint32_t lane) const;
+    const TimeTravelEntry* EntryOn(uint32_t lane, uint64_t t) const;
+    uint64_t HashAtTickOn(uint32_t lane, uint64_t t) const;
+    // target 以下で最寄りのスナップショット。★親を歩くときは parent の tick < forkTick の
+    //   枚だけを候補にする (親が同じ tick に持つ「編集後」の 1 枚を拾わない)
+    const std::vector<std::byte>* SnapshotAtOrBeforeOn(uint32_t lane, uint64_t target,
+                                                       uint64_t& outTick) const;
+    DivergenceReport FirstDivergence(uint32_t laneA, uint32_t laneB) const;
 
     // ---- シーク要求 (UI → EngineLoop) ----
     // 要求した時点でスクラブ状態に入る = EngineLoop は tick を進めなくなる。
@@ -112,42 +206,69 @@ public:
     bool Scrubbing() const { return scrubbing_; }
     void EndScrub() { scrubbing_ = false; } // 再生/ステップ再開 = ここから分岐する
 
-    // ---- 参照 ----
+    // ---- 参照 (ライブレーン) ----
     uint64_t FirstTick() const { return firstTick_; }
     uint64_t EndTick() const { return firstTick_ + entries_.size(); }
     bool HasTick(uint64_t t) const { return enabled_ && t >= firstTick_ && t < EndTick(); }
     const TimeTravelEntry* Entry(uint64_t t) const;
     // 「tick t が走る**前**の状態」のハッシュ。t == EndTick() なら現在の状態
-    uint64_t HashAtTick(uint64_t t) const;
+    uint64_t HashAtTick(uint64_t t) const { return HashAtTickOn(kLiveLane, t); }
     // target 以下で最寄りのスナップショット (無ければ nullptr)
-    const std::vector<std::byte>* SnapshotAtOrBefore(uint64_t target, uint64_t& outTick) const;
+    const std::vector<std::byte>* SnapshotAtOrBefore(uint64_t target, uint64_t& outTick) const
+    {
+        return SnapshotAtOrBeforeOn(kLiveLane, target, outTick);
+    }
 
     size_t SnapshotCount() const { return snapshots_.size(); }
-    size_t SnapshotBytes() const { return bytes_; }
+    size_t SnapshotBytes() const { return bytes_; } // 全レーン合計
     size_t EntryCount() const { return entries_.size(); }
 
 private:
-    struct Snap {
-        uint64_t tick = 0; // この blob は「tick が走る前」の状態
-        std::vector<std::byte> blob;
+    // ライブ / 分岐を同じ形で扱うための束 (ライブは entries_/snapshots_ を指す)
+    struct LaneRef {
+        uint32_t id = 0;
+        uint32_t parent = 0;
+        uint64_t forkTick = 0;
+        uint64_t startHash = 0;
+        std::vector<TimeTravelEntry>* entries = nullptr;
+        std::vector<TimeTravelSnap>* snapshots = nullptr;
+        bool valid = false;
+        uint64_t End() const { return forkTick + entries->size(); }
     };
+    LaneRef Lane(uint32_t lane);
+    LaneRef Lane(uint32_t lane) const;
+    TimeTravelBranch* FindBranchMut(uint32_t id);
 
-    bool TakeSnapshot(const SimRefs& refs, uint64_t tick);
+    bool TakeSnapshot(const SimRefs& refs, uint64_t tick, uint64_t stateHash, bool pinned);
     void Evict();
-    void DropSnapshotsAfter(uint64_t tick);
+    void PruneUnreachable();
+    void EnforceBranchLimit(uint32_t protect);
+    // lane の [at, End) と tick >= at のスナップショットを新しい分岐へ移す。
+    // 移すものが無ければ 0。lane の子で forkTick > at のものは新分岐の子になる
+    uint32_t SplitSuffix(uint32_t lane, uint64_t at);
+    // 分岐をライブの末尾へ継ぎ足して消す (live.End == branch.forkTick が前提)
+    void Graft(uint32_t branchId);
+    void CollapseIdentical(uint64_t ranTick);
+    bool IsLeaf(uint32_t id) const;
 
     TimeTravelConfig config_;
     bool want_ = false;
     bool enabled_ = false;
     bool scrubbing_ = false;
     bool seekPending_ = false;
+    bool switchPending_ = false;
+    bool scrubbedSinceLastTick_ = false; // シーク/切替の後、まだ tick が走っていない
     uint64_t seekTarget_ = 0;
+    uint32_t switchTarget_ = 0;
     uint64_t firstTick_ = 0;
     uint64_t startHash_ = 0;      // firstTick_ が走る前の状態のハッシュ
     uint64_t simSinceSnapshot_ = 0;
     size_t bytes_ = 0;
-    std::vector<TimeTravelEntry> entries_; // entries_[i] = tick firstTick_+i
-    std::vector<Snap> snapshots_;          // tick 昇順
+    std::vector<TimeTravelEntry> entries_;   // entries_[i] = tick firstTick_+i
+    std::vector<TimeTravelSnap> snapshots_;  // tick 昇順
+    std::vector<TimeTravelBranch> branches_; // 作成順
+    uint32_t nextBranchId_ = 1;
+    uint64_t branchSeq_ = 0;
     SeekReport lastSeek_;
 };
 

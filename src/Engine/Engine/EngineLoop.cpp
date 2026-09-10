@@ -805,12 +805,15 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     //   「巻き戻したときだけ挙動が違う」種類のバグが必ず入る。
     // ★呼べるのは tick 境界だけ (構造変更が空)。フレーム頭から呼ぶので、直前フレームの
     //   ImGui が積んだ編集要求を先に捌いてから戻す (捌かないと破棄済み世界のコマンドが残る)
-    const auto SeekTo = [&](uint64_t target) {
+    // M72a: forceRestore = 現在地が target 以上でも必ずスナップショットから戻す。
+    //   レーン切替の直後は「いまの世界」が別レーンの状態なので、前進シークの
+    //   「現在地からそのまま再シム」では嘘の世界の続きを回してしまう
+    const auto SeekTo = [&](uint64_t target, bool forceRestore = false) {
         SeekReport rep;
         rep.target = target;
         const double t0 = clock.Now();
         scene.GetWorld().ApplyStructuralChanges();
-        if (target < ctx.tickIndex) {
+        if (target < ctx.tickIndex || forceRestore) {
             uint64_t snapTick = 0;
             const std::vector<std::byte>* blob = timeTravel.SnapshotAtOrBefore(target, snapTick);
             if (blob == nullptr
@@ -1287,6 +1290,17 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             scene.GetWorld().ApplyStructuralChanges(); // 撮影点の前提 (構造変更が空)
             timeTravel.Begin(simRefs, ctx.tickIndex);
         }
+        // ---- 分岐レーンの切替 (M72a) ----
+        // 純データ操作でレーンを差し替えてから、必ずスナップショットから戻す
+        if (timeTravel.HasPendingSwitch()) {
+            const uint32_t branchId = timeTravel.PendingSwitch();
+            timeTravel.ClearPendingSwitch();
+            uint64_t target = 0;
+            scene.GetWorld().ApplyStructuralChanges();
+            if (timeTravel.SwitchToBranch(branchId, ctx.tickIndex, target)) {
+                SeekTo(target, /*forceRestore*/ true);
+            }
+        }
         if (timeTravel.HasPendingSeek()) {
             const uint64_t target = timeTravel.PendingSeek();
             timeTravel.ClearPendingSeek();
@@ -1301,6 +1315,9 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         if (scrubbing) {
             accumulator = 0.0; // 再開時に溜まった分が一気に流れないように
         }
+        // タイムトラベルのリングが「このフレームの tick を載せる」条件 (M52e/M72a)。
+        // 記録/検証中は .rep がその役なので載せない
+        const bool ttLive = timeTravel.Enabled() && !recorder.IsActive() && !verifying;
         // 検証モード (と --replay-fast の記録) は実時間と切り離して最速で回す (spec 11.3)
         const int maxTicksThisFrame = (verifying || fastRecording) ? 64 : kMaxTicksPerFrame;
         // ---- 遅延ロックステップのゲート (M52h) ----
@@ -1342,6 +1359,15 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                                 && NetReady(ctx.tickIndex)))) {
             // M52i: この tick が未確定レーンを予測で埋めて走ったか (tick 末の投機記録へ)
             bool netTickPredicted = false;
+            // ---- 分岐点 (M72a) ----
+            // 記録済みの未来があれば、走らせる**前**に分岐へ移す (捨てない)。ポーズ中に
+            // Inspector が世界を触っていれば、編集後の状態を撮り直す。どちらでもない
+            // 通常の tick では NeedsBoundaryCheck が偽なので、ハッシュは余分に撮らない
+            if (ttLive && timeTravel.NeedsBoundaryCheck(ctx.tickIndex)) {
+                scene.GetWorld().ApplyStructuralChanges(); // 撮影点の前提 (構造変更が空)
+                const uint32_t forked = timeTravel.Fork(simRefs, ctx.tickIndex);
+                (void)forked; // M72d: 分岐のゴーストを焼く
+            }
             if (verifying) {
                 // フェーズ 1 の入力をレーンごと置換する
                 for (uint32_t p = 0; p < ctx.playerCount; ++p) {
@@ -1581,15 +1607,19 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             timeTravel.EndScrub(); // 再生を再開した = ここから分岐する
             ttProbeStage = 2;
         } else if (ttProbeStage == 2 && ctx.tickIndex > ttScrubTarget) {
+            // M72a: 捨てられた未来は分岐 B1 として残り、その終端が元のリング末尾
             const bool branched = timeTravel.EndTick() == ctx.tickIndex
-                && timeTravel.EndTick() < ttPreScrubEnd;
+                && timeTravel.EndTick() < ttPreScrubEnd
+                && timeTravel.BranchCount() == 1
+                && timeTravel.EndTickOn(timeTravel.Branches().front().id) == ttPreScrubEnd;
             if (!branched) {
                 ++ttProbeFails;
             }
-            MYE_LOG_INFO("[timetravel]   branch: %s (ring end %llu, was %llu)",
+            MYE_LOG_INFO("[timetravel]   branch: %s (ring end %llu, was %llu, %zu branch kept)",
                          branched ? "PASS" : "FAIL",
                          static_cast<unsigned long long>(timeTravel.EndTick()),
-                         static_cast<unsigned long long>(ttPreScrubEnd));
+                         static_cast<unsigned long long>(ttPreScrubEnd),
+                         timeTravel.BranchCount());
             if (ttProbeFails == 0) {
                 MYE_LOG_INFO("==== time travel probe: ALL PASS ====");
             } else {
