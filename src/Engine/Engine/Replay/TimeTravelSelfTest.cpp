@@ -8,6 +8,7 @@
 #include "Engine/Core/World.h"
 #include "Engine/Engine/GameObject.h"
 #include "Engine/Engine/Replay/GhostTrack.h"
+#include "Engine/Engine/Replay/InputOverride.h"
 #include "Engine/Engine/Replay/SimSnapshot.h"
 #include "Engine/Engine/Replay/TimeTravel.h"
 #include "Engine/Engine/Scene.h"
@@ -379,6 +380,54 @@ bool RunTimeTravelSelfTest()
         ghost.Sample(w, 15, 1 << 20);
         check(slot < ghost.entities.size() && ghost.entities[slot].keys.size() == 3,
               "...and only one (no tombstone per tick)");
+    }
+
+    // ---- 入力の上書き (M72f): 経路の選択 / OR と置換 / レーンと tick の範囲 ----
+    {
+        InputActionDef keyAct;
+        keyAct.name = "Jump";
+        keyAct.keys.push_back(0x20); // Space
+        keyAct.padMask = 0x1000;     // A も持つが、キーが先に選ばれる
+        InputActionDef padAct;
+        padAct.name = "Fire";
+        padAct.padMask = 0x0300; // LB | RB → 最下位の LB (0x0100)
+        InputAxisDef axis;
+        axis.name = "MoveX";
+        axis.posKey = 0x44; // D
+        axis.negKey = 0x41; // A
+        axis.padAxis = PadAxis::LX;
+        InputAxisDef stick;
+        stick.name = "LookX";
+        stick.padAxis = PadAxis::RX;
+
+        InputOverrideSet set;
+        set.items.push_back(InputOverride::HoldAction(keyAct, 0, 10, 20));
+        set.items.push_back(InputOverride::HoldAction(padAct, 1, 10, 20));
+        set.items.push_back(InputOverride::HoldAxis(axis, -1.0f, 0, 15, 16));
+        set.items.push_back(InputOverride::HoldAxis(stick, 0.5f, 0, 10, 20));
+        InputSnapshot lanes[kMaxPlayers] = {};
+        lanes[0].padRX = 123;
+        set.Apply(9, lanes, 2);
+        check(!lanes[0].KeyDown(0x20) && lanes[1].padButtons == 0 && lanes[0].padRX == 123,
+              "before fromTick nothing is applied");
+        set.Apply(10, lanes, 2);
+        check(lanes[0].KeyDown(0x20) && lanes[0].padButtons == 0,
+              "HoldAction prefers the key binding over the pad button");
+        check(lanes[1].padButtons == 0x0100 && lanes[1].padConnected == 1,
+              "a pad-only action holds its lowest button and marks the pad connected");
+        check(lanes[0].padRX == 16384 && !lanes[0].KeyDown(0x44) && !lanes[0].KeyDown(0x41),
+              "HoldAxis on a stick-only axis replaces the stick value");
+        InputSnapshot again[kMaxPlayers] = {};
+        set.Apply(15, again, 2);
+        check(again[0].KeyDown(0x41) && !again[0].KeyDown(0x44),
+              "HoldAxis with a negative value presses the negKey");
+        InputSnapshot one[kMaxPlayers] = {};
+        set.Apply(10, one, 1);
+        check(one[1].padButtons == 0, "lanes beyond playerCount are left alone");
+        InputSnapshot late[kMaxPlayers] = {};
+        set.Apply(20, late, 2);
+        check(!late[0].KeyDown(0x20) && late[1].padButtons == 0, "toTick is exclusive");
+        check(std::string(set.items[0].label) == "Jump", "the label carries the action name");
     }
 
     // ---- 停止 ----

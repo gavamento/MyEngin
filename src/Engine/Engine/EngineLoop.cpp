@@ -1260,6 +1260,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     uint64_t wiOrigHashN = 0;
     uint64_t wiEditedHash = 0;
     uint32_t wiBranch = 0;
+    uint8_t wiOverrideVk = 0;
 
     while (running) {
         // ---- フェーズ 1: 時間更新 / 入力取得 ----
@@ -1512,6 +1513,12 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                 for (uint32_t p = 0; p < ctx.playerCount; ++p) {
                     ctx.inputs[p] = SynthLaneInput(ctx.tickIndex, p);
                 }
+            }
+            // ---- 入力の上書き (M72f) ----
+            // ライブ / 合成の**後**に OR / 置換するので、OnTickEnd がそのままリングに載せる =
+            // 後からシークしても同じビットが再現する。verify / net では触らない
+            if (ttLive && !netEnabled) {
+                timeTravel.Overrides().Apply(ctx.tickIndex, ctx.inputs, ctx.playerCount);
             }
             // ---- 固定 tick 本体 (M52d、決定台帳 2) ----
             // 通常 tick / タイムトラベル再シム / ロールバック再シムが通る唯一の実装。
@@ -1894,6 +1901,69 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                 const SeekReport fwd = SeekTo(here);
                 wiCheck(back.outcome == SeekOutcome::Ok && fwd.outcome == SeekOutcome::Ok,
                         "seeks across the grafted lane verify");
+                // ---- 入力の上書き (M72f): N へ戻って、アクションを 20 tick 押し続けて分岐 ----
+                timeTravel.RequestSeek(wiN);
+                wiFramesLeft = 3;
+                wiStage = 40;
+            } else if (wiStage == 40 && --wiFramesLeft <= 0) {
+                wiCheck(ctx.tickIndex == wiN && timeTravel.Scrubbing(), "scrub hold before the override");
+                // ★押すのは**誰かが読むアクション**でないと世界が動かず、分岐は「同一」として
+                //   畳まれる (WatcherRun を押しても既定シーンでは何も起きなかった)。既定シーンの
+                //   スクリプトが読む "Jump" を優先し、無ければ先頭、それも無ければ Space の仮アクション
+                InputActionDef def;
+                if (ctx.inputActions != nullptr) {
+                    for (const InputActionDef& a : ctx.inputActions->Actions()) {
+                        if (a.name == "Jump" && !a.keys.empty()) {
+                            def = a;
+                        }
+                    }
+                    if (def.keys.empty() && !ctx.inputActions->Actions().empty()
+                        && !ctx.inputActions->Actions().front().keys.empty()) {
+                        def = ctx.inputActions->Actions().front();
+                    }
+                }
+                if (def.keys.empty()) {
+                    def.name = "probe";
+                    def.keys.push_back(0x20); // Space
+                }
+                wiOverrideVk = def.keys.front();
+                timeTravel.Overrides().items.push_back(
+                    InputOverride::HoldAction(def, 0, wiN, wiN + 20));
+                MYE_LOG_INFO("[whatif] override: hold '%s' (vk 0x%02X) on lane 0 for ticks [%llu, %llu)",
+                             def.name.c_str(), wiOverrideVk, static_cast<unsigned long long>(wiN),
+                             static_cast<unsigned long long>(wiN + 20));
+                timeTravel.EndScrub();
+                wiStage = 41;
+            } else if (wiStage == 41 && ctx.tickIndex > wiN) {
+                // 分岐は 2 本: 編集した run (F) と、いま離れた [N, N+30) の続き
+                uint32_t fresh = 0;
+                for (const TimeTravelBranch& b : timeTravel.Branches()) {
+                    if (b.forkTick == wiN) {
+                        fresh = b.id;
+                    }
+                }
+                wiBranch = fresh;
+                wiCheck(timeTravel.BranchCount() == 2 && fresh != 0,
+                        "the future left behind by the override run is a branch at N");
+                wiCheck(timeTravel.Entry(wiN) != nullptr
+                            && timeTravel.Entry(wiN)->inputs[0].KeyDown(wiOverrideVk),
+                        "the override is recorded into the ring entry of tick N");
+                wiStage = 42;
+            } else if (wiStage == 42 && ctx.tickIndex >= wiN + 40) {
+                const DivergenceReport d = timeTravel.FirstDivergence(TimeTravel::kLiveLane, wiBranch);
+                wiCheck(d.comparable && d.diverged && d.firstTick > wiN && d.firstTick <= wiN + 21,
+                        "holding an action diverges from the original within the held ticks");
+                wiCheck(timeTravel.FindBranch(wiBranch) != nullptr, "the diverged branch stays");
+                wiCheck(timeTravel.Entry(wiN + 25) != nullptr
+                            && !timeTravel.Entry(wiN + 25)->inputs[0].KeyDown(wiOverrideVk)
+                            == !SynthLaneInput(wiN + 25, 0).KeyDown(wiOverrideVk),
+                        "past the held range the lane is the plain input again");
+                const uint64_t here = ctx.tickIndex;
+                const SeekReport back = SeekTo(wiN + 10);
+                const SeekReport fwd = SeekTo(here);
+                wiCheck(back.outcome == SeekOutcome::Ok && fwd.outcome == SeekOutcome::Ok,
+                        "the overridden ticks replay from the ring (seek OK)");
+                timeTravel.Overrides().Clear();
                 if (wiFails == 0) {
                     MYE_LOG_INFO("==== what-if probe: ALL PASS ====");
                 } else {

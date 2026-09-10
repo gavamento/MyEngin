@@ -958,6 +958,23 @@ MYE_STR(TT_GhostPending,      "baking...", "焼いています...")
 MYE_STR(TT_GhostMismatch,     "HASH MISMATCH", "ハッシュ不一致")
 MYE_STR(TT_GhostTruncated,    "up to tick %llu (%zu KB, budget)", "tick %llu まで (%zu KB、予算)")
 MYE_STR(TT_GhostOk,           "%zu moving (%zu KB)", "動く物 %zu (%zu KB)")
+// ---- 入力の上書き (M72f) ----
+MYE_STR(TT_OvrTitle,          "Input overrides (live lane)", "入力の上書き (ライブレーン)")
+MYE_STR(TT_OvrNoActions,      "No actions or axes are defined (assets\\input\\actions.json).",
+                              "アクションも軸も定義されていません (assets\\input\\actions.json)。")
+MYE_STR(TT_OvrLane,           "lane", "レーン")
+MYE_STR(TT_OvrFrom,           "from", "開始")
+MYE_STR(TT_OvrFromHint,       "Tick at which the hold starts. -1 = the current tick when you press Hold.",
+                              "押し始める tick。-1 = 「押す」を押した時点の現在 tick。")
+MYE_STR(TT_OvrTicks,          "ticks", "tick 数")
+MYE_STR(TT_OvrAdd,            "Hold###TTOvrAdd", "押す###TTOvrAdd")
+MYE_STR(TT_OvrRow,            "%s   lane %u   [%llu, %llu)", "%s   レーン %u   [%llu, %llu)")
+MYE_STR(TT_OvrNone,           "none", "なし")
+MYE_STR(TT_OvrClear,          "Clear all###TTOvrClear", "全部消す###TTOvrClear")
+MYE_STR(TT_OvrHint,           "Applied when those ticks run on the live lane (again after switching lanes) and "
+                              "recorded into the ring like any input, so seeks replay them.",
+                              "ライブレーンでその tick が走るときに効きます (レーンを切り替えた後も)。"
+                              "普通の入力と同じくリングに記録されるので、シークでも再現します。")
 
 // ---- ネットワーク (M52i) ----
 MYE_STR(Win_Net,              "Network###Net", "ネットワーク###Net")

@@ -2220,12 +2220,22 @@ is marked as such rather than drawn as truth, and the live lane is then restored
 seek to the tick it was at. Seek, ghost bake and (M72g) divergence dumps share one
 `RunResim` routine, so output suppression lives in exactly one place.
 
+**Input overrides (M72f).** The third way to change a branch is its input. An
+`InputOverride` holds an action (its first key binding, else its lowest pad button, else its
+mouse button) or an axis (its pos/neg key, else the pad stick value) on one lane for a tick
+range. The set is applied after the lane substitution chain (verify / net / synthetic) and
+before the tick runs, so the bits land in the ring's entry like any other input and a later seek
+replays them; it is never applied while recording, verifying or networked. The override set
+lives with the ring (cleared on Stop) and is a to-do list for the live lane — switching lanes
+and running the same ticks again applies it again.
+
 `--whatif-selftest [N]` exercises it on the live frame loop: seek back, resume, check that the
 old future survived as a branch (and, two frames later, that its ghost is baked, verified and
 covers `[F, N]`) and collapses under identical input; seek back again, edit an entity, resume,
 check the divergence sits at the fork tick and that seeking back keeps the edit; switch to the
 original branch and check the original hash at `N` is reproduced and the demoted lane got a
-ghost too.
+ghost too; finally seek back to `N`, hold the `Jump` action for twenty ticks, and check the held
+bit is in the ring entry, the run diverges within the held range, and the overridden ticks seek.
 
 **Crash bundles (M52f).** A shipped build that dies leaves nothing behind unless it was prepared
 in advance, so both executables install four handlers at startup — the unhandled SEH filter,

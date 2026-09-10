@@ -212,3 +212,13 @@ Q 石・E 瓶)。波そのものを見たいときは SceneView の「音響」�
       チェックを外すとその分岐だけ消える。表の ghost 列に `N moving (S KB)`、
       予算で打ち切られたら `up to tick T (S KB, budget)`、再現できなければ赤の `HASH MISMATCH`
 - [ ] GameView / --screenshot (Runtime) には 1 本も出ない (SceneView の RT だけ)
+
+### 入力の上書き (M72f)
+
+- [ ] Timeline の「Input overrides」でアクション (例 Jump) を選び、tick 数 60 で「Hold」→
+      現在 tick から 60 tick、そのアクションが押されっぱなしになる (Jump なら跳び続ける)
+- [ ] 戻ってから Hold → 再開すると、元の未来がゴーストとして残り、押した分だけライブが離れる
+      (表の「diverges from live」が押し始めの次の tick)
+- [ ] その区間へシークすると同じ動きが再現する (上書きはリングの entry に記録されている)
+- [ ] 軸 (MoveX 等) は値スライダー付き。負の値で negKey、キーの無い軸はパッドの値を置く
+- [ ] 適用が終わった項目はグレーになる。「Clear all」で全部消える。Stop でも消える

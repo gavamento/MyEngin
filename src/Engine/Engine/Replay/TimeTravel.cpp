@@ -50,6 +50,7 @@ void TimeTravel::Clear()
     entries_.clear();
     snapshots_.clear();
     branches_.clear();
+    overrides_.Clear();
     nextBranchId_ = 1;
     branchSeq_ = 0;
     lastSeek_ = SeekReport{};
@@ -60,6 +61,7 @@ void TimeTravel::Begin(const SimRefs& refs, uint64_t tick)
     entries_.clear();
     snapshots_.clear();
     branches_.clear();
+    overrides_.Clear();
     nextBranchId_ = 1;
     branchSeq_ = 0;
     bytes_ = 0;

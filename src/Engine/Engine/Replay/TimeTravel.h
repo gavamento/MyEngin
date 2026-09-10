@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "Engine/Engine/Replay/GhostTrack.h"
+#include "Engine/Engine/Replay/InputOverride.h"
 #include "Engine/Engine/Replay/SimSnapshot.h"
 #include "Engine/Platform/Input.h"
 
@@ -175,6 +176,11 @@ public:
     bool NeedsBoundaryCheck(uint64_t tick) const;
     uint32_t Fork(const SimRefs& refs, uint64_t tick);
 
+    // 入力の上書き (M72f)。リングと運命共同体 (Clear / Begin で消える)。
+    // 適用は EngineLoop の入力置換チェーンの後ろで、ライブレーンにだけ効く
+    InputOverrideSet& Overrides() { return overrides_; }
+    const InputOverrideSet& Overrides() const { return overrides_; }
+
     // レーン切替の要求 (UI → EngineLoop)。RequestSeek と同じくスクラブ状態に入る
     void RequestSwitch(uint32_t branchId);
     bool HasPendingSwitch() const { return switchPending_; }
@@ -281,6 +287,7 @@ private:
     std::vector<TimeTravelEntry> entries_;   // entries_[i] = tick firstTick_+i
     std::vector<TimeTravelSnap> snapshots_;  // tick 昇順
     std::vector<TimeTravelBranch> branches_; // 作成順
+    InputOverrideSet overrides_;             // M72f
     uint32_t nextBranchId_ = 1;
     uint64_t branchSeq_ = 0;
     SeekReport lastSeek_;

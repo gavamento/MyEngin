@@ -37,6 +37,14 @@ private:
     void DrawLaneStrip(const EngineContext& ctx, const TimeTravel& tt);
     // 分岐の一覧 (範囲 / ライブとの乖離 / 切替 / 削除)
     void DrawBranchTable(EngineContext& ctx, TimeTravel& tt, PlayModeController& playMode);
+    // 入力の上書き (M72f): アクション / 軸を [from, from+len) の間押し続ける項目の編集
+    void DrawOverrides(EngineContext& ctx, TimeTravel& tt);
+
+    int ovrSel_ = 0;      // 0..A-1 = アクション、A.. = 軸
+    int ovrLane_ = 0;
+    int ovrFrom_ = -1;    // < 0 = 追加した時点の現在 tick
+    int ovrLen_ = 60;
+    float ovrValue_ = 1.0f;
 
     // スライダーを掴んでいる間の表示位置。ドラッグ中は要求済みの目標を出しておかないと、
     // シークが 1 フレーム遅れて効くせいでつまみが手元へ戻ってしまう

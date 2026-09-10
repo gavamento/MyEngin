@@ -5,6 +5,7 @@
 #include "Editor/PlayModeController.h"
 #include "Engine/Core/Localization.h"
 #include "Engine/Engine/Replay/TimeTravel.h"
+#include "Engine/Platform/InputActions.h"
 
 #include "fontawesome/IconsFontAwesome6.h"
 #include "Engine/Renderer/ImGuiTheme.h" // themeColor (意味色)
@@ -148,10 +149,111 @@ void TimelineWindow::OnImGui(EngineContext& ctx, PlayModeController& playMode)
     ImGui::TextUnformatted(Tr(StrId::TT_Lanes));
     DrawLaneStrip(ctx, *tt);
     DrawBranchTable(ctx, *tt, playMode);
+    DrawOverrides(ctx, *tt);
 
     ImGui::Separator();
     ImGui::TextDisabled("%s", Tr(StrId::TT_CsharpNote));
     ImGui::End();
+}
+
+void TimelineWindow::DrawOverrides(EngineContext& ctx, TimeTravel& tt)
+{
+    ImGui::Separator();
+    ImGui::TextUnformatted(Tr(StrId::TT_OvrTitle));
+    InputOverrideSet& set = tt.Overrides();
+    const InputActions* const ia = ctx.inputActions;
+    const size_t nActions = ia != nullptr ? ia->Actions().size() : 0;
+    const size_t nAxes = ia != nullptr ? ia->Axes().size() : 0;
+    if (nActions + nAxes == 0) {
+        ImGui::TextDisabled("%s", Tr(StrId::TT_OvrNoActions));
+    } else {
+        ovrSel_ = std::clamp(ovrSel_, 0, static_cast<int>(nActions + nAxes) - 1);
+        const bool selIsAxis = static_cast<size_t>(ovrSel_) >= nActions;
+        const char* current = selIsAxis ? ia->Axes()[static_cast<size_t>(ovrSel_) - nActions].name.c_str()
+                                        : ia->Actions()[static_cast<size_t>(ovrSel_)].name.c_str();
+        ImGui::SetNextItemWidth(150.0f);
+        if (ImGui::BeginCombo("##ovrsel", current)) {
+            for (size_t i = 0; i < nActions; ++i) {
+                if (ImGui::Selectable(ia->Actions()[i].name.c_str(), static_cast<size_t>(ovrSel_) == i)) {
+                    ovrSel_ = static_cast<int>(i);
+                }
+            }
+            for (size_t i = 0; i < nAxes; ++i) {
+                if (ImGui::Selectable(ia->Axes()[i].name.c_str(),
+                                      static_cast<size_t>(ovrSel_) == nActions + i)) {
+                    ovrSel_ = static_cast<int>(nActions + i);
+                }
+            }
+            ImGui::EndCombo();
+        }
+        ImGui::SameLine();
+        ImGui::TextUnformatted(Tr(StrId::TT_OvrLane));
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(60.0f);
+        ImGui::InputInt("##ovrlane", &ovrLane_, 0, 0);
+        ovrLane_ = std::clamp(ovrLane_, 0, static_cast<int>(kMaxPlayers) - 1);
+        ImGui::SameLine();
+        ImGui::TextUnformatted(Tr(StrId::TT_OvrFrom));
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(80.0f);
+        ImGui::InputInt("##ovrfrom", &ovrFrom_, 0, 0);
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("%s", Tr(StrId::TT_OvrFromHint));
+        }
+        ImGui::SameLine();
+        ImGui::TextUnformatted(Tr(StrId::TT_OvrTicks));
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(70.0f);
+        ImGui::InputInt("##ovrlen", &ovrLen_, 0, 0);
+        ovrLen_ = std::max(1, ovrLen_);
+        if (selIsAxis) {
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(90.0f);
+            ImGui::SliderFloat("##ovrval", &ovrValue_, -1.0f, 1.0f, "%.2f");
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(Tr(StrId::TT_OvrAdd))) {
+            const uint64_t from = ovrFrom_ < 0 ? ctx.tickIndex : static_cast<uint64_t>(ovrFrom_);
+            const uint64_t to = from + static_cast<uint64_t>(ovrLen_);
+            const uint32_t lane = static_cast<uint32_t>(ovrLane_);
+            set.items.push_back(
+                selIsAxis ? InputOverride::HoldAxis(ia->Axes()[static_cast<size_t>(ovrSel_) - nActions],
+                                                    ovrValue_, lane, from, to)
+                          : InputOverride::HoldAction(ia->Actions()[static_cast<size_t>(ovrSel_)], lane,
+                                                      from, to));
+        }
+    }
+    if (set.items.empty()) {
+        ImGui::TextDisabled("%s", Tr(StrId::TT_OvrNone));
+    } else {
+        size_t toErase = set.items.size();
+        for (size_t i = 0; i < set.items.size(); ++i) {
+            const InputOverride& o = set.items[i];
+            ImGui::PushID(static_cast<int>(i));
+            const bool done = o.toTick <= ctx.tickIndex;
+            if (done) {
+                ImGui::TextDisabled(Tr(StrId::TT_OvrRow), o.label, o.lane,
+                                    static_cast<unsigned long long>(o.fromTick),
+                                    static_cast<unsigned long long>(o.toTick));
+            } else {
+                ImGui::Text(Tr(StrId::TT_OvrRow), o.label, o.lane,
+                            static_cast<unsigned long long>(o.fromTick),
+                            static_cast<unsigned long long>(o.toTick));
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton(Tr(StrId::TT_Delete))) {
+                toErase = i;
+            }
+            ImGui::PopID();
+        }
+        if (toErase < set.items.size()) {
+            set.items.erase(set.items.begin() + static_cast<ptrdiff_t>(toErase));
+        }
+        if (ImGui::SmallButton(Tr(StrId::TT_OvrClear))) {
+            set.Clear();
+        }
+    }
+    ImGui::TextDisabled("%s", Tr(StrId::TT_OvrHint));
 }
 
 void TimelineWindow::DrawLaneStrip(const EngineContext& ctx, const TimeTravel& tt)
