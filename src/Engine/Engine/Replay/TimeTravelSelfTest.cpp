@@ -7,6 +7,7 @@
 #include "Engine/Core/Log.h"
 #include "Engine/Core/World.h"
 #include "Engine/Engine/GameObject.h"
+#include "Engine/Engine/Replay/GhostTrack.h"
 #include "Engine/Engine/Replay/SimSnapshot.h"
 #include "Engine/Engine/Replay/TimeTravel.h"
 #include "Engine/Engine/Scene.h"
@@ -321,6 +322,64 @@ bool RunTimeTravelSelfTest()
     check(ring3.BranchCount() == 2, "no more than maxBranches survive");
     check(ring3.FindBranch(1) == nullptr && ring3.FindBranch(3) != nullptr,
           "the oldest leaf went, the newest fork is protected");
+
+    // ---- ゴーストの採取 (M72d): 疎化 / KeyAt / 墓標 / 予算 ----
+    {
+        GameObject g = scene.CreateGameObjectTracked("Ghosted");
+        if (g.GetComponent<WorldMatrixComponent>() == nullptr) {
+            g.AddComponent<WorldMatrixComponent>();
+        }
+        g.AddComponent<MeshRendererComponent>();
+        scene.GetWorld().ApplyStructuralChanges();
+        World& w = scene.GetWorld();
+        const auto SetX = [&](float x) {
+            if (auto* wm = w.GetComponent<WorldMatrixComponent>(g.Id())) {
+                wm->value._41 = x;
+            }
+        };
+        GhostTrack ghost;
+        ghost.Begin(10);
+        SetX(0.0f);
+        ghost.Sample(w, 10, 1 << 20);
+        ghost.Sample(w, 11, 1 << 20);
+        ghost.Sample(w, 12, 1 << 20);
+        size_t slot = ghost.entities.size();
+        for (size_t i = 0; i < ghost.entities.size(); ++i) {
+            if (ghost.entities[i].id == g.Id()) {
+                slot = i;
+            }
+        }
+        check(slot < ghost.entities.size(), "Sample registers an entity with WorldMatrix + MeshRenderer");
+        GhostTrack tiny;
+        tiny.Begin(10);
+        check(!tiny.Sample(w, 10, 1) && tiny.truncated, "a budget of 1 byte truncates immediately");
+        check(slot < ghost.entities.size() && ghost.entities[slot].keys.size() == 1,
+              "an unmoved entity keeps a single key across ticks (sparse)");
+        SetX(3.0f);
+        ghost.Sample(w, 13, 1 << 20);
+        check(slot < ghost.entities.size() && ghost.entities[slot].keys.size() == 2,
+              "a moved entity gets a new key");
+        const GhostKey* k12 = ghost.KeyAt(slot, 12);
+        const GhostKey* k13 = ghost.KeyAt(slot, 13);
+        const GhostKey* k99 = ghost.KeyAt(slot, 99);
+        check(k12 != nullptr && k12->tick == 10 && k12->m[9] == 0.0f, "KeyAt(12) is the first key");
+        check(k13 != nullptr && k13->tick == 13 && k13->m[9] == 3.0f, "KeyAt(13) is the moved key");
+        check(k99 == k13 && ghost.KeyAt(slot, 9) == nullptr,
+              "KeyAt holds the last key forward and nothing before the first");
+        check(ghost.MovingCount() == 1 && ghost.lastTick == 13, "MovingCount / lastTick follow");
+        DirectX::XMFLOAT4X4 m;
+        GhostTrack::ToMatrix(*k13, m);
+        check(m._41 == 3.0f && m._22 == 1.0f && m._44 == 1.0f, "ToMatrix rebuilds the 4x4");
+        w.DestroyEntity(g.Id());
+        w.ApplyStructuralChanges();
+        ghost.Sample(w, 14, 1 << 20);
+        const GhostKey* k14 = ghost.KeyAt(slot, 14);
+        check(k14 != nullptr && k14->alive == 0 && k14->tick == 14,
+              "a destroyed entity gets one tombstone key");
+        ghost.Sample(w, 15, 1 << 20);
+        check(slot < ghost.entities.size() && ghost.entities[slot].keys.size() == 3,
+              "...and only one (no tombstone per tick)");
+    }
 
     // ---- 停止 ----
     ring2.SetEnabled(false);

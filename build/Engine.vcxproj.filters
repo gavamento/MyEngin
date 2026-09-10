@@ -369,6 +369,9 @@
     <ClCompile Include="..\src\Engine\Engine\Replay\CrashRingSelfTest.cpp">
       <Filter>Engine\Replay</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Replay\GhostTrack.cpp">
+      <Filter>Engine\Replay</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Replay\Replay.cpp">
       <Filter>Engine\Replay</Filter>
     </ClCompile>
@@ -931,6 +934,9 @@
       <Filter>Engine\Replay</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Replay\CrashRingSelfTest.h">
+      <Filter>Engine\Replay</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Replay\GhostTrack.h">
       <Filter>Engine\Replay</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Replay\Replay.h">

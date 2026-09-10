@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <vector>
 
+#include "Engine/Engine/Replay/GhostTrack.h"
 #include "Engine/Engine/Replay/SimSnapshot.h"
 #include "Engine/Platform/Input.h"
 
@@ -77,6 +78,12 @@ struct TimeTravelBranch {
     uint64_t createdSeq = 0;  // 作成順 (追い出し / 上限で古い方から消す)
     std::vector<TimeTravelEntry> entries;   // entries[i] = tick forkTick+i
     std::vector<TimeTravelSnap> snapshots;  // tick 昇順、すべて tick >= forkTick
+    // ゴースト (M72d): この分岐の未来を 1 回だけ再シムして採取した tick ごとのワールド行列。
+    // 焼くのは EngineLoop (再シムには TickServices が要る)。ghostBaked が偽の分岐は
+    // フレーム頭で拾われて焼かれる = 「非ライブの分岐は必ずゴーストを持つ」
+    GhostTrack ghost;
+    bool ghostBaked = false;
+    bool ghostVisible = true; // UI の目印 (Timeline の目アイコン)。sim にもリングにも無関係
     uint64_t EndTick() const { return forkTick + entries.size(); }
 };
 
@@ -86,6 +93,11 @@ struct TimeTravelConfig {
     size_t maxSnapshots = 120;                   // 30 * 120 = 3600 tick = 60 秒
     size_t maxBytes = 64ull * 1024ull * 1024ull; // 既定デモ 528 体で 1 枚 148KB (全レーン合計)
     size_t maxBranches = 8;                      // 超えたら最古の葉を消す (M72a)
+    // ゴースト (M72d) の予算。分岐 1 本あたりのバイト数と、fork から先に採取する tick 数。
+    // 再シムの実測は Release 約 0.12 ms/tick、Debug 約 4 ms/tick (528 体) —
+    // 1800 tick = 30 秒ぶんで Debug でも 7 秒程度、分岐した瞬間に 1 回だけ払う
+    size_t ghostMaxBytes = 8ull * 1024ull * 1024ull;
+    uint64_t ghostMaxTicks = 1800;
 };
 
 // シークの結果。**ハッシュ照合まで込み** — 戻して再シムした世界が元の tick と
@@ -179,6 +191,9 @@ public:
     const std::vector<TimeTravelBranch>& Branches() const { return branches_; }
     size_t BranchCount() const { return branches_.size(); }
     const TimeTravelBranch* FindBranch(uint32_t id) const;
+    // ゴーストを焼く側 (EngineLoop) だけが書く。リングの器の状態はここからは触らないこと
+    TimeTravelBranch* FindBranchMut(uint32_t id);
+    bool HasUnbakedGhost() const;
 
     // レーン付きの参照 (lane = kLiveLane または分岐 id)。forkTick より前は parent を歩く
     bool HasLane(uint32_t lane) const;
@@ -237,7 +252,6 @@ private:
     };
     LaneRef Lane(uint32_t lane);
     LaneRef Lane(uint32_t lane) const;
-    TimeTravelBranch* FindBranchMut(uint32_t id);
 
     bool TakeSnapshot(const SimRefs& refs, uint64_t tick, uint64_t stateHash, bool pinned);
     void Evict();

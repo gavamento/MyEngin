@@ -184,6 +184,10 @@ Q 石・E 瓶)。波そのものを見たいときは SceneView の「音響」�
       edited, re-captured` → もう一度その tick へ戻る → **編集が残っている** (M52e では消えていた) かつ
       Timeline の self-check が `OK` (赤の HASH MISMATCH にならない)
 - [ ] 編集後に走らせた run は畳まれない (Console に collapsed が出ない)
+- [ ] 分岐ができた次のフレームに Console へ `[timetravel] ghost of B1 baked: ticks F-N (...),
+      N entities (M moving), K keys, S KB, T ms -> hash OK` が出る (M72d)。続けて
+      `seek to tick F+1 ... -> hash OK` (焼いた後にライブへ戻した印)。既定デモ (527 体が動く) で
+      100 tick = 約 3 MB / Debug 0.5 秒
 
 ### Timeline のレーン (M72c)
 

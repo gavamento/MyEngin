@@ -292,6 +292,16 @@ TimeTravelBranch* TimeTravel::FindBranchMut(uint32_t id)
     return nullptr;
 }
 
+bool TimeTravel::HasUnbakedGhost() const
+{
+    for (const TimeTravelBranch& b : branches_) {
+        if (!b.ghostBaked) {
+            return true;
+        }
+    }
+    return false;
+}
+
 TimeTravel::LaneRef TimeTravel::Lane(uint32_t lane)
 {
     LaneRef r;

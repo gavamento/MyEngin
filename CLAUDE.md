@@ -254,6 +254,9 @@ Editor → GameLogic → Engine → Renderer → Core → Platform   (上位は�
   Inspector 編集は「tick が走る前の状態」をレーンごとに別物にするので、撮り直さないと
   戻ったときに編集が黙って消える (M52e の欠陥)。同じ入力で分岐の終端まで
   なぞった分岐は畳まれる。`RequestSwitch` → `SwitchToBranch` + `SeekTo(force)` で行き来する。
+  **分岐のゴースト (M72d)** はフレーム頭で 1 回だけ再シムして採取する `GhostTrack` (WorldMatrix +
+  MeshRenderer を持つ物の tick ごとの行列。疎 = 動いた tick だけ)。第 2 の World は回さない。
+  シーク / 焼き / 乖離ダンプの再シムは `RunResim` 1 本 (出力抑止の置き場所はここだけ)。
 - **起動経路が 2 つある**: プロジェクト起動 (`--project DIR`) と裸起動 (プロジェクトマネージャ)。
   **分岐は必ず `config.projectRoot` の有無で判定する**。シェーダは
   「プロジェクトの `assets\shaders` → エンジンリポジトリの `assets\shaders`」の 2 ルート解決

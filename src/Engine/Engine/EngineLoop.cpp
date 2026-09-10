@@ -799,6 +799,76 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         tickServices.recorder = nullptr;
     }
 
+    // ---- 再シムの共通部 (M52e → M72d で切り出し) ----
+    // lane の記録入力で ctx.tickIndex から target まで、描画なし・出力抑止で RunOneTick を回す。
+    // シーク / ゴースト焼き / (M72g) 乖離ダンプの 3 者が**同じ 1 本**を通る — 「抑止の
+    // 付け忘れ」を 1 箇所に閉じ込めるため。ghost が非 null なら各 tick の後に採取する
+    // (World を読むだけ。RunOneTick が返った時点の状態は tick 末ハッシュと同一)
+    struct ResimResult {
+        bool ok = true;
+        uint64_t ticks = 0;
+    };
+    const auto RunResim = [&](uint32_t lane, uint64_t target, GhostTrack* ghost) {
+        ResimResult r;
+        const bool savedSimulate = ctx.simulateScripts;
+        InputSnapshot savedInputs[kMaxPlayers] = {};
+        for (uint32_t p = 0; p < kMaxPlayers; ++p) {
+            savedInputs[p] = ctx.inputs[p];
+        }
+        audioSystem.SetSuspended(true); // 立ち上がりで全停止 = 捨てた未来の音を断つ
+        tickServices.app = nullptr;      // エディタ更新は回さない
+        tickServices.recorder = nullptr; // 記録も照合もしない
+        tickServices.player = nullptr;
+        tickServices.prevWorld = nullptr;
+        tickServices.resim = true;
+        while (ctx.tickIndex < target) {
+            const TimeTravelEntry* e = timeTravel.EntryOn(lane, ctx.tickIndex);
+            if (e == nullptr) {
+                MYE_LOG_ERROR("[timetravel] missing input for tick %llu on lane %u",
+                              static_cast<unsigned long long>(ctx.tickIndex), lane);
+                r.ok = false;
+                break;
+            }
+            for (uint32_t p = 0; p < kMaxPlayers; ++p) {
+                ctx.inputs[p] = e->inputs[p];
+            }
+            // ★ポーズ中の tick も「進めない tick」として忠実になぞる —
+            //   飛ばすと prevTickInput が食い違ってアクションの pressed/released が割れる
+            ctx.simulateScripts = e->simulated;
+            RunOneTick(tickServices);
+            ++r.ticks;
+            if (ghost != nullptr) {
+                // 採取する tick 番号は「この状態で始まる tick」= 進めた後の tickIndex
+                ghost->Sample(scene.GetWorld(), ctx.tickIndex, timeTravel.Config().ghostMaxBytes);
+            }
+        }
+        tickServices.app = &app;
+        tickServices.recorder = &recorder;
+        tickServices.player = &player;
+        tickServices.prevWorld = &prevWorld;
+        tickServices.resim = false;
+        ctx.simulateScripts = savedSimulate;
+        for (uint32_t p = 0; p < kMaxPlayers; ++p) {
+            ctx.inputs[p] = savedInputs[p];
+        }
+        audioSystem.SetSuspended(recorder.IsActive() || player.IsActive());
+        // M36b の補間参照を捨てる: 過去へ飛んだ直後のフレームが「シーク前の行列」と
+        // 混ざって 1 フレームだけ幽霊が出るのを防ぐ (Get() が null を返す = 補間しない)
+        prevWorld.world.clear();
+        prevWorld.generation.clear();
+        return r;
+    };
+    // 非 sim レーンの後始末 (SimSnapshot.h、M52d 申し送り 6): スナップショットから戻した直後に
+    // 呼ぶ。タイムトラベルは「未来の残像」を消したいので、トレイルと GPU パーティクルを落とす。
+    // **CPU パーティクルの池は blob 側で戻っている**ので触ってはいけない。
+    // M65d: 残光も落とす — **捨てた未来で照らした壁が残っていると「過去へ飛んだのに未来の
+    // 地図が見えている」**になる。この後の再シムが記録入力で同じ波を立て直す
+    const auto ResetNonSimLanesAfterRestore = [&]() {
+        vfxRenderer.Reset();
+        particleSystem.Gpu().Reset();
+        acoustic.ResetVisual();
+    };
+
     // ---- タイムトラベルのシーク本体 (M52e) ----
     // 「target 以下の最寄りスナップショットへ Restore → 記録入力で target まで描画なし再シム」。
     // ★再シムは**通常 tick と同じ RunOneTick** を通す (決定台帳 2)。ここで tick を書き直すと
@@ -826,15 +896,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                 return rep;
             }
             rep.fromSnapshot = snapTick;
-            // 非 sim レーンの見せ方は消費者の責務 (SimSnapshot.h、M52d 申し送り 6)。
-            // タイムトラベルは「未来の残像」を消したいので、トレイルと GPU パーティクルを
-            // 落とす。**CPU パーティクルの池は blob 側で戻っている**ので触ってはいけない
-            vfxRenderer.Reset();
-            particleSystem.Gpu().Reset();
-            // M65d: 残光も落とす。**捨てた未来で照らした壁が残っていると
-            // 「過去へ飛んだのに未来の地図が見えている」**になる。この後の再シムが
-            // 記録入力で同じ波を立て直すので、戻った先の残光はちゃんと復元される
-            acoustic.ResetVisual();
+            ResetNonSimLanesAfterRestore();
         } else {
             // 前進シークは現在地からそのまま再シムする (戻す必要が無い)。
             // 「T-K へ戻ってから記録入力で T まで進めると元の T と一致する」という
@@ -842,48 +904,11 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             rep.fromSnapshot = ctx.tickIndex;
         }
         // ---- 記録入力で target まで再シム (描画なし) ----
-        const bool savedSimulate = ctx.simulateScripts;
-        InputSnapshot savedInputs[kMaxPlayers] = {};
-        for (uint32_t p = 0; p < kMaxPlayers; ++p) {
-            savedInputs[p] = ctx.inputs[p];
+        const ResimResult rr = RunResim(TimeTravel::kLiveLane, target, nullptr);
+        rep.resimTicks = rr.ticks;
+        if (!rr.ok) {
+            rep.outcome = SeekOutcome::Failed;
         }
-        audioSystem.SetSuspended(true); // 立ち上がりで全停止 = 捨てた未来の音を断つ
-        tickServices.app = nullptr;      // エディタ更新は回さない
-        tickServices.recorder = nullptr; // 記録も照合もしない
-        tickServices.player = nullptr;
-        tickServices.prevWorld = nullptr;
-        tickServices.resim = true;
-        while (ctx.tickIndex < target) {
-            const TimeTravelEntry* e = timeTravel.Entry(ctx.tickIndex);
-            if (e == nullptr) {
-                MYE_LOG_ERROR("[timetravel] missing input for tick %llu",
-                              static_cast<unsigned long long>(ctx.tickIndex));
-                rep.outcome = SeekOutcome::Failed;
-                break;
-            }
-            for (uint32_t p = 0; p < kMaxPlayers; ++p) {
-                ctx.inputs[p] = e->inputs[p];
-            }
-            // ★ポーズ中の tick も「進めない tick」として忠実になぞる —
-            //   飛ばすと prevTickInput が食い違ってアクションの pressed/released が割れる
-            ctx.simulateScripts = e->simulated;
-            RunOneTick(tickServices);
-            ++rep.resimTicks;
-        }
-        tickServices.app = &app;
-        tickServices.recorder = &recorder;
-        tickServices.player = &player;
-        tickServices.prevWorld = &prevWorld;
-        tickServices.resim = false;
-        ctx.simulateScripts = savedSimulate;
-        for (uint32_t p = 0; p < kMaxPlayers; ++p) {
-            ctx.inputs[p] = savedInputs[p];
-        }
-        audioSystem.SetSuspended(recorder.IsActive() || player.IsActive());
-        // M36b の補間参照を捨てる: 過去へ飛んだ直後のフレームが「シーク前の行列」と
-        // 混ざって 1 フレームだけ幽霊が出るのを防ぐ (Get() が null を返す = 補間しない)
-        prevWorld.world.clear();
-        prevWorld.generation.clear();
         if (rep.outcome != SeekOutcome::Failed) {
             // ★シークは毎回**自己検証する**。戻して同じ入力で回した結果が記録と
             //   ビット一致しなければ、決定論の外 (C# レーン等) が混ざっている証拠
@@ -904,6 +929,74 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                          ? "hash OK"
                          : (rep.outcome == SeekOutcome::HashMismatch ? "HASH MISMATCH" : "FAILED"));
         return rep;
+    };
+    // ---- 分岐のゴーストを焼く (M72d) ----
+    // ghostBaked が偽の分岐について、その分岐のスナップショットへ戻し、分岐の記録入力で
+    // 終端 (または ghostMaxTicks) まで再シムしながら WorldMatrix を採取する。
+    // ★終わったときライブの世界は分岐の状態になっている — 呼び出し側が必ず
+    //   SeekTo(ctx.tickIndex, forceRestore) で戻すこと (フレーム頭でしか呼ばない理由)。
+    //   第 2 のワールドを同時に回す案は採らなかった: TickServices の sim 側シングルトン
+    //   (ScriptHost / Collision / Acoustic / XPBD / Particle …) は Init で Scene* を掴んでいて
+    //   複製 = EngineLoop の初期化を丸ごと二重化する規模になる。1 回の再シムで済ませる
+    const auto BakeGhosts = [&]() {
+        std::vector<uint32_t> todo;
+        for (const TimeTravelBranch& b : timeTravel.Branches()) {
+            if (!b.ghostBaked) {
+                todo.push_back(b.id);
+            }
+        }
+        if (todo.empty()) {
+            return false;
+        }
+        scene.GetWorld().ApplyStructuralChanges();
+        for (uint32_t id : todo) {
+            TimeTravelBranch* b = timeTravel.FindBranchMut(id);
+            if (b == nullptr) {
+                continue;
+            }
+            b->ghostBaked = true;
+            const double t0 = clock.Now();
+            const uint64_t fork = b->forkTick;
+            uint64_t snapTick = 0;
+            const std::vector<std::byte>* blob = timeTravel.SnapshotAtOrBeforeOn(id, fork, snapTick);
+            if (blob == nullptr || !RestoreSimSnapshot(simRefs, blob->data(), blob->size())) {
+                MYE_LOG_WARN("[timetravel] ghost of B%u: no restorable snapshot at or before %llu",
+                             id, static_cast<unsigned long long>(fork));
+                continue;
+            }
+            ResetNonSimLanesAfterRestore();
+            // 分岐点までは観測なしで追いつく (親レーンの入力)
+            ResimResult r = RunResim(id, fork, nullptr);
+            if (!r.ok) {
+                continue;
+            }
+            const uint64_t end = std::min(timeTravel.EndTickOn(id),
+                                          fork + timeTravel.Config().ghostMaxTicks);
+            // ★FindBranchMut を取り直す — RunResim の中でリングは動かないが、
+            //   参照を跨いで持たない (Branches() の vector が伸びると無効になる型)
+            b = timeTravel.FindBranchMut(id);
+            b->ghost.Begin(fork);
+            b->ghost.Sample(scene.GetWorld(), ctx.tickIndex, timeTravel.Config().ghostMaxBytes);
+            r = RunResim(id, end, &b->ghost);
+            b = timeTravel.FindBranchMut(id);
+            const uint64_t actual = TimeTravel::HashOf(simRefs);
+            const uint64_t expected = timeTravel.HashAtTickOn(id, ctx.tickIndex);
+            b->ghost.endHash = actual;
+            b->ghost.verified = r.ok && actual == expected;
+            if (end < timeTravel.EndTickOn(id)) {
+                b->ghost.truncated = true;
+            }
+            const double ms = (clock.Now() - t0) * 1000.0;
+            MYE_LOG_INFO("[timetravel] ghost of B%u baked: ticks %llu-%llu (%llu re-simulated), "
+                         "%zu entities (%zu moving), %zu keys, %zu KB, %.1f ms -> %s%s",
+                         id, static_cast<unsigned long long>(fork),
+                         static_cast<unsigned long long>(b->ghost.lastTick),
+                         static_cast<unsigned long long>(r.ticks), b->ghost.entities.size(),
+                         b->ghost.MovingCount(), b->ghost.keyCount, b->ghost.bytes / 1024, ms,
+                         b->ghost.verified ? "hash OK" : "HASH MISMATCH",
+                         b->ghost.truncated ? " (truncated by budget)" : "");
+        }
+        return true;
     };
     // ---- tick 末のワールドハッシュ (M52f 申し送り 6 の畳み込み) ----
     // クラッシュリング / タイムトラベル / ロールバックの 3 者が**同じ 1 個**を使う。
@@ -1155,7 +1248,9 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     int ttProbeFramesLeft = 0;
     uint64_t ttScrubTarget = 0;
     uint64_t ttPreScrubEnd = 0;
-    // --whatif-selftest の進行状態 (M72b)。段の意味は下のプローブ本体に書いてある。9 = 終了
+    // --whatif-selftest の進行状態 (M72b)。段の意味は下のプローブ本体に書いてある。
+    // ★段番号は順序ではなく識別子 (20 = ゴースト検査を 2 と 3 の間に挟んだ)。終了だけ番号で見る
+    constexpr int kWiDone = 9;
     int wiStage = 0;
     int wiFails = 0;
     int wiFramesLeft = 0;
@@ -1179,7 +1274,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             dt = kMaxFrameDt;
         }
         const bool ttProbeRunning = config.timeTravelProbeTicks > 0 && ttProbeStage < 3;
-        const bool wiProbeRunning = config.whatIfProbeTicks > 0 && wiStage < 9;
+        const bool wiProbeRunning = config.whatIfProbeTicks > 0 && wiStage != kWiDone;
         if (deterministicShot || ttProbeRunning || wiProbeRunning) {
             // M52c: accumulator は毎フレームちょうど kFixedDt 増えて 1 tick 消費し 0 に戻る
             // (同じ double を足して引くので誤差ゼロ) = フレームと tick が 1:1 で固定される。
@@ -1300,6 +1395,16 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         if (timeTravel.BeginPending() && !recorder.IsActive() && !verifying && !netEnabled) {
             scene.GetWorld().ApplyStructuralChanges(); // 撮影点の前提 (構造変更が空)
             timeTravel.Begin(simRefs, ctx.tickIndex);
+        }
+        // ---- 分岐のゴースト (M72d) ----
+        // Fork (tick ループの頭) や切替で生まれた分岐は、次のフレーム頭で焼く。
+        // 焼いた後の世界は分岐の状態なので、必ずライブの現在 tick へ強制復元で戻す
+        if (timeTravel.Enabled() && !recorder.IsActive() && !verifying && timeTravel.HasUnbakedGhost()) {
+            // ★戻り先は焼く**前**のライブ tick。焼き終わりの ctx.tickIndex は分岐の終端
+            const uint64_t liveTick = ctx.tickIndex;
+            if (BakeGhosts()) {
+                SeekTo(liveTick, /*forceRestore*/ true);
+            }
         }
         // ---- 分岐レーンの切替 (M72a) ----
         // 純データ操作でレーンを差し替えてから、必ずスナップショットから戻す
@@ -1648,7 +1753,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         //   4: もう一度 F へ → 世界を編集して再開     5: 分岐点で乖離 / 戻っても編集が残る
         //   6: N まで走る (乖離した run)              7: 元の分岐へ切り替え → 元の N と一致
         //   8: そこから 30 tick 続けて、継ぎ足したレーンでもシークが通る → 終了
-        if (config.whatIfProbeTicks > 0 && wiStage < 9) {
+        if (config.whatIfProbeTicks > 0 && wiStage != kWiDone) {
             const auto wiCheck = [&](bool ok, const char* what) {
                 if (!ok) {
                     ++wiFails;
@@ -1706,6 +1811,24 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             } else if (wiStage == 2 && ctx.tickIndex > wiF) {
                 wiCheck(wiBranchOk(wiF, wiOrigEnd), "the old future is kept as branch B1 [F, N)");
                 wiCheck(timeTravel.EndTick() == ctx.tickIndex, "the live lane restarts at the fork");
+                wiFramesLeft = 2; // ゴーストは次のフレーム頭で焼かれる
+                wiStage = 20;
+            } else if (wiStage == 20 && --wiFramesLeft <= 0) {
+                const TimeTravelBranch* b = timeTravel.BranchCount() == 1 ? &timeTravel.Branches().front()
+                                                                         : nullptr;
+                wiCheck(b != nullptr && b->ghostBaked && b->ghost.verified,
+                        "the branch's ghost is baked and its end hash matches the record");
+                wiCheck(b != nullptr && b->ghost.firstTick == wiF && b->ghost.lastTick == wiOrigEnd
+                            && !b->ghost.truncated,
+                        "the ghost covers [F, N] without truncation");
+                wiCheck(b != nullptr && !b->ghost.entities.empty() && b->ghost.MovingCount() > 0,
+                        "the ghost has entities and some of them move");
+                // 復元先は焼いた時点のライブ tick (fork の直後)。その後もライブは進んでいるので
+                // 「いまの EndTick と等しい」ではなく「fork より後で、いまの EndTick 以下」
+                wiCheck(timeTravel.LastSeek().outcome == SeekOutcome::Ok
+                            && timeTravel.LastSeek().target > wiF
+                            && timeTravel.LastSeek().target <= timeTravel.EndTick(),
+                        "after baking, the live lane was restored (seek OK just past the fork)");
                 wiStage = 3;
             } else if (wiStage == 3 && ctx.tickIndex >= wiN) {
                 wiCheck(timeTravel.HashAtTick(wiN) == wiOrigHashN,
@@ -1763,6 +1886,9 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             } else if (wiStage == 8 && ctx.tickIndex >= wiN + 30) {
                 wiCheck(timeTravel.EndTick() == ctx.tickIndex && timeTravel.BranchCount() == 1,
                         "the ring keeps recording after the switch");
+                wiCheck(timeTravel.BranchCount() == 1 && timeTravel.Branches().front().ghostBaked
+                            && timeTravel.Branches().front().ghost.verified,
+                        "the demoted lane got its ghost too");
                 const uint64_t here = ctx.tickIndex;
                 const SeekReport back = SeekTo(wiN);
                 const SeekReport fwd = SeekTo(here);
@@ -1774,7 +1900,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                     MYE_LOG_ERROR("==== what-if probe: %d FAILED ====", wiFails);
                     exitCode = 1;
                 }
-                wiStage = 9;
+                wiStage = kWiDone;
                 ctx.requestExit = true;
             }
         }

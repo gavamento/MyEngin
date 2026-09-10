@@ -2207,10 +2207,25 @@ Two consequences shape the design:
   memory belongs to the lane just left. Budget is shared across lanes; branches whose fork tick
   falls off the ring are pruned, and at most eight are kept
 
+**Ghosts (M72d).** A branch that is not live has no world of its own, so the editor cannot draw
+it by rendering — the simulation lane's singletons (script host, collision, acoustic field,
+XPBD, particle pools) all capture the live `Scene` at initialisation and cannot be duplicated
+without duplicating the loop itself. Instead, at the next frame head after a branch appears,
+the loop restores that branch's snapshot, re-simulates it forward through the same `RunOneTick`
+with the branch's recorded inputs, and samples every entity that has a `WorldMatrix` and a
+`MeshRenderer` into a `GhostTrack`: a key per entity per tick whose matrix changed (static
+props keep one key, a destroyed entity gets one tombstone), bounded by a byte and tick budget.
+The bake ends with the same hash check a seek performs, so a ghost that could not be reproduced
+is marked as such rather than drawn as truth, and the live lane is then restored with a forced
+seek to the tick it was at. Seek, ghost bake and (M72g) divergence dumps share one
+`RunResim` routine, so output suppression lives in exactly one place.
+
 `--whatif-selftest [N]` exercises it on the live frame loop: seek back, resume, check that the
-old future survived as a branch and collapses under identical input; seek back again, edit an
-entity, resume, check the divergence sits at the fork tick and that seeking back keeps the edit;
-switch to the original branch and check the original hash at `N` is reproduced.
+old future survived as a branch (and, two frames later, that its ghost is baked, verified and
+covers `[F, N]`) and collapses under identical input; seek back again, edit an entity, resume,
+check the divergence sits at the fork tick and that seeking back keeps the edit; switch to the
+original branch and check the original hash at `N` is reproduced and the demoted lane got a
+ghost too.
 
 **Crash bundles (M52f).** A shipped build that dies leaves nothing behind unless it was prepared
 in advance, so both executables install four handlers at startup — the unhandled SEH filter,
