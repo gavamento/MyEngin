@@ -184,3 +184,15 @@ Q 石・E 瓶)。波そのものを見たいときは SceneView の「音響」�
       edited, re-captured` → もう一度その tick へ戻る → **編集が残っている** (M52e では消えていた) かつ
       Timeline の self-check が `OK` (赤の HASH MISMATCH にならない)
 - [ ] 編集後に走らせた run は畳まれない (Console に collapsed が出ない)
+
+### Timeline のレーン (M72c)
+
+- [ ] Window > Timeline。Play 中に戻って再開すると「Lanes」の帯にライブ (オレンジ) の下へ
+      分岐の帯 (水色 = B1) が出る。帯の横軸は tick で、分岐の帯はライブより先まで伸びている
+- [ ] 表の行: `live` / `B1 @<fork>`、範囲 `[fork, end)  N ticks`、「diverges from live」が
+      同じ入力なら `none (identical so far)`、編集して再開した後なら `tick <fork>`
+- [ ] **Switch** → ポーズして、その分岐の世界が復元される (self-check が `OK`)。
+      いままでのライブは新しい行 (B2…) として残る。もう一度 Switch で元へ戻れる
+- [ ] **Delete** → 行が消える。8 本を超えると最古の葉が自動で消える (表の下の注記)
+- [ ] `Editor.exe --whatif-selftest 200 --screenshot cache\tl.png --shot-frame 262 --frames 270`
+      で Timeline が開いた状態の画が撮れる (プローブは Timeline を自動で開く)

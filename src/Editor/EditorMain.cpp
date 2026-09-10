@@ -98,6 +98,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     bool selftest = false;
     bool saveSceneOnStart = false;
     bool autoPlay = false;
+    bool openTimeline = false; // M72c
     float perfRate = 0.0f;
     bool rtShowcase = false; // --rt-demo (M46i)
     bool partsShowcase = false; // --parts-demo (M48g: 部位追従のリプレイ被覆シーン)
@@ -213,6 +214,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 }
                 config.synthInput = true;
                 autoPlay = true;
+                openTimeline = true;
                 config.vsync = false;
             } else if (arg == L"--crash-test" && i + 1 < argc) {
                 // M52f: 意図的に落としてクラッシュバンドルを検証する。
@@ -673,6 +675,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     mye::EditorApp app;
     app.saveSceneOnStart = saveSceneOnStart;
     app.autoPlay = autoPlay;
+    app.openTimeline = openTimeline;
     app.rtShowcase = rtShowcase;
     app.partsShowcase = partsShowcase;
     app.flowShowcase = flowShowcase;

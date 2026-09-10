@@ -915,8 +915,8 @@ MYE_STR(TT_Range,             "tick %llu - %llu   (now %llu)",
                               "tick %llu - %llu   (現在 %llu)")
 MYE_STR(TT_Snapshots,         "%d snapshots / %.1f MB   (one every %d simulated ticks)",
                               "スナップショット %d 枚 / %.1f MB   (sim %d tick ごと)")
-MYE_STR(TT_Scrubbing,         "Scrubbing. Resuming Play branches from here and drops the recorded future.",
-                              "スクラブ中。再生するとここから分岐し、記録済みの未来は破棄されます。")
+MYE_STR(TT_Scrubbing,         "Scrubbing. Resuming Play branches from here; the recorded future is kept as a branch.",
+                              "スクラブ中。再生するとここから分岐します (記録済みの未来は分岐として残ります)。")
 MYE_STR(TT_Resume,            "Branch and resume###TTResume",
                               "分岐して再開###TTResume")
 MYE_STR(TT_SeekOk,            "last seek: tick %llu OK (%llu ticks re-simulated, %.1f ms)",
@@ -930,6 +930,27 @@ MYE_STR(TT_SeekFailed,        "last seek: failed (no snapshot old enough)",
 MYE_STR(TT_CsharpNote,        "C# script state does not rewind - only the C++ sim lane is captured.",
                               "C# スクリプトの状態は巻き戻りません — 撮影対象は C++ の sim レーンだけです。")
 MYE_STR(Tool_TipTimeTravel,   "rewind 30 ticks (time travel)", "30 tick 巻き戻す (タイムトラベル)")
+// ---- 分岐レーン (M72c) ----
+MYE_STR(TT_Lanes,             "Lanes", "レーン")
+MYE_STR(TT_LaneLive,          "live", "ライブ")
+MYE_STR(TT_LaneName,          "B%u @%llu", "B%u @%llu")
+MYE_STR(TT_LaneColLane,       "lane", "レーン")
+MYE_STR(TT_LaneColRange,      "range", "範囲")
+MYE_STR(TT_LaneColDivergence, "diverges from live", "ライブとの乖離")
+MYE_STR(TT_LaneColActions,    "actions", "操作")
+MYE_STR(TT_LaneRange,         "[%llu, %llu)  %llu ticks", "[%llu, %llu)  %llu tick")
+MYE_STR(TT_DivAt,             "tick %llu", "tick %llu")
+MYE_STR(TT_DivNone,           "none (identical so far)", "なし (ここまで同一)")
+MYE_STR(TT_Switch,            "Switch###TTSwitch", "切替###TTSwitch")
+MYE_STR(TT_Delete,            "Delete###TTDelete", "削除###TTDelete")
+MYE_STR(TT_SwitchHint,        "Restores that lane and re-simulates to the current tick. "
+                              "The lane you leave is kept as a branch.",
+                              "そのレーンを復元して現在の tick まで再シムします。"
+                              "離れるレーンは分岐として残ります。")
+MYE_STR(TT_NoBranches,        "No branches yet. Seek back and resume: the future you leave is kept as a branch.",
+                              "分岐はまだありません。戻ってから再開すると、離れた未来が分岐として残ります。")
+MYE_STR(TT_BranchNote,        "A branch whose fork tick falls off the ring is dropped. At most %d are kept.",
+                              "fork tick がリングの外へ出た分岐は消えます。最大 %d 本。")
 
 // ---- ネットワーク (M52i) ----
 MYE_STR(Win_Net,              "Network###Net", "ネットワーク###Net")

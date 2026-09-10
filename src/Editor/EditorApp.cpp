@@ -236,6 +236,9 @@ void EditorApp::OnStart(EngineContext& ctx)
     if (autoPlay && !actorEdit_) { // 編集モード中の Play は禁止 (ツールバーでも無効化している)
         playMode_.Play(*ctx.scene);
     }
+    if (openTimeline) {
+        timeline_.open = true; // プローブの分岐レーンを --screenshot で撮れるように (M72c)
+    }
     if (startDeferred) {
         ctx.renderPath = ctx.renderPathDeferred;
     }
