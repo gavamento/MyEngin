@@ -109,6 +109,9 @@
     <ClCompile Include="..\src\Editor\Windows\ProjectSettingsWindow.cpp">
       <Filter>Windows</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Editor\Windows\SceneViewGhost.cpp">
+      <Filter>Windows</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Editor\Windows\SceneViewWindow.cpp">
       <Filter>Windows</Filter>
     </ClCompile>

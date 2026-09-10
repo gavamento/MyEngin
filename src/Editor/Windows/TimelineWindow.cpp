@@ -202,12 +202,13 @@ void TimelineWindow::DrawBranchTable(EngineContext& ctx, TimeTravel& tt, PlayMod
     }
     const ImGuiTableFlags flags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg
         | ImGuiTableFlags_SizingStretchProp;
-    if (!ImGui::BeginTable("##ttlanes", 4, flags)) {
+    if (!ImGui::BeginTable("##ttlanes", 5, flags)) {
         return;
     }
     ImGui::TableSetupColumn(Tr(StrId::TT_LaneColLane), ImGuiTableColumnFlags_WidthFixed, 90.0f);
     ImGui::TableSetupColumn(Tr(StrId::TT_LaneColRange));
     ImGui::TableSetupColumn(Tr(StrId::TT_LaneColDivergence));
+    ImGui::TableSetupColumn(Tr(StrId::TT_LaneColGhost));
     ImGui::TableSetupColumn(Tr(StrId::TT_LaneColActions), ImGuiTableColumnFlags_WidthFixed, 130.0f);
     ImGui::TableHeadersRow();
 
@@ -219,6 +220,8 @@ void TimelineWindow::DrawBranchTable(EngineContext& ctx, TimeTravel& tt, PlayMod
     ImGui::Text(Tr(StrId::TT_LaneRange), static_cast<unsigned long long>(tt.FirstTick()),
                 static_cast<unsigned long long>(tt.EndTick()),
                 static_cast<unsigned long long>(tt.EndTick() - tt.FirstTick()));
+    ImGui::TableNextColumn();
+    ImGui::TextDisabled("-");
     ImGui::TableNextColumn();
     ImGui::TextDisabled("-");
     ImGui::TableNextColumn();
@@ -244,6 +247,23 @@ void TimelineWindow::DrawBranchTable(EngineContext& ctx, TimeTravel& tt, PlayMod
             ImGui::Text(Tr(StrId::TT_DivAt), static_cast<unsigned long long>(d.firstTick));
         } else {
             ImGui::TextDisabled("%s", Tr(StrId::TT_DivNone));
+        }
+        ImGui::TableNextColumn();
+        // ---- ゴースト (M72e): 表示トグル + 焼き結果 ----
+        if (TimeTravelBranch* mb = tt.FindBranchMut(b.id)) {
+            ImGui::Checkbox("##ghost", &mb->ghostVisible);
+            ImGui::SameLine();
+        }
+        if (!b.ghostBaked) {
+            ImGui::TextDisabled("%s", Tr(StrId::TT_GhostPending));
+        } else if (!b.ghost.verified) {
+            ImGui::TextColored(themeColor::Error, "%s", Tr(StrId::TT_GhostMismatch));
+        } else if (b.ghost.truncated) {
+            ImGui::TextColored(themeColor::Warning, Tr(StrId::TT_GhostTruncated),
+                               static_cast<unsigned long long>(b.ghost.lastTick),
+                               b.ghost.bytes / 1024);
+        } else {
+            ImGui::Text(Tr(StrId::TT_GhostOk), b.ghost.MovingCount(), b.ghost.bytes / 1024);
         }
         ImGui::TableNextColumn();
         if (ImGui::SmallButton(Tr(StrId::TT_Switch))) {

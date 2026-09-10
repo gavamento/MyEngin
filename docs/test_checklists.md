@@ -200,3 +200,15 @@ Q 石・E 瓶)。波そのものを見たいときは SceneView の「音響」�
 - [ ] **Delete** → 行が消える。8 本を超えると最古の葉が自動で消える (表の下の注記)
 - [ ] `Editor.exe --whatif-selftest 200 --screenshot cache\tl.png --shot-frame 262 --frames 270`
       で Timeline が開いた状態の画が撮れる (プローブは Timeline を自動で開く)
+
+### SceneView のゴースト (M72e)
+
+- [ ] 分岐ができた次のフレームから、SceneView に分岐色 (B1 = 水色) の**ワイヤ箱**が
+      動いている物にだけ重なり、前後 (過去 60 / 未来 180 tick) の**トレイル**が伸びる。
+      同じ入力の分岐なら箱はライブの物にぴったり重なる (= 決定論の絵)
+- [ ] 戻って**違う操作**をしてから再開すると、ゴーストの箱がライブから離れていく
+      (元の未来がどこへ行ったかが見える)
+- [ ] SceneView ツールバーの「Ghosts」を外すと全部消える。Timeline の分岐行の
+      チェックを外すとその分岐だけ消える。表の ghost 列に `N moving (S KB)`、
+      予算で打ち切られたら `up to tick T (S KB, budget)`、再現できなければ赤の `HASH MISMATCH`
+- [ ] GameView / --screenshot (Runtime) には 1 本も出ない (SceneView の RT だけ)

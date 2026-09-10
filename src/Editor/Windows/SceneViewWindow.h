@@ -42,6 +42,8 @@ public:
 
 private:
     void BuildOverlays(EngineContext& ctx, Selection& selection);
+    // 分岐のゴースト (M72e、SceneViewGhost.cpp): 非ライブの分岐を同じ tick のワイヤ箱 + トレイルで重ねる
+    void BuildGhostOverlay(EngineContext& ctx);
     void DrawToolbar(EditorSettings& settings);
     void DrawGizmo(EngineContext& ctx, Selection& selection, UndoStack& undo,
                    const EditorSettings& settings, float rectX, float rectY, float rectW,
@@ -95,6 +97,7 @@ private:
     bool camSpeedDirty_ = false; // RMB+ホイールで速度変更中 (RMB リリース時に settings.Save)
     bool showGrid_ = true;
     bool showGizmos_ = true; // コライダー/ライト/カメラ等の補助表示 (ビルボードアイコン含む)
+    bool showGhosts_ = true; // 分岐のゴースト (M72e)。分岐が無ければ何も描かない = 既定 on で無害
     int viewMode_ = 0;       // SceneView 表示モード (M40b): 0=Lit 1=Unlit 2=Wireframe
 
     // 右クリック生成メニュー: ポップアップを開いた瞬間の地面点 (メニュー操作中にカーソルが

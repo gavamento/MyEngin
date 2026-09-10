@@ -409,6 +409,7 @@ MYE_STR(SceneView_Scale,      "Scale",      "拡縮")
 MYE_STR(SceneView_Ortho,      "Ortho",      "平行投影")
 MYE_STR(SceneView_Grid,       "Grid",       "グリッド")
 MYE_STR(SceneView_Gizmos,     "Gizmos",     "ギズモ")
+MYE_STR(SceneView_Ghosts,     "Ghosts",     "ゴースト")
 MYE_STR(SceneView_Lit,        "Lit",        "陰影あり")
 MYE_STR(SceneView_Unlit,      "Unlit",      "陰影なし")
 MYE_STR(SceneView_Wire,       "Wire",       "ワイヤー")
@@ -951,6 +952,12 @@ MYE_STR(TT_NoBranches,        "No branches yet. Seek back and resume: the future
                               "分岐はまだありません。戻ってから再開すると、離れた未来が分岐として残ります。")
 MYE_STR(TT_BranchNote,        "A branch whose fork tick falls off the ring is dropped. At most %d are kept.",
                               "fork tick がリングの外へ出た分岐は消えます。最大 %d 本。")
+// ---- 分岐のゴースト (M72e) ----
+MYE_STR(TT_LaneColGhost,      "ghost", "ゴースト")
+MYE_STR(TT_GhostPending,      "baking...", "焼いています...")
+MYE_STR(TT_GhostMismatch,     "HASH MISMATCH", "ハッシュ不一致")
+MYE_STR(TT_GhostTruncated,    "up to tick %llu (%zu KB, budget)", "tick %llu まで (%zu KB、予算)")
+MYE_STR(TT_GhostOk,           "%zu moving (%zu KB)", "動く物 %zu (%zu KB)")
 
 // ---- ネットワーク (M52i) ----
 MYE_STR(Win_Net,              "Network###Net", "ネットワーク###Net")

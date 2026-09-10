@@ -830,6 +830,8 @@ void SceneViewWindow::BuildOverlays(EngineContext& ctx, Selection& selection)
             lines_.AddWireBox(bw, half, 0xFFA030FFu, /*onTop*/ true);
         }
     }
+
+    BuildGhostOverlay(ctx); // M72e
 }
 
 void SceneViewWindow::DrawToolbar(EditorSettings& settings)
@@ -867,6 +869,8 @@ void SceneViewWindow::DrawToolbar(EditorSettings& settings)
     ImGui::Checkbox(Tr(StrId::SceneView_Grid), &showGrid_);
     ImGui::SameLine();
     ImGui::Checkbox(Tr(StrId::SceneView_Gizmos), &showGizmos_);
+    ImGui::SameLine();
+    ImGui::Checkbox(Tr(StrId::SceneView_Ghosts), &showGhosts_); // M72e
     ImGui::SameLine();
     // 物理デバッグ可視化 (M59e)。**Play 中しか線は出ない** — 積むのは tick 側なので
     // (編集中は物理が走らず接触も速度も無い)。有効中はトグル色で気付けるようにする
