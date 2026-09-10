@@ -234,3 +234,17 @@ Q 石・E 瓶)。波そのものを見たいときは SceneView の「音響」�
       `LocalTransform.position` (= 編集そのもの)
 - [ ] 表の後も self-check が `OK` (両レーンを再シムした後、ライブへ戻している)。
       「Branch and resume」でそのまま続けられる
+
+### 三校ステージでの通し (コンテストの見せ方)
+
+`Editor.exe --project C:\HAL\Shadow_Sound` → Play (stage1)。
+
+- [ ] 敵に見つかるまで歩く → 見つかった tick から 5 秒ほど戻る → Timeline の「Input overrides」で
+      `Light` を 150 tick 押す (= ビーコンを置く) → 「Branch and resume」
+- [ ] SceneView: 元の未来では敵 (`AgentEar*`) がプレイヤーへ向かうゴーストのトレイルが伸び、
+      ライブでは光に釣られて別の経路を歩く = **同じ tick の 2 つの未来が重なる**
+- [ ] Timeline: 乖離 tick が「押し始めの次の tick」、Diff で最初に違うのが `PlayerInput` /
+      `AgentBrain.state` 系のフィールド (敵の状態が変わった瞬間)
+- [ ] Inspector で `GameRoot` の `SkTuning` (敵の速度など) を変えてから再開 → 乖離が分岐点で出て、
+      Diff が `SkTuning.<field>` を名指しする (= 「何を変えたか」が機械で出る)
+- [ ] Switch で元の未来へ戻り、もう一度別の操作で分岐 → 3 本のレーンを行き来できる

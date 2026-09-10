@@ -38,7 +38,7 @@ void TimelineWindow::OnImGui(EngineContext& ctx, PlayModeController& playMode)
         return;
     }
     // 初回はレーン帯 + 分岐表が収まる高さで開く (M72c。ini に残っていればそちらが勝つ)
-    ImGui::SetNextWindowSize(ImVec2(620.0f, 420.0f), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(640.0f, 600.0f), ImGuiCond_FirstUseEver);
     if (!ImGui::Begin(Tr(StrId::Win_Timeline), &open)) {
         ImGui::End();
         return;

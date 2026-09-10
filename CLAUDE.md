@@ -127,6 +127,10 @@ MyEngine — C++20 / DirectX 11 の自作ゲームエンジン (VS2022 / x64 / W
 - **ポインタ値・`unordered_*` の走査順・実時間・`rand()`/`std::random_device` を sim に混ぜない。**
   乱数はエンジンの PCG32 のみ。ソートは明示的な決定論キーで。
   unordered を舐めてバイト列を作るときは昇順に整列してから (SimSnapshot の override 表が実例)。
+- **分岐点 = pinned スナップショットの編集点 (M72a)**: 「tick T が走る前の状態」はレーン内で一意
+  ではない — ポーズ中の Inspector 編集で変わる。タイムトラベルは `Fork` で編集後の状態を撮り直し、
+  `HashAtTick` はスナップショットの stateHash を優先する。**Restore 後にライブ以外の状態で
+  `RunOneTick` を回す経路 (ゴースト焼き / 乖離ダンプ) は必ず `SeekTo(liveTick, force)` で戻す**。
 - `check_rules.ps1` が拾うのは静的に見える違反だけ。**時計依存・順序依存は拾えない** —
   そこは `replay_verify.bat` の 6 ペア照合が唯一の検出手段。
 - **入力レーン (M52g)**: sim は `EngineContext::inputs[kMaxPlayers=4]` を消費する

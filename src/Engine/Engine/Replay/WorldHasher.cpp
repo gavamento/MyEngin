@@ -664,6 +664,10 @@ bool ReadHashDump(const std::wstring& path, HashDump& out)
 HashDumpDiff DiffHashDumps(const HashDump& a, const HashDump& b, int maxReport,
                            std::vector<std::string>* outReport)
 {
+    // M72g: outReport がある = Timeline からの対話的な差分。割れているのは「意図して分岐した
+    // 2 レーン」なので、詳細行は ERROR (赤) ではなく INFO で出す。CLI (--hash-diff) は従来どおり赤
+    const LogLevel detail = outReport != nullptr ? LogLevel::Info : LogLevel::Error;
+#define MYE_HD_DETAIL(...) ::mye::logging::WriteSrc(detail, __FILE__, __LINE__, __VA_ARGS__)
     HashDumpDiff r;
     r.totalDiffers = (a.total != b.total);
     if (a.tick != b.tick) {
@@ -707,11 +711,11 @@ HashDumpDiff DiffHashDumps(const HashDump& a, const HashDump& b, int maxReport,
             ++r.valueDiffs;
             if (reported < maxReport) {
                 ++reported;
-                MYE_LOG_ERROR("[hashdiff] line %zu: %s \"%s\" %s.%s", i + 1,
+                MYE_HD_DETAIL("[hashdiff] line %zu: %s \"%s\" %s.%s", i + 1,
                               std::string(ca.col[1]).c_str(), std::string(ca.col[2]).c_str(),
                               std::string(ca.col[3]).c_str(), std::string(ca.col[4]).c_str());
-                MYE_LOG_ERROR("[hashdiff]   A = %s", Shorten(ca.col[5]).c_str());
-                MYE_LOG_ERROR("[hashdiff]   B = %s", Shorten(cb.col[5]).c_str());
+                MYE_HD_DETAIL("[hashdiff]   A = %s", Shorten(ca.col[5]).c_str());
+                MYE_HD_DETAIL("[hashdiff]   B = %s", Shorten(cb.col[5]).c_str());
                 if (outReport != nullptr) {
                     std::string row;
                     row.append(ca.col[1]).append("\t").append(ca.col[2]).append("\t");
@@ -729,12 +733,12 @@ HashDumpDiff DiffHashDumps(const HashDump& a, const HashDump& b, int maxReport,
     }
     const uint64_t reportCap = maxReport > 0 ? static_cast<uint64_t>(maxReport) : 0;
     if (r.valueDiffs > reportCap) {
-        MYE_LOG_ERROR("[hashdiff] ... and %llu more differing field(s)",
+        MYE_HD_DETAIL("[hashdiff] ... and %llu more differing field(s)",
                       static_cast<unsigned long long>(r.valueDiffs - reportCap));
     }
     if (r.firstFoldLine != static_cast<size_t>(-1)) {
         const DumpCols c = SplitCols(a.lines[r.firstFoldLine]);
-        MYE_LOG_ERROR("[hashdiff] divergence starts at line %zu: %s \"%s\" %s.%s",
+        MYE_HD_DETAIL("[hashdiff] divergence starts at line %zu: %s \"%s\" %s.%s",
                       r.firstFoldLine + 1, std::string(c.col[1]).c_str(),
                       std::string(c.col[2]).c_str(), std::string(c.col[3]).c_str(),
                       std::string(c.col[4]).c_str());
@@ -750,11 +754,12 @@ HashDumpDiff DiffHashDumps(const HashDump& a, const HashDump& b, int maxReport,
         MYE_LOG_INFO("[hashdiff] identical (%zu lines, total %016llX)", a.lines.size(),
                      static_cast<unsigned long long>(a.total));
     } else {
-        MYE_LOG_ERROR("[hashdiff] %llu field(s) differ / total A=%016llX B=%016llX",
+        MYE_HD_DETAIL("[hashdiff] %llu field(s) differ / total A=%016llX B=%016llX",
                       static_cast<unsigned long long>(r.valueDiffs),
                       static_cast<unsigned long long>(a.total),
                       static_cast<unsigned long long>(b.total));
     }
+#undef MYE_HD_DETAIL
     return r;
 }
 
