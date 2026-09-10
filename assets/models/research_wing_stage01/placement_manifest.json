@@ -1,0 +1,646 @@
+{
+  "units": "meters",
+  "blender_axes": "X=east,Y=north,Z=height",
+  "engine_axes": "left-handed Y-up: (Blender X, Blender Z, Blender Y)",
+  "engine_placement": [
+    0,
+    0,
+    0
+  ],
+  "source": "stage.md",
+  "exports": [
+    {
+      "file": "ResearchWing_Stage01.fbx",
+      "mesh_objects": 109,
+      "triangles": 74044
+    },
+    {
+      "file": "ResearchWing_Stage01_OpenTop.fbx",
+      "mesh_objects": 99,
+      "triangles": 73924
+    },
+    {
+      "file": "ResearchWing_Stage01_Markers.fbx",
+      "mesh_objects": 12,
+      "triangles": 720
+    }
+  ],
+  "rooms": [
+    {
+      "name": "A1_LAB01",
+      "rect": [
+        0,
+        12,
+        0,
+        10
+      ],
+      "height": 3
+    },
+    {
+      "name": "A2a_Corridor",
+      "rect": [
+        12,
+        24,
+        6,
+        10
+      ],
+      "height": 3
+    },
+    {
+      "name": "A2b_Corridor",
+      "rect": [
+        20,
+        24,
+        10,
+        20
+      ],
+      "height": 3
+    },
+    {
+      "name": "A3J_Junction",
+      "rect": [
+        24,
+        28,
+        16,
+        24
+      ],
+      "height": 3
+    },
+    {
+      "name": "A3M_Metal",
+      "rect": [
+        28,
+        40,
+        16,
+        20
+      ],
+      "height": 3
+    },
+    {
+      "name": "A3S_Storage",
+      "rect": [
+        28,
+        40,
+        20,
+        36
+      ],
+      "height": 3
+    },
+    {
+      "name": "A4_Central",
+      "rect": [
+        40,
+        60,
+        10,
+        30
+      ],
+      "height": 4.5
+    },
+    {
+      "name": "A5_Supply",
+      "rect": [
+        48,
+        56,
+        2,
+        10
+      ],
+      "height": 3
+    },
+    {
+      "name": "A6a_Connector",
+      "rect": [
+        60,
+        64,
+        18,
+        22
+      ],
+      "height": 3
+    },
+    {
+      "name": "A6_Core",
+      "rect": [
+        64,
+        74,
+        18,
+        26
+      ],
+      "height": 3
+    }
+  ],
+  "doors": [
+    {
+      "name": "D1",
+      "axis": "x",
+      "constant": 12,
+      "start": 7,
+      "end": 9,
+      "height": 2.4
+    },
+    {
+      "name": "D0",
+      "axis": "z",
+      "constant": 10,
+      "start": 20,
+      "end": 24,
+      "height": 3
+    },
+    {
+      "name": "DJ",
+      "axis": "x",
+      "constant": 24,
+      "start": 17,
+      "end": 19,
+      "height": 2.4
+    },
+    {
+      "name": "D2",
+      "axis": "x",
+      "constant": 28,
+      "start": 21,
+      "end": 23,
+      "height": 2.4
+    },
+    {
+      "name": "D3",
+      "axis": "x",
+      "constant": 28,
+      "start": 17,
+      "end": 19,
+      "height": 2.4
+    },
+    {
+      "name": "D4",
+      "axis": "x",
+      "constant": 40,
+      "start": 27,
+      "end": 29,
+      "height": 2.4
+    },
+    {
+      "name": "D5",
+      "axis": "x",
+      "constant": 40,
+      "start": 17,
+      "end": 19,
+      "height": 2.4
+    },
+    {
+      "name": "D6",
+      "axis": "z",
+      "constant": 10,
+      "start": 51,
+      "end": 53,
+      "height": 2.4
+    },
+    {
+      "name": "D7",
+      "axis": "x",
+      "constant": 60,
+      "start": 19,
+      "end": 21,
+      "height": 2.4
+    },
+    {
+      "name": "D8",
+      "axis": "x",
+      "constant": 64,
+      "start": 19,
+      "end": 21,
+      "height": 2.4
+    }
+  ],
+  "surfaces": [
+    {
+      "name": "F01_Glass",
+      "rect": [
+        8,
+        10,
+        7,
+        9
+      ],
+      "material": "Glass"
+    },
+    {
+      "name": "F02_Water",
+      "rect": [
+        9,
+        11,
+        3,
+        4
+      ],
+      "material": "Water"
+    },
+    {
+      "name": "F03_Carpet",
+      "rect": [
+        28,
+        40,
+        20,
+        36
+      ],
+      "material": "Carpet"
+    },
+    {
+      "name": "F04_Metal",
+      "rect": [
+        28,
+        40,
+        16,
+        20
+      ],
+      "material": "Metal"
+    },
+    {
+      "name": "F05a_Rubber",
+      "rect": [
+        28,
+        30,
+        17,
+        19
+      ],
+      "material": "Rubber"
+    },
+    {
+      "name": "F05b_Rubber",
+      "rect": [
+        38,
+        40,
+        17,
+        19
+      ],
+      "material": "Rubber"
+    },
+    {
+      "name": "F06_Rubber",
+      "rect": [
+        40,
+        43,
+        12,
+        28
+      ],
+      "material": "Rubber"
+    },
+    {
+      "name": "F07_Rubber",
+      "rect": [
+        40,
+        60,
+        12,
+        14
+      ],
+      "material": "Rubber"
+    },
+    {
+      "name": "F08_Rubber",
+      "rect": [
+        58,
+        60,
+        12,
+        28
+      ],
+      "material": "Rubber"
+    },
+    {
+      "name": "F09_Rubber",
+      "rect": [
+        40,
+        60,
+        26,
+        28
+      ],
+      "material": "Rubber"
+    },
+    {
+      "name": "F10_Water",
+      "rect": [
+        50,
+        54,
+        8,
+        10
+      ],
+      "material": "Water"
+    }
+  ],
+  "furniture": [
+    {
+      "name": "A1_Bench",
+      "rect": [
+        5,
+        8,
+        4,
+        6
+      ],
+      "height": 1
+    },
+    {
+      "name": "A1_Shelf",
+      "rect": [
+        1,
+        4,
+        8,
+        9
+      ],
+      "height": 2.2
+    },
+    {
+      "name": "A1_Sink",
+      "rect": [
+        9,
+        11,
+        1,
+        2
+      ],
+      "height": 1
+    },
+    {
+      "name": "A3S_ShelfA",
+      "rect": [
+        28.1,
+        36,
+        25,
+        27
+      ],
+      "height": 2.2
+    },
+    {
+      "name": "A3S_ShelfB",
+      "rect": [
+        32,
+        39.9,
+        31,
+        33
+      ],
+      "height": 2.2
+    },
+    {
+      "name": "A4_EastBench",
+      "rect": [
+        54,
+        57,
+        20,
+        22
+      ],
+      "height": 1
+    },
+    {
+      "name": "A4_NWShelf",
+      "rect": [
+        43,
+        47,
+        28.5,
+        29.5
+      ],
+      "height": 2.2
+    },
+    {
+      "name": "A4_NEShelf",
+      "rect": [
+        54,
+        58,
+        28.5,
+        29.5
+      ],
+      "height": 2.2
+    },
+    {
+      "name": "A5_WestShelf",
+      "rect": [
+        49,
+        51,
+        3,
+        4
+      ],
+      "height": 1.2
+    },
+    {
+      "name": "A5_EastShelf",
+      "rect": [
+        53,
+        55,
+        3,
+        4
+      ],
+      "height": 1.2
+    },
+    {
+      "name": "A4_Pillar",
+      "rect": [
+        49,
+        51,
+        22,
+        24
+      ],
+      "height": 4.5
+    },
+    {
+      "name": "A2_Pipes",
+      "rect": [
+        23.5,
+        23.9,
+        11,
+        14
+      ],
+      "height": 2
+    },
+    {
+      "name": "A4_Pipes",
+      "rect": [
+        44,
+        48,
+        10.1,
+        10.5
+      ],
+      "height": 2
+    },
+    {
+      "name": "I01_Crate",
+      "rect": [
+        3.5,
+        4.5,
+        2.5,
+        3.5
+      ],
+      "height": 0.8
+    },
+    {
+      "name": "I02_Crate",
+      "rect": [
+        37.5,
+        38.5,
+        29.5,
+        30.5
+      ],
+      "height": 0.8
+    },
+    {
+      "name": "I03_Crate",
+      "rect": [
+        29.5,
+        30.5,
+        33.5,
+        34.5
+      ],
+      "height": 0.8
+    },
+    {
+      "name": "Core_Pedestal",
+      "rect": [
+        68,
+        70,
+        23,
+        25
+      ],
+      "height": 1
+    },
+    {
+      "name": "FixedLight_Plinth",
+      "rect": [
+        1.7,
+        2.3,
+        1.7,
+        2.3
+      ],
+      "height": 1
+    }
+  ],
+  "markers": [
+    {
+      "name": "START",
+      "engine_position": [
+        3,
+        0,
+        3
+      ]
+    },
+    {
+      "name": "FIXED_LIGHT",
+      "engine_position": [
+        2,
+        1,
+        2
+      ]
+    },
+    {
+      "name": "E1_SPAWN",
+      "engine_position": [
+        22,
+        0,
+        16
+      ]
+    },
+    {
+      "name": "E2_SPAWN",
+      "engine_position": [
+        52,
+        0,
+        25
+      ]
+    },
+    {
+      "name": "L1_CANDIDATE_NOT_REQUIRED",
+      "engine_position": [
+        47,
+        0,
+        16
+      ]
+    },
+    {
+      "name": "L2_CANDIDATE_NOT_REQUIRED",
+      "engine_position": [
+        46,
+        0,
+        20
+      ]
+    },
+    {
+      "name": "I01_STONE_2",
+      "engine_position": [
+        4,
+        0.8,
+        3
+      ]
+    },
+    {
+      "name": "I02_STONE_1",
+      "engine_position": [
+        38,
+        0.8,
+        30
+      ]
+    },
+    {
+      "name": "I03_BOTTLE_1",
+      "engine_position": [
+        30,
+        0.8,
+        34
+      ]
+    },
+    {
+      "name": "I04_STONE_3_BOTTLE_2",
+      "engine_position": [
+        50,
+        1.2,
+        3.5
+      ]
+    },
+    {
+      "name": "I05_LIGHT_REFILL_1",
+      "engine_position": [
+        54,
+        1.2,
+        3.5
+      ]
+    },
+    {
+      "name": "I06_DATA_CORE",
+      "engine_position": [
+        69,
+        1,
+        24
+      ]
+    }
+  ],
+  "patrol_xz": {
+    "E1": [
+      [
+        22,
+        12
+      ],
+      [
+        22,
+        18
+      ],
+      [
+        26,
+        18
+      ],
+      [
+        30,
+        18
+      ]
+    ],
+    "E2": [
+      [
+        47,
+        25
+      ],
+      [
+        52,
+        25
+      ],
+      [
+        52,
+        17
+      ],
+      [
+        47,
+        17
+      ]
+    ]
+  },
+  "notes": [
+    "Static layout only. Gameplay, collision, audio and lights require engine setup.",
+    "Shelves and wall-mounted services inset 0.1m at wall contacts to avoid intersection."
+  ]
+}

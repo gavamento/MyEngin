@@ -1,0 +1,43 @@
+{
+  "status": "review prototype; not final photoreal quality",
+  "blender": "5.1.1",
+  "units": "meters",
+  "source_axes": "Z up, -Y forward",
+  "bone_count": 35,
+  "triangles": 13824,
+  "meshes": 22,
+  "clips": [
+    {
+      "name": "00_Idle",
+      "frames": 180,
+      "fps": 60,
+      "loop": true
+    },
+    {
+      "name": "01_Walk",
+      "frames": 72,
+      "fps": 60,
+      "loop": true
+    },
+    {
+      "name": "02_Run",
+      "frames": 48,
+      "fps": 60,
+      "loop": true
+    },
+    {
+      "name": "03_CrouchWalk",
+      "frames": 108,
+      "fps": 60,
+      "loop": true
+    }
+  ],
+  "limitations": [
+    "No engine integration or runtime fps measurement",
+    "Procedural animation; foot sliding not corrected",
+    "No torso/head mesh; first-person limbs only",
+    "Glove fingers are separate intersecting surfaces",
+    "No throwing or light interaction animations",
+    "No full-frame self-intersection verification"
+  ]
+}

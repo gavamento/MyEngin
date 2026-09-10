@@ -1,0 +1,98 @@
+{
+  "files": [
+    {
+      "file": "ResearchWing_Stage01.fbx",
+      "mesh_objects": 109,
+      "triangles": 74044,
+      "blender_bounds": [
+        [
+          -0.10000000149011612,
+          -0.10000024735927582,
+          -0.20000162720680237
+        ],
+        [
+          74.0999984741211,
+          36.099998474121094,
+          4.660001754760742
+        ]
+      ]
+    },
+    {
+      "file": "ResearchWing_Stage01_OpenTop.fbx",
+      "mesh_objects": 99,
+      "triangles": 73924,
+      "blender_bounds": [
+        [
+          -0.10000000149011612,
+          -0.10000024735927582,
+          -0.20000162720680237
+        ],
+        [
+          74.0999984741211,
+          36.099998474121094,
+          4.500000476837158
+        ]
+      ]
+    },
+    {
+      "file": "ResearchWing_Stage01_Markers.fbx",
+      "mesh_objects": 12,
+      "triangles": 720,
+      "blender_bounds": [
+        [
+          1.75,
+          1.75,
+          -5.702223759840308e-08
+        ],
+        [
+          69.3499984741211,
+          34.25,
+          1.7000000476837158
+        ]
+      ]
+    }
+  ],
+  "door_checks": [
+    {
+      "door": "D1",
+      "clearance_rays": 9
+    },
+    {
+      "door": "D0",
+      "clearance_rays": 3
+    },
+    {
+      "door": "DJ",
+      "clearance_rays": 9
+    },
+    {
+      "door": "D2",
+      "clearance_rays": 9
+    },
+    {
+      "door": "D3",
+      "clearance_rays": 9
+    },
+    {
+      "door": "D4",
+      "clearance_rays": 9
+    },
+    {
+      "door": "D5",
+      "clearance_rays": 9
+    },
+    {
+      "door": "D6",
+      "clearance_rays": 9
+    },
+    {
+      "door": "D7",
+      "clearance_rays": 9
+    },
+    {
+      "door": "D8",
+      "clearance_rays": 9
+    }
+  ],
+  "failures": []
+}

@@ -1,0 +1,7 @@
+..\..\assets\models\research_wing_stage01\ResearchWing_Stage01.fbx
+ meshes=109 triangles=74044 engine_bounds=[-0.100 -0.200 -0.100]..[74.100 4.660 36.100]
+..\..\assets\models\research_wing_stage01\ResearchWing_Stage01_OpenTop.fbx
+ meshes=99 triangles=73924 engine_bounds=[-0.100 -0.200 -0.100]..[74.100 4.500 36.100]
+..\..\assets\models\research_wing_stage01\ResearchWing_Stage01_Markers.fbx
+ meshes=12 triangles=720 engine_bounds=[1.750 -0.000 1.750]..[69.350 1.700 34.250]
+FAILURES=0

@@ -1,0 +1,15 @@
+{
+  "engine": "MyEngine",
+  "physmat": 1,
+  "name": "tile",
+  "density": 2400.0,
+  "staticFriction": 0.65,
+  "dynamicFriction": 0.5,
+  "restitution": 0.0,
+  "rollingResistance": 0.01,
+  "dragCoefficient": 0.47,
+  "adhesion": 0.0,
+  "acousticLoudness": 0.4,
+  "acousticRadiusM": 12.0,
+  "acousticTone": 0
+}

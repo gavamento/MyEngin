@@ -1,0 +1,49 @@
+{
+  "errors": [],
+  "meshes": 22,
+  "bones": 35,
+  "clips": [
+    {
+      "name": "Researcher_Rig|Researcher_Rig|00_Idle",
+      "frames": [
+        1,
+        181
+      ],
+      "loop_max_delta_m": 0.0,
+      "min_z": 0.004000204149633646,
+      "max_z": 1.4717119932174683
+    },
+    {
+      "name": "Researcher_Rig|Researcher_Rig|01_Walk",
+      "frames": [
+        1,
+        73
+      ],
+      "loop_max_delta_m": 0.0,
+      "min_z": -0.0048236967995762825,
+      "max_z": 1.4791154861450195
+    },
+    {
+      "name": "Researcher_Rig|Researcher_Rig|02_Run",
+      "frames": [
+        1,
+        49
+      ],
+      "loop_max_delta_m": 0.0,
+      "min_z": -0.004770912695676088,
+      "max_z": 1.4859416484832764
+    },
+    {
+      "name": "Researcher_Rig|Researcher_Rig|03_CrouchWalk",
+      "frames": [
+        1,
+        109
+      ],
+      "loop_max_delta_m": 0.0,
+      "min_z": 0.1015029326081276,
+      "max_z": 1.4762139320373535
+    }
+  ],
+  "checks": "FBX reimport, textures, UVs, triangles, weights, all-frame finite skinning, loop endpoints",
+  "not_checked": "ufbx, engine runtime, foot sliding, self-intersection, animation transitions"
+}
