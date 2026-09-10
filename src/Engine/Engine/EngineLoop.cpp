@@ -506,7 +506,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // 有効化はエディタ (Play/Stop) か CLI プローブが行う。ここでは器を持つだけ
     TimeTravel timeTravel;
     ctx.timeTravel = &timeTravel;
-    if (config.timeTravelProbeTicks > 0) {
+    if (config.timeTravelProbeTicks > 0 || config.whatIfProbeTicks > 0) {
         timeTravel.SetEnabled(true);
     }
 
@@ -1155,6 +1155,16 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     int ttProbeFramesLeft = 0;
     uint64_t ttScrubTarget = 0;
     uint64_t ttPreScrubEnd = 0;
+    // --whatif-selftest の進行状態 (M72b)。段の意味は下のプローブ本体に書いてある。9 = 終了
+    int wiStage = 0;
+    int wiFails = 0;
+    int wiFramesLeft = 0;
+    uint64_t wiN = 0;
+    uint64_t wiF = 0;
+    uint64_t wiOrigEnd = 0;
+    uint64_t wiOrigHashN = 0;
+    uint64_t wiEditedHash = 0;
+    uint32_t wiBranch = 0;
 
     while (running) {
         // ---- フェーズ 1: 時間更新 / 入力取得 ----
@@ -1169,7 +1179,8 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             dt = kMaxFrameDt;
         }
         const bool ttProbeRunning = config.timeTravelProbeTicks > 0 && ttProbeStage < 3;
-        if (deterministicShot || ttProbeRunning) {
+        const bool wiProbeRunning = config.whatIfProbeTicks > 0 && wiStage < 9;
+        if (deterministicShot || ttProbeRunning || wiProbeRunning) {
             // M52c: accumulator は毎フレームちょうど kFixedDt 増えて 1 tick 消費し 0 に戻る
             // (同じ double を足して引くので誤差ゼロ) = フレームと tick が 1:1 で固定される。
             // M52e のプローブも同じ扱い — 実時間で回すと 400 tick に 6.7 秒かかる
@@ -1628,6 +1639,144 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             }
             ttProbeStage = 3;
             ctx.requestExit = true;
+        }
+        // ---- 分岐 (What-if) の自動プローブ (M72b、--whatif-selftest N) ----
+        // タイムトラベルのプローブが「戻れる」ことを見るのに対し、こちらは「戻って
+        // 別の未来を走らせても、元の未来が分岐として残り、行き来できる」ことを見る。
+        //   0: N tick 走ったら F = N-100 へ戻す      1: スクラブ静止 → 再開 (= Fork)
+        //   2: 元の未来が分岐 B1 として残っている     3: 同じ入力で N まで → B1 は畳まれる
+        //   4: もう一度 F へ → 世界を編集して再開     5: 分岐点で乖離 / 戻っても編集が残る
+        //   6: N まで走る (乖離した run)              7: 元の分岐へ切り替え → 元の N と一致
+        //   8: そこから 30 tick 続けて、継ぎ足したレーンでもシークが通る → 終了
+        if (config.whatIfProbeTicks > 0 && wiStage < 9) {
+            const auto wiCheck = [&](bool ok, const char* what) {
+                if (!ok) {
+                    ++wiFails;
+                }
+                MYE_LOG_INFO("[whatif]   %s: %s", what, ok ? "PASS" : "FAIL");
+            };
+            // ハッシュの走査順で最初に出てくる LocalTransform を動かす (--net-poke-tick と同じ列)
+            const auto PokeFirstTransform = [&](float dx) {
+                std::vector<EntityHash> order;
+                uint64_t total = 0;
+                HashWorldDetailed(scene.GetWorld(),
+                                  {&particleSystem.Cpu(), &scene.Time(), &scene.Persist(), &xpbd, &acoustic, &scene.UI()},
+                                  order, total);
+                for (const EntityHash& e : order) {
+                    if (auto* t = scene.GetWorld().GetComponent<LocalTransform>(e.entity)) {
+                        t->position.x += dx;
+                        MYE_LOG_INFO("[whatif] edited %s LocalTransform.position.x by %.2f (stands in for "
+                                     "an Inspector edit while paused)",
+                                     scene.GetWorld().GetName(e.entity), dx);
+                        return true;
+                    }
+                }
+                return false;
+            };
+            const auto wiBranchOk = [&](uint64_t fork, uint64_t end) {
+                if (timeTravel.BranchCount() != 1) {
+                    return false;
+                }
+                const TimeTravelBranch& b = timeTravel.Branches().front();
+                return b.forkTick == fork && timeTravel.EndTickOn(b.id) == end
+                    && b.parent == TimeTravel::kLiveLane;
+            };
+            if (wiStage == 0 && ctx.tickIndex >= static_cast<uint64_t>(config.whatIfProbeTicks)) {
+                wiN = ctx.tickIndex;
+                wiF = (wiN >= timeTravel.FirstTick() + 100) ? wiN - 100 : timeTravel.FirstTick();
+                wiOrigEnd = timeTravel.EndTick();
+                wiOrigHashN = timeTravel.HashAtTick(wiN);
+                MYE_LOG_INFO("==== what-if probe: tick %llu, fork at %llu, ring [%llu, %llu), %zu "
+                             "snapshots (%zu KB) ====",
+                             static_cast<unsigned long long>(wiN),
+                             static_cast<unsigned long long>(wiF),
+                             static_cast<unsigned long long>(timeTravel.FirstTick()),
+                             static_cast<unsigned long long>(timeTravel.EndTick()),
+                             timeTravel.SnapshotCount(), timeTravel.SnapshotBytes() / 1024);
+                wiCheck(wiOrigEnd == wiN && timeTravel.BranchCount() == 0, "no branch before the fork");
+                timeTravel.RequestSeek(wiF);
+                wiFramesLeft = 3;
+                wiStage = 1;
+            } else if (wiStage == 1 && --wiFramesLeft <= 0) {
+                wiCheck(ctx.tickIndex == wiF && timeTravel.Scrubbing()
+                            && timeTravel.LastSeek().outcome == SeekOutcome::Ok,
+                        "scrub hold at the fork tick");
+                timeTravel.EndScrub(); // 再開 = 次の tick の頭で Fork
+                wiStage = 2;
+            } else if (wiStage == 2 && ctx.tickIndex > wiF) {
+                wiCheck(wiBranchOk(wiF, wiOrigEnd), "the old future is kept as branch B1 [F, N)");
+                wiCheck(timeTravel.EndTick() == ctx.tickIndex, "the live lane restarts at the fork");
+                wiStage = 3;
+            } else if (wiStage == 3 && ctx.tickIndex >= wiN) {
+                wiCheck(timeTravel.HashAtTick(wiN) == wiOrigHashN,
+                        "same input from the fork reproduces the original N");
+                wiCheck(timeTravel.BranchCount() == 0, "an identical branch collapses");
+                timeTravel.RequestSeek(wiF);
+                wiFramesLeft = 3;
+                wiStage = 4;
+            } else if (wiStage == 4 && --wiFramesLeft <= 0) {
+                wiCheck(ctx.tickIndex == wiF && timeTravel.Scrubbing(), "scrub hold before the edit");
+                const uint64_t before = timeTravel.HashAtTick(wiF);
+                wiCheck(PokeFirstTransform(0.25f), "an entity to edit exists");
+                wiEditedHash = TimeTravel::HashOf(simRefs);
+                wiCheck(wiEditedHash != before, "the edit changes the world hash");
+                timeTravel.EndScrub();
+                wiStage = 5;
+            } else if (wiStage == 5 && ctx.tickIndex > wiF) {
+                wiCheck(wiBranchOk(wiF, wiOrigEnd), "the old future is kept again as a branch");
+                wiBranch = timeTravel.BranchCount() == 1 ? timeTravel.Branches().front().id : 0;
+                const DivergenceReport d = timeTravel.FirstDivergence(TimeTravel::kLiveLane, wiBranch);
+                wiCheck(d.comparable && d.diverged && d.firstTick == wiF,
+                        "the edit shows as a divergence at the fork tick");
+                wiCheck(timeTravel.HashAtTick(wiF) == wiEditedHash,
+                        "the live lane's state before F is the edited one");
+                // ★M52e で消えていた編集が、戻っても残ること (pinned スナップショット)
+                const uint64_t here = ctx.tickIndex;
+                const SeekReport back = SeekTo(wiF);
+                wiCheck(back.outcome == SeekOutcome::Ok && TimeTravel::HashOf(simRefs) == wiEditedHash,
+                        "seeking back to F keeps the edit");
+                const SeekReport fwd = SeekTo(here);
+                wiCheck(fwd.outcome == SeekOutcome::Ok, "seeking forward again on the edited lane");
+                wiStage = 6;
+            } else if (wiStage == 6 && ctx.tickIndex >= wiN) {
+                wiCheck(timeTravel.BranchCount() == 1 && timeTravel.FindBranch(wiBranch) != nullptr,
+                        "a diverged branch is not collapsed");
+                MYE_LOG_INFO("[whatif]   edited run at N: hash %s the original",
+                             timeTravel.HashAtTick(wiN) == wiOrigHashN ? "equals" : "differs from");
+                timeTravel.RequestSwitch(wiBranch);
+                wiFramesLeft = 3;
+                wiStage = 7;
+            } else if (wiStage == 7 && --wiFramesLeft <= 0) {
+                const SeekReport& s = timeTravel.LastSeek();
+                wiCheck(s.outcome == SeekOutcome::Ok && s.target == wiN && ctx.tickIndex == wiN,
+                        "switching to the original branch restores it and re-simulates to N");
+                wiCheck(timeTravel.EndTick() == wiOrigEnd && timeTravel.HashAtTick(wiN) == wiOrigHashN,
+                        "the live lane is the original run again");
+                wiCheck(wiBranchOk(wiF, wiN), "the edited run is kept as a branch [F, N)");
+                wiCheck(timeTravel.BranchCount() == 1
+                            && timeTravel.HashAtTickOn(timeTravel.Branches().front().id, wiF)
+                                == wiEditedHash,
+                        "the demoted branch starts from the edited state");
+                wiCheck(timeTravel.Scrubbing(), "a switch leaves the ring scrubbing");
+                timeTravel.EndScrub();
+                wiStage = 8;
+            } else if (wiStage == 8 && ctx.tickIndex >= wiN + 30) {
+                wiCheck(timeTravel.EndTick() == ctx.tickIndex && timeTravel.BranchCount() == 1,
+                        "the ring keeps recording after the switch");
+                const uint64_t here = ctx.tickIndex;
+                const SeekReport back = SeekTo(wiN);
+                const SeekReport fwd = SeekTo(here);
+                wiCheck(back.outcome == SeekOutcome::Ok && fwd.outcome == SeekOutcome::Ok,
+                        "seeks across the grafted lane verify");
+                if (wiFails == 0) {
+                    MYE_LOG_INFO("==== what-if probe: ALL PASS ====");
+                } else {
+                    MYE_LOG_ERROR("==== what-if probe: %d FAILED ====", wiFails);
+                    exitCode = 1;
+                }
+                wiStage = 9;
+                ctx.requestExit = true;
+            }
         }
         if (verifying && !player.failed && !player.HasTick(ctx.tickIndex)) {
             // 未完了 tick (クラッシュ .rep の最後の 1 本) がある場合は必ず併記する。

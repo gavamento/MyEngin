@@ -2185,6 +2185,33 @@ transform side table, audio) is *not* captured; it is either reset by the caller
   several distances, re-simulates forward, compares hashes, and then confirms on the live frame
   loop that scrubbing holds the tick index still and that resuming truncates the ring
 
+**Branches (M72a / M72b).** Resuming after a seek used to discard the recorded future. It is now
+kept as a *branch*: at the head of the tick loop `TimeTravel::Fork` moves the entries and
+snapshots from the current tick onward into a `TimeTravelBranch`, which owns only that suffix and
+delegates everything before its fork tick to its parent lane (a tree; the live lane is id 0).
+Two consequences shape the design:
+
+- The state "before tick T" is no longer unique per tick once the Inspector edits the world while
+  paused at T, so the snapshot at the fork tick is **lane-specific**: the branch inherits the old
+  one, the live lane re-captures the edited state as a *pinned* snapshot, and `HashAtTick` prefers
+  a snapshot's recorded hash over the previous entry's `hashAfter`. Without this, seeking back to
+  T restored the pre-edit world while its hash still matched — the edit vanished with a green
+  "OK" (the M52e defect); seeking past T mismatched. The extra hash is only taken when the
+  boundary can have moved (a recorded future exists, a seek just happened, or the previous tick
+  was paused)
+- A branch whose every tick hashes identically to the live lane by the time the live lane reaches
+  its end is collapsed, so stepping and resuming does not multiply lanes; `FirstDivergence`
+  reports the first tick at which two lanes' "before" hashes differ, and an edit at the fork tick
+  shows up there. `SwitchToBranch` grafts a branch onto the live lane (demoting the current
+  suffix to a branch of its own) and the loop then seeks with a forced restore, since the world in
+  memory belongs to the lane just left. Budget is shared across lanes; branches whose fork tick
+  falls off the ring are pruned, and at most eight are kept
+
+`--whatif-selftest [N]` exercises it on the live frame loop: seek back, resume, check that the
+old future survived as a branch and collapses under identical input; seek back again, edit an
+entity, resume, check the divergence sits at the fork tick and that seeking back keeps the edit;
+switch to the original branch and check the original hash at `N` is reproduced.
+
 **Crash bundles (M52f).** A shipped build that dies leaves nothing behind unless it was prepared
 in advance, so both executables install four handlers at startup — the unhandled SEH filter,
 `std::terminate`, the pure-virtual call handler and the CRT invalid-parameter handler — and write

@@ -225,6 +225,14 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                     config.timeTravelProbeTicks = _wtoi64(argv[++i]);
                 }
                 config.vsync = false;
+            } else if (arg == L"--whatif-selftest") {
+                // M72b: 分岐 (What-if) の自動プローブ (tick 数は省略可、既定 400)。合成入力で回す
+                config.whatIfProbeTicks = 400;
+                if (i + 1 < argc && argv[i + 1][0] != L'-') {
+                    config.whatIfProbeTicks = _wtoi64(argv[++i]);
+                }
+                config.synthInput = true;
+                config.vsync = false;
             } else if (arg == L"--crash-test" && i + 1 < argc) {
                 crashTestArg = argv[++i]; // M52f (綴り違いは下で弾く)
                 config.vsync = false;

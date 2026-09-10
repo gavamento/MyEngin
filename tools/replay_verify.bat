@@ -81,7 +81,7 @@ if exist cache\replay_logs rd /s /q cache\replay_logs
 echo === parallel verification: 7 scene chains + time travel x2 + rule check ===
 rem ★Entry は空白なし相対パスで渡す (人間/CI が bat を叩くのと同じ呼び形に固定。
 rem   バッチ読取りの罠と chcp 437 の理由は runner 冒頭のコメント参照)
-pwsh -NoProfile -ExecutionPolicy Bypass -File tools\run_parallel.ps1 -Entry tools\replay_verify.bat -LogDir cache\replay_logs -Jobs "demo,parts,flow,mp,physics,joints,acoustic,ttdebug,ttrelease,rules" || goto :failed
+pwsh -NoProfile -ExecutionPolicy Bypass -File tools\run_parallel.ps1 -Entry tools\replay_verify.bat -LogDir cache\replay_logs -Jobs "demo,parts,flow,mp,physics,joints,acoustic,ttdebug,ttrelease,whatifdebug,whatifrelease,rules" || goto :failed
 
 echo.
 echo [PASS] replay consistency (Debug/Release, 7 scenes: demo + parts + flow + mp + physics + joints + acoustic) + snapshot round-trip + time travel + rule check
@@ -257,6 +257,17 @@ exit /b 0
 
 :job_ttrelease
 bin\x64\Release\Editor.exe --timetravel-selftest 400 %MYE_EXTRA_ARGS% || exit /b 1
+exit /b 0
+
+rem M72b: 分岐 (What-if)。「戻って再開しても元の未来が分岐として残る / 同じ入力なら畳まれる /
+rem 編集して再開すると分岐点で乖離し、戻っても編集が残る / 元の分岐へ切り替えると元の N と
+rem 一致する」をライブのフレームループ上で実走する。Debug/Release 両方で回す
+:job_whatifdebug
+bin\x64\Debug\Editor.exe --whatif-selftest 400 %MYE_EXTRA_ARGS% || exit /b 1
+exit /b 0
+
+:job_whatifrelease
+bin\x64\Release\Editor.exe --whatif-selftest 400 %MYE_EXTRA_ARGS% || exit /b 1
 exit /b 0
 
 :job_rules

@@ -243,6 +243,12 @@ struct EngineConfig {
     // ★これがエディタ GUI を開かずにタイムトラベルを検証できる唯一の口。
     // Editor では --autoplay と併用しないと sim が進まない (両 Main が自動で立てる)
     int64_t timeTravelProbeTicks = 0;
+    // ---- 分岐 (What-if) の自動プローブ (M72b、--whatif-selftest [N]) ----
+    // >0 で「N tick 進める → N-100 へ戻って再開 (未来は分岐へ) → 同じ入力で N まで
+    // なぞると分岐が畳まれる → もう一度戻って世界を編集してから再開 → 分岐点で乖離 /
+    // 編集が戻っても残る → 元の分岐へ切り替えると元の N と一致」を実走する。
+    // 合成入力 (synthInput) を自分で立てる。Editor では --autoplay と併用 (両 Main が立てる)
+    int64_t whatIfProbeTicks = 0;
 
     // ---- マルチプレイヤー入力レーン (M52g) ----
     // --local-players N (1..kMaxPlayers)。sim が消費する入力レーンの本数で、

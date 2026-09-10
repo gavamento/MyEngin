@@ -285,6 +285,8 @@ Runtime.exe --render-demo --deferred --rt-refl --rt-debug 12
                                           #   (撮影時は自動 freeze。画質を測るなら --rt-anim-seed)
 Editor.exe --snapshot-stress 600          # スナップショットの撮影/復元を往復させ続ける
 Editor.exe --timetravel-selftest [N]      # タイムトラベルのシーク結果と記録ハッシュを照合
+Editor.exe --whatif-selftest [N]          # 分岐 (What-if): 戻って再開しても元の未来が分岐として
+                                          #   残り、編集は分岐点の乖離になり、元の分岐へ戻れる
 Editor.exe --replay-record out.rep --replay-fast
                                           # 記録を早回し (描画を待たない)。replay_verify が使う
 Editor.exe --img-diff a.png b.png --tol 3 # PNG 差分 (exit code で成否)

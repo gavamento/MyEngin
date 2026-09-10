@@ -204,6 +204,16 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 }
                 autoPlay = true;
                 config.vsync = false;
+            } else if (arg == L"--whatif-selftest") {
+                // M72b: 分岐 (What-if) の自動プローブ。tick 数は省略可 (既定 400、100 tick 戻る)。
+                // --timetravel-selftest と同じく --autoplay を立て、合成入力で回す
+                config.whatIfProbeTicks = 400;
+                if (i + 1 < argc && argv[i + 1][0] != L'-') {
+                    config.whatIfProbeTicks = _wtoi64(argv[++i]);
+                }
+                config.synthInput = true;
+                autoPlay = true;
+                config.vsync = false;
             } else if (arg == L"--crash-test" && i + 1 < argc) {
                 // M52f: 意図的に落としてクラッシュバンドルを検証する。
                 // ★Play 中でなくても tick は進む (ポーズ tick) ので --autoplay は要らない。

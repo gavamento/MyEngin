@@ -167,3 +167,20 @@ Q 石・E 瓶)。波そのものを見たいときは SceneView の「音響」�
 - [ ] `class=Bypass` ばかり → リスナーがグリッドの外か `AcousticVolume` が無い
 - [ ] 同じコマンドを 2 回回して `[acaudio] t=` 行が**バイト一致しない** → 出力レーンに
       実時間かポインタが混ざっている (決定論の契約違反。`--synth-input` を付けて比較する)
+
+## M72: 分岐デバッグ (What-if リプレイ)
+
+前提: Play 中 (タイムトラベルのリングは Play 中しか回らない)。機械検査は
+`Editor.exe --whatif-selftest 400` (Debug / Release、`replay_verify.bat` の whatifdebug / whatifrelease)。
+ここは**手で触ったときの感触**の表。
+
+### 分岐と編集 (M72a / M72b)
+
+- [ ] Play → 数秒 → ツールバーの巻き戻し (または Timeline で戻る) → 「Branch and resume」→
+      Console に `[timetravel] fork at tick T -> branch B1 (N ticks moved)` が出る (未来は捨てられていない)
+- [ ] そのまま何も触らず走らせる → 元の未来の終端に追いついた tick で
+      `[timetravel] branch B1 collapsed: identical to the live lane` (同じ入力なら分岐は残らない)
+- [ ] 戻る → **ポーズ中に Inspector で何かの位置を動かす** → 再開 → `fork ... - the live state was
+      edited, re-captured` → もう一度その tick へ戻る → **編集が残っている** (M52e では消えていた) かつ
+      Timeline の self-check が `OK` (赤の HASH MISMATCH にならない)
+- [ ] 編集後に走らせた run は畳まれない (Console に collapsed が出ない)

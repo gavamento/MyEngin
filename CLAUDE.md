@@ -39,7 +39,7 @@ MyEngine — C++20 / DirectX 11 の自作ゲームエンジン (VS2022 / x64 / W
 | コマンド | 担保するもの |
 |---|---|
 | `bin\x64\Debug\Editor.exe --selftest` | ヘッドレス回帰 45 スイート (D3D もウィンドウも作らない) |
-| `tools\replay_verify.bat [ticks]` | 8 ビルド → 並列 10 ジョブ (7 シーンチェーン = 記録 `--replay-fast` + snapshot 往復付き照合 + Release 照合 / タイムトラベル ×2 / 規則検査)。1 本だけ回すなら `--job <名前>` 再入 (ビルド済み前提)、並列度は `MYE_REPLAY_JOBS` |
+| `tools\replay_verify.bat [ticks]` | 8 ビルド → 並列 12 ジョブ (7 シーンチェーン = 記録 `--replay-fast` + snapshot 往復付き照合 + Release 照合 / タイムトラベル ×2 / 分岐 (What-if) ×2 / 規則検査)。1 本だけ回すなら `--job <名前>` 再入 (ビルド済み前提)、並列度は `MYE_REPLAY_JOBS` |
 | `tools\shot_verify.bat [--update]` | 決定的スクショ 24 枚を `tests\golden\*.png` と比較 (CI 判定は 14 枚 — FXAA / TAA / SSR / froxel / fog / パーティクル 2 枚 / RT 反射 / RT GI / RT 反射+ReSTIR の計 10 枚は分岐反転や GPU sim で機種差が増幅するので tol=0 のローカル限定。地形の 1 枚だけ異方性フィルタの実装依存で tol=12。**物理・関節・霧・パーティクル 2・音響 2 の 7 枚は frame 120 で撮る** — 他は frame 3 = ほぼ初期配置なので物理も粒子も絵に出ない。**ReSTIR の 1 枚だけ frame 40** (M 上限 Default 16 / Prop 32 が飽和した状態を固定する。frame 3 では M ≈ 4 でクラス別上限が絵に出ない)。**UI キャンバスの 2 枚 (M70b) だけ解像度が違う** — 23 = 1280x720 (スケール経路)、24 = 960x600 (16:10 = 可変キャンバス経路)。**先に Release ビルドが必要**) |
 | `pwsh -File tools\check_rules.ps1` | 規則 1/2/4/7/8/9/10/11/12 の静的検査 (12 = Source Control の Editor 層封じ込め。9 の `$constGroups` に `kCollabProtoVersion` ⇄ `PROTO_VERSION` も載る) |
 | `cd tools\collab && cargo test` | MyeCollab (Rust) の単体 — porcelain v2 解析 / `diff_names` / `error.code` 分類 / worker のタイマー / panic 隔離 |
@@ -63,7 +63,7 @@ MyEngine — C++20 / DirectX 11 の自作ゲームエンジン (VS2022 / x64 / W
   いつ壊れたかは `tools\bisect_replay.bat` を `git bisect run` に噛ませる。
 - 手動確認用の主な CLI (`Editor.exe` / `Runtime.exe` 共通のものが多い):
   `--replay-record F --replay-ticks N` / `--replay-verify F` / `--snapshot-stress N` /
-  `--timetravel-selftest [N]` /
+  `--timetravel-selftest [N]` / `--whatif-selftest [N]` (M72b: 分岐の実走検査。合成入力で回す) /
   `--crash-test <av|purecall|terminate|invalidparam|stackoverflow>` /
   `--crash-at-tick N` / `--no-crash-handler` /
   `--local-players N` / `--synth-input` / `--local-demo` /
@@ -248,6 +248,12 @@ Editor → GameLogic → Engine → Renderer → Core → Platform   (上位は�
   照合して自己検証する。**再シム中の抑止は `TickServices::resim` 1 本**(出力レーンと C# だけ。
   `LoadScene`/`LoadGame` の読みは抑止しない — 抑止すると必ずハッシュが割れる)。
   スクラブ中は EngineLoop が tick を止める (止めないとポーズ tick がリングの未来を消す)。
+  **戻った後に走らせても未来は捨てない (M72a)** — tick ループの頭で `TimeTravel::Fork` が
+  記録済みの未来を分岐 (`TimeTravelBranch`、fork 以降の suffix だけを所有し、前は parent へ委譲)
+  へ移す。**分岐点では必ず編集後の状態を pinned スナップショットで撮り直す** — ポーズ中の
+  Inspector 編集は「tick が走る前の状態」をレーンごとに別物にするので、撮り直さないと
+  戻ったときに編集が黙って消える (M52e の欠陥)。同じ入力で分岐の終端まで
+  なぞった分岐は畳まれる。`RequestSwitch` → `SwitchToBranch` + `SeekTo(force)` で行き来する。
 - **起動経路が 2 つある**: プロジェクト起動 (`--project DIR`) と裸起動 (プロジェクトマネージャ)。
   **分岐は必ず `config.projectRoot` の有無で判定する**。シェーダは
   「プロジェクトの `assets\shaders` → エンジンリポジトリの `assets\shaders`」の 2 ルート解決
