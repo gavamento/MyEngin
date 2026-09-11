@@ -278,10 +278,16 @@ Editor → GameLogic → Engine → Renderer → Core → Platform   (上位は�
   **分岐は必ず `config.projectRoot` の有無で判定する**。シェーダは
   「プロジェクトの `assets\shaders` → エンジンリポジトリの `assets\shaders`」の 2 ルート解決
   (`PathUtil.h` の `FindEngineShaderDir`)。
-- パス比較・AssetID のキーは必ず `NormalizePathKey()` を通す。**モデル由来のサブアセット ID は
-  正規化した絶対パスのハッシュ**なので、それを含むシーン JSON はチェックアウト先に依存する =
-  コミットできない。そういうシーンはコード (`DemoContent`) を正本にして毎回組み直し、生成物は
-  gitignore する (`cache\parts_showcase.scene.json`、`assets\scenes\flow_*.scene.json` が実例)。
+- パス比較・AssetID のキーは必ず `NormalizePathKey()` を通す。**モデル由来のサブアセット ID
+  (メッシュ / マテリアル / スキン / 埋め込みテクスチャ) は `"guid://<.meta の GUID 16hex>#mesh3#part0"`
+  の HashStr** (M74a、[ADR-019](docs/adr/ADR-019-guid-subasset-keys.md))。接頭辞は
+  `assetkey::SubAssetKeyPrefix` の 1 本だけで作り、ローダに絶対パスを直接書かない。
+  M74 以前は正規化した**絶対パス**が接頭辞で、clone 先の違う 2 台で互いのモデルが黙って消えた。
+  **前提は FBX / glTF の `.meta` がコミットされていること** (無いと path-hash に落ちて元の罠に戻る)。
+  登録名の形式を変えたら `CookedCache.h` の `kCookVersion` を上げる (blob がキー文字列をそのまま再生する)。
+  旧 ID が残ったシーンは `Editor.exe --migrate-subasset-ids [--project DIR] --legacy-root <旧 clone 先>`
+  で書き換える。コード正本のショーケース (`cache\parts_showcase.scene.json` 等) は今もコードから
+  毎回組み直す — ID の都合ではなく、生成物をコミットしない既存の流儀としてそのまま。
 
 ## 規約
 
