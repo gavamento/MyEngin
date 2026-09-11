@@ -161,8 +161,8 @@ void RegisterTerrainShowcaseContent(EngineContext& ctx);
 //   関節に吊られている」骨が微振動を続け、島の全員が静まるまで誰も眠らないので
 //   ラグドール全体が一生眠らない (M60g2 の実測)。車両が推奨する 8 も同時に満たす。
 // ★builtin メッシュ + 名前キーのマテリアル + 名前引きの .physmat が基本だが、
-//   **凸包 1 個とラグドールだけはモデル (.glb) 由来**なので、保存したシーン JSON は
-//   チェックアウト先に依存する = コミットできない (parts と同じ。cache\ へ置いて毎回組む)。
+//   **凸包 1 個とラグドールだけはモデル (.glb) 由来** (parts と同じく cache\ へ置いて毎回組む。
+//   M74a 以前はその ID が絶対パス由来で、保存物がチェックアウト先に依存したのも理由だった)。
 //   凸包にモデル由来を 1 個混ぜてあるのは `.mcvx` クックを replay 被覆へ入れるため。
 void BuildJointShowcaseScene(EngineContext& ctx);
 

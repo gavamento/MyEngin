@@ -120,10 +120,10 @@ void EditorApp::OnStart(EngineContext& ctx)
         scenePath_ = ctx.assetsRoot + L"\\scenes\\rt_showcase.scene.json";
     } else if (partsShowcase) {
         // M48g: 部位追従のリプレイ被覆シーン。**cache\ に置く** (git 非追跡) —
-        // モデル由来のサブアセット ID は「正規化した**絶対パス**のハッシュ」なので、
-        // 保存した .scene.json はチェックアウト先に依存する = コミットできない。
         // 版管理された唯一の正解は BuildPartsShowcaseScene (コード) 側で、
-        // replay_verify.bat は毎回そこから組み直してから記録する
+        // replay_verify.bat は毎回そこから組み直してから記録する。
+        // (M48g 当時はモデル由来のサブアセット ID が絶対パスのハッシュで、保存物をコミット
+        //  できないことも理由だった。M74a で .meta の GUID 由来になり、その理由は消えた)
         scenePath_ = L"cache\\parts_showcase.scene.json";
     } else if (flowShowcase) {
         // M51j: フロー統合デモのタイトルシーン。ファイルは EnsureFlowShowcaseScenes が

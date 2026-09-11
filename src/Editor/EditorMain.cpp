@@ -12,6 +12,7 @@
 #include "Editor/PartSelfTest.h"
 #include "Editor/RagdollBuildSelfTest.h"
 #include "Engine/Engine/Asset/CookedCacheSelfTest.h"
+#include "Engine/Engine/Asset/SubAssetKeySelfTest.h"
 #include "Engine/Engine/SchemaSelfTest.h"
 #include "Editor/ProjectManager.h"
 #include "Editor/ProjectRegistry.h"
@@ -642,7 +643,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             && mye::RunXpbdSelfTest()           // M60'b
             && mye::RunAcousticSelfTest()       // M65a
             && mye::RunSourceControlSelfTest()  // M66a
-            && mye::RunAcousticAudioSelfTest(); // M68a
+            && mye::RunAcousticAudioSelfTest()  // M68a
+            && mye::RunSubAssetKeySelfTest();   // M74a
         return ok ? 0 : 1;
     }
 

@@ -139,9 +139,9 @@ rem ---- 部位のボーン追従シーン (M48g) ----
 rem 既定デモシーンにはスキンメッシュが 1 体も無く、骨演算は一度もハッシュ被覆に
 rem 入ったことがなかった。このペアで「骨駆動の LocalTransform が Debug/Release で
 rem ビット一致する」ことまで機械検証する。
-rem **シーンはコードから毎回組み直す** — モデル由来のサブアセット ID は正規化した
-rem 絶対パスのハッシュなので、保存した .scene.json はチェックアウト先に依存する
-rem (= コミットできない)。版管理された唯一の正解は BuildPartsShowcaseScene。
+rem **シーンはコードから毎回組み直す** — 版管理された唯一の正解は BuildPartsShowcaseScene。
+rem (M48g 当時はモデル由来のサブアセット ID が絶対パスのハッシュで、保存した .scene.json が
+rem チェックアウト先に依存したことも理由だった。M74a で .meta の GUID 由来になり、その理由は消えた)
 rem 組んだ後は保存ファイル経由でロードする = 起動時のヘッドレススケルトン登録も被覆する
 :job_parts
 if exist cache\parts_showcase.scene.json del /q cache\parts_showcase.scene.json

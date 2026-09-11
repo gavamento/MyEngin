@@ -36,7 +36,7 @@ bool ReloadMeshes(RenderResources& resources, ShaderManager& shaders, const std:
 
 // M48g: スケルトン (SkinnedModel) だけを**エンティティも GPU バッファも作らずに**登録する。
 // 詳細は ModelLoader::RegisterSkinnedModels と同じ (保存済みシーンのロード経路の穴埋め)。
-// キーは Load / ReloadMeshes と厳密に同じ (`パス#mesh<id>#skin<id>`)
+// キーは Load / ReloadMeshes と厳密に同じ (`guid://<16hex>#mesh<id>#skin<id>`、M74a)
 size_t RegisterSkinnedModels(RenderResources& resources, const std::wstring& path);
 
 } // namespace FbxLoader

@@ -81,8 +81,8 @@ set SHOT=%SHOTBASE% --no-fxaa
 set TOLNOW=%TOL%
 
 rem ---- コードから組み直すシーン (replay_verify と同じ流儀) ----
-rem parts はモデル由来のサブアセット ID が絶対パスのハッシュなのでシーンファイルを
-rem コミットできない。flow は builtin のみだが正解はコード側なので同じく生成物
+rem parts も flow も正解はコード側なので、シーンファイルは毎回組み直す生成物にしている
+rem (parts は M74a 以前、モデル由来のサブアセット ID が絶対パスのハッシュでコミットできなかった)
 echo === build generated scenes (parts / flow) ===
 set PARTS_SCENE=cache\parts_showcase.scene.json
 if exist %PARTS_SCENE% del /q %PARTS_SCENE%
