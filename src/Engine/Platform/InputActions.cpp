@@ -54,22 +54,6 @@ float NormStick(int16_t raw)
     return std::max(-1.0f, static_cast<float>(raw) / 32767.0f);
 }
 
-bool ActionDown(const InputActionDef& a, const InputSnapshot& s)
-{
-    for (uint8_t vk : a.keys) {
-        if (s.KeyDown(vk)) {
-            return true;
-        }
-    }
-    if ((a.padMask & s.padButtons) != 0) {
-        return true;
-    }
-    if ((a.mouseMask & s.mouseButtons) != 0) {
-        return true;
-    }
-    return false;
-}
-
 float EvalAxis(const InputAxisDef& a, const InputSnapshot& s)
 {
     float v = 0.0f;
@@ -97,6 +81,32 @@ float EvalAxis(const InputAxisDef& a, const InputSnapshot& s)
 }
 
 } // namespace
+
+bool InputActions::ActionDown(const InputActionDef& a, const InputSnapshot& s)
+{
+    for (uint8_t vk : a.keys) {
+        if (s.KeyDown(vk)) {
+            return true;
+        }
+    }
+    if ((a.padMask & s.padButtons) != 0) {
+        return true;
+    }
+    if ((a.mouseMask & s.mouseButtons) != 0) {
+        return true;
+    }
+    return false;
+}
+
+bool InputActions::AnyActionDown(const InputSnapshot& s) const
+{
+    for (const InputActionDef& a : actions_) {
+        if (ActionDown(a, s)) {
+            return true;
+        }
+    }
+    return false;
+}
 
 void InputActions::Load(const std::wstring& assetsRoot, bool force)
 {

@@ -72,6 +72,14 @@ bool World::IsAlive(EntityID e) const
         && records_[e.index].archetype != nullptr;
 }
 
+EntityID World::EntityFromIndex(uint32_t index) const
+{
+    if (index >= records_.size() || records_[index].archetype == nullptr) {
+        return kNullEntity;
+    }
+    return EntityID{ index, records_[index].generation };
+}
+
 // ---------------------------------------------------------------- components
 
 void* World::AddComponentRaw(EntityID e, ComponentTypeId t)

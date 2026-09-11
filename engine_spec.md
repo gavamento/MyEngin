@@ -2175,15 +2175,28 @@ transform side table, audio) is *not* captured; it is either reset by the caller
   recorded when those ticks first ran, and a mismatch is reported in the window rather than
   silently showing a past that never happened. C# script state is the expected cause, since it
   lies outside the snapshot boundary
-- Scrubbing pauses the simulation *and* stops the tick loop entirely. Resuming branches from the
-  scrub point and discards the recorded future, which is announced in the window because Unity
-  has no equivalent behaviour
+- Scrubbing pauses the simulation *and* stops the tick loop entirely. Since M73a the editor's
+  Pause does the same (**hold**): `TimeTravel::Hold` keeps the tick index at the current tick
+  instead of recording paused ticks, Step runs exactly one tick through a step budget
+  (`RequestStep`, re-held at the end of that tick by the loop), and the rule lives in one place
+  (`PlayModeController`: Pause = Hold / Resume = EndScrub / Step = RequestStep). A hold also
+  requests the boundary check, so edits made while held are re-captured by `Fork` on resume —
+  the paused-tick path (`simulated=false`) used to provide that and no longer runs. Resuming
+  branches from the scrub point (see Branches below), which is announced in the window because
+  Unity has no equivalent behaviour
+- A forward seek re-simulates from the current tick only when no *edit point* (a pinned
+  snapshot) lies between the current tick and the target; otherwise it restores from the nearest
+  snapshot first (`HasEditPointBetween`). Re-simulating from before the edit point would pass the
+  fork tick in the pre-edit state and mismatch the lane that was recorded after the edit (found by
+  dragging the Timeline strip, M73b; `--whatif-selftest` now crosses the edit point)
 - Re-simulation suppresses the output lanes (audio playback, pad vibration, save writes) exactly
   as recording and verification do, but never the *input* lanes (`LoadScene`, `LoadGame`):
   suppressing a read would produce a different world and guarantee a hash mismatch
 - `--timetravel-selftest [N]` is the machine-checkable form: it runs `N` ticks, seeks back by
   several distances, re-simulates forward, compares hashes, and then confirms on the live frame
-  loop that scrubbing holds the tick index still and that resuming truncates the ring
+  loop that scrubbing holds the tick index still, that resuming keeps the future as a branch,
+  that a hold keeps the tick index still without a seek, and that a step runs exactly one tick
+  before holding again (M73a)
 
 **Branches (M72a / M72b).** Resuming after a seek used to discard the recorded future. It is now
 kept as a *branch*: at the head of the tick loop `TimeTravel::Fork` moves the entries and

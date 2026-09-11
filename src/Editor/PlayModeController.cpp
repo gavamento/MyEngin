@@ -1,6 +1,7 @@
 #include "Editor/PlayModeController.h"
 
 #include "Engine/Core/Log.h"
+#include "Engine/Engine/Replay/TimeTravel.h"
 #include "Engine/Engine/Scene.h"
 #include "Engine/Engine/SceneSerializer.h"
 
@@ -42,9 +43,9 @@ void PlayModeController::Stop(Scene& scene)
 void PlayModeController::TogglePause()
 {
     if (state_ == PlayState::Playing) {
-        state_ = PlayState::Paused;
+        Pause();
     } else if (state_ == PlayState::Paused) {
-        state_ = PlayState::Playing;
+        Resume();
     }
 }
 
@@ -53,6 +54,13 @@ void PlayModeController::Pause()
     if (state_ == PlayState::Playing) {
         state_ = PlayState::Paused;
     }
+    // M73a: ポーズ = ホールド (tick 番号も止める)。既に Paused でも呼ぶ — スクラブ / 切替 /
+    // 差分の要求は Pause() を先に通るので、ここで立てておけば要求側と同じフラグに重なるだけ。
+    // ★stepPending_ が残っている間 (RequestStep 後にまだ tick が走っていないフレーム) は
+    //   呼ばない — Timeline の Seek ラムダから来た Pause でステップの予算を潰さないため
+    if (state_ == PlayState::Paused && !stepPending_ && tt_ != nullptr) {
+        tt_->Hold();
+    }
 }
 
 void PlayModeController::Resume()
@@ -60,12 +68,26 @@ void PlayModeController::Resume()
     if (state_ == PlayState::Paused) {
         state_ = PlayState::Playing;
     }
+    // 再生再開は保留中のステップを吸収する。残すと Playing の間は消費されず、次の Pause が
+    // 「ステップ待ち」と誤認して Hold を見送る (= 1 tick 余計に走ってから止まる)
+    stepPending_ = false;
+    if (tt_ != nullptr) {
+        tt_->EndScrub(); // 再生再開 = ここから分岐する (M52e / M72a の規約はそのまま)
+    }
 }
 
 void PlayModeController::Step()
 {
-    if (state_ == PlayState::Paused) {
-        stepPending_ = true;
+    if (state_ != PlayState::Paused) {
+        return;
+    }
+    stepPending_ = true;
+    // M73a: ホールド中なら予算 1 で tick ループを 1 本だけ通す。使い切った tick の末で
+    // EngineLoop が Hold し直すので、ステップは正確に 1 tick で止まる。
+    // リングが無い / ホールドしていないとき (記録中の Pause 等) は従来どおり
+    // ConsumeSimulateTick だけで進む
+    if (tt_ != nullptr && tt_->Scrubbing()) {
+        tt_->RequestStep(1);
     }
 }
 

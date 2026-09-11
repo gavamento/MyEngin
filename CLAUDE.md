@@ -252,6 +252,15 @@ Editor → GameLogic → Engine → Renderer → Core → Platform   (上位は�
   照合して自己検証する。**再シム中の抑止は `TickServices::resim` 1 本**(出力レーンと C# だけ。
   `LoadScene`/`LoadGame` の読みは抑止しない — 抑止すると必ずハッシュが割れる)。
   スクラブ中は EngineLoop が tick を止める (止めないとポーズ tick がリングの未来を消す)。
+  **一時停止はホールド (M73a)** — リングが生きている間、エディタの Pause は `TimeTravel::Hold` で
+  tick 番号ごと止める (ポーズ tick を積まない)。Step は `RequestStep(1)` = 予算 1 で 1 tick だけ
+  走らせ、tick 末に EngineLoop が再ホールドする。規則は `PlayModeController` の 1 か所
+  (Pause = Hold / Resume = EndScrub / Step = RequestStep)。記録 / 検証 / ネット中はリングが無いので
+  従来のポーズ tick。`Hold` は `scrubbedSinceLastTick_` を立てる = ホールド中の Inspector 編集を
+  再開時の `Fork` が拾う (ポーズ tick の `simulated=false` 経路が使えなくなった分の代替)。
+  **前進シークも、間に編集点 (pinned スナップショット) があれば復元から行く** (`HasEditPointBetween`、
+  M73b)。手前から現在地のまま再シムすると編集前の状態で分岐点を通過し、その先の記録と噛み合わずに
+  HASH MISMATCH になる (帯のドラッグで踏む)。
   **戻った後に走らせても未来は捨てない (M72a)** — tick ループの頭で `TimeTravel::Fork` が
   記録済みの未来を分岐 (`TimeTravelBranch`、fork 以降の suffix だけを所有し、前は parent へ委譲)
   へ移す。**分岐点では必ず編集後の状態を pinned スナップショットで撮り直す** — ポーズ中の
@@ -296,6 +305,10 @@ Editor → GameLogic → Engine → Renderer → Core → Platform   (上位は�
   全て LF なので、`core.autocrlf=false` のチェックアウトでは bat 以外も含めディスクが LF に
   なり、この罠を踏む + CRLF を書くツール (gen_project_files 等) の diff が全域ノイズ化する
   — **このリポジトリは `core.autocrlf=true` 前提** (リポジトリローカルに設定済み)。
+- **`replay_verify.bat --job <名前>` を手で直接叩くときは `cmd /c "chcp 437 >nul & tools\replay_verify.bat --job ttdebug"`**
+  のように単バイト CP を前置する。runner はそうして子を起動しているが、CP932 のコンソールから
+  直接再入すると UTF-8 の rem 行が DBCS として割れ、断片がコマンド実行されて exit 255 になる
+  (`'ので、cook' は、内部コマンドまたは…`)。bat の冒頭コメントにも書いてある (M73 で踏んだ)。
 - bat で終了コードを見るときは `if errorlevel 1` を使わない。SEH で落ちた exit code
   (`0xC0000005` 等) は符号付きだと負なので「1 以上か」の判定が**偽になる**。
   `if !ERRORLEVEL! NEQ 0` の数値比較で書くこと (M52f)。

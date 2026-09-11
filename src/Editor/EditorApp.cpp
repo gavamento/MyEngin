@@ -683,6 +683,9 @@ void EditorApp::OnImGui(EngineContext& ctx)
     //   ここ (フレーム側) で拾って明示的にスクラブを抜ける = そこから分岐する
     if (ctx.timeTravel != nullptr) {
         ctx.timeTravel->SetEnabled(playMode_.InPlayMode());
+        // M73a: Pause = Hold / Resume = EndScrub / Step = RequestStep の規則は
+        // PlayModeController に 1 本化してある。以下は Controller を通らない経路の安全網
+        playMode_.BindTimeTravel(ctx.timeTravel);
         const PlayState playState = playMode_.State();
         // ★見るのは「今 Playing か」ではなく **Paused → Playing の遷移**。
         //   スクラブは必ずポーズを伴うので、状態だけで判定すると --autoplay のように
@@ -691,6 +694,13 @@ void EditorApp::OnImGui(EngineContext& ctx)
             && ((playState == PlayState::Playing && prevPlayState_ != PlayState::Playing)
                 || playMode_.StepPending())) {
             ctx.timeTravel->EndScrub();
+        }
+        // ★ポーズ中は必ずホールド (M73a)。Play 直後の Begin 待ち 1 フレームで Pause を押すと
+        //   Hold が no-op で抜けるので、リングが起きた次のフレームでここが拾う。
+        //   ステップ待ち (StepPending) の間は予算で走らせるので触らない
+        if (ctx.timeTravel->Enabled() && playState == PlayState::Paused
+            && !playMode_.StepPending() && !ctx.timeTravel->Scrubbing()) {
+            ctx.timeTravel->Hold();
         }
         prevPlayState_ = playState;
     }

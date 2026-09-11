@@ -912,14 +912,11 @@ MYE_STR(TT_NotPlaying,        "Time travel records only while Play is running.",
                               "タイムトラベルは再生中だけ記録します。")
 MYE_STR(TT_Warming,           "starting the ring at the next tick...",
                               "次の tick からリングを開始します...")
-MYE_STR(TT_Range,             "tick %llu - %llu   (now %llu)",
-                              "tick %llu - %llu   (現在 %llu)")
-MYE_STR(TT_Snapshots,         "%d snapshots / %.1f MB   (one every %d simulated ticks)",
-                              "スナップショット %d 枚 / %.1f MB   (sim %d tick ごと)")
-MYE_STR(TT_Scrubbing,         "Scrubbing. Resuming Play branches from here; the recorded future is kept as a branch.",
-                              "スクラブ中。再生するとここから分岐します (記録済みの未来は分岐として残ります)。")
-MYE_STR(TT_Resume,            "Branch and resume###TTResume",
-                              "分岐して再開###TTResume")
+MYE_STR(TT_RangeLine,         "ring: tick %llu - %llu   |   %d snapshots / %.1f MB (one every %d simulated ticks)",
+                              "リング: tick %llu - %llu   |   スナップショット %d 枚 / %.1f MB (sim %d tick ごと)")
+MYE_STR(TT_Scrubbing,         "Resuming here branches: the recorded future is kept as a branch.",
+                              "ここから再開すると分岐します (記録済みの未来は分岐として残ります)。")
+MYE_STR(TT_Resume,            "Branch and resume", "分岐して再開")
 MYE_STR(TT_SeekOk,            "last seek: tick %llu OK (%llu ticks re-simulated, %.1f ms)",
                               "直前のシーク: tick %llu 一致 (%llu tick 再シム、%.1f ms)")
 MYE_STR(TT_SeekMismatch,      "last seek: tick %llu HASH MISMATCH - state outside the snapshot "
@@ -932,7 +929,7 @@ MYE_STR(TT_CsharpNote,        "C# script state does not rewind - only the C++ si
                               "C# スクリプトの状態は巻き戻りません — 撮影対象は C++ の sim レーンだけです。")
 MYE_STR(Tool_TipTimeTravel,   "rewind 30 ticks (time travel)", "30 tick 巻き戻す (タイムトラベル)")
 // ---- 分岐レーン (M72c) ----
-MYE_STR(TT_Lanes,             "Lanes", "レーン")
+MYE_STR(TT_SectionLanes,      "Lanes###TTSecLanes", "レーン###TTSecLanes")
 MYE_STR(TT_LaneLive,          "live", "ライブ")
 MYE_STR(TT_LaneName,          "B%u @%llu", "B%u @%llu")
 MYE_STR(TT_LaneColLane,       "lane", "レーン")
@@ -979,7 +976,7 @@ MYE_STR(TT_DiffColField,      "component.field", "コンポーネント.フィ�
 MYE_STR(TT_DiffColLive,       "live", "ライブ")
 MYE_STR(TT_DiffColBranch,     "branch", "分岐")
 MYE_STR(TT_DiffMore,          "... and %llu more", "... 他 %llu 件")
-MYE_STR(TT_OvrTitle,          "Input overrides (live lane)", "入力の上書き (ライブレーン)")
+MYE_STR(TT_OvrTitle,          "Input overrides (live lane)###TTSecOvr", "入力の上書き (ライブレーン)###TTSecOvr")
 MYE_STR(TT_OvrNoActions,      "No actions or axes are defined (assets\\input\\actions.json).",
                               "アクションも軸も定義されていません (assets\\input\\actions.json)。")
 MYE_STR(TT_OvrLane,           "lane", "レーン")
@@ -995,6 +992,20 @@ MYE_STR(TT_OvrHint,           "Applied when those ticks run on the live lane (ag
                               "recorded into the ring like any input, so seeks replay them.",
                               "ライブレーンでその tick が走るときに効きます (レーンを切り替えた後も)。"
                               "普通の入力と同じくリングに記録されるので、シークでも再現します。")
+// ---- タイムラインのホールドと帯 (M73) ----
+MYE_STR(TT_StatePlaying,      "playing", "再生中")
+MYE_STR(TT_StateHeld,         "paused at tick %llu", "tick %llu で停止中")
+MYE_STR(TT_StateScrubbing,    "stopped at tick %llu (in the past)", "tick %llu で停止中 (過去)")
+MYE_STR(TT_Timecode,          "tick %llu   %s", "tick %llu   %s")
+MYE_STR(TT_StripHint,         "tick %llu   %s\nclick / drag: seek     wheel: -1 / +1 tick     Shift+wheel: -30 / +30",
+                              "tick %llu   %s\nクリック / ドラッグ: シーク     ホイール: -1 / +1 tick     Shift+ホイール: -30 / +30")
+MYE_STR(TT_RowInput,          "input", "入力")
+MYE_STR(TT_RowOverride,       "override", "上書き")
+MYE_STR(TT_SectionDiff,       "Field diff###TTSecDiff", "フィールド差分###TTSecDiff")
+MYE_STR(TT_TipFirst,          "to the start of the ring", "リングの先頭へ")
+MYE_STR(TT_TipLast,           "to the live end", "ライブの末尾へ")
+MYE_STR(TT_TipFork,           "seek to the fork tick", "分岐点の tick へシーク")
+MYE_STR(TT_TipDivergence,     "seek to the first diverging tick", "最初に乖離した tick へシーク")
 
 // ---- ネットワーク (M52i) ----
 MYE_STR(Win_Net,              "Network###Net", "ネットワーク###Net")

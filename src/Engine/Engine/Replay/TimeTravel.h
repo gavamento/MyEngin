@@ -252,7 +252,26 @@ public:
     const SeekReport& LastSeek() const { return lastSeek_; }
 
     bool Scrubbing() const { return scrubbing_; }
-    void EndScrub() { scrubbing_ = false; } // 再生/ステップ再開 = ここから分岐する
+    // 再生再開 = ここから分岐する。ステップ予算も捨てる (Step 直後に Play を押したとき
+    // 1 tick 走ってまた止まらないように)
+    void EndScrub()
+    {
+        scrubbing_ = false;
+        stepTicksLeft_ = 0;
+    }
+
+    // ---- ホールド (M73a) ----
+    // 現在 tick で tick を止める (= Scrubbing() を真にする)。RequestSeek(now) と違って
+    // 復元も再シムも要求しないので、フレーム頭で SeekTo は走らない。
+    // ★scrubbedSinceLastTick_ を立てるのが要点 — ホールド中の Inspector 編集を再開時の
+    //   Fork が撮り直すため。従来の Pause で編集が拾えていたのは「ポーズ tick が simulated=false
+    //   で積まれ、NeedsBoundaryCheck の第 3 条件が真になる」ことに依存していた。ホールドは
+    //   その tick を積まないので、ここで代替しないと M72a の「編集が黙って消える」が再発する
+    void Hold();
+    // ticks 本だけ走らせて再びホールドする (エディタの Step)。EngineLoop が tick 末に
+    // ConsumeStepBudget() を呼び、真が返った tick で Hold() する = 正確に ticks 本で止まる
+    void RequestStep(uint32_t ticks = 1);
+    bool ConsumeStepBudget();
 
     // ---- 参照 (ライブレーン) ----
     uint64_t FirstTick() const { return firstTick_; }
@@ -261,6 +280,11 @@ public:
     const TimeTravelEntry* Entry(uint64_t t) const;
     // 「tick t が走る**前**の状態」のハッシュ。t == EndTick() なら現在の状態
     uint64_t HashAtTick(uint64_t t) const { return HashAtTickOn(kLiveLane, t); }
+    // (after, upto] にライブレーンの編集点 (pinned スナップショット = 分岐点で撮り直した
+    // 「編集後」の 1 枚) があるか。前進シークが「現在地からそのまま再シム」してよいのは
+    // 間に編集点が無いときだけ — 手前から記録入力で再シムすると編集前の状態で分岐点を
+    // 通過し、その先の記録 (編集後の世界で走った入力列) と噛み合わない (M73b で踏んだ)
+    bool HasEditPointBetween(uint64_t after, uint64_t upto) const;
     // target 以下で最寄りのスナップショット (無ければ nullptr)
     const std::vector<std::byte>* SnapshotAtOrBefore(uint64_t target, uint64_t& outTick) const
     {
@@ -268,6 +292,8 @@ public:
     }
 
     size_t SnapshotCount() const { return snapshots_.size(); }
+    // ライブレーンのスナップショット列 (tick 昇順)。Timeline の帯の目盛り用 (読み取り専用)
+    const std::vector<TimeTravelSnap>& Snapshots() const { return snapshots_; }
     size_t SnapshotBytes() const { return bytes_; } // 全レーン合計
     size_t EntryCount() const { return entries_.size(); }
 
@@ -302,6 +328,7 @@ private:
     bool want_ = false;
     bool enabled_ = false;
     bool scrubbing_ = false;
+    uint32_t stepTicksLeft_ = 0; // RequestStep の残り本数。0 = ステップ中ではない (M73a)
     bool seekPending_ = false;
     bool switchPending_ = false;
     bool diffPending_ = false;

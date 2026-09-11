@@ -9,6 +9,7 @@
 #include "Engine/Core/Log.h"
 #include "Engine/Core/World.h"
 #include "Engine/Engine/GameFlow.h"
+#include "Engine/Engine/Replay/TimeTravel.h"
 #include "Engine/Engine/Replay/WorldHasher.h"
 #include "Engine/Engine/SaveGame.h"
 #include "Engine/Engine/Scene.h"
@@ -214,6 +215,48 @@ bool RunGameFlowSelfTest()
               "stop drops persist values written during play");
         check(scene.Persist().Find(HashStr("editor-side")) != nullptr,
               "stop restores pre-play persist values");
+    }
+
+    // ---- PlayModeController × TimeTravel (M73a): Pause = Hold / Resume = EndScrub / Step = 予算 1 ----
+    // 一時停止の入口 7 か所が全部ここを通るので、規則はこの 1 か所で固定する
+    {
+        Scene scene;
+        scene.CreateGameObjectTracked("thing");
+        scene.GetWorld().ApplyStructuralChanges();
+        PlayModeController pmc;
+        // 束ねていない (= 従来の経路 / リングを持たない self test) ときは落ちず、状態だけ動く
+        pmc.Play(scene);
+        pmc.Pause();
+        pmc.Step();
+        pmc.Resume();
+        check(pmc.State() == PlayState::Playing,
+              "unbound: Pause/Step/Resume only move the play state");
+        SimRefs refs;
+        refs.scene = &scene;
+        TimeTravel tt;
+        tt.SetEnabled(true);
+        tt.Begin(refs, 0);
+        pmc.BindTimeTravel(&tt);
+        pmc.Pause();
+        check(pmc.State() == PlayState::Paused && tt.Scrubbing(),
+              "bound: Pause holds the ring (the tick counter stops)");
+        check(tt.NeedsBoundaryCheck(tt.EndTick()),
+              "bound: a hold asks for the boundary check on resume (edits are re-captured)");
+        pmc.Step();
+        check(pmc.StepPending() && !tt.Scrubbing(),
+              "bound: Step releases the hold with a one-tick budget");
+        check(pmc.ConsumeSimulateTick() && !pmc.StepPending(),
+              "...and the next tick simulates exactly once");
+        check(tt.ConsumeStepBudget(), "...and the ring's budget is exhausted by that tick");
+        tt.Hold(); // EngineLoop が tick 末でこう呼ぶ
+        pmc.Pause();
+        check(tt.Scrubbing() && pmc.State() == PlayState::Paused,
+              "bound: Pause while already held is idempotent");
+        pmc.Resume();
+        check(pmc.State() == PlayState::Playing && !tt.Scrubbing(),
+              "bound: Resume releases the hold");
+        pmc.Stop(scene);
+        pmc.BindTimeTravel(nullptr);
     }
 
     if (failCount == 0) {

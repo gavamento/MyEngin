@@ -103,6 +103,12 @@ public:
     // 正規化済み値 [-1,1] へのデッドゾーン適用 (残域を 0..1 に再スケール)。
     // Evaluate の実体を selftest から直接検査するために公開する
     static float ApplyDeadzone(float v, float deadzone);
+    // アクション 1 本がスナップショット 1 枚で押下か (keys / pad / mouse の OR)。Evaluate の実体。
+    // M73b: Timeline の入力帯が**過去 tick の記録済み entry** を見るために公開する
+    // (ActionState 系は Evaluate 済みのライブ状態しか返さない)
+    static bool ActionDown(const InputActionDef& a, const InputSnapshot& s);
+    // 定義済みアクションのどれかが押されているか。定義が無ければ常に false
+    bool AnyActionDown(const InputSnapshot& s) const;
 
 private:
     std::vector<InputActionDef> actions_;

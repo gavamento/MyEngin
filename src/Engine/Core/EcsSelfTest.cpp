@@ -32,6 +32,8 @@ void TestLifetimeAndGenerations()
 
     const EntityID e = w.CreateEntity("A");
     TEST_CHECK(w.IsAlive(e));
+    TEST_CHECK(w.EntityFromIndex(e.index) == e);
+    TEST_CHECK(w.EntityFromIndex(e.index + 1000).IsNull());
     TEST_CHECK(strcmp(w.GetName(e), "A") == 0);
     TEST_CHECK(w.GetComponent<LocalTransform>(e) != nullptr);
 
@@ -40,6 +42,7 @@ void TestLifetimeAndGenerations()
     TEST_CHECK(w.IsAlive(e));
     w.ApplyStructuralChanges();
     TEST_CHECK(!w.IsAlive(e));
+    TEST_CHECK(w.EntityFromIndex(e.index).IsNull());
 
     // スロット再利用で generation が進み、古いハンドルは無効のまま
     const EntityID e2 = w.CreateEntity("B");
@@ -47,6 +50,7 @@ void TestLifetimeAndGenerations()
     TEST_CHECK(e2.generation != e.generation);
     TEST_CHECK(!w.IsAlive(e));
     TEST_CHECK(w.IsAlive(e2));
+    TEST_CHECK(w.EntityFromIndex(e2.index) == e2);
 }
 
 void TestArchetypeMovePreservesData()

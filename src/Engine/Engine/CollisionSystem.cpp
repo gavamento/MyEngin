@@ -71,7 +71,7 @@ void CollisionSystem::Update(World& world, ScriptHost* scripts, ManagedHost* man
     // ---- トリガー: ブロードフェーズ候補 (M28d) → 重なり判定 → 現 tick のペア集合 ----
     // M28c: ペアの少なくとも片方が isTrigger のものだけがトリガーイベント対象
     // (ソリッド同士の接触は PhysicsSystem 由来の OnCollision 系に移管)
-    std::vector<uint64_t> pairs;
+    currentPairs_.clear();
     {
         std::vector<BroadphaseEntry> entries;
         entries.reserve(bodies.size());
@@ -81,9 +81,8 @@ void CollisionSystem::Update(World& world, ScriptHost* scripts, ManagedHost* man
             shapes::ComputeAabb(bodies[i].pose, e.minX, e.minY, e.minZ, e.maxX, e.maxY, e.maxZ);
             entries.push_back(e); // margin 0 (静止判定なので現在位置の AABB で十分)
         }
-        std::vector<uint64_t> candidates;
-        ComputeCandidatePairs(entries, candidates);
-        for (const uint64_t key : candidates) {
+        ComputeCandidatePairs(entries, candidatePairs_);
+        for (const uint64_t key : candidatePairs_) {
             const Body& a = bodies[static_cast<size_t>(key >> 32)];
             const Body& b = bodies[static_cast<size_t>(key & 0xFFFFFFFFu)];
             if (!a.isTrigger && !b.isTrigger) {
@@ -93,20 +92,23 @@ void CollisionSystem::Update(World& world, ScriptHost* scripts, ManagedHost* man
                 continue; // M36a: レイヤー非マッチはトリガーイベントも出さない
             }
             if (shapes::Overlap(a.pose, b.pose)) {
-                pairs.push_back((static_cast<uint64_t>(a.entity.index) << 32) | b.entity.index);
+                currentPairs_.push_back((static_cast<uint64_t>(a.entity.index) << 32)
+                                        | b.entity.index);
             }
         }
     }
-    std::sort(pairs.begin(), pairs.end());
+    std::sort(currentPairs_.begin(), currentPairs_.end());
 
     // ---- トリガー差分 → enter / exit (昇順配信 = 決定論) ----
     trigEnter_.clear();
     trigExit_.clear();
-    std::set_difference(pairs.begin(), pairs.end(), prevPairs_.begin(), prevPairs_.end(),
+    std::set_difference(currentPairs_.begin(), currentPairs_.end(), prevPairs_.begin(),
+                        prevPairs_.end(),
                         std::back_inserter(trigEnter_));
-    std::set_difference(prevPairs_.begin(), prevPairs_.end(), pairs.begin(), pairs.end(),
+    std::set_difference(prevPairs_.begin(), prevPairs_.end(), currentPairs_.begin(),
+                        currentPairs_.end(),
                         std::back_inserter(trigExit_));
-    prevPairs_ = std::move(pairs);
+    prevPairs_.swap(currentPairs_);
 
     // ---- ソリッド差分 → enter / stay / exit (M28c) ----
     solidEnter_.clear();
@@ -114,39 +116,30 @@ void CollisionSystem::Update(World& world, ScriptHost* scripts, ManagedHost* man
     solidExit_.clear();
     static const std::vector<SolidContact> kNoContacts;
     const std::vector<SolidContact>& solid = solidContacts ? *solidContacts : kNoContacts;
-    std::vector<uint64_t> solidKeys;
-    solidKeys.reserve(solid.size());
+    currentSolidPairs_.clear();
+    currentSolidPairs_.reserve(solid.size());
     for (const SolidContact& c : solid) {
-        solidKeys.push_back(c.key); // PhysicsSystem 出力は key 昇順
+        currentSolidPairs_.push_back(c.key); // PhysicsSystem 出力は key 昇順
     }
-    std::set_difference(solidKeys.begin(), solidKeys.end(), prevSolidPairs_.begin(),
+    std::set_difference(currentSolidPairs_.begin(), currentSolidPairs_.end(),
+                        prevSolidPairs_.begin(),
                         prevSolidPairs_.end(), std::back_inserter(solidEnter_));
-    std::set_intersection(solidKeys.begin(), solidKeys.end(), prevSolidPairs_.begin(),
+    std::set_intersection(currentSolidPairs_.begin(), currentSolidPairs_.end(),
+                          prevSolidPairs_.begin(),
                           prevSolidPairs_.end(), std::back_inserter(solidStay_));
-    std::set_difference(prevSolidPairs_.begin(), prevSolidPairs_.end(), solidKeys.begin(),
-                        solidKeys.end(), std::back_inserter(solidExit_));
-    prevSolidPairs_ = std::move(solidKeys);
+    std::set_difference(prevSolidPairs_.begin(), prevSolidPairs_.end(),
+                        currentSolidPairs_.begin(), currentSolidPairs_.end(),
+                        std::back_inserter(solidExit_));
+    prevSolidPairs_.swap(currentSolidPairs_);
 
     if (!scripts && !managed) {
         return;
     }
-    auto resolve = [&world](uint32_t index) {
-        // index から現世代のハンドルを引く (死んでいれば null)
-        for (const auto& arch : world.Archetypes()) {
-            for (uint32_t row = 0; row < arch->Count(); ++row) {
-                if (arch->EntityAt(row).index == index) {
-                    return arch->EntityAt(row);
-                }
-            }
-        }
-        return kNullEntity;
-    };
-
     // ---- トリガー配信 (enter → exit、各 key 昇順) ----
     auto dispatchTrigger = [&](const std::vector<uint64_t>& list, bool enter) {
         for (uint64_t key : list) {
-            const EntityID a = resolve(static_cast<uint32_t>(key >> 32));
-            const EntityID b = resolve(static_cast<uint32_t>(key & 0xFFFFFFFFu));
+            const EntityID a = world.EntityFromIndex(static_cast<uint32_t>(key >> 32));
+            const EntityID b = world.EntityFromIndex(static_cast<uint32_t>(key & 0xFFFFFFFFu));
             if (!a.IsNull()) {
                 if (scripts) { scripts->DispatchTrigger(a, b, enter); }
                 if (managed) { managed->DispatchTrigger(a, b, enter); }
@@ -164,8 +157,8 @@ void CollisionSystem::Update(World& world, ScriptHost* scripts, ManagedHost* man
     // 法線は「相手→自分」方向で渡す (SolidContact.n は大 index→小 index = 小側の自分向き)
     auto dispatchCollision = [&](const std::vector<uint64_t>& list, int kind) {
         for (uint64_t key : list) {
-            const EntityID a = resolve(static_cast<uint32_t>(key >> 32));
-            const EntityID b = resolve(static_cast<uint32_t>(key & 0xFFFFFFFFu));
+            const EntityID a = world.EntityFromIndex(static_cast<uint32_t>(key >> 32));
+            const EntityID b = world.EntityFromIndex(static_cast<uint32_t>(key & 0xFFFFFFFFu));
             float nx, ny, nz;
             FindContactNormal(solid, key, nx, ny, nz);
             if (!a.IsNull()) {

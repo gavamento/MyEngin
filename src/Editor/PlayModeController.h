@@ -6,6 +6,7 @@
 namespace mye {
 
 class Scene;
+class TimeTravel;
 
 enum class PlayState { Editing, Playing, Paused };
 
@@ -19,13 +20,19 @@ public:
 
     void Play(Scene& scene);
     void Stop(Scene& scene);
-    void TogglePause();
+    // M73a: タイムトラベルのリングを束ねる (EditorApp が毎フレーム OnImGui の頭で呼ぶ。
+    // OnStart の時点では ctx.timeTravel が無い)。束ねると Pause = Hold (tick 番号も止める) /
+    // Resume = EndScrub / Step = RequestStep(1) になり、一時停止の入口 (ツールバー・Timeline・
+    // 巻き戻し) 7 か所すべてが同じ規則を通る。リングが無効 (記録 / 検証 / ネット中) のときは
+    // Hold が no-op なので従来どおり sim だけ止まる = 「記録中は .rep がタイムラインの役」
+    void BindTimeTravel(TimeTravel* tt) { tt_ = tt; }
+    void TogglePause(); // Pause / Resume へ委譲
     // M52e: 状態を明示して指定する版 (タイムラインのスクラブが使う)。
     // TogglePause だと「今どちらか」を呼び側が知っている必要があり、
     // スクラブのたびに再生/停止が反転する事故になる
     void Pause();
     void Resume();
-    void Step(); // Paused 中に 1 tick だけ進める
+    void Step(); // Paused 中に 1 tick だけ進める (ホールド中は正確に 1 tick で再ホールド)
     // M52e: ステップ要求が立っているか。スクラブ中は tick が止まっているので、
     // 「ステップを押した = 分岐して 1 tick 進めたい」を外から観測する必要がある
     bool StepPending() const { return stepPending_; }
@@ -41,6 +48,7 @@ private:
     TimeControl timeSnapshot_;
     PersistStore persistSnapshot_;
     bool stepPending_ = false;
+    TimeTravel* tt_ = nullptr; // M73a: 非所有。null なら従来の Pause (sim だけ止める)
 };
 
 } // namespace mye

@@ -46,6 +46,11 @@ public:
 private:
     std::vector<uint64_t> prevPairs_;      // トリガー: (aIdx<<32)|bIdx, aIdx<bIdx、昇順
     std::vector<uint64_t> prevSolidPairs_; // ソリッド: 同上 (前 tick の接触ペア)
+    // tick 間で capacity を再利用する作業領域。sim 状態ではなくスナップショット対象外。
+    // prev* と swap することで、接触数に比例する毎 tick の再確保を避ける。
+    std::vector<uint64_t> currentPairs_;
+    std::vector<uint64_t> currentSolidPairs_;
+    std::vector<uint64_t> candidatePairs_;
     // 直近 Update の配信内容 (観測用)
     std::vector<uint64_t> trigEnter_, trigExit_;
     std::vector<uint64_t> solidEnter_, solidStay_, solidExit_;

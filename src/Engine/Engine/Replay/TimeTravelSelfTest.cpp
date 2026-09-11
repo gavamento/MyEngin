@@ -201,6 +201,10 @@ bool RunTimeTravelSelfTest()
     check(none == 0, "Fork(130) with no future creates no branch");
     check(tt.SnapshotCount() == 2 && tt.HashAtTick(130) == editedHash,
           "...but re-captures the edited state (the stale snapshot at 130 is replaced)");
+    // M73b: 撮り直した pinned は前進シークの「編集点」— 手前から跨ぐシークは復元から行く
+    check(tt.HasEditPointBetween(100, 130) && tt.HasEditPointBetween(129, 130)
+              && !tt.HasEditPointBetween(130, 200) && !tt.HasEditPointBetween(100, 129),
+          "the re-captured snapshot is an edit point for forward seeks that cross it");
     {
         const DivergenceReport d = tt.FirstDivergence(TimeTravel::kLiveLane, b2);
         check(d.comparable && d.diverged && d.firstTick == 130,
@@ -452,6 +456,51 @@ bool RunTimeTravelSelfTest()
             tabs += (c == '\t') ? 1 : 0;
         }
         check(tabs == 4, "the row has 5 tab-separated columns");
+    }
+
+    // ---- ホールドとステップ (M73a) ----
+    // エディタの Pause = Hold (tick を止める)、Step = RequestStep(1) → 1 tick →
+    // ConsumeStepBudget が真 → Hold。要点は「ホールド中の Inspector 編集を再開時の Fork が
+    // 拾う」= Hold が境界チェックを要求すること (上の「ポーズ tick」の検査と対になる —
+    // ホールドはポーズ tick を積まないので、第 3 条件の代わりに scrubbedSinceLastTick_ で拾う)
+    {
+        TimeTravel ringHold;
+        ringHold.Configure(cfg);
+        ringHold.Hold();
+        check(!ringHold.Scrubbing(), "Hold before Begin is a no-op (no ring = nothing to hold)");
+        tick = 5000;
+        ringHold.SetEnabled(true);
+        ringHold.Begin(refs, tick);
+        for (int i = 0; i < 5; ++i) {
+            RunTick(ringHold, true);
+        }
+        check(!ringHold.NeedsBoundaryCheck(ringHold.EndTick()),
+              "simulated ticks at the ring end need no boundary check (baseline)");
+        ringHold.Hold();
+        check(ringHold.Scrubbing(), "Hold stops the ticks (Scrubbing)");
+        check(ringHold.NeedsBoundaryCheck(ringHold.EndTick()),
+              "a hold requests the boundary check (edits during the hold are re-captured by Fork)");
+        check(!ringHold.ConsumeStepBudget(), "no step budget while merely held");
+        ringHold.RequestStep(1);
+        check(!ringHold.Scrubbing(), "RequestStep releases the hold for the budget");
+        RunTick(ringHold, true);
+        check(ringHold.ConsumeStepBudget(), "a 1-tick budget is exhausted by exactly one tick");
+        ringHold.Hold(); // EngineLoop が tick 末でこう呼ぶ
+        check(ringHold.Scrubbing() && ringHold.EndTick() == 5006,
+              "...and the ring is held again one tick later");
+        check(ringHold.NeedsBoundaryCheck(ringHold.EndTick()),
+              "the re-hold requests the boundary check again (OnTickEnd cleared it, Hold set it back)");
+        check(!ringHold.ConsumeStepBudget(), "a consumed budget stays consumed");
+        ringHold.RequestStep(2);
+        RunTick(ringHold, true);
+        check(!ringHold.ConsumeStepBudget(), "a 2-tick budget is not exhausted after one tick");
+        ringHold.EndScrub();
+        RunTick(ringHold, true);
+        check(!ringHold.ConsumeStepBudget(), "EndScrub (Play) drops the remaining budget");
+        ringHold.Hold();
+        ringHold.Clear();
+        check(!ringHold.Scrubbing() && !ringHold.ConsumeStepBudget(),
+              "Clear drops the hold and the budget");
     }
 
     // ---- 停止 ----

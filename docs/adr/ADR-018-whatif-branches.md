@@ -124,3 +124,12 @@ API 追加なし) / `InputSnapshot` / `TimeTravelEntry` のいずれも不変。
 - ゴーストの予算 8 MiB は既定デモ (527 体が動く) では約 280 tick で打ち切る。動く物が少ない
   シーンでは 1800 tick まで届く。UI に打ち切りが出るので、必要なら `TimeTravelConfig` で上げる。
 - C# レーンは従来どおり巻き戻らない (分岐にも同じ注記)。
+- **M73 (2026-09-11)**: 一時停止をホールドに統一 (`TimeTravel::Hold` / `RequestStep` /
+  `ConsumeStepBudget`。規則は `PlayModeController` の 1 か所。ポーズ tick を積まないので、
+  ホールド中の編集は `Hold` が立てる `scrubbedSinceLastTick_` 経由で `Fork` が拾う)。Timeline は
+  トランスポート (⏮ -30 -1 ⏸/▶ step +1 +30 ⏭ + 状態語 / タイムコード) と操作できる帯
+  (クリック / ドラッグ / ホイールでシーク。fork 点・乖離 tick・スナップショット・入力・上書き区間を
+  描く) に作り直した。帯のドラッグで**編集点の手前から前進シークすると HASH MISMATCH** になる穴が
+  見つかり、`SeekTo` は間に pinned があれば復元から行くようにした (`HasEditPointBetween`。
+  `--whatif-selftest` に「編集点を跨ぐ前進シーク」の段、`--timetravel-selftest` に hold / step の段)。
+  ホールド中は描画補間 α を 1.0 に固定する (accumulator が 0 なので前 tick の行列を描き続けていた)。

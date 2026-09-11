@@ -883,7 +883,12 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         rep.target = target;
         const double t0 = clock.Now();
         scene.GetWorld().ApplyStructuralChanges();
-        if (target < ctx.tickIndex || forceRestore) {
+        // ★前進でも、現在地と target の間に編集点 (pinned スナップショット) があれば復元から
+        //   行く (M73b で踏んだ): 編集点の手前から記録入力で再シムすると編集前の状態で分岐点を
+        //   通過し、その先の記録 (編集後の世界で走った入力列) と噛み合わずに HASH MISMATCH に
+        //   なる。Timeline の帯をドラッグすると簡単に踏む経路
+        const bool crossesEdit = timeTravel.HasEditPointBetween(ctx.tickIndex, target);
+        if (target < ctx.tickIndex || forceRestore || crossesEdit) {
             uint64_t snapTick = 0;
             const std::vector<std::byte>* blob = timeTravel.SnapshotAtOrBefore(target, snapTick);
             if (blob == nullptr
@@ -1290,12 +1295,14 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
 
     // --timetravel-selftest の進行状態 (M52e)。
     // 0 = 走行中 / 1 = シーク往復を検査済みでスクラブ静止の確認待ち /
-    // 2 = 再開後の分岐の確認待ち / 3 = 終了
+    // 2 = 再開後の分岐の確認待ち / 3 = ホールド静止の確認待ち (M73a) /
+    // 4 = ステップ (正確に 1 tick で再ホールド) の確認待ち / 5 = 終了
     int ttProbeStage = 0;
     int ttProbeFails = 0;
     int ttProbeFramesLeft = 0;
     uint64_t ttScrubTarget = 0;
     uint64_t ttPreScrubEnd = 0;
+    uint64_t ttHoldTick = 0;
     // --whatif-selftest の進行状態 (M72b)。段の意味は下のプローブ本体に書いてある。
     // ★段番号は順序ではなく識別子 (20 = ゴースト検査を 2 と 3 の間に挟んだ)。終了だけ番号で見る
     constexpr int kWiDone = 9;
@@ -1323,7 +1330,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         if (dt > kMaxFrameDt) {
             dt = kMaxFrameDt;
         }
-        const bool ttProbeRunning = config.timeTravelProbeTicks > 0 && ttProbeStage < 3;
+        const bool ttProbeRunning = config.timeTravelProbeTicks > 0 && ttProbeStage < 5;
         const bool wiProbeRunning = config.whatIfProbeTicks > 0 && wiStage != kWiDone;
         if (deterministicShot || ttProbeRunning || wiProbeRunning) {
             // M52c: accumulator は毎フレームちょうど kFixedDt 増えて 1 tick 消費し 0 に戻る
@@ -1527,7 +1534,9 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         //   ここはホットリロードのセーフポイントも通過済みで、確実に tick 境界
         NetReconcile();
         NetCheckDesync();
-        while (!scrubbing && ticks < maxTicksThisFrame
+        // ★Scrubbing() は毎イテレーション読み直す (M73a): ステップ予算を使い切った tick の末で
+        //   Hold が立ち、同じフレームの残り accumulator ぶんを走らせずに抜けるため
+        while (!timeTravel.Scrubbing() && ticks < maxTicksThisFrame
                && (verifying ? player.HasTick(ctx.tickIndex)
                              : ((fastRecording || accumulator >= kFixedDt)
                                 && NetReady(ctx.tickIndex)))) {
@@ -1651,6 +1660,12 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             if (ttRing) {
                 timeTravel.OnTickEnd(simRefs, ranTick, ctx.inputs, ctx.playerCount,
                                      ctx.simulateScripts, tickHash);
+                // ---- ステップ (M73a): 予算を使い切った tick の末で再ホールド ----
+                // ★OnTickEnd が scrubbedSinceLastTick_ を降ろした**後**に Hold が立て直す順序が
+                //   要点 (ホールド中の Inspector 編集を次の再開時の Fork が拾う)
+                if (timeTravel.ConsumeStepBudget()) {
+                    timeTravel.Hold();
+                }
             }
             // ---- スナップショット往復ストレス (M52d、--snapshot-stress N) ----
             // tick 境界 (= 構造変更が空でハッシュを撮ったのと同じ状態) で「撮る → 戻す →
@@ -1800,13 +1815,49 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                          static_cast<unsigned long long>(timeTravel.EndTick()),
                          static_cast<unsigned long long>(ttPreScrubEnd),
                          timeTravel.BranchCount());
+            // ---- ホールド (M73a): エディタの Pause と同じ口を叩いて tick が止まることを見る ----
+            // RequestSeek と違い復元も再シムも起きないので、止まった tick に現在地が留まり、
+            // ライブの終端も動かないはず
+            timeTravel.Hold();
+            ttHoldTick = ctx.tickIndex;
+            ttProbeFramesLeft = 3;
+            ttProbeStage = 3;
+        } else if (ttProbeStage == 3 && --ttProbeFramesLeft <= 0) {
+            const bool held = ctx.tickIndex == ttHoldTick && timeTravel.Scrubbing()
+                && timeTravel.EndTick() == ttHoldTick;
+            if (!held) {
+                ++ttProbeFails;
+            }
+            MYE_LOG_INFO("[timetravel]   hold: %s (tick %llu, ring end %llu)",
+                         held ? "PASS" : "FAIL",
+                         static_cast<unsigned long long>(ctx.tickIndex),
+                         static_cast<unsigned long long>(timeTravel.EndTick()));
+            // ---- ステップ (M73a): 予算 1 で再開 → 1 tick 走って再ホールド ----
+            // プローブ中は dt が固定 tick 長 (1 フレーム = 1 tick) なので、3 フレーム後に +1 で
+            // 止まっていれば「正確に 1 tick」、+3 なら再ホールドが効いていない。
+            // 再ホールドが境界チェックを要求している (= ホールド中の編集を次の Fork が拾う) ことも見る
+            timeTravel.RequestStep(1);
+            ttProbeFramesLeft = 3;
+            ttProbeStage = 4;
+        } else if (ttProbeStage == 4 && --ttProbeFramesLeft <= 0) {
+            const bool stepped = ctx.tickIndex == ttHoldTick + 1 && timeTravel.Scrubbing()
+                && timeTravel.EndTick() == ttHoldTick + 1
+                && timeTravel.NeedsBoundaryCheck(ctx.tickIndex);
+            if (!stepped) {
+                ++ttProbeFails;
+            }
+            MYE_LOG_INFO("[timetravel]   step: %s (tick %llu, held at %llu, ring end %llu)",
+                         stepped ? "PASS" : "FAIL",
+                         static_cast<unsigned long long>(ctx.tickIndex),
+                         static_cast<unsigned long long>(ttHoldTick),
+                         static_cast<unsigned long long>(timeTravel.EndTick()));
             if (ttProbeFails == 0) {
                 MYE_LOG_INFO("==== time travel probe: ALL PASS ====");
             } else {
                 MYE_LOG_ERROR("==== time travel probe: %d FAILED ====", ttProbeFails);
                 exitCode = 1;
             }
-            ttProbeStage = 3;
+            ttProbeStage = 5;
             ctx.requestExit = true;
         }
         // ---- 分岐 (What-if) の自動プローブ (M72b、--whatif-selftest N) ----
@@ -1924,6 +1975,14 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                         "seeking back to F keeps the edit");
                 const SeekReport fwd = SeekTo(here);
                 wiCheck(fwd.outcome == SeekOutcome::Ok, "seeking forward again on the edited lane");
+                // M73b: 編集点の**手前**から前進で跨ぐ (帯のドラッグで踏む経路)。現在地からの
+                // 再シムでは編集前の状態で分岐点を通過してしまうので、SeekTo は間に編集点が
+                // あれば復元から行く。ここが赤いと「戻ってから進める」だけで嘘のタイムラインになる
+                const SeekReport before = SeekTo(wiF - 11);
+                const SeekReport across = SeekTo(here);
+                wiCheck(before.outcome == SeekOutcome::Ok && across.outcome == SeekOutcome::Ok
+                            && TimeTravel::HashOf(simRefs) == timeTravel.HashAtTick(here),
+                        "a forward seek across the edit point restores from the pinned snapshot");
                 wiStage = 6;
             } else if (wiStage == 6 && ctx.tickIndex >= wiN) {
                 wiCheck(timeTravel.BranchCount() == 1 && timeTravel.FindBranch(wiBranch) != nullptr,
@@ -2068,8 +2127,10 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         //   なる — M45e のドップラーは tick 差分で速度を取る前提でここに置いている。
         //   M45e: AudioSource/AudioListener を先に処理して定位を確定させ、その後に
         //   voice 回収を回す (回収でスロットが空くのは次フレームからで良い)
+        // M73a: ホールド / スクラブ中は sim を止めている扱いで渡す (ctx.simulateScripts は直前 tick
+        // の値のまま残るので、そのまま渡すと playOnAwake の source が止まった世界で鳴り出す)
         audioSources.Update(scene.GetWorld(), audioSystem, soundLibrary, ctx.tickIndex,
-                            ctx.fixedDt, ctx.simulateScripts);
+                            ctx.fixedDt, ctx.simulateScripts && !timeTravel.Scrubbing());
         // dt は**実時間**を渡す (M45f の BGM クロスフェードは絶対経過時間で進むため。
         // 固定 dt を渡すと 6500fps ではフェードが 100 倍速で終わる)
         audioSystem.Update(static_cast<float>(dt));
@@ -2119,8 +2180,11 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
 
             // M36b: 補間係数 (accumulator の残り比)。Play 中のみ有効 —
             // 編集中 / record / verify は 1.0 固定 = 従来描画 (リプレイ透過の保証)
-            const bool interpOk =
-                lastTickSimulated && !recorder.IsActive() && !player.IsActive();
+            // ★ホールド / スクラブ中も 1.0 (M73a): accumulator は 0 に落とされるので α=0 =
+            //   「前 tick の行列」を描き続けてしまう (ステップ直後に 1 フレームだけ新しい位置 →
+            //   翌フレームからステップ前の位置、に見える)。止まっている間は最新 tick を出す
+            const bool interpOk = lastTickSimulated && !recorder.IsActive() && !player.IsActive()
+                && !timeTravel.Scrubbing();
             renderSystem.interpAlpha = interpOk
                 ? std::clamp(static_cast<float>(accumulator / kFixedDt), 0.0f, 1.0f)
                 : 1.0f;

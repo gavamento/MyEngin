@@ -38,6 +38,7 @@ void TimeTravel::Clear()
 {
     enabled_ = false;
     scrubbing_ = false;
+    stepTicksLeft_ = 0;
     seekPending_ = false;
     switchPending_ = false;
     diffPending_ = false;
@@ -70,6 +71,7 @@ void TimeTravel::Begin(const SimRefs& refs, uint64_t tick)
     firstTick_ = tick;
     simSinceSnapshot_ = 0;
     scrubbing_ = false;
+    stepTicksLeft_ = 0;
     seekPending_ = false;
     switchPending_ = false;
     scrubbedSinceLastTick_ = false;
@@ -689,6 +691,49 @@ void TimeTravel::RequestSeek(uint64_t tick)
     seekPending_ = true;
     scrubbing_ = true;
     scrubbedSinceLastTick_ = true;
+}
+
+bool TimeTravel::HasEditPointBetween(uint64_t after, uint64_t upto) const
+{
+    for (const TimeTravelSnap& s : snapshots_) { // tick 昇順
+        if (s.tick > upto) {
+            break;
+        }
+        if (s.tick > after && s.pinned) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// ---------------------------------------------------------------- ホールド (M73a)
+
+void TimeTravel::Hold()
+{
+    if (!enabled_) {
+        return; // 記録 / 検証 / ネット中はリングが無い = 従来のポーズ (tick は回り続ける)
+    }
+    scrubbing_ = true;
+    scrubbedSinceLastTick_ = true; // 再開時の Fork にホールド中の編集を拾わせる
+    stepTicksLeft_ = 0;            // ホールドが勝つ (ステップ途中で止め直された場合)
+}
+
+void TimeTravel::RequestStep(uint32_t ticks)
+{
+    if (!enabled_ || ticks == 0) {
+        return;
+    }
+    stepTicksLeft_ = ticks;
+    scrubbing_ = false; // 予算ぶんだけ tick ループを通す。使い切った tick の末で EngineLoop が Hold する
+}
+
+bool TimeTravel::ConsumeStepBudget()
+{
+    if (stepTicksLeft_ == 0) {
+        return false;
+    }
+    --stepTicksLeft_;
+    return stepTicksLeft_ == 0;
 }
 
 } // namespace mye

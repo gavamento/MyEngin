@@ -32,6 +32,10 @@ public:
     EntityID CreateEntity(std::string_view name);
     void DestroyEntity(EntityID e); // 遅延 (tick 末)。子孫も破棄
     bool IsAlive(EntityID e) const;
+    // index から現在有効な世代付きハンドルを O(1) で引く。
+    // 空きスロット / 範囲外なら kNullEntity。index だけを保持するイベント列などが、
+    // World のアーキタイプ配置を全走査せずに安全な EntityID へ戻すための公開口。
+    EntityID EntityFromIndex(uint32_t index) const;
     uint32_t AliveCount() const { return aliveCount_; }
 
     // ---- コンポーネント ----
