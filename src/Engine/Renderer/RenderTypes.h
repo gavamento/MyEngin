@@ -66,6 +66,8 @@ inline float DecodeEmissive(float encoded)
 struct RenderItem {
     AssetID mesh = {};
     AssetID material = {};
+    // material/mesh/depth が同値でも描画順を確定する最終キー。
+    EntityID entity = {};
     DirectX::XMFLOAT4X4 world = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
     float viewZ = 0.0f; // ソート用 (カメラ空間深度)。RenderQueue::Sort が使用
     // スキニング (M18)。非 null = スキンメッシュ → パスがスキニングシェーダ + ボーン CB を使う。

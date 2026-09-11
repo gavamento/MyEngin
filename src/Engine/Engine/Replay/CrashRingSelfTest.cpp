@@ -124,6 +124,7 @@ bool RunCrashRingSelfTest()
     CrashRing ring;
     CrashRingConfig cfg;
     cfg.snapshotInterval = 10; // 撮り直しの検査を短い tick 数で回すため
+    cfg.hashInterval = 1;      // 既存の全 tick ハッシュ往復テスト
     cfg.maxTicks = 6;
     ring.Configure(cfg);
     ring.SetEnabled(true);
@@ -281,7 +282,52 @@ bool RunCrashRingSelfTest()
         }
     }
 
-    // ---- 6. 無効化 ----
+    // ---- 6. ハッシュ checkpoint: 入力は全 tick、期待ハッシュは間引く ----
+    {
+        CrashRing sparse;
+        CrashRingConfig sparseCfg;
+        sparseCfg.snapshotInterval = 100;
+        sparseCfg.hashInterval = 3;
+        sparseCfg.maxTicks = 8;
+        sparse.Configure(sparseCfg);
+        sparse.SetEnabled(true);
+        uint64_t sparseTick = 700;
+        InputSnapshot sparsePrev[kMaxPlayers] = {};
+        uint64_t sparseSeq = 0;
+        SimRefs sparseRefs;
+        sparseRefs.scene = &scene;
+        sparseRefs.prevTickInput = sparsePrev;
+        sparseRefs.audioHandleSeq = &sparseSeq;
+        sparseRefs.tickIndex = &sparseTick;
+        check(sparse.Begin(sparseRefs, sparseTick), "checkpoint: Begin");
+        bool checkpointPattern = true;
+        for (uint64_t i = 0; i < 5; ++i) {
+            const InputSnapshot in = MakeInput(static_cast<uint32_t>(i) + 80);
+            sparse.OnTickBegin(700 + i, &in, 1);
+            const bool needsHash = sparse.NeedsHashAfterTick(700 + i);
+            checkpointPattern = checkpointPattern && needsHash == (i == 2);
+            sparseTick = 701 + i;
+            sparse.OnTickEnd(sparseRefs, 700 + i,
+                             needsHash ? 0x8888888888888888ull : 0);
+        }
+        check(checkpointPattern, "checkpoint: 3 tick ごとだけハッシュを要求する");
+        ReplayPlayer sparsePlayer;
+        if (check(RoundTrip(sparse, repPath, sparsePlayer), "checkpoint: .rep を読み直せる")) {
+            bool inputsKept = sparsePlayer.TickCount() == 5;
+            for (uint64_t i = 0; i < 5; ++i) {
+                const InputSnapshot want = MakeInput(static_cast<uint32_t>(i) + 80);
+                inputsKept = inputsKept
+                    && std::memcmp(&sparsePlayer.InputForTick(i), &want, sizeof(InputSnapshot)) == 0;
+            }
+            check(inputsKept, "checkpoint: 入力は間引かず全 tick 保存する");
+            check(!sparsePlayer.HasExpectedHash(0) && !sparsePlayer.HasExpectedHash(1)
+                      && sparsePlayer.ExpectedHash(2) == 0x8888888888888888ull
+                      && !sparsePlayer.HasExpectedHash(3) && !sparsePlayer.HasExpectedHash(4),
+                  "checkpoint: 対象 tick だけ期待ハッシュを持つ");
+        }
+    }
+
+    // ---- 7. 無効化 ----
     ring.SetEnabled(false);
     const uint64_t recBefore = ring.RecordCount();
     {

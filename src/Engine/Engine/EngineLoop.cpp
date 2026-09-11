@@ -694,6 +694,8 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         // ★レコード長を決めるので Begin より前に (M52g)。ここから先 playerCount は動かない
         CrashRingConfig crashCfg = crashRing.Config();
         crashCfg.playerCount = ctx.playerCount;
+        crashCfg.hashInterval = static_cast<uint64_t>(
+            (config.crashHashInterval > 0) ? config.crashHashInterval : 1);
         crashRing.Configure(crashCfg);
         crashRing.SetEnabled(true);
         crashRing.Begin(simRefs, ctx.tickIndex);
@@ -1056,9 +1058,16 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // M52f までは消費者ごとに撮っていて、両方 on だと同じ tick で 2 回走っていた
     // (実測 約 0.2ms/回)。ロールバックが毎 tick ハッシュを要求するようになったので
     // ここで 1 本に畳んだ
+    uint64_t tickHashCount = 0;
+    double tickHashMs = 0.0;
     const auto TickEndHash = [&]() -> uint64_t {
-        return HashWorld(scene.GetWorld(),
-                         {&particleSystem.Cpu(), &scene.Time(), &scene.Persist(), &xpbd, &acoustic, &scene.UI()});
+        const double begin = clock.Now();
+        const uint64_t hash = HashWorld(
+            scene.GetWorld(),
+            {&particleSystem.Cpu(), &scene.Time(), &scene.Persist(), &xpbd, &acoustic, &scene.UI()});
+        tickHashMs += (clock.Now() - begin) * 1000.0;
+        ++tickHashCount;
+        return hash;
     };
 
     // ---- 予測ロールバック (M52i、決定台帳 2) ----
@@ -1623,11 +1632,15 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             // クラッシュリング / ロールバック / タイムトラベルの 3 者が同じ 1 個を使う。
             // 撮る点は「構造変更が空 = .rep が記録するのと同じ点」で M52f から不変
             const bool ttRing = timeTravel.Enabled() && !recorder.IsActive() && !verifying;
-            const bool needTickHash = crashRing.Enabled() || netEnabled || ttRing;
+            // 録画/検証は .rep の全 tick 照合が契約なので間引かない。CrashRing 単独の
+            // 通常プレイだけが hashInterval の checkpoint へ縮退する。
+            const bool replayHash = recorder.IsActive() || verifying;
+            const bool needTickHash = crashRing.NeedsHashAfterTick(ranTick) || netEnabled || ttRing
+                || replayHash;
             const uint64_t tickHash = needTickHash ? TickEndHash() : 0;
             if (crashRing.Enabled()) {
-                // これがあるので、届いた crash.rep は「本当に同じ世界を再現したか」を
-                // 受け取り側が tick 単位で機械判定できる
+                // checkpoint のハッシュ、または他機能のために撮った共有ハッシュを記録する。
+                // それ以外は 0 = 照合なし。入力はハッシュと無関係に全 tick 残る。
                 crashRing.OnTickEnd(simRefs, ranTick, tickHash);
             }
             if (netEnabled && net.Running()) {
@@ -2499,6 +2512,11 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                      static_cast<unsigned long long>(crashRing.SnapshotCount()),
                      crashRing.ImageBytes(), crashRing.SnapshotBytes(),
                      static_cast<unsigned long long>(crashRing.RecordCount()));
+    }
+    if (tickHashCount > 0) {
+        MYE_LOG_INFO("[hash] tick-end world hash: %llu calls, %.3f ms total, %.3f ms average",
+                     static_cast<unsigned long long>(tickHashCount), tickHashMs,
+                     tickHashMs / static_cast<double>(tickHashCount));
     }
     MYE_LOG_INFO("Engine loop finished (%llu frames, %llu ticks)",
                  static_cast<unsigned long long>(ctx.frameIndex),

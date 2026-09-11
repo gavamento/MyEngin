@@ -835,6 +835,7 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
             RenderItem item;
             item.mesh = c.mesh;
             item.material = c.material;
+            item.entity = c.e;
             item.world = c.world;
             item.viewZ = c.viewZ;
             // M55c: velocity 用に「前フレームに実際に描いた行列」を載せる。履歴が無い

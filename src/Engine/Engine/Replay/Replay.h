@@ -21,13 +21,14 @@ namespace mye {
 //                  シーン非依存に再生できる (M52f のクラッシュ再現が本命)
 //   playerCount  … tick レコードあたりの入力本数 (M52g のマルチ入力レーン)
 //
-// ★**worldHash == 0 は「期待値なし (未完了 tick)」の予約値** (M52f)。
-//   クラッシュ .rep の最後の 1 本は「入力は確定したが走り切らなかった tick」で、
-//   期待ハッシュが原理的に存在しない。ここに嘘の値を書くと、再現しなかったときに
+// ★**worldHash == 0 は「期待値なし」の予約値** (M52f)。
+//   クラッシュ .rep の未完了 tick と、負荷を抑えるため checkpoint 外にした tick は
+//   期待ハッシュを持たない。ここに嘘の値を書くと、再現しなかったときに
 //   MISMATCH という別の事故に化けるので、値そのもので「照合しない」を表す。
 //   検証側 (TickRunner) は 0 のレコードを照合せず unverifiedTicks へ数える。
-//   ★記録側は 0 を書かない: 実ハッシュが偶然 0 になる確率は 2^-64 で、その場合も
-//     「その 1 tick が未照合になる」だけで誤検出にはならない (安全側に倒れる)。
+//   ★通常の ReplayRecorder は実ハッシュを書き、CrashRing は checkpoint 外へ意図的に 0 を書く。
+//     実ハッシュが偶然 0 になる確率は 2^-64 で、その場合も「その 1 tick が未照合に
+//     なる」だけで誤検出にはならない (安全側に倒れる)。
 //   この予約は v4 のレイアウトを一切変えない = 版は上げない (決定台帳 3)。
 
 // v5 (M64a): InputSnapshot に生マウスデルタ (mouseDeltaX/Y) が入り 64 -> 72 バイトに
@@ -115,7 +116,7 @@ public:
     }
     uint64_t ExpectedHash(uint64_t tick) const { return hashes_[static_cast<size_t>(tick)]; }
     bool HasTick(uint64_t tick) const { return tick < hashes_.size(); }
-    // 0 = 期待値なし (未完了 tick)。クラッシュ .rep の最後の 1 本がこれになる
+    // 0 = 期待値なし (未完了 tick または checkpoint 外)
     bool HasExpectedHash(uint64_t tick) const { return ExpectedHash(tick) != 0; }
 
     // 照合結果

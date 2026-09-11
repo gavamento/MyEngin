@@ -259,6 +259,44 @@ void TestInstanceRuns()
     TEST_CHECK(worlds.size() == 5 && worlds[2]._41 == 2.0f);
 }
 
+void TestRenderQueueOrder()
+{
+    MYE_LOG_INFO("[selftest] render queue total order");
+    auto makeItem = [](uint32_t index, uint32_t generation, float viewZ) {
+        RenderItem item;
+        item.material.value = 10;
+        item.mesh.value = 20;
+        item.entity = { index, generation };
+        item.viewZ = viewZ;
+        return item;
+    };
+
+    RenderQueue a;
+    a.transparent = { makeItem(3, 0, 5.0f), makeItem(1, 0, 5.0f), makeItem(2, 0, 5.0f) };
+    RenderQueue b;
+    b.transparent = { makeItem(2, 0, 5.0f), makeItem(3, 0, 5.0f), makeItem(1, 0, 5.0f) };
+    a.Sort();
+    b.Sort();
+    bool sameOrder = true;
+    for (size_t i = 0; i < a.transparent.size(); ++i) {
+        sameOrder = sameOrder && a.transparent[i].entity == b.transparent[i].entity;
+    }
+    TEST_CHECK(sameOrder && a.transparent[0].entity.index == 1
+               && a.transparent[1].entity.index == 2 && a.transparent[2].entity.index == 3);
+
+    RenderQueue opaque;
+    opaque.opaque = { makeItem(7, 2, 1.0f), makeItem(7, 1, 1.0f) };
+    opaque.Sort();
+    TEST_CHECK(opaque.opaque[0].entity.generation == 1
+               && opaque.opaque[1].entity.generation == 2);
+
+    RenderQueue invalidDepth;
+    invalidDepth.transparent = { makeItem(1, 0, NAN), makeItem(2, 0, 3.0f) };
+    invalidDepth.Sort();
+    TEST_CHECK(invalidDepth.transparent[0].entity.index == 2
+               && invalidDepth.transparent[1].entity.index == 1);
+}
+
 // M43a: ハイトフォグ / 太陽インスキャッタ (common.hlsli::ApplyFog のミラー検証)
 void TestHeightFogInscatter()
 {
@@ -1204,6 +1242,7 @@ bool RunRenderSelfTest()
     TestFrustumCorners();
     TestPostFxMerge();
     TestCascadeSplits();
+    TestRenderQueueOrder();
     TestInstanceRuns();
     TestHeightFogInscatter();
     TestSunScreenPos();

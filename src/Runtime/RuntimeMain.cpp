@@ -240,6 +240,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 config.crashTestTick = _wtoi64(argv[++i]);
             } else if (arg == L"--no-crash-handler") {
                 config.crashHandler = false; // M52f: 既定 on を外す (デバッガ下での切り分け用)
+            } else if (arg == L"--crash-hash-interval" && i + 1 < argc) {
+                config.crashHashInterval = _wtoi64(argv[++i]);
             } else if (arg == L"--net-host") {
                 // M52h: ホストとして待受 (ポート省略時は 7777)。参加側は --net-join
                 config.netRole = 1;

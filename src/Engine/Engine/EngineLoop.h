@@ -294,6 +294,8 @@ struct EngineConfig {
     // crash.txt + scene.json を残す。既定 on (配布ビルドのバグ報告が本命なので、
     // 「調子が悪いときだけ有効にする」形にはしない)。--no-crash-handler で外せる
     bool crashHandler = true;
+    // --crash-hash-interval N: CrashRing の照合ハッシュ間隔。1 は毎 tick。
+    int64_t crashHashInterval = 60;
     // --crash-test <av|purecall|terminate|invalidparam|stackoverflow>: crashTestTick の
     // tick 本体へ入る直前に意図的に落とす。ハンドラが「本当に落ちたときに動くか」は
     // 実際に落として確かめるしかない (M52a 申し送り 5 と同じ流儀)

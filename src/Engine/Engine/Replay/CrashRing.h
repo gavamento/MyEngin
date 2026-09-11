@@ -23,13 +23,17 @@ namespace mye {
 //
 // ★入力は tick に**入る前**に載せる。落ちるのは tick の中なので、tick 末まで待つと
 //   「まさに落ちた tick の入力」が .rep に残らず、再生してもその tick へ入れない。
-//   その tick のハッシュはまだ無いので **0 = 期待値なし (未完了)** を書いておき、
-//   tick が走り切ったら実ハッシュで上書きする (8 バイト整列ストア = 破れない)。
+//   その tick のハッシュはまだ無いので **0 = 期待値なし**を書いておき、ハッシュを撮る
+//   checkpoint tick が走り切ったら実ハッシュで上書きする (8 バイト整列ストア = 破れない)。
 //   0 の意味は Replay.h に予約として明記してある。
 struct CrashRingConfig {
     // 何 tick ごとにスナップショットを撮り直すか。撮り直すたびにレコードは 0 本に戻る。
     // 短くするほど .rep は小さくなるが撮影が増える (Release 実測 0.040ms/枚)
     uint64_t snapshotInterval = 600;
+    // CrashRing だけがハッシュを要求するときの間隔。入力は間引かず全 tick 保存する。
+    // 1 にすると診断用の毎 tick 照合へ戻る。ネット/TimeTravel が要求した tick の
+    // ハッシュは EngineLoop で共有されるため、この間隔外でも .rep に記録される。
+    uint64_t hashInterval = 60;
     size_t maxTicks = 720; // レコード上限 (安全余裕。到達したら次の境界で撮り直す)
     // 入力レーン数 (M52g)。**レコード長を決める**ので Begin より前に確定していること。
     // チューニング値ではなく実行の性質だが、ここに置くと「撮り直しのたびに読み直す」
@@ -57,6 +61,8 @@ public:
     // tick 本体を呼ぶ**直前**。その tick が消費する入力レーンを先に載せる
     // (inputs は playerCount 本の配列)
     void OnTickBegin(uint64_t tick, const InputSnapshot* inputs, uint32_t playerCount);
+    // 現在 in-flight の tick が CrashRing 自身のハッシュ checkpoint か。
+    bool NeedsHashAfterTick(uint64_t ranTick) const;
     // tick が走り切った直後。in-flight レコードのハッシュを確定し、必要なら撮り直す
     void OnTickEnd(const SimRefs& refs, uint64_t ranTick, uint64_t hashAfter);
 

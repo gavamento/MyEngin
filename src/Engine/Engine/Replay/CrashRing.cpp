@@ -37,9 +37,11 @@ bool CrashRing::Begin(const SimRefs& refs, uint64_t tick)
         enabled_ = false;
         return false;
     }
-    MYE_LOG_INFO("[crash] rep ring armed at tick %llu (%zu bytes/snapshot, %llu tick interval)",
+    MYE_LOG_INFO("[crash] rep ring armed at tick %llu (%zu bytes/snapshot, %llu snapshot interval, "
+                 "%llu hash interval)",
                  static_cast<unsigned long long>(tick), snapshotBytes_,
-                 static_cast<unsigned long long>(config_.snapshotInterval));
+                 static_cast<unsigned long long>(config_.snapshotInterval),
+                 static_cast<unsigned long long>(config_.hashInterval));
     return true;
 }
 
@@ -120,6 +122,15 @@ void CrashRing::OnTickBegin(uint64_t tick, const InputSnapshot* inputs, uint32_t
     // どこで落ちてもイメージは常に整合する (書きかけのレコードは範囲外に居る)
     header->tickCount += 1;
     inFlight_ = true;
+}
+
+bool CrashRing::NeedsHashAfterTick(uint64_t ranTick) const
+{
+    if (!enabled_ || !ready_ || !inFlight_ || ranTick < snapshotTick_) {
+        return false;
+    }
+    const uint64_t interval = (config_.hashInterval == 0) ? 1 : config_.hashInterval;
+    return (ranTick - snapshotTick_ + 1) % interval == 0;
 }
 
 void CrashRing::OnTickEnd(const SimRefs& refs, uint64_t ranTick, uint64_t hashAfter)
