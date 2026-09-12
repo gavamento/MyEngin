@@ -8,6 +8,7 @@
 #include "Engine/Engine/UI/UILayout.h"
 #include "Engine/Engine/UI/UILayoutGroup.h" // M75e: LayoutScratch
 #include "Engine/Engine/UI/UINav.h"
+#include "Engine/Engine/UI/UIWidgets.h" // M75f: 泡立ち / interactable / Navigation / Slider の軸
 #include "Engine/Platform/Input.h"
 #include "Engine/Platform/InputActions.h"
 
@@ -117,38 +118,72 @@ EntityID FindNextFocus(World& world, int canvasW, int canvasH, EntityID current,
     std::vector<EntityID> ids;
     uinav::NavRect cur = {};
     bool haveCur = false;
-    ForEachUiElement(world, canvasW, canvasH,
-                     [&](EntityID e, const UIElementComponent& el,
-                         const uilayout::UIWorldContext* wc, uilayout::LayoutScratch& scratch) {
-                         if (el.focusable == 0) {
-                             return;
-                         }
-                         // 祖先クリップで完全に隠れた要素は候補から外す
-                         // (スクロール範囲外の項目へ飛ばない)
-                         const auto vis = uilayout::ResolveVisibleRect(world, e, canvasW, canvasH,
-                                                                       wc, &scratch);
-                         if (vis.w <= 0.0f || vis.h <= 0.0f) {
-                             return;
-                         }
-                         const auto rect =
-                             uilayout::ResolveRect(world, e, canvasW, canvasH, wc, &scratch);
-                         // M75c: 候補の比較は既定キャンバス座標で行う (キャンバスごとに単位が
-                         // 違うので、そのままでは別キャンバスの要素と距離を比べられない)。
-                         // Canvas の無い要素は 1.0f を掛ける = ビット恒等
-                         const float toDefault = uilayout::CanvasOf(world, e, canvasW, canvasH).scale;
-                         uinav::NavRect r;
-                         r.x = rect.x * toDefault;
-                         r.y = rect.y * toDefault;
-                         r.w = rect.w * toDefault;
-                         r.h = rect.h * toDefault;
-                         r.index = e.index;
-                         if (e == current) {
-                             cur = r;
-                             haveCur = true;
-                         }
-                         rects.push_back(r);
-                         ids.push_back(e);
-                     });
+    uilayout::UIWorldContext wcData;
+    const uilayout::UIWorldContext* wc =
+        uilayout::BuildSimWorldContext(world, canvasW, canvasH, wcData) ? &wcData : nullptr;
+    uilayout::LayoutScratch scratch;
+    // 候補の判定は uiwidgets::IsFocusCandidate の 1 本 (旧来の要素は UIElement.focusable、
+    // ウィジェットの根は「操作可能 && navigationMode != None」、M75f)
+    const auto consider = [&](EntityID e) {
+        if (!IsEntityActive(world, e) || !uiwidgets::IsFocusCandidate(world, e)) {
+            return;
+        }
+        // 祖先クリップで完全に隠れた要素は候補から外す
+        // (スクロール範囲外の項目へ飛ばない)
+        const auto vis = uilayout::ResolveVisibleRect(world, e, canvasW, canvasH, wc, &scratch);
+        if (vis.w <= 0.0f || vis.h <= 0.0f) {
+            return;
+        }
+        const auto rect = uilayout::ResolveRect(world, e, canvasW, canvasH, wc, &scratch);
+        // M75c: 候補の比較は既定キャンバス座標で行う (キャンバスごとに単位が
+        // 違うので、そのままでは別キャンバスの要素と距離を比べられない)。
+        // Canvas の無い要素は 1.0f を掛ける = ビット恒等
+        const float toDefault = uilayout::CanvasOf(world, e, canvasW, canvasH).scale;
+        uinav::NavRect r;
+        r.x = rect.x * toDefault;
+        r.y = rect.y * toDefault;
+        r.w = rect.w * toDefault;
+        r.h = rect.h * toDefault;
+        r.index = e.index;
+        if (e == current) {
+            cur = r;
+            haveCur = true;
+        }
+        rects.push_back(r);
+        ids.push_back(e);
+    };
+    {
+        const ComponentTypeId req[] = { UIElementComponent::sTypeId };
+        world.ForEachArchetype(req, [&](Archetype& arch) {
+            for (uint32_t row = 0; row < arch.Count(); ++row) {
+                consider(arch.EntityAt(row));
+            }
+        });
+    }
+    // M75f: UIElement を持たないウィジェットの根 (Toggle / Slider。見た目は子が持つ) も候補になる。
+    // 1 つのエンティティを 2 回数えないよう「持っている型のうち並びの先頭」の走査でだけ拾う
+    // (並べ方は結果に効かない — 吸着は index 最小、FindNext の同点も index で決まる)
+    {
+        const ComponentTypeId widgetTypes[] = { UISelectableComponent::sTypeId,
+                                                UIToggleComponent::sTypeId,
+                                                UISliderComponent::sTypeId };
+        for (int ti = 0; ti < 3; ++ti) {
+            const ComponentTypeId req[] = { widgetTypes[ti] };
+            world.ForEachArchetype(req, [&](Archetype& arch) {
+                if (arch.FindTypeIndex(UIElementComponent::sTypeId) >= 0) {
+                    return; // 上の走査で見た
+                }
+                for (int prev = 0; prev < ti; ++prev) {
+                    if (arch.FindTypeIndex(widgetTypes[prev]) >= 0) {
+                        return; // 前の型の走査で見た
+                    }
+                }
+                for (uint32_t row = 0; row < arch.Count(); ++row) {
+                    consider(arch.EntityAt(row));
+                }
+            });
+        }
+    }
     if (rects.empty()) {
         return kNullEntity; // 候補が 1 つも無い = フォーカスは持てない
     }
@@ -164,6 +199,30 @@ EntityID FindNextFocus(World& world, int canvasW, int canvasH, EntityID current,
             }
         }
         return first;
+    }
+    // ---- M75f: 今のフォーカスの Navigation (Unity の Navigation.Mode) ----
+    // 旧来の要素 (Selectable 無し) は常に自動 = M70c と同じ動き
+    int mode = uiwidgets::kNavAutomatic;
+    if (uiwidgets::IsWidgetRoot(world, current)) {
+        const UISelectableComponent& sel = uiwidgets::SelectableOf(world, current);
+        mode = sel.navigationMode;
+        if (mode == uiwidgets::kNavExplicit) {
+            const EntityID target = (dir == uinav::kNavUp)     ? sel.selectOnUp
+                : (dir == uinav::kNavDown)                     ? sel.selectOnDown
+                : (dir == uinav::kNavLeft)                     ? sel.selectOnLeft
+                                                               : sel.selectOnRight;
+            // 明示の先も候補 (Active・操作可能・見えている) に限る。外れていれば動かない
+            for (const EntityID e : ids) {
+                if (e == target) {
+                    return target;
+                }
+            }
+            return current;
+        }
+    }
+    const bool vertical = (dir == uinav::kNavUp || dir == uinav::kNavDown);
+    if ((mode & (vertical ? uiwidgets::kNavVertical : uiwidgets::kNavHorizontal)) == 0) {
+        return current; // 左右だけ / 上下だけのモードで、許されていない向き
     }
     const uint32_t next = uinav::FindNext(rects.data(), static_cast<int>(rects.size()), cur, dir);
     for (size_t i = 0; i < ids.size(); ++i) {
@@ -188,9 +247,12 @@ uint32_t BitsFor(const UIInteractionState& state, EntityID e)
 }
 
 void Evaluate(World& world, const InputSnapshot& in, const InputSnapshot& prevIn,
-              const InputActions* actions, UIInteractionState& state)
+              const InputActions* actions, UIInteractionState& state, TickEvents* events)
 {
     (void)prevIn; // M75h (InputField のキーエッジ) が読む。配線だけ先に通してある
+    TickEvents localEvents;
+    TickEvents& ev = (events != nullptr) ? *events : localEvents;
+    ev = TickEvents{};
     // clicked / changed は 1 tick だけ立つ値。ここで必ず落とす (立てるのは下の「離した」判定と
     // M75f 以降のウィジェット更新だけ)
     state.clicked = kNullEntity;
@@ -213,11 +275,12 @@ void Evaluate(World& world, const InputSnapshot& in, const InputSnapshot& prevIn
             const int ci = arch.FindTypeIndex(UIElementComponent::sTypeId);
             for (uint32_t row = 0; row < arch.Count(); ++row) {
                 const auto* el = static_cast<const UIElementComponent*>(arch.GetPtr(ci, row));
-                if (el->focusable == 0 || el->focused == 0) {
+                if (el->focused == 0) {
                     continue;
                 }
                 const EntityID e = arch.EntityAt(row);
-                if (!IsEntityActive(world, e)) {
+                // M75f: 候補の規則は FindNextFocus と同じ 1 本 (旧来の要素は focusable のまま)
+                if (!uiwidgets::IsFocusCandidate(world, e) || !IsEntityActive(world, e)) {
                     continue;
                 }
                 if (authored == kNullEntity || e.index < authored.index) {
@@ -233,17 +296,34 @@ void Evaluate(World& world, const InputSnapshot& in, const InputSnapshot& prevIn
     // ---- マウス: hovered / pressed / clicked ----
     const float mouseX = uilayout::SurfaceToCanvas(in.mouseSurfX, canvas);
     const float mouseY = uilayout::SurfaceToCanvas(in.mouseSurfY, canvas);
-    const EntityID under = HitTest(world, canvasW, canvasH, mouseX, mouseY);
+    // M75f: ヒットした要素 (画像や文字) から最寄りのウィジェットの根へ泡立てる。ウィジェットの無い
+    // シーンでは HitTest の結果そのまま = M75e 以前と同じ
+    const EntityID under =
+        uiwidgets::BubbleTarget(world, HitTest(world, canvasW, canvasH, mouseX, mouseY));
     state.hovered = under;
     const bool down = in.MouseDown(0);
     if (down) {
         if (state.pressed == kNullEntity) {
-            state.pressed = under; // 押した瞬間に掴む (以後、離すまで移らない)
+            // 押した瞬間に掴む (以後、離すまで移らない)。
+            // M75f: 操作できない Selectable は**押下を吸うが掴まない** (下の要素にも渡らない)
+            const EntityID grab =
+                (uiwidgets::IsWidgetRoot(world, under) && !uiwidgets::IsInteractable(world, under))
+                ? kNullEntity : under;
+            state.pressed = grab;
             // M75b: ドラッグの原点。何も掴めなかった tick も書く = 空き地で押したまま要素の上へ
             // 入ってきたときは「掴んだ tick の位置」が原点になる
             state.pressSurfX = in.mouseSurfX;
             state.pressSurfY = in.mouseSurfY;
             state.dragging = 0;
+            if (grab != kNullEntity) {
+                ev.pressBegan = grab;
+                // M75f: 押したウィジェットがフォーカスを取る (Unity の Selectable.OnPointerDown)。
+                // 旧来の要素と Navigation なしのウィジェットは取らない = M75e 以前の動きのまま。
+                // 空き地を押してもフォーカスは外さない (Unity は外す — 既存のシーンの挙動を変えないため)
+                if (uiwidgets::IsWidgetRoot(world, grab) && uiwidgets::IsFocusCandidate(world, grab)) {
+                    state.focused = grab;
+                }
+            }
         } else if (state.dragging == 0) {
             const float dx = in.mouseSurfX - state.pressSurfX;
             const float dy = in.mouseSurfY - state.pressSurfY;
@@ -278,30 +358,60 @@ void Evaluate(World& world, const InputSnapshot& in, const InputSnapshot& prevIn
             dir = uinav::kNavRight;
         }
         if (dir >= 0) {
-            state.focused = FindNextFocus(world, canvasW, canvasH, state.focused, dir);
+            // M75f: フォーカス中の Slider は向きの軸の入力を値の変更として受ける (Unity の Slider.OnMove)。
+            // 自動ナビなら常に受け、それ以外のモードはその向きに行き先が無いときだけ受ける
+            const EntityID current = state.focused;
+            const auto* slider = (current != kNullEntity && world.IsAlive(current))
+                ? world.GetComponent<UISliderComponent>(current) : nullptr;
+            if (slider != nullptr && uiwidgets::IsInteractable(world, current)
+                && uiwidgets::SliderMoveOnAxis(*slider, dir)) {
+                const EntityID next =
+                    (uiwidgets::SelectableOf(world, current).navigationMode == uiwidgets::kNavAutomatic)
+                    ? current : FindNextFocus(world, canvasW, canvasH, current, dir);
+                if (next == current) {
+                    ev.navStepTarget = current;
+                    ev.navStepDir = dir;
+                } else {
+                    state.focused = next;
+                }
+            } else {
+                state.focused = FindNextFocus(world, canvasW, canvasH, state.focused, dir);
+            }
         }
         // Submit = フォーカス中の要素を「クリックした」ことにする。マウスと同じ出口へ
         // 合流させるのが要点 — ゲーム側の分岐を 1 本に保てる (パッドとマウスで別経路を
-        // 書かせない)。**マウスの click より後**なので同 tick で両方来たら Submit が勝つ
-        if (state.focused != kNullEntity && navPressed(kActionSubmit)) {
+        // 書かせない)。**マウスの click より後**なので同 tick で両方来たら Submit が勝つ。
+        // M75f: 操作できないウィジェットはクリックにしない
+        if (state.focused != kNullEntity && navPressed(kActionSubmit)
+            && !(uiwidgets::IsWidgetRoot(world, state.focused)
+                 && !uiwidgets::IsInteractable(world, state.focused))) {
             state.clicked = state.focused;
         }
     }
 
     // ---- 生存確認 + UIElement.focused への書き戻し ----
     // 参照先が消えている / focusable でなくなっていたら手放す (世代付き EntityID なので
-    // 破棄後の再利用は別 ID になる = ここは「本当に同じ要素か」の検査になる)
+    // 破棄後の再利用は別 ID になる = ここは「本当に同じ要素か」の検査になる)。
+    // M75f: UIElement を持たないウィジェットの根 (Toggle / Slider) も対話の相手になれる
     const auto stillUsable = [&world](EntityID e) {
         if (e == kNullEntity) {
             return false;
         }
-        return world.IsAlive(e) && world.GetComponent<UIElementComponent>(e) != nullptr;
+        return world.IsAlive(e)
+            && (world.GetComponent<UIElementComponent>(e) != nullptr
+                || uiwidgets::IsWidgetRoot(world, e));
     };
     if (!stillUsable(state.hovered)) { state.hovered = kNullEntity; }
     if (!stillUsable(state.pressed)) { state.pressed = kNullEntity; }
     if (!stillUsable(state.clicked)) { state.clicked = kNullEntity; }
     if (!stillUsable(state.focused)) { state.focused = kNullEntity; }
     if (!stillUsable(state.changed)) { state.changed = kNullEntity; }
+    // M75f: 操作できなくなったウィジェットはフォーカスを手放す (Unity の Selectable が interactable を
+    // 落としたときに選択を外すのと同じ)。旧来の要素は focusable を落としても手放さない (M70c のまま)
+    if (state.focused != kNullEntity && uiwidgets::IsWidgetRoot(world, state.focused)
+        && !uiwidgets::IsInteractable(world, state.focused)) {
+        state.focused = kNullEntity;
+    }
     if (state.pressed == kNullEntity) {
         state.dragging = 0; // 掴んだ要素が消えたらドラッグも終わる
     }
@@ -321,6 +431,8 @@ void Evaluate(World& world, const InputSnapshot& in, const InputSnapshot& prevIn
 
     // M75b: ドラッグ量の基準を今 tick へ進める。**必ず最後** — M75f 以降のウィジェット更新は
     // この手前で「今 - prevSurf」を読む
+    // (M75f の Toggle / Slider は差分を読まないので uiwidgets::Update は TickRunner がこの後に呼ぶ。
+    //  差分が要る M75g の ScrollRect は、ここへ来る前に events へ積むこと)
     state.prevSurfX = in.mouseSurfX;
     state.prevSurfY = in.mouseSurfY;
 }

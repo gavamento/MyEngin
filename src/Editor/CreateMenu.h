@@ -35,6 +35,8 @@ GameObject CreateUICanvas(EngineContext& ctx, const char* name);      // M75c
 GameObject CreateUIHorizontalLayout(EngineContext& ctx, const char* name); // M75e
 GameObject CreateUIVerticalLayout(EngineContext& ctx, const char* name);   // M75e
 GameObject CreateUIGridLayout(EngineContext& ctx, const char* name);       // M75e
+GameObject CreateUIToggle(EngineContext& ctx, const char* name);           // M75f (子構成込み)
+GameObject CreateUISlider(EngineContext& ctx, const char* name);           // M75f (子構成込み)
 
 // 生成操作を 1 つの Undo エントリとして記録し、生成物を選択する。
 GameObject RecordCreate(EngineContext& ctx, Selection& selection, UndoStack& undo, const char* label,

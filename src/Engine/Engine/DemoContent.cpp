@@ -31,6 +31,9 @@
 #include "Engine/Engine/RagdollBuilder.h"
 #include "Engine/Engine/UI/UILayout.h" // M75a: 旧 anchor/x/y/w/h → RectTransform
 #include "Engine/Engine/UI/UILayoutGroup.h" // M75e: --ui-demo の自動レイアウト
+#include "Engine/Engine/UI/UIWidgetFactory.h" // M75f: --ui-demo のウィジェット (Create > UI と同じ構成)
+#include "Engine/Engine/UI/UIWidgets.h"       // M75f: kSlider*
+#include "Engine/Platform/Input.h"            // M75f: UiDemoScriptInput
 #include "Engine/Engine/Scene.h"
 #include "Engine/Engine/SceneSerializer.h"
 #include "Engine/Platform/PathUtil.h"
@@ -3574,6 +3577,210 @@ void BuildUiShowcaseScene(EngineContext& ctx)
                                     { 0.20f + 0.55f * t, 0.35f, 0.75f - 0.45f * t, 1.0f }, 11);
             label("GridCellLabel", cell, digits[i], 3.0f, 12);
         }
+    }
+
+    // ---- M75f: ウィジェット (Selectable / Toggle / ToggleGroup / Slider) ----
+    // ★座標は replay 8 ペア目の入力台本 (UiDemoScriptInput、このファイルの末尾) が押す点と対。動かすなら台本も直す。
+    // 左の中段 (垂直 Group の下) に Toggle、右の中段 (Grid の下) に Slider。どちらの箱も既定キャンバスの左上基準で、
+    // 中身は箱の左上からの位置。子の構成は Create > UI と同じ uiwidgets::CreateToggle / CreateSlider。
+    // ★箱の order は -400 (Title の -500 より手前、ウィジェットの order 0 より奥)。ウィジェットの UIElement は
+    //   order 0 なので、箱を 10 にすると箱の後ろに隠れる
+    const auto placeTopLeft = [](GameObject& go, float x, float y, float w, float h) {
+        auto* rt = go.GetComponent<RectTransformComponent>();
+        rt->anchorMin = { 0.0f, 0.0f };
+        rt->anchorMax = { 0.0f, 0.0f };
+        rt->pivot = { 0.0f, 0.0f };
+        rt->anchoredPosition = { x, y };
+        rt->sizeDelta = { w, h };
+    };
+    // 箱の上辺の見出し (左寄せ)
+    const auto caption = [&](const char* name, GameObject& parent, const char* text) {
+        GameObject go = s.CreateGameObject(name);
+        auto* rt = go.AddComponent<RectTransformComponent>();
+        rt->anchoredPosition = { 12.0f, 8.0f };
+        rt->sizeDelta = { 300.0f, 28.0f };
+        auto* el = go.AddComponent<UIElementComponent>();
+        el->kind = 1;
+        el->align = 3;
+        el->fontScale = 2.0f;
+        std::snprintf(el->text, sizeof(el->text), "%s", text);
+        go.SetParent(parent);
+    };
+
+    // (1) Toggle: 群 (allowSwitchOff なし) の A / B、単独、操作不可。箱自身が UIToggleGroup を持つ。
+    //     一番下は Selectable を付けた旧来のボタン (色の遷移がハードコードのハイライトに代わる)
+    {
+        GameObject box = panel("WidgetToggles", nullptr, 0.0f, 0.0f, 24.0f, 470.0f, 330.0f, 310.0f,
+                               { 0.12f, 0.13f, 0.17f, 1.0f }, -400);
+        box.AddComponent<UIToggleGroupComponent>();
+        caption("WidgetTogglesTitle", box, "TOGGLE");
+        const char* const names[4] = { "ToggleGroupA", "ToggleGroupB", "ToggleSolo", "ToggleDisabled" };
+        const char* const labels[4] = { "GROUP A", "GROUP B", "SOLO", "DISABLED" };
+        for (int i = 0; i < 4; ++i) {
+            GameObject t = uiwidgets::CreateToggle(s, names[i], labels[i], 2.0f);
+            placeTopLeft(t, 12.0f, 40.0f + 48.0f * static_cast<float>(i), 300.0f, 40.0f);
+            t.SetParent(box);
+            {
+                auto* toggle = t.GetComponent<UIToggleComponent>();
+                toggle->isOn = (i == 0 || i == 3) ? 1 : 0;
+                if (i < 2) {
+                    toggle->group = box.Id();
+                }
+            }
+            if (i == 3) {
+                t.GetComponent<UISelectableComponent>()->interactable = 0;
+            }
+        }
+        GameObject button = panel("SelectableButton", &box, 0.0f, 0.0f, 12.0f, 244.0f, 300.0f, 52.0f,
+                                  { 0.30f, 0.36f, 0.50f, 1.0f }, 0);
+        {
+            auto* el = button.GetComponent<UIElementComponent>();
+            el->kind = 2;
+            el->fontScale = 2.0f;
+            std::snprintf(el->text, sizeof(el->text), "%s", "SELECTABLE");
+        }
+        {
+            auto* sel = button.AddComponent<UISelectableComponent>();
+            sel->normalColor = { 0.8f, 0.8f, 0.8f, 1.0f };
+            sel->highlightedColor = { 1.0f, 1.0f, 1.0f, 1.0f };
+            sel->pressedColor = { 0.5f, 0.5f, 0.5f, 1.0f };
+            sel->selectedColor = { 0.9f, 1.0f, 0.9f, 1.0f };
+            sel->colorMultiplier = 1.25f;
+        }
+    }
+
+    // (2) Slider: 左→右 0..1 / 右→左の整数 0..10 / 操作不可 / 下→上 0..100 (縦)
+    {
+        GameObject box = panel("WidgetSliders", nullptr, 0.0f, 0.0f, 1340.0f, 560.0f, 560.0f, 320.0f,
+                               { 0.12f, 0.13f, 0.17f, 1.0f }, -400);
+        caption("WidgetSlidersTitle", box, "SLIDER");
+        struct SliderSpec {
+            const char* name;
+            int direction;
+            float x, y, w, h;
+            float minValue, maxValue, value;
+            int wholeNumbers;
+            int interactable;
+        };
+        const SliderSpec specs[4] = {
+            { "SliderLeftToRight", uiwidgets::kSliderLeftToRight, 16.0f, 44.0f, 400.0f, 40.0f, 0.0f, 1.0f, 0.25f, 0, 1 },
+            { "SliderWholeRightToLeft", uiwidgets::kSliderRightToLeft, 16.0f, 100.0f, 400.0f, 40.0f, 0.0f, 10.0f, 7.0f, 1, 1 },
+            { "SliderDisabled", uiwidgets::kSliderLeftToRight, 16.0f, 156.0f, 400.0f, 40.0f, 0.0f, 1.0f, 0.6f, 0, 0 },
+            { "SliderBottomToTop", uiwidgets::kSliderBottomToTop, 460.0f, 44.0f, 40.0f, 240.0f, 0.0f, 100.0f, 30.0f, 0, 1 },
+        };
+        for (const SliderSpec& sp : specs) {
+            GameObject sl = uiwidgets::CreateSlider(s, sp.name, sp.direction);
+            placeTopLeft(sl, sp.x, sp.y, sp.w, sp.h);
+            sl.SetParent(box);
+            {
+                auto* slider = sl.GetComponent<UISliderComponent>();
+                slider->minValue = sp.minValue;
+                slider->maxValue = sp.maxValue;
+                slider->value = sp.value;
+                slider->wholeNumbers = sp.wholeNumbers;
+            }
+            sl.GetComponent<UISelectableComponent>()->interactable = sp.interactable;
+        }
+    }
+}
+
+void UiDemoScriptInput(uint64_t tick, InputSnapshot& lane0)
+{
+    // 1 手 = [from, to) の区間。ポインタは (x0,y0) → (x1,y1) を線形に動き、buttons / vk はその間ずっと
+    // 押している (vk は UINav* / Submit のキー。2 tick 押して離す = pressed のエッジが 1 回)
+    struct Step {
+        uint16_t from, to;
+        float x0, y0, x1, y1;
+        uint8_t buttons;
+        uint8_t vk;
+    };
+    constexpr uint8_t kVkReturn = 0x0D; // VK_RETURN = UINavSubmit
+    constexpr uint8_t kVkLeft = 0x25;   // VK_LEFT = UINavLeft
+    constexpr uint8_t kVkRight = 0x27;  // VK_RIGHT = UINavRight
+    constexpr uint8_t kVkDown = 0x28;   // VK_DOWN = UINavDown
+    // 座標 = 既定キャンバス 1920x1080 の点 (= ゲーム面 px)。BuildUiShowcaseScene の配置から手で解いた値:
+    //   Toggle i の Background の中心 (56, 530 + 48i) / SOLO のラベル (206, 626) / SELECTABLE (186, 740)
+    //   左→右の溝 x 1366..1746 (y 624) / 右→左 (y 680) / 操作不可 (y 736) / 下→上の溝 y 614..834 (x 1820)
+    static constexpr Step kSteps[] = {
+        // Toggle A (群で唯一の on): 押しても on のまま = changed は立たない
+        { 0, 10, 56, 530, 56, 530, 0, 0 },     { 10, 14, 56, 530, 56, 530, 1, 0 },
+        { 14, 20, 56, 530, 56, 530, 0, 0 },
+        // Toggle B: B が on になり A が off (群の規則)
+        { 20, 30, 56, 578, 56, 578, 0, 0 },    { 30, 34, 56, 578, 56, 578, 1, 0 },
+        { 34, 40, 56, 578, 56, 578, 0, 0 },
+        // SOLO はラベルの上で押す (文字から Toggle の根へ泡立つ)
+        { 40, 50, 206, 626, 206, 626, 0, 0 },  { 50, 54, 206, 626, 206, 626, 1, 0 },
+        { 54, 60, 206, 626, 206, 626, 0, 0 },
+        // 操作不可の Toggle: 押下を吸うだけで何も起きない
+        { 60, 70, 56, 674, 56, 674, 0, 0 },    { 70, 74, 56, 674, 56, 674, 1, 0 },
+        { 74, 80, 56, 674, 56, 674, 0, 0 },
+        // Selectable 付きのボタン: clicked + フォーカス
+        { 80, 90, 186, 740, 186, 740, 0, 0 },  { 90, 94, 186, 740, 186, 740, 1, 0 },
+        { 94, 100, 186, 740, 186, 740, 0, 0 },
+        // 左→右: 溝を押して値が飛ぶ → 押したまま右へ
+        { 100, 110, 1600, 624, 1600, 624, 0, 0 }, { 110, 130, 1600, 624, 1700, 624, 1, 0 },
+        { 130, 140, 1700, 624, 1700, 624, 0, 0 },
+        // 左→右: つまみを中心から 3 ずらして掴み、左へ (掴んだ位置を保つ)。つまみの中心は 1695 —
+        // 直前のドラッグで最後に押していた tick (p=129) の位置。★右端 (1705) はヒットの外 (半開区間) なので
+        // 1705 で押すと掴めずに溝を押したことになる (1 回踏んだ)
+        { 140, 150, 1698, 624, 1698, 624, 0, 0 }, { 150, 170, 1698, 624, 1450, 624, 1, 0 },
+        { 170, 180, 1450, 624, 1450, 624, 0, 0 },
+        // キー: 左→右がフォーカス中。右 / 右 / 左で値、下で右→左へ移り、右で値 (右→左なので減る)
+        { 180, 182, 1450, 624, 1450, 624, 0, kVkRight }, { 182, 186, 1450, 624, 1450, 624, 0, 0 },
+        { 186, 188, 1450, 624, 1450, 624, 0, kVkRight }, { 188, 192, 1450, 624, 1450, 624, 0, 0 },
+        { 192, 194, 1450, 624, 1450, 624, 0, kVkLeft },  { 194, 200, 1450, 624, 1450, 624, 0, 0 },
+        { 200, 202, 1450, 624, 1450, 624, 0, kVkDown },  { 202, 206, 1450, 624, 1450, 624, 0, 0 },
+        { 206, 208, 1450, 624, 1450, 624, 0, kVkRight }, { 208, 212, 1450, 624, 1450, 624, 0, 0 },
+        // 下→上: 押して下へドラッグ (値は下ほど小さい)
+        { 212, 220, 1820, 700, 1820, 700, 0, 0 }, { 220, 240, 1820, 700, 1820, 800, 1, 0 },
+        { 240, 250, 1820, 800, 1820, 800, 0, 0 },
+        // 右→左の整数: 溝の中央を押して 5
+        { 250, 260, 1556, 680, 1556, 680, 0, 0 }, { 260, 264, 1556, 680, 1556, 680, 1, 0 },
+        { 264, 270, 1556, 680, 1556, 680, 0, 0 },
+        // SOLO を押して off → Enter (Submit) で on に戻す
+        { 270, 280, 56, 626, 56, 626, 0, 0 },  { 280, 284, 56, 626, 56, 626, 1, 0 },
+        { 284, 290, 56, 626, 56, 626, 0, 0 },  { 290, 292, 56, 626, 56, 626, 0, kVkReturn },
+        { 292, 300, 56, 626, 56, 626, 0, 0 },
+        // 操作不可の Slider: 押してドラッグしても値は動かない
+        { 300, 306, 1600, 736, 1600, 736, 0, 0 }, { 306, 316, 1600, 736, 1650, 736, 1, 0 },
+        { 316, 320, 1650, 736, 1650, 736, 0, 0 },
+    };
+    constexpr uint64_t kStart = 30;   // シーンが落ち着くまで待つ
+    constexpr uint64_t kPeriod = 320; // 600 tick で 1.8 周 (2 周目は群の A / B が入れ替わる)
+
+    float x = 8.0f; // 待機位置: 背景だけがある左下の隅
+    float y = 1072.0f;
+    uint8_t buttons = 0;
+    uint8_t vk = 0;
+    if (tick >= kStart) {
+        const uint64_t p = (tick - kStart) % kPeriod;
+        for (const Step& st : kSteps) {
+            if (p >= st.from && p < st.to) {
+                const float t = static_cast<float>(p - st.from) / static_cast<float>(st.to - st.from);
+                x = st.x0 + (st.x1 - st.x0) * t;
+                y = st.y0 + (st.y1 - st.y0) * t;
+                buttons = st.buttons;
+                vk = st.vk;
+                break;
+            }
+        }
+    }
+    lane0.surfW = 1920; // 合成入力と同じく基準解像度に固定 (窓の大きさを混ぜない)
+    lane0.surfH = 1080;
+    lane0.mouseSurfX = x;
+    lane0.mouseSurfY = y;
+    lane0.mouseX = static_cast<int32_t>(x);
+    lane0.mouseY = static_cast<int32_t>(y);
+    lane0.mouseButtons = buttons;
+    // ★キーは OR ではなく**丸ごと置き換える**。EngineLoop はライブ入力をフレーム頭に 1 回だけ写し、
+    //   同じフレームで回る 2 本目以降の tick は前の tick が書いた ctx.inputs[0] をそのまま受け取る。
+    //   OR だと前の tick で押したキーが消えず (--replay-fast は 1 フレームで何 tick も回る)、
+    //   同じキーの 2 回目が「押しっぱなし」になって pressed のエッジが立たない (1 回踏んだ)
+    for (uint8_t& k : lane0.keys) {
+        k = 0;
+    }
+    if (vk != 0) {
+        lane0.keys[vk >> 3] |= static_cast<uint8_t>(1u << (vk & 7));
     }
 }
 

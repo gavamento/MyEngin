@@ -13,6 +13,8 @@
 #include "Engine/Engine/RagdollBuilder.h"
 #include "Engine/Engine/Scene.h"
 #include "Engine/Engine/UI/UILayoutGroup.h" // M75e: kLayoutHorizontal 等
+#include "Engine/Engine/UI/UIWidgetFactory.h" // M75f: Toggle / Slider の子構成 (正本は Engine 層)
+#include "Engine/Engine/UI/UIWidgets.h"       // M75f: kSliderLeftToRight
 #include "Engine/Renderer/GpuResources.h"
 #include "Engine/Renderer/Skeleton.h"
 
@@ -214,6 +216,19 @@ GameObject CreateUIGridLayout(EngineContext& ctx, const char* name)
     return CreateUILayoutContainer(ctx, name, uilayout::kLayoutGrid, 320.0f, 320.0f);
 }
 
+// M75f: 子構成込みのウィジェット。構成の正本は Engine 層の uiwidgets::CreateToggle / CreateSlider
+// (--ui-demo と UISelfTest のプレハブ往復も同じ関数を通る = EntityRef の張り方が 1 か所で決まる)。
+// 子の名前 (Background / Checkmark / Label …) は新しい根の下なので一意化しない
+GameObject CreateUIToggle(EngineContext& ctx, const char* name)
+{
+    return uiwidgets::CreateToggle(*ctx.scene, name, "Toggle");
+}
+
+GameObject CreateUISlider(EngineContext& ctx, const char* name)
+{
+    return uiwidgets::CreateSlider(*ctx.scene, name, uiwidgets::kSliderLeftToRight);
+}
+
 GameObject RecordCreate(EngineContext& ctx, Selection& selection, UndoStack& undo, const char* label,
                         const std::function<GameObject()>& make)
 {
@@ -321,6 +336,11 @@ void DrawCreateMenuItems(EngineContext& ctx, Selection& selection, UndoStack& un
         CreateUIItem(ctx, selection, undo, parent, Tr(StrId::Create_UIImage), "Image", &CreateUIImage);
         CreateUIItem(ctx, selection, undo, parent, Tr(StrId::Create_UIButton), "Button", &CreateUIButton);
         CreateUIItem(ctx, selection, undo, parent, Tr(StrId::Create_UIText), "Text", &CreateUIText);
+        // M75f: ウィジェット (子構成込み。Undo は根のサブツリーを丸ごと撮る)
+        CreateUIItem(ctx, selection, undo, parent, Tr(StrId::Create_UIToggle), "Toggle",
+                     &CreateUIToggle);
+        CreateUIItem(ctx, selection, undo, parent, Tr(StrId::Create_UISlider), "Slider",
+                     &CreateUISlider);
         ImGui::Separator(); // M75e: 自動レイアウトの器
         CreateUIItem(ctx, selection, undo, parent, Tr(StrId::Create_UIHLayout),
                      "Horizontal Layout Group", &CreateUIHorizontalLayout);

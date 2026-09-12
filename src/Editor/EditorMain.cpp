@@ -163,6 +163,10 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 cookFontMetrics = true;
                 continue;
             }
+            if (arg == L"--ui-demo-input") {
+                config.uiDemoInput = true; // M75f: --ui-demo を押す入力台本 (replay 8 ペア目の記録側)
+                continue;
+            }
             if (arg == L"--frames" && i + 1 < argc) {
                 config.maxFrames = _wtoi64(argv[++i]);
             } else if (arg == L"--width" && i + 1 < argc) {

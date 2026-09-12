@@ -265,6 +265,10 @@ struct EngineConfig {
     // ★これが無いとヘッドレスの入力は全レーン恒常ゼロで、レーンの配線ミスが
     //   記録側と検証側で対称に起きてハッシュ一致してしまう (Input.h の SynthLaneInput 参照)
     bool synthInput = false;
+    // --ui-demo-input (M75f): --ui-demo のウィジェットを押す決定論の入力台本 (UiDemoScriptInput) を
+    // レーン 0 のマウスとキーに置く。synthInput と同じく記録され検証でも再現する = **replay 8 ペア目の
+    // 記録側にだけ**渡す。--ui-demo と別フラグなのは、手で触る実走 (Runtime --ui-demo) を台本で潰さないため
+    bool uiDemoInput = false;
 
     // ---- ネット対戦: UDP + 遅延ロックステップ (M52h、決定台帳 5) ----
     // NetRole の生値 (0=off / 1=host / 2=join)。**Engine/Net の型をここへ持ち込まない**

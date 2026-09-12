@@ -18,6 +18,7 @@
 #include "Engine/Engine/UI/UIInteraction.h" // v16 (M70c): ヒットテスト/ナビの唯一の実装
 #include "Engine/Engine/UI/UILayout.h" // M51e: 矩形解決を描画と共有 (キャンバス座標のナビ矩形)
 #include "Engine/Engine/UI/UINav.h"    // v7 UIFocusNav (M37)
+#include "Engine/Engine/UI/UIWidgets.h" // M75f: ウィジェットの根もボタン状態 / フォーカスの相手になる
 #include "Engine/Platform/InputActions.h" // v12 GetActionState/GetAxisValue (M51h)
 #include "Engine/Platform/PathUtil.h"
 
@@ -1004,7 +1005,9 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
     out.UIButtonState = [](void* engine, MyeEntityId id) -> uint32_t {
         Scene* sc = Sc(engine);
         const EntityID e = ToEngine(id);
-        if (sc->GetWorld().GetComponent<UIElementComponent>(e) == nullptr) {
+        // M75f: UIElement を持たないウィジェットの根 (Toggle / Slider) も押下が泡立って届く相手なので読める
+        if (sc->GetWorld().GetComponent<UIElementComponent>(e) == nullptr
+            && !uiwidgets::IsWidgetRoot(sc->GetWorld(), e)) {
             return 0u;
         }
         return uiinteract::BitsFor(sc->UI(), e);
@@ -1019,9 +1022,10 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
             sc->UI().focused = kNullEntity; // null id (MyeEntityId{}) = フォーカスを外す
             return 1;
         }
-        const auto* el = sc->GetWorld().GetComponent<UIElementComponent>(e);
-        if (el == nullptr || el->focusable == 0) {
-            return 0; // focusable でない要素は掴ませない (ナビの候補と食い違わせない)
+        // focusable でない要素は掴ませない (ナビの候補と食い違わせない)。M75f: 候補の規則は
+        // FindNextFocus と同じ 1 本 (旧来の要素は focusable、ウィジェットの根は操作可能 && Navigation あり)
+        if (!uiwidgets::IsFocusCandidate(sc->GetWorld(), e)) {
+            return 0;
         }
         sc->UI().focused = e;
         return 1;

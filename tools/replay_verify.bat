@@ -78,13 +78,13 @@ rem 前回の失敗マーカーが残っていると :diagnose が古い tick �
 del /q cache\*.mismatch.txt 2>nul
 if exist cache\replay_logs rd /s /q cache\replay_logs
 
-echo === parallel verification: 7 scene chains + time travel x2 + rule check ===
+echo === parallel verification: 8 scene chains + time travel x2 + what-if x2 + rule check ===
 rem ★Entry は空白なし相対パスで渡す (人間/CI が bat を叩くのと同じ呼び形に固定。
 rem   バッチ読取りの罠と chcp 437 の理由は runner 冒頭のコメント参照)
-pwsh -NoProfile -ExecutionPolicy Bypass -File tools\run_parallel.ps1 -Entry tools\replay_verify.bat -LogDir cache\replay_logs -Jobs "demo,parts,flow,mp,physics,joints,acoustic,ttdebug,ttrelease,whatifdebug,whatifrelease,rules" || goto :failed
+pwsh -NoProfile -ExecutionPolicy Bypass -File tools\run_parallel.ps1 -Entry tools\replay_verify.bat -LogDir cache\replay_logs -Jobs "demo,parts,flow,mp,physics,joints,acoustic,ui,ttdebug,ttrelease,whatifdebug,whatifrelease,rules" || goto :failed
 
 echo.
-echo [PASS] replay consistency (Debug/Release, 7 scenes: demo + parts + flow + mp + physics + joints + acoustic) + snapshot round-trip + time travel + rule check
+echo [PASS] replay consistency (Debug/Release, 8 scenes: demo + parts + flow + mp + physics + joints + acoustic + ui) + snapshot round-trip + time travel + rule check
 exit /b 0
 
 rem ---------------------------------------------------------------- :failed
@@ -119,6 +119,11 @@ if exist cache\golden_joints.rep.mismatch.txt (
 if exist cache\golden_acoustic.rep.mismatch.txt (
     set DIAGFOUND=1
     call :diagnose "cache\golden_acoustic.rep" "--acoustic-demo"
+)
+if exist cache\golden_ui.rep.mismatch.txt (
+    set DIAGFOUND=1
+    rem 期待側の撮り直しは記録と同じ引数 (台本込み) でないと入力がずれる
+    call :diagnose "cache\golden_ui.rep" "--ui-demo --ui-demo-input"
 )
 if "%DIAGFOUND%"=="0" echo [diag] no mismatch markers - failures happened before any hash comparison, see the job logs above
 echo [FAIL] replay verification
@@ -244,6 +249,19 @@ rem   ★検証側には渡さない (合成入力は .rep に記録済み。mp 
 rem シーンはコードから毎回組み直す (parts / physics / joints と同じ流儀)
 :job_acoustic
 call :chain cache\golden_acoustic.rep "--acoustic-demo --synth-input" "--acoustic-demo"
+exit /b %ERRORLEVEL%
+
+rem M75f: 8 ペア目 = ゲーム内 UI のウィジェット (--ui-demo)。UIToggle.isOn / UISlider.value はハッシュ対象で、
+rem UIInteractionState (hovered / pressed / clicked / focused / changed) と合わせて「押下の泡立ち /
+rem ToggleGroup の規則 / Slider の飛び・ドラッグ・掴んだ位置・キー / 操作不可」が Debug/Release の
+rem ビット一致として検査される。
+rem ★記録側にだけ --ui-demo-input (UiDemoScriptInput の台本) を渡す。無入力だと UI は一度も押されず、
+rem   配線ミスが記録側と検証側で対称に起きて一致してしまう (acoustic の --synth-input と同じ理由)。
+rem   検証側には渡さない (台本の入力は .rep に記録済み)
+rem シーンはコードから毎回組み直す (保存済みが残っていると Editor はそちらをロードする)
+:job_ui
+if exist cache\ui_showcase.scene.json del /q cache\ui_showcase.scene.json
+call :chain cache\golden_ui.rep "--ui-demo --ui-demo-input" "--ui-demo"
 exit /b %ERRORLEVEL%
 
 rem ---- タイムトラベルの巻き戻し (M52e) ----

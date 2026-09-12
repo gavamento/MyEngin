@@ -107,16 +107,31 @@ EntityID HitTest(World& world, int canvasW, int canvasH, float x, float y);
 // current が候補に無ければ「最初の候補」へ吸着する (フォーカス不在からの入りぐち)
 EntityID FindNextFocus(World& world, int canvasW, int canvasH, EntityID current, int dir);
 
+// Evaluate が確定した「この tick の出来事」のうち、ウィジェットの値の更新 (uiwidgets::Update、M75f) が
+// 読むもの。**tick の中だけの一時値** — Evaluate と Update は同じ RunOneTick の中で続けて呼ばれるので、
+// スナップショットにもハッシュにも載せない (載せる状態は UIInteractionState と Toggle / Slider 側)
+struct TickEvents {
+    EntityID pressBegan = kNullEntity;    // この tick に掴んだ要素 (泡立ち後)。Slider が「押した点へ飛ぶか」を決める
+    EntityID navStepTarget = kNullEntity; // 向きの軸の UINav* を値の変更として受けた Slider
+    int navStepDir = -1;                  // そのときの uinav::NavDir (-1 = 無し)
+};
+
 // 1 tick 分の評価。**スクリプト層より前**に 1 回だけ呼ぶ (TickRunner)。
 //   1. clicked / changed を落とす (1 tick だけ立つ値)
-//   2. hovered / pressed / clicked とドラッグ状態 (M75b) をマウスから更新
-//   3. UINav* アクションで focused を動かし、UIElement.focused へ書き戻す
+//   2. hovered / pressed / clicked とドラッグ状態 (M75b) をマウスから更新。
+//      M75f: ヒットした要素から最寄りのウィジェットへ泡立ち、操作できない Selectable は掴まず、
+//      押したウィジェットがフォーカスを取る
+//   3. UINav* アクションで focused を動かし、UIElement.focused へ書き戻す。
+//      M75f: Selectable の Navigation (なし / 左右 / 上下 / 自動 / 明示) に従い、フォーカス中の Slider は
+//      向きの軸の入力を値の変更として受ける (events へ)
 //   4. prevSurfX/Y を今 tick のポインタ位置へ進める (M75b)
 // in はレーン 0 の入力 (ゲーム面のマウスを持つ唯一のレーン)。prevIn は前 tick のレーン 0 —
 // M75h の InputField がキーのエッジ (Backspace / 矢印) を取るのに使う。M75b は配線だけ。
-// actions は評価済みのアクションマップ (null 可 = フォーカス移動なし)
+// actions は評価済みのアクションマップ (null 可 = フォーカス移動なし)。
+// events は uiwidgets::Update へ渡す出来事の書き先 (null 可 = ウィジェットの値を動かさない呼び出し)
 void Evaluate(World& world, const InputSnapshot& in, const InputSnapshot& prevIn,
-              const InputActions* actions, UIInteractionState& state);
+              const InputActions* actions, UIInteractionState& state,
+              TickEvents* events = nullptr);
 
 // UIButtonState (ABI v16) のビット。**ScriptAPI.h の MyeUIButton* と同じ値**
 enum StateBits : uint32_t {

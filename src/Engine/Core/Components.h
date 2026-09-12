@@ -518,6 +518,87 @@ struct UIContentSizeFitterComponent {
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
+// ---- Selectable (M75f) ----
+// Unity の Selectable (Interactable / Transition / Navigation / Target Graphic)。Toggle / Slider (と M75g〜h の
+// ウィジェット) の共通部分で、単独で付ければ「押せる・選べる・状態で色が変わる」要素になる。
+// ★押下は**祖先へ泡立つ**: 子の画像や文字の上で押しても、最寄りのウィジェット (Selectable / Toggle /
+//   Slider を持つノード) が hovered / pressed / clicked を受ける (uiwidgets::BubbleTarget)。
+//   Selectable の無い旧来のボタン (UIElement kind 2) は従来どおり自分で受け、ハイライトもハードコードのまま。
+// ★見た目 (Transition) は描画だけが読む。色は Unity の ColorBlock と同じく targetGraphic の color に**掛ける**。
+//   fadeDuration は無い (状態が変わった描画フレームで切り替わる)。Animation 遷移も無い。
+// 描画 / ヒット / ナビの入力なので NoHash + UiAux (UIElement / RectTransform と同じ「authored な NoHash 入力」
+// のクラス)。壊れれば hovered / focused と Toggle / Slider の値 (ハッシュ対象) で表面化する
+struct UISelectableComponent {
+    int32_t interactable = 1; // 0 = 押下を吸うが pressed / clicked / フォーカスを立てない (disabledColor で描く)
+    int32_t transition = 1;   // 0 = なし / 1 = 色 (Color Tint) / 2 = 画像の差し替え (Sprite Swap)
+    // Unity の ColorBlock.defaultColorBlock と同じ既定値 (245 / 200 / 128 を 255 で割った値)
+    DirectX::XMFLOAT4 normalColor = { 1.0f, 1.0f, 1.0f, 1.0f };
+    DirectX::XMFLOAT4 highlightedColor = { 0.9607843f, 0.9607843f, 0.9607843f, 1.0f };
+    DirectX::XMFLOAT4 pressedColor = { 0.7843137f, 0.7843137f, 0.7843137f, 1.0f };
+    DirectX::XMFLOAT4 selectedColor = { 0.9607843f, 0.9607843f, 0.9607843f, 1.0f };
+    DirectX::XMFLOAT4 disabledColor = { 0.7843137f, 0.7843137f, 0.7843137f, 0.5019608f };
+    float colorMultiplier = 1.0f; // 状態色に掛ける倍率 (Unity と同じ 1..5)
+    // Sprite Swap。0 = その状態でも元のテクスチャのまま (Normal は targetGraphic 自身の texture)
+    AssetID highlightedSprite = {};
+    AssetID pressedSprite = {};
+    AssetID selectedSprite = {};
+    AssetID disabledSprite = {};
+    // Unity の Navigation.Mode と同じ値 (ビット: 1 = 左右 / 2 = 上下)。0 = なし (フォーカス候補にならない)
+    // 1 = 左右だけ自動 / 2 = 上下だけ自動 / 3 = 自動 / 4 = 明示 (selectOn* の参照先へ)
+    int32_t navigationMode = 3;
+    EntityID selectOnUp = kNullEntity;
+    EntityID selectOnDown = kNullEntity;
+    EntityID selectOnLeft = kNullEntity;
+    EntityID selectOnRight = kNullEntity;
+    // 色 / 画像を当てる UIElement。null = 自分の UIElement (無ければ見た目は変わらない)
+    EntityID targetGraphic = kNullEntity;
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
+// ---- Toggle (M75f) ----
+// Unity の Toggle。クリック (Submit を含む) で isOn が反転する。graphic (チェックマーク) は isOn == 0 の間
+// 描かれない (Unity の CrossFadeAlpha 0 相当。ヒットテストには残るが、押下は Toggle へ泡立つ)。
+// group が UIToggleGroup を持つエンティティを指せば、同じ group の Toggle のうち 1 つだけが on になる。
+// ★**ハッシュ対象** (NoHash を付けない) — isOn は sim が書く状態。値が変わった tick は
+//   UIInteractionState.changed に自分が立つ
+struct UIToggleComponent {
+    int32_t isOn = 1;
+    EntityID graphic = kNullEntity; // isOn の間だけ描く UIElement (チェックマーク)
+    EntityID group = kNullEntity;   // UIToggleGroup を持つエンティティ (null = 単独)
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
+// ---- Slider (M75f) ----
+// Unity の Slider。fillRect / handleRect の**アンカーを value から導く** (Unity は書き込むが、ここでは
+// Layout Group と同じく書かない — uilayout::Resolve が解くときに uiwidgets::SliderDrivenTransform を通す)。
+// 押した点へ値が飛び、押したままのドラッグで追従する (ハンドルの上で押したときは掴んだ位置を保つ)。
+// フォーカス中は向きの軸の UINav* で値を 1 段 (wholeNumbers なら 1、それ以外は範囲の 1/10) 動かす。
+// ★**ハッシュ対象** — value と dragOffset は sim が書く状態
+struct UISliderComponent {
+    EntityID fillRect = kNullEntity;   // 塗り。親 (Fill Area) の中でアンカーが 0..value に張られる
+    EntityID handleRect = kNullEntity; // つまみ。親 (Handle Slide Area) の中でアンカーが value の位置に来る
+    int32_t direction = 0; // 0 = 左→右 / 1 = 右→左 / 2 = 下→上 / 3 = 上→下 (Unity と同じ並び)
+    float minValue = 0.0f;
+    float maxValue = 1.0f;
+    int32_t wholeNumbers = 0; // 値を整数に丸める (偶数丸め = Unity の Mathf.Round と同じ)
+    float value = 0.0f;
+    // ハンドルを掴んだ点とハンドルの pivot の差 (キャンバス単位。Unity の m_Offset)。押下の tick に書き、
+    // ドラッグ中はこの分だけずらして値を解く = 掴んだ瞬間にハンドルが飛ばない。Inspector には出さない
+    DirectX::XMFLOAT2 dragOffset = { 0.0f, 0.0f };
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
+// ---- Toggle Group (M75f) ----
+// Unity の ToggleGroup。UIToggle.group がこれを持つエンティティを指す。allowSwitchOff == 0 のとき、
+// on の Toggle をクリックしても (群に他の on が無ければ) off にならない。
+// ★Unity の EnsureValidState (有効化時に「どれも on でなければ先頭を on」) は**無い** — tick ごとに
+//   正規化するとエディタで作者が書いた値を勝手に書き換えるため。整えるのはクリックされたときだけ。
+// 群の規則の入力なので NoHash + UiAux (結果の isOn はハッシュ対象)
+struct UIToggleGroupComponent {
+    int32_t allowSwitchOff = 0;
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
 // ---- Animator Controller (M22) ----
 // ステートマシンでアニメーションクリップを切替・ブレンドする。**無ければ何もしない** (opt-in)。
 // LocalTransform (ハッシュ対象) を駆動するので状態は決定論・**hash 対象** (kComponentNoHash を付けない)。

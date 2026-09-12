@@ -774,6 +774,9 @@ MYE_STR(Create_UICanvas,      "Canvas",            "キャンバス")
 MYE_STR(Create_UIHLayout,     "Horizontal Layout Group", "水平レイアウトグループ")
 MYE_STR(Create_UIVLayout,     "Vertical Layout Group",   "垂直レイアウトグループ")
 MYE_STR(Create_UIGridLayout,  "Grid Layout Group",       "グリッドレイアウトグループ")
+// M75f: ウィジェット (子構成込み)
+MYE_STR(Create_UIToggle,      "Toggle",            "トグル")
+MYE_STR(Create_UISlider,      "Slider",            "スライダー")
 
 // ---- 統計ウィンドウ / 未保存確認 (M47b) ----
 MYE_STR(Stats_Fps,            "FPS: %.1f (%.3f ms)",        "FPS: %.1f (%.3f ms)")
@@ -1115,6 +1118,9 @@ MYE_STR(Insp_UIDrivenGroupSize,   "Position and size are set by the parent Layou
                                   "位置とサイズは親の Layout Group が決めています")
 MYE_STR(Insp_UIDrivenFitter,      "Size is set by the Content Size Fitter",
                                   "サイズは Content Size Fitter が決めています")
+// M75f: Slider の fillRect / handleRect (アンカーは value から導かれる)
+MYE_STR(Insp_UIDrivenSlider,      "Anchors are set by the parent Slider",
+                                  "アンカーは親の Slider が決めています")
 MYE_STR(Insp_PmOvRestitution, "Override Restitution", "反発を上書き")
 
 // ---- Source Control (M66b) ----

@@ -432,6 +432,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 app.acousticShowcase = true;
             } else if (arg == L"--ui-demo") {
                 app.uiShowcase = true; // M75c: ゲーム内 UI のショーケース (golden 25 枚目)
+            } else if (arg == L"--ui-demo-input") {
+                config.uiDemoInput = true; // M75f: --ui-demo を押す入力台本 (replay 8 ペア目の記録側)
             } else if (arg == L"--terrain-lod" && i + 1 < argc) {
                 // M58e: 地形 LOD の切替距離。**golden は LOD 無しのまま**で、
                 // クラック A/B のときだけ点ける

@@ -126,6 +126,7 @@ inline constexpr uint32_t kDrivenByGroup = 1u << 0;  // 親の Layout Group が�
 inline constexpr uint32_t kDrivenWidth = 1u << 1;    // 幅が上書きされている
 inline constexpr uint32_t kDrivenHeight = 1u << 2;   // 高さが上書きされている
 inline constexpr uint32_t kDrivenByFitter = 1u << 3; // 上書きの一部は自分の ContentSizeFitter
+inline constexpr uint32_t kDrivenBySlider = 1u << 4; // M75f: アンカーを祖先の Slider が value から決めている
 uint32_t LayoutDrivenBits(World& world, EntityID e);
 
 } // namespace uilayout

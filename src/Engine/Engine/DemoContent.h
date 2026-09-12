@@ -1,8 +1,11 @@
 #pragma once
 
+#include <cstdint>
+
 namespace mye {
 
 struct EngineContext;
+struct InputSnapshot; // M75f: UiDemoScriptInput
 
 // デモ用リソース (メッシュ / マテリアル / モデル) を登録する。
 // シーンファイルは AssetID しか持たないため実体登録は起動側の責務 — Editor / Runtime 共用。
@@ -219,6 +222,12 @@ void RegisterAcousticShowcaseContent(EngineContext& ctx);
 // M75c: ゲーム内 UI のショーケース (--ui-demo)。golden 25 枚目 (ui_widgets) の被写体。
 // 材質を使わない (UI だけ) ので Register* は無い。M75e〜h の Layout / ウィジェットは関数の末尾へ足す
 void BuildUiShowcaseScene(EngineContext& ctx);
+
+// M75f: 上のショーケースのウィジェットを押す決定論の入力台本 (--ui-demo-input、replay 8 ペア目の記録側)。
+// **tick だけの純関数** (SynthLaneInput と同じ)。レーン 0 のゲーム面を 1920x1080 に固定し、マウスの位置と
+// 左ボタンとキー (UINav* / Submit) を置き換える (ライブのキーボードは捨てる)。座標は BuildUiShowcaseScene の配置と対 —
+// ウィジェットを動かしたらここも直す (押す点が外れても replay は緑のまま = 被覆だけが黙って消える)
+void UiDemoScriptInput(uint64_t tick, InputSnapshot& lane0);
 
 // assets\ 以下の .prefab.json / .anim.json を各ライブラリへ登録する (Editor / Runtime 共用)。
 // M48g からは .glb / .gltf / .fbx のスケルトンもここで (エンティティを作らずに) 登録する

@@ -13,6 +13,7 @@
 #include "Engine/Engine/UI/UILayoutGroup.h" // M75e: LayoutScratch
 #include "Engine/Engine/UI/UITextLayout.h"
 #include "Engine/Engine/UI/UITextMetrics.h" // M75d: 行高の一致を固定するだけ
+#include "Engine/Engine/UI/UIWidgets.h"     // M75f: Selectable の色 / 画像と Toggle のチェックマーク
 #include "Engine/Renderer/GpuResources.h"
 #include "Engine/Renderer/GraphicsDevice.h"
 #include "Engine/Renderer/ShaderManager.h"
@@ -297,8 +298,27 @@ void UIRenderer::Render(World& world, GraphicsDevice& device, ShaderManager& sha
     const D3D11_RECT fullScissor = { 0, 0, width, height };
     // M75e: 自動レイアウトのメモはこのフレームの描画 1 回ぶん (結果は変えない。描画中に World は動かない)
     uilayout::LayoutScratch layoutScratch;
+    // M75f: Selectable の遷移 (色 / 画像) と off の Toggle のチェックマーク。ウィジェットの無いシーンでは空で、
+    // 下の color は el.color の複写のまま = M75e 以前と同じ頂点色
+    std::vector<uiwidgets::VisualOverride> overrides;
+    uiwidgets::CollectVisualOverrides(world, ui, overrides);
     for (const Item& it : items) {
         const UIElementComponent& el = *it.el;
+        uiwidgets::VisualOverride vis;
+        if (!overrides.empty()) {
+            vis = uiwidgets::MergedOverrideFor(overrides, it.e);
+            if ((vis.flags & uiwidgets::kVisHidden) != 0) {
+                continue;
+            }
+        }
+        XMFLOAT4 color = el.color;
+        if ((vis.flags & uiwidgets::kVisTint) != 0) {
+            // Unity の ColorBlock と同じく targetGraphic の色に掛ける (倍率で 1 を超えた分は切る)
+            color.x = std::clamp(el.color.x * vis.tint.x, 0.0f, 1.0f);
+            color.y = std::clamp(el.color.y * vis.tint.y, 0.0f, 1.0f);
+            color.z = std::clamp(el.color.z * vis.tint.z, 0.0f, 1.0f);
+            color.w = std::clamp(el.color.w * vis.tint.w, 0.0f, 1.0f);
+        }
         // M75c: この要素のキャンバス単位 → 実 px。明示 Canvas は既定キャンバス単位への倍率を
         // 先に掛ける (UILayout.h の CanvasOfEntity)。Canvas の無い要素は 1.0f * defaultScale =
         // M75c 以前の canvasScale と同ビット — 以下の式はこの 1 行以外 1 文字も変えていない
@@ -348,16 +368,19 @@ void UIRenderer::Render(World& world, GraphicsDevice& device, ShaderManager& sha
 
         if (el.kind == 1) {
             // テキスト (背景無し)。M51e: 矩形 (w,h) 内で整列 + 折返し (既定 0/0 = 従来どおり左上)
-            PushTextInRect(el.text, rx, ry, rect.w, rect.h, textScale, el.color, el.align,
+            PushTextInRect(el.text, rx, ry, rect.w, rect.h, textScale, color, el.align,
                            el.wrap != 0);
         } else if (el.kind == 2) {
             // ボタン: 背景 + hover/press ハイライト + 中央ラベル。
             // ★M70c: 判定はエンジンが tick 中に確定した状態を読むだけ (自前で矩形と
             //   マウスを比べない) = 「光っている要素」と「押したことになる要素」が
             //   構造的に同じものになる
-            XMFLOAT4 bg = el.color;
+            XMFLOAT4 bg = color;
             const uint32_t bits = ui ? uiinteract::BitsFor(*ui, it.e) : 0u;
-            if (bits & uiinteract::kHovered) {
+            // M75f: Selectable を持つボタン / 遷移の対象になったボタンはハードコードのハイライトを当てない
+            const bool legacyHighlight =
+                (vis.flags & (uiwidgets::kVisTint | uiwidgets::kVisNoLegacyHighlight)) == 0;
+            if (legacyHighlight && (bits & uiinteract::kHovered)) {
                 // press で暗く、hover で明るく。pressed は「掴んだ要素」なので、
                 // 押したまま外へ出ているあいだは hovered が落ちて暗くならない
                 const float k = (bits & uiinteract::kPressed) ? 0.8f : 1.25f;
@@ -372,8 +395,11 @@ void UIRenderer::Render(World& world, GraphicsDevice& device, ShaderManager& sha
             // パネル / 画像 (M35: 9-slice / fillAmount 対応)
             ID3D11ShaderResourceView* srv = whiteSrv_;
             float texW = 0.0f, texH = 0.0f;
-            if (el.texture.value != 0) {
-                Texture* t = resources.textures.Get(el.texture);
+            // M75f: Sprite Swap はその状態の画像へ差し替える (無ければ元のテクスチャ)
+            const AssetID texture =
+                ((vis.flags & uiwidgets::kVisSprite) != 0) ? vis.sprite : el.texture;
+            if (texture.value != 0) {
+                Texture* t = resources.textures.Get(texture);
                 if (t && t->srv) {
                     srv = t->srv.Get();
                     texW = static_cast<float>(t->width);
@@ -392,16 +418,16 @@ void UIRenderer::Render(World& world, GraphicsDevice& device, ShaderManager& sha
                     el.sliceBorder.w * canvasScale, texW, texH, quads);
                 for (int i = 0; i < n; ++i) {
                     const uigeom::UIQuad& q = quads[i];
-                    PushQuad(srv, false, q.x, q.y, q.w, q.h, q.u0, q.v0, q.u1, q.v1, el.color);
+                    PushQuad(srv, false, q.x, q.y, q.w, q.h, q.u0, q.v0, q.u1, q.v1, color);
                 }
             } else if (el.fillMode != 0) {
                 const uigeom::UIQuad q =
                     uigeom::BuildFillQuad(rx, ry, rect.w, rect.h, el.fillMode, el.fillAmount);
                 if (q.w > 0.0f && q.h > 0.0f) {
-                    PushQuad(srv, false, q.x, q.y, q.w, q.h, q.u0, q.v0, q.u1, q.v1, el.color);
+                    PushQuad(srv, false, q.x, q.y, q.w, q.h, q.u0, q.v0, q.u1, q.v1, color);
                 }
             } else {
-                PushQuad(srv, false, rx, ry, rect.w, rect.h, 0, 0, 1, 1, el.color);
+                PushQuad(srv, false, rx, ry, rect.w, rect.h, 0, 0, 1, 1, color);
             }
         }
 

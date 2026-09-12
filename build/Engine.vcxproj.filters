@@ -483,6 +483,12 @@
     <ClCompile Include="..\src\Engine\Engine\UI\UITextMetrics.cpp">
       <Filter>Engine\UI</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\UI\UIWidgetFactory.cpp">
+      <Filter>Engine\UI</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\UI\UIWidgets.cpp">
+      <Filter>Engine\UI</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Vfx\VfxRenderer.cpp">
       <Filter>Engine\Vfx</Filter>
     </ClCompile>
@@ -1090,6 +1096,12 @@
       <Filter>Engine\UI</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\UI\UITextMetrics.h">
+      <Filter>Engine\UI</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\UI\UIWidgetFactory.h">
+      <Filter>Engine\UI</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\UI\UIWidgets.h">
       <Filter>Engine\UI</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Vfx\VfxGeometry.h">

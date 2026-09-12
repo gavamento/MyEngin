@@ -164,6 +164,8 @@
     <ClCompile Include="..\src\Engine\Engine\UI\UIRenderer.cpp" />
     <ClCompile Include="..\src\Engine\Engine\UI\UISelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\UI\UITextMetrics.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\UI\UIWidgetFactory.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\UI\UIWidgets.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Vfx\VfxRenderer.cpp" />
     <ClCompile Include="..\src\Engine\Engine\VfxSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Platform\Clock.cpp" />
@@ -367,6 +369,8 @@
     <ClInclude Include="..\src\Engine\Engine\UI\UISelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\UI\UITextLayout.h" />
     <ClInclude Include="..\src\Engine\Engine\UI\UITextMetrics.h" />
+    <ClInclude Include="..\src\Engine\Engine\UI\UIWidgetFactory.h" />
+    <ClInclude Include="..\src\Engine\Engine\UI\UIWidgets.h" />
     <ClInclude Include="..\src\Engine\Engine\Vfx\VfxGeometry.h" />
     <ClInclude Include="..\src\Engine\Engine\Vfx\VfxRenderer.h" />
     <ClInclude Include="..\src\Engine\Engine\VfxSelfTest.h" />

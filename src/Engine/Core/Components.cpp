@@ -1111,6 +1111,62 @@ void RegisterBuiltinComponents()
         MYE_JP("縦の合わせ方", MYE_FIELD_TIP(UIContentSizeFitterComponent, verticalFit, Int32,
                                              "0 = unconstrained 1 = min size 2 = preferred size")),
     }, kComponentNoHash | kComponentUiAux);
+
+    // M75f: ウィジェット 4 種 (UIContentSizeFitter の直後、この順)。
+    // Selectable と ToggleGroup は描画 / ヒット / ナビの入力 = NoHash + UiAux。
+    // Toggle と Slider は **sim が値を書く状態なのでハッシュ対象** (UiAux だけ) — ここを NoHash にすると
+    // ウィジェットの配線が壊れても replay_verify が緑のままになる
+    RegisterComponent<UISelectableComponent>("UISelectable", {
+        MYE_JP("操作可能", MYE_FIELD_TIP(UISelectableComponent, interactable, Int32,
+                                         "0 = swallows the pointer but never presses, clicks or takes focus")),
+        MYE_JP("遷移", MYE_FIELD_TIP(UISelectableComponent, transition, Int32,
+                                     "0 = none 1 = color tint 2 = sprite swap")),
+        MYE_JP("通常の色", MYE_FIELD(UISelectableComponent, normalColor, Color)),
+        MYE_JP("ハイライトの色", MYE_FIELD(UISelectableComponent, highlightedColor, Color)),
+        MYE_JP("押下の色", MYE_FIELD(UISelectableComponent, pressedColor, Color)),
+        MYE_JP("選択中の色", MYE_FIELD(UISelectableComponent, selectedColor, Color)),
+        MYE_JP("無効の色", MYE_FIELD(UISelectableComponent, disabledColor, Color)),
+        MYE_JP("色の倍率", MYE_FIELD_RANGE(UISelectableComponent, colorMultiplier, Float, 1.0f, 5.0f)),
+        MYE_JP("ハイライトの画像", MYE_FIELD(UISelectableComponent, highlightedSprite, AssetRef)),
+        MYE_JP("押下の画像", MYE_FIELD(UISelectableComponent, pressedSprite, AssetRef)),
+        MYE_JP("選択中の画像", MYE_FIELD(UISelectableComponent, selectedSprite, AssetRef)),
+        MYE_JP("無効の画像", MYE_FIELD(UISelectableComponent, disabledSprite, AssetRef)),
+        MYE_JP("ナビゲーション", MYE_FIELD_TIP(UISelectableComponent, navigationMode, Int32,
+                                               "0 = none 1 = horizontal 2 = vertical 3 = automatic 4 = explicit")),
+        MYE_JP("上の選択先", MYE_FIELD_TIP(UISelectableComponent, selectOnUp, EntityRef, "explicit navigation only")),
+        MYE_JP("下の選択先", MYE_FIELD_TIP(UISelectableComponent, selectOnDown, EntityRef, "explicit navigation only")),
+        MYE_JP("左の選択先", MYE_FIELD_TIP(UISelectableComponent, selectOnLeft, EntityRef, "explicit navigation only")),
+        MYE_JP("右の選択先", MYE_FIELD_TIP(UISelectableComponent, selectOnRight, EntityRef, "explicit navigation only")),
+        MYE_JP("対象のグラフィック", MYE_FIELD_TIP(UISelectableComponent, targetGraphic, EntityRef,
+                                                   "UIElement to tint / swap; empty = this entity's own")),
+    }, kComponentNoHash | kComponentUiAux);
+
+    RegisterComponent<UIToggleComponent>("UIToggle", {
+        MYE_JP("オン", MYE_FIELD(UIToggleComponent, isOn, Int32)),
+        MYE_JP("グラフィック", MYE_FIELD_TIP(UIToggleComponent, graphic, EntityRef,
+                                             "drawn only while on (the check mark)")),
+        MYE_JP("グループ", MYE_FIELD_TIP(UIToggleComponent, group, EntityRef,
+                                         "entity with a UIToggleGroup; empty = standalone")),
+    }, kComponentUiAux);
+
+    RegisterComponent<UISliderComponent>("UISlider", {
+        MYE_JP("塗りの矩形", MYE_FIELD_TIP(UISliderComponent, fillRect, EntityRef,
+                                           "anchors are driven from the value inside its parent")),
+        MYE_JP("つまみの矩形", MYE_FIELD_TIP(UISliderComponent, handleRect, EntityRef,
+                                             "anchors are driven from the value inside its parent")),
+        MYE_JP("向き", MYE_FIELD_TIP(UISliderComponent, direction, Int32,
+                                     "0 = left to right 1 = right to left 2 = bottom to top 3 = top to bottom")),
+        MYE_JP("最小値", MYE_FIELD(UISliderComponent, minValue, Float)),
+        MYE_JP("最大値", MYE_FIELD(UISliderComponent, maxValue, Float)),
+        MYE_JP("整数のみ", MYE_FIELD(UISliderComponent, wholeNumbers, Int32)),
+        MYE_JP("値", MYE_FIELD(UISliderComponent, value, Float)),
+        MYE_JP("掴んだ位置", MYE_FIELD_FLAGS(UISliderComponent, dragOffset, Float2, kFieldHidden)),
+    }, kComponentUiAux);
+
+    RegisterComponent<UIToggleGroupComponent>("UIToggleGroup", {
+        MYE_JP("すべてオフを許可", MYE_FIELD_TIP(UIToggleGroupComponent, allowSwitchOff, Int32,
+                                                 "clicking the only toggle that is on may turn it off")),
+    }, kComponentNoHash | kComponentUiAux);
 }
 
 } // namespace mye

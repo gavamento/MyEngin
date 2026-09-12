@@ -43,6 +43,7 @@
 #include "Engine/Engine/SkinningSystem.h"
 #include "Engine/Engine/TransformSystem.h"
 #include "Engine/Engine/UI/UIInteraction.h" // M70c: UI 対話の評価 (スクリプト層より前)
+#include "Engine/Engine/UI/UIWidgets.h"     // M75f: Toggle / Slider の値の更新
 #include "Engine/Engine/Vfx/VfxRenderer.h"
 #include "Engine/Platform/InputActions.h"
 #include "Engine/Platform/PathUtil.h"
@@ -266,7 +267,10 @@ void RunOneTick(TickServices& ts)
     // 消費するのはレーン 0 の入力だけ (キャンバス座標のマウスを持つ唯一のレーン)。
     // 結果は Scene が持つ sim 状態 = tick 末のハッシュに載るので、配線が壊れれば
     // replay_verify が赤くなる (UIElement 自体は NoHash なので他に防波堤が無い)
-    uiinteract::Evaluate(scene.GetWorld(), ctx.Input(), prevUiInput, &inputActions, scene.UI());
+    // M75f: ウィジェットの値の更新 (下の uiwidgets::Update) へ渡す出来事を受け取る (tick 内だけの一時値)
+    uiinteract::TickEvents uiEvents;
+    uiinteract::Evaluate(scene.GetWorld(), ctx.Input(), prevUiInput, &inputActions, scene.UI(),
+                         &uiEvents);
     // M36b: tick 頭のワールド行列を補間用に採取 (record/verify 中は補間しないので省く)
     if (ts.prevWorld != nullptr && !Recording() && !Verifying()) {
         CapturePrevWorld(*ts.prevWorld, scene.GetWorld());
@@ -286,6 +290,14 @@ void RunOneTick(TickServices& ts)
     }
     if (ts.lastTickSimulated != nullptr) {
         *ts.lastTickSimulated = ctx.simulateScripts; // M36b: 編集中 (非 Play) は補間を切る
+    }
+    // M75f: ウィジェットの値 (Toggle.isOn / Slider.value、ハッシュ対象) を書く。**スクリプトと同じ門**
+    // (simulateScripts) を通す — エディタの編集中にゲーム面をクリックしてもシーンのデータが Undo の外で
+    // 書き換わらず、巻き戻しの再シムでもスクリプトと同じ tick だけ走る。
+    // TimeControl のポーズ (stepSim) では止めない = ポーズメニューの Slider は動く (スクリプト層と同じ扱い)。
+    // スクリプト層より前なので、スクリプトはこの tick の changed と新しい値を読める
+    if (ctx.simulateScripts) {
+        uiwidgets::Update(scene.GetWorld(), ctx.Input(), uiEvents, scene.UI());
     }
     // M51g: ゲームフローの tick ゲート (決定台帳 5)。ポーズ/タイムスケールは dt を
     // 触らず「この tick でゲート対象を進めるか」で表現する (整数 tick 決定論と噛み合う)。

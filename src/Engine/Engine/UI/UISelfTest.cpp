@@ -26,6 +26,11 @@
 #include "Engine/Engine/UI/UITextMetrics.h"     // M75d
 #include "Engine/Engine/Scene.h"           // M75a: 旧形式 (v3) シーンのロード時変換
 #include "Engine/Engine/SceneSerializer.h"
+#include "Engine/Engine/DemoContent.h"          // M75f: --ui-demo-input の台本の純関数性
+#include "Engine/Engine/Prefab.h"               // M75f: ウィジェットのプレハブ往復 (EntityRef の付け替え)
+#include "Engine/Engine/Replay/WorldHasher.h"   // M75f: Toggle の値がハッシュに載る
+#include "Engine/Engine/UI/UIWidgetFactory.h"   // M75f
+#include "Engine/Engine/UI/UIWidgets.h"         // M75f
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
@@ -1990,6 +1995,477 @@ bool RunUISelfTest()
         }
 
         uitext::SetActiveFontMetrics(savedMetrics);
+    }
+
+    // ---- M75f: ウィジェット (Selectable / Toggle / ToggleGroup / Slider) ----
+    // 期待値は Unity uGUI の Selectable / Toggle / ToggleGroup / Slider の振る舞い (分担は UIWidgets.h)。
+    // 1 tick は TickRunner と同じ順 = アクション評価 → uiinteract::Evaluate → uiwidgets::Update。
+    // 既定キャンバス 1920x1080 をゲーム面 1920x1080 で解くので、ポインタの座標はそのままキャンバス座標。
+    // Create > UI と同じ子構成 (uiwidgets::CreateToggle / CreateSlider) を中央アンカーで置くので、根は
+    // Toggle (880,520)-(1040,560) / 横の Slider (880,520)-(1040,560) / 縦の Slider (940,460)-(980,620)
+    {
+        const auto approx = [](float a, float b) { return std::fabs(a - b) < 1e-4f; };
+        const auto rectApprox = [&](const uilayout::UIRect& r, float x, float y, float rw, float rh) {
+            return approx(r.x, x) && approx(r.y, y) && approx(r.w, rw) && approx(r.h, rh);
+        };
+        constexpr uint8_t kVkEnter = 0x0D;
+        constexpr uint8_t kVkLeft = 0x25;
+        constexpr uint8_t kVkUp = 0x26;
+        constexpr uint8_t kVkRight = 0x27;
+        constexpr uint8_t kVkDown = 0x28;
+        InputActions navActions;
+        const bool actionsLoaded = navActions.LoadFromJsonText(R"({"actions":[
+            {"name":"UINavUp","keys":["Up"],"pad":[],"mouse":[]},
+            {"name":"UINavDown","keys":["Down"],"pad":[],"mouse":[]},
+            {"name":"UINavLeft","keys":["Left"],"pad":[],"mouse":[]},
+            {"name":"UINavRight","keys":["Right"],"pad":[],"mouse":[]},
+            {"name":"UINavSubmit","keys":["Enter"],"pad":[],"mouse":[]}],"axes":[]})");
+        check(actionsLoaded, "widgets: the navigation action map for the tests loads");
+
+        struct Driver {
+            InputSnapshot in = {};
+            InputSnapshot prev = {};
+            UIInteractionState st;
+        };
+        // 1 tick。vk は 1 つだけ押す (0 = 押さない)
+        const auto tick = [&](World& w, Driver& d, float x, float y, bool down, uint8_t vk) {
+            std::memset(d.in.keys, 0, sizeof(d.in.keys));
+            d.in.surfW = 1920;
+            d.in.surfH = 1080;
+            d.in.mouseSurfX = x;
+            d.in.mouseSurfY = y;
+            d.in.mouseButtons = down ? 1u : 0u;
+            if (vk != 0) {
+                d.in.keys[vk >> 3] |= static_cast<uint8_t>(1u << (vk & 7));
+            }
+            navActions.Evaluate(d.in, d.prev);
+            uiinteract::TickEvents ev;
+            uiinteract::Evaluate(w, d.in, d.prev, &navActions, d.st, &ev);
+            uiwidgets::Update(w, d.in, ev, d.st);
+            d.prev = d.in;
+        };
+        const auto click = [&](World& w, Driver& d, float x, float y) {
+            tick(w, d, x, y, false, 0);
+            tick(w, d, x, y, true, 0);
+            tick(w, d, x, y, false, 0);
+        };
+
+        // (1) 登録: 値を持つ Toggle / Slider はハッシュ対象、見た目と規則の Selectable / ToggleGroup は NoHash。全部 UiAux
+        {
+            const ComponentRegistry& reg = ComponentRegistry::Get();
+            const auto flagsOf = [&reg](const char* name) -> uint32_t {
+                const ComponentTypeId t = reg.FindByName(name);
+                return (t == kInvalidComponentType) ? 0xFFFFFFFFu : reg.Desc(t).flags;
+            };
+            const auto noHashAux = [&](const char* name) {
+                const uint32_t f = flagsOf(name);
+                return f != 0xFFFFFFFFu && (f & kComponentNoHash) != 0 && (f & kComponentUiAux) != 0;
+            };
+            const auto hashedAux = [&](const char* name) {
+                const uint32_t f = flagsOf(name);
+                return f != 0xFFFFFFFFu && (f & kComponentNoHash) == 0 && (f & kComponentUiAux) != 0;
+            };
+            check(noHashAux("UISelectable") && noHashAux("UIToggleGroup") && hashedAux("UIToggle")
+                      && hashedAux("UISlider"),
+                  "widgets: Toggle / Slider are hashed, Selectable / ToggleGroup are not, all are UiAux");
+        }
+
+        // (2) Toggle: 子への押下は根へ泡立ち、離した tick に反転 + changed。ラベル / Submit でも反転。
+        //     Update を呼ばない (エディタの編集中) なら値は動かない。操作不可はフォーカスを手放し、押下を吸うだけ
+        {
+            Scene sc;
+            const EntityID root = uiwidgets::CreateToggle(sc, "Toggle", "Label").Id();
+            World& w = sc.GetWorld();
+            w.ApplyStructuralChanges();
+            const EntityID bg = sc.Find("Background").Id();
+            const EntityID mark = sc.Find("Checkmark").Id();
+            const EntityID lbl = sc.Find("Label").Id();
+            const auto isOn = [&]() { return w.GetComponent<UIToggleComponent>(root)->isOn; };
+            check(rectApprox(uilayout::ResolveRect(w, bg, 1920, 1080), 884.0f, 524.0f, 32.0f, 32.0f)
+                      && rectApprox(uilayout::ResolveRect(w, mark, 1920, 1080), 890.0f, 530.0f, 20.0f, 20.0f)
+                      && rectApprox(uilayout::ResolveRect(w, lbl, 1920, 1080), 924.0f, 520.0f, 112.0f, 40.0f),
+                  "widgets: the toggle hierarchy lays out like Unity's (box on the left, label beside it)");
+            check(uiinteract::HitTest(w, 1920, 1080, 900.0f, 540.0f) == mark
+                      && uiwidgets::BubbleTarget(w, mark) == root
+                      && uiwidgets::BubbleTarget(w, lbl) == root,
+                  "widgets: a hit on the check mark or the label bubbles to the toggle root");
+            Driver d;
+            tick(w, d, 900.0f, 540.0f, false, 0);
+            check(d.st.hovered == root, "widgets: hovering a child hovers the widget root");
+            tick(w, d, 900.0f, 540.0f, true, 0);
+            check(d.st.pressed == root && d.st.focused == root && isOn() == 1,
+                  "widgets: pressing a toggle captures and focuses the root without flipping it yet");
+            tick(w, d, 900.0f, 540.0f, false, 0);
+            check(d.st.clicked == root && d.st.changed == root && isOn() == 0,
+                  "widgets: releasing over the toggle flips isOn and raises changed");
+            tick(w, d, 900.0f, 540.0f, false, 0);
+            check(d.st.changed == kNullEntity && d.st.clicked == kNullEntity && isOn() == 0,
+                  "widgets: changed lasts exactly one tick");
+            std::vector<uiwidgets::VisualOverride> ov;
+            uiwidgets::CollectVisualOverrides(w, &d.st, ov);
+            check((uiwidgets::MergedOverrideFor(ov, mark).flags & uiwidgets::kVisHidden) != 0,
+                  "widgets: the check mark is not drawn while the toggle is off");
+            click(w, d, 1000.0f, 540.0f);
+            check(isOn() == 1 && d.st.changed == root,
+                  "widgets: clicking the label turns the toggle back on");
+            uiwidgets::CollectVisualOverrides(w, &d.st, ov);
+            {
+                // フォーカス中 + カーソルが上 = Selected が Highlighted に勝つ (Unity の優先順位)
+                const uiwidgets::VisualOverride vb = uiwidgets::MergedOverrideFor(ov, bg);
+                check((uiwidgets::MergedOverrideFor(ov, mark).flags & uiwidgets::kVisHidden) == 0
+                          && (vb.flags & uiwidgets::kVisTint) != 0 && approx(vb.tint.x, 0.9607843f)
+                          && uiwidgets::SelectionStateOf(w, d.st, root) == uiwidgets::kStateSelected,
+                      "widgets: the target graphic is tinted with the selected colour while focused");
+            }
+            tick(w, d, 1000.0f, 540.0f, false, kVkEnter);
+            check(isOn() == 0 && d.st.changed == root,
+                  "widgets: Submit on the focused toggle flips it like a click");
+            tick(w, d, 1000.0f, 540.0f, false, 0);
+            {
+                // エディタの編集中 = TickRunner が Update を呼ばない。対話状態は動くが値は動かない
+                UIInteractionState st2 = d.st;
+                InputSnapshot pressIn = d.in;
+                pressIn.mouseSurfX = 900.0f;
+                pressIn.mouseSurfY = 540.0f;
+                pressIn.mouseButtons = 1;
+                InputSnapshot releaseIn = pressIn;
+                releaseIn.mouseButtons = 0;
+                uiinteract::Evaluate(w, pressIn, d.in, nullptr, st2);
+                uiinteract::Evaluate(w, releaseIn, pressIn, nullptr, st2);
+                check(st2.clicked == root && isOn() == 0,
+                      "widgets: without uiwidgets::Update (editing, not playing) a click leaves the value alone");
+            }
+            w.GetComponent<UISelectableComponent>(root)->interactable = 0;
+            tick(w, d, 900.0f, 540.0f, false, 0);
+            check(d.st.focused == kNullEntity && d.st.hovered == root,
+                  "widgets: a widget that stops being interactable drops the focus but still takes the hover");
+            tick(w, d, 900.0f, 540.0f, true, 0);
+            check(d.st.pressed == kNullEntity, "widgets: pressing a non-interactable widget captures nothing");
+            tick(w, d, 900.0f, 540.0f, false, 0);
+            check(d.st.clicked == kNullEntity && d.st.changed == kNullEntity && isOn() == 0,
+                  "widgets: a non-interactable toggle neither clicks nor changes");
+            uiwidgets::CollectVisualOverrides(w, &d.st, ov);
+            check(uiwidgets::SelectionStateOf(w, d.st, root) == uiwidgets::kStateDisabled
+                      && approx(uiwidgets::MergedOverrideFor(ov, bg).tint.w, 0.5019608f),
+                  "widgets: a non-interactable widget is drawn with the disabled colour");
+        }
+
+        // (3) 泡立ちの止まり方: 旧来のボタン (Selectable 無しの kind 2) は自分の部分木を遮る。ウィジェットの無い
+        //     シーンは泡立ちも描画の上書きも起きない (M75e 以前の clicked と頂点色のまま)
+        {
+            World w;
+            const auto node = [&w](const char* name, EntityID parent, float x, float y, int kind) {
+                const EntityID e = w.CreateEntity(name);
+                auto* rt = w.AddComponent<RectTransformComponent>(e);
+                rt->anchoredPosition = { x, y };
+                rt->sizeDelta = { 100.0f, 40.0f };
+                w.AddComponent<UIElementComponent>(e)->kind = kind;
+                if (!parent.IsNull()) {
+                    w.SetParent(e, parent);
+                }
+                return e;
+            };
+            const EntityID panelE = node("selectablePanel", kNullEntity, 100.0f, 100.0f, 0);
+            w.AddComponent<UISelectableComponent>(panelE);
+            const EntityID btn = node("legacyButton", panelE, 10.0f, 10.0f, 2);
+            const EntityID btnText = node("legacyButtonText", btn, 0.0f, 0.0f, 1);
+            const EntityID panelText = node("panelText", panelE, 200.0f, 10.0f, 1);
+            const EntityID plain = node("plainPanel", kNullEntity, 600.0f, 100.0f, 0);
+            const EntityID plainText = node("plainText", plain, 0.0f, 0.0f, 1);
+            w.ApplyStructuralChanges();
+            check(uiwidgets::BubbleTarget(w, btnText) == btnText && uiwidgets::BubbleTarget(w, btn) == btn
+                      && uiwidgets::BubbleTarget(w, panelText) == panelE
+                      && uiwidgets::BubbleTarget(w, plainText) == plainText,
+                  "widgets: a legacy button shields its subtree; other children bubble to the Selectable");
+            std::vector<uiwidgets::VisualOverride> ov;
+            uiwidgets::CollectVisualOverrides(w, nullptr, ov);
+            check((uiwidgets::MergedOverrideFor(ov, panelE).flags & uiwidgets::kVisNoLegacyHighlight) != 0
+                      && uiwidgets::MergedOverrideFor(ov, btn).flags == 0,
+                  "widgets: only elements with a Selectable lose the hard-coded button highlight");
+            World plainWorld;
+            const EntityID lone = plainWorld.CreateEntity("lone");
+            plainWorld.AddComponent<RectTransformComponent>(lone);
+            plainWorld.AddComponent<UIElementComponent>(lone)->kind = 2;
+            plainWorld.ApplyStructuralChanges();
+            uiwidgets::CollectVisualOverrides(plainWorld, nullptr, ov);
+            check(ov.empty(), "widgets: a scene without widgets has no draw overrides");
+        }
+
+        // (4) ToggleGroup: on にすると群の他が off / 唯一の on は allowSwitchOff なしで off にならない
+        {
+            Scene sc;
+            GameObject group = sc.CreateGameObjectTracked("Group");
+            group.AddComponent<UIToggleGroupComponent>();
+            const EntityID a = uiwidgets::CreateToggle(sc, "A", "A").Id();
+            const EntityID b = uiwidgets::CreateToggle(sc, "B", "B").Id();
+            World& w = sc.GetWorld();
+            w.GetComponent<RectTransformComponent>(a)->anchoredPosition = { 0.0f, -100.0f };
+            w.GetComponent<RectTransformComponent>(b)->anchoredPosition = { 0.0f, 100.0f };
+            w.GetComponent<UIToggleComponent>(a)->group = group.Id();
+            w.GetComponent<UIToggleComponent>(b)->group = group.Id();
+            w.GetComponent<UIToggleComponent>(b)->isOn = 0;
+            w.ApplyStructuralChanges();
+            const auto on = [&](EntityID e) { return w.GetComponent<UIToggleComponent>(e)->isOn; };
+            Driver d;
+            click(w, d, 900.0f, 640.0f); // B の Background
+            check(on(b) == 1 && on(a) == 0 && d.st.changed == b,
+                  "toggle group: turning one toggle on turns the others off");
+            click(w, d, 900.0f, 640.0f);
+            check(on(b) == 1 && d.st.changed == kNullEntity,
+                  "toggle group: the only toggle that is on stays on without allowSwitchOff");
+            w.GetComponent<UIToggleGroupComponent>(group.Id())->allowSwitchOff = 1;
+            click(w, d, 900.0f, 640.0f);
+            check(on(b) == 0 && on(a) == 0 && d.st.changed == b,
+                  "toggle group: allowSwitchOff lets the last toggle turn off");
+        }
+
+        // (5) Slider: fill / handle のアンカーを value から導く (Unity の UpdateVisuals)。書き込まない
+        {
+            Scene sc;
+            const EntityID lr = uiwidgets::CreateSlider(sc, "LR", uiwidgets::kSliderLeftToRight).Id();
+            const EntityID rl = uiwidgets::CreateSlider(sc, "RL", uiwidgets::kSliderRightToLeft).Id();
+            const EntityID bt = uiwidgets::CreateSlider(sc, "BT", uiwidgets::kSliderBottomToTop).Id();
+            World& w = sc.GetWorld();
+            for (const EntityID e : { lr, rl, bt }) {
+                w.GetComponent<UISliderComponent>(e)->value = 0.25f;
+            }
+            w.ApplyStructuralChanges();
+            const auto rectOf = [&](EntityID root, bool fill) {
+                const auto* s = w.GetComponent<UISliderComponent>(root);
+                return uilayout::ResolveRect(w, fill ? s->fillRect : s->handleRect, 1920, 1080);
+            };
+            check(rectApprox(rectOf(lr, false), 915.0f, 520.0f, 20.0f, 40.0f)
+                      && rectApprox(rectOf(lr, true), 880.0f, 532.0f, 45.0f, 16.0f),
+                  "slider: left to right puts the handle at 25% and grows the fill from the left");
+            check(rectApprox(rectOf(rl, false), 985.0f, 520.0f, 20.0f, 40.0f)
+                      && rectApprox(rectOf(rl, true), 995.0f, 532.0f, 45.0f, 16.0f),
+                  "slider: right to left mirrors the handle and the fill");
+            check(rectApprox(rectOf(bt, false), 940.0f, 565.0f, 40.0f, 20.0f)
+                      && rectApprox(rectOf(bt, true), 952.0f, 575.0f, 16.0f, 45.0f),
+                  "slider: bottom to top grows the fill upwards in the y-down canvas");
+            const EntityID lrHandle = w.GetComponent<UISliderComponent>(lr)->handleRect;
+            const auto* handleRt = w.GetComponent<RectTransformComponent>(lrHandle);
+            check((uilayout::LayoutDrivenBits(w, lrHandle) & uilayout::kDrivenBySlider) != 0
+                      && (uilayout::LayoutDrivenBits(w, lr) & uilayout::kDrivenBySlider) == 0
+                      && handleRt->anchorMin.x == 0.0f && handleRt->anchorMax.x == 0.0f,
+                  "slider: the handle is reported as driven, and its authored anchors are left untouched");
+        }
+
+        // (6) Slider のポインタ: 溝を押すと飛ぶ / 押したまま追従 / つまみを掴んだ位置を保つ / 丸めと clamp
+        {
+            Scene sc;
+            const EntityID s = uiwidgets::CreateSlider(sc, "S", uiwidgets::kSliderLeftToRight).Id();
+            World& w = sc.GetWorld();
+            w.GetComponent<UISliderComponent>(s)->value = 0.25f;
+            w.ApplyStructuralChanges();
+            const auto value = [&]() { return w.GetComponent<UISliderComponent>(s)->value; };
+            Driver d;
+            // Handle Slide Area = x 890..1030 (幅 140)
+            tick(w, d, 1000.0f, 540.0f, false, 0);
+            tick(w, d, 1000.0f, 540.0f, true, 0);
+            check(approx(value(), 110.0f / 140.0f) && d.st.changed == s && d.st.focused == s,
+                  "slider: pressing the track jumps to the pointer and focuses the slider");
+            tick(w, d, 1100.0f, 540.0f, true, 0);
+            check(value() == 1.0f, "slider: dragging past the end clamps to the maximum");
+            tick(w, d, 1100.0f, 540.0f, false, 0);
+            tick(w, d, 1034.0f, 540.0f, false, 0);
+            tick(w, d, 1034.0f, 540.0f, true, 0); // つまみ (中心 1030) を +4 の所で掴む
+            check(value() == 1.0f && d.st.changed == kNullEntity
+                      && approx(w.GetComponent<UISliderComponent>(s)->dragOffset.x, 4.0f),
+                  "slider: pressing on the handle keeps the value and remembers the grab offset");
+            tick(w, d, 960.0f, 540.0f, true, 0);
+            check(approx(value(), 66.0f / 140.0f), "slider: dragging the handle keeps the grab offset");
+            tick(w, d, 960.0f, 540.0f, false, 0);
+            tick(w, d, 900.0f, 540.0f, false, 0);
+            check(approx(value(), 66.0f / 140.0f) && d.st.changed == kNullEntity,
+                  "slider: moving without the button leaves the value alone");
+            w.GetComponent<UISelectableComponent>(s)->interactable = 0;
+            click(w, d, 1000.0f, 540.0f);
+            check(approx(value(), 66.0f / 140.0f), "slider: a non-interactable slider ignores the pointer");
+
+            UISliderComponent whole;
+            whole.maxValue = 10.0f;
+            whole.wholeNumbers = 1;
+            check(uiwidgets::SliderClampValue(whole, 2.5f) == 2.0f
+                      && uiwidgets::SliderClampValue(whole, 3.5f) == 4.0f
+                      && uiwidgets::SliderClampValue(whole, 7.49f) == 7.0f
+                      && uiwidgets::SliderClampValue(whole, 12.0f) == 10.0f
+                      && uiwidgets::SliderClampValue(whole, -1.0f) == 0.0f
+                      && uiwidgets::SliderClampValue(whole, std::nanf("")) == 0.0f,
+                  "slider: whole numbers round half to even after clamping, NaN falls to the minimum");
+            UISliderComponent flat;
+            flat.minValue = 5.0f;
+            flat.maxValue = 5.0f;
+            flat.value = 5.0f;
+            check(uiwidgets::SliderNormalizedValue(flat) == 0.0f,
+                  "slider: an empty range normalizes to 0 (Mathf.InverseLerp)");
+        }
+
+        // (7) Slider のキーと Navigation のモード
+        {
+            Scene sc;
+            const EntityID s1 = uiwidgets::CreateSlider(sc, "S1", uiwidgets::kSliderLeftToRight).Id();
+            const EntityID s2 = uiwidgets::CreateSlider(sc, "S2", uiwidgets::kSliderLeftToRight).Id();
+            World& w = sc.GetWorld();
+            w.GetComponent<RectTransformComponent>(s2)->anchoredPosition = { 0.0f, 100.0f };
+            w.GetComponent<UISliderComponent>(s1)->value = 0.5f;
+            w.GetComponent<UISliderComponent>(s2)->value = 0.5f;
+            w.ApplyStructuralChanges();
+            const auto v = [&](EntityID e) { return w.GetComponent<UISliderComponent>(e)->value; };
+            const auto sel = [&](EntityID e) { return w.GetComponent<UISelectableComponent>(e); };
+            Driver d;
+            d.st.focused = s1;
+            const auto press = [&](uint8_t vk) {
+                tick(w, d, -1000.0f, -1000.0f, false, vk);
+                tick(w, d, -1000.0f, -1000.0f, false, 0);
+            };
+            tick(w, d, -1000.0f, -1000.0f, false, kVkRight);
+            check(approx(v(s1), 0.6f) && d.st.changed == s1 && d.st.focused == s1,
+                  "slider nav: Right on a focused automatic slider steps a tenth of the range");
+            tick(w, d, -1000.0f, -1000.0f, false, 0);
+            press(kVkDown);
+            check(d.st.focused == s2 && approx(v(s1), 0.6f) && approx(v(s2), 0.5f),
+                  "slider nav: Down (off the slider's axis) moves the focus");
+            sel(s2)->navigationMode = uiwidgets::kNavHorizontal;
+            press(kVkLeft);
+            check(d.st.focused == s2 && approx(v(s2), 0.4f),
+                  "slider nav: in horizontal mode Left with nothing to the left steps the value");
+            press(kVkUp);
+            check(d.st.focused == s2, "navigation: horizontal mode ignores Up");
+            sel(s2)->navigationMode = uiwidgets::kNavVertical;
+            press(kVkUp);
+            check(d.st.focused == s1, "navigation: vertical mode follows Up");
+            sel(s1)->navigationMode = uiwidgets::kNavExplicit;
+            sel(s1)->selectOnRight = s2;
+            press(kVkRight);
+            check(d.st.focused == s2 && approx(v(s1), 0.6f),
+                  "slider nav: an explicit target on the slider's axis wins over stepping");
+            d.st.focused = s1;
+            press(kVkLeft);
+            check(d.st.focused == s1 && approx(v(s1), 0.5f),
+                  "slider nav: explicit mode with no target on that side steps the value");
+            sel(s1)->selectOnDown = s2;
+            sel(s2)->interactable = 0;
+            press(kVkDown);
+            check(d.st.focused == s1, "navigation: an explicit target that is not interactable is not taken");
+            sel(s2)->interactable = 1;
+            sel(s2)->navigationMode = uiwidgets::kNavNone;
+            check(!uiwidgets::IsFocusCandidate(w, s2) && uiwidgets::IsFocusCandidate(w, s1),
+                  "navigation: navigation None removes a widget from the focus candidates");
+            click(w, d, 1000.0f, 640.0f);
+            check(d.st.focused == s1 && approx(v(s2), 110.0f / 140.0f),
+                  "navigation: a widget with navigation None still takes the pointer but never the focus");
+        }
+
+        // (8) 保存 / 読み込み: EntityRef (graphic / group / targetGraphic) が付き直り、UI 専用のまま
+        {
+            Scene sc;
+            const EntityID t = uiwidgets::CreateToggle(sc, "SavedToggle", "L").Id();
+            GameObject group = sc.CreateGameObjectTracked("SavedGroup");
+            group.AddComponent<UIToggleGroupComponent>()->allowSwitchOff = 1;
+            World& w1 = sc.GetWorld();
+            w1.GetComponent<UIToggleComponent>(t)->isOn = 0;
+            w1.GetComponent<UIToggleComponent>(t)->group = group.Id();
+            w1.ApplyStructuralChanges();
+            const nlohmann::json saved = SceneSerializer::SaveToJson(sc);
+            Scene again;
+            const bool loaded = SceneSerializer::LoadFromJson(again, saved);
+            World& w2 = again.GetWorld();
+            GameObject t2 = again.Find("SavedToggle");
+            bool ok = loaded && static_cast<bool>(t2);
+            if (ok) {
+                const auto* tg = w2.GetComponent<UIToggleComponent>(t2.Id());
+                const auto* sl = w2.GetComponent<UISelectableComponent>(t2.Id());
+                const auto* gr = w2.GetComponent<UIToggleGroupComponent>(again.Find("SavedGroup").Id());
+                ok = tg && sl && gr && tg->isOn == 0 && gr->allowSwitchOff == 1
+                    && tg->graphic == again.Find("Checkmark").Id()
+                    && tg->group == again.Find("SavedGroup").Id()
+                    && sl->targetGraphic == again.Find("Background").Id()
+                    && uilayout::IsUiOnlyEntity(w2, t2.Id());
+            }
+            check(ok, "widgets: toggle references survive save/load and the root stays UI-only");
+        }
+
+        // (9) プレハブ往復: インスタンスごとに EntityRef が自分の子へ付け替わる (Create > UI の構成そのまま)
+        {
+            PrefabLibrary lib;
+            const std::filesystem::path tmpDir = std::filesystem::temp_directory_path();
+            for (int kind = 0; kind < 2; ++kind) {
+                Scene base;
+                const EntityID baseRoot = (kind == 0)
+                    ? uiwidgets::CreateToggle(base, "PfToggle", "L").Id()
+                    : uiwidgets::CreateSlider(base, "PfSlider", uiwidgets::kSliderLeftToRight).Id();
+                base.GetWorld().ApplyStructuralChanges();
+                const nlohmann::json local = Prefab::ExtractLocal(base, baseRoot);
+                const std::wstring path =
+                    (tmpDir / ((kind == 0) ? L"mye_selftest_ui_toggle.prefab.json"
+                                           : L"mye_selftest_ui_slider.prefab.json")).wstring();
+                const uint64_t hash = lib.Register(path, (kind == 0) ? "toggle" : "slider", local);
+                Scene inst;
+                const uint64_t r1 = Prefab::Instantiate(inst, lib, hash, 0);
+                const uint64_t r2 = Prefab::Instantiate(inst, lib, hash, 0);
+                World& w = inst.GetWorld();
+                w.ApplyStructuralChanges();
+                const EntityID e1 = inst.FindByFileId(r1).Id();
+                const EntityID e2 = inst.FindByFileId(r2).Id();
+                const auto childOf = [&w](EntityID ref, EntityID root, int depth) {
+                    if (ref.IsNull() || !w.IsAlive(ref)) {
+                        return false;
+                    }
+                    EntityID p = ref;
+                    for (int i = 0; i < depth; ++i) {
+                        p = w.GetParent(p);
+                    }
+                    return p == root;
+                };
+                bool ok = r1 != 0 && r2 != 0 && !e1.IsNull() && !e2.IsNull() && e1 != e2;
+                for (const EntityID e : { e1, e2 }) {
+                    if (!ok) {
+                        break;
+                    }
+                    const auto* sel = w.GetComponent<UISelectableComponent>(e);
+                    if (kind == 0) {
+                        const auto* tg = w.GetComponent<UIToggleComponent>(e);
+                        ok = sel && tg && childOf(tg->graphic, e, 2) && childOf(sel->targetGraphic, e, 1);
+                    } else {
+                        const auto* sl = w.GetComponent<UISliderComponent>(e);
+                        ok = sel && sl && childOf(sl->fillRect, e, 2) && childOf(sl->handleRect, e, 2)
+                            && sel->targetGraphic == sl->handleRect;
+                    }
+                }
+                check(ok, (kind == 0)
+                              ? "widgets: each toggle prefab instance points graphic / targetGraphic at its own children"
+                              : "widgets: each slider prefab instance points fillRect / handleRect / targetGraphic at its own children");
+            }
+        }
+
+        // (10) ハッシュ: 値 (isOn) は載り、見た目 (Selectable の色) は載らない
+        {
+            Scene sc;
+            const EntityID t = uiwidgets::CreateToggle(sc, "HashToggle", "L").Id();
+            World& w = sc.GetWorld();
+            w.ApplyStructuralChanges();
+            const uint64_t h0 = HashWorld(w);
+            w.GetComponent<UISelectableComponent>(t)->normalColor = { 0.5f, 0.5f, 0.5f, 1.0f };
+            const uint64_t h1 = HashWorld(w);
+            w.GetComponent<UIToggleComponent>(t)->isOn = 0;
+            const uint64_t h2 = HashWorld(w);
+            check(h0 == h1 && h1 != h2, "widgets: the toggle value is in the world hash, the selectable's look is not");
+        }
+
+        // (11) --ui-demo-input の台本は tick だけの純関数 (記録と検証で同じビット)
+        {
+            InputSnapshot a = {};
+            InputSnapshot b = {};
+            InputSnapshot idle = {};
+            UiDemoScriptInput(40, a); // 30 tick 待ってから 10 tick 目 = Toggle A を押している
+            UiDemoScriptInput(40, b);
+            UiDemoScriptInput(5, idle);
+            check(std::memcmp(&a, &b, sizeof(a)) == 0 && a.surfW == 1920 && a.surfH == 1080
+                      && a.mouseButtons == 1 && a.mouseSurfX == 56.0f && a.mouseSurfY == 530.0f
+                      && a.charCount == 0 && idle.mouseButtons == 0,
+                  "widgets: the --ui-demo input script is a pure function of the tick");
+        }
     }
 
     if (failCount == 0) {

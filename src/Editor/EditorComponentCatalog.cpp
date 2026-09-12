@@ -79,6 +79,10 @@ const std::unordered_map<std::string, ComponentUiInfo>& Table()
         { "UILayoutGroup", { ICON_FA_TABLE_COLUMNS, "UI", "レイアウトグループ" } }, // M75e
         { "UILayoutElement", { ICON_FA_RULER_COMBINED, "UI", "レイアウト要素" } }, // M75e
         { "UIContentSizeFitter", { ICON_FA_COMPRESS, "UI", "コンテンツサイズフィッター" } }, // M75e
+        { "UISelectable", { ICON_FA_HAND_POINTER, "UI", "選択可能 (Selectable)" } }, // M75f
+        { "UIToggle", { ICON_FA_TOGGLE_ON, "UI", "トグル" } }, // M75f
+        { "UISlider", { ICON_FA_SLIDERS, "UI", "スライダー" } }, // M75f
+        { "UIToggleGroup", { ICON_FA_OBJECT_GROUP, "UI", "トグルグループ" } }, // M75f
     };
     return t;
 }

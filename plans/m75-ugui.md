@@ -274,6 +274,55 @@ Canvas Scaler は Expand (1920x1080 固定) のみ、Layout Group もウィジ�
   Inspector の注記 (「位置とサイズは親の Layout Group が決めています」「サイズは Content Size Fitter が決めています」) は
   `Editor.exe --ui-demo --select <名前> --screenshot` で目視。
 
+- **M75f (2026-09-13)**: master で直接実装。新規 `Engine/UI/UIWidgets.*` (規則・値の更新・描画の上書き) /
+  `Engine/UI/UIWidgetFactory.*` (Toggle / Slider の子構成の正本。CreateMenu / `--ui-demo` / UISelfTest のプレハブ往復が共有)。
+  計画 F から変えた点・計画に無かった事実:
+- **TypeId は 57 UISelectable / 58 UIToggle / 59 UISlider / 60 UIToggleGroup**。**UIToggleGroup は計画外の追加** (Unity の
+  ToggleGroup と同じく allowSwitchOff の置き場。UIToggle.group はこれを持つエンティティを指す EntityRef)。
+  M75g の ScrollRect / Dropdown は 61〜、M75h の InputField は 63。Cloth/SoftBody の予約は M75j で数え直す。
+  ハッシュ: Toggle / Slider は対象 (UiAux だけ)、Selectable / ToggleGroup は NoHash + UiAux。
+- **値の更新 (`uiwidgets::Update`) は Evaluate の末尾ではなく、TickRunner の `app->OnTick` の後に simulateScripts の tick だけ**
+  (計画は Evaluate の末尾)。理由 2 つ: エディタの編集中にゲーム面をクリックするとシーンのデータ (isOn / value) が Undo の
+  外で書き換わる / Evaluate の時点では simulateScripts がまだ決まっていない (OnTick が決める)。スクリプトと同じ門なので
+  巻き戻しの再シムでも同じ tick だけ走る。TimeControl のポーズ (stepSim) では止めない (ポーズメニューの Slider が動く)。
+  Evaluate → Update の受け渡しは `uiinteract::TickEvents` (pressBegan / navStep、tick 内の一時値 = snapshot に載せない)。
+  ★**M75g の ScrollRect がドラッグ量 (今 - prevSurf) を読むなら、Evaluate の中で TickEvents へ積むこと** — prevSurf は
+  Evaluate の最後で今 tick へ進むので、Update の時点では差が 0 になっている。
+- **泡立ちは状態そのものを根に置き換える** (hovered / pressed / clicked がウィジェットの根を指す。`BubbleTarget`)。
+  ABI の UIButtonState(根) で読めるようにするため。**旧来のボタン (Selectable の無い kind 2) と Canvas で止まる** =
+  ウィジェットの無いシーンの clicked は M75e と同じ (UISelfTest (3))。HitTest / ABI UIHitTest は葉のまま。
+- Unity に合わせた挙動: 押したウィジェットがフォーカスを取る (Navigation なし / 操作不可は取らない) / 操作できなくなった
+  ウィジェットはフォーカスを手放す / Pressed は押したまま外へ出ても Pressed / Selected が Highlighted に勝つ /
+  Slider は溝を押すと飛び、つまみを押すと掴んだ位置 (`dragOffset`、ハッシュ対象の隠しフィールド) を保つ / ドラッグ閾値を使わない /
+  向きの軸の UINav* は自動ナビなら常に値、他のモードは行き先が無いときだけ値 / wholeNumbers は偶数丸め。
+  **入れていないもの**: 空き地クリックでのフォーカス解除 (既存シーンの挙動を変えないため) / fadeDuration / Animation 遷移 /
+  ToggleGroup の EnsureValidState (tick ごとに正規化するとエディタで作者の値を書き換える。整えるのはクリック時だけ) /
+  Filled 画像 (fillAmount) の Slider / キーのリピート (pressed エッジだけ) / wrapAround。
+  `changed` は操作されたウィジェット 1 つだけ (群の巻き添えで off になった Toggle は立てない)。
+- **Slider の fill / handle は書き込まない** (M75e と同じ純関数): `uilayout::ResolveImpl` が `uiwidgets::SliderDrivenTransform`
+  (祖先 4 段の最寄りの Slider が自分を fillRect / handleRect に指していればアンカーを value から導く) を通す。
+  `LayoutDrivenBits` に `kDrivenBySlider` を足した (Inspector の注記。**M75i の Rect Tool はアンカーのハンドルを出さないこと**)。
+- ABI (スロット・版とも不変): `UIButtonState` / `UISetFocused` がウィジェットの根 (UIElement を持たない Toggle / Slider) も
+  受け付けるようにした (泡立ちで状態が根に立つ帰結)。`UISetFocused` の規則は `IsFocusCandidate` の 1 本。
+- 描画: `CollectVisualOverrides` (Selectable の色 / Sprite Swap / off の Toggle の graphic を描かない / Selectable を持つボタンは
+  ハードコードのハイライトを当てない)。ウィジェットの無いシーンでは空 = 頂点色は el.color の複写のまま。
+- **replay 8 ペア目 `ui`** = `--ui-demo --ui-demo-input` で記録、`--ui-demo` で検証。**`--ui-demo-input` は計画外の別フラグ**
+  (計画は「--ui-demo 時だけ台本を適用」だが、M75j の手で触る実走を台本が潰すため)。台本 `UiDemoScriptInput` は DemoContent の
+  末尾で、座標は BuildUiShowcaseScene の配置と対。EditorMain では C1061 回避で連鎖の手前で拾う。
+  ★台本で踏んだ 2 つ: (1) **キーを OR すると `--replay-fast` の同じフレームで回る次の tick に残り**、同じキーの 2 回目が
+  押しっぱなしになってエッジが立たない (ライブ入力はフレーム頭に 1 回しか写さない) → キーは丸ごと置換。
+  (2) つまみの右端はヒットの外 (半開区間) で、端を押すと溝を押したことになる。
+  被覆は `--hash-dump` で確認した (tick 238: 左→右 0.34579 = ドラッグ + 右右左、dragOffset 3、右→左 6 / tick 330: A off・B on・
+  SOLO on・操作不可 2 つは不変・右→左 5・下→上 17.727、focused = SOLO)。
+- `--ui-demo` の積み増し: 左の中段に Toggle 4 つ (群 A/B・単独・操作不可) + Selectable 付きボタン、右の中段に Slider 4 つ
+  (左→右 / 右→左の整数 / 操作不可 / 下→上)。★**箱の order は -400** — ウィジェットの UIElement は order 0 なので、箱を 10 に
+  すると箱の後ろに隠れる。
+- **M75f の検証**: Debug/Release `/p:MyeWarnAsError=true` 0 警告 / `--selftest` 0 FAIL (UISelfTest にウィジェット 59 項目) /
+  `check_rules` 0 / **`shot_verify` 既存 24 枚 maxDiff=0** (golden 4 枚の tol 0 を含む)、`ui_widgets` だけ更新 (Debug と Release の
+  `--ui-demo` も maxDiff=0) / **`replay_verify` PASS** (8 シーン = 新しい `ui` ペアを含む 13 ジョブ、`MYE_REPLAY_JOBS=3`) /
+  Inspector (Selectable の列挙 / Slider の fill・handle の注記) は `Editor.exe --ui-demo --select <名前> --height 3000 --screenshot` で目視。
+  ★CLAUDE.md の検証表 (「7 シーンチェーン」「12 ジョブ」) と CLI 一覧 (`--ui-demo-input`) は M75j でまとめて直す。
+
 ## 各サブに共通する罠
 - `IsUiOnlyEntity` の許容漏れ (UiAux で構造的に潰す)。
 - `ZeroStringTail` (InputField の text)。

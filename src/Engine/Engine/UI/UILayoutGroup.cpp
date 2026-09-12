@@ -10,6 +10,7 @@
 
 #include "Engine/Core/Components.h"
 #include "Engine/Core/World.h"
+#include "Engine/Engine/UI/UIWidgets.h" // M75f: LayoutDrivenBits の Slider 駆動
 #include "Engine/Engine/UI/UITextMetrics.h"
 
 namespace mye {
@@ -815,6 +816,9 @@ uint32_t LayoutDrivenBits(World& world, EntityID e)
         if (fitH && (bits & kDrivenHeight) == 0) {
             bits |= kDrivenHeight | kDrivenByFitter;
         }
+    }
+    if (uiwidgets::IsSliderDriven(world, e)) {
+        bits |= kDrivenBySlider; // M75f: 位置とサイズは編集できるが、アンカーは効かない
     }
     return bits;
 }

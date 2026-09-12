@@ -248,6 +248,15 @@ constexpr const char* kUIGridConstraintLabels[] = { "Flexible", "Fixed Column Co
 constexpr const char* kUIGridConstraintJa[] = { "幅に合わせる", "列数を固定", "行数を固定" };
 constexpr const char* kUIFitModeLabels[] = { "Unconstrained", "Min Size", "Preferred Size" };
 constexpr const char* kUIFitModeJa[] = { "制約なし", "最小サイズ", "推奨サイズ" };
+// M75f: ウィジェット (Unity の Selectable.Transition / Navigation.Mode / Slider.Direction と同じ並び)
+constexpr const char* kUITransitionLabels[] = { "None", "Color Tint", "Sprite Swap" };
+constexpr const char* kUITransitionJa[] = { "なし", "色 (Color Tint)", "画像の差し替え (Sprite Swap)" };
+constexpr const char* kUINavModeLabels[] = { "None", "Horizontal", "Vertical", "Automatic",
+                                             "Explicit" };
+constexpr const char* kUINavModeJa[] = { "なし", "左右", "上下", "自動", "明示" };
+constexpr const char* kUISliderDirLabels[] = { "Left To Right", "Right To Left", "Bottom To Top",
+                                               "Top To Bottom" };
+constexpr const char* kUISliderDirJa[] = { "左→右", "右→左", "下→上", "上→下" };
 constexpr const char* kUIPresetColJa[] = { "左", "中央", "右", "伸縮" };
 constexpr const char* kUIPresetRowJa[] = { "上", "中央", "下", "伸縮" };
 constexpr EnumFieldLabels kEnumFields[] = {
@@ -285,6 +294,14 @@ constexpr EnumFieldLabels kEnumFields[] = {
     { "UILayoutElement", "ignoreLayout", kOffOnLabels, 2, kOffOnJa },
     { "UIContentSizeFitter", "horizontalFit", kUIFitModeLabels, 3, kUIFitModeJa },
     { "UIContentSizeFitter", "verticalFit", kUIFitModeLabels, 3, kUIFitModeJa },
+    // M75f: ウィジェット
+    { "UISelectable", "interactable", kOffOnLabels, 2, kOffOnJa },
+    { "UISelectable", "transition", kUITransitionLabels, 3, kUITransitionJa },
+    { "UISelectable", "navigationMode", kUINavModeLabels, 5, kUINavModeJa },
+    { "UIToggle", "isOn", kOffOnLabels, 2, kOffOnJa },
+    { "UIToggleGroup", "allowSwitchOff", kOffOnLabels, 2, kOffOnJa },
+    { "UISlider", "direction", kUISliderDirLabels, 4, kUISliderDirJa },
+    { "UISlider", "wholeNumbers", kOffOnLabels, 2, kOffOnJa },
     { "UIElement", "clipChildren", kOffOnLabels, 2, kOffOnJa },
     { "UIElement", "wrap", kOffOnLabels, 2, kOffOnJa },
     { "ConstantForce", "relative", kForceSpaceLabels, 2, kForceSpaceJa },
@@ -761,6 +778,9 @@ void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
                     }
                     if ((driven & uilayout::kDrivenByFitter) != 0) {
                         ImGui::TextDisabled("%s", Tr(StrId::Insp_UIDrivenFitter));
+                    }
+                    if ((driven & uilayout::kDrivenBySlider) != 0) {
+                        ImGui::TextDisabled("%s", Tr(StrId::Insp_UIDrivenSlider)); // M75f
                     }
                 }
             }

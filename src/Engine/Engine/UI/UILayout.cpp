@@ -7,6 +7,7 @@
 #include "Engine/Core/World.h"
 #include "Engine/Engine/RenderSystem.h" // PrevWorldStore (描画補間 M36b)
 #include "Engine/Engine/UI/UILayoutGroup.h" // M75e: 自動レイアウト
+#include "Engine/Engine/UI/UIWidgets.h"     // M75f: Slider の fill / handle のアンカー
 #include "Engine/Platform/Input.h" // InputSnapshot (M75b: CanvasOfInput)
 
 namespace mye {
@@ -247,11 +248,16 @@ UIResolved ResolveImpl(World& world, EntityID e, int screenW, int screenH,
     UIRect r;
     if (!(parentResolved
           && ResolveLayoutChild(world, parentE, e, base, out.scale, scratch, r))) {
+        // M75f: Slider の fillRect / handleRect はアンカーを value から導く (Unity は書き込むが、ここでは
+        // Layout Group と同じく書かない)。Slider の無い要素は rt をそのまま使う = 以下の式は M75e と同じ
+        RectTransformComponent slid;
+        const RectTransformComponent& use =
+            (rtp != nullptr && uiwidgets::SliderDrivenTransform(world, e, rt, slid)) ? slid : rt;
         RectTransformComponent fitted;
-        if (ApplyContentSizeFitter(world, e, rt, base, out.scale, scratch, fitted)) {
+        if (ApplyContentSizeFitter(world, e, use, base, out.scale, scratch, fitted)) {
             r = RectFromTransform(fitted, base, out.scale);
         } else {
-            r = RectFromTransform(rt, base, out.scale);
+            r = RectFromTransform(use, base, out.scale);
         }
     }
     if (worldRoot && el && el->clampToScreen) {

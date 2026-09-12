@@ -15,6 +15,7 @@
 #include "Engine/Engine/Asset/CookedCache.h"
 #include "Engine/Engine/AssetDatabase.h"
 #include "Engine/Engine/CollisionSystem.h"
+#include "Engine/Engine/DemoContent.h" // M75f: --ui-demo-input の台本 (UiDemoScriptInput)
 #include "Engine/Engine/HotReload/DllReloader.h"
 #include "Engine/Engine/HotReload/ReloadHub.h"
 #include "Engine/Engine/Acoustic/AcousticField.h"
@@ -1629,6 +1630,12 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                 for (uint32_t p = 0; p < ctx.playerCount; ++p) {
                     ctx.inputs[p] = SynthLaneInput(ctx.tickIndex, p);
                 }
+            }
+            // ---- UI の入力台本 (M75f、--ui-demo-input) ----
+            // 合成入力と同じ段 (verify / ネットの置換を受けない tick) でレーン 0 のマウスとキーを置く =
+            // .rep に載り、検証側では上の置換で記録値として戻ってくる (検証側に渡す必要は無い)
+            if (config.uiDemoInput && !verifying && !(netEnabled && net.Running())) {
+                UiDemoScriptInput(ctx.tickIndex, ctx.inputs[0]);
             }
             // ---- 入力の上書き (M72f) ----
             // ライブ / 合成の**後**に OR / 置換するので、OnTickEnd がそのままリングに載せる =
