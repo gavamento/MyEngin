@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 
+#include "Engine/Core/AssetKeyResolver.h"
 #include "Engine/Core/Components.h"
 #include "Engine/Core/Hash.h"
 #include "Engine/Core/Log.h"
@@ -32,7 +33,9 @@ struct LoadContext {
     RenderResources* resources = nullptr;
     const ufbx_scene* fbx = nullptr; // アニメーションスタックの走査に要る (P4)
     GameObject modelRoot;            // スキンメッシュを恒等 transform で置く先 (P4-5)
-    std::string pathUtf8; // AssetID 用のキー (正規化パス)
+    // AssetID 用キーの接頭辞 "guid://<16hex>" (M74a、assetkey::SubAssetKeyPrefix)。
+    // ★絶対パスを入れない — シーンに保存した ID がチェックアウト先に依存する
+    std::string keyPrefix;
     std::wstring baseDir; // 外部テクスチャの解決基準
     AssetID shaderId;
     std::vector<uint32_t> diagnosedMats; // 診断ログを出し終えたマテリアルの element_id
@@ -260,7 +263,7 @@ AssetID ResolveTexture(LoadContext& lc, const ufbx_texture* tex, bool srgb, cons
     //    キーは glTF 側 (ModelLoader.cpp) に倣いパス + element_id でモデル内一意にする
     if (file->content.size > 0) {
         char texKey[512];
-        snprintf(texKey, sizeof(texKey), "%s#tex:%u", lc.pathUtf8.c_str(), file->element_id);
+        snprintf(texKey, sizeof(texKey), "%s#tex:%u", lc.keyPrefix.c_str(), file->element_id);
         const AssetID id =
             lc.resources->textures.CreateFromEncoded(texKey, file->content.data, file->content.size, srgb);
         if (!id.IsNull()) {
@@ -652,7 +655,7 @@ AssetID LoadSkin(LoadContext& lc, const ufbx_mesh* mesh, const ufbx_skin_deforme
     lc.clipCount += model.clips.size();
     // キーはメッシュ + deformer なのでノード非依存 = 複数インスタンスでも 1 本に収束する
     char key[512];
-    snprintf(key, sizeof(key), "%s#mesh%u#skin%u", lc.pathUtf8.c_str(), mesh->element_id,
+    snprintf(key, sizeof(key), "%s#mesh%u#skin%u", lc.keyPrefix.c_str(), mesh->element_id,
              skin->element_id);
     if (lc.cook) {
         lc.cook->AddSkin(key, model); // move 前にコピーを記録
@@ -719,7 +722,7 @@ void LoadMeshInto(LoadContext& lc, const ufbx_node* node, GameObject owner)
     for (size_t pi = 0; pi < mesh->material_parts.count; ++pi) {
         const ufbx_mesh_part* part = &mesh->material_parts.data[pi];
         char key[512];
-        snprintf(key, sizeof(key), "%s#mesh%zu#part%zu", lc.pathUtf8.c_str(), meshId, pi);
+        snprintf(key, sizeof(key), "%s#mesh%zu#part%zu", lc.keyPrefix.c_str(), meshId, pi);
         const AssetID meshAsset = LoadMeshPart(lc, mesh, part, skin, key);
         if (meshAsset.IsNull()) {
             continue;
@@ -729,9 +732,9 @@ void LoadMeshInto(LoadContext& lc, const ufbx_node* node, GameObject owner)
         // 同一マテリアルが AssetID 重複登録され、編集/ホットリロードが 1 箇所で効かない
         char matKey[512];
         if (mat) {
-            snprintf(matKey, sizeof(matKey), "%s#mat%u", lc.pathUtf8.c_str(), mat->element_id);
+            snprintf(matKey, sizeof(matKey), "%s#mat%u", lc.keyPrefix.c_str(), mat->element_id);
         } else {
-            snprintf(matKey, sizeof(matKey), "%s#defaultmat", lc.pathUtf8.c_str());
+            snprintf(matKey, sizeof(matKey), "%s#defaultmat", lc.keyPrefix.c_str());
         }
         const AssetID matAsset = LoadMaterial(lc, mat, mesh, matKey);
 
@@ -803,7 +806,7 @@ GameObject Load(Scene& scene, RenderResources& resources, ShaderManager& shaders
     lc.scene = &scene;
     lc.resources = &resources;
     lc.fbx = fbx;
-    lc.pathUtf8 = WideToUtf8(NormalizePathKey(path));
+    lc.keyPrefix = assetkey::SubAssetKeyPrefix(path);
     lc.baseDir = std::filesystem::path(path).parent_path().wstring();
     lc.shaderId = shaders.Load("forward_lit");
 
@@ -851,7 +854,7 @@ bool RegisterAssets(RenderResources& resources, ShaderManager& shaders, const st
     lc.scene = nullptr; // エンティティは作らない
     lc.resources = &resources;
     lc.fbx = fbx; // スキン / クリップも同じキーで再登録する (P4-5)
-    lc.pathUtf8 = WideToUtf8(NormalizePathKey(path));
+    lc.keyPrefix = assetkey::SubAssetKeyPrefix(path);
     lc.baseDir = std::filesystem::path(path).parent_path().wstring();
     lc.shaderId = shaders.Load("forward_lit");
     ModelCook::ModelCookData cookData;
@@ -894,7 +897,7 @@ size_t RegisterSkinnedModels(RenderResources& resources, const std::wstring& pat
     lc.scene = nullptr; // エンティティは作らない
     lc.resources = &resources;
     lc.fbx = fbx;
-    lc.pathUtf8 = WideToUtf8(NormalizePathKey(path));
+    lc.keyPrefix = assetkey::SubAssetKeyPrefix(path);
     lc.baseDir = std::filesystem::path(path).parent_path().wstring();
     // shaderId は使わない (LoadSkin はメッシュにもマテリアルにも触れない)
 

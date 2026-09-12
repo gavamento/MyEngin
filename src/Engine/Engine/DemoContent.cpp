@@ -3195,8 +3195,8 @@ void BuildAcousticShowcaseScene(EngineContext& ctx)
         GameObject hum = s.CreateGameObject("Hum");
         hum.SetLocalPosition(AcousticMapToWorld(6), 1.0f, AcousticMapToWorld(9));
         auto* src = hum.AddComponent<AudioSourceComponent>();
-        // ★GUID を直書きしない。名前キーで引くのでチェックアウト先に依存しない
-        //   (モデル由来のサブアセット ID と同じ罠を避ける)
+        // ★GUID を直書きしない。名前キーで引くのでチェックアウト先にも .meta の作り直しにも
+        //   依存しない (M74a 以前のモデル由来サブアセット ID が踏んだ罠と同じ種類を避ける)
         src->sound = AssetID{ ctx.sounds != nullptr ? ctx.sounds->ResolveKey(HashStr("hum")) : 0 };
         src->playOnAwake = 1;
     }

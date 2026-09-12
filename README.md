@@ -161,8 +161,9 @@ sln の外にもう 2 本ある。どちらも無い状態でエディタは起�
   会話は **UTF-8 の JSON 1 本 + C ABI 6 関数**だけ (`cargo test` と
   `tools\collab_verify.bat` がエディタ抜きで回帰を取る)。**sim には 1 バイトも触れない** —
   Engine / Runtime / GameLogic / Shared からの include を静的検査 (規則 12) が禁じている。
-  前提は git 2.11 以上と rustup、そしてチーム規則「全員同じパスに clone」
-  (サブアセット ID が絶対パス由来のため。`project.mye.json` の `canonicalRoot` が記録して食い違いを警告する)。
+  前提は git 2.11 以上と rustup。clone 先はそろえなくてよい — モデル由来のサブアセット ID は
+  M74a から `.meta` の GUID 由来で、絶対パスに依存しない ([ADR-019](docs/adr/ADR-019-guid-subasset-keys.md))。
+  `project.mye.json` の `canonicalRoot` は作成時のパスを記録し、食い違いを知らせるだけの情報になった。
   **初回の認証だけはターミナルで一度 `git push` して済ませておく** — 背景 fetch は
   資格情報のダイアログを意図的に抑止している。詳細は [engine_spec.md §14](engine_spec.md) と
   [ADR-015](docs/adr/ADR-015-in-process-rust-collab.md)。v1 でやらないこと: PR / レビュー / LFS /

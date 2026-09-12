@@ -176,8 +176,8 @@ bool ReadValidated(const std::wstring& srcPath, const wchar_t* ext,
         return false; // 旧版/別アセット — 再クックで上書きされる
     }
     // M51j: 封印キャッシュ (配布ビルド) はソース検証を跳ばす。移設先では絶対パスが変わり
-    // pathKey は必ず不一致になるが、配布シーンはクック元パス由来のサブアセット ID を
-    // 参照しているので、クック時の登録列をそのまま再生するのが正しい (kSealedMarker 参照)
+    // pathKey は必ず不一致になり、DDS 一括後は元画像も無いので、クック時の登録列をそのまま
+    // 再生する (kSealedMarker 参照。M74a 以降サブアセット ID 自体は移設で変わらない)
     if (!g_sealed) {
         if (pathKey != WideToUtf8(NormalizePathKey(srcPath))) {
             return false; // 移動/リネーム — フレッシュパースは別キーを登録するので追随する

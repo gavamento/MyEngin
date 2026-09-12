@@ -24,10 +24,10 @@ struct RenderResources;
 //   モデルではなくシーン (Collider.shape=5) だから — 先に焼くと使わない分まで焼ける。
 //
 // 元ファイルのパスは **AssetID の逆引き**で得る。モデル由来のメッシュ登録名は
-// "<正規化絶対パス>#mesh0#prim0" なので、'#' の手前がそのままクックのソースパスになる。
-// 手続き生成メッシュ (builtin:// / 地形チャンク / selftest) は '#' を持たないか実ファイルが
-// 無いので、その場生成だけになる (CookedCache 側が stat に失敗して無効化されるため、
-// 特別扱いのコードは要らない)。
+// "guid://<16hex>#mesh0#prim0" (M74a) なので、接頭辞の GUID を assetguid::ResolvePath で
+// 現在パスへ引いたものがクックのソースパスになる。手続き生成メッシュ (builtin:// / 地形チャンク /
+// selftest) は接頭辞を持たないか GUID が解決できないので、その場生成だけになる
+// (CookedCache 側が stat に失敗して無効化されるため、特別扱いのコードは要らない)。
 //
 // 決定論: 生成は入力頂点順に依らず (ConvexHull.h)、blob は生値なので
 // **クックから読んだ凸包とフレッシュ生成した凸包はビット同一**。`.mmdl` と同じ契約で、
@@ -67,8 +67,8 @@ void SerializeConvexTable(const std::vector<std::pair<std::string, ConvexHullDat
 bool DeserializeConvexTable(const std::vector<uint8_t>& in,
                             std::vector<std::pair<std::string, ConvexHullData>>& out);
 
-// メッシュ登録名からクック元ファイルのパスを切り出す ("<path>#mesh0#prim0" → "<path>")。
-// '#' が無い = 手続き生成なので空を返す
+// メッシュ登録名からクック元ファイルのパスを引く ("guid://<16hex>#mesh0#prim0" → GUID の現在パス)。
+// 接頭辞が無い (手続き生成) / GUID が解決できない (resolver 未設定・未知) は空を返す
 std::wstring ConvexCookSourcePath(const std::string& meshName);
 
 } // namespace mye

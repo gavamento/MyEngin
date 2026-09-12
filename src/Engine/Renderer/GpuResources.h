@@ -84,7 +84,7 @@ public:
     AssetID Register(std::string_view name, std::span<const MeshVertex> vertices,
                      std::span<const uint32_t> indices);
     Mesh* Get(AssetID id);
-    // 登録名の逆引き (未登録は nullptr)。モデル由来なら "<正規化絶対パス>#mesh0#prim0" —
+    // 登録名の逆引き (未登録は nullptr)。モデル由来なら "guid://<16hex>#mesh0#prim0" (M74a) —
     // M60f の凸包クックが「この AssetID の元ファイルはどれか」を知る唯一の手段
     const std::string* NameOf(AssetID id) const;
     // 組み込みプリミティブ (中心原点・単位サイズ基準)。Init が 6 つとも先に登録するので

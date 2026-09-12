@@ -2,6 +2,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <string>
+#include <vector>
 
 #include <Windows.h>
 #include <shellapi.h>
@@ -12,6 +13,8 @@
 #include "Editor/PartSelfTest.h"
 #include "Editor/RagdollBuildSelfTest.h"
 #include "Engine/Engine/Asset/CookedCacheSelfTest.h"
+#include "Engine/Engine/Asset/SubAssetKeySelfTest.h"
+#include "Engine/Engine/Asset/SubAssetMigration.h"
 #include "Engine/Engine/SchemaSelfTest.h"
 #include "Editor/ProjectManager.h"
 #include "Editor/ProjectRegistry.h"
@@ -141,6 +144,9 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     int imgTolerance = 0;                 // --tol N (チャンネル差の許容)
     int64_t imgFailPixels = 0;            // --fail-pixels N (許容を超えてよい画素数)
     int froxelProbeIters = 0;             // --froxel-probe [N] (M57a: 3D テクスチャの実測)
+    bool migrateSubAssetIds = false;      // --migrate-subasset-ids (M74b: 旧 ID → guid:// の ID)
+    std::vector<std::wstring> legacyRoots; // --legacy-root DIR (繰り返し可。旧 clone 先)
+    bool migrateDryRun = false;           // --dry-run (数えるだけで書かない)
 
     int argc = 0;
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
@@ -163,6 +169,12 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 config.screenshotEvery = _wtoi64(argv[++i]);
             } else if (arg == L"--selftest") {
                 selftest = true;
+            } else if (arg == L"--migrate-subasset-ids") {
+                migrateSubAssetIds = true;
+            } else if (arg == L"--legacy-root" && i + 1 < argc) {
+                legacyRoots.emplace_back(argv[++i]);
+            } else if (arg == L"--dry-run") {
+                migrateDryRun = true;
             } else if (arg == L"--save-scene-on-start") {
                 saveSceneOnStart = true;
             } else if (arg == L"--autoplay") {
@@ -610,6 +622,18 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         return mye::RunFroxelVolumeProbe(probe);
     }
 
+    // --migrate-subasset-ids [--project DIR] [--legacy-root OLD]... [--dry-run] (M74b):
+    // M74a 以前のサブアセット ID (正規化絶対パス由来) を guid:// 由来の ID へ書き換えて終了する。
+    // ウィンドウも D3D も作らない (モデルはヘッドレス登録で登録名だけ揃える)。
+    // --legacy-root は「そのシーンを保存したマシンの clone 先 = プロジェクトルート」。現在の
+    // clone 先は自動で含まれる。--project 無しはエンジンリポジトリの assets が対象
+    if (migrateSubAssetIds) {
+        const std::wstring assetsRoot = projectDir.empty()
+            ? mye::FindAssetsRoot()
+            : (std::filesystem::absolute(projectDir) / L"assets").wstring();
+        return mye::subasset::RunMigration(assetsRoot, legacyRoots, migrateDryRun);
+    }
+
     if (selftest) {
         // ウィンドウ/D3D 不要のヘッドレス回帰テスト
         const bool ok = mye::RunEcsSelfTest() && mye::RunSceneSerializerSelfTest()
@@ -642,7 +666,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             && mye::RunXpbdSelfTest()           // M60'b
             && mye::RunAcousticSelfTest()       // M65a
             && mye::RunSourceControlSelfTest()  // M66a
-            && mye::RunAcousticAudioSelfTest(); // M68a
+            && mye::RunAcousticAudioSelfTest()  // M68a
+            && mye::RunSubAssetKeySelfTest();   // M74a / M74b
         return ok ? 0 : 1;
     }
 

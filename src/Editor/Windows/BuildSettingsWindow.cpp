@@ -246,10 +246,10 @@ bool BuildSettingsWindow::StageCopy(EngineContext& ctx, std::string& detail)
     }
 
     // 2c) M51j: クック済みキャッシュを同梱し、封印マーカーを書く。
-    // モデルのサブアセット AssetID は正規化した**絶対パス**由来なので、配布シーンは
-    // パッケージ元パスから導出された ID を参照している。移設先で再クック (フレッシュ
-    // パース) すると別 ID が登録されシーンの参照が空振りする — 封印キャッシュが
-    // 「クック時の登録列」をそのまま再生することが、配布物の移設耐性そのもの (spec §10)
+    // 移設先では pathKey / mtime が必ずずれ、DDS 一括後は元画像も無いので、封印キャッシュが
+    // 「クック時の登録列」をそのまま再生する (spec §10)。M51j 当時はサブアセット AssetID が
+    // 絶対パス由来で、封印が参照の正しさそのものだった — M74a で .meta の GUID 由来になり、
+    // ID は移設で変わらなくなった (封印は再パースの回避と DDS 後の元画像不在のために残す)
     if (CookedCache::Enabled()) {
         const fs::path cookedSrc = fs::path(CookedCache::Dir());
         const fs::path cookedDst = out / L"cache" / L"cooked";

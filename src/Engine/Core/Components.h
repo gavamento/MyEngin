@@ -758,7 +758,8 @@ struct PlayerInputComponent {
 //     ランタイムライブラリを推定する (InspectorWindow::DrawAssetRef) が、地形は
 //     そのライブラリを持たない — TerrainSystem がパスをキーに直接キャッシュする。
 //  2. 相対パスならシーン JSON がチェックアウト先に依存しない。モデル由来のサブアセット ID が
-//     正規化絶対パスのハッシュだったせいでシーンをコミットできなくなった M51j の穴を踏まない。
+//     正規化絶対パスのハッシュだったせいでシーンをコミットできなくなった M51j の穴を踏まない
+//     (その穴自体は M74a で .meta の GUID 由来に直した。ADR-019)。
 //
 // opt-in (TypeId 末尾 append) なので既存シーンは 1 バイトも変わらない
 struct TerrainComponent {

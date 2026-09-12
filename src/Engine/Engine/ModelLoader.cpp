@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 
+#include "Engine/Core/AssetKeyResolver.h"
 #include "Engine/Core/Components.h"
 #include "Engine/Core/Hash.h"
 #include "Engine/Core/Log.h"
@@ -26,7 +27,9 @@ namespace {
 struct LoadContext {
     Scene* scene = nullptr;
     RenderResources* resources = nullptr;
-    std::string pathUtf8;   // AssetID 用のキー
+    // AssetID 用キーの接頭辞 "guid://<16hex>" (M74a、assetkey::SubAssetKeyPrefix)。
+    // ★絶対パスを入れない — シーンに保存した ID がチェックアウト先に依存する
+    std::string keyPrefix;
     std::wstring baseDir;   // 外部テクスチャの解決基準
     AssetID shaderId;
     // 非 null なら各 Register サイトが登録内容を追記する (M51b クックの sink)
@@ -147,7 +150,7 @@ AssetID LoadMaterial(LoadContext& lc, const cgltf_material* mat, const char* key
                 // GLB 埋め込み
                 const auto* bytes =
                     static_cast<const uint8_t*>(img->buffer_view->buffer->data) + img->buffer_view->offset;
-                const std::string texKey = lc.pathUtf8 + "#img:" + (img->name ? img->name : key);
+                const std::string texKey = lc.keyPrefix + "#img:" + (img->name ? img->name : key);
                 const AssetID tex = lc.resources->textures.CreateFromEncoded(
                     texKey, bytes, img->buffer_view->size, /*srgb=*/true); // ベースカラー (M38a)
                 if (!tex.IsNull()) {
@@ -276,7 +279,7 @@ AssetID LoadSkin(LoadContext& lc, const cgltf_data* data, const cgltf_skin* skin
     }
 
     char key[512];
-    snprintf(key, sizeof(key), "%s#skin%zu", lc.pathUtf8.c_str(), skinIdx);
+    snprintf(key, sizeof(key), "%s#skin%zu", lc.keyPrefix.c_str(), skinIdx);
     if (lc.cook) {
         lc.cook->AddSkin(key, model); // move 前にコピーを記録
     }
@@ -334,7 +337,7 @@ void LoadNode(LoadContext& lc, const cgltf_data* data, const cgltf_node* node, G
         }
         for (cgltf_size p = 0; p < node->mesh->primitives_count; ++p) {
             char key[512];
-            snprintf(key, sizeof(key), "%s#mesh%zu#prim%zu", lc.pathUtf8.c_str(), meshIndex,
+            snprintf(key, sizeof(key), "%s#mesh%zu#prim%zu", lc.keyPrefix.c_str(), meshIndex,
                      static_cast<size_t>(p));
             const cgltf_primitive* prim = &node->mesh->primitives[p];
             const AssetID meshId = LoadPrimitiveMesh(lc, prim, key);
@@ -342,7 +345,7 @@ void LoadNode(LoadContext& lc, const cgltf_data* data, const cgltf_node* node, G
                 continue;
             }
             char matKey[512];
-            snprintf(matKey, sizeof(matKey), "%s#mat%zd", lc.pathUtf8.c_str(),
+            snprintf(matKey, sizeof(matKey), "%s#mat%zd", lc.keyPrefix.c_str(),
                      prim->material ? (prim->material - data->materials) : -1);
             const AssetID matId = LoadMaterial(lc, prim->material, matKey);
 
@@ -395,8 +398,8 @@ GameObject Load(Scene& scene, RenderResources& resources, ShaderManager& shaders
     LoadContext lc;
     lc.scene = &scene;
     lc.resources = &resources;
-    // AssetID キーは正規化パスから生成 (ホットリロード時の照合と一致させる)
-    lc.pathUtf8 = WideToUtf8(NormalizePathKey(path));
+    // AssetID キーは .meta の GUID から生成 (ホットリロード時の照合と一致させる。M74a)
+    lc.keyPrefix = assetkey::SubAssetKeyPrefix(path);
     lc.baseDir = std::filesystem::path(path).parent_path().wstring();
     lc.shaderId = shaders.Load("forward_lit");
 
@@ -443,7 +446,7 @@ bool RegisterAssets(RenderResources& resources, ShaderManager& shaders, const st
     LoadContext lc;
     lc.scene = nullptr; // エンティティは作らない
     lc.resources = &resources;
-    lc.pathUtf8 = WideToUtf8(NormalizePathKey(path));
+    lc.keyPrefix = assetkey::SubAssetKeyPrefix(path);
     lc.baseDir = std::filesystem::path(path).parent_path().wstring();
     lc.shaderId = shaders.Load("forward_lit");
     ModelCook::ModelCookData cookData;
@@ -455,13 +458,13 @@ bool RegisterAssets(RenderResources& resources, ShaderManager& shaders, const st
     for (cgltf_size m = 0; m < data->meshes_count; ++m) {
         for (cgltf_size p = 0; p < data->meshes[m].primitives_count; ++p) {
             char key[512];
-            snprintf(key, sizeof(key), "%s#mesh%zu#prim%zu", lc.pathUtf8.c_str(),
+            snprintf(key, sizeof(key), "%s#mesh%zu#prim%zu", lc.keyPrefix.c_str(),
                      static_cast<size_t>(m), static_cast<size_t>(p));
             const cgltf_primitive* prim = &data->meshes[m].primitives[p];
             LoadPrimitiveMesh(lc, prim, key);
 
             char matKey[512];
-            snprintf(matKey, sizeof(matKey), "%s#mat%zd", lc.pathUtf8.c_str(),
+            snprintf(matKey, sizeof(matKey), "%s#mat%zd", lc.keyPrefix.c_str(),
                      prim->material ? (prim->material - data->materials) : -1);
             LoadMaterial(lc, prim->material, matKey);
         }
@@ -502,7 +505,7 @@ size_t RegisterSkinnedModels(RenderResources& resources, const std::wstring& pat
     LoadContext lc;
     lc.scene = nullptr; // エンティティは作らない
     lc.resources = &resources;
-    lc.pathUtf8 = WideToUtf8(NormalizePathKey(path));
+    lc.keyPrefix = assetkey::SubAssetKeyPrefix(path);
     lc.baseDir = std::filesystem::path(path).parent_path().wstring();
     // shaderId は使わない (LoadSkin はマテリアルに触れない)
 

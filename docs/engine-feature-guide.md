@@ -108,7 +108,7 @@ LocalTransform が位置・回転・スケールを持ち、Hierarchy から Wor
 | 物理材料 | `.physmat.json` |
 | データ型 | `.component.schema.json` |
 
-AssetDatabase が GUID と実パスを対応付け、各アセットの `.meta` を管理します。本体と `.meta` を一緒に移動すれば参照を保てます。ただし、モデル内部のサブアセットなど絶対パス由来の ID が残るため、異なる配置先での共同制作を完全に自由なものとしては扱えません。
+AssetDatabase が GUID と実パスを対応付け、各アセットの `.meta` を管理します。本体と `.meta` を一緒に移動すれば参照を保てます。モデル内部のメッシュ・マテリアル・スキンの ID も、M74a からモデルの `.meta` の GUID から作るため、clone 先が違うマシン同士でも同じシーンが同じように表示されます。M74a より前に保存したシーンは `Editor.exe --migrate-subasset-ids` で新しい ID へ書き換えます。
 
 クック済みモデルなどを `cache/cooked` に保存し、次回は再解析を減らします。破損や不一致の検査、キャッシュを無効にして元データから処理する経路があります。キャッシュの存在は、元データを不要にすることと同義ではありません。配布では封印マーカーを含む専用のパッケージ処理を使います。
 
@@ -279,7 +279,7 @@ Search は現在コードにある名前・型・参照検索です。`plans` �
 
 Rust サービスは JSON と 6 つの C ABI 関数でエディタに接続します。ファイルを書き換える操作前に未保存や実行中処理を検査し、更新されたファイルから、ホットリロード・シーン再読込・再起動を振り分けます。`.meta` や地形編集データを本体と対応させます。
 
-サービスがない場合は Source Control が利用不可になります。認証の初期設定、Git 自体、モデルのサブアセット ID に関する配置先の制約は残ります。これはゲーム内ネットワーク機能とは独立です。
+サービスがない場合は Source Control が利用不可になります。認証の初期設定と Git 自体の制約は残ります。モデルのサブアセット ID に関する配置先の制約は M74a で無くなりました。これはゲーム内ネットワーク機能とは独立です。
 
 根拠: [EditorApp.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Editor/EditorApp.cpp)、[EditorApp.h](C:/HAKtokyo/My_Engin/MyEngin/src/Editor/EditorApp.h)、[SearchWindow.h](C:/HAKtokyo/My_Engin/MyEngin/src/Editor/Windows/SearchWindow.h)、[PlayModeController.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Editor/PlayModeController.cpp)、[GitTransaction.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Editor/SourceControl/GitTransaction.cpp)、[ADR-015](C:/HAKtokyo/My_Engin/MyEngin/docs/adr/ADR-015-in-process-rust-collab.md)。
 
