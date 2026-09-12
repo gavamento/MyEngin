@@ -770,6 +770,10 @@ MYE_STR(Create_UIImage,       "Image",             "画像")
 MYE_STR(Create_UIButton,      "Button",            "ボタン")
 MYE_STR(Create_UIText,        "Text",              "テキスト")
 MYE_STR(Create_UICanvas,      "Canvas",            "キャンバス")
+// M75e: 自動レイアウトの器 (RectTransform + UILayoutGroup)
+MYE_STR(Create_UIHLayout,     "Horizontal Layout Group", "水平レイアウトグループ")
+MYE_STR(Create_UIVLayout,     "Vertical Layout Group",   "垂直レイアウトグループ")
+MYE_STR(Create_UIGridLayout,  "Grid Layout Group",       "グリッドレイアウトグループ")
 
 // ---- 統計ウィンドウ / 未保存確認 (M47b) ----
 MYE_STR(Stats_Fps,            "FPS: %.1f (%.3f ms)",        "FPS: %.1f (%.3f ms)")
@@ -1100,6 +1104,17 @@ MYE_STR(Insp_PhysMatNote,     "Applied when assigned to a collider.",
 MYE_STR(Insp_PmOvFriction,    "Override Friction",   "摩擦を上書き")
 // M75a: RectTransform の解決済み矩形 (基準キャンバス上、キャンバス単位)。読み取り専用
 MYE_STR(Insp_UIResolvedRect,  "Rect: x %.1f  y %.1f  w %.1f  h %.1f", "矩形: x %.1f  y %.1f  w %.1f  h %.1f")
+// M75e: 自動レイアウトに上書きされている RectTransform の欄
+MYE_STR(Insp_UIDrivenGroupPos,    "Position is set by the parent Layout Group",
+                                  "位置は親の Layout Group が決めています")
+MYE_STR(Insp_UIDrivenGroupWidth,  "Position and width are set by the parent Layout Group",
+                                  "位置と幅は親の Layout Group が決めています")
+MYE_STR(Insp_UIDrivenGroupHeight, "Position and height are set by the parent Layout Group",
+                                  "位置と高さは親の Layout Group が決めています")
+MYE_STR(Insp_UIDrivenGroupSize,   "Position and size are set by the parent Layout Group",
+                                  "位置とサイズは親の Layout Group が決めています")
+MYE_STR(Insp_UIDrivenFitter,      "Size is set by the Content Size Fitter",
+                                  "サイズは Content Size Fitter が決めています")
 MYE_STR(Insp_PmOvRestitution, "Override Restitution", "反発を上書き")
 
 // ---- Source Control (M66b) ----

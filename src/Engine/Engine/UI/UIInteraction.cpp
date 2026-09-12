@@ -6,6 +6,7 @@
 #include "Engine/Core/Hash.h"
 #include "Engine/Core/World.h"
 #include "Engine/Engine/UI/UILayout.h"
+#include "Engine/Engine/UI/UILayoutGroup.h" // M75e: LayoutScratch
 #include "Engine/Engine/UI/UINav.h"
 #include "Engine/Platform/Input.h"
 #include "Engine/Platform/InputActions.h"
@@ -15,13 +16,15 @@ namespace uiinteract {
 namespace {
 
 // 全 active UIElement を走査する共通形。ワールド追従 UI の射影コンテキストは
-// **sim レーン用の決定論構築** (BuildSimWorldContext) を 1 回だけ組んで使い回す
+// **sim レーン用の決定論構築** (BuildSimWorldContext) を 1 回だけ組んで使い回す。
+// M75e: 自動レイアウトのメモも走査 1 回ぶん共有する (結果は変えない。World はこの間書き換えない)
 template <typename F>
 void ForEachUiElement(World& world, int canvasW, int canvasH, F&& fn)
 {
     uilayout::UIWorldContext wcData;
     const uilayout::UIWorldContext* wc =
         uilayout::BuildSimWorldContext(world, canvasW, canvasH, wcData) ? &wcData : nullptr;
+    uilayout::LayoutScratch scratch;
     const ComponentTypeId req[] = { UIElementComponent::sTypeId };
     world.ForEachArchetype(req, [&](Archetype& arch) {
         const int ci = arch.FindTypeIndex(UIElementComponent::sTypeId);
@@ -30,7 +33,7 @@ void ForEachUiElement(World& world, int canvasW, int canvasH, F&& fn)
             if (!IsEntityActive(world, e)) {
                 continue;
             }
-            fn(e, *static_cast<const UIElementComponent*>(arch.GetPtr(ci, row)), wc);
+            fn(e, *static_cast<const UIElementComponent*>(arch.GetPtr(ci, row)), wc, scratch);
         }
     });
 }
@@ -45,9 +48,9 @@ EntityID HitTest(World& world, int canvasW, int canvasH, float pointX, float poi
     bool have = false;
     ForEachUiElement(world, canvasW, canvasH,
                      [&](EntityID e, const UIElementComponent& el,
-                         const uilayout::UIWorldContext* wc) {
+                         const uilayout::UIWorldContext* wc, uilayout::LayoutScratch& scratch) {
                          const uilayout::UIResolved res =
-                             uilayout::Resolve(world, e, canvasW, canvasH, wc);
+                             uilayout::Resolve(world, e, canvasW, canvasH, wc, &scratch);
                          if (!res.visible) {
                              return;
                          }
@@ -64,7 +67,8 @@ EntityID HitTest(World& world, int canvasW, int canvasH, float pointX, float poi
                              // 1 ビットも変わらない)
                              const auto vis = uilayout::Intersect(
                                  res.rect,
-                                 uilayout::ResolveClipRect(world, e, canvasW, canvasH, wc));
+                                 uilayout::ResolveClipRect(world, e, canvasW, canvasH, wc,
+                                                           &scratch));
                              if (vis.w <= 0.0f || vis.h <= 0.0f || x < vis.x
                                  || x >= vis.x + vis.w || y < vis.y || y >= vis.y + vis.h) {
                                  return;
@@ -73,8 +77,8 @@ EntityID HitTest(World& world, int canvasW, int canvasH, float pointX, float poi
                              // 回転/スケール (M75a): 点を要素のフレームへ逆変換して軸平行矩形で
                              // 判定する (Unity と同じ)。クリップは祖先の AABB で近似 — 描画側の
                              // シザーも同じ AABB なので「見えているのに押せない」は起きない
-                             const auto clip =
-                                 uilayout::ResolveClipRect(world, e, canvasW, canvasH, wc);
+                             const auto clip = uilayout::ResolveClipRect(world, e, canvasW,
+                                                                         canvasH, wc, &scratch);
                              if (clip.w <= 0.0f || clip.h <= 0.0f || x < clip.x
                                  || x >= clip.x + clip.w || y < clip.y || y >= clip.y + clip.h) {
                                  return;
@@ -115,18 +119,19 @@ EntityID FindNextFocus(World& world, int canvasW, int canvasH, EntityID current,
     bool haveCur = false;
     ForEachUiElement(world, canvasW, canvasH,
                      [&](EntityID e, const UIElementComponent& el,
-                         const uilayout::UIWorldContext* wc) {
+                         const uilayout::UIWorldContext* wc, uilayout::LayoutScratch& scratch) {
                          if (el.focusable == 0) {
                              return;
                          }
                          // 祖先クリップで完全に隠れた要素は候補から外す
                          // (スクロール範囲外の項目へ飛ばない)
-                         const auto vis =
-                             uilayout::ResolveVisibleRect(world, e, canvasW, canvasH, wc);
+                         const auto vis = uilayout::ResolveVisibleRect(world, e, canvasW, canvasH,
+                                                                       wc, &scratch);
                          if (vis.w <= 0.0f || vis.h <= 0.0f) {
                              return;
                          }
-                         const auto rect = uilayout::ResolveRect(world, e, canvasW, canvasH, wc);
+                         const auto rect =
+                             uilayout::ResolveRect(world, e, canvasW, canvasH, wc, &scratch);
                          // M75c: 候補の比較は既定キャンバス座標で行う (キャンバスごとに単位が
                          // 違うので、そのままでは別キャンバスの要素と距離を比べられない)。
                          // Canvas の無い要素は 1.0f を掛ける = ビット恒等

@@ -1056,6 +1056,61 @@ void RegisterBuiltinComponents()
         MYE_JP("描画順", MYE_FIELD_TIP(UICanvasComponent, sortOrder, Int32,
                                        "first draw/hit key; larger = in front (default canvas = 0)")),
     }, kComponentNoHash | kComponentUiAux);
+
+    // M75e: 自動レイアウト 3 種 (UICanvas の直後、この順)。どれも描画専用の NoHash + UiAux。
+    // 子の RectTransform へは書き込まず、uilayout::Resolve が解くときに読む (UILayoutGroup.h)
+    RegisterComponent<UILayoutGroupComponent>("UILayoutGroup", {
+        MYE_JP("種類", MYE_FIELD_TIP(UILayoutGroupComponent, kind, Int32,
+                                     "0 = horizontal 1 = vertical 2 = grid")),
+        MYE_JP("余白", MYE_FIELD_TIP(UILayoutGroupComponent, padding, Float4,
+                                     "inner padding (left, top, right, bottom)")),
+        MYE_JP("間隔", MYE_FIELD_TIP(UILayoutGroupComponent, spacing, Float2,
+                                     "gap between children; horizontal uses x, vertical y, grid both")),
+        MYE_JP("子の整列", MYE_FIELD_TIP(UILayoutGroupComponent, childAlignment, Int32,
+                                         "9-grid 0..8 (0 = upper left)")),
+        MYE_JP("子の幅を制御", MYE_FIELD_TIP(UILayoutGroupComponent, controlChildWidth, Int32,
+                                             "horizontal/vertical: the group sets child widths")),
+        MYE_JP("子の高さを制御", MYE_FIELD_TIP(UILayoutGroupComponent, controlChildHeight, Int32,
+                                               "horizontal/vertical: the group sets child heights")),
+        MYE_JP("幅を広げる", MYE_FIELD_TIP(UILayoutGroupComponent, forceExpandWidth, Int32,
+                                           "horizontal/vertical: hand spare width to every child")),
+        MYE_JP("高さを広げる", MYE_FIELD_TIP(UILayoutGroupComponent, forceExpandHeight, Int32,
+                                             "horizontal/vertical: hand spare height to every child")),
+        MYE_JP("逆順に並べる", MYE_FIELD_TIP(UILayoutGroupComponent, reverseArrangement, Int32,
+                                             "horizontal/vertical: last sibling first")),
+        MYE_JP("セルの大きさ", MYE_FIELD_TIP(UILayoutGroupComponent, cellSize, Float2,
+                                             "grid: every child's size")),
+        MYE_JP("開始の角", MYE_FIELD_TIP(UILayoutGroupComponent, startCorner, Int32,
+                                         "grid: 0 = upper left 1 = upper right 2 = lower left 3 = lower right")),
+        MYE_JP("埋める向き", MYE_FIELD_TIP(UILayoutGroupComponent, startAxis, Int32,
+                                           "grid: 0 = fill rows first 1 = fill columns first")),
+        MYE_JP("制約", MYE_FIELD_TIP(UILayoutGroupComponent, constraint, Int32,
+                                     "grid: 0 = flexible 1 = fixed column count 2 = fixed row count")),
+        MYE_JP("列数/行数", MYE_FIELD_TIP(UILayoutGroupComponent, constraintCount, Int32,
+                                          "grid: the fixed column/row count (minimum 1)")),
+    }, kComponentNoHash | kComponentUiAux);
+
+    RegisterComponent<UILayoutElementComponent>("UILayoutElement", {
+        MYE_JP("レイアウトを無視", MYE_FIELD_TIP(UILayoutElementComponent, ignoreLayout, Int32,
+                                                 "not arranged by the parent layout group")),
+        MYE_JP("最小の幅", MYE_FIELD_TIP(UILayoutElementComponent, minWidth, Float, "negative = unset")),
+        MYE_JP("最小の高さ", MYE_FIELD_TIP(UILayoutElementComponent, minHeight, Float, "negative = unset")),
+        MYE_JP("推奨の幅", MYE_FIELD_TIP(UILayoutElementComponent, preferredWidth, Float, "negative = unset")),
+        MYE_JP("推奨の高さ", MYE_FIELD_TIP(UILayoutElementComponent, preferredHeight, Float, "negative = unset")),
+        MYE_JP("伸縮の幅", MYE_FIELD_TIP(UILayoutElementComponent, flexibleWidth, Float,
+                                         "share of the spare width; negative = unset")),
+        MYE_JP("伸縮の高さ", MYE_FIELD_TIP(UILayoutElementComponent, flexibleHeight, Float,
+                                           "share of the spare height; negative = unset")),
+        MYE_JP("優先度", MYE_FIELD_TIP(UILayoutElementComponent, layoutPriority, Int32,
+                                       "higher wins over text/group sizes (priority 0)")),
+    }, kComponentNoHash | kComponentUiAux);
+
+    RegisterComponent<UIContentSizeFitterComponent>("UIContentSizeFitter", {
+        MYE_JP("横の合わせ方", MYE_FIELD_TIP(UIContentSizeFitterComponent, horizontalFit, Int32,
+                                             "0 = unconstrained 1 = min size 2 = preferred size")),
+        MYE_JP("縦の合わせ方", MYE_FIELD_TIP(UIContentSizeFitterComponent, verticalFit, Int32,
+                                             "0 = unconstrained 1 = min size 2 = preferred size")),
+    }, kComponentNoHash | kComponentUiAux);
 }
 
 } // namespace mye

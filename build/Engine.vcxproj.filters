@@ -468,6 +468,9 @@
     <ClCompile Include="..\src\Engine\Engine\UI\UILayout.cpp">
       <Filter>Engine\UI</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\UI\UILayoutGroup.cpp">
+      <Filter>Engine\UI</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\UI\UIProjectSettings.cpp">
       <Filter>Engine\UI</Filter>
     </ClCompile>
@@ -1066,6 +1069,9 @@
       <Filter>Engine\UI</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\UI\UILayout.h">
+      <Filter>Engine\UI</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\UI\UILayoutGroup.h">
       <Filter>Engine\UI</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\UI\UINav.h">

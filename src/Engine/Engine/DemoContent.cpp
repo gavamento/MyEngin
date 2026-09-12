@@ -30,6 +30,7 @@
 #include "Engine/Engine/Prefab.h"
 #include "Engine/Engine/RagdollBuilder.h"
 #include "Engine/Engine/UI/UILayout.h" // M75a: 旧 anchor/x/y/w/h → RectTransform
+#include "Engine/Engine/UI/UILayoutGroup.h" // M75e: --ui-demo の自動レイアウト
 #include "Engine/Engine/Scene.h"
 #include "Engine/Engine/SceneSerializer.h"
 #include "Engine/Platform/PathUtil.h"
@@ -3441,6 +3442,139 @@ void BuildUiShowcaseScene(EngineContext& ctx)
     GameObject highSort = panel("OverlayOrderMinus100", &cOverlay, 0.5f, 1.0f, 120.0f, -120.0f,
                                 480.0f, 200.0f, { 0.20f, 0.60f, 0.70f, 1.0f }, -100);
     label("OverlayLabel", highSort, "SORT 5 ORDER -100", 2.5f, -99);
+
+    // ---- M75e: 自動レイアウト (Layout Group / LayoutElement / ContentSizeFitter) ----
+    // ★M75e 以降の積み増しは**この関数の末尾へ**。前へ挿すと既存要素の entity.index (描画順の同値キー) が動く。
+    // 置き場所は既存の箱の隙間 (上辺中央 / 左の中段 / 右の中段) で、どれも既定キャンバスの要素。
+    // **RectTransform を先に**足す規則は他と同じ (panel が守る)。1 つのエンティティへ続けて AddComponent
+    // するとアーキタイプが移って前のポインタが無効になるので、書いてから次を足す
+
+    // (1) 水平 Group: 幅を制御 + 高さは広げる。MIN 120 (LayoutElement の min/preferred) / FLEX 1 / FLEX 2
+    //     (余りを 1:2 で配る) / 入れ子の垂直 Group (Group 自身の集計 40 より LayoutElement の 120 が勝つ)。
+    //     右上の赤い角は ignoreLayout = 自分の RectTransform で行の角に乗る
+    {
+        GameObject row = panel("LayoutRow", nullptr, 0.5f, 0.0f, 0.0f, 24.0f, 720.0f, 120.0f,
+                               { 0.12f, 0.13f, 0.17f, 1.0f }, 10);
+        {
+            auto* g = row.AddComponent<UILayoutGroupComponent>();
+            g->kind = uilayout::kLayoutHorizontal;
+            g->padding = { 12.0f, 12.0f, 12.0f, 12.0f };
+            g->spacing = { 8.0f, 0.0f };
+            g->controlChildWidth = 1;
+            g->controlChildHeight = 1;
+            g->forceExpandWidth = 0;
+            g->forceExpandHeight = 1;
+        }
+        GameObject minCell = panel("RowMin120", &row, 0.0f, 0.0f, 0.0f, 0.0f, 40.0f, 40.0f,
+                                   { 0.30f, 0.32f, 0.40f, 1.0f }, 11);
+        {
+            auto* le = minCell.AddComponent<UILayoutElementComponent>();
+            le->minWidth = 120.0f;
+            le->preferredWidth = 120.0f;
+        }
+        label("RowMin120Label", minCell, "MIN 120", 2.0f, 12);
+        GameObject flex1 = panel("RowFlex1", &row, 0.0f, 0.0f, 0.0f, 0.0f, 40.0f, 40.0f,
+                                 { 0.20f, 0.45f, 0.55f, 1.0f }, 11);
+        flex1.AddComponent<UILayoutElementComponent>()->flexibleWidth = 1.0f;
+        label("RowFlex1Label", flex1, "FLEX 1", 2.0f, 12);
+        GameObject flex2 = panel("RowFlex2", &row, 0.0f, 0.0f, 0.0f, 0.0f, 40.0f, 40.0f,
+                                 { 0.25f, 0.55f, 0.35f, 1.0f }, 11);
+        flex2.AddComponent<UILayoutElementComponent>()->flexibleWidth = 2.0f;
+        label("RowFlex2Label", flex2, "FLEX 2", 2.0f, 12);
+        GameObject nested = panel("RowNested", &row, 0.0f, 0.0f, 0.0f, 0.0f, 40.0f, 40.0f,
+                                  { 0.18f, 0.18f, 0.24f, 1.0f }, 11);
+        {
+            auto* g = nested.AddComponent<UILayoutGroupComponent>();
+            g->kind = uilayout::kLayoutVertical;
+            g->spacing = { 0.0f, 6.0f };
+            g->controlChildWidth = 1;
+            g->controlChildHeight = 1;
+        }
+        {
+            // ★flexible も 0 で押さえる。子の棒は Force Expand (flexible 1) なので、Group 自身の集計は
+            //   flexible 1 を名乗る (Unity と同じ = 入れ子の Group は伸びる側に回る)。優先度 1 の 0 で上書き
+            auto* le = nested.AddComponent<UILayoutElementComponent>();
+            le->preferredWidth = 120.0f;
+            le->flexibleWidth = 0.0f;
+        }
+        const DirectX::XMFLOAT4 barColors[3] = { { 0.85f, 0.55f, 0.20f, 1.0f },
+                                                 { 0.75f, 0.75f, 0.25f, 1.0f },
+                                                 { 0.55f, 0.80f, 0.35f, 1.0f } };
+        const char* const barNames[3] = { "RowNestedBar0", "RowNestedBar1", "RowNestedBar2" };
+        for (int i = 0; i < 3; ++i) {
+            panel(barNames[i], &nested, 0.0f, 0.0f, 0.0f, 0.0f, 40.0f, 40.0f, barColors[i], 12);
+        }
+        GameObject badge = panel("RowIgnoreLayout", &row, 1.0f, 0.0f, 0.0f, 0.0f, 28.0f, 28.0f,
+                                 { 0.85f, 0.20f, 0.25f, 1.0f }, 13);
+        badge.GetComponent<RectTransformComponent>()->pivot = { 0.5f, 0.5f }; // 角の上に中心を置く
+        badge.AddComponent<UILayoutElementComponent>()->ignoreLayout = 1;
+    }
+
+    // (2) 垂直 Group + ContentSizeFitter (縦 = 推奨)。幅は Group が配り、折り返すテキストの高さは
+    //     **配られた幅で**測る (Unity の 2 パス)。パネルの高さは中身の合計に縮む (作者の値は 10)
+    {
+        GameObject col = panel("LayoutColumn", nullptr, 0.0f, 0.0f, 24.0f, 250.0f, 320.0f, 10.0f,
+                               { 0.12f, 0.13f, 0.17f, 1.0f }, 10);
+        {
+            auto* g = col.AddComponent<UILayoutGroupComponent>();
+            g->kind = uilayout::kLayoutVertical;
+            g->padding = { 12.0f, 12.0f, 12.0f, 12.0f };
+            g->spacing = { 0.0f, 8.0f };
+            g->controlChildWidth = 1;
+            g->controlChildHeight = 1;
+            g->forceExpandWidth = 1;
+            g->forceExpandHeight = 0;
+        }
+        col.AddComponent<UIContentSizeFitterComponent>()->verticalFit = uilayout::kFitPreferred;
+        GameObject bar = panel("ColumnBar", &col, 0.0f, 0.0f, 0.0f, 0.0f, 40.0f, 40.0f,
+                               { 0.45f, 0.25f, 0.60f, 1.0f }, 11);
+        bar.AddComponent<UILayoutElementComponent>()->preferredHeight = 24.0f;
+        const auto columnText = [&](const char* name, const char* text) {
+            GameObject go = s.CreateGameObject(name);
+            go.AddComponent<RectTransformComponent>();
+            auto* el = go.AddComponent<UIElementComponent>();
+            el->kind = 1;
+            el->wrap = 1;
+            el->fontScale = 2.0f;
+            el->order = 11;
+            std::snprintf(el->text, sizeof(el->text), "%s", text);
+            go.SetParent(col);
+        };
+        columnText("ColumnTitle", "VERTICAL GROUP");
+        columnText("ColumnBody", "CONTENT SIZE FITTER GROWS THIS PANEL TO FIT ITS WRAPPED TEXT");
+        columnText("ColumnTail", "WIDTH FIRST, THEN HEIGHT");
+    }
+
+    // (3) Grid: 列数 4 固定・右上から埋める・Fitter で縦横とも中身に合わせる。10 個なので最後の行は右寄せの 2 個
+    {
+        GameObject grid = panel("LayoutGrid", nullptr, 1.0f, 0.0f, -24.0f, 340.0f, 10.0f, 10.0f,
+                                { 0.12f, 0.13f, 0.17f, 1.0f }, 10);
+        {
+            auto* g = grid.AddComponent<UILayoutGroupComponent>();
+            g->kind = uilayout::kLayoutGrid;
+            g->padding = { 12.0f, 12.0f, 12.0f, 12.0f };
+            g->spacing = { 8.0f, 8.0f };
+            g->cellSize = { 56.0f, 56.0f };
+            g->startCorner = 1; // 右上
+            g->constraint = uilayout::kGridFixedColumnCount;
+            g->constraintCount = 4;
+        }
+        {
+            auto* f = grid.AddComponent<UIContentSizeFitterComponent>();
+            f->horizontalFit = uilayout::kFitPreferred;
+            f->verticalFit = uilayout::kFitPreferred;
+        }
+        const char* const cellNames[10] = { "GridCell0", "GridCell1", "GridCell2", "GridCell3",
+                                            "GridCell4", "GridCell5", "GridCell6", "GridCell7",
+                                            "GridCell8", "GridCell9" };
+        const char* const digits[10] = { "0", "1", "2", "3", "4", "5", "6", "7", "8", "9" };
+        for (int i = 0; i < 10; ++i) {
+            const float t = static_cast<float>(i) / 9.0f;
+            GameObject cell = panel(cellNames[i], &grid, 0.0f, 0.0f, 0.0f, 0.0f, 10.0f, 10.0f,
+                                    { 0.20f + 0.55f * t, 0.35f, 0.75f - 0.45f * t, 1.0f }, 11);
+            label("GridCellLabel", cell, digits[i], 3.0f, 12);
+        }
+    }
 }
 
 } // namespace mye

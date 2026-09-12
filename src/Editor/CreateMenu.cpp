@@ -12,6 +12,7 @@
 #include "Engine/Engine/EntityNaming.h"
 #include "Engine/Engine/RagdollBuilder.h"
 #include "Engine/Engine/Scene.h"
+#include "Engine/Engine/UI/UILayoutGroup.h" // M75e: kLayoutHorizontal 等
 #include "Engine/Renderer/GpuResources.h"
 #include "Engine/Renderer/Skeleton.h"
 
@@ -183,6 +184,36 @@ GameObject CreateUICanvas(EngineContext& ctx, const char* name)
     return obj;
 }
 
+namespace {
+
+// M75e: Layout Group の器 = RectTransform + UILayoutGroup だけ (Unity で空の GameObject に Layout Group を
+// 足した形)。背景を持たないので Game ビューでは選択枠 (GameViewWindow) だけが見える。
+// 設定は構造体の既定 = Unity で Add Component したときと同じ (Control Child Size off / Force Expand on)
+GameObject CreateUILayoutContainer(EngineContext& ctx, const char* name, int kind, float w, float h)
+{
+    GameObject obj = ctx.scene->CreateGameObjectTracked(name);
+    AddUnityStyleRect(obj, w, h);
+    obj.AddComponent<UILayoutGroupComponent>()->kind = kind;
+    return obj;
+}
+
+} // namespace
+
+GameObject CreateUIHorizontalLayout(EngineContext& ctx, const char* name)
+{
+    return CreateUILayoutContainer(ctx, name, uilayout::kLayoutHorizontal, 400.0f, 100.0f);
+}
+
+GameObject CreateUIVerticalLayout(EngineContext& ctx, const char* name)
+{
+    return CreateUILayoutContainer(ctx, name, uilayout::kLayoutVertical, 160.0f, 300.0f);
+}
+
+GameObject CreateUIGridLayout(EngineContext& ctx, const char* name)
+{
+    return CreateUILayoutContainer(ctx, name, uilayout::kLayoutGrid, 320.0f, 320.0f);
+}
+
 GameObject RecordCreate(EngineContext& ctx, Selection& selection, UndoStack& undo, const char* label,
                         const std::function<GameObject()>& make)
 {
@@ -290,6 +321,13 @@ void DrawCreateMenuItems(EngineContext& ctx, Selection& selection, UndoStack& un
         CreateUIItem(ctx, selection, undo, parent, Tr(StrId::Create_UIImage), "Image", &CreateUIImage);
         CreateUIItem(ctx, selection, undo, parent, Tr(StrId::Create_UIButton), "Button", &CreateUIButton);
         CreateUIItem(ctx, selection, undo, parent, Tr(StrId::Create_UIText), "Text", &CreateUIText);
+        ImGui::Separator(); // M75e: 自動レイアウトの器
+        CreateUIItem(ctx, selection, undo, parent, Tr(StrId::Create_UIHLayout),
+                     "Horizontal Layout Group", &CreateUIHorizontalLayout);
+        CreateUIItem(ctx, selection, undo, parent, Tr(StrId::Create_UIVLayout),
+                     "Vertical Layout Group", &CreateUIVerticalLayout);
+        CreateUIItem(ctx, selection, undo, parent, Tr(StrId::Create_UIGridLayout),
+                     "Grid Layout Group", &CreateUIGridLayout);
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu(Tr(StrId::Create_Audio))) {

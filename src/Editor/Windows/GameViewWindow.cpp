@@ -9,6 +9,7 @@
 #include "Engine/Engine/RenderSystem.h"
 #include "Engine/Engine/Scene.h"
 #include "Engine/Engine/UI/UILayout.h"
+#include "Engine/Engine/UI/UILayoutGroup.h" // M75e: LayoutScratch
 #include "Engine/Engine/UI/UIRenderer.h"
 #include "Engine/Renderer/RenderPath.h"
 
@@ -128,13 +129,19 @@ void GameViewWindow::OnImGui(EngineContext& ctx, const Selection& selection)
             const uilayout::CanvasInfo canvas = uilayout::CanvasSize(rt_.Width(), rt_.Height());
             const float sx = imgSize.x / static_cast<float>(rt_.Width()) * canvas.scale;
             const float sy = imgSize.y / static_cast<float>(rt_.Height()) * canvas.scale;
+            uilayout::LayoutScratch layoutScratch; // M75e: 選択ぶんの解決で自動レイアウトのメモを共有
             for (uint64_t fid : selection.ids) {
                 GameObject go = ctx.scene->FindByFileId(fid);
-                if (!go || world.GetComponent<UIElementComponent>(go.Id()) == nullptr) {
+                // M75e: RectTransform だけの器 (Layout Group 等) にも枠を出す — 背景を持たないので
+                // Game ビューで大きさを確かめる手段が他に無い
+                if (!go
+                    || (world.GetComponent<UIElementComponent>(go.Id()) == nullptr
+                        && world.GetComponent<RectTransformComponent>(go.Id()) == nullptr)) {
                     continue;
                 }
-                const uilayout::UIRect r = uilayout::ResolveRect(
-                    world, go.Id(), canvas.w, canvas.h, uiWcValid_ ? &uiWc_ : nullptr);
+                const uilayout::UIRect r =
+                    uilayout::ResolveRect(world, go.Id(), canvas.w, canvas.h,
+                                          uiWcValid_ ? &uiWc_ : nullptr, &layoutScratch);
                 if (r.w <= 0.0f || r.h <= 0.0f) {
                     continue;
                 }

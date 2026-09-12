@@ -6,6 +6,7 @@
 #include "Engine/Core/Components.h"
 #include "Engine/Core/World.h"
 #include "Engine/Engine/RenderSystem.h" // PrevWorldStore (描画補間 M36b)
+#include "Engine/Engine/UI/UILayoutGroup.h" // M75e: 自動レイアウト
 #include "Engine/Platform/Input.h" // InputSnapshot (M75b: CanvasOfInput)
 
 namespace mye {
@@ -185,7 +186,7 @@ bool ResolveWorldBase(World& world, EntityID e, const UIElementComponent* el, in
 }
 
 UIResolved ResolveImpl(World& world, EntityID e, int screenW, int screenH,
-                       const UIWorldContext* wc, int depth)
+                       const UIWorldContext* wc, int depth, LayoutScratch& scratch)
 {
     UIResolved out;
     // M75c: Canvas を持つ要素は RectTransform に依らず常にキャンバス全面 (Unity の Canvas の
@@ -209,10 +210,12 @@ UIResolved ResolveImpl(World& world, EntityID e, int screenW, int screenH,
     bool worldRoot = false;
     bool parentResolved = false;
     UIResolved parent;
+    EntityID parentE = kNullEntity;
     if (rt.basis == 0 && depth < kMaxDepth) {
         const EntityID p = FindUIParent(world, e);
         if (p != kNullEntity) {
-            parent = ResolveImpl(world, p, screenW, screenH, wc, depth + 1);
+            parentE = p;
+            parent = ResolveImpl(world, p, screenW, screenH, wc, depth + 1, scratch);
             if (!parent.visible) {
                 out.visible = false; // 親 (world 追従) が背面 → 子ごと消える
                 return out;
@@ -238,7 +241,19 @@ UIResolved ResolveImpl(World& world, EntityID e, int screenW, int screenH,
             }
         }
     }
-    UIRect r = RectFromTransform(rt, base, out.scale);
+    // M75e: 親が Layout Group で自分が並べられる子なら、RectTransform の代わりに配置結果を使う。
+    // そうでなければ RectTransform で解く (ContentSizeFitter があれば sizeDelta だけ中身に合わせる)。
+    // ★Group も Fitter も無い要素は下の RectFromTransform(rt, ...) だけを通る = M75d 以前と同じ式
+    UIRect r;
+    if (!(parentResolved
+          && ResolveLayoutChild(world, parentE, e, base, out.scale, scratch, r))) {
+        RectTransformComponent fitted;
+        if (ApplyContentSizeFitter(world, e, rt, base, out.scale, scratch, fitted)) {
+            r = RectFromTransform(fitted, base, out.scale);
+        } else {
+            r = RectFromTransform(rt, base, out.scale);
+        }
+    }
     if (worldRoot && el && el->clampToScreen) {
         // 矩形が画面内へ収まるよう平行移動 (画面より大きい軸は左/上端起点)。
         // 子 (basis=0) は親の解決済み矩形基準なので一緒に付いてくる
@@ -480,9 +495,14 @@ CanvasInfo CanvasOfInput(const InputSnapshot& in)
     return CanvasSize(in.surfW, in.surfH);
 }
 
-UIResolved Resolve(World& world, EntityID e, int screenW, int screenH, const UIWorldContext* wc)
+UIResolved Resolve(World& world, EntityID e, int screenW, int screenH, const UIWorldContext* wc,
+                   LayoutScratch* scratch)
 {
-    return ResolveImpl(world, e, screenW, screenH, wc, 0);
+    if (scratch != nullptr) {
+        return ResolveImpl(world, e, screenW, screenH, wc, 0, *scratch);
+    }
+    LayoutScratch local; // 空の vector 3 本 = Layout の無いシーンでは確保も起きない
+    return ResolveImpl(world, e, screenW, screenH, wc, 0, local);
 }
 
 bool BuildSimWorldContext(World& world, int screenW, int screenH, UIWorldContext& out)
@@ -553,9 +573,10 @@ bool BuildSimWorldContext(World& world, int screenW, int screenH, UIWorldContext
     return true;
 }
 
-UIRect ResolveRect(World& world, EntityID e, int screenW, int screenH, const UIWorldContext* wc)
+UIRect ResolveRect(World& world, EntityID e, int screenW, int screenH, const UIWorldContext* wc,
+                   LayoutScratch* scratch)
 {
-    const UIResolved r = Resolve(world, e, screenW, screenH, wc);
+    const UIResolved r = Resolve(world, e, screenW, screenH, wc, scratch);
     if (!r.visible) {
         return UIRect{}; // 非表示は {0,0,0,0} = 従来の「隠れている」表現
     }
@@ -563,7 +584,7 @@ UIRect ResolveRect(World& world, EntityID e, int screenW, int screenH, const UIW
 }
 
 UIRect ResolveClipRect(World& world, EntityID e, int screenW, int screenH,
-                       const UIWorldContext* wc)
+                       const UIWorldContext* wc, LayoutScratch* scratch)
 {
     // M75c: 全域 = e の属するキャンバス。Canvas の無い要素は {0,0,screenW,screenH} のまま
     const CanvasInfo canvas = CanvasOf(world, e, screenW, screenH);
@@ -575,7 +596,7 @@ UIRect ResolveClipRect(World& world, EntityID e, int screenW, int screenH,
     for (int guard = 0; guard < kMaxDepth && p != kNullEntity; ++guard) {
         const auto* el = world.GetComponent<UIElementComponent>(p);
         if (el && el->clipChildren != 0) {
-            clip = Intersect(clip, ResolveRect(world, p, screenW, screenH, wc));
+            clip = Intersect(clip, ResolveRect(world, p, screenW, screenH, wc, scratch));
         }
         if (world.GetComponent<UICanvasComponent>(p) != nullptr) {
             break; // 属するキャンバスより上は別の座標系 (入れ子の Canvas は外側のクリップを受けない)
@@ -586,10 +607,15 @@ UIRect ResolveClipRect(World& world, EntityID e, int screenW, int screenH,
 }
 
 UIRect ResolveVisibleRect(World& world, EntityID e, int screenW, int screenH,
-                          const UIWorldContext* wc)
+                          const UIWorldContext* wc, LayoutScratch* scratch)
 {
-    return Intersect(ResolveRect(world, e, screenW, screenH, wc),
-                     ResolveClipRect(world, e, screenW, screenH, wc));
+    if (scratch == nullptr) {
+        LayoutScratch local; // 2 回の解決で同じメモを共有する
+        return Intersect(ResolveRect(world, e, screenW, screenH, wc, &local),
+                         ResolveClipRect(world, e, screenW, screenH, wc, &local));
+    }
+    return Intersect(ResolveRect(world, e, screenW, screenH, wc, scratch),
+                     ResolveClipRect(world, e, screenW, screenH, wc, scratch));
 }
 
 } // namespace uilayout

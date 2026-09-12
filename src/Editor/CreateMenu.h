@@ -32,6 +32,9 @@ GameObject CreateUIImage(EngineContext& ctx, const char* name);       // M51f
 GameObject CreateUIButton(EngineContext& ctx, const char* name);      // M51f
 GameObject CreateUIText(EngineContext& ctx, const char* name);        // M51f
 GameObject CreateUICanvas(EngineContext& ctx, const char* name);      // M75c
+GameObject CreateUIHorizontalLayout(EngineContext& ctx, const char* name); // M75e
+GameObject CreateUIVerticalLayout(EngineContext& ctx, const char* name);   // M75e
+GameObject CreateUIGridLayout(EngineContext& ctx, const char* name);       // M75e
 
 // 生成操作を 1 つの Undo エントリとして記録し、生成物を選択する。
 GameObject RecordCreate(EngineContext& ctx, Selection& selection, UndoStack& undo, const char* label,

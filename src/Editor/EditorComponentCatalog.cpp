@@ -76,6 +76,9 @@ const std::unordered_map<std::string, ComponentUiInfo>& Table()
         { "UIElement", { ICON_FA_WINDOW_MAXIMIZE, "UI", "UI 要素" } },
         { "RectTransform", { ICON_FA_VECTOR_SQUARE, "UI", "矩形トランスフォーム" } }, // M75a
         { "UICanvas", { ICON_FA_DESKTOP, "UI", "キャンバス" } }, // M75c
+        { "UILayoutGroup", { ICON_FA_TABLE_COLUMNS, "UI", "レイアウトグループ" } }, // M75e
+        { "UILayoutElement", { ICON_FA_RULER_COMBINED, "UI", "レイアウト要素" } }, // M75e
+        { "UIContentSizeFitter", { ICON_FA_COMPRESS, "UI", "コンテンツサイズフィッター" } }, // M75e
     };
     return t;
 }

@@ -26,6 +26,7 @@
 #include "Engine/Core/Hash.h" // マテリアルプレビューの同一性キー (M53)
 #include "Engine/Core/Localization.h"
 #include "Engine/Engine/UI/UILayout.h" // M75a: RectTransform の解決済み矩形の読み取り表示
+#include "Engine/Engine/UI/UILayoutGroup.h" // M75e: 自動レイアウトに上書きされている欄の表示
 #include "Engine/Core/Log.h"
 #include "Engine/Core/World.h"
 #include "Engine/Engine/Animation.h"
@@ -234,6 +235,19 @@ constexpr const char* kUIBasisJa[] = { "親", "キャンバス" };
 // M75c: UICanvas.scaleMode (Unity の Screen Match Mode と同じ並び)
 constexpr const char* kUICanvasScaleLabels[] = { "Expand", "Shrink", "Match Width Or Height" };
 constexpr const char* kUICanvasScaleJa[] = { "拡張 (Expand)", "縮小 (Shrink)", "幅/高さに合わせる" };
+// M75e: 自動レイアウト (Unity の Layout Group / ContentSizeFitter と同じ並び)
+constexpr const char* kUILayoutKindLabels[] = { "Horizontal", "Vertical", "Grid" };
+constexpr const char* kUILayoutKindJa[] = { "水平", "垂直", "グリッド" };
+constexpr const char* kUIGridCornerLabels[] = { "Upper Left", "Upper Right", "Lower Left",
+                                                "Lower Right" };
+constexpr const char* kUIGridCornerJa[] = { "左上", "右上", "左下", "右下" };
+constexpr const char* kUIGridAxisLabels[] = { "Horizontal", "Vertical" };
+constexpr const char* kUIGridAxisJa[] = { "横に埋める", "縦に埋める" };
+constexpr const char* kUIGridConstraintLabels[] = { "Flexible", "Fixed Column Count",
+                                                    "Fixed Row Count" };
+constexpr const char* kUIGridConstraintJa[] = { "幅に合わせる", "列数を固定", "行数を固定" };
+constexpr const char* kUIFitModeLabels[] = { "Unconstrained", "Min Size", "Preferred Size" };
+constexpr const char* kUIFitModeJa[] = { "制約なし", "最小サイズ", "推奨サイズ" };
 constexpr const char* kUIPresetColJa[] = { "左", "中央", "右", "伸縮" };
 constexpr const char* kUIPresetRowJa[] = { "上", "中央", "下", "伸縮" };
 constexpr EnumFieldLabels kEnumFields[] = {
@@ -257,6 +271,20 @@ constexpr EnumFieldLabels kEnumFields[] = {
     // (DrawField の特例) — 行はここに置かない
     { "RectTransform", "basis", kUIBasisLabels, 2, kUIBasisJa },
     { "UICanvas", "scaleMode", kUICanvasScaleLabels, 3, kUICanvasScaleJa }, // M75c
+    // M75e: 自動レイアウト
+    { "UILayoutGroup", "kind", kUILayoutKindLabels, 3, kUILayoutKindJa },
+    { "UILayoutGroup", "childAlignment", kUIAnchorLabels, 9, kUIAnchorJa },
+    { "UILayoutGroup", "controlChildWidth", kOffOnLabels, 2, kOffOnJa },
+    { "UILayoutGroup", "controlChildHeight", kOffOnLabels, 2, kOffOnJa },
+    { "UILayoutGroup", "forceExpandWidth", kOffOnLabels, 2, kOffOnJa },
+    { "UILayoutGroup", "forceExpandHeight", kOffOnLabels, 2, kOffOnJa },
+    { "UILayoutGroup", "reverseArrangement", kOffOnLabels, 2, kOffOnJa },
+    { "UILayoutGroup", "startCorner", kUIGridCornerLabels, 4, kUIGridCornerJa },
+    { "UILayoutGroup", "startAxis", kUIGridAxisLabels, 2, kUIGridAxisJa },
+    { "UILayoutGroup", "constraint", kUIGridConstraintLabels, 3, kUIGridConstraintJa },
+    { "UILayoutElement", "ignoreLayout", kOffOnLabels, 2, kOffOnJa },
+    { "UIContentSizeFitter", "horizontalFit", kUIFitModeLabels, 3, kUIFitModeJa },
+    { "UIContentSizeFitter", "verticalFit", kUIFitModeLabels, 3, kUIFitModeJa },
     { "UIElement", "clipChildren", kOffOnLabels, 2, kOffOnJa },
     { "UIElement", "wrap", kOffOnLabels, 2, kOffOnJa },
     { "ConstantForce", "relative", kForceSpaceLabels, 2, kForceSpaceJa },
@@ -719,6 +747,21 @@ void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
                     ImGui::BeginDisabled();
                     ImGui::Text(Tr(StrId::Insp_UIResolvedRect), rr.x, rr.y, rr.w, rr.h);
                     ImGui::EndDisabled();
+                    // M75e: 自動レイアウトに上書きされている欄を言葉で示す (Unity は駆動プロパティを
+                    // 灰色にする)。欄は編集できるままだが、並べられている / 合わせられている間は効かない
+                    const uint32_t driven = uilayout::LayoutDrivenBits(ctx.scene->GetWorld(), e);
+                    if ((driven & uilayout::kDrivenByGroup) != 0) {
+                        const bool dw = (driven & uilayout::kDrivenWidth) != 0;
+                        const bool dh = (driven & uilayout::kDrivenHeight) != 0;
+                        const StrId id = (dw && dh) ? StrId::Insp_UIDrivenGroupSize
+                            : dw                    ? StrId::Insp_UIDrivenGroupWidth
+                            : dh                    ? StrId::Insp_UIDrivenGroupHeight
+                                                    : StrId::Insp_UIDrivenGroupPos;
+                        ImGui::TextDisabled("%s", Tr(id));
+                    }
+                    if ((driven & uilayout::kDrivenByFitter) != 0) {
+                        ImGui::TextDisabled("%s", Tr(StrId::Insp_UIDrivenFitter));
+                    }
                 }
             }
             // M50a: PartBounds 単独 (Part 無し) は RaycastParts の収集

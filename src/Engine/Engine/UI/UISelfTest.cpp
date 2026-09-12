@@ -1,6 +1,7 @@
 #include "Engine/Engine/UI/UISelfTest.h"
 
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -15,6 +16,7 @@
 #include "Engine/Engine/UI/UIGeometry.h"
 #include "Engine/Engine/UI/UIInteraction.h"
 #include "Engine/Engine/UI/UILayout.h"
+#include "Engine/Engine/UI/UILayoutGroup.h"     // M75e
 #include "Engine/Engine/UI/UIProjectSettings.h" // M75c
 #include "Engine/Engine/UI/UINav.h"
 #include "Engine/Platform/Input.h"
@@ -1602,6 +1604,392 @@ bool RunUISelfTest()
                       "fontmetrics: project cook writes once, then reports up to date");
             }
         }
+    }
+
+    // ---- M75e: 自動レイアウト (Layout Group / LayoutElement / ContentSizeFitter) ----
+    // 期待値は Unity の配置式 (UILayoutGroup.cpp が移した HorizontalOrVerticalLayoutGroup /
+    // GridLayoutGroup / LayoutUtility) を手で追った値。テキストは固定メトリクス (全文字 0.8 行 =
+    // fontScale 1 で 8 送り・行高 10) で測るので、計測表を空にしてから回す
+    {
+        const uitext::FontMetrics savedMetrics = uitext::ActiveFontMetrics();
+        uitext::SetActiveFontMetrics({});
+
+        const auto rectNear = [](const uilayout::UIRect& r, float x, float y, float rw, float rh) {
+            return std::fabs(r.x - x) < 1e-3f && std::fabs(r.y - y) < 1e-3f
+                && std::fabs(r.w - rw) < 1e-3f && std::fabs(r.h - rh) < 1e-3f;
+        };
+        const auto rr = [&](World& w, EntityID e) { return uilayout::ResolveRect(w, e, W, H); };
+        // 左上アンカー・pivot 0 の単色パネル (sizeDelta = 大きさ)
+        const auto box = [](World& w, const char* name, EntityID parent, float x, float y,
+                            float rw, float rh) {
+            const EntityID e = w.CreateEntity(name);
+            auto* rt = w.AddComponent<RectTransformComponent>(e);
+            rt->anchoredPosition = { x, y };
+            rt->sizeDelta = { rw, rh };
+            w.AddComponent<UIElementComponent>(e);
+            if (!parent.IsNull()) {
+                w.SetParent(e, parent);
+            }
+            return e;
+        };
+        const auto text = [](World& w, const char* name, EntityID parent, const char* s,
+                             float fontScale, int wrap) {
+            const EntityID e = w.CreateEntity(name);
+            w.AddComponent<RectTransformComponent>(e);
+            auto* el = w.AddComponent<UIElementComponent>(e);
+            el->kind = 1;
+            el->fontScale = fontScale;
+            el->wrap = wrap;
+            std::snprintf(el->text, sizeof(el->text), "%s", s);
+            if (!parent.IsNull()) {
+                w.SetParent(e, parent);
+            }
+            return e;
+        };
+
+        // (1) 水平・サイズを制御しない。group (100,100) 200x60、padding (10,5,10,5)、spacing 4
+        {
+            World w;
+            const EntityID g = box(w, "group", kNullEntity, 100.0f, 100.0f, 200.0f, 60.0f);
+            {
+                auto* lg = w.AddComponent<UILayoutGroupComponent>(g);
+                lg->padding = { 10.0f, 5.0f, 10.0f, 5.0f };
+                lg->spacing = { 4.0f, 99.0f }; // 水平は y を読まない
+                lg->forceExpandWidth = 0;
+                lg->forceExpandHeight = 0;
+            }
+            const EntityID a = box(w, "a", g, 900.0f, 900.0f, 50.0f, 20.0f); // 位置は効かない
+            const EntityID b = box(w, "b", g, 0.0f, 0.0f, 30.0f, 40.0f);
+            w.ApplyStructuralChanges();
+            check(rectNear(rr(w, a), 110.0f, 105.0f, 50.0f, 20.0f)
+                      && rectNear(rr(w, b), 164.0f, 105.0f, 30.0f, 40.0f),
+                  "layout: a horizontal group places children left to right inside padding and spacing");
+            // 中央揃え: 並び (84) を 200 の中央へ、各子を 60 の中央へ
+            w.GetComponent<UILayoutGroupComponent>(g)->childAlignment = 4;
+            check(rectNear(rr(w, a), 158.0f, 120.0f, 50.0f, 20.0f)
+                      && rectNear(rr(w, b), 212.0f, 110.0f, 30.0f, 40.0f),
+                  "layout: middle-center alignment centres the run and each child across the group");
+            w.GetComponent<UILayoutGroupComponent>(g)->reverseArrangement = 1;
+            check(rectNear(rr(w, b), 158.0f, 110.0f, 30.0f, 40.0f)
+                      && rectNear(rr(w, a), 192.0f, 120.0f, 50.0f, 20.0f),
+                  "layout: reverseArrangement lays out the last sibling first");
+            // 広げる + 制御しない: 余り 96 を 2 つの枠へ 48 ずつ配るが、子は sizeDelta のまま枠の中央に立つ
+            w.GetComponent<UILayoutGroupComponent>(g)->reverseArrangement = 0;
+            w.GetComponent<UILayoutGroupComponent>(g)->forceExpandWidth = 1;
+            check(rectNear(rr(w, a), 134.0f, 120.0f, 50.0f, 20.0f)
+                      && rectNear(rr(w, b), 236.0f, 110.0f, 30.0f, 40.0f),
+                  "layout: forceExpand without size control widens the cell, not the child");
+            check(uilayout::LayoutDrivenBits(w, a) == uilayout::kDrivenByGroup
+                      && uilayout::LayoutDrivenBits(w, g) == 0,
+                  "layout: an uncontrolled child reports only its position as driven");
+        }
+
+        // (2)(3) 幅を制御する。preferred は sizeDelta (何も指定が無い要素) = 50 / 30
+        {
+            World w;
+            const EntityID g = box(w, "group", kNullEntity, 100.0f, 100.0f, 200.0f, 60.0f);
+            {
+                auto* lg = w.AddComponent<UILayoutGroupComponent>(g);
+                lg->controlChildWidth = 1;
+                lg->forceExpandHeight = 0; // forceExpandWidth は既定の 1
+            }
+            const EntityID a = box(w, "a", g, 0.0f, 0.0f, 50.0f, 20.0f);
+            const EntityID b = box(w, "b", g, 0.0f, 0.0f, 30.0f, 40.0f);
+            w.ApplyStructuralChanges();
+            check(rectNear(rr(w, a), 100.0f, 100.0f, 110.0f, 20.0f)
+                      && rectNear(rr(w, b), 210.0f, 100.0f, 90.0f, 40.0f),
+                  "layout: controlled width + forceExpand hands the surplus out evenly on top of preferred");
+            check(uilayout::LayoutDrivenBits(w, a) == (uilayout::kDrivenByGroup | uilayout::kDrivenWidth),
+                  "layout: a width-controlled child reports position and width as driven");
+            w.AddComponent<UILayoutElementComponent>(b)->flexibleWidth = 3.0f;
+            w.ApplyStructuralChanges();
+            check(rectNear(rr(w, a), 100.0f, 100.0f, 80.0f, 20.0f)
+                      && rectNear(rr(w, b), 180.0f, 100.0f, 120.0f, 40.0f),
+                  "layout: LayoutElement.flexibleWidth weights the surplus (1 : 3)");
+
+            // (3) 足りないときは min と preferred の間を同じ比で縮める (minMaxLerp = (40-30)/(80-30))
+            w.GetComponent<UILayoutElementComponent>(b)->flexibleWidth = -1.0f;
+            w.GetComponent<UILayoutElementComponent>(b)->minWidth = 20.0f;
+            w.GetComponent<UILayoutGroupComponent>(g)->forceExpandWidth = 0;
+            w.GetComponent<RectTransformComponent>(g)->sizeDelta.x = 40.0f;
+            w.AddComponent<UILayoutElementComponent>(a)->minWidth = 10.0f;
+            w.ApplyStructuralChanges();
+            check(rectNear(rr(w, a), 100.0f, 100.0f, 18.0f, 20.0f)
+                      && rectNear(rr(w, b), 118.0f, 100.0f, 22.0f, 40.0f),
+                  "layout: below the preferred total children shrink from preferred toward min");
+        }
+
+        // (4) 垂直: Active でない子と ignoreLayout の子は並べない (自分の RectTransform で解く)。兄弟順
+        {
+            World w;
+            const EntityID g = box(w, "column", kNullEntity, 0.0f, 0.0f, 100.0f, 200.0f);
+            {
+                auto* lg = w.AddComponent<UILayoutGroupComponent>(g);
+                lg->kind = uilayout::kLayoutVertical;
+                lg->spacing = { 99.0f, 5.0f }; // 垂直は x を読まない
+                lg->controlChildWidth = 1;
+                lg->forceExpandHeight = 0;
+            }
+            const EntityID a = box(w, "a", g, 0.0f, 0.0f, 10.0f, 30.0f);
+            const EntityID b = box(w, "b", g, 0.0f, 0.0f, 10.0f, 20.0f);
+            const EntityID c = box(w, "c", g, 7.0f, 8.0f, 10.0f, 40.0f);
+            const EntityID d = box(w, "d", g, 0.0f, 0.0f, 10.0f, 10.0f);
+            w.AddComponent<ActiveComponent>(b)->enabled = 0;
+            w.AddComponent<UILayoutElementComponent>(c)->ignoreLayout = 1;
+            w.ApplyStructuralChanges();
+            check(rectNear(rr(w, a), 0.0f, 0.0f, 100.0f, 30.0f) && rectNear(rr(w, d), 0.0f, 35.0f, 100.0f, 10.0f)
+                      && rectNear(rr(w, c), 7.0f, 8.0f, 10.0f, 40.0f)
+                      && rectNear(rr(w, b), 0.0f, 0.0f, 10.0f, 20.0f)
+                      && uilayout::LayoutDrivenBits(w, c) == 0,
+                  "layout: a vertical group skips inactive and ignoreLayout children");
+            w.SetSiblingIndex(d, 0);
+            w.ApplyStructuralChanges();
+            check(rectNear(rr(w, d), 0.0f, 0.0f, 100.0f, 10.0f) && rectNear(rr(w, a), 0.0f, 15.0f, 100.0f, 30.0f),
+                  "layout: sibling order follows the Hierarchy (SetSiblingIndex moves the child)");
+        }
+
+        // (5) Grid: cell 20x10、spacing (2,3)、7 個
+        {
+            World w;
+            const EntityID g = box(w, "grid", kNullEntity, 0.0f, 0.0f, 100.0f, 100.0f);
+            {
+                auto* lg = w.AddComponent<UILayoutGroupComponent>(g);
+                lg->kind = uilayout::kLayoutGrid;
+                lg->cellSize = { 20.0f, 10.0f };
+                lg->spacing = { 2.0f, 3.0f };
+                lg->constraint = uilayout::kGridFixedColumnCount;
+                lg->constraintCount = 3;
+            }
+            EntityID cells[7];
+            for (EntityID& cell : cells) {
+                cell = box(w, "cell", g, 0.0f, 0.0f, 1.0f, 1.0f); // 大きさは cellSize に置き換わる
+            }
+            w.ApplyStructuralChanges();
+            check(rectNear(rr(w, cells[4]), 22.0f, 13.0f, 20.0f, 10.0f)
+                      && rectNear(rr(w, cells[6]), 0.0f, 26.0f, 20.0f, 10.0f),
+                  "layout: a fixed-column grid fills rows from the upper left");
+            w.GetComponent<UILayoutGroupComponent>(g)->startCorner = 3;
+            check(rectNear(rr(w, cells[0]), 44.0f, 26.0f, 20.0f, 10.0f)
+                      && rectNear(rr(w, cells[6]), 44.0f, 0.0f, 20.0f, 10.0f),
+                  "layout: a lower-right start corner mirrors both axes");
+            w.GetComponent<UILayoutGroupComponent>(g)->startCorner = 0;
+            {
+                auto* f = w.AddComponent<UIContentSizeFitterComponent>(g);
+                f->horizontalFit = uilayout::kFitPreferred;
+                f->verticalFit = uilayout::kFitPreferred;
+            }
+            w.ApplyStructuralChanges();
+            check(rectNear(rr(w, g), 0.0f, 0.0f, 64.0f, 36.0f) && rectNear(rr(w, cells[5]), 44.0f, 13.0f, 20.0f, 10.0f),
+                  "layout: ContentSizeFitter shrinks a fixed-column grid to 3 columns x 3 rows");
+            // 幅に合わせる: 50 には floor((50 + 2 + 0.001) / 22) = 2 列 → 4 行
+            w.GetComponent<UIContentSizeFitterComponent>(g)->horizontalFit = uilayout::kFitUnconstrained;
+            w.GetComponent<UIContentSizeFitterComponent>(g)->verticalFit = uilayout::kFitUnconstrained;
+            w.GetComponent<UILayoutGroupComponent>(g)->constraint = uilayout::kGridFlexible;
+            w.GetComponent<RectTransformComponent>(g)->sizeDelta.x = 50.0f;
+            uilayout::LayoutScratch s;
+            check(rectNear(rr(w, cells[4]), 0.0f, 26.0f, 20.0f, 10.0f)
+                      && uilayout::LayoutInputHeight(w, g, 50.0f, s).preferred == 49.0f
+                      && uilayout::LayoutInputWidth(w, g, s).preferred == 64.0f,
+                  "layout: a flexible grid derives its column count from its width");
+        }
+        {
+            World w;
+            const EntityID g = box(w, "grid", kNullEntity, 0.0f, 0.0f, 100.0f, 100.0f);
+            {
+                auto* lg = w.AddComponent<UILayoutGroupComponent>(g);
+                lg->kind = uilayout::kLayoutGrid;
+                lg->cellSize = { 20.0f, 10.0f };
+                lg->spacing = { 2.0f, 3.0f };
+                lg->constraint = uilayout::kGridFixedRowCount;
+                lg->constraintCount = 3;
+            }
+            EntityID cells[4];
+            for (EntityID& cell : cells) {
+                cell = box(w, "cell", g, 0.0f, 0.0f, 1.0f, 1.0f);
+            }
+            w.ApplyStructuralChanges();
+            check(rectNear(rr(w, cells[0]), 0.0f, 0.0f, 20.0f, 10.0f)
+                      && rectNear(rr(w, cells[1]), 22.0f, 0.0f, 20.0f, 10.0f)
+                      && rectNear(rr(w, cells[2]), 0.0f, 13.0f, 20.0f, 10.0f)
+                      && rectNear(rr(w, cells[3]), 0.0f, 26.0f, 20.0f, 10.0f),
+                  "layout: a fixed-row grid keeps every row used (Unity case 1345471)");
+        }
+
+        // (6) テキスト + ContentSizeFitter / LayoutElement の優先度
+        {
+            World w;
+            const EntityID t = text(w, "hello", kNullEntity, "HELLO", 2.0f, 0);
+            {
+                auto* f = w.AddComponent<UIContentSizeFitterComponent>(t);
+                f->horizontalFit = uilayout::kFitPreferred;
+                f->verticalFit = uilayout::kFitPreferred;
+            }
+            w.ApplyStructuralChanges();
+            {
+                auto* rt = w.GetComponent<RectTransformComponent>(t);
+                rt->anchorMin = { 0.5f, 0.5f };
+                rt->anchorMax = { 0.5f, 0.5f };
+                rt->pivot = { 0.5f, 0.5f };
+                rt->sizeDelta = { 10.0f, 10.0f };
+            }
+            check(rectNear(rr(w, t), 460.0f, 390.0f, 80.0f, 20.0f)
+                      && uilayout::LayoutDrivenBits(w, t)
+                          == (uilayout::kDrivenWidth | uilayout::kDrivenHeight | uilayout::kDrivenByFitter),
+                  "layout: ContentSizeFitter sizes text from the font metrics around its pivot");
+            w.GetComponent<UIContentSizeFitterComponent>(t)->horizontalFit = uilayout::kFitMinSize;
+            check(rectNear(rr(w, t), 500.0f, 390.0f, 0.0f, 20.0f),
+                  "layout: MinSize fit uses the text's min width (0, as Unity's Text)");
+            w.GetComponent<UIContentSizeFitterComponent>(t)->horizontalFit = uilayout::kFitPreferred;
+            w.AddComponent<UILayoutElementComponent>(t)->preferredWidth = 50.0f;
+            w.ApplyStructuralChanges();
+            uilayout::LayoutScratch s1;
+            const float byPriority1 = uilayout::LayoutInputWidth(w, t, s1).preferred;
+            w.GetComponent<UILayoutElementComponent>(t)->layoutPriority = 0;
+            uilayout::LayoutScratch s2;
+            const float samePriorityText = uilayout::LayoutInputWidth(w, t, s2).preferred;
+            w.GetComponent<UILayoutElementComponent>(t)->preferredWidth = 90.0f;
+            uilayout::LayoutScratch s3;
+            const float samePriorityElement = uilayout::LayoutInputWidth(w, t, s3).preferred;
+            check(byPriority1 == 50.0f && samePriorityText == 80.0f && samePriorityElement == 90.0f,
+                  "layout: a higher layoutPriority wins; equal priorities take the larger value");
+            // 折り返し: 幅 40 に 8 送りの 10 文字 = 5 文字ずつ 2 行
+            const EntityID wrapped = text(w, "wrap", kNullEntity, "ABCDEFGHIJ", 1.0f, 1);
+            w.AddComponent<UIContentSizeFitterComponent>(wrapped)->verticalFit = uilayout::kFitPreferred;
+            w.ApplyStructuralChanges();
+            w.GetComponent<RectTransformComponent>(wrapped)->sizeDelta = { 40.0f, 5.0f };
+            check(rectNear(rr(w, wrapped), 0.0f, 0.0f, 40.0f, 20.0f),
+                  "layout: a vertical fit measures wrapped text at the element's own width");
+        }
+
+        // (7)〜(10) 垂直 Group + Fitter + 折り返すテキスト = 幅 → 高さの 2 パス。入れ子 / メモ / ヒット
+        {
+            World w;
+            const EntityID col = box(w, "column", kNullEntity, 0.0f, 0.0f, 100.0f, 10.0f);
+            {
+                auto* lg = w.AddComponent<UILayoutGroupComponent>(col);
+                lg->kind = uilayout::kLayoutVertical;
+                lg->padding = { 5.0f, 5.0f, 5.0f, 5.0f };
+                lg->spacing = { 0.0f, 2.0f };
+                lg->controlChildWidth = 1;
+                lg->controlChildHeight = 1;
+                lg->forceExpandHeight = 0;
+            }
+            w.AddComponent<UIContentSizeFitterComponent>(col)->verticalFit = uilayout::kFitPreferred;
+            const EntityID t1 = text(w, "long", col, "ABCDEFGHIJKL", 1.0f, 1);
+            const EntityID t2 = text(w, "short", col, "ABC", 1.0f, 1);
+            w.ApplyStructuralChanges();
+            // 内幅 90 = 11 文字/行 → 12 文字は 2 行 (20)。高さ = 5 + 20 + 2 + 10 + 5
+            check(rectNear(rr(w, col), 0.0f, 0.0f, 100.0f, 42.0f) && rectNear(rr(w, t1), 5.0f, 5.0f, 90.0f, 20.0f)
+                      && rectNear(rr(w, t2), 5.0f, 27.0f, 90.0f, 10.0f),
+                  "layout: a fitted vertical group measures wrapped text at the width it hands out");
+            // 内幅 34 = 4 文字/行 → 3 行 (30)。Group は 52 に伸びる
+            w.GetComponent<RectTransformComponent>(col)->sizeDelta.x = 44.0f;
+            check(rectNear(rr(w, col), 0.0f, 0.0f, 44.0f, 52.0f) && rectNear(rr(w, t1), 5.0f, 5.0f, 34.0f, 30.0f)
+                      && rectNear(rr(w, t2), 5.0f, 37.0f, 34.0f, 10.0f),
+                  "layout: narrowing the group re-wraps its text and makes it taller");
+
+            // (8) 入れ子: 水平 Group (高さを制御) の子になった垂直 Group は、自分の幅で測った集計を希望にする
+            w.GetComponent<RectTransformComponent>(col)->sizeDelta.x = 100.0f;
+            w.GetComponent<UIContentSizeFitterComponent>(col)->verticalFit = uilayout::kFitUnconstrained;
+            const EntityID row = box(w, "row", kNullEntity, 0.0f, 200.0f, 300.0f, 100.0f);
+            {
+                auto* lg = w.AddComponent<UILayoutGroupComponent>(row);
+                lg->controlChildHeight = 1;
+                lg->forceExpandWidth = 0;
+                lg->forceExpandHeight = 0;
+            }
+            w.SetParent(col, row);
+            w.ApplyStructuralChanges();
+            check(rectNear(rr(w, col), 0.0f, 200.0f, 100.0f, 42.0f) && rectNear(rr(w, t2), 5.0f, 227.0f, 90.0f, 10.0f)
+                      && uilayout::LayoutDrivenBits(w, col) == (uilayout::kDrivenByGroup | uilayout::kDrivenHeight),
+                  "layout: a nested group reports its height for the width its parent leaves it");
+
+            // (9) メモは結果を変えない: 共有メモで子から先に 2 周解いても、単発の呼び出しとビット一致
+            {
+                const EntityID order[] = { t2, t1, col, row };
+                uilayout::LayoutScratch shared;
+                bool same = true;
+                for (int pass = 0; pass < 2; ++pass) {
+                    for (const EntityID e : order) {
+                        const uilayout::UIRect rs = uilayout::ResolveRect(w, e, W, H, nullptr, &shared);
+                        const uilayout::UIRect r1 = uilayout::ResolveRect(w, e, W, H);
+                        const uilayout::UIRect cs = uilayout::ResolveClipRect(w, e, W, H, nullptr, &shared);
+                        const uilayout::UIRect c1 = uilayout::ResolveClipRect(w, e, W, H);
+                        same = same && std::memcmp(&rs, &r1, sizeof(rs)) == 0
+                            && std::memcmp(&cs, &c1, sizeof(cs)) == 0;
+                    }
+                }
+                check(same, "layout: the scratch memo never changes a resolved rect");
+            }
+
+            // (10) ヒットテストは並べた後の矩形で当たる。t2 の RectTransform (既定 160x40) のままなら
+            //      (150, 210) にも当たるが、並べた矩形 (5..95, 227..237) の外なので row に落ちる
+            w.GetComponent<UIElementComponent>(t2)->order = 1;
+            check(uiinteract::HitTest(w, W, H, 50.0f, 232.0f) == t2
+                      && uiinteract::HitTest(w, W, H, 150.0f, 210.0f) == row,
+                  "layout: hit testing uses the arranged rect, not the authored one");
+        }
+
+        // (11) シーンの保存 / 読み込みで 3 つとも残る。UI 専用オブジェクトのまま (UiAux)
+        {
+            Scene scene;
+            GameObject go = scene.CreateGameObject("LayoutRoundTrip");
+            go.AddComponent<RectTransformComponent>();
+            {
+                auto* g = go.AddComponent<UILayoutGroupComponent>();
+                g->kind = uilayout::kLayoutGrid;
+                g->padding = { 1.0f, 2.0f, 3.0f, 4.0f };
+                g->spacing = { 5.0f, 6.0f };
+                g->childAlignment = 7;
+                g->controlChildWidth = 1;
+                g->forceExpandHeight = 0;
+                g->reverseArrangement = 1;
+                g->cellSize = { 7.0f, 8.0f };
+                g->startCorner = 3;
+                g->startAxis = 1;
+                g->constraint = uilayout::kGridFixedRowCount;
+                g->constraintCount = 5;
+            }
+            {
+                auto* le = go.AddComponent<UILayoutElementComponent>();
+                le->ignoreLayout = 1;
+                le->minWidth = 1.5f;
+                le->preferredHeight = 2.5f;
+                le->flexibleWidth = 3.5f;
+                le->layoutPriority = 4;
+            }
+            {
+                auto* f = go.AddComponent<UIContentSizeFitterComponent>();
+                f->horizontalFit = uilayout::kFitMinSize;
+                f->verticalFit = uilayout::kFitPreferred;
+            }
+            scene.GetWorld().ApplyStructuralChanges();
+            const nlohmann::json saved = SceneSerializer::SaveToJson(scene);
+            Scene again;
+            const bool loaded = SceneSerializer::LoadFromJson(again, saved);
+            World& w1 = scene.GetWorld();
+            World& w2 = again.GetWorld();
+            const EntityID e1 = scene.Find("LayoutRoundTrip").Id();
+            GameObject found = again.Find("LayoutRoundTrip");
+            bool same = loaded && found;
+            if (same) {
+                const EntityID e2 = found.Id();
+                const auto* g1 = w1.GetComponent<UILayoutGroupComponent>(e1);
+                const auto* g2 = w2.GetComponent<UILayoutGroupComponent>(e2);
+                const auto* l1 = w1.GetComponent<UILayoutElementComponent>(e1);
+                const auto* l2 = w2.GetComponent<UILayoutElementComponent>(e2);
+                const auto* f1 = w1.GetComponent<UIContentSizeFitterComponent>(e1);
+                const auto* f2 = w2.GetComponent<UIContentSizeFitterComponent>(e2);
+                same = g1 && g2 && l1 && l2 && f1 && f2
+                    && std::memcmp(g1, g2, sizeof(UILayoutGroupComponent)) == 0
+                    && std::memcmp(l1, l2, sizeof(UILayoutElementComponent)) == 0
+                    && std::memcmp(f1, f2, sizeof(UIContentSizeFitterComponent)) == 0
+                    && uilayout::IsUiOnlyEntity(w2, e2);
+            }
+            check(same, "layout: LayoutGroup / LayoutElement / ContentSizeFitter survive save/load and stay UI-only");
+        }
+
+        uitext::SetActiveFontMetrics(savedMetrics);
     }
 
     if (failCount == 0) {

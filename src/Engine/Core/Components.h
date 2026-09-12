@@ -463,6 +463,61 @@ struct UICanvasComponent {
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
+// ---- Layout Group (M75e) ----
+// Unity の HorizontalLayoutGroup / VerticalLayoutGroup / GridLayoutGroup を kind で 1 つにしたもの。
+// **直属の子** (Active・RectTransform か UIElement を持つ・basis=0・ignoreLayout でない・Canvas でない) を
+// Hierarchy の兄弟順に並べる。子の RectTransform には**書き込まない** — uilayout::Resolve が子の矩形を
+// 解くときに配置結果を使う (UILayoutGroup.h)。並べられた子の anchor と位置は効かず、サイズは
+// Group が制御する軸だけ無視される (Unity と同じ意味論)。
+// 描画専用データ (kComponentNoHash + kComponentUiAux)。壊れれば hovered/pressed で表面化する
+// (UIElement / RectTransform と同じ「authored な NoHash 入力」のクラス)
+struct UILayoutGroupComponent {
+    int32_t kind = 0; // 0 = 水平 / 1 = 垂直 / 2 = グリッド
+    DirectX::XMFLOAT4 padding = { 0.0f, 0.0f, 0.0f, 0.0f }; // 内側の余白 (左, 上, 右, 下)。sliceBorder と同じ並び
+    DirectX::XMFLOAT2 spacing = { 0.0f, 0.0f }; // 子の間隔。水平は x、垂直は y、グリッドは両方
+    int32_t childAlignment = 0; // 9-grid 0..8 (0 = 左上。Unity の TextAnchor と同じ並び)
+    // ---- 水平 / 垂直 ----
+    // 既定は Unity で Add Component したときと同じ (Control Child Size は off、Force Expand は on)
+    int32_t controlChildWidth = 0;  // 子の幅を Group が決める (0 = 子の sizeDelta のまま)
+    int32_t controlChildHeight = 0;
+    int32_t forceExpandWidth = 1;   // 余りを子へ配る (子の flexible を最低 1 にする)
+    int32_t forceExpandHeight = 1;
+    int32_t reverseArrangement = 0; // 兄弟順の逆に並べる
+    // ---- グリッド ----
+    DirectX::XMFLOAT2 cellSize = { 100.0f, 100.0f };
+    int32_t startCorner = 0;     // 0 = 左上 / 1 = 右上 / 2 = 左下 / 3 = 右下
+    int32_t startAxis = 0;       // 0 = 横に埋める / 1 = 縦に埋める
+    int32_t constraint = 0;      // 0 = 幅に合わせる / 1 = 列数を固定 / 2 = 行数を固定
+    int32_t constraintCount = 2; // 固定する列数 / 行数 (1 未満は 1)
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
+// ---- Layout Element (M75e) ----
+// Unity の LayoutElement。親の Layout Group / 自分の ContentSizeFitter が読む大きさの希望を上書きする。
+// **負の値 = 未指定** (テキストの計測値や Group の集計に任せる)。提供者 (テキスト / Group は優先度 0、
+// これは layoutPriority) のうち最高優先度が勝ち、同じ優先度なら大きい値
+struct UILayoutElementComponent {
+    int32_t ignoreLayout = 0; // 親の Layout Group に並べられない (自分の RectTransform で置く)
+    float minWidth = -1.0f;
+    float minHeight = -1.0f;
+    float preferredWidth = -1.0f;
+    float preferredHeight = -1.0f;
+    float flexibleWidth = -1.0f;
+    float flexibleHeight = -1.0f;
+    int32_t layoutPriority = 1;
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
+// ---- Content Size Fitter (M75e) ----
+// Unity の ContentSizeFitter。自分の大きさを中身 (テキストの計測値 / Group の集計 / LayoutElement) に
+// 合わせる。anchoredPosition は pivot の位置なので、pivot を中心に伸び縮みする。
+// 親の Layout Group がその軸を制御しているときは Group が勝つ
+struct UIContentSizeFitterComponent {
+    int32_t horizontalFit = 0; // 0 = 制約なし / 1 = 最小サイズ / 2 = 推奨サイズ
+    int32_t verticalFit = 0;
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
 // ---- Animator Controller (M22) ----
 // ステートマシンでアニメーションクリップを切替・ブレンドする。**無ければ何もしない** (opt-in)。
 // LocalTransform (ハッシュ対象) を駆動するので状態は決定論・**hash 対象** (kComponentNoHash を付けない)。

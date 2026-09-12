@@ -26,6 +26,8 @@ struct PrevWorldStore; // RenderSystem.h (描画補間 M36b)。sim レーンは�
 
 namespace uilayout {
 
+class LayoutScratch; // UILayoutGroup.h (M75e: 自動レイアウトの呼び出し単位のメモ)
+
 // 解決済みキャンバス矩形 (左上原点)。**単位は px ではなくキャンバス単位** (M70b) —
 // 実 px へ落とすのは描画側の仕事で、CanvasSize().scale を掛ける
 struct UIRect {
@@ -217,8 +219,12 @@ struct UIResolved {
 //   UICanvas を持つ要素自身は常に (0,0,cw,ch)、basis=1 は属するキャンバスの全面が基準。
 //   既定キャンバス単位へは CanvasOf(...).scale を掛ける (Canvas の無い要素は 1.0f = 恒等)。
 // 壊れ親/循環は深度上限で打ち切り安全。UIElement も RectTransform も無ければ visible=false。
+// ★M75e: 親が UILayoutGroup なら RectTransform の代わりに Group の配置結果で、自分に
+//   UIContentSizeFitter があれば中身に合わせた大きさで解く (UILayoutGroup.h)。どちらも無い要素の
+//   経路は M75d 以前と 1 ビットも変わらない。scratch は結果を変えないメモ — 同じ World を何度も
+//   解く呼び出し単位 (描画 1 フレーム / HitTest 1 回) で 1 つ作って渡す。nullptr なら内部で作る
 UIResolved Resolve(World& world, EntityID e, int screenW, int screenH,
-                   const UIWorldContext* wc);
+                   const UIWorldContext* wc, LayoutScratch* scratch = nullptr);
 
 // sim レーン用の決定論カメラ構築 — RenderSystem と同じ選択規則 (走査順の先頭、isPrimary 優先)
 // で scalar 演算のみ (SIMD 禁止 = Debug/Release ビット一致)。WorldMatrix は tick 内で
@@ -231,7 +237,7 @@ bool BuildSimWorldContext(World& world, int screenW, int screenH, UIWorldContext
 // 互換ラッパ: Resolve().rect (visible=false は {0,0,0,0} = 従来の「隠れている」表現に合流)。
 // 回転/スケールのある要素は変換後の **AABB** (ナビ / クリップ / GameView / ABI GetUIRect が読む)
 UIRect ResolveRect(World& world, EntityID e, int screenW, int screenH,
-                   const UIWorldContext* wc = nullptr);
+                   const UIWorldContext* wc = nullptr, LayoutScratch* scratch = nullptr);
 
 // e に UI ノード (RectTransform / UIElement 持ち) の祖先がいるか。SceneSerializer が旧形式の
 // 変換で basis を確定するときと、Inspector の表示に使う
@@ -245,11 +251,11 @@ bool IsUiOnlyEntity(World& world, EntityID e);
 // 無ければ screen 全域。e 自身の clipChildren は含まない (自分は切らない)。
 // M75c: 単位は e のキャンバス。祖先を辿るのは**属するキャンバスまで** (その上は別の座標系)
 UIRect ResolveClipRect(World& world, EntityID e, int screenW, int screenH,
-                       const UIWorldContext* wc = nullptr);
+                       const UIWorldContext* wc = nullptr, LayoutScratch* scratch = nullptr);
 
 // 便利形: 要素の可視矩形 = ResolveRect ∩ ResolveClipRect (完全に隠れていれば w/h<=0)
 UIRect ResolveVisibleRect(World& world, EntityID e, int screenW, int screenH,
-                          const UIWorldContext* wc = nullptr);
+                          const UIWorldContext* wc = nullptr, LayoutScratch* scratch = nullptr);
 
 } // namespace uilayout
 } // namespace mye

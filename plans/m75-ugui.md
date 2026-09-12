@@ -239,6 +239,41 @@ Canvas Scaler は Expand (1920x1080 固定) のみ、Layout Group もウィジ�
   `check_rules` 0 / **`shot_verify` 25 枚すべて maxDiff=0** (golden 4 枚の tol 0 を含む) / **`replay_verify` PASS**
   (12 ジョブ、`MYE_REPLAY_JOBS=3` で 256 s) / Project Settings の節は一時プローブ + `--screenshot` で ja/en を目視 (撤去済み)。
 
+- **M75e (2026-09-13)**: master で直接実装。新規 `Engine/UI/UILayoutGroup.*`。計画 E から変えた点・計画に無かった事実:
+- **TypeId は 54 UILayoutGroup / 55 UILayoutElement / 56 UIContentSizeFitter** (計画の 53〜55 は WaveSound の分だけずれる)。
+  M75f 以降の Selectable は 57〜。Cloth/SoftBody の予約番号も同じだけ後ろへずれる (M75j で CLAUDE.md を直すとき数え直す)。
+- **移植元は現行の com.unity.ugui** (GitHub `Unity-Technologies/uGUI` の `Runtime/UGUI/UI/Core/Layout/*.cs`)。
+  max サイズ / FitMode.Clamped / childScale は入れていない — max が +inf のときの式は 2019 系と同値。Grid は
+  現行版の「行数・列数固定で最後の数個を寄せる」修正 (case 1345471) と、Flexible の縦 min = 1 行を含む。
+- 既定値は Unity で **Add Component したとき** (Control Child Size off / Force Expand on。Unity は Reset() で off にする)。
+- **preferred の sizeDelta への倒し方は「誰も preferred を言わないときだけ」**。Fitter はここで通さない
+  (Fitter → LayoutInput → Fitter の環になる)。min / flexible の既定は Unity と同じ 0。
+- **Group が制御しない軸の子の大きさ = 子の ContentSizeFitter があればその値** (計画に無し)。Unity は sizeDelta を読み
+  Fitter が後から書く = 1 回遅れて同じ値に収束するので、純関数では収束後の値を直接出した。
+- 並べられる子は**直属の子**だけ (FindUIParent は非 UI ノードを読み飛ばすが、Layout は Unity と同じく直属)。
+  basis=1 の子 / Canvas を持つ子も並べない。ボタン (kind 2) のラベルは preferred に数えない (Unity の Button と同じ)。
+- 配置は**作者単位**で解いてから距離スケールを掛ける (screen UI は /1 と *1 = ビット恒等)。
+- `LayoutScratch` は計画の「線形探索」ではなく **entity.index → 行の添字表** (`std::vector<int32_t>`)。unordered は不使用。
+  高さのメモは幅をキーに、配置のメモは Group の (W,H) をキーに持つ。**参照でなく添字で持つ** (再帰中の push_back で無効になる)。
+- `Resolve` / `ResolveRect` / `ResolveClipRect` / `ResolveVisibleRect` の末尾に `LayoutScratch* = nullptr` を足した
+  (呼び出し側の変更なしで ABI の GetUIRect や Inspector も自動レイアウトを通る)。メモを渡しているのは Renderer (フレーム) /
+  HitTest・FocusNav (`ForEachUiElement` 1 回) / GameView の選択枠。Group も Fitter も無い要素は `RectFromTransform(rt, …)` の
+  1 本だけを通る = 既存 golden / replay の不変はここに掛かる。
+- `uilayout::LayoutDrivenBits` (Group が位置 / 幅 / 高さを決めているか、Fitter か) を Inspector の注記に使った。
+  **M75i の Rect Tool の「駆動される要素はハンドル無し」はこれを読むこと**。
+- GameView の選択枠を RectTransform だけのノードにも出すようにした (Create > UI の Layout Group 3 種は背景を持たないため)。
+- テキストの高さは表 (Measure) で、描画の折返しは実グリフで組む。TTF では表の送り幅 >= 実グリフなので、描画の行数が
+  Measure より少なくなる側 (箱が文字より高い = 安全側) にだけずれる。`--font-embedded` では 1 画素もずれない。
+- `--ui-demo` の積み増し: 上辺中央の水平 Group (MIN 120 / FLEX 1 / FLEX 2 / 入れ子の垂直 Group / ignoreLayout の角) /
+  左の垂直 Group + Fitter (折り返すテキスト) / 右の Grid (列数 4・右上から・Fitter)。golden `ui_widgets` を更新。
+  ★入れ子の Group は子の Force Expand を**自分の flexible として名乗る** (Unity と同じ)。デモの入れ子を 120 に留めるのに
+  LayoutElement の flexibleWidth = 0 (優先度 1) が要った — 付けないと FLEX の余りを分け合って 208 に伸びる (1 回踏んだ)。
+- **M75e の検証**: Debug/Release `/p:MyeWarnAsError=true` 0 警告 / `--selftest` 0 FAIL (UISelfTest に自動レイアウト 27 項目) /
+  `check_rules` 0 / **`shot_verify` 25 枚 PASS** (既存 24 枚は maxDiff=0 = golden 4 枚の tol 0 を含む、`ui_widgets` だけ更新。
+  Debug と Release の `--ui-demo` も maxDiff=0) / **`replay_verify` PASS** (12 ジョブ、`MYE_REPLAY_JOBS=3` で 267 s) /
+  Inspector の注記 (「位置とサイズは親の Layout Group が決めています」「サイズは Content Size Fitter が決めています」) は
+  `Editor.exe --ui-demo --select <名前> --screenshot` で目視。
+
 ## 各サブに共通する罠
 - `IsUiOnlyEntity` の許容漏れ (UiAux で構造的に潰す)。
 - `ZeroStringTail` (InputField の text)。

@@ -10,6 +10,7 @@
 #include "Engine/Core/World.h"
 #include "Engine/Engine/UI/UIGeometry.h"
 #include "Engine/Engine/UI/UILayout.h"
+#include "Engine/Engine/UI/UILayoutGroup.h" // M75e: LayoutScratch
 #include "Engine/Engine/UI/UITextLayout.h"
 #include "Engine/Engine/UI/UITextMetrics.h" // M75d: 行高の一致を固定するだけ
 #include "Engine/Renderer/GpuResources.h"
@@ -294,6 +295,8 @@ void UIRenderer::Render(World& world, GraphicsDevice& device, ShaderManager& sha
     const float defaultScale = canvas.scale;
 
     const D3D11_RECT fullScissor = { 0, 0, width, height };
+    // M75e: 自動レイアウトのメモはこのフレームの描画 1 回ぶん (結果は変えない。描画中に World は動かない)
+    uilayout::LayoutScratch layoutScratch;
     for (const Item& it : items) {
         const UIElementComponent& el = *it.el;
         // M75c: この要素のキャンバス単位 → 実 px。明示 Canvas は既定キャンバス単位への倍率を
@@ -305,7 +308,8 @@ void UIRenderer::Render(World& world, GraphicsDevice& device, ShaderManager& sha
         // 無い要素は RT 全域シザー = 従来と同じバッチにまとまる。
         // ワールド追従要素はここで射影され、背面 (クランプ OFF) は visible=false で消える。
         // res.scale (距離スケール) は矩形に折り込み済み — テキストのグリフ倍率にだけ手で掛ける
-        const uilayout::UIResolved res = uilayout::Resolve(world, it.e, canvasW, canvasH, worldCtx);
+        const uilayout::UIResolved res =
+            uilayout::Resolve(world, it.e, canvasW, canvasH, worldCtx, &layoutScratch);
         if (!res.visible) {
             continue;
         }
@@ -329,8 +333,8 @@ void UIRenderer::Render(World& world, GraphicsDevice& device, ShaderManager& sha
         const float textScale = el.fontScale * res.scale * canvasScale;
         curScissor_ = fullScissor;
         {
-            const uilayout::UIRect c =
-                uilayout::ResolveClipRect(world, it.e, canvasW, canvasH, worldCtx);
+            const uilayout::UIRect c = uilayout::ResolveClipRect(world, it.e, canvasW, canvasH,
+                                                                 worldCtx, &layoutScratch);
             if (c.w <= 0.0f || c.h <= 0.0f) {
                 continue; // 祖先クリップで完全に隠れている
             }
