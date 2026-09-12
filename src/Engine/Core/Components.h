@@ -442,6 +442,27 @@ struct RectTransformComponent {
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
+// ---- Canvas (M75c) ----
+// Unity の Canvas (Screen Space - Overlay) + Canvas Scaler (Scale With Screen Size) を 1 つにしたもの。
+// 子孫の UI 要素はこのキャンバスの座標系 (キャンバス単位) で解け、描画/ヒットテストは
+// **sortOrder が第 1 キー** (次に UIElement.order、最後に entity.index)。
+// **Canvas の無い UI は暗黙の既定キャンバス** (project_settings の ui.referenceW/H + Expand) に
+// 属する = M75c 以前のシーンは 1 ビットも変わらない。
+// ★ConstantPixelSize は作らない (キャンバス寸法が画素数の関数になり、sim のヒットテストが
+//   ウィンドウの画素数に依存する)。World Space も作らない (既存のワールド追従 UI が代わる)。
+// ★入れ子は非対応: 最寄りの Canvas 祖先が勝ち、その上の階層とは座標系もクリップも切れる。
+//   Canvas を持つ要素自身の矩形は RectTransform に依らず常にキャンバス全面。
+// 描画専用データ (kComponentNoHash + kComponentUiAux)。壊れれば hovered/pressed で表面化する
+// (UIElement / RectTransform と同じ「authored な NoHash 入力」のクラス)
+struct UICanvasComponent {
+    int32_t referenceW = 0; // 基準解像度。<= 0 = project_settings の ui.referenceW/H に従う
+    int32_t referenceH = 0;
+    int32_t scaleMode = 0;  // 0 = Expand (min) / 1 = Shrink (max) / 2 = Match Width Or Height
+    float match = 0.0f;     // scaleMode 2 の比重。0 = 幅に合わせる / 1 = 高さに合わせる
+    int32_t sortOrder = 0;  // 大きいほど手前。既定キャンバスは 0
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
 // ---- Animator Controller (M22) ----
 // ステートマシンでアニメーションクリップを切替・ブレンドする。**無ければ何もしない** (opt-in)。
 // LocalTransform (ハッシュ対象) を駆動するので状態は決定論・**hash 対象** (kComponentNoHash を付けない)。

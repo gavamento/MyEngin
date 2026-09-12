@@ -55,6 +55,7 @@
 #include "Engine/Engine/TickRunner.h"
 #include "Engine/Engine/TransformSystem.h"
 #include "Engine/Engine/UI/UILayout.h" // ワールド追従 UI の射影コンテキスト
+#include "Engine/Engine/UI/UIProjectSettings.h" // M75c: 既定キャンバスの基準解像度
 #include "Engine/Engine/UI/UIRenderer.h"
 #include "Engine/Engine/Vfx/VfxRenderer.h"
 #include "Engine/Platform/Clock.h"
@@ -258,6 +259,18 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     }
     if (!deferredPath.Init(device, shaderManager)) {
         return 1;
+    }
+    // M75c: UI の既定キャンバスの基準解像度 (project_settings.json の ui 節)。**tick が回る前に
+    // 1 回だけ**書く静的な値 — sim のヒットテストが読むので、途中で変えると同じ .rep の再生が割れる
+    // (.rep には載せない。ネットは NetIdentity.referenceW/H で入口照合する)
+    {
+        const uilayout::ProjectUiSettings uiSettings = uilayout::LoadProjectUiSettings(assetsRoot);
+        uilayout::SetDefaultCanvasReference(uiSettings.referenceW, uiSettings.referenceH);
+        if (uiSettings.referenceW != uilayout::kCanvasRefW
+            || uiSettings.referenceH != uilayout::kCanvasRefH) {
+            MYE_LOG_INFO("[ui] default canvas reference %dx%d (project_settings.json)",
+                         uiSettings.referenceW, uiSettings.referenceH);
+        }
     }
     // M21: 失敗してもエンジンは継続 (UI が出ないだけ)。M52c: --font-embedded でフォント固定
     uiRenderer.Init(device, shaderManager, assetsRoot, config.fontEmbedded);
@@ -592,9 +605,9 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             id.canvasW = static_cast<float>(c.w);
             id.canvasH = static_cast<float>(c.h);
             // M75b: 欄だけ先に確保した 2 本 (照合は NetSession 側で既に効いている)。
-            // 基準解像度は M75c で project_settings の実効値に、計測表は M75d で FNV に置き換わる
-            id.referenceW = uilayout::kCanvasRefW;
-            id.referenceH = uilayout::kCanvasRefH;
+            // 基準解像度は project_settings の実効値 (M75c)、計測表は M75d で FNV に置き換わる
+            id.referenceW = uilayout::DefaultCanvasDesc().referenceW;
+            id.referenceH = uilayout::DefaultCanvasDesc().referenceH;
             id.fontMetricsHash = 0;
         }
         // 開始点のワールドハッシュ。**tick 末にハッシュを撮るのと同じ点** (OnStart +

@@ -2,6 +2,9 @@
 
 #include <cmath>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <sstream>
 #include <vector>
 
 #include "Engine/Core/ComponentRegistry.h" // ワールド追従 UI の検証 (スクリプト状態の脇役扱い)
@@ -12,6 +15,7 @@
 #include "Engine/Engine/UI/UIGeometry.h"
 #include "Engine/Engine/UI/UIInteraction.h"
 #include "Engine/Engine/UI/UILayout.h"
+#include "Engine/Engine/UI/UIProjectSettings.h" // M75c
 #include "Engine/Engine/UI/UINav.h"
 #include "Engine/Platform/Input.h"
 #include "Engine/Platform/InputActions.h"
@@ -948,6 +952,352 @@ bool RunUISelfTest()
                                 : nullptr;
         check(rr2 && std::memcmp(rr2, rr, sizeof(RectTransformComponent)) == 0,
               "legacy: RectTransform survives a v4 save/load round trip bit-exactly");
+    }
+
+    // ---- Canvas + Canvas Scaler (M75c) ----
+    // 主張: (1) 既定の解き方は M70b の Expand とビット同一、(2) Shrink / Match が Unity の式どおりで
+    // Match の自前 ln/exp は std::pow と一致、(3) 既定と同じ解き方の Canvas の下の UI は Canvas の
+    // 無い UI と矩形もヒットも同ビット、(4) 明示 Canvas は自分の単位で解け、既定キャンバス座標の点で
+    // 押せる、(5) sortOrder が order より先、(6) クリップは Canvas を越えない、(7) FocusNav は既定
+    // キャンバス座標で比べる、(8) 基準解像度の実効値と project_settings.json の読み書き
+    {
+        // (1) M70b の式 (min + lroundf) を書き直した旧値と比べる
+        {
+            bool same = true;
+            const int res[][2] = { { 960, 540 }, { 1280, 720 }, { 1366, 768 }, { 960, 600 },
+                                   { 2560, 1080 }, { 1080, 1920 }, { 0, 0 }, { 1, 1 } };
+            for (const auto& r : res) {
+                const uilayout::CanvasInfo a = uilayout::CanvasSize(r[0], r[1]);
+                const uilayout::CanvasInfo b = uilayout::CanvasSize(r[0], r[1], uilayout::CanvasDesc{});
+                uilayout::CanvasInfo old;
+                if (r[0] > 0 && r[1] > 0) {
+                    const float sx = static_cast<float>(r[0]) / 1920.0f;
+                    const float sy = static_cast<float>(r[1]) / 1080.0f;
+                    old.scale = (sx < sy) ? sx : sy;
+                    old.w = static_cast<int>(std::lroundf(static_cast<float>(r[0]) / old.scale));
+                    old.h = static_cast<int>(std::lroundf(static_cast<float>(r[1]) / old.scale));
+                }
+                same = same && std::memcmp(&a, &b, sizeof(a)) == 0 && a.scale == old.scale
+                    && a.w == old.w && a.h == old.h;
+            }
+            check(same, "scaler: Expand with the default desc is bit-identical to the M70b formula");
+        }
+
+        // (2) 基準 1024x768 (4:3) を 960x540 (16:9) で解く
+        {
+            uilayout::CanvasDesc d;
+            d.referenceW = 1024;
+            d.referenceH = 768;
+            d.scaleMode = uilayout::kScaleExpand;
+            const uilayout::CanvasInfo ex = uilayout::CanvasSize(960, 540, d);
+            d.scaleMode = uilayout::kScaleShrink;
+            const uilayout::CanvasInfo sh = uilayout::CanvasSize(960, 540, d);
+            check(ex.scale == 540.0f / 768.0f && ex.w == 1365 && ex.h == 768,
+                  "scaler: Expand = min (960x540 on 1024x768 -> 1365x768)");
+            check(sh.scale == 960.0f / 1024.0f && sh.w == 1024 && sh.h == 576,
+                  "scaler: Shrink = max (960x540 on 1024x768 -> 1024x576)");
+            d.scaleMode = uilayout::kScaleMatch;
+            d.match = 0.0f;
+            const uilayout::CanvasInfo m0 = uilayout::CanvasSize(960, 540, d);
+            d.match = 1.0f;
+            const uilayout::CanvasInfo m1 = uilayout::CanvasSize(960, 540, d);
+            check(m0.scale == sh.scale && m1.scale == ex.scale,
+                  "scaler: Match 0 / 1 are exactly the width / height ratio (no pow)");
+            bool close = true;
+            const int sws[] = { 640, 800, 960, 1280, 1920, 2560, 3840 };
+            const int shs[] = { 480, 540, 720, 1080, 1200, 2160 };
+            const float ms[] = { 0.1f, 0.25f, 0.5f, 0.75f, 0.9f };
+            for (const int sw : sws) {
+                for (const int shh : shs) {
+                    for (const float m : ms) {
+                        d.match = m;
+                        const uilayout::CanvasInfo ci = uilayout::CanvasSize(sw, shh, d);
+                        const float sxf = static_cast<float>(sw) / 1024.0f;
+                        const float syf = static_cast<float>(shh) / 768.0f;
+                        const double expect = std::pow(static_cast<double>(sxf), 1.0 - m)
+                            * std::pow(static_cast<double>(syf), static_cast<double>(m));
+                        const bool ok = std::fabs(static_cast<double>(ci.scale) - expect) <= expect * 1e-6;
+                        if (!ok) {
+                            MYE_LOG_ERROR("    match %.2f %dx%d -> %.9f (std::pow %.9f)",
+                                          static_cast<double>(m), sw, shh,
+                                          static_cast<double>(ci.scale), expect);
+                        }
+                        close = close && ok;
+                    }
+                }
+            }
+            check(close, "scaler: Match agrees with std::pow within 1e-6 (deterministic ln/exp)");
+            // 基準と同じアスペクトなら 3 モードが同ビット (べき乗を通さない近道)
+            d.referenceW = 1920;
+            d.referenceH = 1080;
+            d.match = 0.37f;
+            const uilayout::CanvasInfo mm = uilayout::CanvasSize(1280, 720, d);
+            d.scaleMode = uilayout::kScaleExpand;
+            const uilayout::CanvasInfo ee = uilayout::CanvasSize(1280, 720, d);
+            check(std::memcmp(&mm, &ee, sizeof(mm)) == 0,
+                  "scaler: at the reference aspect Match is bit-identical to Expand");
+        }
+
+        // (3) 既定と同じ解き方の Canvas (基準 0 = project 既定 + Expand) の下 ≡ Canvas 無し。
+        //     Canvas エンティティは**最後に**作る = 要素の entity.index が 2 つの World で揃う
+        const auto buildUi = [](World& w, bool withCanvas) {
+            const EntityID root = w.CreateEntity("root");
+            *w.AddComponent<RectTransformComponent>(root) =
+                uilayout::FromLegacyRect(4, -300.0f, -200.0f, 600.0f, 400.0f, 0, false);
+            {
+                auto* el = w.AddComponent<UIElementComponent>(root);
+                el->clipChildren = 1;
+                el->order = 1;
+            }
+            const EntityID stretch = w.CreateEntity("stretch");
+            {
+                auto* rt = w.AddComponent<RectTransformComponent>(stretch);
+                rt->anchorMin = { 0.1f, 0.2f };
+                rt->anchorMax = { 0.9f, 0.8f };
+                rt->pivot = { 0.5f, 0.5f };
+                rt->sizeDelta = { -10.0f, -10.0f };
+            }
+            w.AddComponent<UIElementComponent>(stretch)->order = 2;
+            const EntityID overlay = w.CreateEntity("overlay");
+            {
+                auto* rt = w.AddComponent<RectTransformComponent>(overlay);
+                rt->basis = 1;
+                rt->anchorMin = { 1.0f, 1.0f };
+                rt->anchorMax = { 1.0f, 1.0f };
+                rt->pivot = { 1.0f, 1.0f };
+                rt->sizeDelta = { 200.0f, 100.0f };
+            }
+            w.AddComponent<UIElementComponent>(overlay)->order = 3;
+            const EntityID rot = w.CreateEntity("rot");
+            {
+                auto* rt = w.AddComponent<RectTransformComponent>(rot);
+                rt->anchorMin = { 0.5f, 0.5f };
+                rt->anchorMax = { 0.5f, 0.5f };
+                rt->pivot = { 0.5f, 0.5f };
+                rt->sizeDelta = { 300.0f, 80.0f };
+                rt->rotation = 30.0f;
+            }
+            w.AddComponent<UIElementComponent>(rot)->order = 4;
+            w.SetParent(stretch, root);
+            w.SetParent(overlay, root);
+            w.SetParent(rot, root);
+            if (withCanvas) {
+                const EntityID cv = w.CreateEntity("canvas");
+                {
+                    auto* rt = w.AddComponent<RectTransformComponent>(cv);
+                    rt->anchorMax = { 1.0f, 1.0f };
+                    rt->sizeDelta = { 0.0f, 0.0f };
+                }
+                w.AddComponent<UICanvasComponent>(cv);
+                w.SetParent(root, cv);
+            }
+            w.ApplyStructuralChanges();
+            return std::vector<EntityID>{ root, stretch, overlay, rot };
+        };
+        {
+            World w1;
+            World w2;
+            const std::vector<EntityID> a = buildUi(w1, false);
+            const std::vector<EntityID> b = buildUi(w2, true);
+            bool same = true;
+            const int dims[][2] = { { 1920, 1080 }, { 1920, 1200 }, { 1000, 800 } };
+            for (const auto& dm : dims) {
+                for (size_t i = 0; i < a.size(); ++i) {
+                    const auto ra = uilayout::ResolveRect(w1, a[i], dm[0], dm[1]);
+                    const auto rb = uilayout::ResolveRect(w2, b[i], dm[0], dm[1]);
+                    const auto ca = uilayout::ResolveClipRect(w1, a[i], dm[0], dm[1]);
+                    const auto cb = uilayout::ResolveClipRect(w2, b[i], dm[0], dm[1]);
+                    same = same && std::memcmp(&ra, &rb, sizeof(ra)) == 0
+                        && std::memcmp(&ca, &cb, sizeof(ca)) == 0
+                        && uilayout::CanvasOf(w2, b[i], dm[0], dm[1]).scale == 1.0f;
+                }
+                for (float y = 0.5f; y < static_cast<float>(dm[1]); y += 37.0f) {
+                    for (float x = 0.25f; x < static_cast<float>(dm[0]); x += 37.0f) {
+                        const EntityID ha = uiinteract::HitTest(w1, dm[0], dm[1], x, y);
+                        const EntityID hb = uiinteract::HitTest(w2, dm[0], dm[1], x, y);
+                        same = same && (ha == kNullEntity) == (hb == kNullEntity)
+                            && ha.index == hb.index;
+                    }
+                }
+            }
+            check(same, "canvas: UI under a default-desc Canvas resolves and hits bit-identically to no Canvas");
+        }
+
+        // (4)〜(7) 基準 1024x768 Shrink の Canvas を 1920x1080 の既定キャンバス上で解く
+        //     → s' = 1920/1024 = 1.875、キャンバス 1024x576 (どちらも 2 進で割り切れる)
+        {
+            World w;
+            const EntityID cv = w.CreateEntity("canvas");
+            w.AddComponent<RectTransformComponent>(cv);
+            {
+                auto* c = w.AddComponent<UICanvasComponent>(cv);
+                c->referenceW = 1024;
+                c->referenceH = 768;
+                c->scaleMode = uilayout::kScaleShrink;
+            }
+            const EntityID box = w.CreateEntity("box"); // 既定 RectTransform = 左上・pivot 0
+            {
+                auto* rt = w.AddComponent<RectTransformComponent>(box);
+                rt->anchoredPosition = { 10.0f, 20.0f };
+                rt->sizeDelta = { 100.0f, 50.0f };
+            }
+            w.AddComponent<UIElementComponent>(box)->focusable = 1;
+            const EntityID panelE = w.CreateEntity("panel");
+            {
+                auto* rt = w.AddComponent<RectTransformComponent>(panelE);
+                rt->anchorMin = { 0.5f, 0.5f };
+                rt->anchorMax = { 0.5f, 0.5f };
+                rt->pivot = { 0.5f, 0.5f };
+                rt->sizeDelta = { 400.0f, 300.0f };
+            }
+            w.AddComponent<UIElementComponent>(panelE)->clipChildren = 1;
+            const EntityID corner = w.CreateEntity("corner");
+            {
+                auto* rt = w.AddComponent<RectTransformComponent>(corner);
+                rt->basis = 1;
+                rt->anchorMin = { 1.0f, 1.0f };
+                rt->anchorMax = { 1.0f, 1.0f };
+                rt->pivot = { 1.0f, 1.0f };
+                rt->sizeDelta = { 50.0f, 50.0f };
+            }
+            w.AddComponent<UIElementComponent>(corner);
+            // 既定キャンバスの要素 (Canvas 無し)。box と重なる位置に order 100 で置く
+            const EntityID front = w.CreateEntity("front");
+            {
+                auto* rt = w.AddComponent<RectTransformComponent>(front);
+                rt->sizeDelta = { 400.0f, 200.0f };
+            }
+            w.AddComponent<UIElementComponent>(front)->order = 100;
+            // FocusNav の共通座標の検査用に既定キャンバスへ 2 つ。mid の中心 y=65 は box の中心の
+            // **Canvas 単位 (45) より下、既定キャンバス単位 (84.375) より上** に置いてある
+            const EntityID mid = w.CreateEntity("mid");
+            {
+                auto* rt = w.AddComponent<RectTransformComponent>(mid);
+                rt->anchoredPosition = { 100.0f, 55.0f };
+                rt->sizeDelta = { 20.0f, 20.0f };
+            }
+            w.AddComponent<UIElementComponent>(mid)->focusable = 1;
+            const EntityID below = w.CreateEntity("below");
+            {
+                auto* rt = w.AddComponent<RectTransformComponent>(below);
+                rt->anchoredPosition = { 0.0f, 900.0f };
+                rt->sizeDelta = { 100.0f, 50.0f };
+            }
+            w.AddComponent<UIElementComponent>(below)->focusable = 1;
+            w.SetParent(box, cv);
+            w.SetParent(panelE, cv);
+            w.SetParent(corner, panelE);
+            w.ApplyStructuralChanges();
+
+            const uilayout::CanvasInfo ci = uilayout::CanvasOf(w, box, 1920, 1080);
+            check(ci.w == 1024 && ci.h == 576 && ci.scale == 1.875f
+                      && uilayout::FindCanvas(w, corner) == cv
+                      && uilayout::FindCanvas(w, front) == kNullEntity,
+                  "canvas: Shrink 1024x768 on the 1920x1080 default canvas is 1024x576 at 1.875");
+            const auto rc = uilayout::ResolveRect(w, cv, 1920, 1080);
+            check(rc.x == 0.0f && rc.y == 0.0f && rc.w == 1024.0f && rc.h == 576.0f,
+                  "canvas: the Canvas element itself always covers its whole canvas");
+            const auto rb = uilayout::ResolveRect(w, box, 1920, 1080);
+            check(rb.x == 10.0f && rb.y == 20.0f && rb.w == 100.0f && rb.h == 50.0f,
+                  "canvas: children resolve in the canvas's own units");
+            const auto rk = uilayout::ResolveRect(w, corner, 1920, 1080);
+            check(rk.x == 974.0f && rk.y == 526.0f && rk.w == 50.0f && rk.h == 50.0f,
+                  "canvas: basis=1 is the owning canvas, not the default canvas");
+            // (6) corner は panel (312..712, 138..438) の clipChildren の下で完全に外 → 見えない。
+            //     panel 自身の祖先 (Canvas) より上のクリップは効かない = 全面
+            const auto vk = uilayout::ResolveVisibleRect(w, corner, 1920, 1080);
+            const auto cp = uilayout::ResolveClipRect(w, panelE, 1920, 1080);
+            check(vk.w <= 0.0f && cp.x == 0.0f && cp.y == 0.0f && cp.w == 1024.0f && cp.h == 576.0f,
+                  "canvas: clipping works inside a Canvas and starts from the canvas bounds");
+
+            // (4)(5) 既定キャンバス座標 (20,40) → Canvas 単位 (10.67, 21.3) = box の中。
+            //        front (0..400, 0..200) とも重なるので、決め手はキーの順
+            check(uiinteract::HitTest(w, 1920, 1080, 20.0f, 40.0f) == front,
+                  "canvas: equal sortOrder (0) falls back to element order (front order 100 wins)");
+            w.GetComponent<UICanvasComponent>(cv)->sortOrder = 1;
+            check(uiinteract::HitTest(w, 1920, 1080, 20.0f, 40.0f) == box,
+                  "canvas: a higher Canvas sortOrder beats a higher element order");
+            check(uiinteract::HitTest(w, 1920, 1080, 15.0f, 30.0f) == front,
+                  "canvas: the point is rescaled per canvas (15,30 -> 8,16 misses the box)");
+            w.GetComponent<UICanvasComponent>(cv)->sortOrder = -1;
+            check(uiinteract::HitTest(w, 1920, 1080, 20.0f, 40.0f) == front,
+                  "canvas: a negative sortOrder puts the whole Canvas behind the default canvas");
+            // (7) box の中心は既定座標で y=84.375。下へ行くと mid (y=65) は上なので飛ばして below へ、
+            //     上へ行くと mid。Canvas 単位のまま比べると box の中心 y=45 で mid を「下」と誤判定する
+            check(uiinteract::FindNextFocus(w, 1920, 1080, box, uinav::kNavDown) == below
+                      && uiinteract::FindNextFocus(w, 1920, 1080, box, uinav::kNavUp) == mid,
+                  "canvas: focus navigation compares rects in default-canvas units");
+        }
+
+        // (8) 実効値と JSON
+        {
+            uilayout::SetDefaultCanvasReference(1280, 720);
+            const uilayout::CanvasInfo big = uilayout::CanvasSize(1920, 1080);
+            const uilayout::CanvasInfo zero = uilayout::CanvasSize(0, 0);
+            InputSnapshot headless = {};
+            const uilayout::CanvasInfo fromInput = uilayout::CanvasOfInput(headless);
+            World w;
+            const EntityID cv = w.CreateEntity("canvas");
+            w.AddComponent<UICanvasComponent>(cv); // 基準 0 = project 既定に従う
+            const uilayout::CanvasInfo follow = uilayout::CanvasOfEntity(w, cv, 1280, 720);
+            uilayout::SetDefaultCanvasReference(0, -5); // <= 0 は 1920x1080 へ倒す
+            const bool reset = uilayout::DefaultCanvasDesc().referenceW == uilayout::kCanvasRefW
+                && uilayout::DefaultCanvasDesc().referenceH == uilayout::kCanvasRefH;
+            check(big.scale == 1.5f && big.w == 1280 && big.h == 720 && zero.w == 1280
+                      && zero.h == 720 && fromInput.w == 1280 && follow.scale == 1.0f
+                      && follow.w == 1280 && reset,
+                  "settings: the project reference drives the default canvas and reference-0 Canvases");
+
+            uilayout::ProjectUiSettings p;
+            const bool okParse = uilayout::ParseProjectUiSettings(
+                R"({"particleBackend":"cpu","ui":{"referenceW":1280,"referenceH":720}})", p);
+            check(okParse && p.referenceW == 1280 && p.referenceH == 720,
+                  "settings: ui.referenceW/H parse");
+            uilayout::ProjectUiSettings q;
+            const bool noUi = !uilayout::ParseProjectUiSettings(R"({"particleBackend":"gpu"})", q);
+            uilayout::ProjectUiSettings r;
+            const bool bad = !uilayout::ParseProjectUiSettings(R"({"ui":{"referenceW":0,"referenceH":720}})", r);
+            uilayout::ProjectUiSettings half;
+            const bool halfBad = !uilayout::ParseProjectUiSettings(R"({"ui":{"referenceW":1280}})", half);
+            check(noUi && q.referenceW == 1920 && bad && r.referenceW == 1920 && r.referenceH == 1080
+                      && halfBad && half.referenceW == 1920,
+                  "settings: missing / out-of-range / half-specified ui falls back to 1920x1080 as a pair");
+
+            // マージ保存: 他のキーを消さず、読み直すと同じ値
+            std::error_code ec;
+            const std::filesystem::path dir =
+                std::filesystem::temp_directory_path(ec) / L"mye_ui_settings_selftest";
+            std::filesystem::remove_all(dir, ec);
+            std::filesystem::create_directories(dir, ec);
+            {
+                std::ofstream f(dir / L"project_settings.json", std::ios::binary);
+                f << R"({"particleBackend":"gpu","physicsLayers":["a"]})";
+            }
+            uilayout::ProjectUiSettings save;
+            save.referenceW = 1600;
+            save.referenceH = 1200;
+            const bool saved = uilayout::SaveProjectUiSettings(dir.wstring(), save);
+            const uilayout::ProjectUiSettings loaded = uilayout::LoadProjectUiSettings(dir.wstring());
+            std::string text;
+            {
+                std::ifstream f(dir / L"project_settings.json", std::ios::binary);
+                std::stringstream ss;
+                ss << f.rdbuf();
+                text = ss.str();
+            }
+            check(saved && loaded == save && text.find("\"particleBackend\": \"gpu\"") != std::string::npos
+                      && text.find("physicsLayers") != std::string::npos,
+                  "settings: save merges the ui section and keeps the other keys");
+            uilayout::ProjectUiSettings tooBig;
+            tooBig.referenceW = 100000;
+            check(!uilayout::SaveProjectUiSettings(dir.wstring(), tooBig),
+                  "settings: an out-of-range reference is refused instead of written");
+            std::filesystem::remove_all(dir, ec);
+            const uilayout::ProjectUiSettings none =
+                uilayout::LoadProjectUiSettings(dir.wstring());
+            check(none.referenceW == 1920 && none.referenceH == 1080,
+                  "settings: no project_settings.json = 1920x1080");
+        }
     }
 
     if (failCount == 0) {

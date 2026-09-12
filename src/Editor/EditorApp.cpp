@@ -146,6 +146,8 @@ void EditorApp::OnStart(EngineContext& ctx)
         scenePath_ = L"cache\\joint_showcase.scene.json"; // M60i (同上)
     } else if (fogShowcase) {
         scenePath_ = L"cache\\fog_showcase.scene.json"; // M57追補 (同上)
+    } else if (uiShowcase) {
+        scenePath_ = L"cache\\ui_showcase.scene.json"; // M75c (同上)
     } else {
         scenePath_ = ctx.assetsRoot + L"\\scenes\\main.scene.json";
         ProjectManifest manifest; // ブートシーンはマニフェスト優先 (M26)
@@ -209,6 +211,8 @@ void EditorApp::OnStart(EngineContext& ctx)
         BuildParticleShowcaseScene(ctx); // M63a
     } else if (acousticShowcase) {
         BuildAcousticShowcaseScene(ctx); // M65b
+    } else if (uiShowcase) {
+        BuildUiShowcaseScene(ctx); // M75c
     } else {
         BuildDemoScene(ctx, perfRate, perfMax);
     }

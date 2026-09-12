@@ -216,6 +216,10 @@ void BuildAcousticShowcaseScene(EngineContext& ctx);
 // 上のショーケースが参照するマテリアルの実体登録 (adem_ 接頭辞)
 void RegisterAcousticShowcaseContent(EngineContext& ctx);
 
+// M75c: ゲーム内 UI のショーケース (--ui-demo)。golden 25 枚目 (ui_widgets) の被写体。
+// 材質を使わない (UI だけ) ので Register* は無い。M75e〜h の Layout / ウィジェットは関数の末尾へ足す
+void BuildUiShowcaseScene(EngineContext& ctx);
+
 // assets\ 以下の .prefab.json / .anim.json を各ライブラリへ登録する (Editor / Runtime 共用)。
 // M48g からは .glb / .gltf / .fbx のスケルトンもここで (エンティティを作らずに) 登録する
 void RegisterAssetLibraries(EngineContext& ctx);

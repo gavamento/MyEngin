@@ -1050,11 +1050,14 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
         const uilayout::UIWorldContext* wc =
             uilayout::BuildSimWorldContext(w, canvasW, canvasH, wcData) ? &wcData : nullptr;
         const uilayout::UIRect r = uilayout::ResolveRect(w, e, canvasW, canvasH, wc);
+        // M75c: 返すのは**既定キャンバス座標** (MouseCanvasPos / UIHitTest と同じ単位)。明示 Canvas の
+        // 下の要素はその Canvas の単位から直す。Canvas の無い要素は 1.0f を掛ける = M75c 以前と同ビット
+        const float toDefault = uilayout::CanvasOf(w, e, canvasW, canvasH).scale;
         if (out_) {
-            out_->x = r.x;
-            out_->y = r.y;
-            out_->w = r.w;
-            out_->h = r.h;
+            out_->x = r.x * toDefault;
+            out_->y = r.y * toDefault;
+            out_->w = r.w * toDefault;
+            out_->h = r.h * toDefault;
         }
         return 1;
     };

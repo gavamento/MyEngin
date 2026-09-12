@@ -356,6 +356,14 @@ MYE_STR(PrjSet_ParticleNote,  "  written to assets/project_settings.json (shared
                               "  assets/project_settings.json (共有) に書き込みます。比較モードと SIMD は個人設定です。")
 MYE_STR(PrjSet_ParticleSaved, "Particle backend saved as the project default.",
                               "パーティクルバックエンドをプロジェクト既定として保存しました。")
+MYE_STR(PrjSet_UI,            "UI###PrjSetUI",       "UI###PrjSetUI")
+MYE_STR(PrjSet_UIHint,        "Reference resolution of the default canvas (UI without a Canvas, and Canvases whose reference is 0). Saved to assets/project_settings.json (shared) and applied on the next launch.",
+                              "既定キャンバス (Canvas の無い UI と、基準解像度 0 の Canvas) の基準解像度。assets/project_settings.json (共有) に保存し、次回起動から反映されます。")
+MYE_STR(PrjSet_UIReference,   "Reference resolution###PrjSetUIRef", "基準解像度###PrjSetUIRef")
+MYE_STR(PrjSet_UIActive,      "In effect now: %d x %d", "現在の実効値: %d x %d")
+MYE_STR(PrjSet_SaveUI,        "Save UI settings###PrjSetSaveUI", "UI 設定を保存###PrjSetSaveUI")
+MYE_STR(PrjSet_UISaved,       "Saved. The new reference resolution applies after a restart.",
+                              "保存しました。新しい基準解像度は再起動後に反映されます。")
 MYE_STR(PrjSet_PhysicsLayers, "Physics Layers",      "物理レイヤー")
 MYE_STR(PrjSet_SaveLayers,    "Save Layers",         "レイヤーを保存")
 MYE_STR(PrjSet_Shortcuts,     "Shortcuts",           "ショートカット")
@@ -745,6 +753,7 @@ MYE_STR(Create_UIPanel,       "Panel",             "パネル")
 MYE_STR(Create_UIImage,       "Image",             "画像")
 MYE_STR(Create_UIButton,      "Button",            "ボタン")
 MYE_STR(Create_UIText,        "Text",              "テキスト")
+MYE_STR(Create_UICanvas,      "Canvas",            "キャンバス")
 
 // ---- 統計ウィンドウ / 未保存確認 (M47b) ----
 MYE_STR(Stats_Fps,            "FPS: %.1f (%.3f ms)",        "FPS: %.1f (%.3f ms)")

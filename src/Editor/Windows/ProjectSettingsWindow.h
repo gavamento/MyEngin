@@ -2,6 +2,7 @@
 #include <string>
 
 #include "Engine/Engine/EngineLoop.h"
+#include "Engine/Engine/UI/UIProjectSettings.h" // M75c
 
 namespace mye {
 
@@ -52,6 +53,12 @@ private:
     // 「プロジェクト既定にする」を押した直後の確認表示 (M66h)。窓を閉じるか
     // バックエンドを選び直すと消える
     bool particleSaved_ = false;
+    // UI の基準解像度 (M75c)。UI 節を初めて開いたときにディスクから読む。uiDisk_ は最後に
+    // 読んだ/保存した値 = 未保存判定の相手
+    bool uiLoaded_ = false;
+    bool uiSaved_ = false;
+    uilayout::ProjectUiSettings uiEdit_;
+    uilayout::ProjectUiSettings uiDisk_;
 };
 
 } // namespace mye

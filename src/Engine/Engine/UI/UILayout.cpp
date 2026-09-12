@@ -16,12 +16,60 @@ namespace {
 constexpr int kMaxDepth = 64;
 
 // UI ノードか (RectTransform か UIElement を持つ)。M75a で RectTransform だけの空ノード
-// (Unity の「空の RectTransform」= グループ用コンテナ) も階層の基準になれるようにした
+// (Unity の「空の RectTransform」= グループ用コンテナ) も階層の基準になれるようにした。
+// M75c: UICanvas だけのノードも含める — 含めないと RectTransform を付け忘れた Canvas の子が
+// Canvas を読み飛ばして既定キャンバスへ落ちる
 bool IsUiNode(World& world, EntityID e)
 {
     return world.GetComponent<UIElementComponent>(e) != nullptr
-        || world.GetComponent<RectTransformComponent>(e) != nullptr;
+        || world.GetComponent<RectTransformComponent>(e) != nullptr
+        || world.GetComponent<UICanvasComponent>(e) != nullptr;
 }
+
+// ---- 決定論の ln / exp (M75c: Canvas Scaler の Match) ----
+// UCRT の log / pow は CPU の命令セット (FMA3 の有無) で経路が変わるので、2 台で最後の ULP が
+// 揃う保証が無い。キャンバス寸法と倍率は sim のヒットテストに入るので、四則演算と frexp /
+// ldexp / floor (どれも正確) だけで組んだ double の級数で解く。精度は 1e-15 程度 (セルフテストが
+// std::pow と 1e-6 以内で照合する)。**加算順を変えないこと** (順序が変わると ULP が動く)
+constexpr double kLn2 = 0.69314718055994530942;
+
+double DetLn(double x) // x > 0
+{
+    int e = 0;
+    double m = std::frexp(x, &e); // x = m * 2^e、m は [0.5, 1)
+    if (m < 0.70710678118654752440) {
+        m *= 2.0; // [sqrt(0.5), sqrt(2)) へ寄せて級数を速くする (|z| <= 0.172)
+        --e;
+    }
+    // ln(m) = 2 atanh(z)、z = (m-1)/(m+1)
+    const double z = (m - 1.0) / (m + 1.0);
+    const double z2 = z * z;
+    double term = z;
+    double sum = 0.0;
+    for (int k = 1; k <= 41; k += 2) {
+        sum += term / static_cast<double>(k);
+        term *= z2;
+    }
+    return 2.0 * sum + static_cast<double>(e) * kLn2;
+}
+
+double DetExp(double y)
+{
+    // 画面/基準の比は実用上 1e-4〜1e4 = |y| < 10。壊れた入力でも ldexp が溢れないよう抑える
+    y = (y < -600.0) ? -600.0 : (y > 600.0) ? 600.0 : y;
+    const double kf = std::floor(y / kLn2 + 0.5);
+    const double r = y - kf * kLn2; // |r| <= ln2/2
+    double term = 1.0;
+    double sum = 1.0;
+    for (int n = 1; n <= 30; ++n) {
+        term *= r / static_cast<double>(n);
+        sum += term;
+    }
+    return std::ldexp(sum, static_cast<int>(kf));
+}
+
+// 既定キャンバスの解き方。起動時に SetDefaultCanvasReference が 1 回だけ書く (UILayout.h)
+CanvasDesc g_defaultCanvasDesc = {};
 
 // 最寄りの UI ノード祖先 (間の非 UI ノードは読み飛ばす)。無ければ kNullEntity
 EntityID FindUIParent(World& world, EntityID e)
@@ -140,6 +188,13 @@ UIResolved ResolveImpl(World& world, EntityID e, int screenW, int screenH,
                        const UIWorldContext* wc, int depth)
 {
     UIResolved out;
+    // M75c: Canvas を持つ要素は RectTransform に依らず常にキャンバス全面 (Unity の Canvas の
+    // RectTransform が駆動されて編集できないのと同じ)。祖先は別のキャンバスなので辿らない
+    if (world.GetComponent<UICanvasComponent>(e) != nullptr) {
+        const CanvasInfo c = CanvasOfEntity(world, e, screenW, screenH);
+        out.rect = { 0.0f, 0.0f, static_cast<float>(c.w), static_cast<float>(c.h) };
+        return out;
+    }
     const auto* el = world.GetComponent<UIElementComponent>(e);
     const auto* rtp = world.GetComponent<RectTransformComponent>(e);
     if (!el && !rtp) {
@@ -168,11 +223,19 @@ UIResolved ResolveImpl(World& world, EntityID e, int screenW, int screenH,
         }
     }
     if (!parentResolved) {
-        // basis=0 で UI 祖先なし、または basis=1 (キャンバス) —
-        // 「UI 専用でないオブジェクト」に付いた UIElement はそのオブジェクトへ追従する
-        worldRoot = ResolveWorldBase(world, e, el, screenW, screenH, wc, base, out);
-        if (!out.visible) {
-            return out;
+        // basis=1 (キャンバス) で明示 Canvas の下にいるなら、その Canvas の全面が基準 (M75c)。
+        // basis=0 で UI 祖先が無い要素は Canvas の下にいない (Canvas は UI ノード) ので探さない
+        const EntityID canvasE = (rt.basis != 0) ? FindCanvas(world, e) : kNullEntity;
+        if (canvasE != kNullEntity) {
+            const CanvasInfo c = CanvasOfEntity(world, canvasE, screenW, screenH);
+            base = { 0.0f, 0.0f, static_cast<float>(c.w), static_cast<float>(c.h) };
+        } else {
+            // basis=0 で UI 祖先なし、または basis=1 (既定キャンバス) —
+            // 「UI 専用でないオブジェクト」に付いた UIElement はそのオブジェクトへ追従する
+            worldRoot = ResolveWorldBase(world, e, el, screenW, screenH, wc, base, out);
+            if (!out.visible) {
+                return out;
+            }
         }
     }
     UIRect r = RectFromTransform(rt, base, out.scale);
@@ -313,18 +376,101 @@ UIRect XformAabb(const UIXform& m, const UIRect& r)
     return { x0, y0, x1 - x0, y1 - y0 };
 }
 
-CanvasInfo CanvasSize(int screenW, int screenH)
+CanvasInfo CanvasSize(int screenW, int screenH, const CanvasDesc& desc)
 {
+    const int refW = (desc.referenceW > 0) ? desc.referenceW : kCanvasRefW;
+    const int refH = (desc.referenceH > 0) ? desc.referenceH : kCanvasRefH;
     CanvasInfo c;
+    c.scale = 1.0f;
+    c.w = refW;
+    c.h = refH;
     if (screenW <= 0 || screenH <= 0) {
         return c; // 退化した画面 (最小化など) は基準解像度そのままに倒す
     }
-    const float sx = static_cast<float>(screenW) / static_cast<float>(kCanvasRefW);
-    const float sy = static_cast<float>(screenH) / static_cast<float>(kCanvasRefH);
-    c.scale = (sx < sy) ? sx : sy; // Expand = min。★16:9 では sx と sy が**同じ float** になる
+    const float sx = static_cast<float>(screenW) / static_cast<float>(refW);
+    const float sy = static_cast<float>(screenH) / static_cast<float>(refH);
+    float s = (sx < sy) ? sx : sy; // Expand = min。★16:9 では sx と sy が**同じ float** になる
+    if (desc.scaleMode == kScaleShrink) {
+        s = (sx > sy) ? sx : sy;
+    } else if (desc.scaleMode == kScaleMatch) {
+        const float m = desc.match;
+        if (sx == sy || !(m > 0.0f)) {
+            s = sx; // 基準と同じアスペクト (3 モードが一致) / 幅に合わせる / NaN
+        } else if (m >= 1.0f) {
+            s = sy; // 高さに合わせる
+        } else {
+            // Unity: pow(2, lerp(log2 sx, log2 sy, m)) = exp((1-m) ln sx + m ln sy)
+            const double md = static_cast<double>(m);
+            s = static_cast<float>(DetExp((1.0 - md) * DetLn(static_cast<double>(sx))
+                                          + md * DetLn(static_cast<double>(sy))));
+        }
+    }
+    c.scale = s;
     c.w = static_cast<int>(std::lroundf(static_cast<float>(screenW) / c.scale));
     c.h = static_cast<int>(std::lroundf(static_cast<float>(screenH) / c.scale));
     return c;
+}
+
+CanvasInfo CanvasSize(int screenW, int screenH)
+{
+    return CanvasSize(screenW, screenH, g_defaultCanvasDesc);
+}
+
+void SetDefaultCanvasReference(int referenceW, int referenceH)
+{
+    g_defaultCanvasDesc.referenceW = (referenceW > 0) ? referenceW : kCanvasRefW;
+    g_defaultCanvasDesc.referenceH = (referenceH > 0) ? referenceH : kCanvasRefH;
+}
+
+const CanvasDesc& DefaultCanvasDesc()
+{
+    return g_defaultCanvasDesc;
+}
+
+EntityID FindCanvas(World& world, EntityID e)
+{
+    EntityID p = e;
+    for (int guard = 0; guard <= kMaxDepth && p != kNullEntity; ++guard) {
+        if (world.GetComponent<UICanvasComponent>(p) != nullptr) {
+            return p;
+        }
+        p = world.GetParent(p);
+    }
+    return kNullEntity;
+}
+
+CanvasInfo CanvasOfEntity(World& world, EntityID canvas, int defaultW, int defaultH)
+{
+    CanvasInfo same;
+    same.scale = 1.0f;
+    same.w = defaultW;
+    same.h = defaultH;
+    const auto* cv =
+        (canvas != kNullEntity) ? world.GetComponent<UICanvasComponent>(canvas) : nullptr;
+    if (cv == nullptr) {
+        return same;
+    }
+    const CanvasDesc& def = g_defaultCanvasDesc;
+    CanvasDesc d;
+    d.referenceW = (cv->referenceW > 0) ? cv->referenceW : def.referenceW;
+    d.referenceH = (cv->referenceH > 0) ? cv->referenceH : def.referenceH;
+    d.scaleMode = (cv->scaleMode == kScaleShrink || cv->scaleMode == kScaleMatch) ? cv->scaleMode
+                                                                                  : kScaleExpand;
+    d.match = cv->match;
+    // ★既定と同じ解き方の Canvas は既定キャンバスそのもの。数学的にも s' = 1 だが、defaultW/H に
+    //   CanvasSize の出力でない値 (セルフテストの 1000x800 等) が来ても恒等になるよう明示する
+    if (d.scaleMode == kScaleExpand && d.referenceW == def.referenceW
+        && d.referenceH == def.referenceH) {
+        return same;
+    }
+    return CanvasSize(defaultW, defaultH, d);
+}
+
+int32_t CanvasSortOrder(World& world, EntityID canvas)
+{
+    const auto* cv =
+        (canvas != kNullEntity) ? world.GetComponent<UICanvasComponent>(canvas) : nullptr;
+    return cv ? cv->sortOrder : 0;
 }
 
 CanvasInfo CanvasOfInput(const InputSnapshot& in)
@@ -419,12 +565,20 @@ UIRect ResolveRect(World& world, EntityID e, int screenW, int screenH, const UIW
 UIRect ResolveClipRect(World& world, EntityID e, int screenW, int screenH,
                        const UIWorldContext* wc)
 {
-    UIRect clip = { 0, 0, static_cast<float>(screenW), static_cast<float>(screenH) };
+    // M75c: 全域 = e の属するキャンバス。Canvas の無い要素は {0,0,screenW,screenH} のまま
+    const CanvasInfo canvas = CanvasOf(world, e, screenW, screenH);
+    UIRect clip = { 0, 0, static_cast<float>(canvas.w), static_cast<float>(canvas.h) };
+    if (world.GetComponent<UICanvasComponent>(e) != nullptr) {
+        return clip; // Canvas 自身の祖先は別のキャンバス = そのクリップは効かない
+    }
     EntityID p = FindUIParent(world, e);
     for (int guard = 0; guard < kMaxDepth && p != kNullEntity; ++guard) {
         const auto* el = world.GetComponent<UIElementComponent>(p);
         if (el && el->clipChildren != 0) {
             clip = Intersect(clip, ResolveRect(world, p, screenW, screenH, wc));
+        }
+        if (world.GetComponent<UICanvasComponent>(p) != nullptr) {
+            break; // 属するキャンバスより上は別の座標系 (入れ子の Canvas は外側のクリップを受けない)
         }
         p = FindUIParent(world, p);
     }

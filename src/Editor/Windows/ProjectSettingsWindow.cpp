@@ -27,6 +27,7 @@ void ProjectSettingsWindow::OnImGui(EngineContext& ctx, EditorSettings& settings
     if (!open) {
         captureKind_ = 0;     // 窓を閉じたら捕捉も取り消す
         particleSaved_ = false; // 保存の確認表示も持ち越さない
+        uiSaved_ = false;
         return;
     }
     // 未保存判定に使う参照を控える (M66d)
@@ -78,6 +79,40 @@ void ProjectSettingsWindow::OnImGui(EngineContext& ctx, EditorSettings& settings
                 //   押した直後の 1 行だけをここに残す
                 ImGui::TextColored(themeColor::Success, "%s", Tr(StrId::PrjSet_ParticleSaved));
             }
+        }
+    }
+
+    // ---- UI (M75c、assets\project_settings.json の ui 節) ----
+    // ★書き込むのは**ここだけ**。実効値 (DefaultCanvasDesc) は起動時に 1 回だけ読む静的な値で、
+    //   保存しても実行中のキャンバスは変えない — sim のヒットテストが読む値なので、Play 中や
+    //   タイムトラベルのリングが生きている間に差し替えると再シムが割れる
+    if (ImGui::CollapsingHeader(Tr(StrId::PrjSet_UI))) {
+        if (!uiLoaded_) {
+            uiDisk_ = uilayout::LoadProjectUiSettings(ctx.assetsRoot);
+            uiEdit_ = uiDisk_;
+            uiLoaded_ = true;
+        }
+        ImGui::TextWrapped("%s", Tr(StrId::PrjSet_UIHint));
+        int ref[2] = { uiEdit_.referenceW, uiEdit_.referenceH };
+        ImGui::SetNextItemWidth(200.0f);
+        if (ImGui::InputInt2(Tr(StrId::PrjSet_UIReference), ref)) {
+            uiEdit_.referenceW =
+                std::clamp(ref[0], uilayout::kReferenceMin, uilayout::kReferenceMax);
+            uiEdit_.referenceH =
+                std::clamp(ref[1], uilayout::kReferenceMin, uilayout::kReferenceMax);
+            uiSaved_ = false;
+        }
+        const uilayout::CanvasDesc& live = uilayout::DefaultCanvasDesc();
+        ImGui::TextDisabled(Tr(StrId::PrjSet_UIActive), live.referenceW, live.referenceH);
+        if (ImGui::Button(Tr(StrId::PrjSet_SaveUI))) {
+            if (uilayout::SaveProjectUiSettings(ctx.assetsRoot, uiEdit_)) {
+                uiDisk_ = uiEdit_;
+                uiSaved_ = true;
+                scmhint::Changed(ctx.assetsRoot + L"\\project_settings.json"); // M66i
+            }
+        }
+        if (uiSaved_) {
+            ImGui::TextColored(themeColor::Success, "%s", Tr(StrId::PrjSet_UISaved));
         }
     }
 
@@ -442,6 +477,9 @@ bool ProjectSettingsWindow::HasUnsavedChanges() const
 {
     if (PhysicsLayerNames::Get().DiffersFromDisk() || PartTagNames::Get().DiffersFromDisk()) {
         return true;
+    }
+    if (uiLoaded_ && uiEdit_ != uiDisk_) {
+        return true; // M75c: UI の基準解像度
     }
     if (inputActions_ != nullptr) {
         return InputActionsDifferFromDisk(assetsRoot_, *inputActions_);

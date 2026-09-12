@@ -223,10 +223,14 @@ void UIRenderer::Render(World& world, GraphicsDevice& device, ShaderManager& sha
         return;
     }
 
-    // ---- 収集 (order → entity.index の明示キーで安定ソート) ----
+    // ---- 収集 (canvas.sortOrder → order → entity.index の明示キーで安定ソート) ----
+    // M75c: キーの先頭は属する Canvas の sortOrder (既定キャンバスは 0 = 従来の並びと同じ)。
+    // HitTest の「最前面」と同じキーなので、手前に見えている要素が押せる
     struct Item {
+        int32_t sortOrder;
         int32_t order;
         EntityID e;
+        EntityID canvas; // 属する Canvas (kNullEntity = 既定キャンバス)
         const UIElementComponent* el;
     };
     std::vector<Item> items;
@@ -239,13 +243,17 @@ void UIRenderer::Render(World& world, GraphicsDevice& device, ShaderManager& sha
                 continue;
             }
             const auto* el = static_cast<const UIElementComponent*>(arch.GetPtr(ci, row));
-            items.push_back({ el->order, e, el });
+            const EntityID canvasE = uilayout::FindCanvas(world, e);
+            items.push_back({ uilayout::CanvasSortOrder(world, canvasE), el->order, e, canvasE, el });
         }
     });
     if (items.empty()) {
         return;
     }
     std::sort(items.begin(), items.end(), [](const Item& a, const Item& b) {
+        if (a.sortOrder != b.sortOrder) {
+            return a.sortOrder < b.sortOrder;
+        }
         if (a.order != b.order) {
             return a.order < b.order;
         }
@@ -277,11 +285,16 @@ void UIRenderer::Render(World& world, GraphicsDevice& device, ShaderManager& sha
     const uilayout::CanvasInfo canvas = uilayout::CanvasSize(width, height);
     const int canvasW = canvas.w;
     const int canvasH = canvas.h;
-    const float canvasScale = canvas.scale;
+    const float defaultScale = canvas.scale;
 
     const D3D11_RECT fullScissor = { 0, 0, width, height };
     for (const Item& it : items) {
         const UIElementComponent& el = *it.el;
+        // M75c: この要素のキャンバス単位 → 実 px。明示 Canvas は既定キャンバス単位への倍率を
+        // 先に掛ける (UILayout.h の CanvasOfEntity)。Canvas の無い要素は 1.0f * defaultScale =
+        // M75c 以前の canvasScale と同ビット — 以下の式はこの 1 行以外 1 文字も変えていない
+        const float canvasScale =
+            uilayout::CanvasOfEntity(world, it.canvas, canvasW, canvasH).scale * defaultScale;
         // 矩形解決 (M51e: 親子/クリップは UILayout — UIFocusNav と共有)。クリップ祖先が
         // 無い要素は RT 全域シザー = 従来と同じバッチにまとまる。
         // ワールド追従要素はここで射影され、背面 (クランプ OFF) は visible=false で消える。

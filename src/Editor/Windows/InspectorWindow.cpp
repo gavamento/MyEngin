@@ -231,6 +231,9 @@ constexpr const char* kOffOnJa[] = { "オフ", "オン" };
 constexpr const char* kPartBoundsShapeJa[] = { "ボックス", "スフィア" };
 constexpr const char* kUIFillModeJa[] = { "オフ", "水平 (左→右)", "垂直 (下→上)" };
 constexpr const char* kUIBasisJa[] = { "親", "キャンバス" };
+// M75c: UICanvas.scaleMode (Unity の Screen Match Mode と同じ並び)
+constexpr const char* kUICanvasScaleLabels[] = { "Expand", "Shrink", "Match Width Or Height" };
+constexpr const char* kUICanvasScaleJa[] = { "拡張 (Expand)", "縮小 (Shrink)", "幅/高さに合わせる" };
 constexpr const char* kUIPresetColJa[] = { "左", "中央", "右", "伸縮" };
 constexpr const char* kUIPresetRowJa[] = { "上", "中央", "下", "伸縮" };
 constexpr EnumFieldLabels kEnumFields[] = {
@@ -253,6 +256,7 @@ constexpr EnumFieldLabels kEnumFields[] = {
     // M75a: RectTransform.anchorMin はコンボではなくプリセット 4x4 ピッカー + DragFloat2
     // (DrawField の特例) — 行はここに置かない
     { "RectTransform", "basis", kUIBasisLabels, 2, kUIBasisJa },
+    { "UICanvas", "scaleMode", kUICanvasScaleLabels, 3, kUICanvasScaleJa }, // M75c
     { "UIElement", "clipChildren", kOffOnLabels, 2, kOffOnJa },
     { "UIElement", "wrap", kOffOnLabels, 2, kOffOnJa },
     { "ConstantForce", "relative", kForceSpaceLabels, 2, kForceSpaceJa },
@@ -707,8 +711,11 @@ void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
                 // Unity が駆動プロパティを灰色で見せるのと同じ役どころ — アンカーを伸縮に
                 // したときに「今この要素は何 px なのか」が数値で分かる唯一の場所
                 if (std::strcmp(desc.name, "RectTransform") == 0) {
+                    // M75c: 基準は project_settings の実効値。明示 Canvas の下の要素はその
+                    // Canvas の単位で出す (Unity の RectTransform の数値と同じ見え方)
+                    const uilayout::CanvasDesc& def = uilayout::DefaultCanvasDesc();
                     const uilayout::UIRect rr = uilayout::ResolveRect(
-                        ctx.scene->GetWorld(), e, uilayout::kCanvasRefW, uilayout::kCanvasRefH);
+                        ctx.scene->GetWorld(), e, def.referenceW, def.referenceH);
                     ImGui::BeginDisabled();
                     ImGui::Text(Tr(StrId::Insp_UIResolvedRect), rr.x, rr.y, rr.w, rr.h);
                     ImGui::EndDisabled();

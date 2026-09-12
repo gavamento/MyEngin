@@ -169,6 +169,20 @@ GameObject CreateUIText(EngineContext& ctx, const char* name)
     return obj;
 }
 
+GameObject CreateUICanvas(EngineContext& ctx, const char* name)
+{
+    GameObject obj = ctx.scene->CreateGameObjectTracked(name);
+    // 全面ストレッチ。Canvas の矩形は RectTransform に依らず常にキャンバス全面だが (UILayout)、
+    // 子を Create したときの親判定と Inspector の解決済み矩形の表示を実体と揃えておく
+    auto* rt = obj.AddComponent<RectTransformComponent>();
+    rt->anchorMin = { 0.0f, 0.0f };
+    rt->anchorMax = { 1.0f, 1.0f };
+    rt->pivot = { 0.5f, 0.5f };
+    rt->sizeDelta = { 0.0f, 0.0f };
+    obj.AddComponent<UICanvasComponent>(); // 基準解像度 0 = project_settings に従う = 既定キャンバスと同じ絵
+    return obj;
+}
+
 GameObject RecordCreate(EngineContext& ctx, Selection& selection, UndoStack& undo, const char* label,
                         const std::function<GameObject()>& make)
 {
@@ -229,7 +243,8 @@ void CreateUIItem(EngineContext& ctx, Selection& selection, UndoStack& undo, Ent
             GameObject sel = ctx.scene->FindByFileId(selection.primary);
             if (sel
                 && (world.GetComponent<UIElementComponent>(sel.Id()) != nullptr
-                    || world.GetComponent<RectTransformComponent>(sel.Id()) != nullptr)) {
+                    || world.GetComponent<RectTransformComponent>(sel.Id()) != nullptr
+                    || world.GetComponent<UICanvasComponent>(sel.Id()) != nullptr)) {
                 effParent = sel.Id();
             }
         }
@@ -268,6 +283,9 @@ void DrawCreateMenuItems(EngineContext& ctx, Selection& selection, UndoStack& un
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu(Tr(StrId::Create_UI))) { // M51f
+        // M75c: Canvas は選択中の UI の子にしない (入れ子の Canvas は非対応) ので汎用 CreateItem で作る
+        CreateItem(ctx, selection, undo, parent, nullptr, Tr(StrId::Create_UICanvas), "Canvas",
+                   &CreateUICanvas);
         CreateUIItem(ctx, selection, undo, parent, Tr(StrId::Create_UIPanel), "Panel", &CreateUIPanel);
         CreateUIItem(ctx, selection, undo, parent, Tr(StrId::Create_UIImage), "Image", &CreateUIImage);
         CreateUIItem(ctx, selection, undo, parent, Tr(StrId::Create_UIButton), "Button", &CreateUIButton);

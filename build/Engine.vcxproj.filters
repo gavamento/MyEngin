@@ -456,6 +456,9 @@
     <ClCompile Include="..\src\Engine\Engine\UI\UILayout.cpp">
       <Filter>Engine\UI</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\UI\UIProjectSettings.cpp">
+      <Filter>Engine\UI</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\UI\UIRenderer.cpp">
       <Filter>Engine\UI</Filter>
     </ClCompile>
@@ -1036,6 +1039,9 @@
       <Filter>Engine\UI</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\UI\UINav.h">
+      <Filter>Engine\UI</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\UI\UIProjectSettings.h">
       <Filter>Engine\UI</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\UI\UIRenderer.h">

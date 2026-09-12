@@ -138,8 +138,10 @@ void GameViewWindow::OnImGui(EngineContext& ctx, const Selection& selection)
                 if (r.w <= 0.0f || r.h <= 0.0f) {
                     continue;
                 }
-                const ImVec2 p0(imgPos.x + r.x * sx, imgPos.y + r.y * sy);
-                const ImVec2 p1(imgPos.x + (r.x + r.w) * sx, imgPos.y + (r.y + r.h) * sy);
+                // M75c: r は要素の属するキャンバスの単位。既定キャンバス単位へ直してから表示 px へ
+                const float k = uilayout::CanvasOf(world, go.Id(), canvas.w, canvas.h).scale;
+                const ImVec2 p0(imgPos.x + r.x * k * sx, imgPos.y + r.y * k * sy);
+                const ImVec2 p1(imgPos.x + (r.x + r.w) * k * sx, imgPos.y + (r.y + r.h) * k * sy);
                 dl->AddRect(p0, p1, IM_COL32(255, 160, 40, 255), 0.0f,
                             (fid == selection.primary) ? 2.0f : 1.0f);
             }

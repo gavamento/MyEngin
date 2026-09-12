@@ -3303,4 +3303,121 @@ void RegisterAssetLibraries(EngineContext& ctx)
     MYE_LOG_INFO("[assets] startup asset scan: %.1f ms", scanMs);
 }
 
+// ---- M75c: ゲーム内 UI のショーケース (--ui-demo) ----
+// golden 25 枚目 (ui_widgets) の被写体。M75c の時点では Canvas Scaler の 3 モードと Canvas の
+// sortOrder だけで、M75e 以降の Layout / ウィジェットはこのシーンへ**末尾に**積み増す。
+// ★4 隅の箱は**どれも自分のキャンバス単位で 300x150**。基準 1024x768 (4:3) を 16:9 の画面で
+//   解くので Expand / Shrink / Match で実寸が変わる = 3 モードの差がそのまま絵に出る。
+//   基準を 16:9 にすると 3 モードが一致して何も写らない (UILayout.cpp の sx == sy の近道)
+void BuildUiShowcaseScene(EngineContext& ctx)
+{
+    Scene& s = *ctx.scene;
+    s.SetName("ui_showcase");
+
+    GameObject cam = s.CreateGameObject("Main Camera");
+    cam.SetLocalPosition(0.0f, 2.0f, -8.0f);
+    cam.AddComponent<CameraComponent>()->isPrimary = 1;
+
+    // 全面ストレッチの Canvas。RectTransform は CreateMenu と同じ値 (Canvas の矩形はこれに依らない)
+    auto canvas = [&](const char* name, int refW, int refH, int mode, float match, int sortOrder) {
+        GameObject go = s.CreateGameObject(name);
+        auto* rt = go.AddComponent<RectTransformComponent>();
+        rt->anchorMin = { 0.0f, 0.0f };
+        rt->anchorMax = { 1.0f, 1.0f };
+        rt->pivot = { 0.5f, 0.5f };
+        rt->sizeDelta = { 0.0f, 0.0f };
+        auto* cv = go.AddComponent<UICanvasComponent>();
+        cv->referenceW = refW;
+        cv->referenceH = refH;
+        cv->scaleMode = mode;
+        cv->match = match;
+        cv->sortOrder = sortOrder;
+        return go;
+    };
+    // 単色パネル。anchor と pivot は同じ点 (角に寄せる置き方)。**RectTransform を先に**足す —
+    // 後から足すと UIElement のポインタがアーキタイプ移動で無効になる
+    auto panel = [&](const char* name, GameObject* parent, float ax, float ay, float x, float y,
+                     float w, float h, DirectX::XMFLOAT4 color, int order) {
+        GameObject go = s.CreateGameObject(name);
+        auto* rt = go.AddComponent<RectTransformComponent>();
+        rt->anchorMin = { ax, ay };
+        rt->anchorMax = { ax, ay };
+        rt->pivot = { ax, ay };
+        rt->anchoredPosition = { x, y };
+        rt->sizeDelta = { w, h };
+        auto* el = go.AddComponent<UIElementComponent>();
+        el->kind = 0;
+        el->color = color;
+        el->order = order;
+        if (parent != nullptr) {
+            go.SetParent(*parent);
+        }
+        return go;
+    };
+    // 親の全面に中央揃えのテキスト
+    auto label = [&](const char* name, GameObject& parent, const char* text, float fontScale,
+                     int order) {
+        GameObject go = s.CreateGameObject(name);
+        auto* rt = go.AddComponent<RectTransformComponent>();
+        rt->anchorMin = { 0.0f, 0.0f };
+        rt->anchorMax = { 1.0f, 1.0f };
+        rt->pivot = { 0.5f, 0.5f };
+        rt->sizeDelta = { 0.0f, 0.0f };
+        auto* el = go.AddComponent<UIElementComponent>();
+        el->kind = 1;
+        el->align = 4;
+        el->fontScale = fontScale;
+        el->order = order;
+        std::snprintf(el->text, sizeof(el->text), "%s", text);
+        go.SetParent(parent);
+        return go;
+    };
+
+    // ---- 既定キャンバス (Canvas 無し = project_settings の基準解像度 + Expand) ----
+    {
+        GameObject bg = s.CreateGameObject("Background");
+        auto* rt = bg.AddComponent<RectTransformComponent>();
+        rt->anchorMin = { 0.0f, 0.0f };
+        rt->anchorMax = { 1.0f, 1.0f };
+        rt->sizeDelta = { 0.0f, 0.0f };
+        auto* el = bg.AddComponent<UIElementComponent>();
+        el->color = { 0.08f, 0.09f, 0.12f, 1.0f };
+        el->order = -1000;
+    }
+    // 中央やや上。上端の 2 箱 (Shrink は 16:9 で最も大きく出る) と下の sortOrder の 2 枚に
+    // 重ならない高さに置く (anchor == pivot == 0.5 = 中央基準)
+    GameObject titleBox = panel("TitleBox", nullptr, 0.5f, 0.5f, 0.0f, -100.0f, 1200.0f, 220.0f,
+                                { 0.14f, 0.15f, 0.20f, 1.0f }, -500);
+    label("Title", titleBox, "M75c  CANVAS SCALER", 5.0f, -499);
+    GameObject defBox = panel("DefaultBox", nullptr, 1.0f, 1.0f, -32.0f, -32.0f, 300.0f, 150.0f,
+                              { 0.45f, 0.25f, 0.60f, 1.0f }, 0);
+    label("DefaultLabel", defBox, "DEFAULT 1920x1080", 2.0f, 1);
+
+    // ---- Scaler 3 モード (基準 1024x768)。箱は同じ 300x150 ----
+    GameObject cExpand = canvas("CanvasExpand", 1024, 768, 0, 0.0f, 1);
+    GameObject expandBox = panel("ExpandBox", &cExpand, 0.0f, 0.0f, 16.0f, 16.0f, 300.0f, 150.0f,
+                                 { 0.20f, 0.35f, 0.70f, 1.0f }, 0);
+    label("ExpandLabel", expandBox, "EXPAND 1024x768", 2.0f, 1);
+
+    GameObject cShrink = canvas("CanvasShrink", 1024, 768, 1, 0.0f, 1);
+    GameObject shrinkBox = panel("ShrinkBox", &cShrink, 1.0f, 0.0f, -16.0f, 16.0f, 300.0f, 150.0f,
+                                 { 0.20f, 0.55f, 0.30f, 1.0f }, 0);
+    label("ShrinkLabel", shrinkBox, "SHRINK 1024x768", 2.0f, 1);
+
+    GameObject cMatch = canvas("CanvasMatch", 1024, 768, 2, 0.5f, 1);
+    GameObject matchBox = panel("MatchBox", &cMatch, 0.0f, 1.0f, 16.0f, -16.0f, 300.0f, 150.0f,
+                                { 0.70f, 0.45f, 0.15f, 1.0f }, 0);
+    label("MatchLabel", matchBox, "MATCH 0.5 1024x768", 2.0f, 1);
+
+    // ---- sortOrder: Canvas の sortOrder は要素の order より先に効く ----
+    // 既定キャンバスの order 100 の赤より、sortOrder 5 の Canvas にある order -100 の青が手前に出る
+    GameObject lowSort = panel("DefaultOrder100", nullptr, 0.5f, 1.0f, -120.0f, -220.0f, 480.0f,
+                               200.0f, { 0.75f, 0.20f, 0.20f, 1.0f }, 100);
+    label("DefaultOrder100Label", lowSort, "DEFAULT ORDER 100", 2.5f, 101);
+    GameObject cOverlay = canvas("CanvasOverlay", 0, 0, 0, 0.0f, 5);
+    GameObject highSort = panel("OverlayOrderMinus100", &cOverlay, 0.5f, 1.0f, 120.0f, -120.0f,
+                                480.0f, 200.0f, { 0.20f, 0.60f, 0.70f, 1.0f }, -100);
+    label("OverlayLabel", highSort, "SORT 5 ORDER -100", 2.5f, -99);
+}
+
 } // namespace mye

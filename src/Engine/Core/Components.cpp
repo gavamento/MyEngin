@@ -1028,6 +1028,20 @@ void RegisterBuiltinComponents()
         MYE_JP("基準", MYE_FIELD_TIP(RectTransformComponent, basis, Int32,
                                      "0 = nearest UI ancestor (canvas if none) 1 = canvas")),
     }, kComponentNoHash | kComponentUiAux);
+
+    // M75c: UICanvas (RectTransform の直後)。Canvas + Canvas Scaler。描画専用の NoHash +
+    // UI 専用判定に載せる UiAux (忘れると Canvas を持つ要素がワールド追従に落ちて消える)
+    RegisterComponent<UICanvasComponent>("UICanvas", {
+        MYE_JP("基準幅", MYE_FIELD_TIP(UICanvasComponent, referenceW, Int32,
+                                       "reference width; <= 0 = project_settings ui.referenceW")),
+        MYE_JP("基準高さ", MYE_FIELD_TIP(UICanvasComponent, referenceH, Int32,
+                                         "reference height; <= 0 = project_settings ui.referenceH")),
+        MYE_JP("スケールモード", MYE_FIELD_TIP(UICanvasComponent, scaleMode, Int32,
+                                               "0 = Expand 1 = Shrink 2 = Match width or height")),
+        MYE_JP("幅/高さの比重", MYE_FIELD_RANGE(UICanvasComponent, match, Float, 0.0f, 1.0f)),
+        MYE_JP("描画順", MYE_FIELD_TIP(UICanvasComponent, sortOrder, Int32,
+                                       "first draw/hit key; larger = in front (default canvas = 0)")),
+    }, kComponentNoHash | kComponentUiAux);
 }
 
 } // namespace mye

@@ -37,9 +37,10 @@ void ForEachUiElement(World& world, int canvasW, int canvasH, F&& fn)
 
 } // namespace
 
-EntityID HitTest(World& world, int canvasW, int canvasH, float x, float y)
+EntityID HitTest(World& world, int canvasW, int canvasH, float pointX, float pointY)
 {
     EntityID best = kNullEntity;
+    int32_t bestSort = 0;
     int32_t bestOrder = 0;
     bool have = false;
     ForEachUiElement(world, canvasW, canvasH,
@@ -50,6 +51,13 @@ EntityID HitTest(World& world, int canvasW, int canvasH, float x, float y)
                          if (!res.visible) {
                              return;
                          }
+                         // M75c: 点は既定キャンバス座標で来る。要素の属するキャンバスの単位へ
+                         // 直してから判定する (Canvas の無い要素は 1.0f で割る = ビット恒等)
+                         const EntityID canvasE = uilayout::FindCanvas(world, e);
+                         const uilayout::CanvasInfo cv =
+                             uilayout::CanvasOfEntity(world, canvasE, canvasW, canvasH);
+                         const float x = pointX / cv.scale;
+                         const float y = pointY / cv.scale;
                          if (!res.hasXform) {
                              // 可視矩形 (祖先クリップ適用済み) で判定 — 見えない部分には当たらない
                              // (= 従来の ResolveVisibleRect と同じ式。恒等要素の判定は M75a 前と
@@ -83,9 +91,15 @@ EntityID HitTest(World& world, int canvasW, int canvasH, float x, float y)
                                  return;
                              }
                          }
-                         if (!have || el.order > bestOrder
-                             || (el.order == bestOrder && e.index > best.index)) {
+                         // 最前面 = (キャンバスの sortOrder, order, entity.index) の最大 (M75c)。
+                         // UIRenderer の描画順と同じキー
+                         const int32_t sortOrder = uilayout::CanvasSortOrder(world, canvasE);
+                         if (!have || sortOrder > bestSort
+                             || (sortOrder == bestSort
+                                 && (el.order > bestOrder
+                                     || (el.order == bestOrder && e.index > best.index)))) {
                              best = e;
+                             bestSort = sortOrder;
                              bestOrder = el.order;
                              have = true;
                          }
@@ -113,11 +127,15 @@ EntityID FindNextFocus(World& world, int canvasW, int canvasH, EntityID current,
                              return;
                          }
                          const auto rect = uilayout::ResolveRect(world, e, canvasW, canvasH, wc);
+                         // M75c: 候補の比較は既定キャンバス座標で行う (キャンバスごとに単位が
+                         // 違うので、そのままでは別キャンバスの要素と距離を比べられない)。
+                         // Canvas の無い要素は 1.0f を掛ける = ビット恒等
+                         const float toDefault = uilayout::CanvasOf(world, e, canvasW, canvasH).scale;
                          uinav::NavRect r;
-                         r.x = rect.x;
-                         r.y = rect.y;
-                         r.w = rect.w;
-                         r.h = rect.h;
+                         r.x = rect.x * toDefault;
+                         r.y = rect.y * toDefault;
+                         r.w = rect.w * toDefault;
+                         r.h = rect.h * toDefault;
                          r.index = e.index;
                          if (e == current) {
                              cur = r;

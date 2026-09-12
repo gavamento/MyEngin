@@ -33,10 +33,26 @@ struct UIRect {
 };
 
 // ---- キャンバス (M70b) ----
-// 基準解像度。UI の数値 (x/y/w/h/fontScale/sliceBorder) はすべてこの解像度で
-// オーサリングされているものとして扱う。**project_settings 化は後回し** (ハードコード)。
+// 基準解像度の**既定値**。UI の数値 (x/y/w/h/fontScale/sliceBorder) はすべて基準解像度で
+// オーサリングされているものとして扱う。M75c で実効値は project_settings.json の
+// ui.referenceW/H になった (DefaultCanvasDesc)。この定数は「設定が無いとき」の値
 inline constexpr int kCanvasRefW = 1920;
 inline constexpr int kCanvasRefH = 1080;
+
+// Canvas Scaler の Screen Match Mode (M75c)。UICanvasComponent.scaleMode と同じ値
+inline constexpr int kScaleExpand = 0; // s = min(sx, sy)。キャンバスは基準より広がる側へ伸びる
+inline constexpr int kScaleShrink = 1; // s = max(sx, sy)。キャンバスは基準より狭まる側へ縮む
+inline constexpr int kScaleMatch = 2;  // s = sx^(1-m) * sy^m (Unity の対数空間 lerp と同値)
+
+// キャンバスの解き方 (M75c)。**ConstantPixelSize は無い** — キャンバス寸法が画素数の関数になり、
+// sim のヒットテストがウィンドウの画素数に依存してしまう。3 モードとも「一様スケール +
+// アスペクトで伸びる矩形」の枠内で s の決め方が違うだけ
+struct CanvasDesc {
+    int referenceW = kCanvasRefW;
+    int referenceH = kCanvasRefH;
+    int scaleMode = kScaleExpand;
+    float match = 0.0f; // kScaleMatch のとき 0 = 幅に合わせる / 1 = 高さに合わせる
+};
 
 // キャンバス寸法と、キャンバス → 実 px の一様倍率。
 struct CanvasInfo {
@@ -63,12 +79,41 @@ struct CanvasInfo {
 //   「右端/下端の 0.5 px にだけ UI が届かない (or 半 px はみ出す)」ことだけ。
 //   非 16:9 かつ端数が出る解像度 (1366x768 → canvas 1920.94x1080) でしか効かない。
 //
-// ★**規則は Expand (min) 1 つだけ**。Unity の Match Width Or Height (対数空間 lerp =
-//   pow(2, lerp(log2(w/refW), log2(h/refH), match))) と Shrink (max) は**後から足しても
-//   既存シーンを壊さない** (どちらも同じ「一様スケール + 可変キャンバス」の枠内で s の
-//   決め方が変わるだけ) ので、今回は入れない。足すときは基準解像度と一緒に
-//   project_settings.json へ出す。
+// ★M75c: Shrink (max) と Match Width Or Height を足した。正本は desc を取る版で、
+//   引数無し版は既定キャンバス (DefaultCanvasDesc = project_settings の基準解像度 + Expand)。
+//   Expand の式は M70b から 1 ビットも変えていない (golden 4 枚の不変はここに掛かる)。
+// ★Match の pow / log は CRT を呼ばず、UILayout.cpp の double の級数で解く — UCRT の
+//   数学関数は CPU (FMA3 の有無) で経路が変わり、2 台のヒットテストが割れうるため。
+//   m <= 0 / m >= 1 / sx == sy (基準と同じアスペクト) はべき乗を通さず sx / sy をそのまま使う
+CanvasInfo CanvasSize(int screenW, int screenH, const CanvasDesc& desc);
 CanvasInfo CanvasSize(int screenW, int screenH);
+
+// 既定キャンバスの基準解像度 (M75c)。**起動時に 1 回だけ** EngineLoop が project_settings.json
+// から書く静的な値で、sim 中は変えない (.rep に載らない = 途中で変えると同じ記録の再生が割れる。
+// actions.json と同じ扱い)。<= 0 は kCanvasRefW/H へ倒す
+void SetDefaultCanvasReference(int referenceW, int referenceH);
+const CanvasDesc& DefaultCanvasDesc();
+
+// ---- 複数キャンバス (M75c) ----
+// e が属するキャンバス = 自分を含む最寄りの UICanvas 祖先。無ければ kNullEntity (= 既定キャンバス)。
+// 入れ子は非対応: 最寄りが勝ち、その上の階層とは座標系もクリップも切れる
+EntityID FindCanvas(World& world, EntityID e);
+
+// キャンバスエンティティ (FindCanvas の戻り値) の寸法と、そのキャンバス単位 → **既定キャンバス単位**
+// の倍率 (scale)。defaultW/H は既定キャンバスの寸法 (Resolve* に渡している値)。
+// ★明示キャンバスは**既定キャンバスを仮想の画面として**解く。3 モードとも s は画面寸法の 1 次
+//   同次式なので、実画面から直接解いた s_c と「既定キャンバスで解いた s' × 既定の s」は数学的に
+//   一致する。こうすると sim 側 (HitTest / FocusNav / ABI) は既定キャンバス座標だけを共通語に
+//   でき、Resolve* の引数も変わらない (実 px は描画側が最後に既定の scale を掛けるだけ)。
+// canvas == kNullEntity、または既定と同じ解き方 (基準解像度が既定 + Expand) の Canvas は
+// {1.0f, defaultW, defaultH} を返す = Canvas の無い UI と同ビット
+CanvasInfo CanvasOfEntity(World& world, EntityID canvas, int defaultW, int defaultH);
+inline CanvasInfo CanvasOf(World& world, EntityID e, int defaultW, int defaultH)
+{
+    return CanvasOfEntity(world, FindCanvas(world, e), defaultW, defaultH);
+}
+// 描画/ヒットの第 1 キー。既定キャンバスは 0
+int32_t CanvasSortOrder(World& world, EntityID canvas);
 
 // ---- ゲーム面 → キャンバス (M75b) ----
 // レーン 0 の入力に記録されたゲーム面 (surfW/H) から既定キャンバスを解く。**sim レーンの UI
@@ -165,9 +210,12 @@ struct UIResolved {
 };
 
 // e の RectTransform (無ければ UIElement 用の既定値) を screen px 矩形に解決する (正本)。
-// basis=0 は最寄りの UI 祖先 (RectTransform / UIElement 持ち) の解決済み矩形基準。祖先が
+// basis=0 は最寄りの UI 祖先 (RectTransform / UIElement / UICanvas 持ち) の解決済み矩形基準。祖先が
 // 無い / basis=1 はワールド追従判定 (冒頭コメント: UI 専用でないオブジェクト上の
 // UIElement は自エンティティの射影点基準) → 該当しなければ screen 基準 (従来)。
+// ★M75c: 戻る矩形は **e が属するキャンバスの単位**。screenW/H は既定キャンバスの寸法のまま。
+//   UICanvas を持つ要素自身は常に (0,0,cw,ch)、basis=1 は属するキャンバスの全面が基準。
+//   既定キャンバス単位へは CanvasOf(...).scale を掛ける (Canvas の無い要素は 1.0f = 恒等)。
 // 壊れ親/循環は深度上限で打ち切り安全。UIElement も RectTransform も無ければ visible=false。
 UIResolved Resolve(World& world, EntityID e, int screenW, int screenH,
                    const UIWorldContext* wc);
@@ -195,6 +243,7 @@ bool IsUiOnlyEntity(World& world, EntityID e);
 
 // e の祖先の clipChildren 矩形をすべて交差した「見えてよい範囲」。クリップ祖先が
 // 無ければ screen 全域。e 自身の clipChildren は含まない (自分は切らない)。
+// M75c: 単位は e のキャンバス。祖先を辿るのは**属するキャンバスまで** (その上は別の座標系)
 UIRect ResolveClipRect(World& world, EntityID e, int screenW, int screenH,
                        const UIWorldContext* wc = nullptr);
 

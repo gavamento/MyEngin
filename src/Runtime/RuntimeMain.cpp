@@ -52,6 +52,7 @@ public:
     bool fogShowcase = false;     // --fog-demo (M57追補: 霧 + GPU 粒子 + VFX。golden 15 枚目)
     bool particleShowcase = false; // --particle-demo (M63a: 粒子表現。golden 16/17 枚目)
     bool acousticShowcase = false; // --acoustic-demo (M65b: 音響伝播。replay 7 ペア目)
+    bool uiShowcase = false;       // --ui-demo (M75c: ゲーム内 UI。golden 25 枚目)
     float terrainLodDistance = 0.0f; // --terrain-lod DIST (M58e: 0 = LOD 無効)
     float terrainSkirtDepth = 0.0f;  // --terrain-skirt D (M58e: 0 = 自動 / < 0 = 無し)
 
@@ -60,7 +61,10 @@ public:
         ctx.shaders->Load("forward_lit");
         mye::RegisterDemoContent(ctx);   // Editor と同じ実体登録 (AssetID 解決)
         mye::RegisterAssetLibraries(ctx); // .prefab / .anim を登録
-        if (scenePath.empty() && fogShowcase) {
+        if (scenePath.empty() && uiShowcase) {
+            // M75c: render-demo と同じ理由でコードから毎回組む (bat が撮影前に消す)
+            scenePath = L"cache\\ui_showcase.scene.json";
+        } else if (scenePath.empty() && fogShowcase) {
             // M57追補: joint / physics と同じ理由でコードから毎回組む (bat が撮影前に消す)
             scenePath = L"cache\\fog_showcase.scene.json";
         } else if (scenePath.empty() && jointShowcase) {
@@ -116,6 +120,8 @@ public:
             // Editor と同じ「ロード直後 1 回」(M48e)。ここを揃えないと Editor で録った .rep と
             // Runtime の verify で初期状態が食い違う
             mye::Prefab::RefreshNonOverridden(*ctx.scene, *ctx.prefabs);
+        } else if (uiShowcase) {
+            mye::BuildUiShowcaseScene(ctx); // M75c
         } else if (jointShowcase) {
             mye::BuildJointShowcaseScene(ctx); // M60i
         } else if (acousticShowcase) {
@@ -422,6 +428,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             } else if (arg == L"--acoustic-demo") {
                 // M65b: 音響伝播のショーケース (replay 7 ペア目の被写体)
                 app.acousticShowcase = true;
+            } else if (arg == L"--ui-demo") {
+                app.uiShowcase = true; // M75c: ゲーム内 UI のショーケース (golden 25 枚目)
             } else if (arg == L"--terrain-lod" && i + 1 < argc) {
                 // M58e: 地形 LOD の切替距離。**golden は LOD 無しのまま**で、
                 // クラック A/B のときだけ点ける

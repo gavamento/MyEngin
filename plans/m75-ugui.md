@@ -182,6 +182,33 @@ Canvas Scaler は Expand (1920x1080 固定) のみ、Layout Group もウィジ�
   `Could not load file or assembly 'Microsoft.CodeAnalysis'` が並ぶ。C# レーンは replay 被覆外なので PASS は
   変わらないが、`tools\build_managed.bat Debug` を焼き直してから回すこと。
 
+- **M75c (2026-09-12)**: 同じ worktree (`C:\HAL\MyEngin_m75a`、ブランチ `m75c`) で実装。
+- **明示 Canvas は「既定キャンバスを仮想の画面として」解く** (計画は `CanvasSize(surfW,surfH,desc)` = 実画面から)。
+  3 モードとも s は画面寸法の 1 次同次式なので `s' (既定キャンバスで解く) × s_default == s_c` が数学的に成り立つ。
+  こうすると `Resolve*` / `HitTest` / `FindNextFocus` の引数 (既定キャンバス寸法) も UISelfTest の 58 呼び出しも変わらず、
+  sim の共通語が「既定キャンバス座標」1 本で済む。差は既定キャンバスの int 丸め (最大 0.5 単位) だけ。
+  - 戻る矩形は**要素の属するキャンバスの単位**。既定キャンバス単位へは `CanvasOf(...).scale` を掛ける (Canvas 無しは 1.0f)。
+    掛けているのは Renderer (px 変換の 1 行) / HitTest (点を割る) / FocusNav (候補矩形) / ABI `GetUIRect` / GameView のアウトライン。
+    Inspector の解決済み矩形は Canvas 単位のまま (Unity と同じ見え方)。
+  - **ABI の座標は全部既定キャンバス単位** (`MouseCanvasPos` / `UIHitTest` は元から、`GetUIRect` は Canvas 単位から戻す)。
+- `UICanvas.referenceW/H` の既定は **0 = project_settings に従う**。基準が既定と同じ + Expand の Canvas は
+  `CanvasOfEntity` が `{1.0f, defaultW, defaultH}` を返す近道を持つ = 「Canvas を足しただけでは絵もヒットも 1 ビットも動かない」
+  (UISelfTest (3) が 3 解像度 × 格子で memcmp)。
+- **Match の pow/log は自前の double 級数** (`DetLn` / `DetExp`、UILayout.cpp)。UCRT の数学関数は CPU (FMA3) で経路が変わり
+  2 台のヒットテストが割れうるため。`m <= 0` / `m >= 1` / `sx == sy` (基準と同じアスペクト) はべき乗を通さない。
+  精度は std::pow と 1e-6 以内 (検査済み)。
+- Canvas 要素自身の矩形は RectTransform に依らず常にキャンバス全面 / basis=1 は属する Canvas の全面 /
+  `ResolveClipRect` は属する Canvas で止まる (入れ子 Canvas は外側のクリップを受けない) / `IsUiNode` に UICanvas を追加
+  (RectTransform 無しの Canvas の子が既定キャンバスへ落ちないように)。
+- 描画/ヒットのキー `(sortOrder, order, index)` は Renderer と HitTest に実装。FocusNav は候補を既定キャンバス座標で比べる
+  (Canvas 単位のまま比べると別キャンバスの要素の上下を誤判定する — UISelfTest (7) が固定)。
+- **基準解像度の変更は次回起動から** (Project Settings の UI 節で保存。実効値 `DefaultCanvasDesc` は EngineLoop 起動時に 1 回だけ)。
+  エンジンリポジトリの `assets\project_settings.json` には ui 節を**書いていない** (無い = 1920x1080)。NetIdentity.referenceW/H は実効値。
+- Create > UI > Canvas は**選択中の UI の子にしない** (入れ子非対応なので汎用 CreateItem で作る)。子 UI の親判定は UICanvas も UI ノード扱い。
+- `--ui-demo` = `cache\ui_showcase.scene.json` (Runtime / Editor 共通、shot_verify が撮影前に消す)。4 隅の箱を
+  **基準 1024x768 (4:3)** の Canvas に置いたのは、16:9 の基準だと 3 モードが一致して何も写らないため。
+  M75e 以降は `BuildUiShowcaseScene` の**末尾へ**積み増す。golden 25 枚目 = `ui_widgets` (960x540、CI tol=3)。
+
 ## 各サブに共通する罠
 - `IsUiOnlyEntity` の許容漏れ (UiAux で構造的に潰す)。
 - `ZeroStringTail` (InputField の text)。

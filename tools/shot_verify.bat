@@ -103,14 +103,18 @@ rem M58c: 地形ショーケース (--terrain-demo) も同じ理由でコード�
 set TERRAIN_SCENE=cache\terrain_showcase.scene.json
 if exist %TERRAIN_SCENE% del /q %TERRAIN_SCENE%
 
+rem M75c: UI ショーケース (--ui-demo) も同じ理由でコードから毎回組む
+set UI_SCENE=cache\ui_showcase.scene.json
+if exist %UI_SCENE% del /q %UI_SCENE%
+
 set FAILED=0
 set SHOTS=0
 
-rem ---- 24 本。既定デモの 2 経路 (Forward / Deferred) + 生成シーン 2 本 + UI プローブ
+rem ---- 25 本。既定デモの 2 経路 (Forward / Deferred) + 生成シーン 2 本 + UI プローブ
 rem      + 描画ショーケースの 2 経路 (M54a) + 地形 (M58c) + 物理 (M59l) + 関節 (M60k)
 rem      + 霧 (M57追補) + パーティクル 2 経路 (M63a) + 音響 2 経路 (M65e)
 rem      + RT 反射 / RT GI (M67a) + RT 反射 + ReSTIR (M67g)
-rem      + UI キャンバス 2 本 (M70b)
+rem      + UI キャンバス 2 本 (M70b) + UI ショーケース 1 本 (M75c)
 rem      + ローカル限定 4 本 (ssr / fxaa / taa / froxel) ----
 rem ★**--rt-demo (コーネル箱) は** WARP では重すぎるので golden にしない (ローカル任意)。
 rem   ただし **--render-demo に --rt-refl / --rt-gi を足す 20〜22 枚目は別物** で、
@@ -407,6 +411,15 @@ call :shot ui_probe_720p --scene assets\scenes\ui_probe.scene.json
 set SHOT=--warp --no-audio --font-embedded --width 960 --height 600 --frames 6 --shot-frame 3 --no-fxaa
 call :shot ui_probe_16x10 --scene assets\scenes\ui_probe.scene.json
 set SHOT=%SHOTBASE% --no-fxaa
+
+rem ---- 25 枚目 (M75c): --ui-demo。**明示 Canvas と Canvas Scaler 3 モードの唯一のピクセル被覆**。
+rem      4 隅の箱はどれも自分のキャンバス単位で 300x150 で、基準 1024x768 (4:3) を 16:9 で解くので
+rem      Expand / Shrink / Match 0.5 で実寸が変わる。中央下の 2 枚は Canvas の sortOrder が要素の
+rem      order より先に効くこと (order -100 の方が手前に出る) を固定する。
+rem ★M75e〜h の Layout / ウィジェットはこのシーンへ積み増すので、この 1 枚は各サブで更新される
+rem   (名前が ui_widgets なのは最終形に合わせたため)。tol=3 の CI 判定に載せる — 23/24 枚目と
+rem   同じく不透明クアッドと内蔵フォントの貼り付けだけで、分岐で増幅する演算が無い
+call :shot ui_widgets --ui-demo
 
 echo.
 if %UPDATE%==1 (

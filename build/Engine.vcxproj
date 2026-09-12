@@ -155,6 +155,7 @@
     <ClCompile Include="..\src\Engine\Engine\UfbxImpl.cpp" />
     <ClCompile Include="..\src\Engine\Engine\UI\UIInteraction.cpp" />
     <ClCompile Include="..\src\Engine\Engine\UI\UILayout.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\UI\UIProjectSettings.cpp" />
     <ClCompile Include="..\src\Engine\Engine\UI\UIRenderer.cpp" />
     <ClCompile Include="..\src\Engine\Engine\UI\UISelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Vfx\VfxRenderer.cpp" />
@@ -349,6 +350,7 @@
     <ClInclude Include="..\src\Engine\Engine\UI\UIInteraction.h" />
     <ClInclude Include="..\src\Engine\Engine\UI\UILayout.h" />
     <ClInclude Include="..\src\Engine\Engine\UI\UINav.h" />
+    <ClInclude Include="..\src\Engine\Engine\UI\UIProjectSettings.h" />
     <ClInclude Include="..\src\Engine\Engine\UI\UIRenderer.h" />
     <ClInclude Include="..\src\Engine\Engine\UI\UISelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\UI\UITextLayout.h" />

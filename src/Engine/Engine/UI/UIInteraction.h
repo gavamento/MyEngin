@@ -98,6 +98,8 @@ inline constexpr float kDragThresholdSurfPx = 10.0f;
 // キャンバス座標の点 (x,y) を含む最前面の active UIElement。無ヒットは kNullEntity。
 // 最前面 = order 最大、同値は entity.index 最大 (UIRenderer の描画順で上のもの)。
 // 祖先クリップで見えない部分には当たらない。
+// M75c: canvasW/H と点は**既定キャンバス**のもの。明示 Canvas の下の要素は点をその Canvas の単位へ
+// 直して判定し、最前面のキーの先頭に Canvas の sortOrder が入る (既定キャンバスは 0)
 // ★**ABI の UIHitTest もこの関数を呼ぶ** — ヒットテストの規則を 2 本書かないため
 EntityID HitTest(World& world, int canvasW, int canvasH, float x, float y);
 
