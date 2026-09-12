@@ -95,6 +95,27 @@ XMFLOAT4 SampleQuat(const std::vector<float>& times, const std::vector<XMFLOAT4>
     return out;
 }
 
+// clip (範囲外は null = バインドポーズ) を timeSec でサンプルした 1 ジョイントの TRS。
+// 手順は ComputeJointLocals のループ本体と同じ (トラックが無いチャネルはバインド値)
+void SampleJointTrs(const SkeletalClip* c, const SkeletonJoint& jt, size_t j, float timeSec,
+                    XMFLOAT3& t, XMFLOAT4& r, XMFLOAT3& s)
+{
+    t = jt.bindT;
+    r = jt.bindR;
+    s = jt.bindS;
+    if (c && j < c->tracks.size()) {
+        const JointTrack& tr = c->tracks[j];
+        t = SampleVec3(tr.tTimes, tr.tVals, timeSec, t);
+        r = SampleQuat(tr.rTimes, tr.rVals, timeSec, r);
+        s = SampleVec3(tr.sTimes, tr.sVals, timeSec, s);
+    }
+}
+
+const SkeletalClip* ClipOrNull(const SkinnedModel& model, int clip)
+{
+    return (clip >= 0 && clip < static_cast<int>(model.clips.size())) ? &model.clips[clip] : nullptr;
+}
+
 } // namespace
 
 // clip を timeSec でサンプルして全ジョイントのローカル行列を作る (palette / jointGlobal 共用)。
@@ -122,6 +143,32 @@ void ComputeJointLocals(const SkinnedModel& model, int clip, float timeSec,
         local[j] = XMMatrixScaling(s.x, s.y, s.z) *
                    XMMatrixRotationQuaternion(XMLoadFloat4(&r)) *
                    XMMatrixTranslation(t.x, t.y, t.z);
+    }
+}
+
+void ComputeJointLocalsBlended(const SkinnedModel& model, int clipA, float timeSecA, int clipB,
+                               float timeSecB, float weightB, std::vector<XMMATRIX>& local)
+{
+    const size_t n = model.joints.size();
+    const SkeletalClip* ca = ClipOrNull(model, clipA);
+    const SkeletalClip* cb = ClipOrNull(model, clipB);
+    const float w = std::clamp(weightB, 0.0f, 1.0f);
+
+    local.resize(n);
+    for (size_t j = 0; j < n; ++j) {
+        const SkeletonJoint& jt = model.joints[j];
+        XMFLOAT3 ta, sa, tb, sb;
+        XMFLOAT4 ra, rb;
+        SampleJointTrs(ca, jt, j, timeSecA, ta, ra, sa);
+        SampleJointTrs(cb, jt, j, timeSecB, tb, rb, sb);
+        // XMQuaternionSlerp は内積が負なら片側を反転する (= 常に短い弧を通る)。
+        // ベイク済みキーは隣り合うクリップ間で符号が揃っている保証が無いので、これが要る
+        const XMVECTOR t = XMVectorLerp(XMLoadFloat3(&ta), XMLoadFloat3(&tb), w);
+        const XMVECTOR r = XMQuaternionSlerp(XMLoadFloat4(&ra), XMLoadFloat4(&rb), w);
+        const XMVECTOR s = XMVectorLerp(XMLoadFloat3(&sa), XMLoadFloat3(&sb), w);
+        // 行ベクトル規約: local = S * R * T (ComputeJointLocals と同じ積順)
+        local[j] = XMMatrixScalingFromVector(s) * XMMatrixRotationQuaternion(r) *
+                   XMMatrixTranslationFromVector(t);
     }
 }
 

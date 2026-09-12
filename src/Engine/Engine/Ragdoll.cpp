@@ -50,12 +50,17 @@ bool IsPartHeld(World& world, EntityID part)
 void BuildBonePalette(World& world, EntityID skinnedMesh, const SkinnedModel& model, int clip,
                       float timeSec, std::vector<XMFLOAT4X4>& out)
 {
-    const size_t n = model.joints.size();
-
     // 1) アニメのポーズ。部位を持たない骨 (指先など、剛体を作らなかったところ) は
     //    これを親から合成して埋める
     std::vector<XMMATRIX> locals;
     ComputeJointLocals(model, clip, timeSec, locals);
+    BuildBonePaletteFromLocals(world, skinnedMesh, model, locals, out);
+}
+
+void BuildBonePaletteFromLocals(World& world, EntityID skinnedMesh, const SkinnedModel& model,
+                                const std::vector<XMMATRIX>& locals, std::vector<XMFLOAT4X4>& out)
+{
+    const size_t n = model.joints.size();
 
     // 2) 部位 → 骨の override を集める。**直子だけ**を見るのが M48g の v1 規約で、
     //    そこを緩めるとワールド行列 (= 前 tick の値) を読む必要が出てしまう

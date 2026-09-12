@@ -278,11 +278,28 @@ struct AnimatorComponent {
 // スキン付き glTF メッシュ。ポーズ (ボーン行列) は描画専用のため **hash しない**
 // (kComponentNoHash → 既存シーンのリプレイ不変 = bump 不要)。時刻は tick で保持し、
 // RenderSystem がフレーム毎に SkinnedModel からサンプルしてボーンパレットを構築する。
+//
+// ---- クロスフェード (M18 追補) ----
+// clip を書き換えると SkinningSystem が切り替えとして検出し、新しいクリップを頭から再生し直す。
+// fadeTicks > 0 なら直前のクリップの姿勢から fadeTicks tick かけて溶かす (スクリプトは clip を
+// 書くだけでよい)。一度きりのクリップ (警戒・ひるみ等) は loop = 0 で最後のコマに止める。
+// ★末尾 7 本を足したので生バイトが変わった = kSimSnapshotVersion v16。ハッシュは NoHash のまま
 struct SkinnedMeshComponent {
     AssetID model = {};    // SkinnedModelLibrary のキー (glTF skin 由来)
     int32_t clip = 0;      // 再生クリップ index
     int32_t timeTicks = 0; // 再生位置 (tick、60Hz 前提でサンプル秒 = timeTicks/60)
     int32_t playing = 1;   // 0=停止
+    int32_t loop = 1;      // 0=一度きり (末尾のコマで止める) 1=ループ (M18 の挙動)
+    int32_t fadeTicks = 0; // clip 切り替え時のクロスフェード長 (tick)。0=即時
+    // ---- 以下は SkinningSystem の再生状態 (シーンに保存しない) ----
+    // 前 tick までに観測した clip。clip と違えば切り替え。kClipUnobserved = まだ見ていない
+    // (ロード / 生成直後の 1 回目を切り替えと誤認して、保存済みの timeTicks を潰さないため)
+    int32_t observedClip = kClipUnobserved;
+    int32_t fromClip = -1;     // フェード元のクリップ
+    int32_t fromTimeTicks = 0; // フェード元の再生位置。★フェード中は進めない (凍らせて溶かす)
+    int32_t fadeElapsed = 0;   // 経過 tick。重み = fadeElapsed / fadeTotal (整数の比)
+    int32_t fadeTotal = 0;     // 開始時に確定したフェード長。0 = フェードしていない
+    static constexpr int32_t kClipUnobserved = -2147483647 - 1;
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 

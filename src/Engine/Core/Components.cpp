@@ -211,11 +211,22 @@ void RegisterBuiltinComponents()
 
     // M18: スケルタルスキニング。ポーズは描画専用なので **kComponentNoHash** (既存シーン不変)。
     // opt-in (無ければ通常メッシュ描画) なので TypeId append (=14) だけで bump 不要
+    // M18 追補: loop / fadeTicks (設定) と、クロスフェードの再生状態 5 本を末尾 append。
+    // 再生状態は SkinningSystem が毎 tick 書く値なので **シーンに保存しない** (kFieldNoSerialize)。
+    // 保存すると「編集中に clip を変えて保存」したシーンが、再生開始の 1 tick 目に古い clip から
+    // フェードしてしまう。生バイトは snapshot に載るので kSimSnapshotVersion を v16 へ上げてある
     RegisterComponent<SkinnedMeshComponent>("SkinnedMesh", {
         MYE_JP("モデル", MYE_FIELD(SkinnedMeshComponent, model, AssetRef)),
         MYE_JP("クリップ", MYE_FIELD(SkinnedMeshComponent, clip, Int32)),
         MYE_JP("再生位置 (tick)", MYE_FIELD_FLAGS(SkinnedMeshComponent, timeTicks, Int32, kFieldReadOnly)),
         MYE_JP("再生中", MYE_FIELD(SkinnedMeshComponent, playing, Int32)),
+        MYE_JP("ループ", MYE_FIELD(SkinnedMeshComponent, loop, Int32)),
+        MYE_JP("クロスフェード (tick)", MYE_FIELD(SkinnedMeshComponent, fadeTicks, Int32)),
+        MYE_JP("観測したクリップ", MYE_FIELD_FLAGS(SkinnedMeshComponent, observedClip, Int32, kFieldReadOnly | kFieldNoSerialize)),
+        MYE_JP("フェード元クリップ", MYE_FIELD_FLAGS(SkinnedMeshComponent, fromClip, Int32, kFieldReadOnly | kFieldNoSerialize)),
+        MYE_JP("フェード元の再生位置 (tick)", MYE_FIELD_FLAGS(SkinnedMeshComponent, fromTimeTicks, Int32, kFieldReadOnly | kFieldNoSerialize)),
+        MYE_JP("フェード経過 (tick)", MYE_FIELD_FLAGS(SkinnedMeshComponent, fadeElapsed, Int32, kFieldReadOnly | kFieldNoSerialize)),
+        MYE_JP("フェード長 (tick)", MYE_FIELD_FLAGS(SkinnedMeshComponent, fadeTotal, Int32, kFieldReadOnly | kFieldNoSerialize)),
     }, kComponentNoHash);
 
     // M20: 剛体。velocity は積分される sim 状態なので **hash 対象** (kComponentNoHash を付けない)。

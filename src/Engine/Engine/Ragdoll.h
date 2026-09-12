@@ -47,5 +47,12 @@ bool IsPartHeld(World& world, EntityID part);
 void BuildBonePalette(World& world, EntityID skinnedMesh, const SkinnedModel& model, int clip,
                       float timeSec, std::vector<DirectX::XMFLOAT4X4>& out);
 
+// 上と同じだが、部位を持たない骨を埋めるアニメのポーズ (locals) を呼び出し側が渡す版。
+// SkinnedMesh がクロスフェード中なら SampleSkinnedLocals の結果を渡す (M18 追補)。
+// 上の関数は ComputeJointLocals(clip, timeSec) を作ってこれに委譲する = 経路は 1 本
+void BuildBonePaletteFromLocals(World& world, EntityID skinnedMesh, const SkinnedModel& model,
+                                const std::vector<DirectX::XMMATRIX>& locals,
+                                std::vector<DirectX::XMFLOAT4X4>& out);
+
 } // namespace ragdoll
 } // namespace mye

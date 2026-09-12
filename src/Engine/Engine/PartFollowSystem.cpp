@@ -10,6 +10,7 @@
 #include "Engine/Core/World.h"
 #include "Engine/Engine/Parts.h"   // ResolvePartSource (Inspector と共用)
 #include "Engine/Engine/Ragdoll.h" // M60g1: 駆動方向の判定 (物理・描画と共用)
+#include "Engine/Engine/SkinningSystem.h" // M18 追補: クロスフェード込みのポーズ (描画と共用)
 #include "Engine/Renderer/GpuResources.h"
 #include "Engine/Renderer/Skeleton.h"
 
@@ -119,14 +120,26 @@ void PartFollowSystem::Update(World& world, const RenderResources& resources)
         return; // Part 非使用シーンでは完全 no-op (= 既存シーンのリプレイ不変)
     }
 
-    // 2) (model, clip, timeTicks) 単位でジョイント局所行列をキャッシュする。
+    // 2) (model, clip, timeTicks, フェード状態) 単位でジョイント局所行列をキャッシュする。
     //    ComputeJointGlobal は 1 回ごとに全ジョイントを再評価するので、部位ごとに呼ぶと
     //    O(部位数 × ジョイント数) になる (M48a の申し送り)
+    // ★フェードしていないときはフェード欄を 0 に揃えてから比べる — 終わったフェードの
+    //   残骸 (fromClip 等) が違うだけで、同じポーズのキャッシュが割れないように
     struct PoseCache {
-        const SkinnedModel* model;
-        int clip;
-        int timeTicks;
+        const SkinnedModel* model = nullptr;
+        int clip = 0;
+        int timeTicks = 0;
+        int fromClip = 0;
+        int fromTimeTicks = 0;
+        int fadeElapsed = 0;
+        int fadeTotal = 0;
         std::vector<XMMATRIX> locals;
+        bool SameKey(const PoseCache& o) const
+        {
+            return model == o.model && clip == o.clip && timeTicks == o.timeTicks
+                   && fromClip == o.fromClip && fromTimeTicks == o.fromTimeTicks
+                   && fadeElapsed == o.fadeElapsed && fadeTotal == o.fadeTotal;
+        }
     };
     std::vector<PoseCache> poses;
 
@@ -176,23 +189,28 @@ void PartFollowSystem::Update(World& world, const RenderResources& resources)
             continue;
         }
 
+        PoseCache key;
+        key.model = model;
+        key.clip = sm->clip;
+        key.timeTicks = sm->timeTicks;
+        if (IsSkinFading(*sm)) {
+            key.fromClip = sm->fromClip;
+            key.fromTimeTicks = sm->fromTimeTicks;
+            key.fadeElapsed = sm->fadeElapsed;
+            key.fadeTotal = sm->fadeTotal;
+        }
         // **index で持つこと** — push_back で vector が再確保されるとポインタは失効する
         size_t poseIdx = poses.size();
         for (size_t i = 0; i < poses.size(); ++i) {
-            if (poses[i].model == model && poses[i].clip == sm->clip
-                && poses[i].timeTicks == sm->timeTicks) {
+            if (poses[i].SameKey(key)) {
                 poseIdx = i;
                 break;
             }
         }
         if (poseIdx == poses.size()) {
-            PoseCache c;
-            c.model = model;
-            c.clip = sm->clip;
-            c.timeTicks = sm->timeTicks;
-            // 時刻式は描画側 (RenderSystem) と同一 — 同じ tick で同じポーズになる
-            ComputeJointLocals(*model, c.clip, static_cast<float>(c.timeTicks) / 60.0f, c.locals);
-            poses.push_back(std::move(c));
+            // 評価は描画側 (RenderSystem) と同じ関数 — 同じ tick で同じポーズになる
+            SampleSkinnedLocals(*model, *sm, key.locals);
+            poses.push_back(std::move(key));
         }
 
         // 部位が source の直子なので partLocal = jointGlobal でワールドが閉じる (ヘッダ参照)

@@ -12,6 +12,7 @@
 #include "Engine/Engine/FbxLoader.h"
 #include "Engine/Engine/ModelLoader.h"
 #include "Engine/Engine/Scene.h"
+#include "Engine/Engine/SkinningSystem.h"
 #include "Engine/Engine/TransformSystem.h"
 #include "Engine/Platform/PathUtil.h"
 #include "Engine/Renderer/GpuResources.h"
@@ -57,6 +58,21 @@ LoadedSkin FindSkinned(Scene& scene, RenderResources& resources)
                 out.model = model;
                 out.entityWorld = wm->value;
             }
+        }
+    });
+    return out;
+}
+
+// シーン内で最初に見つかった SkinnedMesh (検証アセットはスキン 1 個)。
+// 以降に構造変更を起こさないので、ポインタのまま持ってよい
+SkinnedMeshComponent* FirstSkinnedComponent(Scene& scene)
+{
+    SkinnedMeshComponent* out = nullptr;
+    const ComponentTypeId req[] = { SkinnedMeshComponent::sTypeId };
+    scene.GetWorld().ForEachArchetype(req, [&](Archetype& arch) {
+        if (out == nullptr && arch.Count() > 0) {
+            const int si = arch.FindTypeIndex(SkinnedMeshComponent::sTypeId);
+            out = static_cast<SkinnedMeshComponent*>(arch.GetPtr(si, 0));
         }
     });
     return out;
@@ -342,6 +358,123 @@ bool RunSkeletonSelfTest()
                          f2.y, t2.y, n2.y);
             check(std::fabs(n2.y - f2.y) < 0.5f,
                   "glTF: dropping entityWorld collapses the height spread (test discriminates)");
+        }
+    }
+
+    // ---- (8) クロスフェードの評価 (M18 追補) ----
+    // skinned_beam の Bone2 はクリップ 0 で 1 秒かけて Z 回転 0 -> 90 度 ((6) の設計値)。
+    // バインド (clip -1 = 0 度) と clip 0 の末尾 (90 度) を半分ずつ混ぜれば 45 度になる。
+    // 行列を線形に混ぜる誤った実装だと、角度は合っても +Y 軸の長さが縮む (cos45 に届かない)
+    {
+        SkinnedMeshComponent sm;
+        sm.clip = 0;
+        sm.timeTicks = 30;
+        std::vector<XMMATRIX> sampled;
+        std::vector<XMMATRIX> direct;
+        SampleSkinnedLocals(*fbx.model, sm, sampled);
+        ComputeJointLocals(*fbx.model, 0, 30.0f / 60.0f, direct);
+        bool same = sampled.size() == direct.size();
+        for (size_t j = 0; same && j < direct.size(); ++j) {
+            same = std::memcmp(&sampled[j], &direct[j], sizeof(XMMATRIX)) == 0;
+        }
+        check(!IsSkinFading(sm) && same,
+              "fade: without a fade SampleSkinnedLocals is bit-identical to ComputeJointLocals");
+
+        sm.timeTicks = 60;
+        sm.fromClip = -1;
+        sm.fromTimeTicks = 0;
+        sm.fadeTotal = 2;
+        sm.fadeElapsed = 1;
+        check(IsSkinFading(sm), "fade: fadeElapsed < fadeTotal is a fade");
+        SampleSkinnedLocals(*fbx.model, sm, sampled);
+        const int32_t j2 = fbx.model->FindJointByName("Bone2");
+        bool half = false;
+        if (j2 >= 0) {
+            const XMMATRIX g = JointGlobalFromLocals(*fbx.model, sampled, j2);
+            const XMVECTOR yAxis = XMVector3TransformNormal(XMVectorSet(0, 1, 0, 0), g);
+            MYE_LOG_INFO("  fade 50%% Bone2 +Y = (y %.5f, length %.5f) expected (0.70711, 1)",
+                         XMVectorGetY(yAxis), XMVectorGetX(XMVector3Length(yAxis)));
+            half = std::fabs(XMVectorGetY(yAxis) - 0.70711f) < 2e-3f
+                   && std::fabs(XMVectorGetX(XMVector3Length(yAxis)) - 1.0f) < 2e-3f;
+        }
+        check(half, "fade: halfway between bind (0 deg) and clip 0 end (90 deg) is 45 deg "
+                    "without shrinking (rotation slerps, not a matrix lerp)");
+
+        // 端点: 重み 0 = 元、1 = 先。slerp の端点は丸めで 1e-7 程度ずれうるので許容差で見る
+        std::vector<XMMATRIX> w0, w1, a, b;
+        ComputeJointLocalsBlended(*fbx.model, -1, 0.0f, 0, 1.0f, 0.0f, w0);
+        ComputeJointLocalsBlended(*fbx.model, -1, 0.0f, 0, 1.0f, 1.0f, w1);
+        ComputeJointLocals(*fbx.model, -1, 0.0f, a);
+        ComputeJointLocals(*fbx.model, 0, 1.0f, b);
+        float dev = 0.0f;
+        for (size_t j = 0; j < a.size(); ++j) {
+            dev = std::max(dev, MaxAbsDiff(ToF4x4(w0[j]), ToF4x4(a[j])));
+            dev = std::max(dev, MaxAbsDiff(ToF4x4(w1[j]), ToF4x4(b[j])));
+        }
+        MYE_LOG_INFO("  fade endpoint max deviation = %.8f", dev);
+        check(dev < 1e-5f, "fade: weight 0 reproduces the source pose and weight 1 the target");
+    }
+
+    // ---- (9) SkinningSystem の再生規則 (ループ / 一度きり / 切り替え / フェードの進行) ----
+    {
+        SkinnedMeshComponent* sm = FirstSkinnedComponent(fbxScene);
+        check(sm != nullptr, "skinning: the FBX skinned entity has a SkinnedMesh");
+        if (sm != nullptr && !fbx.model->clips.empty()) {
+            World& w = fbxScene.GetWorld();
+            SkinningSystem skinning;
+            const int durTicks = static_cast<int>(fbx.model->clips[0].duration * 60.0f + 0.5f);
+
+            // 初めて見る clip は切り替えではない (シーンに保存された timeTicks を潰さない)
+            sm->clip = 0;
+            sm->timeTicks = 5;
+            sm->playing = 1;
+            sm->loop = 1;
+            sm->fadeTicks = 8;
+            skinning.Update(w, resources);
+            check(sm->observedClip == 0 && sm->timeTicks == 6 && !IsSkinFading(*sm),
+                  "skinning: the first observed clip keeps its time and starts no fade");
+
+            // loop = 1 (M18 の既定) はクリップ末尾で 0 へ戻る
+            sm->timeTicks = durTicks - 2;
+            skinning.Update(w, resources);
+            skinning.Update(w, resources);
+            check(sm->timeTicks == 0, "skinning: loop = 1 wraps at the clip end (M18 behaviour)");
+
+            // loop = 0 は最後のコマ (= durTicks) に止まり続ける
+            sm->loop = 0;
+            sm->timeTicks = durTicks - 2;
+            for (int i = 0; i < 5; ++i) {
+                skinning.Update(w, resources);
+            }
+            check(sm->timeTicks == durTicks, "skinning: loop = 0 holds the last frame");
+
+            // 切り替え: 新しいクリップは頭から、元は切り替えた瞬間のクリップと時刻で凍る
+            sm->loop = 1;
+            sm->clip = -1;
+            skinning.Update(w, resources);
+            check(sm->fromClip == 0 && sm->fromTimeTicks == durTicks && sm->fadeTotal == 8
+                      && sm->fadeElapsed == 1 && sm->timeTicks == 0 && IsSkinFading(*sm),
+                  "skinning: a clip change restarts the new clip and freezes the old pose to fade from");
+            for (int i = 0; i < 7; ++i) {
+                skinning.Update(w, resources);
+            }
+            check(sm->fadeElapsed == 8 && !IsSkinFading(*sm),
+                  "skinning: the fade ends after fadeTicks ticks");
+
+            // fadeTicks = 0 は即時切り替え (頭から再生し直すことだけは同じ)
+            sm->fadeTicks = 0;
+            sm->clip = 0;
+            skinning.Update(w, resources);
+            check(sm->timeTicks == 1 && sm->fadeTotal == 0 && !IsSkinFading(*sm),
+                  "skinning: fadeTicks = 0 switches instantly from the head of the clip");
+
+            // 止めたまま切り替えても、再開の tick に古い時刻を持ち越さない
+            sm->playing = 0;
+            sm->timeTicks = 20;
+            sm->clip = -1;
+            skinning.Update(w, resources);
+            check(sm->observedClip == -1 && sm->timeTicks == 0,
+                  "skinning: a clip change while paused still rewinds to the head");
         }
     }
 

@@ -99,6 +99,16 @@ DirectX::XMMATRIX ComputeJointGlobal(const SkinnedModel& model, int clip, float 
 void ComputeJointLocals(const SkinnedModel& model, int clip, float timeSec,
                         std::vector<DirectX::XMMATRIX>& outLocals);
 
+// ---- クロスフェード (M18 追補) ----
+// 2 クリップをそれぞれサンプルし、ジョイントごとに T / S を線形・R を slerp で混ぜた局所行列
+// (joints.size() 個)。weightB = 0 で A、1 で B。
+// ★行列同士を線形に混ぜない — 回転成分が縮んで、切り替えの途中だけ皮膚が痩せる。
+// ★ComputeJointLocals とは別関数にしてある。あちらは M18 からのビット不変が selftest の
+//   対象 (pose checksum) なので、フェードしていない経路は 1 命令も変えない
+void ComputeJointLocalsBlended(const SkinnedModel& model, int clipA, float timeSecA, int clipB,
+                               float timeSecB, float weightB,
+                               std::vector<DirectX::XMMATRIX>& outLocals);
+
 // locals (上の出力) から 1 ジョイントのグローバル行列。範囲外 index は恒等
 DirectX::XMMATRIX JointGlobalFromLocals(const SkinnedModel& model,
                                         const std::vector<DirectX::XMMATRIX>& locals,

@@ -13,6 +13,7 @@
 #include "Engine/Engine/Acoustic/AcousticField.h" // M65d: 残光ボリュームの転送元
 #include "Engine/Engine/Particles/ParticleSystem.h"
 #include "Engine/Engine/Ragdoll.h" // M60g1: 剛体が骨を駆動しているときのパレット
+#include "Engine/Engine/SkinningSystem.h" // M18 追補: クロスフェード込みのポーズ評価
 #include "Engine/Engine/Vfx/VfxRenderer.h"
 #include "Engine/Renderer/FrustumCull.h"
 #include "Engine/Renderer/GpuResources.h"
@@ -860,9 +861,17 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
                     // M60g1: ラグドールが作動中なら、骨の姿勢はアニメではなく**部位の
                     // LocalTransform (= 剛体が置いた値)** から組む。入力が ECS 状態だけの
                     // 純関数なので、ビュー毎に Render() が呼ばれても同じ絵になる
+                    // M18 追補: クロスフェード中は 2 クリップを混ぜた局所行列から組む。
+                    // フェードしていない間は M18 の経路をそのまま通す (golden が動かない)
                     if (const auto* rag = world.GetComponent<RagdollComponent>(c.e);
                         rag && rag->active) {
-                        ragdoll::BuildBonePalette(world, c.e, *model, sm->clip, timeSec, palette);
+                        std::vector<XMMATRIX> locals;
+                        SampleSkinnedLocals(*model, *sm, locals);
+                        ragdoll::BuildBonePaletteFromLocals(world, c.e, *model, locals, palette);
+                    } else if (IsSkinFading(*sm)) {
+                        std::vector<XMMATRIX> locals;
+                        SampleSkinnedLocals(*model, *sm, locals);
+                        ComputeBonePaletteWithOverrides(*model, locals, {}, {}, palette);
                     } else {
                         ComputeBonePalette(*model, sm->clip, timeSec, palette);
                     }

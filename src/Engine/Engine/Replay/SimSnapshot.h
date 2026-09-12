@@ -97,7 +97,9 @@ struct SimRefs {
 //            スクリプトが読めるようになった = 分岐に使う sim 状態へ昇格したので、
 //            撮らないとタイムトラベルと .rep 埋め込みスナップショットが
 //            「World は復元済みなのに名前だけ復元前」という食い違いを起こす
-inline constexpr uint32_t kSimSnapshotVersion = 15;
+// v16 (M18 追補): SkinnedMesh へ loop / fadeTicks とクロスフェードの再生状態 5 本を追加。
+//            NoHash のコンポーネントでも生バイトは World 節に載るので版は上がる (v11 と同型)
+inline constexpr uint32_t kSimSnapshotVersion = 16;
 
 // 撮る: out を clear して blob を書く。成功で true。
 // 節ごとの参照が null なら「空の節」を書くのでレイアウトは常に同じ

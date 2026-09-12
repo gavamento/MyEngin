@@ -128,7 +128,9 @@ bool RunAcousticAudioSelfTest()
         // Light.safeRadius の生バイト追加で13 -> 14。AcousticAudio自身の変更ではない。
         // M71a の Scene 節 sceneName 追加で 14 -> 15。これも AcousticAudio とは無関係で、
         // ABI v17 GetSceneName がシーン名を sim の分岐材料に変えたことに追随したもの。
-        check(kSimSnapshotVersion == 15, "T1: kSimSnapshotVersion is not bumped by AcousticAudio");
+        // M18 追補 (SkinnedMesh の loop / fadeTicks / クロスフェード状態) の生バイト追加で
+        // 15 -> 16。これも AcousticAudio とは無関係。
+        check(kSimSnapshotVersion == 16, "T1: kSimSnapshotVersion is not bumped by AcousticAudio");
     }
 
     // ---- (T2) 同一原点なら波の場と probe が**ビット一致**する ----
