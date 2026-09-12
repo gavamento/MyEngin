@@ -20,6 +20,7 @@
 #include "Engine/Engine/AnimatorController.h"
 #include "Engine/Engine/Audio/AudioMixer.h"
 #include "Engine/Engine/Audio/AudioSystem.h"
+#include "Engine/Engine/Audio/ImpactSoundAsset.h" // .impact.json (手続き生成サウンド)
 #include "Engine/Engine/Audio/SoundAsset.h"
 #include "Engine/Engine/EngineLoop.h"
 #include "Engine/Engine/FbxLoader.h"
@@ -3205,6 +3206,7 @@ void RegisterAssetLibraries(EngineContext& ctx)
     // 起動時アセット走査の所要時間 (M51b のクック効果を含む診断値。sim には無関係)
     const auto scanStart = std::chrono::steady_clock::now();
     std::vector<std::wstring> audioFiles; // 走査後にまとめて判定する (M45f。下の注記参照)
+    std::vector<std::wstring> impactFiles; // .impact.json (手続き生成。走査後にまとめて生成)
     for (const auto& e : std::filesystem::recursive_directory_iterator(ctx.assetsRoot, ec)) {
         if (!e.is_regular_file()) {
             continue;
@@ -3230,6 +3232,8 @@ void RegisterAssetLibraries(EngineContext& ctx)
             if (ctx.sounds) {
                 ctx.sounds->LoadFromFile(p); // M45c: サウンドアセット
             }
+        } else if (p.size() >= 12 && p.compare(p.size() - 12, 12, L".impact.json") == 0) {
+            impactFiles.push_back(p); // ImpactSynth: PCM 生成は走査の後 (順序を名前で固定する)
         } else if (p.size() >= 11 && p.compare(p.size() - 11, 11, L".mixer.json") == 0) {
             if (ctx.mixers) {
                 ctx.mixers->LoadFromFile(p); // M45d: ミキサー (適用は走査後にまとめて)
@@ -3282,6 +3286,25 @@ void RegisterAssetLibraries(EngineContext& ctx)
             continue;
         }
         ctx.audio->LoadWav(WideToUtf8(std::filesystem::path(p).stem().wstring()), p);
+    }
+
+    // ImpactSynth (計画 ImpactSoundDesign §18): 手続き生成サウンドは**起動時にここで 1 回だけ**
+    // PCM を作って登録する。衝突のたびに合成しない。RegisterClip はデバイス無しでも通るので
+    // --no-audio / selftest でも名前キーは解決できる (鳴らないだけ)。
+    // ★ディレクトリ反復順に依存しないよう名前順で回す (spec 11.2 規則 7)
+    if (ctx.audio != nullptr && ctx.sounds != nullptr && !impactFiles.empty()) {
+        std::sort(impactFiles.begin(), impactFiles.end());
+        const auto t0 = std::chrono::steady_clock::now();
+        int registered = 0;
+        for (const std::wstring& p : impactFiles) {
+            if (LoadImpactSoundFile(*ctx.audio, *ctx.sounds, p) != 0) {
+                ++registered;
+            }
+        }
+        MYE_LOG_INFO("[impact] %d/%d procedural sounds registered in %.1f ms", registered,
+                     static_cast<int>(impactFiles.size()),
+                     std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0)
+                         .count());
     }
 
     // M45d: バスグラフはグローバルに 1 つなので、走査後に「どれを鳴らすか」を 1 本決める。

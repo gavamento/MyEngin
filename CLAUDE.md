@@ -38,7 +38,7 @@ MyEngine — C++20 / DirectX 11 の自作ゲームエンジン (VS2022 / x64 / W
 
 | コマンド | 担保するもの |
 |---|---|
-| `bin\x64\Debug\Editor.exe --selftest` | ヘッドレス回帰 45 スイート (D3D もウィンドウも作らない) |
+| `bin\x64\Debug\Editor.exe --selftest` | ヘッドレス回帰 46 スイート (D3D もウィンドウも作らない) |
 | `tools\replay_verify.bat [ticks]` | 8 ビルド → 並列 12 ジョブ (7 シーンチェーン = 記録 `--replay-fast` + snapshot 往復付き照合 + Release 照合 / タイムトラベル ×2 / 分岐 (What-if) ×2 / 規則検査)。1 本だけ回すなら `--job <名前>` 再入 (ビルド済み前提)、並列度は `MYE_REPLAY_JOBS` |
 | `tools\shot_verify.bat [--update]` | 決定的スクショ 24 枚を `tests\golden\*.png` と比較 (CI 判定は 14 枚 — FXAA / TAA / SSR / froxel / fog / パーティクル 2 枚 / RT 反射 / RT GI / RT 反射+ReSTIR の計 10 枚は分岐反転や GPU sim で機種差が増幅するので tol=0 のローカル限定。地形の 1 枚だけ異方性フィルタの実装依存で tol=12。**物理・関節・霧・パーティクル 2・音響 2 の 7 枚は frame 120 で撮る** — 他は frame 3 = ほぼ初期配置なので物理も粒子も絵に出ない。**ReSTIR の 1 枚だけ frame 40** (M 上限 Default 16 / Prop 32 が飽和した状態を固定する。frame 3 では M ≈ 4 でクラス別上限が絵に出ない)。**UI キャンバスの 2 枚 (M70b) だけ解像度が違う** — 23 = 1280x720 (スケール経路)、24 = 960x600 (16:10 = 可変キャンバス経路)。**先に Release ビルドが必要**) |
 | `pwsh -File tools\check_rules.ps1` | 規則 1/2/4/7/8/9/10/11/12 の静的検査 (12 = Source Control の Editor 層封じ込め。9 の `$constGroups` に `kCollabProtoVersion` ⇄ `PROTO_VERSION` も載る) |
@@ -89,7 +89,11 @@ MyEngine — C++20 / DirectX 11 の自作ゲームエンジン (VS2022 / x64 / W
   `--synth-input` を渡している — 視点角は生マウスデルタの積分なので、無入力だと
   恒常ゼロで検査にならない) /
   `--acoustic-dump N` (M65d: N 回目の描画で残光ボリュームを読み戻し、CPU の場と
-  **バイト単位で**照合してログへ。`--froxel-dump` と同じ調査専用) /
+  **バイト単位で**照合してログへ。`--froxel-dump` と同じ調査専用。2026-09-12 からは
+  「描画だけ円」の glow/circle 比較と見通しビットの地図も出す) /
+  `--no-acoustic-front` (2026-09-12: 解析的な波面 (円) を止めて残光だけの絵に戻す A/B 用。
+  波の等距離面はチャンファの八角形なので、**絵だけ**原点からの直線距離で円を描いている —
+  AcousticField.h の FrontWave の説明を参照) /
   `--acoustic-audio-log N` (M68a/M68b: tick < N のあいだ、遮蔽・回折で整形した voice と
   波の一発再生 (`kind=shot`) を 1 行ずつ標準出力へ + 終了時に summary。
   **耳を使わずに配管を検査する唯一の口**。summary の欄は順に

@@ -385,6 +385,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 config.froxel = true;
             } else if (arg == L"--acoustic-dump" && i + 1 < argc) {
                 config.acousticDumpFrame = _wtoi(argv[++i]); // M65d: 残光を読み戻して検査
+            } else if (arg == L"--no-acoustic-front") {
+                config.acousticFront = false; // 2026-09-12: 解析的な波面 (円) を止める (A/B 用)
             } else if (arg == L"--acoustic-audio-log" && i + 1 < argc) {
                 // M68a: tick < N のあいだ整形の結果を 1 行ずつ標準出力へ + 終了時に summary。
                 // ★--no-audio と併用すると 1 行も出ない (設計どおり = ヘッドレスはゼロコスト)

@@ -17,6 +17,7 @@
 #include "Engine/Engine/Acoustic/AcousticDebugDraw.h"
 #include "Engine/Engine/Acoustic/AcousticField.h"
 #include "Engine/Engine/Acoustic/AgentSystem.h" // M65f: 敵の思考 (フェーズ 3.4 の後半)
+#include "Engine/Engine/Audio/AcousticAudio.h" // ResolveWaveShotSound (鳴る波の音の選択)
 #include "Engine/Engine/Audio/AudioMixer.h"
 #include "Engine/Engine/Audio/AudioSourceSystem.h"
 #include "Engine/Engine/Audio/AudioSystem.h"
@@ -347,6 +348,11 @@ void RunOneTick(TickServices& ts)
         // M65h: 減衰率は AcousticVolume の glowKeepPerTick (Sync が鏡へ写した値)。
         // 0 = 既定 kGlowDecayPerTick へ倒すのは DecayVisual 側の範囲ガードの仕事
         ts.acoustic->DecayVisual(ts.acoustic->GlowKeepPerTick());
+        // 「描画だけ円」の材料 (先読み距離場 + 見通しビット)。描画レーンなので resim では
+        // 飛ばす — 飛ばしても次の通常 tick が波スロット表から作り直す (自己修復)
+        if (!ts.resim) {
+            ts.acoustic->UpdateFrontPreview(ctx.tickIndex);
+        }
     }
     // ---- アニメーション (フェーズ 3.5): スクリプト後・Transform 前に LocalTransform を確定 ----
     // Play 中のみ進行 (編集時は Animation 窓が明示サンプリングする)。M51g からは
@@ -601,7 +607,8 @@ void RunOneTick(TickServices& ts)
         //   記録/検証中は AudioSystem が suspend されているので積むだけ無駄 = 手前で弾く
         if (ts.acoustic != nullptr && audioSystem.IsReady() && !audioSystem.IsSuspended()) {
             const std::vector<AcousticField::Wave>& waves = ts.acoustic->Waves();
-            for (const AcousticField::Wave& wv : waves) {
+            for (uint32_t slot = 0; slot < static_cast<uint32_t>(waves.size()); ++slot) {
+                const AcousticField::Wave& wv = waves[slot];
                 if (wv.active == 0 || wv.bornTick != ctx.tickIndex) {
                     continue;
                 }
@@ -614,6 +621,10 @@ void RunOneTick(TickServices& ts)
                 shot.maxRing = wv.maxRing;
                 shot.bornTick = wv.bornTick;
                 shot.source = wv.source;
+                // ImpactSynth: 発音元の WaveSound / 床材の acousticSound で鳴らす音を決める
+                // (World は読むだけ。どちらも無ければ soundKey = 0 = tone マップ)
+                ResolveWaveShotSound(scene.GetWorld(), wv.source, ts.acoustic->WaveSoundHint(slot),
+                                     shot);
                 audioSources.PushWaveShot(shot);
             }
         }

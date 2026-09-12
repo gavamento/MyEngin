@@ -1287,6 +1287,11 @@ struct AcousticVolumeComponent {
     float glowKeepPerTick = 0.0f;
     // ライティングへ合成する残光の明るさ。0 = 転送はするが絵に出ない (企画 §12 全体照明の対)
     float glowIntensity = 1.0f;
+    // 強い (近い / 新しい) 残光にだけ面の albedo を混ぜる割合 [0,1]。0 = 距離色 (青〜白) だけ =
+    // 従来の絵と 1 ビットも変わらない。弱い (遠い / 古い) 残光は常に距離色のまま —
+    // 企画 §3-4「材質は踏むか光を置くまで分からない」を遠くでは崩さないため。
+    // 加算の距離色だけだと暗闇では面の色が一切出ず、床材の境目が読めなかった (三校)
+    float glowAlbedoMix = 0.0f;
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
@@ -1414,6 +1419,12 @@ struct AcousticAudioComponent {
     // ---- 鳴る波 (M68b) ----
     float waveVolume = 1.0f;    // 波の振幅 → 音量の係数
     float minWaveVolume = 0.10f; // これ未満は鳴らさない (呼吸 0.07 は鳴らず carpet 0.12 は鳴る)
+    // 聴感カーブ: 鳴らす音量 = (振幅 × waveVolume)^waveVolumeExp。1 = 線形 (従来どおり)。
+    // ★波の振幅は sim の値 (敵の耳にはこれが届く) で、歩き 1.0 / しゃがみ 0.6 のような差は
+    //   線形音量だと約 -4 dB にしか聞こえない。2.0 なら同じ差が -9 dB になり「忍び足が静か」が
+    //   耳で分かる。足切り (minWaveVolume) は**カーブ前の線形振幅**で判定する (意味が「波が
+    //   小さすぎる」だから)。sim には 1 ビットも影響しない (NoHash の音レーン)
+    float waveVolumeExp = 1.0f;
     float waveReverbSend = 0.35f;
     // ★0 = Logarithmic 既定。**逆二乗 (2) を振幅に掛けてはいけない** — EnergyAt は
     //   エネルギーで、XAudio2 の volume は振幅 (= √エネルギー)。10m で -52dB = 無音になる
@@ -1423,6 +1434,21 @@ struct AcousticAudioComponent {
     char toneSound1[64] = {};
     char toneSound2[64] = {};
     char toneSound3[64] = {};
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
+// 発音元ごとの「波の音」(ImpactSynth 計画、TypeId =51)。**kComponentNoHash** —
+// 決めるのは「その波がどう聞こえるか」だけで、波にも敵にも 1 バイトも影響しない
+// (AcousticAudio と同じ音レーン)。だからスクリプトが SetComponentField で毎 tick 書いても
+// .rep は変わらない (瓶が「割れた / 割れない」で音だけ変える、がこれで書ける)。
+//
+// 選択規則 (AcousticAudio.cpp の ResolveWaveShotSound。**1 本だけ**):
+//   付けた   = この発音元の波は sound の .sound.json / .impact.json で鳴る。空文字 = 無音
+//   付けない = 床材 (PhysMat.acousticSound) → AcousticAudio の tone マップ、の順
+// 足音は付けない (床材で決まる)。石 / 瓶 / 敵の声 / データコアのように「床材ではない音」を
+// 出す発音元に付ける
+struct WaveSoundComponent {
+    char sound[64] = {}; // .sound.json / .impact.json の名前キー。空 = 無音
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 

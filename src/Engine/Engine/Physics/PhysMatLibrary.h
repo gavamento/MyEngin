@@ -61,6 +61,11 @@ struct PhysMat {
     float acousticLoudness = 0.0f; // 発音時の振幅 (原点でのエネルギー)。0 = 無音
     float acousticRadiusM = 0.0f;  // 到達距離 [m]。maxRing = radiusM / cellSize (切り捨て)
     int32_t acousticTone = 0;      // 音色 0..3 (AcousticDebugDraw の kToneColors が色の正本)
+    // ---- ImpactSynth 追加 (末尾 append。旧ファイルは contains 無し = 空) ----
+    // この材質を踏んだ / 叩いたときに鳴らす .sound.json (または .impact.json) の名前キー。
+    // 空 = AcousticAudio の tone マップ (toneSound0..3) に従う。tone は 4 段階しかないので
+    // 「tile と carpet で違う足音」はここでしか表現できない。★音レーン専用 — sim は読まない
+    std::string acousticSound;
 };
 
 // 列挙 1 件 (AssetRef ピッカー / Asset Browser 用。SoundEntry 範型)

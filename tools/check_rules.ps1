@@ -297,6 +297,30 @@ $constGroups = @(
         }
     },
     @{
+        # 2026-09-12「描画だけ円」: 見通しビットの 3D テクスチャ。Deferred は t16 (本数 16 -> 17)
+        label = 'acoustic::kFrontSrvSlot / MYE_ACOUSTIC_FRONT_SRV_SLOT'
+        sites = @{
+            'src\Engine\Renderer\RenderTypes.h'      = 'constexpr\s+int\s+kFrontSrvSlot\s*=\s*(\d+)'
+            'assets\shaders\acoustic_common.hlsli' = '#\s*define\s+MYE_ACOUSTIC_FRONT_SRV_SLOT\s+(\d+)'
+        }
+    },
+    @{
+        # 同じく Forward 系 (t9、本数 8 -> 9。ForwardPath + DeferredPath の透明後段)
+        label = 'acoustic::kFrontForwardSrvSlot / MYE_ACOUSTIC_FRONT_FWD_SRV_SLOT'
+        sites = @{
+            'src\Engine\Renderer\RenderTypes.h'      = 'constexpr\s+int\s+kFrontForwardSrvSlot\s*=\s*(\d+)'
+            'assets\shaders\acoustic_common.hlsli' = '#\s*define\s+MYE_ACOUSTIC_FRONT_FWD_SRV_SLOT\s+(\d+)'
+        }
+    },
+    @{
+        # 波スロット数 (CB の配列長)。C++ は RenderView::kAcousticWaveSlots、HLSL は MYE_ACOUSTIC_WAVE_SLOTS
+        label = 'RenderView::kAcousticWaveSlots / MYE_ACOUSTIC_WAVE_SLOTS'
+        sites = @{
+            'src\Engine\Renderer\RenderTypes.h'      = 'constexpr\s+int\s+kAcousticWaveSlots\s*=\s*(\d+)'
+            'assets\shaders\acoustic_common.hlsli' = '#\s*define\s+MYE_ACOUSTIC_WAVE_SLOTS\s+(\d+)'
+        }
+    },
+    @{
         # M57c: フロクセルのジッタ列の周期。C++ が実際にジッタ値を計算して CB へ載せるので
         # HLSL 側には出てこないが、**カメラジッタ (TAA) の周期と同じ長さ**でなければ
         # 「1 巡」が最小公倍数まで伸びて、決定的撮影で撮った 2 枚がどちらも収束前の

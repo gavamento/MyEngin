@@ -133,6 +133,7 @@ json PhysMatLibrary::ToJson(const PhysMat& m)
     j["acousticLoudness"] = m.acousticLoudness;
     j["acousticRadiusM"] = m.acousticRadiusM;
     j["acousticTone"] = m.acousticTone;
+    j["acousticSound"] = m.acousticSound; // 空でも書く (上と同じ理由)
     return j;
 }
 
@@ -159,6 +160,10 @@ bool PhysMatLibrary::FromJson(const json& j, PhysMat& out)
     if (j.contains("acousticTone") && j["acousticTone"].is_number_integer()) {
         out.acousticTone = j["acousticTone"].get<int32_t>();
     }
+    // 足音 / 衝撃音の名前キー (旧ファイルは空 = tone マップ)
+    out.acousticSound = (j.contains("acousticSound") && j["acousticSound"].is_string())
+        ? j["acousticSound"].get<std::string>()
+        : def.acousticSound;
     Sanitize(out);
     return true;
 }

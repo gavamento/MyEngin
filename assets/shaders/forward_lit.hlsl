@@ -65,7 +65,11 @@ cbuffer PerFrame : register(b0)
     //      Deferred の透明後段だけがゴミを読む (M54e の轍) ----
     float4   gAcousticGridMin; // xyz = セル(0,0,0) の最小角のワールド座標
     float4   gAcousticInvSize; // xyz = 1/(dim*cellSize)
-    float4   gAcousticParams;  // x=強さ y=法線押し出し[m] z=予約 w=有効
+    float4   gAcousticParams;  // x=強さ y=法線押し出し[m] z=面の色の混ぜ具合 w=有効
+    // ---- 2026-09-12「描画だけ円」(末尾 append。front.z = 0 で従来と同一の式)。
+    //      形は RenderTypes.h の AcousticCB (C++ ミラーは 3 つとも同じ構造体) ----
+    float4   gAcousticFront;   // x=残光の残存率/tick y=cellSize z=有効 w=波の数
+    float4   gAcousticWaves[MYE_ACOUSTIC_WAVE_SLOTS * 2]; // [2s]=(原点,半径) [2s+1]=(振幅,上限,tick/m,名残)
 };
 
 cbuffer PerObject : register(b1)
@@ -94,6 +98,8 @@ Texture3D                gFroxelVolume  : register(t7); // M57e (rgb=積算内�
 // ★張る側 (ForwardPath / DeferredPath の透明後段) の本数を 7 -> 8 にすること。
 //   **null を張り直す側も 8**。剥がし忘れると次フレームまで生き残る (M57e の罠)
 Texture3D                gAcousticGlow  : MYE_ACOUSTIC_REG(MYE_ACOUSTIC_FWD_SRV_SLOT);
+// 2026-09-12「描画だけ円」: 見通しビット (Load で読む整数テクスチャ。番号の正本は同 hlsli)
+Texture3D<uint> gAcousticFrontMask : MYE_ACOUSTIC_REG(MYE_ACOUSTIC_FRONT_FWD_SRV_SLOT);
 SamplerState             gSampler       : register(s0);
 SamplerComparisonState   gShadowSampler : register(s1);
 SamplerState             gIblSampler    : register(s2); // LINEAR/CLAMP (M38c)
@@ -155,7 +161,12 @@ float4 PSMain(VSOut i) : SV_Target
         const float glow = AcousticSample(gAcousticGlow, gIblSampler, i.posW, n,
                                           gAcousticGridMin.xyz, gAcousticInvSize.xyz,
                                           gAcousticParams.y);
-        color += AcousticRadiance(glow, gAcousticParams.x);
+        // 解析的な波面 (円) と max 合成。gAcousticFront.z = 0 なら従来とビット恒等
+        const float front = (gAcousticFront.z != 0.0f)
+            ? AcousticFront(gAcousticFrontMask, i.posW, n, gAcousticGridMin.xyz, gAcousticInvSize.xyz,
+                            gAcousticParams.y, gAcousticFront, gAcousticWaves)
+            : 0.0f;
+        color += AcousticRadiance(max(glow, front), gAcousticParams.x, albedo.rgb, gAcousticParams.z);
     }
     // ---- 大気散乱 (M29d + M43a の解析フォグ、M57e でフロクセルと分担) ----
     // 受け持ちの分け方は deferred_light.hlsl (M57d) と同一: グリッドの中はフロクセル、

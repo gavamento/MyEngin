@@ -8,6 +8,7 @@
 #include "Engine/Engine/Animation.h"
 #include "Engine/Engine/Audio/AudioMixer.h"
 #include "Engine/Engine/Audio/AudioSystem.h"
+#include "Engine/Engine/Audio/ImpactSoundAsset.h"
 #include "Engine/Engine/Audio/SoundAsset.h"
 #include "Engine/Engine/FbxLoader.h"
 #include "Engine/Engine/ModelLoader.h"
@@ -60,6 +61,9 @@ int ReloadRank(const std::wstring& normPath)
         }
         if (HasSuffix(normPath, L".sound.json")) {
             return 6;
+        }
+        if (HasSuffix(normPath, L".impact.json")) {
+            return 6; // ImpactSynth。.sound.json と同格 (誰も参照していない)
         }
         if (HasSuffix(normPath, L".mixer.json")) {
             return 6;
@@ -344,6 +348,22 @@ void ReloadHub::HandleChange(const std::wstring& normPath)
                     } else {
                         retryLater();
                     }
+                }
+            }
+            return;
+        }
+        // .impact.json (ImpactSynth): 生成し直して差し替える。RegisterClip が参照中の voice を
+        // 止めてから PCM を入れ替えるので、耳で詰めながら保存 → 即反映が成立する。
+        // 未登録のファイル (起動後に足した) も登録する = .sound.json より緩いが、
+        // 参照する側が名前キーなので「登録した瞬間から鳴る」で困らない
+        if (HasSuffix(normPath, L".impact.json")) {
+            if (sounds_ != nullptr && audio_ != nullptr) {
+                if (LoadImpactSoundFile(*audio_, *sounds_, normPath) != 0) {
+                    MYE_LOG_INFO("[reload] impact sound regenerated: %s",
+                                 WideToUtf8(normPath).c_str());
+                    ++reloadCount_;
+                } else {
+                    retryLater();
                 }
             }
             return;

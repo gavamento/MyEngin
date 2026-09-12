@@ -15,7 +15,10 @@
 #include "Engine/Core/Check.h"
 #include "Engine/Core/ComponentRegistry.h"
 #include "Engine/Core/Components.h"
+#include "Engine/Core/Hash.h" // T20b/c: soundKey = HashStr(名前)
 #include "Engine/Core/Log.h"
+#include "Engine/Core/World.h"
+#include "Engine/Engine/GameObject.h"
 #include "Engine/Engine/Acoustic/AcousticField.h"
 #include "Engine/Engine/Acoustic/AcousticGrid.h"
 #include "Engine/Engine/Audio/AcousticAudio.h"
@@ -130,9 +133,10 @@ bool RunAcousticAudioSelfTest()
         // ABI v17 GetSceneName がシーン名を sim の分岐材料に変えたことに追随したもの。
         // M18 追補 (SkinnedMesh の loop / fadeTicks / クロスフェード状態) の生バイト追加で
         // 15 -> 16。これも AcousticAudio とは無関係。
-        // M75b (InputSnapshot 112 バイト + UI 対話状態のドラッグ欄) で 16 -> 18 (17 は M65i が使用)。
-        // これも AcousticAudio とは無関係。
-        check(kSimSnapshotVersion == 18, "T1: kSimSnapshotVersion is not bumped by AcousticAudio");
+        // M75b (InputSnapshot 112 バイト + UI 対話状態のドラッグ欄) で 16 -> 18 (17 は欠番)。
+        // M65i の AcousticVolume.glowAlbedoMix (残光に面の色) の生バイト追加で 18 -> 19。
+        // どちらも AcousticAudio とは無関係 (入力のレイアウト / 描画レーンの値)。
+        check(kSimSnapshotVersion == 19, "T1: kSimSnapshotVersion is not bumped by AcousticAudio");
     }
 
     // ---- (T2) 同一原点なら波の場と probe が**ビット一致**する ----
@@ -783,6 +787,78 @@ bool RunAcousticAudioSelfTest()
               "T20: an unmapped tone reports UnknownKey instead of playing something else");
     }
 
+    // ---- (T20b) 積む側が決めた soundKey / mute (ImpactSynth: 床材ごとの足音 / 瓶の音) ----
+    // ★soundKey は tone マップより**強い**。解決できない soundKey は tone へ落とさない —
+    //   落とすと「.impact.json を消したら金属の足音が鳴り出す」という遠い非対称が入る
+    {
+        AcousticField field;
+        field.DebugSetGrid(maze, MakeLMaze(maze));
+        AcousticProbe probe;
+        (void)UpdateAcousticProbe(field, tones, CellCenter(maze, 2, 0, 2), probe);
+        Pcg32 rng;
+        rng.Seed(11);
+        PendingWaveShot shot;
+        shot.ox = 4;
+        shot.oy = 0;
+        shot.oz = 2;
+        shot.tone = 0; // tone マップなら step_soft (kToneClips[0]) になるはず
+        shot.amplitude = 1.0f;
+        shot.maxRing = 8;
+        shot.soundKey = HashStr("step_metal");
+        PlayDesc desc;
+        AudioSpatial spatial;
+        check(MakeWaveShotPlay(field, probe, tones, shot, CellCenter(maze, 2, 0, 2), shotAudio,
+                               shotLib, rng, desc, spatial, nullptr)
+                      == WaveShotResult::Played
+                  && desc.clip.value == kToneClips[3],
+              "T20b: an explicit soundKey wins over the tone map");
+        shot.soundKey = HashStr("no_such_sound");
+        check(MakeWaveShotPlay(field, probe, tones, shot, CellCenter(maze, 2, 0, 2), shotAudio,
+                               shotLib, rng, desc, spatial, nullptr)
+                  == WaveShotResult::UnknownKey,
+              "T20b: an unresolvable soundKey reports UnknownKey (no tone fallback)");
+        shot.soundKey = 0;
+        shot.mute = 1;
+        desc.volume = 0.777f;
+        desc.clip = AssetID{ 42ull };
+        desc.spatial = nullptr;
+        check(MakeWaveShotPlay(field, probe, tones, shot, CellCenter(maze, 2, 0, 2), shotAudio,
+                               shotLib, rng, desc, spatial, nullptr)
+                      == WaveShotResult::Muted
+                  && desc.volume == 0.777f && desc.clip.value == 42ull && desc.spatial == nullptr,
+              "T20b: a muted source plays nothing and leaves the PlayDesc untouched");
+    }
+
+    // ---- (T20c) ResolveWaveShotSound: 発音元の WaveSound > 床材 > tone マップ ----
+    // ★physmat:: は selftest では未接続 (Resolve = nullptr) なので、床材のヒントは
+    //   「未接続なら tone マップへ落ちる」側だけを固定する
+    {
+        Scene scene;
+        World& w = scene.GetWorld();
+        GameObject bottle = scene.CreateGameObject("Bottle");
+        auto* ws = bottle.AddComponent<WaveSoundComponent>();
+        std::snprintf(ws->sound, sizeof(ws->sound), "glass_break");
+        GameObject quiet = scene.CreateGameObject("Quiet");
+        (void)quiet.AddComponent<WaveSoundComponent>(); // 空文字 = 無音
+        GameObject plain = scene.CreateGameObject("Plain"); // WaveSound 無し
+
+        PendingWaveShot shot;
+        ResolveWaveShotSound(w, bottle.Id(), 0, shot);
+        check(shot.soundKey == HashStr("glass_break") && shot.mute == 0,
+              "T20c: a source with WaveSound resolves to its own sound key");
+        ResolveWaveShotSound(w, quiet.Id(), 0, shot);
+        check(shot.soundKey == 0 && shot.mute == 1,
+              "T20c: an empty WaveSound mutes the wave");
+        ResolveWaveShotSound(w, plain.Id(), 0, shot);
+        check(shot.soundKey == 0 && shot.mute == 0,
+              "T20c: no WaveSound and no material falls back to the tone map");
+        ResolveWaveShotSound(w, plain.Id(), 0x3a5cull, shot);
+        check(shot.soundKey == 0 && shot.mute == 0,
+              "T20c: an unresolvable material hint also falls back to the tone map");
+        ResolveWaveShotSound(w, kNullEntity, 0, shot);
+        check(shot.soundKey == 0 && shot.mute == 0, "T20c: a null source is the tone map");
+    }
+
     // ---- (T21) 波 -> spatial (+ Detour の追加リバーブ送り) ----
     // ★maxDistance = maxRing * cellSize が「波が届く所でだけ聞こえる」の実装そのもの。
     //   RolloffGain は全カーブで d >= maxDistance を厳密 0 にするので、距離判定を
@@ -822,6 +898,30 @@ bool RunAcousticAudioSelfTest()
               "T21: a Direct shot keeps the plain wave reverb send");
         check(Near(desc.volume, 0.7f * tones.waveVolume * info.gain, 1e-6f),
               "T21: the volume is amplitude * waveVolume * the shaped gain");
+        // 聴感カーブ: 指数 2 なら 0.7 → 0.49。足切りはカーブ前の線形振幅で判定される
+        //   (0.12 を minWaveVolume 0.10 で鳴らし、0.12^2 = 0.0144 にはしても落とさない)
+        {
+            AcousticAudioComponent curved = tones;
+            curved.waveVolumeExp = 2.0f;
+            Pcg32 rng2;
+            rng2.Seed(99);
+            PlayDesc d2;
+            AudioSpatial s2;
+            AcousticShapeInfo i2;
+            const WaveShotResult r2 =
+                MakeWaveShotPlay(openField, probe, curved, shot, CellCenter(free, 12, 2, 12),
+                                 shotAudio, shotLib, rng2, d2, s2, &i2);
+            check(r2 == WaveShotResult::Played
+                      && Near(d2.volume, 0.49f * tones.waveVolume * i2.gain, 1e-5f),
+                  "T21: waveVolumeExp 2 squares the linear wave volume (0.7 -> 0.49)");
+            PendingWaveShot faint = shot;
+            faint.amplitude = 0.12f;
+            const WaveShotResult r3 =
+                MakeWaveShotPlay(openField, probe, curved, faint, CellCenter(free, 12, 2, 12),
+                                 shotAudio, shotLib, rng2, d2, s2, &i2);
+            check(r3 == WaveShotResult::Played && Near(d2.volume, 0.0144f * i2.gain, 1e-5f),
+                  "T21: the minWaveVolume cut is judged before the curve (0.12 still plays)");
+        }
 
         // L 字の向こう側 = Detour。detourWet が**足し算**で乗ることを固定する
         AcousticField mazeField;

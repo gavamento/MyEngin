@@ -59,6 +59,13 @@ public:
     // 目標セルに十分近いか (到着判定。粗セル 1 個ぶん)
     bool ReachedTarget(int field, float wx, float wy, float wz) const;
 
+    // 場 field の目標へ (wx,wy,wz) から辿れないとき、**そこから辿れる**開セルのうち
+    // 目標セルに最も近いものの中心を返す (光で入口を塞がれた部屋の中の目標など)。
+    // 戻り値: 差し替え先を返したか。false = 既に辿れる / 自分のセルが解決できない / 場が無効
+    // ★近さはセル座標の整数 2 乗距離、同点は走査順 (z, y, x 昇順) で先に見つかったほう
+    bool NearestReachable(int field, float wx, float wy, float wz, float& outX, float& outY,
+                          float& outZ) const;
+
     void Reset();
     bool Valid() const { return nav_.Valid() && !navSolid_.empty(); }
     const AcousticGridDesc& Grid() const { return nav_; }
@@ -72,6 +79,8 @@ private:
         std::vector<uint16_t> dist;       // kUnreached = 到達不能
     };
     void BuildDistance(Field& f) const;
+    // 位置 -> 自分の粗セル。閉セルなら開いている隣へ**表の順**に逃がす (見つからなければ false)
+    bool ResolveCell(float wx, float wy, float wz, int32_t& cx, int32_t& cy, int32_t& cz) const;
 
     AcousticGridDesc nav_;            // 粗グリッド (導出値)
     std::vector<uint8_t> navSolid_;   // 粗占有 (導出値)。1 = 閉

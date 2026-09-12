@@ -132,6 +132,7 @@ bool RunPhysMatSelfTest()
         src.acousticLoudness = 0.55f; // M65c
         src.acousticRadiusM = 13.0f;
         src.acousticTone = 2;
+        src.acousticSound = "footstep_gravel"; // ImpactSynth
         PhysMat dst;
         check(PhysMatLibrary::FromJson(PhysMatLibrary::ToJson(src), dst),
               "ToJson output parses back");
@@ -143,7 +144,8 @@ bool RunPhysMatSelfTest()
                   && dst.dragCoefficient == src.dragCoefficient && dst.adhesion == src.adhesion
                   && dst.acousticLoudness == src.acousticLoudness
                   && dst.acousticRadiusM == src.acousticRadiusM
-                  && dst.acousticTone == src.acousticTone,
+                  && dst.acousticTone == src.acousticTone
+                  && dst.acousticSound == src.acousticSound,
               "ToJson/FromJson round-trip is bit-identical");
     }
 

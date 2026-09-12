@@ -306,6 +306,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // 別の RenderSystem は誰もここを埋めないので、サムネイルに音の光が漏れない
     renderSystem.acousticField = &acoustic;
     renderSystem.acousticDumpFrame = config.acousticDumpFrame; // M65d (--acoustic-dump N)
+    renderSystem.acousticFront = config.acousticFront;         // 2026-09-12 (--no-acoustic-front)
     // M68a: 音響 × オーディオ。**ここが唯一の配線点** (残光の 1 行上と同じ理由 —
     // AssetPreviewCache が持つ別インスタンスは誰も埋めないので、試聴音が遮蔽されない)
     audioSources.SetAcousticField(&acoustic);

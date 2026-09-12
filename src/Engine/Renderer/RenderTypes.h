@@ -406,6 +406,28 @@ struct RenderView {
     float acousticInvSize[3] = { 0.0f, 0.0f, 0.0f };
     float acousticIntensity = 0.0f;
     float acousticNormalPush = 0.0f;
+    //   acousticAlbedoMix = 強い残光に面の albedo を混ぜる割合 [0,1]。0 = 距離色だけ (従来)
+    float acousticAlbedoMix = 0.0f;
+    // ---- 「描画だけ円」(2026-09-12。末尾 append。**acousticFrontSRV = null で従来と同一**) ----
+    //   acousticFrontSRV = Texture3D<R16_UINT>。セルごとの見通しビット (bit s = 波スロット s)。
+    //   acousticWaves = 波ごとの (原点 / 半径 / 振幅 / 上限距離 / 減衰換算 / 名残)。
+    //     ★スロット番号 = マスクのビット番号なので、空きスロットも位置を保つ (詰めない)。
+    //   acousticKeepPerTick = 残光の 1 tick の残存率 (シェーダが同じ速さで円を薄める)。
+    //   acousticCellSize = セル寸法 [m] (EnergyAt の minD と波面の縁の幅に使う)
+    struct AcousticWaveGpu {
+        float origin[3] = { 0.0f, 0.0f, 0.0f };
+        float radiusM = 0.0f;
+        float amplitude = 0.0f;
+        float maxDistM = 0.0f;
+        float ticksPerMetre = 0.0f;
+        float extraAgeTicks = 0.0f;
+    };
+    static constexpr int kAcousticWaveSlots = 16;
+    ID3D11ShaderResourceView* acousticFrontSRV = nullptr;
+    AcousticWaveGpu acousticWaves[kAcousticWaveSlots] = {};
+    int acousticWaveCount = 0;
+    float acousticKeepPerTick = 0.0f;
+    float acousticCellSize = 0.0f;
     // ---- M67d: ReSTIR 反射 (末尾 append。**0 = 従来と 1 ビットも変わらない**) ----
     //   rtReflRestir = 1 で反射レイの結果を reservoir に積み、空間再利用 (M67f) と
     //     temporal 再利用 (M67e) を通してから SVGF へ渡す。0 なら rt_refl.cs の
@@ -663,6 +685,14 @@ namespace acoustic {
 //   同名だと片方の値をもう片方の照合が拾って理由の分からない赤が出る (実際に踏んだ)
 constexpr int kGlowSrvSlot = 13;
 constexpr int kGlowForwardSrvSlot = 8;
+// 「描画だけ円」(2026-09-12): 見通しビットの 3D テクスチャ。Deferred は t16 (gbSrvs が
+// 16 -> 17 本)、Forward は t9 (frameSrvs / fwdSrvs が 8 -> 9 本)。
+// ★本数が増える = 張る側 3 箇所 (DeferredPath の光パス + 透明後段 / ForwardPath) と
+//   null を張り直す側を**全部**揃えること (M57e / M65e が踏んだ「剥がし忘れ」の的)。
+//   HLSL 側の正本は acoustic_common.hlsli の MYE_ACOUSTIC_FRONT_SRV_SLOT / _FWD_ で、
+//   tools\check_rules.ps1 の規則 9 が機械照合する
+constexpr int kFrontSrvSlot = 16;
+constexpr int kFrontForwardSrvSlot = 9;
 
 } // namespace acoustic
 
@@ -686,10 +716,16 @@ inline bool AcousticIsBound(const RenderView& view)
 struct AcousticCB {
     DirectX::XMFLOAT4 gridMin = { 0.0f, 0.0f, 0.0f, 0.0f }; // xyz = セル(0,0,0) の最小角
     DirectX::XMFLOAT4 invSize = { 0.0f, 0.0f, 0.0f, 0.0f }; // xyz = 1/(dim*cellSize)
-    // x=強さ / y=法線押し出し [m] / z=予約 (0) / **w=有効フラグ**
+    // x=強さ / y=法線押し出し [m] / z=面の色の混ぜ具合 [0,1] (0 = 従来とビット恒等) /
+    // **w=有効フラグ**
     DirectX::XMFLOAT4 params = { 0.0f, 0.0f, 0.0f, 0.0f };
+    // ---- 「描画だけ円」(2026-09-12。末尾 append。**front.z = 0 で従来と同一**) ----
+    // front: x=残光の 1 tick 残存率 / y=cellSize [m] / z=有効 / w=波の数
+    DirectX::XMFLOAT4 front = { 0.0f, 0.0f, 0.0f, 0.0f };
+    // waves[2s] = (原点 xyz, 半径 [m]) / waves[2s+1] = (振幅, 上限距離 [m], tick/m, 名残 tick)
+    DirectX::XMFLOAT4 waves[RenderView::kAcousticWaveSlots * 2] = {};
 };
-static_assert(sizeof(AcousticCB) == 48, "HLSL 側 (float4 x 3) と一致させること");
+static_assert(sizeof(AcousticCB) == 48 + 16 + 16 * 32, "HLSL 側 (float4 x 36) と一致させること");
 
 inline AcousticCB MakeAcousticCB(const RenderView& view, bool bound)
 {
@@ -701,7 +737,19 @@ inline AcousticCB MakeAcousticCB(const RenderView& view, bool bound)
                     0.0f };
     out.invSize = { view.acousticInvSize[0], view.acousticInvSize[1], view.acousticInvSize[2],
                     0.0f };
-    out.params = { view.acousticIntensity, view.acousticNormalPush, 0.0f, 1.0f };
+    out.params = { view.acousticIntensity, view.acousticNormalPush, view.acousticAlbedoMix, 1.0f };
+    // 解析的な波面はマスクの SRV が無ければ無効 (front.z = 0 = シェーダは分岐に入らない)
+    if (view.acousticFrontSRV != nullptr && view.acousticWaveCount > 0) {
+        const int n = (view.acousticWaveCount < RenderView::kAcousticWaveSlots)
+            ? view.acousticWaveCount
+            : RenderView::kAcousticWaveSlots;
+        out.front = { view.acousticKeepPerTick, view.acousticCellSize, 1.0f, static_cast<float>(n) };
+        for (int s = 0; s < n; ++s) {
+            const RenderView::AcousticWaveGpu& w = view.acousticWaves[s];
+            out.waves[s * 2] = { w.origin[0], w.origin[1], w.origin[2], w.radiusM };
+            out.waves[s * 2 + 1] = { w.amplitude, w.maxDistM, w.ticksPerMetre, w.extraAgeTicks };
+        }
+    }
     return out;
 }
 

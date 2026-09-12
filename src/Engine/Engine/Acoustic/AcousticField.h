@@ -92,8 +92,11 @@ public:
     //   到着順に依存する」= 決定論の穴になる。
     // 原点セルが閉じているとき (足元が床コライダの中など) は 26 近傍を表の順に探して
     // 最初に見つかった開セルへ寄せる。見つからなければ false
+    // soundHint = 発音の元になった PhysMat のハッシュ (0 = 無し)。**音レーン専用**の付帯情報で、
+    // 波の伝播にも敵にも効かない (WaveSoundHint 参照)。足音と衝撃音が床材を入れ、
+    // スクリプトの pending 経路は 0 のまま
     bool Emit(EntityID source, float wx, float wy, float wz, float loudness, float radiusM,
-              uint32_t tone, uint32_t ticksPerRing, uint64_t tick);
+              uint32_t tone, uint32_t ticksPerRing, uint64_t tick, uint64_t soundHint = 0);
 
     // AcousticEmitterComponent の発音要求を波に変える。**entity.index 昇順**で処理し、
     // 消費した pendingLoudness は 0 へ戻す (エンジンが書く sim 状態)。
@@ -187,12 +190,63 @@ public:
     // (0 = 既定へ倒すのは DecayVisual 側の範囲ガード)、RenderSystem が合成強度に乗算する
     float GlowKeepPerTick() const { return glowKeepPerTick_; }
     float GlowIntensity() const { return glowIntensity_; }
+    // 強い残光に面の albedo を混ぜる割合。Sync で [0,1] に丸め済み (0 = 従来の色)
+    float GlowAlbedoMix() const { return glowAlbedoMix_; }
+
+    // ---- 解析的な波面 = 「描画だけ円」(2026-09-12) ----
+    //
+    // ★★**描画レーン**。ハッシュにも snapshot にも 1 バイトも入らない (glow_ と同じ扱い)。
+    //
+    // チャンファ距離 <11,16,19> の等距離面は**八角形**で、方位によって半径が 8〜10% ずれる
+    // (軸方向がぴったり、軸から 24° の方向が最も短い)。sim (敵の耳・到達・残光の形) は
+    // そのままにして、**絵だけ**真円にするための材料をここで作る:
+    //   (1) 波ごとの「先読み距離場」= sim と同じ伝播を sim より数リング先まで回したもの。
+    //       円は八角形の外側に最大 10% はみ出すので、sim が届く前のセルを描いてよいかを
+    //       知るには先読みが要る (先読みが無いと「届いた所」でマスクして八角形に戻る)
+    //   (2) セルごとの「この波の円を描いてよいか」ビット (16 波 = uint16、FrontMask)。
+    //       先読みのチャンファ距離が原点からの直線距離の 1.14 倍以内 = 経路がほぼ直線 =
+    //       見通し内、のセルだけ立てる。角を曲がって届くセルは立てない (残光の形のまま)
+    //   (3) 波ごとの描画パラメータ (FrontWave)。シェーダは (2) が立つセルでだけ (3) から
+    //       原点までのユークリッド距離で円を描き、残光ボリュームと max 合成する
+    //       (acoustic_common.hlsli の AcousticFront)。明るさの式は残光と同じなので、
+    //       円の内側では両者がほぼ一致し継ぎ目が出ない
+    // ★見えている所と敵に届く所は、この分だけ (最大で半径の約 10%) ずれる。ユーザー決定
+    //   (2026-09-12「描画だけ円にする」)。sim を円に近づける案 (5x5x5 のナイト手) は採らなかった
+    struct FrontWave {
+        float ox = 0.0f, oy = 0.0f, oz = 0.0f; // 原点セルの中心 [world]
+        float radiusM = 0.0f;       // 現在の波面半径 [m] (分周の位相で tick 内を補間済み)
+        float amplitude = 0.0f;
+        float maxDistM = 0.0f;      // ここで EnergyAt が 0 になる (= maxRing * cellSize)
+        float ticksPerMetre = 0.0f; // 減衰の時間換算: 波面が過ぎてからの tick 数 = (R - d) * これ
+        float extraAgeTicks = 0.0f; // 消えた波の名残 (消えてからの tick 数)。生きている波は 0
+        uint32_t active = 0;
+    };
+    // 消えた波の円をこの tick 数だけ描き続ける (残光が 227 tick で消えるのに合わせる)。
+    // 消えた瞬間に円が止むと、残光の八角形が一瞬だけ透けて見える
+    static constexpr uint64_t kFrontLingerTicks = 240;
+    // 先読みと見通しビットを今 tick の波スロット表から作り直す。TickRunner が Advance と
+    // DecayVisual の後 (**resim では飛ばす** = 描画レーン) に呼ぶ
+    void UpdateFrontPreview(uint64_t tick);
+    const std::vector<uint16_t>& FrontMask() const { return front_; }
+    const FrontWave* FrontWaves() const { return frontWaves_; }
+    bool FrontActive() const { return frontActive_; }
+    uint32_t FrontSerial() const { return frontSerial_; }
+    // 先読み距離場の読み出し (selftest / デバッグ用。sim の DistanceAt と同じ契約)
+    uint16_t FrontPreviewDistanceAt(uint32_t slot, int32_t cx, int32_t cy, int32_t cz) const;
 
     // 波スロット表。**書き換えてよいのは SimSnapshot / セルフテスト / 音響システム本体だけ**
     // (CpuParticleBackend::PoolsForSnapshot と同じ契約)
     const std::vector<Wave>& Waves() const { return waves_; }
     std::vector<Wave>& WavesForSnapshot() { return waves_; }
     bool AnyWaveActive() const;
+    // 波 slot の床材ヒント (Emit の soundHint)。**ハッシュにも snapshot にも入らない**
+    // (Wave に member を足すと 3 点セット + version bump が要るので、音レーンの付帯情報は
+    // 並列配列に分けてある)。復元後の古い波は 0 に見えるが、M68b の出力レーンは
+    // 「この tick に生まれた波」しか読まないので実害は無い
+    uint64_t WaveSoundHint(uint32_t slot) const
+    {
+        return slot < waveSoundHint_.size() ? waveSoundHint_[slot] : 0ull;
+    }
 
     // 聴者 1 人ぶんの走査結果 (M65f)。**entity.index 昇順**で作る = 決定論のタイブレーク
     struct ListenerSite {
@@ -211,8 +265,13 @@ private:
     void BakeOccupancy(World& world, uint32_t blockLayerMask);
 
     // ---- 距離場 (M65b) ----
-    void SeedWave(uint32_t slot);            // 局所ボックスを確保して原点だけ置く
+    void SeedWave(uint32_t slot);            // 局所ボックスを確保して原点だけ置く (+ 残光の原点)
     void AdvanceWaveOneRing(uint32_t slot);  // バケット [ring*11, (ring+1)*11) を処理
+    // 上 2 つの中身。sim の距離場 (fields_) と描画レーンの先読み (previews_) が**同じ関数**を
+    // 通る = 先読みは sim の距離場の「未来の姿」と必ずビット一致する。
+    // shellSlot >= 0 のときだけ残光へ焼く (先読みは焼かない = 光る場所は sim が決める)
+    void SeedField(const Wave& w, WaveField& f) const;
+    void RelaxOneRing(const Wave& w, WaveField& f, uint32_t ring, int32_t shellSlot);
 
     // 残光へ 1 セル焼く (M65d)。**距離を確定した直後にその場で呼ぶ**。
     // 合成は max — 「より近い距離で塗り直された = より強い」ので、同じセルを何度
@@ -238,6 +297,7 @@ private:
     bool derivedValid_ = false;         // 導出値が現在の world と整合しているか
     std::vector<WaveField> fields_;     // 導出値。waves_ と同じ長さ・同じ slot
     std::vector<Wave> waves_;           // ★**sim 状態**。常に kMaxWaves 本 (空きは active=0)
+    std::vector<uint64_t> waveSoundHint_; // 音レーン専用 (WaveSoundHint)。waves_ と同じ slot
     // ---- 描画レーン (M65d)。ハッシュにも snapshot にも入らない ----
     std::vector<uint8_t> glow_;         // 残光。空 = 一度も光っていない
     bool visualActive_ = false;         // 非ゼロのセルが在るか (全 0 になったら false へ戻る)
@@ -246,6 +306,24 @@ private:
     // コンポーネント側はハッシュ対象だが、この鏡は描画レーン (snapshot に入らない)
     float glowKeepPerTick_ = 0.0f;      // 0 = kGlowDecayPerTick (既定)
     float glowIntensity_ = 1.0f;
+    float glowAlbedoMix_ = 0.0f;        // [0,1] に丸め済み
+    // ---- 解析的な波面 (描画レーン。上の FrontWave の説明を参照) ----
+    struct FrontPreview {
+        // sim の波の写し (消えた後も名残のあいだ持つ)。★maxRing だけ sim の 13/11 倍に広げてある —
+        // 円は到達上限 (ユークリッド) まで描くが、チャンファの到達上限は八角形なので、
+        // 同じ上限で先読みを止めると見通しビットが八角形で切れて円の縁が階段になる (実測)
+        Wave wave;
+        uint32_t simMaxRing = 0; // sim の本当の maxRing (円の到達上限はこちら)
+        WaveField field;        // 先読み距離場
+        uint32_t ring = 0;      // 先読みで確定したリング (sim の wave.ring より先)
+        uint64_t deadTick = 0;  // 0 = 生きている。それ以外 = sim から消えた tick
+        bool valid = false;
+    };
+    std::vector<FrontPreview> previews_; // waves_ と同じ slot
+    std::vector<uint16_t> front_;        // セルごとの見通しビット (bit s = slot s)。空 = 無し
+    FrontWave frontWaves_[kMaxWaves] = {};
+    bool frontActive_ = false;
+    uint32_t frontSerial_ = 0;
 };
 
 } // namespace mye

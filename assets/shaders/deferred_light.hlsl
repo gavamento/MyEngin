@@ -79,7 +79,11 @@ cbuffer LightPass : register(b0)
     //      **w = 0 で従来と完全に同一の式** (下の分岐に一度も入らない) ----
     float4   gAcousticGridMin; // xyz = セル(0,0,0) の最小角のワールド座標
     float4   gAcousticInvSize; // xyz = 1/(dim*cellSize)
-    float4   gAcousticParams;  // x=強さ y=法線押し出し[m] z=予約 w=有効
+    float4   gAcousticParams;  // x=強さ y=法線押し出し[m] z=面の色の混ぜ具合 w=有効
+    // ---- 2026-09-12「描画だけ円」(末尾 append。front.z = 0 で従来と同一の式)。
+    //      形は RenderTypes.h の AcousticCB (C++ ミラーは 3 つとも同じ構造体) ----
+    float4   gAcousticFront;   // x=残光の残存率/tick y=cellSize z=有効 w=波の数
+    float4   gAcousticWaves[MYE_ACOUSTIC_WAVE_SLOTS * 2]; // [2s]=(原点,半径) [2s+1]=(振幅,上限,tick/m,名残)
 };
 
 Texture2D gAlbedo    : register(t0);
@@ -101,6 +105,8 @@ Texture2D   gShadowAtlas    : register(t12); // M54c (局所ライトの深度�
 //   本数を増やすと M57d/e が 3 回踏んだ「SRV 剥がし忘れ」の的が増える。
 // 番号の正本は acoustic_common.hlsli の MYE_ACOUSTIC_SRV_SLOT (C++ と機械照合される)
 Texture3D   gAcousticGlow   : MYE_ACOUSTIC_REG(MYE_ACOUSTIC_SRV_SLOT); // M65e (r=符号化残光)
+// 2026-09-12「描画だけ円」: 見通しビット (Load で読む整数テクスチャ。番号の正本は同 hlsli)
+Texture3D<uint> gAcousticFrontMask : MYE_ACOUSTIC_REG(MYE_ACOUSTIC_FRONT_SRV_SLOT);
 TextureCubeArray gProbeCubes : register(t14); // M56f (プリフィルタ済みプローブ、6 面 × N)
 Texture3D   gFroxelVolume   : register(t15); // M57d (rgb=積算内向き散乱 / a=透過率)
 SamplerState gIblSampler : register(s0); // LINEAR/CLAMP (M38c、s0 は光パスで空きだった)
@@ -228,7 +234,12 @@ float4 PSMain(VSOut i) : SV_Target
         const float glow = AcousticSample(gAcousticGlow, gIblSampler, posW, n,
                                           gAcousticGridMin.xyz, gAcousticInvSize.xyz,
                                           gAcousticParams.y);
-        color += AcousticRadiance(glow, gAcousticParams.x);
+        // 解析的な波面 (円) と max 合成。gAcousticFront.z = 0 なら従来とビット恒等
+        const float front = (gAcousticFront.z != 0.0f)
+            ? AcousticFront(gAcousticFrontMask, posW, n, gAcousticGridMin.xyz, gAcousticInvSize.xyz,
+                            gAcousticParams.y, gAcousticFront, gAcousticWaves)
+            : 0.0f;
+        color += AcousticRadiance(max(glow, front), gAcousticParams.x, albedo.rgb, gAcousticParams.z);
     }
     // ---- 大気散乱 (M29d + M43a の解析フォグ、M57d でフロクセルと分担) ----
     // ★ここが「霧を 3 回足さない」ための唯一の分岐点。同じ大気散乱を表現する仕組みが

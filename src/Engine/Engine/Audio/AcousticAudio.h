@@ -143,7 +143,22 @@ struct PendingWaveShot {
     uint32_t maxRing = 0;
     uint64_t bornTick = 0;
     EntityID source = kNullEntity;
+    // ImpactSynth: 積む側 (ResolveWaveShotSound) が決めた鳴らす音。
+    // soundKey = 名前キーのハッシュ (0 = AcousticAudio の tone マップに従う)。
+    // mute = 1 なら鳴らさない (発音元が WaveSound を空で持っている)
+    uint64_t soundKey = 0;
+    uint8_t mute = 0;
 };
+
+class World;
+
+// 波 1 本の「鳴らす音」を決めて shot へ書く (**規則はこの 1 本だけ**):
+//   1. 発音元が生きていて WaveSoundComponent を持つ → その名前 (空文字 = mute)
+//   2. materialHint (AcousticField::WaveSoundHint = 床材の PhysMat) の acousticSound が非空 → それ
+//   3. どちらでもなければ soundKey = 0 (tone マップ)
+// 呼ぶのは TickRunner の !resim ブロック (出力レーン)。World は読むだけ
+void ResolveWaveShotSound(World& world, EntityID source, uint64_t materialHint,
+                          PendingWaveShot& shot);
 
 // リスナー場を必要なら焼き直す。戻り値 = 焼き直した (統計を進めるのは呼び出し側)。
 //
@@ -201,8 +216,9 @@ float RoomBlend(float openness, float openSmall, float openLarge);
 enum class WaveShotResult : int32_t {
     Played = 0,     // outDesc / outSpatial が埋まった (呼び出し側が Play する)
     BelowMin = 1,   // amplitude * waveVolume < minWaveVolume (呼吸などの微音)
-    UnknownKey = 2, // tone → .sound.json / 生クリップが引けなかった
+    UnknownKey = 2, // tone / soundKey → .sound.json / 生クリップが引けなかった
     Stream = 3,     // BGM (stream) は一発再生の対象外
+    Muted = 4,      // 発音元の WaveSound が空 = 意図して鳴らさない (ImpactSynth)
 };
 
 // 波 1 本 → 一発再生の PlayDesc + AudioSpatial を組み立てる **純関数**

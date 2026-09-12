@@ -267,6 +267,69 @@ int AcousticNav::BuildFlowField(float wx, float wy, float wz)
     return static_cast<int>(fields_.size()) - 1;
 }
 
+bool AcousticNav::ResolveCell(float wx, float wy, float wz, int32_t& cx, int32_t& cy,
+                              int32_t& cz) const
+{
+    if (!acoustic::WorldToCell(nav_, wx, wy, wz, cx, cy, cz)) {
+        return false;
+    }
+    // 自分のセルが閉 (壁にめり込んでいる) なら、開いている隣へ**表の順**に逃がす
+    if (!IsSolid(cx, cy, cz)) {
+        return true;
+    }
+    for (int i = 0; i < acoustic::kNeighborCount; ++i) {
+        const acoustic::Neighbor& nb = acoustic::kNeighbors[i];
+        if (!IsSolid(cx + nb.dx, cy + nb.dy, cz + nb.dz)) {
+            cx += nb.dx;
+            cy += nb.dy;
+            cz += nb.dz;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool AcousticNav::NearestReachable(int field, float wx, float wy, float wz, float& outX,
+                                   float& outY, float& outZ) const
+{
+    if (field < 0 || field >= static_cast<int>(fields_.size())) {
+        return false;
+    }
+    int32_t cx = 0, cy = 0, cz = 0;
+    if (!ResolveCell(wx, wy, wz, cx, cy, cz)) {
+        return false;
+    }
+    const Field& goal = fields_[static_cast<size_t>(field)];
+    if (goal.dist[static_cast<size_t>(NavIndex(nav_, cx, cy, cz))] != kUnreached) {
+        return false; // 辿れる = 差し替えるものが無い
+    }
+    // 自分のセルから距離場を張り、届いたセルだけを候補にする。★fields_ には積まない —
+    //   向きが逆 (自分 -> 周り) の場で、目標として共有されても誰の役にも立たない
+    Field from;
+    from.tx = cx;
+    from.ty = cy;
+    from.tz = cz;
+    BuildDistance(from);
+    int64_t best = INT64_MAX;
+    int32_t bx = cx, by = cy, bz = cz;
+    for (int32_t z = 0; z < nav_.dimZ; ++z) {
+        for (int32_t y = 0; y < nav_.dimY; ++y) {
+            for (int32_t x = 0; x < nav_.dimX; ++x) {
+                if (from.dist[static_cast<size_t>(NavIndex(nav_, x, y, z))] == kUnreached) {
+                    continue;
+                }
+                const int64_t dx = x - goal.tx, dy = y - goal.ty, dz = z - goal.tz;
+                const int64_t distance = dx * dx + dy * dy + dz * dz;
+                if (distance < best) {
+                    best = distance; bx = x; by = y; bz = z;
+                }
+            }
+        }
+    }
+    acoustic::CellToWorldCenter(nav_, bx, by, bz, outX, outY, outZ);
+    return true; // 自分のセル (距離 0) は必ず届くので、候補が空になることは無い
+}
+
 bool AcousticNav::SampleDirection(int field, float wx, float wy, float wz, float& outDx,
                                   float& outDz) const
 {
@@ -277,25 +340,8 @@ bool AcousticNav::SampleDirection(int field, float wx, float wy, float wz, float
     }
     const Field& f = fields_[static_cast<size_t>(field)];
     int32_t cx = 0, cy = 0, cz = 0;
-    if (!acoustic::WorldToCell(nav_, wx, wy, wz, cx, cy, cz)) {
+    if (!ResolveCell(wx, wy, wz, cx, cy, cz)) {
         return false;
-    }
-    // 自分のセルが閉 (壁にめり込んでいる) なら、開いている隣へ**表の順**に逃がす
-    if (IsSolid(cx, cy, cz)) {
-        bool moved = false;
-        for (int i = 0; i < acoustic::kNeighborCount; ++i) {
-            const acoustic::Neighbor& nb = acoustic::kNeighbors[i];
-            if (!IsSolid(cx + nb.dx, cy + nb.dy, cz + nb.dz)) {
-                cx += nb.dx;
-                cy += nb.dy;
-                cz += nb.dz;
-                moved = true;
-                break;
-            }
-        }
-        if (!moved) {
-            return false;
-        }
     }
     const uint16_t here = f.dist[static_cast<size_t>(NavIndex(nav_, cx, cy, cz))];
     if (here == kUnreached) {

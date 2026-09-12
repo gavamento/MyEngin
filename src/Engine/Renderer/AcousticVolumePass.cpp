@@ -58,6 +58,40 @@ bool AcousticVolumePass::Upload(GraphicsDevice& device, const AcousticVolumeUplo
     return true;
 }
 
+bool AcousticVolumePass::UploadFront(GraphicsDevice& device, const uint16_t* cells, int32_t dimX,
+                                     int32_t dimY, int32_t dimZ, uint32_t serial)
+{
+    if (cells == nullptr || dimX <= 0 || dimY <= 0 || dimZ <= 0) {
+        return false;
+    }
+    const bool sameSize = front_.Width() == dimX && front_.Height() == dimY && front_.Depth() == dimZ;
+    if (frontFailed_ && sameSize) {
+        return false;
+    }
+    if (!front_.IsValid() || !sameSize) {
+        // 整数テクスチャ (Load で読む。フィルタしない = ビットが混ざらない)。UAV は要らない
+        if (!front_.Create(device, dimX, dimY, dimZ, DXGI_FORMAT_R16_UINT, false)) {
+            MYE_LOG_ERROR("AcousticVolumePass: R16_UINT の Texture3D (%dx%dx%d) を作れなかった "
+                          "(解析的な波面は出ない = 残光だけの絵に戻る)",
+                          dimX, dimY, dimZ);
+            frontFailed_ = true;
+            return false;
+        }
+        frontFailed_ = false;
+        frontUploaded_ = false;
+    }
+    if (frontUploaded_ && frontSerial_ == serial) {
+        return true;
+    }
+    // RowPitch = dimX * 2 バイト、DepthPitch = dimX * dimY * 2 バイト (残光の 2 倍)
+    device.Context()->UpdateSubresource(front_.Texture(), 0, nullptr, cells,
+                                        static_cast<UINT>(dimX) * 2u,
+                                        static_cast<UINT>(dimX) * static_cast<UINT>(dimY) * 2u);
+    frontSerial_ = serial;
+    frontUploaded_ = true;
+    return true;
+}
+
 void AcousticVolumePass::Release()
 {
     volume_.Release();
@@ -65,6 +99,10 @@ void AcousticVolumePass::Release()
     everUploaded_ = false;
     createFailed_ = false;
     uploadMs_ = 0.0f;
+    front_.Release();
+    frontSerial_ = 0;
+    frontUploaded_ = false;
+    frontFailed_ = false;
 }
 
 } // namespace mye

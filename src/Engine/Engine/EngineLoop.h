@@ -168,6 +168,9 @@ struct EngineConfig {
     // ★--froxel-dump と違い**他のフラグを立てない** — 残光は「音響ボリュームが
     //   シーンに在る」ことだけが条件で、CLI で on/off するものではないから
     int acousticDumpFrame = -1;
+    // 2026-09-12: 解析的な波面 (「描画だけ円」)。false (--no-acoustic-front) で残光だけの
+    // 従来の絵に戻す。A/B と、万一の描画不具合の逃げ道
+    bool acousticFront = true;
 
     // M68a: --acoustic-audio-log N。tick < N のあいだ、整形した voice と shot ごとに
     // 1 行を標準出力へ出し、終了時に summary を 1 行足す (0 = 何も出さない)。

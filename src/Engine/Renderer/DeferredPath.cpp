@@ -1222,7 +1222,9 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
     //   潰し合う (レジスタ番号の食い違いはコンパイルも実行も通ってしまう)。
     // s0=IBL サンプラ / s1=比較サンプラ bind 済み (アトラスも s1 を共有する = サンプラ増やさず。
     // froxel も s0 を流用する)
-    ID3D11ShaderResourceView* gbSrvs[16] = { gbAlbedo_.SRV(),     gbNormal_.SRV(),
+    // 2026-09-12「描画だけ円」: t16 に見通しビットの 3D テクスチャ (本数 16 -> 17。
+    // 下の nullSrvs も 17 = 剥がし忘れの的を増やさない)
+    ID3D11ShaderResourceView* gbSrvs[17] = { gbAlbedo_.SRV(),     gbNormal_.SRV(),
                                              gbPosition_.SRV(),   gbMaterial_.SRV(),
                                              view.shadowSRV,      view.iblIrradiance,
                                              view.iblPrefiltered, view.iblBrdfLut,
@@ -1235,10 +1237,12 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
                                              acousticBound ? view.acousticSRV : nullptr,
                                              (probeSet != nullptr) ? probeSet->cubeArray
                                                                    : nullptr, // t14: M56f
-                                             froxelBound ? view.froxelSRV : nullptr };
+                                             froxelBound ? view.froxelSRV : nullptr,
+                                             acousticBound ? view.acousticFrontSRV : nullptr };
     static_assert(froxel::kSrvSlot == 15, "froxel の SRV スロットは統合契約 予約 2 の t15");
     static_assert(acoustic::kGlowSrvSlot == 13, "音響の SRV スロットは統合契約 予約 2 の t13");
-    dc->PSSetShaderResources(0, 16, gbSrvs);
+    static_assert(acoustic::kFrontSrvSlot == 16, "解析的な波面の SRV は t16 (16 -> 17 本)");
+    dc->PSSetShaderResources(0, 17, gbSrvs);
     dc->IASetInputLayout(nullptr);
     dc->OMSetBlendState(blendOpaque_.Get(), nullptr, 0xFFFFFFFFu);
     dc->VSSetShader(lightProg->vs.Get(), nullptr, 0);
@@ -1250,8 +1254,8 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
     //   ので入力として渡せない (鶏と卵)。加算合成する別パスにしたので t13 は空席のまま。
     // ★16 にしておかないと t15 のフロクセル SRV が張られたまま残り、**次フレームの
     //   積分パスが同じテクスチャを UAV に取った瞬間に D3D が片方を黙って外す**
-    ID3D11ShaderResourceView* nullSrvs[16] = {};
-    dc->PSSetShaderResources(0, 16, nullSrvs); // 次フレームで RT に戻すため解除
+    ID3D11ShaderResourceView* nullSrvs[17] = {};
+    dc->PSSetShaderResources(0, 17, nullSrvs); // 次フレームで RT に戻すため解除 (t16 まで)
 
     // ---- 2.5) スカイボックス (M29d): clearColor ピクセルを深度 1.0 判定で上書き ----
     // (Wireframe はフルスクリーン三角形が線になるためスキップ、M40b)
@@ -1304,14 +1308,16 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
         // フレーム頭で bind 済み。
         // ★t6/t7 を足したら**本数も増やすこと** (増やし忘れると透明メッシュだけが
         //   前段の光パスが残したもの、または null を読む = 影が出ない/霧が抜ける)
-        ID3D11ShaderResourceView* fwdSrvs[8] = { view.shadowSRV,      nullptr,
+        ID3D11ShaderResourceView* fwdSrvs[9] = { view.shadowSRV,      nullptr,
                                                  view.iblIrradiance,  view.iblPrefiltered,
                                                  view.iblBrdfLut,     view.shadowAtlasSRV,
                                                  froxelBound ? view.froxelSRV : nullptr,
-                                                 acousticBound ? view.acousticSRV : nullptr };
+                                                 acousticBound ? view.acousticSRV : nullptr,
+                                                 acousticBound ? view.acousticFrontSRV : nullptr };
         static_assert(froxel::kForwardSrvSlot == 7, "froxel の Forward SRV は統合契約 予約 2 の t7");
         static_assert(acoustic::kGlowForwardSrvSlot == 8, "音響の Forward SRV は t8 (M65e で 7->8)");
-        dc->PSSetShaderResources(1, 8, fwdSrvs);
+        static_assert(acoustic::kFrontForwardSrvSlot == 9, "解析的な波面の Forward SRV は t9 (8->9)");
+        dc->PSSetShaderResources(1, 9, fwdSrvs);
         ID3D11SamplerState* matSampler[1] = { sampler_.Get() };
         dc->PSSetSamplers(0, 1, matSampler);
         dc->VSSetConstantBuffers(0, 2, cbs);

@@ -28,6 +28,7 @@
 #include "Engine/Engine/SceneSerializer.h"
 #include "Engine/Engine/Scene.h"
 #include "Engine/Engine/TransformSystem.h"
+#include "Engine/Renderer/RenderTypes.h" // M65i: MakeAcousticCB (混ぜ具合が z 席へ流れるか)
 
 namespace mye {
 namespace {
@@ -689,6 +690,75 @@ bool RunAcousticSelfTest()
               "glow: ResetVisual drops the buffer and bumps the serial");
     }
 
+    // ---- (16b) 解析的な波面 = 「描画だけ円」(2026-09-12) も描画レーン ----
+    // 先読み距離場は sim の距離場と同じ関数を回すので、sim が追いついた所ではビット一致する。
+    // 見通しビットは直線で届くセルにだけ立ち、角を曲がった先には立たない。ハッシュは動かない
+    {
+        Scene scene;
+        World& w = scene.GetWorld();
+        w.ApplyStructuralChanges();
+        AcousticField field;
+        AcousticGridDesc g;
+        (void)acoustic::MakeGridDesc(24, 1, 24, 0.5f, 0.0f, 0.0f, 0.0f, g);
+        field.DebugSetGrid(g, MakeLMaze(g));
+        const SimSources src{ nullptr, &scene.Time(), &scene.Persist(), nullptr, &field };
+        float wx = 0.0f, wy = 0.0f, wz = 0.0f;
+        acoustic::CellToWorldCenter(g, 2, 0, 2, wx, wy, wz);
+        check(field.Emit(EntityID{ 9, 1 }, wx, wy, wz, 1.0f, 20.0f, 0, 1, 0), "front: emitted");
+        for (uint64_t i = 0; i < 10; ++i) {
+            field.Advance(nullptr, i);
+            field.UpdateFrontPreview(i);
+        }
+        const uint64_t h = HashWorld(w, src);
+        field.UpdateFrontPreview(10);
+        check(HashWorld(w, src) == h, "front: the preview cannot move the world hash");
+        check(field.FrontActive() && field.FrontMask().size() == static_cast<size_t>(g.CellCount()),
+              "front: a live wave produces a mask of the whole grid");
+        bool same = true;
+        for (int32_t x = 2; x <= 20; ++x) {
+            const uint16_t d = field.DistanceAt(0, x, 0, 2);
+            if (d != AcousticField::kUnreached && d != field.FrontPreviewDistanceAt(0, x, 0, 2)) {
+                same = false;
+            }
+        }
+        check(same, "front: the preview agrees with the sim field wherever the sim has arrived");
+        check(field.DistanceAt(0, 14, 0, 2) == AcousticField::kUnreached
+                  && field.FrontPreviewDistanceAt(0, 14, 0, 2) != AcousticField::kUnreached,
+              "front: the preview runs a few rings ahead of the sim");
+        for (uint64_t i = 10; i < 40; ++i) {
+            field.Advance(nullptr, i);
+            field.UpdateFrontPreview(i);
+        }
+        check(field.Waves()[0].ring == 40, "front: the wave reached its last ring");
+        const std::vector<uint16_t>& mask = field.FrontMask();
+        check((mask[static_cast<size_t>(acoustic::CellIndex(g, 10, 0, 2))] & 1u) != 0,
+              "front: a cell straight down the corridor gets the wave's bit");
+        check(field.DistanceAt(0, 20, 0, 10) != AcousticField::kUnreached
+                  && (mask[static_cast<size_t>(acoustic::CellIndex(g, 20, 0, 10))] & 1u) == 0,
+              "front: a cell reached around the corner is not in line of sight (no bit)");
+        check((mask[static_cast<size_t>(acoustic::CellIndex(g, 10, 0, 10))] & 1u) == 0,
+              "front: a wall cell never gets a bit");
+        const AcousticField::FrontWave& fw = field.FrontWaves()[0];
+        check(fw.active != 0 && std::fabs(fw.radiusM - 40.5f * 0.5f) < 1e-5f
+                  && std::fabs(fw.maxDistM - 20.0f) < 1e-5f && fw.extraAgeTicks == 0.0f,
+              "front: the wave table carries radius (ring+0.5 cells) and reach");
+        // 消えた波は名残として最終半径で残り、名残が尽きると消える
+        field.Advance(nullptr, 40); // ring >= maxRing = 消える
+        check(field.Waves()[0].active == 0, "front: the wave died");
+        field.UpdateFrontPreview(41);
+        check(field.FrontActive() && field.FrontWaves()[0].active != 0
+                  && field.FrontWaves()[0].extraAgeTicks == 0.0f,
+              "front: a dead wave lingers with its final radius");
+        field.UpdateFrontPreview(41 + AcousticField::kFrontLingerTicks + 1);
+        check(!field.FrontActive() && field.FrontWaves()[0].active == 0,
+              "front: the linger expires");
+        field.UpdateFrontPreview(41 + AcousticField::kFrontLingerTicks + 2);
+        const uint32_t fs = field.FrontSerial();
+        field.ResetVisual();
+        check(field.FrontSerial() != fs && !field.FrontActive() && field.FrontMask().empty(),
+              "front: ResetVisual drops the mask and bumps the serial");
+    }
+
     // ---- (17) 減衰は単調で必ず 0 に届く (M65d) ----
     // ★uint8 の乗算を四捨五入にすると 255 が 255 のまま止まって**永久に消えない**。
     //   切り捨てであることをここで固定する
@@ -1007,6 +1077,45 @@ bool RunAcousticSelfTest()
         check(allMove, "agent: all eight distinct return goals produce movement on every tick");
     }
 
+    // 譲り合い: 正面から来る 2 体は index の大きいほうが横へ退く / 同じ向きの後続は譲らない。
+    // ★ソリッド Collider を併用した敵の正面衝突が永久に止まる実害から来た規則
+    {
+        Scene scene;
+        World& w = scene.GetWorld();
+        auto vol = scene.CreateGameObjectTracked("Volume");
+        auto* av = vol.AddComponent<AcousticVolumeComponent>();
+        av->dimX = av->dimZ = 48; av->dimY = 2; av->cellSize = 0.5f;
+        auto make = [&](const char* name, float x, float z, float tx, float tz) {
+            auto e = scene.CreateGameObjectTracked(name);
+            e.SetLocalPosition(x, 0.0f, z);
+            e.AddComponent<CharacterControllerComponent>();
+            auto* brain = e.AddComponent<AgentBrainComponent>();
+            brain->home = { tx, 0.0f, tz };
+            brain->target = brain->home;
+            brain->state = kAgentReturn;
+            brain->emitEveryTicks = 0;
+            return e.Id();
+        };
+        // 生成順 = index 昇順。Lead が最小で東へ、Oncoming は 1m 先から西へ (正面)、
+        // Follower は Lead の 1m 後ろから同じ東へ
+        const EntityID lead = make("Lead", -0.5f, 0.0f, 8.0f, 0.0f);
+        const EntityID oncoming = make("Oncoming", 0.5f, 0.0f, -8.0f, 0.0f);
+        const EntityID follower = make("Follower", -1.5f, 0.0f, 8.0f, 0.0f);
+        w.ApplyStructuralChanges();
+        TransformSystem ts;
+        ts.Update(w);
+        AcousticField field;
+        field.Sync(w);
+        AgentSystem sys;
+        sys.Update(w, field, 1);
+        const auto& l = w.GetComponent<CharacterControllerComponent>(lead)->moveInput;
+        const auto& o = w.GetComponent<CharacterControllerComponent>(oncoming)->moveInput;
+        const auto& f = w.GetComponent<CharacterControllerComponent>(follower)->moveInput;
+        check(l.x > 0.0f && l.z == 0.0f, "yield: the lower index keeps its course");
+        check(o.x == 0.0f && std::fabs(o.z) > 0.0f, "yield: the oncoming higher index steps aside");
+        check(f.x > 0.0f && f.z == 0.0f, "yield: a follower heading the same way does not yield");
+    }
+
     // 完成した光は耳だけの敵にも効く。通常照明や消灯後には障害を残さない。
     {
         Scene scene;
@@ -1082,6 +1191,109 @@ bool RunAcousticSelfTest()
         const bool restored = RestoreSimSnapshot(refs, blob.data(), blob.size());
         check(restored && w.GetComponent<LightComponent>(lamp.Id())->safeRadius == 2.5f,
               "sanctuary: snapshot restores radius");
+    }
+
+    // 入口を光で塞がれた部屋 (三校: 立てこもりは仕様)。辿れない目標は辿れる最寄りへ
+    // 差し替わり、敵は入口の手前まで来て固まらない。
+    // 粗グリッド 12x1x12 (1m)。x=6 の列が壁で、z=5..6 の 2m だけが入口。光は入口の真ん中
+    {
+        AcousticGridDesc g;
+        MYE_CHECK(acoustic::MakeGridDesc(24, 2, 24, 0.5f, 0.0f, 0.0f, 0.0f, g));
+        std::vector<uint8_t> occ(static_cast<size_t>(g.CellCount()), 0u);
+        for (int32_t y = 0; y < g.dimY; ++y) {
+            for (int32_t z = 0; z < g.dimZ; ++z) {
+                if (z >= 10 && z <= 13) {
+                    continue; // 入口
+                }
+                for (int32_t x = 12; x <= 13; ++x) {
+                    occ[static_cast<size_t>(acoustic::CellIndex(g, x, y, z))] = 1u;
+                }
+            }
+        }
+        // ★MakeGridDesc は**中心**を原点に置く (最小角は -6m)。座標は最小角からの m で組む
+        const float ox = g.minX, oz = g.minZ;
+        const float kY = g.minY + 0.5f;                            // 粗セル y=0 の中ほど
+        const float kDoorX = ox + 6.5f, kDoorZ = oz + 6.0f;        // 入口の真ん中
+        const float kStartX = ox + 2.5f, kStartZ = oz + 6.5f;      // 部屋の外 (西側)
+        const float kInnerX = ox + 10.5f, kInnerZ = oz + 6.5f;     // 塞がれた部屋の奥
+        constexpr float kRadius = 2.5f;
+        AcousticField field;
+        field.DebugSetGrid(g, occ);
+
+        AcousticNav nav;
+        nav.Sync(field);
+        nav.BeginTick();
+        nav.ExcludeCircle(kDoorX, kDoorZ, kRadius);
+        const int inner = nav.BuildFlowField(kInnerX, kY, kInnerZ);
+        float dx = 0.0f, dz = 0.0f;
+        check(inner >= 0 && !nav.SampleDirection(inner, kStartX, kY, kStartZ, dx, dz),
+              "sealed door: the light cuts the room off (precondition: no direction)");
+        float nx = 0.0f, ny = 0.0f, nz = 0.0f;
+        const bool swapped = nav.NearestReachable(inner, kStartX, kY, kStartZ, nx, ny, nz);
+        const float ex = nx - kDoorX, ez = nz - kDoorZ;
+        check(swapped && nx < ox + 6.0f
+                  && ex * ex + ez * ez <= (kRadius + 2.0f) * (kRadius + 2.0f),
+              "sealed door: an unreachable goal maps to a reachable spot by the door, this side");
+        float nx2 = 0.0f, ny2 = 0.0f, nz2 = 0.0f;
+        check(nav.NearestReachable(inner, kStartX, kY, kStartZ, nx2, ny2, nz2) && nx2 == nx
+                  && ny2 == ny && nz2 == nz,
+              "sealed door: the substitute is bit-identical on a second query");
+        check(!nav.NearestReachable(inner, ox + 11.5f, kY, oz + 2.5f, nx2, ny2, nz2),
+              "sealed door: a goal that is already reachable is left alone");
+
+        // AgentSystem 経路。物理は通さず moveInput をそのまま積分する (CC の壁ずりは見ない)
+        struct SealedRun {
+            bool reached = false;   // untilState に入った
+            bool outside = true;    // 一度も光の内側へ入らなかった
+            float travelled = 0.0f; // 出発点からの水平距離 (固まっていない証拠)
+        };
+        auto runSealed = [&](bool eye, int32_t startState, int32_t untilState) {
+            SealedRun r;
+            Scene scene;
+            World& w = scene.GetWorld();
+            auto lamp = scene.CreateGameObjectTracked("DoorLight");
+            lamp.SetLocalPosition(kDoorX, kY, kDoorZ);
+            auto* lc = lamp.AddComponent<LightComponent>();
+            lc->type = 1;
+            lc->intensity = 1.0f;
+            lc->safeRadius = kRadius;
+            auto enemy = scene.CreateGameObjectTracked("Outside");
+            enemy.SetLocalPosition(kStartX, kY, kStartZ);
+            enemy.AddComponent<CharacterControllerComponent>();
+            auto* brain = enemy.AddComponent<AgentBrainComponent>();
+            brain->state = startState;
+            brain->home = { kInnerX, kY, kInnerZ }; // 巣も塞がれた部屋の中
+            brain->target = brain->home;
+            brain->emitEveryTicks = 0;
+            if (eye) {
+                enemy.AddComponent<LightSeekerComponent>();
+            }
+            w.ApplyStructuralChanges();
+            TransformSystem transforms;
+            transforms.Update(w);
+            AgentSystem sys;
+            constexpr float kDt = 1.0f / 60.0f;
+            float x = kStartX, z = kStartZ;
+            for (uint64_t tick = 1; tick <= 1200 && !r.reached; ++tick) {
+                sys.Update(w, field, tick, kDt);
+                r.reached = w.GetComponent<AgentBrainComponent>(enemy.Id())->state == untilState;
+                const auto& mv = w.GetComponent<CharacterControllerComponent>(enemy.Id())->moveInput;
+                x += mv.x * kDt;
+                z += mv.z * kDt;
+                const float ox = x - kDoorX, oz = z - kDoorZ;
+                r.outside = r.outside && ox * ox + oz * oz > kRadius * kRadius;
+                enemy.SetLocalPosition(x, kY, z);
+                transforms.Update(w);
+            }
+            r.travelled = std::sqrt((x - kStartX) * (x - kStartX) + (z - kStartZ) * (z - kStartZ));
+            return r;
+        };
+        const SealedRun back = runSealed(false, kAgentReturn, kAgentPatrol);
+        check(back.reached && back.travelled > 2.0f && back.outside,
+              "sealed door: returning to a nest inside walks to the door and resumes patrol");
+        const SealedRun lured = runSealed(true, kAgentPatrol, kAgentSearch);
+        check(lured.reached && lured.travelled > 2.0f && lured.outside,
+              "sealed door: a light-seeker drawn to a sealed light reaches the door and searches");
     }
 
     // ---- (22) 敵 FSM: 5 状態の遷移と「警戒中は 1 波も出さない」(M65f) ----
@@ -1260,6 +1472,7 @@ bool RunAcousticSelfTest()
             av->cellSize = 0.5f;
             av->glowKeepPerTick = 0.5f;
             av->glowIntensity = -1.0f; // 負は Sync 側で 0 (消灯) へ丸める
+            av->glowAlbedoMix = 3.0f;  // 1 を超える分は Sync 側で 1 へ丸める
         }
         w.ApplyStructuralChanges();
         TransformSystem ts;
@@ -1269,6 +1482,7 @@ bool RunAcousticSelfTest()
         field.Sync(w);
         check(field.GlowKeepPerTick() == 0.5f, "tune: Sync mirrors glowKeepPerTick");
         check(field.GlowIntensity() == 0.0f, "tune: a negative glowIntensity clamps to zero");
+        check(field.GlowAlbedoMix() == 1.0f, "tune: glowAlbedoMix above 1 clamps to 1");
 
         // keep=0.5 は 1 tick で半分になる = 鏡の値が DecayVisual まで実際に流れる形
         float wx = 0.0f, wy = 0.0f, wz = 0.0f;
@@ -1295,9 +1509,11 @@ bool RunAcousticSelfTest()
         if (auto* av = w.GetComponent<AcousticVolumeComponent>(vol.Id())) {
             av->glowKeepPerTick = 0.0f;
             av->glowIntensity = 2.0f;
+            av->glowAlbedoMix = 0.25f;
         }
         field.Sync(w);
-        check(field.GlowKeepPerTick() == 0.0f && field.GlowIntensity() == 2.0f,
+        check(field.GlowKeepPerTick() == 0.0f && field.GlowIntensity() == 2.0f
+                  && field.GlowAlbedoMix() == 0.25f,
               "tune: Sync re-mirrors after the component changes");
         const uint8_t before = half;
         field.DecayVisual(field.GlowKeepPerTick());
@@ -1307,6 +1523,24 @@ bool RunAcousticSelfTest()
         }
         check(after < before && after + 3 >= before,
               "tune: keep=0 falls back to the engine default (slow decay)");
+
+        // 負の混ぜ具合は 0 (= 従来の色) へ倒れる
+        if (auto* av = w.GetComponent<AcousticVolumeComponent>(vol.Id())) {
+            av->glowAlbedoMix = -1.0f;
+        }
+        field.Sync(w);
+        check(field.GlowAlbedoMix() == 0.0f, "tune: a negative glowAlbedoMix clamps to zero");
+
+        // 混ぜ具合は CB の z 席 (M65e で予約のまま空いていた席) で運ぶ。
+        // ★未バインドは全部 0 のまま = シェーダは分岐に入らない (w も 0)
+        RenderView view;
+        view.acousticIntensity = 1.0f;
+        view.acousticAlbedoMix = 0.25f;
+        const AcousticCB bound = MakeAcousticCB(view, true);
+        check(bound.params.z == 0.25f && bound.params.w == 1.0f,
+              "tune: MakeAcousticCB carries glowAlbedoMix in params.z");
+        check(MakeAcousticCB(view, false).params.z == 0.0f,
+              "tune: an unbound acoustic CB keeps params.z at zero");
     }
 
     if (failCount == 0) {

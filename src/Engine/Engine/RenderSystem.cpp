@@ -114,6 +114,91 @@ void DumpAcousticVolume(GraphicsDevice& device, const AcousticVolumePass& pass,
     } else {
         MYE_LOG_INFO("[acoustic-dump] no solid cell is lit (壁の向こうは完全にゼロ)");
     }
+
+    // ---- 2026-09-12「描画だけ円」: 残光の byte と解析的な波面のモデル値を同じセルで並べる ----
+    // シェーダ (acoustic_common.hlsli AcousticFront) と同じ式を CPU で引き、原点から +x へ
+    // 1 セルずつ「残光 / 円」を出す。両者が大きくずれたら減衰モデルか半径の取り方が違う
+    const float keepRaw = field.GlowKeepPerTick();
+    const float keep = (keepRaw > 0.0f && keepRaw < 1.0f) ? keepRaw : acoustic::kGlowDecayPerTick;
+    const AcousticField::FrontWave* fws = field.FrontWaves();
+    const std::vector<uint16_t>& mask = field.FrontMask();
+    for (uint32_t s = 0; s < AcousticField::kMaxWaves; ++s) {
+        const AcousticField::FrontWave& fw = fws[s];
+        if (fw.active == 0) {
+            continue;
+        }
+        int32_t ox = 0, oy = 0, oz = 0;
+        if (!acoustic::WorldToCell(g, fw.ox, fw.oy, fw.oz, ox, oy, oz)) {
+            continue;
+        }
+        MYE_LOG_INFO("[acoustic-dump] front slot %u: origin cell (%d,%d,%d) R=%.2fm amp=%.2f "
+                     "maxD=%.2fm tick/m=%.1f extraAge=%.0f keep=%.4f",
+                     s, ox, oy, oz, static_cast<double>(fw.radiusM), static_cast<double>(fw.amplitude),
+                     static_cast<double>(fw.maxDistM), static_cast<double>(fw.ticksPerMetre),
+                     static_cast<double>(fw.extraAgeTicks), static_cast<double>(keep));
+        std::string row;
+        for (int32_t k = 0; ox + k < g.dimX && k <= 24; ++k) {
+            const size_t ci = static_cast<size_t>(acoustic::CellIndex(g, ox + k, oy, oz));
+            const unsigned glow = cpu[ci];
+            const bool bit = !mask.empty() && (mask[ci] & (1u << s)) != 0;
+            const float d = static_cast<float>(k) * g.cellSize;
+            float model = 0.0f;
+            if (bit && d < fw.radiusM && d < fw.maxDistM) {
+                const float ratio = g.cellSize / (std::max)(d, g.cellSize);
+                float t = std::sqrt(std::sqrt((std::min)(fw.amplitude * ratio * ratio, 1.0f)));
+                t *= (std::min)(1.0f, (std::max)(0.0f, (fw.radiusM - d) / (0.5f * g.cellSize)));
+                const float age = (fw.radiusM - d) * fw.ticksPerMetre + fw.extraAgeTicks;
+                const float vStar = 1.0f / (std::max)(1.0f - keep, 1e-4f);
+                float v = t * 255.0f;
+                float n = age;
+                if (v > vStar) {
+                    const float n1 = (std::min)(n, std::log(vStar / v) / std::log(keep));
+                    v = v * std::exp(n1 * std::log(keep)) - 0.5f * n1;
+                    n -= n1;
+                }
+                v -= n;
+                model = (std::max)(v, 0.0f);
+            }
+            char buf[48];
+            snprintf(buf, sizeof(buf), " %u/%.0f%s", glow, static_cast<double>(model), bit ? "" : "-");
+            row += buf;
+        }
+        MYE_LOG_INFO("[acoustic-dump]   +x: glow/circle per cell (- = no line of sight):%s", row.c_str());
+        // 原点の層と、床の画素がサンプルする層 (y = 0 + 法線押し出し) を上から見た見通しビットの
+        // 地図 (# = 円を描く / . = 残光だけ / X = 壁)。自由空間で # の縁が凸でなければ
+        // 見通し判定の閾値が低すぎる
+        int32_t fx = 0, fy = oy, fz = 0;
+        (void)acoustic::WorldToCell(g, fw.ox, 0.75f * g.cellSize, fw.oz, fx, fy, fz);
+        const int32_t layers[2] = { oy, fy };
+        for (int li = 0; li < (fy == oy ? 1 : 2); ++li) {
+            const int32_t ly = layers[li];
+            MYE_LOG_INFO("[acoustic-dump]   layer y=%d (%s):", ly, li == 0 ? "origin" : "floor sample");
+            const int32_t rad = 20;
+            for (int32_t z = oz - rad; z <= oz + rad; ++z) {
+                if (z < 0 || z >= g.dimZ) {
+                    continue;
+                }
+                std::string line;
+                for (int32_t x = ox - rad; x <= ox + rad; ++x) {
+                    if (x < 0 || x >= g.dimX) {
+                        line += ' ';
+                        continue;
+                    }
+                    const size_t ci = static_cast<size_t>(acoustic::CellIndex(g, x, ly, z));
+                    if (field.IsSolid(x, ly, z)) {
+                        line += 'X';
+                    } else if (x == ox && z == oz) {
+                        line += 'O';
+                    } else if (!mask.empty() && (mask[ci] & (1u << s)) != 0) {
+                        line += '#';
+                    } else {
+                        line += (cpu[ci] != 0) ? '.' : ' ';
+                    }
+                }
+                MYE_LOG_INFO("[acoustic-dump]   |%s|", line.c_str());
+            }
+        }
+    }
 }
 
 
@@ -1233,11 +1318,45 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
                 // M65h: ボリューム側の明るさ (glowIntensity) と全体係数の積。
                 // 既定はどちらも 1.0 = 既存の絵と 1 ビットも変わらない
                 view.acousticIntensity = acousticIntensity * acousticField->GlowIntensity();
+                // 強い残光に面の色を混ぜる割合。既定 0 = 既存の絵と 1 ビットも変わらない
+                view.acousticAlbedoMix = acousticField->GlowAlbedoMix();
                 // 閉セルは波が絶対に訪れない = 壁面の残光は開セル側にしかない。
                 // 法線方向へ 0.75 セル押し出して開セル側を引くのが
                 // 「壁に当たった面だけが光る」の正体 (計画 判断 5)
                 view.acousticNormalPush = 0.75f * ag.cellSize;
                 acousticSupplied_ = true;
+                // 2026-09-12「描画だけ円」: 見通しビットと波の表。マスクの転送に失敗したら
+                // SRV が null のまま = 従来 (残光だけ) の絵に静かに戻る
+                const std::vector<uint16_t>& front = acousticField->FrontMask();
+                if (acousticFront && acousticField->FrontActive()
+                    && static_cast<int64_t>(front.size()) == ag.CellCount()
+                    && acousticPass_.UploadFront(device, front.data(), ag.dimX, ag.dimY, ag.dimZ,
+                                                 acousticField->FrontSerial())) {
+                    view.acousticFrontSRV = acousticPass_.FrontSRV();
+                    const AcousticField::FrontWave* waves = acousticField->FrontWaves();
+                    int n = 0;
+                    for (uint32_t s = 0; s < AcousticField::kMaxWaves && s < RenderView::kAcousticWaveSlots; ++s) {
+                        // スロット番号 = マスクのビット番号なので、空きも位置を保って詰めない
+                        RenderView::AcousticWaveGpu& g = view.acousticWaves[s];
+                        g = RenderView::AcousticWaveGpu{};
+                        if (waves[s].active == 0) {
+                            continue;
+                        }
+                        g.origin[0] = waves[s].ox;
+                        g.origin[1] = waves[s].oy;
+                        g.origin[2] = waves[s].oz;
+                        g.radiusM = waves[s].radiusM;
+                        g.amplitude = waves[s].amplitude;
+                        g.maxDistM = waves[s].maxDistM;
+                        g.ticksPerMetre = waves[s].ticksPerMetre;
+                        g.extraAgeTicks = waves[s].extraAgeTicks;
+                        n = static_cast<int>(s) + 1;
+                    }
+                    view.acousticWaveCount = n;
+                    const float keep = acousticField->GlowKeepPerTick();
+                    view.acousticKeepPerTick = (keep > 0.0f && keep < 1.0f) ? keep : acoustic::kGlowDecayPerTick;
+                    view.acousticCellSize = ag.cellSize;
+                }
             }
         }
         // 「そのビューの N 回目の描画」= 決定的撮影モードでは frame 番号と一致する

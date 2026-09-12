@@ -204,6 +204,15 @@
     <ClCompile Include="..\src\Engine\Engine\Audio\AudioSystem.cpp">
       <Filter>Engine\Audio</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Audio\ImpactSoundAsset.cpp">
+      <Filter>Engine\Audio</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Audio\ImpactSynth.cpp">
+      <Filter>Engine\Audio</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Audio\ImpactSynthSelfTest.cpp">
+      <Filter>Engine\Audio</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Audio\MusicStream.cpp">
       <Filter>Engine\Audio</Filter>
     </ClCompile>
@@ -760,6 +769,15 @@
       <Filter>Engine\Audio</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Audio\AudioSystem.h">
+      <Filter>Engine\Audio</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Audio\ImpactSoundAsset.h">
+      <Filter>Engine\Audio</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Audio\ImpactSynth.h">
+      <Filter>Engine\Audio</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Audio\ImpactSynthSelfTest.h">
       <Filter>Engine\Audio</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Audio\MusicMath.h">

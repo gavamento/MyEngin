@@ -98,6 +98,7 @@ AcousticField::AcousticField()
 {
     waves_.assign(kMaxWaves, Wave{});
     fields_.assign(kMaxWaves, WaveField{});
+    waveSoundHint_.assign(kMaxWaves, 0ull);
 }
 
 void AcousticField::Reset()
@@ -111,6 +112,7 @@ void AcousticField::Reset()
     derivedValid_ = false;
     waves_.assign(kMaxWaves, Wave{});
     fields_.assign(kMaxWaves, WaveField{});
+    waveSoundHint_.assign(kMaxWaves, 0ull);
     ResetVisual(); // M65d: 残光もシーンと一緒に捨てる
 }
 
@@ -202,6 +204,9 @@ void AcousticField::Sync(World& world)
     // DecayVisual が (0,1) 外を既定へ倒し、強度は負だけここで落とす)
     glowKeepPerTick_ = bestVol.glowKeepPerTick;
     glowIntensity_ = (bestVol.glowIntensity > 0.0f) ? bestVol.glowIntensity : 0.0f;
+    // 混ぜ具合は [0,1] に丸める。★比較で落とす形にしてあるのは NaN も 0 (従来の色) へ倒すため
+    //   (std::clamp は NaN をそのまま返す)
+    glowAlbedoMix_ = (bestVol.glowAlbedoMix > 0.0f) ? std::min(bestVol.glowAlbedoMix, 1.0f) : 0.0f;
     if (!acoustic::SameGrid(desc, grid_) || owner_ != best) {
         grid_ = desc;
         owner_ = best;
@@ -384,9 +389,13 @@ inline int32_t LocalIndex(const AcousticField::WaveField& f, int32_t lx, int32_t
 
 void AcousticField::SeedWave(uint32_t slot)
 {
+    SeedField(waves_[slot], fields_[slot]);
     const Wave& w = waves_[slot];
-    WaveField& f = fields_[slot];
+    WriteShell(slot, w.ox, w.oy, w.oz, 0); // M65d: 音源セルそのものも残光に焼く
+}
 
+void AcousticField::SeedField(const Wave& w, WaveField& f) const
+{
     // 面コストが 11 = 1 リングぶんなので、軸方向に maxRing セルより遠いセルは
     // 必ず maxRing*11 を超える。だから箱は原点 ± maxRing で足りる (証明付きの切り詰め)
     const int32_t r = static_cast<int32_t>(w.maxRing);
@@ -417,18 +426,22 @@ void AcousticField::SeedWave(uint32_t slot)
     const int32_t li = LocalIndex(f, w.ox - x0, w.oy - y0, w.oz - z0);
     f.dist[static_cast<size_t>(li)] = 0;
     f.buckets[0].push_back(li);
-    WriteShell(slot, w.ox, w.oy, w.oz, 0); // M65d: 音源セルそのものも残光に焼く
 }
 
 void AcousticField::AdvanceWaveOneRing(uint32_t slot)
 {
     Wave& w = waves_[slot];
-    WaveField& f = fields_[slot];
+    RelaxOneRing(w, fields_[slot], w.ring, static_cast<int32_t>(slot));
+    ++w.ring;
+}
 
+void AcousticField::RelaxOneRing(const Wave& w, WaveField& f, uint32_t ring, int32_t shellSlot)
+{
+    (void)w;
     // 1 リング = チャンファ距離 11 ぶん。[ring*11, (ring+1)*11) のバケットを昇順に空にする。
     // ★relax の挿入先は必ず d+11 以上 = 現区間の**外**なので、処理済みバケットへ
     //   書き戻されることが構造的に起きない (これが「1 リング = 幅 11」を選んだ理由)
-    const uint32_t lo = w.ring * acoustic::kFaceCost;
+    const uint32_t lo = ring * acoustic::kFaceCost;
     const uint32_t hi = lo + acoustic::kFaceCost; // 排他
     for (uint32_t d = lo; d < hi && d <= f.maxDist; ++d) {
         std::vector<int32_t>& bucket = f.buckets[d];
@@ -477,13 +490,168 @@ void AcousticField::AdvanceWaveOneRing(uint32_t slot)
                 // ★★M65d: 残光を焼くのは**ここ以外にない**。距離が確定したその場、
                 //   同じ 1 ループの中で焼くから「音が届いた場所」と「光った場所」が
                 //   構造的に一致する (企画 §3-1 の中核。別ループに切り出した瞬間に
-                //   ずれる余地ができる)。max 合成なので後から短い距離で来ても正しい
-                WriteShell(slot, nlx + f.x0, nly + f.y0, nlz + f.z0, nd);
+                //   ずれる余地ができる)。max 合成なので後から短い距離で来ても正しい。
+                //   先読み (shellSlot < 0) は焼かない — 光る場所を決めるのは sim だけ
+                if (shellSlot >= 0) {
+                    WriteShell(static_cast<uint32_t>(shellSlot), nlx + f.x0, nly + f.y0, nlz + f.z0, nd);
+                }
             }
         }
         bucket.clear();
     }
-    ++w.ring;
+}
+
+// ---- 解析的な波面 = 「描画だけ円」(描画レーン) ---------------------------------------
+//
+// ★ここから下は glow_ と同じく描画レーン。sim 状態 (waves_) は読むだけで、書かない。
+//   先読み距離場は sim の距離場と**同じ関数 (SeedField / RelaxOneRing) を同じ入力で**
+//   回すので、sim が後から同じリングに到達したとき必ずビット一致する。
+
+void AcousticField::UpdateFrontPreview(uint64_t tick)
+{
+    if (!grid_.Valid()) {
+        if (frontActive_ || !front_.empty()) {
+            front_.clear();
+            frontActive_ = false;
+            ++frontSerial_;
+        }
+        return;
+    }
+    if (previews_.size() != kMaxWaves) {
+        previews_.assign(kMaxWaves, FrontPreview{});
+    }
+
+    // ---- 1. 先読みを sim の数リング先まで進める ----
+    bool anyPreview = false;
+    for (uint32_t s = 0; s < kMaxWaves; ++s) {
+        const Wave& w = waves_[s];
+        FrontPreview& p = previews_[s];
+        if (w.active != 0) {
+            // 同じスロットに別の波が入った / 占有が変わって Rebuild が invalid にした → 引き直す
+            const bool same = p.valid && p.deadTick == 0 && p.wave.bornTick == w.bornTick
+                && p.wave.ox == w.ox && p.wave.oy == w.oy && p.wave.oz == w.oz
+                && p.simMaxRing == w.maxRing && p.wave.source.index == w.source.index;
+            if (!same) {
+                p.wave = w;
+                p.simMaxRing = w.maxRing;
+                // 到達上限を 13/11 倍に広げる (見通し判定の閾値と同じ比。上の FrontPreview 参照)
+                p.wave.maxRing = (w.maxRing * 13u + 10u) / 11u + 1u;
+                p.ring = 0;
+                p.deadTick = 0;
+                p.valid = true;
+                SeedField(p.wave, p.field);
+            }
+            p.wave.ring = w.ring;   // 半径の計算に使う (先読みの進み具合とは別)
+            p.wave.phase = w.phase;
+            // 円が八角形からはみ出す最大 13% + 余裕 3 リングを常に先読みしておく。
+            // ★見通し判定は**確定した**距離 (< 先読みリング*11) だけを使うので (下)、
+            //   円の半径 (ring+2 セル以下) がユークリッドで 12.45 倍のチャンファに収まる
+            //   11*(ring+3+ring/8) >= 12.45*(ring+2) を全 ring で満たす余裕が要る
+            const uint32_t target = (std::min)(p.wave.maxRing, w.ring + 3u + w.ring / 8u);
+            while (p.ring < target) {
+                RelaxOneRing(p.wave, p.field, p.ring, -1);
+                ++p.ring;
+            }
+        } else if (p.valid) {
+            // sim から消えた波。名残のあいだは最終半径で描き続ける (残光と同じ速さで薄れる)
+            if (p.deadTick == 0) {
+                p.deadTick = tick;
+            } else if (tick < p.deadTick || tick - p.deadTick > kFrontLingerTicks) {
+                p = FrontPreview{}; // 時間が戻った (巻き戻し) か、名残が尽きた
+            }
+        }
+        anyPreview = anyPreview || p.valid;
+    }
+
+    if (!anyPreview) {
+        if (frontActive_ || !front_.empty()) {
+            front_.clear();
+            frontActive_ = false;
+            ++frontSerial_;
+        }
+        for (FrontWave& fw : frontWaves_) {
+            fw = FrontWave{};
+        }
+        return;
+    }
+
+    // ---- 2. 見通しビットと描画パラメータを作り直す ----
+    const size_t cells = static_cast<size_t>(grid_.CellCount());
+    front_.assign(cells, 0u);
+    for (uint32_t s = 0; s < kMaxWaves; ++s) {
+        const FrontPreview& p = previews_[s];
+        FrontWave& fw = frontWaves_[s];
+        if (!p.valid) {
+            fw = FrontWave{};
+            continue;
+        }
+        const WaveField& f = p.field;
+        const uint16_t bit = static_cast<uint16_t>(1u << s);
+        // ★確定した距離だけを見る。先読みの縁の「仮の距離」(まだ短い経路で上書きされて
+        //   いない値) は最大 8 だけ長く、見通し判定を落として円の縁が階段になる (実測)
+        const uint32_t confirmed = p.ring * acoustic::kFaceCost;
+        for (int32_t lz = 0; lz < f.sz; ++lz) {
+            for (int32_t ly = 0; ly < f.sy; ++ly) {
+                for (int32_t lx = 0; lx < f.sx; ++lx) {
+                    const uint16_t d = f.dist[static_cast<size_t>(LocalIndex(f, lx, ly, lz))];
+                    if (d == kUnreached || d > f.maxDist || d >= confirmed) {
+                        continue;
+                    }
+                    // 見通し判定: チャンファ距離 d がユークリッド距離 r (セル) の 13/11 倍以内。
+                    // 自由空間のチャンファ <11,16,19> は方向 (11,5,3) で最大 sqrt(155) = 12.45 倍
+                    // (2D の最悪 12.08 より 3D のほうが大きい) なので、13 は「直線で届いた」の
+                    // 上限 + 4% の余裕。角を曲がった経路 (18% 以上長い) はこれを超える。
+                    // ★12.5 にしていたとき、自由空間でも 3D の斜め方向が落ちて円の縁が
+                    //   階段になった (実測)。d <= 13 r  <=>  d^2 <= 169 r^2 (整数のまま比較)
+                    const int64_t dx = static_cast<int64_t>(lx + f.x0 - p.wave.ox);
+                    const int64_t dy = static_cast<int64_t>(ly + f.y0 - p.wave.oy);
+                    const int64_t dz = static_cast<int64_t>(lz + f.z0 - p.wave.oz);
+                    const int64_t r2 = dx * dx + dy * dy + dz * dz;
+                    const int64_t d2 = static_cast<int64_t>(d) * static_cast<int64_t>(d);
+                    if (d2 > 169 * r2) {
+                        continue;
+                    }
+                    front_[static_cast<size_t>(
+                        acoustic::CellIndex(grid_, lx + f.x0, ly + f.y0, lz + f.z0))] |= bit;
+                }
+            }
+        }
+        acoustic::CellToWorldCenter(grid_, p.wave.ox, p.wave.oy, p.wave.oz, fw.ox, fw.oy, fw.oz);
+        const float cell = grid_.cellSize;
+        const float tpr = static_cast<float>((std::max)(p.wave.ticksPerRing, 1u));
+        // 波面の半径: リング r まで進めた直後、残光は軸方向 r セル目まで焼かれている
+        // (--acoustic-dump の glow/circle 比較で確認)。円の縁は半セルで立ち上げるので、
+        // r セル目の中心が縁の内側に入るよう +0.5。分周の位相で tick 内を補間して、
+        // 60Hz でも波面が滑らかに進んで見えるようにする
+        const float ringF = (p.deadTick == 0)
+            ? static_cast<float>(p.wave.ring) + static_cast<float>(p.wave.phase) / tpr
+            : static_cast<float>(p.simMaxRing);
+        fw.radiusM = (ringF + 0.5f) * cell;
+        fw.amplitude = p.wave.amplitude;
+        // 到達上限は sim のもの (先読みの広げた上限ではない) = 残光の EnergyAt と同じ 0 点
+        fw.maxDistM = static_cast<float>(p.simMaxRing) * cell;
+        fw.ticksPerMetre = tpr / cell;
+        fw.extraAgeTicks = (p.deadTick == 0) ? 0.0f : static_cast<float>(tick - p.deadTick);
+        fw.active = 1;
+    }
+    frontActive_ = true;
+    ++frontSerial_;
+}
+
+uint16_t AcousticField::FrontPreviewDistanceAt(uint32_t slot, int32_t cx, int32_t cy,
+                                               int32_t cz) const
+{
+    if (slot >= previews_.size() || !previews_[slot].valid) {
+        return kUnreached;
+    }
+    const WaveField& f = previews_[slot].field;
+    const int32_t lx = cx - f.x0;
+    const int32_t ly = cy - f.y0;
+    const int32_t lz = cz - f.z0;
+    if (lx < 0 || lx >= f.sx || ly < 0 || ly >= f.sy || lz < 0 || lz >= f.sz) {
+        return kUnreached;
+    }
+    return f.dist[static_cast<size_t>(LocalIndex(f, lx, ly, lz))];
 }
 
 void AcousticField::Rebuild()
@@ -512,16 +680,39 @@ void AcousticField::Rebuild()
             AdvanceWaveOneRing(s);
         }
     }
+    // 占有が変わった (または復元した) ので先読みも古い。次の UpdateFrontPreview で引き直す
+    for (FrontPreview& p : previews_) {
+        p.valid = false;
+    }
+}
+
+// 発音要求が波にならなかった理由を残す (最初の 16 回だけ。sim には 1 bit も影響しない)。
+// 「スクリプトは pendingLoudness を書いたのに何も光らず何も鳴らない」は、この 3 つの
+// どれかで、ログが無いと投擲物の着弾位置を疑って回ることになる (三校で実際に踏んだ)
+static void LogEmitDrop(const char* why, EntityID source, float wx, float wy, float wz,
+                        uint64_t tick)
+{
+    static int sLogged = 0;
+    if (sLogged >= 16) {
+        return;
+    }
+    ++sLogged;
+    MYE_LOG_WARN("[acoustic] t=%llu wave dropped (%s): source=%u at (%.1f, %.1f, %.1f)%s",
+                 static_cast<unsigned long long>(tick), why, source.index,
+                 static_cast<double>(wx), static_cast<double>(wy), static_cast<double>(wz),
+                 sLogged == 16 ? " (further drops are not logged)" : "");
 }
 
 bool AcousticField::Emit(EntityID source, float wx, float wy, float wz, float loudness,
-                         float radiusM, uint32_t tone, uint32_t ticksPerRing, uint64_t tick)
+                         float radiusM, uint32_t tone, uint32_t ticksPerRing, uint64_t tick,
+                         uint64_t soundHint)
 {
     if (!grid_.Valid() || loudness <= 0.0f || radiusM <= 0.0f) {
         return false;
     }
     int32_t cx = 0, cy = 0, cz = 0;
     if (!acoustic::WorldToCell(grid_, wx, wy, wz, cx, cy, cz)) {
+        LogEmitDrop("outside the acoustic volume", source, wx, wy, wz, tick);
         return false; // ボリュームの外で鳴った音はこの場では表現しない
     }
     if (IsSolid(cx, cy, cz)) {
@@ -539,6 +730,7 @@ bool AcousticField::Emit(EntityID source, float wx, float wy, float wz, float lo
             }
         }
         if (!moved) {
+            LogEmitDrop("origin cell and all 26 neighbours are solid", source, wx, wy, wz, tick);
             return false; // 完全に埋まっている
         }
     }
@@ -553,6 +745,7 @@ bool AcousticField::Emit(EntityID source, float wx, float wy, float wz, float lo
         }
     }
     if (slot == kMaxWaves) {
+        LogEmitDrop("all wave slots are busy", source, wx, wy, wz, tick);
         return false;
     }
 
@@ -573,6 +766,7 @@ bool AcousticField::Emit(EntityID source, float wx, float wy, float wz, float lo
     w.amplitude = loudness;
     w.tone = tone;
     w.bornTick = tick;
+    waveSoundHint_[slot] = soundHint; // 音レーンの付帯情報 (ハッシュ外)
     SeedWave(slot);
     return true;
 }
@@ -620,6 +814,7 @@ void AcousticField::DrainEmitters(World& world, float dt, uint64_t tick)
 
     for (const Pending& p : pend) {
         AcousticEmitterComponent& em = *p.comp;
+        uint64_t soundHint = 0; // 足音なら床材のハッシュ (音レーン専用。スクリプトの要求は 0)
         if (em.cooldown > 0) {
             --em.cooldown;
         }
@@ -652,6 +847,7 @@ void AcousticField::DrainEmitters(World& world, float dt, uint64_t tick)
                         em.pendingLoudness = loud * gain;
                         em.pendingRadiusM = SelectAcousticRadiusM(mat) * gain;
                         em.pendingTone = SelectAcousticTone(mat);
+                        soundHint = mat->hash; // loud > 0 なので mat は非 null
                     }
                 }
             }
@@ -666,7 +862,7 @@ void AcousticField::DrainEmitters(World& world, float dt, uint64_t tick)
         const uint32_t tone = static_cast<uint32_t>(std::clamp(em.pendingTone, 0, 3));
         const uint32_t tpr = static_cast<uint32_t>(std::clamp(em.ticksPerRing, 1, 64));
         if (Emit(p.entity, p.wx, p.wy, p.wz, em.pendingLoudness, em.pendingRadiusM, tone, tpr,
-                 tick)) {
+                 tick, soundHint)) {
             em.cooldown = (std::max)(0, em.cooldownTicks);
         }
         em.pendingLoudness = 0.0f;
@@ -753,7 +949,8 @@ void AcousticField::DrainImpacts(World& world, const std::vector<SolidContact>& 
         // ★振幅と到達距離の**両方**を gain で縮める。振幅だけ縮めると、かすった音でも
         //   波の届く範囲は全開のまま = 敵に「小さいのに遠くまで届く音」が聞こえる
         if (Emit(src, c.px, c.py, c.pz, loud * gain, SelectAcousticRadiusM(mat) * gain,
-                 static_cast<uint32_t>(SelectAcousticTone(mat)), kImpactTicksPerRing, tick)) {
+                 static_cast<uint32_t>(SelectAcousticTone(mat)), kImpactTicksPerRing, tick,
+                 mat->hash)) { // loud > 0 なので mat は非 null
             ++emitted;
         }
     }
@@ -957,6 +1154,15 @@ void AcousticField::ResetVisual()
     }
     visualActive_ = false;
     ++visualSerial_;
+    // 解析的な波面も同じ描画レーン。巻き戻し / シーン遷移で一緒に捨てる
+    previews_.clear();
+    front_.clear();
+    front_.shrink_to_fit();
+    for (FrontWave& fw : frontWaves_) {
+        fw = FrontWave{};
+    }
+    frontActive_ = false;
+    ++frontSerial_;
 }
 
 uint16_t AcousticField::DistanceAt(uint32_t slot, int32_t cx, int32_t cy, int32_t cz) const

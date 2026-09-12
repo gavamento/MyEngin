@@ -878,6 +878,8 @@ void RegisterBuiltinComponents()
                              "uint8 storage caps the tail at ~4.25s regardless")),
         MYE_JP("残光の明るさ",
                MYE_FIELD_RANGE(AcousticVolumeComponent, glowIntensity, Float, 0.0f, 4.0f)),
+        MYE_JP("残光に面の色",
+               MYE_FIELD_RANGE(AcousticVolumeComponent, glowAlbedoMix, Float, 0.0f, 1.0f)),
     });
 
     // 音を出す口。pending* を書くと次の音響フェーズで波が 1 本生まれる。
@@ -997,6 +999,8 @@ void RegisterBuiltinComponents()
                MYE_FIELD_RANGE(AcousticAudioComponent, waveVolume, Float, 0.0f, 4.0f)),
         MYE_JP("波の最小音量",
                MYE_FIELD_RANGE(AcousticAudioComponent, minWaveVolume, Float, 0.0f, 1.0f)),
+        MYE_JP("波の音量カーブ",
+               MYE_FIELD_RANGE(AcousticAudioComponent, waveVolumeExp, Float, 0.25f, 4.0f)),
         MYE_JP("波の残響送り",
                MYE_FIELD_RANGE(AcousticAudioComponent, waveReverbSend, Float, 0.0f, 1.0f)),
         MYE_JP("波の減衰カーブ",
@@ -1007,7 +1011,17 @@ void RegisterBuiltinComponents()
         MYE_JP("音色 3 のサウンド", MYE_FIELD(AcousticAudioComponent, toneSound3, String64)),
     }, kComponentNoHash);
 
-    // M75a: RectTransform (=51)。UI 要素の配置 (UIElement から分離)。描画専用の NoHash +
+    // ImpactSynth: 発音元ごとの波の音 (=51)。音レーン専用なので NoHash。
+    // 付けなければ床材 → tone マップに従う = 既存シーンの音は 1 音も変わらない
+    RegisterComponent<WaveSoundComponent>("WaveSound", {
+        MYE_JP("波の音",
+               MYE_FIELD_TIP(WaveSoundComponent, sound, String64,
+                             "sound key (.sound.json / .impact.json name) played when this entity's "
+                             "wave is born; empty = silent. Without this component the floor "
+                             "material's acousticSound, then AcousticAudio's tone map, decide")),
+    }, kComponentNoHash);
+
+    // M75a: RectTransform (=52)。UI 要素の配置 (UIElement から分離)。描画専用の NoHash +
     // UI 専用判定に載せる UiAux。旧シーンの UIElement.anchor/x/y/w/h/space はロード時に
     // ここへ変換される (SceneSerializer)。**M60′ の Cloth/SoftBody 予約は 62/63 へ繰り下げ**
     // (M75 の UI コンポーネント群 52〜61 が先に埋める)

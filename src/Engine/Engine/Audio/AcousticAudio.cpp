@@ -8,10 +8,14 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <cstring>
+#include <string_view>
 
 #include "Engine/Core/Hash.h"
 #include "Engine/Core/Log.h"
+#include "Engine/Core/World.h"
 #include "Engine/Engine/Audio/SoundAsset.h"
+#include "Engine/Engine/Physics/PhysMatLibrary.h"
 
 namespace mye {
 namespace {
@@ -507,12 +511,45 @@ float RoomBlend(float openness, float openSmall, float openLarge)
 // 鳴る波 (M68b)
 // ---------------------------------------------------------------------------
 
+void ResolveWaveShotSound(World& world, EntityID source, uint64_t materialHint,
+                          PendingWaveShot& shot)
+{
+    shot.soundKey = 0;
+    shot.mute = 0;
+    // (1) 発音元の WaveSound。★IsAlive を先に見る — drain は tick の後なので、鳴らした主体が
+    //     既に破棄されていることがある (AudioSourceSystem の log の注記と同じ)
+    if (!source.IsNull() && world.IsAlive(source)) {
+        if (const auto* ws = world.GetComponent<WaveSoundComponent>(source)) {
+            if (ws->sound[0] == '\0') {
+                shot.mute = 1;
+            } else {
+                const size_t len = ::strnlen(ws->sound, sizeof(ws->sound));
+                shot.soundKey = HashStr(std::string_view(ws->sound, len));
+            }
+            return;
+        }
+    }
+    // (2) 床材 (足音 / 衝撃音)。physmat:: が未接続 (selftest) なら nullptr = tone マップへ
+    if (materialHint != 0) {
+        if (const PhysMat* mat = physmat::Resolve(AssetID{ materialHint })) {
+            if (!mat->acousticSound.empty()) {
+                shot.soundKey = HashStr(mat->acousticSound);
+            }
+        }
+    }
+}
+
 WaveShotResult MakeWaveShotPlay(const AcousticField& field, const AcousticProbe& probe,
                                 const AcousticAudioComponent& comp, const PendingWaveShot& shot,
                                 AudioVec3 listenerPos, const AudioSystem& audio,
                                 const SoundLibrary& sounds, Pcg32& rng, PlayDesc& outDesc,
                                 AudioSpatial& outSpatial, AcousticShapeInfo* info)
 {
+    // ---- (0) 発音元が意図して黙らせている波 (ImpactSynth の WaveSound = 空) ----
+    if (shot.mute != 0) {
+        return WaveShotResult::Muted;
+    }
+
     // ---- (1) 音量の足切り。**outDesc に 1 バイトも触る前**に判定する ----
     // ★呼吸 (0.07) は鳴らず carpet の足音 (0.12) は鳴る、が既定 0.10 の意味 (spec S4)。
     //   波は「聞こえないほど小さいもの」まで立つので、ここで捨てないと voice を
@@ -521,16 +558,24 @@ WaveShotResult MakeWaveShotPlay(const AcousticField& field, const AcousticProbe&
     if (!(vol >= comp.minWaveVolume) || !(vol > 0.0f)) {
         return WaveShotResult::BelowMin;
     }
+    // ---- (1b) 聴感カーブ。足切りは線形振幅 (「波が小さすぎる」の意味) で済ませ、鳴らす
+    //   音量だけ指数で広げる。1.0 (既定) なら従来どおり線形。0 以下は不正値として 1 扱い
+    const float expo = (comp.waveVolumeExp > 0.0f) ? comp.waveVolumeExp : 1.0f;
+    const float heard = (expo == 1.0f) ? vol : std::pow(vol, expo);
 
-    // ---- (2) tone -> .sound.json の名前キー ----
-    const char* const toneNames[4] = { comp.toneSound0, comp.toneSound1, comp.toneSound2,
-                                       comp.toneSound3 };
-    const uint32_t tone = shot.tone < 4u ? shot.tone : 0u;
-    const char* name = toneNames[tone];
-    if (name == nullptr || name[0] == '\0') {
-        return WaveShotResult::UnknownKey; // その音色は鳴らさない設定 (空文字)
+    // ---- (2) 名前キー: 積む側が決めた soundKey (発音元 / 床材) が勝ち、無ければ tone マップ ----
+    uint64_t key = shot.soundKey;
+    if (key == 0) {
+        const char* const toneNames[4] = { comp.toneSound0, comp.toneSound1, comp.toneSound2,
+                                           comp.toneSound3 };
+        const uint32_t tone = shot.tone < 4u ? shot.tone : 0u;
+        const char* name = toneNames[tone];
+        if (name == nullptr || name[0] == '\0') {
+            return WaveShotResult::UnknownKey; // その音色は鳴らさない設定 (空文字)
+        }
+        key = HashStr(name);
     }
-    const ResolvedSound rs = ResolveSoundKey(audio, sounds, HashStr(name));
+    const ResolvedSound rs = ResolveSoundKey(audio, sounds, key);
     if (!rs.Valid()) {
         return WaveShotResult::UnknownKey;
     }
@@ -548,13 +593,13 @@ WaveShotResult MakeWaveShotPlay(const AcousticField& field, const AcousticProbe&
         const float volJitter = rng.Range(-1.0f, 1.0f);
         const float pitchJitter = rng.Range(-1.0f, 1.0f);
         outDesc = MakePlayDesc(*rs.asset, variation, volJitter, pitchJitter, audio);
-        outDesc.volume = std::clamp(outDesc.volume * vol, 0.0f, 1.0f);
+        outDesc.volume = std::clamp(outDesc.volume * heard, 0.0f, 1.0f);
     } else {
         // 生クリップ経路 (.sound.json を置かずに .wav の stem で鳴らす M19 からの道)
         outDesc = PlayDesc{};
         outDesc.clip = rs.clip;
         outDesc.bus = audio.DefaultBus();
-        outDesc.volume = std::clamp(vol, 0.0f, 1.0f);
+        outDesc.volume = std::clamp(heard, 0.0f, 1.0f);
     }
     outDesc.loop = false; // 一発再生。ループする .sound.json を指されても鳴りっぱなしにしない
 

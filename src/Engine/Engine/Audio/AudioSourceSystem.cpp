@@ -655,10 +655,12 @@ void AudioSourceSystem::Update(World& world, AudioSystem& audio, const SoundLibr
                 //   (借用するなら IsAlive 検査が要る)。tone は音色の識別に足りる
                 const int src =
                     shot.source.IsNull() ? -1 : static_cast<int>(shot.source.index);
-                MYE_LOG_INFO("[acaudio] t=%llu kind=shot src=%d name=tone%u class=%s "
+                // key = 積む側が決めた名前キーのハッシュ (0 = tone マップ)。名前は引かない
+                MYE_LOG_INFO("[acaudio] t=%llu kind=shot src=%d name=tone%u key=%016llx class=%s "
                              "dPath=%.2f dLine=%.2f dReal=%.2f lpf=%.3f gain=%.3f open=%.2f "
                              "room=%.2f",
                              static_cast<unsigned long long>(tickIndex), src, shot.tone,
+                             static_cast<unsigned long long>(shot.soundKey),
                              AcousticPathClassName(info.cls), static_cast<double>(info.dPath),
                              static_cast<double>(info.dLine), static_cast<double>(info.dReal),
                              static_cast<double>(info.lpf), static_cast<double>(info.gain),

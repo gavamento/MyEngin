@@ -50,6 +50,7 @@
 #include "Engine/Engine/Replay/WorldHasher.h"
 #include "Engine/Engine/Acoustic/AcousticSelfTest.h"
 #include "Engine/Engine/Audio/AcousticAudioSelfTest.h"
+#include "Engine/Engine/Audio/ImpactSynthSelfTest.h"
 #include "Engine/Engine/Replay/SimSnapshotSelfTest.h"
 #include "Engine/Engine/Replay/TimeTravelSelfTest.h"
 #include "Engine/Engine/Replay/WorldHasherSelfTest.h"
@@ -411,6 +412,9 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 // M65d: N 回目の描画で残光ボリュームを読み戻し、CPU 側の配列と
                 // バイト単位で突き合わせてログへ (他のフラグは立てない)
                 config.acousticDumpFrame = _wtoi(argv[++i]);
+            } else if (arg == L"--no-acoustic-front") {
+                // 2026-09-12: 解析的な波面 (円) を止めて残光だけの絵にする (A/B 用)
+                config.acousticFront = false;
             } else if (arg == L"--acoustic-audio-log" && i + 1 < argc) {
                 // M68a: tick < N のあいだ整形の結果を 1 行ずつ標準出力へ + 終了時に summary。
                 // ★--no-audio と併用すると 1 行も出ない (設計どおり = ヘッドレスはゼロコスト)
@@ -670,7 +674,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             && mye::RunAcousticSelfTest()       // M65a
             && mye::RunSourceControlSelfTest()  // M66a
             && mye::RunAcousticAudioSelfTest()  // M68a
-            && mye::RunSubAssetKeySelfTest();   // M74a / M74b
+            && mye::RunSubAssetKeySelfTest()    // M74a / M74b
+            && mye::RunImpactSynthSelfTest();   // ImpactSynth (計画 ImpactSoundDesign)
         return ok ? 0 : 1;
     }
 

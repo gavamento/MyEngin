@@ -49,6 +49,12 @@ public:
 
     ID3D11ShaderResourceView* SRV() const { return volume_.SRV(); }
     const VolumeTexture& Volume() const { return volume_; }
+
+    // 「描画だけ円」(2026-09-12): 見通しビット (uint16、bit s = 波スロット s) の 3D テクスチャ。
+    // R16_UINT / SRV のみ。残光と同じ寸法・同じ並び。serial は AcousticField::FrontSerial
+    bool UploadFront(GraphicsDevice& device, const uint16_t* cells, int32_t dimX, int32_t dimY,
+                     int32_t dimZ, uint32_t serial);
+    ID3D11ShaderResourceView* FrontSRV() const { return front_.SRV(); }
     // 直近の転送にかかった CPU 時間 [ms] (ProfilerWindow 表示用)。
     // 転送を省いたフレームは 0 になる = 「速い」ではなく「していない」
     float LastUploadMs() const { return uploadMs_; }
@@ -60,6 +66,10 @@ private:
     bool everUploaded_ = false;
     bool createFailed_ = false; // 一度落ちたら毎フレーム再試行してログを溢れさせない
     float uploadMs_ = 0.0f;
+    VolumeTexture front_;
+    uint32_t frontSerial_ = 0;
+    bool frontUploaded_ = false;
+    bool frontFailed_ = false;
 };
 
 } // namespace mye

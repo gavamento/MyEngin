@@ -224,6 +224,8 @@ public:
     // ★これが RowPitch / DepthPitch の取り違え (= Z がずれるが絵は出る) を捕まえる
     //   唯一の網。130KB を Map する完全同期経路なので調査専用 (--froxel-dump と同じ型)
     int acousticDumpFrame = -1;
+    // 2026-09-12「描画だけ円」: false なら見通しビットを転送せず、残光だけの絵 (従来) に戻す
+    bool acousticFront = true;
 
     // M44d: ポストプロセス解決の GPU 時間 (直近の Resolve、ProfilerWindow 表示用)
     float PostFxGpuMs() const { return postFx_.ResolveGpuMs(); }

@@ -306,14 +306,17 @@ void ForwardPath::Render(GraphicsDevice& device, const RenderView& view, const R
     // t7 に (M57e。統合契約 予約 2)。
     // アトラス用のサンプラは増やさず s1 の比較サンプラを共有する (CSM と同じ設定でよい)。
     // froxel は s2 (IBL 用 LINEAR/CLAMP) を流用する = サンプラは 1 つも増えない
-    ID3D11ShaderResourceView* frameSrvs[8] = { view.shadowSRV,      nullptr,
+    // 2026-09-12「描画だけ円」: t9 に見通しビット (本数 8 -> 9。DeferredPath の透明後段も 9)
+    ID3D11ShaderResourceView* frameSrvs[9] = { view.shadowSRV,      nullptr,
                                                view.iblIrradiance,  view.iblPrefiltered,
                                                view.iblBrdfLut,     view.shadowAtlasSRV,
                                                froxelBound ? view.froxelSRV : nullptr,
-                                               acousticBound ? view.acousticSRV : nullptr };
+                                               acousticBound ? view.acousticSRV : nullptr,
+                                               acousticBound ? view.acousticFrontSRV : nullptr };
     static_assert(froxel::kForwardSrvSlot == 7, "froxel の Forward SRV は統合契約 予約 2 の t7");
     static_assert(acoustic::kGlowForwardSrvSlot == 8, "音響の Forward SRV は t8 (M65e で 7->8)");
-    dc->PSSetShaderResources(1, 8, frameSrvs);
+    static_assert(acoustic::kFrontForwardSrvSlot == 9, "解析的な波面の Forward SRV は t9 (8->9)");
+    dc->PSSetShaderResources(1, 9, frameSrvs);
     dc->RSSetState(wire ? rasterizerWire_.Get() : rasterizer_.Get());
     dc->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
