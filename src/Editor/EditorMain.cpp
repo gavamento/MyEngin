@@ -15,6 +15,7 @@
 #include "Engine/Engine/Asset/CookedCacheSelfTest.h"
 #include "Engine/Engine/Asset/SubAssetKeySelfTest.h"
 #include "Engine/Engine/Asset/SubAssetMigration.h"
+#include "Engine/Engine/UI/UIFontMetricsCook.h" // M75d: --cook-font-metrics
 #include "Engine/Engine/SchemaSelfTest.h"
 #include "Editor/ProjectManager.h"
 #include "Editor/ProjectRegistry.h"
@@ -149,12 +150,19 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     bool migrateSubAssetIds = false;      // --migrate-subasset-ids (M74b: 旧 ID → guid:// の ID)
     std::vector<std::wstring> legacyRoots; // --legacy-root DIR (繰り返し可。旧 clone 先)
     bool migrateDryRun = false;           // --dry-run (数えるだけで書かない)
+    bool cookFontMetrics = false;         // --cook-font-metrics (M75d: フォント計測表を作る)
 
     int argc = 0;
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
     if (argv) {
         for (int i = 1; i < argc; ++i) {
             const std::wstring arg = argv[i];
+            // ★下の else-if 連鎖は MSVC の入れ子上限 (C1061) に達している (M75d で 1 本足したら落ちた)。
+            //   新しいフラグは連鎖に足さず、ここで先に拾って continue する
+            if (arg == L"--cook-font-metrics") {
+                cookFontMetrics = true;
+                continue;
+            }
             if (arg == L"--frames" && i + 1 < argc) {
                 config.maxFrames = _wtoi64(argv[++i]);
             } else if (arg == L"--width" && i + 1 < argc) {
@@ -627,6 +635,18 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             probe.shaderDirs.push_back(engineShaders);
         }
         return mye::RunFroxelVolumeProbe(probe);
+    }
+
+    // --cook-font-metrics [--project DIR] (M75d):
+    // 描画フォント (assets\fonts\*.ttf/.ttc の名前順の先頭) の送り幅を
+    // assets\fonts\<stem>.fontmetrics.json へ書いて終了する (ウィンドウも D3D も作らない)。
+    // 生成物は cache ではなく assets = **コミットする** (sim が読む入力なので全員が同じ表を持つ)。
+    // --project 無しはエンジンリポジトリの assets が対象。exit 0 = 書いた / 最新、1 = 失敗、2 = フォントなし
+    if (cookFontMetrics) {
+        const std::wstring assetsRoot = projectDir.empty()
+            ? mye::FindAssetsRoot()
+            : (std::filesystem::absolute(projectDir) / L"assets").wstring();
+        return mye::uitext::RunFontMetricsCookCli(assetsRoot);
     }
 
     // --migrate-subasset-ids [--project DIR] [--legacy-root OLD]... [--dry-run] (M74b):

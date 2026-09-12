@@ -1,6 +1,7 @@
 #include "Editor/Windows/ProjectSettingsWindow.h"
 
 #include <algorithm>
+#include <filesystem>
 #include <string>
 
 #include "Editor/DiskCompare.h"
@@ -12,7 +13,10 @@
 #include "Engine/Core/Hash.h"
 #include "Engine/Core/Localization.h"
 #include "Engine/Engine/Particles/ParticleSystem.h"
+#include "Engine/Engine/UI/UIFontMetricsCook.h" // M75d
 #include "Engine/Platform/InputActions.h"
+#include "Engine/Platform/PathUtil.h"
+#include "Engine/Renderer/FontFiles.h"
 #include "Engine/Renderer/RenderPath.h"
 
 #include "Engine/Renderer/ImGuiTheme.h" // themeColor (意味色)
@@ -28,6 +32,8 @@ void ProjectSettingsWindow::OnImGui(EngineContext& ctx, EditorSettings& settings
         captureKind_ = 0;     // 窓を閉じたら捕捉も取り消す
         particleSaved_ = false; // 保存の確認表示も持ち越さない
         uiSaved_ = false;
+        fontCookState_ = 0;
+        fontListLoaded_ = false; // 開き直したらフォントの有無を取り直す (エクスプローラで足した分)
         return;
     }
     // 未保存判定に使う参照を控える (M66d)
@@ -113,6 +119,54 @@ void ProjectSettingsWindow::OnImGui(EngineContext& ctx, EditorSettings& settings
         }
         if (uiSaved_) {
             ImGui::TextColored(themeColor::Success, "%s", Tr(StrId::PrjSet_UISaved));
+        }
+
+        // ---- フォント計測表 (M75d、assets\fonts\<描画フォント>.fontmetrics.json) ----
+        // ★cook の結果は**次回起動から**効く。実効値 (ActiveFontMetrics) は起動時に 1 回だけ読む —
+        //   基準解像度と同じく、sim が読む値を Play 中やリングが生きている間に差し替えないため
+        ImGui::SeparatorText(Tr(StrId::PrjSet_FontMetrics));
+        ImGui::TextWrapped("%s", Tr(StrId::PrjSet_FontMetricsHint));
+        const uitext::FontMetrics& fm = uitext::ActiveFontMetrics();
+        if (fm.Empty()) {
+            ImGui::TextDisabled("%s", Tr(StrId::PrjSet_FontMetricsNone));
+        } else {
+            ImGui::TextDisabled(Tr(StrId::PrjSet_FontMetricsActive), fm.FontName().c_str(),
+                                fm.GlyphCount());
+        }
+        if (!fontListLoaded_) {
+            const std::vector<std::wstring> fonts = fontfiles::ListProjectFontFiles(ctx.assetsRoot);
+            fontSource_ = fonts.empty()
+                ? std::string()
+                : WideToUtf8(std::filesystem::path(fonts.front()).filename().wstring());
+            fontListLoaded_ = true;
+        }
+        if (fontSource_.empty()) {
+            ImGui::TextDisabled("%s", Tr(StrId::PrjSet_FontMetricsNoFont));
+        } else {
+            ImGui::Text(Tr(StrId::PrjSet_FontMetricsSource), fontSource_.c_str());
+            if (ImGui::Button(Tr(StrId::PrjSet_CookFontMetrics))) {
+                // 日本語フォントでも 0xFFFF 回の cmap 引きなので、窓の中で同期に回して足りる
+                const uitext::FontMetricsCookResult r = uitext::CookProjectFontMetrics(ctx.assetsRoot);
+                fontCookState_ = r.ok ? (r.unchanged ? 2 : 1) : 3;
+                fontCookText_ = r.ok
+                    ? WideToUtf8(std::filesystem::path(r.outPath).filename().wstring())
+                    : r.error;
+                fontCookGlyphs_ = r.glyphs;
+                if (r.ok && !r.unchanged) {
+                    scmhint::Changed(r.outPath); // M66i
+                }
+                fontListLoaded_ = false;
+            }
+        }
+        if (fontCookState_ == 1) {
+            ImGui::TextColored(themeColor::Success, Tr(StrId::PrjSet_FontMetricsCooked),
+                               fontCookText_.c_str(), fontCookGlyphs_);
+        } else if (fontCookState_ == 2) {
+            ImGui::TextDisabled(Tr(StrId::PrjSet_FontMetricsUnchanged), fontCookText_.c_str(),
+                                fontCookGlyphs_);
+        } else if (fontCookState_ == 3) {
+            ImGui::TextColored(themeColor::Error, Tr(StrId::PrjSet_FontMetricsFailed),
+                               fontCookText_.c_str());
         }
     }
 

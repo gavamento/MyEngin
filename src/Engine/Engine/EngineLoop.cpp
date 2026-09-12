@@ -56,6 +56,7 @@
 #include "Engine/Engine/TransformSystem.h"
 #include "Engine/Engine/UI/UILayout.h" // ワールド追従 UI の射影コンテキスト
 #include "Engine/Engine/UI/UIProjectSettings.h" // M75c: 既定キャンバスの基準解像度
+#include "Engine/Engine/UI/UITextMetrics.h"     // M75d: フォント計測表
 #include "Engine/Engine/UI/UIRenderer.h"
 #include "Engine/Engine/Vfx/VfxRenderer.h"
 #include "Engine/Platform/Clock.h"
@@ -270,6 +271,18 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             || uiSettings.referenceH != uilayout::kCanvasRefH) {
             MYE_LOG_INFO("[ui] default canvas reference %dx%d (project_settings.json)",
                          uiSettings.referenceW, uiSettings.referenceH);
+        }
+    }
+    // M75d: フォント計測表 (assets\fonts\<描画フォント>.fontmetrics.json)。基準解像度と同じく
+    // **tick が回る前に 1 回だけ**。Layout / Fitter が sim の中で読むので、途中で差し替えると
+    // 再シムや .rep の検証が割れる。表が無いときは固定メトリクス (ロード側が必要なら WARN を出す)。
+    // ★`--font-embedded` とは無関係に読む — 描画フラグで sim の入力が変わってはならない
+    {
+        uitext::SetActiveFontMetrics(uitext::LoadProjectFontMetrics(assetsRoot));
+        const uitext::FontMetrics& fm = uitext::ActiveFontMetrics();
+        if (!fm.Empty()) {
+            MYE_LOG_INFO("[ui] font metrics: %s (%u glyphs, hash 0x%016llx)", fm.FontName().c_str(),
+                         fm.GlyphCount(), static_cast<unsigned long long>(fm.Hash()));
         }
     }
     // M21: 失敗してもエンジンは継続 (UI が出ないだけ)。M52c: --font-embedded でフォント固定
@@ -605,11 +618,12 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                 uilayout::CanvasSize(swapChain.Width(), swapChain.Height());
             id.canvasW = static_cast<float>(c.w);
             id.canvasH = static_cast<float>(c.h);
-            // M75b: 欄だけ先に確保した 2 本 (照合は NetSession 側で既に効いている)。
-            // 基準解像度は project_settings の実効値 (M75c)、計測表は M75d で FNV に置き換わる
+            // M75b で欄を確保した 2 本 (照合は NetSession 側)。
+            // 基準解像度は project_settings の実効値 (M75c)、計測表は起動時に読んだ表の FNV (M75d。
+            // 表なし = 0 同士は一致扱い)
             id.referenceW = uilayout::DefaultCanvasDesc().referenceW;
             id.referenceH = uilayout::DefaultCanvasDesc().referenceH;
-            id.fontMetricsHash = 0;
+            id.fontMetricsHash = uitext::ActiveFontMetrics().Hash();
         }
         // 開始点のワールドハッシュ。**tick 末にハッシュを撮るのと同じ点** (OnStart +
         // ApplyStructuralChanges の直後) で撮る = 「同じシーンから始めたか」の機械照合

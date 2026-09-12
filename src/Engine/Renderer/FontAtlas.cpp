@@ -10,6 +10,7 @@
 
 #include "Engine/Core/Log.h"
 #include "Engine/Platform/PathUtil.h"
+#include "Engine/Renderer/FontFiles.h"
 #include "Engine/Renderer/GraphicsDevice.h"
 
 #include "stb/stb_truetype.h"
@@ -132,25 +133,12 @@ bool FontAtlas::Init(GraphicsDevice& device, const std::wstring& assetsRoot,
 {
     device_ = &device;
 
-    // フォント候補: assets\fonts\*.ttf/.ttc (名前順) → システム日本語フォント
+    // フォント候補: assets\fonts\*.ttf/.ttc (名前順) → システム日本語フォント。
+    // M75d: プロジェクト側の選択規則は fontfiles::ListProjectFontFiles の 1 本 (フォント計測表の
+    // cook とロード時照合も同じ関数を通す = 絵のフォントと表のフォントがずれない)
     std::vector<std::wstring> candidates;
     if (!assetsRoot.empty() && !forceEmbedded) {
-        std::error_code ec;
-        const std::filesystem::path dir = std::filesystem::path(assetsRoot) / L"fonts";
-        std::vector<std::wstring> found;
-        if (std::filesystem::is_directory(dir, ec)) {
-            for (const auto& e : std::filesystem::directory_iterator(dir, ec)) {
-                if (!e.is_regular_file()) {
-                    continue;
-                }
-                std::wstring ext = e.path().extension().wstring();
-                std::transform(ext.begin(), ext.end(), ext.begin(), ::towlower);
-                if (ext == L".ttf" || ext == L".ttc") {
-                    found.push_back(e.path().wstring());
-                }
-            }
-            std::sort(found.begin(), found.end());
-        }
+        const std::vector<std::wstring> found = fontfiles::ListProjectFontFiles(assetsRoot);
         candidates.insert(candidates.end(), found.begin(), found.end());
     }
     wchar_t windir[MAX_PATH] = {};

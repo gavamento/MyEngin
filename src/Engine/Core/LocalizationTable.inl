@@ -364,6 +364,22 @@ MYE_STR(PrjSet_UIActive,      "In effect now: %d x %d", "現在の実効値: %d 
 MYE_STR(PrjSet_SaveUI,        "Save UI settings###PrjSetSaveUI", "UI 設定を保存###PrjSetSaveUI")
 MYE_STR(PrjSet_UISaved,       "Saved. The new reference resolution applies after a restart.",
                               "保存しました。新しい基準解像度は再起動後に反映されます。")
+// M75d: フォント計測表。cook の結果は次回起動から (sim が読む値なので実行中は差し替えない)
+MYE_STR(PrjSet_FontMetrics,   "Font metrics",        "フォント計測表")
+MYE_STR(PrjSet_FontMetricsHint, "Layout groups and content size fitters measure text inside the simulation with this table (per-glyph advances of the project font). Cook it again and commit it whenever you replace the font. Applied on the next launch.",
+                              "Layout Group と Content Size Fitter は sim の中でこの表 (プロジェクトフォントの文字ごとの送り幅) を使ってテキストを測ります。フォントを差し替えたら作り直してコミットしてください。次回起動から反映されます。")
+MYE_STR(PrjSet_FontMetricsActive, "In effect now: %s (%u glyphs)", "現在の実効値: %s (%u 文字)")
+MYE_STR(PrjSet_FontMetricsNone, "In effect now: none - fixed metrics (0.8 line per glyph)",
+                              "現在の実効値: なし - 固定メトリクス (1 文字 0.8 行)")
+MYE_STR(PrjSet_FontMetricsSource, "Font: %s",        "対象フォント: %s")
+MYE_STR(PrjSet_FontMetricsNoFont, "No .ttf / .ttc in assets/fonts - text is drawn with a system font and measured with fixed metrics.",
+                              "assets/fonts に .ttf / .ttc がありません - 文字はシステムフォントで描かれ、固定メトリクスで測られます。")
+MYE_STR(PrjSet_CookFontMetrics, "Cook font metrics###PrjSetCookFontMetrics", "計測表を作成###PrjSetCookFontMetrics")
+MYE_STR(PrjSet_FontMetricsCooked, "Wrote %s (%u glyphs). Commit it - it applies after a restart.",
+                              "%s を書きました (%u 文字)。コミットしてください - 再起動後に反映されます。")
+MYE_STR(PrjSet_FontMetricsUnchanged, "%s is already up to date (%u glyphs).",
+                              "%s は最新です (%u 文字)。")
+MYE_STR(PrjSet_FontMetricsFailed, "Could not cook font metrics: %s", "計測表を作成できませんでした: %s")
 MYE_STR(PrjSet_PhysicsLayers, "Physics Layers",      "物理レイヤー")
 MYE_STR(PrjSet_SaveLayers,    "Save Layers",         "レイヤーを保存")
 MYE_STR(PrjSet_Shortcuts,     "Shortcuts",           "ショートカット")

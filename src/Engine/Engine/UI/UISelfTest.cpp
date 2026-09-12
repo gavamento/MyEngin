@@ -20,9 +20,17 @@
 #include "Engine/Platform/Input.h"
 #include "Engine/Platform/InputActions.h"
 #include "Engine/Engine/UI/UITextLayout.h"
+#include "Engine/Engine/UI/UIFontMetricsCook.h" // M75d
+#include "Engine/Engine/UI/UITextMetrics.h"     // M75d
 #include "Engine/Engine/Scene.h"           // M75a: 旧形式 (v3) シーンのロード時変換
 #include "Engine/Engine/SceneSerializer.h"
 #include <nlohmann/json.hpp>
+
+#include <algorithm>
+#include <cstdlib>
+#include <iterator>
+
+#include "stb/stb_truetype.h" // M75d: cook した表と実グリフ幅の比較
 
 namespace mye {
 
@@ -1297,6 +1305,302 @@ bool RunUISelfTest()
                 uilayout::LoadProjectUiSettings(dir.wstring());
             check(none.referenceW == 1920 && none.referenceH == 1080,
                   "settings: no project_settings.json = 1920x1080");
+        }
+    }
+
+    // ---- M75d: フォント計測表 ----
+    {
+        // (1) 固定メトリクス (表なし) は内蔵 8x8 の組版 (textlayout::LayoutText) と**ビット一致**する。
+        //     golden を撮る構成 (--font-embedded) で Layout の箱と描いた文字が 1 画素もずれない根拠。
+        //     8x8 の GlyphScale(fs) = kUILineH × fs / baseLineH(= kUILineH) = fs
+        {
+            FontGlyphMap embedded;
+            for (uint32_t cp = 0x20; cp < 0x80; ++cp) {
+                FontGlyphInfo g;
+                g.advance = 8.0f;
+                g.valid = true;
+                embedded[cp] = g;
+            }
+            const uitext::FontMetrics none;
+            const char* texts[] = { "Button", "Hello, World!", "ab\ncd\n", "\n", "",
+                                    "line one\n\nline three", "wrap me please into several lines",
+                                    "\t", "a\tb", "x\n\ny\n\n", "\xE6\x97\xA5\xE6\x9C\xAC UI" };
+            const float scales[] = { 1.0f, 1.5f, 2.0f, 0.75f };
+            const float widths[] = { 0.0f, 40.0f, 72.0f, 100.5f };
+            bool same = true;
+            std::vector<textlayout::Line> lines;
+            for (const char* t : texts) {
+                for (float fs : scales) {
+                    for (float mw : widths) {
+                        for (int wrap = 0; wrap < 2; ++wrap) {
+                            textlayout::LayoutText(embedded, t, fs, wrap != 0, mw, lines);
+                            float lw = 0.0f;
+                            for (const textlayout::Line& ln : lines) {
+                                lw = std::max(lw, ln.width);
+                            }
+                            const uitext::TextSize ts = uitext::Measure(t, fs, wrap != 0, mw, none);
+                            const float expectH =
+                                static_cast<float>(lines.size()) * (uitext::kLineH * fs);
+                            if (ts.lines != static_cast<int32_t>(lines.size()) || ts.w != lw
+                                || ts.h != expectH) {
+                                MYE_LOG_ERROR("    measure mismatch: \"%s\" fs=%g maxW=%g wrap=%d "
+                                              "lines %d/%zu w %g/%g", t, fs, mw, wrap, ts.lines,
+                                              lines.size(), ts.w, lw);
+                                same = false;
+                            }
+                        }
+                    }
+                }
+            }
+            check(same && none.Empty() && none.Hash() == 0 && none.AdvanceOf('A') == 800,
+                  "fontmetrics: fixed metrics measure exactly like the embedded 8x8 layout");
+            check(uitext::Measure(nullptr, 1.0f, false, 0.0f, none).lines == 0
+                      && uitext::Measure("", 1.0f, false, 0.0f, none).h == 0.0f,
+                  "fontmetrics: null / empty text measures as zero lines");
+        }
+
+        // (2) 構築 → 直列化 → 読み戻し
+        std::vector<uitext::GlyphAdvance> gl;
+        for (uint32_t cp = 0x20; cp <= 0x7E; ++cp) {
+            gl.push_back({ cp, static_cast<uint16_t>(300 + (cp * 37) % 400) });
+        }
+        for (uint32_t cp = 0x3040; cp <= 0x30FF; ++cp) {
+            gl.push_back({ cp, static_cast<uint16_t>((cp == 0x3099 || cp == 0x309A) ? 0 : 1000) });
+        }
+        gl.push_back({ 0x4E00, 1000 });
+        gl.push_back({ 0xFFFD, 1000 });
+        uitext::FontMetrics built;
+        std::string err;
+        const bool okBuild = uitext::FontMetrics::Build("Test.ttf", 1234, 32, 11520, gl, built, &err);
+        const std::string text = uitext::SerializeFontMetricsJson(built);
+        {
+            uitext::FontMetrics parsed;
+            const bool okParse = uitext::ParseFontMetricsJson(text, parsed, &err);
+            const std::vector<uitext::GlyphAdvance> back = parsed.Glyphs();
+            bool sameGlyphs = back.size() == gl.size();
+            for (size_t i = 0; sameGlyphs && i < gl.size(); ++i) {
+                sameGlyphs = back[i].codepoint == gl[i].codepoint && back[i].advance == gl[i].advance;
+            }
+            check(okBuild && okParse && sameGlyphs && built.Hash() != 0
+                      && parsed.Hash() == built.Hash() && parsed.FontName() == "Test.ttf"
+                      && parsed.FontBytes() == 1234 && parsed.LineH256() == 11520
+                      && parsed.GlyphCount() == gl.size()
+                      && uitext::SerializeFontMetricsJson(parsed) == text,
+                  "fontmetrics: build -> serialize -> parse round-trips byte-identically");
+            // 同値の並びは長さ 1 の配列に畳まれ、短い並びは明示配列のまま
+            check(text.find("[12352, 12440, [1000]]") != std::string::npos
+                      && text.find("[12441, 12442, [0, 0]]") != std::string::npos
+                      && text.find("[12443, 12543, [1000]]") != std::string::npos
+                      && text.find("[19968, 19968, [1000]]") != std::string::npos,
+                  "fontmetrics: uniform runs collapse to a single advance");
+
+            // 改行コード (core.autocrlf) と区間の切り方はハッシュに出ない
+            std::string crlf;
+            for (char c : text) {
+                if (c == '\n') {
+                    crlf += '\r';
+                }
+                crlf += c;
+            }
+            uitext::FontMetrics fromCrlf;
+            const std::string head =
+                R"({"format":1,"font":"a.ttf","fontBytes":0,"basePx":32,"lineH256":0,"advPerLine":1000,"ranges":)";
+            uitext::FontMetrics split;
+            uitext::FontMetrics joined;
+            uitext::FontMetrics uniform;
+            const bool okSplit = uitext::ParseFontMetricsJson(
+                head + "[[65,65,[500]],[66,66,[500]],[67,67,[600]]]}", split);
+            const bool okJoined = uitext::ParseFontMetricsJson(head + "[[65,67,[500,500,600]]]}", joined);
+            const bool okUniform =
+                uitext::ParseFontMetricsJson(head + "[[65,66,[500]],[67,67,[600]]]}", uniform);
+            check(uitext::ParseFontMetricsJson(crlf, fromCrlf) && fromCrlf.Hash() == built.Hash()
+                      && okSplit && okJoined && okUniform && split.Hash() == joined.Hash()
+                      && joined.Hash() == uniform.Hash(),
+                  "fontmetrics: hash ignores line endings and how ranges are chunked");
+
+            // (3) 規則違反は読まない (空 = 固定メトリクスへ倒れる)
+            const std::string bad[] = {
+                R"({"format":2,"font":"a.ttf","fontBytes":0,"basePx":32,"lineH256":0,"advPerLine":1000,"ranges":[[65,65,[500]]]})",
+                R"({"format":1,"font":"a.ttf","fontBytes":0,"basePx":32,"lineH256":0,"advPerLine":256,"ranges":[[65,65,[500]]]})",
+                R"({"format":1,"fontBytes":0,"basePx":32,"lineH256":0,"advPerLine":1000,"ranges":[[65,65,[500]]]})",
+                head + "[[65,70,[500]],[70,71,[500]]]}",   // 重なり
+                head + "[[70,71,[500]],[65,66,[500]]]}",   // 降順
+                head + "[[65,67,[500,500]]]}",             // 配列長が 1 でも区間長でもない
+                head + "[[65,65,[65535]]]}",               // 番兵値
+                head + "[[65,65,[-1]]]}",
+                head + "[[65536,65536,[1]]]}",             // BMP 外
+                head + "[[66,65,[1]]]}",                   // start > end
+                head + "[[65,65]]}",
+                head + "[]}",                              // 0 文字 = 表なしと区別できない
+                "{",
+            };
+            bool allRejected = true;
+            for (const std::string& b : bad) {
+                uitext::FontMetrics m;
+                if (uitext::ParseFontMetricsJson(b, m) || !m.Empty() || m.Hash() != 0) {
+                    MYE_LOG_ERROR("    accepted a bad table: %s", b.c_str());
+                    allRejected = false;
+                }
+            }
+            check(allRejected, "fontmetrics: malformed tables are rejected");
+        }
+
+        // (4) 送り幅の引き方と計測
+        {
+            const uint16_t advA = static_cast<uint16_t>(300 + ('A' * 37) % 400);
+            const uint16_t advB = static_cast<uint16_t>(300 + ('B' * 37) % 400);
+            const uint16_t advQ = static_cast<uint16_t>(300 + ('?' * 37) % 400);
+            uitext::FontMetrics noQuestion;
+            const bool okNoQ = uitext::FontMetrics::Build("x.ttf", 0, 32, 0, { { 'A', 500 } }, noQuestion);
+            check(built.AdvanceOf('A') == advA && built.Has('A') && !built.Has(0x4E01)
+                      && built.AdvanceOf(0x4E01) == advQ && built.AdvanceOf(0x1F600) == advQ
+                      && okNoQ && noQuestion.AdvanceOf('B') == uitext::kFixedAdvance,
+                  "fontmetrics: missing glyphs measure as '?' (like the renderer), then fixed");
+            const uitext::TextSize ab = uitext::Measure("AB", 2.0f, false, 0.0f, built);
+            const float expectAb =
+                static_cast<float>(advA + advB) * (uitext::kLineH * 2.0f) / static_cast<float>(uitext::kAdvPerLine);
+            const uitext::TextSize wrapped = uitext::Measure("AAAA", 1.0f, true, 12.0f, noQuestion);
+            const uitext::TextSize narrow = uitext::Measure("AAAA", 1.0f, true, 1.0f, noQuestion);
+            check(ab.w == expectAb && ab.lines == 1 && ab.h == 20.0f && wrapped.lines == 2
+                      && wrapped.w == 10.0f && narrow.lines == 4 && narrow.w == 5.0f,
+                  "fontmetrics: measure sums table advances and wraps (first glyph always fits)");
+            uitext::FontMetrics badBuild;
+            const bool rejectOrder = !uitext::FontMetrics::Build(
+                "x", 0, 0, 0, { { 'B', 1 }, { 'A', 1 } }, badBuild);
+            const bool rejectRange = !uitext::FontMetrics::Build("x", 0, 0, 0, { { 0x10000, 1 } }, badBuild);
+            check(rejectOrder && rejectRange && badBuild.Empty(),
+                  "fontmetrics: build rejects unsorted / non-BMP glyphs");
+        }
+
+        // (5) プロジェクトからのロード: 表は描画フォント (名前順の先頭) の stem に付いて行く
+        {
+            std::error_code ec;
+            const std::filesystem::path dir =
+                std::filesystem::temp_directory_path(ec) / L"mye_fontmetrics_selftest";
+            std::filesystem::remove_all(dir, ec);
+            std::filesystem::create_directories(dir, ec);
+            const std::wstring root = dir.wstring();
+            const bool noFonts = uitext::LoadProjectFontMetrics(root).Empty();
+            const uitext::FontMetricsCookResult noFontCook = uitext::CookProjectFontMetrics(root);
+            std::filesystem::create_directories(dir / L"fonts", ec);
+            {
+                std::ofstream f(dir / L"fonts" / L"B.ttf", std::ios::binary);
+                f << "0123456789abcdef"; // 16 バイトの偽物 (ロードは名前とサイズしか見ない)
+            }
+            const bool noTable = uitext::LoadProjectFontMetrics(root).Empty(); // WARN 1 行が出る
+            uitext::FontMetrics bm;
+            uitext::FontMetrics::Build("B.ttf", 16, 32, 0, gl, bm);
+            {
+                std::ofstream f(std::filesystem::path(
+                                    uitext::FontMetricsPathFor((dir / L"fonts" / L"B.ttf").wstring())),
+                                std::ios::binary);
+                const std::string t = uitext::SerializeFontMetricsJson(bm);
+                f.write(t.data(), static_cast<std::streamsize>(t.size()));
+            }
+            const uitext::FontMetrics loadedB = uitext::LoadProjectFontMetrics(root);
+            {
+                std::ofstream f(dir / L"fonts" / L"A.ttc", std::ios::binary); // 名前順で B より前
+                f << "x";
+            }
+            const bool followsAtlas = uitext::LoadProjectFontMetrics(root).Empty();
+            std::filesystem::remove_all(dir, ec);
+            check(noFonts && noFontCook.noFont && !noFontCook.ok && noTable
+                      && loadedB.Hash() == bm.Hash() && !loadedB.Empty() && followsAtlas
+                      && uitext::FontMetricsPathFor(L"C:\\x\\B.ttf") == L"C:\\x\\B.fontmetrics.json",
+                  "fontmetrics: the table is <atlas font stem>.fontmetrics.json, else fixed metrics");
+
+            uitext::SetActiveFontMetrics(bm);
+            const bool setOk = uitext::ActiveFontMetrics().Hash() == bm.Hash();
+            uitext::SetActiveFontMetrics({}); // 後続のテストへ持ち越さない
+            check(setOk && uitext::ActiveFontMetrics().Empty(),
+                  "fontmetrics: active table is set once and can be reset");
+        }
+
+        // (6) 実フォントの cook (%WINDIR%\Fonts\arial.ttf がある機械だけ)。
+        //     表で測った幅 >= FontAtlas と同じ式で組んだ実グリフ幅 (切り上げの効果) を固定する
+        {
+            std::wstring arial;
+            wchar_t* windirEnv = nullptr;
+            size_t envLen = 0;
+            if (_wdupenv_s(&windirEnv, &envLen, L"WINDIR") == 0 && windirEnv != nullptr) {
+                arial = std::wstring(windirEnv) + L"\\Fonts\\arial.ttf";
+                free(windirEnv);
+            }
+            std::vector<uint8_t> ttf;
+            if (!arial.empty()) {
+                std::ifstream f(std::filesystem::path(arial), std::ios::binary);
+                if (f) {
+                    ttf.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+                }
+            }
+            if (ttf.empty()) {
+                MYE_LOG_INFO("  SKIP: fontmetrics: arial.ttf not found (real-font cook check)");
+            } else {
+                uitext::FontMetrics cooked;
+                const bool okCook = uitext::CookFontMetricsFromTtf(ttf, "arial.ttf", cooked, &err);
+                uitext::FontMetrics reparsed;
+                const bool okRe = uitext::ParseFontMetricsJson(uitext::SerializeFontMetricsJson(cooked), reparsed);
+
+                stbtt_fontinfo info{};
+                bool boundOk = false;
+                if (okCook && stbtt_InitFont(&info, ttf.data(), stbtt_GetFontOffsetForIndex(ttf.data(), 0))) {
+                    const float scale = stbtt_ScaleForPixelHeight(&info, 32.0f);
+                    int asc = 0, desc = 0, gap = 0;
+                    stbtt_GetFontVMetrics(&info, &asc, &desc, &gap);
+                    const float baseLineHPx = static_cast<float>(asc - desc + gap) * scale;
+                    FontGlyphMap real;
+                    for (uint32_t cp = 0x20; cp < 0x7F; ++cp) {
+                        const int gi = stbtt_FindGlyphIndex(&info, static_cast<int>(cp));
+                        if (gi == 0) {
+                            continue;
+                        }
+                        int adv = 0, lsb = 0;
+                        stbtt_GetGlyphHMetrics(&info, gi, &adv, &lsb);
+                        FontGlyphInfo g;
+                        g.advance = static_cast<float>(adv) * scale;
+                        g.valid = true;
+                        real[cp] = g;
+                    }
+                    const char* sample = "The quick brown fox jumps over the lazy dog 0123456789";
+                    const float n = static_cast<float>(std::strlen(sample));
+                    boundOk = true;
+                    for (float fs : { 1.0f, 2.5f }) {
+                        const float k = uitext::kLineH * fs / baseLineHPx; // FontAtlas::GlyphScale と同じ式
+                        std::vector<textlayout::Line> lines;
+                        textlayout::LayoutText(real, sample, k, false, 0.0f, lines);
+                        const float realW = lines.empty() ? 0.0f : lines[0].width;
+                        const uitext::TextSize ts = uitext::Measure(sample, fs, false, 0.0f, cooked);
+                        const float slack = n * uitext::kLineH * fs / static_cast<float>(uitext::kAdvPerLine);
+                        if (!(ts.w + 1e-3f >= realW && ts.w <= realW + slack + 1e-3f)) {
+                            MYE_LOG_ERROR("    fs=%g table %g vs real %g (slack %g)", fs, ts.w, realW, slack);
+                            boundOk = false;
+                        }
+                    }
+                }
+
+                // プロジェクトの cook: 書く → 2 回目は書かない → ロードで同じ表
+                std::error_code ec;
+                const std::filesystem::path dir =
+                    std::filesystem::temp_directory_path(ec) / L"mye_fontmetrics_cook_selftest";
+                std::filesystem::remove_all(dir, ec);
+                std::filesystem::create_directories(dir / L"fonts", ec);
+                {
+                    std::ofstream f(dir / L"fonts" / L"arial.ttf", std::ios::binary);
+                    f.write(reinterpret_cast<const char*>(ttf.data()), static_cast<std::streamsize>(ttf.size()));
+                }
+                const uitext::FontMetricsCookResult r1 = uitext::CookProjectFontMetrics(dir.wstring());
+                const uitext::FontMetricsCookResult r2 = uitext::CookProjectFontMetrics(dir.wstring());
+                const uitext::FontMetrics loaded = uitext::LoadProjectFontMetrics(dir.wstring());
+                std::filesystem::remove_all(dir, ec);
+
+                check(okCook && okRe && reparsed.Hash() == cooked.Hash() && cooked.Has('A')
+                          && !cooked.Has(0x3042) && cooked.GlyphCount() > 90,
+                      "fontmetrics: cook arial.ttf and round-trip it");
+                check(boundOk, "fontmetrics: cooked advances never measure narrower than the glyphs");
+                check(r1.ok && !r1.unchanged && r2.ok && r2.unchanged && r1.hash == cooked.Hash()
+                          && loaded.Hash() == cooked.Hash() && loaded.FontName() == "arial.ttf",
+                      "fontmetrics: project cook writes once, then reports up to date");
+            }
         }
     }
 

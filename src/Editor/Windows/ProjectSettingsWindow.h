@@ -59,6 +59,14 @@ private:
     bool uiSaved_ = false;
     uilayout::ProjectUiSettings uiEdit_;
     uilayout::ProjectUiSettings uiDisk_;
+    // フォント計測表 (M75d)。fontSource_ は cook 対象のフォント名 (空 = assets\fonts にフォントなし)。
+    // ディレクトリ走査を毎フレームしないよう、UI 節を開いた最初のフレームと cook の後だけ取り直す。
+    // fontCookState_: 0 = 表示なし / 1 = 書いた / 2 = 最新だった / 3 = 失敗
+    bool fontListLoaded_ = false;
+    std::string fontSource_;
+    int fontCookState_ = 0;
+    std::string fontCookText_; // 1/2 = 書いたファイル名、3 = エラー文
+    uint32_t fontCookGlyphs_ = 0;
 };
 
 } // namespace mye

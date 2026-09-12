@@ -156,11 +156,13 @@
     <ClCompile Include="..\src\Engine\Engine\TickRunner.cpp" />
     <ClCompile Include="..\src\Engine\Engine\TransformSystem.cpp" />
     <ClCompile Include="..\src\Engine\Engine\UfbxImpl.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\UI\UIFontMetricsCook.cpp" />
     <ClCompile Include="..\src\Engine\Engine\UI\UIInteraction.cpp" />
     <ClCompile Include="..\src\Engine\Engine\UI\UILayout.cpp" />
     <ClCompile Include="..\src\Engine\Engine\UI\UIProjectSettings.cpp" />
     <ClCompile Include="..\src\Engine\Engine\UI\UIRenderer.cpp" />
     <ClCompile Include="..\src\Engine\Engine\UI\UISelfTest.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\UI\UITextMetrics.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Vfx\VfxRenderer.cpp" />
     <ClCompile Include="..\src\Engine\Engine\VfxSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Platform\Clock.cpp" />
@@ -176,6 +178,7 @@
     <ClCompile Include="..\src\Engine\Renderer\EditorLinePass.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\EnvMapBaker.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\FontAtlas.cpp" />
+    <ClCompile Include="..\src\Engine\Renderer\FontFiles.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\ForwardPath.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\FroxelPass.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\GhostMeshPass.cpp" />
@@ -352,6 +355,7 @@
     <ClInclude Include="..\src\Engine\Engine\TerrainSystem.h" />
     <ClInclude Include="..\src\Engine\Engine\TickRunner.h" />
     <ClInclude Include="..\src\Engine\Engine\TransformSystem.h" />
+    <ClInclude Include="..\src\Engine\Engine\UI\UIFontMetricsCook.h" />
     <ClInclude Include="..\src\Engine\Engine\UI\UIGeometry.h" />
     <ClInclude Include="..\src\Engine\Engine\UI\UIInteraction.h" />
     <ClInclude Include="..\src\Engine\Engine\UI\UILayout.h" />
@@ -360,6 +364,7 @@
     <ClInclude Include="..\src\Engine\Engine\UI\UIRenderer.h" />
     <ClInclude Include="..\src\Engine\Engine\UI\UISelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\UI\UITextLayout.h" />
+    <ClInclude Include="..\src\Engine\Engine\UI\UITextMetrics.h" />
     <ClInclude Include="..\src\Engine\Engine\Vfx\VfxGeometry.h" />
     <ClInclude Include="..\src\Engine\Engine\Vfx\VfxRenderer.h" />
     <ClInclude Include="..\src\Engine\Engine\VfxSelfTest.h" />
@@ -377,6 +382,7 @@
     <ClInclude Include="..\src\Engine\Renderer\EditorLinePass.h" />
     <ClInclude Include="..\src\Engine\Renderer\EnvMapBaker.h" />
     <ClInclude Include="..\src\Engine\Renderer\FontAtlas.h" />
+    <ClInclude Include="..\src\Engine\Renderer\FontFiles.h" />
     <ClInclude Include="..\src\Engine\Renderer\FontGeometry.h" />
     <ClInclude Include="..\src\Engine\Renderer\ForwardPath.h" />
     <ClInclude Include="..\src\Engine\Renderer\FroxelPass.h" />

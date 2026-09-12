@@ -120,7 +120,7 @@ Canvas Scaler は Expand (1920x1080 固定) のみ、Layout Group もウィジ�
 `Editor/Windows/GameViewWindow.h/.cpp` (Rect Tool トグル、`gameSurface` 書き込み、ハンドル描画/操作) / `Engine/EngineLoop.h` (`EngineContext.gameSurface`) / `UI/UILayout.h/.cpp` (`SurfaceToCanvas/CanvasToSurface`、`RectToTransform`) / `LocalizationTable.inl` / `EditorSettings`。テスト: 往復 (全アンカー種別 × pivot)。エディタ操作は一時プローブ + `--screenshot` で絵を撮って確認 (ImGui は backbuffer に載る)。
 
 ### M75j — 文書
-`engine_spec.md` (§6.11 追記: サーフェス記録・3 モード・project_settings・複数キャンバス / §6.12 追記: バブリング・drag・changed・Cancel / §6.13 RectTransform と自動レイアウト / §6.14 ウィジェットと InputField / §6.15 Rect Tool / §11.3 .rep v8 / ABI 表 v18 / §12.3 の UI スケール項を消す) / `docs/adr/ADR-020-ui-layout-determinism.md` (純関数+メモ vs 駆動、計測表アセット + 固定 fallback、y 下向き、サーフェス記録、ConstantPixelSize 非採用、兄弟順キー、状態の別コンポーネント化、C# の閉じ方) / `README.md` / `CLAUDE.md` (末尾 TypeId 61、Cloth/SoftBody 62/63、検証表の枚数・ペア数、ABI v18=123、「UI コンポーネントを足す」チェックリスト = UiAux) / `docs/dogfooding.md` (HAL Collector: 初回ロードで v4 化、Rebuild Scripts、fontmetrics の cook)。
+`engine_spec.md` (§6.11 追記: サーフェス記録・3 モード・project_settings・複数キャンバス / §6.12 追記: バブリング・drag・changed・Cancel / §6.13 RectTransform と自動レイアウト / §6.14 ウィジェットと InputField / §6.15 Rect Tool / §11.3 .rep v8 / ABI 表 v18 / §12.3 の UI スケール項を消す) / `docs/adr/ADR-020-ui-layout-determinism.md` (純関数+メモ vs 駆動、計測表アセット + 固定 fallback、y 下向き、サーフェス記録、ConstantPixelSize 非採用、兄弟順キー、状態の別コンポーネント化、C# の閉じ方) / `README.md` / `CLAUDE.md` (末尾 TypeId 61、Cloth/SoftBody 62/63、CLI 一覧に `--cook-font-metrics` (M75d)、「フォントを差し替えたら計測表を cook してコミット」、検証表の枚数・ペア数、ABI v18=123、「UI コンポーネントを足す」チェックリスト = UiAux) / `docs/dogfooding.md` (HAL Collector: 初回ロードで v4 化、Rebuild Scripts、fontmetrics の cook)。
 
 ## 申し送り (計画外の事実)
 
@@ -208,6 +208,36 @@ Canvas Scaler は Expand (1920x1080 固定) のみ、Layout Group もウィジ�
 - `--ui-demo` = `cache\ui_showcase.scene.json` (Runtime / Editor 共通、shot_verify が撮影前に消す)。4 隅の箱を
   **基準 1024x768 (4:3)** の Canvas に置いたのは、16:9 の基準だと 3 モードが一致して何も写らないため。
   M75e 以降は `BuildUiShowcaseScene` の**末尾へ**積み増す。golden 25 枚目 = `ui_widgets` (960x540、CI tol=3)。
+
+- **M75d (2026-09-13)**: master で直接実装 (WIP 無し)。新規 `Engine/UI/UITextMetrics.*` (表・読み書き・`Measure`) /
+  `Engine/UI/UIFontMetricsCook.*` (stb_truetype で cook、CLI とボタンの共通口) / `Renderer/FontFiles.*`
+  (`ListProjectFontFiles` = FontAtlas と表の**選択規則の 1 本化**)。計画 D から変えた点:
+- **固定メトリクスは「全文字 0.8 行」** (計画は ASCII 0.5 / 他 1.0)。内蔵 8x8 (advance 8 / 行高 10、ASCII 外は '?') と
+  厳密に同じ = `--font-embedded` で撮るエンジンリポジトリの golden で Layout の箱と文字がビット一致する
+  (UISelfTest が 11 文字列 × 4 倍率 × 4 幅 × wrap 有無で `textlayout::LayoutText` と照合)。TTF には広めに倒れる
+  (游ゴシックの実測は ASCII 0.14〜0.57 / 全角 0.625 行) が、狭く見積もって勝手に折り返すよりは安全。
+- **送り幅の分母は 1000 (行高 = 1000)、cook は切り上げ** (計画は 1/256)。0.8 行が整数で表せる / 表の和 >= 実グリフの和
+  (箱に合わせた文字が最後の 1 文字で折り返らない。arial.ttf の実幅と比較する検査あり)。比は
+  `ceil(advance × 1000 / (asc - desc + gap))` の**フォント単位の整数演算だけ**で作る (px 倍率は比で消える = 機種非依存)。
+- **ハッシュはファイルのバイト列ではなく「文字と送り幅の組」** (計画は FNV(ファイル内容))。core.autocrlf で改行が
+  変わっただけの 2 台を `NetReject::FontMetrics` で弾かないため。区間の切り方にも依らない (検査あり)。
+- **表の場所は `<描画フォントの stem>.fontmetrics.json`、エンジンリポジトリへは倒さない** (計画は 2 ルート解決)。
+  FontAtlas がエンジンリポジトリのフォントを見ないので、倒すと絵と表のフォントがずれる。フォントがあって表が無い /
+  表の `font` 名・`fontBytes` が描画フォントと食い違う / 壊れている、はそれぞれ WARN 1 行 (食い違いでも表は読む =
+  コミットされた内容が sim の入力)。表の読み込みは `--font-embedded` と無関係 (描画フラグで sim の入力を変えない)。
+- **表に無い文字は表の '?' の幅** (無ければ固定)。描画側 (PushTextLine) が '?' で描くのに合わせた。
+- ★**潜在バグ (未修正)**: `textlayout::LayoutText` は FontAtlas が焼けなかった文字の `FontGlyphInfo{}` (valid=false、
+  advance 0) を `glyphs.find` で拾って**幅 0** で組むが、`PushTextLine` は `Find` (valid のみ) が null なので '?' の
+  advance で描く = フォントに無い文字を含む行の中央/右揃えと折返しがずれる (M34 から)。直すと golden が動きうるので
+  M75d では触っていない。Layout の箱 (Measure) は描画に合わせて '?' の幅で測る。
+- `EditorMain.cpp` の引数解析の else-if 連鎖が **MSVC の入れ子上限 (C1061)** に達していた (1 本足したら落ちた)。
+  `--cook-font-metrics` は連鎖の手前で拾って `continue`。以後の CLI フラグも同じ置き方にする。
+- 実測: 游ゴシック (YuGothM.ttc 13.9 MB) = 15939 文字 / 152 KB / 4507 行 / cook 210 ms (Release)。
+- 表を実際に読む sim のコードはまだ無い (M75e から) = golden / replay は不変のはず。`ActiveFontMetrics()` と
+  `uitext::Measure` が M75e の入口。Project Settings > UI に「フォント計測表」節 (実効値 / 対象フォント / 作成ボタン)。
+- **M75d の検証**: Debug/Release `/p:MyeWarnAsError=true` 0 警告 / `--selftest` 0 FAIL (UISelfTest に計測表 12 項目) /
+  `check_rules` 0 / **`shot_verify` 25 枚すべて maxDiff=0** (golden 4 枚の tol 0 を含む) / **`replay_verify` PASS**
+  (12 ジョブ、`MYE_REPLAY_JOBS=3` で 256 s) / Project Settings の節は一時プローブ + `--screenshot` で ja/en を目視 (撤去済み)。
 
 ## 各サブに共通する罠
 - `IsUiOnlyEntity` の許容漏れ (UiAux で構造的に潰す)。

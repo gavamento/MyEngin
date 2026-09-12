@@ -99,7 +99,8 @@ struct NetIdentity {
     int32_t referenceH = 0;
     uint32_t pad = 0;
     // フォント計測表 (assets\fonts\*.fontmetrics.json) の内容ハッシュ (M75b で欄を確保、
-    // M75d で値が入る)。Layout / ContentSizeFitter が sim の中でテキスト幅を読むので、
+    // M75d で uitext::FontMetrics::Hash() が入る = 文字と送り幅の組だけを畳む。改行コードの違いでは
+    // 割れない)。Layout / ContentSizeFitter が sim の中でテキスト幅を読むので、
     // 表が違う 2 台は矩形が割れる。0 = 表なし (固定メトリクス) で、0 同士は一致扱い
     uint64_t fontMetricsHash = 0;
     uint64_t startWorldHash = 0;  // 開始時点のワールドハッシュ (= 同じシーンか)

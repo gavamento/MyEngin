@@ -11,6 +11,7 @@
 #include "Engine/Engine/UI/UIGeometry.h"
 #include "Engine/Engine/UI/UILayout.h"
 #include "Engine/Engine/UI/UITextLayout.h"
+#include "Engine/Engine/UI/UITextMetrics.h" // M75d: 行高の一致を固定するだけ
 #include "Engine/Renderer/GpuResources.h"
 #include "Engine/Renderer/GraphicsDevice.h"
 #include "Engine/Renderer/ShaderManager.h"
@@ -19,6 +20,11 @@ using namespace DirectX;
 using Microsoft::WRL::ComPtr;
 
 namespace mye {
+
+// sim 側の計測表 (uitext) は D3D 非依存に保つため FontAtlas.h を include せず行高を自前で持つ。
+// 描画の行高とずれると Layout の箱の高さと描いた文字の行送りが食い違うので、ここで機械照合する
+static_assert(uitext::kLineH == FontAtlas::kUILineH,
+              "uitext::kLineH must equal FontAtlas::kUILineH");
 namespace {
 
 // 解決済み矩形 (float px) → シザー矩形。RT 外へはみ出す分は D3D が切るので clamp 不要
