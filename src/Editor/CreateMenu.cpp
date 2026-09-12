@@ -110,13 +110,29 @@ GameObject CreateAudioListener(EngineContext& ctx, const char* name)
 // ---- UI (M51f) ----
 // text はシーンに保存されるデータなのでエディタ言語に依存しない英語固定 (メニュー表示とは別物)
 
+namespace {
+
+// M75a: 生成メニューの UI は Unity と同じ既定 (中央アンカー・中央 pivot) で置く。
+// RectTransform 構造体の既定 (左上・pivot 0) は旧スクリプト互換用なのでここで上書きする。
+// **UIElement より先に**足す — AddComponent はアーキタイプを移すので、後から足すと
+// 呼び出し側が握った UIElement のポインタが無効になる
+void AddUnityStyleRect(GameObject& obj, float w, float h)
+{
+    auto* rt = obj.AddComponent<RectTransformComponent>();
+    rt->anchorMin = { 0.5f, 0.5f };
+    rt->anchorMax = { 0.5f, 0.5f };
+    rt->pivot = { 0.5f, 0.5f };
+    rt->sizeDelta = { w, h };
+}
+
+} // namespace
+
 GameObject CreateUIPanel(EngineContext& ctx, const char* name)
 {
     GameObject obj = ctx.scene->CreateGameObjectTracked(name);
+    AddUnityStyleRect(obj, 240.0f, 160.0f);
     auto* el = obj.AddComponent<UIElementComponent>();
     el->kind = 0;
-    el->w = 240.0f;
-    el->h = 160.0f;
     el->color = { 0.10f, 0.10f, 0.12f, 0.85f }; // 半透明ダーク = メニュー背景の定番
     return obj;
 }
@@ -124,16 +140,16 @@ GameObject CreateUIPanel(EngineContext& ctx, const char* name)
 GameObject CreateUIImage(EngineContext& ctx, const char* name)
 {
     GameObject obj = ctx.scene->CreateGameObjectTracked(name);
+    AddUnityStyleRect(obj, 100.0f, 100.0f);
     auto* el = obj.AddComponent<UIElementComponent>();
     el->kind = 0; // 画像 = kind0 + texture (未割当の間は白い矩形。Inspector か D&D で割り当てる)
-    el->w = 100.0f;
-    el->h = 100.0f;
     return obj;
 }
 
 GameObject CreateUIButton(EngineContext& ctx, const char* name)
 {
     GameObject obj = ctx.scene->CreateGameObjectTracked(name);
+    AddUnityStyleRect(obj, 160.0f, 40.0f);
     auto* el = obj.AddComponent<UIElementComponent>();
     el->kind = 2;
     // ラベルは UIRenderer が白固定で描く — 既定色 (白) のままだと白背景に白文字で潰れる
@@ -146,6 +162,7 @@ GameObject CreateUIButton(EngineContext& ctx, const char* name)
 GameObject CreateUIText(EngineContext& ctx, const char* name)
 {
     GameObject obj = ctx.scene->CreateGameObjectTracked(name);
+    AddUnityStyleRect(obj, 160.0f, 40.0f);
     auto* el = obj.AddComponent<UIElementComponent>();
     el->kind = 1;
     std::snprintf(el->text, sizeof(el->text), "Text");
@@ -195,9 +212,9 @@ void CreateItem(EngineContext& ctx, Selection& selection, UndoStack& undo, Entit
 }
 
 // UI 要素の生成項目 (M51f)。汎用 CreateItem と違い spawnPos は使わない (UI の位置は
-// LocalTransform ではなく anchor/x/y)。親が UIElement を持つなら space=1 (親矩形基準) で作る。
-// 親指定が無いときは選択中 (primary) が UIElement を持てばその子にする — Unity で選択中の
-// Canvas の下に UI が生成されるのと同じ感覚。
+// LocalTransform ではなく RectTransform)。親指定が無いときは選択中 (primary) が UI ノードなら
+// その子にする — Unity で選択中の Canvas の下に UI が生成されるのと同じ感覚。
+// M75a: 生成物の RectTransform は basis=0 (親基準) が既定なので、親矩形基準の指定は要らない
 void CreateUIItem(EngineContext& ctx, Selection& selection, UndoStack& undo, EntityID parent,
                   const char* menuLabel, const char* objName, Factory factory)
 {
@@ -210,7 +227,9 @@ void CreateUIItem(EngineContext& ctx, Selection& selection, UndoStack& undo, Ent
         EntityID effParent = parent;
         if (effParent.IsNull()) {
             GameObject sel = ctx.scene->FindByFileId(selection.primary);
-            if (sel && world.GetComponent<UIElementComponent>(sel.Id()) != nullptr) {
+            if (sel
+                && (world.GetComponent<UIElementComponent>(sel.Id()) != nullptr
+                    || world.GetComponent<RectTransformComponent>(sel.Id()) != nullptr)) {
                 effParent = sel.Id();
             }
         }
@@ -219,9 +238,6 @@ void CreateUIItem(EngineContext& ctx, Selection& selection, UndoStack& undo, Ent
         GameObject obj = factory(ctx, unique.c_str());
         if (!effParent.IsNull()) {
             world.SetParent(obj.Id(), effParent);
-            if (world.GetComponent<UIElementComponent>(effParent) != nullptr) {
-                obj.GetComponent<UIElementComponent>()->space = 1; // 親矩形基準 (M51e)
-            }
         }
         return obj;
     });

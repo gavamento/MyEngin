@@ -25,6 +25,7 @@
 #include "Engine/Core/Components.h"
 #include "Engine/Core/Hash.h" // マテリアルプレビューの同一性キー (M53)
 #include "Engine/Core/Localization.h"
+#include "Engine/Engine/UI/UILayout.h" // M75a: RectTransform の解決済み矩形の読み取り表示
 #include "Engine/Core/Log.h"
 #include "Engine/Core/World.h"
 #include "Engine/Engine/Animation.h"
@@ -203,7 +204,11 @@ constexpr const char* kOffOnLabels[] = { "Off", "On" };
 constexpr const char* kPartBoundsShapeLabels[] = { "Box", "Sphere" };
 // M51f: UI オーサリング
 constexpr const char* kUIFillModeLabels[] = { "Off", "Horizontal", "Vertical" };
-constexpr const char* kUISpaceLabels[] = { "Screen", "Parent Rect" };
+// M75a: RectTransform.basis (旧 UIElement.space の後継。0=親 / 1=キャンバス で意味が反転)
+constexpr const char* kUIBasisLabels[] = { "Parent", "Canvas" };
+// M75a: アンカープリセット 4x4 (Unity の Anchor Presets と同じ並び。行 = 縦、列 = 横)
+constexpr const char* kUIPresetColLabels[] = { "Left", "Center", "Right", "Stretch" };
+constexpr const char* kUIPresetRowLabels[] = { "Top", "Middle", "Bottom", "Stretch" };
 // M47c: 日本語表示。ACES / Reinhard / Exp2 のような固有名詞・数式名は英語のまま
 constexpr const char* kColliderShapeJa[] = { "スフィア", "ボックス", "カプセル", "メッシュ",
                                              "地形",     "凸包" };
@@ -225,7 +230,9 @@ constexpr const char* kTonemapJa[] = { "そのまま", "ACES", "Reinhard" };
 constexpr const char* kOffOnJa[] = { "オフ", "オン" };
 constexpr const char* kPartBoundsShapeJa[] = { "ボックス", "スフィア" };
 constexpr const char* kUIFillModeJa[] = { "オフ", "水平 (左→右)", "垂直 (下→上)" };
-constexpr const char* kUISpaceJa[] = { "スクリーン", "親の矩形" };
+constexpr const char* kUIBasisJa[] = { "親", "キャンバス" };
+constexpr const char* kUIPresetColJa[] = { "左", "中央", "右", "伸縮" };
+constexpr const char* kUIPresetRowJa[] = { "上", "中央", "下", "伸縮" };
 constexpr EnumFieldLabels kEnumFields[] = {
     // M60f: 3 (Mesh) / 4 (Terrain) / 5 (Convex) までコンボに出す。これらは meshAsset を
     // 併せて指す必要があるが、今まで**コンボが 3 件しか出さず "(invalid)" 表示になっていた**
@@ -241,10 +248,11 @@ constexpr EnumFieldLabels kEnumFields[] = {
     // M63a: B群 = 描画表現力
     { "ParticleEmitter", "lightingMode", kPtclLightModeLabels, 3, kPtclLightModeJa },
     { "UIElement", "kind", kUIKindLabels, 3, kUIKindJa },
-    // M51f: anchor はコンボではなく 9-grid ピッカー (DrawField の特例) — 行はここに置かない
     { "UIElement", "align", kUIAnchorLabels, 9, kUIAnchorJa },
     { "UIElement", "fillMode", kUIFillModeLabels, 3, kUIFillModeJa },
-    { "UIElement", "space", kUISpaceLabels, 2, kUISpaceJa },
+    // M75a: RectTransform.anchorMin はコンボではなくプリセット 4x4 ピッカー + DragFloat2
+    // (DrawField の特例) — 行はここに置かない
+    { "RectTransform", "basis", kUIBasisLabels, 2, kUIBasisJa },
     { "UIElement", "clipChildren", kOffOnLabels, 2, kOffOnJa },
     { "UIElement", "wrap", kOffOnLabels, 2, kOffOnJa },
     { "ConstantForce", "relative", kForceSpaceLabels, 2, kForceSpaceJa },
@@ -656,10 +664,9 @@ void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
                             && std::strcmp(f.name, "mask") == 0)
                         // M59a2: 材料上書きチェックボックスもクリック即確定 = 自前 Undo
                         || (std::strcmp(desc.name, "Collider") == 0
-                            && std::strcmp(f.name, "materialOverrideBits") == 0)
-                        // M51f: anchor 9-grid はクリック即確定 (ボタン群) なので自前 Undo
-                        || (std::strcmp(desc.name, "UIElement") == 0
-                            && std::strcmp(f.name, "anchor") == 0);
+                            && std::strcmp(f.name, "materialOverrideBits") == 0);
+                    // (M75a: RectTransform のアンカープリセット 4x4 は自前 Undo だが、同じ行の
+                    //  DragFloat2 が最後のアイテムなので通常経路のままでよい — DrawField 参照)
                     if (!ownUndo) {
                         HandleEditUndoMulti(ctx, selection, undo, tfids, "Modify");
                     }
@@ -695,6 +702,16 @@ void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
                             ImGui::TextColored(kPrefabBlue, "*");
                         }
                     }
+                }
+                // M75a: 解決済み矩形 (基準キャンバス上のキャンバス単位) を読み取り専用で出す。
+                // Unity が駆動プロパティを灰色で見せるのと同じ役どころ — アンカーを伸縮に
+                // したときに「今この要素は何 px なのか」が数値で分かる唯一の場所
+                if (std::strcmp(desc.name, "RectTransform") == 0) {
+                    const uilayout::UIRect rr = uilayout::ResolveRect(
+                        ctx.scene->GetWorld(), e, uilayout::kCanvasRefW, uilayout::kCanvasRefH);
+                    ImGui::BeginDisabled();
+                    ImGui::Text(Tr(StrId::Insp_UIResolvedRect), rr.x, rr.y, rr.w, rr.h);
+                    ImGui::EndDisabled();
                 }
             }
             // M50a: PartBounds 単独 (Part 無し) は RaycastParts の収集
@@ -912,55 +929,6 @@ bool InspectorWindow::DrawField(EngineContext& ctx, const char* componentName, v
             if (changed) {
                 *static_cast<int*>(p) = v;
             }
-        } else if (componentName && std::strcmp(componentName, "UIElement") == 0
-                   && std::strcmp(field.name, "anchor") == 0) {
-            // M51f: anchor は 3x3 の 9-grid ピッカー。クリック即確定なので Undo は自前で
-            // 1 エントリ記録する (Collider.mask と同じ ownUndo 方式 — 呼び出し側の
-            // HandleEditUndoMulti はグリッド最後のボタンしか見ないため機能しない)
-            const int32_t cur = *static_cast<int32_t*>(p);
-            const char* const* names =
-                (CurrentLanguage() != Lang::En) ? kUIAnchorJa : kUIAnchorLabels;
-            ImGui::BeginGroup();
-            for (int row = 0; row < 3; ++row) {
-                for (int col = 0; col < 3; ++col) {
-                    const int idx = row * 3 + col;
-                    if (col > 0) {
-                        ImGui::SameLine(0.0f, 3.0f);
-                    }
-                    ImGui::PushID(idx);
-                    const bool sel = (cur == idx);
-                    if (sel) {
-                        const ImVec4 c = ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive);
-                        ImGui::PushStyleColor(ImGuiCol_Button, c);
-                        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, c);
-                    }
-                    if (ImGui::Button("##cell", ImVec2(20, 20)) && !sel) {
-                        undo.BeginRecord("Modify", selection);
-                        for (uint64_t tf : fids) {
-                            undo.CaptureBefore(*ctx.scene, tf);
-                        }
-                        for (void* c2 : comps) {
-                            *reinterpret_cast<int32_t*>(static_cast<uint8_t*>(c2)
-                                                        + field.offset) = idx;
-                        }
-                        for (uint64_t tf : fids) {
-                            undo.CaptureAfter(*ctx.scene, tf);
-                        }
-                        undo.EndRecord(selection);
-                        changed = true;
-                    }
-                    if (sel) {
-                        ImGui::PopStyleColor(2);
-                    }
-                    if (ImGui::IsItemHovered()) {
-                        ImGui::SetTooltip("%s", names[idx]);
-                    }
-                    ImGui::PopID();
-                }
-            }
-            ImGui::EndGroup();
-            ImGui::SameLine();
-            ImGui::TextUnformatted(labelText);
         } else if (const EnumFieldLabels* ef = FindEnumLabels(componentName, field.name)) {
             int v = *static_cast<int*>(p);
             if (v < 0 || v >= ef->count) {
@@ -1115,7 +1083,62 @@ bool InspectorWindow::DrawField(EngineContext& ctx, const char* componentName, v
         break;
     }
     case FieldType::Float2:
-        changed = ImGui::DragFloat2(label, static_cast<float*>(p), speed, lo, hi);
+        if (componentName && std::strcmp(componentName, "RectTransform") == 0
+            && std::strcmp(field.name, "anchorMin") == 0) {
+            // M75a: Unity の Anchor Presets 相当の 4x4 (列 = 左/中/右/伸縮、行 = 上/中/下/伸縮)。
+            // クリック即確定で anchorMin と anchorMax を**同時に**書くので Undo は自前で
+            // 1 エントリ記録する (M51f の 9-grid と同型)。右隣の DragFloat2 (anchorMin の生値)
+            // は最後のアイテムなので呼び出し側の HandleEditUndoMulti がそのまま効く
+            const bool ja = CurrentLanguage() != Lang::En;
+            const char* const* colNames = ja ? kUIPresetColJa : kUIPresetColLabels;
+            const char* const* rowNames = ja ? kUIPresetRowJa : kUIPresetRowLabels;
+            const auto* cur = static_cast<const RectTransformComponent*>(comp);
+            ImGui::BeginGroup();
+            for (int row = 0; row < 4; ++row) {
+                for (int col = 0; col < 4; ++col) {
+                    if (col > 0) {
+                        ImGui::SameLine(0.0f, 3.0f);
+                    }
+                    ImGui::PushID(row * 4 + col);
+                    const float minX = (col == 1) ? 0.5f : (col == 2) ? 1.0f : 0.0f;
+                    const float maxX = (col == 3) ? 1.0f : minX;
+                    const float minY = (row == 1) ? 0.5f : (row == 2) ? 1.0f : 0.0f;
+                    const float maxY = (row == 3) ? 1.0f : minY;
+                    const bool sel = cur->anchorMin.x == minX && cur->anchorMax.x == maxX
+                        && cur->anchorMin.y == minY && cur->anchorMax.y == maxY;
+                    if (sel) {
+                        const ImVec4 c = ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive);
+                        ImGui::PushStyleColor(ImGuiCol_Button, c);
+                        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, c);
+                    }
+                    if (ImGui::Button("##preset", ImVec2(18, 18)) && !sel) {
+                        undo.BeginRecord("Modify", selection);
+                        for (uint64_t tf : fids) {
+                            undo.CaptureBefore(*ctx.scene, tf);
+                        }
+                        for (void* c2 : comps) {
+                            auto* rt = static_cast<RectTransformComponent*>(c2);
+                            rt->anchorMin = { minX, minY };
+                            rt->anchorMax = { maxX, maxY };
+                        }
+                        for (uint64_t tf : fids) {
+                            undo.CaptureAfter(*ctx.scene, tf);
+                        }
+                        undo.EndRecord(selection);
+                        changed = true;
+                    }
+                    if (sel) {
+                        ImGui::PopStyleColor(2);
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("%s / %s", rowNames[row], colNames[col]);
+                    }
+                    ImGui::PopID();
+                }
+            }
+            ImGui::EndGroup();
+        }
+        changed = ImGui::DragFloat2(label, static_cast<float*>(p), speed, lo, hi) || changed;
         break;
     case FieldType::Float3:
         // サイズの比率固定: チェック中は 1 軸の編集で他 2 軸を同率スケール。

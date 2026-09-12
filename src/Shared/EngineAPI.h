@@ -391,10 +391,12 @@ struct MyeEngineApi {
     //      record/verify 中走らないため、C# が書いた UI 値を sim が読み返すと
     //      リプレイが壊れる。成功で 1、UIElement 非所持は 0 ----
     // SetUIRect: anchor 基準オフセット (x,y) とサイズ (w,h) を設定。w/h < 0 は現値維持
-    //            (UI は write-only で読めないため「位置だけ動かす」用の keep 意味論)
+    //            (UI は write-only で読めないため「位置だけ動かす」用の keep 意味論)。
+    //            ★M75a: 書き先は RectTransform (anchoredPosition / sizeDelta)。署名は不変
     int (*SetUIRect)(void* engine, MyeEntityId id, float x, float y, float w, float h);
     // SetUILayout: anchor/align は 9-grid (0..8)、space/clipChildren/wrap は 0/1。
-    //              負値はいずれも現値維持 (SetUIRect と同じ keep 意味論)
+    //              負値はいずれも現値維持 (SetUIRect と同じ keep 意味論)。
+    //              ★M75a: anchor → RectTransform の一致アンカー、space → basis (1=親 / 0=キャンバス)
     int (*SetUILayout)(void* engine, MyeEntityId id, int32_t anchor, int32_t space,
                        int32_t clipChildren, int32_t align, int32_t wrap);
     // SetUITexture: 登録テクスチャキー名 (SetMeshRenderer と同じ規約)。null/空 = 単色に戻す

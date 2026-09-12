@@ -16,6 +16,12 @@ enum ComponentFlags : uint32_t {
     kComponentScriptState = 1u << 1, // GameLogic.dll のスクリプト状態 (M4 で動的登録)
     kComponentHidden = 1u << 2,      // Inspector の Add Component 一覧に出さない
     kComponentNoHash = 1u << 3,      // ワールドハッシュ対象外 (C# スクリプト状態 = 非決定論レーン)
+    // M75a: ゲーム内 UI の脇役 (RectTransform / Canvas / Layout* / Selectable / ウィジェット)。
+    // uilayout::IsUiOnlyEntity が「UI 専用オブジェクト」を判定するときの許容リストを
+    // 型名の列挙ではなくこのフラグで引く — UI コンポーネントを足すたびに許容リストへ
+    // 1 行足し忘れると、その UI を持つ全 screen UI がワールド追従に落ちて黙って消える
+    // (UILayout.cpp 冒頭の罠の再来)。UI 側のコンポーネントは**必ず**これを付けて登録する
+    kComponentUiAux = 1u << 4,
 };
 
 struct ComponentDesc {

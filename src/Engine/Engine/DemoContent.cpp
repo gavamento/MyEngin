@@ -28,6 +28,7 @@
 #include "Engine/Engine/Physics/PhysMatLibrary.h"
 #include "Engine/Engine/Prefab.h"
 #include "Engine/Engine/RagdollBuilder.h"
+#include "Engine/Engine/UI/UILayout.h" // M75a: 旧 anchor/x/y/w/h → RectTransform
 #include "Engine/Engine/Scene.h"
 #include "Engine/Engine/SceneSerializer.h"
 #include "Engine/Platform/PathUtil.h"
@@ -520,13 +521,12 @@ GameObject MakeUiText(Scene& s, const char* name, int anchor, float x, float y, 
                       const char* text, float fontScale, int align)
 {
     GameObject go = s.CreateGameObject(name);
+    // M75a: 配置は RectTransform (旧 9-grid 引数を同じ式で変換)。**UIElement より先に**足す —
+    // AddComponent はアーキタイプを移すので、後から足すと ui のポインタが無効になる
+    *go.AddComponent<RectTransformComponent>() =
+        uilayout::FromLegacyRect(anchor, x, y, w, h, 0, /*hasUiAncestor*/ false);
     auto* ui = go.AddComponent<UIElementComponent>();
     ui->kind = 1;
-    ui->anchor = anchor;
-    ui->x = x;
-    ui->y = y;
-    ui->w = w;
-    ui->h = h;
     ui->fontScale = fontScale;
     ui->align = align;
     std::snprintf(ui->text, sizeof(ui->text), "%s", text);
@@ -539,13 +539,10 @@ GameObject MakeUiButton(Scene& s, const char* name, int anchor, float x, float y
                         float h, const char* label, float fontScale)
 {
     GameObject go = s.CreateGameObject(name);
+    *go.AddComponent<RectTransformComponent>() =
+        uilayout::FromLegacyRect(anchor, x, y, w, h, 0, /*hasUiAncestor*/ false);
     auto* ui = go.AddComponent<UIElementComponent>();
     ui->kind = 2;
-    ui->anchor = anchor;
-    ui->x = x;
-    ui->y = y;
-    ui->w = w;
-    ui->h = h;
     ui->fontScale = fontScale;
     ui->focusable = 1;
     ui->color = { 0.22f, 0.27f, 0.38f, 1.0f }; // CreateMenu の生成ボタンと同じ配色
@@ -673,13 +670,10 @@ void BuildFlowGameScene(EngineContext& ctx)
     MakeUiText(s, "GameScore", 0, 80.0f, 60.0f, 800.0f, 100.0f, "SCORE 0", 4.0f, 0);
     {
         GameObject bar = s.CreateGameObject("GameScoreBar");
+        *bar.AddComponent<RectTransformComponent>() =
+            uilayout::FromLegacyRect(0, 80.0f, 190.0f, 800.0f, 44.0f, 0, false);
         auto* ui = bar.AddComponent<UIElementComponent>();
         ui->kind = 0;
-        ui->anchor = 0;
-        ui->x = 80.0f;
-        ui->y = 190.0f;
-        ui->w = 800.0f;
-        ui->h = 44.0f;
         ui->color = { 0.30f, 0.85f, 0.45f, 0.9f };
         ui->fillMode = 1; // 水平バー (FlowGameDriver が SetUIFill で書く)
         ui->fillAmount = 0.0f;

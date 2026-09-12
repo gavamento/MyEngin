@@ -16,8 +16,26 @@
 #include "Engine/Platform/Input.h"
 #include "Engine/Platform/InputActions.h"
 #include "Engine/Engine/UI/UITextLayout.h"
+#include "Engine/Engine/Scene.h"           // M75a: 旧形式 (v3) シーンのロード時変換
+#include "Engine/Engine/SceneSerializer.h"
+#include <nlohmann/json.hpp>
 
 namespace mye {
+
+namespace {
+
+// M75a: 旧 UIElement の配置引数 (anchor / x / y / w / h / space) で RectTransform + UIElement を
+// 足す検査用ヘルパ。**RectTransform を先に**足す (後から足すと UIElement のポインタが
+// アーキタイプ移動で無効になる)。戻り値は UIElement
+UIElementComponent* AddLegacyUi(World& w, EntityID e, int anchor, float x, float y, float rw,
+                                float rh, int space = 0, bool hasUiAncestor = false)
+{
+    *w.AddComponent<RectTransformComponent>(e) =
+        uilayout::FromLegacyRect(anchor, x, y, rw, rh, space, hasUiAncestor);
+    return w.AddComponent<UIElementComponent>(e);
+}
+
+} // namespace
 
 bool RunUISelfTest()
 {
@@ -54,13 +72,10 @@ bool RunUISelfTest()
     {
         World w;
         const EntityID e = w.CreateEntity("ui");
-        auto* el = w.AddComponent<UIElementComponent>(e);
-        el->x = ox;
-        el->y = oy;
-        el->w = 100.0f;
-        el->h = 40.0f;
+        AddLegacyUi(w, e, 0, ox, oy, 100.0f, 40.0f);
         for (const Case& c : cases) {
-            w.GetComponent<UIElementComponent>(e)->anchor = c.anchor;
+            *w.GetComponent<RectTransformComponent>(e) =
+                uilayout::FromLegacyRect(c.anchor, ox, oy, 100.0f, 40.0f, 0, false);
             const auto r = uilayout::ResolveRect(w, e, W, H);
             const bool ok = std::fabs(r.x - (c.baseX + ox)) < 1e-4f
                 && std::fabs(r.y - (c.baseY + oy)) < 1e-4f && r.w == 100.0f && r.h == 40.0f;
@@ -72,26 +87,17 @@ bool RunUISelfTest()
     {
         World w;
         const EntityID parent = w.CreateEntity("panel");
-        auto* pel = w.AddComponent<UIElementComponent>(parent);
-        pel->anchor = 4; // 画面中央
-        pel->x = 0.0f;
-        pel->y = 0.0f;
-        pel->w = 200.0f;
-        pel->h = 100.0f;
+        AddLegacyUi(w, parent, 4 /*画面中央*/, 0.0f, 0.0f, 200.0f, 100.0f);
         const EntityID child = w.CreateEntity("child");
-        auto* cel = w.AddComponent<UIElementComponent>(child);
-        cel->space = 1;
-        cel->x = ox;
-        cel->y = oy;
-        cel->w = 50.0f;
-        cel->h = 20.0f;
+        AddLegacyUi(w, child, 0, ox, oy, 50.0f, 20.0f, /*space*/ 1, true);
         w.SetParent(child, parent);
         w.ApplyStructuralChanges();
         // 親の解決済み矩形: anchor は「左上をアンカー点に置く」(センタリングしない —
         // 旧 ResolveAnchor と同じ) ので anchor=4 → 左上 (500,400)、(500,400)-(700,500)
         const float px = 500.0f, py = 400.0f, pw = 200.0f, ph = 100.0f;
         for (const Case& c : cases) {
-            w.GetComponent<UIElementComponent>(child)->anchor = c.anchor;
+            *w.GetComponent<RectTransformComponent>(child) =
+                uilayout::FromLegacyRect(c.anchor, ox, oy, 50.0f, 20.0f, 1, true);
             const auto r = uilayout::ResolveRect(w, child, W, H);
             const float bx = px + (c.baseX / W) * pw; // 9-grid 基準点を親矩形に写像
             const float by = py + (c.baseY / H) * ph;
@@ -100,25 +106,18 @@ bool RunUISelfTest()
         }
         // 3 段入れ子: 孫 (space=1, anchor=0) は子の左上基準
         const EntityID gc = w.CreateEntity("grandchild");
-        auto* gel = w.AddComponent<UIElementComponent>(gc);
-        gel->space = 1;
-        gel->x = 3.0f;
-        gel->y = 4.0f;
-        gel->w = 10.0f;
-        gel->h = 10.0f;
+        AddLegacyUi(w, gc, 0, 3.0f, 4.0f, 10.0f, 10.0f, 1, true);
         w.SetParent(gc, child);
         w.ApplyStructuralChanges();
-        w.GetComponent<UIElementComponent>(child)->anchor = 0; // 子 = 親左上 + (ox,oy)
+        *w.GetComponent<RectTransformComponent>(child) =
+            uilayout::FromLegacyRect(0, ox, oy, 50.0f, 20.0f, 1, true); // 子 = 親左上 + (ox,oy)
         const auto rg = uilayout::ResolveRect(w, gc, W, H);
         check(std::fabs(rg.x - (px + ox + 3.0f)) < 1e-4f && std::fabs(rg.y - (py + oy + 4.0f)) < 1e-4f,
               "3-level nesting resolves through chain");
         // space=1 でも UIElement 祖先が無ければ screen 基準へフォールバック
         const EntityID orphanParent = w.CreateEntity("plain"); // UIElement 無し
         const EntityID orphan = w.CreateEntity("orphan");
-        auto* oel = w.AddComponent<UIElementComponent>(orphan);
-        oel->space = 1;
-        oel->x = 7.0f;
-        oel->y = 8.0f;
+        AddLegacyUi(w, orphan, 0, 7.0f, 8.0f, 160.0f, 40.0f, 1, false);
         w.SetParent(orphan, orphanParent);
         w.ApplyStructuralChanges();
         const auto ro = uilayout::ResolveRect(w, orphan, W, H);
@@ -127,10 +126,7 @@ bool RunUISelfTest()
         // 非 UI ノードを挟んでも最寄りの UIElement 祖先に到達する
         const EntityID mid = w.CreateEntity("group"); // UIElement 無し
         const EntityID leaf = w.CreateEntity("leaf");
-        auto* lel = w.AddComponent<UIElementComponent>(leaf);
-        lel->space = 1;
-        lel->x = 1.0f;
-        lel->y = 2.0f;
+        AddLegacyUi(w, leaf, 0, 1.0f, 2.0f, 160.0f, 40.0f, 1, true);
         w.SetParent(mid, parent);
         w.SetParent(leaf, mid);
         w.ApplyStructuralChanges();
@@ -140,8 +136,8 @@ bool RunUISelfTest()
         // 循環親 (壊れデータ) でもハングしない — 深度上限打ち切り
         const EntityID a = w.CreateEntity("cycA");
         const EntityID b = w.CreateEntity("cycB");
-        w.AddComponent<UIElementComponent>(a)->space = 1;
-        w.AddComponent<UIElementComponent>(b)->space = 1;
+        AddLegacyUi(w, a, 0, 0.0f, 0.0f, 10.0f, 10.0f, 1, true);
+        AddLegacyUi(w, b, 0, 0.0f, 0.0f, 10.0f, 10.0f, 1, true);
         w.AddComponent<HierarchyComponent>(a)->parent = b;
         w.AddComponent<HierarchyComponent>(b)->parent = a;
         const auto rc = uilayout::ResolveRect(w, a, W, H);
@@ -152,27 +148,11 @@ bool RunUISelfTest()
     {
         World w;
         const EntityID outer = w.CreateEntity("outer");
-        auto* oel = w.AddComponent<UIElementComponent>(outer);
-        oel->x = 100.0f;
-        oel->y = 100.0f;
-        oel->w = 300.0f;
-        oel->h = 200.0f;
-        oel->clipChildren = 1;
+        AddLegacyUi(w, outer, 0, 100.0f, 100.0f, 300.0f, 200.0f)->clipChildren = 1;
         const EntityID inner = w.CreateEntity("inner");
-        auto* iel = w.AddComponent<UIElementComponent>(inner);
-        iel->space = 1;
-        iel->x = 50.0f;
-        iel->y = 50.0f;
-        iel->w = 200.0f;
-        iel->h = 100.0f;
-        iel->clipChildren = 1;
+        AddLegacyUi(w, inner, 0, 50.0f, 50.0f, 200.0f, 100.0f, 1, true)->clipChildren = 1;
         const EntityID item = w.CreateEntity("item");
-        auto* tel = w.AddComponent<UIElementComponent>(item);
-        tel->space = 1;
-        tel->x = 100.0f;
-        tel->y = 80.0f;
-        tel->w = 500.0f;
-        tel->h = 40.0f;
+        AddLegacyUi(w, item, 0, 100.0f, 80.0f, 500.0f, 40.0f, 1, true);
         w.SetParent(inner, outer);
         w.SetParent(item, inner);
         w.ApplyStructuralChanges();
@@ -186,7 +166,7 @@ bool RunUISelfTest()
         check(std::fabs(vis.x - 250.0f) < 1e-4f && std::fabs(vis.w - 100.0f) < 1e-4f,
               "visible rect = rect clipped by ancestors");
         // クリップ外へ出し切ると可視矩形は退化する
-        w.GetComponent<UIElementComponent>(item)->y = 500.0f;
+        w.GetComponent<RectTransformComponent>(item)->anchoredPosition.y = 500.0f;
         const auto gone = uilayout::ResolveVisibleRect(w, item, W, H);
         check(gone.w <= 0.0f || gone.h <= 0.0f, "fully scrolled-out item has empty visible rect");
         // 自分の clipChildren は自分を切らない
@@ -347,11 +327,7 @@ bool RunUISelfTest()
         // 3D オブジェクト (MeshRenderer 持ち = UI 専用でない) に UIElement を直付け
         const EntityID obj = w.CreateEntity("enemy");
         w.AddComponent<MeshRendererComponent>(obj);
-        {
-            auto* el = w.AddComponent<UIElementComponent>(obj);
-            el->w = 100.0f;
-            el->h = 40.0f;
-        }
+        AddLegacyUi(w, obj, 0, 0.0f, 0.0f, 100.0f, 40.0f);
         w.ApplyStructuralChanges();
         w.GetComponent<LocalTransform>(obj)->position = { 0, 0, 10.0f };
         xform.Update(w);
@@ -398,12 +374,7 @@ bool RunUISelfTest()
         // 複合ウィジェット: UI 専用の子を space=1 でぶら下げると親矩形基準で一緒に追従し、
         // 距離スケールも伝播する
         const EntityID fill = w.CreateEntity("fill");
-        {
-            auto* cel = w.AddComponent<UIElementComponent>(fill);
-            cel->space = 1;
-            cel->w = 60.0f;
-            cel->h = 10.0f;
-        }
+        AddLegacyUi(w, fill, 0, 0.0f, 0.0f, 60.0f, 10.0f, 1, true);
         w.SetParent(fill, obj);
         w.ApplyStructuralChanges();
         res = uilayout::Resolve(w, fill, 1920, 1080, &wc);
@@ -433,13 +404,7 @@ bool RunUISelfTest()
 
         // 既存不変 1: UI 専用のルートエンティティはカメラコンテキストが有っても従来とビット同一
         const EntityID rootUi = w.CreateEntity("screen");
-        {
-            auto* rel = w.AddComponent<UIElementComponent>(rootUi);
-            rel->x = 10.0f;
-            rel->y = 20.0f;
-            rel->w = 100.0f;
-            rel->h = 40.0f;
-        }
+        AddLegacyUi(w, rootUi, 0, 10.0f, 20.0f, 100.0f, 40.0f);
         w.ApplyStructuralChanges();
         const auto ra = uilayout::ResolveRect(w, rootUi, 1920, 1080, &wc);
         const auto rb = uilayout::ResolveRect(w, rootUi, 1920, 1080);
@@ -449,19 +414,13 @@ bool RunUISelfTest()
         // 既存不変 2: UI 専用の子を 3D オブジェクトの下に整理してもそれ自体は画面 UI のまま
         // (space=0 なので screen 基準。追従はコンポーネント構成でのみ決まる)
         const EntityID grouped = w.CreateEntity("grouped");
-        {
-            auto* gel = w.AddComponent<UIElementComponent>(grouped);
-            gel->x = 30.0f;
-            gel->y = 40.0f;
-            gel->w = 50.0f;
-            gel->h = 20.0f;
-        }
+        AddLegacyUi(w, grouped, 0, 30.0f, 40.0f, 50.0f, 20.0f, /*space*/ 0, /*hasUiAncestor*/ true);
         w.SetParent(grouped, obj);
         w.ApplyStructuralChanges();
-        // 親 obj は UIElement 持ちだが grouped は space=0 = screen 基準 (従来意味論)
+        // 親 obj は UIElement 持ちだが grouped は旧 space=0 = basis 1 (キャンバス基準。従来意味論)
         const auto rg = uilayout::ResolveRect(w, grouped, 1920, 1080, &wc);
         check(rg.x == 30.0f && rg.y == 40.0f,
-              "world UI: a ui-only child under a 3D object stays screen-anchored (space=0)");
+              "world UI: a ui-only child under a 3D object stays screen-anchored (basis=1)");
 
         // 既存不変 3: スクリプト状態コンポーネントは「UI 専用」を壊さない
         // (ボタンにロジックを付けても画面 UI のまま)
@@ -474,13 +433,7 @@ bool RunUISelfTest()
         sd.construct = [](void* dst) { *static_cast<int32_t*>(dst) = 0; };
         const ComponentTypeId scriptType = ComponentRegistry::Get().Register(sd);
         const EntityID button = w.CreateEntity("button");
-        {
-            auto* bel = w.AddComponent<UIElementComponent>(button);
-            bel->x = 5.0f;
-            bel->y = 6.0f;
-            bel->w = 80.0f;
-            bel->h = 30.0f;
-        }
+        AddLegacyUi(w, button, 0, 5.0f, 6.0f, 80.0f, 30.0f);
         w.AddComponentRaw(button, scriptType);
         w.ApplyStructuralChanges();
         const auto rs = uilayout::ResolveRect(w, button, 1920, 1080, &wc);
@@ -501,16 +454,11 @@ bool RunUISelfTest()
         const EntityID a = w.CreateEntity("btnA");
         const EntityID b = w.CreateEntity("btnB");
         for (const EntityID e : { a, b }) {
-            auto* el = w.AddComponent<UIElementComponent>(e);
+            auto* el = AddLegacyUi(w, e, 0, 100.0f, (e == a) ? 100.0f /*上*/ : 300.0f /*下*/,
+                                   200.0f, 80.0f);
             el->kind = 2;
-            el->anchor = 0;
-            el->x = 100.0f;
-            el->w = 200.0f;
-            el->h = 80.0f;
             el->focusable = 1;
         }
-        w.GetComponent<UIElementComponent>(a)->y = 100.0f; // 上
-        w.GetComponent<UIElementComponent>(b)->y = 300.0f; // 下
         w.ApplyStructuralChanges();
 
         InputActions actions;
@@ -632,6 +580,284 @@ bool RunUISelfTest()
         check(degenerate.w == uilayout::kCanvasRefW && degenerate.h == uilayout::kCanvasRefH
                   && degenerate.scale == 1.0f,
               "canvas: a degenerate screen falls back to the reference resolution");
+    }
+
+    // ---- RectTransform (M75a) ----
+    // 主張: (1) 旧式 (9-grid + オフセット) と新式 (anchorMin/Max + pivot) は一致アンカー・
+    // pivot 0 で**ビット同一** = golden 4 枚が動かない根拠、(2) ストレッチ / pivot / basis が
+    // Unity の式どおり、(3) 回転はヒットテストが逆変換して判定し、恒等要素は xform を作らない、
+    // (4) UI コンポーネントは UiAux フラグ付きで登録されている (IsUiOnlyEntity の許容リスト)
+    {
+        // (1) 旧式との memcmp。旧式 = AnchorOrigin (base.x + {0, w*0.5f, w}) + オフセット*scale
+        bool same = true;
+        int tested = 0;
+        const float bases[][4] = { { 0, 0, 1920, 1080 }, { 500, 400, 200, 100 },
+                                   { 123.5f, 77.25f, 333.3f, 19.7f }, { 960.0f, 540.0f, 0, 0 } };
+        const float offs[][4] = { { 10, 5, 100, 40 }, { -920, -500, 1840, 1000 },
+                                  { -600.0f, 60.0f, 1200.0f, 96.0f }, { 0.1f, -0.7f, 33.3f, 7.77f } };
+        const float scales[] = { 1.0f, 0.5f, 1.7f, 0.3333f };
+        for (int anchor = 0; anchor < 9 && same; ++anchor) {
+            for (const auto& bv : bases) {
+                for (const auto& ov : offs) {
+                    for (const float sc : scales) {
+                        const uilayout::UIRect base = { bv[0], bv[1], bv[2], bv[3] };
+                        const int col = anchor % 3;
+                        const int row = anchor / 3;
+                        uilayout::UIRect oldR;
+                        oldR.x = base.x + ((col == 0) ? 0.0f : (col == 1) ? base.w * 0.5f : base.w);
+                        oldR.y = base.y + ((row == 0) ? 0.0f : (row == 1) ? base.h * 0.5f : base.h);
+                        oldR.x += ov[0] * sc;
+                        oldR.y += ov[1] * sc;
+                        oldR.w = ov[2] * sc;
+                        oldR.h = ov[3] * sc;
+                        const RectTransformComponent rt =
+                            uilayout::FromLegacyRect(anchor, ov[0], ov[1], ov[2], ov[3], 0, false);
+                        const uilayout::UIRect newR = uilayout::RectFromTransform(rt, base, sc);
+                        if (std::memcmp(&oldR, &newR, sizeof(oldR)) != 0) {
+                            same = false;
+                            MYE_LOG_ERROR("    anchor %d base(%g,%g,%g,%g) off(%g,%g,%g,%g) s=%g:"
+                                          " old(%g,%g,%g,%g) new(%g,%g,%g,%g)",
+                                          anchor, bv[0], bv[1], bv[2], bv[3], ov[0], ov[1], ov[2],
+                                          ov[3], sc, oldR.x, oldR.y, oldR.w, oldR.h, newR.x,
+                                          newR.y, newR.w, newR.h);
+                        }
+                        ++tested;
+                    }
+                }
+            }
+        }
+        check(same && tested == 9 * 4 * 4 * 4,
+              "rect: legacy 9-grid formula and RectTransform formula are bit-identical");
+
+        // (2) ストレッチ / pivot / basis
+        World w;
+        const EntityID panel = w.CreateEntity("panel");
+        AddLegacyUi(w, panel, 4, 0.0f, 0.0f, 200.0f, 100.0f); // (500,400)-(700,500) on 1000x800
+        const EntityID st = w.CreateEntity("stretch");
+        {
+            auto* rt = w.AddComponent<RectTransformComponent>(st);
+            rt->anchorMin = { 0.0f, 0.0f };
+            rt->anchorMax = { 1.0f, 1.0f };
+            rt->pivot = { 0.5f, 0.5f };
+            rt->anchoredPosition = { 0.0f, 0.0f };
+            rt->sizeDelta = { -20.0f, -10.0f }; // 親から左右 10 / 上下 5 の余白
+            w.AddComponent<UIElementComponent>(st);
+        }
+        w.SetParent(st, panel);
+        w.ApplyStructuralChanges();
+        {
+            const auto r = uilayout::ResolveRect(w, st, W, H);
+            check(std::fabs(r.x - 510.0f) < 1e-4f && std::fabs(r.y - 405.0f) < 1e-4f
+                      && std::fabs(r.w - 180.0f) < 1e-4f && std::fabs(r.h - 90.0f) < 1e-4f,
+                  "rect: stretch anchors follow the parent with sizeDelta as margins");
+            // 親を広げると子も追従する (固定サイズなら動かない)
+            w.GetComponent<RectTransformComponent>(panel)->sizeDelta = { 400.0f, 100.0f };
+            const auto r2 = uilayout::ResolveRect(w, st, W, H);
+            check(std::fabs(r2.w - 380.0f) < 1e-4f, "rect: stretched child grows with its parent");
+            w.GetComponent<RectTransformComponent>(panel)->sizeDelta = { 200.0f, 100.0f };
+        }
+        const EntityID centered = w.CreateEntity("centered");
+        {
+            auto* rt = w.AddComponent<RectTransformComponent>(centered);
+            rt->anchorMin = { 0.5f, 0.5f };
+            rt->anchorMax = { 0.5f, 0.5f };
+            rt->pivot = { 0.5f, 0.5f };
+            rt->sizeDelta = { 100.0f, 40.0f };
+            w.AddComponent<UIElementComponent>(centered);
+        }
+        w.ApplyStructuralChanges();
+        {
+            const auto r = uilayout::ResolveRect(w, centered, W, H);
+            check(std::fabs(r.x - 450.0f) < 1e-4f && std::fabs(r.y - 380.0f) < 1e-4f,
+                  "rect: pivot (0.5,0.5) centres the rect on the anchor point");
+        }
+        // basis=1 は親の下にいてもキャンバス基準
+        const EntityID canvasChild = w.CreateEntity("canvasChild");
+        {
+            auto* rt = w.AddComponent<RectTransformComponent>(canvasChild);
+            rt->anchoredPosition = { 10.0f, 20.0f };
+            rt->sizeDelta = { 30.0f, 40.0f };
+            rt->basis = 1;
+            w.AddComponent<UIElementComponent>(canvasChild);
+        }
+        w.SetParent(canvasChild, panel);
+        w.ApplyStructuralChanges();
+        {
+            const auto r = uilayout::ResolveRect(w, canvasChild, W, H);
+            check(r.x == 10.0f && r.y == 20.0f, "rect: basis=1 ignores the UI parent (canvas)");
+        }
+        // RectTransform だけのノード (空コンテナ) も基準になれる / UIElement だけは既定で解ける
+        const EntityID container = w.CreateEntity("container");
+        {
+            auto* rt = w.AddComponent<RectTransformComponent>(container);
+            rt->anchoredPosition = { 100.0f, 100.0f };
+            rt->sizeDelta = { 300.0f, 300.0f };
+        }
+        const EntityID inContainer = w.CreateEntity("inContainer");
+        AddLegacyUi(w, inContainer, 0, 1.0f, 2.0f, 10.0f, 10.0f, 1, true);
+        w.SetParent(inContainer, container);
+        const EntityID bare = w.CreateEntity("bare");
+        w.AddComponent<UIElementComponent>(bare); // RectTransform 無し
+        w.ApplyStructuralChanges();
+        {
+            const auto rc = uilayout::ResolveRect(w, container, W, H);
+            const auto ri = uilayout::ResolveRect(w, inContainer, W, H);
+            const auto rb = uilayout::ResolveRect(w, bare, W, H);
+            check(rc.w == 300.0f && ri.x == 101.0f && ri.y == 102.0f,
+                  "rect: a RectTransform-only node resolves and anchors its children");
+            check(rb.x == 0.0f && rb.y == 0.0f && rb.w == 160.0f && rb.h == 40.0f,
+                  "rect: UIElement without RectTransform resolves with the legacy defaults");
+        }
+        // FromLegacyRect の basis 規則
+        check(uilayout::FromLegacyRect(0, 0, 0, 1, 1, 1, true).basis == 0
+                  && uilayout::FromLegacyRect(0, 0, 0, 1, 1, 0, true).basis == 1
+                  && uilayout::FromLegacyRect(0, 0, 0, 1, 1, 0, false).basis == 0,
+              "rect: legacy space maps to basis (parent / canvas / root)");
+
+        // (3) 回転: (100,100)-(300,150) を中心 (200,125) で 90 度回すと縦長になる。
+        //     pivot (0.5,0.5) なので anchoredPosition は**矩形の中心**を指す (Unity と同じ)
+        const EntityID rot = w.CreateEntity("rot");
+        {
+            auto* rt = w.AddComponent<RectTransformComponent>(rot);
+            rt->anchoredPosition = { 200.0f, 125.0f };
+            rt->sizeDelta = { 200.0f, 50.0f };
+            rt->pivot = { 0.5f, 0.5f };
+            rt->rotation = 90.0f;
+            w.AddComponent<UIElementComponent>(rot);
+        }
+        w.ApplyStructuralChanges();
+        {
+            const auto res = uilayout::Resolve(w, rot, W, H, nullptr);
+            check(res.visible && res.hasXform, "rect: rotated element carries an xform");
+            const auto aabb = uilayout::ResolveRect(w, rot, W, H);
+            check(std::fabs(aabb.x - 175.0f) < 1e-3f && std::fabs(aabb.y - 25.0f) < 1e-3f
+                      && std::fabs(aabb.w - 50.0f) < 1e-3f && std::fabs(aabb.h - 200.0f) < 1e-3f,
+                  "rect: ResolveRect of a rotated element is the AABB");
+            // 回転後は上下に 100、左右に 25 — 未回転なら当たらない点が当たり、逆も
+            check(uiinteract::HitTest(w, W, H, 200.0f, 215.0f) == rot,
+                  "rect: hit test follows the rotated rect (inside after rotation)");
+            check(uiinteract::HitTest(w, W, H, 290.0f, 125.0f) == kNullEntity,
+                  "rect: hit test misses where only the unrotated rect would be");
+            // 恒等ゲート: 回転 0 / スケール 1 の要素は xform を持たない (既存経路のまま)
+            w.GetComponent<RectTransformComponent>(rot)->rotation = 0.0f;
+            w.GetComponent<RectTransformComponent>(rot)->scale = { 1.0f, 1.0f };
+            check(!uilayout::Resolve(w, rot, W, H, nullptr).hasXform,
+                  "rect: identity rotation/scale produces no xform (bit-exact legacy path)");
+            // スケール 2 は pivot 中心に広がる: 中心 (200,125)、幅 400 → x 0..400
+            w.GetComponent<RectTransformComponent>(rot)->scale = { 2.0f, 1.0f };
+            const auto sc = uilayout::ResolveRect(w, rot, W, H);
+            check(std::fabs(sc.x - 0.0f) < 1e-3f && std::fabs(sc.w - 400.0f) < 1e-3f,
+                  "rect: scale grows around the pivot");
+            // 親の回転は子にも掛かる (子の未回転矩形は親フレーム上で解け、xform は合成される)
+            w.GetComponent<RectTransformComponent>(rot)->scale = { 1.0f, 1.0f };
+            w.GetComponent<RectTransformComponent>(rot)->rotation = 90.0f;
+            const EntityID rotChild = w.CreateEntity("rotChild");
+            AddLegacyUi(w, rotChild, 0, 0.0f, 0.0f, 200.0f, 50.0f, 1, true); // 親と同じ矩形
+            w.SetParent(rotChild, rot);
+            w.ApplyStructuralChanges();
+            const auto rcr = uilayout::ResolveRect(w, rotChild, W, H);
+            check(std::fabs(rcr.x - 175.0f) < 1e-3f && std::fabs(rcr.h - 200.0f) < 1e-3f,
+                  "rect: a child inherits its parent's rotation");
+            // 逆行列の往復
+            uilayout::UIXform inv;
+            check(uilayout::InvertXform(res.xform, inv), "rect: xform inverts");
+            float ax = 0, ay = 0, bx = 0, by = 0;
+            uilayout::XformPoint(res.xform, 123.0f, 45.0f, ax, ay);
+            uilayout::XformPoint(inv, ax, ay, bx, by);
+            check(std::fabs(bx - 123.0f) < 1e-3f && std::fabs(by - 45.0f) < 1e-3f,
+                  "rect: xform round-trips through its inverse");
+        }
+
+        // (4) UiAux: UI 側のコンポーネントは全部フラグ付き (IsUiOnlyEntity の許容リスト)。
+        //     名前が "UI" で始まる / RectTransform / *Canvas は UI 側とみなす
+        {
+            const ComponentRegistry& reg = ComponentRegistry::Get();
+            bool allUi = true;
+            int uiCount = 0;
+            for (uint32_t t = 0; t < reg.Count(); ++t) {
+                const ComponentDesc& d = reg.Desc(t);
+                const bool uiName = (std::strncmp(d.name, "UI", 2) == 0
+                                     && std::strncmp(d.name, "UiSelfTest", 10) != 0)
+                    || std::strcmp(d.name, "RectTransform") == 0;
+                if (!uiName) {
+                    continue;
+                }
+                ++uiCount;
+                if ((d.flags & kComponentUiAux) == 0) {
+                    allUi = false;
+                    MYE_LOG_ERROR("    '%s' is a UI component but lacks kComponentUiAux", d.name);
+                }
+            }
+            check(allUi && uiCount >= 2, "rect: every UI component is registered with kComponentUiAux");
+            check(uilayout::IsUiOnlyEntity(w, container),
+                  "rect: a RectTransform-only entity counts as ui-only (screen UI, not world-follow)");
+        }
+    }
+
+    // ---- 旧形式シーンのロード (M75a): v3 の UIElement.anchor/x/y/w/h/space → RectTransform ----
+    {
+        const char* v3 = R"({
+          "engine": "MyEngine", "version": 3, "sceneName": "legacy", "nextFileId": 4,
+          "entities": [
+            { "fileId": 1, "name": "Root", "childIndex": 0, "components": {
+                "UIElement": { "kind": 0, "anchor": 4, "x": -100.0, "y": -50.0, "w": 200.0, "h": 100.0,
+                               "space": 0, "color": [1,1,1,1] } } },
+            { "fileId": 2, "name": "Child", "parent": 1, "childIndex": 0, "components": {
+                "UIElement": { "kind": 1, "anchor": 8, "x": -10.0, "y": -5.0, "w": 50.0, "h": 20.0,
+                               "space": 1, "text": "hi" } } },
+            { "fileId": 3, "name": "Overlay", "parent": 1, "childIndex": 1, "components": {
+                "UIElement": { "kind": 2, "anchor": 0, "x": 5.0, "y": 6.0, "w": 70.0, "h": 30.0,
+                               "space": 0 } } }
+          ] })";
+        Scene scene;
+        const nlohmann::json doc = nlohmann::json::parse(v3);
+        check(SceneSerializer::LoadFromJson(scene, doc), "legacy: v3 scene loads");
+        World& w = scene.GetWorld();
+        GameObject root = scene.Find("Root");
+        GameObject child = scene.Find("Child");
+        GameObject overlay = scene.Find("Overlay");
+        const auto* rr = root ? w.GetComponent<RectTransformComponent>(root.Id()) : nullptr;
+        const auto* rc = child ? w.GetComponent<RectTransformComponent>(child.Id()) : nullptr;
+        const auto* ro = overlay ? w.GetComponent<RectTransformComponent>(overlay.Id()) : nullptr;
+        check(rr && rc && ro, "legacy: every UIElement gained a RectTransform");
+        if (rr && rc && ro) {
+            check(rr->anchorMin.x == 0.5f && rr->anchorMax.y == 0.5f && rr->pivot.x == 0.0f
+                      && rr->anchoredPosition.x == -100.0f && rr->sizeDelta.y == 100.0f
+                      && rr->basis == 0,
+                  "legacy: root keeps its 9-grid anchor as matching anchors (basis=parent)");
+            check(rc->anchorMin.x == 1.0f && rc->anchorMin.y == 1.0f && rc->basis == 0,
+                  "legacy: space=1 child resolves against its parent (basis=0)");
+            check(ro->basis == 1, "legacy: space=0 under a UI parent keeps the canvas basis");
+            // 解決結果は旧式と同じ (1000x800): root = 中央 (500,400) + (-100,-50)
+            const auto r = uilayout::ResolveRect(w, root.Id(), 1000, 800);
+            const auto c = uilayout::ResolveRect(w, child.Id(), 1000, 800);
+            const auto o = uilayout::ResolveRect(w, overlay.Id(), 1000, 800);
+            check(r.x == 400.0f && r.y == 350.0f && c.x == 590.0f && c.y == 445.0f && o.x == 5.0f
+                      && o.y == 6.0f,
+                  "legacy: converted rects resolve exactly where the v3 layout put them");
+        }
+        // 保存すると v4 になり、UIElement から旧キーが消え RectTransform が書かれる
+        const nlohmann::json saved = SceneSerializer::SaveToJson(scene);
+        check(saved.value("version", 0) == Scene::kDocVersion && Scene::kDocVersion == 4,
+              "legacy: re-saved document declares v4");
+        bool cleaned = true;
+        for (const auto& item : saved["entities"]) {
+            const auto& comps = item["components"];
+            if (!comps.contains("UIElement")) {
+                continue;
+            }
+            cleaned = cleaned && !comps["UIElement"].contains("anchor")
+                && !comps["UIElement"].contains("x") && comps.contains("RectTransform");
+        }
+        check(cleaned, "legacy: v4 output has no legacy layout keys and carries RectTransform");
+        // v4 を読み直しても再変換は走らない (RectTransform があるので anchor キーは無視される)
+        Scene again;
+        check(SceneSerializer::LoadFromJson(again, saved), "legacy: v4 reloads");
+        GameObject root2 = again.Find("Root");
+        const auto* rr2 = root2 ? again.GetWorld().GetComponent<RectTransformComponent>(root2.Id())
+                                : nullptr;
+        check(rr2 && std::memcmp(rr2, rr, sizeof(RectTransformComponent)) == 0,
+              "legacy: RectTransform survives a v4 save/load round trip bit-exactly");
     }
 
     if (failCount == 0) {

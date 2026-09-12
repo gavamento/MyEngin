@@ -745,7 +745,8 @@ inline float MyeAxis(const MyeUpdateContext& ctx, const char* name)
     return ctx.api->GetAxisValue(ctx.api->engine, MyeNameHash(name));
 }
 
-// UI 書込 (write-only)。w/h・anchor 以降の負値は「現値維持」(EngineAPI.h の keep 意味論)
+// UI 書込 (write-only)。w/h・anchor 以降の負値は「現値維持」(EngineAPI.h の keep 意味論)。
+// M75a 以降は RectTransform (anchoredPosition / sizeDelta / 一致アンカー / basis) へ書く
 inline bool MyeSetUIRect(const MyeUpdateContext& ctx, MyeEntityId id, float x, float y,
                          float w = -1.0f, float h = -1.0f)
 {

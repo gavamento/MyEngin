@@ -14,12 +14,20 @@ namespace {
 // 壊れたデータ (親循環など) でも必ず停止する上限。正常なシーンの UI 階層はこれより浅い
 constexpr int kMaxDepth = 64;
 
-// 最寄りの UIElement 持ち祖先 (間の非 UI ノードは読み飛ばす)。無ければ kNullEntity
+// UI ノードか (RectTransform か UIElement を持つ)。M75a で RectTransform だけの空ノード
+// (Unity の「空の RectTransform」= グループ用コンテナ) も階層の基準になれるようにした
+bool IsUiNode(World& world, EntityID e)
+{
+    return world.GetComponent<UIElementComponent>(e) != nullptr
+        || world.GetComponent<RectTransformComponent>(e) != nullptr;
+}
+
+// 最寄りの UI ノード祖先 (間の非 UI ノードは読み飛ばす)。無ければ kNullEntity
 EntityID FindUIParent(World& world, EntityID e)
 {
     EntityID p = world.GetParent(e);
     for (int guard = 0; guard < kMaxDepth && p != kNullEntity; ++guard) {
-        if (world.GetComponent<UIElementComponent>(p)) {
+        if (IsUiNode(world, p)) {
             return p;
         }
         p = world.GetParent(p);
@@ -27,11 +35,16 @@ EntityID FindUIParent(World& world, EntityID e)
     return kNullEntity;
 }
 
+} // namespace
+
 // 「UI 専用オブジェクト」判定 (完全自動追従の基準)。
 // ★全エンティティは基本アーキタイプ (Name/LocalTransform/WorldMatrix/Hierarchy) を持つので
 //   「Transform の有無」では判定できない (最初の実装で全 screen UI が追従して全滅した)。
-// 許容 = 基本 4 種 + UIElement + エディタ帳簿 (FileId/Active/Prefab*) + スクリプト状態
-// (kComponentScriptState — ボタンにロジックを付けても UI 専用のまま)。
+// 許容 = 基本 4 種 + エディタ帳簿 (FileId/Active/Prefab*) + スクリプト状態
+// (kComponentScriptState — ボタンにロジックを付けても UI 専用のまま) + **kComponentUiAux**
+// (M75a: UIElement / RectTransform / 以後の UI コンポーネント群。型名の列挙をやめてフラグに
+// したのは、UI コンポーネントを足すたびにここへ 1 行足し忘れると screen UI が丸ごと
+// ワールド追従に落ちて消えるため)。
 // それ以外 (メッシュ/コライダー/ライト/スキーマ等の実体コンポーネント) を 1 つでも持てば
 // 「3D オブジェクト」= その上の UIElement はオブジェクトに追従する。
 bool IsUiOnlyEntity(World& world, EntityID e)
@@ -44,25 +57,28 @@ bool IsUiOnlyEntity(World& world, EntityID e)
     for (const ComponentTypeId t : arch->Types()) {
         if (t == NameComponent::sTypeId || t == LocalTransform::sTypeId
             || t == WorldMatrixComponent::sTypeId || t == HierarchyComponent::sTypeId
-            || t == UIElementComponent::sTypeId || t == FileIdComponent::sTypeId
-            || t == ActiveComponent::sTypeId || t == PrefabInstanceComponent::sTypeId
-            || t == PrefabLinkComponent::sTypeId) {
+            || t == FileIdComponent::sTypeId || t == ActiveComponent::sTypeId
+            || t == PrefabInstanceComponent::sTypeId || t == PrefabLinkComponent::sTypeId) {
             continue;
         }
-        if (t < reg.Count() && (reg.Desc(t).flags & kComponentScriptState) != 0) {
-            continue; // C++/C# スクリプト状態は UI ロジックの脇役扱い
+        if (t < reg.Count()
+            && (reg.Desc(t).flags & (kComponentScriptState | kComponentUiAux)) != 0) {
+            continue; // C++/C# スクリプト状態と UI の脇役は UI ロジックの一部扱い
         }
         return false;
     }
     return true;
 }
 
+namespace {
+
 // ワールド追従の基準点を解決して base (0 サイズ矩形 = 射影点) と out.scale を書く。
 // 戻り値: 追従したか (false = 従来の screen 基準へ)。追従したが描けない
 // (コンテキスト無し / カメラ背面でクランプ OFF) ときは out.visible=false。
 // ★射影は scalar 演算のみ — sim レーン (UIHitTest / FocusNav) が同じ経路を通るため
 //   SIMD (XMMatrix*) を混ぜると Debug/Release でビットが割れる
-bool ResolveWorldBase(World& world, EntityID e, const UIElementComponent& el, int screenW,
+// el は UIElement (無ければ nullptr = RectTransform だけのノード。クランプ/距離スケール無し)
+bool ResolveWorldBase(World& world, EntityID e, const UIElementComponent* el, int screenW,
                       int screenH, const UIWorldContext* wc, UIRect& base, UIResolved& out)
 {
     if (IsUiOnlyEntity(world, e)) {
@@ -93,7 +109,8 @@ bool ResolveWorldBase(World& world, EntityID e, const UIElementComponent& el, in
     const float cy = px * m._12 + py * m._22 + pz * m._32 + m._42;
     const float cw = px * m._14 + py * m._24 + pz * m._34 + m._44;
     const bool behind = cw <= 1e-4f; // ほぼカメラ面上もまとめて背面扱い (ゼロ除算防止)
-    if (behind && !el.clampToScreen) {
+    const bool clamp = el && el->clampToScreen;
+    if (behind && !clamp) {
         out.visible = false;
         return true;
     }
@@ -110,8 +127,8 @@ bool ResolveWorldBase(World& world, EntityID e, const UIElementComponent& el, in
     base.y = (1.0f - (fy * 0.5f + 0.5f)) * static_cast<float>(screenH); // NDC は y 上向き
     base.w = 0.0f; // 0 サイズ矩形 = anchor 9-grid はどれも射影点そのもの
     base.h = 0.0f;
-    if (el.distanceScale) {
-        const float refD = (el.distanceRef > 0.0f) ? el.distanceRef : 1.0f;
+    if (el && el->distanceScale) {
+        const float refD = (el->distanceRef > 0.0f) ? el->distanceRef : 1.0f;
         const float d = (cw > 1e-3f) ? cw : 1e-3f; // 透視射影の w = ビュー空間深度 ~ 距離
         out.scale = refD / d;
     }
@@ -123,43 +140,44 @@ UIResolved ResolveImpl(World& world, EntityID e, int screenW, int screenH,
 {
     UIResolved out;
     const auto* el = world.GetComponent<UIElementComponent>(e);
-    if (!el) {
+    const auto* rtp = world.GetComponent<RectTransformComponent>(e);
+    if (!el && !rtp) {
         out.visible = false;
         return out;
     }
+    // RectTransform 無し (スクリプトが UIElement だけ AddComponent した等) は既定値で解く —
+    // 既定は旧 UIElement の既定と同値 (左上・pivot 0・160x40) なので M75a 以前と同じ絵になる
+    static const RectTransformComponent kDefaultRt = {};
+    const RectTransformComponent& rt = rtp ? *rtp : kDefaultRt;
     UIRect base = { 0, 0, static_cast<float>(screenW), static_cast<float>(screenH) };
     bool worldRoot = false;
     bool parentResolved = false;
-    if (el->space == 1 && depth < kMaxDepth) {
+    UIResolved parent;
+    if (rt.basis == 0 && depth < kMaxDepth) {
         const EntityID p = FindUIParent(world, e);
         if (p != kNullEntity) {
-            const UIResolved parent = ResolveImpl(world, p, screenW, screenH, wc, depth + 1);
+            parent = ResolveImpl(world, p, screenW, screenH, wc, depth + 1);
             if (!parent.visible) {
                 out.visible = false; // 親 (world 追従) が背面 → 子ごと消える
                 return out;
             }
-            base = parent.rect;
+            base = parent.rect; // 親の**未回転**矩形。回転は親の xform が持つ
             out.scale = parent.scale; // 距離スケールは子のオフセット/サイズにも掛かる
             parentResolved = true;
         }
     }
     if (!parentResolved) {
-        // space=0、または space=1 で UI 親なし (従来は screen フォールバック) —
+        // basis=0 で UI 祖先なし、または basis=1 (キャンバス) —
         // 「UI 専用でないオブジェクト」に付いた UIElement はそのオブジェクトへ追従する
-        worldRoot = ResolveWorldBase(world, e, *el, screenW, screenH, wc, base, out);
+        worldRoot = ResolveWorldBase(world, e, el, screenW, screenH, wc, base, out);
         if (!out.visible) {
             return out;
         }
     }
-    UIRect r;
-    AnchorOrigin(el->anchor, base, r.x, r.y);
-    r.x += el->x * out.scale;
-    r.y += el->y * out.scale;
-    r.w = el->w * out.scale;
-    r.h = el->h * out.scale;
-    if (worldRoot && el->clampToScreen) {
+    UIRect r = RectFromTransform(rt, base, out.scale);
+    if (worldRoot && el && el->clampToScreen) {
         // 矩形が画面内へ収まるよう平行移動 (画面より大きい軸は左/上端起点)。
-        // 子 (space=1) は親の解決済み矩形基準なので一緒に付いてくる
+        // 子 (basis=0) は親の解決済み矩形基準なので一緒に付いてくる
         const float sw = static_cast<float>(screenW);
         const float sh = static_cast<float>(screenH);
         if (r.x + r.w > sw) {
@@ -176,10 +194,123 @@ UIResolved ResolveImpl(World& world, EntityID e, int screenW, int screenH,
         }
     }
     out.rect = r;
+
+    // ---- 回転 / スケール (M75a)。恒等ゲート: 自分も祖先も恒等なら xform を一切作らない ----
+    if (parentResolved && parent.hasXform) {
+        out.hasXform = true;
+        out.xform = parent.xform;
+    }
+    const bool identity = rt.rotation == 0.0f && rt.scale.x == 1.0f && rt.scale.y == 1.0f;
+    if (!identity) {
+        // ローカル: pivot を中心に S → R。y 下向きなので標準の回転行列がそのまま
+        // 「画面上で時計回り」になる。sin/cos は <cmath> の float 版 (BuildSimWorldContext の
+        // std::tan と同じ扱い = CRT 依存だが Debug/Release で同じ関数を呼ぶ)
+        const float rad = rt.rotation * (3.14159265358979323846f / 180.0f);
+        const float cs = std::cos(rad);
+        const float sn = std::sin(rad);
+        UIXform l;
+        l.a = cs * rt.scale.x;
+        l.b = sn * rt.scale.x;
+        l.c = -sn * rt.scale.y;
+        l.d = cs * rt.scale.y;
+        const float px = r.x + rt.pivot.x * r.w;
+        const float py = r.y + rt.pivot.y * r.h;
+        l.tx = px - (l.a * px + l.c * py);
+        l.ty = py - (l.b * px + l.d * py);
+        if (out.hasXform) {
+            // 合成 = 親 ∘ ローカル (ローカルを先に掛ける)
+            const UIXform& pm = out.xform;
+            UIXform m;
+            m.a = pm.a * l.a + pm.c * l.b;
+            m.b = pm.b * l.a + pm.d * l.b;
+            m.c = pm.a * l.c + pm.c * l.d;
+            m.d = pm.b * l.c + pm.d * l.d;
+            m.tx = pm.a * l.tx + pm.c * l.ty + pm.tx;
+            m.ty = pm.b * l.tx + pm.d * l.ty + pm.ty;
+            out.xform = m;
+        } else {
+            out.xform = l;
+            out.hasXform = true;
+        }
+    }
     return out;
 }
 
 } // namespace
+
+bool HasUiAncestor(World& world, EntityID e)
+{
+    return FindUIParent(world, e) != kNullEntity;
+}
+
+RectTransformComponent FromLegacyRect(int anchor, float x, float y, float w, float h, int space,
+                                      bool hasUiAncestor)
+{
+    RectTransformComponent rt;
+    const int a = (anchor < 0) ? 0 : (anchor > 8) ? 8 : anchor;
+    float ax = 0.0f, ay = 0.0f;
+    AnchorPreset(a, ax, ay);
+    rt.anchorMin = { ax, ay };
+    rt.anchorMax = { ax, ay };
+    rt.pivot = { 0.0f, 0.0f }; // 旧意味論: 左上をアンカー点 + オフセットへ
+    rt.anchoredPosition = { x, y };
+    rt.sizeDelta = { w, h };
+    rt.rotation = 0.0f;
+    rt.scale = { 1.0f, 1.0f };
+    // space=1 (親矩形基準) → 親。space=0 (画面基準) → UI 祖先の下にいるなら「親ではなく
+    // キャンバス」を明示 (basis=1)。ルートなら basis=0 でも結果はキャンバスなので Unity 風の
+    // 既定 (親基準) に寄せておく = 後で親の下へ動かしたときに付いてくる
+    rt.basis = (space == 1) ? 0 : (hasUiAncestor ? 1 : 0);
+    return rt;
+}
+
+UIRect RectFromTransform(const RectTransformComponent& rt, const UIRect& base, float scale)
+{
+    // ★加算順が正本 (UILayout.h の説明)。一致アンカー・pivot 0 では
+    //   w = 0 + sizeDelta*scale、x = (base.x + base.w*a) + pos*scale - 0 で旧式と同ビット
+    UIRect r;
+    r.w = base.w * (rt.anchorMax.x - rt.anchorMin.x) + rt.sizeDelta.x * scale;
+    r.h = base.h * (rt.anchorMax.y - rt.anchorMin.y) + rt.sizeDelta.y * scale;
+    r.x = (base.x + base.w * rt.anchorMin.x) + rt.anchoredPosition.x * scale
+        - rt.pivot.x * (rt.sizeDelta.x * scale);
+    r.y = (base.y + base.h * rt.anchorMin.y) + rt.anchoredPosition.y * scale
+        - rt.pivot.y * (rt.sizeDelta.y * scale);
+    return r;
+}
+
+bool InvertXform(const UIXform& m, UIXform& out)
+{
+    const float det = m.a * m.d - m.b * m.c;
+    if (std::fabs(det) < 1e-12f) {
+        out = UIXform{};
+        return false;
+    }
+    const float id = 1.0f / det;
+    out.a = m.d * id;
+    out.b = -m.b * id;
+    out.c = -m.c * id;
+    out.d = m.a * id;
+    out.tx = -(out.a * m.tx + out.c * m.ty);
+    out.ty = -(out.b * m.tx + out.d * m.ty);
+    return true;
+}
+
+UIRect XformAabb(const UIXform& m, const UIRect& r)
+{
+    float xs[4], ys[4];
+    XformPoint(m, r.x, r.y, xs[0], ys[0]);
+    XformPoint(m, r.x + r.w, r.y, xs[1], ys[1]);
+    XformPoint(m, r.x + r.w, r.y + r.h, xs[2], ys[2]);
+    XformPoint(m, r.x, r.y + r.h, xs[3], ys[3]);
+    float x0 = xs[0], x1 = xs[0], y0 = ys[0], y1 = ys[0];
+    for (int i = 1; i < 4; ++i) {
+        x0 = (xs[i] < x0) ? xs[i] : x0;
+        x1 = (xs[i] > x1) ? xs[i] : x1;
+        y0 = (ys[i] < y0) ? ys[i] : y0;
+        y1 = (ys[i] > y1) ? ys[i] : y1;
+    }
+    return { x0, y0, x1 - x0, y1 - y0 };
+}
 
 CanvasInfo CanvasSize(int screenW, int screenH)
 {
@@ -271,7 +402,10 @@ bool BuildSimWorldContext(World& world, int screenW, int screenH, UIWorldContext
 UIRect ResolveRect(World& world, EntityID e, int screenW, int screenH, const UIWorldContext* wc)
 {
     const UIResolved r = Resolve(world, e, screenW, screenH, wc);
-    return r.visible ? r.rect : UIRect{}; // 非表示は {0,0,0,0} = 従来の「隠れている」表現
+    if (!r.visible) {
+        return UIRect{}; // 非表示は {0,0,0,0} = 従来の「隠れている」表現
+    }
+    return r.hasXform ? XformAabb(r.xform, r.rect) : r.rect;
 }
 
 UIRect ResolveClipRect(World& world, EntityID e, int screenW, int screenH,

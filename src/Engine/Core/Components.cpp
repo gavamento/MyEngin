@@ -276,14 +276,12 @@ void RegisterBuiltinComponents()
     });
 
     // M21: ゲーム内 UI。描画専用なので **kComponentNoHash** (既存シーンのハッシュ不変)。
-    // serialize はされる (UI をシーン保存/Inspector 編集可能)。opt-in で TypeId append (=16) のみ
+    // serialize はされる (UI をシーン保存/Inspector 編集可能)。opt-in で TypeId append (=16) のみ。
+    // ★M75a: anchor / x / y / w / h / space は RectTransform (末尾登録) へ移した。旧シーンの
+    //   同名キーは SceneSerializer::ReadEntityComponents が拾って RectTransform に変換する
+    //   (ここに残すと二重管理になる — 変換の正本は uilayout::FromLegacyRect の 1 本)
     RegisterComponent<UIElementComponent>("UIElement", {
         MYE_JP("種類", MYE_FIELD(UIElementComponent, kind, Int32)),
-        MYE_JP("アンカー", MYE_FIELD(UIElementComponent, anchor, Int32)),
-        MYE_JP("X", MYE_FIELD(UIElementComponent, x, Float)),
-        MYE_JP("Y", MYE_FIELD(UIElementComponent, y, Float)),
-        MYE_JP("幅", MYE_FIELD(UIElementComponent, w, Float)),
-        MYE_JP("高さ", MYE_FIELD(UIElementComponent, h, Float)),
         MYE_JP("色", MYE_FIELD(UIElementComponent, color, Color)),
         MYE_JP("テクスチャ", MYE_FIELD(UIElementComponent, texture, AssetRef)),
         MYE_JP("文字サイズ", MYE_FIELD(UIElementComponent, fontScale, Float)),
@@ -297,7 +295,6 @@ void RegisterBuiltinComponents()
         MYE_JP("フォーカス可", MYE_FIELD(UIElementComponent, focusable, Int32)),
         MYE_JP("フォーカス中", MYE_FIELD(UIElementComponent, focused, Int32)),
         // M51e 拡張 (末尾 append)
-        MYE_JP("配置空間", MYE_FIELD_TIP(UIElementComponent, space, Int32, "0=screen 1=parent rect")),
         MYE_JP("子をクリップ", MYE_FIELD(UIElementComponent, clipChildren, Int32)),
         MYE_JP("文字整列", MYE_FIELD_TIP(UIElementComponent, align, Int32, "9-grid 0..8 (text only)")),
         MYE_JP("折返し", MYE_FIELD_TIP(UIElementComponent, wrap, Int32, "0=off 1=char wrap at width")),
@@ -308,7 +305,7 @@ void RegisterBuiltinComponents()
                                              "distance at which scale = 1.0")),
         MYE_JP("画面内にクランプ", MYE_FIELD_TIP(UIElementComponent, clampToScreen, Bool,
                                                  "keep the rect on screen (world-attached UI only)")),
-    }, kComponentNoHash);
+    }, kComponentNoHash | kComponentUiAux);
 
     // M22: Animator Controller。LocalTransform を駆動するので **hash 対象** (kComponentNoHash 無し)。
     // opt-in (無ければ no-op) で TypeId append (=17) のみ → 既存シーン不変 = bump 不要。
@@ -1009,6 +1006,28 @@ void RegisterBuiltinComponents()
         MYE_JP("音色 2 のサウンド", MYE_FIELD(AcousticAudioComponent, toneSound2, String64)),
         MYE_JP("音色 3 のサウンド", MYE_FIELD(AcousticAudioComponent, toneSound3, String64)),
     }, kComponentNoHash);
+
+    // M75a: RectTransform (=51)。UI 要素の配置 (UIElement から分離)。描画専用の NoHash +
+    // UI 専用判定に載せる UiAux。旧シーンの UIElement.anchor/x/y/w/h/space はロード時に
+    // ここへ変換される (SceneSerializer)。**M60′ の Cloth/SoftBody 予約は 62/63 へ繰り下げ**
+    // (M75 の UI コンポーネント群 52〜61 が先に埋める)
+    RegisterComponent<RectTransformComponent>("RectTransform", {
+        MYE_JP("アンカー (min)", MYE_FIELD_TIP(RectTransformComponent, anchorMin, Float2,
+                                              "parent-relative 0..1, (0,0) = top-left")),
+        MYE_JP("アンカー (max)", MYE_FIELD_TIP(RectTransformComponent, anchorMax, Float2,
+                                              "equal to anchorMin = fixed size, apart = stretch")),
+        MYE_JP("ピボット", MYE_FIELD_TIP(RectTransformComponent, pivot, Float2,
+                                         "own-rect 0..1, centre of rotation/scale")),
+        MYE_JP("位置", MYE_FIELD_TIP(RectTransformComponent, anchoredPosition, Float2,
+                                     "offset from the anchor point to the pivot")),
+        MYE_JP("サイズ", MYE_FIELD_TIP(RectTransformComponent, sizeDelta, Float2,
+                                       "size delta against the anchor rect (= size when anchors match)")),
+        MYE_JP("回転 (度)", MYE_FIELD_TIP(RectTransformComponent, rotation, Float,
+                                          "Z rotation in degrees, positive = clockwise")),
+        MYE_JP("スケール", MYE_FIELD(RectTransformComponent, scale, Float2)),
+        MYE_JP("基準", MYE_FIELD_TIP(RectTransformComponent, basis, Int32,
+                                     "0 = nearest UI ancestor (canvas if none) 1 = canvas")),
+    }, kComponentNoHash | kComponentUiAux);
 }
 
 } // namespace mye

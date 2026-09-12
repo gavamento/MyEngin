@@ -97,6 +97,10 @@ private:
     std::vector<Batch> batches_;
     ID3D11ShaderResourceView* whiteSrv_ = nullptr;
     D3D11_RECT curScissor_ = {}; // PushQuad が参照する現在のシザー (要素毎に設定)
+    // M75a: 回転/スケール。要素ごとに設定し、PushQuad が 6 頂点に掛ける (実 px 系の 2x3)。
+    // hasXform_=false の要素は掛け算を 1 回も通らない (恒等ゲート = 既存の絵はビット不変)
+    bool hasXform_ = false;
+    float xf_[6] = { 1, 0, 0, 1, 0, 0 }; // a b c d tx ty (UILayout.h の UIXform と同じ並び)
 };
 
 } // namespace mye

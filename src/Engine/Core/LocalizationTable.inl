@@ -1073,6 +1073,8 @@ MYE_STR(Insp_PmAdhesion,      "Adhesion (N)",        "粘着力 (N)")
 MYE_STR(Insp_PhysMatNote,     "Applied when assigned to a collider.",
                               "コライダーに割り当てると適用されます。")
 MYE_STR(Insp_PmOvFriction,    "Override Friction",   "摩擦を上書き")
+// M75a: RectTransform の解決済み矩形 (基準キャンバス上、キャンバス単位)。読み取り専用
+MYE_STR(Insp_UIResolvedRect,  "Rect: x %.1f  y %.1f  w %.1f  h %.1f", "矩形: x %.1f  y %.1f  w %.1f  h %.1f")
 MYE_STR(Insp_PmOvRestitution, "Override Restitution", "反発を上書き")
 
 // ---- Source Control (M66b) ----

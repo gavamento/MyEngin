@@ -721,25 +721,47 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
         return Ctx(engine)->input.wheelDelta; // InputSnapshot 由来 = verify では記録値
     };
 
-    // UI 書込 (write-only、決定台帳 3)。UIElement は NoHash なので毎 tick 書いても sim 安全
+    // UI 書込 (write-only、決定台帳 3)。UIElement / RectTransform は NoHash なので毎 tick
+    // 書いても sim 安全。
+    // ★M75a: 配置の書き先は RectTransform になった (署名は v12 のまま = ABI bump なし)。
+    //   旧 9-grid / x / y / w / h / space の語彙は FromLegacyRect と同じ式で写す。
+    //   RectTransform を持たない UIElement (スクリプトが AddComponent だけした等) は
+    //   既定値 (左上・pivot 0 = 旧 UIElement と同値) で足してから書く
     out.SetUIRect = [](void* engine, MyeEntityId id, float x, float y, float w, float h) -> int {
-        auto* el = Sc(engine)->GetWorld().GetComponent<UIElementComponent>(ToEngine(id));
-        if (!el) { return 0; }
-        el->x = x;
-        el->y = y;
-        if (w >= 0.0f) { el->w = w; } // 負値 = 現値維持 (write-only で読めないための keep)
-        if (h >= 0.0f) { el->h = h; }
+        World& world = Sc(engine)->GetWorld();
+        const EntityID e = ToEngine(id);
+        if (!world.GetComponent<UIElementComponent>(e)) { return 0; }
+        auto* rt = world.GetComponent<RectTransformComponent>(e);
+        if (!rt) { rt = world.AddComponent<RectTransformComponent>(e); }
+        if (!rt) { return 0; }
+        rt->anchoredPosition.x = x;
+        rt->anchoredPosition.y = y;
+        if (w >= 0.0f) { rt->sizeDelta.x = w; } // 負値 = 現値維持 (write-only で読めないための keep)
+        if (h >= 0.0f) { rt->sizeDelta.y = h; }
         return 1;
     };
     out.SetUILayout = [](void* engine, MyeEntityId id, int32_t anchor, int32_t space,
                          int32_t clipChildren, int32_t align, int32_t wrap) -> int {
-        auto* el = Sc(engine)->GetWorld().GetComponent<UIElementComponent>(ToEngine(id));
+        World& world = Sc(engine)->GetWorld();
+        const EntityID e = ToEngine(id);
+        auto* el = world.GetComponent<UIElementComponent>(e);
         if (!el) { return 0; }
-        if (anchor >= 0) { el->anchor = anchor > 8 ? 8 : anchor; }
-        if (space >= 0) { el->space = space ? 1 : 0; }
         if (clipChildren >= 0) { el->clipChildren = clipChildren ? 1 : 0; }
         if (align >= 0) { el->align = align > 8 ? 8 : align; }
         if (wrap >= 0) { el->wrap = wrap ? 1 : 0; }
+        if (anchor >= 0 || space >= 0) {
+            auto* rt = world.GetComponent<RectTransformComponent>(e);
+            if (!rt) { rt = world.AddComponent<RectTransformComponent>(e); }
+            if (!rt) { return 0; }
+            if (anchor >= 0) {
+                // 9-grid プリセット = 一致アンカー (ストレッチは SetRectTransform (v18 予定) で)
+                float ax = 0.0f, ay = 0.0f;
+                uilayout::AnchorPreset(anchor > 8 ? 8 : anchor, ax, ay);
+                rt->anchorMin = { ax, ay };
+                rt->anchorMax = { ax, ay };
+            }
+            if (space >= 0) { rt->basis = space ? 0 : 1; } // space=1 (親) → basis 0 / 0 (画面) → 1
+        }
         return 1;
     };
     out.SetUITexture = [](void* engine, MyeEntityId id, const char* textureKey) -> int {

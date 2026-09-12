@@ -377,18 +377,15 @@ struct RigidbodyComponent {
 };
 
 // ---- ゲーム内 UI (M21) ----
-// スクリーン空間の UI 要素。**無ければ何も描かない** (opt-in)。描画専用なので **kComponentNoHash**
-// (ワールドハッシュ非対象 → 既存シーンのリプレイ不変 = bump 不要)。ただしシリアライズはされる
-// (シーンに UI を保存できる)。ボタン操作は描画に非関与 — スクリプトが InputSnapshot の
-// マウス (決定論) でヒットテストして gameplay を駆動する (エンジンは描画のみ)。
-// 座標は anchor 基準のピクセルオフセット (解像度非依存)。
+// スクリーン空間の UI 要素の**見た目**。**無ければ何も描かない** (opt-in)。描画専用なので
+// **kComponentNoHash** (ワールドハッシュ非対象 → 既存シーンのリプレイ不変 = bump 不要)。
+// ただしシリアライズはされる (シーンに UI を保存できる)。
+// ★M75a: 配置 (anchor / x / y / w / h / space) は **RectTransformComponent へ分離**した
+//   (Unity の RectTransform + Image/Text/Button の分け方)。旧シーン (v3 以前) の値は
+//   SceneSerializer がロード時に RectTransform へ変換する (uilayout::FromLegacyRect)。
+//   押下判定はエンジンが持つ (UIInteraction、M70c) — ここは見た目だけ。
 struct UIElementComponent {
     int32_t kind = 0;     // 0=panel/image, 1=text, 2=button
-    int32_t anchor = 0;   // 9-grid: 0=左上 1=上中 2=右上 3=左中 4=中央 5=右中 6=左下 7=下中 8=右下
-    float x = 0.0f;       // anchor 基準の水平オフセット (px)
-    float y = 0.0f;       // anchor 基準の垂直オフセット (px)
-    float w = 160.0f;     // 幅 (px)。kind==1(text) は背景を描かない
-    float h = 40.0f;      // 高さ (px)
     DirectX::XMFLOAT4 color = { 1.0f, 1.0f, 1.0f, 1.0f }; // panel/button 背景色 or text 色
     AssetID texture = {}; // kind==0 の画像 (0=単色)
     float fontScale = 1.0f; // text/button ラベルのフォント倍率
@@ -402,17 +399,46 @@ struct UIElementComponent {
     int32_t focusable = 0;   // パッドナビ候補 (状態はスクリプト側 — UINav.h 参照)
     int32_t focused = 0;     // フォーカス枠の表示 (表示専用。スクリプトが書く)
     // ---- M51e 拡張 (末尾 append、NoHash なので旧シーンは既定値ロードで互換) ----
-    int32_t space = 0;        // 0=screen 基準 / 1=最寄りの UIElement 祖先の解決済み矩形基準 (UILayout.h)
     int32_t clipChildren = 0; // !=0 で子孫要素を自矩形へシザークリップ (自分自身は切らない)
-    int32_t align = 0;        // kind1(text) の矩形内整列 (anchor と同じ 9-grid 0..8)。ボタンラベルは中央固定
+    int32_t align = 0;        // kind1(text) の矩形内整列 (9-grid 0..8)。ボタンラベルは中央固定
     int32_t wrap = 0;         // kind1(text) の文字単位折返し (幅 w で折る、日本語前提)。0=off
     // ---- ワールド追従 UI 拡張 (末尾 append、NoHash = 旧シーン互換・リプレイ不変) ----
     // 追従自体は**エンティティ構成による完全自動判定** (UILayout.h 冒頭): UI 専用でない
     // オブジェクト (メッシュ/コライダー等を持つ) に付いた UIElement はそのオブジェクトの
     // ワールド位置の射影点が基準になる。以下はその追従要素にだけ効くオプション
-    bool distanceScale = false; // 距離で縮む (distanceRef の距離で等倍。子 space=1 にも伝播)
+    bool distanceScale = false; // 距離で縮む (distanceRef の距離で等倍。子にも伝播)
     float distanceRef = 5.0f;   // 等倍になるカメラ距離 (m)。<=0 は 1m 扱い
     bool clampToScreen = false; // 画面端クランプ (ON: 背面も方向反転で端に貼る / OFF: 背面は非表示)
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
+// ---- RectTransform (M75a) ----
+// UI 要素の配置。Unity の RectTransform と同じ語彙 (anchorMin/anchorMax/pivot/anchoredPosition/
+// sizeDelta) で、**座標系だけ左上原点・y 下向き** (Unity は y 上向き)。anchor (0,0) = 親の左上、
+// (1,1) = 右下。rotation の正は画面上で時計回り (y 下向きの帰結。Unity と逆)。
+//   幅  w  = 親幅 * (anchorMax.x - anchorMin.x) + sizeDelta.x
+//   左端 x = 親左 + 親幅 * anchorMin.x + anchoredPosition.x - pivot.x * sizeDelta.x
+// (Unity の offsetMin = anchoredPosition - sizeDelta*pivot と同じ式。UILayout.cpp が正本)
+// anchorMin == anchorMax なら固定サイズ、離せば親に追従して伸びる (ストレッチ)。
+// 描画専用データなので **kComponentNoHash** (UIElement と同じ)。UI 専用オブジェクトの
+// 判定 (uilayout::IsUiOnlyEntity) には **kComponentUiAux** で載せる。
+// ★既定値は**旧 UIElement の既定 (左上アンカー・pivot 0・160x40) と同値**にしてある —
+//   RectTransform を持たない UIElement (スクリプトが AddComponent だけした等) は既定の
+//   RectTransform 相当で解決するので、M75a 以前のスクリプトの見た目が変わらない。
+//   エディタの Create > UI は Unity 風 (中央アンカー・pivot 0.5) を明示的に書く。
+// ★sim レーン (ヒットテスト) からも読まれるが、UIElement と同じ「authored な NoHash 入力」
+//   のクラス。スクリプトから書く口は SetUIRect / SetUILayout / SetRectTransform (write-only)
+struct RectTransformComponent {
+    DirectX::XMFLOAT2 anchorMin = { 0.0f, 0.0f };        // 親矩形の 0..1 (左上 = 0,0)
+    DirectX::XMFLOAT2 anchorMax = { 0.0f, 0.0f };
+    DirectX::XMFLOAT2 pivot = { 0.0f, 0.0f };            // 自矩形の 0..1。回転/スケールの中心
+    DirectX::XMFLOAT2 anchoredPosition = { 0.0f, 0.0f }; // アンカー基準点 → pivot のオフセット
+    DirectX::XMFLOAT2 sizeDelta = { 160.0f, 40.0f };     // アンカー矩形からのサイズ差 (一致アンカーでは実寸)
+    float rotation = 0.0f;                               // Z 回転 (度)。正 = 時計回り
+    DirectX::XMFLOAT2 scale = { 1.0f, 1.0f };            // pivot 中心のスケール
+    // 基準矩形: 0 = 最寄りの UI 祖先 (RectTransform / UIElement 持ち) の矩形。無ければキャンバス
+    //           1 = 常にキャンバス (旧 space=0 の「親の下にいても画面基準」に相当)
+    int32_t basis = 0;
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 

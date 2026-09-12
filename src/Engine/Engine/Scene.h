@@ -22,7 +22,11 @@ public:
     //   v3: 「キー不在 = ベース追随」をコンポーネント構造へ拡張 (M50c) —
     //       ベースにあり実体に無く "-Component" キーの無い comp は、ロード時に
     //       ベース値で追加してよい (v2 以前の文書では記録へのマージのみで実体は不変)
-    static constexpr int kDocVersion = 3;
+    //   v4: UI の配置を UIElement.anchor/x/y/w/h/space から RectTransform へ分離 (M75a)。
+    //       ロードは版番号ではなく「UIElement に anchor キーあり && RectTransform 無し」で
+    //       旧形式を検出して変換する (プレハブのミニシーンや手書き JSON も拾う) —
+    //       v4 は「この形式で保存した」の宣言
+    static constexpr int kDocVersion = 4;
     GameObject CreateGameObject(std::string_view name)
     {
         return GameObject(&world_, world_.CreateEntity(name));

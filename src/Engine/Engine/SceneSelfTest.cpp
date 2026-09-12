@@ -1560,7 +1560,9 @@ bool RunSceneSerializerSelfTest()
 
         // (2) v3 往復で削除が sticky に生き残る
         const nlohmann::json savedV3 = SceneSerializer::SaveToJson(s);
-        check(savedV3.value("version", 0) == 3, "struct: scene documents now save as version 3");
+        // (M75a で v4 へ。v3 の「キー不在 = ベース追随」の意味論は v4 でも同じ)
+        check(savedV3.value("version", 0) == Scene::kDocVersion && Scene::kDocVersion >= 3,
+              "struct: scene documents save as the current version (>= 3)");
         {
             Scene s2;
             SceneSerializer::LoadFromJson(s2, savedV3);

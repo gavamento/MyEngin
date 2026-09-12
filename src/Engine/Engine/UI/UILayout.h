@@ -20,6 +20,7 @@ namespace mye {
 
 class World;
 struct UIElementComponent;
+struct RectTransformComponent;
 struct PrevWorldStore; // RenderSystem.h (描画補間 M36b)。sim レーンは使わない
 
 namespace uilayout {
@@ -68,14 +69,51 @@ struct CanvasInfo {
 //   project_settings.json へ出す。
 CanvasInfo CanvasSize(int screenW, int screenH);
 
-// 9-grid anchor (0..8) の基準点: base 矩形の 左/中/右 × 上/中/下
-inline void AnchorOrigin(int anchor, const UIRect& base, float& outX, float& outY)
+// ---- RectTransform (M75a) ----
+// 9-grid anchor (0..8、M51e の UIElement.anchor) を anchorMin/anchorMax の 0..1 へ写す。
+// 旧式 AnchorOrigin は base.x + {0, base.w*0.5f, base.w} だったので、ここで 0/0.5/1 を
+// 掛けても **同じ float** になる (0*w = 0、0.5f*w、1*w = w)。これが旧シーンの矩形が
+// 1 ビットも動かない根拠
+inline void AnchorPreset(int anchor, float& outAx, float& outAy)
 {
-    const int col = anchor % 3;  // 0=左 1=中 2=右
-    const int row = anchor / 3;  // 0=上 1=中 2=下
-    outX = base.x + ((col == 0) ? 0.0f : (col == 1) ? base.w * 0.5f : base.w);
-    outY = base.y + ((row == 0) ? 0.0f : (row == 1) ? base.h * 0.5f : base.h);
+    const int col = anchor % 3; // 0=左 1=中 2=右
+    const int row = anchor / 3; // 0=上 1=中 2=下
+    outAx = (col == 0) ? 0.0f : (col == 1) ? 0.5f : 1.0f;
+    outAy = (row == 0) ? 0.0f : (row == 1) ? 0.5f : 1.0f;
 }
+
+// 旧 UIElement (anchor / x / y / w / h / space) → RectTransform。**変換の正本はこの 1 本**
+// (SceneSerializer のロード時変換 / ABI の SetUIRect・SetUILayout / DemoContent / 自己検査が
+// 全部ここを通る)。pivot は (0,0) = 「矩形の左上をアンカー点 + オフセットに置く」旧意味論。
+// hasUiAncestor: space==0 (画面基準) の要素に UI 祖先がいるなら basis=1 (キャンバス) で
+// 旧挙動を保ち、いなければ basis=0 (親 = 無いのでキャンバス。Unity 風の既定に寄せる)
+RectTransformComponent FromLegacyRect(int anchor, float x, float y, float w, float h, int space,
+                                      bool hasUiAncestor);
+
+// RectTransform を base 矩形 (親の未回転矩形 or キャンバス) の上で解く純関数。scale は
+// 距離スケールの伝播係数 (オフセットとサイズに掛かる。screen UI は 1.0f)。
+//   w = base.w * (anchorMax.x - anchorMin.x) + sizeDelta.x * scale
+//   x = (base.x + base.w * anchorMin.x) + anchoredPosition.x * scale - pivot.x * (sizeDelta.x * scale)
+// ★**加算順を変えないこと** — 一致アンカー・pivot 0 では旧式 (AnchorOrigin + オフセット) と
+//   恒等演算 (+0 / *1 / -0) しか違わず、golden 4 枚の不変はこの順序に掛かっている
+UIRect RectFromTransform(const RectTransformComponent& rt, const UIRect& base, float scale);
+
+// 2x3 アフィン (M75a: rotation / scale)。p' = (a*x + c*y + tx, b*x + d*y + ty)。
+// 描画側は 4 頂点に、ヒットテストは点を逆変換してローカル軸平行矩形で判定する。
+// rotation == 0 && scale == (1,1) の要素 (と祖先) は **hasXform=false で一切通らない**
+// (恒等ゲート) — 既存経路の数値には 1 ビットも触れない
+struct UIXform {
+    float a = 1.0f, b = 0.0f, c = 0.0f, d = 1.0f, tx = 0.0f, ty = 0.0f;
+};
+inline void XformPoint(const UIXform& m, float x, float y, float& ox, float& oy)
+{
+    ox = m.a * x + m.c * y + m.tx;
+    oy = m.b * x + m.d * y + m.ty;
+}
+// 逆行列。退化 (scale 0) は false で out は恒等
+bool InvertXform(const UIXform& m, UIXform& out);
+// 矩形の 4 隅を変換した AABB (回転要素のシザー / アウトライン / ナビ用の近似)
+UIRect XformAabb(const UIXform& m, const UIRect& r);
 
 // a ∩ b (交差なしは w/h<=0 の退化矩形)
 inline UIRect Intersect(const UIRect& a, const UIRect& b)
@@ -103,15 +141,18 @@ struct UIWorldContext {
 // 親の scale を継承しオフセットとサイズに掛かる。screen UI は常に 1.0f で、x*1.0f = x は
 // ビット恒等なので既存要素の矩形は従来と完全一致する。
 struct UIResolved {
-    UIRect rect;
+    UIRect rect;         // 未回転の矩形 (親の未回転フレーム上)。回転/スケールは xform が持つ
     float scale = 1.0f;
     bool visible = true; // false = カメラ背面 (クランプ OFF) / コンテキスト無しの world 要素
+    bool hasXform = false; // M75a: 自分か祖先に回転/スケールがある (恒等ゲート)
+    UIXform xform;         // rect のフレーム → キャンバス座標 (hasXform のときだけ意味を持つ)
 };
 
-// e の UIElement を screen px 矩形に解決する (正本)。space=1 は最寄りの UIElement 祖先の
-// 解決済み矩形基準。それ以外はワールド追従判定 (冒頭コメント: UI 専用でないオブジェクト上の
+// e の RectTransform (無ければ UIElement 用の既定値) を screen px 矩形に解決する (正本)。
+// basis=0 は最寄りの UI 祖先 (RectTransform / UIElement 持ち) の解決済み矩形基準。祖先が
+// 無い / basis=1 はワールド追従判定 (冒頭コメント: UI 専用でないオブジェクト上の
 // UIElement は自エンティティの射影点基準) → 該当しなければ screen 基準 (従来)。
-// 壊れ親/循環は深度上限で打ち切り安全。UIElement 非所持は visible=false。
+// 壊れ親/循環は深度上限で打ち切り安全。UIElement も RectTransform も無ければ visible=false。
 UIResolved Resolve(World& world, EntityID e, int screenW, int screenH,
                    const UIWorldContext* wc);
 
@@ -123,9 +164,18 @@ UIResolved Resolve(World& world, EntityID e, int screenW, int screenH,
 // (M70b 以前は sim だけ 1920x1080 固定で、非 16:9 では横方向にずれていた)。
 bool BuildSimWorldContext(World& world, int screenW, int screenH, UIWorldContext& out);
 
-// 互換ラッパ: Resolve().rect (visible=false は {0,0,0,0} = 従来の「隠れている」表現に合流)
+// 互換ラッパ: Resolve().rect (visible=false は {0,0,0,0} = 従来の「隠れている」表現に合流)。
+// 回転/スケールのある要素は変換後の **AABB** (ナビ / クリップ / GameView / ABI GetUIRect が読む)
 UIRect ResolveRect(World& world, EntityID e, int screenW, int screenH,
                    const UIWorldContext* wc = nullptr);
+
+// e に UI ノード (RectTransform / UIElement 持ち) の祖先がいるか。SceneSerializer が旧形式の
+// 変換で basis を確定するときと、Inspector の表示に使う
+bool HasUiAncestor(World& world, EntityID e);
+
+// 「UI 専用オブジェクト」か (ワールド追従の自動判定。UILayout.cpp 冒頭)。
+// 許容 = 基本 4 種 + 帳簿 (FileId/Active/Prefab*) + kComponentScriptState + **kComponentUiAux**
+bool IsUiOnlyEntity(World& world, EntityID e);
 
 // e の祖先の clipChildren 矩形をすべて交差した「見えてよい範囲」。クリップ祖先が
 // 無ければ screen 全域。e 自身の clipChildren は含まない (自分は切らない)。

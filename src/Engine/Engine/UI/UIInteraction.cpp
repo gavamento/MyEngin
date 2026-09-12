@@ -45,12 +45,43 @@ EntityID HitTest(World& world, int canvasW, int canvasH, float x, float y)
     ForEachUiElement(world, canvasW, canvasH,
                      [&](EntityID e, const UIElementComponent& el,
                          const uilayout::UIWorldContext* wc) {
-                         // 可視矩形 (祖先クリップ適用済み) で判定 — 見えない部分には当たらない
-                         const auto vis =
-                             uilayout::ResolveVisibleRect(world, e, canvasW, canvasH, wc);
-                         if (vis.w <= 0.0f || vis.h <= 0.0f || x < vis.x || x >= vis.x + vis.w
-                             || y < vis.y || y >= vis.y + vis.h) {
+                         const uilayout::UIResolved res =
+                             uilayout::Resolve(world, e, canvasW, canvasH, wc);
+                         if (!res.visible) {
                              return;
+                         }
+                         if (!res.hasXform) {
+                             // 可視矩形 (祖先クリップ適用済み) で判定 — 見えない部分には当たらない
+                             // (= 従来の ResolveVisibleRect と同じ式。恒等要素の判定は M75a 前と
+                             // 1 ビットも変わらない)
+                             const auto vis = uilayout::Intersect(
+                                 res.rect,
+                                 uilayout::ResolveClipRect(world, e, canvasW, canvasH, wc));
+                             if (vis.w <= 0.0f || vis.h <= 0.0f || x < vis.x
+                                 || x >= vis.x + vis.w || y < vis.y || y >= vis.y + vis.h) {
+                                 return;
+                             }
+                         } else {
+                             // 回転/スケール (M75a): 点を要素のフレームへ逆変換して軸平行矩形で
+                             // 判定する (Unity と同じ)。クリップは祖先の AABB で近似 — 描画側の
+                             // シザーも同じ AABB なので「見えているのに押せない」は起きない
+                             const auto clip =
+                                 uilayout::ResolveClipRect(world, e, canvasW, canvasH, wc);
+                             if (clip.w <= 0.0f || clip.h <= 0.0f || x < clip.x
+                                 || x >= clip.x + clip.w || y < clip.y || y >= clip.y + clip.h) {
+                                 return;
+                             }
+                             uilayout::UIXform inv;
+                             if (!uilayout::InvertXform(res.xform, inv)) {
+                                 return; // scale 0 = 面積ゼロ = 当たらない
+                             }
+                             float lx = 0.0f, ly = 0.0f;
+                             uilayout::XformPoint(inv, x, y, lx, ly);
+                             const uilayout::UIRect& r = res.rect;
+                             if (r.w <= 0.0f || r.h <= 0.0f || lx < r.x || lx >= r.x + r.w
+                                 || ly < r.y || ly >= r.y + r.h) {
+                                 return;
+                             }
                          }
                          if (!have || el.order > bestOrder
                              || (el.order == bestOrder && e.index > best.index)) {

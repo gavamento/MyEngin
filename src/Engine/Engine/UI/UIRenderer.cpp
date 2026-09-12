@@ -130,11 +130,20 @@ void UIRenderer::PushQuad(ID3D11ShaderResourceView* srv, bool linear, float x, f
         b.count = 0;
         batches_.push_back(b);
     }
-    const UIVertex q[6] = {
+    UIVertex q[6] = {
         { { x, y }, { u0, v0 }, col },     { { x + w, y }, { u1, v0 }, col },
         { { x + w, y + h }, { u1, v1 }, col }, { { x, y }, { u0, v0 }, col },
         { { x + w, y + h }, { u1, v1 }, col }, { { x, y + h }, { u0, v1 }, col },
     };
+    if (hasXform_) {
+        // M75a: 回転/スケール要素だけ頂点を変換する (テキストのグリフも 1 枚ずつ回る)
+        for (UIVertex& v : q) {
+            const float px = v.pos.x;
+            const float py = v.pos.y;
+            v.pos.x = xf_[0] * px + xf_[2] * py + xf_[4];
+            v.pos.y = xf_[1] * px + xf_[3] * py + xf_[5];
+        }
+    }
     for (const UIVertex& v : q) {
         verts_.push_back(v);
     }
@@ -287,6 +296,17 @@ void UIRenderer::Render(World& world, GraphicsDevice& device, ShaderManager& sha
                                         res.rect.w * canvasScale, res.rect.h * canvasScale };
         const float rx = rect.x;
         const float ry = rect.y;
+        // M75a: 回転/スケールはキャンバス単位の xform を px 系へ (線形部はそのまま、
+        // 平行移動だけ canvasScale を掛ける: s*(A q + t) = A (s q) + s t)
+        hasXform_ = res.hasXform;
+        if (res.hasXform) {
+            xf_[0] = res.xform.a;
+            xf_[1] = res.xform.b;
+            xf_[2] = res.xform.c;
+            xf_[3] = res.xform.d;
+            xf_[4] = res.xform.tx * canvasScale;
+            xf_[5] = res.xform.ty * canvasScale;
+        }
         const float textScale = el.fontScale * res.scale * canvasScale;
         curScissor_ = fullScissor;
         {

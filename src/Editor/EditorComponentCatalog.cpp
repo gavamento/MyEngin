@@ -74,6 +74,7 @@ const std::unordered_map<std::string, ComponentUiInfo>& Table()
         { "CameraPostFx", { ICON_FA_SLIDERS, "Environment", "ポストエフェクト" } },
         // UI
         { "UIElement", { ICON_FA_WINDOW_MAXIMIZE, "UI", "UI 要素" } },
+        { "RectTransform", { ICON_FA_VECTOR_SQUARE, "UI", "矩形トランスフォーム" } }, // M75a
     };
     return t;
 }

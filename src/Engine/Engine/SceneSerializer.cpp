@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "Engine/Core/Components.h"
+#include "Engine/Engine/UI/UILayout.h" // M75a: 旧 UIElement の配置 → RectTransform
 #include "Engine/Core/JsonUtil.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Core/World.h"
@@ -192,14 +193,37 @@ void ReadEntityOverrides(Scene& scene, uint64_t fileId, const json& item)
 // ★M70a: 型を引けなかった分は捨てず Scene へ預ける (WriteEntity が書き戻す)。戻り値は
 // 預けた件数 — 呼び出し元がまとめて 1 行警告を出せるようにするため。fileId は預かりの鍵で、
 // 呼び出し元 3 本 (LoadFromJson / ApplyDiff / ApplyPartial) はいずれも 0 のものを弾いている
+//
+// ★M75a: 旧形式 (v3 以前) の UIElement.anchor/x/y/w/h/space は登録フィールドから消えたので
+// FieldFromJson では拾えない。ここで生 JSON から読んで RectTransform を追加する
+// (変換式は uilayout::FromLegacyRect の 1 本)。outMigratedRects に追加した実体を返し、
+// LoadFromJson が親リンク確定後に basis を確定する (それまでは「UI 祖先あり」仮置き =
+// キャンバス基準 = 旧挙動と同値なので、確定しない経路 (ApplyPartial 等) でも壊れない)
 int ReadEntityComponents(Scene& scene, uint64_t fileId, EntityID e, const json& item,
                          const std::function<EntityID(uint64_t)>& toEntity, bool removeMissing,
-                         bool removeHiddenMissing = false)
+                         bool removeHiddenMissing = false,
+                         std::vector<EntityID>* outMigratedRects = nullptr)
 {
     World& world = scene.GetWorld();
     const ComponentRegistry& reg = ComponentRegistry::Get();
     const json comps = item.contains("components") ? item["components"] : json::object();
     Scene::UnknownCompSet unknown;
+    bool migratedRect = false;
+    if (comps.contains("UIElement") && !comps.contains("RectTransform")) {
+        const json& ui = comps["UIElement"];
+        if (ui.is_object() && ui.contains("anchor")) {
+            if (auto* rt = world.AddComponent<RectTransformComponent>(e)) {
+                *rt = uilayout::FromLegacyRect(ui.value("anchor", 0), ui.value("x", 0.0f),
+                                               ui.value("y", 0.0f), ui.value("w", 160.0f),
+                                               ui.value("h", 40.0f), ui.value("space", 0),
+                                               /*hasUiAncestor*/ true);
+                migratedRect = true;
+                if (outMigratedRects) {
+                    outMigratedRects->push_back(e);
+                }
+            }
+        }
+    }
     for (const auto& [compName, fields] : comps.items()) {
         const ComponentTypeId t = reg.FindByName(compName);
         if (t == kInvalidComponentType) {
@@ -254,6 +278,9 @@ int ReadEntityComponents(Scene& scene, uint64_t fileId, EntityID e, const json& 
                 }
                 if ((desc.flags & kComponentHidden) != 0 && !removeHiddenMissing) {
                     continue;
+                }
+                if (migratedRect && t == RectTransformComponent::sTypeId) {
+                    continue; // 旧形式から今作ったばかり (JSON には無い) — 消さない
                 }
                 if (!comps.contains(desc.name)) {
                     world.RemoveComponentRaw(e, t);
@@ -397,6 +424,7 @@ bool LoadFromJson(Scene& scene, const json& root)
 
     // 2) コンポーネントとフィールド (EntityRef は fileId で解決)
     int unknownTotal = 0;
+    std::vector<EntityID> migratedRects; // M75a: 旧 UIElement 配置から作った RectTransform
     for (const json& item : items) {
         const uint64_t fileId = item.value("fileId", 0ull);
         const EntityID e = toEntity(fileId);
@@ -404,7 +432,7 @@ bool LoadFromJson(Scene& scene, const json& root)
             continue;
         }
         unknownTotal += ReadEntityComponents(scene, fileId, e, item, toEntity,
-                                             /*removeMissing*/ false);
+                                             /*removeMissing*/ false, false, &migratedRects);
         ReadEntityOverrides(scene, fileId, item); // M48e
     }
     if (unknownTotal > 0) {
@@ -426,6 +454,20 @@ bool LoadFromJson(Scene& scene, const json& root)
         }
     }
     world.ApplyStructuralChanges();
+    // 4) M75a: 旧形式から変換した RectTransform の basis を確定する (親リンク確定後にしか
+    //    「UI 祖先がいるか」が分からない)。変換時は basis=1 (キャンバス) の仮置き = 旧挙動と
+    //    同値。UI 祖先がいなければ basis=0 (親基準 = 無いのでキャンバス) へ戻す — 結果の
+    //    矩形は同じで、Unity 風の既定 (親基準) に揃うだけ
+    if (!migratedRects.empty()) {
+        for (const EntityID e : migratedRects) {
+            auto* rt = world.GetComponent<RectTransformComponent>(e);
+            if (rt && rt->basis == 1 && !uilayout::HasUiAncestor(world, e)) {
+                rt->basis = 0;
+            }
+        }
+        MYE_LOG_INFO("scene load: %d UI element(s) migrated to RectTransform (doc v%d)",
+                     static_cast<int>(migratedRects.size()), scene.LoadedVersion());
+    }
     return true;
 }
 
