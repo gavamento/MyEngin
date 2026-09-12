@@ -35,15 +35,16 @@ MyeEntityId ToShared(EntityID id) { return { id.index, id.generation }; }
 ScriptApiContext* Ctx(void* engine) { return static_cast<ScriptApiContext*>(engine); }
 Scene* Sc(void* engine) { return Ctx(engine)->scene; }
 
-// UI を解く土俵 (M70b)。**レーン 0 の入力に記録されたキャンバス寸法**を使う —
-// ここでライブのウィンドウ実寸を読むと、UIElement が kComponentNoHash なせいで
-// 「窓の大きさで当たり判定が変わるのに replay もワールドハッシュも緑」になる
-// (Input.h の InputSnapshot 解説)。0 = 未確定 (ヘッドレス / 旧い記録) は基準解像度へ倒す
+// UI を解く土俵 (M70b)。**レーン 0 の入力に記録されたゲーム面**から解く (M75b で
+// uilayout::CanvasOfInput に一本化 = uiinteract::Evaluate と同じ関数) — ここでライブの
+// ウィンドウ実寸を読むと、UIElement が kComponentNoHash なせいで「窓の大きさで当たり判定が
+// 変わるのに replay もワールドハッシュも緑」になる (Input.h の InputSnapshot 解説)。
+// 0 = 未確定 (ヘッドレス / 旧い記録) は基準解像度へ倒れる
 void UiCanvasOf(void* engine, int& outW, int& outH)
 {
-    const InputSnapshot& in = Ctx(engine)->input;
-    outW = (in.canvasW > 0.0f) ? static_cast<int>(in.canvasW) : uilayout::kCanvasRefW;
-    outH = (in.canvasH > 0.0f) ? static_cast<int>(in.canvasH) : uilayout::kCanvasRefH;
+    const uilayout::CanvasInfo c = uilayout::CanvasOfInput(Ctx(engine)->input);
+    outW = c.w;
+    outH = c.h;
 }
 
 // v8 (M45): 再生ハンドルを 1 つ予約する。**採番は push 側 = 記録/検証でもゲートされない**
@@ -1028,9 +1029,12 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
     // ★MousePos (クライアント実 px) との違いはキャンバス正規化だけ。UI 系の引数は
     //   すべてキャンバス座標なので、UI を触るならこちらを使う (M70b)
     out.MouseCanvasPos = [](void* engine, float* outX, float* outY) {
+        // M75b: 記録はゲーム面 px。HitTest (uiinteract::Evaluate) と同じ換算を通す = 同じ点を指す。
+        // 既定キャンバスでは M70b の記録値 mouseCanvasX と同ビット (UISelfTest が固定)
         const InputSnapshot& in = Ctx(engine)->input;
-        if (outX) { *outX = in.mouseCanvasX; }
-        if (outY) { *outY = in.mouseCanvasY; }
+        const uilayout::CanvasInfo c = uilayout::CanvasOfInput(in);
+        if (outX) { *outX = uilayout::SurfaceToCanvas(in.mouseSurfX, c); }
+        if (outY) { *outY = uilayout::SurfaceToCanvas(in.mouseSurfY, c); }
     };
     out.GetUIRect = [](void* engine, MyeEntityId id, MyeUIRect* out_) -> int {
         World& w = Sc(engine)->GetWorld();

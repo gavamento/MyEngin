@@ -591,6 +591,11 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                 uilayout::CanvasSize(swapChain.Width(), swapChain.Height());
             id.canvasW = static_cast<float>(c.w);
             id.canvasH = static_cast<float>(c.h);
+            // M75b: 欄だけ先に確保した 2 本 (照合は NetSession 側で既に効いている)。
+            // 基準解像度は M75c で project_settings の実効値に、計測表は M75d で FNV に置き換わる
+            id.referenceW = uilayout::kCanvasRefW;
+            id.referenceH = uilayout::kCanvasRefH;
+            id.fontMetricsHash = 0;
         }
         // 開始点のワールドハッシュ。**tick 末にハッシュを撮るのと同じ点** (OnStart +
         // ApplyStructuralChanges の直後) で撮る = 「同じシーンから始めたか」の機械照合
@@ -1353,24 +1358,27 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         // ★ネット中はローカルのデバイスを 1 レーンぶんしか読まない。レーン n>0 は
         //   相手の端末が持っている = XInput スロット n を撃つ意味が無い (M52g 申し送り 4 の
         //   「未接続スロットへの XInputGetState は重い」がそのまま効く)
+        // M75b: このフレームで写した文字の数。tick が 1 本回ったらこの数だけキューから捨てる
+        // (Input::ConsumeChars の解説。フレーム頭で消費すると tick の回らないフレームで文字が消える)
+        uint8_t liveCharsPending = 0;
         {
-            // ---- UI キャンバス (M70b) ----
-            // **実解像度が sim へ入る唯一の口**。ここで正規化した値が .rep に載るので、
-            // 再生は窓の大きさに依らず一致する (Input.h の InputSnapshot 解説)。
+            // ---- ゲーム面 (M70b → M75b) ----
+            // **実解像度が sim へ入る唯一の口**。ここで記録した面の寸法とゲーム面 px のマウスが
+            // .rep に載るので、再生は窓の大きさに依らず一致する (Input.h の InputSnapshot 解説)。
+            // キャンバスへの換算は sim 側の uilayout::CanvasOfInput (M75b まではここで
+            // CanvasSize を解いて正規化済みの値を渡していた)。
             // 基準はバックバッファ = Runtime のゲーム画面そのもの。エディタのゲーム UI は
             // GameView RT に描かれるので、**描画側のキャンバスは GameViewWindow が
             // 自分の RT から別に解く** — エディタでのスクリプト側ヒットテストは
-            // (マウス座標がメインウィンドウのクライアント px なので) 元から近似
-            const uilayout::CanvasInfo canvasInfo =
-                uilayout::CanvasSize(swapChain.Width(), swapChain.Height());
-            InputCanvas canvas;
-            canvas.scale = canvasInfo.scale;
-            canvas.w = static_cast<float>(canvasInfo.w);
-            canvas.h = static_cast<float>(canvasInfo.h);
+            // (マウス座標がメインウィンドウのクライアント px なので) 元から近似 (M75i で直す)
+            InputSurface surface;
+            surface.w = static_cast<int32_t>(swapChain.Width());
+            surface.h = static_cast<int32_t>(swapChain.Height());
             const uint32_t captureLanes = netEnabled ? 1u : ctx.playerCount;
             for (uint32_t p = 0; p < captureLanes; ++p) {
-                ctx.inputs[p] = input.CaptureSnapshot(p, canvas);
+                ctx.inputs[p] = input.CaptureSnapshot(p, surface);
             }
+            liveCharsPending = ctx.inputs[0].charCount;
             if (deterministicShot) {
                 // ---- 撮影モードの決定化 (M68c、dt 固定と同じ趣旨) ----
                 // frame == tick に倒すのと同じ理由で、**生デバイス由来の**マウスデルタを
@@ -1394,8 +1402,8 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                 // 座標なので使えない (負の座標に置かれた要素にも当たらない値にする)
                 ctx.inputs[0].mouseX = kShotMouseX;
                 ctx.inputs[0].mouseY = kShotMouseY;
-                ctx.inputs[0].mouseCanvasX = static_cast<float>(kShotMouseX);
-                ctx.inputs[0].mouseCanvasY = static_cast<float>(kShotMouseY);
+                ctx.inputs[0].mouseSurfX = static_cast<float>(kShotMouseX);
+                ctx.inputs[0].mouseSurfY = static_cast<float>(kShotMouseY);
                 ctx.inputs[0].mouseButtons = 0;
             }
             if (netEnabled) {
@@ -1504,6 +1512,11 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         const bool scrubbing = timeTravel.Scrubbing();
         if (scrubbing) {
             accumulator = 0.0; // 再開時に溜まった分が一気に流れないように
+            // M75b: 止まっている間に打った文字も溜めない (再開した瞬間に古い文字がゲームへ入る)
+            if (liveCharsPending > 0) {
+                input.ConsumeChars(liveCharsPending);
+                liveCharsPending = 0;
+            }
         }
         // タイムトラベルのリングが「このフレームの tick を載せる」条件 (M52e/M72a)。
         // 記録/検証中は .rep がその役なので載せない
@@ -1607,6 +1620,12 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             if (netEnabled && net.Running()) {
                 const uint64_t target = ranTick + net.InputDelay();
                 net.SubmitLocalInput(target, NetLocalInput(target));
+                // M75b: 文字は 1 tick ぶんだけ送る。同じフレームで次の tick の target を
+                // 確定させるときに同じ文字をもう一度送ると、相手側で 2 回打たれる
+                for (uint16_t& c : netLiveInput.chars) {
+                    c = 0;
+                }
+                netLiveInput.charCount = 0;
             }
             // ★クラッシュ .rep へは tick に**入る前**に入力を載せる (M52f)。
             //   落ちるのは RunOneTick の中なので、tick 末に載せる作りだと
@@ -1704,6 +1723,18 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                 stressBytes = stressBlob.size();
                 stressCaptureMs += (tRes - tCap) * 1000.0;
                 stressRestoreMs += (tEnd - tRes) * 1000.0;
+            }
+            // ---- 文字キューの消費 (M75b) ----
+            // この tick が文字を読み、記録 (.rep / リング / 投機記録) にも上で載った。同じフレームの
+            // 次の tick へ同じ文字を渡さない。ライブのキューも写した数だけ捨てる — verify / 合成入力で
+            // ライブ値を使わなかった tick でも捨てる (溜めると verify 明けに古い文字が出る)
+            for (uint16_t& c : ctx.inputs[0].chars) {
+                c = 0;
+            }
+            ctx.inputs[0].charCount = 0;
+            if (liveCharsPending > 0) {
+                input.ConsumeChars(liveCharsPending);
+                liveCharsPending = 0;
             }
             ++ticks;
             if (!verifying && !fastRecording) {

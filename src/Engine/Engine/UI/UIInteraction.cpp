@@ -164,16 +164,20 @@ uint32_t BitsFor(const UIInteractionState& state, EntityID e)
     return bits;
 }
 
-void Evaluate(World& world, const InputSnapshot& in, const InputActions* actions,
-              UIInteractionState& state)
+void Evaluate(World& world, const InputSnapshot& in, const InputSnapshot& prevIn,
+              const InputActions* actions, UIInteractionState& state)
 {
-    // clicked は 1 tick だけ立つ値。ここで必ず落とす (立てるのは下の「離した」判定だけ)
+    (void)prevIn; // M75h (InputField のキーエッジ) が読む。配線だけ先に通してある
+    // clicked / changed は 1 tick だけ立つ値。ここで必ず落とす (立てるのは下の「離した」判定と
+    // M75f 以降のウィジェット更新だけ)
     state.clicked = kNullEntity;
+    state.changed = kNullEntity;
 
-    // キャンバス寸法は入力に記録された値 (M70b)。0 = 未確定 (ヘッドレス / 旧い記録) は
-    // 基準解像度へ倒す — ABI の UiCanvasOf と同じ規則
-    const int canvasW = (in.canvasW > 0.0f) ? static_cast<int>(in.canvasW) : uilayout::kCanvasRefW;
-    const int canvasH = (in.canvasH > 0.0f) ? static_cast<int>(in.canvasH) : uilayout::kCanvasRefH;
+    // キャンバスは入力に記録されたゲーム面から解く (M75b)。0 = 未確定 (ヘッドレス / 旧い記録) は
+    // 基準解像度へ倒れる — ABI の UiCanvasOf / MouseCanvasPos と同じ関数を通す
+    const uilayout::CanvasInfo canvas = uilayout::CanvasOfInput(in);
+    const int canvasW = canvas.w;
+    const int canvasH = canvas.h;
 
     // ---- シーンが書いた focused を一度だけ拾う ----
     // 起動直後 / シーン遷移直後の 1 回だけ。候補が複数あれば entity.index 最小
@@ -204,12 +208,25 @@ void Evaluate(World& world, const InputSnapshot& in, const InputActions* actions
     }
 
     // ---- マウス: hovered / pressed / clicked ----
-    const EntityID under = HitTest(world, canvasW, canvasH, in.mouseCanvasX, in.mouseCanvasY);
+    const float mouseX = uilayout::SurfaceToCanvas(in.mouseSurfX, canvas);
+    const float mouseY = uilayout::SurfaceToCanvas(in.mouseSurfY, canvas);
+    const EntityID under = HitTest(world, canvasW, canvasH, mouseX, mouseY);
     state.hovered = under;
     const bool down = in.MouseDown(0);
     if (down) {
         if (state.pressed == kNullEntity) {
             state.pressed = under; // 押した瞬間に掴む (以後、離すまで移らない)
+            // M75b: ドラッグの原点。何も掴めなかった tick も書く = 空き地で押したまま要素の上へ
+            // 入ってきたときは「掴んだ tick の位置」が原点になる
+            state.pressSurfX = in.mouseSurfX;
+            state.pressSurfY = in.mouseSurfY;
+            state.dragging = 0;
+        } else if (state.dragging == 0) {
+            const float dx = in.mouseSurfX - state.pressSurfX;
+            const float dy = in.mouseSurfY - state.pressSurfY;
+            if (dx * dx + dy * dy > kDragThresholdSurfPx * kDragThresholdSurfPx) {
+                state.dragging = 1; // 以後、離すまで保持する
+            }
         }
     } else if (state.pressed != kNullEntity) {
         // 離した。**掴んだ要素の上で離したときだけ** click (Unity 意味論) —
@@ -218,6 +235,7 @@ void Evaluate(World& world, const InputSnapshot& in, const InputActions* actions
             state.clicked = under;
         }
         state.pressed = kNullEntity;
+        state.dragging = 0;
     }
 
     // ---- フォーカス: UINav* アクションで移動 ----
@@ -260,6 +278,10 @@ void Evaluate(World& world, const InputSnapshot& in, const InputActions* actions
     if (!stillUsable(state.pressed)) { state.pressed = kNullEntity; }
     if (!stillUsable(state.clicked)) { state.clicked = kNullEntity; }
     if (!stillUsable(state.focused)) { state.focused = kNullEntity; }
+    if (!stillUsable(state.changed)) { state.changed = kNullEntity; }
+    if (state.pressed == kNullEntity) {
+        state.dragging = 0; // 掴んだ要素が消えたらドラッグも終わる
+    }
 
     // UIElement.focused は**表示専用のミラー** (NoHash)。正本は state.focused 側で、
     // ここは毎 tick 上書きする = スクリプトが直接書いても次の tick で戻る
@@ -273,6 +295,11 @@ void Evaluate(World& world, const InputSnapshot& in, const InputActions* actions
             el->focused = (arch.EntityAt(row) == focused) ? 1 : 0;
         }
     });
+
+    // M75b: ドラッグ量の基準を今 tick へ進める。**必ず最後** — M75f 以降のウィジェット更新は
+    // この手前で「今 - prevSurf」を読む
+    state.prevSurfX = in.mouseSurfX;
+    state.prevSurfY = in.mouseSurfY;
 }
 
 } // namespace uiinteract

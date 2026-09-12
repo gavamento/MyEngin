@@ -12,14 +12,15 @@ namespace mye {
 //   (kSimSnapshotVersion の bump が要る)
 inline constexpr uint32_t kMaxPlayers = 4;
 
-// このフレームの UI キャンバス (M70b)。**式の正本は Engine 層の uilayout::CanvasSize** —
-// Platform 層は Engine 層を include できないので、EngineLoop が計算して渡す形にしてある
-// (Input はデバイスの層で、UI の基準解像度を知る立場ではない)。
-// scale <= 0 は「未確定」の予約値で、CaptureSnapshot はキャンバス欄を 0 のままにする
-struct InputCanvas {
-    float scale = 0.0f; // キャンバス単位 → 実 px の一様倍率
-    float w = 0.0f;     // キャンバス幅 (キャンバス単位)
-    float h = 0.0f;     // キャンバス高さ
+// このフレームのゲーム面 (M75b。M70b の InputCanvas を置き換え)。
+// M70b は EngineLoop が uilayout::CanvasSize を解いて渡し、ここでキャンバス座標へ正規化して
+// 記録していた。M75c でキャンバスが複数になると**倍率がキャンバスごとに違う**ので、
+// 「正規化済みの座標 1 個」は記録できない。記録するのは換算前のゲーム面 px と面の寸法だけにし、
+// キャンバスへの換算は sim 側の uilayout::CanvasOfInput / SurfaceToCanvas (描画側と同じ関数) に寄せる。
+// w/h <= 0 は「未確定」の予約値で、CaptureSnapshot は面の寸法欄を 0 のままにする
+struct InputSurface {
+    int32_t w = 0; // ゲーム面の幅 (実 px。Runtime ではクライアント矩形 = バックバッファ)
+    int32_t h = 0;
 };
 
 // 1 tick 分の入力状態。リプレイ記録の最小単位 (spec 11.3)。
@@ -52,27 +53,39 @@ struct InputSnapshot {
     int16_t  padRY;           // 右スティック Y
     uint8_t  padConnected;    // 0=未接続 1=接続
     uint8_t  pad2[3];         // 明示パディング
-    // ---- UI キャンバス (M70b)。**レーン 0 だけが持つ** (マウスと同じ規約、レーン n>0 は 0) ----
-    // なぜ入力に載せるのか: UI のヒットテストとフォーカスナビは sim レーンにあり、
-    // キャンバス寸法は**ウィンドウの大きさという機種依存の値**から出る。実解像度をその場で
-    // 読ませると 2 台/2 回の実行でズレるが、UIElement は kComponentNoHash なので
+    // ---- ゲーム面 (M75b、M70b の UI キャンバス 4 値を置き換え)。**レーン 0 だけが持つ** ----
+    // なぜ入力に載せるのか (M70b から不変): UI のヒットテストとフォーカスナビは sim レーンにあり、
+    // 面の寸法は**ウィンドウの大きさという機種依存の値**。実解像度をその場で読ませると
+    // 2 台/2 回の実行でズレるが、UIElement は kComponentNoHash なので
     // **ワールドハッシュには 1 ビットも出ない** = replay も desync 検出も助けてくれない
     // (「最悪の壊れ方」)。ここへ載せて .rep に記録すれば、再生は窓の大きさに依らず一致する。
-    // ★消費側は必ず ctx.Input() (レーン 0) を読むこと。canvasW/H == 0 は「まだ確定して
-    //   いない」(ヘッドレス / 旧い記録) で、読み手が基準解像度へ倒す
-    float mouseCanvasX;       // mouseX をキャンバス座標へ正規化した値 (= mouseX / scale)
-    float mouseCanvasY;
-    float canvasW;            // uilayout::CanvasSize(クライアント実 px) の結果 (整数値を float で)
-    float canvasH;
+    // M75b で記録を**換算前のゲーム面 px** に変えた (InputSurface の解説)。既定キャンバスでの
+    // キャンバス座標は M70b の mouseCanvasX と同ビット — どちらも float(mouseX) を同じ
+    // CanvasSize(面).scale で割るだけ (UISelfTest が 960x540 / 1600x900 などで memcmp する)。
+    // ★消費側は必ず ctx.Input() (レーン 0) を読み、uilayout::CanvasOfInput を通すこと。
+    //   surfW/H == 0 は「まだ確定していない」(ヘッドレス / 旧い記録) で、読み手が基準解像度へ倒す
+    float mouseSurfX;         // ゲーム面 px のマウス位置 (Runtime では float(mouseX))
+    float mouseSurfY;
+    int32_t surfW;            // ゲーム面の寸法 (実 px)
+    int32_t surfH;
+    // ---- 文字入力 (M75b、InputField 用)。**レーン 0 だけが持つ** ----
+    // WM_CHAR の UTF-16 コード単位を、**それを消費する tick 1 本ぶん**だけ載せる
+    // (Input::ConsumeChars の解説)。載るのは BMP の可視文字だけ — 制御文字 (<0x20 / 0x7F) と
+    // サロゲートは捨てる。IME は非対応 (確定文字が WM_CHAR で来る分は載る)。
+    // Backspace / Enter / 矢印は文字ではなく keys のエッジで読む。
+    // ★chars[charCount..] は必ず 0 (.rep とハッシュに未初期化バイトを載せない)
+    uint16_t chars[8];
+    uint8_t charCount;        // 0..8。溢れた分は捨てる (60Hz で 1 tick 8 文字 = 480 字/秒)
+    uint8_t pad3[7];          // 明示パディング
 
     bool KeyDown(uint8_t vk) const { return ((keys[vk >> 3] >> (vk & 7)) & 1) != 0; }
     bool MouseDown(int button) const { return ((mouseButtons >> button) & 1) != 0; }
     bool PadButton(uint16_t mask) const { return (padButtons & mask) != 0; }
 };
-// M64a で 64 -> 72、M70b で 72 -> 88。レイアウトが変わったので kReplayFileVersion /
-// kSimSnapshotVersion / kNetProtoVersion を同時に上げてある
-// (この 3 つがこのビット列をそのまま持ち回る)
-static_assert(sizeof(InputSnapshot) == 88, "InputSnapshot layout is part of the replay format");
+// M64a で 64 -> 72、M70b で 72 -> 88、M75b で 88 -> 112 (ゲーム面 + 文字キュー)。
+// レイアウトが変わったので kReplayFileVersion / kSimSnapshotVersion / kNetProtoVersion を
+// 同時に上げてある (この 3 つがこのビット列をそのまま持ち回る)
+static_assert(sizeof(InputSnapshot) == 112, "InputSnapshot layout is part of the replay format");
 
 // Win32 メッセージを蓄積し、フレーム頭でスナップショットを確定する。
 class Input {
@@ -90,11 +103,18 @@ public:
     // ★つまりローカル 2P には物理パッドが 2 本要る。パッド無しでレーンを動かす手段は
     //   検証用の合成入力 (SynthLaneInput / --synth-input) 側に寄せてある
     //
-    // canvas = このフレームの UI キャンバス (呼び出し側が uilayout::CanvasSize で作る)。
-    // ここでキャンバス座標へ正規化してしまうのが M70b の要点 — 実解像度が sim へ生で
-    // 入る口をこの 1 箇所に閉じ込め、**記録される値は正規化後**にする (InputSnapshot の解説)。
-    // レーン n>0 は canvas を持たない (0 のまま) ので引数は無視される
-    InputSnapshot CaptureSnapshot(uint32_t lane, const InputCanvas& canvas);
+    // surface = このフレームのゲーム面 (M75b)。実解像度が sim へ入る口はこの 1 箇所のまま
+    // (M70b)。M70b はここでキャンバス座標へ正規化していたが、M75b からは換算前の px と
+    // 面の寸法を記録し、換算は sim 側がやる (InputSurface の解説)。
+    // レーン n>0 は面も文字も持たない (0 のまま) ので引数は無視される
+    InputSnapshot CaptureSnapshot(uint32_t lane, const InputSurface& surface);
+
+    // 文字キューの先頭 count 個を捨てる (M75b)。**tick が 1 本回った後に EngineLoop が呼ぶ**。
+    // wheelDelta と違って CaptureSnapshot では消費しない — CaptureSnapshot はフレーム頭に
+    // 毎フレーム呼ばれるので、そこで消費すると **tick の回らないフレーム (fps が 60 を超えると
+    // 過半) に打った文字が消える**。count はそのフレームで写した charCount — 写した後に届いた
+    // 文字 (フレーム途中のポンプ) を巻き込んで捨てないよう、全消去ではなく先頭だけ落とす
+    void ConsumeChars(uint8_t count);
 
     // パッド振動を適用する (M51h、XInput パッド 0、値 0..1)。**出力レーン専用** —
     // sim から振動状態を読み返す API は作らない。実際の XInputSetState は
@@ -127,6 +147,8 @@ private:
     bool rawAbsValid_ = false;  // 上の基準が有効か (初回とフォーカス喪失で落とす)
     bool cursorLocked_ = false; // ShowCursor の内部カウンタを二重に進めないための現状態
     uint8_t buttons_ = 0;
+    uint16_t chars_[8] = {};    // M75b: WM_CHAR のキュー (ConsumeChars が先頭から捨てる)
+    uint8_t charCount_ = 0;
     uint16_t lastVibLeft_ = 0;  // 最後に XInput へ送った量子化値 (重複送信の抑止)
     uint16_t lastVibRight_ = 0;
 };

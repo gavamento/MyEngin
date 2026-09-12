@@ -108,6 +108,23 @@ bool RunSimSnapshotSelfTest()
     refs.prevTickInput = prevInput;
     uint64_t tick = 4242;
     refs.tickIndex = &tick;
+    // v18 (M75b): UI 対話状態のドラッグ欄と、前 tick 入力のゲーム面 / 文字キュー
+    {
+        UIInteractionState& ui = scene.UI();
+        ui.changed.index = 7;
+        ui.changed.generation = 2;
+        ui.pressSurfX = 12.5f;
+        ui.pressSurfY = -3.25f;
+        ui.prevSurfX = 640.75f;
+        ui.prevSurfY = 360.5f;
+        ui.dragging = 1;
+    }
+    prevInput[0].mouseSurfX = 480.5f;
+    prevInput[0].surfW = 960;
+    prevInput[0].surfH = 540;
+    prevInput[0].chars[0] = 'M';
+    prevInput[0].chars[1] = 0x3042;
+    prevInput[0].charCount = 2;
 
     const uint64_t hash0 = HashWorld(w, {nullptr, &scene.Time(), &scene.Persist()});
     const std::string shape0 = ArchetypeShape(w);
@@ -140,6 +157,7 @@ bool RunSimSnapshotSelfTest()
     scene.SetName("WrongStage"); // 復元で必ず上書きされること
     scene.ReplaceOverridesTable({});
     scene.SetNextFileId(9999);
+    scene.UI().Clear(); // v18 (M75b): 復元で必ず戻ること
     for (uint32_t p = 0; p < kMaxPlayers; ++p) {
         prevInput[p] = {};
     }
@@ -172,6 +190,17 @@ bool RunSimSnapshotSelfTest()
     check(prevInput[1].mouseX == 1321 && prevInput[kMaxPlayers - 1].mouseX == 4321,
           "...for every input lane (M52g)");
     check(tick == 4242, "tick index is restored");
+    {
+        const UIInteractionState& ui = scene.UI();
+        check(ui.changed.index == 7 && ui.changed.generation == 2 && ui.pressSurfX == 12.5f
+                  && ui.pressSurfY == -3.25f && ui.prevSurfX == 640.75f && ui.prevSurfY == 360.5f
+                  && ui.dragging == 1,
+              "UI interaction changed + drag state is restored (v18)");
+    }
+    check(prevInput[0].mouseSurfX == 480.5f && prevInput[0].surfW == 960 && prevInput[0].surfH == 540
+              && prevInput[0].chars[0] == 'M' && prevInput[0].chars[1] == 0x3042
+              && prevInput[0].charCount == 2,
+          "prev tick input carries the game surface and the char queue (v18)");
 
     // ---- ハッシュに出ない状態: EntityID 世代と freeIndices の LIFO 順 ----
     const EntityID actualNext = w.CreateEntity("AfterRestore");

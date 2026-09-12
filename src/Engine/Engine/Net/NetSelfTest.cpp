@@ -28,6 +28,8 @@ NetIdentity MakeIdentity()
     id.configBits = kNetCfgSynthInput | kNetCfgJobs;
     id.canvasW = 1920.0f; // M70b: 16:9 の基準キャンバス (960x540 でも 4K でもこの値)
     id.canvasH = 1080.0f;
+    id.referenceW = 1920; // M75b: UI の基準解像度 (M75c で project_settings の値)
+    id.referenceH = 1080;
     id.startWorldHash = 0xABCDEF0123456789ull;
     return id;
 }
@@ -111,12 +113,14 @@ bool RunNetSelfTest()
     // ---- 1. 線上のレイアウト ----
     // proto v2 (M52i) でヘッダへ確定 (tick, hash) の 16 バイトが増えた
     check(sizeof(NetPacketHeader) == 64, "packet header is 64 bytes");
-    // M70b: NetIdentity に canvasW/H が入って 40 -> 48、payload もその分だけ太る
-    check(sizeof(NetHandshakePayload) == 56, "handshake payload is 56 bytes");
-    // M64a: 生マウスデルタ (int32 x2) が入って 64 -> 72 / M70b: UI キャンバス 4 値で 88
-    check(sizeof(InputSnapshot) == 88, "input snapshot is 88 bytes");
-    check(kNetMaxPacket == 64 + 8 * 88, "max packet = header + 8 inputs");
-    check(kNetProtoVersion == 4, "protocol version is 4 (M70b input layout + canvas)");
+    // M70b: NetIdentity に canvasW/H が入って 40 -> 48 / M75b: 基準解像度 + 計測表ハッシュで 64。
+    // payload もその分だけ太る
+    check(sizeof(NetHandshakePayload) == 72, "handshake payload is 72 bytes");
+    // M64a: 生マウスデルタ (int32 x2) が入って 64 -> 72 / M70b: UI キャンバス 4 値で 88 /
+    // M75b: ゲーム面 + 文字キューで 112
+    check(sizeof(InputSnapshot) == 112, "input snapshot is 112 bytes");
+    check(kNetMaxPacket == 64 + 8 * 112, "max packet = header + 8 inputs");
+    check(kNetProtoVersion == 5, "protocol version is 5 (M75b surface + chars + UI fingerprint)");
 
     // ---- 2. 指紋の照合はフィールドごとに理由を返す ----
     {
@@ -136,12 +140,16 @@ bool RunNetSelfTest()
         NetIdentity h = base; h.startWorldHash ^= 1ull;
         // M70b: アスペクトが違う 2 台 (16:9 の 1920x1080 と 16:10 の 1920x1200) は弾く
         NetIdentity i = base; i.canvasH = 1200.0f;
+        // M75b: 基準解像度が違う 2 台 / フォント計測表が違う 2 台 (0 = 表なし と表あり)
+        NetIdentity j = base; j.referenceW = 1280;
+        NetIdentity k = base; k.fontMetricsHash = 0x1234ull;
         const Case cases[] = {
             { NetReject::Proto, a },           { NetReject::ApiVersion, b },
             { NetReject::RepVersion, c },      { NetReject::SnapshotVersion, d },
             { NetReject::PlayerCount, e },     { NetReject::InputDelay, f },
             { NetReject::ConfigBits, g },      { NetReject::WorldHash, h },
-            { NetReject::Canvas, i },
+            { NetReject::Canvas, i },          { NetReject::ReferenceSize, j },
+            { NetReject::FontMetrics, k },
         };
         bool ok = true;
         for (const Case& cs : cases) {

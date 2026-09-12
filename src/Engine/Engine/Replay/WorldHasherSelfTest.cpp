@@ -85,6 +85,42 @@ bool RunWorldHasherSelfTest()
     TimeControl& time = scene.Time();
     PersistStore& persist = scene.Persist();
 
+    // ---- UI 対話状態の節 (M75b で changed / ドラッグ欄が増えた) ----
+    // 足した欄が本当に畳まれ、--hash-diff が欄の名前まで指せることを固定する。
+    // 畳み忘れると「ドラッグ量の基準がずれても replay が緑」になる (UIElement は NoHash)
+    {
+        UIInteractionState& ui = scene.UI();
+        const SimSources uiRefs{nullptr, &time, &persist, nullptr, nullptr, &ui};
+        HashDump before;
+        HashWorldDump(w, uiRefs, 42, before);
+        check(FindLine(before, "\tUIInteraction\tprevSurfX\t", "\t") != std::string::npos
+                  && FindLine(before, "\tUIInteraction\tdragging\t", "\t") != std::string::npos
+                  && FindLine(before, "\tUIInteraction\tchanged\t", "\t") != std::string::npos,
+              "UI section dumps the M75b fields (changed / pressSurf / prevSurf / dragging)");
+
+        ui.pressSurfY = 3.5f;
+        HashDump moved;
+        HashWorldDump(w, uiRefs, 42, moved);
+        const auto dMoved = DiffHashDumps(before, moved);
+        check(dMoved.totalDiffers && dMoved.valueDiffs == 1
+                  && dMoved.firstFoldLine == FindLine(before, "\tUIInteraction\tpressSurfY\t", "\t"),
+              "a drag-origin change is caught and named (pressSurfY)");
+        ui.pressSurfY = 0.0f;
+
+        ui.dragging = 1;
+        HashDump dragging;
+        HashWorldDump(w, uiRefs, 42, dragging);
+        const auto dDrag = DiffHashDumps(before, dragging);
+        check(dDrag.totalDiffers
+                  && dDrag.firstFoldLine == FindLine(before, "\tUIInteraction\tdragging\t", "\t"),
+              "the dragging latch is part of the hash");
+        ui.dragging = 0;
+
+        HashDump again;
+        HashWorldDump(w, uiRefs, 42, again);
+        check(DiffHashDumps(before, again).Same(), "restoring the UI fields makes the diff clean");
+    }
+
     // ---- 3 出口の total 一致 ----
     // 走査が 3 実装に分かれると、診断だけ古い規則で歩いて嘘の行を指すようになる。
     // 「同一実装の 3 出口」であることをここで毎回固定する

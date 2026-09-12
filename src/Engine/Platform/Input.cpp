@@ -85,6 +85,23 @@ bool Input::HandleMessage(void* hwnd, uint32_t msg, uint64_t wparam, int64_t lpa
     case WM_MOUSEWHEEL:
         wheelAccum_ += GET_WHEEL_DELTA_WPARAM(wparam);
         break;
+    case WM_CHAR: {
+        // 文字入力 (M75b)。Win32Window のポンプの TranslateMessage が WM_KEYDOWN から作る
+        // (窓は W 系で作ってあるので wparam は UTF-16 のコード単位 1 個)。v1 は BMP の可視文字だけ:
+        //   - 制御文字 (<0x20 = Backspace / Tab / Enter / Ctrl+英字、0x7F = Ctrl+Backspace) は
+        //     keys のエッジで読む側の仕事。文字としても積むと InputField で二重に効く
+        //   - サロゲート (0xD800..0xDFFF) は対で来るが、片割れだけ積まれると InputField の
+        //     String256 に壊れた UTF-16 が残るので両方捨てる (絵文字は非対応)
+        // 溢れた分は捨てる (1 tick に 8 文字を超えて打つことは無い)
+        const uint32_t cu = static_cast<uint32_t>(wparam & 0xFFFFu);
+        const bool control = cu < 0x20u || cu == 0x7Fu;
+        const bool surrogate = cu >= 0xD800u && cu <= 0xDFFFu;
+        if (!control && !surrogate && charCount_ < sizeof(chars_) / sizeof(chars_[0])) {
+            chars_[charCount_] = static_cast<uint16_t>(cu);
+            ++charCount_;
+        }
+        break;
+    }
     case WM_KILLFOCUS:
         // フォーカス喪失中の KEYUP は届かないため全解除 (キー押しっぱなし防止)
         memset(keys_, 0, sizeof(keys_));
@@ -101,7 +118,7 @@ bool Input::HandleMessage(void* hwnd, uint32_t msg, uint64_t wparam, int64_t lpa
     return false; // 消費しない (ImGui など他のハンドラにも流す)
 }
 
-InputSnapshot Input::CaptureSnapshot(uint32_t lane, const InputCanvas& canvas)
+InputSnapshot Input::CaptureSnapshot(uint32_t lane, const InputSurface& surface)
 {
     InputSnapshot s = {};
     if (lane == 0) {
@@ -118,16 +135,20 @@ InputSnapshot Input::CaptureSnapshot(uint32_t lane, const InputCanvas& canvas)
         wheelAccum_ = 0;
         mouseDeltaX_ = 0; // M64a: wheel と同じ「1 tick で消費」規約
         mouseDeltaY_ = 0;
-        // M70b: 実解像度が sim へ入る唯一の口。ここで正規化して「記録される値は
-        // キャンバス座標」にしておくと、再生は窓の大きさに依らず一致する。
-        // scale <= 0 (退化した画面 / 呼び出し側が埋めていない) は 0 のまま残す =
-        // 「まだ確定していない」の予約値 (読み手が基準解像度へ倒す)
-        if (canvas.scale > 0.0f) {
-            s.canvasW = canvas.w;
-            s.canvasH = canvas.h;
-            s.mouseCanvasX = static_cast<float>(s.mouseX) / canvas.scale;
-            s.mouseCanvasY = static_cast<float>(s.mouseY) / canvas.scale;
+        // M70b → M75b: 実解像度が sim へ入る唯一の口。記録するのは換算前のゲーム面 px と
+        // 面の寸法で、キャンバスへの換算は sim 側 (uilayout::CanvasOfInput) がやる。
+        // 位置は面が未確定でも書く (float にするだけ) — 未確定の読み手は基準解像度 + scale 1 へ
+        // 倒れるので、M70b の退化扱い (CanvasSize(0,0) の scale 1 で割っていた) と同じ値になる。
+        // 寸法が退化 (最小化など) なら 0 のまま = 「まだ確定していない」の予約値
+        s.mouseSurfX = static_cast<float>(s.mouseX);
+        s.mouseSurfY = static_cast<float>(s.mouseY);
+        if (surface.w > 0 && surface.h > 0) {
+            s.surfW = surface.w;
+            s.surfH = surface.h;
         }
+        // M75b: 文字は写すだけ。消費は tick が回った後の ConsumeChars (Input.h の解説)
+        memcpy(s.chars, chars_, sizeof(s.chars));
+        s.charCount = charCount_;
     }
 
     // gamepad (XInput、スロット = レーン番号)。verify 中は記録値が上書きするので透過 (spec 11.3)
@@ -143,6 +164,21 @@ InputSnapshot Input::CaptureSnapshot(uint32_t lane, const InputCanvas& canvas)
         s.padRY = xs.Gamepad.sThumbRY;
     }
     return s;
+}
+
+void Input::ConsumeChars(uint8_t count)
+{
+    const uint8_t n = (count < charCount_) ? count : charCount_;
+    const uint8_t rest = static_cast<uint8_t>(charCount_ - n);
+    // 写した後に届いた分を先頭へ詰め、空いた末尾は 0 に戻す
+    // (次の CaptureSnapshot が chars[charCount..] == 0 の規約をそのまま写せるように)
+    for (uint8_t i = 0; i < rest; ++i) {
+        chars_[i] = chars_[n + i];
+    }
+    for (uint8_t i = rest; i < charCount_; ++i) {
+        chars_[i] = 0;
+    }
+    charCount_ = rest;
 }
 
 void Input::ApplyVibration(float left, float right)
@@ -282,15 +318,31 @@ InputSnapshot SynthLaneInput(uint64_t tick, uint32_t lane)
     s.mouseDeltaX = span3(40) - span3(43);
     s.mouseDeltaY = span3(46) - span3(49);
 
-    // キャンバス (M70b)。**基準解像度で固定する** — 合成入力は「(tick, lane) だけの
+    // ゲーム面 (M70b → M75b)。**基準解像度で固定する** — 合成入力は「(tick, lane) だけの
     // 純関数」なので、ここに実ウィンドウの寸法を混ぜたら決定論が壊れる。
     // レーン 0 だけが持つのは実キャプチャと同じ規約 (Input.h)。
-    // ★マウス位置を動かさない規約は据え置きなので mouseCanvasX/Y は 0 のまま。
-    //   0 も正当なキャンバス座標 (左上) で、被覆としては canvasW/H が
+    // ★マウス位置を動かさない規約は据え置きなので mouseSurfX/Y は 0 のまま。
+    //   0 も正当な座標 (左上) で、被覆としては surfW/H が
     //   .rep / SimSnapshot の往復にレイアウトごと載ることに意味がある
     if (lane == 0) {
-        s.canvasW = 1920.0f; // = uilayout::kCanvasRefW (Engine 層なので直接は引けない)
-        s.canvasH = 1080.0f; // = uilayout::kCanvasRefH
+        s.surfW = 1920; // = uilayout::kCanvasRefW (Engine 層なので直接は引けない)
+        s.surfH = 1080; // = uilayout::kCanvasRefH
+        // 文字キュー (M75b)。37 tick に 1 回、固定の文字列から 1〜3 文字を順に載せる。
+        // 狙いは .rep / SimSnapshot の prevTickInput / ネットのパケットに文字の列が実際に
+        // 載ること (M75h の InputField が読むまでハッシュには出ない)。ブロック量子化の外に
+        // 置くのは、文字には「押しっぱなし」の意味論が無いから (毎 tick 積むと連打になる)。
+        // 可視 ASCII だけ = WM_CHAR の取り込み規則 (制御文字を捨てる) と揃える
+        constexpr uint64_t kCharPeriod = 37;
+        if (tick % kCharPeriod == 0u) {
+            static constexpr char kText[] = "MyEngine uGUI 75b";
+            const uint64_t len = sizeof(kText) - 1u;
+            const uint64_t k = tick / kCharPeriod;
+            const uint8_t count = static_cast<uint8_t>(1u + k % 3u);
+            for (uint8_t i = 0; i < count; ++i) {
+                s.chars[i] = static_cast<uint16_t>(static_cast<unsigned char>(kText[(k + i) % len]));
+            }
+            s.charCount = count;
+        }
     }
     return s;
 }

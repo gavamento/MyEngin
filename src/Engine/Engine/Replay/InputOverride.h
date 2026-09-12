@@ -17,6 +17,9 @@ namespace mye {
 //   操作なので、ハッシュ / .rep / snapshot の版には影響しない。
 // ★意味論は「ライブレーンの to-do」: レーンを切り替えて同じ tick をもう一度走らせると
 //   また効く。消したければ Clear
+// ★文字キュー (M75b の chars / charCount) とゲーム面 (mouseSurfX/Y, surfW/H) は上書きしない。
+//   文字は「押し続ける」の意味論を持たない (毎 tick 同じ文字を積むと InputField に連打される) し、
+//   面を上書きすると記録済みの当たり判定の土俵がその区間だけ別物になる
 struct InputOverride {
     enum : uint32_t {
         kSetPadLX = 1u << 0,

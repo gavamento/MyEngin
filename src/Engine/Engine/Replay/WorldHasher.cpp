@@ -443,6 +443,20 @@ uint64_t HashUiInteraction(uint64_t h, const UIInteractionState* ui, DumpCtx* d)
     fold("focused", ui->focused);
     h = HashCombine(h, ui->adoptedAuthored);
     EmitU64(d, "UIInteraction", "adoptedAuthored", ui->adoptedAuthored, h);
+    // M75b: ウィジェットのための状態。float は生バイトで畳む (HashCpuParticles の emitAccum と同じ) —
+    // ドラッグ量の基準がずれると M75f 以降の Slider / ScrollRect の値が割れるが、それより前に
+    // ここで割れてくれれば --hash-diff が「どの欄か」まで名指しできる
+    fold("changed", ui->changed);
+    const auto foldF = [&h, d](const char* field, const float& v) {
+        h = HashBytes(&v, sizeof(float), h);
+        EmitBytes(d, "UIInteraction", field, &v, sizeof(float), h);
+    };
+    foldF("pressSurfX", ui->pressSurfX);
+    foldF("pressSurfY", ui->pressSurfY);
+    foldF("prevSurfX", ui->prevSurfX);
+    foldF("prevSurfY", ui->prevSurfY);
+    h = HashCombine(h, ui->dragging);
+    EmitU64(d, "UIInteraction", "dragging", ui->dragging, h);
     return h;
 }
 

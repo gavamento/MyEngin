@@ -49,7 +49,11 @@ namespace mye {
 // 版を上げる」— 記録ハッシュの意味が変わるので、旧 .rep を再生すると全 tick で
 // MISMATCH になる。版で弾いて「読めない」と言わせるほうが診断として正しい。
 
-inline constexpr uint32_t kReplayFileVersion = 7;
+// v8 (M75b): InputSnapshot 88 -> 112 バイト。UI キャンバスの 4 値を「ゲーム面 px + 面の寸法」へ
+// 置き換え (キャンバスが複数になる M75c で倍率がキャンバスごとに違うため、正規化前を記録する)、
+// 末尾に文字キュー (chars[8] + charCount) を足した。WorldHasher の UI 節にも changed /
+// ドラッグ状態が入った (v7 と同型の「記録ハッシュの意味が変わる」) ので、両方の理由で上げる。
+inline constexpr uint32_t kReplayFileVersion = 8;
 
 struct MyeReplayHeader {
     uint32_t magic = 0x5045524Du; // 'MREP'

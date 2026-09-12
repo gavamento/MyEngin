@@ -54,6 +54,10 @@ const char* NetRejectName(NetReject r)
     case NetReject::Canvas: return "UI canvas size (the two windows have different aspect ratios)";
     case NetReject::WorldHash: return "starting world hash (different scene or build)";
     case NetReject::Busy: return "host is already connected to another peer";
+    case NetReject::ReferenceSize:
+        return "UI reference resolution (project_settings.json ui.referenceW/H)";
+    case NetReject::FontMetrics:
+        return "font metrics table (assets\\fonts\\*.fontmetrics.json differs)";
     }
     return "?";
 }
@@ -71,6 +75,12 @@ NetReject CompareNetIdentity(const NetIdentity& a, const NetIdentity& b)
     // 解像度が違っても厳密に同じ float になる (== で比べてよい。近似比較にすると
     // 「ほぼ同じアスペクト」を通してしまい、弾く意味が薄れる)
     if (a.canvasW != b.canvasW || a.canvasH != b.canvasH) return NetReject::Canvas;
+    // M75b: 基準解像度と計測表。キャンバスの後・ワールドハッシュの前 — 「画面の違い」を
+    // 先に言い、シーンの違いは最後に言う (ワールドハッシュはほぼ何が違っても割れるので)
+    if (a.referenceW != b.referenceW || a.referenceH != b.referenceH) {
+        return NetReject::ReferenceSize;
+    }
+    if (a.fontMetricsHash != b.fontMetricsHash) return NetReject::FontMetrics;
     if (a.startWorldHash != b.startWorldHash) return NetReject::WorldHash;
     return NetReject::None;
 }

@@ -143,6 +143,44 @@ Canvas Scaler は Expand (1920x1080 固定) のみ、Layout Group もウィジ�
   CreateMenu が明示的に書く。理由は `Components.h` の RectTransform のコメント。
 - **anchoredPosition は pivot 点の位置** (Unity と同じ)。pivot (0.5,0.5) の要素を (100,100) に置くと
   中心が (100,100) に来る — 自己検査を書いたときに 1 度踏んだ。
+- **M75b (2026-09-12)**: M75a と同じく WIP を避けて worktree (`C:\HAL\MyEngin_m75a`、ブランチ `m75b`) で実装。
+- **snap 版は 16 → 18** (計画の「17→18」は WIP 込みの番号。**v17 は未コミットの M65i が使用中なので欠番**)。
+  同じ番号で別レイアウトの blob を作らないことを優先した。.rep 7→8 / net 4→5 は計画どおり。
+- **文字キューの消費は「フレーム頭」ではなく「tick の後」** (計画は「CaptureSnapshot が消費 = wheel と同規約」)。
+  CaptureSnapshot は毎フレーム呼ばれるので、そこで消すと **tick の回らないフレーム (fps > 60 で過半) に打った
+  文字が消える**。`Input::ConsumeChars(n)` を EngineLoop が tick 末に呼び、`ctx.inputs[0]` と `netLiveInput`
+  の文字もその tick で 0 に戻す (同じフレームの 2 本目の tick / ネットの次の target へ二重に渡さない)。
+  ホールド中 (Scrubbing) も捨てる。n は写した数 = 写した後に届いた文字は残る。
+  ★**wheelDelta / mouseDeltaX/Y は今もフレーム頭で消費** = tick の回らないフレームの分を取りこぼし、
+  1 フレームで 2 tick 回ると 2 回効く (M64a からの潜在。M75b では触っていない)。**ScrollRect (M75g) が
+  ホイールを読む前に直すか決めること** (直すと入力の意味が変わるので replay の録り直しだけで済むが、版は不要)。
+- **UIInteractionState に `dragging` を計画外で追加** (計画は changed / pressSurf / prevSurf だけ)。
+  ABI v18 の `kDragging` は「掴んでから閾値を超えて動いた・離すまで保持」で距離から毎 tick 導けない =
+  状態が要る。後から足すと snap の版がもう一度動くので M75b に入れた。閾値は Unity の
+  `pixelDragThreshold` と同じ 10 面 px (`uiinteract::kDragThresholdSurfPx`、2 乗距離で比較)。
+  - `prevSurfX/Y` は Evaluate の**最後**で毎 tick 進む (押していなくても)。ドラッグ量 = 今 - prevSurf を読む
+    ウィジェット更新 (M75f) は Evaluate の末尾・この 2 行の手前に置くこと。
+  - 空き地で押したまま要素へ入ると、掴んだ tick の位置が pressSurf になる (既存の「pressed が null の間は
+    under を掴み直す」挙動に合わせた)。Unity は押した瞬間の raycast だけで決まる — 合わせるなら M75f で。
+- **NetIdentity 48 → 64 バイト**: `referenceW/H` (今は `kCanvasRefW/H` 固定) + `fontMetricsHash` (今は 0)。
+  **照合 (`NetReject::ReferenceSize` / `FontMetrics`) は実装済み** = M75c / M75d は EngineLoop で値を入れるだけ。
+  NetReject は Reject パケットに載るので末尾に append した。
+- **`UINavCancel`** は actions.json と `kActionNavCancel` を足しただけで、読む者はまだいない (M75g/h)。
+  `Pause` と Escape、`WatcherCrouch` とパッド B を共有する (アクションの重複割り当ては許されている)。
+- **合成入力の文字**: レーン 0 に 37 tick ごと 1〜3 文字 (`"MyEngine uGUI 75b"` を巡回)。InputField (M75h) が
+  読むまではハッシュに出ず、.rep / snapshot の prevTickInput / ネットのパケットの被覆だけ。
+- **Bash ツールのヒアドキュメントは `\\` を `\` に潰す** (`\n` は残る) — パッチの Python にパス文字列を
+  書いたら C++ に `\f` が入った。spec ファイルは Write ツールで書き、Python 側は raw 文字列にする。
+- **M75b の検証 (M75a の積み残し分も兼ねる)**: Debug/Release `/p:MyeWarnAsError=true` 0 警告 /
+  `--selftest` 0 FAIL / `check_rules` 0 / **`shot_verify` 24 枚すべて maxDiff=0** (golden 4 枚の tol 0 を含む) /
+  **`replay_verify` PASS** (12 ジョブ、620 s) / **`net_verify` PASS** (A〜D の .rep がホスト・参加・ローカル 2P 参照で
+  バイト一致 = 112 バイトの入力と文字キューがパケットに正しく載っている、E の desync 検出も PASS、256 s)。
+  ★replay_verify を**並列 12 のまま回すとメモリ不足でバックグラウンドごと殺された** (他アプリが 18 GB 占有時)。
+  `MYE_REPLAY_JOBS=3` で完走。フォアグラウンドの 10 分上限も超える (3 並列で 620 s)。
+  ★新しい worktree の `bin\x64\Debug` には `build_managed.bat Debug` の Roslyn DLL が揃っていないことがある
+  (`MyeScripting.dll` だけ有って `Microsoft.CodeAnalysis*.dll` が無い) — replay のログに C# の
+  `Could not load file or assembly 'Microsoft.CodeAnalysis'` が並ぶ。C# レーンは replay 被覆外なので PASS は
+  変わらないが、`tools\build_managed.bat Debug` を焼き直してから回すこと。
 
 ## 各サブに共通する罠
 - `IsUiOnlyEntity` の許容漏れ (UiAux で構造的に潰す)。

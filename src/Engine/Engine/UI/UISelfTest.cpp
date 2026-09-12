@@ -463,13 +463,15 @@ bool RunUISelfTest()
 
         InputActions actions;
         UIInteractionState st;
-        // キャンバス寸法 + キャンバス座標のマウスを持つ入力を組む (レーン 0 の規約)
+        // ゲーム面 + ゲーム面 px のマウスを持つ入力を組む (レーン 0 の規約、M75b)。
+        // 面 1920x1080 = キャンバスと 1:1 なので、下の座標はそのままキャンバス座標でもある
         InputSnapshot in = {};
-        in.canvasW = 1920.0f;
-        in.canvasH = 1080.0f;
+        in.surfW = 1920;
+        in.surfH = 1080;
+        InputSnapshot prevIn = {};
         const auto mouse = [&in](float x, float y, bool down) {
-            in.mouseCanvasX = x;
-            in.mouseCanvasY = y;
+            in.mouseSurfX = x;
+            in.mouseSurfY = y;
             in.mouseButtons = down ? 1u : 0u;
         };
 
@@ -481,29 +483,29 @@ bool RunUISelfTest()
 
         // (b) hover → press → release で click が 1 tick だけ立つ
         mouse(150.0f, 150.0f, false);
-        uiinteract::Evaluate(w, in, &actions, st);
+        uiinteract::Evaluate(w, in, prevIn, &actions, st);
         check(st.hovered == a && st.pressed == kNullEntity && st.clicked == kNullEntity,
               "interaction: hovering alone does not press or click");
         mouse(150.0f, 150.0f, true);
-        uiinteract::Evaluate(w, in, &actions, st);
+        uiinteract::Evaluate(w, in, prevIn, &actions, st);
         check(st.pressed == a && st.clicked == kNullEntity,
               "interaction: the press is captured but does not click yet");
         mouse(150.0f, 150.0f, false);
-        uiinteract::Evaluate(w, in, &actions, st);
+        uiinteract::Evaluate(w, in, prevIn, &actions, st);
         check(st.clicked == a && st.pressed == kNullEntity,
               "interaction: releasing over the pressed element clicks it");
-        uiinteract::Evaluate(w, in, &actions, st);
+        uiinteract::Evaluate(w, in, prevIn, &actions, st);
         check(st.clicked == kNullEntity, "interaction: clicked lasts exactly one tick");
 
         // (c) 押したまま別の要素へ移っても掴んだ相手は変わらない / そこで離しても click しない
         mouse(150.0f, 150.0f, true);
-        uiinteract::Evaluate(w, in, &actions, st);
+        uiinteract::Evaluate(w, in, prevIn, &actions, st);
         mouse(150.0f, 350.0f, true); // btnB の上へドラッグ
-        uiinteract::Evaluate(w, in, &actions, st);
+        uiinteract::Evaluate(w, in, prevIn, &actions, st);
         check(st.pressed == a && st.hovered == b,
               "interaction: the captured element does not change while the button is held");
         mouse(150.0f, 350.0f, false);
-        uiinteract::Evaluate(w, in, &actions, st);
+        uiinteract::Evaluate(w, in, prevIn, &actions, st);
         check(st.clicked == kNullEntity,
               "interaction: releasing over a different element cancels the click");
 
@@ -516,7 +518,7 @@ bool RunUISelfTest()
         check(uiinteract::FindNextFocus(w, 1920, 1080, b, uinav::kNavDown) == b,
               "interaction: focus stays put when there is nothing further down");
         st.focused = b;
-        uiinteract::Evaluate(w, in, &actions, st);
+        uiinteract::Evaluate(w, in, prevIn, &actions, st);
         check(w.GetComponent<UIElementComponent>(b)->focused == 1
                   && w.GetComponent<UIElementComponent>(a)->focused == 0,
               "interaction: UIElement.focused mirrors the engine focus");
@@ -524,7 +526,7 @@ bool RunUISelfTest()
         // (e) 参照先が消えたら手放す (破棄済みの EntityID を握り続けない)
         w.DestroyEntity(b);
         w.ApplyStructuralChanges();
-        uiinteract::Evaluate(w, in, &actions, st);
+        uiinteract::Evaluate(w, in, prevIn, &actions, st);
         check(st.focused == kNullEntity, "interaction: a destroyed element drops the focus");
 
         // (f) BitsFor はビットの意味を固定する (ScriptAPI.h の MyeUIButton* と同値)
@@ -533,6 +535,94 @@ bool RunUISelfTest()
         st.clicked = a;
         check(uiinteract::BitsFor(st, a) == (uiinteract::kHovered | uiinteract::kClicked),
               "interaction: BitsFor reports exactly the states that hold");
+
+        // (g) M75b: ドラッグ状態。原点は掴んだ tick の位置、閾値 (10 面 px) を超えたら
+        //     離すまで dragging を保持する (元の位置へ戻っても落ちない)
+        st.Clear();
+        mouse(150.0f, 150.0f, true);
+        uiinteract::Evaluate(w, in, prevIn, &actions, st);
+        check(st.pressed == a && st.pressSurfX == 150.0f && st.pressSurfY == 150.0f
+                  && st.dragging == 0 && st.prevSurfX == 150.0f,
+              "drag: the press records its origin in surface px");
+        mouse(157.0f, 150.0f, true); // 7 px
+        uiinteract::Evaluate(w, in, prevIn, &actions, st);
+        check(st.dragging == 0, "drag: moving within the threshold is not a drag yet");
+        mouse(157.0f, 158.0f, true); // 2 乗距離 49 + 64 = 113 > 100
+        uiinteract::Evaluate(w, in, prevIn, &actions, st);
+        check(st.dragging == 1 && st.prevSurfX == 157.0f && st.prevSurfY == 158.0f,
+              "drag: crossing the threshold starts the drag, prevSurf follows the pointer");
+        mouse(150.0f, 150.0f, true);
+        uiinteract::Evaluate(w, in, prevIn, &actions, st);
+        check(st.dragging == 1 && st.pressSurfX == 150.0f,
+              "drag: returning to the origin keeps dragging (latched until release)");
+        mouse(150.0f, 150.0f, false);
+        uiinteract::Evaluate(w, in, prevIn, &actions, st);
+        check(st.dragging == 0 && st.pressed == kNullEntity && st.clicked == a,
+              "drag: releasing ends the drag (and still clicks the element it started on)");
+        st.changed = a;
+        uiinteract::Evaluate(w, in, prevIn, &actions, st);
+        check(st.changed == kNullEntity, "interaction: changed lasts exactly one tick");
+        st.dragging = 1;
+        st.prevSurfX = 5.0f;
+        st.Clear();
+        check(st.dragging == 0 && st.prevSurfX == 0.0f && st.changed == kNullEntity,
+              "interaction: Clear drops the M75b drag state with the rest");
+
+        // (h) M75b: 面が 2 倍のときはキャンバス座標へ半分に換算してから当てる
+        //     (記録はゲーム面 px、換算は Evaluate の中 = 描画と同じ CanvasOfInput)
+        {
+            InputSnapshot big = {};
+            big.surfW = 3840;
+            big.surfH = 2160;
+            big.mouseSurfX = 300.0f; // キャンバス 150
+            big.mouseSurfY = 300.0f;
+            UIInteractionState st2;
+            uiinteract::Evaluate(w, big, prevIn, &actions, st2);
+            check(st2.hovered == a, "surface: a 2x surface hit-tests at half the surface px");
+        }
+
+        // (i) M75b: 記録を「キャンバス座標」から「ゲーム面 px + 面の寸法」へ変えても、既定キャンバスの
+        //     座標は M70b の記録値と**同じビット**になる。M70b は EngineLoop が CanvasSize(実寸) を解き、
+        //     CaptureSnapshot が float(mouseX) / scale を記録していた。M75b はその除算を sim 側の
+        //     CanvasOfInput + SurfaceToCanvas で行う — 式が 1 回の除算のまま保たれていることの固定
+        {
+            struct Surf {
+                int32_t w;
+                int32_t h;
+            };
+            const Surf surfs[] = { { 960, 540 },  { 1600, 900 },  { 1920, 1080 },
+                                   { 1366, 768 }, { 1920, 1200 }, { 3840, 2160 } };
+            const int32_t pts[][2] = { { 0, 0 },     { 1, 1 },       { 479, 269 },  { 959, 539 },
+                                       { 123, 457 }, { 1365, 767 },  { -5, 20 },    { 3839, 2159 } };
+            bool sameCanvas = true;
+            bool sameBits = true;
+            for (const Surf& s : surfs) {
+                const uilayout::CanvasInfo old = uilayout::CanvasSize(s.w, s.h);
+                InputSnapshot si = {};
+                si.surfW = s.w;
+                si.surfH = s.h;
+                const uilayout::CanvasInfo now = uilayout::CanvasOfInput(si);
+                sameCanvas = sameCanvas && now.w == old.w && now.h == old.h
+                    && std::memcmp(&now.scale, &old.scale, sizeof(float)) == 0;
+                for (const auto& p : pts) {
+                    const float oldX = static_cast<float>(p[0]) / old.scale; // M70b CaptureSnapshot
+                    const float oldY = static_cast<float>(p[1]) / old.scale;
+                    si.mouseSurfX = static_cast<float>(p[0]); // M75b CaptureSnapshot
+                    si.mouseSurfY = static_cast<float>(p[1]);
+                    const float newX = uilayout::SurfaceToCanvas(si.mouseSurfX, now);
+                    const float newY = uilayout::SurfaceToCanvas(si.mouseSurfY, now);
+                    sameBits = sameBits && std::memcmp(&oldX, &newX, sizeof(float)) == 0
+                        && std::memcmp(&oldY, &newY, sizeof(float)) == 0;
+                }
+            }
+            check(sameCanvas, "surface: CanvasOfInput equals CanvasSize of the recorded surface");
+            check(sameBits,
+                  "surface: canvas mouse is bit-identical to the M70b recording (960x540 / 1600x900 / ...)");
+            const InputSnapshot unset = {};
+            const uilayout::CanvasInfo c0 = uilayout::CanvasOfInput(unset);
+            check(c0.w == uilayout::kCanvasRefW && c0.h == uilayout::kCanvasRefH && c0.scale == 1.0f,
+                  "surface: an unset surface (0) falls back to the reference canvas with scale 1");
+        }
         check(uiinteract::BitsFor(st, kNullEntity) == 0u,
               "interaction: BitsFor of a null entity is 0");
     }

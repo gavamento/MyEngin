@@ -250,6 +250,9 @@ void RunOneTick(TickServices& ts)
     // 記録済みスナップショット 2 枚の純関数なので record/verify に透過 (決定台帳 4)。
     // M52g: レーン数ぶんまとめて評価する (playerCount 以降のレーンは Evaluate がゼロへ落とす)
     inputActions.Evaluate(ctx.inputs, prevTickInput, ctx.playerCount);
+    // M75b: UI の評価は前 tick のレーン 0 も受け取る (M75h の InputField がキーのエッジを取る)。
+    // ★prevTickInput は直下のループで今 tick の値に上書きされるので、**その前に**写す
+    const InputSnapshot prevUiInput = prevTickInput[0];
     for (uint32_t p = 0; p < kMaxPlayers; ++p) {
         prevTickInput[p] = ctx.inputs[p];
     }
@@ -262,7 +265,7 @@ void RunOneTick(TickServices& ts)
     // 消費するのはレーン 0 の入力だけ (キャンバス座標のマウスを持つ唯一のレーン)。
     // 結果は Scene が持つ sim 状態 = tick 末のハッシュに載るので、配線が壊れれば
     // replay_verify が赤くなる (UIElement 自体は NoHash なので他に防波堤が無い)
-    uiinteract::Evaluate(scene.GetWorld(), ctx.Input(), &inputActions, scene.UI());
+    uiinteract::Evaluate(scene.GetWorld(), ctx.Input(), prevUiInput, &inputActions, scene.UI());
     // M36b: tick 頭のワールド行列を補間用に採取 (record/verify 中は補間しないので省く)
     if (ts.prevWorld != nullptr && !Recording() && !Verifying()) {
         CapturePrevWorld(*ts.prevWorld, scene.GetWorld());

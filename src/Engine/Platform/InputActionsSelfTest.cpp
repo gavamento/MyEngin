@@ -361,6 +361,107 @@ bool RunInputActionsSelfTest()
               "synth: mouse position stays untouched (UI hit-test must not fire)");
     }
 
+    // ---- ゲーム面と文字キュー (M75b) ----
+    // 取り込み (WM_CHAR / WM_MOUSEMOVE) → CaptureSnapshot → ConsumeChars の往復。
+    // ウィンドウは作らない — HandleMessage は hwnd を読まないので nullptr で叩ける
+    {
+        const uint32_t kWmChar = 0x0102;      // WM_CHAR (Windows.h をこのテストへ持ち込まない)
+        const uint32_t kWmMouseMove = 0x0200; // WM_MOUSEMOVE
+        Input dev;
+        int64_t res = 0;
+        const auto type = [&dev, &res, kWmChar](uint64_t cu) {
+            dev.HandleMessage(nullptr, kWmChar, cu, 0, res);
+        };
+        const auto tailZero = [](const InputSnapshot& s) {
+            bool ok = true;
+            for (int i = s.charCount; i < 8; ++i) {
+                ok = ok && s.chars[i] == 0;
+            }
+            for (int i = 0; i < 7; ++i) {
+                ok = ok && s.pad3[i] == 0;
+            }
+            return ok;
+        };
+        type('h');
+        type(0x08); // Backspace (制御文字)
+        type('i');
+        type(0x0D); // Enter
+        type(0x7F); // Ctrl+Backspace
+        type(0xD83D); // サロゲートの片割れ
+        type(0x3042); // あ (BMP の可視文字)
+        dev.HandleMessage(nullptr, kWmMouseMove, 0, (static_cast<int64_t>(50) << 16) | 100, res);
+        InputSurface surf;
+        surf.w = 960;
+        surf.h = 540;
+        InputSnapshot s = dev.CaptureSnapshot(0, surf);
+        check(s.charCount == 3 && s.chars[0] == 'h' && s.chars[1] == 'i' && s.chars[2] == 0x3042,
+              "chars: visible BMP characters are queued, control chars and surrogates are dropped");
+        check(tailZero(s), "chars: the tail past charCount and pad3 are zero (no garbage in .rep)");
+        check(s.mouseSurfX == 100.0f && s.mouseSurfY == 50.0f && s.surfW == 960 && s.surfH == 540,
+              "surface: the mouse is recorded in surface px together with the surface size");
+        check(dev.CaptureSnapshot(0, surf).charCount == 3,
+              "chars: capturing again (a frame without a tick) does not consume the queue");
+        const InputSnapshot lane1 = dev.CaptureSnapshot(1, surf);
+        check(lane1.charCount == 0 && lane1.surfW == 0 && lane1.mouseSurfX == 0.0f,
+              "chars/surface: lanes other than 0 carry neither");
+
+        // 写した後に 1 文字届いた → 写した 3 文字だけ捨て、遅れて来た文字は残す
+        type('!');
+        dev.ConsumeChars(3);
+        s = dev.CaptureSnapshot(0, surf);
+        check(s.charCount == 1 && s.chars[0] == '!' && tailZero(s),
+              "chars: ConsumeChars drops only the captured prefix and keeps late arrivals");
+        dev.ConsumeChars(s.charCount);
+        for (int i = 0; i < 12; ++i) {
+            type(static_cast<uint64_t>('a' + i));
+        }
+        s = dev.CaptureSnapshot(0, surf);
+        check(s.charCount == 8 && s.chars[7] == 'h', "chars: the queue saturates at 8 (overflow is dropped)");
+
+        const InputSurface degenerate;
+        const InputSnapshot d = dev.CaptureSnapshot(0, degenerate);
+        check(d.surfW == 0 && d.surfH == 0 && d.mouseSurfX == 100.0f,
+              "surface: a degenerate surface stays 0 (readers fall back to the reference canvas)");
+    }
+
+    // 合成入力の面と文字 (M75b)。(tick, lane) の純関数のまま、レーン 0 にだけ可視 ASCII が周期的に載る
+    {
+        const auto sameBytes = [](const InputSnapshot& a, const InputSnapshot& b) {
+            const auto* pa = reinterpret_cast<const uint8_t*>(&a);
+            const auto* pb = reinterpret_cast<const uint8_t*>(&b);
+            for (size_t i = 0; i < sizeof(InputSnapshot); ++i) {
+                if (pa[i] != pb[i]) {
+                    return false;
+                }
+            }
+            return true;
+        };
+        bool pure = true;
+        bool sawChars = false;
+        bool visible = true;
+        bool surfaceFixed = true;
+        bool lane1Clean = true;
+        for (uint64_t t = 0; t < 400; ++t) {
+            const InputSnapshot s0 = SynthLaneInput(t, 0);
+            pure = pure && sameBytes(s0, SynthLaneInput(t, 0));
+            sawChars = sawChars || s0.charCount > 0;
+            surfaceFixed = surfaceFixed && s0.surfW == 1920 && s0.surfH == 1080;
+            visible = visible && s0.charCount <= 8;
+            for (int i = 0; i < 8; ++i) {
+                const bool used = i < s0.charCount;
+                visible = visible
+                    && (used ? (s0.chars[i] >= 0x20 && s0.chars[i] < 0x7F) : (s0.chars[i] == 0));
+            }
+            const InputSnapshot s1 = SynthLaneInput(t, 1);
+            lane1Clean = lane1Clean && s1.charCount == 0 && s1.surfW == 0 && s1.surfH == 0;
+        }
+        check(pure, "synth: the M75b fields stay a pure function of (tick, lane)");
+        check(sawChars, "synth: lane 0 actually carries characters (coverage for .rep / snapshot)");
+        check(visible, "synth: only visible ASCII is synthesized and the tail stays zero");
+        check(surfaceFixed, "synth: lane 0 surface is pinned to the reference 1920x1080");
+        check(lane1Clean, "synth: lanes other than 0 carry no characters and no surface");
+    }
+
     if (failCount == 0) {
         MYE_LOG_INFO("==== InputActions self test: ALL PASS ====");
         return true;

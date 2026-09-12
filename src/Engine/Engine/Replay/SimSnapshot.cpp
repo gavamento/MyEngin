@@ -65,6 +65,13 @@ void WriteScene(ByteWriter& w, const Scene& scene)
     writeId(ui.clicked);
     writeId(ui.focused);
     w.U32(ui.adoptedAuthored);
+    // v18 (M75b): ウィジェットのための状態 (UIInteraction.h)。書いた順に読む
+    writeId(ui.changed);
+    w.F32(ui.pressSurfX);
+    w.F32(ui.pressSurfY);
+    w.F32(ui.prevSurfX);
+    w.F32(ui.prevSurfY);
+    w.U32(ui.dragging);
 
     w.U64(scene.PeekNextFileId());
     w.Str(scene.Name()); // v15 (M71a)
@@ -130,6 +137,12 @@ bool ReadScene(ByteReader& r, SceneState& out)
     out.ui.clicked = readId();
     out.ui.focused = readId();
     out.ui.adoptedAuthored = r.U32();
+    out.ui.changed = readId(); // v18 (M75b)
+    out.ui.pressSurfX = r.F32();
+    out.ui.pressSurfY = r.F32();
+    out.ui.prevSurfX = r.F32();
+    out.ui.prevSurfY = r.F32();
+    out.ui.dragging = r.U32();
 
     out.nextFileId = r.U64();
     out.name = r.Str(); // v15 (M71a)。書いた順に読む

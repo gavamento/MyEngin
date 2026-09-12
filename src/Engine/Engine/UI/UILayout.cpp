@@ -6,6 +6,7 @@
 #include "Engine/Core/Components.h"
 #include "Engine/Core/World.h"
 #include "Engine/Engine/RenderSystem.h" // PrevWorldStore (描画補間 M36b)
+#include "Engine/Platform/Input.h" // InputSnapshot (M75b: CanvasOfInput)
 
 namespace mye {
 namespace uilayout {
@@ -324,6 +325,13 @@ CanvasInfo CanvasSize(int screenW, int screenH)
     c.w = static_cast<int>(std::lroundf(static_cast<float>(screenW) / c.scale));
     c.h = static_cast<int>(std::lroundf(static_cast<float>(screenH) / c.scale));
     return c;
+}
+
+CanvasInfo CanvasOfInput(const InputSnapshot& in)
+{
+    // 未確定 (0) は CanvasSize の退化経路へそのまま流す = 基準解像度 + scale 1。
+    // M70b の読み手の「canvasW == 0 なら kCanvasRefW」と同じ答えになる
+    return CanvasSize(in.surfW, in.surfH);
 }
 
 UIResolved Resolve(World& world, EntityID e, int screenW, int screenH, const UIWorldContext* wc)

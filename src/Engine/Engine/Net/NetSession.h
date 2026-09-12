@@ -35,7 +35,11 @@ namespace mye {
 // v4 (M70b): InputSnapshot が 72 -> 88 バイト (UI キャンバスの 4 値) + ハンドシェイクの
 //            指紋に canvasW/H が入って NetIdentity が 40 -> 48 バイト。
 //            **本体長とハンドシェイク項目の両方**が変わる
-inline constexpr uint32_t kNetProtoVersion = 4;
+// v5 (M75b): InputSnapshot が 88 -> 112 バイト (ゲーム面 + 文字キュー) + 指紋に UI の基準解像度
+//            (referenceW/H) とフォント計測表のハッシュが入って NetIdentity が 48 -> 64 バイト。
+//            基準解像度の実効値は M75c (project_settings)、計測表のハッシュは M75d で入る —
+//            **欄と照合はここで先に確保して、版の bump を 1 回にまとめてある**
+inline constexpr uint32_t kNetProtoVersion = 5;
 inline constexpr uint32_t kNetMagic = 0x4E45594Du; // 'MYEN'
 inline constexpr uint32_t kNetRedundancy = 8;  // 1 パケットに載せる直近 tick 数
 inline constexpr uint32_t kNetRingTicks = 512; // 入力リングの深さ (tick)
@@ -87,10 +91,20 @@ struct NetIdentity {
     // 状態で遊べてしまう」のを防ぐため。16:9 同士は解像度が違っても厳密に一致する
     float canvasW = 0.0f;
     float canvasH = 0.0f;
+    // UI の基準解像度 (M75b で欄を確保、M75c で project_settings.json の実効値が入る)。
+    // 基準は 2 台がそれぞれのプロジェクト設定から読む値になるので、キャンバス寸法の一致から
+    // 間接に保証させずに直接照合する (基準が違うと一様スケールが変わり、sizeDelta の見え方と
+    // 押せる場所が 2 台でずれる)
+    int32_t referenceW = 0;
+    int32_t referenceH = 0;
     uint32_t pad = 0;
+    // フォント計測表 (assets\fonts\*.fontmetrics.json) の内容ハッシュ (M75b で欄を確保、
+    // M75d で値が入る)。Layout / ContentSizeFitter が sim の中でテキスト幅を読むので、
+    // 表が違う 2 台は矩形が割れる。0 = 表なし (固定メトリクス) で、0 同士は一致扱い
+    uint64_t fontMetricsHash = 0;
     uint64_t startWorldHash = 0;  // 開始時点のワールドハッシュ (= 同じシーンか)
 };
-static_assert(sizeof(NetIdentity) == 48, "NetIdentity is part of the wire format");
+static_assert(sizeof(NetIdentity) == 64, "NetIdentity is part of the wire format");
 
 // configBits の内訳。**「ビット同一のはず」と分かっているものも入れる** —
 // 分かっているのは検証済みの構成だけで、食い違ったまま何時間も desync を追うより
@@ -115,6 +129,10 @@ enum class NetReject : uint32_t {
     Canvas, // UI キャンバス寸法 (= 画面アスペクト) の不一致 (M70b)
     WorldHash,
     Busy, // 既に別の相手と繋がっている
+    // M75b。**末尾に足す** — 値は線に載る (Reject の reason) ので、途中挿入すると
+    // WorldHash / Busy の番号が動く (proto で弾けるが、ログを読み違える余地を作らない)
+    ReferenceSize, // UI の基準解像度の不一致
+    FontMetrics,   // フォント計測表の不一致
 };
 
 const char* NetRejectName(NetReject r);
@@ -154,7 +172,7 @@ struct NetHandshakePayload {
     uint32_t assignedIndex = 0; // Accept: 受信者が使うレーン
     uint32_t reason = 0;        // Reject: NetReject
 };
-static_assert(sizeof(NetHandshakePayload) == 56, "NetHandshakePayload is part of the wire format");
+static_assert(sizeof(NetHandshakePayload) == 72, "NetHandshakePayload is part of the wire format");
 
 // パケット 1 個の最大長 (ヘッダ + 冗長分の入力)
 inline constexpr size_t kNetMaxPacket =

@@ -99,7 +99,11 @@ struct SimRefs {
 //            「World は復元済みなのに名前だけ復元前」という食い違いを起こす
 // v16 (M18 追補): SkinnedMesh へ loop / fadeTicks とクロスフェードの再生状態 5 本を追加。
 //            NoHash のコンポーネントでも生バイトは World 節に載るので版は上がる (v11 と同型)
-inline constexpr uint32_t kSimSnapshotVersion = 16;
+// v18 (M75b): InputSnapshot 88 -> 112 バイト (prevTickInput の生バイトが太る) + Scene 節の UI 対話状態に
+//            changed / pressSurfX/Y / prevSurfX/Y / dragging を追加。
+//            ★v17 は欠番 — 未コミットの M65i (AcousticVolume.glowAlbedoMix) が作業ツリーで先に使っている。
+//            版は一致しか見ないので飛ばしてよく、**同じ番号で別レイアウトの blob を作らない**ほうが大事
+inline constexpr uint32_t kSimSnapshotVersion = 18;
 
 // 撮る: out を clear して blob を書く。成功で true。
 // 節ごとの参照が null なら「空の節」を書くのでレイアウトは常に同じ

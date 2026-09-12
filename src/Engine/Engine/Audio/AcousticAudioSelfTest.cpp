@@ -130,7 +130,9 @@ bool RunAcousticAudioSelfTest()
         // ABI v17 GetSceneName がシーン名を sim の分岐材料に変えたことに追随したもの。
         // M18 追補 (SkinnedMesh の loop / fadeTicks / クロスフェード状態) の生バイト追加で
         // 15 -> 16。これも AcousticAudio とは無関係。
-        check(kSimSnapshotVersion == 16, "T1: kSimSnapshotVersion is not bumped by AcousticAudio");
+        // M75b (InputSnapshot 112 バイト + UI 対話状態のドラッグ欄) で 16 -> 18 (17 は M65i が使用)。
+        // これも AcousticAudio とは無関係。
+        check(kSimSnapshotVersion == 18, "T1: kSimSnapshotVersion is not bumped by AcousticAudio");
     }
 
     // ---- (T2) 同一原点なら波の場と probe が**ビット一致**する ----

@@ -10,7 +10,8 @@
     { "name": "UINavDown", "keys": ["Down"], "pad": ["DPadDown"], "mouse": [] },
     { "name": "UINavLeft", "keys": ["Left"], "pad": ["DPadLeft"], "mouse": [] },
     { "name": "UINavRight", "keys": ["Right"], "pad": ["DPadRight"], "mouse": [] },
-    { "name": "UINavSubmit", "keys": ["Enter", "Space"], "pad": ["A"], "mouse": [] }
+    { "name": "UINavSubmit", "keys": ["Enter", "Space"], "pad": ["A"], "mouse": [] },
+    { "name": "UINavCancel", "keys": ["Escape"], "pad": ["B"], "mouse": [] }
   ],
   "axes": [
     { "name": "WatcherLookX", "padAxis": "RX", "deadzone": 0.24 },

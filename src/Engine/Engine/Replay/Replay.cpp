@@ -159,11 +159,23 @@ std::string FirstDifferentInputField(const InputSnapshot& a, const InputSnapshot
     if (a.padRY != b.padRY) return "padRY";
     if (a.padConnected != b.padConnected) return "padConnected";
     if (std::memcmp(a.pad2, b.pad2, sizeof(a.pad2)) != 0) return "pad2";
-    // UI キャンバス (M70b)。float だが「同じ入力なら同じビット列」の照合なので == でよい
-    if (a.mouseCanvasX != b.mouseCanvasX) return "mouseCanvasX";
-    if (a.mouseCanvasY != b.mouseCanvasY) return "mouseCanvasY";
-    if (a.canvasW != b.canvasW) return "canvasW";
-    if (a.canvasH != b.canvasH) return "canvasH";
+    // ゲーム面 (M75b、M70b のキャンバス 4 値の後継)。float だが「同じ入力なら同じビット列」の
+    // 照合なので == でよい
+    if (a.mouseSurfX != b.mouseSurfX) return "mouseSurfX";
+    if (a.mouseSurfY != b.mouseSurfY) return "mouseSurfY";
+    if (a.surfW != b.surfW) return "surfW";
+    if (a.surfH != b.surfH) return "surfH";
+    // 文字キュー (M75b)。charCount より先に chars を見る — 数が同じで中身だけ違う列も
+    // 「どの文字か」まで名指しできるように
+    for (int i = 0; i < 8; ++i) {
+        if (a.chars[i] != b.chars[i]) {
+            char buf[32];
+            std::snprintf(buf, sizeof(buf), "chars[%d]", i);
+            return std::string(buf);
+        }
+    }
+    if (a.charCount != b.charCount) return "charCount";
+    if (std::memcmp(a.pad3, b.pad3, sizeof(a.pad3)) != 0) return "pad3";
     return std::string();
 }
 

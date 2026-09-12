@@ -19,6 +19,7 @@
 namespace mye {
 
 class World;
+struct InputSnapshot;
 struct UIElementComponent;
 struct RectTransformComponent;
 struct PrevWorldStore; // RenderSystem.h (描画補間 M36b)。sim レーンは使わない
@@ -68,6 +69,21 @@ struct CanvasInfo {
 //   決め方が変わるだけ) ので、今回は入れない。足すときは基準解像度と一緒に
 //   project_settings.json へ出す。
 CanvasInfo CanvasSize(int screenW, int screenH);
+
+// ---- ゲーム面 → キャンバス (M75b) ----
+// レーン 0 の入力に記録されたゲーム面 (surfW/H) から既定キャンバスを解く。**sim レーンの UI
+// (HitTest / FocusNav / ABI の GetUIRect・UIHitTest・MouseCanvasPos) はすべてここを通る** —
+// 面の寸法 → キャンバスの式を読み手ごとに書くと、M70b の「0 なら基準解像度」の倒し方が
+// 1 箇所だけ食い違う。surfW/H <= 0 (ヘッドレス / 未確定) は CanvasSize の退化扱い
+// (= 基準解像度 + scale 1) に倒れる。M75c で CanvasDesc を取る版がこの隣に並ぶ
+CanvasInfo CanvasOfInput(const InputSnapshot& in);
+
+// ゲーム面 px → キャンバス座標。M70b の Input::CaptureSnapshot がやっていた
+// `float(mouseX) / scale` と同じ 1 回の除算 = 同じビット (UISelfTest が memcmp で固定)
+inline float SurfaceToCanvas(float surfPx, const CanvasInfo& canvas)
+{
+    return surfPx / canvas.scale;
+}
 
 // ---- RectTransform (M75a) ----
 // 9-grid anchor (0..8、M51e の UIElement.anchor) を anchorMin/anchorMax の 0..1 へ写す。
