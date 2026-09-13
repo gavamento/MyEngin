@@ -281,7 +281,9 @@ private:
     // 1 本の波について、今のリングで**新たに確定した**セルに居る聴者へ到達を配る (M65f)。
     // 「新たに確定した」= dist が [(ring-1)*11, ring*11) に入っていること —
     // バケット幅が面コストちょうどなので、この判定だけで状態を持たずに縁が取れる
-    void DeliverArrivals(uint32_t slot, const std::vector<ListenerSite>& sites, uint64_t tick);
+    // world は聴者の「聞かない音」(hearAgents) の判定に使う。null なら音源を調べない
+    void DeliverArrivals(uint32_t slot, const std::vector<ListenerSite>& sites, uint64_t tick,
+                         World* world);
 
     // 聴者セルから親方向を遡って音源セルへ戻る。戻り値 = 遡れたか。
     // ★遡ること自体が「その波が本当にそこへ届いた」ことの検算になっている

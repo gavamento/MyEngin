@@ -1550,6 +1550,46 @@ bool RunAcousticSelfTest()
             field.Advance(&w, static_cast<uint64_t>(41 + i));
         }
         check(m->lastHeardTick == before, "mirror: below the threshold nothing is written");
+
+        // ★慣れた音源 (ignoreSource) の波は配られない (2026-09-13、三校)
+        {
+            auto* cfg = w.GetComponent<AcousticListenerComponent>(who.Id());
+            cfg->threshold = 0.0f;
+            cfg->ignoreSource = other;
+            const uint64_t beforeIgnore = cfg->lastHeardTick;
+            check(field.Emit(other, 1.0f, 0.0f, 1.0f, 1.0f, 8.0f, 2, 1, 60), "mirror: ignored emit ok");
+            for (int i = 0; i < 8; ++i) {
+                field.Advance(&w, static_cast<uint64_t>(61 + i));
+            }
+            check(cfg->lastHeardTick == beforeIgnore,
+                  "mirror: a wave from ignoreSource is never delivered");
+        }
+        // ★hearAgents=false なら AgentBrain を持つ実体の波は配られない / 既定 (true) なら聞く
+        {
+            GameObject agent = scene.CreateGameObjectTracked("Agent");
+            agent.AddComponent<AgentBrainComponent>();
+            w.ApplyStructuralChanges();
+            // 構造変更の後はポインタを取り直す
+            auto* cfg = w.GetComponent<AcousticListenerComponent>(who.Id());
+            cfg->ignoreSource = kNullEntity;
+            cfg->hearAgents = false;
+            const uint64_t beforeAgent = cfg->lastHeardTick;
+            check(field.Emit(agent.Id(), 1.0f, 0.0f, 1.0f, 1.0f, 8.0f, 1, 1, 80), "mirror: agent emit ok");
+            for (int i = 0; i < 8; ++i) {
+                field.Advance(&w, static_cast<uint64_t>(81 + i));
+            }
+            cfg = w.GetComponent<AcousticListenerComponent>(who.Id());
+            check(cfg->lastHeardTick == beforeAgent,
+                  "mirror: hearAgents=false never delivers a wave from an AgentBrain entity");
+            cfg->hearAgents = true;
+            check(field.Emit(agent.Id(), 1.0f, 0.0f, 1.0f, 1.0f, 8.0f, 1, 1, 100), "mirror: agent emit 2 ok");
+            for (int i = 0; i < 8; ++i) {
+                field.Advance(&w, static_cast<uint64_t>(101 + i));
+            }
+            cfg = w.GetComponent<AcousticListenerComponent>(who.Id());
+            check(cfg->lastHeardTick != beforeAgent && cfg->lastSourceEntity == agent.Id(),
+                  "mirror: hearAgents=true (the default) still hears an AgentBrain entity");
+        }
     }
 
     // ---- (24) 残光パラメータの鏡 (M65h) ----

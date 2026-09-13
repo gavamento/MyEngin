@@ -987,7 +987,7 @@ bool AcousticField::TraceToOrigin(uint32_t slot, int32_t cx, int32_t cy, int32_t
 }
 
 void AcousticField::DeliverArrivals(uint32_t slot, const std::vector<ListenerSite>& sites,
-                                    uint64_t tick)
+                                    uint64_t tick, World* world)
 {
     const Wave& w = waves_[slot];
     const WaveField& f = fields_[slot];
@@ -1008,6 +1008,17 @@ void AcousticField::DeliverArrivals(uint32_t slot, const std::vector<ListenerSit
         const float energy = acoustic::EnergyAt(d, f.maxDist, w.amplitude, grid_.cellSize);
         if (energy < site.mirror->threshold) {
             continue; // 閾値未満は「聞こえなかった」
+        }
+        // ★聞かない音 (2026-09-13、三校)。下の「大きいほうが勝つ」より**前に**落とす —
+        //   後で打ち消すと、この tick に届いた別の音を握り潰したまま消えてしまう。
+        //   音源を引くのは到達した聴者だけなので、毎リングの走査には乗らない
+        const AcousticListenerComponent& cfg = *site.mirror;
+        if (!cfg.ignoreSource.IsNull() && cfg.ignoreSource == w.source) {
+            continue; // 慣れた音源 (例: 一度調べたポンプ)
+        }
+        if (!cfg.hearAgents && world != nullptr && world->IsAlive(w.source)
+            && world->GetComponent<AgentBrainComponent>(w.source) != nullptr) {
+            continue; // 敵の声を別の敵が聞かない (同じ場所に集まった 2 体が声で追跡を延長し合う)
         }
         // 音源の位置は**親方向を遡って**得る。距離場そのものを辿るので、角を曲がって
         // 届いた音でも「実際に音が通った道の先」が出る (企画 §6-3 と §3-1 が同じ配列から出る)
@@ -1089,7 +1100,7 @@ void AcousticField::Advance(World* world, uint64_t tick)
         // ★**同じループの中で**配る。進めたばかりの dist 配列を、残光と同じ EnergyAt で
         //   読む — 「聞こえた場所」と「光った場所」が別式になる余地をここで潰している
         if (!sites.empty()) {
-            DeliverArrivals(s, sites, tick);
+            DeliverArrivals(s, sites, tick, world);
         }
     }
 }

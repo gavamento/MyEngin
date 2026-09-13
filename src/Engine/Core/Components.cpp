@@ -922,6 +922,14 @@ void RegisterBuiltinComponents()
                                            kFieldReadOnly)),
         MYE_JP("最終音色", MYE_FIELD_FLAGS(AcousticListenerComponent, lastTone, Int32,
                                            kFieldReadOnly)),
+        MYE_JP("敵の音を聞く",
+               MYE_FIELD_TIP(AcousticListenerComponent, hearAgents, Bool,
+                             "off = waves emitted by an entity with AgentBrain are never delivered "
+                             "(enemies stop reacting to each other's voices)")),
+        MYE_JP("無視する音源",
+               MYE_FIELD_TIP(AcousticListenerComponent, ignoreSource, EntityRef,
+                             "waves emitted by this entity are never delivered "
+                             "(a sound source this listener has got used to)")),
     });
 
     // 光に寄る目。光源は既存の LightComponent をそのまま読む (新しい光の概念を作らない)

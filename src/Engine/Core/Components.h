@@ -1468,6 +1468,11 @@ struct AcousticListenerComponent {
     float lastLoudness = 0.0f;
     EntityID lastSourceEntity = kNullEntity; // 自分の音を自分で聞かないための除外にも使う
     int32_t lastTone = 0;
+    // ---- 聞かない音 (2026-09-13、三校)。作者 (スクリプト) が書く設定値 = sim 入力 ----
+    // ★届いた後で反応を打ち消すのではなく**配らない**。配ってから打ち消すと、同じ tick に届いた
+    //   別の音 (「大きいほうが勝つ」で負けたプレイヤーの足音など) を握り潰したまま消えてしまう
+    bool hearAgents = true;              // false = AgentBrain を持つ実体が出した波を聞かない (敵同士の声)
+    EntityID ignoreSource = kNullEntity; // この実体が出した波を聞かない (慣れた音源 1 つ)
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
