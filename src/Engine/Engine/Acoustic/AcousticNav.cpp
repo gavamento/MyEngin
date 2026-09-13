@@ -137,7 +137,7 @@ void AcousticNav::ExcludeCircle(float x, float z, float radius)
     }
 }
 
-void AcousticNav::BuildDistance(Field& f) const
+void AcousticNav::BuildDistance(Field& f, bool towardTarget) const
 {
     const size_t n = static_cast<size_t>(nav_.CellCount());
     f.dist.assign(n, kUnreached);
@@ -174,6 +174,11 @@ void AcousticNav::BuildDistance(Field& f) const
             const int32_t z = li / (nav_.dimX * nav_.dimY);
             for (int i = 0; i < acoustic::kNeighborCount; ++i) {
                 const acoustic::Neighbor& nb = acoustic::kNeighbors[i];
+                // ★登らない (ヘッダ冒頭)。目標へ向かう場では、敵は隣 n から x へ動いて近づくので
+                //   n が x と同じか上の層 (dy >= 0) の辺だけを張る。出発点から広がる場は逆向き
+                if (towardTarget ? (nb.dy < 0) : (nb.dy > 0)) {
+                    continue;
+                }
                 const int32_t nx = x + nb.dx;
                 const int32_t ny = y + nb.dy;
                 const int32_t nz = z + nb.dz;
@@ -252,6 +257,13 @@ int AcousticNav::BuildFlowField(float wx, float wy, float wz)
             return -1;
         }
     }
+    // 空中の目標 (台の上で鳴った音・宙に浮いた光・壁から寄せた先が上の層) は、真下が閉じるまで
+    // 落とす。★登らない流れ場では上の層の目標に誰も着けないので、落とさないと「辿れない目標」として
+    //   NearestReachable の差し替えが毎 tick 走り、ReachedTarget も層違いで永久に偽になる。
+    //   グリッドの外は IsSolid が閉を返すので、最下層で必ず止まる
+    while (!IsSolid(tx, ty - 1, tz)) {
+        --ty;
+    }
     for (size_t i = 0; i < fields_.size(); ++i) {
         if (fields_[i].tx == tx && fields_[i].ty == ty && fields_[i].tz == tz) {
             return static_cast<int>(i); // 同じ粗セルを指す要求は 1 本を共有する
@@ -262,7 +274,7 @@ int AcousticNav::BuildFlowField(float wx, float wy, float wz)
     f.tx = tx;
     f.ty = ty;
     f.tz = tz;
-    BuildDistance(f);
+    BuildDistance(f, true);
     fields_.push_back(std::move(f));
     return static_cast<int>(fields_.size()) - 1;
 }
@@ -305,11 +317,12 @@ bool AcousticNav::NearestReachable(int field, float wx, float wy, float wz, floa
     }
     // 自分のセルから距離場を張り、届いたセルだけを候補にする。★fields_ には積まない —
     //   向きが逆 (自分 -> 周り) の場で、目標として共有されても誰の役にも立たない
+    // ★登らない規則で辺に向きがあるので、ここは「出発点から」の向きで張る (目標の場とは別物)
     Field from;
     from.tx = cx;
     from.ty = cy;
     from.tz = cz;
-    BuildDistance(from);
+    BuildDistance(from, false);
     int64_t best = INT64_MAX;
     int32_t bx = cx, by = cy, bz = cz;
     for (int32_t z = 0; z < nav_.dimZ; ++z) {
@@ -356,6 +369,11 @@ bool AcousticNav::SampleDirection(int field, float wx, float wy, float wz, float
     int bestIdx = -1;
     for (int i = 0; i < acoustic::kNeighborCount; ++i) {
         const acoustic::Neighbor& nb = acoustic::kNeighbors[i];
+        // ★上の層へは動けない。場の値だけ見ると上の隣が小さいことがある (別の道で付いた距離) ので、
+        //   ここでも辺の規則を守らないと水平成分だけを拾って障害物を押し続ける
+        if (nb.dy > 0) {
+            continue;
+        }
         const int32_t nx = cx + nb.dx;
         const int32_t ny = cy + nb.dy;
         const int32_t nz = cz + nb.dz;
@@ -372,13 +390,25 @@ bool AcousticNav::SampleDirection(int field, float wx, float wy, float wz, float
         return false;
     }
     // 水平成分だけを返す (縦の移動は CharacterController の重力に任せる)。
-    // 真上/真下だけの隣が選ばれると水平成分が 0 になるので、その場合は「進めない」
+    // ★隣の**向き**ではなく、今の位置から隣のセル**中心**へ向かう (2026-09-13)。向きをそのまま返すと、
+    //   斜めに角をかすめて障害物の側面に接した敵が「面へ真っ直ぐ突っ込む向き」を受け取り続け、
+    //   壁ずりが起きずに固まる (三校 stage2: 書架の角で自分のセルが閉になり、表の順で逃がした隣から
+    //   見た -X を返し続けた)。中心へ向かえば粗セルの中心線へ寄るので、面に斜めの成分が残って滑り出る。
+    //   ★どの隣を選ぶかは上の整数比較のまま。float は選んだ後の向きの 1 式だけ (規則 7 は崩さない)
     const acoustic::Neighbor& nb = acoustic::kNeighbors[bestIdx];
-    const float dx = static_cast<float>(nb.dx);
-    const float dz = static_cast<float>(nb.dz);
-    const float len = std::sqrt(dx * dx + dz * dz);
-    if (!(len > 0.0f)) {
-        return false;
+    float centerX = 0.0f, centerY = 0.0f, centerZ = 0.0f;
+    acoustic::CellToWorldCenter(nav_, cx + nb.dx, cy + nb.dy, cz + nb.dz, centerX, centerY, centerZ);
+    float dx = centerX - wx;
+    float dz = centerZ - wz;
+    float len = std::sqrt(dx * dx + dz * dz);
+    if (!(len > 1e-4f)) {
+        // 真下の隣の中心の真上に居る等、水平の差が無い。隣の向きに落とし、それも 0 なら「進めない」
+        dx = static_cast<float>(nb.dx);
+        dz = static_cast<float>(nb.dz);
+        len = std::sqrt(dx * dx + dz * dz);
+        if (!(len > 0.0f)) {
+            return false;
+        }
     }
     outDx = dx / len;
     outDz = dz / len;

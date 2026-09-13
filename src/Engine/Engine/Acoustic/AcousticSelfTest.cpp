@@ -1098,9 +1098,11 @@ bool RunAcousticSelfTest()
         };
         // 生成順 = index 昇順。Lead が最小で東へ、Oncoming は 1m 先から西へ (正面)、
         // Follower は Lead の 1m 後ろから同じ東へ
-        const EntityID lead = make("Lead", -0.5f, 0.0f, 8.0f, 0.0f);
-        const EntityID oncoming = make("Oncoming", 0.5f, 0.0f, -8.0f, 0.0f);
-        const EntityID follower = make("Follower", -1.5f, 0.0f, 8.0f, 0.0f);
+        // ★z は粗セル (1m) の中心線 0.5 に置く。SampleDirection は隣のセル中心へ向かうので、
+        //   セル境界 (z=0) に置くと中心線へ寄る z 成分が乗り、「進路を保つ = z 成分 0」が読めない
+        const EntityID lead = make("Lead", -0.5f, 0.5f, 8.0f, 0.5f);
+        const EntityID oncoming = make("Oncoming", 0.5f, 0.5f, -8.0f, 0.5f);
+        const EntityID follower = make("Follower", -1.5f, 0.5f, 8.0f, 0.5f);
         w.ApplyStructuralChanges();
         TransformSystem ts;
         ts.Update(w);
@@ -1294,6 +1296,100 @@ bool RunAcousticSelfTest()
         const SealedRun lured = runSealed(true, kAgentPatrol, kAgentSearch);
         check(lured.reached && lured.travelled > 2.0f && lured.outside,
               "sealed door: a light-seeker drawn to a sealed light reaches the door and searches");
+    }
+
+    // 腰高の障害物 (書架・閉じた扉) の「上」を通らない (三校 2026-09-13)。
+    // ★音響グリッドは立体なので、障害物の上の空いた層は開。登りを禁じないと流れ場が上を越える
+    //   道を張り、敵は水平成分だけを受け取って側面を押し続ける (三校 stage2: 書架の前で速度 0)。
+    // 細 24x6x24 (粗 12x3x12、1m)。粗 x=6 の列に高さ 2 層の壁を立て、最上層 (粗 y=2) は空ける
+    {
+        AcousticGridDesc g;
+        MYE_CHECK(acoustic::MakeGridDesc(24, 6, 24, 0.5f, 0.0f, 0.0f, 0.0f, g));
+        auto makeWall = [&](bool gap) {
+            std::vector<uint8_t> occ(static_cast<size_t>(g.CellCount()), 0u);
+            for (int32_t y = 0; y < 4; ++y) { // 細 y=0..3 = 粗 y=0..1
+                for (int32_t z = 0; z < g.dimZ; ++z) {
+                    if (gap && z >= 20) {
+                        continue; // 粗 z=10..11 だけ抜け道
+                    }
+                    for (int32_t x = 12; x <= 13; ++x) {
+                        occ[static_cast<size_t>(acoustic::CellIndex(g, x, y, z))] = 1u;
+                    }
+                }
+            }
+            return occ;
+        };
+        const float ox = g.minX, oz = g.minZ;
+        const float kFloorY = g.minY + 0.5f; // 粗 y=0 (床の層)
+        const float kAirY = g.minY + 2.5f;   // 粗 y=2 (壁より上の空いた層)
+        const float kWestX = ox + 2.5f, kEastX = ox + 10.5f, kZ = oz + 2.5f;
+
+        // 抜け道が無い: 壁の上が開いていても越える道にはならない
+        {
+            AcousticField field;
+            field.DebugSetGrid(g, makeWall(false));
+            AcousticNav nav;
+            nav.Sync(field);
+            nav.BeginTick();
+            int32_t cx = 0, cy = 0, cz = 0;
+            acoustic::WorldToCell(nav.Grid(), ox + 6.5f, kAirY, kZ, cx, cy, cz);
+            check(cy == 2 && !nav.IsSolid(cx, cy, cz) && nav.IsSolid(cx, 0, cz),
+                  "climb: precondition - the wall is solid on the floor and open above");
+            const int fi = nav.BuildFlowField(kEastX, kFloorY, kZ);
+            float dx = 0.0f, dz = 0.0f;
+            check(fi >= 0 && !nav.SampleDirection(fi, kWestX, kFloorY, kZ, dx, dz),
+                  "climb: open air above a wall is not a way over it (no direction)");
+            float nx = 0.0f, ny = 0.0f, nz = 0.0f;
+            check(nav.NearestReachable(fi, kWestX, kFloorY, kZ, nx, ny, nz) && nx < ox + 6.0f
+                      && ny < g.minY + 1.0f,
+                  "climb: the substitute goal stays on this side, on the floor layer");
+        }
+
+        // 抜け道がある: 勾配降下は床の層のまま抜け道を回って着く
+        {
+            AcousticField field;
+            field.DebugSetGrid(g, makeWall(true));
+            AcousticNav nav;
+            nav.Sync(field);
+            nav.BeginTick();
+            const int fi = nav.BuildFlowField(kEastX, kFloorY, kZ);
+            float px = kWestX, pz = kZ;
+            bool crossedAtGap = true;
+            bool stalled = false;
+            for (int step = 0; step < 400 && !nav.ReachedTarget(fi, px, kFloorY, pz); ++step) {
+                float dx = 0.0f, dz = 0.0f;
+                if (!nav.SampleDirection(fi, px, kFloorY, pz, dx, dz)) {
+                    stalled = true;
+                    break;
+                }
+                px += dx * nav.Grid().cellSize * 0.5f;
+                pz += dz * nav.Grid().cellSize * 0.5f;
+                // ★斜めの 1 歩が角を半セル未満かすめるのは許す (実機では CC が壁ずりで吸収する)。
+                //   見るのは「抜け道以外の所で壁の列を越えたか」だけ
+                if (px >= ox + 6.0f && px < ox + 7.0f) {
+                    crossedAtGap = crossedAtGap && pz >= oz + 9.5f;
+                }
+            }
+            check(crossedAtGap, "climb: the path crosses the wall line only at the gap");
+            check(!stalled && nav.ReachedTarget(fi, px, kFloorY, pz),
+                  "climb: the floor-layer path reaches the goal without stalling");
+        }
+
+        // 空中で鳴った音は真下の床の層へ落ちる (着いたと言えるのは床の層)
+        {
+            AcousticField field;
+            field.DebugSetGrid(g, std::vector<uint8_t>(static_cast<size_t>(g.CellCount()), 0u));
+            AcousticNav nav;
+            nav.Sync(field);
+            nav.BeginTick();
+            const int fi = nav.BuildFlowField(ox + 8.5f, kAirY, oz + 8.5f);
+            check(fi >= 0 && nav.ReachedTarget(fi, ox + 8.5f, kFloorY, oz + 8.5f)
+                      && !nav.ReachedTarget(fi, ox + 8.5f, kAirY, oz + 8.5f),
+                  "climb: a goal in the air drops to the floor layer below it");
+            float dx = 0.0f, dz = 0.0f;
+            check(nav.SampleDirection(fi, ox + 2.5f, kFloorY, oz + 2.5f, dx, dz),
+                  "climb: a floor-layer agent is guided toward a sound in the air");
+        }
     }
 
     // ---- (22) 敵 FSM: 5 状態の遷移と「警戒中は 1 波も出さない」(M65f) ----

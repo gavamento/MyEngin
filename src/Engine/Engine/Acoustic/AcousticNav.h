@@ -29,6 +29,14 @@ class AcousticField;
 //   sim 状態に化ける**。しかもそれは巻き戻しでだけ割れる = 最悪の型のバグになる。
 //   毎 tick 全再計算なら場は (占有, 目標セル) の純関数で、履歴が存在しない。
 //   重いときは**解像度を落とす方向にしか逃げない** (navCellRatio 2 -> 4)。
+//
+// ★★**敵は登らない** (2026-09-13)。グリッドは立体なので、書架や閉じた扉の**上の空いた層**も
+//   「開」になる。音はそこを越えてよいが、敵 (CharacterController) は越えられない。以前は
+//   流れ場が上の層を通って障害物を越える道を張り、SampleDirection が返す水平成分だけを
+//   受け取った敵が書架の側面を押し続けた (三校 stage2 で実測: moveInput 3m/s・速度 0 のまま)。
+//   そこで流れ場の辺を「同じ層か下の層へ」に限る。落ちる (下りる) のは重力が運ぶので許す。
+//   空中の目標は BuildFlowField が真下の床の層まで落とす。
+//   「音が通れる所は敵も通れる」は**同じ層の中では**そのまま成り立つ
 class AcousticNav {
 public:
     // 同じ目標セルの要求は共有する。異なる目標はすべて同期的に処理し、
@@ -45,14 +53,17 @@ public:
     void ExcludeCircle(float x, float z, float radius);
 
     // 目標のワールド座標から流れ場を 1 本張る。同じ粗セルを指す要求は同じ場を返す。
+    // 目標が空中 (真下が開) なら、真下が閉じるまで層を落としてから張る = 音源の足元へ向かう。
     // 戻り値: 場の index / 張れなければ -1 (グリッド外・開セルへ寄せられない目標)
     int BuildFlowField(float wx, float wy, float wz);
 
     // 場 index と現在位置から進む向き (水平、単位ベクトル) を得る。
     // 戻り値: 進める向きが在ったか。false = 到達不能 or 目標セルに居る
-    // ★向きは**26 近傍のどれか**に量子化される。滑らかにするために距離を補間して
+    // ★上の層の隣は選ばない (登らない)。
+    // ★進む隣は**26 近傍のどれか**を整数の比較で選ぶ。滑らかにするために距離を補間して
     //   勾配を取ると、順序ではなく値の比較に float が入り込む — この層は
-    //   「順序を決めるものは全部整数」で通す (見た目のがたつきは速度で均される)
+    //   「順序を決めるものは全部整数」で通す。返す向きは「今の位置から選んだ隣のセル中心へ」
+    //   (2026-09-13。隣の向きそのままだと、角をかすめて障害物の面に接した敵が面へ直角に押し続ける)
     bool SampleDirection(int field, float wx, float wy, float wz, float& outDx,
                          float& outDz) const;
 
@@ -78,7 +89,10 @@ private:
         int32_t tx = 0, ty = 0, tz = 0;   // 目標の粗セル
         std::vector<uint16_t> dist;       // kUnreached = 到達不能
     };
-    void BuildDistance(Field& f) const;
+    // towardTarget = true: 「各セルから目標まで」の場 (辺は目標側が同じか下の層)。
+    // false: 「目標セル (= 出発点) から各セルまで」の場 (辺は行き先が同じか下の層)。
+    // ★登らない規則で辺に向きが付いたので、2 つは同じ場にならない
+    void BuildDistance(Field& f, bool towardTarget) const;
     // 位置 -> 自分の粗セル。閉セルなら開いている隣へ**表の順**に逃がす (見つからなければ false)
     bool ResolveCell(float wx, float wy, float wz, int32_t& cx, int32_t& cy, int32_t& cz) const;
 
