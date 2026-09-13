@@ -186,28 +186,52 @@ bool BuildSettingsWindow::StageCopy(EngineContext& ctx, std::string& detail)
     copyGlob(L"System.Collections.Immutable");
     copyGlob(L"System.Reflection.Metadata");
 
-    // 1c) .NET ランタイム同梱 (自己完結配布)。プロセス内 coreclr.dll から SDK レイアウトを特定。
-    // 配布先の Runtime.exe は起動時に exe 隣の dotnet\ を DOTNET_ROOT として使う (ManagedHost)。
+    // 1c) .NET ランタイム同梱 (自己完結配布)。プロセス内の hostfxr.dll / coreclr.dll から
+    // SDK レイアウトを特定する。配布先の Runtime.exe は exe 隣の dotnet\ を DOTNET_ROOT として
+    // 使う (ManagedHost) ので、配布先に .NET 8 が無くても C# スクリプトが動く。
+    // ★fs::copy(recursive) はコピー先の最下層しか作らない。親 (dotnet\ 等) を先に
+    //   create_directories しないと ERROR_PATH_NOT_FOUND で 2 本とも失敗し、dotnet\ が
+    //   1 つも同梱されない (M16-M25 の追加時から 2026-09-13 までこの状態だった)
     if (bundleDotnet_) {
         HMODULE coreclr = GetModuleHandleW(L"coreclr.dll");
+        HMODULE hostfxr = GetModuleHandleW(L"hostfxr.dll");
         wchar_t clrPath[MAX_PATH] = {};
-        if (coreclr && GetModuleFileNameW(coreclr, clrPath, MAX_PATH)) {
-            const fs::path clr(clrPath); // ...\dotnet\shared\Microsoft.NETCore.App\<ver>\coreclr.dll
-            const fs::path fwVerDir = clr.parent_path();
+        wchar_t fxrPath[MAX_PATH] = {};
+        if (coreclr && hostfxr && GetModuleFileNameW(coreclr, clrPath, MAX_PATH)
+            && GetModuleFileNameW(hostfxr, fxrPath, MAX_PATH)) {
+            // ...\dotnet\shared\Microsoft.NETCore.App\<ver>\coreclr.dll
+            const fs::path fwVerDir = fs::path(clrPath).parent_path();
+            // ...\dotnet\host\fxr\<ver>\hostfxr.dll
+            const fs::path fxrVerDir = fs::path(fxrPath).parent_path();
             const std::wstring ver = fwVerDir.filename().wstring();
-            const fs::path dotnetRoot = fwVerDir.parent_path().parent_path().parent_path();
             const fs::path outDn = out / L"dotnet";
-            // host\fxr\* (hostfxr.dll) と shared framework の当該バージョンをコピー
-            fs::copy(dotnetRoot / L"host", outDn / L"host",
-                     fs::copy_options::recursive | fs::copy_options::overwrite_existing, ec);
-            fs::copy(fwVerDir, outDn / L"shared" / L"Microsoft.NETCore.App" / ver,
-                     fs::copy_options::recursive | fs::copy_options::overwrite_existing, ec);
-            if (ec) {
-                MYE_LOG_WARN("[build] .NET runtime bundle incomplete: %s", ec.message().c_str());
-                ec.clear();
+            // host\fxr は今ロードされている 1 版だけを積む。丸ごとだと開発機に入っている全版
+            // (5.0 / 6.0 / 10.0 ...) が乗り、nethost は最新の fxr を選ぶので、エディタで動いた
+            // 組み合わせと配布物の組み合わせがずれうる
+            auto copyTree = [](const fs::path& from, const fs::path& to) -> bool {
+                std::error_code e; // 2 本で共有すると後のコピーが先の失敗を上書きして隠す
+                fs::create_directories(to.parent_path(), e);
+                if (!e) {
+                    fs::copy(from, to,
+                             fs::copy_options::recursive | fs::copy_options::overwrite_existing, e);
+                }
+                if (e) {
+                    MYE_LOG_WARN("[build] .NET runtime copy failed: %s -> %s (%s)",
+                                 WideToUtf8(from.wstring()).c_str(),
+                                 WideToUtf8(to.wstring()).c_str(), e.message().c_str());
+                    return false;
+                }
+                return true;
+            };
+            const bool fxrOk = copyTree(fxrVerDir, outDn / L"host" / L"fxr" / fxrVerDir.filename());
+            const bool fwOk = copyTree(fwVerDir, outDn / L"shared" / L"Microsoft.NETCore.App" / ver);
+            if (fxrOk && fwOk) {
+                MYE_LOG_INFO("[build] bundled .NET runtime %s + hostfxr %s (self-contained)",
+                             WideToUtf8(ver).c_str(),
+                             WideToUtf8(fxrVerDir.filename().wstring()).c_str());
             } else {
-                MYE_LOG_INFO("[build] bundled .NET runtime %s (self-contained)",
-                             WideToUtf8(ver).c_str());
+                MYE_LOG_WARN("[build] .NET runtime bundle incomplete "
+                             "(target needs .NET 8 installed for C# scripts)");
             }
         } else {
             MYE_LOG_WARN("[build] coreclr.dll not located — skipping runtime bundle "
