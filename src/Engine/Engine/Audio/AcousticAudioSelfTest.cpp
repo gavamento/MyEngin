@@ -136,7 +136,8 @@ bool RunAcousticAudioSelfTest()
         // M75b (InputSnapshot 112 バイト + UI 対話状態のドラッグ欄) で 16 -> 18 (17 は欠番)。
         // M65i の AcousticVolume.glowAlbedoMix (残光に面の色) の生バイト追加で 18 -> 19。
         // どちらも AcousticAudio とは無関係 (入力のレイアウト / 描画レーンの値)。
-        check(kSimSnapshotVersion == 19, "T1: kSimSnapshotVersion is not bumped by AcousticAudio");
+        // AcousticVolume.glowDecayEveryTicks (残光の間引き) の生バイト追加で 19 -> 20。これも無関係。
+        check(kSimSnapshotVersion == 20, "T1: kSimSnapshotVersion is not bumped by AcousticAudio");
     }
 
     // ---- (T2) 同一原点なら波の場と probe が**ビット一致**する ----

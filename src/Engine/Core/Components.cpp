@@ -880,6 +880,11 @@ void RegisterBuiltinComponents()
                MYE_FIELD_RANGE(AcousticVolumeComponent, glowIntensity, Float, 0.0f, 4.0f)),
         MYE_JP("残光に面の色",
                MYE_FIELD_RANGE(AcousticVolumeComponent, glowAlbedoMix, Float, 0.0f, 1.0f)),
+        MYE_JP("残光を減らす間隔",
+               MYE_FIELD_TIP(AcousticVolumeComponent, glowDecayEveryTicks, Int32,
+                             "decay the afterglow only once every N ticks; 0 or 1 = every tick. "
+                             "N stretches the afterglow (and its ~4.25s uint8 cap) by N. "
+                             "clamped to 16")),
     });
 
     // 音を出す口。pending* を書くと次の音響フェーズで波が 1 本生まれる。

@@ -192,6 +192,15 @@ public:
     float GlowIntensity() const { return glowIntensity_; }
     // 強い残光に面の albedo を混ぜる割合。Sync で [0,1] に丸め済み (0 = 従来の色)
     float GlowAlbedoMix() const { return glowAlbedoMix_; }
+    // 残光を何 tick に 1 回減らすか。Sync で [1, kGlowDecayEveryMax] に丸め済み (1 = 毎 tick = 従来)
+    static constexpr int32_t kGlowDecayEveryMax = 16;
+    int32_t GlowDecayEveryTicks() const { return glowDecayEveryTicks_; }
+    // この tick に DecayVisual を回すか。★位相は tick 番号そのもの — 自前のカウンタを持つと
+    //   snapshot に載せる状態が増え、巻き戻し後に「同じ tick で減る」が崩れる
+    bool ShouldDecayVisual(uint64_t tick) const
+    {
+        return glowDecayEveryTicks_ <= 1 || tick % static_cast<uint64_t>(glowDecayEveryTicks_) == 0;
+    }
 
     // ---- 解析的な波面 = 「描画だけ円」(2026-09-12) ----
     //
@@ -309,6 +318,7 @@ private:
     float glowKeepPerTick_ = 0.0f;      // 0 = kGlowDecayPerTick (既定)
     float glowIntensity_ = 1.0f;
     float glowAlbedoMix_ = 0.0f;        // [0,1] に丸め済み
+    int32_t glowDecayEveryTicks_ = 1;   // [1, kGlowDecayEveryMax] に丸め済み
     // ---- 解析的な波面 (描画レーン。上の FrontWave の説明を参照) ----
     struct FrontPreview {
         // sim の波の写し (消えた後も名残のあいだ持つ)。★maxRing だけ sim の 13/11 倍に広げてある —

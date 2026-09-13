@@ -1428,6 +1428,12 @@ struct AcousticVolumeComponent {
     // 企画 §3-4「材質は踏むか光を置くまで分からない」を遠くでは崩さないため。
     // 加算の距離色だけだと暗闇では面の色が一切出ず、床材の境目が読めなかった (三校)
     float glowAlbedoMix = 0.0f;
+    // 残光を何 tick に 1 回減らすか (2026-09-13、三校)。0 / 1 = 毎 tick = 従来と 1 ビットも変わらない。
+    // N にすると残光の寿命がそのまま N 倍になる = 上の「最長 ~4.25 秒」を超えられる唯一の口
+    // (glowKeepPerTick は既定 0.995 の時点で 200 未満のセルが既に 1 tick 1 段 = 伸ばす余地が無い)。
+    // ★常用ではなく**一時的に書き換える**想定 (データ取得の大音波が描いた施設を数秒だけ長く残す)。
+    //   間引きの位相は tick 番号で決まる (TickRunner)。上限 16 は Sync が丸める
+    int32_t glowDecayEveryTicks = 0;
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 

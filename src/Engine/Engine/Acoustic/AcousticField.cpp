@@ -207,6 +207,9 @@ void AcousticField::Sync(World& world)
     // 混ぜ具合は [0,1] に丸める。★比較で落とす形にしてあるのは NaN も 0 (従来の色) へ倒すため
     //   (std::clamp は NaN をそのまま返す)
     glowAlbedoMix_ = (bestVol.glowAlbedoMix > 0.0f) ? std::min(bestVol.glowAlbedoMix, 1.0f) : 0.0f;
+    // 間引きは 0 / 負を 1 (毎 tick) へ倒す。★上限は「戻し忘れても残光が 1 分強で必ず消える」長さ
+    //   (255 段 x 16 tick = 68 秒)。これより長く残す用途はゲームの見え方の規則 (企画 §3-5) を壊す
+    glowDecayEveryTicks_ = std::clamp(bestVol.glowDecayEveryTicks, 1, kGlowDecayEveryMax);
     if (!acoustic::SameGrid(desc, grid_) || owner_ != best) {
         grid_ = desc;
         owner_ = best;

@@ -359,7 +359,10 @@ void RunOneTick(TickServices& ts)
         //   残光の長さが変わる (絵が機種依存になる = golden が撮れない)
         // M65h: 減衰率は AcousticVolume の glowKeepPerTick (Sync が鏡へ写した値)。
         // 0 = 既定 kGlowDecayPerTick へ倒すのは DecayVisual 側の範囲ガードの仕事
-        ts.acoustic->DecayVisual(ts.acoustic->GlowKeepPerTick());
+        // 2026-09-13: glowDecayEveryTicks = N なら N tick に 1 回だけ減らす (uint8 の尾 4.25 秒を N 倍へ)
+        if (ts.acoustic->ShouldDecayVisual(ctx.tickIndex)) {
+            ts.acoustic->DecayVisual(ts.acoustic->GlowKeepPerTick());
+        }
         // 「描画だけ円」の材料 (先読み距離場 + 見通しビット)。描画レーンなので resim では
         // 飛ばす — 飛ばしても次の通常 tick が波スロット表から作り直す (自己修復)
         if (!ts.resim) {

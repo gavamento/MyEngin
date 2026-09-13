@@ -1667,6 +1667,28 @@ bool RunAcousticSelfTest()
         field.Sync(w);
         check(field.GlowAlbedoMix() == 0.0f, "tune: a negative glowAlbedoMix clamps to zero");
 
+        // 残光の間引き (2026-09-13)。既定 0 と負は 1 = 毎 tick、上限超えは上限、N は tick % N == 0 だけ
+        check(field.GlowDecayEveryTicks() == 1 && field.ShouldDecayVisual(7),
+              "tune: the default glowDecayEveryTicks (0) decays every tick");
+        if (auto* av = w.GetComponent<AcousticVolumeComponent>(vol.Id())) {
+            av->glowDecayEveryTicks = -5;
+        }
+        field.Sync(w);
+        check(field.GlowDecayEveryTicks() == 1, "tune: a negative glowDecayEveryTicks decays every tick");
+        if (auto* av = w.GetComponent<AcousticVolumeComponent>(vol.Id())) {
+            av->glowDecayEveryTicks = 1000;
+        }
+        field.Sync(w);
+        check(field.GlowDecayEveryTicks() == AcousticField::kGlowDecayEveryMax,
+              "tune: glowDecayEveryTicks clamps to the cap");
+        if (auto* av = w.GetComponent<AcousticVolumeComponent>(vol.Id())) {
+            av->glowDecayEveryTicks = 3;
+        }
+        field.Sync(w);
+        check(field.ShouldDecayVisual(0) && !field.ShouldDecayVisual(1) && !field.ShouldDecayVisual(2)
+                  && field.ShouldDecayVisual(3) && field.ShouldDecayVisual(6),
+              "tune: glowDecayEveryTicks=3 decays only on every third tick");
+
         // 混ぜ具合は CB の z 席 (M65e で予約のまま空いていた席) で運ぶ。
         // ★未バインドは全部 0 のまま = シェーダは分岐に入らない (w も 0)
         RenderView view;

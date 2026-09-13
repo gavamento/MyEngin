@@ -107,7 +107,9 @@ struct SimRefs {
 //            描画レーン専用の値だが、コンポーネントの生バイトが World 節に載るので版は上がる
 //            (v11 と同型)。作業中は v17 だったが、master に M75b (v18) が先に入ったので 19 へ移した
 //            (v17 / v18 のどちらとも別レイアウトなので、どちらの番号も使い回さない)
-inline constexpr uint32_t kSimSnapshotVersion = 19;
+// v20 (2026-09-13): AcousticVolumeComponent へ glowDecayEveryTicks (残光を N tick に 1 回減らす) を追加。
+//            v19 と同じく描画レーンの値だが、生バイトが World 節に載るので版は上がる
+inline constexpr uint32_t kSimSnapshotVersion = 20;
 
 // 撮る: out を clear して blob を書く。成功で true。
 // 節ごとの参照が null なら「空の節」を書くのでレイアウトは常に同じ
