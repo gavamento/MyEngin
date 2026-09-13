@@ -491,9 +491,20 @@ void BuildSettingsWindow::AdvancePipeline(EngineContext& ctx)
             fs::remove(zip, ec); // 古い zip を先に落とす (tar は truncate するが明示的に)
             procLog_ = out.wstring() + L".zip.log";
             // Windows 標準の bsdtar (-a = 拡張子から zip 形式を推定)。出力フォルダの中身を
-            // アーカイブ直下に入れる (-C out .) — 展開してそのまま実行できる形
-            const std::wstring cmd = L"tar.exe -a -c -f \"" + zip.wstring() + L"\" -C \""
-                + out.wstring() + L"\" .";
+            // アーカイブ直下に入れる — 展開してそのまま実行できる形。
+            // ★"-C out ." と渡すとエントリ名が "./Runtime.exe" になり、エクスプローラーの
+            // zip フォルダには空に見えて 1 ファイルも展開できない (tar / .NET では読めるので
+            // 作った側では気づけない)。直下の子を名前で列挙して渡す
+            std::vector<std::wstring> children;
+            for (const auto& e : fs::directory_iterator(out, ec)) {
+                children.push_back(e.path().filename().wstring());
+            }
+            std::sort(children.begin(), children.end()); // 列挙順は FS 任せなので固定する
+            std::wstring cmd = L"tar.exe -a -c -f \"" + zip.wstring() + L"\" -C \""
+                + out.wstring() + L"\"";
+            for (const std::wstring& name : children) {
+                cmd += L" \"" + name + L"\"";
+            }
             proc_ = StartChildProcess(cmd, out.parent_path().wstring(), procLog_);
             if (proc_ == nullptr) {
                 FinishStage(StrId::Build_StZip, false, false, "tar.exe not available?");
