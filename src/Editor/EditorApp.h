@@ -102,6 +102,7 @@ private:
     void DrawMainMenuBar(EngineContext& ctx);
     void HandleShortcuts(EngineContext& ctx);
     void SaveCurrentScene(EngineContext& ctx);
+    bool BlockSaveWhilePlaying(); // true = 再生中なので保存を止めた (トーストは中で出す)
     bool IsSceneDirty() const { return undo_.StateSerial() != savedStateSerial_; }
     void RequestGuardedAction(EngineContext& ctx, PendingAction action);
     void ExecuteAction(EngineContext& ctx, PendingAction action);

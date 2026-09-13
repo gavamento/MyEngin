@@ -1470,8 +1470,29 @@ void EditorApp::HandleShortcuts(EngineContext& ctx)
     }
 }
 
+// ★再生中は保存しない。再生中の ctx.scene は編集中の文書ではなく**動いている世界**で、
+//   スクリプトの LoadScene で別シーンに入れ替わっても scenePath_ は開いたときのまま。
+//   ここで書くと「開いていたシーンのパスに、遷移先のシーンのプレイ途中の状態」が残る
+//   (三校 2026-09-13: タイトルを Play → ステージ 1 へ遷移 → 保存で title.scene.json が
+//   ステージ 1 の途中状態に上書きされ、起動するとタイトルを飛ばしてステージ 1 が始まった)。
+//   Stop で戻るのはメモリだけでディスクは戻らない。止めた = dirty のまま なので、
+//   未保存モーダルも「保存してコミット」も続きへ進まない (どちらも IsSceneDirty で判定している)
+bool EditorApp::BlockSaveWhilePlaying()
+{
+    if (!playMode_.InPlayMode()) {
+        return false;
+    }
+    MYE_LOG_WARN("[play] save blocked: the scene is playing (stop first)");
+    toasts_.Notify(LogLevel::Warn, Tr(StrId::Save_BlockedPlaying));
+    return true;
+}
+
 void EditorApp::SaveCurrentScene(EngineContext& ctx)
 {
+    // File メニュー / Ctrl+S / 未保存モーダル / 「保存してコミット」が全部ここを通る
+    if (BlockSaveWhilePlaying()) {
+        return;
+    }
     // ★M66g: 競合中の文書は保存しない (spec §7)。ディスクには競合マーカー入りの
     //   JSON があり、メモリには pull 前の内容がある。ここで保存すると
     //   **マーカーごと上書きして黙って ours を選ぶ** = 相手の変更が履歴にも
@@ -1805,6 +1826,11 @@ void EditorApp::SetupDockLayout(unsigned int dockspaceId)
 
 void EditorApp::SaveSceneAs(EngineContext& ctx)
 {
+    // ダイアログの後で scenePath_ を書き換えてから保存するので、ここで止めないと
+    // 保存は止まってもパスだけ変わる
+    if (BlockSaveWhilePlaying()) {
+        return;
+    }
     wchar_t path[MAX_PATH] = L"main.scene.json";
     OPENFILENAMEW ofn = {};
     ofn.lStructSize = sizeof(ofn);

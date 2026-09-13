@@ -792,6 +792,9 @@ MYE_STR(Confirm_UnsavedBody,  "The scene has unsaved changes. Save them?",
                               "シーンに未保存の変更があります。保存しますか？")
 MYE_STR(Confirm_Save,         "Save",       "保存する")
 MYE_STR(Confirm_DontSave,     "Don't Save", "保存しない")
+// ★再生中の ctx.scene は文書ではなく動いている世界 (LoadScene で別シーンにもなる)。保存を止める
+MYE_STR(Save_BlockedPlaying,  "Cannot save while playing. Stop first, then save.",
+                              "再生中は保存できません。停止してから保存してください。")
 // ★M70a: 型を引けなかったコンポーネントを抱えたまま保存したときの告知。**黙って通すと
 // 「保存は成功したのに次に開くと値が既定へ戻る」に見える**ので、保持したことを必ず言う
 MYE_STR(Save_UnknownKept,     "Saved with %d unknown component(s) kept as-is.",
