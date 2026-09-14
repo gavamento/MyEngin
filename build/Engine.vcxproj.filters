@@ -1209,6 +1209,9 @@
     <ClInclude Include="..\src\Engine\Renderer\MeshInstancing.h">
       <Filter>Renderer</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\MeshBind.h">
+      <Filter>Renderer</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\PickingPass.h">
       <Filter>Renderer</Filter>
     </ClInclude>

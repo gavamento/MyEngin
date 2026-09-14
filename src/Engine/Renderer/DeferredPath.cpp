@@ -8,6 +8,7 @@
 #include "Engine/Renderer/GpuBufferUtil.h" // M46a: バッファ生成ヘルパ (共通化)
 #include "Engine/Renderer/GpuResources.h"
 #include "Engine/Renderer/GraphicsDevice.h"
+#include "Engine/Renderer/MeshBind.h"
 #include "Engine/Renderer/RayTracing/RtPasses.h" // M46b: RT デバッグ表示
 #include "Engine/Renderer/RayTracing/RtTypes.h"  // M46h: 反射の roughness しきい値
 #include "Engine/Renderer/ShaderManager.h"
@@ -69,21 +70,7 @@ struct PerFrameCB {
     AcousticCB acoustic;
 };
 
-struct PerObjectCB {
-    XMFLOAT4X4 world;
-    XMFLOAT4 baseColor;
-    // ---- インスタンシング (M38f、末尾 append)。インスタンス版シェーダのみ参照 ----
-    int32_t instanceBase;
-    float instPad[3];
-};
-
-// deferred_gbuffer.hlsl / forward_lit.hlsl の MaterialParams (b2) と一致 (16 バイト)
-struct MaterialCB {
-    float metallic;
-    float roughness;
-    int32_t hasNormal; // 0=ノーマルマップ無し
-    float emissive;    // M46i: 自己発光の強さ (0 = 発光なし)
-};
+// PerObjectCB / MaterialCB は MeshBind.h (ForwardPath と共有する 1 本)
 
 // (M54c の ShadowTileCB は M54e で RenderTypes.h へ引き上げた — Forward の PerFrameCB も
 //  同じ形を要求するようになったため。転置の式は FillShadowTilesCB 1 本きり)
@@ -840,9 +827,7 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
         }
     }
 
-    uint64_t boundMesh = 0;
-    uint64_t boundTexture = 0;
-    uint64_t boundNormal = 0;
+    MeshBindState bound;
     uint64_t boundGbShader = gbufferShader_.value; // 上で gbProg を bind 済み
     size_t nextRun = 0;
     for (size_t idx = 0; idx < queue.opaque.size(); ++idx) {
@@ -862,41 +847,14 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
                 dc->PSSetShader(gbInstProg->ps.Get(), nullptr, 0);
                 boundGbShader = gbufferInstancedShader_.value;
             }
-            const AssetID texId =
-                mat->texture.IsNull() ? resources.textures.White() : mat->texture;
-            if (texId.value != boundTexture) {
-                Texture* tex = resources.textures.Get(texId);
-                ID3D11ShaderResourceView* srv = tex ? tex->srv.Get() : nullptr;
-                dc->PSSetShaderResources(0, 1, &srv);
-                boundTexture = texId.value;
-            }
-            const AssetID nrmId =
-                mat->normalTex.IsNull() ? resources.textures.White() : mat->normalTex;
-            if (nrmId.value != boundNormal) {
-                Texture* ntex = resources.textures.Get(nrmId);
-                ID3D11ShaderResourceView* nsrv = ntex ? ntex->srv.Get() : nullptr;
-                dc->PSSetShaderResources(1, 1, &nsrv);
-                boundNormal = nrmId.value;
-            }
-            if (item.mesh.value != boundMesh) {
-                const UINT stride = sizeof(MeshVertex);
-                const UINT offset = 0;
-                ID3D11Buffer* vb = mesh->vb.Get();
-                dc->IASetVertexBuffers(0, 1, &vb, &stride, &offset);
-                dc->IASetIndexBuffer(mesh->ib.Get(), DXGI_FORMAT_R32_UINT, 0);
-                boundMesh = item.mesh.value;
-            }
+            BindMaterialTextures(dc, resources.textures, *mat, kGBufferNormalSlot, bound);
+            BindMeshBuffers(dc, *mesh, item.mesh, bound);
             PerObjectCB po = {};
             po.world = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 }; // 未使用
             po.baseColor = SrgbToLinear(mat->baseColor);
             po.instanceBase = static_cast<int32_t>(run.base);
             UploadCB(dc, perObjectCB_.Get(), po);
-            MaterialCB imc = {};
-            imc.metallic = mat->metallic;
-            imc.roughness = mat->roughness;
-            imc.hasNormal = mat->normalTex.IsNull() ? 0 : 1;
-            imc.emissive = mat->emissiveIntensity;
-            UploadCB(dc, materialCB_.Get(), imc);
+            UploadCB(dc, materialCB_.Get(), MakeMaterialCB(*mat));
             dc->DrawIndexedInstanced(mesh->indexCount, run.count, 0, 0, 0);
             prof::AddDraw(static_cast<int>(mesh->indexCount / 3 * run.count));
             idx += run.count - 1; // for の ++idx と合わせて run 全体を飛ばす
@@ -923,29 +881,8 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
             ID3D11Buffer* bcb = boneCB_.Get();
             dc->VSSetConstantBuffers(3, 1, &bcb);
         }
-        const AssetID texId = mat->texture.IsNull() ? resources.textures.White() : mat->texture;
-        if (texId.value != boundTexture) {
-            Texture* tex = resources.textures.Get(texId);
-            ID3D11ShaderResourceView* srv = tex ? tex->srv.Get() : nullptr;
-            dc->PSSetShaderResources(0, 1, &srv);
-            boundTexture = texId.value;
-        }
-        // GBuffer パスはノーマルマップを t1 に (無ければ White。gHasNormal で使用可否を判定)
-        const AssetID nrmId = mat->normalTex.IsNull() ? resources.textures.White() : mat->normalTex;
-        if (nrmId.value != boundNormal) {
-            Texture* ntex = resources.textures.Get(nrmId);
-            ID3D11ShaderResourceView* nsrv = ntex ? ntex->srv.Get() : nullptr;
-            dc->PSSetShaderResources(1, 1, &nsrv);
-            boundNormal = nrmId.value;
-        }
-        if (item.mesh.value != boundMesh) {
-            const UINT stride = sizeof(MeshVertex);
-            const UINT offset = 0;
-            ID3D11Buffer* vb = mesh->vb.Get();
-            dc->IASetVertexBuffers(0, 1, &vb, &stride, &offset);
-            dc->IASetIndexBuffer(mesh->ib.Get(), DXGI_FORMAT_R32_UINT, 0);
-            boundMesh = item.mesh.value;
-        }
+        BindMaterialTextures(dc, resources.textures, *mat, kGBufferNormalSlot, bound);
+        BindMeshBuffers(dc, *mesh, item.mesh, bound);
         PerObjectCB po = {};
         XMStoreFloat4x4(&po.world, XMMatrixTranspose(XMLoadFloat4x4(&item.world)));
         po.baseColor = SrgbToLinear(mat->baseColor); // M38a: authored 色をリニアへ
@@ -954,12 +891,7 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
         // フレーム頭で埋めた値をそのまま持ち回る
         XMStoreFloat4x4(&vel.prevWorld, XMMatrixTranspose(XMLoadFloat4x4(&item.prevWorld)));
         UploadCB(dc, velocityCB_.Get(), vel);
-        MaterialCB mc = {};
-        mc.metallic = mat->metallic;
-        mc.roughness = mat->roughness;
-        mc.hasNormal = mat->normalTex.IsNull() ? 0 : 1;
-        mc.emissive = mat->emissiveIntensity;
-        UploadCB(dc, materialCB_.Get(), mc);
+        UploadCB(dc, materialCB_.Get(), MakeMaterialCB(*mat));
         dc->DrawIndexed(mesh->indexCount, 0, 0);
         prof::AddDraw(static_cast<int>(mesh->indexCount / 3));
     }
@@ -1325,9 +1257,7 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
         dc->OMSetBlendState(blendAlpha_.Get(), nullptr, 0xFFFFFFFFu);
 
         uint64_t boundShader = 0;
-        boundMesh = 0;
-        boundTexture = 0;
-        boundNormal = 0;
+        bound = {}; // 不透明パスとはシェーダもスロットも違うので、張ったものの記憶を捨てる
         for (const RenderItem& item : queue.transparent) {
             Material* mat = resources.materials.Get(item.material);
             Mesh* mesh = resources.meshes.Get(item.mesh);
@@ -1344,40 +1274,14 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
                 dc->PSSetShader(prog->ps.Get(), nullptr, 0);
                 boundShader = mat->shader.value;
             }
-            const AssetID texId = mat->texture.IsNull() ? resources.textures.White() : mat->texture;
-            if (texId.value != boundTexture) {
-                Texture* tex = resources.textures.Get(texId);
-                ID3D11ShaderResourceView* srv = tex ? tex->srv.Get() : nullptr;
-                dc->PSSetShaderResources(0, 1, &srv);
-                boundTexture = texId.value;
-            }
-            // forward_lit はノーマルマップを t2 で参照する (無ければ White)
-            const AssetID nrmId =
-                mat->normalTex.IsNull() ? resources.textures.White() : mat->normalTex;
-            if (nrmId.value != boundNormal) {
-                Texture* ntex = resources.textures.Get(nrmId);
-                ID3D11ShaderResourceView* nsrv = ntex ? ntex->srv.Get() : nullptr;
-                dc->PSSetShaderResources(2, 1, &nsrv);
-                boundNormal = nrmId.value;
-            }
-            if (item.mesh.value != boundMesh) {
-                const UINT stride = sizeof(MeshVertex);
-                const UINT offset = 0;
-                ID3D11Buffer* vb = mesh->vb.Get();
-                dc->IASetVertexBuffers(0, 1, &vb, &stride, &offset);
-                dc->IASetIndexBuffer(mesh->ib.Get(), DXGI_FORMAT_R32_UINT, 0);
-                boundMesh = item.mesh.value;
-            }
+            // 透明後段は forward_lit をそのまま使う = ノーマルマップは Forward と同じ t2
+            BindMaterialTextures(dc, resources.textures, *mat, kForwardNormalSlot, bound);
+            BindMeshBuffers(dc, *mesh, item.mesh, bound);
             PerObjectCB po = {};
             XMStoreFloat4x4(&po.world, XMMatrixTranspose(XMLoadFloat4x4(&item.world)));
             po.baseColor = SrgbToLinear(mat->baseColor); // M38a: authored 色をリニアへ
             UploadCB(dc, perObjectCB_.Get(), po);
-            MaterialCB mc = {};
-            mc.metallic = mat->metallic;
-            mc.roughness = mat->roughness;
-            mc.hasNormal = mat->normalTex.IsNull() ? 0 : 1;
-            mc.emissive = mat->emissiveIntensity;
-            UploadCB(dc, materialCB_.Get(), mc);
+            UploadCB(dc, materialCB_.Get(), MakeMaterialCB(*mat));
             dc->DrawIndexed(mesh->indexCount, 0, 0);
             prof::AddDraw(static_cast<int>(mesh->indexCount / 3));
         }
