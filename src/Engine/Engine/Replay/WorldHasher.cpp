@@ -155,21 +155,51 @@ void EmitArray(DumpCtx* d, const char* component, const char* field, const uint3
     EmitArray(d, component, field, data, count * sizeof(uint32_t), count, fold);
 }
 
+// ---- 1 単位を畳み込み、畳んだ直後の h をダンプの 1 行に載せる ----
+// ★畳み込みと Emit を別々の 2 行で書くと、片方だけ足し忘れる。ダンプの行とハッシュの単位を
+//   1:1 に保つ (--hash-diff の「1 フィールド = valueDiffs 1」はこれが前提) ため、必ずこの組で書く
+
+// u64 として畳む値 (HashCombine は u64 の 1 本だけなので、u32 もここで u64 に広がる)
+void FoldU64(uint64_t& h, DumpCtx* d, const char* component, const char* field, uint64_t value)
+{
+    h = HashCombine(h, value);
+    EmitU64(d, component, field, value, h);
+}
+
+// 生バイト列として畳む値 (float 1 個もビットパターンのままここで畳む)
+void FoldBytes(uint64_t& h, DumpCtx* d, const char* component, const char* field, const void* data,
+               size_t size)
+{
+    h = HashBytes(data, size, h);
+    EmitBytes(d, component, field, data, size, h);
+}
+
+// SoA 配列 (ダンプは要素数 + サブハッシュの 1 行)
+void FoldFloats(uint64_t& h, DumpCtx* d, const char* component, const char* field, const float* data,
+                uint32_t count)
+{
+    h = HashBytes(data, count * sizeof(float), h);
+    EmitArray(d, component, field, data, count, h);
+}
+
+void FoldU32s(uint64_t& h, DumpCtx* d, const char* component, const char* field, const uint32_t* data,
+              uint32_t count)
+{
+    h = HashBytes(data, count * sizeof(uint32_t), h);
+    EmitArray(d, component, field, data, count, h);
+}
+
 // 1 エンティティ分: 親リンク + シリアライズ対象コンポーネントの登録フィールド
 uint64_t HashEntity(World& world, EntityID e, DumpCtx* d)
 {
     const ComponentRegistry& reg = ComponentRegistry::Get();
     uint64_t h = kFnvOffset;
-    h = HashCombine(h, e.index);
-    EmitU64(d, "-", "index", e.index, h);
-    h = HashCombine(h, e.generation);
-    EmitU64(d, "-", "generation", e.generation, h);
+    FoldU64(h, d, "-", "index", e.index);
+    FoldU64(h, d, "-", "generation", e.generation);
 
     const EntityID parent = world.GetParent(e);
-    h = HashCombine(h, parent.index);
-    EmitU64(d, "-", "parentIndex", parent.index, h);
-    h = HashCombine(h, parent.generation);
-    EmitU64(d, "-", "parentGeneration", parent.generation, h);
+    FoldU64(h, d, "-", "parentIndex", parent.index);
+    FoldU64(h, d, "-", "parentGeneration", parent.generation);
 
     const Archetype* arch = world.GetArchetype(e);
     if (!arch) {
@@ -184,17 +214,14 @@ uint64_t HashEntity(World& world, EntityID e, DumpCtx* d)
         if (!comp) {
             continue;
         }
-        h = HashCombine(h, desc.nameHash);
-        EmitU64(d, desc.name, "#nameHash", desc.nameHash, h);
+        FoldU64(h, d, desc.name, "#nameHash", desc.nameHash);
         for (const FieldDesc& f : desc.fields) {
             if (f.flags & kFieldNoSerialize) {
                 continue;
             }
             // ビットパターンをそのままハッシュ (float 演算で比較しない — spec 11.3)
             const uint8_t* bytes = static_cast<const uint8_t*>(comp) + f.offset;
-            const uint32_t size = FieldTypeSize(f.type);
-            h = HashBytes(bytes, size, h);
-            EmitBytes(d, desc.name, f.name, bytes, size, h);
+            FoldBytes(h, d, desc.name, f.name, bytes, FieldTypeSize(f.type));
         }
     }
     return h;
@@ -210,57 +237,33 @@ uint64_t HashCpuParticles(const CpuParticleBackend& cpu, DumpCtx* d)
             d->entityCol.push_back(':');
             AppendDecU64(d->entityCol, pool.owner.generation);
         }
-        h = HashCombine(h, pool.owner.index);
-        EmitU64(d, "Particles", "owner.index", pool.owner.index, h);
-        h = HashCombine(h, pool.owner.generation);
-        EmitU64(d, "Particles", "owner.generation", pool.owner.generation, h);
-        h = HashCombine(h, pool.alive);
-        EmitU64(d, "Particles", "alive", pool.alive, h);
-        h = HashBytes(&pool.emitAccum, sizeof(pool.emitAccum), h);
-        EmitBytes(d, "Particles", "emitAccum", &pool.emitAccum, sizeof(pool.emitAccum), h);
-        h = HashCombine(h, static_cast<uint32_t>(pool.ageTicks)); // M32a: 放出ウィンドウ状態
-        EmitU64(d, "Particles", "ageTicks", static_cast<uint32_t>(pool.ageTicks), h);
-        const uint64_t rngState = pool.rng.State();
-        const uint64_t rngInc = pool.rng.Inc();
-        h = HashCombine(h, rngState);
-        EmitU64(d, "Particles", "rngState", rngState, h);
-        h = HashCombine(h, rngInc);
-        EmitU64(d, "Particles", "rngInc", rngInc, h);
+        FoldU64(h, d, "Particles", "owner.index", pool.owner.index);
+        FoldU64(h, d, "Particles", "owner.generation", pool.owner.generation);
+        FoldU64(h, d, "Particles", "alive", pool.alive);
+        FoldBytes(h, d, "Particles", "emitAccum", &pool.emitAccum, sizeof(pool.emitAccum));
+        FoldU64(h, d, "Particles", "ageTicks", static_cast<uint32_t>(pool.ageTicks)); // M32a: 放出ウィンドウ状態
+        FoldU64(h, d, "Particles", "rngState", pool.rng.State());
+        FoldU64(h, d, "Particles", "rngInc", pool.rng.Inc());
         // M61a: 放出系拡張の sim 状態 (snapshot v5 と対)
-        h = HashBytes(&pool.prevOrigin, sizeof(pool.prevOrigin), h);
-        EmitBytes(d, "Particles", "prevOrigin", &pool.prevOrigin, sizeof(pool.prevOrigin), h);
-        h = HashCombine(h, pool.prevOriginValid);
-        EmitU64(d, "Particles", "prevOriginValid", pool.prevOriginValid, h);
-        h = HashCombine(h, pool.prewarmed);
-        EmitU64(d, "Particles", "prewarmed", pool.prewarmed, h);
+        FoldBytes(h, d, "Particles", "prevOrigin", &pool.prevOrigin, sizeof(pool.prevOrigin));
+        FoldU64(h, d, "Particles", "prevOriginValid", pool.prevOriginValid);
+        FoldU64(h, d, "Particles", "prewarmed", pool.prewarmed);
         const uint32_t n = pool.alive;
         if (n > 0) {
-            h = HashBytes(pool.px.data(), n * sizeof(float), h);
-            EmitArray(d, "Particles", "px", pool.px.data(), n, h);
-            h = HashBytes(pool.py.data(), n * sizeof(float), h);
-            EmitArray(d, "Particles", "py", pool.py.data(), n, h);
-            h = HashBytes(pool.pz.data(), n * sizeof(float), h);
-            EmitArray(d, "Particles", "pz", pool.pz.data(), n, h);
-            h = HashBytes(pool.vx.data(), n * sizeof(float), h);
-            EmitArray(d, "Particles", "vx", pool.vx.data(), n, h);
-            h = HashBytes(pool.vy.data(), n * sizeof(float), h);
-            EmitArray(d, "Particles", "vy", pool.vy.data(), n, h);
-            h = HashBytes(pool.vz.data(), n * sizeof(float), h);
-            EmitArray(d, "Particles", "vz", pool.vz.data(), n, h);
-            h = HashBytes(pool.life.data(), n * sizeof(float), h);
-            EmitArray(d, "Particles", "life", pool.life.data(), n, h);
-            h = HashBytes(pool.invLife.data(), n * sizeof(float), h);
-            EmitArray(d, "Particles", "invLife", pool.invLife.data(), n, h);
-            h = HashBytes(pool.size0.data(), n * sizeof(float), h);
-            EmitArray(d, "Particles", "size0", pool.size0.data(), n, h);
+            FoldFloats(h, d, "Particles", "px", pool.px.data(), n);
+            FoldFloats(h, d, "Particles", "py", pool.py.data(), n);
+            FoldFloats(h, d, "Particles", "pz", pool.pz.data(), n);
+            FoldFloats(h, d, "Particles", "vx", pool.vx.data(), n);
+            FoldFloats(h, d, "Particles", "vy", pool.vy.data(), n);
+            FoldFloats(h, d, "Particles", "vz", pool.vz.data(), n);
+            FoldFloats(h, d, "Particles", "life", pool.life.data(), n);
+            FoldFloats(h, d, "Particles", "invLife", pool.invLife.data(), n);
+            FoldFloats(h, d, "Particles", "size0", pool.size0.data(), n);
             // M63a: per-particle の不変属性 (snapshot v7 と対)。sim では動かないが、
             // 放出時に RNG から決まる = 復元後も同じ絵になることを保証する必要があるので畳む
-            h = HashBytes(pool.rot0.data(), n * sizeof(float), h);
-            EmitArray(d, "Particles", "rot0", pool.rot0.data(), n, h);
-            h = HashBytes(pool.rotVel.data(), n * sizeof(float), h);
-            EmitArray(d, "Particles", "rotVel", pool.rotVel.data(), n, h);
-            h = HashBytes(pool.flipU.data(), n * sizeof(float), h);
-            EmitArray(d, "Particles", "flipU", pool.flipU.data(), n, h);
+            FoldFloats(h, d, "Particles", "rot0", pool.rot0.data(), n);
+            FoldFloats(h, d, "Particles", "rotVel", pool.rotVel.data(), n);
+            FoldFloats(h, d, "Particles", "flipU", pool.flipU.data(), n);
         }
     }
     if (d && d->lines) {
@@ -285,35 +288,21 @@ uint64_t HashAcousticWaves(const AcousticField& field, DumpCtx* d)
             d->entityCol.push_back(':');
             AppendDecU64(d->entityCol, w.source.generation);
         }
-        h = HashCombine(h, slot);
-        EmitU64(d, "Acoustic", "slot", slot, h);
-        h = HashCombine(h, w.active);
-        EmitU64(d, "Acoustic", "active", w.active, h);
-        h = HashCombine(h, w.source.index);
-        EmitU64(d, "Acoustic", "source.index", w.source.index, h);
-        h = HashCombine(h, w.source.generation);
-        EmitU64(d, "Acoustic", "source.generation", w.source.generation, h);
-        h = HashCombine(h, static_cast<uint32_t>(w.ox));
-        EmitU64(d, "Acoustic", "ox", static_cast<uint32_t>(w.ox), h);
-        h = HashCombine(h, static_cast<uint32_t>(w.oy));
-        EmitU64(d, "Acoustic", "oy", static_cast<uint32_t>(w.oy), h);
-        h = HashCombine(h, static_cast<uint32_t>(w.oz));
-        EmitU64(d, "Acoustic", "oz", static_cast<uint32_t>(w.oz), h);
-        h = HashCombine(h, w.ring);
-        EmitU64(d, "Acoustic", "ring", w.ring, h);
-        h = HashCombine(h, w.maxRing);
-        EmitU64(d, "Acoustic", "maxRing", w.maxRing, h);
-        h = HashCombine(h, w.ticksPerRing);
-        EmitU64(d, "Acoustic", "ticksPerRing", w.ticksPerRing, h);
-        h = HashCombine(h, w.phase);
-        EmitU64(d, "Acoustic", "phase", w.phase, h);
-        // float は**ビットパターン**で畳む (spec 11.3)
-        h = HashBytes(&w.amplitude, sizeof(float), h);
-        EmitArray(d, "Acoustic", "amplitude", &w.amplitude, 1u, h);
-        h = HashCombine(h, w.tone);
-        EmitU64(d, "Acoustic", "tone", w.tone, h);
-        h = HashCombine(h, w.bornTick);
-        EmitU64(d, "Acoustic", "bornTick", w.bornTick, h);
+        FoldU64(h, d, "Acoustic", "slot", slot);
+        FoldU64(h, d, "Acoustic", "active", w.active);
+        FoldU64(h, d, "Acoustic", "source.index", w.source.index);
+        FoldU64(h, d, "Acoustic", "source.generation", w.source.generation);
+        FoldU64(h, d, "Acoustic", "ox", static_cast<uint32_t>(w.ox));
+        FoldU64(h, d, "Acoustic", "oy", static_cast<uint32_t>(w.oy));
+        FoldU64(h, d, "Acoustic", "oz", static_cast<uint32_t>(w.oz));
+        FoldU64(h, d, "Acoustic", "ring", w.ring);
+        FoldU64(h, d, "Acoustic", "maxRing", w.maxRing);
+        FoldU64(h, d, "Acoustic", "ticksPerRing", w.ticksPerRing);
+        FoldU64(h, d, "Acoustic", "phase", w.phase);
+        // float は**ビットパターン**で畳む (spec 11.3)。ダンプは既存の行の形 (n=1#…) のまま
+        FoldFloats(h, d, "Acoustic", "amplitude", &w.amplitude, 1u);
+        FoldU64(h, d, "Acoustic", "tone", w.tone);
+        FoldU64(h, d, "Acoustic", "bornTick", w.bornTick);
         ++slot;
     }
     return h;
@@ -333,57 +322,35 @@ uint64_t HashXpbdPools(const XpbdBackend& xpbd, DumpCtx* d)
             d->entityCol.push_back(':');
             AppendDecU64(d->entityCol, pool.owner.generation);
         }
-        h = HashCombine(h, pool.owner.index);
-        EmitU64(d, "Xpbd", "owner.index", pool.owner.index, h);
-        h = HashCombine(h, pool.owner.generation);
-        EmitU64(d, "Xpbd", "owner.generation", pool.owner.generation, h);
-        h = HashCombine(h, pool.kind);
-        EmitU64(d, "Xpbd", "kind", pool.kind, h);
+        FoldU64(h, d, "Xpbd", "owner.index", pool.owner.index);
+        FoldU64(h, d, "Xpbd", "owner.generation", pool.owner.generation);
+        FoldU64(h, d, "Xpbd", "kind", pool.kind);
         const uint32_t n = static_cast<uint32_t>(pool.px.size());
         const uint32_t m = static_cast<uint32_t>(pool.ca.size());
-        h = HashCombine(h, n);
-        EmitU64(d, "Xpbd", "particleCount", n, h);
-        h = HashCombine(h, m);
-        EmitU64(d, "Xpbd", "constraintCount", m, h);
+        FoldU64(h, d, "Xpbd", "particleCount", n);
+        FoldU64(h, d, "Xpbd", "constraintCount", m);
         if (n > 0) {
-            h = HashBytes(pool.px.data(), n * sizeof(float), h);
-            EmitArray(d, "Xpbd", "px", pool.px.data(), n, h);
-            h = HashBytes(pool.py.data(), n * sizeof(float), h);
-            EmitArray(d, "Xpbd", "py", pool.py.data(), n, h);
-            h = HashBytes(pool.pz.data(), n * sizeof(float), h);
-            EmitArray(d, "Xpbd", "pz", pool.pz.data(), n, h);
-            h = HashBytes(pool.vx.data(), n * sizeof(float), h);
-            EmitArray(d, "Xpbd", "vx", pool.vx.data(), n, h);
-            h = HashBytes(pool.vy.data(), n * sizeof(float), h);
-            EmitArray(d, "Xpbd", "vy", pool.vy.data(), n, h);
-            h = HashBytes(pool.vz.data(), n * sizeof(float), h);
-            EmitArray(d, "Xpbd", "vz", pool.vz.data(), n, h);
-            h = HashBytes(pool.prevX.data(), n * sizeof(float), h);
-            EmitArray(d, "Xpbd", "prevX", pool.prevX.data(), n, h);
-            h = HashBytes(pool.prevY.data(), n * sizeof(float), h);
-            EmitArray(d, "Xpbd", "prevY", pool.prevY.data(), n, h);
-            h = HashBytes(pool.prevZ.data(), n * sizeof(float), h);
-            EmitArray(d, "Xpbd", "prevZ", pool.prevZ.data(), n, h);
-            h = HashBytes(pool.invMass.data(), n * sizeof(float), h);
-            EmitArray(d, "Xpbd", "invMass", pool.invMass.data(), n, h);
+            FoldFloats(h, d, "Xpbd", "px", pool.px.data(), n);
+            FoldFloats(h, d, "Xpbd", "py", pool.py.data(), n);
+            FoldFloats(h, d, "Xpbd", "pz", pool.pz.data(), n);
+            FoldFloats(h, d, "Xpbd", "vx", pool.vx.data(), n);
+            FoldFloats(h, d, "Xpbd", "vy", pool.vy.data(), n);
+            FoldFloats(h, d, "Xpbd", "vz", pool.vz.data(), n);
+            FoldFloats(h, d, "Xpbd", "prevX", pool.prevX.data(), n);
+            FoldFloats(h, d, "Xpbd", "prevY", pool.prevY.data(), n);
+            FoldFloats(h, d, "Xpbd", "prevZ", pool.prevZ.data(), n);
+            FoldFloats(h, d, "Xpbd", "invMass", pool.invMass.data(), n);
         }
         if (m > 0) {
-            h = HashBytes(pool.ca.data(), m * sizeof(uint32_t), h);
-            EmitArray(d, "Xpbd", "ca", pool.ca.data(), m, h);
-            h = HashBytes(pool.cb.data(), m * sizeof(uint32_t), h);
-            EmitArray(d, "Xpbd", "cb", pool.cb.data(), m, h);
-            h = HashBytes(pool.rest.data(), m * sizeof(float), h);
-            EmitArray(d, "Xpbd", "rest", pool.rest.data(), m, h);
+            FoldU32s(h, d, "Xpbd", "ca", pool.ca.data(), m);
+            FoldU32s(h, d, "Xpbd", "cb", pool.cb.data(), m);
+            FoldFloats(h, d, "Xpbd", "rest", pool.rest.data(), m);
         }
         // M60'd: 終端アタッチの焼き込み (snapshot v6 と対)
-        h = HashCombine(h, pool.attachValid);
-        EmitU64(d, "Xpbd", "attachValid", pool.attachValid, h);
-        h = HashBytes(&pool.attachLx, sizeof(float), h);
-        EmitBytes(d, "Xpbd", "attachLx", &pool.attachLx, sizeof(float), h);
-        h = HashBytes(&pool.attachLy, sizeof(float), h);
-        EmitBytes(d, "Xpbd", "attachLy", &pool.attachLy, sizeof(float), h);
-        h = HashBytes(&pool.attachLz, sizeof(float), h);
-        EmitBytes(d, "Xpbd", "attachLz", &pool.attachLz, sizeof(float), h);
+        FoldU64(h, d, "Xpbd", "attachValid", pool.attachValid);
+        FoldBytes(h, d, "Xpbd", "attachLx", &pool.attachLx, sizeof(float));
+        FoldBytes(h, d, "Xpbd", "attachLy", &pool.attachLy, sizeof(float));
+        FoldBytes(h, d, "Xpbd", "attachLz", &pool.attachLz, sizeof(float));
     }
     if (d && d->lines) {
         d->entityCol = "-";
@@ -396,12 +363,9 @@ uint64_t HashXpbdPools(const XpbdBackend& xpbd, DumpCtx* d)
 uint64_t HashGameFlow(uint64_t h, const TimeControl* time, const PersistStore* persist, DumpCtx* d)
 {
     if (time) {
-        h = HashCombine(h, time->paused ? 1u : 0u);
-        EmitU64(d, "TimeControl", "paused", time->paused ? 1u : 0u, h);
-        h = HashCombine(h, static_cast<uint32_t>(time->scalePercent));
-        EmitU64(d, "TimeControl", "scalePercent", static_cast<uint32_t>(time->scalePercent), h);
-        h = HashCombine(h, static_cast<uint32_t>(time->accum));
-        EmitU64(d, "TimeControl", "accum", static_cast<uint32_t>(time->accum), h);
+        FoldU64(h, d, "TimeControl", "paused", time->paused ? 1u : 0u);
+        FoldU64(h, d, "TimeControl", "scalePercent", static_cast<uint32_t>(time->scalePercent));
+        FoldU64(h, d, "TimeControl", "accum", static_cast<uint32_t>(time->accum));
     }
     if (persist) {
         for (const auto& [key, blob] : persist->Entries()) {
@@ -409,13 +373,10 @@ uint64_t HashGameFlow(uint64_t h, const TimeControl* time, const PersistStore* p
                 d->nameCol.clear();
                 AppendHexU64(d->nameCol, key);
             }
-            h = HashCombine(h, key);
-            EmitU64(d, "Persist", "key", key, h);
-            h = HashCombine(h, static_cast<uint64_t>(blob.size()));
-            EmitU64(d, "Persist", "size", static_cast<uint64_t>(blob.size()), h);
+            FoldU64(h, d, "Persist", "key", key);
+            FoldU64(h, d, "Persist", "size", static_cast<uint64_t>(blob.size()));
             if (!blob.empty()) {
-                h = HashBytes(blob.data(), blob.size(), h);
-                EmitBytes(d, "Persist", "blob", blob.data(), blob.size(), h);
+                FoldBytes(h, d, "Persist", "blob", blob.data(), blob.size());
             }
         }
         if (d && d->lines) {
@@ -432,31 +393,24 @@ uint64_t HashUiInteraction(uint64_t h, const UIInteractionState* ui, DumpCtx* d)
     if (ui == nullptr) {
         return h;
     }
-    const auto fold = [&h, d](const char* field, EntityID e) {
-        h = HashCombine(h, e.index);
-        EmitU64(d, "UIInteraction", field, e.index, h);
-        h = HashCombine(h, e.generation);
+    const auto foldEntity = [&h, d](const char* field, EntityID e) {
+        FoldU64(h, d, "UIInteraction", field, e.index);
+        h = HashCombine(h, e.generation); // ★ダンプに行が無い (index の行だけ出ている)
     };
-    fold("hovered", ui->hovered);
-    fold("pressed", ui->pressed);
-    fold("clicked", ui->clicked);
-    fold("focused", ui->focused);
-    h = HashCombine(h, ui->adoptedAuthored);
-    EmitU64(d, "UIInteraction", "adoptedAuthored", ui->adoptedAuthored, h);
+    foldEntity("hovered", ui->hovered);
+    foldEntity("pressed", ui->pressed);
+    foldEntity("clicked", ui->clicked);
+    foldEntity("focused", ui->focused);
+    FoldU64(h, d, "UIInteraction", "adoptedAuthored", ui->adoptedAuthored);
     // M75b: ウィジェットのための状態。float は生バイトで畳む (HashCpuParticles の emitAccum と同じ) —
     // ドラッグ量の基準がずれると M75f 以降の Slider / ScrollRect の値が割れるが、それより前に
     // ここで割れてくれれば --hash-diff が「どの欄か」まで名指しできる
-    fold("changed", ui->changed);
-    const auto foldF = [&h, d](const char* field, const float& v) {
-        h = HashBytes(&v, sizeof(float), h);
-        EmitBytes(d, "UIInteraction", field, &v, sizeof(float), h);
-    };
-    foldF("pressSurfX", ui->pressSurfX);
-    foldF("pressSurfY", ui->pressSurfY);
-    foldF("prevSurfX", ui->prevSurfX);
-    foldF("prevSurfY", ui->prevSurfY);
-    h = HashCombine(h, ui->dragging);
-    EmitU64(d, "UIInteraction", "dragging", ui->dragging, h);
+    foldEntity("changed", ui->changed);
+    FoldBytes(h, d, "UIInteraction", "pressSurfX", &ui->pressSurfX, sizeof(float));
+    FoldBytes(h, d, "UIInteraction", "pressSurfY", &ui->pressSurfY, sizeof(float));
+    FoldBytes(h, d, "UIInteraction", "prevSurfX", &ui->prevSurfX, sizeof(float));
+    FoldBytes(h, d, "UIInteraction", "prevSurfY", &ui->prevSurfY, sizeof(float));
+    FoldU64(h, d, "UIInteraction", "dragging", ui->dragging);
     return h;
 }
 
