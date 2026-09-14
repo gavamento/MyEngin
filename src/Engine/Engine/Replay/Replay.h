@@ -15,12 +15,6 @@ namespace mye {
 //   tick 毎: InputSnapshot × playerCount + uint64 worldHash
 // InputSnapshot / WorldHasher のレイアウトが変わったら version を上げること。
 //
-// v4 (M52d、決定台帳 3): 版を上げるのは M52 を通してこの 1 回だけ。使い始めるのは
-// 後のサブでも、フォーマットの改版は 1 回に束ねる (M51h の ABI 束ねと同じ思想):
-//   snapshotSize … ヘッダ直後に置く「開始時点の sim 状態」。これがあると .rep は
-//                  シーン非依存に再生できる (M52f のクラッシュ再現が本命)
-//   playerCount  … tick レコードあたりの入力本数 (M52g のマルチ入力レーン)
-//
 // ★**worldHash == 0 は「期待値なし」の予約値** (M52f)。
 //   クラッシュ .rep の未完了 tick と、負荷を抑えるため checkpoint 外にした tick は
 //   期待ハッシュを持たない。ここに嘘の値を書くと、再現しなかったときに
@@ -29,30 +23,16 @@ namespace mye {
 //   ★通常の ReplayRecorder は実ハッシュを書き、CrashRing は checkpoint 外へ意図的に 0 を書く。
 //     実ハッシュが偶然 0 になる確率は 2^-64 で、その場合も「その 1 tick が未照合に
 //     なる」だけで誤検出にはならない (安全側に倒れる)。
-//   この予約は v4 のレイアウトを一切変えない = 版は上げない (決定台帳 3)。
-
-// v5 (M64a): InputSnapshot に生マウスデルタ (mouseDeltaX/Y) が入り 64 -> 72 バイトに
-// なった。ヘッダの inputSize でも弾けるが、**レイアウト変更は版で表すのが規約**
-// (inputSize は同サイズの別レイアウトを検出できない)。
-// ★過去の .rep は読めなくなるが、このリポジトリは golden .rep をコミットしておらず
-//   (replay_verify.bat が毎回録り直す)、失うものは無い
-
-// v6 (M70b): InputSnapshot に UI キャンバスの 4 値 (mouseCanvasX/Y, canvasW/H) が入り
-// 72 -> 88 バイトになった。**この 4 値を記録することが M70b の決定論の要**で、
-// UIElement は kComponentNoHash = ワールドハッシュに出ないため、記録せずに実解像度を
-// 渡す作りにすると「窓の大きさで当たり判定が変わるのに replay は緑」になる。
 
 // .rep のフォーマット版。ネットのハンドシェイク (M52h) でも照合するので、
-// Replay.cpp の中に閉じずにここへ出してある
-// v7 (M70c): WorldHasher に UI 対話状態の節が入った (InputSnapshot は不変)。
-// このファイルの冒頭が言うとおり「InputSnapshot / WorldHasher のレイアウトが変わったら
-// 版を上げる」— 記録ハッシュの意味が変わるので、旧 .rep を再生すると全 tick で
-// MISMATCH になる。版で弾いて「読めない」と言わせるほうが診断として正しい。
-
-// v8 (M75b): InputSnapshot 88 -> 112 バイト。UI キャンバスの 4 値を「ゲーム面 px + 面の寸法」へ
-// 置き換え (キャンバスが複数になる M75c で倍率がキャンバスごとに違うため、正規化前を記録する)、
-// 末尾に文字キュー (chars[8] + charCount) を足した。WorldHasher の UI 節にも changed /
-// ドラッグ状態が入った (v7 と同型の「記録ハッシュの意味が変わる」) ので、両方の理由で上げる。
+// Replay.cpp の中に閉じずにここへ出してある。
+// 版で弾く理由: ヘッダの inputSize は同サイズの別レイアウトを検出できず、WorldHasher の意味が
+// 変わった旧 .rep は全 tick で MISMATCH になる — 「読めない」と言わせるほうが診断として正しい。
+// v4 (M52d): ヘッダに snapshotSize (開始時点の sim 状態の埋め込み) と playerCount (入力レーン数)
+// v5 (M64a): InputSnapshot 64 -> 72 バイト (生マウスデルタ mouseDeltaX/Y)
+// v6 (M70b): InputSnapshot 72 -> 88 バイト (UI キャンバスの 4 値)
+// v7 (M70c): WorldHasher に UI 対話状態の節 (InputSnapshot は不変)
+// v8 (M75b): InputSnapshot 88 -> 112 バイト (ゲーム面 px + 面の寸法、文字キュー) + WorldHasher の UI 節に changed / ドラッグ状態
 inline constexpr uint32_t kReplayFileVersion = 8;
 
 struct MyeReplayHeader {

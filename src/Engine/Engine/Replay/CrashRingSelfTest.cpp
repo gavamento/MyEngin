@@ -175,7 +175,7 @@ bool RunCrashRingSelfTest()
         }
     }
 
-    // ---- 3. in-flight tick (このサブの肝) ----
+    // ---- 3. in-flight tick (このテストの肝) ----
     // tick に入ったが走り切っていない = 期待ハッシュが存在しない。
     // ★ここに嘘の値を書くと「再現しなかった」が「MISMATCH」に化ける (Replay.h の予約)
     {

@@ -22,8 +22,7 @@ struct PhysicsDebugFlags {
     bool impulses = false;   // 法線インパルスの強さを法線の長さに乗せる (contacts と併用)
     bool velocities = false; // 剛体の速度ベクトル
     // M60a: 関節のアンカー 2 点 + それを結ぶ「ずれ」の線 + 軸。**アンカーがどこで軸が
-    // どっちを向いているかが見えないと関節のデバッグは成立しない**ので、拘束ソルバと
-    // 同じサブで入れてある (M59 が可視化を面空力より前に置いて正解だったのと同じ判断)。
+    // どっちを向いているかが見えないと関節のデバッグは成立しない**。
     // ★これも他の 2 つと同じで**線が積まれるのは Play 中だけ** (積むのは tick 側なので)。
     //   編集中の authoring 用には SceneViewWindow のギズモ (SpringJoint と同じ棚) が別にある
     bool joints = false;

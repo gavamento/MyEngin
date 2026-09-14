@@ -24,17 +24,15 @@ namespace mye {
 namespace {
 
 // 決定論のため全て scalar float 演算 (XMVECTOR SIMD を使わない = Debug/Release で同一ビット)。
-// 形状判定は Physics/Shapes.cpp に統合 (M28a)。M28b で回転剛体 (角速度・慣性テンソル)、
-// クーロン摩擦、接触マニフォールド (最大 4 点)、反発速度閾値を追加。
+// 形状判定は Physics/Shapes.cpp に統合 (M28a)。
 constexpr float kGravity = -9.81f;      // m/s^2 (重力加速度、-Y)
-// 速度ソルバの固定反復回数 (収束判定による早期終了はしない = 決定論)。M28b から 8 のまま。
-// ★tick あたりのコストは M59g1 で**下がっている** — M28b は反復のたびに CollideManifold を
-//   呼んでいた (8 回) のに対し、いまは生成 1 回 + 位置補正 8 回。速度反復そのものは
-//   有効質量も再計算しない安い計算になった
+// 速度ソルバの固定反復回数 (収束判定による早期終了はしない = 決定論)。
+// 速度反復は CollideManifold も有効質量の再計算もしない安い計算
+// (CollideManifold を呼ぶのは制約生成の 1 回 + 位置補正の毎パス)
 constexpr int kSolverIterations = 8;
 // 位置補正のパス数 (M59g1)。**ここだけは真の貫通量が要るので毎回 CollideManifold を呼ぶ**
-// (速度ソルバと違い、接触点を反復間で持ち越す必要が無い)。M28b が速度ソルバと同じループで
-// 8 回押し出していたのに合わせてある。**4 に減らすと 10 段スタックが床を突き抜けた** (実測)
+// (速度ソルバと違い、接触点を反復間で持ち越す必要が無い)。
+// **4 に減らすと 10 段スタックが床を突き抜けた** (実測)
 constexpr int kPositionIterations = 8;
 // サブステップ数の上限 (M59g2)。PhysicsEnvironment のフィールドをここでクランプする
 constexpr int kMaxSubsteps = 16;
@@ -1341,7 +1339,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             // コライダーがあり isTrigger==0 ならソリッド (衝突解決に参加)。
             // M41: メッシュ (shape=3) は静的/kinematic 専用 — 動的剛体では無視する
             // (慣性テンソルを定義しないため。kinematic は invMass=0 なので許可)
-            // M59a2: 質量導出が形状体積を要るためコライダー取得を質量計算の前へ移動
+            // コライダー取得は質量計算より前 (M59a2: 質量導出が形状体積を要る)
             auto* col = world.GetComponent<ColliderComponent>(e);
             if (col && col->shape == collidershape::kMesh && !kinematic) {
                 col = nullptr;
@@ -1480,7 +1478,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             b.adhesion = SelectAdhesion(mat);              // M60d
             b.layer = col->layer; // M36a
             b.mask = col->mask;
-            // M28d: 親付き静的コライダーもワールド姿勢で判定 (従来は lt 直読みのバグ)
+            // M28d: 親付き静的コライダーもワールド姿勢で判定 (lt 直読みでは親の姿勢が抜ける)
             const WorldFrame f = ComposeParentFrame(world, e);
             XMFLOAT3 wpos;
             XMFLOAT4 wrot;
@@ -1758,7 +1756,6 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
     // **1 tick に 1 回だけ**。「誰と誰を繋ぐか」はサブステップで変わらないし、島と起床の
     // 配線にも同じ表を使い回す。行そのものは姿勢が動くのでサブステップごとに作り直す。
     // 1 個も無ければ以降の関節帯は全て空ループ = 既存シーンは fp 演算が 1 回も増えない
-    // 関節 1 本ぶんの作業データ JointLink は無名名前空間に置いてある (リミット行を組む関数も受け取るため)
     std::vector<JointLink> jointLinks;
     // M60j: 接触を作らないボディ対の表 ((小 index << 32) | 大 index、昇順・重複なし)。
     // ブロードフェーズの候補キーと**同じ組み方**なので、そのまま二分探索で引ける。
@@ -2149,8 +2146,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
     // ---- サブステップ (M59g2) ----
     // 1 tick を substeps 回に割って「積分 → 制約生成 → 解決 → 位置補正 → 前進」を繰り返す。
     // 反復回数を増やすより効く — 接触が生まれてから解かれるまでの時間が短くなるので、
-    // 反発の頂点保存も貫通も改善する。**env が無ければ 1 = M59g1 までと同一経路**
-    // (存在ゲート。文の並びも変えていないのでサブステップ 1 は構造的にそのまま)。
+    // 反発の頂点保存も貫通も改善する。**env が無ければ 1** (存在ゲート)。
     int substeps = 1;
     if (env) {
         substeps = env->substeps;
@@ -2214,7 +2210,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
     std::vector<uint64_t> islandPairs;
     for (int sub = 0; sub < substeps; ++sub) {
         // ---- 速度積分 (動的・非 kinematic のみ)。位置はまだ動かさない ----
-        // M28b で「速度積分 → ソルバ → 位置積分」の順に変更 (Box2D 流)。摩擦や法線インパルスで
+        // 「速度積分 → ソルバ → 位置積分」の順 (Box2D 流、M28b)。摩擦や法線インパルスで
         // 静止した速度がそのまま位置積分に使われるため、静止接触の毎 tick クリープが出ない
         for (Body& b : bodies) {
             if (b.invMass == 0.0f || !b.rb) {
@@ -2233,7 +2229,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                 b.vy += kGravity * b.rb->gravityScale * h;
             }
             // ★減衰は**毎 tick の率**なのでサブステップごとに掛けてはいけない (N 乗になる)。
-            //   最初のサブステップで 1 回だけ適用する — substeps=1 なら文の並びも M59g1 と同一
+            //   最初のサブステップで 1 回だけ適用する
             if (sub == 0) {
                 float damp = 1.0f - b.rb->linearDamping;
                 if (damp < 0.0f) { damp = 0.0f; }
@@ -2722,8 +2718,8 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                 jy = maxJ;
             }
             // 作用点は浮力中心 (没水部分の体積重心)。腕は **質量中心から** 測る。
-            // ★M59f1 でここが効き出した: centerOfMass を下げた浮体は r が水平成分を持ち、
-            //   r × (0, jy, 0) が**復原モーメント**になる (式は M59b2 から 1 文字も変えていない)。
+            // ★centerOfMass を下げた浮体 (M59f1) は r が水平成分を持ち、
+            //   r × (0, jy, 0) が**復原モーメント**になる。
             //   質量中心が形状原点のままなら r は +Y のみ = 外積が恒等 0 で従来どおり
             ApplyImpulse(b, -b.comx, centroidY - bp.py - b.comy, -b.comz, 0.0f, jy, 0.0f, 1.0f);
             // 水中抗力: 没水割合で按分した閉形式 implicit (静水前提 = 流れの場は持たない)
@@ -2742,9 +2738,9 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
         }
 
         // ---- ジャイロ項 ω×Iω (M59f1): **陰的**に解く。opt-in (Rigidbody.gyroscopic) ----
-        // 剛体の回転方程式は I ω̇ + ω×Iω = τ。従来はこの第 2 項を丸ごと落としていた
+        // 剛体の回転方程式は I ω̇ + ω×Iω = τ。gyroscopic を立てないボディはこの第 2 項を落とす
         // (= 対称でない物体が回っても軸が動かない)。陽的に足すとエネルギーが単調に増えて
-        // 必ず発散するので、後退 Euler を Newton で解く:
+        // 必ず発散するので、陰的中点を Newton で解く:
         //   f(ω) = I ω - I ω₀ + h (ω̄ × I ω̄) = 0    (ω̄ = (ω + ω₀)/2)
         //   J     = I + (h/2) ( skew(ω̄)·I - skew(I ω̄) )
         // ★中点を使う (**後退 Euler ではない**)。後退 Euler は無条件安定だが保存則を
@@ -3189,9 +3185,8 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                 }
                 BroadphaseEntry e;
                 e.id = static_cast<uint32_t>(i);
-                // M60e: 複合は**全子形状の和の AABB** を 1 エントリで出す。計画は子形状ごとに
-                // エントリを出す案だったが、ペアキーが body ベースのままなら SolidContact の
-                // 意味も統合処理も一切いじらずに済む。候補列は真の接触集合のスーパーセットで
+                // M60e: 複合は**全子形状の和の AABB** を 1 エントリで出す。ペアキーが body ベースの
+                // ままなので、SolidContact の意味も統合処理も子形状を意識せずに済む。候補列は真の接触集合のスーパーセットで
                 // あればよい (Broadphase.h の契約) ので、和の AABB でも正しい。
                 // 非複合ではこのループが 1 回 = 従来と同じ ComputeAabb 呼び出し 1 回
                 {
@@ -3353,7 +3348,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             float t1[3], t2[3];
             OrthoBasis(ax[0], ax[1], ax[2], t1, t2);
 
-            // アンカーは線形ブロックとスライダのリミット / モータで共用する (M60c で外へ出した)
+            // アンカーは線形ブロックとスライダのリミット / モータで共用する
             float pax, pay, paz, pbx, pby, pbz;
             jointAnchorsWorld(l, pax, pay, paz, pbx, pby, pbz);
 
@@ -3468,18 +3463,16 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
         std::vector<SolidContact> sleepContacts;
 
         // ---- 接触制約の生成 (M59g1): マニフォールドは **1 ステップに 1 回だけ**作る ----
-        // M28b は反復のたびに CollideManifold を呼び直していた。それをやめたのは、
-        // **蓄積インパルスの前提が「接触点が反復をまたいで同じであること」**だから —
-        // 毎回作り直すと「この接触点にこれまで何 N*s 入れたか」を持ち越す先が消える。
+        // 反復のたびに作り直さないのは、**蓄積インパルスの前提が「接触点が反復をまたいで
+        // 同じであること」**だから — 毎回作り直すと「この接触点にこれまで何 N*s 入れたか」を
+        // 持ち越す先が消える。
         //
-        // ★**解き方の「形」は M28b のまま**にした (中央法線 1 発 → 点毎 Jacobi → 重心摩擦)。
+        // ★**解き方の形は「中央法線 1 発 → 点毎 Jacobi → 重心摩擦」**。
         //   点ごとの逐次 (Gauss-Seidel) へ作り替える方が教科書的だが、**warm starting 無しでは
         //   スタックが目に見えて歩く** (実測: 3 段タワーの 600 tick ドリフトが 0.7mm → 75mm)。
         //   中央法線インパルスが「並進を全質量で 1 発で解く」役をしていて、それが 8 反復しか
-        //   回さないソルバの安定性を支えている。warm starting は M59h の計測ゲート付き別コミット
-        //   なので、ここでは**蓄積とクランプだけ**を足す。
-        // ★物理モデルは 1 つも変えていない: mu = sqrt(mu_a * mu_b) / e = min(e_a, e_b) /
-        //   kRestitutionVelThreshold / kPenetrationSlop はそのまま。
+        //   回さないソルバの安定性を支えている。
+        // 結合則: mu = sqrt(mu_a * mu_b) / e = min(e_a, e_b)。
         struct ContactPoint {
             float ra[3] = { 0, 0, 0 }; // 接触点 - A 重心 (生成時に固定)
             float rb[3] = { 0, 0, 0 };
@@ -3524,9 +3517,8 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             if (A.invMass + B.invMass == 0.0f) {
                 // ★眠っているペアは「解かないが**報告はする**」(M59h)。ここで落とすと
                 //   接触ペア列から消えて CollisionSystem が OnCollisionExit を誤発火し、
-                //   起きた瞬間に Enter が再発火する。計画は CollisionSystem 側に
-                //   「両者睡眠なら前 tick から Stay を繰り越す」規則を足す案だったが、
-                //   こちらのほうが (a) 生存確認が要らない (b) 毎 tick 実際に重なりを
+                //   起きた瞬間に Enter が再発火する。CollisionSystem 側で「両者睡眠なら
+                //   前 tick から Stay を繰り越す」より、こちらのほうが (a) 生存確認が要らない (b) 毎 tick 実際に重なりを
                 //   確かめるので嘘をつかない。コストは最後のサブステップの 1 回だけ
                 if ((A.sleeping || B.sleeping) && outContacts && sub == substeps - 1) {
                     // M60e: 複合は**最初に当たった子形状**を代表にする (報告は 1 ペア 1 件)
@@ -3591,8 +3583,8 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             c.count = m.count;
             // 法線から接線基底を決定論的に作る (分岐は入力だけに依存)。
             // 0.57735 = 1/sqrt(3) — 最も長い成分を避けて正規化の桁落ちを防ぐ古典手法。
-            // ★接線が**固定**なのが M28b との違い: 蓄積するには方向が動いてはいけない
-            //   (旧実装は毎反復その場の滑り方向を測っていたので蓄積できなかった)
+            // ★接線は生成時に**固定**する: 蓄積するには方向が反復をまたいで動いてはいけない
+            //   (毎反復その場の滑り方向を測ると蓄積できない)
             {
                 float ax, ay, az;
                 if (std::fabs(c.nx) >= 0.57735f) {
@@ -3703,7 +3695,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                 const float rvy = (A.vy + way) - (B.vy + wby);
                 const float rvz = (A.vz + waz) - (B.vz + wbz);
                 const float vn = rvx * c.nx + rvy * c.ny + rvz * c.nz;
-                // 低速接触は e=0 扱い (micro-bounce 除去 = 静止安定の柱。M28b から不変)
+                // 低速接触は e=0 扱い (micro-bounce 除去 = 静止安定の柱)
                 if (vn < 0.0f && -vn >= restitutionVelThreshold) {
                     c.biasC = -e * vn;
                 }
@@ -3713,12 +3705,12 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
         }
 
         // ---- 接触解決 (固定反復・生成順 = 候補ペアの (小,大) 昇順 = 決定論) ----
-        // 3 段構成は M28b のまま。違うのは各段が**蓄積量 lambda を持ちクランプする**こと:
+        // 3 段構成。各段が**蓄積量 lambda を持ちクランプする**:
         //   1. 重心での中央法線インパルス (反発込み) — 並進を全質量で 1 発。lambda >= 0
         //   2. 点毎 Jacobi 法線インパルス (同一速度から一括計算・点数分配) — 回転の不均衡だけ。
         //      対称接触では自動的にゼロになる = スタックが歩かない性質はここから来ている
         //   3. 重心でのクーロン摩擦 (固定接線 2 方向)。上限は**その時点の蓄積法線インパルス合計**
-        //      — 旧実装の「その反復ぶんの法線インパルス」より正しい Coulomb 境界になっている
+        //      (「その反復ぶんの法線インパルス」を上限にするより正しい Coulomb 境界)
         for (int iter = 0; iter < kSolverIterations; ++iter) {
             // ---- 関節 → 接触 の順 (M60 決定台帳 3) ----
             // 各反復の**先頭**で関節を解く。貫通のほうが目に見えるので接触を最後に置く
@@ -3764,11 +3756,10 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                     }
                 }
                 // ---- 2. 点毎 法線インパルス (反発なし。回転の不均衡だけを担当) ----
-                // ★M28b はここを 1/count に緩和した Jacobi にしていた。**蓄積インパルスでは
+                // ★ここを 1/count に緩和した Jacobi にしてはいけない。**蓄積インパルスでは
                 //   その緩和が収束の律速になる** — 4 点マニフォールドだと毎反復 1/4 しか
-                //   進まないので、8 反復では回転の残差が消えず 2 段タワーすら静定しない
-                //   (実測。旧方式は毎反復ゼロから解き直していたので緩和が効いていた)。
-                //   蓄積 + 0 クランプがあれば緩和無しでも暴れないので、緩和を外した。
+                //   進まないので、8 反復では回転の残差が消えず 2 段タワーすら静定しない (実測)。
+                //   蓄積 + 0 クランプがあれば緩和無しでも暴れない。
                 //   一括適用 (Jacobi) は維持している — 点を順に適用すると走査順の非対称が
                 //   トルクとして残り、対称なスタックが歩き出すため
                 float totalJn = c.lambdaNc;
@@ -3903,10 +3894,9 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
 
         // ---- 位置補正 (M59g1): 速度ソルバから**切り離した別パス** ----
         // 速度を解いている最中に姿勢を動かすと、生成時に固定した接触点・有効質量・法線と
-        // 食い違っていく (M28b は毎反復マニフォールドを作り直していたので問題にならなかった。
-        // 実測: 分離しないと 2 段タワーですら跳ね続け、下の接触インパルスが 2*m*g*dt の
-        // 2.3 倍に膨らんだ)。押し出しだけは**その場の真の貫通量**が要るので、ここでだけ
-        // CollideManifold を呼び直す。回転補正はしない (簡易ソルバの発散防止。M28b から不変)
+        // 食い違っていく (実測: 分離しないと 2 段タワーですら跳ね続け、下の接触インパルスが
+        // 2*m*g*dt の 2.3 倍に膨らんだ)。押し出しだけは**その場の真の貫通量**が要るので、ここでだけ
+        // CollideManifold を呼び直す。回転補正はしない (簡易ソルバの発散防止)
         for (int pass = 0; pass < kPositionIterations; ++pass) {
             // ---- 関節の位置補正 (M60a)。接触より先 (決定台帳 3 と同順) ----
             // アンカーのずれを質量比で分けて**並進だけ**で詰める (接触と同じ流儀。

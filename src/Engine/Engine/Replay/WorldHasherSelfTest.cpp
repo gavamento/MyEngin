@@ -116,8 +116,8 @@ bool RunWorldHasherSelfTest()
               "the dragging latch is part of the hash");
         ui.dragging = 0;
 
-        // EntityID の generation も 1 行として出る。以前はハッシュにだけ畳まれてダンプに行が無く、
-        // generation だけの差は「total は違うのに値の差 0 件」と報告されていた
+        // EntityID の generation も 1 行として出る。ハッシュにだけ畳んでダンプに行を出さないと、
+        // generation だけの差が「total は違うのに値の差 0 件」と報告される
         ++ui.hovered.generation;
         HashDump regen;
         HashWorldDump(w, uiRefs, 42, regen);

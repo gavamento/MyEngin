@@ -105,7 +105,7 @@ void TimeTravel::OnTickEnd(const SimRefs& refs, uint64_t ranTick, const InputSna
     const size_t idx = static_cast<size_t>(ranTick - firstTick_);
     if (idx < entries_.size()) {
         // 縮退経路: Fork を通らずにリングの途中で tick が走った。記録済みの未来は
-        // 捨てずに分岐へ移す (M52e までは resize で捨てていた)。走る前の状態は撮れて
+        // 捨てずに分岐へ移す。走る前の状態は撮れて
         // いないので、編集があったとしてもここでは拾えない = 正規経路は Fork
         const uint32_t id = SplitSuffix(kLiveLane, ranTick);
         MYE_LOG_WARN("[timetravel] tick %llu ran without Fork - the recorded future moved to "

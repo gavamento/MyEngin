@@ -476,17 +476,13 @@ uint64_t HashWorldImpl(World& world, const SimSources& src,
         total = HashCombine(total, ph);
         EmitU64(d, "Particles", "#total", ph, total);
     }
-    // XPBD 変形体の池 (M60'b)。★内容ゲート — 池が 1 つも無ければ節ごと畳まない。
-    //   CPU 粒子節は「ポインタ非 null なら空でも定数を 1 個畳む」形だが、それを真似ると
-    //   配線しただけで全既存シーンのハッシュが動き .rep 版 bump が要る (計画の決定台帳 4)
+    // XPBD 変形体の池 (M60'b)。内容ゲート (理由は WorldHasher.h の SimSources::xpbd)
     if (src.xpbd && !src.xpbd->Pools().empty()) {
         const uint64_t xh = HashXpbdPools(*src.xpbd, d);
         total = HashCombine(total, xh);
         EmitU64(d, "Xpbd", "#total", xh, total);
     }
-    // 音響の波 (M65a)。★XPBD 池と同じ**内容ゲート** — active な波が 1 本も無ければ
-    //   節ごと畳まない。「AcousticField を配線しただけ」で既存 6 シーンのハッシュが
-    //   動くと .rep 版 bump が要るので、そこを踏まないための条件
+    // 音響の波 (M65a)。内容ゲート (理由は WorldHasher.h の SimSources::acoustic)
     if (src.acoustic && src.acoustic->AnyWaveActive()) {
         const uint64_t ah = HashAcousticWaves(*src.acoustic, d);
         total = HashCombine(total, ah);

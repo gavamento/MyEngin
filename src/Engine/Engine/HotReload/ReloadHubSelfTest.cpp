@@ -21,7 +21,7 @@ bool RunReloadHubSelfTest()
         }
     };
 
-    // パスは NormalizePathKey 済みの形 (小文字 + '\\')。種類と順位は表へ置き換える前の実装から写した値
+    // パスは NormalizePathKey 済みの形 (小文字 + '\\')
     struct Case {
         const wchar_t* path;
         ReloadKind kind;

@@ -34,9 +34,8 @@ constexpr uint32_t kJointAxisColor = 0x60A0FFFFu; // 軸 (青)
 constexpr float kJointCrossArm = 0.10f; // アンカーの十字の腕 [m] (接触点より一回り大きく)
 constexpr float kJointAxisLen = 0.50f;  // 軸の描画長 [m]
 
-// ---- 可動域 (M60c の申し送り 9 を M60g2 で消化) ----
-// ★ラグドールは「どこまで曲がるか」が見えないとデバッグが成立しない。M60c の時点では
-//   曲げる被写体がヒンジ 1 本だったので後回しにしていた。
+// ---- 可動域 (M60g2) ----
+// ★ラグドールは「どこまで曲がるか」が見えないとデバッグが成立しない。
 constexpr uint32_t kJointLimitColor = 0xC080FFFFu; // 可動域の円錐 / 円弧 (紫)
 constexpr float kJointLimitLen = 0.40f;            // 円錐の母線 / 円弧の半径 [m]
 

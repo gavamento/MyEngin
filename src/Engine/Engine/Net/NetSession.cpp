@@ -365,8 +365,7 @@ void NetSession::HandlePacket(const NetAddress& from, const uint8_t* data, int s
     }
     lastRecvMs_ = NowMs();
     peerSendTimeMs_ = h.sendTimeMs;
-    // M52i: 相手の確定点。**後退させない** — 冗長送信で古いパケットが後から届くので、
-    // 単純代入だと確定点が行ったり来たりして desync の照合対象が安定しない
+    // M52i: 相手の確定点 (後退させない理由は下の peerConfirm* の更新)
     if (h.confirmHash != 0) {
         const size_t slot =
             static_cast<size_t>((h.confirmTick / kNetHashCheckpoint) % kNetPeerHashRing);

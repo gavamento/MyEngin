@@ -26,10 +26,9 @@ class PersistStore;
 // 実装を変更すると過去の .rep が検証不能になるため、変更時は ReplayFile の
 // バージョンを上げること
 
-// sim 状態源の集約 (M60'a = 予約事項 1)。「ECS 外の sim 状態」のハッシュ源は
-// ここに member を 1 個ずつ足す (次は M60'b の XpbdBackend)。名指し引数のまま
-// 増やすと全呼び出し (~107 箇所) が毎回壊れるので箱で受ける。
-// ★member は必ず末尾へ append — 呼び出し側は位置指定の波括弧初期化で組んでいる
+// sim 状態源の集約 (M60'a)。「ECS 外の sim 状態」のハッシュ源は member を末尾へ足す
+// (組み立ては SimSnapshot.h の SimSourcesOf 1 か所)。
+// ★member は必ず末尾へ append — SimSourcesOf は位置指定の波括弧初期化で組んでいる
 struct SimSources {
     const CpuParticleBackend* particles = nullptr;
     const TimeControl* time = nullptr;

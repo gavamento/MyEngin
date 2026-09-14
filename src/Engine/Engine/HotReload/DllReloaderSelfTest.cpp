@@ -94,7 +94,7 @@ bool RunDllReloaderSelfTest()
 
     // ---- 4. 読み手 (share_read) — 本バグの回帰テスト ----
     // net_verify case A/D のフレーク: もう片方のエンジンプロセスのプローブ /
-    // CopyFile のソース読みと共存できること (排他オープンだった頃はここで衝突した)
+    // CopyFile のソース読みと共存できること (排他オープンにするとここで衝突する)
     {
         HandleHolder r(filePath, GENERIC_READ, FILE_SHARE_READ);
         check(r.Valid(), "読み手 (share_read) を握れる");
@@ -123,9 +123,7 @@ bool RunDllReloaderSelfTest()
     }
 
     // ---- 7. ロードできない DLL は「ファイルが変わるまで」再試行しない (M70e) ----
-    // 三校プロジェクトで踏んだ: 旧 ABI (v15) の DLL を v16 のエディタが拒否 → Update() が
-    // 500ms ごとに棚 (cache\hot\p<pid>\vN) へ DLL+PDB を複製してから失敗し、51 秒で
-    // 101 段 / 63MB + 偽の「ホットリロードしました (vN)」トースト。ここでは PE ですらない
+    // 契約の理由は DllReloader.cpp の TryCopyAndLoad。ここでは PE ですらない
     // ファイルを DLL として渡して LoadModule を確実に失敗させ、DllReloader 側の契約
     // (時刻を記録 / Version を進めない / 棚を残さない / 書き直されたら再試行) を固定する。
     // 失敗の理由 (LoadLibrary 失敗 / 版不一致 / export 不在) は DllReloader から見れば

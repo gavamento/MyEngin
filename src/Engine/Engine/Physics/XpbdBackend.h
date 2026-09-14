@@ -16,12 +16,11 @@ class World;
 // XPBD 変形体 (ロープ / 布 / ソフトボディ) の粒子池 (M60'b、計画 supple-weaving-loom)。
 //
 // ★「ECS 外の sim 状態」の 2 例目 (1 例目 = CpuParticleBackend)。粒子数がオーサリングに
-//   依存して可変なので、コンポーネント常駐 (M59h の家風) には物理的に置けない —
-//   これが予約事項 1 の「ステートフルバックエンドの箱を開ける」の実体。
+//   依存して可変なので、コンポーネント常駐 (M59h の家風) には物理的に置けない。
 // ★sim 状態は必ず 3 点セットで運ぶこと:
 //   池 (ここ) + ハッシュ節 (WorldHasher の HashXpbdPools) + snapshot 節 (SimSnapshot v4)。
 //   片方だけ足すと「リプレイは通るのに巻き戻し/ロールバックで割れる」型のバグになる。
-// M60'b は器と配線のみ (何もシミュしない)。ソルバは M60'c の XpbdSolver が持つ。
+// ここは池 (状態) だけを持つ。ソルバは XpbdSolver (M60'c) にあり、PhysicsSystem のサブステップが呼ぶ。
 class XpbdBackend {
 public:
     // 池の種別 (オーサリング元のコンポーネント)。値はハッシュと blob に生で入るので

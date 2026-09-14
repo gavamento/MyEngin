@@ -125,7 +125,7 @@ bool NetRollback::InputsMatch(uint64_t tick, const InputSnapshot* lanes,
         return false;
     }
     const uint32_t n = (playerCount < kMaxPlayers) ? playerCount : kMaxPlayers;
-    // ★InputSnapshot は明示パディング済みの 64B POD (Input.h の static_assert)。
+    // ★InputSnapshot は明示パディング済みの 112B POD (Input.h の static_assert)。
     //   .rep はこの生バイトをそのまま書いて 2 プロセス間でバイト比較している
     //   (--rep-diff) ので、ここで memcmp を使うのは既存の不変量と同じ土俵
     return std::memcmp(e->inputs, lanes, sizeof(InputSnapshot) * n) == 0;

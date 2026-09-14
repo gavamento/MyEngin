@@ -745,7 +745,7 @@ bool CapsuleCapsuleManifold(const ShapePose& a, const ShapePose& b, Manifold& ou
     return true;
 }
 
-// ---- レイ交差 (M20 の RaySphere / RayAabb をそのまま移設 + capsule / OBB 追加) ----
+// ---- レイ交差 (sphere / AABB / OBB / capsule) ----
 
 bool RaySphere(float ox, float oy, float oz, float dx, float dy, float dz, float cx, float cy,
                float cz, float r, float maxDist, float& outT, float& nx, float& ny, float& nz)
@@ -1729,8 +1729,7 @@ bool MeshOtherManifold(const ShapePose& mesh, const ShapePose& other, Manifold& 
             triHit = CapsuleTriContact(other, ax, ay, az, bx, by, bz, cx, cy, cz, tnx, tny, tnz,
                                        td, qx, qy, qz);
         } else if (cvOk) {
-            // M60f: 三角形を「表裏 2 面の潰れた凸体」にして同じ SAT へ通す。
-            // convex::Collide の normal は b→a = 三角形→凸包 = ここの規約と同じ
+            // M60f: 三角形を潰れた凸体にして SAT へ通す (理由は Shapes.cpp の CollideMeshOther の同じ枝)
             convex::Body tb;
             convex::BuildFromTriangle(ax, ay, az, bx, by, bz, cx, cy, cz, tb);
             triHit = convex::Collide(cvBody, tb, tnx, tny, tnz, td);

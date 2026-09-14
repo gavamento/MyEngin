@@ -14,7 +14,7 @@ struct PhysMat;
 struct PhysicsEnvironmentComponent;
 struct ShapePose;
 
-// ソリッド接触ペア (M28c)。PhysicsSystem が tick 毎に最終ソルバ反復で検出したペアを
+// ソリッド接触ペア (M28c)。PhysicsSystem が tick 毎に全サブステップの接触制約から集めたペア (和集合) を
 // key 昇順で出力し、CollisionSystem が前 tick 差分から OnCollisionEnter/Stay/Exit を配信する。
 // key = (小 index << 32) | 大 index。normal は大 index 側→小 index 側 (小側から見た
 // 「相手→自分」方向)。PhysicsSystem 自身は状態を持たない (per-tick 出力 = ステートレス維持)
@@ -26,35 +26,36 @@ struct SolidContact {
     // 代表接触点 (ワールド)。マニフォールド最大 4 点の重心 = ソルバが中央法線インパルスと
     // 摩擦を効かせている点そのもの (別に平均を取り直していない)
     float px = 0, py = 0, pz = 0;
-    // その tick にこのペアへ入った**法線インパルスの合計** [N*s] = 固定 8 反復ぶんの総和。
+    // その tick にこのペアへ入った**法線インパルスの合計** [N*s] = 全反復・全サブステップの総和。
     // 静止した質量 m の物体を支えている接触ではちょうど m*g*dt になる (selftest が断言)。
     // ★最終反復ぶんだけでは駄目 — 静止接触は 1 回目でほぼ解決してしまい最後の反復は
-    //   ほぼ 0 = 「載っている重さ」を表さない。M59g1 で蓄積インパルスに改装しても
-    //   意味は変わらない (消費者は式を書き換えなくてよい)
+    //   ほぼ 0 = 「載っている重さ」を表さない
     float impulse = 0.0f;
 };
 
 // M60'c: 親チェーンを LocalTransform から scalar 合成したワールド位置/回転。
 // 物理フェーズ (3.6) は WorldMatrix を読めない (1 tick 古い) ための公開口で、
-// 剛体収集の ComposeParentFrame/ApplyFrame と**同じ式**を通る (挙動は 1 ビットも変えない)。
+// 剛体収集の ComposeParentFrame/ApplyFrame と**同じ式**を通る。
 // XpbdBackend::Sync が池の初期配置とピン追従にこれを使う。scale は畳み込み済みの
 // 位置にだけ効き、回転は正規化前提 (剛体と同じ近似)
 void ComposeEntityWorldPose(World& world, EntityID e, float& px, float& py, float& pz, float& qx,
                             float& qy, float& qz, float& qw);
 
 // 剛体物理 (M20、形状拡張 M28a、回転剛体 M28b)。決定論契約に従う簡易逐次インパルスソルバ:
-//   収集 (entity.index 昇順) → 積分 (重力 / 減衰 / 速度 / 角速度 / クォータニオン) →
-//   接触マニフォールド生成 (index 順、最大 4 点) → 固定反復・固定順ソルバ
-//   (貫通押し出し[並進のみ] + 接触点毎の法線インパルス + クーロン摩擦) → 書戻し。
+//   収集 (entity.index 昇順) → サブステップごとに [速度積分 (重力 / 減衰) →
+//   接触マニフォールド生成 (index 順、最大 4 点) → 固定反復・固定順の速度ソルバ
+//   (関節 → 接触: 法線インパルス + クーロン摩擦) → 位置補正の別パス (関節 / 貫通押し出し[並進のみ]) →
+//   XPBD / CCD → 位置積分] → 書戻し。
 // RigidbodyComponent を持つエンティティのみが動的ボディ。ソリッドな ColliderComponent
 // (isTrigger==0) が衝突面。RigidbodyComponent 非存在シーンでは完全 no-op = 既存リプレイ不変。
 // 形状判定 (sphere / OBB / capsule) は Physics/Shapes.cpp に統合 (M28a)。
 // 慣性テンソルは形状+質量から毎 tick 導出 (コンポーネントに持たない = ステートレス維持)。
-// freezeRotation で回転積分・角応答を無効化 (M28a 以前の並進のみ挙動)。
+// freezeRotation で回転積分・角応答を無効化 (並進のみ)。
 // スリープは M59h で追加 (PhysicsEnvironment の閾値が有効なときだけ働く)。
 // 親子階層対応 (M28d): 親チェーンを LocalTransform から scalar 合成してワールド姿勢で sim し、
 // 親フレームの逆変換でローカルに書き戻す。親は運動学的フレーム扱い (同 tick の親の積分結果は
-// 子に伝播しない)。velocity / angularVelocity は常にワールド系。ジョイント/複合コライダーは対象外。
+// 子に伝播しない)。velocity / angularVelocity は常にワールド系。
+// 関節 (JointComponent、M60a) と複合コライダー (Rigidbody.compoundColliders で子のコライダーを親剛体へ畳む、M60e) も解く。
 // ブロードフェーズ (M28d): 毎 tick 再構築の 1 軸 sort & sweep (Broadphase.cpp)。
 // 状態は全てコンポーネントに常駐 (velocity=Rigidbody, position=LocalTransform) → システムはステートレス。
 // CCD (M59j): Rigidbody.ccd を立てたボディだけ、1 サブステップの移動量が自分の外接球半径を
@@ -66,7 +67,7 @@ public:
     // TransformSystem の直前に呼ぶ (Play / 検証時のみ)。dt は固定 tick (1/60)。
     // outContacts 非 null なら clear してソリッド接触ペアを key 昇順で書き込む (M28c)。
     // 両方不動 (静的/kinematic 同士) のペアはソルバ対象外なので出力されない。
-    // xpbd (M60'b): 変形体の粒子池。先頭で Sync だけ呼ぶ (ソルバ統合は M60'c から)
+    // xpbd (M60'b): 変形体の粒子池。先頭で Sync し、サブステップごとに xpbd::Predict / Solve を呼ぶ
     void Update(World& world, float dt, std::vector<SolidContact>* outContacts = nullptr,
                 XpbdBackend* xpbd = nullptr);
 

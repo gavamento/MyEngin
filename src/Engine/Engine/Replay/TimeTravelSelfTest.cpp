@@ -135,7 +135,6 @@ bool RunTimeTravelSelfTest()
     const uint64_t oldHash130 = tt.HashAtTick(130);
 
     // ---- 縮退経路: Fork を呼ばずにリングの途中で tick が走る = 未来は分岐へ移る (M72a) ----
-    // (M52e まではここで未来を捨てていた)
     const uint64_t branchHash = tt.HashAtTick(150);
     tick = 150;
     RunTick(tt, true);

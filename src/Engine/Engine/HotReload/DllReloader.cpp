@@ -99,10 +99,9 @@ unsigned long DllReloader::ProbeWritable(const std::wstring& path)
     //       相手の share 設定に依存せず弾ける = リンカ検出はこれで足りる)
     //     ・読み手 (もう片方のエンジンプロセスの同じプローブ / CopyFile のソース読み)
     //       とは共存する
-    //   排他オープンだった頃は、ネットの 2 プロセス同時起動で互いのプローブが衝突し、
+    //   排他オープンにすると、ネットの 2 プロセス同時起動で互いのプローブが衝突し、
     //   負けた側が「C++ スクリプト 0 本の世界」で開始 → 開始ワールドハッシュ照合で
-    //   接続拒否になっていた (net_verify case A/D のフレーク。コピー先は M52h の
-    //   p<pid> 分離で解決済みだったが、コピー元の排他読みがここに残っていた)。
+    //   接続拒否になる (net_verify case A/D のフレーク)。
     //   FILE_SHARE_DELETE は足さない — DELETE を持つ相手 (差し替え直前) は弾くべき
     const HANDLE h = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
                                  OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
@@ -158,8 +157,7 @@ bool DllReloader::TryCopyAndLoad()
         //   記録しないと Update() が 500ms ごとにここへ戻ってきて、版不一致のような
         //   「待っても直らない」失敗のたびに ERROR 2 行 + 棚 1 段 (DLL+PDB) を積み、
         //   counter_ も進むので EditorApp が「ホットリロードしました (vN)」の偽トーストを
-        //   出し続ける (M70e で踏んだ: 三校プロジェクトの v15 DLL を v16 のエディタが
-        //   51 秒で 101 段 / 63MB 積んだ)。棚は消し、counter_ は CopyFile 失敗と同じく戻す —
+        //   出し続ける (M70e)。棚は消し、counter_ は CopyFile 失敗と同じく戻す —
         //   LoadModule は失敗時に FreeLibrary 済みなので消せる (ロード中の旧棚は別の vN)。
         //   代償: LoadLibrary の一過性失敗 (AV スキャナが握っている等) も次のビルドまで
         //   再試行しない。その場合は Rebuild Scripts を押し直せば mtime が変わって通る
@@ -184,8 +182,7 @@ bool DllReloader::LoadInitial()
     // ここは 1 発勝負 (ネット起動では Update() の 500ms 再試行が開始ワールドハッシュ
     // 照合に間に合わない) なので、書き手が居る間だけ短く待ってから 1 回だけ試す。
     // TryCopyAndLoad 全体はリトライしない — LoadModule 失敗 (待っても直らない) を
-    // 巻き込むため。失敗した mtime は TryCopyAndLoad が記録するので、Update() 側も
-    // ファイルが書き直されるまでは再試行しない (M70e)
+    // 巻き込むため (失敗した mtime の扱いは DllReloader.cpp の TryCopyAndLoad)
     const unsigned long err = WaitUntilWritable(dllPath_, kInitialDllWaitMs);
     if (err != 0) {
         MYE_LOG_WARN("[dll] initial load: GameLogic.dll is still busy (err=%lu): %s",
@@ -203,8 +200,7 @@ bool DllReloader::Update()
     }
     lastPollMs_ = now;
 
-    // lastWriteTime_ は「最後に試した DLL」の時刻 (失敗も含む)。同じ mtime のまま
-    // 再試行しないことが、ロードできない DLL で 500ms ごとに棚を積まない根拠 (M70e)
+    // 同じ mtime は失敗したものも再試行しない (理由は DllReloader.cpp の TryCopyAndLoad)
     const uint64_t writeTime = GetWriteTime(dllPath_);
     if (writeTime == 0 || writeTime == lastWriteTime_) {
         return false;

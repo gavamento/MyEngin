@@ -264,11 +264,10 @@ void WriteCollision(ByteWriter& w, CollisionSystem* collision)
 }
 
 // ---- ScriptHost の Start 済み記録 ----
-// キーは (エンティティ, スクリプト型) の 2 語 (M64b、v9)。**1 語 = エンティティだけ**
-// だった v8 までは、同じエンティティの 2 つ目のスクリプトが Start されないバグと
-// 表裏だったので、blob も 2 語へ広げてある。
+// キーは (エンティティ, スクリプト型) の 2 語 (M64b、v9)。**エンティティ 1 語だけ**にすると、
+// 同じエンティティの 2 つ目のスクリプトが Start されない。
 // ★整列は要らない — `std::set` なので走査順そのものが昇順で決定論
-//   (v8 までは unordered_set だったので、ここで sort するのが約束だった)
+//   (unordered_set に変えるならここで sort すること)
 void WriteScripts(ByteWriter& w, ScriptHost* scripts)
 {
     w.U32(kScrMagic);

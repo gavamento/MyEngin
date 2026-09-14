@@ -428,8 +428,8 @@ ReloadHub::ReloadResult ReloadHub::ReloadMixer(const std::wstring& path)
 }
 
 // 登録済みなら読み直す (M59a1)。所有は EngineLoop = physmat:: 経由で引く。
-// ★M59a2 で sim が消費し始めたら「ホットリロードが sim を変える既存資産クラス
-//   (メッシュコライダーと同類)」に合流する — record/verify 中の挙動もそちらの規約に従う
+// ★ソルバが材料を読む (M59a2) ので「ホットリロードが sim を変える既存資産クラス
+//   (メッシュコライダーと同類)」に属する — record/verify 中の挙動もそちらの規約に従う
 ReloadHub::ReloadResult ReloadHub::ReloadPhysMat(const std::wstring& path)
 {
     PhysMatLibrary* pm = physmat::Library();

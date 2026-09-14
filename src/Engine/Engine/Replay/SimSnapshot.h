@@ -72,56 +72,29 @@ struct SimRefs {
 };
 
 // blob の形式版。**.rep の版とは独立** (M52a 申し送り 7 と同じ規約) —
-// blob のレイアウトを変えたらここだけを上げる。
-// v2 (M52e): LOP 節へ audioHandleSeq を追加
+// blob のレイアウトを変えたらここだけを上げる。描画レーン専用の値や NoHash のコンポーネントでも
+// 生バイトは World 節に載るので版は上がる。版は一致しか見ないので番号は飛ばしてよいが、
+// **同じ番号で別レイアウトの blob を作らない**。
+// v2 (M52e): LOP 節へ audioHandleSeq
 // v3 (M52g): LOP 節の prevTickInput を kMaxPlayers 本のレーン配列へ (レーン数を節に明記)
 // v4 (M60'b): XPB 節 (XpbdBackend の池) を LOP 節の後・World 節の前に追加
-// v5 (M61a): PTC 節へ prevOrigin/prevOriginValid/prewarmed を追加。
-//            ParticleEmitterComponent の A群拡張で descCache の Raw サイズも変化
-// v6 (M60'd): XPB 節へ attachValid/attachLx/Ly/Lz (終端アタッチの焼き込み) を追加
-// v7 (M63a): PTC 節へ rot0/rotVel/flipU (per-particle の不変属性) を追加。
-//            ParticleEmitterComponent の B群拡張 18 本で descCache の Raw サイズも変化。
-//            ★M63b〜e が消費するフィールドも M63a でまとめて確保してあるので、
-//              B群で版が上がるのはこの 1 回だけ (分割して足すと 5 回上がる)
-// v8 (M64a): InputSnapshot が 64 -> 72 バイト。LOP 節の prevTickInput が
-//            レーン数ぶんそのまま太るので blob レイアウトが変わる
-// v9 (M64b): SCR 節の Start 済み記録が (エンティティ) 1 語から
-//            (エンティティ, スクリプト型) の 2 語へ。**同じエンティティに 2 つ以上
-//            スクリプトを付けると 2 つ目以降の Start() が呼ばれない**バグの修正で、
-//            キーの語数がそのまま blob の語数になる
-// v10 (M65a): ACU 節 (音響の波スロット表) を XPB 節の後・World 節の前に追加。
-//            ★M65b〜g が使うフィールドも M65a でまとめて確保してあるので、
-//              音響で版が上がるのはこの 1 回だけ (分割して足すと 7 回上がる)
-// v11 (M65h): AcousticVolumeComponent へ glowKeepPerTick / glowIntensity、
-//            AcousticEmitterComponent へ footstepGain を追加。World 節のカラム
-//            Raw サイズが変わる (残光の 2 本は描画レーン専用の値だが、
-//            コンポーネントの生バイトが blob に載るので版は上がる。
-//            3 本を 1 回で足したのは M63a と同じ「まとめて確保」の型)
-// v12 (M70b): InputSnapshot が 72 -> 88 バイト (UI キャンバスの 4 値)。
-//            LOP 節の prevTickInput がレーン数ぶんそのまま太るので blob レイアウトが変わる
-//            (v8 = M64a と同型の理由)
-// v13 (M70c): Scene 節に UI の対話状態 (hovered / pressed / clicked / focused =
-//            EntityID x 4) が入った。TimeControl と同じ「Scene が持つ sim 状態」で、
-//            巻き戻したときに押下中の要素まで戻らないと再シムが割れる
-// v14: Light.safeRadius の追加で World 節のカラム生バイトが変化する。
-// v15 (M71a): Scene 節に sceneName が入った。ABI v17 の GetSceneName で
-//            スクリプトが読めるようになった = 分岐に使う sim 状態へ昇格したので、
-//            撮らないとタイムトラベルと .rep 埋め込みスナップショットが
-//            「World は復元済みなのに名前だけ復元前」という食い違いを起こす
-// v16 (M18 追補): SkinnedMesh へ loop / fadeTicks とクロスフェードの再生状態 5 本を追加。
-//            NoHash のコンポーネントでも生バイトは World 節に載るので版は上がる (v11 と同型)
-// v18 (M75b): InputSnapshot 88 -> 112 バイト (prevTickInput の生バイトが太る) + Scene 節の UI 対話状態に
-//            changed / pressSurfX/Y / prevSurfX/Y / dragging を追加。
-//            ★v17 は欠番 — 未コミットの M65i (AcousticVolume.glowAlbedoMix) が作業ツリーで先に使っている。
-//            版は一致しか見ないので飛ばしてよく、**同じ番号で別レイアウトの blob を作らない**ほうが大事
-// v19 (M65i): AcousticVolumeComponent へ glowAlbedoMix (強い残光に面の色を混ぜる割合) を追加。
-//            描画レーン専用の値だが、コンポーネントの生バイトが World 節に載るので版は上がる
-//            (v11 と同型)。作業中は v17 だったが、master に M75b (v18) が先に入ったので 19 へ移した
-//            (v17 / v18 のどちらとも別レイアウトなので、どちらの番号も使い回さない)
-// v20 (2026-09-13): AcousticVolumeComponent へ glowDecayEveryTicks (残光を N tick に 1 回減らす) を追加。
-//            v19 と同じく描画レーンの値だが、生バイトが World 節に載るので版は上がる
-// v21 (2026-09-14): AcousticField::kMaxWaves 16 -> 32。ACU 節の波スロット表が 32 本になる
-//            (Wave の形は不変。本数が変わるので古い blob は ReadAcoustic が本数不一致で拒む)
+// v5 (M61a): PTC 節へ prevOrigin/prevOriginValid/prewarmed + ParticleEmitterComponent の A群拡張
+// v6 (M60'd): XPB 節へ attachValid/attachLx/Ly/Lz (終端アタッチの焼き込み)
+// v7 (M63a): PTC 節へ rot0/rotVel/flipU + ParticleEmitterComponent の B群拡張 18 本
+// v8 (M64a): InputSnapshot 64 -> 72 バイト (LOP 節の prevTickInput がレーン数ぶん太る)
+// v9 (M64b): SCR 節の Start 済み記録を (エンティティ, スクリプト型) の 2 語へ
+// v10 (M65a): ACU 節 (音響の波スロット表) を XPB 節の後・World 節の前に追加
+// v11 (M65h): AcousticVolumeComponent へ glowKeepPerTick / glowIntensity、AcousticEmitterComponent へ footstepGain
+// v12 (M70b): InputSnapshot 72 -> 88 バイト (UI キャンバスの 4 値)
+// v13 (M70c): Scene 節に UI の対話状態 (hovered / pressed / clicked / focused = EntityID x 4)
+// v14: Light.safeRadius (World 節のカラム生バイト)
+// v15 (M71a): Scene 節に sceneName (スクリプトが GetSceneName で読む sim 状態)
+// v16 (M18 追補): SkinnedMesh へ loop / fadeTicks とクロスフェードの再生状態 5 本
+// v17: 欠番 (使い回さない)
+// v18 (M75b): InputSnapshot 88 -> 112 バイト + Scene 節の UI 対話状態に changed / pressSurfX/Y / prevSurfX/Y / dragging
+// v19 (M65i): AcousticVolumeComponent へ glowAlbedoMix
+// v20 (2026-09-13): AcousticVolumeComponent へ glowDecayEveryTicks
+// v21 (2026-09-14): AcousticField::kMaxWaves 16 -> 32 (古い blob は ReadAcoustic が本数不一致で拒む)
 inline constexpr uint32_t kSimSnapshotVersion = 21;
 
 // 撮る: out を clear して blob を書く。成功で true。

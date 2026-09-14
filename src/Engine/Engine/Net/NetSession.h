@@ -27,18 +27,13 @@ namespace mye {
 // 再送機構は持たない。**直近 kNetRedundancy tick 分を毎回まるごと送り直す**ことで
 // ロスを吸収する (ロスに強く、順序も重複も気にしなくてよい)。
 
-// v2 (M52i): ヘッダへ「確定済み tick とそのワールドハッシュ」を 1 組ピギーバックした。
-// desync 検出のためで、入力交換の意味論は 1 バイトも変えていない
-// v3 (M64a): InputSnapshot が 64 -> 72 バイトになり、1 パケットの本体長が変わった
-//            (kNetMaxPacket は sizeof から導出しているので式は不変)。
-//            意味論は変えていないが、**旧版と繋ぐと入力が丸ごとずれる**ので版を上げる
-// v4 (M70b): InputSnapshot が 72 -> 88 バイト (UI キャンバスの 4 値) + ハンドシェイクの
-//            指紋に canvasW/H が入って NetIdentity が 40 -> 48 バイト。
-//            **本体長とハンドシェイク項目の両方**が変わる
-// v5 (M75b): InputSnapshot が 88 -> 112 バイト (ゲーム面 + 文字キュー) + 指紋に UI の基準解像度
-//            (referenceW/H) とフォント計測表のハッシュが入って NetIdentity が 48 -> 64 バイト。
-//            基準解像度の実効値は M75c (project_settings)、計測表のハッシュは M75d で入る —
-//            **欄と照合はここで先に確保して、版の bump を 1 回にまとめてある**
+// プロトコル版。パケットのレイアウト (ヘッダ / InputSnapshot) かハンドシェイクの項目 (NetIdentity) が
+// 変わったら上げる — 意味論が同じでも**旧版と繋ぐと入力が丸ごとずれる**
+// (kNetMaxPacket は sizeof から導出しているので式は不変)。
+// v2 (M52i): ヘッダへ確定済み tick とそのワールドハッシュを 1 組ピギーバック (desync 検出)
+// v3 (M64a): InputSnapshot 64 -> 72 バイト
+// v4 (M70b): InputSnapshot 72 -> 88 バイト + NetIdentity 40 -> 48 バイト (canvasW/H)
+// v5 (M75b): InputSnapshot 88 -> 112 バイト + NetIdentity 48 -> 64 バイト (referenceW/H、fontMetricsHash)
 inline constexpr uint32_t kNetProtoVersion = 5;
 inline constexpr uint32_t kNetMagic = 0x4E45594Du; // 'MYEN'
 inline constexpr uint32_t kNetRedundancy = 8;  // 1 パケットに載せる直近 tick 数
@@ -91,15 +86,15 @@ struct NetIdentity {
     // 状態で遊べてしまう」のを防ぐため。16:9 同士は解像度が違っても厳密に一致する
     float canvasW = 0.0f;
     float canvasH = 0.0f;
-    // UI の基準解像度 (M75b で欄を確保、M75c で project_settings.json の実効値が入る)。
+    // UI の基準解像度 (M75c: project_settings.json の実効値)。
     // 基準は 2 台がそれぞれのプロジェクト設定から読む値になるので、キャンバス寸法の一致から
     // 間接に保証させずに直接照合する (基準が違うと一様スケールが変わり、sizeDelta の見え方と
     // 押せる場所が 2 台でずれる)
     int32_t referenceW = 0;
     int32_t referenceH = 0;
     uint32_t pad = 0;
-    // フォント計測表 (assets\fonts\*.fontmetrics.json) の内容ハッシュ (M75b で欄を確保、
-    // M75d で uitext::FontMetrics::Hash() が入る = 文字と送り幅の組だけを畳む。改行コードの違いでは
+    // フォント計測表 (assets\fonts\*.fontmetrics.json) の内容ハッシュ
+    // (M75d: uitext::FontMetrics::Hash() = 文字と送り幅の組だけを畳む。改行コードの違いでは
     // 割れない)。Layout / ContentSizeFitter が sim の中でテキスト幅を読むので、
     // 表が違う 2 台は矩形が割れる。0 = 表なし (固定メトリクス) で、0 同士は一致扱い
     uint64_t fontMetricsHash = 0;
