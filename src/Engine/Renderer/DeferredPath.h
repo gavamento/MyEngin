@@ -49,6 +49,23 @@ private:
     // 戻り値 false = 確保できなかった → そのフレームは albedo だけの M56a 相当へ縮退する
     bool EnsureNormalCopy(GraphicsDevice& device);
 
+    // ---- Render の段 (Render が上から呼ぶ順)。段をまたぐ値は DeferredFrame (.cpp で定義) で受け渡す ----
+    struct DeferredFrame;
+    // 1) + 1.1) GBuffer 5 本と深度へ不透明と地形を書く。フレーム定数 (pf) と velocity 用 CB もここで組む
+    void RenderGeometry(GraphicsDevice& device, const RenderView& view, const RenderQueue& queue,
+                        RenderResources& resources, ShaderManager& shaders, DeferredFrame& f);
+    void RenderSsao(GraphicsDevice& device, const RenderView& view, ShaderManager& shaders, DeferredFrame& f); // 1.5)
+    void BuildHzb(GraphicsDevice& device, const RenderView& view, ShaderManager& shaders, DeferredFrame& f);   // 1.6)
+    void RenderRayTracing(GraphicsDevice& device, const RenderView& view, ShaderManager& shaders,
+                          DeferredFrame& f); // 1.7)
+    void RenderLighting(const RenderView& view, DeferredFrame& f);                                              // 2)
+    void RenderSky(GraphicsDevice& device, const RenderView& view, ShaderManager& shaders, DeferredFrame& f);  // 2.5)
+    void RenderSsr(GraphicsDevice& device, const RenderView& view, ShaderManager& shaders, DeferredFrame& f);  // 2.6)
+    void RenderTransparent(const RenderView& view, const RenderQueue& queue, RenderResources& resources,
+                           ShaderManager& shaders, DeferredFrame& f); // 3)
+    void RenderDebugViews(GraphicsDevice& device, const RenderView& view, ShaderManager& shaders,
+                          DeferredFrame& f); // 4) - 6)
+
     RenderTexture gbAlbedo_;   // a=1 でジオメトリ有りマーク
     RenderTexture gbNormal_;   // ワールド法線 *0.5+0.5
     RenderTexture gbPosition_; // ワールド座標 (Point/Spot ライティング用)

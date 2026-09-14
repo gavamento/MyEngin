@@ -655,17 +655,52 @@ void DeferredPath::RenderDecals(GraphicsDevice& device, ShaderManager& shaders,
     dc->OMSetBlendState(blendOpaque_.Get(), nullptr, 0xFFFFFFFFu);
 }
 
+// Render の段をまたぐ 1 フレームぶんの値。段の関数が上から順に埋め、後の段が読む
+struct DeferredPath::DeferredFrame {
+    ID3D11DeviceContext* dc = nullptr;
+    D3D11_VIEWPORT vp = {};
+    ShaderProgram* gbProg = nullptr;
+    ShaderProgram* gbSkinnedProg = nullptr; // スキンメッシュ用 (M18)
+    ShaderProgram* lightProg = nullptr;
+    const SceneLightData* lights = nullptr; // Render に渡されたライト (RT が読む)
+    // ---- 1) ジオメトリパスで決まる ----
+    bool unlit = false;                     // SceneView 表示モード (M40b)
+    bool wire = false;
+    SceneLightData unlitLights;             // Unlit のときの白定数ライト
+    const SceneLightData* L = nullptr;      // 光パスと透明後段が使うライト (Unlit なら unlitLights)
+    PerFrameCB pf = {};                     // b0。透明後段の forward_lit も読む
+    VelocityCB vel = {};                    // b4 (M55c)
+    bool froxelBound = false;               // M57e: 光パスと透明後段で**同じ変数**を使う
+    bool acousticBound = false;             // M65e: 同上
+    // ---- 1.5) - 1.7) で決まる ----
+    bool ssaoOn = false;
+    bool ssrWanted = false;
+    bool hzbBuilt = false;
+    bool rtAvailable = false;
+    RtFrameInputs rtIn;
+    RtGiResult rtGi;
+    RtReflResult rtRefl;
+    ID3D11ShaderResourceView* rtShadowSrv = nullptr;
+    bool rtGiBound = false;
+    bool rtShadowBound = false;
+    bool rtReflBound = false;
+    // ---- 2) ライティングパスで決まる ----
+    const ReflectionProbeSet* probeSet = nullptr; // M56f: 光パスと SSR が同じ束を使う
+};
+
 void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const RenderQueue& queue,
                           const SceneLightData& lights, RenderResources& resources,
                           ShaderManager& shaders)
 {
-    ShaderProgram* gbProg = shaders.Get(gbufferShader_);
-    ShaderProgram* lightProg = shaders.Get(lightShader_);
-    if (!gbProg || !gbProg->valid || !lightProg || !lightProg->valid) {
+    DeferredFrame f;
+    f.gbProg = shaders.Get(gbufferShader_);
+    f.lightProg = shaders.Get(lightShader_);
+    if (!f.gbProg || !f.gbProg->valid || !f.lightProg || !f.lightProg->valid) {
         return;
     }
-    ShaderProgram* gbSkinnedProg = shaders.Get(gbufferSkinnedShader_); // スキンメッシュ用 (M18)
-    ID3D11DeviceContext* dc = device.Context();
+    f.gbSkinnedProg = shaders.Get(gbufferSkinnedShader_); // スキンメッシュ用 (M18)
+    f.dc = device.Context();
+    f.lights = &lights;
 
     // GBuffer をビューサイズに追従 (パス所有 RT のみ再生成 — spec 7.4 と同じ精神)
     gbAlbedo_.Resize(device, view.width, view.height, DXGI_FORMAT_R8G8B8A8_UNORM, false);
@@ -679,10 +714,51 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
         return;
     }
 
-    D3D11_VIEWPORT vp = {};
-    vp.Width = static_cast<float>(view.width);
-    vp.Height = static_cast<float>(view.height);
-    vp.MaxDepth = 1.0f;
+    f.vp.Width = static_cast<float>(view.width);
+    f.vp.Height = static_cast<float>(view.height);
+    f.vp.MaxDepth = 1.0f;
+
+    // ★呼ぶ順 = D3D へ命令を積む順。後の段は前の段が張った RTV / サンプラ / SRV を前提にしている所があるので入れ替えない
+    RenderGeometry(device, view, queue, resources, shaders, f); // 1) + 1.1)
+
+    // ---- 1.2) デカール (M56a/M56b): ジオメトリパス (地形込み) の直後・SSAO の前。
+    //      「もう GBuffer に書かれた面」の albedo / 法線 / roughness を投影ボックスで
+    //      上描きするので、
+    //      **地形の後**でなければ地形に貼れない。SSAO / RT / 光パスの**前**でなければ
+    //      デカールの色がライティングにも AO にも乗らない。
+    //      Wireframe (M40b) では線の画素しか GBuffer に無く投影しても意味が無いので飛ばす ----
+    if (!f.wire) {
+        RenderDecals(device, shaders, view, resources, f.pf.viewProj);
+    }
+
+    RenderSsao(device, view, shaders, f);                   // 1.5)
+    BuildHzb(device, view, shaders, f);                     // 1.6)
+    RenderRayTracing(device, view, shaders, f);             // 1.7)
+    RenderLighting(view, f);                                // 2)
+    RenderSky(device, view, shaders, f);                    // 2.5)
+    RenderSsr(device, view, shaders, f);                    // 2.6)
+    RenderTransparent(view, queue, resources, shaders, f);  // 3)
+    RenderDebugViews(device, view, shaders, f);             // 4) - 6)
+
+    // ---- M57e: t1-t7 を剥がす。**t7 (フロクセル積分結果) を残してはいけない** ----
+    // 光パスの nullSrvs[16] より後にスカイと透明後段が t7 を張り直しているので、
+    // ここで剥がさないと次フレームの積分パスが同じテクスチャを UAV に取った瞬間に
+    // D3D が片方を黙って外す (M57d が t15 で踏んだのと同じ罠。今度は Render の末尾)
+    // ★M65e: **本数も 8 にすること**。7 のままだと t8 (残光) が張られたまま次フレームへ
+    //   生き残る = 張り忘れではなく剥がし忘れが実害を出す (M57e が踏んだ罠と同型)
+    ID3D11ShaderResourceView* fwdNull[8] = {};
+    f.dc->PSSetShaderResources(1, 8, fwdNull);
+}
+
+// 1) + 1.1) ジオメトリパス: GBuffer 5 本と深度へ不透明 (インスタンス run / スキン) と地形を書く。
+// 透明後段の forward_lit も読むフレーム定数 (pf) と、velocity 用 CB (b4) はここで組んで張る
+void DeferredPath::RenderGeometry(GraphicsDevice& device, const RenderView& view, const RenderQueue& queue,
+                                  RenderResources& resources, ShaderManager& shaders, DeferredFrame& f)
+{
+    ID3D11DeviceContext* dc = f.dc;
+    ShaderProgram* gbProg = f.gbProg;
+    ShaderProgram* gbSkinnedProg = f.gbSkinnedProg;
+    const D3D11_VIEWPORT& vp = f.vp;
 
     // ---- 1) ジオメトリパス ----
     // M55c: MRT は 5 本 (RT4 = velocity)。blendOpaque_ は IndependentBlendEnable=FALSE なので
@@ -702,14 +778,16 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
     }
 
     // SceneView 表示モード (M40b): Unlit/Wireframe はライト白差替 + 影/IBL/SSAO/フォグ無効
-    const bool unlit = view.debugViewMode != 0;
-    const bool wire = view.debugViewMode == 2;
-    SceneLightData unlitLights;
-    unlitLights.ambient = { 1.0f, 1.0f, 1.0f };
-    unlitLights.count = 0;
-    const SceneLightData& L = unlit ? unlitLights : lights;
+    f.unlit = view.debugViewMode != 0;
+    f.wire = view.debugViewMode == 2;
+    f.unlitLights.ambient = { 1.0f, 1.0f, 1.0f };
+    f.unlitLights.count = 0;
+    f.L = f.unlit ? &f.unlitLights : f.lights;
+    const bool unlit = f.unlit;
+    const bool wire = f.wire;
+    const SceneLightData& L = *f.L;
 
-    PerFrameCB pf = {};
+    PerFrameCB& pf = f.pf;
     const XMMATRIX v = XMLoadFloat4x4(&view.view);
     const XMMATRIX p = XMLoadFloat4x4(&view.proj);
     XMStoreFloat4x4(&pf.viewProj, XMMatrixTranspose(XMMatrixMultiply(v, p)));
@@ -750,12 +828,12 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
     FillShadowTilesCB(view, pf.shadowTiles);
     // M57e: 透明後段 (forward_lit) のフロクセル。判定は光パスと**同じ FroxelIsBound** —
     // 不透明と透明で霧の有無が食い違うと、ガラス越しの絵だけ霧が抜ける
-    const bool froxelBound = FroxelIsBound(view);
-    pf.froxel = MakeFroxelForwardCB(view, froxelBound);
+    f.froxelBound = FroxelIsBound(view);
+    pf.froxel = MakeFroxelForwardCB(view, f.froxelBound);
     // M65e: 残光も同じ理屈で、判定は光パスと**同じ AcousticIsBound**。
     // 不透明と透明で残光の有無が食い違うと、ガラス越しの壁だけ音の光が消える
-    const bool acousticBound = AcousticIsBound(view);
-    pf.acoustic = MakeAcousticCB(view, acousticBound);
+    f.acousticBound = AcousticIsBound(view);
+    pf.acoustic = MakeAcousticCB(view, f.acousticBound);
     UploadCB(dc, perFrameCB_.Get(), pf);
 
     ID3D11Buffer* cbs[2] = { perFrameCB_.Get(), perObjectCB_.Get() };
@@ -767,7 +845,7 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
     // prevViewProj は **非ジッタ** (RenderSystem が projNoJitter で保存している)。
     // 履歴が無いフレームは valid=0 → シェーダは velocity 0 を書く (行列は使われないが、
     // 未初期化を渡さないよう今フレームの非ジッタ VP で埋めておく)
-    VelocityCB vel = {};
+    VelocityCB& vel = f.vel;
     if (view.prevViewProjValid != 0) {
         XMStoreFloat4x4(&vel.prevViewProj, XMMatrixTranspose(XMLoadFloat4x4(&view.prevViewProj)));
         vel.valid = 1;
@@ -911,23 +989,21 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
     if (wire) {
         dc->RSSetState(rasterizer_.Get());
     }
+}
 
-    // ---- 1.2) デカール (M56a/M56b): ジオメトリパス (地形込み) の直後・SSAO の前。
-    //      「もう GBuffer に書かれた面」の albedo / 法線 / roughness を投影ボックスで
-    //      上描きするので、
-    //      **地形の後**でなければ地形に貼れない。SSAO / RT / 光パスの**前**でなければ
-    //      デカールの色がライティングにも AO にも乗らない。
-    //      Wireframe (M40b) では線の画素しか GBuffer に無く投影しても意味が無いので飛ばす ----
-    if (!wire) {
-        RenderDecals(device, shaders, view, resources, pf.viewProj);
-    }
-
-    // ---- 1.5) SSAO (M38e): worldpos + normal → 半解像度 AO → 4x4 ブラー ----
+// 1.5) SSAO (M38e): worldpos + normal → 半解像度 AO → 4x4 ブラー
+void DeferredPath::RenderSsao(GraphicsDevice& device, const RenderView& view, ShaderManager& shaders,
+                              DeferredFrame& f)
+{
+    ID3D11DeviceContext* dc = f.dc;
+    const bool unlit = f.unlit;
+    const PerFrameCB& pf = f.pf;
     // (Unlit/Wireframe では環境項が定数 1 のためスキップ、M40b)
     ShaderProgram* ssaoProg = shaders.Get(ssaoShader_);
     ShaderProgram* ssaoBlurProg = shaders.Get(ssaoBlurShader_);
     const bool ssaoOn = view.ssaoEnabled != 0 && !unlit && ssaoProg && ssaoProg->valid
         && ssaoBlurProg && ssaoBlurProg->valid;
+    f.ssaoOn = ssaoOn;
     if (ssaoOn) {
         const int hw = (view.width > 1) ? view.width / 2 : 1;
         const int hh = (view.height > 1) ? view.height / 2 : 1;
@@ -987,7 +1063,15 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
         ID3D11ShaderResourceView* aoNull[3] = {};
         dc->PSSetShaderResources(0, 3, aoNull); // 光パスで再バインドする前に解除
     }
+}
 
+// 1.6) HZB (M56c): 可視化か SSR が要求したときだけ min-Z ピラミッドを組む
+void DeferredPath::BuildHzb(GraphicsDevice& device, const RenderView& view, ShaderManager& shaders,
+                            DeferredFrame& f)
+{
+    ID3D11DeviceContext* dc = f.dc;
+    const bool unlit = f.unlit;
+    const bool wire = f.wire;
     // ---- 1.6) HZB (M56c): 完成した深度から min-Z ピラミッドを組む。
     //      ここに置く理由は「不透明 + 地形が深度を書き終えていて、まだ半透明が乗る前」だから
     //      (半透明は深度を書かないので後でも同じだが、消費者の SSR (M56d) が光パス直後に
@@ -1007,7 +1091,16 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
         dc->OMSetRenderTargets(0, nullptr, nullptr);
         hzbBuilt = hzb_.Build(device, shaders, view.depthSRV, view.width, view.height);
     }
+    f.ssrWanted = ssrWanted;
+    f.hzbBuilt = hzbBuilt;
+}
 
+// 1.7) レイトレ (RT GI / RT 影 / RT 反射)。光パスとデバッグ表示がこの結果を使い回す
+void DeferredPath::RenderRayTracing(GraphicsDevice& device, const RenderView& view, ShaderManager& shaders,
+                                    DeferredFrame& f)
+{
+    ID3D11DeviceContext* dc = f.dc;
+    const bool unlit = f.unlit;
     // ---- 1.7) レイトレ拡散 GI (M46f) / RT 影 (M46g) / RT 反射 (M46h): ライトパスの前に撃つ。
     //      デバッグ表示 (mode 4-8 = GI / 9 = 影 / 10-11 = 反射) も**この結果を使い回す** —
     //      1 フレームに 2 回撃つとテンポラル履歴が二重に進んで蓄積が壊れるため。
@@ -1016,13 +1109,13 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
     const bool rtGiOn = rtAvailable && !unlit && view.rtGiEnabled != 0;
     const bool rtShadowOn = rtAvailable && !unlit && view.rtShadowEnabled != 0;
     const bool rtReflOn = rtAvailable && !unlit && view.rtReflEnabled != 0;
-    RtFrameInputs rtIn;
-    RtGiResult rtGi;
-    RtReflResult rtRefl;
+    RtFrameInputs& rtIn = f.rtIn;
+    RtGiResult& rtGi = f.rtGi;
+    RtReflResult& rtRefl = f.rtRefl;
     ID3D11ShaderResourceView* rtShadowSrv = nullptr;
     if (rtAvailable) {
         rtIn.scene = view.rtScene;
-        rtIn.lights = &lights;
+        rtIn.lights = f.lights;
         rtIn.gbNormal = gbNormal_.SRV();
         rtIn.gbPosition = gbPosition_.SRV();
         rtIn.gbAlbedo = gbAlbedo_.SRV();
@@ -1030,7 +1123,7 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
         // M55f: 画面速度 (RT4)。テンポラル蓄積が履歴 UV に使う。velocity を書けなかった
         // フレーム (vel.valid==0 = 履歴なし) は渡さない — 全画素 0 の RT4 を「動いていない」と
         // 読むと、カメラが動いた初回フレームの履歴を取り違える
-        rtIn.gbVelocity = (vel.valid != 0) ? gbVelocity_.SRV() : nullptr;
+        rtIn.gbVelocity = (f.vel.valid != 0) ? gbVelocity_.SRV() : nullptr;
         rtIn.skyCube = view.skyCubemap;
         // デバッグ表示がそのパスの結果を映すなら、合成が off でも撃つ
         const bool needGi = rtGiOn || rtdebug::NeedsGi(view.rtDebugMode);
@@ -1054,8 +1147,33 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
     const bool rtGiBound = rtGiOn && rtGi.filtered != nullptr;
     const bool rtShadowBound = rtShadowOn && rtShadowSrv != nullptr;
     const bool rtReflBound = rtReflOn && rtRefl.filtered != nullptr;
+    f.rtAvailable = rtAvailable;
+    f.rtShadowSrv = rtShadowSrv;
+    f.rtGiBound = rtGiBound;
+    f.rtShadowBound = rtShadowBound;
+    f.rtReflBound = rtReflBound;
+}
 
-    // ---- 2) ライティングパス (フルスクリーン解決) ----
+// 2) ライティングパス (フルスクリーン解決)。GBuffer / 影 / IBL / SSAO / RT / アトラス / プローブ /
+// フロクセル / 残光を t0-t16 に張って 1 枚描き、描き終えたら t0-t16 を剥がす
+void DeferredPath::RenderLighting(const RenderView& view, DeferredFrame& f)
+{
+    ID3D11DeviceContext* dc = f.dc;
+    const D3D11_VIEWPORT& vp = f.vp;
+    const bool unlit = f.unlit;
+    const bool wire = f.wire;
+    const SceneLightData& L = *f.L;
+    const PerFrameCB& pf = f.pf;
+    const bool ssaoOn = f.ssaoOn;
+    const bool froxelBound = f.froxelBound;
+    const bool acousticBound = f.acousticBound;
+    const bool rtGiBound = f.rtGiBound;
+    const bool rtShadowBound = f.rtShadowBound;
+    const bool rtReflBound = f.rtReflBound;
+    const RtGiResult& rtGi = f.rtGi;
+    const RtReflResult& rtRefl = f.rtRefl;
+    ID3D11ShaderResourceView* rtShadowSrv = f.rtShadowSrv;
+    ShaderProgram* lightProg = f.lightProg;
     dc->OMSetRenderTargets(1, &view.rtv, nullptr); // GBuffer を SRV で読むため depth も外す
     dc->RSSetViewports(1, &vp);
     LightPassCB lp = {};
@@ -1186,8 +1304,16 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
     //   積分パスが同じテクスチャを UAV に取った瞬間に D3D が片方を黙って外す**
     ID3D11ShaderResourceView* nullSrvs[17] = {};
     dc->PSSetShaderResources(0, 17, nullSrvs); // 次フレームで RT に戻すため解除 (t16 まで)
+    f.probeSet = probeSet;
+}
 
-    // ---- 2.5) スカイボックス (M29d): clearColor ピクセルを深度 1.0 判定で上書き ----
+// 2.5) スカイボックス (M29d): clearColor ピクセルを深度 1.0 判定で上書き
+void DeferredPath::RenderSky(GraphicsDevice& device, const RenderView& view, ShaderManager& shaders,
+                             DeferredFrame& f)
+{
+    ID3D11DeviceContext* dc = f.dc;
+    const bool wire = f.wire;
+    const bool froxelBound = f.froxelBound;
     // (Wireframe はフルスクリーン三角形が線になるためスキップ、M40b)
     if (!wire) {
         // M57e: スカイもフロクセルを載せる (載せないと地平線に段が残る)。
@@ -1198,7 +1324,18 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
         dc->PSSetShaderResources(froxel::kForwardSrvSlot, 1, skyFroxel);
         skybox_.Render(device, shaders, view);
     }
+}
 
+// 2.6) SSR (M56d): 反射の差分を加算する。スカイの後・透明後段の前
+void DeferredPath::RenderSsr(GraphicsDevice& device, const RenderView& view, ShaderManager& shaders,
+                             DeferredFrame& f)
+{
+    ID3D11DeviceContext* dc = f.dc;
+    const D3D11_VIEWPORT& vp = f.vp;
+    const bool ssrWanted = f.ssrWanted;
+    const bool hzbBuilt = f.hzbBuilt;
+    const bool ssaoOn = f.ssaoOn;
+    const ReflectionProbeSet* probeSet = f.probeSet;
     // ---- 2.6) SSR (M56d): 反射の差分を加算する。既定 (ssrEnabled==0) では
     //      1 命令も走らない = golden 全枚がビット一致し続ける根拠。
     //      ★**スカイボックスの後**に置いている。SSR はシーン色を読むので、空がまだ
@@ -1224,8 +1361,18 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
         dc->OMSetDepthStencilState(nullptr, 0);
         dc->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFFu);
     }
+}
 
-    // ---- 3) 透明後段 (Forward — マテリアルのシェーダで上描き) ----
+// 3) 透明後段 (Forward — マテリアルのシェーダで上描き)。無ければパーティクル後段のために RTV + DSV だけ戻す
+void DeferredPath::RenderTransparent(const RenderView& view, const RenderQueue& queue, RenderResources& resources,
+                                     ShaderManager& shaders, DeferredFrame& f)
+{
+    ID3D11DeviceContext* dc = f.dc;
+    const bool wire = f.wire;
+    const bool froxelBound = f.froxelBound;
+    const bool acousticBound = f.acousticBound;
+    ID3D11Buffer* cbs[2] = { perFrameCB_.Get(), perObjectCB_.Get() };
+    ID3D11Buffer* matCbs[1] = { materialCB_.Get() };
     if (!queue.transparent.empty()) {
         dc->OMSetRenderTargets(1, &view.rtv, view.dsv);
         if (wire) {
@@ -1257,7 +1404,7 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
         dc->OMSetBlendState(blendAlpha_.Get(), nullptr, 0xFFFFFFFFu);
 
         uint64_t boundShader = 0;
-        bound = {}; // 不透明パスとはシェーダもスロットも違うので、張ったものの記憶を捨てる
+        MeshBindState bound; // 不透明パスとはシェーダもスロットも違うので、張ったものの記憶は持ち越さない
         for (const RenderItem& item : queue.transparent) {
             Material* mat = resources.materials.Get(item.material);
             Mesh* mesh = resources.meshes.Get(item.mesh);
@@ -1296,7 +1443,20 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
     if (wire) {
         dc->RSSetState(rasterizer_.Get());
     }
+}
 
+// 4) - 6) デバッグ表示 (RT / velocity / HZB)。既定ではどれも 1 命令も走らない
+void DeferredPath::RenderDebugViews(GraphicsDevice& device, const RenderView& view, ShaderManager& shaders,
+                                    DeferredFrame& f)
+{
+    ID3D11DeviceContext* dc = f.dc;
+    const D3D11_VIEWPORT& vp = f.vp;
+    const bool rtAvailable = f.rtAvailable;
+    RtFrameInputs& rtIn = f.rtIn;
+    RtGiResult& rtGi = f.rtGi;
+    RtReflResult& rtRefl = f.rtRefl;
+    ID3D11ShaderResourceView* rtShadowSrv = f.rtShadowSrv;
+    const bool hzbBuilt = f.hzbBuilt;
     // ---- 4) RT デバッグ表示 (M46b): BVH の検証用に画面を丸ごと差し替える。
     //      既定 (rtDebugMode==kOff / rtScene==null) では何も起きない ----
     if (view.rtDebugMode != rtdebug::kOff && rtAvailable) {
@@ -1383,14 +1543,6 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
             dc->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFFu);
         }
     }
-    // ---- M57e: t1-t7 を剥がす。**t7 (フロクセル積分結果) を残してはいけない** ----
-    // 光パスの nullSrvs[16] より後にスカイと透明後段が t7 を張り直しているので、
-    // ここで剥がさないと次フレームの積分パスが同じテクスチャを UAV に取った瞬間に
-    // D3D が片方を黙って外す (M57d が t15 で踏んだのと同じ罠。今度は Render の末尾)
-    // ★M65e: **本数も 8 にすること**。7 のままだと t8 (残光) が張られたまま次フレームへ
-    //   生き残る = 張り忘れではなく剥がし忘れが実害を出す (M57e が踏んだ罠と同型)
-    ID3D11ShaderResourceView* fwdNull[8] = {};
-    dc->PSSetShaderResources(1, 8, fwdNull);
 }
 
 } // namespace mye
