@@ -239,7 +239,7 @@ AssetID LoadMeshPart(LoadContext& lc, const ufbx_mesh* mesh, const ufbx_mesh_par
 
 // FBX のテクスチャ参照を AssetID に解決する (P2)。解決順は
 // レイヤード/シェーダの展開 → 埋め込みコンテンツ → 外部ファイル → フォールバック探索。
-// 解決できなければ空 ID を返し、試したパスを WARN に出す (従来は黙って White に落ちていた)。
+// 解決できなければ空 ID を返し、試したパスを WARN に出す (黙って White に落とさない)。
 AssetID ResolveTexture(LoadContext& lc, const ufbx_texture* tex, bool srgb, const char* slot,
                        const char* matName)
 {
@@ -833,7 +833,7 @@ bool RegisterAssets(RenderResources& resources, ShaderManager& shaders, const st
                     bool logErrors)
 {
     // M51b: クック済みキャッシュが有効ならパースを丸ごと飛ばして登録を再生する。
-    // 挿入点はこの RegisterAssets 経路のみ — Load (D&D 配置) は従来パースのまま
+    // 挿入点はこの RegisterAssets 経路のみ — Load (D&D 配置) は毎回パースする
     if (ModelCook::TryReplayFromCache(resources, shaders, path)) {
         return true;
     }

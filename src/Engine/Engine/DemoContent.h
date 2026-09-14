@@ -164,8 +164,7 @@ void RegisterTerrainShowcaseContent(EngineContext& ctx);
 //   関節に吊られている」骨が微振動を続け、島の全員が静まるまで誰も眠らないので
 //   ラグドール全体が一生眠らない (M60g2 の実測)。車両が推奨する 8 も同時に満たす。
 // ★builtin メッシュ + 名前キーのマテリアル + 名前引きの .physmat が基本だが、
-//   **凸包 1 個とラグドールだけはモデル (.glb) 由来** (parts と同じく cache\ へ置いて毎回組む。
-//   M74a 以前はその ID が絶対パス由来で、保存物がチェックアウト先に依存したのも理由だった)。
+//   **凸包 1 個とラグドールだけはモデル (.glb) 由来** (parts と同じく cache\ へ置いて毎回組む)。
 //   凸包にモデル由来を 1 個混ぜてあるのは `.mcvx` クックを replay 被覆へ入れるため。
 void BuildJointShowcaseScene(EngineContext& ctx);
 
@@ -177,9 +176,8 @@ void RegisterJointShowcaseContent(EngineContext& ctx);
 // M57追補: 霧のショーケース (--fog-demo)。**リポジトリで唯一「霧と粒子と VFX が同居する」
 // シーン**で、golden 15 枚目の被写体。
 //
-// ★存在理由は被覆の穴埋め。M57e まで、GPU パーティクル描画経路と VfxRenderer
-//   (Sprite / Trail / TextMesh) は **どちらも golden に 1 枚も写っていなかった** — 壊れても
-//   14 枚が全部緑のまま通る状態だった。既存デモに足すのでは駄目で、FogComponent を持つ
+// ★存在理由は被覆の穴埋め。GPU パーティクル描画経路と VfxRenderer (Sprite / Trail / TextMesh) を
+//   golden に写すのはこのシーンだけ (無いと壊れても golden が全部緑のまま通る)。既存デモに足すのでは駄目で、FogComponent を持つ
 //   --render-demo に粒子を足すと demo_render_* 5 枚が、粒子を持つ既定デモに Fog を足すと
 //   demo_* 3 枚が動く (統合契約 予約 3「既存 golden には 1 バイトも触らない」に反する)。
 // ★被写体は「霧の量が距離の関数として読める」ように置いてある: 同じ柱を 10/25/45/70m に
@@ -210,8 +208,7 @@ void RegisterParticleShowcaseContent(EngineContext& ctx);
 // M65b: 音響ショーケース (--acoustic-demo)。**L 字の廊下で 2 部屋を繋いだ**間取りに
 // 音源を 1 個置くだけのシーン。replay 7 ペア目の被写体で、波スロット表がハッシュに
 // 載る唯一の場所。
-// ★M65b 時点では**絵に出ない** (デバッグ線でしか見えない) — ライティングへの差し込みは
-//   M65e。それでも先にシーンを置くのは、伝播のハッシュ被覆をこのサブで確保するため。
+// ★残光は光パスで絵に出る (M65e) ほか、デバッグ線 (View > 音響) でも見える。
 // ★音源は WavePinger (GameLogic.dll) が叩く。DLL が焼けていないと波が 1 本も出ず、
 //   ハッシュ被覆が丸ごと消える (joints の VehicleDemoDriver と同じ依存)。
 void BuildAcousticShowcaseScene(EngineContext& ctx);
@@ -220,7 +217,7 @@ void BuildAcousticShowcaseScene(EngineContext& ctx);
 void RegisterAcousticShowcaseContent(EngineContext& ctx);
 
 // M75c: ゲーム内 UI のショーケース (--ui-demo)。golden 25 枚目 (ui_widgets) の被写体。
-// 材質を使わない (UI だけ) ので Register* は無い。M75e〜h の Layout / ウィジェットは関数の末尾へ足す
+// 材質を使わない (UI だけ) ので Register* は無い。Layout / ウィジェットの積み増しは関数の末尾へ足す
 void BuildUiShowcaseScene(EngineContext& ctx);
 
 // M75f: 上のショーケースのウィジェットを押す決定論の入力台本 (--ui-demo-input、replay 8 ペア目の記録側)。

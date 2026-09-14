@@ -38,7 +38,7 @@ struct EngineConfig {
     int width = 1600;
     int height = 900;
     int64_t maxFrames = -1;  // >0 でそのフレーム数後に自動終了 (スモークテスト / CI 用)
-    bool enableImGui = true; // false = エディタ UI 無し (将来の Runtime.exe 用の余地)
+    bool enableImGui = true; // false = エディタ UI 無し (Runtime.exe が使う)
     bool vsync = true;
     float clearColor[4] = { 0.08f, 0.09f, 0.11f, 1.0f };
     std::wstring screenshotPath; // 空でなければ screenshotFrame で PNG 保存 (検証用)
@@ -92,11 +92,11 @@ struct EngineConfig {
     // 終了時に BVH の規模とトラバーサルの GPU 時間をログに出す (性能実測用)
     int rtDebugMode = 0;
     // M55c: velocity バッファ (GBuffer RT4) の可視化 (--velocity-debug)。0=off。
-    // Deferred パスのみ効く。TAA / モーションブラー v2 が入るまでの唯一の目視口
+    // Deferred パスのみ効く。velocity の中身を直接見る目視口
     int velocityDebug = 0;
     // M56c: HZB (min-Z ピラミッド) の可視化 (--hzb-debug N)。0=off / N=ミップ N-1 を表示。
-    // Deferred パスのみ効く。**0 のときはピラミッドを組みもしない** = 従来と 1 命令も違わない。
-    // SSR (M56d) が入るまでは、これが「本当に段が積めているか」の唯一の目視口になる
+    // Deferred パスのみ効く。**0 のときはピラミッドを組みもしない** (--ssr が on なら組む)。
+    // 「本当に段が積めているか」を直接見る目視口
     int hzbDebug = 0;
     // M56d: SSR (--ssr)。**Deferred のみ** (GBuffer と HZB が前提)。
     // シーンカメラに CameraPostFx があればそちらの ssrOn が勝つ (TAA と同じ規則)。
@@ -181,8 +181,8 @@ struct EngineConfig {
     // ---- パーティクルバックエンドの CLI 上書き (M57追補) ----
     // -1 = 未指定 (project_settings.json に従う) / 0 = CPU / 1 = GPU。
     // ★これが無いと GPU バックエンドはエディタ GUI と設定ファイルからしか選べず、
-    //   --screenshot で GPU 粒子の絵を撮る手段が 1 つも無かった。それが
-    //   「GPU 描画経路のピクセル被覆がゼロ」= 壊れても golden が全部緑、の原因だった。
+    //   --screenshot で GPU 粒子の絵を撮る手段が無い = GPU 描画経路のピクセル被覆がゼロ
+    //   (壊れても golden が全部緑)。
     // ★上書きは**設定ファイルへ書き戻さない** — 撮影 1 回のために開発者の永続設定を
     //   書き換えると、次に GUI を開いたときバックエンドが変わっている
     int particleBackendOverride = -1;

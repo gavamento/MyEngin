@@ -24,9 +24,9 @@ namespace mye {
 //     ComponentRegistry::Register は nameHash が一致すると既存 TypeId を黙って返すので、
 //     素通しするとサイズの違う別物に化ける (静かなデータ破壊)
 //
-// v1 の制限: ホットリロードなし (起動時 1 回)。スクリプトからフィールドを読み書きする
-// 汎用 ABI も無い (型付きアクセサのコード生成は M49+)。v1 の用途は
-// 「オーサリング + 保存 + ハッシュ被覆」まで。
+// 制限: ホットリロードなし (起動時 1 回)。スクリプトからは汎用フィールド ABI
+// (MyeSetComponentField 系、Shared/ScriptAPI.h) で読み書きでき、型付きアクセサは
+// SchemaCodegen (M50d) が生成する。
 namespace schema {
 
 // 1 プロセスで登録できるスキーマ型の上限 (construct 関数ポインタのサムネイル数)

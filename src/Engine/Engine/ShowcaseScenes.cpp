@@ -17,7 +17,7 @@ void BuildTerrain(EngineContext& ctx, const ShowcaseOptions& options)
     BuildTerrainShowcaseScene(ctx, options.terrainLodDistance, options.terrainSkirtDepth);
 }
 
-// ★上の行ほど優先 (--*-demo を複数渡したとき)。並びは Editor の従来の判定順。
+// ★並び順に意味がある (契約は ShowcaseScenes.h の PickShowcase)。
 // ★cache\ の行はコードから毎回組む。保存先を専用にしてあるのは、万一 Ctrl+S されても既定デモシーン
 //   (main.scene.json = golden.rep の入力) を潰さないため。保存済みが残っているとロードする側へ落ちるので、
 //   shot_verify / replay_verify は撮影・記録の前に消している
@@ -70,7 +70,7 @@ const ShowcaseDef* PickShowcase(const ShowcaseDef* current, const ShowcaseDef* c
     if (candidate == nullptr) {
         return current;
     }
-    return (candidate < current) ? candidate : current; // どちらも kShowcases の中 = 位置が上のほうが勝つ
+    return (candidate < current) ? candidate : current; // どちらも kShowcases の中 = ポインタの大小が表の位置
 }
 
 std::wstring ShowcaseScenePath(const ShowcaseDef& showcase, const std::wstring& assetsRoot)

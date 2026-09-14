@@ -13,7 +13,7 @@ class ManagedHost;
 // 衝突イベント配信 (M7 トリガー / M28a 形状拡張 / M28c ソリッドイベント)。
 // - トリガー: 毎 tick、Transform 確定後に総当たりで重なり判定し、前 tick とのペア差分から
 //   OnTriggerEnter / OnTriggerExit を配信する。**ペアの少なくとも片方が isTrigger** のものだけ
-//   (M28c で是正 — ソリッド同士は OnCollision 系に移管)。
+//   (ソリッド同士は OnCollision 系)。
 // - ソリッド: PhysicsSystem が出力した接触ペア列 (key 昇順) を前 tick と差分し、
 //   OnCollisionEnter (法線付き) / OnCollisionStay / OnCollisionExit を配信する。
 // 配信順: トリガー Enter → Exit → ソリッド Enter → Stay → Exit、各リスト key 昇順 (決定論)。
@@ -30,13 +30,13 @@ public:
         prevSolidPairs_.clear();
     }
 
-    // テスト / デバッグ用の観測点 (非ハッシュ・決定論)。直近 Update で配信したキー列
     // sim スナップショット (M52d): 前 tick の接触ペアは「次 tick に enter/exit の
     // どちらを配信するか」を決める sim 状態。ハッシュ対象ではないが、戻し忘れると
     // 復元直後の 1 tick だけイベントが二重/欠落する。**SimSnapshot 専用**
     std::vector<uint64_t>& PrevPairsForSnapshot() { return prevPairs_; }
     std::vector<uint64_t>& PrevSolidPairsForSnapshot() { return prevSolidPairs_; }
 
+    // テスト / デバッグ用の観測点 (非ハッシュ・決定論)。直近 Update で配信したキー列
     const std::vector<uint64_t>& LastTriggerEnter() const { return trigEnter_; }
     const std::vector<uint64_t>& LastTriggerExit() const { return trigExit_; }
     const std::vector<uint64_t>& LastCollisionEnter() const { return solidEnter_; }

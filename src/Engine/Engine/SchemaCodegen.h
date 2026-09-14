@@ -7,7 +7,7 @@
 
 namespace mye::schema {
 
-// スキーマの型付きコード生成 (M50d、ADR-011 の「型付きアクセサは M49+」の回収)。
+// スキーマの型付きコード生成 (M50d、ADR-011)。
 //
 // 入力は**実行時レジストリ** (RegisteredSchemaTypeIds → ComponentRegistry) — スキーマ
 // JSON を再パースしない。offset/size はランタイムが実際に使っている値そのものなので、

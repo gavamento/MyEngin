@@ -82,14 +82,14 @@ LightSelection SelectLights(const LightCandidate* cands, int count, const Frustu
         SelectedLight& s = out.lights[out.count++];
         s.light = c.light;
         s.sortKey = c.sortKey;
-        // 平行光の影は既存の CSM (ShadowPass) が担当する。M54c 以降のアトラスは局所ライト専用。
+        // 平行光の影は CSM (ShadowPass) が担当する。アトラス (M54c) は局所ライト専用。
         // 枠はソート後の順に前詰め = 同じシーンなら frame をまたいでも同じ枠に落ちる
         if (c.castShadow != 0 && c.light.type != lighttype::kDirectional && out.shadowCount < maxShadowLights) {
             s.shadowSlot = out.shadowCount++;
         }
     }
 
-    // ---- 4. ライトが 1 つも無いシーンの既定平行光 (従来挙動) ----
+    // ---- 4. ライトが 1 つも無いシーンの既定平行光 ----
     // ★条件は「候補が 0 件」であって「選別後が 0 件」ではない。全部カリングで落ちたときに
     //   補うと、画面外の点光源だけのシーンでカメラを振った瞬間に太陽が湧いて消える
     if (count == 0 && out.count < maxLights) {

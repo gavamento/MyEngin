@@ -17,8 +17,7 @@ namespace mye {
 namespace {
 
 // 判定は Physics/Shapes.cpp に統合 (M28a)。sphere/box/capsule + 回転 (OBB) 対応。
-// 境界 (ちょうど接触 = 距離が厳密に一致) はソリッド判定と同じ「重なりのみ true」に統一
-// (M7 は境界含みだったが float 同値の測度ゼロ事象のため実挙動差なし)
+// 境界 (ちょうど接触 = 距離が厳密に一致) はソリッド判定と同じ「重なりのみ true」
 struct Body {
     EntityID entity;
     ShapePose pose;
@@ -70,7 +69,7 @@ void CollisionSystem::Update(World& world, ScriptHost* scripts, ManagedHost* man
 
     // ---- トリガー: ブロードフェーズ候補 (M28d) → 重なり判定 → 現 tick のペア集合 ----
     // M28c: ペアの少なくとも片方が isTrigger のものだけがトリガーイベント対象
-    // (ソリッド同士の接触は PhysicsSystem 由来の OnCollision 系に移管)
+    // (ソリッド同士の接触は PhysicsSystem 由来の OnCollision 系が扱う)
     currentPairs_.clear();
     {
         std::vector<BroadphaseEntry> entries;

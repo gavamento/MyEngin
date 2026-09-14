@@ -16,7 +16,7 @@ struct EngineCliExtras {
 };
 
 enum class CliParse {
-    NotMine,  // 共通フラグではない。値が足りない場合もこれ (= Main 側の分岐へ回す。昔の else-if 連鎖と同じ)
+    NotMine,  // 共通フラグではない。値が足りない場合もこれ (= Main 側の分岐へ回す)
     Consumed, // 読んだ。i は最後に読んだ値の位置まで進んでいる
     Error,    // 値の綴り違い。メッセージは stderr へ出してある (Main は exit 1)
 };

@@ -313,7 +313,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     renderSystem.rtReflRestirParams.spatial = config.rtRestirSpatial ? 1 : 0;
     renderSystem.rtReflRestirParams.visRay = config.rtRestirVisRay ? 1 : 0;
     renderSystem.rtReflRestirParams.classOverride = config.rtClassOverride;
-    renderSystem.enableFroxel = config.froxel;         // M57b (--froxel。まだ絵は変わらない)
+    renderSystem.enableFroxel = config.froxel;         // M57b (--froxel)
     renderSystem.froxelSettings.temporal = config.froxelTemporal; // M57c (--froxel-no-temporal)
     renderSystem.froxelDumpFrame = config.froxelDumpFrame; // M57b/M57c (--froxel-dump N)
     // M65d: 音響の残光ボリューム。**ここが唯一の配線点** — AssetPreviewCache が持つ
@@ -773,9 +773,8 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     double stressRestoreMs = 0.0;
 
     // ---- tick 本体へ渡す参照束 (M52d) ----
-    // 中身はすべてこのスコープのローカルなので、ループ前に 1 回組んで使い回す。
-    // 「tick が何を消費するか」をこの 1 構造体に閉じたことで、後続サブ (タイムトラベル /
-    // ロールバック) は別の入力源で同じ RunOneTick を回せる
+    // 中身はすべてこのスコープのローカルなので、ループ前に 1 回組んで使い回す
+    // (契約は TickRunner.h の TickServices)
     TickServices tickServices;
     tickServices.ctx = &ctx;
     tickServices.config = &config;
@@ -835,7 +834,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         tickServices.recorder = nullptr;
     }
 
-    // ---- 再シムの共通部 (M52e → M72d で切り出し) ----
+    // ---- 再シムの共通部 (M52e / M72d) ----
     // lane の記録入力で ctx.tickIndex から target まで、描画なし・出力抑止で RunOneTick を回す。
     // シーク / ゴースト焼き / (M72g) 乖離ダンプの 3 者が**同じ 1 本**を通る — 「抑止の
     // 付け忘れ」を 1 箇所に閉じ込めるため。ghost が非 null なら各 tick の後に採取する
@@ -907,8 +906,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
 
     // ---- タイムトラベルのシーク本体 (M52e) ----
     // 「target 以下の最寄りスナップショットへ Restore → 記録入力で target まで描画なし再シム」。
-    // ★再シムは**通常 tick と同じ RunOneTick** を通す (決定台帳 2)。ここで tick を書き直すと
-    //   「巻き戻したときだけ挙動が違う」種類のバグが必ず入る。
+    // (契約は TickRunner.h の TickServices)
     // ★呼べるのは tick 境界だけ (構造変更が空)。フレーム頭から呼ぶので、直前フレームの
     //   ImGui が積んだ編集要求を先に捌いてから戻す (捌かないと破棄済み世界のコマンドが残る)
     // M72a: forceRestore = 現在地が target 以上でも必ずスナップショットから戻す。
@@ -1042,8 +1040,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // ---- 2 レーンのフィールド差分 (M72g) ----
     // 両レーンを tick まで再シムして HashWorldDump し、DiffHashDumps に掛ける。
     // ★終わったらライブの現在 tick へ強制復元する (BakeGhosts と同じ規約)。
-    //   フィールドまで名指しできる道具は M52a からあった (--hash-diff) が、ファイル経由の
-    //   CLI にしか配線されていなかった。ここはそれを 2 レーンに対してインプロセスで撃つ
+    //   --hash-diff (M52a) と同じフィールド差分を、ファイルを経由せず 2 レーンに対して撃つ
     const auto DiffAt = [&](uint32_t laneA, uint32_t laneB, uint64_t tick) {
         DiffReport rep;
         rep.laneA = laneA;
@@ -1089,9 +1086,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     };
     // ---- tick 末のワールドハッシュ (M52f 申し送り 6 の畳み込み) ----
     // クラッシュリング / タイムトラベル / ロールバックの 3 者が**同じ 1 個**を使う。
-    // M52f までは消費者ごとに撮っていて、両方 on だと同じ tick で 2 回走っていた
-    // (実測 約 0.2ms/回)。ロールバックが毎 tick ハッシュを要求するようになったので
-    // ここで 1 本に畳んだ
+    // 消費者ごとに撮ると、複数 on のとき同じ tick でハッシュが複数回走る (約 0.2ms/回)
     uint64_t tickHashCount = 0;
     double tickHashMs = 0.0;
     const auto TickEndHash = [&]() -> uint64_t {
@@ -1122,9 +1117,9 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     };
 
     // from の**直前**まで巻き戻し、そこから現在 tick まで確定入力で走り直す。
-    // ★通常 tick と同じ RunOneTick を通す (決定台帳 2)。タイムトラベルの SeekTo と
-    //   まったく同じ形にしてあるのは、抑止する対象 (出力レーン / C# / 記録) が
-    //   「過去をなぞっている」という一点で完全に同じだから。
+    // (契約は TickRunner.h の TickServices)
+    // ★タイムトラベルの SeekTo とまったく同じ形にしてあるのは、抑止する対象
+    //   (出力レーン / C# / 記録) が「過去をなぞっている」という一点で完全に同じだから。
     // ★ここで net.SubmitLocalInput を呼んではいけない — 自レーンの値は tick ごとに
     //   ちょうど 1 回しか確定させない (M52h 申し送り 6)。再シムで撃ち直すと、相手が
     //   先に消費した値と食い違って本物の desync になる
@@ -1415,8 +1410,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             // ---- ゲーム面 (M70b → M75b) ----
             // **実解像度が sim へ入る唯一の口**。ここで記録した面の寸法とゲーム面 px のマウスが
             // .rep に載るので、再生は窓の大きさに依らず一致する (Input.h の InputSnapshot 解説)。
-            // キャンバスへの換算は sim 側の uilayout::CanvasOfInput (M75b まではここで
-            // CanvasSize を解いて正規化済みの値を渡していた)。
+            // キャンバスへの換算は sim 側の uilayout::CanvasOfInput が行う。
             // 基準はバックバッファ = Runtime のゲーム画面そのもの。エディタのゲーム UI は
             // GameView RT に描かれるので、**描画側のキャンバスは GameViewWindow が
             // 自分の RT から別に解く** — エディタでのスクリプト側ヒットテストは
@@ -1441,26 +1435,13 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             }
             liveCharsPending = ctx.inputs[0].charCount;
             if (deterministicShot) {
-                // ---- 撮影モードの決定化 (M68c、dt 固定と同じ趣旨) ----
-                // frame == tick に倒すのと同じ理由で、**生デバイス由来の**マウスデルタを
-                // 0 にする。WatcherFpsCamera (M65g) がこのデルタを yaw に積分して
-                // MeshRenderer 付きのプレイヤーの箱を回すので、**撮影中に机のマウスが
-                // 動くと acoustic の golden が割れる** (M68b で実測: acoustic_deferred が
-                // maxDiff=125 / 520 px、worst pixel は部屋 A の隅の箱)。
-                // ★合成入力 (--synth-input) と .rep の記録入力はここより**後**で
-                //   レーンごと置換されるので 1 カウントも殺していない — 生デルタは
-                //   replay 7 ペア目 (記録側 --synth-input) の視点角の被覆に使っている。
-                // ★キーボードとマウス**位置**は触らない。位置に依存する golden が
-                //   無いことを確認していないので、効く範囲を最小に留める
+                // ---- 撮影モードの決定化 (M68c / M70c、dt 固定と同じ趣旨) ----
+                // **生デバイス由来の**マウスのデルタ・位置・ボタンを中立化する。デルタは視点の yaw に、
+                // 位置とボタンは UI の hovered / pressed に効くので、机のマウスで golden が割れる。キーボードは触らない。
+                // ★合成入力 (--synth-input) と .rep の記録入力はここより**後**でレーンごと置換されるので影響しない。
+                //   位置は 0,0 (左上の正当な座標) ではなく、どのキャンバス座標も指さない値へ倒す
                 ctx.inputs[0].mouseDeltaX = 0;
                 ctx.inputs[0].mouseDeltaY = 0;
-                // ---- M70c: マウスの**位置とボタン**も中立化する ----
-                // M68c は「位置に依存する golden が無いことを確認していない」ので位置を
-                // 触らなかったが、M70c で hovered / pressed がボタンのハイライトを決める
-                // ようになった = **撮影中にカーソルが窓の上にあるだけで golden が割れる**
-                // (ui_probe と flow_title はまさにボタンを含む)。
-                // 位置は「どのキャンバス座標も指さない」値へ倒す — 0,0 は左上の正当な
-                // 座標なので使えない (負の座標に置かれた要素にも当たらない値にする)
                 ctx.inputs[0].mouseX = kShotMouseX;
                 ctx.inputs[0].mouseY = kShotMouseY;
                 ctx.inputs[0].mouseSurfX = static_cast<float>(kShotMouseX);
@@ -1676,7 +1657,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                 timeTravel.Overrides().Apply(ctx.tickIndex, ctx.inputs, ctx.playerCount);
             }
             // ---- 固定 tick 本体 (M52d、決定台帳 2) ----
-            // 通常 tick / タイムトラベル再シム / ロールバック再シムが通る唯一の実装。
+            // (契約は TickRunner.h の TickServices)
             // ここでの仕事は「この tick が消費する入力を確定させて呼ぶ」だけ
             const uint64_t ranTick = ctx.tickIndex;
             // ---- 自レーンの未来入力を確定させる (M52h) ----
@@ -1716,7 +1697,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             RunOneTick(tickServices);
             // ---- tick 末ハッシュは 1 回だけ (M52i、M52f 申し送り 6) ----
             // クラッシュリング / ロールバック / タイムトラベルの 3 者が同じ 1 個を使う。
-            // 撮る点は「構造変更が空 = .rep が記録するのと同じ点」で M52f から不変
+            // 撮る点は「構造変更が空 = .rep が記録するのと同じ点」
             const bool ttRing = timeTravel.Enabled() && !recorder.IsActive() && !verifying;
             // 録画/検証は .rep の全 tick 照合が契約なので間引かない。CrashRing 単独の
             // 通常プレイだけが hashInterval の checkpoint へ縮退する。

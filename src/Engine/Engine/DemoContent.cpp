@@ -74,8 +74,8 @@ void RegisterDemoContent(EngineContext& ctx)
     makeMat("mat_green", 0.35f, 0.75f, 0.40f);
     makeMat("mat_blue", 0.30f, 0.50f, 0.85f);
     makeMat("mat_yellow", 0.90f, 0.80f, 0.30f);
-    // BoxTextured.glb の単発登録は M50a で削除 — RegisterAssetLibraries の起動走査が
-    // 全モデルを RegisterAssets でヘッドレス登録するようになった (呼び出し側は常に対)
+    // モデル (.glb など) はここでは登録しない — RegisterAssetLibraries の起動走査が
+    // 全モデルを RegisterAssets でヘッドレス登録する (呼び出し側は常に対)
 }
 
 void BuildDemoScene(EngineContext& ctx, float perfRate, int perfMax)
@@ -508,9 +508,8 @@ void BuildFlowStage(Scene& s, RenderResources& res, bool withColliders)
 }
 
 // UI テキスト要素 (kind=1)。矩形左上がアンカー点 + オフセットに置かれる (M51e 意味論)。
-// ★数値の単位は**キャンバス単位 (基準 1920x1080)** — M70b でこのデモ一式の x/y/w/h/
-//   fontScale を 2 倍してある (それまでは 960x540 相当の実 px で書かれていた)。
-//   960x540 では canvasScale がちょうど 0.5 なので、絵は IEEE754 でビット一致する
+// ★数値の単位は**キャンバス単位 (基準 1920x1080)** (M70b)。実 px ではない —
+//   960x540 の画面では canvasScale がちょうど 0.5 になる
 GameObject MakeUiText(Scene& s, const char* name, int anchor, float x, float y, float w, float h,
                       const char* text, float fontScale, int align)
 {
@@ -577,9 +576,7 @@ void BuildFlowTitleScene(EngineContext& ctx)
 
     MakeUiText(s, "TitleText", 1, -800.0f, 240.0f, 1600.0f, 160.0f, "MyEngine FLOW DEMO", 6.0f,
                4);
-    // ★anchor 7 (下中央) へ移した。M70c 以前は anchor 4 + y=240 で、真下の TitleBest と
-    //   **文字が重なっていた** (golden にもそのまま写っていた)。ボタンを足して画面の
-    //   下半分が埋まったので、ここで解消しておく
+    // ★anchor 7 (下中央) に置く。anchor 4 + y=240 だと真下の TitleBest と**文字が重なる**
     GameObject hint = MakeUiText(s, "TitleHint", 7, -600.0f, -170.0f, 1200.0f, 80.0f,
                                  "D-Pad / Arrows : MOVE   A / Enter : SELECT", 2.4f, 4);
     AttachScriptIfRegistered(s.GetWorld(), hint.Id(), "FlowMenu"); // C# 点滅 (別レーン)
@@ -1305,9 +1302,7 @@ void BuildRenderShowcaseScene(EngineContext& ctx)
         l->range = 42.0f;
         l->spotInnerDeg = 18.0f;
         l->spotOuterDeg = 30.0f;
-        // M54e: ここで初めて局所影を立てる。M54b〜M54d の間は既定 0 のままにしてあった
-        // ので、golden 8 枚は「機能を足しても絵が動かない」でビット一致し続けていた。
-        // このコミットから demo_render_* の 2 枚だけが動く (それ以外が動いたらバグ)
+        // M54e: 局所影を立てる (局所影の golden 被覆)
         l->castShadow = 1;
         // 目印 (発光する小球)。ライトエンティティの子にすると位置が自動で追従する
         GameObject marker = s.CreateGameObject((std::string(name) + "_Marker").c_str());
@@ -1786,11 +1781,9 @@ void BuildJointShowcaseScene(EngineContext& ctx)
     }
 
     // ---- 2. ロープ (Ball 10 連鎖 + 錘) ----
-    // ★**コライダーは見た目どおり** (halfExtents 0.5)。M60i では「関節で繋がった相手と
-    //   食い込むと永久に押し合う」のを 0.4 へ縮めて幾何で逃げていたが、M60j の
-    //   `Joint.disableCollision` が入ったので**繋がったペアだけ候補から落とす**形へ移した。
-    //   ★これが `disableCollision` の replay / golden 被覆でもある (M60k まで selftest しか
-    //     踏んでいなかった)。切れるのは直接繋がった 1 ペアだけなので、1 つ飛ばしの鎖どうしは
+    // ★**コライダーは見た目どおり** (halfExtents 0.5)。関節で繋がった相手と食い込むと永久に
+    //   押し合うので、`Joint.disableCollision` で**繋がったペアだけ候補から落とす** (縮めて逃げない)。
+    //   ★これが `disableCollision` の replay / golden 被覆でもある。切れるのは直接繋がった 1 ペアだけなので、1 つ飛ばしの鎖どうしは
     //     当たったまま = 「伝播しない」ことも 600 tick のハッシュに載る
     {
         constexpr int kLinks = 10;
@@ -1891,9 +1884,8 @@ void BuildJointShowcaseScene(EngineContext& ctx)
         addJoint(bracket, jointtype::kFixed, kNullEntity)->connectedAnchor = { 0.0f, 3.2f, 0.0f };
 
         GameObject arm = makeBox("WeldArm", 1.2f, 3.2f, 0.0f, 1.8f, 0.3f, 0.3f, "jdemo_weld");
-        // ★M60i では 0.45 へ縮めて幾何で逃げていた (溶接で密着している相手と食い込むと
-        //   接触ソルバが毎 tick 押し返して静止しない)。M60j 以降は見た目どおりの 0.5 で
-        //   置き、繋がったペアだけ `disableCollision` で落とす
+        // ★見た目どおりの 0.5 で置き、繋がったペアだけ `disableCollision` で落とす
+        //   (溶接で密着している相手と食い込むと接触ソルバが毎 tick 押し返して静止しない)
         addBoxCollider(arm, 0.5f, 0.5f, 0.5f, matSteel);
         addBody(arm, 3.0f);
         auto* aj = addJoint(arm, jointtype::kFixed, bracket.Id());
@@ -2020,8 +2012,8 @@ void BuildJointShowcaseScene(EngineContext& ctx)
 
     // ---- 10. ラグドール (M60g1 の逆駆動 + M60g2 の生成器) ----
     // ★**生成器をそのまま呼ぶ** — 手で組むと g2 が積み上げた寸法の決め方 (2 段カプセル /
-    //   restRotation / 短すぎる骨の足切り) が 2 箇所に散る。生成器を Engine 層へ移したのは
-    //   このため (M60i で `src\Editor\` から移動。Runtime も同じシーンを組めるようになる)
+    //   restRotation / 短すぎる骨の足切り) が 2 箇所に散る。生成器が Engine 層にあるのは
+    //   このため (Runtime も同じシーンを組める)
     {
         GameObject actor =
             ModelLoader::Load(s, res, *ctx.shaders, ctx.assetsRoot + L"\\models\\CesiumMan.glb");
@@ -2309,9 +2301,9 @@ void BuildParticleShowcaseScene(EngineContext& ctx)
     GameObject camera = s.CreateGameObject("Main Camera");
     camera.AddComponent<CameraComponent>();
     // 6 本のエミッタ (x = -16..+10) を 1 枚に収める。少し見下ろして床との衝突が読めるように。
-    // M63d で左端に mode=1 のライティングエミッタが増えたが、**既存 5 本は 1 つも動かして
-    // いない** (元から x_px 230 より左は空白だった) — 動かすと C1〜C3/C5 の被覆が
-    // 「位置が変わっただけ」で全部赤くなり、レビューで本物の回帰が埋もれる
+    // ★左端の mode=1 ライティングエミッタ (M63d) は x_px 230 より左の空白に置いてある。
+    //   他のエミッタを動かすと C1〜C3/C5 の被覆が「位置が変わっただけ」で全部赤くなり、
+    //   レビューで本物の回帰が埋もれる
     camera.SetLocalPosition(0.5f, 3.6f, -15.0f);
     camera.SetLocalRotationEuler(8.0f, 0.0f, 0.0f);
 
@@ -2623,8 +2615,7 @@ void BuildFogShowcaseScene(EngineContext& ctx)
         e->speedMin = 1.0f;
         e->speedMax = 1.8f;
         // ★M42追補: **中間キーの CPU/GPU 一致をピクセルで担保するための被覆**。
-        //   GPU バックエンドは長らく begin→end の 2 点線形しか持っておらず、中間キーを
-        //   丸ごと無視していた。golden にこの 2 本が写っている限り、片方だけ直した瞬間に赤くなる。
+        //   golden にこの 2 本が写っている限り、片方のバックエンドが中間キーを無視すると赤くなる。
         //   ★値は「begin→end の線形補間から**明確に外れる**」ように選ぶこと —
         //     線上に置くと中間キーを無視しても絵が変わらず、被覆にならない。
         //   立ち上がりで炎に照らされた暖色へ寄せ (alpha も線形より高い)、その後に冷えて散る絵。
@@ -2639,8 +2630,7 @@ void BuildFogShowcaseScene(EngineContext& ctx)
     }
 
     // ---- VFX (Sprite / Trail / TextMesh) ----
-    // ★**リポジトリで唯一この 3 種が写る被写体**。M57e まで golden に 1 枚も無かったので、
-    //   VfxRenderer は壊れても 14 枚が全部緑のままだった
+    // ★**リポジトリで唯一この 3 種が写る被写体** (無いと VfxRenderer が壊れても golden が全部緑のまま)
     // ★スプライト 2 枚は **「霧の量だけが違う 2 枚」になるように配置してある**:
     //   どちらもカメラの目線高さ (y=4) に置き、遠いほうは距離比 (68/28) だけ大きく焼く。
     //   こうすると 2 枚は画面上で同じ大きさ・左右対称の同じ高さに出るので、
@@ -2778,9 +2768,8 @@ static float AcousticMapToWorld(int i)
 
 // M65b: 音響ショーケース (--acoustic-demo)。
 // ★**波が壁を貫通せず L 字を曲がる**ことを見せるためだけのシーン。
-//   M65b 時点では絵は出ず、デバッグ線 (View > 音響) でしか見えない —
-//   ライティングに差し込むのは M65e。それでも今サブで置くのは、replay 7 ペア目の
-//   被写体 (= 波のハッシュ被覆) がここにしか無いため。
+//   残光は光パスで絵に出る (M65e) ほか、デバッグ線 (View > 音響) でも見える。
+//   replay 7 ペア目の被写体 (= 波のハッシュ被覆) はここにしか無い。
 void BuildAcousticShowcaseScene(EngineContext& ctx)
 {
     Scene& s = *ctx.scene;
@@ -2807,8 +2796,7 @@ void BuildAcousticShowcaseScene(EngineContext& ctx)
     camera.AddComponent<CameraComponent>();
     // ★間取り全体が 1 枚に入る俯瞰。**L 字の 2 本の腕と 2 部屋が同時に見えること**が
     //   画角の唯一の要件 — 片方の腕が切れていると「回り込んだ」が絵から読めない
-    // ★M65e で寄せた (26,-17 -> 20,-13)。golden をここで初めて撮るので、間取りが
-    //   画面の中で小さいと**残光が壊れても差分画素が少なすぎて埋もれる**。
+    // ★間取りが画面の中で小さいと**残光が壊れても golden の差分画素が少なすぎて埋もれる**。
     //   2 本の腕と 2 部屋が入る限界まで寄せてある
     camera.SetLocalPosition(0.0f, 20.0f, -13.0f);
     camera.SetLocalRotationEuler(56.0f, 0.0f, 0.0f);
@@ -2877,8 +2865,7 @@ void BuildAcousticShowcaseScene(EngineContext& ctx)
     }
 
     // ---- 聴者 (部屋 B) ----
-    // M65b では鏡が空のままだが、**デバッグ線の被写体**として先に置いてある。
-    // M65f でここに「いつ・どこから聞こえたか」が入る
+    // 鏡に「いつ・どこから聞こえたか」が入る (M65f)。**デバッグ線の被写体**でもある
     {
         GameObject ear = s.CreateGameObject("Listener");
         // ★部屋 B の**入口寄り**に置く。奥に置くと L 字経路が 32m を超えて
@@ -2892,10 +2879,9 @@ void BuildAcousticShowcaseScene(EngineContext& ctx)
     //   (a) セル中心 (層 0 = y=0.5) には**届かない**こと — 届くと廊下の床が
     //       占有セルになり、M65b で測った「断面 24 セルの平面波」が変わる。
     //   (b) 床 (天面 y=0) との段差が **CC が登れる高さ**であること。
-    //       ★★M65c は天面 0.45 で置いていたが、それは **M65f で敵が廊下へ入れない**
-    //         原因だった。0.45m の段差は collide-and-slide では登れず、追跡中の敵が
-    //         タイルの端で永久に足踏みする (probe で発見。歩行者はタイルの上で
-    //         生まれるので一度も跨がず、絵にも出ていなかった)。5cm なら誰でも登れる。
+    //       ★★天面 0.45 にすると **敵 (M65f) が廊下へ入れない**。0.45m の段差は
+    //         collide-and-slide では登れず、追跡中の敵がタイルの端で永久に足踏みする
+    //         (歩行者はタイルの上で生まれるので一度も跨がず、絵にも出ない)。5cm なら誰でも登れる。
     //   ★(a) の「天面が音響ボリュームの下端 (y=0.25) より上」は**タイルには要らない**。
     //     足音は歩行者の位置 (y=1.35) で鳴るので、タイルの高さは発音位置に無関係。
     //     この制約が効くのは接触点そのものが発音位置になる**衝撃の金属板だけ**で、
@@ -2929,7 +2915,7 @@ void BuildAcousticShowcaseScene(EngineContext& ctx)
     //   GroundMaterialUnder が無音を返す仕様なので、併用すると足音が 1 度も出なくなる
     {
         GameObject walker = s.CreateGameObject("Walker");
-        // 天面 0.45 + カプセル半長 0.9 = 1.35。落として馴染ませるより初期値で載せる
+        // タイル天面は 0.05 (上の床材タイル)。カプセル半長 0.9 で載る高さ 0.95 より 0.4m 上から始まる
         walker.SetLocalPosition(AcousticMapToWorld(2), 1.35f, AcousticMapToWorld(4));
         walker.SetLocalScale(0.6f, 1.0f, 0.6f);
         auto* mr = walker.AddComponent<MeshRendererComponent>();
@@ -3222,9 +3208,8 @@ void RegisterAssetLibraries(EngineContext& ctx)
             } else if (ctx.resources != nullptr && ctx.shaders != nullptr
                        && (ext == L".glb" || ext == L".gltf" || ext == L".fbx")) {
                 // M50a: メッシュ / マテリアル / スキンを丸ごとヘッドレス登録する。
-                // M48g はスケルトンだけだったため、保存済みシーンをロードする経路
-                // (ModelLoader::Load を通らない) では MeshRenderer.mesh / .material の
-                // 実体が誰にも登録されず、モデルが描画されなかった。Editor / Runtime 共通
+                // 保存済みシーンをロードする経路 (ModelLoader::Load を通らない) では、ここで
+                // 登録しないと MeshRenderer.mesh / .material の実体が誰にも登録されず、モデルが描画されない。Editor / Runtime 共通
                 const bool ok = (ext == L".fbx")
                     ? FbxLoader::RegisterAssets(*ctx.resources, *ctx.shaders, p, false)
                     : ModelLoader::RegisterAssets(*ctx.resources, *ctx.shaders, p, false);
@@ -3294,8 +3279,8 @@ void RegisterAssetLibraries(EngineContext& ctx)
 }
 
 // ---- M75c: ゲーム内 UI のショーケース (--ui-demo) ----
-// golden 25 枚目 (ui_widgets) の被写体。M75c の時点では Canvas Scaler の 3 モードと Canvas の
-// sortOrder だけで、M75e 以降の Layout / ウィジェットはこのシーンへ**末尾に**積み増す。
+// golden 25 枚目 (ui_widgets) の被写体。Canvas Scaler の 3 モードと Canvas の sortOrder (M75c)、
+// 自動レイアウト (M75e)、ウィジェット (M75f) を載せる。積み増しはこのシーンの**末尾に**。
 // ★4 隅の箱は**どれも自分のキャンバス単位で 300x150**。基準 1024x768 (4:3) を 16:9 の画面で
 //   解くので Expand / Shrink / Match で実寸が変わる = 3 モードの差がそのまま絵に出る。
 //   基準を 16:9 にすると 3 モードが一致して何も写らない (UILayout.cpp の sx == sy の近道)

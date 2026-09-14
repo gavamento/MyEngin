@@ -17,7 +17,7 @@ struct RenderResources;
 // マテリアルはベースカラー / ノーマルマップ / 半透明 / metallic-roughness / emissive に対応。
 // emissive は M46i でエンジン側の受け皿 (Material::emissiveIntensity) ができたので取り込む
 // (スカラー強度なので発光色は baseColor に従う)。第 2 UV セットは受け皿が無く WARN のみ。
-// 現状はスタティックメッシュ + マテリアル + 階層に対応 (スキン/アニメは将来)。
+// スキン (skin deformer → SkinnedModel) とクリップも取り込む (RegisterSkinnedModels)。
 namespace FbxLoader {
 
 // 失敗時は無効な GameObject を返す (エラーは Console ログへ)

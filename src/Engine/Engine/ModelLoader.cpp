@@ -423,7 +423,7 @@ bool RegisterAssets(RenderResources& resources, ShaderManager& shaders, const st
                     bool logErrors)
 {
     // M51b: クック済みキャッシュが有効ならパースを丸ごと飛ばして登録を再生する。
-    // 挿入点はこの RegisterAssets 経路のみ — Load (D&D 配置) は従来パースのまま
+    // 挿入点はこの RegisterAssets 経路のみ — Load (D&D 配置) は毎回パースする
     if (ModelCook::TryReplayFromCache(resources, shaders, path)) {
         return true;
     }

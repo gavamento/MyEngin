@@ -41,9 +41,8 @@ constexpr size_t kCullGrain = 256; // これ未満は直列 (スレッド起動�
 
 // ---- M65d: `--acoustic-dump N` の読み戻し検査 ----
 //
-// ★消費者 (M65e のライティング) がまだ居ない段階で「転送が正しい」と主張できる
-//   唯一の手段。GPU から読み戻したバイト列を **CPU 側の残光配列とバイト単位で**
-//   突き合わせる — RowPitch と DepthPitch を取り違えると Z がずれた絵になり、
+// ★「転送が正しい」を数値で主張できる唯一の手段。GPU から読み戻したバイト列を
+//   **CPU 側の残光配列とバイト単位で**突き合わせる — RowPitch と DepthPitch を取り違えると Z がずれた絵になり、
 //   しかも絵は普通に出るので目視では絶対に見つからない。
 // 併せて「残光が閉セルに入っていないこと」も数える。閉セルは波が絶対に訪れないので、
 // ここが 0 でなければ伝播か転送のどちらかが壁を越えている。
@@ -525,7 +524,7 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
                           const FrameTarget& target, const CameraOverride* cameraOverride,
                           ParticleSystem* particles, VfxRenderer* vfx)
 {
-    // ★呼ぶ順 = 元の 1 関数の文の順。後の段は前の段が view / lights に書いた値を読む
+    // ★後の段は前の段が view / lights に書いた値を読む
     FrameContext f;
     BeginView(device, shaders, target, f);
     ResolveCamera(world, cameraOverride, f);
@@ -568,10 +567,9 @@ void RenderSystem::BeginView(GraphicsDevice& device, ShaderManager& shaders, con
     view.depthSRV = target.depthSRV;       // M42a: null なら深度読み系効果は自然無効
     view.dsvReadOnly = target.dsvReadOnly;
 
-    // ---- HDR ポストプロセス経路 (M16) ----
     // シーン + パーティクルを HDR 中間 (R16F, color のみ) へ描き、最後にトーンマップ解決で
     // target.rtv へ書く。depth は target.dsv を共有するため、解決後にエディタが重ねる
-    // ギズモ/線 (rt_.DSV() 利用) の深度テストは従来どおり成立する。
+    // ギズモ/線 (rt_.DSV() 利用) の深度テストはそのまま成立する。
     if (!postFx_.IsReady()) {
         postFx_.Init(device, shaders);
     }
@@ -598,7 +596,6 @@ void RenderSystem::ResolveCamera(World& world, const CameraOverride* cameraOverr
     const float aspectRatio = f.aspectRatio;
     bool& cameraFound = f.cameraFound;
     EntityID& camEntity = f.camEntity;
-    // ---- カメラ ----
     if (cameraOverride) {
         view.view = cameraOverride->view;
         if (cameraOverride->hasProj) {
@@ -737,14 +734,13 @@ void RenderSystem::DecideTaaAndFroxel(World& world, IRenderPath& path, const Fra
     }
 }
 
-// 視錐台 (メッシュとライトのカリング用) と、ライトの候補収集 → SelectLights (M54b)
+// 視錐台 (M16。メッシュとライトのカリング用。カメラがある時のみ。描画専用でハッシュ非対象) と、
+// ライトの候補収集 → SelectLights (M54b)
 void RenderSystem::CollectLights(World& world, FrameContext& f)
 {
     RenderView& view = f.view;
     Frustum& frustum = f.frustum;
     SceneLightData& lights = f.lights;
-    // ---- 視錐台 (M16: メッシュのカリング用。カメラがある時のみ。描画専用でハッシュ非対象) ----
-    // M54b からライト選別も同じ視錐台を使うので、収集ブロックの中からここへ引き上げた
     f.cullEnabled = f.cameraFound;
     const bool cullEnabled = f.cullEnabled;
     if (cullEnabled) {
@@ -759,7 +755,6 @@ void RenderSystem::CollectLights(World& world, FrameContext& f)
     // M54b: ここは候補を集めるだけで、カリング / 決定論ソート / 上限 kMaxLights の適用は
     // LightSelection.cpp の純関数が行う (M54c のシャドウアトラスが「影を投げるライトの列」の
     // frame 間安定性を要求するため、順序を決める場所を 1 箇所に閉じた)。
-    // M54b 以前はカリングもソートも無い「登録順の先着 16 本」だった
     {
         const ComponentTypeId req[] = { LightComponent::sTypeId, WorldMatrixComponent::sTypeId };
         bool ambientSet = false;
@@ -791,7 +786,7 @@ void RenderSystem::CollectLights(World& world, FrameContext& f)
                 g.cosOuter = std::cos(XMConvertToRadians(l->spotOuterDeg));
                 if (!ambientSet) {
                     // アンビエントは最初のライトの値を全体に使う (M38a: リニアへ)。
-                    // ★選別後の先頭ではなく**走査順の先頭** — 従来挙動を 1 ビットも変えない
+                    // ★選別後の先頭ではなく**走査順の先頭** — 選別の順に替えると ambient の出どころが変わり絵が動く
                     lights.ambient = SrgbToLinear(l->ambient);
                     ambientSet = true;
                 }
@@ -1096,7 +1091,6 @@ void RenderSystem::RenderCascadeShadows(GraphicsDevice& device, ShaderManager& s
     const XMFLOAT3& sceneMin = f.sceneMin;
     const XMFLOAT3& sceneMax = f.sceneMax;
     const bool hasScene = f.hasScene;
-    // ---- シャドウパス (M17): 最初の平行光でシーンにフィットした深度マップを描く ----
     if (!shadowPass_.IsReady()) {
         shadowPass_.Init(device, shaders);
     }
@@ -1130,7 +1124,7 @@ void RenderSystem::RenderCascadeShadows(GraphicsDevice& device, ShaderManager& s
     }
 }
 
-// 局所ライトのシャドウアトラス (M54c / M54d): 影を投げるスポット / 点光源へ枠を前詰めで割り当てて描く
+// 局所ライトのシャドウアトラス (M54c: スポット 1 面 / M54d: 点光源 6 面): 影を投げるライトへ枠を前詰めで割り当てて描く
 void RenderSystem::AllocateShadowAtlas(GraphicsDevice& device, ShaderManager& shaders, RenderResources& resources,
                                        FrameContext& frame) // f は下の面番号ループが使う名前
 {
@@ -1139,7 +1133,6 @@ void RenderSystem::AllocateShadowAtlas(GraphicsDevice& device, ShaderManager& sh
     const XMFLOAT3& sceneMin = frame.sceneMin;
     const XMFLOAT3& sceneMax = frame.sceneMax;
     const bool hasScene = frame.hasScene;
-    // ---- 局所ライトのシャドウアトラス (M54c: スポット 1 面 / M54d: 点光源 6 面) ----
     // 枠は「M54b の決定論キーで並んだライト順に前詰め」= シーンが変わらなければ
     // frame をまたいでも同じライトが同じ枠に落ちる (割当が揺れると影がポップする)。
     // ★点光源は 6 枚を**連番**で取る — シェーダは shadowTile + 面番号で引くので、
@@ -1402,12 +1395,11 @@ void RenderSystem::UpdateFroxel(GraphicsDevice& device, ShaderManager& shaders, 
     SceneLightData& lights = f.lights;
     const bool froxelOn = f.froxelOn;
     FroxelSettings& effectiveFroxel = f.effectiveFroxel;
-    // ---- M57b/M57c/M57d: フロクセル (注入 → テンポラル → 前方積分 → 光パスへ供給) ----
     // ★置き場所はここしかない: 上流に CollectEnvironment (高度フォグのパラメータ) と
     //   シャドウアトラス (SampleShadowAtlas の入力) が要り、下流の path.Render より
-    //   前でないと消費側 (Deferred 光パス) が積分結果を読めない。
-    // M57d でここが初めて絵に出る。**積分が走らなかったフレームは SRV が null のまま** =
-    //   光パス側のゲートで従来の ApplyFog へ落ちる (正射影ビュー / シェーダ未ロードなど)
+    //   前でないと消費側 (光パス) が積分結果を読めない。
+    // ★**積分が走らなかったフレームは SRV が null のまま** =
+    //   光パス側のゲートで ApplyFog へ落ちる (正射影ビュー / シェーダ未ロードなど)
     if (froxelOn && (froxelPass_.IsReady() || froxelPass_.Init(device, shaders))) {
         view.froxelSRV = froxelPass_.Render(device, shaders, view, lights, effectiveFroxel);
         view.froxelNearZ = froxelPass_.GridNearZ();
@@ -1427,13 +1419,10 @@ void RenderSystem::UpdateFroxel(GraphicsDevice& device, ShaderManager& shaders, 
 }
 
 // 音響の残光ボリューム (M65d) と解析的な波面: CPU の値を 3D テクスチャへ上げて view へ配線する
+// (読むのは M65e の光パス。転送の正しさは `--acoustic-dump` の読み戻しで数値として確かめる)
 void RenderSystem::UpdateAcousticVolume(GraphicsDevice& device, const FrameTarget& target, FrameContext& f)
 {
     RenderView& view = f.view;
-    // ---- M65d: 音響の残光ボリューム (CPU の波面 → 3D テクスチャ → M65e の光パス) ----
-    // ★**この時点では消費者が 1 人も居ない** (合成は M65e)。それでも配線してあるのは、
-    //   転送そのものの正しさを `--acoustic-dump` の読み戻しで数値として主張しておくため
-    //   (M57c が「積分結果を読む者が居ない段階で golden を撮らない」とした流儀と同じ)。
     // ★三重のゲート: ポインタが null / ボリュームが無い / 一度も光っていない、の
     //   どれかなら SRV は null のまま = 既存の絵は 1 ビットも動かない
     acousticSupplied_ = false;
@@ -1622,8 +1611,8 @@ void RenderSystem::ResolvePost(World& world, GraphicsDevice& device, ShaderManag
         // 両方走らせると太陽まわりの散乱を 2 回足すことになるので、フロクセルが
         // 実際に絵へ出たフレームだけ自動で降ろす。**ユーザー設定は書き換えない** —
         // ここで潰すのは「このフレームで使う実効値」だけなので、froxel を切れば戻る
-        // ★条件に path.AppliesFroxel() が要る — Forward はまだ積分結果を読まない (M57e) ので、
-        //   ここを SRV の有無だけで判定すると「ゴッドレイだけ消えて霧が増えない」になる
+        // ★条件に path.AppliesFroxel() が要る — 積分結果を読まないパスで SRV の有無だけで
+        //   判定すると「ゴッドレイだけ消えて霧が増えない」になる
         if (view.froxelSRV != nullptr && path.AppliesFroxel()) {
             effective.godrayIntensity = 0.0f;
         }

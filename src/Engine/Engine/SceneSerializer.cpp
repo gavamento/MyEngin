@@ -355,8 +355,7 @@ json SaveToJson(Scene& scene)
 
     json root;
     root["engine"] = "MyEngine";
-    // v3 (M50c): 「キー不在 = ベース追随」を構造へ拡張した文書であることの宣言。
-    // 値の書式は v2 と同一 — 旧エンジンは version を読まないので素通しでロードできる
+    // 書く値は Scene::kDocVersion (現行 4)。版ごとの意味は Scene.h の kDocVersion が正本
     root["version"] = Scene::kDocVersion;
     root["sceneName"] = scene.Name();
     root["nextFileId"] = scene.PeekNextFileId();

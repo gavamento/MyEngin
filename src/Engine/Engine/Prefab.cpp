@@ -389,9 +389,8 @@ uint64_t PrefabLibrary::LoadFromFile(const std::wstring& path)
         return 0;
     }
     // 宣言キーで種別を検証する (M48d)。**actor:1 と prefab:1 の両方を受理** し、
-    // どちらも無いものは弾く — 従来はキーを一切見ずに entities だけ拾っていたので、
-    // 別種の .json (シーンやマテリアル) を渡しても「エンティティ 0 件のプレハブ」として
-    // 静かに登録されてしまっていた
+    // どちらも無いものは弾く — キーを見ずに entities だけ拾うと、別種の .json
+    // (シーンやマテリアル) を渡しても「エンティティ 0 件のプレハブ」として静かに登録される
     const bool isActor = root.value("actor", 0) == 1;
     const bool isPrefab = root.value("prefab", 0) == 1;
     if (!isActor && !isPrefab) {
@@ -682,7 +681,7 @@ uint64_t InstantiateEntities(Scene& scene, const json& localEntities, uint64_t p
     // 集合内に親を持たないエントリ = ベースのルート。
     // **複数ある場合 (ミニシーン型の .actor.json) はラッパーで包む** (M48d) —
     // インスタンスの実体が単一ルートでないと、FindInstanceRoot / 選択 / Undo が
-    // 「どれがルートか」で割れる。従来は最後のルートだけをタグ付けして残りが野良になっていた
+    // 「どれがルートか」で割れる (最後のルートだけをタグ付けすると残りが野良になる)
     std::unordered_set<uint64_t> localIds;
     for (const json& item : localEntities) {
         const uint64_t local = item.value("fileId", 0ull);

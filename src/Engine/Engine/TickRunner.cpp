@@ -199,11 +199,9 @@ void CapturePrevWorld(PrevWorldStore& prevWorld, World& w)
 } // namespace
 
 // 固定 tick 1 回分 (engine_spec.md 5.3 のフェーズ 3/3.5/3.6/4/5/7 + tick 末の出力レーン)。
-// EngineLoop / タイムトラベル / ロールバックの 3 経路が**この 1 実装だけ**を通る (決定台帳 2)
+// (契約は TickRunner.h の TickServices)
 void RunOneTick(TickServices& ts)
 {
-    // 本体は元のフレームループから丸ごと持ってきたコードなので、参照名は当時のまま束ねる
-    // (差分を「移動」に留めて、抽出そのものが挙動を変えていないことを読めるようにする)
     EngineContext& ctx = *ts.ctx;
     const EngineConfig& config = *ts.config;
     Scene& scene = *ts.scene;
@@ -465,13 +463,10 @@ void RunOneTick(TickServices& ts)
             if (!prefabLibrary.Contains(hash)) {
                 prefabLibrary.LoadFromFile(full);
             }
-            // ★M70d (dogfooding #4): 判定は null id そのもので行う。以前は
-            //   「index も generation も 0 でなければ親あり」だったので、
-            //   (a) 自然に書ける MyeEntityId{} (= null id、index 0xFFFFFFFF) が
-            //       「親あり」に分類され、EnsureFileId が死んだエンティティに 0 を返す
-            //       という**2 段階の偶然**でルート生成になっていた。
-            //   (b) 逆に最初に作られた実在エンティティ {0,0} を親に渡すと、
-            //       黙ってルート生成になっていた (こちらは本物のバグ)。
+            // ★M70d (dogfooding #4): 判定は null id そのもので行う。「index も generation も
+            //   0 でなければ親あり」で判定すると、MyeEntityId{} (= null id、index 0xFFFFFFFF) が
+            //   「親あり」に分類され、逆に最初に作られた実在エンティティ {0,0} を親に渡すと
+            //   黙ってルート生成になる。
             const bool hasParent = !MyeEntityIdIsNull(req.parent);
             const uint64_t parentFid =
                 hasParent ? scene.EnsureFileId(

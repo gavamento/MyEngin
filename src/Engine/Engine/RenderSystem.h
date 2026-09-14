@@ -76,7 +76,7 @@ struct CameraOverride {
     float farZ = 1000.0f;
     int32_t debugViewMode = 0; // SceneView 表示モード (M40b): 0=Lit 1=Unlit 2=Wireframe
     // M55b: 呼び出し側が組んだ射影をそのまま使う。SceneView は Ortho トグルと
-    // ギズモ/ピッキング用に同じ行列を自前で持っていたので、渡してもらって二重構築を無くす
+    // ギズモ/ピッキング用に同じ行列を自前で持っているので、渡してもらって二重構築しない
     // (fovYDeg/nearZ/farZ から組み直す従来経路は hasProj=false のときだけ通る)。
     bool hasProj = false;
     DirectX::XMFLOAT4X4 proj = {};
@@ -175,12 +175,11 @@ public:
     //   この値は「TAA が有効なときの振幅」で、0 にすればジッタだけ止められる (A/B 用)
     float jitterAmplitude = 1.0f;
     // M55c: velocity バッファ (GBuffer RT4) の可視化 (--velocity-debug / View メニュー)。
-    // 0 = off。Deferred のみ。velocity を読む本番の消費者はまだ居ない (M55d/M55e/M55f)
-    // ので、これが唯一の「本当に書けているか」の目視口になる
+    // 0 = off。Deferred のみ。velocity の中身を直接見る目視口
     int velocityDebugMode = 0;
     // M56c: HZB (min-Z ピラミッド) の可視化 (--hzb-debug N / Rendering メニュー)。
     // 0 = off / N = ミップ N-1 を表示。Deferred のみ。**0 のときはピラミッドを組みもしない** —
-    // HZB を読む本番の消費者 (SSR) は M56d で入った (下の enableSsr でも組まれる)
+    // ただし下の enableSsr でも組まれる (SSR が HZB を読む)
     int hzbDebugMip = 0;
     // M56d: SSR (スクリーンスペース反射、--ssr / Rendering メニュー)。**Deferred のみ**。
     // シーンカメラに CameraPostFx があればそちらの ssrOn が勝つ (TAA と同じ規則)。
@@ -195,9 +194,7 @@ public:
     const ReflectionProbeSet* reflectionProbes = nullptr;
 
     // ---- M57b/M57c: フロクセル・ボリュメトリック (--froxel) ----
-    // ★既定 off。**M57c の時点でも積分結果を読む者は居ない** (最終画像への合成は
-    //   M57d/M57e) ので、on にしても絵は 1 ビットも変わらない。それでも配線して
-    //   あるのは GPU コストを実シーンで測り、値を読み戻して検査できるようにするため。
+    // ★既定 off。積分結果は光パスが最終画像へ合成する (Deferred M57d / Forward M57e)。
     //   on のあいだだけ 3D テクスチャを確保する (注入 7MB + 積分 7MB +
     //   テンポラル履歴が viewKey あたり 14MB)。
     // ★シーンカメラに CameraPostFx があれば **そちらの froxelOn が勝つ**

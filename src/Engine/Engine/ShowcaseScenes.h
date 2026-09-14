@@ -12,7 +12,7 @@ struct ShowcaseOptions {
 };
 
 // デモ / ショーケースのシーン 1 本 = --*-demo フラグ 1 本 (表は ShowcaseScenes.cpp の kShowcases)。
-// Editor と Runtime は同じ行から「保存先 = 在ればロードする先」と「無ければ組む関数」を引く
+// Editor と Runtime は同じ行から保存先と組み立て関数を引く
 struct ShowcaseDef {
     const wchar_t* flag;      // "--rt-demo" など
     bool inAssets;            // true = <assets>\ 相対。false = 作業ディレクトリ相対 (cache\)

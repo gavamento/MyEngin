@@ -12,11 +12,9 @@ struct SkinnedModel;
 // **sim には 1 バイトも足さない**。エディタ時に 1 回きり、スケルトンの形から
 // 「M60g1 が駆動できる階層」を組み立てるだけの器。
 //
-// ★M60i で `src\Editor\` から Engine 層へ移した。ショーケース (`--joint-demo`) の
-//   ラグドールを `DemoContent` が組むため — Editor 層に置いたままだと **Runtime.exe が
-//   同じシーンを組めない** (golden スクショは Runtime で撮る)。中身は元から Engine 層の
-//   型しか触っていなかったので、移動は include の付け替えだけで済んでいる。
-//   これで「生成器が吐く階層」そのものが replay 6 ペア目の被写体になった。
+// ★Engine 層に置くのは、ショーケース (`--joint-demo`) のラグドールを `DemoContent` が
+//   組むため — Editor 層にあると **Runtime.exe が同じシーンを組めない** (golden スクショは
+//   Runtime で撮る)。「生成器が吐く階層」そのものが replay 6 ペア目の被写体。
 //
 //   Skin (SkinnedMesh + Ragdoll(active=false))
 //    ├ <骨名>            Part(joint) / PartBounds / Rigidbody(compoundColliders) / Joint(Cone)
@@ -31,8 +29,8 @@ struct SkinnedModel;
 //   こうすると骨が +Y を向いていない rig (Blender 系以外) でもカプセルが骨に乗る。
 //
 // ★**同じスケルトンからは毎回ビット同一の階層が出ること**が検証条件 (g2-1)。そのため
-//   骨の走査は joints 配列の index 昇順に固定、子が複数ある骨は **index 最小の子**へ
-//   伸ばす、と決め打ちしてある。浮動小数も式の形を変えずに 1 本道で書いている。
+//   骨の走査は joints 配列の index 昇順に固定、子が複数ある骨は index 昇順で最初に
+//   見つかる**長さのある子**へ伸ばす、と決め打ちしてある (index 最小の子ではない)。浮動小数も式の形を変えずに 1 本道で書いている。
 //
 // ★部位の LocalTransform は `DecomposeRowMajorTRS` (PartFollowSystem と共有) で作る。
 //   追従システムがバインドポーズで書く値とビット一致していないと、Play を押した瞬間に
