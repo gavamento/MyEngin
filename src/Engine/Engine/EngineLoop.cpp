@@ -1407,6 +1407,17 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             for (uint32_t p = 0; p < captureLanes; ++p) {
                 ctx.inputs[p] = input.CaptureSnapshot(p, surface);
             }
+            // ---- ゲームの画面の外のクリックを捨てる (2026-09-14) ----
+            // エディタのマウス座標はエディタ全体のクライアント px なので、そのままだと停止ボタンや
+            // インスペクタのクリックがゲームの「画面クリック」になる (Esc で放したカーソルを
+            // 停止ボタンのクリックでゲームが掴み直し、ボタンが押せなくなった)。
+            // ★写した直後 = .rep の記録と verify / synth の置換より前なので決定論は崩れない
+            {
+                InputRect gameArea;
+                if (app.GameMouseArea(gameArea)) {
+                    Input::MaskMouseOutside(ctx.inputs[0], gameArea);
+                }
+            }
             liveCharsPending = ctx.inputs[0].charCount;
             if (deterministicShot) {
                 // ---- 撮影モードの決定化 (M68c、dt 固定と同じ趣旨) ----
@@ -2240,9 +2251,18 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             //   実行でデスクトップのカーソルを奪うのは事故** — CI とスクショ検証は
             //   record/verify を通らない経路なので、この 1 条件が無いと素通りする
             const bool batchRun = config.maxFrames > 0 || !config.screenshotPath.empty();
+            // エディタは Game ビューの中央へ固定する。Game ビューが見えていないときと、
+            // スクリプトが回っていないとき (エディタの Stop 後 / Pause 中) は掴まない —
+            // Stop するとスクリプトはもう 0 を出せないので、ここで外さないと隠れたまま残る。
+            // ★simulateScripts は Runtime では常に true (EngineContext の解説) = exe は変わらない
+            InputRect lockArea;
+            const bool hasLockArea = app.GameMouseArea(lockArea);
+            const bool lockAreaHidden = hasLockArea && (lockArea.w <= 0 || lockArea.h <= 0);
             input.ApplyCursorLock(window.Hwnd(),
                                   cursorLock.mode != 0 && !vibSuspend && !batchRun
-                                      && !cursorLock.escapeReleased);
+                                      && !cursorLock.escapeReleased && ctx.simulateScripts
+                                      && !lockAreaHidden,
+                                  hasLockArea ? &lockArea : nullptr);
         }
         const double tRender = clock.Now();
 

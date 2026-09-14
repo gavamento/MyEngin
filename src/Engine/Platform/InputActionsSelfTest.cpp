@@ -462,6 +462,49 @@ bool RunInputActionsSelfTest()
         check(lane1Clean, "synth: lanes other than 0 carry no characters and no surface");
     }
 
+    // ---- ゲームの画面の外のクリックを捨てる (2026-09-14、エディタの Game ビュー) ----
+    // 停止ボタンのクリックがゲームに届いてカーソルを掴み直していた不具合の固定。
+    // 捨てるのはボタンとホイールだけ (キー・位置・生デルタは残す)
+    {
+        InputRect area;
+        area.x = 100;
+        area.y = 50;
+        area.w = 640;
+        area.h = 360;
+        InputSnapshot base = Snap();
+        base.mouseX = 420;
+        base.mouseY = 200;
+        base.mouseButtons = 0x03;
+        base.wheelDelta = 120;
+        base.mouseDeltaX = 5;
+        Down(base, kVkW);
+
+        InputSnapshot inside = base;
+        Input::MaskMouseOutside(inside, area);
+        check(std::memcmp(&inside, &base, sizeof(base)) == 0, "game area: a click inside passes untouched");
+
+        InputSnapshot outside = base;
+        outside.mouseX = 99; // 左端の 1 px 外
+        Input::MaskMouseOutside(outside, area);
+        check(outside.mouseButtons == 0 && outside.wheelDelta == 0,
+              "game area: outside drops mouse buttons and wheel");
+        check(outside.KeyDown(kVkW) && outside.mouseX == 99 && outside.mouseDeltaX == 5,
+              "game area: outside keeps keys, position and raw delta");
+
+        InputSnapshot rightEdge = base;
+        rightEdge.mouseX = area.x + area.w; // 半開区間 = 右端は外
+        Input::MaskMouseOutside(rightEdge, area);
+        InputSnapshot leftEdge = base;
+        leftEdge.mouseX = area.x; // 左端は中
+        Input::MaskMouseOutside(leftEdge, area);
+        check(rightEdge.mouseButtons == 0 && leftEdge.mouseButtons == 0x03,
+              "game area: the left edge is inside, the right edge is outside");
+
+        InputSnapshot hidden = base;
+        Input::MaskMouseOutside(hidden, InputRect{});
+        check(hidden.mouseButtons == 0, "game area: an empty area (view not visible) receives no clicks");
+    }
+
     if (failCount == 0) {
         MYE_LOG_INFO("==== InputActions self test: ALL PASS ====");
         return true;

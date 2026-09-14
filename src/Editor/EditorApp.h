@@ -52,6 +52,8 @@ public:
     // すると EditorApp の破棄 (= device.Shutdown の後) まで生き残る。
     // ★同じ問題は preview_ (AssetPreviewCache) にもあるが、そちらは M56f の範囲外
     void OnShutdown(EngineContext& ctx) override;
+    // Game ビューの画像だけがゲームの画面 (2026-09-14。範囲外のクリックはゲームに渡さない)
+    bool GameMouseArea(InputRect& out) override;
 
     bool saveSceneOnStart = false; // --save-scene-on-start (シーンリロード検証用)
     bool autoPlay = false;         // --autoplay (起動直後に Play。スクリプト検証用)

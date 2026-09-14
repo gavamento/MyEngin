@@ -533,9 +533,10 @@ struct MyeEngineApi {
     //     を通して割ること。上下は「下向きが正」(画面座標と同じ向き)
     void (*GetMouseDelta)(void* engine, int32_t* outDx, int32_t* outDy);
 
-    // SetCursorMode: 0 = 通常 / 1 = ロック (クライアント矩形へ閉じ込めて非表示)。
+    // SetCursorMode: 0 = 通常 / 1 = ロック (クライアント矩形の中央へ毎フレーム固定して非表示)。
+    //   エディタでは矩形が Game ビューの画像になり、Stop 後 / Pause 中は掴まない (2026-09-14)。
     //   **出力レーン** — SetPadVibration と同格で、要求を書くだけ。実際の
-    //   ClipCursor/ShowCursor はフレーム末にエンジンが適用し、record/verify 中・
+    //   ClipCursor/SetCursorPos/ShowCursor はフレーム末にエンジンが適用し、record/verify 中・
     //   フォーカス喪失中・タイムトラベルのスクラブ中は強制的に解除される。
     //   現在のモードを読み返す口は無い (状態は呼び出し側が持つ)。
     //

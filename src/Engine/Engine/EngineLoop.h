@@ -396,6 +396,11 @@ public:
     virtual void OnRenderViews(EngineContext&) {} // フェーズ 6: 独自 RT への描画 (エディタの SceneView 等)
     virtual void OnImGui(EngineContext&) {}       // 描画フレーム毎 (spec 5.3 フェーズ 8)
     virtual void OnShutdown(EngineContext&) {}
+    // ゲームがマウスのクリックを受け取ってよい範囲 (2026-09-14)。false = 制限なし (Runtime)。
+    // true を返すと、範囲の外にあるマウスのボタン / ホイールを入力レーン 0 から捨て
+    // (Input::MaskMouseOutside)、カーソルロックもこの範囲の中央へ固定する。
+    // エディタは Game ビューの画像を返す (見えていなければ w/h = 0 = どこも受け取らない / 掴まない)
+    virtual bool GameMouseArea(InputRect&) { return false; }
 };
 
 // メインループ (engine_spec.md 5.3)。

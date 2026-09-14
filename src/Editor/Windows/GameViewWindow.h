@@ -13,8 +13,12 @@ public:
     bool open = true; // 閉じる / 再表示 (タブ [x] と Window メニューに連動)
     void OnRenderViews(EngineContext& ctx);
     void OnImGui(EngineContext& ctx, const Selection& selection); // M51f: 選択 UI の矩形表示
+    // 直近の OnImGui で描いたゲーム画像の矩形 (メインウィンドウのクライアント px、2026-09-14)。
+    // IEngineApp::GameMouseArea の中身。見えていない (閉じた / タブの裏) ときは w = h = 0
+    InputRect GameArea() const { return gameArea_; }
 
 private:
+    InputRect gameArea_;
     RenderTexture rt_;
     int desiredW_ = 0;
     int desiredH_ = 0;

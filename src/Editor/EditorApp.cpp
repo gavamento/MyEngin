@@ -410,6 +410,14 @@ void EditorApp::OnTick(EngineContext& ctx)
     ctx.simulateScripts = playMode_.ConsumeSimulateTick();
 }
 
+bool EditorApp::GameMouseArea(InputRect& out)
+{
+    // マウス座標はエディタ全体のクライアント px。Game ビューの外 (停止ボタン / インスペクタ) の
+    // クリックをゲームの「画面クリック」にしないため、画像の矩形で絞る
+    out = gameView_.GameArea();
+    return true;
+}
+
 void EditorApp::OnRenderViews(EngineContext& ctx)
 {
     if (actorEdit_) {

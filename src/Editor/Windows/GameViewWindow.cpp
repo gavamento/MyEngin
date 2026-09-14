@@ -56,6 +56,7 @@ void GameViewWindow::OnRenderViews(EngineContext& ctx)
 
 void GameViewWindow::OnImGui(EngineContext& ctx, const Selection& selection)
 {
+    gameArea_ = {}; // 画像を描けたフレームだけ下で埋める (早期 return = 見えていない)
     if (!open) {
         return;
     }
@@ -102,6 +103,13 @@ void GameViewWindow::OnImGui(EngineContext& ctx, const Selection& selection)
         ImGui::SetCursorScreenPos(ImVec2(cursor.x + off.x, cursor.y + off.y));
         const ImVec2 imgPos = ImGui::GetCursorScreenPos();
         ImGui::Image(reinterpret_cast<ImTextureID>(rt_.SRV()), imgSize);
+        // ゲームがクリックを受け取る範囲 = この画像 (EngineLoop が範囲外のクリックを捨てる)。
+        // ★マルチビューポートは無効 (ImGuiRenderer は Docking だけ) なので、ImGui のスクリーン座標が
+        //   そのままメインウィンドウのクライアント px = InputSnapshot.mouseX/Y と同じ系
+        gameArea_.x = static_cast<int32_t>(imgPos.x);
+        gameArea_.y = static_cast<int32_t>(imgPos.y);
+        gameArea_.w = static_cast<int32_t>(imgSize.x);
+        gameArea_.h = static_cast<int32_t>(imgSize.y);
 
         ImDrawList* dl = ImGui::GetWindowDrawList();
         if (showStats_) {

@@ -23,6 +23,23 @@ struct InputSurface {
     int32_t h = 0;
 };
 
+// ゲームがマウスのクリックを受け取ってよい範囲 (メインウィンドウのクライアント px、2026-09-14)。
+// エディタの Game ビューの画像がこれ — エディタのマウス座標はエディタ全体のクライアント px なので、
+// 範囲を持たないと停止ボタンやインスペクタのクリックまでゲームの「画面クリック」になる。
+// Runtime は範囲を持たない (IEngineApp::GameMouseArea が false = クライアント全体)。
+// w/h <= 0 は「どこも受け取らない」(Game ビューが見えていない)
+struct InputRect {
+    int32_t x = 0;
+    int32_t y = 0;
+    int32_t w = 0;
+    int32_t h = 0;
+    // 右端 / 下端は含まない (半開区間 = 隣り合う矩形で 1 px を二重に取らない)
+    bool Contains(int32_t px, int32_t py) const
+    {
+        return w > 0 && h > 0 && px >= x && py >= y && px < x + w && py < y + h;
+    }
+};
+
 // 1 tick 分の入力状態。リプレイ記録の最小単位 (spec 11.3)。
 // - POD であること (このビットパターンがそのまま .rep に保存され、ハッシュされる)
 // - レイアウトを変更すると過去のリプレイと互換が壊れるため、変更時は
@@ -127,11 +144,18 @@ public:
     //   WM_INPUT で**追加で**受け取るだけにしてある
     void AttachRawInput(void* hwnd);
 
-    // カーソルをクライアント矩形へ閉じ込めて隠す / 解除する (M64a)。
+    // カーソルを矩形の中央へ固定して隠す / 解除する (M64a、中央固定は 2026-09-14)。
+    // 矩形は area (エディタの Game ビュー) があればそれ、無ければクライアント全体。
     // **出力レーン専用** — ApplyVibration と同じ扱いで、sim から状態を読み返す口は作らない。
     // record/verify 中・フォーカス喪失中は呼び出し側が false を渡す (ゲートは EngineLoop)。
-    // ロック中は毎フレーム呼んでよい (ウィンドウ移動に追従するため矩形を打ち直している)
-    void ApplyCursorLock(void* hwnd, bool locked);
+    // ロック中は毎フレーム呼ぶこと (ウィンドウ移動に追従するため矩形と中央を打ち直している)
+    void ApplyCursorLock(void* hwnd, bool locked, const InputRect* area = nullptr);
+
+    // area の外にあるマウスのボタンとホイールを捨てる (2026-09-14、エディタの Game ビュー用)。
+    // キー・パッド・位置・生デルタは触らない — 視点 (生デルタ) は範囲に関係なく回ってよく、
+    // 位置を消すと UI の hovered が「どこも指さない」値と区別できなくなる。
+    // ★EngineLoop が CaptureSnapshot の**直後**に呼ぶ = .rep の記録と verify / synth の置換より前
+    static void MaskMouseOutside(InputSnapshot& s, const InputRect& area);
 
 private:
     void SetKey(uint8_t vk, bool down);

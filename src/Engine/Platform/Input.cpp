@@ -219,7 +219,7 @@ void Input::AttachRawInput(void* hwnd)
     }
 }
 
-void Input::ApplyCursorLock(void* hwnd, bool locked)
+void Input::ApplyCursorLock(void* hwnd, bool locked, const InputRect* area)
 {
     const HWND h = static_cast<HWND>(hwnd);
     if (locked && h != nullptr) {
@@ -227,17 +227,21 @@ void Input::ApplyCursorLock(void* hwnd, bool locked)
         //   ウィンドウを動かす / サイズを変えると前の矩形は無関係な場所に残る
         RECT rc = {};
         GetClientRect(h, &rc);
+        if (area != nullptr && area->w > 0 && area->h > 0) {
+            // エディタは Game ビューの画像の中へ閉じ込める (クライアント全体だとパネルの上へ出る)
+            rc = { area->x, area->y, area->x + area->w, area->y + area->h };
+        }
         POINT tl = { rc.left, rc.top };
         POINT br = { rc.right, rc.bottom };
         ClientToScreen(h, &tl);
         ClientToScreen(h, &br);
         const RECT screenRect = { tl.x, tl.y, br.x, br.y };
         ClipCursor(&screenRect);
-        if (!cursorLocked_) {
-            // 掴んだ瞬間だけ中央へ寄せる。毎フレーム SetCursorPos しないのは、
-            // 生デルタがカーソル位置に依存しないので単に無駄だから
-            SetCursorPos((tl.x + br.x) / 2, (tl.y + br.y) / 2);
-        }
+        // ★毎フレーム中央へ戻す (生デルタは WM_INPUT なので視点には効かない)。
+        //   掴んだ瞬間だけ寄せる方式だと、見えないカーソルが矩形の中を流れて端に張り付く。
+        //   エディタでは MaskMouseOutside が位置でクリックを選り分けるので、端にいると
+        //   1 px の誤差で投擲のクリックが捨てられうる — 中央に置けば常に Game ビューの中
+        SetCursorPos((tl.x + br.x) / 2, (tl.y + br.y) / 2);
     } else if (cursorLocked_) {
         ClipCursor(nullptr);
     }
@@ -247,6 +251,15 @@ void Input::ApplyCursorLock(void* hwnd, bool locked)
         ShowCursor(locked ? FALSE : TRUE);
         cursorLocked_ = locked;
     }
+}
+
+void Input::MaskMouseOutside(InputSnapshot& s, const InputRect& area)
+{
+    if (area.Contains(s.mouseX, s.mouseY)) {
+        return;
+    }
+    s.mouseButtons = 0;
+    s.wheelDelta = 0;
 }
 
 namespace {

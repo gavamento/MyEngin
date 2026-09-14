@@ -2378,7 +2378,21 @@ and snapshot round trips.
 
 The paired ABI slot `SetCursorMode` is an **output lane** in the same sense as `SetPadVibration`:
 scripts write a request, the frame tail applies `ClipCursor` / `ShowCursor`, and nothing reads the
-state back into the simulation. Suppression covers recording, verification, time-travel scrubbing
+state back into the simulation. While locked, the frame tail also **re-centres the cursor every
+frame** with `SetCursorPos` (2026-09-14). Centring only at the moment of locking let the hidden
+cursor drift inside the clip rect, and in the editor that rect is the whole editor window, so a
+Play-time click (a throw) could land on an Inspector panel; raw deltas come from `WM_INPUT` and are
+unaffected by the repositioning. **The editor narrows the game's mouse to the Game view** through
+`IEngineApp::GameMouseArea` (Runtime returns false = the whole client rect, unchanged). The editor
+reports the Game view image rect in main-window client px (multi-viewport is off, so ImGui screen
+coordinates are client px). Right after `CaptureSnapshot`, `Input::MaskMouseOutside` clears lane 0's
+mouse buttons and wheel when the cursor is outside that rect. Without this, a click on the Stop
+button reached the game as a screen click and re-acquired a cursor the player had released with
+`Escape`, so the button could never be pressed. Masking before the recorder and the verify/synth
+substitutions keeps it inside the recorded input. The lock clips to and centres on the same rect,
+and is not applied while the rect is empty (view hidden) or while `simulateScripts` is false
+(after Stop / while paused), since a stopped game can no longer issue `SetCursorMode(0)`.
+Suppression covers recording, verification, time-travel scrubbing
 and lost focus — plus, new here, **batch runs** (`--frames` / `--screenshot`), because those never
 pass through record or verify and would otherwise let CI and screenshot verification steal the
 desktop cursor. `Escape` releases the lock from inside the engine, since a locked cursor during
