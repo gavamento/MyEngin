@@ -432,6 +432,37 @@ bool JointFieldApplies(int32_t type, const char* name)
 
 } // namespace
 
+namespace {
+
+// マルチ選択の対象集合 (M40a): 生存する選択 fileId 群、primary 先頭。
+// 表示値は primary のもの。編集は全対象へバッチ適用 (ギズモ操作は従来どおり primary のみ)
+InspectorTargets CollectInspectorTargets(EngineContext& ctx, const Selection& selection, uint64_t fid, EntityID e)
+{
+    World& world = ctx.scene->GetWorld();
+    InspectorTargets tg;
+    tg.fid = fid;
+    tg.e = e;
+    tg.fids.push_back(fid);
+    tg.ents.push_back(e);
+    for (uint64_t sfid : selection.ids) {
+        if (sfid == fid) {
+            continue;
+        }
+        GameObject g = ctx.scene->FindByFileId(sfid);
+        if (g && world.IsAlive(g.Id())) {
+            tg.fids.push_back(sfid);
+            tg.ents.push_back(g.Id());
+        }
+    }
+    tg.multi = tg.fids.size() > 1;
+    // プレハブ所属判定 (青文字 / オーバーライド表示 / Revert・Apply に使う)
+    tg.prefabRoot = Prefab::FindInstanceRoot(world, e);
+    tg.isPrefabMember = !tg.prefabRoot.IsNull();
+    return tg;
+}
+
+} // namespace
+
 void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStack& undo,
                               AssetPreviewCache& preview)
 {
@@ -460,30 +491,36 @@ void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
         return;
     }
 
-    // ---- マルチ選択の対象集合 (M40a): 生存する選択 fileId 群、primary 先頭 ----
-    // 表示値は primary のもの。編集は全対象へバッチ適用 (ギズモ操作は従来どおり primary のみ)
-    std::vector<uint64_t> targetFids;
-    std::vector<EntityID> targetEnts;
-    targetFids.push_back(fid);
-    targetEnts.push_back(e);
-    for (uint64_t sfid : selection.ids) {
-        if (sfid == fid) {
-            continue;
-        }
-        GameObject g = ctx.scene->FindByFileId(sfid);
-        if (g && world.IsAlive(g.Id())) {
-            targetFids.push_back(sfid);
-            targetEnts.push_back(g.Id());
-        }
+    const InspectorTargets tg = CollectInspectorTargets(ctx, selection, fid, e);
+    DrawNameRow(ctx, selection, undo, tg);
+    DrawPrefabBar(ctx, selection, undo, tg);
+    ImGui::Separator();
+
+    // ---- コンポーネント一覧 (アーキタイプの型リスト = TypeId 昇順) ----
+    const Archetype* arch = world.GetArchetype(e);
+    if (!arch) {
+        ImGui::End();
+        return;
     }
-    const bool multi = targetFids.size() > 1;
+    // 型リストをコピー (描画中の RemoveComponent でアーキタイプが変わっても安全に)
+    std::vector<ComponentTypeId> types(arch->Types().begin(), arch->Types().end());
+    for (ComponentTypeId t : types) {
+        DrawComponent(ctx, selection, undo, tg, t);
+    }
 
-    // ---- プレハブ所属判定 (青文字 / オーバーライド表示 / Revert・Apply に使う) ----
-    const EntityID prefabRoot = Prefab::FindInstanceRoot(world, e);
-    const bool isPrefabMember = !prefabRoot.IsNull();
-    const ImVec4& kPrefabBlue = themeColor::Prefab; // 名前は歴史的経緯 (意味は「プレハブ由来」)
+    DrawRemovedPrefabComponents(ctx, selection, undo, tg);
+    DrawUnknownComponents(ctx, tg);
+    DrawAddComponentPopup(ctx, selection, undo, tg);
+    DrawScriptDropTarget(ctx, selection, undo, tg);
+    ImGui::End();
+}
 
-    // ---- 名前 ----
+// 名前欄と、対象の説明 1 行 (マルチ選択の件数 / Entity index:generation)
+void InspectorWindow::DrawNameRow(EngineContext& ctx, Selection& selection, UndoStack& undo,
+                                  const InspectorTargets& tg)
+{
+    World& world = ctx.scene->GetWorld();
+    const EntityID e = tg.e;
     if (auto* nc = world.GetComponent<NameComponent>(e)) {
         // 部位の構造ロック (M48f): プレハブメンバの部位はリネーム不可。Hierarchy 側だけ
         // 塞いでも Inspector から改名できたら穴になるので、ここも読み取り専用にする
@@ -505,430 +542,478 @@ void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
         if (ImGui::IsItemDeactivatedAfterEdit()) {
             FinishRename(world, e, nc->value, nameOriginal_);
         }
-        HandleEditUndo(ctx, selection, undo, fid, "Rename");
-        if (isPrefabMember && Prefab::IsNameOverridden(*ctx.scene, *ctx.prefabs, e)) {
+        HandleEditUndo(ctx, selection, undo, tg.fid, "Rename");
+        if (tg.isPrefabMember && Prefab::IsNameOverridden(*ctx.scene, *ctx.prefabs, e)) {
             ImGui::SameLine();
-            ImGui::TextColored(kPrefabBlue, "*");
+            ImGui::TextColored(themeColor::Prefab, "*"); // Prefab 色 = 「プレハブ由来」(名前は歴史的経緯)
         }
     }
-    if (multi) {
+    if (tg.multi) {
         ImGui::TextDisabled("%zu entities selected — edits apply to all (gizmo: primary only)",
-                            targetFids.size());
+                            tg.fids.size());
     } else {
         ImGui::TextDisabled("Entity %u:%u  (fileId %llu)", e.index, e.generation,
-                            static_cast<unsigned long long>(fid));
+                            static_cast<unsigned long long>(tg.fid));
     }
+}
 
-    // ---- プレハブバー (Revert All / Apply All) ----
-    if (isPrefabMember) {
-        auto* inst = world.GetComponent<PrefabInstanceComponent>(prefabRoot);
-        const PrefabAsset* asset = inst ? ctx.prefabs->Get(inst->prefabHash) : nullptr;
-        ImGui::TextColored(kPrefabBlue, "Prefab: %s", asset ? asset->name.c_str() : "(missing)");
-        const uint64_t rootFid = ctx.scene->EnsureFileId(prefabRoot);
-        if (ImGui::SmallButton(Tr(StrId::Insp_RevertAll))) {
-            undo.Record("Revert Prefab", *ctx.scene, selection, rootFid,
-                        UndoStack::StructuralChanges::Apply, [&] {
-                Prefab::RevertInstance(*ctx.scene, *ctx.prefabs, rootFid);
-            });
-        }
-        ImGui::SameLine();
-        // Apply は他インスタンス・アセットファイルも更新するため Undo 対象外 (Unity 同様)
-        if (ImGui::SmallButton(Tr(StrId::Insp_ApplyAll))) {
-            Prefab::ApplyInstance(*ctx.scene, *ctx.prefabs, rootFid);
-            ctx.scene->GetWorld().ApplyStructuralChanges();
-        }
-    }
-    ImGui::Separator();
-
-    // ---- コンポーネント一覧 (アーキタイプの型リスト = TypeId 昇順) ----
-    const ComponentRegistry& reg = ComponentRegistry::Get();
-    const Archetype* arch = world.GetArchetype(e);
-    if (!arch) {
-        ImGui::End();
+// プレハブバー (Revert All / Apply All)。プレハブ由来のエンティティのときだけ
+void InspectorWindow::DrawPrefabBar(EngineContext& ctx, Selection& selection, UndoStack& undo,
+                                    const InspectorTargets& tg)
+{
+    if (!tg.isPrefabMember) {
         return;
     }
-    // 型リストをコピー (描画中の RemoveComponent でアーキタイプが変わっても安全に)
-    std::vector<ComponentTypeId> types(arch->Types().begin(), arch->Types().end());
-    for (ComponentTypeId t : types) {
-        const ComponentDesc& desc = reg.Desc(t);
-        if ((desc.flags & kComponentHidden) && t != LocalTransform::sTypeId) {
+    World& world = ctx.scene->GetWorld();
+    auto* inst = world.GetComponent<PrefabInstanceComponent>(tg.prefabRoot);
+    const PrefabAsset* asset = inst ? ctx.prefabs->Get(inst->prefabHash) : nullptr;
+    ImGui::TextColored(themeColor::Prefab, "Prefab: %s", asset ? asset->name.c_str() : "(missing)");
+    const uint64_t rootFid = ctx.scene->EnsureFileId(tg.prefabRoot);
+    if (ImGui::SmallButton(Tr(StrId::Insp_RevertAll))) {
+        undo.Record("Revert Prefab", *ctx.scene, selection, rootFid,
+                    UndoStack::StructuralChanges::Apply, [&] {
+            Prefab::RevertInstance(*ctx.scene, *ctx.prefabs, rootFid);
+        });
+    }
+    ImGui::SameLine();
+    // Apply は他インスタンス・アセットファイルも更新するため Undo 対象外 (Unity 同様)
+    if (ImGui::SmallButton(Tr(StrId::Insp_ApplyAll))) {
+        Prefab::ApplyInstance(*ctx.scene, *ctx.prefabs, rootFid);
+        ctx.scene->GetWorld().ApplyStructuralChanges();
+    }
+}
+
+// コンポーネント 1 型ぶん。表示するかの判定と、見出し・PushID / PopID はここで持ち、
+// 中身は DrawComponentContextMenu / DrawComponentFields / DrawComponentNotes に任せる
+void InspectorWindow::DrawComponent(EngineContext& ctx, Selection& selection, UndoStack& undo,
+                                    const InspectorTargets& tg, ComponentTypeId t)
+{
+    World& world = ctx.scene->GetWorld();
+    const ComponentDesc& desc = ComponentRegistry::Get().Desc(t);
+    if ((desc.flags & kComponentHidden) && t != LocalTransform::sTypeId) {
+        return;
+    }
+    if (t == NameComponent::sTypeId) {
+        return; // 上部で表示済み
+    }
+    // マルチ選択: 全対象が共通に持つコンポーネントだけ表示 (M40a)
+    if (tg.multi) {
+        for (size_t i = 1; i < tg.ents.size(); ++i) {
+            if (!world.HasComponent(tg.ents[i], t)) {
+                return;
+            }
+        }
+    }
+    InspectorComponentRow row;
+    row.type = t;
+    row.desc = &desc;
+    // この型のバッチ対象 (fileId + コンポーネント実体、[0] = primary)。
+    // フィールド編集中に構造変更は起きないためポインタはフレーム内有効
+    for (size_t i = 0; i < tg.ents.size(); ++i) {
+        if (void* c = world.GetComponentRaw(tg.ents[i], t)) {
+            row.fids.push_back(tg.fids[i]);
+            row.comps.push_back(c);
+        }
+    }
+    row.managed = ctx.managedHost && ctx.managedHost->IsManagedComponent(t);
+    // 構造上書きの状態 (M50c)。Added = インスタンスで追加された comp
+    row.addedInInstance = tg.isPrefabMember
+        && Prefab::ComponentOverrideState(*ctx.scene, *ctx.prefabs, tg.e, desc.name)
+               == Prefab::CompOverride::Added;
+
+    ImGui::PushID(static_cast<int>(t));
+    const ComponentUiInfo& ui = ComponentUiFor(desc.name);
+    // コンポーネント見出しは Semibold + 8% 増し (テーマ第 3 世代)。フィールド行と
+    // 同じ書体・同じサイズだと「どこからが次のコンポーネントか」を色だけで探すことになる。
+    // アイコンはカテゴリ色 — ImGui はラベルの部分着色ができないので、可視ラベルを
+    // 空にして DrawItemIconLabel が矩形へ直接描く (PopFont より前に呼ぶこと)
+    ImGui::PushFont(EditorHeadingFont(), ImGui::GetStyle().FontSizeBase * 1.08f);
+    const bool openHeader = ImGui::CollapsingHeader((std::string("###") + desc.name).c_str(),
+                                                    ImGuiTreeNodeFlags_DefaultOpen);
+    DrawItemIconLabel(ui.icon, ComponentCategoryColor(ui.category),
+                      ComponentDisplayName(desc.name), /*framed=*/true);
+    ImGui::PopFont();
+    if (row.addedInInstance) {
+        // ヘッダ右端に「+」バッジ (M50c)。ヘッダは全幅アイテムなので SameLine では
+        // 右端に置けない — アイテム矩形へ直接描く (折りたたみ中でも見える)
+        const ImVec2 mn = ImGui::GetItemRectMin();
+        const ImVec2 mx = ImGui::GetItemRectMax();
+        ImGui::GetWindowDrawList()->AddText(
+            ImVec2(mx.x - ImGui::GetFontSize() - ImGui::GetStyle().FramePadding.x,
+                   mn.y + ImGui::GetStyle().FramePadding.y),
+            ImGui::GetColorU32(themeColor::Prefab), "+");
+    }
+    DrawComponentContextMenu(ctx, selection, undo, tg, row);
+    if (openHeader) {
+        void* comp = row.comps.empty() ? nullptr : row.comps[0];
+        // C# スクリプトコンポーネント: フィールドは managed 側が保持 → 専用描画パス
+        // (マルチ選択でも primary のみ編集 — managed 状態はエンティティ毎に独立)
+        if (comp && row.managed) {
+            DrawManagedComponentFields(ctx, t, comp, tg.e);
+            ImGui::PopID();
+            return;
+        }
+        if (comp) {
+            DrawComponentFields(ctx, selection, undo, tg, row, comp);
+        }
+        DrawComponentNotes(ctx, tg, row);
+    }
+    ImGui::PopID();
+}
+
+// 見出しの右クリックメニュー (Copy / Paste / Reset / Remove / Revert Added Component)
+void InspectorWindow::DrawComponentContextMenu(EngineContext& ctx, Selection& selection, UndoStack& undo,
+                                               const InspectorTargets& tg, const InspectorComponentRow& row)
+{
+    if (!ImGui::BeginPopupContextItem("##comp_ctx")) {
+        return;
+    }
+    const ComponentDesc& desc = *row.desc;
+    // 全対象の before/after を取り 1 Undo エントリにするバッチヘルパ (M40a)
+    auto batchOp = [&](const char* label, auto&& mutate) {
+        undo.Record(label, *ctx.scene, selection, row.fids, UndoStack::StructuralChanges::Apply, mutate);
+    };
+    // C# コンポーネントはフィールドが managed 側にあるため copy/paste/reset 対象外
+    ComponentClipboard& clip = GetComponentClipboard();
+    if (ImGui::MenuItem(Tr(StrId::Insp_CopyComponent), nullptr, false, !row.managed && !row.comps.empty())) {
+        clip.componentName = desc.name;
+        clip.fields = ComponentFieldsToJson(desc, row.comps[0]);
+    }
+    const bool canPaste = !row.managed && !clip.Empty() && clip.componentName == desc.name;
+    if (ImGui::MenuItem(Tr(StrId::Insp_PasteValues), nullptr, false, canPaste)) {
+        batchOp("Paste Component", [&] {
+            for (void* c : row.comps) {
+                ComponentFieldsFromJson(desc, c, clip.fields);
+            }
+        });
+    }
+    if (ImGui::MenuItem(Tr(StrId::Insp_ResetComponent), nullptr, false, !row.managed && desc.construct)) {
+        batchOp("Reset Component", [&] {
+            for (void* c : row.comps) {
+                desc.construct(c); // 既定値の書き込み (placement new)
+            }
+        });
+    }
+    ImGui::Separator();
+    if (ImGui::MenuItem(Tr(StrId::Insp_RemoveComponent))) {
+        World& world = ctx.scene->GetWorld();
+        batchOp("Remove Component", [&] {
+            for (EntityID te : tg.ents) {
+                world.RemoveComponentRaw(te, row.type); // 基本コンポーネントは World 側で拒否
+            }
+        });
+    }
+    // インスタンスで追加した comp の取り消し (M50c)。Remove と結果は同じだが
+    // レコードの "+C" キーも消える (RevertComponent 内)。primary のみ対象
+    if (tg.isPrefabMember
+        && ImGui::MenuItem(Tr(StrId::Insp_RevertAddedComp), nullptr, false, row.addedInInstance)) {
+        undo.Record("Revert Added Component", *ctx.scene, selection, tg.fid,
+                    UndoStack::StructuralChanges::None, [&] {
+            Prefab::RevertComponent(*ctx.scene, *ctx.prefabs, tg.e, desc.name);
+        });
+    }
+    ImGui::EndPopup();
+}
+
+// フィールド行 (リフレクションの表から自動生成) と、行ごとのプレハブオーバーライド表示。
+// 末尾に RectTransform の解決済み矩形 (読み取り専用) を足す
+void InspectorWindow::DrawComponentFields(EngineContext& ctx, Selection& selection, UndoStack& undo,
+                                          const InspectorTargets& tg, const InspectorComponentRow& row,
+                                          void* comp)
+{
+    const ComponentDesc& desc = *row.desc;
+    const EntityID e = tg.e;
+    // M60b: 関節は type によって意味を持つフィールドが変わる。効かない行を
+    // 並べておくのは「軸を弄っても何も起きない」という無言の嘘になるので、
+    // その型に効くものだけ出す (Collider の shape 依存より粒度が細かいのは、
+    // 関節が 1 コンポーネントで 5 種類を兼ねているため = 決定台帳 1 の代償)
+    const bool isJoint = (std::strcmp(desc.name, "Joint") == 0);
+    int32_t jointType = jointtype::kBall;
+    if (isJoint) {
+        for (const FieldDesc& tf : desc.fields) {
+            if (std::strcmp(tf.name, "type") == 0) {
+                std::memcpy(&jointType,
+                            static_cast<const uint8_t*>(comp) + tf.offset,
+                            sizeof(int32_t));
+                break;
+            }
+        }
+    }
+    for (const FieldDesc& f : desc.fields) {
+        if (f.flags & kFieldHidden) {
             continue;
         }
-        if (t == NameComponent::sTypeId) {
-            continue; // 上部で表示済み
+        if (isJoint && !JointFieldApplies(jointType, f.name)) {
+            continue;
         }
-        // マルチ選択: 全対象が共通に持つコンポーネントだけ表示 (M40a)
-        if (multi) {
-            bool commonToAll = true;
-            for (size_t i = 1; i < targetEnts.size(); ++i) {
-                if (!world.HasComponent(targetEnts[i], t)) {
-                    commonToAll = false;
-                    break;
-                }
-            }
-            if (!commonToAll) {
-                continue;
-            }
-        }
-        // この型のバッチ対象 (fileId + コンポーネント実体、[0] = primary)。
-        // フィールド編集中に構造変更は起きないためポインタはフレーム内有効
-        std::vector<uint64_t> tfids;
-        std::vector<void*> tcomps;
-        for (size_t i = 0; i < targetEnts.size(); ++i) {
-            if (void* c = world.GetComponentRaw(targetEnts[i], t)) {
-                tfids.push_back(targetFids[i]);
-                tcomps.push_back(c);
+        const bool changed =
+            DrawField(ctx, desc.name, comp, f, e, selection, undo, row.fids, row.comps);
+        // マルチ選択: primary で編集した値をフィールド単位で他対象へ伝播
+        // (バイトコピー — POD リフレクション型のみなので安全)
+        if (changed && row.comps.size() > 1 && !(f.flags & kFieldReadOnly)
+            && f.type != FieldType::AssetRef && f.type != FieldType::EntityRef) {
+            const uint32_t sz = FieldTypeSize(f.type);
+            for (size_t i = 1; i < row.comps.size(); ++i) {
+                std::memcpy(static_cast<uint8_t*>(row.comps[i]) + f.offset,
+                            static_cast<const uint8_t*>(comp) + f.offset, sz);
             }
         }
-        const bool managed = ctx.managedHost && ctx.managedHost->IsManagedComponent(t);
-        // 構造上書きの状態 (M50c)。Added = インスタンスで追加された comp
-        const Prefab::CompOverride compState = isPrefabMember
-            ? Prefab::ComponentOverrideState(*ctx.scene, *ctx.prefabs, e, desc.name)
-            : Prefab::CompOverride::None;
-
-        ImGui::PushID(static_cast<int>(t));
-        const ComponentUiInfo& ui = ComponentUiFor(desc.name);
-        // コンポーネント見出しは Semibold + 8% 増し (テーマ第 3 世代)。フィールド行と
-        // 同じ書体・同じサイズだと「どこからが次のコンポーネントか」を色だけで探すことになる。
-        // アイコンはカテゴリ色 — ImGui はラベルの部分着色ができないので、可視ラベルを
-        // 空にして DrawItemIconLabel が矩形へ直接描く (PopFont より前に呼ぶこと)
-        ImGui::PushFont(EditorHeadingFont(), ImGui::GetStyle().FontSizeBase * 1.08f);
-        const bool openHeader = ImGui::CollapsingHeader((std::string("###") + desc.name).c_str(),
-                                                        ImGuiTreeNodeFlags_DefaultOpen);
-        DrawItemIconLabel(ui.icon, ComponentCategoryColor(ui.category),
-                          ComponentDisplayName(desc.name), /*framed=*/true);
-        ImGui::PopFont();
-        if (compState == Prefab::CompOverride::Added) {
-            // ヘッダ右端に「+」バッジ (M50c)。ヘッダは全幅アイテムなので SameLine では
-            // 右端に置けない — アイテム矩形へ直接描く (折りたたみ中でも見える)
-            const ImVec2 mn = ImGui::GetItemRectMin();
-            const ImVec2 mx = ImGui::GetItemRectMax();
-            ImGui::GetWindowDrawList()->AddText(
-                ImVec2(mx.x - ImGui::GetFontSize() - ImGui::GetStyle().FramePadding.x,
-                       mn.y + ImGui::GetStyle().FramePadding.y),
-                ImGui::GetColorU32(kPrefabBlue), "+");
+        // 参照ピッカー / 衝突マスク (M36a) はポップアップ内で自前 Undo を記録するので除外
+        const bool ownUndo = f.type == FieldType::AssetRef
+            || f.type == FieldType::EntityRef
+            || (std::strcmp(desc.name, "Collider") == 0
+                && std::strcmp(f.name, "mask") == 0)
+            // M59a2: 材料上書きチェックボックスもクリック即確定 = 自前 Undo
+            || (std::strcmp(desc.name, "Collider") == 0
+                && std::strcmp(f.name, "materialOverrideBits") == 0);
+        // (M75a: RectTransform のアンカープリセット 4x4 は自前 Undo だが、同じ行の
+        //  DragFloat2 が最後のアイテムなので通常経路のままでよい — DrawField 参照)
+        if (!ownUndo) {
+            HandleEditUndoMulti(ctx, selection, undo, row.fids, "Modify");
         }
-        if (ImGui::BeginPopupContextItem("##comp_ctx")) {
-            // 全対象の before/after を取り 1 Undo エントリにするバッチヘルパ (M40a)
-            auto batchOp = [&](const char* label, auto&& mutate) {
-                undo.Record(label, *ctx.scene, selection, tfids, UndoStack::StructuralChanges::Apply, mutate);
-            };
-            // C# コンポーネントはフィールドが managed 側にあるため copy/paste/reset 対象外
-            ComponentClipboard& clip = GetComponentClipboard();
-            if (ImGui::MenuItem(Tr(StrId::Insp_CopyComponent), nullptr, false, !managed && !tcomps.empty())) {
-                clip.componentName = desc.name;
-                clip.fields = ComponentFieldsToJson(desc, tcomps[0]);
-            }
-            const bool canPaste = !managed && !clip.Empty() && clip.componentName == desc.name;
-            if (ImGui::MenuItem(Tr(StrId::Insp_PasteValues), nullptr, false, canPaste)) {
-                batchOp("Paste Component", [&] {
-                    for (void* c : tcomps) {
-                        ComponentFieldsFromJson(desc, c, clip.fields);
-                    }
-                });
-            }
-            if (ImGui::MenuItem(Tr(StrId::Insp_ResetComponent), nullptr, false, !managed && desc.construct)) {
-                batchOp("Reset Component", [&] {
-                    for (void* c : tcomps) {
-                        desc.construct(c); // 既定値の書き込み (placement new)
-                    }
-                });
-            }
-            ImGui::Separator();
-            if (ImGui::MenuItem(Tr(StrId::Insp_RemoveComponent))) {
-                batchOp("Remove Component", [&] {
-                    for (EntityID te : targetEnts) {
-                        world.RemoveComponentRaw(te, t); // 基本コンポーネントは World 側で拒否
-                    }
-                });
-            }
-            // インスタンスで追加した comp の取り消し (M50c)。Remove と結果は同じだが
-            // レコードの "+C" キーも消える (RevertComponent 内)。primary のみ対象
-            if (isPrefabMember
-                && ImGui::MenuItem(Tr(StrId::Insp_RevertAddedComp), nullptr, false,
-                                   compState == Prefab::CompOverride::Added)) {
-                undo.Record("Revert Added Component", *ctx.scene, selection, fid,
-                            UndoStack::StructuralChanges::None, [&] {
-                    Prefab::RevertComponent(*ctx.scene, *ctx.prefabs, e, desc.name);
-                });
-            }
-            ImGui::EndPopup();
-        }
-        if (openHeader) {
-            void* comp = tcomps.empty() ? nullptr : tcomps[0];
-            // C# スクリプトコンポーネント: フィールドは managed 側が保持 → 専用描画パス
-            // (マルチ選択でも primary のみ編集 — managed 状態はエンティティ毎に独立)
-            if (comp && managed) {
-                DrawManagedComponentFields(ctx, t, comp, e);
-                ImGui::PopID();
-                continue;
-            }
-            if (comp) {
-                // M60b: 関節は type によって意味を持つフィールドが変わる。効かない行を
-                // 並べておくのは「軸を弄っても何も起きない」という無言の嘘になるので、
-                // その型に効くものだけ出す (Collider の shape 依存より粒度が細かいのは、
-                // 関節が 1 コンポーネントで 5 種類を兼ねているため = 決定台帳 1 の代償)
-                const bool isJoint = (std::strcmp(desc.name, "Joint") == 0);
-                int32_t jointType = jointtype::kBall;
-                if (isJoint) {
-                    for (const FieldDesc& tf : desc.fields) {
-                        if (std::strcmp(tf.name, "type") == 0) {
-                            std::memcpy(&jointType,
-                                        static_cast<const uint8_t*>(comp) + tf.offset,
-                                        sizeof(int32_t));
-                            break;
-                        }
-                    }
+        // ---- プレハブオーバーライド: 右クリック Revert/Apply + マーカー ----
+        if (tg.isPrefabMember) {
+            // ID は f.name を明示する (M51f)。既定 (最終アイテムの ID) だと
+            // ラベルを TextUnformatted で締める field (mask / anchor 9-grid) が
+            // ID=0 で IM_ASSERT に落ちる
+            if (f.type != FieldType::AssetRef && f.type != FieldType::EntityRef
+                && ImGui::BeginPopupContextItem(f.name)) {
+                // 追加 comp ("+C") はベースにフィールドが無く RevertField が
+                // no-op — 押せるのに何も起きない穴だったので disabled (M50c)。
+                // 構造ごと戻すのはヘッダ右クリックの Revert Added Component
+                const bool ov = Prefab::IsFieldOverridden(*ctx.scene, *ctx.prefabs, e,
+                                                          desc.name, f)
+                    && !row.addedInInstance;
+                if (ImGui::MenuItem(Tr(StrId::Insp_RevertToPrefab), nullptr, false, ov)) {
+                    undo.Record("Revert Field", *ctx.scene, selection, tg.fid,
+                                UndoStack::StructuralChanges::None, [&] {
+                        Prefab::RevertField(*ctx.scene, *ctx.prefabs, e, desc.name, f);
+                    });
                 }
-                for (const FieldDesc& f : desc.fields) {
-                    if (f.flags & kFieldHidden) {
-                        continue;
-                    }
-                    if (isJoint && !JointFieldApplies(jointType, f.name)) {
-                        continue;
-                    }
-                    const bool changed =
-                        DrawField(ctx, desc.name, comp, f, e, selection, undo, tfids, tcomps);
-                    // マルチ選択: primary で編集した値をフィールド単位で他対象へ伝播
-                    // (バイトコピー — POD リフレクション型のみなので安全)
-                    if (changed && tcomps.size() > 1 && !(f.flags & kFieldReadOnly)
-                        && f.type != FieldType::AssetRef && f.type != FieldType::EntityRef) {
-                        const uint32_t sz = FieldTypeSize(f.type);
-                        for (size_t i = 1; i < tcomps.size(); ++i) {
-                            std::memcpy(static_cast<uint8_t*>(tcomps[i]) + f.offset,
-                                        static_cast<const uint8_t*>(comp) + f.offset, sz);
-                        }
-                    }
-                    // 参照ピッカー / 衝突マスク (M36a) はポップアップ内で自前 Undo を記録するので除外
-                    const bool ownUndo = f.type == FieldType::AssetRef
-                        || f.type == FieldType::EntityRef
-                        || (std::strcmp(desc.name, "Collider") == 0
-                            && std::strcmp(f.name, "mask") == 0)
-                        // M59a2: 材料上書きチェックボックスもクリック即確定 = 自前 Undo
-                        || (std::strcmp(desc.name, "Collider") == 0
-                            && std::strcmp(f.name, "materialOverrideBits") == 0);
-                    // (M75a: RectTransform のアンカープリセット 4x4 は自前 Undo だが、同じ行の
-                    //  DragFloat2 が最後のアイテムなので通常経路のままでよい — DrawField 参照)
-                    if (!ownUndo) {
-                        HandleEditUndoMulti(ctx, selection, undo, tfids, "Modify");
-                    }
-                    // ---- プレハブオーバーライド: 右クリック Revert/Apply + マーカー ----
-                    if (isPrefabMember) {
-                        // ID は f.name を明示する (M51f)。既定 (最終アイテムの ID) だと
-                        // ラベルを TextUnformatted で締める field (mask / anchor 9-grid) が
-                        // ID=0 で IM_ASSERT に落ちる
-                        if (f.type != FieldType::AssetRef && f.type != FieldType::EntityRef
-                            && ImGui::BeginPopupContextItem(f.name)) {
-                            // 追加 comp ("+C") はベースにフィールドが無く RevertField が
-                            // no-op — 押せるのに何も起きない穴だったので disabled (M50c)。
-                            // 構造ごと戻すのはヘッダ右クリックの Revert Added Component
-                            const bool ov = Prefab::IsFieldOverridden(*ctx.scene, *ctx.prefabs, e,
-                                                                      desc.name, f)
-                                && compState != Prefab::CompOverride::Added;
-                            if (ImGui::MenuItem(Tr(StrId::Insp_RevertToPrefab), nullptr, false, ov)) {
-                                undo.Record("Revert Field", *ctx.scene, selection, fid,
-                                            UndoStack::StructuralChanges::None, [&] {
-                                    Prefab::RevertField(*ctx.scene, *ctx.prefabs, e, desc.name, f);
-                                });
-                            }
-                            if (ImGui::MenuItem(Tr(StrId::Insp_ApplyToPrefab))) {
-                                Prefab::ApplyInstance(*ctx.scene, *ctx.prefabs,
-                                                      ctx.scene->EnsureFileId(prefabRoot));
-                                ctx.scene->GetWorld().ApplyStructuralChanges();
-                            }
-                            ImGui::EndPopup();
-                        }
-                        if (Prefab::IsFieldOverridden(*ctx.scene, *ctx.prefabs, e, desc.name, f)) {
-                            ImGui::SameLine();
-                            ImGui::TextColored(kPrefabBlue, "*");
-                        }
-                    }
+                if (ImGui::MenuItem(Tr(StrId::Insp_ApplyToPrefab))) {
+                    Prefab::ApplyInstance(*ctx.scene, *ctx.prefabs,
+                                          ctx.scene->EnsureFileId(tg.prefabRoot));
+                    ctx.scene->GetWorld().ApplyStructuralChanges();
                 }
-                // M75a: 解決済み矩形 (基準キャンバス上のキャンバス単位) を読み取り専用で出す。
-                // Unity が駆動プロパティを灰色で見せるのと同じ役どころ — アンカーを伸縮に
-                // したときに「今この要素は何 px なのか」が数値で分かる唯一の場所
-                if (std::strcmp(desc.name, "RectTransform") == 0) {
-                    // M75c: 基準は project_settings の実効値。明示 Canvas の下の要素はその
-                    // Canvas の単位で出す (Unity の RectTransform の数値と同じ見え方)
-                    const uilayout::CanvasDesc& def = uilayout::DefaultCanvasDesc();
-                    const uilayout::UIRect rr = uilayout::ResolveRect(
-                        ctx.scene->GetWorld(), e, def.referenceW, def.referenceH);
-                    ImGui::BeginDisabled();
-                    ImGui::Text(Tr(StrId::Insp_UIResolvedRect), rr.x, rr.y, rr.w, rr.h);
-                    ImGui::EndDisabled();
-                    // M75e: 自動レイアウトに上書きされている欄を言葉で示す (Unity は駆動プロパティを
-                    // 灰色にする)。欄は編集できるままだが、並べられている / 合わせられている間は効かない
-                    const uint32_t driven = uilayout::LayoutDrivenBits(ctx.scene->GetWorld(), e);
-                    if ((driven & uilayout::kDrivenByGroup) != 0) {
-                        const bool dw = (driven & uilayout::kDrivenWidth) != 0;
-                        const bool dh = (driven & uilayout::kDrivenHeight) != 0;
-                        const StrId id = (dw && dh) ? StrId::Insp_UIDrivenGroupSize
-                            : dw                    ? StrId::Insp_UIDrivenGroupWidth
-                            : dh                    ? StrId::Insp_UIDrivenGroupHeight
-                                                    : StrId::Insp_UIDrivenGroupPos;
-                        ImGui::TextDisabled("%s", Tr(id));
-                    }
-                    if ((driven & uilayout::kDrivenByFitter) != 0) {
-                        ImGui::TextDisabled("%s", Tr(StrId::Insp_UIDrivenFitter));
-                    }
-                    if ((driven & uilayout::kDrivenBySlider) != 0) {
-                        ImGui::TextDisabled("%s", Tr(StrId::Insp_UIDrivenSlider)); // M75f
-                    }
-                }
+                ImGui::EndPopup();
             }
-            // M50a: PartBounds 単独 (Part 無し) は RaycastParts の収集
-            // ({Part, PartBounds, WorldMatrix} の同居アーキタイプ) から黙って外れるため警告
-            if (std::strcmp(desc.name, "PartBounds") == 0
-                && world.GetComponent<PartComponent>(e) == nullptr) {
-                ImGui::TextDisabled("%s", Tr(StrId::Insp_BoundsNoPart));
-            }
-            // カメラ操縦モードの入口。押すと SceneView の飛行操作 (右ドラッグ + WASDQE /
-            // ホイール / 中ドラッグ) の**書き込み先**がエディタカメラからこのカメラへ移る。
-            // 視点はエディタのまま = 外から見ながら置ける。
-            // マルチ選択では出さない — 操縦できるのは 1 台だけで、「どれが対象か」が
-            // ボタンからは読めなくなるため
-            if (std::strcmp(desc.name, "Camera") == 0 && !multi) {
-                CameraPilotState& pilot = GetCameraPilot();
-                const bool on = (pilot.fileId == fid);
-                // 「別モード」トグルなので地形ブラシと同じ mode 色 (統一規格)
-                if (ToolbarToggle(Tr(on ? StrId::Insp_PilotStop : StrId::Insp_PilotCamera), on,
-                                  nullptr, /*mode=*/true)) {
-                    pilot.fileId = on ? 0 : fid;
-                }
+            if (Prefab::IsFieldOverridden(*ctx.scene, *ctx.prefabs, e, desc.name, f)) {
                 ImGui::SameLine();
-                ImGui::TextDisabled("%s", Tr(StrId::Insp_PilotHint));
+                ImGui::TextColored(themeColor::Prefab, "*");
             }
+        }
+    }
+    // M75a: 解決済み矩形 (基準キャンバス上のキャンバス単位) を読み取り専用で出す。
+    // Unity が駆動プロパティを灰色で見せるのと同じ役どころ — アンカーを伸縮に
+    // したときに「今この要素は何 px なのか」が数値で分かる唯一の場所
+    if (std::strcmp(desc.name, "RectTransform") == 0) {
+        // M75c: 基準は project_settings の実効値。明示 Canvas の下の要素はその
+        // Canvas の単位で出す (Unity の RectTransform の数値と同じ見え方)
+        const uilayout::CanvasDesc& def = uilayout::DefaultCanvasDesc();
+        const uilayout::UIRect rr = uilayout::ResolveRect(
+            ctx.scene->GetWorld(), e, def.referenceW, def.referenceH);
+        ImGui::BeginDisabled();
+        ImGui::Text(Tr(StrId::Insp_UIResolvedRect), rr.x, rr.y, rr.w, rr.h);
+        ImGui::EndDisabled();
+        // M75e: 自動レイアウトに上書きされている欄を言葉で示す (Unity は駆動プロパティを
+        // 灰色にする)。欄は編集できるままだが、並べられている / 合わせられている間は効かない
+        const uint32_t driven = uilayout::LayoutDrivenBits(ctx.scene->GetWorld(), e);
+        if ((driven & uilayout::kDrivenByGroup) != 0) {
+            const bool dw = (driven & uilayout::kDrivenWidth) != 0;
+            const bool dh = (driven & uilayout::kDrivenHeight) != 0;
+            const StrId id = (dw && dh) ? StrId::Insp_UIDrivenGroupSize
+                : dw                    ? StrId::Insp_UIDrivenGroupWidth
+                : dh                    ? StrId::Insp_UIDrivenGroupHeight
+                                        : StrId::Insp_UIDrivenGroupPos;
+            ImGui::TextDisabled("%s", Tr(id));
+        }
+        if ((driven & uilayout::kDrivenByFitter) != 0) {
+            ImGui::TextDisabled("%s", Tr(StrId::Insp_UIDrivenFitter));
+        }
+        if ((driven & uilayout::kDrivenBySlider) != 0) {
+            ImGui::TextDisabled("%s", Tr(StrId::Insp_UIDrivenSlider)); // M75f
+        }
+    }
+}
+
+// 型ごとの付記 (フィールド行の下)。PartBounds の警告と、カメラの操縦ボタン
+void InspectorWindow::DrawComponentNotes(EngineContext& ctx, const InspectorTargets& tg,
+                                         const InspectorComponentRow& row)
+{
+    const ComponentDesc& desc = *row.desc;
+    World& world = ctx.scene->GetWorld();
+    // M50a: PartBounds 単独 (Part 無し) は RaycastParts の収集
+    // ({Part, PartBounds, WorldMatrix} の同居アーキタイプ) から黙って外れるため警告
+    if (std::strcmp(desc.name, "PartBounds") == 0
+        && world.GetComponent<PartComponent>(tg.e) == nullptr) {
+        ImGui::TextDisabled("%s", Tr(StrId::Insp_BoundsNoPart));
+    }
+    // カメラ操縦モードの入口。押すと SceneView の飛行操作 (右ドラッグ + WASDQE /
+    // ホイール / 中ドラッグ) の**書き込み先**がエディタカメラからこのカメラへ移る。
+    // 視点はエディタのまま = 外から見ながら置ける。
+    // マルチ選択では出さない — 操縦できるのは 1 台だけで、「どれが対象か」が
+    // ボタンからは読めなくなるため
+    if (std::strcmp(desc.name, "Camera") == 0 && !tg.multi) {
+        CameraPilotState& pilot = GetCameraPilot();
+        const bool on = (pilot.fileId == tg.fid);
+        // 「別モード」トグルなので地形ブラシと同じ mode 色 (統一規格)
+        if (ToolbarToggle(Tr(on ? StrId::Insp_PilotStop : StrId::Insp_PilotCamera), on,
+                          nullptr, /*mode=*/true)) {
+            pilot.fileId = on ? 0 : tg.fid;
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("%s", Tr(StrId::Insp_PilotHint));
+    }
+}
+
+// 削除されたプレハブコンポーネント (M50c)。
+// インスタンスで削除されたベース comp ("-C") の一覧 + Restore。一覧はレコード由来だが
+// 実体・ベースと突き合わせ済み (RemovedPrefabComponents) なので no-op 行は出ない
+void InspectorWindow::DrawRemovedPrefabComponents(EngineContext& ctx, Selection& selection, UndoStack& undo,
+                                                  const InspectorTargets& tg)
+{
+    if (!tg.isPrefabMember || tg.multi) {
+        return;
+    }
+    const std::vector<std::string> removed =
+        Prefab::RemovedPrefabComponents(*ctx.scene, *ctx.prefabs, tg.e);
+    if (removed.empty()) {
+        return;
+    }
+    ImGui::Separator();
+    ImGui::TextColored(themeColor::Prefab, "%s", Tr(StrId::Insp_RemovedComps));
+    for (const std::string& name : removed) {
+        ImGui::PushID(name.c_str());
+        ImGui::TextDisabled("%s %s", ComponentUiFor(name.c_str()).icon,
+                            ComponentDisplayName(name.c_str()));
+        ImGui::SameLine();
+        if (ImGui::SmallButton(Tr(StrId::Insp_RestoreComp))) {
+            undo.Record("Restore Component", *ctx.scene, selection, tg.fid,
+                        UndoStack::StructuralChanges::None, [&] {
+                Prefab::RevertComponent(*ctx.scene, *ctx.prefabs, tg.e, name.c_str());
+            });
         }
         ImGui::PopID();
     }
+}
 
-    // ---- 削除されたプレハブコンポーネント (M50c) ----
-    // インスタンスで削除されたベース comp ("-C") の一覧 + Restore。一覧はレコード由来だが
-    // 実体・ベースと突き合わせ済み (RemovedPrefabComponents) なので no-op 行は出ない
-    if (isPrefabMember && !multi) {
-        const std::vector<std::string> removed =
-            Prefab::RemovedPrefabComponents(*ctx.scene, *ctx.prefabs, e);
-        if (!removed.empty()) {
-            ImGui::Separator();
-            ImGui::TextColored(kPrefabBlue, "%s", Tr(StrId::Insp_RemovedComps));
-            for (const std::string& name : removed) {
-                ImGui::PushID(name.c_str());
-                ImGui::TextDisabled("%s %s", ComponentUiFor(name.c_str()).icon,
-                                    ComponentDisplayName(name.c_str()));
-                ImGui::SameLine();
-                if (ImGui::SmallButton(Tr(StrId::Insp_RestoreComp))) {
-                    undo.Record("Restore Component", *ctx.scene, selection, fid,
-                                UndoStack::StructuralChanges::None, [&] {
-                        Prefab::RevertComponent(*ctx.scene, *ctx.prefabs, e, name.c_str());
-                    });
-                }
-                ImGui::PopID();
-            }
-        }
+// 未知のコンポーネント (M70a)。
+// 型が引けていないので編集も削除もできないが、生 JSON のまま保持していて保存でも
+// 消えない。**ここに出さないと「消えた」と思って作り直され、型が戻った瞬間に
+// 二重になる**。マルチ選択では出さない (どの対象の話か行から読めないため)
+void InspectorWindow::DrawUnknownComponents(EngineContext& ctx, const InspectorTargets& tg)
+{
+    if (tg.multi) {
+        return;
     }
-
-    // ---- 未知のコンポーネント (M70a) ----
-    // 型が引けていないので編集も削除もできないが、生 JSON のまま保持していて保存でも
-    // 消えない。**ここに出さないと「消えた」と思って作り直され、型が戻った瞬間に
-    // 二重になる**。マルチ選択では出さない (どの対象の話か行から読めないため)
-    if (!multi) {
-        if (const Scene::UnknownCompSet* unknown = ctx.scene->GetUnknownComponents(fid)) {
-            ImGui::Separator();
-            char header[96];
-            std::snprintf(header, sizeof(header), Tr(StrId::Insp_UnknownComps),
-                          static_cast<int>(unknown->size()));
-            ImGui::TextDisabled("%s", header);
-            for (const auto& [compName, raw] : *unknown) {
-                ImGui::TextDisabled("    %s %s", ICON_FA_CIRCLE_QUESTION, compName.c_str());
-            }
-            ImGui::TextDisabled("%s", Tr(StrId::Insp_UnknownCompsHint));
-        }
+    const Scene::UnknownCompSet* unknown = ctx.scene->GetUnknownComponents(tg.fid);
+    if (unknown == nullptr) {
+        return;
     }
+    ImGui::Separator();
+    char header[96];
+    std::snprintf(header, sizeof(header), Tr(StrId::Insp_UnknownComps),
+                  static_cast<int>(unknown->size()));
+    ImGui::TextDisabled("%s", header);
+    for (const auto& [compName, raw] : *unknown) {
+        ImGui::TextDisabled("    %s %s", ICON_FA_CIRCLE_QUESTION, compName.c_str());
+    }
+    ImGui::TextDisabled("%s", Tr(StrId::Insp_UnknownCompsHint));
+}
 
-    // ---- Add Component ----
+// Add Component ボタンと、検索付きのポップアップ (カテゴリ順)
+void InspectorWindow::DrawAddComponentPopup(EngineContext& ctx, Selection& selection, UndoStack& undo,
+                                            const InspectorTargets& tg)
+{
+    World& world = ctx.scene->GetWorld();
+    const ComponentRegistry& reg = ComponentRegistry::Get();
     ImGui::Separator();
     if (ImGui::Button(Tr(StrId::Insp_AddComponent), ImVec2(-1, 0))) {
         addComponentFilter_[0] = '\0';
         ImGui::OpenPopup("##add_component");
     }
-    if (ImGui::BeginPopup("##add_component")) {
-        // 検索ボックス (開いた直後にフォーカス)
-        if (ImGui::IsWindowAppearing()) {
-            ImGui::SetKeyboardFocusHere();
-        }
-        ImGui::SetNextItemWidth(240.0f);
-        ImGui::InputTextWithHint("##add_filter", ICON_FA_MAGNIFYING_GLASS " Search",
-                                 addComponentFilter_, sizeof(addComponentFilter_));
-        ImGui::Separator();
-        // カテゴリ順に列挙 (EditorComponentCatalog)。マッチ行のあるカテゴリだけ見出しを出す
-        for (const char* cat : ComponentUiCategories()) {
-            bool headerShown = false;
-            for (ComponentTypeId t = 0; t < reg.Count(); ++t) {
-                const ComponentDesc& desc = reg.Desc(t);
-                if (desc.flags & kComponentHidden) {
-                    continue;
-                }
-                if (world.HasComponent(e, t)) {
-                    continue;
-                }
-                const ComponentUiInfo& info = ComponentUiFor(desc.name);
-                if (std::strcmp(info.category, cat) != 0) {
-                    continue;
-                }
-                if (!ContainsIgnoreCase(desc.name, addComponentFilter_)
-                    && !ContainsIgnoreCase(ComponentDisplayName(desc.name), addComponentFilter_)) {
-                    continue;
-                }
-                if (!headerShown) {
-                    ImGui::SeparatorText(ComponentCategoryLabel(cat));
-                    headerShown = true;
-                }
-                // アイコンはカテゴリ色の独立アイテムで描く (MenuItem ラベルは部分着色不可)。
-                // FA は GlyphMinAdvanceX で等幅化済みなので列が揃う
-                ImGui::PushStyleColor(ImGuiCol_Text, ComponentCategoryColor(info.category));
-                ImGui::TextUnformatted(info.icon);
-                ImGui::PopStyleColor();
-                ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
-                if (ImGui::MenuItem(ComponentDisplayName(desc.name))) {
-                    // マルチ選択: まだ持っていない全対象へ追加 (1 Undo エントリ、M40a)
-                    undo.BeginRecord("Add Component", selection);
-                    for (size_t i = 0; i < targetEnts.size(); ++i) {
-                        if (!world.HasComponent(targetEnts[i], t)) {
-                            undo.CaptureBefore(*ctx.scene, targetFids[i]);
-                        }
+    if (!ImGui::BeginPopup("##add_component")) {
+        return;
+    }
+    // 検索ボックス (開いた直後にフォーカス)
+    if (ImGui::IsWindowAppearing()) {
+        ImGui::SetKeyboardFocusHere();
+    }
+    ImGui::SetNextItemWidth(240.0f);
+    ImGui::InputTextWithHint("##add_filter", ICON_FA_MAGNIFYING_GLASS " Search",
+                             addComponentFilter_, sizeof(addComponentFilter_));
+    ImGui::Separator();
+    // カテゴリ順に列挙 (EditorComponentCatalog)。マッチ行のあるカテゴリだけ見出しを出す
+    for (const char* cat : ComponentUiCategories()) {
+        bool headerShown = false;
+        for (ComponentTypeId t = 0; t < reg.Count(); ++t) {
+            const ComponentDesc& desc = reg.Desc(t);
+            if (desc.flags & kComponentHidden) {
+                continue;
+            }
+            if (world.HasComponent(tg.e, t)) {
+                continue;
+            }
+            const ComponentUiInfo& info = ComponentUiFor(desc.name);
+            if (std::strcmp(info.category, cat) != 0) {
+                continue;
+            }
+            if (!ContainsIgnoreCase(desc.name, addComponentFilter_)
+                && !ContainsIgnoreCase(ComponentDisplayName(desc.name), addComponentFilter_)) {
+                continue;
+            }
+            if (!headerShown) {
+                ImGui::SeparatorText(ComponentCategoryLabel(cat));
+                headerShown = true;
+            }
+            // アイコンはカテゴリ色の独立アイテムで描く (MenuItem ラベルは部分着色不可)。
+            // FA は GlyphMinAdvanceX で等幅化済みなので列が揃う
+            ImGui::PushStyleColor(ImGuiCol_Text, ComponentCategoryColor(info.category));
+            ImGui::TextUnformatted(info.icon);
+            ImGui::PopStyleColor();
+            ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
+            if (ImGui::MenuItem(ComponentDisplayName(desc.name))) {
+                // マルチ選択: まだ持っていない全対象へ追加 (1 Undo エントリ、M40a)
+                undo.BeginRecord("Add Component", selection);
+                for (size_t i = 0; i < tg.ents.size(); ++i) {
+                    if (!world.HasComponent(tg.ents[i], t)) {
+                        undo.CaptureBefore(*ctx.scene, tg.fids[i]);
                     }
-                    std::vector<uint64_t> addedFids;
-                    for (size_t i = 0; i < targetEnts.size(); ++i) {
-                        if (!world.HasComponent(targetEnts[i], t)) {
-                            world.AddComponentRaw(targetEnts[i], t);
-                            addedFids.push_back(targetFids[i]);
-                        }
-                    }
-                    world.ApplyStructuralChanges();
-                    for (uint64_t af : addedFids) {
-                        undo.CaptureAfter(*ctx.scene, af);
-                    }
-                    undo.EndRecord(selection);
                 }
+                std::vector<uint64_t> addedFids;
+                for (size_t i = 0; i < tg.ents.size(); ++i) {
+                    if (!world.HasComponent(tg.ents[i], t)) {
+                        world.AddComponentRaw(tg.ents[i], t);
+                        addedFids.push_back(tg.fids[i]);
+                    }
+                }
+                world.ApplyStructuralChanges();
+                for (uint64_t af : addedFids) {
+                    undo.CaptureAfter(*ctx.scene, af);
+                }
+                undo.EndRecord(selection);
             }
         }
-        ImGui::EndPopup();
     }
+    ImGui::EndPopup();
+}
 
-    // ---- スクリプト D&D 受け皿 (M31): パネル残余をターゲット化して .cs をアタッチ ----
-    // AssetBrowser/SceneView の .cs をここへドロップすると表示中エンティティに付与される。
+// スクリプト D&D 受け皿 (M31): パネル残余をターゲット化して .cs をアタッチ。
+// AssetBrowser/SceneView の .cs をここへドロップすると表示中エンティティに付与される
+void InspectorWindow::DrawScriptDropTarget(EngineContext& ctx, Selection& selection, UndoStack& undo,
+                                           const InspectorTargets& tg)
+{
     const ImVec2 dropAvail = ImGui::GetContentRegionAvail();
     ImGui::Dummy(ImVec2(dropAvail.x, dropAvail.y > 48.0f ? dropAvail.y : 48.0f));
     if (ImGui::BeginDragDropTarget()) {
         if (const ImGuiPayload* pa = ImGui::AcceptDragDropPayload(kAssetDragPayload)) {
             const std::wstring path = Utf8ToWide(static_cast<const char*>(pa->Data));
             if (AssetDatabase::ClassifyPath(path) == AssetType::Script) {
-                AttachScriptToEntity(ctx, selection, undo, path, e);
+                AttachScriptToEntity(ctx, selection, undo, path, tg.e);
             }
         }
         ImGui::EndDragDropTarget();
     }
-    ImGui::End();
 }
 
 bool InspectorWindow::DrawField(EngineContext& ctx, const char* componentName, void* comp,

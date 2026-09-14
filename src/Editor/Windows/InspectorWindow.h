@@ -15,7 +15,29 @@
 namespace mye {
 
 struct FieldDesc;
+struct ComponentDesc;
 class UndoStack;
+
+// Inspector に出すエンティティの集合 (M40a)。[0] = primary。表示値は primary、編集は全対象へバッチ適用
+struct InspectorTargets {
+    uint64_t fid = 0;            // primary の fileId
+    EntityID e = kNullEntity;    // primary の EntityID
+    std::vector<uint64_t> fids;  // 生存する選択の fileId (primary 先頭)
+    std::vector<EntityID> ents;  // 同じ並びの EntityID
+    bool multi = false;
+    EntityID prefabRoot = kNullEntity; // primary が属するプレハブインスタンスのルート (無ければ null)
+    bool isPrefabMember = false;
+};
+
+// コンポーネント 1 型ぶんの描画に使う値 (InspectorWindow::DrawComponent が組む)
+struct InspectorComponentRow {
+    ComponentTypeId type = 0;
+    const ComponentDesc* desc = nullptr;
+    std::vector<uint64_t> fids;   // この型を持つ対象の fileId ([0] = primary)
+    std::vector<void*> comps;     // 同じ並びのコンポーネント実体
+    bool managed = false;         // C# スクリプトコンポーネント (フィールドは managed 側が持つ)
+    bool addedInInstance = false; // プレハブインスタンスで追加された comp (M50c の "+C")
+};
 
 // リフレクション駆動 Inspector (engine_spec.md 9 章)。
 // ComponentRegistry のフィールド表から widget を自動生成する —
@@ -32,6 +54,25 @@ public:
 private:
     // アセット選択時の表示 (M40c): 名前/種別/GUID + テクスチャは Import Settings 編集
     void DrawAssetInspector(EngineContext& ctx, Selection& selection, AssetPreviewCache& preview);
+
+    // ---- エンティティ選択時の OnImGui の部品 (上から描く順) ----
+    void DrawNameRow(EngineContext& ctx, Selection& selection, UndoStack& undo, const InspectorTargets& tg);
+    void DrawPrefabBar(EngineContext& ctx, Selection& selection, UndoStack& undo, const InspectorTargets& tg);
+    // コンポーネント 1 型ぶん。表示判定・見出し・PushID / PopID を持ち、中身は下の 3 つに任せる
+    void DrawComponent(EngineContext& ctx, Selection& selection, UndoStack& undo, const InspectorTargets& tg,
+                       ComponentTypeId t);
+    void DrawComponentContextMenu(EngineContext& ctx, Selection& selection, UndoStack& undo,
+                                  const InspectorTargets& tg, const InspectorComponentRow& row);
+    void DrawComponentFields(EngineContext& ctx, Selection& selection, UndoStack& undo,
+                             const InspectorTargets& tg, const InspectorComponentRow& row, void* comp);
+    void DrawComponentNotes(EngineContext& ctx, const InspectorTargets& tg, const InspectorComponentRow& row);
+    void DrawRemovedPrefabComponents(EngineContext& ctx, Selection& selection, UndoStack& undo,
+                                     const InspectorTargets& tg);
+    void DrawUnknownComponents(EngineContext& ctx, const InspectorTargets& tg);
+    void DrawAddComponentPopup(EngineContext& ctx, Selection& selection, UndoStack& undo,
+                               const InspectorTargets& tg);
+    void DrawScriptDropTarget(EngineContext& ctx, Selection& selection, UndoStack& undo,
+                              const InspectorTargets& tg);
 
     // fids/comps は同コンポーネントを持つ選択エンティティ列 (要素 [0] = primary、comp と同一)。
     // 単一選択では要素 1 個。ポップアップ系 (mask/参照ピッカー) はこの列へバッチ書込する
