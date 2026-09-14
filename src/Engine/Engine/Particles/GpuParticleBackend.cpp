@@ -811,7 +811,7 @@ void GpuParticleBackend::SortEmittersForDraw(GraphicsDevice& device, const Rende
         // ★M42追補: **加算 (0) も並べる**。「加算は順序非依存だから不要」は数学の話で、
         //   ブレンドはクォッド 1 枚ごとに RT の精度へ丸めながら積むのでビットレベルでは
         //   順序依存 — ここを外していたせいで炎に 8 画素 / maxDiff=1 が残っていた。
-        //   CPU 側 (CpuParticleBackend::BuildInstances) の同じ規則と対になっている
+        //   CPU 側 (CpuParticleBackend::Render の ParticleNeedsDrawSort) の同じ規則と対になっている
         if (!ready || em.frozen || em.gpuIdle || !ParticleNeedsDrawSort(em.descCache.blendMode)) {
             continue;
         }
@@ -992,7 +992,7 @@ void GpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
         // M42b: ソフトフェード (深度が読めるビューのみ有効)
         simCb.params2 = { (view.depthSRV != nullptr) ? em.descCache.softFadeDistance : 0.0f,
                           view.nearZ, view.farZ, 0.0f };
-        // M42c: テクスチャ解決 (空なら procedural 円へフォールバック。CPU 側 :504-510 と同型)
+        // M42c: テクスチャ解決 (空なら procedural 円へフォールバック。CPU 側 CpuParticleBackend::Render の同じ処理と同型)
         ID3D11ShaderResourceView* texSrv = nullptr;
         if (em.descCache.texture.value != 0) {
             if (Texture* t = resources.textures.Get(em.descCache.texture)) {

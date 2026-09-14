@@ -269,10 +269,6 @@ uint64_t HashCpuParticles(const CpuParticleBackend& cpu, DumpCtx* d)
     return h;
 }
 
-// XPBD 変形体の池 (M60'b)。HashCpuParticles と同じ形 — 池ごとに owner と種別を畳み、
-// 粒子 SoA と距離拘束 (rest は塑性で変わる状態) を生バイトで畳む。
-// 要素数も明示的に畳む: 空配列の並びだけでは「粒子 0 + 拘束 1」と「粒子 1 + 拘束 0」の
-// 境界が曖昧になるため
 // M65a: 音響の波スロット表。★**ここに入るのは波だけ** — 占有グリッドも距離場も
 // 残光も導出値なので 1 バイトも畳まない。それが成立するのは到達エネルギーを
 // 整数チャンファ距離の純関数にしてあるから (計画 判断 3)。
@@ -323,6 +319,10 @@ uint64_t HashAcousticWaves(const AcousticField& field, DumpCtx* d)
     return h;
 }
 
+// XPBD 変形体の池 (M60'b)。HashCpuParticles と同じ形 — 池ごとに owner と種別を畳み、
+// 粒子 SoA と距離拘束 (rest は塑性で変わる状態) を生バイトで畳む。
+// 要素数も明示的に畳む: 空配列の並びだけでは「粒子 0 + 拘束 1」と「粒子 1 + 拘束 0」の
+// 境界が曖昧になるため
 uint64_t HashXpbdPools(const XpbdBackend& xpbd, DumpCtx* d)
 {
     uint64_t h = kFnvOffset;

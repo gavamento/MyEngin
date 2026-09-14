@@ -2964,7 +2964,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                 l.spin += (vLong / l.wc->radius) * h;
             }
             // 材料の結合則は**接触と同じ** — μ は sqrt(積)、転がり抵抗は max
-            // (相手が 0 の瞬間に消えないため。:3246 のコメントが正本)
+            // (相手が 0 の瞬間に消えないため。接触で c.muRoll を決める所のコメントが正本)
             const Body& G = bodies[hitBody];
             const float mu = std::sqrt(l.wc->friction * G.friction);
             const float roll

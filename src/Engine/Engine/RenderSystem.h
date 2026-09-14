@@ -88,7 +88,8 @@ void CollectEnvironment(World& world, RenderView& view);
 
 // ECS から描画アイテムを収集し、ソートして RenderPath に提出する (spec 5.1 システム層 / 6.3)。
 // カメラ: isPrimary の CameraComponent (無ければ最初のカメラ)。override 指定時はそれを優先。
-// ライト: 最初の LightComponent (向き = エンティティの +Z)
+// ライト: SelectLights でカリング + 決定論ソート + 上限本数に絞る (向き = エンティティの +Z)。
+//   太陽は選別後の最初の平行光
 class RenderSystem {
 public:
     // 戻り値: カメラが見つかった (または override があった) か。
@@ -133,9 +134,8 @@ public:
     // シーン描画後 (ポスプロ解決前) に深度テスト付きの線として重ねる
     const std::vector<DebugLineCmd>* debugLines = nullptr;
 
-    // M46b: レイトレのデバッグ表示 (Deferred のみ)。
-    // 0=off 1=BVH ヒート 2=法線 3=インスタンス ID 4=生 GI (M46c)。
-    // 0 なら BVH の構築も転送も走らない = 従来と完全に同じ経路
+    // M46b: レイトレのデバッグ表示 (Deferred のみ)。0 = off、値の意味は RenderTypes.h の rtDebugMode の凡例が正本。
+    // BVH の構築と転送は、これが非 0 か RT のレーン (GI / 影 / 反射) のどれかが有効なときに走る
     int rtDebugMode = 0;
     // M46c: GI を撃つ内部解像度の倍率 / 二次光線のバウンス数 /
     // 乱数をフレームで進めない (リプレイ・スクリーンショットの決定性を保つため)
@@ -284,7 +284,7 @@ public:
     bool AcousticSupplied() const { return acousticSupplied_; }
 
     // M54b: 直近フレームのライト選別結果 (カリング + 決定論ソート + 上限)。
-    // shadowSlot は M54c のシャドウアトラスが読む — この時点ではまだ誰も配線していない
+    // shadowSlot は M54c のシャドウアトラス (Render のアトラス割当) が読む
     LightSelection lightSelection;
     // M58c: 地形の統計 (ProfilerWindow / 手動確認用)。検査したチャンク総数と可視数
     uint32_t TerrainChunkCount() const { return terrainSystem_.LastChunkCount(); }
@@ -350,7 +350,7 @@ private:
     // M55c: viewKey 毎の「前フレームに実際に描いた world 行列」(velocity の出所)。
     // viewKey==0 (AssetPreview) は履歴を持たない = velocity は常に 0
     PrevRenderWorldStore prevRender_[4];
-    // M46b: レイトレ (遅延 Init)。rtDebugMode == 0 のあいだは一切触らない
+    // M46b: レイトレ (遅延 Init)。rtDebugMode が 0 で RT のレーンも全部無効のあいだは一切触らない
     RtScene rtScene_;
     RtPasses rtPasses_;
     std::vector<RtScene::InstanceDesc> rtInstances_; // フレーム毎に再構築

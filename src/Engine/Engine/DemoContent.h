@@ -199,11 +199,11 @@ void RegisterFogShowcaseContent(EngineContext& ctx);
 //   ライティング / 深度衝突) は全部既定 off なので、専用シーンが無いと回帰検出がゼロになる。
 //   既定デモ (= CI 対象の demo_forward/deferred) にも --fog-demo にも足せない理由は
 //   DemoContent.cpp の実装側コメントに書いてある。
-// ★エミッタ 5 本は左から C1..C5 の順に並んでいる。**5 本目 (深度衝突) だけは
+// ★エミッタ 6 本は左から C1 / C2 / C3 / C4 / C4b / C5 の順に並んでいる。**C5 (深度衝突) だけは
 //   GPU 限定** (spec 7.5 の例外) なので、CPU と GPU の 2 枚は意図的に食い違う。
 void BuildParticleShowcaseScene(EngineContext& ctx);
 
-// 上のショーケースが参照する材質 + **手続き生成テクスチャ 2 枚** (pdemo_ 接頭辞)。
+// 上のショーケースが参照する材質 + **手続き生成テクスチャ 2 枚** (vdemo_ 接頭辞。pdemo_ は --physics-demo が使用済み)。
 // テクスチャが要るのは、既定の procedural ソフト円が点対称で**回しても絵が変わらない**ため
 void RegisterParticleShowcaseContent(EngineContext& ctx);
 
@@ -229,8 +229,8 @@ void BuildUiShowcaseScene(EngineContext& ctx);
 // ウィジェットを動かしたらここも直す (押す点が外れても replay は緑のまま = 被覆だけが黙って消える)
 void UiDemoScriptInput(uint64_t tick, InputSnapshot& lane0);
 
-// assets\ 以下の .prefab.json / .anim.json を各ライブラリへ登録する (Editor / Runtime 共用)。
-// M48g からは .glb / .gltf / .fbx のスケルトンもここで (エンティティを作らずに) 登録する
+// assets\ 以下の資産 (JSON 資産・音声・モデル) を各ライブラリへ登録する (Editor / Runtime 共用。エンティティは作らない)。
+// 対象の拡張子は実装 (DemoContent.cpp の RegisterAssetLibraries) の分岐が正本 — ここには列挙しない
 void RegisterAssetLibraries(EngineContext& ctx);
 
 } // namespace mye

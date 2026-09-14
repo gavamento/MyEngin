@@ -197,7 +197,7 @@ constexpr uint32_t kPhysMatOverrideRolling = 1u << 2;
 // 球はスケールの最大成分で拡大、capsule はローカル Y 軸・radius は max(sx,sz) スケール。
 struct ColliderComponent {
     // 0=sphere 1=box(OBB) 2=capsule(ローカル Y 軸) 3=mesh (静的専用、M41)
-    // 4=terrain heightfield (静的専用、M59i)。3 と 4 は meshAsset を共有する
+    // 4=terrain heightfield (静的専用、M59i) 5=convex hull。3 と 4 は meshAsset を共有する
     // (3 = メッシュ資産 / 4 = `.terrain.json`)。**自然な使い方は TerrainComponent と
     //  同じエンティティに置いて同じ地形を指すこと**
     int32_t shape = 0;
@@ -1198,7 +1198,7 @@ struct AeroSurfaceComponent {
 // broken は sim 状態 = **hash 対象** (ソルバが書き、snapshot と JSON が運ぶ)。
 struct JointComponent {
     EntityID connectedEntity = kNullEntity; // null = ワールドの不動アンカーへ繋ぐ
-    // 0=Ball 1=Hinge 2=Fixed 3=Slider 4=Cone。**M60a が行を立てるのは Ball だけ**
+    // 0=Ball 1=Hinge 2=Fixed 3=Slider 4=Cone
     int32_t type = 0;
     // アンカー点。owner 側は**このエンティティのローカル**、相手側は**相手のローカル**。
     // ★相手が null のときだけ connectedAnchor は**ワールド座標**として読む
