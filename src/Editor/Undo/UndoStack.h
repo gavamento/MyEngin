@@ -1,6 +1,8 @@
 #pragma once
 #include <cstdint>
+#include <span>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "nlohmann/json.hpp"
@@ -75,6 +77,40 @@ public:
     void CancelRecord();
     bool IsRecording() const { return recording_; }
 
+    // 編集の中で構造変更 (コンポーネントの追加・削除、親子付け) をしたか。
+    // Apply なら CaptureAfter の前に World::ApplyStructuralChanges を通す — 通さないと
+    // 追加したコンポーネントが After に写らず、Undo しても何も戻らないエントリになる
+    enum class StructuralChanges { None, Apply };
+
+    // **1 フレームで終わる編集**を 1 エントリとして積む:
+    //   BeginRecord → fids を CaptureBefore → edit() → (Apply なら ApplyStructuralChanges)
+    //   → fids を CaptureAfter → EndRecord。選択は前後とも selection をそのまま使う。
+    // ★ドラッグやリネームのように複数フレームに跨ぐ操作と、Before / After の対象が違う操作
+    //   (生成・破棄・複製) は、従来どおり Begin / Capture / End を手で書く
+    template <typename Edit>
+    void Record(const char* label, Scene& scene, const Selection& selection, std::span<const uint64_t> fids,
+                StructuralChanges structural, Edit&& edit)
+    {
+        BeginRecord(label, selection);
+        for (uint64_t fid : fids) {
+            CaptureBefore(scene, fid);
+        }
+        edit();
+        if (structural == StructuralChanges::Apply) {
+            ApplyStructuralChanges(scene);
+        }
+        for (uint64_t fid : fids) {
+            CaptureAfter(scene, fid);
+        }
+        EndRecord(selection);
+    }
+    template <typename Edit>
+    void Record(const char* label, Scene& scene, const Selection& selection, uint64_t fid,
+                StructuralChanges structural, Edit&& edit)
+    {
+        Record(label, scene, selection, std::span<const uint64_t>(&fid, 1), structural, std::forward<Edit>(edit));
+    }
+
     // ---- 実行 ----
     bool CanUndo() const { return !undo_.empty(); }
     bool CanRedo() const { return !redo_.empty(); }
@@ -110,6 +146,7 @@ private:
         UndoFileOp fileOp;   // kind != None ならファイル操作エントリ (before/after は空、M51i)
     };
 
+    static void ApplyStructuralChanges(Scene& scene); // Record 用 (ヘッダに World を持ち込まないため)
     static void ApplyStep(Scene& scene, Selection& sel, const nlohmann::json& payload,
                           const std::vector<uint64_t>& destroyFirst,
                           const std::vector<uint64_t>& selIds, uint64_t primary);

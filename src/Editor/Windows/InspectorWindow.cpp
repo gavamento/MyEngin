@@ -526,12 +526,10 @@ void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
         ImGui::TextColored(kPrefabBlue, "Prefab: %s", asset ? asset->name.c_str() : "(missing)");
         const uint64_t rootFid = ctx.scene->EnsureFileId(prefabRoot);
         if (ImGui::SmallButton(Tr(StrId::Insp_RevertAll))) {
-            undo.BeginRecord("Revert Prefab", selection);
-            undo.CaptureBefore(*ctx.scene, rootFid);
-            Prefab::RevertInstance(*ctx.scene, *ctx.prefabs, rootFid);
-            ctx.scene->GetWorld().ApplyStructuralChanges();
-            undo.CaptureAfter(*ctx.scene, rootFid);
-            undo.EndRecord(selection);
+            undo.Record("Revert Prefab", *ctx.scene, selection, rootFid,
+                        UndoStack::StructuralChanges::Apply, [&] {
+                Prefab::RevertInstance(*ctx.scene, *ctx.prefabs, rootFid);
+            });
         }
         ImGui::SameLine();
         // Apply は他インスタンス・アセットファイルも更新するため Undo 対象外 (Unity 同様)
@@ -613,16 +611,7 @@ void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
         if (ImGui::BeginPopupContextItem("##comp_ctx")) {
             // 全対象の before/after を取り 1 Undo エントリにするバッチヘルパ (M40a)
             auto batchOp = [&](const char* label, auto&& mutate) {
-                undo.BeginRecord(label, selection);
-                for (uint64_t tf : tfids) {
-                    undo.CaptureBefore(*ctx.scene, tf);
-                }
-                mutate();
-                world.ApplyStructuralChanges();
-                for (uint64_t tf : tfids) {
-                    undo.CaptureAfter(*ctx.scene, tf);
-                }
-                undo.EndRecord(selection);
+                undo.Record(label, *ctx.scene, selection, tfids, UndoStack::StructuralChanges::Apply, mutate);
             };
             // C# コンポーネントはフィールドが managed 側にあるため copy/paste/reset 対象外
             ComponentClipboard& clip = GetComponentClipboard();
@@ -658,11 +647,10 @@ void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
             if (isPrefabMember
                 && ImGui::MenuItem(Tr(StrId::Insp_RevertAddedComp), nullptr, false,
                                    compState == Prefab::CompOverride::Added)) {
-                undo.BeginRecord("Revert Added Component", selection);
-                undo.CaptureBefore(*ctx.scene, fid);
-                Prefab::RevertComponent(*ctx.scene, *ctx.prefabs, e, desc.name);
-                undo.CaptureAfter(*ctx.scene, fid);
-                undo.EndRecord(selection);
+                undo.Record("Revert Added Component", *ctx.scene, selection, fid,
+                            UndoStack::StructuralChanges::None, [&] {
+                    Prefab::RevertComponent(*ctx.scene, *ctx.prefabs, e, desc.name);
+                });
             }
             ImGui::EndPopup();
         }
@@ -738,11 +726,10 @@ void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
                                                                       desc.name, f)
                                 && compState != Prefab::CompOverride::Added;
                             if (ImGui::MenuItem(Tr(StrId::Insp_RevertToPrefab), nullptr, false, ov)) {
-                                undo.BeginRecord("Revert Field", selection);
-                                undo.CaptureBefore(*ctx.scene, fid);
-                                Prefab::RevertField(*ctx.scene, *ctx.prefabs, e, desc.name, f);
-                                undo.CaptureAfter(*ctx.scene, fid);
-                                undo.EndRecord(selection);
+                                undo.Record("Revert Field", *ctx.scene, selection, fid,
+                                            UndoStack::StructuralChanges::None, [&] {
+                                    Prefab::RevertField(*ctx.scene, *ctx.prefabs, e, desc.name, f);
+                                });
                             }
                             if (ImGui::MenuItem(Tr(StrId::Insp_ApplyToPrefab))) {
                                 Prefab::ApplyInstance(*ctx.scene, *ctx.prefabs,
@@ -830,11 +817,10 @@ void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
                                     ComponentDisplayName(name.c_str()));
                 ImGui::SameLine();
                 if (ImGui::SmallButton(Tr(StrId::Insp_RestoreComp))) {
-                    undo.BeginRecord("Restore Component", selection);
-                    undo.CaptureBefore(*ctx.scene, fid);
-                    Prefab::RevertComponent(*ctx.scene, *ctx.prefabs, e, name.c_str());
-                    undo.CaptureAfter(*ctx.scene, fid);
-                    undo.EndRecord(selection);
+                    undo.Record("Restore Component", *ctx.scene, selection, fid,
+                                UndoStack::StructuralChanges::None, [&] {
+                        Prefab::RevertComponent(*ctx.scene, *ctx.prefabs, e, name.c_str());
+                    });
                 }
                 ImGui::PopID();
             }
@@ -1042,18 +1028,12 @@ bool InspectorWindow::DrawField(EngineContext& ctx, const char* componentName, v
             if (ImGui::BeginPopup("##collider_mask")) {
                 auto applyMask = [&](uint32_t next) {
                     // マルチ選択は全対象へバッチ適用 (1 Undo エントリ、M40a)
-                    undo.BeginRecord("Modify Mask", selection);
-                    for (uint64_t tf : fids) {
-                        undo.CaptureBefore(*ctx.scene, tf);
-                    }
-                    for (void* c : comps) {
-                        *reinterpret_cast<uint32_t*>(static_cast<uint8_t*>(c) + field.offset) =
-                            next;
-                    }
-                    for (uint64_t tf : fids) {
-                        undo.CaptureAfter(*ctx.scene, tf);
-                    }
-                    undo.EndRecord(selection);
+                    undo.Record("Modify Mask", *ctx.scene, selection, fids,
+                                UndoStack::StructuralChanges::None, [&] {
+                        for (void* c : comps) {
+                            *reinterpret_cast<uint32_t*>(static_cast<uint8_t*>(c) + field.offset) = next;
+                        }
+                    });
                     changed = true;
                 };
                 if (ImGui::SmallButton(Tr(StrId::Insp_MaskAll))) {
@@ -1083,17 +1063,12 @@ bool InspectorWindow::DrawField(EngineContext& ctx, const char* componentName, v
             // クリック即確定なので呼び出し側の HandleEditUndoMulti からは除外されている)
             uint32_t& bits = *static_cast<uint32_t*>(p);
             auto applyBits = [&](uint32_t next) {
-                undo.BeginRecord("Modify Material Override", selection);
-                for (uint64_t tf : fids) {
-                    undo.CaptureBefore(*ctx.scene, tf);
-                }
-                for (void* c : comps) {
-                    *reinterpret_cast<uint32_t*>(static_cast<uint8_t*>(c) + field.offset) = next;
-                }
-                for (uint64_t tf : fids) {
-                    undo.CaptureAfter(*ctx.scene, tf);
-                }
-                undo.EndRecord(selection);
+                undo.Record("Modify Material Override", *ctx.scene, selection, fids,
+                            UndoStack::StructuralChanges::None, [&] {
+                    for (void* c : comps) {
+                        *reinterpret_cast<uint32_t*>(static_cast<uint8_t*>(c) + field.offset) = next;
+                    }
+                });
                 changed = true;
             };
             ImGui::PushID(field.name);
@@ -1187,19 +1162,14 @@ bool InspectorWindow::DrawField(EngineContext& ctx, const char* componentName, v
                         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, c);
                     }
                     if (ImGui::Button("##preset", ImVec2(18, 18)) && !sel) {
-                        undo.BeginRecord("Modify", selection);
-                        for (uint64_t tf : fids) {
-                            undo.CaptureBefore(*ctx.scene, tf);
-                        }
-                        for (void* c2 : comps) {
-                            auto* rt = static_cast<RectTransformComponent*>(c2);
-                            rt->anchorMin = { minX, minY };
-                            rt->anchorMax = { maxX, maxY };
-                        }
-                        for (uint64_t tf : fids) {
-                            undo.CaptureAfter(*ctx.scene, tf);
-                        }
-                        undo.EndRecord(selection);
+                        undo.Record("Modify", *ctx.scene, selection, fids,
+                                    UndoStack::StructuralChanges::None, [&] {
+                            for (void* c2 : comps) {
+                                auto* rt = static_cast<RectTransformComponent*>(c2);
+                                rt->anchorMin = { minX, minY };
+                                rt->anchorMax = { maxX, maxY };
+                            }
+                        });
                         changed = true;
                     }
                     if (sel) {
@@ -2138,17 +2108,12 @@ void InspectorWindow::DrawAssetRef(EngineContext& ctx, const FieldDesc& field, v
     if (ImGui::BeginPopup("##assetpick")) {
         auto assign = [&](AssetID v) {
             // マルチ選択は全対象へバッチ適用 (1 Undo エントリ、M40a)
-            undo.BeginRecord("Assign asset", selection);
-            for (uint64_t tf : fids) {
-                undo.CaptureBefore(*ctx.scene, tf);
-            }
-            for (void* c : comps) {
-                *reinterpret_cast<AssetID*>(static_cast<uint8_t*>(c) + fieldOffset) = v;
-            }
-            for (uint64_t tf : fids) {
-                undo.CaptureAfter(*ctx.scene, tf);
-            }
-            undo.EndRecord(selection);
+            undo.Record("Assign asset", *ctx.scene, selection, fids,
+                        UndoStack::StructuralChanges::None, [&] {
+                for (void* c : comps) {
+                    *reinterpret_cast<AssetID*>(static_cast<uint8_t*>(c) + fieldOffset) = v;
+                }
+            });
         };
         if (ImGui::Selectable(Tr(StrId::Insp_NoneItem))) {
             assign(AssetID{});
@@ -2197,17 +2162,12 @@ void InspectorWindow::DrawEntityRef(EngineContext& ctx, const FieldDesc& field, 
     if (ImGui::BeginPopup("##entpick")) {
         auto assign = [&](EntityID v) {
             // マルチ選択は全対象へバッチ適用 (同一エンティティを参照させる、M40a)
-            undo.BeginRecord("Assign reference", selection);
-            for (uint64_t tf : fids) {
-                undo.CaptureBefore(*ctx.scene, tf);
-            }
-            for (void* c : comps) {
-                *reinterpret_cast<EntityID*>(static_cast<uint8_t*>(c) + fieldOffset) = v;
-            }
-            for (uint64_t tf : fids) {
-                undo.CaptureAfter(*ctx.scene, tf);
-            }
-            undo.EndRecord(selection);
+            undo.Record("Assign reference", *ctx.scene, selection, fids,
+                        UndoStack::StructuralChanges::None, [&] {
+                for (void* c : comps) {
+                    *reinterpret_cast<EntityID*>(static_cast<uint8_t*>(c) + fieldOffset) = v;
+                }
+            });
         };
         if (ImGui::Selectable(Tr(StrId::Insp_NoneItem))) {
             assign(kNullEntity);

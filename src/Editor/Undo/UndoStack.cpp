@@ -3,6 +3,7 @@
 #include <algorithm>
 
 #include "Editor/Selection.h"
+#include "Engine/Core/World.h"
 #include "Engine/Engine/GameObject.h"
 #include "Engine/Engine/Prefab.h"
 #include "Engine/Engine/Scene.h"
@@ -116,6 +117,11 @@ void UndoStack::CancelRecord()
 {
     recording_ = false;
     pending_ = Entry{};
+}
+
+void UndoStack::ApplyStructuralChanges(Scene& scene)
+{
+    scene.GetWorld().ApplyStructuralChanges();
 }
 
 void UndoStack::PushFileOp(const char* label, UndoFileOp op)

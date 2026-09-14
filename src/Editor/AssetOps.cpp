@@ -599,12 +599,9 @@ bool AttachScriptToEntity(EngineContext& ctx, Selection& selection, UndoStack& u
     }
     // Add Component と同一の Undo 雛形 (InspectorWindow の Add Component 経路と一致)
     const uint64_t fid = ctx.scene->EnsureFileId(target);
-    undo.BeginRecord("Attach Script", selection);
-    undo.CaptureBefore(*ctx.scene, fid);
-    world.AddComponentRaw(target, t);
-    world.ApplyStructuralChanges();
-    undo.CaptureAfter(*ctx.scene, fid);
-    undo.EndRecord(selection);
+    undo.Record("Attach Script", *ctx.scene, selection, fid, UndoStack::StructuralChanges::Apply, [&] {
+        world.AddComponentRaw(target, t);
+    });
     selection.SelectOnly(fid);
     MYE_LOG_INFO(Tr(StrId::Log_ScriptAttached), className.c_str());
     return true;
@@ -630,11 +627,9 @@ bool AssignMaterialToEntity(EngineContext& ctx, Selection& selection, UndoStack&
     }
     // AssetBrowser ダブルクリック割当と同じ 1 Undo エントリ (選択は変えない)
     const uint64_t fid = ctx.scene->EnsureFileId(target);
-    undo.BeginRecord("Assign Material", selection);
-    undo.CaptureBefore(*ctx.scene, fid);
-    mr->material = id;
-    undo.CaptureAfter(*ctx.scene, fid);
-    undo.EndRecord(selection);
+    undo.Record("Assign Material", *ctx.scene, selection, fid, UndoStack::StructuralChanges::None, [&] {
+        mr->material = id;
+    });
     return true;
 }
 

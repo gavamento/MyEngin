@@ -673,19 +673,17 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
                 GameObject sel = ctx.scene->FindByFileId(selection.primary);
                 if (hash != 0 && sel) {
                     World& w = ctx.scene->GetWorld();
-                    undo.BeginRecord("Assign Clip", selection);
-                    undo.CaptureBefore(*ctx.scene, selection.primary);
-                    auto* an = w.GetComponent<AnimatorComponent>(sel.Id());
-                    if (!an) {
-                        an = static_cast<AnimatorComponent*>(
-                            w.AddComponentRaw(sel.Id(), AnimatorComponent::sTypeId));
-                    }
-                    if (an) {
-                        an->clip = AssetID{ hash };
-                    }
-                    w.ApplyStructuralChanges();
-                    undo.CaptureAfter(*ctx.scene, selection.primary);
-                    undo.EndRecord(selection);
+                    undo.Record("Assign Clip", *ctx.scene, selection, selection.primary,
+                                UndoStack::StructuralChanges::Apply, [&] {
+                        auto* an = w.GetComponent<AnimatorComponent>(sel.Id());
+                        if (!an) {
+                            an = static_cast<AnimatorComponent*>(
+                                w.AddComponentRaw(sel.Id(), AnimatorComponent::sTypeId));
+                        }
+                        if (an) {
+                            an->clip = AssetID{ hash };
+                        }
+                    });
                 }
             } else if (isMat) {
                 // 選択エンティティの MeshRenderer にこのマテリアルを割り当てる (anim と同じ流儀)
@@ -695,11 +693,10 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
                 if (!id.IsNull() && sel) {
                     World& w = ctx.scene->GetWorld();
                     if (auto* mr = w.GetComponent<MeshRendererComponent>(sel.Id())) {
-                        undo.BeginRecord("Assign Material", selection);
-                        undo.CaptureBefore(*ctx.scene, selection.primary);
-                        mr->material = id;
-                        undo.CaptureAfter(*ctx.scene, selection.primary);
-                        undo.EndRecord(selection);
+                        undo.Record("Assign Material", *ctx.scene, selection, selection.primary,
+                                    UndoStack::StructuralChanges::None, [&] {
+                            mr->material = id;
+                        });
                     } else {
                         ShellExecuteW(nullptr, L"open", path.c_str(), nullptr, nullptr,
                                       SW_SHOWNORMAL);
@@ -718,11 +715,10 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
                         as = ctx.scene->GetWorld().GetComponent<AudioSourceComponent>(sel.Id());
                     }
                     if (as != nullptr) {
-                        undo.BeginRecord("Assign Sound", selection);
-                        undo.CaptureBefore(*ctx.scene, selection.primary);
-                        as->sound = AssetID{ hash };
-                        undo.CaptureAfter(*ctx.scene, selection.primary);
-                        undo.EndRecord(selection);
+                        undo.Record("Assign Sound", *ctx.scene, selection, selection.primary,
+                                    UndoStack::StructuralChanges::None, [&] {
+                            as->sound = AssetID{ hash };
+                        });
                     } else if (const SoundAsset* s = ctx.sounds->Get(hash)) {
                         PreviewSound(*ctx.audio, *s); // 先頭バリエーション・揺らぎ無し
                     }

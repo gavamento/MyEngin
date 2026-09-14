@@ -54,13 +54,11 @@ void CreatePrefabFromEntity(EngineContext& ctx, Selection& selection, UndoStack&
     std::filesystem::create_directories(dir, ec); // プロジェクト起動では未作成のことがある
     const std::wstring path = MakeUniqueAssetPath(dir, Utf8ToWide(safe) + suffix);
 
-    undo.BeginRecord("Create Prefab", selection);
     const uint64_t fid = ctx.scene->EnsureFileId(e);
-    undo.CaptureBefore(*ctx.scene, fid);
-    const uint64_t hash = Prefab::CreateAsset(*ctx.scene, *ctx.prefabs, path, e);
-    ctx.scene->GetWorld().ApplyStructuralChanges();
-    undo.CaptureAfter(*ctx.scene, fid);
-    undo.EndRecord(selection);
+    uint64_t hash = 0;
+    undo.Record("Create Prefab", *ctx.scene, selection, fid, UndoStack::StructuralChanges::Apply, [&] {
+        hash = Prefab::CreateAsset(*ctx.scene, *ctx.prefabs, path, e);
+    });
     if (hash == 0) {
         MYE_LOG_ERROR("Create Prefab failed for '%s'", safe.c_str());
     }
@@ -136,13 +134,10 @@ void HierarchyWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
             const EntityID src = *static_cast<const EntityID*>(payload->Data);
             // 部位をルートへ引き剥がすのも再親化 (M48f)
             if (!BlockedByPartLock(world, src)) {
-                undo.BeginRecord("Reparent", selection);
                 const uint64_t fid = ctx.scene->EnsureFileId(src);
-                undo.CaptureBefore(*ctx.scene, fid);
-                world.SetParent(src, kNullEntity);
-                world.ApplyStructuralChanges();
-                undo.CaptureAfter(*ctx.scene, fid);
-                undo.EndRecord(selection);
+                undo.Record("Reparent", *ctx.scene, selection, fid, UndoStack::StructuralChanges::Apply, [&] {
+                    world.SetParent(src, kNullEntity);
+                });
             }
         }
         // AssetBrowser からのドロップ: .cs はエンティティ行へドロップするよう促す、他はルート配置
@@ -217,14 +212,12 @@ void HierarchyWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
         ImGui::Text(Tr(StrId::Unpack_ConfirmBody), tname);
         ImGui::Spacing();
         if (ImGui::Button(Tr(StrId::Common_Ok), ImVec2(90, 0)) && target) {
-            undo.BeginRecord("Unpack Prefab", selection);
-            undo.CaptureBefore(*ctx.scene, unpackModalFid_);
-            if (Prefab::UnpackInstance(*ctx.scene, unpackModalFid_)) {
-                MYE_LOG_INFO(Tr(StrId::Log_Unpacked), tname);
-            }
-            world.ApplyStructuralChanges();
-            undo.CaptureAfter(*ctx.scene, unpackModalFid_);
-            undo.EndRecord(selection);
+            undo.Record("Unpack Prefab", *ctx.scene, selection, unpackModalFid_,
+                        UndoStack::StructuralChanges::Apply, [&] {
+                if (Prefab::UnpackInstance(*ctx.scene, unpackModalFid_)) {
+                    MYE_LOG_INFO(Tr(StrId::Log_Unpacked), tname);
+                }
+            });
             unpackModalFid_ = 0;
             ImGui::CloseCurrentPopup();
         }
@@ -313,18 +306,16 @@ void HierarchyWindow::DrawEntityNode(EngineContext& ctx, World& world, EntityID 
     // HierarchyComponent ポインタ (h) を取得する前に処理する (取得後だと use-after-move)
     bool active = IsEntityActive(world, e);
     if (ImGui::Checkbox("##active", &active)) {
-        undo.BeginRecord("Toggle Active", selection);
-        undo.CaptureBefore(*ctx.scene, ctx.scene->EnsureFileId(e));
-        auto* a = world.GetComponent<ActiveComponent>(e);
-        if (!a) {
-            a = static_cast<ActiveComponent*>(world.AddComponentRaw(e, ActiveComponent::sTypeId));
-        }
-        if (a) {
-            a->enabled = active ? 1 : 0;
-        }
-        world.ApplyStructuralChanges();
-        undo.CaptureAfter(*ctx.scene, ctx.scene->EnsureFileId(e));
-        undo.EndRecord(selection);
+        undo.Record("Toggle Active", *ctx.scene, selection, ctx.scene->EnsureFileId(e),
+                    UndoStack::StructuralChanges::Apply, [&] {
+            auto* a = world.GetComponent<ActiveComponent>(e);
+            if (!a) {
+                a = static_cast<ActiveComponent*>(world.AddComponentRaw(e, ActiveComponent::sTypeId));
+            }
+            if (a) {
+                a->enabled = active ? 1 : 0;
+            }
+        });
     }
     ImGui::SameLine();
 
@@ -474,13 +465,11 @@ void HierarchyWindow::DrawEntityNode(EngineContext& ctx, World& world, EntityID 
             if (payload->IsDelivery() && src != e
                 && !(zone == 0 && BlockedByPartLock(world, src))) {
                 if (zone == 0) {
-                    undo.BeginRecord("Reparent", selection);
                     const uint64_t sfid = ctx.scene->EnsureFileId(src);
-                    undo.CaptureBefore(*ctx.scene, sfid);
-                    world.SetParent(src, e); // 循環は World 側で拒否される
-                    world.ApplyStructuralChanges();
-                    undo.CaptureAfter(*ctx.scene, sfid);
-                    undo.EndRecord(selection);
+                    undo.Record("Reparent", *ctx.scene, selection, sfid,
+                                UndoStack::StructuralChanges::Apply, [&] {
+                        world.SetParent(src, e); // 循環は World 側で拒否される
+                    });
                 } else {
                     ReorderAsSibling(ctx, world, src, e, zone > 0, selection, undo);
                 }
@@ -562,16 +551,13 @@ void HierarchyWindow::ReorderAsSibling(EngineContext& ctx, World& world, EntityI
 
     // 兄弟順は WorldHash 非対象・シーン JSON に childIndex で保存され、
     // Undo は SubtreeToJson の childIndex を ApplyPartial が復元することで成立する
-    undo.BeginRecord("Reorder", selection);
     const uint64_t sfid = ctx.scene->EnsureFileId(src);
-    undo.CaptureBefore(*ctx.scene, sfid);
-    if (world.GetParent(src) != parent) {
-        world.SetParent(src, parent);
-    }
-    world.SetSiblingIndex(src, insertIdx);
-    world.ApplyStructuralChanges();
-    undo.CaptureAfter(*ctx.scene, sfid);
-    undo.EndRecord(selection);
+    undo.Record("Reorder", *ctx.scene, selection, sfid, UndoStack::StructuralChanges::Apply, [&] {
+        if (world.GetParent(src) != parent) {
+            world.SetParent(src, parent);
+        }
+        world.SetSiblingIndex(src, insertIdx);
+    });
 }
 
 } // namespace mye

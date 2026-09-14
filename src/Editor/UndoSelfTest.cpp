@@ -269,6 +269,49 @@ bool RunUndoSelfTest()
               "clipboard: missing keys keep current values");
     }
 
+    // ============ Phase 6: UndoStack::Record (1 フレームで終わる編集の雛形) ============
+    {
+        Scene scene;
+        World& world = scene.GetWorld();
+        UndoStack undo;
+        Selection sel;
+
+        GameObject a = scene.CreateGameObjectTracked("A");
+        a.SetLocalPosition(1.0f, 0.0f, 0.0f);
+        world.ApplyStructuralChanges();
+        const uint64_t aFid = FidOf(scene, a.Id());
+        // Undo/Redo の復元で EntityID が作り直されうるので、読むたびに fileId から引き直す
+        auto posX = [&] {
+            GameObject g = scene.FindByFileId(aFid);
+            auto* lt = g ? g.GetComponent<LocalTransform>() : nullptr;
+            return lt ? lt->position.x : -1.0f;
+        };
+        auto hasCollider = [&] {
+            GameObject g = scene.FindByFileId(aFid);
+            return g && g.GetComponent<ColliderComponent>() != nullptr;
+        };
+
+        // None: フィールドの書き換えだけ (構造は変わらない)
+        undo.Record("move A", scene, sel, aFid, UndoStack::StructuralChanges::None, [&] {
+            scene.FindByFileId(aFid).GetComponent<LocalTransform>()->position.x = 7.0f;
+        });
+        check(undo.CanUndo(), "Record(None): field edit pushed an entry");
+        undo.Undo(scene, sel);
+        check(posX() == 1.0f, "Record(None): undo restores the old value");
+        undo.Redo(scene, sel);
+        check(posX() == 7.0f, "Record(None): redo re-applies the new value");
+
+        // Apply: コンポーネント追加。ApplyStructuralChanges を通さないと After に写らない
+        undo.Record("add collider", scene, sel, aFid, UndoStack::StructuralChanges::Apply, [&] {
+            world.AddComponentRaw(scene.FindByFileId(aFid).Id(), ColliderComponent::sTypeId);
+        });
+        check(hasCollider(), "Record(Apply): component added");
+        undo.Undo(scene, sel);
+        check(!hasCollider(), "Record(Apply): undo removes the added component");
+        undo.Redo(scene, sel);
+        check(hasCollider(), "Record(Apply): redo adds the component back");
+    }
+
     if (failCount == 0) {
         MYE_LOG_INFO("==== Undo self test: ALL PASS ====");
         return true;

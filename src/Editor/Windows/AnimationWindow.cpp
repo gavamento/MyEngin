@@ -230,17 +230,15 @@ void AnimationWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
             if (ctx.anims->SaveToFile(hash)) {
                 scmhint::Changed(path); // M66i
             }
-            undo.BeginRecord("Create Animator", selection);
             const uint64_t fid = ctx.scene->EnsureFileId(e);
-            undo.CaptureBefore(*ctx.scene, fid);
-            auto* an = static_cast<AnimatorComponent*>(
-                world.AddComponentRaw(e, AnimatorComponent::sTypeId));
-            if (an) {
-                an->clip = AssetID{ hash };
-            }
-            world.ApplyStructuralChanges();
-            undo.CaptureAfter(*ctx.scene, fid);
-            undo.EndRecord(selection);
+            undo.Record("Create Animator", *ctx.scene, selection, fid,
+                        UndoStack::StructuralChanges::Apply, [&] {
+                auto* an = static_cast<AnimatorComponent*>(
+                    world.AddComponentRaw(e, AnimatorComponent::sTypeId));
+                if (an) {
+                    an->clip = AssetID{ hash };
+                }
+            });
         }
         ImGui::End();
         return;
