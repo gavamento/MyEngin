@@ -115,46 +115,10 @@ void EditorApp::OnStart(EngineContext& ctx)
                     { "Stats", &showStats_ } });
     if (!sceneOverride.empty()) {
         scenePath_ = sceneOverride;
-    } else if (rtShowcase) {
-        // M46i: ショーケースの保存先は専用パスにする。ここを main.scene.json のままにすると
-        // Ctrl+S ひとつで既定デモシーンが置き換わり、golden.rep の入力が変わってしまう
-        scenePath_ = ctx.assetsRoot + L"\\scenes\\rt_showcase.scene.json";
-    } else if (partsShowcase) {
-        // M48g: 部位追従のリプレイ被覆シーン。**cache\ に置く** (git 非追跡) —
-        // 版管理された唯一の正解は BuildPartsShowcaseScene (コード) 側で、
-        // replay_verify.bat は毎回そこから組み直してから記録する。
-        // (M48g 当時はモデル由来のサブアセット ID が絶対パスのハッシュで、保存物をコミット
-        //  できないことも理由だった。M74a で .meta の GUID 由来になり、その理由は消えた)
-        scenePath_ = L"cache\\parts_showcase.scene.json";
-    } else if (flowShowcase) {
-        // M51j: フロー統合デモのタイトルシーン。ファイルは EnsureFlowShowcaseScenes が
-        // assets\scenes\ に生成する (gitignore 済み) — タイトル⇄ゲームの遷移が
-        // LoadScene("scenes/flow_*.scene.json") = assets 相対解決のため、cache\ には置けない
-        scenePath_ = ctx.assetsRoot + L"\\scenes\\flow_title.scene.json";
-    } else if (localDemo) {
-        // M52g: コードから毎回組む (ファイルは作らない)。パスだけ cache\ へ振っておくと、
-        // 万一 Ctrl+S されても既定デモシーン = golden.rep の入力を潰さない
-        scenePath_ = L"cache\\local_players.scene.json";
-    } else if (netDemo) {
-        scenePath_ = L"cache\\net_duel.scene.json"; // M52i (同上)
-    } else if (renderShowcase) {
-        scenePath_ = L"cache\\render_showcase.scene.json"; // M54a (同上)
-    } else if (terrainShowcase) {
-        scenePath_ = L"cache\\terrain_showcase.scene.json"; // M58c (同上)
-    } else if (physicsShowcase) {
-        scenePath_ = L"cache\\physics_showcase.scene.json"; // M59d (同上)
-    } else if (jointShowcase) {
-        scenePath_ = L"cache\\joint_showcase.scene.json"; // M60i (同上)
-    } else if (fogShowcase) {
-        scenePath_ = L"cache\\fog_showcase.scene.json"; // M57追補 (同上)
-    } else if (particleShowcase) {
-        // M63a / M65b (同上)。★以前はここに枝が無く main.scene.json へ落ちていた = Ctrl+S で既定デモシーンを
-        // ショーケースで上書きし、main.scene.json があるとショーケースを組まずにそちらを読んでいた
-        scenePath_ = L"cache\\particle_showcase.scene.json";
-    } else if (acousticShowcase) {
-        scenePath_ = L"cache\\acoustic_showcase.scene.json";
-    } else if (uiShowcase) {
-        scenePath_ = L"cache\\ui_showcase.scene.json"; // M75c (同上)
+    } else if (showcase != nullptr) {
+        // ★ショーケースは専用の保存先 (ShowcaseScenes.cpp の表)。main.scene.json のままにすると
+        //   Ctrl+S ひとつで既定デモシーンが置き換わり、golden.rep の入力が変わってしまう (M46i)
+        scenePath_ = ShowcaseScenePath(*showcase, ctx.assetsRoot);
     } else {
         scenePath_ = ctx.assetsRoot + L"\\scenes\\main.scene.json";
         ProjectManifest manifest; // ブートシーンはマニフェスト優先 (M26)
@@ -185,41 +149,19 @@ void EditorApp::OnStart(EngineContext& ctx)
     RegisterFogShowcaseContent(ctx);     // M57追補 (fdemo_* 材質。同上)
     RegisterParticleShowcaseContent(ctx); // M63a (vdemo_* 材質 + 手続きテクスチャ。同上)
     RegisterAcousticShowcaseContent(ctx); // M65b (adem_* 材質。同上)
-    if (flowShowcase) {
-        // 両シーンファイルを確保してからタイトルを普通のロード経路で開く。
+    if (showcase != nullptr && showcase->prepare != nullptr) {
+        // シーンファイルを先に確保してから普通のロード経路で開く (--flow-demo の 2 シーン)。
         // ここで組む = GameLogic.dll / C# コンパイル済み (EngineLoop が OnStart 前に実施)
         // なので FlowTitleDriver / FlowMenu のアタッチが解決できる
-        EnsureFlowShowcaseScenes(ctx);
+        showcase->prepare(ctx);
     }
     undo_.SetPrefabLibrary(ctx.prefabs); // 編集直後の override リスト記録 (M48e)
     if (std::filesystem::exists(scenePath_)) {
         SceneSerializer::LoadFromFile(*ctx.scene, scenePath_);
         // ロード直後 1 回だけ: 閉じている間に更新されたプレハブへ非 override を追随させる (M48e)
         Prefab::RefreshNonOverridden(*ctx.scene, *ctx.prefabs);
-    } else if (rtShowcase) {
-        BuildRtShowcaseScene(ctx); // M46i
-    } else if (partsShowcase) {
-        BuildPartsShowcaseScene(ctx); // M48g
-    } else if (localDemo) {
-        BuildLocalPlayersScene(ctx); // M52g
-    } else if (netDemo) {
-        BuildNetDuelScene(ctx); // M52i
-    } else if (renderShowcase) {
-        BuildRenderShowcaseScene(ctx); // M54a
-    } else if (terrainShowcase) {
-        BuildTerrainShowcaseScene(ctx, terrainLodDistance, terrainSkirtDepth); // M58c / M58e
-    } else if (physicsShowcase) {
-        BuildPhysicsShowcaseScene(ctx); // M59d
-    } else if (jointShowcase) {
-        BuildJointShowcaseScene(ctx); // M60i
-    } else if (fogShowcase) {
-        BuildFogShowcaseScene(ctx); // M57追補
-    } else if (particleShowcase) {
-        BuildParticleShowcaseScene(ctx); // M63a
-    } else if (acousticShowcase) {
-        BuildAcousticShowcaseScene(ctx); // M65b
-    } else if (uiShowcase) {
-        BuildUiShowcaseScene(ctx); // M75c
+    } else if (showcase != nullptr && showcase->build != nullptr) {
+        showcase->build(ctx, showcaseOptions);
     } else {
         BuildDemoScene(ctx, perfRate, perfMax);
     }

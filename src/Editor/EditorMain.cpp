@@ -65,6 +65,7 @@
 #include "Engine/Engine/HotReload/ReloadHubSelfTest.h"
 #include "Engine/Engine/EngineCli.h"
 #include "Engine/Engine/EngineCliSelfTest.h"
+#include "Engine/Engine/ShowcaseScenes.h"
 #include "Engine/Engine/Replay/CrashRingSelfTest.h"
 #include "Engine/Platform/CrashHandler.h"
 #include "Engine/Platform/InputActionsSelfTest.h"
@@ -108,21 +109,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     bool autoPlay = false;
     bool openTimeline = false; // M72c
     float perfRate = 0.0f;
-    bool rtShowcase = false; // --rt-demo (M46i)
-    bool partsShowcase = false; // --parts-demo (M48g: 部位追従のリプレイ被覆シーン)
-    bool flowShowcase = false;  // --flow-demo (M51j: ゲームフロー統合デモ)
-    bool localDemo = false;     // --local-demo (M52g: ローカルマルチプレイの入力レーンデモ)
-    bool netDemo = false;       // --net-demo (M52i: 2 人ネット対戦のデモ)
-    bool renderShowcase = false; // --render-demo (M54a: 描画ロードマップのショーケース)
-    bool terrainShowcase = false; // --terrain-demo (M58c: 地形のショーケース)
-    bool physicsShowcase = false; // --physics-demo (M59d: 物理のリプレイ被覆シーン)
-    bool jointShowcase = false;   // --joint-demo (M60i: 関節と機構のリプレイ被覆シーン)
-    bool fogShowcase = false;     // --fog-demo (M57追補: 霧のショーケース)
-    bool particleShowcase = false; // --particle-demo (M63a: 粒子表現のショーケース)
-    bool acousticShowcase = false; // --acoustic-demo (M65b: 音響伝播のショーケース)
-    bool uiShowcase = false;       // --ui-demo (M75c: ゲーム内 UI のショーケース)
-    float terrainLodDistance = 0.0f; // --terrain-lod DIST (M58e: 0 = LOD 無効)
-    float terrainSkirtDepth = 0.0f;  // --terrain-skirt D (M58e: 0 = 自動 / < 0 = 無し)
+    const mye::ShowcaseDef* showcase = nullptr; // --*-demo (ShowcaseScenes.h。複数なら表の上の行)
+    mye::ShowcaseOptions showcaseOptions;       // --terrain-lod DIST / --terrain-skirt D (M58e)
     std::wstring editActorPath;  // --edit-actor PATH (M48k)
     std::wstring packageDir;     // --package DIR (M51j: CLI パッケージ)
     bool packageDds = false;     // --package-dds
@@ -215,41 +203,14 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 pickTestFrame = 20;
             } else if (arg == L"--scene" && i + 1 < argc) {
                 sceneOverride = argv[++i];
-            } else if (arg == L"--rt-demo") {
-                rtShowcase = true; // M46i: コーネル箱のショーケースシーンを構築
-            } else if (arg == L"--parts-demo") {
-                partsShowcase = true; // M48g: 部位追従の被覆シーンを構築
-            } else if (arg == L"--flow-demo") {
-                flowShowcase = true; // M51j: ゲームフロー統合デモ (タイトル⇄ゲームの 2 シーン)
-            } else if (arg == L"--local-demo") {
-                localDemo = true; // M52g: 入力レーンのローカルマルチプレイデモ
-            } else if (arg == L"--net-demo") {
-                netDemo = true; // M52i: 2 人ネット対戦のデモシーン
-            } else if (arg == L"--render-demo") {
-                renderShowcase = true; // M54a: 描画ショーケース (局所ライト/反射/フォグ/遠景)
-            } else if (arg == L"--physics-demo") {
-                physicsShowcase = true; // M59d: 空力/浮力/材料のリプレイ被覆シーン
-            } else if (arg == L"--joint-demo") {
-                jointShowcase = true; // M60i: 関節/機構/ラグドール/車のリプレイ被覆シーン
-            } else if (arg == L"--fog-demo") {
-                // M57追補: 霧 + GPU 粒子 + VFX のショーケース (golden 15 枚目の被写体)
-                fogShowcase = true;
-            } else if (arg == L"--particle-demo") {
-                // M63a: 粒子表現のショーケース (golden 16/17 枚目 = CPU/GPU の突き合わせ)
-                particleShowcase = true;
-            } else if (arg == L"--acoustic-demo") {
-                // M65b: 音響伝播のショーケース (replay 7 ペア目の被写体)
-                acousticShowcase = true;
-            } else if (arg == L"--ui-demo") {
-                uiShowcase = true; // M75c: ゲーム内 UI のショーケース
-            } else if (arg == L"--terrain-demo") {
-                terrainShowcase = true; // M58c: 地形ショーケース (golden demo_terrain_deferred)
+            } else if (const mye::ShowcaseDef* s = mye::FindShowcase(arg, /*editor=*/true)) {
+                showcase = mye::PickShowcase(showcase, s); // --*-demo (ShowcaseScenes.cpp の表)
             } else if (arg == L"--terrain-lod" && i + 1 < argc) {
                 // M58e: 地形 LOD の切替距離。**golden は LOD 無しのまま**で、
                 // クラック A/B のときだけ点ける
-                terrainLodDistance = static_cast<float>(_wtof(argv[++i]));
+                showcaseOptions.terrainLodDistance = static_cast<float>(_wtof(argv[++i]));
             } else if (arg == L"--terrain-skirt" && i + 1 < argc) {
-                terrainSkirtDepth = static_cast<float>(_wtof(argv[++i])); // M58e (負値 = 無し)
+                showcaseOptions.terrainSkirtDepth = static_cast<float>(_wtof(argv[++i])); // M58e (負値 = 無し)
             } else if (arg == L"--edit-actor" && i + 1 < argc) {
                 editActorPath = argv[++i]; // M48k: 起動直後にミニシーン編集モードで開く
             } else if (arg == L"--package" && i + 1 < argc) {
@@ -501,21 +462,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     app.saveSceneOnStart = saveSceneOnStart;
     app.autoPlay = autoPlay;
     app.openTimeline = openTimeline;
-    app.rtShowcase = rtShowcase;
-    app.partsShowcase = partsShowcase;
-    app.flowShowcase = flowShowcase;
-    app.localDemo = localDemo;
-    app.netDemo = netDemo;
-    app.renderShowcase = renderShowcase;
-    app.terrainShowcase = terrainShowcase; // M58c
-    app.physicsShowcase = physicsShowcase; // M59d
-    app.jointShowcase = jointShowcase;     // M60i
-    app.fogShowcase = fogShowcase;         // M57追補
-    app.particleShowcase = particleShowcase; // M63a
-    app.acousticShowcase = acousticShowcase; // M65b
-    app.uiShowcase = uiShowcase;             // M75c
-    app.terrainLodDistance = terrainLodDistance; // M58e
-    app.terrainSkirtDepth = terrainSkirtDepth;   // M58e
+    app.showcase = showcase;
+    app.showcaseOptions = showcaseOptions;
     app.editActorPath = editActorPath;
     app.packageDir = packageDir;
     app.packageDds = packageDds;

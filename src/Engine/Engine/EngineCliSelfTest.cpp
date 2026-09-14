@@ -7,6 +7,7 @@
 #include "Engine/Core/Log.h"
 #include "Engine/Engine/EngineCli.h"
 #include "Engine/Engine/EngineLoop.h"
+#include "Engine/Engine/ShowcaseScenes.h"
 
 namespace mye {
 namespace {
@@ -263,6 +264,25 @@ bool RunEngineCliSelfTest()
     check(r.errors == 0 && r.notMine == 1, "--particle-backend without a value is not an error");
     r = RunParse({ L"--selftest", L"--scene", L"x.scene.json", L"--deferred", L"--ui-demo" });
     check(r.consumed == 0 && r.notMine == 5, "app-only flags (and their values) are not shared flags");
+
+    // ---- --*-demo の表 (ShowcaseScenes.h) ----
+    const ShowcaseDef* rtDemo = FindShowcase(L"--rt-demo", true);
+    const ShowcaseDef* uiDemo = FindShowcase(L"--ui-demo", true);
+    check(rtDemo != nullptr && uiDemo != nullptr && PickShowcase(uiDemo, rtDemo) == rtDemo
+              && PickShowcase(rtDemo, uiDemo) == rtDemo && PickShowcase(nullptr, uiDemo) == uiDemo,
+          "several --*-demo flags: the upper row of the table wins whatever order they are passed in");
+    check(FindShowcase(L"--parts-demo", true) != nullptr && FindShowcase(L"--parts-demo", false) == nullptr
+              && FindShowcase(L"--flow-demo", false) == nullptr && FindShowcase(L"--ui-demo", false) == uiDemo,
+          "editor-only demos are not offered to the Runtime");
+    check(rtDemo != nullptr
+              && ShowcaseScenePath(*rtDemo, L"c:\\p\\assets") == L"c:\\p\\assets\\scenes\\rt_showcase.scene.json",
+          "--rt-demo saves under assets\\scenes");
+    check(uiDemo != nullptr && ShowcaseScenePath(*uiDemo, L"c:\\p\\assets") == L"cache\\ui_showcase.scene.json",
+          "--ui-demo saves under cache");
+    const ShowcaseDef* flowDemo = FindShowcase(L"--flow-demo", true);
+    check(flowDemo != nullptr && flowDemo->prepare != nullptr && flowDemo->build == nullptr,
+          "--flow-demo prepares its scene files instead of building a scene");
+    check(FindShowcase(L"--frames", true) == nullptr, "shared flags are not demos");
 
     MYE_LOG_INFO("Engine CLI self test: %s (%d failure(s))", failCount == 0 ? "OK" : "FAILED", failCount);
     return failCount == 0;

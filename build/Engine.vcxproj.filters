@@ -450,6 +450,9 @@
     <ClCompile Include="..\src\Engine\Engine\Script\ScriptHost.cpp">
       <Filter>Engine\Script</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\ShowcaseScenes.cpp">
+      <Filter>Engine</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\SkeletonSelfTest.cpp">
       <Filter>Engine</Filter>
     </ClCompile>
@@ -1073,6 +1076,9 @@
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Script\ScriptKeys.h">
       <Filter>Engine\Script</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\ShowcaseScenes.h">
+      <Filter>Engine</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\SkeletonSelfTest.h">
       <Filter>Engine</Filter>

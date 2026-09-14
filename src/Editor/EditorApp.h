@@ -37,6 +37,7 @@
 #include "Engine/Engine/GameObject.h"
 #include "Engine/Engine/ProbeBaker.h"
 #include "Engine/Engine/Scene.h"
+#include "Engine/Engine/ShowcaseScenes.h"
 #include "Engine/Engine/TransformSystem.h"
 
 namespace mye {
@@ -64,23 +65,9 @@ public:
     std::string selectName;        // --select NAME (起動時に名前でエンティティを選択 — ギズモ検証用)
     int pickTestFrame = -1;        // --pick-test (このフレームで中心をピッキングし PASS/FAIL ログ)
     std::wstring sceneOverride;    // --scene PATH (既定の main.scene.json の代わりに読むシーン)
-    bool rtShowcase = false;       // --rt-demo (M46i: コーネル箱のショーケースを構築)
-    bool partsShowcase = false;    // --parts-demo (M48g: 部位追従のリプレイ被覆シーン)
-    bool flowShowcase = false;     // --flow-demo (M51j: ゲームフロー統合デモ 2 シーン)
-    bool localDemo = false;        // --local-demo (M52g: 入力レーンのローカルマルチプレイデモ)
-    bool netDemo = false;          // --net-demo (M52i: 2 人ネット対戦のデモ)
-    bool renderShowcase = false;   // --render-demo (M54a: 描画ロードマップのショーケース)
-    bool physicsShowcase = false;  // --physics-demo (M59d: 物理のリプレイ被覆シーン)
-    bool jointShowcase = false;    // --joint-demo (M60i: 関節と機構のリプレイ被覆シーン)
-    bool fogShowcase = false;      // --fog-demo (M57追補: 霧 + GPU 粒子 + VFX のショーケース)
-    bool particleShowcase = false; // --particle-demo (M63a: 粒子表現。golden 16/17 枚目)
-    bool acousticShowcase = false; // --acoustic-demo (M65b: 音響伝播。replay 7 ペア目)
-    bool uiShowcase = false;       // --ui-demo (M75c: ゲーム内 UI。golden 25 枚目)
-    bool terrainShowcase = false;  // --terrain-demo (M58c: 地形のショーケース)
-    // --terrain-lod DIST (M58e): 地形ショーケースの LOD 切替距離。0 = 無効 (既定 = golden の絵)
-    float terrainLodDistance = 0.0f;
-    // --terrain-skirt D (M58e): 0 = 自動 / < 0 = スカート無し (クラックの A/B 撮影用)
-    float terrainSkirtDepth = 0.0f;
+    // --*-demo (ShowcaseScenes.cpp の表の 1 行)。複数渡したら表の上の行が勝つ。nullptr = 通常の起動
+    const ShowcaseDef* showcase = nullptr;
+    ShowcaseOptions showcaseOptions; // --terrain-lod / --terrain-skirt (M58e。地形ショーケースだけが使う)
     // --edit-actor PATH (M48k): 起動直後にミニシーン編集モードで開く。
     // 編集モードの入口はダブルクリックだけで自動検証できないため、既存の検証フラグ
     // (--select / --pick-test / --parts-demo) と同じ流儀で口を開けてある
