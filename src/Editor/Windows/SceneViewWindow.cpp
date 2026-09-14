@@ -384,6 +384,66 @@ void SceneViewWindow::RenderCameraPreview(EngineContext& ctx)
     previewValid_ = true;
 }
 
+namespace {
+
+// ---- シーンビューのギズモの色と大きさ (Draw*Gizmos が使う) ----
+namespace gizmo {
+constexpr uint32_t kCollider = 0x40D040FFu;
+constexpr uint32_t kLight = 0xF0E040FFu;
+constexpr uint32_t kCamera = 0x40C0F0FFu;
+constexpr uint32_t kEmitter = 0xF08020FFu;
+constexpr uint32_t kSpring = 0xE060E0FFu;
+constexpr uint32_t kJointA = 0x40FF90FFu;     // 関節のアンカー (owner)
+constexpr uint32_t kJointB = 0xFFD040FFu;     // 関節のアンカー (相手)
+constexpr uint32_t kJointErr = 0xFF3030FFu;   // 2 点を結ぶ「ずれ」の線
+constexpr uint32_t kForce = 0xF0A040FFu;
+constexpr uint32_t kCharCtrl = 0x30E0B0FFu;
+constexpr uint32_t kVfx = 0xC080F0FFu;        // スプライト / 3D テキスト
+constexpr uint32_t kAudio = 0x40E0C0FFu;      // 音源マーカー / リスナー
+constexpr uint32_t kAudioMin = 0x40FFA0FFu;   // minDistance (ここまでは減衰しない)
+constexpr uint32_t kAudioMax = 0x2080A0FFu;   // maxDistance (ここから先は無音)
+constexpr uint32_t kPartBone = 0xF060C0FFu;   // 部位: ボーン追従あり (マゼンタ)
+constexpr uint32_t kPartStatic = 0x8080A0FFu; // 部位: 静的ソケット (くすんだ青灰)
+constexpr uint32_t kProbeBox = 0x60C0FFFFu;   // 反射プローブ (水色)
+constexpr uint32_t kSelection = 0xFFA030FFu;  // 選択アウトライン
+
+constexpr float kLightMarkerRadius = 0.3f;
+constexpr float kLightDirLength = 2.0f;
+const XMFLOAT3 kCameraBoxHalf = { 0.3f, 0.3f, 0.45f };
+constexpr float kEmitterCross = 0.4f;
+constexpr float kSpringEndRadius = 0.08f;
+constexpr float kJointAnchorRadius = 0.10f;
+constexpr float kForceArrowLength = 1.2f; // 長さは正規化 + 固定 (大きさは Inspector で読む)
+constexpr float kForceHeadBack = 0.25f;
+constexpr float kForceHeadSide = 0.12f;
+constexpr float kAudioMarkerRadius = 0.18f;
+constexpr float kListenerMarkerRadius = 0.3f;
+constexpr float kListenerDirLength = 1.2f;
+constexpr float kTextGlyph = 0.25f;
+constexpr float kPartSocketRadius = 0.09f;
+constexpr float kPartTickLength = 0.22f;
+constexpr float kProbePointRadius = 0.2f;
+} // namespace gizmo
+
+// T と WorldMatrix を両方持つ行を回す。★要求するコンポーネントの組は元の書き方と同じ =
+// 回る順も同じなので、線を積む順は変わらない
+template <typename T, typename Fn>
+void ForEachWithWorldMatrix(World& world, Fn&& fn)
+{
+    const ComponentTypeId req[] = { T::sTypeId, WorldMatrixComponent::sTypeId };
+    world.ForEachArchetype(req, [&](Archetype& arch) {
+        const int ti = arch.FindTypeIndex(T::sTypeId);
+        const int wi = arch.FindTypeIndex(WorldMatrixComponent::sTypeId);
+        for (uint32_t row = 0; row < arch.Count(); ++row) {
+            const auto* comp = static_cast<const T*>(arch.GetPtr(ti, row));
+            const XMFLOAT4X4& wm = static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row))->value;
+            fn(*comp, wm, arch.EntityAt(row));
+        }
+    });
+}
+
+} // namespace
+
 void SceneViewWindow::BuildOverlays(EngineContext& ctx, Selection& selection)
 {
     World& world = ctx.scene->GetWorld();
@@ -393,452 +453,399 @@ void SceneViewWindow::BuildOverlays(EngineContext& ctx, Selection& selection)
     }
 
     if (showGizmos_) {
-        constexpr uint32_t kCollider = 0x40D040FFu;
-        constexpr uint32_t kLight = 0xF0E040FFu;
-        constexpr uint32_t kCamera = 0x40C0F0FFu;
-        constexpr uint32_t kEmitter = 0xF08020FFu;
-
-        // コライダー (球 / OBB / カプセル、M28a)。寸法・基底は物理と同じ
-        // shapes::MakePoseFromMatrix から取る = ギズモと判定のズレを構造的に防ぐ
-        const ComponentTypeId colReq[] = { ColliderComponent::sTypeId,
-                                           WorldMatrixComponent::sTypeId };
-        world.ForEachArchetype(colReq, [&](Archetype& arch) {
-            const int ci = arch.FindTypeIndex(ColliderComponent::sTypeId);
-            const int wi = arch.FindTypeIndex(WorldMatrixComponent::sTypeId);
-            for (uint32_t row = 0; row < arch.Count(); ++row) {
-                const auto* col = static_cast<const ColliderComponent*>(arch.GetPtr(ci, row));
-                const XMFLOAT4X4& wm = static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row))->value;
-                const ShapePose pose = shapes::MakePoseFromMatrix(*col, wm);
-                const XMFLOAT3 pos = { pose.px, pose.py, pose.pz };
-                if (col->shape == collidershape::kSphere) {
-                    lines_.AddWireSphere(pos, pose.radius, kCollider);
-                } else if (col->shape == collidershape::kCapsule) {
-                    lines_.AddWireCapsule(pos, { pose.bx[0], pose.bx[1], pose.bx[2] },
-                                          { pose.by[0], pose.by[1], pose.by[2] },
-                                          { pose.bz[0], pose.bz[1], pose.bz[2] }, pose.radius,
-                                          pose.halfSeg, kCollider);
-                } else if (col->shape == collidershape::kConvex) {
-                    // M60f: 凸包は**実際の稜線**を描く。箱で代用すると「どこまでが当たり
-                    // 判定なのか」が分からず、凸包コライダーのデバッグが成立しない。
-                    // 実体は MakePoseFromMatrix が convexcol 経由で解決済み (未生成は null)
-                    const auto* hull = static_cast<const ConvexHullData*>(pose.meshData);
-                    if (hull != nullptr) {
-                        auto toWorld = [&](const XMFLOAT3& v) {
-                            const float lx = v.x * pose.sx, ly = v.y * pose.sy, lz = v.z * pose.sz;
-                            return XMFLOAT3{
-                                pose.px + pose.bx[0] * lx + pose.by[0] * ly + pose.bz[0] * lz,
-                                pose.py + pose.bx[1] * lx + pose.by[1] * ly + pose.bz[1] * lz,
-                                pose.pz + pose.bx[2] * lx + pose.by[2] * ly + pose.bz[2] * lz
-                            };
-                        };
-                        for (const ConvexEdge& e : hull->edges) {
-                            lines_.AddLine(toWorld(hull->verts[static_cast<size_t>(e.v0)]),
-                                           toWorld(hull->verts[static_cast<size_t>(e.v1)]),
-                                           kCollider);
-                        }
-                    }
-                } else {
-                    // OBB: 基底 × スケール適用済み half extents を行列に組んで描画
-                    XMFLOAT4X4 boxWorld = {
-                        pose.bx[0], pose.bx[1], pose.bx[2], 0,
-                        pose.by[0], pose.by[1], pose.by[2], 0,
-                        pose.bz[0], pose.bz[1], pose.bz[2], 0,
-                        pose.px,    pose.py,    pose.pz,    1,
-                    };
-                    lines_.AddWireBox(boxWorld, { pose.hx, pose.hy, pose.hz }, kCollider);
-                }
-            }
-        });
-
-        // ライト (位置マーカー + 前方向)
-        const ComponentTypeId liReq[] = { LightComponent::sTypeId, WorldMatrixComponent::sTypeId };
-        world.ForEachArchetype(liReq, [&](Archetype& arch) {
-            const int wi = arch.FindTypeIndex(WorldMatrixComponent::sTypeId);
-            for (uint32_t row = 0; row < arch.Count(); ++row) {
-                const XMFLOAT4X4& wm = static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row))->value;
-                const XMFLOAT3 pos = { wm._41, wm._42, wm._43 };
-                lines_.AddWireSphere(pos, 0.3f, kLight);
-                const XMVECTOR fwd = XMVector3Normalize(XMVectorSet(wm._31, wm._32, wm._33, 0));
-                XMFLOAT3 tip;
-                XMStoreFloat3(&tip, XMVectorAdd(XMLoadFloat3(&pos), XMVectorScale(fwd, 2.0f)));
-                lines_.AddLine(pos, tip, kLight);
-            }
-        });
-
-        // カメラ (ボックス glyph)
-        const ComponentTypeId caReq[] = { CameraComponent::sTypeId, WorldMatrixComponent::sTypeId };
-        world.ForEachArchetype(caReq, [&](Archetype& arch) {
-            const int wi = arch.FindTypeIndex(WorldMatrixComponent::sTypeId);
-            for (uint32_t row = 0; row < arch.Count(); ++row) {
-                const XMFLOAT4X4& wm = static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row))->value;
-                lines_.AddWireBox(wm, { 0.3f, 0.3f, 0.45f }, kCamera);
-            }
-        });
-
-        // 視錐台ワイヤは**選択中 (= 操縦中) の 1 台だけ**。全カメラに出すと、カメラが
-        // 数台あるだけで画面が線だらけになって何も読めなくなる
-        if (camTargetFid_ != 0) {
-            if (GameObject obj = ctx.scene->FindByFileId(camTargetFid_)) {
-                const auto* cam = world.GetComponent<CameraComponent>(obj.Id());
-                const auto* wmc = world.GetComponent<WorldMatrixComponent>(obj.Id());
-                if (cam != nullptr && wmc != nullptr) {
-                    AddFrustumWire(wmc->value, *cam);
-                }
-            }
-        }
-
-        // パーティクルエミッタ (クロス glyph)
-        const ComponentTypeId emReq[] = { ParticleEmitterComponent::sTypeId,
-                                          WorldMatrixComponent::sTypeId };
-        world.ForEachArchetype(emReq, [&](Archetype& arch) {
-            const int wi = arch.FindTypeIndex(WorldMatrixComponent::sTypeId);
-            for (uint32_t row = 0; row < arch.Count(); ++row) {
-                const XMFLOAT4X4& wm = static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row))->value;
-                const XMFLOAT3 p = { wm._41, wm._42, wm._43 };
-                const float r = 0.4f;
-                lines_.AddLine({ p.x - r, p.y, p.z }, { p.x + r, p.y, p.z }, kEmitter);
-                lines_.AddLine({ p.x, p.y - r, p.z }, { p.x, p.y + r, p.z }, kEmitter);
-                lines_.AddLine({ p.x, p.y, p.z - r }, { p.x, p.y, p.z + r }, kEmitter);
-            }
-        });
-
-        // ばねジョイント (owner↔connected を結ぶ線 + 両端マーカー、M29a)
-        constexpr uint32_t kSpring = 0xE060E0FFu;
-        const ComponentTypeId sjReq[] = { SpringJointComponent::sTypeId,
-                                          WorldMatrixComponent::sTypeId };
-        world.ForEachArchetype(sjReq, [&](Archetype& arch) {
-            const int si = arch.FindTypeIndex(SpringJointComponent::sTypeId);
-            const int wi = arch.FindTypeIndex(WorldMatrixComponent::sTypeId);
-            for (uint32_t row = 0; row < arch.Count(); ++row) {
-                const auto* sj = static_cast<const SpringJointComponent*>(arch.GetPtr(si, row));
-                if (sj->connectedEntity.IsNull() || !world.IsAlive(sj->connectedEntity)) {
-                    continue;
-                }
-                const auto* owm = world.GetComponent<WorldMatrixComponent>(sj->connectedEntity);
-                if (!owm) {
-                    continue;
-                }
-                const XMFLOAT4X4& wm = static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row))->value;
-                const XMFLOAT3 a = { wm._41, wm._42, wm._43 };
-                const XMFLOAT3 b = { owm->value._41, owm->value._42, owm->value._43 };
-                lines_.AddLine(a, b, kSpring);
-                lines_.AddWireSphere(a, 0.08f, kSpring);
-                lines_.AddWireSphere(b, 0.08f, kSpring);
-            }
-        });
-
-        // 関節 (M60a)。アンカー 2 点 (owner=緑 / 相手=黄) と、それを結ぶ「ずれ」の線。
-        // ★**編集中に見えること**がこのギズモの存在理由 — 走らせる前にアンカーの位置が
-        //   意図どおりかを確かめられないと関節の authoring は成立しない。Play 中の
-        //   ライブ表示は PhysicsDebugFlags.joints (両ビューに出る) が別に持っている
-        constexpr uint32_t kJointA = 0x40FF90FFu;
-        constexpr uint32_t kJointB = 0xFFD040FFu;
-        constexpr uint32_t kJointErr = 0xFF3030FFu;
-        const ComponentTypeId jtReq[] = { JointComponent::sTypeId, WorldMatrixComponent::sTypeId };
-        world.ForEachArchetype(jtReq, [&](Archetype& arch) {
-            const int ji = arch.FindTypeIndex(JointComponent::sTypeId);
-            const int wi = arch.FindTypeIndex(WorldMatrixComponent::sTypeId);
-            for (uint32_t row = 0; row < arch.Count(); ++row) {
-                const auto* jc = static_cast<const JointComponent*>(arch.GetPtr(ji, row));
-                const XMFLOAT4X4& wm =
-                    static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row))->value;
-                auto xform = [](const XMFLOAT4X4& m, const XMFLOAT3& v) {
-                    return XMFLOAT3{ v.x * m._11 + v.y * m._21 + v.z * m._31 + m._41,
-                                     v.x * m._12 + v.y * m._22 + v.z * m._32 + m._42,
-                                     v.x * m._13 + v.y * m._23 + v.z * m._33 + m._43 };
-                };
-                const XMFLOAT3 a = xform(wm, jc->anchor);
-                XMFLOAT3 b;
-                if (jc->connectedEntity.IsNull()) {
-                    b = jc->connectedAnchor; // 相手が居ないときだけワールド座標 (ソルバと同規約)
-                } else {
-                    const auto* owm =
-                        world.GetComponent<WorldMatrixComponent>(jc->connectedEntity);
-                    if (!owm) {
-                        continue;
-                    }
-                    b = xform(owm->value, jc->connectedAnchor);
-                }
-                lines_.AddWireSphere(a, 0.10f, kJointA);
-                lines_.AddWireSphere(b, 0.10f, kJointB);
-                lines_.AddLine(a, b, kJointErr);
-            }
-        });
-
-        // 定常力 (力方向の矢印、M29a)。長さは正規化 + 固定 (大きさは Inspector で読む)
-        constexpr uint32_t kForce = 0xF0A040FFu;
-        const ComponentTypeId cfReq[] = { ConstantForceComponent::sTypeId,
-                                          WorldMatrixComponent::sTypeId };
-        world.ForEachArchetype(cfReq, [&](Archetype& arch) {
-            const int fi = arch.FindTypeIndex(ConstantForceComponent::sTypeId);
-            const int wi = arch.FindTypeIndex(WorldMatrixComponent::sTypeId);
-            for (uint32_t row = 0; row < arch.Count(); ++row) {
-                const auto* cf = static_cast<const ConstantForceComponent*>(arch.GetPtr(fi, row));
-                const XMFLOAT4X4& wm = static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row))->value;
-                XMVECTOR dir = XMVectorSet(cf->force.x, cf->force.y, cf->force.z, 0);
-                if (cf->relative != 0) {
-                    // ローカル指定はワールド行列の回転成分で向きを変換 (表示のみ)
-                    XMFLOAT4X4 rot = wm;
-                    rot._41 = rot._42 = rot._43 = 0;
-                    dir = XMVector3TransformNormal(dir, XMLoadFloat4x4(&rot));
-                }
-                if (XMVectorGetX(XMVector3LengthSq(dir)) < 1e-8f) {
-                    continue;
-                }
-                dir = XMVector3Normalize(dir);
-                const XMFLOAT3 p = { wm._41, wm._42, wm._43 };
-                XMFLOAT3 tip;
-                XMStoreFloat3(&tip, XMVectorAdd(XMLoadFloat3(&p), XMVectorScale(dir, 1.2f)));
-                lines_.AddLine(p, tip, kForce);
-                // 矢先 (tip から根本方向へ小さな八の字)
-                XMVECTOR back = XMVectorScale(dir, -0.25f);
-                XMVECTOR up = XMVectorSet(0, 1, 0, 0);
-                XMVECTOR side = XMVector3Cross(dir, up);
-                if (XMVectorGetX(XMVector3LengthSq(side)) < 1e-6f) {
-                    side = XMVectorSet(1, 0, 0, 0);
-                } else {
-                    side = XMVector3Normalize(side);
-                }
-                XMFLOAT3 w1, w2;
-                XMStoreFloat3(&w1, XMVectorAdd(XMLoadFloat3(&tip),
-                                               XMVectorAdd(back, XMVectorScale(side, 0.12f))));
-                XMStoreFloat3(&w2, XMVectorAdd(XMLoadFloat3(&tip),
-                                               XMVectorSubtract(back, XMVectorScale(side, 0.12f))));
-                lines_.AddLine(tip, w1, kForce);
-                lines_.AddLine(tip, w2, kForce);
-            }
-        });
-
-        // キャラクターコントローラ (カプセルワイヤ、M29b)。寸法規約は物理とミラー
-        // (radius×max(sx,sz)、halfSeg = height/2×sy − radius、常にワールド Y 軸)
-        constexpr uint32_t kCharCtrl = 0x30E0B0FFu;
-        const ComponentTypeId chReq[] = { CharacterControllerComponent::sTypeId,
-                                          WorldMatrixComponent::sTypeId };
-        world.ForEachArchetype(chReq, [&](Archetype& arch) {
-            const int ci = arch.FindTypeIndex(CharacterControllerComponent::sTypeId);
-            const int wi = arch.FindTypeIndex(WorldMatrixComponent::sTypeId);
-            for (uint32_t row = 0; row < arch.Count(); ++row) {
-                const auto* cc =
-                    static_cast<const CharacterControllerComponent*>(arch.GetPtr(ci, row));
-                const XMFLOAT4X4& wm = static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row))->value;
-                const XMFLOAT3 sc = MatrixScale(wm);
-                const float wr = cc->radius * std::max(std::fabs(sc.x), std::fabs(sc.z));
-                const float wh = cc->height * 0.5f * std::fabs(sc.y);
-                const float halfSeg = (wh > wr) ? (wh - wr) : 0.0f;
-                lines_.AddWireCapsule({ wm._41, wm._42, wm._43 }, { 1, 0, 0 }, { 0, 1, 0 },
-                                      { 0, 0, 1 }, wr, halfSeg, kCharCtrl);
-            }
-        });
-
-        // スプライト (サイズ枠、M29c)。ビルボードは常時回るのでワイヤは XY 平面固定のヒント表示
-        constexpr uint32_t kVfx = 0xC080F0FFu;
-        const ComponentTypeId spReq[] = { SpriteRendererComponent::sTypeId,
-                                          WorldMatrixComponent::sTypeId };
-        world.ForEachArchetype(spReq, [&](Archetype& arch) {
-            const int si = arch.FindTypeIndex(SpriteRendererComponent::sTypeId);
-            const int wi = arch.FindTypeIndex(WorldMatrixComponent::sTypeId);
-            for (uint32_t row = 0; row < arch.Count(); ++row) {
-                const auto* sp = static_cast<const SpriteRendererComponent*>(arch.GetPtr(si, row));
-                const XMFLOAT4X4& wm = static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row))->value;
-                const XMFLOAT3 p = { wm._41, wm._42, wm._43 };
-                const float hx = sp->size.x * 0.5f;
-                const float hy = sp->size.y * 0.5f;
-                lines_.AddLine({ p.x - hx, p.y - hy, p.z }, { p.x + hx, p.y - hy, p.z }, kVfx);
-                lines_.AddLine({ p.x + hx, p.y - hy, p.z }, { p.x + hx, p.y + hy, p.z }, kVfx);
-                lines_.AddLine({ p.x + hx, p.y + hy, p.z }, { p.x - hx, p.y + hy, p.z }, kVfx);
-                lines_.AddLine({ p.x - hx, p.y + hy, p.z }, { p.x - hx, p.y - hy, p.z }, kVfx);
-            }
-        });
-
-        // オーディオ (M45e)。音源はマーカー球、リスナーは向きが要るので前方向線も引く。
-        // **減衰球 (min/max) は選択中の 1 個だけ** — 全音源に描くとシーンが球だらけになる
-        constexpr uint32_t kAudio = 0x40E0C0FFu;    // 音源マーカー / リスナー
-        constexpr uint32_t kAudioMin = 0x40FFA0FFu; // minDistance (ここまでは減衰しない)
-        constexpr uint32_t kAudioMax = 0x2080A0FFu; // maxDistance (ここから先は無音)
-        const GameObject selForAudio = ctx.scene->FindByFileId(selection.primary);
-        const EntityID selAudioEntity = selForAudio ? selForAudio.Id() : kNullEntity;
-
-        const ComponentTypeId auReq[] = { AudioSourceComponent::sTypeId,
-                                          WorldMatrixComponent::sTypeId };
-        world.ForEachArchetype(auReq, [&](Archetype& arch) {
-            const int ai = arch.FindTypeIndex(AudioSourceComponent::sTypeId);
-            const int wi = arch.FindTypeIndex(WorldMatrixComponent::sTypeId);
-            for (uint32_t row = 0; row < arch.Count(); ++row) {
-                const auto* src = static_cast<const AudioSourceComponent*>(arch.GetPtr(ai, row));
-                const XMFLOAT4X4& wm =
-                    static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row))->value;
-                const XMFLOAT3 p = { wm._41, wm._42, wm._43 };
-                lines_.AddWireSphere(p, 0.18f, kAudio);
-                if (!(arch.EntityAt(row) == selAudioEntity)) {
-                    continue;
-                }
-                // ★実効値は再生時とまったく同じ 1 本の規則 (MakeSourcePlay) から取る。
-                //   ここで overrideAttenuation の分岐を書き直すと、ギズモと実際の鳴り方が
-                //   静かにズレる (コライダーのギズモを shapes:: 経由にしてあるのと同じ理由)
-                const SoundAsset* asset =
-                    ctx.sounds != nullptr ? ctx.sounds->Get(src->sound.value) : nullptr;
-                if (asset == nullptr || ctx.audio == nullptr) {
-                    continue;
-                }
-                PlayDesc desc;
-                AudioSpatial sp;
-                MakeSourcePlay(*asset, *src, *ctx.audio, -1, 0.0f, 0.0f, desc, sp);
-                if (sp.spatialBlend <= 0.0f) {
-                    continue; // 2D 音源に距離球を描くと嘘になる
-                }
-                lines_.AddWireSphere(p, sp.minDistance, kAudioMin);
-                lines_.AddWireSphere(p, sp.maxDistance, kAudioMax);
-            }
-        });
-
-        const ComponentTypeId alReq[] = { AudioListenerComponent::sTypeId,
-                                          WorldMatrixComponent::sTypeId };
-        world.ForEachArchetype(alReq, [&](Archetype& arch) {
-            const int wi = arch.FindTypeIndex(WorldMatrixComponent::sTypeId);
-            for (uint32_t row = 0; row < arch.Count(); ++row) {
-                const XMFLOAT4X4& wm =
-                    static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row))->value;
-                const XMFLOAT3 pos = { wm._41, wm._42, wm._43 };
-                lines_.AddWireSphere(pos, 0.3f, kAudio);
-                const XMVECTOR fwd = XMVector3Normalize(XMVectorSet(wm._31, wm._32, wm._33, 0));
-                XMFLOAT3 tip;
-                XMStoreFloat3(&tip, XMVectorAdd(XMLoadFloat3(&pos), XMVectorScale(fwd, 1.2f)));
-                lines_.AddLine(pos, tip, kAudio);
-            }
-        });
-
-        // 3D テキスト (T 字 glyph、M29c)
-        const ComponentTypeId txReq[] = { TextMeshComponent::sTypeId,
-                                          WorldMatrixComponent::sTypeId };
-        world.ForEachArchetype(txReq, [&](Archetype& arch) {
-            const int wi = arch.FindTypeIndex(WorldMatrixComponent::sTypeId);
-            for (uint32_t row = 0; row < arch.Count(); ++row) {
-                const XMFLOAT4X4& wm = static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row))->value;
-                const XMFLOAT3 p = { wm._41, wm._42, wm._43 };
-                const float r = 0.25f;
-                lines_.AddLine({ p.x - r, p.y + r, p.z }, { p.x + r, p.y + r, p.z }, kVfx);
-                lines_.AddLine({ p.x, p.y + r, p.z }, { p.x, p.y - r, p.z }, kVfx);
-            }
-        });
-
-        // 部位ソケット (八面体 glyph + 前方ティック、M48i)。
-        // ボーン追従 (joint 指定あり) と静的ソケットで色を分ける — 実行時に動くかどうかが
-        // 一目で分かることが、この glyph の主目的
-        constexpr uint32_t kPartBone = 0xF060C0FFu;   // 追従あり (マゼンタ)
-        constexpr uint32_t kPartStatic = 0x8080A0FFu; // 静的ソケット (くすんだ青灰)
-        const ComponentTypeId ptReq[] = { PartComponent::sTypeId, WorldMatrixComponent::sTypeId };
-        world.ForEachArchetype(ptReq, [&](Archetype& arch) {
-            const int pi = arch.FindTypeIndex(PartComponent::sTypeId);
-            const int wi = arch.FindTypeIndex(WorldMatrixComponent::sTypeId);
-            for (uint32_t row = 0; row < arch.Count(); ++row) {
-                const auto* pc = static_cast<const PartComponent*>(arch.GetPtr(pi, row));
-                const XMFLOAT4X4& wm =
-                    static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row))->value;
-                const XMFLOAT3 p = { wm._41, wm._42, wm._43 };
-                const uint32_t c = (pc->joint[0] != '\0') ? kPartBone : kPartStatic;
-                // 八面体のワイヤ (= 3 平面の菱形)。ワールド軸に揃えるので向きに関係なく読める
-                const float r = 0.09f;
-                const XMFLOAT3 px = { p.x + r, p.y, p.z }, nx = { p.x - r, p.y, p.z };
-                const XMFLOAT3 py = { p.x, p.y + r, p.z }, ny = { p.x, p.y - r, p.z };
-                const XMFLOAT3 pz = { p.x, p.y, p.z + r }, nz = { p.x, p.y, p.z - r };
-                const XMFLOAT3* ring[3][4] = { { &px, &py, &nx, &ny },
-                                               { &py, &pz, &ny, &nz },
-                                               { &pz, &px, &nz, &nx } };
-                for (const XMFLOAT3** rg : ring) {
-                    for (int i = 0; i < 4; ++i) {
-                        lines_.AddLine(*rg[i], *rg[(i + 1) & 3], c);
-                    }
-                }
-                // 取り付け向き (+Z) を短いティックで示す — ソケットは向きが本体なので
-                const XMVECTOR fwd = XMVector3Normalize(XMVectorSet(wm._31, wm._32, wm._33, 0));
-                XMFLOAT3 tip;
-                XMStoreFloat3(&tip, XMVectorAdd(XMLoadFloat3(&p), XMVectorScale(fwd, 0.22f)));
-                lines_.AddLine(p, tip, c);
-            }
-        });
-
-        // 部位の範囲 (M49): 箱/球ボリュームのワイヤ。ポーズはクリック選択・RaycastParts と
-        // 同じ Parts::MakePartBoundsPose から取る = 表示と判定のズレを構造的に防ぐ
-        const ComponentTypeId pbReq[] = { PartComponent::sTypeId, PartBoundsComponent::sTypeId,
-                                          WorldMatrixComponent::sTypeId };
-        world.ForEachArchetype(pbReq, [&](Archetype& arch) {
-            const int pi = arch.FindTypeIndex(PartComponent::sTypeId);
-            const int bi = arch.FindTypeIndex(PartBoundsComponent::sTypeId);
-            const int wi = arch.FindTypeIndex(WorldMatrixComponent::sTypeId);
-            for (uint32_t row = 0; row < arch.Count(); ++row) {
-                const auto* pc = static_cast<const PartComponent*>(arch.GetPtr(pi, row));
-                const auto* pb = static_cast<const PartBoundsComponent*>(arch.GetPtr(bi, row));
-                const XMFLOAT4X4& wm =
-                    static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row))->value;
-                const uint32_t c = (pc->joint[0] != '\0') ? kPartBone : kPartStatic;
-                const ShapePose pose = Parts::MakePartBoundsPose(*pb, wm);
-                const XMFLOAT3 pos = { pose.px, pose.py, pose.pz };
-                if (pose.shape == collidershape::kSphere) {
-                    lines_.AddWireSphere(pos, pose.radius, c);
-                } else {
-                    XMFLOAT4X4 boxWorld = {
-                        pose.bx[0], pose.bx[1], pose.bx[2], 0,
-                        pose.by[0], pose.by[1], pose.by[2], 0,
-                        pose.bz[0], pose.bz[1], pose.bz[2], 0,
-                        pose.px,    pose.py,    pose.pz,    1,
-                    };
-                    lines_.AddWireBox(boxWorld, { pose.hx, pose.hy, pose.hz }, c);
-                }
-            }
-        });
-
-        // 反射プローブの影響ボックス (M56f)。**箱は軸平行**なのでワールド行列は平行移動だけ
-        // (エンティティの回転もスケールも見ない = ここで拾わないのが仕様どおり)。
-        // ★これが無いとプローブは画面に一切現れない — メッシュを持たず、焼くまでは絵にも
-        //   寄与しないので、置いた箱の大きさを確かめる手段が他に無い
-        constexpr uint32_t kProbeBox = 0x60C0FFFFu; // 水色
-        const ComponentTypeId rpReq[] = { ReflectionProbeComponent::sTypeId,
-                                          WorldMatrixComponent::sTypeId };
-        world.ForEachArchetype(rpReq, [&](Archetype& arch) {
-            const int ri = arch.FindTypeIndex(ReflectionProbeComponent::sTypeId);
-            const int wi = arch.FindTypeIndex(WorldMatrixComponent::sTypeId);
-            for (uint32_t row = 0; row < arch.Count(); ++row) {
-                const auto* rp = static_cast<const ReflectionProbeComponent*>(arch.GetPtr(ri, row));
-                const XMFLOAT4X4& wm =
-                    static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row))->value;
-                const XMFLOAT4X4 boxWorld = {
-                    1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, wm._41, wm._42, wm._43, 1,
-                };
-                lines_.AddWireBox(boxWorld,
-                                  { std::fabs(rp->extents.x), std::fabs(rp->extents.y),
-                                    std::fabs(rp->extents.z) },
-                                  kProbeBox);
-                lines_.AddWireSphere({ wm._41, wm._42, wm._43 }, 0.2f, kProbeBox); // 撮影点
-            }
-        });
+        // 呼ぶ順 = 線を積む順 (1 関数だったときと同じ順に保つ)
+        DrawColliderGizmos(world);
+        DrawLightGizmos(world);
+        DrawCameraGizmos(ctx, world);
+        DrawEmitterGizmos(world);
+        DrawSpringJointGizmos(world);
+        DrawJointGizmos(world);
+        DrawConstantForceGizmos(world);
+        DrawCharacterControllerGizmos(world);
+        DrawSpriteGizmos(world);
+        DrawAudioGizmos(ctx, world, selection);
+        DrawTextMeshGizmos(world);
+        DrawPartSocketGizmos(world);
+        DrawPartBoundsGizmos(world);
+        DrawReflectionProbeGizmos(world);
     }
 
-    // 選択アウトライン (常時最前面)
-    GameObject sel = ctx.scene->FindByFileId(selection.primary);
-    if (sel) {
-        auto* wm = world.GetComponent<WorldMatrixComponent>(sel.Id());
-        if (wm) {
-            XMFLOAT3 lo = { -0.5f, -0.5f, -0.5f };
-            XMFLOAT3 hi = { 0.5f, 0.5f, 0.5f };
-            if (auto* mr = world.GetComponent<MeshRendererComponent>(sel.Id())) {
-                if (Mesh* mesh = ctx.resources->meshes.Get(mr->mesh)) {
-                    lo = mesh->aabbMin;
-                    hi = mesh->aabbMax;
-                }
-            }
-            const XMFLOAT3 center = { (lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f,
-                                     (lo.z + hi.z) * 0.5f };
-            const XMFLOAT3 half = { (hi.x - lo.x) * 0.5f, (hi.y - lo.y) * 0.5f,
-                                    (hi.z - lo.z) * 0.5f };
-            const XMMATRIX boxWorld =
-                XMMatrixTranslation(center.x, center.y, center.z) * XMLoadFloat4x4(&wm->value);
-            XMFLOAT4X4 bw;
-            XMStoreFloat4x4(&bw, boxWorld);
-            lines_.AddWireBox(bw, half, 0xFFA030FFu, /*onTop*/ true);
-        }
-    }
-
+    DrawSelectionOutline(ctx, world, selection);
     BuildGhostOverlay(ctx); // M72e
+}
+
+// コライダー (球 / OBB / カプセル、M28a)。寸法・基底は物理と同じ
+// shapes::MakePoseFromMatrix から取る = ギズモと判定のズレを構造的に防ぐ
+void SceneViewWindow::DrawColliderGizmos(World& world)
+{
+    ForEachWithWorldMatrix<ColliderComponent>(world, [&](const ColliderComponent& col, const XMFLOAT4X4& wm, EntityID) {
+        const ShapePose pose = shapes::MakePoseFromMatrix(col, wm);
+        const XMFLOAT3 pos = { pose.px, pose.py, pose.pz };
+        if (col.shape == collidershape::kSphere) {
+            lines_.AddWireSphere(pos, pose.radius, gizmo::kCollider);
+        } else if (col.shape == collidershape::kCapsule) {
+            lines_.AddWireCapsule(pos, { pose.bx[0], pose.bx[1], pose.bx[2] },
+                                  { pose.by[0], pose.by[1], pose.by[2] },
+                                  { pose.bz[0], pose.bz[1], pose.bz[2] }, pose.radius,
+                                  pose.halfSeg, gizmo::kCollider);
+        } else if (col.shape == collidershape::kConvex) {
+            // M60f: 凸包は**実際の稜線**を描く。箱で代用すると「どこまでが当たり
+            // 判定なのか」が分からず、凸包コライダーのデバッグが成立しない。
+            // 実体は MakePoseFromMatrix が convexcol 経由で解決済み (未生成は null)
+            const auto* hull = static_cast<const ConvexHullData*>(pose.meshData);
+            if (hull != nullptr) {
+                auto toWorld = [&](const XMFLOAT3& v) {
+                    const float lx = v.x * pose.sx, ly = v.y * pose.sy, lz = v.z * pose.sz;
+                    return XMFLOAT3{
+                        pose.px + pose.bx[0] * lx + pose.by[0] * ly + pose.bz[0] * lz,
+                        pose.py + pose.bx[1] * lx + pose.by[1] * ly + pose.bz[1] * lz,
+                        pose.pz + pose.bx[2] * lx + pose.by[2] * ly + pose.bz[2] * lz
+                    };
+                };
+                for (const ConvexEdge& e : hull->edges) {
+                    lines_.AddLine(toWorld(hull->verts[static_cast<size_t>(e.v0)]),
+                                   toWorld(hull->verts[static_cast<size_t>(e.v1)]),
+                                   gizmo::kCollider);
+                }
+            }
+        } else {
+            // OBB: 基底 × スケール適用済み half extents を行列に組んで描画
+            XMFLOAT4X4 boxWorld = {
+                pose.bx[0], pose.bx[1], pose.bx[2], 0,
+                pose.by[0], pose.by[1], pose.by[2], 0,
+                pose.bz[0], pose.bz[1], pose.bz[2], 0,
+                pose.px,    pose.py,    pose.pz,    1,
+            };
+            lines_.AddWireBox(boxWorld, { pose.hx, pose.hy, pose.hz }, gizmo::kCollider);
+        }
+    });
+}
+
+// ライト (位置マーカー + 前方向)
+void SceneViewWindow::DrawLightGizmos(World& world)
+{
+    ForEachWithWorldMatrix<LightComponent>(world, [&](const LightComponent&, const XMFLOAT4X4& wm, EntityID) {
+        const XMFLOAT3 pos = { wm._41, wm._42, wm._43 };
+        lines_.AddWireSphere(pos, gizmo::kLightMarkerRadius, gizmo::kLight);
+        const XMVECTOR fwd = XMVector3Normalize(XMVectorSet(wm._31, wm._32, wm._33, 0));
+        XMFLOAT3 tip;
+        XMStoreFloat3(&tip, XMVectorAdd(XMLoadFloat3(&pos), XMVectorScale(fwd, gizmo::kLightDirLength)));
+        lines_.AddLine(pos, tip, gizmo::kLight);
+    });
+}
+
+// カメラ (ボックス glyph) と、選択中 (= 操縦中) の 1 台だけの視錐台ワイヤ。
+// 全カメラに視錐台を出すと、カメラが数台あるだけで画面が線だらけになって何も読めなくなる
+void SceneViewWindow::DrawCameraGizmos(EngineContext& ctx, World& world)
+{
+    ForEachWithWorldMatrix<CameraComponent>(world, [&](const CameraComponent&, const XMFLOAT4X4& wm, EntityID) {
+        lines_.AddWireBox(wm, gizmo::kCameraBoxHalf, gizmo::kCamera);
+    });
+    if (camTargetFid_ != 0) {
+        if (GameObject obj = ctx.scene->FindByFileId(camTargetFid_)) {
+            const auto* cam = world.GetComponent<CameraComponent>(obj.Id());
+            const auto* wmc = world.GetComponent<WorldMatrixComponent>(obj.Id());
+            if (cam != nullptr && wmc != nullptr) {
+                AddFrustumWire(wmc->value, *cam);
+            }
+        }
+    }
+}
+
+// パーティクルエミッタ (クロス glyph)
+void SceneViewWindow::DrawEmitterGizmos(World& world)
+{
+    ForEachWithWorldMatrix<ParticleEmitterComponent>(
+        world, [&](const ParticleEmitterComponent&, const XMFLOAT4X4& wm, EntityID) {
+            const XMFLOAT3 p = { wm._41, wm._42, wm._43 };
+            const float r = gizmo::kEmitterCross;
+            lines_.AddLine({ p.x - r, p.y, p.z }, { p.x + r, p.y, p.z }, gizmo::kEmitter);
+            lines_.AddLine({ p.x, p.y - r, p.z }, { p.x, p.y + r, p.z }, gizmo::kEmitter);
+            lines_.AddLine({ p.x, p.y, p.z - r }, { p.x, p.y, p.z + r }, gizmo::kEmitter);
+        });
+}
+
+// ばねジョイント (owner↔connected を結ぶ線 + 両端マーカー、M29a)
+void SceneViewWindow::DrawSpringJointGizmos(World& world)
+{
+    ForEachWithWorldMatrix<SpringJointComponent>(
+        world, [&](const SpringJointComponent& sj, const XMFLOAT4X4& wm, EntityID) {
+            if (sj.connectedEntity.IsNull() || !world.IsAlive(sj.connectedEntity)) {
+                return;
+            }
+            const auto* owm = world.GetComponent<WorldMatrixComponent>(sj.connectedEntity);
+            if (!owm) {
+                return;
+            }
+            const XMFLOAT3 a = { wm._41, wm._42, wm._43 };
+            const XMFLOAT3 b = { owm->value._41, owm->value._42, owm->value._43 };
+            lines_.AddLine(a, b, gizmo::kSpring);
+            lines_.AddWireSphere(a, gizmo::kSpringEndRadius, gizmo::kSpring);
+            lines_.AddWireSphere(b, gizmo::kSpringEndRadius, gizmo::kSpring);
+        });
+}
+
+// 関節 (M60a)。アンカー 2 点 (owner=緑 / 相手=黄) と、それを結ぶ「ずれ」の線。
+// ★**編集中に見えること**がこのギズモの存在理由 — 走らせる前にアンカーの位置が
+//   意図どおりかを確かめられないと関節の authoring は成立しない。Play 中の
+//   ライブ表示は PhysicsDebugFlags.joints (両ビューに出る) が別に持っている
+void SceneViewWindow::DrawJointGizmos(World& world)
+{
+    auto xform = [](const XMFLOAT4X4& m, const XMFLOAT3& v) {
+        return XMFLOAT3{ v.x * m._11 + v.y * m._21 + v.z * m._31 + m._41,
+                         v.x * m._12 + v.y * m._22 + v.z * m._32 + m._42,
+                         v.x * m._13 + v.y * m._23 + v.z * m._33 + m._43 };
+    };
+    ForEachWithWorldMatrix<JointComponent>(world, [&](const JointComponent& jc, const XMFLOAT4X4& wm, EntityID) {
+        const XMFLOAT3 a = xform(wm, jc.anchor);
+        XMFLOAT3 b;
+        if (jc.connectedEntity.IsNull()) {
+            b = jc.connectedAnchor; // 相手が居ないときだけワールド座標 (ソルバと同規約)
+        } else {
+            const auto* owm = world.GetComponent<WorldMatrixComponent>(jc.connectedEntity);
+            if (!owm) {
+                return;
+            }
+            b = xform(owm->value, jc.connectedAnchor);
+        }
+        lines_.AddWireSphere(a, gizmo::kJointAnchorRadius, gizmo::kJointA);
+        lines_.AddWireSphere(b, gizmo::kJointAnchorRadius, gizmo::kJointB);
+        lines_.AddLine(a, b, gizmo::kJointErr);
+    });
+}
+
+// 定常力 (力方向の矢印、M29a)
+void SceneViewWindow::DrawConstantForceGizmos(World& world)
+{
+    ForEachWithWorldMatrix<ConstantForceComponent>(
+        world, [&](const ConstantForceComponent& cf, const XMFLOAT4X4& wm, EntityID) {
+            XMVECTOR dir = XMVectorSet(cf.force.x, cf.force.y, cf.force.z, 0);
+            if (cf.relative != 0) {
+                // ローカル指定はワールド行列の回転成分で向きを変換 (表示のみ)
+                XMFLOAT4X4 rot = wm;
+                rot._41 = rot._42 = rot._43 = 0;
+                dir = XMVector3TransformNormal(dir, XMLoadFloat4x4(&rot));
+            }
+            if (XMVectorGetX(XMVector3LengthSq(dir)) < 1e-8f) {
+                return;
+            }
+            dir = XMVector3Normalize(dir);
+            const XMFLOAT3 p = { wm._41, wm._42, wm._43 };
+            XMFLOAT3 tip;
+            XMStoreFloat3(&tip, XMVectorAdd(XMLoadFloat3(&p), XMVectorScale(dir, gizmo::kForceArrowLength)));
+            lines_.AddLine(p, tip, gizmo::kForce);
+            // 矢先 (tip から根本方向へ小さな八の字)
+            XMVECTOR back = XMVectorScale(dir, -gizmo::kForceHeadBack);
+            XMVECTOR up = XMVectorSet(0, 1, 0, 0);
+            XMVECTOR side = XMVector3Cross(dir, up);
+            if (XMVectorGetX(XMVector3LengthSq(side)) < 1e-6f) {
+                side = XMVectorSet(1, 0, 0, 0);
+            } else {
+                side = XMVector3Normalize(side);
+            }
+            XMFLOAT3 w1, w2;
+            XMStoreFloat3(&w1, XMVectorAdd(XMLoadFloat3(&tip),
+                                           XMVectorAdd(back, XMVectorScale(side, gizmo::kForceHeadSide))));
+            XMStoreFloat3(&w2, XMVectorAdd(XMLoadFloat3(&tip),
+                                           XMVectorSubtract(back, XMVectorScale(side, gizmo::kForceHeadSide))));
+            lines_.AddLine(tip, w1, gizmo::kForce);
+            lines_.AddLine(tip, w2, gizmo::kForce);
+        });
+}
+
+// キャラクターコントローラ (カプセルワイヤ、M29b)。寸法規約は物理とミラー
+// (radius×max(sx,sz)、halfSeg = height/2×sy − radius、常にワールド Y 軸)
+void SceneViewWindow::DrawCharacterControllerGizmos(World& world)
+{
+    ForEachWithWorldMatrix<CharacterControllerComponent>(
+        world, [&](const CharacterControllerComponent& cc, const XMFLOAT4X4& wm, EntityID) {
+            const XMFLOAT3 sc = MatrixScale(wm);
+            const float wr = cc.radius * std::max(std::fabs(sc.x), std::fabs(sc.z));
+            const float wh = cc.height * 0.5f * std::fabs(sc.y);
+            const float halfSeg = (wh > wr) ? (wh - wr) : 0.0f;
+            lines_.AddWireCapsule({ wm._41, wm._42, wm._43 }, { 1, 0, 0 }, { 0, 1, 0 },
+                                  { 0, 0, 1 }, wr, halfSeg, gizmo::kCharCtrl);
+        });
+}
+
+// スプライト (サイズ枠、M29c)。ビルボードは常時回るのでワイヤは XY 平面固定のヒント表示
+void SceneViewWindow::DrawSpriteGizmos(World& world)
+{
+    ForEachWithWorldMatrix<SpriteRendererComponent>(
+        world, [&](const SpriteRendererComponent& sp, const XMFLOAT4X4& wm, EntityID) {
+            const XMFLOAT3 p = { wm._41, wm._42, wm._43 };
+            const float hx = sp.size.x * 0.5f;
+            const float hy = sp.size.y * 0.5f;
+            lines_.AddLine({ p.x - hx, p.y - hy, p.z }, { p.x + hx, p.y - hy, p.z }, gizmo::kVfx);
+            lines_.AddLine({ p.x + hx, p.y - hy, p.z }, { p.x + hx, p.y + hy, p.z }, gizmo::kVfx);
+            lines_.AddLine({ p.x + hx, p.y + hy, p.z }, { p.x - hx, p.y + hy, p.z }, gizmo::kVfx);
+            lines_.AddLine({ p.x - hx, p.y + hy, p.z }, { p.x - hx, p.y - hy, p.z }, gizmo::kVfx);
+        });
+}
+
+// オーディオ (M45e)。音源はマーカー球、リスナーは向きが要るので前方向線も引く。
+// **減衰球 (min/max) は選択中の 1 個だけ** — 全音源に描くとシーンが球だらけになる
+void SceneViewWindow::DrawAudioGizmos(EngineContext& ctx, World& world, const Selection& selection)
+{
+    const GameObject selForAudio = ctx.scene->FindByFileId(selection.primary);
+    const EntityID selAudioEntity = selForAudio ? selForAudio.Id() : kNullEntity;
+
+    ForEachWithWorldMatrix<AudioSourceComponent>(
+        world, [&](const AudioSourceComponent& src, const XMFLOAT4X4& wm, EntityID e) {
+            const XMFLOAT3 p = { wm._41, wm._42, wm._43 };
+            lines_.AddWireSphere(p, gizmo::kAudioMarkerRadius, gizmo::kAudio);
+            if (!(e == selAudioEntity)) {
+                return;
+            }
+            // ★実効値は再生時とまったく同じ 1 本の規則 (MakeSourcePlay) から取る。
+            //   ここで overrideAttenuation の分岐を書き直すと、ギズモと実際の鳴り方が
+            //   静かにズレる (コライダーのギズモを shapes:: 経由にしてあるのと同じ理由)
+            const SoundAsset* asset = ctx.sounds != nullptr ? ctx.sounds->Get(src.sound.value) : nullptr;
+            if (asset == nullptr || ctx.audio == nullptr) {
+                return;
+            }
+            PlayDesc desc;
+            AudioSpatial sp;
+            MakeSourcePlay(*asset, src, *ctx.audio, -1, 0.0f, 0.0f, desc, sp);
+            if (sp.spatialBlend <= 0.0f) {
+                return; // 2D 音源に距離球を描くと嘘になる
+            }
+            lines_.AddWireSphere(p, sp.minDistance, gizmo::kAudioMin);
+            lines_.AddWireSphere(p, sp.maxDistance, gizmo::kAudioMax);
+        });
+
+    ForEachWithWorldMatrix<AudioListenerComponent>(
+        world, [&](const AudioListenerComponent&, const XMFLOAT4X4& wm, EntityID) {
+            const XMFLOAT3 pos = { wm._41, wm._42, wm._43 };
+            lines_.AddWireSphere(pos, gizmo::kListenerMarkerRadius, gizmo::kAudio);
+            const XMVECTOR fwd = XMVector3Normalize(XMVectorSet(wm._31, wm._32, wm._33, 0));
+            XMFLOAT3 tip;
+            XMStoreFloat3(&tip, XMVectorAdd(XMLoadFloat3(&pos), XMVectorScale(fwd, gizmo::kListenerDirLength)));
+            lines_.AddLine(pos, tip, gizmo::kAudio);
+        });
+}
+
+// 3D テキスト (T 字 glyph、M29c)
+void SceneViewWindow::DrawTextMeshGizmos(World& world)
+{
+    ForEachWithWorldMatrix<TextMeshComponent>(world, [&](const TextMeshComponent&, const XMFLOAT4X4& wm, EntityID) {
+        const XMFLOAT3 p = { wm._41, wm._42, wm._43 };
+        const float r = gizmo::kTextGlyph;
+        lines_.AddLine({ p.x - r, p.y + r, p.z }, { p.x + r, p.y + r, p.z }, gizmo::kVfx);
+        lines_.AddLine({ p.x, p.y + r, p.z }, { p.x, p.y - r, p.z }, gizmo::kVfx);
+    });
+}
+
+// 部位ソケット (八面体 glyph + 前方ティック、M48i)。
+// ボーン追従 (joint 指定あり) と静的ソケットで色を分ける — 実行時に動くかどうかが
+// 一目で分かることが、この glyph の主目的
+void SceneViewWindow::DrawPartSocketGizmos(World& world)
+{
+    ForEachWithWorldMatrix<PartComponent>(world, [&](const PartComponent& pc, const XMFLOAT4X4& wm, EntityID) {
+        const XMFLOAT3 p = { wm._41, wm._42, wm._43 };
+        const uint32_t c = (pc.joint[0] != '\0') ? gizmo::kPartBone : gizmo::kPartStatic;
+        // 八面体のワイヤ (= 3 平面の菱形)。ワールド軸に揃えるので向きに関係なく読める
+        const float r = gizmo::kPartSocketRadius;
+        const XMFLOAT3 px = { p.x + r, p.y, p.z }, nx = { p.x - r, p.y, p.z };
+        const XMFLOAT3 py = { p.x, p.y + r, p.z }, ny = { p.x, p.y - r, p.z };
+        const XMFLOAT3 pz = { p.x, p.y, p.z + r }, nz = { p.x, p.y, p.z - r };
+        const XMFLOAT3* ring[3][4] = { { &px, &py, &nx, &ny },
+                                       { &py, &pz, &ny, &nz },
+                                       { &pz, &px, &nz, &nx } };
+        for (const XMFLOAT3** rg : ring) {
+            for (int i = 0; i < 4; ++i) {
+                lines_.AddLine(*rg[i], *rg[(i + 1) & 3], c);
+            }
+        }
+        // 取り付け向き (+Z) を短いティックで示す — ソケットは向きが本体なので
+        const XMVECTOR fwd = XMVector3Normalize(XMVectorSet(wm._31, wm._32, wm._33, 0));
+        XMFLOAT3 tip;
+        XMStoreFloat3(&tip, XMVectorAdd(XMLoadFloat3(&p), XMVectorScale(fwd, gizmo::kPartTickLength)));
+        lines_.AddLine(p, tip, c);
+    });
+}
+
+// 部位の範囲 (M49): 箱/球ボリュームのワイヤ。ポーズはクリック選択・RaycastParts と
+// 同じ Parts::MakePartBoundsPose から取る = 表示と判定のズレを構造的に防ぐ。
+// ★Part と PartBounds の両方が要るので ForEachWithWorldMatrix は使わない
+void SceneViewWindow::DrawPartBoundsGizmos(World& world)
+{
+    const ComponentTypeId pbReq[] = { PartComponent::sTypeId, PartBoundsComponent::sTypeId,
+                                      WorldMatrixComponent::sTypeId };
+    world.ForEachArchetype(pbReq, [&](Archetype& arch) {
+        const int pi = arch.FindTypeIndex(PartComponent::sTypeId);
+        const int bi = arch.FindTypeIndex(PartBoundsComponent::sTypeId);
+        const int wi = arch.FindTypeIndex(WorldMatrixComponent::sTypeId);
+        for (uint32_t row = 0; row < arch.Count(); ++row) {
+            const auto* pc = static_cast<const PartComponent*>(arch.GetPtr(pi, row));
+            const auto* pb = static_cast<const PartBoundsComponent*>(arch.GetPtr(bi, row));
+            const XMFLOAT4X4& wm =
+                static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row))->value;
+            const uint32_t c = (pc->joint[0] != '\0') ? gizmo::kPartBone : gizmo::kPartStatic;
+            const ShapePose pose = Parts::MakePartBoundsPose(*pb, wm);
+            const XMFLOAT3 pos = { pose.px, pose.py, pose.pz };
+            if (pose.shape == collidershape::kSphere) {
+                lines_.AddWireSphere(pos, pose.radius, c);
+            } else {
+                XMFLOAT4X4 boxWorld = {
+                    pose.bx[0], pose.bx[1], pose.bx[2], 0,
+                    pose.by[0], pose.by[1], pose.by[2], 0,
+                    pose.bz[0], pose.bz[1], pose.bz[2], 0,
+                    pose.px,    pose.py,    pose.pz,    1,
+                };
+                lines_.AddWireBox(boxWorld, { pose.hx, pose.hy, pose.hz }, c);
+            }
+        }
+    });
+}
+
+// 反射プローブの影響ボックス (M56f)。**箱は軸平行**なのでワールド行列は平行移動だけ
+// (エンティティの回転もスケールも見ない = ここで拾わないのが仕様どおり)。
+// ★これが無いとプローブは画面に一切現れない — メッシュを持たず、焼くまでは絵にも
+//   寄与しないので、置いた箱の大きさを確かめる手段が他に無い
+void SceneViewWindow::DrawReflectionProbeGizmos(World& world)
+{
+    ForEachWithWorldMatrix<ReflectionProbeComponent>(
+        world, [&](const ReflectionProbeComponent& rp, const XMFLOAT4X4& wm, EntityID) {
+            const XMFLOAT4X4 boxWorld = {
+                1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, wm._41, wm._42, wm._43, 1,
+            };
+            lines_.AddWireBox(boxWorld,
+                              { std::fabs(rp.extents.x), std::fabs(rp.extents.y),
+                                std::fabs(rp.extents.z) },
+                              gizmo::kProbeBox);
+            lines_.AddWireSphere({ wm._41, wm._42, wm._43 }, gizmo::kProbePointRadius, gizmo::kProbeBox); // 撮影点
+        });
+}
+
+// 選択アウトライン (常時最前面)。メッシュがあればその AABB、無ければ単位箱
+void SceneViewWindow::DrawSelectionOutline(EngineContext& ctx, World& world, const Selection& selection)
+{
+    GameObject sel = ctx.scene->FindByFileId(selection.primary);
+    if (!sel) {
+        return;
+    }
+    auto* wm = world.GetComponent<WorldMatrixComponent>(sel.Id());
+    if (!wm) {
+        return;
+    }
+    XMFLOAT3 lo = { -0.5f, -0.5f, -0.5f };
+    XMFLOAT3 hi = { 0.5f, 0.5f, 0.5f };
+    if (auto* mr = world.GetComponent<MeshRendererComponent>(sel.Id())) {
+        if (Mesh* mesh = ctx.resources->meshes.Get(mr->mesh)) {
+            lo = mesh->aabbMin;
+            hi = mesh->aabbMax;
+        }
+    }
+    const XMFLOAT3 center = { (lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f,
+                             (lo.z + hi.z) * 0.5f };
+    const XMFLOAT3 half = { (hi.x - lo.x) * 0.5f, (hi.y - lo.y) * 0.5f,
+                            (hi.z - lo.z) * 0.5f };
+    const XMMATRIX boxWorld =
+        XMMatrixTranslation(center.x, center.y, center.z) * XMLoadFloat4x4(&wm->value);
+    XMFLOAT4X4 bw;
+    XMStoreFloat4x4(&bw, boxWorld);
+    lines_.AddWireBox(bw, half, gizmo::kSelection, /*onTop*/ true);
 }
 
 void SceneViewWindow::DrawToolbar(EditorSettings& settings)

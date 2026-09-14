@@ -17,6 +17,7 @@
 namespace mye {
 
 struct Selection;
+class World;
 class UndoStack;
 struct EditorSettings;
 struct CameraComponent;
@@ -43,6 +44,22 @@ public:
 
 private:
     void BuildOverlays(EngineContext& ctx, Selection& selection);
+    // BuildOverlays が同じ順に呼ぶギズモ (showGizmos_ のときだけ)。どれも lines_ へ線を積むだけ
+    void DrawColliderGizmos(World& world);
+    void DrawLightGizmos(World& world);
+    void DrawCameraGizmos(EngineContext& ctx, World& world);
+    void DrawEmitterGizmos(World& world);
+    void DrawSpringJointGizmos(World& world);
+    void DrawJointGizmos(World& world);
+    void DrawConstantForceGizmos(World& world);
+    void DrawCharacterControllerGizmos(World& world);
+    void DrawSpriteGizmos(World& world);
+    void DrawAudioGizmos(EngineContext& ctx, World& world, const Selection& selection);
+    void DrawTextMeshGizmos(World& world);
+    void DrawPartSocketGizmos(World& world);
+    void DrawPartBoundsGizmos(World& world);
+    void DrawReflectionProbeGizmos(World& world);
+    void DrawSelectionOutline(EngineContext& ctx, World& world, const Selection& selection);
     // 分岐のゴースト (M72e、SceneViewGhost.cpp): 非ライブの分岐を同じ tick のワイヤ箱 + トレイルで重ねる
     void BuildGhostOverlay(EngineContext& ctx);
     void DrawToolbar(EditorSettings& settings);
