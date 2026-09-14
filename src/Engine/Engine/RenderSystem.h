@@ -293,6 +293,32 @@ public:
     void InvalidateTerrain() { terrainSystem_.Clear(); }
 
 private:
+    // ---- Render の段 (Render が上から呼ぶ順)。段をまたぐ値は FrameContext (.cpp で定義) で受け渡す ----
+    struct FrameContext;
+    void BeginView(GraphicsDevice& device, ShaderManager& shaders, const FrameTarget& target, FrameContext& f);
+    void ResolveCamera(World& world, const CameraOverride* cameraOverride, FrameContext& f);
+    void DecideTaaAndFroxel(World& world, IRenderPath& path, const FrameTarget& target,
+                            const CameraOverride* cameraOverride, FrameContext& f);
+    void CollectLights(World& world, FrameContext& f);
+    void CollectDrawables(World& world, RenderResources& resources, const FrameTarget& target, FrameContext& f);
+    void RenderCascadeShadows(GraphicsDevice& device, ShaderManager& shaders, RenderResources& resources,
+                              FrameContext& f);
+    void AllocateShadowAtlas(GraphicsDevice& device, ShaderManager& shaders, RenderResources& resources,
+                             FrameContext& f);
+    void PrepareEnvironment(World& world, GraphicsDevice& device, ShaderManager& shaders, RenderResources& resources,
+                            const FrameTarget& target, const CameraOverride* cameraOverride, FrameContext& f);
+    void UpdateRtScene(GraphicsDevice& device, ShaderManager& shaders, RenderResources& resources,
+                       const FrameTarget& target, FrameContext& f);
+    void UpdateFroxel(GraphicsDevice& device, ShaderManager& shaders, const FrameTarget& target, FrameContext& f);
+    void UpdateAcousticVolume(GraphicsDevice& device, const FrameTarget& target, FrameContext& f);
+    void DrawParticlesAndDebug(World& world, GraphicsDevice& device, ShaderManager& shaders,
+                               RenderResources& resources, const FrameTarget& target,
+                               const CameraOverride* cameraOverride, ParticleSystem* particles, VfxRenderer* vfx,
+                               FrameContext& f);
+    void ResolvePost(World& world, GraphicsDevice& device, ShaderManager& shaders, RenderResources& resources,
+                     IRenderPath& path, const FrameTarget& target, const CameraOverride* cameraOverride,
+                     FrameContext& f);
+
     // M54d: 面カリング (シーン AABB と交差しない点光源の面) で描画を省いた枚数。
     // 統計専用 — 枠自体は連番を崩さないために確保したまま (クリア値 = 影なし)
     int shadowAtlasFaceCulled_ = 0;
