@@ -111,6 +111,29 @@ $constGroups = @(
             'assets\shaders\rt_common.hlsli'           = '#\s*define\s+MYE_RT_REFL_CLASS_COUNT\s+(\d+)'
         }
     },
+    # RT デバッグ表示の番号のうち rt_debug.cs が自分で描く 3 つ。食い違うと、メニューで選んだのと
+    # 別の表示 (インスタンス ID の色) が黙って出る
+    @{
+        label = 'rtdebug::kBvhHeat / MYE_RT_DEBUG_BVH_HEAT'
+        sites = @{
+            'src\Engine\Renderer\RayTracing\RtTypes.h' = 'constexpr\s+int32_t\s+kBvhHeat\s*=\s*(\d+)'
+            'assets\shaders\rt_debug.cs.hlsl'          = '#\s*define\s+MYE_RT_DEBUG_BVH_HEAT\s+(\d+)'
+        }
+    },
+    @{
+        label = 'rtdebug::kHitNormal / MYE_RT_DEBUG_HIT_NORMAL'
+        sites = @{
+            'src\Engine\Renderer\RayTracing\RtTypes.h' = 'constexpr\s+int32_t\s+kHitNormal\s*=\s*(\d+)'
+            'assets\shaders\rt_debug.cs.hlsl'          = '#\s*define\s+MYE_RT_DEBUG_HIT_NORMAL\s+(\d+)'
+        }
+    },
+    @{
+        label = 'rtdebug::kPrimaryClass / MYE_RT_DEBUG_PRIMARY_CLASS'
+        sites = @{
+            'src\Engine\Renderer\RayTracing\RtTypes.h' = 'constexpr\s+int32_t\s+kPrimaryClass\s*=\s*(\d+)'
+            'assets\shaders\rt_debug.cs.hlsl'          = '#\s*define\s+MYE_RT_DEBUG_PRIMARY_CLASS\s+(\d+)'
+        }
+    },
     # M67: 空間再利用のタップ数の上限。HLSL 側は [loop] の静的上限 (これを超えるタップは
     # 黙って落ちる)、C++ 側はクラス表の検査に使う。食い違うと「クラス表の taps は 12 なのに
     # 実際は 8 本しか撃っていない」= 絵は出るがノイズだけ増える、という静かな壊れ方をする

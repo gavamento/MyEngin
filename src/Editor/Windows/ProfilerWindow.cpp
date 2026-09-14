@@ -115,14 +115,16 @@ void ProfilerWindow::OnImGui(EngineContext& ctx)
         const bool rtGiOn = ctx.renderSystem->enableRtGi;             // M46f
         const bool rtShadowOn = ctx.renderSystem->enableRtShadow;     // M46g
         const bool rtReflOn = ctx.renderSystem->enableRtRefl;         // M46h
-        if (ctx.renderSystem->rtDebugMode != 0 || rtGiOn || rtShadowOn || rtReflOn) {
+        const int32_t rtDebug = ctx.renderSystem->rtDebugMode;
+        if (rtDebug != rtdebug::kOff || rtGiOn || rtShadowOn || rtReflOn) {
             ImGui::Text("  rt bvh: %5d inst / %7d tri / %6.3f ms (CPU)",
                         ctx.renderSystem->RtInstanceCount(),
                         ctx.renderSystem->RtTriangleCount(), ctx.renderSystem->RtBuildCpuMs());
-            if (ctx.renderSystem->rtDebugMode != 0) {
+            if (rtDebug != rtdebug::kOff) {
                 ImGui::Text("  rt debug: %6.3f ms (GpuTimer)", ctx.renderSystem->RtDebugGpuMs());
             }
-            if (ctx.renderSystem->rtDebugMode >= 4 || rtGiOn) {
+            // ★ここは GI 以外の表示 (影・反射) でも行を出す広い判定のまま (表示だけの差。前回値が出る)
+            if (rtDebug >= rtdebug::kGiRaw || rtGiOn) {
                 ImGui::Text("  rt gi: %6.3f ms (GpuTimer, %.0f%% res, %d bounce)",
                             ctx.renderSystem->RtGiGpuMs(),
                             ctx.renderSystem->rtResolutionScale * 100.0f,
@@ -137,15 +139,13 @@ void ProfilerWindow::OnImGui(EngineContext& ctx)
                                                                                        : "off");
             }
             // M46g: 影レイと分離型空間フィルタ (どちらもフル解像度)
-            if (ctx.renderSystem->rtDebugMode == 9 || rtShadowOn) {
+            if (rtdebug::NeedsShadow(rtDebug) || rtShadowOn) {
                 ImGui::Text("  rt shadow: %6.3f ms trace / %6.3f ms filter (GpuTimer, full res)",
                             ctx.renderSystem->RtShadowGpuMs(),
                             ctx.renderSystem->RtShadowFilterGpuMs());
             }
             // M46h: 反射レイと、そのデノイズ (蓄積 + 分散推定 + A-Trous の合計)
-            if (ctx.renderSystem->rtDebugMode == 10 || ctx.renderSystem->rtDebugMode == 11
-                || ctx.renderSystem->rtDebugMode == 12 || ctx.renderSystem->rtDebugMode == 14
-                || rtReflOn) {
+            if (rtdebug::NeedsReflection(rtDebug) || rtReflOn) {
                 // M67d: restir = ReSTIR の 2 パス目 (off なら 0.000)。初期 reservoir の
                 // 書き出しは反射レイと同じディスパッチなので trace 側に含まれる
                 ImGui::Text("  rt refl: %6.3f ms trace / %6.3f ms denoise / %6.3f ms restir "

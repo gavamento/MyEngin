@@ -1100,12 +1100,10 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
         // 読むと、カメラが動いた初回フレームの履歴を取り違える
         rtIn.gbVelocity = (vel.valid != 0) ? gbVelocity_.SRV() : nullptr;
         rtIn.skyCube = view.skyCubemap;
-        const bool needGi = rtGiOn || (view.rtDebugMode >= 4 && view.rtDebugMode <= 8);
-        const bool needShadow = rtShadowOn || view.rtDebugMode == 9;
-        // M67d: 12 (reservoir の M) / 14 (反射像側のクラス) も反射パスの産物なので、
-        // 10 / 11 と同じく「反射合成が off でも撃つ」側に入れる
-        const bool needRefl = rtReflOn || view.rtDebugMode == 10 || view.rtDebugMode == 11
-            || view.rtDebugMode == 12 || view.rtDebugMode == 14;
+        // デバッグ表示がそのパスの結果を映すなら、合成が off でも撃つ
+        const bool needGi = rtGiOn || rtdebug::NeedsGi(view.rtDebugMode);
+        const bool needShadow = rtShadowOn || rtdebug::NeedsShadow(view.rtDebugMode);
+        const bool needRefl = rtReflOn || rtdebug::NeedsReflection(view.rtDebugMode);
         if (needGi || needShadow || needRefl) {
             // GBuffer を CS の SRV で読むので RTV を先に外す
             // (SSAO off の経路では GBuffer が RTV に残ったままなので必須。M44b と同じ罠)
@@ -1396,10 +1394,9 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
     }
 
     // ---- 4) RT デバッグ表示 (M46b): BVH の検証用に画面を丸ごと差し替える。
-    //      既定 (rtDebugMode==0 / rtScene==null) では何も起きない ----
-    if (view.rtDebugMode != 0 && rtAvailable) {
-        // GI 系表示 (4=生 / 5=蓄積 / 6=履歴長 / 7=SVGF / 8=分散) と影 (9=可視率)、
-        // 反射 (10=生 / 11=デノイズ後) の入力は 1.7 で撃った結果。
+    //      既定 (rtDebugMode==kOff / rtScene==null) では何も起きない ----
+    if (view.rtDebugMode != rtdebug::kOff && rtAvailable) {
+        // GI 系・影・反射の表示の入力は 1.7 で撃った結果。
         // ここで撃ち直すと同じフレームで履歴が 2 回進むので絶対に呼ばない
         view.rtPasses->RenderDebug(device, shaders, view, rtIn, rtGi, rtShadowSrv, rtRefl);
         // パーティクル後段のために RTV+DSV を戻す (ブリットが RTV のみに差し替えたため)

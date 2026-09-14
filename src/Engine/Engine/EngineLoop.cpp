@@ -2533,7 +2533,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                      acs.shotsSkipped, acs.shotsUnknownKey, acs.shotsDropped,
                      static_cast<double>(acs.roomT), acs.shotsPlayFailed);
     }
-    if (config.rtDebugMode != 0 || config.rtGi || config.rtShadow || config.rtRefl) {
+    if (config.rtDebugMode != rtdebug::kOff || config.rtGi || config.rtShadow || config.rtRefl) {
         // M46b: BVH の規模とソフトウェアトラバーサルの実測値 (性能ゲートの一次データ)。
         // M67d: restir = ReSTIR の 2 パス目 (off なら 0.000)。初期 reservoir の書き出しは
         // 反射レイと同じディスパッチなので refl 側に含まれる

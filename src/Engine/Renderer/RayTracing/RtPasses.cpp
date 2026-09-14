@@ -1012,46 +1012,39 @@ bool RtPasses::RenderDebug(GraphicsDevice& device, ShaderManager& shaders, const
                            const RtFrameInputs& in, const RtGiResult& gi,
                            ID3D11ShaderResourceView* shadow, const RtReflResult& refl)
 {
-    if (!inited_ || view.rtDebugMode == 0 || !in.scene || !in.scene->IsValid()
+    if (!inited_ || view.rtDebugMode == rtdebug::kOff || !in.scene || !in.scene->IsValid()
         || view.rtv == nullptr || view.width <= 0 || view.height <= 0) {
         return false;
     }
 
-    // モード 4-8 は GI バッファをそのまま拡大表示する (CS は RenderGi で実行済み)
-    if (view.rtDebugMode == 4) {
+    // GI / 影 / 反射 / reservoir の表示は、1.7 で撃ったパスの結果バッファをそのまま拡大表示する
+    // (CS は各パスで実行済み)。一次レイを撃つ表示 (kBvhHeat / kHitNormal / kInstanceId /
+    // kPrimaryClass) だけが default を抜けて下の rt_debug.cs へ進む
+    switch (view.rtDebugMode) {
+    case rtdebug::kGiRaw:
         return Blit(device, shaders, view, gi.raw);
-    }
-    if (view.rtDebugMode == 5) {
+    case rtdebug::kGiAccumulated:
         return Blit(device, shaders, view, gi.accumulated);
-    }
-    if (view.rtDebugMode == 6) { // 履歴長 (a) のヒートマップ
+    case rtdebug::kGiHistory: // 履歴長 (a) のヒートマップ
         return Blit(device, shaders, view, gi.accumulated, /*mode=*/1);
-    }
-    if (view.rtDebugMode == 7) { // M46e: SVGF 後
+    case rtdebug::kGiSvgf:
         return Blit(device, shaders, view, gi.filtered);
-    }
-    if (view.rtDebugMode == 8) { // M46e: 推定分散 (a) のヒートマップ。緑 = 収束
+    case rtdebug::kGiVariance: // 推定分散 (a) のヒートマップ。緑 = 収束
         // 標準偏差 0.25 で赤に振り切る (GI の輝度スケールに合わせた表示用の定数)
         return Blit(device, shaders, view, gi.filtered, /*mode=*/2, /*param=*/4.0f);
-    }
-    if (view.rtDebugMode == 9) { // M46g: 太陽の可視率 (白 = 照らされる / 黒 = 影)
+    case rtdebug::kShadowVisibility: // 白 = 照らされる / 黒 = 影
         return Blit(device, shaders, view, shadow, /*mode=*/3);
-    }
-    if (view.rtDebugMode == 10) { // M46h: 反射の生 1spp (roughness 超過は黒)
+    case rtdebug::kReflRaw: // roughness 超過は黒
         return Blit(device, shaders, view, refl.raw);
-    }
-    if (view.rtDebugMode == 11) { // M46h: デノイズ後の反射
+    case rtdebug::kReflDenoised:
         return Blit(device, shaders, view, refl.filtered);
-    }
-    // M67d: ReSTIR の reservoir。**13 (一次ヒットのクラス) はここを素通りして CS 経路へ
-    // 落ちる** — 4〜11 と 12 / 14 は Blit で早期 return する側、13 だけが「どの早期
-    // return にも当たらない」ことで rt_debug.cs に届く構造なので、順序を崩さないこと
-    if (view.rtDebugMode == 12) { // reservoir の M (赤 = 1 本 → 緑 = 上限まで再利用)
+    case rtdebug::kReservoirM: // 赤 = 1 本 → 緑 = 上限まで再利用
         return Blit(device, shaders, view, refl.reservoirM, /*mode=*/1,
                     /*param=*/kRtRestirMaxM);
-    }
-    if (view.rtDebugMode == 14) { // 反射像側の ReflectionClass (空 = 黒 / スカイ = 黒)
+    case rtdebug::kReflClass: // 反射像側の ReflectionClass (空 = 黒 / スカイ = 黒)
         return Blit(device, shaders, view, refl.reservoirCls, /*mode=*/4);
+    default:
+        break;
     }
 
     ShaderProgram* cs = shaders.Get(debugCS_);

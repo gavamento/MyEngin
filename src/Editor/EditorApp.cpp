@@ -1208,59 +1208,35 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu(Tr(StrId::Menu_RtDebug))) {
-            // M46b: BVH 検証用の可視化。off なら BVH の構築も GPU 転送も走らない
+            // M46b: BVH 検証用の可視化。off なら BVH の構築も GPU 転送も走らない。
+            // 各表示の意味は rtdebug:: (RtTypes.h) の凡例が正本
+            struct RtDebugMenuItem {
+                StrId label;
+                int32_t mode;
+            };
+            static constexpr RtDebugMenuItem kRtDebugItems[] = {
+                { StrId::Menu_RtDbgOff, rtdebug::kOff },
+                { StrId::Menu_RtDbgBvhHeat, rtdebug::kBvhHeat },
+                { StrId::Menu_RtDbgNormals, rtdebug::kHitNormal },
+                { StrId::Menu_RtDbgInstanceId, rtdebug::kInstanceId },
+                { StrId::Menu_RtDbgRawGi, rtdebug::kGiRaw },
+                { StrId::Menu_RtDbgAccumGi, rtdebug::kGiAccumulated }, // M46d
+                { StrId::Menu_RtDbgHistory, rtdebug::kGiHistory },
+                { StrId::Menu_RtDbgSvgfGi, rtdebug::kGiSvgf }, // M46e
+                { StrId::Menu_RtDbgVariance, rtdebug::kGiVariance },
+                { StrId::Menu_RtDbgShadowVis, rtdebug::kShadowVisibility }, // M46g: RT 影 off でも撃って表示する
+                { StrId::Menu_RtDbgRawRefl, rtdebug::kReflRaw },            // M46h
+                { StrId::Menu_RtDbgSvgfRefl, rtdebug::kReflDenoised },
+                { StrId::Menu_RtDbgReservoirM, rtdebug::kReservoirM }, // M67d
+                // M67: 一次ヒットのクラスだけは RT 反射が要らない (カメラから一次レイを撃つだけ)
+                { StrId::Menu_RtDbgReflClass, rtdebug::kPrimaryClass },
+                { StrId::Menu_RtDbgReflClassRefl, rtdebug::kReflClass },
+            };
             int& mode = ctx.renderSystem->rtDebugMode;
-            if (ImGui::MenuItem(Tr(StrId::Menu_RtDbgOff), nullptr, mode == 0)) {
-                mode = 0;
-            }
-            if (ImGui::MenuItem(Tr(StrId::Menu_RtDbgBvhHeat), nullptr, mode == 1)) {
-                mode = 1;
-            }
-            if (ImGui::MenuItem(Tr(StrId::Menu_RtDbgNormals), nullptr, mode == 2)) {
-                mode = 2;
-            }
-            if (ImGui::MenuItem(Tr(StrId::Menu_RtDbgInstanceId), nullptr, mode == 3)) {
-                mode = 3;
-            }
-            if (ImGui::MenuItem(Tr(StrId::Menu_RtDbgRawGi), nullptr, mode == 4)) {
-                mode = 4;
-            }
-            // M46d: 蓄積結果と履歴長 (赤=履歴なし → 緑=上限まで蓄積) の可視化
-            if (ImGui::MenuItem(Tr(StrId::Menu_RtDbgAccumGi), nullptr, mode == 5)) {
-                mode = 5;
-            }
-            if (ImGui::MenuItem(Tr(StrId::Menu_RtDbgHistory), nullptr, mode == 6)) {
-                mode = 6;
-            }
-            // M46e: SVGF 後の GI と、A-Trous を駆動している推定分散 (緑 = 収束)
-            if (ImGui::MenuItem(Tr(StrId::Menu_RtDbgSvgfGi), nullptr, mode == 7)) {
-                mode = 7;
-            }
-            if (ImGui::MenuItem(Tr(StrId::Menu_RtDbgVariance), nullptr, mode == 8)) {
-                mode = 8;
-            }
-            // M46g: 太陽の可視率 (白 = 照らされる / 黒 = 影)。RT 影 off でも撃って表示する
-            if (ImGui::MenuItem(Tr(StrId::Menu_RtDbgShadowVis), nullptr, mode == 9)) {
-                mode = 9;
-            }
-            // M46h: 反射の生 1spp とデノイズ後 (roughness 超過の面は黒 = 撃っていない)
-            if (ImGui::MenuItem(Tr(StrId::Menu_RtDbgRawRefl), nullptr, mode == 10)) {
-                mode = 10;
-            }
-            if (ImGui::MenuItem(Tr(StrId::Menu_RtDbgSvgfRefl), nullptr, mode == 11)) {
-                mode = 11;
-            }
-            // M67d: ReSTIR の reservoir に積んだサンプル数 (赤 = 1 本 → 緑 = 上限まで再利用)
-            if (ImGui::MenuItem(Tr(StrId::Menu_RtDbgReservoirM), nullptr, mode == 12)) {
-                mode = 12;
-            }
-            // M67: 一次ヒットの反射クラス (13) と、反射像側の反射クラス (14)。
-            // 13 だけは RT 反射が要らない (カメラから一次レイを撃つだけ)
-            if (ImGui::MenuItem(Tr(StrId::Menu_RtDbgReflClass), nullptr, mode == 13)) {
-                mode = 13;
-            }
-            if (ImGui::MenuItem(Tr(StrId::Menu_RtDbgReflClassRefl), nullptr, mode == 14)) {
-                mode = 14;
+            for (const RtDebugMenuItem& item : kRtDebugItems) {
+                if (ImGui::MenuItem(Tr(item.label), nullptr, mode == item.mode)) {
+                    mode = item.mode;
+                }
             }
             ImGui::Separator();
             // M46c: GI の品質。解像度は内部バッファ、バウンスは二次光線の深さ

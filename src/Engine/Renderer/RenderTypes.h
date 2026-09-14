@@ -283,9 +283,8 @@ struct RenderView {
     int32_t prevViewProjValid = 0;
     // ---- M46b: ハイブリッド・パストレーシング (末尾 append。既定 = 0/null = 従来と同一)。
     //      rtScene/rtPasses が null のパス (Forward / AssetPreview) では自然に無効化される ----
-    // 0=off 1=BVH ヒートマップ 2=ヒット法線 3=インスタンス ID 4=生 GI … 11=デノイズ後の反射
-    // 12=reservoir の M (M67d) 13=反射クラス (M67、一次ヒット) 14=反射像側の反射クラス (M67d)
-    int32_t rtDebugMode = 0;
+    // rtdebug:: (RayTracing\RtTypes.h) の番号。凡例はそちらが正本
+    int32_t rtDebugMode = rtdebug::kOff;
     const struct RtSceneBindings* rtScene = nullptr;
     class RtPasses* rtPasses = nullptr;
     // ---- M46c: 拡散 GI ----
@@ -439,7 +438,7 @@ struct RenderView {
     //   rtReflRestir = 1 で反射レイの結果を reservoir に積み、空間再利用 (M67f) と
     //     temporal 再利用 (M67e) を通してから SVGF へ渡す。0 なら rt_refl.cs の
     //     uniform 分岐が M67d 以前の経路をそのまま走り、reservoir は確保すらされない。
-    //     RenderSystem が「トグル or rtDebugMode ∈ {12, 14}」で立てる。
+    //     RenderSystem が「トグル or rtdebug::NeedsRestir(rtDebugMode)」で立てる。
     //   rtReflRestirParams = クラス表と後段 SVGF の設定 (RtTypes.h の定数表が既定)。
     //     **非永続** — チューニング UI (M67f) が実行中に書き換えるだけ
     int32_t rtReflRestir = 0;

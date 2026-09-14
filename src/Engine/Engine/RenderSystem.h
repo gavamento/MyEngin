@@ -162,7 +162,7 @@ public:
     bool enableRtRefl = false;
     // M67d: ReSTIR 反射 (--rt-restir / View > RT デバッグのトグル)。RT 反射が前提。
     // false なら反射シェーダの uniform 分岐が M67d 以前の経路を走る = 絵はビット一致。
-    // ★rtDebugMode が 12 / 14 のときは RenderSystem が強制的に立てる (影の 9 と同じ流儀)
+    // ★rtdebug::NeedsRestir のモードでは RenderSystem が強制的に立てる (影の kShadowVisibility と同じ流儀)
     bool rtReflRestir = false;
     // M67d: 再利用の強さ (クラス表 / 後段 SVGF / 空間再利用 / 可視レイ / クラス上書き)。
     // **非永続** — チューニング UI (M67f) が実行中に書き換えるだけで保存しない
@@ -253,7 +253,7 @@ public:
     //   知らずに「絵は出ているのにスライダが灰色」になっていた欠陥そのもの
     bool RtRestirEffective() const
     {
-        return rtReflRestir || rtDebugMode == 12 || rtDebugMode == 14;
+        return rtReflRestir || rtdebug::NeedsRestir(rtDebugMode);
     }
     float RtBuildCpuMs() const { return rtScene_.BuildCpuMs(); }
     int RtInstanceCount() const { return rtScene_.InstanceCount(); }

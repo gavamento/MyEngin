@@ -91,7 +91,7 @@ public:
                                   const RenderView& view, const RtFrameInputs& in);
 
     // デバッグ表示を view.rtv へ上書きする。描いたら true。
-    // gi は rtDebugMode 4-8 / shadow は 9 / refl は 10-11 のときだけ使う
+    // gi / shadow / refl は、それぞれ rtdebug::NeedsGi / NeedsShadow / NeedsReflection のモードのときだけ使う
     bool RenderDebug(GraphicsDevice& device, ShaderManager& shaders, const RenderView& view,
                      const RtFrameInputs& in, const RtGiResult& gi,
                      ID3D11ShaderResourceView* shadow, const RtReflResult& refl);

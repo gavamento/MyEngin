@@ -908,7 +908,7 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
 
         // ---- ステージ 3 (直列): 可視候補をキュー化 (スキン/AABB/キューは順序依存で直列) ----
         const bool collectRt =
-            rtDebugMode != 0 || enableRtGi || enableRtShadow || enableRtRefl; // M46b/f/g/h
+            rtDebugMode != rtdebug::kOff || enableRtGi || enableRtShadow || enableRtRefl; // M46b/f/g/h
         rtInstances_.clear();
         for (const CullCand& c : cullCands) {
             // M46b: レイトレ用の収集はフラスタムカリングしない (画面外の物体も
@@ -1213,7 +1213,7 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
     // M46b: レイトレ用シーン (BLAS 連結 + TLAS + インスタンス) を GPU へ。
     // デバッグ表示・GI 合成・RT 影のどれも off なら収集自体が空なので、
     // この節はまるごと従来経路と同じになる
-    if ((rtDebugMode != 0 || enableRtGi || enableRtShadow || enableRtRefl)
+    if ((rtDebugMode != rtdebug::kOff || enableRtGi || enableRtShadow || enableRtRefl)
         && !rtInstances_.empty()) {
         if (!rtPasses_.IsReady()) {
             rtPasses_.Init(device, shaders);

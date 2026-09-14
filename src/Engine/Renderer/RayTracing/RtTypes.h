@@ -19,6 +19,47 @@ constexpr int kRtMaxVisit = 512;
 // TLAS の葉あたりインスタンス数 (BLAS 側は MeshColliderLibrary の kLeafTris=8 に従う)
 constexpr int kRtTlasLeafSize = 2;
 
+// RT のデバッグ表示の番号 (RenderView::rtDebugMode。--rt-debug N と View > RT デバッグ)。
+// 一次レイを撃つ表示 (kBvhHeat / kHitNormal / kInstanceId / kPrimaryClass) は rt_debug.cs が描き、
+// それ以外は各パスの結果バッファを RtPasses::RenderDebug が Blit する。
+// kBvhHeat / kHitNormal / kPrimaryClass は HLSL 側にも同値の #define があり、規則 9 が照合する
+namespace rtdebug {
+inline constexpr int32_t kOff = 0;
+inline constexpr int32_t kBvhHeat = 1;          // BVH の訪問ノード数 (M46b)
+inline constexpr int32_t kHitNormal = 2;        // 一次ヒットの法線
+inline constexpr int32_t kInstanceId = 3;       // 一次ヒットのインスタンス ID
+inline constexpr int32_t kGiRaw = 4;            // GI の生 1spp (M46c)
+inline constexpr int32_t kGiAccumulated = 5;    // テンポラル蓄積後 (M46d)
+inline constexpr int32_t kGiHistory = 6;        // 履歴長 (赤 = 履歴なし → 緑 = 上限まで蓄積)
+inline constexpr int32_t kGiSvgf = 7;           // SVGF 後 (M46e)
+inline constexpr int32_t kGiVariance = 8;       // A-Trous を駆動している推定分散 (緑 = 収束)
+inline constexpr int32_t kShadowVisibility = 9; // 太陽の可視率 (M46g)
+inline constexpr int32_t kReflRaw = 10;         // 反射の生 1spp (M46h)
+inline constexpr int32_t kReflDenoised = 11;    // デノイズ後の反射
+inline constexpr int32_t kReservoirM = 12;      // ReSTIR の reservoir に積んだサンプル数 (M67d)
+inline constexpr int32_t kPrimaryClass = 13;    // 一次ヒットの ReflectionClass (M67。RT 反射は要らない)
+inline constexpr int32_t kReflClass = 14;       // 反射像側の ReflectionClass (M67d)
+
+// その表示がパスの結果を映す = 合成が off でもそのパスを撃つ必要があるか
+inline constexpr bool NeedsGi(int32_t mode)
+{
+    return mode >= kGiRaw && mode <= kGiVariance;
+}
+inline constexpr bool NeedsShadow(int32_t mode)
+{
+    return mode == kShadowVisibility;
+}
+inline constexpr bool NeedsReflection(int32_t mode)
+{
+    return mode == kReflRaw || mode == kReflDenoised || mode == kReservoirM || mode == kReflClass;
+}
+// reservoir そのものを映す = ReSTIR をトグルと独立に立てる必要があるか
+inline constexpr bool NeedsRestir(int32_t mode)
+{
+    return mode == kReservoirM || mode == kReflClass;
+}
+} // namespace rtdebug
+
 // ---- M46d: テンポラル蓄積 ----
 
 // 履歴長の上限。移動平均の重み下限 = 1/この値 (32 → 約 3% で追従が止まらない)。
