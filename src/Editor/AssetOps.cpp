@@ -16,6 +16,7 @@
 
 #include "nlohmann/json.hpp"
 
+#include "Editor/ChildProcess.h"
 #include "Editor/Selection.h"
 #include "Editor/SourceControl/ScmHint.h" // M66i: 生成 / 移動 / 削除の直後に status を取り直させる
 #include "Editor/Undo/UndoStack.h"
@@ -1524,38 +1525,12 @@ void* StartGameLogicBuild(EngineContext& ctx, std::wstring& logPathOut)
         return nullptr;
     }
     logPathOut = workDir + L"\\build_scripts.log";
-
-    SECURITY_ATTRIBUTES sa = {};
-    sa.nLength = sizeof(sa);
-    sa.bInheritHandle = TRUE;
-    HANDLE log = CreateFileW(logPathOut.c_str(), GENERIC_WRITE, FILE_SHARE_READ, &sa,
-                             CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-    HANDLE nulIn = CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa,
-                               OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-    STARTUPINFOW si = {};
-    si.cb = sizeof(si);
-    si.dwFlags = STARTF_USESTDHANDLES;
-    si.hStdOutput = log;
-    si.hStdError = log;
-    si.hStdInput = nulIn;
-    PROCESS_INFORMATION pi = {};
-    std::vector<wchar_t> cmdline(args.begin(), args.end());
-    cmdline.push_back(L'\0'); // CreateProcessW は書込可能バッファを要求する
-    const BOOL ok = CreateProcessW(nullptr, cmdline.data(), nullptr, nullptr, TRUE,
-                                   CREATE_NO_WINDOW, nullptr, workDir.c_str(), &si, &pi);
-    if (log != INVALID_HANDLE_VALUE) {
-        CloseHandle(log); // 子が継承済み — 親側は即クローズでよい
-    }
-    if (nulIn != INVALID_HANDLE_VALUE) {
-        CloseHandle(nulIn);
-    }
-    if (!ok) {
-        MYE_LOG_ERROR("[build] CreateProcess failed for script build (%lu)", GetLastError());
+    void* proc = StartChildProcess(args, workDir, logPathOut, "[build]", " for script build");
+    if (proc == nullptr) {
         return nullptr;
     }
-    CloseHandle(pi.hThread);
     MYE_LOG_INFO(Tr(StrId::Log_BuildingGameLogic), WideToUtf8(cfg).c_str());
-    return pi.hProcess;
+    return proc;
 }
 
 void* StartCollabBuild(std::wstring& logPathOut)
@@ -1573,39 +1548,13 @@ void* StartCollabBuild(std::wstring& logPathOut)
     }
     logPathOut = repo + L"\\build_collab.log";
     const std::wstring args = L"cmd.exe /c \"\"" + bat + L"\"\"";
-
-    SECURITY_ATTRIBUTES sa = {};
-    sa.nLength = sizeof(sa);
-    sa.bInheritHandle = TRUE;
-    HANDLE log = CreateFileW(logPathOut.c_str(), GENERIC_WRITE, FILE_SHARE_READ, &sa,
-                             CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-    HANDLE nulIn = CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa,
-                               OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-    STARTUPINFOW si = {};
-    si.cb = sizeof(si);
-    si.dwFlags = STARTF_USESTDHANDLES;
-    si.hStdOutput = log;
-    si.hStdError = log;
-    si.hStdInput = nulIn;
-    PROCESS_INFORMATION pi = {};
-    std::vector<wchar_t> cmdline(args.begin(), args.end());
-    cmdline.push_back(L'\0'); // CreateProcessW は書込可能バッファを要求する
-    const BOOL ok = CreateProcessW(nullptr, cmdline.data(), nullptr, nullptr, TRUE,
-                                   CREATE_NO_WINDOW, nullptr, repo.c_str(), &si, &pi);
-    if (log != INVALID_HANDLE_VALUE) {
-        CloseHandle(log); // 子が継承済み — 親側は即クローズでよい
-    }
-    if (nulIn != INVALID_HANDLE_VALUE) {
-        CloseHandle(nulIn);
-    }
-    if (!ok) {
-        MYE_LOG_ERROR("[collab] CreateProcess failed for first-run build (%lu)", GetLastError());
+    void* proc = StartChildProcess(args, repo, logPathOut, "[collab]", " for first-run build");
+    if (proc == nullptr) {
         return nullptr;
     }
-    CloseHandle(pi.hThread);
     MYE_LOG_INFO("[collab] MyeCollab.dll not found - building in the background "
                  "(tools\\build_collab.bat)");
-    return pi.hProcess;
+    return proc;
 }
 
 } // namespace mye

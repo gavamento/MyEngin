@@ -12,6 +12,7 @@
 #include <shellapi.h>
 
 #include "Editor/AssetOps.h"
+#include "Editor/ChildProcess.h"
 #include "Engine/Core/Localization.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Engine/Asset/CookedCache.h"
@@ -32,54 +33,6 @@ namespace fs = std::filesystem;
 
 namespace mye {
 namespace {
-
-// 子プロセス (zip 等) を出力リダイレクト + stdin NUL で起動する。
-// AssetOps::StartGameLogicBuild と同じ流儀 (対話プロンプトで詰まらせない)
-void* StartChildProcess(std::wstring cmdline, const std::wstring& workDir,
-                        const std::wstring& logPath)
-{
-    SECURITY_ATTRIBUTES sa = {};
-    sa.nLength = sizeof(sa);
-    sa.bInheritHandle = TRUE;
-    HANDLE log = CreateFileW(logPath.c_str(), GENERIC_WRITE, FILE_SHARE_READ, &sa, CREATE_ALWAYS,
-                             FILE_ATTRIBUTE_NORMAL, nullptr);
-    HANDLE nulIn = CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa,
-                               OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-    STARTUPINFOW si = {};
-    si.cb = sizeof(si);
-    si.dwFlags = STARTF_USESTDHANDLES;
-    si.hStdOutput = log;
-    si.hStdError = log;
-    si.hStdInput = nulIn;
-    PROCESS_INFORMATION pi = {};
-    cmdline.push_back(L'\0'); // CreateProcessW は書込可能バッファを要求する
-    const BOOL ok = CreateProcessW(nullptr, cmdline.data(), nullptr, nullptr, TRUE,
-                                   CREATE_NO_WINDOW, nullptr, workDir.c_str(), &si, &pi);
-    if (log != INVALID_HANDLE_VALUE) {
-        CloseHandle(log);
-    }
-    if (nulIn != INVALID_HANDLE_VALUE) {
-        CloseHandle(nulIn);
-    }
-    if (!ok) {
-        MYE_LOG_ERROR("[build] CreateProcess failed (%lu)", GetLastError());
-        return nullptr;
-    }
-    CloseHandle(pi.hThread);
-    return pi.hProcess;
-}
-
-// 終了済みなら true を返し、exitCode を書く (未終了なら false)
-bool PollProcess(void* handle, uint32_t& exitCode)
-{
-    if (WaitForSingleObject(handle, 0) != WAIT_OBJECT_0) {
-        return false;
-    }
-    DWORD code = 1;
-    GetExitCodeProcess(handle, &code);
-    exitCode = code;
-    return true;
-}
 
 std::wstring LowerExt(const fs::path& p)
 {
@@ -419,10 +372,10 @@ void BuildSettingsWindow::AdvancePipeline(EngineContext& ctx)
             return;
         }
         uint32_t code = 1;
-        if (!PollProcess(proc_, code)) {
+        if (!PollChildProcess(proc_, code)) {
             return; // 実行中 — 次フレームでまた見る (UI は生きたまま)
         }
-        CloseHandle(proc_);
+        CloseChildProcess(proc_);
         proc_ = nullptr;
         const bool ok = code == 0;
         FinishStage(StrId::Build_StScripts, ok, false,
@@ -529,7 +482,7 @@ void BuildSettingsWindow::AdvancePipeline(EngineContext& ctx)
             for (const std::wstring& name : children) {
                 cmd += L" \"" + name + L"\"";
             }
-            proc_ = StartChildProcess(cmd, out.parent_path().wstring(), procLog_);
+            proc_ = StartChildProcess(cmd, out.parent_path().wstring(), procLog_, "[build]", "");
             if (proc_ == nullptr) {
                 FinishStage(StrId::Build_StZip, false, false, "tar.exe not available?");
                 stage_ = Stage::Done;
@@ -538,10 +491,10 @@ void BuildSettingsWindow::AdvancePipeline(EngineContext& ctx)
             return;
         }
         uint32_t code = 1;
-        if (!PollProcess(proc_, code)) {
+        if (!PollChildProcess(proc_, code)) {
             return;
         }
-        CloseHandle(proc_);
+        CloseChildProcess(proc_);
         proc_ = nullptr;
         const bool ok = code == 0;
         FinishStage(StrId::Build_StZip, ok, false,

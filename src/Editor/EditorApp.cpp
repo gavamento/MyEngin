@@ -12,6 +12,7 @@
 #include <shellapi.h>
 
 #include "Editor/AssetOps.h"
+#include "Editor/ChildProcess.h"
 #include "Editor/CreateMenu.h"
 #include "Editor/EditorGlobalSettings.h"
 #include "Editor/ProjectManager.h" // M66d: 段階 C の RelaunchSelfWithProject
@@ -1624,18 +1625,17 @@ void EditorApp::PollScriptBuild()
     if (scriptBuildProc_ == nullptr) {
         return;
     }
-    if (WaitForSingleObject(scriptBuildProc_, 0) != WAIT_OBJECT_0) {
+    uint32_t code = 1;
+    if (!PollChildProcess(scriptBuildProc_, code)) {
         return; // 実行中 — 次フレームでまた見る (この間ゲートは閉じている)
     }
-    DWORD code = 1;
-    GetExitCodeProcess(scriptBuildProc_, &code);
-    CloseHandle(scriptBuildProc_);
+    CloseChildProcess(scriptBuildProc_);
     scriptBuildProc_ = nullptr;
     if (code == 0) {
         // DLL の差し替えは DllReloader が拾う (~0.5s)。ここは「終わった」だけ知らせる
         toasts_.Notify(LogLevel::Info, Tr(StrId::Scm_ScriptBuildDone));
     } else {
-        MYE_LOG_ERROR("[build] script build failed (exit %lu) - see %s", code,
+        MYE_LOG_ERROR("[build] script build failed (exit %lu) - see %s", static_cast<unsigned long>(code),
                       WideToUtf8(scriptBuildLog_).c_str());
         // ★旧経路 (可視 cmd 窓 + pause) ではコンパイルエラーがその場で読めた。
         //   M66e で窓を消した分を Console へ戻す (M66h)
@@ -1649,12 +1649,11 @@ void EditorApp::PollCollabBuild()
     if (collabBuildProc_ == nullptr) {
         return;
     }
-    if (WaitForSingleObject(collabBuildProc_, 0) != WAIT_OBJECT_0) {
+    uint32_t code = 1;
+    if (!PollChildProcess(collabBuildProc_, code)) {
         return; // 実行中 — 次フレームでまた見る
     }
-    DWORD code = 1;
-    GetExitCodeProcess(collabBuildProc_, &code);
-    CloseHandle(collabBuildProc_);
+    CloseChildProcess(collabBuildProc_);
     collabBuildProc_ = nullptr;
     if (code == 0) {
         // DLL が今できたので Load をやり直す。再起動なしで Source Control が生きる
@@ -1666,7 +1665,7 @@ void EditorApp::PollCollabBuild()
         // ★トーストは出さない — バックグラウンドで黙って試した初回ビルドなので、
         //   失敗を知りたいのは Rust 側を触っている開発者だけ。ログで十分 (M66j 系の
         //   ScriptBuildFailed トーストとは違い、これはユーザーが明示的に押した操作ではない)
-        MYE_LOG_ERROR("[collab] first-run build failed (exit %lu) - see %s", code,
+        MYE_LOG_ERROR("[collab] first-run build failed (exit %lu) - see %s", static_cast<unsigned long>(code),
                       WideToUtf8(collabBuildLog_).c_str());
     }
 }
