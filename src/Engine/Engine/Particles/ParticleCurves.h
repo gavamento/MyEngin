@@ -95,8 +95,8 @@ inline DirectX::XMFLOAT4 EvalParticleColor(const ParticleEmitterComponent& d, fl
 }
 
 // M42b: ソフトパーティクル。非線形深度 [0,1] -> ビュー空間 z (透視投影)。
-// M55a: 式そのものは Renderer/PostFxMath.h::LinearizeDepth へ移した (HLSL 側も
-// common.hlsli の共有版に一本化済み)。ここは既存の呼び出し元と selftest のための別名。
+// M55a: 式の正本は Renderer/PostFxMath.h::LinearizeDepth (HLSL 側は
+// common.hlsli の共有版)。ここは既存の呼び出し元と selftest のための別名。
 // PostFxMath.h は D3D 非依存の純数式ヘッダなので、Engine → Renderer の依存方向に沿う。
 inline float LinearizeParticleDepth(float d, float nearZ, float farZ)
 {
@@ -146,8 +146,8 @@ inline bool ParticleBlendIsAdditive(int blendMode) { return blendMode != 1; }
 // CPU 側の std::sort と GPU 側の SortEmittersForDraw が同じ集合を並べることの唯一の機械保証。
 // ★alpha だけでなく加算 (0) も並べる。加算合成が順序非依存なのは厳密演算の話で、ブレンドは
 //   クォッド 1 枚ごとに RT の精度へ丸めながら積むため**ビットレベルでは順序依存** —
-//   ここを alpha だけにしていたせいで、fog ショーケースの炎に 8 画素 / maxDiff=1 が
-//   最後まで残っていた (両方を同じキーで並べた瞬間に 0 画素になる)。
+//   alpha だけを並べると、fog ショーケースの炎に CPU/GPU 間で 8 画素 / maxDiff=1 の差が
+//   残る (両方を同じキーで並べると 0 画素)。
 // ★歪み (2) だけ外すのは「GPU が描かない = 突き合わせる相手が居ない」から。並べても
 //   誰も得をしないぶん、CPU の std::sort を 1 回節約する
 inline bool ParticleNeedsDrawSort(int blendMode) { return blendMode != 2; }
@@ -155,8 +155,7 @@ inline bool ParticleNeedsDrawSort(int blendMode) { return blendMode != 2; }
 // M42e: GPU 深度衝突の座標変換/反射。HLSL 側の正本は particle_gpu_common.hlsli で、
 // ここはコメント同期のミラー — selftest はこちらを検証する。
 // GPU バックエンド限定の見た目効果 (spec 7.5 例外)。
-// ★M63e まで sim CS は式を**手写ししていた** (共有点が無かった)。今は sim CS が
-//   particle_gpu_common.hlsli の同名関数を呼ぶので、突き合わせる相手は 1 本だけ。
+// ★sim CS は particle_gpu_common.hlsli の同名関数を呼ぶので、突き合わせる相手は 1 本だけ。
 // クリップ座標 -> スクリーン UV。背面 (w<=0) は false (衝突判定しない)
 inline bool ParticleClipToUv(float clipX, float clipY, float clipW, float& u, float& v)
 {
@@ -171,7 +170,7 @@ inline bool ParticleClipToUv(float clipX, float clipY, float clipW, float& u, fl
 // M63e: 深度法線の 5 タップ選択。軸ごとに「-1 側と +1 側のどちらが d0 と近いか」を
 // 返す (true = +1 側)。**これが 5 タップ化の判断そのもの**で、外積を取る前に
 // 「同じ面に載っている側」を選ぶことでシルエット境界の破綻を潰す。
-// ★ここを純関数へ切り出して selftest へ乗せてあるのは、**この規則はスクショ回帰では
+// ★ここを純関数にして selftest へ乗せてあるのは、**この規則はスクショ回帰では
 //   守れない**から — 実測した: シルエットを作る箱をデモの落下域へ置いてみると、
 //   1.3x0.9x1.3 の段差では 2 タップへ戻す変異が 43 画素動くのに、ひと回り小さい
 //   0.9x0.6x1.3 だと **0 画素**になった。frame 120 のその瞬間に際の 1 画素へ
@@ -313,12 +312,12 @@ inline bool GpuCapacityNeedsRecreate(uint32_t currentCapacity, uint32_t desiredC
     return currentCapacity != desiredCapacity;
 }
 
-// 1 tick の GPU 放出数クランプ。旧実装は capacity/4 の静黙クランプ (1tick 暴発ガード) で、
-// 「maxParticles まで積んだはずのバーストが 25% で切られる」罠だったので容量全量まで緩和。
+// 1 tick の GPU 放出数クランプ。容量全量まで許可する — capacity/4 のような暴発ガードで
+// 静かに切ると「maxParticles まで積んだはずのバーストが 25% で切られる」罠になる。
 // dead list 枯渇分は particle_emit.cs.hlsl の deadCount ガードが既に安全に捨てる。
 // EmitData ステージングが最大 capacity*48B (1M で 48MB) になりうるが、burst した tick
 // だけの一過性 (動的バッファは以降の小さい tick でもそのまま再利用されるだけ) と判断。
-// M42追補: 32B -> 48B に増えたのは invLife を CPU から渡すようにしたため — emit CS が
+// M42追補: 48B なのは invLife を CPU から渡すため — emit CS が
 // 1/life から作り直すと subframe の寿命前倒しぶん age 曲線がずれ、alpha が CPU と食い違う
 inline int ClampGpuEmitCount(int emitCount, uint32_t capacity)
 {
@@ -326,14 +325,10 @@ inline int ClampGpuEmitCount(int emitCount, uint32_t capacity)
 }
 
 // ==== M42追補: GPU 描画順ソート (ビットニックネットワークの正本) ====
-// CPU バックエンドはプールを毎フレーム back-to-front に std::sort するが、GPU バックエンドには
-// 順序の概念が無く、particle_sim.cs.hlsl の gAliveOut.IncrementCounter() が返す圧縮順のまま
-// 描いていた = **view と無関係かつ非決定**。alpha が 610 画素割れていたのはこれが理由
-// (M57追補の申し送り)。
-// ★対象は alpha だけではない。「加算は順序非依存」は数学の話で、ブレンドはクォッド 1 枚ごとに
-//   RT の精度へ丸めながら積むので**ビットレベルでは順序依存**。加算の炎に最後まで残っていた
-//   8 画素 / maxDiff=1 がその実体で、両バックエンドを同じキーで並べた瞬間に 0 になった。
-//   並べないのは歪み (blendMode==2) だけ — GPU が描かない = 突き合わせる相手が居ないため。
+// CPU バックエンドはプールを毎フレーム back-to-front に std::sort するが、GPU バックエンドの
+// alive list は particle_sim.cs.hlsl の gAliveOut.IncrementCounter() が返す圧縮順で、
+// **view と無関係かつ非決定**。そのまま描くと CPU と重なり順が揃わないので、ここで並べる。
+// 加算も並べる (理由は ParticleNeedsDrawSort)
 //
 // ここに置くのは「どのパスをどの順で回すか」と「どの要素とどの要素を比べるか」の**添字演算**
 // だけ。3 本の CS (particle_sort_setup / _lds / _merge) はこれと同じ規則を HLSL で書いた
@@ -341,7 +336,7 @@ inline int ClampGpuEmitCount(int emitCount, uint32_t capacity)
 // 正しいことを std::sort と突き合わせて証明する** (D3D 実機を要さない = カールノイズと同じ手)。
 
 // LDS 1 ブロックの要素数。uint 2 本 × 2048 = 16KB で cs_5_0 の上限 32KB に収まる
-// (実測: fxc /T cs_5_0 で通ることを着手前に確認済み)。
+// (fxc /T cs_5_0 で通ることを確認済み)。
 // ★HLSL 側 MYE_PARTICLE_SORT_BLOCK と一致必須 — check_rules.ps1 規則 9 が機械照合する
 inline constexpr uint32_t kParticleSortBlock = 2048;
 // ブロック内 CS のスレッド数 (1 スレッドが 2 要素を担当)。D3D11 の上限ちょうど
@@ -525,8 +520,8 @@ inline void ParticleSortApplyPass(const ParticleSortPass& pass, uint32_t pad, ui
 
 // ==== M61b/M61c: 放出系ヘルパ (回転 / 形状サンプリング / サブフレーム補間 / 速度継承) はこの下へ ====
 
-// 放出式で使う π (CpuParticleBackend.cpp の旧 kPi と同じ float 値)。
-// ★「u * 2.0f * kParticleEmitPi」のように旧コードと同じ演算列で使うこと — 2π を
+// 放出式で使う π。
+// ★「u * 2.0f * kParticleEmitPi」の演算列で使うこと — 2π を
 //   事前に畳んだ定数へ変えると丸めが 1 ulp 変わり、既存 .rep/golden のビット保存が崩れる
 inline constexpr float kParticleEmitPi = 3.14159265358979323846f;
 
@@ -582,7 +577,7 @@ inline void ParticleBasisTransformOffset(const ParticleEmitBasis& b, float& x, f
 }
 
 // ---- M61b: 形状サンプリング (emitFrom = 0:従来 / 1:体積 / 2:表面) ----
-// CPU/GPU 両バックエンドの放出ループが共有する (旧: 両者に手写しの switch が重複していた)。
+// CPU/GPU 両バックエンドの放出ループが共有する。
 // RNG 消費数の契約 ((shape, emitFrom) の組ごとに個数と順序が固定 — 決定論。変更禁止):
 //   point(0):  0 回 (emitFrom 無視)
 //   sphere(1): emitFrom=1 (体積) は 3 回 (z, phi, u)。それ以外は 2 回 (z, phi) —
@@ -882,10 +877,8 @@ inline void ParticleBillboardCornerCpu(float cornerX, float cornerY, float rot, 
 }
 
 // ---- M63b: ビルボード変換のゲート (CPU/GPU が呼ぶ唯一の正本) ----
-// M63a では CPU バックエンドと GPU バックエンドが同じ 4 項の式を**手写し**していた。
-// M63b でストレッチが枠に加わり判定が 2 種類になったので、片方だけ緩める事故
-// (「同じシーンで CPU だけ回る / GPU だけ伸びる」) が起きる前にここへ寄せる。
-// ★判定の内容は M63a から 1 ビットも変えていない (回転の分は同じ式のまま移設)。
+// 判定を CPU / GPU で手写しすると、片方だけ緩めたときに
+// 「同じシーンで CPU だけ回る / GPU だけ伸びる」が静かに起きる。
 
 inline bool ParticleUsesRotation(const ParticleEmitterComponent& d)
 {
@@ -955,7 +948,7 @@ inline bool ParticleUsesFlipbook(const ParticleEmitterComponent& d)
 }
 
 // ---- M63d: ライティングのゲート (CPU/GPU が呼ぶ唯一の正本) ----
-// 0 = unlit (従来と 1 ビットも変わらない) / 1 = 粒子単位 (VS で色へ畳む) /
+// 0 = unlit (ライティング無しの経路とビット同一) / 1 = 粒子単位 (VS で色へ畳む) /
 // 2 = 画素単位 (球面法線)。
 // ★**未知の値をここで 0 へ潰す**のが仕事。lightingMode は Inspector・スクリプト・
 //   手書きシーン JSON のどこからでも任意の int が入る枠で、3 を素通しすると VS も PS も

@@ -161,9 +161,9 @@ bool RunParticleSelfTest()
         check(NearF(cm.x, 0.0f) && NearF(cm.y, 1.0f) && NearF(cm.z, 0.0f),
               "gradient: mid key hit exactly at its T");
 
-        // M42追補: **中間キーのケースで alpha (.w) も検査する**。ここが RGB しか見て
-        // いなかったので、「GPU が中間キーを丸ごと無視して alpha のフェード曲線が別物」を
-        // C++ 側からは誰も指摘できなかった (GPU 側の被覆は golden の fog.png が持つ)
+        // M42追補: **中間キーのケースで alpha (.w) も検査する**。RGB しか見ないと、
+        // 「GPU が中間キーを丸ごと無視して alpha のフェード曲線が別物」を
+        // C++ 側からは誰も指摘できない (GPU 側の被覆は golden の fog.png が持つ)
         check(NearF(cm.w, 1.0f), "gradient: mid key carries alpha too (not just RGB)");
         // 中間キーの手前/奥それぞれの区間が、そのキーを端点にした線形になっていること。
         // begin(t=0, a=1) → mid1(t=0.5, a=1) → end(t=1, a=0)
@@ -483,7 +483,7 @@ bool RunParticleSelfTest()
         }
         check(est.Alive(100000) == 8 * 29, "alive estimator converges to rate*(life-1)");
 
-        // 放出停止後: 寿命分の tick で 0 に戻る (容量合計を返す旧実装との違いの核)
+        // 放出停止後: 寿命分の tick で 0 に戻る (容量合計ではなく寿命から推定していることの核)
         for (int t = 0; t < 30; ++t) {
             est.EndTick();
         }
@@ -647,7 +647,7 @@ bool RunParticleSelfTest()
             probe.size0 = { 0.1f, 0.2f };
             // ★M63a: SoA を増やしたら **alive と同じ長さで必ず埋めること**。
             //   HashCpuParticles は alive 件を生バイトで畳むので、短いまま放置すると
-            //   ヌル/範囲外読みで落ちる (この節が実際にアクセス違反で落ちて気づいた)
+            //   ヌル/範囲外読みで落ちる
             probe.rot0 = { 0.75f, -1.25f };
             probe.rotVel = { 2.5f, -3.5f };
             probe.flipU = { 0.375f, 0.875f };
@@ -817,10 +817,10 @@ bool RunParticleSelfTest()
         CpuParticleBackend cpu;
         cpu.Update(w, kDt);
 
-        // 手計算: 旧コードと同じ式・同じ順で 1 粒を再現 (シードはプール生成と同じ規則)
+        // 手計算: SampleParticleShape と同じ式・同じ順で 1 粒を再現 (シードはプール生成と同じ規則)
         Pcg32 r;
         r.Seed(4242u, static_cast<uint64_t>(go.Id().index) * 2u + 1u);
-        const float pi = 3.14159265358979323846f; // 旧 kPi と同値
+        const float pi = 3.14159265358979323846f; // kParticleEmitPi と同値
         const float cosMax = cosf(20.0f * pi / 180.0f);
         const float cosT = 1.0f - r.NextFloat01() * (1.0f - cosMax);
         const float sinT = sqrtf(std::max(0.0f, 1.0f - cosT * cosT));
@@ -1033,7 +1033,7 @@ bool RunParticleSelfTest()
             auto* em = go.AddComponent<ParticleEmitterComponent>();
             em->rate = 60.0f; // 1 粒/tick
             em->seed = 99u;
-            em->shape = 2; // cone (既定角。従来式の手計算対象)
+            em->shape = 2; // cone (既定角。下の手計算の対象)
             em->velocityInheritance = vi;
             em->subframeEmission = sub;
             s.GetWorld().ApplyStructuralChanges();
@@ -1073,7 +1073,7 @@ bool RunParticleSelfTest()
         }
         check(sameAsStatic, "m61c: defaults ignore emitter motion (bit-identical to static)");
 
-        // 従来式の手計算: tick2 に生まれた粒 (index 1) を旧コードの式で逐語再現
+        // 既定の式の手計算: tick2 に生まれた粒 (index 1) を速度継承・サブフレーム補間なしの式で逐語再現
         {
             Pcg32 r;
             r.Seed(99u, static_cast<uint64_t>(ia.index) * 2u + 1u);
@@ -1525,7 +1525,7 @@ bool RunParticleSelfTest()
         check(!GpuCapacityNeedsRecreate(1024u, GpuEmitterCapacityFor(512)),
               "gpu cap: clamped-equal change (512 -> min) does not recreate");
 
-        // バースト上限: 旧 25% クランプの撤廃 — capacity 全量まで通り、超過分だけ切られる
+        // バースト上限: capacity 全量まで通り (25% などで切らない)、超過分だけ切られる
         check(ClampGpuEmitCount(-5, 4096u) == 0, "gpu burst: negative clamps to 0");
         check(ClampGpuEmitCount(4096, 4096u) == 4096,
               "gpu burst: full capacity passes (25% clamp removed)");
@@ -1769,15 +1769,14 @@ bool RunParticleSelfTest()
 
         // M42追補: blendMode → 描画順を並べ替えるか。**CPU の std::sort と GPU の
         // SortEmittersForDraw が同じ集合を並べることの唯一の機械保証**。
-        // ★加算 (0) が true であることが本追補の肝 — ここを false に戻すと、加算合成の
-        //   丸めが順序依存であるせいで fog の炎に 8 画素 / maxDiff=1 が戻る
+        // 加算も並べる (理由は ParticleNeedsDrawSort)
         check(ParticleNeedsDrawSort(0) && ParticleNeedsDrawSort(1)
                   && !ParticleNeedsDrawSort(2),
               "sort: additive and alpha are both ordered, distortion is not (GPU never draws it)");
     }
 
-    // ---- (N) M42追補: GPU alpha ソートのビットニックネットワーク ----
-    // **ここが本追補の要**。GPU 上のソートは D3D 実機が要るので selftest では回せないが、
+    // ---- (N) M42追補: GPU 描画順ソートのビットニックネットワーク ----
+    // GPU 上のソートは D3D 実機が要るので selftest では回せないが、
     // 「どのパスを何本、どの添字どうしを、どの向きで比べるか」という**ネットワークの正しさ**は
     // 純関数だけで完全に証明できる (ParticleCurves.h の ParticleSort* が 3 本の CS の正本)。
     // ソーティングネットワークは「全ての入力で必ず整列する」ことが要件なので、
@@ -1800,8 +1799,8 @@ bool RunParticleSelfTest()
             check(mono, "sort: viewZ -> uint key preserves float ordering (incl. -0.0/+0.0)");
         }
 
-        // (1b) キー軸が CPU バックエンドの比較子と同式であること (切り出しの回帰)。
-        //      旧式 `x*_13 + y*_23 + z*_33` とのビット一致を要求する
+        // (1b) キー軸が CPU バックエンドの比較子と同式であること。
+        //      手書きの `x*_13 + y*_23 + z*_33` とのビット一致を要求する
         {
             XMFLOAT4X4 vm;
             XMStoreFloat4x4(&vm, XMMatrixRotationRollPitchYaw(0.3f, -1.1f, 0.7f)
@@ -2342,8 +2341,8 @@ bool RunParticleSelfTest()
     }
 
     // ---- (M63c-3) 固定 fps は**寿命に依らない** ----
-    // ★C3 の主張そのもの。従来は age (= 経過/寿命) 駆動なので、寿命の違う 2 粒子が
-    //   同じ経過秒で違うコマを踏んでいた
+    // ★fps を使わない経路は age (= 経過/寿命) 駆動なので、寿命の違う 2 粒子が
+    //   同じ経過秒で違うコマを踏む。固定 fps ではそうならないこと
     {
         // 経過 0.5s / 12fps = 6 コマ目。age (寿命) を変えても動かないこと
         const float a = ParticleFlipFrameAt(0.25f, 0.5f, 1.0f, 12.0f, 0.0f, 16.0f, false);
@@ -2421,9 +2420,9 @@ bool RunParticleSelfTest()
     }
 
     // ---- (M66h) 調査用トグルは project_settings.json を 1 バイトも書かない ----
-    // ★以前は SetActiveKind / SetCompareMode / SIMD トグルがその場で SaveSettings() を
-    //   呼んでいた = 比較モードを一瞬見ただけで、チームで共有するファイルに
-    //   差分が出た。ここは「どの setter も書かない」をバイト列で固める検査で、
+    // ★SetActiveKind / SetCompareMode / SIMD トグルがその場で SaveSettings() を
+    //   呼ぶと、比較モードを一瞬見ただけでチームで共有するファイルに
+    //   差分が出る。ここは「どの setter も書かない」をバイト列で固める検査で、
     //   D3D の無い selftest で回せるよう Init を通さず LoadSettings(path) から始める
     {
         namespace fs = std::filesystem;

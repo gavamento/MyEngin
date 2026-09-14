@@ -237,9 +237,8 @@ bool RunVfxSelfTest()
     }
 
     // ---- (3.7) BuildVfxFogParams (M57追補): VFX がメッシュと同じ霧を読んでいるか ----
-    // ★これがこのサブの主張そのもの。M32c の手書きフォグは M29d の 5 本しか読んでおらず、
-    //   **M43a の 6 本を落としていた** = 同じシーンでメッシュと VFX の霧の濃さが食い違って
-    //   いたのに、それに気づく仕掛けがどこにも無かった。落としたら赤くなる場所を作る。
+    // ★1 本でも読み落とすと同じシーンでメッシュと VFX の霧の濃さが食い違うのに、
+    //   絵以外に気づく仕掛けが無い。落としたら赤くなる場所を作る。
     {
         RenderView v;
         v.fogMode = 2;
@@ -291,7 +290,7 @@ bool RunVfxSelfTest()
                   && BuildVfxFogParams(n4).froxelEnabled == 0,
               "vfx fog: froxel gate matches FroxelIsBound on all four negative cases");
 
-        // 既定構築のビュー = 従来の意味論 (ApplyFog が M29d の距離フォグへ潰れる)
+        // 既定構築のビュー = 距離フォグだけの意味論 (ApplyFog が M29d の距離フォグへ潰れる)
         RenderView def;
         const VfxFogParams d = BuildVfxFogParams(def);
         check(d.froxelEnabled == 0 && d.heightFalloff == 0.0f && d.inscatterIntensity == 0.0f

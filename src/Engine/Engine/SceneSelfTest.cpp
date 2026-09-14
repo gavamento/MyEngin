@@ -413,7 +413,7 @@ bool RunSceneSerializerSelfTest()
     }
 
     // ---- ActiveComponent の階層伝播 (M64b) ----
-    // ★M64a まで自エンティティのみの判定で、**親を止めても子の描画だけが残った**。
+    // ★自エンティティだけで判定すると、**親を止めても子の描画だけが残る**。
     //   sim は親で止まるのに絵が残るので「消えたはずのものが映っている」で必ず踏む
     {
         Scene s6;
@@ -1235,7 +1235,7 @@ bool RunSceneSerializerSelfTest()
         check(prefabHash != 0 && lib.Get(prefabHash) && !lib.Get(prefabHash)->actorFormat,
               "format: \"prefab\":1 loads as the compatible subset (prefab format)");
 
-        // (3) どちらのキーも無い .json は弾く (従来は entities だけ見て素通ししていた)
+        // (3) どちらのキーも無い .json は弾く (entities だけ見て素通ししない)
         writeText(badPath, R"({"engine":"MyEngine","sceneName":"x","entities":[]})");
         check(lib.LoadFromFile(badPath) == 0,
               "format: a json with neither actor:1 nor prefab:1 is rejected");
@@ -1340,7 +1340,7 @@ bool RunSceneSerializerSelfTest()
     // ---- シーン override リスト + ロード時ベース更新 (M48e) ----
     // M13 のライブ diff は「シーンを閉じている間にベースが変わった」ケースを誤判定する
     // (ユーザーが触っていないフィールドまで上書き扱いになり、二度とベース更新に追随しない)。
-    // 保存型の override リストでそこを直したので、以下 4 点を機械的に押さえる:
+    // 保存型の override リストはこれを避けるためのもの。以下 4 点を機械的に押さえる:
     //   (1) 上書きが overrides キーで往復する  (2) 再ロードで非 override だけベース最新値へ
     //   (3) レガシー (キー無し) シーンはビット不変ロード  (4) Play/Stop 往復でリスト不変
     {
@@ -1494,7 +1494,7 @@ bool RunSceneSerializerSelfTest()
     // override キーに "+C"/"-C" を追加し、コンポーネント単位の構造変更を上書きとして追跡する。
     // レコードはライブ diff の純導出 (RecordOverrides の全置換と両立)。v3 文書は
     // 「キー不在 = ベース追随」が構造にも及ぶ契約で、v2 以前はレコードへのマージのみ。
-    // 押さえるのは計画の検証済みリスト 13 本 (削除 sticky / v3 追随 / v2 移行 / "+C" 転換 /
+    // 押さえるのは 13 本 (削除 sticky / v3 追随 / v2 移行 / "+C" 転換 /
     // Undo / Revert 双方向 / Apply 伝播 / 入れ子再播種 / レガシー復活ピン)
     {
         PrefabLibrary lib;
@@ -2052,7 +2052,7 @@ bool RunSceneSerializerSelfTest()
     // ---- 未知コンポーネントのパススルー (M70a) ----
     //
     // 「型が引けないコンポーネントはロードで捨て、保存はアーキタイプだけを正本にする」
-    // という非対称が、**保存した瞬間にディスクからデータを消していた**。引き金は
+    // という非対称だと、**保存した瞬間にディスクからデータが消える**。引き金は
     // スキーマ未登録に限らず GameLogic.dll のロード失敗でも同じ (どちらも起動は続く)。
     //
     // ★このスイートは連鎖の 2 番目 (EditorMain.cpp)、RunSchemaSelfTest は 20 番目なので、

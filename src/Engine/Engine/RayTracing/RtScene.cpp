@@ -161,7 +161,7 @@ void RtScene::Update(const std::vector<InstanceDesc>& instances, RenderResources
         WorldAabb(d.world, mesh->aabbMin, mesh->aabbMax, ab.min, ab.max);
         boundScratch_.push_back(ab);
 
-        // M67: マテリアルを**先に**引く。RtInstance がクラスを載せるようになったので、
+        // M67: マテリアルを**先に**引く。RtInstance がクラスを載せるので、
         // 「inst を push してから mat を引く」順だと inst 側に値を書けない
         const Material* mat = resources.materials.Get(d.material);
 
@@ -202,7 +202,8 @@ void RtScene::Update(const std::vector<InstanceDesc>& instances, RenderResources
         return;
     }
 
-    // TLAS を組み、葉が連続範囲を指せるようインスタンス/マテリアルをその順に並べ替える
+    // TLAS を組み、葉が連続範囲を指せるようインスタンスをその順に並べ替える
+    // (マテリアルは inst.materialIndex で引くので収集順のまま)
     BuildTlas(boundScratch_, tlasScratch_, orderScratch_);
     if (tlasScratch_.empty() || orderScratch_.size() != instScratch_.size()) {
         return;

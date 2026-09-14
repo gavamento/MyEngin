@@ -23,8 +23,7 @@ bool ParticleSystem::Init(GraphicsDevice& device, ShaderManager& shaders,
     }
     LoadSettings(assetsRoot + L"\\project_settings.json");
     // M57追補: CLI (--particle-backend / --particle-compare) は設定ファイルより優先する。
-    // ★M66h 以降、この 2 つの setter は保存しない (書き戻しは Project Settings 窓だけ) ので
-    //   経路の選択は自由になったが、Reset とログを走らせない直接代入のままにしてある —
+    // ★setter ではなく直接代入にして Reset とログを走らせない —
     //   ここは LoadSettings() の直後で「読んだ値を差し替える」以上のことをする必要が無い。
     // ★compare が CLI 由来かどうかは覚えておく: Editor が個人設定 (editor_settings.json) の
     //   比較モードを流し込む前に見て、CLI を勝たせるため (撮影の再現性が個人設定で壊れると
@@ -121,7 +120,7 @@ void ParticleSystem::LoadSettings(const std::wstring& settingsPath)
         active_ = (backend == "gpu") ? ParticleBackendKind::Gpu : ParticleBackendKind::Cpu;
         // ★particleCompareMode / particleCompareOffsetX / particleCpuSimd は**読まない** (M66h)。
         //   既存プロジェクトの JSON には残っているが、個人設定の正本は
-        //   <project>\.mye\editor_settings.json に移った。ここで読むと
+        //   <project>\.mye\editor_settings.json。ここで読むと
         //   「共有ファイルの古い値が、あとから個人設定を上書きする」順序問題が生まれる
         //   (移行は行わない = 既定値から始まる。compare は本来 OFF が既定の調査用表示なので、
         //    共有ファイルに ON が焼かれていた場合はむしろ消える方が正しい)

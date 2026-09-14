@@ -17,7 +17,7 @@ using Microsoft::WRL::ComPtr;
 namespace mye {
 namespace {
 
-// vfx_sprite.hlsl の VfxCB と一致 (M32c でフォグ params + cameraPos を追加)
+// vfx_sprite.hlsl の VfxCB と一致 (M32c: フォグ params + cameraPos)
 struct VfxCB {
     XMFLOAT4X4 viewProj; // transpose(view*proj)
     XMFLOAT3 cameraPos;
@@ -28,9 +28,9 @@ struct VfxCB {
     float fogEnd;
     float pad[2];
     // ---- M57追補: M43a のハイトフォグ + 太陽インスキャッタ (末尾 append) ----
-    // ★ここが空だったせいで、**同じシーンでメッシュと VFX の霧の濃さが食い違っていた** —
-    //   PS が ApplyFog を呼ばず M32c の距離フォグを手書きコピーしていたため。
-    //   0/0 なら ApplyFog は M29d の距離フォグと同じ式に潰れる (= 従来の意味論)
+    // ★PS はメッシュと同じ ApplyFog を呼ぶ。ここを欠くと同じシーンでメッシュと VFX の
+    //   霧の濃さが食い違う。
+    //   0/0 なら ApplyFog は M29d の距離フォグと同じ式に潰れる
     float heightFalloff;
     float baseHeight;
     float inscatterIntensity;
@@ -39,7 +39,7 @@ struct VfxCB {
     float pad1;
     XMFLOAT3 sunColor; // リニア・強度込み
     float pad2;
-    // ---- M57追補: フロクセル (0 = 従来経路へ厳密に落ちる分岐を持つ) ----
+    // ---- M57追補: フロクセル (0 = フロクセル無しの経路へ厳密に落ちる分岐を持つ) ----
     int32_t froxelEnabled;
     float froxelNearZ;
     float froxelFarZ;
@@ -420,8 +420,8 @@ void VfxRenderer::Render(World& world, GraphicsDevice& device, ShaderManager& sh
                     XMMatrixTranspose(XMMatrixMultiply(XMLoadFloat4x4(&view.view),
                                                        XMLoadFloat4x4(&view.proj))));
     cbData.cameraPos = view.cameraPos; // フォグ距離用 (M32c)
-    // M57追補: フォグの素材は純関数へ寄せた (VfxSelfTest がヘッドレスで検査する)。
-    // **メッシュ (forward_lit) とまったく同じ RenderView フィールドを読む**のがこの追補の主張
+    // M57追補: フォグの素材は純関数 BuildVfxFogParams (VfxSelfTest がヘッドレスで検査する)。
+    // **メッシュ (forward_lit) とまったく同じ RenderView フィールドを読む**
     const VfxFogParams fog = BuildVfxFogParams(view);
     cbData.fogMode = fog.fogMode;
     cbData.fogColor = fog.fogColor;
@@ -502,7 +502,7 @@ VfxFogParams BuildVfxFogParams(const RenderView& view)
     p.fogDensity = view.fogDensity;
     p.fogStart = view.fogStart;
     p.fogEnd = view.fogEnd;
-    // M43a: ここが M32c 以来ずっと欠けていた 6 本。forward_lit が読むのと同じフィールド
+    // M43a: ハイトフォグ + 太陽インスキャッタの 6 本。forward_lit が読むのと同じフィールド
     p.heightFalloff = view.fogHeightFalloff;
     p.baseHeight = view.fogBaseHeight;
     p.inscatterIntensity = view.fogInscatterIntensity;

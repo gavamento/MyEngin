@@ -43,7 +43,7 @@ void AppendStr(std::vector<uint8_t>& buf, const std::string& s)
 
 // 境界検査つきリーダ。長さは必ず「残量」で検算してから resize する —
 // 破損 blob の巨大な要素数をそのまま信じると bad_alloc で即死する
-// (ModelCook が実際にそれで落ちた。selftest が同じ穴を突く)
+// (selftest がこの穴を突く)
 struct Reader {
     const uint8_t* p = nullptr;
     size_t size = 0;

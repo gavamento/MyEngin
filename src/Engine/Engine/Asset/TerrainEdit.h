@@ -104,9 +104,8 @@ bool SaveEdits(const std::wstring& srcPath, TerrainAsset::TerrainData& d);
 
 // ---- 高さ場の問い合わせ (エディタ専用) ----
 //
-// ★**sim から呼ばないこと。** 地形コリジョンは engine_spec §6.5 で M59 送りと決めてあり、
-//   ここを tick から触った瞬間に地形がワールドハッシュのレーンに入る
-//   (`replay_verify.bat` に 5 ペア目が必要になる)。今の唯一の呼び出し元は
+// ★**sim から呼ばないこと。** sim の地形コリジョンは TerrainColliderLibrary (M59i) が
+//   自分でロードしたデータで行う。ここはエディタ用で、今の唯一の呼び出し元は
 //   SceneViewWindow のブラシ = カーソル下の地表を求めるためだけ。
 
 // 地形ローカル XZ の高さ (双一次補間)。範囲外は端の値へクランプ

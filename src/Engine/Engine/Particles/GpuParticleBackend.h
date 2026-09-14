@@ -15,9 +15,9 @@ namespace mye {
 // - プール + dead list (append/consume) + alive list A/B ピンポン (圧縮)
 // - InstanceCount は CopyStructureCount → DrawInstancedIndirect (CPU リードバックなし)
 // - 乱数は CPU 側 (エンジンの決定論 RNG) が生成した放出バッファを消費 (spec 7.3)
-// - M42追補: alpha (blendMode==1) はビットニックソートで back-to-front に並べ替える。
-//   CPU バックエンドの std::sort と同じ比較規則 (viewZ 降順 → 添字昇順) を GPU 上で写す —
-//   ここが無かった間、加算はビット一致するのに alpha だけ 610 画素割れていた (M57追補の申し送り)
+// - M42追補: 歪み以外 (ParticleNeedsDrawSort = blendMode != 2) はビットニックソートで
+//   back-to-front に並べ替える。CPU バックエンドの std::sort と同じ比較規則
+//   (viewZ 降順 → 添字昇順) を GPU 上で写す
 class GpuParticleBackend : public IParticleBackend {
 public:
     const char* Name() const override { return "GPU (Compute)"; }
@@ -45,10 +45,10 @@ private:
         // M42追補: CPU が作った 1/lifetime をそのまま渡す。emit CS が 1/life から作り直すと
         // subframe の寿命前倒し (life = lifetime + f*dt) の分だけ age 曲線が前へずれ、
         // **alpha のフェードが CPU と食い違う** (差は最大 1 tick だが色は毎フレーム効く)。
-        // ステージングは 32B -> 48B になる (1M バーストで 32MB -> 48MB。ClampGpuEmitCount の
+        // ステージングは 48B/粒 (1M バーストで 48MB。ClampGpuEmitCount の
         // コメント参照 — burst した tick だけの一過性)
         float invLife;
-        // M63a: 旧 _pad の 12B を意味づけし直した (48B のまま)。CPU バックエンドと**同じゲート・
+        // M63a: 末尾 12B (全体で 48B)。CPU バックエンドと**同じゲート・
         // 同じ消費順** (rot0 → rotVel → flipU) で Pcg32 から引いた値を GPU へ運ぶ。
         // 乱数を GPU で作らない契約 (particle_emit.cs.hlsl 冒頭) の下では、per-particle の
         // ランダム属性を渡す口はここしかない
@@ -82,7 +82,7 @@ private:
                                             0.0f, 0.0f, 0.0f, 1.0f };
         Pcg32 rng;
         ParticleEmitterComponent descCache;
-        bool firstDispatch = true; // 初回のみ dead list カウンタを capacity で初期化
+        bool firstDispatch = true;
         Microsoft::WRL::ComPtr<ID3D11Buffer> pool;
         Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> poolUAV;
         Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> poolSRV;
@@ -92,7 +92,7 @@ private:
         Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> aliveUAV[2]; // COUNTER flag
         Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> aliveSRV[2];
         int aliveCurrent = 0; // 描画に使う側 (= 直近 sim の出力)
-        // [0]=deadCount [1]=aliveInCount [2]=aliveOutCount (M42追補: alpha ソートの
+        // [0]=deadCount [1]=aliveInCount [2]=aliveOutCount (M42追補: 描画順ソートの
         // setup CS が「どれだけ働くか」をここから決める。CPU は生存数を readback しない)
         Microsoft::WRL::ComPtr<ID3D11Buffer> counts;
         Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> countsSRV;
@@ -100,16 +100,16 @@ private:
         Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> emitSRV;
         uint32_t emitCapacity = 0;
         Microsoft::WRL::ComPtr<ID3D11Buffer> indirectArgs; // DrawInstancedIndirect
-        // ---- M42追補: alpha ソート (blendMode==1 のエミッタだけが持つ。遅延確保) ----
+        // ---- M42追補: 描画順ソート (ParticleNeedsDrawSort が真のエミッタだけが持つ。遅延確保) ----
         // 0 = 未確保。プール容量が変わったら作り直す (M61f の容量追従と対で動く)
         uint32_t sortCapacity = 0;
-        bool sortValid = false; // この Render でソート済み (false = 従来どおり alive list を描く)
+        bool sortValid = false; // この Render でソート済み (false = 並べ替えずに alive list を描く)
         Microsoft::WRL::ComPtr<ID3D11Buffer> sortKeys;
         Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> sortKeysUAV;
         Microsoft::WRL::ComPtr<ID3D11Buffer> sortIdx;
         Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> sortIdxUAV;
         // ★これが描画へ渡る成果物。型も意味も alive list と同じ StructuredBuffer<uint> なので、
-        //   particle_render_gpu.hlsl は 1 行も変えずに t1 の中身だけが差し替わる
+        //   particle_render_gpu.hlsl は同じ t1 を読むだけで、中身だけが差し替わる
         Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> sortIdxSRV;
         Microsoft::WRL::ComPtr<ID3D11Buffer> sortArgs; // DispatchIndirect 引数 (16B × パス数)
         Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> sortArgsUAV; // RAW
@@ -137,7 +137,7 @@ private:
     AssetID emitCS_ = {};
     AssetID simCS_ = {};
     AssetID renderShader_ = {};
-    // M42追補: alpha ソートの 3 パス (キー生成 / ブロック内 LDS / 全域マージ)
+    // M42追補: 描画順ソートの 3 パス (キー生成 / ブロック内 LDS / 全域マージ)
     AssetID sortSetupCS_ = {};
     AssetID sortLdsCS_ = {};
     AssetID sortMergeCS_ = {};

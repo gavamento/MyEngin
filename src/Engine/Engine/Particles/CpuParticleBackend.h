@@ -15,7 +15,7 @@ struct ParticleEmitBasis; // M61b: エミッタの上 3x3 基底 (ParticleCurves
 // - SoA レイアウト + SSE 4-wide 更新 (スカラー参照実装を常備 — 端数レーンと検証用)
 // - エミッタ別の決定論 RNG ストリーム (ワールドハッシュ対象)
 // - 消滅は swap-and-pop
-// - アルファブレンドはビュー深度で back-to-front ソート (明示キー、描画専用)
+// - 歪み以外 (ParticleNeedsDrawSort) はビュー深度で back-to-front ソート (明示キー、描画専用)
 class CpuParticleBackend : public IParticleBackend {
 public:
     const char* Name() const override { return "CPU (SIMD)"; }
@@ -53,7 +53,7 @@ public:
         //   回転は rot0 + rotVel*elapsed の**閉形式**で描画時に導出する。
         // ★**KillDead の swap-and-pop に必ず 3 行足すこと。** 忘れると粒子が 1 つ死ぬたびに
         //   隣の粒子の回転とコマ位置が飛び移る — 絵は普通に出るのに合わないだけ、という
-        //   最も気づきにくい壊れ方をする (selftest では検出できず golden が唯一の検出器)。
+        //   最も気づきにくい壊れ方をする (ParticleSelfTest の M63a-5 節が検出する)。
         std::vector<float> rot0;   // 初期回転角 [rad]
         std::vector<float> rotVel; // 角速度 [rad/s]
         std::vector<float> flipU;  // フリップブック開始位相 [0,1)
@@ -104,7 +104,7 @@ private:
     float noiseSpeed_ = 0.5f;
     float noiseTime_ = 0.0f;
     ParticleStats stats_;
-    std::vector<uint32_t> orderScratch_; // アルファソート用 (描画専用)
+    std::vector<uint32_t> orderScratch_; // 描画順ソート用 (描画専用)
     std::vector<uint8_t> visScratch_;    // プール毎の可視フラグ (Render 内のみ有効、描画専用)
     // M61g: ローカル空間プールのワールド変換済み位置 (Render 内のみ有効、描画専用)。
     // SoA と同じ並びの 3 本にするのは、ソート比較とインスタンス詰めが「ベースポインタの

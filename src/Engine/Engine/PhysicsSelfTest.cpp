@@ -1198,7 +1198,7 @@ bool RunPhysicsSelfTest()
             GameObject ground = s.CreateGameObjectTracked("MeshGround");
             auto* col = ground.AddComponent<ColliderComponent>();
             col->shape = 3;
-            col->isTrigger = false; // ソリッド衝突面 (M51 後続で既定が false になったが明示のまま)
+            col->isTrigger = false; // ソリッド衝突面 (既定も false だが明示する)
             col->meshAsset = meshId;
             GameObject ball = MakeSphereBody(s, "Ball", 0.5f, 3.0f, 0.5f, 0.5f);
             (void)ball;
@@ -3020,8 +3020,7 @@ bool RunPhysicsSelfTest()
 
     // ================= M59f1: ジャイロ項 + 質量中心オフセット =================
     // どちらも Rigidbody の opt-in フィールド。既定 (false / (0,0,0)) では
-    // **配線が 1 ビットも動かさない**ことを 2 段階ビルドで確認済み
-    // (フィールドだけ足したビルドと配線後のビルドで [phys] ログが完全一致)。
+    // **配線が 1 ビットも動かさない** (既存の [phys] ログが完全一致する)。
     {
         // ローカルベクトルを姿勢で回す (試験側で重心のワールド位置を出すため)
         auto rotQ = [](const DirectX::XMFLOAT4& q, float vx, float vy, float vz, float& ox, float& oy,
@@ -3379,8 +3378,8 @@ bool RunPhysicsSelfTest()
 
     // ================= M59f2: 静止/動摩擦の分離 + 転がり抵抗 =================
     // どちらも **.physmat 経由でしか有効にならない**。材料未割当のコライダーは
-    // μs = μd = Collider.friction / Crr = 0 になり、新しい分岐が従来の 1 本の
-    // クランプへ畳まれる (実測でも既存 32 行の [phys] ログが 1 ビットも動かなかった)。
+    // μs = μd = Collider.friction / Crr = 0 になり、新しい分岐が 1 本の
+    // クランプへ畳まれる (既存の [phys] ログが 1 ビットも動かない)。
     {
         PhysMatLibrary* prevFricLib = physmat::Library();
         PhysMatLibrary fricLib;
@@ -4961,7 +4960,7 @@ bool RunPhysicsSelfTest()
     //   **片側不等式** (リミット) = λ を [0,∞) にクランプし、**範囲外に出たときだけ立てる**
     //   **駆動** (モータ)         = 目標速度を bias に持ち |λ| ≤ maxForce·h でクランプ
     // どちらも 1 自由度なので M60a の ConstraintBlock (count==1 でクランプが効く) に
-    // そのまま収まる — ソルバ本体は 1 行も変えていない。
+    // そのまま収まる。
     // ★向きの規約: **違反する向きの速度が cdot < 0 になるように d を取る**。
     // ★関節角は「**owner が connected に対して軸まわりに回った量**」(qE の逆向き)。
     //   ドアを +30° 開いたら関節角も +30°、モータ目標速度 + なら owner が +軸まわりに回る。
@@ -6773,8 +6772,8 @@ bool RunPhysicsSelfTest()
         }
 
         // -- (h2-7) 運転入力はスクリプトから既存 ABI で書ける (= ABI 追加ゼロ) --
-        // ★M60j (ABI v15 束ね) を廃止した根拠を実走で固定する。ここが通る限り、
-        //   車両のためにスロットを足す理由は無い
+        // ★車両のために ABI スロットを足さない (M60j の ABI v15 束ねは採らない) 根拠を
+        //   実走で固定する。ここが通る限り、スロットを足す理由は無い
         {
             ScriptApiContext apiCtx;
             MyeEngineApi api = {};

@@ -23,7 +23,7 @@ struct ParticleInstance {
     float size;
     XMFLOAT4 color;
     float age; // [0,1] 寿命係数 (M32b フリップブック用)
-    // ---- M63a: 旧 pad[3] を意味づけし直した (48B のまま = StructureByteStride も SRV も不変) ----
+    // ---- M63a: 末尾 3 float (全体で 48B = StructureByteStride も SRV も 48B 前提) ----
     // ★**CPU は速度 3 成分を送らない。** 充填ループは view 行列を持っている (vm) ので、
     //   速度ストレッチを「画面基底へ射影した角度 + 長軸倍率」の 2 スカラへ畳める。
     //   回転角と速度角は同じ θ なので rot 1 本を共有し、加算する (M63b)。
@@ -52,11 +52,11 @@ struct ParticleCB {
     XMFLOAT3 fogColor;
     float fogStart;
     float fogEnd;
-    // M42b: ソフトパーティクル (旧 pad3 転用。particle_render.hlsl の ParticleCB と一致)
+    // M42b: ソフトパーティクル (particle_render.hlsl の ParticleCB と一致)
     float softFade; // 深度フェード距離 (0=off)
     float nearZ;    // 深度線形化用
     float farZ;
-    // ---- M57e: フロクセル (末尾 append。0 = 従来と 1 ビットも変わらない) ----
+    // ---- M57e: フロクセル (末尾 append。0 = フロクセル無しの経路とビット同一) ----
     // ★particle_distort.hlsl は ParticleCB を**手前で切り詰めて**宣言しているので
     //   あちらには触らなくてよい (歪みは色を出さないので霧も要らない)
     int32_t froxelEnabled;
@@ -65,13 +65,13 @@ struct ParticleCB {
     float froxelSlices;
     float froxelScreenSize[2]; // SV_Position → uv
     float froxelPad[2];
-    // ---- M63a: ビルボード変換 (末尾 append。0 = 従来と 1 ビットも変わらない) ----
+    // ---- M63a: ビルボード変換 (末尾 append。0 = corner 素通しの経路とビット同一) ----
     // ★billboardMode が 0 のとき VS は corner をそのまま使う = `* 1.0f` も `cos(0)` 乗算も
     //   通らない。**恒等のビット保存はこのフラグ 1 本が担っている**ので、
     //   「どうせ回転 0 なら同じ」と分岐を外してはいけない。
     int32_t billboardMode; // 0=従来 (corner 素通し) / 1=回転・ストレッチを適用
     float billboardPad[3];
-    // ---- M63c: フリップブック (末尾 append。0 = 従来と 1 ビットも変わらない) ----
+    // ---- M63c: フリップブック (末尾 append。0 = PS が age からコマを作る経路とビット同一) ----
     // ★flipMode が 0 のとき PS は充填ループの flipFrame を**読まない** — その場で age から
     //   作る従来の式を通る。ラスタライザ補間を通った age と CPU が持つ age は別の道の値
     //   なので、「fps=0 なら同じだから分岐は要らない」は成り立たない。
@@ -80,7 +80,7 @@ struct ParticleCB {
     int32_t flipMode;  // 0=従来 (PS が age から作る) / 1=充填ループの連続コマ位置を使う
     int32_t flipBlend; // 1=隣のコマと frac で補間
     float flipPad[2];
-    // ---- M63d: ライティング (末尾 append。0 = 従来と 1 ビットも変わらない) ----
+    // ---- M63d: ライティング (末尾 append。0 = unlit の経路とビット同一) ----
     // ★lightingMode が 0 のとき VS も PS も ParticleLightAt を 1 度も呼ばない。
     //   「ライト 0 本なら受光係数 1.0」ではない — アンビエントが乗って色が動く
     int32_t lightingMode;       // 0=unlit (従来) / 1=粒子単位 (VS) / 2=画素単位 (球面法線)
@@ -288,8 +288,7 @@ void CpuParticleBackend::EmitParticles(EmitterPool& pool, const ParticleEmitterC
     for (int n = 0; n < emit; ++n) {
         const uint32_t i = pool.alive++;
         // 乱数の消費順は固定 (決定論): 方向 → 位置 → 速度 → 寿命 → サイズ。
-        // (shape, emitFrom) ごとの消費数は SampleParticleShape の表が契約 (M61b で共通化 —
-        // emitFrom=0 は旧 switch と同一の演算列・同一の消費列に縮退する)
+        // (shape, emitFrom) ごとの消費数は SampleParticleShape の表が契約 (M61b)
         ParticleShapeSample smp = SampleParticleShape(desc, pool.rng);
         const float speed = pool.rng.Range(desc.speedMin, desc.speedMax);
         const float lifetime = std::max(0.01f, pool.rng.Range(desc.lifetimeMin, desc.lifetimeMax));
@@ -573,9 +572,7 @@ void CpuParticleBackend::Update(World& world, float dt)
         // ハッシュに乗り、どのビルドでも同じ回数だけ回るので決定論は保たれる。上限 600 tick
         // (10 秒 @60Hz) は誤設定の巨大値が 1 tick を丸ごと食い潰す暴走ガード。snapshot 復元後は
         // prewarmed==1 ごと復元されるため再トリガしない (selftest M61e 節で確認)。
-        // M42追補: GPU バックエンドも同じ上限・同じ順序で先回しするようになった
-        // (GpuParticleBackend::Update の runOneTick ラムダ)。かつてここに書いてあった
-        // 「GPU はプリウォームしない = spec 7.5 の例外」は解消済み
+        // GPU 側 (RunEmitterTick) も同じ上限・同じ順序で先回しする
         if (pool.prewarmed == 0 && desc->prewarmTime > 0.0f && desc->playing != 0) {
             const int prewarmTicks = std::min(600, static_cast<int>(desc->prewarmTime / dt));
             for (int step = 0; step < prewarmTicks; ++step) {
@@ -697,7 +694,7 @@ void CpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
         }
     }
 
-    // インスタンスデータ充填 (エミッタ順。アルファは back-to-front ソート — 描画専用処理で
+    // インスタンスデータ充填 (エミッタ順。歪み以外は back-to-front ソート — 描画専用処理で
     // シミュレーション状態 (ハッシュ対象) には触れない)
     const XMFLOAT4X4& vm = view.view;
     // M63b: 速度ストレッチの射影基底。CB へ入れるものと同じ値だが、充填ループの中で
@@ -745,7 +742,7 @@ void CpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
         const uint32_t base = cursor;
 
         // M61g: ローカル空間プールは位置を renderWorld でワールドへ変換してから詰める
-        // (renderOffsetX はその後に加算)。alpha ソートの viewZ も変換後の位置で計る。
+        // (renderOffsetX はその後に加算)。描画順ソートの viewZ も変換後の位置で計る。
         // ワールド空間 (既定) はベースポインタの差し替えだけ = 従来と同一の値・同一の演算列。
         // ビルボードサイズにはスケールを適用しない (v1 制限 — renderWorld は位置にだけ効く)
         const float* sx = pool.px.data();
@@ -771,19 +768,10 @@ void CpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
         for (uint32_t i = 0; i < pool.alive; ++i) {
             orderScratch_[i] = i;
         }
-        // ★M42追補: **加算 (blendMode==0) も並べる**。加算合成は数学的には順序非依存だが、
-        //   ブレンドはクォッド 1 枚ごとにレンダターゲットの精度へ丸めながら積むので、
-        //   **ビットレベルでは順序依存**になる。CPU が SoA 順・GPU が圧縮順で描いていたせいで、
-        //   fog ショーケースの炎に 8 画素 / maxDiff=1 が残り続けていた (コミット① が
-        //   「評価場所の差」と誤診していた 8 画素の正体がこれ)。両バックエンドが同じキーで
-        //   並べた瞬間に 0 画素になる。歪み (blendMode==2) は GPU が描かない = 突き合わせる
-        //   相手が居ないので、並べる意味が無い分だけ従来どおり素通しにする
+        // 加算も並べる (理由は ParticleNeedsDrawSort)
         if (ParticleNeedsDrawSort(d.blendMode)) {
             // back-to-front (明示キー: viewZ 降順 → index 昇順。spec 11.2 規則 7)
-            // M42追補: キーの式は ParticleCurves.h::ParticleAlphaSortViewZ へ切り出した —
-            // GPU バックエンドのソート CS が同じ 1 本を写すため (式が 2 箇所に散ると、
-            // 片方だけ直したときに「同じシーンで CPU と GPU の重なり順が違う」形で静かに割れる)。
-            // 演算列は 1 ビットも変えていない (関数名の後ろへ移しただけ)
+            // キーの式は GPU バックエンドのソート CS と共有 (ParticleCurves.h::ParticleAlphaSortViewZ)
             std::sort(orderScratch_.begin(), orderScratch_.end(), [&](uint32_t a, uint32_t b) {
                 const float za = ParticleAlphaSortViewZ(sx[a], sy[a], sz[a], vm);
                 const float zb = ParticleAlphaSortViewZ(sx[b], sy[b], sz[b], vm);
@@ -798,8 +786,7 @@ void CpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
         // ★off のときは rot/stretch へ 0/1 を書くだけで sin/cos も乗算も通らない。
         //   絵のビット保存は CB の billboardMode と VS の分岐が担うが、CPU 側もここで
         //   「使わないなら計算しない」を守っておくと、フラグと実データが食い違わない
-        // M63b: 判定式は ParticleCurves.h へ寄せた (GPU バックエンドと共有。手写しだと
-        // 片方だけ緩めたときに「同じシーンで CPU だけ回る」が静かに起きる)
+        // M63b: 判定式は GPU バックエンドと共有 (ParticleCurves.h)
         const bool useRotation = ParticleUsesRotation(d);
         const bool useStretch = ParticleUsesStretch(d);
         // M63c: フリップブックの新 3 本 (固定 fps / 補間 / ランダム開始) を使うか。
@@ -826,7 +813,6 @@ void CpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
             inst.color = EvalParticleColor(d, age);
             inst.age = age;
             // M63a: 回転は閉形式 (rot0 + rotVel*elapsed) で導出する — sim では積分しない。
-            // M63c がここへ flipFrame を埋める
             float rot = useRotation
                 ? ParticleRotationAt(pool.rot0[i], pool.rotVel[i],
                                      ParticleElapsedFromLife(pool.life[i], pool.invLife[i]))
@@ -969,7 +955,7 @@ void CpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
             continue;
         }
         cbData.baseIndex = range.base;
-        // M57追補: 規則を ParticleCurves.h へ寄せた (GPU バックエンドと共有。値は同一)
+        // M57追補: 規則は GPU バックエンドと共有 (ParticleCurves.h)
         cbData.blendAdditive = ParticleBlendIsAdditive(range.blendMode) ? 1 : 0;
         // テクスチャ解決 (空なら procedural 円へフォールバック)
         ID3D11ShaderResourceView* texSrv = nullptr;

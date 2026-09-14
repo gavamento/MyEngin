@@ -6,7 +6,7 @@
 #include "Engine/Core/Log.h"
 #include "Engine/Core/World.h"
 #include "Engine/Engine/Particles/ParticleCurves.h"
-#include "Engine/Renderer/GpuBufferUtil.h" // M46a: バッファ生成ヘルパ (共通化)
+#include "Engine/Renderer/GpuBufferUtil.h" // M46a: バッファ生成ヘルパ
 #include "Engine/Renderer/GpuResources.h" // M42c: TextureLibrary (フリップブック解決)
 #include "Engine/Renderer/GraphicsDevice.h"
 #include "Engine/Renderer/ShaderManager.h"
@@ -29,7 +29,6 @@ struct GpuParticleCB { // particle_gpu_common.hlsli と一致
     XMFLOAT4 params3;     // M42c: useTexture, flipTilesX, flipTilesY, flipCycles
     XMFLOAT4X4 collViewProj;    // M42e: transpose 済み
     XMFLOAT4X4 collInvViewProj; // M42e: transpose 済み
-    // M63e: thickness の 0.0f 固定を撤廃し、予約だった w を摩擦へ回した
     XMFLOAT4 collParams;        // M42e: enabled, restitution, thickness, friction
     XMFLOAT4 collScreen;        // M42e: 画面 w/h, nearZ, farZ
     XMFLOAT4 params4;           // M61d: turbulenceMode, noiseFrequency, noiseSpeed, noiseTime
@@ -40,18 +39,18 @@ struct GpuParticleCB { // particle_gpu_common.hlsli と一致
     XMFLOAT4 params5; // colorMidT1, colorMidT2, sizeMidScale, sizeMidT
     // ---- M63c: フリップブック (末尾 append。HLSL 側と両方同時に変更する) ----
     // 描画の VS (flipMode/flipFps/flipRandomStart) と PS (flipMode/flipBlend) だけが読む。
-    // 既定 (flipMode=0) は従来と 1 ビットも変わらない
+    // 既定 (flipMode=0) は PS が age からコマを作る経路とビット同一
     XMFLOAT4 params6; // flipMode, flipFps, flipRandomStart, flipBlend
     // ---- M63d: ライティング (末尾 append。HLSL 側と両方同時に変更する) ----
     // 描画の VS (x==1 = 粒子単位) と PS (x==2 = 画素単位) だけが読む。既定 (x=0) は
-    // 従来と 1 ビットも変わらない。
+    // unlit の経路とビット同一。
     // ★**ライト配列そのものはここに入れない** — この CB はエミッタごと tick ごとに
     //   上がるので、1KB のライト配列を積むと 100 エミッタで毎フレーム 100KB 増える。
     //   ライトはビュー単位なので b2 (particlelight::ParticleLightCB) 側へ置く
     XMFLOAT4 params7; // lightingMode, lightWrap, lightIntensity, lightReceiveShadow
     // ---- M63e: 深度衝突の拡張 (末尾 append。HLSL 側と両方同時に変更する) ----
     // sim CS だけが読む。既定 (lifeLoss=0 / floorEnabled=0 かつ collParams.w=0) は
-    // M42e から 1 ビットも変わらない (ReflectWithFriction の早期 return が効く)
+    // M42e の反射だけの経路とビット同一 (ReflectWithFriction の早期 return が効く)
     XMFLOAT4 collParams2; // collisionLifeLoss, 予約, floorEnabled, floorY
 };
 static_assert(sizeof(GpuParticleCB) == 368,
@@ -69,14 +68,14 @@ struct GpuRenderCB { // particle_render_gpu.hlsl の GpuRenderCB と一致
     XMFLOAT4X4 emitterWorld; // transpose 済み (mul(float4, M) 規約は viewProj と同じ)
     XMFLOAT4 spaceParams;    // x = simulationSpace (1 = pos を emitterWorld で変換), yzw = 予約
     // ---- M57追補: 解析フォグ + フロクセル (末尾 append。HLSL 側と両方同時に変更する) ----
-    // 既定 (fogMode=-1 / froxelEnabled=0) は従来と 1 ビットも変わらない
+    // 既定 (fogMode=-1 / froxelEnabled=0) はフォグもフロクセルも無い経路とビット同一
     XMFLOAT4 fogParams;      // x=fogMode, y=density, z=start, w=end
     XMFLOAT4 fogColorBlend;  // xyz=フォグ色, w=blendAdditive (エミッタごとに変わる)
     XMFLOAT4 cameraPosParam; // xyz=カメラ位置 (VS の dist 用), w=予約
     XMFLOAT4 froxelParams;   // x=enabled, y=nearZ, z=farZ, w=slices
     XMFLOAT4 froxelScreen;   // xy=画面サイズ, zw=予約
     // ---- M63a/M63b: ビルボード変換 (末尾 append。HLSL 側と両方同時に変更する) ----
-    // 既定 (billboardMode=0) は従来と 1 ビットも変わらない
+    // 既定 (billboardMode=0) は corner 素通しの経路とビット同一
     XMFLOAT4 billboardParams; // x=billboardMode, y=stretchScale(0=off), z=stretchMax, w=useRotation
 };
 
@@ -94,14 +93,14 @@ struct GpuParticleData { // 48 bytes (シェーダの GpuParticle と一致)
     XMFLOAT3 vel;
     float invLife;
     float size0;
-    // M63a: 旧 pad の 12B (particle_gpu_common.hlsli の GpuParticle と一致)。
+    // M63a: 末尾 12B (particle_gpu_common.hlsli の GpuParticle と一致)。
     // 放出時に決まる不変データなので sim CS は触らない
     float rot0;
     float rotVel;
     float flipU;
 };
 
-// M46a: CreateStructured / CreateConstant / UploadCB は GpuBufferUtil.h へ集約 (定義は同一)
+// CreateStructured / CreateConstant / UploadCB (GpuBufferUtil.h)
 using namespace gpubuf;
 
 } // namespace
@@ -113,7 +112,7 @@ bool GpuParticleBackend::Init(GraphicsDevice& device, ShaderManager& shaders)
     emitCS_ = shaders.LoadCompute("particle_emit.cs");
     simCS_ = shaders.LoadCompute("particle_sim.cs");
     renderShader_ = shaders.Load("particle_render_gpu");
-    // M42追補: alpha ソートの 3 パス。加算しか使わないシーンでは 1 度も走らないが、
+    // M42追補: 描画順ソートの 3 パス。歪みしか使わないシーンでは 1 度も走らないが、
     // ロードは常に行う (実行時に blendMode を切り替えても即座に効くように)
     sortSetupCS_ = shaders.LoadCompute("particle_sort_setup.cs");
     sortLdsCS_ = shaders.LoadCompute("particle_sort_lds.cs");
@@ -323,7 +322,7 @@ void GpuParticleBackend::SyncEmitters(World& world, GraphicsDevice& device)
 }
 
 // 1 エミッタの 1 tick ぶんを GpuParticleBackend::Update から RunEmitterTick へ渡す値
-// (元は Update の中のラムダが参照で捕まえていたもの)。Update が使うので Update より前に定義する
+// Update が使うので Update より前に定義する
 struct GpuParticleBackend::EmitterTickCtx {
     const ParticleEmitterComponent* desc = nullptr;
     GpuEmitter* em = nullptr;
@@ -487,7 +486,7 @@ void GpuParticleBackend::Update(World& world, float dt)
         em.prewarmed = 1;
 
         if (!RunEmitterTick(tick, true)) {
-            continue; // 従来どおり aliveEstimate にも足さない
+            continue; // aliveEstimate にも足さない
         }
         aliveEstimate += em.aliveEst.Alive(em.capacity);
     }
@@ -498,19 +497,8 @@ void GpuParticleBackend::Update(World& world, float dt)
     stats_.aliveTotal = aliveEstimate;
 }
 
-    // ---- CPU 側で放出データを生成 (決定論 RNG。GPU では乱数を作らない) ----
-    // 放出計画は CPU バックエンドと共有 (M32a: playing/duration/loop/burst)。表示用ベストエフォート。
-    // M42追補: プリウォームは GPU でも行う (M61e の「GPU では行わない」例外は解消)。
-    // 誕生直後だけ GPU 側の粒子が age≒0 に揃って CPU と別の絵になっていたため
-    // M42追補: {放出計画 → EmitData 生成 → emit Dispatch → sim Dispatch → 記帳} を
-    // ラムダへ束ねた。**CPU 側 {EmitParticles → Simulate → KillDead} の 1 回分**に
-    // ちょうど対応する単位で、プリウォームがこれを誕生 tick に k 回先回しで呼ぶ。
-    // allowIdleSkip=false (プリウォーム中) は空 Dispatch 回避を効かせない —
-    // 意図して働く場面なので、生存 0 を理由に省かれると先回しが空振りする。
-    // 戻り値 false = この tick は GPU 作業をしなかった (呼び出し側は統計に足さない)
 bool GpuParticleBackend::RunEmitterTick(EmitterTickCtx& t, bool allowIdleSkip)
 {
-    // 本体はラムダだった頃のまま読めるよう、元と同じ名前で束ねる
     const ParticleEmitterComponent* desc = t.desc;
     GpuEmitter& em = *t.em;
     const float dt = t.dt;
@@ -525,7 +513,7 @@ bool GpuParticleBackend::RunEmitterTick(EmitterTickCtx& t, bool allowIdleSkip)
     ID3D11ComputeShader* simShader = t.simShader;
 
     int emitCount = PlanParticleEmission(*desc, em.ageTicks, em.emitAccum, dt);
-    // M61f: 旧「capacity/4」の 25% 静黙クランプを撤廃し容量全量まで許可。枯渇分は
+    // M61f: 容量全量まで許可。枯渇分は
     // emit CS の deadCount ガードが捨てる (判断の詳細は ParticleCurves.h::ClampGpuEmitCount)
     emitCount = ClampGpuEmitCount(emitCount, em.capacity);
 
@@ -545,12 +533,8 @@ bool GpuParticleBackend::RunEmitterTick(EmitterTickCtx& t, bool allowIdleSkip)
         }
     }
 
-    // M61b: 形状サンプリングは CPU バックエンドと共有 (SampleParticleShape。
-    // 旧: ここに CpuParticleBackend::EmitParticles の手写しコピーが重複していた)
+    // M61b: 形状サンプリングは CPU バックエンドと共有 (SampleParticleShape)。
     // M61c: 速度継承とサブフレーム補間も CPU 側 EmitParticles と同式のミラー。
-    // M42追補: かつてここにあった「invLife だけは emit CS が 1/life から作り直すので
-    // subframe のとき age 曲線が最大 1 tick ずれる」という許容誤差は解消済み —
-    // EmitData に invLife を載せて CPU の 1/lifetime をそのまま渡している
     const bool subframe = (desc->subframeEmission != 0);
     // M63a: per-particle 不変属性のゲート。**CPU バックエンドと同じ 1 本**を呼ぶ
     // (片方だけ条件を書き換えると 2 バックエンドの RNG が別の進み方をして粒子が別物になる)
@@ -740,7 +724,7 @@ bool GpuParticleBackend::RunEmitterTick(EmitterTickCtx& t, bool allowIdleSkip)
     dc->CSSetShaderResources(0, 3, nullSrvs); // M42e: t2 (深度) も解除
     dc->CSSetUnorderedAccessViews(0, 3, nullUavs, nullptr);
     dc->CopyStructureCount(em.indirectArgs.Get(), 4, em.aliveUAV[aliveOut].Get());
-    // M42追補: 同じ値を counts[2] へも落とす。alpha ソートの setup CS が
+    // M42追補: 同じ値を counts[2] へも落とす。描画順ソートの setup CS が
     // 「どれだけ働くか」をここから決める (CPU は生存数をリードバックしない — ADR-008)
     dc->CopyStructureCount(em.counts.Get(), 8, em.aliveUAV[aliveOut].Get());
     em.aliveCurrent = aliveOut;
@@ -772,7 +756,7 @@ void GpuParticleBackend::SetSceneDepth(ID3D11ShaderResourceView* depthSRV,
 }
 
 // ---- M42追補: 描画順ソートの資源 (歪み以外のエミッタが描画時に持つ) ----
-// 失敗しても致命ではない — 呼び出し側は false でソートを諦め、従来どおり alive list を描く
+// 失敗しても致命ではない — 呼び出し側は false でソートを諦め、並べ替えずに alive list を描く
 // (絵は出る。順序が CPU と揃わないだけ)。M61f の容量追従と同じ「壊さない再作成」の流儀
 bool GpuParticleBackend::EnsureSortResources(GraphicsDevice& device, GpuEmitter& em)
 {
@@ -834,7 +818,7 @@ bool GpuParticleBackend::EnsureSortResources(GraphicsDevice& device, GpuEmitter&
     return true;
 }
 
-// ---- M42追補: alpha エミッタを back-to-front に並べ替える (Render の前段) ----
+// ---- M42追補: 描画順ソート対象のエミッタを back-to-front に並べ替える (Render の前段) ----
 // **Update ではなく Render でやる**。キーが view 依存だから — Update 側 (前フレームの
 // カメラ) でやると 1 フレーム遅れ、「CPU とピクセル一致」という目的そのものが崩れる
 // (M42e の深度衝突が 1 フレーム遅延を許容できるのは、あちらが GPU 限定の見た目効果だからで、
@@ -856,10 +840,7 @@ void GpuParticleBackend::SortEmittersForDraw(GraphicsDevice& device, const Rende
         em.sortValid = false;
         // 凍結 (M61e) と空 Dispatch 回避 (gpuIdle) は描画自体をスキップするので並べる意味が無い。
         // 歪み (blendMode==2) は GPU では描かないので、並べる相手が居ない。
-        // ★M42追補: **加算 (0) も並べる**。「加算は順序非依存だから不要」は数学の話で、
-        //   ブレンドはクォッド 1 枚ごとに RT の精度へ丸めながら積むのでビットレベルでは
-        //   順序依存 — ここを外していたせいで炎に 8 画素 / maxDiff=1 が残っていた。
-        //   CPU 側 (CpuParticleBackend::Render の ParticleNeedsDrawSort) の同じ規則と対になっている
+        // 加算も並べる (理由は ParticleNeedsDrawSort)
         if (!ready || em.frozen || em.gpuIdle || !ParticleNeedsDrawSort(em.descCache.blendMode)) {
             continue;
         }
@@ -935,7 +916,7 @@ void GpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
     }
     ID3D11DeviceContext* dc = device.Context();
 
-    // M42追補: alpha エミッタの並べ替え。描画ループより**前**に全部済ませる
+    // M42追補: 描画順ソート。描画ループより**前**に全部済ませる
     SortEmittersForDraw(device, view);
 
     // M42c: フリップブックテクスチャの白フォールバック (CPU バックエンドと同じ)
@@ -951,8 +932,8 @@ void GpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
     cb.offsetX = renderOffsetX;
     // M57追補: フォグ (M32c)。RenderView が CollectEnvironment から埋めた値を GPU 粒子にも
     // 適用する — **CPU バックエンド (CpuParticleBackend::Render) と同じフィールドを同じ意味で
-    // 読む**のがこの追補の主張そのもの。fogMode=-1 (Fog コンポーネント無し) なら
-    // FogFactor が厳密に 0 を返すので従来とビット同一
+    // 読む**。fogMode=-1 (Fog コンポーネント無し) なら
+    // FogFactor が厳密に 0 を返すのでフォグ無しの絵とビット同一
     cb.fogParams = { static_cast<float>(view.fogMode), view.fogDensity, view.fogStart,
                      view.fogEnd };
     cb.fogColorBlend = { view.fogColor.x, view.fogColor.y, view.fogColor.z,
@@ -967,7 +948,7 @@ void GpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
     cb.froxelScreen = { static_cast<float>(view.width), static_cast<float>(view.height), 0.0f,
                         0.0f };
     // M61g: emitterWorld / spaceParams がエミッタ毎に変わるため、アップロードはエミッタ
-    // ループ内で毎回行う (共通部は同じ値を書き直すだけ — 描画結果は従来と同一)
+    // ループ内で毎回行う (共通部は同じ値を書き直すだけ — 1 回だけ上げるのと描画結果は同一)
 
     dc->IASetInputLayout(nullptr);
     dc->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
@@ -1086,7 +1067,7 @@ void GpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
         // (0=additive / 1=alpha / 2=歪み) を片方だけ直したときに静かに割れるのを防ぐ
         cb.fogColorBlend.w = ParticleBlendIsAdditive(em.descCache.blendMode) ? 1.0f : 0.0f;
         // M63a: 回転/ストレッチを使うエミッタだけ VS のビルボード変換を通す。判定は
-        // ParticleCurves.h の共有ゲート — CPU バックエンドと同じ 1 本を呼ぶ (M63b で寄せた)。
+        // ParticleCurves.h の共有ゲート — CPU バックエンドと同じ 1 本を呼ぶ (M63b)。
         // ★「回転 0 なら通しても同じ」ではないので、常時 1 にはしないこと (ビット保存の根拠)
         // ★x (通すか) と w (回転を評価するか) を分けているのは、CPU の
         //   `useRotation ? ParticleRotationAt(...) : 0.0f` と**同じ分岐**を GPU にも通すため。
@@ -1103,8 +1084,8 @@ void GpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
         dc->VSSetConstantBuffers(0, 2, cbs);
         dc->PSSetConstantBuffers(0, 2, cbs); // M42b: PS もソフトフェードで b0 を参照
 
-        // M42追補: alpha は並べ替え済みの添字列を t1 へ。中身が違うだけで型も意味も
-        // alive list と同じ StructuredBuffer<uint> なので、VS は 1 行も変わっていない
+        // M42追補: 並べ替え済みなら添字列を t1 へ。中身が違うだけで型も意味も
+        // alive list と同じ StructuredBuffer<uint> なので、VS は同じ読み方で済む
         ID3D11ShaderResourceView* aliveOrSorted =
             em.sortValid ? em.sortIdxSRV.Get() : em.aliveSRV[em.aliveCurrent].Get();
         ID3D11ShaderResourceView* srvs[2] = { em.poolSRV.Get(), aliveOrSorted };

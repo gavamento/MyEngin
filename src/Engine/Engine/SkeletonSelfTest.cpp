@@ -255,12 +255,12 @@ bool RunSkeletonSelfTest()
     // となる。スキニングの頂点式 `v * IB * jointGlobal * entityWorld` と同じ座標系に乗るので、
     // 部位に付けた子は必ずボーンが動かす皮膚と一致する。
     //
-    // ★当初は `IB * jointGlobal * entityWorld == 恒等` を規約と仮定していたが**これは誤り**。
+    // ★`IB * jointGlobal * entityWorld == 恒等` は規約**ではない**。
     //   glTF の inverse-bind は「メッシュノード基準」で書かれており、シーンルート基準ではない
     //   (glTF 仕様の jointMatrix = inverse(meshNodeGlobal) * jointGlobal * IB に対応)。
-    //   実測でも entityWorld を掛けた版は max|dev| = 1.000001 = ちょうど entityWorld ぶん外れ、
-    //   ズレは全ジョイント共通の固定変換だった (spread = 0.000001) ため、余分な因子と判明した。
-    //   FBX は entityWorld が恒等 (P4-5) なので両式が偶然一致し、glTF が差を暴いた。
+    //   entityWorld を掛けた版は max|dev| = 1.000001 = ちょうど entityWorld ぶん外れ、
+    //   ズレは全ジョイント共通の固定変換 (spread = 0.000001) = 余分な因子。
+    //   FBX は entityWorld が恒等 (P4-5) なので両式が偶然一致し、glTF でしか差が出ない。
     {
         float gltfDev = 0.0f;
         for (size_t j = 0; j < gltf.model->joints.size(); ++j) {

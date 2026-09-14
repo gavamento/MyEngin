@@ -11,9 +11,8 @@ namespace TerrainAsset {
 // クック結果 = ハイトマップ (R16) + スプラットマップ (RGBA8) + レイヤ定義。
 // GPU も D3D も要らない純データなので、クック/往復/境界検査は全部 selftest で回せる。
 //
-// **描画専用レーン** — 地形は sim (ワールドハッシュ) に 1 バイトも触らない。
-// ただし M59 の地形コリジョンがこの blob をハッシュレーンへ持ち込む予定なので、
-// **クックはバイト決定論であること**が今から契約になっている
+// 描画 (TerrainSystem) だけでなく sim も読む — M59i の地形コリジョン (TerrainColliderLibrary) が
+// このデータを sim レーン (ワールドハッシュ) で使うので、**クックはバイト決定論であること**が契約
 // (同じソースを 2 回焼いたら payload がビット一致すること。CookedCacheSelfTest が検査する)。
 inline constexpr const wchar_t* kTerrainExt = L".mterr";
 inline constexpr const wchar_t* kSourceSuffix = L".terrain.json";
