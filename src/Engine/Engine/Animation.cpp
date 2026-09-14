@@ -9,6 +9,7 @@
 #include <DirectXMath.h>
 
 #include "Engine/Core/Components.h"
+#include "Engine/Core/HierarchyWalk.h"
 #include "Engine/Core/AssetKeyResolver.h"
 #include "Engine/Core/Hash.h"
 #include "Engine/Core/Log.h"
@@ -37,18 +38,10 @@ std::string NameFromPath(const std::wstring& path)
 // アニメータサブツリーを DFS 順に収集 (index 0 = animator 自身)
 void DfsCollect(World& w, EntityID root, std::vector<EntityID>& out)
 {
-    std::function<void(EntityID)> visit = [&](EntityID e) {
+    ForEachInSubtree(w, root, [&](EntityID e, uint32_t) {
         out.push_back(e);
-        auto* h = w.GetComponent<HierarchyComponent>(e);
-        EntityID c = h ? h->firstChild : kNullEntity;
-        while (!c.IsNull()) {
-            auto* ch = w.GetComponent<HierarchyComponent>(c);
-            const EntityID next = ch ? ch->nextSibling : kNullEntity;
-            visit(c);
-            c = next;
-        }
-    };
-    visit(root);
+        return WalkStep::Continue;
+    });
 }
 
 // timeTicks を speed 分進める (loop で巻き戻し / 非 loop で末尾停止)

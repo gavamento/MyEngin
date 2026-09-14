@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "Engine/Core/Components.h"
+#include "Engine/Core/HierarchyWalk.h"
 #include "Engine/Engine/UI/UILayout.h" // M75a: 旧 UIElement の配置 → RectTransform
 #include "Engine/Core/JsonUtil.h"
 #include "Engine/Core/Log.h"
@@ -292,54 +293,30 @@ int ReadEntityComponents(Scene& scene, uint64_t fileId, EntityID e, const json& 
 }
 
 // DFS 順 (ルート firstRoot → 子は firstChild/nextSibling) で全エンティティと兄弟 index を収集
+void CollectSubtreeOrdered(World& world, EntityID root, uint32_t rootIdx, std::vector<EntityID>& out,
+                           std::vector<uint32_t>& outIdx)
+{
+    ForEachInSubtree(
+        world, root,
+        [&](EntityID e, uint32_t idx) {
+            out.push_back(e);
+            outIdx.push_back(idx);
+            return WalkStep::Continue;
+        },
+        rootIdx);
+}
+
 void CollectHierarchyOrdered(World& world, std::vector<EntityID>& out, std::vector<uint32_t>& outIdx)
 {
-    std::function<void(EntityID, uint32_t)> visit = [&](EntityID e, uint32_t idx) {
-        out.push_back(e);
-        outIdx.push_back(idx);
-        auto* h = world.GetComponent<HierarchyComponent>(e);
-        if (!h) {
-            return;
-        }
-        EntityID c = h->firstChild;
-        uint32_t ci = 0;
-        while (!c.IsNull()) {
-            auto* ch = world.GetComponent<HierarchyComponent>(c);
-            const EntityID next = ch ? ch->nextSibling : kNullEntity;
-            visit(c, ci++);
-            c = next;
-        }
-    };
+    // ルートも子と同じく兄弟リスト (FirstRoot → nextSibling) で並んでいる
     EntityID r = world.FirstRoot();
     uint32_t ri = 0;
     while (!r.IsNull()) {
         auto* rh = world.GetComponent<HierarchyComponent>(r);
         const EntityID next = rh ? rh->nextSibling : kNullEntity;
-        visit(r, ri++);
+        CollectSubtreeOrdered(world, r, ri++, out, outIdx);
         r = next;
     }
-}
-
-void CollectSubtreeOrdered(World& world, EntityID root, uint32_t rootIdx, std::vector<EntityID>& out,
-                           std::vector<uint32_t>& outIdx)
-{
-    std::function<void(EntityID, uint32_t)> visit = [&](EntityID e, uint32_t idx) {
-        out.push_back(e);
-        outIdx.push_back(idx);
-        auto* h = world.GetComponent<HierarchyComponent>(e);
-        if (!h) {
-            return;
-        }
-        EntityID c = h->firstChild;
-        uint32_t ci = 0;
-        while (!c.IsNull()) {
-            auto* ch = world.GetComponent<HierarchyComponent>(c);
-            const EntityID next = ch ? ch->nextSibling : kNullEntity;
-            visit(c, ci++);
-            c = next;
-        }
-    };
-    visit(root, rootIdx);
 }
 
 } // namespace

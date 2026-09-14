@@ -14,6 +14,7 @@
 
 #include "Engine/Core/ComponentRegistry.h"
 #include "Engine/Core/Components.h"
+#include "Engine/Core/HierarchyWalk.h"
 #include "Engine/Core/Hash.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Engine/Animation.h"
@@ -366,25 +367,13 @@ void BuildPartsShowcaseScene(EngineContext& ctx)
     World& w = s.GetWorld();
     w.ApplyStructuralChanges();
     EntityID skinned = kNullEntity;
-    {
-        std::function<void(EntityID)> visit = [&](EntityID e) {
-            if (!skinned.IsNull()) {
-                return;
-            }
-            if (w.GetComponent<SkinnedMeshComponent>(e)) {
-                skinned = e;
-                return;
-            }
-            auto* h = w.GetComponent<HierarchyComponent>(e);
-            for (EntityID c = h ? h->firstChild : kNullEntity; !c.IsNull();) {
-                auto* ch = w.GetComponent<HierarchyComponent>(c);
-                const EntityID next = ch ? ch->nextSibling : kNullEntity;
-                visit(c);
-                c = next;
-            }
-        };
-        visit(actor.Id());
-    }
+    ForEachInSubtree(w, actor.Id(), [&](EntityID e, uint32_t) {
+        if (w.GetComponent<SkinnedMeshComponent>(e)) {
+            skinned = e;
+            return WalkStep::Stop;
+        }
+        return WalkStep::Continue;
+    });
     if (skinned.IsNull()) {
         MYE_LOG_ERROR("[parts] no SkinnedMesh in CesiumMan.glb — showcase scene is incomplete");
         return;
@@ -2005,27 +1994,14 @@ void BuildJointShowcaseScene(EngineContext& ctx)
             w.ApplyStructuralChanges();
             EntityID meshEntity = kNullEntity;
             AssetID meshId{};
-            std::function<void(EntityID)> visit = [&](EntityID e) {
-                if (!meshEntity.IsNull()) {
-                    return;
-                }
+            ForEachInSubtree(w, model.Id(), [&](EntityID e, uint32_t) {
                 if (auto* mr = w.GetComponent<MeshRendererComponent>(e)) {
                     meshEntity = e;
                     meshId = mr->mesh;
-                    return;
+                    return WalkStep::Stop;
                 }
-                auto* h = w.GetComponent<HierarchyComponent>(e);
-                for (EntityID c = h ? h->firstChild : kNullEntity;;) {
-                    if (c.IsNull()) {
-                        break;
-                    }
-                    auto* ch = w.GetComponent<HierarchyComponent>(c);
-                    const EntityID next = ch ? ch->nextSibling : kNullEntity;
-                    visit(c);
-                    c = next;
-                }
-            };
-            visit(model.Id());
+                return WalkStep::Continue;
+            });
             if (!meshEntity.IsNull() && !meshId.IsNull()) {
                 model.SetLocalPosition(16.6f, 5.6f, 0.2f);
                 GameObject body(&w, meshEntity);
@@ -2056,26 +2032,13 @@ void BuildJointShowcaseScene(EngineContext& ctx)
             actor.SetLocalRotationEuler(0.0f, 0.0f, 25.0f); // 傾けて置く = 落ちて転ぶ
             w.ApplyStructuralChanges();
             EntityID skinned = kNullEntity;
-            std::function<void(EntityID)> visit = [&](EntityID e) {
-                if (!skinned.IsNull()) {
-                    return;
-                }
+            ForEachInSubtree(w, actor.Id(), [&](EntityID e, uint32_t) {
                 if (w.GetComponent<SkinnedMeshComponent>(e)) {
                     skinned = e;
-                    return;
+                    return WalkStep::Stop;
                 }
-                auto* h = w.GetComponent<HierarchyComponent>(e);
-                for (EntityID c = h ? h->firstChild : kNullEntity;;) {
-                    if (c.IsNull()) {
-                        break;
-                    }
-                    auto* ch = w.GetComponent<HierarchyComponent>(c);
-                    const EntityID next = ch ? ch->nextSibling : kNullEntity;
-                    visit(c);
-                    c = next;
-                }
-            };
-            visit(actor.Id());
+                return WalkStep::Continue;
+            });
             const SkinnedMeshComponent* sm =
                 skinned.IsNull() ? nullptr : w.GetComponent<SkinnedMeshComponent>(skinned);
             const SkinnedModel* model = sm ? res.skinnedModels.Get(sm->model) : nullptr;

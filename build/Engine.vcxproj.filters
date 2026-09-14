@@ -672,6 +672,9 @@
     <ClInclude Include="..\src\Engine\Core\Hash.h">
       <Filter>Core</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Core\HierarchyWalk.h">
+      <Filter>Core</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Core\ImportMetaResolver.h">
       <Filter>Core</Filter>
     </ClInclude>

@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "Engine/Core/Components.h"
+#include "Engine/Core/HierarchyWalk.h"
 #include "Engine/Core/World.h"
 
 namespace mye {
@@ -14,23 +15,15 @@ namespace {
 void SetSubtreeEmission(World& world, EntityID root, bool on)
 {
     const int32_t v = on ? 1 : 0;
-    std::function<void(EntityID)> visit = [&](EntityID e) {
+    ForEachInSubtree(world, root, [&](EntityID e, uint32_t) {
         if (auto* em = world.GetComponent<ParticleEmitterComponent>(e)) {
             em->playing = v;
         }
         if (auto* tr = world.GetComponent<TrailRendererComponent>(e)) {
             tr->emitting = v;
         }
-        auto* h = world.GetComponent<HierarchyComponent>(e);
-        EntityID c = h ? h->firstChild : kNullEntity;
-        while (!c.IsNull()) {
-            auto* ch = world.GetComponent<HierarchyComponent>(c);
-            const EntityID next = ch ? ch->nextSibling : kNullEntity;
-            visit(c);
-            c = next;
-        }
-    };
-    visit(root);
+        return WalkStep::Continue;
+    });
 }
 
 // root サブツリーの Animator を先頭へ巻き戻して再開する (ループ再生 / RestartEffect 用)。
@@ -40,21 +33,13 @@ void SetSubtreeEmission(World& world, EntityID root, bool on)
 // SetSubtreeEmission と同じ規約 (「頭から再生し直す」= サブツリー全体を再生状態へ)。
 void RestartSubtreeAnimators(World& world, EntityID root)
 {
-    std::function<void(EntityID)> visit = [&](EntityID e) {
+    ForEachInSubtree(world, root, [&](EntityID e, uint32_t) {
         if (auto* an = world.GetComponent<AnimatorComponent>(e)) {
             an->timeTicks = 0;
             an->playing = 1;
         }
-        auto* h = world.GetComponent<HierarchyComponent>(e);
-        EntityID c = h ? h->firstChild : kNullEntity;
-        while (!c.IsNull()) {
-            auto* ch = world.GetComponent<HierarchyComponent>(c);
-            const EntityID next = ch ? ch->nextSibling : kNullEntity;
-            visit(c);
-            c = next;
-        }
-    };
-    visit(root);
+        return WalkStep::Continue;
+    });
 }
 
 } // namespace

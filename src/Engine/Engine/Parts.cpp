@@ -6,6 +6,7 @@
 #include <functional>
 
 #include "Engine/Core/Components.h"
+#include "Engine/Core/HierarchyWalk.h"
 #include "Engine/Core/World.h"
 
 namespace mye::Parts {
@@ -50,21 +51,12 @@ void FindPartsByTag(World& world, EntityID root, uint64_t tag, std::vector<Entit
         return;
     }
     // 入れ子インスタンスの境界は見ない (フラット走査) — Parts.h の設計判断
-    std::function<void(EntityID)> visit = [&](EntityID e) {
+    ForEachInSubtree(world, root, [&](EntityID e, uint32_t) {
         if (auto* p = world.GetComponent<PartComponent>(e); p && p->tag == tag) {
             out.push_back(e);
         }
-        auto* h = world.GetComponent<HierarchyComponent>(e);
-        EntityID c = h ? h->firstChild : kNullEntity;
-        while (!c.IsNull()) {
-            // 次を先に控える (訪問中に破棄されても走査が飛ばない家風)
-            auto* ch = world.GetComponent<HierarchyComponent>(c);
-            const EntityID next = ch ? ch->nextSibling : kNullEntity;
-            visit(c);
-            c = next;
-        }
-    };
-    visit(root);
+        return WalkStep::Continue;
+    });
 }
 
 EntityID ResolvePartSource(World& world, EntityID part, EntityID explicitSource)

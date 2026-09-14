@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "Engine/Core/Components.h"
+#include "Engine/Core/HierarchyWalk.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Core/World.h"
 #include "Engine/Engine/TransformSystem.h"
@@ -156,6 +157,57 @@ void TestHierarchyAndSubtreeDestroy()
     TEST_CHECK(w.GetParent(ch) == p2);
     TEST_CHECK(w.GetComponent<HierarchyComponent>(p1)->firstChild.IsNull());
     TEST_CHECK(w.GetComponent<HierarchyComponent>(p2)->firstChild == ch);
+}
+
+// ForEachInSubtree (HierarchyWalk.h) の訪問順と打ち切り。プレハブの Apply / シーン保存の兄弟順 /
+// アニメータのボーン番号がこの順序に乗っているので、12 か所の手書き DFS を置き換えた時点で固定する
+void TestForEachInSubtree()
+{
+    MYE_LOG_INFO("[selftest] ForEachInSubtree (pre-order / sibling index / skip / stop)");
+    World w;
+    const EntityID r = w.CreateEntity("R");
+    const EntityID a = w.CreateEntity("A");
+    const EntityID a1 = w.CreateEntity("A1");
+    const EntityID a2 = w.CreateEntity("A2");
+    const EntityID b = w.CreateEntity("B");
+    const EntityID b1 = w.CreateEntity("B1");
+    const EntityID c = w.CreateEntity("C");
+    w.SetParent(a, r);
+    w.SetParent(a1, a);
+    w.SetParent(a2, a);
+    w.SetParent(b, r);
+    w.SetParent(b1, b);
+    w.SetParent(c, r);
+    w.ApplyStructuralChanges(); // 適用順 = 兄弟順
+
+    std::vector<EntityID> order;
+    std::vector<uint32_t> index;
+    const WalkStep all = ForEachInSubtree(
+        w, r,
+        [&](EntityID e, uint32_t i) {
+            order.push_back(e);
+            index.push_back(i);
+            return WalkStep::Continue;
+        },
+        5);
+    TEST_CHECK(all == WalkStep::Continue);
+    TEST_CHECK((order == std::vector<EntityID>{ r, a, a1, a2, b, b1, c })); // 前順
+    TEST_CHECK((index == std::vector<uint32_t>{ 5, 0, 0, 1, 1, 0, 2 }));   // root は渡した番号
+
+    order.clear();
+    ForEachInSubtree(w, r, [&](EntityID e, uint32_t) {
+        order.push_back(e);
+        return (e == a) ? WalkStep::SkipChildren : WalkStep::Continue;
+    });
+    TEST_CHECK((order == std::vector<EntityID>{ r, a, b, b1, c })); // A の子だけ飛ばし、兄弟へは進む
+
+    order.clear();
+    const WalkStep stopped = ForEachInSubtree(w, r, [&](EntityID e, uint32_t) {
+        order.push_back(e);
+        return (e == a2) ? WalkStep::Stop : WalkStep::Continue;
+    });
+    TEST_CHECK(stopped == WalkStep::Stop);
+    TEST_CHECK((order == std::vector<EntityID>{ r, a, a1, a2 })); // 入れ子の奥の Stop が外まで伝わる
 }
 
 void TestDeterministicRng()
@@ -357,6 +409,7 @@ bool RunEcsSelfTest()
     TestArchetypeMovePreservesData();
     TestDeferredCommandsDuringIteration();
     TestHierarchyAndSubtreeDestroy();
+    TestForEachInSubtree();
     TestDeterministicRng();
     TestQueryCacheTransparency();
     TestFindTypeIndexMatchesLinear();

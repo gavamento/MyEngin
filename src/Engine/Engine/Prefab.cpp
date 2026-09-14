@@ -9,6 +9,7 @@
 
 #include "Engine/Core/ComponentRegistry.h"
 #include "Engine/Core/Components.h"
+#include "Engine/Core/HierarchyWalk.h"
 #include "Engine/Core/AssetKeyResolver.h"
 #include "Engine/Core/Hash.h"
 #include "Engine/Core/JsonUtil.h"
@@ -164,27 +165,19 @@ uint64_t FidOf(World& w, EntityID e)
 void SplitLevels(World& w, EntityID root, std::unordered_set<uint64_t>& ownLevel,
                  std::unordered_set<uint64_t>& innerRoots)
 {
-    std::function<void(EntityID, bool)> visit = [&](EntityID e, bool isRoot) {
+    ForEachInSubtree(w, root, [&](EntityID e, uint32_t) {
         const uint64_t fid = FidOf(w, e);
-        if (!isRoot && w.GetComponent<PrefabInstanceComponent>(e)) {
+        if (e != root && w.GetComponent<PrefabInstanceComponent>(e)) {
             if (fid != 0) {
                 innerRoots.insert(fid);
             }
-            return; // 入れ子の境界 — ここから下は内側インスタンスの持ち物
+            return WalkStep::SkipChildren; // 入れ子の境界 — ここから下は内側インスタンスの持ち物
         }
         if (fid != 0) {
             ownLevel.insert(fid);
         }
-        auto* h = w.GetComponent<HierarchyComponent>(e);
-        EntityID c = h ? h->firstChild : kNullEntity;
-        while (!c.IsNull()) {
-            auto* ch = w.GetComponent<HierarchyComponent>(c);
-            const EntityID next = ch ? ch->nextSibling : kNullEntity;
-            visit(c, false);
-            c = next;
-        }
-    };
-    visit(root, true);
+        return WalkStep::Continue;
+    });
 }
 
 // 抽出したエンティティ item のプレハブタグをベース用に整える (M48c)。
@@ -460,26 +453,18 @@ EntityID FindInstanceRoot(World& world, EntityID e)
 void CollectInstanceMembers(World& world, EntityID root, std::vector<EntityID>& out,
                             std::vector<EntityID>* innerRoots)
 {
-    std::function<void(EntityID, bool)> visit = [&](EntityID e, bool isRoot) {
-        if (!isRoot && world.GetComponent<PrefabInstanceComponent>(e)) {
+    ForEachInSubtree(world, root, [&](EntityID e, uint32_t) {
+        if (e != root && world.GetComponent<PrefabInstanceComponent>(e)) {
             if (innerRoots) {
                 innerRoots->push_back(e); // 入れ子の境界 — 内側は外側のメンバではない
             }
-            return;
+            return WalkStep::SkipChildren;
         }
         if (world.GetComponent<PrefabLinkComponent>(e)) {
             out.push_back(e);
         }
-        auto* h = world.GetComponent<HierarchyComponent>(e);
-        EntityID c = h ? h->firstChild : kNullEntity;
-        while (!c.IsNull()) {
-            auto* ch = world.GetComponent<HierarchyComponent>(c);
-            const EntityID next = ch ? ch->nextSibling : kNullEntity;
-            visit(c, false);
-            c = next;
-        }
-    };
-    visit(root, true);
+        return WalkStep::Continue;
+    });
 }
 
 bool UnpackInstance(Scene& scene, uint64_t rootFileId)
@@ -1343,19 +1328,11 @@ void RecordOverrides(Scene& scene, const PrefabLibrary& lib, EntityID e)
 void RecordOverridesSubtree(Scene& scene, const PrefabLibrary& lib, EntityID root)
 {
     World& w = scene.GetWorld();
-    std::function<void(EntityID)> visit = [&](EntityID e) {
-        RecordOverrides(scene, lib, e);
-        auto* h = w.GetComponent<HierarchyComponent>(e);
-        EntityID c = h ? h->firstChild : kNullEntity;
-        while (!c.IsNull()) {
-            auto* ch = w.GetComponent<HierarchyComponent>(c);
-            const EntityID next = ch ? ch->nextSibling : kNullEntity;
-            visit(c);
-            c = next;
-        }
-    };
     if (w.IsAlive(root)) {
-        visit(root);
+        ForEachInSubtree(w, root, [&](EntityID e, uint32_t) {
+            RecordOverrides(scene, lib, e);
+            return WalkStep::Continue;
+        });
     }
 }
 
