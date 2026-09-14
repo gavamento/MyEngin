@@ -393,19 +393,21 @@ uint64_t HashUiInteraction(uint64_t h, const UIInteractionState* ui, DumpCtx* d)
     if (ui == nullptr) {
         return h;
     }
-    const auto foldEntity = [&h, d](const char* field, EntityID e) {
-        FoldU64(h, d, "UIInteraction", field, e.index);
-        h = HashCombine(h, e.generation); // ★ダンプに行が無い (index の行だけ出ている)
+    // EntityID は index と generation の 2 行。★generation の行が無いと、同じ index を再利用した
+    // 別エンティティへの付け替えが、ハッシュでは割れるのに --hash-diff では「値の差 0 件」に見える
+    const auto foldEntity = [&h, d](const char* indexField, const char* generationField, EntityID e) {
+        FoldU64(h, d, "UIInteraction", indexField, e.index);
+        FoldU64(h, d, "UIInteraction", generationField, e.generation);
     };
-    foldEntity("hovered", ui->hovered);
-    foldEntity("pressed", ui->pressed);
-    foldEntity("clicked", ui->clicked);
-    foldEntity("focused", ui->focused);
+    foldEntity("hovered", "hovered.generation", ui->hovered);
+    foldEntity("pressed", "pressed.generation", ui->pressed);
+    foldEntity("clicked", "clicked.generation", ui->clicked);
+    foldEntity("focused", "focused.generation", ui->focused);
     FoldU64(h, d, "UIInteraction", "adoptedAuthored", ui->adoptedAuthored);
     // M75b: ウィジェットのための状態。float は生バイトで畳む (HashCpuParticles の emitAccum と同じ) —
     // ドラッグ量の基準がずれると M75f 以降の Slider / ScrollRect の値が割れるが、それより前に
     // ここで割れてくれれば --hash-diff が「どの欄か」まで名指しできる
-    foldEntity("changed", ui->changed);
+    foldEntity("changed", "changed.generation", ui->changed);
     FoldBytes(h, d, "UIInteraction", "pressSurfX", &ui->pressSurfX, sizeof(float));
     FoldBytes(h, d, "UIInteraction", "pressSurfY", &ui->pressSurfY, sizeof(float));
     FoldBytes(h, d, "UIInteraction", "prevSurfX", &ui->prevSurfX, sizeof(float));

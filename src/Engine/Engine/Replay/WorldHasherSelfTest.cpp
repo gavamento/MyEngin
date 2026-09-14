@@ -116,6 +116,17 @@ bool RunWorldHasherSelfTest()
               "the dragging latch is part of the hash");
         ui.dragging = 0;
 
+        // EntityID の generation も 1 行として出る。以前はハッシュにだけ畳まれてダンプに行が無く、
+        // generation だけの差は「total は違うのに値の差 0 件」と報告されていた
+        ++ui.hovered.generation;
+        HashDump regen;
+        HashWorldDump(w, uiRefs, 42, regen);
+        const auto dGen = DiffHashDumps(before, regen);
+        check(dGen.totalDiffers && dGen.valueDiffs == 1
+                  && dGen.firstFoldLine == FindLine(before, "\tUIInteraction\thovered.generation\t", "\t"),
+              "a generation-only change of an interaction entity is one named row (hovered.generation)");
+        --ui.hovered.generation;
+
         HashDump again;
         HashWorldDump(w, uiRefs, 42, again);
         check(DiffHashDumps(before, again).Same(), "restoring the UI fields makes the diff clean");
