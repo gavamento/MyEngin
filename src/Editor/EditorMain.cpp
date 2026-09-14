@@ -253,7 +253,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     }
 
     // 自動化 (CI/検証) 起動かどうか。既存の CI/検証コマンド列 (--frames / --screenshot /
-    // --scene / --replay-* 等) は従来のレガシー動作 (リポジトリ assets) を維持する
+    // --scene / --replay-* 等) はレガシー動作 (リポジトリ assets) のまま
     const bool automation = config.maxFrames > 0 || !config.screenshotPath.empty()
                             || !config.replayRecordPath.empty() || !config.replayVerifyPath.empty()
                             || !sceneOverride.empty() || autoPlay || saveSceneOnStart

@@ -31,12 +31,10 @@ public:
 
     // ---- M66d: 書き込み系 git 操作のゲート ----
     // ★`StartGameLogicBuild` の呼び出し元は 2 経路ある: **この窓の Stage::Scripts** と、
-    //   Asset Browser の [Rebuild Scripts] を受ける `EditorApp::PollScriptBuild`
-    //   (2026-09-04 に全文検索で再確認)。後者は M66e で「可視 cmd 窓へ投げっぱなし =
-    //   プロセスハンドルが誰の手にも残らない」旧経路を廃してこの 1 本へ寄せたもので、
-    //   EditorApp が握ったハンドルを `GateInputs` の `scriptBuildRunning` に
-    //   OR している (EditorApp.cpp の BuildGateInputs)。
-    //   **ゲートから観測できないビルド経路はもう無い**
+    //   Asset Browser の [Rebuild Scripts] を受ける EditorApp (起動は OnImGui、
+    //   回収は `PollScriptBuild`)。EditorApp が握ったハンドルを `GateInputs` の
+    //   `scriptBuildRunning` に OR している (EditorApp.cpp の BuildGateInputs)。
+    //   **ゲートから観測できないビルド経路は無い**
     // 段階パイプライン全体が進行中か (dist\ を書き換えている間 = git を通さない)
     bool IsPipelineRunning() const { return stage_ != Stage::Idle && stage_ != Stage::Done; }
     // GameLogic のビルドが走っている段 (bin\ と cache\ を書き換える)
@@ -57,7 +55,7 @@ private:
     void AdvancePipeline(EngineContext& ctx);
     void FinishStage(StrId name, bool ok, bool skipped, std::string detail);
     bool StageCookWarm(EngineContext& ctx, std::string& detail);
-    bool StageCopy(EngineContext& ctx, std::string& detail); // 旧 DoPackage + cooked 同梱
+    bool StageCopy(EngineContext& ctx, std::string& detail); // exe / assets 等のコピー + cooked 同梱
     bool StageDds(EngineContext& ctx, std::string& detail);
 
     char outputDir_[512] = {};

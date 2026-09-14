@@ -22,8 +22,8 @@ void ParticleSettingsWindow::OnImGui(EngineContext& ctx, EditorSettings& setting
     // ---- バックエンド選択 (spec 7.4: ラジオボタン) ----
     // ★M66h: ここでの切替は**このセッションだけ**。プロジェクト既定 (project_settings.json の
     //   particleBackend) にしたいときは Project Settings 窓の「プロジェクト既定にする」を押す。
-    //   触った瞬間に共有ファイルへ書いていた頃は、GPU の絵を 1 度見ただけで
-    //   チーム全員のバックエンドが変わる差分が commit 待ちになっていた
+    //   触った瞬間に共有ファイルへ書くと、GPU の絵を 1 度見ただけで
+    //   チーム全員のバックエンドが変わる差分が commit 待ちになる
     ImGui::TextUnformatted(Tr(StrId::Particle_Backend));
     int kind = static_cast<int>(ps.ActiveKind());
     bool changed = false;

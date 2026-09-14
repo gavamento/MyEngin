@@ -100,8 +100,7 @@ const char* IconFor(const std::wstring& ext)
 }
 
 // 構成アセット (.actor.json / .prefab.json) をシーンのルートへ配置する。
-// M48k でダブルクリックが「編集モードで開く」に変わったため、右クリックメニューの
-// 「シーンに配置」から呼ぶ経路として切り出した (挙動は M48b 以降と同一)
+// 右クリックメニューの「シーンに配置」から呼ぶ (ダブルクリックは編集モードで開く、M48k)
 void InstantiateComposeAsset(EngineContext& ctx, Selection& selection, UndoStack& undo,
                              const std::wstring& path)
 {
@@ -332,7 +331,7 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
         // ★ここで直接 ShellExecuteW しない (M66e)。fire-and-forget で起動すると
         //   プロセスハンドルが誰の手にも残らず、**走っている間ゲートが閉じない** =
         //   ビルドが bin\ と cache\ を書いている最中に checkout / pull が通る。
-        //   EditorApp がハンドルを持って毎フレーム見る形へ寄せる
+        //   ハンドルは EditorApp が持って毎フレーム見る
         rebuildScriptsRequest_ = true;
     }
     if (ImGui::IsItemHovered()) {
@@ -570,7 +569,7 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
         }
         // タイル本体は **必ず ID を持つアイテム (Button)** にする。ImGui::Image は ID を持たず、
         // 直後の BeginDragDropSource が「ID なしアイテム」経路 (IM_ASSERT → false) に落ちるため、
-        // サムネイルが生成されたアセット (fbx/glb/prefab/画像) だけドラッグで掴めなくなっていた。
+        // サムネイルが生成されたアセット (fbx/glb/prefab/画像) だけドラッグで掴めなくなる。
         // フォルダタイルと同じ流儀: 透明ボタンをアイテムにして絵は drawlist で重ねる
         ImGui::PushStyleColor(ImGuiCol_Button, thumb ? ImVec4(0, 0, 0, 0)
                                                      : ImGui::GetStyleColorVec4(ImGuiCol_Button));
@@ -619,8 +618,8 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
                 pendingDeletePath_ = path;
                 requestDeleteModal_ = true;
             }
-            // M48k でダブルクリックが「編集モードで開く」に変わったので、旧来の
-            // 「シーンへ配置」はここに残す (D&D 配置も従来どおり使える)
+            // ダブルクリックは「編集モードで開く」(M48k) なので、「シーンへ配置」は
+            // ここに置く (D&D でも配置できる)
             if (isCompose) {
                 if (ImGui::MenuItem(Tr(StrId::Asset_InstantiateItem))) {
                     InstantiateComposeAsset(ctx, selection, undo, path);

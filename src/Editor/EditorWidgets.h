@@ -14,8 +14,8 @@ namespace mye {
 // (地形ブラシ・カメラ操縦のような「別モードに入る」トグル)。tooltip は null 可
 bool ToolbarToggle(const char* label, bool on, const char* tooltip = nullptr, bool mode = false);
 
-// フレーム高に揃えた縦の区切り線。テキスト "|" をベースライン描画する旧方式は
-// ボタンと縦位置が揃わないので禁止 (これを使う)
+// フレーム高に揃えた縦の区切り線。テキスト "|" をベースライン描画すると
+// ボタンと縦位置が揃わないので、区切りは必ずこれを使う
 void ToolbarSeparator();
 
 // ビューポート上に浮くオーバーレイバー (SceneView ツールバー / 操縦バナー)。

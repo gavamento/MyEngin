@@ -1,4 +1,4 @@
-// SceneView の分岐ゴースト (M72e)。SceneViewWindow.cpp が 1600 行を超えているので分けた。
+// SceneView の分岐ゴースト (M72e)。SceneViewWindow.cpp とは別ファイルに置く。
 //
 // 分岐 (= いまライブではないレーン) の未来を、GhostTrack の tick ごとのワールド行列から
 // **同じ tick の**半透明メッシュ (M72i、GhostMeshPass) として重ね描く。メッシュが引けない物は

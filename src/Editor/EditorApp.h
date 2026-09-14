@@ -51,7 +51,7 @@ public:
     void OnImGui(EngineContext& ctx) override;
     // M56f: 焼いたプローブ束を**デバイスより先に**解放する。ComPtr のデストラクタ任せに
     // すると EditorApp の破棄 (= device.Shutdown の後) まで生き残る。
-    // ★同じ問題は preview_ (AssetPreviewCache) にもあるが、そちらは M56f の範囲外
+    // ★同じ問題は preview_ (AssetPreviewCache) にもあるが、そちらはここで解放していない
     void OnShutdown(EngineContext& ctx) override;
     // Game ビューの画像だけがゲームの画面 (2026-09-14。範囲外のクリックはゲームに渡さない)
     bool GameMouseArea(InputRect& out) override;
@@ -133,7 +133,7 @@ private:
         bool actorFormat = true; // 読み込んだ宣言キーを維持する (.prefab.json を勝手に移行しない)
         // ---- 外側 (通常シーン) の編集状態の退避 ----
         // ★編集中は selection_ / undo_ / savedStateSerial_ の**中身をアセット側に入れ替える**。
-        //   こうすると EditorApp 内に 49 箇所ある selection_/undo_ 参照を 1 つも書き換えずに
+        //   こうすると EditorApp 内の selection_/undo_ 参照を 1 つも書き換えずに
         //   「今開いている文書」を丸ごと切り替えられる (ショートカット・複製・削除・
         //   ダーティ判定・タイトルバーが全部そのまま効く)
         Selection outerSelection;
@@ -168,7 +168,7 @@ private:
     // M66d: working tree を書き換える git 操作の唯一の入口 (ゲート + 一括適用 + モーダル)
     GitTransaction gitTx_;
     // M66e: Asset Browser の [Rebuild Scripts] で起動した子プロセス (void* = HANDLE)。
-    // ★ここで**持ち続ける**ことがゲートの成立条件そのもの。fire-and-forget に戻すと
+    // ★ここで**持ち続ける**ことがゲートの成立条件そのもの。fire-and-forget にすると
     //   ビルド中に checkout が通る (bin\ と cache\ を書いている最中に入れ替わる)
     void* scriptBuildProc_ = nullptr;
     std::wstring scriptBuildLog_;

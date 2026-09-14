@@ -56,7 +56,7 @@ bool ExecuteAssetFileOp(EngineContext* ctx, const UndoFileOp& op, bool redo);
 class UndoStack {
 public:
     // プレハブ override リストの記録に使うライブラリ (M48e)。EditorApp が起動時に一度設定する。
-    // **未設定なら override の記録だけを飛ばす** — Undo 自体は従来どおり動く
+    // **未設定なら override の記録だけを飛ばす** — Undo 自体は動く
     void SetPrefabLibrary(const PrefabLibrary* lib) { prefabs_ = lib; }
 
     // ファイル操作エントリの実行に使うコンテキスト (assetDb テーブル更新、M51i)。
@@ -82,11 +82,8 @@ public:
     // 追加したコンポーネントが After に写らず、Undo しても何も戻らないエントリになる
     enum class StructuralChanges { None, Apply };
 
-    // **1 フレームで終わる編集**を 1 エントリとして積む:
-    //   BeginRecord → fids を CaptureBefore → edit() → (Apply なら ApplyStructuralChanges)
-    //   → fids を CaptureAfter → EndRecord。選択は前後とも selection をそのまま使う。
-    // ★ドラッグやリネームのように複数フレームに跨ぐ操作と、Before / After の対象が違う操作
-    //   (生成・破棄・複製) は、従来どおり Begin / Capture / End を手で書く
+    // 1 フレームで終わり、Before と After が同じ fids の編集を 1 エントリにする。
+    // ★複数フレームに跨ぐ操作や、生成・破棄・複製は Begin / Capture / End を手で書く
     template <typename Edit>
     void Record(const char* label, Scene& scene, const Selection& selection, std::span<const uint64_t> fids,
                 StructuralChanges structural, Edit&& edit)

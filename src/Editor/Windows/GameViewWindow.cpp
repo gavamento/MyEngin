@@ -46,7 +46,7 @@ void GameViewWindow::OnRenderViews(EngineContext& ctx)
     uiWc_.alpha = ctx.renderSystem->interpAlpha;
     // M21: ゲーム内 UI を GameView RT に重ねる。
     // ★M70c: ハイライトはエンジンが確定した対話状態そのもの。編集中 (非 Play) は
-    //   tick が回らないので状態は既定 (全部 null) = 従来どおりハイライト無し
+    //   tick が回らないので状態は既定 (全部 null) = ハイライト無し
     if (ctx.uiRenderer) {
         ctx.uiRenderer->Render(ctx.scene->GetWorld(), *ctx.device, *ctx.shaders, *ctx.resources,
                                target.rtv, target.width, target.height, &ctx.scene->UI(),

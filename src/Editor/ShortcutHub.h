@@ -4,7 +4,7 @@
 namespace mye {
 
 // エディタのキーボードショートカット集約 (M8)。
-// 現状は既定割り当て固定。M10 でリバインド (editor_settings 経由) に拡張する。
+// 割り当ては既定で固定 (リバインドは無い)。
 // enum の順序と下の配列の順序は一致させること。
 enum class Shortcut {
     Save,

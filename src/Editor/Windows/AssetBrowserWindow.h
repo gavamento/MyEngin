@@ -17,14 +17,16 @@ const char* AssetTileLabel(const std::wstring& path);
 
 // Asset Browser (engine_spec.md 9 章、M11)。
 // assets/ をフォルダツリー + ファイルグリッドで表示。テクスチャはサムネイル、
-// 他は拡張子アイコン。ダブルクリックで OS 既定アプリで開く。
-// .prefab.json はダブルクリックでシーンへインスタンス化 (M13)。
-// .scene.json はダブルクリックでシーンを開く (EditorApp が dirty ガード経由でロード)。
+// 他は拡張子アイコン。ダブルクリックは種類ごと:
+//   構成アセット (.actor.json / .prefab.json) はミニシーン編集 (M48k)、
+//   .mat / .anim / .sound は選択エンティティへ割り当て、.mixer は Audio Mixer を開く、
+//   .wav / .ogg は試聴、.scene.json は開く (EditorApp が dirty ガード経由でロード)、
+//   それ以外は OS 既定アプリで開く。
 class AssetBrowserWindow {
 public:
     bool open = true; // 閉じる / 再表示 (タブ [x] と Window メニューに連動)
     // scm は Git バッジの引き先 (M66i)。**null 可** — 裸起動 / Collab 利用不可でも
-    // Content Browser は従来どおり動く。窓の開閉とは無関係に status は最新なので、
+    // Content Browser はバッジ無しで動く。窓の開閉とは無関係に status は最新なので、
     // Source Control 窓を閉じていてもバッジは出る
     void OnImGui(EngineContext& ctx, Selection& selection, UndoStack& undo,
                  const std::string& externalEditorCmd, AssetPreviewCache& preview,

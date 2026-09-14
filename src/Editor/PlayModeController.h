@@ -24,7 +24,7 @@ public:
     // OnStart の時点では ctx.timeTravel が無い)。束ねると Pause = Hold (tick 番号も止める) /
     // Resume = EndScrub / Step = RequestStep(1) になり、一時停止の入口 (ツールバー・Timeline・
     // 巻き戻し) 7 か所すべてが同じ規則を通る。リングが無効 (記録 / 検証 / ネット中) のときは
-    // Hold が no-op なので従来どおり sim だけ止まる = 「記録中は .rep がタイムラインの役」
+    // Hold が no-op なので sim だけ止まる = 「記録中は .rep がタイムラインの役」
     void BindTimeTravel(TimeTravel* tt) { tt_ = tt; }
     void TogglePause(); // Pause / Resume へ委譲
     // M52e: 状態を明示して指定する版 (タイムラインのスクラブが使う)。
@@ -48,7 +48,7 @@ private:
     TimeControl timeSnapshot_;
     PersistStore persistSnapshot_;
     bool stepPending_ = false;
-    TimeTravel* tt_ = nullptr; // M73a: 非所有。null なら従来の Pause (sim だけ止める)
+    TimeTravel* tt_ = nullptr; // M73a: 非所有。null なら Pause は sim だけ止める
 };
 
 } // namespace mye

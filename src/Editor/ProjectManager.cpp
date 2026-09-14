@@ -458,7 +458,7 @@ bool RelaunchSelfWithProject(const std::wstring& projectRoot)
     wchar_t exePath[MAX_PATH] = {};
     GetModuleFileNameW(nullptr, exePath, MAX_PATH);
     const std::wstring args = L"--project \"" + projectRoot + L"\"";
-    // AssetOps::RebuildGameLogic と同じ ShellExecuteW パターン (引数 + 作業ディレクトリ)
+    // ShellExecuteW で自分自身を起動し直す (引数 + 作業ディレクトリ = プロジェクト)
     const HINSTANCE r =
         ShellExecuteW(nullptr, L"open", exePath, args.c_str(), projectRoot.c_str(), SW_SHOWNORMAL);
     const bool ok = reinterpret_cast<intptr_t>(r) > 32;

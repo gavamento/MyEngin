@@ -212,9 +212,9 @@ void SceneViewWindow::OnRenderViews(EngineContext& ctx, Selection& selection)
                                  static_cast<float>(rt_.Height()) * 0.02f, kNearZ, kFarZ)
         : XMMatrixPerspectiveFovLH(XMConvertToRadians(kEditorFovDeg), aspect, kNearZ, kFarZ);
     XMStoreFloat4x4(&lastProj_, proj);
-    // M55b: 射影の組み立てはここ 1 箇所に集約し、描画側 (RenderSystem) には組み直させない。
-    // これまで RenderSystem は fovYDeg から透視を組み直していたので、Ortho トグルが
-    // オーバーレイ/ギズモ/ピッキングにしか効かず絵は常に透視のまま = 3 者が食い違っていた。
+    // M55b: 射影の組み立てはここ 1 箇所で行い、描画側 (RenderSystem) には組み直させない。
+    // 描画側が fovYDeg から透視を組み直すと、Ortho トグルがオーバーレイ/ギズモ/ピッキングに
+    // しか効かず絵だけ透視のまま = 3 者が食い違う。
     // ジッタ (M55b) はこの行列を **元** に RenderSystem 側で載せる — lastProj_ は
     // 非ジッタのまま = ギズモとピッキングは揺れない
     cam.hasProj = true;
@@ -425,8 +425,7 @@ constexpr float kPartTickLength = 0.22f;
 constexpr float kProbePointRadius = 0.2f;
 } // namespace gizmo
 
-// T と WorldMatrix を両方持つ行を回す。★要求するコンポーネントの組は元の書き方と同じ =
-// 回る順も同じなので、線を積む順は変わらない
+// T と WorldMatrix を両方持つ行を回す
 template <typename T, typename Fn>
 void ForEachWithWorldMatrix(World& world, Fn&& fn)
 {
@@ -453,7 +452,7 @@ void SceneViewWindow::BuildOverlays(EngineContext& ctx, Selection& selection)
     }
 
     if (showGizmos_) {
-        // 呼ぶ順 = 線を積む順 (1 関数だったときと同じ順に保つ)
+        // 呼ぶ順 = 線を積む順
         DrawColliderGizmos(world);
         DrawLightGizmos(world);
         DrawCameraGizmos(ctx, world);
@@ -851,15 +850,14 @@ void SceneViewWindow::DrawSelectionOutline(EngineContext& ctx, World& world, con
 void SceneViewWindow::DrawToolbar(EditorSettings& settings)
 {
     // ビューポート左上のオーバーレイツールバー (ギズモ操作 / 座標系 / 投影 / カメラ速度)。
-    // 面・余白・区切り・トグル ON 色は EditorWidgets の統一規格 — かつては高さ 30px 固定 +
-    // "|" テキスト区切り + ハードコード青だったが、テーマの余白変更で中身が縦にはみ出す
-    // 事故を起こしたので、サイズは規格側 (フレーム高) から導出する
+    // 面・余白・区切り・トグル ON 色は EditorWidgets の統一規格。サイズは規格側 (フレーム高) から
+    // 導出する — 固定高さにするとテーマの余白変更で中身が縦にはみ出す
     const ImVec2 p = ImGui::GetItemRectMin();
     const float panelWidth = ImGui::GetItemRectMax().x - p.x; // ビューポート画像の幅
     ImGui::SetCursorScreenPos(ImVec2(p.x + 8.0f, p.y + 8.0f));
-    // M47b: 幅は中身から自動決定する。訳文が長いと 830px 固定ではボタンが見切れるため。
-    // M47b追補: それは「中身 vs 器」の解決で、パネルが器より狭いと右端が親にクリップ
-    // されて操作不能のまま — 区切り単位で折り返して「器 vs パネル」もここで受ける。
+    // M47b: 幅は中身から自動決定する (訳文が長いと固定幅ではボタンが見切れる)。
+    // パネルが器より狭いと右端が親にクリップされて操作不能になるので、区切り単位で
+    // 折り返して全項目を届く位置に保つ (M47b追補)。
     // 限界 = パネル幅 − 左オフセット 8px − 器の左右 padding 16px
     const int toolbarRows = toolbarFlow_.BeginFrame(panelWidth - 24.0f);
     BeginToolbarOverlay("##sv_toolbar", ToolbarFlow::OverlayHeight(toolbarRows));

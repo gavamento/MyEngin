@@ -144,7 +144,7 @@ bool BuildSettingsWindow::StageCopy(EngineContext& ctx, std::string& detail)
     // 使う (ManagedHost) ので、配布先に .NET 8 が無くても C# スクリプトが動く。
     // ★fs::copy(recursive) はコピー先の最下層しか作らない。親 (dotnet\ 等) を先に
     //   create_directories しないと ERROR_PATH_NOT_FOUND で 2 本とも失敗し、dotnet\ が
-    //   1 つも同梱されない (M16-M25 の追加時から 2026-09-13 までこの状態だった)
+    //   1 つも同梱されない
     if (bundleDotnet_) {
         HMODULE coreclr = GetModuleHandleW(L"coreclr.dll");
         HMODULE hostfxr = GetModuleHandleW(L"hostfxr.dll");
@@ -224,9 +224,9 @@ bool BuildSettingsWindow::StageCopy(EngineContext& ctx, std::string& detail)
 
     // 2c) M51j: クック済みキャッシュを同梱し、封印マーカーを書く。
     // 移設先では pathKey / mtime が必ずずれ、DDS 一括後は元画像も無いので、封印キャッシュが
-    // 「クック時の登録列」をそのまま再生する (spec §10)。M51j 当時はサブアセット AssetID が
-    // 絶対パス由来で、封印が参照の正しさそのものだった — M74a で .meta の GUID 由来になり、
-    // ID は移設で変わらなくなった (封印は再パースの回避と DDS 後の元画像不在のために残す)
+    // 「クック時の登録列」をそのまま再生する (spec §10)。サブアセット AssetID は .meta の
+    // GUID 由来で移設しても変わらないので、封印が担うのは再パースの回避と DDS 後の元画像不在
+    // (M74a)
     if (CookedCache::Enabled()) {
         const fs::path cookedSrc = fs::path(CookedCache::Dir());
         const fs::path cookedDst = out / L"cache" / L"cooked";

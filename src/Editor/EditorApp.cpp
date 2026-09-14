@@ -86,7 +86,7 @@ void NotifyUnknownKept(ToastCenter& toasts, const Scene& scene)
 void EditorApp::OnStart(EngineContext& ctx)
 {
     ctx.shaders->Load("forward_lit");
-    // 設定の置き場 (M26): プロジェクト起動時は <project>\.mye\、レガシー時は従来の assets\ 直下
+    // 設定の置き場 (M26): プロジェクト起動時は <project>\.mye\、レガシー時は assets\ 直下
     const std::wstring settingsDir = ctx.projectRoot.empty()
         ? ctx.assetsRoot
         : ctx.projectRoot + L"\\" + kProjectLocalDir;
@@ -445,9 +445,7 @@ void EditorApp::OnShutdown(EngineContext& ctx)
     scm_.Shutdown();
 }
 
-// 焼いた 6 面のサムネイル (M56e)。**Inspector ではなく専用の小窓**にしてある —
-// 反射プローブのコンポーネント自体は M56f で入るので、それまで「どのエンティティの
-// インスペクタに出すか」が決まらない。並びは十字 (ProbeWriteFacesPng と同一) で、
+// 焼いた 6 面のサムネイル (M56e)。**Inspector ではなく専用の小窓**に出す。並びは十字 (ProbeWriteFacesPng と同一) で、
 // 隣り合う面が画面上でも隣り合う = 面の向きが壊れていれば継ぎ目の段差で分かる
 void EditorApp::DrawProbePreview()
 {
@@ -1022,10 +1020,9 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
             }
             ImGui::EndMenu();
         }
-        // M54e: 影の内訳 (平行光 CSM / 局所ライトのアトラス) と統計。
-        // M40d までは Rendering メニューの「影」1 個で全部を切っていたが、局所ライトの
+        // M54e: 影の内訳 (平行光 CSM / 局所ライトのアトラス) と統計。局所ライトの
         // アトラスは 4096^2 = 64MB + タイル数ぶんの深度パスという別勘定のコストなので、
-        // CSM を残したまま局所影だけ外せる口が要る。旧トグルはここへ移動した
+        // CSM を残したまま局所影だけ外せる口を持つ
         if (ImGui::BeginMenu(Tr(StrId::Menu_Shadows))) {
             ImGui::MenuItem(Tr(StrId::Shadow_Directional), nullptr,
                             &ctx.renderSystem->enableShadows);
@@ -1144,8 +1141,6 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
                                    "%.2f");
                 ImGui::EndDisabled();
                 ImGui::Separator();
-                // ★Tr() を書式文字列として渡している = 訳文の % が指定子として解釈される。
-                //   ここは意図した書式付き文字列 (規則 10 が並びを機械検査する)
                 ImGui::TextDisabled(Tr(StrId::Froxel_Grid), froxel::kGridX, froxel::kGridY,
                                     froxel::kGridZ,
                                     froxel::kGridX * froxel::kGridY * froxel::kGridZ);
@@ -1217,13 +1212,12 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
             // M67f: 再利用の強さを実行中に触る。**非永続** (rtBounces と同じ扱い) で、
             // プロジェクトにも project_settings.json にも書かない — 既定の出所は
             // RtTypes.h の kRtReflClassTable ただ 1 か所という規約を崩さないため。
-            // ★ここで触った値はどこにも残らない。既定値の確定は M67h で決着済みで、
-            //   出所は今も RtTypes.h ただ 1 か所 (ADR-016「S5 の結論」)
+            // ★ここで触った値はどこにも残らない (既定値の決め方は ADR-016「S5 の結論」)
             if (ImGui::BeginMenu(Tr(StrId::Restir_Menu))) {
                 // 親が off なら reservoir すら確保されない (遅延確保) ので子は無効表示。
                 // ★判定は RenderSystem::RtRestirEffective() 1 本 (M67h)。トグルを直接
-                //   読んでいた M67 は、デバッグ 12 / 14 が RenderSystem 側で ReSTIR を
-                //   強制する条件を知らず「絵は出ているのにスライダが灰色」だった
+                //   読むと、デバッグ 12 / 14 で RenderSystem 側が ReSTIR を強制する条件を
+                //   知らず「絵は出ているのにスライダが灰色」になる
                 ImGui::BeginDisabled(!ctx.renderSystem->RtRestirEffective());
                 RtReflRestirParams& rp = ctx.renderSystem->rtReflRestirParams;
                 bool spatial = rp.spatial != 0;
@@ -1301,7 +1295,6 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
                 }
                 ImGui::EndDisabled();
                 ImGui::Separator();
-                // ★Tr() を書式文字列として渡している (規則 10 が並びを機械検査する)
                 ImGui::TextDisabled(Tr(StrId::Restir_Gpu), ctx.renderSystem->RtRestirGpuMs());
                 ImGui::EndMenu();
             }
@@ -1355,7 +1348,6 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
         ImGui::EndMenu();
     }
 
-    // Play/Pause/Step は M27c でツールバー (EditorToolbar) へ移設
     ImGui::EndMainMenuBar();
 
     HandleShortcuts(ctx);
@@ -1405,9 +1397,7 @@ void EditorApp::HandleShortcuts(EngineContext& ctx)
 
 // ★再生中は保存しない。再生中の ctx.scene は編集中の文書ではなく**動いている世界**で、
 //   スクリプトの LoadScene で別シーンに入れ替わっても scenePath_ は開いたときのまま。
-//   ここで書くと「開いていたシーンのパスに、遷移先のシーンのプレイ途中の状態」が残る
-//   (三校 2026-09-13: タイトルを Play → ステージ 1 へ遷移 → 保存で title.scene.json が
-//   ステージ 1 の途中状態に上書きされ、起動するとタイトルを飛ばしてステージ 1 が始まった)。
+//   ここで書くと「開いていたシーンのパスに、遷移先のシーンのプレイ途中の状態」が残る。
 //   Stop で戻るのはメモリだけでディスクは戻らない。止めた = dirty のまま なので、
 //   未保存モーダルも「保存してコミット」も続きへ進まない (どちらも IsSceneDirty で判定している)
 bool EditorApp::BlockSaveWhilePlaying()
@@ -1585,8 +1575,7 @@ void EditorApp::PollScriptBuild()
     } else {
         MYE_LOG_ERROR("[build] script build failed (exit %lu) - see %s", static_cast<unsigned long>(code),
                       WideToUtf8(scriptBuildLog_).c_str());
-        // ★旧経路 (可視 cmd 窓 + pause) ではコンパイルエラーがその場で読めた。
-        //   M66e で窓を消した分を Console へ戻す (M66h)
+        // ★ビルドは窓なしで走るので、コンパイルエラーは Console へ流す (M66h)
         ReportScriptBuildErrors();
         toasts_.Notify(LogLevel::Error, Tr(StrId::Scm_ScriptBuildFailed));
     }
@@ -1651,10 +1640,6 @@ void EditorApp::ReportScriptBuildErrors()
         }
         ++shown;
         if (e.line > 0 && !e.file.empty()) {
-            // ★マクロ (MYE_LOG_ERROR) を使わないのは __FILE__/__LINE__ が入るから。
-            //   それだと Console のダブルクリックが**この EditorApp.cpp** へ飛ぶ。
-            //   MSVC が告げた path(line) をそのまま乗せると、ジャンプ先が
-            //   壊れているスクリプトの行になる (旧経路の可視 cmd 窓の代替)
             logging::WriteSrc(LogLevel::Error, e.file.c_str(), e.line, "%s", e.text.c_str());
         } else {
             logging::Write(LogLevel::Error, "%s", e.text.c_str());
@@ -1676,9 +1661,8 @@ GateInputs EditorApp::BuildGateInputs(EngineContext& ctx)
     in.playing = playMode_.InPlayMode();
     in.netActive = ctx.net != nullptr && ctx.net->active;
     in.buildRunning = buildSettings_.IsPipelineRunning();
-    // ★Asset Browser の [Rebuild Scripts] も OR で入れる (M66e)。以前は
-    //   ShellExecuteW の fire-and-forget で観測できず、**その間だけゲートに穴が開いていた**
-    //   (checkout が src\GameLogic\Scripts\ を入れ替えている最中にビルドが走る)
+    // ★Asset Browser の [Rebuild Scripts] も OR で入れる (M66e)。入れないとその間だけ
+    //   ゲートに穴が開く (checkout が src\GameLogic\Scripts\ を入れ替えている最中にビルドが走る)
     in.scriptBuildRunning = buildSettings_.IsScriptBuildRunning() || scriptBuildProc_ != nullptr;
     in.opInFlight = scm_.WriteInFlight();
     in.mergeInProgress = scm_.MergeInProgress() || scm_.RebaseInProgress();
@@ -1724,7 +1708,7 @@ void EditorApp::SetupDockLayout(unsigned int dockspaceId)
     ImGui::DockBuilderDockWindow("Profiler", rightBottom);
     ImGui::DockBuilderDockWindow("Timeline", bottom);
     ImGui::DockBuilderDockWindow("Console", bottom);
-    // ★Source Control は**左列 (Hierarchy と同じ束)** (M66e で下段帯から移した)。
+    // ★Source Control は**左列 (Hierarchy と同じ束)**。
     //   下段帯 (高さ ≒ 200px) では変更一覧が 2 行で切れ、コミット欄が窓の外へ落ちる
     //   (M66c で実測)。縦に長い左列なら「選ぶ → 書く → 押す」がスクロール無しで通る
     ImGui::DockBuilderDockWindow("Source Control", left);
@@ -1738,7 +1722,7 @@ void EditorApp::SetupDockLayout(unsigned int dockspaceId)
     ImGui::DockBuilderDockWindow("Game", center);
     // ★束の既定タブを明示する。ImGui は「最後に足されたタブ」を選ぶので、
     //   束へ窓を 1 つ足しただけで「起動したら Hierarchy ではなく Source Control が
-    //   出ている」という意図しない既定になる (M66e で Source Control を左列へ移した)。
+    //   出ている」という意図しない既定になる。
     //   ★タブ ID は窓 ID そのものではなく `ImHashStr("#TAB", 0, 窓 ID)`
     //     (ImGuiWindow の TabId = GetID("#TAB"))。窓 ID の方を入れると一致せず、
     //     「書いたのに効かない」形で静かに無視される

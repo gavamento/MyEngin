@@ -767,7 +767,7 @@ bool RunTerrainSelfTest()
                 }
             }
             // ★1 m 以上の食い違いを要求する。「> 0」だと、地形の高さが縁に沿って 1 次式に
-            //   なっている fixture (旧 MakeTestTerrain がまさにそれだった) で丸め誤差だけの
+            //   なっている fixture で丸め誤差だけの
             //   1e-5 が通ってしまい、クラック検査が何も検査しないまま緑になる
             check(worstSeen > 1.0f,
                   "terrain lod: mixed-LOD neighbours really do disagree along the shared edge");

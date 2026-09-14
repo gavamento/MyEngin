@@ -181,7 +181,7 @@ constexpr const char* kColliderShapeLabels[] = { "Sphere", "Box",  "Capsule",
 constexpr const char* kLightTypeLabels[] = { "Directional", "Point", "Spot" };
 constexpr const char* kEmitterShapeLabels[] = { "Point", "Sphere", "Cone", "Box" };
 constexpr const char* kBlendModeLabels[] = { "Additive", "Alpha", "Distortion" }; // M42d
-// M61a: A群拡張の enum 3 種 (消費実装は M61b/M61d/M61g — 表示の予約のみ)。
+// M61a: A群拡張の enum 3 種。
 // simulationSpace は kForceSpaceLabels と同文だが、ConstantForce の並びと結合させない
 // (片方の値域拡張がもう片方の表示を静かに変える事故を避ける) ため専用配列にする
 constexpr const char* kPtclSimSpaceLabels[] = { "World", "Local" };
@@ -266,9 +266,8 @@ static_assert(std::size(kColliderShapeLabels) == collidershape::kCount
 static_assert(std::size(kLightTypeLabels) == lighttype::kCount && std::size(kLightTypeJa) == lighttype::kCount);
 static_assert(std::size(kPartBoundsShapeLabels) == 2 && partboundsshape::kSphere == 1);
 constexpr EnumFieldLabels kEnumFields[] = {
-    // M60f: 3 (Mesh) / 4 (Terrain) / 5 (Convex) までコンボに出す。これらは meshAsset を
-    // 併せて指す必要があるが、今まで**コンボが 3 件しか出さず "(invalid)" 表示になっていた**
-    // ので、シーン JSON を手で書く以外に選ぶ手段が無かった (エディタ表示のみの変更)
+    // M60f: 3 (Mesh) / 4 (Terrain) / 5 (Convex) までコンボに出す (これらは meshAsset を
+    // 併せて指す必要がある)
     { "Collider", "shape", kColliderShapeLabels, collidershape::kCount, kColliderShapeJa },
     { "Light", "type", kLightTypeLabels, lighttype::kCount, kLightTypeJa },
     { "ParticleEmitter", "shape", kEmitterShapeLabels, 4, kEmitterShapeJa },
@@ -435,7 +434,7 @@ bool JointFieldApplies(int32_t type, const char* name)
 namespace {
 
 // マルチ選択の対象集合 (M40a): 生存する選択 fileId 群、primary 先頭。
-// 表示値は primary のもの。編集は全対象へバッチ適用 (ギズモ操作は従来どおり primary のみ)
+// 表示値は primary のもの。編集は全対象へバッチ適用 (ギズモ操作は primary のみ)
 InspectorTargets CollectInspectorTargets(EngineContext& ctx, const Selection& selection, uint64_t fid, EntityID e)
 {
     World& world = ctx.scene->GetWorld();
@@ -779,7 +778,7 @@ void InspectorWindow::DrawComponentFields(EngineContext& ctx, Selection& selecti
             if (f.type != FieldType::AssetRef && f.type != FieldType::EntityRef
                 && ImGui::BeginPopupContextItem(f.name)) {
                 // 追加 comp ("+C") はベースにフィールドが無く RevertField が
-                // no-op — 押せるのに何も起きない穴だったので disabled (M50c)。
+                // no-op — 押せるのに何も起きないので disabled にする (M50c)。
                 // 構造ごと戻すのはヘッダ右クリックの Revert Added Component
                 const bool ov = Prefab::IsFieldOverridden(*ctx.scene, *ctx.prefabs, e,
                                                           desc.name, f)
@@ -1631,7 +1630,7 @@ void InspectorWindow::LoadMaterialEdit(EngineContext& ctx, const std::wstring& p
     matEdit_.metallic = root.value("metallic", 0.0f);
     matEdit_.roughness = root.value("roughness", 0.5f);
     matEdit_.emissive = root.value("emissive", 0.0f); // M46i (欠損 = 発光なし)
-    // M67: 反射クラス。ParseMaterialJson と**同じ関数**を呼ぶ (M67h で規則を 1 本に集約)
+    // M67: 反射クラス。ParseMaterialJson と**同じ関数**を呼ぶ (規則は 1 本、M67h)
     // — ここで拾い方がずれると「Inspector に出る値」と「描画に効く値」が食い違う
     matEdit_.reflectionClass = ParseReflectionClassJson(root);
     matEdit_.transparent = root.value("transparent", false);
@@ -1951,7 +1950,7 @@ void InspectorWindow::DrawSoundInspector(EngineContext& ctx, const std::wstring&
     ImGui::Checkbox(Tr(StrId::Insp_Loop), &soundEdit_.loop);
     ImGui::SameLine();
     ImGui::Checkbox(Tr(StrId::Insp_StreamBgm), &soundEdit_.stream);
-    // バス候補は**実際に張られているミキサー**から採る (M45d でバスはデータ駆動になった)。
+    // バス候補は**実際に張られているミキサー**から採る (バスはデータ駆動、M45d)。
     // 保存は名前なので、未知のバス名は既定バスへ落ちるだけで値自体は壊さない
     if (ctx.audio != nullptr) {
         const int current = ctx.audio->FindBus(soundEdit_.bus.c_str());
@@ -1994,7 +1993,7 @@ void InspectorWindow::DrawSoundInspector(EngineContext& ctx, const std::wstring&
     ImGui::TextDisabled("%s", Tr(StrId::Insp_SpatialNote));
     ImGui::TextDisabled("%s", Tr(StrId::Insp_AttenNote));
 
-    // ---- ループ点 (M45f から実際に効く。stream + loop のときだけ意味を持つ) ----
+    // ---- ループ点 (M45f。stream + loop のときだけ意味を持つ) ----
     ImGui::SeparatorText(Tr(StrId::Insp_LoopPoints));
     ImGui::SetNextItemWidth(160.0f);
     ImGui::DragInt(Tr(StrId::Insp_LoopStart), &soundEdit_.loopStartSample, 8.0f, 0, 1 << 30);
@@ -2112,8 +2111,8 @@ void InspectorWindow::DrawAssetRef(EngineContext& ctx, const FieldDesc& field, v
 {
     auto* id = static_cast<AssetID*>(p);
     // フィールド名からライブラリを推定 (mesh / material / texture)。
-    // ★**小文字へ畳んでから照合する**。素の名前で探していたため "cubemapTexture" /
-    //   "lutTexture" / "normalTex" が "tex" に一致せず、どれも総当たり一覧へ落ちていた
+    // ★**小文字へ畳んでから照合する**。素の名前で探すと "cubemapTexture" /
+    //   "lutTexture" / "normalTex" が "tex" に一致せず、どれも総当たり一覧へ落ちる
     std::string fname = field.name;
     std::transform(fname.begin(), fname.end(), fname.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
@@ -2122,7 +2121,6 @@ void InspectorWindow::DrawAssetRef(EngineContext& ctx, const FieldDesc& field, v
         // M59a1: 物理マテリアル (M59a2 の Collider.physMaterial 等)。
         // ★"material" より**先に**見ること。小文字化した "physmaterial" は "material" を
         //   含むので、順序を誤ると MaterialLibrary と取り違えたまま気付けない
-        //   (小文字化前は find("material") が npos で、代わりに混合リストへ落ちていた)
         if (PhysMatLibrary* pm = physmat::Library()) {
             for (const PhysMatEntry& e : pm->Enumerate()) {
                 entries.push_back({ AssetID{ e.hash }, e.name });

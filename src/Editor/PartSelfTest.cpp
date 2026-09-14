@@ -118,7 +118,7 @@ bool RunPartSelfTest()
         check(sub.size() == 2, "FindPartsByTag: the search is scoped to the given root");
     }
 
-    // ---- 骨の供給元の解決 (M48i で Parts:: へ 1 本化) ----
+    // ---- 骨の供給元の解決 (Parts:: の 1 本、M48i) ----
     check(Parts::ResolvePartSource(w, head.Id(), kNullEntity).IsNull(),
           "source: a part with no skinned mesh ancestor resolves to null");
     check(Parts::ResolvePartSource(w, head.Id(), hips.Id()).IsNull(),
@@ -515,10 +515,9 @@ bool RunPartSelfTest()
         check(registered == 1 && registeredFbx == 1,
               "follow: RegisterSkinnedModels registers glTF and FBX skeletons headlessly");
 
-        // (0a) 名前を覚えていること。★M18 の積み残しで SkinnedModelLibrary だけ names_ を
-        //   持たず Enumerate も無かったため、Inspector の AssetRef ピッカーは
-        //   SkinnedMesh.model の候補を 1 件も作れず、メッシュ + マテリアル + テクスチャの
-        //   混合リストへ落ちていた (正解が出ないうえ、選ぶと参照が壊れる)
+        // (0a) 名前を覚えていること。★SkinnedModelLibrary が names_ / Enumerate を持たないと、
+        //   Inspector の AssetRef ピッカーは SkinnedMesh.model の候補を 1 件も作れず、
+        //   メッシュ + マテリアル + テクスチャの混合リストへ落ちる (正解が出ないうえ、選ぶと参照が壊れる)
         const std::vector<SkinnedModelEntry> skinList = headless.skinnedModels.Enumerate();
         check(skinList.size() == 2
                   && std::all_of(skinList.begin(), skinList.end(),

@@ -14,8 +14,8 @@ namespace mye {
 
 namespace {
 
-// 状態 → 意味色は EditorWidgets の ScmBadgeColor へ移した (M66i)。
-// ★Content Browser のバッジ (M66i) と**同じ表**を引くため。ここに残しておくと、
+// 状態 → 意味色はここに持たず、EditorWidgets の ScmBadgeColor を引く (M66i)。
+// ★Content Browser のバッジと**同じ表**にするため。ここにも持つと、
 //   意味の見直しで一覧と Content Browser の色が食い違う
 
 // 利用不可の理由 → 文言
@@ -736,7 +736,7 @@ void SourceControlWindow::DrawChanges(SourceControlSession& scm, const SourceCon
         commitH += ImGui::GetTextLineHeightWithSpacing();
     }
     const float avail = ImGui::GetContentRegionAvail().y;
-    // 差分は別窓へ出した (M66e) ので、ここは「一覧 + コミット欄」の 2 段だけ。
+    // 差分は別窓 (M66e) なので、ここは「一覧 + コミット欄」の 2 段だけ。
     // ★コミット欄の高さを先に確保し、残り全部を一覧に渡す
     const float listH = (std::max)(60.0f, avail - commitH - style.ItemSpacing.y * 2.0f);
 

@@ -161,7 +161,7 @@ bool AssetPreviewCache::RenderOne(EngineContext& ctx, const std::wstring& path, 
     const bool isMaterial = entry.live || IsMaterialPath(path);
     XMFLOAT3 center = { 0, 0, 0 };
     float radius = 0.0f;
-    // カメラの立ち位置 (中心から見た方向)。既定は 30° 見下ろしの斜め — モデル/プレハブは従来どおり
+    // カメラの立ち位置 (中心から見た方向)。既定は 30° 見下ろしの斜め (モデル/プレハブはこの向き)
     XMVECTOR eyeDir = XMVector3Normalize(XMVectorSet(-0.5f, 0.45f, -0.75f, 0.0f));
     bool hasBounds = false;
 
@@ -193,8 +193,7 @@ bool AssetPreviewCache::RenderOne(EngineContext& ctx, const std::wstring& path, 
         case PreviewShape::Plane:
             // 1x1 の板をほぼ正対で見る (テクスチャ/ノーマルマップの確認用)。
             // Plane() は XZ 平面なので真横から見ることになり材質確認には向かない。
-            // ★Quad() の法線は **-Z** (実装が正、GpuResources.h の宣言コメントは誤記だった)
-            // なので、カメラは -Z 側に置かないと裏面を見て背面カリングで消える
+            // ★Quad() の法線は **-Z** なので、カメラは -Z 側に置かないと裏面を見て背面カリングで消える
             mr->mesh = ctx.resources->meshes.Quad();
             eyeDir = XMVector3Normalize(XMVectorSet(0.0f, 0.18f, -1.0f, 0.0f));
             radius = 0.72f; // 1x1 の半対角 sqrt(2)/2 に少し余白
@@ -310,7 +309,7 @@ bool AssetPreviewCache::RenderOne(EngineContext& ctx, const std::wstring& path, 
     // M42a: depthSRV/dsvReadOnly は意図的に null のまま (viewKey=0) — プレビューは
     // パーティクル無しで深度読み系効果が不要。null なら効果側が自然に無効化される
     // 背景色はリニアで置く — _SRGB RTV の Clear は指定値を linear と解釈して符号化するので、
-    // 従来と同じ見た目 (sRGB 0.13/0.13/0.15) にするにはその逆変換値を書く必要がある
+    // 狙いの見た目 (sRGB 0.13/0.13/0.15) にするにはその逆変換値を書く必要がある
     target.clearColor[0] = 0.0152f; // = SrgbToLinear(0.13)
     target.clearColor[1] = 0.0152f;
     target.clearColor[2] = 0.0194f; // = SrgbToLinear(0.15)

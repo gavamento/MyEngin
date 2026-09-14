@@ -126,7 +126,7 @@ bool AssignMaterialToEntity(EngineContext& ctx, Selection& selection, UndoStack&
 void OpenInExternalEditor(const std::string& editorCmd, const std::wstring& path); // {file}/{line} 置換
 void CompileCSharpScripts(EngineContext& ctx); // assets\scripts\*.cs をエンジン内 Roslyn でコンパイル
 
-// C++ スクリプトのビルド (M51j。**唯一の起動口** — M66e で fire-and-forget 版を廃止)。
+// C++ スクリプトのビルド (M51j。**唯一の起動口**)。
 // プロジェクト起動時は <project>\src\GameLogic\Scripts\*.cpp を <project>\cache\ に
 // 生成した vcxproj で、レガシー起動時は tools\build_scripts.bat でビルドする。
 // プロセスハンドル (void* = HANDLE) を返し、呼び出し側が毎フレームポーリングして

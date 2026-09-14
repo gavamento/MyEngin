@@ -35,7 +35,7 @@ bool TextDiffersFromDisk(const std::wstring& path, const std::string& inMemory,
     std::ifstream f(std::filesystem::path(path), std::ios::binary);
     if (!f) {
         // ファイルが無い = 一度も保存していない。呼び手が渡した「読み直した既定状態」と
-        // 比べる (2 引数版は空文字列 = 「中身があるなら未保存」の従来どおり)
+        // 比べる (2 引数版は空文字列 = 「中身があるなら未保存」)
         return Normalize(inMemory) != Normalize(whenMissing);
     }
     const std::string onDisk((std::istreambuf_iterator<char>(f)),

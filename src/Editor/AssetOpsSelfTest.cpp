@@ -331,8 +331,8 @@ bool RunAssetOpsSelfTest()
         // value() に食わせると type_error が ParseMaterialJson の外まで飛んで
         // マテリアル 1 枚で起動ごと落ちるので、受理規則の側で型を見て弾いている。
         // ★M67h: 「非整数」は **JSON の型ではなく値**で判定する = `3.0` は 3 として受ける。
-        //   型で弾いていた M67 は jq / Python / 手編集が書いた `3.0` を黙って 4 に落として
-        //   いた (静かなデータ損失。review-1 minor 5)。
+        //   型で弾くと jq / Python / 手編集が書いた `3.0` を黙って 4 に落とす
+        //   (静かなデータ損失。review-1 minor 5)。
         //   受理規則は ReflectionClassJson.h の 1 本で、Inspector の LoadMaterialEdit も
         //   同じ関数を呼ぶ — あちらは private でヘッドレスから叩けないので、
         //   **この検査が Inspector 側の唯一の機械的な担保**になる (spec §4.1)
@@ -414,9 +414,8 @@ bool RunAssetOpsSelfTest()
     }
 
     // ---- (M66h) build_scripts.log の error 行を Console へ流す分解 ----
-    // ★旧経路は可視の cmd 窓 + pause で、コンパイルエラーをその場で読めた。
-    //   M66e で窓を消したので、同じ情報を Console へ戻すのがこの分解。
-    //   file/line を拾い損ねるとダブルクリックジャンプが死ぬ = 退行が埋まらない
+    // ★ビルドは窓なしで走るので、コンパイルエラーを読める場所は Console だけ。
+    //   file/line を拾い損ねるとダブルクリックジャンプが死ぬ
     {
         const std::string log =
             "=== building C++ scripts (Debug) ===\r\n"
@@ -449,9 +448,7 @@ bool RunAssetOpsSelfTest()
     }
 
     // ---- Content Browser のタイルラベル (AssetTileLabel)。種類の判定は AssetDatabase::ClassifyPath 1 本 ----
-    // 小文字のサフィックスは手書き判定だった頃と同じラベル。大文字を含むサフィックスは ClassifyPath に
-    // 合わせて小文字と同じ扱いになった (以前は Orc.Actor.json が "prefab"、Walk.ANIM.json が "json"、
-    // Red.MAT.JSON が "model")
+    // 大文字を含むサフィックスも ClassifyPath に合わせて小文字と同じラベルになる
     {
         struct TileLabelCase {
             const wchar_t* path;

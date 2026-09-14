@@ -98,9 +98,6 @@ std::string LowerAscii(const std::string& s)
 // C++ スクリプトを置くツリーのルート。
 //   プロジェクト起動 = <project> (Hub から開いた通常の動線)
 //   レガシー起動      = エンジンリポジトリ (assets\ の親。replay_verify / selftest の経路)
-// 旧 RepoRoot() は常に「assets\ の親」を返していたため、プロジェクト起動時に
-// <project>\src\GameLogic\Scripts へ書いた上で <project>\tools\build_scripts.bat を
-// 探しに行き、ビルドできないまま無言で失敗していた
 std::wstring ScriptsRoot(EngineContext& ctx)
 {
     if (!ctx.projectRoot.empty()) {
@@ -134,8 +131,6 @@ bool RunningRelease()
     return exeDir.find(L"Release") != std::wstring::npos
         || exeDir.find(L"release") != std::wstring::npos;
 }
-
-// ---- 外部ファイルインポート (エクスプローラー D&D) のヘルパー ----
 
 } // namespace
 
@@ -244,8 +239,8 @@ void CopyDirRecursive(EngineContext& ctx, const fs::path& srcDir, const fs::path
 
 } // namespace
 
-// ファイル名向けサニタイズ。M50b で許可リスト (英数のみ) から禁止リスト
-// (\/:*?"<>| + 制御文字) へ緩めた — 非 ASCII (日本語名) のアセット名を通すため。
+// ファイル名向けサニタイズ。禁止リスト (\/:*?"<>| + 制御文字) で弾く (M50b) —
+// 許可リスト (英数のみ) にすると非 ASCII (日本語名) のアセット名が通らない。
 // 前後の空白と末尾ドット (Windows 不可) を落とし、空になったら fallback
 std::string SanitizeFileName(const std::string& in, const char* fallback)
 {
@@ -1149,7 +1144,7 @@ void InstantiateAssetAtPath(EngineContext& ctx, Selection& selection, UndoStack&
                     if (SoundAsset* s = ctx.sounds->GetMutable(h)) {
                         s->variations[0].clip = clip.value;
                         // 置いた瞬間から 3D で鳴ってほしいので既定を 3D にする
-                        // (.sound.json 単体の既定は 2D = 従来の再生と同じ、を保つ)
+                        // (.sound.json 単体の既定は 2D のまま)
                         s->spatialBlend = 1.0f;
                         ctx.sounds->SaveToFile(h);
                         soundHash = h;
@@ -1347,9 +1342,8 @@ bool WriteGeneratedVcxproj(const std::wstring& path, const std::wstring& engineR
 // bat の絶対パスを返す (空 = 失敗)。C# の [Compile C# Scripts] と同じ
 // 「プロジェクト内のソースをエンジンがビルドする」モデル。エンジンリポジトリの vcxproj や
 // gen_project_files.ps1 には一切依存しない。vcvars は使わない — MSBuild はツールチェーンを
-// 自前で解決するので環境依存が少ない。起動は呼び出し側 (`StartGameLogicBuild` が
-// 返すハンドルを呼び出し側がポーリングする) の責務 — fire-and-forget の起動口は
-// M66e で消した (下の削除跡コメントを参照)
+// 自前で解決するので環境依存が少ない。起動は `StartGameLogicBuild` の責務で、
+// 返したハンドルを呼び出し側がポーリングする
 std::wstring PrepareProjectScriptsBat(EngineContext& ctx)
 {
     const std::wstring engineRepo = FindEngineRepoRoot();
@@ -1387,7 +1381,8 @@ std::wstring PrepareProjectScriptsBat(EngineContext& ctx)
     }
 
     // MSBuild の起動は tools\build_scripts.bat と同じ vswhere パターン。
-    // 失敗時は pause で窓を残し、コンパイルエラーをそのまま読めるようにする
+    // 失敗系の pause は、StartChildProcess が CREATE_NO_WINDOW と stdin=NUL で起動するので
+    // 窓は出ず、すぐ抜ける (エラーは build_scripts.log から Console へ流す)
     const std::wstring cfg = RunningRelease() ? L"Release" : L"Debug";
     const std::wstring batPath = cacheDir + L"\\build_scripts.bat";
     {
@@ -1447,11 +1442,6 @@ bool IsCargoAvailable()
 
 } // namespace
 
-// ★可視の cmd 窓で bat を投げる `RebuildGameLogic` は M66e で**削除した**。
-//   fire-and-forget ではプロセスハンドルが誰の手にも残らず、走っている間
-//   `GateBlocker::ScriptBuildRunning` が立たない = ビルドが bin\ と cache\ を
-//   書いている最中に checkout / pull が通ってしまう (spec §7 の穴)。
-//   起動口は「ハンドルを返す」この 1 本だけにする。
 std::vector<BuildErrorLine> ParseBuildErrorLines(const std::string& logUtf8)
 {
     std::vector<BuildErrorLine> out;
@@ -1502,10 +1492,8 @@ std::vector<BuildErrorLine> ParseBuildErrorLines(const std::string& logUtf8)
 
 void* StartGameLogicBuild(EngineContext& ctx, std::wstring& logPathOut)
 {
-    // RebuildGameLogic の二経路と同じ bat を使う。違いは起動形態のみ:
-    //   - stdout/stderr をログファイルへリダイレクト (エディタは完了後に失敗の尻尾を出せる)
-    //   - stdin を NUL に繋ぐ — bat の失敗系 `pause` が EOF を読んで即抜ける = 詰まらない
-    //   - CREATE_NO_WINDOW + プロセスハンドル返し = BuildSettings が毎フレームポーリング
+    // 起動は StartChildProcess (ログ・stdin の扱いは ChildProcess.h)。返したハンドルを
+    // 呼び出し側 (BuildSettings / EditorApp) が毎フレームポーリングする
     std::wstring bat, workDir, args;
     const std::wstring cfg = RunningRelease() ? L"Release" : L"Debug";
     if (!ctx.projectRoot.empty()) {

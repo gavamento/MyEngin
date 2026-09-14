@@ -84,7 +84,7 @@ void PlayModeController::Step()
     stepPending_ = true;
     // M73a: ホールド中なら予算 1 で tick ループを 1 本だけ通す。使い切った tick の末で
     // EngineLoop が Hold し直すので、ステップは正確に 1 tick で止まる。
-    // リングが無い / ホールドしていないとき (記録中の Pause 等) は従来どおり
+    // リングが無い / ホールドしていないとき (記録中の Pause 等) は
     // ConsumeSimulateTick だけで進む
     if (tt_ != nullptr && tt_->Scrubbing()) {
         tt_->RequestStep(1);

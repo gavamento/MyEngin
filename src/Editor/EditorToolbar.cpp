@@ -94,7 +94,7 @@ bool EditorToolbar::OnImGui(EngineContext& ctx, PlayModeController& playMode, Se
             }
         }
 
-        // ---- 中央: Play / Pause / Step (旧メニューバー中央から移設) ----
+        // ---- 中央: Play / Pause / Step ----
         // 編集モード中は無効化する: Play は Save+Load でシーンを作り直すので、
         // ミニシーン (= アセットの実体) に走らせると編集内容が壊れる
         ImGui::BeginDisabled(inActorEdit);

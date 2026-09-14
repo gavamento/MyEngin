@@ -70,7 +70,7 @@ void StatusBar::OnImGui(EngineContext& ctx, const std::string& projectName,
         const std::string sceneName =
             WideToUtf8(std::filesystem::path(scenePath).filename().wstring())
             + (dirty ? "*" : "");
-        // M47b: 旧実装は char[256] 固定で、日本語のプロジェクト名/シーン名だと溢れていた
+        // M47b: std::string で組む (固定長バッファだと日本語のプロジェクト名/シーン名で溢れる)
         const float fps = (ctx.timings.frameMs > 0.01f) ? 1000.0f / ctx.timings.frameMs : 0.0f;
         const std::string info =
             Format(Tr(StrId::Status_Info), projectName.c_str(),
