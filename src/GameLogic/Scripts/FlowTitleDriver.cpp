@@ -5,7 +5,6 @@
 // **リプレイ被覆に入れる**ための恒久 probe を兼ねる:
 //   - PersistStore (v12): BEST/LAST/RUNS を読んで登録フィールドへ書き戻す
 //     (フィールドは hash 対象 — シーンを跨いだ持ち越し値が構成間でズレたら即 divergence)
-//   - アクションマップ (M51d): "Jump" pressed で開始 (ヘッドレス記録では未押下 = 純 tick 進行)
 //   - LoadScene: tick 決定の自動開始 (90 tick) → 記録/検証とも同一 tick で遷移する
 //   - **UI の対話 (M70c)**: START / CLEAR BEST の 2 ボタンを MyeUIClicked で読む。
 //     矩形はエンジンが解決し、押下もフォーカスもエンジンが持つ = スクリプト側に
@@ -65,9 +64,9 @@ struct FlowTitleDriver : Script<FlowTitleDriver> {
         }
 
         // ---- 開始: START のクリック / 90 tick (自動デモ = 決定論) ----
-        // ★"Jump" (Space / パッド A) の直接判定は M70c で外した — Space と A は
+        // ★"Jump" (Space / パッド A) を直接見ないこと — Space と A は
         //   UINavSubmit にも割り当ててあるので、CLEAR BEST を選んで決定したときに
-        //   「消えると同時にゲームも始まる」二重発火になっていた。
+        //   「消えると同時にゲームも始まる」二重発火になる。
         //   決定は 1 本 (フォーカス + Submit) に寄せる
         if (MyeUIClicked(ctx, startBtn) || ticksInScene == 90) {
             MyePersistSetValue(ctx, "flow.runs", lastRuns + 1);

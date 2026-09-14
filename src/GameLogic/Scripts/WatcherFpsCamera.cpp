@@ -1,5 +1,5 @@
 // 企画 (三校企画.md) の一人称操作 (M65g)。**エンジンには 1 行も足していない** —
-// 視点は v15 の GetMouseDelta / SetCursorMode (M64a で開通して以来これが初の利用者)、
+// 視点は v15 の GetMouseDelta / SetCursorMode、
 // 移動は v5 の CharacterMove、足音は M65c の autoFootstep がそのまま担当する。
 //
 // ★**既定ではカメラを 1 バイトも触らない**。`--acoustic-demo` の golden 2 枚は俯瞰で
@@ -7,8 +7,7 @@
 //   スクショ回帰が理由不明に揺れる (撮影中に手がマウスに触れただけで赤くなる)。
 //   切り替えは **V キーのトグル 1 本**だけ = 事故では入らない入力に限定してある。
 // ★視点角は登録フィールド = ハッシュ対象 = .rep 被覆。`--synth-input` が生デルタを
-//   流すので、replay 7 ペア目が「同じデルタ列から同じ角度が出る」ことを毎回検査する
-//   (M64a の ABI に実走の被覆が付くのはここが初めて)。
+//   流すので、replay 7 ペア目が「同じデルタ列から同じ角度が出る」ことを毎回検査する。
 // ★呼吸 (企画 3-3) もここ。止まっているあいだだけ極小の波を出す — 「完全な無音には
 //   なれない」が企画の主張で、同時に**暗闇で自分の足元だけは見える**ことの実装でもある。
 #include <cmath>
@@ -19,13 +18,10 @@ namespace {
 // <Windows.h> を引き込まないため VK コードを直接定義 (PlayerController.cpp と同じ流儀)
 constexpr uint8_t kVkV = 0x56; // 一人称 / 俯瞰の切り替え
 
-// ★**sin / cos を CRT から取らない**。`Physics\AeroSampling.cpp` の注記が正本で、
-//   「std::cos / std::sin は CRT 実装依存でビットが動きうる」。視点角はハッシュ対象の
-//   フィールドから移動速度まで一直線に流れるので、ここに CRT 依存を挟むと
-//   「別の Windows で .rep が再生できない」種類の壊れ方になる。
-//   ★M70d で **ScriptAPI.h の MyeSinRad / MyeCosRad へ引き上げた** (実装は 1 命令も
-//     変えていない = 視点角のビット列は M65g のまま)。角度を扱うスクリプトが増えるたびに
-//     多項式を書き写す形になっていたのを 1 本に寄せたもの
+// ★**sin / cos を CRT から取らない** (ScriptAPI.h の MyeSinRad / MyeCosRad を使う)。
+//   `Physics\AeroSampling.cpp` の注記が正本で、「std::cos / std::sin は CRT 実装依存で
+//   ビットが動きうる」。視点角はハッシュ対象のフィールドから移動速度まで一直線に流れるので、
+//   ここに CRT 依存を挟むと「別の Windows で .rep が再生できない」種類の壊れ方になる。
 constexpr float kDeg2Rad = kMyeDeg2Rad;
 
 // AcousticEmitterComponent (Engine/Core/Components.h) の名前ハッシュ。
@@ -38,8 +34,8 @@ const uint64_t kFieldRadius = MyeNameHash("pendingRadiusM");
 const uint64_t kFieldTone = MyeNameHash("pendingTone");
 const uint64_t kFieldTicksPerRing = MyeNameHash("ticksPerRing");
 
-// ★**登録フィールドは 16 本まで** (ScriptAPI.h の MYE_SF_FOREACH)。上限は窮屈に見えるが、
-//   「動かないものを ECS に置かない」線引きを強制してくれる — 調整値をフィールドで持つと
+// ★**登録フィールドは 32 本まで** (ScriptAPI.h の MYE_SF_FOREACH)。上限とは別に、
+//   動かないものは ECS に置かない — 調整値をフィールドで持つと
 //   snapshot に載りハッシュに入り、DLL リロードで**古い値が生き残る**。定数はここへ置く
 constexpr float kPitchLimitDeg = 80.0f;
 constexpr float kWalkStrideM = 0.9f;   // 企画 3-2: 速度は歩幅 (= 波の間隔) で表す

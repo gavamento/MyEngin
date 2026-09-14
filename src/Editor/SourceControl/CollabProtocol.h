@@ -14,8 +14,7 @@ namespace mye {
 constexpr int kCollabProtoVersion = 1;
 
 // op 名 (spec §4.1 で v1 に凍結)。文字列直書きを避けるのは、綴り違いが
-// bad_request として**実行時にしか**現れないため。M66a で使うのは 3 本だけで、
-// 残りは後続サブが埋める
+// bad_request として**実行時にしか**現れないため
 namespace collabop {
 constexpr const char* kHello = "hello";
 constexpr const char* kRepoCheck = "repo_check";
@@ -23,7 +22,7 @@ constexpr const char* kStatus = "status";
 constexpr const char* kHintChanged = "hint_changed"; // M66b: 保存直後の即時取り直し
 // M66c。stage / unstage / commit は書き込み系 = CollabOpKindOf が Write に落とす
 // (無期限に待つ + OpInFlight でボタンを塞ぐ)。log / diff / identity_check は
-// 上の kReadOps 表に既に載っている
+// 下の kReadOps 表に載っている
 constexpr const char* kStage = "stage";
 constexpr const char* kUnstage = "unstage";
 constexpr const char* kCommit = "commit";
@@ -31,17 +30,17 @@ constexpr const char* kLog = "log";
 constexpr const char* kDiff = "diff";
 constexpr const char* kIdentityCheck = "identity_check";
 // M66d。revert は書き込み系 = GitTransaction (ゲート + ReloadHub の一括適用) 経由でだけ
-// 投げる。diff_names は読み取り系で、既に上の kReadOps 表に載っている
+// 投げる。diff_names は読み取り系で、下の kReadOps 表に載っている
 constexpr const char* kRevert = "revert";
 constexpr const char* kDiffNames = "diff_names";
-// M66e。branches は読み取り系 (上の kReadOps に既に載っている)。branch_create は
+// M66e。branches は読み取り系 (下の kReadOps に載っている)。branch_create は
 // ref を 1 本足すだけで working tree を動かさないが、**書き込み系**として扱う
 // (index.lock と同じ理屈で git の直列化に乗せる)。checkout は working tree を
 // 丸ごと入れ替えるので GitTransaction 経由でだけ投げる
 constexpr const char* kBranches = "branches";
 constexpr const char* kBranchCreate = "branch_create";
 constexpr const char* kCheckout = "checkout";
-// M66f。remote_state は読み取り系 (上の kReadOps に既に載っている)。fetch / push は
+// M66f。remote_state は読み取り系 (下の kReadOps に載っている)。fetch / push は
 // working tree を触らないが**書き込み系**として扱う — ネットワーク待ちがあるので
 // 30 s で打ち切られると「諦めた後に refs だけ書き換わる」食い違いが起きる。
 // pull は working tree を丸ごと入れ替えるので GitTransaction 経由でだけ投げる
@@ -49,7 +48,7 @@ constexpr const char* kFetch = "fetch";
 constexpr const char* kPull = "pull";
 constexpr const char* kPush = "push";
 constexpr const char* kRemoteState = "remote_state";
-// M66g。conflicts は読み取り系 (上の kReadOps に既に載っている)。resolve /
+// M66g。conflicts は読み取り系 (下の kReadOps に載っている)。resolve /
 // merge_abort / continue は working tree を書き換える。**merge_abort と continue は
 // GitTransaction 経由でだけ投げる** (段階 A/B/C の後処理が要る)。resolve は
 // 競合したファイルだけを書き換えるので、監視のホットリロードに任せてよい
@@ -78,8 +77,7 @@ constexpr int kCollabReadTimeoutMs = 30000;
 
 // op 名 → 待ち方。**未知の op は Write 扱い** (= 打ち切らない) に倒す。
 // 分類を間違えたときの被害が「余計に待つ」で済む側を既定にしている。
-// ★op 一覧は spec §4.1 で v1 に凍結済みなので、実装がまだ無い op もここには並ぶ
-//   (M66c 以降が ops.rs を埋めるたびに、この表を触らなくて済むようにするため)
+// ★op 一覧は spec §4.1 で v1 に凍結済み (ops.rs の dispatch と同じ集合)
 inline CollabOpKind CollabOpKindOf(std::string_view op)
 {
     if (op == "hello") {

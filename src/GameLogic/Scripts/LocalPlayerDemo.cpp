@@ -3,7 +3,7 @@
 // **エンジンの ABI は 1 本も足さずに**「自分がどのプレイヤーの入力で動くか」を読む:
 // エンジンが毎 tick 書く `PlayerInputComponent` のミラーを、v11 の汎用フィールドスロット
 // (GetComponentField、名前ハッシュ引き) で読むだけ。レーン別の専用スロット
-// (GetActionForPlayer / GetAxisForPlayer) は M52i の ABI v13 へ束ねる。
+// (v13 の GetActionForPlayer / GetAxisForPlayer) を使う形は NetDuelDemo にある。
 //
 // 読む index は assets\input\actions.json の**定義順**:
 //   axes[0] = MoveX / axes[1] = MoveY / アクション bit0 = Jump

@@ -148,7 +148,7 @@ void (*GetCollisionExitFn())(void*, MyeUpdateContext*, MyeEntityId)
 
 inline uint64_t LayoutHash(const MyeScriptField* fields, uint32_t count)
 {
-    // FNV-1a (Engine/Core/Hash.h と同じ定数 — Shared はエンジンヘッダを включできないため再掲)
+    // FNV-1a (Engine/Core/Hash.h と同じ定数 — Shared はエンジンヘッダを include できないため再掲)
     uint64_t h = 14695981039346656037ull;
     auto mix = [&h](const void* data, size_t size) {
         const unsigned char* p = static_cast<const unsigned char*>(data);
@@ -251,8 +251,7 @@ struct Registrar {
 #define MYE_SF_14(T, m, ...) MYE_SF(T, m) MYE_SF_13(T, __VA_ARGS__)
 #define MYE_SF_15(T, m, ...) MYE_SF(T, m) MYE_SF_14(T, __VA_ARGS__)
 #define MYE_SF_16(T, m, ...) MYE_SF(T, m) MYE_SF_15(T, __VA_ARGS__)
-// M70d: 16 → 32。16 が上限だったせいで AudioDemo が 9 個のキーのエッジ検出を
-// int32_t のビットへ畳んでいた (= 上限が設計を歪めていた) ので倍にした
+// 登録フィールドの上限は 32 本 (M70d)
 #define MYE_SF_17(T, m, ...) MYE_SF(T, m) MYE_SF_16(T, __VA_ARGS__)
 #define MYE_SF_18(T, m, ...) MYE_SF(T, m) MYE_SF_17(T, __VA_ARGS__)
 #define MYE_SF_19(T, m, ...) MYE_SF(T, m) MYE_SF_18(T, __VA_ARGS__)
@@ -296,7 +295,7 @@ struct Registrar {
 
 // 名前 → ハッシュ。FNV-1a 64bit で **Engine/Core/Hash.h の HashStr と同一の定数**
 // (MyePartTag と同じ再掲。一致は SchemaSelfTest が機械検査している)。
-// ★M70d でこの節の先頭へ移動 (MyeGameObject が WorldMatrix を引くのに使うため)
+// ★この節の先頭に置くのは、下の MyeGameObject が WorldMatrix を引くのに使うため
 inline constexpr uint64_t MyeNameHash(const char* name)
 {
     uint64_t h = 14695981039346656037ull;
@@ -334,8 +333,7 @@ struct MyeGameObject {
     }
     void SetLocalPosition(MyeVec3 v) const { api->SetLocalPosition(api->engine, id, v); }
     void SetLocalRotation(MyeQuat q) const { api->SetLocalRotation(api->engine, id, q); }
-    // M70d (dogfooding #18): 回転とスケールは**書けるのに読めない**非対称だった。
-    // ABI スロットは v1 から 6 本とも埋まっているので、足りなかったのは糖衣だけ
+    // 回転とスケールの読み取り (M70d、dogfooding #18)。ABI スロットは v1 からある
     MyeQuat GetLocalRotation() const
     {
         MyeQuat q;
@@ -405,8 +403,8 @@ constexpr float kMyeDeg2Rad = kMyePi / 180.0f;
 
 // sin(x)。**前提: |x| <= 3pi/2** (sin(x)=sin(pi-x) の対称性で [-pi/2, pi/2] へ 1 回だけ
 // 折り返し、9 次のテイラーで評価する。この区間の誤差は 1e-9 未満)。
-// ★実装は WatcherFpsCamera (M65g) が持っていたものを**1 命令も変えずに**引き上げた —
-//   変えると同スクリプトの視点角が動いて replay 7 ペア目が割れる
+// ★**1 命令も変えないこと** — 変えると WatcherFpsCamera の視点角が動いて
+//   replay 7 ペア目 (acoustic) が割れる
 inline float MyeSinRad(float x)
 {
     if (x > kMyePi * 0.5f) {
@@ -475,9 +473,9 @@ inline uint64_t MyePlaySoundAt(const MyeUpdateContext& ctx, const char* key, Mye
 }
 
 // 自分の位置で 3D 再生する (足音・衝突音など)。
-// ★M70d で実バグを修正: v8 から **ローカル位置をワールド位置として**渡していたので、
-//   親を持つエンティティ (車輪・手に持った物・キャラの子ボーン) では鳴る場所がずれていた。
-//   ずれは「親のワールド位置ぶん」なので、原点付近の親では気づけない
+// ★渡すのは**ワールド位置**。ローカル位置を渡すと、親を持つエンティティ (車輪・手に
+//   持った物・キャラの子ボーン) で鳴る場所が「親のワールド位置ぶん」ずれる。
+//   原点付近の親では気づけない
 inline uint64_t MyePlaySoundHere(const MyeUpdateContext& ctx, const char* key, float volume = 1.0f)
 {
     return MyePlaySoundAt(ctx, key, MyeSelf(ctx).GetWorldPosition(), volume);
@@ -587,10 +585,6 @@ inline bool MyeRaycastParts(const MyeUpdateContext& ctx, MyeEntityId root, const
 // スキーマごとに提供する — 手書きでここを直接呼ぶのは probe / 一時実験くらいのはず。
 // ★C# スクリプト状態 (非決定論レーン) は読み書きとも 0 が返る (EngineAPI.h の契約)
 
-// ★MyeNameHash の定義は「スクリプト用ユーティリティ」節の先頭へ移した (M70d) —
-//   MyeGameObject::GetWorldPosition が WorldMatrix を汎用フィールドアクセスで読むため、
-//   ここより前で必要になった
-
 // 生スロットの糖衣。戻り値は Get = 実サイズ / Set = 1 (0 = 無し/不一致)
 inline int32_t MyeGetComponentField(const MyeUpdateContext& ctx, MyeEntityId e, uint64_t comp,
                                     uint64_t field, void* buf, int32_t bufSize,
@@ -629,10 +623,9 @@ inline bool MyeSetField(const MyeUpdateContext& ctx, MyeEntityId e, uint64_t com
 // InputSnapshot のマウス経由** で判定する (ABI 追加なし = bump 不要)。verify では記録された
 // マウスで再現されるため replay 一致。
 //
-// ★M70c で解消: 矩形は**キャンバス座標** (基準 1920x1080、UIElement の x/y/w/h と同じ
-//   土俵) で、マウスも MouseCanvasPos 経由のキャンバス座標になった。
-//   さらに「矩形を手書きしない」経路 (MyeUIClicked) が下に増えている — 新しく書くなら
-//   そちらを使うこと。
+// ★矩形は**キャンバス座標** (基準 1920x1080、UIElement の x/y/w/h と同じ土俵) で、
+//   マウスも MouseCanvasPos のキャンバス座標で比べる。
+//   新しく書くなら「矩形を手書きしない」MyeUIClicked (下) を使うこと。
 // キャンバス座標のマウス位置 (v16、M70b/M70c)。UI の引数はすべてこの座標系
 inline void MyeMouseCanvasPos(const MyeUpdateContext& ctx, float& outX, float& outY)
 {
@@ -649,7 +642,7 @@ inline bool MyeMouseInRect(const MyeUpdateContext& ctx, MyeUIRect r)
 // 左ボタンを rect 内で押した瞬間に true。prevDown は呼び出し側スクリプトがフィールドで
 // 保持する (エッジ検出。登録フィールドなら DLL リロードを跨いで状態維持)。
 // ★**新しく書くなら MyeUIClicked を使うこと** — こちらは矩形を手書きする形なので、
-//   UIElement 側のレイアウトを変えると黙って食い違う (M70c で潰したのがまさにこれ)
+//   UIElement 側のレイアウトを変えると黙って食い違う
 inline bool MyeButtonClicked(const MyeUpdateContext& ctx, MyeUIRect r, int32_t& prevDown)
 {
     const int down = ctx.api->MouseButton(ctx.api->engine, 0);
@@ -660,7 +653,7 @@ inline bool MyeButtonClicked(const MyeUpdateContext& ctx, MyeUIRect r, int32_t& 
 
 // ---- v16 (M70c): エンジンが持つ UI の対話状態 ----
 // 矩形はエンジンが解決し、判定もエンジンが tick 中 (スクリプト層より前) に済ませてある。
-// スクリプトは結果を読むだけ = **矩形の二重管理が無くなる**。
+// スクリプトは結果を読むだけ = **矩形を二重に持たない**。
 enum MyeUIButtonBits : uint32_t {
     MyeUIButtonHovered = 1u << 0,
     MyeUIButtonPressed = 1u << 1,
@@ -765,7 +758,7 @@ inline bool MyeSetUITexture(const MyeUpdateContext& ctx, MyeEntityId id, const c
 }
 // **キャンバス座標**でのヒットテスト (M70b。描画と同じ土俵)。無ヒットは null id
 // (MyeEntityIdIsNull で判定)。★MousePos は実 px なのでそのまま渡さないこと —
-// キャンバス座標のマウス (MouseCanvasPos) は M70c で足す
+// キャンバス座標のマウスは MyeMouseCanvasPos で取る
 inline MyeEntityId MyeUIHitTest(const MyeUpdateContext& ctx, float x, float y)
 {
     return ctx.api->UIHitTest(ctx.api->engine, x, y);

@@ -4,7 +4,7 @@
 //   (ハッシュ対象) に**正規化した絶対パスのハッシュ**が載り、sim 状態がチェックアウト先に
 //   依存する。`Spawner.cpp` が M13 の頃から使っている「CreateGameObject +
 //   SetMeshRenderer("builtin://...") + AddComponentByName」なら、そこに 1 つも
-//   パス由来の値が入らない。計画本文は prefab と書いていたが、こちらが正しい。
+//   パス由来の値が入らない。
 // ★着弾音は**スクリプトが自分で鳴らす**。M65c の衝撃音は接触した面の PhysMat から
 //   出るので、床材タイルの外 (素の床・壁) に落ちた石は 1 度も鳴らない = 企画 §5 の
 //   「投げた先の地形が一瞬見える」が成立しない。飛翔中の物を数本だけ覚えておき、
@@ -30,7 +30,7 @@ const uint64_t kCompRigidbody = MyeNameHash("Rigidbody");
 const uint64_t kFieldMass = MyeNameHash("mass");
 const uint64_t kFieldRestitution = MyeNameHash("restitution");
 
-// ★**登録フィールドは 16 本まで** (ScriptAPI.h の MYE_SF_FOREACH)。動かない調整値は
+// ★**登録フィールドは 32 本まで** (ScriptAPI.h の MYE_SF_FOREACH)。動かない調整値は
 //   ここへ置く — フィールドにすると snapshot / ハッシュ / DLL リロードの復元に載る
 constexpr int32_t kCooldownTicks = 20;
 constexpr float kEyeHeight = 0.7f;
@@ -172,7 +172,7 @@ struct WatcherThrowTool : Script<WatcherThrowTool> {
         MyeSetField(ctx, e, kCompEmitter, kFieldCooldown, int32_t{ 30 });
         // 射出方向は**投げた本人の今の向き**から取り直す (1 tick ぶんのずれは
         // 数ミリラジアンで絵にも当たりにも出ない)。方向を持ち越すフィールドを
-        // 3 本増やすより安い — 登録フィールドは 16 本しか無い
+        // 3 本増やすより安い — 登録フィールドには上限 (32 本) がある
         MyeVec3 f = Forward(ctx);
         api->SetVelocity(api->engine, e,
                          { f.x * throwSpeed, f.y * throwSpeed + throwLift, f.z * throwSpeed });

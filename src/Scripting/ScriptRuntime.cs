@@ -241,7 +241,7 @@ namespace MyeScripting
             if (!_instances.TryGetValue(handle, out var inst)) return;
             try
             {
-                // M70d: ネイティブから来た tick 番号をインスタンスへ渡す (以前は捨てていた)。
+                // M70d: ネイティブから来た tick 番号をインスタンスへ渡す。
                 // C# レーンにはこれ以外に決定論的な時間カウンタが無い
                 inst.Tick = tick;
                 switch (phase)

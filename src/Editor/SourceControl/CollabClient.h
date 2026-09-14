@@ -22,8 +22,9 @@ bool RunSourceControlSelfTest();
 //     応答をコールバックへ配るだけ = ロックも条件変数も Editor 層に持ち込まない。
 //   * DLL が返した文字列は **mye_collab_free でしか解放しない** (Rust のアロケータで
 //     確保されているので delete/free で返すとヒープが違って即クラッシュする)。
-//   * Shutdown は destroy -> FreeLibrary の順。逆にすると走行中の worker のコードごと
-//     アンロードされる。
+//   * Shutdown は destroy (worker を join) だけで、**FreeLibrary はわざと呼ばない**。
+//     DLL の中に join できないスレッドが残り、アンロードするとそのコードごと消えて落ちる
+//     (理由と実測は CollabClient.cpp の Shutdown)。
 //   * DLL が無い / 版が違うのは**異常ではない** (rustup 未導入の同僚がいる)。
 //     State() が理由を返し、エディタの他機能は一切影響を受けない。
 class CollabClient {
@@ -34,7 +35,7 @@ public:
     CollabClient() = default;
     ~CollabClient();
     // ★コピー禁止。dll_ / handle_ は所有権のある生ポインタで、デストラクタが
-    //   Shutdown (destroy + FreeLibrary) を呼ぶ = 複製すると二重解放になる
+    //   Shutdown (destroy) を呼ぶ = 複製すると同じハンドルを二重に destroy する
     CollabClient(const CollabClient&) = delete;
     CollabClient& operator=(const CollabClient&) = delete;
 
@@ -52,7 +53,7 @@ public:
     // 応答/通知を NULL まで drain する。毎フレーム 1 回呼ぶ
     void Poll();
 
-    // destroy + FreeLibrary。以後 State() は NoService
+    // destroy だけ (FreeLibrary は呼ばない。理由は .cpp)。以後 State() は NoService
     void Shutdown();
 
     void SetEventHandler(EventFn fn) { onEvent_ = std::move(fn); }

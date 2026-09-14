@@ -10,77 +10,25 @@
 #include "Shared/MathPod.h"
 
 // 互換性チェック用。テーブルや ScriptDesc のレイアウトを変えたら必ず上げること
-// v3 (M19): gamepad / Raycast / PlaySound / StopSound / LoadScene をスロット予約で一括追加
-// v4 (M28a): 剛体操作 (AddForce/AddImpulse/AddTorque/Get/SetVelocity) + 空間クエリ
-//            (OverlapSphere/OverlapBox/SphereCast) + OnCollision コールバックを一括追加。
-//            AddTorque は M28b、Overlap*/SphereCast と OnCollision 配信は M28c で実装
-// v5 (M29b): キャラクターコントローラ操作 (CharacterMove/Jump/IsGrounded/GetVelocity) +
-//            SetTextMeshText (スロット予約、M29c の TextMesh で実装) を一括追加
-// v6 (M32f): エフェクト制御 (EmitterBurst/SetEmitterPlaying/RestartEffect/PlayEffect) を一括追加
-// v7 (M37): Instantiate (fileId 予約方式) / FindByFileId / AnimatorParam / 動的 UI
-//           (SetUIText/Fill/Color/Focused + UIFocusNav) / DebugDrawLine / マスク付きクエリ
-// v8 (M45): オーディオ操作一式をスロット予約で一括追加 (実装は M45g)。
-//           v3 の PlaySound/StopSound はシグネチャを変えずに残す — Interop.cs が
-//           位置ベースでミラーしているため、既存スロットをいじると C# 側が全てズレる
-// v9 (M48h): 部位 (ソケット) クエリ FindPart / FindPartsByTag を追加。取り付けは既存
-//            SetParent、位置取得は既存 Transform getter で足りるので新スロットは 2 本だけ
-// v10 (M49): 部位ボリューム (PartBounds) へのレイキャスト RaycastParts を追加。
-//            root/tag のフィルタ込みで 1 本に収めた (root null = シーン全体、tag 0 = 全部位)
-// v11 (M50d): 汎用フィールドアクセス GetComponentField / SetComponentField を追加。
-//             コンポーネント名/フィールド名の FNV-1a 64bit ハッシュで任意コンポーネント
-//             (組込み / スキーマ / C++ スクリプト) の登録フィールドを値コピーで読み書きする。
-//             スキーマ codegen (SchemaComponents.gen.h / Schema.gen.cs) の呼び先で、
-//             型ごとのスロットを増やさずに済ませるための 2 本 (家風: 足す本数を減らす)
-// v12 (M51h): M51 のエンジン内機能 (d 入力アクション / e UI / g ゲームフロー) を 14 本で
-//             一括開通 (M48h の「束ねて 1 回だけ bump」運用)。GetMouseWheel / UI 矩形・
-//             レイアウト・テクスチャ・ヒットテスト / アクションマップ 2 本 / TimeControl 2 本 /
-//             PersistSet・Get / SaveGame・LoadGame / SetPadVibration。
-//             ミラー照合は tools\check_rules.ps1 規則 11 (順序・件数・名前・引数個数 +
-//             version⇄スロット数の同時性) が機械検査する
-// v13 (M52i): ネット対戦 (2 人 P2P + 予測ロールバック) の状態参照 5 本 +
-//             入力アクションのレーン指定版 2 本。
-//             ★Net* の 5 本が返すのは**すべて機種依存の値** (自分がどちら側か / ping /
-//               巻き戻し回数)。読むのは表示・カメラ・UI といった描画レーンに限り、
-//               **sim 状態へ書き戻さないこと** — 書き戻した瞬間に 2 台のワールド
-//               ハッシュが割れる。誤用は M52i の desync 検出が毎 tick 見張っていて、
-//               「静かに壊れる」のではなく desync バンドルが出て止まる形で表面化する。
-//             ★レーン指定版は v12 の GetActionState/GetAxisValue と**同じ評価結果**を
-//               引くだけ (InputActions がレーン major で全 kMaxPlayers 本を持っている)。
-//               既存 2 本は「レーン 0」の別名として 1 文字も変えずに残す
-// v14 (M59k): 超リアル物理 (M59) の入口 8 本を束ねて 1 回で開通 (「ABI は各マイルストーン
-//             末に 1 回」の運用)。コンポーネントの付け外し 2 本 (RemoveComponentByName /
-//             HasComponentByName)、作用点付きの力 (AddForceAtPosition)、接触の強さ
-//             (GetContactInfo)、環境と地形のサンプリング 2 本 (SampleWind /
-//             SampleTerrainHeight)、スリープ 2 本 (WakeRigidbody / IsSleeping)。
-//             ★GetContactInfo が読めるのは**今 tick の物理が書いた接触列だけ**。
-//               スクリプトの Update はフェーズ 3 = 物理より前なので常に 0 が返り、
-//               実データが返るのは LateUpdate と OnCollision* コールバックだけ。
-//               これは行儀の問題ではなく決定論の要請 — 接触列は毎 tick 使い回す
-//               バッファで SimSnapshot に入っていないため、前 tick の列を読ませると
-//               タイムトラベル復元 / ネットのロールバック後の再シムでハッシュが割れる。
-//             ★M59 の新機能はすべて「コンポーネントを付けたら効く」存在ゲートなので、
-//               ON/OFF の構造的な操作は AddComponentByName / RemoveComponentByName、
-//               フィールド粒度の ON/OFF は v11 の SetComponentField が担当する
-//               (専用スロットは足さない — 決定台帳 10)
-// v15 (M64a): マウスルック 2 本。GameEngin_Demo のドッグフーディングで
-//             「一人称の視点をマウスで回せない」ことが分かって足した穴埋め:
-//             InputSnapshot は絶対座標しか持たず、カーソルを画面内へ留める手段も
-//             無かったので、窓の端で視点が止まっていた。
-//             GetMouseDelta (決定論レーン = InputSnapshot 由来) と
-//             SetCursorMode (出力レーン = SetPadVibration と同格) の対で開通する。
-//             ★この 2 本は**非対称**であることに意味がある。デルタは .rep に載る
-//               sim 入力、カーソルの掴みは載せてはいけない機種依存の副作用で、
-//               後者を sim から読み返す口は今後も作らない
-// v17 (M71a): GetSceneName 1 本。シーン遷移 (v3 LoadScene) は M19.4 から動いていたが、
-//             スクリプトが「今どのシーンに居るか」を知る口が無く、遷移先を決める材料が
-//             常にスクリプト側の外部知識だった (三校のステージ進行で詰まった)。
-//             ★返すのは **sceneName であってパスではない**。SourcePath() は assets ルート
-//               込みの絶対パスなのでチェックアウト先ごとに変わる = sim へ持ち込むと
-//               機種依存になる (決定論の契約: パス由来の値をハッシュへ載せない)。
-//               sceneName は作者が書いた値なので機種に依らない。
-//             ★これに伴い Scene::name_ は sim が分岐に使う状態へ昇格したので、
-//               SimSnapshot v15 で撮る対象に加えた (載せないとタイムトラベルと
-//               .rep 埋め込みスナップショットが名前だけ古いまま復元される)
+// ★既存スロットの並びとシグネチャは変えない — Interop.cs が位置ベースでミラーしているため、
+//   既存スロットをいじると C# 側が全てズレる。ミラー照合は tools\check_rules.ps1 規則 11
+//   (順序・件数・名前・引数個数 + version⇄スロット数の同時性) が機械検査する。
+// 版ごとの中身 (注意は各スロットの注記。足した経緯は docs\history\api-scripting-tools.md):
+// v3 (M19): gamepad / Raycast / PlaySound / StopSound / LoadScene
+// v4 (M28a): 剛体操作 (AddForce/AddImpulse/AddTorque/Get/SetVelocity) + Overlap*/SphereCast + OnCollision
+// v5 (M29b): キャラクターコントローラ (CharacterMove/Jump/IsGrounded/GetVelocity) + SetTextMeshText
+// v6 (M32f): エフェクト制御 (EmitterBurst/SetEmitterPlaying/RestartEffect/PlayEffect)
+// v7 (M37): Instantiate / FindByFileId / AnimatorParam / 動的 UI + UIFocusNav / DebugDrawLine / マスク付きクエリ
+// v8 (M45): オーディオ操作一式 (PlaySound2 以降)
+// v9 (M48h): 部位 (ソケット) クエリ FindPart / FindPartsByTag
+// v10 (M49): 部位ボリュームへのレイキャスト RaycastParts
+// v11 (M50d): 汎用フィールドアクセス GetComponentField / SetComponentField
+// v12 (M51h): GetMouseWheel / UI 矩形・レイアウト・テクスチャ・ヒットテスト / アクションマップ / TimeControl / Persist / Save・Load / SetPadVibration
+// v13 (M52i): ネット対戦の状態参照 5 本 + 入力アクションのレーン指定版 2 本
+// v14 (M59k): 付け外し 2 本 / AddForceAtPosition / GetContactInfo / SampleWind / SampleTerrainHeight / スリープ 2 本
+// v15 (M64a): マウスルック GetMouseDelta / SetCursorMode
+// v16 (M70c): UI の対話 UIButtonState / UIGetFocused / UISetFocused / MouseCanvasPos / GetUIRect + LoadPersist
+// v17 (M71a): GetSceneName
 #define MYE_API_VERSION 17u
 
 // PersistSet の 1 エントリ最大バイト数 (v12)。PersistStore は WorldHash / セーブ出力に
@@ -386,12 +334,12 @@ struct MyeEngineApi {
     // InputSnapshot 由来 = 記録/検証で記録値が返る (決定論)
     int32_t (*GetMouseWheel)(void* engine);
 
-    // ---- UI 矩形/レイアウト書込 (M51e の回収)。UIElement は NoHash の描画状態 →
-    //      **write-only 専用** (決定台帳 3)。読み取りは今後も追加しない — C# レーンは
-    //      record/verify 中走らないため、C# が書いた UI 値を sim が読み返すと
-    //      リプレイが壊れる。成功で 1、UIElement 非所持は 0 ----
+    // ---- UI 矩形/レイアウト書込 (M51e の回収)。UIElement は NoHash の描画状態。
+    //      書いた値そのものを読み返す口は無く、読めるのは v16 の GetUIRect (解決済みの
+    //      矩形) だけ。★C# レーンは record/verify 中走らないため、C# から UI 幾何を
+    //      書くとリプレイが壊れる (C# 側には開けていない)。成功で 1、UIElement 非所持は 0 ----
     // SetUIRect: anchor 基準オフセット (x,y) とサイズ (w,h) を設定。w/h < 0 は現値維持
-    //            (UI は write-only で読めないため「位置だけ動かす」用の keep 意味論)。
+    //            (書いた値を読み返さずに「位置だけ動かす」ための keep 意味論)。
     //            ★M75a: 書き先は RectTransform (anchoredPosition / sizeDelta)。署名は不変
     int (*SetUIRect)(void* engine, MyeEntityId id, float x, float y, float w, float h);
     // SetUILayout: anchor/align は 9-grid (0..8)、space/clipChildren/wrap は 0/1。
@@ -407,7 +355,7 @@ struct MyeEngineApi {
     //   ★M70b: 描画もキャンバス座標で解くので「見えている場所 = 押せる場所」が構造的に
     //     一致する。キャンバス寸法は入力レーン 0 に記録された値なので決定論。
     //   ★MousePos は**クライアント実 px**を返すので、そのまま渡すと解像度に応じてズレる。
-    //     キャンバス座標のマウスを返す MouseCanvasPos は M70c で足す
+    //     キャンバス座標のマウスは v16 の MouseCanvasPos で取る
     MyeEntityId (*UIHitTest)(void* engine, float x, float y);
 
     // ---- 入力アクションマップ (M51d の回収)。assets\input\actions.json で定義し、
@@ -443,7 +391,9 @@ struct MyeEngineApi {
     void (*SetPadVibration)(void* engine, float left, float right);
 
     // ---- v13 (M52i): ネット対戦の状態参照 ----
-    // ★**表示用**。ここで得た値を sim 状態へ書くとリプレイもネットも壊れる (上の注記)。
+    // ★**表示用**。返すのは機種依存の値 (自分がどちら側か / ping / 巻き戻し回数) なので、
+    //   sim 状態へ書くとリプレイもネットも壊れる (2 台のワールドハッシュが割れ、
+    //   desync 検出が desync バンドルを出して止まる)。
     //   セッションが張られていないときは 0 / 1 レーンの既定値を返す
     int (*NetIsConnected)(void* engine);      // 入力交換中なら 1
     uint32_t (*NetLocalPlayer)(void* engine); // 自分が動かすレーン (非ネットは 0)
@@ -549,9 +499,8 @@ struct MyeEngineApi {
     void (*SetCursorMode)(void* engine, int mode);
 
     // ---- v16 (M70c): UI の対話をエンジンが持つ ----
-    // M70b までは「押されたか」がエンジン内 (UIRenderer のハイライト計算) にしか無く、
-    // ゲーム側は UIElement と同じ矩形をスクリプトに手書きして自前でヒットテストしていた。
-    // 矩形の二重管理はレイアウト変更で黙って食い違うので、判定をエンジンへ 1 本化した。
+    // 矩形の解決・押下判定・フォーカスはエンジンが 1 本で持つ。スクリプトに矩形を
+    // 手書きさせると、UIElement 側のレイアウト変更で黙って食い違うため。
     // 状態は Scene が持つ sim 状態で **WorldHash 対象** = 配線が壊れれば replay が赤くなる。
 
     // UIButtonState: 要素の対話状態をビットで返す。
@@ -584,8 +533,8 @@ struct MyeEngineApi {
     int (*GetUIRect)(void* engine, MyeEntityId id, MyeUIRect* out);
 
     // LoadPersist: セーブスロットから **PersistStore だけ**を読む (シーンは動かさない)。
-    //   LoadGame は保存時のシーンへ必ず遷移するので「タイトル画面でハイスコアだけ読む」
-    //   ができなかった (dogfooding #16)。読めたら 1。
+    //   LoadGame は保存時のシーンへ必ず遷移するので、「タイトル画面でハイスコアだけ読む」
+    //   にはこちらを使う (dogfooding #16)。読めたら 1。
     //   ★LoadGame と同じく record/verify/netplay 中は no-op + WARN — セーブファイルは
     //     sim の外にあり、再生を跨ぐと同じ入力から別の世界が出てしまう
     int (*LoadPersist)(void* engine, int slot);

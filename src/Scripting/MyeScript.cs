@@ -67,9 +67,9 @@ namespace MyeScripting
         public bool PlayAudio() => Engine.PlayAudioSource(Id);
         public bool StopAudio(float fadeSeconds = 0.0f) => Engine.StopAudioSource(Id, fadeSeconds);
 
-        // ---- ゲーム内 UI (UIElement を持つエンティティ、v7 + v12)。**write-only** —
-        // UIElement は描画レーン (非ハッシュ) なので毎 tick 書いてよいが、読み返す API は無い。
-        // UIElement 非所持なら false
+        // ---- ゲーム内 UI (UIElement を持つエンティティ、v7 + v12)。演出の書き込み —
+        // UIElement は描画レーン (非ハッシュ) なので毎 tick 書いてよい。読めるのは下の
+        // GetUIRect (解決済みの矩形) だけ。UIElement 非所持なら false
         public bool SetUIText(string text) => Engine.SetUIText(Id, text);
         public bool SetUIFill(float amount) => Engine.SetUIFill(Id, amount);
         public bool SetUIColor(float r, float g, float b, float a = 1.0f)
@@ -80,7 +80,7 @@ namespace MyeScripting
         public bool GetUIRect(out float x, out float y, out float w, out float h)
             => Engine.GetUIRect(Id, out x, out y, out w, out h);
 
-        // ---- ★M70c で C# から閉じた口: SetUIRect / SetUILayout / SetUIFocused ----
+        // ---- ★C# には開けない口: SetUIRect / SetUILayout / SetUIFocused (M70c) ----
         // どれも **UI の当たり判定を動かす** = M70c でワールドハッシュに載った値
         // (hovered / pressed / clicked / focused) を間接的に書き換える。
         // ところが C# レーンは
@@ -88,7 +88,7 @@ namespace MyeScripting
         //   * ネット対戦中は止まる (TickServices::netLockstep)
         //   * リプレイの被覆外
         // なので、ここから UI 幾何を書くと「録ったときと再生で当たり判定が違う」形の
-        // 割れ方をする。**演出 (テキスト / 色 / 塗り率 / テクスチャ) は今までどおり**で、
+        // 割れ方をする。**演出 (テキスト / 色 / 塗り率 / テクスチャ) は書いてよく**、
         // 幾何とフォーカスを動かしたいときは C++ スクリプト側 (ScriptAPI.h の
         // MyeSetUIRect / MyeUISetFocused) を使うこと。
 
@@ -96,10 +96,7 @@ namespace MyeScripting
         public static MyeEntity Find(string name) => new MyeEntity(Engine.FindByName(name));
 
         // ---- コンポーネントの付け外し (v14、M59k) ----
-        // ★構造変更 = アーキタイプ移動なので毎 tick は非推奨 (常用する ON/OFF は
-        //   フィールドの bool を倒すほうが桁違いに安い)。
-        // ★**Add / Remove はどちらも tick 末に適用される** (ADR-005)。Has が答えるのは
-        //   常に「この tick の頭の状態」— 付けた直後は false、外した直後は true
+        // ★注意 (毎 tick は非推奨 / Add・Remove は tick 末に適用) は MyeScript.AddComponent と同じ
         public bool AddComponent(string name) => Engine.AddComponent(Id, name);
         public bool RemoveComponent(string name) => Engine.RemoveComponent(Id, name);
         public bool HasComponent(string name) => Engine.HasComponent(Id, name);
@@ -178,8 +175,7 @@ namespace MyeScripting
         // 規則と Start の注意は MyeEntity.WorldPosition と同じ
         public MyeVec3 WorldPosition => Engine.GetWorldPosition(SelfId);
 
-        // 現在の sim tick 番号 (M70d)。ネイティブは以前から Invoke で渡していたのに
-        // 捨てていた — C# にはこれ以外に**決定論的な時間カウンタが 1 つも無い**
+        // 現在の sim tick 番号 (M70d)。C# にはこれ以外に**決定論的な時間カウンタが 1 つも無い**
         // (実時間は機種依存、dt の積算は誤差が乗る)。「N tick に 1 回だけ」を書く土台
         public ulong Tick { get; internal set; }
 
@@ -412,8 +408,6 @@ namespace MyeScripting
         //   ON/OFF は付けたまま bool フィールドを倒すほうが桁違いに安い)。
         // ★**Add / Remove はどちらも tick 末に適用される** (ADR-005)。Has が答えるのは
         //   常に「この tick の頭の状態」— 付けた直後は false、外した直後は true
-        // ★AddComponent は v2 からエンジン内部にあったが C# へ露出していなかった —
-        //   付けられるのに外せない/確かめられない状態だったので v14 でまとめて開ける
         protected bool AddComponent(string name) => Engine.AddComponent(SelfId, name);
         protected bool RemoveComponent(string name) => Engine.RemoveComponent(SelfId, name);
         protected bool HasComponent(string name) => Engine.HasComponent(SelfId, name);
@@ -424,8 +418,8 @@ namespace MyeScripting
         protected static ulong PlaySound(string soundKey, float volume = 1.0f, float pitch = 1.0f)
             => Engine.PlaySound(soundKey, volume, pitch);
         // 自分の位置で 3D 再生する (足音・衝突音など)。
-        // ★M70d で実バグを修正: **ローカル位置をワールド位置として**渡していたので、
-        //   親を持つエンティティでは鳴る場所が「親のワールド位置ぶん」ずれていた
+        // ★渡すのは**ワールド位置**。ローカル位置を渡すと、親を持つエンティティで
+        //   鳴る場所が「親のワールド位置ぶん」ずれる
         protected ulong PlaySoundHere(string soundKey, float volume = 1.0f)
             => Engine.PlaySoundAt(soundKey, Engine.GetWorldPosition(SelfId), volume);
         protected static ulong PlaySoundAt(string soundKey, MyeVec3 worldPos, float volume = 1.0f)

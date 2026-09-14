@@ -4,13 +4,13 @@
 // pendingTone / ticksPerRing) は `AcousticEmitterComponent` の **sim 状態フィールド**なので、
 // v11 からある汎用スロット `SetComponentField` (名前ハッシュ引き) でそのまま書ける
 // (VehicleDemoDriver が車両入力で示したのと同じ形)。
-// おまげに要求が sim 状態なので、snapshot / .rep / タイムトラベルが**何もしなくても**
+// おまけに要求が sim 状態なので、snapshot / .rep / タイムトラベルが**何もしなくても**
 // 「いつ鳴ったか」を運ぶ。
 //
 // ★時間は **登録フィールドの int カウンタ**で持つ。実時間も float の秒累積も使わない
 //   (規則 2: 実時間は sim に混ぜない / 秒の float 累積は加算順で割れる)。
 // ★スクリプト名は名前順ソートで TypeId が決まるので 'Wa v' で始めてある
-//   (現行末尾の WalkerDemo より後。M65g の Watcher* が入っても後ろのまま)。
+//   (WalkerDemo / Watcher* より後)。
 #include "Shared/ScriptAPI.h"
 
 namespace {

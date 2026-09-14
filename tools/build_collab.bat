@@ -12,7 +12,7 @@ if "%CFG%"=="" set CFG=Debug
 
 rem cargo の解決: PATH -> 無ければ rustup の既定インストール先。
 rem ★rustup を入れた後に開き直していないシェルでは PATH に載っていない
-rem   (環境変数はプロセス起動時に固定される)。M66a で実際に踏んだのでフォールバックを持つ
+rem   (環境変数はプロセス起動時に固定される) ので、フォールバックを持つ (M66a)
 set CARGO=
 for /f "delims=" %%i in ('where cargo 2^>nul') do if not defined CARGO set CARGO=%%i
 if not defined CARGO if exist "%USERPROFILE%\.cargo\bin\cargo.exe" set CARGO=%USERPROFILE%\.cargo\bin\cargo.exe

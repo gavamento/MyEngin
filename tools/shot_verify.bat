@@ -57,7 +57,8 @@ rem チャンネル差の許容。同一マシンなら 0 で一致する。3 �
 rem 実測した最大差がちょうど 3 (deferred のトーンマップ)」という数字そのもので、余裕は 1 レベル
 rem しかない。数字は毎回ログに出す — 隠さないことがこのテストの価値。
 rem
-rem ★tol は 3 種類ある。**どれも実測値から決めていて、赤くなったから緩めた数字は 1 つも無い**:
+rem ★tol は 3 種類ある。**どれも実測値から決めていて、赤くなったから緩めた数字は 1 つも無い**。
+rem   赤くなっても tol は上げない (上げると本物の回帰も一緒に見逃す)。後退先は各 call の直前:
 rem   tol=3  … 既定。ラスタ + ライティング + トーンマップの丸め (実測 maxDiff 1〜3)
 rem   tol=12 … demo_terrain_deferred の 1 枚だけ。**異方性フィルタは実装依存**で
 rem            WARP のビルド違いで一致しない (実測 maxDiff=8)。詳細は該当 call の直前
@@ -82,7 +83,6 @@ set TOLNOW=%TOL%
 
 rem ---- コードから組み直すシーン (replay_verify と同じ流儀) ----
 rem parts も flow も正解はコード側なので、シーンファイルは毎回組み直す生成物にしている
-rem (parts は M74a 以前、モデル由来のサブアセット ID が絶対パスのハッシュでコミットできなかった)
 echo === build generated scenes (parts / flow) ===
 set PARTS_SCENE=cache\parts_showcase.scene.json
 if exist %PARTS_SCENE% del /q %PARTS_SCENE%
@@ -110,16 +110,10 @@ if exist %UI_SCENE% del /q %UI_SCENE%
 set FAILED=0
 set SHOTS=0
 
-rem ---- 25 本。既定デモの 2 経路 (Forward / Deferred) + 生成シーン 2 本 + UI プローブ
-rem      + 描画ショーケースの 2 経路 (M54a) + 地形 (M58c) + 物理 (M59l) + 関節 (M60k)
-rem      + 霧 (M57追補) + パーティクル 2 経路 (M63a) + 音響 2 経路 (M65e)
-rem      + RT 反射 / RT GI (M67a) + RT 反射 + ReSTIR (M67g)
-rem      + UI キャンバス 2 本 (M70b) + UI ショーケース 1 本 (M75c)
-rem      + ローカル限定 4 本 (ssr / fxaa / taa / froxel) ----
+rem ---- 25 枚。うち 10 枚が tol=0 のローカル限定 (上の tol 一覧)。枚数と順番は下の call :shot が正本 ----
 rem ★**--rt-demo (コーネル箱) は** WARP では重すぎるので golden にしない (ローカル任意)。
 rem   ただし **--render-demo に --rt-refl / --rt-gi を足す 20〜22 枚目は別物** で、
-rem   1 枚 11 s・同一バイナリで 2 回撮って maxDiff=0 (M67a 実測)。「RT は WARP では重い」を
-rem   RT レーン全体へ広げた結果、M67 まで RT の絵が 1 枚も固定されていなかった
+rem   1 枚 11 s・同一バイナリで 2 回撮って maxDiff=0 (M67a 実測)。
 call :shot demo_forward
 call :shot demo_deferred --deferred
 call :shot parts --scene %PARTS_SCENE%
@@ -127,9 +121,9 @@ call :shot flow_title --scene %FLOW_TITLE%
 call :shot ui_probe --scene assets\scenes\ui_probe.scene.json
 
 rem ---- 6/7 枚目 (M54a): 描画ロードマップ M54〜M58 の被写体が揃ったショーケース。
-rem      既存 5 枚は平行光 1 本だけで組まれていて点光源もスポットも無いため、局所ライトの影 /
+rem      1〜5 枚目は平行光 1 本だけで組まれていて点光源もスポットも無いため、局所ライトの影 /
 rem      デカール / SSR / プローブ / フロクセル / 地形は **どれも既定でピクセル不変** =
-rem      「壊れても誰も気づかない」。この 2 枚がそれ以降 27 サブの回帰の土台になる
+rem      「壊れても誰も気づかない」。この 2 枚が描画系の回帰の土台
 call :shot demo_render_forward --render-demo
 call :shot demo_render_deferred --render-demo --deferred
 
@@ -157,17 +151,11 @@ rem ---- 9 枚目 (M56d): SSR。--render-demo の反射床パッチ (rdemo_mirro
 rem      柱と灯りが映り込む。**この 1 枚が SSR の唯一の自動被覆**で、既定 off の SSR は
 rem      これが無いと壊れても全 golden が緑のままになる。
 rem      撮影条件は demo_render_deferred と --ssr だけ違う = 差分がまるごと SSR の寄与。
-rem      ★**当初 CI 判定 (tol=3) に載せたが、実測で降格した** (CI run 32622063559)。
-rem        SSR の交差判定はレイが当たったか外れたかで**離散的に分岐する**演算で、
-rem        1 ULP の深度差が hit/miss を反転させると、その画素は反射色 ⇔ IBL フォールバックへ
-rem        丸ごと飛ぶ。実測は **maxDiff=95 / tol=3 超えはわずか 30 画素** — 「広く薄く」ではなく
-rem        「狭く極端に」違う形で、FXAA (1 → 35 へ増幅) と同型。
-rem        ★差分ヒートマップも反射床と柱の輪郭に**孤立した点**が散る = 分岐反転の署名。
-rem        **この形は tol をいくつにしても守れない** — 本物の SSR 回帰も同じ「数十画素が
-rem        大きく飛ぶ」形で出るので、tol を 95 まで上げると検出力がゼロになる。
-rem        よって FXAA / TAA / froxel と同じローカル限定 tol=0 の枠へ移す。
-rem        ローカルでは maxDiff=0 のビット一致なので降格しても検出力は落ちない
-rem        (落ちるのは「ランナー上でも SSR が同じ絵を出す」という主張だけ)。
+rem      ★**ローカル限定 (tol=0)**。SSR の交差判定はレイが当たったか外れたかで**離散的に分岐する**
+rem        演算で、1 ULP の深度差が hit/miss を反転させると、その画素は反射色 ⇔ IBL フォールバックへ
+rem        丸ごと飛ぶ。ランナーでは「狭く極端に」違う形 (maxDiff=95 / tol=3 超え 30 画素、
+rem        CI run 32622063559) で出て、本物の SSR 回帰も同じ形なので tol では守れない。
+rem        ローカルでは maxDiff=0 のビット一致なので検出力は落ちない。
 if defined MYE_SHOT_SKIP_SSR goto :skip_ssr
 set TOLNOW=0
 call :shot demo_render_ssr --render-demo --deferred --ssr
@@ -197,10 +185,6 @@ set TOLNOW=%TOL%
 
 rem ---- 12 枚目 (統合契約の予約 3、M57d): フロクセル・ボリュメトリック。
 rem      FXAA / TAA と同じ理由でローカル限定 (tol=0 のビット一致)。CI は MYE_SHOT_SKIP_FROXEL=1 で飛ばす。
-rem      ★M57c ではこの枠を撮らなかった — 積分結果を読む者が 1 人も居ない段階で撮ると
-rem        demo_render_deferred と tol=0 でビット一致する「同じ絵の 2 枚目」にしかならず、
-rem        以後それが動いたときに原因が機能なのか撮影条件なのか切り分けられなくなるため。
-rem        絵が初めて変わる M57d がこの枠を撮る。
 rem      合成は Deferred 光パスの t15 なので --deferred が要る。撮影条件は --no-fxaa のまま =
 rem      demo_render_deferred との差が **フロクセルだけ** になる
 if defined MYE_SHOT_SKIP_FROXEL goto :skip_froxel
@@ -209,8 +193,8 @@ call :shot demo_render_froxel --render-demo --deferred --froxel
 set TOLNOW=%TOL%
 :skip_froxel
 
-rem ---- 13 枚目 (M59l): 物理ショーケース。**frame 120 (2 秒) で撮る 2 枚のうちの 1 枚目**
-rem      (もう 1 枚は 14 枚目の joints)。他の 12 枚は frame 3 = ほぼ初期配置で、それは
+rem ---- 13 枚目 (M59l): 物理ショーケース。**frame 120 (2 秒) で撮る** (joints / fog /
+rem      particle / acoustic も同じ)。既定の撮り方は frame 3 = ほぼ初期配置で、それは
 rem      「描画が壊れていないか」を見る撮り方。
 rem      物理は 3 tick では 1 ミリも動いていないので、同じ撮り方をすると M59 で足した数式
 rem      (空力 / 浮力 / マグヌス / ジャイロ / 材料 / CCD) が 1 つも絵に出ない = 守るものが無い。
@@ -218,12 +202,12 @@ rem      120 tick 回すと 羽根のひらひら / 鉄球の着地 / 紙飛行�
 rem      浮きの喫水 / 箱の山 が全部同じフレームに乗る。
 rem
 rem ★これは**シミュレーションの機種独立性を絵で検査する 1 枚**でもある (14 枚目の joints と
-rem   合わせて 2 枚)。他の 12 枚はどれも tick 3 なので、sim が機種で割れても絵はほとんど
+rem   合わせて 2 枚)。frame 3 の撮影では、sim が機種で割れても絵はほとんど
 rem   変わらない。120 tick ぶん
 rem   積み上がった状態を照合するということは、ランナーの sim が開発機と 1 ビットでも
 rem   違えば必ず赤くなるということ (scalar float + /fp:precise の契約が守られていれば一致する)。
-rem   ★もしランナーで赤くなったら、**tol を上げて誤魔化さないこと** — 意味のある後退先は
-rem     「--shot-frame 3 に落として描画だけの検査に戻す」か「tol=0 のローカル限定枠へ移す」。
+rem   ★ランナーで赤くなったときの後退先は「--shot-frame 3 に落として描画だけの検査に戻す」か
+rem     「tol=0 のローカル限定枠へ移す」。
 rem   経路は既定の Forward (このシーンは平行光 1 本だけで deferred 固有の被写体が無い)
 set PHYS_SCENE=cache\physics_showcase.scene.json
 if exist %PHYS_SCENE% del /q %PHYS_SCENE%
@@ -241,7 +225,7 @@ rem
 rem ★physics.png と同じく**シミュレーションの機種独立性を絵で検査する 1 枚**。
 rem   このシーンは substeps 16 なので 120 tick = 1920 サブステップぶん積み上がっており、
 rem   1 ビットの差でも必ず絵に出る。赤くなったときの後退先も physics と同じ
-rem   (frame 3 へ落とすか tol=0 のローカル限定枠へ移す。**tol は上げない**)。
+rem   (frame 3 へ落とすか tol=0 のローカル限定枠へ移す)。
 rem ★車の運転入力は C++ スクリプト (VehicleDemoDriver) が書くので、GameLogic.dll が
 rem   焼けていないと車だけ止まった絵になる = golden が静かに変わる。
 rem   replay_verify が先にビルドしている前提なのは physics と同じ
@@ -252,10 +236,8 @@ call :shot joints --joint-demo
 set SHOT=%SHOTBASE% --no-fxaa
 
 rem ---- 15 枚目 (M57追補): 霧のショーケース。**GPU パーティクル描画経路と VfxRenderer
-rem      (Sprite / Trail / TextMesh) の唯一のピクセル被覆**。
-rem      それまで GPU バックエンドは --screenshot で撮る手段が無く (エディタ GUI からしか
-rem      選べなかった)、VFX 3 種は 14 枚のどれにも写っていなかったので、**どちらも壊れても
-rem      全部緑のまま通る**状態だった。
+rem      (Sprite / Trail / TextMesh) のピクセル被覆** (VfxRenderer はこの 1 枚だけ、GPU パーティクルは
+rem      17 枚目の particle_gpu も)。無いと**壊れても全部緑のまま通る**。
 rem
 rem ★frame 120 で撮る (physics / joints と同じ理由)。frame 3 だとトレイルの点が 3 つしか
 rem   無く粒子も数個で、守るものが絵に出ない。Rotator (GameLogic.dll) が 30 deg/s なので
@@ -265,8 +247,8 @@ rem     (a) froxel の注入/積分は exp/pow を含む CS で、開発機と�
 rem         バージョンが違う (demo_render_froxel を tol=0 にした先例そのもの)
 rem     (b) **GPU パーティクルの sim 自体が WARP 上の float 演算**なので、粒子位置が
 rem         機種で動きうる (CPU バックエンドと違い sim が GPU に載っている)
-rem   ★赤くなったから tol を上げる、はやらないこと。後退先は「--particle-backend を外して
-rem     CPU 粒子で撮る」か「--froxel を外す」で、どちらも被覆を 1 段落とすだけで済む
+rem   ★赤くなったときの後退先は「--particle-backend を外して CPU 粒子で撮る」か
+rem     「--froxel を外す」で、どちらも被覆を 1 段落とすだけで済む
 if defined MYE_SHOT_SKIP_FOG goto :skip_fog
 set FOG_SCENE=cache\fog_showcase.scene.json
 if exist %FOG_SCENE% del /q %FOG_SCENE%
@@ -284,8 +266,7 @@ rem      全部既定 off なので、この 2 枚が無いと回帰検出がゼ
 rem
 rem ★2 枚撮るのが要点。C1〜C3 は「CPU が畳んでインスタンスへ送る」経路と「GPU が VS で
 rem   作る」経路の 2 実装を持ち、共有しているのは particle_billboard.hlsli の式だけ。
-rem   1 枚だけだと**片方の実装が壊れても緑のまま通る** (M57追補 で GPU 描画経路が
-rem   14 枚のどれにも写っていなかったのと同じ穴を、最初から開けないための 2 枚)。
+rem   1 枚だけだと**片方の実装が壊れても緑のまま通る**。
 rem ★2 枚は**意図的に食い違う** — 5 本目のエミッタ (depthCollision=1) は GPU 限定の
 rem   見た目効果 (spec 7.5 の例外) なので、CPU 側では衝突しない。M63a 時点の実測で
 rem   「深度衝突を切ると 2 枚は maxDiff=0 でビット一致」を確認済み = 食い違いは
@@ -309,10 +290,7 @@ set SHOT=%SHOTBASE% --no-fxaa
 :skip_particle
 
 rem ---- 18/19 枚目 (M65e): 音響ショーケースの 2 経路。
-rem      **M65 で初めてピクセルが動くサブの、唯一の回帰検出**。
-rem      M65a〜M65d は「存在ゲートの内側なので既存 17 枚が maxDiff=0」を主張し続けてきたが、
-rem      裏を返すと **M65 の成果物は 4 サブぶん 1 画素も golden に写っていなかった**。
-rem      この 2 枚がその全部 (波面伝播 / 床材 / 残光 / 転送 / 合成) を初めて絵に固定する。
+rem      **音響 (M65) の唯一のピクセル被覆**。波面伝播 / 床材 / 残光 / 転送 / 合成を絵に固定する。
 rem
 rem ★★**真っ黒な画にしないことが 1 枚目の設計要件**。企画は「世界は真っ暗」だが、
 rem   全画素が黒い golden は**機能が壊れて残光が 1 画素も出なくても一致して通る** =
@@ -324,11 +302,11 @@ rem ★frame 120 で撮る (physics / joints / fog / particle と同じ理由)�
 rem   歩行者が 1 歩も踏み出しておらず、波も残光も箱の落下も絵に出ない。
 rem   120 tick 回すと 足音 6 材質ぶんの波 / L 字を曲がった残光 / 金属板への着地 /
 rem   設置光 が全部同じフレームに乗る。
-rem ★**CI 判定に載せる** (tol=3。skip 5 本の仲間には入れない)。載せられる根拠:
+rem ★**CI 判定に載せる** (tol=3。ローカル限定の枠には入れない)。載せられる根拠:
 rem   波面は整数チャンファ距離 = 機種非依存、残光の符号化は sqrt (IEEE-754 で正しく
 rem   丸められる)、合成は lerp と乗算だけで**しきい値分岐もテンポラル蓄積も無い** —
-rem   FXAA / TAA / SSR / froxel を降格させた「1 ULP が増幅する」機構がどこにも無い。
-rem   ★もしランナーで赤くなったら tol を上げずに MYE_SHOT_SKIP_ACOUSTIC を立てること
+rem   FXAA / TAA / SSR / froxel をローカル限定にした「1 ULP が増幅する」機構がどこにも無い。
+rem   ★ランナーで赤くなったら MYE_SHOT_SKIP_ACOUSTIC を立てる
 rem     (ci.yml の env に 1 行足すだけ。囲いは下に用意してある)
 rem ★2 経路撮るのは、残光の合成が **deferred_light.hlsl と forward_lit.hlsl の 2 実装**に
 rem   あるため。共有しているのは acoustic_common.hlsli の式だけなので、1 枚だと
@@ -344,29 +322,25 @@ set SHOT=%SHOTBASE% --no-fxaa
 :skip_acoustic
 
 rem ---- 20〜22 枚目 (M67a / M67g): RT 反射 / RT GI / RT 反射 + ReSTIR。
-rem      **RT 反射 / GI の唯一のピクセル被覆** (RT 影 (M46g) は依然ゼロ被覆)。
-rem      それまで 19 本の call :shot に --rt-* が 1 つも無く、rtReflEnabled を立てる口は
-rem      --rt-refl とメニューだけ = **RT 反射も RT GI も壊れて全 golden が緑のまま通る**
-rem      状態だった (M65 で踏んだ「4 サブぶん golden に 1 画素も写っていなかった」と同根)。
+rem      **RT 反射 / GI の唯一のピクセル被覆** (RT 影 (M46g) は被覆ゼロ)。rtReflEnabled を
+rem      立てる口は --rt-refl とメニューだけなので、この 3 枚が無いと **RT 反射も RT GI も
+rem      壊れて全 golden が緑のまま通る**。
 rem      M67 の ReSTIR は「off = 現行の絵とビット一致」を主張の土台にするので、
 rem      その現行の絵をここで固定しておかないと主張そのものが空振りする。
 rem
 rem ★off の 2 枚 (反射 / GI) を分けて撮るのが要点。
 rem   反射 (rt_refl.cs.hlsl) と GI (rt_gi.cs.hlsl) が共有しているのは
-rem   rt_common.hlsli の放射輝度トレース 1 本だけなので、1 枚だと共有ヘルパを触ったときに
+rem   rt_common.hlsli の放射輝度トレース 1 本だけ (RtTraceRadianceFirstHit が本体、
+rem   RtTraceRadianceLod はそれを呼ぶ薄いラッパ) なので、1 枚だと共有ヘルパを触ったときに
 rem   片方の経路が壊れても緑のまま通る (particle_cpu/gpu を 2 枚撮ったのと同じ理由)。
-rem   M67d で実際にこのヘルパを first-hit 版へ分解した (rt_common.hlsli の
-rem   RtTraceRadianceFirstHit が本体、RtTraceRadianceLod はそれを呼ぶ薄いラッパ) ので、
-rem   共有部分は今も 1 本 = GI 側の 1 枚が本当に要る。
 rem ★実測 (M67a、開発機 WARP 10.0.26100 / Release / SHOTBASE 条件):
 rem   撮影 11 s/枚 (RT 無しの同条件は 7 s)、**同一バイナリで 2 回撮って maxDiff=0** の
 rem   ビット一致、RT 無し (demo_render_deferred) との差は 反射 45114 画素 (maxDiff=221) /
 rem   GI 221162 画素 (maxDiff=93) = どちらも守るものが絵に出ている。
-rem ★tol=0 のローカル限定 (MYE_SHOT_SKIP_RT=1 で 3 枚とも飛ぶ)。**SSR を降格させたのと
+rem ★tol=0 のローカル限定 (MYE_SHOT_SKIP_RT=1 で 3 枚とも飛ぶ)。**SSR と
 rem   同じ形**で、BVH のトラバーサルは「レイが当たったか外れたか」で離散的に分岐する演算 —
 rem   1 ULP の差が hit/miss を反転させると、その画素は反射色 ⇔ IBL フォールバックへ丸ごと飛ぶ。
 rem   ランナーの WARP は版が違う (10.0.20348) のでこの形は tol をいくつにしても守れない。
-rem   ★赤くなったから tol を上げる、はやらないこと (SSR / FXAA と同じ)
 if defined MYE_SHOT_SKIP_RT goto :skip_rt
 set TOLNOW=0
 call :shot demo_render_rtrefl --render-demo --deferred --rt-refl
@@ -387,8 +361,7 @@ rem   つまりこの golden が固定しているのは「reservoir の配管�
 rem   ノイズ低減の質ではない (質の観測は --rt-anim-seed の A/B = 開発者の手元でだけ)。
 rem   spatial は画素ごとにタップ先が違うので凍結シードでも絵に出る (既定 off なので今は出ない)。
 rem ★自身が基準なので tol=0 (A5 の 1 ulp は「on と off を比べる」ときにしか出ない)。
-rem   M67i (2026-09-08) で Hero の M 上限を 8 -> 16 にしたので、この 1 枚は差し替え済み。
-rem   ★次に既定値を動かすときも **--update は使わない**。--update は 24 枚を一括で撮り直すので
+rem   ★ReSTIR の既定値を動かすときは **--update を使わない**。--update は全 25 枚を一括で撮り直すので
 rem     「1 枚しか動いていない」を git status で示せなくなる。比較 run が tests\actual\ に
 rem     残した実物を tests\golden\ へ 1 枚コピーし、コピー後にもう一度この bat を回すこと
 set SHOT=--warp --no-audio --font-embedded --width 960 --height 540 --frames 41 --shot-frame 40 --no-fxaa
@@ -401,7 +374,7 @@ rem ---- 23/24 枚目 (M70b): UI キャンバス。**可変キャンバスの唯
 rem      5 枚目 (ui_probe) は 960x540 = 16:9 なのでキャンバスが厳密に 1920x1080 になり、
 rem      スケールもちょうど 1/2 = **2 進で割り切れる**。つまりあの 1 枚だけでは
 rem      「実 px とキャンバスが 1:1 でない経路」も「非 16:9 でキャンバスが伸びる経路」も
-rem      1 画素も通らない (M65 で踏んだ「4 サブぶん golden に写っていなかった」と同根)。
+rem      1 画素も通らない。
 rem
 rem ★23 枚目 = **スケール経路**。1280x720 も 16:9 なのでキャンバスは 1920x1080 のままだが、
 rem   s = 2/3 で 2 進では割り切れない。ここが緑なら「キャンバス → 実 px の一様スケールが
@@ -422,8 +395,8 @@ rem ---- 25 枚目 (M75c): --ui-demo。**明示 Canvas と Canvas Scaler 3 モ�
 rem      4 隅の箱はどれも自分のキャンバス単位で 300x150 で、基準 1024x768 (4:3) を 16:9 で解くので
 rem      Expand / Shrink / Match 0.5 で実寸が変わる。中央下の 2 枚は Canvas の sortOrder が要素の
 rem      order より先に効くこと (order -100 の方が手前に出る) を固定する。
-rem ★M75e〜h の Layout / ウィジェットはこのシーンへ積み増すので、この 1 枚は各サブで更新される
-rem   (名前が ui_widgets なのは最終形に合わせたため)。tol=3 の CI 判定に載せる — 23/24 枚目と
+rem ★Layout / ウィジェット (M75e〜h) もこのシーンに載っている (名前が ui_widgets なのはそのため)。
+rem   tol=3 の CI 判定に載せる — 23/24 枚目と
 rem   同じく不透明クアッドと内蔵フォントの貼り付けだけで、分岐で増幅する演算が無い
 call :shot ui_widgets --ui-demo
 
@@ -451,8 +424,8 @@ rem 撮影条件は %SHOT%、判定の許容は %TOLNOW% を見る (呼ぶ側が
 :shot
 set NAME=%1
 shift
-rem M57追補: 4 トークンへ広げた (--fog-demo --froxel --particle-backend gpu で
-rem   3 つでは足りず、末尾の "gpu" が黙って落ちて CPU の絵が撮れてしまう)
+rem ★追加引数は 4 トークンまで。足りないと末尾が黙って落ちる (--fog-demo --froxel
+rem   --particle-backend gpu を 3 つで受けると "gpu" が落ちて CPU の絵が撮れる)
 set EXTRA=%1 %2 %3 %4
 set OUT=%ACTUAL%\%NAME%.png
 if %UPDATE%==1 set OUT=%GOLDEN%\%NAME%.png

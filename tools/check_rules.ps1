@@ -71,6 +71,8 @@ foreach ($f in Get-Sources) {
 
 # 規則 9: C++ と HLSL で共有する定数の一致
 # (食い違うと定数バッファ不一致やトラバーサル破綻として静かに壊れる)
+# ★どのグループも、食い違ってもコンパイルも実行も通る (張られていないスロットは 0 を返す /
+#   CB がずれても絵は出る)。ここの機械照合が唯一の防波堤なので、各グループには症状だけ書く
 $constGroups = @(
     @{
         label = 'kMaxBones / MYE_MAX_BONES'
@@ -170,8 +172,7 @@ $constGroups = @(
             'assets\shaders\rt_shadow_filter.cs.hlsl'  = '#\s*define\s+MYE_RT_ATROUS_RADIUS\s+(\d+)'
         }
     },
-    # M55a: ここから下の 2 件は M17/M38d 以来ずっと未登録だった穴の回収。
-    # ライト配列長は CB のレイアウトそのものなので、食い違うと「静かに壊れる」の典型
+    # M55a: ライト配列長は CB のレイアウトそのものなので、食い違うと「静かに壊れる」の典型
     # (RtPasses.cpp:40 の static_assert は C++ 内の 2 者しか見ていない)
     @{
         label = 'kMaxLights / MAX_LIGHTS / MYE_RT_MAX_LIGHTS'
@@ -206,10 +207,10 @@ $constGroups = @(
     @{
         # M58c: 地形の CB スロット。地形パスは b0 (ホストパスの PerFrame) をそのまま読み、
         # 自分の値は b1-b3 を避けて b4 に置く (b1-b3 を張り替えると後段の透明描画が壊れる)。
-        # C++ 側の定数と HLSL の register(b4) が食い違うと **CB が丸ごと 0 のまま描かれる** —
-        # 地形が真っ黒になるだけでコンパイルも実行も通るので、機械照合が唯一の防波堤
-        # ★M58d で cbuffer の宣言は terrain_common.hlsli へ移った (deferred / forward の
-        #   2 本が同じ地表を出すための共有点。宣言が 1 箇所になったので照合先も 1 本)
+        # C++ 側の定数と HLSL の register(b4) が食い違うと **CB が丸ごと 0 のまま描かれる**
+        # (地形が真っ黒になる)
+        # ★cbuffer の宣言は terrain_common.hlsli の 1 箇所 (deferred / forward の 2 本が
+        #   同じ地表を出すための共有点) なので照合先も 1 本
         label = 'kTerrainObjectCbSlot / register(b4)'
         sites = @{
             'src\Engine\Renderer\TerrainPass.h'      = 'constexpr\s+uint32_t\s+kTerrainObjectCbSlot\s*=\s*(\d+)'
@@ -217,8 +218,8 @@ $constGroups = @(
         }
     },
     # M58d: 地形パス専用の SRV スロット (t20 以降)。ホストのスロットとも他マイルストーンの
-    # 予約席とも隣り合わない位置に逃がしてある。食い違うと**地形だけが真っ黒**になるが
-    # コンパイルも実行も通る (テクスチャが張られていないスロットは 0 を返すため)
+    # 予約席とも隣り合わない位置に逃がしてある。食い違うと**地形だけが真っ黒**になる
+    # (テクスチャが張られていないスロットは 0 を返すため)
     @{
         label = 'kTerrainSplatSrvSlot / register(t20)'
         sites = @{
@@ -252,7 +253,7 @@ $constGroups = @(
     @{
         # M56c: HZB の縮小 CS のスレッドグループ辺長。C++ はディスパッチ数の切り上げに、
         # HLSL は numthreads に使う。食い違うと**画面の右端・下端だけ**が縮小されずに
-        # 前フレームの値が残る — 絵は普通に出てしまうので、機械照合が唯一の防波堤
+        # 前フレームの値が残る (絵は普通に出てしまう)
         label = 'kHzbThreadGroupSize / MYE_HZB_TG'
         sites = @{
             'src\Engine\Renderer\HzbPass.h'     = 'constexpr\s+int\s+kHzbThreadGroupSize\s*=\s*(\d+)'
@@ -272,7 +273,7 @@ $constGroups = @(
     @{
         # M56f: 反射プローブの最大数 = 定数バッファ内の配列長そのもの。**光パス
         # (deferred_light) と SSR (ssr_trace) の 2 本が同じ配列を持つ**ので、C++ と
-        # 食い違うと CB のレイアウトごとずれる (絵は普通に出る) — 機械照合が唯一の防波堤
+        # 食い違うと CB のレイアウトごとずれる (絵は普通に出る)
         label = 'kMaxReflectionProbes / MYE_MAX_REFLECTION_PROBES'
         sites = @{
             'src\Engine\Renderer\RenderTypes.h' = 'constexpr\s+int\s+kMaxReflectionProbes\s*=\s*(\d+)'
@@ -287,18 +288,15 @@ $constGroups = @(
         label = 'froxel::kGroupSize / MYE_FROXEL_GROUP'
         sites = @{
             'src\Engine\Renderer\RenderTypes.h'   = 'constexpr\s+int\s+kGroupSize\s*=\s*(\d+)'
-            # M57c: HLSL 側の正本は froxel_common.hlsli 1 本にまとめた (clear / inject /
-            # temporal / integrate の 4 本が同じ割り方を要求するようになったため)。
-            # 各 .cs.hlsl が #define を持たなくなったので、照合先もここへ移す
+            # HLSL 側の正本は froxel_common.hlsli 1 本 (clear / inject / temporal /
+            # integrate の 4 本が同じ割り方を要求する。各 .cs.hlsl は #define を持たない)
             'assets\shaders\froxel_common.hlsli'  = '#\s*define\s+MYE_FROXEL_GROUP\s+(\d+)'
         }
     },
     @{
         # M65e: 音響の残光ボリュームの SRV スロット (Deferred 光パス)。
-        # ★レジスタ番号の食い違いは**コンパイルも実行も通る** — 別のテクスチャを読んで
-        #   絵が変わるだけなので、ビルドでもテストでも捕まらない。統合契約 予約 2 が
-        #   t13 を「空席。詰めないこと」と書いていた席を M65e が取ったので、
-        #   ここから先は機械照合でしか守れない。
+        # ★レジスタ番号が食い違うと別のテクスチャを読んで絵が変わるだけなので、
+        #   ビルドでもテストでも捕まらない。
         # ★HLSL 側は register(t13) を直書きせず #define 1 個から連結で組む
         #   (MYE_ACOUSTIC_REG)。同じファイルの中で define と register が食い違う
         #   余地を消してあるので、照合先は define だけでよい
@@ -358,8 +356,9 @@ $constGroups = @(
         # M57d: Deferred 光パスがフロクセルの積分結果を読む SRV スロット (統合契約 予約 2 の t15)。
         # C++ 側は gbSrvs[] の**位置**でしか表現されないので、static_assert で定数へ結び直し
         # てある (DeferredPath.cpp)。ここが HLSL の register(t15) と食い違うと
-        # **霧が丸ごと 0 になるだけ**でコンパイルも実行も通る (張られていないスロットは 0)。
-        # ★t13/t14 は M56 (SSR / 反射プローブ) の空席。詰めると統合時に無言で潰し合う
+        # **霧が丸ごと 0 になるだけ** (張られていないスロットは 0)。
+        # ★光パスの隣の席は t13 = 音響の残光 (kGlowSrvSlot、上のグループ)、t14 = 反射プローブ、
+        #   t16 = 見通しビット (kFrontSrvSlot)。番号を詰めないこと
         label = 'froxel::kSrvSlot / deferred_light register(t15)'
         sites = @{
             'src\Engine\Renderer\RenderTypes.h' = 'constexpr\s+int\s+kSrvSlot\s*=\s*(\d+)'
@@ -397,7 +396,7 @@ $constGroups = @(
     @{
         # M57追補: **GPU** パーティクル PS のフロクセルスロット。CPU 版 (t3) と番号が違う —
         # GPU 版は t3 をフリップブックテクスチャが占有しているので t4。
-        # 食い違うと **GPU 粒子だけ霧が 0** になるが、コンパイルも実行も通る
+        # 食い違うと **GPU 粒子だけ霧が 0** になる
         # (張られていないスロットは 0 を返す)。CPU 版と揃っていないのは意図的なので、
         # 「番号が違う = バグ」と早合点して片方を書き換えないこと
         label = 'froxel::kGpuParticleSrvSlot / particle_render_gpu register(t4)'
@@ -409,7 +408,7 @@ $constGroups = @(
     @{
         # M57追補: VFX (Sprite / Trail / TextMesh) PS のフロクセルスロット。
         # vfx_sprite.hlsl は t0 (自前テクスチャ) しか使わないので t1。食い違うと
-        # **VFX だけ霧が 0** になるが、コンパイルも実行も通る
+        # **VFX だけ霧が 0** になる
         label = 'froxel::kVfxSrvSlot / vfx_sprite register(t1)'
         sites = @{
             'src\Engine\Renderer\RenderTypes.h' = 'constexpr\s+int\s+kVfxSrvSlot\s*=\s*(\d+)'
@@ -418,8 +417,7 @@ $constGroups = @(
     },
     # M42追補: GPU alpha ソートのブロック長とスレッド数。C++ 側はパス表 (どのパスを何グループ
     # 起動するか) の計算に、HLSL 側は groupshared 配列長と numthreads に同じ値を使う。
-    # 食い違うと **ソートが途中までしか効かない** — 絵が微妙に乱れるだけでコンパイルも実行も
-    # 通ってしまうので、機械照合が唯一の防波堤。
+    # 食い違うと **ソートが途中までしか効かない** (絵が微妙に乱れるだけ)。
     # ★ブロック長は LDS 消費に直結する (uint 2 本 x 2048 = 16KB)。cs_5_0 の上限は 32KB
     @{
         label = 'kParticleSortBlock / MYE_PARTICLE_SORT_BLOCK'
@@ -446,7 +444,7 @@ $constGroups = @(
     # particle_light.hlsli は **register 宣言を持つ .hlsli** で、番号は include する側が
     # マクロで渡す (CPU 版と GPU 版で空きが違うため)。C++ 側は張る場所として同じ番号を
     # 使うので、食い違うと「CB が全 0 のまま = 粒子が真っ黒」「CSM が別のテクスチャ =
-    # 影が出鱈目な位置」になる。**どちらもコンパイルも実行も通る**ので機械照合が唯一の防波堤。
+    # 影が出鱈目な位置」になる。
     # ★1 グループ = 1 整数なので、CPU 版と GPU 版は別グループに分けてある
     #   (両者は別シェーダでバインド空間を共有せず、番号が違うのが正しい)。
     @{

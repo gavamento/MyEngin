@@ -47,7 +47,7 @@ if (-not $scenarios) { Write-Host "[collab_verify] no scenarios in $scenarioDir"
 
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 
-# fixture は**シナリオ 1 本ごとに作り直す** (M66b で shared → per-scenario に変更)。
+# fixture は**シナリオ 1 本ごとに作り直す** (M66b)。
 # ★共用にすると N 本目の期待ファイルが 1..N-1 本目の実行結果に依存する。
 #   「新しいシナリオを足しただけで既存の期待が動く」「単体で --job 的に 1 本流すと
 #   落ちる」という、原因が読めない壊れ方をする。git init + commit 1 回は

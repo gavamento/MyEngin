@@ -67,7 +67,7 @@ public:
         }
         // ショーケース材質は無条件で登録する (M50a)。--scene で保存済みショーケースを
         // 直接開く経路でも実体が揃う。
-        // Runtime には --parts-demo が無いので、ゲートしたままだと parts 材質は常に欠落する
+        // Runtime には --parts-demo が無いので、フラグでゲートすると parts 材質は常に欠落する
         mye::RegisterRtShowcaseContent(ctx);
         mye::RegisterPartsShowcaseContent(ctx);
         mye::RegisterFlowShowcaseContent(ctx); // M51j: flow_* 材質 (配布ブートシーンにも使う)
@@ -147,7 +147,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             } else if (arg == L"--terrain-skirt" && i + 1 < argc) {
                 app.showcaseOptions.terrainSkirtDepth = static_cast<float>(_wtof(argv[++i])); // 負値 = 無し
             } else if (arg == L"--project" && i + 1 < argc) {
-                // M26: プロジェクト指定。dist 配布物は従来どおり exe 隣の assets を自動発見する
+                // M26: プロジェクト指定。指定が無ければ dist 配布物は exe 隣の assets を自動発見する
                 config.projectRoot = std::filesystem::absolute(argv[++i]).wstring();
             }
         }

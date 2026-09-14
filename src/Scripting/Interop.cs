@@ -92,7 +92,8 @@ namespace MyeScripting
     }
 
     // ---- ネイティブ C ABI テーブル (Shared/EngineAPI.h の MyeEngineApi と同一レイアウト) ----
-    // フィールド順は EngineAPI.h と厳密に一致させること。
+    // フィールド順は EngineAPI.h と厳密に一致させること (tools\check_rules.ps1 規則 11 が
+    // 順序・件数・名前・引数個数を機械照合する)。
     [StructLayout(LayoutKind.Sequential)]
     internal unsafe struct MyeEngineApi
     {
@@ -135,18 +136,18 @@ namespace MyeScripting
         public delegate* unmanaged<void*, MyeVec3, float, MyeEntityId*, int, int> OverlapSphere;
         public delegate* unmanaged<void*, MyeVec3, MyeVec3, MyeQuat, MyeEntityId*, int, int> OverlapBox;
         public delegate* unmanaged<void*, MyeVec3, MyeVec3, float, float, MyeRaycastHit*, int> SphereCast;
-        // ---- キャラクターコントローラ + UI テキスト (v5、M29b)。宣言順 = ネイティブと一致 ----
+        // ---- キャラクターコントローラ + UI テキスト (v5、M29b) ----
         public delegate* unmanaged<void*, MyeEntityId, MyeVec3, int> CharacterMove;
         public delegate* unmanaged<void*, MyeEntityId, float, int> CharacterJump;
         public delegate* unmanaged<void*, MyeEntityId, int> CharacterIsGrounded;
         public delegate* unmanaged<void*, MyeEntityId, MyeVec3*, int> CharacterGetVelocity;
         public delegate* unmanaged<void*, MyeEntityId, byte*, int> SetTextMeshText;
-        // ---- エフェクト制御 (v6、M32f)。宣言順 = ネイティブと一致 ----
+        // ---- エフェクト制御 (v6、M32f) ----
         public delegate* unmanaged<void*, MyeEntityId, int, int> EmitterBurst;
         public delegate* unmanaged<void*, MyeEntityId, int, int> SetEmitterPlaying;
         public delegate* unmanaged<void*, MyeEntityId, int> RestartEffect;
         public delegate* unmanaged<void*, byte*, MyeVec3, MyeEntityId, void> PlayEffect;
-        // ---- v7 (M37)。宣言順 = ネイティブと一致 ----
+        // ---- v7 (M37) ----
         public delegate* unmanaged<void*, byte*, MyeVec3, MyeEntityId, ulong> Instantiate;
         public delegate* unmanaged<void*, ulong, MyeEntityId> FindByFileId;
         public delegate* unmanaged<void*, MyeEntityId, int, int, int> SetAnimatorParam;
@@ -160,7 +161,7 @@ namespace MyeScripting
         public delegate* unmanaged<void*, MyeVec3, MyeVec3, float, uint, MyeRaycastHit*, int> RaycastMasked;
         public delegate* unmanaged<void*, MyeVec3, float, uint, MyeEntityId*, int, int> OverlapSphereMasked;
         public delegate* unmanaged<void*, MyeVec3, MyeVec3, float, float, uint, MyeRaycastHit*, int> SphereCastMasked;
-        // ---- オーディオ (v8、M45)。宣言順 = ネイティブと一致。**write-only** で、
+        // ---- オーディオ (v8、M45)。**write-only** で、
         //      再生位置や再生中判定の読み取り API は意図的に存在しない (EngineAPI.h 参照) ----
         public delegate* unmanaged<void*, byte*, float, float, ulong> PlaySound2;
         public delegate* unmanaged<void*, byte*, MyeVec3, float, ulong> PlaySoundAt;
@@ -173,19 +174,18 @@ namespace MyeScripting
         public delegate* unmanaged<void*, byte*, float, int, void> PlayMusic;
         public delegate* unmanaged<void*, float, void> StopMusic;
         public delegate* unmanaged<void*, MyeEntityId, void> SetListenerEntity;
-        // ---- 部位 (ソケット) クエリ (v9、M48h)。宣言順 = ネイティブと一致 ----
+        // ---- 部位 (ソケット) クエリ (v9、M48h) ----
         public delegate* unmanaged<void*, MyeEntityId, byte*, MyeEntityId> FindPart;
         public delegate* unmanaged<void*, MyeEntityId, ulong, MyeEntityId*, int, int> FindPartsByTag;
-        // ---- 部位ボリューム レイキャスト (v10、M49)。宣言順 = ネイティブと一致 ----
+        // ---- 部位ボリューム レイキャスト (v10、M49) ----
         public delegate* unmanaged<void*, MyeEntityId, ulong, MyeVec3, MyeVec3, float,
             MyeRaycastHit*, int> RaycastParts;
-        // ---- 汎用フィールドアクセス (v11、M50d)。宣言順 = ネイティブと一致 ----
+        // ---- 汎用フィールドアクセス (v11、M50d) ----
         public delegate* unmanaged<void*, MyeEntityId, ulong, ulong, void*, int, int*, int>
             GetComponentField;
         public delegate* unmanaged<void*, MyeEntityId, ulong, ulong, void*, int, int>
             SetComponentField;
-        // ---- v12 (M51h): 入力アクション / UI 拡張 / ゲームフロー / パッド振動。
-        //      宣言順 = ネイティブと一致 (tools\check_rules.ps1 規則 11 が機械照合) ----
+        // ---- v12 (M51h): 入力アクション / UI 拡張 / ゲームフロー / パッド振動 ----
         public delegate* unmanaged<void*, int> GetMouseWheel;
         public delegate* unmanaged<void*, MyeEntityId, float, float, float, float, int> SetUIRect;
         public delegate* unmanaged<void*, MyeEntityId, int, int, int, int, int, int> SetUILayout;
@@ -208,7 +208,7 @@ namespace MyeScripting
         public delegate* unmanaged<void*, ulong> NetRollbackCount;
         public delegate* unmanaged<void*, ulong, uint, uint> GetActionForPlayer;
         public delegate* unmanaged<void*, ulong, uint, float> GetAxisForPlayer;
-        // ---- v14 (M59k): 超リアル物理 (M59) の入口 8 本。宣言順 = ネイティブと一致 ----
+        // ---- v14 (M59k): 超リアル物理 (M59) の入口 8 本 ----
         public delegate* unmanaged<void*, MyeEntityId, byte*, int> RemoveComponentByName;
         public delegate* unmanaged<void*, MyeEntityId, byte*, int> HasComponentByName;
         public delegate* unmanaged<void*, MyeEntityId, MyeVec3, MyeVec3, int> AddForceAtPosition;
@@ -218,10 +218,10 @@ namespace MyeScripting
         public delegate* unmanaged<void*, float, float, float*, MyeVec3*, int> SampleTerrainHeight;
         public delegate* unmanaged<void*, MyeEntityId, int> WakeRigidbody;
         public delegate* unmanaged<void*, MyeEntityId, int> IsSleeping;
-        // ---- v15 (M64a): マウスルック 2 本。宣言順 = ネイティブと一致 ----
+        // ---- v15 (M64a): マウスルック 2 本 ----
         public delegate* unmanaged<void*, int*, int*, void> GetMouseDelta;
         public delegate* unmanaged<void*, int, void> SetCursorMode;
-        // ---- v16 (M70c): UI の対話 6 本。宣言順 = ネイティブと一致 ----
+        // ---- v16 (M70c): UI の対話 6 本 ----
         public delegate* unmanaged<void*, MyeEntityId, uint> UIButtonState;
         public delegate* unmanaged<void*, MyeEntityId> UIGetFocused;
         public delegate* unmanaged<void*, MyeEntityId, int> UISetFocused;
@@ -681,7 +681,6 @@ namespace MyeScripting
         }
 
         // ---- v3 の回収 (M51h): LoadScene / gamepad ----
-        // これまでスロットはあったが C# へ公開していなかった分。
         // LoadScene は tick 末に遅延ロードされる (パスは assets 相対)
         public static void LoadScene(string scenePath)
         {
@@ -755,7 +754,7 @@ namespace MyeScripting
         public static float GetAxisValue(string name)
             => _api != null ? _api->GetAxisValue(_api->Engine, NameHash(name)) : 0.0f;
 
-        // UI 書込 (write-only — UIElement は描画レーンなので読み取り API は無い)。
+        // UI 書込 (UIElement は描画レーン。読めるのは下の GetUIRect の解決済み矩形だけ)。
         // w/h・anchor 以降の負値は「現値維持」
         public static bool SetUIRect(MyeEntityId id, float x, float y, float w = -1.0f,
                                      float h = -1.0f)

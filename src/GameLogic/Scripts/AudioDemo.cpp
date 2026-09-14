@@ -32,8 +32,7 @@ constexpr uint8_t kVkX = 0x58;
 constexpr float kPi = 3.14159265358979323846f;
 
 // 押した瞬間だけ true。押下状態は 1 つの int32 にビットで畳んである
-// (M70d で登録フィールドの上限は 32 になったが、9 キーぶんを 9 フィールドに割るより
-//  1 語のビットで持つほうが Inspector も snapshot も小さいのでこのまま)
+// (9 キーぶんを 9 フィールドに割るより、1 語のビットで持つほうが Inspector も snapshot も小さい)
 bool Pressed(const MyeUpdateContext& ctx, uint8_t vk, int32_t bit, int32_t& prevBits)
 {
     const bool down = ctx.api->KeyDown(ctx.api->engine, vk) != 0;

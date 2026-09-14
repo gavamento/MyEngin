@@ -160,10 +160,10 @@ public:
     bool Running() const { return phase_ == Phase::Running; }
 
 private:
-    // どの op を通しているか (M66e で 2 種になった)。
+    // どの op を通しているか。
     // ★`BeginOp` / `ApplyResult` / 後処理は op に依存しない。違うのは
     //   「変更集合をどう決めるか」だけ — revert は実行前後のディスク、
-    //   checkout は git が返した `names`
+    //   それ以外 (checkout / pull / merge_abort / continue) は git が返した `names`
     enum class OpKind : uint8_t {
         Revert,
         Checkout,

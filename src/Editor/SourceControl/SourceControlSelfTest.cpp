@@ -1481,7 +1481,6 @@ bool RunSourceControlSelfTest()
             //   '?' で返す (porcelain.rs) ので `indexState` にも `Untracked` が入り、
             //   「None でなければ staged」で見ると**未追跡が 1 個あるだけで検査ごと飛ぶ**。
             //   fixture は必ず未追跡を持つので、それだと恒久検査が永久に空振りする
-            //   (sub-12 round 2 の must。実際 round 1 の実行が skip で通っていた)
             const auto stagedForCommit = [](ChangeState s) {
                 return s != ChangeState::None && s != ChangeState::Untracked;
             };

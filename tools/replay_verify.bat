@@ -1,15 +1,15 @@
 @echo off
 rem replay_verify.bat — Debug/Release 一貫性の自動検証 (engine_spec.md 11.3)
 rem   1. 両構成をビルド
-rem   2. 並列プールで 9 ジョブを回す (tools\run_parallel.ps1、並列度の既定 = 論理コア数):
-rem        - 6 シーンチェーン: record (Debug, --replay-fast) →
+rem   2. 並列プールで下の -Jobs の全ジョブを回す (tools\run_parallel.ps1、並列度の既定 = 論理コア数):
+rem        - シーンごとのチェーン: record (Debug, --replay-fast) →
 rem          snapshot stress 付き verify (Debug) → verify (Release)
-rem        - タイムトラベルの巻き戻し (Debug / Release)
+rem        - タイムトラベルの巻き戻しと分岐 What-if (それぞれ Debug / Release)
 rem        - 静的規則チェック (check_rules.ps1)
 rem   3. 失敗時は mismatch マーカーの残ったシーンだけ :diagnose を直列で回す
 rem 全て成功で exit 0、いずれか失敗で exit 1
 rem
-rem 素の Debug verify は stress 付き verify (M52d) へ統合した — ハッシュ照合は素の
+rem Debug の verify は stress 付き (M52d) だけを回す — ハッシュ照合は素の
 rem verify と同一機構で毎 tick 走るので検出能力は同じ。赤いときだけ素の verify を
 rem 再実行して「素の非決定」と「スナップショット復元の非対称」を切り分ける (:chain)。
 rem
@@ -20,19 +20,16 @@ rem     手元で 1 本だけ回すのにも使える (ビルド済み前提):
 rem       tools\replay_verify.bat --job joints
 rem     tick 数は MYE_RV_TICKS、並列度は MYE_REPLAY_JOBS で上書きできる。
 rem     ★--job 再入の子 cmd は chcp 437 (単バイト CP) で呼ぶこと (runner が強制する)。
-rem       コンソール CP が多バイト (932/65001) だと、cmd のバッチ読取りが goto の後に
-rem       バイト数と文字数のずれで読み位置をドリフトさせ、日本語 rem の断片をコマンド
-rem       実行して即死する。壊れるかはバイト配置の運次第 (rem を 1 行足すだけで変わる
-rem       ことを実測) なので、単バイト CP でドリフトを構造的に殺す。ジョブ経路の echo を
+rem       多バイト CP だと cmd のバッチ読取りがドリフトし、日本語 rem の断片をコマンド
+rem       実行して即死する (詳細は run_parallel.ps1 冒頭)。ジョブ経路の echo を
 rem       ASCII 限定に保つのもこのため。
 rem   - cook キャッシュ: 各シーンの record が自シーン分をコールドで焼き、verify が
 rem     ウォームで読む。並列で他シーンが先に焼いたアセットは「先に焼いた側のペアが
 rem     コールドを証明する」ので、cook 有無のビット一致証明 (M51b) は全アセットで
 rem     保たれる。同一アセットの同時クックは CookedCache の PID 付きテンポラリ +
 rem     rename で無害 (どちらかの完全な内容しか観測されない)。
-rem   - 録画は --replay-fast で実時間から切り離した (旧: 600 tick = 実時間 10 秒 × 6 本)。
-rem     sim は実時間を読まない (規則 3) ので .rep はバイト一致する — 導入時に
-rem     遅い録画と fc /b で機械確認済み。
+rem   - 録画は --replay-fast で実時間から切り離す。
+rem     sim は実時間を読まない (規則 3) ので .rep はバイト一致する。
 rem
 rem M52a: 照合が失敗したときだけ :diagnose を呼び、
 rem   失敗側の <rep>.tickN.actual.dump (EngineLoop が自動で残す) と
@@ -141,12 +138,10 @@ call :chain cache\golden.rep "" ""
 exit /b %ERRORLEVEL%
 
 rem ---- 部位のボーン追従シーン (M48g) ----
-rem 既定デモシーンにはスキンメッシュが 1 体も無く、骨演算は一度もハッシュ被覆に
-rem 入ったことがなかった。このペアで「骨駆動の LocalTransform が Debug/Release で
+rem 既定デモシーンにはスキンメッシュが 1 体も無く、骨演算はこのペアでしかハッシュ被覆に
+rem 入らない。このペアで「骨駆動の LocalTransform が Debug/Release で
 rem ビット一致する」ことまで機械検証する。
 rem **シーンはコードから毎回組み直す** — 版管理された唯一の正解は BuildPartsShowcaseScene。
-rem (M48g 当時はモデル由来のサブアセット ID が絶対パスのハッシュで、保存した .scene.json が
-rem チェックアウト先に依存したことも理由だった。M74a で .meta の GUID 由来になり、その理由は消えた)
 rem 組んだ後は保存ファイル経由でロードする = 起動時のヘッドレススケルトン登録も被覆する
 :job_parts
 if exist cache\parts_showcase.scene.json del /q cache\parts_showcase.scene.json
@@ -240,7 +235,7 @@ rem   実走検査で、selftest の memcmp と合わせて「増分と引き直
 rem ★波は WavePinger (GameLogic.dll) が 150 tick ごとに立てる。DLL が焼けていないと
 rem   波が 1 本も出ず、**ハッシュ節が内容ゲートで畳まれないまま緑になる** (= 何も検査
 rem   していない状態で PASS する) ので、DLL のビルドはこの検査の前提。
-rem ★M65g から **記録側に --synth-input を渡す**。プレイヤー (Watcher* 3 本) の視点角は
+rem ★**記録側に --synth-input を渡す** (M65g)。プレイヤー (Watcher* 3 本) の視点角は
 rem   GetMouseDelta を積分した登録フィールドで、無入力だと恒常ゼロのまま「配線ミスが
 rem   記録側と検証側で対称に起きて一致してしまう」= mp ペアと同じ穴が開く。合成入力は
 rem   生マウスデルタも流す (M64a) ので、これで視点・移動・足音・敵との接触までが
@@ -297,7 +292,7 @@ rem ---------------------------------------------------------------- :chain
 rem 1 シーンぶんの record → stress 付き Debug verify → Release verify。
 rem   %1 = .rep パス / %2 = record 側のシーン引数 / %3 = verify 側のシーン引数
 rem stress 付き verify (--snapshot-stress 37、M52d) はハッシュ照合が素の verify と
-rem 同一機構なので完全上位互換 — 素の Debug verify はもう回さない。ここが赤い =
+rem 同一機構なので完全上位互換 — 素の Debug verify は回さない。ここが赤い =
 rem 「撮って戻す」を挟んでも 600 tick の期待ハッシュが全一致するはず、が崩れたという
 rem 意味で、タイムトラベル (M52e) / クラッシュ再現 (M52f) / ロールバック (M52i) の
 rem 土台が崩れている。赤いときだけ素の verify を再実行して切り分ける
@@ -337,7 +332,7 @@ rem ---------------------------------------------------------------- :diagnose
 rem 失敗した照合の「どのフィールドが割れたか」を出す (M52a)。
 rem   %1 = .rep パス / %2 = シーン切替の追加引数 ("" / "--parts-demo" / "--flow-demo" /
 rem                        "--local-demo" / "--physics-demo" / "--joint-demo" /
-rem                        "--acoustic-demo")
+rem                        "--acoustic-demo" / "--ui-demo --ui-demo-input")
 rem 失敗側のダンプは EngineLoop が MISMATCH 時に自動で残しているので、
 rem ここでは期待側 (= その .rep を録ったのと同じコマンド) を撮り直して突き合わせる
 :diagnose

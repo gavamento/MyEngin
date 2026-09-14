@@ -18,9 +18,7 @@ struct FlowGameDriver : Script<FlowGameDriver> {
     int32_t score = 0;        // hash 被覆の本体
     int32_t bounces = 0;      // 衝突コールバック経由の加点回数
     // v17 (M71a): 今いるシーン名のハッシュ下位 31bit。**登録フィールド = ハッシュ対象**
-    // なので、GetSceneName が記録と検証で同じ値を返すことがリプレイの照合対象になる
-    // (persist を登録フィールドへ書き戻しているのと同じ作法)。flow ペアは 2 シーンを
-    // 行き来する唯一の検査なので、遷移の前後で名前が入れ替わることもここに載る
+    // (理由は FlowTitleDriver の sceneTag と同じ)
     int32_t sceneTag = 0;
 
     void Start(MyeUpdateContext& ctx)
