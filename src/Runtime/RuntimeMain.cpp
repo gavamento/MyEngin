@@ -7,6 +7,7 @@
 
 #include "Engine/Core/Log.h"
 #include "Engine/Engine/DemoContent.h"
+#include "Engine/Engine/EngineCli.h"
 #include "Engine/Engine/EngineLoop.h"
 #include "Engine/Engine/Prefab.h"
 #include "Engine/Engine/Project.h"
@@ -181,239 +182,25 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     config.enableImGui = false;            // エディタ UI 無し
 
     RuntimeApp app;
-    std::wstring repDiffA;
-    std::wstring repDiffB;
-    std::wstring hashDiffA; // --hash-diff A B (M52a)
-    std::wstring hashDiffB;
-    std::wstring crashTestArg; // --crash-test <kind> (M52f)
+    mye::EngineCliExtras cli; // --crash-test / --rep-diff / --hash-diff (Editor と共通の CLI。EngineCli.h)
 
     int argc = 0;
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
     if (argv) {
         for (int i = 1; i < argc; ++i) {
             const std::wstring arg = argv[i];
-            if (arg == L"--frames" && i + 1 < argc) {
-                config.maxFrames = _wtoi64(argv[++i]);
-            } else if (arg == L"--width" && i + 1 < argc) {
-                config.width = _wtoi(argv[++i]);
-            } else if (arg == L"--height" && i + 1 < argc) {
-                config.height = _wtoi(argv[++i]);
-            } else if (arg == L"--no-vsync") {
-                config.vsync = false;
-            } else if (arg == L"--screenshot" && i + 1 < argc) {
-                config.screenshotPath = argv[++i];
-            } else if (arg == L"--shot-frame" && i + 1 < argc) {
-                config.screenshotFrame = _wtoi64(argv[++i]);
-            } else if (arg == L"--shot-every" && i + 1 < argc) {
-                config.screenshotEvery = _wtoi64(argv[++i]);
-            } else if (arg == L"--scene" && i + 1 < argc) {
+            // Editor と同じ意味のフラグは表で読む (EngineCli.cpp)。この下に残すのは Runtime だけのフラグ
+            const mye::CliParse shared = mye::ParseEngineCliFlag(argc, argv, i, config, cli);
+            if (shared == mye::CliParse::Error) {
+                return 1;
+            }
+            if (shared == mye::CliParse::Consumed) {
+                continue;
+            }
+            if (arg == L"--scene" && i + 1 < argc) {
                 app.scenePath = argv[++i];
-            } else if (arg == L"--replay-record" && i + 1 < argc) {
-                config.replayRecordPath = argv[++i];
-                config.vsync = false;
-            } else if (arg == L"--replay-verify" && i + 1 < argc) {
-                config.replayVerifyPath = argv[++i];
-                config.vsync = false;
-            } else if (arg == L"--replay-ticks" && i + 1 < argc) {
-                config.replayTicks = _wtoi64(argv[++i]);
-            } else if (arg == L"--replay-fast") {
-                // バッチ記録の早回し (replay_verify.bat 用)。手動記録には渡さないこと —
-                // ライブ入力は 1 フレーム 1 回しか採らないので複数 tick が同じ値を食う
-                config.replayFast = true;
-            } else if (arg == L"--rep-snapshot") {
-                // M52d: .rep へ記録開始時点の sim 状態を埋め込む (シーン非依存の再生)
-                config.replayEmbedSnapshot = true;
-            } else if (arg == L"--hash-dump" && i + 1 < argc) {
-                config.hashDumpPath = argv[++i]; // M52a: フィールド単位ダンプの出力先
-            } else if (arg == L"--hash-dump-tick" && i + 1 < argc) {
-                config.hashDumpTick = _wtoi64(argv[++i]);
-            } else if (arg == L"--snapshot-stress" && i + 1 < argc) {
-                // M52d: N tick ごとにスナップショット往復を挟む (期待ハッシュ不変が合格条件)
-                config.snapshotStress = _wtoi64(argv[++i]);
-            } else if (arg == L"--timetravel-selftest") {
-                // M52e: 巻き戻し + 再シムのハッシュ照合 (tick 数は省略可、既定 400)。
-                // Runtime は常に sim を進めるので --autoplay 相当の細工は要らない
-                config.timeTravelProbeTicks = 400;
-                if (i + 1 < argc && argv[i + 1][0] != L'-') {
-                    config.timeTravelProbeTicks = _wtoi64(argv[++i]);
-                }
-                config.vsync = false;
-            } else if (arg == L"--whatif-selftest") {
-                // M72b: 分岐 (What-if) の自動プローブ (tick 数は省略可、既定 400)。合成入力で回す
-                config.whatIfProbeTicks = 400;
-                if (i + 1 < argc && argv[i + 1][0] != L'-') {
-                    config.whatIfProbeTicks = _wtoi64(argv[++i]);
-                }
-                config.synthInput = true;
-                config.vsync = false;
-            } else if (arg == L"--crash-test" && i + 1 < argc) {
-                crashTestArg = argv[++i]; // M52f (綴り違いは下で弾く)
-                config.vsync = false;
-            } else if (arg == L"--crash-at-tick" && i + 1 < argc) {
-                config.crashTestTick = _wtoi64(argv[++i]);
-            } else if (arg == L"--no-crash-handler") {
-                config.crashHandler = false; // M52f: 既定 on を外す (デバッガ下での切り分け用)
-            } else if (arg == L"--crash-hash-interval" && i + 1 < argc) {
-                config.crashHashInterval = _wtoi64(argv[++i]);
-            } else if (arg == L"--net-host") {
-                // M52h: ホストとして待受 (ポート省略時は 7777)。参加側は --net-join
-                config.netRole = 1;
-                if (i + 1 < argc && argv[i + 1][0] != L'-') {
-                    config.netPort = _wtoi(argv[++i]);
-                }
-            } else if (arg == L"--net-join" && i + 1 < argc) {
-                config.netRole = 2;
-                config.netJoinTarget = argv[++i]; // HOST:PORT
-            } else if (arg == L"--net-players" && i + 1 < argc) {
-                config.netPlayers = _wtoi(argv[++i]); // 現状 2 のみ
-            } else if (arg == L"--net-delay" && i + 1 < argc) {
-                // 入力遅延 (tick)。**全 peer で一致必須** — 違うとハンドシェイクで弾かれる
-                config.netInputDelay = _wtoi(argv[++i]);
-            } else if (arg == L"--net-loss" && i + 1 < argc) {
-                config.netLossPercent = _wtoi(argv[++i]); // 入力パケットを故意に捨てる (検証用)
-            } else if (arg == L"--net-no-rollback") {
-                // M52i: 予測ロールバックを切って M52h の素の遅延ロックステップへ落とす
-                config.netRollback = false;
-            } else if (arg == L"--net-no-halt-on-desync") {
-                config.netHaltOnDesync = false; // 検出しても止めずに走り続ける (観察用)
-            } else if (arg == L"--net-poke-tick" && i + 1 < argc) {
-                // M52i: 片側にだけ渡して意図的に desync を起こす (検出器の実地検証)
-                config.netPokeTick = _wtoi64(argv[++i]);
-            } else if (arg == L"--rep-diff" && i + 2 < argc) {
-                // M52h: .rep 2 本の突き合わせ (ネットの 2 プロセスが同じ tick 列を回したか)
-                repDiffA = argv[++i];
-                repDiffB = argv[++i];
-            } else if (arg == L"--hash-diff" && i + 2 < argc) {
-                // M52a: 配布ビルド単体でもクラッシュ報告のダンプを突き合わせられるように
-                hashDiffA = argv[++i];
-                hashDiffB = argv[++i];
             } else if (arg == L"--deferred") {
                 app.startDeferred = true;
-            } else if (arg == L"--postfx-mode" && i + 1 < argc) {
-                config.postFxTonemap = _wtoi(argv[++i]);
-            } else if (arg == L"--no-postfx") {
-                config.postFx = false;
-            } else if (arg == L"--no-audio") {
-                config.audio = false; // M45: XAudio2 を初期化しない (端末の無い CI / 撮影専用実行)
-            } else if (arg == L"--font-embedded") {
-                config.fontEmbedded = true; // M52c: 撮影のフォントを機種非依存に固定
-            } else if (arg == L"--shot-realtime") {
-                config.shotRealtime = true; // M52c: 決定的撮影を解除して実時間で回す
-            } else if (arg == L"--warp") {
-                config.forceWarp = true; // M52b: ソフトウェアラスタライザ固定 (CI / 撮影再現)
-            } else if (arg == L"--exposure" && i + 1 < argc) {
-                config.postFxExposure = static_cast<float>(_wtof(argv[++i]));
-            } else if (arg == L"--no-bloom") {
-                config.postFxBloom = false;
-            } else if (arg == L"--bloom-threshold" && i + 1 < argc) {
-                config.postFxBloomThreshold = static_cast<float>(_wtof(argv[++i]));
-            } else if (arg == L"--bloom-intensity" && i + 1 < argc) {
-                config.postFxBloomIntensity = static_cast<float>(_wtof(argv[++i]));
-            } else if (arg == L"--no-fxaa") {
-                config.postFxFxaa = false;
-            } else if (arg == L"--no-jobs") {
-                config.useJobs = false; // M25: 並列を直列化 (決定論ゲート / 計測比較)
-            } else if (arg == L"--no-sim-cache") {
-                config.useSimCache = false; // M51a: sim 索引を素通し (決定論ゲート / 切り分け)
-            } else if (arg == L"--no-cook-cache") {
-                config.useCookCache = false; // M51b: クックを使わず毎回フルパース (切り分け)
-            } else if (arg == L"--rt-debug" && i + 1 < argc) {
-                config.rtDebugMode = _wtoi(argv[++i]); // M46b (Deferred のみ)
-            } else if (arg == L"--velocity-debug") {
-                config.velocityDebug = 1; // M55c: GBuffer RT4 の可視化 (Deferred のみ)
-            } else if (arg == L"--hzb-debug" && i + 1 < argc) {
-                config.hzbDebug = _wtoi(argv[++i]); // M56c: N=ミップ N-1 (Deferred のみ)
-            } else if (arg == L"--ssr") {
-                config.ssr = true; // M56d: SSR (Deferred のみ。HZB も一緒に組まれる)
-            } else if (arg == L"--probe-bake" && i + 1 < argc) {
-                // M56e: 反射プローブを 1 回だけ焼く (引数は "X,Y,Z")。**明示指示専用** —
-                // 自動ベイクの口はどこにも無い (撮影ごとに焼き上がりが変わると決定的撮影が
-                // 壊れるため)。焼いた 6 面は PNG に落ちて継ぎ目の一致が機械判定される
-                config.probeBake = true;
-                float px = 0.0f, py = 0.0f, pz = 0.0f;
-                if (swscanf_s(argv[++i], L"%f,%f,%f", &px, &py, &pz) == 3) {
-                    config.probeBakePos[0] = px;
-                    config.probeBakePos[1] = py;
-                    config.probeBakePos[2] = pz;
-                }
-            } else if (arg == L"--probe-bake-all") {
-                // M56f: シーン中の ReflectionProbeComponent を全部焼いて描画へ載せる。
-                // ★撮影に映すならベイクのフレームを --shot-frame より前に置くこと
-                //   (ベイクはスクショ保存の後に走る)
-                config.probeBakeAll = true;
-            } else if (arg == L"--probe-bake-frame" && i + 1 < argc) {
-                config.probeBakeFrame = _wtoi(argv[++i]); // M56e (既定 3 = --shot-frame と同じ)
-            } else if (arg == L"--probe-bake-png" && i + 1 < argc) {
-                config.probeBakePng = argv[++i]; // M56e (既定 testsctual\probe_faces.png)
-            } else if (arg == L"--taa") {
-                config.postFxTaa = true; // M55d: TAA + カメラジッタ (Deferred のみ)
-            } else if (arg == L"--motion-blur" && i + 1 < argc) {
-                config.postFxMotionBlur = static_cast<float>(_wtof(argv[++i])); // M55e
-            } else if (arg == L"--rt-no-temporal") {
-                config.rtTemporal = false; // M46d: 1spp 生のまま (A/B 計測用)
-            } else if (arg == L"--rt-freeze-seed") {
-                config.rtFreezeSeed = true; // M46d: 乱数列を進めない (決定的スクショ)
-            } else if (arg == L"--rt-anim-seed") {
-                config.rtAnimSeed = true; // M46d: スクショ時の自動 freeze を解除
-            } else if (arg == L"--rt-no-svgf") {
-                config.rtSvgf = false; // M46e: 空間フィルタ off (蓄積のみ = A/B 計測用)
-            } else if (arg == L"--rt-gi") {
-                config.rtGi = true; // M46f: GI を最終画像へ合成 (Deferred のみ)
-            } else if (arg == L"--rt-shadow") {
-                config.rtShadow = true; // M46g: 平行光の影をレイトレで (Deferred のみ)
-            } else if (arg == L"--rt-refl") {
-                config.rtRefl = true; // M46h: スペキュラ環境項をレイトレ反射で (Deferred のみ)
-            } else if (arg == L"--rt-restir") {
-                // M67d: 反射のサンプルを reservoir で時空間再利用する (--rt-refl と併用)
-                config.rtRestir = true;
-            } else if (arg == L"--rt-restir-spatial") {
-                config.rtRestirSpatial = true; // M67f: 空間再利用を on (既定 off)
-                config.rtRestir = true;
-            } else if (arg == L"--rt-restir-no-spatial") {
-                config.rtRestirSpatial = false; // M67f: 明示 off (既定と同値)
-                config.rtRestir = true;
-            } else if (arg == L"--rt-restir-visray") {
-                // M67f: 可視レイはタップの中でしか撃たないので空間再利用も立てる
-                config.rtRestirVisRay = true;
-                config.rtRestirSpatial = true;
-                config.rtRestir = true;
-            } else if (arg == L"--rt-class-override" && i + 1 < argc) {
-                // M67f: 全インスタンスの ReflectionClass を強制 (-1 = off)。
-                // ReSTIR とは独立 (デバッグ 13 にも効く) ので --rt-restir は立てない
-                config.rtClassOverride = _wtoi(argv[++i]);
-            } else if (arg == L"--froxel") {
-                // M57b: フロクセルへの注入 (積分 = M57c / 合成 = M57e まで絵は不変)
-                config.froxel = true;
-            } else if (arg == L"--froxel-no-temporal") {
-                config.froxelTemporal = false; // M57c: ジッタと履歴を止める (A/B 用)
-                config.froxel = true;
-            } else if (arg == L"--froxel-dump" && i + 1 < argc) {
-                config.froxelDumpFrame = _wtoi(argv[++i]); // M57b/M57c: 読み戻して検査
-                config.froxel = true;
-            } else if (arg == L"--acoustic-dump" && i + 1 < argc) {
-                config.acousticDumpFrame = _wtoi(argv[++i]); // M65d: 残光を読み戻して検査
-            } else if (arg == L"--no-acoustic-front") {
-                config.acousticFront = false; // 2026-09-12: 解析的な波面 (円) を止める (A/B 用)
-            } else if (arg == L"--acoustic-audio-log" && i + 1 < argc) {
-                // M68a: tick < N のあいだ整形の結果を 1 行ずつ標準出力へ + 終了時に summary。
-                // ★--no-audio と併用すると 1 行も出ない (設計どおり = ヘッドレスはゼロコスト)
-                config.acousticAudioLogTicks = _wtoi(argv[++i]);
-            } else if (arg == L"--particle-backend" && i + 1 < argc) {
-                // M57追補: バックエンドの CLI 固定。**shot_verify は Runtime.exe で撮る**ので
-                // Editor 側だけに足しても golden は撮れない (両方に要る)
-                const std::wstring backend = argv[++i];
-                if (backend == L"gpu") {
-                    config.particleBackendOverride = 1;
-                } else if (backend == L"cpu") {
-                    config.particleBackendOverride = 0;
-                } else {
-                    // ★綴り違いを黙って無視しない — 黙って cpu で撮ると
-                    //   「GPU の絵のつもりの golden」が CPU の絵になり、以後ずっと嘘をつく
-                    std::fwprintf(stderr, L"unknown --particle-backend value (expected cpu|gpu)\n");
-                    return 1;
-                }
-            } else if (arg == L"--particle-compare") {
-                config.particleCompareOverride = 1; // CPU/GPU を横に並べて描く (spec 7.4)
             } else if (arg == L"--rt-demo") {
                 app.rtShowcase = true; // M46i: コーネル箱のショーケースシーンを構築
             } else if (arg == L"--local-demo") {
@@ -439,18 +226,12 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 app.acousticShowcase = true;
             } else if (arg == L"--ui-demo") {
                 app.uiShowcase = true; // M75c: ゲーム内 UI のショーケース (golden 25 枚目)
-            } else if (arg == L"--ui-demo-input") {
-                config.uiDemoInput = true; // M75f: --ui-demo を押す入力台本 (replay 8 ペア目の記録側)
             } else if (arg == L"--terrain-lod" && i + 1 < argc) {
                 // M58e: 地形 LOD の切替距離。**golden は LOD 無しのまま**で、
                 // クラック A/B のときだけ点ける
                 app.terrainLodDistance = static_cast<float>(_wtof(argv[++i]));
             } else if (arg == L"--terrain-skirt" && i + 1 < argc) {
                 app.terrainSkirtDepth = static_cast<float>(_wtof(argv[++i])); // 負値 = 無し
-            } else if (arg == L"--local-players" && i + 1 < argc) {
-                config.localPlayers = _wtoi(argv[++i]); // M52g: 消費する入力レーン数
-            } else if (arg == L"--synth-input") {
-                config.synthInput = true; // M52g: レーンごとの合成入力 (検証用)
             } else if (arg == L"--project" && i + 1 < argc) {
                 // M26: プロジェクト指定。dist 配布物は従来どおり exe 隣の assets を自動発見する
                 config.projectRoot = std::filesystem::absolute(argv[++i]).wstring();
@@ -461,23 +242,23 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
 
     // --crash-test の綴り違いを黙って無視しない (M52f)。
     // 「落とすつもりで走らせたのに何も起きない」を 1 時間追いかける事故を潰す
-    if (!crashTestArg.empty()) {
-        const mye::CrashTestKind kind = mye::ParseCrashTestKind(crashTestArg.c_str());
+    if (!cli.crashTestArg.empty()) {
+        const mye::CrashTestKind kind = mye::ParseCrashTestKind(cli.crashTestArg.c_str());
         if (kind == mye::CrashTestKind::None) {
             std::fprintf(stderr,
                          "unknown --crash-test kind: %s "
                          "(av | purecall | terminate | invalidparam | stackoverflow)\n",
-                         mye::WideToUtf8(crashTestArg).c_str());
+                         mye::WideToUtf8(cli.crashTestArg).c_str());
             return 2;
         }
         config.crashTest = static_cast<int>(kind);
     }
 
     // --hash-diff A B: ダンプ 2 本を突き合わせて終了 (M52a)。同一なら 0、食い違えば 1
-    if (!hashDiffA.empty() && !hashDiffB.empty()) {
+    if (!cli.hashDiffA.empty() && !cli.hashDiffB.empty()) {
         mye::HashDump a;
         mye::HashDump b;
-        if (!mye::ReadHashDump(hashDiffA, a) || !mye::ReadHashDump(hashDiffB, b)) {
+        if (!mye::ReadHashDump(cli.hashDiffA, a) || !mye::ReadHashDump(cli.hashDiffB, b)) {
             return 2;
         }
         return mye::DiffHashDumps(a, b).Same() ? 0 : 1;
@@ -486,8 +267,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     // --rep-diff A B: .rep 2 本を突き合わせて終了 (M52h)。一致なら 0、食い違えば 1、
     // そもそも読めなければ 2。ネットの 2 プロセスが**同じ tick 列を回した**ことの機械証明で、
     // 割れたときは「どの tick の どのレーンの どのフィールドか」まで 1 行で出る
-    if (!repDiffA.empty() && !repDiffB.empty()) {
-        const mye::ReplayDiffResult r = mye::DiffReplayFiles(repDiffA, repDiffB);
+    if (!cli.repDiffA.empty() && !cli.repDiffB.empty()) {
+        const mye::ReplayDiffResult r = mye::DiffReplayFiles(cli.repDiffA, cli.repDiffB);
         std::fprintf(stdout, "[rep-diff] %s\n", r.summary.c_str());
         if (r.same) {
             return 0;

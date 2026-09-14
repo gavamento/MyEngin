@@ -82,6 +82,8 @@
     <ClCompile Include="..\src\Engine\Engine\CollisionSystem.cpp" />
     <ClCompile Include="..\src\Engine\Engine\DemoContent.cpp" />
     <ClCompile Include="..\src\Engine\Engine\EffectSystem.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\EngineCli.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\EngineCliSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\EngineLoop.cpp" />
     <ClCompile Include="..\src\Engine\Engine\EntityNaming.cpp" />
     <ClCompile Include="..\src\Engine\Engine\FbxLoader.cpp" />
@@ -282,6 +284,8 @@
     <ClInclude Include="..\src\Engine\Engine\DebugDraw.h" />
     <ClInclude Include="..\src\Engine\Engine\DemoContent.h" />
     <ClInclude Include="..\src\Engine\Engine\EffectSystem.h" />
+    <ClInclude Include="..\src\Engine\Engine\EngineCli.h" />
+    <ClInclude Include="..\src\Engine\Engine\EngineCliSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\EngineLoop.h" />
     <ClInclude Include="..\src\Engine\Engine\EntityNaming.h" />
     <ClInclude Include="..\src\Engine\Engine\FbxLoader.h" />
