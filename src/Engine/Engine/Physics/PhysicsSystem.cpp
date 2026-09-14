@@ -264,6 +264,35 @@ Body* FindBody(std::vector<Body>& bodies, EntityID e)
     return (i >= 0) ? &bodies[static_cast<size_t>(i)] : nullptr;
 }
 
+// q += (ω_quat ⊗ q)·h/2 を 1 回積んで正規化する。hx/hy/hz は「軸 × 半角」で、呼び出し側が
+// 自分の式 (角速度 × 0.5 × h / 補正回転 × 0.5) で作って渡す。
+// ★姿勢補正 (ApplyPoseRotation)・位置積分・XPBD アタッチの先読みの 3 か所がこの 1 本を通る。
+//   先読みは位置積分と**ビット一致**である前提で書かれているので、式を変えるときはここだけを変える
+inline void IntegrateQuatNormalized(float hx, float hy, float hz, float& qx, float& qy, float& qz, float& qw)
+{
+    const float dqw = -(hx * qx + hy * qy + hz * qz);
+    const float dqx = hx * qw + hy * qz - hz * qy;
+    const float dqy = hy * qw + hz * qx - hx * qz;
+    const float dqz = hz * qw + hx * qy - hy * qx;
+    qx += dqx;
+    qy += dqy;
+    qz += dqz;
+    qw += dqw;
+    const float len2 = qx * qx + qy * qy + qz * qz + qw * qw;
+    if (len2 > 1e-12f) {
+        const float inv = 1.0f / std::sqrt(len2);
+        qx *= inv;
+        qy *= inv;
+        qz *= inv;
+        qw *= inv;
+    } else {
+        qx = 0.0f;
+        qy = 0.0f;
+        qz = 0.0f;
+        qw = 1.0f;
+    }
+}
+
 // 形状のローカル主軸慣性 (対角、質量 m)。col null は半径 0.5 の球扱い。
 // pose の寸法はワールドスケール適用済みなのでそのまま使う
 void LocalInertiaDiag(const ColliderComponent* col, const ShapePose& pose, float m, float& ix,
@@ -755,28 +784,7 @@ void ApplyPoseRotation(Body& b, float ex, float ey, float ez)
         comWy += b.comy;
         comWz += b.comz;
     }
-    const float hx = ex * 0.5f, hy = ey * 0.5f, hz = ez * 0.5f;
-    const float dqw = -(hx * b.qx + hy * b.qy + hz * b.qz);
-    const float dqx = hx * b.qw + hy * b.qz - hz * b.qy;
-    const float dqy = hy * b.qw + hz * b.qx - hx * b.qz;
-    const float dqz = hz * b.qw + hx * b.qy - hy * b.qx;
-    b.qx += dqx;
-    b.qy += dqy;
-    b.qz += dqz;
-    b.qw += dqw;
-    const float len2 = b.qx * b.qx + b.qy * b.qy + b.qz * b.qz + b.qw * b.qw;
-    if (len2 > 1e-12f) {
-        const float inv = 1.0f / std::sqrt(len2);
-        b.qx *= inv;
-        b.qy *= inv;
-        b.qz *= inv;
-        b.qw *= inv;
-    } else {
-        b.qx = 0;
-        b.qy = 0;
-        b.qz = 0;
-        b.qw = 1;
-    }
+    IntegrateQuatNormalized(ex * 0.5f, ey * 0.5f, ez * 0.5f, b.qx, b.qy, b.qz, b.qw);
     if (b.hasCom) {
         float ox, oy, oz;
         QuatRotate(b.qx, b.qy, b.qz, b.qw, b.comLx, b.comLy, b.comLz, ox, oy, oz);
@@ -4068,31 +4076,9 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                     comY += b.vy * h;
                     comZ += b.vz * h;
                     if (!b.freezeRot) {
-                        // q += 0.5·h·(ω_quat ⊗ q) → 正規化 (位置積分と同式の先取り)
-                        const float hx = b.wx * 0.5f * h;
-                        const float hy = b.wy * 0.5f * h;
-                        const float hz = b.wz * 0.5f * h;
-                        const float dqw = -(hx * qx + hy * qy + hz * qz);
-                        const float dqx = hx * qw + hy * qz - hz * qy;
-                        const float dqy = hy * qw + hz * qx - hx * qz;
-                        const float dqz = hz * qw + hx * qy - hy * qx;
-                        qx += dqx;
-                        qy += dqy;
-                        qz += dqz;
-                        qw += dqw;
-                        const float len2 = qx * qx + qy * qy + qz * qz + qw * qw;
-                        if (len2 > 1e-12f) {
-                            const float inv = 1.0f / std::sqrt(len2);
-                            qx *= inv;
-                            qy *= inv;
-                            qz *= inv;
-                            qw *= inv;
-                        } else {
-                            qx = 0.0f;
-                            qy = 0.0f;
-                            qz = 0.0f;
-                            qw = 1.0f;
-                        }
+                        // 位置積分と同じ 1 本で先取りする (ビット一致)
+                        IntegrateQuatNormalized(b.wx * 0.5f * h, b.wy * 0.5f * h, b.wz * 0.5f * h, qx, qy,
+                                                qz, qw);
                     }
                 }
                 xpbd::AttachContext ctx;
@@ -4397,20 +4383,8 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                 b.pose.pz += mvz;
             }
             if (!b.freezeRot) {
-                // q += 0.5·h·(ω_quat ⊗ q)、その後正規化 (全て scalar)
-                const float hx = b.wx * 0.5f * h, hy = b.wy * 0.5f * h, hz = b.wz * 0.5f * h;
-                const float dqw = -(hx * b.qx + hy * b.qy + hz * b.qz);
-                const float dqx = hx * b.qw + hy * b.qz - hz * b.qy;
-                const float dqy = hy * b.qw + hz * b.qx - hx * b.qz;
-                const float dqz = hz * b.qw + hx * b.qy - hy * b.qx;
-                b.qx += dqx; b.qy += dqy; b.qz += dqz; b.qw += dqw;
-                const float len2 = b.qx * b.qx + b.qy * b.qy + b.qz * b.qz + b.qw * b.qw;
-                if (len2 > 1e-12f) {
-                    const float inv = 1.0f / std::sqrt(len2);
-                    b.qx *= inv; b.qy *= inv; b.qz *= inv; b.qw *= inv;
-                } else {
-                    b.qx = 0; b.qy = 0; b.qz = 0; b.qw = 1;
-                }
+                IntegrateQuatNormalized(b.wx * 0.5f * h, b.wy * 0.5f * h, b.wz * 0.5f * h, b.qx, b.qy, b.qz,
+                                        b.qw);
             }
             if (b.hasCom) {
                 // 新しい姿勢でのオフセットを引いて形状原点を戻す (com* 自体は次のサブ
