@@ -516,6 +516,34 @@ void ApplyImpulse(Body& b, float rx, float ry, float rz, float jx, float jy, flo
 //   ±kJointRowUnbounded のままで、クランプが結果に触れない。
 // ★`bias` に**位置誤差を入れない** — 位置補正は速度ソルバから分離した別パスの担当
 //   (M59g1-2 の教訓)。bias が入るのはモータの目標速度 (M60c) だけ。
+// 関節 1 本ぶんの作業データ。PhysicsSystem::Update が tick 頭に jointLinks へ集め、
+// サブステップごとの行ブロック組み (AppendTwistLimitRow ほか) と位置補正が読む
+struct JointLink {
+    EntityID owner;
+    // M60d: **書き込み可**。破断は `broken` フラグを立てるだけで、コンポーネントは
+    // 外さない (構造変更をソルバ内から起こさないのが家風。決定台帳 5)
+    JointComponent* jc = nullptr;
+    int32_t ai = -1; // owner の bodies index (-1 = 不動アンカー)
+    int32_t bi = -1; // 相手の bodies index (-1 = 不動アンカー)
+    // bodies に居ない側の固定ワールドアンカー (相手 null / 変換だけのエンティティ)
+    float wax = 0, way = 0, waz = 0;
+    float wbx = 0, wby = 0, wbz = 0;
+    // 同じく固定側のワールド回転 (M60b の軸と相対姿勢の基準に要る)。
+    // body 側は Body の作業用姿勢が正なのでこちらは使わない
+    float waq[4] = { 0, 0, 0, 1 };
+    float wbq[4] = { 0, 0, 0, 1 };
+    // ---- リミットのしきい値 (M60c) ----
+    // ★**tick 頭に 1 回だけ**作る (決定台帳 11)。角度は半角の sin/cos、swing は
+    //   cos/sin をそのまま持つので、サブステップの中では三角関数を 1 回も呼ばない。
+    // ★limitOn は「useLimit **かつ** 範囲が正順」。逆転した範囲 (min > max) は
+    //   満たしようが無いので**行を立てない** = 自由にする — 縮退軸のヒンジを Ball へ
+    //   落とすのと同じ「オーサリングミスで物体が飛ばない」側の選択
+    bool limitOn = false;
+    float sinHalfLo = 0.0f, cosHalfLo = 1.0f; // limitMin/2 (Hinge / Cone twist)
+    float sinHalfHi = 0.0f, cosHalfHi = 1.0f; // limitMax/2
+    float sinSwing = 0.0f, cosSwing = 1.0f;   // swingLimitDeg (Cone のみ)
+};
+
 struct ConstraintBlock {
     int32_t ai = -1; // bodies index (-1 = 不動アンカー = ワールド)
     int32_t bi = -1;
@@ -772,6 +800,158 @@ bool JointConeAxisB(const float qb[4], const JointComponent& jc, float out[3])
     out[1] *= inv;
     out[2] *= inv;
     return true;
+}
+
+// ---- 関節リミット (M60c) ----
+// 速度行 (範囲外なら押し戻す 1 行を積む) と位置補正 (はみ出しを姿勢 / 並進で戻す) が同じ判定を使う。
+// ★判定の式はここ 1 か所 — 2 か所で食い違うと「行は立つのに位置補正が戻さない」関節になる
+
+// ツイスト角 (Hinge の回転角 / Cone のツイスト角) のはみ出し。sh / ch = 関節角の半角 sin/cos (JointTwistHalf)。
+// over > 0 ⇔ θ > hi、under > 0 ⇔ θ < lo — sin(θ/2 − hi/2) > 0 ⇔ θ > hi (どちらも [-90°,90°] なので単調)。
+// 値は「はみ出した半角の sin」なので、位置補正は 2 倍して戻す量に使う
+void TwistLimitError(const JointLink& l, float sh, float ch, float& over, float& under)
+{
+    over = sh * l.cosHalfHi - ch * l.sinHalfHi;
+    under = l.sinHalfLo * ch - l.cosHalfLo * sh;
+}
+
+// コーンのスイング角 (軸そのものが円錐から出たか)。出ていれば true で、
+// n = 軸 × 相手の軸 (nl = |n| = sinθ) と dot = cosθ を返す。
+// ★真裏 (180°) は回す向きが決められないので false — swingLimitDeg の上限を 179 に切ってあるので通常は届かない
+bool SwingLimitAxis(const JointLink& l, const float ax[3], const float axB[3], float& dot, float& nx, float& ny,
+                    float& nz, float& nl)
+{
+    dot = ax[0] * axB[0] + ax[1] * axB[1] + ax[2] * axB[2];
+    if (dot < l.cosSwing) { // cos は単調減少なので「角が大きい」
+        Cross(ax[0], ax[1], ax[2], axB[0], axB[1], axB[2], nx, ny, nz);
+        nl = std::sqrt(nx * nx + ny * ny + nz * nz);
+        return nl > 1e-6f;
+    }
+    return false;
+}
+
+// スライダの変位 u = (アンカーA − アンカーB)·軸 = owner が +軸側へ滑った量 [m]
+float SliderDisplacement(float pax, float pay, float paz, float pbx, float pby, float pbz, const float ax[3])
+{
+    return (pax - pbx) * ax[0] + (pay - pby) * ax[1] + (paz - pbz) * ax[2];
+}
+
+// 関節の行ブロックの共通部分。breakJoint = 破断の集計先 (-1 = 数えない。ConstraintBlock::breakJoint)
+void InitJointBlock(ConstraintBlock& blk, const JointLink& l, int32_t breakJoint)
+{
+    blk.ai = l.ai;
+    blk.bi = l.bi;
+    blk.breakJoint = breakJoint;
+}
+
+// 線形の行の腕 = **質量中心から**アンカーへ (M59f1)。com* は hasCom が false なら +0.0f 固定なので
+// 「x - (+0.0f) == x」でビットを崩さない
+void SetJointArms(ConstraintBlock& blk, const Body& A, const Body& B, float pax, float pay, float paz, float pbx,
+                  float pby, float pbz)
+{
+    blk.ra[0] = pax - A.pose.px - A.comx;
+    blk.ra[1] = pay - A.pose.py - A.comy;
+    blk.ra[2] = paz - A.pose.pz - A.comz;
+    blk.rb[0] = pbx - B.pose.px - B.comx;
+    blk.rb[1] = pby - B.pose.py - B.comy;
+    blk.rb[2] = pbz - B.pose.pz - B.comz;
+}
+
+// 有効質量を組んで積む。組めない = 誰も動かせない (静的同士 / 睡眠中) ブロックは捨てる
+void PushJointBlock(std::vector<ConstraintBlock>& out, ConstraintBlock& blk, const Body& A, const Body& B)
+{
+    if (FinalizeConstraintBlock(blk, A, B)) {
+        out.push_back(blk);
+    }
+}
+
+// リミット行はどれも**片側不等式**の 1 行: 違反している向きの速度が cdot < 0 になる d を取り、
+// λ を [0, ∞) にクランプする (呼び出し側「リミット行 (M60c)」の注記)。範囲内なら何も積まない
+
+// 角度リミット (Hinge の回転角 / Cone のツイスト角)
+void AppendTwistLimitRow(std::vector<ConstraintBlock>& out, const JointLink& l, int32_t breakJoint, const Body& A,
+                         const Body& B, const float qa[4], const float qb[4], const float ax[3])
+{
+    float qe[4];
+    JointRelativeQuat(qa, qb, *l.jc, qe);
+    float sh, ch;
+    if (!JointTwistHalf(qe, ax, sh, ch)) {
+        return;
+    }
+    float over = 0.0f, under = 0.0f;
+    TwistLimitError(l, sh, ch, over, under);
+    float sgn = 0.0f;
+    if (over > 0.0f) {
+        sgn = -1.0f; // θ を増やす速度 (cdot>0) を止めたい → d = -軸
+    } else if (under > 0.0f) {
+        sgn = 1.0f;
+    }
+    if (sgn == 0.0f) {
+        return;
+    }
+    ConstraintBlock blk;
+    InitJointBlock(blk, l, breakJoint); // M60d: リミットは反力なので数える
+    blk.count = 1;
+    blk.angular = true;
+    for (int k = 0; k < 3; ++k) {
+        blk.d[0][k] = sgn * ax[k];
+    }
+    blk.lo[0] = 0.0f; // 押し戻す向きにだけ効く
+    blk.hi[0] = kJointRowUnbounded;
+    PushJointBlock(out, blk, A, B);
+}
+
+// コーンのスイング角 (軸そのものが円錐から出たら止める)
+void AppendSwingLimitRow(std::vector<ConstraintBlock>& out, const JointLink& l, int32_t breakJoint, const Body& A,
+                         const Body& B, const float qb[4], const float ax[3])
+{
+    float axB[3];
+    if (!JointConeAxisB(qb, *l.jc, axB)) {
+        return;
+    }
+    float dot = 0.0f, nx = 0.0f, ny = 0.0f, nz = 0.0f, nl = 0.0f;
+    if (!SwingLimitAxis(l, ax, axB, dot, nx, ny, nz, nl)) {
+        return;
+    }
+    ConstraintBlock blk;
+    InitJointBlock(blk, l, breakJoint); // M60d
+    blk.count = 1;
+    blk.angular = true;
+    // B は n まわりに swing 角だけ余分に回っている → d = n なら「swing を増やす速度」が cdot < 0 になる
+    blk.d[0][0] = nx / nl;
+    blk.d[0][1] = ny / nl;
+    blk.d[0][2] = nz / nl;
+    blk.lo[0] = 0.0f;
+    blk.hi[0] = kJointRowUnbounded;
+    PushJointBlock(out, blk, A, B);
+}
+
+// スライダの変位リミット (軸方向の並進)
+void AppendSliderLimitRow(std::vector<ConstraintBlock>& out, const JointLink& l, int32_t breakJoint, const Body& A,
+                          const Body& B, float pax, float pay, float paz, float pbx, float pby, float pbz,
+                          const float ax[3])
+{
+    const float u = SliderDisplacement(pax, pay, paz, pbx, pby, pbz, ax);
+    float sgn = 0.0f;
+    if (u > l.jc->limitMax) {
+        sgn = -1.0f;
+    } else if (u < l.jc->limitMin) {
+        sgn = 1.0f;
+    }
+    if (sgn == 0.0f) {
+        return;
+    }
+    ConstraintBlock blk;
+    InitJointBlock(blk, l, breakJoint); // M60d
+    blk.count = 1;
+    blk.angular = false;
+    for (int k = 0; k < 3; ++k) {
+        blk.d[0][k] = sgn * ax[k];
+    }
+    SetJointArms(blk, A, B, pax, pay, paz, pbx, pby, pbz);
+    blk.lo[0] = 0.0f;
+    blk.hi[0] = kJointRowUnbounded;
+    PushJointBlock(out, blk, A, B);
 }
 
 // 位置補正パスから姿勢を回す (M60b)。**質量中心まわり**に回すのは位置積分と同じ規約。
@@ -1578,31 +1758,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
     // **1 tick に 1 回だけ**。「誰と誰を繋ぐか」はサブステップで変わらないし、島と起床の
     // 配線にも同じ表を使い回す。行そのものは姿勢が動くのでサブステップごとに作り直す。
     // 1 個も無ければ以降の関節帯は全て空ループ = 既存シーンは fp 演算が 1 回も増えない
-    struct JointLink {
-        EntityID owner;
-        // M60d: **書き込み可**。破断は `broken` フラグを立てるだけで、コンポーネントは
-        // 外さない (構造変更をソルバ内から起こさないのが家風。決定台帳 5)
-        JointComponent* jc = nullptr;
-        int32_t ai = -1; // owner の bodies index (-1 = 不動アンカー)
-        int32_t bi = -1; // 相手の bodies index (-1 = 不動アンカー)
-        // bodies に居ない側の固定ワールドアンカー (相手 null / 変換だけのエンティティ)
-        float wax = 0, way = 0, waz = 0;
-        float wbx = 0, wby = 0, wbz = 0;
-        // 同じく固定側のワールド回転 (M60b の軸と相対姿勢の基準に要る)。
-        // body 側は Body の作業用姿勢が正なのでこちらは使わない
-        float waq[4] = { 0, 0, 0, 1 };
-        float wbq[4] = { 0, 0, 0, 1 };
-        // ---- リミットのしきい値 (M60c) ----
-        // ★**tick 頭に 1 回だけ**作る (決定台帳 11)。角度は半角の sin/cos、swing は
-        //   cos/sin をそのまま持つので、サブステップの中では三角関数を 1 回も呼ばない。
-        // ★limitOn は「useLimit **かつ** 範囲が正順」。逆転した範囲 (min > max) は
-        //   満たしようが無いので**行を立てない** = 自由にする — 縮退軸のヒンジを Ball へ
-        //   落とすのと同じ「オーサリングミスで物体が飛ばない」側の選択
-        bool limitOn = false;
-        float sinHalfLo = 0.0f, cosHalfLo = 1.0f; // limitMin/2 (Hinge / Cone twist)
-        float sinHalfHi = 0.0f, cosHalfHi = 1.0f; // limitMax/2
-        float sinSwing = 0.0f, cosSwing = 1.0f;   // swingLimitDeg (Cone のみ)
-    };
+    // 関節 1 本ぶんの作業データ JointLink は無名名前空間に置いてある (リミット行を組む関数も受け取るため)
     std::vector<JointLink> jointLinks;
     // M60j: 接触を作らないボディ対の表 ((小 index << 32) | 大 index、昇順・重複なし)。
     // ブロードフェーズの候補キーと**同じ組み方**なので、そのまま二分探索で引ける。
@@ -3204,17 +3360,8 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             // ---- 線形ブロック ----
             {
                 ConstraintBlock blk;
-                blk.ai = l.ai;
-                blk.bi = l.bi;
-                blk.breakJoint = breakJoint; // M60d
-                // 腕は**質量中心から** (M59f1)。com* は hasCom が false なら +0.0f 固定なので
-                // 「x - (+0.0f) == x」でビットを崩さない
-                blk.ra[0] = pax - A.pose.px - A.comx;
-                blk.ra[1] = pay - A.pose.py - A.comy;
-                blk.ra[2] = paz - A.pose.pz - A.comz;
-                blk.rb[0] = pbx - B.pose.px - B.comx;
-                blk.rb[1] = pby - B.pose.py - B.comy;
-                blk.rb[2] = pbz - B.pose.pz - B.comz;
+                InitJointBlock(blk, l, breakJoint); // M60d
+                SetJointArms(blk, A, B, pax, pay, paz, pbx, pby, pbz);
                 blk.angular = false;
                 if (type == jointtype::kSlider && hasAxis) {
                     // Slider は軸方向に自由 → 軸に直交する 2 自由度だけ拘束する
@@ -3232,9 +3379,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                     blk.d[1][1] = 1.0f;
                     blk.d[2][2] = 1.0f;
                 }
-                if (FinalizeConstraintBlock(blk, A, B)) {
-                    jointBlocks.push_back(blk); // 失敗 = 誰も動かせない (静的同士 / 睡眠中)
-                }
+                PushJointBlock(jointBlocks, blk, A, B);
             }
 
             // ---- 角ブロック (M60b) ----
@@ -3242,9 +3387,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             //   位置補正パスの担当 — 線形と同じ役割分担にしてある
             if (type == jointtype::kHinge || type == jointtype::kFixed || type == jointtype::kSlider) {
                 ConstraintBlock blk;
-                blk.ai = l.ai;
-                blk.bi = l.bi;
-                blk.breakJoint = breakJoint; // M60d
+                InitJointBlock(blk, l, breakJoint); // M60d
                 blk.angular = true;
                 if (type == jointtype::kHinge) {
                     if (!hasAxis) {
@@ -3265,9 +3408,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                     blk.d[1][1] = 1.0f;
                     blk.d[2][2] = 1.0f;
                 }
-                if (FinalizeConstraintBlock(blk, A, B)) {
-                    jointBlocks.push_back(blk);
-                }
+                PushJointBlock(jointBlocks, blk, A, B);
             }
 
             // ---- モータ行 (M60c): 目標速度を bias に持つ**両側**行 ----
@@ -3281,20 +3422,14 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             if ((type == jointtype::kHinge || type == jointtype::kSlider) && hasAxis
                 && l.jc->motorMaxForce > 0.0f) {
                 ConstraintBlock blk;
-                blk.ai = l.ai;
-                blk.bi = l.bi;
+                InitJointBlock(blk, l, -1); // ★モータは駆動であって反力ではない = 破断に数えない (M60d)
                 blk.count = 1;
                 blk.angular = (type == jointtype::kHinge);
                 for (int k = 0; k < 3; ++k) {
                     blk.d[0][k] = ax[k];
                 }
                 if (!blk.angular) {
-                    blk.ra[0] = pax - A.pose.px - A.comx;
-                    blk.ra[1] = pay - A.pose.py - A.comy;
-                    blk.ra[2] = paz - A.pose.pz - A.comz;
-                    blk.rb[0] = pbx - B.pose.px - B.comx;
-                    blk.rb[1] = pby - B.pose.py - B.comy;
-                    blk.rb[2] = pbz - B.pose.pz - B.comz;
+                    SetJointArms(blk, A, B, pax, pay, paz, pbx, pby, pbz);
                 }
                 // d = +軸 なので cdot = (ωA-ωB)·軸 = **関節角の角速度そのもの** (線形なら
                 // アンカーの軸方向相対速度)。ソルバは cdot を bias へ寄せるので、
@@ -3303,9 +3438,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                 const float cap = l.jc->motorMaxForce * h;
                 blk.lo[0] = -cap;
                 blk.hi[0] = cap;
-                if (FinalizeConstraintBlock(blk, A, B)) {
-                    jointBlocks.push_back(blk);
-                }
+                PushJointBlock(jointBlocks, blk, A, B);
             }
 
             // ---- リミット行 (M60c): **片側不等式** (λ を [0, ∞) にクランプ) ----
@@ -3319,104 +3452,14 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             //   モータがリミットへ突っ込んでも各反復の最後にリミットが勝つ。
             //   逆順だとモータの目標速度がそのまま残って可動域を突き抜ける。
             if (l.limitOn && hasAxis) {
-                // -- 角度リミット (Hinge の回転角 / Cone のツイスト角) --
                 if (type == jointtype::kHinge || type == jointtype::kCone) {
-                    float qe[4];
-                    JointRelativeQuat(qa, qb, *l.jc, qe);
-                    float sh, ch;
-                    if (JointTwistHalf(qe, ax, sh, ch)) {
-                        // sin(θ/2 − hi/2) > 0 ⇔ θ > hi (どちらも [-90°,90°] なので単調)
-                        const float over = sh * l.cosHalfHi - ch * l.sinHalfHi;
-                        const float under = l.sinHalfLo * ch - l.cosHalfLo * sh;
-                        float sgn = 0.0f;
-                        if (over > 0.0f) {
-                            sgn = -1.0f; // θ を増やす速度 (cdot>0) を止めたい → d = -軸
-                        } else if (under > 0.0f) {
-                            sgn = 1.0f;
-                        }
-                        if (sgn != 0.0f) {
-                            ConstraintBlock blk;
-                            blk.ai = l.ai;
-                            blk.bi = l.bi;
-                            blk.breakJoint = breakJoint; // M60d: リミットは反力なので数える
-                            blk.count = 1;
-                            blk.angular = true;
-                            for (int k = 0; k < 3; ++k) {
-                                blk.d[0][k] = sgn * ax[k];
-                            }
-                            blk.lo[0] = 0.0f; // 押し戻す向きにだけ効く
-                            blk.hi[0] = kJointRowUnbounded;
-                            if (FinalizeConstraintBlock(blk, A, B)) {
-                                jointBlocks.push_back(blk);
-                            }
-                        }
-                    }
+                    AppendTwistLimitRow(jointBlocks, l, breakJoint, A, B, qa, qb, ax);
                 }
-                // -- コーンのスイング角 (軸そのものが円錐から出たら止める) --
                 if (type == jointtype::kCone) {
-                    float axB[3];
-                    if (JointConeAxisB(qb, *l.jc, axB)) {
-                        const float dot = ax[0] * axB[0] + ax[1] * axB[1] + ax[2] * axB[2];
-                        if (dot < l.cosSwing) { // cos は単調減少なので「角が大きい」
-                            float nx, ny, nz;
-                            Cross(ax[0], ax[1], ax[2], axB[0], axB[1], axB[2], nx, ny, nz);
-                            const float nl = std::sqrt(nx * nx + ny * ny + nz * nz);
-                            // 真裏 (180°) は回す向きが決められない — 行を立てない。
-                            // swingLimitDeg の上限を 179 に切ってあるので通常は届かない
-                            if (nl > 1e-6f) {
-                                ConstraintBlock blk;
-                                blk.ai = l.ai;
-                                blk.bi = l.bi;
-                                blk.breakJoint = breakJoint; // M60d
-                                blk.count = 1;
-                                blk.angular = true;
-                                // B は n まわりに swing 角だけ余分に回っている →
-                                // d = n なら「swing を増やす速度」が cdot < 0 になる
-                                blk.d[0][0] = nx / nl;
-                                blk.d[0][1] = ny / nl;
-                                blk.d[0][2] = nz / nl;
-                                blk.lo[0] = 0.0f;
-                                blk.hi[0] = kJointRowUnbounded;
-                                if (FinalizeConstraintBlock(blk, A, B)) {
-                                    jointBlocks.push_back(blk);
-                                }
-                            }
-                        }
-                    }
+                    AppendSwingLimitRow(jointBlocks, l, breakJoint, A, B, qb, ax);
                 }
-                // -- スライダの変位リミット (軸方向の並進) --
-                // u = (アンカーA − アンカーB)·軸 = owner が +軸側へ滑った量
                 if (type == jointtype::kSlider) {
-                    const float u = (pax - pbx) * ax[0] + (pay - pby) * ax[1]
-                                  + (paz - pbz) * ax[2];
-                    float sgn = 0.0f;
-                    if (u > l.jc->limitMax) {
-                        sgn = -1.0f;
-                    } else if (u < l.jc->limitMin) {
-                        sgn = 1.0f;
-                    }
-                    if (sgn != 0.0f) {
-                        ConstraintBlock blk;
-                        blk.ai = l.ai;
-                        blk.bi = l.bi;
-                        blk.breakJoint = breakJoint; // M60d
-                        blk.count = 1;
-                        blk.angular = false;
-                        for (int k = 0; k < 3; ++k) {
-                            blk.d[0][k] = sgn * ax[k];
-                        }
-                        blk.ra[0] = pax - A.pose.px - A.comx;
-                        blk.ra[1] = pay - A.pose.py - A.comy;
-                        blk.ra[2] = paz - A.pose.pz - A.comz;
-                        blk.rb[0] = pbx - B.pose.px - B.comx;
-                        blk.rb[1] = pby - B.pose.py - B.comy;
-                        blk.rb[2] = pbz - B.pose.pz - B.comz;
-                        blk.lo[0] = 0.0f;
-                        blk.hi[0] = kJointRowUnbounded;
-                        if (FinalizeConstraintBlock(blk, A, B)) {
-                            jointBlocks.push_back(blk);
-                        }
-                    }
+                    AppendSliderLimitRow(jointBlocks, l, breakJoint, A, B, pax, pay, paz, pbx, pby, pbz, ax);
                 }
             }
         }
@@ -3910,8 +3953,8 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                         JointRelativeQuat(qa, qb, *l.jc, qe);
                         float sh, ch;
                         if (JointTwistHalf(qe, ax, sh, ch)) {
-                            const float over = sh * l.cosHalfHi - ch * l.sinHalfHi;
-                            const float under = l.sinHalfLo * ch - l.cosHalfLo * sh;
+                            float over = 0.0f, under = 0.0f;
+                            TwistLimitError(l, sh, ch, over, under);
                             float corr = 0.0f; // 関節角をこれだけ動かしたい (符号つき)
                             if (over > 0.0f) {
                                 corr = -2.0f * over;
@@ -3927,20 +3970,13 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                     }
                     if (type == jointtype::kCone) {
                         float axB[3];
-                        if (JointConeAxisB(qb, *l.jc, axB)) {
-                            const float dot = ax[0] * axB[0] + ax[1] * axB[1] + ax[2] * axB[2];
-                            if (dot < l.cosSwing) {
-                                float nx, ny, nz;
-                                Cross(ax[0], ax[1], ax[2], axB[0], axB[1], axB[2], nx, ny, nz);
-                                const float nl = std::sqrt(nx * nx + ny * ny + nz * nz);
-                                if (nl > 1e-6f) {
-                                    // sin(θ−L) = sinθ·cosL − cosθ·sinL (nl = sinθ, dot = cosθ)
-                                    const float sd = nl * l.cosSwing - dot * l.sinSwing;
-                                    if (sd > 0.0f) {
-                                        const float s = sd / nl;
-                                        applyJointAngular(l, nx * s, ny * s, nz * s);
-                                    }
-                                }
+                        float dot = 0.0f, nx = 0.0f, ny = 0.0f, nz = 0.0f, nl = 0.0f;
+                        if (JointConeAxisB(qb, *l.jc, axB) && SwingLimitAxis(l, ax, axB, dot, nx, ny, nz, nl)) {
+                            // sin(θ−L) = sinθ·cosL − cosθ·sinL (nl = sinθ, dot = cosθ)
+                            const float sd = nl * l.cosSwing - dot * l.sinSwing;
+                            if (sd > 0.0f) {
+                                const float s = sd / nl;
+                                applyJointAngular(l, nx * s, ny * s, nz * s);
                             }
                         }
                     }
@@ -3982,8 +4018,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                 // ★(2) が動かしたのは**軸に直交する成分だけ**なので、u は上のアンカーから
                 //   そのまま測ってよい (軸方向は (2) の対象外 = そこが可動域)
                 if (l.limitOn && hasAxis && type == jointtype::kSlider) {
-                    const float u = (pax - pbx) * ax[0] + (pay - pby) * ax[1]
-                                  + (paz - pbz) * ax[2];
+                    const float u = SliderDisplacement(pax, pay, paz, pbx, pby, pbz, ax);
                     float corr = 0.0f;
                     if (u > l.jc->limitMax) {
                         corr = l.jc->limitMax - u;
