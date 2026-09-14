@@ -18,8 +18,6 @@
 namespace mye {
 namespace {
 
-MyeEntityId ToShared(EntityID id) { return { id.index, id.generation }; }
-
 FieldType ToFieldTypeImpl(int32_t t)
 {
     switch (t) {
@@ -36,17 +34,6 @@ FieldType ToFieldTypeImpl(int32_t t)
     case MYE_FIELD_ENTITYREF: return FieldType::EntityRef;
     }
     return FieldType::Float;
-}
-
-// Start 済み記録のキー。**スクリプト型まで含める** — エンティティだけで引くと、
-// 同じエンティティの 2 つ目のスクリプトが「もう Start 済み」と判定されて
-// 一度も初期化されない (M64b で修正。詳細は ScriptStartedKey のコメント)
-ScriptStartedKey StartedKey(EntityID e, ComponentTypeId script)
-{
-    ScriptStartedKey k;
-    k.entity = (static_cast<uint64_t>(e.index) << 32) | e.generation;
-    k.script = static_cast<uint64_t>(script);
-    return k;
 }
 
 } // namespace
@@ -310,7 +297,7 @@ void ScriptHost::RunPhase(Phase phase)
                 ctx.api = &api_;
                 void* state = arch.GetPtr(ci, row);
                 if (wantStart) {
-                    const ScriptStartedKey key = StartedKey(arch.EntityAt(row), type.componentId);
+                    const ScriptStartedKey key = MakeScriptStartedKey(arch.EntityAt(row), type.componentId);
                     if (!started_.contains(key)) {
                         started_.insert(key);
                         type.start(state, &ctx);

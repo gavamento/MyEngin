@@ -1,13 +1,14 @@
 #pragma once
 #include <cstdint>
 #include <deque>
+#include <set>
 #include <string>
-#include <unordered_set>
 #include <vector>
 
 #include "Engine/Core/EntityID.h"
 #include "Engine/Core/Reflection.h" // FieldType
 #include "Engine/Engine/Script/EngineApiTable.h"
+#include "Engine/Engine/Script/ScriptKeys.h" // ScriptStartedKey (C++ ホストと同じキー)
 #include "Engine/Platform/Input.h"
 #include "Shared/MathPod.h" // MyeEntityId
 
@@ -144,7 +145,7 @@ private:
     MyeEngineApi api_ = {};
     MyeManagedVTable vt_ = {};
     std::deque<CsType> types_;              // deque: name の c_str() 安定性のため
-    std::unordered_set<uint64_t> started_;  // Start 済みインスタンス
+    std::set<ScriptStartedKey> started_;    // Start 済みインスタンス (エンティティ + スクリプト型)
     InputSnapshot input_ = {};
     uint64_t tickIndex_ = 0;
     float dt_ = 1.0f / 60.0f;

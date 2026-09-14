@@ -1053,6 +1053,9 @@
     <ClInclude Include="..\src\Engine\Engine\Script\ScriptHost.h">
       <Filter>Engine\Script</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Script\ScriptKeys.h">
+      <Filter>Engine\Script</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\SkeletonSelfTest.h">
       <Filter>Engine</Filter>
     </ClInclude>

@@ -7,6 +7,7 @@
 #include "Engine/Core/EntityID.h"
 #include "Engine/Core/Reflection.h" // FieldDesc (FieldDescFromScriptField の戻り値)
 #include "Engine/Engine/Script/EngineApiTable.h"
+#include "Engine/Engine/Script/ScriptKeys.h" // ScriptStartedKey (snapshot も読む)
 #include "Engine/Platform/Input.h"
 #include "Shared/ScriptTypes.h"
 
@@ -20,27 +21,6 @@ class Scene;
 // ★公開しているのは SchemaSelfTest から直接叩いて検査するため — 変換規則が
 //   LoadModule の中に埋まっていると、DLL を実際にロードしないと確かめられなくなる
 FieldDesc FieldDescFromScriptField(const MyeScriptField& sf);
-
-// Start 済みインスタンスの識別子 (M64b)。
-// ★**エンティティ ID だけでは足りない**。同じエンティティに 2 つ目のスクリプトを
-//   付けると、1 つ目が入れたキーで弾かれて 2 つ目の `Start()` が一度も呼ばれない、
-//   という穴が M64a まで開いていた。`Update` / `LateUpdate` は無条件に回るので
-//   「初期化だけ静かに効かない」という一番追いにくい形で出る。
-// ★エンティティ側は index<<32|generation で 64bit を使い切っているので、
-//   スクリプト型を同じ語に詰めることはできない。2 語持つ。
-struct ScriptStartedKey {
-    uint64_t entity = 0; // index<<32 | generation
-    uint64_t script = 0; // そのスクリプト型の ComponentTypeId
-
-    friend bool operator<(const ScriptStartedKey& a, const ScriptStartedKey& b)
-    {
-        return (a.entity != b.entity) ? (a.entity < b.entity) : (a.script < b.script);
-    }
-    friend bool operator==(const ScriptStartedKey& a, const ScriptStartedKey& b)
-    {
-        return a.entity == b.entity && a.script == b.script;
-    }
-};
 
 // GameLogic.dll のホスト (engine_spec.md 5.2 / 8.4)。
 // - スクリプト型ごとに動的 ECS コンポーネントを登録する

@@ -15,6 +15,7 @@
 #include "Engine/Engine/Parts.h" // v9 部位クエリ (M48h)
 #include "Engine/Engine/Physics/PhysicsSystem.h"
 #include "Engine/Engine/Scene.h"
+#include "Engine/Engine/Script/ScriptKeys.h" // ToShared
 #include "Engine/Engine/UI/UIInteraction.h" // v16 (M70c): ヒットテスト/ナビの唯一の実装
 #include "Engine/Engine/UI/UILayout.h" // M51e: 矩形解決を描画と共有 (キャンバス座標のナビ矩形)
 #include "Engine/Engine/UI/UINav.h"    // v7 UIFocusNav (M37)
@@ -31,7 +32,7 @@ static_assert(offsetof(MyeEntityId, index) == offsetof(EntityID, index));
 static_assert(offsetof(MyeEntityId, generation) == offsetof(EntityID, generation));
 
 EntityID ToEngine(MyeEntityId id) { return { id.index, id.generation }; }
-MyeEntityId ToShared(EntityID id) { return { id.index, id.generation }; }
+// ToShared は ScriptKeys.h (C++ / C# の両ホストと共有する 1 本)
 
 ScriptApiContext* Ctx(void* engine) { return static_cast<ScriptApiContext*>(engine); }
 Scene* Sc(void* engine) { return Ctx(engine)->scene; }

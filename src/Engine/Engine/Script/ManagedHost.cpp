@@ -25,13 +25,6 @@ hostfxr_initialize_for_runtime_config_fn g_init = nullptr;
 hostfxr_get_runtime_delegate_fn g_getDelegate = nullptr;
 hostfxr_close_fn g_close = nullptr;
 
-MyeEntityId ToShared(EntityID id) { return { id.index, id.generation }; }
-
-uint64_t StartedKey(EntityID e)
-{
-    return (static_cast<uint64_t>(e.index) << 32) | e.generation;
-}
-
 // MyeFieldType (managed から届く int) → エンジンの FieldType
 FieldType ToFieldType(int32_t t)
 {
@@ -310,7 +303,7 @@ void ManagedHost::RunPhase(Phase phase)
                     }
                 }
                 if (phase == Phase::StartAndUpdate) {
-                    const uint64_t key = StartedKey(e);
+                    const ScriptStartedKey key = MakeScriptStartedKey(e, type.componentId);
                     if (!started_.contains(key)) {
                         started_.insert(key);
                         vt_.Invoke(*handle, 0, dt_, tickIndex_); // Start
