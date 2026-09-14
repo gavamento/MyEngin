@@ -11,6 +11,10 @@ class UndoStack;
 class AssetPreviewCache;
 class SourceControlSession;
 
+// ファイルタイルに出す文字ラベル (サムネイルが無いとき)。種類は AssetDatabase::ClassifyPath で決める。
+// AssetOpsSelfTest がパス表で固定している
+const char* AssetTileLabel(const std::wstring& path);
+
 // Asset Browser (engine_spec.md 9 章、M11)。
 // assets/ をフォルダツリー + ファイルグリッドで表示。テクスチャはサムネイル、
 // 他は拡張子アイコン。ダブルクリックで OS 既定アプリで開く。

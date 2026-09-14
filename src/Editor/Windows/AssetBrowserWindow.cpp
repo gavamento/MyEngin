@@ -129,34 +129,34 @@ void InstantiateComposeAsset(EngineContext& ctx, Selection& selection, UndoStack
     undo.EndRecord(selection);
 }
 
-// サムネイル未生成 (または対象外) のタイルに出す文字ラベル
-const char* TileLabel(const std::wstring& ext, const std::wstring& path, bool isCompose,
-                      bool isActor, bool isAnim, bool isMat, bool isSound, bool isMixer,
-                      bool isSchema, bool isPhysMat)
+// サムネイル未生成 (または対象外) のタイルに出す文字ラベル。
+// type は AssetDatabase::ClassifyPath の結果 (複合サフィックスの順序はあちらが正本)、ext は小文字の拡張子
+const char* TileLabel(AssetType type, const std::wstring& ext, const std::wstring& path)
 {
-    if (IsImageExt(ext)) {
-        return "img"; // デコード完了までのプレースホルダ
-    }
-    if (isSchema) {
+    switch (type) {
+    case AssetType::Texture:
+        if (IsImageExt(ext)) {
+            return "img"; // デコード完了までのプレースホルダ
+        }
+        break; // .bmp はサムネイルを読まないので拡張子の表示へ落とす
+    case AssetType::Schema:
         return "schema"; // .component.schema.json (M48j)
-    }
-    if (isCompose) {
-        return isActor ? "actor" : "prefab";
-    }
-    if (isAnim) {
+    case AssetType::Actor:
+        return "actor";
+    case AssetType::Prefab:
+        return "prefab";
+    case AssetType::Anim:
         return "anim";
-    }
-    if (isPhysMat) {
-        return "physmat"; // .physmat.json (M59a1)。isMat より先 (どちらも mat.json を含む)
-    }
-    if (isMat) {
+    case AssetType::PhysMat:
+        return "physmat"; // .physmat.json (M59a1)
+    case AssetType::Material:
         return "mat";
-    }
-    if (isSound) {
+    case AssetType::Sound:
         return "sound";
-    }
-    if (isMixer) {
+    case AssetType::Mixer:
         return "mixer";
+    default:
+        break;
     }
     if (AssetPreviewCache::IsPreviewable(path)) {
         return "model"; // 立体サムネイル生成待ち
@@ -181,6 +181,13 @@ void DrawTreeBadge(ChangeState s)
 }
 
 } // namespace
+
+const char* AssetTileLabel(const std::wstring& path)
+{
+    std::wstring ext = fs::path(path).extension().wstring();
+    std::transform(ext.begin(), ext.end(), ext.begin(), ::towlower);
+    return TileLabel(AssetDatabase::ClassifyPath(path), ext, path);
+}
 
 void AssetBrowserWindow::BeginRename(const std::wstring& path)
 {
@@ -533,30 +540,17 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
         std::wstring ext = filePath.extension().wstring();
         std::transform(ext.begin(), ext.end(), ext.begin(), ::towlower);
         const std::string nameU = WideToUtf8(filePath.filename().wstring());
-        // .actor.json / .prefab.json はどちらもプレハブライブラリが扱う構成アセット (M48d)。
-        // 判定は PrefabLibrary::IsComposePath 一本 (suffix の書き足し漏れを作らない)
-        const bool isCompose = PrefabLibrary::IsComposePath(path);
-        const bool isActor = isCompose && nameU.size() >= 11
-            && nameU.compare(nameU.size() - 11, 11, ".actor.json") == 0;
-        const bool isAnim = !isCompose && nameU.size() >= 10
-            && nameU.compare(nameU.size() - 10, 10, ".anim.json") == 0;
-        const bool isMat = !isCompose && !isAnim && nameU.size() >= 9
-            && nameU.compare(nameU.size() - 9, 9, ".mat.json") == 0;
-        const bool isScene = !isCompose && !isAnim && !isMat && nameU.size() >= 11
-            && nameU.compare(nameU.size() - 11, 11, ".scene.json") == 0;
-        const bool isSound = !isCompose && !isAnim && !isMat && !isScene && nameU.size() >= 11
-            && nameU.compare(nameU.size() - 11, 11, ".sound.json") == 0;
-        const bool isMixer = !isCompose && !isAnim && !isMat && !isScene && !isSound
-            && nameU.size() >= 11 && nameU.compare(nameU.size() - 11, 11, ".mixer.json") == 0;
-        // M59a1: 物理マテリアル。".physmat.json" の末尾 9 文字は "smat.json" なので isMat には
-        // 落ちない (PhysMatSelfTest が固定) — ここは独立判定でよい
-        const bool isPhysMat = !isCompose
-            && nameU.size() >= 13 && nameU.compare(nameU.size() - 13, 13, ".physmat.json") == 0;
-        // M48j: .component.schema.json は起動時に読まれる動的コンポーネント定義。
-        // 他の複合サフィックスより長いので単独判定でよい (.json の一般判定より先に効く)
-        const bool isSchema = nameU.size() >= 22
-            && nameU.compare(nameU.size() - 22, 22, ".component.schema.json") == 0;
-        const bool isClip = ext == L".wav" || ext == L".ogg"; // 素の音声ファイル
+        // 種類は AssetDatabase::ClassifyPath で 1 回だけ決める。複合サフィックスの判定順
+        // (.component.schema.json → .actor/.prefab → .anim → .physmat → .mat …) と
+        // 大文字小文字の扱いはあちらが正本 (型フィルタ・リロードと同じ答えになる)
+        const AssetType type = AssetDatabase::ClassifyPath(path);
+        const bool isCompose = type == AssetType::Actor || type == AssetType::Prefab; // M48d
+        const bool isAnim = type == AssetType::Anim;
+        const bool isMat = type == AssetType::Material;
+        const bool isScene = type == AssetType::Scene;
+        const bool isSound = type == AssetType::Sound;
+        const bool isMixer = type == AssetType::Mixer;
+        const bool isClip = type == AssetType::Audio; // 素の音声ファイル (.wav / .ogg)
 
         if (i % cols != 0) {
             ImGui::SameLine();
@@ -581,8 +575,7 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
         ImGui::PushStyleColor(ImGuiCol_Button, thumb ? ImVec4(0, 0, 0, 0)
                                                      : ImGui::GetStyleColorVec4(ImGuiCol_Button));
         ImGui::Button(thumb ? "##tile"
-                            : TileLabel(ext, path, isCompose, isActor, isAnim, isMat, isSound,
-                                        isMixer, isSchema, isPhysMat),
+                            : TileLabel(type, ext, path),
                       ImVec2(kCell, kCell));
         ImGui::PopStyleColor();
         if (thumb) {

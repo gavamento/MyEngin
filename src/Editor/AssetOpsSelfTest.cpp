@@ -1,19 +1,23 @@
 #include "Editor/AssetOpsSelfTest.h"
 
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <string>
 #include <system_error>
 
 #include "Editor/AssetOps.h"
 #include "Editor/AssetPreviewCache.h"
 #include "Editor/Selection.h"
 #include "Editor/Undo/UndoStack.h"
+#include "Editor/Windows/AssetBrowserWindow.h" // AssetTileLabel
 #include "Engine/Core/Log.h"
 #include "Engine/Engine/AssetDatabase.h"
 #include "Engine/Engine/EngineLoop.h"
 #include "Engine/Engine/Prefab.h"
 #include "Engine/Engine/Scene.h"
+#include "Engine/Platform/PathUtil.h"
 #include "Engine/Renderer/RayTracing/RtTypes.h" // kRtReflClass* (M67)
 
 namespace fs = std::filesystem;
@@ -442,6 +446,55 @@ bool RunAssetOpsSelfTest()
               "build log: a non-numeric parenthesis is not mistaken for a line number");
         check(ParseBuildErrorLines("").empty() && ParseBuildErrorLines("all good\n").empty(),
               "build log: a successful log produces nothing");
+    }
+
+    // ---- Content Browser のタイルラベル (AssetTileLabel)。種類の判定は AssetDatabase::ClassifyPath 1 本 ----
+    // 小文字のサフィックスは手書き判定だった頃と同じラベル。大文字を含むサフィックスは ClassifyPath に
+    // 合わせて小文字と同じ扱いになった (以前は Orc.Actor.json が "prefab"、Walk.ANIM.json が "json"、
+    // Red.MAT.JSON が "model")
+    {
+        struct TileLabelCase {
+            const wchar_t* path;
+            const char* label;
+        };
+        const TileLabelCase kTileLabels[] = {
+            { L"assets/tex/rock.png", "img" },
+            { L"assets/tex/Rock.PNG", "img" },
+            { L"assets/tex/sky.dds", "img" },
+            { L"assets/tex/old.bmp", "file" }, // Texture だがサムネイルを読まない拡張子
+            { L"assets/x.component.schema.json", "schema" },
+            { L"assets/orc.actor.json", "actor" },
+            { L"assets/crate.prefab.json", "prefab" },
+            { L"assets/walk.anim.json", "anim" },
+            { L"assets/ice.physmat.json", "physmat" },
+            { L"assets/red.mat.json", "mat" },
+            { L"assets/hit.sound.json", "sound" },
+            { L"assets/main.mixer.json", "mixer" },
+            { L"assets/level.scene.json", "json" },
+            { L"assets/hero.controller.json", "json" },
+            { L"assets/hill.terrain.json", "json" },
+            { L"assets/data.json", "json" },
+            { L"assets/mesh.glb", "model" },
+            { L"assets/mesh.gltf", "model" },
+            { L"assets/mesh.fbx", "model" },
+            { L"assets/Mesh.FBX", "model" },
+            { L"assets/mesh.obj", "file" },
+            { L"assets/hit.wav", "audio" },
+            { L"assets/amb.ogg", "audio" },
+            { L"assets/lit.hlsl", "shader" },
+            { L"assets/common.hlsli", "shader" },
+            { L"assets/Foo.cs", "file" },
+            { L"assets/readme.txt", "file" },
+            { L"assets/Orc.Actor.json", "actor" },
+            { L"assets/Walk.ANIM.json", "anim" },
+            { L"assets/Red.MAT.JSON", "mat" },
+        };
+        for (const TileLabelCase& c : kTileLabels) {
+            const char* got = AssetTileLabel(c.path);
+            const std::string what =
+                "tile label " + WideToUtf8(c.path) + " -> " + c.label + " (got " + got + ")";
+            check(std::strcmp(got, c.label) == 0, what.c_str());
+        }
     }
 
     if (failCount == 0) {
