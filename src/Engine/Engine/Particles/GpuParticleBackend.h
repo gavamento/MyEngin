@@ -121,6 +121,12 @@ private:
     // (歪み専用のエミッタは 1 バイトも余分に確保しない)
     bool EnsureSortResources(GraphicsDevice& device, GpuEmitter& em);
     void SortEmittersForDraw(GraphicsDevice& device, const RenderView& view);
+    // 1 エミッタの 1 tick ぶん (放出計画 → EmitData 生成 → emit Dispatch → sim Dispatch → 記帳)。
+    // CPU 側 {EmitParticles → Simulate → KillDead} の 1 回分に対応し、プリウォームが誕生 tick に
+    // k 回先回しで呼ぶ。戻り値 false = この tick は GPU 作業をしなかった (統計に足さない)。
+    // 渡す値の束 EmitterTickCtx は .cpp で定義する (ParticleEmitBasis をヘッダへ持ち込まない)
+    struct EmitterTickCtx;
+    bool RunEmitterTick(EmitterTickCtx& t, bool allowIdleSkip);
 
     std::vector<GpuEmitter> emitters_; // owner.index 昇順
     GraphicsDevice* device_ = nullptr;
