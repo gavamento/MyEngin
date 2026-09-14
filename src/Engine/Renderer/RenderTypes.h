@@ -232,6 +232,12 @@ struct RenderView {
     DirectX::XMFLOAT3 skyTop = { 0.24f, 0.42f, 0.83f };
     DirectX::XMFLOAT3 skyHorizon = { 0.74f, 0.81f, 0.90f };
     DirectX::XMFLOAT3 skyBottom = { 0.28f, 0.25f, 0.22f };
+    // 2026-09-14: 手続きの星空と環境光の切り離し (SkyboxComponent の末尾 append と同じ意味)
+    float skyStarDensity = 0.0f; // 0 = 星なし (シェーダは星の分岐に入らない)
+    float skyStarBrightness = 1.0f;
+    float skyStarTwinkle = 0.0f;
+    int32_t skyStarCells = 180;
+    int32_t skyLighting = 1; // 0 = IBL を焼かない (各パスは定数アンビエントのまま)
     int32_t fogMode = -1; // -1=フォグ無効 / 0=linear 1=exp 2=exp2
     DirectX::XMFLOAT3 fogColor = { 0.65f, 0.70f, 0.75f };
     float fogDensity = 0.02f;

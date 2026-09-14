@@ -401,6 +401,12 @@ void RegisterBuiltinComponents()
         MYE_JP("地平線の色", MYE_FIELD(SkyboxComponent, horizonColor, Color)),
         MYE_JP("下の色", MYE_FIELD(SkyboxComponent, bottomColor, Color)),
         MYE_JP("キューブマップ", MYE_FIELD(SkyboxComponent, cubemapTexture, AssetRef)),
+        // 2026-09-14: 星空と環境光の切り離し (末尾 append。欠けた古いシーンは既定値 = 従来の見た目)
+        MYE_JP("星の密度", MYE_FIELD_RANGE(SkyboxComponent, starDensity, Float, 0.0f, 1.0f)),
+        MYE_JP("星の明るさ", MYE_FIELD_RANGE(SkyboxComponent, starBrightness, Float, 0.0f, 20.0f)),
+        MYE_JP("星の瞬き", MYE_FIELD_RANGE(SkyboxComponent, starTwinkle, Float, 0.0f, 1.0f)),
+        MYE_JP("星の細かさ", MYE_FIELD_RANGE(SkyboxComponent, starCells, Int32, 1.0f, 1024.0f)),
+        MYE_JP("環境光に使う", MYE_FIELD_RANGE(SkyboxComponent, lighting, Int32, 0.0f, 1.0f)),
     }, kComponentNoHash);
 
     RegisterComponent<FogComponent>("Fog", {

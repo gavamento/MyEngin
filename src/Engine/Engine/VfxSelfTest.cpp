@@ -176,7 +176,15 @@ bool RunVfxSelfTest()
     {
         Scene s;
         GameObject sky1 = s.CreateGameObjectTracked("Sky1"); // index が小さい方が勝つ
-        sky1.AddComponent<SkyboxComponent>()->topColor = { 0.1f, 0.2f, 0.3f, 1.0f };
+        {
+            auto* sb = sky1.AddComponent<SkyboxComponent>();
+            sb->topColor = { 0.1f, 0.2f, 0.3f, 1.0f };
+            sb->starDensity = 0.25f; // 2026-09-14: 星空と環境光の切り離しのパススルー検証
+            sb->starBrightness = 3.0f;
+            sb->starTwinkle = 0.5f;
+            sb->starCells = 333;
+            sb->lighting = 0;
+        }
         GameObject sky2 = s.CreateGameObjectTracked("Sky2");
         sky2.AddComponent<SkyboxComponent>()->topColor = { 0.9f, 0.9f, 0.9f, 1.0f };
         GameObject fog1 = s.CreateGameObjectTracked("Fog1");
@@ -203,6 +211,11 @@ bool RunVfxSelfTest()
                   && std::fabs(view.fogInscatterIntensity - 0.7f) < 1e-6f
                   && std::fabs(view.fogInscatterPower - 16.0f) < 1e-6f,
               "environment: M43a height-fog/inscatter fields propagate to view");
+        check(std::fabs(view.skyStarDensity - 0.25f) < 1e-6f
+                  && std::fabs(view.skyStarBrightness - 3.0f) < 1e-6f
+                  && std::fabs(view.skyStarTwinkle - 0.5f) < 1e-6f && view.skyStarCells == 333
+                  && view.skyLighting == 0,
+              "environment: star field / sky lighting fields propagate to view");
 
         sky1.AddComponent<ActiveComponent>()->enabled = 0;
         s.GetWorld().ApplyStructuralChanges();
@@ -216,6 +229,9 @@ bool RunVfxSelfTest()
         CollectEnvironment(empty.GetWorld(), view3);
         check(view3.skyMode == -1 && view3.fogMode == -1,
               "environment: empty scene leaves sky/fog disabled");
+        check(view3.skyStarDensity == 0.0f && view3.skyLighting == 1
+                  && SkyboxComponent{}.starDensity == 0.0f && SkyboxComponent{}.lighting == 1,
+              "environment: stars are off and sky lighting is on by default (old scenes unchanged)");
         check(view3.fogHeightFalloff == 0.0f && view3.fogInscatterIntensity == 0.0f,
               "environment: M43a fields default to identity (bit-identical legacy fog)");
     }
@@ -354,7 +370,13 @@ bool RunVfxSelfTest()
             tm->fontScale = 2.0f;
         }
         GameObject c = src.CreateGameObjectTracked("C");
-        c.AddComponent<SkyboxComponent>()->topColor = { 0.5f, 0.6f, 0.7f, 1.0f };
+        {
+            auto* sky = c.AddComponent<SkyboxComponent>();
+            sky->topColor = { 0.5f, 0.6f, 0.7f, 1.0f };
+            sky->starDensity = 0.375f; // 2026-09-14: 末尾 append したフィールドも JSON を往復する
+            sky->starCells = 777;
+            sky->lighting = 0;
+        }
         c.AddComponent<FogComponent>()->density = 0.125f;
         c.AddComponent<CameraPostFxComponent>()->exposure = 4.0f;
         src.GetWorld().ApplyStructuralChanges();
@@ -381,7 +403,8 @@ bool RunVfxSelfTest()
                  && cc && cc->radius == 0.45f && sp && sp->size.x == 2.5f && sp->size.y == 0.75f
                  && sp->billboardMode == 1 && tr && tr->width == 0.33f && tm
                  && std::strcmp(tm->text, "RT") == 0 && tm->fontScale == 2.0f && sb
-                 && sb->topColor.y == 0.6f && fg && fg->density == 0.125f && px
+                 && sb->topColor.y == 0.6f && sb->starDensity == 0.375f && sb->starCells == 777
+                 && sb->lighting == 0 && fg && fg->density == 0.125f && px
                  && px->exposure == 4.0f;
         }
         check(ok, "roundtrip: all 9 M29 components survive scene JSON save/load");

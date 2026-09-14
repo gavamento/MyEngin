@@ -21,6 +21,10 @@ struct SkyCB {
     // ---- M57e: フロクセル (末尾 append。x=0 = 従来と 1 ビットも変わらない) ----
     XMFLOAT4 froxel;       // x = enabled / y = スライス数 / zw = 未使用
     XMFLOAT4 froxelScreen; // xy = レンダーターゲット実寸 (px) / zw = 未使用
+    // ---- 2026-09-14: 手続きの星空 (末尾 append。x=0 = 従来と 1 ビットも変わらない) ----
+    // ★skybox_cubemap.hlsl の SkyCB は前半だけを宣言している。バッファが宣言より大きいのは D3D11 で合法
+    XMFLOAT4 stars;     // x = 星のあるセルの割合 / y = 明るさ / z = 瞬きの深さ / w = キューブ 1 面の分割数
+    XMFLOAT4 starsTime; // x = 瞬きの時刻 (描画通番 / 60) / yzw = 未使用
 };
 
 } // namespace
@@ -97,6 +101,19 @@ void SkyboxPass::Render(GraphicsDevice& device, ShaderManager& shaders, const Re
     cb.froxel = { froxelBound ? 1.0f : 0.0f, static_cast<float>(view.froxelSlices), 0.0f, 0.0f };
     cb.froxelScreen = { static_cast<float>(view.width), static_cast<float>(view.height), 0.0f,
                         0.0f };
+    // 2026-09-14: 星空。cubemap の絵には足さない (skybox_cubemap.hlsl は gStars を宣言していない)。
+    // ★分割数は 1..1024 に丸める — シェーダがセル番号を 1024 進で詰めて uint のハッシュ鍵にしている
+    const int32_t starCells =
+        (view.skyStarCells < 1) ? 1 : ((view.skyStarCells > 1024) ? 1024 : view.skyStarCells);
+    const float starDensity = (useCube || view.skyStarDensity < 0.0f) ? 0.0f : view.skyStarDensity;
+    const float starTwinkle = (view.skyStarTwinkle < 0.0f)
+                                  ? 0.0f
+                                  : ((view.skyStarTwinkle > 1.0f) ? 1.0f : view.skyStarTwinkle);
+    cb.stars = { starDensity, view.skyStarBrightness, starTwinkle, static_cast<float>(starCells) };
+    // 瞬きの時刻は描画通番から作る (sim の外 = 決定論に関わらない。撮影モードは frame == tick なので絵も再現する)。
+    // ★通番 / 60 なので描画が 60Hz を超えると瞬きも速くなる (見た目だけの差)。
+    // ★10 分で巻き戻す — float に大きな通番を載せると sin の位相が粗くなり、瞬きが段付きになるため
+    cb.starsTime = { static_cast<float>(view.viewFrameIndex % 36000u) / 60.0f, 0.0f, 0.0f, 0.0f };
     D3D11_MAPPED_SUBRESOURCE mapped = {};
     if (SUCCEEDED(dc->Map(cb_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
         memcpy(mapped.pData, &cb, sizeof(cb));

@@ -468,6 +468,12 @@ void CollectEnvironment(World& world, RenderView& view)
             view.skyTop = { sb->topColor.x, sb->topColor.y, sb->topColor.z };
             view.skyHorizon = { sb->horizonColor.x, sb->horizonColor.y, sb->horizonColor.z };
             view.skyBottom = { sb->bottomColor.x, sb->bottomColor.y, sb->bottomColor.z };
+            // 2026-09-14: 星空と環境光の切り離し (純パススルー。丸めは SkyboxPass / IBL の判定側)
+            view.skyStarDensity = sb->starDensity;
+            view.skyStarBrightness = sb->starBrightness;
+            view.skyStarTwinkle = sb->starTwinkle;
+            view.skyStarCells = sb->starCells;
+            view.skyLighting = sb->lighting;
         }
     });
 
@@ -1175,14 +1181,17 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
     // M38c: スカイがあるなら IBL 環境マップを取得 (初回のみ GPU ベイク、以後キャッシュ)。
     // gradient も同じベイクに通す — シェーダ側は「IBL on/off」の 2 択で済む。
     // ベイクは RT/シェーダ状態を触るが、この後の path.Render が全て再設定するので安全
-    if (view.skyMode == 1 && view.skyCubemap != nullptr) {
+    // 2026-09-14: Skybox.lighting = 0 なら焼かない = IBL の SRV が null のまま = 各パスは定数アンビエントへ
+    //   落ちる (ForwardPath / DeferredPath / SsrPass の判定はどれも「3 枚そろったら IBL」の 1 本)
+    const bool skyLights = (view.skyLighting != 0);
+    if (view.skyMode == 1 && view.skyCubemap != nullptr && skyLights) {
         const EnvMaps em =
             envBaker_.GetForCubemap(device, shaders, view.skyCubemapId, view.skyCubemap);
         view.iblIrradiance = em.irradiance;
         view.iblPrefiltered = em.prefiltered;
         view.iblBrdfLut = em.brdfLut;
         view.iblSpecMips = em.specMips;
-    } else if (view.skyMode == 0) {
+    } else if (view.skyMode == 0 && skyLights) {
         const EnvMaps em = envBaker_.GetForGradient(device, shaders, view.skyTop, view.skyHorizon,
                                                     view.skyBottom); // リニア変換済みの色
         view.iblIrradiance = em.irradiance;

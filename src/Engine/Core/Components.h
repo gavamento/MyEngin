@@ -718,6 +718,17 @@ struct SkyboxComponent {
     DirectX::XMFLOAT4 horizonColor = { 0.74f, 0.81f, 0.90f, 1.0f }; // 地平線
     DirectX::XMFLOAT4 bottomColor = { 0.28f, 0.25f, 0.22f, 1.0f };  // 地面方向
     AssetID cubemapTexture = {}; // mode=1 用の DDS cubemap (面順 +X,-X,+Y,-Y,+Z,-Z)
+    // ---- 2026-09-14: 手続きの星空 + 環境光の切り離し (末尾 append。既定 = 従来の見た目) ----
+    // 星は gradient モードだけに描く (cubemap は絵そのものが空なので足さない)。
+    // starDensity が 0 ならシェーダは星の分岐に入らない = 従来とビット一致
+    float starDensity = 0.0f;    // 星のあるセルの割合 (0..1)
+    float starBrightness = 1.0f; // 星の明るさ (リニア HDR。1 を超えるとブルームで滲む)
+    float starTwinkle = 0.0f;    // 瞬きの深さ (0 = 静止 / 1 = 暗い瞬間に 0 まで落ちる)
+    int32_t starCells = 180;     // キューブ 1 面あたりの分割数 (多いほど星が小さく細かい。1..1024 に丸める)
+    // 1 = 空の色から IBL を焼いて環境光に使う (M38c 以来の既定)。
+    // 0 = 背景に描くだけで、ライトの ambient (定数アンビエント) を残す。
+    // ★暗いゲームでほぼ黒の空を置くと、1 のままでは環境光まで黒い空に置き換わって世界の下地が消える
+    int32_t lighting = 1;
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
