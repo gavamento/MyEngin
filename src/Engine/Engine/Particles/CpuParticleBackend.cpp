@@ -266,7 +266,7 @@ void CpuParticleBackend::EmitParticles(EmitterPool& pool, const ParticleEmitterC
     // origin=(0,0,0) を渡してくるので、ここでは「基底適用のスキップ (ローカル系では恒等)」と
     // 「速度継承の無効化」だけを担う。ガードは全て localSpace 側の分岐 —
     // 既定 (0=ワールド) の演算列は 1 ビットも変えない
-    const bool localSpace = (desc.simulationSpace == 1);
+    const bool localSpace = ParticleIsLocalSpace(desc);
     // M61c: エミッタ速度 (prevOrigin 履歴から。プール誕生 tick は履歴なし = 0)。
     // 消費するのは速度継承 (velocityInheritance != 0) とサブフレーム補間だけ —
     // 既定 (係数 0 / subframe 0) では値を読みもしないため従来とビット同一。
@@ -557,7 +557,7 @@ void CpuParticleBackend::Update(World& world, float dt)
         // サブフレーム補間の位置補間は自然に消え、部分 tick 前進だけがローカル座標で効く。
         // ★実行中に simulationSpace を切り替えると生存粒子の座標解釈が変わって絵が跳ぶ — 仕様
         //   (移行処理は書かない。切り替え直後の 1 tick は prevOrigin も旧空間の値のまま)
-        const bool localSpace = (desc->simulationSpace == 1);
+        const bool localSpace = ParticleIsLocalSpace(*desc);
         const XMFLOAT3 origin = localSpace
                                     ? XMFLOAT3{ 0.0f, 0.0f, 0.0f }
                                     : XMFLOAT3{ wm->value._41, wm->value._42, wm->value._43 };
@@ -655,7 +655,7 @@ void CpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
             // ワールド空間 (既定) はコピーを渡すだけで判定値は従来と同一
             XMFLOAT3 bmin = pool.boundsMin;
             XMFLOAT3 bmax = pool.boundsMax;
-            if (pool.descCache.simulationSpace == 1) {
+            if (ParticleIsLocalSpace(pool.descCache)) {
                 TransformAabbToWorld(pool.renderWorld, pool.boundsMin, pool.boundsMax, bmin, bmax);
             }
             if (!ParticlePoolVisible(frustum, bmin, bmax,
@@ -751,7 +751,7 @@ void CpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
         const float* sx = pool.px.data();
         const float* sy = pool.py.data();
         const float* sz = pool.pz.data();
-        if (d.simulationSpace == 1) {
+        if (ParticleIsLocalSpace(d)) {
             wxScratch_.resize(pool.alive);
             wyScratch_.resize(pool.alive);
             wzScratch_.resize(pool.alive);
@@ -814,7 +814,7 @@ void CpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
         // 上向きに伸びる」形でエミッタの回転ぶんズレる。平行移動は速度に効かないので
         // _41.._43 は読まない (スケールは意図的に通す = 画面上の見た目速度と伸びが整合する)
         const XMFLOAT4X4& velWorld = pool.renderWorld;
-        const bool localVel = useStretch && d.simulationSpace == 1;
+        const bool localVel = useStretch && ParticleIsLocalSpace(d);
         for (uint32_t k = 0; k < pool.alive; ++k) {
             const uint32_t i = orderScratch_[k];
             float age = 1.0f - pool.life[i] * pool.invLife[i];

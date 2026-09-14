@@ -792,6 +792,13 @@ inline DirectX::XMFLOAT3 EvalCurlNoise(const DirectX::XMFLOAT3& p, float t)
     return { dFzDy - dFyDz, dFxDz - dFzDx, dFyDx - dFxDy };
 }
 
+// M61g: エミッタがローカルシミュレーション空間 (simulationSpace=1) か。CPU / GPU 両バックエンドの
+// 判定をこの 1 本に揃える (0=ワールドが既定。1 以外はすべてワールド扱い)
+inline bool ParticleIsLocalSpace(const ParticleEmitterComponent& d)
+{
+    return d.simulationSpace == 1;
+}
+
 // ---- M61g: ローカルシミュレーション空間 (simulationSpace=1) の描画用 AABB 変換 ----
 // ローカル AABB をエミッタのワールド行列 (アフィン、行ベクトル規約 v' = v * M) で変換し、
 // 8 頂点を包む保守的なワールド AABB を返す。回転で体積は膨らむが包含は必ず保存される —

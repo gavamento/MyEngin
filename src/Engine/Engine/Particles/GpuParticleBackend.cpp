@@ -429,7 +429,7 @@ void GpuParticleBackend::Update(World& world, float dt)
 
         // M61g: ローカルシミュレーション空間 (CPU 側 Update と同じ判定・同じ原点規約 —
         // 放出原点は (0,0,0)、prevOrigin 履歴もローカル原点で回る)
-        const bool localSpace = (desc->simulationSpace == 1);
+        const bool localSpace = ParticleIsLocalSpace(*desc);
         const XMFLOAT3 origin = localSpace
                                     ? XMFLOAT3{ 0.0f, 0.0f, 0.0f }
                                     : XMFLOAT3{ wm->value._41, wm->value._42, wm->value._43 };
@@ -667,7 +667,7 @@ bool GpuParticleBackend::RunEmitterTick(EmitterTickCtx& t, bool allowIdleSkip)
     // M61g: ローカル空間 (simulationSpace=1) では無効 — 衝突判定はワールド座標前提
     // (粒子位置を深度バッファへ投影する) で、ローカル座標をそのまま投影すると無関係な
     // 面と衝突する。sim CS へ渡す collParams.enabled を 0 に落とす (spec 7.5 例外の並び)
-    const bool collide = (desc->depthCollision != 0) && (desc->simulationSpace != 1)
+    const bool collide = (desc->depthCollision != 0) && !ParticleIsLocalSpace(*desc)
                          && collValid_ && collDepthSRV_;
     cb.collViewProj = collViewProj_;
     cb.collInvViewProj = collInvViewProj_;
@@ -676,7 +676,7 @@ bool GpuParticleBackend::RunEmitterTick(EmitterTickCtx& t, bool allowIdleSkip)
     // ので、「床だけ塞ぐ」が単独で成立する使い方になる。
     // ★ローカル空間 (simulationSpace=1) では床も無効。粒子位置がローカル座標な以上、
     //   ワールドの床面 Y と比べても意味がない (深度衝突を切るのと同じ理由)
-    const bool floorCollide = (desc->collisionFloor != 0) && (desc->simulationSpace != 1);
+    const bool floorCollide = (desc->collisionFloor != 0) && !ParticleIsLocalSpace(*desc);
     cb.collParams = { collide ? 1.0f : 0.0f, desc->collisionBounce,
                       desc->collisionThickness, desc->collisionFriction };
     cb.collScreen = { collScreen_[0], collScreen_[1], collScreen_[2], collScreen_[3] };
@@ -875,7 +875,7 @@ void GpuParticleBackend::SortEmittersForDraw(GraphicsDevice& device, const Rende
         cb.viewZAxis = { view.view._13, view.view._23, view.view._33, 0.0f };
         cb.dims[0] = em.sortCapacity;
         XMStoreFloat4x4(&cb.emitterWorld, XMMatrixTranspose(XMLoadFloat4x4(&em.renderWorld)));
-        cb.space = { (em.descCache.simulationSpace == 1) ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f };
+        cb.space = { ParticleIsLocalSpace(em.descCache) ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f };
         ID3D11Buffer* cbs[1] = { sortCB_.Get() };
 
         // ---- 1. キー生成 + 間接引数の書き出し ----
@@ -1080,7 +1080,7 @@ void GpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
         // M61g: ローカル空間はエミッタのワールド行列で VS が pos を変換する (transpose は
         // gViewProj と同じ規約)。ワールド空間 (既定) は flag=0 — 行列は VS が読まない
         XMStoreFloat4x4(&cb.emitterWorld, XMMatrixTranspose(XMLoadFloat4x4(&em.renderWorld)));
-        cb.spaceParams = { (em.descCache.simulationSpace == 1) ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f };
+        cb.spaceParams = { ParticleIsLocalSpace(em.descCache) ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f };
         // M57追補: 合成の種類でフォグの効き方が変わる (加算=減光 / alpha=フォグ色へ補間)。
         // 判定は CPU バックエンドと同じ ParticleBlendIsAdditive 1 本 — blendMode の意味
         // (0=additive / 1=alpha / 2=歪み) を片方だけ直したときに静かに割れるのを防ぐ
