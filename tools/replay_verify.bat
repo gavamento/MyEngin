@@ -248,6 +248,7 @@ rem   Debug/Release のビット一致として機械検証される。
 rem   ★検証側には渡さない (合成入力は .rep に記録済み。mp ペアと同じ理由)
 rem シーンはコードから毎回組み直す (parts / physics / joints と同じ流儀)
 :job_acoustic
+if exist cache\acoustic_showcase.scene.json del /q cache\acoustic_showcase.scene.json
 call :chain cache\golden_acoustic.rep "--acoustic-demo --synth-input" "--acoustic-demo"
 exit /b %ERRORLEVEL%
 

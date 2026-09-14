@@ -297,6 +297,9 @@ rem ★tol=0 のローカル限定。GPU 側は sim が WARP 上の float 演算
 rem   動きうる (fog 15 枚目と同じ理由 (b))。CPU 側も対で外す — 片方だけ CI に載せると
 rem   「2 枚を突き合わせる」という存在理由が崩れる
 if defined MYE_SHOT_SKIP_PARTICLE goto :skip_particle
+rem ★他のショーケースと同じく、保存済み (エディタで Ctrl+S) が残っているとロード経路に落ちるので撮影前に消す
+set PARTICLE_SCENE=cache\particle_showcase.scene.json
+if exist %PARTICLE_SCENE% del /q %PARTICLE_SCENE%
 set SHOT=--warp --no-audio --font-embedded --width 960 --height 540 --frames 123 --shot-frame 120 --no-fxaa
 set TOLNOW=0
 call :shot particle_cpu --particle-demo --particle-backend cpu
@@ -331,6 +334,9 @@ rem ★2 経路撮るのは、残光の合成が **deferred_light.hlsl と forwa
 rem   あるため。共有しているのは acoustic_common.hlsli の式だけなので、1 枚だと
 rem   片方が壊れても緑のまま通る (particle_cpu/gpu を 2 枚撮ったのと同じ理由)
 if defined MYE_SHOT_SKIP_ACOUSTIC goto :skip_acoustic
+rem ★保存済みが残っているとロード経路に落ちるので撮影前に消す (particle と同じ)
+set ACOUSTIC_SCENE=cache\acoustic_showcase.scene.json
+if exist %ACOUSTIC_SCENE% del /q %ACOUSTIC_SCENE%
 set SHOT=--warp --no-audio --font-embedded --width 960 --height 540 --frames 123 --shot-frame 120 --no-fxaa
 call :shot acoustic_forward --acoustic-demo
 call :shot acoustic_deferred --acoustic-demo --deferred

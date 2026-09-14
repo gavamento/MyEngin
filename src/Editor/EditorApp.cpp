@@ -147,6 +147,12 @@ void EditorApp::OnStart(EngineContext& ctx)
         scenePath_ = L"cache\\joint_showcase.scene.json"; // M60i (同上)
     } else if (fogShowcase) {
         scenePath_ = L"cache\\fog_showcase.scene.json"; // M57追補 (同上)
+    } else if (particleShowcase) {
+        // M63a / M65b (同上)。★以前はここに枝が無く main.scene.json へ落ちていた = Ctrl+S で既定デモシーンを
+        // ショーケースで上書きし、main.scene.json があるとショーケースを組まずにそちらを読んでいた
+        scenePath_ = L"cache\\particle_showcase.scene.json";
+    } else if (acousticShowcase) {
+        scenePath_ = L"cache\\acoustic_showcase.scene.json";
     } else if (uiShowcase) {
         scenePath_ = L"cache\\ui_showcase.scene.json"; // M75c (同上)
     } else {

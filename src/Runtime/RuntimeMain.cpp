@@ -70,6 +70,13 @@ public:
         } else if (scenePath.empty() && jointShowcase) {
             // M60i: physics と同じ理由でコードから毎回組む (bat が撮影前に消す)
             scenePath = L"cache\\joint_showcase.scene.json";
+        } else if (scenePath.empty() && acousticShowcase) {
+            // M65b: joint と同じ理由でコードから毎回組む (bat が撮影前に消す)。★以前は枝が無く
+            // main.scene.json へ落ちていた (保存すると既定シーンを潰し、あるとショーケースを組まずに読む)
+            scenePath = L"cache\\acoustic_showcase.scene.json";
+        } else if (scenePath.empty() && particleShowcase) {
+            // M63a: 同上
+            scenePath = L"cache\\particle_showcase.scene.json";
         } else if (scenePath.empty() && physicsShowcase) {
             // M59l: render/terrain と同じ理由でコードから毎回組む (bat が撮影前に消す)
             scenePath = L"cache\\physics_showcase.scene.json";
