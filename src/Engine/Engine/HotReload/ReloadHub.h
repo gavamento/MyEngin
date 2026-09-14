@@ -51,6 +51,29 @@ std::vector<std::wstring> OrderBatch(const std::vector<BatchChange>& changes);
 //   毎フレーム開き直しを試み続ける。60 回 = 1 秒 (60 fps) で諦める
 constexpr int kReloadRetryMax = 60;
 
+// ホットリロードが扱う資産の種類 = ReloadHub.cpp の kAssetKinds 表の行。None = どの行にも当たらない
+enum class ReloadKind : uint8_t {
+    None,
+    Shader,      // .hlsl / .hlsli
+    Texture,     // .png / .tga / .jpg / .jpeg / .dds
+    AudioClip,   // .wav / .ogg
+    Gltf,        // .glb / .gltf
+    Fbx,         // .fbx
+    Material,    // .mat.json
+    Anim,        // .anim.json
+    Sound,       // .sound.json
+    ImpactSound, // .impact.json
+    Mixer,       // .mixer.json
+    PhysMat,     // .physmat.json
+    Compose,     // .actor.json / .prefab.json
+    Scene,       // .scene.json と、それ以外の .json (開いているシーンなら拡張子を問わない)
+};
+
+// 正規化済みパス (NormalizePathKey) の種類と、一括適用の順位 (小さいほど先)。
+// どちらも同じ表の同じ行から引く — 振り分けと順位が別々の判定だとずれる
+ReloadKind ReloadKindOf(const std::wstring& normPath);
+int ReloadRank(const std::wstring& normPath);
+
 // ホットリロードの司令塔 (engine_spec.md 8 章)。
 // assets\ を 1 本の FileWatcher で再帰監視し、拡張子で各リロード先へ振り分ける。
 // 適用は必ずメインループのフェーズ 2 (Update) で行う
@@ -82,7 +105,30 @@ public:
     uint64_t ReloadCount() const { return reloadCount_; } // AssetBrowser 表示用
 
 private:
-    void HandleChange(const std::wstring& normPath);
+    // attempt = このパスを読み直そうとした回数 (watcher / 一括適用からは 0、リトライ列からは前回 + 1)
+    void HandleChange(const std::wstring& normPath, int attempt = 0);
+
+    // 種類ごとの読み直し。HandleChange は戻り値で「数える / リトライ列へ積む」を決める
+    enum class ReloadResult {
+        Skipped,  // 何もしなかった (登録外 / 開いていないシーン / 壊れたシーン JSON)
+        Reloaded, // 読み直した (ReloadCount を 1 増やす)
+        Retry,    // 読めなかった (共有違反 = まだ書き込み中など)。次のフレームにもう一度
+    };
+    ReloadResult ReloadShader(const std::wstring& path);
+    ReloadResult ReloadTexture(const std::wstring& path);
+    ReloadResult ReloadAudioClip(const std::wstring& path);
+    ReloadResult ReloadGltf(const std::wstring& path);
+    ReloadResult ReloadFbx(const std::wstring& path);
+    ReloadResult ReloadMaterial(const std::wstring& path);
+    ReloadResult ReloadAnim(const std::wstring& path);
+    ReloadResult ReloadSound(const std::wstring& path);
+    ReloadResult ReloadImpactSound(const std::wstring& path);
+    ReloadResult ReloadMixer(const std::wstring& path);
+    ReloadResult ReloadPhysMat(const std::wstring& path);
+    ReloadResult ReloadCompose(const std::wstring& path);
+    ReloadResult ReloadActiveScene(const std::wstring& path);
+    // リトライ列へ積む (同じパスが積まれていれば何もしない)
+    void QueueRetry(const std::wstring& path, int attempts);
     // watcher の溜まりを捨てる (バッチ中と EndBatch 直後)
     void DiscardPendingChanges();
 
@@ -109,10 +155,6 @@ private:
         int attempts = 0;
     };
     std::vector<Retry> retries_;
-    // retryLater が積むときに引き継ぐ試行回数 (今処理している Retry の回数 + 1)。
-    // ★HandleChange のラムダから見えるところに置くしかない — 引数で渡すと
-    //   HandleChange の呼び出し元 12 箇所すべてを書き換えることになる
-    int retryAttempt_ = 0;
     bool batching_ = false; // BeginBatch 〜 EndBatch の間だけ true
 };
 

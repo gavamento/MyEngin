@@ -258,6 +258,9 @@
     <ClCompile Include="..\src\Engine\Engine\HotReload\ReloadHub.cpp">
       <Filter>Engine\HotReload</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\HotReload\ReloadHubSelfTest.cpp">
+      <Filter>Engine\HotReload</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\LightSelection.cpp">
       <Filter>Engine</Filter>
     </ClCompile>
@@ -859,6 +862,9 @@
       <Filter>Engine\HotReload</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\HotReload\ReloadHub.h">
+      <Filter>Engine\HotReload</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\HotReload\ReloadHubSelfTest.h">
       <Filter>Engine\HotReload</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\LightSelection.h">

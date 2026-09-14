@@ -62,6 +62,7 @@
 #include "Engine/Engine/VfxSelfTest.h"
 #include "Engine/Engine/Net/NetSelfTest.h"
 #include "Engine/Engine/HotReload/DllReloaderSelfTest.h"
+#include "Engine/Engine/HotReload/ReloadHubSelfTest.h"
 #include "Engine/Engine/Replay/CrashRingSelfTest.h"
 #include "Engine/Platform/CrashHandler.h"
 #include "Engine/Platform/InputActionsSelfTest.h"
@@ -699,7 +700,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             && mye::RunSourceControlSelfTest()  // M66a
             && mye::RunAcousticAudioSelfTest()  // M68a
             && mye::RunSubAssetKeySelfTest()    // M74a / M74b
-            && mye::RunImpactSynthSelfTest();   // ImpactSynth (計画 ImpactSoundDesign)
+            && mye::RunImpactSynthSelfTest()    // ImpactSynth (計画 ImpactSoundDesign)
+            && mye::RunReloadHubSelfTest();     // ホットリロードの資産の種類表
         return ok ? 0 : 1;
     }
 

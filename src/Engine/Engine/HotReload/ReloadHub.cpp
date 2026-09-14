@@ -23,69 +23,75 @@
 namespace mye {
 namespace {
 
-std::wstring ExtensionLower(const std::wstring& path)
-{
-    const size_t dot = path.find_last_of(L'.');
-    return (dot == std::wstring::npos) ? L"" : path.substr(dot); // path は正規化済み (小文字)
-}
-
+// path は正規化済み (NormalizePathKey = 小文字) なので大文字小文字は見ない
 bool HasSuffix(const std::wstring& s, const wchar_t* suffix)
 {
     const size_t n = std::char_traits<wchar_t>::length(suffix);
     return s.size() >= n && s.compare(s.size() - n, n, suffix) == 0;
 }
 
-// 適用順の階級 (小さいほど先)。参照する側が後に来るように並べてある:
+// ホットリロードが扱う資産の種類。**上から順に**末尾一致で引き、最初に当たった行が勝つ。
+// ★.json の細分 (.mat.json など) は、最後の汎用 .json 行より上に置くこと。
+// rank = 一括適用の順位 (小さいほど先)。参照する側が後に来るように並べてある:
 //   シェーダ → テクスチャ/音 → マテリアル → モデル → クリップ類 → アクター → シーン
 // ★spec §4.1 の「texture → mat → model → actor → scene」を部分列として含む。
 //   間に挟んだものは「誰も参照していない」か「テクスチャと同格」のどちらかで、
 //   相対順が結果を変えない位置に置いてある
-int ReloadRank(const std::wstring& normPath)
+struct AssetKindRow {
+    const wchar_t* suffix;
+    ReloadKind kind;
+    int rank;
+};
+constexpr int kRankUnknown = 9;
+constexpr AssetKindRow kAssetKinds[] = {
+    { L".hlsl", ReloadKind::Shader, 0 },
+    { L".hlsli", ReloadKind::Shader, 0 },
+    { L".png", ReloadKind::Texture, 1 },
+    { L".tga", ReloadKind::Texture, 1 },
+    { L".jpg", ReloadKind::Texture, 1 },
+    { L".jpeg", ReloadKind::Texture, 1 },
+    { L".dds", ReloadKind::Texture, 1 },
+    { L".wav", ReloadKind::AudioClip, 2 },
+    { L".ogg", ReloadKind::AudioClip, 2 },
+    { L".glb", ReloadKind::Gltf, 4 },
+    { L".gltf", ReloadKind::Gltf, 4 },
+    { L".fbx", ReloadKind::Fbx, 4 },
+    { L".mat.json", ReloadKind::Material, 3 },
+    { L".anim.json", ReloadKind::Anim, 5 },
+    { L".sound.json", ReloadKind::Sound, 6 },
+    { L".impact.json", ReloadKind::ImpactSound, 6 }, // ImpactSynth。.sound.json と同格 (誰も参照していない)
+    { L".mixer.json", ReloadKind::Mixer, 6 },
+    { L".physmat.json", ReloadKind::PhysMat, 6 },
+    { PrefabLibrary::kActorSuffix, ReloadKind::Compose, 7 },
+    { PrefabLibrary::kPrefabSuffix, ReloadKind::Compose, 7 },
+    { L".scene.json", ReloadKind::Scene, 8 },
+    // 未知の .json。開いているシーンなら拡張子を問わず差分適用する (ReloadActiveScene)。順位は最後
+    { L".json", ReloadKind::Scene, kRankUnknown },
+};
+
+const AssetKindRow* FindAssetKind(const std::wstring& normPath)
 {
-    const std::wstring ext = ExtensionLower(normPath);
-    if (ext == L".hlsl" || ext == L".hlsli") {
-        return 0;
+    for (const AssetKindRow& row : kAssetKinds) {
+        if (HasSuffix(normPath, row.suffix)) {
+            return &row;
+        }
     }
-    if (ext == L".png" || ext == L".tga" || ext == L".jpg" || ext == L".jpeg" || ext == L".dds") {
-        return 1;
-    }
-    if (ext == L".wav" || ext == L".ogg") {
-        return 2;
-    }
-    if (ext == L".json") {
-        if (HasSuffix(normPath, L".mat.json")) {
-            return 3;
-        }
-        if (HasSuffix(normPath, L".anim.json")) {
-            return 5;
-        }
-        if (HasSuffix(normPath, L".sound.json")) {
-            return 6;
-        }
-        if (HasSuffix(normPath, L".impact.json")) {
-            return 6; // ImpactSynth。.sound.json と同格 (誰も参照していない)
-        }
-        if (HasSuffix(normPath, L".mixer.json")) {
-            return 6;
-        }
-        if (HasSuffix(normPath, L".physmat.json")) {
-            return 6;
-        }
-        if (HasSuffix(normPath, L".actor.json") || HasSuffix(normPath, L".prefab.json")) {
-            return 7;
-        }
-        if (HasSuffix(normPath, L".scene.json")) {
-            return 8;
-        }
-        return 9; // 未知の .json (HandleChange は何もしない)
-    }
-    if (ext == L".glb" || ext == L".gltf" || ext == L".fbx") {
-        return 4;
-    }
-    return 9;
+    return nullptr;
 }
 
 } // namespace
+
+ReloadKind ReloadKindOf(const std::wstring& normPath)
+{
+    const AssetKindRow* row = FindAssetKind(normPath);
+    return row ? row->kind : ReloadKind::None;
+}
+
+int ReloadRank(const std::wstring& normPath)
+{
+    const AssetKindRow* row = FindAssetKind(normPath);
+    return row ? row->rank : kRankUnknown;
+}
 
 std::vector<std::wstring> OrderBatch(const std::vector<BatchChange>& changes)
 {
@@ -225,233 +231,267 @@ void ReloadHub::Update()
                              WideToUtf8(r.path).c_str());
                 continue;
             }
-            retryAttempt_ = r.attempts + 1; // retryLater が積み直すときに引き継ぐ
-            HandleChange(r.path);           // 失敗すれば HandleChange が再登録する
+            HandleChange(r.path, r.attempts + 1); // 失敗すれば HandleChange が回数を 1 増やして積み直す
         }
-        retryAttempt_ = 0;
     }
 }
 
-void ReloadHub::HandleChange(const std::wstring& normPath)
+void ReloadHub::HandleChange(const std::wstring& normPath, int attempt)
 {
-    const std::wstring ext = ExtensionLower(normPath);
-
-    // 共有違反 (エディタがまだ書き込み中) はリトライ
-    auto retryLater = [this, &normPath] {
-        for (Retry& r : retries_) {
-            if (r.path == normPath) {
-                return;
-            }
-        }
-        // retryAttempt_ = 「今 Update が処理している Retry の回数 + 1」。
-        // watcher 由来の初回は 0 のまま = 1 回目として積まれる
-        retries_.push_back({ normPath, retryAttempt_ });
-    };
-
-    if (ext == L".hlsl" || ext == L".hlsli") {
-        shaders_->RequestRecompileForFile(normPath);
+    const AssetKindRow* row = FindAssetKind(normPath);
+    if (row == nullptr) {
+        return;
+    }
+    ReloadResult result = ReloadResult::Skipped;
+    switch (row->kind) {
+    case ReloadKind::Shader:
+        result = ReloadShader(normPath);
+        break;
+    case ReloadKind::Texture:
+        result = ReloadTexture(normPath);
+        break;
+    case ReloadKind::AudioClip:
+        result = ReloadAudioClip(normPath);
+        break;
+    case ReloadKind::Gltf:
+        result = ReloadGltf(normPath);
+        break;
+    case ReloadKind::Fbx:
+        result = ReloadFbx(normPath);
+        break;
+    case ReloadKind::Material:
+        result = ReloadMaterial(normPath);
+        break;
+    case ReloadKind::Anim:
+        result = ReloadAnim(normPath);
+        break;
+    case ReloadKind::Sound:
+        result = ReloadSound(normPath);
+        break;
+    case ReloadKind::ImpactSound:
+        result = ReloadImpactSound(normPath);
+        break;
+    case ReloadKind::Mixer:
+        result = ReloadMixer(normPath);
+        break;
+    case ReloadKind::PhysMat:
+        result = ReloadPhysMat(normPath);
+        break;
+    case ReloadKind::Compose:
+        result = ReloadCompose(normPath);
+        break;
+    case ReloadKind::Scene:
+        result = ReloadActiveScene(normPath);
+        break;
+    case ReloadKind::None:
+        break;
+    }
+    if (result == ReloadResult::Reloaded) {
         ++reloadCount_;
-        return;
+    } else if (result == ReloadResult::Retry) {
+        QueueRetry(normPath, attempt);
     }
+}
 
-    if (ext == L".png" || ext == L".tga" || ext == L".jpg" || ext == L".jpeg" || ext == L".dds") {
-        const AssetID id = TextureLibrary::IdForFile(normPath);
-        if (resources_->textures.Get(id) != nullptr) {
-            if (resources_->textures.ReplaceFromFile(id, normPath)) {
-                MYE_LOG_INFO("[reload] texture replaced: %s", WideToUtf8(normPath).c_str());
-                ++reloadCount_;
-            } else {
-                retryLater();
-            }
+void ReloadHub::QueueRetry(const std::wstring& path, int attempts)
+{
+    for (const Retry& r : retries_) {
+        if (r.path == path) {
+            return;
         }
-        return;
     }
+    retries_.push_back({ path, attempts });
+}
 
-    if (ext == L".wav" || ext == L".ogg") {
-        // ★再生中の XAUDIO2_BUFFER はクリップのバイト列を直接指しているので、
-        //   差し替えは必ず「参照している voice を止めてから」行う
-        //   (ReloadClipFile → RegisterClip → StopVoicesUsingClip の順で保証される)。
-        //   未ロードのファイルは false が返るだけで何も起きない
-        if (audio_ != nullptr && audio_->HasClip(AudioSystem::IdForFile(normPath))) {
-            if (audio_->ReloadClipFile(normPath)) {
-                MYE_LOG_INFO("[reload] audio clip reloaded: %s", WideToUtf8(normPath).c_str());
-                ++reloadCount_;
-            } else {
-                retryLater();
-            }
-        }
-        return;
-    }
+// ★リトライしない — 再コンパイルの要求を積むだけで、コンパイルは Update 冒頭の PollAsyncCompiles が進める
+ReloadHub::ReloadResult ReloadHub::ReloadShader(const std::wstring& path)
+{
+    shaders_->RequestRecompileForFile(path);
+    return ReloadResult::Reloaded;
+}
 
-    if (ext == L".glb" || ext == L".gltf") {
-        if (ModelLoader::ReloadMeshes(*resources_, *shaders_, normPath)) {
-            ++reloadCount_;
-        } else {
-            retryLater();
-        }
-        return;
+ReloadHub::ReloadResult ReloadHub::ReloadTexture(const std::wstring& path)
+{
+    const AssetID id = TextureLibrary::IdForFile(path);
+    if (resources_->textures.Get(id) == nullptr) {
+        return ReloadResult::Skipped;
     }
+    if (!resources_->textures.ReplaceFromFile(id, path)) {
+        return ReloadResult::Retry;
+    }
+    MYE_LOG_INFO("[reload] texture replaced: %s", WideToUtf8(path).c_str());
+    return ReloadResult::Reloaded;
+}
 
-    if (ext == L".fbx") {
-        if (FbxLoader::ReloadMeshes(*resources_, *shaders_, normPath)) {
-            ++reloadCount_;
-        } else {
-            retryLater();
-        }
-        return;
+// ★再生中の XAUDIO2_BUFFER はクリップのバイト列を直接指しているので、
+//   差し替えは必ず「参照している voice を止めてから」行う
+//   (ReloadClipFile → RegisterClip → StopVoicesUsingClip の順で保証される)
+ReloadHub::ReloadResult ReloadHub::ReloadAudioClip(const std::wstring& path)
+{
+    if (audio_ == nullptr || !audio_->HasClip(AudioSystem::IdForFile(path))) {
+        return ReloadResult::Skipped;
     }
+    if (!audio_->ReloadClipFile(path)) {
+        return ReloadResult::Retry;
+    }
+    MYE_LOG_INFO("[reload] audio clip reloaded: %s", WideToUtf8(path).c_str());
+    return ReloadResult::Reloaded;
+}
 
-    if (ext == L".json") {
-        // .mat.json: 登録済みマテリアルなら再読込 (MeshRenderer は AssetID 参照なので自動反映)
-        const bool isMat = normPath.size() >= 9
-            && normPath.compare(normPath.size() - 9, 9, L".mat.json") == 0;
-        if (isMat) {
-            const AssetID id = MaterialLibrary::HashForPath(normPath);
-            if (resources_->materials.Get(id) != nullptr) {
-                if (!resources_->materials.LoadFromFile(normPath, resources_->textures, assetsRoot_)
-                         .IsNull()) {
-                    MYE_LOG_INFO("[reload] material reloaded: %s", WideToUtf8(normPath).c_str());
-                    ++reloadCount_;
-                } else {
-                    retryLater();
-                }
-            }
-            return;
-        }
-        // .anim.json: 登録済みクリップなら再読込 (animator は hash 参照なので自動反映)
-        const bool isAnim = normPath.size() >= 10
-            && normPath.compare(normPath.size() - 10, 10, L".anim.json") == 0;
-        if (isAnim) {
-            if (anims_) {
-                const uint64_t hash = AnimationLibrary::HashForPath(normPath);
-                if (anims_->Contains(hash)) {
-                    if (anims_->LoadFromFile(normPath) != 0) {
-                        MYE_LOG_INFO("[reload] anim reloaded: %s", WideToUtf8(normPath).c_str());
-                        ++reloadCount_;
-                    } else {
-                        retryLater();
-                    }
-                }
-            }
-            return;
-        }
-        // .sound.json: 登録済みサウンドなら再読込 (参照側は GUID なので自動反映、M45c)
-        const bool isSound = normPath.size() >= 11
-            && normPath.compare(normPath.size() - 11, 11, L".sound.json") == 0;
-        if (isSound) {
-            if (sounds_ != nullptr) {
-                const uint64_t hash = SoundLibrary::HashForPath(normPath);
-                if (sounds_->Contains(hash)) {
-                    if (sounds_->LoadFromFile(normPath) != 0) {
-                        MYE_LOG_INFO("[reload] sound reloaded: %s", WideToUtf8(normPath).c_str());
-                        ++reloadCount_;
-                    } else {
-                        retryLater();
-                    }
-                }
-            }
-            return;
-        }
-        // .impact.json (ImpactSynth): 生成し直して差し替える。RegisterClip が参照中の voice を
-        // 止めてから PCM を入れ替えるので、耳で詰めながら保存 → 即反映が成立する。
-        // 未登録のファイル (起動後に足した) も登録する = .sound.json より緩いが、
-        // 参照する側が名前キーなので「登録した瞬間から鳴る」で困らない
-        if (HasSuffix(normPath, L".impact.json")) {
-            if (sounds_ != nullptr && audio_ != nullptr) {
-                if (LoadImpactSoundFile(*audio_, *sounds_, normPath) != 0) {
-                    MYE_LOG_INFO("[reload] impact sound regenerated: %s",
-                                 WideToUtf8(normPath).c_str());
-                    ++reloadCount_;
-                } else {
-                    retryLater();
-                }
-            }
-            return;
-        }
-        // .mixer.json: 登録済みミキサーなら再読込。**アクティブなら即バスグラフへ再適用する**
-        // (適用自体は AudioSystem::Update = フレーム境界まで遅延される、M45d)
-        const bool isMixer = normPath.size() >= 11
-            && normPath.compare(normPath.size() - 11, 11, L".mixer.json") == 0;
-        if (isMixer) {
-            if (mixers_ != nullptr) {
-                const uint64_t hash = MixerLibrary::HashForPath(normPath);
-                if (mixers_->Contains(hash)) {
-                    if (mixers_->LoadFromFile(normPath) != 0) {
-                        if (audio_ != nullptr && mixers_->ActiveHash() == hash) {
-                            if (const MixerAsset* m = mixers_->Get(hash)) {
-                                audio_->ApplyMixer(*m);
-                            }
-                        }
-                        MYE_LOG_INFO("[reload] mixer reloaded: %s", WideToUtf8(normPath).c_str());
-                        ++reloadCount_;
-                    } else {
-                        retryLater();
-                    }
-                }
-            }
-            return;
-        }
-        // .physmat.json: 登録済みなら再読込 (M59a1)。所有は EngineLoop = physmat:: 経由で引く。
-        // ★M59a2 で sim が消費し始めたら「ホットリロードが sim を変える既存資産クラス
-        //   (メッシュコライダーと同類)」に合流する — record/verify 中の挙動もそちらの規約に従う
-        const bool isPhysMat = normPath.size() >= 13
-            && normPath.compare(normPath.size() - 13, 13, L".physmat.json") == 0;
-        if (isPhysMat) {
-            if (PhysMatLibrary* pm = physmat::Library()) {
-                const uint64_t hash = PhysMatLibrary::HashForPath(normPath);
-                if (pm->Contains(hash)) {
-                    if (pm->LoadFromFile(normPath) != 0) {
-                        MYE_LOG_INFO("[reload] physmat reloaded: %s",
-                                     WideToUtf8(normPath).c_str());
-                        ++reloadCount_;
-                    } else {
-                        retryLater();
-                    }
-                }
-            }
-            return;
-        }
-        // .actor.json / .prefab.json: 登録済みなら再読込 → 全インスタンスの非オーバーライドへ伝播
-        if (PrefabLibrary::IsComposePath(normPath)) {
-            if (prefabs_ && scene_) {
-                const uint64_t hash = PrefabLibrary::HashForPath(normPath);
-                if (prefabs_->Contains(hash)) {
-                    const PrefabAsset* before = prefabs_->Get(hash);
-                    const nlohmann::json oldBase = before ? before->entities : nlohmann::json::array();
-                    const uint64_t rh = prefabs_->LoadFromFile(normPath);
-                    if (rh == 0) {
-                        retryLater(); // 書き込み途中 / パースエラー
-                        return;
-                    }
-                    if (const PrefabAsset* after = prefabs_->Get(rh)) {
-                        Prefab::PropagateBaseChange(*scene_, oldBase, after->entities, rh);
-                        MYE_LOG_INFO("[reload] compose asset recomposited: %s",
-                                     WideToUtf8(normPath).c_str());
-                        ++reloadCount_;
-                    }
-                }
-            }
-            return;
-        }
-        if (!activeSceneNorm_.empty() && normPath == activeSceneNorm_) {
-            std::ifstream f(std::filesystem::path(normPath), std::ios::binary);
-            if (!f) {
-                retryLater();
-                return;
-            }
-            nlohmann::json root;
-            try {
-                f >> root;
-            } catch (const nlohmann::json::exception& ex) {
-                // 手編集途中の不正 JSON — エンジンは止めない (spec 8.1 と同じ精神)
-                MYE_LOG_WARN("[reload] scene json parse error (keeping current scene): %s", ex.what());
-                return;
-            }
-            SceneSerializer::ApplyDiff(*scene_, root);
-            ++reloadCount_;
-        }
-        return;
+ReloadHub::ReloadResult ReloadHub::ReloadGltf(const std::wstring& path)
+{
+    return ModelLoader::ReloadMeshes(*resources_, *shaders_, path) ? ReloadResult::Reloaded : ReloadResult::Retry;
+}
+
+ReloadHub::ReloadResult ReloadHub::ReloadFbx(const std::wstring& path)
+{
+    return FbxLoader::ReloadMeshes(*resources_, *shaders_, path) ? ReloadResult::Reloaded : ReloadResult::Retry;
+}
+
+// 登録済みマテリアルなら読み直す (MeshRenderer は AssetID 参照なので自動で反映される)
+ReloadHub::ReloadResult ReloadHub::ReloadMaterial(const std::wstring& path)
+{
+    const AssetID id = MaterialLibrary::HashForPath(path);
+    if (resources_->materials.Get(id) == nullptr) {
+        return ReloadResult::Skipped;
     }
+    if (resources_->materials.LoadFromFile(path, resources_->textures, assetsRoot_).IsNull()) {
+        return ReloadResult::Retry;
+    }
+    MYE_LOG_INFO("[reload] material reloaded: %s", WideToUtf8(path).c_str());
+    return ReloadResult::Reloaded;
+}
+
+// 登録済みクリップなら読み直す (animator は hash 参照なので自動で反映される)
+ReloadHub::ReloadResult ReloadHub::ReloadAnim(const std::wstring& path)
+{
+    if (anims_ == nullptr || !anims_->Contains(AnimationLibrary::HashForPath(path))) {
+        return ReloadResult::Skipped;
+    }
+    if (anims_->LoadFromFile(path) == 0) {
+        return ReloadResult::Retry;
+    }
+    MYE_LOG_INFO("[reload] anim reloaded: %s", WideToUtf8(path).c_str());
+    return ReloadResult::Reloaded;
+}
+
+// 登録済みサウンドなら読み直す (参照側は GUID なので自動で反映される、M45c)
+ReloadHub::ReloadResult ReloadHub::ReloadSound(const std::wstring& path)
+{
+    if (sounds_ == nullptr || !sounds_->Contains(SoundLibrary::HashForPath(path))) {
+        return ReloadResult::Skipped;
+    }
+    if (sounds_->LoadFromFile(path) == 0) {
+        return ReloadResult::Retry;
+    }
+    MYE_LOG_INFO("[reload] sound reloaded: %s", WideToUtf8(path).c_str());
+    return ReloadResult::Reloaded;
+}
+
+// ImpactSynth: 生成し直して差し替える。RegisterClip が参照中の voice を止めてから PCM を入れ替えるので、
+// 耳で詰めながら保存 → 即反映が成立する。
+// ★未登録のファイル (起動後に足した) も登録する = .sound.json より緩いが、
+//   参照する側が名前キーなので「登録した瞬間から鳴る」で困らない
+ReloadHub::ReloadResult ReloadHub::ReloadImpactSound(const std::wstring& path)
+{
+    if (sounds_ == nullptr || audio_ == nullptr) {
+        return ReloadResult::Skipped;
+    }
+    if (LoadImpactSoundFile(*audio_, *sounds_, path) == 0) {
+        return ReloadResult::Retry;
+    }
+    MYE_LOG_INFO("[reload] impact sound regenerated: %s", WideToUtf8(path).c_str());
+    return ReloadResult::Reloaded;
+}
+
+// 登録済みミキサーなら読み直す。**アクティブなら即バスグラフへ再適用する**
+// (適用自体は AudioSystem::Update = フレーム境界まで遅延される、M45d)
+ReloadHub::ReloadResult ReloadHub::ReloadMixer(const std::wstring& path)
+{
+    if (mixers_ == nullptr) {
+        return ReloadResult::Skipped;
+    }
+    const uint64_t hash = MixerLibrary::HashForPath(path);
+    if (!mixers_->Contains(hash)) {
+        return ReloadResult::Skipped;
+    }
+    if (mixers_->LoadFromFile(path) == 0) {
+        return ReloadResult::Retry;
+    }
+    if (audio_ != nullptr && mixers_->ActiveHash() == hash) {
+        if (const MixerAsset* m = mixers_->Get(hash)) {
+            audio_->ApplyMixer(*m);
+        }
+    }
+    MYE_LOG_INFO("[reload] mixer reloaded: %s", WideToUtf8(path).c_str());
+    return ReloadResult::Reloaded;
+}
+
+// 登録済みなら読み直す (M59a1)。所有は EngineLoop = physmat:: 経由で引く。
+// ★M59a2 で sim が消費し始めたら「ホットリロードが sim を変える既存資産クラス
+//   (メッシュコライダーと同類)」に合流する — record/verify 中の挙動もそちらの規約に従う
+ReloadHub::ReloadResult ReloadHub::ReloadPhysMat(const std::wstring& path)
+{
+    PhysMatLibrary* pm = physmat::Library();
+    if (pm == nullptr) {
+        return ReloadResult::Skipped;
+    }
+    if (!pm->Contains(PhysMatLibrary::HashForPath(path))) {
+        return ReloadResult::Skipped;
+    }
+    if (pm->LoadFromFile(path) == 0) {
+        return ReloadResult::Retry;
+    }
+    MYE_LOG_INFO("[reload] physmat reloaded: %s", WideToUtf8(path).c_str());
+    return ReloadResult::Reloaded;
+}
+
+// .actor.json / .prefab.json: 登録済みなら読み直し → 全インスタンスの非オーバーライドへ伝播
+ReloadHub::ReloadResult ReloadHub::ReloadCompose(const std::wstring& path)
+{
+    if (prefabs_ == nullptr || scene_ == nullptr) {
+        return ReloadResult::Skipped;
+    }
+    const uint64_t hash = PrefabLibrary::HashForPath(path);
+    if (!prefabs_->Contains(hash)) {
+        return ReloadResult::Skipped;
+    }
+    const PrefabAsset* before = prefabs_->Get(hash);
+    const nlohmann::json oldBase = before ? before->entities : nlohmann::json::array();
+    const uint64_t rh = prefabs_->LoadFromFile(path);
+    if (rh == 0) {
+        return ReloadResult::Retry; // 書き込み途中 / パースエラー
+    }
+    const PrefabAsset* after = prefabs_->Get(rh);
+    if (after == nullptr) {
+        return ReloadResult::Skipped;
+    }
+    Prefab::PropagateBaseChange(*scene_, oldBase, after->entities, rh);
+    MYE_LOG_INFO("[reload] compose asset recomposited: %s", WideToUtf8(path).c_str());
+    return ReloadResult::Reloaded;
+}
+
+// 開いているシーンの外部編集だけを差分適用する (拡張子は問わない — 表の最後の .json 行もここへ来る)
+ReloadHub::ReloadResult ReloadHub::ReloadActiveScene(const std::wstring& path)
+{
+    if (activeSceneNorm_.empty() || path != activeSceneNorm_) {
+        return ReloadResult::Skipped;
+    }
+    std::ifstream f(std::filesystem::path(path), std::ios::binary);
+    if (!f) {
+        return ReloadResult::Retry;
+    }
+    nlohmann::json root;
+    try {
+        f >> root;
+    } catch (const nlohmann::json::exception& ex) {
+        // 手編集途中の不正 JSON — エンジンは止めない (spec 8.1 と同じ精神)。
+        // ★リトライ列にも積まない (直して保存し直せば watcher がまた運んでくる)
+        MYE_LOG_WARN("[reload] scene json parse error (keeping current scene): %s", ex.what());
+        return ReloadResult::Skipped;
+    }
+    SceneSerializer::ApplyDiff(*scene_, root);
+    return ReloadResult::Reloaded;
 }
 
 } // namespace mye
