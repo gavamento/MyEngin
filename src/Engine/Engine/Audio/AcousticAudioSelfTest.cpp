@@ -137,7 +137,8 @@ bool RunAcousticAudioSelfTest()
         // M65i の AcousticVolume.glowAlbedoMix (残光に面の色) の生バイト追加で 18 -> 19。
         // どちらも AcousticAudio とは無関係 (入力のレイアウト / 描画レーンの値)。
         // AcousticVolume.glowDecayEveryTicks (残光の間引き) の生バイト追加で 19 -> 20。これも無関係。
-        check(kSimSnapshotVersion == 20, "T1: kSimSnapshotVersion is not bumped by AcousticAudio");
+        // AcousticField::kMaxWaves 16 -> 32 (ACU 節の本数) で 20 -> 21。波の本数であって音レーンとは無関係。
+        check(kSimSnapshotVersion == 21, "T1: kSimSnapshotVersion is not bumped by AcousticAudio");
     }
 
     // ---- (T2) 同一原点なら波の場と probe が**ビット一致**する ----

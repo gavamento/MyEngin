@@ -121,7 +121,7 @@ void DumpAcousticVolume(GraphicsDevice& device, const AcousticVolumePass& pass,
     const float keepRaw = field.GlowKeepPerTick();
     const float keep = (keepRaw > 0.0f && keepRaw < 1.0f) ? keepRaw : acoustic::kGlowDecayPerTick;
     const AcousticField::FrontWave* fws = field.FrontWaves();
-    const std::vector<uint16_t>& mask = field.FrontMask();
+    const std::vector<uint32_t>& mask = field.FrontMask();
     for (uint32_t s = 0; s < AcousticField::kMaxWaves; ++s) {
         const AcousticField::FrontWave& fw = fws[s];
         if (fw.active == 0) {
@@ -1327,7 +1327,7 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
                 acousticSupplied_ = true;
                 // 2026-09-12「描画だけ円」: 見通しビットと波の表。マスクの転送に失敗したら
                 // SRV が null のまま = 従来 (残光だけ) の絵に静かに戻る
-                const std::vector<uint16_t>& front = acousticField->FrontMask();
+                const std::vector<uint32_t>& front = acousticField->FrontMask();
                 if (acousticFront && acousticField->FrontActive()
                     && static_cast<int64_t>(front.size()) == ag.CellCount()
                     && acousticPass_.UploadFront(device, front.data(), ag.dimX, ag.dimY, ag.dimZ,

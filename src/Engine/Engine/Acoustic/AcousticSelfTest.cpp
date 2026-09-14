@@ -483,8 +483,10 @@ bool RunAcousticSelfTest()
               "rebuild: a second field fed the same inputs lands on the same array");
     }
 
-    // ---- (10) スロットの決定論: 最小 index の空き / 満杯は false ----
+    // ---- (10) スロットの決定論: 最小 index の空き / 満杯は false / 敵の声だけは最古の非敵を追い出す ----
     {
+        Scene scene;
+        World& w = scene.GetWorld();
         AcousticField field;
         AcousticGridDesc g;
         (void)acoustic::MakeGridDesc(24, 1, 24, 0.5f, 0.0f, 0.0f, 0.0f, g);
@@ -492,25 +494,54 @@ bool RunAcousticSelfTest()
         float wx = 0.0f, wy = 0.0f, wz = 0.0f;
         acoustic::CellToWorldCenter(g, 2, 0, 2, wx, wy, wz);
 
+        // ★偽の発音元は World に居ない id にする (生きた実体と index/generation が重なると
+        //   「敵の声か」の判定に World の中身が混ざる)
+        const auto fake = [](uint32_t i) { return EntityID{ 1000u + i, 7u }; };
         bool allTook = true;
         for (uint32_t s = 0; s < AcousticField::kMaxWaves; ++s) {
-            // radius を小さくしておかないと 16 本ぶんの局所ボックスで時間を食う
-            if (!field.Emit(EntityID{ s + 1, 1 }, wx, wy, wz, 1.0f, 1.0f, 0, 1, s)) {
+            // radius を小さくしておかないと kMaxWaves 本ぶんの局所ボックスで時間を食う
+            if (!field.Emit(fake(s), wx, wy, wz, 1.0f, 1.0f, 0, 1, s)) {
                 allTook = false;
             }
         }
-        check(allTook && field.Waves()[15].active != 0, "slots: 16 emits fill the table in order");
+        check(allTook && field.Waves()[AcousticField::kMaxWaves - 1].active != 0,
+              "slots: kMaxWaves emits fill the table in order");
         const uint64_t survivorTick = field.Waves()[0].bornTick;
-        check(!field.Emit(EntityID{ 99, 1 }, wx, wy, wz, 1.0f, 1.0f, 0, 1, 99),
+        check(!field.Emit(fake(99), wx, wy, wz, 1.0f, 1.0f, 0, 1, 99),
               "slots: a full table refuses the emit (it must not evict the oldest)");
         check(field.Waves()[0].bornTick == survivorTick,
               "slots: the refused emit left every existing wave untouched");
 
         // 途中のスロットが空くと、次の Emit はその**最小 index** を取る
         field.WavesForSnapshot()[4] = AcousticField::Wave{};
-        check(field.Emit(EntityID{ 42, 1 }, wx, wy, wz, 1.0f, 1.0f, 0, 1, 100)
-                  && field.Waves()[4].source.index == 42,
+        check(field.Emit(fake(42), wx, wy, wz, 1.0f, 1.0f, 0, 1, 100)
+                  && field.Waves()[4].source == fake(42),
               "slots: the freed slot 4 is the one reused (lowest free index wins)");
+
+        // ★敵の声 (agentPriority = World) だけは満杯でも立つ (2026-09-14、三校)。
+        //   追い出すのは AgentBrain を持たない発音元のうち bornTick が最小の波
+        GameObject agent = scene.CreateGameObjectTracked("SlotAgent");
+        agent.AddComponent<AgentBrainComponent>();
+        w.ApplyStructuralChanges();
+        check(!field.Emit(fake(98), wx, wy, wz, 1.0f, 1.0f, 0, 1, 200, 0, &w)
+                  && field.Waves()[0].source == fake(0),
+              "slots: a non-agent source never evicts, even when a World is passed");
+        check(field.Emit(agent.Id(), wx, wy, wz, 1.0f, 1.0f, 1, 1, 201, 0, &w)
+                  && field.Waves()[0].source == agent.Id() && field.Waves()[0].bornTick == 201,
+              "slots: an agent voice evicts the oldest non-agent wave (bornTick 0 in slot 0)");
+        check(field.Waves()[1].source == fake(1) && field.Waves()[4].source == fake(42),
+              "slots: the eviction touched only that one slot");
+        // 残りの非敵の波を全部追い出すと、次の敵の声は立たない (敵の声どうしは追い出さない)
+        bool evictedAll = true;
+        for (uint32_t i = 1; i < AcousticField::kMaxWaves; ++i) {
+            if (!field.Emit(agent.Id(), wx, wy, wz, 1.0f, 1.0f, 1, 1, 201 + i, 0, &w)) {
+                evictedAll = false;
+            }
+        }
+        check(evictedAll && field.Waves()[4].source == agent.Id(),
+              "slots: agent voices keep evicting while a non-agent wave is left (slot 4 = bornTick 100 goes last)");
+        check(!field.Emit(agent.Id(), wx, wy, wz, 1.0f, 1.0f, 1, 1, 400, 0, &w),
+              "slots: a table full of agent voices refuses another agent voice");
     }
 
     // ---- (11) 原点が閉セルなら開セルへ寄せる / 完全に埋まっていれば false ----
@@ -730,7 +761,7 @@ bool RunAcousticSelfTest()
             field.UpdateFrontPreview(i);
         }
         check(field.Waves()[0].ring == 40, "front: the wave reached its last ring");
-        const std::vector<uint16_t>& mask = field.FrontMask();
+        const std::vector<uint32_t>& mask = field.FrontMask();
         check((mask[static_cast<size_t>(acoustic::CellIndex(g, 10, 0, 2))] & 1u) != 0,
               "front: a cell straight down the corridor gets the wave's bit");
         check(field.DistanceAt(0, 20, 0, 10) != AcousticField::kUnreached

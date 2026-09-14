@@ -409,7 +409,8 @@ struct RenderView {
     //   acousticAlbedoMix = 強い残光に面の albedo を混ぜる割合 [0,1]。0 = 距離色だけ (従来)
     float acousticAlbedoMix = 0.0f;
     // ---- 「描画だけ円」(2026-09-12。末尾 append。**acousticFrontSRV = null で従来と同一**) ----
-    //   acousticFrontSRV = Texture3D<R16_UINT>。セルごとの見通しビット (bit s = 波スロット s)。
+    //   acousticFrontSRV = Texture3D<R32_UINT>。セルごとの見通しビット (bit s = 波スロット s。
+    //     2026-09-14 に 16 → 32 本へ増やしたので R16_UINT から広げた)。
     //   acousticWaves = 波ごとの (原点 / 半径 / 振幅 / 上限距離 / 減衰換算 / 名残)。
     //     ★スロット番号 = マスクのビット番号なので、空きスロットも位置を保つ (詰めない)。
     //   acousticKeepPerTick = 残光の 1 tick の残存率 (シェーダが同じ速さで円を薄める)。
@@ -422,7 +423,7 @@ struct RenderView {
         float ticksPerMetre = 0.0f;
         float extraAgeTicks = 0.0f;
     };
-    static constexpr int kAcousticWaveSlots = 16;
+    static constexpr int kAcousticWaveSlots = 32; // = AcousticField::kMaxWaves (2026-09-14 に 16 -> 32)
     ID3D11ShaderResourceView* acousticFrontSRV = nullptr;
     AcousticWaveGpu acousticWaves[kAcousticWaveSlots] = {};
     int acousticWaveCount = 0;
@@ -725,7 +726,8 @@ struct AcousticCB {
     // waves[2s] = (原点 xyz, 半径 [m]) / waves[2s+1] = (振幅, 上限距離 [m], tick/m, 名残 tick)
     DirectX::XMFLOAT4 waves[RenderView::kAcousticWaveSlots * 2] = {};
 };
-static_assert(sizeof(AcousticCB) == 48 + 16 + 16 * 32, "HLSL 側 (float4 x 36) と一致させること");
+static_assert(sizeof(AcousticCB) == 48 + 16 + 16 * 2 * RenderView::kAcousticWaveSlots,
+              "HLSL 側 (float4 x (4 + 2 * MYE_ACOUSTIC_WAVE_SLOTS) = 68) と一致させること");
 
 inline AcousticCB MakeAcousticCB(const RenderView& view, bool bound)
 {

@@ -54,9 +54,12 @@ public:
         uint64_t bornTick = 0;           // 診断用 + M68b の出力レーンが「この tick に生まれた波」を拾う鍵
     };
 
-    // 同時に走れる波の本数。★満杯のときの Emit は**最古を潰さず false を返す** —
-    // 潰す実装にすると「満杯時の挙動が到着順に依存する」= 決定論の穴になる
-    static constexpr uint32_t kMaxWaves = 16;
+    // 同時に走れる波の本数。★満杯のときの Emit は**最古を潰さず false を返す**。
+    // 例外は敵の声だけ (Emit の agentPriority)。16 → 32 は 2026-09-14 (三校): 金属床を走る足音と
+    // 追跡中の 3 体の声で 16 本が埋まり、敵の声が捨てられて「敵が見えない」が起きうるため。
+    // ★本数を変えるときは RenderView::kAcousticWaveSlots / MYE_ACOUSTIC_WAVE_SLOTS (check_rules 規則 9) と
+    //   見通しマスクのビット幅 (FrontMask は uint32 = 32 本まで) と kSimSnapshotVersion を同時に動かす
+    static constexpr uint32_t kMaxWaves = 32;
 
     // 1 tick に衝撃音として立てる波の上限 (M65c)。**key 昇順で先着**が取る —
     // 「最も大きい接触を選ぶ」にすると順序が float で決まってしまう (規則: 順序を
@@ -95,8 +98,12 @@ public:
     // soundHint = 発音の元になった PhysMat のハッシュ (0 = 無し)。**音レーン専用**の付帯情報で、
     // 波の伝播にも敵にも効かない (WaveSoundHint 参照)。足音と衝撃音が床材を入れ、
     // スクリプトの pending 経路は 0 のまま
+    // agentPriority = 敵の声の優先 (2026-09-14、三校)。null 以外で、かつ source が AgentBrain を持つ
+    // 実体なら、満杯でも**AgentBrain を持たない発音元のうち bornTick 最小の波** (同値は slot 最小) を
+    // 追い出して立てる。敵の声どうしは追い出さない。渡すのは AgentSystem の声だけ
     bool Emit(EntityID source, float wx, float wy, float wz, float loudness, float radiusM,
-              uint32_t tone, uint32_t ticksPerRing, uint64_t tick, uint64_t soundHint = 0);
+              uint32_t tone, uint32_t ticksPerRing, uint64_t tick, uint64_t soundHint = 0,
+              World* agentPriority = nullptr);
 
     // AcousticEmitterComponent の発音要求を波に変える。**entity.index 昇順**で処理し、
     // 消費した pendingLoudness は 0 へ戻す (エンジンが書く sim 状態)。
@@ -212,7 +219,7 @@ public:
     //   (1) 波ごとの「先読み距離場」= sim と同じ伝播を sim より数リング先まで回したもの。
     //       円は八角形の外側に最大 10% はみ出すので、sim が届く前のセルを描いてよいかを
     //       知るには先読みが要る (先読みが無いと「届いた所」でマスクして八角形に戻る)
-    //   (2) セルごとの「この波の円を描いてよいか」ビット (16 波 = uint16、FrontMask)。
+    //   (2) セルごとの「この波の円を描いてよいか」ビット (32 波 = uint32、FrontMask)。
     //       先読みのチャンファ距離が原点からの直線距離の 1.14 倍以内 = 経路がほぼ直線 =
     //       見通し内、のセルだけ立てる。角を曲がって届くセルは立てない (残光の形のまま)
     //   (3) 波ごとの描画パラメータ (FrontWave)。シェーダは (2) が立つセルでだけ (3) から
@@ -236,7 +243,7 @@ public:
     // 先読みと見通しビットを今 tick の波スロット表から作り直す。TickRunner が Advance と
     // DecayVisual の後 (**resim では飛ばす** = 描画レーン) に呼ぶ
     void UpdateFrontPreview(uint64_t tick);
-    const std::vector<uint16_t>& FrontMask() const { return front_; }
+    const std::vector<uint32_t>& FrontMask() const { return front_; }
     const FrontWave* FrontWaves() const { return frontWaves_; }
     bool FrontActive() const { return frontActive_; }
     uint32_t FrontSerial() const { return frontSerial_; }
@@ -332,7 +339,7 @@ private:
         bool valid = false;
     };
     std::vector<FrontPreview> previews_; // waves_ と同じ slot
-    std::vector<uint16_t> front_;        // セルごとの見通しビット (bit s = slot s)。空 = 無し
+    std::vector<uint32_t> front_;        // セルごとの見通しビット (bit s = slot s)。空 = 無し
     FrontWave frontWaves_[kMaxWaves] = {};
     bool frontActive_ = false;
     uint32_t frontSerial_ = 0;

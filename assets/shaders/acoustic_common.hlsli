@@ -27,7 +27,9 @@
 // C++ の acoustic::kFrontSrvSlot / kFrontForwardSrvSlot と規則 9 で照合される
 #define MYE_ACOUSTIC_FRONT_SRV_SLOT 16
 #define MYE_ACOUSTIC_FRONT_FWD_SRV_SLOT 9
-#define MYE_ACOUSTIC_WAVE_SLOTS 16
+// 波スロット数 = C++ の AcousticField::kMaxWaves / RenderView::kAcousticWaveSlots (規則 9)。
+// ★マスクは Texture3D<uint> (R32_UINT) なので 32 本が上限 (2026-09-14 に 16 → 32)
+#define MYE_ACOUSTIC_WAVE_SLOTS 32
 
 // register(tN) を #define 1 個から作る。
 // ★「#define と register(t13) が両方ある」形にすると**同じファイルの中で食い違える**ので、

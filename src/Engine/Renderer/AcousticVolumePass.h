@@ -50,9 +50,10 @@ public:
     ID3D11ShaderResourceView* SRV() const { return volume_.SRV(); }
     const VolumeTexture& Volume() const { return volume_; }
 
-    // 「描画だけ円」(2026-09-12): 見通しビット (uint16、bit s = 波スロット s) の 3D テクスチャ。
-    // R16_UINT / SRV のみ。残光と同じ寸法・同じ並び。serial は AcousticField::FrontSerial
-    bool UploadFront(GraphicsDevice& device, const uint16_t* cells, int32_t dimX, int32_t dimY,
+    // 「描画だけ円」(2026-09-12): 見通しビット (uint32、bit s = 波スロット s) の 3D テクスチャ。
+    // R32_UINT / SRV のみ (2026-09-14 に波 32 本へ増やしたので R16_UINT から広げた)。
+    // 残光と同じ寸法・同じ並び。serial は AcousticField::FrontSerial
+    bool UploadFront(GraphicsDevice& device, const uint32_t* cells, int32_t dimX, int32_t dimY,
                      int32_t dimZ, uint32_t serial);
     ID3D11ShaderResourceView* FrontSRV() const { return front_.SRV(); }
     // 直近の転送にかかった CPU 時間 [ms] (ProfilerWindow 表示用)。

@@ -447,9 +447,11 @@ void AgentSystem::Update(World& world, AcousticField& field, uint64_t tick, floa
             if (b.emitPhase >= b.emitEveryTicks) {
                 b.emitPhase = 0;
                 // 到達距離は音量に比例させる (材質を持たないので 1 式で決める)。
-                // tone 1 = 敵の音として固定 — 音色で「誰が鳴らしたか」が読める
+                // tone 1 = 敵の音として固定 — 音色で「誰が鳴らしたか」が読める。
+                // ★world を渡す = 波の枠が満杯でも、敵ではない最も古い波を追い出して必ず立てる
+                //   (2026-09-14、三校。声が捨てられると敵の位置が見えなくなる)
                 field.Emit(a.entity, a.x, a.y, a.z, b.emitLoudness, b.emitLoudness * 18.0f, 1u, 2u,
-                           tick);
+                           tick, 0ull, &world);
             }
         }
     }

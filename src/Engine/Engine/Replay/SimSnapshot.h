@@ -109,7 +109,9 @@ struct SimRefs {
 //            (v17 / v18 のどちらとも別レイアウトなので、どちらの番号も使い回さない)
 // v20 (2026-09-13): AcousticVolumeComponent へ glowDecayEveryTicks (残光を N tick に 1 回減らす) を追加。
 //            v19 と同じく描画レーンの値だが、生バイトが World 節に載るので版は上がる
-inline constexpr uint32_t kSimSnapshotVersion = 20;
+// v21 (2026-09-14): AcousticField::kMaxWaves 16 -> 32。ACU 節の波スロット表が 32 本になる
+//            (Wave の形は不変。本数が変わるので古い blob は ReadAcoustic が本数不一致で拒む)
+inline constexpr uint32_t kSimSnapshotVersion = 21;
 
 // 撮る: out を clear して blob を書く。成功で true。
 // 節ごとの参照が null なら「空の節」を書くのでレイアウトは常に同じ

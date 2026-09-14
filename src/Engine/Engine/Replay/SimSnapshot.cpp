@@ -379,6 +379,13 @@ bool ReadAcoustic(ByteReader& r, std::vector<AcousticField::Wave>& out)
     }
     // 1 波あたりの最小バイト数 = U32 x 12 + U64 x 1
     const size_t count = r.Count(sizeof(uint32_t) * 12 + sizeof(uint64_t));
+    // ★表は常に kMaxWaves 本 (空きも sim 状態)。本数が違う blob を受け入れると、Advance などの
+    //   kMaxWaves 本ループが表の外を読む。空の節 (refs.acoustic == null で書いた 0 本) だけは通す
+    if (count != 0 && count != AcousticField::kMaxWaves) {
+        MYE_LOG_ERROR("[snapshot] acoustic wave table has %zu slots (expected %u)", count,
+                      AcousticField::kMaxWaves);
+        return false;
+    }
     out.resize(count);
     for (size_t i = 0; i < count && r.Ok(); ++i) {
         AcousticField::Wave& v = out[i];

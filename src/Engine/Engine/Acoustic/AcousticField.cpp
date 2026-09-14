@@ -371,10 +371,11 @@ void AcousticField::BakeOccupancy(World& world, uint32_t blockLayerMask)
 //   変わり、AI が聞く方向が変わる。規約は「順序を決めるものは全部整数。float は
 //   整数から導く末端の 1 式 (EnergyAt) だけ」。
 //
-// メモリの見積り (kMaxWaves = 16 の根拠):
+// メモリの見積り (kMaxWaves = 32 の根拠):
 //   局所ボックスは軸ごとに **min(2*maxRing+1, dim)** セル。★グリッドでクリップされる
 //   のが効いていて、既定ボリューム (64x16x64 = 65,536 セル) なら 1 波 196 KB
-//   (uint16 dist + uint8 parentDir = 3 B/セル) → 16 本で 3.1 MB。
+//   (uint16 dist + uint8 parentDir = 3 B/セル) → 32 本で 6.3 MB (描画レーンの先読みも同量)。
+//   2026-09-14 に 16 → 32 (三校: 走る足音と追跡中の敵 3 体の声で 16 本が埋まった)。
 //   上限が出るので固定本数で持ってよい (プールも LRU も要らない = 隠れた状態が無い)。
 // 重くなったときの縮退はこの順で (絵の劣化が小さい順):
 //   (1) ticksPerRing を上げる (2) cellSize 0.5→0.75 (セル数は 1/s^3)
@@ -589,7 +590,7 @@ void AcousticField::UpdateFrontPreview(uint64_t tick)
             continue;
         }
         const WaveField& f = p.field;
-        const uint16_t bit = static_cast<uint16_t>(1u << s);
+        const uint32_t bit = 1u << s; // ★kMaxWaves = 32 なので uint32 (uint16 のままだと slot 16 以降のビットが消える)
         // ★確定した距離だけを見る。先読みの縁の「仮の距離」(まだ短い経路で上書きされて
         //   いない値) は最大 8 だけ長く、見通し判定を落として円の縁が階段になる (実測)
         const uint32_t confirmed = p.ring * acoustic::kFaceCost;
@@ -706,9 +707,28 @@ static void LogEmitDrop(const char* why, EntityID source, float wx, float wy, fl
                  sLogged == 16 ? " (further drops are not logged)" : "");
 }
 
+// 敵の声のために波を追い出したことを残す (最初の 16 回だけ。sim には 1 bit も影響しない)
+static void LogEmitEvict(uint32_t slot, EntityID victim, EntityID agent, uint64_t tick)
+{
+    static int sLogged = 0;
+    if (sLogged >= 16) {
+        return;
+    }
+    ++sLogged;
+    MYE_LOG_WARN("[acoustic] t=%llu wave slots full: evicted slot %u (source=%u) for agent voice (source=%u)%s",
+                 static_cast<unsigned long long>(tick), slot, victim.index, agent.index,
+                 sLogged == 16 ? " (further evictions are not logged)" : "");
+}
+
+// 発音元が敵 (AgentBrain を持つ生きた実体) か。Emit の優先と追い出し候補の判定で同じ式を使う
+static bool IsAgentSource(World& world, EntityID e)
+{
+    return world.IsAlive(e) && world.GetComponent<AgentBrainComponent>(e) != nullptr;
+}
+
 bool AcousticField::Emit(EntityID source, float wx, float wy, float wz, float loudness,
                          float radiusM, uint32_t tone, uint32_t ticksPerRing, uint64_t tick,
-                         uint64_t soundHint)
+                         uint64_t soundHint, World* agentPriority)
 {
     if (!grid_.Valid() || loudness <= 0.0f || radiusM <= 0.0f) {
         return false;
@@ -745,6 +765,28 @@ bool AcousticField::Emit(EntityID source, float wx, float wy, float wz, float lo
         if (waves_[s].active == 0) {
             slot = s; // **最小 index の空き** = 決定論のタイブレーク
             break;
+        }
+    }
+    if (slot == kMaxWaves && agentPriority != nullptr && IsAgentSource(*agentPriority, source)) {
+        // ★敵の声だけは満杯でも捨てない (2026-09-14、三校。企画 §6-3「敵は常に自分の位置を告げる」)。
+        //   追い出すのは**発音元が AgentBrain を持たない波のうち bornTick が最小**のもの (同値は slot 番号が
+        //   小さいほう)。順序は整数 (bornTick, slot) だけで決まり、判定に使う AgentBrain の有無も sim 状態
+        //   なので決定論は保たれる。判定を並列配列のフラグにしないのは snapshot 復元で消えるから
+        uint32_t victim = kMaxWaves;
+        for (uint32_t s = 0; s < kMaxWaves; ++s) {
+            const Wave& v = waves_[s];
+            if (IsAgentSource(*agentPriority, v.source)) {
+                continue; // 敵の声どうしは追い出さない
+            }
+            if (victim == kMaxWaves || v.bornTick < waves_[victim].bornTick) {
+                victim = s;
+            }
+        }
+        if (victim != kMaxWaves) {
+            LogEmitEvict(victim, waves_[victim].source, source, tick);
+            waves_[victim] = Wave{};
+            fields_[victim] = WaveField{};
+            slot = victim; // 先読み (previews_) は bornTick / source の違いで UpdateFrontPreview が引き直す
         }
     }
     if (slot == kMaxWaves) {
