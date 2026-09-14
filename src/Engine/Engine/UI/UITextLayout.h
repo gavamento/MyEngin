@@ -1,6 +1,6 @@
 #pragma once
 // テキスト行レイアウトの純関数群 (M51e)。D3D 非依存 — UISelfTest が合成グリフマップで検証。
-// UIRenderer::PushText から「行分割 (改行 + 折返し) と整列オフセット」を抽出したもの。
+// UIRenderer::PushTextInRect が使う「行分割 (改行 + 折返し) と整列オフセット」。
 // 折返しは文字単位 (日本語優先 — 単語境界は扱わない)。計測は FontGlyphInfo::advance × k
 // (k = FontAtlas::GlyphScale(fontScale)) で、描画側と同じ式なのでズレない。
 #include <vector>

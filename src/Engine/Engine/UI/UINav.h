@@ -1,8 +1,8 @@
 #pragma once
 // パッド/キーボードの UI フォーカスナビゲーション純関数 (M35)。D3D 非依存・scalar float のみ。
-// エンジンはフォーカスの「状態」を持たない — 状態はスクリプト側が保持し、UIElement.focused
-// (表示専用) に書き戻す設計 (M21 の「ボタン操作はスクリプトがヒットテスト」哲学の踏襲)。
-// M37 で ABI (UIFocusNav) として公開予定。InputSnapshot 由来の決定論入力で呼べば決定論。
+// この純関数は状態を持たない。フォーカスの正本は UIInteractionState.focused (Scene が持つ sim 状態) で、
+// UIElement.focused は表示用のミラー。呼び手は uiinteract::FindNextFocus (ABI の UIFocusNav もそこを通る)。
+// InputSnapshot 由来の決定論入力で呼べば決定論。
 #include <cstdint>
 
 namespace mye {

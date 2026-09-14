@@ -559,7 +559,7 @@ WaveShotResult MakeWaveShotPlay(const AcousticField& field, const AcousticProbe&
         return WaveShotResult::BelowMin;
     }
     // ---- (1b) 聴感カーブ。足切りは線形振幅 (「波が小さすぎる」の意味) で済ませ、鳴らす
-    //   音量だけ指数で広げる。1.0 (既定) なら従来どおり線形。0 以下は不正値として 1 扱い
+    //   音量だけ指数で広げる。1.0 (既定) なら pow を通さず線形のまま。0 以下は不正値として 1 扱い
     const float expo = (comp.waveVolumeExp > 0.0f) ? comp.waveVolumeExp : 1.0f;
     const float heard = (expo == 1.0f) ? vol : std::pow(vol, expo);
 

@@ -32,8 +32,6 @@ struct SolidContact;
 // ★復元 (snapshot / ロールバック) の後は Invalidate() を呼ぶこと。次の Update が
 //   ring 0 から現リングまで**引き直す**。「増分で育てた場」と「引き直した場」が
 //   ビット同一であることが本システムで最も重要な不変条件で、そこに selftest を当てる。
-//
-// M65a は器と占有ベイクだけ (波は 1 本も出さない)。伝播は M65b。
 class AcousticField {
 public:
     // 波 1 本。**全状態がここに閉じる** — 原点セル・現リング・振幅・音色があれば、
@@ -183,7 +181,7 @@ public:
     //   できる — 企画の中核 (§3-1「見えている所と敵に届く所が一致する」) はこの
     //   「同じ 1 ループ」でしか構造的に保証できない。
     //
-    // 1 セル 1 バイト (EncodeGlow の符号化済み値)。既定ボリューム 104x12x104 で 130KB。
+    // 1 セル 1 バイト (EncodeGlow の符号化済み値)。既定ボリューム 64x16x64 (65,536 セル) で 64KB。
     // ★**波が 1 本も光るまで確保しない** — ボリュームだけ置いたシーンは 0 バイト
     void DecayVisual(float perTick);
     void ResetVisual();
@@ -197,9 +195,9 @@ public:
     // (0 = 既定へ倒すのは DecayVisual 側の範囲ガード)、RenderSystem が合成強度に乗算する
     float GlowKeepPerTick() const { return glowKeepPerTick_; }
     float GlowIntensity() const { return glowIntensity_; }
-    // 強い残光に面の albedo を混ぜる割合。Sync で [0,1] に丸め済み (0 = 従来の色)
+    // 強い残光に面の albedo を混ぜる割合。Sync で [0,1] に丸め済み (0 = 面の色を混ぜない)
     float GlowAlbedoMix() const { return glowAlbedoMix_; }
-    // 残光を何 tick に 1 回減らすか。Sync で [1, kGlowDecayEveryMax] に丸め済み (1 = 毎 tick = 従来)
+    // 残光を何 tick に 1 回減らすか。Sync で [1, kGlowDecayEveryMax] に丸め済み (1 = 毎 tick)
     static constexpr int32_t kGlowDecayEveryMax = 16;
     int32_t GlowDecayEveryTicks() const { return glowDecayEveryTicks_; }
     // この tick に DecayVisual を回すか。★位相は tick 番号そのもの — 自前のカウンタを持つと

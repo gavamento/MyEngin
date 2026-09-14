@@ -124,7 +124,7 @@ bool IsUiOnlyEntity(World& world, EntityID e)
 namespace {
 
 // ワールド追従の基準点を解決して base (0 サイズ矩形 = 射影点) と out.scale を書く。
-// 戻り値: 追従したか (false = 従来の screen 基準へ)。追従したが描けない
+// 戻り値: 追従したか (false = screen 基準へ)。追従したが描けない
 // (コンテキスト無し / カメラ背面でクランプ OFF) ときは out.visible=false。
 // ★射影は scalar 演算のみ — sim レーン (UIHitTest / FocusNav) が同じ経路を通るため
 //   SIMD (XMMatrix*) を混ぜると Debug/Release でビットが割れる
@@ -133,7 +133,7 @@ bool ResolveWorldBase(World& world, EntityID e, const UIElementComponent* el, in
                       int screenH, const UIWorldContext* wc, UIRect& base, UIResolved& out)
 {
     if (IsUiOnlyEntity(world, e)) {
-        return false; // UI 専用オブジェクト = 従来どおり画面 UI
+        return false; // UI 専用オブジェクト = 画面 UI
     }
     const auto* wm = world.GetComponent<WorldMatrixComponent>(e);
     if (!wm) {
@@ -204,7 +204,7 @@ UIResolved ResolveImpl(World& world, EntityID e, int screenW, int screenH,
         return out;
     }
     // RectTransform 無し (スクリプトが UIElement だけ AddComponent した等) は既定値で解く —
-    // 既定は旧 UIElement の既定と同値 (左上・pivot 0・160x40) なので M75a 以前と同じ絵になる
+    // 既定は旧形式 UIElement の既定と同値 (左上・pivot 0・160x40)
     static const RectTransformComponent kDefaultRt = {};
     const RectTransformComponent& rt = rtp ? *rtp : kDefaultRt;
     UIRect base = { 0, 0, static_cast<float>(screenW), static_cast<float>(screenH) };
@@ -244,12 +244,12 @@ UIResolved ResolveImpl(World& world, EntityID e, int screenW, int screenH,
     }
     // M75e: 親が Layout Group で自分が並べられる子なら、RectTransform の代わりに配置結果を使う。
     // そうでなければ RectTransform で解く (ContentSizeFitter があれば sizeDelta だけ中身に合わせる)。
-    // ★Group も Fitter も無い要素は下の RectFromTransform(rt, ...) だけを通る = M75d 以前と同じ式
+    // ★Group も Fitter も無い要素は下の RectFromTransform(rt, ...) だけを通る
     UIRect r;
     if (!(parentResolved
           && ResolveLayoutChild(world, parentE, e, base, out.scale, scratch, r))) {
         // M75f: Slider の fillRect / handleRect はアンカーを value から導く (Unity は書き込むが、ここでは
-        // Layout Group と同じく書かない)。Slider の無い要素は rt をそのまま使う = 以下の式は M75e と同じ
+        // Layout Group と同じく書かない)。Slider の無い要素は rt をそのまま使う
         RectTransformComponent slid;
         const RectTransformComponent& use =
             (rtp != nullptr && uiwidgets::SliderDrivenTransform(world, e, rt, slid)) ? slid : rt;
@@ -584,7 +584,7 @@ UIRect ResolveRect(World& world, EntityID e, int screenW, int screenH, const UIW
 {
     const UIResolved r = Resolve(world, e, screenW, screenH, wc, scratch);
     if (!r.visible) {
-        return UIRect{}; // 非表示は {0,0,0,0} = 従来の「隠れている」表現
+        return UIRect{}; // 非表示は {0,0,0,0} = 「隠れている」表現
     }
     return r.hasXform ? XformAabb(r.xform, r.rect) : r.rect;
 }

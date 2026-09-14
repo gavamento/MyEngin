@@ -1046,7 +1046,7 @@ bool AudioSystem::EnsureSourceVoice(Voice& v, uint16_t channels, uint32_t sample
 
     // ★XAudio2 が張った既定行列を **書き換える前に** 読み出して控える (M45e)。
     //   spatialBlend の 2D 側と ResetVoiceTo2D はこれを使う — 自前で書き起こすと
-    //   5.1/7.1 環境で従来と違う鳴り方になるため、推測せず実物を控えるのが要点。
+    //   5.1/7.1 環境で XAudio2 の既定と違う鳴り方になるため、推測せず実物を控えるのが要点。
     //   ここを逃すと以降は 3D 行列で上書き済みの値しか読めない
     if (channels >= 1 && channels <= 2) {
         const size_t di = static_cast<size_t>(channels) - 1;
@@ -1101,8 +1101,8 @@ void AudioSystem::ResetVoiceTo2D(Voice& v)
 // X3DAudio で 1 voice ぶんの定位を計算して反映する。
 // spatialBlend は「XAudio2 の既定行列 (2D)」と「X3DAudio の行列 (3D)」の線形補間で表現し、
 // ドップラー / LPF / リバーブ送りも同じ係数で恒等値側へ寄せる — blend=0 が
-// **従来の 2D 再生と完全に同一**になることが重要 (spatialBlend 既定 0 の .sound.json が
-// M45e の導入で鳴り方を変えてはいけない)。
+// **3D を通さない 2D 再生と完全に同一**になることが重要 (spatialBlend 既定 0 の .sound.json の
+// 鳴り方を 3D 定位の有無で変えてはいけない)。
 void AudioSystem::ApplySpatialToVoice(Voice& v, const AudioSpatial& s)
 {
     if (v.voice == nullptr || !ValidBus(v.bus)) {
@@ -1214,7 +1214,7 @@ void AudioSystem::ApplySpatialToVoice(Voice& v, const AudioSpatial& s)
         v.voice->SetOutputFilterParameters(dst, &p);
     };
     // M68a: 遮蔽/回折ぶんの追加ローパスを **min** で載せる (乗算にすると二重に暗くなる)。
-    // 既定 (1.0) なら従来と 1 ビットも変わらない
+    // 既定 (1.0) なら min は dsp 側の係数のまま = 遮蔽ぶんが無いのと 1 ビットも変わらない
     applyLpf(dry, (std::min)(dsp.LPFDirectCoefficient, s.lpfCoefficient));
     if (reverbVoice_ != nullptr) {
         applyLpf(reverbVoice_, dsp.LPFReverbCoefficient);

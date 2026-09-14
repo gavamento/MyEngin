@@ -232,7 +232,7 @@ void UIRenderer::Render(World& world, GraphicsDevice& device, ShaderManager& sha
     }
 
     // ---- 収集 (canvas.sortOrder → order → entity.index の明示キーで安定ソート) ----
-    // M75c: キーの先頭は属する Canvas の sortOrder (既定キャンバスは 0 = 従来の並びと同じ)。
+    // M75c: キーの先頭は属する Canvas の sortOrder (既定キャンバスは 0)。
     // HitTest の「最前面」と同じキーなので、手前に見えている要素が押せる
     struct Item {
         int32_t sortOrder;
@@ -299,7 +299,7 @@ void UIRenderer::Render(World& world, GraphicsDevice& device, ShaderManager& sha
     // M75e: 自動レイアウトのメモはこのフレームの描画 1 回ぶん (結果は変えない。描画中に World は動かない)
     uilayout::LayoutScratch layoutScratch;
     // M75f: Selectable の遷移 (色 / 画像) と off の Toggle のチェックマーク。ウィジェットの無いシーンでは空で、
-    // 下の color は el.color の複写のまま = M75e 以前と同じ頂点色
+    // 下の color は el.color の複写のまま
     std::vector<uiwidgets::VisualOverride> overrides;
     uiwidgets::CollectVisualOverrides(world, ui, overrides);
     for (const Item& it : items) {
@@ -321,11 +321,11 @@ void UIRenderer::Render(World& world, GraphicsDevice& device, ShaderManager& sha
         }
         // M75c: この要素のキャンバス単位 → 実 px。明示 Canvas は既定キャンバス単位への倍率を
         // 先に掛ける (UILayout.h の CanvasOfEntity)。Canvas の無い要素は 1.0f * defaultScale =
-        // M75c 以前の canvasScale と同ビット — 以下の式はこの 1 行以外 1 文字も変えていない
+        // defaultScale とビット一致
         const float canvasScale =
             uilayout::CanvasOfEntity(world, it.canvas, canvasW, canvasH).scale * defaultScale;
         // 矩形解決 (M51e: 親子/クリップは UILayout — UIFocusNav と共有)。クリップ祖先が
-        // 無い要素は RT 全域シザー = 従来と同じバッチにまとまる。
+        // 無い要素は RT 全域シザー = 同じバッチにまとまる。
         // ワールド追従要素はここで射影され、背面 (クランプ OFF) は visible=false で消える。
         // res.scale (距離スケール) は矩形に折り込み済み — テキストのグリフ倍率にだけ手で掛ける
         const uilayout::UIResolved res =
@@ -334,7 +334,7 @@ void UIRenderer::Render(World& world, GraphicsDevice& device, ShaderManager& sha
             continue;
         }
         // キャンバス単位 → 実 px。**ここが唯一の変換点**で、以降の PushQuad / PushText は
-        // 従来どおり実 px を積む (シザーもフォーカス枠も同じ土俵に乗る)
+        // 実 px を積む (シザーもフォーカス枠も同じ土俵に乗る)
         const uilayout::UIRect rect = { res.rect.x * canvasScale, res.rect.y * canvasScale,
                                         res.rect.w * canvasScale, res.rect.h * canvasScale };
         const float rx = rect.x;
@@ -367,7 +367,7 @@ void UIRenderer::Render(World& world, GraphicsDevice& device, ShaderManager& sha
         }
 
         if (el.kind == 1) {
-            // テキスト (背景無し)。M51e: 矩形 (w,h) 内で整列 + 折返し (既定 0/0 = 従来どおり左上)
+            // テキスト (背景無し)。M51e: 矩形 (w,h) 内で整列 + 折返し (既定 0/0 = 左上)
             PushTextInRect(el.text, rx, ry, rect.w, rect.h, textScale, color, el.align,
                            el.wrap != 0);
         } else if (el.kind == 2) {

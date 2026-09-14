@@ -60,7 +60,7 @@ struct DumpPreset {
     float size;
     float duration;
 };
-// 三校の 14 本は brightness を揃えて持っている (2026-09-12 試聴 2 回目: 1.0 → 0.7 「まだ少し高い」)
+// 三校の 14 本は brightness を揃えて持っている (0.7。1.0 だとまだ少し高く聞こえる)
 constexpr float kDumpBrightness = 0.7f;
 constexpr DumpPreset kDumps[] = {
     { "footstep_carpet", ImpactSoundKind::Footstep, AcousticMaterial::Grass, AcousticMaterial::Grass, 0.6f, 1.2f, 0.18f },

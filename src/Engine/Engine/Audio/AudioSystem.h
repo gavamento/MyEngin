@@ -121,7 +121,7 @@ struct AudioBusState {
 // I3DL2 リバーブの 13 パラメータ (M68b)。**SDK の XAUDIO2FX_REVERB_I3DL2_PARAMETERS と
 // 同名・同順・同型の POD**。
 // ★このヘッダは xaudio2fx.h を include できない (Windows.h を丸ごと引き込む。
-//   AudioSystem.cpp:59 の x3daudio.h と同じ事情) ので、SDK 型をそのままヘッダへ出せない。
+//   AudioSystem.cpp が X3DAUDIO_HANDLE を生バイトで持つのと同じ事情) ので、SDK 型をそのままヘッダへ出せない。
 //   .cpp 側で 1 対 1 に写し、sizeof を static_assert で結んで「SDK が増えたら気づく」形にしてある。
 // ★POD にしてある理由はもう 1 つあって、**補間 (LerpReverbParams) をデバイス無しで
 //   セルフテストできる**こと。音響 (M68b) が部屋の広さから響きを連続に変えるとき、

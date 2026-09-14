@@ -10,7 +10,8 @@
 
 namespace mye {
 
-// 距離減衰カーブ (M45e の X3DAudio 側で実際に使う。ここでは .sound.json の保持だけ)
+// 距離減衰カーブ。ここは .sound.json の保持だけで、AudioSourceSystem が AudioSpatial.rolloff へ写し
+// AudioSystem が X3DAudio の曲線にする
 enum class SoundRolloff : int32_t { Logarithmic = 0, Linear = 1, Inverse = 2 };
 
 // 1 バリエーション = 1 クリップ + 抽選重み。同じ音の言い回し違いを 1 アセットに束ねる
@@ -24,7 +25,7 @@ struct SoundVariation {
 };
 
 // .sound.json 1 件。**再生パラメータのデータ化**であって ECS コンポーネントではない
-// (AudioSource コンポーネントは M45e)。決定論レーン外なので float を持ってよい
+// (ECS 側は AudioSourceComponent)。決定論レーン外なので float を持ってよい
 struct SoundAsset {
     uint64_t hash = 0; // = GUID (SoundLibrary のキー)
     std::string name;
@@ -45,7 +46,7 @@ struct SoundAsset {
     int32_t priority = 128;    // 大きいほど重要 (VoicePolicy と同じ規約)
     int32_t maxInstances = 0;  // 同時発音数の上限 (0 = 無制限)
 
-    // ---- 3D 設定 (M45e で実際に効く) ----
+    // ---- 3D 設定 (M45e) ----
     float spatialBlend = 0.0f; // 0 = 2D、1 = フル 3D
     float minDistance = 1.0f;  // これより近ければ減衰なし
     float maxDistance = 50.0f;
@@ -68,7 +69,7 @@ struct SoundEntry {
 // **BGM を PCM 全展開しない**ための判定に使う — 数分の曲を展開すると数十 MB になり、
 // ストリーミングの意味が無くなる
 enum class ClipUsage : int32_t {
-    None = 0,   // どの .sound.json からも参照されていない (従来どおり展開する)
+    None = 0,   // どの .sound.json からも参照されていない (PCM へ展開する)
     Sampled,    // 1 つでも stream=false から参照されている (SE として展開が要る)
     StreamOnly, // 参照元が **すべて** stream=true (展開せずストリーミングだけで足りる)
 };
@@ -128,7 +129,7 @@ ResolvedSound ResolveSoundKey(const AudioSystem& audio, const SoundLibrary& lib,
 // 候補 (weight>0 かつ clip!=0) が無ければ -1
 int PickVariationIndex(const SoundAsset& s, uint32_t roll);
 
-// SoundAsset → PlayDesc (2D 部分のみ。3D 定位/ドップラーは M45e が上書きする)。
+// SoundAsset → PlayDesc (2D 部分のみ。3D 定位/ドップラーは AudioSourceSystem が上書きする)。
 // jitter は [-1,1]。0,0 を渡せば揺らぎ無し = 試聴が毎回同じ音になる。
 // **バス名の解決は audio 側に問う** — M45d でバスは .mixer.json のデータになったので、
 // 静的な既定 4 バスではなく実際に張られているグラフで引く必要がある

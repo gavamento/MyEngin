@@ -204,7 +204,7 @@ void AcousticField::Sync(World& world)
     // DecayVisual が (0,1) 外を既定へ倒し、強度は負だけここで落とす)
     glowKeepPerTick_ = bestVol.glowKeepPerTick;
     glowIntensity_ = (bestVol.glowIntensity > 0.0f) ? bestVol.glowIntensity : 0.0f;
-    // 混ぜ具合は [0,1] に丸める。★比較で落とす形にしてあるのは NaN も 0 (従来の色) へ倒すため
+    // 混ぜ具合は [0,1] に丸める。★比較で落とす形にしてあるのは NaN も 0 (面の色を混ぜない) へ倒すため
     //   (std::clamp は NaN をそのまま返す)
     glowAlbedoMix_ = (bestVol.glowAlbedoMix > 0.0f) ? std::min(bestVol.glowAlbedoMix, 1.0f) : 0.0f;
     // 間引きは 0 / 負を 1 (毎 tick) へ倒す。★上限は「戻し忘れても残光が 1 分強で必ず消える」長さ
@@ -366,16 +366,12 @@ void AcousticField::BakeOccupancy(World& world, uint32_t blockLayerMask)
 // Dial 法 (バケット付き Dijkstra)。26 近傍 x Borgefors の整数重み <11,16,19> なので
 // キーが 0..maxDist の整数に収まり、優先度キューが要らない。
 //
-// ★**キーが整数であることが決定論の核心**。物理の float は 1 ulp ずれても剛体が
-//   微動するだけだが、伝播は順序比較が 1 ulp ずれると訪問順が入れ替わり、親リンクが
-//   変わり、AI が聞く方向が変わる。規約は「順序を決めるものは全部整数。float は
-//   整数から導く末端の 1 式 (EnergyAt) だけ」。
+// ★**キーが整数であることが決定論の核心** (理由は AcousticGrid.h の kFaceCost の注記)。
 //
 // メモリの見積り (kMaxWaves = 32 の根拠):
 //   局所ボックスは軸ごとに **min(2*maxRing+1, dim)** セル。★グリッドでクリップされる
 //   のが効いていて、既定ボリューム (64x16x64 = 65,536 セル) なら 1 波 196 KB
 //   (uint16 dist + uint8 parentDir = 3 B/セル) → 32 本で 6.3 MB (描画レーンの先読みも同量)。
-//   2026-09-14 に 16 → 32 (三校: 走る足音と追跡中の敵 3 体の声で 16 本が埋まった)。
 //   上限が出るので固定本数で持ってよい (プールも LRU も要らない = 隠れた状態が無い)。
 // 重くなったときの縮退はこの順で (絵の劣化が小さい順):
 //   (1) ticksPerRing を上げる (2) cellSize 0.5→0.75 (セル数は 1/s^3)
@@ -1184,7 +1180,7 @@ void AcousticField::WriteShell(uint32_t slot, int32_t cx, int32_t cy, int32_t cz
 void AcousticField::DecayVisual(float perTick)
 {
     if (!visualActive_ || glow_.empty()) {
-        return; // 光っていないフレームは 130KB を舐めない
+        return; // 光っていないフレームは glow_ (既定ボリュームで 64KB) を舐めない
     }
     // 1 以上を渡されたら「減らない」= 永久に残る、になるので弾く (呼び手のバグ)
     const float keep = (perTick > 0.0f && perTick < 1.0f) ? perTick : acoustic::kGlowDecayPerTick;

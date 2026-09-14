@@ -21,8 +21,8 @@ constexpr uint32_t kListenerColor = 0x40FF90FFu;  // 聴者 (緑)
 constexpr uint32_t kHeardColor = 0xFFD040FFu;     // 最後に聞いた位置への線 (黄)
 constexpr uint32_t kBoundsColor = 0x40C8FFFFu;    // ボリューム境界 (明るい水色、M65h)
 
-// 音色 0..3 の色。M65e のライティングでも同じ 4 色を使う予定なので、
-// **ここが色の正本**になる (先に決めておかないと絵とデバッグ線で色が食い違う)
+// 音色 0..3 の色。**ここが色の正本** (PhysMatLibrary.h の acousticTone が参照する)。
+// 残光ボリュームは音色を持たない (acoustic_common.hlsli) ので、音色が色で見えるのはこの線だけ
 constexpr uint32_t kToneColors[4] = {
     0x60C0FFFFu, // 0 = 低い / 鈍い音 (水色)
     0xFFFFFFFFu, // 1 = 中庸 (白)
@@ -190,7 +190,7 @@ void BuildAcousticDebugLines(World& world, const AcousticField& field,
         }
     }
 
-    // ---- 聴者 (鏡の中身は M65f から。それまでは十字だけが出る) ----
+    // ---- 聴者 (まだ何も聞いていなければ十字だけ) ----
     if (flags.listener) {
         const ComponentTypeId req[] = { AcousticListenerComponent::sTypeId,
                                         WorldMatrixComponent::sTypeId };

@@ -1,6 +1,6 @@
 #pragma once
 // stb_vorbis の設定マクロと宣言の**単一情報源**。
-// 実装 TU (StbVorbisImpl.cpp) も利用側 (AudioClip.cpp / 将来のストリーマ) も必ずこれを通すこと。
+// 実装 TU (StbVorbisImpl.cpp) も利用側 (AudioClip.cpp / MusicStream.cpp) も必ずこれを通すこと。
 // マクロが TU 間でズレると宣言と定義が食い違って ODR 違反になる。
 //
 // stb_vorbis.c の構造 (v1.22):

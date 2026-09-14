@@ -50,8 +50,8 @@ enum class AcousticPathClass : int32_t {
 const char* AcousticPathClassName(AcousticPathClass c);
 
 // リスナー場が確保してよいセル数の上限。超えたら probeMaxRing を半分ずつ下げて収める。
-// ★262144 = 64^3 = 3 配列で ~1.3MB。既定ボリューム (52x6x52 = 16k) なら常に箱 =
-//   グリッド全体なので、この予算が効くのは 256^3 級のグリッドだけ
+// ★262144 = 64^3 = 3 配列で ~1.3MB。既定ボリューム (64x16x64 = 65,536 セル) は箱がグリッド全体まで
+//   広がっても収まるので、この予算が効くのはそれより大きいグリッドだけ
 inline constexpr int64_t kProbeCellBudget = 262144;
 
 // 自由空間 (占有を無視) のチャンファ距離の閉形式。

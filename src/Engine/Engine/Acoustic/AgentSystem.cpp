@@ -366,7 +366,7 @@ void AgentSystem::Update(World& world, AcousticField& field, uint64_t tick, floa
                 b.state = kAgentReturn;
                 b.target = b.home;
             } else if ((b.stateTicks % 45) == 0) {
-                // ★**乱数を引くのはここだけ**。探索の不規則さが企画 §6-4 の
+                // ★探索は乱数で揺らす (乱数を引くのは巡回の目標点とここの 2 箇所)。探索の不規則さが企画 §6-4 の
                 //   「調べ終えた場所を覚えている」の裏返しで、まっすぐ往復すると
                 //   プレイヤーから完全に読めてしまう。
                 //   エージェントが居るときしか引かないので、既存シーンの乱数列は無風
@@ -449,7 +449,7 @@ void AgentSystem::Update(World& world, AcousticField& field, uint64_t tick, floa
                 // 到達距離は音量に比例させる (材質を持たないので 1 式で決める)。
                 // tone 1 = 敵の音として固定 — 音色で「誰が鳴らしたか」が読める。
                 // ★world を渡す = 波の枠が満杯でも、敵ではない最も古い波を追い出して必ず立てる
-                //   (2026-09-14、三校。声が捨てられると敵の位置が見えなくなる)
+                //   (声が捨てられると敵の位置が見えなくなる。AcousticField::Emit の agentPriority)
                 field.Emit(a.entity, a.x, a.y, a.z, b.emitLoudness, b.emitLoudness * 18.0f, 1u, 2u,
                            tick, 0ull, &world);
             }

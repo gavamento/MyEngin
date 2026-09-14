@@ -7,7 +7,7 @@
 //
 // ワールド追従 (オブジェクト追従 UI) は**エンティティ構成による完全自動判定**:
 //   「UI 専用オブジェクト」(基本 4 種 + UIElement + エディタ帳簿 + スクリプト状態のみ) に
-//   付いた UIElement は従来どおり画面 UI。**それ以外のコンポーネント (メッシュ/コライダー等)
+//   付いた UIElement は画面 UI。**それ以外のコンポーネント (メッシュ/コライダー等)
 //   を持つオブジェクトに付いた UIElement は、そのオブジェクトのワールド位置の射影点が基準**
 //   になる (= オブジェクトに UI が出る)。判定の正本は UILayout.cpp の IsUiOnlyEntity。
 //   複合ウィジェット (HP バー等) は追従オブジェクトに背景 UIElement を直付けし、
@@ -81,9 +81,9 @@ struct CanvasInfo {
 //   「右端/下端の 0.5 px にだけ UI が届かない (or 半 px はみ出す)」ことだけ。
 //   非 16:9 かつ端数が出る解像度 (1366x768 → canvas 1920.94x1080) でしか効かない。
 //
-// ★M75c: Shrink (max) と Match Width Or Height を足した。正本は desc を取る版で、
+// ★モードは Expand (min) / Shrink (max) / Match Width Or Height (M75c)。正本は desc を取る版で、
 //   引数無し版は既定キャンバス (DefaultCanvasDesc = project_settings の基準解像度 + Expand)。
-//   Expand の式は M70b から 1 ビットも変えていない (golden 4 枚の不変はここに掛かる)。
+//   Expand の式には golden 4 枚の不変が掛かっているので、1 ビットも変えないこと。
 // ★Match の pow / log は CRT を呼ばず、UILayout.cpp の double の級数で解く — UCRT の
 //   数学関数は CPU (FMA3 の有無) で経路が変わり、2 台のヒットテストが割れうるため。
 //   m <= 0 / m >= 1 / sx == sy (基準と同じアスペクト) はべき乗を通さず sx / sy をそのまま使う
@@ -120,13 +120,12 @@ int32_t CanvasSortOrder(World& world, EntityID canvas);
 // ---- ゲーム面 → キャンバス (M75b) ----
 // レーン 0 の入力に記録されたゲーム面 (surfW/H) から既定キャンバスを解く。**sim レーンの UI
 // (HitTest / FocusNav / ABI の GetUIRect・UIHitTest・MouseCanvasPos) はすべてここを通る** —
-// 面の寸法 → キャンバスの式を読み手ごとに書くと、M70b の「0 なら基準解像度」の倒し方が
+// 面の寸法 → キャンバスの式を読み手ごとに書くと、「0 なら基準解像度」の倒し方が
 // 1 箇所だけ食い違う。surfW/H <= 0 (ヘッドレス / 未確定) は CanvasSize の退化扱い
-// (= 基準解像度 + scale 1) に倒れる。M75c で CanvasDesc を取る版がこの隣に並ぶ
+// (= 基準解像度 + scale 1) に倒れる
 CanvasInfo CanvasOfInput(const InputSnapshot& in);
 
-// ゲーム面 px → キャンバス座標。M70b の Input::CaptureSnapshot がやっていた
-// `float(mouseX) / scale` と同じ 1 回の除算 = 同じビット (UISelfTest が memcmp で固定)
+// ゲーム面 px → キャンバス座標。`float(px) / scale` の 1 回の除算 (UISelfTest が memcmp で固定)
 inline float SurfaceToCanvas(float surfPx, const CanvasInfo& canvas)
 {
     return surfPx / canvas.scale;
@@ -202,7 +201,7 @@ struct UIWorldContext {
 
 // 解決結果。scale は距離スケール (UIElement.distanceScale) の伝播係数 — space=1 の子は
 // 親の scale を継承しオフセットとサイズに掛かる。screen UI は常に 1.0f で、x*1.0f = x は
-// ビット恒等なので既存要素の矩形は従来と完全一致する。
+// ビット恒等なので screen UI の矩形は scale を掛けない式と完全一致する。
 struct UIResolved {
     UIRect rect;         // 未回転の矩形 (親の未回転フレーム上)。回転/スケールは xform が持つ
     float scale = 1.0f;
@@ -214,14 +213,14 @@ struct UIResolved {
 // e の RectTransform (無ければ UIElement 用の既定値) を screen px 矩形に解決する (正本)。
 // basis=0 は最寄りの UI 祖先 (RectTransform / UIElement / UICanvas 持ち) の解決済み矩形基準。祖先が
 // 無い / basis=1 はワールド追従判定 (冒頭コメント: UI 専用でないオブジェクト上の
-// UIElement は自エンティティの射影点基準) → 該当しなければ screen 基準 (従来)。
+// UIElement は自エンティティの射影点基準) → 該当しなければ screen 基準。
 // ★M75c: 戻る矩形は **e が属するキャンバスの単位**。screenW/H は既定キャンバスの寸法のまま。
 //   UICanvas を持つ要素自身は常に (0,0,cw,ch)、basis=1 は属するキャンバスの全面が基準。
 //   既定キャンバス単位へは CanvasOf(...).scale を掛ける (Canvas の無い要素は 1.0f = 恒等)。
 // 壊れ親/循環は深度上限で打ち切り安全。UIElement も RectTransform も無ければ visible=false。
 // ★M75e: 親が UILayoutGroup なら RectTransform の代わりに Group の配置結果で、自分に
-//   UIContentSizeFitter があれば中身に合わせた大きさで解く (UILayoutGroup.h)。どちらも無い要素の
-//   経路は M75d 以前と 1 ビットも変わらない。scratch は結果を変えないメモ — 同じ World を何度も
+//   UIContentSizeFitter があれば中身に合わせた大きさで解く (UILayoutGroup.h)。どちらも無い要素は
+//   RectFromTransform だけを通る。scratch は結果を変えないメモ — 同じ World を何度も
 //   解く呼び出し単位 (描画 1 フレーム / HitTest 1 回) で 1 つ作って渡す。nullptr なら内部で作る
 UIResolved Resolve(World& world, EntityID e, int screenW, int screenH,
                    const UIWorldContext* wc, LayoutScratch* scratch = nullptr);
@@ -229,12 +228,12 @@ UIResolved Resolve(World& world, EntityID e, int screenW, int screenH,
 // sim レーン用の決定論カメラ構築 — RenderSystem と同じ選択規則 (走査順の先頭、isPrimary 優先)
 // で scalar 演算のみ (SIMD 禁止 = Debug/Release ビット一致)。WorldMatrix は tick 内で
 // TransformSystem が更新済み (RaycastWorld と同じ前例)。カメラ不在は false。
-// aspect は screenW/screenH。**M70b でここへ渡すのはキャンバス寸法になった** — キャンバスは
+// aspect は screenW/screenH。**ここへ渡すのはキャンバス寸法** — キャンバスは
 // 実画面と同じアスペクトなので sim (ヒットテスト) と描画で射影が一致する
-// (M70b 以前は sim だけ 1920x1080 固定で、非 16:9 では横方向にずれていた)。
+// (1920x1080 固定を渡すと、非 16:9 で sim と描画の射影が横方向にずれる)。
 bool BuildSimWorldContext(World& world, int screenW, int screenH, UIWorldContext& out);
 
-// 互換ラッパ: Resolve().rect (visible=false は {0,0,0,0} = 従来の「隠れている」表現に合流)。
+// 互換ラッパ: Resolve().rect (visible=false は {0,0,0,0} = 「隠れている」表現に合流)。
 // 回転/スケールのある要素は変換後の **AABB** (ナビ / クリップ / GameView / ABI GetUIRect が読む)
 UIRect ResolveRect(World& world, EntityID e, int screenW, int screenH,
                    const UIWorldContext* wc = nullptr, LayoutScratch* scratch = nullptr);

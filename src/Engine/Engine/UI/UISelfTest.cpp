@@ -225,7 +225,7 @@ bool RunUISelfTest()
         LayoutText(glyphs, "AB\n\nC", 1.0f, false, 0.0f, lines);
         check(lines.size() == 3 && approx(lines[1].width, 0.0f) && approx(lines[2].width, 10.0f),
               "layout: newline split keeps empty middle line");
-        // 末尾 '\n' は空行を出さない (旧 PushText の描画と同じ見え方)
+        // 末尾 '\n' は空行を出さない (描画 PushTextInRect の見え方と同じ)
         LayoutText(glyphs, "AB\n", 1.0f, false, 0.0f, lines);
         check(lines.size() == 1, "layout: trailing newline emits no empty line");
         // 文字単位折返し: 幅 25 に 10px 字 → 2 字 (20) + 次で折る

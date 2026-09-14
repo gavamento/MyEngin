@@ -123,21 +123,9 @@ bool RunAcousticAudioSelfTest()
         const ComponentDesc& d =
             ComponentRegistry::Get().Desc(AcousticAudioComponent::sTypeId);
         check((d.flags & kComponentNoHash) != 0, "T1: AcousticAudio is kComponentNoHash");
-        // NoHash = WorldHasher が丸ごと飛ばす = **M68a が snapshot の版を上げる理由は無い**。
-        // ★数字そのものは M70b (InputSnapshot 72 -> 88) と M70c (Scene 節に UI 対話状態)
-        //   で 11 -> 13 へ動いた。
-        //   この検査が守っているのは「AcousticAudio を足したせいで版が動いていないこと」で、
-        //   別の理由で上がった版に追随するのは正しい (>= にすると主張が消えるので値で書く)
-        // Light.safeRadius の生バイト追加で13 -> 14。AcousticAudio自身の変更ではない。
-        // M71a の Scene 節 sceneName 追加で 14 -> 15。これも AcousticAudio とは無関係で、
-        // ABI v17 GetSceneName がシーン名を sim の分岐材料に変えたことに追随したもの。
-        // M18 追補 (SkinnedMesh の loop / fadeTicks / クロスフェード状態) の生バイト追加で
-        // 15 -> 16。これも AcousticAudio とは無関係。
-        // M75b (InputSnapshot 112 バイト + UI 対話状態のドラッグ欄) で 16 -> 18 (17 は欠番)。
-        // M65i の AcousticVolume.glowAlbedoMix (残光に面の色) の生バイト追加で 18 -> 19。
-        // どちらも AcousticAudio とは無関係 (入力のレイアウト / 描画レーンの値)。
-        // AcousticVolume.glowDecayEveryTicks (残光の間引き) の生バイト追加で 19 -> 20。これも無関係。
-        // AcousticField::kMaxWaves 16 -> 32 (ACU 節の本数) で 20 -> 21。波の本数であって音レーンとは無関係。
+        // NoHash = WorldHasher が丸ごと飛ばす = **AcousticAudio を足しても snapshot の版は動かない**。
+        // ★この検査が守っているのは「AcousticAudio のせいで版が動いていないこと」で、
+        //   他の理由で版を上げたときは値を追随させる (>= にすると主張が消えるので値で書く)
         check(kSimSnapshotVersion == 21, "T1: kSimSnapshotVersion is not bumped by AcousticAudio");
     }
 
@@ -562,7 +550,7 @@ bool RunAcousticAudioSelfTest()
     }
 
     // ---- (T15) ボリュームが無いシーンは 1 バイトも触らない ----
-    // ★これが「M68 を足しても既存シーンの音が 1 ビットも変わらない」の根拠
+    // ★これが「音響ボリュームの無いシーンの音は AcousticAudio があっても 1 ビットも変わらない」の根拠
     {
         AcousticField empty; // Sync も DebugSetGrid も呼ばない = HasVolume() false
         AcousticProbe probe;

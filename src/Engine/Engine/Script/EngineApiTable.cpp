@@ -92,9 +92,8 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
     out.MouseButton = [](void* engine, int button) -> int {
         return Ctx(engine)->input.MouseDown(button) ? 1 : 0;
     };
-    // ★**クライアント実 px** を返す (M70b で意味は変えていない)。UI のヒットテストは
-    //   キャンバス座標なので、この値をそのまま UIHitTest に渡すと解像度に応じてズレる —
-    //   キャンバス座標のマウスを返す MouseCanvasPos は M70c で足す
+    // ★**クライアント実 px** を返す。UI のヒットテストはキャンバス座標なので、
+    //   この値をそのまま UIHitTest に渡すと解像度に応じてズレる — UI を触るなら MouseCanvasPos を使う
     out.MousePos = [](void* engine, int32_t* x, int32_t* y) {
         if (x) { *x = Ctx(engine)->input.mouseX; }
         if (y) { *y = Ctx(engine)->input.mouseY; }
@@ -208,9 +207,8 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
         e.a = volume;
         e.handle = ReserveAudioHandle(c);
         c->audioQueue->push_back(e);
-        // v3 の戻り値は int なので下位 31bit だけ返す。**tick を跨いで一意** になったので
-        // 旧実装 (キュー index) の衝突バグは解消しているが、停止には v8 の
-        // StopVoice(uint64) を使うこと (int へ潰すと 2^31 再生目以降で衝突しうる)
+        // v3 の戻り値は int なので下位 31bit だけ返す。ハンドルは **tick を跨いで一意** だが、
+        // 停止には v8 の StopVoice(uint64) を使うこと (int へ潰すと 2^31 再生目以降で衝突しうる)
         return static_cast<int>(e.handle & 0x7FFFFFFFull);
     };
     out.StopSound = [](void* engine, int voice) {
@@ -230,7 +228,7 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
     // 決定論なので直接更新してよい (SetLocalPosition と同格)。蓄積フィールドは持たない ----
     // M59h: 速度・力を触るスロットは**必ず起こす**。眠っているボディはソルバが
     // 丸ごと飛ばすので、起こさずに velocity を書くと「書いたのに動かない」になる
-    // (ABI の Wake/IsSleeping そのものは M59k で足す)
+    // (起こすだけの ABI は WakeRigidbody、状態の読み出しは IsSleeping)
     out.AddForce = [](void* engine, MyeEntityId id, MyeVec3 f) -> int {
         auto* rb = Sc(engine)->GetWorld().GetComponent<RigidbodyComponent>(ToEngine(id));
         if (!rb || rb->isKinematic) { return 0; }
@@ -1035,7 +1033,7 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
     //   すべてキャンバス座標なので、UI を触るならこちらを使う (M70b)
     out.MouseCanvasPos = [](void* engine, float* outX, float* outY) {
         // M75b: 記録はゲーム面 px。HitTest (uiinteract::Evaluate) と同じ換算を通す = 同じ点を指す。
-        // 既定キャンバスでは M70b の記録値 mouseCanvasX と同ビット (UISelfTest が固定)
+        // 既定キャンバスでは float(px) / scale の 1 回の除算 (UISelfTest が固定)
         const InputSnapshot& in = Ctx(engine)->input;
         const uilayout::CanvasInfo c = uilayout::CanvasOfInput(in);
         if (outX) { *outX = uilayout::SurfaceToCanvas(in.mouseSurfX, c); }
@@ -1056,7 +1054,7 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
             uilayout::BuildSimWorldContext(w, canvasW, canvasH, wcData) ? &wcData : nullptr;
         const uilayout::UIRect r = uilayout::ResolveRect(w, e, canvasW, canvasH, wc);
         // M75c: 返すのは**既定キャンバス座標** (MouseCanvasPos / UIHitTest と同じ単位)。明示 Canvas の
-        // 下の要素はその Canvas の単位から直す。Canvas の無い要素は 1.0f を掛ける = M75c 以前と同ビット
+        // 下の要素はその Canvas の単位から直す。Canvas の無い要素は 1.0f を掛ける = 恒等
         const float toDefault = uilayout::CanvasOf(w, e, canvasW, canvasH).scale;
         if (out_) {
             out_->x = r.x * toDefault;

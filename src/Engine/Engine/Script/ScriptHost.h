@@ -75,8 +75,8 @@ public:
     void ClearStarted() { started_.clear(); }
     // sim スナップショット (M52d): Start 済み記録は sim 状態 (戻し忘れると復元後の
     // エンティティで Start が再実行される / されない が食い違う)。**SimSnapshot 専用**。
-    // ★M64b で `std::set` に変えたので**走査順そのものが決定論**になった
-    //   (unordered_set のときは書き出し側で昇順に整列する約束だった)
+    // ★`std::set` なので**走査順そのものが決定論** (書き出し側で整列しなくてよい)。
+    //   unordered_set に戻すなら書き出し側で昇順に整列すること
     std::set<ScriptStartedKey>& StartedForSnapshot() { return started_; }
 
     // 毎 tick、フェーズ 3/5 で呼ぶ (Play 中のみ)

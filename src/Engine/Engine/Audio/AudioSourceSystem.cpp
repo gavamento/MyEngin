@@ -466,7 +466,7 @@ void AudioSourceSystem::Update(World& world, AudioSystem& audio, const SoundLibr
         acProbe_.valid = false; // 調整卓が消えた / 場が繋がっていない = 何も主張しない
     }
     // ★有効な AcousticAudio が無い / 場が繋がっていない tick は **Bypass 相当** =
-    //   spatial に 1 バイトも触らない (= M68 以前と 1 ビットも変わらない)
+    //   spatial に 1 バイトも触らない (= AcousticAudio の無いシーンと 1 ビットも変わらない)
     acStats_.active = acOn && acProbe_.valid;
     const bool acLog = acOn && acousticLogTicks_ > 0
         && tickIndex < static_cast<uint64_t>(acousticLogTicks_);

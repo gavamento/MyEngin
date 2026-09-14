@@ -64,8 +64,7 @@ EntityID HitTest(World& world, int canvasW, int canvasH, float pointX, float poi
                          const float y = pointY / cv.scale;
                          if (!res.hasXform) {
                              // 可視矩形 (祖先クリップ適用済み) で判定 — 見えない部分には当たらない
-                             // (= 従来の ResolveVisibleRect と同じ式。恒等要素の判定は M75a 前と
-                             // 1 ビットも変わらない)
+                             // (ResolveVisibleRect と同じ式)
                              const auto vis = uilayout::Intersect(
                                  res.rect,
                                  uilayout::ResolveClipRect(world, e, canvasW, canvasH, wc,
@@ -297,7 +296,7 @@ void Evaluate(World& world, const InputSnapshot& in, const InputSnapshot& prevIn
     const float mouseX = uilayout::SurfaceToCanvas(in.mouseSurfX, canvas);
     const float mouseY = uilayout::SurfaceToCanvas(in.mouseSurfY, canvas);
     // M75f: ヒットした要素 (画像や文字) から最寄りのウィジェットの根へ泡立てる。ウィジェットの無い
-    // シーンでは HitTest の結果そのまま = M75e 以前と同じ
+    // シーンでは HitTest の結果そのまま
     const EntityID under =
         uiwidgets::BubbleTarget(world, HitTest(world, canvasW, canvasH, mouseX, mouseY));
     state.hovered = under;

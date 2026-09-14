@@ -25,14 +25,14 @@ float Clamp(float v, float lo, float hi) { return v < lo ? lo : (v > hi ? hi : v
 // 材質プリセット。順序は AcousticMaterial の列挙値
 // (baseFrequency / resonanceDecay / resonanceAmount / noiseAmount / brightness / shardAmount /
 //  transientDecay / bodyAmount)
-// ★2026-09-12 の試聴で「全体的に高音」→ 基本周波数を 2/3 前後に下げ、brightness を少し絞り、
-//   bodyAmount (低域の胴鳴り) を足した。計画 §9 の初期値より一段暗い
+// ★計画 §9 の初期値より一段暗い (基本周波数を 2/3 前後・brightness を少し絞る・bodyAmount で
+//   低域の胴鳴り)。初期値のままだと全体的に高音に聞こえる
 constexpr ImpactMaterialPreset kPresets[kAcousticMaterialCount] = {
     { 260.0f, 24.0f, 0.80f, 0.60f, 0.25f, 0.10f, 120.0f, 0.60f },  // Wood: 低中域の共鳴、早く減衰
     { 650.0f, 6.0f, 1.00f, 0.15f, 0.75f, 0.20f, 220.0f, 0.30f },   // Metal: 明るく長く鳴る
     { 170.0f, 40.0f, 0.35f, 0.90f, 0.35f, 0.00f, 180.0f, 0.55f },  // Concrete: 乾いたノイズ、共鳴弱
     // Glass: 甲高い、破片あり。★resonanceDecay 14 だと 0.3 秒鳴り続けてグラスを弾いた「ピーン」に
-    //   なる (試聴 3 回目「ガラスの音がおかしい」: 純音 3 本だけで hi>4k のノイズが 0 だった)。
+    //   なる (純音 3 本だけで hi>4k のノイズが 0 だった)。
     //   瓶や板ガラスの衝突は「カツン」= 短い共鳴 + はっきりした transient なので 45 / noise 0.55
     { 1200.0f, 45.0f, 1.00f, 0.55f, 0.90f, 1.00f, 200.0f, 0.15f },
     { 220.0f, 45.0f, 0.60f, 0.50f, 0.20f, 0.00f, 150.0f, 0.50f },  // Plastic: 鈍く短い
@@ -41,8 +41,8 @@ constexpr ImpactMaterialPreset kPresets[kAcousticMaterialCount] = {
 };
 
 // brightness (0..1.3) → transient LPF のカットオフ [Hz]。対数補間: 0 = 400 Hz、1 = 10 kHz。
-// ★旧実装は 1 極 (6 dB/oct) で alpha 0.9 = ほぼ白色ノイズだったので何を踏んでも「シャッ」に
-//   なっていた。2 極 (12 dB/oct) にして肩を下げる
+// ★1 極 (6 dB/oct) で alpha 0.9 だとほぼ白色ノイズになり、何を踏んでも「シャッ」に
+//   なる。2 極 (12 dB/oct) にして肩を下げる
 float TransientCutoffHz(float brightness, uint32_t rate)
 {
     const float fc = 400.0f * std::pow(25.0f, Clamp(brightness, 0.0f, 1.3f));
@@ -284,9 +284,9 @@ void ImpactSynthRender(const ImpactSynthParams& params, AudioClip& out)
     }
 
     // ---- 3. Shard Events (計画 §14。GlassBreak だけ) ----
-    // ★破片は「短く・多く・crack の直後に密」。旧値 (減衰 20-100/s、0-250ms に一様) だと
-    //   長い純音が 150ms 以降に積み上がり、crack より**後のほうが大きい**「ピロロロン」になった
-    //   (試聴 3 回目)。減衰を 60-250/s に、開始を r² で crack 側へ寄せ、飛び散る「シャラ」は
+    // ★破片は「短く・多く・crack の直後に密」。減衰が遅く (20-100/s) 開始が 0-250ms に一様だと
+    //   長い純音が 150ms 以降に積み上がり、crack より**後のほうが大きい**「ピロロロン」になる。
+    //   だから減衰は 60-250/s、開始は r² で crack 側へ寄せ、飛び散る「シャラ」は
     //   別枝の明るいノイズの尾で描く
     if (params.kind == ImpactSoundKind::GlassBreak) {
         const float shardScale = MaterialPreset(params.materialA).shardAmount;

@@ -221,7 +221,7 @@ bool DecodeOgg(const uint8_t* bytes, size_t len, AudioClip& out)
     int channels = 0;
     int sampleRate = 0;
     short* pcm = nullptr;
-    // 全展開 (SE 用)。ストリーミングは M45f で open_memory + アリーナ経路を別に作る
+    // 全展開 (SE 用)。ストリーミングは MusicStream.cpp の open_memory + アリーナ経路
     const int frames = stb_vorbis_decode_memory(bytes, static_cast<int>(len), &channels,
                                                 &sampleRate, &pcm);
     if (frames <= 0 || pcm == nullptr || channels <= 0 || sampleRate <= 0) {

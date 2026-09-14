@@ -1,10 +1,9 @@
 #pragma once
 // ゲーム内 UI の対話状態 (M70c)。「押されたか」をエンジンが持ち、スクリプトは結果を読むだけ。
 //
-// M70b までは押下判定が **UIRenderer の中にだけ**あり (ハイライト表示のためだけに計算して
-// 捨てていた)、ゲーム側で動く経路は「UIElement と同じ矩形をスクリプトにもう一度手書きして
-// マウス座標と比べる」しか無かった (`UIButtonDemo`)。矩形が二重管理になるので、
-// レイアウトを変えた瞬間に**絵と当たり判定が黙って食い違う**。
+// ★押下判定を描画 (UIRenderer) の中にだけ置くと、ゲーム側は UIElement と同じ矩形をスクリプトに
+//   もう一度手書きしてマウス座標と比べるしかない。矩形が二重管理になり、レイアウトを変えた瞬間に
+//   **絵と当たり判定が黙って食い違う**。
 //
 // ★状態は `Scene` が持つ sim 状態で **WorldHash 対象** (TimeControl の隣)。
 //   UIElement 自体は kComponentNoHash なので、ここをハッシュに載せておかないと
@@ -40,15 +39,14 @@ struct UIInteractionState {
     // 以後の挙動が変わるので、巻き戻しで戻らないと再シムが割れる)
     uint32_t adoptedAuthored = 0;
 
-    // ---- M75b: ウィジェット (M75f〜h) のための状態 ----
-    // 使い始めるのは後のサブだが、SimSnapshot / .rep の版の bump を M75b の 1 回に集約するため
-    // 欄はここで全部足してある (後から足すと版がもう一度動く)。
+    // ---- ウィジェット (M75f〜h) のための状態 (M75b) ----
+    // ★欄を足すと SimSnapshot / .rep の版が動く
     //
     // 値が変わった要素 (Toggle / Slider / InputField ...)。clicked と同じく**立った tick だけ**
-    // 持つ値で、Evaluate の頭で落とす。M75b の時点では立てる者がいない (常に null)
+    // 持つ値で、Evaluate の頭で落とす。立てるのは UIWidgets.cpp
     EntityID changed = kNullEntity;
     // ドラッグ。座標は**ゲーム面 px** (InputSnapshot.mouseSurfX/Y と同じ系) — キャンバス座標で
-    // 持たないのは、M75c でキャンバスが複数になると倍率が要素ごとに違うため (受け手が自分の
+    // 持たないのは、キャンバスが複数あると倍率が要素ごとに違うため (受け手が自分の
     // キャンバスの scale で割る)
     float pressSurfX = 0.0f; // pressed を掴んだ tick のポインタ位置
     float pressSurfY = 0.0f;

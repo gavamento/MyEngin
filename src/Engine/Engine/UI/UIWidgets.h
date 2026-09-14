@@ -75,7 +75,7 @@ bool IsWidgetRoot(World& world, EntityID e);
 // Selectable を付け忘れても押せる。**返る参照は構造変更で無効になる** (その場で読むこと)
 const UISelectableComponent& SelectableOf(World& world, EntityID e);
 bool IsInteractable(World& world, EntityID e);
-// フォーカス候補か。ウィジェットの根は「操作可能 && navigationMode != None」、それ以外は従来どおり
+// フォーカス候補か。ウィジェットの根は「操作可能 && navigationMode != None」、それ以外は
 // UIElement.focusable (M35)。**FindNextFocus / 起動時の authored focus / ABI UISetFocused の共通規則**
 bool IsFocusCandidate(World& world, EntityID e);
 // ヒットした要素 (leaf) から祖先を辿り、最初のウィジェットの根を返す (Unity の ExecuteEvents が

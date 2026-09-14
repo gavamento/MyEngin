@@ -1691,7 +1691,7 @@ bool RunAcousticSelfTest()
         check(after < before && after + 3 >= before,
               "tune: keep=0 falls back to the engine default (slow decay)");
 
-        // 負の混ぜ具合は 0 (= 従来の色) へ倒れる
+        // 負の混ぜ具合は 0 (= 面の色を混ぜない) へ倒れる
         if (auto* av = w.GetComponent<AcousticVolumeComponent>(vol.Id())) {
             av->glowAlbedoMix = -1.0f;
         }
