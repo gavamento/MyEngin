@@ -168,8 +168,19 @@ AudioSystem::AudioSystem()
 {
     // 既定バス構成はデバイスに依存しない**データ**として持つ。こうしておくと
     // --no-audio / selftest (Init を呼ばない) でも FindBus / MakePlayDesc が働く
+    ResetToDefaultBuses();
+    // ストリーマは常に構築しておく (ワーカーが起きるのは Init のとき)。
+    // こうすると --no-audio / selftest でも PlayMusic が null チェック無しに no-op になる
+    music_ = std::make_unique<MusicStreamer>();
+}
+
+// 既定のバス構成 (DefaultMixer) を buses_ へ入れ直す (音量などは既定値)。
+// 親が解決できない (-2) バスはルート (-1) として読む — ApplyMixer と同じ読み替え
+void AudioSystem::ResetToDefaultBuses()
+{
     const MixerAsset def = DefaultMixer();
     const std::vector<int> parents = MixerBusParents(def);
+    buses_.clear();
     buses_.reserve(def.buses.size());
     for (size_t i = 0; i < def.buses.size(); ++i) {
         BusSlot b;
@@ -178,9 +189,28 @@ AudioSystem::AudioSystem()
         buses_.push_back(std::move(b));
     }
     UpdateRootBus();
-    // ストリーマは常に構築しておく (ワーカーが起きるのは Init のとき)。
-    // こうすると --no-audio / selftest でも PlayMusic が null チェック無しに no-op になる
-    music_ = std::make_unique<MusicStreamer>();
+}
+
+// 各バスのルートからの深さ (ルート = 0) と、その最大値。
+// ApplyMixer が検証済みなので buses_ は木であることが保証されている — d <= n の打ち切りは
+// 壊れた構成で無限ループしないための保険にすぎない。
+// ★AudioMixer.cpp の MixerBusDepths は**検証用**で、循環・孤児を -1 にする別仕様 (こちらは持たない)
+std::vector<int> AudioSystem::BusDepths(int& maxDepth) const
+{
+    const size_t n = buses_.size();
+    std::vector<int> depth(n, 0);
+    maxDepth = 0;
+    for (size_t i = 0; i < n; ++i) {
+        int d = 0;
+        int cur = static_cast<int>(i);
+        while (buses_[static_cast<size_t>(cur)].s.parent >= 0 && d <= static_cast<int>(n)) {
+            cur = buses_[static_cast<size_t>(cur)].s.parent;
+            ++d;
+        }
+        depth[i] = d;
+        maxDepth = d > maxDepth ? d : maxDepth;
+    }
+    return depth;
 }
 
 // MusicStreamer が前方宣言なので、デストラクタは**必ずここ** (完全定義が見える場所) に置く
@@ -316,19 +346,8 @@ bool AudioSystem::BuildBusGraph()
     }
     const size_t n = buses_.size();
 
-    // 深さ (ルートからの距離)。ApplyMixer が検証済みなので木であることは保証されている
-    std::vector<int> depth(n, 0);
     int maxDepth = 0;
-    for (size_t i = 0; i < n; ++i) {
-        int d = 0;
-        int cur = static_cast<int>(i);
-        while (buses_[static_cast<size_t>(cur)].s.parent >= 0 && d <= static_cast<int>(n)) {
-            cur = buses_[static_cast<size_t>(cur)].s.parent;
-            ++d;
-        }
-        depth[i] = d;
-        maxDepth = d > maxDepth ? d : maxDepth;
-    }
+    const std::vector<int> depth = BusDepths(maxDepth);
     const uint32_t reverbStage = static_cast<uint32_t>(2 * maxDepth);
     auto stageOf = [&depth, maxDepth](size_t i) {
         return static_cast<uint32_t>(2 * (maxDepth - depth[i]) + 1);
@@ -426,18 +445,8 @@ void AudioSystem::DestroyBusGraph()
     // 送り元から先に破棄する (入力を持つ voice の DestroyVoice は未定義動作)。
     // 深いバス → リバーブ → ルート の順になるよう、深さの降順で回す
     const size_t n = buses_.size();
-    std::vector<int> depth(n, 0);
     int maxDepth = 0;
-    for (size_t i = 0; i < n; ++i) {
-        int d = 0;
-        int cur = static_cast<int>(i);
-        while (buses_[static_cast<size_t>(cur)].s.parent >= 0 && d <= static_cast<int>(n)) {
-            cur = buses_[static_cast<size_t>(cur)].s.parent;
-            ++d;
-        }
-        depth[i] = d;
-        maxDepth = d > maxDepth ? d : maxDepth;
-    }
+    const std::vector<int> depth = BusDepths(maxDepth);
     for (int d = maxDepth; d >= 1; --d) {
         for (size_t i = 0; i < n; ++i) {
             if (depth[i] == d && buses_[i].voice != nullptr) {
@@ -527,16 +536,7 @@ void AudioSystem::RebuildBusGraphNow()
     if (!BuildBusGraph()) {
         MYE_LOG_ERROR("[audio] bus graph rebuild failed — falling back to the default mixer");
         DestroyBusGraph();
-        buses_.clear();
-        const MixerAsset def = DefaultMixer();
-        const std::vector<int> parents = MixerBusParents(def);
-        for (size_t i = 0; i < def.buses.size(); ++i) {
-            BusSlot b;
-            b.s.name = def.buses[i].name;
-            b.s.parent = parents[i] >= 0 ? parents[i] : -1;
-            buses_.push_back(std::move(b));
-        }
-        UpdateRootBus();
+        ResetToDefaultBuses();
         BuildBusGraph();
     }
     MYE_LOG_INFO("[audio] bus graph rebuilt: %d buses, root '%s', reverb %s", BusCount(),

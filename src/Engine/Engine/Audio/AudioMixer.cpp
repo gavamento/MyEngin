@@ -283,6 +283,8 @@ std::vector<int> MixerBusParents(const MixerAsset& m)
     return parents;
 }
 
+// ★検証用 (ValidateMixer)。循環・孤児を -1 で返す。検証を通った後の実行時の深さは
+//   AudioSystem::BusDepths が buses_ から数える (そちらは木である前提で -1 を持たない)
 std::vector<int> MixerBusDepths(const MixerAsset& m)
 {
     const std::vector<int> parents = MixerBusParents(m);

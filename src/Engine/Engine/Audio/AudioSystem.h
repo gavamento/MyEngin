@@ -350,6 +350,8 @@ private:
         float hold = 0.0f;    // 表示用 (ピーク保持)
     };
 
+    void ResetToDefaultBuses();                       // buses_ を DefaultMixer の構成へ入れ直す
+    std::vector<int> BusDepths(int& maxDepth) const; // 各バスのルートからの深さ (検証済みの木が前提)
     bool BuildBusGraph();
     void DestroyBusGraph();
     void DestroyAllSourceVoices(); // グラフ再構築の前に必ず通す (送り先が消えるため)
