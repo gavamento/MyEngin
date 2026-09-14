@@ -37,7 +37,7 @@ bool ImGuiRenderer::Init(Win32Window& window, GraphicsDevice& device, const ImGu
     }
 
     ImGui::StyleColorsDark();
-    ApplyEditorTheme(ImGui::GetStyle()); // テーマ第 3 世代 (M27a の UE5 風を置き換え)
+    ApplyEditorTheme(ImGui::GetStyle()); // テーマ第 3 世代
     // M47a: 日本語グリフが無い環境 (英語版 Windows の最小構成など) で日本語 UI にすると
     // 画面全体が豆腐になるので、フォント側の実情に合わせて英語へ落とす
     if (!SetupEditorFonts() && CurrentLanguage() == Lang::Ja) {

@@ -12,8 +12,6 @@ using namespace DirectX;
 namespace mye {
 namespace {
 
-// ボーンパレット最大数は RenderTypes.h の mye::kMaxBones (HLSL の MYE_MAX_BONES と対) を使う。
-
 // HLSL 側は既定の column_major packing のため、書き込み前に転置する。
 // forward_lit.hlsl / deferred_gbuffer.hlsl の PerFrame と同一レイアウト。
 struct PerFrameCB {
@@ -60,7 +58,7 @@ struct PerFrameCB {
     ShadowTileCB shadowTiles[kMaxShadowTiles];
     // ---- M57e: フロクセル (末尾 append)。0 = 従来と完全に同一の式。
     //      形は RenderTypes.h の FroxelForwardCB 1 本きりで DeferredPath.cpp と共有する
-    //      (上の M54e の轍 = 「片方だけ足す」を型で潰した) ----
+    //      (型が 1 本なので「片方だけ足す」が起きない) ----
     FroxelForwardCB froxel;
     // ---- M65e: 音響の残光 (末尾 append)。同上 — 形は RenderTypes.h の AcousticCB
     //      1 本きりで DeferredPath.cpp と共有する ----
@@ -289,11 +287,11 @@ void ForwardPath::Render(GraphicsDevice& device, const RenderView& view, const R
     ID3D11SamplerState* samplers[3] = { sampler_.Get(), shadowSampler_.Get(), iblSampler_.Get() };
     dc->PSSetSamplers(0, 3, samplers);
     // シャドウマップを t1 に (マテリアルの albedo は t0)、IBL を t3-5 に (M38c)、
-    // 局所ライトのアトラスを t6 に (M54e。統合契約 予約 2)、フロクセルの積分結果を
-    // t7 に (M57e。統合契約 予約 2)。
+    // 局所ライトのアトラスを t6 に (M54e)、フロクセルの積分結果を t7 に (M57e)、
+    // 音響の残光を t8 に (M65e)、見通しビットの 3D テクスチャを t9 に。本数は 9
+    // (DeferredPath の透明後段も同じ 9 本)。
     // アトラス用のサンプラは増やさず s1 の比較サンプラを共有する (CSM と同じ設定でよい)。
     // froxel は s2 (IBL 用 LINEAR/CLAMP) を流用する = サンプラは 1 つも増えない
-    // 2026-09-12「描画だけ円」: t9 に見通しビット (本数 8 -> 9。DeferredPath の透明後段も 9)
     ID3D11ShaderResourceView* frameSrvs[9] = { view.shadowSRV,      nullptr,
                                                view.iblIrradiance,  view.iblPrefiltered,
                                                view.iblBrdfLut,     view.shadowAtlasSRV,
@@ -358,8 +356,8 @@ void ForwardPath::Render(GraphicsDevice& device, const RenderView& view, const R
     // 半透明 (インスタンシング対象外)
     if (!queue.transparent.empty()) {
         // M57e: スカイボックスの cubemap 経路が s0 を LINEAR/CLAMP へ差し替えたままなので
-        // マテリアル用 (異方性 WRAP) へ戻す。M38b からの潜在バグで、フロクセルとは
-        // 独立に効く (Deferred の透明後段は前から同じことをしている)
+        // マテリアル用 (異方性 WRAP) へ戻す。フロクセルの有無とは関係なく要る
+        // (Deferred の透明後段も同じことをしている)
         ID3D11SamplerState* samplers2[3] = { sampler_.Get(), shadowSampler_.Get(),
                                              iblSampler_.Get() };
         dc->PSSetSamplers(0, 3, samplers2);
@@ -373,10 +371,11 @@ void ForwardPath::Render(GraphicsDevice& device, const RenderView& view, const R
         dc->RSSetState(rasterizer_.Get());
     }
 
-    // ---- M57e: t1-t7 を剥がす。**t7 (フロクセル積分結果) を残してはいけない** ----
+    // ---- M57e: t1-t8 を剥がす。**t7 (フロクセル積分結果) を残してはいけない** ----
     // 残すと次フレームの積分パスが同じテクスチャを UAV に取った瞬間に D3D が
-    // 片方を黙って外す (M57d が Deferred の t15 で踏んだのと同じ罠)
-    // ★M65e: **本数も 8 にすること** (t8 = 残光)。剥がし忘れると次フレームまで生き残る
+    // 片方を黙って外す (Deferred 光パスの t15 と同じ罠)
+    // ★t8 (残光) も剥がす本数に入れること。剥がし忘れると次フレームまで生き残る。
+    //   t9 (見通しビット) はここでは剥がしていない — SRV 専用のテクスチャで UAV と衝突しないため
     ID3D11ShaderResourceView* fwdNull[8] = {};
     dc->PSSetShaderResources(1, 8, fwdNull);
 }

@@ -4,8 +4,7 @@
 #include <d3d11.h>
 #include <wrl/client.h>
 
-// GPU バッファ生成の共通ヘルパ (M46a)。
-// GpuParticleBackend / PostProcess / DeferredPath に同型の定義が三重化していたものを集約した。
+// GPU バッファ生成の共通ヘルパ (M46a)。GpuParticleBackend / PostProcess / DeferredPath が使う。
 // D3D11 の素の呼び出しを畳むだけの薄い層で、状態は持たない (ヘッダオンリー)。
 namespace mye::gpubuf {
 

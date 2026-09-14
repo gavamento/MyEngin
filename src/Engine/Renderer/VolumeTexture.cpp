@@ -284,7 +284,7 @@ bool VolumeTexture::ReadbackAll(GraphicsDevice& device, std::vector<float>& out)
 // ---- M57a: WARP 実測プローブ ----
 namespace {
 
-// 候補解像度。上から順に「計画が想定した値」「中間」「退避先」。
+// 候補解像度。上から順に「本命」「中間」「退避先」。
 // 3 点あるのは「遅い/速い」ではなく **セル数に対してどう伸びるか**を見るため —
 // 線形なら解像度を落とせば予算に入る、そうでなければディスパッチの固定費が支配的で
 // 解像度を落としても救われない (= 設計をやり直す) という判断ができる
@@ -655,8 +655,7 @@ int RunFroxelVolumeProbe(const FroxelProbeOptions& options)
         }
 
         // ボリューム 1 枚の VRAM。M57c のテンポラルは履歴 ping-pong を持つので
-        // 実際に載る枚数はこの 3〜4 倍になる (計画が「3D テクスチャは VRAM を増やす」と
-        // 名指ししている箇所の根拠になる数字)
+        // 実際に載る枚数はこの 3〜4 倍になる
         const double cells = static_cast<double>(c.x) * c.y * c.z;
         const double megabytes = cells * BytesPerTexel(DXGI_FORMAT_R16G16B16A16_FLOAT)
             / (1024.0 * 1024.0);

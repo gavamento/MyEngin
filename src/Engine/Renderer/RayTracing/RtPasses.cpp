@@ -147,8 +147,8 @@ static_assert(sizeof(RtReflCB) == 64, "HLSL の RtReflCB と一致させるこ�
 // 16 バイト行を埋め、float4 配列は 16 バイト境界 (M67f で 144 → offset 160) から始める。
 // 途中に 1 つ足すと配列の開始がずれて再利用パラメータが丸ごと化けるので、
 // 追加は**必ず gRsClass の直前まで**で、サイズの static_assert を必ず更新すること。
-// M67f で gRsRadiusAlphaRef を足したぶん **明示パディング float3 を添えて 240 B** にした
-// (足さないと C++ は 148、HLSL は 160 から配列を始めて 12 バイトずれる)
+// gRsRadiusAlphaRef (M67f) の後ろに **明示パディング float3 を置いて 240 B** にしてある
+// (無いと C++ は 148、HLSL は 160 から配列を始めて 12 バイトずれる)
 struct RtRestirCB {
     XMFLOAT4X4 prevViewProj = {}; // 転置済み
     XMFLOAT3 prevCameraPos = { 0, 0, 0 };
@@ -161,10 +161,10 @@ struct RtRestirCB {
     int32_t histValid = 0;
     int32_t useVelocity = 0;
     int32_t classOverride = -1;
-    // M67h: 旧 frameIndex の枠。**フレーム番号は ReSTIR には二度と混ぜない** —
-    // M67f でタップ回転のフレーム項を外した (回すと候補集合が毎フレーム入れ替わり、
-    // 乗り換えがそのままフリッカーになる = 実測 2 倍: 1.21 → 0.61)。名前だけ pad にして
-    // 理由を書かないと次の人が同じ理由で足し直すので、ここに残す。
+    // M67h: 使っていない枠。**フレーム番号は ReSTIR には混ぜない** — タップ回転に
+    // フレーム項を入れると候補集合が毎フレーム入れ替わり、乗り換えがそのままフリッカーになる
+    // (M67f の実測でフリッカー 2 倍)。名前だけ pad にして理由を書かないと次の人が
+    // 同じ理由で足し直すので、ここに残す。
     // 混ぜたくなったら先に RtTypes.h の kRtRestirTapSeed のコメントを読むこと。
     // 枠を潰さず残しているのは 240 B / offsetof(classTable) == 160 を動かさないため
     uint32_t pad1 = 0;
@@ -734,7 +734,7 @@ RtReflResult RtPasses::RenderReflection(GraphicsDevice& device, ShaderManager& s
     }
 
     // M67d: ReSTIR。**ここを通らない限り reservoir は 1 バイトも確保しない**。
-    // シェーダのコンパイルに失敗したら現行経路へ黙って縮退する (絵は M67d 以前と同じ)
+    // シェーダのコンパイルに失敗したら現行経路へ黙って縮退する (絵は ReSTIR off と同じ)
     RtReservoirSlot& slot = reservoirs_[HistorySlot(view.rtViewKey, kHistorySlots)];
     ShaderProgram* restirCs = shaders.Get(restirCS_);
     const bool restirOn = view.rtReflRestir != 0 && restirCs != nullptr && restirCs->valid
@@ -789,8 +789,6 @@ RtReflResult RtPasses::RenderReflection(GraphicsDevice& device, ShaderManager& s
     // M55f と同じ条件 — velocity が全画素 0 のフレームを「動いていない」と読まない
     rs.useVelocity = (in.gbVelocity != nullptr && rsHistValid) ? 1 : 0;
     rs.classOverride = view.rtReflRestirParams.classOverride;
-    // (M67h: 旧 rs.frameIndex への代入はここにあった。読み手がいないので落とした —
-    //  RtRestirCB の pad1 のコメントに理由がある)
     rs.depthThreshold = kRtTemporalDepthThreshold;
     rs.normalThreshold = kRtTemporalNormalThreshold;
     rs.jacobianMax = kRtRestirJacobianMax;

@@ -65,12 +65,11 @@ struct AssetEntry {
 class MeshLibrary {
 public:
     // ★M70d (dogfooding #12): 組込みプリミティブ 6 種を**ここで登録し切る**。
-    //   以前は全部遅延生成だったので、Runtime で生きているのは cube / sphere だけ —
-    //   しかもそれは RuntimeMain がショーケースの材質登録を呼ぶときの**副作用**。
-    //   結果、「エディタで作った円柱を含むシーンが Runtime では黙って描画されない」が
-    //   成立していた (使える組込みメッシュが**実行環境で変わる**)。
+    //   遅延生成にすると、Runtime で生きているのは誰かが**副作用**で作ったものだけになり、
+    //   「エディタで作った円柱を含むシーンが Runtime では黙って描画されない」が起きる
+    //   (使える組込みメッシュが**実行環境で変わる**)。
     //   6 つで合計数百頂点なので遅延にする価値が無い。
-    //   ★Init を呼ばない CPU 専用モード (TerrainSelfTest) は従来どおり 1 本も作らない
+    //   ★Init を呼ばない CPU 専用モード (TerrainSelfTest) は 1 本も作らない
     void Init(GraphicsDevice& device)
     {
         device_ = &device;
@@ -227,7 +226,6 @@ struct Material {
     //   アラインメント 8 なので、reflectionClass を足した 60 バイトは 64 に丸められる —
     //   その 4 バイトを暗黙パディングのままにすると値が不定になり、
     //   「同じ入力から作った cooked ファイルのバイト列が run ごとに違う」が生まれる
-    //   (M67 以前の Material はちょうど 56 バイトでこの穴が無かった)
     int32_t pad0 = 0;
 };
 

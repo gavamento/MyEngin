@@ -66,7 +66,7 @@ public:
     const SkinnedModel* Get(AssetID id) const;
     // ★名前は Register でしか手に入らない (models_ はハッシュしか持たない)。これが無いと
     //   Inspector の AssetRef ピッカーが候補を 1 件も作れず、SkinnedMesh.model が
-    //   「メッシュ + マテリアル + テクスチャの混合リスト」へ落ちる (M18 の積み残し)
+    //   「メッシュ + マテリアル + テクスチャの混合リスト」へ落ちる
     std::vector<SkinnedModelEntry> Enumerate() const;
 
 private:

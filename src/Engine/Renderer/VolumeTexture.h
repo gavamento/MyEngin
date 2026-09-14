@@ -26,7 +26,7 @@ class GraphicsDevice;
 //   WARP が本当に R16G16B16A16_FLOAT の 3D UAV ストアを通すかは机上では決まらないので、
 //   下の RunFroxelVolumeProbe が実際に書いて読み戻して確かめる。
 //
-// ★M65d: `withUav = false` で **SRV だけ**の 3D テクスチャも作れるようにした。
+// ★M65d: `withUav = false` で **SRV だけ**の 3D テクスチャになる。
 //   R8_UNORM は FL11_0 の「typed UAV 必須」リストの外なので、UAV 込みで作ろうとすると
 //   CreateUnorderedAccessView が落ちて Create ごと false を返す。音響の残光は CPU が
 //   UpdateSubresource で流し込んで PS が読むだけ = UAV は 1 度も要らないので、
@@ -52,7 +52,7 @@ public:
 
     // 検証用の同期読み戻し。STAGING テクスチャを都度作って CopyResource + Map する =
     // GPU を完全に待たせる経路なので、**毎フレームの描画からは呼ばないこと**
-    // (プローブと将来の selftest 専用)。対応フォーマットは R16G16B16A16_FLOAT /
+    // (プローブと検証専用)。対応フォーマットは R16G16B16A16_FLOAT /
     // R32G32B32A32_FLOAT / R8_UNORM (M65d) のみ — それ以外は false を返す。
     // R8_UNORM のときは out[0] だけ埋まり、out[1..3] は 0
     bool ReadbackTexel(GraphicsDevice& device, int x, int y, int z, float out[4]) const;
@@ -82,12 +82,8 @@ private:
 
 // ---- M57a: WARP 実測プローブ (`Editor.exe --froxel-probe`) ----
 //
-// なぜ「設計より先に計測」なのか: shot_verify.bat が「RT デモは WARP では重すぎる」と
-// 明記していて、その RT GI は 960x540 の半解像度 = 約 130k ピクセル。フロクセル
-// 160x90x64 は **セル数だけで 7 倍**の 921,600 ある。ここが CI 予算に載らないなら
-// M57b 以降の設計 (解像度・パス数・golden を CI に入れるか) が全部変わるので、
-// 実装を始める前に「空の CS を回した壁時計」と「typed 3D UAV が WARP で動くか」を
-// 数字で確定させる。**この数字を出すこと自体が M57a の成果物**。
+// 「空の CS を回した壁時計」と「typed 3D UAV が WARP で動くか」を数字で出す。
+// フロクセル 160x90x64 は 921,600 セルあり、CI (WARP) の予算に載るかは机上では決まらないため。
 //
 // ウィンドウも sim も作らない (GraphicsDevice + ShaderManager だけの裸経路)。
 // 戻り値: 0 = 全候補で UAV ストアが正しく動いた / 1 = 書き込み結果が食い違った /

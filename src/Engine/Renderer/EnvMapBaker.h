@@ -38,7 +38,7 @@ struct EnvMaps {
 class EnvMapBaker {
 public:
     // 焼き上がった 1 組 (irradiance + prefiltered)。**テクスチャの所有者**。
-    // M56e で public にした — 反射プローブは「キャッシュを通さず、呼び出し側が
+    // public なのは反射プローブ (M56e) のため — 反射プローブは「キャッシュを通さず、呼び出し側が
     // プローブ 1 個ぶんずつ持つ」ので、キャッシュ内部の型では足りない
     struct BakedEnv {
         Microsoft::WRL::ComPtr<ID3D11Texture2D> irrTex;

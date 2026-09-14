@@ -234,16 +234,15 @@ struct RtInstance {
     DirectX::XMFLOAT4 invRow3 = { 0, 0, 0, 0 }; // xyz = 平行移動成分
     int32_t blasRoot = 0;      // 連結ノード配列における BLAS のルート index
     int32_t materialIndex = 0; // マテリアル配列の index
-    // M67: 反射に映る側の品質クラス (kRtReflClass*)。旧 pad0 の枠をそのまま意味付けした
-    // ものなのでレイアウトは不変 (static_assert 80 が動かない)。**コメントではなく名前で
-    // 縛る** — pad は「誰も読まない」が前提の名前で、読み始めた瞬間に嘘になる
+    // M67: 反射に映る側の品質クラス (kRtReflClass*)。**読む枠には pad ではなく名前を付ける** —
+    // pad は「誰も読まない」が前提の名前で、読み始めた瞬間に嘘になる
     int32_t reflectionClass = kRtReflClassDefault;
     int32_t pad1 = 0;
 };
 static_assert(sizeof(RtInstance) == 80, "HLSL RtInstance と一致させること");
 
 // ヒット点のシェーディングに使うマテリアル定数。
-// baseColor はリニア (SrgbToLinear 済み)。emissive は M46i まで 0
+// baseColor はリニア (SrgbToLinear 済み)。emissive は自己発光 (M46i)
 struct RtMaterial {
     DirectX::XMFLOAT3 baseColor = { 1, 1, 1 };
     float metallic = 0.0f;
@@ -266,28 +265,19 @@ struct RtReflClassParams {
 };
 static_assert(sizeof(RtReflClassParams) == 16, "HLSL の gRsClass (float4) と一致させること");
 
-// クラス別の既定値。**向きが元計画の初版と逆で「Hero ほど数字が小さい = 保守的」**。
+// クラス別の既定値。**向きは「Hero ほど数字が小さい = 保守的」**。
 // 反射に映る主役を遠くの画素から借りると、輪郭がにじみ (空間)、動いたときに
 // 残像として引きずる (時間) — 主役ほどそれが目立つので、主役の再利用を絞る。
 // 逆に小物は多少にじんでも気付かれないので、思い切って借りてノイズを消す。
 // **ここが唯一の出所** (UI のスライダも「既定に戻す」でこの表へ戻る)。
-// ★M67h (S5) で **2 軸 × 5 条件 (64 run) を測った**。結論は「**4 行は規則どおり据え置き、
-//   Hero の mCap だけユーザー判断で 8 → 16**」。数値と領域の取り方は ADR-016 の
-//   「S5 の結論」節。**同じ測定をやり直す前に読むこと**。
-//   - 据え置いた 4 行の根拠: mCap を上げるとフリッカーは必ず減る (片側の軸) が、動く反射像の
-//     追従が同時に落ちる。規則「フリッカー 20% 以上改善 かつ 追従の低下 0.05 未満」を
-//     満たす段差が 1 つも無かった (24→32 は軸 A が 14.0% / 9.6% で 20% にすら届かない)。
-//   - **Hero だけは規則も不成立だった** — 追従の低下は規則の指標で +0.083 / +0.056 / +0.053 /
-//     +0.042 (4 標本中 3 つが閾値 0.05 超)、動きを分離した対照では 0.010 (= 分解能内)。
-//     つまり「遅れない」ではなく「我々の道具では判定できない」。**2026-09-08 にユーザーが
-//     フリッカー 35.5〜38.9% の改善 (Ro 3.789 → 2.317 / R 4.343 → 2.802) を採り、
-//     決着しなかった遅れのリスクを引き受けて 16 を選んだ**。8 へ戻すなら上の数値がそのまま根拠。
-//   - ★**16 にしたことで Hero == Character == Default になった**。spatial が既定 off の間、
+// ★表の値は M67h (S5) の計測で決めた (Hero の mCap 16 だけはユーザー判断)。数値と判断の
+//   根拠は ADR-016 の「S5 の結論」節。**同じ測定をやり直す前に読むこと**。
+//   - ★**Hero == Character == Default の mCap が同じ 16**。spatial が既定 off の間、
 //     クラスが選ぶのは mCap だけ (radiusPx / taps はシェーダで 1 タップも使われない) =
 //     **出荷構成ではこの 3 クラスが同挙動**。Hero をこれ以上上げると「主役が中立より積極的」に
 //     なるので、`RtSelfTest` の `hero.mCap <= 他 4 クラスの最小` で機械的に止めてある
 constexpr RtReflClassParams kRtReflClassTable[kRtReflClassCount] = {
-    { 2.0f, 2.0f, 16.0f, 0.0f },  // 0 Hero      = 最も保守的 (mCap は M67h でユーザー判断により 8 → 16)
+    { 2.0f, 2.0f, 16.0f, 0.0f },  // 0 Hero      = 最も保守的 (mCap 16 は M67h のユーザー判断。ADR-016)
     { 4.0f, 4.0f, 16.0f, 0.0f },  // 1 Character
     { 6.0f, 6.0f, 24.0f, 0.0f },  // 2 Vehicle
     { 12.0f, 8.0f, 32.0f, 0.0f }, // 3 Prop      = 最も積極的
@@ -298,7 +288,7 @@ static_assert(kRtReflClassCount == 5,
 
 // ReSTIR の実行時パラメータ一式 (RenderView に載り、CB へ写される)。
 // **非永続** — チューニング UI (M67f) が実行中に書き換えるだけでプロジェクトには保存しない。
-// 既定は上の定数表と M46h の SVGF 設定そのもの = 「既定のまま on にしたら元計画の表で動く」
+// 既定は上の定数表と M46h の SVGF 設定そのもの = 既定のまま on にすれば上の表で動く
 struct RtReflRestirParams {
     RtReflClassParams classTable[kRtReflClassCount] = {
         kRtReflClassTable[0], kRtReflClassTable[1], kRtReflClassTable[2],
@@ -307,16 +297,13 @@ struct RtReflRestirParams {
     float svgfHistory = kRtReflMaxHistory;              // ReSTIR 後段の SVGF 履歴長
     int atrousIterations = kRtReflAtrousIterations;     // 同 A-Trous 反復回数
     float radiusAlphaRef = kRtRestirRadiusAlphaRef;     // 半径を α で縮める基準 (M67f)
-    // 空間再利用の既定。**sub-06 round 2 の計測で 0 に決めた** (spec §7 U7 の規則:
-    // 目標帯で temporal 単独より改善すれば on、しなければ off)。実測 (音響デモの床、
-    // 粗さ 0.5、--rt-debug 11 = 反射レーンだけ、frame 120/121 のフリッカー):
-    //   off 2.943 → temporal 単独 0.181 → spatial on 0.255
-    // temporal 単独が最良で、spatial を足すと 1.4 倍に戻る。MIS 重みを持たない
-    // biased 合成では近傍の p̂ 比がそのまま重みの分散になるため (unbiased 化は M67 の
-    // スコープ外 = spec §3)。**ノブ (UI) と CLI は残す** — 粗い面が主役のシーンでは
-    // 効く可能性があるので、いつでも再評価できるようにしておく。
-    // (S5 の再評価そのものは M67h で済んでいて結論は「off 維持」= ADR-016「S5 の結論」の R2。
-    //  次に測る人は目標帯を決めてから — 帯を決めずに測ると「今の帯では得が無い」を見落とす)
+    // 空間再利用の既定は 0 (spec §7 U7 の規則: 目標帯で temporal 単独より改善すれば on、
+    // しなければ off)。計測では temporal 単独が最良で、spatial を足すとフリッカーが戻った。
+    // MIS 重みを持たない biased 合成では近傍の p̂ 比がそのまま重みの分散になるため
+    // (unbiased 化は M67 のスコープ外 = spec §3)。数値は ADR-016 (「S5 の結論」の R2)。
+    // **ノブ (UI) と CLI は残す** — 粗い面が主役のシーンでは効く可能性があるので、
+    // いつでも再評価できるようにしておく。
+    // 次に測る人は目標帯を決めてから — 帯を決めずに測ると「今の帯では得が無い」を見落とす
     int spatial = 0;                                    // 空間再利用 (0 = temporal のみ)
     int visRay = 0;                                     // 候補の可視レイ (既定 off = 光漏れ許容)
     int classOverride = -1;                             // 全インスタンスのクラス強制 (-1 = off)

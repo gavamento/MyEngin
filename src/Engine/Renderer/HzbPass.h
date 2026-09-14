@@ -16,8 +16,7 @@ class ShaderManager;
 //
 // 「ミップ n のテクセル 1 個 = 対応する画面領域の**最も手前**の深度」を持つ縮小列で、
 // SSR (M56d) の光線行進が「この領域には何も無い」を 1 サンプルで判定して大股で進むための
-// 加速構造。消費者が現れるのは M56d なので、このサブでは**デバッグ表示だけが唯一の目視口**
-// になる (M55c の velocity と同じ立ち位置)。
+// 加速構造。ピラミッドそのものを目で確かめる口は DeferredPath の HZB 可視化 (--hzb-debug)。
 //
 // ★**`RenderTexture` にミップを足していない**。`RenderTexture::Create` の `MipLevels = 1` は
 //   GBuffer 5 枚 / postfx 中間 / SceneView RT / RT パスが全部使う共有クラスの固定値で、

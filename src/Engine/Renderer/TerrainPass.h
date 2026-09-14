@@ -21,8 +21,9 @@ struct RenderView;
 // ★**なぜ独立したパスなのか**: Deferred の不透明パスは `material->shader` を**見ない**
 //   (`DeferredPath.cpp` が GBuffer シェーダ固定 3 種を bind している。Forward は見る)。
 //   つまり地形を「マテリアルを持つ MeshRenderer」として通しても、Deferred では永久に
-//   deferred_gbuffer で描かれてしまう。加えて地形はテクスチャを 8 枚使う予定 (M58d の
-//   4 レイヤ x albedo+normal) で `Material` の 2 枚枠に収まらない。**専用パス一択**。
+//   deferred_gbuffer で描かれてしまう。加えて地形はレイヤのテクスチャを 8 枚使う (M58d の
+//   4 レイヤ x albedo+normal。ほかにスプラット 1 枚) ので `Material` の 2 枚枠に収まらない。
+//   **専用パス一択**。
 //
 // ★**CB は b4 を使う** (下の kTerrainObjectCbSlot)。b0 = ホストパスが張った PerFrame を
 //   そのまま読み、b1-b3 (PerObject / MaterialParams / ボーンパレット) には触らない。
@@ -33,10 +34,10 @@ struct RenderView;
 // `register(b4)` と必ず一致させること。**
 inline constexpr uint32_t kTerrainObjectCbSlot = 4;
 
-// ★**地形パス専用の SRV スロット (M58d)。** t0-t7 はホスト (Deferred 光パス / Forward) の
-//   持ち物で、t12-t15 / t6-t7 は他のマイルストーンの予約席 (計画の付録「予約 2」)。
+// ★**地形パス専用の SRV スロット (M58d)。** 若い番号はホストの持ち物
+//   (Deferred 光パスが t0-t16、Forward 系が t1-t9)。
 //   地形は**誰とも隣り合わない t20 以降**へ逃がす — こうしておけば
-//   「統合で番号がぶつかったが *コンパイルは通る*」という一番静かな壊れ方が起きない。
+//   「番号がぶつかったが *コンパイルは通る*」という一番静かな壊れ方が起きない。
 //   描画後に必ず null で剥がす (剥がさないと後段のパスが読まないだけの残留になるが、
 //   RT との二重バインド警告の温床になる)。**HLSL の register(t20/t21/t25) と一致必須**
 inline constexpr uint32_t kTerrainSplatSrvSlot = 20;      // スプラット (RGBA8 = 4 レイヤの重み)

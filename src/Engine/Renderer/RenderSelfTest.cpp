@@ -417,8 +417,7 @@ void TestSignedCoC()
 }
 
 // M55a: 深度線形化 (common.hlsli::LinearizeDepth のミラー検証)。
-// M55a 以前は同じ式が 5 つのシェーダにローカルコピーで散っていて CPU 側の検査も
-// パーティクル文脈 (LinearizeParticleDepth の端点 2 点) しか無かった。共有版になったので
+// 複数のシェーダが共有する式なので、
 // 「実際の透視投影行列が吐く NDC 深度を戻せるか」まで踏み込んで固定する
 void TestLinearizeDepth()
 {
@@ -540,7 +539,7 @@ void TestEmissiveEncoding()
     const float kMax = static_cast<float>(kEmissiveMaxIntensity);
 
     // ★受け入れ基準の核: 発光なし → 符号化値も復号値も厳密に 0。
-    //   ライトパスの加算項がちょうど 0 になるので M46i 以前とビット一致する
+    //   ライトパスの加算項がちょうど 0 になるので発光項の無い式とビット一致する
     TEST_CHECK(EncodeEmissive(0.0f) == 0.0f);
     TEST_CHECK(DecodeEmissive(0.0f) == 0.0f);
     TEST_CHECK(DecodeEmissive(EncodeEmissive(0.0f)) == 0.0f);
@@ -895,8 +894,8 @@ void TestFroxelGrid()
 }
 
 // M57b: 注入パスの数式 (RenderTypes.h の mye::froxel。HLSL froxel_inject.cs.hlsl と同一式)。
-// ★ここが「注入が物理的に正しいか」を言える唯一の場所 — 積分 (M57c) も合成 (M57e) も
-//   まだ無いので、絵からは 1 画素も分からない。GPU 側で本当に走るかは
+// ★ここが「注入が物理的に正しいか」を言える唯一の場所 — 積分と合成を通った後の絵からは
+//   注入の式の誤りを切り分けられない。GPU 側で本当に走るかは
 //   `Editor.exe --froxel-probe` (値の照合つき) の担当
 void TestFroxelScattering()
 {
@@ -1106,7 +1105,7 @@ void TestFroxelComposite()
 
     // ⑤ サンプル w。手前は最初のテクセル中心 (0)、奥端は最後のテクセル中心で**止まる**。
     //    ★止めないとグリッドの外を外挿して、遠景にグリッド全体より濃い霧が乗る
-    //    (解析フォグの残りと合わせて二重計上 = このサブが解いた問題の再発)
+    //    (解析フォグの残りと合わせて二重計上になる)
     TEST_CHECK(froxel::IntegratedSampleWForDepth(nearZ, slices, nearZ, farZ) == 0.0f);
     TEST_CHECK(std::fabs(froxel::IntegratedSampleWForDepth(farZ, slices, nearZ, farZ)
                          - (static_cast<float>(slices) - 0.5f) / slices)
@@ -1140,13 +1139,13 @@ void TestFroxelComposite()
     }
 
     // ⑦ 合成は透過率 1 / 内向き散乱 0 で**厳密に恒等**。
-    //    ここがビット恒等でないと「froxel を切れば直前コミットとビット一致」が崩れる
+    //    ここがビット恒等でないと「froxel を切れば froxel 無しの経路とビット一致」が崩れる
     TEST_CHECK(froxel::CompositeFroxel(0.375f, 0.0f, 1.0f) == 0.375f);
     // 透過率 0 なら内向き散乱だけが残る (完全に霧へ埋もれた遠景)
     TEST_CHECK(froxel::CompositeFroxel(9.0f, 0.25f, 0.0f) == 0.25f);
     TEST_CHECK(std::fabs(froxel::CompositeFroxel(1.0f, 0.2f, 0.5f) - 0.7f) < 1e-6f);
 
-    // ⑧ 受け持ちが重ならないこと (このサブの主張そのもの) を距離で確かめる。
+    // ⑧ 受け持ちが重ならないこと (フォグ三重計上を解く核) を距離で確かめる。
     //    カメラ→サーフェスの線分を [0, handoff] (= froxel) と [handoff, 1] (= 解析フォグ)
     //    に割るので、2 区間の和はちょうど全長 = 1m も重複しない・欠けない
     {

@@ -32,7 +32,7 @@ public:
         bool fxaa = true;
         // linear→sRGB OETF。M38a でリニアパイプライン (sRGB テクスチャデコード +
         // authored 色の CPU 変換) が揃ったので既定 ON。
-        // 制限: enablePostFx=false (HDR 配管バイパス) 時は OETF も掛からない = 旧来の見た目
+        // 制限: enablePostFx=false (HDR 配管バイパス) 時は OETF も掛からない (ガンマ補正の無い見た目)
         bool applyGamma = true;
         // ---- M32d: 追加ポスト効果 (既定 = 無効 = 従来の見た目) ----
         float chromAberration = 0.0f;   // 色収差 (UV スケール、0=off)

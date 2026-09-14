@@ -34,9 +34,9 @@ public:
     float HzbGpuMs() const override { return hzb_.GpuMs(); }
     // M56d: SSR (コピー + 階層 Z トレース + 加算合成) の GPU 時間。同上
     float SsrGpuMs() const override { return ssr_.GpuMs(); }
-    // M57d: 光パス (t15) で不透明ピクセルへ合成する。M57e で背景ピクセルと透明後段
-    // (Forward t7) も受け持つようになった。スカイとパーティクルは SkyboxPass /
-    // ParticleSystem が view.froxelSRV を直接読む。ここが true になった時点で
+    // M57d: 光パス (t15) で不透明ピクセルへ合成する。背景ピクセルと透明後段
+    // (Forward t7) も受け持つ (M57e)。スカイとパーティクルは SkyboxPass /
+    // ParticleSystem が view.froxelSRV を直接読む。ここが true のパスでは
     // ゴッドレイは自動 off になる (三重計上の解消)
     bool AppliesFroxel() const override { return true; }
 
@@ -70,9 +70,8 @@ private:
     RenderTexture gbNormal_;   // ワールド法線 *0.5+0.5
     RenderTexture gbPosition_; // ワールド座標 (Point/Spot ライティング用)
     RenderTexture gbMaterial_; // r=metallic g=roughness (PBR、M17)
-    // M55c: 画面速度 (R16G16_FLOAT)。**このサブでは誰も読まない** — 消費者は
-    // M55d (TAA) / M55e (モーションブラー v2) / M55f (RT の物体モーション)。
-    // 読む側は自分で SRV を bind する (光パスの t0-t11 の並びは 1 つも動かさない)
+    // M55c: 画面速度 (R16G16_FLOAT)。読むのは TAA (M55d) / モーションブラー v2 (M55e) /
+    // RT の物体モーション (M55f)。光パス (t0-t16) には張らず、読む側が自分で SRV を bind する
     RenderTexture gbVelocity_;
 
     Microsoft::WRL::ComPtr<ID3D11Buffer> perFrameCB_;
@@ -126,14 +125,14 @@ private:
     int normalCopyW_ = 0;
     int normalCopyH_ = 0;
     // ---- M56c: HZB (min-Z ピラミッド) ----
-    // 本番の消費者 (SSR) は M56d。**このサブでは view.hzbDebug != 0 のときしか組まない**ので、
-    // 既定の絵は 1 命令も増えない。可視化シェーダは velocityDebugShader_ と同じ立ち位置
+    // 組む条件は **view.hzbDebug != 0 と SSR の要求の or** (BuildHzb)。どちらも off の既定では
+    // 1 命令も増えない。可視化シェーダは velocityDebugShader_ と同じ立ち位置
     HzbPass hzb_;
     AssetID hzbDebugShader_ = {};
     Microsoft::WRL::ComPtr<ID3D11Buffer> hzbDebugCB_;
     // ---- M56d: SSR (スクリーンスペース反射) ----
     // HZB の唯一の本番消費者。**view.ssrEnabled が HZB を組む条件に or で入る** —
-    // 忘れると SSR が null のピラミッドを見て何も映らない (M56c からの申し送り)
+    // 忘れると SSR が null のピラミッドを見て何も映らない
     SsrPass ssr_;
     SkyboxPass skybox_; // ライトパス後・透明前に空を塗る (M29d)
     // 地形 (M58c)。GBuffer へ専用シェーダで書く — 不透明パスは material->shader を

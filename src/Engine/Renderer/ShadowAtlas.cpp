@@ -169,9 +169,8 @@ void ShadowAtlas::Render(GraphicsDevice& device, ShaderManager& shaders, const R
     }
 
     // ---- タイル毎カリング用の world AABB を 1 回だけ作る (M54d) ----
-    // ★これを入れないと「点光源 1 個 = 6 タイル × 不透明キュー全件」が素通しで積まれる。
-    //   M54c はスポット 2 本 = 2 パスだったので問題にならなかったが、点光源が入ると
-    //   一気に 6 倍になり、WARP 撮影が計測不能に遅くなる (計画 M54d の★罠)
+    // ★これを入れないと「点光源 1 個 = 6 タイル × 不透明キュー全件」が素通しで積まれ、
+    //   WARP 撮影が計測不能に遅くなる (M54d の★罠)
     const size_t itemCount = queue.opaque.size();
     itemMin_.assign(itemCount, XMFLOAT3{ 0.0f, 0.0f, 0.0f });
     itemMax_.assign(itemCount, XMFLOAT3{ 0.0f, 0.0f, 0.0f });

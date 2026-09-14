@@ -18,8 +18,6 @@ using namespace DirectX;
 namespace mye {
 namespace {
 
-// ボーンパレット最大数は RenderTypes.h の mye::kMaxBones (HLSL の MYE_MAX_BONES と対) を使う。
-
 // ForwardPath と同一レイアウト (forward_lit.hlsl を透明後段でそのまま使うため)
 struct PerFrameCB {
     XMFLOAT4X4 viewProj;
@@ -62,8 +60,7 @@ struct PerFrameCB {
     float atlasPad[2];
     ShadowTileCB shadowTiles[kMaxShadowTiles];
     // ---- M57e: フロクセル (末尾 append)。透明後段の forward_lit が参照。
-    //      形は RenderTypes.h の FroxelForwardCB 1 本きりで ForwardPath.cpp と共有する
-    //      (M54e の「2 つのミラーを手で揃える」を型で潰した) ----
+    //      形は RenderTypes.h の FroxelForwardCB 1 本きりで ForwardPath.cpp と共有する ----
     FroxelForwardCB froxel;
     // ---- M65e: 音響の残光 (末尾 append)。同上 — 形は AcousticCB 1 本きりで
     //      ForwardPath.cpp と共有する ----
@@ -71,9 +68,6 @@ struct PerFrameCB {
 };
 
 // PerObjectCB / MaterialCB は MeshBind.h (ForwardPath と共有する 1 本)
-
-// (M54c の ShadowTileCB は M54e で RenderTypes.h へ引き上げた — Forward の PerFrameCB も
-//  同じ形を要求するようになったため。転置の式は FillShadowTilesCB 1 本きり)
 
 // deferred_light.hlsl の LightPass と同一レイアウト
 struct LightPassCB {
@@ -215,7 +209,7 @@ struct HzbDebugCB {
 // 階調になり、段が上がるほど四角が粗くなる様子が一番読み取りやすい。デバッグ表示専用
 constexpr float kHzbDebugRange = 40.0f;
 
-// M46a: 定数バッファ生成 / CB 更新は GpuBufferUtil.h へ集約 (定義は同一)
+// 定数バッファ生成 / CB 更新は GpuBufferUtil.h (M46a)
 using namespace gpubuf;
 
 } // namespace
@@ -396,7 +390,7 @@ bool DeferredPath::Init(GraphicsDevice& device, ShaderManager& shaders)
     }
 
     // ---- M56b: デカール専用ブレンド (MRT ごとに別設定) ----
-    // ★**IndependentBlendEnable がこのサブの肝**。3 枚を 1 draw で書くのに、
+    // ★**IndependentBlendEnable がこのブレンドの肝**。3 枚を 1 draw で書くのに、
     //   ・RT1 (法線) は「デカールの法線へどれだけ寄せるか」= SV_Target1.a
     //   ・RT3 (material) は「roughness をどれだけ上書きするか」= SV_Target3.a
     //   と **別々の係数**が要る。D3D11 は独立ブレンドのとき RT n の SRC_ALPHA を
@@ -554,14 +548,11 @@ void DeferredPath::RenderDecals(GraphicsDevice& device, ShaderManager& shaders,
         writesSurface = writesSurface || DecalWritesSurface(d);
     }
 
-    // ★**GBuffer の RT は「書くものだけ」張り直す。**
-    //   計画は「IndependentBlendEnable=TRUE で RT2 (position) と RT4 (velocity) を
-    //   RenderTargetWriteMask=0 で塞ぐ」を想定していたが、
+    // ★**GBuffer の RT は「書くものだけ」張り直す。** 張るのは RT0 (albedo) と、
+    //   法線 / roughness を書くフレームだけ RT1 (法線) と RT3 (material)。
     //     ・ワールド座標 (RT2) は**この場で SRV として読む**ので、そもそも RTV に
     //       残したままには出来ない (同一リソースの読み書き二重バインド)。
-    //     ・書込マスク 0 は「PS が値を出さなかった RT の内容は未定義」という D3D の規則を
-    //       消してくれるが、**bind しない方がそれより強い**。
-    //   → M56b で足したのは RT1 (法線) と RT3 (material) だけ。
+    //     ・書かない RT は書込マスク 0 で塞ぐより **bind しない方が強い**。
     //     **RT2 (SSAO / RT / SSR の入力) と RT4 (TAA の入力) は nullptr のまま据え置き**
     //     (RT4 を 1 バイトでも書くと TAA の履歴 UV が壊れる)。
     // ★法線 (RT1) は角度フェードのために**読みながら書く**ので、RTV に張る前に
@@ -740,12 +731,13 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
     RenderTransparent(view, queue, resources, shaders, f);  // 3)
     RenderDebugViews(device, view, shaders, f);             // 4) - 6)
 
-    // ---- M57e: t1-t7 を剥がす。**t7 (フロクセル積分結果) を残してはいけない** ----
-    // 光パスの nullSrvs[16] より後にスカイと透明後段が t7 を張り直しているので、
+    // ---- M57e: t1-t8 を剥がす。**t7 (フロクセル積分結果) を残してはいけない** ----
+    // 光パスの nullSrvs[17] より後にスカイ (t7) と透明後段 (t1-t9) が張り直しているので、
     // ここで剥がさないと次フレームの積分パスが同じテクスチャを UAV に取った瞬間に
-    // D3D が片方を黙って外す (M57d が t15 で踏んだのと同じ罠。今度は Render の末尾)
-    // ★M65e: **本数も 8 にすること**。7 のままだと t8 (残光) が張られたまま次フレームへ
-    //   生き残る = 張り忘れではなく剥がし忘れが実害を出す (M57e が踏んだ罠と同型)
+    // D3D が片方を黙って外す (光パスの t15 と同じ罠)。
+    // ★t8 (残光) も剥がす本数に入れること。本数を減らすと t8 が張られたまま次フレームへ
+    //   生き残る = 張り忘れではなく剥がし忘れが実害を出す。
+    //   t9 (見通しビット) はここでは剥がしていない — SRV 専用のテクスチャで UAV と衝突しないため
     ID3D11ShaderResourceView* fwdNull[8] = {};
     f.dc->PSSetShaderResources(1, 8, fwdNull);
 }
@@ -760,7 +752,6 @@ void DeferredPath::RenderGeometry(GraphicsDevice& device, const RenderView& view
     ShaderProgram* gbSkinnedProg = f.gbSkinnedProg;
     const D3D11_VIEWPORT& vp = f.vp;
 
-    // ---- 1) ジオメトリパス ----
     // M55c: MRT は 5 本 (RT4 = velocity)。blendOpaque_ は IndependentBlendEnable=FALSE なので
     // RT0 の設定 (ブレンド無効・全チャンネル書込) がそのまま 5 本すべてに適用される
     ID3D11RenderTargetView* gbufs[5] = { gbAlbedo_.RTV(), gbNormal_.RTV(), gbPosition_.RTV(),
@@ -1072,22 +1063,14 @@ void DeferredPath::BuildHzb(GraphicsDevice& device, const RenderView& view, Shad
     ID3D11DeviceContext* dc = f.dc;
     const bool unlit = f.unlit;
     const bool wire = f.wire;
-    // ---- 1.6) HZB (M56c): 完成した深度から min-Z ピラミッドを組む。
-    //      ここに置く理由は「不透明 + 地形が深度を書き終えていて、まだ半透明が乗る前」だから
-    //      (半透明は深度を書かないので後でも同じだが、消費者の SSR (M56d) が光パス直後に
-    //      入るので、それより前という制約の方が強い)。
-    //      発火条件は「**誰かが見せろと言ったとき**」の 1 本 — 可視化 (M56c) か
-    //      SSR (M56d) のどちらかが要求したときだけ組む。既定 (両方 0) では確保も
-    //      ディスパッチも走らず、絵は 1 ビットも変わらない。
-    //      ★SSR は HZB を唯一の加速構造として使うので、ここに ssrEnabled を or で
-    //        入れ忘れると SSR が null のピラミッドを見て何も映らない ----
+    // 深度が書き終わった後、SSR より前に置く
     const bool ssrWanted = view.ssrEnabled != 0 && !unlit && !wire;
     const bool hzbOn = (view.hzbDebug != 0 || ssrWanted) && view.depthSRV != nullptr;
     bool hzbBuilt = false;
     if (hzbOn) {
         // ★CS が深度を SRV で読む前に RTV / DSV を明示的に外す。SSAO が off の経路では
         //   GBuffer + view.dsv がまだ OM に載ったままで、深度を SRV と DSV に同時に
-        //   張ることになる (M44b / RT パスと同じ罠。実際に踏んだ記録が計画にある)
+        //   張ることになる (M44b / RT パスと同じ罠)
         dc->OMSetRenderTargets(0, nullptr, nullptr);
         hzbBuilt = hzb_.Build(device, shaders, view.depthSRV, view.width, view.height);
     }
@@ -1101,10 +1084,9 @@ void DeferredPath::RenderRayTracing(GraphicsDevice& device, const RenderView& vi
 {
     ID3D11DeviceContext* dc = f.dc;
     const bool unlit = f.unlit;
-    // ---- 1.7) レイトレ拡散 GI (M46f) / RT 影 (M46g) / RT 反射 (M46h): ライトパスの前に撃つ。
-    //      デバッグ表示 (mode 4-8 = GI / 9 = 影 / 10-11 = 反射) も**この結果を使い回す** —
-    //      1 フレームに 2 回撃つとテンポラル履歴が二重に進んで蓄積が壊れるため。
-    //      Unlit/Wireframe は環境項が定数・影も無効なので撃たない (SSAO/IBL と同じ扱い) ----
+    // デバッグ表示 (mode 4-8 = GI / 9 = 影 / 10-11 = 反射) も**この結果を使い回す** —
+    // 1 フレームに 2 回撃つとテンポラル履歴が二重に進んで蓄積が壊れるため。
+    // Unlit/Wireframe は環境項が定数・影も無効なので撃たない (SSAO/IBL と同じ扱い)
     const bool rtAvailable = view.rtPasses != nullptr && view.rtScene != nullptr;
     const bool rtGiOn = rtAvailable && !unlit && view.rtGiEnabled != 0;
     const bool rtShadowOn = rtAvailable && !unlit && view.rtShadowEnabled != 0;
@@ -1264,14 +1246,13 @@ void DeferredPath::RenderLighting(const RenderView& view, DeferredFrame& f)
     dc->PSSetSamplers(0, 2, lightSamplers);
     // GBuffer t0-3 + シャドウ t4 + IBL t5-7 (M38c) + SSAO t8 (M38e) + RT GI t9 (M46f)
     // + RT 影 t10 (M46g) + RT 反射 t11 (M46h) + シャドウアトラス t12 (M54c)
-    // + [t13 = SSR (M56d) / t14 = 反射プローブ (M56f) は統合契約 予約 2 の**空席**]
-    // + フロクセル積分結果 t15 (M57d)。
-    // ★空席を詰めない — 番号を前倒しすると M56 のブランチと統合したときに無言で
-    //   潰し合う (レジスタ番号の食い違いはコンパイルも実行も通ってしまう)。
+    // + 音響の残光 t13 (M65e、acoustic::kGlowSrvSlot) + 反射プローブ t14 (M56f)
+    // + フロクセル積分結果 t15 (M57d) + 見通しビットの 3D テクスチャ t16
+    //   (acoustic::kFrontSrvSlot) の 17 本。下の nullSrvs も同じ 17 本。
+    // ★並びは deferred_light.hlsl のレジスタ番号と一致させる — 食い違ってもコンパイルも
+    //   実行も通ってしまう。
     // s0=IBL サンプラ / s1=比較サンプラ bind 済み (アトラスも s1 を共有する = サンプラ増やさず。
     // froxel も s0 を流用する)
-    // 2026-09-12「描画だけ円」: t16 に見通しビットの 3D テクスチャ (本数 16 -> 17。
-    // 下の nullSrvs も 17 = 剥がし忘れの的を増やさない)
     ID3D11ShaderResourceView* gbSrvs[17] = { gbAlbedo_.SRV(),     gbNormal_.SRV(),
                                              gbPosition_.SRV(),   gbMaterial_.SRV(),
                                              view.shadowSRV,      view.iblIrradiance,
@@ -1281,7 +1262,7 @@ void DeferredPath::RenderLighting(const RenderView& view, DeferredFrame& f)
                                              rtShadowBound ? rtShadowSrv : nullptr,
                                              rtReflBound ? rtRefl.filtered : nullptr,
                                              view.shadowAtlasSRV,
-                                             // t13: 旧 SSR の空席。M65e で音響の残光が入った
+                                             // t13: 音響の残光 (M65e)
                                              acousticBound ? view.acousticSRV : nullptr,
                                              (probeSet != nullptr) ? probeSet->cubeArray
                                                                    : nullptr, // t14: M56f
@@ -1297,11 +1278,8 @@ void DeferredPath::RenderLighting(const RenderView& view, DeferredFrame& f)
     dc->PSSetShader(lightProg->ps.Get(), nullptr, 0);
     dc->OMSetDepthStencilState(depthDisabled_.Get(), 0);
     dc->Draw(3, 0);
-    // 統合契約 予約 2: 最終的に [16] になる (M54 が [13]、M56 が [15]、M57 が [16])。
-    // ★**M56d (SSR) は予約席の t13 を取らなかった** — SSR はライトパスの**出力**を読む
-    //   ので入力として渡せない (鶏と卵)。加算合成する別パスにしたので t13 は空席のまま。
-    // ★16 にしておかないと t15 のフロクセル SRV が張られたまま残り、**次フレームの
-    //   積分パスが同じテクスチャを UAV に取った瞬間に D3D が片方を黙って外す**
+    // ★本数は gbSrvs と同じ 17 にすること。足りないと t15 のフロクセル SRV が張られたまま残り、
+    //   **次フレームの積分パスが同じテクスチャを UAV に取った瞬間に D3D が片方を黙って外す**
     ID3D11ShaderResourceView* nullSrvs[17] = {};
     dc->PSSetShaderResources(0, 17, nullSrvs); // 次フレームで RT に戻すため解除 (t16 まで)
     f.probeSet = probeSet;
@@ -1318,7 +1296,7 @@ void DeferredPath::RenderSky(GraphicsDevice& device, const RenderView& view, Sha
     if (!wire) {
         // M57e: スカイもフロクセルを載せる (載せないと地平線に段が残る)。
         // ★SkyboxPass は SRV を自分で張らない — Forward ではスカイの直後に半透明が
-        //   来るので、あちらで張ると t1 (CSM) を潰す。Deferred は直前に t0-t15 を
+        //   来るので、あちらで張ると t1 (CSM) を潰す。Deferred は直前に t0-t16 を
         //   剥がしたので、**呼ぶ側のここで** t7 を張り直すのが役割分担
         ID3D11ShaderResourceView* skyFroxel[1] = { froxelBound ? view.froxelSRV : nullptr };
         dc->PSSetShaderResources(froxel::kForwardSrvSlot, 1, skyFroxel);
@@ -1336,12 +1314,10 @@ void DeferredPath::RenderSsr(GraphicsDevice& device, const RenderView& view, Sha
     const bool hzbBuilt = f.hzbBuilt;
     const bool ssaoOn = f.ssaoOn;
     const ReflectionProbeSet* probeSet = f.probeSet;
-    // ---- 2.6) SSR (M56d): 反射の差分を加算する。既定 (ssrEnabled==0) では
-    //      1 命令も走らない = golden 全枚がビット一致し続ける根拠。
-    //      ★**スカイボックスの後**に置いている。SSR はシーン色を読むので、空がまだ
-    //        clearColor の平板なままだと、地平線際の反射に「本当の空ではない色」が写る。
-    //      ★**透明後段より前**。半透明は深度も GBuffer も書かないので反射に写せない
-    //        (v1 の制限。engine_spec §6.8) — 先に描くと二重に映って崩れる ----
+    // ★**スカイボックスの後**に置いている。SSR はシーン色を読むので、空がまだ
+    //   clearColor の平板なままだと、地平線際の反射に「本当の空ではない色」が写る。
+    // ★**透明後段より前**。半透明は深度も GBuffer も書かないので反射に写せない
+    //   (v1 の制限。engine_spec §6.8) — 先に描くと二重に映って崩れる
     if (ssrWanted && hzbBuilt && hzb_.SRV() != nullptr) {
         dc->OMSetRenderTargets(0, nullptr, nullptr); // シーン色を CopyResource するため外す
         dc->RSSetViewports(1, &vp);
@@ -1379,11 +1355,11 @@ void DeferredPath::RenderTransparent(const RenderView& view, const RenderQueue& 
             dc->RSSetState(rasterizerWire_.Get()); // M40b: 透明メッシュもワイヤ表示
         }
         // forward_lit はシャドウ t1 / IBL t3-5 / 局所シャドウアトラス t6 /
-        // フロクセル積分結果 t7 を参照 (M38c + M54e + M57e)。
+        // フロクセル積分結果 t7 / 音響の残光 t8 / 見通しビット t9 を参照 (M38c + M54e + M57e + M65e)。
         // s0 は光パスで IBL 用に差し替えたのでマテリアル用 (異方性) に戻す。
         // s1 (比較サンプラ = アトラスと CSM で共有) と s2 (IBL。froxel も流用) は
         // フレーム頭で bind 済み。
-        // ★t6/t7 を足したら**本数も増やすこと** (増やし忘れると透明メッシュだけが
+        // ★スロットを足したら**本数も増やすこと** (増やし忘れると透明メッシュだけが
         //   前段の光パスが残したもの、または null を読む = 影が出ない/霧が抜ける)
         ID3D11ShaderResourceView* fwdSrvs[9] = { view.shadowSRV,      nullptr,
                                                  view.iblIrradiance,  view.iblPrefiltered,
@@ -1469,8 +1445,7 @@ void DeferredPath::RenderDebugViews(GraphicsDevice& device, const RenderView& vi
         dc->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFFu);
     }
 
-    // ---- 5) velocity の可視化 (M55c)。既定 (velocityDebug==0) では 1 命令も走らない。
-    //      RT4 を読む本番の消費者は M55d/M55e/M55f まで居ないので、ここが唯一の目視口 ----
+    // ---- 5) velocity の可視化 (M55c)。既定 (velocityDebug==0) では 1 命令も走らない ----
     if (view.velocityDebug != 0) {
         ShaderProgram* velDbg = shaders.Get(velocityDebugShader_);
         if (velDbg && velDbg->valid) {
@@ -1503,9 +1478,9 @@ void DeferredPath::RenderDebugViews(GraphicsDevice& device, const RenderView& vi
     }
 
     // ---- 6) HZB の可視化 (M56c)。既定 (hzbDebug==0) では 1 命令も走らない。
-    //      ★条件は **hzbDebug** であって hzbOn ではない。M56d が hzbOn に ssrEnabled を
-    //        or で足したので、hzbOn で判定すると **--ssr を付けただけで画面が
-    //        HZB の可視化に置き換わる** (実際に踏んだ: 518309/518400 画素が変わった) ----
+    //      ★条件は **hzbDebug** であって hzbOn ではない。hzbOn は SSR の要求も or で
+    //        含むので、hzbOn で判定すると **--ssr を付けただけで画面が
+    //        HZB の可視化に置き換わる** (実際に踏んだ) ----
     if (view.hzbDebug != 0 && hzbBuilt && hzb_.SRV() != nullptr) {
         ShaderProgram* hzbDbg = shaders.Get(hzbDebugShader_);
         if (hzbDbg && hzbDbg->valid) {

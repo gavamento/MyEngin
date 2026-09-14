@@ -59,11 +59,11 @@ struct PostFxCB {
     float vignetteRadius;
     float saturation;
     float contrast;
-    int32_t distortEnabled; // M42d: 旧 pad[0] 転用。1 で t2 の歪みバッファを UV に加算
-    int32_t godrayEnabled;  // M43b: 旧 pad[1] 転用。1 で t3 のゴッドレイを加算
+    int32_t distortEnabled; // M42d: 1 で t2 の歪みバッファを UV に加算
+    int32_t godrayEnabled;  // M43b: 1 で t3 のゴッドレイを加算
     float pad;
     DirectX::XMFLOAT4 colorFilter;
-    // ---- M44a: LUT (末尾 append) / M44b: 自動露出 (旧 lutPad[0] 転用) ----
+    // ---- M44a: LUT (末尾 append) / M44b: 自動露出 ----
     float lutIntensity;    // 0 = 無効 (t4 不参照)
     int32_t autoExposure;  // 1 = t5 の露出倍率を gExposure に乗算
     float lutPad[2];
@@ -144,7 +144,7 @@ struct MotionBlurCB {
     float pad[3];
 };
 
-// M46a: 構造化バッファ / 定数バッファ / CB 更新は GpuBufferUtil.h へ集約 (定義は同一)
+// 構造化バッファ / 定数バッファ / CB 更新は GpuBufferUtil.h (M46a)
 using namespace gpubuf;
 
 } // namespace

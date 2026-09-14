@@ -33,8 +33,8 @@ inline DirectX::XMFLOAT4 SrgbToLinear(const DirectX::XMFLOAT4& c)
 // 「収集 → ソート → 提出」モデル (engine_spec.md 6.3)。
 // 即時描画 API は提供しない — 将来のマルチスレッド化 / API 差し替えの余地を残す。
 
-// ボーンパレット最大数 (M18、M45 で 64 → 128)。定数バッファは 128*64B = 8KB で D3D11 の
-// 64KB 上限に十分収まる。Mixamo の標準ヒューマノイドが約 65 ジョイントで 64 を超えるため拡張。
+// ボーンパレット最大数 (M18 / M45)。定数バッファは 128*64B = 8KB で D3D11 の
+// 64KB 上限に十分収まる。Mixamo の標準ヒューマノイドが約 65 ジョイントあり 64 には収まらない。
 // **HLSL 側の MYE_MAX_BONES (forward_skinned.hlsl / deferred_gbuffer_skinned.hlsl) と必ず一致
 // させること** — 食い違うと定数バッファのサイズ不一致で描画が壊れる。
 // tools\check_rules.ps1 の規則 9 が C++/HLSL 3 箇所の一致を静的に検査する。
@@ -50,8 +50,8 @@ constexpr int kEmissiveMaxIntensity = 8;
 
 // common.hlsli の EncodeEmissive / DecodeEmissive の CPU ミラー (PostFxMath.h と同じ方針)。
 // selftest がこの 2 本で往復と飽和を検証し、HLSL 側との式の一致は目視 + 規則 9 で担保する。
-// **0 はちょうど 0 に落ちる** — これが「発光を使わないマテリアルは M46i 以前と
-// ビット単位で同じ絵になる」という受け入れ基準の根拠
+// **0 はちょうど 0 に落ちる** — これが「発光を使わないマテリアルは発光項の無い式と
+// ビット単位で同じ絵になる」の根拠
 inline float EncodeEmissive(float intensity)
 {
     const float t = intensity / static_cast<float>(kEmissiveMaxIntensity);
@@ -87,9 +87,8 @@ struct RenderItem {
 // **HLSL の MYE_MAX_SHADOW_TILES (common.hlsli) と必ず一致させること** —
 // 定数バッファの配列長そのものなので、食い違うとレイアウト不一致として静かに壊れる。
 // tools\check_rules.ps1 の規則 9 が一致を検査する。
-// ★per-light パラメータを StructuredBuffer ではなく CB で渡しているのは、統合契約の
-//   予約 2 が M54 に許した SRV スロットが t12 (アトラス本体) の 1 本きりだから
-//   (計画本文の「StructuredBuffer で t7/t13」は予約表と食い違っており、予約表が正)。
+// ★per-light パラメータを StructuredBuffer ではなく CB で渡しているのは、アトラスに
+//   割り当てた SRV スロットが t12 (Forward は t6) のアトラス本体 1 本きりだから。
 //   16 枚 × 96 バイト = 1.5KB で、64KB の CB 上限には遠く届かない
 constexpr int kMaxShadowTiles = 16;
 
@@ -107,8 +106,8 @@ struct ShadowTile {
 
 // 定数バッファへ載せる形のタイル (HLSL common.hlsli の ShadowTile と同一 96 バイト、M54c)。
 // 上の ShadowTile (描画側の生データ) を転置 + 詰め替えたもの。
-// ★M54e で Deferred 光パス / Forward / Deferred 透明後段の **3 箇所**が同じ変換を要求する
-//   ようになったのでここへ引き上げた。転置を 1 箇所でも書き忘れると
+// ★Deferred 光パス / Forward / Deferred 透明後段の **3 箇所**が同じ変換を使うので、
+//   変換は FillShadowTilesCB 1 本にしてある。転置を 1 箇所でも書き忘れると
 //   「その経路だけ影が明後日の方向に出る」という、絵は出るのに合わないだけの壊れ方をする
 struct ShadowTileCB {
     DirectX::XMFLOAT4X4 lightViewProj = {}; // transpose(lightView*lightProj)
@@ -146,7 +145,7 @@ struct ReflectionProbeSet {
 
 // 影響の重み。箱の外 = 0 / 内側へブレンド距離ぶん入ると 1。
 // **HLSL ミラー: common.hlsli の ReflProbeWeight — 変更時は両方更新**
-// (ProbeBakerSelfTest が両者の一致を…ではなく、CPU 側の値を機械で固定する)
+// (ProbeBakerSelfTest が機械で固定するのは CPU 側の値だけで、HLSL との一致は検査しない)
 inline float ReflProbeWeight(const ReflectionProbeGpu& p, const DirectX::XMFLOAT3& posW)
 {
     const float dx = (posW.x - p.boxMin.x < p.boxMax.x - posW.x) ? posW.x - p.boxMin.x
@@ -327,7 +326,7 @@ struct RenderView {
     float jitterNdc[2] = { 0.0f, 0.0f };    // 同じものを NDC で (TAA が履歴サンプルに使う)
     uint32_t viewFrameIndex = 0;            // viewKey 別の描画通番 = ジッタ列のインデックス
     // ---- M55c: velocity バッファの可視化 (末尾 append。0 = 何も起きない) ----
-    // Deferred のみ。GBuffer RT4 を画面へ貼り替える純デバッグ表示で、消費側は誰もいない
+    // Deferred のみ。GBuffer RT4 を画面へ貼り替える純デバッグ表示
     int32_t velocityDebug = 0;
     // ---- M55d: TAA (末尾 append。既定 0/null = 従来と 1 ビットも変わらない) ----
     //   taaEnabled  = このビューで TAA を走らせる (= カメラジッタも載っている)。
@@ -353,9 +352,8 @@ struct RenderView {
     //      Forward は v1 非対応なのでここを読まない (engine_spec.md §6.4) ----
     const struct DecalDrawList* decals = nullptr;
     // ---- M56c: HZB (min-Z ピラミッド) の可視化 (末尾 append。0 = 何も起きない) ----
-    //      0 = off / N = ミップ N-1 を画面へ貼る。**このサブではピラミッドを作るかどうかも
-    //      この値だけで決まる** — 0 なら確保も CS ディスパッチも 1 つも走らない
-    //      (本番の消費者 = SSR は M56d。そちらが入ったら ssrOn も「作る」条件に加わる)。
+    //      0 = off / N = ミップ N-1 を画面へ貼る。**ピラミッドを作る条件はこの値と SSR の
+    //      要求 (ssrEnabled) の or** — どちらも 0 なら確保も CS ディスパッチも 1 つも走らない。
     //      Deferred のみ。depthSRV が null の経路 (AssetPreview) では自然に無効化される
     int32_t hzbDebug = 0;
     // ---- M56d: SSR (スクリーンスペース反射、末尾 append。既定 0 = 従来と 1 ビットも同じ) ----
@@ -415,7 +413,7 @@ struct RenderView {
     float acousticAlbedoMix = 0.0f;
     // ---- 「描画だけ円」(2026-09-12。末尾 append。**acousticFrontSRV = null で従来と同一**) ----
     //   acousticFrontSRV = Texture3D<R32_UINT>。セルごとの見通しビット (bit s = 波スロット s。
-    //     2026-09-14 に 16 → 32 本へ増やしたので R16_UINT から広げた)。
+    //     波スロットが 32 本なので 32 ビット)。
     //   acousticWaves = 波ごとの (原点 / 半径 / 振幅 / 上限距離 / 減衰換算 / 名残)。
     //     ★スロット番号 = マスクのビット番号なので、空きスロットも位置を保つ (詰めない)。
     //   acousticKeepPerTick = 残光の 1 tick の残存率 (シェーダが同じ速さで円を薄める)。
@@ -428,7 +426,7 @@ struct RenderView {
         float ticksPerMetre = 0.0f;
         float extraAgeTicks = 0.0f;
     };
-    static constexpr int kAcousticWaveSlots = 32; // = AcousticField::kMaxWaves (2026-09-14 に 16 -> 32)
+    static constexpr int kAcousticWaveSlots = 32; // = AcousticField::kMaxWaves
     ID3D11ShaderResourceView* acousticFrontSRV = nullptr;
     AcousticWaveGpu acousticWaves[kAcousticWaveSlots] = {};
     int acousticWaveCount = 0;
@@ -437,7 +435,7 @@ struct RenderView {
     // ---- M67d: ReSTIR 反射 (末尾 append。**0 = 従来と 1 ビットも変わらない**) ----
     //   rtReflRestir = 1 で反射レイの結果を reservoir に積み、空間再利用 (M67f) と
     //     temporal 再利用 (M67e) を通してから SVGF へ渡す。0 なら rt_refl.cs の
-    //     uniform 分岐が M67d 以前の経路をそのまま走り、reservoir は確保すらされない。
+    //     uniform 分岐が ReSTIR を通さない経路をそのまま走り、reservoir は確保すらされない。
     //     RenderSystem が「トグル or rtdebug::NeedsRestir(rtDebugMode)」で立てる。
     //   rtReflRestirParams = クラス表と後段 SVGF の設定 (RtTypes.h の定数表が既定)。
     //     **非永続** — チューニング UI (M67f) が実行中に書き換えるだけ
@@ -656,7 +654,7 @@ struct FroxelForwardCB {
     float slices = 0.0f;
     // dot(float4(posW,1), これ) = view 深度。view 行列の第 3 列そのもの。
     // ★カメラ前方ベクトルを正規化して内積する式にしない — 非一様スケールの入った
-    //   ビュー行列で静かにずれる (M57d が Deferred 側で確定させた規約)
+    //   ビュー行列で静かにずれる (M57d)
     DirectX::XMFLOAT4 viewZRow = { 0.0f, 0.0f, 0.0f, 0.0f };
     float screenSize[2] = { 0.0f, 0.0f }; // SV_Position → uv (Forward に gScreenSize は無い)
     float pad[2] = { 0.0f, 0.0f };
@@ -680,21 +678,19 @@ namespace acoustic {
 
 // SRV スロット。**HLSL 側の正本は acoustic_common.hlsli の MYE_ACOUSTIC_SRV_SLOT /
 // MYE_ACOUSTIC_FWD_SRV_SLOT** で、tools\check_rules.ps1 の規則 9 が機械照合する。
-// ★t13 は SSR の予約席だったが SSR (M56d) は光パスの**出力**を読む別パスになったので
-//   空いたままだった (統合契約 予約 2)。M65e がここを取る。この席を選んだ理由は
-//   **Deferred の gbSrvs[16] / nullSrvs[16] の本数が 1 つも変わらない**こと —
-//   M57d/e が 3 回踏んだ「SRV 剥がし忘れ」を構造的に回避できる。
-// ★Forward 側は t8 = 本数が 7 -> 8 に増える。張る側と**剥がす側の両方**を 8 にすること
-//   (4 箇所: ForwardPath の 2 + DeferredPath の透明後段の 2)。
+// ★Deferred の光パスは t0-t16 の 17 本 (gbSrvs[17] / nullSrvs[17])、Forward 系は t1-t9 の
+//   9 本 (ForwardPath の frameSrvs[9] / DeferredPath の透明後段の fwdSrvs[9])。
+//   Forward / Deferred の Render 末尾は t1-t8 の 8 本を剥がす (t8 の残光を張ったまま次フレームへ
+//   残さない)。スロットを動かしたら張る側と**剥がす側の両方**の本数を揃えること。
 // ★名前を kSrvSlot / kForwardSrvSlot にしないこと — froxel が同じヘッダで同名の定数を
 //   持っており、check_rules の規則 9 は**名前の正規表現**でしか場所を特定できないので
 //   同名だと片方の値をもう片方の照合が拾って理由の分からない赤が出る (実際に踏んだ)
 constexpr int kGlowSrvSlot = 13;
 constexpr int kGlowForwardSrvSlot = 8;
-// 「描画だけ円」(2026-09-12): 見通しビットの 3D テクスチャ。Deferred は t16 (gbSrvs が
-// 16 -> 17 本)、Forward は t9 (frameSrvs / fwdSrvs が 8 -> 9 本)。
-// ★本数が増える = 張る側 3 箇所 (DeferredPath の光パス + 透明後段 / ForwardPath) と
-//   null を張り直す側を**全部**揃えること (M57e / M65e が踏んだ「剥がし忘れ」の的)。
+// 「描画だけ円」: 見通しビットの 3D テクスチャ。Deferred は t16、Forward は t9。
+// ★張る側 3 箇所 (DeferredPath の光パス + 透明後段 / ForwardPath) の本数と、光パスの
+//   nullSrvs の本数を揃えること。Forward 系の t9 は Render 末尾では剥がしていない
+//   (SRV 専用のテクスチャで、UAV と衝突しないため)。
 //   HLSL 側の正本は acoustic_common.hlsli の MYE_ACOUSTIC_FRONT_SRV_SLOT / _FWD_ で、
 //   tools\check_rules.ps1 の規則 9 が機械照合する
 constexpr int kFrontSrvSlot = 16;
@@ -771,8 +767,7 @@ struct GpuLight {
     int32_t type = 0;      // 0=Directional 1=Point 2=Spot
     float cosInner = 0.9f; // Spot: cos(内角)
     float cosOuter = 0.8f; // Spot: cos(外角)
-    // ---- M54c: シャドウアトラス (旧 pad0/pad1 の再利用。64 バイトのレイアウトは不変) ----
-    // 統合契約 (plans/radiant-shimmering-lumen.md 付録 予約 2) が pad0/pad1 に予約した枠。
+    // ---- M54c: シャドウアトラス (64 バイトのレイアウトに収めてある) ----
     // rt_common.hlsli の RtLight は同じ 8 バイトを _pad のまま持つ (RT は局所影を持たない)
     int32_t shadowTile = 0;  // アトラスのタイル index (先頭面)。shadowFaces==0 なら無意味
     int32_t shadowFaces = 0; // 面数: 0=影を投げない / 1=スポット (M54c) / 6=点光源 (M54d)
@@ -969,8 +964,8 @@ inline float IntegratedSampleW(float sliceCoord, int sliceCount)
 
 // テンポラルの混合。feedback = 履歴の残し率 [0, kMaxTemporalFeedback]。
 // ★histValid=false / feedback=0 は **厳密に現フレームそのまま** を返す —
-//   ここがビット恒等でないと「テンポラル off で直前コミットとビット一致」という
-//   このロードマップの受入基準が成立しない (lerp の丸めで最下位ビットが動く)
+//   ここがビット恒等でないと「テンポラル off ならテンポラル無しの経路とビット一致」が
+//   成立しない (lerp の丸めで最下位ビットが動く)
 constexpr float kMaxTemporalFeedback = 0.95f;
 inline float TemporalBlend(float cur, float hist, float feedback, bool histValid)
 {
@@ -1050,7 +1045,7 @@ constexpr int kParticleSrvSlot = 3;
 constexpr int kGpuParticleSrvSlot = 4;
 // M57追補: VFX (Sprite / Trail / TextMesh) PS のスロット。vfx_sprite.hlsl は
 // t0 (自前テクスチャ = スプライト画像 / 白 / フォントアトラス) しか使わないので t1 が最初の空き。
-// ForwardPath / DeferredPath が Render 末尾で t1..t7 を null 化するので、VfxRenderer が
+// ForwardPath / DeferredPath が Render 末尾で t1..t8 を null 化するので、VfxRenderer が
 // 走る時点で t1 は必ず空いている。
 // ★サンプラは **s1** に LINEAR/CLAMP を別途張る (s0 は 8x8 フォントのバッチで POINT に
 //   化けるため)。フロクセルを POINT で引くと 3D テクスチャがブロックノイズになる
@@ -1083,7 +1078,7 @@ inline float CompositeFroxelAdditive(float src, float transmittance)
 // パーティクルは **RenderPath の外** (RenderSystem が forward 後段で呼ぶ) で描かれるので、
 // forward_lit / deferred_light が使っているライト CB にはどうやっても相乗りできない。
 // かといって CPU/GPU の 2 バックエンドがそれぞれ CB を組むと「片方だけ影が付かない」が
-// 起きる (M63b で billboardParams の手写しが実際にそうなりかけた) ので、**CB の形と
+// 起きるので、**CB の形と
 // 詰め方をここに 1 本だけ**置いて両者が呼ぶ (MakeFroxelForwardCB と同じ形)。
 //
 // ★**GpuParticleCB には絶対に入れない。** あちらは「エミッタごと・tick ごと」に上がる CB で、
@@ -1118,7 +1113,7 @@ inline bool IsBound(const RenderView& view)
 
 // CSM を実際に張れるか (IsBound の中でさらに絞る)。
 // ★shadowSRV は**次フレームのシャドウパスで DSV になる**。張ったら必ず剥がすこと
-//   (M57d/e が t15/t7/t3 で 3 度踏んだ罠と同型)。
+//   (フロクセルの t15 / t7 で D3D が黙って外す罠と同型)。
 inline bool ShadowIsBound(const RenderView& view)
 {
     return IsBound(view) && view.shadowSRV != nullptr && view.cascadeCount > 0;

@@ -29,7 +29,7 @@ public:
     virtual bool WritesVelocity() const { return false; }
     // 直近の Render が書いた velocity の SRV (null = 未生成 / このパスは書かない)。
     // 消費側 (TAA / モーションブラー v2 / RT) が自分でバインドする —
-    // 「光パスの t0-t11 の並びは 1 つも動かさない」が M55c からの約束
+    // Deferred の光パス (t0-t16) には velocity を張らない
     virtual ID3D11ShaderResourceView* VelocitySRV() const { return nullptr; }
 
     // ---- M56c: HZB (min-Z ピラミッド) ----
@@ -45,7 +45,7 @@ public:
     // **Render を呼ぶ前に**知る必要がある: フロクセルが霧を持つフレームでは
     // ゴッドレイを自動で降ろす (フォグ三重計上の解消) ので、「降ろしたのに誰も霧を
     // 足さない」= 霧が減るだけ、という状態を作らないための門になる。
-    // v1 は Deferred だけが true。Forward への配線 (t7) は M57e の枠
+    // Deferred (光パス t15) も Forward (t7、M57e) も true
     virtual bool AppliesFroxel() const { return false; }
 };
 

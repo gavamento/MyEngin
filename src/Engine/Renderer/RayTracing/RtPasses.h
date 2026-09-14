@@ -40,7 +40,7 @@ struct RtFrameInputs {
     ID3D11ShaderResourceView* gbMaterial = nullptr; // M46h: r=metallic g=roughness
     ID3D11ShaderResourceView* skyCube = nullptr;    // skyMode==1 のときのみ
     // M55f: 画面速度 (RT4)。テンポラル蓄積の履歴 UV に使う。null = 前フレーム VP への
-    // 射影 (M46d) へ縮退する — 絵は M55f 以前と 1 ビットも変わらない
+    // 射影 (M46d) へ縮退する
     ID3D11ShaderResourceView* gbVelocity = nullptr;
 };
 
@@ -59,8 +59,7 @@ struct RtReflResult {
     // M67d: ReSTIR のデバッグ表示 (12 = M / 14 = 反射像側のクラス) が読む面。
     // 実体は **今フレームの面** `slot.set[slot.write]` の rad (a = M) と nrm (rgb = ns, a = cls)
     // = rt_refl がこのフレームに書いた reservoir。spatial は reservoir を書き戻さないので、
-    // 「今フレームの reservoir」はここ以外に存在しない (M67h: 組 A/B の呼び方は M67f で
-    // ping-pong を入れた時点で意味が変わっている — A = 前フレームに書いた面)。
+    // 「今フレームの reservoir」はここ以外に存在しない。
     // **ReSTIR off なら null** — 消費側 (RenderDebug) は Blit が null で false を返すのに任せる
     ID3D11ShaderResourceView* reservoirM = nullptr;
     ID3D11ShaderResourceView* reservoirCls = nullptr;
@@ -151,13 +150,12 @@ private:
         RenderTexture rpos;
     };
 
-    // viewKey 別の reservoir スロット。**M67f で RtHistory と同じ ping-pong になった** —
+    // viewKey 別の reservoir スロット。**RtHistory と同じ ping-pong** (M67f) —
     // rt_refl は set[1-write] (前フレーム) を読んで set[write] へ書き、spatial は
     // set[write] を**読むだけ** (reservoir を書き戻さない)。フレーム末に write を flip。
     // 読む側と書く側が常に別テクスチャなのは変わらない = typed UAV load 不要 (U5)。
-    // ★初版は「set[0] 固定 = spatial が書き戻す」だったが、近傍の履歴が自画素の履歴へ
-    //   混ざり、M の重いクラスのサンプルが 1 フレームに半径ぶんずつ拡散した
-    //   (sub-06 round 1 実測: Prop が 40 フレームで画面の 94% を占拠)
+    // ★「set[0] 固定 = spatial が書き戻す」にしてはいけない — 近傍の履歴が自画素の履歴へ
+    //   混ざり、M の重いクラスのサンプルが 1 フレームに半径ぶんずつ拡散する (sub-06 round 1 で実測)
     struct RtReservoirSlot {
         RtReservoirSet set[2];
         int write = 0; // 今フレームの書き込み先 index (読みは 1-write)

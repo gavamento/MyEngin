@@ -8,8 +8,8 @@
 // ポストプロセス/大気系シェーダの数式を C++ に複製した純関数群 (D3D 非依存)。
 // HLSL 側 (common.hlsli / postfx_*.hlsl) とコメント同期で複製し、selftest がこちらを検証する。
 // 描画専用 (sim/hash 非関与)。
-// M55a 以降、複数パスで共有する描画数式の CPU ミラーはポストプロセス由来でなくても
-// ここへ置く (LinearizeDepth は DoF / パーティクル / 今後の HZB・SSR・froxel が共有する)。
+// 複数パスで共有する描画数式の CPU ミラーはポストプロセス由来でなくても
+// ここへ置く (M55a。LinearizeDepth は DoF / パーティクルなどが共有する)。
 namespace mye {
 
 // M55a: 透視投影の非線形深度 [0,1] → ビュー空間 z。
@@ -146,7 +146,7 @@ inline bool ReprojectUv(const DirectX::XMFLOAT4X4& invViewProj,
 // 片方だけ直すと「ブラーの向きだけ静かに違う」形で壊れるので変更時は両方更新
 // (RenderSelfTest の TestMotionBlurVelocity が CPU 側を固定する)。
 //
-// ★速度源は画素ごとに選ぶ。ここが v1 (M44d、カメラのみ) から変わった唯一の点:
+// ★速度源は画素ごとに選ぶ (v1 = M44d はカメラのみの深度再投影):
 //   ① hasVelocity かつ **その画素にジオメトリがある** (depth < 1) → GBuffer RT4 の
 //      画面速度をそのまま使う。カメラ + オブジェクトが合成済みなので、静止カメラでも
 //      回る物体がブレる。

@@ -36,7 +36,7 @@ struct FroxelInjectCB {
     int32_t lightCount = 0;
     int32_t shadowAtlasEnabled = 0;
     float shadowAtlasTexel = 0.0f;
-    float sliceJitter = 0.5f; // M57c (0.5 = ジッタ無し = M57b とビット一致)
+    float sliceJitter = 0.5f; // M57c (0.5 = ジッタ無し = テンポラル無しの代表点とビット一致)
     float pad1 = 0.0f;
     GpuLight lights[kMaxLights] = {};
     ShadowTileCB shadowTiles[kMaxShadowTiles] = {};
@@ -468,8 +468,7 @@ bool FroxelPass::ReadbackStats(GraphicsDevice& device, FroxelVolumeStats& out,
 void FroxelPass::DebugDumpAB(GraphicsDevice& device, ShaderManager& shaders, const RenderView& view,
                              const SceneLightData& lights, const FroxelSettings& settings)
 {
-    // ★消費者 (積分 = M57c / 合成 = M57e) がまだ居ないサブなので、絵からは
-    //   「グリッドに何が入ったか」が 1 画素も分からない。ここで読み戻して数えるのが
+    // ★合成後の絵からは「グリッドに何が入ったか」をセル単位で遡れない。ここで読み戻して数えるのが
     //   唯一の機械的な確認手段になる。A/B (影あり / 影なし) を**同じ実行の中で**
     //   撮るのは、2 回起動すると別プロセスの WARP 差やタイミング差が混ざるため
     // ★GpuTimer は 6 フレームのリングで、結果は同じスロットが一周してから回収される。
@@ -480,7 +479,7 @@ void FroxelPass::DebugDumpAB(GraphicsDevice& device, ShaderManager& shaders, con
     }
     FroxelVolumeStats withShadow;
     std::vector<float> a;
-    // ★A/B はジッタ 0.5 (= M57b と同じ代表点) で撮る。ジッタ付きで撮ると、
+    // ★A/B はジッタ 0.5 (= ジッタ無しの代表点) で撮る。ジッタ付きで撮ると、
     //   影の効きを測っているのかジッタの揺れを測っているのか分からなくなる
     if (!Inject(device, shaders, view, lights, settings, 0.5f)
         || !ReadbackStats(device, withShadow, &a)) {

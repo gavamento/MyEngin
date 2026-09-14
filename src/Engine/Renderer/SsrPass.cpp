@@ -150,7 +150,7 @@ bool SsrPass::Render(GraphicsDevice& device, ShaderManager& shaders, const Rende
     }
     ShaderProgram* prog = shaders.Get(shader_);
     if (!prog || !prog->valid) {
-        return false; // コンパイル失敗時は SSR 無しで進む (絵は M56c 以前と同じ)
+        return false; // コンパイル失敗時は SSR 無しで進む (絵は SSR off と同じ)
     }
     if (!EnsureSceneCopy(device, view.rtv)) {
         return false;

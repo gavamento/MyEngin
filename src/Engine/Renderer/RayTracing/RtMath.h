@@ -392,7 +392,7 @@ inline float RtAtrousKernel(int d)
 // M = 1 (再利用なし) のとき RtRestirResolve が Ls をそのまま返すことが、
 // 「ReSTIR off = 現行とビット一致」の数学的な根拠になっている。
 // **この節は RtLuminance に依存するので SVGF 節より後ろに置いてある**
-// (sub-03 の見立ては M46h 節の直後だったが、それだと前方参照になる)。
+// (前に置くと前方参照になる)。
 
 // reservoir が保持する 1 サンプルと統計。GPU 側は 3 枚のテクスチャに詰めて運ぶ
 // (rt_restir_common.hlsli の struct RtReservoir と同じ並び)。

@@ -61,7 +61,7 @@ inline void BindMaterialTextures(ID3D11DeviceContext* dc, TextureLibrary& textur
     }
 }
 
-// 頂点バッファとインデックスバッファを張る
+// 同じメッシュが続く間は張り直さない (bound.mesh と比べる)
 inline void BindMeshBuffers(ID3D11DeviceContext* dc, const Mesh& mesh, AssetID meshId, MeshBindState& bound)
 {
     if (meshId.value != bound.mesh) {

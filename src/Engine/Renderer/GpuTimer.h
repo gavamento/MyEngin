@@ -7,7 +7,7 @@ namespace mye {
 class GraphicsDevice;
 
 // GPU 時間計測 (TIMESTAMP クエリペア + DISJOINT)。
-// 読み出しレイテンシ吸収のため 3 フレームのリングで運用する (パイプラインストールなし)
+// 読み出しレイテンシ吸収のため kFrames 本のリングで運用する (パイプラインストールなし)
 class GpuTimer {
 public:
     bool Init(GraphicsDevice& device);

@@ -20,9 +20,8 @@ public:
                 const SceneLightData& lights, RenderResources& resources,
                 ShaderManager& shaders) override;
     // M57e: Forward も t7 でフロクセルを合成する (不透明 / 透明 / 地形 + スカイ)。
-    // ★M57d の時点では false だった — 合成が Deferred の光パスにしか無く、true に
-    //   すると「ゴッドレイだけ消えて霧が増えない」= 霧が減るだけになったため。
-    //   M57e で Forward 側の合成が入ったので true にできる
+    // ★合成を外すなら false に戻すこと — true のまま合成が無いと「ゴッドレイだけ消えて
+    //   霧が増えない」= 霧が減るだけになる
     bool AppliesFroxel() const override { return true; }
 
 private:

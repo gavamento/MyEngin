@@ -12,7 +12,7 @@ namespace mye {
 // 1. 原色を使わない: UI に置く有彩色は彩度 0.35〜0.60・明度 0.65〜0.85 の帯から取る
 //    (暗背景で刺さらず、かつ区別は付く帯。純色 RGB / S=1 / V=1 は禁止)
 // 2. ImVec4 リテラルでの着色は禁止 — 必ずこの表を経由する。同じ「意味」は同じトークン
-//    (かつて Warn 系だけで 4 通りの黄色が散っていた再発防止)
+//    (リテラルで塗ると同じ意味の色が何通りも散る)
 // 3. Accent (青) は「選択・フォーカス・トグル ON」専用。状態の意味色
 //    (Success/Warning/Error/PlayAccent) と混用しない
 // 4. コンポーネントのカテゴリ色は EditorComponentCatalog::ComponentCategoryColor が持つ
@@ -30,7 +30,7 @@ extern const ImVec4 Prefab;     // プレハブ由来の印 (Unity 風の淡青�
 } // namespace themeColor
 
 // テーマ第 3 世代: 3 段の暗色面 (最奥 < パネル < ポップアップ) + 沈み込む入力欄 +
-// 白半透明のホバー + 青アクセント。M27a の UE5 風 (灰色の浮き上がる入力欄) を置き換えた
+// 白半透明のホバー + 青アクセント
 void ApplyEditorTheme(ImGuiStyle& style);
 
 // エディタフォント構築 (M27a):

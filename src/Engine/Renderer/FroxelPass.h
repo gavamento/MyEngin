@@ -15,10 +15,8 @@ class GraphicsDevice;
 class ShaderManager;
 
 // M57b: フロクセルへの注入パラメータ。
-// M57c で `CameraPostFxComponent` の froxelDensity / froxelAnisotropy から供給される
-// (**このサブではまだコンポーネントを触らない** — 統合契約 予約 4 が M57c の枠と
-// 決めているので、先回りして末尾 append すると M56 と番号を取り合う)。
-// 既定値は予約表に書かれた値と同じにしてある = M57c で意味が変わらない
+// density / anisotropy は `CameraPostFxComponent` の froxelDensity / froxelAnisotropy から
+// 供給される (M57c)
 struct FroxelSettings {
     float density = 0.02f;      // 基準の消散係数 σ_t [1/m] (高度スケール前)
     float anisotropy = 0.3f;    // HG 位相関数の g (>0 = 前方散乱)
@@ -33,13 +31,13 @@ struct FroxelSettings {
     // テンポラル蓄積 (深度スライスジッタ + 履歴の再投影)。
     // ★ジッタと履歴は**必ずセット**で切り替える。ジッタだけ入れると霧が毎フレーム
     //   奥行き方向に脈打つだけになる (M55d のカメラジッタと TAA の関係と同じ)。
-    //   false のときは代表点が厳密に 0.5 = M57b とビット一致する
+    //   false のときは代表点が厳密に 0.5 = ジッタも履歴も無い注入とビット一致する
     bool temporal = true;
     float temporalFeedback = 0.9f; // 履歴の残し率 [0, froxel::kMaxTemporalFeedback]
 };
 
 // 注入結果の統計 (`--froxel-dump N` の読み戻し 1 回ぶんを CPU で集計したもの)。
-// 消費者 (積分 = M57c、合成 = M57e) がまだ居ないサブなので、
+// 合成後の絵からはセル単位の中身を遡れないので、
 // **グリッドに何が入ったかを機械で言える口はこれしかない**
 struct FroxelVolumeStats {
     int cells = 0; // グリッドの総セル数
@@ -61,11 +59,8 @@ struct FroxelVolumeStats {
 };
 
 // M57b: 密度注入 + 局所ライト散乱注入のコンピュートパス。
-//
-// このサブの時点では **1 パスしか無く、書いた結果を読む者も居ない**。
-// 積分 (M57c) と最終画像への合成 (M57e) が入るまで、絵は 1 ビットも変わらない。
-// それでも実体をここに作るのは、「注入のコストが WARP で許容範囲か」が
-// M57c の設計 (テンポラルを入れるか / golden を CI に載せるか) の入力になるため。
+// Render が 注入 → テンポラル → 前方積分 (M57c) をまわし、積分結果を
+// Deferred 光パス (t15) / Forward 系とスカイ (t7) が合成する (M57d / M57e)。
 //
 // ★VolumeTexture (M57a) の Create/Resize/Release の作法をそのまま使う。
 //   Resize は同寸なら no-op なので毎フレーム呼んでよい (RenderTexture と同じ流儀)。
@@ -79,8 +74,8 @@ public:
 
     // M57c: 1 フレームぶん (注入 → テンポラル → 前方積分) をまわす。
     // 戻り値 = 積分結果の SRV。null = 走らなかった (呼び出し側は霧なしで進む)。
-    // ★M57c の時点でこの SRV を読む者はまだ居ない (合成は M57d/M57e)。
-    //   絵は 1 ビットも変わらない — 中身の検査は `--froxel-dump` の読み戻しが担当する
+    // RenderSystem が view.froxelSRV に入れ、光パス / Forward 系 / スカイ / パーティクルが読む。
+    // 中身をセル単位で検査するのは `--froxel-dump` の読み戻しの担当
     ID3D11ShaderResourceView* Render(GraphicsDevice& device, ShaderManager& shaders,
                                      const RenderView& view, const SceneLightData& lights,
                                      const FroxelSettings& settings);
@@ -166,7 +161,7 @@ private:
     VolumeTexture integrated_;
     // M57c: viewKey (0=AssetPreview 1=runtime 2=SceneView 3=GameView) 毎の履歴。
     // ★(w,h) キーではなく viewKey キーで持つ — SceneView と GameView が同寸のときに
-    //   履歴を食い合って混線する (TaaPass / RtPasses::kHistorySlots と同じ理由。3 度目)。
+    //   履歴を食い合って混線する (TaaPass / RtPasses::kHistorySlots と同じ理由)。
     //   グリッド寸法は固定 (froxel::kGrid*) なのでリサイズによる破棄は起きない
     static constexpr int kHistorySlots = 4;
     struct History {

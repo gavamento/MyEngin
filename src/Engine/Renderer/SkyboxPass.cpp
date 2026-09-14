@@ -96,7 +96,7 @@ void SkyboxPass::Render(GraphicsDevice& device, ShaderManager& shaders, const Re
     // ★SRV もサンプラも**ここでは張らない** — t7 / s2 はホストのパスが張ったものを
     //   そのまま読む。スカイは不透明と透明の間に挟まるパスなので、ここで別スロットを
     //   触ると後段の半透明メッシュへ漏れる (Forward の t1 = CSM を潰した形で顕在化する)。
-    //   Deferred は光パスの後で t0-t15 を剥がしているので、呼ぶ側が t7 を張り直している
+    //   Deferred は光パスの後で t0-t16 を剥がしているので、呼ぶ側が t7 を張り直している
     const bool froxelBound = FroxelIsBound(view);
     cb.froxel = { froxelBound ? 1.0f : 0.0f, static_cast<float>(view.froxelSlices), 0.0f, 0.0f };
     cb.froxelScreen = { static_cast<float>(view.width), static_cast<float>(view.height), 0.0f,
