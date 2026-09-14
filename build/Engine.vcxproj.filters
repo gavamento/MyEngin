@@ -1209,10 +1209,10 @@
     <ClInclude Include="..\src\Engine\Renderer\ImGuiTheme.h">
       <Filter>Renderer</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\MeshInstancing.h">
+    <ClInclude Include="..\src\Engine\Renderer\MeshBind.h">
       <Filter>Renderer</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\MeshBind.h">
+    <ClInclude Include="..\src\Engine\Renderer\MeshInstancing.h">
       <Filter>Renderer</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\PickingPass.h">

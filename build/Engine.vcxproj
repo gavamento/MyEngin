@@ -406,8 +406,8 @@
     <ClInclude Include="..\src\Engine\Renderer\ImageWrite.h" />
     <ClInclude Include="..\src\Engine\Renderer\ImGuiRenderer.h" />
     <ClInclude Include="..\src\Engine\Renderer\ImGuiTheme.h" />
-    <ClInclude Include="..\src\Engine\Renderer\MeshInstancing.h" />
     <ClInclude Include="..\src\Engine\Renderer\MeshBind.h" />
+    <ClInclude Include="..\src\Engine\Renderer\MeshInstancing.h" />
     <ClInclude Include="..\src\Engine\Renderer\PickingPass.h" />
     <ClInclude Include="..\src\Engine\Renderer\PostFxMath.h" />
     <ClInclude Include="..\src\Engine\Renderer\PostProcess.h" />
