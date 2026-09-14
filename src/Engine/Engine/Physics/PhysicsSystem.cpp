@@ -245,6 +245,25 @@ struct Body {
     WorldFrame frame;
 };
 
+// bodies は収集後に entity.index 昇順へソート済み → 二分探索。generation まで一致したときだけ当たり
+// (同じ index を再利用した別エンティティを掴まないため)。見つからなければ -1
+int32_t FindBodyIndex(const std::vector<Body>& bodies, EntityID e)
+{
+    auto it = std::lower_bound(bodies.begin(), bodies.end(), e.index,
+                               [](const Body& b, uint32_t idx) { return b.entity.index < idx; });
+    if (it != bodies.end() && it->entity == e) {
+        return static_cast<int32_t>(it - bodies.begin());
+    }
+    return -1;
+}
+
+// FindBodyIndex のポインタ版。見つからなければ nullptr
+Body* FindBody(std::vector<Body>& bodies, EntityID e)
+{
+    const int32_t i = FindBodyIndex(bodies, e);
+    return (i >= 0) ? &bodies[static_cast<size_t>(i)] : nullptr;
+}
+
 // 形状のローカル主軸慣性 (対角、質量 m)。col null は半径 0.5 の球扱い。
 // pose の寸法はワールドスケール適用済みなのでそのまま使う
 void LocalInertiaDiag(const ColliderComponent* col, const ShapePose& pose, float m, float& ix,
@@ -1349,16 +1368,6 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                       }
                       return a.child.index < b.child.index;
                   });
-        auto findCompoundOwner = [&bodies](EntityID e) -> Body* {
-            auto it = std::lower_bound(
-                bodies.begin(), bodies.end(), e.index,
-                [](const Body& b, uint32_t idx) { return b.entity.index < idx; });
-            if (it != bodies.end() && it->entity.index == e.index
-                && it->entity.generation == e.generation) {
-                return &(*it);
-            }
-            return nullptr;
-        };
         size_t ci0 = 0;
         while (ci0 < compoundShapes.size()) {
             const EntityID owner = compoundShapes[ci0].owner;
@@ -1367,7 +1376,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                    && compoundShapes[ci1].owner.generation == owner.generation) {
                 ++ci1;
             }
-            Body* body = findCompoundOwner(owner);
+            Body* body = FindBody(bodies, owner);
             if (!body) {
                 ci0 = ci1;
                 continue; // 親が非アクティブ等で収集されていない = 子形状ごと捨てる
@@ -1618,16 +1627,6 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
         // 決定論の順序: owner の entity.index 昇順 (SpringJoint と同じ流儀)
         std::sort(jointLinks.begin(), jointLinks.end(),
                   [](const JointLink& a, const JointLink& b) { return a.owner.index < b.owner.index; });
-        // bodies は index 昇順ソート済 → 二分探索 (generation も一致確認)
-        auto findBodyIndex = [&bodies](EntityID e) -> int32_t {
-            auto it = std::lower_bound(bodies.begin(), bodies.end(), e.index,
-                                       [](const Body& b, uint32_t idx) { return b.entity.index < idx; });
-            if (it != bodies.end() && it->entity.index == e.index
-                && it->entity.generation == e.generation) {
-                return static_cast<int32_t>(it - bodies.begin());
-            }
-            return -1;
-        };
         // bodies に居ないエンティティ (剛体もコライダーも無い) は変換から不動アンカーを作る。
         // 動かないので tick 頭に 1 回計算すれば足りる
         auto fixedAnchor = [&world](EntityID e, const XMFLOAT3& local, float& ox, float& oy,
@@ -1655,7 +1654,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
         };
         size_t w = 0;
         for (JointLink& l : jointLinks) {
-            l.ai = findBodyIndex(l.owner);
+            l.ai = FindBodyIndex(bodies, l.owner);
             if (l.ai < 0 && !fixedAnchor(l.owner, l.jc->anchor, l.wax, l.way, l.waz, l.waq)) {
                 continue; // owner の位置すら決まらない = 何もできない
             }
@@ -1670,7 +1669,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             } else if (!world.IsAlive(other) || !IsEntityActive(world, other)) {
                 continue;
             } else {
-                l.bi = findBodyIndex(other);
+                l.bi = FindBodyIndex(bodies, other);
                 if (l.bi < 0
                     && !fixedAnchor(other, l.jc->connectedAnchor, l.wbx, l.wby, l.wbz, l.wbq)) {
                     continue;
@@ -1902,20 +1901,11 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
         // 決定論の順序: owner の entity.index 昇順 (SpringJoint / Joint と同じ流儀)
         std::sort(wheelLinks.begin(), wheelLinks.end(),
                   [](const WheelLink& a, const WheelLink& b) { return a.owner.index < b.owner.index; });
-        auto findBodyIndex = [&bodies](EntityID e) -> int32_t {
-            auto it = std::lower_bound(bodies.begin(), bodies.end(), e.index,
-                                       [](const Body& b, uint32_t idx) { return b.entity.index < idx; });
-            if (it != bodies.end() && it->entity.index == e.index
-                && it->entity.generation == e.generation) {
-                return static_cast<int32_t>(it - bodies.begin());
-            }
-            return -1;
-        };
         size_t w = 0;
         for (WheelLink& l : wheelLinks) {
             // 力の入れ先 = 自分 → 祖先の順に最初に見つかった Rigidbody
             for (EntityID cur = l.owner; !cur.IsNull(); cur = world.GetParent(cur)) {
-                const int32_t bi = findBodyIndex(cur);
+                const int32_t bi = FindBodyIndex(bodies, cur);
                 if (bi >= 0 && bodies[static_cast<size_t>(bi)].rb) {
                     l.bi = bi;
                     break;
@@ -2032,17 +2022,14 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                 pool.attachValid = 0;
                 continue;
             }
-            auto it = std::lower_bound(
-                bodies.begin(), bodies.end(), other.index,
-                [](const Body& b, uint32_t idx) { return b.entity.index < idx; });
-            if (it == bodies.end() || it->entity.index != other.index
-                || it->entity.generation != other.generation) {
+            const int32_t attachIndex = FindBodyIndex(bodies, other);
+            if (attachIndex < 0) {
                 pool.attachValid = 0; // 剛体でもコライダーでもない相手には繋げない
                 continue;
             }
             if (pool.attachValid == 0) {
                 // COM 系ローカルへ焼く: L = R⁻¹·(p_end − com)。逆回転は共役クォータニオン
-                const Body& b = *it;
+                const Body& b = bodies[static_cast<size_t>(attachIndex)];
                 const size_t last = pool.px.size() - 1;
                 float comX = b.pose.px, comY = b.pose.py, comZ = b.pose.pz;
                 if (b.hasCom) {
@@ -2055,7 +2042,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                            pool.attachLy, pool.attachLz);
                 pool.attachValid = 1;
             }
-            xpbdAttachBody[k] = static_cast<int32_t>(it - bodies.begin());
+            xpbdAttachBody[k] = attachIndex;
         }
     }
     // M59h: 島 (union-find) の材料。最後のサブステップの候補ペアを使う — サブステップ
@@ -2385,17 +2372,6 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             if (!panels.empty()) {
                 std::sort(panels.begin(), panels.end(),
                           [](const Panel& a, const Panel& b) { return a.owner.index < b.owner.index; });
-                // bodies は index 昇順ソート済 → 二分探索 (SpringJoint と同じ流儀)
-                auto findBody = [&bodies](EntityID e) -> Body* {
-                    auto it = std::lower_bound(
-                        bodies.begin(), bodies.end(), e.index,
-                        [](const Body& b, uint32_t idx) { return b.entity.index < idx; });
-                    if (it != bodies.end() && it->entity.index == e.index
-                        && it->entity.generation == e.generation) {
-                        return &(*it);
-                    }
-                    return nullptr;
-                };
                 const float rhoAir = env ? env->airDensity : kDefaultAirDensity;
                 const float wndX = env ? env->windVelocity.x : 0.0f;
                 const float wndY = env ? env->windVelocity.y : 0.0f;
@@ -2408,7 +2384,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                     // 力の入り先 = 自分 → 祖先の順に最初に見つかった動的剛体
                     Body* body = nullptr;
                     for (EntityID cur = p.owner; !cur.IsNull(); cur = world.GetParent(cur)) {
-                        Body* b = findBody(cur);
+                        Body* b = FindBody(bodies, cur);
                         if (b && b->rb && b->invMass > 0.0f) {
                             body = b;
                             break;
@@ -2688,17 +2664,6 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             if (!joints.empty()) {
                 std::sort(joints.begin(), joints.end(),
                           [](const Joint& a, const Joint& b) { return a.owner.index < b.owner.index; });
-                // bodies は index 昇順ソート済 → 二分探索 (generation も一致確認)
-                auto findBody = [&bodies](EntityID e) -> Body* {
-                    auto it = std::lower_bound(
-                        bodies.begin(), bodies.end(), e.index,
-                        [](const Body& b, uint32_t idx) { return b.entity.index < idx; });
-                    if (it != bodies.end() && it->entity.index == e.index
-                        && it->entity.generation == e.generation) {
-                        return &(*it);
-                    }
-                    return nullptr;
-                };
                 // bodies に居ないエンティティ (コライダー/Rigidbody 無し) は変換から不動アンカー位置
                 auto anchorPos = [&world](EntityID e, float& px, float& py, float& pz) -> bool {
                     const auto* alt = world.GetComponent<LocalTransform>(e);
@@ -2720,8 +2685,8 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                     if (other.IsNull() || !world.IsAlive(other) || !IsEntityActive(world, other)) {
                         continue;
                     }
-                    Body* ba = findBody(j.owner);
-                    Body* bb = findBody(other);
+                    Body* ba = FindBody(bodies, j.owner);
+                    Body* bb = FindBody(bodies, other);
                     float pax, pay, paz, pbx, pby, pbz;
                     if (ba) {
                         pax = ba->pose.px; pay = ba->pose.py; paz = ba->pose.pz;
