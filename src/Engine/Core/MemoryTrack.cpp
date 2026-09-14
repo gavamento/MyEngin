@@ -6,7 +6,7 @@
 
 // global operator new/delete フック (M12)。
 // - このオブジェクトは Engine.lib に入り、GetMemoryStats() の参照でリンクに引き込まれる
-//   → Editor.exe / (将来の) Runtime.exe 内の new/delete を捕捉する。
+//   → Editor.exe / Runtime.exe 内の new/delete を捕捉する。
 //   GameLogic.dll は Engine.lib をリンクしない別 CRT モジュールなので対象外 (spec 8.4 / 計画)。
 // - カウンタは atomic のみ (ロック/コンテナ無し) なので再入・デッドロックしない。
 // - 名前空間スコープの atomic{0} は定数初期化される → main 前の静的初期化中の確保も安全に数える。

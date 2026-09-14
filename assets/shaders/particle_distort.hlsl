@@ -1,6 +1,7 @@
 // スクリーンスペース歪みパーティクル (M42d)。blendMode=2 のエミッタを
 // R16G16F の歪みバッファへ加算描画し、postfx_tonemap がシーンサンプル UV に加算する。
-// VS/CB レイアウトは particle_render.hlsl と同一 (CPU バックエンドが同じ CB を使う)。
+// CB / ParticleInstance は particle_render.hlsl の前半だけを同じレイアウトで宣言する
+// (CPU バックエンドが同じ CB を使う。後ろに足されたフィールドは読まない)。
 // 深度テストは read-only DSV で有効 = 遮蔽された粒子は歪まない。
 
 cbuffer ParticleCB : register(b0)
@@ -23,7 +24,7 @@ cbuffer ParticleCB : register(b0)
     float3   gFogColor;
     float    gFogStart;
     float    gFogEnd;
-    float    gSoftFade; // M42b (歪みでは未使用 — 交差の緩和は将来拡張)
+    float    gSoftFade; // M42b (歪みでは未使用)
     float    gNearZ;
     float    gFarZ;
 };

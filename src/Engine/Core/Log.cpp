@@ -44,7 +44,7 @@ void EmitUtf8(const char* utf8, bool isError)
     const int wlen =
         MultiByteToWideChar(CP_UTF8, 0, utf8, -1, wide, static_cast<int>(std::size(wide)));
     if (wlen <= 0) {
-        // 変換不能 (不正 UTF-8 / 長すぎ) は従来経路へフォールバック
+        // 変換不能 (不正 UTF-8 / 長すぎ) は A 版 + fputs へフォールバック
         OutputDebugStringA(utf8);
         fputs(utf8, isError ? stderr : stdout);
         return;

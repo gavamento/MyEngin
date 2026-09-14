@@ -99,17 +99,14 @@ Texture2D   gRtGi           : register(t9); // M46f (内部解像度、demodulat
 Texture2D   gRtShadow       : register(t10); // M46g (フル解像度 R8、太陽の可視率)
 Texture2D   gRtRefl         : register(t11); // M46h (内部解像度、反射方向の入射放射輝度)
 Texture2D   gShadowAtlas    : register(t12); // M54c (局所ライトの深度アトラス、R32_FLOAT)
-// t13 = SSR の予約席だったが、SSR (M56d) は光パスの**出力**を読む別パスになったので
-// 空いたままだった席。**M65e (音響の残光) がここを取った** = 統合契約 予約 2 の更新。
-// ★この席を選んだ理由は「gbSrvs[16] / nullSrvs[16] の本数が 1 つも変わらない」こと —
-//   本数を増やすと M57d/e が 3 回踏んだ「SRV 剥がし忘れ」の的が増える。
-// 番号の正本は acoustic_common.hlsli の MYE_ACOUSTIC_SRV_SLOT (C++ と機械照合される)
+// t13 = 音響の残光 (M65e)。番号の正本は acoustic_common.hlsli の MYE_ACOUSTIC_SRV_SLOT
+// (C++ と機械照合される)。光パスの SRV は t0-t16 の 17 本 (剥がし忘れの注意も同 hlsli)
 Texture3D   gAcousticGlow   : MYE_ACOUSTIC_REG(MYE_ACOUSTIC_SRV_SLOT); // M65e (r=符号化残光)
 // 2026-09-12「描画だけ円」: 見通しビット (Load で読む整数テクスチャ。番号の正本は同 hlsli)
 Texture3D<uint> gAcousticFrontMask : MYE_ACOUSTIC_REG(MYE_ACOUSTIC_FRONT_SRV_SLOT);
 TextureCubeArray gProbeCubes : register(t14); // M56f (プリフィルタ済みプローブ、6 面 × N)
 Texture3D   gFroxelVolume   : register(t15); // M57d (rgb=積算内向き散乱 / a=透過率)
-SamplerState gIblSampler : register(s0); // LINEAR/CLAMP (M38c、s0 は光パスで空きだった)
+SamplerState gIblSampler : register(s0); // LINEAR/CLAMP (M38c)。SSAO / RT / プローブ / 残光 / フロクセルもこれを流用する
 SamplerComparisonState gShadowSampler : register(s1);
 
 struct VSOut
@@ -135,9 +132,9 @@ float4 PSMain(VSOut i) : SV_Target
         // スカイボックスが無いシーン (--render-demo が実例) では clearColor が
         // そのまま地平線の上に出るので、床だけに霧が乗ると水平線に段ができる。
         // 深度が無いので「グリッド全体ぶん」を引く (= 最遠テクセル)。
-        // ★グリッドより奥の解析フォグは**掛けない** — 背景に ApplyFog が掛かる挙動は
-        //   M29d 以来一度も無く、ここで足すと froxel off の絵まで動かしたくなる。
-        //   フロクセル区間ぶんの段だけを消す、が M57e の受け持ち
+        // ★グリッドより奥の解析フォグは**掛けない** — 背景は ApplyFog を受けない仕様
+        //   (froxel off の経路も掛けていない) で、ここだけ足すと froxel の on/off で背景の色が
+        //   食い違う。ここで消すのはフロクセル区間ぶんの段だけ
         if (gFroxelEnabled != 0) {
             const float2 bguv = i.pos.xy / gScreenSize;
             const float4 bgvol = gFroxelVolume.SampleLevel(
@@ -164,7 +161,7 @@ float4 PSMain(VSOut i) : SV_Target
         ao = gSsao.SampleLevel(gIblSampler, i.pos.xy / gScreenSize, 0).r; // M38e
     }
     // M54c: 局所ライトの影を先に解決して配列で渡す (ApplyLighting にテクスチャを
-    // 持ち込まないための規約)。M54e で Forward 3 本と同じ関数へ畳んだ
+    // 持ち込まないための規約)。Forward 3 本と同じ関数
     float localShadow[MAX_LIGHTS];
     ResolveLocalShadows(gShadowAtlas, gShadowSampler, gShadowTiles, gLights, gLightCount,
                         gShadowAtlasEnabled, posW, gShadowAtlasTexel, localShadow);
@@ -198,7 +195,7 @@ float4 PSMain(VSOut i) : SV_Target
     //   足しているので、生の放射輝度を上乗せすると同じ光を二重に数える。
     //   `(プローブ - IBL) * ao * 環境BRDF * 重み` を足すと、結果は
     //   「スペキュラ放射輝度を lerp で差し替えた」値とちょうど一致し、**重み 0 で厳密に 0**。
-    //   ApplyLighting 系のシグネチャを触らずに済む = Forward 3 本が 1 文字も動かない。
+    //   Forward と共有している ApplyLighting 系のシグネチャを増やさずに済む。
     // ★RT 反射が効いている画素では、その重みぶんは既にレイの結果で置き換わっているので
     //   (1-wRt) を掛ける。**フォールバック連鎖は SSR → プローブ → グローバル env** で、
     //   SSR 側は「自分が引く基準値」に同じプローブ放射輝度を使う (ssr_trace.hlsl)
@@ -222,8 +219,8 @@ float4 PSMain(VSOut i) : SV_Target
         }
     }
     // M46i: 自己発光 (G-Buffer の b に正規化して詰めてある)。ライティングに依らず
-    // 放射する分を足す。発光なしのマテリアルは b が厳密に 0 なので加算項もちょうど 0 になり、
-    // M46i 以前の出力とビット単位で一致する
+    // 放射する分を足す。発光なしのマテリアルは b が厳密に 0 なので加算項もちょうど 0
+    // (発光を使わない絵はビット単位で変わらない)
     color += albedo.rgb * DecodeEmissive(matG.b);
     // ---- M65e: 音響の残光 (末尾 append。gAcousticParams.w == 0 で従来とビット恒等) ----
     // ★足すのは**フォグより前**。残光は面から出ていく放射なので、霧が掛かる側に居るのが

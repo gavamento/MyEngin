@@ -160,7 +160,7 @@ void TestHierarchyAndSubtreeDestroy()
 }
 
 // ForEachInSubtree (HierarchyWalk.h) の訪問順と打ち切り。プレハブの Apply / シーン保存の兄弟順 /
-// アニメータのボーン番号がこの順序に乗っているので、12 か所の手書き DFS を置き換えた時点で固定する
+// アニメータのボーン番号がこの順序に乗っているので固定する
 void TestForEachInSubtree()
 {
     MYE_LOG_INFO("[selftest] ForEachInSubtree (pre-order / sibling index / skip / stop)");
@@ -341,7 +341,7 @@ void TestTransformSkipCache()
     w.SetParent(f, r2);
     w.ApplyStructuralChanges();
 
-    // 再構築直後は全再計算 + メモ化深度が親チェーン長と一致 (旧 O(N×深度) ロジックと同値)
+    // 再構築直後は全再計算 + メモ化深度が親チェーン長と一致
     ts.Update(w);
     TEST_CHECK(ts.LastStats().computed == 5 && ts.LastStats().skipped == 0);
     TEST_CHECK(w.GetComponent<HierarchyComponent>(a)->depth == 0);

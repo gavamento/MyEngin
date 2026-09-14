@@ -340,8 +340,8 @@ bool RunInputActionsSelfTest()
             // 判定は平均 |0.15| カウント未満。厳密な 0 は要求しない — 合成入力は
             // **ブロック単位で量子化**されている (レーン 0 なら 11 tick に 1 個の
             // 独立サンプル) ので、有限区間の平均には必ず端数が残る。
-            // ★不合格だった旧実装は平均が**ちょうど +0.5** だった (`(h & 15) - 7` の
-            //   非対称な範囲)。実害の閾値との差は一桁あるので、この幅で十分に効く
+            // ★`(h & 15) - 7` のような非対称な範囲だと平均が**ちょうど +0.5** になる。
+            //   この閾値との差は一桁あるので、この幅で十分に検出できる
             const int64_t n = 65536;
             for (uint32_t lane = 0; lane < 2; ++lane) {
                 int64_t sumX = 0;
@@ -356,7 +356,7 @@ bool RunInputActionsSelfTest()
                       "synth: mouse delta has no DC bias (integrating it must not pin to a clamp)");
             }
         }
-        // ★位置は今も動かさない。合成入力で UI ヒットテストが誤爆しないことの回帰
+        // ★位置は動かさない。合成入力で UI ヒットテストが誤爆しないことの回帰
         check(SynthLaneInput(37, 0).mouseX == 0 && SynthLaneInput(37, 0).mouseY == 0,
               "synth: mouse position stays untouched (UI hit-test must not fire)");
     }

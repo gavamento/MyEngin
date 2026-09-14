@@ -35,8 +35,8 @@ cbuffer GpuRenderCB : register(b1)
     float4x4 gEmitterWorld; // transpose 済み (mul(float4, M) 規約は gViewProj と同じ)
     float4   gSpaceParams;  // x = simulationSpace (1 = pos を gEmitterWorld で変換), yzw = 予約
     // ---- M57追補: 解析フォグ + フロクセル (末尾 append。C++ 側 GpuRenderCB と一致) ----
-    // ★ここが 1 行も無かったのが M57e のやり残し。加算合成は背景の減衰を受けないので、
-    //   周囲が霞むほど GPU 粒子だけが不自然にくっきり残っていた。
+    // ★加算合成は背景の減衰を受けないので、これが無いと周囲が霞むほど GPU 粒子だけが
+    //   不自然にくっきり残る。
     // ★**gSpaceParams.yzw の予約枠は使わない** — あれは M61g「シミュレーション空間」の
     //   ブロックで、フォグとは無関係。混ぜると名前が嘘になり、次にローカル空間を拡張する
     //   人が .y を空きだと思って踏む。節約できるのも 16 バイトだけ (必要なスカラは 17 本)。
@@ -65,11 +65,11 @@ SamplerState gSamp : register(s0); // LINEAR/CLAMP — froxel もこれを流用
 
 // ---- M42追補: カーブ評価の HLSL ミラー (正本は ParticleCurves.h) ----
 // ★**particle_gpu_common.hlsli には入れない** — あちらは emit/sim CS も読むので、描画専用の
-//   ものを持ち込まない (M57追補が FroxelCompositeParticle で立てたのと同じ線引き)。
+//   ものを持ち込まない (上の froxel_common.hlsli の include と同じ線引き)。
 // ★lerp を使わず `a + (b - a) * f` と明示展開する — C++ 側 EvalParticleColor と同じ演算列に
 //   揃えるため。ここを lerp にすると mad へ畳まれて最下位ビットが動きうる。
-// ★中間キーが無効 (T が (0,1) の外) なら begin→end の 2 点線形へ縮退し、
-//   従来の絵とビット同一になる (既存コンテンツのビット保存はこの縮退が担保する)。
+// ★中間キーが無効 (T が (0,1) の外) なら begin→end の 2 点線形へ縮退する
+//   (中間キーを使わないコンテンツのビット保存はこの縮退が担保する)。
 
 // 寿命係数 age∈[0,1] での色。キー: begin(0) / [colorMid1@T1] / [colorMid2@T2] / end(1)
 float4 EvalParticleColorGpu(float age)
@@ -167,7 +167,7 @@ VSOut VSMain(uint vid : SV_VertexID, uint iid : SV_InstanceID)
 {
     const GpuParticle p = gPoolSRV[gAliveList[iid]];
     const float age = saturate(1.0f - p.life * p.invLife);
-    // M42追補: 多点グラデーション。中間キーが無効なら従来の 2 点線形へビット同一に縮退する
+    // M42追補: 多点グラデーション。中間キーが無効なら 2 点線形へビット同一に縮退する
     const float size = p.size0 * EvalParticleSizeScaleGpu(age);
     const float4 color = EvalParticleColorGpu(age);
 
@@ -212,8 +212,8 @@ VSOut VSMain(uint vid : SV_VertexID, uint iid : SV_InstanceID)
     const float3 world = basePos + float3(gOffsetX, 0, 0)
         + (gCamRight * c.x + gCamUp * c.y) * size;
 
-    // M63c: フリップブックの連続コマ位置。off なら 0 のまま = PS が従来経路を通る。
-    // ★コマ数は PS の従来経路と同じ「max(1,tilesX) * max(1,tilesY)」— タイル数を
+    // M63c: フリップブックの連続コマ位置。off なら 0 のまま = PS が age から作る経路を通る。
+    // ★コマ数は PS の age 経路と同じ「max(1,tilesX) * max(1,tilesY)」— タイル数を
     //   片方だけ 1 未満に落とすと剰余が 0 除算になる
     float flipFrame = 0.0f;
     if (gParams6.x != 0.0f) {
@@ -250,8 +250,8 @@ float4 PSMain(VSOut i) : SV_Target
     if (gParams3.x != 0.0f)
     {
         // フリップブック (M42c): particle_render.hlsl PSMain と**同一式**。
-        // M63c: タイル分割と 2 コマ補間は particle_billboard.hlsli の SampleFlipTile へ
-        // 寄せて、両バックエンドの PS が同じ 1 本を呼ぶようにした (M42c 以来ここは手写し)。
+        // タイル分割と 2 コマ補間は particle_billboard.hlsli の SampleFlipTile (M63c)。
+        // 両バックエンドの PS が同じ 1 本を呼ぶ。
         // ★gParams6.x==0 の枝は M42c の式そのまま。この場で age から作るのが既存 golden の
         //   ビット保存条件で、VS 経由の値へ置き換えてはいけない
         const uint tx = (uint)max(1.0f, gParams3.y);
@@ -274,8 +274,7 @@ float4 PSMain(VSOut i) : SV_Target
 
     // ---- M63d: ライティング。**col が確定した直後・フォグの前** ----
     // CPU 版 particle_render.hlsl PSMain と同一の位置・同一の関数。二重計上が起きない
-    // 論証と挿入位置の理由はあちらのコメントに書いてある (正本はどちらでもなく
-    // particle_light.hlsli の頭)
+    // 論証と挿入位置の理由は particle_render.hlsl PSMain の同じ場所のコメントに書いてある
     if (gParams7.x == 2.0f) {
         const float3 n = ParticleSphericalNormal(i.uv * 2.0f - 1.0f, gCamRight, gCamUp,
                                                  gPlCamFwd.xyz);
@@ -284,8 +283,7 @@ float4 PSMain(VSOut i) : SV_Target
 
     // ---- M57追補: フォグ (M32c) + フロクセル (M57e) ----
     // **CPU バックエンド (particle_render.hlsl PSMain) と同一の意味論・同一の順序**
-    // (フォグ → フロクセル → ソフトフェード)。ここが 1 行も無かったせいで、GPU に
-    // 切り替えると粒子だけ霧が抜けていた。
+    // (フォグ → フロクセル → ソフトフェード)。
     // 解析フォグが担うのは「視線がグリッドを出てから粒子まで」の残り区間だけ —
     // グリッドの中の粒子は残り 0m = f が厳密に 0 になり、フロクセル側だけが効く
     // (deferred_light の起点押し出しと同じ規約を距離側で書いたもの = 三重計上の回避)
@@ -306,7 +304,7 @@ float4 PSMain(VSOut i) : SV_Target
                                           gFroxelParams.z, col.rgb, blendAdditive);
     }
 
-    // ソフトパーティクル (M42b): 0=off (従来とビット同一)。CPU 版 particle_render.hlsl と同一式
+    // ソフトパーティクル (M42b): 0=off (分岐に入らない)。CPU 版 particle_render.hlsl と同一式
     if (gParams2.x > 0.0f) {
         const float sceneZ =
             LinearizeDepth(gDepth.Load(int3(int2(i.pos.xy), 0)).r, gParams2.y, gParams2.z);

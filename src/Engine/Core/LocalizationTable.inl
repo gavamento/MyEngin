@@ -19,7 +19,7 @@
 // TextUnformatted(Tr(X)) か Text("%s", Tr(X)) を使うこと。
 
 // ---- ウィンドウ名 (M47a) ----
-// "###" の右辺は M47 以前の英語ウィンドウ名そのまま。変更禁止。
+// "###" の右辺は既存のウィンドウ ID (英語名) そのまま。変更禁止。
 MYE_STR(Win_Hierarchy,        "Hierarchy###Hierarchy",                 "ヒエラルキー###Hierarchy")
 MYE_STR(Win_Inspector,        "Inspector###Inspector",                 "インスペクター###Inspector")
 MYE_STR(Win_Console,          "Console###Console",                     "コンソール###Console")
@@ -86,19 +86,19 @@ MYE_STR(Menu_PostFx,          "Post FX",           "ポストエフェクト")
 MYE_STR(Menu_RtGi,            "RT GI (Deferred)",  "RT GI (Deferred)")
 MYE_STR(Menu_RtShadow,        "RT Shadow (Deferred)",     "RT 影 (Deferred)")
 MYE_STR(Menu_RtReflection,    "RT Reflection (Deferred)", "RT 反射 (Deferred)")
-// M55c: velocity バッファ (GBuffer RT4) の可視化。接頭辞 Taa_* は M55 の予約 (統合契約 予約 5)
+// M55c: velocity バッファ (GBuffer RT4) の可視化
 MYE_STR(Taa_VelocityDebug,    "Velocity Buffer (Deferred)", "velocity バッファ (Deferred)")
 // M55d: TAA 本体。カメラジッタもこのトグルと連動する (片方だけ on にはできない)
 MYE_STR(Taa_Enable,           "TAA (Deferred)",             "TAA (Deferred)")
-// M56c: HZB (min-Z ピラミッド) の可視化。接頭辞 Hzb_* は M56 の予約 (統合契約 予約 5)。
+// M56c: HZB (min-Z ピラミッド) の可視化。
 // Hzb_DebugMip は「訳文自体が書式」の正当な用法 (規則 10-a が明示的に許している形)。
 // %d の並びは en / ja で一致必須 — 規則 10-b が機械検査している
 MYE_STR(Hzb_Debug,            "HZB (Deferred)",             "HZB (Deferred)")
 MYE_STR(Hzb_DebugOff,         "Off",                        "オフ")
 MYE_STR(Hzb_DebugMip,         "Mip %d",                     "ミップ %d")
-// M56d: SSR (スクリーンスペース反射)。接頭辞 Ssr_* も M56 の予約 (統合契約 予約 5)
+// M56d: SSR (スクリーンスペース反射)
 MYE_STR(Ssr_Enable,           "SSR (Deferred)",             "SSR (Deferred)")
-// M56e: 反射プローブのシーンキャプチャ。接頭辞 Probe_* も M56 の予約 (統合契約 予約 5)。
+// M56e: 反射プローブのシーンキャプチャ。
 // ★Probe_BakeHere は**トグルではなくボタン**の文言 — 自動ベイクの口はどこにも無い
 MYE_STR(Probe_BakeHere,       "Bake Reflection Probe Here",      "反射プローブをここでベイク")
 MYE_STR(Probe_Preview,        "Reflection Probe###ProbePreview", "反射プローブ###ProbePreview")
@@ -117,7 +117,7 @@ MYE_STR(Probe_BakeAllFailed,  "No reflection probe was baked",   "反射プロ�
 MYE_STR(Probe_SetCount,       "Baked probes: %d",                "焼いたプローブ: %d 個")
 MYE_STR(Probe_PreviewIndex,   "Probe###ProbePreviewIndex",       "プローブ###ProbePreviewIndex")
 
-// ---- 影 (M54e)。View > 影 サブメニュー。統合契約 予約 5 の接頭辞 Shadow_* ----
+// ---- 影 (M54e)。View > 影 サブメニュー ----
 // 統計行の書式指定子の並びは en / ja で一致必須 (規則 10 が機械検査する)
 MYE_STR(Shadow_Directional,   "Directional (CSM)",                    "平行光 (CSM)")
 MYE_STR(Shadow_LocalLights,   "Local Lights (Spot / Point)",          "局所ライト (スポット / 点)")
@@ -126,7 +126,7 @@ MYE_STR(Shadow_AtlasGpu,      "GPU: CSM %.2f ms / atlas %.2f ms",     "GPU: CSM 
 MYE_STR(Shadow_AtlasIdle,     "Atlas: unused (no local shadow caster)", "アトラス: 未使用 (影を投げる局所ライトなし)")
 
 // ---- ボリュメトリックフォグ (M57e)。View > レンダリング の入れ子サブメニュー。
-//      統合契約 予約 5 の接頭辞 Froxel_*。書式指定子の並びは en / ja で一致必須 ----
+//      書式指定子の並びは en / ja で一致必須 ----
 MYE_STR(Froxel_Menu,          "Volumetric Fog",                       "ボリュメトリックフォグ")
 MYE_STR(Froxel_Enable,        "Enabled",                              "有効")
 MYE_STR(Froxel_Temporal,      "Temporal Accumulation",                "テンポラル蓄積")
@@ -165,7 +165,7 @@ MYE_STR(Menu_RtBounce1,       "1 bounce",              "1 バウンス")
 MYE_STR(Menu_RtBounce2,       "2 bounces",             "2 バウンス")
 MYE_STR(Menu_RtTemporal,      "Temporal Accumulation", "テンポラル蓄積")
 MYE_STR(Menu_RtSvgf,          "SVGF Spatial Filter",   "SVGF 空間フィルタ")
-// M67d: ReSTIR (反射サンプルの時空間再利用)。RT 反射が前提で、off なら M67d 以前の絵
+// M67d: ReSTIR (反射サンプルの時空間再利用)。RT 反射が前提で、off なら再利用なしの RT 反射
 MYE_STR(Menu_RtRestir,        "ReSTIR Reflection",     "ReSTIR 反射")
 // M67f: ReSTIR のチューニング (非永続。既定の出所は RtTypes.h の定数表)。
 // ★"###" の右辺は両言語で一致・テーブル内で一意。クラス表の 3 本は 5 行で
@@ -176,7 +176,7 @@ MYE_STR(Restir_VisRay,        "Visibility ray",        "可視レイ")
 MYE_STR(Restir_ClassOverride, "Class override",        "クラス上書き")
 MYE_STR(Restir_ClassOff,      "Off (use material)",    "Off (マテリアルの値)")
 // M67h: クラス表 5 行 × 3 スライダは親メニューに並べると 1400x900 窓で下端が切れる
-// (Reset と GPU 時間が見えなくなる) ので、子メニューへ畳んだ。その子メニュー名
+// (Reset と GPU 時間が見えなくなる) ので、子メニューにしてある。その子メニュー名
 MYE_STR(Restir_ClassTable,    "Class table",           "クラス表")
 MYE_STR(Restir_Radius,        "radius px###RsRadius",  "半径 px###RsRadius")
 MYE_STR(Restir_Taps,          "taps###RsTaps",         "タップ数###RsTaps")
@@ -453,8 +453,7 @@ MYE_STR(SceneView_PhysJoint,  "Joint anchors###sv_phys_joint",
 MYE_STR(SceneView_PhysDeform, "Deformables###sv_phys_deform",
                               "変形体###sv_phys_deform")
 // ---- 音響デバッグ可視化 (M65b)。物理と同じ「ボタン + ポップアップ」の型 ----
-// ★M65e でライティングに差し込むまでは、**波が壁を貫通せず角を曲がったことを
-//   人間が確かめる唯一の手段**がこの 4 トグル
+// ★波が壁を貫通せず角を曲がったことを、ライティングの残光とは独立に目で確かめる手段
 MYE_STR(SceneView_AcDebug,    "Acoustic###sv_acdbg_btn", "音響###sv_acdbg_btn")
 MYE_STR(SceneView_AcFrontier, "Wavefront###sv_ac_frontier",
                               "波面###sv_ac_frontier")
@@ -488,7 +487,7 @@ MYE_STR(SceneView_PilotKeys,  "RMB look + WASDQE / wheel dolly / MMB pan move th
 MYE_STR(SceneView_CamPreview, "Camera Preview", "カメラプレビュー")
 
 // ---- インスペクター (M47b) ----
-// フィールド名 (position / roughness など) はリフレクション由来なので M47c で扱う。
+// フィールド名 (position / roughness など) の表示名はリフレクション由来 (MYE_JP) なのでここには無い。
 // ここはインスペクターが自前で書いているラベルだけ
 MYE_STR(Insp_NoSelection,     "(no selection)",             "(選択なし)")
 MYE_STR(Insp_AddComponent,    "Add Component",              "コンポーネントを追加")
@@ -510,7 +509,7 @@ MYE_STR(Insp_UnknownComps,    "Unknown components (%d):",   "未知のコンポ�
 MYE_STR(Insp_UnknownCompsHint, "The type is not registered - the values are kept as-is and "
                                "written back on save.",
                                "型が登録されていません。値はそのまま保持され、保存時に書き戻されます。")
-// Collider の衝突マスク。元から "##mask" で ID を分けていたので "###" 付きに揃える
+// Collider の衝突マスク。"###" で ID を分ける
 MYE_STR(Insp_Everything,      "Everything###mask_all",      "すべて###mask_all")
 MYE_STR(Insp_Nothing,         "Nothing###mask_none",        "なし###mask_none")
 MYE_STR(Insp_MaskMixed,       "Mixed (0x%08X)###mask_mixed", "一部 (0x%08X)###mask_mixed")

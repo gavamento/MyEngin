@@ -63,8 +63,7 @@ public:
     //
     // M52g: cur / prev は **kMaxPlayers 本のレーン配列**で、playerCount 本だけを評価する。
     // マップ定義 (actions.json) は全レーン共通で、レーン間で違うのは入力スナップショット
-    // だけ — 評価そのものが (cur, prev) の純関数なので、レーン化しても record/verify
-    // 透過という根拠は 1 ミリも変わらない。
+    // だけ — 評価そのものが (cur, prev) の純関数なので、レーン配列でも record/verify 透過。
     // ★playerCount 以降のレーンは**明示的にゼロへ落とす** (前回の残骸を残さない)。
     //   未接続レーンを読んだスクリプトが「前の tick の値」を拾うのが一番たちが悪い
     void Evaluate(const InputSnapshot* cur, const InputSnapshot* prev, uint32_t playerCount);
@@ -76,7 +75,7 @@ public:
     }
 
     // 名前ハッシュ (HashStr) で引く。未定義は 0。線形走査 (アクションは高々数十本)。
-    // player 省略時はレーン 0 = 従来の単一入力 (既存の呼び出し側は 1 文字も変わらない)
+    // player 省略時はレーン 0
     uint32_t ActionState(uint64_t nameHash, uint32_t player = 0) const; // kAction* の論理和
     float AxisValue(uint64_t nameHash, uint32_t player = 0) const;      // [-1, +1]
 

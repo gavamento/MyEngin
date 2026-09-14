@@ -18,7 +18,7 @@ cbuffer SkyCB : register(b3)
 
 TextureCube gSky : register(t0);
 SamplerState gSampler : register(s0);
-// M57e: フロクセルは **t7 / s2** — skybox.hlsl の頭のコメントと同じ理由で、
+// M57e: フロクセルは **t7 / s2** — skybox.hlsl の gFroxelVolume 宣言のコメントと同じ理由で、
 // ホストのパスが既に張っているスロットをそのまま読む (自分では張らない)
 Texture3D gFroxelVolume : register(t7);
 SamplerState gFroxelSampler : register(s2);

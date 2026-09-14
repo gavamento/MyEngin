@@ -16,9 +16,7 @@
 //   (forward_terrain.hlsl と**必ず同じ地表**を出すための共有点)。
 //
 // ★GBuffer は 5 枚 (RT4 = velocity R16G16_FLOAT、M55c)。地形は動かないので RT4 には
-//   常に 0 を書く。**書かずに済ませてはいけない** — 統合 1 で実際に踏みかけた穴で、
-//   SV_Target4 を持たない PS が 5 本張った MRT へ描くと RT4 はその画素に前に居た
-//   不透明の速度が残り、TAA が地形の画素を別の場所から引く。
+//   常に 0 を書く (書かずに済ませてはいけない理由は PSOut の velocity)。
 
 #include "common.hlsli"         // EncodeEmissive (gbMaterial.b の符号化規約) / PerturbNormal
 #include "terrain_common.hlsli" // M58d: b4 の TerrainObject + t20.. のレイヤ + ブレンド本体
@@ -68,7 +66,7 @@ struct PSOut
     float4 position : SV_Target2; // ワールド座標 (R16G16B16A16_FLOAT)
     float4 material : SV_Target3; // r=metallic g=roughness b=emissive/MYE_EMISSIVE_MAX
     // M55c: GBuffer 5 枚目 = 画面速度。地形は動かないので**常に 0** で正しい。
-    // ★書かないと済ませてはいけない — MRT を 5 本張った状態で SV_Target4 を持たない PS が
+    // ★書かずに済ませてはいけない — MRT を 5 本張った状態で SV_Target4 を持たない PS が
     //   描くと RT4 は「その画素に前に居た不透明が書いた速度」のまま残り、TAA が
     //   地形の画素を別の場所から引いてくる (地形だけがゴーストする形で出る)
     float2 velocity : SV_Target4;

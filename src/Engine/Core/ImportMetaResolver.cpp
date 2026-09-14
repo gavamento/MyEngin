@@ -20,7 +20,7 @@ bool Resolve(const std::wstring& path, TextureImportSettings& out)
     if (g_fn) {
         return g_fn(g_user, path, out);
     }
-    return false; // 既定 = 未解決 (呼び出し側が既定値 = 従来挙動)
+    return false; // 既定 = 未解決 (呼び出し側が既定値を使う)
 }
 
 } // namespace importmeta

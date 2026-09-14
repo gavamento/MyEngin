@@ -48,7 +48,7 @@ cbuffer SsrCB : register(b0)
     float    gSsrFogHeightFalloff;
     float    gSsrFogBaseHeight;
     float2   _ssrPad;
-    // ---- M56f: ローカル反射プローブ (末尾 append)。0 = M56d と 1 ビットも変わらない ----
+    // ---- M56f: ローカル反射プローブ (末尾 append)。0 = プローブを見ない (分岐に入らない) ----
     // **引く基準値**を差し替えるためだけに要る。ライトパスがプローブで置き換えた画素から
     // 素の IBL を引くと、その差だけプローブの寄与が二重に乗る (絵は普通に出る)
     int      gSsrProbeCount;

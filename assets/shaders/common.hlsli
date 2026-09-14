@@ -3,9 +3,8 @@
 
 // ---- 深度ユーティリティ (M55a) ----
 // 透視投影の非線形深度 [0,1] → ビュー空間 z。逆行列を要求せず near/far だけで解けるので、
-// 深度 SRV さえあればどのパスからでも呼べる (DoF / ソフトパーティクル / 今後の HZB・SSR・froxel)。
-// 分母の 1e-4 クランプは d==1 かつ near==0 のゼロ除算よけ — 一本化前の 5 つの複製すべてに
-// 同じ形で入っていたので、そのまま共有版の仕様として残す。
+// 深度 SRV さえあればどのパスからでも呼べる (DoF / ソフトパーティクル / SSR / GPU 粒子の深度衝突)。
+// 分母の 1e-4 クランプは d==1 かつ near==0 のゼロ除算よけ。
 // **CPU ミラー: PostFxMath.h::LinearizeDepth — 変更時は両方更新** (RenderSelfTest が検証)。
 // ★このファイルは register 宣言を 1 つも持たない (純関数 + 構造体だけ) ので、
 //   postfx / particle 系のように独自のスロット割当を持つシェーダからも安全に include できる。
@@ -50,8 +49,8 @@ float3 ApplyDirectionalLight(float3 albedo, float3 normal, float3 lightDir, floa
 // tools\check_rules.ps1 の規則 9 が静的に検査する
 #define MYE_EMISSIVE_MAX 8
 
-// 自己発光強度 → G-Buffer の b チャンネル (0..1)。0 はちょうど 0 に落ちるので、
-// 発光を使わないマテリアルは M46i 以前と 1 ビットも変わらない
+// 自己発光強度 → G-Buffer の b チャンネル (0..1)。0 はちょうど 0 に落ちる
+// (発光を使わないマテリアルは b が厳密に 0 = 加算項もちょうど 0)
 float EncodeEmissive(float intensity)
 {
     return saturate(intensity / (float)MYE_EMISSIVE_MAX);
@@ -73,7 +72,7 @@ struct Light
     int    type;      // 0=Directional 1=Point 2=Spot
     float  cosInner;  // Spot: cos(内角)
     float  cosOuter;  // Spot: cos(外角)
-    // ---- M54c: シャドウアトラス (旧 _pad の再利用。64 バイトのままなので既存 3 ミラー不変) ----
+    // ---- M54c: シャドウアトラス (64 バイトのまま。rt_common.hlsli の RtLight はこの 8 バイトを _pad で持つ) ----
     int    shadowTile;  // アトラスのタイル index (先頭面)
     int    shadowFaces; // 0=影を投げない / 1=スポット / 6=点光源 (M54d)
 };
@@ -112,8 +111,9 @@ int CubeFaceIndex(float3 dir)
 }
 
 // ライト 1 本のアトラス内タイル index (M54d)。スポットは先頭タイルそのまま、点光源は
-// 6 面のうち表面がどの面から見えるかで先頭 + 面番号。**光パス 3 経路 (M54e) で同じ式を
-// 使うためにここへ置いてある** — 呼び出し側でインライン展開すると面順の定義が散る。
+// 6 面のうち表面がどの面から見えるかで先頭 + 面番号。**ResolveLocalShadows とフロクセル注入
+// (froxel_inject.cs.hlsl) が同じ式を使うためにここへ置いてある** — 呼び出し側でインライン展開すると
+// 面順の定義が散る。
 int ShadowTileIndexForLight(Light L, float3 posW)
 {
     return (L.shadowFaces == 6) ? (L.shadowTile + CubeFaceIndex(posW - L.position)) : L.shadowTile;
@@ -153,12 +153,11 @@ float SampleShadowAtlas(Texture2D atlas, SamplerComparisonState samp, ShadowTile
 
 // ライト配列ぶんの局所シャドウ係数をまとめて解決する (M54e)。
 // **光パス 4 経路 (deferred_light / forward_lit / forward_lit_instanced / forward_skinned)
-//   が呼ぶ**。M54c/M54d では Deferred にこのループを直書きしていたが、経路が 4 つに増えると
-//   「1 箇所だけ面選択を忘れる」「1 箇所だけ enabled を見ない」が起きてもコンパイルは通り、
-//   絵の食い違いにしか現れない (= Forward と Deferred の一致という ADR-007 の主張が
-//   静かに壊れる) ので 1 本に畳んである。
-// enabled == 0 のときは全要素が厳密に 1.0 = ApplyLighting の乗算が恒等になり、出力は
-// M54c 以前とビット単位で一致する (「機能 off で直前コミットとビット一致」の根拠)。
+//   が呼ぶ**。経路ごとにループを書くと「1 箇所だけ面選択を忘れる」「1 箇所だけ enabled を
+//   見ない」が起きてもコンパイルは通り、絵の食い違いにしか現れない (= Forward と Deferred の
+//   一致という ADR-007 の主張が静かに壊れる) ので 1 本にしてある。
+// enabled == 0 のときは全要素が厳密に 1.0 = ApplyLighting の乗算が恒等になる
+// (局所影 off の出力は、影を持たない経路とビット単位で一致する)。
 //
 // ★tiles を値渡しの配列で受けるのは ApplyLighting の lights[MAX_LIGHTS] と同じ流儀。
 //   HLSL の関数は必ずインライン展開されるので、cbuffer 配列の動的添字にそのまま落ちる。
@@ -181,10 +180,6 @@ void ResolveLocalShadows(Texture2D atlas, SamplerComparisonState samp,
         }
     }
 }
-
-// (M17 の単一シャドウマップ用 SampleShadowPCF は M54d で削除した — M38d の CSM 化で
-//  呼び出しが消えて以来 5 マイルストーン誰も呼んでおらず、SampleShadowAtlas / SampleShadowCSM
-//  と 3 つ目の「ほぼ同じ 3x3 PCF」が並ぶと、どれを直せばよいかが読み手に分からなくなる)
 
 // CSM のカスケード選択付き PCF (M38d)。カスケード 0 (最詳細) から順に posW を射影し、
 // 最初にマップ範囲へ収まったスライスで 3x3 比較平均。どれにも入らなければ 1 (影なし)。
@@ -283,15 +278,15 @@ float GeometrySmith(float ndv, float ndl, float rough)
 
 // ライト 1 個の「表面 → 光源の向き」と「影を除いた減衰」(M63d)。
 //
-// **正本はここ 1 本。** 元は ApplyLighting のループに直書きされていて、パーティクルの
-// ライティング (M63d) が同じ式を手写しする形になっていた — 距離減衰の分母やスポットの
-// 二乗フォールオフを片方だけ直すと「メッシュと粒子で光の届き方が違う」が静かに起きる。
+// **正本はここ 1 本** (ApplyLighting とパーティクルのライティング particle_light.hlsli が呼ぶ)。
+// 距離減衰の分母やスポットの二乗フォールオフを呼び出し側へ書き写すと、片方だけ直したときに
+// 「メッシュと粒子で光の届き方が違う」が静かに起きる。
 //
 // ★**影を含めない**のが分割線。平行光は dirShadow を**代入**、局所光は localShadow[i] を
-//   **乗算**するという非対称は ApplyLighting の既存の演算列そのもので、ここへ畳むと
-//   平行光に `1.0f *` が 1 つ増えて最下位ビットが動きうる (= golden 15 枚が全部動く)。
+//   **乗算**するという非対称は ApplyLighting の演算列そのもので、ここへ畳むと
+//   平行光に `1.0f *` が 1 つ増えて最下位ビットが動きうる (= golden が全部動く)。
 //   影の解決手段 (CSM / アトラス / レイトレ) が呼び出し側でばらばらなのとも整合する。
-// ★戻り値ではなく out 引数 2 本なのは、抽出前の代入順序をそのまま保つため。
+// ★戻り値ではなく out 引数 2 本なのは、ApplyLighting の代入順序 (= ビット) を保つため。
 void LightSample(Light L, float3 posW, out float3 toLightDir, out float atten)
 {
     if (L.type == 0) // Directional
@@ -319,14 +314,12 @@ void LightSample(Light L, float3 posW, out float3 toLightDir, out float atten)
 // 全ライトを Cook-Torrance で積算して最終色を返す (Forward / Deferred 共通)。
 // posW はワールド座標、cameraPos は視点。dirShadow は平行光 (type 0) のシャドウ係数 (1=影なし)。
 // M38c: 環境項は iblEnabled != 0 なら split-sum IBL (irradiance + prefiltered + BRDF LUT)、
-// 無効なら従来の定数アンビエント。IBL テクスチャは呼び出しシェーダのスロットから引数で渡す
+// 無効なら定数アンビエント。IBL テクスチャは呼び出しシェーダのスロットから引数で渡す
 // (forward=t3-5/s2、deferred=t5-7/s0 — スロットが異なるため)。
 // ao (M38e): 環境項に掛ける遮蔽係数 (1=遮蔽なし。SSAO は Deferred のみ、Forward は 1 を渡す)
 // localShadow (M54c): 局所ライト (点/スポット) 1 本ごとの影係数 (1=影なし)。ライト配列と同添字。
-//   ★テクスチャ引数をここへ持ち込まないための設計。呼び出し側が SampleShadowAtlas で
-//     先に解決して配列で渡す。こうしておくと Forward 3 本 (forward_lit /
-//     forward_lit_instanced / forward_skinned) は**1 文字も変えずに済む** — 下の
-//     オーバーロードが全要素 1.0 の配列を作って呼ぶだけなので、乗算は厳密に恒等になる。
+//   ★テクスチャ引数をここへ持ち込まないための設計。呼び出し側が ResolveLocalShadows
+//     (SampleShadowAtlas) で先に解決して配列で渡す。未割当のライトは厳密に 1.0 なので乗算は恒等。
 float3 ApplyLighting(float3 albedo, float3 normal, float3 posW, float3 cameraPos, float metallic,
                      float roughness, float3 ambient, Light lights[MAX_LIGHTS], int count,
                      float dirShadow, float localShadow[MAX_LIGHTS], int iblEnabled,
@@ -369,7 +362,7 @@ float3 ApplyLighting(float3 albedo, float3 normal, float3 posW, float3 cameraPos
         // 拡散は 1/PI を省く (既存コンテンツの明るさを維持。ライト強度の再調整を避ける)。
         Lo += (kd * albedo + specular) * radiance * ndl;
     }
-    // 環境項 (M38c): IBL (split-sum) または従来の定数アンビエント
+    // 環境項 (M38c): IBL (split-sum) または定数アンビエント
     float3 ambientTerm;
     if (iblEnabled != 0) {
         const float3 kS = FresnelSchlickRoughness(ndv, F0, roughness);
@@ -383,16 +376,14 @@ float3 ApplyLighting(float3 albedo, float3 normal, float3 posW, float3 cameraPos
             iblBrdfLut.SampleLevel(iblSampler, float2(ndv, roughness), 0).rg;
         ambientTerm = diffuse + pre * (F0 * brdf.x + brdf.y);
     } else {
-        // 簡易アンビエント (スカイ無し。誘電体のみ拡散に寄与 — 従来挙動)
+        // 簡易アンビエント (スカイ無し。誘電体のみ拡散に寄与)
         ambientTerm = ambient * albedo * (1.0f - metallic);
     }
     return ambientTerm * ao + Lo; // SSAO は環境項のみ減衰 (直接光には掛けない)
 }
 
-// 局所ライトの影を持たない呼び出し用のオーバーロード (M54c、M54c 以前と同一シグネチャ)。
-// Forward 3 本と ApplyLightingHybrid の非アトラス経路がここを通る。
-// **1.0 の乗算は IEEE で厳密なので、この経路の出力は M54c 以前とビット単位で一致する**
-// (受入基準「機能 off で直前コミットの PNG とビット一致」の根拠がこれ)
+// 局所ライトの影を持たない呼び出し用のオーバーロード (M54c)。現状の呼び出しは forward_terrain.hlsl だけ。
+// **1.0 の乗算は IEEE で厳密なので、この経路の出力は局所影が全部 1.0 の場合とビット単位で一致する**
 float3 ApplyLighting(float3 albedo, float3 normal, float3 posW, float3 cameraPos, float metallic,
                      float roughness, float3 ambient, Light lights[MAX_LIGHTS], int count,
                      float dirShadow, int iblEnabled, float iblSpecMips, TextureCube iblIrradiance,
@@ -522,7 +513,7 @@ float3 ReflProbeRadiance(TextureCubeArray cubes, SamplerState samp,
 // 直接光は式を複製せず ApplyLighting を「環境項ゼロ」(ambient=0 / iblEnabled=0) で呼んで
 // Lo だけを取り出す — こうしておくと Forward と Deferred のライティングが永久に一致する。
 // ao はレイトレ由来の項には掛けない (可視性はレイが持っている = 二重遮蔽になるため)。
-// IBL 由来の環境項は従来どおり ao で減衰させる。**既存 ApplyLighting は無変更**。
+// IBL 由来の環境項は ApplyLighting と同じく ao で減衰させる。
 // M54c: localShadow は直接光の側なので、そのまま ApplyLighting へ素通しする
 // (レイトレ経路でも局所ライトの影はラスタのアトラスが担当する — RT 影は平行光だけ)。
 float3 ApplyLightingHybrid(float3 albedo, float3 normal, float3 posW, float3 cameraPos,
@@ -554,7 +545,7 @@ float3 ApplyLightingHybrid(float3 albedo, float3 normal, float3 posW, float3 cam
     } else if (iblEnabled != 0) {
         ambientTerm = iblIrradiance.SampleLevel(iblSampler, N, 0).rgb * albedo * kD * ao;
     } else {
-        ambientTerm = ambient * albedo * (1.0f - metallic) * ao; // 従来の簡易アンビエント
+        ambientTerm = ambient * albedo * (1.0f - metallic) * ao; // 簡易アンビエント (スカイ無し)
     }
 
     // ---- スペキュラ環境項 (split-sum: 放射輝度 × 環境 BRDF) ----
@@ -587,8 +578,8 @@ float3 ApplyLightingHybrid(float3 albedo, float3 normal, float3 posW, float3 cam
 // CPU バックエンド (particle_render.hlsl) と GPU バックエンド (particle_render_gpu.hlsl) が
 // **この 1 本を共有する** — 片方だけ直すと「同じシーンで CPU 粒子と GPU 粒子の霧が違う」
 // という、絵でしか気づけない形で割れる。
-// ★下の ApplyFog は**この追補では 1 文字も変えない** — 全 lit シェーダが通る関数で、
-//   1 ULP でも動くと golden 14 枚が全部動く。式の一本化はここの宿題ではない。
+// ★下の ApplyFog は同じ係数の式を自前で持っていて、この関数を呼んでいない — 全 lit シェーダが
+//   通る関数で、1 ULP でも動くと golden が全部動く。畳むなら golden の差分を確かめること。
 // **C++ ミラー: ParticleCurves.h::ParticleFogFactor** (変更時は両方更新)
 float FogFactor(int fogMode, float density, float fogStart, float fogEnd, float dist)
 {
@@ -605,7 +596,7 @@ float FogFactor(int fogMode, float density, float fogStart, float fogEnd, float 
 // M43a: heightFalloff>0 のとき高度 exp 減衰密度 ρ(y)=e^{-k(y-base)} の視線積分を
 // 「実効距離」として距離に置換。inscatterIntensity>0 のとき視線が太陽 (光の進行方向
 // sunDir の逆) へ向くほどフォグ色を太陽色へ寄せる。
-// **既定 (heightFalloff==0 && inscatterIntensity==0) は従来とビット同一**。
+// **既定 (heightFalloff==0 && inscatterIntensity==0) は距離フォグだけの式 (M29d) とビット同一**。
 // C++ ミラー: PostFxMath.h (HeightFogEffectiveDistance / SunInscatterFactor) — 変更時は両方更新
 float3 ApplyFog(float3 color, float3 fogColor, int fogMode, float density, float fogStart,
                 float fogEnd, float3 cameraPos, float3 posW, float heightFalloff,

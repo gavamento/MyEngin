@@ -67,7 +67,7 @@ public:
     void ClearHierarchyDirty() { hierarchyDirty_ = false; }
 
     // ---- sim 索引ゲート (M51a) ----
-    // false で World のクエリキャッシュと Scene の fileId 索引を素通しし、従来の
+    // false で World のクエリキャッシュと Scene の fileId 索引を素通しし、
     // 線形経路に落とす (決定論 A/B / 障害切り分け用。useJobs と同じ設計)。
     // キャッシュは「結果不変・計算省略」型 — ON record → OFF verify のビット一致で
     // 透過性を実証する。既定 ON、EngineLoop が EngineConfig::useSimCache で設定する
@@ -173,7 +173,7 @@ private:
     // クエリキャッシュ (M51a): required 型リスト → マッチする archetype index 列 (生成順)。
     // アーキタイプは Clear() まで append-only なので、無効化は「生成点で全エントリへ
     // 追記マッチ」だけで済む。キャッシュ無効時 (SimCacheEnabled()==false) は nullptr を
-    // 返し、呼び出し側が従来の線形マッチに落ちる。
+    // 返し、呼び出し側が線形マッチに落ちる。
     // エントリは unique_ptr 保持 — ネストした ForEachArchetype が別クエリを充填しても
     // 外側が掴んでいる index 列が再配置されないようにするため
     struct QueryCacheEntry {

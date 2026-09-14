@@ -4,16 +4,15 @@
 // 出力  = 解決した反射放射輝度 (u0 = reflRestirRt_、後段の SVGF がこれを食う) **だけ**
 //
 // ★M67f: **reservoir を書き戻さない**。時間再利用の履歴は rt_refl (temporal) の出力
-//   そのもので、spatial の結果は「今フレームの絵」にしか使わない。書き戻していた初版は
-//   近傍の履歴が自画素の履歴に混ざり、(a) M の重いクラス (Prop) のサンプルが 1 フレーム
-//   あたり半径ぶんずつ拡散して 40 フレームで画面の 94% を占拠 (実測 9988 → 40432 px、
-//   平均輝度 +8.4%)、(b) 採用サンプルの乗り換えがフリッカーになる、という壊れ方をした。
-//   断てば「Hero のサンプルは radius[Hero] より遠くへ運ばれない」がフレームを跨いでも
-//   成り立つ (spec §4.2 の保存の項)。
+//   そのもので、spatial の結果は「今フレームの絵」にしか使わない。書き戻すと近傍の履歴が
+//   自画素の履歴に混ざり、(a) M の重いクラス (Prop) のサンプルが 1 フレームあたり
+//   半径ぶんずつ拡散して画面を占拠し、(b) 採用サンプルの乗り換えがフリッカーになる。
+//   断っているので「Hero のサンプルは radius[Hero] より遠くへ運ばれない」がフレームを
+//   跨いでも成り立つ (spec §4.2 の保存の項)。
 //   組の入れ替え (ping-pong の flip) は RtPasses が持つ — このシェーダは
-//   「今フレームの reservoir を読んで絵を作る」だけの純粋な消費者になった。
+//   「今フレームの reservoir を読んで絵を作る」だけの消費者。
 //
-// 読む面と書く面が常に別テクスチャなのは変わらない (typed UAV load を避ける。U5)。
+// 読む面と書く面は常に別テクスチャ (typed UAV load を避ける。U5)。
 
 #include "rt_common.hlsli"
 #include "rt_restir_common.hlsli"
@@ -79,7 +78,7 @@ void CSMain(uint3 tid : SV_DispatchThreadID)
     //   gRsClass 由来の動的値だから (fxc が展開に失敗しうる)
     // ★半径は**受け側の α に比例して縮める** (M67f)。p̂ のローブ幅は α に比例するので、
     //   滑らかな面で表の半径をそのまま使うと「ローブの外のタップ」が増えるだけで、
-    //   暗化とフリッカーしか生まない (round 1 実測: 粗さ 0.10 で -5.2% / フリッカー 5 倍)。
+    //   暗化とフリッカーしか生まない。
     //   実効半径が 1 px 未満なら**タップ 0** = 鏡面では spatial が自然に切れる
     const float4 centerParams = RtRestirClassParams(center.cls);
     const float radiusScale = RtRestirRadiusScale(alpha, gRsRadiusAlphaRef);
@@ -89,8 +88,8 @@ void CSMain(uint3 tid : SV_DispatchThreadID)
         : 0;
     // タップの回転角。**画素ごとに違うがフレームでは回さない** — 全画素同じだと螺旋の
     // 偏りが格子模様として絵に焼き付くが、フレームで回すと候補集合が毎フレーム
-    // 入れ替わって採用サンプルの乗り換えがそのままフリッカーになる (round 1 実測 2 倍)。
-    // 書き戻しを断ったのでフレーム間の脱相関は要らない (spec §4.3)
+    // 入れ替わって採用サンプルの乗り換えがそのままフリッカーになる。
+    // reservoir を書き戻さないのでフレーム間の脱相関は要らない (spec §4.3)
     uint3 seed = uint3(tid.x, tid.y, (uint)MYE_RT_RESTIR_TAP_SEED);
     const float rot = RtNextRand2(seed).x * 6.28318531f;
     const float centerDist = length(P - gRsCameraPos);
@@ -166,21 +165,21 @@ void CSMain(uint3 tid : SV_DispatchThreadID)
     }
 
     // M をクラスの上限へ切り詰める (wSum も同じ比率で縮むので resolve の結果は不変)。
-    // ★**書き戻しが無い今、この 1 行は出力に効かない** — 縮めた M / wSum は下の resolve で
+    // ★**reservoir を書き戻さないので、この 1 行は出力に効かない** — 縮めた M / wSum は下の resolve で
     //   比としてしか使われず、reservoir はどこにも保存されないので次フレームにも伝わらない。
     //   それでも残すのは、CPU ミラーの 2 パス往復テスト (RtSelfTest の spatial 側) と
     //   形を揃えるため。spec §4.2 の「統合後は cls_sel の上限まで」を片側だけ崩すと、
     //   書き戻しを復活させた瞬間に GPU と CPU の M が食い違う
     RtRestirClampM(r, wSum, RtRestirClassParams(r.cls).z);
     // ★候補を 1 つも採れなかった画素は **1spp をそのまま通す** (0 にしない)。
-    //   補間法線が視線の裏へ回った画素 (現行コードが「鏡面方向で代用する」と書いている
+    //   補間法線が視線の裏へ回った画素 (rt_refl.cs.hlsl が鏡面方向で代用している
     //   シルエット際) では VNDF の pdf が定義できず p̂ = 0 → W = 0 になり、ReSTIR の
     //   推定量はその画素を**永久に**黒くする (時間・空間再利用を足しても受け側の p̂ が
-    //   0 なので全候補が落ちる)。--render-demo の frame 3 で実測 950 テクセル。
-    //   現行の 1spp はそこにも値を出しているので、**置き換えられない画素は置き換えない**
+    //   0 なので全候補が落ちる)。
+    //   1spp はそこにも値を出しているので、**置き換えられない画素は置き換えない**
     //   = 「ReSTIR on が off より悪くなることはない」を不変量にする。
     //   center.Ls は rt_refl が u0 (reflRt_) へ書いた 1spp と**同じ fp16 の値**なので、
-    //   これで再利用ゼロのときに現行とビット一致する (受け入れ条件 A5)。
+    //   これで再利用ゼロのときに 1spp とビット一致する (受け入れ条件 A5)。
     //   ★M67f: reservoir は書き戻さないので、この画素が「採点できなかった」ことは
     //     次フレームには伝わらない — 伝える必要も無い (履歴は rt_refl の出力が持つ)
     const float3 radiance = (r.M > 0.0f) ? RtRestirResolve(r, wSum) : center.Ls;

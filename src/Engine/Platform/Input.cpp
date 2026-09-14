@@ -135,10 +135,9 @@ InputSnapshot Input::CaptureSnapshot(uint32_t lane, const InputSurface& surface)
         wheelAccum_ = 0;
         mouseDeltaX_ = 0; // M64a: wheel と同じ「1 tick で消費」規約
         mouseDeltaY_ = 0;
-        // M70b → M75b: 実解像度が sim へ入る唯一の口。記録するのは換算前のゲーム面 px と
+        // M75b: 実解像度が sim へ入る唯一の口。記録するのは換算前のゲーム面 px と
         // 面の寸法で、キャンバスへの換算は sim 側 (uilayout::CanvasOfInput) がやる。
-        // 位置は面が未確定でも書く (float にするだけ) — 未確定の読み手は基準解像度 + scale 1 へ
-        // 倒れるので、M70b の退化扱い (CanvasSize(0,0) の scale 1 で割っていた) と同じ値になる。
+        // 位置は面が未確定でも書く (float にするだけ) — 未確定の読み手は基準解像度 + scale 1 へ倒れる。
         // 寸法が退化 (最小化など) なら 0 のまま = 「まだ確定していない」の予約値
         s.mouseSurfX = static_cast<float>(s.mouseX);
         s.mouseSurfY = static_cast<float>(s.mouseY);
@@ -331,7 +330,7 @@ InputSnapshot SynthLaneInput(uint64_t tick, uint32_t lane)
     s.mouseDeltaX = span3(40) - span3(43);
     s.mouseDeltaY = span3(46) - span3(49);
 
-    // ゲーム面 (M70b → M75b)。**基準解像度で固定する** — 合成入力は「(tick, lane) だけの
+    // ゲーム面 (M75b)。**基準解像度で固定する** — 合成入力は「(tick, lane) だけの
     // 純関数」なので、ここに実ウィンドウの寸法を混ぜたら決定論が壊れる。
     // レーン 0 だけが持つのは実キャプチャと同じ規約 (Input.h)。
     // ★マウス位置を動かさない規約は据え置きなので mouseSurfX/Y は 0 のまま。

@@ -8,16 +8,12 @@ namespace mye {
 
 // 自分と**祖先すべて**を見る (M64b)。1 つでも無効なら無効。
 //
-// ★M64a まで自エンティティしか見ていなかった。sim (スクリプト/衝突/物理/パーティクル) は
-//   親を無効にすれば止まるのに、**子の MeshRenderer だけは描かれ続ける**ので、
-//   「親を消したのに見た目が残る」という形で必ず踏む (ドッグフーディングで実際に踏んだ:
-//   車に乗っているあいだプレイヤーを親ごと止めたのに、体の箱が地面に立ったままだった)。
+// ★自エンティティしか見ないと、sim (スクリプト/衝突/物理/パーティクル) は親を無効にすれば
+//   止まるのに**子の MeshRenderer だけは描かれ続ける** = 「親を消したのに見た目が残る」。
 // ★親子の循環は `World::ApplySetParent` が拒否するので、この走査は必ず終わる。
-//   祖先を辿る形はエンジン内で既に何度も使っている
-//   (`PhysicsSystem` の車輪→剛体探索、`Parts::RaycastParts` の root 判定)。
 // ★コストは「自分の Active 引き + 親の Hierarchy 引き」× 階層の深さ。全エンティティが
 //   HierarchyComponent を必ず持つ (World の基本アーキタイプ) ので親引きは常にヒットし、
-//   ルート 1 段なら従来 + 1 回の FindTypeIndex で済む。
+//   ルート 1 段なら Active 引き 1 回 + Hierarchy 引き 1 回で済む。
 bool IsEntityActive(World& world, EntityID e)
 {
     for (EntityID cur = e; !cur.IsNull(); cur = world.GetParent(cur)) {
@@ -38,7 +34,12 @@ void RegisterBuiltinComponents()
     registered = true;
 
     // 登録順 = TypeId。順序を変えるとシーン互換とリプレイ互換が壊れるため、
-    // 追加は必ず末尾に行うこと
+    // 追加は必ず末尾に行うこと。
+    // ★末尾に足した opt-in の型 (無ければ何もしない) は、持つエンティティが既存シーンに居ないので
+    //   既存シーンのワールドハッシュを 1 バイトも変えない = ReplayFile の bump は要らない。
+    //   既存の型の末尾へフィールドを足した場合は別で、hash 対象ならハッシュ値は変わる (.rep は毎回
+    //   録り直しの使い捨てなので bump はしない)、生バイトが伸びるので kSimSnapshotVersion は上げる。
+    //   以下の各登録には、型ごとに違う理由 (hash 対象か NoHash か、など) だけを書く
     RegisterComponent<NameComponent>("Name", {
         MYE_JP("値", MYE_FIELD(NameComponent, value, String64)),
     });
@@ -126,11 +127,10 @@ void RegisterBuiltinComponents()
         MYE_JP("フリップ行数", MYE_FIELD(ParticleEmitterComponent, flipTilesY, Int32)),
         MYE_JP("フリップ周回数", MYE_FIELD(ParticleEmitterComponent, flipCycles, Float)),
         MYE_JP("ソフトフェード距離", MYE_FIELD(ParticleEmitterComponent, softFadeDistance, Float)),
-        // M42e: GPU 深度衝突 (末尾 append。hash 対象フィールド追加 → golden 再記録 = M42e で実施)
+        // M42e: GPU 深度衝突 (末尾 append)
         MYE_JP("深度バッファ衝突", MYE_FIELD(ParticleEmitterComponent, depthCollision, Int32)),
         MYE_JP("衝突時の反発", MYE_FIELD_RANGE(ParticleEmitterComponent, collisionBounce, Float, 0.0f, 1.0f)),
-        // M61a: A群拡張 (末尾 append)。既定値 = 従来挙動とビット同一。hash 対象の追加なので
-        // 既存 .rep のハッシュ値は変わる (.rep は毎回録り直しの使い捨て、M59a2 と同じ扱い)
+        // M61a: A群拡張 (末尾 append)。既定値では拡張を使わない経路とビット同一
         MYE_JP("速度の継承", MYE_FIELD(ParticleEmitterComponent, velocityInheritance, Float)),
         MYE_JP("シミュレーション空間", MYE_FIELD(ParticleEmitterComponent, simulationSpace, Int32)),
         MYE_JP("プリウォーム (秒)", MYE_FIELD(ParticleEmitterComponent, prewarmTime, Float)),
@@ -139,9 +139,7 @@ void RegisterBuiltinComponents()
         MYE_JP("ノイズ周波数", MYE_FIELD(ParticleEmitterComponent, noiseFrequency, Float)),
         MYE_JP("ノイズ速度", MYE_FIELD(ParticleEmitterComponent, noiseSpeed, Float)),
         MYE_JP("放出元", MYE_FIELD(ParticleEmitterComponent, emitFrom, Int32)),
-        // M63a: B群 = 描画表現力 (末尾 append)。既定値 = 従来挙動とビット同一。hash 対象の追加なので
-        // 既存 .rep のハッシュ値は変わる (.rep は毎回録り直しの使い捨て、M61a と同じ扱い)。
-        // M63b〜e が消費するぶんもここで確保済み — 分割して足すと snapshot 版 bump が 5 回要る
+        // M63a: B群 = 描画表現力 (末尾 append)。既定値では B 群を使わない経路とビット同一
         MYE_JP("回転 (最小)", MYE_FIELD(ParticleEmitterComponent, rotationMin, Float)),
         MYE_JP("回転 (最大)", MYE_FIELD(ParticleEmitterComponent, rotationMax, Float)),
         MYE_JP("角速度 (最小)", MYE_FIELD(ParticleEmitterComponent, rotationSpeedMin, Float)),
@@ -164,7 +162,7 @@ void RegisterBuiltinComponents()
 
     // M28a: height / friction、M36a: layer / mask / meshAsset を末尾 append
     // (フィールド順変更なし = シーン互換維持。既存シーンは欠損フィールドをデフォルト値でロード。
-    //  hash 対象フィールドの追加なので golden.rep は M36a で再記録済み)
+    //  hash 対象)
     RegisterComponent<ColliderComponent>("Collider", {
         MYE_JP("形状", MYE_FIELD(ColliderComponent, shape, Int32)),
         MYE_JP("半径", MYE_FIELD(ColliderComponent, radius, Float)),
@@ -174,25 +172,23 @@ void RegisterBuiltinComponents()
         MYE_JP("摩擦", MYE_FIELD(ColliderComponent, friction, Float)),
         MYE_JP("レイヤー", MYE_FIELD_TIP(ColliderComponent, layer, Int32, "collision layer 0..31")),
         MYE_JP("衝突マスク", MYE_FIELD_TIP(ColliderComponent, mask, UInt32, "layers this collider hits (bitmask)")),
-        MYE_JP("メッシュアセット", MYE_FIELD(ColliderComponent, meshAsset, AssetRef)), // M41 予約 (現状未使用)
-        // M59a2: 物理マテリアル (末尾 append)。hash 対象フィールドの追加だが .rep は毎回
-        // 録り直しの使い捨てで、挙動のビット同一は PhysicsSelfTest の [phys] body
-        // ビットパターン照合で証明する (ワールドハッシュ値自体はフィールド追加で変わる)
+        MYE_JP("メッシュアセット", MYE_FIELD(ColliderComponent, meshAsset, AssetRef)), // shape=3 静的メッシュ / shape=4 .terrain.json
+        // M59a2: 物理マテリアル (末尾 append)。未割当の挙動のビット同一は
+        // PhysicsSelfTest の [phys] body ビットパターン照合が見る (ワールドハッシュ値は変わるため)
         MYE_JP("物理マテリアル", MYE_FIELD(ColliderComponent, physMaterial, AssetRef)),
         MYE_JP("材料の上書き", MYE_FIELD(ColliderComponent, materialOverrideBits, UInt32)),
     });
 
-    // M10: 末尾追加 (TypeId 順を壊さない)。無ければ有効なので既存シーンは不変
+    // M10: 無ければ有効扱い
     RegisterComponent<ActiveComponent>("Active", {
         MYE_JP("有効", MYE_FIELD(ActiveComponent, enabled, Int32)),
     });
 
     // M13: プレハブタグ。純データ (どのシステムにも参加しない = sim 非影響)。
     // kComponentHidden で Inspector の Add/一覧から隠すが、シリアライズ+ハッシュはされる。
-    // 無ければ通常エンティティなので既存シーンのハッシュは不変 (ReplayFile bump 不要)
     RegisterComponent<PrefabInstanceComponent>("PrefabInstance", {
         MYE_JP("プレハブハッシュ", MYE_FIELD_FLAGS(PrefabInstanceComponent, prefabHash, UInt64, kFieldReadOnly)),
-        // M48c: 末尾追加。追跡シーンに PrefabInstance は 1 件も無いのでハッシュ影響なし
+        // M48c: 末尾追加
         MYE_JP("外側ローカル ID", MYE_FIELD_FLAGS(PrefabInstanceComponent, outerLocalId, UInt64, kFieldReadOnly)),
     }, kComponentHidden);
 
@@ -200,7 +196,7 @@ void RegisterBuiltinComponents()
         MYE_JP("ローカル ID", MYE_FIELD_FLAGS(PrefabLinkComponent, localId, UInt64, kFieldReadOnly)),
     }, kComponentHidden);
 
-    // M14: アニメータ。無ければ何もしない (opt-in) ので既存シーンは不変
+    // M14: アニメータ。無ければ何もしない
     RegisterComponent<AnimatorComponent>("Animator", {
         MYE_JP("クリップ", MYE_FIELD(AnimatorComponent, clip, AssetRef)),
         MYE_JP("再生位置 (tick)", MYE_FIELD_FLAGS(AnimatorComponent, timeTicks, Int32, kFieldReadOnly)),
@@ -209,12 +205,11 @@ void RegisterBuiltinComponents()
         MYE_JP("再生中", MYE_FIELD(AnimatorComponent, playing, Int32)),
     });
 
-    // M18: スケルタルスキニング。ポーズは描画専用なので **kComponentNoHash** (既存シーン不変)。
-    // opt-in (無ければ通常メッシュ描画) なので TypeId append (=14) だけで bump 不要
-    // M18 追補: loop / fadeTicks (設定) と、クロスフェードの再生状態 5 本を末尾 append。
+    // M18: スケルタルスキニング。ポーズは描画専用なので **kComponentNoHash**。
+    // M18 追補: loop / fadeTicks (設定) と、クロスフェードの再生状態 5 本 (末尾)。
     // 再生状態は SkinningSystem が毎 tick 書く値なので **シーンに保存しない** (kFieldNoSerialize)。
     // 保存すると「編集中に clip を変えて保存」したシーンが、再生開始の 1 tick 目に古い clip から
-    // フェードしてしまう。生バイトは snapshot に載るので kSimSnapshotVersion を v16 へ上げてある
+    // フェードしてしまう。生バイトは snapshot に載る
     RegisterComponent<SkinnedMeshComponent>("SkinnedMesh", {
         MYE_JP("モデル", MYE_FIELD(SkinnedMeshComponent, model, AssetRef)),
         MYE_JP("クリップ", MYE_FIELD(SkinnedMeshComponent, clip, Int32)),
@@ -230,7 +225,6 @@ void RegisterBuiltinComponents()
     }, kComponentNoHash);
 
     // M20: 剛体。velocity は積分される sim 状態なので **hash 対象** (kComponentNoHash を付けない)。
-    // opt-in (無ければ物理非関与) なので TypeId append (=15) だけで既存シーンは不変 → bump 不要
     // M28b: angularVelocity / angularDamping / freezeRotation を末尾 append。
     // angularVelocity は積分される sim 状態なので hash 対象 (velocity と同格)
     RegisterComponent<RigidbodyComponent>("Rigidbody", {
@@ -242,7 +236,7 @@ void RegisterBuiltinComponents()
         MYE_JP("キネマティック", MYE_FIELD(RigidbodyComponent, isKinematic, Int32)),
         MYE_JP("角速度", MYE_FIELD(RigidbodyComponent, angularVelocity, Float3)),
         MYE_JP("回転の減衰", MYE_FIELD(RigidbodyComponent, angularDamping, Float)),
-        MYE_JP("回転を固定", MYE_FIELD(RigidbodyComponent, freezeRotation, Bool)), // M59a2 後続で bool 化
+        MYE_JP("回転を固定", MYE_FIELD(RigidbodyComponent, freezeRotation, Bool)),
         // M59a2: 密度→質量導出 (opt-in、末尾 append)
         MYE_JP("密度から質量", MYE_FIELD_TIP(RigidbodyComponent, useDensity, Bool,
                                              "mass = material density x scaled shape volume "
@@ -275,11 +269,11 @@ void RegisterBuiltinComponents()
                              "their own, and derive the centre of mass and inertia from them")),
     });
 
-    // M21: ゲーム内 UI。描画専用なので **kComponentNoHash** (既存シーンのハッシュ不変)。
-    // serialize はされる (UI をシーン保存/Inspector 編集可能)。opt-in で TypeId append (=16) のみ。
-    // ★M75a: anchor / x / y / w / h / space は RectTransform (末尾登録) へ移した。旧シーンの
+    // M21: ゲーム内 UI。描画専用なので **kComponentNoHash**。
+    // serialize はされる (UI をシーン保存/Inspector 編集可能)。
+    // ★配置 (anchor / x / y / w / h / space) は RectTransform が持つ (M75a)。旧シーンの
     //   同名キーは SceneSerializer::ReadEntityComponents が拾って RectTransform に変換する
-    //   (ここに残すと二重管理になる — 変換の正本は uilayout::FromLegacyRect の 1 本)
+    //   (ここにフィールドを置くと二重管理になる — 変換の正本は uilayout::FromLegacyRect の 1 本)
     RegisterComponent<UIElementComponent>("UIElement", {
         MYE_JP("種類", MYE_FIELD(UIElementComponent, kind, Int32)),
         MYE_JP("色", MYE_FIELD(UIElementComponent, color, Color)),
@@ -308,7 +302,6 @@ void RegisterBuiltinComponents()
     }, kComponentNoHash | kComponentUiAux);
 
     // M22: Animator Controller。LocalTransform を駆動するので **hash 対象** (kComponentNoHash 無し)。
-    // opt-in (無ければ no-op) で TypeId append (=17) のみ → 既存シーン不変 = bump 不要。
     // params[4] は配列なので手動 FieldDesc で各要素を Int32 登録する (hash + serialize + Inspector)
     RegisterComponent<AnimatorControllerComponent>("AnimatorController", {
         MYE_JP("コントローラ", MYE_FIELD(AnimatorControllerComponent, controller, AssetRef)),
@@ -337,14 +330,13 @@ void RegisterBuiltinComponents()
     });
 
     // M29a: 定常力。Rigidbody の velocity (hash 対象) を決定論的に駆動するので **hash 対象**。
-    // opt-in (無ければ物理非関与) で TypeId append (=18) のみ → 既存シーン不変 = bump 不要
     RegisterComponent<ConstantForceComponent>("ConstantForce", {
         MYE_JP("力", MYE_FIELD(ConstantForceComponent, force, Float3)),
         MYE_JP("トルク", MYE_FIELD(ConstantForceComponent, torque, Float3)),
         MYE_JP("ローカル座標系", MYE_FIELD(ConstantForceComponent, relative, Int32)),
     });
 
-    // M29a: 距離バネジョイント。速度を駆動するので **hash 対象**。opt-in で TypeId append (=19)。
+    // M29a: 距離バネジョイント。速度を駆動するので **hash 対象**。
     // connectedEntity は EntityRef → シーン保存は fileId 変換、プレハブは既存 remap が面倒を見る
     RegisterComponent<SpringJointComponent>("SpringJoint", {
         MYE_JP("接続先", MYE_FIELD(SpringJointComponent, connectedEntity, EntityRef)),
@@ -355,7 +347,6 @@ void RegisterBuiltinComponents()
     });
 
     // M29b: キャラクターコントローラ。LocalTransform を駆動する sim 状態なので **hash 対象**。
-    // opt-in で TypeId append (=20) のみ → 既存シーン不変 = bump 不要
     RegisterComponent<CharacterControllerComponent>("CharacterController", {
         MYE_JP("半径", MYE_FIELD_RANGE(CharacterControllerComponent, radius, Float, 0.01f, 10.0f)),
         MYE_JP("高さ", MYE_FIELD_RANGE(CharacterControllerComponent, height, Float, 0.1f, 20.0f)),
@@ -368,8 +359,8 @@ void RegisterBuiltinComponents()
         MYE_JP("接地している", MYE_FIELD_FLAGS(CharacterControllerComponent, isGrounded, Int32, kFieldReadOnly)),
     });
 
-    // M29c: スプライト/トレイル/3D テキスト。描画専用なので **kComponentNoHash**
-    // (既存シーンのハッシュ不変)。serialize はされる。opt-in で TypeId append (=21/22/23) のみ
+    // M29c: スプライト/トレイル/3D テキスト。描画専用なので **kComponentNoHash**。
+    // serialize はされる
     RegisterComponent<SpriteRendererComponent>("SpriteRenderer", {
         MYE_JP("テクスチャ", MYE_FIELD(SpriteRendererComponent, texture, AssetRef)),
         MYE_JP("色", MYE_FIELD(SpriteRendererComponent, color, Color)),
@@ -393,15 +384,15 @@ void RegisterBuiltinComponents()
         MYE_JP("ビルボード", MYE_FIELD(TextMeshComponent, billboardMode, Int32)),
     }, kComponentNoHash);
 
-    // M29d: スカイボックス/フォグ。描画専用なので **kComponentNoHash** (既存シーン不変)。
-    // opt-in で TypeId append (=24/25) のみ → bump 不要
+    // M29d: スカイボックス/フォグ。描画専用なので **kComponentNoHash** (末尾にフィールドを
+    // 足してもハッシュは変わらない)
     RegisterComponent<SkyboxComponent>("Skybox", {
         MYE_JP("モード", MYE_FIELD(SkyboxComponent, mode, Int32)),
         MYE_JP("上の色", MYE_FIELD(SkyboxComponent, topColor, Color)),
         MYE_JP("地平線の色", MYE_FIELD(SkyboxComponent, horizonColor, Color)),
         MYE_JP("下の色", MYE_FIELD(SkyboxComponent, bottomColor, Color)),
         MYE_JP("キューブマップ", MYE_FIELD(SkyboxComponent, cubemapTexture, AssetRef)),
-        // 2026-09-14: 星空と環境光の切り離し (末尾 append。欠けた古いシーンは既定値 = 従来の見た目)
+        // 2026-09-14: 星空と環境光の切り離し (末尾 append。欠けた古いシーンは既定値 = 星なし + 空の色で環境光)
         MYE_JP("星の密度", MYE_FIELD_RANGE(SkyboxComponent, starDensity, Float, 0.0f, 1.0f)),
         MYE_JP("星の明るさ", MYE_FIELD_RANGE(SkyboxComponent, starBrightness, Float, 0.0f, 20.0f)),
         MYE_JP("星の瞬き", MYE_FIELD_RANGE(SkyboxComponent, starTwinkle, Float, 0.0f, 1.0f)),
@@ -415,15 +406,15 @@ void RegisterBuiltinComponents()
         MYE_JP("濃度", MYE_FIELD_RANGE(FogComponent, density, Float, 0.0f, 1.0f)),
         MYE_JP("開始", MYE_FIELD(FogComponent, start, Float)),
         MYE_JP("終了", MYE_FIELD(FogComponent, end, Float)),
-        // M43a: ハイトフォグ + 太陽インスキャッタ (末尾 append、NoHash なので bump 不要)
+        // M43a: ハイトフォグ + 太陽インスキャッタ (末尾 append)
         MYE_JP("高度減衰", MYE_FIELD_RANGE(FogComponent, heightFalloff, Float, 0.0f, 4.0f)),
         MYE_JP("基準高度", MYE_FIELD(FogComponent, baseHeight, Float)),
         MYE_JP("インスキャッタ強度", MYE_FIELD_RANGE(FogComponent, inscatterIntensity, Float, 0.0f, 1.0f)),
         MYE_JP("インスキャッタ指数", MYE_FIELD_RANGE(FogComponent, inscatterPower, Float, 1.0f, 64.0f)),
     }, kComponentNoHash);
 
-    // M29e: カメラ別ポストプロセス。描画専用なので **kComponentNoHash**。
-    // opt-in で TypeId append (=26) のみ → bump 不要
+    // M29e: カメラ別ポストプロセス。描画専用なので **kComponentNoHash** (末尾にフィールドを
+    // 足してもハッシュは変わらない)
     RegisterComponent<CameraPostFxComponent>("CameraPostFx", {
         MYE_JP("露出", MYE_FIELD_RANGE(CameraPostFxComponent, exposure, Float, 0.0f, 16.0f)),
         MYE_JP("トーンマップ", MYE_FIELD(CameraPostFxComponent, tonemapMode, Int32)),
@@ -431,49 +422,48 @@ void RegisterBuiltinComponents()
         MYE_JP("ブルームしきい値", MYE_FIELD(CameraPostFxComponent, bloomThreshold, Float)),
         MYE_JP("ブルーム強度", MYE_FIELD(CameraPostFxComponent, bloomIntensity, Float)),
         MYE_JP("FXAA", MYE_FIELD(CameraPostFxComponent, fxaaOn, Int32)),
-        // M32d: 色収差 / ビネット / カラーグレーディング (末尾 append、NoHash なので bump 不要)
+        // M32d: 色収差 / ビネット / カラーグレーディング (末尾 append)
         MYE_JP("色収差", MYE_FIELD_RANGE(CameraPostFxComponent, chromAberration, Float, 0.0f, 0.05f)),
         MYE_JP("ビネット強度", MYE_FIELD_RANGE(CameraPostFxComponent, vignetteIntensity, Float, 0.0f, 1.0f)),
         MYE_JP("ビネット半径", MYE_FIELD_RANGE(CameraPostFxComponent, vignetteRadius, Float, 0.0f, 1.0f)),
         MYE_JP("彩度", MYE_FIELD_RANGE(CameraPostFxComponent, saturation, Float, 0.0f, 4.0f)),
         MYE_JP("コントラスト", MYE_FIELD_RANGE(CameraPostFxComponent, contrast, Float, 0.0f, 4.0f)),
         MYE_JP("カラーフィルタ", MYE_FIELD(CameraPostFxComponent, colorFilter, Color)),
-        // M40d: SSAO パラメータ (末尾 append、NoHash なので bump 不要)
+        // M40d: SSAO パラメータ (末尾 append)
         MYE_JP("SSAO 半径", MYE_FIELD_RANGE(CameraPostFxComponent, ssaoRadius, Float, 0.05f, 4.0f)),
         MYE_JP("SSAO 強度", MYE_FIELD_RANGE(CameraPostFxComponent, ssaoIntensity, Float, 0.0f, 4.0f)),
-        // M43b: ゴッドレイ (末尾 append、NoHash なので bump 不要)
+        // M43b: ゴッドレイ (末尾 append)
         MYE_JP("ゴッドレイ強度", MYE_FIELD_RANGE(CameraPostFxComponent, godrayIntensity, Float, 0.0f, 4.0f)),
         MYE_JP("ゴッドレイ減衰", MYE_FIELD_RANGE(CameraPostFxComponent, godrayDecay, Float, 0.5f, 0.999f)),
-        // M44a: カラーグレーディング LUT (末尾 append、NoHash なので bump 不要)
+        // M44a: カラーグレーディング LUT (末尾 append)
         MYE_JP("LUT テクスチャ", MYE_FIELD(CameraPostFxComponent, lutTexture, AssetRef)),
         MYE_JP("LUT 強度", MYE_FIELD_RANGE(CameraPostFxComponent, lutIntensity, Float, 0.0f, 1.0f)),
-        // M44b: 自動露出 (末尾 append、NoHash なので bump 不要)
+        // M44b: 自動露出 (末尾 append)
         MYE_JP("自動露出", MYE_FIELD(CameraPostFxComponent, autoExposure, Int32)),
         MYE_JP("自動露出の追従速度", MYE_FIELD_RANGE(CameraPostFxComponent, aeSpeed, Float, 0.1f, 20.0f)),
         MYE_JP("自動露出の下限", MYE_FIELD_RANGE(CameraPostFxComponent, aeMin, Float, 0.01f, 1.0f)),
         MYE_JP("自動露出の上限", MYE_FIELD_RANGE(CameraPostFxComponent, aeMax, Float, 1.0f, 16.0f)),
-        // M44c: 被写界深度 (末尾 append、NoHash なので bump 不要)
+        // M44c: 被写界深度 (末尾 append)
         MYE_JP("被写界深度: 合焦距離", MYE_FIELD_RANGE(CameraPostFxComponent, dofFocusDistance, Float, 0.1f, 500.0f)),
         MYE_JP("被写界深度: 合焦幅", MYE_FIELD_RANGE(CameraPostFxComponent, dofFocusRange, Float, 0.1f, 100.0f)),
         MYE_JP("被写界深度: 最大ボケ半径", MYE_FIELD_RANGE(CameraPostFxComponent, dofMaxRadius, Float, 0.0f, 32.0f)),
-        // M44d: カメラモーションブラー (末尾 append、NoHash なので bump 不要)
+        // M44d: カメラモーションブラー (末尾 append)
         MYE_JP("モーションブラー強度", MYE_FIELD_RANGE(CameraPostFxComponent, motionBlurIntensity, Float, 0.0f, 1.0f)),
         MYE_JP("モーションブラー最大画素", MYE_FIELD_RANGE(CameraPostFxComponent, mbMaxPixels, Float, 1.0f, 64.0f)),
-        // M55d: TAA (末尾 append、NoHash なので bump 不要)。Deferred のみ効く
+        // M55d: TAA (末尾 append)。Deferred のみ効く
         MYE_JP("TAA", MYE_FIELD(CameraPostFxComponent, taaOn, Int32)),
         MYE_JP("TAA 履歴の残し率", MYE_FIELD_RANGE(CameraPostFxComponent, taaFeedback, Float, 0.0f, 0.95f)),
-        // M56d: SSR (末尾 append、NoHash なので bump 不要)。Deferred のみ効く
+        // M56d: SSR (末尾 append)。Deferred のみ効く
         MYE_JP("SSR", MYE_FIELD(CameraPostFxComponent, ssrOn, Int32)),
         MYE_JP("SSR 最大粗さ", MYE_FIELD_RANGE(CameraPostFxComponent, ssrMaxRoughness, Float, 0.0f, 1.0f)),
         MYE_JP("SSR 強度", MYE_FIELD_RANGE(CameraPostFxComponent, ssrIntensity, Float, 0.0f, 2.0f)),
-        // M57c: フロクセル・ボリュメトリック (末尾 append、NoHash なので bump 不要)
+        // M57c: フロクセル・ボリュメトリック (末尾 append)
         MYE_JP("ボリュメトリック霧", MYE_FIELD(CameraPostFxComponent, froxelOn, Int32)),
         MYE_JP("霧の密度", MYE_FIELD_RANGE(CameraPostFxComponent, froxelDensity, Float, 0.0f, 0.5f)),
         MYE_JP("霧の異方性", MYE_FIELD_RANGE(CameraPostFxComponent, froxelAnisotropy, Float, -0.9f, 0.9f)),
     }, kComponentNoHash);
 
     // M32e: 合成エフェクトのライフサイクル。DestroyEntity + 子エミッタ playing を駆動 = hash 対象。
-    // opt-in (TypeId append =27) なので既存シーンは不変 = bump 不要
     RegisterComponent<EffectComponent>("Effect", {
         MYE_JP("長さ (tick)", MYE_FIELD(EffectComponent, durationTicks, Int32)),
         MYE_JP("余韻 (tick)", MYE_FIELD(EffectComponent, lingerTicks, Int32)),
@@ -483,9 +473,8 @@ void RegisterBuiltinComponents()
         MYE_JP("再生後に破棄", MYE_FIELD(EffectComponent, autoDestroy, Int32)),
     });
 
-    // M45e: 3D オーディオ。**出力 sink であり決定論レーン外なので kComponentNoHash** —
-    // WorldHasher.cpp が NoHash を丸ごとスキップするので、TypeId 末尾 append (=28/29) の
-    // これらを足しても既存シーンのハッシュは 1 バイトも変わらない (= golden 再記録不要)。
+    // M45e: 3D オーディオ。**出力 sink であり決定論レーン外なので kComponentNoHash**
+    // (WorldHasher.cpp が NoHash を丸ごとスキップする)。
     RegisterComponent<AudioListenerComponent>("AudioListener", {
         MYE_JP("有効", MYE_FIELD(AudioListenerComponent, enabled, Int32)),
     }, kComponentNoHash);
@@ -509,8 +498,7 @@ void RegisterBuiltinComponents()
     }, kComponentNoHash);
 
     // M48f: 部位 (ソケット)。**hash 対象** — M48g の PartFollowSystem が LocalTransform を
-    // 駆動する = sim 状態の入力になるため。opt-in (TypeId 末尾 append =30) なので
-    // 既存シーンのハッシュは 1 バイトも変わらない = ReplayFile bump 不要
+    // 駆動する = sim 状態の入力になるため
     RegisterComponent<PartComponent>("Part", {
         MYE_JP("タグ", MYE_FIELD(PartComponent, tag, UInt64)),
         MYE_JP("ジョイント", MYE_FIELD(PartComponent, joint, String64)),
@@ -518,8 +506,7 @@ void RegisterBuiltinComponents()
     });
 
     // M49: 部位の範囲 (箱/球ボリューム)。**hash 対象** — Parts::RaycastParts の結果を
-    // スクリプトが読んで挙動を変える = sim 状態の入力になるため (Part と同じ判断)。
-    // opt-in (TypeId 末尾 append =31) なので既存シーンのハッシュは不変 = ReplayFile bump 不要
+    // スクリプトが読んで挙動を変える = sim 状態の入力になるため (Part と同じ判断)
     RegisterComponent<PartBoundsComponent>("PartBounds", {
         MYE_JP("形状", MYE_FIELD(PartBoundsComponent, shape, Int32)),
         MYE_JP("中心", MYE_FIELD(PartBoundsComponent, center, Float3)),
@@ -529,7 +516,6 @@ void RegisterBuiltinComponents()
 
     // M52g: 入力レーンの結び付け。**hash 対象** — レーンごとのアクション評価結果を
     // ワールドハッシュに載せること自体が目的 (Components.h の理由 1)。
-    // opt-in (TypeId 末尾 append =32) なので既存シーンのハッシュは不変 = ReplayFile bump 不要。
     //
     // ★ミラー 5 本に kFieldNoSerialize を**付けてはいけない**: WorldHasher は
     //   NoSerialize フィールドをハッシュから除外する (WorldHasher.cpp) ので、
@@ -547,9 +533,8 @@ void RegisterBuiltinComponents()
         MYE_JP("離した瞬間ビット", MYE_FIELD_FLAGS(PlayerInputComponent, releasedBits, UInt32, kFieldReadOnly)),
     });
 
-    // M58b: 地形。**kComponentNoHash** — 地形は描画専用レーンで、ハイトフィールドが
-    // sim に入る (= ワールドハッシュに載る) のは M59 の地形コリジョンから。
-    // opt-in (TypeId 末尾 append) なので既存シーンのハッシュは不変 = ReplayFile bump 不要
+    // M58b: 地形。**kComponentNoHash** — 地形は描画専用レーン。ハイトフィールドを
+    // sim に入れる地形コリジョンは Collider (shape=4) 側が持つ
     RegisterComponent<TerrainComponent>("Terrain", {
         MYE_JP("地形アセット", MYE_FIELD_TIP(TerrainComponent, source, String64,
                                              "assets-relative .terrain.json path")),
@@ -557,8 +542,7 @@ void RegisterBuiltinComponents()
         // 「打った数字が黙って丸められて表示と食い違う」事故が起きない
         MYE_JP("チャンクのタイル数",
                MYE_FIELD_RANGE(TerrainComponent, chunkTiles, Int32, 2.0f, 256.0f)),
-        // M58e: LOD (フィールド表の末尾 append)。既定 0 = 無効なので、既存シーンを
-        // 開き直しても絵は 1 画素も変わらない
+        // M58e: LOD (フィールド表の末尾 append)。既定 0 = 無効
         MYE_JP("LOD 切替距離",
                MYE_FIELD_TIP(TerrainComponent, lodDistance, Float,
                              "camera-space depth for LOD 1 (0 = LOD off)")),
@@ -569,7 +553,6 @@ void RegisterBuiltinComponents()
 
     // M56a/M56b: デカール (投影ボックス)。**kComponentNoHash** — GBuffer の albedo と
     // 法線 / roughness を上描きするだけの描画レーンで、sim には 1 バイトも触らない。
-    // opt-in (TypeId 末尾 append) なので既存シーンのハッシュは不変 = ReplayFile bump 不要
     RegisterComponent<DecalComponent>("Decal", {
         // フィールド名に "tex" が入っていることが Inspector のピッカーが
         // TextureLibrary を引く条件 (InspectorWindow::DrawAssetRef の名前推定)
@@ -583,8 +566,7 @@ void RegisterBuiltinComponents()
         // (範囲外を渡されても DecalAngleFadeCos が丸めるが、表示と食い違わせない)
         MYE_JP("角度フェード", MYE_FIELD_RANGE(DecalComponent, angleFadeDeg, Float, 0.0f, 180.0f)),
         MYE_JP("描画順", MYE_FIELD(DecalComponent, sortOrder, Int32)),
-        // ---- M56b (末尾 append)。**強度 0 = 恒等** = 既存シーンを読み直しても
-        //      GBuffer は 1 ビットも動かない (フィールドが増えるだけ) ----
+        // ---- M56b (末尾 append)。**強度 0 = 恒等** = GBuffer は 1 ビットも動かない ----
         MYE_JP("法線マップ", MYE_FIELD_TIP(DecalComponent, normalTex, AssetRef,
                                            "tangent-space normal map (null = flat)")),
         MYE_JP("法線の強さ", MYE_FIELD_RANGE(DecalComponent, normalStrength, Float, 0.0f, 1.0f)),
@@ -614,8 +596,7 @@ void RegisterBuiltinComponents()
     }, kComponentNoHash);
 
     // M59b: 物理環境。**hash 対象** — 重力ベクトル / 風 / 空気密度は velocity を決定論的に
-    // 駆動する sim 入力そのもの。opt-in (TypeId 末尾 append =36) なので既存シーンのハッシュは
-    // 1 バイトも変わらない = ReplayFile bump 不要。
+    // 駆動する sim 入力そのもの。
     // 消費は「entity.index 最小の active な 1 個」(Skybox/Fog 規約) — 2 個以上置いても
     // 決定論は保たれるが 2 個目以降は黙って無視される
     RegisterComponent<PhysicsEnvironmentComponent>("PhysicsEnvironment", {
@@ -651,7 +632,7 @@ void RegisterBuiltinComponents()
     });
 
     // M59b: 等方空力。**hash 対象** — velocity / angularVelocity を駆動する。
-    // opt-in (TypeId 末尾 append =37)。**装着 = 新数式への opt-in** (係数 0 でのビット中立は
+    // **装着 = 新数式への opt-in** (係数 0 でのビット中立は
     // 約束しない = M59 決定台帳 1 の存在ゲート)
     RegisterComponent<AeroComponent>("Aero", {
         MYE_JP("抗力", MYE_FIELD(AeroComponent, enableDrag, Bool)),
@@ -671,7 +652,7 @@ void RegisterBuiltinComponents()
     });
 
     // M59b2: 浮力。**hash 対象** — velocity / angularVelocity を駆動する。
-    // opt-in (TypeId 末尾 append =38)。水面と水の密度は PhysicsEnvironment 側 (env 不在なら
+    // 水面と水の密度は PhysicsEnvironment 側 (env 不在なら
     // 既定の水)。**v1 に復原モーメントは無い** (Components.h の制限コメント参照)
     RegisterComponent<BuoyancyComponent>("Buoyancy", {
         MYE_JP("排除体積倍率", MYE_FIELD_TIP(BuoyancyComponent, volumeScale, Float,
@@ -682,7 +663,7 @@ void RegisterBuiltinComponents()
     });
 
     // M59d: 翼面。**hash 対象** — 親剛体の velocity / angularVelocity を駆動する。
-    // opt-in (TypeId 末尾 append =39)。子エンティティに置いて質量中心からずらすのが本来の
+    // 子エンティティに置いて質量中心からずらすのが本来の
     // 使い方 (Components.h の設計コメント参照)
     RegisterComponent<AeroSurfaceComponent>("AeroSurface", {
         MYE_JP("法線", MYE_FIELD_TIP(AeroSurfaceComponent, normal, Float3,
@@ -700,8 +681,8 @@ void RegisterBuiltinComponents()
     });
 
     // M60a: 関節。**hash 対象** — broken が sim 状態で、拘束が velocity / angularVelocity /
-    // LocalTransform を駆動する。opt-in (TypeId 末尾 append =40)。type は「どの拘束行を
-    // 立てるか」のプリセットで、M60a が実際に立てるのは Ball の 3 本だけ (残りは M60b/c)
+    // LocalTransform を駆動する。type は「どの拘束行を立てるか」のプリセット
+    // (Components.h の jointtype)
     RegisterComponent<JointComponent>("Joint", {
         MYE_JP("接続先", MYE_FIELD_TIP(JointComponent, connectedEntity, EntityRef,
                                        "empty pins this body to a fixed point in the world")),
@@ -753,7 +734,7 @@ void RegisterBuiltinComponents()
 
     // M60g1: ラグドール。**hash 対象** — active が「アニメが骨を駆動するか / 物理が駆動するか」
     // を切り替え、物理の収集分岐 (部位を kinematic として扱うか) がこれを読む。
-    // SkinnedMesh 側に付く札で、骨の実体は Part を持つ直子エンティティ (TypeId 末尾 append =41)
+    // SkinnedMesh 側に付く札で、骨の実体は Part を持つ直子エンティティ
     RegisterComponent<RagdollComponent>("Ragdoll", {
         MYE_JP("物理駆動", MYE_FIELD_TIP(RagdollComponent, active, Bool,
                                          "on hands the bones to the rigid bodies; off lets the "
@@ -762,7 +743,7 @@ void RegisterBuiltinComponents()
 
     // M60h1: 車輪 (レイキャストサスペンション)。**hash 対象** — 親剛体の velocity /
     // angularVelocity を駆動し、出力 2 本もソルバが毎 tick 書く sim 状態。
-    // opt-in (TypeId 末尾 append =42)。車体の**子**に置いて質量中心からずらすのが本来の
+    // 車体の**子**に置いて質量中心からずらすのが本来の
     // 使い方 (AeroSurface と同じ「子に置くとレバー腕が生まれる」設計)
     RegisterComponent<WheelComponent>("Wheel", {
         MYE_JP("サス静止長", MYE_FIELD_TIP(WheelComponent, restLength, Float,
@@ -800,7 +781,7 @@ void RegisterBuiltinComponents()
     });
 
     // M60h2: 車両。**hash 対象** — steer / throttle / brake が sim 状態の運転入力で、
-    // タイヤ力が velocity / angularVelocity を駆動する。opt-in (TypeId 末尾 append =43)。
+    // タイヤ力が velocity / angularVelocity を駆動する。
     // ★入力を ABI ではなくフィールドに置いたので **ABI 追加ゼロ** (スクリプトは既存の
     //   SetComponentField で書く)。同時に「この車体の車輪はタイヤ摩擦を持つ」の宣言も
     //   兼ねていて、Vehicle が無ければ車輪は M60h1 のサスだけ = ビット同一の経路を通る
@@ -820,8 +801,7 @@ void RegisterBuiltinComponents()
     });
 
     // M60'c: ロープ (XPBD 変形体第 1 号)。状態は XpbdBackend の池 (ECS 外 sim 状態) に
-    // 住み、ここはオーサリングのみ。フィールドは **hash 対象** (opt-in、TypeId 末尾
-    // append =44)。池の組み直し条件は「粒子数 (segmentCount+1) の不一致」だけ —
+    // 住み、ここはオーサリングのみ。フィールドは **hash 対象**。池の組み直し条件は「粒子数 (segmentCount+1) の不一致」だけ —
     // snapshot 復元後の Sync が池を壊さないための規約 (XpbdBackend::Sync 参照)
     RegisterComponent<RopeComponent>("Rope", {
         MYE_JP("分割数", MYE_FIELD_RANGE(RopeComponent, segmentCount, Int32, 1.0f, 256.0f)),
@@ -851,15 +831,8 @@ void RegisterBuiltinComponents()
     });
 
     // ---- M65a: 音響伝播 (TypeId 45〜49、末尾 append) ----
-    // ★M60' が予約していた 45=Cloth / 46=SoftBody は **51/52 へ繰り下げた**
-    //   (M68a が 50 = AcousticAudio を取ったので、M65a 時点の 50/51 から更に 1 つずつ後ろ。
-    //    M60'h/k はどちらも未登録なのでデータは 1 バイトも壊れていない。
-    //    plans\supple-weaving-loom.md の予約表も同じコミットで書き換えてある)。
+    // ★M60' の Cloth / SoftBody は未登録 (番号の見込みは RectTransform の登録コメント)。
     //   登録順 = TypeId なので飛ばし登録はできない — M60' 再開時はその時点の末尾へ append する。
-    //
-    // 5 本まとめて確保するのは、M65f までしか使わないフィールドも含めて
-    // **共有契約の変更を M65a の 1 コミットに畳む**ため (M63a / M61a の型)。
-    // 途中のサブで足すと snapshot 版が 5 回上がる。
 
     // 音のボクセル場を張る箱。**この 1 個の有無が音響システム全体の存在ゲート**。
     // hash 対象 — グリッドの形は波の到達セルを決める sim 入力そのもの
@@ -981,9 +954,8 @@ void RegisterBuiltinComponents()
     });
 
     // ---- M68a: 音響 × オーディオの調整卓 (TypeId 50、末尾 append) ----
-    // ★**kComponentNoHash** — 出力レーンしか触らないので、WorldHasher が丸ごとスキップする。
-    //   だから既存シーンのハッシュも .rep も snapshot 版 (11) も 1 ビットも動かない
-    //   (前例 M45e の AudioListener/AudioSource = 28/29 と同じ根拠)。
+    // ★**kComponentNoHash** — 出力レーンしか触らないので、WorldHasher が丸ごとスキップする
+    //   (AudioListener / AudioSource と同じ根拠)。
     // ★実行中に Inspector で全部触れることが設計の一部。調整値は耳でしか決まらないので、
     //   「触っても replay が割れない」ことがそのまま作業速度になる。
     RegisterComponent<AcousticAudioComponent>("AcousticAudio", {
@@ -1042,7 +1014,7 @@ void RegisterBuiltinComponents()
 
     // M75a: RectTransform (=52)。UI 要素の配置 (UIElement から分離)。描画専用の NoHash +
     // UI 専用判定に載せる UiAux。旧シーンの UIElement.anchor/x/y/w/h/space はロード時に
-    // ここへ変換される (SceneSerializer)。**M60′ の Cloth/SoftBody 予約は 62/63 へ繰り下げ**
+    // ここへ変換される (SceneSerializer)。**M60′ の Cloth/SoftBody は 62/63 の見込み**
     // (M75 の UI コンポーネント群 52〜61 が先に埋める)
     RegisterComponent<RectTransformComponent>("RectTransform", {
         MYE_JP("アンカー (min)", MYE_FIELD_TIP(RectTransformComponent, anchorMin, Float2,

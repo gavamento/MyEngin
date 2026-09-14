@@ -6,7 +6,7 @@ namespace mye {
 namespace importmeta {
 
 // テクスチャのインポート設定 (.meta v2、M39b)。
-// 既定値 = 従来挙動 (srgb はロードサイトのヒント / mips 有 / Cook は BCn 自動)。
+// 既定値 = .meta が無いときの挙動 (srgb はロードサイトのヒント / mips 有 / Cook は BCn 自動)。
 // wrap (サンプラアドレス) はサンプラがパス単位のため v1 では見送り。
 struct TextureImportSettings {
     int32_t srgb = 0;         // 0=auto (ロードサイトのヒント) / 1=on (_SRGB) / 2=off (UNORM)
@@ -17,7 +17,7 @@ struct TextureImportSettings {
 // パス → インポート設定解決のグローバルフック (assetkey::/assetguid:: と同じ流儀)。
 // TextureLibrary (Renderer 層) が AssetDatabase (Engine 層) を参照せずに .meta の
 // 設定を引くための関数ポインタ注入。AssetDatabase::InstallAsKeyResolver が接続する。
-// 戻り値 false = .meta 無し等で未解決 — 呼び出し側は既定値 (= 従来挙動) を使う。
+// 戻り値 false = .meta 無し等で未解決 — 呼び出し側は既定値を使う。
 // スレッド規約: Install/Resolve はメインスレッド専用 (LoadFile/PollAsyncLoads と同じ)。
 using ResolveFn = bool (*)(void* user, const std::wstring& path, TextureImportSettings& out);
 

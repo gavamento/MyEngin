@@ -1,6 +1,5 @@
-// M67d: 再投影 (前フレームの同じ材質点を探す) の共通関数。**M46d/M55f から
-// rt_temporal.cs.hlsl にあったものを 1 文字も変えずに移しただけ** — ReSTIR の
-// temporal 再利用 (M67e) が rt_refl から同じ判定を使うので、2 か所に写経すると
+// M67d: 再投影 (前フレームの同じ材質点を探す) の共通関数。SVGF の蓄積 (rt_temporal) と
+// ReSTIR の temporal 再利用 (rt_refl、M67e) が同じ判定を使う — 2 か所に書くと
 // 「片方だけ直して SVGF と ReSTIR の履歴条件がずれる」形で静かに壊れる。
 //
 // C++ 側 src/Engine/Renderer/RayTracing/RtMath.h の同名関数の写しで、

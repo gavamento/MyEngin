@@ -1,9 +1,9 @@
 // CPU パーティクル描画 (ビルボード展開を VS で行う)
 // DrawInstanced(4, count) + TRIANGLESTRIP。頂点入力なし (SV_VertexID / SV_InstanceID)
 
-#include "common.hlsli" // LinearizeDepth (M55a で共有化)。register 宣言は含まないので衝突しない
+#include "common.hlsli" // LinearizeDepth (M55a) / FogFactor。register 宣言は含まないので衝突しない
 #include "froxel_common.hlsli" // M57e: フロクセルのサンプル座標と受け持ちの分け方 (同上)
-#include "particle_billboard.hlsli" // M63a: 四隅の回転/ストレッチ (GPU バックエンドと共有する唯一の式)
+#include "particle_billboard.hlsli" // M63a: 四隅の回転/ストレッチとフリップブック (GPU バックエンドと共有)
 // M63d: パーティクルのライティング。**このファイルは register 宣言を持つ**ので、
 // 空きスロットを include の前に指定する (CPU 版は b0/t0-t3/s0 まで使用済み)。
 // ★C++ 側の正本は RenderTypes.h の mye::particlelight:: の 4 定数で、
@@ -34,11 +34,11 @@ cbuffer ParticleCB : register(b0)
     float3   gFogColor;
     float    gFogStart;
     float    gFogEnd;
-    // M42b: ソフトパーティクル (旧 _p3 パディングを転用、CB サイズ不変)
+    // M42b: ソフトパーティクル
     float    gSoftFade; // 深度フェード距離 (0=off)。ParticleCurves.h::SoftFadeFactor と同一式
     float    gNearZ;    // 深度線形化用 (common.hlsli::LinearizeDepth へ渡す)
     float    gFarZ;
-    // ---- M57e: フロクセル (末尾 append。0 = 従来と 1 ビットも変わらない) ----
+    // ---- M57e: フロクセル (末尾 append。0 = その機能の演算を通らない) ----
     // ★粒子に適用しないと「霧の中で粒子だけが浮く」— 加算合成は背景の減衰を
     //   受けないので、周囲が霞むほど粒子だけが不自然にくっきり残る
     int      gFroxelEnabled;
@@ -47,21 +47,21 @@ cbuffer ParticleCB : register(b0)
     float    gFroxelSlices;
     float2   gFroxelScreenSize; // SV_Position → uv
     float2   _froxelPad;
-    // ---- M63a: ビルボード変換 (末尾 append。0 = 従来と 1 ビットも変わらない) ----
+    // ---- M63a: ビルボード変換 (末尾 append。0 = その機能の演算を通らない) ----
     int      gBillboardMode; // 0=corner 素通し / 1=回転・ストレッチを適用
     float3   _billboardPad;
-    // ---- M63c: フリップブック (末尾 append。0 = 従来と 1 ビットも変わらない) ----
+    // ---- M63c: フリップブック (末尾 append。0 = その機能の演算を通らない) ----
     // ★gFlipMode が 0 のとき PS は **VS が送ってきた flip を読まない** — その場で age から
-    //   作る従来の式を通る。「fps=0 なら値は同じ」ではない: CPU 充填ループが作った値は
+    //   作る式 (M42c) を通る。「fps=0 なら値は同じ」ではない: CPU 充填ループが作った値は
     //   ラスタライザ補間を通っていない別の道の値で、最下位ビットが動きうる
-    int      gFlipMode;  // 0=従来 (PS が age から作る) / 1=VS 経由の連続コマ位置を使う
+    int      gFlipMode;  // 0=PS が age から作る / 1=VS 経由の連続コマ位置を使う
     int      gFlipBlend; // 1=隣のコマと frac で補間 (PS の Sample が 2 回になる)
     float2   _flipPad;
-    // ---- M63d: ライティング (末尾 append。0 = 従来と 1 ビットも変わらない) ----
+    // ---- M63d: ライティング (末尾 append。0 = その機能の演算を通らない) ----
     // ★gLightingMode が 0 のとき VS も PS も ParticleLightAt を 1 度も呼ばない。
     //   「ライトが 0 本なら受光係数は 1.0 だから分岐は要らない」ではない —
     //   アンビエントが 0 でないシーンでは env が乗って色が動く
-    int      gLightingMode;       // 0=unlit (従来) / 1=粒子単位 (VS) / 2=画素単位 (球面法線)
+    int      gLightingMode;       // 0=unlit / 1=粒子単位 (VS) / 2=画素単位 (球面法線)
     float    gLightWrap;
     float    gLightIntensity;
     int      gLightReceiveShadow; // 平行光の CSM 影を受けるか
@@ -73,7 +73,7 @@ struct ParticleInstance
     float  size;
     float4 color;
     float  age;   // [0,1] 寿命係数
-    // ---- M63a: 旧 _pad の 12B を意味づけし直した (48B のまま) ----
+    // ---- M63a: 回転 / ストレッチ / コマ位置 (構造体は 48B) ----
     // CPU 側 (CpuParticleBackend.cpp の ParticleInstance) が畳んで送る 3 スカラ。
     // ★速度は送られてこない — ストレッチは CPU が「画面角 + 長軸倍率」へ落としてある
     float  rot;       // 回転角 [rad] (初期回転 + 角速度*経過 + 速度の画面角)
@@ -141,9 +141,8 @@ VSOut VSMain(uint vid : SV_VertexID, uint iid : SV_InstanceID)
 
 // 距離フォグ係数。ApplyFog へは寄せない — 粒子は additive なら「減光」、alpha なら
 // 「フォグ色へ補間」と合成の仕方が分かれるので、色ではなく係数が要る。
-// M57追補: 式そのものは common.hlsli::FogFactor へ移して GPU バックエンドと共有した。
-// ここに残るのは CB フィールドを束ねるだけの名前 — .hlsli は register / CB 名を持たない
-// 契約なので、「CB を読む部分」はシェーダ側に残す必要がある
+// 式は common.hlsli::FogFactor (GPU バックエンドと共有)。ここは CB フィールドを束ねるだけの
+// 名前 — .hlsli は register / CB 名を持たない契約なので、「CB を読む部分」はシェーダ側に置く
 float ParticleFogFactor(float dist)
 {
     return FogFactor(gFogMode, gFogDensity, gFogStart, gFogEnd, dist);
@@ -155,8 +154,8 @@ float4 PSMain(VSOut i) : SV_Target
     if (gUseTexture != 0)
     {
         // フリップブック: 連続コマ位置でタイルを選ぶ (tilesX*tilesY コマ)。
-        // M63c: タイル分割と 2 コマ補間は particle_billboard.hlsli の SampleFlipTile へ
-        // 寄せた — GPU バックエンドの PS が同じ 1 本を呼ぶ (M42c 以来ここは手写しだった)。
+        // タイル分割と 2 コマ補間は particle_billboard.hlsli の SampleFlipTile (M63c)。
+        // GPU バックエンドの PS も同じ 1 本を呼ぶ。
         // ★gFlipMode==0 の枝は M42c の式そのまま。`i.age * gFlipCycles * (float)tiles` を
         //   **この場で**評価するのが既存 golden のビット保存条件で、VS 経由の値へ
         //   置き換えてはいけない
@@ -177,14 +176,13 @@ float4 PSMain(VSOut i) : SV_Target
     }
 
     // ---- M63d: ライティング。**col が確定した直後・フォグの前**に挿す ----
-    // 既存チェーン (色 → フォグ → フロクセル → ソフトフェード) は 1 文字も動かしていない。
+    // 順序は 色 → ライティング → フォグ → フロクセル → ソフトフェード。
     // ★フォグより前でなければならない: 受光はアルベド側の量で、フォグはその結果が
     //   カメラへ届くまでの媒質。順序を入れ替えると「霧の中の粒子だけ影が濃くなる」。
     // ★フロクセル / ApplyFog との**二重計上は起きない** — あちらが担うのはカメラと粒子の
     //   間の媒質の散乱と透過率で、こちらは粒子自身のアルベド × 入射放射照度。物理量も
     //   場所も別物。FroxelCompositeParticle の「加算に inscatter を足さない」守りは
-    //   重なった枚数ぶん霧が濃くなるのを防ぐためのもので、粒子の陰影とは無関係
-    //   (だから 1 行も触っていない)。
+    //   重なった枚数ぶん霧が濃くなるのを防ぐためのもので、粒子の陰影とは無関係。
     // ★唯一の副作用: godray は screen-space なので、粒子が明るくなればシャフトも強くなる。
     //   これは増幅であって二重計上ではない。
     if (gLightingMode == 2) {
@@ -213,15 +211,14 @@ float4 PSMain(VSOut i) : SV_Target
     // M57e: フロクセルの合成。**加算合成には内向き散乱を足さない** — 背後のサーフェス
     // (またはスカイ) が既に 1 回足しているので、加算で重ねるたびに足すと粒子の枚数ぶん
     // 霧が濃くなる。加算の粒子が受け取るのは「自分からカメラまでの減衰」だけ。
-    // M57追補: 2 分岐を froxel_common.hlsli::FroxelCompositeParticle へ移して GPU
-    // バックエンドと共有した (式は 1 ビットも変えていない)
+    // 2 分岐は froxel_common.hlsli::FroxelCompositeParticle (GPU バックエンドと共有)
     if (gFroxelEnabled != 0) {
         col.rgb = FroxelCompositeParticle(gFroxelVolume, gSamp, i.pos.xy, gFroxelScreenSize,
                                           i.viewZ, gFroxelSlices, gFroxelNearZ, gFroxelFarZ,
                                           col.rgb, gBlendAdditive != 0);
     }
 
-    // ソフトパーティクル (M42b): シーン深度との差でフェード。0=off (従来とビット同一)。
+    // ソフトパーティクル (M42b): シーン深度との差でフェード。0=off (分岐に入らない)。
     // ParticleCurves.h::SoftFadeFactor と同一式 (selftest はそちらを検証)
     if (gSoftFade > 0.0f) {
         const float sceneZ =

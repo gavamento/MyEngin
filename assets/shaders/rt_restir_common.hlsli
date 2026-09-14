@@ -3,9 +3,9 @@
 // C++ 側 src/Engine/Renderer/RayTracing/RtMath.h の同名関数の写しで、
 // **式は 1 文字も変えずに両方更新すること** (selftest が CPU 側だけを固定できる根拠)。
 //
-// 推定対象は現行 (M46h) と同じ「VNDF 方向の入射放射輝度の期待値」なので出力の次元は
-// 変わらない = 合成側は不変。M = 1 (再利用なし) で RtRestirResolve が Ls をそのまま返すのが
-// 「ReSTIR off = 現行とビット一致」の数学的な根拠。
+// 推定対象は ReSTIR 無しの反射 (M46h) と同じ「VNDF 方向の入射放射輝度の期待値」なので
+// 出力の次元は同じ = 合成側は ReSTIR の有無を区別しない。M = 1 (再利用なし) で
+// RtRestirResolve が Ls をそのまま返すのが「再利用ゼロ = 1spp とビット一致」の数学的な根拠。
 //
 // ★`!(x > 0)` の形で書いてある判定は CPU 側 (/fp:precise) では NaN も弾くが、
 //   fxc は既定で IEEE 厳密ではない (D3DCOMPILE_IEEE_STRICTNESS を渡していない) ので
@@ -30,9 +30,9 @@
 // ★規則 9 は整数しか比べられないのでここだけは目視同期 — 変えたら両方直すこと
 #define MYE_RT_RESTIR_ALPHA_MIN 1e-3f
 
-// 輝度 (Rec.709)。rt_temporal / rt_variance / rt_atrous が各自持っている同名関数と同一式で、
-// 同じ翻訳単位に 2 つ来ると再定義エラーになるのでガードで包む
-// (共通ヘッダへ括り出すのは M67 の範囲外。括り出す側も同じガードを使うこと)
+// 輝度 (Rec.709)。rt_reproject.hlsli も同名関数を同じガードで持つ — 両方を include する
+// シェーダでは先に来た方が勝つ (rt_refl はこちらを先に読む。理由は rt_refl.cs.hlsl の include)。
+// rt_variance / rt_atrous はガード無しの自前版を持つ (このヘッダも rt_reproject も読まない)
 #ifndef MYE_RT_LUMINANCE_DEFINED
 #define MYE_RT_LUMINANCE_DEFINED
 float RtLuminance(float3 c)
@@ -122,7 +122,7 @@ float RtGgxVndfPdf(float3 n, float3 v, float3 l, float alpha)
 // ReSTIR の target function p̂_q(y)。「この受け側画素にとってこのサンプルがどれだけ
 // 効くか」を 1 本のスカラーで表す = 再利用の重み付けの基準。
 // 輝度 × VNDF pdf にしてあるので、初期サンプル (ソース pdf = VNDF) では
-// w = p̂/p = lum(Ls) に約分される = M=1 で現行と一致する形になる。
+// w = p̂/p = lum(Ls) に約分される = M=1 で 1spp と一致する形になる。
 // **RtMath.h の RtRestirTargetPdf と同一式**
 float RtRestirTargetPdf(float3 Ls, float3 L, float3 V, float3 N, float alpha)
 {

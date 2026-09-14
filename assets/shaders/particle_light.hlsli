@@ -1,7 +1,6 @@
 // M63d: パーティクルのライティング (拡散のみ + 平行光の CSM 影 + IBL irradiance)。
 //
 // **CPU バックエンドと GPU バックエンドの共有点その 2** (その 1 = particle_billboard.hlsli)。
-// 粒子は M63c までずっと完全 unlit で、点光源の隣でも影の中でも同じ色で光っていた。
 //
 // ★particle_billboard.hlsli と違い、**このファイルは register 宣言を持つ**。
 //   CB (1264B) とライト配列のレイアウトを 2 つのシェーダへ手写しすると、片方だけ

@@ -3,7 +3,7 @@
 // 1 スレッド = 1 セル。各セルの中心をワールド座標へ戻し、そこに満ちている媒質の
 //   rgb = 単位長あたりの内向き散乱 (in-scattering) 放射輝度
 //   a   = 単位長あたりの消散係数 σ_t
-// を書く。積分 (手前から舐めて透過率を掛けながら足す) は M57c の担当なので、
+// を書く。積分 (手前から舐めて透過率を掛けながら足す) は froxel_integrate.cs.hlsl の担当なので、
 // **このパスは 1 セルの中だけで完結する = 隣のセルを読まない**。
 //
 // ★局所ライトのビームの実体は common.hlsli の SampleShadowAtlas そのもの (M54c/M54d)。
@@ -12,14 +12,10 @@
 //   ここで自前の影サンプルを書き起こすと、M54d の面選択 (CubeFaceIndex) や
 //   タイル外クランプの規則が 2 箇所に散る。
 //
-// ★平行光 (type 0) はここでは足さない。太陽の大気散乱は今のところ common.hlsli の
-//   ApplyFog (距離フォグ + M43a の太陽インスキャッタ) と postfx_godray_* が担当しており、
-//   ここで素直に足すと同じ現象が 3 回計上される。**役割分担を決めるのは M57d** なので、
-//   このサブでは「局所ライトだけをフロクセルに載せる」= 既存の霧と絶対に重ならない
-//   範囲に限定してある。
+// ★平行光 (type 0) は注入しない。グリッドが持つのは環境光ぶんの等方散乱と局所ライトの
+//   ビームだけ (大気散乱の受け持ちの表は deferred_light.hlsl の「大気散乱」の節)。
 #include "common.hlsli"
-// M57c: スライス深度と逆射影は 3 パス (注入 / テンポラル / 積分) の共有物になったので
-// froxel_common.hlsli へ移した (MYE_FROXEL_GROUP もそちらが正本)
+// スライス深度と逆射影 (3 パス共有)。MYE_FROXEL_GROUP もこちらが正本
 #include "froxel_common.hlsli"
 
 // C++ の FroxelInjectCB (src\Engine\Renderer\FroxelPass.cpp) とレイアウト一致 (2720 バイト)
@@ -42,7 +38,7 @@ cbuffer FroxelInjectCB : register(b0)
     int gFroxelLightCount;
     int gFroxelShadowAtlasEnabled; // 0 = アトラス無し (影なし = 全部 1.0)
     float gFroxelShadowAtlasTexel;
-    // M57c: セル中心のスライス方向オフセット [0,1)。0.5 = ジッタ無し (M57b と同じ位置)。
+    // M57c: セル中心のスライス方向オフセット [0,1)。0.5 = ジッタ無し (セル中心)。
     // CPU が viewKey 別の描画通番から引く (froxel::SliceJitter) = 実時間に依存しない
     float gFroxelSliceJitter;
     float gFroxelPad1;
@@ -80,10 +76,10 @@ void CSMain(uint3 id : SV_DispatchThreadID)
     // ---- セル中心 → ワールド座標 ----
     // ★スライスの**内側**を代表点にする。境界を使うと隣のセルと同じ点を評価してしまい、
     //   1 スライスぶんの厚みが消える (手前のスライスほど薄いので近景で顕著に出る)。
-    // ★M57c: 0.5 (= 中心) 固定ではなく CB から来るジッタで置く。フレーム毎に
+    // ★代表点は CB から来るジッタで置く (M57c)。フレーム毎に
     //   代表点をスライス内で動かし、テンポラル (froxel_temporal.cs.hlsl) が
     //   混ぜることでスライス方向の多重サンプルになる。**テンポラル off のときは
-    //   CPU 側が厳密に 0.5 を入れる** = M57b とビット一致する
+    //   CPU 側が厳密に 0.5 を入れる** = セル中心
     const float viewZ = FroxelSliceDepth((float)id.z + gFroxelSliceJitter,
                                          (float)gFroxelGridSize.z, gFroxelNearZ, gFroxelFarZ);
     const float2 uv = ((float2)id.xy + 0.5f) / (float2)gFroxelGridSize.xy;
@@ -104,12 +100,12 @@ void CSMain(uint3 id : SV_DispatchThreadID)
     for (int i = 0; i < gFroxelLightCount; ++i) {
         const Light L = gFroxelLights[i];
         if (L.type == 0) {
-            continue; // 平行光は M57d が役割を決めるまで ApplyFog / godray の担当
+            continue; // 平行光は注入しない (ファイル冒頭の★)
         }
         const float3 toLight = L.position - posW;
         const float dist = length(toLight);
         const float3 toLightDir = toLight / max(dist, 1e-4f);
-        // ★減衰は ApplyLighting (common.hlsli) と**同じ式**を使う。面の明るさと
+        // ★減衰は common.hlsli::LightSample (ApplyLighting が使う) と**同じ式**を使う。面の明るさと
         //   霧の明るさが別の減衰で走ると、光溜まりの縁で霧だけが先に消える
         const float d = saturate(1.0f - dist / max(L.range, 1e-4f));
         float atten = d * d;

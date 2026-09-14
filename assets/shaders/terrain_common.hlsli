@@ -7,8 +7,8 @@
 //   していて (postfx / cs 系が独自のスロット割当で include するため)、ここは register を
 //   9 個持つ。ibl_common.hlsli / rt_common.hlsli と同じ「用途別の共有ヘッダ」の流儀。
 //
-// ★**スロットは t20 以降。** t0-t7 はホストパス (Deferred 光パス / Forward) の持ち物で、
-//   t12-t15 / t6-t7 は他マイルストーンの予約席。地形は誰とも隣り合わない位置へ逃がす。
+// ★**スロットは t20 以降。** ホストパスの SRV は Deferred 光パスが t0-t16、Forward が t0-t9 を
+//   使っている。地形は誰とも隣り合わない位置へ逃がす。
 //   **C++ 側の正本は TerrainPass.h の kTerrainSplatSrvSlot / kTerrainAlbedoSrvSlot /
 //   kTerrainNormalSrvSlot。** 食い違うと「地形だけが真っ黒」になるだけでコンパイルも実行も
 //   通るので、tools\check_rules.ps1 の規則 9 が静的に照合している。

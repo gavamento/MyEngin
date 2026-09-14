@@ -2,7 +2,7 @@
 //
 // 消費者は 5 本 (deferred_light / forward_lit / forward_lit_instanced / forward_skinned /
 // forward_terrain)。5 箇所に同じ式を書くと「片方だけ直して床だけ光り方が違う」が必ず
-// 起きるので、froxel_common.hlsli / terrain_common.hlsli と同じ流儀で式だけを切り出した。
+// 起きるので、式はこのヘッダの 1 本に置く。
 // **common.hlsli には置けない** — あちらは「register 宣言を持たない」契約で、ここも
 // その契約は守る (テクスチャもサンプラも**引数で受け取る**。宣言は消費側が持つ)。
 //
@@ -15,11 +15,9 @@
 
 // C++ の mye::acoustic::kSrvSlot / kForwardSrvSlot (RenderTypes.h) と一致検査される
 // (tools\check_rules.ps1 規則 9)。
-// ★t13 は「SSR の予約席だったが SSR (M56d) が光パスの**出力**を読む別パスになったので
-//   空いたまま」だった席。M65e がここを取る = 統合契約 予約 2 の更新。取ったことで
-//   Deferred の gbSrvs / nullSrvs は **[16] のまま本数が変わらない** —
-//   M57d/e が 3 回踏んだ「SRV 剥がし忘れ」を構造的に回避できるのがこの席を選んだ理由。
-// ★Forward 側の t8 は本数が 7 -> 8 に増える。**null を張り直す側も 8 にすること** —
+// ★SRV の本数: Deferred の光パスは t0-t16 の 17 本 (t13 残光 / t14 反射プローブ /
+//   t15 フロクセル / t16 見通しビット)、Forward は t1-t9 の 9 本 (t8 残光 / t9 見通しビット)。
+//   張る本数を変えたら **null を張り直す側も同じ本数にすること** —
 //   張り忘れではなく剥がし忘れが実害を出す (次フレームまで生き残る)。
 #define MYE_ACOUSTIC_SRV_SLOT 13
 #define MYE_ACOUSTIC_FWD_SRV_SLOT 8
@@ -28,7 +26,7 @@
 #define MYE_ACOUSTIC_FRONT_SRV_SLOT 16
 #define MYE_ACOUSTIC_FRONT_FWD_SRV_SLOT 9
 // 波スロット数 = C++ の AcousticField::kMaxWaves / RenderView::kAcousticWaveSlots (規則 9)。
-// ★マスクは Texture3D<uint> (R32_UINT) なので 32 本が上限 (2026-09-14 に 16 → 32)
+// ★マスクは Texture3D<uint> (R32_UINT) なので 32 本が上限
 #define MYE_ACOUSTIC_WAVE_SLOTS 32
 
 // register(tN) を #define 1 個から作る。
@@ -157,8 +155,7 @@ float3 AcousticTint(float t)
 //   分かる」とも噛み合う
 // ★帯の位置は t = amp^(1/4) * sqrt(cellSize / d) (EnergyAt の逆二乗 + ガンマ 1/4) から決めた。
 //   cellSize 0.5 で amp 1 の足音なら「2m 以内は面の色 / 5.6m から先は距離色」、
-//   amp 0.3 の忍び足なら「1.1m 以内 / 3m から先」。0.55〜0.80 では音源の真下 1m 未満にしか
-//   色が乗らず、音響デモで変化が 648 px しか無かった
+//   amp 0.3 の忍び足なら「1.1m 以内 / 3m から先」
 static const float kAcousticAlbedoLo = 0.30f;
 static const float kAcousticAlbedoHi = 0.50f;
 // albedo に掛ける倍率。床材の albedo は 0.2〜0.6 程度なので、そのままだと距離色 (白 ≒ 0.9)
@@ -170,7 +167,7 @@ static const float kAcousticAlbedoGain = 2.0f;
 //   ・エネルギーそのもの (逆二乗) だと数メートル先で真っ黒になり「波が壁を描く」が消える
 //   ・符号化値そのもの (エネルギーの 1/4 乗) だと平坦すぎて音源の位置が読めない
 // の中間を取ったから。t が 0 のとき厳密に 0 を返す = 未到達セルは 1 命令も足さない。
-// albedoMix = 0 なら lerp の重みが厳密に 0 = 距離色そのもの (従来とビット恒等)。
+// albedoMix = 0 なら lerp の重みが厳密に 0 = 距離色そのもの (ビット恒等)。
 float3 AcousticRadiance(float t, float intensity, float3 albedo, float albedoMix)
 {
     const float w = albedoMix * smoothstep(kAcousticAlbedoLo, kAcousticAlbedoHi, t);

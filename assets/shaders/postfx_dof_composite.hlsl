@@ -5,7 +5,7 @@
 // v1 制限: 近景の前景滲み (シャープな背景への bleed) 非対応 / 半解像度境界のハロ。
 // CB は PostProcess.cpp の DofCB と同一レイアウト。
 
-#include "common.hlsli" // LinearizeDepth (M55a で共有化)
+#include "common.hlsli" // LinearizeDepth
 
 cbuffer DofCB : register(b0)
 {

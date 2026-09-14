@@ -1,4 +1,4 @@
-// Deferred ジオメトリパス: GBuffer (albedo + ワールド法線 + ワールド座標) へ出力。
+// Deferred ジオメトリパス: GBuffer (albedo / ワールド法線 / ワールド座標 / material / 画面速度) へ出力。
 // ライティングは deferred_light パスで行うため、ここでは gViewProj のみ使う
 // (CB 実体は Forward と同じ PerFrameCB。先頭の viewProj/cameraPos だけ読む)。
 

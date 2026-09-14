@@ -100,9 +100,8 @@ TextureCube              gIblPrefiltered: register(t4);
 Texture2D                gIblBrdfLut    : register(t5);
 Texture2D                gShadowAtlas   : register(t6); // M54e (局所ライトの深度アトラス)
 Texture3D                gFroxelVolume  : register(t7); // M57e (rgb=積算内向き散乱 / a=透過率)
-// M65e: 残光ボリューム。番号の正本は acoustic_common.hlsli の MYE_ACOUSTIC_FWD_SRV_SLOT。
-// ★張る側 (ForwardPath / DeferredPath の透明後段) の本数を 7 -> 8 にすること。
-//   **null を張り直す側も 8**。剥がし忘れると次フレームまで生き残る (M57e の罠)
+// M65e: 残光ボリューム。番号の正本は acoustic_common.hlsli の MYE_ACOUSTIC_FWD_SRV_SLOT
+// (Forward の SRV 本数と剥がし忘れの注意も同 hlsli)
 Texture3D                gAcousticGlow  : MYE_ACOUSTIC_REG(MYE_ACOUSTIC_FWD_SRV_SLOT);
 // 2026-09-12「描画だけ円」: 見通しビット (Load で読む整数テクスチャ。番号の正本は同 hlsli)
 Texture3D<uint> gAcousticFrontMask : MYE_ACOUSTIC_REG(MYE_ACOUSTIC_FRONT_FWD_SRV_SLOT);

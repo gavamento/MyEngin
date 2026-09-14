@@ -1,8 +1,8 @@
 // デカールの投影パス (M56a / M56b、spec §6.6)。
 //
 // GBuffer のジオメトリパスが終わった直後に、投影ボックス (単位立方体 [-0.5,0.5]^3 を
-// デカールのワールド行列で変換したもの) を 1 個ずつ描いて **albedo (RT0)** と、
-// M56b からは **法線 (RT1) / roughness (RT3 の g)** をアルファブレンドで上描きする。
+// デカールのワールド行列で変換したもの) を 1 個ずつ描いて **albedo (RT0)** と
+// **法線 (RT1) / roughness (RT3 の g)** (M56b) をアルファブレンドで上描きする。
 // RT2 (ワールド座標) と RT4 (画面速度 = TAA の入力) には決して書かない。
 //
 // ★**深度の逆投影は要らない** — GBuffer RT2 にワールド座標がそのまま入っているので、
@@ -97,8 +97,8 @@ PSOut PSMain(VSOut i)
     // 角度フェード: 受け面が投影方向に正対しているほど濃い。
     // ★投影パスでは common.hlsli の PerturbNormal 系 (posW の ddx/ddy から TBN を作る)
     //   が使えない — 微分が「投影ボックスの面」のものになるため。ここは GBuffer に
-    //   既に書かれている受け面の法線をそのまま読む (M56b の法線書き込みも同じ理由で
-    //   デカール自身の OBB 基底から TBN を作ることになる)
+    //   既に書かれている受け面の法線をそのまま読む (下の法線書き込みも同じ理由で
+    //   デカール自身の OBB 基底から TBN を作る)
     const float3 n = normalize(gNormal.Load(pixel).xyz * 2.0f - 1.0f);
     const float ndl = dot(n, -gDecalProj.xyz);
     const float fade = saturate((ndl - gDecalProj.w) / max(1.0f - gDecalProj.w, 1e-4f));
@@ -121,7 +121,7 @@ PSOut PSMain(VSOut i)
     // (UV の v を反転しているぶん符号が入れ替わる) / N = -投影方向 (デカール面は
     // プロジェクタの方を向く)。3 本とも CPU 側で正規化済みなのでここでは正規化しない。
     // ★common.hlsli の PerturbNormal は使えない — posW の ddx/ddy が「投影ボックスの面」の
-    //   ものになり、受け面の微分にならないため (これがこのサブの中心的な制約)
+    //   ものになり、受け面の微分にならないため
     float3 tsN = float3(0.0f, 0.0f, 1.0f);
     if (gDecalSurf.y > 0.5f) {
         tsN = gDecalNrm.Sample(gSampler, uv).xyz * 2.0f - 1.0f;

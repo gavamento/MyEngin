@@ -111,8 +111,8 @@ void CSMain(uint3 tid : SV_DispatchThreadID)
 
     // ---- 深度バッファ衝突 (M42e / M63e、GPU 限定の見た目効果) ----
     // 前フレーム深度に投影して貫通していたら反射。画面外/空 (depth=1) は素通し。
-    // C++ ミラー: particle_gpu_common.hlsli の ParticleClipToUv / ReflectWithFriction
-    // (正本は ParticleCurves.h。M42e 以来ここが式を手写ししていたのを M63e で共有点へ寄せた)
+    // 式は particle_gpu_common.hlsli の ParticleClipToUv / ReflectWithFriction
+    // (C++ ミラーは ParticleCurves.h)
     if (gCollParams.x > 0.5f) {
         const float4 clip = mul(float4(p.pos, 1.0f), gCollViewProj);
         float2 collUv = float2(0.0f, 0.0f);
@@ -147,7 +147,7 @@ void CSMain(uint3 tid : SV_DispatchThreadID)
                         const float3 pY = CollReconstructWorld(pix + int2(0, useYp ? 1 : -1),
                                                                useYp ? dyp : dym);
                         // 採った側で外積の巻きは反転しうるが、直後に「速度と逆向き」へ
-                        // 揃えるので符号は問われない (M42e の 3 タップ時代と同じ理屈)
+                        // 揃えるので符号は問われない
                         float3 n = normalize(cross(pY - p0, pX - p0));
                         if (dot(n, p.vel) > 0.0f) {
                             n = -n;
@@ -156,7 +156,7 @@ void CSMain(uint3 tid : SV_DispatchThreadID)
                         p.pos += n * pen; // 表面外へ押し戻し
                         // M63e: 寿命損失。invLife = 1/lifetime なので割り戻すと「元の寿命の
                         // 何割を失うか」になる。1.0 = kill-on-collide (life <= lifetime なので
-                        // 必ず 0 以下へ落ちる)。数行下の既存 dead-list 分岐がそのまま回収する
+                        // 必ず 0 以下へ落ちる)。数行下の dead-list 分岐がそのまま回収する
                         if (gCollParams2.x > 0.0f) {
                             p.life -= gCollParams2.x / p.invLife;
                         }

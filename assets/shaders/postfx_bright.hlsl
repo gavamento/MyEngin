@@ -34,7 +34,7 @@ float4 PSMain(VSOut i) : SV_Target
     // しきい値判定は露出後空間で行う — 露出前の絶対値だと、自動露出で持ち上げた暗所で
     // 何もしきい値を超えられずブルームが全滅する (露出後なら gThreshold=1.0 が
     // 「表示でほぼ白飛び」という一定の意味を持つ)。出力は露出前のまま = 露出は
-    // tonemap 側が加算合成の後に一括で掛ける。exposure==1 では従来とビット同一
+    // tonemap 側が加算合成の後に一括で掛ける
     float exposure = gExposure;
     if (gAutoExposure != 0) {
         exposure *= gExposureBuf[0];

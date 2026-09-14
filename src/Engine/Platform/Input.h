@@ -12,11 +12,10 @@ namespace mye {
 //   (kSimSnapshotVersion の bump が要る)
 inline constexpr uint32_t kMaxPlayers = 4;
 
-// このフレームのゲーム面 (M75b。M70b の InputCanvas を置き換え)。
-// M70b は EngineLoop が uilayout::CanvasSize を解いて渡し、ここでキャンバス座標へ正規化して
-// 記録していた。M75c でキャンバスが複数になると**倍率がキャンバスごとに違う**ので、
-// 「正規化済みの座標 1 個」は記録できない。記録するのは換算前のゲーム面 px と面の寸法だけにし、
-// キャンバスへの換算は sim 側の uilayout::CanvasOfInput / SurfaceToCanvas (描画側と同じ関数) に寄せる。
+// このフレームのゲーム面 (M75b)。記録するのは換算前のゲーム面 px と面の寸法だけで、
+// キャンバスへの換算は sim 側の uilayout::CanvasOfInput / SurfaceToCanvas (描画側と同じ関数) がやる。
+// ★ここでキャンバス座標へ正規化してはいけない — キャンバスは複数あり (M75c)
+//   **倍率がキャンバスごとに違う**ので、「正規化済みの座標 1 個」は記録できない。
 // w/h <= 0 は「未確定」の予約値で、CaptureSnapshot は面の寸法欄を 0 のままにする
 struct InputSurface {
     int32_t w = 0; // ゲーム面の幅 (実 px。Runtime ではクライアント矩形 = バックバッファ)
@@ -70,15 +69,13 @@ struct InputSnapshot {
     int16_t  padRY;           // 右スティック Y
     uint8_t  padConnected;    // 0=未接続 1=接続
     uint8_t  pad2[3];         // 明示パディング
-    // ---- ゲーム面 (M75b、M70b の UI キャンバス 4 値を置き換え)。**レーン 0 だけが持つ** ----
-    // なぜ入力に載せるのか (M70b から不変): UI のヒットテストとフォーカスナビは sim レーンにあり、
+    // ---- ゲーム面 (M75b)。**レーン 0 だけが持つ** ----
+    // なぜ入力に載せるのか: UI のヒットテストとフォーカスナビは sim レーンにあり、
     // 面の寸法は**ウィンドウの大きさという機種依存の値**。実解像度をその場で読ませると
     // 2 台/2 回の実行でズレるが、UIElement は kComponentNoHash なので
     // **ワールドハッシュには 1 ビットも出ない** = replay も desync 検出も助けてくれない
     // (「最悪の壊れ方」)。ここへ載せて .rep に記録すれば、再生は窓の大きさに依らず一致する。
-    // M75b で記録を**換算前のゲーム面 px** に変えた (InputSurface の解説)。既定キャンバスでの
-    // キャンバス座標は M70b の mouseCanvasX と同ビット — どちらも float(mouseX) を同じ
-    // CanvasSize(面).scale で割るだけ (UISelfTest が 960x540 / 1600x900 などで memcmp する)。
+    // 記録するのは**換算前のゲーム面 px** (InputSurface の解説)。
     // ★消費側は必ず ctx.Input() (レーン 0) を読み、uilayout::CanvasOfInput を通すこと。
     //   surfW/H == 0 は「まだ確定していない」(ヘッドレス / 旧い記録) で、読み手が基準解像度へ倒す
     float mouseSurfX;         // ゲーム面 px のマウス位置 (Runtime では float(mouseX))
@@ -99,9 +96,8 @@ struct InputSnapshot {
     bool MouseDown(int button) const { return ((mouseButtons >> button) & 1) != 0; }
     bool PadButton(uint16_t mask) const { return (padButtons & mask) != 0; }
 };
-// M64a で 64 -> 72、M70b で 72 -> 88、M75b で 88 -> 112 (ゲーム面 + 文字キュー)。
-// レイアウトが変わったので kReplayFileVersion / kSimSnapshotVersion / kNetProtoVersion を
-// 同時に上げてある (この 3 つがこのビット列をそのまま持ち回る)
+// ★レイアウトを変えたら kReplayFileVersion / kSimSnapshotVersion / kNetProtoVersion を
+// 同時に上げること (この 3 つがこのビット列をそのまま持ち回る)
 static_assert(sizeof(InputSnapshot) == 112, "InputSnapshot layout is part of the replay format");
 
 // Win32 メッセージを蓄積し、フレーム頭でスナップショットを確定する。
@@ -113,16 +109,15 @@ public:
     // フレーム頭 (spec 5.3 フェーズ 1) で呼ぶ。wheel 累積はここでリセットされる。
     //
     // M52g のレーン規約 (ローカルマルチプレイ):
-    //   lane 0   … キーボード + マウス + XInput スロット 0 (従来と 1 バイトも変わらない)
+    //   lane 0   … キーボード + マウス + XInput スロット 0
     //   lane n>0 … XInput スロット n **だけ**。キーボード/マウスは載せない
     // キーボードを 2 人で分割しないのは、割り当てがアクションマップ (プロジェクト共有の
     // 1 本) に無く、レーンごとの別マップを持つ設計は M52 の範囲外だから。
     // ★つまりローカル 2P には物理パッドが 2 本要る。パッド無しでレーンを動かす手段は
     //   検証用の合成入力 (SynthLaneInput / --synth-input) 側に寄せてある
     //
-    // surface = このフレームのゲーム面 (M75b)。実解像度が sim へ入る口はこの 1 箇所のまま
-    // (M70b)。M70b はここでキャンバス座標へ正規化していたが、M75b からは換算前の px と
-    // 面の寸法を記録し、換算は sim 側がやる (InputSurface の解説)。
+    // surface = このフレームのゲーム面 (M75b)。実解像度が sim へ入る口はこの 1 箇所。
+    // 換算前の px と面の寸法を記録し、キャンバスへの換算は sim 側がやる (InputSurface の解説)。
     // レーン n>0 は面も文字も持たない (0 のまま) ので引数は無視される
     InputSnapshot CaptureSnapshot(uint32_t lane, const InputSurface& surface);
 

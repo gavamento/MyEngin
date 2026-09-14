@@ -10,18 +10,18 @@ cbuffer PostFx : register(b0)
     float gExposure;
     int   gTonemap;
     float gBloomIntensity; // 0 でブルーム無効
-    int   gApplyGamma;     // 1 で linear→sRGB OETF を適用 (正しい sRGB パイプラインが揃う M17 で ON)
+    int   gApplyGamma;     // 1 で linear→sRGB OETF を適用
     // ---- M32d ----
     float  gChromAb;         // 色収差 (UV スケール、0=off)
     float  gVignette;        // 周辺減光 (0=off)
     float  gVignetteRadius;  // 減光開始半径
     float  gSaturation;      // 彩度 (1=変化なし)
     float  gContrast;        // コントラスト (1=変化なし)
-    int    gDistortEnabled;  // M42d: 1 で gDistort の UV オフセットを適用 (旧 _pfxpad.x 転用)
-    int    gGodrayEnabled;   // M43b: 1 で gGodray を加算 (旧 _pfxpad.y 転用)
+    int    gDistortEnabled;  // M42d: 1 で gDistort の UV オフセットを適用
+    int    gGodrayEnabled;   // M43b: 1 で gGodray を加算
     float  _pfxpad;
     float4 gColorFilter;     // 乗算カラーフィルタ
-    // ---- M44a: LUT (末尾 append) / M44b: 自動露出 (旧 _lutPad.x 転用) ----
+    // ---- M44a: LUT (末尾 append) / M44b: 自動露出 ----
     float  gLutIntensity;    // 0 = 無効 (t4 不参照)
     int    gAutoExposure;    // 1 = gExposureBuf[0] を gExposure に乗算
     float2 _lutPad;
@@ -83,7 +83,7 @@ float4 PSMain(VSOut i) : SV_Target
     }
 
     // 歪み (M42d): シーンサンプルの基準 UV に歪みバッファをオフセット加算。
-    // 0 なら uv 不変 + 従来の Load 経路 = ビット同一
+    // 0 なら uv 不変で Load 経路を通る
     float2 uv = i.uv;
     if (gDistortEnabled != 0) {
         uv += gDistort.Sample(gLinear, i.uv).rg;
@@ -102,7 +102,7 @@ float4 PSMain(VSOut i) : SV_Target
         hdr = gScene.Load(pixel).rgb;
     }
 
-    // M44b: 自動露出 — 手動 gExposure は補正段として温存 (乗算合成)。off = 従来とビット同一
+    // M44b: 自動露出 — 手動 gExposure は補正段として温存 (乗算合成)
     float exposure = gExposure;
     if (gAutoExposure != 0) {
         exposure *= gExposureBuf[0];
@@ -115,7 +115,7 @@ float4 PSMain(VSOut i) : SV_Target
         c += gGodray.Sample(gLinear, i.uv).rgb; // M43b: 強度はマスク側で焼き込み済み
     }
     // 露出は加算合成の後に一括で掛ける — シーンだけに掛けるとブルーム/ゴッドレイが
-    // 露出と非連動になり、明所で過剰・暗所で過少に光る。exposure==1 では従来とビット同一
+    // 露出と非連動になり、明所で過剰・暗所で過少に光る
     c *= exposure;
     if (gTonemap == 2) {
         c = c / (1.0f + c); // Reinhard
@@ -139,10 +139,10 @@ float4 PSMain(VSOut i) : SV_Target
     }
 
     if (gApplyGamma != 0) {
-        c = pow(max(c, 0.0f), 1.0f / 2.2f); // linear → sRGB (OETF)。M16 は既定 OFF
+        c = pow(max(c, 0.0f), 1.0f / 2.2f); // linear → sRGB (OETF)
     }
     // M44a: カラーグレーディング LUT。OETF 後の sRGB 域で適用 (LUT は「表示される色 →
-    // 表示される色」でオーサリングされる前提)。0 = 従来とビット同一。
+    // 表示される色」でオーサリングされる前提)。0 = 無効 (分岐に入らない)。
     // 制限: applyGamma=false (リニア出力) との併用はオーサリング域とズレるため非推奨
     if (gLutIntensity > 0.0f) {
         c = lerp(c, SampleLutStrip(saturate(c)), gLutIntensity);

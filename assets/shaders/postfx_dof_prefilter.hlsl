@@ -3,7 +3,7 @@
 // CoC 式は PostFxMath.h::SignedCoC とコメント同期 — 変更時は両方更新。
 // CB は PostProcess.cpp の DofCB と同一レイアウト (3 パス共通)。
 
-#include "common.hlsli" // LinearizeDepth (M55a で共有化)
+#include "common.hlsli" // LinearizeDepth
 
 cbuffer DofCB : register(b0)
 {

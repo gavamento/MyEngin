@@ -45,7 +45,7 @@ struct RtInstance {
     float4 invRow3;
     int blasRoot;
     int materialIndex;
-    int reflectionClass; // M67: 反射に映る側の品質クラス (旧 pad0。レイアウト不変)
+    int reflectionClass; // M67: 反射に映る側の品質クラス
     int pad1;
 };
 
@@ -483,7 +483,7 @@ float3 RtGgxVndf(float3 n, float3 v, float alpha, float2 u)
 float3 RtSkyRadianceLod(float3 dir, float lod)
 {
     // 単一の戻り値にまとめる (早期 return を混ぜると X4000 の誤検出が出る)
-    float3 c = gRtAmbient; // スカイ無し = 従来の定数アンビエント
+    float3 c = gRtAmbient; // スカイ無し = ラスタと同じ定数アンビエント
     if (gRtSkyMode == 1) {
         c = gRtSkyCube.SampleLevel(gRtSampler, dir, lod).rgb;
     } else if (gRtSkyMode == 0) {
@@ -500,7 +500,7 @@ float3 RtSkyRadiance(float3 dir)
     return RtSkyRadianceLod(dir, 2.0f);
 }
 
-// ヒット点の直接光 (拡散のみ)。common.hlsli::ApplyLighting の減衰規約をそのまま複製し、
+// ヒット点の直接光 (拡散のみ)。common.hlsli::LightSample (ApplyLighting の減衰) と同じ式を複製し、
 // 拡散の 1/PI 省略も踏襲する (ラスタと明るさの次元を揃えるため)。
 // 影レイは太陽のみ — ローカルライトが影を落とさないのはラスタ側と同じ
 float3 RtDirectLight(float3 P, float3 N, float3 albedo, float metallic)
@@ -561,9 +561,9 @@ struct RtFirstHit {
 // v1 制限: ヒット点のシェーディングは拡散のみ — 二次ヒット面の鏡面反射は評価しない
 // (金属に映った金属は黒く落ちる)。マテリアルは定数のみでテクスチャは引かない
 //
-// M67d: **本体はこちら** — 1 周目のヒット情報 (fh) も一緒に返す版。ReSTIR (M67d) は
+// M67d: **本体はこちら** — 1 周目のヒット情報 (fh) も一緒に返す版。ReSTIR は
 // 「どこに当たったか」を reservoir に積むので、放射輝度だけでは足りない。
-// 既存の RtTraceRadianceLod はこれを呼ぶ薄いラッパで、**式は 1 つも複製していない**
+// RtTraceRadianceLod はこれを呼ぶ薄いラッパにして**式を複製しない**
 // (複製すると片方だけ直されて GI と反射の明るさが静かにずれる)
 float3 RtTraceRadianceFirstHit(float3 ro, float3 rd, float tMax, int bounces, inout uint3 seed,
                                float skyLod, float envOnLastHit, out RtFirstHit fh)
@@ -587,8 +587,8 @@ float3 RtTraceRadianceFirstHit(float3 ro, float3 rd, float tMax, int bounces, in
             N = -N; // 裏面ヒットは法線を反転 (マテリアルは両面扱い)
         }
         if (b == 0) {
-            // ★ここは**代入だけ** — 上の計算行に一切触っていないので、
-            //   ラッパ経由の GI / 反射の出力はビット単位で従来のまま
+            // ★ここは**代入だけ**にする — 計算行に手を入れると、fh を使わない
+            //   ラッパ経由の GI / 反射の出力まで動く
             fh.pos = P;
             fh.nrm = N;
             fh.inst = hit.inst;
@@ -618,7 +618,7 @@ float3 RtTraceRadianceFirstHit(float3 ro, float3 rd, float tMax, int bounces, in
     return radiance;
 }
 
-// first hit を要らない呼び出し用の薄いラッパ (M46c/M46g/M46h の既存経路はこちら)
+// first hit を要らない呼び出し用の薄いラッパ
 float3 RtTraceRadianceLod(float3 ro, float3 rd, float tMax, int bounces, inout uint3 seed,
                           float skyLod, float envOnLastHit)
 {
@@ -626,7 +626,7 @@ float3 RtTraceRadianceLod(float3 ro, float3 rd, float tMax, int bounces, inout u
     return RtTraceRadianceFirstHit(ro, rd, tMax, bounces, seed, skyLod, envOnLastHit, fh);
 }
 
-// 拡散 GI 既定 (skyLod = 2 / 環境項なし)。M46c からの呼び出しはこちら = 出力はビット不変
+// 拡散 GI 既定 (skyLod = 2 / 環境項なし)。rt_gi.cs.hlsl が呼ぶ
 float3 RtTraceRadiance(float3 ro, float3 rd, float tMax, int bounces, inout uint3 seed)
 {
     return RtTraceRadianceLod(ro, rd, tMax, bounces, seed, 2.0f, 0.0f);

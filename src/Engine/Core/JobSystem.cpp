@@ -111,8 +111,8 @@ void JobSystem::ParallelRanges(size_t total, size_t grain,
     }
 
     // バッチ状態は mutex_ 下で確定する。ワーカーも mutex_ 下でコピーするので、
-    // これらのフィールドにデータ競合は無い (以前は素の書き込みで、drain 中のワーカーが
-    // 破棄済みの fn_ を読んで落ちていた)
+    // これらのフィールドにデータ競合は無い (素の書き込みにすると、drain 中のワーカーが
+    // 破棄済みの fn を読んで落ちる)
     Batch b;
     {
         std::lock_guard<std::mutex> lk(mutex_);

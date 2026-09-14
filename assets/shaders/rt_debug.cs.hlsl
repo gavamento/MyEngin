@@ -65,7 +65,7 @@ void CSMain(uint3 tid : SV_DispatchThreadID)
             col = RtHitNormal(hit) * 0.5f + 0.5f;
         } else if (gDebugMode == MYE_RT_DEBUG_PRIMARY_CLASS) {
             // M67: 一次ヒットの ReflectionClass。Material → RtInstance の配管が
-            // 通っているかを絵で確かめる唯一の口 (反射像側は 14 = sub-04)
+            // 通っているかを絵で確かめる唯一の口 (反射像側は 14 = rt_blit.hlsl の mode 4)
             col = RtReflClassColor(RtHitReflectionClass(hit));
         } else {
             col = IdColor(hit.inst);

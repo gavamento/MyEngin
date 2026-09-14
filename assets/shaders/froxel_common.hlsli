@@ -1,9 +1,7 @@
-// M57c: フロクセルの 3 パス (注入 / テンポラル / 積分) が共有する幾何と積分の式。
+// M57c: フロクセルの幾何と積分の式。3 パス (注入 / テンポラル / 積分) と、合成する側
+// (deferred_light / forward 系 / スカイ / 粒子 / VFX) が共有する。
 //
-// **計画外の追加ファイル。** M57b までは注入 1 パスしか無かったので式はその 1 本に
-// 直接書いてあったが、M57c でスライス深度と逆射影を読む者が 3 本に増える。
-// 3 箇所に同じ式を書くと「片方だけ直して絵が 1 スライスずれる」が必ず起きるので、
-// 地形 (M58d の terrain_common.hlsli) と同じ流儀で本体だけを切り出した。
+// 同じ式を複数箇所に書くと「片方だけ直して絵が 1 スライスずれる」が必ず起きるので、ここに 1 本だけ置く。
 // **common.hlsli には置けない** — あちらは「register 宣言を持たない」契約で、
 // froxel は CB のフィールド名まで含めて共有したいわけではなく式だけを共有したいため。
 //
@@ -67,7 +65,7 @@ float FroxelIntegratedSliceScatter(float sigmaT, float thickness)
     return (1.0f - exp(-s * d)) / s;
 }
 
-// ---- M57d: 最終画像への合成 (deferred_light.hlsl が呼ぶ) ----
+// ---- M57d: 最終画像への合成 (deferred_light.hlsl ほか合成する側が呼ぶ) ----
 
 // view 深度 → 積分ボリュームの w 座標。格納規約はテクセル z = 「スライス z の**奥端**まで」
 // なので、テクセル中心 (z+0.5)/count が sliceCoord z+1 を表す → w = (s - 0.5)/count。
@@ -105,7 +103,6 @@ float FroxelSampleWFar(float sliceCount)
 // 解析フォグ (ApplyFog) に渡す起点。グリッドの中なら **posW をそのまま返す**。
 // ★lerp(cameraPos, posW, frac) で書いてはいけない — frac==1 でも a+(b-a) は b と
 //   厳密には一致せず、近景に最下位ビットの霧が二重に乗る (絵では気づけない)。
-//   M57d が deferred_light.hlsl で踏んだ罠をそのまま関数にしたもの
 float3 FroxelFogOrigin(float3 cameraPos, float3 posW, float viewZ, float gridFarZ)
 {
     if (viewZ > gridFarZ) {

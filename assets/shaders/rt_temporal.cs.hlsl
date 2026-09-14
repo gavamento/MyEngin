@@ -7,10 +7,10 @@
 //               viewKey 別に ping-pong する。深度は view 行列を要らなくするため
 //               「カメラ距離」で持つ (カメラの向きが変わっても意味が変わらない)。
 //
-// 再投影 (M55f で 2 経路になった):
+// 再投影 (2 経路、M55f):
 //   ① 画面速度あり (gTempUseVelocity != 0) → prevUv = uv - velocity。GBuffer RT4 は
 //      カメラと物体の運動を合成済みなので、**動く物体でも同じ材質点の履歴**に当たる。
-//   ② それ以外 (履歴なしフレーム / velocity 未バインド) → M46d のまま、現フレームの
+//   ② それ以外 (履歴なしフレーム / velocity 未バインド) → 現フレームの
 //      可視点 P を前フレームの viewProj で射影する (カメラ運動のみ)。
 // どちらの経路でも、得られた画素の記録法線/距離が現在の面と食い違えば履歴を捨てる。
 // ★①でも深度判定は「**現**フレームの P を前カメラから測った距離」と比べている
@@ -19,11 +19,10 @@
 //   ノイズへ落ちる。安全側なので v1 はこれで許容する。
 // v1 制限: 履歴のタップは最近傍 1 点 (バイリニアの部分棄却はしない)。
 //          スキンメッシュは前フレームのボーンパレットが無いので velocity が
-//          カメラ + 物体トランスフォームぶんしか出ない (M55c から続く制限)。
+//          カメラ + 物体トランスフォームぶんしか出ない (M55c)。
 
-// M67d: 再投影の共通関数 (RtClipToPrevUv / RtHistoryUv / RtReprojectValid /
-// RtAdvanceHistory / RtTemporalAlpha / RtLuminance) は rt_reproject.hlsli へ移した。
-// ReSTIR の temporal 再利用 (M67e) が rt_refl 側から同じ判定を使うため
+// 再投影の共通関数 (RtClipToPrevUv / RtHistoryUv / RtReprojectValid /
+// RtAdvanceHistory / RtTemporalAlpha / RtLuminance)。ReSTIR の temporal 再利用と共有
 #include "rt_reproject.hlsli"
 
 // C++ の kRtTemporalMaxHistory と一致検査される (tools/check_rules.ps1 規則 9)

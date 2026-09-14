@@ -31,8 +31,8 @@ float4 PSMain(VSOut i) : SV_Target
 {
     const float2 uv = i.pos.xy / max(gBlitDstSize, float2(1.0f, 1.0f));
     // M67d: クラス番号 (整数) を線形補間すると境界に「隣り合う 2 クラスの中間の番号」=
-    // 実在しないクラスの色が出るので、mode 4 だけ点サンプルで引く。gBlitMode は
-    // CB のスカラー = 完全に uniform なので既存モードの経路は 1 命令も変わらない
+    // 実在しないクラスの色が出るので、mode 4 だけ点サンプルで引く (gBlitMode は
+    // CB のスカラー = uniform な分岐)
     const float4 s = (gBlitMode == 4) ? gSrc.SampleLevel(gBlitPoint, uv, 0)
                                       : gSrc.SampleLevel(gBlitSamp, uv, 0);
     float3 c = s.rgb;

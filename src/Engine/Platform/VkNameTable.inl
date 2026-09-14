@@ -8,7 +8,7 @@
 //
 // 修飾キーは汎用 VK のみ収載する — WM_KEYDOWN の wParam は Shift/Ctrl/Alt を
 // 汎用コード (0x10-0x12) で届けるので、L/R 分離コード (0xA0-0xA5) を収載しても
-// 決して押下にならないダミー割り当てを作るだけになる (Input.cpp:28-35)。
+// 決して押下にならないダミー割り当てを作るだけになる (Input::HandleMessage の WM_KEYDOWN)。
 // OEM キー (VK_OEM_1 等) はレイアウトで刻印が変わるため主要 4 つ以外は収載しない。
 
 MYE_VK(0x08, "Backspace")

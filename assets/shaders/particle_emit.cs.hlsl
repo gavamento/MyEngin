@@ -12,7 +12,7 @@ struct EmitData
     // M42追補: CPU 側 pool.invLife[i] と同じ値 (= 1/lifetime)。
     // C++ 側 GpuParticleBackend::EmitData と一致 (48B)
     float  invLife;
-    // M63a: 旧 _pad の 12B。**乱数は GPU で作らない**契約 (ファイル冒頭) の通り、
+    // M63a: 放出時の不変属性。**乱数は GPU で作らない**契約 (ファイル冒頭) の通り、
     // CPU の Pcg32 が決定論的に引いた値をそのまま受け取る (CPU バックエンドと同じ消費順)
     float  rot0;
     float  rotVel;

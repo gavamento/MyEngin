@@ -1,13 +1,12 @@
 // M63a: パーティクルのビルボード四隅変換 (回転 + 長軸ストレッチ)。
 //
-// **CPU バックエンドと GPU バックエンドの唯一の共有点。** 粒子の描画は
+// **CPU バックエンドと GPU バックエンドの共有点その 1** (その 2 = particle_light.hlsli)。粒子の描画は
 // particle_render.hlsl (CPU インスタンス経路) と particle_render_gpu.hlsl (GPU プール経路) の
 // 2 実装を持つが、spec 7.5 は両者が同じ絵を出すことを要求している。四隅の作り方を 2 箇所に
-// 手写しすると「片方だけ直して CPU と GPU で回転の向きが逆」が必ず起きる — M42追補 が
-// alpha ソートで実際に踏んだ形 (キーの式を ParticleAlphaSortViewZ へ寄せて decided した) と同じ。
+// 手写しすると「片方だけ直して CPU と GPU で回転の向きが逆」が必ず起きる。
 //
 // **particle_gpu_common.hlsli には置けない** — あちらは emit / sim CS も読むので、
-// 描画専用のものを持ち込まない (M57追補 が FroxelCompositeParticle で立てた線引きと同じ)。
+// 描画専用のものを持ち込まない (froxel_common.hlsli の粒子合成と同じ線引き)。
 // **common.hlsli にも置けない** — あちらはエンジン全体の共有で、粒子固有の規約を混ぜない。
 //
 // ★ここの関数はすべて **C++ の mye::ParticleCurves.h と同一式**。
@@ -42,7 +41,7 @@ float ParticleElapsedFromLife(float life, float invLife)
 
 // 回転角の閉形式。C++ ミラー: ParticleRotationAt。
 // ★**sim では積分しない** — 定数角速度なら積分結果がこの式と厳密に一致するので、
-//   particle_sim.cs.hlsl を 1 行も触らずに回転が入る。角速度に減衰を入れる日が来たら
+//   sim 状態に角度を持たずに済む。角速度に減衰を入れる日が来たら
 //   この閉形式は壊れるので、そのときは sim 状態へ移すこと。
 float ParticleRotationAt(float rot0, float rotVel, float elapsed)
 {
@@ -59,8 +58,6 @@ float ParticleRotationAt(float rot0, float rotVel, float elapsed)
 // ★CPU 側とのビット一致は**保証しない** — atan2 / sqrt の実装が libm と GPU で違う。
 //   突き合わせるのは「向きと伸び方が同じか」であって画素の完全一致ではない
 //   (particle_cpu / particle_gpu の golden が別々に版管理されているのはこのため)。
-//   実測 (WARP, M63b 時点) では伸びの領域は画素一致し、golden 間の差 217→221 画素は
-//   M63a から在る回転部の差のまま — つまり**この関数は現状ずれを増やしていない**。
 void EvalParticleStretch(float3 v, float3 camRight, float3 camUp, float stretchScale,
                          float stretchMax, out float angle, out float stretch)
 {
@@ -80,13 +77,12 @@ void EvalParticleStretch(float3 v, float3 camRight, float3 camUp, float stretchS
 // C++ ミラー: ParticleCurves.h の ParticleFlipFrameAt / ParticleFlipTilePos /
 // ParticleFlipTileUvCpu (UV は検査用ミラー — 実際にサンプルするのは下の SampleFlipTile)。
 //
-// ★タイル UV の式は M42c から **CPU 経路と GPU 経路の PS へ手写し**されていた。
-//   コマ間補間で「2 コマ目の UV」を作る必要が出た時点で写しが 4 箇所になるので、
-//   ここへ寄せて 1 本にする (回転で particle_billboard.hlsli を作ったのと同じ理由)。
+// ★タイル UV は CPU / GPU 両バックエンドの PS がここの 1 本を呼ぶ。コマ間補間で
+//   「2 コマ目の UV」も要るので、写すと 4 箇所に散る。
 
 // 連続コマ位置。C++ ミラー: ParticleFlipFrameAt。
 // ★flipFps <= 0 && !randomStart では `age * flipCycles * tiles` へ**演算列ごと**縮退する
-//   — 従来 PS に書かれている式そのもの。ここが崩れると既存のフリップブックが動く。
+//   — PS の flipMode==0 の枝 (age から作る式) と同じ。ここが崩れると既存のフリップブックが動く。
 float ParticleFlipFrameAt(float age, float elapsed, float flipCycles, float flipFps,
                           float flipU, float tiles, bool randomStart)
 {
@@ -98,8 +94,7 @@ float ParticleFlipFrameAt(float age, float elapsed, float flipCycles, float flip
 }
 
 // 連続コマ位置 → 表示コマ / ブレンド先 / 補間係数。C++ ミラー: ParticleFlipTilePos。
-// ★負 (subframeEmission で life が前倒しされた粒子) は 0 へ丸める = 従来の
-//   `(uint)max(0, (int)floor(...))` と同じ扱い。
+// ★負 (subframeEmission で life が前倒しされた粒子) は 0 へ丸める (= コマ 0 を出す)。
 // ★ブレンド先は **先頭コマへ循環** — 非ブレンド経路の `frame % tiles` と同じ規約。
 void ParticleFlipTilePos(float frame, uint tiles, out uint idx, out uint next, out float blend)
 {
@@ -119,8 +114,8 @@ float2 ParticleFlipTileUV(float2 uv, uint frame, uint tx, uint ty)
 }
 
 // アトラスから 1 コマを取る。blendFrames で隣のコマとの 2 サンプル補間。
-// ★blendFrames が false のときは **Sample 1 回だけ / lerp を通らない**。従来経路
-//   (M42c) と演算列が 1 つも変わらないのが、既存 golden をビット保存する条件。
+// ★blendFrames が false のときは **Sample 1 回だけ / lerp を通らない**。補間なしの
+//   フリップブック (M42c) の演算列がこれで保たれるのが、既存 golden をビット保存する条件。
 // ★mip は張らない前提 (アトラスはタイル境界を跨ぐ mip でコマ同士が混ざる)。
 //   DemoContent の vdemo_flipbook が mips=false で作っているのはこのため。
 float4 SampleFlipTile(Texture2D tex, SamplerState samp, float2 uv, float frame,

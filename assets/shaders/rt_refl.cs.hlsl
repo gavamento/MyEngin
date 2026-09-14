@@ -10,9 +10,9 @@
 // 同じしきい値でフォールバックする (撃たなかった画素の値は使われない)。
 //
 // M67d: ReSTIR (時空間サンプル再利用) の初期 reservoir もここで作る。
-// **gRsOn == 0 の経路は M67d 以前と同じ計算をして同じ値を書く** — 分岐は CB の
+// **gRsOn == 0 の経路は ReSTIR 無しの 1spp 反射だけを書いて抜ける** — 分岐は CB の
 // スカラー 1 個で完全に uniform、reservoir 側の UAV (u1-u5) は C++ が張りもしない。
-// golden `demo_render_rtrefl` (tol=0) がそのビット一致を機械証明している。
+// golden `demo_render_rtrefl` (tol=0) がこの経路のビット一致を機械検査している。
 //
 // M67e: 時間再利用。初期 reservoir を作った直後に「前フレームの同じ材質点の reservoir」
 // (組 A = t11-t15) を 1 つだけ統合する。**別ディスパッチにしない** = 近傍を読まないので
@@ -21,7 +21,7 @@
 // 2 か所に写経すると「片方だけ直して履歴条件がずれる」形で静かに壊れる。
 
 #include "rt_common.hlsli"
-// M67c: ReSTIR の数学。M67d からは実際に呼んでいる。
+// M67c: ReSTIR の数学。
 // ★rt_restir_common → rt_reproject の順で include すること — RtLuminance は
 //   両方が `MYE_RT_LUMINANCE_DEFINED` ガードで定義していて、先に来た方が勝つ。
 //   ReSTIR の重みは RtMath.h の CPU ミラーと同じ式 (rt_restir_common 側) で
@@ -49,7 +49,7 @@ Texture2D gRfNormal : register(t7);   // GBuffer 法線 (*0.5+0.5 のワール�
 Texture2D gRfPosition : register(t8); // GBuffer ワールド座標
 Texture2D gRfMark : register(t9);     // GBuffer アルベド (a = ジオメトリ有りマーク)
 Texture2D gRfMaterial : register(t10); // GBuffer マテリアル (r = metallic, g = roughness)
-// M67d: 前フレームの reservoir (組 A)。M67e から temporal 統合が実際に読んでいる
+// M67d: 前フレームの reservoir (組 A)。temporal 統合 (M67e) が読む
 Texture2D gRsPrevPos : register(t11);
 Texture2D gRsPrevRad : register(t12);
 Texture2D gRsPrevNrm : register(t13);
@@ -146,9 +146,9 @@ void CSMain(uint3 tid : SV_DispatchThreadID)
     RtFirstHit fh;
     const float3 Ls = RtTraceRadianceFirstHit(P + N * eps, L, gRfTMax, max(gRfBounces, 1), seed,
                                               0.0f, 1.0f, fh);
-    gRfOut[tid.xy] = float4(Ls, 1.0f); // 生の 1spp (デバッグ 10 が読む。M67d 以前と同一)
+    gRfOut[tid.xy] = float4(Ls, 1.0f); // 生の 1spp (デバッグ 10 が読む。ReSTIR off の出力そのもの)
     if (gRsOn == 0) {
-        return; // ---- M67d 以前と完全に同一 (以降は 1 命令も実行されない) ----
+        return; // ---- ReSTIR off はここまで (以降は 1 命令も実行されない) ----
     }
 
     // ---- M67d: ReSTIR の初期 reservoir ----
@@ -213,7 +213,7 @@ void CSMain(uint3 tid : SV_DispatchThreadID)
     // ★p̂ は**保存した xs から復元した方向**で評価する — 撃った L そのものではない。
     //   次段 (spatial) と次フレーム (temporal) は xs しか知らないので、そちらと同じ
     //   復元 (RtRestirSampleDir) をしておかないと p̂ の比が 1 にならず、
-    //   再利用ゼロ (M=1) でも絵が現行から数 % ずれる (A5 の根拠)。
+    //   再利用ゼロ (M=1) でも絵が 1spp から数 % ずれる (A5 の根拠)。
     //   ★**temporal の統合より後**に評価すること — 採用されたサンプルが履歴側に
     //     入れ替わっていることがあるので、r.Ls / r.xs を見てから W を作る
     const float pHat = RtRestirTargetPdf(r.Ls, RtRestirSampleDir(r, P), V, N, alpha);

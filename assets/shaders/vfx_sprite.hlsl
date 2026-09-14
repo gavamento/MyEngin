@@ -1,11 +1,9 @@
 // VFX (M29c): Sprite / Trail / TextMesh のワールド空間クアッド描画。
 // 頂点は CPU 構築済みのワールド座標。色 * テクスチャを出力 (アルファブレンド、深度書き込み無し)。
 // Sprite は画像 or 白、Trail は白、TextMesh はフォントアトラス (rgb=1, a=カバレッジ) をバインド。
-// M32c: シーンフォグを距離ベースで適用 (アルファブレンドなのでフォグ色へ lerp)。
-// M57追補: その M32c の実装は **ApplyFog の手書き劣化コピー**で、M43a のハイトフォグと
-// 太陽インスキャッタを 1 つも持っていなかった = 同じシーンでメッシュと VFX の霧の濃さが
-// 食い違っていた。VFX クアッドは「深度を持つ alpha 合成のサーフェス」= 透明メッシュと
-// まったく同じ分類なので、forward_lit.hlsl の形をそのまま写して共有の ApplyFog へ寄せた。
+// フォグ (M32c / M57追補): VFX クアッドは「深度を持つ alpha 合成のサーフェス」= 透明メッシュと
+// まったく同じ分類なので、forward_lit.hlsl と同じ共有の ApplyFog (ハイトフォグ + 太陽
+// インスキャッタ込み) とフロクセルを通す。式を別に持つと、同じシーンでメッシュと VFX の霧の濃さが食い違う。
 
 #include "common.hlsli"        // M57追補: ApplyFog (register 宣言ゼロなので衝突しない)
 #include "froxel_common.hlsli" // M57追補: 受け持ちの分け方と合成 (同上)
@@ -21,7 +19,7 @@ cbuffer VfxCB : register(b0)
     float    gFogEnd;
     float2   _pad;
     // ---- M57追補: M43a のハイトフォグ + 太陽インスキャッタ (末尾 append) ----
-    // 0/0 なら ApplyFog は M29d の距離フォグと同じ式に潰れる (= 従来の意味論)
+    // 0/0 なら ApplyFog は距離フォグだけの式 (M29d) に潰れる
     float    gFogHeightFalloff;
     float    gFogBaseHeight;
     float    gFogInscatterIntensity;
@@ -30,7 +28,7 @@ cbuffer VfxCB : register(b0)
     float    _pad1;
     float3   gSunColor;     // リニア・強度込み
     float    _pad2;
-    // ---- M57追補: フロクセル (0 = 従来経路へ厳密に落ちる分岐を持つ) ----
+    // ---- M57追補: フロクセル (0 = ApplyFog だけの経路へ厳密に落ちる分岐を持つ) ----
     int      gFroxelEnabled;
     float    gFroxelNearZ;
     float    gFroxelFarZ;
@@ -51,10 +49,10 @@ struct VSOut
     float4 pos : SV_POSITION;
     float2 uv : TEXCOORD0;
     float4 color : COLOR;
-    // M57追補: dist (VS で計算したワールド距離) を **posW + viewZ に置き換えた**。
+    // M57追補: フォグ用の補間子は **posW + viewZ**。
     //   ・posW  … ApplyFog / FroxelFogOrigin が要る (どちらもワールド座標で受ける)。
-    //     距離を PS で毎ピクセル計算する形になり forward_lit と揃う — 大きなクアッドの
-    //     角と中心で霧の量が変わるのが正しい (旧コードは VS 計算 + 線形補間だった)
+    //     距離は PS で毎ピクセル計算する (forward_lit と同じ) — 大きなクアッドの
+    //     角と中心で霧の量が変わるのが正しく、VS で測った距離の線形補間ではそうならない
     //   ・viewZ … フロクセルのスライス座標。透視投影では clip.w = ビュー空間 z。
     //     **PS の SV_Position.w は 1/w に化けている**ので別の補間子で運ぶ必要がある
     float3 posW  : TEXCOORD1;
@@ -85,7 +83,7 @@ float4 PSMain(VSOut i) : SV_TARGET
     float4 col = i.color * gTex.Sample(gSamp, i.uv);
     // ---- 大気散乱 (M29d + M43a、M57追補 でフロクセルと分担) ----
     // VFX クアッドは「深度を持つ alpha 合成のサーフェス」= 透明メッシュと同じ分類なので、
-    // forward_lit.hlsl と同じ形をそのまま写す。gFroxelEnabled==0 なら else 側 = 従来経路
+    // forward_lit.hlsl と同じ形。gFroxelEnabled==0 なら else 側 = ApplyFog だけ
     if (gFroxelEnabled != 0)
     {
         // 解析フォグの起点を「視線がグリッドを出る点」まで押し出す = 受け持ちが 1m も

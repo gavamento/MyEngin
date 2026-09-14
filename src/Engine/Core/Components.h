@@ -73,8 +73,7 @@ struct LightComponent {
     float range = 15.0f;        // Point/Spot: 減衰半径
     float spotInnerDeg = 25.0f; // Spot: フル強度の内角 (度)
     float spotOuterDeg = 35.0f; // Spot: 減衰端の外角 (度)
-    // M54b: 影を落とすか (0/1)。旧 `float pad` の枠をそのまま使っているので sizeof も
-    // 既存フィールドの offsetof も 1 バイト動いていない (シーン JSON も .rep も無風)。
+    // M54b: 影を落とすか (0/1)。
     // 対象は**局所ライト (点/スポット)** — 平行光の影は既存の CSM が常に担当する。
     // bool ではなく int32_t なのはパディングの 4 バイトを潰さないため
     int32_t castShadow = 0;
@@ -116,8 +115,7 @@ struct ParticleEmitterComponent {
     DirectX::XMFLOAT3 wind = { 0.0f, 0.0f, 0.0f };
     float turbulence = 0.0f;
     // ---- 描画 ----
-    // 2=distortion (M42d): 歪みバッファへ描き postfx で UV オフセット。既存 Int32 の値域
-    // 拡張のみ = フィールド追加なし = hash 不変。強度は color のアルファで表現。
+    // 2=distortion (M42d): 歪みバッファへ描き postfx で UV オフセット。強度は color のアルファで表現。
     // v1 制限: CPU バックエンド限定 (GPU は skip) / enablePostFx=false では描かれない
     int32_t blendMode = 0; // 0=additive 1=alpha 2=distortion
     // ---- 決定論 ----
@@ -158,11 +156,7 @@ struct ParticleEmitterComponent {
     float noiseFrequency = 1.0f;      // ⑧ ノイズ空間周波数 (turbulenceMode=1 のみ)
     float noiseSpeed = 0.5f;          // ⑧ ノイズ時間スクロール (turbulenceMode=1 のみ)
     int32_t emitFrom = 0;             // ⑦ 0=形状ごとの既定 1=体積 2=表面 (実装は M61b)
-    // ---- M63a: B群 (描画表現力) の共有フィールド (末尾 append。既定 = 従来挙動とビット同一) ----
-    // hash 対象フィールドの追加 = 既存 .rep のハッシュ値は変わる (毎回録り直しなので bump 無し、
-    // M61a と同じ扱い)。sizeof が変わるので snapshot 版は v7 へ (descCache の Raw 書きが伸びる)。
-    // ★M63b〜e が消費するフィールドもここで**まとめて**確保する — 5 サブに分けて足すと
-    //   sizeof が 5 回変わり、snapshot 版 bump と golden .rep 再記録が 5 回要る。
+    // ---- M63a: B群 (描画表現力) の共有フィールド (末尾 append。既定では B 群を使わない経路とビット同一) ----
     // ★既定値でビット同一になる根拠は 2 段構え: ①回転/コマは Pcg32::Range(0,0) が厳密に +0.0f を
     //   返す ②そもそも ParticleUsesSpawnAttribs() が false のとき **1 draw も引かない**
     //   (引いてしまうと後続粒子の方向/位置/速度/寿命/サイズが全部ずれて golden が全部動く)
@@ -190,8 +184,8 @@ struct ParticleEmitterComponent {
 };
 
 // M59a2: Collider.materialOverrideBits のビット割当。材料 (.physmat.json) を割り当てたまま
-// 特定プロパティだけ既存フィールドの値へ戻すための opt-out。将来の材料プロパティ
-// (M59f2 静止摩擦/転がり抵抗、M59b Cd) は下へ append する — 値はシーン JSON に焼かれるので
+// 特定プロパティだけ既存フィールドの値へ戻すための opt-out。材料プロパティを増やすときは
+// 下へ append する — 値はシーン JSON に焼かれるので
 // 既存ビットの再割当は不可
 constexpr uint32_t kPhysMatOverrideFriction = 1u << 0;    // 摩擦は Collider.friction を使う
 constexpr uint32_t kPhysMatOverrideRestitution = 1u << 1; // 反発は Rigidbody.restitution (静的は 0)
@@ -230,7 +224,7 @@ struct ColliderComponent {
     // ---- M28a 追加 (末尾 append = シーン/リプレイ互換維持) ----
     float height = 2.0f;   // capsule 全高 (両端の半球を含む)。線分半長 = max(0, height/2 − radius)
     float friction = 0.5f; // クーロン摩擦係数 (M28b のソルバで使用。ペアは sqrt(μa·μb))
-    // ---- M36a 追加: 衝突レイヤー (hash 対象のフィールド追加 → golden 再記録済) ----
+    // ---- M36a 追加: 衝突レイヤー (hash 対象) ----
     int32_t layer = 0;          // 所属レイヤー 0..31 (名前は project_settings.json、sim は index のみ)
     uint32_t mask = 0xFFFFFFFFu; // 衝突相手レイヤーのビット集合。判定は双方向 (CanCollide)
     // shape=3 なら静的メッシュ資産、shape=4 なら `.terrain.json` (M59i)。空 = 従来形状
@@ -246,10 +240,8 @@ struct ColliderComponent {
 
 // 有効/無効フラグ (M10)。**このコンポーネントが無ければ有効**。
 // enabled==0 で自身**と子孫すべて**を sim (スクリプト/衝突/物理/パーティクル) と描画から外す。
-// 既存シーンは ActiveComponent を持たない → 挙動もワールドハッシュも不変 (ReplayFile bump 不要)。
-// ★**階層に伝播する** (M64b)。M64a まで自エンティティのみの判定で、親を止めても子の
-//   MeshRenderer だけが描かれ続けた — 「親を消したのに見た目が残る」で必ず踏む。
-//   判定の実体は IsEntityActive (Components.cpp)。
+// ★**階層に伝播する** (M64b)。判定の実体と、自エンティティだけを見てはいけない理由は
+//   IsEntityActive (Components.cpp)。
 struct ActiveComponent {
     int32_t enabled = 1;
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
@@ -258,7 +250,7 @@ struct ActiveComponent {
 // ---- プレハブ (M13) ----
 // インスタンスの **ルートのみ** に付く。元 .prefab.json をパスハッシュで指す
 // (PrefabLibrary のキー = PrefabInstanceComponent.prefabHash)。
-// **無ければプレハブインスタンスでない** (opt-in → 既存シーンは挙動もハッシュも不変)。
+// **無ければプレハブインスタンスでない**。
 // シリアライズ+ハッシュ対象だが、どのシステムにも参加しない純データタグ (sim 非影響)
 struct PrefabInstanceComponent {
     uint64_t prefabHash = 0;
@@ -282,7 +274,7 @@ struct PrefabLinkComponent {
 };
 
 // ---- アニメーション (M14) ----
-// AnimationClip (.anim.json) を再生する。**無ければ何もしない** (opt-in → 既存シーン不変)。
+// AnimationClip (.anim.json) を再生する。**無ければ何もしない**。
 // 時間は **tick カウント (int)** で持つ (float 秒累積は決定論違反リスク)。
 // トラックの補間係数は整数キー位置の比なのでプラットフォーム非依存。serialize+hash 対象
 struct AnimatorComponent {
@@ -296,14 +288,13 @@ struct AnimatorComponent {
 
 // ---- スケルタルスキニング (M18) ----
 // スキン付き glTF メッシュ。ポーズ (ボーン行列) は描画専用のため **hash しない**
-// (kComponentNoHash → 既存シーンのリプレイ不変 = bump 不要)。時刻は tick で保持し、
+// (kComponentNoHash)。時刻は tick で保持し、
 // RenderSystem がフレーム毎に SkinnedModel からサンプルしてボーンパレットを構築する。
 //
 // ---- クロスフェード (M18 追補) ----
 // clip を書き換えると SkinningSystem が切り替えとして検出し、新しいクリップを頭から再生し直す。
 // fadeTicks > 0 なら直前のクリップの姿勢から fadeTicks tick かけて溶かす (スクリプトは clip を
 // 書くだけでよい)。一度きりのクリップ (警戒・ひるみ等) は loop = 0 で最後のコマに止める。
-// ★末尾 7 本を足したので生バイトが変わった = kSimSnapshotVersion v16。ハッシュは NoHash のまま
 struct SkinnedMeshComponent {
     AssetID model = {};    // SkinnedModelLibrary のキー (glTF skin 由来)
     int32_t clip = 0;      // 再生クリップ index
@@ -324,7 +315,7 @@ struct SkinnedMeshComponent {
 };
 
 // ---- 剛体物理 (M20) ----
-// 重力・速度で動く動的ボディ。**無ければ物理は関与しない** (opt-in → 既存シーンのハッシュ/リプレイ不変)。
+// 重力・速度で動く動的ボディ。**無ければ物理は関与しない**。
 // ソリッドな ColliderComponent (isTrigger==0) が衝突面。位置は LocalTransform に書き戻される
 // (ルート = ワールド位置前提)。velocity は sim 状態なので **hash 対象** (決定論的に積分される)。
 // PhysicsSystem が TransformSystem 直前に積分 + 固定反復ソルバで貫通を解消する。
@@ -338,9 +329,8 @@ struct RigidbodyComponent {
     // ---- M28b 追加 (末尾 append = シーン互換維持)。回転剛体 ----
     DirectX::XMFLOAT3 angularVelocity = { 0.0f, 0.0f, 0.0f }; // rad/s (ワールド)。sim 状態 = hash 対象
     float angularDamping = 0.05f;  // 毎 tick の角速度減衰率 (スタック静止安定の柱の 1 つ)
-    // true = 回転積分・角応答をしない (M28a 以前の並進のみ挙動)。M59a2 後続で int32→bool 化
-    // (M28b 当時は FieldType::Bool が無かっただけで機能上の理由は無い。旧シーンの 0/1 数値は
-    // isTrigger と同じ FieldFromJson のシムが受理。1B 化でハッシュのバイト列は変わるが挙動不変)
+    // true = 回転積分・角応答をしない (並進のみ)。旧シーンの int の 0/1 数値は
+    // isTrigger と同じ FieldFromJson のシムが受理する
     bool freezeRotation = false;
     // ---- M59a2 追加: 密度→質量導出 (opt-in、末尾 append = シーン互換維持) ----
     // true かつ コライダーに材料割当済みなら 質量 = 材料密度 × ワールドスケール済み形状体積
@@ -398,7 +388,7 @@ struct RigidbodyComponent {
 
 // ---- ゲーム内 UI (M21) ----
 // スクリーン空間の UI 要素の**見た目**。**無ければ何も描かない** (opt-in)。描画専用なので
-// **kComponentNoHash** (ワールドハッシュ非対象 → 既存シーンのリプレイ不変 = bump 不要)。
+// **kComponentNoHash** (ワールドハッシュ非対象)。
 // ただしシリアライズはされる (シーンに UI を保存できる)。
 // ★M75a: 配置 (anchor / x / y / w / h / space) は **RectTransformComponent へ分離**した
 //   (Unity の RectTransform + Image/Text/Button の分け方)。旧シーン (v3 以前) の値は
@@ -689,7 +679,7 @@ struct CharacterControllerComponent {
 
 // ---- スプライト/ビルボード (M29c) ----
 // ワールド空間のテクスチャ付き板。**無ければ何も描かない** (opt-in)。描画専用なので
-// **kComponentNoHash** (既存シーンのリプレイ不変 = bump 不要)。VfxRenderer が
+// **kComponentNoHash**。VfxRenderer が
 // 透明メッシュの後・パーティクルの前に描く (透明メッシュとの相互ソートはしない)。
 struct SpriteRendererComponent {
     AssetID texture = {};                          // 空 = 白 (単色板)
@@ -727,25 +717,23 @@ struct TextMeshComponent {
 
 // ---- スカイボックス (M29d) ----
 // 背景の空。シーン内の **最初の active な 1 個** (entity.index 最小) を使用 (isPrimary カメラ前例)。
-// **無ければ従来の clearColor 背景** (opt-in)。描画専用 = **kComponentNoHash**。
-// mode=1 (Cubemap) は M38b で実装済み (cubemapTexture が解決できないときだけ Gradient)。
+// **無ければ clearColor 背景** (opt-in)。描画専用 = **kComponentNoHash**。
 struct SkyboxComponent {
-    // 0=Gradient 1=Cubemap。★**cubemap は M38b で実装済み** (dogfooding #8 の記述が古かった。
-    // SkyboxPass の専用シェーダ skybox_cubemap + GpuResources の DDS cubemap ローダ +
-    // RtPasses の環境サンプル)。SRV が解決できないときだけ Gradient へフォールバックする
+    // 0=Gradient 1=Cubemap (M38b。SkyboxPass の専用シェーダ skybox_cubemap + GpuResources の
+    // DDS cubemap ローダ + RtPasses の環境サンプル)。SRV が解決できないときだけ Gradient へフォールバックする
     int32_t mode = 0;
     DirectX::XMFLOAT4 topColor = { 0.24f, 0.42f, 0.83f, 1.0f };     // 天頂
     DirectX::XMFLOAT4 horizonColor = { 0.74f, 0.81f, 0.90f, 1.0f }; // 地平線
     DirectX::XMFLOAT4 bottomColor = { 0.28f, 0.25f, 0.22f, 1.0f };  // 地面方向
     AssetID cubemapTexture = {}; // mode=1 用の DDS cubemap (面順 +X,-X,+Y,-Y,+Z,-Z)
-    // ---- 2026-09-14: 手続きの星空 + 環境光の切り離し (末尾 append。既定 = 従来の見た目) ----
+    // ---- 2026-09-14: 手続きの星空 + 環境光の切り離し (末尾 append。既定 = 星なし + 空で環境光) ----
     // 星は gradient モードだけに描く (cubemap は絵そのものが空なので足さない)。
-    // starDensity が 0 ならシェーダは星の分岐に入らない = 従来とビット一致
+    // starDensity が 0 ならシェーダは星の分岐に入らない
     float starDensity = 0.0f;    // 星のあるセルの割合 (0..1)
     float starBrightness = 1.0f; // 星の明るさ (リニア HDR。1 を超えるとブルームで滲む)
     float starTwinkle = 0.0f;    // 瞬きの深さ (0 = 静止 / 1 = 暗い瞬間に 0 まで落ちる)
     int32_t starCells = 180;     // キューブ 1 面あたりの分割数 (多いほど星が小さく細かい。1..1024 に丸める)
-    // 1 = 空の色から IBL を焼いて環境光に使う (M38c 以来の既定)。
+    // 1 = 空の色から IBL を焼いて環境光に使う (既定、M38c)。
     // 0 = 背景に描くだけで、ライトの ambient (定数アンビエント) を残す。
     // ★暗いゲームでほぼ黒の空を置くと、1 のままでは環境光まで黒い空に置き換わって世界の下地が消える
     int32_t lighting = 1;
@@ -754,15 +742,16 @@ struct SkyboxComponent {
 
 // ---- フォグ (M29d) ----
 // 距離フォグ。シーン内の **最初の active な 1 個** を使用。**無ければフォグ無し** (opt-in)。
-// 描画専用 = **kComponentNoHash**。不透明+透明メッシュに適用 (forward/deferred 両パス)。
-// パーティクル/スプライト/スカイボックスには掛からない (v1 の制限)。
+// 描画専用 = **kComponentNoHash**。不透明+透明メッシュ (forward/deferred 両パス) と、
+// パーティクル / VFX (スプライト・トレイル・3D テキスト) の各シェーダが同じ式で掛ける。
+// スカイボックスには掛からない (空に ApplyFog を掛けない規約。skybox.hlsl)。
 struct FogComponent {
     int32_t mode = 0; // 0=Linear (start..end) 1=Exp (1-e^-ρd) 2=Exp2 (1-e^-(ρd)²)
     DirectX::XMFLOAT4 color = { 0.65f, 0.70f, 0.75f, 1.0f };
     float density = 0.02f; // Exp/Exp2 用
     float start = 10.0f;   // Linear 用
     float end = 80.0f;     // Linear 用
-    // ---- M43a: ハイトフォグ + 太陽インスキャッタ (末尾 append。既定 = 恒等 = 従来の見た目) ----
+    // ---- M43a: ハイトフォグ + 太陽インスキャッタ (末尾 append。既定 = 恒等) ----
     float heightFalloff = 0.0f;      // 高度による密度の指数減衰係数 (0 = 高さ一様)
     float baseHeight = 0.0f;         // 密度基準の高さ (これより上で薄くなる)
     float inscatterIntensity = 0.0f; // 太陽方向へのフォグ色寄せ (0 = 無効)
@@ -773,7 +762,8 @@ struct FogComponent {
 // ---- カメラ別ポストプロセス (M29e) ----
 // シーンカメラに付けて既存 PostProcess::Settings をシーンオーサリングする。
 // **無ければグローバル設定 (renderSystem.postFxSettings) のまま** (opt-in)。
-// 描画専用 = **kComponentNoHash**。SceneView のエディタカメラ (CameraOverride) には
+// 描画専用 = **kComponentNoHash** (末尾にフィールドを足してもハッシュは変わらない)。
+// SceneView のエディタカメラ (CameraOverride) には
 // 適用されない (エディタ操作視界は不変)。enablePostFx=false 時は無視される。
 struct CameraPostFxComponent {
     float exposure = 1.0f;       // トーンマップ前の露出倍率
@@ -782,46 +772,46 @@ struct CameraPostFxComponent {
     float bloomThreshold = 1.0f; // bright-pass しきい値 (輝度)
     float bloomIntensity = 0.6f; // 合成強度
     int32_t fxaaOn = 1;          // 0=Off 1=On
-    // ---- M32d: 追加ポスト効果 (末尾 append。既定 = 無効 = 従来の見た目) ----
+    // ---- M32d: 追加ポスト効果 (末尾 append。既定 = 無効) ----
     float chromAberration = 0.0f;   // 色収差 (UV スケール、0=off)
     float vignetteIntensity = 0.0f; // 周辺減光 (0=off)
     float vignetteRadius = 0.75f;   // 減光開始半径 (0..1)
     float saturation = 1.0f;        // 彩度 (1=変化なし)
     float contrast = 1.0f;          // コントラスト (1=変化なし)
     DirectX::XMFLOAT4 colorFilter = { 1.0f, 1.0f, 1.0f, 1.0f }; // 乗算カラーフィルタ
-    // ---- M40d: SSAO パラメータ (Deferred のみ。末尾 append、NoHash なので hash 不変) ----
+    // ---- M40d: SSAO パラメータ (Deferred のみ。末尾 append) ----
     float ssaoRadius = 0.8f;    // サンプル半球の半径 (ワールド単位)
     float ssaoIntensity = 1.0f; // 遮蔽の効き (0=off 相当)
-    // ---- M43b: スクリーンスペースゴッドレイ (末尾 append、NoHash なので hash 不変) ----
+    // ---- M43b: スクリーンスペースゴッドレイ (末尾 append) ----
     float godrayIntensity = 0.0f; // 空マスクの明るさ倍率 (0=off)
     float godrayDecay = 0.95f;    // 放射ブラーのタップ毎減衰
-    // ---- M44a: カラーグレーディング LUT (末尾 append、NoHash なので hash 不変) ----
+    // ---- M44a: カラーグレーディング LUT (末尾 append) ----
     AssetID lutTexture = {};   // 256x16 ストリップ (sRGB off でロードされる)
     float lutIntensity = 0.0f; // 0=off / 1=LUT 全適用
-    // ---- M44b: 自動露出 (末尾 append、NoHash なので hash 不変) ----
+    // ---- M44b: 自動露出 (末尾 append) ----
     int32_t autoExposure = 0; // 0=off 1=on (輝度ヒストグラム → 露出適応)
     float aeSpeed = 3.0f;     // 適応速度 (1/s)
     float aeMin = 0.25f;      // 露出倍率の下限
     float aeMax = 4.0f;       // 上限
-    // ---- M44c: 被写界深度 (末尾 append、NoHash なので hash 不変) ----
+    // ---- M44c: 被写界深度 (末尾 append) ----
     float dofFocusDistance = 10.0f; // 焦点距離 (ビュー空間 z)
     float dofFocusRange = 5.0f;     // 焦点面からボケが最大に達するまでの距離
     float dofMaxRadius = 0.0f;      // 最大ボケ半径 (px、0=off)
-    // ---- M44d: カメラモーションブラー (末尾 append、NoHash なので hash 不変) ----
+    // ---- M44d: カメラモーションブラー (末尾 append) ----
     float motionBlurIntensity = 0.0f; // 0=off (SceneView は常に強制 0)
     float mbMaxPixels = 16.0f;        // 速度クランプ (px)
-    // ---- M55d: TAA (末尾 append、NoHash なので hash 不変) ----
+    // ---- M55d: TAA (末尾 append) ----
     // **Deferred 専用** — 画面速度が GBuffer RT4 にしか無いため。Forward では
     // カメラジッタごと無効化する (TAA 無しでジッタだけ載ると画面が揺れるだけになる)
     int32_t taaOn = 0;        // 0=off 1=on
     float taaFeedback = 0.9f; // 履歴の残し率 [0,0.95]。大きいほど滑らかで残像も増える
-    // ---- M56d: SSR (末尾 append、NoHash なので hash 不変) ----
+    // ---- M56d: SSR (末尾 append) ----
     // **Deferred 専用** — GBuffer と HZB (min-Z ピラミッド) が前提。
     // ssrMaxRoughness 以上の粗さの面には厳密に 0 を足す (= その面は IBL のまま)
     int32_t ssrOn = 0;            // 0=off 1=on
     float ssrMaxRoughness = 0.6f; // これを超える粗さの面は反射しない (RT 反射と同じ既定値)
     float ssrIntensity = 1.0f;    // 1 = IBL スペキュラをちょうど反射で置き換える
-    // ---- M57c: フロクセル・ボリュメトリック (末尾 append、NoHash なので hash 不変) ----
+    // ---- M57c: フロクセル・ボリュメトリック (末尾 append) ----
     // ★既定 0 = 恒等。1 にすると不透明 / 透明 / 地形 / スカイ / パーティクルの全部に
     //   合成され、同時に **ゴッドレイが自動 off** になる (フォグの三重計上の解消。M57d)
     int32_t froxelOn = 0;          // 0=off 1=on
@@ -835,7 +825,7 @@ struct CameraPostFxComponent {
 // エフェクト = プレハブ (子に複数エミッタ) + Animator (.anim.json で rate/color を時間変化) +
 // この EffectComponent (ライフサイクル)。移動はルートの LocalTransform で行う (親子変換)。
 // **DestroyEntity と子エミッタの playing を駆動する = sim 構造変更なので hash 対象** (NoHash 無し)。
-// opt-in (無ければ EffectSystem 完全 no-op) なので既存シーンは不変 = golden 再記録不要。
+// 無ければ EffectSystem は完全 no-op。
 struct EffectComponent {
     int32_t durationTicks = 120; // 放出フェーズ長 (tick)。0=手動制御 (自動停止しない)
     int32_t lingerTicks = 120;   // 放出停止後、残粒子の消滅を待つ猶予 (autoDestroy 用)
@@ -894,8 +884,6 @@ struct AudioSourceComponent {
 // 変換は LocalTransform、階層は HierarchyComponent がそのまま担う。
 //
 // - **kComponentHidden にしない**: Inspector で編集する対象そのものだから
-// - opt-in (TypeId 末尾 append) なので既存シーンは不変 = ReplayFile bump 不要
-//   (ActiveComponent / Rigidbody と同じ前例)
 // - `source` を EntityRef にしているのは、インスタンス化・複製で
 //   `RemapEntityRefsInComponents` が自動で追従してくれるため (fileId で保存される)
 struct PartComponent {
@@ -952,9 +940,6 @@ struct PartBoundsComponent {
 // 参照は**アクション名ではなく index** で行う: 名前で持つと固定長文字列表が要るうえ、
 // actions.json を並べ替えるたびにシーンが壊れる。index は actions.json の定義順
 // (= ProjectSettings の表示順) そのもの。定義が無い index は 0 / false になる。
-//
-// opt-in (TypeId 末尾 append) なので既存シーンのハッシュは 1 バイトも変わらない
-// = ReplayFile bump 不要 (Part / PartBounds と同じ判断)
 struct PlayerInputComponent {
     int32_t playerIndex = 0; // 読むレーン (0..kMaxPlayers-1)。作者が設定する唯一の値
     // ---- 以下はエンジンが毎 tick 書く (Inspector では読み取り専用) ----
@@ -970,17 +955,14 @@ struct PlayerInputComponent {
 
 // ---- 地形 (M58b、spec §6.5) ----
 // **描画専用 (kComponentNoHash)** — 地形は sim / ワールドハッシュに 1 バイトも触らない。
-// 地形コリジョン (ハイトフィールド = sim レーン入り) は engine_spec §6.5 で M59 送り。
+// 地形コリジョン (ハイトフィールド = sim レーン入り) は Collider (shape=4、M59i) 側が持つ。
 //
 // アセットを AssetID ではなく**相対パス文字列**で持つ理由が 2 つある:
 //  1. AssetRef の Inspector ピッカーはフィールド名から Mesh/Material/Texture 等の
 //     ランタイムライブラリを推定する (InspectorWindow::DrawAssetRef) が、地形は
 //     そのライブラリを持たない — TerrainSystem がパスをキーに直接キャッシュする。
-//  2. 相対パスならシーン JSON がチェックアウト先に依存しない。モデル由来のサブアセット ID が
-//     正規化絶対パスのハッシュだったせいでシーンをコミットできなくなった M51j の穴を踏まない
-//     (その穴自体は M74a で .meta の GUID 由来に直した。ADR-019)。
-//
-// opt-in (TypeId 末尾 append) なので既存シーンは 1 バイトも変わらない
+//  2. 相対パスならシーン JSON がチェックアウト先に依存しない。絶対パス由来の ID は clone 先が
+//     違うと参照が切れる (AssetKeyResolver.h の★。ADR-019)。
 struct TerrainComponent {
     char source[64] = {}; // assets\ からの相対パス (例 "terrain/demo.terrain.json")。空 = 無効
     // チャンク 1 辺のタイル数。**範囲外の値は TerrainSystem::ClampChunkTiles が丸める**ので
@@ -988,7 +970,7 @@ struct TerrainComponent {
     // 既定 32 / 範囲 2..256 の正本は Engine\Engine\TerrainSystem.h の kTerrain*ChunkTiles)
     int32_t chunkTiles = 32;
     // ---- LOD (M58e) ----
-    // LOD 1 へ落とす**カメラ空間深度** (m)。0 = LOD 無効 (既定 = 従来と 1 画素も変わらない)。
+    // LOD 1 へ落とす**カメラ空間深度** (m)。0 = LOD 無効 (既定)。
     // LOD n の切替は lodDistance * 2^n で、段が上がるほど遠い。段数の正本は
     // Engine\Engine\TerrainSystem.h の kTerrainLodCount (Core 層は Engine を読めない)
     float lodDistance = 0.0f;
@@ -1011,8 +993,6 @@ struct TerrainComponent {
 //
 // ★**Deferred 専用 (v1)**。Forward には GBuffer が無く、「もう描かれた面の albedo」という
 //   上描き先が存在しない。engine_spec.md §6.6 に制限として明記してある。
-//
-// opt-in (TypeId 末尾 append) なので既存シーンのハッシュは不変 = ReplayFile bump 不要
 struct DecalComponent {
     AssetID texture = {}; // 貼る画像 (null = 白 = color がそのまま出る)
     // authored な sRGB 色 (RenderSystem がリニアへ)。**a = 不透明度** —
@@ -1076,39 +1056,38 @@ struct ReflectionProbeComponent {
 // 同じ「**entity.index 最小の active な 1 個**」規約 (RenderSystem::CollectEnvironment 前例)。
 //
 // ★**存在ゲート**が契約 (M59 決定台帳 1): このコンポーネントが無いシーンは
-//   PhysicsSystem の従来式 `vy += kGravity * gravityScale * dt` を 1 文字も変えずに通る
+//   PhysicsSystem の定数重力の式 `vy += kGravity * gravityScale * dt` を 1 文字も変えずに通る
 //   分岐へ落ちる。「gravity を (0,-9.81,0) にしておけば置いても挙動不変」は**約束しない** —
 //   -0.0f + 0.0f = +0.0f でビットが動くので、値ゲート (係数 0 で中立) は成立しない。
 //   **置いた = 新しい数式に opt-in した**と読むこと。
 //
 // velocity (hash 対象) を駆動する sim 入力なので **hash 対象**。
-// opt-in (TypeId 末尾 append) なので既存シーンは 1 バイトも変わらない = ReplayFile bump 不要。
 //
 // ★CharacterController は M59 では**この env に従わない** (kGravity 直参照のまま) —
 //   接地判定が Y 軸前提で組まれており、任意重力ベクトルは CC の意味論ごと壊すため。
 //   engine_spec 10.4 に制限として明記してある。
 struct PhysicsEnvironmentComponent {
-    // 重力加速度 (m/s^2、ワールド)。既定は従来の定数と同じ -9.81 (ただし上記のとおり
+    // 重力加速度 (m/s^2、ワールド)。既定は kGravity と同じ -9.81 (ただし上記のとおり
     // 「置くだけでビット不変」は約束しない)
     DirectX::XMFLOAT3 gravity = { 0.0f, -9.81f, 0.0f };
     float airDensity = 1.225f; // kg/m^3 (海面 15 degC)。Aero の抗力・マグヌスが使う
     // 一様定常風 (m/s、ワールド)。抗力は **相対速度 v - wind** に効く。
     // 乱流 (tick とセル座標から PCG32 で導出) は M59 のスコープ外 (予約事項 5)
     DirectX::XMFLOAT3 windVelocity = { 0.0f, 0.0f, 0.0f };
-    float waterPlaneY = 0.0f;     // 水面の高さ (M59b2 の Buoyancy が使う。それまで未消費)
+    float waterPlaneY = 0.0f;     // 水面の高さ (M59b2 の Buoyancy が使う)
     float waterDensity = 1000.0f; // kg/m^3 (M59b2)
     // ---- M59g2 追加: サブステップ数 (末尾 append) ----
     // 1 tick を何分割して積分・解決するか。**定数にしないのは車両 (M60) が 8 を要求しがち**
     // だから (予約事項 4)。範囲は [1, 16] にクランプされる。
     // ★**env が無いシーンは 1 固定** — 存在ゲートの一部で、置いていないシーンは
-    //   M59g1 までと同じ 1 回積分の経路をそのまま通る。
+    //   1 回積分の経路をそのまま通る。
     // ★サブステップは反復回数を増やすより効く: 同じコストなら接触の解像度が上がり、
     //   反発の頂点保存も貫通も改善する。代償として「1 tick あたりの力」を使う項
     //   (ConstantForce / 空力 / 浮力 / 翼 / ばね) は h = dt / substeps 刻みで効く
     int32_t substeps = 4;
     // ---- M59h 追加: スリープ (末尾 append) ----
     // ★**閾値の置き場が env = 存在ゲートの内側**。env を置いていないシーンは
-    //   スリープしない = M59f2 までとビット同一。sleepDelayTicks <= 0 でも無効。
+    //   スリープしない。sleepDelayTicks <= 0 でも無効。
     // ★判定は **int の tick カウンタ**で行う (秒の float 累積は禁止 — 加算順で割れる)。
     float sleepLinearThreshold = 0.05f;  // m/s。これ未満が続いたら候補
     float sleepAngularThreshold = 0.1f;  // rad/s
@@ -1130,7 +1109,6 @@ struct PhysicsEnvironmentComponent {
 // ならって 1 tick の Delta-v に決定論的な上限クランプを掛けてある。
 //
 // velocity / angularVelocity (hash 対象) を駆動するので **hash 対象**。
-// opt-in (TypeId 末尾 append) なので既存シーンは 1 バイトも変わらない。
 // bool の OFF は**項の計算ごとスキップ**する (係数 0 を掛けるのではない = fp 演算が走らない)。
 struct AeroComponent {
     bool enableDrag = true;        // 等方二次抗力 F = 0.5 rho Cd A |v_rel| v_rel
@@ -1167,7 +1145,6 @@ struct AeroComponent {
 // ★水面は軸平行なので、重力ベクトルを傾けても**浮力は常に +Y** (大きさだけ |g| に従う)。
 //
 // velocity / angularVelocity (hash 対象) を駆動するので **hash 対象**。
-// opt-in (TypeId 末尾 append) なので既存シーンは 1 バイトも変わらない。
 struct BuoyancyComponent {
     // 排除体積の倍率 (中空の船体・積荷の近似)。**<= 0 で無効** (項ごとスキップ)
     float volumeScale = 1.0f;
@@ -1191,7 +1168,6 @@ struct BuoyancyComponent {
 // 併用してよい (紙飛行機 = 胴体に Aero、主翼と尾翼に AeroSurface が素直な組み方)。
 //
 // velocity / angularVelocity (hash 対象) を駆動するので **hash 対象**。
-// opt-in (TypeId 末尾 append) なので既存シーンは 1 バイトも変わらない。
 struct AeroSurfaceComponent {
     // 翼面のローカル法線 (**正の迎角でこちら側へ揚力が出る**)。非単位でもよい (内部で正規化)
     DirectX::XMFLOAT3 normal = { 0.0f, 1.0f, 0.0f };
@@ -1218,8 +1194,7 @@ inline constexpr int32_t kCount = 5;
 } // namespace jointtype
 
 // ---- 関節 (M60a) ----
-// 2 つの剛体 (または剛体とワールドの不動点) を拘束する。**無ければ物理は何も足さない**
-// (opt-in → 既存シーンのハッシュ/リプレイ不変)。
+// 2 つの剛体 (または剛体とワールドの不動点) を拘束する。**無ければ物理は何も足さない**。
 //
 // ★内部表現は「1 自由度の拘束行 (Jacobian 1 行 + 蓄積λ) の集合」で、**`type` は
 //   どの行を立てるかのプリセットにすぎない** (M60 決定台帳 1)。型ごとに別コンポーネントを
@@ -1228,8 +1203,6 @@ inline constexpr int32_t kCount = 5;
 // ★**関節は「子側」= 動かしたいほうのエンティティに付ける**。ECS のアーキタイプ SoA に
 //   従い 1 エンティティ 1 関節 (決定台帳 2)。複数要るなら中間エンティティを挟む —
 //   ラグドールの骨も車輪も自然に片側 1 個なので、実用上これで足りる。
-// ★フィールドは M60a の時点で c/d の分まで**先に**切ってある。後から足すとシーンの
-//   バイト列が動くため (M59a1 で確立した「スキーマを先に切る」流儀)。
 // broken は sim 状態 = **hash 対象** (ソルバが書き、snapshot と JSON が運ぶ)。
 struct JointComponent {
     EntityID connectedEntity = kNullEntity; // null = ワールドの不動アンカーへ繋ぐ
@@ -1281,19 +1254,17 @@ struct JointComponent {
     // ★既定は単位 = 「両者のローカル軸が揃っているのが rest」。自動採取 (Unity の
     //   auto-configure 相当) はアンカーと同じ理由で入れない。両者が無回転で置かれている
     //   ふつうの authoring では既定のまま正しい。
-    // ★M60a では切っていなかったフィールド。a の「c/d の分まで先に切る」は
-    //   **リミット/モータ/破断しか見ていなかった** (申し送り M60b-1)
     DirectX::XMFLOAT4 restRotation = { 0.0f, 0.0f, 0.0f, 1.0f };
     // ---- M60j 追加 (末尾 append) ----
     // true = **この関節が繋ぐ 2 体どうしの接触を作らない** (Unity の Enable Collision の裏返し)。
     // 隣り合う骨・ロープの節・車体と溶接腕は関節点を共有するので、形どおりのコライダーを
-    // 張ると必ず食い込む。M60g2 まではコライダーを見た目より縮める幾何の逃げで凌いでいた。
+    // 張ると必ず食い込む。
     // ★切るのは**直接繋がった 1 ペアだけ**で、伝播はしない (A-B-C の A と C は当たる)。
     //   ラグドールの自己衝突を丸ごと切ると却って暴れる (M60g2-4 の実測: |w| が 3〜5 倍) —
     //   接触は暴れの原因であると同時に**減衰源**でもあるため、隣接だけを外すのが要点。
     // ★`broken` が立った関節は行も接触除外も**両方**消える (収集の時点で落ちる) —
     //   折れたら普通にぶつかるのが自然で、除外だけ残すと折れた腕がすり抜ける。
-    // ★既定 false = 従来どおり全ペアが接触する (存在ゲート)
+    // ★既定 false = 全ペアが接触する (存在ゲート)
     bool disableCollision = false;
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
@@ -1315,7 +1286,7 @@ struct JointComponent {
 // ★**hash 対象** (sim 状態)。active が物理の収集を分岐させるので、snapshot と .rep が
 //   これを運ばないと巻き戻しで駆動方向が食い違う。
 // ★骨のポーズ自体は描画専用のまま (SkinnedMesh は kComponentNoHash)。ハッシュに載るのは
-//   部位の LocalTransform = 従来から載っていたものだけで、決定論の面積は広がらない
+//   部位の LocalTransform = もともとハッシュ対象のものだけで、決定論の面積は広がらない
 struct RagdollComponent {
     bool active = false;
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
@@ -1340,7 +1311,6 @@ struct RagdollComponent {
 //   板は沈まない。返すには相手の島・起床の配線も要るので h2 以降の判断に回す。
 //
 // velocity / angularVelocity を駆動し、出力フィールドも sim 状態なので **hash 対象**。
-// opt-in (TypeId 末尾 append) なので既存シーンは 1 バイトも変わらない。
 struct WheelComponent {
     // サスの静止長 [m] = 無負荷のときの「取り付け点 → 車輪中心」の距離。
     // レイの長さは restLength + radius (= 完全に伸びきった車輪の接地点まで)
@@ -1360,8 +1330,8 @@ struct WheelComponent {
     float compression = 0.0f; // 今の圧縮量 [m] (maxCompression でクランプ済み)
     // ---- M60h2 追加: タイヤ (末尾 append) ----
     // ★**タイヤの摩擦が効くのは車体に `Vehicle` が付いているときだけ**。Wheel 単体は
-    //   「サス = 縦の支え」しか持たない (= M60h1 とビット同一の経路)。分岐ゲートを
-    //   コンポーネントの有無に置いたので、h1 のシーンは 1 ビットも動かない。
+    //   「サス = 縦の支え」しか持たない。分岐ゲートをコンポーネントの有無に置いたので、
+    //   Wheel だけのシーンはタイヤの演算を 1 つも通らない。
     float steerFactor = 0.0f;   // ステア入力への追従率 (前輪 1 / 後輪 0 / 逆位相なら -1)
     float driveFactor = 0.0f;   // 駆動力の配分 (FF なら前 1 / 後 0)
     float brakeFactor = 1.0f;   // 制動力の配分 (サイドブレーキを作るなら後輪だけ 1)
@@ -1392,14 +1362,13 @@ struct WheelComponent {
 //   `SetComponentField` で書けるので、**車両のために ABI スロットを 1 本も足していない**
 //   (前例は `CharacterControllerComponent.moveInput`)。おまけに入力が sim 状態なので
 //   snapshot / .rep / タイムトラベルが**何もしなくても**運転操作を運ぶ。
-// ★Vehicle が無ければ車輪はサス (縦の支え) しか出さない = M60h1 とビット同一。
-//   タイヤの摩擦をコンポーネントの有無で分岐ゲートしてあるので、既存シーンも
-//   「Wheel だけ付けたシーン」も 1 ビットも動かない。
+// ★Vehicle が無ければ車輪はサス (縦の支え) しか出さない — タイヤの摩擦を
+//   コンポーネントの有無で分岐ゲートしてある (Wheel の M60h2 の節)。
 // ★v1 に**駆動系のモデルは無い** — エンジン回転もギアもデフも持たず、throttle に比例した
 //   力を駆動輪へ直接入れる。トルク曲線を入れるなら「回転角を sim 状態に持っている」
 //   ここから素直に伸ばせる (v1 の回転角は転がりから逆算した見た目用)。
 //
-// velocity / angularVelocity を駆動するので **hash 対象**。opt-in (TypeId 末尾 append)。
+// velocity / angularVelocity を駆動するので **hash 対象**。
 struct VehicleComponent {
     // ---- 運転入力 (スクリプトが毎 tick 書く。**hash 対象 = sim 状態**) ----
     float steer = 0.0f;    // -1..1 (+ で右へ切る)。範囲外はクランプされる
@@ -1431,7 +1400,7 @@ struct RopeComponent {
     bool attachStart = true;
     // 末尾粒子を**生成時のワールド位置**へピンする (動かない点。生成時に確定)
     bool attachEnd = false;
-    // 末尾の接続先 (M60'd から使用。c では読まれない)
+    // 末尾の接続先 (M60'd)
     EntityID connectedEntity = kNullEntity;
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
@@ -1446,7 +1415,6 @@ struct RopeComponent {
 // 2 個目以降は黙って無視され警告が出る。
 //
 // フィールドは **hash 対象** — グリッドの形が変われば波の到達セルが変わる = sim 入力そのもの。
-// opt-in (TypeId 末尾 append =45) なので既存シーンは 1 バイトも変わらない。
 struct AcousticVolumeComponent {
     // ★**セル数は整数で持ち、範囲 (half extent) を dim*cellSize/2 の導出値にする**。
     //   逆にすると float -> int の丸めがグリッド形状そのものになり、丸めが 1 変わるだけで
@@ -1460,20 +1428,19 @@ struct AcousticVolumeComponent {
     bool enabled = true;
     // ---- 残光の見た目 (M65h 追補) ----
     // ★どちらも**描画レーンにしか効かない** (AcousticField が Sync で鏡へ写し、
-    //   減衰と合成だけが読む)。ただしコンポーネントの生バイトはハッシュ/snapshot に
-    //   載るので、追加時に kSimSnapshotVersion を上げてある (v11)。
+    //   減衰と合成だけが読む)。ただしコンポーネントの生バイトはハッシュ/snapshot に載る。
     // 残光の減衰率 [/tick]。0 または範囲外 (>= 1.0) = 既定 kGlowDecayPerTick (0.995)。
     // 1 に近いほど長く残る。企画 §3-5「残光がどれだけ残るかが難易度そのもの」の調整口。
     // ★uint8 の切り捨てにより、いくら 1 に近づけても最長 ~4.25 秒 (AcousticGrid.h の注記)
     float glowKeepPerTick = 0.0f;
     // ライティングへ合成する残光の明るさ。0 = 転送はするが絵に出ない (企画 §12 全体照明の対)
     float glowIntensity = 1.0f;
-    // 強い (近い / 新しい) 残光にだけ面の albedo を混ぜる割合 [0,1]。0 = 距離色 (青〜白) だけ =
-    // 従来の絵と 1 ビットも変わらない。弱い (遠い / 古い) 残光は常に距離色のまま —
+    // 強い (近い / 新しい) 残光にだけ面の albedo を混ぜる割合 [0,1]。0 = 距離色 (青〜白) だけ
+    // (lerp の重みが厳密に 0)。弱い (遠い / 古い) 残光は常に距離色のまま —
     // 企画 §3-4「材質は踏むか光を置くまで分からない」を遠くでは崩さないため。
     // 加算の距離色だけだと暗闇では面の色が一切出ず、床材の境目が読めなかった (三校)
     float glowAlbedoMix = 0.0f;
-    // 残光を何 tick に 1 回減らすか (2026-09-13、三校)。0 / 1 = 毎 tick = 従来と 1 ビットも変わらない。
+    // 残光を何 tick に 1 回減らすか (2026-09-13、三校)。0 / 1 = 毎 tick (間引かない)。
     // N にすると残光の寿命がそのまま N 倍になる = 上の「最長 ~4.25 秒」を超えられる唯一の口
     // (glowKeepPerTick は既定 0.995 の時点で 200 未満のセルが既に 1 tick 1 段 = 伸ばす余地が無い)。
     // ★常用ではなく**一時的に書き換える**想定 (データ取得の大音波が描いた施設を数秒だけ長く残す)。
@@ -1571,9 +1538,6 @@ struct AgentBrainComponent {
 //   だから実行中にスライダを動かしても .rep は 1 ビットも変わらない — 調整値を耳で
 //   詰めるのにビルドもリプレイの録り直しも要らない、という運用がここから来ている。
 // ★消費は「entity.index 最小の active な 1 個」(AcousticVolume と同じ規約)。
-// ★フィールドは M68a で**全部**確定させてある (M68b でしか読まない残響と波の欄も含む)。
-//   後から足すと Inspector のレイアウトとシーン JSON が 2 度動くので、共有契約の
-//   変更は 1 コミットに畳む (M65a が 5 コンポーネントをまとめて確保したのと同じ型)。
 struct AcousticAudioComponent {
     bool enabled = true;
     // ---- リスナー場 ----

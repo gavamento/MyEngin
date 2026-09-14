@@ -15,7 +15,7 @@ namespace mye {
 
 // IPv4 の宛先。**両フィールドともネットワークバイト順のまま**持つ
 // (sockaddr_in へそのまま詰めるため。人間に見せるときだけ NetAddressToString を通す)。
-// 2 人 P2P に限定しているので IPv6 は M53 送り (計画「見送り」)。
+// 2 人 P2P に限定しているので IPv6 は非対応。
 struct NetAddress {
     uint32_t ipv4 = 0; // in_addr.S_un.S_addr そのもの
     uint16_t port = 0; // sockaddr_in.sin_port そのもの
