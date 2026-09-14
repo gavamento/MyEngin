@@ -629,7 +629,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         // 開始点のワールドハッシュ。**tick 末にハッシュを撮るのと同じ点** (OnStart +
         // ApplyStructuralChanges の直後) で撮る = 「同じシーンから始めたか」の機械照合
         id.startWorldHash = HashWorld(scene.GetWorld(),
-                                      {&particleSystem.Cpu(), &scene.Time(), &scene.Persist(), &xpbd, &acoustic, &scene.UI()});
+                                      simRefs.HashSources());
         const bool ok = !netFailed && net.Start(ncfg, id, ctx.tickIndex)
             && net.WaitUntilReady([&window] { return window.PumpMessages(); });
         if (!ok) {
@@ -955,7 +955,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             //   ビット一致しなければ、決定論の外 (C# レーン等) が混ざっている証拠
             rep.expectedHash = timeTravel.HashAtTick(target);
             rep.actualHash = HashWorld(scene.GetWorld(),
-                                       {&particleSystem.Cpu(), &scene.Time(), &scene.Persist(), &xpbd, &acoustic, &scene.UI()});
+                                       simRefs.HashSources());
             rep.outcome = (rep.expectedHash == rep.actualHash) ? SeekOutcome::Ok
                                                               : SeekOutcome::HashMismatch;
         }
@@ -1069,7 +1069,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             ok = RunResim(lanes[i], tick, nullptr).ok;
             if (ok) {
                 HashWorldDump(scene.GetWorld(),
-                              {&particleSystem.Cpu(), &scene.Time(), &scene.Persist(), &xpbd, &acoustic, &scene.UI()},
+                              simRefs.HashSources(),
                               tick, dumps[i]);
             }
         }
@@ -1098,7 +1098,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         const double begin = clock.Now();
         const uint64_t hash = HashWorld(
             scene.GetWorld(),
-            {&particleSystem.Cpu(), &scene.Time(), &scene.Persist(), &xpbd, &acoustic, &scene.UI()});
+            simRefs.HashSources());
         tickHashMs += (clock.Now() - begin) * 1000.0;
         ++tickHashCount;
         return hash;
@@ -1318,7 +1318,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         report.role = config.netRole;
         HashDump dump;
         HashWorldDump(scene.GetWorld(),
-                      {&particleSystem.Cpu(), &scene.Time(), &scene.Persist(), &xpbd, &acoustic, &scene.UI()}, ctx.tickIndex, dump);
+                      simRefs.HashSources(), ctx.tickIndex, dump);
         std::wstring dir;
         const std::wstring crashRoot =
             config.projectRoot.empty() ? GetExecutableDir() : config.projectRoot;
@@ -1987,7 +1987,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                 std::vector<EntityHash> order;
                 uint64_t total = 0;
                 HashWorldDetailed(scene.GetWorld(),
-                                  {&particleSystem.Cpu(), &scene.Time(), &scene.Persist(), &xpbd, &acoustic, &scene.UI()},
+                                  simRefs.HashSources(),
                                   order, total);
                 for (const EntityHash& e : order) {
                     if (auto* t = scene.GetWorld().GetComponent<LocalTransform>(e.entity)) {

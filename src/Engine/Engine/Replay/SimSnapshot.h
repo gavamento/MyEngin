@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <vector>
 
+#include "Engine/Engine/Replay/WorldHasher.h"
 #include "Engine/Platform/Input.h"
 
 namespace mye {
@@ -13,6 +14,13 @@ class XpbdBackend;
 class AcousticField;
 class CollisionSystem;
 class ScriptHost;
+
+// ワールドハッシュに畳む「ECS 外の sim 状態」の束 (WorldHasher の SimSources) を組む**唯一の場所**。
+// record / verify / --hash-dump / タイムトラベルの自己検証 / ネットの開始ハッシュが全部ここを通る —
+// 呼び出し側で波括弧初期化を手書きすると、項目を足したときに 1 か所だけ古いまま残る
+// (M70c: acoustic を 4 か所で渡し忘れ、波の出るシーンでだけ crash .rep が全 tick 割れた)
+SimSources SimSourcesOf(Scene& scene, const CpuParticleBackend* particles, const XpbdBackend* xpbd,
+                        const AcousticField* acoustic);
 
 // sim レーンのスナップショット (M52d、決定台帳 1)。
 // 「ある tick の sim 状態を丸ごと保存し、後でビット同一に復元し、そこから同じ入力で
@@ -58,6 +66,9 @@ struct SimRefs {
     //   同一 tick の往復しか見ないのでこの穴を検出できなかった (M52e で発見)
     uint64_t* audioHandleSeq = nullptr;
     uint64_t* tickIndex = nullptr; // 撮影時に読み、復元時に書き戻す (null なら素通し)
+
+    // この束で撮るワールドハッシュの源 (SimSourcesOf)。scene は非 null が前提
+    SimSources HashSources() const { return SimSourcesOf(*scene, particles, xpbd, acoustic); }
 };
 
 // blob の形式版。**.rep の版とは独立** (M52a 申し送り 7 と同じ規約) —

@@ -19,6 +19,14 @@
 #include "Engine/Engine/Script/ScriptHost.h"
 
 namespace mye {
+
+SimSources SimSourcesOf(Scene& scene, const CpuParticleBackend* particles, const XpbdBackend* xpbd,
+                        const AcousticField* acoustic)
+{
+    // 並びは SimSources の member 順 (畳み込む順序は HashWorldImpl が決めるので、ここは関係ない)
+    return { particles, &scene.Time(), &scene.Persist(), xpbd, acoustic, &scene.UI() };
+}
+
 namespace {
 
 // 節ごとの目印。壊れた/別形式の blob を「途中まで復元」する前に止めるため
