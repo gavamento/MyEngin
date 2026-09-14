@@ -208,7 +208,7 @@ void AgentSystem::Update(World& world, AcousticField& field, uint64_t tick, floa
                     }
                     const auto* lc = static_cast<const LightComponent*>(arch.GetPtr(gi, row));
                     // ★平行光は「置かれた光」ではないので見ない (太陽に向かって歩き出す)
-                    if (lc->type == 0) {
+                    if (lc->type == lighttype::kDirectional) {
                         continue;
                     }
                     const auto& wm =

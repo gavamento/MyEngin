@@ -915,7 +915,7 @@ void ApplyScaledExtents(ShapePose& p, const ColliderComponent& col, float sx, fl
     p.hy = col.halfExtents.y * sy;
     p.hz = col.halfExtents.z * sz;
     p.halfSeg = 0.0f;
-    if (col.shape == 2) {
+    if (col.shape == collidershape::kCapsule) {
         const float wr = col.radius * std::max(sx, sz);
         const float wh = col.height * 0.5f * sy;
         p.radius = wr;
@@ -927,13 +927,13 @@ void ApplyScaledExtents(ShapePose& p, const ColliderComponent& col, float sx, fl
     p.sx = sx;
     p.sy = sy;
     p.sz = sz;
-    if (col.shape == 3) {
+    if (col.shape == collidershape::kMesh) {
         p.meshData = meshcol::Resolve(col.meshAsset);
-    } else if (col.shape == 5) {
+    } else if (col.shape == collidershape::kConvex) {
         // M60f: 凸包。`meshAsset` は shape=3 と同じ「メッシュ資産」を指すが、
         // 三角形スープではなく**その頂点群の凸包**として解決される
         p.meshData = convexcol::Resolve(col.meshAsset);
-    } else if (col.shape == 4) {
+    } else if (col.shape == collidershape::kTerrain) {
         // M59i: 同じスロットに地形データを載せる (判別は shape 値)。
         // meshAsset が `.terrain.json` を指す — 自然な使い方は「TerrainComponent と
         // 同じエンティティに shape=4 の Collider を置き、同じ地形を指す」
@@ -1145,15 +1145,15 @@ int TerrainGatherTris(const ShapePose& terr, const ShapePose& other, float margi
 // 最近点の本体は 1 つで済む
 bool IsSoup(const ShapePose& s)
 {
-    return s.shape == 3 || s.shape == 4;
+    return s.shape == collidershape::kMesh || s.shape == collidershape::kTerrain;
 }
 
 bool SoupUsable(const ShapePose& s)
 {
-    if (s.shape == 3) {
+    if (s.shape == collidershape::kMesh) {
         return MeshOf(s) != nullptr;
     }
-    if (s.shape == 4) {
+    if (s.shape == collidershape::kTerrain) {
         return TerrainUsable(TerrainOf(s));
     }
     return false;
@@ -1161,7 +1161,7 @@ bool SoupUsable(const ShapePose& s)
 
 int SoupGatherTris(const ShapePose& s, const ShapePose& other, float margin, int32_t* buf, int cap)
 {
-    if (s.shape == 4) {
+    if (s.shape == collidershape::kTerrain) {
         return TerrainGatherTris(s, other, margin, buf, cap);
     }
     return GatherTrisForShape(s, other, margin, buf, cap);
@@ -1170,7 +1170,7 @@ int SoupGatherTris(const ShapePose& s, const ShapePose& other, float margin, int
 void SoupWorldTri(const ShapePose& s, int32_t tri, float& ax, float& ay, float& az, float& bx,
                   float& by, float& bz, float& cx, float& cy, float& cz)
 {
-    if (s.shape == 4) {
+    if (s.shape == collidershape::kTerrain) {
         TerrainWorldTri(s, *TerrainOf(s), tri, ax, ay, az, bx, by, bz, cx, cy, cz);
         return;
     }
@@ -1661,8 +1661,9 @@ bool CollideMeshOther(const ShapePose& mesh, const ShapePose& other, float& nx, 
     }
     // M60f: 候補三角形ごとに凸包のワールド頂点を組み直すと 256 回になるので 1 回だけ作る
     convex::Body cvBody;
-    const bool cvOk = (other.shape == 5) && convex::BuildFromPose(other, cvBody);
-    if (other.shape == 5 && !cvOk) {
+    const bool cvOk =
+        (other.shape == collidershape::kConvex) && convex::BuildFromPose(other, cvBody);
+    if (other.shape == collidershape::kConvex && !cvOk) {
         return false;
     }
     bool hit = false;
@@ -1672,12 +1673,12 @@ bool CollideMeshOther(const ShapePose& mesh, const ShapePose& other, float& nx, 
         SoupWorldTri(mesh, tris[i], ax, ay, az, bx, by, bz, cx, cy, cz);
         float tnx = 0, tny = 1, tnz = 0, td = 0, qx = 0, qy = 0, qz = 0;
         bool triHit = false;
-        if (other.shape == 0) {
+        if (other.shape == collidershape::kSphere) {
             triHit = SphereTriContact(other.px, other.py, other.pz, other.radius, ax, ay, az, bx,
                                       by, bz, cx, cy, cz, tnx, tny, tnz, td, qx, qy, qz);
-        } else if (other.shape == 1) {
+        } else if (other.shape == collidershape::kBox) {
             triHit = BoxTriSat(other, ax, ay, az, bx, by, bz, cx, cy, cz, tnx, tny, tnz, td);
-        } else if (other.shape == 2) {
+        } else if (other.shape == collidershape::kCapsule) {
             triHit = CapsuleTriContact(other, ax, ay, az, bx, by, bz, cx, cy, cz, tnx, tny, tnz,
                                        td, qx, qy, qz);
         } else if (cvOk) {
@@ -1706,8 +1707,9 @@ bool MeshOtherManifold(const ShapePose& mesh, const ShapePose& other, Manifold& 
         return false;
     }
     convex::Body cvBody;
-    const bool cvOk = (other.shape == 5) && convex::BuildFromPose(other, cvBody);
-    if (other.shape == 5 && !cvOk) {
+    const bool cvOk =
+        (other.shape == collidershape::kConvex) && convex::BuildFromPose(other, cvBody);
+    if (other.shape == collidershape::kConvex && !cvOk) {
         return false;
     }
     bool hit = false;
@@ -1718,12 +1720,12 @@ bool MeshOtherManifold(const ShapePose& mesh, const ShapePose& other, Manifold& 
         SoupWorldTri(mesh, tris[i], ax, ay, az, bx, by, bz, cx, cy, cz);
         float tnx = 0, tny = 1, tnz = 0, td = 0, qx = 0, qy = 0, qz = 0;
         bool triHit = false;
-        if (other.shape == 0) {
+        if (other.shape == collidershape::kSphere) {
             triHit = SphereTriContact(other.px, other.py, other.pz, other.radius, ax, ay, az, bx,
                                       by, bz, cx, cy, cz, tnx, tny, tnz, td, qx, qy, qz);
-        } else if (other.shape == 1) {
+        } else if (other.shape == collidershape::kBox) {
             triHit = BoxTriSat(other, ax, ay, az, bx, by, bz, cx, cy, cz, tnx, tny, tnz, td);
-        } else if (other.shape == 2) {
+        } else if (other.shape == collidershape::kCapsule) {
             triHit = CapsuleTriContact(other, ax, ay, az, bx, by, bz, cx, cy, cz, tnx, tny, tnz,
                                        td, qx, qy, qz);
         } else if (cvOk) {
@@ -1744,7 +1746,7 @@ bool MeshOtherManifold(const ShapePose& mesh, const ShapePose& other, Manifold& 
     }
     float ax, ay, az, bx, by, bz, cx, cy, cz;
     SoupWorldTri(mesh, bestTri, ax, ay, az, bx, by, bz, cx, cy, cz);
-    if (other.shape == 1) {
+    if (other.shape == collidershape::kBox) {
         return BoxTriManifold(other, ax, ay, az, bx, by, bz, cx, cy, cz, out);
     }
     if (cvOk) {
@@ -1754,7 +1756,7 @@ bool MeshOtherManifold(const ShapePose& mesh, const ShapePose& other, Manifold& 
     }
     float tnx = 0, tny = 1, tnz = 0, td = 0, qx = 0, qy = 0, qz = 0;
     bool triHit = false;
-    if (other.shape == 0) {
+    if (other.shape == collidershape::kSphere) {
         triHit = SphereTriContact(other.px, other.py, other.pz, other.radius, ax, ay, az, bx, by,
                                   bz, cx, cy, cz, tnx, tny, tnz, td, qx, qy, qz);
     } else {
@@ -1782,7 +1784,7 @@ bool ConvexOtherManifold(const ShapePose& cv, const ShapePose& other, Manifold& 
     if (!convex::BuildFromPose(cv, a)) {
         return false; // 凸包が未生成 = 衝突なしに落とす (shape=3 の null と同じ安全側)
     }
-    if (other.shape == 0) {
+    if (other.shape == collidershape::kSphere) {
         float nx, ny, nz, depth, qx, qy, qz;
         if (!convex::SphereContact(a, other.px, other.py, other.pz, other.radius, nx, ny, nz,
                                    depth, qx, qy, qz)) {
@@ -1795,11 +1797,11 @@ bool ConvexOtherManifold(const ShapePose& cv, const ShapePose& other, Manifold& 
         out.count = 1;
         return true;
     }
-    if (other.shape == 2) {
+    if (other.shape == collidershape::kCapsule) {
         return convex::CapsuleManifold(a, other, out);
     }
     convex::Body b;
-    if (other.shape == 1) {
+    if (other.shape == collidershape::kBox) {
         convex::BuildFromBox(other, b);
     } else if (!convex::BuildFromPose(other, b)) {
         return false;
@@ -1821,16 +1823,16 @@ bool ConvexOtherCollide(const ShapePose& cv, const ShapePose& other, float& nx, 
     if (!convex::BuildFromPose(cv, a)) {
         return false;
     }
-    if (other.shape == 0) {
+    if (other.shape == collidershape::kSphere) {
         float qx, qy, qz;
         return convex::SphereContact(a, other.px, other.py, other.pz, other.radius, nx, ny, nz,
                                      depth, qx, qy, qz);
     }
-    if (other.shape == 2) {
+    if (other.shape == collidershape::kCapsule) {
         return convex::CapsuleContact(a, other, nx, ny, nz, depth);
     }
     convex::Body b;
-    if (other.shape == 1) {
+    if (other.shape == collidershape::kBox) {
         convex::BuildFromBox(other, b);
     } else if (!convex::BuildFromPose(other, b)) {
         return false;
@@ -1940,8 +1942,8 @@ bool Collide(const ShapePose& a, const ShapePose& b, float& nx, float& ny, float
         return true;
     }
     // ---- 凸包 (M60f)。凸包が絡むペアだけ SAT へ回す ----
-    if (sa == 5 || sb == 5) {
-        if (sa == 5) { // ConvexOtherCollide は 凸(a)→b。規約は b→a なので反転する
+    if (sa == collidershape::kConvex || sb == collidershape::kConvex) {
+        if (sa == collidershape::kConvex) { // ConvexOtherCollide は 凸(a)→b。規約は b→a なので反転する
             if (!ConvexOtherCollide(a, b, nx, ny, nz, depth)) {
                 return false;
             }
@@ -1952,20 +1954,20 @@ bool Collide(const ShapePose& a, const ShapePose& b, float& nx, float& ny, float
         }
         return ConvexOtherCollide(b, a, nx, ny, nz, depth); // 凸(b)→a = そのまま b→a
     }
-    if (sa == 0 && sb == 0) {
+    if (sa == collidershape::kSphere && sb == collidershape::kSphere) {
         return SpherePair(a.px, a.py, a.pz, b.px, b.py, b.pz, a.radius + b.radius, nx, ny, nz,
                           depth);
     }
-    if (sa == 1 && sb == 1) {
+    if (sa == collidershape::kBox && sb == collidershape::kBox) {
         return BoxBox(a, b, nx, ny, nz, depth);
     }
-    if (sa == 2 && sb == 2) {
+    if (sa == collidershape::kCapsule && sb == collidershape::kCapsule) {
         return CapsuleCapsule(a, b, nx, ny, nz, depth);
     }
-    if (sa == 0 && sb == 1) {
+    if (sa == collidershape::kSphere && sb == collidershape::kBox) {
         return SphereBox(a.px, a.py, a.pz, a.radius, b, nx, ny, nz, depth); // box→sphere = b→a
     }
-    if (sa == 1 && sb == 0) {
+    if (sa == collidershape::kBox && sb == collidershape::kSphere) {
         if (!SphereBox(b.px, b.py, b.pz, b.radius, a, nx, ny, nz, depth)) {
             return false;
         }
@@ -1974,10 +1976,10 @@ bool Collide(const ShapePose& a, const ShapePose& b, float& nx, float& ny, float
         nz = -nz;
         return true;
     }
-    if (sa == 0 && sb == 2) {
+    if (sa == collidershape::kSphere && sb == collidershape::kCapsule) {
         return SphereCapsule(a.px, a.py, a.pz, a.radius, b, nx, ny, nz, depth);
     }
-    if (sa == 2 && sb == 0) {
+    if (sa == collidershape::kCapsule && sb == collidershape::kSphere) {
         if (!SphereCapsule(b.px, b.py, b.pz, b.radius, a, nx, ny, nz, depth)) {
             return false;
         }
@@ -1986,10 +1988,10 @@ bool Collide(const ShapePose& a, const ShapePose& b, float& nx, float& ny, float
         nz = -nz;
         return true;
     }
-    if (sa == 2 && sb == 1) {
+    if (sa == collidershape::kCapsule && sb == collidershape::kBox) {
         return CapsuleBox(a, b, nx, ny, nz, depth); // box→capsule = b→a
     }
-    if (sa == 1 && sb == 2) {
+    if (sa == collidershape::kBox && sb == collidershape::kCapsule) {
         if (!CapsuleBox(b, a, nx, ny, nz, depth)) {
             return false;
         }
@@ -2033,8 +2035,8 @@ bool CollideManifold(const ShapePose& a, const ShapePose& b, Manifold& out)
     }
 
     // ---- 凸包 (M60f) ----
-    if (sa == 5 || sb == 5) {
-        if (sa == 5) {
+    if (sa == collidershape::kConvex || sb == collidershape::kConvex) {
+        if (sa == collidershape::kConvex) {
             if (!ConvexOtherManifold(a, b, out)) {
                 return false;
             }
@@ -2045,7 +2047,7 @@ bool CollideManifold(const ShapePose& a, const ShapePose& b, Manifold& out)
         }
         return ConvexOtherManifold(b, a, out) && out.count > 0; // 凸(b)→a = そのまま
     }
-    if (sa == 0 && sb == 0) {
+    if (sa == collidershape::kSphere && sb == collidershape::kSphere) {
         if (!SpherePairContact(a.px, a.py, a.pz, b.px, b.py, b.pz, a.radius, b.radius, nx, ny, nz,
                                c0)) {
             return false;
@@ -2055,7 +2057,7 @@ bool CollideManifold(const ShapePose& a, const ShapePose& b, Manifold& out)
         out.count = 1;
         return true;
     }
-    if (sa == 1 && sb == 1) {
+    if (sa == collidershape::kBox && sb == collidershape::kBox) {
         int axisId;
         float depth;
         if (!BoxBoxSat(a, b, nx, ny, nz, depth, axisId)) {
@@ -2069,10 +2071,10 @@ bool CollideManifold(const ShapePose& a, const ShapePose& b, Manifold& out)
         }
         return out.count > 0;
     }
-    if (sa == 2 && sb == 2) {
+    if (sa == collidershape::kCapsule && sb == collidershape::kCapsule) {
         return CapsuleCapsuleManifold(a, b, out);
     }
-    if (sa == 0 && sb == 1) {
+    if (sa == collidershape::kSphere && sb == collidershape::kBox) {
         if (!SphereBoxContact(a.px, a.py, a.pz, a.radius, b, nx, ny, nz, c0)) {
             return false;
         }
@@ -2081,7 +2083,7 @@ bool CollideManifold(const ShapePose& a, const ShapePose& b, Manifold& out)
         out.count = 1;
         return true;
     }
-    if (sa == 1 && sb == 0) {
+    if (sa == collidershape::kBox && sb == collidershape::kSphere) {
         if (!SphereBoxContact(b.px, b.py, b.pz, b.radius, a, nx, ny, nz, c0)) {
             return false;
         }
@@ -2090,7 +2092,7 @@ bool CollideManifold(const ShapePose& a, const ShapePose& b, Manifold& out)
         out.count = 1;
         return true;
     }
-    if (sa == 0 && sb == 2) {
+    if (sa == collidershape::kSphere && sb == collidershape::kCapsule) {
         const float t = std::clamp(Dot3(b.by, a.px - b.px, a.py - b.py, a.pz - b.pz), -b.halfSeg,
                                    b.halfSeg);
         const float qx = b.px + b.by[0] * t, qy = b.py + b.by[1] * t, qz = b.pz + b.by[2] * t;
@@ -2102,7 +2104,7 @@ bool CollideManifold(const ShapePose& a, const ShapePose& b, Manifold& out)
         out.count = 1;
         return true;
     }
-    if (sa == 2 && sb == 0) {
+    if (sa == collidershape::kCapsule && sb == collidershape::kSphere) {
         const float t = std::clamp(Dot3(a.by, b.px - a.px, b.py - a.py, b.pz - a.pz), -a.halfSeg,
                                    a.halfSeg);
         const float qx = a.px + a.by[0] * t, qy = a.py + a.by[1] * t, qz = a.pz + a.by[2] * t;
@@ -2114,10 +2116,10 @@ bool CollideManifold(const ShapePose& a, const ShapePose& b, Manifold& out)
         out.count = 1;
         return true;
     }
-    if (sa == 2 && sb == 1) {
+    if (sa == collidershape::kCapsule && sb == collidershape::kBox) {
         return CapsuleBoxManifold(a, b, out); // n = box→capsule = b→a
     }
-    if (sa == 1 && sb == 2) {
+    if (sa == collidershape::kBox && sb == collidershape::kCapsule) {
         if (!CapsuleBoxManifold(b, a, out)) {
             return false;
         }
@@ -2131,15 +2133,15 @@ float DistanceToShape(const ShapePose& s, float px, float py, float pz)
 {
     // 静的メッシュ (M41): 表面 (三角形群) までの距離。メッシュ無しは「無限遠」=
     // SphereCast の保守的前進が自由に進める (障害物として扱わない)
-    if (s.shape == 3) {
+    if (s.shape == collidershape::kMesh) {
         float qx, qy, qz;
         return MeshClosestPoint(s, px, py, pz, qx, qy, qz);
     }
-    if (s.shape == 4) { // M59i: 地形も同じ意味 (表面までの距離)
+    if (s.shape == collidershape::kTerrain) { // M59i: 地形も同じ意味 (表面までの距離)
         float qx, qy, qz;
         return TerrainClosestPoint(s, px, py, pz, qx, qy, qz);
     }
-    if (s.shape == 5) { // M60f: 凸包。内部は 0 (他形状と同じ規約)
+    if (s.shape == collidershape::kConvex) { // M60f: 凸包。内部は 0 (他形状と同じ規約)
         convex::Body b;
         if (!convex::BuildFromPose(s, b)) {
             return 3.4e38f;
@@ -2148,12 +2150,12 @@ float DistanceToShape(const ShapePose& s, float px, float py, float pz)
         const float d = convex::SignedDistance(b, px, py, pz, qx, qy, qz, onx, ony, onz);
         return (d > 0.0f) ? d : 0.0f;
     }
-    if (s.shape == 0) {
+    if (s.shape == collidershape::kSphere) {
         const float dx = px - s.px, dy = py - s.py, dz = pz - s.pz;
         const float d = std::sqrt(dx * dx + dy * dy + dz * dz) - s.radius;
         return (d > 0.0f) ? d : 0.0f;
     }
-    if (s.shape == 1) {
+    if (s.shape == collidershape::kBox) {
         float lx, ly, lz;
         WorldToLocal(s, px - s.px, py - s.py, pz - s.pz, lx, ly, lz);
         float ex = std::fabs(lx) - s.hx;
@@ -2177,17 +2179,18 @@ void ClosestPointOnShape(const ShapePose& s, float px, float py, float pz, float
                          float& qz)
 {
     // 静的メッシュ (M41): 三角形群上の最近点。メッシュ無しはその点自身
-    if (s.shape == 3 || s.shape == 4) {
+    if (s.shape == collidershape::kMesh || s.shape == collidershape::kTerrain) {
         qx = px; qy = py; qz = pz;
         float mqx, mqy, mqz;
-        const float d = (s.shape == 3) ? MeshClosestPoint(s, px, py, pz, mqx, mqy, mqz)
-                                       : TerrainClosestPoint(s, px, py, pz, mqx, mqy, mqz);
+        const float d = (s.shape == collidershape::kMesh)
+            ? MeshClosestPoint(s, px, py, pz, mqx, mqy, mqz)
+            : TerrainClosestPoint(s, px, py, pz, mqx, mqy, mqz);
         if (d < 3.4e38f) {
             qx = mqx; qy = mqy; qz = mqz;
         }
         return;
     }
-    if (s.shape == 5) { // M60f: 凸包の表面最近点 (内部の点は最も浅い面へ射影される)
+    if (s.shape == collidershape::kConvex) { // M60f: 凸包の表面最近点 (内部の点は最も浅い面へ射影される)
         qx = px; qy = py; qz = pz;
         convex::Body b;
         if (convex::BuildFromPose(s, b)) {
@@ -2196,7 +2199,7 @@ void ClosestPointOnShape(const ShapePose& s, float px, float py, float pz, float
         }
         return;
     }
-    if (s.shape == 1) {
+    if (s.shape == collidershape::kBox) {
         float lx, ly, lz;
         WorldToLocal(s, px - s.px, py - s.py, pz - s.pz, lx, ly, lz);
         const float cx = std::clamp(lx, -s.hx, s.hx);
@@ -2211,7 +2214,7 @@ void ClosestPointOnShape(const ShapePose& s, float px, float py, float pz, float
     }
     // sphere / capsule: 中心 (または軸最近点) から半径方向へ
     float cx = s.px, cy = s.py, cz = s.pz;
-    if (s.shape == 2) {
+    if (s.shape == collidershape::kCapsule) {
         const float t = std::clamp(Dot3(s.by, px - s.px, py - s.py, pz - s.pz), -s.halfSeg,
                                    s.halfSeg);
         cx = s.px + s.by[0] * t;
@@ -2235,7 +2238,7 @@ void ComputeAabb(const ShapePose& s, float& minX, float& minY, float& minZ, floa
 {
     // 地形 (M59i): ローカル AABB は「幅 x 高さ範囲 x 奥行」。高さ範囲はロード時に 1 回
     // 測ってある (毎フレーム O(W*H) で走査し直さないための TerrainCollisionData)
-    if (s.shape == 4) {
+    if (s.shape == collidershape::kTerrain) {
         const TerrainCollisionData* t = static_cast<const TerrainCollisionData*>(s.meshData);
         if (!TerrainUsable(t)) {
             minX = maxX = s.px;
@@ -2261,7 +2264,7 @@ void ComputeAabb(const ShapePose& s, float& minX, float& minY, float& minZ, floa
     // 凸包 (M60f): 生成時に測ったローカル AABB をワールドへ (shape=3 と同じ変換)。
     // 頂点を全部回して厳密な AABB を作ることもできるが、ブロードフェーズの契約は
     // 「真の接触集合のスーパーセット」なので保守的で構わない (Broadphase.h)
-    if (s.shape == 5) {
+    if (s.shape == collidershape::kConvex) {
         const ConvexHullData* h = static_cast<const ConvexHullData*>(s.meshData);
         if (!h || !h->Valid()) {
             minX = maxX = s.px;
@@ -2290,7 +2293,7 @@ void ComputeAabb(const ShapePose& s, float& minX, float& minY, float& minZ, floa
         return;
     }
     // 静的メッシュ (M41): BVH ルートのローカル AABB をワールドへ (スケール → |基底| 変換)
-    if (s.shape == 3) {
+    if (s.shape == collidershape::kMesh) {
         const MeshColliderData* md = static_cast<const MeshColliderData*>(s.meshData);
         if (!md || md->nodes.empty()) {
             minX = maxX = s.px;
@@ -2320,12 +2323,12 @@ void ComputeAabb(const ShapePose& s, float& minX, float& minY, float& minZ, floa
         return;
     }
     float ex, ey, ez; // 中心からの半径 (各ワールド軸)
-    if (s.shape == 1) {
+    if (s.shape == collidershape::kBox) {
         // box: 各ワールド軸への投影半径 = Σ |基底成分|·half
         ex = std::fabs(s.bx[0]) * s.hx + std::fabs(s.by[0]) * s.hy + std::fabs(s.bz[0]) * s.hz;
         ey = std::fabs(s.bx[1]) * s.hx + std::fabs(s.by[1]) * s.hy + std::fabs(s.bz[1]) * s.hz;
         ez = std::fabs(s.bx[2]) * s.hx + std::fabs(s.by[2]) * s.hy + std::fabs(s.bz[2]) * s.hz;
-    } else if (s.shape == 2) {
+    } else if (s.shape == collidershape::kCapsule) {
         // capsule: 軸方向の線分半長 + 半径
         ex = std::fabs(s.by[0]) * s.halfSeg + s.radius;
         ey = std::fabs(s.by[1]) * s.halfSeg + s.radius;
@@ -2460,28 +2463,28 @@ bool RayTerrain(const ShapePose& s, float ox, float oy, float oz, float dx, floa
 bool Raycast(const ShapePose& s, float ox, float oy, float oz, float dx, float dy, float dz,
              float maxDist, float& outT, float& nx, float& ny, float& nz)
 {
-    if (s.shape == 0) {
+    if (s.shape == collidershape::kSphere) {
         return RaySphere(ox, oy, oz, dx, dy, dz, s.px, s.py, s.pz, s.radius, maxDist, outT, nx,
                          ny, nz);
     }
-    if (s.shape == 1) {
+    if (s.shape == collidershape::kBox) {
         return RayBox(s, ox, oy, oz, dx, dy, dz, maxDist, outT, nx, ny, nz);
     }
-    if (s.shape == 2) {
+    if (s.shape == collidershape::kCapsule) {
         return RayCapsule(s, ox, oy, oz, dx, dy, dz, maxDist, outT, nx, ny, nz);
     }
-    if (s.shape == 5) { // M60f: 凸包は全面の支持平面でスラブクリップ
+    if (s.shape == collidershape::kConvex) { // M60f: 凸包は全面の支持平面でスラブクリップ
         convex::Body b;
         if (!convex::BuildFromPose(s, b)) {
             return false;
         }
         return convex::Raycast(b, ox, oy, oz, dx, dy, dz, maxDist, outT, nx, ny, nz);
     }
-    if (s.shape == 4) { // M59i: 地形は XZ セルの DDA
+    if (s.shape == collidershape::kTerrain) { // M59i: 地形は XZ セルの DDA
         return RayTerrain(s, ox, oy, oz, dx, dy, dz, maxDist, outT, nx, ny, nz);
     }
     // 静的メッシュ (M41): 線分 AABB で BVH 候補収集 → 三角形番号昇順に MT 判定、最近 t を採用
-    if (s.shape == 3) {
+    if (s.shape == collidershape::kMesh) {
         const MeshColliderData* md = static_cast<const MeshColliderData*>(s.meshData);
         if (!md) {
             return false;

@@ -259,12 +259,18 @@ constexpr const char* kUISliderDirLabels[] = { "Left To Right", "Right To Left",
 constexpr const char* kUISliderDirJa[] = { "左→右", "右→左", "下→上", "上→下" };
 constexpr const char* kUIPresetColJa[] = { "左", "中央", "右", "伸縮" };
 constexpr const char* kUIPresetRowJa[] = { "上", "中央", "下", "伸縮" };
+// 番号の表 (Components.h) とラベルの件数を機械で揃える。種類を足してラベルを忘れると
+// コンボが "(invalid)" 表示になり、エディタから選ぶ手段が消える (M60f で踏んだ)
+static_assert(std::size(kColliderShapeLabels) == collidershape::kCount
+              && std::size(kColliderShapeJa) == collidershape::kCount);
+static_assert(std::size(kLightTypeLabels) == lighttype::kCount && std::size(kLightTypeJa) == lighttype::kCount);
+static_assert(std::size(kPartBoundsShapeLabels) == 2 && partboundsshape::kSphere == 1);
 constexpr EnumFieldLabels kEnumFields[] = {
     // M60f: 3 (Mesh) / 4 (Terrain) / 5 (Convex) までコンボに出す。これらは meshAsset を
     // 併せて指す必要があるが、今まで**コンボが 3 件しか出さず "(invalid)" 表示になっていた**
     // ので、シーン JSON を手で書く以外に選ぶ手段が無かった (エディタ表示のみの変更)
-    { "Collider", "shape", kColliderShapeLabels, 6, kColliderShapeJa },
-    { "Light", "type", kLightTypeLabels, 3, kLightTypeJa },
+    { "Collider", "shape", kColliderShapeLabels, collidershape::kCount, kColliderShapeJa },
+    { "Light", "type", kLightTypeLabels, lighttype::kCount, kLightTypeJa },
     { "ParticleEmitter", "shape", kEmitterShapeLabels, 4, kEmitterShapeJa },
     { "ParticleEmitter", "blendMode", kBlendModeLabels, 3, kBlendModeJa },
     // M61a: A群拡張 (subframeEmission は playing/looping と同じく素の DragInt のまま)
@@ -392,15 +398,14 @@ void DrawManagedComponentFields(EngineContext& ctx, ComponentTypeId t, void* com
     }
 }
 
-// M60b: 関節の型ごとに Inspector へ出すフィールドを選ぶ
-// (0=Ball 1=Hinge 2=Fixed 3=Slider 4=Cone)。ソルバ側の type ディスパッチと**対**なので、
+// M60b: 関節の型 (jointtype::) ごとに Inspector へ出すフィールドを選ぶ。ソルバ側の type ディスパッチと**対**なので、
 // 型を足したらここも足すこと — 出ているのに効かない行があるのが最悪の状態
 bool JointFieldApplies(int32_t type, const char* name)
 {
-    const bool usesAxis = (type == 1 || type == 3 || type == 4);
-    const bool usesAngular = (type != 0); // Ball だけ相対姿勢を拘束しない
-    const bool usesLimit = (type == 1 || type == 3 || type == 4);
-    const bool usesMotor = (type == 1 || type == 3);
+    const bool usesAxis = (type == jointtype::kHinge || type == jointtype::kSlider || type == jointtype::kCone);
+    const bool usesAngular = (type != jointtype::kBall); // Ball だけ相対姿勢を拘束しない
+    const bool usesLimit = (type == jointtype::kHinge || type == jointtype::kSlider || type == jointtype::kCone);
+    const bool usesMotor = (type == jointtype::kHinge || type == jointtype::kSlider);
     if (std::strcmp(name, "axis") == 0) {
         return usesAxis;
     }
@@ -412,7 +417,7 @@ bool JointFieldApplies(int32_t type, const char* name)
         return usesLimit;
     }
     if (std::strcmp(name, "swingLimitDeg") == 0) {
-        return type == 4;
+        return type == jointtype::kCone;
     }
     if (std::strcmp(name, "motorTargetVelocity") == 0
         || std::strcmp(name, "motorMaxForce") == 0) {
@@ -676,7 +681,7 @@ void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
                 // その型に効くものだけ出す (Collider の shape 依存より粒度が細かいのは、
                 // 関節が 1 コンポーネントで 5 種類を兼ねているため = 決定台帳 1 の代償)
                 const bool isJoint = (std::strcmp(desc.name, "Joint") == 0);
-                int32_t jointType = 0;
+                int32_t jointType = jointtype::kBall;
                 if (isJoint) {
                     for (const FieldDesc& tf : desc.fields) {
                         if (std::strcmp(tf.name, "type") == 0) {

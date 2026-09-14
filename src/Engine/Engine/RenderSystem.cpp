@@ -1010,7 +1010,7 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
         if (enableShadows && shadowPass_.IsReady() && hasScene) {
             int dirIdx = -1;
             for (int i = 0; i < lights.count; ++i) {
-                if (lights.lights[i].type == 0) {
+                if (lights.lights[i].type == lighttype::kDirectional) {
                     dirIdx = i;
                     break;
                 }
@@ -1052,7 +1052,7 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
                     continue;
                 }
                 const GpuLight& g = lights.lights[i];
-                const int faces = (g.type == 1) ? 6 : ((g.type == 2) ? 1 : 0);
+                const int faces = (g.type == lighttype::kPoint) ? 6 : ((g.type == lighttype::kSpot) ? 1 : 0);
                 if (faces == 0) {
                     continue; // 平行光の影は CSM (ShadowPass) の担当
                 }
@@ -1150,12 +1150,12 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
     view.skyHorizon = SrgbToLinear(view.skyHorizon);
     view.skyBottom = SrgbToLinear(view.skyBottom);
     view.fogColor = SrgbToLinear(view.fogColor);
-    // M43a: 太陽 = 最初の type==0 平行光 (CSM の dirIdx と同じ規則)。色はリニア・強度込み。
+    // M43a: 太陽 = 最初の平行光 (CSM の dirIdx と同じ規則)。色はリニア・強度込み。
     // 平行光が無いシーンではインスキャッタ無効化 (黒い太陽へ lerp して暗転する事故を防ぐ)
     {
         int sunIdx = -1;
         for (int i = 0; i < lights.count; ++i) {
-            if (lights.lights[i].type == 0) {
+            if (lights.lights[i].type == lighttype::kDirectional) {
                 sunIdx = i;
                 break;
             }

@@ -70,7 +70,7 @@ int OverlapSphereWorld(World& world, MyeVec3 center, float radius, MyeEntityId* 
                        int maxCount, uint32_t mask)
 {
     ColliderComponent probe;
-    probe.shape = 0;
+    probe.shape = collidershape::kSphere;
     probe.radius = radius;
     const ShapePose pose = shapes::MakePose(probe, { center.x, center.y, center.z },
                                             { 0, 0, 0, 1 }, { 1, 1, 1 });
@@ -81,7 +81,7 @@ int OverlapBoxWorld(World& world, MyeVec3 center, MyeVec3 halfExtents, MyeQuat r
                     MyeEntityId* outEntities, int maxCount, uint32_t mask)
 {
     ColliderComponent probe;
-    probe.shape = 1;
+    probe.shape = collidershape::kBox;
     probe.halfExtents = { halfExtents.x, halfExtents.y, halfExtents.z };
     const ShapePose pose = shapes::MakePose(probe, { center.x, center.y, center.z },
                                             { rotation.x, rotation.y, rotation.z, rotation.w },
@@ -112,7 +112,7 @@ int SphereCastWorld(World& world, MyeVec3 origin, MyeVec3 dir, float radius, flo
     float bnx = 0, bny = 0, bnz = 0;
 
     for (const QueryTarget& t : targets) {
-        if (t.pose.shape == 0 || t.pose.shape == 2) {
+        if (t.pose.shape == collidershape::kSphere || t.pose.shape == collidershape::kCapsule) {
             // sphere / capsule: 半径を radius だけ膨らませた形状へのレイ = 掃引球の解析解
             ShapePose inflated = t.pose;
             inflated.radius += radius;

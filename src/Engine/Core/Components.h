@@ -55,13 +55,21 @@ struct CameraComponent {
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
+// LightComponent::type の番号。フィールドは int32_t のまま (シーン JSON と .rep に整数で載るので値は変えない)
+namespace lighttype {
+inline constexpr int32_t kDirectional = 0; // 平行光
+inline constexpr int32_t kPoint = 1;       // 点光源
+inline constexpr int32_t kSpot = 2;        // スポット
+inline constexpr int32_t kCount = 3;
+} // namespace lighttype
+
 // ライト (spec 6.2)。向きはエンティティの前方 (+Z)、位置はワールド行列から取る。
-// type: 0=Directional(平行光) / 1=Point(点光源) / 2=Spot(スポット)
+// type は lighttype:: の番号
 struct LightComponent {
     DirectX::XMFLOAT3 color = { 1.0f, 1.0f, 1.0f };
     float intensity = 1.0f;
     DirectX::XMFLOAT3 ambient = { 0.15f, 0.16f, 0.18f };
-    int32_t type = 0;           // 0=Directional 1=Point 2=Spot
+    int32_t type = lighttype::kDirectional;
     float range = 15.0f;        // Point/Spot: 減衰半径
     float spotInnerDeg = 25.0f; // Spot: フル強度の内角 (度)
     float spotOuterDeg = 35.0f; // Spot: 減衰端の外角 (度)
@@ -195,12 +203,24 @@ constexpr uint32_t kPhysMatOverrideRolling = 1u << 2;
 // 衝突形状 (M7 トリガー / M20 ソリッド / M28a 形状拡張)。判定は Physics/Shapes.cpp に統合。
 // box はエンティティ回転を考慮する OBB (M28a)。無回転なら M20 の AABB 判定とビット同一。
 // 球はスケールの最大成分で拡大、capsule はローカル Y 軸・radius は max(sx,sz) スケール。
+// ColliderComponent::shape と ShapePose::shape (Shapes.h) の共通の番号。
+// フィールドは int32_t のまま (シーン JSON と .rep に整数で載るので値は変えない)。
+// ★PartBoundsComponent::shape は番号が**逆** — partboundsshape:: を使う
+namespace collidershape {
+inline constexpr int32_t kSphere = 0;
+inline constexpr int32_t kBox = 1;     // OBB
+inline constexpr int32_t kCapsule = 2; // ローカル Y 軸
+inline constexpr int32_t kMesh = 3;    // 三角形メッシュ (静的専用、M41)
+inline constexpr int32_t kTerrain = 4; // 地形ハイトフィールド (静的専用、M59i)
+inline constexpr int32_t kConvex = 5;  // 凸包 (M60f、動的剛体でも使える)
+inline constexpr int32_t kCount = 6;
+} // namespace collidershape
+
 struct ColliderComponent {
-    // 0=sphere 1=box(OBB) 2=capsule(ローカル Y 軸) 3=mesh (静的専用、M41)
-    // 4=terrain heightfield (静的専用、M59i) 5=convex hull。3 と 4 は meshAsset を共有する
-    // (3 = メッシュ資産 / 4 = `.terrain.json`)。**自然な使い方は TerrainComponent と
+    // collidershape:: の番号。kMesh と kTerrain は meshAsset を共有する
+    // (kMesh = メッシュ資産 / kTerrain = `.terrain.json`)。**自然な使い方は TerrainComponent と
     //  同じエンティティに置いて同じ地形を指すこと**
-    int32_t shape = 0;
+    int32_t shape = collidershape::kSphere;
     float radius = 0.5f; // sphere / capsule
     DirectX::XMFLOAT3 halfExtents = { 0.5f, 0.5f, 0.5f }; // box
     // M51 後続で int32→bool 化 + 既定をソリッドへ (旧データの 0/1 数値は FieldFromJson が受理)。
@@ -899,10 +919,15 @@ struct PartComponent {
 // Part と同じエンティティに載せる想定 (Parts::RaycastParts の対象は Part + PartBounds 両持ちのみ)。
 // 部位エンティティ自体が PartFollowSystem で骨に追従するので、範囲もそのまま追従する。
 //
-// ★shape の番号は ShapePose (0=球 1=箱) と**逆**。変換は Parts::MakePartBoundsPose の
+// ★shape の番号は ShapePose (collidershape::kSphere=0 / kBox=1) と**逆**。変換は Parts::MakePartBoundsPose の
 //   1 箇所に閉じ込めてあり、対応は PartSelfTest が機械検査する
+namespace partboundsshape {
+inline constexpr int32_t kBox = 0;
+inline constexpr int32_t kSphere = 1;
+} // namespace partboundsshape
+
 struct PartBoundsComponent {
-    int32_t shape = 0;                                    // 0=箱 1=球
+    int32_t shape = partboundsshape::kBox;                // partboundsshape:: の番号
     DirectX::XMFLOAT3 center = { 0.0f, 0.0f, 0.0f };      // ローカルオフセット
     DirectX::XMFLOAT3 halfExtents = { 0.5f, 0.5f, 0.5f }; // 球は x を半径に使う (y/z 無視)
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
@@ -1182,6 +1207,16 @@ struct AeroSurfaceComponent {
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
+// JointComponent::type の番号。フィールドは int32_t のまま (シーン JSON と .rep に整数で載るので値は変えない)
+namespace jointtype {
+inline constexpr int32_t kBall = 0;
+inline constexpr int32_t kHinge = 1;
+inline constexpr int32_t kFixed = 2;
+inline constexpr int32_t kSlider = 3;
+inline constexpr int32_t kCone = 4; // swing + twist
+inline constexpr int32_t kCount = 5;
+} // namespace jointtype
+
 // ---- 関節 (M60a) ----
 // 2 つの剛体 (または剛体とワールドの不動点) を拘束する。**無ければ物理は何も足さない**
 // (opt-in → 既存シーンのハッシュ/リプレイ不変)。
@@ -1198,8 +1233,7 @@ struct AeroSurfaceComponent {
 // broken は sim 状態 = **hash 対象** (ソルバが書き、snapshot と JSON が運ぶ)。
 struct JointComponent {
     EntityID connectedEntity = kNullEntity; // null = ワールドの不動アンカーへ繋ぐ
-    // 0=Ball 1=Hinge 2=Fixed 3=Slider 4=Cone
-    int32_t type = 0;
+    int32_t type = jointtype::kBall; // jointtype:: の番号
     // アンカー点。owner 側は**このエンティティのローカル**、相手側は**相手のローカル**。
     // ★相手が null のときだけ connectedAnchor は**ワールド座標**として読む
     //   (自動算出はしない — エディタ時ロジックが sim の契約の外に増えるため)

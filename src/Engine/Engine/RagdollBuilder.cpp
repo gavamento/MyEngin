@@ -312,7 +312,7 @@ int Build(Scene& scene, EntityID skin, const SkinnedModel& model, const Options&
             const float hx = bp.dir.x * bp.len * 0.5f;
             const float hy = bp.dir.y * bp.len * 0.5f;
             const float hz = bp.dir.z * bp.len * 0.5f;
-            pb->shape = 0; // 箱
+            pb->shape = partboundsshape::kBox;
             pb->center = { hx, hy, hz };
             pb->halfExtents = { std::fabs(hx) + bp.radius, std::fabs(hy) + bp.radius,
                                 std::fabs(hz) + bp.radius };
@@ -337,7 +337,7 @@ int Build(Scene& scene, EntityID skin, const SkinnedModel& model, const Options&
             slt->rotation = QuatFromYTo(bp.dir);
         }
         if (auto* col = shape.GetComponent<ColliderComponent>()) {
-            col->shape = 2; // カプセル (ローカル Y 軸)
+            col->shape = collidershape::kCapsule; // ローカル Y 軸
             col->radius = bp.radius;
             // 全高は骨長より**短くする**。骨の中央に置くので両端の関節に隙間が空き、
             // 隣の骨のカプセルと食い合わない (Options::lengthRatio のコメントが正本)
@@ -360,7 +360,7 @@ int Build(Scene& scene, EntityID skin, const SkinnedModel& model, const Options&
         if (!jc) {
             continue;
         }
-        jc->type = 4; // Cone (swing + twist)
+        jc->type = jointtype::kCone; // swing + twist
         jc->connectedEntity = partOf[static_cast<size_t>(bp.parentPart)];
         jc->anchor = { 0.0f, 0.0f, 0.0f }; // 部位の原点 = 骨の根元 = 関節ピボットそのもの
         jc->connectedAnchor = bp.connAnchor;

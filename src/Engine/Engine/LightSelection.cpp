@@ -4,6 +4,8 @@
 #include <cmath>
 #include <vector>
 
+#include "Engine/Core/Components.h" // lighttype::
+
 using namespace DirectX;
 
 namespace mye {
@@ -46,7 +48,7 @@ LightSelection SelectLights(const LightCandidate* cands, int count, const Frustu
     keep.reserve(static_cast<size_t>(count));
     for (int i = 0; i < count; ++i) {
         const LightCandidate& c = cands[i];
-        if (c.light.type != 0 && frustum != nullptr
+        if (c.light.type != lighttype::kDirectional && frustum != nullptr
             && !SphereInFrustum(*frustum, c.light.position, c.light.range)) {
             ++out.culled;
             continue;
@@ -82,7 +84,7 @@ LightSelection SelectLights(const LightCandidate* cands, int count, const Frustu
         s.sortKey = c.sortKey;
         // 平行光の影は既存の CSM (ShadowPass) が担当する。M54c 以降のアトラスは局所ライト専用。
         // 枠はソート後の順に前詰め = 同じシーンなら frame をまたいでも同じ枠に落ちる
-        if (c.castShadow != 0 && c.light.type != 0 && out.shadowCount < maxShadowLights) {
+        if (c.castShadow != 0 && c.light.type != lighttype::kDirectional && out.shadowCount < maxShadowLights) {
             s.shadowSlot = out.shadowCount++;
         }
     }
@@ -93,7 +95,7 @@ LightSelection SelectLights(const LightCandidate* cands, int count, const Frustu
     if (count == 0 && out.count < maxLights) {
         SelectedLight& s = out.lights[out.count++];
         XMStoreFloat3(&s.light.direction, XMVector3Normalize(XMVectorSet(0.3f, -0.8f, 0.5f, 0)));
-        s.light.type = 0;
+        s.light.type = lighttype::kDirectional;
     }
 
     return out;

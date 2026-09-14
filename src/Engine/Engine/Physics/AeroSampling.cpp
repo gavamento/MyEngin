@@ -2,6 +2,7 @@
 
 #include <cmath>
 
+#include "Engine/Core/Components.h"
 #include "Engine/Engine/Physics/Shapes.h"
 
 namespace mye {
@@ -97,8 +98,8 @@ void AccumulateShapeAero(const ShapePose& pose, float vx, float vy, float vz, fl
 {
     SurfaceElement e;
     switch (pose.shape) {
-    case 0: { // 球: 面積分の閉形式。等方なのでトルクは出ない (回転由来のマグヌスは
-              // 等方空力 (M59b) 側の担当 — こちらは向きを見る抗力だけを受け持つ)
+    case collidershape::kSphere: { // 球: 面積分の閉形式。等方なのでトルクは出ない (回転由来のマグヌスは
+        // 等方空力 (M59b) 側の担当 — こちらは向きを見る抗力だけを受け持つ)
         const float R = pose.radius;
         if (R <= 0.0f) {
             return;
@@ -117,7 +118,7 @@ void AccumulateShapeAero(const ShapePose& pose, float vx, float vy, float vz, fl
         acc.fz += uz * k;
         return;
     }
-    case 1: { // box: 基底順の 6 面 (+X, -X, +Y, -Y, +Z, -Z)
+    case collidershape::kBox: { // box: 基底順の 6 面 (+X, -X, +Y, -Y, +Z, -Z)
         const float halfs[3] = { pose.hx, pose.hy, pose.hz };
         // 面 k の面積は残り 2 辺の積 (全辺 = 2h)
         const float areas[3] = { 4.0f * pose.hy * pose.hz, 4.0f * pose.hx * pose.hz,
@@ -137,7 +138,7 @@ void AccumulateShapeAero(const ShapePose& pose, float vx, float vy, float vz, fl
         }
         return;
     }
-    case 2: { // capsule (ローカル Y 軸): 方位 8 分割の側面 → +Y 端 → -Y 端
+    case collidershape::kCapsule: { // capsule (ローカル Y 軸): 方位 8 分割の側面 → +Y 端 → -Y 端
         const float R = pose.radius;
         if (R <= 0.0f) {
             return;

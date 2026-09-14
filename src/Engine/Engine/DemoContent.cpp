@@ -169,7 +169,7 @@ void BuildDemoScene(EngineContext& ctx, float perfRate, int perfMax)
     if (player != kInvalidComponentType && model) {
         s.GetWorld().AddComponentRaw(model.Id(), player);
         auto* col = model.AddComponent<ColliderComponent>();
-        col->shape = 0;
+        col->shape = collidershape::kSphere;
         col->radius = 1.2f;
         // M7 以来の OnTrigger 用検知球。既定が bool 化でソリッドに変わったため明示
         col->isTrigger = true;
@@ -348,7 +348,7 @@ void BuildPartsShowcaseScene(EngineContext& ctx)
         mr->mesh = cube;
         mr->material = AssetID{ HashStr("parts_floor") };
         auto* col = floor.AddComponent<ColliderComponent>();
-        col->shape = 1; // box
+        col->shape = collidershape::kBox;
         col->halfExtents = { 0.5f, 0.5f, 0.5f }; // ローカル半径 (スケールは Collider 側で掛かる)
         col->isTrigger = false;
     }
@@ -419,7 +419,7 @@ void BuildPartsShowcaseScene(EngineContext& ctx)
         mr->mesh = cube;
         mr->material = AssetID{ HashStr("parts_drop") };
         auto* col = drop.AddComponent<ColliderComponent>();
-        col->shape = 1;
+        col->shape = collidershape::kBox;
         col->halfExtents = { 0.5f, 0.5f, 0.5f };
         col->isTrigger = false;
         drop.AddComponent<RigidbodyComponent>();
@@ -441,7 +441,7 @@ void BuildPartsShowcaseScene(EngineContext& ctx)
         auto* p = weak.AddComponent<PartComponent>();
         p->tag = HashStr("WeakPoint"); // joint 空 = 静的ソケット
         auto* b = weak.AddComponent<PartBoundsComponent>();
-        b->shape = 0;                      // 箱
+        b->shape = partboundsshape::kBox;
         b->center = { 0.0f, 0.25f, 0.0f }; // 単位キューブの上半分だけが弱点
         b->halfExtents = { 0.5f, 0.25f, 0.5f };
     }
@@ -511,7 +511,7 @@ void BuildFlowStage(Scene& s, RenderResources& res, bool withColliders)
         mr->material = AssetID{ HashStr("flow_floor") };
         if (withColliders) {
             auto* col = floor.AddComponent<ColliderComponent>();
-            col->shape = 1; // box
+            col->shape = collidershape::kBox;
             col->halfExtents = { 0.5f, 0.5f, 0.5f }; // ローカル半径 (スケールは Collider 側で掛かる)
             col->isTrigger = false;
         }
@@ -633,7 +633,7 @@ void BuildFlowGameScene(EngineContext& ctx)
         mr->mesh = cube;
         mr->material = AssetID{ HashStr("flow_wall") };
         auto* col = go.AddComponent<ColliderComponent>();
-        col->shape = 1;
+        col->shape = collidershape::kBox;
         col->halfExtents = { 0.5f, 0.5f, 0.5f };
         col->isTrigger = false;
     };
@@ -651,7 +651,7 @@ void BuildFlowGameScene(EngineContext& ctx)
         mr->mesh = cube;
         mr->material = AssetID{ HashStr("flow_paddle") };
         auto* col = paddle.AddComponent<ColliderComponent>();
-        col->shape = 1;
+        col->shape = collidershape::kBox;
         col->halfExtents = { 0.5f, 0.5f, 0.5f };
         col->isTrigger = false;
     }
@@ -664,7 +664,7 @@ void BuildFlowGameScene(EngineContext& ctx)
         mr->mesh = sphere;
         mr->material = AssetID{ HashStr("flow_ball") };
         auto* col = ball.AddComponent<ColliderComponent>();
-        col->shape = 0; // sphere
+        col->shape = collidershape::kSphere;
         col->radius = 0.5f;
         col->isTrigger = false;
         auto* rb = ball.AddComponent<RigidbodyComponent>();
@@ -946,7 +946,7 @@ void BuildPhysicsShowcaseScene(EngineContext& ctx)
         mr->mesh = cube;
         mr->material = AssetID{ HashStr("pdemo_floor") };
         auto* col = floor.AddComponent<ColliderComponent>();
-        col->shape = 1;
+        col->shape = collidershape::kBox;
         col->isTrigger = false;
         col->halfExtents = { 0.5f, 0.5f, 0.5f }; // ワールドスケールが効く
         col->physMaterial = matSteel;            // 鋼の床 (e=0.6 を主張できるのが M59a2 の新能力)
@@ -961,7 +961,7 @@ void BuildPhysicsShowcaseScene(EngineContext& ctx)
         mr->mesh = cube;
         mr->material = AssetID{ HashStr("pdemo_feather") };
         auto* col = feather.AddComponent<ColliderComponent>();
-        col->shape = 1;
+        col->shape = collidershape::kBox;
         col->halfExtents = { 0.5f, 0.5f, 0.5f };
         auto* rb = feather.AddComponent<RigidbodyComponent>();
         rb->mass = 0.03f;
@@ -977,7 +977,7 @@ void BuildPhysicsShowcaseScene(EngineContext& ctx)
         mr->mesh = sphere;
         mr->material = AssetID{ HashStr("pdemo_steel") };
         auto* col = ball.AddComponent<ColliderComponent>();
-        col->shape = 0;
+        col->shape = collidershape::kSphere;
         col->radius = 0.5f;
         col->physMaterial = matSteel;
         auto* rb = ball.AddComponent<RigidbodyComponent>();
@@ -995,7 +995,7 @@ void BuildPhysicsShowcaseScene(EngineContext& ctx)
         mr->mesh = cube;
         mr->material = AssetID{ HashStr("pdemo_plane") };
         auto* col = plane.AddComponent<ColliderComponent>();
-        col->shape = 1;
+        col->shape = collidershape::kBox;
         col->halfExtents = { 0.5f, 0.5f, 0.5f };
         auto* rb = plane.AddComponent<RigidbodyComponent>();
         rb->mass = 0.08f;
@@ -1028,7 +1028,7 @@ void BuildPhysicsShowcaseScene(EngineContext& ctx)
         mr->mesh = sphere;
         mr->material = AssetID{ HashStr("pdemo_ball") };
         auto* col = ball.AddComponent<ColliderComponent>();
-        col->shape = 0;
+        col->shape = collidershape::kSphere;
         col->radius = 0.5f;
         col->physMaterial = matRubber;
         auto* rb = ball.AddComponent<RigidbodyComponent>();
@@ -1050,7 +1050,7 @@ void BuildPhysicsShowcaseScene(EngineContext& ctx)
         mr->mesh = sphere;
         mr->material = AssetID{ HashStr("pdemo_buoy") };
         auto* col = buoy.AddComponent<ColliderComponent>();
-        col->shape = 0;
+        col->shape = collidershape::kSphere;
         col->radius = 0.5f;
         auto* rb = buoy.AddComponent<RigidbodyComponent>();
         // 半径 0.4 の球 = 0.268 m^3。その半分の水を押しのける重さ = 半没で釣り合う
@@ -1072,7 +1072,7 @@ void BuildPhysicsShowcaseScene(EngineContext& ctx)
         mr->mesh = cube;
         mr->material = AssetID{ HashStr("pdemo_rubber") };
         auto* col = t.AddComponent<ColliderComponent>();
-        col->shape = 1;
+        col->shape = collidershape::kBox;
         col->halfExtents = { 0.5f, 0.5f, 0.5f };
         auto* rb = t.AddComponent<RigidbodyComponent>();
         rb->mass = 1.0f;
@@ -1090,7 +1090,7 @@ void BuildPhysicsShowcaseScene(EngineContext& ctx)
         mr->mesh = sphere;
         mr->material = AssetID{ HashStr("pdemo_rubber") };
         auto* col = ball.AddComponent<ColliderComponent>();
-        col->shape = 0;
+        col->shape = collidershape::kSphere;
         col->radius = 0.5f;
         col->physMaterial = matRubber;
         auto* rb = ball.AddComponent<RigidbodyComponent>();
@@ -1108,7 +1108,7 @@ void BuildPhysicsShowcaseScene(EngineContext& ctx)
         mr->mesh = cube;
         mr->material = AssetID{ HashStr("pdemo_floor") };
         auto* col = go.AddComponent<ColliderComponent>();
-        col->shape = 1;
+        col->shape = collidershape::kBox;
         col->halfExtents = { 0.5f, 0.5f, 0.5f };
         col->physMaterial = (i % 2 == 0) ? matSteel : matRubber;
         auto* rb = go.AddComponent<RigidbodyComponent>();
@@ -1126,7 +1126,7 @@ void BuildPhysicsShowcaseScene(EngineContext& ctx)
         mr->mesh = cube;
         mr->material = AssetID{ HashStr("pdemo_steel") };
         auto* col = wall.AddComponent<ColliderComponent>();
-        col->shape = 1;
+        col->shape = collidershape::kBox;
         col->halfExtents = { 0.5f, 0.5f, 0.5f }; // ワールドスケールが効く = 厚さ 0.1m
         col->physMaterial = matSteel;
     }
@@ -1138,7 +1138,7 @@ void BuildPhysicsShowcaseScene(EngineContext& ctx)
         mr->mesh = sphere;
         mr->material = AssetID{ HashStr("pdemo_ball") };
         auto* col = bullet.AddComponent<ColliderComponent>();
-        col->shape = 0;
+        col->shape = collidershape::kSphere;
         col->radius = 0.5f; // ワールド半径 0.08m
         // ★材料を**割り当てない** = e は Rigidbody の 0。鋼 (e=0.6) を付けると
         //   CCD の一発インパルスが 1.6 倍の跳ね返りを作り、弾が 72 m/s で後ろへ飛んで
@@ -1310,7 +1310,7 @@ void BuildRenderShowcaseScene(EngineContext& ctx)
         go.SetLocalPosition(px, py, pz);
         go.SetLocalRotationEuler(pitchDeg, yawDeg, 0.0f);
         auto* l = go.AddComponent<LightComponent>();
-        l->type = 2;
+        l->type = lighttype::kSpot;
         l->color = { r, g, b };
         l->intensity = intensity;
         l->range = 42.0f;
@@ -1342,7 +1342,7 @@ void BuildRenderShowcaseScene(EngineContext& ctx)
         GameObject go = s.CreateGameObject(name);
         go.SetLocalPosition(px, py, pz);
         auto* l = go.AddComponent<LightComponent>();
-        l->type = 1;
+        l->type = lighttype::kPoint;
         l->color = { r, g, b };
         l->intensity = intensity;
         l->range = range;
@@ -1706,7 +1706,7 @@ void BuildJointShowcaseScene(EngineContext& ctx)
     };
     auto addBoxCollider = [&](GameObject go, float hx, float hy, float hz, AssetID physMat) {
         auto* col = go.AddComponent<ColliderComponent>();
-        col->shape = 1;
+        col->shape = collidershape::kBox;
         col->isTrigger = false;
         col->halfExtents = { hx, hy, hz };
         col->physMaterial = physMat;
@@ -1720,7 +1720,7 @@ void BuildJointShowcaseScene(EngineContext& ctx)
         mr->mesh = sphere;
         mr->material = AssetID{ HashStr(mat) };
         auto* col = go.AddComponent<ColliderComponent>();
-        col->shape = 0;
+        col->shape = collidershape::kSphere;
         col->isTrigger = false;
         col->radius = 0.5f;
         col->physMaterial = matSteel;
@@ -1783,7 +1783,7 @@ void BuildJointShowcaseScene(EngineContext& ctx)
         auto* rrb = addBody(rod, 2.0f);
         rrb->velocity = { 3.0f, 0.0f, 0.0f }; // 吊った直後に横へ蹴る
         rrb->angularDamping = 0.0f;
-        auto* rj = addJoint(rod, 0, kNullEntity);
+        auto* rj = addJoint(rod, jointtype::kBall, kNullEntity);
         rj->anchor = { 0.0f, 0.5f, 0.0f };            // ローカル → スケールが掛かって +1.5m
         rj->connectedAnchor = { -24.0f, 8.0f, 0.0f }; // 相手が null のときだけワールド
 
@@ -1791,7 +1791,7 @@ void BuildJointShowcaseScene(EngineContext& ctx)
         auto* brb = addBody(bob, 6.0f);
         brb->velocity = { 3.0f, 0.0f, 0.0f };
         brb->angularDamping = 0.0f;
-        auto* bj = addJoint(bob, 0, rod.Id());
+        auto* bj = addJoint(bob, jointtype::kBall, rod.Id());
         bj->anchor = { 0.0f, 0.75f, 0.0f };          // +0.6m (球の外 = 吊り点)
         bj->connectedAnchor = { 0.0f, -0.5f, 0.0f }; // 棒の下端 (相手のローカル)
     }
@@ -1815,7 +1815,7 @@ void BuildJointShowcaseScene(EngineContext& ctx)
             addBoxCollider(link, 0.5f, 0.5f, 0.5f, matWood);
             auto* rb = addBody(link, 0.5f);
             rb->velocity = { 2.5f, 0.0f, 0.0f }; // 鎖ごと横へ振り出す
-            auto* j = addJoint(link, 0, prev);
+            auto* j = addJoint(link, jointtype::kBall, prev);
             j->disableCollision = true; // 1 つ上の鎖 (先頭は天井) との接触を切る (M60j)
             j->anchor = { 0.0f, 0.5f, 0.0f };
             if (prev.IsNull()) {
@@ -1828,7 +1828,7 @@ void BuildJointShowcaseScene(EngineContext& ctx)
         GameObject weight = addSphere("RopeWeight", -19.0f, 2.4f, 0.0f, 0.9f, "jdemo_crate");
         auto* rb = addBody(weight, 12.0f); // 鎖を張らせる錘 (張力が関節に効く)
         rb->velocity = { 2.5f, 0.0f, 0.0f };
-        auto* j = addJoint(weight, 0, prev);
+        auto* j = addJoint(weight, jointtype::kBall, prev);
         j->disableCollision = true; // 錘と最下段の鎖 (M60j)
         j->anchor = { 0.0f, 0.6667f, 0.0f };
         j->connectedAnchor = { 0.0f, -0.5f, 0.0f };
@@ -1842,7 +1842,7 @@ void BuildJointShowcaseScene(EngineContext& ctx)
         GameObject door = makeBox("Door", -14.0f, 1.7f, 0.0f, 2.0f, 3.0f, 0.16f, "jdemo_door");
         addBoxCollider(door, 0.5f, 0.5f, 0.5f, matWood);
         addBody(door, 12.0f)->angularVelocity = { 0.0f, -3.0f, 0.0f };
-        auto* j = addJoint(door, 1, kNullEntity);
+        auto* j = addJoint(door, jointtype::kHinge, kNullEntity);
         j->axis = { 0.0f, 1.0f, 0.0f };
         j->anchor = { -0.5f, 0.0f, 0.0f }; // 板の -X 辺 (スケールが掛かって -1.0m)
         j->connectedAnchor = { -15.0f, 1.7f, 0.0f };
@@ -1859,7 +1859,7 @@ void BuildJointShowcaseScene(EngineContext& ctx)
         GameObject arm = makeBox("CrankArm", -8.0f, 3.2f, 0.0f, 2.4f, 0.25f, 0.25f, "jdemo_motor");
         addBoxCollider(arm, 0.5f, 0.5f, 0.5f, matSteel);
         addBody(arm, 3.0f)->angularDamping = 0.0f;
-        auto* j = addJoint(arm, 1, kNullEntity);
+        auto* j = addJoint(arm, jointtype::kHinge, kNullEntity);
         j->axis = { 0.0f, 0.0f, 1.0f }; // XY 平面で回る = カメラから回転が見える
         j->anchor = { -0.5f, 0.0f, 0.0f };
         j->connectedAnchor = { -9.2f, 3.2f, 0.0f };
@@ -1876,7 +1876,7 @@ void BuildJointShowcaseScene(EngineContext& ctx)
             makeBox("ElevatorPlate", -4.0f, 1.0f, 0.0f, 1.8f, 0.25f, 1.8f, "jdemo_motor");
         addBoxCollider(plat, 0.5f, 0.5f, 0.5f, matSteel);
         addBody(plat, 20.0f);
-        auto* j = addJoint(plat, 3, kNullEntity);
+        auto* j = addJoint(plat, jointtype::kSlider, kNullEntity);
         j->axis = { 0.0f, 1.0f, 0.0f };
         j->connectedAnchor = { -4.0f, 1.0f, 0.0f }; // ここが変位 0
         j->useLimit = true;
@@ -1899,7 +1899,7 @@ void BuildJointShowcaseScene(EngineContext& ctx)
             makeBox("WeldBracket", 0.0f, 3.2f, 0.0f, 0.6f, 0.6f, 0.6f, "jdemo_weld");
         addBoxCollider(bracket, 0.5f, 0.5f, 0.5f, matSteel);
         addBody(bracket, 2.0f);
-        addJoint(bracket, 2, kNullEntity)->connectedAnchor = { 0.0f, 3.2f, 0.0f };
+        addJoint(bracket, jointtype::kFixed, kNullEntity)->connectedAnchor = { 0.0f, 3.2f, 0.0f };
 
         GameObject arm = makeBox("WeldArm", 1.2f, 3.2f, 0.0f, 1.8f, 0.3f, 0.3f, "jdemo_weld");
         // ★M60i では 0.45 へ縮めて幾何で逃げていた (溶接で密着している相手と食い込むと
@@ -1907,14 +1907,14 @@ void BuildJointShowcaseScene(EngineContext& ctx)
         //   置き、繋がったペアだけ `disableCollision` で落とす
         addBoxCollider(arm, 0.5f, 0.5f, 0.5f, matSteel);
         addBody(arm, 3.0f);
-        auto* aj = addJoint(arm, 2, bracket.Id());
+        auto* aj = addJoint(arm, jointtype::kFixed, bracket.Id());
         aj->disableCollision = true; // ブラケットと腕 (M60j)
         aj->anchor = { -0.5f, 0.0f, 0.0f };         // 腕の -X 端 (-0.9m)
         aj->connectedAnchor = { 0.5f, 0.0f, 0.0f }; // ブラケットの +X 面 (+0.3m)
 
         GameObject weight = addSphere("WeldWeight", 1.92f, 2.41f, 0.0f, 0.8f, "jdemo_crate");
         addBody(weight, 15.0f);
-        auto* wj = addJoint(weight, 0, arm.Id());
+        auto* wj = addJoint(weight, jointtype::kBall, arm.Id());
         wj->disableCollision = true; // 腕と錘 (M60j)
         wj->anchor = { 0.0f, 0.8f, 0.0f };
         wj->connectedAnchor = { 0.4f, -0.5f, 0.0f };
@@ -1931,7 +1931,7 @@ void BuildJointShowcaseScene(EngineContext& ctx)
         GameObject deck = makeBox("PierDeck", 8.0f, 3.4f, 0.0f, 5.0f, 0.3f, 2.2f, "jdemo_plank");
         addBoxCollider(deck, 0.5f, 0.5f, 0.5f, matWood);
         addBody(deck, 25.0f);
-        auto* j = addJoint(deck, 1, kNullEntity);
+        auto* j = addJoint(deck, jointtype::kHinge, kNullEntity);
         j->axis = { 0.0f, 0.0f, 1.0f };
         j->anchor = { -0.5f, 0.0f, 0.0f }; // 甲板の -X 端 (-2.5m) = 塔の側
         j->connectedAnchor = { 5.5f, 3.4f, 0.0f };
@@ -1968,7 +1968,7 @@ void BuildJointShowcaseScene(EngineContext& ctx)
         addBoxCollider(b, 0.5f, 0.5f, 0.5f, matSteel);
     }
 
-    // ---- 9. 凸多面体の山 (Collider.shape = 5) ----
+    // ---- 9. 凸多面体の山 (collidershape::kConvex) ----
     // ★**見た目のメッシュと凸包の元メッシュを同じ AssetID にしてある** — 絵と当たりが
     //   ずれないので「凸包が壊れた」が目で分かる。
     // ★1 個だけモデル由来 (.glb) を混ぜてあるのは **`.mcvx` クックを replay に載せるため**。
@@ -1986,7 +1986,7 @@ void BuildJointShowcaseScene(EngineContext& ctx)
             mr->mesh = mesh;
             mr->material = AssetID{ HashStr("jdemo_hull") };
             auto* col = go.AddComponent<ColliderComponent>();
-            col->shape = 5;
+            col->shape = collidershape::kConvex;
             col->isTrigger = false;
             col->meshAsset = mesh; // 凸包の素材 = 見た目と同じメッシュ
             col->physMaterial = matWood;
@@ -2030,7 +2030,7 @@ void BuildJointShowcaseScene(EngineContext& ctx)
                 model.SetLocalPosition(16.6f, 5.6f, 0.2f);
                 GameObject body(&w, meshEntity);
                 auto* col = body.AddComponent<ColliderComponent>();
-                col->shape = 5;
+                col->shape = collidershape::kConvex;
                 col->isTrigger = false;
                 col->meshAsset = meshId;
                 col->physMaterial = matWood;
@@ -2138,7 +2138,7 @@ void BuildJointShowcaseScene(EngineContext& ctx)
         chassis.SetLocalPosition(-14.0f, kRadius + kRest + kHalfY, -16.0f);
         chassis.SetLocalRotationEuler(0.0f, 90.0f, 0.0f); // 前 (+Z) を +X へ向ける
         auto* ccol = chassis.AddComponent<ColliderComponent>();
-        ccol->shape = 1;
+        ccol->shape = collidershape::kBox;
         ccol->isTrigger = false;
         ccol->halfExtents = { 0.9f, kHalfY, 1.8f };
         ccol->friction = 1.0f;
@@ -2376,7 +2376,7 @@ void BuildParticleShowcaseScene(EngineContext& ctx)
     GameObject lamp = s.CreateGameObject("Lamp");
     {
         auto* l = lamp.AddComponent<LightComponent>();
-        l->type = 1; // Point
+        l->type = lighttype::kPoint;
         l->color = { 1.0f, 0.62f, 0.28f };
         l->intensity = 6.0f;
         l->range = 5.0f;
@@ -2389,7 +2389,7 @@ void BuildParticleShowcaseScene(EngineContext& ctx)
     GameObject lamp2 = s.CreateGameObject("Lamp2");
     {
         auto* l = lamp2.AddComponent<LightComponent>();
-        l->type = 1; // Point
+        l->type = lighttype::kPoint;
         l->color = { 1.0f, 0.62f, 0.28f };
         l->intensity = 6.0f;
         l->range = 5.0f;
@@ -2835,7 +2835,7 @@ void BuildAcousticShowcaseScene(EngineContext& ctx)
         mr->mesh = cube;
         mr->material = AssetID{ HashStr(mat) };
         auto* col = go.AddComponent<ColliderComponent>();
-        col->shape = 1; // box。★これが占有ベイクの入力 = 音を遮る実体
+        col->shape = collidershape::kBox; // ★これが占有ベイクの入力 = 音を遮る実体
         col->halfExtents = { 0.5f, 0.5f, 0.5f }; // スケールが掛かるので単位箱でよい
         return go;
     };
@@ -2954,7 +2954,7 @@ void BuildAcousticShowcaseScene(EngineContext& ctx)
             mr->mesh = cube;
             mr->material = AssetID{ HashStr(kTileVisuals[i]) };
             auto* col2 = t.AddComponent<ColliderComponent>();
-            col2->shape = 1;
+            col2->shape = collidershape::kBox;
             col2->halfExtents = { 0.5f, 0.5f, 0.5f };
             // ★materials 未登録なら AssetID{} = 未割当 = 無音に落ちるだけ (デモは壊れない)
             col2->physMaterial = FindPhysMat(kTileMats[i]);
@@ -2994,7 +2994,7 @@ void BuildAcousticShowcaseScene(EngineContext& ctx)
         mr->mesh = cube;
         mr->material = AssetID{ HashStr("adem_metal") };
         auto* pc = plate.AddComponent<ColliderComponent>();
-        pc->shape = 1;
+        pc->shape = collidershape::kBox;
         pc->halfExtents = { 0.5f, 0.5f, 0.5f };
         pc->physMaterial = FindPhysMat("metal");
 
@@ -3005,7 +3005,7 @@ void BuildAcousticShowcaseScene(EngineContext& ctx)
         dmr->mesh = cube;
         dmr->material = AssetID{ HashStr("adem_drop") };
         auto* dc = drop.AddComponent<ColliderComponent>();
-        dc->shape = 1;
+        dc->shape = collidershape::kBox;
         dc->halfExtents = { 0.5f, 0.5f, 0.5f };
         auto* rb = drop.AddComponent<RigidbodyComponent>();
         rb->mass = 2.0f;
@@ -3031,7 +3031,7 @@ void BuildAcousticShowcaseScene(EngineContext& ctx)
         GameObject lamp = s.CreateGameObject("Placed Light");
         lamp.SetLocalPosition(AcousticMapToWorld(3), 1.6f, AcousticMapToWorld(3));
         auto* pl = lamp.AddComponent<LightComponent>();
-        pl->type = 1; // 点光源
+        pl->type = lighttype::kPoint;
         pl->range = 6.0f;
         pl->intensity = 2.2f;
         pl->color = { 1.0f, 0.86f, 0.62f }; // 携行灯らしい暖色 (残光の寒色と対になる)
@@ -3152,7 +3152,7 @@ void BuildAcousticShowcaseScene(EngineContext& ctx)
         lmr->mesh = res.meshes.Sphere();
         lmr->material = AssetID{ HashStr("adem_lamp") };
         auto* pl = lamp.AddComponent<LightComponent>();
-        pl->type = 1; // 点光源
+        pl->type = lighttype::kPoint;
         pl->range = 6.0f;
         pl->intensity = 0.0f; // 消灯 = 手札。設置中にスクリプトが 0 から育てる
         pl->color = { 1.0f, 0.86f, 0.62f }; // 携行灯らしい暖色 (残光の寒色と対になる)

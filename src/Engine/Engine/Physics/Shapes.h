@@ -18,9 +18,8 @@ struct ColliderComponent;
 // ワールド方向)。スケールは radius / half extents / halfSeg に折り込み済み。
 // 非一様スケール × 回転のシアーは無視する近似 (基底正規化 — M20 までの流儀を踏襲)。
 struct ShapePose {
-    int32_t shape = 0;        // 0=sphere 1=box(OBB) 2=capsule(ローカル Y 軸)
-                              // 3=triangle mesh (M41) 4=terrain heightfield (M59i)
-                              // 5=convex hull (M60f、**動的剛体で使える唯一のメッシュ由来形状**)
+    int32_t shape = 0;        // collidershape:: の番号 (Components.h。ColliderComponent::shape と共通)。0 = kSphere
+                              // ★kConvex (M60f) は**動的剛体で使える唯一のメッシュ由来形状**
     int32_t identityRot = 1;  // 基底が単位 (無回転) — M20 互換 fast-path 用
     float px = 0, py = 0, pz = 0;
     float bx[3] = { 1, 0, 0 };

@@ -84,7 +84,8 @@ EntityID ResolvePartSource(World& world, EntityID part, EntityID explicitSource)
 ShapePose MakePartBoundsPose(const PartBoundsComponent& b, const DirectX::XMFLOAT4X4& wm)
 {
     ShapePose p;
-    p.shape = (b.shape == 1) ? 0 : 1; // PartBounds 0=箱/1=球 → ShapePose 0=球/1=箱 (★番号が逆)
+    // ★PartBounds と ShapePose は番号が逆 (partboundsshape::kBox == collidershape::kSphere == 0)
+    p.shape = (b.shape == partboundsshape::kSphere) ? collidershape::kSphere : collidershape::kBox;
     // スケール近似: 行ベクトル長 (shapes::MakePoseFromMatrix と同一式)
     const float sx = std::sqrt(wm._11 * wm._11 + wm._12 * wm._12 + wm._13 * wm._13);
     const float sy = std::sqrt(wm._21 * wm._21 + wm._22 * wm._22 + wm._23 * wm._23);
@@ -173,7 +174,7 @@ bool RaycastParts(World& world, EntityID root, uint64_t tag, const DirectX::XMFL
             }
         }
         // ゼロ/負寸法はスキップ (入力のみ依存の分岐 = 決定論に無害)
-        const bool degenerate = (c.b->shape == 1)
+        const bool degenerate = (c.b->shape == partboundsshape::kSphere)
             ? (c.b->halfExtents.x <= 0.0f)
             : (std::max(c.b->halfExtents.x, std::max(c.b->halfExtents.y, c.b->halfExtents.z))
                <= 0.0f);

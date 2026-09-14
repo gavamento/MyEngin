@@ -280,7 +280,8 @@ void BuildPhysicsDebugLines(World& world, const std::vector<SolidContact>& conta
                 //   「赤い線が見えたら関節が破れている」が一目で分かるのが可視化の主目的
                 PushLine(out, ax, ay, az, bx, by, bz, kJointErrColor);
                 // 軸を使う型 (Hinge / Slider / Cone) だけ軸を描く
-                if (jc->type == 1 || jc->type == 3 || jc->type == 4) {
+                if (jc->type == jointtype::kHinge || jc->type == jointtype::kSlider
+                    || jc->type == jointtype::kCone) {
                     float dx, dy, dz;
                     XformDir(wm->value, jc->axis, dx, dy, dz);
                     const float len = std::sqrt(dx * dx + dy * dy + dz * dz);
@@ -295,7 +296,7 @@ void BuildPhysicsDebugLines(World& world, const std::vector<SolidContact>& conta
                     //   「絵には枠があるのに素通りする」という一番たちの悪い嘘になる
                     if (jc->useLimit && Normalize3(dx, dy, dz)) {
                         const float o[3] = { ax, ay, az };
-                        if (jc->type == 3) {
+                        if (jc->type == jointtype::kSlider) {
                             // スライダ: 許される変位の区間そのものを線分で出す
                             const float lox = o[0] + dx * jc->limitMin;
                             const float loy = o[1] + dy * jc->limitMin;
@@ -306,7 +307,7 @@ void BuildPhysicsDebugLines(World& world, const std::vector<SolidContact>& conta
                             PushLine(out, lox, loy, loz, hix, hiy, hiz, kJointLimitColor);
                             PushCross(out, lox, loy, loz, kJointCrossArm * 0.5f, kJointLimitColor);
                             PushCross(out, hix, hiy, hiz, kJointCrossArm * 0.5f, kJointLimitColor);
-                        } else if (jc->type == 1) {
+                        } else if (jc->type == jointtype::kHinge) {
                             // ヒンジ: 軸に垂直な面内の円弧。0 度の基準は表示専用の
                             // 「軸に垂直な適当な 1 本」なので、**絵の向きではなく開き角を見る**
                             const float axis[3] = { dx, dy, dz };

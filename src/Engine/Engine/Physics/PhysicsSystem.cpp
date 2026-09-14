@@ -250,13 +250,13 @@ struct Body {
 void LocalInertiaDiag(const ColliderComponent* col, const ShapePose& pose, float m, float& ix,
                       float& iy, float& iz)
 {
-    if (!col || pose.shape == 0) {
+    if (!col || pose.shape == collidershape::kSphere) {
         const float r = col ? pose.radius : 0.5f;
         const float i = 0.4f * m * r * r; // 2/5 m r²
         ix = iy = iz = i;
         return;
     }
-    if (pose.shape == 5) {
+    if (pose.shape == collidershape::kConvex) {
         // M60f: 凸包。ソルバ本体は下のフル 3x3 経路 (Body::invILocal) を通るので、
         // ここへ来るのは ABI の AddTorque / AddForceAtPoint と、凸包が未生成で
         // フル経路に載れなかったボディだけ。**非対角を捨てた対角近似**で答える —
@@ -276,7 +276,7 @@ void LocalInertiaDiag(const ColliderComponent* col, const ShapePose& pose, float
             }
         }
     }
-    if (pose.shape == 1) {
+    if (pose.shape == collidershape::kBox) {
         // box (全辺 = 2h): I = m/12 (d1² + d2²) = m/3 (h1² + h2²)
         ix = m * (pose.hy * pose.hy + pose.hz * pose.hz) / 3.0f;
         iy = m * (pose.hx * pose.hx + pose.hz * pose.hz) / 3.0f;
@@ -829,16 +829,16 @@ void MergeSubstepContacts(const std::vector<SolidContact>& sub, std::vector<Soli
 // 通常の離散ソルバが詰める
 float CcdBoundingRadius(const ShapePose& p)
 {
-    if (p.shape == 0) {
+    if (p.shape == collidershape::kSphere) {
         return p.radius;
     }
-    if (p.shape == 1) {
+    if (p.shape == collidershape::kBox) {
         return std::sqrt(p.hx * p.hx + p.hy * p.hy + p.hz * p.hz);
     }
-    if (p.shape == 2) {
+    if (p.shape == collidershape::kCapsule) {
         return p.halfSeg + p.radius;
     }
-    if (p.shape == 5) { // M60f: 生成時に測った外接半径。スケールは最大成分で保守側へ
+    if (p.shape == collidershape::kConvex) { // M60f: 生成時に測った外接半径。スケールは最大成分で保守側へ
         const ConvexHullData* h = static_cast<const ConvexHullData*>(p.meshData);
         const float s = std::max(std::fabs(p.sx), std::max(std::fabs(p.sy), std::fabs(p.sz)));
         return h ? h->boundRadius * s : 0.0f;
@@ -863,7 +863,7 @@ bool CcdSweepTarget(const ShapePose& target, float ox, float oy, float oz, float
     if (shapes::DistanceToShape(target, ox, oy, oz) - radius <= kCcdTouchEps) {
         return false;
     }
-    if (target.shape == 0 || target.shape == 2) {
+    if (target.shape == collidershape::kSphere || target.shape == collidershape::kCapsule) {
         ShapePose inflated = target;
         inflated.radius += radius;
         float t, nx, ny, nz;
@@ -945,7 +945,7 @@ void SolveCharacters(std::vector<Body>& bodies, std::vector<CharBody>& chars, fl
         float vy = c.cc->velocity.y + kGravity * c.cc->gravityScale * dt;
         // 変位一括適用 (水平は moveInput 直接駆動、垂直は重力積分)
         ShapePose pose;
-        pose.shape = 2; // capsule (常にワールド Y 軸 = 単位基底)
+        pose.shape = collidershape::kCapsule; // 常にワールド Y 軸 = 単位基底
         pose.identityRot = 1;
         pose.radius = c.radius;
         pose.halfSeg = c.halfSeg;
@@ -1136,7 +1136,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             // (慣性テンソルを定義しないため。kinematic は invMass=0 なので許可)
             // M59a2: 質量導出が形状体積を要るためコライダー取得を質量計算の前へ移動
             auto* col = world.GetComponent<ColliderComponent>(e);
-            if (col && col->shape == 3 && !kinematic) {
+            if (col && col->shape == collidershape::kMesh && !kinematic) {
                 col = nullptr;
             }
             const PhysMat* mat = col ? physmat::Resolve(col->physMaterial) : nullptr; // M59a2
@@ -1495,7 +1495,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
     // ★複合の子として集約された凸包はここへ来ない (subCount > 0 は上のブロックが済ませて
     //   いる) — 二重に慣性を組むと後勝ちで静かに壊れる
     for (Body& b : bodies) {
-        if (!b.rb || b.subCount > 0 || !b.ownShape || !b.col || b.col->shape != 5) {
+        if (!b.rb || b.subCount > 0 || !b.ownShape || !b.col || b.col->shape != collidershape::kConvex) {
             continue;
         }
         if (b.invMass <= 0.0f || b.freezeRot) {
@@ -1685,7 +1685,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                 l.limitOn = true;
                 constexpr float kDeg2Rad = 3.14159265f / 180.0f;
                 const int32_t ty = l.jc->type;
-                if (ty == 1 || ty == 4) { // 角度リミット (度) → 半角の sin/cos
+                if (ty == jointtype::kHinge || ty == jointtype::kCone) { // 角度リミット (度) → 半角の sin/cos
                     const float hlo = l.jc->limitMin * kDeg2Rad * 0.5f;
                     const float hhi = l.jc->limitMax * kDeg2Rad * 0.5f;
                     l.sinHalfLo = std::sin(hlo);
@@ -1693,7 +1693,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                     l.sinHalfHi = std::sin(hhi);
                     l.cosHalfHi = std::cos(hhi);
                 }
-                if (ty == 4) { // 円錐半頂角はそのまま cos/sin のしきい値で持つ
+                if (ty == jointtype::kCone) { // 円錐半頂角はそのまま cos/sin のしきい値で持つ
                     const float sw = l.jc->swingLimitDeg * kDeg2Rad;
                     l.sinSwing = std::sin(sw);
                     l.cosSwing = std::cos(sw);
@@ -2275,7 +2275,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                     ap = shapes::MakePose(*b.shapeCol, { b.pose.px, b.pose.py, b.pose.pz },
                                           { b.qx, b.qy, b.qz, b.qw }, b.scale);
                 } else {
-                    ap.shape = 0;
+                    ap.shape = collidershape::kSphere;
                     ap.radius = 0.5f; // 慣性・等方空力と同じ既定
                     ap.identityRot = 1;
                 }
@@ -2554,7 +2554,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                 bp = shapes::MakePose(*b.shapeCol, { b.pose.px, b.pose.py, b.pose.pz },
                                       { b.qx, b.qy, b.qz, b.qw }, b.scale);
             } else {
-                bp.shape = 0;
+                bp.shape = collidershape::kSphere;
                 bp.radius = 0.5f; // 慣性・空力と同じ「半径 0.5 の球」既定
                 bp.identityRot = 1;
             }
@@ -3243,7 +3243,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                 blk.rb[1] = pby - B.pose.py - B.comy;
                 blk.rb[2] = pbz - B.pose.pz - B.comz;
                 blk.angular = false;
-                if (type == 3 && hasAxis) {
+                if (type == jointtype::kSlider && hasAxis) {
                     // Slider は軸方向に自由 → 軸に直交する 2 自由度だけ拘束する
                     blk.count = 2;
                     for (int k = 0; k < 3; ++k) {
@@ -3267,13 +3267,13 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             // ---- 角ブロック (M60b) ----
             // ★相対**角速度**だけを拘束する。姿勢のずれ (積分誤差で必ず溜まる) は
             //   位置補正パスの担当 — 線形と同じ役割分担にしてある
-            if (type == 1 || type == 2 || type == 3) {
+            if (type == jointtype::kHinge || type == jointtype::kFixed || type == jointtype::kSlider) {
                 ConstraintBlock blk;
                 blk.ai = l.ai;
                 blk.bi = l.bi;
                 blk.breakJoint = breakJoint; // M60d
                 blk.angular = true;
-                if (type == 1) {
+                if (type == jointtype::kHinge) {
                     if (!hasAxis) {
                         // 軸が縮退したヒンジ = 線形だけ (= Ball) で通す。
                         // ★この continue は**関節 1 個ぶんを飛ばす** — 下のモータ / リミットも
@@ -3305,12 +3305,13 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             //   substeps を増やすと 1 ステップあたりの上限も比例して下がる = 正しい。
             // ★`motorMaxForce <= 0` は**分岐ゲート** (値ゲートで 0 を掛けると -0.0f が
             //   +0.0f へ化けてハッシュが動く。M59f1-4)
-            if ((type == 1 || type == 3) && hasAxis && l.jc->motorMaxForce > 0.0f) {
+            if ((type == jointtype::kHinge || type == jointtype::kSlider) && hasAxis
+                && l.jc->motorMaxForce > 0.0f) {
                 ConstraintBlock blk;
                 blk.ai = l.ai;
                 blk.bi = l.bi;
                 blk.count = 1;
-                blk.angular = (type == 1);
+                blk.angular = (type == jointtype::kHinge);
                 for (int k = 0; k < 3; ++k) {
                     blk.d[0][k] = ax[k];
                 }
@@ -3346,7 +3347,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             //   逆順だとモータの目標速度がそのまま残って可動域を突き抜ける。
             if (l.limitOn && hasAxis) {
                 // -- 角度リミット (Hinge の回転角 / Cone のツイスト角) --
-                if (type == 1 || type == 4) {
+                if (type == jointtype::kHinge || type == jointtype::kCone) {
                     float qe[4];
                     JointRelativeQuat(qa, qb, *l.jc, qe);
                     float sh, ch;
@@ -3379,7 +3380,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                     }
                 }
                 // -- コーンのスイング角 (軸そのものが円錐から出たら止める) --
-                if (type == 4) {
+                if (type == jointtype::kCone) {
                     float axB[3];
                     if (JointConeAxisB(qb, *l.jc, axB)) {
                         const float dot = ax[0] * axB[0] + ax[1] * axB[1] + ax[2] * axB[2];
@@ -3412,7 +3413,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                 }
                 // -- スライダの変位リミット (軸方向の並進) --
                 // u = (アンカーA − アンカーB)·軸 = owner が +軸側へ滑った量
-                if (type == 3) {
+                if (type == jointtype::kSlider) {
                     const float u = (pax - pbx) * ax[0] + (pay - pby) * ax[1]
                                   + (paz - pbz) * ax[2];
                     float sgn = 0.0f;
@@ -3909,10 +3910,10 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                 // ★角度自由度にはボールジョイントのような「並進だけで厳密に直る」性質が
                 //   無い — 速度拘束だけでは軸のずれが積分誤差として累積するので、
                 //   ここで姿勢そのものを回して基準へ戻す
-                if (type == 1 || type == 2 || type == 3) {
+                if (type == jointtype::kHinge || type == jointtype::kFixed || type == jointtype::kSlider) {
                     float e[3];
                     JointOrientationError(qa, qb, *l.jc, e);
-                    if (type == 1 && hasAxis) {
+                    if (type == jointtype::kHinge && hasAxis) {
                         // ヒンジは軸まわりの回転が自由 → 軸成分を落として直交成分だけ直す
                         const float d = e[0] * ax[0] + e[1] * ax[1] + e[2] * ax[2];
                         e[0] -= d * ax[0];
@@ -3931,7 +3932,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                 //   なので、反復する位置補正では収束が少し遅くなるだけで行き過ぎない
                 //   (M60b-2 の「acos を通さない」と同じ手)
                 if (l.limitOn && hasAxis) {
-                    if (type == 1 || type == 4) {
+                    if (type == jointtype::kHinge || type == jointtype::kCone) {
                         float qe[4];
                         JointRelativeQuat(qa, qb, *l.jc, qe);
                         float sh, ch;
@@ -3951,7 +3952,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                             }
                         }
                     }
-                    if (type == 4) {
+                    if (type == jointtype::kCone) {
                         float axB[3];
                         if (JointConeAxisB(qb, *l.jc, axB)) {
                             const float dot = ax[0] * axB[0] + ax[1] * axB[1] + ax[2] * axB[2];
@@ -3983,7 +3984,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                 float ex = pbx - pax;
                 float ey = pby - pay;
                 float ez = pbz - paz;
-                if (type == 3 && hasAxis) {
+                if (type == jointtype::kSlider && hasAxis) {
                     // Slider は軸方向のずれを「ずれ」とみなさない (そこが可動域)
                     const float d = ex * ax[0] + ey * ax[1] + ez * ax[2];
                     ex -= d * ax[0];
@@ -4007,7 +4008,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                 // ---- (2b) スライダの変位リミット (M60c): 軸方向のはみ出しを並進で戻す ----
                 // ★(2) が動かしたのは**軸に直交する成分だけ**なので、u は上のアンカーから
                 //   そのまま測ってよい (軸方向は (2) の対象外 = そこが可動域)
-                if (l.limitOn && hasAxis && type == 3) {
+                if (l.limitOn && hasAxis && type == jointtype::kSlider) {
                     const float u = (pax - pbx) * ax[0] + (pay - pby) * ax[1]
                                   + (paz - pbz) * ax[2];
                     float corr = 0.0f;
@@ -4744,23 +4745,23 @@ float MeanProjectedAreaWorld(const ColliderComponent* col, float sx, float sy, f
     sz = std::fabs(sz);
     // コライダー無し / 動的 mesh は慣性導出 (LocalInertiaDiag) と同じ「半径 0.5 の球」既定。
     // ここを 0 にすると「空力が黙って効かない」になるので、既定の代表形状へ落とす
-    if (!col || col->shape == 3) {
+    if (!col || col->shape == collidershape::kMesh) {
         return XM_PI * 0.25f;
     }
     switch (col->shape) {
-    case 0: { // 球 = 最大成分スケール。表面積 4 pi r^2 の 1/4 = pi r^2
+    case collidershape::kSphere: { // 球 = 最大成分スケール。表面積 4 pi r^2 の 1/4 = pi r^2
         const float r = col->radius * std::max(sx, std::max(sy, sz));
         return XM_PI * r * r;
     }
-    case 1: { // box = 成分別スケール。表面積 8(hx hy + hy hz + hz hx) の 1/4
+    case collidershape::kBox: { // box = 成分別スケール。表面積 8(hx hy + hy hz + hz hx) の 1/4
         const float hx = col->halfExtents.x * sx;
         const float hy = col->halfExtents.y * sy;
         const float hz = col->halfExtents.z * sz;
         return 2.0f * (hx * hy + hy * hz + hz * hx);
     }
-    case 5: { // M60f: 凸包は**外接 AABB の箱で代用**する。
-              // 厳密な表面積は非一様スケールで積分し直しになるうえ、向きを見る正しい
-              // 面積分は M59c/M59d の面サンプリングが担当なので、ここは代表値で足りる
+    case collidershape::kConvex: { // M60f: 凸包は**外接 AABB の箱で代用**する。
+        // 厳密な表面積は非一様スケールで積分し直しになるうえ、向きを見る正しい
+        // 面積分は M59c/M59d の面サンプリングが担当なので、ここは代表値で足りる
         const ConvexHullData* h = convexcol::Resolve(col->meshAsset);
         if (!h || !h->Valid()) {
             return XM_PI * 0.25f;
@@ -4782,7 +4783,7 @@ float MeanProjectedAreaWorld(const ColliderComponent* col, float sx, float sy, f
 float SubmergedFractionWorld(const ShapePose& pose, float planeY, float& outCentroidY)
 {
     outCentroidY = pose.py;
-    if (pose.shape == 0) {
+    if (pose.shape == collidershape::kSphere) {
         // 球冠。中心を原点に取り t = planeY - 中心Y。t <= -R は完全に水面上、t >= R は完全没水。
         // V(t) = pi(R^2 t - t^3/3 + 2R^3/3)、M(t) = pi(R^2 t^2/2 - t^4/4 - R^4/4)
         // (どちらも多項式 — 球冠の体積・重心に三角関数は要らない)
@@ -4827,20 +4828,20 @@ float ShapeVolumeWorld(const ColliderComponent& col, float sx, float sy, float s
     sy = std::fabs(sy);
     sz = std::fabs(sz);
     switch (col.shape) {
-    case 0: { // 球 = 最大成分スケール
+    case collidershape::kSphere: { // 球 = 最大成分スケール
         const float r = col.radius * std::max(sx, std::max(sy, sz));
         return (4.0f / 3.0f) * XM_PI * r * r * r;
     }
-    case 1: // box = 成分別スケール
+    case collidershape::kBox: // box = 成分別スケール
         return 8.0f * (col.halfExtents.x * sx) * (col.halfExtents.y * sy)
              * (col.halfExtents.z * sz);
-    case 2: { // capsule = 円柱 + 両端半球 (halfSeg 規約は ApplyScaledExtents と同一)
+    case collidershape::kCapsule: { // capsule = 円柱 + 両端半球 (halfSeg 規約は ApplyScaledExtents と同一)
         const float wr = col.radius * std::max(sx, sz);
         const float wh = col.height * 0.5f * sy;
         const float halfSeg = (wh > wr) ? (wh - wr) : 0.0f;
         return XM_PI * wr * wr * (2.0f * halfSeg) + (4.0f / 3.0f) * XM_PI * wr * wr * wr;
     }
-    case 5: { // M60f: 凸包。生成時に積分した体積 (密度 1) に線形写像の行列式を掛ける
+    case collidershape::kConvex: { // M60f: 凸包。生成時に積分した体積 (密度 1) に線形写像の行列式を掛ける
         const ConvexHullData* h = convexcol::Resolve(col.meshAsset);
         return h ? h->volume * sx * sy * sz : 0.0f;
     }
@@ -4853,7 +4854,7 @@ float ResolveBodyMass(const RigidbodyComponent& rb, const ColliderComponent* col
                       const PhysMat* mat, float sx, float sy, float sz)
 {
     const float base = (rb.mass > 0.0f) ? rb.mass : 1.0f; // 従来の既定 (M20)
-    if (!rb.useDensity || !mat || !col || col->shape == 3) {
+    if (!rb.useDensity || !mat || !col || col->shape == collidershape::kMesh) {
         return base; // 未割当シーンは常にここ = 従来と同一式
     }
     const float m = mat->density * ShapeVolumeWorld(*col, sx, sy, sz);
@@ -4967,7 +4968,7 @@ int SampleTerrainHeightWorld(World& world, float x, float z, float* outHeight, M
                 continue;
             }
             const auto* col = static_cast<const ColliderComponent*>(arch.GetPtr(ci, row));
-            if (col->shape != 4) {
+            if (col->shape != collidershape::kTerrain) {
                 continue; // 地形コライダーだけが対象 (レイヤーマスクは見ない — 高さは幾何)
             }
             const auto* wm = static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row));

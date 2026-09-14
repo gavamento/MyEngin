@@ -410,14 +410,14 @@ void SceneViewWindow::BuildOverlays(EngineContext& ctx, Selection& selection)
                 const XMFLOAT4X4& wm = static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row))->value;
                 const ShapePose pose = shapes::MakePoseFromMatrix(*col, wm);
                 const XMFLOAT3 pos = { pose.px, pose.py, pose.pz };
-                if (col->shape == 0) {
+                if (col->shape == collidershape::kSphere) {
                     lines_.AddWireSphere(pos, pose.radius, kCollider);
-                } else if (col->shape == 2) {
+                } else if (col->shape == collidershape::kCapsule) {
                     lines_.AddWireCapsule(pos, { pose.bx[0], pose.bx[1], pose.bx[2] },
                                           { pose.by[0], pose.by[1], pose.by[2] },
                                           { pose.bz[0], pose.bz[1], pose.bz[2] }, pose.radius,
                                           pose.halfSeg, kCollider);
-                } else if (col->shape == 5) {
+                } else if (col->shape == collidershape::kConvex) {
                     // M60f: 凸包は**実際の稜線**を描く。箱で代用すると「どこまでが当たり
                     // 判定なのか」が分からず、凸包コライダーのデバッグが成立しない。
                     // 実体は MakePoseFromMatrix が convexcol 経由で解決済み (未生成は null)
@@ -773,7 +773,7 @@ void SceneViewWindow::BuildOverlays(EngineContext& ctx, Selection& selection)
                 const uint32_t c = (pc->joint[0] != '\0') ? kPartBone : kPartStatic;
                 const ShapePose pose = Parts::MakePartBoundsPose(*pb, wm);
                 const XMFLOAT3 pos = { pose.px, pose.py, pose.pz };
-                if (pose.shape == 0) {
+                if (pose.shape == collidershape::kSphere) {
                     lines_.AddWireSphere(pos, pose.radius, c);
                 } else {
                     XMFLOAT4X4 boxWorld = {
