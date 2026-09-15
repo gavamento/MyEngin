@@ -781,6 +781,9 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
 
     // ---- メインループ (フェーズ構成は engine_spec.md 5.3 / ADR-005) ----
     double accumulator = 0.0;
+    // 生マウスデルタとホイールの持ち越し (2026-09-15)。tick の回らないフレームで動かした分を
+    // 次に回る tick へ渡し、1 フレームで複数本回っても最初の 1 本にだけ渡す (Input.h の解説)
+    PointerDeltaCarry pointerCarry;
     bool running = !netFailed; // 接続失敗時は 1 フレームも回さずに通常の後始末へ落ちる
     // M36b 描画補間: 前 tick 末のワールド行列 (tick 頭に採取)。record/verify 中は不使用
     PrevWorldStore prevWorld;
@@ -1445,6 +1448,9 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             for (uint32_t p = 0; p < captureLanes; ++p) {
                 ctx.inputs[p] = input.CaptureSnapshot(p, surface);
             }
+            // 前のフレームで tick が回らず読まれなかったマウス量を足す (PointerDeltaCarry)。
+            // ★画面外のホイールを捨てる下の Mask より前 = 持ち越した分にも同じ規則が効く
+            pointerCarry.AddTo(ctx.inputs[0]);
             // ---- ゲームの画面の外のクリックを捨てる (2026-09-14) ----
             // エディタのマウス座標はエディタ全体のクライアント px なので、そのままだと停止ボタンや
             // インスペクタのクリックがゲームの「画面クリック」になる (Esc で放したカーソルを
@@ -1697,6 +1703,8 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                     c = 0;
                 }
                 netLiveInput.charCount = 0;
+                // マウス量も同じ (PointerDeltaCarry)。次の target へ同じ量を送ると相手側で 2 回回る
+                PointerDeltaCarry::ClearAfterTick(netLiveInput);
             }
             // ★クラッシュ .rep へは tick に**入る前**に入力を載せる (M52f)。
             //   落ちるのは RunOneTick の中なので、tick 末に載せる作りだと
@@ -1803,6 +1811,9 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                 c = 0;
             }
             ctx.inputs[0].charCount = 0;
+            // マウス量も 1 tick ぶんだけ (PointerDeltaCarry)。消さないと同じフレームの次の tick が
+            // 同じ量をもう一度足し、fps が 60 を割ったフレームで視点が跳ねる
+            PointerDeltaCarry::ClearAfterTick(ctx.inputs[0]);
             if (liveCharsPending > 0) {
                 input.ConsumeChars(liveCharsPending);
                 liveCharsPending = 0;
@@ -1815,6 +1826,9 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                 break;
             }
         }
+        // 回らなかったフレームのマウス量を次へ持ち越す (回ったフレームは 0 が残る)。
+        // ★スクラブ中とフォーカス喪失中は捨てる — 再開した 1 tick で視点が飛ぶ
+        pointerCarry.EndFrame(ctx.inputs[0], timeTravel.Scrubbing() || !window.HasFocus());
         if (!verifying && !fastRecording && ticks == kMaxTicksPerFrame && accumulator > kFixedDt) {
             // 追いつけない分は捨てる (スローモーション化を許容し、tick 爆発を防ぐ)
             accumulator = kFixedDt;

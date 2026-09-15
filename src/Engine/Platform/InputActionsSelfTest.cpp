@@ -505,6 +505,50 @@ bool RunInputActionsSelfTest()
         check(hidden.mouseButtons == 0, "game area: an empty area (view not visible) receives no clicks");
     }
 
+    // ---- マウス量の持ち越し (2026-09-15、PointerDeltaCarry) ----
+    // EngineLoop と同じ順 (写す → AddTo → tick ごとに読んで ClearAfterTick → EndFrame) で回し、
+    // フレームと tick の本数が食い違っても「動かした総量 = tick が読んだ総量」になることを見る。
+    // 本数の列は 180Hz の 0,0,1 に、fps が落ちた 2 本 / 3 本のフレームを混ぜたもの
+    {
+        PointerDeltaCarry carry;
+        const int ticksPerFrame[] = { 0, 0, 1, 0, 0, 1, 2, 0, 3, 1 };
+        int32_t movedX = 0, movedWheel = 0, readX = 0, readY = 0, readWheel = 0;
+        int repeated = 0; // 同じフレームの 2 本目以降が非 0 を読んだ回数
+        for (int ticks : ticksPerFrame) {
+            InputSnapshot s = Snap(); // このフレームで写した量
+            s.mouseDeltaX = 5;
+            s.mouseDeltaY = -2;
+            s.wheelDelta = 120;
+            movedX += 5;
+            movedWheel += 120;
+            carry.AddTo(s);
+            for (int t = 0; t < ticks; ++t) {
+                if (t > 0 && (s.mouseDeltaX != 0 || s.wheelDelta != 0)) {
+                    ++repeated;
+                }
+                readX += s.mouseDeltaX;
+                readY += s.mouseDeltaY;
+                readWheel += s.wheelDelta;
+                PointerDeltaCarry::ClearAfterTick(s);
+            }
+            carry.EndFrame(s, /*drop*/ false);
+        }
+        check(readX == movedX && readY == -movedX * 2 / 5 && readWheel == movedWheel,
+              "pointer carry: movement in frames that ran no tick reaches the next tick");
+        check(repeated == 0, "pointer carry: a frame that runs several ticks hands the movement to the first one only");
+
+        PointerDeltaCarry dropped;
+        InputSnapshot scrub = Snap();
+        scrub.mouseDeltaX = 7;
+        scrub.wheelDelta = 120;
+        dropped.AddTo(scrub);
+        dropped.EndFrame(scrub, /*drop*/ true);
+        InputSnapshot resumed = Snap();
+        dropped.AddTo(resumed);
+        check(resumed.mouseDeltaX == 0 && resumed.wheelDelta == 0,
+              "pointer carry: drop (scrub / focus loss) carries nothing into the resumed tick");
+    }
+
     if (failCount == 0) {
         MYE_LOG_INFO("==== InputActions self test: ALL PASS ====");
         return true;

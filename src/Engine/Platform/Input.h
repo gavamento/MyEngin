@@ -50,13 +50,13 @@ struct InputSnapshot {
     // 生マウスデルタ (M64a)。**WM_INPUT (Raw Input) の生カウント**であって
     // mouseX/mouseY の差分ではない。差分にしないのは、カーソルロック中は絶対座標が
     // 動かない (クライアント矩形の端や中央に張り付く) ため — 一人称の視点は
-    // ロック中こそ回り続けなければならない。1 tick 分を CaptureSnapshot が消費して
-    // 0 に戻す (wheelDelta と同じ規約)。
+    // ロック中こそ回り続けなければならない。CaptureSnapshot が消費して 0 に戻し、
+    // そのフレームで回った**最初の tick だけ**が読む (wheelDelta と同じ規約、PointerDeltaCarry)。
     // ★ポインタ加速の掛からない生カウントなので OS のマウス設定には依存しないが、
     //   **DPI は機種依存**。感度は必ずプロジェクト側の調整値で割ること
     int32_t mouseDeltaX;
     int32_t mouseDeltaY;
-    int32_t wheelDelta;    // このフレームに累積した生値 (WHEEL_DELTA=120 単位)
+    int32_t wheelDelta;    // この tick へ渡す累積の生値 (WHEEL_DELTA=120 単位、PointerDeltaCarry)
     uint8_t mouseButtons;  // bit0:L bit1:R bit2:M bit3:X1 bit4:X2
     uint8_t pad[3];        // 明示パディング (未初期化バイト混入防止, spec 11.2-3)
     // ---- gamepad (XInput、M19)。record/verify では記録値が live poll を上書きするので透過 ----
@@ -185,5 +185,28 @@ private:
 // 撹拌する: 毎 tick 変えると pressed/released が全 tick で立ち、絵としても診断としても
 // 読めなくなる (押しっぱなしの区間があるほうが実入力に近い)
 InputSnapshot SynthLaneInput(uint64_t tick, uint32_t lane);
+
+// 生マウスデルタとホイールを「実際に回った tick」へ 1 回だけ渡す (2026-09-15)。
+// CaptureSnapshot はフレーム頭に 1 回だけ呼ばれ、同じ ctx.inputs でそのフレームの tick を 0〜N 本回す。
+// 量を素通しすると、
+//   - tick の回らないフレームで動かした分が消える (fps が 60 を超えると過半。180Hz なら 3 回に 2 回)
+//   - 1 フレームで 2 本以上回ると、同じ量が本数ぶん足される
+// の両方が起きる。視点は「たまにがくがく」になり、感度も fps で変わる (三校で踏んだ)。
+// 文字の ConsumeChars と同じ問題だが、こちらは量なので「持ち越して足す」で解く:
+//   フレーム頭 (写した直後)  AddTo(ctx.inputs[0])          … 前のフレームで回らなかった分を足す
+//   tick を 1 本回した後      ClearAfterTick(ctx.inputs[0]) … 同じフレームの次の tick へ渡さない
+//   tick ループの後           EndFrame(ctx.inputs[0], drop) … 残っていれば次のフレームへ持ち越す
+// ★ワールドに入るのは tick が読んだ値だけで、それは .rep に載る = 記録と照合の対称は崩れない
+struct PointerDeltaCarry {
+    int32_t dx = 0;
+    int32_t dy = 0;
+    int32_t wheel = 0;
+
+    void AddTo(InputSnapshot& s) const;
+    static void ClearAfterTick(InputSnapshot& s);
+    // drop = 持ち越さずに捨てる (スクラブ中 / フォーカス喪失。Input の WM_KILLFOCUS と同じ理由で、
+    // 止まっていた間や裏で動かした分を再開の 1 tick にまとめて入れない)
+    void EndFrame(const InputSnapshot& s, bool drop);
+};
 
 } // namespace mye

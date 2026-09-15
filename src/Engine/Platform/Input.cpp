@@ -261,6 +261,29 @@ void Input::MaskMouseOutside(InputSnapshot& s, const InputRect& area)
     s.wheelDelta = 0;
 }
 
+void PointerDeltaCarry::AddTo(InputSnapshot& s) const
+{
+    s.mouseDeltaX += dx;
+    s.mouseDeltaY += dy;
+    s.wheelDelta += wheel;
+}
+
+void PointerDeltaCarry::ClearAfterTick(InputSnapshot& s)
+{
+    s.mouseDeltaX = 0;
+    s.mouseDeltaY = 0;
+    s.wheelDelta = 0;
+}
+
+void PointerDeltaCarry::EndFrame(const InputSnapshot& s, bool drop)
+{
+    // tick が回ったフレームは ClearAfterTick 済みで 0 が残る = 分岐しなくても持ち越しは消える。
+    // verify / ネットで ctx.inputs を差し替えた tick も同じ (差し替えた値を消した 0 が残る)
+    dx = drop ? 0 : s.mouseDeltaX;
+    dy = drop ? 0 : s.mouseDeltaY;
+    wheel = drop ? 0 : s.wheelDelta;
+}
+
 namespace {
 
 // SplitMix64 (整数四則とシフトのみ = /fp:precise 以前に浮動小数を触らない)。
