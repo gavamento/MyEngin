@@ -134,6 +134,11 @@ json PhysMatLibrary::ToJson(const PhysMat& m)
     j["acousticRadiusM"] = m.acousticRadiusM;
     j["acousticTone"] = m.acousticTone;
     j["acousticSound"] = m.acousticSound; // 空でも書く (上と同じ理由)
+    // Deep-Modal (M76a): 常に 4 本とも書く (0 でも欠けさせない、上と同じ理由)
+    j["youngsModulus"] = m.youngsModulus;
+    j["poissonRatio"] = m.poissonRatio;
+    j["rayleighAlpha"] = m.rayleighAlpha;
+    j["rayleighBeta"] = m.rayleighBeta;
     return j;
 }
 
@@ -164,6 +169,11 @@ bool PhysMatLibrary::FromJson(const json& j, PhysMat& out)
     out.acousticSound = (j.contains("acousticSound") && j["acousticSound"].is_string())
         ? j["acousticSound"].get<std::string>()
         : def.acousticSound;
+    // Deep-Modal (M76a、旧ファイルは 4 本とも既定 = 参照材質のまま・poissonRatio は保持のみ)
+    out.youngsModulus = ReadFloat(j, "youngsModulus", def.youngsModulus);
+    out.poissonRatio = ReadFloat(j, "poissonRatio", def.poissonRatio);
+    out.rayleighAlpha = ReadFloat(j, "rayleighAlpha", def.rayleighAlpha);
+    out.rayleighBeta = ReadFloat(j, "rayleighBeta", def.rayleighBeta);
     Sanitize(out);
     return true;
 }
@@ -187,6 +197,12 @@ void PhysMatLibrary::Sanitize(PhysMat& m)
     m.acousticLoudness = SanitizeValue(m.acousticLoudness, def.acousticLoudness, 0.0f, 100.0f);
     m.acousticRadiusM = SanitizeValue(m.acousticRadiusM, def.acousticRadiusM, 0.0f, 1000.0f);
     m.acousticTone = std::clamp(m.acousticTone, 0, 3);
+    // Deep-Modal (M76a): 下限は全て 0 (BuildModes が非有限・負値でスケールを壊さないため)。
+    // 上限は「表現上困らない」以上の意味は無い (E は鋼の 3 倍程度、β はゴムより緩い上限)
+    m.youngsModulus = SanitizeValue(m.youngsModulus, def.youngsModulus, 0.0f, 1.0e13f);
+    m.poissonRatio = SanitizeValue(m.poissonRatio, def.poissonRatio, 0.0f, 0.49f);
+    m.rayleighAlpha = SanitizeValue(m.rayleighAlpha, def.rayleighAlpha, 0.0f, 1.0e4f);
+    m.rayleighBeta = SanitizeValue(m.rayleighBeta, def.rayleighBeta, 0.0f, 1.0e-2f);
 }
 
 // ==== physmat:: モジュール注入 ====

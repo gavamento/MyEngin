@@ -74,6 +74,8 @@
     <ClCompile Include="..\src\Engine\Engine\Audio\ImpactSoundAsset.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Audio\ImpactSynth.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Audio\ImpactSynthSelfTest.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Audio\ModalSynth.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Audio\ModalSynthSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Audio\MusicStream.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Audio\SoundAsset.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Audio\StbVorbisImpl.cpp" />
@@ -275,6 +277,8 @@
     <ClInclude Include="..\src\Engine\Engine\Audio\ImpactSoundAsset.h" />
     <ClInclude Include="..\src\Engine\Engine\Audio\ImpactSynth.h" />
     <ClInclude Include="..\src\Engine\Engine\Audio\ImpactSynthSelfTest.h" />
+    <ClInclude Include="..\src\Engine\Engine\Audio\ModalSynth.h" />
+    <ClInclude Include="..\src\Engine\Engine\Audio\ModalSynthSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Audio\MusicMath.h" />
     <ClInclude Include="..\src\Engine\Engine\Audio\MusicStream.h" />
     <ClInclude Include="..\src\Engine\Engine\Audio\SoundAsset.h" />
@@ -300,6 +304,7 @@
     <ClInclude Include="..\src\Engine\Engine\HotReload\ReloadHub.h" />
     <ClInclude Include="..\src\Engine\Engine\HotReload\ReloadHubSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\LightSelection.h" />
+    <ClInclude Include="..\src\Engine\Engine\Modal\ModalTypes.h" />
     <ClInclude Include="..\src\Engine\Engine\ModelLoader.h" />
     <ClInclude Include="..\src\Engine\Engine\Net\NetRollback.h" />
     <ClInclude Include="..\src\Engine\Engine\Net\NetRuntime.h" />

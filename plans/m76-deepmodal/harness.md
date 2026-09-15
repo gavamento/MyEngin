@@ -18,8 +18,8 @@
 ## サブ進捗
 | サブ | 状態 | 往復 | コミット | メモ |
 |---|---|---|---|---|
-| sub-01 | 実装中 | 0 | | M76a モーダル合成器 + PhysMat 音響材質 4 フィールド (依存なし) |
-| sub-02 | 未着手 | 0 | | M76b ボクセライザ (.mvox) + OFF/OBJ + --modal-voxelize (依存なし、sub-01 と並列可) |
+| sub-01 | OK | 1 | 34d59da | M76a モーダル合成器 + PhysMat 音響材質 4 フィールド (依存なし) |
+| sub-02 | 実装中 | 0 | | M76b ボクセライザ (.mvox) + OFF/OBJ + --modal-voxelize (依存なし) |
 | sub-03 | 未着手 | 0 | | M76c Python データセット生成 + pytest + constGroups (依存 sub-02) |
 | sub-04 | 未着手 | 0 | | M76d モデル / 学習 / export、overfit の門 (依存 sub-03) |
 | sub-05 | 未着手 | 0 | | M76e .dmnet ローダ + CPU バックエンド + .msfm + ModalSoundLibrary (依存 sub-02, sub-04) |
@@ -32,4 +32,6 @@
 |---|---|---|---|
 
 ## 申し送り (セッション跨ぎ)
--
+- sub-01 nit: `ImpactSynth.h:27` のコメントが `engine_spec §10.7` を先取りで参照。sub-08 で節番号が変わったら合わせる
+- 環境: `replay_verify.bat` を既定の並列 12 で回すとホストのメモリ不足でバックグラウンドごと kill されることがある → `MYE_REPLAY_JOBS=3` で回す (エンジン非依存、M75b と同じ症状)
+- planner / coder のエージェント ID はこのセッション限り。再開時は `spec.md` / `sub-NN.md` / 台帳から文脈を渡して新規起動

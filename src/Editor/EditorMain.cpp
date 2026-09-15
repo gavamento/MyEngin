@@ -52,6 +52,7 @@
 #include "Engine/Engine/Acoustic/AcousticSelfTest.h"
 #include "Engine/Engine/Audio/AcousticAudioSelfTest.h"
 #include "Engine/Engine/Audio/ImpactSynthSelfTest.h"
+#include "Engine/Engine/Audio/ModalSynthSelfTest.h"
 #include "Engine/Engine/Replay/SimSnapshotSelfTest.h"
 #include "Engine/Engine/Replay/TimeTravelSelfTest.h"
 #include "Engine/Engine/Replay/WorldHasherSelfTest.h"
@@ -426,6 +427,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             && mye::RunSubAssetKeySelfTest()    // M74a / M74b
             && mye::RunImpactSynthSelfTest()    // ImpactSynth (計画 ImpactSoundDesign)
             && mye::RunReloadHubSelfTest()      // ホットリロードの資産の種類表
+            && mye::RunModalSynthSelfTest()     // M76a: Deep-Modal のモード合成器
             && mye::RunEngineCliSelfTest();     // 両 Main 共通の CLI フラグ表
         return ok ? 0 : 1;
     }

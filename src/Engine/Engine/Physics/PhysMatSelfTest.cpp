@@ -74,6 +74,16 @@ bool RunPhysMatSelfTest()
         check(d.acousticLoudness == 0.0f && d.acousticRadiusM == 0.0f && d.acousticTone == 0,
               "a physmat written before M65c is silent");
 
+        // ★M76a (Deep-Modal) で足した 4 本も同じ形。**旧ファイルは参照材質のまま**
+        //   (youngsModulus=0 → BuildModes の σ1=1、poissonRatio=0.3 は保持のみで未使用、
+        //   rayleighAlpha/Beta=0)。既定が変わった瞬間に全既存資産の鳴り方が変わる
+        check(m.youngsModulus == d.youngsModulus && m.poissonRatio == d.poissonRatio
+                  && m.rayleighAlpha == d.rayleighAlpha && m.rayleighBeta == d.rayleighBeta,
+              "missing Deep-Modal keys fall back to struct defaults (M76a forward compat)");
+        check(d.youngsModulus == 0.0f && d.poissonRatio == 0.3f && d.rayleighAlpha == 0.0f
+                  && d.rayleighBeta == 0.0f,
+              "a physmat written before M76a stays at the reference material (E=0, nu=0.3, alpha/beta=0)");
+
         // 音色は整数キー。float で書かれていても**読まない** (0..3 の意味が丸めに乗るため)
         nlohmann::json toned;
         toned["physmat"] = 1;
@@ -97,6 +107,10 @@ bool RunPhysMatSelfTest()
         m.acousticLoudness = -1.0f;                                  // M65c
         m.acousticRadiusM = std::numeric_limits<float>::quiet_NaN(); // 同上
         m.acousticTone = 9;                                          // 同上
+        m.youngsModulus = -1.0f;                                     // M76a
+        m.poissonRatio = 0.9f;                                       // 同上 (上限 0.49 を超える)
+        m.rayleighAlpha = -5.0f;                                     // 同上
+        m.rayleighBeta = std::numeric_limits<float>::quiet_NaN();    // 同上
         PhysMatLibrary::Sanitize(m);
         check(m.density == d.density, "NaN density falls back to default (not 0)");
         check(m.staticFriction == 0.0f, "negative static friction clamps to 0");
@@ -111,6 +125,13 @@ bool RunPhysMatSelfTest()
         check(m.acousticLoudness == 0.0f, "negative acoustic loudness clamps to 0 (silent)");
         check(m.acousticRadiusM == d.acousticRadiusM, "NaN acoustic radius falls back to default");
         check(m.acousticTone == 3, "acoustic tone clamps into the 4 colour slots");
+        // M76a: 負の E/α はゼロへ (BuildModes のσ1・減衰係数が負を想定していない)。
+        // ν は 0.49 が上限 (非圧縮限界に寄せた保険。1.5 を通すとポアソン比の意味が壊れる範囲)。
+        // NaN の β は既定 (0、参照材質と同じ剛性項) へ
+        check(m.youngsModulus == 0.0f, "negative Young's modulus clamps to 0 (reference material)");
+        check(m.poissonRatio == 0.49f, "poisson ratio clamps to the 0.49 upper bound");
+        check(m.rayleighAlpha == 0.0f, "negative rayleigh alpha clamps to 0");
+        check(m.rayleighBeta == d.rayleighBeta, "NaN rayleigh beta falls back to default (0)");
         m.density = 0.0f;
         m.dynamicFriction = 250.0f; // 有限の範囲外はクランプ (非有限との扱いの差を固定)
         PhysMatLibrary::Sanitize(m);
@@ -133,6 +154,10 @@ bool RunPhysMatSelfTest()
         src.acousticRadiusM = 13.0f;
         src.acousticTone = 2;
         src.acousticSound = "footstep_gravel"; // ImpactSynth
+        src.youngsModulus = 7.0e10f;            // M76a (metal 相当)
+        src.poissonRatio = 0.33f;
+        src.rayleighAlpha = 6.0f;
+        src.rayleighBeta = 1.0e-7f;
         PhysMat dst;
         check(PhysMatLibrary::FromJson(PhysMatLibrary::ToJson(src), dst),
               "ToJson output parses back");
@@ -145,8 +170,12 @@ bool RunPhysMatSelfTest()
                   && dst.acousticLoudness == src.acousticLoudness
                   && dst.acousticRadiusM == src.acousticRadiusM
                   && dst.acousticTone == src.acousticTone
-                  && dst.acousticSound == src.acousticSound,
-              "ToJson/FromJson round-trip is bit-identical");
+                  && dst.acousticSound == src.acousticSound
+                  && dst.youngsModulus == src.youngsModulus
+                  && dst.poissonRatio == src.poissonRatio
+                  && dst.rayleighAlpha == src.rayleighAlpha
+                  && dst.rayleighBeta == src.rayleighBeta,
+              "ToJson/FromJson round-trip is bit-identical (including the Deep-Modal 4 fields)");
     }
 
     // ---- Register / Get / Enumerate (名前昇順) ----
