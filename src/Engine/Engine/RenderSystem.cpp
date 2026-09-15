@@ -35,6 +35,7 @@ struct CullCand {
     const Mesh* meshPtr;
     float viewZ;
     uint8_t visible;
+    uint8_t skinned;
 };
 
 constexpr size_t kCullGrain = 256; // これ未満は直列 (スレッド起動コスト回避)
@@ -967,7 +968,9 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
                     worldMat, *static_cast<const WheelComponent*>(arch.GetPtr(whi, row)));
             }
             cullCands.push_back({ e, mr->mesh, mr->material, worldMat,
-                                   resources.meshes.Get(mr->mesh), 0.0f, 1 });
+                                   resources.meshes.Get(mr->mesh), 0.0f, 1,
+                                   world.GetComponent<SkinnedMeshComponent>(e) != nullptr ? uint8_t{ 1 }
+                                                                                         : uint8_t{ 0 } });
         }
     });
 
@@ -975,8 +978,12 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
     jobs::System().ParallelRanges(cullCands.size(), kCullGrain, [&](size_t a, size_t b) {
         for (size_t i = a; i < b; ++i) {
             CullCand& c = cullCands[i];
+            // スキン付きメッシュの AABB はバインドポーズの頂点から作られており、現在の
+            // ボーン姿勢を包まない。これで落とすと、別メッシュになっている手・指などが
+            // アニメ中だけ消える。全クリップを包む bounds を持つまでは保守的に描画する。
             if (cullEnabled && c.meshPtr
-                && !AabbInFrustum(frustum, c.world, c.meshPtr->aabbMin, c.meshPtr->aabbMax)) {
+                && !RenderableInFrustum(frustum, c.world, c.meshPtr->aabbMin, c.meshPtr->aabbMax,
+                                        c.skinned != 0)) {
                 c.visible = 0;
                 continue;
             }

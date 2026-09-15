@@ -87,6 +87,15 @@ inline bool AabbInFrustum(const Frustum& f, const DirectX::XMFLOAT4X4& m,
     return true;
 }
 
+// スキン付きメッシュの登録 AABB はバインドポーズの頂点だけを包み、アニメ後の頂点を
+// 包む保証がない。現在姿勢の bounds を持つまでは、誤って部位を消さないことを優先する。
+inline bool RenderableInFrustum(const Frustum& f, const DirectX::XMFLOAT4X4& m,
+                                const DirectX::XMFLOAT3& lmin, const DirectX::XMFLOAT3& lmax,
+                                bool skinned)
+{
+    return skinned || AabbInFrustum(f, m, lmin, lmax);
+}
+
 // 既に world 空間へ落ちている AABB が視錐台と交差するか (M54d)。
 // AabbInFrustum は「ローカル AABB + world 行列」を受けるが、シーン AABB や
 // 「タイル毎に使い回すため一度だけ world へ落としたキャッシュ」はもう行列を持たない。
