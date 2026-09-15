@@ -1,7 +1,9 @@
 #include "Engine/Engine/ModelLoader.h"
 
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -23,6 +25,60 @@ using namespace DirectX;
 
 namespace mye::ModelLoader {
 namespace {
+
+// cgltf の既定 reader は fopen(char*) を使うため、Windows では日本語を含む
+// 配布先パスを開けない。UTF-8 からワイドパスへ変換して開く。
+cgltf_result ReadGltfFile(const cgltf_memory_options* memory, const cgltf_file_options*,
+                          const char* path, cgltf_size* size, void** data)
+{
+    std::ifstream file(std::filesystem::path(Utf8ToWide(path)), std::ios::binary | std::ios::ate);
+    if (!file) {
+        return cgltf_result_file_not_found;
+    }
+    const std::streamoff end = file.tellg();
+    if (end < 0) {
+        return cgltf_result_io_error;
+    }
+    const cgltf_size fileSize = size && *size ? *size : static_cast<cgltf_size>(end);
+    void* bytes = memory->alloc_func
+        ? memory->alloc_func(memory->user_data, fileSize)
+        : std::malloc(fileSize);
+    if (!bytes && fileSize != 0) {
+        return cgltf_result_out_of_memory;
+    }
+    file.seekg(0, std::ios::beg);
+    file.read(static_cast<char*>(bytes), static_cast<std::streamsize>(fileSize));
+    if (!file) {
+        if (memory->free_func) {
+            memory->free_func(memory->user_data, bytes);
+        } else {
+            std::free(bytes);
+        }
+        return cgltf_result_io_error;
+    }
+    if (size) {
+        *size = fileSize;
+    }
+    *data = bytes;
+    return cgltf_result_success;
+}
+
+void ReleaseGltfFile(const cgltf_memory_options* memory, const cgltf_file_options*, void* data)
+{
+    if (memory->free_func) {
+        memory->free_func(memory->user_data, data);
+    } else {
+        std::free(data);
+    }
+}
+
+cgltf_options GltfOptions()
+{
+    cgltf_options options = {};
+    options.file.read = ReadGltfFile;
+    options.file.release = ReleaseGltfFile;
+    return options;
+}
 
 struct LoadContext {
     Scene* scene = nullptr;
@@ -383,7 +439,7 @@ GameObject Load(Scene& scene, RenderResources& resources, ShaderManager& shaders
 {
     const std::string utf8 = WideToUtf8(path);
 
-    cgltf_options options = {};
+    cgltf_options options = GltfOptions();
     cgltf_data* data = nullptr;
     if (cgltf_parse_file(&options, utf8.c_str(), &data) != cgltf_result_success) {
         MYE_LOG_ERROR("glTF parse failed: %s", utf8.c_str());
@@ -430,7 +486,7 @@ bool RegisterAssets(RenderResources& resources, ShaderManager& shaders, const st
 
     const std::string utf8 = WideToUtf8(path);
 
-    cgltf_options options = {};
+    cgltf_options options = GltfOptions();
     cgltf_data* data = nullptr;
     if (cgltf_parse_file(&options, utf8.c_str(), &data) != cgltf_result_success
         || cgltf_load_buffers(&options, data, utf8.c_str()) != cgltf_result_success) {
@@ -493,7 +549,7 @@ bool ReloadMeshes(RenderResources& resources, ShaderManager& shaders, const std:
 size_t RegisterSkinnedModels(RenderResources& resources, const std::wstring& path)
 {
     const std::string utf8 = WideToUtf8(path);
-    cgltf_options options = {};
+    cgltf_options options = GltfOptions();
     cgltf_data* data = nullptr;
     if (cgltf_parse_file(&options, utf8.c_str(), &data) != cgltf_result_success
         || cgltf_load_buffers(&options, data, utf8.c_str()) != cgltf_result_success) {
