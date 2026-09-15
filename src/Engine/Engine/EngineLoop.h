@@ -214,6 +214,12 @@ struct EngineConfig {
     // (判定を他の二経路と同じ projectRoot に揃える)
     bool developmentRun = true;
 
+    // ---- ウィンドウの表示モード (ABI v19 SetWindowMode) ----
+    // true = 起動時に <saveDir>\display.json (無ければ project_settings.json の window.defaultMode) のモードで開き、
+    // スクリプトの要求で切り替えて保存する。**Runtime.exe だけが立てる** — エディタの Game ビューはパネルなので
+    // 要求を覚えるだけ。立っていても record/verify・--frames・--screenshot・ネット・プローブの実行では窓を動かさない
+    bool applyWindowMode = false;
+
     // ---- リプレイ一貫性検証 (engine_spec.md 11.3) ----
     std::wstring replayRecordPath; // 空でなければ記録モード (replayTicks 分記録して終了)
     std::wstring replayVerifyPath; // 空でなければ検証モード (全 tick 照合、exit code 0/1)

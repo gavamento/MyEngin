@@ -720,6 +720,21 @@ inline bool MyeIsDevelopmentRun(const MyeUpdateContext& ctx)
     return ctx.api->IsDevelopmentRun(ctx.api->engine) != 0;
 }
 
+// ---- v19: ウィンドウの表示モード ----
+// MYE_WINDOW_MODE_WINDOWED / MYE_WINDOW_MODE_BORDERLESS。**出力レーン** — 要求を書くだけで、切り替えと
+// 次の起動のための保存はエンジンが行う (エディタ・record/verify・バッチ実行では窓は動かない)
+inline void MyeSetWindowMode(const MyeUpdateContext& ctx, int32_t mode)
+{
+    ctx.api->SetWindowMode(ctx.api->engine, mode);
+}
+
+// 今の要求値。★前回の選択と起動方法で決まる値 = 表示にだけ使い、登録フィールドへ書き戻さない
+// (EngineAPI.h の v19 の注記)
+inline int32_t MyeGetWindowMode(const MyeUpdateContext& ctx)
+{
+    return ctx.api->GetWindowMode(ctx.api->engine);
+}
+
 // ---- v12 (M51h): 入力アクション / UI 拡張 / ゲームフロー / パッド振動 ----
 
 inline int32_t MyeGetMouseWheel(const MyeUpdateContext& ctx)

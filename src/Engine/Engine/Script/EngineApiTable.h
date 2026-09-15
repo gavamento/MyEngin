@@ -32,6 +32,12 @@ struct CursorLockState {
     bool escapeReleased = false; // Escape で手放し済み (mode 0 の要求で解除)
 };
 
+// ウィンドウの表示モードの要求値 (v19)。CursorLockState と同じ「書くだけ」の出力レーンで、
+// 実際の切り替えと display.json への保存は EngineLoop がフレーム末に行う
+struct WindowModeState {
+    int32_t mode = 0; // MYE_WINDOW_MODE_WINDOWED / MYE_WINDOW_MODE_BORDERLESS
+};
+
 // スクリプトが tick 内で積むオーディオ操作 (M19 の再生イベントを v8 でタグ付きに拡張)。
 // ハッシュ後に EngineLoop が drain して AudioSystem へ流す。
 // **POD で持つ** — 毎 tick clear() されるので std::string を含めるとヒープが暴れる。
@@ -108,6 +114,8 @@ struct ScriptApiContext {
     PadVibrationState* padVibration = nullptr;
     // v15 (M64a): カーソルロックの要求値の書き先。適用は EngineLoop (出力レーン)
     CursorLockState* cursorLock = nullptr;
+    // v19: ウィンドウの表示モードの要求値の書き先。適用は EngineLoop (出力レーン)。null 時は Set が no-op、Get がウィンドウ
+    WindowModeState* windowMode = nullptr;
     // v13 (M52i): ネットセッションの状態 (EngineLoop が毎フレーム書く読み取り専用 POD)。
     // null = ネットを張っていない → Net* スロットは既定値を返す
     const NetRuntimeInfo* net = nullptr;

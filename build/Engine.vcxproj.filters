@@ -234,6 +234,9 @@
     <ClCompile Include="..\src\Engine\Engine\DemoContent.cpp">
       <Filter>Engine</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\DisplaySettings.cpp">
+      <Filter>Engine</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\EffectSystem.cpp">
       <Filter>Engine</Filter>
     </ClCompile>
@@ -841,6 +844,9 @@
       <Filter>Engine</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\DemoContent.h">
+      <Filter>Engine</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\DisplaySettings.h">
       <Filter>Engine</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\EffectSystem.h">

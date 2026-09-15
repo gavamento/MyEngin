@@ -30,7 +30,8 @@
 // v16 (M70c): UI の対話 UIButtonState / UIGetFocused / UISetFocused / MouseCanvasPos / GetUIRect + LoadPersist
 // v17 (M71a): GetSceneName
 // v18: IsDevelopmentRun (デバッグ機能を配布物で閉じる)
-#define MYE_API_VERSION 18u
+// v19: SetWindowMode / GetWindowMode (ウィンドウ / ボーダーレスの切り替え)
+#define MYE_API_VERSION 19u
 
 // PersistSet の 1 エントリ最大バイト数 (v12)。PersistStore は WorldHash / セーブ出力に
 // 全量が載るため、無制限だと 1 キーでハッシュとセーブが肥大する
@@ -60,6 +61,12 @@ enum MyePadButton {
     MYE_PAD_B = 0x2000,
     MYE_PAD_X = 0x4000,
     MYE_PAD_Y = 0x8000,
+};
+
+// ウィンドウの表示モード (v19 SetWindowMode / GetWindowMode。Win32Window.h の WindowMode と同値)
+enum MyeWindowMode {
+    MYE_WINDOW_MODE_WINDOWED = 0,   // 枠付き・サイズ変更可
+    MYE_WINDOW_MODE_BORDERLESS = 1, // 枠なしでモニタ全面
 };
 
 // Raycast のヒット結果 (M19 で予約、M20 の物理で実装)
@@ -560,6 +567,19 @@ struct MyeEngineApi {
     //     記録と検証は同じ起動方法で走らせること — 配布物で記録した .rep (crash.rep など) を --project 付きで
     //     検証すると、配布物では無視されたデバッグ入力が効いてその tick で割れる
     int32_t (*IsDevelopmentRun)(void* engine);
+
+    // ---- v19: ウィンドウの表示モード ----
+    // SetWindowMode: MYE_WINDOW_MODE_WINDOWED (0) / MYE_WINDOW_MODE_BORDERLESS (1)。それ以外の値は無視。
+    //   **出力レーン** — SetCursorMode と同じく要求を書くだけで、実際の切り替えはフレーム末にエンジンが行い、
+    //   変わったら <saveDir>\display.json へ書く (次の起動は最初からそのモードで開く)。
+    //   ★窓が動くのは Runtime の通常起動だけ。エディタ・record/verify・--frames / --screenshot・ネット対戦・
+    //     プローブ実行では要求を覚えるだけ (Game ビューはパネル / 人の座っていない実行で画面を奪わない)
+    void (*SetWindowMode)(void* engine, int32_t mode);
+    // GetWindowMode: 今の要求値。起動直後は実際のモード (Runtime なら display.json か
+    //   project_settings.json の window.defaultMode、窓が動かない実行ではウィンドウ)。
+    //   ★**起動方法と前回の選択で決まる値で、sim 状態ではない** — 設定画面の表示にだけ使い、
+    //     登録フィールドへ書き戻さない (書くと前回の選択が違うだけで記録と検証のワールドハッシュが割れる)
+    int32_t (*GetWindowMode)(void* engine);
 };
 
 // スクリプトの各コールバックに渡されるコンテキスト (POD)

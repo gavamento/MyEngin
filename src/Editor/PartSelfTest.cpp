@@ -15,6 +15,7 @@
 #include "Engine/Core/Hash.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Core/World.h"
+#include "Engine/Engine/DisplaySettings.h" // v19 表示モードの読み書き
 #include "Engine/Engine/EntityNaming.h"
 #include "Engine/Engine/FbxLoader.h"
 #include "Engine/Engine/GameObject.h"
@@ -174,8 +175,8 @@ bool RunPartSelfTest()
         };
         const MyeEntityId root = toShared(enemy.Id());
 
-        check(api.version == MYE_API_VERSION && MYE_API_VERSION == 18u,
-              "abi: the table reports v18");
+        check(api.version == MYE_API_VERSION && MYE_API_VERSION == 19u,
+              "abi: the table reports v19");
         check(api.FindPart != nullptr && api.FindPartsByTag != nullptr,
               "abi: the v9 part slots are filled in");
         check(api.RaycastParts != nullptr, "abi: the v10 RaycastParts slot is filled in");
@@ -265,6 +266,62 @@ bool RunPartSelfTest()
         check(api.IsDevelopmentRun(api.engine) == 0,
               "abi: IsDevelopmentRun reports 0 once the host is wired as a packaged run");
         apiCtx.developmentRun = 1;
+        // v19: ウィンドウの表示モード。切り替えそのものは窓が要るので見ない — 見るのは要求の読み書きの契約と
+        // display.json / project_settings.json の読み方 (起動時のモードを決める唯一の材料)
+        check(api.SetWindowMode != nullptr && api.GetWindowMode != nullptr,
+              "abi: the v19 window-mode slots are filled in");
+        api.SetWindowMode(api.engine, MYE_WINDOW_MODE_BORDERLESS); // 未配線 = no-op で落ちないこと
+        check(api.GetWindowMode(api.engine) == MYE_WINDOW_MODE_WINDOWED,
+              "abi: GetWindowMode reports windowed without a wired state");
+        {
+            WindowModeState wm;
+            apiCtx.windowMode = &wm;
+            api.SetWindowMode(api.engine, MYE_WINDOW_MODE_BORDERLESS);
+            check(wm.mode == MYE_WINDOW_MODE_BORDERLESS
+                      && api.GetWindowMode(api.engine) == MYE_WINDOW_MODE_BORDERLESS,
+                  "abi: SetWindowMode writes the request that GetWindowMode reads back");
+            api.SetWindowMode(api.engine, 7);
+            api.SetWindowMode(api.engine, -1);
+            check(api.GetWindowMode(api.engine) == MYE_WINDOW_MODE_BORDERLESS,
+                  "abi: SetWindowMode ignores an unknown mode");
+            apiCtx.windowMode = nullptr;
+        }
+        {
+            WindowMode m = WindowMode::Borderless;
+            check(display::ParseDisplaySettings("{\"windowMode\": \"windowed\"}", m) && m == WindowMode::Windowed,
+                  "display: display.json windowMode is read");
+            m = WindowMode::Windowed;
+            check(!display::ParseDisplaySettings("{\"windowMode\": \"fullscreen\"}", m)
+                      && !display::ParseDisplaySettings("{\"windowMode\": 1}", m)
+                      && !display::ParseDisplaySettings("not json", m) && m == WindowMode::Windowed,
+                  "display: an unknown, non-string or broken windowMode is rejected without touching the output");
+            check(display::ParseProjectDefaultWindowMode(
+                      "{\"ui\": {}, \"window\": {\"defaultMode\": \"borderless\"}}", m)
+                      && m == WindowMode::Borderless,
+                  "display: project_settings.json window.defaultMode is read");
+            check(!display::ParseProjectDefaultWindowMode("{\"ui\": {}}", m) && m == WindowMode::Borderless,
+                  "display: a project without a window section keeps the caller's default");
+            // 保存 → 起動時の読み取りの往復 (display.json が project_settings.json の既定に勝つ)
+            const std::filesystem::path dir =
+                std::filesystem::temp_directory_path() / L"mye_display_selftest";
+            std::error_code ec;
+            std::filesystem::remove_all(dir, ec);
+            const std::wstring saveDir = (dir / L"save").wstring(); // 無いディレクトリ = Save が作る
+            check(display::LoadStartupWindowMode(L"", saveDir) == WindowMode::Windowed,
+                  "display: with no files the startup mode is windowed");
+            {
+                std::filesystem::create_directories(dir / L"assets", ec);
+                std::ofstream f(dir / L"assets" / L"project_settings.json", std::ios::binary);
+                f << "{\"window\": {\"defaultMode\": \"borderless\"}}";
+            }
+            const std::wstring assetsRoot = (dir / L"assets").wstring();
+            check(display::LoadStartupWindowMode(assetsRoot, saveDir) == WindowMode::Borderless,
+                  "display: the project default applies before anything is saved");
+            check(display::SaveWindowMode(saveDir, WindowMode::Windowed)
+                      && display::LoadStartupWindowMode(assetsRoot, saveDir) == WindowMode::Windowed,
+                  "display: a saved mode wins over the project default");
+            std::filesystem::remove_all(dir, ec);
+        }
         check(api.GetMouseWheel != nullptr && api.SetUIRect != nullptr
                   && api.SetUILayout != nullptr && api.SetUITexture != nullptr
                   && api.UIHitTest != nullptr && api.GetActionState != nullptr

@@ -915,6 +915,20 @@ verifying it with `--project` re-enables the debug inputs the packaged build ign
 the first one. Carrying the flag in the `.rep` header was rejected for now because it costs a `.rep`
 version bump. The C# lane gets the slot but no wrapper, since nothing there uses it yet.
 
+**ABI v19 (114 slots).** `SetWindowMode` / `GetWindowMode`. A settings screen needs to switch between
+a framed window and a borderless window that covers the monitor. Exclusive fullscreen is deliberately
+not offered - `SwapChain` already disables the Alt+Enter transition for the same reason. `SetWindowMode`
+is an output lane like `SetCursorMode`: the script writes a request into `WindowModeState`, and
+`EngineLoop` applies it at frame end, then writes `<saveDir>\display.json`. On the next launch the
+window is created in that mode **before it is first shown**, so the game does not open windowed and then
+jump to full screen. With no `display.json`, `project_settings.json`'s `window.defaultMode` decides, and
+without that the window stays framed - the engine default is unchanged for projects that never opt in.
+Only `Runtime.exe` sets `EngineConfig::applyWindowMode`, and even then record/verify, `--frames`,
+`--screenshot`, net and probe runs keep the request without moving the window: the editor's Game view is
+a panel, and an unattended run must not take over the screen. `GetWindowMode` returns the request, which
+depends on the previous choice and on how the process was started, so it is **not sim state** and must
+not be written back into a registered field. The C# lane gets the slots but no wrapper.
+
 **What was closed.** `MyeScript.cs` no longer exposes `SetUIRect` / `SetUILayout` /
 `SetUIFocused`. All three move UI geometry or focus, which now feeds hashed state, and the C# lane
 is suspended during rollback and time-travel re-simulation and is outside replay coverage - so a

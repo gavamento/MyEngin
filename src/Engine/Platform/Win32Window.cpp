@@ -66,6 +66,8 @@ bool Win32Window::Create(const WindowDesc& desc)
     hwnd_ = hwnd;
     width_ = desc.width;
     height_ = desc.height;
+    // 見せる前に当てる = 起動直後にウィンドウの姿を一瞬出してから全面へ化けない
+    SetMode(desc.mode);
 
     ShowWindow(hwnd, SW_SHOW);
     UpdateWindow(hwnd);
@@ -114,6 +116,53 @@ bool Win32Window::ConsumeResize()
     const bool r = resized_;
     resized_ = false;
     return r;
+}
+
+void Win32Window::SetMode(WindowMode mode)
+{
+    const HWND hwnd = static_cast<HWND>(hwnd_);
+    if (hwnd == nullptr || mode == mode_) {
+        return;
+    }
+    // WS_VISIBLE は引き継ぐ (Create から見せる前に呼ばれたときは隠れたまま切り替える)
+    const LONG_PTR visible = GetWindowLongPtrW(hwnd, GWL_STYLE) & WS_VISIBLE;
+    if (mode == WindowMode::Borderless) {
+        // 戻り先はワークスペース座標の通常位置 + 最大化。GetWindowRect だと最大化中の大きさを覚えてしまう
+        WINDOWPLACEMENT wp = {};
+        wp.length = sizeof(wp);
+        if (GetWindowPlacement(hwnd, &wp)) {
+            windowedRect_[0] = wp.rcNormalPosition.left;
+            windowedRect_[1] = wp.rcNormalPosition.top;
+            windowedRect_[2] = wp.rcNormalPosition.right;
+            windowedRect_[3] = wp.rcNormalPosition.bottom;
+            windowedMaximized_ = (wp.showCmd == SW_SHOWMAXIMIZED);
+            hasWindowedRect_ = true;
+        }
+        MONITORINFO mi = {};
+        mi.cbSize = sizeof(mi);
+        if (!GetMonitorInfoW(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), &mi)) {
+            MYE_LOG_WARN("[window] GetMonitorInfo failed (%lu) - staying windowed", GetLastError());
+            return;
+        }
+        // ★スタイルは丸ごと置き換える。WS_MAXIMIZE を残すと、戻したときに最大化の扱いが食い違う
+        SetWindowLongPtrW(hwnd, GWL_STYLE, WS_POPUP | visible);
+        const RECT& r = mi.rcMonitor;
+        SetWindowPos(hwnd, HWND_TOP, r.left, r.top, r.right - r.left, r.bottom - r.top,
+                     SWP_FRAMECHANGED | SWP_NOOWNERZORDER);
+    } else {
+        SetWindowLongPtrW(hwnd, GWL_STYLE, WS_OVERLAPPEDWINDOW | visible);
+        if (hasWindowedRect_) {
+            WINDOWPLACEMENT wp = {};
+            wp.length = sizeof(wp);
+            wp.rcNormalPosition = { windowedRect_[0], windowedRect_[1], windowedRect_[2], windowedRect_[3] };
+            wp.showCmd = !visible ? SW_HIDE : (windowedMaximized_ ? SW_SHOWMAXIMIZED : SW_SHOWNORMAL);
+            SetWindowPlacement(hwnd, &wp);
+        }
+        // 枠の再計算 (SetWindowLongPtr だけでは非クライアント領域が古いまま)
+        SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
+                     SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER);
+    }
+    mode_ = mode;
 }
 
 bool Win32Window::HasFocus() const

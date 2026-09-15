@@ -49,9 +49,11 @@ public:
                            PadVibrationState* padVibration = nullptr,
                            const NetRuntimeInfo* net = nullptr,
                            CursorLockState* cursorLock = nullptr,
-                           int* pendingLoadPersistSlot = nullptr)
+                           int* pendingLoadPersistSlot = nullptr,
+                           WindowModeState* windowMode = nullptr)
     {
         apiCtx_.pendingLoadPersistSlot = pendingLoadPersistSlot; // v16 (M70c)
+        apiCtx_.windowMode = windowMode;                         // v19。null = Set が no-op
         apiCtx_.audioQueue = audioQueue;
         apiCtx_.pendingScene = pendingScene;
         apiCtx_.effectQueue = effectQueue;

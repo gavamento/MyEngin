@@ -16,6 +16,7 @@
 #include "Engine/Engine/AssetDatabase.h"
 #include "Engine/Engine/CollisionSystem.h"
 #include "Engine/Engine/DemoContent.h" // M75f: --ui-demo-input の台本 (UiDemoScriptInput)
+#include "Engine/Engine/DisplaySettings.h" // v19: 表示モードの保存と起動時のモード
 #include "Engine/Engine/HotReload/DllReloader.h"
 #include "Engine/Engine/HotReload/ReloadHub.h"
 #include "Engine/Engine/Acoustic/AcousticField.h"
@@ -174,6 +175,8 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // M64a: SetCursorMode の要求値。padVibration と全く同じ出力レーンで、適用は
     // フレーム末 (record/verify 中・フォーカス喪失中・スクラブ中は強制解除、終了時も解除)
     CursorLockState cursorLock;
+    // v19: SetWindowMode の要求値。同じ出力レーンで、切り替えと display.json への保存はフレーム末
+    WindowModeState windowMode;
     std::vector<EffectSpawnRequest> effectQueue; // PlayEffect の spawn 要求 (tick 末に消費、M32f)
     std::vector<DebugLineCmd> debugLines; // DebugDrawLine (v7)。tick 頭クリア → 描画で消費
     IRenderPath* activePath = &forwardPath;
@@ -197,14 +200,27 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         assetsRoot = FindAssetsRoot();
     }
 
+    // M51g: セーブディレクトリ (SaveGame/LoadGame)。二経路は cache\cooked と同じ規則。
+    // v19 の display.json も同じ場所 — 窓を作る前に読むのでここで決める
+    const std::wstring saveDir =
+        (config.projectRoot.empty() ? GetExecutableDir() : config.projectRoot) + L"\\save";
+    // v19: 窓を動かしてよい実行か。人の座っていない実行 (record/verify・バッチ・プローブ) で画面全体を奪わない
+    // (カーソルロックの batchRun と同じ理由)。ネットは 1 台で 2 プロセスを並べて試すので動かさない
+    const bool windowModeLive = config.applyWindowMode && config.replayRecordPath.empty()
+        && config.replayVerifyPath.empty() && config.maxFrames <= 0 && config.screenshotPath.empty()
+        && config.netRole == 0 && config.timeTravelProbeTicks <= 0 && config.whatIfProbeTicks <= 0;
+
     // ---- 起動 ----
     WindowDesc wd;
     wd.title = config.title.c_str();
     wd.width = config.width;
     wd.height = config.height;
+    wd.mode = windowModeLive ? display::LoadStartupWindowMode(assetsRoot, saveDir) : WindowMode::Windowed;
     if (!window.Create(wd)) {
         return 1;
     }
+    windowMode.mode = static_cast<int32_t>(window.Mode()); // GetWindowMode の起動直後の値 = 実際のモード
+    bool windowModeIgnoredLogged = false;
     if (!device.Init(config.forceWarp)) {
         return 1;
     }
@@ -401,11 +417,11 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     scriptHost.SetSharedServices(&audioQueue, &pendingScene, &effectQueue, &debugLines,
                                  &audioHandleSeq, &inputActions, &pendingSaveSlot,
                                  &pendingLoadSlot, &padVibration, &netInfo, &cursorLock,
-                                 &pendingLoadPersistSlot);
+                                 &pendingLoadPersistSlot, &windowMode);
     managedHost.SetSharedServices(&audioQueue, &pendingScene, &effectQueue, &debugLines,
                                   &audioHandleSeq, &inputActions, &pendingSaveSlot,
                                   &pendingLoadSlot, &padVibration, &netInfo, &cursorLock,
-                                  &pendingLoadPersistSlot);
+                                  &pendingLoadPersistSlot, &windowMode);
     // v18: 開発中の実行か。プロセスの定数なので起動時に 1 回だけ渡す (sim 状態ではない = .rep に載らない)
     scriptHost.SetDevelopmentRun(config.developmentRun);
     managedHost.SetDevelopmentRun(config.developmentRun);
@@ -479,9 +495,6 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                      config.useCookCache ? "enabled" : "disabled (parse every launch)",
                      WideToUtf8(cookedDir).c_str());
     }
-    // M51g: セーブディレクトリ (SaveGame/LoadGame)。二経路は cache\cooked と同じ規則
-    const std::wstring saveDir =
-        (config.projectRoot.empty() ? GetExecutableDir() : config.projectRoot) + L"\\save";
     ctx.fixedDt = static_cast<float>(kFixedDt);
 
     // ---- クラッシュバンドル (M52f) ----
@@ -2271,6 +2284,23 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                                       && !cursorLock.escapeReleased && ctx.simulateScripts
                                       && !lockAreaHidden,
                                   hasLockArea ? &lockArea : nullptr);
+        }
+        // ---- ウィンドウの表示モードの適用 (v19、出力レーン) ----
+        // 要求が実際のモードと食い違った瞬間だけ切り替えて display.json へ書く (次の起動は最初からそのモード)。
+        // スワップチェーンは SetMode が同期で起こす WM_SIZE を次フレームの ConsumeResize で拾う
+        if (windowMode.mode != static_cast<int32_t>(window.Mode())) {
+            const WindowMode wanted = static_cast<WindowMode>(windowMode.mode);
+            if (windowModeLive) {
+                window.SetMode(wanted);
+                const bool saved = display::SaveWindowMode(saveDir, wanted);
+                MYE_LOG_INFO("[window] mode -> %s (%dx%d)%s", display::WindowModeName(window.Mode()),
+                             window.Width(), window.Height(), saved ? "" : " - display.json NOT written");
+            } else if (!windowModeIgnoredLogged) {
+                windowModeIgnoredLogged = true;
+                MYE_LOG_INFO("[window] SetWindowMode(%s) kept as a request only "
+                             "(editor / record / verify / batch / net run)",
+                             display::WindowModeName(wanted));
+            }
         }
         const double tRender = clock.Now();
 

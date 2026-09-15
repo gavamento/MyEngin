@@ -1099,6 +1099,20 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
     // ---- v18: 開発中の実行か ----
     // 値の意味と「sim 状態ではない = 記録と検証を同じ起動方法で走らせる」は EngineAPI.h の v18 の注記が正本
     out.IsDevelopmentRun = [](void* engine) -> int32_t { return Ctx(engine)->developmentRun; };
+
+    // ---- v19: ウィンドウの表示モード ----
+    // 出力レーン。要求を書くだけ — 切り替え・保存・起動方法によるゲートは EngineLoop (フレーム末) が持つ
+    out.SetWindowMode = [](void* engine, int32_t mode) {
+        WindowModeState* w = Ctx(engine)->windowMode;
+        if (w == nullptr || (mode != MYE_WINDOW_MODE_WINDOWED && mode != MYE_WINDOW_MODE_BORDERLESS)) {
+            return;
+        }
+        w->mode = mode;
+    };
+    out.GetWindowMode = [](void* engine) -> int32_t {
+        const WindowModeState* w = Ctx(engine)->windowMode;
+        return (w != nullptr) ? w->mode : MYE_WINDOW_MODE_WINDOWED;
+    };
 }
 
 } // namespace mye
